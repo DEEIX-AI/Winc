@@ -118,36 +118,33 @@ impl App {
         (first, slider, active)
     }
 
-    /// 在缩略图上按下：点在滑块外时先滚到点中的那一行（让它位于编辑区中间），然后开始拖动滑块。
+    /// 在缩略图上按下，开始拖动滑块。
+    ///
+    /// 点在滑块外时视为按在滑块中心：滑块移到指针下面，之后继续按指针的位移拖动。
     pub(in crate::app) fn press_minimap(&mut self, y: f32) {
-        let area = self.layout.minimap;
-        let (first, slider) = self.minimap_place();
-        if y < slider.y || y >= slider.bottom() {
-            let row = first as f32 + (y - area.y) / MINIMAP_ROW;
-            let center = row - self.visible_lines() as f32 / 2.0;
-            self.set_minimap_scroll(center);
-        }
         let (_, slider) = self.minimap_place();
-        self.drag = Drag::Minimap {
-            grab: (y - slider.y).clamp(0.0, slider.h),
+        let scroll = self.editor.active().map_or(0.0, |doc| doc.scroll_line);
+        let from = if y < slider.y || y >= slider.bottom() {
+            slider.y + slider.h / 2.0
+        } else {
+            y
         };
+        self.drag = Drag::Minimap { from, scroll };
+        self.drag_minimap(y, from, scroll);
     }
 
-    /// 拖动缩略图的滑块：`grab` 是按下点到滑块顶边的距离，拖动时保持不变。
-    pub(in crate::app) fn drag_minimap(&mut self, y: f32, grab: f32) {
-        let area = self.layout.minimap;
+    /// 拖动缩略图的滑块：滚动位置从按下时的 `scroll` 起，按指针相对按下点 `from` 的位移变化，
+    /// 指针不动时滚动位置不变。
+    ///
+    /// 滑块滚到底时的位置就是它能移动的距离，滑块因此跟着指针移动。
+    pub(in crate::app) fn drag_minimap(&mut self, y: f32, from: f32, scroll: f32) {
         let total = self.row_count();
-        let shown = (area.h / MINIMAP_ROW).ceil() as usize;
+        let shown = (self.layout.minimap.h / MINIMAP_ROW).ceil() as usize;
         let max = self.max_scroll_line();
-        // 滑块能移动的距离：放得下时是能滚动的行数，放不下时是缩略图的行数减去滑块的行数。
-        let room = if total <= shown {
-            max
-        } else {
-            shown.saturating_sub(self.visible_lines()) as f32
-        } * MINIMAP_ROW;
+        let first = crate::layout::minimap_first_row(total, shown, max, max);
+        let room = (max - first as f32) * MINIMAP_ROW;
         if room > 0.0 {
-            let share = (y - grab - area.y) / room;
-            self.set_minimap_scroll(share.clamp(0.0, 1.0) * max);
+            self.set_minimap_scroll(scroll + (y - from) / room * max);
         }
     }
 

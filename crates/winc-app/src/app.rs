@@ -533,9 +533,10 @@ enum Drag {
         start_x: f32,
         start_width: f32,
     },
-    /// 拖动缩略图的滑块；`grab` 是按下点到滑块顶边的距离（像素）。
+    /// 拖动缩略图的滑块；指针在纵坐标 `from`（逻辑像素）时，滚动位置是 `scroll`。
     Minimap {
-        grab: f32,
+        from: f32,
+        scroll: f32,
     },
     /// 拖动滚动条。
     ///
