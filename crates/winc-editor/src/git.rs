@@ -1077,6 +1077,9 @@ fn relative_all<'a>(
     })
 }
 
+/// [`find_repositories`] 最多查看的目录项数（个，经验值）：放着大量文件的目录不拖慢打开。
+const SCAN_ENTRIES: usize = 4096;
+
 /// 从 `dir` 往上找仓库的根目录：第一个含有 `.git`（目录，或工作树和子模块里的文件）的目录。
 ///
 /// 只查文件系统，不运行 `git`。
@@ -1084,6 +1087,26 @@ pub fn find_root(dir: &Path) -> Option<PathBuf> {
     dir.ancestors()
         .find(|d| d.join(".git").exists())
         .map(Path::to_path_buf)
+}
+
+/// 返回打开目录 `dir` 时可用的仓库：`dir` 所在的仓库（如果有，排在最前面），之后是第一层子目录里的
+/// 仓库，按名字排序。
+///
+/// 只查文件系统，不运行 `git`。目录项很多时只看前一部分（`SCAN_ENTRIES`）。
+pub fn find_repositories(dir: &Path) -> Vec<PathBuf> {
+    let mut children: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .take(SCAN_ENTRIES)
+        .map(|entry| entry.path())
+        .filter(|path| path.join(".git").exists())
+        .collect();
+    children.sort_by_cached_key(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+    });
+    find_root(dir).into_iter().chain(children).collect()
 }
 
 /// macOS 上命令行开发者工具是否已安装（`xcode-select -p` 成功）。

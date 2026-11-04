@@ -103,6 +103,7 @@ menu-table-align-right = 右对齐
 ## Git 菜单项
 
 menu-worktrees-heading = 工作树
+menu-repositories-heading = 仓库
 menu-new-worktree = 新建工作树…
 menu-prune-worktrees = 清理失效的工作树
 menu-git-fetch = 获取

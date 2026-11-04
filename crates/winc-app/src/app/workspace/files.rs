@@ -774,6 +774,7 @@ impl App {
         // 在终端里提交、切换分支时 `.git` 可能不在监视范围内：打开的是仓库中的子目录，或者没有
         // 启动监视。工作树、子模块的 `.git` 是文件，真正的目录在其他位置。仓库根位于已监视的目录
         // 中、`.git` 是目录时，它的变化已由监视报告，不必每次窗口重新获得焦点都启动 git。
+        self.git_discover();
         let watched = self.watcher.as_ref().zip(self.git.root.as_deref());
         if !watched
             .is_some_and(|(w, root)| root.starts_with(w.root()) && root.join(".git").is_dir())
