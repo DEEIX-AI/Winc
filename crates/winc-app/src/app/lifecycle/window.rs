@@ -218,6 +218,7 @@ impl App {
         self.place_preview_button();
         self.place_browser_button();
         self.place_split();
+        self.place_minimap();
 
         // 侧栏显示搜索面板时没有文件树，点击、悬停和滚动不能落在文件树原来的区域上。
         if self.sidebar_view == SidebarView::Search {
@@ -280,6 +281,31 @@ impl App {
     ///
     /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`；编辑区太窄、
     /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
+    fn place_minimap(&mut self) {
+        // 编辑区窄于该宽度时不显示（逻辑像素，经验值）：优先留给代码。
+        const MINIMAP_MIN: f32 = 480.0;
+        // 缩略图占的宽度（逻辑像素，经验值），右边一段让给滚动条。
+        const MINIMAP_W: f32 = 84.0;
+        self.layout.minimap = Rect::default();
+        let shows_code = self.editor.active().is_some_and(|doc| {
+            doc.shows_text()
+                && doc.diff.is_none()
+                && doc.log.is_none()
+                && doc.preview_mode() != winc_editor::PreviewMode::Preview
+        });
+        let l = &mut self.layout;
+        if self.config.minimap != Some(true) || !shows_code || l.editor.w < MINIMAP_MIN {
+            return;
+        }
+        l.text.w = (l.text.w - MINIMAP_W).max(0.0);
+        l.minimap = Rect::new(
+            l.text.right(),
+            l.editor.y,
+            MINIMAP_W - SCROLLBAR_HIT,
+            l.editor.h,
+        );
+    }
+
     fn place_split(&mut self) {
         // 分栏时每一半的最小宽度（逻辑像素，经验值）。
         const SPLIT_MIN: f32 = 240.0;

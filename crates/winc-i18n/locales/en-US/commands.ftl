@@ -134,6 +134,7 @@ cmd-theme-light = Theme: Light
 cmd-theme-dark = Theme: Dark
 cmd-toggle-sticky-scroll = Toggle Sticky Scroll
 cmd-toggle-word-wrap = Toggle Word Wrap
+cmd-toggle-minimap = Toggle Minimap
 cmd-next-difference = Next Change
 cmd-previous-difference = Previous Change
 cmd-git-show-changes = Git: Show Changes

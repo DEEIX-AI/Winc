@@ -180,6 +180,7 @@ impl App {
             Target::Tab(index, false) => self.press_tab(index, x),
             Target::RulerChange(hunk) => self.go_to_change(hunk),
             Target::Scrollbar(bar, grab) => self.grab_scrollbar(bar, grab),
+            Target::Minimap => self.press_minimap(y),
             Target::Crumb(index) => self.open_crumb_menu(index),
             Target::Status(item) => self.open_status_menu(item),
             Target::TitleBar => self.click_title_bar(x, y),

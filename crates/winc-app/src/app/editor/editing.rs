@@ -91,6 +91,77 @@ impl App {
         self.flash(message);
     }
 
+    /// 返回缩略图最上面显示的行和滑块的位置。
+    fn minimap_place(&self) -> (usize, Rect) {
+        let area = self.layout.minimap;
+        let scroll = self.editor.active().map_or(0.0, |doc| doc.scroll_line);
+        let shown = (area.h / MINIMAP_ROW).ceil() as usize;
+        let first = crate::layout::minimap_first_row(
+            self.row_count(),
+            shown,
+            scroll,
+            self.max_scroll_line(),
+        );
+        let slider = Rect::new(
+            area.x,
+            area.y + (scroll - first as f32) * MINIMAP_ROW,
+            area.w,
+            self.visible_lines() as f32 * MINIMAP_ROW,
+        );
+        (first, slider)
+    }
+
+    /// 返回绘制缩略图所需的状态：最上面显示的行、滑块的位置，以及滑块是否加深。
+    pub(crate) fn minimap_view(&self) -> (usize, Rect, bool) {
+        let active = self.hover == Hover::Minimap || matches!(self.drag, Drag::Minimap { .. });
+        let (first, slider) = self.minimap_place();
+        (first, slider, active)
+    }
+
+    /// 在缩略图上按下：点在滑块外时先滚到点中的那一行（让它位于编辑区中间），然后开始拖动滑块。
+    pub(in crate::app) fn press_minimap(&mut self, y: f32) {
+        let area = self.layout.minimap;
+        let (first, slider) = self.minimap_place();
+        if y < slider.y || y >= slider.bottom() {
+            let row = first as f32 + (y - area.y) / MINIMAP_ROW;
+            let center = row - self.visible_lines() as f32 / 2.0;
+            self.set_minimap_scroll(center);
+        }
+        let (_, slider) = self.minimap_place();
+        self.drag = Drag::Minimap {
+            grab: (y - slider.y).clamp(0.0, slider.h),
+        };
+    }
+
+    /// 拖动缩略图的滑块：`grab` 是按下点到滑块顶边的距离，拖动时保持不变。
+    pub(in crate::app) fn drag_minimap(&mut self, y: f32, grab: f32) {
+        let area = self.layout.minimap;
+        let total = self.row_count();
+        let shown = (area.h / MINIMAP_ROW).ceil() as usize;
+        let max = self.max_scroll_line();
+        // 滑块能移动的距离：放得下时是能滚动的行数，放不下时是缩略图的行数减去滑块的行数。
+        let room = if total <= shown {
+            max
+        } else {
+            shown.saturating_sub(self.visible_lines()) as f32
+        } * MINIMAP_ROW;
+        if room > 0.0 {
+            let share = (y - grab - area.y) / room;
+            self.set_minimap_scroll(share.clamp(0.0, 1.0) * max);
+        }
+    }
+
+    /// 把当前文档滚动到第 `line` 行（可以有小数），不播放平滑滚动。
+    fn set_minimap_scroll(&mut self, line: f32) {
+        let max = self.max_scroll_line();
+        self.scroll_glide = None;
+        if let Some(doc) = self.editor.active_mut() {
+            doc.scroll_line = line.clamp(0.0, max);
+        }
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
     /// 返回当前文档的文件行数；没有打开文档时为 0。
     pub(super) fn line_count(&self) -> usize {
         self.editor.active().map_or(0, |d| d.text().line_count())
