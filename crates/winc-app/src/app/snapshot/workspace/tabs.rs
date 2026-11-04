@@ -176,6 +176,28 @@ fn switching_apps_mid_drag_drops_the_tab() {
 }
 
 #[test]
+fn the_wheel_scrolls_a_full_tab_bar_sideways() {
+    let dir = search_folder("tabs-wheel");
+    let mut app = app_with(&dir, false);
+    for _ in 0..20 {
+        app.new_file();
+    }
+    app.activate_tab(0);
+    paint(&mut app);
+    assert_eq!(app.tabs.scroll, 0.0);
+    let (x, y) = tab_point(&app, 0);
+    app.on_mouse_move(x, y);
+
+    // 鼠标滚轮的竖直一格、水平一格都横向滚动标签栏。
+    app.on_wheel(MouseScrollDelta::LineDelta(0.0, -1.0));
+    let after_vertical = app.tabs.scroll;
+    assert!(after_vertical > 0.0);
+    app.on_wheel(MouseScrollDelta::LineDelta(-1.0, 0.0));
+    assert!(app.tabs.scroll > after_vertical);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn dragging_to_the_end_of_a_full_tab_bar_scrolls_it() {
     let dir = search_folder("tabs-scroll");
     let mut app = app_with(&dir, false);

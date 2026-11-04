@@ -918,6 +918,19 @@ fn crowded_terminal_tabs_shrink_and_keep_the_active_one_in_view() {
     // 移出可视区的第一个标签被裁掉，点击不到。
     assert_eq!(header_hit(&app, HeaderHit::Tab(0)).w, 0.0);
 
+    // 滚轮停在标签栏上：横向滚动标签，终端内容不动，也不切换标签；竖直和水平滚轮都可以。
+    let header = header_hit(&app, HeaderHit::Tab(5));
+    app.on_mouse_move(header.x + 8.0, header.y + 8.0);
+    let lines = app.terminal.tab().unwrap().scroll;
+    app.on_wheel(MouseScrollDelta::LineDelta(0.0, 40.0));
+    paint(&mut app);
+    assert_eq!(header_hit(&app, HeaderHit::Tab(0)).w, TAB_SQUEEZED);
+    assert_eq!(app.terminal.active, 5);
+    assert_eq!(app.terminal.tab().unwrap().scroll, lines);
+    app.on_wheel(MouseScrollDelta::LineDelta(-40.0, 0.0));
+    paint(&mut app);
+    assert_eq!(header_hit(&app, HeaderHit::Tab(5)).w, TAB_SQUEEZED);
+
     // 切换到第一个标签：标签栏滚回最左边。
     app.activate_terminal_tab(0);
     paint(&mut app);

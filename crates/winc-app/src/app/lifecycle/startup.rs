@@ -129,6 +129,7 @@ impl App {
             tree_scroll: 0.0,
             tree_scroll_x: 0.0,
             tree_content_w: 0.0,
+            text_content_w: 0.0,
             tree_typed: None,
             tree_motion: None,
             fold_motion: None,

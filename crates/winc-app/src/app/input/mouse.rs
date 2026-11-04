@@ -171,6 +171,13 @@ impl App {
                 view.details_scroll = (view.details_scroll - dy).clamp(0.0, self.log.details_max);
             }
             self.request_redraw();
+        } else if l.terminal.contains(x, y)
+            && y < l.terminal.y + crate::app::terminal::header_height(l.terminal)
+        {
+            // 与编辑区的标签栏相同，竖直滚轮同样用于横向滚动。
+            let delta = if dx.abs() > dy.abs() { dx } else { dy };
+            self.terminal.strip.wheel(delta);
+            self.set_hover(self.hover_at(x, y));
         } else if l.terminal.contains(x, y) {
             self.terminal_wheel(dy);
         } else if self.markdown.area.contains(x, y) {

@@ -52,6 +52,56 @@ fn scrollbars_show_while_scrolling_or_hovered() {
 }
 
 #[test]
+fn the_editor_scrolls_sideways_by_its_scrollbar_and_by_dragging_past_the_edge() {
+    let dir = sample_folder("scrollbar-horizontal");
+    // 每行 300 格宽：远超编辑区宽度，横向滚动才有可滚的余量。
+    let long: String = (0..20)
+        .map(|i| format!("line {i} {}\n", "x".repeat(300)))
+        .collect();
+    let path = dir.join("long.txt");
+    std::fs::write(&path, long).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+    let track = app.text_hscroll_track();
+    assert!(app.text_content_w > track.w);
+
+    // 按住滑块拖到右端：滚动到最右边。
+    let y = track.bottom() - 4.0;
+    app.on_mouse_move(track.x + 8.0, y);
+    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::EditorHorizontal));
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(track.right(), y);
+    app.on_mouse_up(MouseButton::Left);
+    let max = app.text_content_w - track.w;
+    assert!((app.editor.active().unwrap().scroll_x - max).abs() < 1.0);
+
+    // 回到左端后拖选文字，鼠标停在右缘外：持续向右滚动，选区随之扩展。
+    app.editor.active_mut().unwrap().scroll_x = 0.0;
+    paint(&mut app);
+    let t = app.layout.text;
+    app.on_mouse_move(t.x + 40.0, t.y + 8.0);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(t.right() + 40.0, t.y + 8.0);
+    assert!(app.drag_autoscrolling());
+    let first = app.editor.active().unwrap().scroll_x;
+    assert!(first > 0.0);
+    app.drag_scrolled_at = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+    app.continue_drag_scroll();
+    let doc = app.editor.active().unwrap();
+    assert!(doc.scroll_x > first, "{first} → {}", doc.scroll_x);
+    let head = doc.selection.head;
+    app.drag_scrolled_at = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+    app.continue_drag_scroll();
+    assert!(app.editor.active().unwrap().selection.head > head);
+
+    // 鼠标回到编辑区内时停止滚动。
+    app.on_mouse_move(t.x + 40.0, t.y + 8.0);
+    assert!(!app.drag_autoscrolling());
+    app.on_mouse_up(MouseButton::Left);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn shift_turns_only_mouse_wheel_scrolling_sideways() {
     let dir = sample_folder("scrollbar-shift");
     // 每行 300 格宽：远超编辑区宽度，横向滚动才有可滚的余量。

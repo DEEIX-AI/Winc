@@ -426,6 +426,8 @@ impl Ruler {
 pub enum Scrollbar {
     /// 编辑区的竖直滚动条。
     Editor,
+    /// 编辑区的水平滚动条。
+    EditorHorizontal,
     /// 文件树的竖直滚动条。
     Tree,
     /// 文件树的水平滚动条。

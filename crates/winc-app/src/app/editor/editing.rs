@@ -308,8 +308,6 @@ impl App {
     /// 把当前文档的纵向和横向滚动位置限制在有效范围内。
     pub(in crate::app) fn clamp_scroll(&mut self) {
         let max_scroll = self.max_scroll_line();
-        let width = self.layout.text.w;
-        let visible = self.visible_lines() + 1;
         let cell = self.cell;
         let tab_width = self.editor.active_tab_width();
 
@@ -332,7 +330,33 @@ impl App {
             return;
         }
 
-        // 横向滚动范围只按可见行中最长的一行限制。
+        let max_x = self.text_max_scroll_x();
+        if let Some(doc) = self.editor.active_mut() {
+            doc.scroll_x = doc.scroll_x.clamp(0.0, max_x);
+        }
+    }
+
+    /// 返回编辑区水平滚动条的轨道：文字区，右端让出竖直滚动条。
+    pub(crate) fn text_hscroll_track(&self) -> Rect {
+        let t = self.layout.text;
+        Rect::new(t.x, t.y, (t.w - SCROLLBAR_HIT).max(0.0), t.h)
+    }
+
+    /// 返回当前文档文字的最大横向滚动量（逻辑像素）；差异视图和自动换行时为 0。
+    ///
+    /// 范围只按可见行中最长的一行计算。
+    pub(crate) fn text_max_scroll_x(&mut self) -> f32 {
+        let width = self.layout.text.w;
+        let visible = self.visible_lines() + 1;
+        let cell = self.cell;
+        let tab_width = self.editor.active_tab_width();
+        let Some(doc) = self.editor.active_mut() else {
+            return 0.0;
+        };
+        if doc.diff.is_some() || doc.is_wrapping() {
+            return 0.0;
+        }
+
         let segments =
             doc.folds()
                 .segments(doc.scroll_line as usize, visible, doc.text().line_count());
@@ -356,8 +380,7 @@ impl App {
                     std::ops::ControlFlow::Continue(())
                 });
         }
-        let max_x = (widest as f32 * cell - width + TEXT_PAD + cell * 8.0).max(0.0);
-        doc.scroll_x = doc.scroll_x.clamp(0.0, max_x);
+        (widest as f32 * cell - width + TEXT_PAD + cell * 8.0).max(0.0)
     }
 
     /// 写入剪贴板。

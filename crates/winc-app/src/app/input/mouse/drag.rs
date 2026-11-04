@@ -217,6 +217,20 @@ impl App {
 
                 self.request_redraw();
             }
+            Drag::Scrollbar {
+                bar: Scrollbar::EditorHorizontal,
+                grab,
+            } => {
+                let track = self.text_hscroll_track();
+                let content = self.text_content_w;
+                if let Some(doc) = self.editor.active_mut()
+                    && let Some(thumb) = hscrollbar_thumb(track, doc.scroll_x, content)
+                {
+                    let max = content - track.w;
+                    doc.scroll_x = scroll_for_thumb(track.x, track.w, thumb.w, x, grab, max);
+                }
+                self.request_redraw();
+            }
             Drag::LogText => self.drag_log_text(x, y),
             Drag::MarkdownText => self.drag_markdown(x, y),
             Drag::TableCells => self.drag_table(x, y),
@@ -237,9 +251,9 @@ impl App {
     /// `by_word` 为 `true` 时按词扩展选区；`origin` 为拖选起始范围的起点和终点（字符偏移）。
     fn drag_select(&mut self, x: f32, y: f32, by_word: bool, origin: (usize, usize)) {
         let t = self.layout.text;
-        let scrolled = self.scroll_while_dragging(y);
+        let scrolled = self.scroll_while_dragging(Some(x), y);
 
-        if let Some(pos) = self.pos_at(x, y.clamp(t.y, t.bottom() - 1.0))
+        if let Some(pos) = self.pos_at(x.clamp(t.x, t.right()), y.clamp(t.y, t.bottom() - 1.0))
             && let Some(doc) = self.editor.active_mut()
         {
             doc.selection = if !by_word {
@@ -251,7 +265,7 @@ impl App {
             };
         }
 
-        // 只有拖出上下边缘并随之滚动时，才需要重新计算横向可滚动的范围
+        // 只有拖出边缘并随之滚动时，才需要重新计算横向可滚动的范围
         // （需要测量所有可见行的宽度）。
         if scrolled {
             self.clamp_scroll();
@@ -260,20 +274,35 @@ impl App {
         self.request_redraw();
     }
 
-    /// 拖选时鼠标位于编辑区上下边缘之外，按超出的距离向上或向下滚动；返回鼠标是否在边缘之外。
+    /// 拖选时鼠标位于编辑区边缘之外，按超出的距离滚动；返回鼠标是否在边缘之外。
+    ///
+    /// `x` 为 `None` 时只按上下边缘滚动（拖选整行）。
     ///
     /// 滚动量按经过的时间计算（速度见 [`drag_scroll_speed`]），而不按鼠标事件的次数，因此鼠标
     /// 停在边缘外不动时仍逐帧滚动（[`App::drag_autoscrolling`]），滚动速度也不受鼠标晃动快慢影响。
-    pub(in crate::app) fn scroll_while_dragging(&mut self, y: f32) -> bool {
+    pub(in crate::app) fn scroll_while_dragging(&mut self, x: Option<f32>, y: f32) -> bool {
         let t = self.layout.text;
         let outside = if y < t.y {
             y - t.y
         } else if y > t.bottom() {
             y - t.bottom()
         } else {
+            0.0
+        };
+        let right = self.text_hscroll_track().right();
+        let outside_x = x.map_or(0.0, |x| {
+            if x < t.x {
+                x - t.x
+            } else if x > right {
+                x - right
+            } else {
+                0.0
+            }
+        });
+        if outside == 0.0 && outside_x == 0.0 {
             self.drag_scrolled_at = None;
             return false;
-        };
+        }
         let now = Instant::now();
         // 刚拖出边缘时立即滚动一帧的量；距上次滚动的间隔（如主线程阻塞后）最多按 100 ms 计算。
         let elapsed = self
@@ -282,10 +311,18 @@ impl App {
             .min(std::time::Duration::from_millis(100));
         self.drag_scrolled_at = Some(now);
         let lh = self.fonts.line_height;
-        let step = drag_scroll_speed(outside.abs() / lh) * elapsed.as_secs_f32();
+        let cell = self.cell;
+        let seconds = elapsed.as_secs_f32();
         let max = self.max_scroll_line();
         if let Some(doc) = self.editor.active_mut() {
-            doc.scroll_line = (doc.scroll_line + step.copysign(outside)).clamp(0.0, max);
+            if outside != 0.0 {
+                let step = drag_scroll_speed(outside.abs() / lh) * seconds;
+                doc.scroll_line = (doc.scroll_line + step.copysign(outside)).clamp(0.0, max);
+            }
+            if outside_x != 0.0 {
+                let step = drag_scroll_speed(outside_x.abs() / cell) * cell * seconds;
+                doc.scroll_x = (doc.scroll_x + step.copysign(outside_x)).max(0.0);
+            }
         }
         true
     }
@@ -298,7 +335,7 @@ impl App {
         }
     }
 
-    /// 是否需要逐帧自动滚动：正在拖选或列选择，鼠标位于编辑区上下边缘之外，且该方向仍可滚动。
+    /// 是否需要逐帧自动滚动：正在拖选或列选择，鼠标位于编辑区边缘之外，且该方向仍可滚动。
     pub(in crate::app) fn drag_autoscrolling(&self) -> bool {
         let selecting = matches!(
             self.drag,
@@ -307,19 +344,24 @@ impl App {
                 | Drag::Columns { .. }
                 | Drag::AddSelect { .. }
         );
-        let (t, y) = (self.layout.text, self.mouse.1);
+        let (t, (x, y)) = (self.layout.text, self.mouse);
         let Some(doc) = self.editor.active() else {
             return false;
         };
+        // 拖选整行与横向位置无关。
+        let sideways = !matches!(self.drag, Drag::SelectLine { .. });
+        let track = self.text_hscroll_track();
         selecting
             && ((y < t.y && doc.scroll_line > 0.0)
-                || (y > t.bottom() && doc.scroll_line < self.max_scroll_line()))
+                || (y > t.bottom() && doc.scroll_line < self.max_scroll_line())
+                || (sideways && x < t.x && doc.scroll_x > 0.0)
+                || (sideways && x > track.right() && doc.scroll_x < self.text_content_w - track.w))
     }
 
     /// 拖选整行：三击或点击行号栏之后，按光标所在行与按下的那一行重选整段行。
     fn drag_select_line(&mut self, x: f32, y: f32, anchor: usize) {
         let t = self.layout.text;
-        let scrolled = self.scroll_while_dragging(y);
+        let scrolled = self.scroll_while_dragging(None, y);
 
         if let Some(pos) = self.pos_at(x, y.clamp(t.y, t.bottom() - 1.0))
             && let Some(doc) = self.editor.active_mut()
