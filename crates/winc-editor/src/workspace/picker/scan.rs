@@ -189,6 +189,7 @@ pub(super) fn patch(
     let mut added: Vec<String> = Vec::new();
     let mut dirs: Vec<String> = Vec::new();
     let mut listings: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut redone: Option<String> = None;
 
     for path in paths {
         if cancel.load(Ordering::Relaxed) {
@@ -235,13 +236,26 @@ pub(super) fn patch(
                 added.push(rel);
             }
             Some(kind) if kind.is_dir() => {
-                if was_dir && !was_file {
+                // 路径已排好序，上一级目录刚重新收录过时不用再收录一遍。
+                if redone
+                    .as_deref()
+                    .is_some_and(|dir| rel.strip_prefix(dir).is_some_and(|r| r.starts_with('/')))
+                {
                     continue;
                 }
-                if was_file {
+                // 目录可能被整个换掉（删除后把另一个目录改名移入），此时只有这一条通知，里面的
+                // 文件没有各自的通知，因此与磁盘对照；没有变化时不更新文件表。
+                let (mut files, mut found) = (Vec::new(), Vec::new());
+                gather(root, &rel, base.layers, &mut files, &mut found, cancel);
+                if was_dir && !was_file && same_files(base, &rel, &mut files) {
+                    continue;
+                }
+                if was_file || was_dir {
                     removed.insert(rel.clone());
                 }
-                gather(root, &rel, base.layers, &mut added, &mut dirs, cancel);
+                added.append(&mut files);
+                dirs.append(&mut found);
+                redone = Some(rel);
             }
             _ if was_file || was_dir => {
                 removed.insert(rel);
@@ -258,6 +272,19 @@ pub(super) fn patch(
         return Some(collect(root, MAX_FILES, cancel));
     }
     Some(files)
+}
+
+/// `base` 中目录 `dir` 下的文件是否正好是 `files`；`files` 会被排序。
+fn same_files(base: &Files, dir: &str, files: &mut [String]) -> bool {
+    files.sort_by(|a, b| path_order(a, b));
+    let mut inside = base
+        .paths
+        .iter()
+        .filter(|path| path.strip_prefix(dir).is_some_and(|r| r.starts_with('/')));
+    files
+        .iter()
+        .all(|file| inside.next() == Some(file.as_str()))
+        && inside.next().is_none()
 }
 
 /// 返回新表：从 `base` 中去掉 `removed`（连同它们下面的内容），加上 `added` 和遍历过的 `dirs`，

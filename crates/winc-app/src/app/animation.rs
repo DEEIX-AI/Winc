@@ -272,6 +272,7 @@ impl App {
         settle(&mut self.tree_motion, |m| m.clock);
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
+        settle(&mut self.global.field_motion, |m| m.2);
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.fold_motion, |m| m.clock);
         settle(&mut self.scroll_glide, |g| g.clock);
@@ -344,6 +345,7 @@ impl App {
             || self.tree_motion.is_some()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
+            || self.global.field_motion.is_some()
             || self.global.motion.is_some()
             || self.drag_autoscrolling()
             || self.global.rows_moving()

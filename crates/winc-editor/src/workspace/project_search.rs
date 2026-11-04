@@ -37,7 +37,7 @@ use crate::document::encoding::{UTF8_BOM, decode, utf16_bom};
 use crate::document::large::{LINE_CAP, visible_len};
 use crate::document::{BINARY_SNIFF, Document, DocumentId, LARGE_FILE, OPEN_LIMIT, looks_binary};
 use crate::editing::search::{Matcher, Options, Pattern, Search, count_chars, joined, unescape};
-use crate::workspace::tree::{is_listed_file, natural_cmp, walker};
+use crate::workspace::tree::{is_listed_file, natural_cmp, walker, walker_with_ignored};
 
 /// 最多记录的匹配数（处）；达到后停止搜索，并提示结果不全。
 ///
@@ -77,6 +77,8 @@ pub struct Query {
     pub regex: bool,
     /// 只搜索匹配的文件：逗号分隔的 glob，例如 `src, *.rs`；为空时不限制。
     pub include: String,
+    /// 是否也搜索被 `.gitignore`、`.ignore` 和全局规则忽略的文件。
+    pub include_ignored: bool,
     /// 不搜索匹配的文件：逗号分隔的 glob。
     pub exclude: String,
 }
@@ -231,7 +233,7 @@ impl ProjectSearch {
         self.matcher = Some(matcher);
         self.wake = Some(Arc::new(wake));
         self.launch(
-            Source::Tree(overrides),
+            Source::Tree(overrides, query.include_ignored),
             Arc::new(dirty.into_iter().collect()),
             None,
         );

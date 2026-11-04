@@ -40,8 +40,9 @@ impl ProjectSearch {
 
 /// 后台搜索哪些文件。
 pub(super) enum Source {
-    /// 遍历根目录下的全部文件，按「包含」「排除」规则过滤（整体搜索）。
-    Tree(Override),
+    /// 遍历根目录下的全部文件，按「包含」「排除」规则过滤（整体搜索）；第二项为是否也搜索
+    /// 被忽略的文件。
+    Tree(Override, bool),
     /// 只搜索这些文件（重新搜索一批文件）。
     Files(Vec<PathBuf>),
 }
@@ -85,17 +86,21 @@ impl Walk {
         };
 
         let paths: Box<dyn Iterator<Item = PathBuf> + '_> = match &self.source {
-            Source::Tree(overrides) => Box::new(
-                walker(&self.root)
-                    .overrides(overrides.clone())
-                    .build()
-                    .flatten()
-                    .filter(|entry| {
-                        entry
-                            .file_type()
-                            .is_some_and(|t| is_listed_file(t, entry.path()))
-                    })
-                    .map(ignore::DirEntry::into_path),
+            Source::Tree(overrides, ignored) => Box::new(
+                if *ignored {
+                    walker_with_ignored(&self.root)
+                } else {
+                    walker(&self.root)
+                }
+                .overrides(overrides.clone())
+                .build()
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_type()
+                        .is_some_and(|t| is_listed_file(t, entry.path()))
+                })
+                .map(ignore::DirEntry::into_path),
             ),
             Source::Files(files) => Box::new(files.iter().cloned()),
         };

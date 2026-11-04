@@ -187,6 +187,14 @@ pub fn filter(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: R
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
 
+/// 绘制「被忽略的文件」图标：一个文件，被一条斜线划过。
+pub fn ignored_files(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let file = rounded_outline(cx - 4.5, cy - 6.0, 9.0, 12.0, 1.5);
+    let slash = [Stroke::Line(cx - 6.5, cy + 5.5, cx + 6.5, cy - 5.5)];
+    frame.stroke(&file, RING_STROKE, color, clip);
+    frame.stroke(&slash, RING_STROKE, color, clip);
+}
+
 /// 绘制「全部展开」图标，与「全部折叠」成对：卡片相同，卡片内是加号。
 pub fn expand_all(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     let card = rounded_outline(cx - 5.5, cy - 3.0, 11.0, 9.0, 2.0);

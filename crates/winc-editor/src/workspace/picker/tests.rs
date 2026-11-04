@@ -292,6 +292,67 @@ fn collect_respects_gitignore_and_hidden_directories() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：版本库根目录之外的 `.gitignore` 曾把版本库里的文件也隐藏掉。
+#[test]
+fn ignore_rules_above_a_repository_do_not_apply_inside_it() {
+    let outer = crate::test_util::scratch("index-repo-boundary");
+    std::fs::write(outer.join(".gitignore"), "dist/\n").unwrap();
+    write(&outer, "repo/.git/HEAD");
+    write(&outer, "repo/.gitignore");
+    write(&outer, "repo/dist/core/a.d.ts");
+    write(&outer, "repo/target/out.o");
+    std::fs::write(outer.join("repo/.gitignore"), "target/\n").unwrap();
+
+    let repo = outer.join("repo");
+    let index = FileIndex::collect_now(&repo);
+    let listed = paths(&index);
+    assert!(listed.contains(&"dist/core/a.d.ts"), "{listed:?}");
+    // 版本库自己的规则照常生效。
+    assert!(!listed.contains(&"target/out.o"), "{listed:?}");
+    // 按目录的变化更新文件表时，用的是同一套规则。
+    let cancel = AtomicBool::new(false);
+    let dist = repo.join("dist");
+    assert!(patch(&repo, &index.files, std::slice::from_ref(&dist), &cancel).is_none());
+
+    // 打开版本库里的子目录：版本库根目录的规则仍然生效。
+    write(&outer, "repo/sub/target/b.o");
+    write(&outer, "repo/sub/c.rs");
+    let index = FileIndex::collect_now(&repo.join("sub"));
+    assert_eq!(paths(&index), ["c.rs"]);
+
+    let _ = std::fs::remove_dir_all(&outer);
+}
+
+/// 没有 `.git` 的目录（如下载的源码包）里，它自己的 `.gitignore` 同样生效。
+#[test]
+fn a_folder_without_a_repository_keeps_its_own_ignore_rules() {
+    let root = crate::test_util::scratch("index-no-repo");
+    write(&root, "node_modules/x.js");
+    write(&root, "a.rs");
+    std::fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
+    let index = FileIndex::collect_now(&root);
+    assert!(!paths(&index).contains(&"node_modules/x.js"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn queries_ignore_spaces_and_accept_backslashes() {
+    let root = crate::test_util::scratch("index-query-forms");
+    write(&root, "dist/core/account-store.d.ts");
+    let mut index = FileIndex::collect_now(&root);
+    for query in [
+        "account store",
+        "dist core account",
+        " account-store ",
+        "core\\account-store",
+    ] {
+        assert_eq!(index.search(query).len(), 1, "{query}");
+        assert!(!index.matched(query, 0).is_empty(), "{query}");
+    }
+    assert!(index.search("account zebra").is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn walking_layer_by_layer_follows_the_same_ignore_rules_as_the_walker() {
     let root = crate::test_util::scratch("index-rules");
@@ -561,6 +622,38 @@ fn patching_a_layered_index_keeps_its_layers() {
     );
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 回归：外部构建删除输出目录后把另一个目录改名移入时，只有这个目录本身的通知，里面的文件曾因此
+/// 从文件表中消失，快速打开搜不到。
+#[test]
+fn a_directory_replaced_from_outside_is_listed_again() {
+    let root = crate::test_util::scratch("index-replaced");
+    let outside = crate::test_util::scratch("index-replaced-outside");
+    write(&root, "dist/core/old.d.ts");
+    write(&root, "src/a.rs");
+    write(&outside, "out/core/new.d.ts");
+    let base = FileIndex::collect_now(&root);
+    let cancel = AtomicBool::new(false);
+
+    // 目录没有变化时（例如目录里的文件被修改时目录本身也有通知）不更新文件表。
+    let dist = root.join("dist");
+    assert!(patch(&root, &base.files, std::slice::from_ref(&dist), &cancel).is_none());
+
+    std::fs::remove_dir_all(&dist).unwrap();
+    std::fs::rename(outside.join("out"), &dist).unwrap();
+    let files = patch(&root, &base.files, std::slice::from_ref(&dist), &cancel).unwrap();
+    let listed: Vec<&str> = files.paths.iter().collect();
+    assert_eq!(listed, ["dist/core/new.d.ts", "src/a.rs"]);
+    assert!(files.walked("dist/core"));
+
+    // 上一级目录重新收录过时，同一批里的下一级不重复处理，结果相同。
+    let core = dist.join("core");
+    let both = patch(&root, &base.files, &[dist.clone(), core], &cancel).unwrap();
+    assert_eq!(both.paths.iter().collect::<Vec<_>>(), listed);
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
 }
 
 #[test]

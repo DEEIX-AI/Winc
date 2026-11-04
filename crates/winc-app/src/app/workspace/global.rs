@@ -128,6 +128,12 @@ pub struct GlobalSearch {
     pub whole_word: bool,
     /// 是否按正则表达式搜索。
     pub regex: bool,
+    /// 是否也搜索被忽略的文件。
+    pub include_ignored: bool,
+    /// 查找、替换输入框的文字折成的行数。
+    pub field_lines: (usize, usize),
+    /// 输入框高度的过渡：开始时查找、替换输入框的高度和时钟；不在过渡时为 `None`。
+    pub field_motion: Option<(f32, f32, crate::app::animation::Clock)>,
     /// 替换行是否展开。
     pub replace_open: bool,
     /// 「包含」「排除」输入框是否展开。
@@ -164,7 +170,30 @@ pub struct GlobalSearch {
     preview: Option<(Query, String, ReplacePreview)>,
 }
 
+/// 查找、替换输入框最多显示的行数（经验值）；更长的文字在框内滚动。
+const FIELD_MAX_LINES: usize = 6;
+/// 查找、替换输入框每多一行增加的高度（逻辑像素），与折行的行高相同。
+const FIELD_LINE: f32 = 20.0;
+
 impl GlobalSearch {
+    /// 返回查找、替换输入框当前的高度，过渡途中是过渡到的位置。
+    pub(crate) fn field_heights(&self) -> (f32, f32) {
+        let (query, replace) = self.settled_field_heights();
+        self.field_motion
+            .map_or((query, replace), |(from_q, from_r, clock)| {
+                (clock.between(from_q, query), clock.between(from_r, replace))
+            })
+    }
+
+    /// 返回查找、替换输入框按行数应有的高度。
+    pub(crate) fn settled_field_heights(&self) -> (f32, f32) {
+        let height = |lines: usize| {
+            let extra = lines.clamp(1, FIELD_MAX_LINES) - 1;
+            crate::layout::PANEL_FIELD + extra as f32 * FIELD_LINE
+        };
+        (height(self.field_lines.0), height(self.field_lines.1))
+    }
+
     /// 返回由输入框和选项组成的当前搜索条件。
     pub fn current_query(&self) -> Query {
         Query {
@@ -172,6 +201,7 @@ impl GlobalSearch {
             case_sensitive: self.case_sensitive,
             whole_word: self.whole_word,
             regex: self.regex,
+            include_ignored: self.include_ignored,
             include: self.include.text().to_owned(),
             exclude: self.exclude.text().to_owned(),
         }
@@ -298,7 +328,30 @@ impl App {
         let summary =
             (!g.query.text().is_empty() && !self.no_search_results()) || g.engine.error().is_some();
         let (replace, details) = (g.replace_share(), g.details_share());
-        PanelParts::new(self.panel_rect(), replace, details, summary)
+        PanelParts::new(
+            self.panel_rect(),
+            replace,
+            details,
+            summary,
+            g.field_heights(),
+        )
+    }
+
+    /// 记下查找、替换输入框折成的行数；变化时框高从当前高度过渡到新高度。
+    pub(crate) fn set_search_field_lines(&mut self, lines: (usize, usize)) {
+        if lines == self.global.field_lines {
+            return;
+        }
+        let settled = self.global.settled_field_heights();
+        let (from_q, from_r) = self.global.field_heights();
+        self.global.field_lines = lines;
+        // 行数变了、高度不变（超过最多行数之后）时不用过渡。
+        if self.global.settled_field_heights() == settled {
+            return;
+        }
+        let clock = self.clock(crate::app::animation::TREE_ANIMATION);
+        self.global.field_motion = clock.map(|c| (from_q, from_r, c));
+        self.clamp_results_scroll();
     }
 
     /// 在每帧绘制前检查替换行与「包含」「排除」两行的展开状态，变化时开始展开或收起的动画。
@@ -594,6 +647,10 @@ impl App {
             }
             PanelButton::Regex => {
                 g.regex = !g.regex;
+                self.global_changed(true);
+            }
+            PanelButton::Ignored => {
+                g.include_ignored = !g.include_ignored;
                 self.global_changed(true);
             }
             PanelButton::Details => {

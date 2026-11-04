@@ -127,6 +127,26 @@ fn draw_change_dot(frame: &mut Frame<'_>, p: &Palette, button: Rect, ring: Color
 /// 绘制全局搜索面板，返回有焦点的输入框的光标矩形（供输入法候选框定位）。
 pub(super) fn draw_panel(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
     app.global.sync_rows();
+    // 查找、替换输入框随内容长高：先按框的宽度折好行（宽度和高度无关），框的高度按行数定，
+    // 绘制时继续使用折好的行。
+    let wraps = {
+        let parts = app.panel_parts();
+        let width = PanelParts::text_area(parts.query, parts.case_toggle.x).w;
+        let (query_focused, replace_focused) = (
+            app.focus == Focus::GlobalQuery,
+            app.focus == Focus::GlobalReplace,
+        );
+        let mut query = std::mem::take(&mut app.global.query);
+        let mut replace = std::mem::take(&mut app.global.replace);
+        let wraps = (
+            wrap_area_field(app, frame, width, &mut query, query_focused),
+            wrap_area_field(app, frame, width, &mut replace, replace_focused),
+        );
+        app.global.query = query;
+        app.global.replace = replace;
+        wraps
+    };
+    app.set_search_field_lines((wraps.0.lines(), wraps.1.lines()));
     let parts = app.panel_parts();
     draw_panel_header(app, frame, &parts);
 
@@ -137,7 +157,7 @@ pub(super) fn draw_panel(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
         std::mem::take(&mut app.global.include),
         std::mem::take(&mut app.global.exclude),
     ];
-    let caret = draw_panel_inputs(app, frame, &parts, &mut fields);
+    let caret = draw_panel_inputs(app, frame, &parts, &mut fields, wraps);
     let [query, replace, include, exclude] = fields;
     app.global.query = query;
     app.global.replace = replace;
@@ -192,6 +212,7 @@ fn draw_panel_inputs(
     frame: &mut Frame<'_>,
     parts: &PanelParts,
     [query, replace, include, exclude]: &mut [TextField; 4],
+    (query_wrap, replace_wrap): (AreaWrap, AreaWrap),
 ) -> Option<Rect> {
     let p = app.palette;
     let g = &app.global;
@@ -222,15 +243,26 @@ fn draw_panel_inputs(
         panel,
     );
 
-    let area = PanelParts::text_area(parts.query, parts.case_toggle.x);
-    let mut caret = draw_bar_field(
-        app,
-        frame,
-        area,
-        query,
-        t!("workspace-search-placeholder"),
-        focused,
-    );
+    // 过渡途中文字按过渡结束后的高度排版，只绘制在当前的框内。
+    let (query_h, replace_h) = g.settled_field_heights();
+    let lines = |field: Rect, right: f32, height: f32| {
+        let area = PanelParts::text_area(field, right);
+        // 文字行在第一行的高度上居中。
+        let pad = (crate::layout::PANEL_FIELD - AREA_LINE) / 2.0;
+        Rect::new(area.x, field.y + pad, area.w, height - 2.0 * pad)
+    };
+    let area = lines(parts.query, parts.case_toggle.x, query_h);
+    let mut caret = frame.within(parts.query, |frame| {
+        draw_area_field(
+            app,
+            frame,
+            area,
+            query,
+            query_wrap,
+            t!("workspace-search-placeholder"),
+            focused,
+        )
+    });
 
     let toggles = [
         (
@@ -245,7 +277,10 @@ fn draw_panel_inputs(
 
     // 输入框最右端是「过滤」：展开了包含、排除，或者包含、排除不为空时用强调色。
     let button = parts.details;
-    let active = g.details_open || !g.include.text().is_empty() || !g.exclude.text().is_empty();
+    let active = g.details_open
+        || g.include_ignored
+        || !g.include.text().is_empty()
+        || !g.exclude.text().is_empty();
     draw_button(
         frame,
         p,
@@ -263,15 +298,18 @@ fn draw_panel_inputs(
             frame.with_opacity(g.replace_share(), |frame| {
                 let focused = app.focus == Focus::GlobalReplace;
                 draw_field_box(app, frame, parts.replace, focused, false);
-                let area = PanelParts::text_area(parts.replace, parts.replace_all.x);
-                let c = draw_bar_field(
-                    app,
-                    frame,
-                    area,
-                    replace,
-                    t!("workspace-search-replace-placeholder"),
-                    focused,
-                );
+                let area = lines(parts.replace, parts.replace_all.x, replace_h);
+                let c = frame.within(parts.replace, |frame| {
+                    draw_area_field(
+                        app,
+                        frame,
+                        area,
+                        replace,
+                        replace_wrap,
+                        t!("workspace-search-replace-placeholder"),
+                        focused,
+                    )
+                });
 
                 // 全部替换：图标按钮，与上一行的正则开关在水平方向上对齐；没有结果时置灰。
                 let button = parts.replace_all;
@@ -323,15 +361,21 @@ fn draw_panel_inputs(
                     draw_field_box(app, frame, rect, focused, error);
                     let title_x = rect.x - 8.0 + PANEL_LEFT;
                     let end = ui_text_small(frame, app, title_x, rect, title, p.text_muted, rect);
-                    let area = Rect::new(
-                        end + 8.0,
-                        rect.y,
-                        (rect.right() - 6.0 - end - 8.0).max(0.0),
-                        rect.h,
-                    );
+                    // 「排除」的右端让给「也搜索被忽略的文件」开关。
+                    let right = if focus == Focus::GlobalExclude {
+                        parts.ignored_toggle.x - 2.0
+                    } else {
+                        rect.right() - 6.0
+                    };
+                    let area = Rect::new(end + 8.0, rect.y, (right - end - 8.0).max(0.0), rect.h);
                     let c = draw_bar_field(app, frame, area, field, placeholder, focused);
                     caret = caret.or(c);
                 }
+                let button = parts.ignored_toggle;
+                let on = g.include_ignored;
+                draw_button(frame, p, button, panel, hovered(PanelButton::Ignored), on);
+                let color = if on { p.accent } else { p.text_muted };
+                icons::ignored_files(frame, center(button), color, panel);
                 caret
             })
         });
@@ -411,7 +455,11 @@ fn draw_results(app: &mut App, frame: &mut Frame<'_>, parts: &PanelParts) {
             frame,
             (area, sidebar_span(app)),
             t!("workspace-search-no-results"),
-            Some(t!("workspace-search-no-results-hint")),
+            Some(if app.global.include_ignored {
+                t!("workspace-search-no-results-hint")
+            } else {
+                t!("workspace-search-no-results-hint-ignored")
+            }),
         );
         return;
     }
@@ -993,6 +1041,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, same.label()))
         }
+        Hover::Panel(PanelButton::Ignored) => Some((
+            app.panel_parts().ignored_toggle,
+            t!("workspace-search-include-ignored").to_owned(),
+        )),
         Hover::Panel(PanelButton::Details) => {
             let label = if app.global.details_open {
                 t!("workspace-search-hide-filters")
