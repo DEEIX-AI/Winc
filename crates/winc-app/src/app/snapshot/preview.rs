@@ -656,6 +656,44 @@ fn live_doc(name: &str, text: &str) -> (App, PathBuf) {
     (app, dir)
 }
 
+/// 回归：打字之后、重新解析之前，光标所在块的范围来自上一版文档。文档变短或范围落到多字节字符
+/// 中间时，曾在绘制或按回车时 panic，发布版中表现为闪退。
+#[test]
+fn edits_before_the_next_parse_keep_the_live_block_inside_the_text() {
+    use winit::keyboard::{Key, NamedKey};
+
+    let text =
+        "第一段中文\n\n第二段中文内容\n\n| 表头 | 中 |\n| - | - |\n| 一 | 二 |\n\n最后一段\n";
+    for keep in ["", "中", "中文\n\n表", "第一段中文\n\n第"] {
+        let (mut app, dir) = live_doc("md-stale", text);
+        let doc = app.editor.active_mut().unwrap();
+        let count = doc.text().rope().unwrap().len_chars();
+        doc.selection = winc_core::Selection::new(0, count);
+        // 整篇换成更短的文字，不等重新解析：后台的解析结果还留在上一版。
+        app.run(winc_editor::Command::Insert(keep.into()));
+        let count = app
+            .editor
+            .active()
+            .unwrap()
+            .text()
+            .rope()
+            .unwrap()
+            .len_chars();
+        for at in 0..=count {
+            app.editor.active_mut().unwrap().selection = winc_core::Selection::point(at);
+            let rope = app.editor.active().unwrap().text().rope().unwrap().clone();
+            if let Some(live) = app.live_leaf() {
+                let _ = rope.byte_slice(live.range.clone());
+                let _ = rope.byte_slice(live.leaf.clone());
+            }
+            app.markdown_key(&Key::Named(NamedKey::Enter), false);
+            paint(&mut app);
+            app.run(winc_editor::Command::Undo);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[test]
 fn deeply_nested_documents_lay_out_and_paint() {
     // 嵌套超过上限的引用、列表、公式：排版和绘制同样按层递归，测试线程与后台线程的栈都是 2 MB。

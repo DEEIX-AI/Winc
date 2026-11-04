@@ -55,7 +55,6 @@ preview-svg-missing-text-path = 沿路径排列的文字
 ## Markdown 预览
 
 preview-markdown-image-alt = 图片
-preview-markdown-parse-failed = Markdown 预览解析出错，当前显示上一次的结果
 preview-markdown-code-copied = 已复制代码
 preview-markdown-heading-not-found = 文档中没有此标题
 preview-markdown-link-file-not-found = 未找到链接指向的文件

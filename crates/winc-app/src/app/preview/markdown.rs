@@ -23,8 +23,8 @@ use crate::system;
 
 /// 后台任务的结果。
 enum Done {
-    /// 文档、所依据的文档版本、解析结果；解析器 panic 时为 `None`。
-    Parsed(DocumentId, u64, Option<Markdown>),
+    /// 文档、所依据的文档版本、解析结果。
+    Parsed(DocumentId, u64, Markdown),
     /// 图片（解析好的本地路径）、读取结果。
     Loaded(PathBuf, Result<Arc<Picture>, String>),
     /// 图片、按显示大小（物理像素）画好的像素。
@@ -368,8 +368,7 @@ impl App {
         let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
         winc_editor::background::spawn(move || {
             let text = rope.to_string();
-            // 解析器 panic 时也要送回结果，否则 `pending` 一直占着，预览不再更新。
-            let parsed = std::panic::catch_unwind(|| markdown::parse(&text)).ok();
+            let parsed = markdown::parse(&text);
             if sender.send(Done::Parsed(id, revision, parsed)).is_ok()
                 && let Some(proxy) = proxy
             {
@@ -390,11 +389,7 @@ impl App {
                     }
                     md.pending = None;
                     md.checked = Some(revision);
-                    match parsed {
-                        Some(parsed) => md.parsed = Some(Arc::new(parsed)),
-                        // 保留上一版；文字再次改动时重新解析。
-                        None => self.flash(t!("preview-markdown-parse-failed")),
-                    }
+                    md.parsed = Some(Arc::new(parsed));
                 }
                 Done::Loaded(path, result) => {
                     // 读取期间图片已作废（切换了文档或联网设置变化），丢弃结果。
@@ -811,6 +806,11 @@ impl App {
         let table = !gap && kind.is_some_and(|l| l.table);
         let block = block_of(found.start)?;
         let range = parsed.ranges[block].start..shift(parsed.ranges[block].end).max(leaf.end);
+        // 打字之后、重新解析之前，范围来自上一版文档：起点可能已超出文档，也可能不再落在字符边界
+        // 上，先收拢到现在的文档里，后面才能按它们截取原文。
+        let snap = |at: usize| rope.char_to_byte(rope.byte_to_char(at.min(len)));
+        let leaf = snap(leaf.start)..snap(leaf.end).max(snap(leaf.start));
+        let range = snap(range.start)..snap(range.end).max(snap(range.start));
         let last = rope.byte_to_line(leaf.end.min(len));
         let edge =
             (!prose && !table && (line <= rope.byte_to_line(leaf.start) || line + 1 >= last))

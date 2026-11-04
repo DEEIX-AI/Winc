@@ -2,7 +2,7 @@
 //! 一起终止。
 
 use std::io::{self, Read, Write};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,6 +17,8 @@ use winc_i18n::t;
 pub(crate) const MAX_OUTPUT: usize = 64 << 20;
 /// 程序退出后，等待其遗留的子进程释放输出管道的时长（200 毫秒，经验值）；超时后终止进程组。
 const GRACE: Duration = Duration::from_millis(200);
+/// 启动程序最多尝试的次数（经验值）。
+const SPAWN_TRIES: u32 = 5;
 
 /// 程序的运行结果：退出状态和捕获的输出。
 #[derive(Debug)]
@@ -102,6 +104,25 @@ impl Cancel {
     }
 }
 
+/// 启动 `command`；程序文件暂时被占用（`ETXTBSY`）时稍等再试，最多试 [`SPAWN_TRIES`] 次。
+///
+/// 程序文件刚写完时，同时启动的另一个进程可能在 exec 之前仍继承着它的可写描述符。这种占用
+/// 只持续片刻，不能当作程序无法运行。
+fn spawn(command: &mut Command) -> std::io::Result<Child> {
+    /// Unix 上 `ETXTBSY` 的错误码。
+    const TEXT_BUSY: i32 = 26;
+    let mut tries = 1;
+    loop {
+        match command.spawn() {
+            Err(e) if cfg!(unix) && e.raw_os_error() == Some(TEXT_BUSY) && tries < SPAWN_TRIES => {
+                std::thread::sleep(Duration::from_millis(10 * u64::from(tries)));
+                tries += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
 /// 运行 `command`，最多等待 `timeout`，返回退出状态和捕获的输出。
 ///
 /// 标准输入不继承 winc 自己的；程序自成一个进程组，超时、取消、输出过多时终止整个进程组。
@@ -129,11 +150,8 @@ pub(crate) fn run(
     } else {
         Stdio::piped()
     };
-    let mut child = command
-        .stdin(stdin)
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(RunError::Spawn)?;
+    command.stdin(stdin).stdout(Stdio::piped());
+    let mut child = spawn(command).map_err(RunError::Spawn)?;
     let pid = child.id();
     let deadline = Instant::now() + timeout;
     let too_large = Arc::new(AtomicBool::new(false));

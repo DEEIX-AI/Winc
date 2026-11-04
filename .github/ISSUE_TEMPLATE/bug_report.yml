@@ -63,7 +63,10 @@ body:
     id: logs
     attributes:
       label: Screenshots or logs
-      description: Optional. Drag and drop files here. Remove private data.
+      description: >-
+        Optional. Drag and drop files here. Remove private data. After a crash, please attach
+        crash.log from ~/Library/Application Support/winc on macOS, %LOCALAPPDATA%\winc on Windows,
+        or ~/.local/state/winc on Linux.
     validations:
       required: false
   - type: checkboxes

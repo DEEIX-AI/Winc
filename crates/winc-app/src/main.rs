@@ -12,6 +12,7 @@
 mod app;
 mod bench;
 mod cli;
+mod crash;
 mod field;
 mod icons;
 mod instance;
@@ -52,6 +53,7 @@ use bench::Bench;
 use winc::{Envelope, Winc};
 
 fn main() {
+    crash::install();
     #[cfg(windows)]
     windows::attach_console();
     // `--help` 和无法识别的选项不需要窗口，先处理参数；用法与错误信息按系统语言输出。
