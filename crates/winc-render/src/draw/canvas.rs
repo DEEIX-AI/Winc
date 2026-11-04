@@ -6,6 +6,8 @@
 use std::f32::consts::TAU;
 use std::ops::Range;
 
+mod wide;
+
 /// 物理像素下的矩形，左闭右开：包含 `(x0, y0)`，不含 `(x1, y1)`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IRect {
@@ -411,9 +413,7 @@ impl Canvas<'_> {
             return;
         }
         for (dst, src) in self.paste_rows(area, px) {
-            for (out, &p) in self.px[dst].iter_mut().zip(&px[src]) {
-                *out = lerp(p, tint, a);
-            }
+            wide::lerp_to_color(&mut self.px[dst], &px[src], tint, a);
         }
     }
 
@@ -491,9 +491,7 @@ impl Canvas<'_> {
             };
             let source: &[u32] = if scaled {
                 let (top, bottom) = (&layer[y0 * w..][..w], &layer[y1 * w..][..w]);
-                for ((out, &t), &b) in blended.iter_mut().zip(top).zip(bottom) {
-                    *out = lerp(t, b, fy);
-                }
+                wide::lerp_rows(&mut blended, top, bottom, fy);
                 &blended
             } else {
                 &layer[y * w..][..w]
@@ -517,13 +515,9 @@ impl Canvas<'_> {
                 for ((a, b), &(x0, x1, _)) in first.iter_mut().zip(&mut *second).zip(span) {
                     (*a, *b) = (source[x0], source[x1]);
                 }
-                for (((p, &a), &b), &fx) in middle.iter_mut().zip(&*first).zip(&*second).zip(fxs) {
-                    *p = lerp(*p, lerp(a, b, fx), full);
-                }
+                wide::lerp_pairs_onto(middle, first, second, fxs, full);
             } else {
-                for (p, &top) in middle.iter_mut().zip(&source[inner.0..inner.1]) {
-                    *p = lerp(*p, top, full);
-                }
+                wide::lerp_onto(middle, &source[inner.0..inner.1], full);
             }
             for (part, start) in [(left, 0), (right, inner.1)] {
                 for (p, x) in part.iter_mut().zip(start..) {
@@ -580,7 +574,7 @@ impl Canvas<'_> {
                 if opaque {
                     row.fill(color);
                 } else {
-                    row.iter_mut().for_each(|p| *p = blend(*p, color, 255));
+                    wide::mix_span(row, color, color >> 24);
                 }
             }
         }
@@ -665,7 +659,7 @@ impl Canvas<'_> {
                 if opaque {
                     mid.fill(color);
                 } else {
-                    mid.iter_mut().for_each(|p| *p = blend(*p, color, 255));
+                    wide::mix_span(mid, color, color >> 24);
                 }
 
                 for (start, part) in [(a, left), (mid1, right)] {

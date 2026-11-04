@@ -124,6 +124,46 @@ fn lerp_matches_per_channel() {
     }
 }
 
+#[test]
+fn span_loops_match_the_single_pixel_functions() {
+    let row: Vec<u32> = (0..1031u32)
+        .map(|i| 0xff00_0000 | ((i * 89) & 0xff) << 16 | ((i * 3) & 0xff) << 8 | ((i * 17) & 0xff))
+        .collect();
+    let other: Vec<u32> = row.iter().rev().copied().collect();
+    let weights: Vec<u32> = (0..row.len() as u32).map(|i| i % 257).collect();
+    let run = |f: &dyn Fn(&mut [u32])| {
+        let mut out = row.clone();
+        f(&mut out);
+        out
+    };
+    for (color, a) in [(0x00c8_4010, 0), (0x80c8_4010, 128), (0xfe01_ff7f, 256)] {
+        let sa = a.min(255);
+
+        // 半透明矩形按颜色自带的透明度铺满，结果与逐像素调用 `blend` 相同。
+        let want: Vec<u32> = row.iter().map(|&p| blend(p, color, 255)).collect();
+        assert_eq!(run(&|o| wide::mix_span(o, color, color >> 24)), want);
+        let want: Vec<u32> = row.iter().map(|&p| mix(p, color, sa)).collect();
+        assert_eq!(run(&|o| wide::mix_span(o, color, sa)), want);
+
+        let want: Vec<u32> = other.iter().map(|&s| lerp(s, color, a)).collect();
+        assert_eq!(run(&|o| wide::lerp_to_color(o, &other, color, a)), want);
+
+        let want: Vec<u32> = (0..row.len()).map(|i| lerp(other[i], row[i], a)).collect();
+        assert_eq!(run(&|o| wide::lerp_rows(o, &other, &row, a)), want);
+
+        let want: Vec<u32> = (0..row.len()).map(|i| lerp(row[i], other[i], a)).collect();
+        assert_eq!(run(&|o| wide::lerp_onto(o, &other, a)), want);
+
+        let want: Vec<u32> = (0..row.len())
+            .map(|i| lerp(row[i], lerp(row[i], other[i], weights[i]), a))
+            .collect();
+        assert_eq!(
+            run(&|o| wide::lerp_pairs_onto(o, &row, &other, &weights, a)),
+            want
+        );
+    }
+}
+
 /// 逐像素判断覆盖率、按四个相邻像素取样的合成结果，与 `Canvas::blend_layer` 的算法无关。
 fn reference_layer(
     (w, h): (usize, usize),
