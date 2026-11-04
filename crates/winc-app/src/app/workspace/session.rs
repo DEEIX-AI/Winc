@@ -9,8 +9,10 @@ pub enum StartAction {
     Settings,
     /// 新建未命名文件（`⌘N`）。
     NewFile,
-    /// 打开文件或目录（`⌘O`），选择器中文件和目录都能选。
+    /// macOS 上打开文件或目录（`⌘O`），选择器中都能选；其他平台上只打开文件（`Ctrl+O`）。
     Open,
+    /// 打开目录（`Ctrl+K Ctrl+O`）；只在选择器不能同时选文件和目录的平台上显示。
+    OpenFolder,
     /// 打开最近列表中的目录，参数为列表下标（从 0 起）。
     Recent(usize),
     /// 从最近列表中移除一项（悬停时右端的 ✕），参数为列表下标（从 0 起）。
@@ -372,6 +374,7 @@ impl App {
             StartAction::Settings => self.open_settings(),
             StartAction::NewFile => self.new_file(),
             StartAction::Open => self.pick(Pick::Open),
+            StartAction::OpenFolder => self.pick(Pick::OpenFolder),
             StartAction::Recent(index) => {
                 let Some(folder) = self.state.recent.get(index).cloned() else {
                     return;

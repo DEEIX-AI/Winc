@@ -361,9 +361,17 @@ fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
         // 顶部已经显示「未打开目录」，这里只提示打开方式，并与该文本左对齐。
         let row = Rect::new(tree.x, tree.y + 4.0, tree.w, TREE_ROW);
         let x = app.layout.sidebar_header.x + 14.0;
-        let hint = match keymap::shortcut(Action::OpenFile) {
-            Some(key) => t!("workspace-tree-open-hint-key", key = key),
-            None => t!("workspace-tree-open-hint").to_owned(),
+        // 只有 macOS 的选择器能同时选文件和目录，其他平台上提示打开目录的快捷键。
+        let hint = if cfg!(target_os = "macos") {
+            match keymap::shortcut(Action::OpenFile) {
+                Some(key) => t!("workspace-tree-open-hint-key", key = key),
+                None => t!("workspace-tree-open-hint").to_owned(),
+            }
+        } else {
+            match keymap::shortcut(Action::OpenFolder) {
+                Some(key) => t!("workspace-tree-open-folder-hint-key", key = key),
+                None => t!("workspace-tree-open-folder-hint").to_owned(),
+            }
         };
         ui_text_small(frame, app, x, row, &hint, p.text_dim, tree);
         return;
