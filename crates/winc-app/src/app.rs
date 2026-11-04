@@ -777,6 +777,8 @@ pub struct App {
     pub tree_scroll_x: f32,
     /// 文件树中最宽一行的内容宽度，横向滚动范围和滑块据此计算；绘制时量出。
     pub tree_content_w: f32,
+    /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
+    pub text_content_w: f32,
     /// 文件树中连续键入的字符与最后一次键入的时刻，用于跳到名称以这些字符开头的行
     /// （`App::on_key_tree`）。
     pub(crate) tree_typed: Option<(String, std::time::Instant)>,

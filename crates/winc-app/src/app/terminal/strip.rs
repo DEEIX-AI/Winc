@@ -1,7 +1,8 @@
 //! 终端面板的标签栏：新建的标签从零宽长出来，关掉的在原位收窄、淡出，右边的跟着让开；按住
 //! 标签左右拖动调整顺序，越过相邻标签的中线时和它换位，被换的那个滑过去。
 //!
-//! 动画参数与编辑区的标签栏相同，实现简单得多：终端标签不多，标签栏不滚动。
+//! 动画参数与编辑区的标签栏相同。放不下时标签栏可以用滚轮横向滚动，不显示滚动条；切换标签、
+//! 新建或关闭标签时滚到正在看的标签。
 
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
@@ -59,6 +60,12 @@ pub(crate) struct Strip {
     pub widths: Vec<f32>,
     /// 上一帧第一个标签的左边。
     pub left: f32,
+    /// 标签栏的横向滚动量（逻辑像素）。
+    pub scroll: f32,
+    /// 上一帧的最大滚动量（逻辑像素）；放得下时为 0。
+    pub max_scroll: f32,
+    /// 上一帧正在看的标签和标签数：变了就滚到正在看的标签。
+    pub revealed: Option<(u16, usize)>,
     /// 上一帧见过的标签，和这一帧比认出新建的。
     known: Option<Vec<u16>>,
     /// 正在长出来的标签：（标签编号，进度时钟）。
@@ -75,6 +82,11 @@ pub(crate) struct Strip {
 }
 
 impl Strip {
+    /// 按滚轮的位移 `delta`（逻辑像素）横向滚动标签栏。
+    pub fn wheel(&mut self, delta: f32) {
+        self.scroll = (self.scroll - delta).clamp(0.0, self.max_scroll);
+    }
+
     /// 第 `index` 个标签左边相对第一个标签左边的距离（逻辑像素）。
     fn slot(&self, index: usize) -> f32 {
         self.widths[..index].iter().map(|w| w + TAB_GAP).sum()
