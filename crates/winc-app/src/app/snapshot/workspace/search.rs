@@ -7,6 +7,63 @@ use super::*;
 use crate::keymap::{Action, Context};
 
 #[test]
+fn long_queries_and_replacements_grow_their_boxes() {
+    let dir = search_folder("global-grow");
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+    app.set_sidebar_view(SidebarView::Search);
+    app.global.replace_open = true;
+    settle_search(&mut app);
+    let one = app.panel_parts();
+    assert_eq!(one.query.h, crate::layout::PANEL_FIELD);
+
+    // 长文字折成多行，框变高，下方的行跟着下移；开关留在第一行。
+    let long = "word ".repeat(60);
+    app.global.query.insert(&long);
+    app.global.replace.insert(&long);
+    settle_search(&mut app);
+    let tall = app.panel_parts();
+    assert!(tall.query.h > one.query.h);
+    assert!(tall.replace.h > one.replace.h);
+    assert_eq!(
+        tall.replace.y,
+        tall.query.bottom() + (one.replace.y - one.query.bottom())
+    );
+    assert_eq!(tall.case_toggle.y, one.case_toggle.y);
+    assert!(tall.results.y > one.results.y);
+
+    // 高度有上限，更长的文字在框内滚动。
+    app.global.query.insert(&long.repeat(20));
+    settle_search(&mut app);
+    let capped = app.panel_parts();
+    assert_eq!(capped.query.h, crate::layout::PANEL_FIELD + 5.0 * 20.0);
+
+    // 点第二行的文字：光标落在第二行，不是第一行。
+    let parts = app.panel_parts();
+    app.on_mouse_move(parts.query.x + 60.0, parts.query.y + 40.0);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert_eq!(app.focus, Focus::GlobalQuery);
+    paint(&mut app);
+    assert!(app.global.query.caret() > 0);
+
+    // 清空后恢复一行。
+    app.global.query = TextField::default();
+    app.global.replace = TextField::default();
+    settle_search(&mut app);
+    assert_eq!(app.panel_parts().query.h, one.query.h);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 绘制到输入框高度的过渡结束。
+fn settle_search(app: &mut App) {
+    paint(app);
+    app.global.field_motion = None;
+    paint(app);
+}
+
+#[test]
 fn the_exclude_field_toggles_searching_ignored_files() {
     let dir = search_folder("global-ignored");
     std::fs::write(dir.join(".gitignore"), "dist/\n").unwrap();
