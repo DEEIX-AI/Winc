@@ -122,25 +122,23 @@ fn the_minimap_takes_room_from_the_text_and_scrolls_the_editor() {
     assert!(app.layout.text.w < before);
     assert_eq!(map.x, app.layout.text.right());
 
-    // 点在滑块外：点中的那一行滚到编辑区中间。
+    // 点在滑块外：滑块移到指针下面，贴近底边时滚到文档末尾。
     let scroll = |app: &App| app.editor.active().unwrap().scroll_line;
     app.on_mouse_move(map.x + 8.0, map.bottom() - 1.0);
     assert_eq!(app.hover, Hover::Minimap);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
-    let row = (map.h - 1.0) / crate::theme::MINIMAP_ROW;
-    let expected = row - app.visible_lines() as f32 / 2.0;
-    assert!((scroll(&app) - expected).abs() < 2.0, "{}", scroll(&app));
+    assert_eq!(scroll(&app), app.max_scroll_line());
     paint(&mut app);
 
-    // 按在滑块上不跳动；拖动时抓取点不变，拖到两端分别滚到文档的两端。
+    // 按在滑块上不跳动；拖动时滑块跟着指针，拖到两端分别滚到文档的两端。
     let (_, slider, _) = app.minimap_view();
     let (at, y) = (scroll(&app), slider.y + 2.0);
     app.on_mouse_move(map.x + 8.0, y);
     app.on_mouse_down(MouseButton::Left);
     assert_eq!(scroll(&app), at);
-    app.on_mouse_move(map.x + 8.0, y + 4.0);
-    assert!(scroll(&app) > at);
+    app.on_mouse_move(map.x + 8.0, y - 4.0);
+    assert!(scroll(&app) < at);
     app.on_mouse_move(map.x + 8.0, map.bottom() + 40.0);
     assert_eq!(scroll(&app), app.max_scroll_line());
     app.on_mouse_move(map.x + 8.0, map.y - 40.0);
@@ -162,6 +160,90 @@ fn the_minimap_takes_room_from_the_text_and_scrolls_the_editor() {
 }
 
 /// 回归：自动换行时长行的每个显示行都绘制，后面不留空白。
+#[test]
+fn pressing_the_minimap_puts_the_slider_under_the_pointer_once() {
+    let dir = sample_folder("minimap-press");
+    let row = crate::theme::MINIMAP_ROW;
+    let scroll = |app: &App| app.editor.active().unwrap().scroll_line;
+    let center = |app: &App| {
+        let (_, slider, _) = app.minimap_view();
+        slider.y + slider.h / 2.0
+    };
+    // 比缩略图长得多、比缩略图短的文档：滑块都落在指针下面。
+    for (name, lines) in [("long.rs", 20_000), ("short.rs", 150)] {
+        let text: String = (0..lines)
+            .map(|i| format!("let row_{i} = {i};\n"))
+            .collect();
+        let file = dir.join(name);
+        std::fs::write(&file, text).unwrap();
+        let mut app = app_with(&file, true);
+        app.settings_toggle(Setting::Minimap);
+        paint(&mut app);
+        let map = app.layout.minimap;
+        let x = map.x + 8.0;
+
+        let (_, slider, _) = app.minimap_view();
+        let y = (slider.bottom() + 120.0)
+            .min(map.y + map.h * 0.75)
+            .max(slider.bottom() + 1.0);
+        app.on_mouse_move(x, y);
+        app.on_mouse_down(MouseButton::Left);
+        let pressed = scroll(&app);
+        assert!(pressed > 0.0, "{name}");
+        assert!(
+            (center(&app) - y).abs() <= row,
+            "{name}: {} {y}",
+            center(&app)
+        );
+
+        // 指针不动：继续移动事件和松开都不改变位置。
+        app.on_mouse_move(x, y);
+        assert_eq!(scroll(&app), pressed, "{name}");
+        app.on_mouse_up(MouseButton::Left);
+        assert_eq!(scroll(&app), pressed, "{name}");
+        paint(&mut app);
+        assert_eq!(scroll(&app), pressed, "{name}");
+    }
+}
+
+#[test]
+fn dragging_the_minimap_slider_follows_the_pointer() {
+    let dir = sample_folder("minimap-drag");
+    let row = crate::theme::MINIMAP_ROW;
+    let text: String = (0..20_000)
+        .map(|i| format!("let row_{i} = {i};\n"))
+        .collect();
+    let file = dir.join("long.rs");
+    std::fs::write(&file, text).unwrap();
+    let mut app = app_with(&file, true);
+    app.settings_toggle(Setting::Minimap);
+    paint(&mut app);
+    let map = app.layout.minimap;
+    let x = map.x + 8.0;
+    let scroll = |app: &App| app.editor.active().unwrap().scroll_line;
+
+    // 按在滑块上不跳动，之后滑块的位移等于指针的位移；取整到整行造成的误差不超过一行。
+    let (_, slider, _) = app.minimap_view();
+    let y = slider.y + 4.0;
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    assert_eq!(scroll(&app), 0.0);
+    for delta in [1.0, 37.0, 240.0] {
+        app.on_mouse_move(x, y + delta);
+        let (_, moved, _) = app.minimap_view();
+        assert!(
+            (moved.y - slider.y - delta).abs() <= row,
+            "{delta} {}",
+            moved.y
+        );
+    }
+
+    // 指针往回拖到按下处，回到原来的位置。
+    app.on_mouse_move(x, y);
+    assert_eq!(scroll(&app), 0.0);
+    app.on_mouse_up(MouseButton::Left);
+}
+
 #[test]
 fn wrapped_lines_fill_their_rows_in_the_minimap() {
     let dir = sample_folder("minimap-wrap");
