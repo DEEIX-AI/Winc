@@ -200,6 +200,7 @@ fn round_trips_through_json() {
         open_folder_in_new_window: Some(true),
         sticky_scroll: Some(false),
         word_wrap: Some(true),
+        minimap: Some(true),
         theme: Some(ThemeChoice::Dark),
         light_theme: Some("paper".to_string()),
         dark_theme: Some("ember".to_string()),

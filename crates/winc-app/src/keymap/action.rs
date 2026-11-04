@@ -148,6 +148,8 @@ pub enum Action {
     ThemeDark,
     ToggleStickyScroll,
     ToggleWordWrap,
+    /// 显示或隐藏编辑区右侧的缩略图。
+    ToggleMinimap,
     TogglePreview,
     NextDifference,
     PreviousDifference,
@@ -333,6 +335,7 @@ impl Action {
             ThemeDark => t!("cmd-theme-dark"),
             ToggleStickyScroll => t!("cmd-toggle-sticky-scroll"),
             ToggleWordWrap => t!("cmd-toggle-word-wrap"),
+            ToggleMinimap => t!("cmd-toggle-minimap"),
             NextDifference => t!("cmd-next-difference"),
             PreviousDifference => t!("cmd-previous-difference"),
             GitShowChanges => t!("cmd-git-show-changes"),
@@ -501,6 +504,7 @@ impl Action {
             ThemeDark => "Theme: Dark",
             ToggleStickyScroll => "Toggle Editor Sticky Scroll",
             ToggleWordWrap => "Toggle Word Wrap",
+            ToggleMinimap => "Toggle Minimap",
             NextDifference => "Go to Next Difference",
             PreviousDifference => "Go to Previous Difference",
             GitShowChanges => "Git: Open Changes",
@@ -616,8 +620,8 @@ impl Action {
             }
             RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
             ToggleSidebar | FocusSidebar | ShowFiles | ZoomIn | ZoomOut | ResetZoom | ThemeAuto
-            | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | TogglePreview
-            | NextDifference | PreviousDifference | GitShowChanges | GitShowLog
+            | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | ToggleMinimap
+            | TogglePreview | NextDifference | PreviousDifference | GitShowChanges | GitShowLog
             | GitSwitchWorktree | GitNewWorktree | GitFileHistory | GitBlame | ShowCommit
             | GitRevertChange | ToggleTerminal | ClearTerminal | NewTerminal | CloseTerminal
             | NextTerminal | PreviousTerminal | FindInTerminal | MaximizeTerminal
@@ -884,6 +888,7 @@ pub const ACTIONS: &[Action] = {
         ThemeDark,
         ToggleStickyScroll,
         ToggleWordWrap,
+        ToggleMinimap,
         TogglePreview,
         ShowCommit,
         GitShowChanges,

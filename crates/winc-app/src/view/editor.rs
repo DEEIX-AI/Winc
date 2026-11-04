@@ -6,6 +6,7 @@ mod area;
 mod caret;
 mod glyphs;
 pub(super) mod hint;
+mod minimap;
 mod picture;
 mod placeholder;
 pub(super) mod places;
@@ -40,8 +41,9 @@ use crate::system;
 
 /// 每帧最多向后推算高亮状态的行数（行，经验值）。
 ///
-/// 跳到大文件中间时，推算分多帧完成。
-pub(super) const HIGHLIGHT_BUDGET: usize = 20_000;
+/// 跳到长文件靠后的位置时，推算分多帧完成。与粘滞滚动的预算合计约 16 ms（约一次屏幕刷新），
+/// 期间界面保持响应。
+pub(super) const HIGHLIGHT_BUDGET: usize = 4_000;
 
 /// 查找匹配括号时，向前或向后最多扫描的字符数（字符，经验值）。
 const BRACE_SCAN_LIMIT: usize = 20_000;

@@ -56,6 +56,8 @@ pub struct Config {
     pub sticky_scroll: Option<bool>,
     /// 自动换行：按编辑区宽度把长行断开显示（不修改文件），默认为否。
     pub word_wrap: Option<bool>,
+    /// 在编辑区右侧显示缩略图，默认为否。
+    pub minimap: Option<bool>,
     /// 配色：`auto` 跟随系统，`dark` 或 `light` 强制指定。
     pub theme: Option<ThemeChoice>,
     /// 浅色外观时用的主题（主题的名字，如 `paper`）；没写时用默认的。

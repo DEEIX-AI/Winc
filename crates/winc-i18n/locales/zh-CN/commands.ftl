@@ -134,6 +134,7 @@ cmd-theme-light = 主题：浅色
 cmd-theme-dark = 主题：深色
 cmd-toggle-sticky-scroll = 切换粘滞滚动
 cmd-toggle-word-wrap = 切换自动换行
+cmd-toggle-minimap = 切换缩略图
 cmd-next-difference = 下一处更改
 cmd-previous-difference = 上一处更改
 cmd-git-show-changes = Git：显示差异

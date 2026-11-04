@@ -102,6 +102,176 @@ fn the_editor_scrolls_sideways_by_its_scrollbar_and_by_dragging_past_the_edge() 
 }
 
 #[test]
+fn the_minimap_takes_room_from_the_text_and_scrolls_the_editor() {
+    let dir = sample_folder("minimap");
+    let long: String = (0..2000)
+        .map(|i| format!("let value_{i} = {i};\n"))
+        .collect();
+    let path = dir.join("long.rs");
+    std::fs::write(&path, long).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+
+    // 默认不显示；打开后从文字区右边让出位置，紧挨文字区。
+    let before = app.layout.text.w;
+    assert_eq!(app.layout.minimap.w, 0.0);
+    app.settings_toggle(Setting::Minimap);
+    paint(&mut app);
+    let map = app.layout.minimap;
+    assert!(map.w > 0.0);
+    assert!(app.layout.text.w < before);
+    assert_eq!(map.x, app.layout.text.right());
+
+    // 点在滑块外：点中的那一行滚到编辑区中间。
+    let scroll = |app: &App| app.editor.active().unwrap().scroll_line;
+    app.on_mouse_move(map.x + 8.0, map.bottom() - 1.0);
+    assert_eq!(app.hover, Hover::Minimap);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    let row = (map.h - 1.0) / crate::theme::MINIMAP_ROW;
+    let expected = row - app.visible_lines() as f32 / 2.0;
+    assert!((scroll(&app) - expected).abs() < 2.0, "{}", scroll(&app));
+    paint(&mut app);
+
+    // 按在滑块上不跳动；拖动时抓取点不变，拖到两端分别滚到文档的两端。
+    let (_, slider, _) = app.minimap_view();
+    let (at, y) = (scroll(&app), slider.y + 2.0);
+    app.on_mouse_move(map.x + 8.0, y);
+    app.on_mouse_down(MouseButton::Left);
+    assert_eq!(scroll(&app), at);
+    app.on_mouse_move(map.x + 8.0, y + 4.0);
+    assert!(scroll(&app) > at);
+    app.on_mouse_move(map.x + 8.0, map.bottom() + 40.0);
+    assert_eq!(scroll(&app), app.max_scroll_line());
+    app.on_mouse_move(map.x + 8.0, map.y - 40.0);
+    assert_eq!(scroll(&app), 0.0);
+    app.on_mouse_up(MouseButton::Left);
+
+    // 滚轮在缩略图上照常滚动编辑区。
+    app.on_mouse_move(map.x + 8.0, map.y + 40.0);
+    app.on_wheel(MouseScrollDelta::LineDelta(0.0, -1.0));
+    assert!(app.editor.active().unwrap().scroll_line > 0.0);
+    paint(&mut app);
+
+    // 关闭后还给文字区。
+    app.settings_toggle(Setting::Minimap);
+    assert_eq!(app.layout.minimap.w, 0.0);
+    assert_eq!(app.layout.text.w, before);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 回归：自动换行时长行的每个显示行都绘制，后面不留空白。
+#[test]
+fn wrapped_lines_fill_their_rows_in_the_minimap() {
+    let dir = sample_folder("minimap-wrap");
+    let path = dir.join("wrap.txt");
+    std::fs::write(&path, format!("{}\nend\n", "word ".repeat(2000))).unwrap();
+    let mut app = app_with(&path, false);
+    app.settings_toggle(Setting::Minimap);
+    app.settings_toggle(Setting::WordWrap);
+    let mut filled = 0;
+    let map = app.layout.minimap;
+    paint(&mut app);
+    let renderer = app.renderer.take().unwrap();
+    let scale = renderer.scale_factor();
+    let image = renderer.image().unwrap();
+    let pixel = |x: f32, y: f32| {
+        let (x, y) = ((x * scale) as usize, (y * scale) as usize);
+        image.pixels[y * image.width as usize + x]
+    };
+    let x = map.x + 2.0;
+    let background = pixel(x, map.bottom() - 2.0);
+    for row in 2..10 {
+        let y = map.y + row as f32 * crate::theme::MINIMAP_ROW + 0.5;
+        filled += usize::from(pixel(x, y) != background);
+    }
+    app.renderer = Some(renderer);
+    assert!(filled >= 6, "{filled}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_minimap() {
+    let mut app = app_with(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/app.rs")
+            .as_path(),
+        false,
+    );
+    app.settings_toggle(Setting::Minimap);
+    app.editor.active_mut().unwrap().scroll_line = 300.0;
+    shoot(&mut app, "minimap");
+    app.set_theme_choice(ThemeChoice::Dark);
+    shoot(&mut app, "minimap-dark");
+}
+
+/// 测量跳转后第一帧的耗时，手动运行：
+/// `cargo test --release -p winc-app measure_minimap_jump -- --ignored --nocapture`。
+#[test]
+#[ignore = "测量，手动运行"]
+fn measure_minimap_jump() {
+    let dir = sample_folder("minimap-jump");
+    let line = |i: usize| {
+        format!("    fn value_{i}(x: u32) -> String {{ format!(\"{{x}} and {i}\") }} // note\n")
+    };
+    for (name, count) in [("rope.rs", 200_000), ("large.rs", 1_000_000)] {
+        let path = dir.join(name);
+        std::fs::write(&path, (0..count).map(line).collect::<String>()).unwrap();
+        for (on, sticky) in [(false, true), (true, true), (false, false)] {
+            let mut app = app_with(&path, false);
+            app.config.sticky_scroll = Some(sticky);
+            if on {
+                app.settings_toggle(Setting::Minimap);
+            }
+            paint(&mut app);
+            for target in [0.9, 0.2, 0.6] {
+                app.editor.active_mut().unwrap().scroll_line = app.max_scroll_line() * target;
+                let mut frames = Vec::new();
+                for _ in 0..12 {
+                    let started = std::time::Instant::now();
+                    paint(&mut app);
+                    frames.push(started.elapsed().as_millis());
+                }
+                println!("{name} 缩略图{on} 粘滞{sticky} 跳到 {target}：{frames:?} ms");
+            }
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 测量缩略图的绘制耗时，手动运行：
+/// `cargo test --release -p winc-app measure_minimap -- --ignored --nocapture`。
+#[test]
+#[ignore = "测量，手动运行"]
+fn measure_minimap() {
+    let dir = sample_folder("minimap-measure");
+    let long: String = (0..100_000)
+        .map(|i| {
+            format!("    fn value_{i}(x: u32) -> String {{ format!(\"{{x}} and {i}\") }} // note\n")
+        })
+        .collect();
+    let path = dir.join("long.rs");
+    std::fs::write(&path, long).unwrap();
+    let mut app = app_with(&path, false);
+    let frames = 60;
+    let run = |app: &mut App| {
+        let started = std::time::Instant::now();
+        for i in 0..frames {
+            app.editor.active_mut().unwrap().scroll_line = (i * 500) as f32;
+            paint(app);
+        }
+        started.elapsed() / frames
+    };
+    let off = run(&mut app);
+    app.settings_toggle(Setting::Minimap);
+    let on = run(&mut app);
+    println!("每帧绘制：关闭 {off:?}，打开 {on:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn shift_turns_only_mouse_wheel_scrolling_sideways() {
     let dir = sample_folder("scrollbar-shift");
     // 每行 300 格宽：远超编辑区宽度，横向滚动才有可滚的余量。

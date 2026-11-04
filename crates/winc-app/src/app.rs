@@ -336,6 +336,8 @@ impl Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hover {
     None,
+    /// 编辑区右侧的缩略图。
+    Minimap,
     /// 应用绘制的标题栏上的窗口按钮。
     WindowControl(WindowControl),
     /// 可以拖动改变窗口大小的边缘，参数是方向。
@@ -530,6 +532,10 @@ enum Drag {
     LogDivider {
         start_x: f32,
         start_width: f32,
+    },
+    /// 拖动缩略图的滑块；`grab` 是按下点到滑块顶边的距离（像素）。
+    Minimap {
+        grab: f32,
     },
     /// 拖动滚动条。
     ///
