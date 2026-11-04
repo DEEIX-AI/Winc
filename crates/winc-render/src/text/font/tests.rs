@@ -245,6 +245,72 @@ fn fonts_without_stated_heights_measure_their_letters() {
     assert!(measured.0 > 30.0 && measured.1 > measured.0, "{measured:?}");
 }
 
+#[test]
+fn sorted_fontconfig_results_keep_order_and_skip_missing_files() {
+    let dir = std::env::temp_dir().join(format!("winc-sorted-fonts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("a.ttf"), dir.join("b.ttc"));
+    std::fs::write(&a, "").unwrap();
+    std::fs::write(&b, "").unwrap();
+    let text = format!(
+        "{}\nFirst\n/no/such/file.ttf\nGone\n{}\n\n",
+        a.display(),
+        b.display()
+    );
+
+    let fonts = parse_sorted_fonts(&text);
+    assert_eq!(fonts.len(), 2);
+    assert_eq!(fonts[0].path, a);
+    assert_eq!(fonts[0].postscript.as_deref(), Some("First"));
+    assert_eq!(fonts[1].path, b);
+    assert_eq!(fonts[1].postscript, None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 回归：fontconfig 把不含汉字的字体排在最前时，中文后备槽位继续往后找含汉字的字体。
+#[cfg(target_os = "linux")]
+#[test]
+fn the_cjk_slot_skips_fonts_without_chinese() {
+    let query = "sans-serif:lang=zh-cn";
+    let covers =
+        |file: &FontFile| Face::open(file).is_some_and(|face| face.font().charmap().map('中') != 0);
+    let sorted = fontconfig_sorted(query);
+    let Some(chinese) = sorted.iter().find(|file| covers(file)) else {
+        return;
+    };
+    let latin = sorted
+        .iter()
+        .find(|file| Face::open(file).is_some() && !covers(file));
+    let Some(latin) = latin else {
+        return;
+    };
+
+    // 不含汉字的字体排在前面，也选用后面含汉字的字体。
+    let choices = Choices {
+        query: None,
+        files: vec![latin.clone(), chinese.clone()],
+        probe: Some('中'),
+    };
+    let face = choices.open().unwrap();
+    assert_ne!(face.font().charmap().map('中'), 0);
+
+    // 查询结果本身也是如此，无论 fontconfig 把什么字体排在第一个。
+    let choices = Choices {
+        query: Some(query.to_owned()),
+        files: Vec::new(),
+        probe: Some('中'),
+    };
+    assert_ne!(choices.open().unwrap().font().charmap().map('中'), 0);
+
+    // 都不含时仍用第一个能打开的字体。
+    let choices = Choices {
+        query: None,
+        files: vec![latin.clone()],
+        probe: Some('中'),
+    };
+    assert!(choices.open().is_some());
+}
+
 /// 回归：Linux 上默认字体能绘制中文。字体不在常见位置的发行版靠 fontconfig 找到中文字体；系统里
 /// 没有中文字体时不检查。
 #[cfg(target_os = "linux")]

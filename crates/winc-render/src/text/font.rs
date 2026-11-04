@@ -31,6 +31,9 @@ pub enum FontKind {
     Math,
 }
 
+/// 选后备字体时最多尝试的 fontconfig 结果数（经验值）：系统里没有合适的字体时不逐个打开全部字体。
+const SORTED_FONTS: usize = 64;
+
 /// 一个已经打开的字体文件。
 pub(crate) struct Face {
     /// 字体文件的内容，见 [`FontData`]。
@@ -604,6 +607,46 @@ fn fontconfig(pattern: &str) -> Option<FontFile> {
     })
 }
 
+/// 返回 fontconfig 为 `pattern` 排序的字体，最匹配的在前，最多 [`SORTED_FONTS`] 个。
+///
+/// `fc-match -s` 的结果按用户的偏好排序，排在最前的不一定含有查询的语言的文字：用户把不含
+/// 汉字的字体强制绑定到 `sans-serif` 时，它在 `lang=zh-cn` 的查询中同样排第一。没有 `fc-match`
+/// 或查询失败时返回空列表。
+fn fontconfig_sorted(pattern: &str) -> Vec<FontFile> {
+    let output = std::process::Command::new("fc-match")
+        .args([
+            "--sort",
+            "--format",
+            "%{file}\n%{postscriptname}\n",
+            pattern,
+        ])
+        .stderr(std::process::Stdio::null())
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            parse_sorted_fonts(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// 解析 [`fontconfig_sorted`] 的输出：每个字体两行，依次是文件路径和 PostScript 名；只保留存在的
+/// 文件。
+fn parse_sorted_fonts(text: &str) -> Vec<FontFile> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    lines
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[path, name]| FontFile {
+            path: PathBuf::from(path),
+            postscript: (!name.is_empty()).then(|| (*name).to_owned()),
+        })
+        .filter(|font| font.path.is_file())
+        .take(SORTED_FONTS)
+        .collect()
+}
+
 /// 各字体槽位的候选字体。
 struct Candidates {
     /// 等宽字体的候选，按优先级排列。
@@ -616,7 +659,8 @@ struct Candidates {
     fallbacks: Vec<Choices>,
 }
 
-/// 一个后备槽位的候选：先执行 fontconfig 查询（有查询时），再按优先级尝试固定的字体文件。
+/// 一个后备槽位的候选：先按序尝试 fontconfig 的查询结果（有查询时），再按优先级尝试固定的字体
+/// 文件。
 ///
 /// 后备槽位在第一次用到时才打开，fontconfig 也在那时查询。
 struct Choices {
@@ -624,18 +668,39 @@ struct Choices {
     query: Option<String>,
     /// 固定的候选字体文件，按优先级排列。
     files: Vec<FontFile>,
+    /// 槽位要显示的代表字符；不为 `None` 时选用第一个含有该字符的字体。
+    probe: Option<char>,
 }
 
 impl Choices {
     /// 只有固定字体文件的候选。
     fn files(files: Vec<FontFile>) -> Choices {
-        Choices { query: None, files }
+        Choices {
+            query: None,
+            files,
+            probe: None,
+        }
     }
 
-    /// 打开第一个能打开的候选字体；都打不开时返回 `None`。
+    /// 打开第一个含有 [`Self::probe`] 的候选字体；没有 `probe` 时打开第一个能打开的。
+    ///
+    /// 都不含 `probe` 时返回第一个能打开的字体，都打不开时返回 `None`。
     fn open(&self) -> Option<Face> {
-        let asked = self.query.as_deref().and_then(fontconfig);
-        asked.iter().chain(&self.files).find_map(Face::open)
+        let asked = self
+            .query
+            .as_deref()
+            .map_or_else(Vec::new, fontconfig_sorted);
+        let mut first = None;
+        for face in asked.iter().chain(&self.files).filter_map(Face::open) {
+            let Some(probe) = self.probe else {
+                return Some(face);
+            };
+            if face.font().charmap().map(probe) != 0 {
+                return Some(face);
+            }
+            first.get_or_insert(face);
+        }
+        first
     }
 }
 
@@ -774,10 +839,12 @@ impl Candidates {
                             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
                         ]),
+                        probe: Some('中'),
                     },
                     Choices {
                         query: Some("emoji".to_owned()),
                         files: paths(&["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"]),
+                        probe: Some('😀'),
                     },
                 ],
             }
