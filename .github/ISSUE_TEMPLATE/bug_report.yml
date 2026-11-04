@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a reproducible defect in winc.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security vulnerabilities, do not open a public issue. Email support@winc.si instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: The part of winc where the problem appears.
+      options:
+        - Editor
+        - Search
+        - File tree
+        - Preview
+        - Git
+        - Terminal
+        - Settings
+        - Performance
+        - Install / update
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: The operating system where the problem occurs.
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in Settings → About.
+      placeholder: "0.1.413"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Steps to reproduce, what you expected, and what happened instead.
+      placeholder: |
+        1.
+        2.
+        3.
+
+        Expected:
+        Actual:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Screenshots or logs
+      description: Optional. Drag and drop files here. Remove private data.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submit checklist
+      description: Duplicate issues are closed in favor of the earlier one.
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I removed private code, file paths, and personal data from this report.
+          required: true
+        - label: This is not a security vulnerability report.
+          required: false

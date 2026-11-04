@@ -1,0 +1,633 @@
+//! 运行状态：最近打开的目录、每个目录上次的现场、退出时开着的目录和项目自带工具的选择。
+//!
+//! 状态由程序维护，保存为 `state.json`。读取时容错：格式错误时返回空状态，类型不符或越界的项
+//! 被丢弃，其余仍然读取。
+
+use std::path::{Path, PathBuf};
+
+use crate::json::Json;
+
+/// 最近目录和各目录现场的最大数量（个）。
+///
+/// 取 10（经验值），作用于最近项目菜单、每个目录现场的保存数量和徽章颜色分配。
+pub const MAX_RECENT: usize = 10;
+
+/// 项目徽章的颜色数量（种）。
+///
+/// 取 10（经验值）：最近列表里的目录各用一种颜色，互不相同，因此 [`MAX_RECENT`] 不能超过
+/// 该值。
+pub const BADGE_COLORS: usize = 10;
+const _: () = assert!(
+    MAX_RECENT <= BADGE_COLORS,
+    "最近列表中的每个目录必须使用不同的颜色"
+);
+
+/// 由程序维护的运行状态：最近目录、各目录的现场和项目工具选择。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct State {
+    /// 最近打开的目录，最新的在前，不重复。
+    pub recent: Vec<PathBuf>,
+    /// 每个目录上次的现场，最近的在前，每个目录一条，最多 [`MAX_RECENT`] 条。
+    pub sessions: Vec<Session>,
+    /// 上次退出时开着的目录；退出时没有打开目录则为 `None`，下次启动显示开始页。
+    pub last: Option<PathBuf>,
+    /// 上次退出时其他窗口开着的目录（`last` 是当前窗口的），下次启动时各开一个窗口；没有
+    /// 打开目录的窗口不记录。
+    ///
+    /// 只在退出时写入。
+    pub others: Vec<PathBuf>,
+    /// 提交视图的改动列表是否按目录排成树显示。
+    ///
+    /// `false`（默认）时平铺，每个文件一行。所有窗口和仓库共用，下次启动沿用。
+    pub commit_tree: bool,
+    /// 能预览的文件（SVG、Markdown、表格）打开时的显示方式：`"split"`（分栏）或 `"preview"`
+    /// （只看预览）；`None` 表示源代码。记录用户最近一次在标签栏右端选择的方式，下次启动
+    /// 沿用。
+    pub preview_mode: Option<String>,
+    /// 最近列表里每个目录的徽章颜色（值在 `0..BADGE_COLORS` 之内），互不相同。
+    ///
+    /// 目录第一次进入最近列表时，选一个其他目录未使用的颜色，之后保持不变，使项目名旁和最近
+    /// 项目菜单中始终显示同一种颜色。
+    badges: Vec<(PathBuf, usize)>,
+    /// 用户对项目自带格式化工具（位于 `node_modules/.bin` 等目录）的确认结果，最近的在前。
+    ///
+    /// 每项为（工具所在目录，是否运行该目录中的程序）；`false` 表示改用系统安装的程序。
+    /// 最多 [`MAX_TOOL_CHOICES`] 项。
+    tool_choices: Vec<(PathBuf, bool)>,
+    /// 用户信任了配置的 Git 仓库（根目录）和当时配置的指纹，最近的在前，最多
+    /// [`MAX_TOOL_CHOICES`] 项。
+    ///
+    /// 仓库的配置变了（指纹不同）要重新确认。
+    trusted_repos: Vec<(PathBuf, u64)>,
+}
+/// 最多记录的项目自带工具选择数量（个）。
+///
+/// 取 50（经验值），作用于工具选择和已信任仓库两项列表。
+const MAX_TOOL_CHOICES: usize = 50;
+
+/// 一个目录的现场：按顺序排列的标签、活动标签的下标，以及各文件的书签。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Session {
+    /// 目录路径。
+    pub folder: PathBuf,
+    /// 打开着的标签，按标签栏中的顺序排列。
+    pub tabs: Vec<Tab>,
+    /// 活动标签在 `tabs` 中的下标（从 0 起）。
+    pub active: Option<usize>,
+    /// 各文件的书签（行号从 0 起），包括当前未打开的文件。
+    pub bookmarks: Vec<(PathBuf, Vec<usize>)>,
+    /// 终端面板；终端里没有标签时为 `None`。
+    pub terminal: Option<TerminalSession>,
+}
+
+/// 现场里的终端面板：各标签的工作目录（按标签栏中的顺序）、正在看的标签、面板开着没有、大小。
+///
+/// 只恢复标签和目录，里面的程序不恢复。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TerminalSession {
+    /// 各标签的工作目录；空路径表示打开的目录。
+    pub tabs: Vec<PathBuf>,
+    /// 各标签上用户起的名字，和 `tabs` 一一对应；空的是没起，比 `tabs` 短时后面的都没起。
+    pub names: Vec<String>,
+    /// 正在看的标签在 `tabs` 中的下标（从 0 起）。
+    pub active: usize,
+    /// 面板是否展开。
+    pub open: bool,
+    /// 面板在编辑区下面时的高度（逻辑像素），0 表示默认值。
+    pub height: f32,
+    /// 面板在编辑区右边时的宽度（逻辑像素），0 表示默认值。
+    pub width: f32,
+}
+
+/// 现场里的一个标签：已保存的文件，或未保存文档的备份。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tab {
+    /// 已保存到磁盘的文件。
+    File(PathBuf),
+    /// 未保存过的新文件：内容保存在备份中，值为备份文件名。
+    Untitled(String),
+}
+
+impl State {
+    /// 读取指定文件中的状态；文件不存在、无法读取或格式不对时返回空状态。
+    pub fn load_from(path: &Path) -> State {
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|text| State::parse(&text))
+            .unwrap_or_default()
+    }
+
+    /// 解析状态文件内容；格式错误或顶层不是对象时返回空状态。
+    ///
+    /// 类型不符或越界的项被丢弃，其余仍然读取。
+    pub fn parse(text: &str) -> State {
+        let Some(root) = Json::parse(text) else {
+            return State::default();
+        };
+        let Some(root) = root.as_object() else {
+            return State::default();
+        };
+
+        let paths = |value: Option<&Json>| -> Vec<PathBuf> {
+            value
+                .and_then(Json::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Json::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(PathBuf::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let mut recent = Vec::new();
+        for path in paths(root.get("recent")) {
+            if !recent.contains(&path) && recent.len() < MAX_RECENT {
+                recent.push(path);
+            }
+        }
+
+        // 已保存的文件写成路径字符串，未保存过的新文件写成 `{"untitled": 备份文件名}`。
+        let tab = |value: &Json| -> Option<Tab> {
+            if let Some(path) = value.as_str() {
+                return (!path.is_empty()).then(|| Tab::File(PathBuf::from(path)));
+            }
+            let name = value.as_object()?.get("untitled")?.as_str()?;
+            (!name.is_empty()).then(|| Tab::Untitled(name.to_owned()))
+        };
+        let session = |value: &Json| -> Option<Session> {
+            let s = value.as_object()?;
+            let folder = PathBuf::from(s.get("folder")?.as_str().filter(|f| !f.is_empty())?);
+            let tabs: Vec<Tab> = s
+                .get("files")
+                .and_then(Json::as_array)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(tab)
+                .collect();
+            let active = s
+                .get("active")
+                .and_then(Json::as_number)
+                .filter(|n| *n >= 0.0 && n.fract() == 0.0)
+                .map(|n| n as usize)
+                .filter(|&i| i < tabs.len());
+            let bookmarks = s
+                .get("bookmarks")
+                .and_then(Json::as_object)
+                .map(|files| {
+                    files
+                        .iter()
+                        .filter(|(path, _)| !path.is_empty())
+                        .map(|(path, lines)| {
+                            let lines = lines
+                                .as_array()
+                                .unwrap_or_default()
+                                .iter()
+                                .filter_map(Json::as_number)
+                                .filter(|n| *n >= 0.0 && n.fract() == 0.0)
+                                .map(|n| n as usize)
+                                .collect();
+                            (PathBuf::from(path), lines)
+                        })
+                        .filter(|(_, lines): &(PathBuf, Vec<usize>)| !lines.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let terminal = s.get("terminal").and_then(Json::as_object).and_then(|t| {
+                let number = |key| {
+                    t.get(key)
+                        .and_then(Json::as_number)
+                        .filter(|n| n.is_finite() && *n >= 0.0)
+                };
+                let tabs: Vec<PathBuf> = t
+                    .get("tabs")?
+                    .as_array()?
+                    .iter()
+                    .filter_map(Json::as_str)
+                    .map(PathBuf::from)
+                    .collect();
+                let names = t.get("names").and_then(Json::as_array).map(|names| {
+                    let names = names.iter().map(|n| n.as_str().unwrap_or_default());
+                    names.map(str::to_owned).collect()
+                });
+                (!tabs.is_empty()).then(|| TerminalSession {
+                    active: number("active").map_or(0, |n| (n as usize).min(tabs.len() - 1)),
+                    tabs,
+                    names: names.unwrap_or_default(),
+                    open: t.get("open").and_then(Json::as_bool).unwrap_or(false),
+                    height: number("height").unwrap_or(0.0) as f32,
+                    width: number("width").unwrap_or(0.0) as f32,
+                })
+            });
+            Some(Session {
+                folder,
+                tabs,
+                active,
+                bookmarks,
+                terminal,
+            })
+        };
+
+        let badges = root
+            .get("badges")
+            .and_then(Json::as_object)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|(path, color)| {
+                        let color = color.as_number().filter(|n| n.fract() == 0.0)?;
+                        Some((PathBuf::from(path), color as usize))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let tool_choices = root
+            .get("toolChoices")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                let item = item.as_object()?;
+                let folder = item.get("folder")?.as_str().filter(|f| !f.is_empty())?;
+                Some((PathBuf::from(folder), item.get("run")?.as_bool()?))
+            })
+            .take(MAX_TOOL_CHOICES)
+            .collect();
+
+        // 指纹是 64 位，存成十六进制字符串：JSON 的数字按 f64 读，精度不够，装不下。
+        let trusted_repos = root
+            .get("trustedRepos")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                let item = item.as_object()?;
+                let folder = item.get("folder")?.as_str().filter(|f| !f.is_empty())?;
+                let fingerprint =
+                    u64::from_str_radix(item.get("fingerprint")?.as_str()?, 16).ok()?;
+                Some((PathBuf::from(folder), fingerprint))
+            })
+            .take(MAX_TOOL_CHOICES)
+            .collect();
+
+        let mut state = State {
+            recent,
+            badges,
+            tool_choices,
+            trusted_repos,
+            ..State::default()
+        };
+        // 旧文件和手工修改过的文件里，颜色可能缺失、重复或越界；读入后统一理顺。
+        state.assign_badges();
+        for s in root
+            .get("sessions")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(session)
+        {
+            if !state.sessions.iter().any(|old| old.folder == s.folder)
+                && state.sessions.len() < MAX_RECENT
+            {
+                state.sessions.push(s);
+            }
+        }
+        state.last = root
+            .get("last")
+            .and_then(Json::as_str)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        // 旧版曾默认排成树，只记录选了平铺（`commitFlat`）；默认平铺后该项不再读入。
+        state.commit_tree = root
+            .get("commitTree")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
+        state.preview_mode = root
+            .get("previewMode")
+            .and_then(Json::as_str)
+            .filter(|m| matches!(*m, "split" | "preview"))
+            .map(str::to_owned);
+        for path in paths(root.get("otherWindows")) {
+            if !state.others.contains(&path) && state.others.len() < MAX_RECENT {
+                state.others.push(path);
+            }
+        }
+
+        // 旧格式只记单个 `session`，即上次退出时的目录。
+        if let Some(old) = root.get("session").and_then(session)
+            && state.sessions.is_empty()
+        {
+            state.last = Some(old.folder.clone());
+            state.sessions.push(old);
+        }
+
+        state
+    }
+
+    /// 返回上次退出时开着的目录的现场，启动时据此恢复；没有时返回 `None`。
+    pub fn last_session(&self) -> Option<&Session> {
+        self.session_for(self.last.as_deref()?)
+    }
+
+    /// 返回目录 `folder` 上次的现场；没有记录时返回 `None`。
+    pub fn session_for(&self, folder: &Path) -> Option<&Session> {
+        self.sessions.iter().find(|s| s.folder == folder)
+    }
+
+    /// 记录一个目录的现场并移到最前面。
+    ///
+    /// 同目录的旧记录被替换，超出 [`MAX_RECENT`] 的从末尾移除。
+    pub fn set_session(&mut self, session: Session) {
+        self.sessions.retain(|s| s.folder != session.folder);
+        self.sessions.insert(0, session);
+        self.sessions.truncate(MAX_RECENT);
+    }
+
+    /// 序列化为 `state.json` 的内容，末尾带一个换行符。
+    ///
+    /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos` 为空，
+    /// `commitTree` 为假时省略对应的键。
+    pub fn to_json(&self) -> String {
+        let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
+        let mut fields = vec![(
+            "recent",
+            Json::Array(self.recent.iter().map(path).collect()),
+        )];
+
+        if let Some(last) = &self.last {
+            fields.push(("last", path(last)));
+        }
+        if !self.others.is_empty() {
+            fields.push((
+                "otherWindows",
+                Json::Array(self.others.iter().map(path).collect()),
+            ));
+        }
+
+        if self.commit_tree {
+            fields.push(("commitTree", Json::Bool(true)));
+        }
+        if let Some(mode) = &self.preview_mode {
+            fields.push(("previewMode", Json::String(mode.clone())));
+        }
+
+        let badges = self.badges.iter().map(|(folder, color)| {
+            let folder = folder.to_string_lossy().into_owned();
+            (folder, Json::Number(*color as f64))
+        });
+        fields.push(("badges", Json::object(badges)));
+
+        let tab = |tab: &Tab| match tab {
+            Tab::File(file) => path(file),
+            Tab::Untitled(name) => Json::object(vec![("untitled", Json::String(name.clone()))]),
+        };
+        let sessions = self.sessions.iter().map(|session| {
+            let mut items = vec![
+                ("folder", path(&session.folder)),
+                ("files", Json::Array(session.tabs.iter().map(tab).collect())),
+            ];
+            if let Some(active) = session.active {
+                items.push(("active", Json::Number(active as f64)));
+            }
+            if !session.bookmarks.is_empty() {
+                let files = session.bookmarks.iter().map(|(file, lines)| {
+                    let lines = lines.iter().map(|&l| Json::Number(l as f64)).collect();
+                    (file.to_string_lossy().into_owned(), Json::Array(lines))
+                });
+                items.push(("bookmarks", Json::Object(files.collect())));
+            }
+            if let Some(t) = &session.terminal {
+                let number = |n: f32| Json::Number(f64::from(n));
+                let mut fields = vec![
+                    ("tabs", Json::Array(t.tabs.iter().map(path).collect())),
+                    ("active", Json::Number(t.active as f64)),
+                    ("open", Json::Bool(t.open)),
+                    ("height", number(t.height)),
+                    ("width", number(t.width)),
+                ];
+                // 都没起名字时不写。
+                if t.names.iter().any(|n| !n.is_empty()) {
+                    let names = t.names.iter().map(|n| Json::String(n.clone()));
+                    fields.push(("names", Json::Array(names.collect())));
+                }
+                items.push(("terminal", Json::object(fields)));
+            }
+            Json::object(items)
+        });
+        fields.push(("sessions", Json::Array(sessions.collect())));
+
+        if !self.tool_choices.is_empty() {
+            let choices = self.tool_choices.iter().map(|(folder, run)| {
+                Json::object(vec![("folder", path(folder)), ("run", Json::Bool(*run))])
+            });
+            fields.push(("toolChoices", Json::Array(choices.collect())));
+        }
+        if !self.trusted_repos.is_empty() {
+            let repos = self.trusted_repos.iter().map(|(folder, fingerprint)| {
+                Json::object(vec![
+                    ("folder", path(folder)),
+                    ("fingerprint", Json::String(format!("{fingerprint:016x}"))),
+                ])
+            });
+            fields.push(("trustedRepos", Json::Array(repos.collect())));
+        }
+
+        let mut out = Json::object(fields).write(0);
+        out.push('\n');
+        out
+    }
+
+    /// 原子地写入 `path`：先写临时文件再改名。
+    ///
+    /// 与 [`Config::save_to`](crate::Config::save_to) 相同，不提供不带路径的写法，避免测试写入
+    /// 真实文件。
+    ///
+    /// # Errors
+    ///
+    /// 目录创建失败、没有写权限或磁盘错误时返回对应的 `std::io::Error`。
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        crate::files::write_atomic(path, &self.to_json())
+    }
+
+    /// 读出 `path` 中现在的状态，用 `change` 修改后写回，返回修改后的状态和写入的结果。
+    ///
+    /// 多个 winc 进程（各开一个目录）共用一个状态文件，每次写都重新读一遍再改，避免旧副本
+    /// 覆盖其他进程写入的最近列表、现场和书签；读改写期间锁住旁边的 `<文件>.lock`（建议锁），
+    /// 两个进程不会交错。锁文件打不开时仍然读改写。
+    ///
+    /// # Errors
+    ///
+    /// 写回失败时返回对应的 `std::io::Error`。
+    pub fn update(path: &Path, change: impl FnOnce(&mut State)) -> (State, std::io::Result<()>) {
+        let lock = path.parent().and_then(|dir| {
+            std::fs::create_dir_all(dir).ok()?;
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(path.with_extension("lock"))
+                .ok()?;
+            file.lock().ok()?;
+            Some(file)
+        });
+        let mut state = State::load_from(path);
+        change(&mut state);
+        let result = state.save_to(path);
+        drop(lock);
+        (state, result)
+    }
+
+    /// 记录打开了一个目录：移到最前面，超出 [`MAX_RECENT`] 的从末尾移除。
+    ///
+    /// 首次进入最近列表的目录会被分配一个徽章颜色。
+    pub fn remember(&mut self, folder: &Path) {
+        self.recent.retain(|p| p != folder);
+        self.recent.insert(0, folder.to_path_buf());
+        self.recent.truncate(MAX_RECENT);
+        self.assign_badges();
+    }
+
+    /// 从最近列表中移除目录 `folder`（目录已不存在，或用户选择移除）。
+    ///
+    /// 同时丢弃该目录的现场；该目录是上次退出时的目录时，清空 `last`。其徽章颜色被释放，
+    /// 供之后的目录使用。
+    pub fn forget(&mut self, folder: &Path) {
+        self.recent.retain(|p| p != folder);
+        self.sessions.retain(|s| s.folder != folder);
+        if self.last.as_deref() == Some(folder) {
+            self.last = None;
+        }
+        self.assign_badges();
+    }
+
+    /// 返回 `folder` 中项目自带格式化工具的上次选择：运行该目录中的程序（`true`），
+    /// 或使用系统安装的程序（`false`）；没有记录时返回 `None`。
+    pub fn tool_choice(&self, folder: &Path) -> Option<bool> {
+        self.tool_choices
+            .iter()
+            .find(|(p, _)| p == folder)
+            .map(|&(_, run)| run)
+    }
+
+    /// 记录对 `folder` 中项目自带工具的选择并移到最前面，超出 `MAX_TOOL_CHOICES` 的从末尾移除。
+    pub fn set_tool_choice(&mut self, folder: &Path, run: bool) {
+        self.tool_choices.retain(|(p, _)| p != folder);
+        self.tool_choices.insert(0, (folder.to_path_buf(), run));
+        self.tool_choices.truncate(MAX_TOOL_CHOICES);
+    }
+
+    /// 返回用户信任 Git 仓库 `root` 的配置时记下的指纹；没有信任过时返回 `None`。
+    pub fn trusted_repo(&self, root: &Path) -> Option<u64> {
+        self.trusted_repos
+            .iter()
+            .find(|(p, _)| p == root)
+            .map(|&(_, fingerprint)| fingerprint)
+    }
+
+    /// 记下用户信任了指纹为 `fingerprint` 的 Git 仓库 `root` 配置，移到最前面。
+    pub fn trust_repo(&mut self, root: &Path, fingerprint: u64) {
+        self.trusted_repos.retain(|(p, _)| p != root);
+        self.trusted_repos
+            .insert(0, (root.to_path_buf(), fingerprint));
+        self.trusted_repos.truncate(MAX_TOOL_CHOICES);
+    }
+
+    /// 返回目录 `folder` 的徽章颜色（值在 `0..BADGE_COLORS` 之内）；不在最近列表中时按名字
+    /// 计算一个。
+    pub fn badge_color(&self, folder: &Path) -> usize {
+        self.badges
+            .iter()
+            .find(|(p, _)| p == folder)
+            .map_or_else(|| preferred_color(folder), |&(_, color)| color)
+    }
+
+    /// 使最近列表里的目录各有一个互不相同的颜色。
+    ///
+    /// 已有的颜色保持不变，新来的目录从按名字算出的颜色起向后取第一个未占用的颜色；列表
+    /// 最多 [`MAX_RECENT`] 个，且 `MAX_RECENT <= BADGE_COLORS`，颜色一定够用。
+    fn assign_badges(&mut self) {
+        // 先保留已有的颜色，再给新来的目录分配：新来的目录排在列表最前面，先分配会占用其他
+        // 目录已有的颜色。
+        let mut taken = [false; BADGE_COLORS];
+        let mut colors: Vec<Option<usize>> = self
+            .recent
+            .iter()
+            .map(|folder| {
+                let color = self
+                    .badges
+                    .iter()
+                    .find(|(p, _)| p == folder)
+                    .map(|&(_, color)| color)
+                    .filter(|&color| color < BADGE_COLORS && !taken[color])?;
+                taken[color] = true;
+                Some(color)
+            })
+            .collect();
+
+        for (folder, color) in self.recent.iter().zip(&mut colors) {
+            if color.is_none() {
+                let start = preferred_color(folder);
+                let free = (0..BADGE_COLORS)
+                    .map(|i| (start + i) % BADGE_COLORS)
+                    .find(|&c| !taken[c])
+                    .unwrap_or(start);
+                taken[free] = true;
+                *color = Some(free);
+            }
+        }
+
+        self.badges = self
+            .recent
+            .iter()
+            .cloned()
+            .zip(colors.into_iter().flatten())
+            .collect();
+    }
+}
+
+/// 返回按目录名计算的颜色：32 位 FNV-1a 哈希对 `BADGE_COLORS` 取余。
+///
+/// 选用 FNV-1a 是因为其结果在各平台、各版本间一致，标准库的哈希不保证这一点。
+fn preferred_color(folder: &Path) -> usize {
+    let name = folder.file_name().unwrap_or(folder.as_os_str());
+    let hash = name
+        .as_encoded_bytes()
+        .iter()
+        .fold(0x811c_9dc5_u32, |h, &b| {
+            (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+        });
+    hash as usize % BADGE_COLORS
+}
+
+/// 返回状态文件的路径；无法确定用户目录时返回 `None`。
+///
+/// 各平台按自己的约定：
+///
+/// - macOS：`~/Library/Application Support/winc/state.json`
+/// - Linux：`$XDG_STATE_HOME/winc/state.json`，未设置时为 `~/.local/state/winc/state.json`
+/// - Windows：`%LOCALAPPDATA%\winc\state.json`（不随账户漫游：内容都是本机路径）
+pub fn state_path() -> Option<PathBuf> {
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+
+    let dir = if cfg!(target_os = "macos") {
+        crate::files::config_dir()
+    } else if cfg!(target_os = "windows") {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .or_else(home)
+            .map(|dir| dir.join("winc"))
+    } else {
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home().map(|home| home.join(".local").join("state")))
+            .map(|dir| dir.join("winc"))
+    }?;
+
+    Some(dir.join("state.json"))
+}
+
+#[cfg(test)]
+mod tests;

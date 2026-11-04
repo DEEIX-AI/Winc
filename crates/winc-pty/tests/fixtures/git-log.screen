@@ -1,0 +1,31 @@
+ 0|* 3f06c07 Update theme names and configurations for improved clarity and consist
+ 1|ency
+ 2|* 67c8a98 Implement soft checkbox and enhance theme selection UI
+ 3|* fdf583e Implement theme selection and management enhancements
+ 4|* e9c5440 Enhance color palette and UI elements for improved visual consistency
+ 5|* 8f9a529 Enhance diff selection and context menu functionality
+ 6|* 03cef76 Implement tab opening animations and enhance tab management
+ 7|* 72fa12a Enhance multi-cursor functionality and selection features
+ 8|* 0e14d15 Implement multi-cursor support and enhance selection features
+ 9|* bf9bc3f Implement tab closing animations and enhance tab management
+10|* 729e63a Enhance icon dimensions and alignment for improved visual consistency
+11|* 3627a69 Refactor log view alignment and padding for improved aesthetics
+12|* 14fd293 Enhance log details interaction and visual transitions
+13|* 1d1ce87 Implement scrolling limits for log details and enhance rendering logic
+14|* c25b17f Enhance log text selection and detail rendering
+15|* 3b504ce Add LOG_LIST_PAD constant and adjust log view rendering
+16|* 2e94aec Refine time display formatting in log views
+17|* 637e46c Refine icon alignment and rendering consistency
+18|* c70d042 Enhance backup functionality and handling for large documents
+19|* 87e55e8 Remove unused branch name handling and associated tooltip logic
+20|* 20a9487 Enhance file glyph representation and type recognition
+21|* 13138e9 Enhance icon rendering and file type recognition
+22|* 0c680a7 Enhance sidebar view switching and icon rendering
+23|
+cursor 23,0
+alternate false
+row 0 runs:
+    0 fg=Default bg=Default attrs=0x0
+    2 fg=Indexed(3) bg=Default attrs=0x0
+    9 fg=Default bg=Default attrs=0x0
+row 1 runs:

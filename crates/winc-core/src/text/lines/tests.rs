@@ -1,0 +1,218 @@
+//! `lines` 模块的测试：行与位置的换算、默认方法与 `Rope` 实现的结果一致、行尾风格识别，
+//! 以及列布局与显示列换算。
+
+use super::*;
+
+#[test]
+fn rope_lines_strip_endings() {
+    let text = Rope::from_str("ab\r\ncd\nef");
+    assert_eq!(text.line_len(0), 2);
+    assert_eq!(line_slice(&text, 0), "ab");
+    assert_eq!(text.line_content(1).slice(), "cd");
+    assert_eq!(text.line_end(0), 2);
+    assert_eq!(text.line_start(1), 4);
+    assert_eq!(text.line_span(0), 0..4);
+    assert_eq!(text.line_span(2), 7..9);
+    assert_eq!(text.pos_to_line_col(3), (0, 2));
+    assert_eq!(text.line_col_to_pos(1, 99), 6);
+    assert_eq!(text.end_pos(), 9);
+}
+
+/// 只实现必需方法的最简文本，用于检查默认方法与 `Rope` 的专门实现结果一致。
+struct Plain(Rope);
+
+impl Lines for Plain {
+    fn line_count(&self) -> usize {
+        self.0.line_count()
+    }
+
+    fn line_start(&self, line: usize) -> usize {
+        self.0.line_start(line)
+    }
+
+    fn line_of(&self, pos: usize) -> usize {
+        self.0.line_of(pos)
+    }
+
+    fn line_content(&self, line: usize) -> Line<'_> {
+        Line::Owned(line_slice(&self.0, line).to_string())
+    }
+
+    fn substring(&self, from: usize, to: usize) -> String {
+        self.0.substring(from, to)
+    }
+
+    fn end_pos(&self) -> usize {
+        self.0.end_pos()
+    }
+}
+
+#[test]
+fn default_methods_match_rope() {
+    let rope = Rope::from_str("中文\r\nab\n\nend");
+    let plain = Plain(rope.clone());
+
+    for line in 0..rope.line_count() {
+        assert_eq!(plain.line_len(line), rope.line_len(line));
+        assert_eq!(plain.line_span(line), rope.line_span(line));
+    }
+
+    for pos in 0..=rope.end_pos() {
+        assert_eq!(plain.pos_to_line_col(pos), rope.pos_to_line_col(pos));
+        assert_eq!(plain.char_at(pos).is_some(), rope.char_at(pos).is_some());
+    }
+
+    fn collect(text: &impl Lines) -> Vec<(usize, usize, String)> {
+        let mut out = Vec::new();
+        text.visit_lines(1, usize::MAX, |l, s, t| {
+            out.push((l, s, t.to_owned()));
+            ControlFlow::Continue(())
+        });
+        out
+    }
+
+    let (from_rope, from_plain) = (collect(&rope), collect(&plain));
+    assert_eq!(from_rope, from_plain);
+    assert_eq!(from_rope[0], (1, 4, "ab".to_owned()));
+
+    // 截断到 4 字节时不切开字符：“中文”只保留“中”（3 字节）。
+    let mut prefixes = Vec::new();
+    rope.visit_lines(0, 4, |_, _, t| {
+        prefixes.push(t.to_owned());
+        ControlFlow::Continue(())
+    });
+    assert_eq!(prefixes, ["中", "ab", "", "end"]);
+    assert_eq!(
+        rope.visit_lines(0, usize::MAX, |l, _, _| if l == 2 {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }),
+        Some(2)
+    );
+}
+
+#[test]
+fn only_lf_cr_and_crlf_break_lines() {
+    // 分页符（U+000C）和 Unicode 行分隔符（U+2028）不是换行符，留在行内；行号只由 LF、CRLF
+    // 和 CR 决定。
+    let text = Rope::from_str("a\x0Cb\nc\u{2028}d\re\r\nf");
+    assert_eq!(text.line_count(), 4);
+    assert_eq!(text.line_content(0).slice().to_string(), "a\x0Cb");
+    assert_eq!(text.line_content(1).slice().to_string(), "c\u{2028}d");
+}
+
+#[test]
+fn detect_line_endings() {
+    assert_eq!(
+        LineEnding::detect(&Rope::from_str("a\r\nb\r\nc")),
+        LineEnding::CrLf
+    );
+    assert_eq!(
+        LineEnding::detect(&Rope::from_str("a\rb\rc")),
+        LineEnding::Cr
+    );
+    assert_eq!(
+        LineEnding::detect(&Rope::from_str("a\nb\n")),
+        LineEnding::Lf
+    );
+    assert_eq!(LineEnding::detect(&Rope::from_str("abc")), LineEnding::Lf);
+}
+
+#[test]
+fn csv_columns_line_up() {
+    let rope = Rope::from_str("id,name,city\n1,\"Doe, John\",北京\n22,Al,LA\n");
+    let columns = Columns::measure(',', rope.chunks(), 4);
+    // 第 0 列最宽的字段占 2 个显示列（`id`、`22`），第 1 列最宽的占 11 个（`"Doe, John"`，
+    // 引号内的逗号不分列）。
+    assert_eq!(columns.starts, [0, 4, 17]);
+
+    // 分隔符紧跟内容，下一列的字符从该列的起始显示列开始。
+    let line = line_slice(&rope, 1);
+    let mut positions = Vec::new();
+    columns.layout(line, 4, usize::MAX, &mut positions, None);
+    assert_eq!(&positions[..3], [0, 1, 4]);
+    assert_eq!(positions[14], 17, "北京从第三列开始");
+    assert_eq!(*positions.last().unwrap(), 21, "北京两个字各占两格");
+
+    let aligned = Aligned {
+        columns: &columns,
+        tab_width: 4,
+    };
+    assert_eq!(aligned.col_to_cell(line, 2), 4);
+    // 显示列落在第 0 列与第 1 列之间的空隙：距下一列起点更近时取逗号之后（列 2），否则取逗号
+    // 之前（列 1）。
+    assert_eq!(aligned.cell_to_col(line, 3), 2);
+    assert_eq!(aligned.cell_to_col(line, 1), 1);
+    assert_eq!(aligned.cell_to_col(line, 99), line.len_chars());
+
+    // 只排前 `limit` 个字符时，末项是这些字符绘制结束处的显示列。
+    let mut fields = Vec::new();
+    columns.layout(line, 4, 3, &mut positions, Some(&mut fields));
+    assert_eq!(
+        (&positions[..], &fields[..]),
+        (&[0, 1, 4, 5][..], &[0, 0, 1][..])
+    );
+
+    let quoted = Rope::from_str("a,\",\",b");
+    columns.layout(
+        line_slice(&quoted, 0),
+        4,
+        usize::MAX,
+        &mut positions,
+        Some(&mut fields),
+    );
+    assert_eq!(fields, [0, 0, 1, 1, 1, 1, 2]);
+    assert_eq!(positions.len(), fields.len() + 1);
+}
+
+#[test]
+fn cells_handle_tabs_and_wide_chars() {
+    let text = Rope::from_str("\tx中文y");
+    let line = line_slice(&text, 0);
+    assert_eq!(col_to_cell(line, 1, 4), 4);
+    assert_eq!(col_to_cell(line, 3, 4), 7);
+    assert_eq!(col_to_cell(line, 5, 4), 10);
+    assert_eq!(col_to_cell(line, usize::MAX, 4), 10);
+
+    let chars: Vec<char> = "\tx中文y".chars().collect();
+    assert_eq!(slice_cells(&chars[..3], 0, 4), 7);
+    assert_eq!(slice_cells(&chars, 0, 4), 10);
+    assert_eq!(slice_cells(&[], 3, 4), 3);
+    // 从第 2 格起排：制表符只排到第 4 格。
+    assert_eq!(slice_cells(&chars[..2], 2, 4), 5);
+
+    assert_eq!(cell_to_col(line, 0, 4), 0);
+    assert_eq!(cell_to_col(line, 1, 4), 0);
+    assert_eq!(cell_to_col(line, 3, 4), 1);
+    assert_eq!(cell_to_col(line, 5, 4), 2);
+    assert_eq!(cell_to_col(line, 6, 4), 2);
+    assert_eq!(cell_to_col(line, 7, 4), 3);
+    assert_eq!(cell_to_col(line, 100, 4), 5);
+}
+
+#[test]
+fn prefix_and_indent() {
+    let text = Rope::from_str("\t  # x");
+    let line = line_slice(&text, 0);
+    assert_eq!(leading_whitespace(line), 3);
+    assert_eq!(indent_cells(line, 4), 6);
+    assert!(starts_with(line.slice(3..), "# "));
+    assert!(!starts_with(line.slice(3..), "# xy"));
+}
+
+#[test]
+fn prefix_cells_match_slice_cells_for_every_column() {
+    for line in ["plain ascii", "a\tb\t\tc", "中文a好", "\u{1}x\u{301}y", ""] {
+        let chars: Vec<char> = line.chars().collect();
+        let prefix = prefix_cells(&chars, 4);
+        assert_eq!(prefix.len(), chars.len() + 1);
+        for col in 0..=chars.len() {
+            assert_eq!(
+                prefix[col],
+                slice_cells(&chars[..col], 0, 4),
+                "{line:?} {col}"
+            );
+        }
+    }
+}

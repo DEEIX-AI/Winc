@@ -1,0 +1,22 @@
+[package]
+name = "winc-i18n"
+description = "界面文案的多语言：Fluent 格式的语言包、界面语言的选择、消息的查找和格式化。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+fluent-bundle.workspace = true
+unic-langid.workspace = true
+sys-locale.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# 测试遍历语言包的语法树，比较各语言的消息 id 和参数；版本与 fluent-bundle 依赖的一致。
+fluent-syntax = "0.12"

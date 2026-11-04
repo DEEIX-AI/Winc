@@ -1,0 +1,69 @@
+name: Release Tag
+
+# Every merge into main is a release: tag the [workspace.package] version of Cargo.toml as
+# `v<version>` and start the Release workflow, which opens a draft release. Publishing the draft is
+# still a human step. A push whose version is already tagged fails, because the version was not
+# raised; the "Release version" check on pull requests into main stops that before the merge.
+# A manual run with the version already tagged does nothing, so a failed release can be retried by
+# running the Release workflow on the existing tag.
+#
+# The tag is pushed with GITHUB_TOKEN, and events raised that way do not start
+# other workflows, so they are started explicitly via workflow_dispatch (the
+# documented exception).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+# Pushes are handled one at a time, so a later push sees the tag an earlier one created.
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag and dispatch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create the version tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(node release/common/version.mjs)"
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+              echo "::error::${tag} is already released." \
+                "Raise the version in Cargo.toml for a new release."
+              exit 1
+            fi
+            echo "${tag} already exists; nothing to do"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "Release ${tag}"
+          git push origin "refs/tags/${tag}"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Start release builds for the tag
+        if: steps.tag.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh workflow run release.yml --ref "refs/tags/$RELEASE_TAG"

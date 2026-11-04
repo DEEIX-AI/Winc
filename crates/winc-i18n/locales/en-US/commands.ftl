@@ -1,0 +1,208 @@
+## Command names shown in the Command Palette, the Keyboard Shortcuts page and menus.
+
+cmd-show-commands = Show All Commands
+cmd-quick-open = Go to File…
+cmd-go-to-symbol = Go to Symbol in File…
+cmd-go-to-line = Go to Line…
+cmd-go-to-definition = Go to Definition
+cmd-find-references = Find References
+cmd-go-back = Back
+cmd-go-forward = Forward
+cmd-settings = Settings
+cmd-keyboard-shortcuts = Keyboard Shortcuts
+cmd-record-keys = Record Keys
+cmd-new-file = New File
+cmd-new-window = New Window
+cmd-open-file = Open…
+cmd-open-folder = Open Folder…
+cmd-save = Save
+cmd-save-as = Save As…
+cmd-close-tab = Close Tab
+cmd-close-other-tabs = Close Other Tabs
+cmd-close-all-tabs = Close All Tabs
+cmd-reopen-closed = Reopen Closed Tab
+cmd-next-tab = Next Tab
+cmd-previous-tab = Previous Tab
+cmd-close-folder = Close Folder
+cmd-close-window = Close Window
+cmd-copy-path = Copy Path
+cmd-copy-relative-path = Copy Relative Path
+cmd-copy-reference = Copy Code Reference
+cmd-copy-absolute-reference = Copy Code Reference (Absolute Path)
+cmd-copy-active-path = Copy Path of Current File
+cmd-copy-key-path = Copy Key Path
+cmd-reveal-active-file-in-finder = Reveal Current File in Finder
+cmd-reveal-active-file-in-folder = Show Current File in Folder
+cmd-open-in-terminal = Open in External Terminal
+cmd-quit = Quit
+cmd-undo = Undo
+cmd-redo = Redo
+cmd-cut = Cut
+cmd-copy = Copy
+cmd-paste = Paste
+cmd-select-all = Select All
+cmd-toggle-comment = Toggle Line Comment
+cmd-delete-line = Delete Line
+cmd-delete-all-left = Delete to Line Start
+cmd-indent-lines = Indent Line
+cmd-outdent-lines = Outdent Line
+cmd-move-lines-up = Move Line Up
+cmd-move-lines-down = Move Line Down
+cmd-copy-lines-up = Copy Line Up
+cmd-copy-lines-down = Copy Line Down
+cmd-join-lines = Join Lines
+cmd-expand-selection = Expand Selection
+cmd-shrink-selection = Shrink Selection
+cmd-add-cursor-above = Add Cursor Above
+cmd-add-cursor-below = Add Cursor Below
+cmd-add-next-occurrence = Add Selection to Next Match
+cmd-skip-to-next-occurrence = Move Last Selection to Next Match
+cmd-select-all-occurrences = Select All Occurrences
+cmd-remove-secondary-cursors = Keep Only Primary Cursor
+cmd-add-cursors-to-line-ends = Add Cursors to Line Ends
+cmd-cursor-undo = Undo Cursor Change
+cmd-cursor-redo = Redo Cursor Change
+cmd-column-select-up = Column Select: Up
+cmd-column-select-down = Column Select: Down
+cmd-column-select-left = Column Select: Left
+cmd-column-select-right = Column Select: Right
+cmd-jump-to-bracket = Go to Bracket
+cmd-transform-to-uppercase = Transform to Uppercase
+cmd-transform-to-lowercase = Transform to Lowercase
+cmd-transform-to-titlecase = Transform to Title Case
+cmd-sort-lines-ascending = Sort Lines Ascending
+cmd-sort-lines-descending = Sort Lines Descending
+cmd-trim-trailing-whitespace = Trim Trailing Whitespace
+cmd-indent-using-spaces = Indent Using Spaces
+cmd-indent-using-tabs = Indent Using Tabs
+cmd-convert-indentation-to-spaces = Convert Indentation to Spaces
+cmd-convert-indentation-to-tabs = Convert Indentation to Tabs
+cmd-detect-indentation = Detect Indentation from Content
+cmd-change-end-of-line = Change End of Line Sequence
+cmd-change-language-mode = Change File Language…
+cmd-fold = Fold
+cmd-unfold = Unfold
+cmd-toggle-fold = Toggle Fold
+cmd-fold-recursively = Fold Recursively
+cmd-unfold-recursively = Unfold Recursively
+cmd-fold-all = Fold All
+cmd-unfold-all = Unfold All
+cmd-fold-level-1 = Fold Level 1
+cmd-fold-level-2 = Fold Level 2
+cmd-fold-level-3 = Fold Level 3
+cmd-fold-level-4 = Fold Level 4
+cmd-fold-level-5 = Fold Level 5
+cmd-fold-level-6 = Fold Level 6
+cmd-fold-level-7 = Fold Level 7
+cmd-toggle-bookmark = Toggle Bookmark
+cmd-next-bookmark = Next Bookmark
+cmd-previous-bookmark = Previous Bookmark
+cmd-list-bookmarks = List Bookmarks
+cmd-clear-bookmarks = Clear All Bookmarks
+cmd-format = Format Document
+cmd-format-selection = Format Selection
+cmd-fix = Fix Problems
+cmd-find = Find
+cmd-replace = Replace
+cmd-find-next = Find Next
+cmd-find-previous = Find Previous
+cmd-replace-one = Replace This Match
+cmd-replace-all = Replace All
+cmd-select-all-matches = Select All Find Results
+cmd-toggle-case = Match Case
+cmd-toggle-word = Match Whole Word
+cmd-toggle-regex = Use Regular Expression
+cmd-filter-lines = Show Only Matching Lines
+cmd-find-in-files = Find in Files
+cmd-replace-in-files = Replace in Files
+cmd-replace-all-in-files = Replace All in Files
+cmd-next-result = Next Search Result
+cmd-previous-result = Previous Search Result
+cmd-rename-file = Rename…
+cmd-delete-file = Delete
+cmd-open-selected = Open
+cmd-preview-selected = Open (Keep Focus in File Tree)
+cmd-find-in-folder = Find in Folder…
+cmd-toggle-sidebar = Show or Hide Sidebar
+cmd-focus-sidebar = Focus Sidebar
+cmd-show-files = Show Files
+cmd-zoom-in = Increase Font Size
+cmd-zoom-out = Decrease Font Size
+cmd-reset-zoom = Reset Font Size
+cmd-theme-auto = Theme: Match System
+cmd-theme-light = Theme: Light
+cmd-theme-dark = Theme: Dark
+cmd-toggle-sticky-scroll = Toggle Sticky Scroll
+cmd-toggle-word-wrap = Toggle Word Wrap
+cmd-next-difference = Next Change
+cmd-previous-difference = Previous Change
+cmd-git-show-changes = Git: Show Changes
+cmd-git-show-log = Git: Show Log
+cmd-git-switch-worktree = Git: Switch Worktree…
+cmd-git-new-worktree = Git: New Worktree…
+cmd-git-file-history = Git: Show History of Current File
+cmd-git-blame = Git: Blame
+cmd-show-commit = Git: Commit…
+cmd-git-revert-change = Git: Revert Change at Cursor
+cmd-toggle-terminal = Show or Hide Terminal
+cmd-clear-terminal = Terminal: Clear
+cmd-new-terminal = New Terminal
+cmd-close-terminal = Terminal: Close Tab
+cmd-next-terminal = Terminal: Next Tab
+cmd-previous-terminal = Terminal: Previous Tab
+cmd-find-in-terminal = Terminal: Find
+cmd-maximize-terminal = Terminal: Maximize Panel
+cmd-rename-terminal = Terminal: Rename
+cmd-previous-command = Terminal: Previous Command
+cmd-next-command = Terminal: Next Command
+cmd-fold-output = Terminal: Fold Command Output
+cmd-unfold-output = Terminal: Unfold Command Output
+cmd-next-error = Terminal: Next Error
+cmd-previous-error = Terminal: Previous Error
+cmd-send-to-terminal = Terminal: Run Selected Code
+cmd-toggle-preview = Toggle Preview
+
+## Command feedback
+
+cmd-no-selected-file = No file selected
+cmd-no-file-for-tab = The current tab has no file
+cmd-no-selection = Nothing selected
+cmd-chord-unassigned = { $keys } isn’t assigned to any command
+cmd-chord-pending = { $key } was pressed. Press the second key…
+cmd-one-off-no-new-window = Can’t open a new window from a temporary window
+
+## Command line: usage and error output
+
+cmd-cli-usage =
+    Usage: winc [options] [files or folders ...]
+
+      winc                  Restore the last opened folder
+      winc .                Open the current folder
+      winc file:line[:col]  Open a file and go to that line
+      winc -                Read standard input (e.g. cargo build 2>&1 | winc -)
+      -w, --wait            Exit after all of the files’ tabs are closed (e.g. git config core.editor "winc -w")
+      -n, --new-instance    Start a separate process instead of handing off to the running winc
+      -h, --help            Show this help
+cmd-cli-unknown-option = Unrecognized option “{ $flag }”
+cmd-cli-wait-needs-file = --wait requires a file
+cmd-cli-wait-needs-openable-file = --wait requires at least one file that can be opened
+cmd-cli-wait-folder = “{ $path }” is a folder; --wait can only open files
+cmd-cli-open-failed = Couldn’t open “{ $path }”: { $error }
+cmd-cli-event-loop-failed = Couldn’t create the event loop: { $error }
+
+## Keyboard Shortcuts page: command scopes and groups
+
+cmd-when-editor = Editor
+cmd-when-editor-or-find = Editor, Find Bar
+cmd-when-replace-input = Replace Field
+cmd-when-panel = Search View
+cmd-when-tree = File Tree
+cmd-when-keys-page = Shortcut Search
+cmd-when-not-editor = Outside Editor
+cmd-when-terminal = Terminal
+cmd-group-general = General
+cmd-group-file = File
+cmd-group-edit = Edit
+cmd-group-find = Find
+cmd-group-tree = File Tree
+cmd-group-view = View

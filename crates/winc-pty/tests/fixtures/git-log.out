@@ -1,0 +1,30 @@
+* [33m7d0f768[m Enhance folding behavior to maintain view consistency during collapses
+* [33m28e5eb0[m Implement edits_in_diff functionality and associated tests for action handling
+* [33m355acfb[m Enhance document handling for deleted files and improve user notifications
+* [33m5474e7a[m Refactor Git task management to improve background processing and error handling
+* [33m682249e[m Enhance theme color definitions and add syntax color contrast tests
+* [33mb0975c9[m Refactor app structure and enhance functionality for improved user experience
+* [33me0dd13c[m Enhance settings overlay animations and caching for improved performance
+* [33m74c9d1b[m Refactor layout and settings animations for improved user experience
+* [33m3f06c07[m Update theme names and configurations for improved clarity and consistency
+* [33m67c8a98[m Implement soft checkbox and enhance theme selection UI
+* [33mfdf583e[m Implement theme selection and management enhancements
+* [33me9c5440[m Enhance color palette and UI elements for improved visual consistency
+* [33m8f9a529[m Enhance diff selection and context menu functionality
+* [33m03cef76[m Implement tab opening animations and enhance tab management
+* [33m72fa12a[m Enhance multi-cursor functionality and selection features
+* [33m0e14d15[m Implement multi-cursor support and enhance selection features
+* [33mbf9bc3f[m Implement tab closing animations and enhance tab management
+* [33m729e63a[m Enhance icon dimensions and alignment for improved visual consistency
+* [33m3627a69[m Refactor log view alignment and padding for improved aesthetics
+* [33m14fd293[m Enhance log details interaction and visual transitions
+* [33m1d1ce87[m Implement scrolling limits for log details and enhance rendering logic
+* [33mc25b17f[m Enhance log text selection and detail rendering
+* [33m3b504ce[m Add LOG_LIST_PAD constant and adjust log view rendering
+* [33m2e94aec[m Refine time display formatting in log views
+* [33m637e46c[m Refine icon alignment and rendering consistency
+* [33mc70d042[m Enhance backup functionality and handling for large documents
+* [33m87e55e8[m Remove unused branch name handling and associated tooltip logic
+* [33m20a9487[m Enhance file glyph representation and type recognition
+* [33m13138e9[m Enhance icon rendering and file type recognition
+* [33m0c680a7[m Enhance sidebar view switching and icon rendering

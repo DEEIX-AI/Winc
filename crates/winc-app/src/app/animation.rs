@@ -1,0 +1,387 @@
+//! 动画共用的时钟。
+//!
+//! 侧栏开关、目录展开收起、代码折叠展开、`⌘P` 面板高度变化和标签滑动都用 [`Clock`] 计算进度，
+//! 设置浮层、`⌘P` 面板和跳转条这类输入条出现、消失用同一条曲线（[`dialog_curve`]、[`CardFx`]），
+//! 动画结束后由 [`App::settle_animations`] 统一清除。文件树工具栏的收起动画目标随宽度连续变化，
+//! 不用时钟，见 `tool_fold.rs`。Git、终端模块开关时跟着出现、消失的几样东西见
+//! `presence.rs`。
+
+use std::time::{Duration, Instant};
+
+use super::*;
+
+/// 侧栏展开、收起的动画时长（经验值）。
+pub(super) const SIDEBAR_ANIMATION: Duration = Duration::from_millis(200);
+/// 目录展开、收起的动画时长（经验值）。
+pub(super) const TREE_ANIMATION: Duration = Duration::from_millis(160);
+/// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动时长（经验值）。
+///
+/// 时长足以让用户看清滚动方向，连续翻页时也不会明显滞后于按键。
+pub(super) const SCROLL_GLIDE: Duration = Duration::from_millis(125);
+/// 代码折叠、展开的动画时长，取 [`TREE_ANIMATION`]，使两种展开收起的节奏统一。
+pub(super) const FOLD_ANIMATION: Duration = TREE_ANIMATION;
+/// `⌘P` 面板高度变化的动画时长，取 [`TREE_ANIMATION`]。
+pub(super) const PICKER_ANIMATION: Duration = TREE_ANIMATION;
+/// 标签滑动的动画时长（经验值）：为拖动中的标签让位，以及松开拖动后落到目标位置。
+pub(super) const TAB_SLIDE: Duration = Duration::from_millis(150);
+/// 元素消失时内容淡出的时长（经验值）。
+///
+/// 内容先在原宽度内淡出，宽度随后收起，收起途中不显示被裁去一部分的文字或图标。
+pub(super) const EXIT_FADE: Duration = Duration::from_millis(70);
+/// 元素出现时内容开始淡入的显示比例（经验值）。
+///
+/// 宽度按缓出曲线展开，达到该比例时约经过三分之一的时长，此后被裁去的内容很少。
+const REVEAL_FROM: f32 = 0.7;
+/// 日志详情换成另一个提交时内容淡入的时长（经验值）：比视图切换还短，只用于遮盖内容的突然替换。
+pub(super) const DETAILS_FADE: Duration = Duration::from_millis(120);
+/// 切换侧栏视图时，视图切换中选中段滑到新位置的时长（经验值），取 [`TAB_SLIDE`]。
+pub(super) const VIEW_SLIDE: Duration = TAB_SLIDE;
+/// 设置中开关切换时圆钮滑动、底色渐变的时长（经验值），取 [`TAB_SLIDE`]。
+///
+/// macOS 系统开关的动画约为 0.2 秒；此处的开关更小，滑动距离更短，因此时长略短。
+pub(super) const SWITCH_SLIDE: Duration = TAB_SLIDE;
+/// 位置浮窗（定义、用法、书签）出现的动画时长（经验值）：从名字那一侧滑出并淡入。
+pub(super) const POPUP_IN: Duration = Duration::from_millis(150);
+/// 位置浮窗消失的动画时长（经验值）：比出现时短，原地淡出，关闭时立即消失。
+pub(super) const POPUP_OUT: Duration = Duration::from_millis(110);
+/// 可编辑的预览重排后各块滑到新位置、新显示的标记淡入的时长，取 [`TREE_ANIMATION`]。
+pub(crate) const MARKDOWN_MOTION: Duration = TREE_ANIMATION;
+/// 设置浮层出现的时长（经验值）：整张卡片比小浮窗大得多，时长需要相应加长。
+pub(super) const DIALOG_IN: Duration = Duration::from_millis(220);
+/// 设置浮层消失的时长（经验值）：比出现短。
+pub(super) const DIALOG_OUT: Duration = Duration::from_millis(150);
+
+/// 浮层卡片（设置、`⌘P` 面板、输入条）出现、消失途中的（不透明度，缩放）：出现时整张淡入、
+/// 从 95% 放大到原大，消失时整张淡出、略微缩小。
+pub fn dialog_curve(opening: bool, clock: Clock) -> (f32, f32) {
+    let t = clock.progress();
+    if opening {
+        (t, 0.95 + 0.05 * t)
+    } else {
+        (1.0 - t, 1.0 - 0.02 * t)
+    }
+}
+
+/// `⌘P` 面板、输入条（跳转到行、新建分支……）出现和消失的动画，使用 [`dialog_curve`]。
+///
+/// 关闭的途径很多（`Esc`、回车、点击外部、焦点移走），因此不在各处记录，而由
+/// [`App::track_card`] 每帧绘制时与上一帧比较：打开时淡入，关闭时用最后一帧保存的卡片淡出。
+#[derive(Debug, Default)]
+pub struct CardFx {
+    /// 上一帧绘制时是否处于打开状态。
+    shown: bool,
+    /// 出现（`true`）或消失的动画；不在动画中时为 `None`。
+    pub motion: Option<(bool, Clock)>,
+    /// 最近一帧画出来的卡片（位置，逻辑像素；不含阴影）：关闭以后淡出用。
+    pub shot: Option<(winc_render::Rect, winc_render::Snapshot)>,
+    /// 淡入途中存放卡片下方内容（连同阴影）的缓冲，每帧复用；淡入结束后释放。
+    pub base: Option<winc_render::Snapshot>,
+}
+
+impl CardFx {
+    /// 正在淡出：关闭了，最后一帧的卡片还在。
+    pub fn closing(&self) -> Option<(Clock, winc_render::Rect, &winc_render::Snapshot)> {
+        match (self.motion, &self.shot) {
+            (Some((false, clock)), Some((rect, shot))) if !self.shown => Some((clock, *rect, shot)),
+            _ => None,
+        }
+    }
+
+    fn settle(&mut self) {
+        if self.motion.is_some_and(|(_, clock)| clock.done()) {
+            self.motion = None;
+        }
+        if self.motion.is_none() {
+            self.base = None;
+        }
+        if !self.shown && self.motion.is_none() {
+            self.shot = None;
+        }
+    }
+}
+
+/// 哪一张浮层卡片。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Card {
+    /// `⌘P` 面板（文件、命令、符号）。
+    ///
+    /// 位置浮窗有自己的动画，不算。
+    Picker,
+    /// 编辑区顶上的输入条（跳转到行、新建分支、储藏……）。
+    Bar,
+    /// 窗口正中的功能对话框（新建工作树）。
+    Dialog,
+    /// 窗口中画出来的提示框（没有系统提示框时）。
+    Alert,
+}
+
+impl Card {
+    /// 卡片的圆角半径：输入条和面板用较小的 `RADIUS_BAR`，对话框用 `RADIUS_CARD`。
+    pub fn radius(self) -> f32 {
+        match self {
+            Card::Picker | Card::Bar => crate::theme::RADIUS_BAR,
+            Card::Dialog | Card::Alert => crate::theme::RADIUS_CARD,
+        }
+    }
+}
+
+/// 一段动画的时钟：从开始起经过 `duration` 结束，进度按三次缓出（先快后慢）计算。
+#[derive(Debug, Clone, Copy)]
+pub struct Clock {
+    start: Instant,
+    duration: Duration,
+    /// 测试中固定的已用时间，使截图每次都相同。
+    #[cfg(test)]
+    frozen: Option<Duration>,
+}
+
+impl Clock {
+    /// 创建从当前时刻开始、时长为 `duration` 的时钟。
+    pub(super) fn new(duration: Duration) -> Clock {
+        Clock {
+            start: Instant::now(),
+            duration,
+            #[cfg(test)]
+            frozen: None,
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        #[cfg(test)]
+        if let Some(at) = self.frozen {
+            return at;
+        }
+        self.start.elapsed()
+    }
+
+    /// 返回应用缓出曲线之后的进度：0 表示刚开始，1 表示已结束。
+    pub fn progress(&self) -> f32 {
+        1.0 - (1.0 - self.linear()).powi(3)
+    }
+
+    /// 返回未加缓动的进度（经过的时间占时长的比例）：0 表示刚开始，1 表示已结束。
+    ///
+    /// 需要别的曲线时（例如消失时先慢后快）由调用方在此基础上计算。
+    pub fn linear(&self) -> f32 {
+        (self.elapsed().as_secs_f32() / self.duration.as_secs_f32()).min(1.0)
+    }
+
+    /// 返回从 `from` 过渡到 `to` 的动画在当前进度下的值。
+    pub fn between(&self, from: f32, to: f32) -> f32 {
+        from + (to - from) * self.progress()
+    }
+
+    /// 返回淡出途中的不透明度：按未加缓动的进度从 1 平滑降到 0。
+    pub fn fade_out(&self) -> f32 {
+        1.0 - stage(self.linear(), 0.0, 1.0)
+    }
+
+    /// 创建与 `self` 同时开始、时长为 `duration` 的时钟。
+    pub fn lasting(self, duration: Duration) -> Clock {
+        Clock { duration, ..self }
+    }
+
+    /// 创建在 `self` 结束时开始、时长为 `duration` 的时钟；开始之前进度为 0。
+    pub fn then(self, duration: Duration) -> Clock {
+        Clock {
+            start: self.start + self.duration,
+            duration,
+            #[cfg(test)]
+            frozen: self.frozen.map(|at| at.saturating_sub(self.duration)),
+        }
+    }
+
+    /// 返回时长。
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    /// 是否已经过 `duration`，即动画已结束。
+    pub fn done(&self) -> bool {
+        self.elapsed() >= self.duration
+    }
+}
+
+/// 返回 `t` 在 `start` 到 `end` 区间内的平滑过渡值，0 到 1。
+///
+/// `t` 不大于 `start` 时为 0，不小于 `end` 时为 1，区间两端的变化率为 0。
+pub fn stage(t: f32, start: f32, end: f32) -> f32 {
+    let x = ((t - start) / (end - start)).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// 返回显示比例为 `share` 的元素中内容的不透明度，0 到 1。
+///
+/// 比例小于 [`REVEAL_FROM`] 时内容不显示，此后平滑淡入，展开途中内容不与相邻元素重叠。
+pub fn reveal(share: f32) -> f32 {
+    stage(share, REVEAL_FROM, 1.0)
+}
+
+impl App {
+    /// 画 `card` 之前调用：和上一帧比，刚开（`open`）就开始淡入，刚关就开始淡出。
+    pub(crate) fn track_card(&mut self, card: Card, open: bool) {
+        let shown = self.card_fx(card).shown;
+        if shown != open {
+            let duration = if open { DIALOG_IN } else { DIALOG_OUT };
+            let motion = self.clock(duration).map(|clock| (open, clock));
+            let fx = self.card_fx(card);
+            fx.shown = open;
+            fx.motion = motion;
+            if open {
+                fx.shot = None;
+            }
+        }
+    }
+
+    /// `card` 的动画状态。
+    pub(crate) fn card_fx(&mut self, card: Card) -> &mut CardFx {
+        match card {
+            Card::Picker => &mut self.picker_card,
+            Card::Bar => &mut self.bar_card,
+            Card::Dialog => &mut self.dialog_card,
+            Card::Alert => &mut self.alert_card,
+        }
+    }
+
+    /// 创建一段时长为 `duration` 的动画时钟，并按窗口所在显示器更新帧间隔 `frame_interval`。
+    ///
+    /// 没有窗口，或系统开启了「减弱动态效果」时返回 `None`，调用方应直接跳到动画终点。
+    pub(super) fn clock(&mut self, duration: Duration) -> Option<Clock> {
+        let window = self.window.as_ref()?;
+
+        #[cfg(target_os = "macos")]
+        if crate::macos::reduce_motion() {
+            return None;
+        }
+
+        self.frame_interval = frame_interval(window);
+        Some(Clock::new(duration))
+    }
+
+    /// 清除已经结束的动画。
+    ///
+    /// 每帧绘制之前调用，使动画的最后一帧按终点状态绘制。
+    pub(super) fn settle_animations(&mut self) {
+        fn settle<T>(slot: &mut Option<T>, clock: impl Fn(&T) -> Clock) {
+            if slot.as_ref().is_some_and(|m| clock(m).done()) {
+                *slot = None;
+            }
+        }
+
+        settle(&mut self.sidebar_motion, |m| m.clock);
+        settle(&mut self.tree_motion, |m| m.clock);
+        settle(&mut self.commit.motion, |m| m.clock);
+        settle(&mut self.commit.message_motion, |m| m.1);
+        settle(&mut self.global.motion, |m| m.clock);
+        settle(&mut self.fold_motion, |m| m.clock);
+        settle(&mut self.scroll_glide, |g| g.clock);
+        settle(&mut self.picker_motion, |m| m.clock);
+        if self.places_in.is_some_and(|c| c.done()) {
+            self.places_in = None;
+        }
+        settle(&mut self.places_out, |g| g.clock);
+        if self.notice_in.is_some_and(|c| c.done()) {
+            self.notice_in = None;
+        }
+        settle(&mut self.notice_out, |g| g.clock);
+        settle(&mut self.diff_fade, |f| f.clock);
+        settle(&mut self.view_slide, |s| s.1);
+        settle(&mut self.settings.motion, |m| m.1);
+        self.picker_card.settle();
+        self.bar_card.settle();
+        self.dialog_card.settle();
+        self.alert_card.settle();
+        if self.settings.motion.is_none() {
+            self.settings.cache = None;
+        }
+        settle(&mut self.settings.mode_slide, |s| s.1);
+        settle(&mut self.settings.switch_slide, |s| s.1);
+        settle(&mut self.log.fade, |c| *c);
+        self.settle_hint();
+        self.tabs.slides.retain(|s| !s.clock.done());
+        self.tabs.closing.retain(|g| !g.clock.done());
+        self.tabs.opening.retain(|(_, c)| !c.done());
+        self.terminal.strip.settle();
+        settle(&mut self.terminal.motion, |m| m.clock);
+        settle(&mut self.terminal.grow, |g| g.1);
+        settle(&mut self.markdown.motion, |m| m.clock);
+        self.status_motion.settle();
+    }
+
+    /// 一帧绘制完成后，如果仍有动画在进行，则安排下一帧。
+    ///
+    /// 存在显示链接时，由显示链接在下一次屏幕刷新时唤醒界面；否则按计时器，
+    /// 在本帧开始时刻 `started` 之后经过一个 `frame_interval` 唤醒。
+    pub(super) fn schedule_frame(&mut self, started: Instant) {
+        let animating = self.animating();
+        #[cfg(target_os = "macos")]
+        if let Some(link) = &mut self.display_link {
+            link.set_running(animating);
+            self.next_frame = None;
+            return;
+        }
+        self.next_frame = animating.then(|| started + self.frame_interval);
+    }
+
+    /// 这一帧没画成（呈现缓冲都被合成器占着，见 `Renderer::draw`）：下一次屏幕刷新时再画，
+    /// 不立即重试，避免界面线程空转等待。
+    ///
+    /// 存在显示链接时由它在下一次刷新时请求重画；显示链接没有回调时（窗口被遮住）由计时器在
+    /// 两个 `frame_interval` 后兜底，画成以后 [`Self::schedule_frame`] 会取消它。
+    pub(super) fn retry_frame(&mut self, started: Instant) {
+        #[cfg(target_os = "macos")]
+        if let Some(link) = &mut self.display_link {
+            link.set_running(true);
+            self.next_frame = Some(started + self.frame_interval * 2);
+            return;
+        }
+        self.next_frame = Some(started + self.frame_interval);
+    }
+
+    /// 是否有动画正在进行，包括滚动条的淡入、淡出和变色。
+    pub(super) fn animating(&self) -> bool {
+        self.sidebar_motion.is_some()
+            || self.tree_motion.is_some()
+            || self.commit.motion.is_some()
+            || self.commit.message_motion.is_some()
+            || self.global.motion.is_some()
+            || self.drag_autoscrolling()
+            || self.global.rows_moving()
+            || self.fold_motion.is_some()
+            || self.scroll_glide.is_some()
+            || self.picker_motion.is_some()
+            || self.places_in.is_some()
+            || self.places_out.is_some()
+            || self.notice_in.is_some()
+            || self.notice_out.is_some()
+            || self.diff_fade.is_some()
+            || self.view_slide.is_some()
+            || self.settings.motion.is_some()
+            || self.picker_card.motion.is_some()
+            || self.bar_card.motion.is_some()
+            || self.dialog_card.motion.is_some()
+            || self.alert_card.motion.is_some()
+            || self.settings.mode_slide.is_some()
+            || self.settings.switch_slide.is_some()
+            || self.log.fade.is_some()
+            || self.hint_animating()
+            || !self.tabs.slides.is_empty()
+            || !self.tabs.closing.is_empty()
+            || !self.tabs.opening.is_empty()
+            || self.terminal.strip.animating()
+            || self.terminal.motion.is_some()
+            || self.terminal.grow.is_some()
+            || self.module_fx.moving()
+            || self.tool_fold.moving()
+            || self.scrollbars_animating()
+            || self.markdown.motion.is_some()
+            || self.status_motion.moving()
+            || self.commit_syncing()
+    }
+}
+
+mod presence;
+pub use presence::*;
+
+#[cfg(test)]
+mod tests;

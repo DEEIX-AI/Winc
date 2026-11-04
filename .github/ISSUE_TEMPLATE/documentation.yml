@@ -1,0 +1,31 @@
+name: Documentation
+description: Report missing, unclear, or outdated documentation or interface text.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Link to the page or file, or name the screen where the text appears.
+      placeholder: "README.md#building-from-source, Settings → Editor"
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is missing, unclear, or outdated?
+      description: Quote the current text when there is any, and suggest a fix if you have one.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submit checklist
+      description: Duplicate issues are closed in favor of the earlier one.
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I included the specific location of the text.
+          required: true

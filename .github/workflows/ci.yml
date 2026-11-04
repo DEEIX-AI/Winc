@@ -1,0 +1,144 @@
+# Build checks: rustfmt, and clippy (warnings fail), the tests, and the documentation build
+# (warnings fail) on macOS, Linux, and Windows, for pull requests into `dev` and for every push to
+# `dev`. Pull requests that change only documentation or repository templates skip the builds.
+#
+# Pull requests into `main` come only from `dev`, so they are not built again: a required check is
+# matched on the pull request's head commit, and the push to `dev` already checked that commit.
+#
+# Caches: a pull request can read caches saved by its own branch or by `dev`, but not by other pull
+# requests. Pushes to `dev` save the dependency cache and pull requests only restore it, so they
+# recompile little more than the workspace crates.
+#
+# "CI" collects the results. It is the check to require in the branch rules, because skipped jobs
+# do not report the names that a rule expects.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new commit on the same pull request or branch cancels the checks still running.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Dependencies need no debug information; builds are faster and caches smaller.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Any change outside the paths listed below counts as code. Pushes to `dev` and manual runs
+      # always build, so that the cache stays current.
+      - name: Changed files
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code="$(git diff --name-only "${BASE}...${HEAD}" -- . \
+            ':!*.md' ':!LICENSE' ':!NOTICE' ':!.github/ISSUE_TEMPLATE/' \
+            ':!.github/workflows/cla.yml' ':!.github/workflows/commits.yml')"
+          echo "code=$([[ -n "${code}" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  # Formatting is the same on every platform, so it is checked once, on Linux.
+  format:
+    name: Format
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # Installs the version and components named in rust-toolchain.toml.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+  check:
+    name: check (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-26
+          - name: Linux
+            os: ubuntu-24.04
+          - name: Windows
+            os: windows-2022
+    steps:
+      # On Windows, Git converts line endings to CRLF by default, which changes the language
+      # bundles, shell scripts, and test samples; the tests compare LF.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      # Installs the version and components named in rust-toolchain.toml.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
+
+      # The terminal tests start the installed shells (zsh and fish are skipped when missing); the
+      # font tests need a monospace font and a CJK font.
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fish fonts-dejavu-core fonts-noto-cjk
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked --no-fail-fast
+
+      - name: Docs
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  result:
+    name: CI
+    if: always()
+    needs: [changes, format, check]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All checks passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: ${RESULTS}"
+          [[ ! " ${RESULTS} " =~ \ (failure|cancelled)\  ]]
