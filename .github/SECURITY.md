@@ -38,4 +38,4 @@ Out of scope:
 ## Supported Versions
 
 Security fixes go into the latest release. Update to the newest version through the in-app updater
-or from [winc.si](https://winc.si/releases/).
+or from [winc.si](https://winc.si/#download).
