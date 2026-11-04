@@ -811,6 +811,11 @@ impl App {
         let table = !gap && kind.is_some_and(|l| l.table);
         let block = block_of(found.start)?;
         let range = parsed.ranges[block].start..shift(parsed.ranges[block].end).max(leaf.end);
+        // 打字之后、重新解析之前，范围来自上一版文档：起点可能已超出文档，也可能不再落在字符边界
+        // 上，先收拢到现在的文档里，后面才能按它们截取原文。
+        let snap = |at: usize| rope.char_to_byte(rope.byte_to_char(at.min(len)));
+        let leaf = snap(leaf.start)..snap(leaf.end).max(snap(leaf.start));
+        let range = snap(range.start)..snap(range.end).max(snap(range.start));
         let last = rope.byte_to_line(leaf.end.min(len));
         let edge =
             (!prose && !table && (line <= rope.byte_to_line(leaf.start) || line + 1 >= last))
