@@ -185,7 +185,14 @@ impl Shell {
 
         // `printenv … || echo none` 在 bash、zsh、fish 里写法相同。
         let leak = self.run("env | grep -c WINC_ ; printenv ZDOTDIR || echo none");
-        assert_eq!(self.output(&leak), format!("0\n{expected_cwd}"));
+        // 管道的成员退出得早时，bash 3.2 会报 `child setpgid` 失败。这条竞争的提示与被检查的环境
+        // 无关，比较前去掉。
+        let output = self.output(&leak);
+        let output: Vec<&str> = output
+            .lines()
+            .filter(|line| !line.contains("child setpgid"))
+            .collect();
+        assert_eq!(output.join("\n"), format!("0\n{expected_cwd}"));
 
         let cd = self.run("cd /usr");
         assert_eq!(cd.cwd, b"/", "块记的是命令开始时的目录");
