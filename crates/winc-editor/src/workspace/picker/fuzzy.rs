@@ -53,15 +53,16 @@ pub(super) fn score_all(
     .collect()
 }
 
-/// 归一化查询词：去掉首尾空白，截断到 [`MAX_QUERY_CHARS`] 个字符，逐字符转小写。
+/// 归一化查询词：去掉所有空白，反斜杠换成 `/`，截断到 [`MAX_QUERY_CHARS`] 个字符，逐字符转小写。
 ///
+/// 空白不参与匹配，可以用空格分开路径的几部分；反斜杠是 Windows 上复制的路径里的分隔符。
 /// 中文没有大小写，转小写对它是恒等变换，因此不需要特殊处理。
 pub(super) fn normalize(query: &str) -> String {
     query
-        .trim()
         .chars()
+        .filter(|c| !c.is_whitespace())
         .take(MAX_QUERY_CHARS)
-        .map(fold)
+        .map(|c| if c == '\\' { '/' } else { fold(c) })
         .collect()
 }
 
