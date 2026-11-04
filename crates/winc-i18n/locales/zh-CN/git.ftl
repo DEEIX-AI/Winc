@@ -79,6 +79,7 @@ git-op-failed-in = 无法在「{ $name }」中{ $what }：{ $error }
 ## 工作树
 
 git-worktree-remove-menu = 移除工作树
+git-repository-detail = { $head } · { $count } 处改动
 git-worktree-detached = { $oid }（分离 HEAD）
 git-worktree-missing = 目录已不存在
 git-worktree-open-here = 已在当前窗口中打开

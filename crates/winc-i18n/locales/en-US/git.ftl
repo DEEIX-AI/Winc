@@ -79,6 +79,10 @@ git-op-failed-in = Error { $what } in “{ $name }”: { $error }
 ## Worktrees
 
 git-worktree-remove-menu = Remove Worktree
+git-repository-detail = { $head } · { $count ->
+    [one] { $count } change
+   *[other] { $count } changes
+}
 git-worktree-detached = { $oid } (detached HEAD)
 git-worktree-missing = Folder no longer exists
 git-worktree-open-here = Open in this window

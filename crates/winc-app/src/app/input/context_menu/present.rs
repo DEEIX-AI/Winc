@@ -686,9 +686,12 @@ impl App {
             MenuCommand::OpenWorktree(_)
             | MenuCommand::OpenWorktreeHere(_)
             | MenuCommand::RemoveWorktree(_) => self.worktree_label(command),
-            MenuCommand::SwitchRepository(i) => {
-                MenuLabel::plain(self.git_repository_name(i).as_str())
-            }
+            MenuCommand::SwitchRepository(i) => MenuLabel {
+                title: self.git_repository_name(i),
+                subtitle: self.git_repository_detail(i),
+                tooltip: (self.git.repositories.get(i))
+                    .map(|repo| winc_editor::display_path(repo, None)),
+            },
             MenuCommand::ToolAuto | MenuCommand::ToolPreset(_) => self.tool_label(command),
             MenuCommand::LogCheckout | MenuCommand::LogCherryPick | MenuCommand::LogNewWorktree => {
                 self.log_commit_label(command)

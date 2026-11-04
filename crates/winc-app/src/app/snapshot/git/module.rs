@@ -46,15 +46,63 @@ fn a_folder_of_repositories_can_switch_between_them() {
         "group/deep".replace('/', std::path::MAIN_SEPARATOR_STR)
     );
 
+    // 切换仓库时沿用找到的 git，切回去时马上有状态。
+    let tool = app.git.tool.get();
+    assert!(tool.is_some());
+    app.git_switch_repository(1);
+    assert!(app.git.tool.get().is_some());
+    assert!(app.git.status.is_some());
+    assert_eq!(
+        app.git.status.as_ref().unwrap().head,
+        Some(Head::Branch("main".into()))
+    );
+
     // 重新查找时保留已加入的仓库。
     app.git_discover();
     assert!(app.git.repositories.contains(&deep));
 
+    // 正在看提交视图时不跟随，新仓库只加入列表。
+    app.git_switch_repository(0);
+    app.sidebar_view = SidebarView::Commit;
+    let shallow = dir.join("group/other");
+    std::fs::create_dir_all(shallow.join("src")).unwrap();
+    std::fs::write(shallow.join("src/main.rs"), "fn main() {}\n").unwrap();
+    if !make_repo(&shallow) {
+        return;
+    }
+    app.open_path(&shallow.join("src/main.rs"));
+    app.git_follow_active();
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    assert!(app.git.repositories.contains(&shallow));
+    app.sidebar_view = SidebarView::Files;
+    app.git_switch_repository(2);
+
+    // 菜单里每个仓库都写分支和改动数：另一个仓库改一个文件，后台读到以后显示。
+    std::fs::write(b.join("src/main.rs"), "fn changed() {}\n").unwrap();
+    app.git_discover();
+    let index = app.git.repositories.iter().position(|r| *r == b).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut detail = None;
+    while std::time::Instant::now() < deadline {
+        detail = app.git_repository_detail(index);
+        if detail.as_deref().is_some_and(|d| d != "main") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let detail = detail.unwrap();
+    assert!(detail.starts_with("main ·"), "{detail}");
+    // 当前仓库用最新的状态，分支写在最前面。
+    let current = (app.git.repositories.iter()).position(|r| Some(r) == app.git.root.as_ref());
+    let current = app.git_repository_detail(current.unwrap()).unwrap();
+    assert!(current.starts_with("main"), "{current}");
+
     // 提交信息写了字时不跟随，文字不会丢。
+    let root_before = app.git.root.clone();
     app.commit.message.insert("draft");
     app.open_path(&b.join("src/main.rs"));
     app.git_follow_active();
-    assert_eq!(app.git.root.as_ref(), Some(&deep));
+    assert_eq!(app.git.root.as_ref(), root_before.as_ref());
     assert_eq!(app.commit.message.text(), "draft");
 
     std::fs::remove_dir_all(&dir).unwrap();
