@@ -74,12 +74,7 @@ impl Shell {
     ///
     /// 第一次调用要先取到环境，会等待。
     pub fn find(&self, name: &str) -> Option<PathBuf> {
-        let path = self
-            .vars()
-            .iter()
-            .find(|(k, _)| k == "PATH")
-            .map(|(_, v)| v);
-        find_in_path(name, path.map(OsString::as_os_str))
+        find_in_path(name, lookup(self.vars(), "PATH"))
     }
 
     /// 返回运行 `program` 的命令：环境换成用户 shell 的环境，并设置 `NO_COLOR=1`。
@@ -92,6 +87,22 @@ impl Shell {
             .envs(self.vars().iter().map(|(k, v)| (k, v)))
             .env("NO_COLOR", "1");
         command
+    }
+}
+
+
+fn lookup<'a>(vars: &'a Vars, name: &str) -> Option<&'a OsStr> {
+    vars.iter()
+        .find(|(key, _)| variable_name_matches(key, name, cfg!(windows)))
+        .map(|(_, value)| value.as_os_str())
+}
+
+/// `key` 是否就是环境变量 `name`；`windows` 为真时不分大小写。
+fn variable_name_matches(key: &OsStr, name: &str, windows: bool) -> bool {
+    if windows {
+        key.to_str().is_some_and(|key| key.eq_ignore_ascii_case(name))
+    } else {
+        key == name
     }
 }
 
