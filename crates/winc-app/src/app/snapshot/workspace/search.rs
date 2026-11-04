@@ -7,6 +7,45 @@ use super::*;
 use crate::keymap::{Action, Context};
 
 #[test]
+fn the_exclude_field_toggles_searching_ignored_files() {
+    let dir = search_folder("global-ignored");
+    std::fs::write(dir.join(".gitignore"), "dist/\n").unwrap();
+    std::fs::create_dir_all(dir.join("dist")).unwrap();
+    std::fs::write(dir.join("dist/out.js"), "ignoredneedle\n").unwrap();
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+    app.set_sidebar_view(SidebarView::Search);
+    app.global.details_open = true;
+    app.global.query.insert("ignoredneedle");
+    app.global_changed(true);
+    app.global.engine.wait();
+    paint(&mut app);
+    assert!(app.no_search_results());
+
+    // 默认不搜索被忽略的文件；点「排除」输入框右端的开关后能搜到，再点一次恢复。
+    let toggle = app.panel_parts().ignored_toggle;
+    assert!(toggle.w > 0.0);
+    let at = (toggle.x + 4.0, toggle.y + 4.0);
+    app.on_mouse_move(at.0, at.1);
+    assert_eq!(app.hover, Hover::Panel(PanelButton::Ignored));
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(app.global.include_ignored);
+    app.global.engine.wait();
+    paint(&mut app);
+    assert!(!app.no_search_results());
+
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(!app.global.include_ignored);
+    app.global.engine.wait();
+    paint(&mut app);
+    assert!(app.no_search_results());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn global_search_finds_opens_and_replaces() {
     let dir = search_folder("global");
     let mut app = app_with(&dir, false);

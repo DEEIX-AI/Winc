@@ -128,6 +128,8 @@ pub struct GlobalSearch {
     pub whole_word: bool,
     /// 是否按正则表达式搜索。
     pub regex: bool,
+    /// 是否也搜索被忽略的文件。
+    pub include_ignored: bool,
     /// 替换行是否展开。
     pub replace_open: bool,
     /// 「包含」「排除」输入框是否展开。
@@ -172,6 +174,7 @@ impl GlobalSearch {
             case_sensitive: self.case_sensitive,
             whole_word: self.whole_word,
             regex: self.regex,
+            include_ignored: self.include_ignored,
             include: self.include.text().to_owned(),
             exclude: self.exclude.text().to_owned(),
         }
@@ -594,6 +597,10 @@ impl App {
             }
             PanelButton::Regex => {
                 g.regex = !g.regex;
+                self.global_changed(true);
+            }
+            PanelButton::Ignored => {
+                g.include_ignored = !g.include_ignored;
                 self.global_changed(true);
             }
             PanelButton::Details => {

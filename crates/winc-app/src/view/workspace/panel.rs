@@ -245,7 +245,10 @@ fn draw_panel_inputs(
 
     // 输入框最右端是「过滤」：展开了包含、排除，或者包含、排除不为空时用强调色。
     let button = parts.details;
-    let active = g.details_open || !g.include.text().is_empty() || !g.exclude.text().is_empty();
+    let active = g.details_open
+        || g.include_ignored
+        || !g.include.text().is_empty()
+        || !g.exclude.text().is_empty();
     draw_button(
         frame,
         p,
@@ -323,15 +326,21 @@ fn draw_panel_inputs(
                     draw_field_box(app, frame, rect, focused, error);
                     let title_x = rect.x - 8.0 + PANEL_LEFT;
                     let end = ui_text_small(frame, app, title_x, rect, title, p.text_muted, rect);
-                    let area = Rect::new(
-                        end + 8.0,
-                        rect.y,
-                        (rect.right() - 6.0 - end - 8.0).max(0.0),
-                        rect.h,
-                    );
+                    // 「排除」的右端让给「也搜索被忽略的文件」开关。
+                    let right = if focus == Focus::GlobalExclude {
+                        parts.ignored_toggle.x - 2.0
+                    } else {
+                        rect.right() - 6.0
+                    };
+                    let area = Rect::new(end + 8.0, rect.y, (right - end - 8.0).max(0.0), rect.h);
                     let c = draw_bar_field(app, frame, area, field, placeholder, focused);
                     caret = caret.or(c);
                 }
+                let button = parts.ignored_toggle;
+                let on = g.include_ignored;
+                draw_button(frame, p, button, panel, hovered(PanelButton::Ignored), on);
+                let color = if on { p.accent } else { p.text_muted };
+                icons::ignored_files(frame, center(button), color, panel);
                 caret
             })
         });
@@ -411,7 +420,11 @@ fn draw_results(app: &mut App, frame: &mut Frame<'_>, parts: &PanelParts) {
             frame,
             (area, sidebar_span(app)),
             t!("workspace-search-no-results"),
-            Some(t!("workspace-search-no-results-hint")),
+            Some(if app.global.include_ignored {
+                t!("workspace-search-no-results-hint")
+            } else {
+                t!("workspace-search-no-results-hint-ignored")
+            }),
         );
         return;
     }
@@ -993,6 +1006,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, same.label()))
         }
+        Hover::Panel(PanelButton::Ignored) => Some((
+            app.panel_parts().ignored_toggle,
+            t!("workspace-search-include-ignored").to_owned(),
+        )),
         Hover::Panel(PanelButton::Details) => {
             let label = if app.global.details_open {
                 t!("workspace-search-hide-filters")

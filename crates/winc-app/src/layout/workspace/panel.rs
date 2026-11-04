@@ -32,6 +32,8 @@ pub enum PanelButton {
     Word,
     /// 使用正则表达式。
     Regex,
+    /// 也搜索被忽略的文件。
+    Ignored,
     /// 全部替换。
     ReplaceAll,
     /// 结果统计行右端的「过滤」按钮：展开或收起「包含」「排除」两个输入。
@@ -95,6 +97,8 @@ pub struct PanelParts {
     pub replace_band: Rect,
     /// 替换输入框内的「全部替换」按钮，和查找输入框里的「过滤」按钮对齐；收起替换时尺寸为 0。
     pub replace_all: Rect,
+    /// 「排除」输入框内的「也搜索被忽略的文件」开关；收起时尺寸为 0。
+    pub ignored_toggle: Rect,
     /// 查找输入框最右端的「过滤」按钮：展开或收起「包含」「排除」。
     pub details: Rect,
     /// 「包含」输入框；收起时尺寸为 0。
@@ -164,11 +168,12 @@ impl PanelParts {
             Default::default()
         };
 
-        let (include, exclude, details_band) = if details_shown > 0.0 {
+        let (include, exclude, details_band, ignored_toggle) = if details_shown > 0.0 {
             let (area, shift) = band(&mut y, details_shown, 2.0 * row);
             let include = Rect::new(left, area.y + shift + PANEL_GAP, width, PANEL_FIELD);
             let exclude = Rect::new(left, include.bottom() + PANEL_GAP, width, PANEL_FIELD);
-            (include, exclude, area)
+            let toggle = toggle(exclude.right() - inset, exclude.y);
+            (include, exclude, area, toggle)
         } else {
             Default::default()
         };
@@ -194,6 +199,7 @@ impl PanelParts {
             case_toggle,
             word_toggle,
             regex_toggle,
+            ignored_toggle,
             replace,
             replace_all,
             replace_band,
@@ -215,6 +221,7 @@ impl PanelParts {
             (self.case_toggle, PanelButton::Case),
             (self.word_toggle, PanelButton::Word),
             (self.regex_toggle, PanelButton::Regex),
+            (self.ignored_toggle, PanelButton::Ignored),
             (self.details, PanelButton::Details),
         ]
         .into_iter()
