@@ -55,7 +55,6 @@ preview-svg-missing-text-path = text on paths
 ## Markdown preview
 
 preview-markdown-image-alt = Image
-preview-markdown-parse-failed = Couldn’t parse the Markdown preview; showing the previous result
 preview-markdown-code-copied = Copied code
 preview-markdown-heading-not-found = This heading isn’t in the document
 preview-markdown-link-file-not-found = The linked file wasn’t found
