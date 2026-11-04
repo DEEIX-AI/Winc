@@ -29,7 +29,7 @@ pub struct Changes {
     ///
     /// 为 `true` 时 `paths` 不完整（此后的路径不再记录），调用方应当整个重新扫描，不依赖 `paths`。
     pub rescan: bool,
-    /// 根目录下 `.git` 里的 `HEAD`、`index`、`packed-refs` 或 `refs/` 是否变了：提交、暂存、
+    /// 某个 `.git` 里的 `HEAD`、`index`、`packed-refs` 或 `refs/` 是否变了：提交、暂存、
     /// 切换分支等操作，Git 模块据此刷新。
     ///
     /// 这些路径不在 `paths` 里。
@@ -74,7 +74,6 @@ impl Watcher {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let shared = Arc::clone(&pending);
         let base = root.to_path_buf();
-        let git_dir = root.join(".git");
 
         let mut inner =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -86,7 +85,7 @@ impl Watcher {
                     Ok(event) => {
                         // 已经要重新扫描时不再记录路径（反正用不上），只看 `.git` 是否变化。
                         for path in event.paths {
-                            if git_state(&git_dir, &path) {
+                            if git_state(&path) {
                                 pending.git = true;
                             } else if !pending.rescan && !hidden(&base, &path) {
                                 pending.paths.insert(path);
@@ -131,11 +130,14 @@ impl Watcher {
     }
 }
 
-/// `path` 是不是 `git_dir`（根目录下的 `.git`）里记录仓库状态的文件：`HEAD`、`index`、
-/// `packed-refs`、`refs/` 下的文件。
+/// `path` 是不是某个 `.git` 目录（打开的目录里可能有多个仓库）里记录仓库状态的文件：`HEAD`、
+/// `index`、`packed-refs`、`refs/` 下的文件。
 ///
 /// `index.lock` 这类临时文件不算，操作完成时正式的文件会再变一次。
-fn git_state(git_dir: &Path, path: &Path) -> bool {
+fn git_state(path: &Path) -> bool {
+    let Some(git_dir) = path.ancestors().find(|dir| dir.ends_with(".git")) else {
+        return false;
+    };
     let Ok(relative) = path.strip_prefix(git_dir) else {
         return false;
     };

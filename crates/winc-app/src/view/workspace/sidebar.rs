@@ -125,6 +125,16 @@ impl ContextBar {
             || t!("workspace-sidebar-no-folder").to_owned(),
             |w| w.name.clone(),
         );
+        // 提交视图里有多个仓库时写当前仓库：提交前须能确认提交到哪个仓库。
+        let repository = (app.sidebar_view == SidebarView::Commit
+            && app.git.repositories.len() >= 2)
+            .then(|| {
+                let root = app.git.root.as_ref()?;
+                let index = app.git.repositories.iter().position(|repo| repo == root)?;
+                Some(app.git_repository_name(index))
+            })
+            .flatten();
+        let project = repository.unwrap_or(project);
         // 分支只在提交视图中绘制：提交前须能直接确认提交的目标分支。文件、搜索视图中分支与当前操作
         // 无关，且状态栏右端始终显示当前分支（同一个菜单），因此不重复绘制。
         let branch = (opened && app.sidebar_view == SidebarView::Commit)

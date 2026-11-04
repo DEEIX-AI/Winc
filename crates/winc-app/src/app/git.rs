@@ -143,8 +143,12 @@ struct DiffTab {
 
 /// Git 模块的状态。
 pub(crate) struct GitState {
-    /// 打开的目录所在仓库的根目录；模块关着、不在仓库里时为 `None`。
+    /// 当前仓库的根目录；模块关着、目录里没有仓库时为 `None`。
     pub root: Option<PathBuf>,
+    /// 打开的目录里可用的仓库，见 [`App::git_discover`]；项目菜单在有多个时列出。
+    pub repositories: Vec<PathBuf>,
+    /// 上次跟随的标签（[`App::git_follow_active`]）：切换标签时才查找文件所在的仓库。
+    followed: Option<DocumentId>,
     /// 找到的 git，第一次用到时在后台找，所有后台任务共用（[`SharedGit`]）。
     pub(super) tool: SharedGit,
     /// 最近一次成功的 `git status`。
@@ -188,6 +192,8 @@ impl Default for GitState {
         let (sender, receiver) = channel();
         GitState {
             root: None,
+            repositories: Vec::new(),
+            followed: None,
             tool: SharedGit::default(),
             status: None,
             branches: Vec::new(),
@@ -341,12 +347,95 @@ impl App {
     }
 
     /// 打开的目录变了、或者模块开关变了：重新确定仓库，并刷新一次。
+    ///
+    /// 目录本身不是仓库、第一层子目录里有仓库时用第一个，其余的在项目菜单里切换。
     pub(super) fn git_folder_changed(&mut self) {
-        let root = if self.git_enabled() {
-            self.editor.root().and_then(git::find_root)
-        } else {
-            None
+        self.git.repositories.clear();
+        self.git.followed = None;
+        self.git_discover();
+        let root = self.git.repositories.first().cloned();
+        self.git_set_root(root);
+    }
+
+    /// 重新查找打开的目录里的仓库；已经加入的（打开过其中文件的）只要还在就保留。
+    pub(in crate::app) fn git_discover(&mut self) {
+        let Some(dir) = self.editor.root().filter(|_| self.git_enabled()) else {
+            self.git.repositories.clear();
+            return;
         };
+        let mut found = git::find_repositories(dir);
+        let kept = self
+            .git
+            .repositories
+            .iter()
+            .filter(|repo| !found.contains(repo) && repo.join(".git").exists());
+        let kept: Vec<PathBuf> = kept.cloned().collect();
+        found.extend(kept);
+        self.git.repositories = found;
+    }
+
+    /// 返回第 `index` 个仓库在菜单里显示的名字：相对打开的目录的路径，目录本身用目录名。
+    pub(crate) fn git_repository_name(&self, index: usize) -> String {
+        let Some(repo) = self.git.repositories.get(index) else {
+            return String::new();
+        };
+        let relative = self
+            .editor
+            .root()
+            .and_then(|root| repo.strip_prefix(root).ok());
+        match relative {
+            Some(path) if !path.as_os_str().is_empty() => path.display().to_string(),
+            _ => repo.file_name().map_or_else(
+                || repo.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+        }
+    }
+
+    /// 切换到项目菜单里的第 `index` 个仓库。
+    pub(in crate::app) fn git_switch_repository(&mut self, index: usize) {
+        if let Some(root) = self.git.repositories.get(index).cloned() {
+            self.git_set_root(Some(root));
+        }
+    }
+
+    /// 当前标签换了文件时，把文件所在的仓库加入列表，并切换过去。
+    ///
+    /// 正在提交、拉取推送，或提交信息已写了字时不切换：切换会丢掉这些内容。
+    pub(in crate::app) fn git_follow_active(&mut self) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        if self.git.followed == Some(doc.id) || !self.git_enabled() {
+            return;
+        }
+        self.git.followed = Some(doc.id);
+        let (Some(dir), Some(folder)) = (
+            doc.path.as_deref().and_then(Path::parent),
+            self.editor.root(),
+        ) else {
+            return;
+        };
+        // 目录之外的文件不改变当前仓库。
+        if !dir.starts_with(folder) {
+            return;
+        }
+        let Some(root) = git::find_root(dir) else {
+            return;
+        };
+        if !self.git.repositories.contains(&root) {
+            self.git.repositories.push(root.clone());
+        }
+        let busy = self.commit.busy
+            || self.branch.running.is_some()
+            || !self.commit.message.text().is_empty();
+        if !busy {
+            self.git_set_root(Some(root));
+        }
+    }
+
+    /// 把当前仓库换成 `root`；没有变化时什么也不做。
+    fn git_set_root(&mut self, root: Option<PathBuf>) {
         if root == self.git.root {
             return;
         }

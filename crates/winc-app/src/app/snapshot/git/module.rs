@@ -2,6 +2,78 @@
 
 use super::*;
 
+/// 目录本身不是仓库、下面有几个仓库时：都能找到，可以切换，打开文件时跟过去。
+#[test]
+fn a_folder_of_repositories_can_switch_between_them() {
+    let dir = search_folder("git-repositories");
+    let (a, b, deep) = (dir.join("a"), dir.join("b"), dir.join("group/deep"));
+    for repo in [&a, &b, &deep] {
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+        if !make_repo(repo) {
+            return;
+        }
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let dir = app.editor.root().unwrap().to_path_buf();
+    let (a, b, deep) = (dir.join("a"), dir.join("b"), dir.join("group/deep"));
+
+    // 只看第一层子目录，按名字排序，默认用第一个。
+    assert_eq!(app.git.repositories, [a.clone(), b.clone()]);
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    assert!(app.git.status.is_some());
+    assert_eq!(app.git_repository_name(1), "b");
+
+    // 从项目菜单切换。
+    app.git_switch_repository(1);
+    assert_eq!(app.git.root.as_ref(), Some(&b));
+    assert!(app.git.status.is_some());
+
+    // 打开另一个仓库的文件：跟过去。更深的仓库也加入列表。
+    app.open_path(&a.join("src/main.rs"));
+    app.git_follow_active();
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    app.open_path(&deep.join("src/main.rs"));
+    app.git_follow_active();
+    assert_eq!(app.git.root.as_ref(), Some(&deep));
+    assert!(app.git.repositories.contains(&deep));
+    assert_eq!(
+        app.git_repository_name(2),
+        "group/deep".replace('/', std::path::MAIN_SEPARATOR_STR)
+    );
+
+    // 重新查找时保留已加入的仓库。
+    app.git_discover();
+    assert!(app.git.repositories.contains(&deep));
+
+    // 提交信息写了字时不跟随，文字不会丢。
+    app.commit.message.insert("draft");
+    app.open_path(&b.join("src/main.rs"));
+    app.git_follow_active();
+    assert_eq!(app.git.root.as_ref(), Some(&deep));
+    assert_eq!(app.commit.message.text(), "draft");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 目录本身就是仓库时只用它，子目录没有仓库时不显示仓库一组。
+#[test]
+fn a_single_repository_lists_only_itself() {
+    let dir = search_folder("git-one-repository");
+    if !make_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    assert_eq!(app.git.repositories.len(), 1);
+    assert_eq!(app.git.repositories.first(), app.git.root.as_ref());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn git_module_is_off_until_switched_on_and_clears_when_off() {
     let dir = search_folder("git-module");

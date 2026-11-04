@@ -438,6 +438,7 @@ impl App {
         self.continue_drag_scroll();
         self.track_modules();
         self.track_search_rows();
+        self.git_follow_active();
         self.relayout();
         self.run_when_loaded();
         self.advance_search();

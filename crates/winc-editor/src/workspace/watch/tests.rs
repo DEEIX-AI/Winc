@@ -25,14 +25,13 @@ fn wait_for(watcher: &Watcher, woken: &mpsc::Receiver<()>, want: &[&Path]) -> Ve
 #[test]
 fn only_repository_state_files_count_as_git_changes() {
     let root = Path::new("/r");
-    let git_dir = root.join(".git");
     for yes in [
         ".git/HEAD",
         ".git/index",
         ".git/packed-refs",
         ".git/refs/heads/main",
     ] {
-        assert!(git_state(&git_dir, &root.join(yes)), "{yes}");
+        assert!(git_state(&root.join(yes)), "{yes}");
     }
     for no in [
         ".git/index.lock",
@@ -41,7 +40,7 @@ fn only_repository_state_files_count_as_git_changes() {
         ".git/HEAD/x",
         "src/HEAD",
     ] {
-        assert!(!git_state(&git_dir, &root.join(no)), "{no}");
+        assert!(!git_state(&root.join(no)), "{no}");
     }
 }
 

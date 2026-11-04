@@ -86,6 +86,7 @@ impl App {
             MenuTarget::Project => match command {
                 MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
                 MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
+                MenuCommand::SwitchRepository(i) => self.git_switch_repository(i),
                 MenuCommand::OpenWorktree(i) => self.open_worktree(i, true),
                 MenuCommand::OpenWorktreeHere(i) => self.open_worktree(i, false),
                 MenuCommand::NewWorktree => self.open_worktree_dialog(),

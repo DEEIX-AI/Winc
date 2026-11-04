@@ -108,6 +108,10 @@ pub enum MenuCommand {
     CloseFolder,
     /// 项目菜单里工作树一组的小标题（不能点）。
     WorktreeHeading,
+    /// 项目菜单里仓库一组的标题。
+    RepositoryHeading,
+    /// 切换到第几个仓库。
+    SwitchRepository(usize),
     /// 项目菜单：在新窗口打开第几个工作树（`GitState::worktrees` 的下标）；已经开着就切过去。
     OpenWorktree(usize),
     /// 项目菜单（按住 `⌥`）：在当前窗口打开第几个工作树。
@@ -322,8 +326,10 @@ impl MenuCommand {
             | MenuCommand::OpenRecentInNewWindow(_)
             | MenuCommand::OpenWorktree(_)
             | MenuCommand::OpenWorktreeHere(_)
-            | MenuCommand::RemoveWorktree(_) => "",
+            | MenuCommand::RemoveWorktree(_)
+            | MenuCommand::SwitchRepository(_) => "",
             MenuCommand::WorktreeHeading => t!("menu-worktrees-heading"),
+            MenuCommand::RepositoryHeading => t!("menu-repositories-heading"),
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
             MenuCommand::PruneWorktrees => t!("menu-prune-worktrees"),
             MenuCommand::GitFetch => t!("menu-git-fetch"),
