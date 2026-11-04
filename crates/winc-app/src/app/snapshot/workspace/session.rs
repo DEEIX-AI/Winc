@@ -9,19 +9,20 @@ fn no_history_starts_on_the_start_page() {
     let mut app = blank_app(false);
     paint(&mut app);
 
-    // 没有目录时侧栏收起，编辑区卡片占满整个宽度；开始页上有三项操作（应用设置、新建文件、
-    // 打开文件或目录），没有最近列表。
+    // 没有目录时侧栏收起，编辑区卡片占满整个宽度；开始页上有应用设置、新建文件和打开操作，没有
+    // 最近列表。只有 macOS 的选择器能同时选文件和目录，其他平台上打开文件和打开目录是两项。
     assert!(app.layout.sidebar.right() <= 0.0);
     assert_eq!(app.layout.editor.x, ISLAND_MARGIN);
     let actions: Vec<StartAction> = app.start_hits.iter().map(|(_, a)| *a).collect();
-    assert_eq!(
-        actions,
-        [
-            StartAction::Settings,
-            StartAction::NewFile,
-            StartAction::Open
-        ]
-    );
+    let mut expected = vec![
+        StartAction::Settings,
+        StartAction::NewFile,
+        StartAction::Open,
+    ];
+    if !cfg!(target_os = "macos") {
+        expected.push(StartAction::OpenFolder);
+    }
+    assert_eq!(actions, expected);
 
     // 点「应用设置」打开设置。
     let (row, _) = app.start_hits[0];

@@ -18,18 +18,31 @@ const GAP: f32 = 20.0;
 const MAX_SHOWN: usize = 8;
 
 /// 「开始」一段的操作：操作、用于显示快捷键的键位表动作；行上的文字见 [`action_label`]。
-const ACTIONS: [(StartAction, Action); 3] = [
-    (StartAction::Settings, Action::Settings),
-    (StartAction::NewFile, Action::NewFile),
-    (StartAction::Open, Action::OpenFile),
-];
+///
+/// 只有 macOS 的选择器能同时选文件和目录，其他平台上打开文件和打开目录是两项。
+const ACTIONS: &[(StartAction, Action)] = if cfg!(target_os = "macos") {
+    &[
+        (StartAction::Settings, Action::Settings),
+        (StartAction::NewFile, Action::NewFile),
+        (StartAction::Open, Action::OpenFile),
+    ]
+} else {
+    &[
+        (StartAction::Settings, Action::Settings),
+        (StartAction::NewFile, Action::NewFile),
+        (StartAction::Open, Action::OpenFile),
+        (StartAction::OpenFolder, Action::OpenFolder),
+    ]
+};
 
 /// 返回「开始」一段中操作 `action` 所在行上的文字。
 fn action_label(action: StartAction) -> &'static str {
     match action {
         StartAction::Settings => t!("workspace-start-settings"),
         StartAction::NewFile => t!("workspace-start-new-file"),
-        _ => t!("workspace-start-open"),
+        StartAction::OpenFolder => t!("workspace-start-open-folder"),
+        _ if cfg!(target_os = "macos") => t!("workspace-start-open"),
+        _ => t!("workspace-start-open-file"),
     }
 }
 
@@ -73,7 +86,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     y += title_h + GAP;
 
     y = section_title(app, frame, t!("workspace-start-section-start"), x, y, w);
-    for (action, key) in ACTIONS {
+    for &(action, key) in ACTIONS {
         let label = action_label(action);
         let row = Rect::new(x, y, w, ROW);
         draw_row_bg(app, frame, row, action);
@@ -186,7 +199,12 @@ fn action_icon(app: &App, frame: &mut Frame<'_>, action: StartAction, row: Rect)
     match action {
         StartAction::Settings => icons::gear(frame, (cx, cy), color, clip),
         StartAction::NewFile => icons::new_file(frame, (cx - 6.0, cy - 7.5), color, clip),
-        StartAction::Open => icons::folder(frame, (cx - 7.5, cy - 6.0), true, color, clip),
+        StartAction::Open if !cfg!(target_os = "macos") => {
+            icons::files(frame, (cx, cy), 1.0, color, clip);
+        }
+        StartAction::Open | StartAction::OpenFolder => {
+            icons::folder(frame, (cx - 7.5, cy - 6.0), true, color, clip);
+        }
         StartAction::Recent(_) | StartAction::Forget(_) => {}
     }
 }

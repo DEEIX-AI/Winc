@@ -120,8 +120,16 @@ fn too_many_changes_become_a_rescan() {
     assert!(changes.rescan);
     assert!(changes.paths.len() <= 1, "{}", changes.paths.len());
 
-    // 取走后状态清空，下一批变化会重新唤醒界面线程。
-    assert!(watcher.take().is_empty());
+    // 取走后状态清空，下一批变化会重新唤醒界面线程。`one.txt` 的通知可能晚到一次（Windows 上新建、
+    // 修改各一次），除此之外不留下任何内容。
+    let rest = watcher.take();
+    assert!(!rest.rescan);
+    assert!(!rest.git);
+    assert!(
+        rest.paths.iter().all(|p| p.ends_with("one.txt")),
+        "{:?}",
+        rest.paths
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

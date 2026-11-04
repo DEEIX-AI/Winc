@@ -89,6 +89,7 @@ pub(super) fn draw_welcome(app: &App, frame: &mut Frame<'_>) {
     #[derive(Clone, Copy)]
     enum Icon {
         Open,
+        OpenFile,
         New,
         Find,
         Quick,
@@ -96,8 +97,24 @@ pub(super) fn draw_welcome(app: &App, frame: &mut Frame<'_>) {
         Settings,
     }
 
-    let items: [(Icon, &str, Action); 6] = [
-        (Icon::Open, t!("editor-welcome-open"), Action::OpenFile),
+    // 只有 macOS 的选择器能同时选文件和目录，其他平台上打开文件和打开目录是两项。
+    let mut items = if cfg!(target_os = "macos") {
+        vec![(Icon::Open, t!("editor-welcome-open"), Action::OpenFile)]
+    } else {
+        vec![
+            (
+                Icon::OpenFile,
+                t!("editor-welcome-open-file"),
+                Action::OpenFile,
+            ),
+            (
+                Icon::Open,
+                t!("editor-welcome-open-folder"),
+                Action::OpenFolder,
+            ),
+        ]
+    };
+    items.extend([
         (Icon::New, t!("editor-welcome-new-file"), Action::NewFile),
         (
             Icon::Quick,
@@ -119,7 +136,7 @@ pub(super) fn draw_welcome(app: &App, frame: &mut Frame<'_>) {
             t!("editor-welcome-settings"),
             Action::Settings,
         ),
-    ];
+    ]);
     // 一行的高度与整列的宽度（逻辑像素）。
     const ROW: f32 = 36.0;
     const WIDTH: f32 = 280.0;
@@ -136,6 +153,7 @@ pub(super) fn draw_welcome(app: &App, frame: &mut Frame<'_>) {
 
         match icon {
             Icon::Open => icons::folder(frame, (cx - 7.5, cy - 6.0), true, color, editor),
+            Icon::OpenFile => icons::files(frame, (cx, cy), 1.0, color, editor),
             Icon::New => icons::new_file(frame, (cx - 6.0, cy - 7.5), color, editor),
             Icon::Find => icons::search(frame, (cx, cy), 1.0, color, editor),
             Icon::Quick => icons::files(frame, (cx, cy), 1.0, color, editor),

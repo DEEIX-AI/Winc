@@ -14,10 +14,13 @@
 
 <p align="center">
   <a href="https://winc.si"><img alt="Website" src="https://img.shields.io/badge/Website-winc.si-black" /></a>
-  <a href="https://winc.si/releases/"><img alt="Download" src="https://img.shields.io/badge/Download-winc.si-0f766e" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue" /></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-b7410e" />
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555" />
+</p>
+
+<p align="center">
+  <a href="https://winc.si/#download"><img alt="下载 Winc" src="./.github/assets/download-zh.svg" /></a>
 </p>
 
 ## 概述
@@ -55,8 +58,8 @@ winc 以 Rust 与自研渲染引擎构建：0.1 秒启动，十万行代码仅�
 | Linux | x86_64，X11 或 Wayland | AppImage、deb |
 | Windows | Windows 10 1809 及以上，x86_64 | NSIS、MSI、便携 ZIP |
 
-主要在 macOS 上开发和测试。最新版本可从 [winc.si](https://winc.si/releases/) 或
-[GitHub Releases](https://github.com/DEEIX-AI/Winc/releases) 下载。
+主要在 macOS 上开发和测试。可从 [winc.si](https://winc.si/#download) 下载，所有版本见
+[GitHub Releases](https://github.com/DEEIX-AI/Winc/releases)。
 
 ## 从源代码构建
 

@@ -14,10 +14,13 @@
 
 <p align="center">
   <a href="https://winc.si"><img alt="Website" src="https://img.shields.io/badge/Website-winc.si-black" /></a>
-  <a href="https://winc.si/releases/"><img alt="Download" src="https://img.shields.io/badge/Download-winc.si-0f766e" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue" /></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-b7410e" />
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555" />
+</p>
+
+<p align="center">
+  <a href="https://winc.si/#download"><img alt="Download Winc" src="./.github/assets/download-en.svg" /></a>
 </p>
 
 ## Overview
@@ -56,8 +59,8 @@ Measured on macOS; results vary with hardware and system load.
 | Linux | x86_64, X11 or Wayland | AppImage, deb |
 | Windows | Windows 10 1809 or later, x86_64 | NSIS, MSI, portable ZIP |
 
-winc is developed and tested mainly on macOS. Download the latest release from
-[winc.si](https://winc.si/releases/) or from
+winc is developed and tested mainly on macOS. Download it from
+[winc.si](https://winc.si/#download); all versions are on
 [GitHub Releases](https://github.com/DEEIX-AI/Winc/releases).
 
 ## Building from Source
