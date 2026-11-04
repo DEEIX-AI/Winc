@@ -27,6 +27,16 @@ fn programs_are_found_in_absolute_path_directories() {
 }
 
 #[test]
+fn windows_finds_the_path_variable_whatever_its_case() {
+    let vars: Vars = vec![
+        ("Other".into(), "x".into()),
+        ("Path".into(), "C:\\Git\\cmd".into()),
+    ];
+    assert_eq!(path_value(&vars, true), Some(OsStr::new("C:\\Git\\cmd")));
+    assert_eq!(path_value(&vars, false), None);
+}
+
+#[test]
 fn windows_programs_are_looked_up_with_their_extensions() {
     assert_eq!(
         windows_names("prettier", ".COM;.EXE;.BAT;.CMD;.VBS"),
