@@ -1,0 +1,476 @@
+//! 工作树的测试：项目菜单里的一组、分支被其他工作树签出、在当前窗口打开，以及附属工作树的徽章。
+
+use super::*;
+
+/// 在仓库 `root` 旁边用新分支 `feat` 签出一个工作树，返回该目录（解析过符号链接）。
+fn add_worktree(root: &Path) -> PathBuf {
+    let name = format!("{}-feat", root.file_name().unwrap().to_string_lossy());
+    let linked = root.with_file_name(name);
+    let _ = std::fs::remove_dir_all(&linked);
+    git_in(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat",
+            linked.to_str().unwrap(),
+        ],
+    );
+    winc_config::files::canonicalize(linked).unwrap()
+}
+
+/// 关闭已打开的对话框，重新打开新建工作树对话框并输入分支名 `name`。
+fn fill_dialog(app: &mut App, name: &str) {
+    app.close_form_dialog();
+    app.open_worktree_dialog();
+    app.edit_field(|f| f.insert(name));
+}
+
+/// 在对话框里输入 `name`，按「创建」。
+fn create(app: &mut App, name: &str) {
+    fill_dialog(app, name);
+    app.submit_form_dialog();
+}
+
+/// 返回对话框输入 `name` 后按「创建」会生成的计划。
+fn plan(app: &mut App, name: &str) -> crate::app::git::form::FormPlan {
+    fill_dialog(app, name);
+    let plan = app.form_plan(app.form_dialog.as_ref().unwrap());
+    app.close_form_dialog();
+    plan
+}
+
+#[test]
+fn worktrees_show_in_the_project_menu_and_the_branch_menu() {
+    use crate::app::git::branch::BranchOp;
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+
+    let Some((mut app, root)) = git_app("git-worktrees", false) else {
+        return;
+    };
+    // 只有一个工作树：项目菜单里没有工作树一组。
+    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
+    assert!(!menu_commands(&app).contains(&(MenuCommand::WorktreeHeading, false)));
+
+    let linked = add_worktree(&root);
+    app.git_refresh();
+    assert_eq!(app.git.worktrees.len(), 2);
+    assert_eq!(app.git.current_worktree(), Some(0));
+
+    // 项目菜单：两个工作树，当前的打勾、没有「在当前窗口打开」；另一个下面写着分支。
+    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
+    let commands = menu_commands(&app);
+    for command in [
+        (MenuCommand::OpenWorktree(0), true),
+        (MenuCommand::OpenWorktree(1), true),
+        (MenuCommand::OpenWorktreeHere(1), true),
+    ] {
+        assert!(commands.contains(&command), "{command:?} in {commands:?}");
+    }
+    assert!(!commands.contains(&(MenuCommand::OpenWorktreeHere(0), true)));
+    assert!(app.menu_checked(MenuCommand::OpenWorktree(0)));
+    let label = app.menu_label(MenuCommand::OpenWorktree(1));
+    assert_eq!(label.title, winc_editor::display_name(&linked));
+    assert_eq!(label.subtitle.as_deref(), Some("feat"));
+    let here = app.menu_label(MenuCommand::OpenWorktreeHere(1));
+    assert!(
+        here.title.starts_with("在当前窗口中打开「"),
+        "{}",
+        here.title
+    );
+
+    // 分支菜单：`feat` 已被其他工作树签出，「签出」表示切换过去，且不能删除。
+    let feat = app
+        .git
+        .branches
+        .iter()
+        .position(|b| b.name == "feat")
+        .unwrap();
+    app.open_context_menu(MenuTarget::Branch, (0.0, 0.0));
+    let commands = menu_commands(&app);
+    let checkout = MenuCommand::GitBranch(BranchOp::Checkout, feat);
+    assert!(commands.contains(&(checkout, true)));
+    assert!(commands.contains(&(MenuCommand::GitBranch(BranchOp::Delete, feat), false)));
+    assert!(app.menu_label(checkout).title.starts_with("切换到工作树「"));
+
+    // 在当前窗口打开：工作区切换到该目录；在该工作树中查看，主工作树是另一项，`main` 被占用。
+    app.open_worktree(1, false);
+    assert_eq!(app.editor.root(), Some(linked.as_path()));
+    app.git_refresh();
+    assert_eq!(app.git.current_worktree(), Some(1));
+    assert_eq!(
+        app.git.main_worktree().map(|w| w.path.clone()),
+        Some(root.clone())
+    );
+    assert_eq!(app.git.held_branches(), ["main"]);
+    paint(&mut app);
+
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn worktrees_are_created_removed_and_pruned() {
+    use crate::app::git::branch::BranchOp;
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+
+    let Some((mut app, root)) = git_app("git-worktree-life", false) else {
+        return;
+    };
+    app.trash = delete_for_test;
+    let trees = root.with_file_name(format!(
+        "{}.worktrees",
+        root.file_name().unwrap().to_string_lossy()
+    ));
+    let _ = std::fs::remove_dir_all(&trees);
+    // 被忽略的 `.env` 按配置复制到新工作树。
+    std::fs::write(root.join(".git").join("info").join("exclude"), ".env\n").unwrap();
+    std::fs::write(root.join(".env"), "KEY=1").unwrap();
+    app.config.git_worktree_copy = vec![".env".to_owned()];
+
+    // 只有一个工作树：项目菜单中也能新建，分支菜单中显示创建位置。
+    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
+    assert!(menu_commands(&app).contains(&(MenuCommand::NewWorktree, true)));
+    assert_eq!(
+        app.worktree_dir_hint("feat/x"),
+        format!("{}/feat-x", winc_editor::display_name(&trees))
+    );
+    create(&mut app, "feat/x");
+    assert!(app.form_dialog.is_none());
+    let feat = trees.join("feat-x");
+    assert_eq!(std::fs::read_to_string(feat.join(".env")).unwrap(), "KEY=1");
+    assert_eq!(app.git.worktrees.len(), 2);
+    assert_eq!(app.git.worktrees[1].branch(), Some("feat/x"));
+
+    // 分支菜单：已有的分支签出到新工作树。
+    git_in(&root, &["branch", "other"]);
+    app.git_refresh();
+    let other = app
+        .git
+        .branches
+        .iter()
+        .position(|b| b.name == "other")
+        .unwrap();
+    choose_in_branch_menu(
+        &mut app,
+        MenuCommand::GitBranch(BranchOp::NewWorktree, other),
+    );
+    assert_eq!(app.git.worktrees.len(), 3);
+    assert!(trees.join("other").join(".git").is_file());
+
+    // 对话框里输入已有的名字：已有分支直接签出，被其他工作树占用时切换过去，当前分支不可用。
+    git_in(&root, &["branch", "spare"]);
+    app.git_refresh();
+    let spare = plan(&mut app, "spare");
+    assert!(spare.enabled && !spare.base_enabled);
+    assert_eq!((spare.confirm, spare.base.as_str()), ("创建", "现有分支"));
+    let held = plan(&mut app, "feat/x");
+    assert!(held.enabled && held.confirm == "打开");
+    assert_eq!(
+        held.dir
+            .map(|d| winc_config::files::canonicalize(d).unwrap()),
+        Some(winc_config::files::canonicalize(trees.join("feat-x")).unwrap())
+    );
+    let main = plan(&mut app, "main");
+    assert!(!main.enabled);
+    assert_eq!(
+        main.problem.as_deref(),
+        Some("当前分支无法在其他工作树中签出")
+    );
+    let fresh = plan(&mut app, "brand-new");
+    assert!(fresh.enabled && fresh.base_enabled && fresh.problem.is_none());
+    assert_eq!(fresh.base, "main（当前分支）");
+    let empty = plan(&mut app, "");
+    assert!(!empty.enabled && empty.problem.is_none());
+    // 「-」开头的名字会被 `git branch` 当成选项：不建。
+    let dash = plan(&mut app, "--unset-upstream");
+    assert!(!dash.enabled);
+    assert_eq!(dash.problem.as_deref(), Some("分支名称不能以「-」开头"));
+    create(&mut app, "--unset-upstream");
+    assert_eq!(app.git.worktrees.len(), 3);
+    // 建不了时对话框保留，原因写在输入框里。
+    assert!(app.form_dialog.is_some());
+    create(&mut app, "main");
+    assert_eq!(app.git.worktrees.len(), 3);
+    create(&mut app, "spare");
+    let at = |app: &App, dir: &Path| {
+        let dir = winc_config::files::canonicalize(dir).unwrap();
+        app.git
+            .worktrees
+            .iter()
+            .position(|w| w.path == dir)
+            .unwrap()
+    };
+    let spare = trees.join("spare");
+    assert_eq!(app.git.worktrees[at(&app, &spare)].branch(), Some("spare"));
+    // 日志里的提交：游离地签出，目录用短提交号。
+    let oid = app.git.status.as_ref().unwrap().oid.clone().unwrap();
+    app.new_worktree_at(oid.clone(), None);
+    let short = &oid[..7];
+    assert!(trees.join(short).join(".git").is_file());
+    assert_eq!(app.git.worktrees.len(), 5);
+    for dir in [trees.join(short), spare] {
+        let i = at(&app, &dir);
+        app.remove_worktree(i);
+        assert!(!dir.exists());
+    }
+    assert_eq!(app.git.worktrees.len(), 3);
+
+    // 移除：有改动也能移除（确认框写明），目录被删除，已合并的分支一起删掉。
+    std::fs::write(feat.join("scratch.txt"), "x").unwrap();
+    let i = at(&app, &feat);
+    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
+    assert!(menu_commands(&app).contains(&(MenuCommand::RemoveWorktree(i), true)));
+    app.remove_worktree(i);
+    assert!(!feat.exists());
+    assert_eq!(app.git.worktrees.len(), 2);
+    assert!(app.git.branches.iter().all(|b| b.name != "feat/x"));
+
+    // 目录在外部被删除：标记为可清理，清理后只剩一个工作树。
+    std::fs::remove_dir_all(trees.join("other")).unwrap();
+    app.git_refresh();
+    assert!(app.git.worktrees.iter().any(|w| w.prunable));
+    // 该分支所在的工作树已被删除，git 仍不允许再次签出：签出项灰显，对话框提示先清理。
+    assert_eq!(app.git.stale_branches(), ["other"]);
+    assert!(app.git.held_branches().is_empty());
+    let stale = plan(&mut app, "other").problem.unwrap_or_default();
+    assert!(stale.contains("请先清理"), "{stale}");
+    create(&mut app, "other");
+    assert_eq!(app.git.worktrees.len(), 2);
+    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
+    assert!(menu_commands(&app).contains(&(MenuCommand::PruneWorktrees, true)));
+    app.prune_worktrees();
+    assert!(app.git.worktrees.len() < 2);
+
+    let _ = std::fs::remove_dir_all(&trees);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 截图：附属工作树的徽章，浅色与深色各一张。
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_worktree_badge() {
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let Some((mut app, root)) = git_app_in(&format!("worktree-shot-{theme}"), false, dark)
+        else {
+            return;
+        };
+        let linked = add_worktree(&root);
+        app.git_refresh();
+        app.open_worktree(1, false);
+        app.git_refresh();
+        shoot(&mut app, &format!("worktree-badge-{theme}"));
+        let _ = std::fs::remove_dir_all(&linked);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// 对话框中的选择全部生效：从选定的起点新建、建在选定的目录下、不复制被忽略的文件、在当前窗口打开。
+///
+/// 键盘：`Esc` 关闭，回车创建；点击卡片外面也会关闭。
+#[test]
+fn the_new_worktree_dialog_builds_what_it_shows() {
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+
+    let Some((mut app, root)) = git_app("git-worktree-dialog", false) else {
+        return;
+    };
+    std::fs::write(root.join(".git").join("info").join("exclude"), ".env\n").unwrap();
+    std::fs::write(root.join(".env"), "KEY=1").unwrap();
+    app.config.git_worktree_copy = vec![".env".to_owned()];
+    git_in(&root, &["branch", "base"]);
+    git_in(
+        &root,
+        &["commit", "-q", "--allow-empty", "-m", "after base"],
+    );
+    app.git_refresh();
+    let folder = root.with_file_name(format!(
+        "{}-picked",
+        root.file_name().unwrap().to_string_lossy()
+    ));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let folder = winc_config::files::canonicalize(folder).unwrap();
+
+    // 打开时焦点在分支名上；关闭后焦点回到原来的位置。
+    let before = app.focus;
+    app.open_worktree_dialog();
+    assert_eq!(app.focus, Focus::Dialog);
+    app.close_form_dialog();
+    assert_eq!(app.focus, before);
+    assert!(app.form_dialog.is_none());
+
+    // 点击卡片外面关闭对话框。
+    fill_dialog(&mut app, "x");
+    let card = app.dialog_layout().card;
+    app.mouse = (card.x - 10.0, card.y - 10.0);
+    app.click_form_dialog(card.x - 10.0, card.y - 10.0);
+    assert!(app.form_dialog.is_none());
+
+    // 「基于」菜单：当前分支打勾，其余分支都在；选了「base」。
+    fill_dialog(&mut app, "from-base");
+    app.open_context_menu(MenuTarget::FormBase, (0.0, 0.0));
+    let base = app
+        .git
+        .branches
+        .iter()
+        .position(|b| b.name == "base")
+        .unwrap();
+    let commands = menu_commands(&app);
+    assert!(commands.contains(&(MenuCommand::FormBase(0), true)));
+    assert!(commands.contains(&(MenuCommand::FormBase(base + 1), true)));
+    assert!(app.menu_checked(MenuCommand::FormBase(0)));
+    assert_eq!(
+        app.menu_label(MenuCommand::FormBase(0)).title,
+        "main（当前分支）"
+    );
+    app.run_menu_command(MenuCommand::FormBase(base + 1));
+    assert!(app.menu_checked(MenuCommand::FormBase(base + 1)));
+    app.worktree_folder_picked(folder.clone());
+    let dialog = app.form_dialog.as_mut().unwrap();
+    dialog.copy = false;
+    dialog.new_window = false;
+    let shown = app.form_plan(app.form_dialog.as_ref().unwrap());
+    assert_eq!(shown.base, "base");
+    assert_eq!(shown.dir, Some(folder.join("from-base")));
+    app.submit_form_dialog();
+
+    // 建在选定的目录下，从 `base` 开始，不复制 `.env`，当前窗口切换过去。
+    let made = folder.join("from-base");
+    assert!(made.join(".git").is_file());
+    assert!(!made.join(".env").exists());
+    assert_eq!(app.editor.root(), Some(made.as_path()));
+    let head = |dir: &Path| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let base_oid = {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", "base"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(head(&made), base_oid);
+
+    let _ = std::fs::remove_dir_all(&folder);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn form_dialog_moves_focus_with_tab_and_keeps_failures_in_the_card() {
+    use crate::layout::DialogPart;
+
+    let Some((mut app, root)) = git_app("git-form-keys", false) else {
+        return;
+    };
+    let key = |app: &mut App, key: NamedKey| {
+        assert!(app.dialog_key(&Key::Named(key), "", false));
+    };
+    app.open_worktree_dialog();
+    app.edit_field(|f| f.insert("feat/keys"));
+    let focus = |app: &App| app.form_dialog.as_ref().unwrap().focus;
+    // `Tab` 的顺序：名称 → 基于 → 选择目录 → 在新窗口中打开 → 取消 → 创建 → 名称；`⇧Tab` 逆序。
+    let mut order = Vec::new();
+    for _ in 0..6 {
+        key(&mut app, NamedKey::Tab);
+        order.push(focus(&app));
+    }
+    assert_eq!(
+        order,
+        [
+            DialogPart::Base,
+            DialogPart::Change,
+            DialogPart::NewWindow,
+            DialogPart::Cancel,
+            DialogPart::Confirm,
+            DialogPart::Branch,
+        ]
+    );
+    // 空格切换焦点所在的勾选项；焦点不在名称上时，键入的文字不进入输入框。
+    app.modifiers = ModifiersState::SHIFT;
+    key(&mut app, NamedKey::Tab);
+    key(&mut app, NamedKey::Tab);
+    key(&mut app, NamedKey::Tab);
+    app.modifiers = ModifiersState::empty();
+    assert_eq!(focus(&app), DialogPart::NewWindow);
+    key(&mut app, NamedKey::Space);
+    assert!(!app.form_dialog.as_ref().unwrap().new_window);
+    let name = |app: &App| app.form_dialog.as_ref().unwrap().name.text().to_owned();
+    assert!(app.dialog_key(&Key::Character("x".into()), "x", false));
+    assert_eq!(name(&app), "feat/keys");
+    paint(&mut app);
+
+    // git 拒绝名称时保留对话框并在其中显示原因，不另行通知；修改名称后清空原因。
+    app.close_form_dialog();
+    app.open_branch_dialog(None, None);
+    app.edit_field(|f| f.insert("bad..name"));
+    app.submit_form_dialog();
+    let dialog = app.form_dialog.as_ref().expect("stays open");
+    assert!(dialog.running.is_none());
+    assert!(dialog.error.is_some());
+    assert_eq!(dialog.focus, DialogPart::Branch);
+    paint(&mut app);
+    assert!(!app.dialog_key(&Key::Named(NamedKey::Backspace), "", false));
+    assert!(app.form_dialog.as_ref().unwrap().error.is_none());
+
+    // 操作成功后才关闭对话框。
+    app.edit_field(|f| {
+        f.set_text("good-name");
+        true
+    });
+    app.submit_form_dialog();
+    assert!(app.form_dialog.is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 截图：新建工作树对话框的多种状态及新建分支失败时的对话框，浅色与深色各一张。
+///
+/// 状态包括空白、已填写、选中当前分支（错误色且「基于」不可选）和键盘焦点位于选项上。
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_worktree_dialog() {
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let Some((mut app, root)) = git_app_in(&format!("worktree-dialog-{theme}"), false, dark)
+        else {
+            return;
+        };
+        app.config.git_worktree_copy = vec![".env*".to_owned(), "config/local.toml".to_owned()];
+        app.open_worktree_dialog();
+        shoot(&mut app, &format!("worktree-dialog-empty-{theme}"));
+        app.edit_field(|f| f.insert("feat/login-page"));
+        shoot(&mut app, &format!("worktree-dialog-{theme}"));
+        // 当前分支不能再签出：状态行是错误色，「创建」灰显，「基于」不可选。
+        app.edit_field(|f| {
+            f.set_text("main");
+            true
+        });
+        app.form_dialog.as_mut().unwrap().new_window = false;
+        shoot(&mut app, &format!("worktree-dialog-error-{theme}"));
+        // 键盘焦点位于「在新窗口中打开」时，勾选框外绘制一圈强调色细线。
+        app.edit_field(|f| {
+            f.set_text("feat/login-page");
+            true
+        });
+        app.form_dialog.as_mut().unwrap().focus = crate::layout::DialogPart::NewWindow;
+        shoot(&mut app, &format!("worktree-dialog-focus-{theme}"));
+        // git 拒绝名称时保留对话框，并在按钮左侧显示原因。
+        app.close_form_dialog();
+        app.open_branch_dialog(None, None);
+        app.edit_field(|f| f.insert("bad..name"));
+        app.submit_form_dialog();
+        shoot(&mut app, &format!("branch-dialog-failed-{theme}"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

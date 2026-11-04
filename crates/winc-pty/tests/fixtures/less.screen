@@ -1,0 +1,30 @@
+ 0|line number 150
+ 1|line number 151
+ 2|line number 152
+ 3|line number 153
+ 4|line number 154
+ 5|line number 155
+ 6|line number 156
+ 7|line number 157
+ 8|line number 158
+ 9|line number 159
+10|line number 160
+11|line number 161
+12|line number 162
+13|line number 163
+14|line number 164
+15|line number 165
+16|line number 166
+17|line number 167
+18|line number 168
+19|line number 169
+20|line number 170
+21|line number 171
+22|line number 172
+23|:
+cursor 23,1
+alternate true
+row 0 runs:
+    0 fg=Default bg=Default attrs=0x0
+    5 fg=Default bg=Default attrs=0x10
+row 23 runs:

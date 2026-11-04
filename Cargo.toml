@@ -1,0 +1,155 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/winc-app"]
+
+[workspace.package]
+version = "0.1.451"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "Apache-2.0"
+repository = "https://github.com/DEEIX-AI/Winc"
+homepage = "https://winc.si"
+
+[workspace.dependencies]
+winc-config = { path = "crates/winc-config" }
+winc-core = { path = "crates/winc-core" }
+winc-syntax = { path = "crates/winc-syntax" }
+winc-render = { path = "crates/winc-render" }
+winc-editor = { path = "crates/winc-editor" }
+winc-preview = { path = "crates/winc-preview" }
+winc-pty = { path = "crates/winc-pty" }
+winc-i18n = { path = "crates/winc-i18n" }
+
+# 只把 LF、CR、CRLF 当换行。默认的 `unicode_lines` 还认 VT、FF、U+0085、U+2028、U+2029，
+# 行号会和编译器、git、grep 报的对不上（C 和 Python 源码里常见分页符 FF）。
+ropey = { version = "1.6", default-features = false, features = ["simd", "cr_lines"] }
+unicode-segmentation = "1"
+unicode-width = "0.2"
+winit = "0.30"
+swash = "0.2"
+memmap2 = "0.9"
+memchr = "2"
+# 只开 Unicode 大小写和 \w \d \s，不带 \p{..} 的 Unicode 属性表，二进制小约 250 KB。
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
+# 查找里 `regex` 不支持的环视（`(?=…)`、`(?<=…)`）和反向引用（`\1`）由它匹配。
+# 它建立在 `regex` 的底层实现之上，Unicode 表与上面一样不带全。
+fancy-regex = { version = "0.19.2", default-features = false, features = ["std", "perf", "variable-lookbehinds"] }
+arboard = { version = "3", default-features = false }
+# 全局搜索遍历目录：遵守 .gitignore、.ignore 和全局忽略规则（`ripgrep` 使用的规则集）。
+ignore = "0.4"
+# 格式化超时时连同子进程一起杀掉整个进程组（`kill(-pgid)`）。
+# 本来就在依赖树里（winit、memmap2 都用它）。
+libc = "0.2"
+# 终端的 VT 序列切分（VT 解析状态机），只有辅助进程 winc-pty 用到。
+vte = { version = "0.15", default-features = false, features = ["std"] }
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+# 不是 UTF-8 的文件（GBK、Big5、Shift JIS、UTF-16……）的编解码和按内容猜编码。
+encoding_rs = "0.8"
+chardetng = "0.1"
+# 图片预览：PNG、JPEG、GIF、WebP 的解码，纯 Rust，各平台一样
+# （BMP、ICO 自己解，SVG 用 swash 里的 zeno 画）。
+# macOS 上要缩小的 JPEG 例外，交给系统的 ImageIO 按目标大小解码
+# （winc-preview 的 src/image/imageio.rs）。
+png = "0.18"
+zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
+gif = { version = "0.14", default-features = false, features = ["std"] }
+image-webp = "0.2"
+# SVG 预览：XML 解析；路径光栅化用 swash 里本来就有的 zeno。
+roxmltree = "0.20"
+# Markdown 预览：CommonMark 加 GitHub 的扩展（表格、任务列表、删除线），纯 Rust 实现，解析速度快；
+# 不要默认的 HTML 输出和命令行参数解析。
+pulldown-cmark = { version = "0.13", default-features = false }
+zeno = "0.3"
+# 界面文案的多语言：Fluent 消息格式（含各语言的复数规则），语言标签按 BCP 47 解析。
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+# 读取系统的首选语言，界面语言为「跟随系统」时使用。
+sys-locale = "0.3"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+# 公开条目必须有文档。
+missing_docs = "warn"
+
+[workspace.lints.rustdoc]
+# 文档里的 [`链接`] 必须指向存在且可见的条目。
+broken_intra_doc_links = "warn"
+private_intra_doc_links = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+# 文档规范：返回 `Result`、可能 panic、`unsafe` 的条目要有对应小节，`unsafe` 块要有 SAFETY 注释。
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "warn"
+undocumented_unsafe_blocks = "warn"
+doc_markdown = "warn"
+
+# 调试信息只留行号：崩溃、panic 的回溯仍然有文件和行号，只是调试器里看不了局部变量（要看时本地
+# 临时改回 `true`）。依赖不留调试信息。实测：干净构建 winc-app 的测试 29 → 24 s，
+# target 1.4 → 0.9 GB，改一个文件后的增量构建不变。
+[profile.dev]
+debug = "line-tables-only"
+
+# 依赖在 dev 构建下也开优化，否则 swash 和逐像素合成太慢，无法评估交互的流畅度；自己的 crate
+# 保持 0，编译快。
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+# 逐像素合成在未优化时耗时增加数十倍。
+[profile.dev.package.winc-render]
+opt-level = 2
+
+# 优化级别取 2：与 3 相比滚动、高亮、查找、终端吞吐都在测量误差以内，二进制小约 0.6 MB。
+# 整体按体积（`s`）优化更小，但链接时优化（fat LTO）按整体的级别重新优化全部代码，滚动慢
+# 约 80%、查找慢约 50%，对单个 crate 提高级别也无法弥补，因此不使用。
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# 依赖按体积优化（二进制再小约 0.2 MB），下面几个在热路径上的除外。
+[profile.release.package."*"]
+opt-level = "s"
+
+# 文件内查找、全局搜索：按体积优化时纯文字查找慢约 7%。
+[profile.release.package.memchr]
+opt-level = 2
+
+[profile.release.package.regex]
+opt-level = 2
+
+[profile.release.package.regex-automata]
+opt-level = 2
+
+[profile.release.package.fancy-regex]
+opt-level = 2
+
+[profile.release.package.aho-corasick]
+opt-level = 2
+
+# 文本存储：每次编辑、每帧取行都经过它。
+[profile.release.package.ropey]
+opt-level = 2
+
+# 打开图片、非 UTF-8 文件时的解码，耗时与文件大小成正比。
+[profile.release.package.png]
+opt-level = 2
+
+[profile.release.package.fdeflate]
+opt-level = 2
+
+[profile.release.package.zune-jpeg]
+opt-level = 2
+
+[profile.release.package.image-webp]
+opt-level = 2
+
+[profile.release.package.encoding_rs]
+opt-level = 2

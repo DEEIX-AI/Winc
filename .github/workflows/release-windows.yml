@@ -1,0 +1,137 @@
+name: Release · Windows x64
+
+on:
+  workflow_call:
+    inputs:
+      source-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: 0
+      TARGET: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/build-setup
+        with:
+          target: ${{ env.TARGET }}
+          source-sha: ${{ inputs.source-sha }}
+      - name: Import Windows code-signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host "::warning::WINDOWS_CERTIFICATE not set; building an unsigned Windows installer"
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $secure = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+          Remove-Item $pfx
+          # A thumbprint is a public hash of the certificate, not a secret.
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure build
+        env:
+          WINC_UPDATE_PRIVATE_KEY: ${{ secrets.WINC_UPDATE_PRIVATE_KEY }}
+        run: |
+          args=()
+          if [[ -n "${WINDOWS_CERTIFICATE_THUMBPRINT:-}" ]]; then
+            args+=(--thumbprint "$WINDOWS_CERTIFICATE_THUMBPRINT")
+          fi
+          node release/common/config.mjs "${args[@]}" --output "$RUNNER_TEMP/build-config.json"
+      - name: Compile
+        run: |
+          cargo build --release --locked --target "$TARGET" -p winc-app -p winc-pty
+          cargo xtask icons "target/$TARGET/release/bundle/icons"
+      - name: Install native packaging tools
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.11 --allow-downgrade --yes --no-progress
+          choco install wixtoolset --version=3.14.1 --allow-downgrade --yes --no-progress
+      - name: Sign executables
+        if: env.WINDOWS_CERTIFICATE_THUMBPRINT != ''
+        shell: pwsh
+        run: ./release/windows/sign.ps1 -Target $env:TARGET
+      - name: Bundle NSIS and MSI installers
+        env:
+          WINC_UPDATE_PRIVATE_KEY: ${{ secrets.WINC_UPDATE_PRIVATE_KEY }}
+        run: |
+          pwsh -NoProfile -File release/windows/package.ps1 -Phase installers -Target "$TARGET"
+      - name: Package portable
+        shell: pwsh
+        run: ./release/windows/package.ps1 -Phase portable -Target $env:TARGET
+      - name: Sign the update feed
+        env:
+          WINC_UPDATE_PRIVATE_KEY: ${{ secrets.WINC_UPDATE_PRIVATE_KEY }}
+        run: |
+          node release/common/sign-updates.mjs --platform windows-x64 --bundle "target/$TARGET/release/bundle"
+          cargo test --locked -p winc-app updates::tests::release_appcast_matches_packages -- --ignored
+      - name: Verify Windows signatures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = "target/$env:TARGET/release"
+          $files = @(
+            "$root/winc.exe"
+            "$root/winc-pty.exe"
+          )
+          $files += Get-ChildItem "$root/bundle/nsis/*-setup.exe", "$root/bundle/msi/*.msi" |
+            ForEach-Object FullName
+          $required = [bool]$env:WINDOWS_CERTIFICATE_THUMBPRINT
+          $failed = $false
+          foreach ($file in $files) {
+            $sig = Get-AuthenticodeSignature -FilePath $file
+            $line = "$($sig.Status): $file ($($sig.SignerCertificate.Subject))"
+            if ($sig.Status -eq 'Valid') {
+              Write-Host $line
+            } elseif ($required) {
+              Write-Host "::error::$line"
+              $failed = $true
+            } else {
+              Write-Host "::warning::$line"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Verify installers and native updates
+        shell: pwsh
+        run: ./release/windows/verify.ps1 -Target $env:TARGET
+      - name: Stage release assets
+        run: |
+          node release/common/collect-assets.mjs --platform windows-x64 \
+            --bundle "target/$TARGET/release/bundle" --out "$RUNNER_TEMP/release-assets"
+      # GitHub provides attestations for public repositories only, so private builds skip this.
+      # The action records the workflow, commit, and run as SLSA provenance.
+      - name: Attest Windows build provenance
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release-assets/*.exe
+            ${{ runner.temp }}/release-assets/*.msi
+            ${{ runner.temp }}/release-assets/*.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-windows-x64
+          path: ${{ runner.temp }}/release-assets
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true

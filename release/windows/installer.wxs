@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- UUIDv5(DNS, com.deeix.winc); keep this product family stable across releases. -->
+  <Product Id="*" Name="winc" Language="1033" Version="$(var.Version)" Manufacturer="DEEIX"
+           UpgradeCode="00FDC6A5-D527-59AE-B4A5-E051B25222F3">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64"/>
+    <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize"/>
+    <Property Id="REINSTALLMODE" Value="amus"/>
+    <MediaTemplate EmbedCab="yes"/>
+    <Icon Id="WincIcon" SourceFile="$(var.Source)\winc.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="WincIcon"/>
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.Source)\license.rtf"/>
+    <UIRef Id="WixUI_InstallDir"/>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="winc">
+          <Component Id="Application" Guid="*" Win64="yes">
+            <File Id="WincExe" Source="$(var.Source)\winc.exe" KeyPath="yes"/>
+          </Component>
+          <Component Id="TerminalHelper" Guid="*" Win64="yes">
+            <File Source="$(var.Source)\winc-pty.exe" KeyPath="yes"/>
+          </Component>
+          <Component Id="InstallationKind" Guid="*" Win64="yes">
+            <File Source="$(var.Source)\msi\winc-installation" KeyPath="yes"/>
+          </Component>
+          <Component Id="License" Guid="*" Win64="yes"><File Source="$(var.Source)\LICENSE" KeyPath="yes"/></Component>
+          <Component Id="Notice" Guid="*" Win64="yes"><File Source="$(var.Source)\NOTICE" KeyPath="yes"/></Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="winc">
+          <Component Id="StartMenu" Guid="*" Win64="yes">
+            <Shortcut Id="StartMenuShortcut" Name="winc" Target="[#WincExe]" WorkingDirectory="INSTALLFOLDER" Icon="WincIcon"/>
+            <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+            <RegistryValue Root="HKCU" Key="Software\DEEIX\winc\MSI" Name="Start Menu Shortcut" Type="integer" Value="1" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id="Main" Title="winc" Level="1">
+      <ComponentRef Id="Application"/><ComponentRef Id="TerminalHelper"/><ComponentRef Id="InstallationKind"/>
+      <ComponentRef Id="License"/><ComponentRef Id="Notice"/><ComponentRef Id="StartMenu"/>
+    </Feature>
+  </Product>
+</Wix>

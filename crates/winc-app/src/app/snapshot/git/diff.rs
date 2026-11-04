@@ -1,0 +1,813 @@
+//! 并排差异的测试：打开与走动、编辑右侧、从左侧取回改动、滚动、点击，以及跟随文件更新。
+
+use super::*;
+
+#[test]
+fn show_changes_opens_a_side_by_side_diff_and_walks_it() {
+    let dir = search_folder("git-diff");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    // 模块关闭时该命令不可用。
+    assert!(!app.run_action(Action::GitShowChanges));
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    // 再改一处不保存：右边是编辑器里的内容。
+    app.run(winc_editor::Command::Insert("// 新的一行\n".into()));
+    assert!(app.run_action(Action::GitShowChanges));
+
+    let doc = app.editor.active().unwrap();
+    assert_eq!(doc.title.as_deref(), Some("main.rs · 差异"));
+    let view = doc.diff.as_deref().unwrap();
+    assert!(view.old.title.starts_with("HEAD · "), "{}", view.old.title);
+    assert_eq!(view.new.title, "工作区 · 未保存");
+    assert_eq!(view.hunks.len(), 3);
+    assert!(!view.old.missing && !view.new.missing);
+    assert_eq!(view.stats(), (2, 2));
+    assert!(
+        view.rows[RIGHT]
+            .iter()
+            .any(|r| matches!(r, SideRow::Fold { .. }))
+    );
+
+    // 绘制一帧后，标题栏的按钮和折叠起来的行都能点。
+    paint(&mut app);
+    // 「第几处」按跳到的那一段算：整个差异放得下、不滚动时也一处一处往下走。
+    let current = |app: &App| {
+        let doc = app.editor.active().unwrap();
+        doc.diff.as_deref().unwrap().current_hunk(doc.scroll_line)
+    };
+    let first = current(&app).unwrap();
+    app.press_diff(DiffTarget::Next);
+    let second = current(&app).unwrap();
+    assert!(second > first);
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(current(&app), Some(2));
+    // 到了最后一处再往下：不动，在状态栏说明。
+    app.press_diff(DiffTarget::Next);
+    assert_eq!(current(&app), Some(2));
+    assert!(app.run_action(Action::PreviousDifference));
+    assert_eq!(current(&app), Some(1));
+
+    paint(&mut app);
+    let fold = app
+        .diff_hits
+        .iter()
+        .find(|(_, t)| matches!(t, DiffTarget::Fold(_)))
+        .map(|(r, _)| *r);
+    if let Some(rect) = fold {
+        let before = app
+            .editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .row_count();
+        click(&mut app, (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0));
+        let after = app
+            .editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .row_count();
+        assert!(after > before);
+    }
+    app.press_diff(DiffTarget::Collapse);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(!view.collapses());
+    assert!(
+        !view.rows[RIGHT]
+            .iter()
+            .any(|r| matches!(r, SideRow::Fold { .. }))
+    );
+    // 差异标签只读，编辑命令不修改任何内容。
+    app.run(winc_editor::Command::Insert("x".into()));
+    paint(&mut app);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
+    let dir = search_folder("git-diff-edit");
+    if !long_repo(&dir) {
+        return;
+    }
+    let file = winc_editor::canonical_path(&dir.join("src/main.rs"));
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.fetch_changes(&file, Target::Open);
+    let tabs = app.editor.documents.len();
+    assert_eq!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .hunks
+            .len(),
+        2
+    );
+
+    // 文件没打开：「»」直接改磁盘，不多开标签。
+    paint(&mut app);
+    assert!(
+        app.diff_hits
+            .iter()
+            .any(|(_, t)| *t == DiffTarget::Revert(0))
+    );
+    app.press_diff(DiffTarget::Revert(0));
+    assert_eq!(app.editor.documents.len(), tabs);
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(disk.contains("let value_5 = 5;\n"));
+    assert_eq!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .hunks
+            .len(),
+        1
+    );
+
+    // 在右侧点击放置光标：文件在后台打开，差异标签仍是当前标签。
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let pane = parts.panes[1];
+    let at = (
+        pane.text.x + 30.0,
+        parts.body.y + app.fonts.line_height * 0.5,
+    );
+    click(&mut app, at);
+    assert_eq!(app.editor.documents.len(), tabs + 1);
+    assert!(app.editor.active().unwrap().diff.is_some());
+    assert!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .editing
+    );
+
+    // 左侧：拖选一段，⌘C 复制；右侧的光标关闭。
+    let lh = app.fonts.line_height;
+    let left = parts.panes[0].text;
+    let from = (left.x + 14.0, parts.body.y + lh * 1.5);
+    let to = (left.x + 60.0, parts.body.y + lh * 2.5);
+    app.on_mouse_move(from.0, from.1);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(to.0, to.1);
+    app.on_mouse_up(MouseButton::Left);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(!view.editing);
+    let selected = view.left_selected().unwrap();
+    assert!(
+        selected.contains('\n') && selected.starts_with("et value_"),
+        "{selected:?}"
+    );
+    assert!(app.run_action(Action::Copy));
+    assert!(app.run_action(Action::SelectAll));
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.left_selected().unwrap(), view.old.text.to_string());
+    click(&mut app, at);
+    assert!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .left_selection
+            .is_none()
+    );
+
+    // 键入的字符写入文件，差异跟着重新比较；撤销也是文件的撤销。
+    assert!(app.diff_edit_text("X"));
+    let source = app
+        .editor
+        .documents
+        .iter()
+        .find(|d| d.path.as_deref() == Some(file.as_path()))
+        .unwrap();
+    assert!(source.is_dirty());
+    assert!(source.text().rope().unwrap().to_string().contains('X'));
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.hunks.len(), 2);
+    assert_eq!(view.new.title, "工作区 · 未保存");
+    assert!(app.run_action(Action::Undo));
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.hunks.len(), 1);
+
+    // ⌘F 查的是右侧的文件：跳到的匹配是右侧文档的选区，差异跟着滚过去；查找条在差异的
+    // 标题栏下面。
+    assert!(app.run_action(Action::Find));
+    assert!(app.search_open);
+    assert!(app.layout.search.y >= app.layout.editor.y + crate::app::diff::DIFF_HEADER);
+    app.find_input.set_text("value_55 ");
+    app.search.query = "value_55 ".into();
+    app.search_changed();
+    assert!(app.editor.active().unwrap().diff.is_some());
+    let source = app
+        .editor
+        .documents
+        .iter()
+        .find(|d| d.path.as_deref() == Some(file.as_path()))
+        .unwrap();
+    let selected = source.text_range(source.selection.from(), source.selection.to());
+    assert_eq!(selected.as_deref(), Some("value_55 "));
+    let line = source.text().pos_to_line_col(source.selection.head).0;
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let row = view.row_of_new(line);
+    let scroll = app.editor.active().unwrap().scroll_line as usize;
+    assert!(row >= scroll && row < scroll + app.visible_lines());
+    app.close_search();
+
+    // 光标不在改动上时「回滚光标处的改动」不动；挪到删掉的那一行的位置再回滚，两侧内容一致。
+    assert!(app.run_action(Action::GitRevertChange));
+    assert_eq!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .hunks
+            .len(),
+        1
+    );
+    let source = app
+        .editor
+        .documents
+        .iter_mut()
+        .find(|d| d.path.as_deref() == Some(file.as_path()))
+        .unwrap();
+    let pos = source.text().line_start(50);
+    source.selection = winc_core::Selection::point(pos);
+    assert!(app.run_action(Action::GitRevertChange));
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(view.is_identical());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：「»」换掉一段改动以后，该段颜色淡出到一半时的画面。
+#[test]
+#[ignore]
+fn shoot_diff_replace_fade() {
+    let dir = search_folder("git-diff-fade");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    let file = app.git.root.clone().unwrap().join("src/main.rs");
+    app.fetch_changes(&file, Target::Open);
+    paint(&mut app);
+    app.press_diff(DiffTarget::Revert(0));
+    let doc = app.editor.active().unwrap().id;
+    app.diff_fade = Some(crate::app::diff::DiffFade {
+        doc,
+        left: 5..6,
+        right: 5..6,
+        kind: crate::app::HunkKind::Modified,
+        clock: crate::app::animation::Clock::frozen(
+            std::time::Duration::from_millis(120),
+            std::time::Duration::from_millis(420),
+        ),
+    });
+    shoot(&mut app, "diff-fade");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：差异里查找，右侧标出匹配。
+#[test]
+#[ignore]
+fn shoot_diff_search() {
+    let dir = search_folder("git-diff-search");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.settings_toggle(Setting::GitModule);
+    app.run_action(Action::GitShowChanges);
+    paint(&mut app);
+    app.run_action(Action::Find);
+    app.find_input.set_text("value_4");
+    app.search.query = "value_4".into();
+    app.search_changed();
+    shoot(&mut app, "diff-search");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：当前文件改动的并排差异，深浅两套配色。
+#[test]
+#[ignore]
+fn shoot_git_diff() {
+    for dark in [false, true] {
+        let dir = search_folder(if dark {
+            "git-diff-dark"
+        } else {
+            "git-diff-light"
+        });
+        if !long_repo(&dir) {
+            return;
+        }
+        let mut app = app_with(&dir.join("src/main.rs"), dark);
+        app.settings_toggle(Setting::GitModule);
+        // 开头再加两行不保存：三种改动（新增、修改、删除）都有。
+        app.run(winc_editor::Command::Insert(
+            "use std::fs;\nuse std::io;\n".into(),
+        ));
+        app.run_action(Action::GitShowChanges);
+        // 光标放在右侧第一处改动上。
+        paint(&mut app);
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let lh = app.fonts.line_height;
+        click(
+            &mut app,
+            (parts.panes[1].text.x + 120.0, parts.body.y + lh * 3.5),
+        );
+        shoot(&mut app, if dark { "diff-dark" } else { "diff-light" });
+        // 鼠标停在第二处改动的「»」上，提示已显示。
+        let revert = app
+            .diff_hits
+            .iter()
+            .find(|(_, t)| *t == DiffTarget::Revert(1))
+            .unwrap()
+            .0;
+        app.on_mouse_move(revert.x + 4.0, revert.y + 4.0);
+        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        shoot(
+            &mut app,
+            if dark {
+                "diff-revert-dark"
+            } else {
+                "diff-revert-light"
+            },
+        );
+        // 鼠标停在第二处改动的勾选框上。
+        let check = app
+            .diff_hits
+            .iter()
+            .find(|(_, t)| *t == DiffTarget::Include(1))
+            .unwrap()
+            .0;
+        app.on_mouse_move(check.x + 4.0, check.y + 4.0);
+        app.tooltip_since = None;
+        shoot(
+            &mut app,
+            if dark {
+                "diff-check-dark"
+            } else {
+                "diff-check-light"
+            },
+        );
+        // 新文件（不在 `HEAD` 里）：左侧整个是空的。
+        let text: String = (0..80)
+            .map(|i| format!("pub const C{i}: u32 = {i};\n"))
+            .collect();
+        std::fs::write(dir.join("src/new.rs"), text).unwrap();
+        app.open_path(&dir.join("src/new.rs"));
+        app.run_action(Action::GitShowChanges);
+        paint(&mut app);
+        // 滚动一次，滚动条的滑块显示。
+        app.editor.active_mut().unwrap().scroll_line = 20.0;
+        shoot(
+            &mut app,
+            if dark {
+                "diff-new-dark"
+            } else {
+                "diff-new-light"
+            },
+        );
+        // 滚到底：滑块停在卡片的圆角上面，不伸出去。
+        app.editor.active_mut().unwrap().scroll_line = 78.0;
+        shoot(
+            &mut app,
+            if dark {
+                "diff-new-bottom-dark"
+            } else {
+                "diff-new-bottom-light"
+            },
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn diff_scrollbar_stays_below_the_header_and_new_files_have_no_replace() {
+    let Some((mut app, root)) = git_app("git-diff-track", true) else {
+        return;
+    };
+    app.open_path(&root.join("src/main.rs"));
+    assert!(app.run_action(Action::GitShowChanges));
+    paint(&mut app);
+    // 滚动条的轨道让出标题栏：标题栏右端（折叠开关旁边）不是滚动条。
+    let editor = app.layout.editor;
+    let track = app.scroll_track();
+    assert_eq!(track.y, editor.y + crate::app::diff::DIFF_HEADER);
+    assert_ne!(
+        app.hover_at(editor.right() - 4.0, editor.y + 10.0),
+        Hover::Scrollbar(crate::layout::Scrollbar::Editor)
+    );
+    assert!(
+        app.diff_hits
+            .iter()
+            .any(|(_, t)| matches!(t, DiffTarget::Revert(_)))
+    );
+
+    // 新文件：左侧整个是空的，没有「»」（用左侧替换就是清空整个文件）。
+    let text: String = (0..80)
+        .map(|i| format!("pub const C{i}: u32 = {i};\n"))
+        .collect();
+    std::fs::write(root.join("src/fresh.rs"), text).unwrap();
+    app.git_refresh();
+    app.open_path(&root.join("src/fresh.rs"));
+    assert!(app.run_action(Action::GitShowChanges));
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(view.one_side_empty());
+    // 左侧表示 `HEAD` 中没有该文件，不是空文件：不写「空文件」。
+    assert!(view.old.missing && !view.new.missing);
+    assert!(
+        !app.diff_hits
+            .iter()
+            .any(|(_, t)| matches!(t, DiffTarget::Revert(_)))
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn status_refreshes_rediff_a_git_diff_tab_only_when_head_moves() {
+    let Some((mut app, root)) = git_app("git-diff-refresh", false) else {
+        return;
+    };
+    app.open_path(&root.join("src/main.rs"));
+    assert!(app.run_action(Action::GitShowChanges));
+    let view = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        std::ptr::from_ref(view) as usize
+    };
+    let before = view(&app);
+
+    // 文件开在编辑器里、`HEAD` 没动：右边跟着文档走，刷新状态不再跑 git 重新比较。
+    app.git_refresh();
+    assert_eq!(view(&app), before);
+
+    // `HEAD` 动了：左边重新取。
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "second"]);
+    app.git_refresh();
+    assert_ne!(view(&app), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diff_text_clicks_and_cursors_work_like_the_editor() {
+    use crate::app::diff::DIFF_TEXT_PAD;
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+    use winc_editor::diff_view::LEFT;
+    use winit::keyboard::ModifiersState;
+
+    let dir = search_folder("git-diff-clicks");
+    if !long_repo(&dir) {
+        return;
+    }
+    let file = winc_editor::canonical_path(&dir.join("src/main.rs"));
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.fetch_changes(&file, Target::Open);
+    paint(&mut app);
+    // 第 `side` 侧第 `line` 行（从 0 起）第 `col` 列的窗口坐标；`gutter` 时是那一行的行号。
+    let at = |app: &App, side: usize, line: usize, col: usize, gutter: bool| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let row = view.rows[side]
+            .iter()
+            .position(|r| matches!(r, SideRow::Line { line: l, .. } if *l == line))
+            .unwrap();
+        let lh = app.fonts.line_height;
+        let pane = parts.panes[side];
+        let x = if gutter {
+            pane.gutter.x + pane.gutter.w / 2.0
+        } else {
+            pane.text.x + DIFF_TEXT_PAD + (col as f32 + 0.3) * app.cell
+        };
+        (x, parts.body.y + (row as f32 + 0.5) * lh)
+    };
+    let source = |app: &App| {
+        app.editor
+            .documents
+            .iter()
+            .position(|d| d.path.as_deref() == Some(file.as_path()))
+            .unwrap()
+    };
+    let selected = |app: &App| {
+        let doc = &app.editor.documents[source(app)];
+        doc.text_range(doc.selection.from(), doc.selection.to())
+            .unwrap_or_default()
+    };
+    // 按下、松开，按着的时候鼠标轻微抖动（横着移动了一个像素）。
+    let press = |app: &mut App, (x, y): (f32, f32)| {
+        app.on_mouse_move(x, y);
+        app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_move(x + 1.0, y);
+        app.on_mouse_up(MouseButton::Left);
+    };
+
+    // 右侧：双击选词、三击选行，按着时轻微抖动也不会缩回。
+    let word = at(&app, RIGHT, 5, 6, false);
+    press(&mut app, word);
+    press(&mut app, word);
+    assert_eq!(selected(&app), "value_5");
+    press(&mut app, word);
+    assert_eq!(selected(&app), "let value_5 = 500;\n");
+
+    // 点行号选整行，拖到下一行的行号选两行。
+    app.last_click = None;
+    let (x, y) = at(&app, RIGHT, 6, 0, true);
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    let (x, y) = at(&app, RIGHT, 7, 0, true);
+    app.on_mouse_move(x, y);
+    app.on_mouse_up(MouseButton::Left);
+    assert_eq!(selected(&app), "let value_6 = 6;\nlet value_7 = 7;\n");
+
+    // ⌥ 单击再添一个光标，键入的字两处都有；Esc 先收起多余的光标，再收起右侧的光标。
+    app.last_click = None;
+    let point = at(&app, RIGHT, 6, 0, false);
+    click(&mut app, point);
+    app.modifiers = ModifiersState::ALT;
+    let point = at(&app, RIGHT, 7, 0, false);
+    click(&mut app, point);
+    app.modifiers = ModifiersState::empty();
+    assert_eq!(app.editor.documents[source(&app)].selections().0.len(), 2);
+    assert!(app.diff_edit_text("X"));
+    let text = app.editor.documents[source(&app)]
+        .text()
+        .rope()
+        .unwrap()
+        .to_string();
+    assert!(text.contains("Xlet value_6 = 6;\nXlet value_7"), "{text}");
+    assert!(app.run_action(Action::RemoveSecondaryCursors));
+    assert_eq!(app.editor.documents[source(&app)].selections().0.len(), 1);
+    assert!(app.run_action(Action::Undo));
+    assert!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .editing
+    );
+
+    // ⌘D：再选中下一处同样的词。
+    app.last_click = None;
+    let word = at(&app, RIGHT, 8, 1, false);
+    press(&mut app, word);
+    press(&mut app, word);
+    assert_eq!(selected(&app), "let");
+    assert!(app.run_action(Action::AddNextOccurrence));
+    assert_eq!(app.editor.documents[source(&app)].selections().0.len(), 2);
+    assert!(app.run_action(Action::RemoveSecondaryCursors));
+
+    // 右键：右侧有剪切、复制、粘贴，光标在改动上时能回滚这一处。
+    let point = at(&app, RIGHT, 5, 2, false);
+    right_click(&mut app, point);
+    assert!(matches!(
+        app.context_menu.as_ref().unwrap().target,
+        MenuTarget::Diff(_, true)
+    ));
+    let commands = menu_commands(&app);
+    assert!(commands.contains(&(MenuCommand::Paste, true)));
+    assert!(commands.contains(&(MenuCommand::GitRevertHunk, true)));
+    let point = at(&app, RIGHT, 8, 2, false);
+    right_click(&mut app, point);
+    assert!(menu_commands(&app).contains(&(MenuCommand::GitRevertHunk, false)));
+
+    // 左侧：双击选词，点行号选整行，右键只有复制。先关掉开着的菜单：菜单开着时点在菜单外
+    // 只关闭菜单。
+    app.dismiss_popup();
+    app.last_click = None;
+    let word = at(&app, LEFT, 5, 6, false);
+    press(&mut app, word);
+    press(&mut app, word);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(!view.editing);
+    assert_eq!(view.left_selected().unwrap(), "value_5");
+    app.last_click = None;
+    let point = at(&app, LEFT, 9, 0, true);
+    click(&mut app, point);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.left_selected().unwrap(), "let value_9 = 9;\n");
+    let point = at(&app, LEFT, 9, 3, false);
+    right_click(&mut app, point);
+    assert_eq!(menu_commands(&app), vec![(MenuCommand::Copy, true)]);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.left_selected().unwrap(), "let value_9 = 9;\n");
+}
+
+#[test]
+fn clicks_and_keys_in_a_diff_scroll_it_and_touch_nothing_else() {
+    let Some((mut app, root)) = git_app("git-diff-keys", true) else {
+        return;
+    };
+    app.open_path(&root.join("src/main.rs"));
+    app.run_action(Action::GitShowChanges);
+    // 展开没改的内容：比一屏高，能滚动。
+    app.press_diff(DiffTarget::Collapse);
+    paint(&mut app);
+    let scroll = app.editor.active().unwrap().scroll_line;
+
+    // 点正文：只拿焦点，不在看不见的文本里放光标，视图不动；⌘ 点击也不转到定义。
+    let body = app.layout.editor;
+    click(&mut app, (body.x + body.w * 0.75, body.bottom() - 40.0));
+    assert_eq!(app.focus, Focus::Editor);
+    assert_eq!(app.editor.active().unwrap().scroll_line, scroll);
+    assert_eq!(app.editor.active().unwrap().selection.head, 0);
+
+    // 键盘滚动。
+    app.diff_key(&Key::Named(NamedKey::ArrowDown), false);
+    assert_eq!(app.editor.active().unwrap().scroll_line, scroll + 1.0);
+    app.diff_key(&Key::Named(NamedKey::Home), false);
+    assert_eq!(app.editor.active().unwrap().scroll_line, 0.0);
+    app.diff_key(&Key::Named(NamedKey::End), false);
+    assert!(app.editor.active().unwrap().scroll_line > 0.0);
+    app.diff_key(&Key::Named(NamedKey::PageUp), false);
+    // 字符键什么都不做（差异只读）。
+    let before = app.editor.active().unwrap().scroll_line;
+    app.diff_key(&Key::Character("x".into()), false);
+    assert_eq!(app.editor.active().unwrap().scroll_line, before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diffs_follow_the_file_and_skip_binaries_and_stale_previews() {
+    let Some((mut app, root)) = git_app("git-diff-live", false) else {
+        return;
+    };
+    let main = root.join("src/main.rs");
+    app.git_preview_changes(&main);
+    let id = app.editor.active().unwrap().id;
+    let new_text = |app: &App| {
+        let doc = app.editor.document(id).unwrap();
+        doc.diff.as_deref().unwrap().new.text.to_string()
+    };
+    assert_eq!(new_text(&app), "fn main() {}\n");
+
+    // 文件又变了：状态刷新以后，已打开的差异原地更新，不切换标签。
+    std::fs::write(&main, "fn main() { run() }\n").unwrap();
+    app.open_path(&root.join("src/config.rs"));
+    let active = app.editor.active().unwrap().id;
+    app.apply_changes(winc_editor::Changes {
+        paths: vec![main.clone()],
+        rescan: false,
+        git: false,
+    });
+    assert_eq!(new_text(&app), "fn main() { run() }\n");
+    assert_eq!(app.editor.active().unwrap().id, active);
+
+    // 被忽略的路径里的变化不触发刷新。
+    std::fs::write(root.join(".gitignore"), "/target\n").unwrap();
+    app.apply_changes(winc_editor::Changes {
+        paths: vec![root.join(".gitignore")],
+        rescan: false,
+        git: false,
+    });
+    let generation = app.git.generation;
+    app.apply_changes(winc_editor::Changes {
+        paths: vec![root.join("target/debug/app")],
+        rescan: false,
+        git: false,
+    });
+    assert_eq!(app.git.generation, generation);
+
+    // 过期的预览请求交回来时不打开。
+    let tabs = app.editor.documents.len();
+    let seq = app.git.preview_seq;
+    app.git.preview_seq += 1;
+    app.fetch_changes(&root.join("src/new.rs"), Target::Preview(seq));
+    assert_eq!(app.editor.documents.len(), tabs);
+    assert_eq!(app.editor.active().unwrap().id, active);
+
+    // 二进制文件不显示差异，在状态栏说明。
+    std::fs::write(root.join("blob.bin"), [0u8, 1, 2, 0, 3]).unwrap();
+    app.git_preview_changes(&root.join("blob.bin"));
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("二进制")),
+        "{:?}",
+        app.status_message
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 测量：滚动差异标签与滚动普通文件时每帧的绘制耗时。
+///
+/// 运行方式：`cargo test -p winc-app measure_diff_scroll -- --ignored --nocapture`。
+#[test]
+#[ignore]
+fn measure_diff_scroll() {
+    use std::time::Instant;
+    let dir = search_folder("git-diff-measure");
+    let text: String = (0..3000)
+        .map(|i| format!("    let value_{i} = compute(value_{i}, \"text {i}\");\n"))
+        .collect();
+    std::fs::write(dir.join("src/main.rs"), &text).unwrap();
+    if !make_repo(&dir) {
+        return;
+    }
+    let mut changed = String::new();
+    for (i, line) in text.lines().enumerate() {
+        match i % 25 {
+            0 => changed.push_str(&line.replace("compute", "recompute")),
+            7 => continue,
+            13 => {
+                changed.push_str(line);
+                changed.push_str("\n    extra();");
+            }
+            _ => changed.push_str(line),
+        }
+        changed.push('\n');
+    }
+    std::fs::write(dir.join("src/main.rs"), changed).unwrap();
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.settings_toggle(Setting::GitModule);
+    let frames = |app: &mut App, label: &str| {
+        paint(app);
+        let start = Instant::now();
+        for _ in 0..60 {
+            app.editor.active_mut().unwrap().scroll_line += 1.3;
+            app.clamp_scroll();
+            paint(app);
+        }
+        eprintln!("{label}: {:?} / 帧", start.elapsed() / 120);
+    };
+    frames(&mut app, "普通文件");
+    app.run_action(Action::GitShowChanges);
+    frames(&mut app, "差异");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：工作区删掉了 `HEAD` 中间一大段，滚到这段中间：左侧一行行露出删掉的内容，右侧停在
+/// 删除的地方。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_diff_long_deletion() {
+    for dark in [false, true] {
+        let name = if dark {
+            "deletion-dark"
+        } else {
+            "deletion-light"
+        };
+        let dir = search_folder(name);
+        if !make_repo(&dir) {
+            return;
+        }
+        let lines: Vec<String> = (0..120).map(|i| format!("let value_{i} = {i};")).collect();
+        std::fs::write(dir.join("long.rs"), lines.join("\n") + "\n").unwrap();
+        git_in(&dir, &["add", "-A"]);
+        git_in(&dir, &["commit", "-q", "-m", "long"]);
+        let kept: Vec<&String> = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !(30..90).contains(i))
+            .map(|(_, l)| l)
+            .collect();
+        let kept: String = kept.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(dir.join("long.rs"), kept).unwrap();
+        let mut app = app_with(&dir.join("long.rs"), dark);
+        app.settings_toggle(Setting::GitModule);
+        app.run_action(Action::GitShowChanges);
+        paint(&mut app);
+        let doc = app.editor.active_mut().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        let span = view.hunk_span(0);
+        doc.scroll_line = span.start + 20.0;
+        shoot(&mut app, name);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

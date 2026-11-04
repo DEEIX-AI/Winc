@@ -1,0 +1,121 @@
+## Settings card.
+
+settings-language = Language
+settings-language-auto = System Default
+settings-language-desc = Interface text language; the menu bar updates after restart
+settings-title = Settings
+
+## Pages and groups.
+
+settings-page-appearance = Appearance
+settings-page-editor = Editor
+settings-page-format = Formatting
+settings-page-modules = Modules
+settings-page-keys = Shortcuts
+settings-page-about = About
+settings-section-format-tools = Formatters
+settings-section-fix-tools = Fixers
+
+## Setting names.
+
+settings-theme = Mode
+settings-light-theme = Light Theme
+settings-dark-theme = Dark Theme
+settings-ui-font = Interface Font
+settings-ui-size = Interface Font Size
+settings-editor-font = Font
+settings-editor-size = Font Size
+settings-tab-width = Tab Width
+settings-auto-save = Auto Save
+settings-hot-exit = Hot Exit
+settings-restore-folder = Reopen Last Folder on Launch
+settings-sticky-scroll = Sticky Scroll
+settings-word-wrap = Word Wrap
+settings-remote-images = Show Remote Images in Markdown Preview
+settings-check-updates = Check for Updates Automatically
+settings-system-title-bar = Use System Title Bar
+settings-format-on-save = Format on Save
+settings-fix-on-save = Fix Problems on Save
+settings-skip-on-save = Excluded Languages
+settings-add-language = Add Language…
+settings-terminal-module = Terminal
+settings-key-search = Search Shortcuts
+
+## Setting descriptions.
+
+settings-tab-width-desc = Tab display width in spaces; space indentation follows the file
+settings-auto-save-desc = Save changes automatically when switching tabs or apps
+settings-hot-exit-desc = Quit without asking to save each file; unsaved changes are restored on next launch
+settings-restore-folder-desc = Remember the open folder and tabs on quit and restore them on next launch
+settings-sticky-scroll-desc = Pin the current function, class, and heading to the top while scrolling
+settings-word-wrap-desc = Wrap long lines to the editor width without changing the file
+settings-remote-images-desc = Load badges and screenshots in READMEs from the web; when off, show alt text
+settings-check-updates-desc = Check on launch and once a day, and show new versions in the status bar
+settings-system-title-bar-desc = Use the title bar and window frame drawn by the desktop
+settings-version = Version
+settings-updates = Software Update
+settings-check-now = Check Now
+settings-updates-off = In-app updates aren’t available in this build
+settings-updates-idle = Not checked yet
+settings-updates-checking = Checking for updates…
+settings-updates-latest = winc is up to date
+settings-updates-found = A new version is available: { $version }
+settings-updates-failed = Couldn’t check for updates. Try again later.
+settings-updates-downloading = Downloading { $version }…
+settings-updates-ready = { $platform ->
+    [windows] { $version } is downloaded. It installs when you restart or quit winc.
+   *[other] { $version } is installed. Restart winc to use it.
+}
+settings-updates-install-failed = Couldn’t install the update: { $error }
+settings-format-on-save-desc = Format files with the tools below before saving
+settings-fix-on-save-desc = Fix problems that lint tools can fix automatically before saving
+settings-skip-on-save-desc = Don’t fix or format files in these languages on save; running manually still works
+settings-git-module-desc = Show file status and the current branch in Git repositories
+settings-terminal-module-desc = Terminal panel below the editor (⌃`); starts a helper process when opened
+
+## Setting values and hints.
+
+settings-theme-auto = Auto
+settings-theme-light = Light
+settings-theme-dark = Dark
+settings-skip-on-save-none = None
+settings-list-separator = { ", " }
+settings-font-default = System Default
+settings-command-placeholder = Enter a command; { "{file}" } stands for the file path
+settings-command-edit-hint = Press ↩ to save, Esc to cancel
+settings-font-not-installed = Font “{ $name }” is not installed
+settings-font-file-not-found = Font file “{ $name }” not found
+settings-font-unsupported = The glyph format of font “{ $name }” is not supported
+settings-theme-used-when-dark = This theme is used when the system appearance is dark
+settings-theme-used-when-light = This theme is used when the system appearance is light
+
+## Theme names.
+
+settings-theme-name-winc-day = Winc Daylight
+settings-theme-name-winc-paper = Winc Rice Paper
+settings-theme-name-sky = Clear Sky
+settings-theme-name-paper = Plain Paper
+settings-theme-name-vermilion = Vermilion
+settings-theme-name-mist = Morning Mist
+settings-theme-name-winc-night = Winc Night Flight
+settings-theme-name-winc-slate = Winc Distant Hills
+settings-theme-name-ink = Ink Blue
+settings-theme-name-ember = Ember
+settings-theme-name-midnight = Midnight
+settings-theme-name-dusk = Dusk
+
+## Shortcuts page.
+
+settings-keys-recording = Press the shortcut to look up; press Esc to stop
+settings-keys-search-record = Type a command name to search, or press { $key } to record keys
+settings-keys-search = Type a command name to search
+settings-keys-no-command = No command uses this shortcut
+settings-keys-no-match = No matching commands
+
+## Font size and the configuration file.
+
+settings-zoom-limit = Editor font size is already { $size } and can’t be adjusted further
+settings-zoom = Editor font size { $size }
+settings-config-backed-up = The configuration file couldn’t be parsed; it was saved as { $path } and the new settings were written
+settings-config-comments-backed-up = Comments in the configuration file can’t be kept when writing settings; the original was saved as { $path }
+settings-config-write-failed = Couldn’t write the configuration file: { $error }

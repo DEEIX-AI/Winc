@@ -1,0 +1,33 @@
+[package]
+name = "winc-render"
+description = "渲染层：swash 字形光栅化 + CPU 合成。macOS 上直接写 IOSurface，其他平台用 softbuffer。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+winit.workspace = true
+swash.workspace = true
+memmap2.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+softbuffer = "0.4"
+
+# macOS：自己往 IOSurface 里画，再用 CALayer 显示。比 GPU 路径省 100–200 MB 常驻内存。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary", "CFNumber", "CFString", "CFCGTypes", "CFURL"] }
+# 按字体名找字体文件：自己扫字体目录认不出 .ttc 里有哪些字重，也认不出用户自己装的字体。
+# 字形只放在 `hvgl` 表中的系统字体（苹方），由 CoreText 取轮廓（CGPath），
+# CoreGraphics 填充成覆盖率位图。
+objc2-core-text = { version = "0.3", default-features = false, features = ["std", "CTFont", "CTFontDescriptor", "CTFontManager", "CTFontTraits", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGImage", "CGPath"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurface", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2", "objc2-core-foundation"] }
+
+[lints]
+workspace = true

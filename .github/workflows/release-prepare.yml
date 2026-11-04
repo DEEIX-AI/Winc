@@ -1,0 +1,48 @@
+name: Release · Prepare
+
+on:
+  workflow_call:
+    inputs:
+      release-tag:
+        type: string
+        default: ""
+    outputs:
+      source-sha:
+        value: ${{ jobs.resolve.outputs.source-sha }}
+      release-tag:
+        value: ${{ jobs.resolve.outputs.release-tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve source and version
+    runs-on: ubuntu-24.04
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      release-tag: ${{ steps.source.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify source
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs';
+          import { currentReleaseSource } from './release/common/source.mjs';
+          import { workspaceVersion } from './release/common/version.mjs';
+          const { sha, releaseTag: tag } = currentReleaseSource();
+          const version = workspaceVersion();
+          if (tag && tag !== `v${version}`) throw new Error(`Tag ${tag} does not match the Cargo.toml version ${version}`);
+          const channel = version.includes('-') ? 'beta' : 'stable';
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\nrelease-tag=${tag}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Source: ${sha}\n\nVersion: ${version} (${channel})\n`);
+          JS
+      # Builds use --locked, so a Cargo.lock that does not match Cargo.toml fails here first.
+      - name: Check Cargo.lock
+        run: cargo metadata --locked --format-version 1 > /dev/null
+

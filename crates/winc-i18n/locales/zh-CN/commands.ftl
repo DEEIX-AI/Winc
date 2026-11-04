@@ -1,0 +1,208 @@
+## 命令名：命令面板、「快捷键」页和菜单中显示的名称。
+
+cmd-show-commands = 显示所有命令
+cmd-quick-open = 转到文件…
+cmd-go-to-symbol = 转到文件中的符号…
+cmd-go-to-line = 转到行…
+cmd-go-to-definition = 转到定义
+cmd-find-references = 查找引用
+cmd-go-back = 后退
+cmd-go-forward = 前进
+cmd-settings = 设置
+cmd-keyboard-shortcuts = 快捷键
+cmd-record-keys = 录制按键
+cmd-new-file = 新建文件
+cmd-new-window = 新建窗口
+cmd-open-file = 打开…
+cmd-open-folder = 打开目录…
+cmd-save = 保存
+cmd-save-as = 另存为…
+cmd-close-tab = 关闭标签页
+cmd-close-other-tabs = 关闭其他标签页
+cmd-close-all-tabs = 关闭所有标签页
+cmd-reopen-closed = 重新打开关闭的标签页
+cmd-next-tab = 下一个标签页
+cmd-previous-tab = 上一个标签页
+cmd-close-folder = 关闭目录
+cmd-close-window = 关闭窗口
+cmd-copy-path = 复制路径
+cmd-copy-relative-path = 复制相对路径
+cmd-copy-reference = 复制代码引用
+cmd-copy-absolute-reference = 复制代码引用（绝对路径）
+cmd-copy-active-path = 复制当前文件的路径
+cmd-copy-key-path = 复制键路径
+cmd-reveal-active-file-in-finder = 在访达中显示当前文件
+cmd-reveal-active-file-in-folder = 在目录中显示当前文件
+cmd-open-in-terminal = 在外部终端中打开
+cmd-quit = 退出
+cmd-undo = 撤销
+cmd-redo = 重做
+cmd-cut = 剪切
+cmd-copy = 复制
+cmd-paste = 粘贴
+cmd-select-all = 全选
+cmd-toggle-comment = 切换行注释
+cmd-delete-line = 删除行
+cmd-delete-all-left = 删除到行首
+cmd-indent-lines = 增加缩进
+cmd-outdent-lines = 减少缩进
+cmd-move-lines-up = 向上移动行
+cmd-move-lines-down = 向下移动行
+cmd-copy-lines-up = 向上复制行
+cmd-copy-lines-down = 向下复制行
+cmd-join-lines = 合并行
+cmd-expand-selection = 扩大选区
+cmd-shrink-selection = 缩小选区
+cmd-add-cursor-above = 在上面添加光标
+cmd-add-cursor-below = 在下面添加光标
+cmd-add-next-occurrence = 将选择添加到下一个匹配项
+cmd-skip-to-next-occurrence = 将上次选择移动到下一个匹配项
+cmd-select-all-occurrences = 选择所有匹配项
+cmd-remove-secondary-cursors = 只保留主光标
+cmd-add-cursors-to-line-ends = 在行尾添加光标
+cmd-cursor-undo = 撤销光标操作
+cmd-cursor-redo = 重做光标操作
+cmd-column-select-up = 列选择：向上
+cmd-column-select-down = 列选择：向下
+cmd-column-select-left = 列选择：向左
+cmd-column-select-right = 列选择：向右
+cmd-jump-to-bracket = 转到括号
+cmd-transform-to-uppercase = 转换为大写
+cmd-transform-to-lowercase = 转换为小写
+cmd-transform-to-titlecase = 转换为词首字母大写
+cmd-sort-lines-ascending = 按升序排列行
+cmd-sort-lines-descending = 按降序排列行
+cmd-trim-trailing-whitespace = 裁剪尾随空格
+cmd-indent-using-spaces = 使用空格缩进
+cmd-indent-using-tabs = 使用制表符缩进
+cmd-convert-indentation-to-spaces = 将缩进转换为空格
+cmd-convert-indentation-to-tabs = 将缩进转换为制表符
+cmd-detect-indentation = 从内容中检测缩进方式
+cmd-change-end-of-line = 更改行尾序列
+cmd-change-language-mode = 更改文件的语言…
+cmd-fold = 折叠
+cmd-unfold = 展开
+cmd-toggle-fold = 切换折叠
+cmd-fold-recursively = 以递归方式折叠
+cmd-unfold-recursively = 以递归方式展开
+cmd-fold-all = 全部折叠
+cmd-unfold-all = 全部展开
+cmd-fold-level-1 = 折叠级别 1
+cmd-fold-level-2 = 折叠级别 2
+cmd-fold-level-3 = 折叠级别 3
+cmd-fold-level-4 = 折叠级别 4
+cmd-fold-level-5 = 折叠级别 5
+cmd-fold-level-6 = 折叠级别 6
+cmd-fold-level-7 = 折叠级别 7
+cmd-toggle-bookmark = 切换书签
+cmd-next-bookmark = 下一个书签
+cmd-previous-bookmark = 上一个书签
+cmd-list-bookmarks = 列出书签
+cmd-clear-bookmarks = 清除所有书签
+cmd-format = 格式化文档
+cmd-format-selection = 格式化所选内容
+cmd-fix = 修复问题
+cmd-find = 查找
+cmd-replace = 替换
+cmd-find-next = 查找下一个
+cmd-find-previous = 查找上一个
+cmd-replace-one = 替换此处
+cmd-replace-all = 全部替换
+cmd-select-all-matches = 选择所有查找结果
+cmd-toggle-case = 区分大小写
+cmd-toggle-word = 全字匹配
+cmd-toggle-regex = 使用正则表达式
+cmd-filter-lines = 只显示匹配的行
+cmd-find-in-files = 在文件中查找
+cmd-replace-in-files = 在文件中替换
+cmd-replace-all-in-files = 在文件中全部替换
+cmd-next-result = 下一个搜索结果
+cmd-previous-result = 上一个搜索结果
+cmd-rename-file = 重命名…
+cmd-delete-file = 删除
+cmd-open-selected = 打开
+cmd-preview-selected = 打开（焦点保留在文件树）
+cmd-find-in-folder = 在目录中查找…
+cmd-toggle-sidebar = 显示或隐藏侧栏
+cmd-focus-sidebar = 聚焦到侧栏
+cmd-show-files = 显示文件
+cmd-zoom-in = 放大字号
+cmd-zoom-out = 缩小字号
+cmd-reset-zoom = 还原字号
+cmd-theme-auto = 主题：跟随系统
+cmd-theme-light = 主题：浅色
+cmd-theme-dark = 主题：深色
+cmd-toggle-sticky-scroll = 切换粘滞滚动
+cmd-toggle-word-wrap = 切换自动换行
+cmd-next-difference = 下一处更改
+cmd-previous-difference = 上一处更改
+cmd-git-show-changes = Git：显示差异
+cmd-git-show-log = Git：显示日志
+cmd-git-switch-worktree = Git：切换工作树…
+cmd-git-new-worktree = Git：新建工作树…
+cmd-git-file-history = Git：显示当前文件的历史
+cmd-git-blame = Git：逐行追溯
+cmd-show-commit = Git：提交…
+cmd-git-revert-change = Git：回滚光标处的更改
+cmd-toggle-terminal = 显示或隐藏终端
+cmd-clear-terminal = 终端：清除
+cmd-new-terminal = 新建终端
+cmd-close-terminal = 终端：关闭标签页
+cmd-next-terminal = 终端：下一个标签页
+cmd-previous-terminal = 终端：上一个标签页
+cmd-find-in-terminal = 终端：查找
+cmd-maximize-terminal = 终端：最大化面板
+cmd-rename-terminal = 终端：重命名
+cmd-previous-command = 终端：上一条命令
+cmd-next-command = 终端：下一条命令
+cmd-fold-output = 终端：折叠命令的输出
+cmd-unfold-output = 终端：展开命令的输出
+cmd-next-error = 终端：下一处错误
+cmd-previous-error = 终端：上一处错误
+cmd-send-to-terminal = 终端：运行选中的代码
+cmd-toggle-preview = 切换预览
+
+## 执行命令时的提示
+
+cmd-no-selected-file = 没有选中的文件
+cmd-no-file-for-tab = 当前标签页没有对应的文件
+cmd-no-selection = 没有选中的内容
+cmd-chord-unassigned = { $keys } 未分配任何命令
+cmd-chord-pending = 已按下 { $key }，请按第二个键…
+cmd-one-off-no-new-window = 临时窗口无法新建窗口
+
+## 命令行：用法说明和错误输出
+
+cmd-cli-usage =
+    用法：winc [选项] [文件或目录 ...]
+
+      winc                  恢复上次打开的目录
+      winc .                打开当前目录
+      winc 文件:行[:列]     打开文件并跳到那一行
+      winc -                读取标准输入（例如 cargo build 2>&1 | winc -）
+      -w, --wait            等文件的标签都关闭后再退出（例如 git config core.editor "winc -w"）
+      -n, --new-instance    不交给正在运行的 winc，另开一个进程（例如在 winc 的终端里运行开发中的版本）
+      -h, --help            显示这些说明
+cmd-cli-unknown-option = 无法识别的选项「{ $flag }」
+cmd-cli-wait-needs-file = --wait 需要指定文件
+cmd-cli-wait-needs-openable-file = --wait 需要至少一个可以打开的文件
+cmd-cli-wait-folder = 「{ $path }」是目录，--wait 只能打开文件
+cmd-cli-open-failed = 无法打开「{ $path }」：{ $error }
+cmd-cli-event-loop-failed = 无法创建事件循环：{ $error }
+
+## 「快捷键」页：命令的生效范围和分组
+
+cmd-when-editor = 编辑区
+cmd-when-editor-or-find = 编辑区、查找栏
+cmd-when-replace-input = 替换框
+cmd-when-panel = 搜索视图
+cmd-when-tree = 文件树
+cmd-when-keys-page = 快捷键搜索
+cmd-when-not-editor = 非编辑区
+cmd-when-terminal = 终端
+cmd-group-general = 常用
+cmd-group-file = 文件
+cmd-group-edit = 编辑
+cmd-group-find = 查找
+cmd-group-tree = 文件树
+cmd-group-view = 视图

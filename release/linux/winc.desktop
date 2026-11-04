@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=winc
+Comment=A lighter, faster desktop code editor
+Exec=winc %F
+Icon=winc
+Type=Application
+Terminal=false
+Categories=Development;TextEditor;
+MimeType=text/plain;inode/directory;
+StartupNotify=true

@@ -1,0 +1,195 @@
+//! 鼠标：悬停、点击、拖动和滚轮。
+//!
+//! 绘制每帧把可点击的区域记入 `*_hits` 表（标签、文件树、编辑区、按钮等），鼠标事件按当前
+//! 焦点和这些表找到目标。拖动包括标签排序、文件树拖动、滚动条和文本选区。
+
+mod click;
+mod drag;
+mod regions;
+mod target;
+
+use target::*;
+
+use std::time::Instant;
+
+use winit::event::{MouseButton, MouseScrollDelta};
+use winit::window::CursorIcon;
+
+use winc_core::{Lines, Selection, movement};
+use winc_render::Renderer;
+
+use crate::app::{
+    App, Click, DOUBLE_CLICK, Drag, Focus, Hover, MenuCommand, PICKER_ROW, TreeDrag, WindowControl,
+    resize_cursor, tree_max_scroll,
+};
+use crate::layout::{
+    RowAction, Scrollbar, SearchParts, SettingControl, SettingsPart, SidebarView, goto_bar, hit,
+    hscrollbar_thumb, row_actions, scroll_for_thumb, scrollbar_thumb,
+};
+use crate::theme::*;
+use crate::view;
+
+impl App {
+    /// 处理鼠标按键 `button` 松开：结束拖动，并在需要时关闭标签。
+    ///
+    /// 左键按在关闭按钮上、或中键按在标签上之后，松开时鼠标仍在同一个标签上才关闭该标签。
+    pub(in crate::app) fn on_mouse_up(&mut self, button: MouseButton) {
+        // 拖动标签时悬停目标被清除，松开后重新判断鼠标下方的部件。
+        let was_tab = self.dragged_tab().is_some();
+        self.drag_scrolled_at = None;
+        if button == MouseButton::Left {
+            self.release_tree_item();
+            self.release_tab();
+        }
+
+        if matches!(button, MouseButton::Left | MouseButton::Middle)
+            && let Some(id) = self.close_pressed.take()
+            && let Some((index, _)) = self.tab_at(self.mouse.0, self.mouse.1)
+            && self.editor.documents.get(index).is_some_and(|d| d.id == id)
+        {
+            self.tabs.width_lock = self.tabs.widths.get(index).map(|&w| (index, w));
+            self.close_tab(index);
+        }
+
+        self.terminal_mouse_up();
+        self.release_terminal_tab();
+        let was_scrollbar = matches!(self.drag, Drag::Scrollbar { .. });
+        let was_divider = matches!(
+            self.drag,
+            Drag::Splitter { .. } | Drag::TerminalDivider { .. } | Drag::SplitDivider { .. }
+        );
+        if matches!(self.drag, Drag::TerminalDivider { .. }) {
+            self.terminal_dragging(false);
+        }
+        self.drag = Drag::None;
+        // 拖动分隔条期间不重新断行（`sync_wrap`）；松开后重画，重画前的布局按最终宽度断行。
+        if was_divider {
+            self.request_redraw();
+        }
+        if was_scrollbar || was_tab {
+            self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
+        }
+        self.update_cursor_icon();
+    }
+
+    /// 处理滚轮事件 `delta`：滚动鼠标所在区域对应的内容。
+    pub(in crate::app) fn on_wheel(&mut self, delta: MouseScrollDelta) {
+        self.dismiss_hint();
+        // 滚轮和触控板的滚动由用户直接控制：平滑滚动立即停在目标位置，从该位置继续滚动。
+        self.scroll_glide = None;
+        let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
+        let (dx, dy) = match delta {
+            // 滚轮一格滚 3 行；`cell` 与行高都是逻辑像素。
+            MouseScrollDelta::LineDelta(x, y) => {
+                (x * self.cell * 3.0, y * self.fonts.line_height * 3.0)
+            }
+            MouseScrollDelta::PixelDelta(p) => (p.x as f32 / scale, p.y as f32 / scale),
+        };
+        // 按住 `Shift` 时竖直滚动改为横向滚动，只用于鼠标滚轮。触控板本身能横向滚动，手指离开后
+        // 还会持续发出惯性滚动事件；这时按 `⇧Tab` 等组合键，惯性滚动会被当成横向滚动，
+        // 编辑区突然右移几列。
+        let shift_wheel = self.modifiers.shift_key()
+            && dx == 0.0
+            && matches!(delta, MouseScrollDelta::LineDelta(..));
+
+        let (x, y) = self.mouse;
+        let l = self.layout;
+
+        // 窗口内的提示框打开时什么也不滚；菜单打开时只滚动菜单。
+        if self.alert.is_some() || self.popup_wheel(dy) {
+            return;
+        }
+        // 对话框不滚动；下方的编辑区和文件树也不动。
+        if self.form_dialog.is_some() {
+            return;
+        }
+        // 设置浮层打开时滚轮只滚动浮层的分组区，下方的编辑区和文件树不动。
+        if self.settings.open {
+            if self.settings_layout().body.contains(x, y) {
+                self.settings_scroll_by(dy);
+            }
+            return;
+        }
+
+        if self.picker_open && l.picker.contains(x, y) {
+            // 滚轮只滚动列表，选中项不变。
+            let rows = self.picker_hits.len();
+            let max = (rows as f32 * PICKER_ROW - view::picker_span(self)).max(0.0);
+            if self.picker_places.is_some() {
+                // 位置浮窗按整行滚动，任何时候都只露出完整的行：滚动量攒够一行才滚一行，
+                // 触控板的小幅滑动也不会让行停在半截上。
+                self.places_wheel += dy;
+                let steps = (self.places_wheel / PICKER_ROW).trunc();
+                self.places_wheel -= steps * PICKER_ROW;
+                let max = (max / PICKER_ROW).ceil() * PICKER_ROW;
+                self.picker_scroll = (self.picker_scroll - steps * PICKER_ROW).clamp(0.0, max);
+            } else {
+                self.picker_scroll = (self.picker_scroll - dy).clamp(0.0, max);
+            }
+            // 列表滚动后，鼠标下方的行已改变。
+            self.set_hover(self.hover_at(x, y));
+        } else if l.tabs.contains(x, y) {
+            // 竖直滚轮同样用于横向滚动标签栏。
+            let delta = if dx.abs() > dy.abs() { dx } else { dy };
+            let max = self.tabs.max_scroll();
+            self.tabs.scroll = (self.tabs.scroll - delta).clamp(0.0, max);
+            // 标签滚动后，鼠标下方的标签已改变。
+            self.set_hover(self.hover_at(x, y));
+        } else if self.commit_shown() && self.commit_parts().message.contains(x, y) {
+            // 提交信息框里的文字超出最大行数时在框内滚动；上限在绘制时按文字的行数收紧。
+            let view = &mut self.commit.message.view;
+            view.scroll = (view.scroll - dy).max(0.0);
+        } else if self.commit_shown() && self.commit_parts().list.contains(x, y) {
+            let max = self.commit_max_scroll();
+            self.commit.scroll = (self.commit.scroll - dy).clamp(0.0, max);
+            self.set_hover(self.hover_at(x, y));
+        } else if self.panel_shown() && l.sidebar.contains(x, y) {
+            let max = self.results_max_scroll();
+            self.global.scroll = (self.global.scroll - dy).clamp(0.0, max);
+            self.set_hover(self.hover_at(x, y));
+        } else if l.sidebar.contains(x, y) || self.in_tree_overflow(x, y) {
+            let rows = self.editor.workspace.as_ref().map_or(0, |w| w.rows().len());
+            let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
+            let max = tree_max_scroll(l.tree, rows).max(0.0);
+            self.tree_scroll = (self.tree_scroll - dy).clamp(0.0, max);
+            // 触控板的斜向滚动只取主方向，竖直滚动时不会同时产生左右位移。
+            if dx != 0.0 {
+                let max_x = self.tree_max_scroll_x();
+                let delta = if dy == 0.0 || dx.abs() > dy.abs() {
+                    -dx
+                } else {
+                    0.0
+                };
+                self.tree_scroll_x = (self.tree_scroll_x + delta).clamp(0.0, max_x);
+            }
+
+            // 文件树滚动后，鼠标下方的行已改变。
+            self.set_hover(self.hover_at(x, y));
+        } else if self.log_active() && self.log_parts().details.contains(x, y) {
+            // 日志的详情一栏单独滚动。
+            if let Some(view) = self.editor.active_mut().and_then(|d| d.log.as_deref_mut()) {
+                view.details_scroll = (view.details_scroll - dy).clamp(0.0, self.log.details_max);
+            }
+            self.request_redraw();
+        } else if l.terminal.contains(x, y) {
+            self.terminal_wheel(dy);
+        } else if self.markdown.area.contains(x, y) {
+            self.scroll_markdown(dy);
+        } else if self.table_at(x, y) {
+            let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
+            self.scroll_table(dx, dy, (x, y));
+        } else if l.editor.contains(x, y) {
+            // 按住 `Shift` 时，竖直滚轮用于横向滚动。
+            let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
+
+            if let Some(doc) = self.editor.active_mut() {
+                doc.scroll_line -= dy / self.fonts.line_height;
+                doc.scroll_x -= dx;
+            }
+
+            self.clamp_scroll();
+        }
+
+        self.request_redraw();
+    }
+}

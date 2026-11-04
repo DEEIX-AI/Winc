@@ -1,0 +1,1100 @@
+//! Git 模块的底层：找到系统里的 `git`，运行 `git status` 并解析结果，取文件在暂存区或提交里的内容。
+//!
+//! 只调用 `git` 命令，不链接 Git 的库，用户的 hooks、全局配置、凭据助手都仍然生效；界面线程不调用这
+//! 里的函数。仓库自己的配置（`.git/config`、hooks）可能来自不可信的压缩包或共享盘，可以指定 `git`
+//! 要运行的命令：用户信任该仓库（[`Git::trust`]）之前不运行 fsmonitor 和过滤器，会改动仓库的操作一
+//! 律拒绝，依据见 [`Risks`]。
+
+pub mod log;
+pub mod merge;
+
+mod commit;
+mod ignored;
+mod parse;
+mod sync;
+mod trust;
+mod worktree;
+
+pub use ignored::*;
+use parse::*;
+pub use trust::*;
+pub use worktree::*;
+
+use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use winc_core::hash::Fnv;
+
+use crate::tools::shell::Shell;
+use crate::tools::shell::process::{self, Cancel, RunError};
+
+/// `git status` 最长的运行时间（30 秒）。
+///
+/// 几十万个文件的仓库第一次运行需要数秒；超过该时间视为 `git` 失去响应。
+const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
+/// 日志中日期的格式参数。
+///
+/// 本机时区的换算由 `git` 完成（`format-local`），不需要读取时区数据库。
+const LOG_DATE: &str = "--date=format-local:%Y-%m-%d %H:%M";
+/// 日志中单个提交的输出格式，由 [`parse_log`] 解析。
+const LOG_FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%ad%x1f%D%x1f%s%x1e";
+/// 取文件内容最长的运行时间（10 秒）。
+///
+/// 读取大仓库里的对象通常在毫秒级；超过该时间视为 `git` 失去响应。
+const SHOW_TIMEOUT: Duration = Duration::from_secs(10);
+/// 提交最长的运行时间（10 分钟）：提交前的 hooks 可能要运行测试、格式检查。
+const COMMIT_TIMEOUT: Duration = Duration::from_secs(600);
+/// 获取、拉取、推送、合并、变基这类操作最长的运行时间（10 分钟）。
+///
+/// 网络慢、hooks 需要运行测试或格式检查时耗时较长。
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// `HEAD` 指向的提交（提交视图里「撤销上一次提交」使用）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastCommit {
+    /// 完整的提交号。
+    pub oid: String,
+    /// 提交信息的第一行。
+    pub subject: String,
+    /// 完整的提交信息。
+    pub message: String,
+    /// 提交时间（Unix 秒）。
+    pub time: i64,
+    /// 提交时间在本机时区的写法「2026-10-26 14:32」。
+    pub local: String,
+}
+
+/// 只提交一部分改动的文件：提交成 `content`，工作区里的文件不变。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial {
+    /// 文件的路径。
+    pub path: PathBuf,
+    /// 要提交成的内容（工作区里的形式，换行符等与工作区文件相同）。
+    pub content: Vec<u8>,
+}
+
+/// 一个分支。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branch {
+    /// 分支名；远程分支带着远程名（`origin/main`）。
+    pub name: String,
+    /// 是否是远程分支。
+    pub remote: bool,
+    /// 是否是当前分支。
+    pub current: bool,
+    /// 跟踪的上游分支（`origin/main`）；没有时为 `None`。
+    pub upstream: Option<String>,
+    /// 该分支指向的完整提交号。
+    ///
+    /// 提交、推送、获取使分支移动时随之变化，据此判断开着的日志是否需要重新读取。
+    pub oid: String,
+}
+/// 日志里的一个提交。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    /// 完整的提交号。
+    pub oid: String,
+    /// 父提交的提交号，第一个是主线；根提交没有，合并提交有两个以上。
+    pub parents: Vec<String>,
+    /// 作者的名字。
+    pub author: String,
+    /// 作者的邮箱。
+    pub email: String,
+    /// 作者写下这次提交的时间（Unix 秒）。
+    pub time: i64,
+    /// 同一时间换成本机时区的写法：「2026-10-26 14:32」。
+    pub local: String,
+    /// 指向该提交的引用：分支、远程分支、标签、`HEAD`。
+    pub refs: Vec<Ref>,
+    /// 说明的第一行。
+    pub subject: String,
+}
+
+/// 指着一个提交的引用。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ref {
+    /// `HEAD` 指着的当前分支。
+    Head(String),
+    /// `HEAD` 直接指向该提交（分离的 `HEAD`）。
+    Detached,
+    /// 本地分支。
+    Branch(String),
+    /// 远程分支（带远程名，`origin/main`）。
+    Remote(String),
+    /// 标签。
+    Tag(String),
+}
+
+/// 一次提交改动的一个文件。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitFile {
+    /// 文件的绝对路径（改之后的路径）。
+    pub path: PathBuf,
+    /// 改名前的绝对路径（只有改名时才有）。
+    pub from: Option<PathBuf>,
+    /// 怎么变的：新增、修改、删除、改名。
+    pub change: Change,
+    /// 加了几行、删了几行；二进制文件为 `None`。
+    pub lines: Option<(usize, usize)>,
+}
+
+/// 一条储藏（`git stash`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stash {
+    /// 名字：`stash@{0}`，最新的是 0。
+    ///
+    /// 新建或删除储藏后，其余储藏的编号随之改变；要指定某一条储藏时用 `oid`。
+    pub name: String,
+    /// 储藏对应的提交号（完整的对象号），不随其他储藏的增删改变。
+    pub oid: String,
+    /// `git` 记下的说明：「On main: 说明」或「WIP on main: 提交号 说明」。
+    pub message: String,
+}
+
+/// 逐行追溯（`git blame`）的结果：每一行最后一次由哪次提交改动。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Blame {
+    /// 出现过的提交，按第一次出现的顺序。
+    pub commits: Vec<BlameCommit>,
+    /// 每一行（从 0 起）是 `commits` 里的第几个。
+    pub lines: Vec<u32>,
+}
+
+/// 逐行追溯里的一次提交。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlameCommit {
+    /// 完整的提交号；尚未提交的行全是 0。
+    pub oid: String,
+    /// 作者的名字。
+    pub author: String,
+    /// 作者写下这次提交的时间（Unix 秒）。
+    pub time: i64,
+    /// 作者所在时区与 UTC 的差（秒），东八区是 28800。
+    pub offset: i64,
+    /// 说明的第一行。
+    pub summary: String,
+    /// 这些行还没有提交（在当前工作区里改过、尚未提交的行）。
+    pub uncommitted: bool,
+}
+
+/// 日志的筛选条件。
+///
+/// 都不填时是所有分支的全部提交。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogQuery {
+    /// 说明里含有这段文字（不分大小写，按字面找，不是正则）。
+    pub text: String,
+    /// 只看该分支（本地或远程，如 `origin/main`）能走到的提交。
+    pub branch: Option<String>,
+    /// 作者名字或邮箱里含有这段文字（不分大小写，按字面找）。
+    pub author: Option<String>,
+    /// 只看改过该文件的提交（文件历史），越过改名继续往前查找。
+    pub path: Option<PathBuf>,
+}
+
+impl LogQuery {
+    /// 是否因为按说明、作者或文件筛选而画不出提交图。
+    ///
+    /// 这些条件下结果里的父提交大多不在列表里，提交图连不起来；只按分支筛选时提交仍然相连，
+    /// 可以画图。
+    pub fn graphless(&self) -> bool {
+        !self.text.trim().is_empty() || self.author.is_some() || self.path.is_some()
+    }
+
+    /// 是否按说明、分支或作者筛选过。
+    ///
+    /// 文件历史的文件不算：那本来就是该标签展示的内容。
+    pub fn filtered(&self) -> bool {
+        !self.text.trim().is_empty() || self.branch.is_some() || self.author.is_some()
+    }
+}
+
+/// 日志最长的运行时间（30 秒，经验值）。
+///
+/// 几十万个提交的仓库取一批也只要零点几秒。
+const LOG_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 检查 macOS 开发者工具是否已安装的最长时间（5 秒，经验值）。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 一个文件相对于某个版本的变化。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Change {
+    /// 被删除。
+    Deleted,
+    /// 未跟踪的新文件。
+    Untracked,
+    /// 新加入版本管理。
+    Added,
+    /// 被改名（可能同时被修改）。
+    Renamed,
+    /// 内容或类型被修改。
+    Modified,
+    /// 合并时有冲突。
+    Conflicted,
+}
+
+impl Change {
+    /// 状态的单字母写法，用在文件树和变更列表里。
+    pub fn letter(self) -> char {
+        match self {
+            Change::Deleted => 'D',
+            Change::Untracked => 'U',
+            Change::Added => 'A',
+            Change::Renamed => 'R',
+            Change::Modified => 'M',
+            Change::Conflicted => '!',
+        }
+    }
+
+    /// 把 `git status --porcelain=v2` 中 `XY` 的一位字母转换成变化类型，`.` 表示没有变化。
+    fn from_code(code: u8) -> Option<Change> {
+        match code {
+            b'M' | b'T' => Some(Change::Modified),
+            b'A' | b'C' => Some(Change::Added),
+            b'D' => Some(Change::Deleted),
+            b'R' => Some(Change::Renamed),
+            b'U' => Some(Change::Conflicted),
+            _ => None,
+        }
+    }
+}
+
+/// 状态里的一个文件。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    /// 文件的绝对路径。
+    pub path: PathBuf,
+    /// 改名前的绝对路径（只有改名时才有）。
+    pub from: Option<PathBuf>,
+    /// 已暂存的变化：暂存区相对于 `HEAD`。
+    pub staged: Option<Change>,
+    /// 未暂存的变化：工作区相对于暂存区。
+    ///
+    /// 未跟踪、冲突的文件只有这一项。
+    pub unstaged: Option<Change>,
+    /// 该条目是整个未被跟踪的目录（`git` 只报一项，路径以 `/` 结尾）；读状态时记下，绘制时
+    /// 不再查询文件系统。
+    pub is_dir: bool,
+}
+
+impl Entry {
+    /// 是否是未跟踪的文件（或目录）。
+    pub fn untracked(&self) -> bool {
+        self.unstaged == Some(Change::Untracked)
+    }
+
+    /// 是否只暂存了一部分：已暂存的内容和工作区的文件不同。
+    ///
+    /// 即 `git status` 的 `MM` 一类，暂存区和工作区相对各自的上一级都有变化。未跟踪、冲突、
+    /// 暂存了删除的文件不算。
+    pub fn partly_staged(&self) -> bool {
+        !self.conflicted()
+            && !self.untracked()
+            && self.unstaged.is_some()
+            && self.staged.is_some_and(|c| c != Change::Deleted)
+    }
+
+    /// 是否为合并时有冲突的文件。
+    pub fn conflicted(&self) -> bool {
+        self.staged == Some(Change::Conflicted) || self.unstaged == Some(Change::Conflicted)
+    }
+
+    /// 在文件树里显示的状态：两项中优先级更高的一项。
+    pub fn shown(&self) -> Change {
+        match (self.staged, self.unstaged) {
+            (Some(a), Some(b)) => a.max(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => Change::Modified,
+        }
+    }
+}
+
+/// `HEAD` 指向哪里。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Head {
+    /// 在某个分支上。
+    Branch(String),
+    /// 分离的 `HEAD`，值是提交号的前 7 位。
+    Detached(String),
+}
+
+/// `git status` 最多读取的有变化的文件数（个）。
+///
+/// 超过时只保留前 `STATUS_LIMIT` 个，并标记 [`Status::truncated`]。
+///
+/// 没被忽略的数据目录、虚拟环境可以有数十万个文件，每次刷新都重建全部条目会占用数百 MB 内存。
+pub const STATUS_LIMIT: usize = 10_000;
+
+/// 一次 `git status` 的结果。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Status {
+    /// 当前的 `HEAD`；仓库状态异常、读不出时为 `None`。
+    pub head: Option<Head>,
+    /// `HEAD` 指向的完整提交号；还没有提交过时为 `None`。
+    ///
+    /// `HEAD` 变化时（提交、切换分支），提交号随之变化。
+    /// 据此判断各文件在 `HEAD` 里的内容是否需要重新取。
+    pub oid: Option<String>,
+    /// 有上游分支时，本地领先的提交数。
+    pub ahead: u32,
+    /// 有上游分支时，本地落后的提交数。
+    pub behind: u32,
+    /// 有变化的文件，按 `git` 输出的顺序（路径排序）。
+    pub entries: Vec<Entry>,
+    /// 被忽略规则（各级 `.gitignore`、`.git/info/exclude`、全局忽略文件）忽略且未跟踪的文件和目录。
+    ///
+    /// 整个目录被忽略时只包含目录本身，不列出其中的文件（`--ignored=matching`）。
+    pub ignored: Vec<PathBuf>,
+    /// 正在进行、停下来等用户处理冲突的操作（合并、变基……）；没有时为 `None`。
+    pub operation: Option<Operation>,
+    /// 有变化的文件超过 [`STATUS_LIMIT`] 个、`entries` 只含前一部分时为 `true`。
+    pub truncated: bool,
+    /// 仍含冲突标记（`<<<<<<<` … `>>>>>>>`）的冲突文件。
+    ///
+    /// 提交这些文件会将冲突标记一并提交。读取状态时在后台同时读取这些文件。
+    pub unresolved: Vec<PathBuf>,
+}
+
+/// 停下来等用户处理冲突的操作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Operation {
+    /// `git merge`（还有 `pull` 时的合并）。
+    Merge,
+    /// `git rebase`。
+    Rebase,
+    /// `git cherry-pick`。
+    CherryPick,
+    /// `git revert`。
+    Revert,
+}
+
+impl Operation {
+    /// 命令的名字，例如「合并」「变基」。
+    pub fn label(self) -> &'static str {
+        match self {
+            Operation::Merge => winc_i18n::t!("git-operation-merge"),
+            Operation::Rebase => winc_i18n::t!("git-operation-rebase"),
+            Operation::CherryPick => winc_i18n::t!("git-operation-cherry-pick"),
+            Operation::Revert => winc_i18n::t!("git-operation-revert"),
+        }
+    }
+
+    fn command(self) -> &'static str {
+        match self {
+            Operation::Merge => "merge",
+            Operation::Rebase => "rebase",
+            Operation::CherryPick => "cherry-pick",
+            Operation::Revert => "revert",
+        }
+    }
+
+    /// 从仓库目录 `git_dir` 里的标记文件看出正在进行的操作。
+    fn detect(git_dir: &Path) -> Option<Operation> {
+        if git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir() {
+            Some(Operation::Rebase)
+        } else if git_dir.join("MERGE_HEAD").is_file() {
+            Some(Operation::Merge)
+        } else if git_dir.join("CHERRY_PICK_HEAD").is_file() {
+            Some(Operation::CherryPick)
+        } else if git_dir.join("REVERT_HEAD").is_file() {
+            Some(Operation::Revert)
+        } else {
+            None
+        }
+    }
+}
+
+/// 仓库 `root` 的 `.git` 目录：工作树和子模块里 `.git` 是一个写着 `gitdir: <路径>` 的文件。
+fn git_dir(root: &Path) -> Option<PathBuf> {
+    let dot = root.join(".git");
+    if dot.is_dir() {
+        return Some(dot);
+    }
+    let text = std::fs::read_to_string(&dot).ok()?;
+    let target = text.trim().strip_prefix("gitdir:")?.trim();
+    Some(root.join(target))
+}
+
+/// 仓库共用的 `git` 目录：工作树（`git worktree`）的 `.git` 文件指向它自己的目录，hooks、
+/// 各工作树的记录（`worktrees/`）在那里的 `commondir` 所指的目录里。
+fn git_common_dir(root: &Path) -> Option<PathBuf> {
+    let dir = git_dir(root)?;
+    match std::fs::read_to_string(dir.join("commondir")) {
+        Ok(common) => Some(dir.join(common.trim())),
+        Err(_) => Some(dir),
+    }
+}
+
+impl Status {
+    /// 文件树要用的状态：每个有变化的文件，以及它们所在的各级目录（直到 `root`，不含 `root`）。
+    ///
+    /// 目录取子项里最显眼的状态，但删除不传给目录：目录里删掉一个文件，目录本身不显示异常。
+    pub fn decorations(&self, root: &Path) -> HashMap<PathBuf, Change> {
+        let mut map: HashMap<PathBuf, Change> = HashMap::new();
+        for entry in &self.entries {
+            let shown = entry.shown();
+            map.insert(entry.path.clone(), shown);
+            if shown == Change::Deleted {
+                continue;
+            }
+            for dir in entry.path.ancestors().skip(1) {
+                if dir == root || !dir.starts_with(root) {
+                    break;
+                }
+                match map.entry(dir.to_path_buf()) {
+                    // 已经有同样显眼或更显眼的状态：再往上的各级目录也已经有了。
+                    std::collections::hash_map::Entry::Occupied(slot) if *slot.get() >= shown => {
+                        break;
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut slot) => {
+                        slot.insert(shown);
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(shown);
+                    }
+                }
+            }
+        }
+        map
+    }
+}
+
+/// 找不到可用的 `git` 的原因。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unavailable {
+    /// `PATH` 里没有 `git`。
+    NotInstalled,
+    /// macOS 上没有安装命令行开发者工具：`/usr/bin/git` 是占位程序，运行后只会弹出系统的
+    /// 安装对话框。
+    NoDeveloperTools,
+}
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unavailable::NotInstalled => {
+                f.write_str(winc_i18n::t!("git-unavailable-not-installed"))
+            }
+            Unavailable::NoDeveloperTools => {
+                f.write_str(winc_i18n::t!("git-unavailable-no-developer-tools"))
+            }
+        }
+    }
+}
+
+/// 系统里可用的 `git`。
+#[derive(Debug, Clone)]
+pub struct Git {
+    /// `git` 可执行文件的路径。
+    program: PathBuf,
+    /// 用户 shell 的环境：`git` 命令都在这个环境里运行。
+    shell: Shell,
+    /// 各仓库的配置检查结果和信任状态，[`Git`] 的各个副本共用。
+    trust: Arc<Mutex<Trust>>,
+}
+
+impl Git {
+    /// 在用户 shell 的 `PATH` 里找 `git`，确认它能用。
+    ///
+    /// 第一次调用要等取到环境。
+    ///
+    /// # Errors
+    ///
+    /// 找不到，或者 macOS 上找到的是没装开发者工具时的占位程序，返回 [`Unavailable`]。
+    pub fn find(shell: &Shell) -> Result<Git, Unavailable> {
+        let program = shell.find("git").ok_or(Unavailable::NotInstalled)?;
+        if cfg!(target_os = "macos")
+            && program == Path::new("/usr/bin/git")
+            && !developer_tools_installed()
+        {
+            return Err(Unavailable::NoDeveloperTools);
+        }
+        Ok(Git {
+            program,
+            shell: shell.clone(),
+            trust: Arc::default(),
+        })
+    }
+
+    /// 在仓库 `root` 里运行 `git status`。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败、超时、被取消或者输出读不懂时返回原因。
+    pub fn status(&self, root: &Path, cancel: &Cancel) -> Result<Status, String> {
+        self.inspect(root)?;
+        let mut command = self.command(root);
+        command.args([
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+            // 文件树以淡色绘制被忽略的项。`matching` 只列出匹配忽略规则的那一层，不列出被忽略
+            // 目录中的内容（`target/`、`node_modules/` 下可能有数万个文件）。
+            "--ignored=matching",
+            "--ignore-submodules=dirty",
+        ]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        let mut status = parse_status(&stdout, root)
+            .ok_or_else(|| winc_i18n::t!("git-status-unreadable").to_owned())?;
+        status.operation = git_dir(root).and_then(|d| Operation::detect(&d));
+        status.unresolved = status
+            .entries
+            .iter()
+            .filter(|e| e.conflicted() && merge::file_has_conflicts(&e.path))
+            .map(|e| e.path.clone())
+            .collect();
+        Ok(status)
+    }
+
+    /// 处理完冲突以后继续 `operation`（例如 `git rebase --continue`）。
+    ///
+    /// 合并的继续由提交视图提交完成，不经过该函数。
+    ///
+    /// # Errors
+    ///
+    /// 还有未解决的冲突、hooks 拒绝时返回 `git` 给出的原因。
+    pub fn continue_operation(&self, root: &Path, operation: Operation) -> Result<String, String> {
+        self.operate(root, &[operation.command(), "--continue"])
+    }
+
+    /// 放弃 `operation`，回到开始之前的状态（例如 `git merge --abort`）。
+    ///
+    /// # Errors
+    ///
+    /// `git` 报错时返回它的说明。
+    pub fn abort_operation(&self, root: &Path, operation: Operation) -> Result<String, String> {
+        self.operate(root, &[operation.command(), "--abort"])
+    }
+
+    /// 合并的提交信息草稿（`.git/MERGE_MSG`，去掉 `#` 开头的说明行）；不在合并中时为 `None`。
+    pub fn merge_message(&self, root: &Path) -> Option<String> {
+        let text = std::fs::read_to_string(git_dir(root)?.join("MERGE_MSG")).ok()?;
+        let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        Some(kept.join("\n").trim().to_owned())
+    }
+
+    /// 本地和远程分支，本地的在前，各自按名字排列。
+    ///
+    /// 远程的 `HEAD` 指针不列出。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败时返回原因。
+    pub fn branches(&self, root: &Path, cancel: &Cancel) -> Result<Vec<Branch>, String> {
+        let mut command = self.command(root);
+        command.args([
+            "for-each-ref",
+            "--format=%(refname)%00%(HEAD)%00%(upstream:short)%00%(objectname)",
+            "refs/heads",
+            "refs/remotes",
+        ]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        Ok(parse_branches(&String::from_utf8_lossy(&stdout)))
+    }
+
+    /// 在仓库 `root` 里运行会改动仓库的 `git` 操作 `args`（如 `["pull"]`），返回 `git` 的结论。
+    ///
+    /// 分支名、提交号、储藏名等来自仓库或用户的参数之前必须加 `--end-of-options`，否则仓库里名为
+    /// `--output=…` 的引用会被当作选项。
+    ///
+    /// # Errors
+    ///
+    /// 失败时返回 `git` 给出的原因：优先取 `error::`、`fatal::`、`! [rejected]` 这样的行。
+    pub fn operate(&self, root: &Path, args: &[&str]) -> Result<String, String> {
+        self.require_trust(root)?;
+        let mut command = self.command(root);
+        command.args(args).stderr(Stdio::piped());
+        match process::run(
+            &mut command,
+            Vec::new(),
+            OPERATION_TIMEOUT,
+            &Cancel::default(),
+        ) {
+            Ok(output) => {
+                let mut text = output.stderr;
+                text.extend_from_slice(&output.stdout);
+                if output.status.success() {
+                    Ok(summary(&text))
+                } else {
+                    Err(failure(&text))
+                }
+            }
+            Err(e) => Err(describe(&e)),
+        }
+    }
+
+    /// 推送当前分支。
+    ///
+    /// 没有上游时推到第一个远程上同名的分支，并设为上游（`push -u`）。
+    ///
+    /// # Errors
+    ///
+    /// 没有任何远程、`git` 报错（被拒绝、需要认证）时返回原因。
+    pub fn push(&self, root: &Path, has_upstream: bool) -> Result<String, String> {
+        self.require_trust(root)?;
+        if has_upstream {
+            return self.operate(root, &["push"]);
+        }
+        let mut command = self.command(root);
+        command.arg("remote");
+        let remotes = self.run(&mut command, STATUS_TIMEOUT, &Cancel::default())?;
+        let remotes = String::from_utf8_lossy(&remotes);
+        // 远程名来自仓库的配置，`git` 允许以 `-` 开头的远程名（`--receive-pack=…` 会运行命令）：
+        // 跳过这样的远程，推送时另外加 `--end-of-options`。
+        let Some(remote) = remotes
+            .lines()
+            .map(str::trim)
+            .find(|r| !r.is_empty() && !r.starts_with('-'))
+        else {
+            return Err(winc_i18n::t!("git-push-no-remote").to_owned());
+        };
+        self.operate(
+            root,
+            &["push", "--set-upstream", "--end-of-options", remote, "HEAD"],
+        )
+    }
+
+    /// 返回 `path` 在 `HEAD` 里的内容，见 [`Git::content_at`]。
+    ///
+    /// `HEAD` 里没有该文件（包括还没有提交过）时返回 `Ok(None)`。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败、超时或被取消时返回原因。
+    pub fn head_content(
+        &self,
+        root: &Path,
+        path: &Path,
+        cancel: &Cancel,
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.content_at(root, "HEAD", path, cancel)
+    }
+
+    /// 日志：按 `query` 筛过的提交，孩子在前，按时间排，用 [`LogStream::next`] 一批一批地读。
+    ///
+    /// 不指定分支时是所有分支、远程分支、标签（不含储藏）能走到的提交，文件历史只用当前分支。
+    /// `git log` 进程一直开着，从它停下的地方继续读；重新起进程时要走过跳过的提交，越翻越慢。
+    ///
+    /// # Errors
+    ///
+    /// 文件不在仓库里、`git` 无法启动时返回原因；`git` 报的错在读第一批时返回。
+    pub fn log_stream(&self, root: &Path, query: &LogQuery) -> Result<LogStream, String> {
+        let pinned = self.commit_by_hash(root, query.text.trim());
+        let mut command = self.command(root);
+        command.args(["log", "--date-order", "--decorate=full", "--no-color"]);
+        let text = query.text.trim();
+        if !text.is_empty() || query.author.is_some() {
+            command.args(["--regexp-ignore-case", "--fixed-strings"]);
+        }
+        if !text.is_empty() {
+            command.arg(format!("--grep={text}"));
+        }
+        if let Some(author) = &query.author {
+            command.arg(format!("--author={author}"));
+        }
+        command.arg(LOG_DATE).arg(LOG_FORMAT);
+        if query.path.is_some() {
+            command.arg("--follow");
+        }
+        // 选项都在前面，最后是从哪些提交往回走、看哪个文件。分支名前面加 `--end-of-options`：
+        // 叫 `-x` 的分支也不会被当成选项。
+        match (&query.branch, &query.path) {
+            (Some(branch), _) => {
+                command.arg("--end-of-options").arg(branch);
+            }
+            (None, Some(_)) => {
+                command.arg("HEAD");
+            }
+            (None, None) => {
+                command.args(["--exclude=refs/stash", "--all"]);
+            }
+        }
+        if let Some(path) = &query.path {
+            command.arg("--").arg(slash_path(root, path)?);
+        }
+        let stream = process::Stream::spawn(&mut command).map_err(|e| describe(&e))?;
+        Ok(LogStream {
+            stream,
+            pinned,
+            skip: None,
+        })
+    }
+
+    /// 筛选文字形如提交号（4 位以上的十六进制）且能解析为某个提交时，返回该提交。
+    ///
+    /// 日志筛选同时匹配说明和提交号，使用户粘贴提交号即可定位提交。`git log` 无法按
+    /// 「说明或提交号」筛选，因此该提交单独读取并排在最前面。
+    fn commit_by_hash(&self, root: &Path, text: &str) -> Option<Box<Commit>> {
+        if !(4..=40).contains(&text.len()) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let mut command = self.command(root);
+        command
+            .args([
+                "log",
+                "--no-walk",
+                "--decorate=full",
+                "--no-color",
+                LOG_DATE,
+                LOG_FORMAT,
+            ])
+            .arg("--end-of-options")
+            .arg(format!("{text}^{{commit}}"));
+        let stdout = self
+            .run(&mut command, STATUS_TIMEOUT, &Cancel::default())
+            .ok()?;
+        let commit = parse_log(&String::from_utf8_lossy(&stdout))
+            .into_iter()
+            .next()?;
+        commit
+            .oid
+            .starts_with(&text.to_ascii_lowercase())
+            .then(|| Box::new(commit))
+    }
+
+    /// 储藏列表，最新的在前。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败时返回原因。
+    pub fn stashes(&self, root: &Path, cancel: &Cancel) -> Result<Vec<Stash>, String> {
+        let mut command = self.command(root);
+        command.args(["stash", "list", "--format=%gd%x1f%H%x1f%gs"]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        Ok(String::from_utf8_lossy(&stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.splitn(3, '\u{1f}');
+                Some(Stash {
+                    name: fields.next()?.to_owned(),
+                    oid: fields.next()?.to_owned(),
+                    message: fields.next()?.to_owned(),
+                })
+            })
+            .collect())
+    }
+
+    /// 对提交号为 `oid` 的储藏执行 `git stash <verb>`，返回 `git` 的结论。
+    ///
+    /// `verb` 是 `apply`、`pop` 或 `drop`。`git stash pop`、`drop` 只接受 `stash@{n}` 形式的名字，
+    /// 编号会随储藏的增删改变，因此执行前按提交号查出当前的名字。
+    ///
+    /// # Errors
+    ///
+    /// 储藏已不存在时返回说明这一点的文案；其余情况同 [`Git::operate`]。
+    pub fn stash(&self, root: &Path, verb: &str, oid: &str) -> Result<String, String> {
+        let stashes = self.stashes(root, &Cancel::default())?;
+        let Some(stash) = stashes.iter().find(|s| s.oid == oid) else {
+            return Err(winc_i18n::t!("git-stash-gone").to_owned());
+        };
+        self.operate(root, &["stash", verb, "--end-of-options", &stash.name])
+    }
+
+    /// 逐行追溯：返回每一行最后是哪次提交改的。
+    ///
+    /// `contents` 是编辑器里该文件当前的内容（含未保存的修改），改过还没提交的行算「未提交」。
+    /// 它整个移交给写标准输入的线程，不再复制，因此行号和编辑器里的行号一一对应。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败（文件没被跟踪、仓库还没有提交）时返回原因。
+    pub fn blame(
+        &self,
+        root: &Path,
+        path: &Path,
+        contents: Vec<u8>,
+        cancel: &Cancel,
+    ) -> Result<Blame, String> {
+        let relative = slash_path(root, path)?;
+        let mut command = self.command(root);
+        command
+            // 不使用 textconv：转换后的行与编辑器中的行不对应，转换命令也来自仓库的配置。
+            .args([
+                "blame",
+                "--no-textconv",
+                "--porcelain",
+                "--contents",
+                "-",
+                "--",
+            ])
+            .arg(relative)
+            .stderr(Stdio::piped());
+        match process::run(&mut command, contents, LOG_TIMEOUT, cancel) {
+            Ok(output) if output.status.success() => {
+                Ok(parse_blame(&String::from_utf8_lossy(&output.stdout)))
+            }
+            Ok(output) => Err(failure(&output.stderr)),
+            Err(e) => Err(describe(&e)),
+        }
+    }
+
+    /// 提交 `oid` 的完整说明。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败时返回原因。
+    pub fn commit_message(
+        &self,
+        root: &Path,
+        oid: &str,
+        cancel: &Cancel,
+    ) -> Result<String, String> {
+        let mut command = self.command(root);
+        command.args(["show", "-s", "--format=%B", "--end-of-options", oid]);
+        let stdout = self.run(&mut command, SHOW_TIMEOUT, cancel)?;
+        Ok(String::from_utf8_lossy(&stdout).trim_end().to_owned())
+    }
+
+    /// 返回提交 `oid` 相对于 `parent`（根提交传 `None`）改动的文件及各文件的增删行数，按路径
+    /// 排序。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败时返回原因。
+    pub fn commit_files(
+        &self,
+        root: &Path,
+        parent: Option<&str>,
+        oid: &str,
+        cancel: &Cancel,
+    ) -> Result<Vec<CommitFile>, String> {
+        // 文件和行数一次取齐：`--raw` 的各条在前，`--numstat` 的各条按同样的顺序跟在后面。
+        let mut command = self.command(root);
+        command.args([
+            "diff-tree",
+            "-r",
+            "-M",
+            "-z",
+            "--no-commit-id",
+            "--raw",
+            "--numstat",
+        ]);
+        // 提交号来自日志，分支名来自仓库：加 `--end-of-options`，以 `-` 开头的参数不会被当作选项。
+        match parent {
+            Some(parent) => command.args(["--end-of-options", parent, oid]),
+            // 根提交和空树比；不写空树的对象号：SHA-1 和 SHA-256 的仓库里该对象号不同。
+            None => command.args(["--root", "--end-of-options", oid]),
+        };
+        let stdout = self.run(&mut command, SHOW_TIMEOUT, cancel)?;
+        let mut files = parse_diff_tree(&stdout, root);
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
+    }
+
+    /// 文件 `path` 在版本 `rev`（提交号、分支名……；空字符串是暂存区）里的内容，套用检出时
+    /// 的转换；该版本里没有该文件时为 `None`。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败（版本不存在、对象损坏、必需的过滤器失败……）、超时或被取消时返回原因。
+    pub fn content_at(
+        &self,
+        root: &Path,
+        rev: &str,
+        path: &Path,
+        cancel: &Cancel,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let relative = slash_path(root, path)?;
+        let mut command = self.command(root);
+        command
+            // `--filters` 套用 `git` 检出时的转换（autocrlf 的换行、LFS、textconv 以外的
+            // 过滤器），取到的内容和检出到工作区的文件相同，才能和工作区逐行比较。
+            .args(["cat-file", "--filters", "--end-of-options"])
+            .arg(joined_arg(&[OsStr::new(rev), OsStr::new(":"), &relative]))
+            // 要按 `git` 的报错认出「没有该文件」，报错不能被翻译成用户的语言。
+            .env("LC_ALL", "C")
+            .stderr(Stdio::piped());
+        match process::run(&mut command, Vec::new(), SHOW_TIMEOUT, cancel) {
+            Ok(output) if output.status.success() => Ok(Some(output.stdout)),
+            Ok(output) if output.status.code() == Some(128) && absent(&output.stderr, rev) => {
+                Ok(None)
+            }
+            Ok(output) => Err(failure(&output.stderr)),
+            Err(e) => Err(describe(&e)),
+        }
+    }
+
+    fn command(&self, root: &Path) -> Command {
+        let mut command = self.shell.command(&self.program);
+        command
+            .arg("-C")
+            .arg(root)
+            // 不获取可选的锁（例如刷新索引）：后台运行的 `git` 不能和用户在同一仓库里运行的
+            // `git` 抢同一把锁。
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            // 需要输入密码时直接失败，不阻塞等待输入。
+            .env("GIT_TERMINAL_PROMPT", "0")
+            // 不打开编辑器：`rebase --continue` 等操作会打开它修改提交信息，这里沿用原来的信息。
+            .env("GIT_EDITOR", ":")
+            // 不验证签名：验证需要运行 `gpg.program`，仓库配置不可信时它可以是任意命令；验证结果
+            // 还会混入 `log`、`show`、`stash list` 的输出，破坏解析。
+            .args(["-c", "log.showSignature=false"]);
+        // 配置不可信：fsmonitor 和仓库里定义的过滤器都不运行；必需的过滤器被清空命令后 `git` 会
+        // 报错，不会把没经过过滤的内容当成结果。会改仓库的操作在此之前已经被拒绝，剩下的只读命令
+        // 中只有 `diff.*.textconv` 会运行仓库配置的命令，`blame` 总是带 `--no-textconv`。
+        if let Some(risks) = self.untrusted(root) {
+            command.args(["-c", "core.fsmonitor=false"]);
+            for name in &risks.filters {
+                for key in ["clean", "smudge", "process"] {
+                    command.arg("-c").arg(format!("filter.{name}.{key}="));
+                }
+            }
+        }
+        command
+    }
+
+    fn run(
+        &self,
+        command: &mut Command,
+        timeout: Duration,
+        cancel: &Cancel,
+    ) -> Result<Vec<u8>, String> {
+        command.stderr(Stdio::piped());
+        match process::run(command, Vec::new(), timeout, cancel) {
+            Ok(output) if output.status.success() => Ok(output.stdout),
+            Ok(output) => Err(failure(&output.stderr)),
+            Err(e) => Err(describe(&e)),
+        }
+    }
+}
+
+/// 开着的 `git log` 进程，见 [`Git::log_stream`]。
+///
+/// 丢弃时连同 `git` 进程一起结束。
+pub struct LogStream {
+    stream: process::Stream,
+    /// 按提交号找到的提交（[`Git::commit_by_hash`]），在第一批中排在最前面。
+    pinned: Option<Box<Commit>>,
+    /// 排在最前面的提交号；说明同样匹配时 `git log` 会再次输出该提交，读取时跳过。
+    skip: Option<String>,
+}
+
+impl LogStream {
+    /// 继续读最多 `max` 个提交；不满 `max` 个说明读完了。
+    ///
+    /// 每一批最多等 `LOG_TIMEOUT`。
+    ///
+    /// # Errors
+    ///
+    /// `git` 报错（还没有提交、分支不存在）、超时或读输出出错时返回原因。读取出错后该日志
+    /// 不能再继续读。
+    pub fn next(&mut self, max: usize) -> Result<Vec<Commit>, String> {
+        let mut commits = self.read(max)?;
+        if let Some(at) = commits
+            .iter()
+            .position(|c| Some(&c.oid) == self.skip.as_ref())
+        {
+            commits.remove(at);
+            self.skip = None;
+            // 本批数量少于 `max` 会被视为已读完，因此再读取一个补足。
+            if commits.len() + 1 == max {
+                commits.extend(self.read(1)?);
+            }
+        }
+        if let Some(pinned) = self.pinned.take() {
+            match commits.iter().position(|c| c.oid == pinned.oid) {
+                Some(at) => {
+                    commits.remove(at);
+                }
+                None => self.skip = Some(pinned.oid.clone()),
+            }
+            commits.insert(0, *pinned);
+        }
+        Ok(commits)
+    }
+
+    fn read(&mut self, max: usize) -> Result<Vec<Commit>, String> {
+        let (bytes, _) = self
+            .stream
+            .read_records(0x1e, max, LOG_TIMEOUT)
+            .map_err(|e| match e {
+                process::StreamError::Run(e) => describe(&e),
+                process::StreamError::Exited(stderr) => failure(&stderr),
+            })?;
+        Ok(parse_log(&String::from_utf8_lossy(&bytes)))
+    }
+}
+
+/// `path` 相对仓库根目录 `root` 的路径，用 `/` 分隔（`git` 的路径分隔符总是 `/`）。
+///
+/// 各段按原样的字节拼接，不经有损转换：Unix 上文件名可以不是 UTF-8，替换成 U+FFFD 以后指向的
+/// 是另一个（通常不存在的）文件。
+fn slash_path(root: &Path, path: &Path) -> Result<OsString, String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| winc_i18n::t!("git-file-outside-repository"))?;
+    let mut out = OsString::new();
+    for (i, part) in relative.components().enumerate() {
+        if i > 0 {
+            out.push("/");
+        }
+        out.push(part.as_os_str());
+    }
+    Ok(out)
+}
+
+/// 把 `parts` 依次接成一个参数，路径部分保持原样的字节（见 [`slash_path`]）。
+fn joined_arg(parts: &[&OsStr]) -> OsString {
+    parts.iter().fold(OsString::new(), |mut out, part| {
+        out.push(part);
+        out
+    })
+}
+
+/// 返回文件在 `git` 里的模式：能执行的是 `100755`，否则 `100644`。
+fn file_mode(path: &Path) -> &'static str {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
+            return "100755";
+        }
+    }
+    let _ = path;
+    "100644"
+}
+
+/// 把绝对路径换成相对于 `root` 的路径，交给 `git` 的路径参数（`--` 之后）。
+///
+/// 每个都加上 `::(literal)`，按字面匹配：`app/[slug]/page.tsx` 里的 `[`、`*`、`?` 不当通配符，
+/// 回滚、提交、取消暂存时不会连带改动名字碰巧匹配上的其他文件。不用 `GIT_LITERAL_PATHSPECS`：
+/// `git stash push -u` 自己也要用路径匹配，开启它以后不再收录未跟踪的文件。
+fn relative_all<'a>(
+    root: &'a Path,
+    paths: &'a [PathBuf],
+) -> impl Iterator<Item = std::ffi::OsString> + 'a {
+    paths.iter().map(move |p| {
+        let mut spec = std::ffi::OsString::from(":(literal)");
+        spec.push(p.strip_prefix(root).unwrap_or(p));
+        spec
+    })
+}
+
+/// 从 `dir` 往上找仓库的根目录：第一个含有 `.git`（目录，或工作树和子模块里的文件）的目录。
+///
+/// 只查文件系统，不运行 `git`。
+pub fn find_root(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf)
+}
+
+/// macOS 上命令行开发者工具是否已安装（`xcode-select -p` 成功）。
+fn developer_tools_installed() -> bool {
+    let mut command = Command::new("/usr/bin/xcode-select");
+    command.arg("-p").stderr(Stdio::null());
+    matches!(
+        process::run(&mut command, Vec::new(), PROBE_TIMEOUT, &Cancel::default()),
+        Ok(output) if output.status.success()
+    )
+}
+
+#[cfg(test)]
+mod tests;

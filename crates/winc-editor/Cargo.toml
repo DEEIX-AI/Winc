@@ -1,0 +1,32 @@
+[package]
+name = "winc-editor"
+description = "无界面编辑器：文档、标签、工作区文件树、编辑命令、读写文件。不依赖任何 GUI。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+winc-core.workspace = true
+winc-syntax.workspace = true
+winc-config.workspace = true
+winc-preview.workspace = true
+winc-i18n.workspace = true
+ropey.workspace = true
+memchr.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+ignore.workspace = true
+notify.workspace = true
+encoding_rs.workspace = true
+chardetng.workspace = true
+png.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true

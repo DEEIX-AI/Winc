@@ -1,0 +1,578 @@
+//! Git 模块整体的测试：开关、文件树装饰、上下文栏、视图切换、切换目录、损坏的仓库与耗时测量。
+
+use super::*;
+
+#[test]
+fn git_module_is_off_until_switched_on_and_clears_when_off() {
+    let dir = search_folder("git-module");
+    if !make_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    assert!(!app.git_enabled());
+    assert!(app.git.root.is_none() && app.git.status.is_none());
+
+    app.settings_toggle(Setting::GitModule);
+    assert!(app.git_enabled());
+    // 未安装开发者工具或找不到 git 时，只检查开关本身。
+    if git_unusable(&app) {
+        return;
+    }
+    let status = app.git.status.clone().expect("刷新是就地完成的");
+    assert_eq!(status.head, Some(Head::Branch("main".into())));
+    let main = app.editor.root().unwrap().join("src/main.rs");
+    assert_eq!(app.git.change_of(&main), Some(Change::Modified));
+    let new = app.editor.root().unwrap().join("src/new.rs");
+    assert_eq!(app.git.change_of(&new), Some(Change::Untracked));
+    assert_eq!(
+        app.git.change_of(&app.editor.root().unwrap().join("src")),
+        Some(Change::Modified)
+    );
+
+    // 绘制一帧：文件树和状态栏都能正常绘制，不会因为装饰出错。
+    paint(&mut app);
+
+    app.settings_toggle(Setting::GitModule);
+    assert!(!app.git_enabled());
+    assert!(app.git.root.is_none() && app.git.status.is_none());
+    assert_eq!(app.git.change_of(&main), None);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ignored_files_are_known_to_the_tree() {
+    let dir = search_folder("git-ignored");
+    if !make_repo(&dir) {
+        return;
+    }
+    std::fs::write(dir.join(".gitignore"), "target/\n*.log\n").unwrap();
+    std::fs::create_dir_all(dir.join("target/debug")).unwrap();
+    std::fs::write(dir.join("target/debug/app"), "x").unwrap();
+    std::fs::write(dir.join("src/run.log"), "x").unwrap();
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let root = app.editor.root().unwrap().to_path_buf();
+    // 被忽略的目录本身及其中的项均视为忽略（`git` 只列出目录本身），被忽略的文件同样如此。
+    assert!(app.git.is_ignored(&root.join("target")));
+    assert!(app.git.is_ignored(&root.join("target/debug/app")));
+    assert!(app.git.is_ignored(&root.join("src/run.log")));
+    // 已跟踪的文件、未被忽略的未跟踪文件及其所在目录均不视为忽略。
+    assert!(!app.git.is_ignored(&root.join("src/main.rs")));
+    assert!(!app.git.is_ignored(&root.join("src/new.rs")));
+    assert!(!app.git.is_ignored(&root.join("src")));
+    assert!(!app.git.is_ignored(&root));
+    paint(&mut app);
+
+    // 关闭 Git 模块后不再提供忽略信息。
+    app.settings_toggle(Setting::GitModule);
+    assert!(!app.git.is_ignored(&root.join("target")));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：Git 模块启用时的文件树和状态栏，深浅两套配色。
+#[test]
+#[ignore]
+fn shoot_git_decorations() {
+    for dark in [false, true] {
+        let dir = search_folder(if dark {
+            "git-shot-dark"
+        } else {
+            "git-shot-light"
+        });
+        if !make_repo(&dir) {
+            return;
+        }
+        let mut app = app_with(&dir.join("src/main.rs"), dark);
+        app.settings_toggle(Setting::GitModule);
+        shoot(&mut app, if dark { "git-dark" } else { "git-light" });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 截图：每个主题各一张，左侧提交视图、右侧带语法高亮的 Rust 差异（三种改动齐全），
+/// 光标与选区在右侧。
+#[test]
+#[ignore]
+fn shoot_themes() {
+    const BEFORE: &str = "use std::collections::HashMap;\n\n/// 按名字查用户的缓存。\n#[derive(Debug, Default)]\npub struct Cache {\n    users: HashMap<String, u32>,\n    hits: usize,\n}\n\nimpl Cache {\n    pub fn get(&mut self, name: &str) -> Option<u32> {\n        // 先查缓存\n        let id = self.users.get(name).copied();\n        if id.is_some() {\n            self.hits += 1;\n        }\n        id\n    }\n\n    pub fn clear(&mut self) {\n        self.users.clear();\n    }\n}\n";
+    let after = BEFORE
+        .replace(
+            "hits: usize,\n",
+            "hits: usize,\n    misses: usize,\n    limit: Option<usize>,\n",
+        )
+        .replace(
+            "            self.hits += 1;\n",
+            "            self.hits += 1;\n        } else {\n            self.misses += 1;\n",
+        )
+        .replace(
+            "    pub fn clear(&mut self) {\n        self.users.clear();\n    }\n",
+            "",
+        );
+    for dark in [false, true] {
+        for theme in crate::theme::themes(dark) {
+            let name = theme.id;
+            let dir = search_folder(&format!("theme-{name}"));
+            std::fs::write(dir.join("src/main.rs"), BEFORE).unwrap();
+            if !make_repo(&dir) {
+                return;
+            }
+            std::fs::write(dir.join("src/main.rs"), &after).unwrap();
+            std::fs::write(dir.join("src/new.rs"), "pub fn new() {}\n").unwrap();
+            let mut app = app_with(&dir, dark);
+            if dark {
+                app.config.dark_theme = Some(name.to_owned());
+            } else {
+                app.config.light_theme = Some(name.to_owned());
+            }
+            app.set_theme(if dark {
+                winit::window::Theme::Dark
+            } else {
+                winit::window::Theme::Light
+            });
+            app.settings_toggle(Setting::GitModule);
+            app.run_action(Action::ShowCommit);
+            app.edit_field(|f| f.insert("缓存记下没命中的次数"));
+            let main = app.editor.root().unwrap().join("src/main.rs");
+            let index = app
+                .git
+                .status
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .position(|e| e.path == main);
+            paint(&mut app);
+            app.press_commit(CommitTarget::File(index.unwrap()));
+            // 在右侧双击选中一个词，光标位于右侧。
+            paint(&mut app);
+            let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+            let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+            let lh = app.fonts.line_height;
+            let at = (
+                parts.panes[RIGHT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell * 13.3,
+                parts.body.y + lh * 12.5,
+            );
+            click(&mut app, at);
+            click(&mut app, at);
+            shoot(&mut app, &format!("theme-{name}"));
+            // 文件视图加编辑区：文件树与代码并排。
+            app.set_sidebar_view(crate::layout::SidebarView::Files);
+            app.open_path(&dir.join("src/main.rs"));
+            app.focus = Focus::Editor;
+            shoot(&mut app, &format!("theme-{name}-editor"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+/// 截图：文件视图标题行的上下文栏（项目 ⌄、分支 ⌄），鼠标停在分支上，深浅两套配色。
+#[test]
+#[ignore]
+fn shoot_context_bar() {
+    for dark in [false, true] {
+        let name = if dark {
+            "context-dark"
+        } else {
+            "context-light"
+        };
+        let dir = search_folder(name);
+        if !long_repo(&dir) {
+            return;
+        }
+        let mut app = app_with(&dir, dark);
+        app.settings_toggle(Setting::GitModule);
+        paint(&mut app);
+        let branch = app.branch_hit;
+        app.on_mouse_move(branch.x + 4.0, branch.y + 4.0);
+        shoot(&mut app, name);
+        // 悬停提示：「名字 … 快捷键」两栏，快捷键是右边的淡色字。
+        let commit = app.sidebar_tabs()[2].0;
+        app.on_mouse_move(commit.x + 4.0, commit.y + 4.0);
+        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        shoot(&mut app, &format!("{name}-tip"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 截图：窄侧栏里的空搜索页，分支名很长（从末尾截短，项目徽章一直在），深浅两套配色。
+#[test]
+#[ignore]
+fn shoot_search_header() {
+    for dark in [false, true] {
+        let name = if dark {
+            "search-head-dark"
+        } else {
+            "search-head-light"
+        };
+        let dir = search_folder(name);
+        if !long_repo(&dir) {
+            return;
+        }
+        git_in(&dir, &["checkout", "-q", "-b", "grok_build_1.0.40"]);
+        let mut app = app_with(&dir, dark);
+        app.settings_toggle(Setting::GitModule);
+        app.panel_width = 270.0;
+        app.run_action(Action::FindInFiles);
+        shoot(&mut app, name);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 尚未找到 git 时，由最先用到 git 的后台任务查找，结果留给之后的任务和界面线程，
+/// 避免每个任务各查一次并在用完后丢弃。
+#[test]
+fn the_first_git_job_to_find_git_shares_it() {
+    let dir = search_folder("git-shared-tool");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    // 状态刷新找到的 git 保留在缓存中；清除缓存后，打开日志的任务自行查找，结果同样保留。
+    assert!(app.git.tool.get().is_some());
+    app.git.tool.forget();
+    assert!(app.git.tool.get().is_none());
+    assert!(app.run_action(Action::GitShowLog));
+    assert!(app.git.tool.get().is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn broken_repositories_explain_why_instead_of_loading_forever() {
+    let Some((mut app, root)) = git_app("git-broken", false) else {
+        return;
+    };
+    std::fs::write(root.join(".git/HEAD"), "garbage\n").unwrap();
+    app.git_refresh();
+    assert!(app.git.status.is_none());
+    assert!(app.git.problem.is_some());
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    app.open_settings();
+    paint(&mut app);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 测量：在本仓库上打开 Git 模块后，各个会在界面线程上发生的事情花多长时间。
+///
+/// 运行方式：`cargo test -p winc-app measure_git_costs -- --ignored --nocapture`。
+#[test]
+#[ignore]
+fn measure_git_costs() {
+    use std::time::Instant;
+    // 先克隆再测：本仓库可能正开在另一个 winc 窗口中，直接打开时会被转交给该窗口。
+    let source =
+        winc_config::files::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .unwrap();
+    let repo = std::env::temp_dir().join(format!("winc-measure-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    let cloned = Command::new("git")
+        .args(["clone", "-q", "--local"])
+        .arg(&source)
+        .arg(&repo)
+        .status()
+        .unwrap();
+    assert!(cloned.success());
+    let repo = winc_config::files::canonicalize(&repo).unwrap();
+    // 有改动、有编译产物：改几个文件，在 target/ 下放几千个文件。
+    std::fs::write(repo.join("crates/winc-app/src/main.rs"), "// changed\n").unwrap();
+    std::fs::create_dir_all(repo.join("target/debug/deps")).unwrap();
+    for i in 0..4000 {
+        std::fs::write(repo.join(format!("target/debug/deps/x{i}.o")), "x").unwrap();
+    }
+    let mut app = app_with(&repo, false);
+    let file = repo.join("crates/winc-app/src/app.rs");
+    app.open_path(&file);
+    let time = |label: &str, n: u32, f: &mut dyn FnMut()| {
+        let start = Instant::now();
+        for _ in 0..n {
+            f();
+        }
+        eprintln!("{label}: {:?} / 次", start.elapsed() / n);
+    };
+    paint(&mut app);
+    time("画一帧（模块关）", 20, &mut || paint(&mut app));
+    app.settings_toggle(Setting::GitModule);
+    eprintln!(
+        "root = {:?}, enabled = {}, editor root = {:?}",
+        app.git.root,
+        app.git_enabled(),
+        app.editor.root()
+    );
+    eprintln!(
+        "entries = {:?}, problem = {:?}",
+        app.git.status.as_ref().map(|s| s.entries.len()),
+        app.git.problem
+    );
+    time("画一帧（模块开）", 20, &mut || paint(&mut app));
+    time("刷新状态（就地，含 git）", 3, &mut || {
+        app.git_refresh()
+    });
+    time("打字后画一帧", 20, &mut || {
+        app.run(winc_editor::Command::Insert("x".into()));
+        paint(&mut app);
+    });
+    let paths: Vec<PathBuf> = (0..4000)
+        .map(|i| repo.join(format!("target/debug/deps/x{i}.o")))
+        .collect();
+    let mut ignored = winc_editor::git::Ignored::new(&repo);
+    time("判断 4000 个 target 路径是否忽略", 5, &mut || {
+        for p in &paths {
+            ignored.is_ignored(p);
+        }
+    });
+    let status = app.git.status.clone().unwrap();
+    time("算文件树装饰", 20, &mut || {
+        let _ = status.decorations(&repo);
+    });
+    app.run_action(Action::ShowCommit);
+    time("画一帧（提交视图）", 20, &mut || paint(&mut app));
+    let changes = winc_editor::Changes {
+        paths: paths.clone(),
+        rescan: false,
+        git: false,
+    };
+    let mut changes = Some(changes);
+    time("处理一批 4000 个 target 变化", 1, &mut || {
+        app.apply_changes(changes.take().unwrap());
+    });
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn project_and_branch_lead_the_second_row_in_every_view() {
+    let Some((mut app, root)) = git_app("git-context-bar", false) else {
+        return;
+    };
+    // 顶栏是侧栏开关和视图切换图标，第二行左边是项目名。分支只在提交视图里画在项目名之后，
+    // 状态栏已经始终显示当前分支；工具栏位于分支之后。
+    app.panel_width = 400.0;
+    paint(&mut app);
+    let project = app.project_hit;
+    assert_eq!(app.branch_hit.w, 0.0);
+    assert!(project.y >= app.layout.sidebar_header.y);
+    let tabs = app.sidebar_tabs();
+    assert!(tabs[0].0.x > app.layout.sidebar_button.right());
+    assert!(tabs[0].0.bottom() <= app.layout.sidebar_header.y);
+    app.run_action(Action::FindInFiles);
+    paint(&mut app);
+    assert_eq!(app.project_hit, project);
+    assert_eq!(app.branch_hit.w, 0.0);
+
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.project_hit, project);
+    let branch = app.branch_hit;
+    assert!(branch.w > 0.0);
+    assert!(branch.x >= project.right());
+    app.on_mouse_move(branch.x + branch.w / 2.0, branch.y + branch.h / 2.0);
+    assert_eq!(app.hover, Hover::BranchName);
+    app.on_mouse_move(project.x + 4.0, project.y + 4.0);
+    assert_eq!(app.hover, Hover::ProjectName);
+    let tools = app.commit_parts().tools;
+    assert_eq!(
+        tools.map(|(_, t)| t),
+        [CommitTarget::Log, CommitTarget::Layout, CommitTarget::More]
+    );
+    assert!(tools[0].0.x >= branch.right());
+
+    // 侧栏缩到最窄：项目名始终可点；分支放不下时完全不画（状态栏中始终显示），绘制时保持
+    // 完整，不碰到右端的按钮。
+    let full_project = app.project_hit.w;
+    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    assert!(app.project_hit.w >= crate::layout::TREE_NAME_MIN);
+    let narrow = app.branch_hit;
+    if narrow.w > 0.0 {
+        assert_eq!(narrow.w, branch.w);
+        assert!(narrow.x >= app.project_hit.right());
+        assert!(narrow.right() <= app.commit_parts().tools[0].0.x);
+    }
+
+    // 分支名很长、放不下：不画分支，项目名完整。
+    app.panel_width = 300.0;
+    git_in(
+        &root,
+        &[
+            "switch",
+            "-q",
+            "-c",
+            "feature/a-very-long-branch-name-for-the-sidebar",
+        ],
+    );
+    app.git_refresh();
+    paint(&mut app);
+    assert_eq!(app.branch_hit.w, 0.0);
+    assert_eq!(app.project_hit.w, full_project);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn switching_views_slides_the_raised_segment() {
+    use crate::app::animation::{Clock, VIEW_SLIDE};
+    use std::time::Duration;
+
+    let Some((mut app, root)) = git_app("view-slide", false) else {
+        return;
+    };
+    // 没有窗口（测试中）时不做动画，直接到终点。
+    app.set_sidebar_view(SidebarView::Search);
+    assert!(app.view_slide.is_none());
+    // 半路：动画进行中、下一帧继续绘制；到时间以后清掉。
+    app.view_slide = Some((
+        SidebarView::Files,
+        Clock::frozen(VIEW_SLIDE / 2, VIEW_SLIDE),
+    ));
+    assert!(app.animating());
+    app.settle_animations();
+    assert!(app.view_slide.is_some());
+    app.view_slide = Some((
+        SidebarView::Files,
+        Clock::frozen(VIEW_SLIDE + Duration::from_millis(1), VIEW_SLIDE),
+    ));
+    app.settle_animations();
+    assert!(app.view_slide.is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 截图：从「文件」切到「提交」滑到一半（`view-slide-light`、`view-slide-dark`）。
+#[test]
+#[ignore]
+fn shoot_view_slide() {
+    use crate::app::animation::{Clock, VIEW_SLIDE};
+
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let Some((mut app, root)) = git_app_in(&format!("view-slide-{theme}"), false, dark) else {
+            return;
+        };
+        app.set_sidebar_view(SidebarView::Commit);
+        app.view_slide = Some((
+            SidebarView::Files,
+            Clock::frozen(VIEW_SLIDE / 3, VIEW_SLIDE),
+        ));
+        shoot(&mut app, &format!("view-slide-{theme}"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// 切换目录：旧仓库的分支操作与写了一半的提交信息不带入新目录；旧仓库晚到的结果只在状态栏
+/// 提示一句，不在当前目录打开差异，也不改动当前状态。
+#[test]
+fn switching_folders_leaves_the_old_repos_work_behind() {
+    let Some((mut app, root)) = git_app("git-switch-away", false) else {
+        return;
+    };
+    app.commit.message.set_text("写了一半");
+    app.commit.amend = true;
+    app.branch.running = Some("拉取".into());
+
+    let other = search_folder("git-switch-target");
+    app.open_path(&other);
+    assert_ne!(app.git.root.as_deref(), Some(root.as_path()));
+    assert!(app.branch.running.is_none());
+    assert_eq!(app.commit.message.text(), "");
+    assert!(!app.commit.amend);
+
+    // 旧仓库的拉取完成：在状态栏说明在哪个目录完成；当前目录正在进行的操作不受影响。
+    app.branch.running = Some("推送".into());
+    app.pulled_in(&root);
+    assert_eq!(app.branch.running.as_deref(), Some("推送"));
+    let name = winc_editor::display_name(&root).into_owned();
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some(format!("已在「{name}」中拉取").as_str())
+    );
+    // 旧仓库的差异晚到了：不开标签，也不提示。
+    app.status_message = None;
+    let tabs = app.editor.documents.len();
+    app.diff_failed_in(&root, &root.join("src/main.rs"));
+    assert_eq!(app.editor.documents.len(), tabs);
+    assert!(app.status_message.is_none());
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+/// 把「提交」一段、终端开关、分支名的出现、消失动画停在 `at`，方向是 `on`。
+///
+/// 测试中没有窗口，`track_modules` 不做动画，因此直接给时钟。
+fn freeze_modules(app: &mut App, on: bool, at: std::time::Duration) {
+    use crate::app::animation::{Clock, EXIT_FADE, MODULE_FADE};
+
+    // 消失时宽度在内容淡出结束后才开始收起，`at` 从收起开始计时。
+    let at = if on { at } else { at + EXIT_FADE };
+    let fx = &mut app.module_fx;
+    for p in [&mut fx.commit_tab, &mut fx.terminal_icon, &mut fx.branch] {
+        p.track(!on, None);
+        p.track(on, Some(Clock::frozen(at, MODULE_FADE)));
+    }
+}
+
+/// 关闭 Git、终端模块时「提交」一段缩回去、终端开关和分支名淡出。
+///
+/// 动画途中仍然绘制（分支名用最后一帧的内容），但不再可点；动画结束后消失。
+#[test]
+fn switching_modules_off_fades_their_chrome_out() {
+    use crate::app::animation::MODULE_FADE;
+
+    let Some((mut app, root)) = git_app("module-fade", false) else {
+        return;
+    };
+    app.settings_toggle(Setting::TerminalModule);
+    paint(&mut app);
+    assert!(app.module_fx.branch_label.is_some());
+    let full = app.sidebar_tabs()[2].0;
+    let hit = |app: &App, item| app.status_hits.iter().any(|h| h.1 == item);
+    assert!(hit(&app, StatusItem::Branch) && hit(&app, StatusItem::Terminal));
+
+    app.settings_toggle(Setting::GitModule);
+    app.settings_toggle(Setting::TerminalModule);
+    freeze_modules(&mut app, false, MODULE_FADE / 3);
+    assert!(app.animating());
+    paint(&mut app);
+    let tabs = app.sidebar_tabs();
+    assert_eq!(tabs.len(), 3);
+    assert!(tabs[2].0.w > 0.0 && tabs[2].0.w < full.w);
+    assert_eq!(tabs[2].0.right(), full.right());
+    assert!(app.module_fx.branch_label.is_some());
+    assert!(!hit(&app, StatusItem::Branch) && !hit(&app, StatusItem::Terminal));
+
+    freeze_modules(&mut app, false, MODULE_FADE);
+    app.track_modules();
+    assert!(!app.module_fx.moving());
+    assert!(app.module_fx.branch_label.is_none());
+    assert_eq!(app.sidebar_tabs().len(), 2);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 截图：打开 Git、终端模块时「提交」一段展开、终端开关和分支名淡入到四分之一
+/// （`module-fade-in-*`），以及关闭时淡出到四分之一（`module-fade-out-*`）。
+#[test]
+#[ignore]
+fn shoot_module_fade() {
+    use crate::app::animation::MODULE_FADE;
+
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let Some((mut app, root)) = git_app_in(&format!("module-fade-{theme}"), false, dark) else {
+            return;
+        };
+        app.settings_toggle(Setting::TerminalModule);
+        freeze_modules(&mut app, true, MODULE_FADE / 4);
+        shoot(&mut app, &format!("module-fade-in-{theme}"));
+        app.settings_toggle(Setting::GitModule);
+        app.settings_toggle(Setting::TerminalModule);
+        freeze_modules(&mut app, false, MODULE_FADE / 4);
+        shoot(&mut app, &format!("module-fade-out-{theme}"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

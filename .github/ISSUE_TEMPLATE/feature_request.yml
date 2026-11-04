@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose a product or technical improvement for winc.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: The part of winc this proposal affects.
+      options:
+        - Editor
+        - Search
+        - File tree
+        - Preview
+        - Git
+        - Terminal
+        - Settings
+        - Performance
+        - Install / update
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How should it work? Mockups and alternatives you considered are welcome.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submit checklist
+      description: Duplicate issues are closed in favor of the earlier one.
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: This request is focused on one feature or improvement.
+          required: true
+        - label: I described the impact on performance, platforms, or existing behavior where relevant.
+          required: true

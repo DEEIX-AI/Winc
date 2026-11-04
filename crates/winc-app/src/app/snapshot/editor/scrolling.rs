@@ -1,0 +1,159 @@
+//! 编辑区滚动与焦点的测试：跳转时的平滑滚动、查找把远处的匹配滚到正中、拖选停在编辑区外时的
+//! 持续滚动，以及有无焦点时选区与当前行的绘制。
+
+use std::time::Duration;
+
+use super::*;
+use crate::app::Clock;
+use crate::app::animation::SCROLL_GLIDE;
+
+/// 打开一个 480 行的文件并绘制一帧，返回界面与目录。
+///
+/// 文件内容是同构的：60 个 8 行的小函数，第 `i` 个从第 `i * 8` 行开始，每行都短于一屏的宽度。
+/// 行号可以由序号直接算出作期望值，480 行又远高于一屏，跳转需要滚过若干屏才会到达。
+fn long_file(name: &str) -> (App, PathBuf) {
+    let dir = search_folder(name);
+    let mut src = String::new();
+    for i in 0..60 {
+        src.push_str(&format!(
+            "fn item_{i}(config: &Config) -> usize {{\n    if config.enabled {{\n        config.value + {i}\n    }} else {{\n        0\n    }}\n}}\n\n"
+        ));
+    }
+    std::fs::write(dir.join("src/long.rs"), src).unwrap();
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("src/long.rs"));
+    paint(&mut app);
+    (app, dir)
+}
+
+fn scroll(app: &App) -> f32 {
+    app.editor.active().unwrap().scroll_line
+}
+
+#[test]
+fn far_jumps_glide_and_near_ones_do_not() {
+    let (mut app, dir) = long_file("scroll-glide");
+
+    // 跳转到第 200 行（居中）：距离超过一屏，滚动需要一段动画。没有窗口时不做动画，滚动位置
+    // 直接等于目标。
+    app.scroll_to_line(200, 0.5, false);
+    assert!(app.scroll_glide.is_none());
+    let target = scroll(&app);
+
+    // 平滑滚动进行到一半：绘制的帧位于中间位置，绘制后恢复为目标，计算始终按目标进行。
+    app.scroll_glide = Some(ScrollGlide {
+        doc: app.editor.active().unwrap().id,
+        from: 0.0,
+        clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
+    });
+    let glide = app.begin_glide_frame();
+    let shown = scroll(&app);
+    assert_eq!(glide, Some(target));
+    assert!(shown > 0.0 && shown < target, "{shown} / {target}");
+    app.end_glide_frame(glide);
+    assert_eq!(scroll(&app), target);
+    assert!(app.animating());
+
+    // 滚轮事件中止平滑滚动，滚动位置停在目标上。
+    app.on_wheel(winit::event::MouseScrollDelta::LineDelta(0.0, -1.0));
+    assert!(app.scroll_glide.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn find_centres_far_matches_and_keeps_near_ones_still() {
+    let (mut app, dir) = long_file("find-centre");
+    app.open_search(false);
+    app.edit_field(|f| f.insert("item_40"));
+    paint(&mut app);
+    let visible = app.visible_lines() as f32;
+
+    // 远处的匹配（`item_40` 在第 320 行）滚到编辑区正中，而不是刚刚露出的下边缘：按 0.4 到 0.6
+    // 的屏内位置断言，留出预览留白与行高的余量。
+    app.find_next(false);
+    let line = 40 * 8;
+    let row = scroll(&app);
+    let at = (line as f32 - row) / visible;
+    assert!((0.4..0.6).contains(&at), "匹配在 {at} 高处");
+
+    // 匹配已可见时不滚动：`item_41` 在第 328 行，紧接上一处，仍在同一屏内。
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("item_41")
+    });
+    let before = scroll(&app);
+    app.find_next(false);
+    assert_eq!(scroll(&app), before);
+
+    // 首个可见位置设成第 328 行：下一处 `-> usize`（在 `item_41` 的开头）正好贴到编辑区顶部、
+    // 被查找条盖住，视为不可见，编辑区向下滚一行使其露出。光标放在上一块（`item_40`）内，
+    // 命中位置因此与光标分开。
+    let doc = app.editor.active_mut().unwrap();
+    doc.scroll_line = (41 * 8) as f32;
+    doc.scroll_x = 0.0;
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("-> usize")
+    });
+    let doc = app.editor.active_mut().unwrap();
+    doc.selection = winc_core::Selection::point(doc.text().line_start(40 * 8 + 4));
+    app.find_next(false);
+    let doc = app.editor.active().unwrap();
+    let (found, _) = doc.text().pos_to_line_col(doc.selection.from());
+    assert_eq!(found, 41 * 8);
+    assert!(scroll(&app) < found as f32 - 1.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn drag_select_keeps_scrolling_while_the_mouse_rests_outside() {
+    let (mut app, dir) = long_file("drag-autoscroll");
+    // 从第一行开始按住向下拖，鼠标停在编辑区下缘外 60 逻辑像素：开始持续滚动。
+    let t = app.layout.text;
+    app.on_mouse_move(t.x + 40.0, t.y + 40.0);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(t.x + 40.0, t.bottom() + 60.0);
+    assert!(app.drag_autoscrolling());
+    let first = scroll(&app);
+    assert!(first > 0.0);
+
+    // 鼠标不动但时间推移（距上次滚动 50 毫秒）：编辑区继续滚动，选区随之向下扩展。
+    app.drag_scrolled_at = Some(std::time::Instant::now() - Duration::from_millis(50));
+    app.continue_drag_scroll();
+    let second = scroll(&app);
+    assert!(second > first, "{first} → {second}");
+    let head = app.editor.active().unwrap().selection.head;
+    let (line, _) = app.editor.active().unwrap().text().pos_to_line_col(head);
+    assert!(line as f32 >= second);
+
+    // 鼠标回到编辑区内时停止滚动。
+    app.on_mouse_move(t.x + 40.0, t.y + 100.0);
+    assert!(!app.drag_autoscrolling());
+    assert!(app.drag_scrolled_at.is_none());
+    app.on_mouse_up(MouseButton::Left);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn selections_dim_without_focus_and_hide_the_current_line() {
+    let (mut app, dir) = long_file("selection-focus");
+    // 选中第 9 到第 11 行的中间一段：选区跨三行，能与当前行的高亮相区分。
+    let doc = app.editor.active_mut().unwrap();
+    let a = doc.text().line_start(9) + 4;
+    let b = doc.text().line_start(11) + 12;
+    doc.selection = winc_core::Selection::new(a, b);
+    assert!(app.editor_focused());
+    shoot(&mut app, "selection-focused");
+
+    app.focus = Focus::Tree;
+    assert!(!app.editor_focused());
+    shoot(&mut app, "selection-unfocused");
+    app.focus = Focus::Editor;
+    app.window_focused = false;
+    assert!(!app.editor_focused());
+    // 窗口不在前台也按无焦点绘制；无焦点时用淡一层的 `selection_inactive`，当前行不高亮。
+    app.window_focused = true;
+    let p = app.palette;
+    assert_ne!(p.selection_inactive, p.selection);
+    let _ = std::fs::remove_dir_all(&dir);
+}
