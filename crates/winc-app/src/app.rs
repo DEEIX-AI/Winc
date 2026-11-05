@@ -207,6 +207,14 @@ pub enum UserEvent {
     GitRollback(Vec<PathBuf>),
     /// 确认框上确认了中止进行中的合并、变基等操作。
     GitAbort,
+    /// 确认框上确认了同步；参数表示勾选了「不再询问」。
+    GitSync(bool),
+    /// 确认框上确认了提交并推送；参数表示勾选了「不再询问」。
+    GitCommitAndPush(bool),
+    /// 确认框上确认了强制推送。
+    GitForcePush,
+    /// 确认框上确认了撤销上一次提交。
+    GitUndoCommit,
     /// 后台取到了某个文件在 `HEAD` 里的内容（行号栏改动标记的基准）。
     GitBase,
     /// 后台的分支操作（获取、拉取、推送、签出……）做完了。

@@ -144,5 +144,6 @@ menu-commit-refresh = Refresh
 menu-commit-expand-all = Expand All
 menu-commit-collapse-all = Collapse All
 menu-commit-roll-back = Roll Back Checked Files…
+menu-commit-undo = Undo Commit
 menu-commit-and-push = Commit and Push
 menu-commit-amend = Amend Last Commit

@@ -1,8 +1,11 @@
 //! 提交和回滚：先保存要提交的文件、请用户确认回滚，在后台运行 git 并收下结果。
 
+use winc_editor::git::Synced;
 use winc_i18n::t;
 
 use super::*;
+use crate::app::AlertButton;
+use crate::app::git::branch::Then;
 
 /// 提交成功后按钮显示「✓ 已提交」的时长（经验值）。
 ///
@@ -27,13 +30,109 @@ impl App {
         self.branch.running.as_deref() == Some(t!("git-op-sync").as_ref() as &str)
     }
 
-    /// 与上游同步（[`winc_editor::git::Git::sync`]）：落后时拉取，领先时推送；本地改写了已推送的
-    /// 提交时以本地版本推送。
+    /// 与上游同步：先询问（配置项 `git.confirmSync` 为 `false` 时不问），确认后开始。
     pub(in crate::app) fn git_sync(&mut self) {
-        if self.commit_sync().is_none() {
+        let Some((ahead, behind)) = self.commit_sync() else {
+            return;
+        };
+        if self.config.confirm_sync != Some(false) && self.window.is_some() {
+            let detail = match (ahead, behind) {
+                (_, 0) => t!("git-sync-confirm-push", ahead = ahead),
+                (0, _) => t!("git-sync-confirm-pull", behind = behind),
+                _ => t!("git-sync-confirm-both", ahead = ahead, behind = behind),
+            };
+            let buttons = vec![
+                AlertButton::new(t!("git-sync-confirm-button")),
+                AlertButton::cancel(t!("common-cancel")),
+            ];
+            let asked = Some((t!("git-confirm-dont-ask"), false));
+            let message = t!("git-sync-confirm");
+            self.show_alert(message, &detail, buttons, asked, |index, never| {
+                (index == 0).then_some(UserEvent::GitSync(never))
+            });
             return;
         }
-        self.git_operate(t!("git-op-sync").into(), |git, root| git.sync(root));
+        self.run_git_sync(false);
+    }
+
+    /// 同步的提示框按了「同步」：`never_ask` 表示勾选了「不再询问」。
+    pub(in crate::app) fn confirm_git_sync(&mut self, never_ask: bool) {
+        self.never_ask_sync(never_ask);
+        self.run_git_sync(false);
+    }
+
+    /// 勾选了「不再询问」时写入配置，之后同步、提交并推送都不再询问。
+    fn never_ask_sync(&mut self, never_ask: bool) {
+        if never_ask {
+            self.config.confirm_sync = Some(false);
+            self.save_config();
+        }
+    }
+
+    /// 在后台同步（[`winc_editor::git::Git::sync`]）；需要强制推送而 `force` 为假时转为询问。
+    pub(in crate::app) fn run_git_sync(&mut self, force: bool) {
+        self.git_operate_then(t!("git-op-sync").into(), move |git, root| {
+            git.sync(root, force).map(|synced| match synced {
+                Synced::Done(summary) => (summary, Then::Nothing),
+                Synced::NeedsForce(count) => (String::new(), Then::ConfirmForcePush(count)),
+            })
+        });
+    }
+
+    /// 同步需要强制推送：无论配置如何都询问，确认后才替换上游的 `count` 个提交。
+    ///
+    /// 没有窗口（测试中）时无法确认，在状态栏说明，不推送。
+    pub(in crate::app) fn confirm_force_push(&mut self, count: usize) {
+        let message = t!("git-force-push-confirm");
+        if self.window.is_some() {
+            let detail = t!("git-force-push-confirm-detail", count = count);
+            let button = t!("git-force-push-confirm-button");
+            self.show_confirm(message, &detail, button, |ok| {
+                ok.then_some(UserEvent::GitForcePush)
+            });
+            return;
+        }
+        self.flash(message);
+    }
+
+    /// 提交并推送：可以提交时先询问（配置项 `git.confirmSync` 为 `false` 时不问）。
+    pub(in crate::app) fn ask_commit_and_push(&mut self) {
+        let ready = !self.commit.busy
+            && self
+                .git
+                .status
+                .as_ref()
+                .is_some_and(|status| self.commit.blocker(status).is_none());
+        if ready && self.config.confirm_sync != Some(false) && self.window.is_some() {
+            let detail = match self.commit_scope() {
+                Some((count, Some(branch))) => {
+                    t!(
+                        "git-commit-push-confirm-scope",
+                        count = count,
+                        branch = branch
+                    )
+                }
+                _ => t!("git-commit-push-confirm-detail").to_owned(),
+            };
+            let buttons = vec![
+                AlertButton::new(t!("git-commit-push-confirm-button")),
+                AlertButton::cancel(t!("common-cancel")),
+            ];
+            let asked = Some((t!("git-confirm-dont-ask"), false));
+            let message = t!("git-commit-push-confirm");
+            self.show_alert(message, &detail, buttons, asked, |index, never| {
+                (index == 0).then_some(UserEvent::GitCommitAndPush(never))
+            });
+            return;
+        }
+        // 不能提交时由提交的入口说明原因。
+        self.git_commit_and_push();
+    }
+
+    /// 提交并推送的提示框按了确认：`never_ask` 表示勾选了「不再询问」。
+    pub(in crate::app) fn confirm_commit_and_push(&mut self, never_ask: bool) {
+        self.never_ask_sync(never_ask);
+        self.git_commit_and_push();
     }
 
     /// 提交勾上的文件。

@@ -138,5 +138,6 @@ menu-commit-refresh = 刷新
 menu-commit-expand-all = 全部展开
 menu-commit-collapse-all = 全部折叠
 menu-commit-roll-back = 回滚勾选的文件…
+menu-commit-undo = 撤销提交
 menu-commit-and-push = 提交并推送
 menu-commit-amend = 修改上一次提交

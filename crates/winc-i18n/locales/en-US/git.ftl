@@ -204,7 +204,34 @@ git-commit-done = Committed { $oid }: { $subject }
 git-commit-failed = Couldn't commit: { $error }
 git-commit-done-in = Committed { $oid } in “{ $name }”
 git-commit-failed-in = Couldn't commit in “{ $name }”: { $error }
-git-undo-commit = Undo
+git-undo-commit-confirm = Undo commit "{ $subject }"?
+git-undo-commit-confirm-detail = The branch moves back to the previous commit. The changes stay staged and the commit message returns to the input box.
+git-undo-commit-confirm-button = Undo Commit
+git-confirm-dont-ask = Don't ask again
+git-sync-confirm = Sync with upstream?
+git-sync-confirm-push = { $ahead ->
+    [one] 1 commit will be pushed.
+   *[other] { $ahead } commits will be pushed.
+}
+git-sync-confirm-pull = { $behind ->
+    [one] 1 commit will be pulled.
+   *[other] { $behind } commits will be pulled.
+}
+git-sync-confirm-both = Commits to pull: { $behind }. Commits to push: { $ahead }.
+git-sync-confirm-button = Sync
+git-force-push-confirm = Force push?
+git-force-push-confirm-detail = { $count ->
+    [one] Pushed commits were rewritten locally. 1 upstream commit will be replaced by the local version. The push is rejected if upstream has received new commits in the meantime.
+   *[other] Pushed commits were rewritten locally. { $count } upstream commits will be replaced by the local version. The push is rejected if upstream has received new commits in the meantime.
+}
+git-force-push-confirm-button = Force Push
+git-commit-push-confirm = Commit and push?
+git-commit-push-confirm-scope = { $count ->
+    [one] 1 file will be committed to { $branch } and pushed to upstream.
+   *[other] { $count } files will be committed to { $branch } and pushed to upstream.
+}
+git-commit-push-confirm-detail = The commit will be pushed to upstream.
+git-commit-push-confirm-button = Commit and Push
 git-undo-commit-done = Undid commit { $oid }; its changes are staged
 git-undo-commit-done-in = Undid commit { $oid } in “{ $name }”
 git-undo-commit-failed = Couldn't undo the commit: { $error }

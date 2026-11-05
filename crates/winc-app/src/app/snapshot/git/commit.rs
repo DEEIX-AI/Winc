@@ -1330,11 +1330,21 @@ fn the_last_local_commit_can_be_undone() {
     assert!(
         app.commit_hits
             .iter()
-            .any(|(r, t)| *t == CommitTarget::Undo && *r == button)
+            .any(|(r, t)| *t == CommitTarget::LastCommit && *r == button)
     );
 
     // 撤销：分支退回上一个提交，改动回到列表里，提交信息填回输入框。
-    app.press_commit(CommitTarget::Undo);
+    app.press_commit(CommitTarget::LastCommit);
+    app.run_menu_command(MenuCommand::CommitCopyOid);
+    let oid = app.commit_undoable().unwrap().oid.clone();
+    assert_eq!(app.copied.as_deref(), Some(oid.as_str()));
+    app.press_commit(CommitTarget::LastCommit);
+    let commands: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
+    assert_eq!(
+        commands,
+        [MenuCommand::CommitUndo, MenuCommand::CommitCopyOid]
+    );
+    app.run_menu_command(MenuCommand::CommitUndo);
     let status = app.git.status.clone().unwrap();
     assert_eq!(status.oid.as_deref(), Some(first.as_str()));
     assert!(!status.entries.is_empty());
@@ -1568,4 +1578,53 @@ fn the_commit_button_names_its_scope_only_for_a_plain_commit() {
     assert_eq!(app.commit_scope(), Some((1, None)));
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_rewritten_branch_is_not_force_pushed_without_confirmation() {
+    let Some((mut app, root)) = git_app("git-sync-force", false) else {
+        return;
+    };
+    let remote = root.with_extension("sync-remote.git");
+    let _ = std::fs::remove_dir_all(&remote);
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "one"]);
+    git_in(&root, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_in(
+        &root,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git_in(&root, &["push", "-q", "-u", "origin", "main"]);
+    let pushed = |root: &Path| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "origin/main"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+    git_in(&root, &["commit", "-q", "--amend", "-m", "one, reworded"]);
+    let before = pushed(&root);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert!(app.commit_sync().is_some());
+
+    // 同步发现需要强制推送：只询问，上游不变。
+    app.press_commit(CommitTarget::Commit);
+    assert_eq!(pushed(&root), before);
+    assert_eq!(app.status_message.as_deref(), Some("要强制推送吗？"));
+    // 「不再询问」只影响普通同步：写入配置后，强制推送仍然要确认。
+    app.handle_event(UserEvent::GitSync(true));
+    assert_eq!(app.config.confirm_sync, Some(false));
+    assert_eq!(pushed(&root), before);
+
+    // 确认后才替换上游。
+    app.handle_event(UserEvent::GitForcePush);
+    assert_ne!(pushed(&root), before);
+    assert!(app.commit_sync().is_none());
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&remote);
 }

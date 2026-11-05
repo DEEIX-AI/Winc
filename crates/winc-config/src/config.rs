@@ -118,6 +118,8 @@ pub struct Config {
     pub terminal_right: Option<bool>,
     /// 是否启用 Git 模块（文件状态、分支、变更视图），默认为否。
     pub git_enabled: Option<bool>,
+    /// 同步、提交并推送之前是否询问，默认询问；提示框上勾选「不再询问」时写为否。
+    pub confirm_sync: Option<bool>,
     /// 新建的工作树放在哪个目录下（按仓库分开，`<目录>/<仓库名>/<分支名>`）；可以用 `~/`，相对
     /// 路径相对于主工作树。
     ///

@@ -58,6 +58,8 @@ pub enum MenuButton {
     CommitMore,
     /// 提交视图「提交 ⌄」拆分按钮的箭头。
     CommitButton,
+    /// 提交视图底部「上一次提交」那一栏的「⋯」。
+    LastCommit,
     /// 文件树工具栏收起按钮以后的「⋯」。
     TreeMore,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。
@@ -255,6 +257,10 @@ pub enum MenuCommand {
     CommitCollapseAll,
     /// 提交视图的「⋯」：回滚勾上的文件（先确认）。
     CommitRollback,
+    /// 撤销上一次提交（先确认）。
+    CommitUndo,
+    /// 复制上一次提交的提交号。
+    CommitCopyOid,
     /// 「提交 ⌄」：提交以后继续推送。
     CommitPush,
     /// 「提交 ⌄」：开关「修改上一次提交」（开着时打勾）。
@@ -367,6 +373,8 @@ impl MenuCommand {
             MenuCommand::CommitExpandAll => t!("menu-commit-expand-all"),
             MenuCommand::CommitCollapseAll => t!("menu-commit-collapse-all"),
             MenuCommand::CommitRollback => t!("menu-commit-roll-back"),
+            MenuCommand::CommitUndo => t!("menu-commit-undo"),
+            MenuCommand::CommitCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::CommitPush => t!("menu-commit-and-push"),
             MenuCommand::CommitAmend => t!("menu-commit-amend"),
             MenuCommand::TreeRefresh => t!("workspace-tree-tool-refresh"),
@@ -562,6 +570,8 @@ pub enum MenuTarget {
     CommitMore,
     /// 提交视图「提交 ⌄」拆分按钮的箭头。
     CommitButton,
+    /// 提交视图底部「上一次提交」那一栏的「⋯」。
+    LastCommit,
     /// 文件树工具栏的「⋯」：收起的各个工具。
     TreeTools,
     /// 标签栏最右端「⌄」弹出的标签列表。

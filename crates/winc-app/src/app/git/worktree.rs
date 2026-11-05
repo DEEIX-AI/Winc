@@ -405,7 +405,7 @@ impl App {
     /// 换目录会重新读）。
     pub(super) fn worktree_done(&mut self, then: Then) {
         match then {
-            Then::Nothing | Then::ConfirmRemove(_) => return,
+            Then::Nothing | Then::ConfirmRemove(_) | Then::ConfirmForcePush(_) => return,
             Then::Refresh => {}
             Then::Open(path, true) => self.open_in_new_window(&path),
             Then::Open(path, false) => return self.switch_folder(&path),

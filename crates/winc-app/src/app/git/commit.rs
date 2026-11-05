@@ -334,8 +334,8 @@ pub enum CommitTarget {
     Commit,
     /// 拆分按钮右边的下拉箭头：弹「提交并推送」「修改上一次提交」。
     CommitMenu,
-    /// 「上一次提交」那一行右端的「撤销」。
-    Undo,
+    /// 「上一次提交」那一栏的「⋯」。
+    LastCommit,
     /// 合并、变基暂停时说明条右端的「中止」按钮。
     Abort,
     /// 固定在列表顶部的组或目录：列表先滚到它真正那一行停在固定的位置（画面不动），再收起或
@@ -364,7 +364,7 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
-    /// 视图底部「上一次提交」那一栏（整个侧栏宽）及其右端的「撤销」按钮。
+    /// 视图底部「上一次提交」那一栏（整个侧栏宽）及其右端的「⋯」按钮。
     ///
     /// 上一次提交不能撤销（已经推送、不在分支上、有进行中的操作）时为 `None`。
     pub undo: Option<(Rect, Rect)>,
@@ -622,8 +622,8 @@ impl App {
         // 「上一次提交」固定在视图底部，改动列表在它上面结束。
         let undo = self.commit_undoable().is_some().then(|| {
             let bar = Rect::new(panel.x, panel.bottom() - UNDO_H, panel.w, UNDO_H);
-            let w = BANNER_ABORT_W.min(inner_w);
-            let button = Rect::new(inner_x + inner_w - w, bar.y + 4.0, w, bar.h - 8.0);
+            let h = bar.h - 8.0;
+            let button = Rect::new(inner_x + inner_w - h, bar.y + 4.0, h, h);
             (bar, button)
         });
         let list_y = commit.bottom() + SIDEBAR_LIST_GAP;
@@ -878,7 +878,16 @@ impl App {
             CommitTarget::Commit if self.commit_sync().is_some() => self.git_sync(),
             CommitTarget::Commit => self.git_commit(),
             CommitTarget::Abort => self.confirm_abort(),
-            CommitTarget::Undo => self.undo_last_commit(),
+            CommitTarget::LastCommit => {
+                let Some((_, button)) = self.commit_parts().undo else {
+                    return;
+                };
+                self.open_button_menu(
+                    MenuButton::LastCommit,
+                    MenuTarget::LastCommit,
+                    menu_below(button),
+                );
+            }
             CommitTarget::CommitMenu => {
                 // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
                 // 避免菜单看起来与「⌄」无关。
@@ -950,7 +959,7 @@ impl App {
     ) {
         use crate::app::input::context_menu::MenuCommand;
         match command {
-            MenuCommand::CommitPush => self.git_commit_and_push(),
+            MenuCommand::CommitPush => self.ask_commit_and_push(),
             MenuCommand::CommitAmend => self.toggle_amend(),
             _ => {}
         }
@@ -958,7 +967,7 @@ impl App {
     }
 
     /// 提交勾上的文件，成功以后继续推送。
-    pub(super) fn git_commit_and_push(&mut self) {
+    pub(in crate::app) fn git_commit_and_push(&mut self) {
         self.commit.push_after = true;
         self.git_commit();
         // 没有真的开始提交（没写信息、没勾文件），就不留着「之后推送」。
@@ -1154,9 +1163,58 @@ impl App {
         });
     }
 
-    /// 撤销上一次提交（「撤销」按钮）：分支退回上一个提交，改动留在暂存区并保持勾选，提交信息
-    /// 填回输入框（输入框里已经写了别的时不覆盖）。
-    pub(super) fn undo_last_commit(&mut self) {
+    /// 「上一次提交」那一栏的「⋯」菜单。
+    pub(in crate::app) fn last_commit_menu(
+        &self,
+    ) -> Vec<crate::app::input::context_menu::MenuEntry> {
+        use crate::app::input::context_menu::{MenuCommand, MenuEntry};
+        vec![
+            MenuEntry::Item(MenuCommand::CommitUndo, self.commit_undoable().is_some()),
+            MenuEntry::Item(MenuCommand::CommitCopyOid, true),
+        ]
+    }
+
+    /// 执行「上一次提交」菜单中的命令。
+    pub(in crate::app) fn run_last_commit_command(
+        &mut self,
+        command: crate::app::input::context_menu::MenuCommand,
+    ) {
+        use crate::app::input::context_menu::MenuCommand;
+        let Some(last) = self.commit_undoable().cloned() else {
+            return;
+        };
+        match command {
+            MenuCommand::CommitUndo => self.ask_undo_commit(&last),
+            MenuCommand::CommitCopyOid => {
+                let short = last.oid.chars().take(7).collect::<String>();
+                self.flash(t!("git-log-copied-oid", commit = short.as_str()));
+                self.set_clipboard(last.oid, false);
+            }
+            _ => {}
+        }
+    }
+
+    /// 先请用户确认，确认后撤销上一次提交；没有窗口（测试中）时直接撤销。
+    fn ask_undo_commit(&mut self, last: &LastCommit) {
+        if self.window.is_some() {
+            let message = t!("git-undo-commit-confirm", subject = last.subject.as_str());
+            use crate::app::AlertButton;
+            let buttons = vec![
+                AlertButton::new(t!("git-undo-commit-confirm-button")),
+                AlertButton::cancel(t!("common-cancel")),
+            ];
+            let detail = t!("git-undo-commit-confirm-detail");
+            self.show_alert(&message, detail, buttons, None, |index, _| {
+                (index == 0).then_some(UserEvent::GitUndoCommit)
+            });
+            return;
+        }
+        self.undo_last_commit();
+    }
+
+    /// 撤销上一次提交：分支退回上一个提交，改动留在暂存区并保持勾选，提交信息填回输入框（输入框里
+    /// 已经写了别的时不覆盖）。
+    pub(in crate::app) fn undo_last_commit(&mut self) {
         let Some(last) = self.commit_undoable().cloned() else {
             return;
         };

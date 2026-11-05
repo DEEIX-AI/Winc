@@ -277,6 +277,7 @@ const TERMINAL: &[Field] = &[
 /// `git` 一节。
 const GIT: &[Field] = &[
     bool_field!("enabled", git_enabled),
+    bool_field!("confirmSync", confirm_sync),
     string_field!("worktreeRoot", git_worktree_root),
     Field {
         key: "worktreeCopy",

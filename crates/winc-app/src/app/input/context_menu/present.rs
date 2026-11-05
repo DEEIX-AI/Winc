@@ -527,6 +527,7 @@ impl App {
             }
             MenuTarget::CommitMore => self.commit_more_menu(),
             MenuTarget::CommitButton => self.commit_button_menu(),
+            MenuTarget::LastCommit => self.last_commit_menu(),
             MenuTarget::TreeTools => self.tree_tools_menu(),
             MenuTarget::TabList => (0..self.editor.documents.len())
                 .map(|i| MenuEntry::Item(MenuCommand::ShowTab(i), true))

@@ -322,6 +322,10 @@ impl App {
             | UserEvent::Replaced) => self.finished(done),
             UserEvent::Rediffed => self.poll_rediffs(),
             UserEvent::GitRollback(paths) => self.git_rollback(paths),
+            UserEvent::GitSync(never_ask) => self.confirm_git_sync(never_ask),
+            UserEvent::GitCommitAndPush(never_ask) => self.confirm_commit_and_push(never_ask),
+            UserEvent::GitForcePush => self.run_git_sync(true),
+            UserEvent::GitUndoCommit => self.undo_last_commit(),
             UserEvent::GitAbort => {
                 self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitAbort);
             }

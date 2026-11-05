@@ -155,6 +155,7 @@ impl App {
             },
             MenuTarget::CommitMore => self.run_commit_more_command(command),
             MenuTarget::CommitButton => self.run_commit_button_command(command),
+            MenuTarget::LastCommit => self.run_last_commit_command(command),
             MenuTarget::TabList => {
                 if let MenuCommand::ShowTab(i) = command {
                     self.activate_tab(i);

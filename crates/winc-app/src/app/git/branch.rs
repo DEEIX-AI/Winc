@@ -96,6 +96,9 @@ pub(super) enum Then {
     Open(PathBuf, bool),
     /// 检查完要移除的工作树：确认以后移除（[`App::confirm_remove_worktree`]），不说做完了。
     ConfirmRemove(RemoveCheck),
+    /// 同步需要强制推送：确认以后推送（[`App::confirm_force_push`]），不说做完了；内容是上游将被
+    /// 替换的提交数。
+    ConfirmForcePush(usize),
 }
 
 /// 一次操作的结果。
@@ -526,7 +529,7 @@ impl App {
             if stale || self.git.root.as_deref() != Some(done.root.as_path()) {
                 let name = winc_editor::display_name(&done.root);
                 match done.result {
-                    Ok((_, Then::ConfirmRemove(_))) => {}
+                    Ok((_, Then::ConfirmRemove(_) | Then::ConfirmForcePush(_))) => {}
                     Ok((_, then)) => {
                         self.flash(t!("git-op-done-in", name = name, what = done.what));
                         // 已经换了目录：当前窗口不再换过去，在新窗口打开。
@@ -549,6 +552,7 @@ impl App {
             }
             match done.result {
                 Ok((_, Then::ConfirmRemove(check))) => self.confirm_remove_worktree(check),
+                Ok((_, Then::ConfirmForcePush(count))) => self.confirm_force_push(count),
                 Ok((summary, then)) => {
                     if summary.is_empty() {
                         self.flash(t!("git-op-done", what = done.what));

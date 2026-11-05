@@ -202,14 +202,16 @@ fn draw_undo(
         subject_clip,
     );
 
-    let hovered = app.hover == Hover::Commit(CommitTarget::Undo);
-    draw_button(frame, p, button, clip, hovered, false);
-    let label = t!("git-undo-commit");
-    let w = frame.measure(FontKind::Ui, size, label);
-    let color = if hovered { p.text } else { p.text_muted };
-    let text_x = (button.x + (button.w - w) / 2.0).round();
-    ui_text_small(frame, app, text_x, button, label, color, clip);
-    hits.push((button, CommitTarget::Undo));
+    let hovered = app.hover == Hover::Commit(CommitTarget::LastCommit);
+    let open = app.menu_button == Some(crate::app::MenuButton::LastCommit);
+    draw_button(frame, p, button, clip, hovered, open);
+    let color = if hovered || open {
+        p.text
+    } else {
+        p.text_muted
+    };
+    icons::more(frame, center(button), color, clip);
+    hits.push((button, CommitTarget::LastCommit));
 }
 
 /// 没有改动时列表区的空状态：居中的「没有更改」，下面一行淡色说明。

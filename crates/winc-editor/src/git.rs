@@ -12,6 +12,8 @@ mod commit;
 mod ignored;
 mod parse;
 mod sync;
+
+pub use sync::Synced;
 mod trust;
 mod worktree;
 
