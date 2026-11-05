@@ -1532,3 +1532,47 @@ fn uneven_lines_repo(name: &str) -> Option<(PathBuf, PathBuf)> {
     std::fs::write(&file, kept).unwrap();
     Some((dir, winc_editor::canonical_path(&file)))
 }
+
+#[test]
+fn diffs_render_whitespace_like_the_editor() {
+    use winc_config::RenderWhitespace;
+
+    use super::super::editor::whitespace::{changed, pixels_with};
+
+    let dir = search_folder("whitespace-diff");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.settings_toggle(Setting::GitModule);
+    app.run(winc_editor::Command::Insert("use std::fs;\n".into()));
+    app.run_action(Action::GitShowChanges);
+    paint(&mut app);
+    assert!(app.editor.active().unwrap().diff.is_some());
+
+    let none = pixels_with(&mut app, RenderWhitespace::None);
+    // 没有选区时，「选中时」和「不显示」一样。
+    assert_eq!(none, pixels_with(&mut app, RenderWhitespace::Selection));
+    assert!(changed(&none, &pixels_with(&mut app, RenderWhitespace::All)) > 0);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：显示全部空白符的差异，深浅两套配色。
+#[test]
+#[ignore]
+fn shoot_diff_whitespace() {
+    for (dark, theme) in [(false, "light"), (true, "dark")] {
+        let dir = search_folder(&format!("whitespace-diff-shot-{theme}"));
+        if !long_repo(&dir) {
+            return;
+        }
+        let mut app = app_with(&dir.join("src/main.rs"), dark);
+        app.settings_toggle(Setting::GitModule);
+        app.run(winc_editor::Command::Insert("use std::fs;  \n".into()));
+        app.run_action(Action::GitShowChanges);
+        app.config.render_whitespace = Some(winc_config::RenderWhitespace::All);
+        shoot(&mut app, &format!("whitespace-diff-{theme}"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

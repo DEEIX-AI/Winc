@@ -88,7 +88,7 @@ fn make_repo_inner(dir: &Path) -> bool {
 }
 
 /// 在 `dir` 中创建 60 行的仓库，改一处、删一行，用于测试差异的折叠与跳转。
-pub(super) fn long_repo(dir: &Path) -> bool {
+fn long_repo(dir: &Path) -> bool {
     let text: String = (0..60).map(|i| format!("let value_{i} = {i};\n")).collect();
     std::fs::write(dir.join("src/main.rs"), &text).unwrap();
     if !make_repo(dir) {

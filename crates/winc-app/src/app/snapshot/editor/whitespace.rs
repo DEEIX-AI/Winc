@@ -1,13 +1,12 @@
-//! 空白符的测试：四个选项在编辑区和差异中的绘制结果、设置菜单与切换命令。
+//! 空白符的测试：四个选项在编辑区的绘制结果、设置菜单与切换命令。
 
 use winc_config::RenderWhitespace;
 
-use super::super::git::long_repo;
 use super::*;
 use crate::keymap::Action;
 
 /// 用选项 `mode` 绘制一帧，返回全部像素。
-fn pixels_with(app: &mut App, mode: RenderWhitespace) -> Vec<u32> {
+pub(in crate::app::snapshot) fn pixels_with(app: &mut App, mode: RenderWhitespace) -> Vec<u32> {
     app.config.render_whitespace = Some(mode);
     paint(app);
     app.renderer
@@ -20,7 +19,7 @@ fn pixels_with(app: &mut App, mode: RenderWhitespace) -> Vec<u32> {
 }
 
 /// 返回两帧中不同的像素数。
-fn changed(a: &[u32], b: &[u32]) -> usize {
+pub(in crate::app::snapshot) fn changed(a: &[u32], b: &[u32]) -> usize {
     a.iter().zip(b).filter(|(a, b)| a != b).count()
 }
 
@@ -44,26 +43,6 @@ fn each_option_marks_its_own_whitespace() {
     let selected_none = pixels_with(&mut app, RenderWhitespace::None);
     let selected = pixels_with(&mut app, RenderWhitespace::Selection);
     assert!(changed(&selected_none, &selected) > 0);
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn diffs_follow_the_same_option() {
-    let dir = search_folder("whitespace-diff");
-    if !long_repo(&dir) {
-        return;
-    }
-    let mut app = app_with(&dir.join("src/main.rs"), false);
-    app.settings_toggle(Setting::GitModule);
-    app.run(winc_editor::Command::Insert("use std::fs;\n".into()));
-    app.run_action(Action::GitShowChanges);
-    paint(&mut app);
-    assert!(app.editor.active().unwrap().diff.is_some());
-
-    let none = pixels_with(&mut app, RenderWhitespace::None);
-    assert_eq!(none, pixels_with(&mut app, RenderWhitespace::Selection));
-    assert!(changed(&none, &pixels_with(&mut app, RenderWhitespace::All)) > 0);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -97,7 +76,7 @@ fn the_setting_menu_and_the_command_change_the_option() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 截图：显示全部空白符的编辑区和差异，深浅两套配色。
+/// 截图：编辑区显示全部空白符和选区内的空白符，深浅两套配色。
 #[test]
 #[ignore]
 fn shoot_render_whitespace() {
@@ -112,18 +91,6 @@ fn shoot_render_whitespace() {
         app.config.render_whitespace = Some(RenderWhitespace::Selection);
         app.run(winc_editor::Command::SelectAll);
         shoot(&mut app, &format!("whitespace-selection-{theme}"));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let dir = search_folder(&format!("whitespace-diff-shot-{theme}"));
-        if !long_repo(&dir) {
-            return;
-        }
-        let mut app = app_with(&dir.join("src/main.rs"), dark);
-        app.settings_toggle(Setting::GitModule);
-        app.run(winc_editor::Command::Insert("use std::fs;  \n".into()));
-        app.run_action(Action::GitShowChanges);
-        app.config.render_whitespace = Some(RenderWhitespace::All);
-        shoot(&mut app, &format!("whitespace-diff-{theme}"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
