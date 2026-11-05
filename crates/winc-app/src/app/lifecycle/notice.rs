@@ -39,7 +39,7 @@ impl NoticeAction {
 }
 
 /// 状态栏消息（由 [`App::flash`] 设置）显示的时间（4 秒）。
-const FLASH_DURATION: Duration = Duration::from_secs(4);
+pub(in crate::app) const FLASH_DURATION: Duration = Duration::from_secs(4);
 
 /// 编辑区右上角提示条显示的时间（5 秒）。
 const NOTICE_DURATION: Duration = Duration::from_secs(5);
@@ -58,6 +58,18 @@ impl App {
         }
         self.status_message = Some(message.into());
         self.status_until = Some(Instant::now() + FLASH_DURATION);
+        self.request_redraw();
+    }
+
+    /// 清除 [`App::flash`] 显示的消息：状态已经变化，消息不再成立时调用。
+    ///
+    /// 隐藏状态栏时消息显示在提示条上，清除提示条。
+    pub(crate) fn clear_flash(&mut self) {
+        self.status_message = None;
+        self.status_until = None;
+        if !self.status_bar_shown() {
+            self.clear_notice();
+        }
         self.request_redraw();
     }
 

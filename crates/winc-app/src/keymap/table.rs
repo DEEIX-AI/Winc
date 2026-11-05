@@ -386,6 +386,8 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     // `F7` / `⇧F7` 是同一命令的另一组绑定；登记在 `⌥F5` 之后，因此提示中仍显示 `⌥F5`。
     t.one(NextDifference, Editor, key(none, F(7)));
     t.one(PreviousDifference, Editor, key(shift, F(7)));
+    t.one(NextDiffFile, Editor, key(none, F(8)));
+    t.one(PreviousDiffFile, Editor, key(shift, F(8)));
     t.chord(GitRevertChange, Editor, chord_k, c(cmd, 'r'));
 
     t.one(ToggleSidebar, Global, c(cmd, 'b'));
