@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::ops::Range;
 
 use winc_core::text::{self, MAX_LINE_CHARS};
+use winc_core::wrap::{self, Breaks};
 use winc_core::{Lines, Selection};
 use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT, SideRow};
 use winc_i18n::t;
@@ -349,6 +350,7 @@ fn draw_body(
     let mut chars: Vec<char> = Vec::with_capacity(256);
     let mut tokens = Vec::with_capacity(32);
     let mut number = String::new();
+    let view_wrap = view.wrap();
 
     draw_fade(app, frame, view, parts, &row_y);
 
@@ -367,11 +369,15 @@ fn draw_body(
     for side in [LEFT, RIGHT] {
         let pane = parts.panes[side];
         let rows = visible_rows(scroll.rows[side], body.h, lh);
+        // 同一行的各段共用字符、分段和着色，换到另一行时才重新取。
+        let mut loaded = None;
+        let mut breaks = Breaks::default();
+        let mut prefix = std::cell::OnceCell::new();
         for row in rows.start..rows.end.min(view.rows[side].len()) {
             let y = row_y(side, row);
             let band = Rect::new(pane.rect.x, y, pane.rect.w, lh);
             let baseline = baseline_in(band, ascent, descent);
-            let (line, hunk) = match view.rows[side][row] {
+            let (line, hunk, part) = match view.rows[side][row] {
                 SideRow::Fold { gap, ref lines } => {
                     // 折起来的一段：一条淡底（不绘制上下两道细线：这些线在中间一栏会断开），行号
                     // 那一栏一对朝外的小箭头表示能展开；悬停时底色加深。
@@ -394,7 +400,7 @@ fn draw_body(
                     hits.push((band.intersect(body), DiffTarget::Fold(gap)));
                     continue;
                 }
-                SideRow::Line { line, hunk } => (line, hunk),
+                SideRow::Line { line, hunk, part } => (line, hunk, part),
             };
 
             if let Some(h) = hunk {
@@ -402,33 +408,59 @@ fn draw_body(
                 frame.rect_clipped(band, shade.line, 0.0, body);
             }
 
-            // 行号靠中间的带子一边右对齐。
-            number.clear();
-            let _ = write!(number, "{}", line + 1);
-            let number_x =
-                pane.gutter.right() - DIFF_GUTTER_PAD - number.chars().count() as f32 * app.cell;
-            frame.text(
-                FontKind::Mono,
-                app.fonts.code,
-                number_x,
-                baseline,
-                &number,
-                p.gutter_text,
-                pane.gutter,
-            );
+            // 行号靠中间的带子一边右对齐；后续各段不绘制行号。
+            if part == 0 {
+                number.clear();
+                let _ = write!(number, "{}", line + 1);
+                let number_x = pane.gutter.right()
+                    - DIFF_GUTTER_PAD
+                    - number.chars().count() as f32 * app.cell;
+                frame.text(
+                    FontKind::Mono,
+                    app.fonts.code,
+                    number_x,
+                    baseline,
+                    &number,
+                    p.gutter_text,
+                    pane.gutter,
+                );
+            }
 
             let text_side = if side == LEFT {
                 &mut view.old
             } else {
                 &mut view.new
             };
-            line_chars(text_side, line, &mut chars);
+            if loaded != Some(line) {
+                loaded = Some(line);
+                line_chars(text_side, line, &mut chars);
+                breaks = match view_wrap {
+                    Some((width, tab)) => wrap::breaks(&chars, width, tab),
+                    None => Breaks::default(),
+                };
+                prefix = std::cell::OnceCell::new();
+                let state = text_side
+                    .highlighter
+                    .state_at(&text_side.text, line, HIGHLIGHT_BUDGET);
+                app.highlight_pending |= state.is_none();
+                let language = text_side.highlighter.language();
+                tokens.clear();
+                let _ = winc_syntax::highlight_line(
+                    language,
+                    &chars,
+                    state.unwrap_or_default(),
+                    &mut tokens,
+                );
+            }
             // 这一行各字符之前的格数用到时算一次：改了的字、查找结果、选区、光标都按列查表。
-            let prefix = std::cell::OnceCell::new();
-            let at = |col: usize| {
-                let prefix = prefix.get_or_init(|| text::prefix_cells(&chars, tab_width));
-                prefix[col.min(chars.len())] as f32
+            // 这一段之外的列夹到这一段的两端，绘制出来宽度为 0。
+            let range = breaks.range(part.min(breaks.rows() - 1), chars.len());
+            let last = range.end == chars.len();
+            let cells = |col: usize| {
+                prefix.get_or_init(|| text::prefix_cells(&chars, tab_width))[col.min(chars.len())]
             };
+            let lead = breaks.indent_of(part) as f32 - cells(range.start) as f32;
+            let at = |col: usize| cells(col.clamp(range.start, range.end)) as f32 + lead;
             let origin_x = pane.text.x + DIFF_TEXT_PAD - scroll.x;
 
             // 改了的字：行首的缩进和只有空白的地方不标。
@@ -442,16 +474,16 @@ fn draw_body(
                     (&marks.new, hunk.new.start)
                 };
                 let word = hunk_shade(p, hunk).word;
-                for range in lines.get(line - start).into_iter().flatten() {
-                    let end = range.end.min(chars.len());
-                    let from = (range.start..end)
+                for mark in lines.get(line - start).into_iter().flatten() {
+                    let end = mark.end.min(chars.len());
+                    let from = (mark.start..end)
                         .find(|&c| !chars[c].is_whitespace())
                         .unwrap_or(end);
                     let to = (from..end)
                         .rev()
                         .find(|&c| !chars[c].is_whitespace())
                         .map_or(from, |c| c + 1);
-                    if from >= to {
+                    if from >= to || to <= range.start || from >= range.end {
                         continue;
                     }
                     let x0 = origin_x + at(from) * app.cell;
@@ -468,6 +500,9 @@ fn draw_body(
                 let current = app.search.current_match();
                 for &(from, to) in app.search.matches_in(start, end.max(start + 1)) {
                     let (a, b) = (from.max(start) - start, to.min(end).max(from) - start);
+                    if b <= range.start || a >= range.end {
+                        continue;
+                    }
                     let x0 = origin_x + at(a) * app.cell;
                     let x1 = origin_x + at(b) * app.cell;
                     let color = if current == Some((from, to)) {
@@ -494,39 +529,46 @@ fn draw_body(
                 let x0 = origin_x + at(from) * app.cell;
                 let x1 = origin_x
                     + at(to) * app.cell
-                    + if to > chars.len() {
+                    + if to > chars.len() && last {
                         app.cell * 0.5
                     } else {
                         0.0
                     };
-                let rect = Rect::new(x0, y, (x1 - x0).max(0.0), lh);
-                frame.rect_clipped(rect, p.selection, 0.0, pane.text);
+                if x1 > x0 {
+                    let rect = Rect::new(x0, y, x1 - x0, lh);
+                    frame.rect_clipped(rect, p.selection, 0.0, pane.text);
+                }
             }
 
-            let state = text_side
-                .highlighter
-                .state_at(&text_side.text, line, HIGHLIGHT_BUDGET);
-            app.highlight_pending |= state.is_none();
-            let language = text_side.highlighter.language();
-            tokens.clear();
-            let _ = winc_syntax::highlight_line(
-                language,
-                &chars,
-                state.unwrap_or_default(),
-                &mut tokens,
-            );
+            // 整行从行首绘制（Tab 的宽度与它在行内的位置有关），只露出这一段的范围。
+            let clip = if breaks.starts.is_empty() {
+                pane.text
+            } else {
+                let from = origin_x + at(range.start) * app.cell;
+                let to = origin_x + at(range.end) * app.cell;
+                Rect::new(from, pane.text.y, (to - from).max(0.0), pane.text.h).intersect(pane.text)
+            };
             draw_glyphs(
-                app, frame, &chars, &tokens, origin_x, baseline, tab_width, pane.text,
+                app,
+                frame,
+                &chars,
+                &tokens,
+                origin_x + lead * app.cell,
+                baseline,
+                tab_width,
+                clip,
             );
 
             // 其余光标与主光标一起闪烁；输入法组字只显示在主光标处，候选窗也跟着它。
             if side == RIGHT && carets_shown {
                 let skip = edit.carets.partition_point(|c| c.0 < line);
                 for &(_, col) in edit.carets[skip..].iter().take_while(|c| c.0 == line) {
-                    let x = origin_x + at(col) * app.cell;
-                    caret_bar(app, frame, x, y, pane.text);
+                    if breaks.row_of(col) == part {
+                        let x = origin_x + at(col) * app.cell;
+                        caret_bar(app, frame, x, y, pane.text);
+                    }
                 }
-                if edit.caret.0 == line {
+                if edit.caret.0 == line && breaks.row_of(edit.caret.1) == part {
                     let x = origin_x + at(edit.caret.1) * app.cell;
                     app.ime_cursor = Some(draw_caret(app, frame, x, y, baseline, pane.text));
                 }

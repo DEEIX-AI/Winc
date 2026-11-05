@@ -18,7 +18,10 @@ fn cause(levels: usize) -> LabelCause {
 
 /// 返回开始了一帧的状态。
 fn labels(animate: bool) -> TreeLabels {
-    let mut labels = TreeLabels::default();
+    let mut labels = TreeLabels {
+        animate_without_window: true,
+        ..TreeLabels::default()
+    };
     labels.begin_frame(animate);
     labels
 }

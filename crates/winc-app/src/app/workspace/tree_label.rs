@@ -28,7 +28,7 @@ pub struct TreeLabels {
     animate: bool,
     /// 绘制的帧号，用来清除不再显示的行。
     frame: u64,
-    /// 测试中没有窗口时仍播放过渡。
+    /// 测试中没有窗口时仍播放过渡，时钟停在刚开始的位置，结果不随实际时间变化。
     #[cfg(test)]
     pub(crate) animate_without_window: bool,
 }
@@ -172,7 +172,7 @@ impl TreeLabels {
                 row.motion = self.animate.then(|| Motion {
                     from,
                     from_width: current,
-                    clock: Clock::new(STATUS_SLIDE),
+                    clock: self.clock(),
                 });
             }
         }
@@ -197,6 +197,23 @@ impl TreeLabels {
     /// 是否有行在过渡途中。
     pub fn moving(&self) -> bool {
         self.rows.borrow().values().any(|row| row.motion.is_some())
+    }
+
+    /// 返回一次过渡的时钟。
+    fn clock(&self) -> Clock {
+        #[cfg(test)]
+        if self.animate_without_window {
+            return Clock::stopped(STATUS_SLIDE, std::time::Duration::from_millis(1));
+        }
+        Clock::new(STATUS_SLIDE)
+    }
+
+    /// 立即结束所有过渡，测试里用来进入下一步。
+    #[cfg(test)]
+    pub(crate) fn finish(&mut self) {
+        for row in self.rows.get_mut().values_mut() {
+            row.motion = None;
+        }
     }
 
     /// 结束已到终点的过渡。

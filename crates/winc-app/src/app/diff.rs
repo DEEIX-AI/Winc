@@ -542,6 +542,50 @@ impl App {
     }
 
     /// 让右侧光标可见：所在行被折叠时先展开，再滚动到视口内。
+    /// 让当前的差异标签按设置和文字区宽度自动换行，视图停在原来的内容上；当前标签不是差异时返回
+    /// `false`。
+    ///
+    /// 整篇断行的耗时与行数成正比：宽度逐帧变化时沿用已有的宽度，变化结束后再断行一次。
+    pub(in crate::app) fn sync_diff_wrap(&mut self) -> bool {
+        let wrap = self.config.word_wrap == Some(true);
+        let tab_width = self.editor.active_tab_width();
+        let resizing = self.text_width_changing();
+        let (editor, cell) = (self.layout.editor, self.cell);
+        let line_height = self.fonts.line_height;
+        let Some(doc) = self.editor.active_mut() else {
+            return false;
+        };
+        let Some(view) = doc.diff.as_deref_mut() else {
+            return false;
+        };
+        if resizing && wrap && view.is_wrapping() {
+            return true;
+        }
+        let parts = diff_parts(editor, view, cell);
+        let text_w = parts.panes[LEFT].text.w.min(parts.panes[RIGHT].text.w);
+        let cols = ((text_w - 2.0 * DIFF_TEXT_PAD) / cell).floor().max(1.0) as usize;
+
+        // 按屏幕上右侧最上面的显示行定位：两侧在视图中线对齐，它不一定是滚动位置换算出的行。
+        let visible = parts.body.h / line_height;
+        let row = view.side_scroll(RIGHT, doc.scroll_line.max(0.0), visible);
+        let (top, part) = match view.rows[RIGHT].get(row.floor() as usize) {
+            Some(SideRow::Line { line, part, .. }) => (*line, *part),
+            Some(SideRow::Fold { lines, .. }) => (lines.start, 0),
+            None => (usize::MAX, 0),
+        };
+        if view.set_wrap(wrap.then_some((cols, tab_width))) {
+            let part = part.min(view.breaks(RIGHT, top).rows().saturating_sub(1));
+            let first = view.row_of_new(top) + part;
+            doc.scroll_line = view.pos_of_top(RIGHT, first as f32 + row.fract(), visible);
+            if view.is_wrapping() {
+                doc.scroll_x = 0.0;
+            }
+            self.clamp_scroll();
+            self.request_redraw();
+        }
+        true
+    }
+
     fn diff_caret_visible(&mut self, index: usize) {
         let Some(line) = self.diff_caret_line(index) else {
             return;
@@ -553,14 +597,14 @@ impl App {
             .diff
             .as_deref()
             .and_then(|v| v.new.path.clone());
-        let caret_cell = path
+        let (caret_col, caret_cell) = path
             .and_then(|p| self.diff_source(&p, false))
             .map(|s| {
                 let doc = &self.editor.documents[s];
                 let (line, col) = doc.text().pos_to_line_col(doc.selection.head);
-                doc.col_to_cell(line, col, tab_width)
+                (col, doc.col_to_cell(line, col, tab_width))
             })
-            .unwrap_or(0);
+            .unwrap_or((0, 0));
         let width = {
             let Some(view) = self.editor.documents[index].diff.as_deref() else {
                 return;
@@ -573,13 +617,17 @@ impl App {
         };
         view.reveal_new(line);
         // 按滚动位置比：左侧更长的改动里右侧停着不动，按右侧的行数比会差出一截。
-        let at = view.pos_of(RIGHT, view.row_of_new(line) as f32);
+        let at = view.pos_of(RIGHT, view.row_of_col(RIGHT, line, caret_col) as f32);
         if at < doc.scroll_line {
             doc.scroll_line = at;
         } else if at >= doc.scroll_line + visible as f32 {
             doc.scroll_line = at - visible as f32 + 1.0;
         }
-        let x = caret_cell as f32 * cell;
+        let x = if view.is_wrapping() {
+            doc.scroll_x
+        } else {
+            caret_cell as f32 * cell
+        };
         if x < doc.scroll_x {
             doc.scroll_x = (x - cell * 4.0).max(0.0);
         } else if x > doc.scroll_x + width - cell * 2.0 {

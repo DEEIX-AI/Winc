@@ -146,6 +146,15 @@ impl Clock {
         }
     }
 
+    /// 返回停在 `at` 的时钟：测试里的进度不随实际时间变化。
+    #[cfg(test)]
+    pub(crate) fn stopped(duration: Duration, at: Duration) -> Clock {
+        Clock {
+            frozen: Some(at),
+            ..Clock::new(duration)
+        }
+    }
+
     fn elapsed(&self) -> Duration {
         #[cfg(test)]
         if let Some(at) = self.frozen {

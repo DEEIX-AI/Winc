@@ -94,6 +94,7 @@ impl App {
             Some(SideRow::Fold { .. }) => return None,
             None => (usize::MAX, true),
         };
+        let cell = view.cell_in_row(RIGHT, row, cell);
         let source = self.diff_source(&path, open)?;
         let lines = self.editor.documents[source].text().line_count();
         Some(DiffSpot {
@@ -314,6 +315,7 @@ impl App {
         let cell = ((x - pane.text.x - DIFF_TEXT_PAD + doc.scroll_x) / self.cell)
             .round()
             .max(0.0) as usize;
+        let cell = view.cell_in_row(LEFT, row, cell);
         let slice = text.line(line);
         let content = slice.len_chars()
             - slice
