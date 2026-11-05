@@ -1210,8 +1210,15 @@ impl App {
     }
 
     /// 处理对项目名的点击：在项目名下方弹出最近项目菜单。
+    ///
+    /// 提交视图里有多个仓库时项目名写的是当前仓库，改为打开仓库选择器。
     pub(in crate::app) fn open_project_menu(&mut self) {
+        if self.project_name_picks_repository() {
+            self.open_repository_picker();
+            return;
+        }
         self.git_discover();
+        self.git_scan_repositories();
         let hit = self.project_hit;
         self.open_button_menu(MenuButton::Project, MenuTarget::Project, menu_below(hit));
     }

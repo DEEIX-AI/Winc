@@ -918,6 +918,8 @@ pub struct App {
     pub picker_places: Option<editor::definition::Places>,
     /// 面板列出分支（分支选择器）时的各行。
     pub picker_branch_rows: Option<Vec<git::branch::picker::BranchRow>>,
+    /// 面板列出仓库（仓库选择器）时的各行。
+    pub picker_repository_rows: Option<Vec<git::repository_picker::RepositoryRow>>,
     /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
     pub branch_folders: std::collections::HashSet<(bool, String)>,
     /// 正在后台项目中进行的定义查找。

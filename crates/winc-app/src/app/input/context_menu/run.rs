@@ -22,6 +22,9 @@ impl App {
         if matches!(menu.target, MenuTarget::Branch | MenuTarget::BranchOps(_)) {
             self.close_branch_picker();
         }
+        if matches!(menu.target, MenuTarget::Project) {
+            self.close_repository_picker();
+        }
 
         match menu.target {
             MenuTarget::Tree(path) => self.run_tree_command(command, path),

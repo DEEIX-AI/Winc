@@ -1098,6 +1098,11 @@ fn relative_all<'a>(
     })
 }
 
+/// [`scan_repositories`] 最多查看的目录项数（个）：在后台运行，比 [`SCAN_ENTRIES`] 宽松，又不至于
+/// 在放着海量文件的目录里长时间读磁盘。
+const SCAN_DEEP_ENTRIES: usize = 65_536;
+/// [`scan_repositories`] 不进入的目录：依赖和构建产物，里面不会有用户自己的仓库，文件却很多。
+const SCAN_SKIPPED: [&str; 4] = ["node_modules", "target", "vendor", "__pycache__"];
 /// [`find_repositories`] 最多查看的目录项数（个，经验值）：放着大量文件的目录不拖慢打开。
 const SCAN_ENTRIES: usize = 4096;
 
@@ -1128,6 +1133,46 @@ pub fn find_repositories(dir: &Path) -> Vec<PathBuf> {
             .map(|name| name.to_string_lossy().to_lowercase())
     });
     find_root(dir).into_iter().chain(children).collect()
+}
+
+/// 在 `dir` 下面最多 `depth` 层里查找仓库，按路径排序，不含 `dir` 本身。
+///
+/// 按层往下找，较浅的目录优先用完额度（`SCAN_DEEP_ENTRIES`）。找到的仓库不再往里找；跳过隐藏
+/// 目录、依赖和构建产物目录（`SCAN_SKIPPED`），不跟随符号链接。取消时返回已找到的部分。
+pub fn scan_repositories(dir: &Path, depth: usize, cancel: &Cancel) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut level = vec![dir.to_path_buf()];
+    let mut budget = SCAN_DEEP_ENTRIES;
+    for _ in 0..depth {
+        let mut next = Vec::new();
+        for parent in &level {
+            if cancel.is_cancelled() || budget == 0 {
+                found.sort();
+                return found;
+            }
+            let Ok(entries) = std::fs::read_dir(parent) else {
+                continue;
+            };
+            for entry in entries.flatten().take(budget) {
+                budget -= 1;
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let skipped = name.starts_with('.') || SCAN_SKIPPED.contains(&name.as_ref());
+                if skipped || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    continue;
+                }
+                let path = entry.path();
+                if path.join(".git").exists() {
+                    found.push(path);
+                } else {
+                    next.push(path);
+                }
+            }
+        }
+        level = next;
+    }
+    found.sort();
+    found
 }
 
 /// macOS 上命令行开发者工具是否已安装（`xcode-select -p` 成功）。

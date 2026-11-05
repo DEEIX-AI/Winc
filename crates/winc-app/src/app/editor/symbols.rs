@@ -35,6 +35,7 @@ impl App {
         self.finish_name_input();
         self.picker_places = None;
         self.picker_branch_rows = None;
+        self.picker_repository_rows = None;
         self.picker_open = true;
         self.picker_doc = self.editor.active().map(|d| d.id);
         self.picker_input.set_text("@");
@@ -50,6 +51,7 @@ impl App {
     pub(crate) fn picker_lists_symbols(&self) -> bool {
         self.picker_places.is_none()
             && !self.picker_lists_branches()
+            && !self.picker_lists_repositories()
             && self.picker_input.text().starts_with('@')
     }
 

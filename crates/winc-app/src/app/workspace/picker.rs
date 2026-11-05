@@ -125,6 +125,7 @@ impl App {
         self.finish_name_input();
         self.picker_places = None;
         self.picker_branch_rows = None;
+        self.picker_repository_rows = None;
         self.picker_open = true;
         self.picker_doc = self.editor.active().map(|d| d.id);
         self.picker_input.set_text("");
@@ -145,6 +146,7 @@ impl App {
         self.picker.forget_query();
         self.picker_open = false;
         self.picker_branch_rows = None;
+        self.picker_repository_rows = None;
         self.places_in = None;
         if let Some(places) = self.picker_places.take()
             && let Some(clock) = self.clock(POPUP_OUT)
@@ -290,6 +292,12 @@ impl App {
             self.branch_picker_refresh();
             return;
         }
+        if self.picker_lists_repositories() {
+            self.picker_goto = None;
+            self.drop_symbols();
+            self.repository_picker_refresh();
+            return;
+        }
         if self.picker_lists_symbols() {
             self.picker_goto = None;
             self.symbols_refresh();
@@ -394,7 +402,8 @@ impl App {
 
         let files = !self.picker_lists_commands()
             && !self.picker_lists_symbols()
-            && !self.picker_lists_branches();
+            && !self.picker_lists_branches()
+            && !self.picker_lists_repositories();
         if self.picker_open && files && self.picker_places.is_none() {
             let scroll = self.picker_scroll;
             self.picker_refresh();
@@ -468,6 +477,10 @@ impl App {
         }
         if self.picker_lists_branches() {
             self.branch_picker_accept();
+            return;
+        }
+        if self.picker_lists_repositories() {
+            self.repository_picker_accept();
             return;
         }
         if self.picker_lists_commands() {

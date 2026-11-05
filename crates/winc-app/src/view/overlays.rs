@@ -330,7 +330,12 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         let cy = bar.y + bar.h / 2.0;
         icons::magnifier(frame, (x, cy), p.text_dim, bar);
 
-        let total = if app_mut.picker_lists_branches() {
+        let total = if app_mut.picker_lists_repositories() {
+            t!(
+                "git-repository-picker-count",
+                count = app_mut.git.repositories.len()
+            )
+        } else if app_mut.picker_lists_branches() {
             t!(
                 "git-branch-picker-count",
                 count = app_mut.git.branches.len()
@@ -366,7 +371,9 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         bar.h,
     );
 
-    let placeholder = if app.picker_lists_branches() {
+    let placeholder = if app.picker_lists_repositories() {
+        t!("git-repository-picker-placeholder")
+    } else if app.picker_lists_branches() {
         t!("git-branch-picker-placeholder")
     } else {
         t!("workspace-picker-placeholder")
@@ -396,6 +403,10 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         rect,
     );
 
+    if app.picker_lists_repositories() {
+        draw_repository_rows(app, frame, &parts);
+        return;
+    }
     if app.picker_lists_branches() {
         draw_branch_rows(app, frame, &parts);
         return;
@@ -519,6 +530,61 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
                 marked_label(frame, app, size, at, &shown, &in_dir, p.text_dim, clip);
             }
         }
+    }
+}
+
+/// 绘制仓库选择器的各行：「项目菜单」和各个仓库。当前仓库打勾，右端是淡色的分支和改动数。
+fn draw_repository_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
+    use crate::app::git::repository_picker::RepositoryRow;
+
+    let p = app.palette;
+    let list = parts.list;
+    let rows = app.picker_repository_rows.as_deref().unwrap_or_default();
+    if rows.is_empty() {
+        let row = Rect::new(list.x, list.y, list.w, list.h.min(PICKER_ROW));
+        let empty = t!("git-repository-picker-empty");
+        ui_text(
+            frame,
+            app,
+            list.x + PICKER_TEXT_X,
+            row,
+            empty,
+            p.text_dim,
+            list,
+        );
+        return;
+    }
+
+    let scroll = app.picker_scroll;
+    for i in parts.visible(scroll, rows.len()) {
+        let row = parts.row(i, scroll);
+        let clip = row.intersect(list);
+        draw_pick_row(app, frame, row, i, clip);
+        let mark = (
+            row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0,
+            row.y + row.h / 2.0,
+        );
+        let index = match rows[i] {
+            RepositoryRow::ProjectMenu => {
+                icons::more(frame, mark, p.text_dim, clip);
+                let label = t!("git-repository-picker-project");
+                ui_text(frame, app, row.x + PICKER_TEXT_X, row, label, p.text, clip);
+                continue;
+            }
+            RepositoryRow::Repository(index) => index,
+        };
+        if app.git.repositories.get(index) == app.git.root.as_ref() {
+            icons::check(frame, mark, 10.0, p.accent, clip);
+        }
+        if let Some(detail) = app.git_repository_detail(index) {
+            let size = app.fonts.ui_small;
+            let x = row.right() - 14.0 - frame.measure(FontKind::Ui, size, &detail);
+            ui_text_small(frame, app, x, row, &detail, p.text_dim, clip);
+        }
+        let name = app.git_repository_name(index);
+        let marked = app.repository_picker_matched(&name);
+        let at = (row.x + PICKER_TEXT_X, row);
+        marked_label(frame, app, app.fonts.ui, at, &name, &marked, p.text, clip);
     }
 }
 

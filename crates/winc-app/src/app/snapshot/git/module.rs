@@ -15,6 +15,7 @@ fn a_folder_of_repositories_can_switch_between_them() {
         }
     }
     let mut app = app_with(&dir, false);
+    app.config.repository_scan_depth = Some(1);
     app.settings_toggle(Setting::GitModule);
     if git_unusable(&app) {
         return;
@@ -22,7 +23,7 @@ fn a_folder_of_repositories_can_switch_between_them() {
     let dir = app.editor.root().unwrap().to_path_buf();
     let (a, b, deep) = (dir.join("a"), dir.join("b"), dir.join("group/deep"));
 
-    // 只看第一层子目录，按名字排序，默认用第一个。
+    // 查找层数为 1 时只看第一层子目录，按名字排序，默认用第一个。
     assert_eq!(app.git.repositories, [a.clone(), b.clone()]);
     assert_eq!(app.git.root.as_ref(), Some(&a));
     assert!(app.git.status.is_some());
@@ -695,4 +696,113 @@ fn shoot_module_fade() {
         shoot(&mut app, &format!("module-fade-out-{theme}"));
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+
+/// 建一个放着多个仓库的目录：`a`、`group/b`、`group/deep/c`，打开它并等后台查找完成。
+fn nested_repositories(name: &str) -> Option<(App, PathBuf)> {
+    let dir = search_folder(name);
+    for repo in ["a", "group/b", "group/deep/c"] {
+        let repo = dir.join(repo);
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+        if !make_repo(&repo) {
+            return None;
+        }
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.git.repositories.len() < 3 && std::time::Instant::now() < deadline {
+        app.poll_git();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Some((app, dir))
+}
+
+#[test]
+fn nested_repositories_are_found_in_the_background_without_moving_earlier_ones() {
+    let Some((mut app, dir)) = nested_repositories("git-nested") else {
+        return;
+    };
+    let names: Vec<String> = (0..app.git.repositories.len())
+        .map(|i| app.git_repository_name(i))
+        .collect();
+    assert_eq!(names, ["a", "group/b", "group/deep/c"]);
+    assert_eq!(app.git.root.as_ref(), app.git.repositories.first());
+
+    // 配置的层数生效：只找一层时找不到更深的。
+    app.config.repository_scan_depth = Some(1);
+    app.git_folder_changed();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    app.poll_git();
+    assert_eq!(app.git.repositories.len(), 1);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_repository_picker_searches_and_switches() {
+    use crate::app::git::repository_picker::RepositoryRow;
+
+    let Some((mut app, dir)) = nested_repositories("git-repo-picker") else {
+        return;
+    };
+    // 文件视图里项目名仍然打开项目菜单；提交视图里打开仓库选择器。
+    assert!(!app.project_name_picks_repository());
+    app.run_action(Action::ShowCommit);
+    assert!(app.project_name_picks_repository());
+    app.open_project_menu();
+    assert!(app.picker_lists_repositories());
+    assert!(app.context_menu.is_none());
+
+    // 第一行是项目菜单，选中的是当前仓库。
+    let rows = |app: &App| app.picker_repository_rows.clone().unwrap();
+    assert_eq!(rows(&app)[0], RepositoryRow::ProjectMenu);
+    assert_eq!(
+        rows(&app)[app.picker_selected],
+        RepositoryRow::Repository(0)
+    );
+    paint(&mut app);
+
+    // 搜索只留下匹配的仓库；回车切换并关闭。
+    app.picker_input.set_text("deep");
+    app.picker_refresh();
+    assert_eq!(rows(&app), [RepositoryRow::Repository(2)]);
+    app.picker_accept();
+    assert!(!app.picker_open);
+    assert_eq!(app.git.root.as_ref(), app.git.repositories.get(2));
+
+    // 项目菜单还在：从第一行打开，选了一项以后选择器关闭。
+    app.open_repository_picker();
+    app.picker_selected = 0;
+    app.picker_accept();
+    assert!(app.picker_lists_repositories());
+    assert!(app.context_menu.is_some());
+    app.run_menu_command(crate::app::MenuCommand::SwitchRepository(1));
+    assert!(!app.picker_open);
+    assert_eq!(app.git.root.as_ref(), app.git.repositories.get(1));
+
+    // 只有一个仓库时项目名不打开仓库选择器。
+    app.git.repositories.truncate(1);
+    assert!(!app.project_name_picks_repository());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 截图：仓库选择器。
+#[test]
+#[ignore]
+fn shoot_repository_picker() {
+    let Some((mut app, dir)) = nested_repositories("git-repo-shot") else {
+        return;
+    };
+    std::fs::write(dir.join("group/b/src/main.rs"), "fn changed() {}\n").unwrap();
+    app.run_action(Action::ShowCommit);
+    app.open_repository_picker();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline && app.git_repository_detail(1).is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    shoot(&mut app, "repository-picker");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

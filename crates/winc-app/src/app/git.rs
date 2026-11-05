@@ -12,6 +12,7 @@ pub(super) mod commit;
 pub(crate) mod form;
 pub(crate) mod log;
 pub(crate) mod merge;
+pub(crate) mod repository_picker;
 pub(crate) mod worktree;
 
 use std::collections::{HashMap, HashSet};
@@ -151,11 +152,14 @@ struct DiffTab {
 /// 项目菜单最多读取分支和改动数的仓库数（个，经验值）：每个要运行一次 `git status`。
 const SUMMARY_REPOSITORIES: usize = 32;
 
+/// 后台深层查找的结果：（查找的目录，找到的仓库）。
+type ScannedRepositories = (PathBuf, Vec<PathBuf>);
+
 /// Git 模块的状态。
 pub(crate) struct GitState {
     /// 当前仓库的根目录；模块关着、目录里没有仓库时为 `None`。
     pub root: Option<PathBuf>,
-    /// 打开的目录里可用的仓库，见 [`App::git_discover`]；项目菜单在有多个时列出。
+    /// 打开的目录里可用的仓库，见 [`App::git_discover`]；项目菜单和仓库选择器在有多个时列出。
     pub repositories: Vec<PathBuf>,
     /// 上次跟随的标签（[`App::git_follow_active`]）：切换标签时才查找文件所在的仓库。
     followed: Option<DocumentId>,
@@ -163,6 +167,10 @@ pub(crate) struct GitState {
     summaries: Arc<Mutex<HashMap<PathBuf, Status>>>,
     /// 正在运行的读取；重新读取时取消。
     summaries_running: Option<Cancel>,
+    /// 后台深层查找（[`App::git_scan_repositories`]）的结果。
+    scanned: Arc<Mutex<Option<ScannedRepositories>>>,
+    /// 正在运行的深层查找；重新查找时取消。
+    scan_running: Option<Cancel>,
     /// 找到的 git，第一次用到时在后台找，所有后台任务共用（[`SharedGit`]）。
     pub(super) tool: SharedGit,
     /// 最近一次成功的 `git status`。
@@ -214,6 +222,8 @@ impl Default for GitState {
             followed: None,
             summaries: Arc::default(),
             summaries_running: None,
+            scanned: Arc::default(),
+            scan_running: None,
             tool: SharedGit::default(),
             status: None,
             branches: Vec::new(),
@@ -370,7 +380,8 @@ impl App {
 
     /// 打开的目录变了、或者模块开关变了：重新确定仓库，并刷新一次。
     ///
-    /// 目录本身不是仓库、第一层子目录里有仓库时用第一个，其余的在项目菜单里切换。
+    /// 目录本身不是仓库、第一层子目录里有仓库时用第一个，其余的在仓库选择器里切换；更深的仓库由
+    /// 后台查找（[`App::git_scan_repositories`]）加入。
     pub(super) fn git_folder_changed(&mut self) {
         self.git.repositories.clear();
         self.git.followed = None;
@@ -382,6 +393,68 @@ impl App {
         self.git_discover();
         let root = self.git.repositories.first().cloned();
         self.git_set_root(root);
+        self.git_scan_repositories();
+    }
+
+    /// 在后台按配置的层数查找打开的目录下的仓库，找到的加入列表（[`App::git_take_scan`]）。
+    pub(in crate::app) fn git_scan_repositories(&mut self) {
+        if let Some(cancel) = self.git.scan_running.take() {
+            cancel.cancel();
+        }
+        let Some(dir) = self
+            .editor
+            .root()
+            .filter(|_| self.git_enabled())
+            .map(Path::to_path_buf)
+        else {
+            return;
+        };
+        let depth = self
+            .config
+            .repository_scan_depth
+            .unwrap_or(winc_config::Config::REPOSITORY_SCAN_DEPTH);
+        let cancel = Cancel::default();
+        self.git.scan_running = Some(cancel.clone());
+        let slot = Arc::clone(&self.git.scanned);
+        self.spawn_blocking_then(UserEvent::GitStatus, move || {
+            let found = git::scan_repositories(&dir, depth, &cancel);
+            if !cancel.is_cancelled() {
+                *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((dir, found));
+            }
+        });
+    }
+
+    /// 收下后台查找的结果：新的仓库加在列表末尾（菜单、选择器按下标引用仓库，已有的下标不能变）；
+    /// 还没有当前仓库时用找到的第一个。
+    pub(in crate::app) fn git_take_scan(&mut self) {
+        let scanned = self
+            .git
+            .scanned
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some((dir, found)) = scanned else {
+            return;
+        };
+        if self.editor.root() != Some(dir.as_path()) || !self.git_enabled() {
+            return;
+        }
+        let known = self.git.repositories.len();
+        for repo in found {
+            if !self.git.repositories.contains(&repo) {
+                self.git.repositories.push(repo);
+            }
+        }
+        if self.git.repositories.len() == known {
+            return;
+        }
+        self.git_read_summaries();
+        if self.git.root.is_none() {
+            let root = self.git.repositories.first().cloned();
+            self.git_set_root(root);
+        }
+        self.repository_picker_refreshed();
+        self.request_redraw();
     }
 
     /// 重新查找打开的目录里的仓库；已经加入的（打开过其中文件的）只要还在就保留。
@@ -436,7 +509,7 @@ impl App {
 
     /// 返回第 `index` 个仓库在项目菜单里的小字：分支和改动数；还没读到时为 `None`。当前仓库用
     /// 最新的状态。
-    pub(in crate::app) fn git_repository_detail(&self, index: usize) -> Option<String> {
+    pub(crate) fn git_repository_detail(&self, index: usize) -> Option<String> {
         let repo = self.git.repositories.get(index)?;
         let (head, changes) = match &self.git.status {
             Some(status) if self.git.root.as_ref() == Some(repo) => {
@@ -671,6 +744,7 @@ impl App {
 
     /// 收下后台刷新的结果；成功时顺带更新打开着的 Git 差异。
     pub(super) fn poll_git(&mut self) {
+        self.git_take_scan();
         let mut changed = false;
         let mut refreshed = false;
         while let Ok(outcome) = self.git.receiver.try_recv() {

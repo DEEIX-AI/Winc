@@ -189,6 +189,7 @@ impl App {
             picker_symbols: None,
             picker_places: None,
             picker_branch_rows: None,
+            picker_repository_rows: None,
             branch_folders: Default::default(),
             definitions: None,
             settings: SettingsState::default(),
