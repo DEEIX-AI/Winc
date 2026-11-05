@@ -335,7 +335,7 @@ impl App {
                 if !self.diff_active() {
                     return false;
                 }
-                self.toggle_diff_layout();
+                self.settings_toggle(crate::layout::Setting::DiffInline);
             }
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),

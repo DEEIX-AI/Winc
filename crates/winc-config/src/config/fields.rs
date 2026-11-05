@@ -130,6 +130,7 @@ const EDITOR: &[Field] = &[
     bool_field!("stickyScroll", sticky_scroll),
     bool_field!("wordWrap", word_wrap),
     bool_field!("minimap", minimap),
+    bool_field!("diffInline", diff_inline),
     bool_field!("lineNumbers", line_numbers),
     bool_field!("statusBar", status_bar),
     bool_field!("restoreWindow", restore_window),

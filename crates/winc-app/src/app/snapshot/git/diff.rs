@@ -995,14 +995,14 @@ fn the_inline_layout_can_be_toggled_and_edits_only_new_lines() {
         (doc.scroll_line, doc.diff.as_deref().unwrap().is_unified())
     };
     assert!(!view(&app).1);
-    assert!(!app.state.diff_unified);
+    assert!(!app.switch_on(Setting::DiffInline));
     let layout = app.diff_hits.iter().any(|(_, t)| *t == DiffTarget::Layout);
     assert!(layout);
 
-    // 切换：记下选择，文字区占满整个宽度，两侧共用一个文字区。
+    // 切换：改的是设置，文字区占满整个宽度，两侧共用一个文字区。
     assert!(app.run_action(Action::ToggleDiffLayout));
     assert!(view(&app).1);
-    assert!(app.state.diff_unified);
+    assert_eq!(app.config.diff_inline, Some(true));
     assert!(app.editor.diff_unified);
     let parts = |app: &App| {
         let doc = app.editor.active().unwrap();
@@ -1071,9 +1071,16 @@ fn the_inline_layout_can_be_toggled_and_edits_only_new_lines() {
     assert!(view(&app).1);
     assert!(app.run_action(Action::ToggleDiffLayout));
     assert!(!view(&app).1);
-    assert!(!app.state.diff_unified);
+    assert_eq!(app.config.diff_inline, Some(false));
     paint(&mut app);
     assert_eq!(view(&app).0.fract(), 0.0);
+
+    // 设置页的开关、标题栏的按钮改的是同一项，已打开的差异跟着变。
+    app.settings_toggle(Setting::DiffInline);
+    assert!(view(&app).1);
+    app.press_diff(DiffTarget::Layout);
+    assert!(!view(&app).1);
+    assert!(!app.switch_on(Setting::DiffInline));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -259,7 +259,7 @@ impl App {
             DiffTarget::Next => self.jump_difference(true),
             DiffTarget::PreviousFile => self.step_diff_file(false),
             DiffTarget::NextFile => self.step_diff_file(true),
-            DiffTarget::Layout => self.toggle_diff_layout(),
+            DiffTarget::Layout => self.settings_toggle(crate::layout::Setting::DiffInline),
             DiffTarget::Collapse => {
                 let Some(doc) = self.editor.active_mut() else {
                     return;
@@ -881,11 +881,11 @@ impl App {
         }
     }
 
-    /// 切换差异的单栏显示和并排显示，所有打开着的差异一起切换，选择记下来，下次启动沿用。
+    /// 让所有打开着的差异和之后打开的差异按设置（`diffInline`）显示。
     ///
     /// 各标签顶上的那一行还在顶上；跳到过的改动仍然是当前段。
-    pub(in crate::app) fn toggle_diff_layout(&mut self) {
-        let on = !self.editor.diff_unified;
+    pub(in crate::app) fn apply_diff_layout(&mut self) {
+        let on = self.config.diff_inline == Some(true);
         self.editor.diff_unified = on;
         let visible = self.layout.editor.h / self.fonts.line_height;
         for doc in &mut self.editor.documents {
@@ -900,7 +900,6 @@ impl App {
                 view.focus = Some((hunk, scroll));
             }
         }
-        self.update_state(|state| state.diff_unified = on);
         self.relayout();
         self.clamp_scroll();
         self.request_redraw();
