@@ -40,8 +40,8 @@ pub use navigation::{bookmarks, definition, keypath, symbols, usages};
 pub use tools::{format, shell};
 pub use workspace::picker::{FileIndex, IndexedFile, MAX_RESULTS as PICKER_MAX_RESULTS};
 pub use workspace::project_search::{
-    FileResult, LineMatch, MAX_RESULTS, ProjectSearch, Query, ReplacePreview, replace_in_document,
-    replace_in_file,
+    FileResult, LineMatch, MAX_RESULTS, MAX_THREADS as MAX_SEARCH_THREADS, ProjectSearch, Query,
+    ReplacePreview, replace_in_document, replace_in_file,
 };
 pub use workspace::tree::{
     DirEntry, DirListing, DirScan, EXPAND_DIRS, Entry, EntryKind, Workspace, copy_entry, list_dir,
