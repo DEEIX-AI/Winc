@@ -179,8 +179,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::AddFixLanguage);
 
-    // 主题：← → 在三个选项之间切换，到头后不再变化。
-    for _ in 0..30 {
+    // 主题：← → 在三个选项之间切换，到头后不再变化。步数按全部设置项计算，原因同上。
+    for _ in 0..Setting::all(&app.settings.languages).len() {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::Theme);
