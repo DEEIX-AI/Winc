@@ -527,6 +527,7 @@ impl App {
             Setting::WordWrap => self.config.word_wrap == Some(true),
             Setting::Minimap => self.config.minimap == Some(true),
             Setting::LineNumbers => self.config.line_numbers != Some(false),
+            Setting::DiffInline => self.config.diff_inline == Some(true),
             Setting::StatusBar => self.config.status_bar != Some(false),
             Setting::RestoreWindow => self.config.restore_window != Some(false),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
@@ -561,6 +562,7 @@ impl App {
             Setting::WordWrap => self.config.word_wrap = Some(on),
             Setting::Minimap => self.config.minimap = Some(on),
             Setting::LineNumbers => self.config.line_numbers = Some(on),
+            Setting::DiffInline => self.config.diff_inline = Some(on),
             Setting::StatusBar => self.config.status_bar = Some(on),
             Setting::RestoreWindow => self.config.restore_window = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
@@ -584,6 +586,9 @@ impl App {
             Setting::Minimap | Setting::LineNumbers | Setting::StatusBar
         ) {
             self.relayout();
+        }
+        if setting == Setting::DiffInline {
+            self.apply_diff_layout();
         }
         // 关掉以后不再沿用：之后再打开时从下一次关闭窗口开始记录。
         if setting == Setting::RestoreWindow && !on {
@@ -979,6 +984,7 @@ impl App {
             || old.line_numbers != new.line_numbers
             || old.status_bar != new.status_bar;
         let compact = old.compact_folders != new.compact_folders;
+        let diff_layout = old.diff_inline != new.diff_inline;
         // 窗口字体同步。
         let glyph_language = old.language != new.language
             && crate::set_locale(new.language.unwrap_or_default().resolve());
@@ -1011,6 +1017,9 @@ impl App {
         }
         if compact {
             self.apply_compact_folders();
+        }
+        if diff_layout {
+            self.apply_diff_layout();
         }
         if images {
             self.markdown.forget_images();

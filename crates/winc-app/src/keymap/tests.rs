@@ -80,6 +80,8 @@ fn default_key_labels_per_system() {
     // 多光标的默认键位。
     assert_eq!(label(Os::Mac, Action::AddCursorBelow), ["⌥⌘↓"]);
     assert_eq!(label(Os::Windows, Action::AddCursorAbove), ["Ctrl+Alt+↑"]);
+    assert_eq!(label(Os::Mac, Action::NextDifference)[0], "F7");
+    assert_eq!(label(Os::Mac, Action::PreviousDifference)[0], "⇧F7");
     assert_eq!(label(Os::Mac, Action::CloseTerminal), ["⌘W"]);
     assert_eq!(label(Os::Windows, Action::CloseTerminal), ["Ctrl+Shift+W"]);
     assert_eq!(label(Os::Linux, Action::CloseTerminal), ["Ctrl+Shift+W"]);

@@ -58,6 +58,8 @@ pub struct Config {
     pub word_wrap: Option<bool>,
     /// 在编辑区右侧显示缩略图，默认为否。
     pub minimap: Option<bool>,
+    /// 差异单栏显示：新旧内容上下排列，默认为否（左右并排）。
+    pub diff_inline: Option<bool>,
     /// 在行号栏显示行号，默认为是；关闭后折叠箭头、书签和改动标记仍然显示。
     pub line_numbers: Option<bool>,
     /// 显示窗口底部的状态栏，默认为是。

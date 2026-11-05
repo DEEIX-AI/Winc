@@ -39,6 +39,8 @@ const DIFF_CHECKS: f32 = 22.0;
 const DIFF_RIBBON: f32 = 36.0;
 /// 行号左右各留的空白（逻辑像素）。
 pub(crate) const DIFF_GUTTER_PAD: f32 = 10.0;
+/// 单栏时加减号那一列的宽度，按字符宽度的倍数算：一个字符加一点间距。
+const DIFF_SIGN_CELLS: f32 = 1.5;
 /// 文字和文字区边缘之间的空白（逻辑像素）。
 pub(crate) const DIFF_TEXT_PAD: f32 = 10.0;
 
@@ -151,6 +153,8 @@ pub enum DiffTarget {
     PreviousFile,
     /// 下一个文件。
     NextFile,
+    /// 切换单栏显示和并排显示。
+    Layout,
     /// 折起或展开所有没改的长段。
     Collapse,
     /// 折起来的一段，参数是第几段没改的内容。
@@ -255,6 +259,7 @@ impl App {
             DiffTarget::Next => self.jump_difference(true),
             DiffTarget::PreviousFile => self.step_diff_file(false),
             DiffTarget::NextFile => self.step_diff_file(true),
+            DiffTarget::Layout => self.settings_toggle(crate::layout::Setting::DiffInline),
             DiffTarget::Collapse => {
                 let Some(doc) = self.editor.active_mut() else {
                     return;
@@ -876,6 +881,30 @@ impl App {
         }
     }
 
+    /// 让所有打开着的差异和之后打开的差异按设置（`diffInline`）显示。
+    ///
+    /// 各标签顶上的那一行还在顶上；跳到过的改动仍然是当前段。
+    pub(in crate::app) fn apply_diff_layout(&mut self) {
+        let on = self.config.diff_inline == Some(true);
+        self.editor.diff_unified = on;
+        let visible = self.layout.editor.h / self.fonts.line_height;
+        for doc in &mut self.editor.documents {
+            let Some(view) = doc.diff.as_deref_mut() else {
+                continue;
+            };
+            let row = view.side_scroll(RIGHT, doc.scroll_line.max(0.0), visible);
+            view.set_unified(on);
+            doc.scroll_line = view.pos_of_top(RIGHT, row, visible);
+            let scroll = doc.scroll_line;
+            if let Some((hunk, _)) = view.focus {
+                view.focus = Some((hunk, scroll));
+            }
+        }
+        self.relayout();
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
     /// 切换到下一个（`forward`）或上一个文件，从第一处改动开始看；没有更多文件时给出提示。
     pub(in crate::app) fn step_diff_file(&mut self, forward: bool) {
         if !self.enter_diff_file(forward, false) {
@@ -1055,10 +1084,42 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
     let lines = view.old.text.len_lines().max(view.new.text.len_lines());
     let digits = lines.to_string().len().max(2) as f32;
     let gutter_w = (digits * cell + 2.0 * DIFF_GUTTER_PAD).round();
+    let column = |x: f32, w: f32| Rect::new(x, body.y, w, body.h);
+    if view.is_unified() {
+        // 单栏：「»」、改之前的行号、改之后的行号、勾选框、加减号，其余都是文字。
+        let arrows = column(editor.x, DIFF_ARROWS);
+        let left_gutter = column(arrows.right(), gutter_w);
+        let right_gutter = column(left_gutter.right(), gutter_w);
+        let checks = column(right_gutter.right(), DIFF_CHECKS);
+        let sign = (DIFF_SIGN_CELLS * cell).round();
+        let text = column(
+            checks.right() + sign,
+            (editor.right() - checks.right() - sign).max(0.0),
+        );
+        let rect = column(editor.x, editor.w);
+        return DiffParts {
+            header,
+            body,
+            panes: [
+                DiffPane {
+                    rect,
+                    gutter: left_gutter,
+                    text,
+                },
+                DiffPane {
+                    rect,
+                    gutter: right_gutter,
+                    text,
+                },
+            ],
+            arrows,
+            ribbon: column(checks.right(), 0.0),
+            checks,
+        };
+    }
     let middle = DIFF_ARROWS + 2.0 * gutter_w + DIFF_RIBBON + DIFF_CHECKS;
     let text_w = ((editor.w - middle) / 2.0).max(0.0).floor();
 
-    let column = |x: f32, w: f32| Rect::new(x, body.y, w, body.h);
     let left_text = column(editor.x, text_w);
     let arrows = column(left_text.right(), DIFF_ARROWS);
     let left_gutter = column(arrows.right(), gutter_w);

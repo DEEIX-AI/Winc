@@ -148,6 +148,35 @@ impl Compared {
     }
 }
 
+/// 单栏时滚动位置和各侧显示行之间的换算表。
+///
+/// 从差异里取出来单独持有：绘制时要同时修改差异两侧的着色状态。
+#[derive(Debug, Clone)]
+pub struct UnifiedMap(Vec<(f32, [f32; 2])>);
+
+impl UnifiedMap {
+    /// 第 `side` 侧显示行 `row` 在滚动位置上的哪里。
+    ///
+    /// 每段改动先是左侧的行，后面接右侧的行。这一侧在一段改动里没有行时，取这段改动的结尾。
+    pub fn pos_of(&self, side: usize, row: f32) -> f32 {
+        let i = self.0.partition_point(|k| k.1[side] <= row);
+        if i % 2 == 1 {
+            let (start, from) = self.0[i - 1];
+            let (_, to) = self.0[i];
+            let before = if side == RIGHT {
+                to[LEFT] - from[LEFT]
+            } else {
+                0.0
+            };
+            return start + before + row - from[side];
+        }
+        let (at, last) = i
+            .checked_sub(1)
+            .map_or((0.0, 0.0), |i| (self.0[i].0, self.0[i].1[side]));
+        at + row - last
+    }
+}
+
 /// 差异只读一侧的选区：只能选中、复制。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadSelection {
@@ -177,6 +206,8 @@ pub struct DiffView {
     knots: Vec<(f32, [f32; 2])>,
     /// 是否折起长段没改的内容。
     collapse: bool,
+    /// 单栏显示：没改的行只显示一次，每段改动先是左侧的行，后面接右侧的行。
+    unified: bool,
     /// 自动换行的（断行宽度，Tab 宽度），单位是显示列；不换行时为 `None`。
     ///
     /// 两侧用同一个宽度：没改的行两侧断法相同、行数相等，滚动位置的换算才成立。
@@ -236,6 +267,7 @@ impl DiffView {
             hunk_rows: [Vec::new(), Vec::new()],
             knots: Vec::new(),
             collapse: true,
+            unified: false,
             wrap: None,
             focus: None,
             expanded: Vec::new(),
@@ -301,6 +333,7 @@ impl DiffView {
             self.repo_path.clone_from(&old.repo_path);
         }
         self.collapse = old.collapse;
+        self.unified = old.unified;
         self.wrap = old.wrap;
         if old.hunks.len() == self.hunks.len() {
             self.expanded = old.expanded.clone();
@@ -414,6 +447,9 @@ impl DiffView {
     /// 行数，短的一侧按比例跟着走（一侧是 0 行时停在原地）。只按右侧的行数滚时，左侧删掉的一大段
     /// 在右侧只是一个点，一滚就跳过去，比半屏长的部分永远看不到。
     pub fn row_at(&self, side: usize, pos: f32) -> f32 {
+        if self.unified {
+            return self.unified_row_at(side, pos);
+        }
         // 分段点按滚动位置排好了：二分找到第一个不在 `pos` 之前的，在它和前一个之间插值。
         let i = self.knots.partition_point(|k| k.0 < pos);
         let from = self.knot(side, i);
@@ -440,6 +476,9 @@ impl DiffView {
     ///
     /// 这一侧在一段改动里停着不动（0 行）时取这段改动的开头。
     pub fn pos_of(&self, side: usize, row: f32) -> f32 {
+        if self.unified {
+            return self.unified_map().pos_of(side, row);
+        }
         // 每一侧的显示行也随分段点递增：二分找到第一个不在 `row` 之前的。
         let i = self.knots.partition_point(|k| k.1[side] < row);
         let from = self.knot(side, i);
@@ -458,6 +497,10 @@ impl DiffView {
     /// 两侧在同一个对齐点上对齐：滚过半屏以后，对齐点位于视图中间；离开头不到半屏时，对齐点随之
     /// 向上移动，在开头时位于顶边，两侧一起停在第一行。
     pub fn side_scroll(&self, side: usize, pos: f32, visible: f32) -> f32 {
+        // 单栏只有一列，不需要对齐两侧。
+        if self.unified {
+            return self.row_at(side, pos);
+        }
         let anchor = pos.min(visible / 2.0).max(0.0);
         let center = self.row_at(side, pos + anchor);
         (center - anchor).clamp(0.0, self.rows[side].len() as f32)
@@ -467,6 +510,9 @@ impl DiffView {
     ///
     /// 离开头不到半屏时对齐点随滚动移动，没有直接的反算公式，改用二分查找。
     pub fn pos_of_top(&self, side: usize, row: f32, visible: f32) -> f32 {
+        if self.unified {
+            return self.pos_of(side, row);
+        }
         let half = visible / 2.0;
         let pos = self.pos_of(side, row + half) - half;
         if pos >= half {
@@ -482,6 +528,77 @@ impl DiffView {
             }
         }
         high
+    }
+
+    /// 是否单栏显示。
+    pub fn is_unified(&self) -> bool {
+        self.unified
+    }
+
+    /// 切换单栏显示和并排显示。
+    ///
+    /// 滚动位置的换算随之改变，调用方负责换算滚动位置。
+    pub fn set_unified(&mut self, on: bool) {
+        if self.unified != on {
+            self.unified = on;
+            self.layout();
+        }
+    }
+
+    /// 单栏时滚动位置和各侧显示行之间的换算表。
+    pub fn unified_map(&self) -> UnifiedMap {
+        UnifiedMap(self.knots.clone())
+    }
+
+    /// 单栏第 `index` 个显示行（从 0 起）属于哪一侧的哪个显示行：（哪一侧，显示行）。
+    ///
+    /// 没改的行和折起来的一段算右侧。超出最后一行时为 `None`。
+    pub fn unified_row(&self, index: usize) -> Option<(usize, usize)> {
+        let pos = index as f32;
+        let i = self.knots.partition_point(|k| k.0 <= pos);
+        let (side, row) = if i % 2 == 1 {
+            let (start, from) = self.knots[i - 1];
+            let (_, to) = self.knots[i];
+            let (old, offset) = (to[LEFT] - from[LEFT], pos - start);
+            if offset < old {
+                (LEFT, from[LEFT] + offset)
+            } else {
+                (RIGHT, from[RIGHT] + offset - old)
+            }
+        } else {
+            let (at, row) = self.knot(RIGHT, i);
+            (RIGHT, row + pos - at)
+        };
+        let row = row as usize;
+        (row < self.rows[side].len()).then_some((side, row))
+    }
+
+    /// 单栏时滚动位置 `pos` 上第 `side` 侧对着的显示行：在另一侧的行上时是这一侧接下来的行。
+    fn unified_row_at(&self, side: usize, pos: f32) -> f32 {
+        let i = self.knots.partition_point(|k| k.0 <= pos);
+        if i % 2 == 1 {
+            let (start, from) = self.knots[i - 1];
+            let (_, to) = self.knots[i];
+            let (old, offset) = (to[LEFT] - from[LEFT], pos - start);
+            return if side == LEFT {
+                from[LEFT] + offset.min(old)
+            } else {
+                from[RIGHT] + (offset - old).max(0.0)
+            };
+        }
+        let (at, row) = self.knot(side, i);
+        row + pos - at
+    }
+
+    /// 滚动位置为 `pos`、可见 `visible` 行时，从顶边往下第 `below` 行（可以有小数）对着的第
+    /// `side` 侧的显示行。
+    pub fn row_under(&self, side: usize, pos: f32, visible: f32, below: f32) -> usize {
+        let row = if self.unified {
+            self.row_at(side, (pos + below).floor())
+        } else {
+            self.side_scroll(side, pos, visible) + below
+        };
+        row.floor().max(0.0) as usize
     }
 
     /// 计算滚动位置为 `pos`、可见 `visible` 行时左侧的滚动位置，换算方式同
@@ -802,7 +919,12 @@ impl DiffView {
         for (l, r) in hunk_rows[LEFT].iter().zip(&hunk_rows[RIGHT]) {
             pos += r.start - prev[RIGHT];
             knots.push((pos as f32, [l.start as f32, r.start as f32]));
-            pos += l.len().max(r.len());
+            // 并排时每段改动占长的那一侧的行数，单栏时两侧的行上下排开。
+            pos += if self.unified {
+                l.len() + r.len()
+            } else {
+                l.len().max(r.len())
+            };
             knots.push((pos as f32, [l.end as f32, r.end as f32]));
             prev = [l.end, r.end];
         }

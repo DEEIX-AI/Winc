@@ -474,6 +474,7 @@ impl Hover {
                         | DiffTarget::Next
                         | DiffTarget::PreviousFile
                         | DiffTarget::NextFile
+                        | DiffTarget::Layout
                         | DiffTarget::Collapse
                         | DiffTarget::Revert(_)
                         | DiffTarget::Include(_)

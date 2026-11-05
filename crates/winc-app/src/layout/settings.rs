@@ -76,19 +76,27 @@ impl SettingsPage {
                 sections
             }
             SettingsPage::Editor => vec![
-                plain(vec![Setting::EditorFont, Setting::EditorSize]),
-                plain(vec![Setting::TabWidth]),
+                plain(vec![
+                    Setting::EditorFont,
+                    Setting::EditorSize,
+                    Setting::TabWidth,
+                ]),
+                plain(vec![
+                    Setting::LineNumbers,
+                    Setting::WordWrap,
+                    Setting::Minimap,
+                    Setting::StickyScroll,
+                ]),
                 plain(vec![
                     Setting::AutoSave,
                     Setting::HotExit,
                     Setting::RestoreFolder,
-                    Setting::CompactFolders,
-                    Setting::StickyScroll,
-                    Setting::WordWrap,
-                    Setting::Minimap,
-                    Setting::LineNumbers,
                 ]),
-                plain(vec![Setting::RemoteImages]),
+                plain(vec![
+                    Setting::CompactFolders,
+                    Setting::DiffInline,
+                    Setting::RemoteImages,
+                ]),
             ],
             SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
             SettingsPage::Format => {
@@ -187,6 +195,8 @@ pub enum Setting {
     Minimap,
     /// 显示行号。
     LineNumbers,
+    /// 差异单栏显示。
+    DiffInline,
     /// 显示状态栏。
     StatusBar,
     /// 记住窗口大小和位置。
@@ -273,6 +283,7 @@ impl Setting {
             | Setting::WordWrap
             | Setting::Minimap
             | Setting::LineNumbers
+            | Setting::DiffInline
             | Setting::RemoteImages => SettingsPage::Editor,
             Setting::Version | Setting::Updates | Setting::CheckUpdates => SettingsPage::About,
             Setting::FormatOnSave
@@ -307,6 +318,7 @@ impl Setting {
             Setting::WordWrap => t!("settings-word-wrap"),
             Setting::Minimap => t!("settings-minimap"),
             Setting::LineNumbers => t!("settings-line-numbers"),
+            Setting::DiffInline => t!("settings-diff-inline"),
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::CompactFolders => t!("settings-compact-folders"),
@@ -342,6 +354,7 @@ impl Setting {
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
             Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
+            Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
@@ -373,6 +386,7 @@ impl Setting {
             | Setting::WordWrap
             | Setting::Minimap
             | Setting::LineNumbers
+            | Setting::DiffInline
             | Setting::StatusBar
             | Setting::RestoreWindow
             | Setting::RemoteImages

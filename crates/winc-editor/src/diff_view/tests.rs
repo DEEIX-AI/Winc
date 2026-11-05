@@ -437,3 +437,54 @@ fn folded_rows_are_not_wrapped_and_a_rebuilt_view_keeps_wrapping() {
     assert!(next.is_wrapping());
     assert_eq!(next.rows[LEFT].len(), first.rows[LEFT].len());
 }
+
+#[test]
+fn the_unified_layout_lists_old_rows_before_new_rows() {
+    let old = "same\nold 1\nold 2\nsame\ngone\nsame\n";
+    let new = "same\nnew 1\nsame\nsame\nadded\n";
+    let mut v = view(old, new);
+    v.set_unified(true);
+    assert!(v.is_unified());
+    let rows: Vec<_> = (0..v.scroll_rows())
+        .map(|i| v.unified_row(i).unwrap())
+        .collect();
+    assert_eq!(v.unified_row(rows.len()), None);
+    // 每一行只出现一次，两侧各自按顺序排列；改动里左侧的行在右侧的行前面。
+    for side in [LEFT, RIGHT] {
+        let of_side: Vec<_> = rows.iter().filter(|r| r.0 == side).map(|r| r.1).collect();
+        assert!(of_side.windows(2).all(|w| w[0] < w[1]), "{of_side:?}");
+    }
+    let first = &v.hunk_rows;
+    let at = v.hunk_pos(0) as usize;
+    let old_rows = first[LEFT][0].len();
+    assert_eq!(rows[at], (LEFT, first[LEFT][0].start));
+    assert_eq!(rows[at + old_rows], (RIGHT, first[RIGHT][0].start));
+    // 没改的行算右侧，只显示一次：总行数是右侧的行数加上左侧在改动里的行数。
+    let changed: usize = first[LEFT].iter().map(|r| r.len()).sum();
+    assert_eq!(rows.len(), v.rows[RIGHT].len() + changed);
+
+    // 滚动位置和显示行互相换算。
+    let map = v.unified_map();
+    for (index, &(side, row)) in rows.iter().enumerate() {
+        assert_eq!(v.pos_of(side, row as f32), index as f32, "{side} {row}");
+        assert_eq!(map.pos_of(side, row as f32), index as f32, "{side} {row}");
+        assert_eq!(v.row_at(side, index as f32), row as f32, "{side} {row}");
+        assert_eq!(v.row_under(side, 0.0, 10.0, index as f32), row);
+    }
+
+    // 切回并排，排布恢复。
+    let side_by_side = view(old, new);
+    v.set_unified(false);
+    assert_eq!(v.scroll_rows(), side_by_side.scroll_rows());
+    assert_eq!(v.rows, side_by_side.rows);
+}
+
+#[test]
+fn a_unified_view_stays_unified_after_comparing_again() {
+    let mut a = view("one\ntwo\n", "one\nTWO\n");
+    a.set_unified(true);
+    let mut b = view("one\ntwo\n", "one\ntwo!\n");
+    b.inherit(&a);
+    assert!(b.is_unified());
+    assert_eq!(b.scroll_rows(), 3);
+}

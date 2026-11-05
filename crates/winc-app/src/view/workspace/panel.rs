@@ -977,6 +977,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 DiffTarget::NextFile => {
                     with_key(t!("workspace-tip-next-file"), Some(Action::NextDiffFile))
                 }
+                DiffTarget::Layout if app.editor.diff_unified => {
+                    t!("workspace-tip-diff-side-by-side").to_owned()
+                }
+                DiffTarget::Layout => t!("workspace-tip-diff-inline").to_owned(),
                 DiffTarget::Revert(_) => with_key(
                     t!("workspace-tip-revert-to-left"),
                     Some(Action::GitRevertChange),
