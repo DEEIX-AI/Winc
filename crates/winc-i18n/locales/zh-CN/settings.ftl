@@ -2,7 +2,6 @@
 
 settings-language = 语言
 settings-language-auto = 跟随系统
-settings-language-desc = 界面文字使用的语言；菜单栏在重新启动后更新
 settings-title = 设置
 
 ## 分类与分组。
@@ -85,6 +84,7 @@ settings-theme-dark = 深色
 settings-skip-on-save-none = 无
 settings-list-separator = 、
 settings-font-default = 系统默认
+settings-font-others = 其他字体
 settings-command-placeholder = 输入命令，{ "{file}" } 表示文件路径
 settings-command-edit-hint = 按 ↩ 保存，按 Esc 取消
 settings-font-not-installed = 未安装字体「{ $name }」

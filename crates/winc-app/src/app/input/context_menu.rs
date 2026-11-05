@@ -144,6 +144,10 @@ pub enum MenuCommand {
     /// 设置中「语言」菜单的一项，参数为 [`LocaleChoice::ALL`](winc_i18n::LocaleChoice::ALL)
     /// 中的序号（从 0 起）。
     Locale(usize),
+    /// 设置中字体菜单的「系统默认」。
+    FontDefault,
+    /// 设置中字体菜单的一项，参数为 [`winc_render::installed_fonts`] 中的序号（从 0 起）。
+    Font(usize),
     /// 设置中某种语言的格式化（修复）工具：自动选择。
     ToolAuto,
     /// 设置中某种语言的格式化（修复）工具：预设，参数为 `PRESETS` 中的序号（从 0 起）。
@@ -407,6 +411,10 @@ impl MenuCommand {
             MenuCommand::Locale(i) => winc_i18n::LocaleChoice::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::locale_label(choice)),
+            MenuCommand::FontDefault => t!("settings-font-default"),
+            MenuCommand::Font(i) => winc_render::installed_fonts()
+                .get(i)
+                .map_or("", |family| family.name.as_str()),
             MenuCommand::OpenFolder => t!("cmd-open-folder"),
             MenuCommand::CloseFolder => t!("cmd-close-folder"),
             MenuCommand::Cut => t!("cmd-cut"),
@@ -528,6 +536,8 @@ pub enum MenuTarget {
     SkipOnSave,
     /// 设置的外观页中的「语言」。
     Locale,
+    /// 设置中字体一行的下拉按钮。
+    Font(Setting),
     /// 设置的格式化页中一种语言的格式化（修复）工具。
     Tool(Task, &'static str),
     /// 状态栏中一个文档的缩进。

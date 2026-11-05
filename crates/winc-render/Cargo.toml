@@ -20,7 +20,7 @@ softbuffer = "0.4"
 # macOS：自己往 IOSurface 里画，再用 CALayer 显示。比 GPU 路径省 100–200 MB 常驻内存。
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary", "CFNumber", "CFString", "CFCGTypes", "CFURL"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFDictionary", "CFNumber", "CFString", "CFCGTypes", "CFURL"] }
 # 按字体名找字体文件：自己扫字体目录认不出 .ttc 里有哪些字重，也认不出用户自己装的字体。
 # 字形只放在 `hvgl` 表中的系统字体（苹方），由 CoreText 取轮廓（CGPath），
 # CoreGraphics 填充成覆盖率位图。

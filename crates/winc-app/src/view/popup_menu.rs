@@ -31,6 +31,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     let window = app.layout.window;
     for l in 0..popup.levels.len() {
         let (w, content) = measure(app, frame, &popup.levels[l].rows);
+        let w = if l == 0 { w.max(popup.min_width) } else { w };
         let h = content.min(window.h - 2.0 * MARGIN).max(0.0);
         let (x, y) = if l == 0 {
             let mut y = popup.at.1;

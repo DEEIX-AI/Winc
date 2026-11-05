@@ -152,19 +152,23 @@ pub const MOD_OPTION: usize = 1 << 19;
 /// `NSEventModifierFlagCommand`：Command 键。
 pub const MOD_COMMAND: usize = 1 << 20;
 
-/// 在窗口的 `at`（逻辑坐标，左上角为原点）处弹出系统菜单，`items` 中的 `None` 表示分隔线。
+/// 系统菜单弹出的位置和宽度。
+pub struct MenuPlace {
+    /// 窗口中的位置（逻辑坐标，左上角为原点），默认对准菜单的左上角。
+    pub at: (f64, f64),
+    /// 改为对准第一个打勾的项，让当前选择盖在触发菜单的按钮上。
+    pub at_checked: bool,
+    /// `at` 是菜单的右上角，按菜单宽度往左挪。
+    pub right_aligned: bool,
+    /// 菜单的最小宽度（逻辑像素）；没有要求时为 0。
+    pub min_width: f64,
+}
+
+/// 在窗口上按 `place` 弹出系统菜单，`items` 中的 `None` 表示分隔线。
 ///
-/// `at` 对准菜单的左上角；`at_checked` 时改为对准第一个打勾的项，让当前选择盖在触发菜单的按钮上；
-/// `right_aligned` 时 `at` 是菜单的右上角，按菜单宽度往左挪。菜单关闭后才返回，选中的项通过
-/// [`super::on_menu_command`] 注册的回调送出；返回是否弹出了菜单。可以在 `winit` 的事件回调中调用
-/// （菜单跟踪期间它把事件排队，回调返回后再派发）。
-pub fn popup_menu(
-    window: &Window,
-    items: &[Option<MenuItem<'_>>],
-    at: (f64, f64),
-    at_checked: bool,
-    right_aligned: bool,
-) -> bool {
+/// 菜单关闭后才返回，选中的项通过 [`super::on_menu_command`] 注册的回调送出；返回是否弹出了菜单。
+/// 可以在 `winit` 的事件回调中调用（菜单跟踪期间它把事件排队，回调返回后再派发）。
+pub fn popup_menu(window: &Window, items: &[Option<MenuItem<'_>>], place: MenuPlace) -> bool {
     let Some(target) = AnyClass::get(DELEGATE).and_then(|_| app_delegate()) else {
         return false;
     };
@@ -175,9 +179,10 @@ pub fn popup_menu(
     // 上调用（winit 只在主线程派发事件）。
     unsafe {
         let checked = fill_menu(&menu, items, &target);
-        let positioning = checked.as_deref().filter(|_| at_checked);
-        let mut at = at;
-        if right_aligned {
+        let positioning = checked.as_deref().filter(|_| place.at_checked);
+        let mut at = place.at;
+        let () = msg_send![&*menu, setMinimumWidth: place.min_width];
+        if place.right_aligned {
             let size: CGSize = msg_send![&*menu, size];
             at.0 -= size.width;
         }

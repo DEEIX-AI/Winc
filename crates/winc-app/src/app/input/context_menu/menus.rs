@@ -480,6 +480,34 @@ pub fn locale_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回字体菜单的菜单项：第一项是系统默认，然后是已安装的字族，当前的选择打勾。
+///
+/// 编辑器字体直接列出等宽字体，其余字体收进子菜单；界面字体全部直接列出。
+pub fn font_menu(setting: Setting) -> Vec<MenuEntry> {
+    use MenuEntry::{Item, Separator, Submenu};
+
+    let item = |(i, _)| Item(MenuCommand::Font(i), true);
+    let fonts = winc_render::installed_fonts().iter().enumerate();
+    let (first, rest): (Vec<_>, Vec<_>) = if setting == Setting::EditorFont {
+        fonts.partition(|(_, family)| family.monospace)
+    } else {
+        (fonts.collect(), Vec::new())
+    };
+    let mut menu = vec![Item(MenuCommand::FontDefault, true)];
+    if !first.is_empty() {
+        menu.push(Separator);
+        menu.extend(first.into_iter().map(item));
+    }
+    if !rest.is_empty() {
+        menu.push(Separator);
+        menu.push(Submenu(
+            t!("settings-font-others").to_owned(),
+            rest.into_iter().map(item).collect(),
+        ));
+    }
+    menu
+}
+
 /// 返回「排除的语言」菜单的菜单项：格式化页列出的语言，被排除的打勾。
 ///
 /// 点击一项即切换该语言是否被排除，菜单随即关闭。

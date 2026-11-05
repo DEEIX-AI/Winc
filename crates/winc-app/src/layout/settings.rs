@@ -318,7 +318,6 @@ impl Setting {
     /// 格式化命令的说明随状态变化，不在此处给出。
     pub fn description(self) -> Option<&'static str> {
         match self {
-            Setting::Language => Some(t!("settings-language-desc")),
             Setting::SystemTitleBar => Some(t!("settings-system-title-bar-desc")),
             Setting::TabWidth => Some(t!("settings-tab-width-desc")),
             Setting::AutoSave => Some(t!("settings-auto-save-desc")),
@@ -428,6 +427,8 @@ pub enum SettingsPart {
     Page(SettingsPage),
     /// 字体名、格式化命令的输入框。
     Field(Setting),
+    /// 字体输入框右端的下拉按钮。
+    FontMenu(Setting),
     /// 开关。
     Switch(Setting),
     /// 整行是按钮的一行，或点击后弹出菜单的值。
@@ -645,6 +646,9 @@ impl SettingsLayout {
         let row = self.rows.iter().find(|r| r.control.contains(x, y))?;
 
         match row.setting.control() {
+            SettingControl::Font if font_menu_button(row.control).contains(x, y) => {
+                Some(SettingsPart::FontMenu(row.setting))
+            }
             SettingControl::Font | SettingControl::Command => {
                 Some(SettingsPart::Field(row.setting))
             }
@@ -789,12 +793,29 @@ fn row_height(setting: Setting, width: f32) -> f32 {
     }
 }
 
+/// 返回字体输入框 `control` 右端下拉按钮的位置。
+pub(crate) fn font_menu_button(control: Rect) -> Rect {
+    const WIDTH: f32 = 26.0;
+    Rect::new(control.right() - WIDTH, control.y, WIDTH, control.h)
+}
+
+/// 返回模式分段控件的宽度：各段加上段间距和底槽的内边距。
+fn segmented_width() -> f32 {
+    let n = SETTINGS_SEGMENT_W.len() as f32;
+    let w: f32 = SETTINGS_SEGMENT_W.iter().sum();
+    w + (n - 1.0) * SEGMENT_SPACING + 4.0
+}
+
 /// 返回一行中控件的位置：靠右、垂直居中；主题缩略图占满控件区的高度。
 fn control_rect(setting: Setting, row: Rect, editing: bool) -> Rect {
     let (w, h) = match setting.control() {
         // 整行都可点击。
         SettingControl::Action | SettingControl::Search => return row,
-        SettingControl::Font => (SETTINGS_FONT_W, SETTINGS_CONTROL_H),
+        // 与「外观」页同一组的模式分段控件同宽。
+        SettingControl::Font => (segmented_width(), SETTINGS_CONTROL_H),
+        SettingControl::Choice if setting == Setting::Language => {
+            (segmented_width(), SETTINGS_CONTROL_H)
+        }
         SettingControl::Command if editing => (SETTINGS_COMMAND_W, SETTINGS_CONTROL_H),
         SettingControl::Command | SettingControl::Choice | SettingControl::Value => {
             (SETTINGS_CHOICE_W, SETTINGS_CONTROL_H)
@@ -806,11 +827,7 @@ fn control_rect(setting: Setting, row: Rect, editing: bool) -> Rect {
         SettingControl::ThemeList => {
             return row.inset(SETTINGS_INSET, THEME_GRID_PAD);
         }
-        SettingControl::Themes => {
-            let n = SETTINGS_SEGMENT_W.len() as f32;
-            let w: f32 = SETTINGS_SEGMENT_W.iter().sum();
-            (w + (n - 1.0) * SEGMENT_SPACING + 4.0, SETTINGS_CONTROL_H)
-        }
+        SettingControl::Themes => (segmented_width(), SETTINGS_CONTROL_H),
     };
     // 控件宽度不超过行宽减去左右内边距，并给左侧名称至少留出 80 像素。
     let w = w.min((row.w - SETTINGS_INSET * 2.0 - 80.0).max(0.0));

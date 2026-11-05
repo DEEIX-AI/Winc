@@ -2,7 +2,6 @@
 
 settings-language = Language
 settings-language-auto = System Default
-settings-language-desc = Interface text language; the menu bar updates after restart
 settings-title = Settings
 
 ## Pages and groups.
@@ -85,6 +84,7 @@ settings-theme-dark = Dark
 settings-skip-on-save-none = None
 settings-list-separator = { ", " }
 settings-font-default = System Default
+settings-font-others = Other Fonts
 settings-command-placeholder = Enter a command; { "{file}" } stands for the file path
 settings-command-edit-hint = Press ↩ to save, Esc to cancel
 settings-font-not-installed = Font “{ $name }” is not installed

@@ -516,6 +516,9 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     let rect = row.control;
     let editing = matches!(&app.settings.editing, Some((s, _)) if *s == row.setting);
     let hovered = app.settings.hover == Some(SettingsPart::Field(row.setting));
+    let font = row.setting.control() == SettingControl::Font;
+    let on_menu = font && app.settings.hover == Some(SettingsPart::FontMenu(row.setting));
+    let hovered = hovered || on_menu;
     let (configured, placeholder) = match row.setting {
         Setting::UiFont => (app.config.ui_font.clone(), t!("settings-font-default")),
         Setting::FormatCommand(_) | Setting::FixCommand(_) => {
@@ -523,7 +526,24 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         }
         _ => (app.config.editor_font.clone(), t!("settings-font-default")),
     };
-    let area = rect.inset(10.0, 0.0);
+    // 字体输入框的文字不进入右端的下拉按钮。
+    let area = if font {
+        let button = crate::layout::font_menu_button(rect);
+        Rect::new(
+            rect.x + 10.0,
+            rect.y,
+            (button.x - rect.x - 10.0).max(0.0),
+            rect.h,
+        )
+    } else {
+        rect.inset(10.0, 0.0)
+    };
+    let draw_arrows = |app: &App, frame: &mut Frame<'_>| {
+        if font {
+            let arrows = (rect.right() - 13.0, rect.y + rect.h / 2.0);
+            icons::up_down(frame, arrows, app.palette.text_dim, clip);
+        }
+    };
 
     if editing {
         let ring = if matches!(&app.settings.error, Some((s, _)) if *s == row.setting) {
@@ -538,6 +558,11 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         let (setting, mut field) = app.settings.editing.take().expect("刚刚判断过在编辑");
         let caret = draw_bar_field(app, frame, area, &mut field, placeholder, focused);
         app.settings.editing = Some((setting, field));
+        if on_menu {
+            let button = crate::layout::font_menu_button(rect);
+            frame.rect_clipped(button, p.hover, RADIUS_ROW, clip);
+        }
+        draw_arrows(app, frame);
         return caret;
     }
 
@@ -552,6 +577,7 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     let text = ellipsize(frame, &text, app.fonts.ui, area.w);
     let w = frame.measure(FontKind::Ui, app.fonts.ui, &text);
     ui_text(frame, app, area.right() - w, area, &text, color, area);
+    draw_arrows(app, frame);
     None
 }
 

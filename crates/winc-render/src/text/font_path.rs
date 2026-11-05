@@ -5,13 +5,15 @@
 
 use std::path::PathBuf;
 
+use super::font_list::find_family;
+
 /// 一次字体请求：按名字查系统，或直接使用给定的路径。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FontSpec {
     /// 字体名或字族名，例如 `Menlo`、`Helvetica`、`苹方-简`。
     ///
     /// macOS 由 CoreText 查询，识别字族名、PostScript 名和本地化名称；其他平台按文件名前缀匹配，
-    /// 忽略空格、连字符、下划线和大小写。
+    /// 忽略空格、连字符、下划线和大小写。这些方式都找不到时，再按同样宽松的写法匹配已安装的字族名。
     Name(String),
     /// 字体文件路径。
     Path(PathBuf),
@@ -80,6 +82,12 @@ impl FontSpec {
 /// 自行安装了同名字体时优先使用安装的字体。
 #[cfg(target_os = "macos")]
 fn resolve_name(name: &str) -> Option<FontFile> {
+    exact_font(name).or_else(|| find_family(name).map(|family| family.file.clone()))
+}
+
+/// 返回按名字 `name` 精确查到的字体文件：先问 CoreText，再查 CoreText 不列出的系统字体。
+#[cfg(target_os = "macos")]
+pub(super) fn exact_font(name: &str) -> Option<FontFile> {
     macos::resolve(name).or_else(|| {
         let path = match name.to_ascii_lowercase().as_str() {
             "sf mono" => "/System/Library/Fonts/SFNSMono.ttf",
@@ -89,6 +97,12 @@ fn resolve_name(name: &str) -> Option<FontFile> {
         let path = PathBuf::from(path);
         path.is_file().then(|| FontFile::first(path))
     })
+}
+
+/// 返回 CoreText 列出的字族名。
+#[cfg(target_os = "macos")]
+pub(super) fn macos_families() -> Vec<String> {
+    macos::families()
 }
 
 /// 字族中匹配到的字体，以及实际取到的变体。
@@ -120,24 +134,31 @@ pub(crate) fn resolve_face(family: &str, bold: bool, italic: bool) -> Option<Fac
         (false, true) => Some(format!("{family} Italic")),
         (false, false) => None,
     };
-    if let Some(file) = styled.and_then(|name| resolve_name(&name)) {
+    if let Some(file) = styled.and_then(|name| resolve_file_name(&name)) {
         return Some(FaceMatch { file, bold, italic });
     }
-    resolve_name(family).map(|file| FaceMatch {
+    resolve_file_name(family).map(|file| FaceMatch {
         file,
         bold: false,
         italic: false,
     })
 }
 
-/// 返回字体名 `name` 对应的字体文件：在常见字体目录中按文件名查找，找不到时返回 `None`。
-///
-/// 字体目录只在第一次查找时遍历一遍并建立索引，之后的查找都在这份索引里进行。程序运行期间
-/// 新安装的字体需要重启后才能找到。
+/// 返回字体名 `name` 对应的字体文件：先按文件名查找，再按字族名查找（文件名与字族名无关的
+/// 字体，例如 `msyh.ttc`），找不到时返回 `None`。
 #[cfg(not(target_os = "macos"))]
 fn resolve_name(name: &str) -> Option<FontFile> {
+    resolve_file_name(name).or_else(|| find_family(name).map(|family| family.file.clone()))
+}
+
+/// 返回字体目录下的全部文件，每项是（规范化文件名，路径）。
+///
+/// 字体目录只在第一次调用时遍历一遍并建立索引，之后都使用这份索引。程序运行期间新安装的字体
+/// 需要重启后才能找到。
+#[cfg(not(target_os = "macos"))]
+pub(super) fn font_index() -> &'static [(String, PathBuf)] {
     static INDEX: std::sync::OnceLock<Vec<(String, PathBuf)>> = std::sync::OnceLock::new();
-    let index = INDEX.get_or_init(|| {
+    INDEX.get_or_init(|| {
         let mut files = Vec::new();
         for dir in font_dirs() {
             walk(&dir, &mut files, 0);
@@ -145,10 +166,14 @@ fn resolve_name(name: &str) -> Option<FontFile> {
         // 同一名字命中多个文件时，按路径排序取第一个，使结果稳定。
         files.sort_by(|a, b| a.1.cmp(&b.1));
         files
-    });
+    })
+}
 
+/// 返回文件名以字体名 `name` 开头的字体文件；找不到时返回 `None`。
+#[cfg(not(target_os = "macos"))]
+fn resolve_file_name(name: &str) -> Option<FontFile> {
     let target = normalize(name);
-    index
+    font_index()
         .iter()
         .find(|(stem, _)| stem.starts_with(&target))
         .map(|(_, path)| FontFile::first(path.clone()))
@@ -190,8 +215,7 @@ fn font_dirs() -> Vec<PathBuf> {
 /// 返回规范化后的字体名：去掉空格、连字符和下划线并转为小写。
 ///
 /// 字体名中的空格、连字符和下划线不一定出现在文件名里，比较前要统一去掉。
-#[cfg(not(target_os = "macos"))]
-fn normalize(name: &str) -> String {
+pub(super) fn normalize(name: &str) -> String {
     name.to_ascii_lowercase().replace([' ', '-', '_'], "")
 }
 
@@ -231,9 +255,10 @@ fn walk(dir: &std::path::Path, out: &mut Vec<(String, PathBuf)>, depth: usize) {
 // 本模块的 `unsafe` 仅用于调用 CoreText，不扩散到其他模块。
 #[allow(unsafe_code)]
 mod macos {
-    use objc2_core_foundation::{CFRetained, CFString, CFURL};
+    use objc2_core_foundation::{CFArray, CFRetained, CFString, CFURL};
     use objc2_core_text::{
-        CTFont, CTFontDescriptor, CTFontSymbolicTraits, kCTFontNameAttribute, kCTFontURLAttribute,
+        CTFont, CTFontDescriptor, CTFontManagerCopyAvailableFontFamilyNames, CTFontSymbolicTraits,
+        kCTFontNameAttribute, kCTFontURLAttribute,
     };
 
     use super::{FaceMatch, FontFile};
@@ -280,6 +305,15 @@ mod macos {
             bold: traits.contains(CTFontSymbolicTraits::TraitBold),
             italic: traits.contains(CTFontSymbolicTraits::TraitItalic),
         })
+    }
+
+    /// 返回系统中已安装的字族名，名称可能是本地化的。
+    pub(super) fn families() -> Vec<String> {
+        // SAFETY: 该函数没有前提条件，返回的数组由调用方持有。文档写明元素都是 `CFString`，
+        // 因此可以按 `CFArray<CFString>` 使用。
+        let names: CFRetained<CFArray<CFString>> =
+            unsafe { CFRetained::cast_unchecked(CTFontManagerCopyAvailableFontFamilyNames()) };
+        names.iter().map(|name| name.to_string()).collect()
     }
 
     /// 用 CoreText 按名字查找字体文件；系统里没有该名字的字体时返回 `None`。
