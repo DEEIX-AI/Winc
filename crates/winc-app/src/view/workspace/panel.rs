@@ -826,6 +826,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, with_key(label, Some(Action::ToggleTerminal))))
         }
+        Hover::Status(item @ crate::app::StatusItem::Settings) => {
+            let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
+            Some((rect, with_key(t!("cmd-settings"), Some(Action::Settings))))
+        }
         // 提交按钮：无法提交时显示原因，可以提交时显示提交目标和快捷键。
         Hover::Commit(CommitTarget::Commit) => {
             use winc_editor::git::{Head, Operation};

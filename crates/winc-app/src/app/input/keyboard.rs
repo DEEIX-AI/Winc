@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, KeyEvent};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyLocation, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use winc_core::Selection;
@@ -84,7 +84,12 @@ impl App {
 
         // 快捷键都定义在键位表中，先查表；不是快捷键的按键（打字、方向键、回车）再交给
         // 焦点所在的部件。
-        let stroke = Stroke::from_event(&event.logical_key, &base, event.location, m);
+        let stroke = self.stroke_of(
+            &event.logical_key,
+            &base,
+            event.physical_key,
+            event.location,
+        );
         if let Some(stroke) = stroke
             && self.on_shortcut(stroke)
         {
@@ -130,6 +135,23 @@ impl App {
             focus if focus.in_panel() => Context::Panel,
             _ => Context::Other,
         }
+    }
+
+    /// 将一次按键转换为 [`Stroke`]，参数含义见 [`Stroke::from_event`]。
+    ///
+    /// 输入法正在组字时，它接管的按键属于组字，不作为快捷键。
+    pub(in crate::app) fn stroke_of(
+        &self,
+        key: &Key,
+        base: &str,
+        physical: PhysicalKey,
+        location: KeyLocation,
+    ) -> Option<Stroke> {
+        let composing = !self.preedit.is_empty() || !self.field_preedit.is_empty();
+        if composing && *key == Key::Named(NamedKey::Process) {
+            return None;
+        }
+        Stroke::from_event(key, base, physical, location, self.modifiers)
     }
 
     /// 是否已作为快捷键处理按键 `stroke`。
@@ -504,7 +526,7 @@ impl App {
 
     /// 处理快捷键页搜索框中的按键：先交给 `keys_page_stroke`，未处理的再交给输入框。
     fn on_key_search_keys(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let stroke = Stroke::from_event(&event.logical_key, base, event.location, self.modifiers);
+        let stroke = self.stroke_of(&event.logical_key, base, event.physical_key, event.location);
         if let Some(stroke) = stroke
             && self.keys_page_stroke(stroke)
         {

@@ -329,6 +329,9 @@ pub fn bindings(os: Os) -> Vec<Binding> {
         }
     }
     t.one(Settings, Global, c(cmd, ','));
+    if !mac {
+        t.one(Settings, Global, c(ctrl | alt, 's'));
+    }
     t.chord(KeyboardShortcuts, Global, chord_k, c(cmd, 's'));
 
     t.one(NewFile, Global, c(cmd, 'n'));

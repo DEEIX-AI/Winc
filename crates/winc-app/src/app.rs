@@ -427,7 +427,7 @@ impl Hover {
             self,
             Hover::TreeTool(_)
                 | Hover::TerminalHeader(terminal::HeaderHit::Position | terminal::HeaderHit::Hide)
-                | Hover::Status(StatusItem::Terminal)
+                | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
                 | Hover::Tab(..)
