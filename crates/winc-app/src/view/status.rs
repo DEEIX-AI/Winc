@@ -14,7 +14,7 @@ use crate::icons::Direction;
 const CRUMB_GAP: f32 = 22.0;
 
 /// 状态栏右侧相邻两项之间的距离（逻辑像素）。
-const STATUS_GAP: f32 = 18.0;
+const STATUS_GAP: f32 = 15.0;
 
 /// 路径中一段的底色在文字两侧各超出的宽度（逻辑像素）。
 ///
@@ -191,7 +191,24 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let mut right = bar.right() - 14.0;
     let mut status_hits = Vec::new();
 
-    // 终端模块开着时最右边是终端面板的开关：悬停时与其他可点击项一样铺按钮底色，面板开着时
+    // 最右边始终是设置按钮，不随模块和当前文档变化：悬停时与其他可点击项一样铺按钮底色。
+    let item = StatusItem::Settings;
+    let slot = right - icons::SIDEBAR_WIDTH;
+    right -= icons::SIDEBAR_WIDTH + STATUS_GAP;
+    let pill = Rect::new(
+        slot - CRUMB_PAD,
+        bar.y + 4.0,
+        icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD,
+        bar.h - 8.0,
+    );
+    let hovered = app.hover == Hover::Status(item);
+    draw_button(frame, p, pill, bar, hovered, false);
+    let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
+    let color = if hovered { p.text } else { p.text_muted };
+    icons::gear(frame, center, color, bar);
+    status_hits.push((pill, item));
+
+    // 终端模块开着时左边是终端面板的开关：悬停时与其他可点击项一样铺按钮底色，面板开着时
     // 图标亮、收着时灰。面板收着、后台有命令结束了时右上角一个小点（失败了是红的），和标签上的
     // 一样。
     // 开关模块时淡入淡出，左边的几项跟着滑过去（`App::track_modules`）；消失途中点不到。

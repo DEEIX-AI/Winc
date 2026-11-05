@@ -370,10 +370,11 @@ fn status_bar_changes_indentation_and_line_endings() {
     ));
     app.context_menu = None;
 
-    // 仅供查看的输出标签（格式化输出）没有可点击的状态栏项。
+    // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮。
     app.editor.show_output("格式化输出", "x\n");
     paint(&mut app);
-    assert!(app.status_hits.is_empty());
+    let items: Vec<StatusItem> = app.status_hits.iter().map(|&(_, item)| item).collect();
+    assert_eq!(items, [StatusItem::Settings]);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

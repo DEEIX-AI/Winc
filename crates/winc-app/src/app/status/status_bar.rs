@@ -1,4 +1,4 @@
-//! 状态栏右侧可点击的项：缩进、行尾、编码、语言、分支和终端开关。
+//! 状态栏右侧可点击的项：缩进、行尾、编码、语言、分支、终端开关和设置。
 //!
 //! 点击缩进、行尾、编码、语言时，在该项处弹出系统菜单；菜单命令由 [`App::run_status_command`]
 //! 执行。
@@ -26,8 +26,10 @@ pub enum StatusItem {
     Language,
     /// Git 的当前分支：点了弹分支菜单。
     Branch,
-    /// 终端面板的开关（终端模块开着时在最右边）。
+    /// 终端面板的开关（终端模块开着时在设置按钮左边）。
     Terminal,
+    /// 设置按钮（始终在最右边）：点了打开设置。
+    Settings,
     /// 后台检查找到了新版本：点了打开更新窗口。
     Update,
 }
@@ -43,10 +45,13 @@ pub fn indent_label(indent: Indent, tab_width: usize) -> String {
 }
 
 impl App {
-    /// 响应状态栏上 `item` 的点击：在该项处弹出菜单；终端开关直接开关面板。
+    /// 响应状态栏上 `item` 的点击：在该项处弹出菜单；终端开关直接开关面板，设置按钮直接打开设置。
     pub(in crate::app) fn open_status_menu(&mut self, item: StatusItem) {
         if item == StatusItem::Terminal {
             return self.click_terminal_button();
+        }
+        if item == StatusItem::Settings {
+            return self.open_settings();
         }
         if item == StatusItem::Update {
             #[cfg(target_os = "macos")]
@@ -66,7 +71,7 @@ impl App {
             (StatusItem::LineEnding, Some(id)) => MenuTarget::LineEnding(id),
             (StatusItem::Encoding, Some(id)) => MenuTarget::Encoding(id),
             (StatusItem::Language, Some(id)) => MenuTarget::Language(id),
-            (StatusItem::Terminal | StatusItem::Update, _) => return,
+            (StatusItem::Terminal | StatusItem::Settings | StatusItem::Update, _) => return,
         };
         self.open_button_menu(
             MenuButton::Status(item),
