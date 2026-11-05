@@ -298,8 +298,10 @@ git-log-title = Git 日志
 git-history-title = { $name } · 历史
 git-log-target-not-loaded = 目标提交尚未加载，请向下滚动列表后重试
 git-log-parent-not-loaded = 父提交尚未加载，请向下滚动列表后重试
-git-log-next-file = 下一个文件：{ $name }（{ $index }/{ $total }）
-git-log-previous-file = 上一个文件：{ $name }（{ $index }/{ $total }）
+git-next-file = 已切换到下一个文件：{ $name }（{ $index }/{ $total }）
+git-previous-file = 已切换到上一个文件：{ $name }（{ $index }/{ $total }）
+git-press-again-next-file = 已是最后一处更改。再次执行可切换到下一个文件：{ $name }
+git-press-again-previous-file = 已是第一处更改。再次执行可切换到上一个文件：{ $name }
 git-diff-side-commit-missing = { $commit } · 文件不存在
 git-diff-side-before-root = 空 · 根提交之前
 

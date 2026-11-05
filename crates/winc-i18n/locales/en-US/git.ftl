@@ -364,8 +364,10 @@ git-log-title = Git Log
 git-history-title = { $name } · History
 git-log-target-not-loaded = The target commit hasn't loaded yet. Scroll down the list and try again
 git-log-parent-not-loaded = The parent commit hasn't loaded yet. Scroll down the list and try again
-git-log-next-file = Next file: { $name } ({ $index }/{ $total })
-git-log-previous-file = Previous file: { $name } ({ $index }/{ $total })
+git-next-file = Switched to the next file: { $name } ({ $index }/{ $total })
+git-previous-file = Switched to the previous file: { $name } ({ $index }/{ $total })
+git-press-again-next-file = This is the last change. Repeat to switch to the next file: { $name }
+git-press-again-previous-file = This is the first change. Repeat to switch to the previous file: { $name }
 git-diff-side-commit-missing = { $commit } · File Doesn't Exist
 git-diff-side-before-root = Empty · Before Root Commit
 

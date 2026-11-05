@@ -202,6 +202,7 @@ impl App {
             diff_fade: None,
             diff_pulse: None,
             diff_land: None,
+            diff_cross: None,
             rediff: diff::RediffState::default(),
             prompt_kind: PromptKind::GoTo,
             context_menu: None,

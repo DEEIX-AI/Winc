@@ -844,51 +844,50 @@ impl App {
         self.git.diff_tabs.contains_key(&id)
     }
 
+    /// 工作区文件的差异标签里，提交视图列出的下一个（`forward`）或上一个文件：（路径，从 0 起的
+    /// 序号，文件总数）；当前标签不是这种差异，或者没有更多文件时为 `None`。
+    ///
+    /// 按最近一次切换到的文件算：那个文件打不开时（二进制、没有差异）标签还是原来的内容，这样再切换
+    /// 一次能跳过它。
+    pub(super) fn next_changed_file(&self, forward: bool) -> Option<(PathBuf, usize, usize)> {
+        let id = self.editor.active()?.id;
+        let tab = self.git.diff_tabs.get(&id)?;
+        let current = match &self.git.stepped {
+            Some((doc, path)) if *doc == id => path,
+            _ => &tab.path,
+        };
+        // 列表里收起的目录中的文件不在 `commit_files` 里，这时按状态里的顺序。
+        let mut files = self.commit_files();
+        if !files.contains(current) {
+            let entries = &self.git.status.as_ref()?.entries;
+            files = entries.iter().map(|e| e.path.clone()).collect();
+        }
+        let at = files.iter().position(|p| p == current)?;
+        let next = if forward { at + 1 } else { at.checked_sub(1)? };
+        let path = files.get(next)?.clone();
+        Some((path, next, files.len()))
+    }
+
     /// 在工作区文件的差异标签中打开提交视图列出的下一个（`forward`）或上一个文件，返回是否已打开。
     ///
-    /// 新文件在当前标签里打开，连续查看时只占一个标签。按最近一次切换到的文件算下一个：那个文件
-    /// 打不开时（二进制、没有差异）标签还是原来的内容，再按一次跳过它。
+    /// 新文件在当前标签里打开，连续查看时只占一个标签。
     pub(super) fn step_changed_file(&mut self, forward: bool) -> bool {
         let Some(id) = self.editor.active().map(|d| d.id) else {
             return false;
         };
-        let Some(tab) = self.git.diff_tabs.get(&id) else {
-            return false;
-        };
-        let current = match &self.git.stepped {
-            Some((doc, path)) if *doc == id => path.clone(),
-            _ => tab.path.clone(),
-        };
-        // 列表里收起的目录中的文件不在 `commit_files` 里，这时按状态里的顺序。
-        let mut files = self.commit_files();
-        if !files.contains(&current) {
-            let entries = self.git.status.as_ref().map(|s| s.entries.as_slice());
-            files = (entries.unwrap_or_default().iter())
-                .map(|e| e.path.clone())
-                .collect();
-        }
-        let Some(at) = files.iter().position(|p| *p == current) else {
-            return false;
-        };
-        let next = if forward { at + 1 } else { at.wrapping_sub(1) };
-        let Some(path) = files.get(next).cloned() else {
+        let Some((path, next, total)) = self.next_changed_file(forward) else {
             return false;
         };
         let name = winc_editor::display_name(&path).into_owned();
         self.commit.preview = Some(id);
         self.git.stepped = Some((id, path.clone()));
         self.select_commit_file(path);
-        let (index, total, name) = (next + 1, files.len(), name.as_str());
+        let (index, name) = (next + 1, name.as_str());
         self.flash(if forward {
-            t!(
-                "git-log-next-file",
-                name = name,
-                index = index,
-                total = total
-            )
+            t!("git-next-file", name = name, index = index, total = total)
         } else {
             t!(
-                "git-log-previous-file",
+                "git-previous-file",
                 name = name,
                 index = index,
                 total = total

@@ -940,6 +940,8 @@ pub struct App {
     /// 差异切换文件时，新文件打开以后停在哪里：`true` 是最后一处改动，`false` 是第一处；没有在切换
     /// 文件时为 `None`。
     pub(crate) diff_land: Option<bool>,
+    /// 差异走到头时等待再按一次的状态和提示的时刻；没有在等待时为 `None`。
+    pub(crate) diff_cross: Option<(Instant, diff::DiffCross)>,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: diff::RediffState,
     /// 跳转条现在用来输入什么。

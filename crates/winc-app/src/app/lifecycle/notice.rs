@@ -39,7 +39,7 @@ impl NoticeAction {
 }
 
 /// 状态栏消息（由 [`App::flash`] 设置）显示的时间（4 秒）。
-const FLASH_DURATION: Duration = Duration::from_secs(4);
+pub(in crate::app) const FLASH_DURATION: Duration = Duration::from_secs(4);
 
 /// 编辑区右上角提示条显示的时间（5 秒）。
 const NOTICE_DURATION: Duration = Duration::from_secs(5);

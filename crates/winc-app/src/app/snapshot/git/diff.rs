@@ -46,10 +46,16 @@ fn show_changes_opens_a_side_by_side_diff_and_walks_it() {
     assert!(second > first);
     assert!(app.run_action(Action::NextDifference));
     assert_eq!(current(&app), Some(2));
-    // 到了最后一处再往下：进入下一个改动的文件；往回时回到这个文件的最后一处。
-    app.press_diff(DiffTarget::Next);
+    // 到了最后一处再往下：第一次只提示，再按一次进入下一个改动的文件；往回同样要按两次，回到
+    // 这个文件的最后一处。
     let title = |app: &App| app.editor.active().unwrap().title.clone().unwrap();
+    app.press_diff(DiffTarget::Next);
+    assert!(title(&app).starts_with("main.rs"), "{}", title(&app));
+    let hint = app.status_message.clone().unwrap();
+    assert!(hint.starts_with("已是最后一处更改"), "{hint}");
+    app.press_diff(DiffTarget::Next);
     assert!(!title(&app).starts_with("main.rs"), "{}", title(&app));
+    assert!(app.run_action(Action::PreviousDifference));
     assert!(app.run_action(Action::PreviousDifference));
     assert!(title(&app).starts_with("main.rs"), "{}", title(&app));
     assert_eq!(current(&app), Some(2));
@@ -769,7 +775,31 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     assert!(view.editing);
     paint(&mut app);
 
-    // 越过最后一处进入下一个文件，仍在同一个标签，停在第一处；上一个文件回来时停在最后一处。
+    // 越过最后一处：第一次提示，文件不变。
+    assert!(app.run_action(Action::NextDifference));
+    assert!(title(&app).starts_with("main.rs"));
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("已是最后一处更改。再次执行可切换到下一个文件：zeta.rs")
+    );
+    // 滚动过以后要重新确认：这一次按视口的位置找改动，不切换文件；走完各处改动才再次提示。
+    app.editor.active_mut().unwrap().scroll_line += 1.0;
+    assert!(app.run_action(Action::NextDifference));
+    assert!(title(&app).starts_with("main.rs"));
+    assert_eq!(app.diff_cross, None);
+    for _ in 0..3 {
+        if app.diff_cross.is_none() {
+            assert!(app.run_action(Action::NextDifference));
+        }
+    }
+    assert!(title(&app).starts_with("main.rs"));
+    // 提示消失以后同样要重新确认。
+    let (at, cross) = app.diff_cross.unwrap();
+    app.diff_cross = Some((at - std::time::Duration::from_secs(60), cross));
+    assert!(app.run_action(Action::NextDifference));
+    assert!(title(&app).starts_with("main.rs"));
+
+    // 再按一次进入下一个文件，仍在同一个标签，停在第一处；上一个文件回来时停在最后一处。
     assert!(app.run_action(Action::NextDifference));
     assert!(title(&app).starts_with("zeta.rs"), "{}", title(&app));
     assert_eq!(app.editor.documents.len(), tabs);
@@ -779,6 +809,15 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     assert!(!view.editing);
     assert_eq!(view.read_caret(), Some((winc_editor::diff_view::RIGHT, 2)));
     paint(&mut app);
+    // 没有更多文件时不提示再按一次。
+    assert!(app.run_action(Action::NextDifference));
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(app.status_message.as_deref(), Some("没有下一处更改"));
+    // 这个文件有两处改动：先回到第一处，再提示，第三次回到上一个文件。
+    assert!(app.run_action(Action::PreviousDifference));
+    assert_eq!(focus(&app), Some(0));
+    assert!(app.run_action(Action::PreviousDifference));
+    assert!(title(&app).starts_with("zeta.rs"));
     assert!(app.run_action(Action::PreviousDifference));
     assert!(title(&app).starts_with("main.rs"));
     assert_eq!(focus(&app), Some(1));
@@ -805,6 +844,55 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
         (parts.panes[0].text.x + 20.0, parts.body.y + 30.0),
     );
     assert_eq!(focus(&app), None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn typing_at_the_read_caret_opens_the_file_and_edits_there() {
+    use crate::app::diff::edits_text;
+    use winit::keyboard::{Key, NamedKey};
+
+    let dir = search_folder("git-diff-type");
+    if !long_repo(&dir) {
+        return;
+    }
+    let main = winc_editor::canonical_path(&dir.join("src/main.rs"));
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.git_refresh();
+    app.fetch_changes(&main, Target::Open);
+    paint(&mut app);
+    assert!(app.run_action(Action::NextDifference));
+    let tabs = app.editor.documents.len();
+    let id = app.editor.active().unwrap().id;
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(!view.editing);
+    assert!(view.read_caret().is_some());
+
+    // 修改文字的键才打开文件，方向键只移动。
+    assert!(edits_text(&Key::Named(NamedKey::Backspace)));
+    assert!(edits_text(&Key::Named(NamedKey::Enter)));
+    assert!(!edits_text(&Key::Named(NamedKey::ArrowDown)));
+    assert!(!edits_text(&Key::Named(NamedKey::PageDown)));
+
+    // 打字：打开文件但不切换标签，文字进右侧文档里光标所在的行。
+    assert!(app.diff_edit_text("X"));
+    assert_eq!(app.editor.documents.len(), tabs + 1);
+    assert_eq!(app.editor.active().unwrap().id, id);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(view.editing);
+    assert_eq!(view.read_selection, None);
+    let source = app
+        .editor
+        .documents
+        .iter()
+        .find(|d| d.path.as_deref() == Some(&main));
+    let text = source.unwrap().text().rope().unwrap().to_string();
+    assert!(text.contains("Xlet value_51 = 51;"), "{text}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

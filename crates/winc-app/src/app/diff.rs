@@ -13,6 +13,7 @@ mod pointer;
 use std::path::Path;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Instant;
 use winc_core::{Lines, Selection, movement};
 
 use winc_editor::background;
@@ -24,6 +25,7 @@ use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
 use super::git::changes::replace_lines;
+use super::lifecycle::notice::FLASH_DURATION;
 use super::{App, Focus, UserEvent};
 use crate::keymap::Action;
 
@@ -121,6 +123,21 @@ impl Default for RediffState {
             results: channel(),
         }
     }
+}
+
+/// 差异走到头时等待再按一次的状态：第一次只提示，确认以后才切换文件。
+///
+/// 再按一次时这些值都没变、提示还在显示才切换，否则重新提示。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DiffCross {
+    /// 差异标签。
+    doc: DocumentId,
+    /// 方向：`true` 是下一个文件。
+    forward: bool,
+    /// 提示时的当前段。
+    hunk: Option<usize>,
+    /// 提示时的滚动位置。
+    scroll: f32,
 }
 
 /// 差异标签里可以点的地方。
@@ -683,6 +700,9 @@ impl App {
             }
             return false;
         }
+        if edits_text(&event.logical_key) {
+            self.edit_at_read_caret();
+        }
         self.in_diff_source(|app| app.on_key_editor(event, cmd))
             .is_some()
     }
@@ -691,6 +711,7 @@ impl App {
     ///
     /// 返回是否处理了。
     pub(super) fn diff_edit_text(&mut self, text: &str) -> bool {
+        self.edit_at_read_caret();
         let text = text.to_owned();
         self.in_diff_source(|app| app.run(winc_editor::Command::Insert(text)))
             .is_some()
@@ -724,6 +745,9 @@ impl App {
         }
         if !action.edits_in_diff() {
             return None;
+        }
+        if matches!(action, Cut | Paste) {
+            self.edit_at_read_caret();
         }
         self.in_diff_source(|app| app.run_action(action))
     }
@@ -770,6 +794,7 @@ impl App {
         self.clamp_scroll();
         self.glide_scroll(before);
         self.place_diff_caret(hunk);
+        self.diff_cross = None;
         self.diff_pulse = self.clock(crate::app::animation::DIFF_PULSE);
         if let Some(doc) = self.editor.active_mut() {
             let scroll = doc.scroll_line;
@@ -821,6 +846,36 @@ impl App {
         }
     }
 
+    /// 在只读光标的位置开始编辑：打开右侧的文件，把光标放到文档的同一位置。
+    ///
+    /// 输入文字、编辑按键和编辑命令之前调用：[`App::place_diff_caret`] 没有打开文件，用户开始编辑
+    /// 时才打开。光标不在可以编辑的右侧，或者文件打不开时不做任何事。
+    fn edit_at_read_caret(&mut self) {
+        let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
+            return;
+        };
+        let (Some((RIGHT, pos)), Some(path), false) =
+            (view.read_caret(), view.new.path.clone(), view.editing)
+        else {
+            return;
+        };
+        let text = &view.new.text;
+        let line = text.char_to_line(pos);
+        let col = pos - text.line_to_char(line);
+        let Some(source) = self.diff_source(&path, true) else {
+            return;
+        };
+        let doc = &mut self.editor.documents[source];
+        let at = doc.text().line_col_to_pos(line, col);
+        doc.collapse_selections();
+        doc.selection = Selection::point(at);
+        doc.goal_cell = None;
+        if let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut()) {
+            view.editing = true;
+            view.read_selection = None;
+        }
+    }
+
     /// 切换到下一个（`forward`）或上一个文件，从第一处改动开始看；没有更多文件时给出提示。
     pub(in crate::app) fn step_diff_file(&mut self, forward: bool) {
         if !self.enter_diff_file(forward, false) {
@@ -860,6 +915,51 @@ impl App {
         }
     }
 
+    /// 下一个（`forward`）或上一个文件的文件名；没有更多文件时为 `None`。
+    fn next_diff_file_name(&self, forward: bool) -> Option<String> {
+        if let Some((_, _, name, _)) = self.next_log_file(forward) {
+            return Some(name);
+        }
+        let (path, _, _) = self.next_changed_file(forward)?;
+        Some(winc_editor::display_name(&path).into_owned())
+    }
+
+    /// 走到头时的第一次按键提示「再按一次」，提示还在显示时的第二次才切换文件，往回切换时停在最后
+    /// 一处改动；没有更多文件时说明没有更多改动。
+    ///
+    /// 差异可能正在编辑，不在一次按键里换掉用户正在看的文件。
+    fn cross_diff_file(&mut self, forward: bool, none: &str) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        let Some(view) = doc.diff.as_deref() else {
+            return;
+        };
+        let cross = DiffCross {
+            doc: doc.id,
+            forward,
+            hunk: view.focus.map(|(hunk, _)| hunk),
+            scroll: doc.scroll_line,
+        };
+        let armed = self.diff_cross.take();
+        if armed.is_some_and(|(at, armed)| armed == cross && at.elapsed() < FLASH_DURATION)
+            && self.enter_diff_file(forward, !forward)
+        {
+            return;
+        }
+        let Some(name) = self.next_diff_file_name(forward) else {
+            self.flash(none);
+            return;
+        };
+        self.diff_cross = Some((Instant::now(), cross));
+        let name = name.as_str();
+        self.flash(if forward {
+            t!("git-press-again-next-file", name = name)
+        } else {
+            t!("git-press-again-previous-file", name = name)
+        });
+    }
+
     /// 当前差异标签能不能切换文件：由日志或提交视图打开，或者是工作区文件的 Git 差异。
     pub(crate) fn diff_steps_files(&self) -> bool {
         let Some(id) = self.editor.active().map(|d| d.id) else {
@@ -870,8 +970,7 @@ impl App {
 
     /// 滚动到下一处（`forward`）或上一处改动。
     ///
-    /// 没有更多改动时切换到下一个或上一个文件，往回切换时停在该文件的最后一处改动；没有更多文件
-    /// 时在状态栏给出提示。
+    /// 没有更多改动时按 [`App::cross_diff_file`] 切换文件。
     pub(super) fn jump_difference(&mut self, forward: bool) {
         let Some(doc) = self.editor.active_mut() else {
             return;
@@ -914,12 +1013,18 @@ impl App {
                 } else {
                     t!("git-change-no-previous")
                 };
-                if !self.enter_diff_file(forward, !forward) {
-                    self.flash(message);
-                }
+                self.cross_diff_file(forward, message);
             }
         }
     }
+}
+
+/// 按键 `key` 是否修改文字；方向键、翻页键只移动，不为它们打开文件。
+pub(crate) fn edits_text(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::Named(NamedKey::Enter | NamedKey::Backspace | NamedKey::Delete | NamedKey::Tab)
+    )
 }
 
 /// 右侧（工作区）的标题。
