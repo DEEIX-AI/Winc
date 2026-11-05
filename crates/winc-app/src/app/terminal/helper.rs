@@ -93,6 +93,42 @@ impl App {
         }
     }
 
+    /// 重新开始正在看的标签需不需要先确认：伪终端断开时里面的程序可能还在运行，重新开始会结束
+    /// 它们；是否正在运行不一定查得到（Windows 上没有前台进程），所以一律确认。
+    pub(in crate::app) fn terminal_restart_needs_confirm(&self) -> bool {
+        let t = &self.terminal;
+        self.window.is_some()
+            && !t.crashed
+            && self.config.terminal_confirm_close != Some(false)
+            && t.tab()
+                .is_some_and(|tab| tab.ended == Some(TabEnd::Disconnected))
+    }
+
+    /// 用户要重新开始（点按钮、按 ↩）：需要时先确认（[`App::terminal_restart_needs_confirm`]）。
+    pub(in crate::app) fn request_terminal_restart(&mut self) {
+        let Some(id) = (self.terminal_restart_needs_confirm())
+            .then(|| self.terminal.tab().map(|tab| tab.id))
+            .flatten()
+        else {
+            self.restart_terminal_tab();
+            return;
+        };
+        let message = winc_i18n::t!("terminal-restart-confirm");
+        let detail = winc_i18n::t!("terminal-restart-confirm-detail");
+        let action = winc_i18n::t!("terminal-restart-confirm-action");
+        self.show_confirm(message, detail, action, move |ok| {
+            ok.then_some(UserEvent::TerminalRestart(id))
+        });
+    }
+
+    /// 确认框上确认了重新开始编号是 `id` 的标签。
+    pub(crate) fn confirmed_terminal_restart(&mut self, id: u16) {
+        if let Some(index) = self.terminal.index_of(id) {
+            self.terminal.active = index;
+            self.restart_terminal_tab();
+        }
+    }
+
     /// 重新开始：辅助进程退出了时所有标签在各自最后的目录里重开；shell 退出了或者伪终端断开了时
     /// 只重开正在看的这一个，还在原来的位置。
     pub(in crate::app) fn restart_terminal_tab(&mut self) {
@@ -442,9 +478,16 @@ impl App {
                 }
             }
             FromHelper::Disconnected { tab: id } => {
+                // 面板收着、在看别的标签时看不到标签栏上的说明：提示一声，标签上留红点。
+                let seen = t.open && t.index_of(id) == Some(t.active);
                 if let Some(tab) = t.by_id(id) {
                     tab.ended = Some(TabEnd::Disconnected);
+                    if !seen {
+                        tab.unseen = Some(true);
+                    }
                 }
+                let message = (!seen).then(|| winc_i18n::t!("terminal-disconnected").to_string());
+                self.terminal_alert(id, message);
             }
             FromHelper::Failed { tab: id, message } => {
                 // 只是这个终端起不来（shell 不存在等）：说一声，其他标签和新开的终端不受影响。

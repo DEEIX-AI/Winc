@@ -371,7 +371,8 @@ impl TermTab {
         const SHELLS: &[&str] = &[
             "zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu",
         ];
-        if self.ended.is_some() {
+        // 伪终端断开时程序可能还在运行，关掉标签会结束它们，仍然要确认。
+        if matches!(self.ended, Some(TabEnd::Exited(_))) {
             return None;
         }
         if let Some(block) = self.blocks.last().filter(|b| b.running()) {

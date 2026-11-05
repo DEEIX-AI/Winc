@@ -23,6 +23,7 @@ use crate::app::terminal::{
     BAND_X, BlockHit, HeaderHit, TabEnd, TermTab, ViewRow, format_duration, grid_rect,
     header_height,
 };
+use crate::keymap::{self, Action};
 use crate::theme::readable;
 
 /// 标签栏上一个标签的高度（逻辑像素），与编辑区的标签相同。
@@ -612,16 +613,23 @@ fn restart_label() -> &'static str {
 }
 
 /// 标签栏右端「重新启动」那一组的说明和颜色、怎么关掉；终端还能用时为 `None`。
-fn restart_texts(app: &App) -> Option<(String, Color, &'static str)> {
+fn restart_texts(app: &App) -> Option<(String, Color, String)> {
     let p = app.palette;
     if app.terminal.crashed {
-        Some((t!("terminal-helper-exited").to_string(), p.error, ""))
+        Some((
+            t!("terminal-helper-exited").to_string(),
+            p.error,
+            String::new(),
+        ))
     } else {
         let (note, color) = match app.terminal.tab()?.ended? {
             TabEnd::Exited(code) => (t!("terminal-process-exited", code = code), p.text_dim),
             TabEnd::Disconnected => (t!("terminal-disconnected").to_string(), p.error),
         };
-        Some((note, color, t!("terminal-close-hint")))
+        // 快捷键可以改，也可以解除绑定：解除以后不写这一段。
+        let close = keymap::shortcut(Action::CloseTerminal)
+            .map_or(String::new(), |key| t!("terminal-close-hint", key = key));
+        Some((note, color, close))
     }
 }
 
@@ -631,7 +639,7 @@ fn restart_width(app: &App, frame: &mut Frame<'_>) -> f32 {
         return 0.0;
     };
     let measure = |frame: &mut Frame<'_>, s: &str| frame.measure(FontKind::Ui, app.fonts.ui, s);
-    let texts = measure(frame, close) + measure(frame, restart_label()) + measure(frame, &note);
+    let texts = measure(frame, &close) + measure(frame, restart_label()) + measure(frame, &note);
     // 右边留白 12，「关闭」和按钮间隔 8，按钮左右各 8，按钮和说明间隔 10。
     texts + 12.0 + 8.0 + 16.0 + 10.0
 }
@@ -648,10 +656,10 @@ fn draw_restart(app: &mut App, frame: &mut Frame<'_>, header: Rect) {
     let (note_w, label_w, close_w) = (
         measure(frame, &note),
         measure(frame, label) + 16.0,
-        measure(frame, close),
+        measure(frame, &close),
     );
     let mut x = header.right() - 12.0 - close_w;
-    ui_text(frame, app, x, header, close, p.text_dim, header);
+    ui_text(frame, app, x, header, &close, p.text_dim, header);
     x -= label_w + 8.0;
     let button = Rect::new(x, header.y + (header.h - TAB_H) / 2.0, label_w, TAB_H);
     let fill = if app.hover == Hover::TerminalHeader(HeaderHit::Restart) {

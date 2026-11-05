@@ -304,6 +304,7 @@ impl App {
             }
             UserEvent::ReplaceAllConfirmed(total) => self.replace_all_confirmed(total),
             UserEvent::TerminalClose(id) => self.confirmed_terminal_close(id),
+            UserEvent::TerminalRestart(id) => self.confirmed_terminal_restart(id),
             UserEvent::TerminalPaste(id, text) => self.confirmed_terminal_paste(id, text),
             UserEvent::TerminalQuit(ok) => {
                 if let Some(request) = self.quit_confirming.take()

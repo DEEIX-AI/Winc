@@ -176,11 +176,12 @@ fn a_lost_pseudo_console_stops_input_and_offers_a_restart() {
     let id = app.terminal.tabs[0].id;
     app.terminal.tabs[0].process = "codex".into();
 
-    // 程序还在运行，但已经够不着：关标签不再询问，输入不再发出去。
+    // 程序还在运行，但已经够不着：输入不再发出去，关标签时仍然要确认。
     app.terminal_message(FromHelper::Disconnected { tab: id });
     let tab = app.terminal.tab().unwrap();
     assert_eq!(tab.ended, Some(TabEnd::Disconnected));
-    assert_eq!(tab.busy(), None);
+    assert_eq!(tab.busy(), Some("codex"));
+    assert_eq!(tab.unseen, None);
     app.terminal_input(b"a".to_vec());
     let sent = app.sent_to_helper(&log);
     assert!(!sent.iter().any(|m| matches!(m, ToHelper::Input { .. })));
@@ -191,19 +192,41 @@ fn a_lost_pseudo_console_stops_input_and_offers_a_restart() {
 
     // shell 随后退出了：说明换成退出码，仍然可以重新启动。
     app.terminal_message(FromHelper::Exited { tab: id, code: 1 });
-    assert_eq!(app.terminal.tab().unwrap().ended, Some(TabEnd::Exited(1)));
+    let tab = app.terminal.tab().unwrap();
+    assert_eq!(tab.ended, Some(TabEnd::Exited(1)));
+    assert_eq!(tab.busy(), None);
     paint(&mut app);
     assert!(restart(&app));
 
     // 重新启动时关掉旧的终端，其中还在运行的进程一并结束。
     app.terminal_message(FromHelper::Disconnected { tab: id });
-    app.restart_terminal_tab();
+    app.request_terminal_restart();
     let sent = app.sent_to_helper(&log);
     assert!(
         sent.iter()
             .any(|m| matches!(m, ToHelper::Close { tab } if *tab == id))
     );
     assert_eq!(app.terminal.tab().unwrap().ended, None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_lost_pseudo_console_out_of_view_leaves_a_red_dot() {
+    let dir = sample_folder("terminal-disconnected-unseen");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "$ ");
+    add_tab(&mut app, "zsh", "$ ");
+    let (first, second) = (app.terminal.tabs[0].id, app.terminal.tabs[1].id);
+
+    // 在看第二个标签时第一个断开了。
+    app.terminal_message(FromHelper::Disconnected { tab: first });
+    assert_eq!(app.terminal.tabs[0].unseen, Some(true));
+
+    // 面板收着时正在看的标签断开了。
+    app.terminal.open = false;
+    app.terminal_message(FromHelper::Disconnected { tab: second });
+    assert_eq!(app.terminal.tabs[1].unseen, Some(true));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

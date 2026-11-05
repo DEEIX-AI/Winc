@@ -178,7 +178,7 @@ impl App {
         // shell 退出、伪终端断开（或者辅助进程退出）以后按 ↩ 重新开始。
         if tab.ended.is_some() || self.terminal.crashed {
             if event.logical_key == Key::Named(NamedKey::Enter) {
-                self.restart_terminal_tab();
+                self.request_terminal_restart();
             }
             return;
         }
