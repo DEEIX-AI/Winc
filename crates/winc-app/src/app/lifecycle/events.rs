@@ -554,6 +554,8 @@ impl App {
 
         earliest(&mut wake, self.scrollbar_tick(now));
 
+        earliest(&mut wake, self.settings_scroll_tick(now));
+
         earliest(&mut wake, self.format_progress_tick(now));
 
         earliest(&mut wake, self.log_tick(now));

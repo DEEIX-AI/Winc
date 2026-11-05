@@ -9,6 +9,59 @@ use super::*;
 use winc_editor::format::{PRESETS, Task};
 
 #[test]
+fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
+    use std::time::{Duration, Instant};
+
+    let dir = sample_folder("settings-scroll-base");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.open_settings();
+    app.settings.motion = None;
+    paint(&mut app);
+    assert!(app.settings.scroll_base.is_none());
+
+    // 第一帧完整绘制并保存快照。
+    app.settings_scroll_by(-10.0);
+    paint(&mut app);
+    assert!(app.settings.scroll_base.is_some());
+    let window = app.layout.window;
+    let scale = app.renderer.as_ref().unwrap().scale_factor();
+    assert!(app.settings_reuses_base(window, scale));
+
+    // 之后的帧使用快照，画面与完整绘制相同。
+    app.settings_scroll_by(-30.0);
+    paint(&mut app);
+    let reused = app
+        .renderer
+        .as_ref()
+        .unwrap()
+        .image()
+        .unwrap()
+        .pixels
+        .clone();
+
+    // 停止滚动后释放快照并重绘。
+    let now = Instant::now();
+    assert!(app.settings_scroll_tick(now).is_some());
+    assert!(app.settings.scroll_base.is_some());
+    assert_eq!(app.settings_scroll_tick(now + Duration::from_secs(1)), None);
+    assert!(app.settings.scroll_base.is_none());
+    assert!(!app.settings_reuses_base(window, scale));
+    paint(&mut app);
+    let full = &app.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
+
+    // 关闭设置时释放快照。
+    app.settings_scroll_by(-10.0);
+    paint(&mut app);
+    app.close_settings();
+    assert!(app.settings.scroll_base.is_none());
+    assert_eq!(app.settings.scrolled_at, None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn zoom_changes_the_editor_font_size_and_resets() {
     let dir = search_folder("zoom");
     let mut app = app_with(&dir, false);

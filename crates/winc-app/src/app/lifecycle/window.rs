@@ -65,7 +65,7 @@ impl App {
 
     /// 窗口是否完全看不见（见 `occluded`）；看得见时，或者测量时（窗口透明，系统当它看不见）
     /// 为假。
-    pub(super) fn unseen(&self) -> bool {
+    pub(in crate::app) fn unseen(&self) -> bool {
         self.occluded && !self.bench.silent()
     }
 
@@ -431,7 +431,11 @@ impl App {
     /// 编辑区每帧都先用不透明的 `editor_bg` 整个铺一遍（`view::editor::draw_editor`），告诉渲染器
     /// 那一块不必先铺窗口背景色。
     pub(in crate::app) fn cover_frame(&self, renderer: &mut winc_render::Renderer) {
-        if self.palette.editor_bg.a >= 1.0 {
+        let (window, scale) = (self.layout.window, renderer.scale_factor());
+        if self.settings_reuses_base(window, scale) {
+            // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。
+            renderer.cover_next_frame(window);
+        } else if self.palette.editor_bg.a >= 1.0 {
             renderer.cover_next_frame(self.layout.editor);
         }
     }
@@ -455,6 +459,7 @@ impl App {
             return;
         }
         self.settle_animations();
+        self.advance_wheel_glide();
         self.continue_drag_scroll();
         self.track_modules();
         self.track_search_rows();

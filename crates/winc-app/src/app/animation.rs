@@ -362,6 +362,7 @@ impl App {
             || self.global.rows_moving()
             || self.fold_motion.is_some()
             || self.scroll_glide.is_some()
+            || self.wheel_glide.is_some()
             || self.picker_motion.is_some()
             || self.places_in.is_some()
             || self.places_out.is_some()

@@ -806,6 +806,8 @@ pub struct App {
     pub fold_motion: Option<FoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
     pub(crate) scroll_glide: Option<ScrollGlide>,
+    /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
+    pub(crate) wheel_glide: Option<input::mouse::WheelGlide>,
     /// 文件树中正在改名字的项和输入框；没有时为 `None`。
     pub name_input: Option<NameInput>,
     /// 在文件树中按住的项；拖动该项可移动到其他目录。

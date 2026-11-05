@@ -1,5 +1,5 @@
-//! 编辑区滚动与焦点的测试：跳转时的平滑滚动、查找把远处的匹配滚到正中、拖选停在编辑区外时的
-//! 持续滚动，以及有无焦点时选区与当前行的绘制。
+//! 编辑区滚动与焦点的测试：跳转时的平滑滚动、鼠标滚轮的过渡、查找把远处的匹配滚到正中、拖选
+//! 停在编辑区外时的持续滚动，以及有无焦点时选区与当前行的绘制。
 
 use std::time::Duration;
 
@@ -156,4 +156,46 @@ fn selections_dim_without_focus_and_hide_the_current_line() {
     let p = app.palette;
     assert_ne!(p.selection_inactive, p.selection);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_mouse_wheel_notch_glides_and_a_trackpad_follows_directly() {
+    use winit::dpi::PhysicalPosition;
+    use winit::event::MouseScrollDelta::{LineDelta, PixelDelta};
+
+    const LENGTH: Duration = Duration::from_millis(100);
+    let dir = sample_folder("wheel-glide");
+    let code = "let x = 1;\n".repeat(500);
+    std::fs::write(dir.join("long.rs"), code).unwrap();
+    let mut app = app_with(&dir.join("long.rs"), false);
+    paint(&mut app);
+    let text = app.layout.text;
+    app.on_mouse_move(text.x + 100.0, text.y + 100.0);
+    let scroll = |app: &App| app.editor.active().unwrap().scroll_line;
+    let lh = app.fonts.line_height;
+
+    // 只有鼠标滚轮的整格滚动使用过渡；不足一格、触控板和终端的滚动立即生效。
+    assert!(app.wheel_glides(LineDelta(0.0, -1.0)));
+    assert!(!app.wheel_glides(LineDelta(0.0, -0.25)));
+    assert!(!app.wheel_glides(PixelDelta(PhysicalPosition::new(0.0, -40.0))));
+    app.layout.terminal = text;
+    assert!(!app.wheel_glides(LineDelta(0.0, -1.0)));
+    app.layout.terminal = winc_render::Rect::default();
+
+    // 向下滚动 30 行：时钟过半时位于缓出曲线的对应位置。
+    let half = Clock::stopped(LENGTH, LENGTH / 2);
+    let progress = half.progress();
+    app.start_wheel_glide((0.0, -30.0 * lh), half);
+    app.advance_wheel_glide();
+    assert!((scroll(&app) - 30.0 * progress).abs() < 0.01);
+    assert!(app.wheel_glide.is_some());
+    assert!(app.animating());
+
+    // 过渡途中再次滚动：未完成的距离计入新的总距离。
+    app.start_wheel_glide((0.0, -10.0 * lh), Clock::stopped(LENGTH, LENGTH));
+    app.advance_wheel_glide();
+    assert!((scroll(&app) - 40.0).abs() < 0.01);
+    assert!(app.wheel_glide.is_none());
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

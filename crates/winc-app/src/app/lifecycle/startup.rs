@@ -141,6 +141,7 @@ impl App {
             tree_motion: None,
             fold_motion: None,
             scroll_glide: None,
+            wheel_glide: None,
             tree_drag: None,
             file_hover: None,
             name_input: None,
