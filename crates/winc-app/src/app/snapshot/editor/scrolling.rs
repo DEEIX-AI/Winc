@@ -30,6 +30,29 @@ fn scroll(app: &App) -> f32 {
     app.editor.active().unwrap().scroll_line
 }
 
+/// 换了标签的跳转直接到位：跳转时开始的平滑滚动被取消；留在同一标签时保留。
+#[test]
+fn opening_another_tab_does_not_glide() {
+    fn jump(app: &mut App) {
+        app.scroll_glide = Some(ScrollGlide {
+            doc: app.editor.active().unwrap().id,
+            from: 0.0,
+            clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
+        });
+    }
+    let (mut app, dir) = long_file("scroll-glide-tab");
+    std::fs::write(dir.join("src/other.rs"), "fn other() {}\n").unwrap();
+
+    app.open_path_then(&dir.join("src/long.rs"), jump);
+    assert!(app.scroll_glide.is_some());
+
+    app.open_path_then(&dir.join("src/other.rs"), jump);
+    assert_eq!(app.editor.active().unwrap().name(), "other.rs");
+    paint(&mut app);
+    assert!(app.scroll_glide.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn far_jumps_glide_and_near_ones_do_not() {
     let (mut app, dir) = long_file("scroll-glide");
