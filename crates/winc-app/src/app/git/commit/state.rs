@@ -31,7 +31,11 @@ impl CommitState {
 
     /// 文件 `entry` 是否勾上。
     pub fn checked(&self, entry: &Entry) -> bool {
-        !self.excluded.contains(&entry.path)
+        if entry.untracked() {
+            self.included.contains(&entry.path)
+        } else {
+            !self.excluded.contains(&entry.path)
+        }
     }
 
     /// 文件的勾选框：`Some(true)` 整个提交，`Some(false)` 只提交一部分改动，`None` 不提交。
@@ -315,7 +319,9 @@ impl CommitState {
         self.skipped.remove(&path);
         if on {
             self.excluded.remove(&path);
+            self.included.insert(path);
         } else {
+            self.included.remove(&path);
             self.excluded.insert(path);
         }
     }

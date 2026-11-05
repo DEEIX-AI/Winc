@@ -211,6 +211,8 @@ git-operation-abort = 中止
 git-commit-message-placeholder = 提交信息（{ $key } 提交）
 git-commit-message-amend-placeholder = 修改后的提交信息
 git-commit-button = 提交
+git-commit-button-files = 提交 { $count } 个文件
+git-commit-button-files-to = 提交 { $count } 个文件到 { $branch }
 git-commit-button-amend = 修改提交
 git-commit-button-committing = 正在提交…
 git-commit-button-sync = 同步更改 { $counts }
@@ -366,6 +368,7 @@ git-change-popup-more-lines = 另有 { $count } 行未显示
 
 git-commit-group-changes = 更改
 git-commit-group-conflicts = 冲突
+git-commit-group-untracked = 未跟踪的文件
 git-commit-open-deleted = 文件已删除，无法打开
 git-commit-blocker-conflicts = { $count } 个文件还有未解决的冲突
 git-log-files-changed = 更改了 { $count } 个文件

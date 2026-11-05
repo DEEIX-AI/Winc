@@ -1,5 +1,5 @@
 //! 侧栏的提交视图：标题行与工具按钮、说明条（合并、变基暂停时）、多行提交信息、
-//! 「提交 ⌄」拆分按钮，以及分组并按目录排成树的改动列表。
+//! 写明提交范围的「提交 ⌄」拆分按钮，以及分组并按目录排成树的改动列表。
 //!
 //! 每个文件占一行：勾选框、文件图标、文件名（平铺时其后以淡色显示所在目录）、右端着色的
 //! 状态字母；悬停时状态字母替换为「打开文件」「回滚」两个按钮。改动行不显示行数。
@@ -864,10 +864,23 @@ fn draw_compose(
         (false, None, true) => t!("git-commit-button-amend").to_owned(),
         (false, None, false) => t!("git-commit-button").to_owned(),
     };
-    let text = text.as_str();
     let size = app.fonts.ui_small;
-    let text_w = frame.measure(FontKind::Ui, size, text);
     let icon_w = if busy && !syncing { 0.0 } else { 16.0 };
+    // 平时写明提交的范围，放不下时依次省去分支和文件数。
+    let idle = !busy && done.is_none() && sync.is_none();
+    let text = app
+        .commit_scope()
+        .filter(|_| idle)
+        .and_then(|(count, branch)| {
+            let to = branch
+                .map(|branch| t!("git-commit-button-files-to", count = count, branch = branch));
+            to.into_iter()
+                .chain([t!("git-commit-button-files", count = count)])
+                .find(|text| frame.measure(FontKind::Ui, size, text) + icon_w + 16.0 <= main.w)
+        })
+        .unwrap_or(text);
+    let text = text.as_str();
+    let text_w = frame.measure(FontKind::Ui, size, text);
     let x = (main.x + (main.w - icon_w - text_w) / 2.0).round();
     let clip = panel.intersect(main);
     if syncing {

@@ -271,6 +271,14 @@ git-operation-abort = Abort
 git-commit-message-placeholder = Commit message ({ $key } to commit)
 git-commit-message-amend-placeholder = Amended commit message
 git-commit-button = Commit
+git-commit-button-files = { $count ->
+    [one] Commit 1 File
+   *[other] Commit { $count } Files
+}
+git-commit-button-files-to = { $count ->
+    [one] Commit 1 File to { $branch }
+   *[other] Commit { $count } Files to { $branch }
+}
 git-commit-button-amend = Amend Commit
 git-commit-button-committing = Committing…
 git-commit-button-sync = Sync Changes { $counts }
@@ -471,6 +479,7 @@ git-change-popup-more-lines = { $count ->
 
 git-commit-group-changes = Changes
 git-commit-group-conflicts = Conflicts
+git-commit-group-untracked = Untracked Files
 git-commit-open-deleted = The file was deleted and can't be opened
 git-commit-blocker-conflicts = { $count ->
     [one] { $count } file still has unresolved conflicts

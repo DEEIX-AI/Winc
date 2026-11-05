@@ -88,20 +88,25 @@ pub(crate) struct CommitOverflow {
 /// 改动列表里的一组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommitGroup {
-    /// 没有冲突的改动：已跟踪文件的改动和未跟踪的新文件（状态字母 U）放在一起，默认都勾上。
+    /// 已跟踪文件的改动和已暂存的新文件，默认勾上。
     Changes,
     /// 合并、拣选、变基时有冲突的文件。
     ///
     /// 冲突须先于其他改动处理，因此单独成组并排在最上方，不与普通改动混排。
     Conflicts,
+    /// 未跟踪的文件（状态字母 U）：默认不勾，只有勾上才随提交加入仓库。
+    Untracked,
 }
 
 impl CommitGroup {
     /// 各组在列表中自上而下的顺序。
-    pub const ALL: [CommitGroup; CommitGroup::COUNT] =
-        [CommitGroup::Conflicts, CommitGroup::Changes];
+    pub const ALL: [CommitGroup; CommitGroup::COUNT] = [
+        CommitGroup::Conflicts,
+        CommitGroup::Changes,
+        CommitGroup::Untracked,
+    ];
     /// 组的个数。
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = 3;
 }
 
 impl CommitGroup {
@@ -110,6 +115,7 @@ impl CommitGroup {
         match self {
             CommitGroup::Changes => t!("git-commit-group-changes"),
             CommitGroup::Conflicts => t!("git-commit-group-conflicts"),
+            CommitGroup::Untracked => t!("git-commit-group-untracked"),
         }
     }
 
@@ -121,7 +127,8 @@ impl CommitGroup {
     pub fn holds(self, entry: &Entry) -> bool {
         match self {
             CommitGroup::Conflicts => entry.conflicted(),
-            CommitGroup::Changes => !entry.conflicted(),
+            CommitGroup::Changes => !entry.conflicted() && !entry.untracked(),
+            CommitGroup::Untracked => !entry.conflicted() && entry.untracked(),
         }
     }
 }
@@ -398,8 +405,10 @@ pub(crate) struct CommitState {
     draft: Option<String>,
     /// 勾选（`excluded`）每变一次加 1，见 [`CommitRows::members_state`]。
     checks: u64,
-    /// 用户取消勾选的文件；其余的（包括未跟踪的新文件）都勾着。
+    /// 用户取消勾选的文件；其余已跟踪的文件都勾着。
     excluded: HashSet<PathBuf>,
+    /// 用户勾上的未跟踪文件；其余未跟踪的文件都不勾。
+    included: HashSet<PathBuf>,
     /// 这次合并（拣选、还原）的提交信息草稿已经填进去过了：用户清空以后不再填。
     pub(super) prefilled: bool,
     /// 勾上的文件里取消勾选的各块改动（[`winc_core::diff::hunk_key`]）：这些文件只提交其余的改动。
@@ -462,6 +471,7 @@ impl CommitState {
     /// 清掉所有勾选，回到默认（提交完成以后）。
     pub(super) fn reset_checks(&mut self) {
         self.excluded.clear();
+        self.included.clear();
         self.checks += 1;
     }
 
@@ -482,6 +492,7 @@ impl Default for CommitState {
             amend: false,
             draft: None,
             excluded: HashSet::new(),
+            included: HashSet::new(),
             skipped: HashMap::new(),
             head: None,
             prefilled: false,
@@ -629,6 +640,22 @@ impl App {
             undo,
             list,
         }
+    }
+
+    /// 提交按钮要写明的范围：勾上的文件数和当前分支（游离 `HEAD` 时没有）。
+    ///
+    /// 修改提交、合并或变基暂停时按钮另有说法，没有勾选时也不写范围，都返回 `None`。
+    pub(crate) fn commit_scope(&self) -> Option<(usize, Option<&str>)> {
+        let status = self.git.status.as_ref()?;
+        if self.commit.amend || status.operation.is_some() {
+            return None;
+        }
+        let count = self.commit.checked_entries(status).count();
+        let branch = match &status.head {
+            Some(Head::Branch(name)) => Some(name.as_str()),
+            _ => None,
+        };
+        (count > 0).then_some((count, branch))
     }
 
     /// 可以撤销的上一次提交：`HEAD` 在分支上，指向的提交还没推送到上游（没有上游，或者本地
@@ -878,8 +905,15 @@ impl App {
             .status
             .as_ref()
             .is_some_and(|s| s.entries.iter().any(|e| self.commit.checked(e)));
-        let all_collapsed = self.commit.collapsed.iter().all(|c| *c);
-        let all_expanded = self.commit.collapsed.iter().all(|c| !*c)
+        // 没有文件的组不显示，不算在内。
+        let shown = || {
+            let status = self.git.status.as_ref();
+            CommitGroup::ALL.into_iter().filter(move |group| {
+                status.is_some_and(|s| s.entries.iter().any(|e| group.holds(e)))
+            })
+        };
+        let all_collapsed = shown().all(|group| self.commit.group_collapsed(group));
+        let all_expanded = shown().all(|group| !self.commit.group_collapsed(group))
             && self.commit.collapsed_dirs.iter().all(HashSet::is_empty);
         vec![
             MenuEntry::Item(MenuCommand::CommitRefresh, true),

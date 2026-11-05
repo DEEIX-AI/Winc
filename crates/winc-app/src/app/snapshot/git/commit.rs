@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// 创建含大量深层未跟踪文件的仓库：`assets/pets/a`、`assets/pets/b` 下各 12 张图，
+/// 创建含大量深层新文件（已暂存）的仓库：`assets/pets/a`、`assets/pets/b` 下各 12 张图，
 /// 另加 3 个散文件。
 fn deep_changes_repo(name: &str) -> Option<PathBuf> {
     let dir = search_folder(name);
@@ -21,14 +21,16 @@ fn deep_changes_repo(name: &str) -> Option<PathBuf> {
     for f in ["arm_L.png", "arm_R.png", "bg.png"] {
         std::fs::write(dir.join("assets/pets").join(f), "x").unwrap();
     }
+    git_in(&dir, &["add", "-A"]);
     Some(dir)
 }
 
-/// 在 [`deep_changes_repo`] 的基础上新增一个名字很长的未跟踪文件，返回仓库目录与文件名。
+/// 在 [`deep_changes_repo`] 的基础上新增一个名字很长的已暂存文件，返回仓库目录与文件名。
 fn long_name_repo(name: &str) -> Option<(PathBuf, String)> {
     let dir = deep_changes_repo(name)?;
     let long = "a-very-long-file-name-that-never-fits-in-the-sidebar-at-all.png".to_owned();
     std::fs::write(dir.join("assets/pets/a").join(&long), "x").unwrap();
+    git_in(&dir, &["add", "-A"]);
     Some((dir, long))
 }
 
@@ -108,6 +110,7 @@ fn commit_list_groups_changes_by_directory() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "x\n").unwrap();
     }
+    git_in(&root, &["add", "-A"]);
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     paint(&mut app);
@@ -119,7 +122,7 @@ fn commit_list_groups_changes_by_directory() {
             .position(|e| e.path.ends_with(name))
             .unwrap()
     };
-    // 未跟踪的新文件和改过的 `src/main.rs` 同在「更改」一组里。
+    // 已暂存的新文件和改过的 `src/main.rs` 同在「更改」一组里。
     let changes: Vec<CommitRow> = app
         .commit_rows()
         .iter()
@@ -253,6 +256,7 @@ fn commit_view_commits_only_the_checked_files() {
     if !make_repo(&dir) {
         return;
     }
+    git_in(&dir, &["add", "src/new.rs"]);
     let mut app = app_with(&dir, false);
     // 默认显示为列表；本测试检查按目录排列的树形视图。
     app.commit.set_flat(false);
@@ -270,7 +274,7 @@ fn commit_view_commits_only_the_checked_files() {
     assert_eq!(app.focus, Focus::CommitMessage);
     paint(&mut app);
 
-    // 「更改」一组里是改过的 `src/main.rs` 和未跟踪的新文件 `src/new.rs`，都在 `src` 目录下面，
+    // 「更改」一组里是改过的 `src/main.rs` 和已暂存的新文件 `src/new.rs`，都在 `src` 目录下面，
     // 默认都勾上。
     let status = app.git.status.clone().unwrap();
     let rows = app.commit_rows();
@@ -363,7 +367,7 @@ fn commit_view_commits_only_the_checked_files() {
     assert!(app.git.status.as_ref().unwrap().entries.is_empty());
     paint(&mut app);
 
-    // 回滚：已修改的文件恢复 `HEAD` 中的内容，未跟踪的文件移到废纸篓（测试中直接删除）。
+    // 回滚只处理勾上的文件：已修改的文件恢复 `HEAD` 中的内容，未跟踪的文件默认不勾，保留。
     let main = root.join("src/main.rs");
     let before = std::fs::read_to_string(&main).unwrap();
     std::fs::write(&main, "changed\n").unwrap();
@@ -371,6 +375,10 @@ fn commit_view_commits_only_the_checked_files() {
     app.git_refresh();
     app.run_commit_more_command(crate::app::input::context_menu::MenuCommand::CommitRollback);
     assert_eq!(std::fs::read_to_string(&main).unwrap(), before);
+    assert!(root.join("scratch.txt").exists());
+    // 勾上以后，未跟踪的文件移到废纸篓（测试中直接删除）。
+    app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
+    app.run_commit_more_command(crate::app::input::context_menu::MenuCommand::CommitRollback);
     assert!(!root.join("scratch.txt").exists());
     assert!(app.git.status.as_ref().unwrap().entries.is_empty());
 
@@ -574,6 +582,7 @@ fn the_commit_more_menu_greys_out_what_does_not_apply() {
         return;
     };
     std::fs::write(root.join("new.txt"), "x").unwrap();
+    git_in(&root, &["add", "-A"]);
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     paint(&mut app);
@@ -1475,5 +1484,88 @@ fn shoot_commit_narrow_dirs() {
     app.relayout();
     app.run_action(Action::ShowCommit);
     shoot(&mut app, "commit-narrow-dirs");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn untracked_files_stay_out_of_the_commit_until_checked() {
+    let Some((mut app, root)) = git_app("git-commit-untracked", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let (main, new) = (root.join("src/main.rs"), root.join("src/new.rs"));
+    let status = app.git.status.clone().unwrap();
+    let entry = status.entries.iter().find(|e| e.path == new).unwrap();
+
+    // 未跟踪的文件单独成组，默认显示但不勾，不计入提交范围。
+    assert!(!app.commit.group_collapsed(CommitGroup::Untracked));
+    assert!(!app.commit.checked(entry));
+    assert_eq!(
+        app.commit.group_state(&status, CommitGroup::Untracked),
+        None
+    );
+    assert_eq!(app.commit_files(), [main.clone(), new.clone()]);
+    assert_eq!(app.commit_scope(), Some((1, Some("main"))));
+
+    // 收起和展开不改变勾选；收起时切换文件跳过这一组。
+    app.press_commit(CommitTarget::Group(CommitGroup::Untracked));
+    assert_eq!(app.commit_files(), std::slice::from_ref(&main));
+    assert!(!app.commit.checked(entry));
+    app.press_commit(CommitTarget::Group(CommitGroup::Untracked));
+    assert_eq!(app.commit_files(), [main.clone(), new.clone()]);
+
+    app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
+    assert!(app.commit.checked(entry));
+    assert_eq!(app.commit_scope(), Some((2, Some("main"))));
+    app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
+    assert!(!app.commit.checked(entry));
+
+    // 没有勾上时提交只包含已跟踪的改动，未跟踪的文件仍未跟踪。
+    app.commit.message.set_text("只提交改动");
+    app.git_commit();
+    let status = app.git.status.clone().unwrap();
+    assert_eq!(status.entries.len(), 1);
+    assert_eq!(status.entries[0].path, new);
+    assert!(status.entries[0].untracked());
+
+    // 勾上以后随提交加入仓库；提交后勾选回到默认。
+    assert_eq!(app.commit_scope(), None);
+    app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
+    app.commit.message.set_text("加入新文件");
+    app.git_commit();
+    assert!(app.git.status.as_ref().unwrap().entries.is_empty());
+    std::fs::write(&new, "changed\n").unwrap();
+    std::fs::write(root.join("another.rs"), "\n").unwrap();
+    app.git_refresh();
+    let status = app.git.status.clone().unwrap();
+    let another = status.entries.iter().find(|e| e.untracked()).unwrap();
+    assert!(!app.commit.checked(another));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_commit_button_names_its_scope_only_for_a_plain_commit() {
+    let Some((mut app, root)) = git_app("git-commit-scope", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.commit_scope(), Some((1, Some("main"))));
+
+    // 没有勾选、修改上一次提交时都不写范围。
+    app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
+    assert_eq!(app.commit_scope(), None);
+    app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
+    app.commit.amend = true;
+    assert_eq!(app.commit_scope(), None);
+    app.commit.amend = false;
+
+    // 游离 `HEAD`：只写文件数。
+    git_in(&root, &["checkout", "-q", "--detach"]);
+    app.git_refresh();
+    assert_eq!(app.commit_scope(), Some((1, None)));
+
     let _ = std::fs::remove_dir_all(&root);
 }
