@@ -74,6 +74,7 @@ use workspace::tree::SidebarMotion;
 pub(crate) use workspace::tree::tree_max_scroll;
 pub use workspace::tree::{NameInput, TreeMotion};
 pub use workspace::tree_drag::TreeDrag;
+pub use workspace::tree_label::{LabelCause, LabelView, TreeLabels};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -788,6 +789,8 @@ pub struct App {
     pub tree_segments: Vec<(usize, f32, f32, PathBuf)>,
     /// 鼠标所在的合并显示的目录；不在这样的目录上时为 `None`。
     pub tree_hover_segment: Option<PathBuf>,
+    /// 文件树各行名字的过渡状态。
+    pub tree_labels: TreeLabels,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
     /// 文件树中连续键入的字符与最后一次键入的时刻，用于跳到名称以这些字符开头的行

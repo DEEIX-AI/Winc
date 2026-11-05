@@ -149,9 +149,7 @@ impl App {
             return Target::Search;
         }
         // 名称放不下的一行盖在分隔条上：这一行优先，其余各行照常可以拖动分隔条。
-        let over_row = self
-            .tree_overflow
-            .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y));
+        let over_row = self.over_tree_overflow_row(y);
         if self.panel_visible && !over_row && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
@@ -196,7 +194,11 @@ impl App {
         if let Some((hunk, _)) = self.ruler_change_at(x, y) {
             return Target::RulerChange(hunk);
         }
-        if let Some((bar, grab)) = self.scrollbar_at(x, y) {
+        // 名称放不下的一行同样盖在文件树的滚动条上，不会一进滚动条就收起。
+        if let Some((bar, grab)) = self
+            .scrollbar_at(x, y)
+            .filter(|(bar, _)| !(over_row && *bar == Scrollbar::Tree))
+        {
             return Target::Scrollbar(bar, grab);
         }
         if l.minimap.contains(x, y) {
@@ -382,6 +384,14 @@ impl App {
 
     /// 窗口坐标 (`x`, `y`)（逻辑像素）是否位于文件树中放不下的文件名向右展开、覆盖到编辑区上方
     /// 的那一段区域内。
+    /// 纵坐标 `y` 是否在正在显示完整名称的那一行上：这一行在最上层，盖住分隔条和文件树的滚动条。
+    ///
+    /// 只有已经展开的一行优先。沿着边缘上下移动到别的行时，那一行还没有展开，滚动条照常响应。
+    pub(in crate::app) fn over_tree_overflow_row(&self, y: f32) -> bool {
+        self.tree_overflow
+            .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y))
+    }
+
     pub(in crate::app) fn in_tree_overflow(&self, x: f32, y: f32) -> bool {
         self.tree_overflow
             .is_some_and(|(rect, _)| rect.contains(x, y))

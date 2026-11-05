@@ -260,6 +260,9 @@ impl App {
 
     /// 按鼠标现在的位置更新悬停的合并目录；同一行内换到另一级时悬停目标不变，要在这里请求重画。
     pub(in crate::app) fn track_tree_segment(&mut self) {
+        if self.tree_segments.is_empty() && self.tree_hover_segment.is_none() {
+            return;
+        }
         let (x, y) = self.mouse;
         let segment = matches!(self.hover_at(x, y), Hover::TreeRow(_))
             .then(|| self.tree_row_at(y))

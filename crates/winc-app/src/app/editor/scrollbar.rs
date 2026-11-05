@@ -232,6 +232,10 @@ impl App {
             if dialog || settings != (area == ScrollArea::Settings) {
                 return false;
             }
+            // 鼠标在展开了完整名称的一行上：不唤出文件树的滚动条。
+            if area == ScrollArea::Tree && self.over_tree_overflow_row(y) {
+                return false;
+            }
             self.scrollbars.reveals[area as usize]
                 .area
                 .is_some_and(|r| {
