@@ -102,6 +102,17 @@ fn default_key_labels_per_system() {
         label(Os::Windows, Action::ShowCommands),
         ["Ctrl+Shift+P", "F1"]
     );
+    assert_eq!(label(Os::Mac, Action::Settings), ["⌘,"]);
+    assert_eq!(
+        label(Os::Windows, Action::Settings),
+        ["Ctrl+,", "Ctrl+Alt+S"]
+    );
+    assert_eq!(label(Os::Linux, Action::Settings), ["Ctrl+,", "Ctrl+Alt+S"]);
+    // 备用键在编辑区之外同样生效。
+    assert_eq!(
+        runs(Os::Windows, ctrl | alt, KeyCode::Char('s'), Context::Other),
+        Some(Action::Settings)
+    );
     assert_eq!(label(Os::Mac, Action::Format), ["⌥⇧F"]);
     assert_eq!(label(Os::Linux, Action::Format), ["Ctrl+Shift+I"]);
     assert_eq!(label(Os::Mac, Action::FormatSelection), ["⌘K ⌘F"]);
