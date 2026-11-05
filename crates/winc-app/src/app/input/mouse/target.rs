@@ -148,7 +148,11 @@ impl App {
         if l.search.contains(x, y) {
             return Target::Search;
         }
-        if self.panel_visible && l.splitter.contains(x, y) {
+        // 名称放不下的一行盖在分隔条上：这一行优先，其余各行照常可以拖动分隔条。
+        let over_row = self
+            .tree_overflow
+            .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y));
+        if self.panel_visible && !over_row && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
         if let Some(tool) = hit(&self.tree_tools, x, y) {
@@ -399,6 +403,7 @@ impl App {
             self.set_hover(hover);
             self.update_cursor_icon();
         }
+        self.track_tree_segment();
     }
 
     /// `(x, y)` 是否在编辑区右上角的卡片（冲突卡片、提示条）上：卡片浮在文字上面，点击、

@@ -3,6 +3,7 @@
 //! 同时提供目录读取（[`list_dir`]）、自然排序（[`natural_cmp`]），以及新建、改名、移动、
 //! 复制文件和目录的操作。
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -42,6 +43,34 @@ pub struct Entry {
     pub parent: Option<usize>,
     /// 这一行之后第一个不在它下面的可见行的下标：`index + 1..end` 是它展开后的全部子孙。
     pub end: usize,
+    /// 合并显示在这一行的连续目录，从最上一级到这一行本身；没有合并时为 `None`。
+    ///
+    /// 这一行的路径、名字和展开状态都是最下一级目录的。
+    chain: Option<Rc<[PathBuf]>>,
+}
+
+impl Entry {
+    /// 合并显示在这一行的连续目录，从最上一级到这一行本身；没有合并时为空。
+    pub fn chain(&self) -> &[PathBuf] {
+        self.chain.as_deref().unwrap_or_default()
+    }
+
+    /// 这一行显示的名字：合并的目录按 `/` 连接，没有合并时就是名字本身。
+    pub fn label(&self) -> Cow<'_, str> {
+        match self.chain() {
+            [] => Cow::Borrowed(&self.name),
+            chain => {
+                let names: Vec<_> = chain.iter().map(|path| segment_name(path)).collect();
+                Cow::Owned(names.join("/"))
+            }
+        }
+    }
+}
+
+/// 返回路径最后一段的显示名。
+pub fn segment_name(path: &Path) -> Cow<'_, str> {
+    path.file_name()
+        .map_or(Cow::Borrowed(""), |name| name.to_string_lossy())
 }
 
 impl std::ops::Deref for Entry {
@@ -95,6 +124,10 @@ pub struct Workspace {
     marked: HashSet<PathBuf>,
     /// 按 ⇧ 扩展选区的起点（绝对路径）。
     anchor: Option<PathBuf>,
+    /// 选中行合并显示的目录中选中的那一级；选中最下一级或选中行没有合并时为 `None`。
+    segment: Option<PathBuf>,
+    /// 是否把连续的单子目录合并显示为一行。
+    compact: bool,
     /// 已展开的目录（绝对路径）。
     expanded: HashSet<PathBuf>,
     /// 读过的目录内容，已排序。
@@ -102,6 +135,12 @@ pub struct Workspace {
     /// 按展开状态拍平后的可见行。
     rows: Vec<Entry>,
 }
+
+/// 递归展开最多展开的目录数（个，经验值）：再多的行也无法浏览，读取也会明显卡住界面。
+pub const EXPAND_DIRS: usize = 1000;
+
+/// 递归展开最多查看的目录项数（个，经验值）：放着大量文件的目录不拖慢界面。
+const EXPAND_ENTRIES: usize = 50_000;
 
 /// 文件树中不显示的目录和文件名（按名字精确匹配），快速打开的文件索引同样跳过。
 pub(crate) const HIDDEN: &[&str] = &[
@@ -184,6 +223,8 @@ impl Workspace {
             selected: None,
             marked: HashSet::new(),
             anchor: None,
+            segment: None,
+            compact: true,
             expanded: HashSet::from([root]),
             children: HashMap::new(),
             rows: Vec::new(),
@@ -197,7 +238,16 @@ impl Workspace {
         &self.rows
     }
 
-    /// 路径为 `path` 的行的下标；不在可见行里（没展开到那里、不在工作区里）时返回 `None`。
+    /// 设置是否把连续的单子目录合并显示为一行。
+    pub fn set_compact(&mut self, compact: bool) {
+        if self.compact != compact {
+            self.compact = compact;
+            self.rebuild();
+        }
+    }
+
+    /// 显示路径 `path` 的行的下标（合并显示时也算）；不在可见行里（没展开到那里、不在工作区里）
+    /// 时返回 `None`。
     ///
     /// 按路径的各级逐层往下找，每层跳过不是 `path` 上级的兄弟连同其子孙（`Entry::end`），耗时与
     /// 层数和每层的项数有关，与整棵树的行数无关：拖动时每帧都要找放置目标所在的行。
@@ -205,7 +255,7 @@ impl Workspace {
         let (mut i, mut end) = (0, self.rows.len());
         while i < end {
             let entry = &self.rows[i];
-            if entry.path == path {
+            if entry.path == path || entry.chain().iter().any(|p| p == path) {
                 return Some(i);
             }
             if entry.expanded && path.starts_with(&entry.path) {
@@ -230,10 +280,80 @@ impl Workspace {
         let path = entry.path.clone();
 
         if !self.expanded.remove(&path) {
-            self.expanded.insert(path);
+            self.expand_chain(path);
         }
 
         self.rebuild();
+    }
+
+    /// 展开第 `index` 行的目录和它下面的各级目录；文件行和越界下标不做任何事。
+    ///
+    /// 遵守忽略规则，不进入符号链接，也不展开文件树中不显示的名字；这一行本身被忽略时只展开
+    /// 一层。返回是否因目录太多只展开了一部分（见 [`EXPAND_DIRS`]）。
+    pub fn expand_recursively(&mut self, index: usize) -> bool {
+        self.expand_within(index, EXPAND_DIRS, EXPAND_ENTRIES)
+    }
+
+    /// 同 [`Self::expand_recursively`]，上限是目录数 `dirs` 和目录项数 `entries`。
+    fn expand_within(&mut self, index: usize, dirs: usize, entries: usize) -> bool {
+        let Some(entry) = self.rows.get(index).filter(|e| e.kind == EntryKind::Dir) else {
+            return false;
+        };
+        let path = entry.path.clone();
+        let listed = path.parent().is_some_and(|parent| {
+            walker(parent)
+                .max_depth(Some(1))
+                .build()
+                .filter_map(Result::ok)
+                .any(|e| e.path() == path)
+        });
+        if !listed {
+            self.expand_chain(path);
+            self.rebuild();
+            return false;
+        }
+
+        let mut walk = walker(&path);
+        walk.sort_by_file_name(|a, b| a.cmp(b));
+        let (mut expanded, mut seen, mut limited) = (0, 0, false);
+        for item in walk.build().filter_map(Result::ok) {
+            seen += 1;
+            let dir = item.file_type().is_some_and(|kind| kind.is_dir());
+            if seen > entries || (dir && expanded == dirs) {
+                limited = true;
+                break;
+            }
+            if dir {
+                expanded += 1;
+                self.expanded.insert(item.into_path());
+            }
+        }
+        self.rebuild();
+        limited
+    }
+
+    /// 收起第 `index` 行的目录和它下面的各级目录，不访问磁盘；文件行和越界下标不做任何事。
+    pub fn collapse_recursively(&mut self, index: usize) {
+        let Some(entry) = self.rows.get(index).filter(|e| e.kind == EntryKind::Dir) else {
+            return;
+        };
+        let path = entry.path.clone();
+        self.expanded.retain(|p| !p.starts_with(&path));
+        self.rebuild();
+    }
+
+    /// 展开目录 `path`；合并显示时，连同它下面连续的单子目录一起展开，一次就能看到最下一级的内容。
+    fn expand_chain(&mut self, mut path: PathBuf) {
+        while self.compact {
+            let children = cached_children(&mut self.children, &path);
+            let Some(only) = sole_folder(&children) else {
+                break;
+            };
+            let next = only.path.clone();
+            self.expanded.insert(path);
+            path = next;
+        }
+        self.expanded.insert(path);
     }
 
     /// 展开 `path` 的所有上级目录并选中它，使其在树中可见；`path` 不在工作区内时不做任何事。
@@ -249,7 +369,10 @@ impl Workspace {
         }
 
         self.rebuild();
-        self.select(self.rows.iter().position(|e| e.path == path));
+        match self.row_of(path) {
+            Some(index) => self.select_segment(index, Some(path)),
+            None => self.select(None),
+        }
     }
 
     /// 重新读取全部已缓存的目录，已不是目录的展开项被移除。
@@ -287,7 +410,31 @@ impl Workspace {
     pub fn select(&mut self, index: Option<usize>) {
         self.selected = index.filter(|&i| i < self.rows.len());
         self.marked.clear();
+        self.segment = None;
         self.anchor = self.selected_entry().map(|e| e.path.clone());
+    }
+
+    /// 只选中第 `index` 行，以及这一行合并显示的目录中的 `path`；`path` 为 `None` 或不在其中时
+    /// 选中这一行本身。
+    pub fn select_segment(&mut self, index: usize, path: Option<&Path>) {
+        self.select(Some(index));
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
+        let inner = path.filter(|&p| p != entry.path && entry.chain().iter().any(|c| c == p));
+        self.segment = inner.map(Path::to_path_buf);
+    }
+
+    /// 选中行合并显示的目录中选中的那一级；选中最下一级或选中行没有合并时为 `None`。
+    pub fn segment(&self) -> Option<&Path> {
+        self.segment.as_deref()
+    }
+
+    /// 当前行实际指向的路径：合并显示时是选中的那一级目录；没有选中时为 `None`。
+    pub fn current_path(&self) -> Option<&Path> {
+        self.segment
+            .as_deref()
+            .or_else(|| self.selected_entry().map(|e| e.path.as_path()))
     }
 
     /// 把第 `index` 行加入或移出选区（⌘ 单击）；这一行成为当前行和扩展选区的起点。
@@ -297,6 +444,7 @@ impl Workspace {
         let Some(path) = self.rows.get(index).map(|e| e.path.clone()) else {
             return;
         };
+        self.segment = None;
         if self.marked.is_empty()
             && let Some(current) = self.selected_entry()
         {
@@ -321,6 +469,7 @@ impl Workspace {
         if index >= self.rows.len() {
             return;
         }
+        self.segment = None;
         let from = self
             .anchor
             .as_ref()
@@ -338,6 +487,7 @@ impl Workspace {
         if self.rows.is_empty() {
             return;
         }
+        self.segment = None;
         self.marked = self.rows.iter().map(|e| e.path.clone()).collect();
         self.selected = self.selected.or(Some(0));
     }
@@ -382,8 +532,8 @@ impl Workspace {
     pub fn selection(&self) -> Vec<PathBuf> {
         if self.marked.is_empty() {
             return self
-                .selected_entry()
-                .map(|e| e.path.clone())
+                .current_path()
+                .map(Path::to_path_buf)
                 .into_iter()
                 .collect();
         }
@@ -416,6 +566,9 @@ impl Workspace {
     /// 返回新建文件或目录的默认位置：选中目录时为该目录，选中文件时为其所在目录，
     /// 没有选中时为根目录。
     pub fn target_dir(&self) -> PathBuf {
+        if let Some(segment) = &self.segment {
+            return segment.clone();
+        }
         match self.selected_entry() {
             Some(e) if e.kind == EntryKind::Dir => e.path.clone(),
             Some(e) => e
@@ -622,18 +775,27 @@ impl Workspace {
     /// 选中项保持不变；选中项被折叠隐藏时，改为选中最近的可见上级目录。
     /// 多选中不再可见的项移出选区。
     fn rebuild(&mut self) {
-        let selected = self.selected_entry().map(|e| e.path.clone());
+        let selected = self.current_path().map(Path::to_path_buf);
         let mut rows = Vec::with_capacity(self.rows.len());
         flatten(
             &mut self.children,
             &self.expanded,
+            self.compact,
             &self.root,
             None,
             &mut rows,
         );
         self.rows = rows;
-        self.selected =
-            selected.and_then(|path| self.rows.iter().rposition(|e| path.starts_with(&e.path)));
+        self.selected = selected.as_ref().and_then(|path| {
+            self.rows.iter().rposition(|e| {
+                path.starts_with(&e.path) || e.chain().iter().any(|member| member == path)
+            })
+        });
+        // 选中的目录仍合并在这一行时继续选中它；已有自己的一行或已不存在时选中这一行。
+        self.segment = self.selected_entry().and_then(|entry| {
+            let path = selected.as_ref()?;
+            (*path != entry.path && entry.chain().contains(path)).then(|| path.clone())
+        });
         // 折叠或删除后看不见的项不再算选中。
         if !self.marked.is_empty() {
             let visible: HashSet<&Path> = self.rows.iter().map(|e| e.path.as_path()).collect();
@@ -642,39 +804,75 @@ impl Workspace {
     }
 }
 
+/// 返回目录 `dir` 的内容；未缓存时先读取并写入 `cache`，无法读取的目录按空目录处理。
+fn cached_children(cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>, dir: &Path) -> Rc<[DirEntry]> {
+    if let Some(children) = cache.get(dir) {
+        return Rc::clone(children);
+    }
+    let children: Rc<[DirEntry]> = list_dir(dir).unwrap_or_default().into();
+    cache.insert(dir.to_path_buf(), Rc::clone(&children));
+    children
+}
+
+/// 返回可以和所在目录合并显示的子目录：目录的内容 `children` 只有一项，且是目录。
+///
+/// 指向目录的符号链接不合并，避免链接成环时无限展开。
+fn sole_folder(children: &[DirEntry]) -> Option<&DirEntry> {
+    match children {
+        [only] if only.kind == EntryKind::Dir && !only.path.is_symlink() => Some(only),
+        _ => None,
+    }
+}
+
 /// 把 `dir` 下已展开的部分按显示顺序追加到 `rows`；未缓存的目录先读取并写入 `cache`。
+///
+/// `compact` 为真时，已展开的目录中唯一的一项也是目录时与它合并为一行。收起的目录不读取内容，
+/// 因此不会访问磁盘去判断能否合并。
 fn flatten(
     cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>,
     expanded: &HashSet<PathBuf>,
+    compact: bool,
     dir: &Path,
     parent: Option<usize>,
     rows: &mut Vec<Entry>,
 ) {
     let depth = parent.map_or(0, |p| rows[p].depth + 1);
-    let children = match cache.get(dir) {
-        Some(children) => Rc::clone(children),
-        None => {
-            // 无法读取的目录在树中按空目录处理。
-            let children: Rc<[DirEntry]> = list_dir(dir).unwrap_or_default().into();
-            cache.insert(dir.to_path_buf(), Rc::clone(&children));
-            children
-        }
-    };
+    let children = cached_children(cache, dir);
 
-    for (index, child) in children.iter().enumerate() {
-        let open = child.kind == EntryKind::Dir && expanded.contains(&child.path);
+    for index in 0..children.len() {
+        let (mut siblings, mut at) = (Rc::clone(&children), index);
+        let mut chain = vec![];
+        while compact
+            && siblings[at].kind == EntryKind::Dir
+            && expanded.contains(&siblings[at].path)
+        {
+            let inner = cached_children(cache, &siblings[at].path);
+            if sole_folder(&inner).is_none() {
+                break;
+            }
+            chain.push(siblings[at].path.clone());
+            (siblings, at) = (inner, 0);
+        }
+        let tail = siblings[at].path.clone();
+        let kind = siblings[at].kind;
+        let chain = (!chain.is_empty()).then(|| {
+            chain.push(tail.clone());
+            Rc::from(chain)
+        });
+        let open = kind == EntryKind::Dir && expanded.contains(&tail);
         let row = rows.len();
         rows.push(Entry {
-            siblings: Rc::clone(&children),
-            index,
+            siblings,
+            index: at,
             depth,
             expanded: open,
             parent,
             end: row + 1,
+            chain,
         });
 
         if open {
-            flatten(cache, expanded, &child.path, Some(row), rows);
+            flatten(cache, expanded, compact, &tail, Some(row), rows);
             rows[row].end = rows.len();
         }
     }

@@ -134,6 +134,7 @@ impl App {
             && self.editor.workspace.is_some()
         {
             let row = self.tree_row_at(y);
+            let segment = row.and_then(|i| self.tree_segment_at(i, x));
             let Some(ws) = &mut self.editor.workspace else {
                 return;
             };
@@ -141,8 +142,12 @@ impl App {
             if !row.is_some_and(|i| ws.is_selected(i)) {
                 ws.select(row);
             }
+            // 点在合并显示的一行上时，菜单作用于点中的那一级目录。
+            if let Some(i) = row.filter(|_| !ws.multi_selected()) {
+                ws.select_segment(i, segment.as_deref());
+            }
             self.focus = Focus::Tree;
-            MenuTarget::Tree(row.map(|i| ws.rows()[i].path.clone()))
+            MenuTarget::Tree(row.map(|i| segment.unwrap_or_else(|| ws.rows()[i].path.clone())))
         } else if let Some((path, m)) = self.search_context_target(x, y) {
             MenuTarget::SearchResult(path, m)
         } else if let Some(path) = self.commit_context_target(x, y) {
@@ -352,7 +357,7 @@ impl App {
             MenuTarget::Tree(path) => {
                 let kind = path.as_ref().and_then(|p| {
                     let ws = self.editor.workspace.as_ref()?;
-                    ws.rows().iter().find(|e| e.path == *p).map(|e| e.kind)
+                    ws.row_of(p).map(|i| ws.rows()[i].kind)
                 });
                 let can_paste = self.can_paste_into_tree();
                 let mut menu = tree_menu(kind, can_paste);

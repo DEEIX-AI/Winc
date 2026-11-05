@@ -3,6 +3,9 @@
 //! 拖动项目见 `tree_drag.rs`，工具栏按钮的收起动画见 `tool_fold.rs`；滚动时固定在顶部的各级目录
 //! 由 [`StickyRow`] 描述。
 
+use winc_editor::{EXPAND_DIRS, Workspace};
+use winc_i18n::t;
+
 use super::*;
 use crate::layout::tree_row_slot;
 
@@ -178,6 +181,45 @@ impl App {
         if entry.kind != EntryKind::Dir || entry.expanded == expanding {
             return;
         }
+        self.change_dir(index, expanding, |ws| ws.toggle(index));
+    }
+
+    /// 递归展开或收起文件树里第 `index` 行的目录（`⌥` 单击），带动画：收起的目录展开到底，展开
+    /// 的目录连同各级子目录一起收起。目录太多只展开了一部分时提示。
+    pub(in crate::app) fn toggle_dir_recursively(&mut self, index: usize) {
+        let Some(entry) = self
+            .editor
+            .workspace
+            .as_ref()
+            .and_then(|w| w.rows().get(index))
+        else {
+            return;
+        };
+        if entry.kind != EntryKind::Dir {
+            return;
+        }
+        let expanding = !entry.expanded;
+        let mut limited = false;
+        self.change_dir(index, expanding, |ws| {
+            if expanding {
+                limited = ws.expand_recursively(index);
+            } else {
+                ws.collapse_recursively(index);
+            }
+        });
+        if limited {
+            self.flash(t!("workspace-tree-expand-limit", count = EXPAND_DIRS));
+        }
+    }
+
+    /// 用 `change` 展开（`expanding` 为真）或收起第 `index` 行的目录，播放子行露出或收起的动画。
+    fn change_dir(&mut self, index: usize, expanding: bool, change: impl FnOnce(&mut Workspace)) {
+        let Some(ws) = &mut self.editor.workspace else {
+            return;
+        };
+        let Some(entry) = ws.rows().get(index) else {
+            return;
+        };
 
         // 收起前先保存子行：`index + 1..entry.end` 是它展开后的全部子孙。
         let removed: Vec<Entry> = if expanding {
@@ -186,7 +228,7 @@ impl App {
             ws.rows()[index + 1..entry.end].to_vec()
         };
         let before = ws.rows().len();
-        ws.toggle(index);
+        change(ws);
         let count = ws.rows().len().abs_diff(before);
 
         self.tree_motion = self.clock(TREE_ANIMATION).map(|clock| TreeMotion {
@@ -197,6 +239,36 @@ impl App {
             clock,
         });
         self.request_redraw();
+    }
+
+    /// 让文件树按设置合并或逐级显示连续的单子目录。
+    pub(in crate::app) fn apply_compact_folders(&mut self) {
+        let compact = self.config.compact_folders != Some(false);
+        if let Some(ws) = &mut self.editor.workspace {
+            ws.set_compact(compact);
+        }
+        self.request_redraw();
+    }
+
+    /// 返回第 `index` 行里横坐标 `x` 处合并显示的目录；不在其中时返回 `None`。
+    pub(in crate::app) fn tree_segment_at(&self, index: usize, x: f32) -> Option<PathBuf> {
+        self.tree_segments
+            .iter()
+            .find(|(row, left, right, _)| *row == index && (*left..*right).contains(&x))
+            .map(|(.., path)| path.clone())
+    }
+
+    /// 按鼠标现在的位置更新悬停的合并目录；同一行内换到另一级时悬停目标不变，要在这里请求重画。
+    pub(in crate::app) fn track_tree_segment(&mut self) {
+        let (x, y) = self.mouse;
+        let segment = matches!(self.hover_at(x, y), Hover::TreeRow(_))
+            .then(|| self.tree_row_at(y))
+            .flatten()
+            .and_then(|row| self.tree_segment_at(row, x));
+        if segment != self.tree_hover_segment {
+            self.tree_hover_segment = segment;
+            self.request_redraw();
+        }
     }
 
     /// 切换侧栏的显示（`⌘B`、`⌘1` 和顶栏按钮）。
@@ -218,10 +290,10 @@ impl App {
     ///
     /// 动画中和拖动时不展开，返回 `None`。
     pub(crate) fn overflow_candidate(&self) -> Option<usize> {
-        let idle = self.sidebar_motion.is_none()
-            && self.tree_motion.is_none()
-            && matches!(self.drag, Drag::None);
-        let pointing = matches!(self.hover, Hover::TreeRow(_) | Hover::Splitter);
+        let idle = self.sidebar_motion.is_none() && matches!(self.drag, Drag::None);
+        // 拖动文件时没有悬停目标，放不下的名称同样要显示，才看得到、放得进那几级目录。
+        let pointing = matches!(self.hover, Hover::TreeRow(_) | Hover::Splitter)
+            || self.tree_dragging().is_some_and(|drag| drag.active);
         let (_, y) = self.mouse;
         let tree = self.layout.tree;
 
@@ -229,7 +301,12 @@ impl App {
             return None;
         }
 
-        self.tree_row_at(y)
+        // 展开、收起的动画中其他行在移动；正在展开、收起的这一行不动，继续显示完整名称。
+        let row = self.tree_row_at(y)?;
+        match &self.tree_motion {
+            Some(motion) if motion.parent != row => None,
+            _ => Some(row),
+        }
     }
 
     /// 文件树中 `y` 位置对应第几个条目；被固定在顶部的目录覆盖的区域算作该目录。
@@ -548,9 +625,7 @@ impl App {
         };
 
         let dir = ws.target_dir();
-        let at = (dir != ws.root)
-            .then(|| ws.rows().iter().position(|e| e.path == dir))
-            .flatten();
+        let at = (dir != ws.root).then(|| ws.row_of(&dir)).flatten();
         let (index, depth) = match at {
             Some(at) => (at + 1, ws.rows()[at].depth + 1),
             None if dir == ws.root => (0, 0),

@@ -41,6 +41,7 @@ impl App {
             return;
         }
 
+        self.track_tree_segment();
         if self.tree_drag.is_some() {
             self.drag_tree_item(x, y);
         }

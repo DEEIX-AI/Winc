@@ -59,15 +59,19 @@ impl TreeDrag {
     pub(in crate::app) fn new(ws: &Workspace, index: usize, origin: (f32, f32)) -> Self {
         let entry = &ws.rows()[index];
         let from = entry.path.clone();
+        // 拖动合并显示的一行时，移动的是选中的那一级目录。
+        let segment = ws.segment().filter(|_| ws.selected == Some(index));
+        let dragged = segment.unwrap_or(&from);
+        let name = winc_editor::segment_name(dragged).into_owned();
         let paths = if ws.multi_selected() && ws.is_selected(index) {
             ws.selection_roots()
         } else {
-            vec![from.clone()]
+            vec![dragged.to_path_buf()]
         };
         TreeDrag {
             from,
             kind: entry.kind,
-            name: entry.name.clone(),
+            name,
             paths,
             origin,
             active: false,
@@ -191,7 +195,12 @@ impl App {
         };
 
         if ws.rows()[index].kind == EntryKind::Dir {
-            self.set_dir_expanded(index, None);
+            // 按着 `⌥` 单击：递归展开或收起。
+            if self.modifiers.alt_key() {
+                self.toggle_dir_recursively(index);
+            } else {
+                self.set_dir_expanded(index, None);
+            }
         } else {
             self.open_path(path);
             self.focus = Focus::Tree;
@@ -259,14 +268,20 @@ impl App {
     /// - 鼠标在文件树的空白处：根目录。
     pub(super) fn tree_dir_at(&self, x: f32, y: f32) -> Option<PathBuf> {
         let ws = self.editor.workspace.as_ref()?;
-        if !self.layout.tree.contains(x, y) {
+        if !self.layout.tree.contains(x, y) && !self.in_tree_overflow(x, y) {
             return None;
         }
 
-        Some(match self.tree_row_at(y).map(|i| &ws.rows()[i]) {
-            Some(entry) if entry.kind == EntryKind::Dir => entry.path.clone(),
-            Some(entry) => entry.path.parent()?.to_path_buf(),
-            None => ws.root.clone(),
+        let Some(index) = self.tree_row_at(y) else {
+            return Some(ws.root.clone());
+        };
+        let entry = &ws.rows()[index];
+        Some(match entry.kind {
+            // 合并显示的一行放进鼠标所在的那一级目录，其余位置放进这一行本身。
+            EntryKind::Dir => self
+                .tree_segment_at(index, x)
+                .unwrap_or_else(|| entry.path.clone()),
+            EntryKind::File => entry.path.parent()?.to_path_buf(),
         })
     }
 

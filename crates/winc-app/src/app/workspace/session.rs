@@ -131,6 +131,7 @@ impl App {
             return;
         }
 
+        self.apply_compact_folders();
         self.folder_opened();
         self.focus = match self.sidebar_view {
             SidebarView::Files => Focus::Tree,

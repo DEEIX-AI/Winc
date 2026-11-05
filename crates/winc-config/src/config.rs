@@ -76,6 +76,8 @@ pub struct Config {
     ///
     /// 提示框上勾选「不再询问」后写成 `false`。
     pub confirm_drag_and_drop: Option<bool>,
+    /// 文件树是否把连续的单子目录合并显示为一行；未设置时合并。
+    pub compact_folders: Option<bool>,
     /// 「在外部终端中打开」使用的终端程序；未设置时使用系统默认的终端程序。
     pub external_terminal: Option<String>,
     /// 是否启用终端模块（编辑区下方的终端面板），默认为否。

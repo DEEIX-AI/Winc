@@ -11,7 +11,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use winc_core::Selection;
-use winc_editor::{Command, EntryKind};
+use winc_editor::{Command, EntryKind, segment_name};
 
 use crate::app::{App, Focus, ResultRow};
 use crate::field::{TextField, Unit};
@@ -722,7 +722,14 @@ impl App {
             let hit = (start..count)
                 .chain(0..start)
                 .map(|i| i % count)
-                .find(|&i| rows[i].name.to_lowercase().starts_with(&word));
+                .find(|&i| {
+                    let matches = |name: &str| name.to_lowercase().starts_with(&word);
+                    matches(&rows[i].name)
+                        || rows[i]
+                            .chain()
+                            .iter()
+                            .any(|path| matches(&segment_name(path)))
+                });
             self.tree_typed = Some((word, now));
             let Some(hit) = hit else {
                 return;
@@ -740,6 +747,13 @@ impl App {
                 ws.select(Some(to));
             }
         };
+        let chain = entry.chain();
+        let at = chain
+            .iter()
+            .position(|path| Some(path.as_path()) == ws.current_path());
+        let previous = at.and_then(|i| chain.get(i.checked_sub(1)?)).cloned();
+        let next = at.and_then(|i| chain.get(i + 1)).cloned();
+
         match key {
             Key::Named(NamedKey::Home) => jump(0, ws),
             Key::Named(NamedKey::End) => jump(count - 1, ws),
@@ -756,6 +770,13 @@ impl App {
                 } else {
                     ws.select(Some(next));
                 }
+            }
+            // 合并显示的一行：左右键先在各级目录之间移动，到头才收起、展开或换行。
+            Key::Named(NamedKey::ArrowLeft) if previous.is_some() => {
+                ws.select_segment(selected, previous.as_deref());
+            }
+            Key::Named(NamedKey::ArrowRight) if next.is_some() => {
+                ws.select_segment(selected, next.as_deref());
             }
             Key::Named(NamedKey::ArrowRight) if is_dir && !entry.expanded => expand = Some(true),
             Key::Named(NamedKey::ArrowRight) if is_dir => {

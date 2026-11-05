@@ -7,11 +7,15 @@ impl App {
     ///
     /// `proxy` 为事件循环的代理，测试中传 `None`。
     pub fn new(
-        editor: Editor,
+        mut editor: Editor,
         proxy: Option<crate::winc::WindowProxy>,
         bench: Bench,
         config: Config,
     ) -> Self {
+        // 启动时打开的目录在界面创建之前读入，这里补上文件树的显示方式。
+        if let Some(ws) = &mut editor.workspace {
+            ws.set_compact(config.compact_folders != Some(false));
+        }
         // 启动时恢复的标签同样计入最近打开的文件，当前标签排在最前。
         let recent_files = {
             let active = editor.active().and_then(|d| d.path.clone());
@@ -129,6 +133,8 @@ impl App {
             tree_scroll: 0.0,
             tree_scroll_x: 0.0,
             tree_content_w: 0.0,
+            tree_segments: Vec::new(),
+            tree_hover_segment: None,
             text_content_w: 0.0,
             tree_typed: None,
             tree_motion: None,
