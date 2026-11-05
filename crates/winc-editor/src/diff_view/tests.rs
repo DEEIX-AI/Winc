@@ -392,6 +392,27 @@ fn a_cell_in_a_wrapped_row_maps_to_the_whole_line() {
 }
 
 #[test]
+fn the_top_row_maps_back_to_its_scroll_position() {
+    // 一段删除让两侧不等长：开头半屏内、停在删除处、越过删除之后都能反算回来。
+    let old = numbered(100);
+    let new: String = old
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !(30..80).contains(i))
+        .map(|(_, l)| format!("{l}\n"))
+        .collect();
+    let mut v = view(&old, &new);
+    v.set_collapse(false, 0);
+    for row in [0.0, 5.0, 19.5, 20.0, 30.0, 40.25] {
+        let pos = v.pos_of_top(RIGHT, row, 20.0);
+        assert!(
+            (v.side_scroll(RIGHT, pos, 20.0) - row).abs() < 0.01,
+            "{row}"
+        );
+    }
+}
+
+#[test]
 fn folded_rows_are_not_wrapped_and_a_rebuilt_view_keeps_wrapping() {
     let long = "word ".repeat(10);
     let lines: String = (0..40).map(|i| format!("{long}{i}\n")).collect();

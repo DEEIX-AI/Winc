@@ -930,3 +930,71 @@ fn word_wrap_applies_to_the_diff_view() {
     assert_eq!(view(&app).rows[RIGHT].len(), plain);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn toggling_word_wrap_keeps_the_top_line_of_the_diff_in_place() {
+    let Some((dir, file)) = uneven_lines_repo("git-diff-wrap-top") else {
+        return;
+    };
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.fetch_changes(&file, Target::Open);
+    paint(&mut app);
+    // 屏幕上右侧最上面的（行，段，行内偏移）。
+    fn top(app: &App) -> (usize, usize, f32) {
+        let doc = app.editor.active().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let visible = parts.body.h / app.fonts.line_height;
+        let row = view.side_scroll(RIGHT, doc.scroll_line, visible);
+        let SideRow::Line { line, part, .. } = view.rows[RIGHT][row as usize] else {
+            panic!("{row}");
+        };
+        (line, part, row.fract())
+    }
+    let start = {
+        let doc = app.editor.active_mut().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        doc.scroll_line = view.pos_of(RIGHT, view.row_of_new(90) as f32 + 0.25);
+        top(&app)
+    };
+
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    let wrapped = top(&app);
+    assert_eq!((wrapped.0, wrapped.1), (start.0, 0));
+    assert!((wrapped.2 - start.2).abs() < 0.01, "{wrapped:?} {start:?}");
+
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    let plain = top(&app);
+    assert_eq!(plain.0, start.0);
+    assert!((plain.2 - start.2).abs() < 0.01, "{plain:?} {start:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 一个长短行相间、每隔几行删掉一段的改动：顶边和中线之间总有两侧不等长的改动。
+fn uneven_lines_repo(name: &str) -> Option<(PathBuf, PathBuf)> {
+    let dir = search_folder(name);
+    if !make_repo(&dir) {
+        return None;
+    }
+    let line = |i: usize| match i % 3 {
+        0 => format!("{i} {}\n", "value + other * third, ".repeat(16)),
+        _ => format!("{i}\n"),
+    };
+    let file = dir.join("src/wrap.rs");
+    std::fs::write(&file, (0..400).map(line).collect::<String>()).unwrap();
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-q", "-m", "uneven"]);
+    let kept = (0..400)
+        .filter(|i| i % 12 >= 6)
+        .map(line)
+        .collect::<String>();
+    std::fs::write(&file, kept).unwrap();
+    Some((dir, winc_editor::canonical_path(&file)))
+}

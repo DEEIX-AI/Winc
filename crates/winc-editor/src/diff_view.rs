@@ -454,6 +454,27 @@ impl DiffView {
         (center - anchor).clamp(0.0, self.rows[side].len() as f32)
     }
 
+    /// 第 `side` 侧最上面显示到 `row` 时的滚动位置（[`DiffView::side_scroll`] 反过来）。
+    ///
+    /// 离开头不到半屏时对齐点随滚动移动，没有直接的反算公式，改用二分查找。
+    pub fn pos_of_top(&self, side: usize, row: f32, visible: f32) -> f32 {
+        let half = visible / 2.0;
+        let pos = self.pos_of(side, row + half) - half;
+        if pos >= half {
+            return pos;
+        }
+        let (mut low, mut high) = (0.0, half.max(0.0));
+        for _ in 0..24 {
+            let mid = (low + high) / 2.0;
+            if self.side_scroll(side, mid, visible) < row {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        high
+    }
+
     /// 计算滚动位置为 `pos`、可见 `visible` 行时左侧的滚动位置，换算方式同
     /// [`DiffView::side_scroll`]。
     pub fn left_scroll(&self, pos: f32, visible: f32) -> f32 {

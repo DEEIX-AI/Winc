@@ -79,10 +79,11 @@ impl App {
         }
     }
 
-    /// 处理自动换行开关的变化：重新断行，滚动到光标，并在状态栏提示结果。
+    /// 处理自动换行开关的变化：重新断行，视图顶部的文本行保持不动，并在状态栏提示结果。
     pub(in crate::app) fn word_wrap_changed(&mut self) {
+        // 正在进行的平滑滚动按断行前的显示行计算，断行后已不再对应原来的内容。
+        self.scroll_glide = None;
         self.relayout();
-        self.ensure_caret_visible();
         let message = match (self.config.word_wrap == Some(true), self.editor.active()) {
             (true, Some(doc)) if doc.diff.as_deref().is_some_and(|v| !v.is_wrapping()) => {
                 t!("editor-word-wrap-on-large")

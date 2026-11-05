@@ -551,6 +551,7 @@ impl App {
         let tab_width = self.editor.active_tab_width();
         let resizing = self.text_width_changing();
         let (editor, cell) = (self.layout.editor, self.cell);
+        let line_height = self.fonts.line_height;
         let Some(doc) = self.editor.active_mut() else {
             return false;
         };
@@ -564,7 +565,9 @@ impl App {
         let text_w = parts.panes[LEFT].text.w.min(parts.panes[RIGHT].text.w);
         let cols = ((text_w - 2.0 * DIFF_TEXT_PAD) / cell).floor().max(1.0) as usize;
 
-        let row = view.row_at(RIGHT, doc.scroll_line.max(0.0));
+        // 按屏幕上右侧最上面的显示行定位：两侧在视图中线对齐，它不一定是滚动位置换算出的行。
+        let visible = parts.body.h / line_height;
+        let row = view.side_scroll(RIGHT, doc.scroll_line.max(0.0), visible);
         let (top, part) = match view.rows[RIGHT].get(row.floor() as usize) {
             Some(SideRow::Line { line, part, .. }) => (*line, *part),
             Some(SideRow::Fold { lines, .. }) => (lines.start, 0),
@@ -573,10 +576,11 @@ impl App {
         if view.set_wrap(wrap.then_some((cols, tab_width))) {
             let part = part.min(view.breaks(RIGHT, top).rows().saturating_sub(1));
             let first = view.row_of_new(top) + part;
-            doc.scroll_line = view.pos_of(RIGHT, first as f32 + row.fract());
+            doc.scroll_line = view.pos_of_top(RIGHT, first as f32 + row.fract(), visible);
             if view.is_wrapping() {
                 doc.scroll_x = 0.0;
             }
+            self.clamp_scroll();
             self.request_redraw();
         }
         true
