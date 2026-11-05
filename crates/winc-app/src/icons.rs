@@ -648,6 +648,22 @@ pub fn split(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Re
     frame.stroke(shapes.as_slice(), STROKE, color, clip);
 }
 
+/// 绘制「单栏」图标：与 [`split`] 尺寸相同的圆角框，中间一道横线分成上下两半（上面是改之前，
+/// 下面是改之后）。
+pub fn single_column(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (x, y) = (
+        (cx - SIDEBAR_WIDTH / 2.0).round() + 0.75,
+        (cy - 7.0).round() + 1.0,
+    );
+    let (w, h) = (SIDEBAR_WIDTH - 1.5, 12.0);
+    let mid = (y + h / 2.0).round() - 0.25;
+    let shapes: Strokes<9> = joined(&[
+        &rounded_outline(x, y, w, h, 3.0),
+        &[Stroke::Line(x, mid, x + w, mid)],
+    ]);
+    frame.stroke(shapes.as_slice(), STROKE, color, clip);
+}
+
 /// 按缩放倍数 `k` 绘制 `split` 图标，用于出现与消失的动画。
 ///
 /// 线宽不变，坐标不取整；`k` 不小于 1 时直接调用 `split` 绘制原尺寸图标。

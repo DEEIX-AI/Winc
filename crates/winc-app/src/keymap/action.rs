@@ -161,6 +161,8 @@ pub enum Action {
     NextDiffFile,
     /// 差异里的上一个文件。
     PreviousDiffFile,
+    /// 切换差异的单栏显示和并排显示。
+    ToggleDiffLayout,
     GitShowChanges,
     GitShowLog,
     GitSwitchWorktree,
@@ -350,6 +352,7 @@ impl Action {
             PreviousDifference => t!("cmd-previous-difference"),
             NextDiffFile => t!("cmd-next-diff-file"),
             PreviousDiffFile => t!("cmd-previous-diff-file"),
+            ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
             GitShowLog => t!("cmd-git-show-log"),
             GitSwitchWorktree => t!("cmd-git-switch-worktree"),
@@ -523,6 +526,7 @@ impl Action {
             PreviousDifference => "Go to Previous Difference",
             NextDiffFile => "Go to Next File in Diff",
             PreviousDiffFile => "Go to Previous File in Diff",
+            ToggleDiffLayout => "Toggle Inline Diff",
             GitShowChanges => "Git: Open Changes",
             GitShowLog => "Git: Show Log",
             GitSwitchWorktree => "Git: Switch Worktree…",
@@ -638,10 +642,10 @@ impl Action {
             ToggleSidebar | FocusSidebar | ShowFiles | ZoomIn | ZoomOut | ResetZoom | ThemeAuto
             | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | ToggleMinimap
             | ToggleLineNumbers | ToggleStatusBar | TogglePreview | NextDifference
-            | PreviousDifference | NextDiffFile | PreviousDiffFile | GitShowChanges
-            | GitShowLog | GitSwitchWorktree | GitNewWorktree | GitFileHistory | GitBlame
-            | ShowCommit | GitRevertChange | ToggleTerminal | ClearTerminal | NewTerminal
-            | CloseTerminal | NextTerminal | PreviousTerminal | FindInTerminal
+            | PreviousDifference | NextDiffFile | PreviousDiffFile | ToggleDiffLayout
+            | GitShowChanges | GitShowLog | GitSwitchWorktree | GitNewWorktree | GitFileHistory
+            | GitBlame | ShowCommit | GitRevertChange | ToggleTerminal | ClearTerminal
+            | NewTerminal | CloseTerminal | NextTerminal | PreviousTerminal | FindInTerminal
             | MaximizeTerminal | RenameTerminal | PreviousCommand | NextCommand | FoldOutput
             | UnfoldOutput | NextError | PreviousError | SendToTerminal => Group::View,
         }
@@ -946,5 +950,6 @@ pub const ACTIONS: &[Action] = {
         PreviousDifference,
         NextDiffFile,
         PreviousDiffFile,
+        ToggleDiffLayout,
     ]
 };

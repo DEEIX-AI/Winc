@@ -141,6 +141,7 @@ cmd-next-difference = 下一处更改
 cmd-previous-difference = 上一处更改
 cmd-next-diff-file = 下一个文件
 cmd-previous-diff-file = 上一个文件
+cmd-toggle-diff-layout = 切换差异单栏视图
 cmd-git-show-changes = Git：显示差异
 cmd-git-show-log = Git：显示日志
 cmd-git-switch-worktree = Git：切换工作树…

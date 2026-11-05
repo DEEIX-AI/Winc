@@ -973,6 +973,112 @@ fn diff_navigation_keys_work_with_focus_in_the_commit_list() {
 }
 
 #[test]
+fn the_inline_layout_can_be_toggled_and_edits_only_new_lines() {
+    use winc_editor::diff_view::{LEFT, RIGHT};
+
+    let dir = search_folder("git-diff-inline");
+    if !long_repo(&dir) {
+        return;
+    }
+    std::fs::remove_file(dir.join("src/new.rs")).unwrap();
+    let main = winc_editor::canonical_path(&dir.join("src/main.rs"));
+    let mut app = app_with(&main, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.git_refresh();
+    app.fetch_changes(&main, Target::Open);
+    paint(&mut app);
+    let view = |app: &App| {
+        let doc = app.editor.active().unwrap();
+        (doc.scroll_line, doc.diff.as_deref().unwrap().is_unified())
+    };
+    assert!(!view(&app).1);
+    assert!(!app.state.diff_unified);
+    let layout = app.diff_hits.iter().any(|(_, t)| *t == DiffTarget::Layout);
+    assert!(layout);
+
+    // 切换：记下选择，文字区占满整个宽度，两侧共用一个文字区。
+    assert!(app.run_action(Action::ToggleDiffLayout));
+    assert!(view(&app).1);
+    assert!(app.state.diff_unified);
+    assert!(app.editor.diff_unified);
+    let parts = |app: &App| {
+        let doc = app.editor.active().unwrap();
+        crate::app::diff_parts(app.layout.editor, doc.diff.as_deref().unwrap(), app.cell)
+    };
+    let inline = parts(&app);
+    assert_eq!(inline.panes[LEFT].text, inline.panes[RIGHT].text);
+    assert!(inline.panes[RIGHT].text.w > app.layout.editor.w * 0.7);
+    paint(&mut app);
+
+    // 跳转照常：第一处改动先是旧行，后面接新行。
+    assert!(app.run_action(Action::NextDifference));
+    paint(&mut app);
+    let doc = app.editor.active().unwrap();
+    let diff = doc.diff.as_deref().unwrap();
+    assert_eq!(diff.focus.map(|f| f.0), Some(0));
+    let start = diff.hunk_pos(0) as usize;
+    assert_eq!(diff.unified_row(start).map(|r| r.0), Some(LEFT));
+    assert_eq!(diff.unified_row(start + 1).map(|r| r.0), Some(RIGHT));
+
+    // 第 `index` 个显示行的窗口坐标。
+    let at = |app: &App, index: usize, col: usize| {
+        let doc = app.editor.active().unwrap();
+        let parts = parts(app);
+        let y = parts.body.y + (index as f32 - doc.scroll_line + 0.5) * app.fonts.line_height;
+        let x = parts.panes[RIGHT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell * col as f32;
+        (x, y)
+    };
+    // 点旧行：只读，光标在左侧。
+    let old = at(&app, start, 4);
+    assert!(!app.over_diff_editable(old.0, old.1));
+    assert!(app.over_diff_text(old.0, old.1));
+    click(&mut app, old);
+    let diff = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(!diff.editing);
+    assert_eq!(diff.read_caret().map(|c| c.0), Some(LEFT));
+    // 选中、复制的是旧行的内容。
+    app.last_click = None;
+    click(&mut app, old);
+    click(&mut app, old);
+    let diff = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(diff.read_selected().as_deref(), Some("value_5"));
+
+    // 点新行：光标进右侧的文档，键入的字进文件。
+    app.last_click = None;
+    let new = at(&app, start + 1, 0);
+    assert!(app.over_diff_editable(new.0, new.1));
+    click(&mut app, new);
+    let diff = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(diff.editing);
+    assert!(app.diff_edit_text("X"));
+    let source = app
+        .editor
+        .documents
+        .iter()
+        .find(|d| d.path.as_deref() == Some(&main));
+    let text = source.unwrap().text().rope().unwrap().to_string();
+    assert!(text.contains("Xlet value_5 = 500;"), "{text}");
+    paint(&mut app);
+    // 重新比较以后仍然是单栏。
+    assert!(view(&app).1);
+
+    // 新打开的差异沿用选择；切回并排也沿用。
+    app.fetch_changes(&main, Target::Open);
+    paint(&mut app);
+    assert!(view(&app).1);
+    assert!(app.run_action(Action::ToggleDiffLayout));
+    assert!(!view(&app).1);
+    assert!(!app.state.diff_unified);
+    paint(&mut app);
+    assert_eq!(view(&app).0.fract(), 0.0);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn typing_at_the_read_caret_opens_the_file_and_edits_there() {
     use crate::app::diff::edits_text;
     use winit::keyboard::{Key, NamedKey};

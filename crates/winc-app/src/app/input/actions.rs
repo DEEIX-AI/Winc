@@ -331,6 +331,12 @@ impl App {
                 }
                 self.step_diff_file(action == NextDiffFile);
             }
+            ToggleDiffLayout => {
+                if !self.diff_active() {
+                    return false;
+                }
+                self.toggle_diff_layout();
+            }
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),
             GitSwitchWorktree => self.switch_worktree(),

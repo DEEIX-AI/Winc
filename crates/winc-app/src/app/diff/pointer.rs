@@ -22,10 +22,10 @@ impl App {
         if !self.over_diff_editable(x, y) {
             let view = self.editor.documents[index].diff.as_deref()?;
             let parts = diff_parts(self.layout.editor, view, self.cell);
-            let side = if parts.panes[RIGHT].text.contains(x, y) {
-                RIGHT
-            } else {
-                LEFT
+            let side = match self.diff_unified_side_at(y) {
+                Some(side) => side,
+                None if parts.panes[RIGHT].text.contains(x, y) => RIGHT,
+                None => LEFT,
             };
             let pos = self.diff_read_pos_at(side, x, y);
             let view = self.editor.documents[index].diff.as_deref_mut()?;
@@ -94,8 +94,8 @@ impl App {
             return None;
         }
         let lh = self.fonts.line_height;
-        let scroll = view.side_scroll(RIGHT, doc.scroll_line.max(0.0), parts.body.h / lh);
-        let row = ((y - parts.body.y) / lh + scroll).floor().max(0.0) as usize;
+        let below = (y - parts.body.y) / lh;
+        let row = view.row_under(RIGHT, doc.scroll_line.max(0.0), parts.body.h / lh, below);
         let cell = ((x - pane.text.x - DIFF_TEXT_PAD + doc.scroll_x) / self.cell)
             .round()
             .max(0.0) as usize;
@@ -156,13 +156,20 @@ impl App {
 
         let right = parts.panes[RIGHT];
         let on_pane = |pane: &DiffPane| pane.text.contains(x, y) || pane.gutter.contains(x, y);
-        let read_side = if on_pane(&parts.panes[LEFT]) {
-            Some(LEFT)
-        } else {
-            (!editable && on_pane(&right)).then_some(RIGHT)
+        let on_left = on_pane(&parts.panes[LEFT]);
+        let on_right = on_pane(&right);
+        // 单栏的两列行号共用一个文字区：是哪一侧看这一行，不看鼠标在哪一列。
+        let (read_side, on_right) = match self.diff_unified_side_at(y) {
+            Some(side) if on_left || on_right => {
+                ((side == LEFT || !editable).then_some(side), true)
+            }
+            Some(_) => (None, false),
+            None if on_left => (Some(LEFT), on_right),
+            None => ((!editable && on_right).then_some(RIGHT), on_right),
         };
+        let on_gutter = parts.panes[LEFT].gutter.contains(x, y) || right.gutter.contains(x, y);
         if let Some(side) = read_side {
-            let unit = if parts.panes[side].gutter.contains(x, y) {
+            let unit = if on_gutter {
                 SelectUnit::Line
             } else {
                 SelectUnit::of(count)
@@ -191,14 +198,13 @@ impl App {
             view.read_selection = None;
         }
 
-        if !(editable && (right.text.contains(x, y) || right.gutter.contains(x, y))) {
+        if !(editable && on_right) {
             if let Some(view) = self.editor.documents[index].diff.as_deref_mut() {
                 view.editing = false;
             }
             self.request_redraw();
             return true;
         }
-        let on_gutter = right.gutter.contains(x, y);
         if alt && shift && !on_gutter {
             self.start_diff_columns(x, y);
             return true;
@@ -327,8 +333,8 @@ impl App {
         let view = doc.diff.as_deref()?;
         let parts = diff_parts(self.layout.editor, view, self.cell);
         let lh = self.fonts.line_height;
-        let scroll = view.side_scroll(side, doc.scroll_line.max(0.0), parts.body.h / lh);
-        let row = ((y - parts.body.y) / lh + scroll).floor().max(0.0) as usize;
+        let below = (y - parts.body.y) / lh;
+        let row = view.row_under(side, doc.scroll_line.max(0.0), parts.body.h / lh, below);
         let text = &view.side(side).text;
         let line = match view.rows[side].get(row) {
             Some(SideRow::Line { line, .. }) => *line,
@@ -389,5 +395,16 @@ impl App {
             && diff_parts(self.layout.editor, view, self.cell).panes[RIGHT]
                 .text
                 .contains(x, y)
+            && self.diff_unified_side_at(y) != Some(LEFT)
+    }
+
+    /// 单栏时窗口纵坐标 `y` 上的显示行属于哪一侧；并排时，或者这个位置没有行时为 `None`。
+    fn diff_unified_side_at(&self, y: f32) -> Option<usize> {
+        let doc = self.editor.active()?;
+        let view = doc.diff.as_deref().filter(|v| v.is_unified())?;
+        let body = diff_parts(self.layout.editor, view, self.cell).body;
+        let index = doc.scroll_line.max(0.0) + (y - body.y) / self.fonts.line_height;
+        view.unified_row(index.floor().max(0.0) as usize)
+            .map(|(side, _)| side)
     }
 }
