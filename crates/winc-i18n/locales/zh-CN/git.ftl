@@ -339,6 +339,8 @@ git-change-deleted-at-start = 删除 { $count } 行 · 文件开头
 git-change-deleted-after = 删除 { $count } 行 · 第 { $line } 行之后
 git-change-reverted = 已回滚更改
 git-change-no-next = 没有下一处更改
+git-no-next-file = 没有下一个文件
+git-no-previous-file = 没有上一个文件
 git-change-no-previous = 没有上一处更改
 git-change-none-at-caret = 光标所在行没有更改
 

@@ -796,10 +796,12 @@ impl App {
         });
     }
 
-    /// 在从日志打开的差异标签中越过最后（`forward`）或第一处改动时，打开同一提交中的下一个
-    /// （或上一个）文件，返回是否已打开。
-    ///
-    /// 用户可连续按 `F7` 依次查看同一提交中的所有文件。
+    /// 标签 `id` 是否是从日志打开的差异。
+    pub(in crate::app) fn steps_log_files(&self, id: DocumentId) -> bool {
+        self.log.preview == Some(id) && self.log.preview_source.is_some()
+    }
+
+    /// 在从日志打开的差异标签中打开同一提交中的下一个（`forward`）或上一个文件，返回是否已打开。
     pub(in crate::app) fn step_log_file(&mut self, forward: bool) -> bool {
         let active = self.editor.active().map(|d| d.id);
         let Some((log, i)) = self
@@ -930,8 +932,12 @@ impl App {
                         self.log.preview = Some(self.editor.documents[index].id);
                         self.relayout();
                         self.clamp_scroll();
+                        self.land_diff_file();
                     }
-                    Err(e) => self.flash(e),
+                    Err(e) => {
+                        self.diff_land = None;
+                        self.flash(e);
+                    }
                 },
             }
         }

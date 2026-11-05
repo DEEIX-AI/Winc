@@ -432,6 +432,8 @@ git-change-deleted-after = { $count ->
 }
 git-change-reverted = Reverted change
 git-change-no-next = No next change
+git-no-next-file = No next file
+git-no-previous-file = No previous file
 git-change-no-previous = No previous change
 git-change-none-at-caret = No change on the current line
 

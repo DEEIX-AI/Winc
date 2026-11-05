@@ -130,6 +130,10 @@ pub enum DiffTarget {
     Previous,
     /// 下一处改动。
     Next,
+    /// 上一个文件。
+    PreviousFile,
+    /// 下一个文件。
+    NextFile,
     /// 折起或展开所有没改的长段。
     Collapse,
     /// 折起来的一段，参数是第几段没改的内容。
@@ -232,6 +236,8 @@ impl App {
         match target {
             DiffTarget::Previous => self.jump_difference(false),
             DiffTarget::Next => self.jump_difference(true),
+            DiffTarget::PreviousFile => self.step_diff_file(false),
+            DiffTarget::NextFile => self.step_diff_file(true),
             DiffTarget::Collapse => {
                 let Some(doc) = self.editor.active_mut() else {
                     return;
@@ -527,6 +533,10 @@ impl App {
         let id = self.editor.documents[index].id;
         let path = view.new.path.clone()?;
         let source = self.diff_source(&path, true)?;
+        // 编辑以后光标不一定还在跳到的那一段，不再标记。
+        if let Some(view) = self.editor.documents[index].diff.as_deref_mut() {
+            view.focus = None;
+        }
         self.editor.active = Some(source);
         let result = f(self);
         // `f` 可能关闭了标签：按标识找回差异标签。
@@ -746,10 +756,122 @@ impl App {
         self.request_redraw();
     }
 
-    /// 滚动到下一处（`forward`）或上一处改动，使其停在距视口顶部三行的位置。
+    /// 跳到第 `hunk` 段改动：滚动到距视口顶部三行的位置，距离较远时平滑滚动；光标移到这一段的
+    /// 开头，这一段显示当前标记和一次短暂的高亮。
+    fn go_to_hunk(&mut self, hunk: usize) {
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        let Some(view) = doc.diff.as_deref() else {
+            return;
+        };
+        let before = doc.scroll_line;
+        doc.scroll_line = (view.hunk_pos(hunk) - 3.0).max(0.0);
+        self.clamp_scroll();
+        self.glide_scroll(before);
+        self.place_diff_caret(hunk);
+        self.diff_pulse = self.clock(crate::app::animation::DIFF_PULSE);
+        if let Some(doc) = self.editor.active_mut() {
+            let scroll = doc.scroll_line;
+            if let Some(view) = doc.diff.as_deref_mut() {
+                view.focus = Some((hunk, scroll));
+            }
+        }
+        self.reset_blink();
+        self.request_redraw();
+    }
+
+    /// 把光标放到第 `hunk` 段改动的开头：右侧的文件已经打开时放在它的文档里，否则放在只读光标上。
     ///
-    /// 距离较远时平滑滚动。没有更多改动时，若差异由日志打开，则打开同一提交中的下一个文件；
-    /// 否则在状态栏给出提示。
+    /// 不为此打开文件：打开文件会新增一个标签，连续查看时标签会越来越多；点击右侧时再打开。右侧
+    /// 没有内容时（文件已删除）放在左侧。
+    fn place_diff_caret(&mut self, hunk: usize) {
+        let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
+            return;
+        };
+        let Some(lines) = view.hunks.get(hunk).map(|h| (h.old.start, h.new.start)) else {
+            return;
+        };
+        let path = view.new.path.clone();
+        let source = path.and_then(|path| self.diff_source(&path, false));
+        if let Some(source) = source {
+            let doc = &mut self.editor.documents[source];
+            let line = lines.1.min(doc.text().line_count().saturating_sub(1));
+            let pos = doc.text().line_col_to_pos(line, 0);
+            doc.record_cursors();
+            doc.collapse_selections();
+            doc.selection = Selection::point(pos);
+            doc.goal_cell = None;
+        }
+        let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut()) else {
+            return;
+        };
+        view.editing = source.is_some();
+        view.read_selection = None;
+        if source.is_none() {
+            let (side, line) = if view.new.text.len_chars() > 0 {
+                (RIGHT, lines.1)
+            } else {
+                (LEFT, lines.0)
+            };
+            let text = &view.side(side).text;
+            let pos = text.line_to_char(line.min(text.len_lines().saturating_sub(1)));
+            let range = (pos, pos);
+            view.read_selection = Some(ReadSelection { side, range });
+        }
+    }
+
+    /// 切换到下一个（`forward`）或上一个文件，从第一处改动开始看；没有更多文件时给出提示。
+    pub(in crate::app) fn step_diff_file(&mut self, forward: bool) {
+        if !self.enter_diff_file(forward, false) {
+            self.flash(if forward {
+                t!("git-no-next-file")
+            } else {
+                t!("git-no-previous-file")
+            });
+        }
+    }
+
+    /// 打开同一批文件中的下一个（`forward`）或上一个文件，返回是否已打开。
+    ///
+    /// 差异由日志打开时是同一提交的文件，否则是提交视图列出的文件，都在当前标签里切换。`last` 表示
+    /// 打开后停在最后一处改动，否则停在第一处。
+    fn enter_diff_file(&mut self, forward: bool, last: bool) -> bool {
+        self.diff_land = Some(last);
+        let entered = self.step_log_file(forward) || self.step_changed_file(forward);
+        if !entered {
+            self.diff_land = None;
+        }
+        entered
+    }
+
+    /// 文件切换的差异已经换上：按 [`App::enter_diff_file`] 的要求跳到第一处或最后一处改动。
+    pub(in crate::app) fn land_diff_file(&mut self) {
+        let Some(last) = self.diff_land.take() else {
+            return;
+        };
+        let hunks = self
+            .editor
+            .active()
+            .and_then(|d| d.diff.as_deref())
+            .map_or(0, |v| v.hunks.len());
+        if hunks > 0 {
+            self.go_to_hunk(if last { hunks - 1 } else { 0 });
+        }
+    }
+
+    /// 当前差异标签能不能切换文件：由日志或提交视图打开，或者是工作区文件的 Git 差异。
+    pub(crate) fn diff_steps_files(&self) -> bool {
+        let Some(id) = self.editor.active().map(|d| d.id) else {
+            return false;
+        };
+        self.steps_log_files(id) || self.steps_changed_files(id)
+    }
+
+    /// 滚动到下一处（`forward`）或上一处改动。
+    ///
+    /// 没有更多改动时切换到下一个或上一个文件，往回切换时停在该文件的最后一处改动；没有更多文件
+    /// 时在状态栏给出提示。
     pub(super) fn jump_difference(&mut self, forward: bool) {
         let Some(doc) = self.editor.active_mut() else {
             return;
@@ -771,7 +893,11 @@ impl App {
             }
             _ => {
                 let mut hunks = 0..view.hunks.len();
-                if forward {
+                if forward && view.focus.is_none() {
+                    // 还没有当前段：离文件开头很近的改动也在视口里，从视口顶部开始找，不跳过它。
+                    let top = doc.scroll_line.max(0.0).floor();
+                    hunks.find(|&i| view.hunk_pos(i) >= top)
+                } else if forward {
                     hunks.find(|&i| view.hunk_pos(i) > here)
                 } else {
                     hunks.rev().find(|&i| view.hunk_pos(i) < here)
@@ -779,19 +905,7 @@ impl App {
             }
         };
         match target {
-            Some(hunk) => {
-                let before = doc.scroll_line;
-                doc.scroll_line = (view.hunk_pos(hunk) - 3.0).max(0.0);
-                self.clamp_scroll();
-                self.glide_scroll(before);
-                if let Some(doc) = self.editor.active_mut() {
-                    let scroll = doc.scroll_line;
-                    if let Some(view) = doc.diff.as_deref_mut() {
-                        view.focus = Some((hunk, scroll));
-                    }
-                }
-                self.request_redraw();
-            }
+            Some(hunk) => self.go_to_hunk(hunk),
             None => {
                 let message = if view.is_identical() {
                     t!("git-diff-identical-sides")
@@ -800,8 +914,7 @@ impl App {
                 } else {
                     t!("git-change-no-previous")
                 };
-                // 差异从日志打开时，改为打开同一提交中的下一个（或上一个）文件。
-                if !self.step_log_file(forward) {
+                if !self.enter_diff_file(forward, !forward) {
                     self.flash(message);
                 }
             }

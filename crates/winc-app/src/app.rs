@@ -472,6 +472,8 @@ impl Hover {
                 | Hover::Diff(
                     DiffTarget::Previous
                         | DiffTarget::Next
+                        | DiffTarget::PreviousFile
+                        | DiffTarget::NextFile
                         | DiffTarget::Collapse
                         | DiffTarget::Revert(_)
                         | DiffTarget::Include(_)
@@ -933,6 +935,11 @@ pub struct App {
     pub merge: git::merge::MergeState,
     /// 差异里「»」换掉一段改动以后正在淡出的颜色。
     pub diff_fade: Option<diff::DiffFade>,
+    /// 跳到一处改动时那一段的短暂高亮；没有时为 `None`。
+    pub(crate) diff_pulse: Option<Clock>,
+    /// 差异切换文件时，新文件打开以后停在哪里：`true` 是最后一处改动，`false` 是第一处；没有在切换
+    /// 文件时为 `None`。
+    pub(crate) diff_land: Option<bool>,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: diff::RediffState,
     /// 跳转条现在用来输入什么。

@@ -147,6 +147,10 @@ impl App {
         let parts = diff_parts(self.layout.editor, view, self.cell);
         let editable = view.new.path.is_some();
         self.focus = Focus::Editor;
+        // 点击以后光标不再停在跳到的那一段，不再标记。
+        if let Some(view) = self.editor.documents[index].diff.as_deref_mut() {
+            view.focus = None;
+        }
         let count = self.click_count(x, y);
         let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
 

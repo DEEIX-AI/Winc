@@ -200,6 +200,8 @@ impl App {
             branch: git::branch::BranchState::default(),
             merge: git::merge::MergeState::default(),
             diff_fade: None,
+            diff_pulse: None,
+            diff_land: None,
             rediff: diff::RediffState::default(),
             prompt_kind: PromptKind::GoTo,
             context_menu: None,

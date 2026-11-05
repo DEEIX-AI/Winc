@@ -189,6 +189,8 @@ pub(crate) struct GitState {
     refs_wanted: bool,
     /// 打开着的 Git 差异标签；状态刷新以后按需原地更新，标签关闭时去掉。
     diff_tabs: HashMap<DocumentId, DiffTab>,
+    /// 最近一次切换文件时的（差异标签，切换到的文件）。
+    stepped: Option<(DocumentId, PathBuf)>,
     /// 最近一次预览请求的序号。
     pub(super) preview_seq: u64,
     /// 本次运行中已经问过是否信任的仓库配置指纹（[`git::Risks::fingerprint`]）：选了不信任的
@@ -222,6 +224,7 @@ impl Default for GitState {
             again: false,
             refs_wanted: false,
             diff_tabs: HashMap::new(),
+            stepped: None,
             preview_seq: 0,
             asked_trust: Vec::new(),
             sender,
@@ -836,6 +839,64 @@ impl App {
         self.fetch_changes(path, Target::Preview(self.git.preview_seq));
     }
 
+    /// 标签 `id` 是否是工作区文件的 Git 差异。
+    pub(super) fn steps_changed_files(&self, id: DocumentId) -> bool {
+        self.git.diff_tabs.contains_key(&id)
+    }
+
+    /// 在工作区文件的差异标签中打开提交视图列出的下一个（`forward`）或上一个文件，返回是否已打开。
+    ///
+    /// 新文件在当前标签里打开，连续查看时只占一个标签。按最近一次切换到的文件算下一个：那个文件
+    /// 打不开时（二进制、没有差异）标签还是原来的内容，再按一次跳过它。
+    pub(super) fn step_changed_file(&mut self, forward: bool) -> bool {
+        let Some(id) = self.editor.active().map(|d| d.id) else {
+            return false;
+        };
+        let Some(tab) = self.git.diff_tabs.get(&id) else {
+            return false;
+        };
+        let current = match &self.git.stepped {
+            Some((doc, path)) if *doc == id => path.clone(),
+            _ => tab.path.clone(),
+        };
+        // 列表里收起的目录中的文件不在 `commit_files` 里，这时按状态里的顺序。
+        let mut files = self.commit_files();
+        if !files.contains(&current) {
+            let entries = self.git.status.as_ref().map(|s| s.entries.as_slice());
+            files = (entries.unwrap_or_default().iter())
+                .map(|e| e.path.clone())
+                .collect();
+        }
+        let Some(at) = files.iter().position(|p| *p == current) else {
+            return false;
+        };
+        let next = if forward { at + 1 } else { at.wrapping_sub(1) };
+        let Some(path) = files.get(next).cloned() else {
+            return false;
+        };
+        let name = winc_editor::display_name(&path).into_owned();
+        self.commit.preview = Some(id);
+        self.git.stepped = Some((id, path.clone()));
+        self.select_commit_file(path);
+        let (index, total, name) = (next + 1, files.len(), name.as_str());
+        self.flash(if forward {
+            t!(
+                "git-log-next-file",
+                name = name,
+                index = index,
+                total = total
+            )
+        } else {
+            t!(
+                "git-log-previous-file",
+                name = name,
+                index = index,
+                total = total
+            )
+        });
+        true
+    }
+
     /// 状态刷新以后，重新比较打开着的 Git 差异标签里过时了的，原地换内容：`HEAD` 动了（提交、
     /// 切换分支）的左边要重新取；右边是磁盘上的内容（文件没在编辑器里打开）的，文件可能变了。
     ///
@@ -973,6 +1034,7 @@ impl App {
                 // 原地更新失败（文件变成了二进制、读不出来）时不打扰，标签留着上一次的内容。
                 Err(_) if matches!(prepared.target, Target::Refresh(_)) => continue,
                 Err(e) => {
+                    self.diff_land = None;
                     self.flash(e);
                     continue;
                 }
@@ -992,6 +1054,7 @@ impl App {
                     continue;
                 }
                 _ if view.is_identical() => {
+                    self.diff_land = None;
                     self.flash(t!("git-diff-identical", name = name.as_str()));
                     continue;
                 }
@@ -1015,6 +1078,14 @@ impl App {
             }
             self.relayout();
             self.clamp_scroll();
+            // 打开时停在第一处改动，这一处就是当前段，`F7` 从下一处开始。不移动光标：连续预览时不
+            // 必为每个文件在后台打开文档。
+            let doc = &mut self.editor.documents[index];
+            let scroll = doc.scroll_line;
+            if let Some(view) = doc.diff.as_deref_mut().filter(|v| !v.hunks.is_empty()) {
+                view.focus = Some((0, scroll));
+            }
+            self.land_diff_file();
             self.request_redraw();
         }
     }

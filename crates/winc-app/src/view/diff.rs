@@ -89,6 +89,33 @@ fn draw_fade(
     draw_ribbon(frame, parts.ribbon, spans[0], spans[1], shade, parts.body);
 }
 
+/// 标出跳到的那一段改动：一侧的边上一条强调色的竖线，这一侧没有行时是插入位置上的横线；刚跳到时
+/// 整段再叠一层渐隐的强调色。
+///
+/// `(y0, y1)` 是这一段在这一侧的上下边，`clip` 是差异的文字区域。
+fn draw_hunk_focus(app: &App, frame: &mut Frame<'_>, pane: Rect, (y0, y1): (f32, f32), clip: Rect) {
+    /// 当前标记的粗细（逻辑像素）：比 1 像素的改动边线粗，能和普通改动区分开。
+    const MARK: f32 = 3.0;
+    /// 高亮开始时强调色的不透明度：能看出落点，又不遮挡文字。
+    const PULSE_ALPHA: f32 = 0.28;
+    let accent = app.palette.accent;
+    if y1 > y0 {
+        if let Some(pulse) = app.diff_pulse {
+            let band = Rect::new(pane.x, y0, pane.w, y1 - y0);
+            frame.rect_clipped(
+                band,
+                accent.alpha(PULSE_ALPHA * pulse.fade_out()),
+                0.0,
+                clip,
+            );
+        }
+        frame.rect_clipped(Rect::new(pane.x, y0, MARK, y1 - y0), accent, 0.0, clip);
+    } else {
+        let line = Rect::new(pane.x, y0 - MARK / 2.0, pane.w, MARK);
+        frame.rect_clipped(line, accent, 0.0, clip);
+    }
+}
+
 /// 两侧的滚动位置（显示行）。
 #[derive(Clone, Copy)]
 struct Scroll {
@@ -153,7 +180,10 @@ fn draw_header(
     // 右端：折叠开关、下一处、上一处（从右往左排）。折叠开关按状态换图标，不绘制按下状态。
     let y = header.y + (header.h - BUTTON) / 2.0;
     let mut right = header.right() - 10.0;
-    for target in [DiffTarget::Collapse, DiffTarget::Next, DiffTarget::Previous] {
+    let files = [DiffTarget::NextFile, DiffTarget::PreviousFile];
+    let files = files.iter().copied().filter(|_| app.diff_steps_files());
+    let targets = [DiffTarget::Collapse].into_iter().chain(files);
+    for target in targets.chain([DiffTarget::Next, DiffTarget::Previous]) {
         let rect = Rect::new(right - BUTTON, y, BUTTON, BUTTON);
         right = rect.x - 2.0;
         draw_button(
@@ -170,6 +200,12 @@ fn draw_header(
                 icons::chevron(frame, c, 8.0, Direction::Up, p.text_muted, rect)
             }
             DiffTarget::Next => icons::chevron(frame, c, 8.0, Direction::Down, p.text_muted, rect),
+            DiffTarget::PreviousFile => {
+                icons::chevron(frame, c, 8.0, Direction::Left, p.text_muted, rect)
+            }
+            DiffTarget::NextFile => {
+                icons::chevron(frame, c, 8.0, Direction::Right, p.text_muted, rect)
+            }
             _ if view.collapses() => icons::expand_all(frame, c, p.text_muted, rect),
             _ => icons::collapse_all(frame, c, p.text_muted, rect),
         }
@@ -665,6 +701,11 @@ fn draw_body(
                 let pane = parts.panes[side];
                 let line = Rect::new(pane.rect.x, y0 - 0.5, pane.rect.w, 1.0);
                 frame.rect_clipped(line, shade.edge, 0.0, body);
+            }
+        }
+        if view.focus.is_some_and(|(focus, _)| focus == h) {
+            for (side, span) in [(LEFT, (l0, l1)), (RIGHT, (r0, r1))] {
+                draw_hunk_focus(app, frame, parts.panes[side].rect, span, body);
             }
         }
     }

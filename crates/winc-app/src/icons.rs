@@ -65,6 +65,8 @@ pub enum Direction {
     Down,
     /// 朝右。
     Right,
+    /// 朝左。
+    Left,
 }
 
 /// 按给定朝向绘制 `V` 形折线箭头。
@@ -82,6 +84,7 @@ pub fn chevron(
         Direction::Up => -FRAC_PI_2,
         Direction::Down => FRAC_PI_2,
         Direction::Right => 0.0,
+        Direction::Left => PI,
     };
     chevron_turned(frame, center, size, angle, color, clip);
 }

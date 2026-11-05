@@ -970,6 +970,13 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                     t!("workspace-tip-next-change"),
                     Some(Action::NextDifference),
                 ),
+                DiffTarget::PreviousFile => with_key(
+                    t!("workspace-tip-previous-file"),
+                    Some(Action::PreviousDiffFile),
+                ),
+                DiffTarget::NextFile => {
+                    with_key(t!("workspace-tip-next-file"), Some(Action::NextDiffFile))
+                }
                 DiffTarget::Revert(_) => with_key(
                     t!("workspace-tip-revert-to-left"),
                     Some(Action::GitRevertChange),

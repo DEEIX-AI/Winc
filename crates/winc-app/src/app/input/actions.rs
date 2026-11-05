@@ -325,6 +325,12 @@ impl App {
                     return false;
                 }
             }
+            NextDiffFile | PreviousDiffFile => {
+                if !self.editor.active().is_some_and(|d| d.diff.is_some()) {
+                    return false;
+                }
+                self.step_diff_file(action == NextDiffFile);
+            }
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),
             GitSwitchWorktree => self.switch_worktree(),
