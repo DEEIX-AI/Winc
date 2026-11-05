@@ -44,7 +44,8 @@ pub use workspace::project_search::{
     replace_in_file,
 };
 pub use workspace::tree::{
-    DirEntry, DirListing, DirScan, Entry, EntryKind, Workspace, copy_entry, list_dir, natural_cmp,
+    DirEntry, DirListing, DirScan, EXPAND_DIRS, Entry, EntryKind, Workspace, copy_entry, list_dir,
+    natural_cmp, segment_name,
 };
 pub use workspace::watch::{Changes, Watcher};
 

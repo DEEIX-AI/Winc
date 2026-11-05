@@ -1,5 +1,5 @@
 //! 文件树 [`Workspace`] 的测试：按变化只重读受影响的目录、改名与移动保持展开、复制不覆盖、
-//! 选中跟随行变化、自然排序与按需展开的缓存。
+//! 选中跟随行变化、自然排序与按需展开的缓存，以及连续单子目录的合并显示和递归展开。
 
 use super::*;
 
@@ -49,6 +49,7 @@ fn rename_keeps_expansion_and_rejects_bad_names() {
     fs::write(root.join("readme.md"), "").unwrap();
     fs::write(root.join("other.md"), "").unwrap();
     let mut ws = Workspace::open(&root).unwrap();
+    ws.set_compact(false);
     let root = ws.root.clone();
     ws.reveal(&root.join("src/deep/x.py"));
 
@@ -87,6 +88,7 @@ fn move_into_keeps_expansion_and_refuses_what_cannot_be_moved() {
     fs::write(root.join("readme.md"), "a").unwrap();
     fs::write(root.join("lib/readme.md"), "b").unwrap();
     let mut ws = Workspace::open(&root).unwrap();
+    ws.set_compact(false);
     let root = ws.root.clone();
     ws.reveal(&root.join("src/deep/x.py"));
 
@@ -410,4 +412,252 @@ fn rows_are_found_by_walking_down_the_tree() {
     assert_eq!(ws.row_of(&root.join("nowhere")), None);
     assert_eq!(ws.row_of(Path::new("/elsewhere")), None);
     let _ = fs::remove_dir_all(&root);
+}
+
+/// 返回各行显示的名字和缩进层级。
+fn labels(ws: &Workspace) -> Vec<(String, usize)> {
+    ws.rows()
+        .iter()
+        .map(|e| (e.label().into_owned(), e.depth))
+        .collect()
+}
+
+/// 创建 `src/main/java/com/{config,model}` 和 `other` 目录，返回打开的工作区。
+fn java_tree(name: &str) -> Workspace {
+    let root = crate::test_util::scratch(name);
+    fs::create_dir_all(root.join("src/main/java/com/config")).unwrap();
+    fs::create_dir_all(root.join("src/main/java/com/model")).unwrap();
+    fs::create_dir_all(root.join("other")).unwrap();
+    Workspace::open(&root).unwrap()
+}
+
+#[test]
+fn single_child_folders_merge_into_one_row_when_expanded() {
+    let mut ws = java_tree("ws-compact");
+    let root = ws.root.clone();
+
+    // 收起时不读取目录内容，只显示自己的名字。
+    assert_eq!(
+        labels(&ws),
+        [("other".to_owned(), 0), ("src".to_owned(), 0)]
+    );
+
+    // 展开一次就到最下一级目录：这一行的路径是最下一级，子项紧跟其后。
+    ws.toggle(1);
+    assert_eq!(
+        labels(&ws),
+        [
+            ("other".to_owned(), 0),
+            ("src/main/java/com".to_owned(), 0),
+            ("config".to_owned(), 1),
+            ("model".to_owned(), 1),
+        ]
+    );
+    let row = &ws.rows()[1];
+    assert_eq!(row.path, root.join("src/main/java/com"));
+    assert!(row.expanded);
+    assert_eq!(row.chain().len(), 4);
+    assert_eq!(ws.rows()[2].parent, Some(1));
+
+    // 收起后仍是一行，再展开不必逐级点击。
+    ws.toggle(1);
+    assert_eq!(labels(&ws)[1], ("src/main/java/com".to_owned(), 0));
+    assert_eq!(ws.rows().len(), 2);
+    ws.toggle(1);
+    assert_eq!(ws.rows().len(), 4);
+
+    // 全部折叠后回到只有自己的名字。
+    ws.collapse_all();
+    assert_eq!(labels(&ws)[1], ("src".to_owned(), 0));
+}
+
+#[test]
+fn folders_with_files_or_several_children_do_not_merge() {
+    let root = crate::test_util::scratch("ws-compact-stop");
+    fs::create_dir_all(root.join("a/b/c")).unwrap();
+    fs::write(root.join("a/b/note.txt"), "").unwrap();
+    fs::create_dir_all(root.join("only/file")).unwrap();
+    fs::write(root.join("only/file/x.rs"), "").unwrap();
+    let mut ws = Workspace::open(&root).unwrap();
+
+    // `a` 只有 `b`，合并；`b` 里还有文件，合并到此为止。
+    ws.toggle(0);
+    assert_eq!(
+        labels(&ws),
+        [
+            ("a/b".to_owned(), 0),
+            ("c".to_owned(), 1),
+            ("note.txt".to_owned(), 1),
+            ("only".to_owned(), 0),
+        ]
+    );
+
+    // 唯一的子项是文件时，文件不并入。
+    ws.toggle(3);
+    assert_eq!(labels(&ws)[3], ("only/file".to_owned(), 0));
+    assert_eq!(labels(&ws)[4], ("x.rs".to_owned(), 1));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_cycle_does_not_expand_forever() {
+    let root = crate::test_util::scratch("ws-compact-link");
+    fs::create_dir_all(root.join("a")).unwrap();
+    std::os::unix::fs::symlink(root.join("a"), root.join("a/again")).unwrap();
+    let mut ws = Workspace::open(&root).unwrap();
+    ws.toggle(0);
+    assert_eq!(labels(&ws), [("a".to_owned(), 0), ("again".to_owned(), 1)]);
+}
+
+#[test]
+fn compact_folders_can_be_turned_off() {
+    let mut ws = java_tree("ws-compact-off");
+    ws.toggle(1);
+    ws.set_compact(false);
+    let names: Vec<_> = labels(&ws).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(
+        names,
+        ["other", "src", "main", "java", "com", "config", "model"]
+    );
+    ws.set_compact(true);
+    assert_eq!(labels(&ws)[1].0, "src/main/java/com");
+}
+
+#[test]
+fn a_merged_folder_can_be_selected_on_its_own() {
+    let mut ws = java_tree("ws-compact-segment");
+    let root = ws.root.clone();
+    ws.toggle(1);
+    let (main, com) = (root.join("src/main"), root.join("src/main/java/com"));
+    assert_eq!(ws.row_of(&main), Some(1));
+    assert_eq!(ws.row_of(&com), Some(1));
+    assert_eq!(ws.row_of(&root.join("src/main/java/com/model")), Some(3));
+
+    // 选中合并的某一级：新建、删除、复制都作用于它。
+    ws.select_segment(1, Some(&main));
+    assert_eq!(ws.segment(), Some(main.as_path()));
+    assert_eq!(ws.current_path(), Some(main.as_path()));
+    assert_eq!(ws.target_dir(), main);
+    assert_eq!(ws.selection(), std::slice::from_ref(&main));
+    assert_eq!(ws.selection_roots(), std::slice::from_ref(&main));
+
+    // 选中最下一级等同于选中这一行；选另一行清掉这一级。
+    ws.select_segment(1, Some(&com));
+    assert_eq!(ws.segment(), None);
+    assert_eq!(ws.target_dir(), com);
+    ws.select_segment(1, Some(&main));
+    ws.select(Some(0));
+    assert_eq!(ws.segment(), None);
+
+    // 定位到合并的某一级。
+    ws.reveal(&main);
+    assert_eq!(ws.selected, Some(1));
+    assert_eq!(ws.segment(), Some(main.as_path()));
+}
+
+#[test]
+fn merged_rows_split_and_rejoin_with_the_disk() {
+    let mut ws = java_tree("ws-compact-change");
+    let root = ws.root.clone();
+    ws.toggle(1);
+    let main = root.join("src/main");
+    ws.select_segment(1, Some(&main));
+
+    // 中间的目录多了文件：合并在那里断开，选中的目录有了自己的一行，仍然选中它。
+    fs::write(root.join("src/main/note.txt"), "").unwrap();
+    assert!(ws.refresh_paths(&[root.join("src/main/note.txt")]));
+    let names: Vec<_> = labels(&ws).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(
+        names,
+        [
+            "other", "src/main", "java/com", "config", "model", "note.txt"
+        ]
+    );
+    assert_eq!(ws.segment(), None);
+    assert_eq!(ws.selected_entry().unwrap().path, main);
+
+    // 文件删除后重新合并，选中的目录回到合并的一行里。
+    fs::remove_file(root.join("src/main/note.txt")).unwrap();
+    assert!(ws.refresh_paths(&[root.join("src/main/note.txt")]));
+    assert_eq!(labels(&ws)[1].0, "src/main/java/com");
+    assert_eq!(ws.segment(), Some(main.as_path()));
+
+    // 改名后展开状态跟着新路径。
+    ws.rename(&root.join("src/main/java"), "kotlin").unwrap();
+    assert_eq!(labels(&ws)[1].0, "src/main/kotlin/com");
+}
+
+/// 创建含 `a/{b/c,d}` 和被忽略的 `ignored/x/y` 的版本库，返回打开的工作区。
+fn nested_tree(name: &str) -> Workspace {
+    let root = crate::test_util::scratch(name);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+    fs::create_dir_all(root.join("a/b/c")).unwrap();
+    fs::create_dir_all(root.join("a/d")).unwrap();
+    fs::create_dir_all(root.join("ignored/x/y")).unwrap();
+    let mut ws = Workspace::open(&root).unwrap();
+    ws.set_compact(false);
+    ws
+}
+
+/// 返回各行的名字。
+fn row_names(ws: &Workspace) -> Vec<String> {
+    ws.rows().iter().map(|e| e.name.clone()).collect()
+}
+
+#[test]
+fn expanding_recursively_opens_every_level_but_skips_ignored_folders() {
+    let mut ws = nested_tree("ws-recursive");
+    let root = ws.root.clone();
+    fs::create_dir_all(root.join("a/ignored/deep")).unwrap();
+
+    assert!(!ws.expand_recursively(0));
+    let names = row_names(&ws);
+    assert_eq!(
+        names[..5],
+        ["a", "b", "c", "d", "ignored"].map(str::to_owned),
+        "{names:?}"
+    );
+    // `a/ignored` 符合忽略规则：显示，但不展开。
+    assert!(!ws.rows()[4].expanded);
+    assert!(ws.rows()[1].expanded && ws.rows()[2].expanded);
+
+    // 递归收起后，下次普通展开只露出一层。
+    ws.collapse_recursively(0);
+    assert_eq!(row_names(&ws)[..2], ["a", "ignored"].map(str::to_owned));
+    ws.toggle(0);
+    assert!(!ws.rows()[1].expanded);
+}
+
+#[test]
+fn a_folder_that_is_itself_ignored_expands_only_one_level() {
+    let mut ws = nested_tree("ws-recursive-ignored");
+    let index = ws.rows().iter().position(|e| e.name == "ignored").unwrap();
+    assert!(!ws.expand_recursively(index));
+    assert!(ws.rows()[index].expanded);
+    assert_eq!(ws.rows()[index + 1].name, "x");
+    assert!(!ws.rows()[index + 1].expanded);
+}
+
+#[test]
+fn expanding_recursively_stops_at_the_limits() {
+    let mut ws = nested_tree("ws-recursive-limit");
+    assert!(ws.expand_within(0, 2, 1000));
+    let expanded = ws.rows().iter().filter(|e| e.expanded).count();
+    assert_eq!(expanded, 2);
+
+    let mut ws = nested_tree("ws-recursive-entries");
+    assert!(ws.expand_within(0, 1000, 2));
+}
+
+#[cfg(unix)]
+#[test]
+fn expanding_recursively_does_not_follow_symlinks() {
+    let mut ws = nested_tree("ws-recursive-link");
+    let root = ws.root.clone();
+    std::os::unix::fs::symlink(&root, root.join("a/loop")).unwrap();
+    ws.refresh();
+    assert!(!ws.expand_recursively(0));
+    let link = ws.rows().iter().find(|e| e.name == "loop").unwrap();
+    assert!(!link.expanded);
 }

@@ -784,6 +784,10 @@ pub struct App {
     pub tree_scroll_x: f32,
     /// 文件树中最宽一行的内容宽度，横向滚动范围和滑块据此计算；绘制时量出。
     pub tree_content_w: f32,
+    /// 屏幕上合并显示的目录占的横向范围：所在行的下标、左右边界（逻辑像素）和目录路径；绘制时量出。
+    pub tree_segments: Vec<(usize, f32, f32, PathBuf)>,
+    /// 鼠标所在的合并显示的目录；不在这样的目录上时为 `None`。
+    pub tree_hover_segment: Option<PathBuf>,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
     /// 文件树中连续键入的字符与最后一次键入的时刻，用于跳到名称以这些字符开头的行

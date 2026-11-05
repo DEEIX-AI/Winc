@@ -7,6 +7,7 @@ workspace-quoted-name = 「{ $name }」
 
 ## 文件树和侧栏
 
+workspace-tree-expand-limit = 目录太多，只展开了前 { $count } 个
 workspace-tree-invalid-name = 名称无效
 workspace-tree-name-taken = 已存在同名项
 workspace-tree-cannot-rename = 无法重命名此项

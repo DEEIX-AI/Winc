@@ -81,6 +81,7 @@ impl SettingsPage {
                     Setting::AutoSave,
                     Setting::HotExit,
                     Setting::RestoreFolder,
+                    Setting::CompactFolders,
                     Setting::StickyScroll,
                     Setting::WordWrap,
                     Setting::Minimap,
@@ -182,6 +183,8 @@ pub enum Setting {
     WordWrap,
     /// 编辑区右侧的缩略图。
     Minimap,
+    /// 文件树把连续的单子目录合并显示为一行。
+    CompactFolders,
     /// Markdown 预览联网加载网址的图片。
     RemoteImages,
     /// 定时检查更新。
@@ -255,6 +258,7 @@ impl Setting {
             | Setting::AutoSave
             | Setting::HotExit
             | Setting::RestoreFolder
+            | Setting::CompactFolders
             | Setting::StickyScroll
             | Setting::WordWrap
             | Setting::Minimap
@@ -291,6 +295,7 @@ impl Setting {
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::WordWrap => t!("settings-word-wrap"),
             Setting::Minimap => t!("settings-minimap"),
+            Setting::CompactFolders => t!("settings-compact-folders"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::CheckUpdates => t!("settings-check-updates"),
             Setting::Version => t!("settings-version"),
@@ -321,6 +326,7 @@ impl Setting {
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
+            Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
@@ -346,6 +352,7 @@ impl Setting {
             | Setting::AutoSave
             | Setting::HotExit
             | Setting::RestoreFolder
+            | Setting::CompactFolders
             | Setting::StickyScroll
             | Setting::WordWrap
             | Setting::Minimap

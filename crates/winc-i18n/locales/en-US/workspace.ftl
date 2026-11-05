@@ -7,6 +7,7 @@ workspace-quoted-name = “{ $name }”
 
 ## File tree and sidebar
 
+workspace-tree-expand-limit = Too many folders. Only the first { $count } were expanded.
 workspace-tree-invalid-name = Invalid name
 workspace-tree-name-taken = An item with this name already exists
 workspace-tree-cannot-rename = This item can’t be renamed

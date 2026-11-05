@@ -161,7 +161,10 @@ const UI: &[Field] = &[
 ];
 
 /// `tree` 一节。
-const TREE: &[Field] = &[bool_field!("confirmDragAndDrop", confirm_drag_and_drop)];
+const TREE: &[Field] = &[
+    bool_field!("confirmDragAndDrop", confirm_drag_and_drop),
+    bool_field!("compactFolders", compact_folders),
+];
 
 /// `markdown` 一节。
 const MARKDOWN: &[Field] = &[bool_field!("remoteImages", markdown_remote_images)];

@@ -1,5 +1,5 @@
 //! 文件树的测试：放不下的名称、横向滚动、新建条目的输入行、工具栏、固定在顶部的目录，
-//! 以及在终端中打开。
+//! 紧凑文件夹，以及在终端中打开。
 
 use super::*;
 
@@ -782,4 +782,421 @@ fn an_empty_folder_says_so() {
     shoot(&mut app, "tree-empty-creating");
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 打开含 `src/main/java/{a,b}` 的目录，展开 `src`，并绘制一帧。
+fn compact_app(name: &str) -> (App, PathBuf, usize) {
+    let dir = sample_folder(name);
+    let root = dir.join("project");
+    std::fs::create_dir_all(root.join("src/main/java/a")).unwrap();
+    std::fs::create_dir_all(root.join("src/main/java/b")).unwrap();
+    let mut app = app_with(&root, true);
+    let root = app.editor.root().unwrap().to_path_buf();
+    let row = row_of(&app, "src");
+    let ws = app.editor.workspace.as_mut().unwrap();
+    ws.toggle(row);
+    ws.select(None);
+    paint(&mut app);
+    (app, root, row)
+}
+
+/// 返回第 `row` 行里合并显示的目录 `path` 的中点横坐标。
+fn segment_x(app: &App, row: usize, path: &Path) -> f32 {
+    app.tree_segments
+        .iter()
+        .find(|(index, .., p)| *index == row && p == path)
+        .map(|(_, left, right, _)| (left + right) / 2.0)
+        .unwrap()
+}
+
+#[test]
+fn clicking_a_merged_folder_selects_that_level() {
+    let (mut app, root, row) = compact_app("compact-click");
+    let main = root.join("src/main");
+    let y = app.tree_row_top(row) + TREE_ROW / 2.0;
+    let x = segment_x(&app, row, &main);
+    let count = app.editor.workspace.as_ref().unwrap().rows().len();
+
+    // 单击选中点中的那一级，同时收起这一行；新建的内容放进这一级。
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    let ws = app.editor.workspace.as_ref().unwrap();
+    assert_eq!(ws.segment(), Some(main.as_path()));
+    assert_eq!(ws.target_dir(), main);
+    assert!(ws.rows().len() < count);
+    assert_eq!(app.shortcut_target(), Some(main.clone()));
+    paint(&mut app);
+
+    // 点在图标上选中这一行本身。
+    app.on_mouse_move(app.layout.tree.x + 12.0, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    let ws = app.editor.workspace.as_ref().unwrap();
+    assert_eq!(ws.segment(), None);
+    assert_eq!(ws.target_dir(), root.join("src/main/java"));
+}
+
+#[test]
+fn renaming_a_merged_folder_changes_only_that_level() {
+    let (mut app, root, row) = compact_app("compact-rename");
+    let main = root.join("src/main");
+
+    app.start_rename(&main);
+    let entry = app.name_input.as_mut().unwrap();
+    assert_eq!(entry.field.text(), "main");
+    entry.field.set_text("core");
+    app.submit_name_input();
+    assert!(root.join("src/core/java/a").is_dir());
+    assert_eq!(
+        app.editor.workspace.as_ref().unwrap().rows()[row].label(),
+        "src/core/java"
+    );
+}
+
+#[test]
+fn the_compact_folders_setting_applies_at_once() {
+    let (mut app, _, row) = compact_app("compact-setting");
+    let label = |app: &App| {
+        app.editor.workspace.as_ref().unwrap().rows()[row]
+            .label()
+            .into_owned()
+    };
+    assert_eq!(label(&app), "src/main/java");
+
+    app.settings_toggle(Setting::CompactFolders);
+    assert_eq!(label(&app), "src");
+    paint(&mut app);
+    assert!(app.tree_segments.is_empty());
+
+    app.settings_toggle(Setting::CompactFolders);
+    assert_eq!(label(&app), "src/main/java");
+}
+
+#[test]
+fn clicking_a_merged_folder_past_the_sidebar_selects_it() {
+    let dir = sample_folder("compact-overflow");
+    let root = dir.join("project");
+    let names = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let deep: PathBuf = names.iter().collect();
+    std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
+    std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
+    let mut app = app_with(&root, true);
+    app.panel_width = 230.0;
+    let root = app.editor.root().unwrap().to_path_buf();
+    let row = row_of(&app, "alpha");
+    let ws = app.editor.workspace.as_mut().unwrap();
+    ws.toggle(row);
+    ws.select(None);
+    paint(&mut app);
+
+    // 鼠标移到行上，放不下的部分继续绘制在编辑区上方；再移到那一段上的某一级目录。
+    let golf = root.join("alpha/bravo/charlie/delta/echo/foxtrot/golf");
+    let y = app.tree_row_top(row) + TREE_ROW / 2.0;
+    app.on_mouse_move(app.layout.tree.right() - 4.0, y);
+    paint(&mut app);
+    let (rect, _) = app.tree_overflow.unwrap();
+    let x = segment_x(&app, row, &golf);
+    assert!(x > rect.x && x < rect.right(), "{x} {rect:?}");
+    app.on_mouse_move(x, y);
+    paint(&mut app);
+    assert_eq!(app.hover, Hover::TreeRow(row));
+
+    app.on_mouse_down(MouseButton::Left);
+    let ws = app.editor.workspace.as_ref().unwrap();
+    assert_eq!(ws.segment(), Some(golf.as_path()));
+    app.on_mouse_up(MouseButton::Left);
+    let ws = app.editor.workspace.as_ref().unwrap();
+    assert_eq!(ws.segment(), Some(golf.as_path()));
+}
+
+#[test]
+fn dragging_onto_a_merged_row_drops_into_the_folder_under_the_pointer() {
+    let (mut app, root, _) = compact_app("compact-drop");
+    std::fs::write(root.join("note.txt"), "").unwrap();
+    app.editor.workspace.as_mut().unwrap().refresh();
+    paint(&mut app);
+    let row = row_of(&app, "java");
+    let main = root.join("src/main");
+    let java = root.join("src/main/java");
+    let file = row_of(&app, "note.txt");
+    let (x, y) = tree_row_center(&app, file);
+    let top = app.tree_row_top(row) + TREE_ROW / 2.0;
+
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    // 鼠标在中间的一级上：放进那一级；在最后一级或名称以外：放进这一行本身。
+    app.on_mouse_move(segment_x(&app, row, &main), top);
+    assert_eq!(app.tree_dragging().unwrap().target, Some(main.clone()));
+    paint(&mut app);
+    app.on_mouse_move(segment_x(&app, row, &java), top);
+    assert_eq!(app.tree_dragging().unwrap().target, Some(java.clone()));
+    app.on_mouse_move(app.layout.tree.right() - 8.0, top);
+    assert_eq!(app.tree_dragging().unwrap().target, Some(java));
+
+    // 移到中间的一级松开，确认后文件进入那一级。
+    app.on_mouse_move(segment_x(&app, row, &main), top);
+    app.on_mouse_up(MouseButton::Left);
+    app.confirm_move(&[root.join("note.txt")], &main, false);
+    assert!(main.join("note.txt").is_file());
+}
+
+#[test]
+fn dragging_past_the_sidebar_reaches_merged_folders_that_do_not_fit() {
+    let dir = sample_folder("compact-drop-overflow");
+    let root = dir.join("project");
+    let names = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let deep: PathBuf = names.iter().collect();
+    std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
+    std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
+    std::fs::write(root.join("note.txt"), "").unwrap();
+    let mut app = app_with(&root, true);
+    app.panel_width = 230.0;
+    let root = app.editor.root().unwrap().to_path_buf();
+    let row = row_of(&app, "alpha");
+    app.editor.workspace.as_mut().unwrap().toggle(row);
+    paint(&mut app);
+    let golf = root.join("alpha/bravo/charlie/delta/echo/foxtrot/golf");
+    let file = row_of(&app, "note.txt");
+    let (x, y) = tree_row_center(&app, file);
+    let top = app.tree_row_top(row) + TREE_ROW / 2.0;
+
+    // 拖到放不下名称的一行上：编辑区上方继续绘制完整名称。
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(app.layout.tree.right() - 4.0, top);
+    paint(&mut app);
+    let (rect, index) = app.tree_overflow.unwrap();
+    assert_eq!(index, row);
+
+    // 继续移到那一段上的某一级：放进那一级。
+    let at = segment_x(&app, row, &golf);
+    assert!(at > rect.x && at < rect.right(), "{at} {rect:?}");
+    app.on_mouse_move(at, top);
+    assert_eq!(app.tree_dragging().unwrap().target, Some(golf.clone()));
+    paint(&mut app);
+    assert!(app.tree_overflow.is_some());
+
+    // 移开到编辑区：不再有放置目标。
+    app.on_mouse_move(rect.right() + 40.0, top);
+    paint(&mut app);
+    app.on_mouse_move(rect.right() + 41.0, top);
+    assert_eq!(app.tree_dragging().unwrap().target, None);
+    app.on_mouse_up(MouseButton::Left);
+}
+
+#[test]
+fn a_row_that_does_not_fit_covers_the_sidebar_splitter() {
+    let dir = sample_folder("compact-splitter");
+    let root = dir.join("project");
+    let names = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let deep: PathBuf = names.iter().collect();
+    std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
+    std::fs::create_dir_all(root.join("zzz")).unwrap();
+    let mut app = app_with(&root, true);
+    app.panel_width = 230.0;
+    let row = row_of(&app, "alpha");
+    app.editor.workspace.as_mut().unwrap().toggle(row);
+    paint(&mut app);
+    let x = app.layout.tree.right();
+    let top = app.tree_row_top(row) + TREE_ROW / 2.0;
+    assert!(app.layout.splitter.contains(x, top));
+
+    // 名称放得下的行：分隔条照常可以拖动。
+    let other = row_of(&app, "zzz");
+    app.on_mouse_move(x, app.tree_row_top(other) + TREE_ROW / 2.0);
+    paint(&mut app);
+    assert_eq!(app.hover, Hover::Splitter);
+
+    // 从左边移到放不下名称的一行：经过分隔条时仍算在这一行上。
+    app.on_mouse_move(x - 20.0, top);
+    paint(&mut app);
+    assert!(app.tree_overflow.is_some());
+    app.on_mouse_move(x, top);
+    assert_eq!(app.hover, Hover::TreeRow(row));
+}
+
+#[test]
+fn a_row_keeps_its_full_name_while_it_expands() {
+    let dir = sample_folder("compact-motion");
+    let root = dir.join("project");
+    let names = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let deep: PathBuf = names.iter().collect();
+    std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
+    std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
+    std::fs::create_dir_all(root.join("zzz")).unwrap();
+    let mut app = app_with(&root, true);
+    app.panel_width = 230.0;
+    let row = row_of(&app, "alpha");
+    app.editor.workspace.as_mut().unwrap().toggle(row);
+    paint(&mut app);
+    let y = app.tree_row_top(row) + TREE_ROW / 2.0;
+    app.on_mouse_move(app.layout.tree.right() - 4.0, y);
+    paint(&mut app);
+    assert!(app.tree_overflow.is_some());
+
+    // 这一行正在展开、收起：完整名称不消失。
+    let motion = |parent| crate::app::TreeMotion {
+        parent,
+        count: 2,
+        expanding: false,
+        removed: Vec::new(),
+        clock: crate::app::animation::Clock::new(std::time::Duration::from_secs(60)),
+    };
+    app.tree_motion = Some(motion(row));
+    assert_eq!(app.overflow_candidate(), Some(row));
+
+    // 其他行在动画中：行的位置还在变，不显示。
+    app.tree_motion = Some(motion(row + 1));
+    assert_eq!(app.overflow_candidate(), None);
+    app.tree_motion = None;
+}
+
+#[test]
+fn the_compact_setting_also_applies_to_the_folder_opened_at_startup() {
+    let dir = sample_folder("compact-startup");
+    let root = dir.join("project");
+    std::fs::create_dir_all(root.join("src/main/java/a")).unwrap();
+    std::fs::create_dir_all(root.join("src/main/java/b")).unwrap();
+    let mut editor = Editor::default();
+    editor.open_folder(&root).unwrap();
+    let config = Config {
+        compact_folders: Some(false),
+        ..Config::default()
+    };
+    let mut app = App::new(editor, None, Bench::from_env(), config);
+    let ws = app.editor.workspace.as_mut().unwrap();
+    ws.toggle(0);
+    assert_eq!(ws.rows()[0].label(), "src");
+    assert_eq!(ws.rows()[1].label(), "main");
+}
+
+/// 在文件树里按下方向键等命名键。
+fn press_tree_key(app: &mut App, key: winit::keyboard::NamedKey) {
+    app.on_key_tree(&winit::keyboard::Key::Named(key));
+}
+
+#[test]
+fn typing_finds_any_level_of_a_merged_row() {
+    let (mut app, root, row) = compact_app("compact-typing");
+    std::fs::create_dir_all(root.join("aaa")).unwrap();
+    app.editor.workspace.as_mut().unwrap().refresh();
+    paint(&mut app);
+    let row = row + 1;
+    app.focus = Focus::Tree;
+    app.editor.workspace.as_mut().unwrap().select(Some(0));
+    assert_eq!(
+        app.editor.workspace.as_ref().unwrap().rows()[row].label(),
+        "src/main/java"
+    );
+    app.on_key_tree(&winit::keyboard::Key::Character("m".into()));
+    assert_eq!(app.editor.workspace.as_ref().unwrap().selected, Some(row));
+}
+
+#[test]
+fn arrow_keys_walk_through_merged_folders() {
+    let (mut app, root, row) = compact_app("compact-keys");
+    let (src, main, java) = (
+        root.join("src"),
+        root.join("src/main"),
+        root.join("src/main/java"),
+    );
+    app.focus = Focus::Tree;
+    let segment = |app: &App| {
+        let ws = app.editor.workspace.as_ref().unwrap();
+        ws.current_path().map(Path::to_path_buf)
+    };
+    app.editor.workspace.as_mut().unwrap().select(Some(row));
+    assert_eq!(segment(&app), Some(java.clone()));
+
+    // 从最后一级往左走到第一级，这一行不收起。
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowLeft);
+    assert_eq!(segment(&app), Some(main.clone()));
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowLeft);
+    assert_eq!(segment(&app), Some(src.clone()));
+    let open = |app: &App| app.editor.workspace.as_ref().unwrap().rows()[row].expanded;
+    assert!(open(&app));
+
+    // 第一级再按左键才收起；往右走回最后一级，再按右键展开。
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowLeft);
+    assert!(!open(&app));
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowRight);
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowRight);
+    assert_eq!(segment(&app), Some(java.clone()));
+    assert!(!open(&app));
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowRight);
+    assert!(open(&app));
+
+    // 上下键换行，回到这一行时选中的是最后一级。
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowDown);
+    press_tree_key(&mut app, winit::keyboard::NamedKey::ArrowUp);
+    assert_eq!(segment(&app), Some(java));
+}
+
+#[test]
+fn hovering_tracks_the_merged_folder_under_the_pointer() {
+    let (mut app, root, row) = compact_app("compact-hover");
+    let (main, java) = (root.join("src/main"), root.join("src/main/java"));
+    let y = app.tree_row_top(row) + TREE_ROW / 2.0;
+
+    // 同一行内换一级：悬停目标跟着换，并且请求重画。
+    app.on_mouse_move(segment_x(&app, row, &main), y);
+    paint(&mut app);
+    assert_eq!(app.tree_hover_segment.as_ref(), Some(&main));
+    app.dirty = false;
+    app.on_mouse_move(segment_x(&app, row, &java), y);
+    assert_eq!(app.tree_hover_segment.as_ref(), Some(&java));
+    assert!(app.dirty);
+
+    // 移到图标上、其他行上都不再悬停某一级。
+    app.on_mouse_move(app.layout.tree.x + 12.0, y);
+    assert_eq!(app.tree_hover_segment, None);
+    app.on_mouse_move(segment_x(&app, row, &main), y);
+    let below = app.tree_row_top(row + 1) + TREE_ROW / 2.0;
+    app.on_mouse_move(app.layout.tree.x + 60.0, below);
+    assert_eq!(app.tree_hover_segment, None);
+}
+
+#[test]
+fn option_clicking_a_folder_expands_and_collapses_it_all_the_way() {
+    let dir = sample_folder("recursive-click");
+    let root = dir.join("project");
+    std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+    std::fs::create_dir_all(root.join("a/d/e")).unwrap();
+    std::fs::create_dir_all(root.join("other")).unwrap();
+    let mut app = app_with(&root, true);
+    paint(&mut app);
+    let row = row_of(&app, "a");
+    let click = |app: &mut App, modifiers| {
+        let (x, y) = tree_row_center(app, row);
+        app.modifiers = modifiers;
+        app.on_mouse_move(x, y);
+        app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_up(MouseButton::Left);
+        app.modifiers = winit::keyboard::ModifiersState::empty();
+        paint(app);
+    };
+    let labels = |app: &App| -> Vec<String> {
+        let ws = app.editor.workspace.as_ref().unwrap();
+        ws.rows().iter().map(|e| e.label().into_owned()).collect()
+    };
+    let alt = winit::keyboard::ModifiersState::ALT;
+
+    // 一次展开到底，单子目录照常合并。
+    click(&mut app, alt);
+    assert_eq!(labels(&app), ["a", "b/c", "d/e", "other"]);
+
+    // 再按 `⌥` 单击全部收起，之后普通单击只展开一层。
+    click(&mut app, alt);
+    assert_eq!(labels(&app), ["a", "other"]);
+    click(&mut app, winit::keyboard::ModifiersState::empty());
+    assert_eq!(labels(&app), ["a", "b", "d", "other"]);
 }

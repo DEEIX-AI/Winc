@@ -208,6 +208,7 @@ fn round_trips_through_json() {
         markdown_remote_images: Some(false),
         update_auto_check: Some(false),
         confirm_drag_and_drop: Some(false),
+        compact_folders: Some(false),
         external_terminal: Some("test-terminal".to_string()),
         terminal_enabled: Some(true),
         terminal_scrollback: Some(5000),

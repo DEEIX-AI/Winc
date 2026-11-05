@@ -340,6 +340,7 @@ impl App {
             return;
         };
         let sticky = self.tree_sticky_at(y).map(|s| s.level);
+        let segment = self.tree_segment_at(index, x);
         let Some(ws) = &mut self.editor.workspace else {
             return;
         };
@@ -352,7 +353,7 @@ impl App {
             return;
         }
         if !(ws.multi_selected() && ws.is_selected(index)) {
-            ws.select(Some(index));
+            ws.select_segment(index, segment.as_deref());
         }
         let mut drag = TreeDrag::new(ws, index, (x, y));
         drag.sticky = sticky;

@@ -487,13 +487,13 @@ impl App {
         let Some(ws) = &mut self.editor.workspace else {
             return;
         };
-        let Some(index) = ws.rows().iter().position(|e| e.path == path) else {
+        let Some(index) = ws.row_of(path) else {
             return;
         };
         let entry = &ws.rows()[index];
-        let (name, kind, depth, expanded) =
-            (entry.name.clone(), entry.kind, entry.depth, entry.expanded);
-        ws.select(Some(index));
+        let name = winc_editor::segment_name(path).into_owned();
+        let (kind, depth, expanded) = (entry.kind, entry.depth, entry.expanded);
+        ws.select_segment(index, Some(path));
 
         let mut field = TextField::default();
         field.set_text(&name);
@@ -637,7 +637,9 @@ impl App {
 
         // 选中原位置上的下一行，便于继续用 `⌘⌫` 连续删除。
         if let Some(ws) = &mut self.editor.workspace {
-            let was = ws.rows().iter().position(|e| deleted.contains(&e.path));
+            let was = ws.rows().iter().position(|e| {
+                deleted.contains(&e.path) || e.chain().iter().any(|p| deleted.contains(p))
+            });
             ws.refresh();
             let count = ws.rows().len();
             ws.select(was.filter(|_| count > 0).map(|i| i.min(count - 1)));
@@ -681,8 +683,8 @@ impl App {
                 .editor
                 .workspace
                 .as_ref()?
-                .selected_entry()
-                .map(|e| e.path.clone());
+                .current_path()
+                .map(Path::to_path_buf);
         }
         self.editor.active().and_then(|d| d.path.clone())
     }
