@@ -304,6 +304,7 @@ impl App {
             }
             UserEvent::ReplaceAllConfirmed(total) => self.replace_all_confirmed(total),
             UserEvent::TerminalClose(id) => self.confirmed_terminal_close(id),
+            UserEvent::TerminalRestart(id) => self.confirmed_terminal_restart(id),
             UserEvent::TerminalPaste(id, text) => self.confirmed_terminal_paste(id, text),
             UserEvent::TerminalQuit(ok) => {
                 if let Some(request) = self.quit_confirming.take()
@@ -468,7 +469,7 @@ impl App {
         // 预览和无法打开的文件不显示光标。离上次输入超过 `BLINK_STOP` 后光标停在亮着的状态。
         let typing = self.focus.is_field()
             || (self.focus == Focus::Terminal
-                && self.terminal.tab().is_some_and(|t| t.exited.is_none()))
+                && self.terminal.tab().is_some_and(|t| t.ended.is_none()))
             || (self.focus == Focus::Editor
                 && self.editor.active().is_some_and(|doc| {
                     doc.edits_text() || doc.diff.as_deref().is_some_and(|v| v.editing)
