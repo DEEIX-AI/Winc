@@ -17,7 +17,9 @@ use crate::app::{
     MESSAGE_LINE, MESSAGE_PAD,
 };
 use crate::icons::Direction;
-use crate::view::workspace::sidebar::git_color;
+use crate::view::workspace::sidebar::{
+    CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, fold_chain, git_color,
+};
 use crate::view::*;
 
 /// 绘制提交视图，返回提交信息里光标的矩形（窗口坐标，逻辑像素），供输入法定位候选框。
@@ -1110,9 +1112,6 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     }
 }
 
-/// 并起来的几级目录之间「/」两边各留的空隙（逻辑像素，经验值）。
-const DIR_SEPARATOR_GAP: f32 = 4.0;
-
 /// 返回并起来的几级目录（`Sources/DEEIXPET`）画出来的宽度（逻辑像素），见 [`draw_dir_label`]。
 fn dir_label_width(app: &App, frame: &mut Frame<'_>, label: &str) -> f32 {
     let size = app.fonts.ui;
@@ -1121,15 +1120,14 @@ fn dir_label_width(app: &App, frame: &mut Frame<'_>, label: &str) -> f32 {
         .split('/')
         .map(|part| frame.measure(FontKind::Ui, size, part))
         .sum();
-    let slash = frame.measure(FontKind::Ui, size, "/") + 2.0 * DIR_SEPARATOR_GAP;
+    let slash = frame.measure(FontKind::Ui, size, "/") + 2.0 * CHAIN_GAP;
     names + (parts - 1.0) * slash
 }
 
 /// 画目录行的名字。
 ///
-/// 只有一个子目录的几级并成一行，各级之间的「/」用淡色，两边留出空隙，能看出层级，不挤成
-/// 一个长名字。放不下 `room`（逻辑像素）时从中间截短，截短后仍按同样的样式绘制。返回名字
-/// 末尾的 x 坐标（逻辑像素）。
+/// 只有一个子目录的几级并成一行，样式与文件树中合并显示的目录相同。放不下 `room`（逻辑像素）时
+/// 折叠中间的各级（见 [`fold_chain`]），目录名不会被截成半个。返回名字末尾的 x 坐标（逻辑像素）。
 fn draw_dir_label(
     app: &App,
     frame: &mut Frame<'_>,
@@ -1140,29 +1138,29 @@ fn draw_dir_label(
 ) -> f32 {
     let p = app.palette;
     let size = app.fonts.ui;
-    let mut parts: Vec<String> = label.split('/').map(str::to_owned).collect();
-    if let Some(room) = room.filter(|&room| dir_label_width(app, frame, label) > room) {
-        // 按「 / 」连成一段截短，再按「/」拆回各级并去掉两侧空格。绘制时每个分隔符比「 / 」宽，
-        // 截短的宽度扣除这部分差值；省略号截掉分隔符时，拆出的级数相应减少。
-        let spaced = label.replace('/', " / ");
-        let styled = frame.measure(FontKind::Ui, size, "/") + 2.0 * DIR_SEPARATOR_GAP;
-        let extra = styled - frame.measure(FontKind::Ui, size, " / ");
-        let room = room - (parts.len() - 1) as f32 * extra.max(0.0);
-        let name = ellipsize(frame, &spaced, size, room);
-        parts = name
-            .split('/')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
+    let names: Vec<&str> = label.split('/').collect();
+    let widths: Vec<f32> = names
+        .iter()
+        .map(|name| frame.measure(FontKind::Ui, size, name))
+        .collect();
+    let slash = frame.measure(FontKind::Ui, size, "/");
+    let step = slash + 2.0 * CHAIN_GAP;
+    let fold = frame.measure(FontKind::Ui, size, CHAIN_FOLD);
+    let parts = match room {
+        Some(room) => fold_chain(&widths, step, fold, names.len() - 1, room).0,
+        None => (0..names.len()).map(Some).collect(),
+    };
+    let separator = p.text.alpha(p.text.a * CHAIN_SEPARATOR);
     let mut x = x;
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
-            x += DIR_SEPARATOR_GAP;
-            x = ui_text(frame, app, x, band, "/", p.text_dim, clip) + DIR_SEPARATOR_GAP;
+            x += CHAIN_GAP;
+            x = ui_text(frame, app, x, band, "/", separator, clip) + CHAIN_GAP;
         }
-        x = ui_text(frame, app, x, band, part, p.text, clip);
+        x = match part {
+            Some(index) => ui_text(frame, app, x, band, names[*index], p.text, clip),
+            None => ui_text(frame, app, x, band, CHAIN_FOLD, separator, clip),
+        };
     }
     x
 }

@@ -731,6 +731,62 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
 }
 
 #[test]
+fn option_clicking_a_changed_folder_collapses_and_expands_it_all_the_way() {
+    let Some(dir) = deep_changes_repo("git-recursive") else {
+        return;
+    };
+    let mut app = app_with(&dir, false);
+    app.commit.set_flat(false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.run_action(Action::ShowCommit);
+    app.press_commit(CommitTarget::Group(CommitGroup::Changes));
+    app.press_commit(CommitTarget::Group(CommitGroup::Changes));
+    paint(&mut app);
+    let dirs = |app: &App| -> Vec<(PathBuf, bool)> {
+        app.commit_rows()
+            .iter()
+            .filter_map(|row| match row {
+                CommitRow::Dir { group, dir, .. } => {
+                    Some((dir.clone(), app.commit.dir_collapsed(*group, dir)))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let first = app
+        .commit_rows()
+        .iter()
+        .position(|row| matches!(row, CommitRow::Dir { .. }))
+        .unwrap();
+    let inner = dirs(&app).len();
+    assert!(inner > 1);
+    let alt = winit::keyboard::ModifiersState::ALT;
+
+    // 递归收起：只剩最上面的目录行，且收起。
+    app.modifiers = alt;
+    app.press_commit(CommitTarget::Dir(first));
+    assert_eq!(dirs(&app).len(), 1);
+    assert!(dirs(&app)[0].1);
+
+    // 普通单击只展开一层：下一级目录还是收起的。
+    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.press_commit(CommitTarget::Dir(first));
+    assert!(dirs(&app).iter().skip(1).all(|(_, collapsed)| *collapsed));
+
+    // 先收起再递归展开：各级全部展开，行数回到最初。
+    app.press_commit(CommitTarget::Dir(first));
+    app.modifiers = alt;
+    app.press_commit(CommitTarget::Dir(first));
+    app.modifiers = winit::keyboard::ModifiersState::empty();
+    assert_eq!(dirs(&app).len(), inner);
+    assert!(dirs(&app).iter().all(|(_, collapsed)| !collapsed));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
     let Some(dir) = deep_changes_repo("git-sticky-click") else {
         return;
