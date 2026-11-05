@@ -150,6 +150,10 @@ pub enum Action {
     ToggleWordWrap,
     /// 显示或隐藏编辑区右侧的缩略图。
     ToggleMinimap,
+    /// 显示或隐藏行号。
+    ToggleLineNumbers,
+    /// 显示或隐藏状态栏。
+    ToggleStatusBar,
     TogglePreview,
     NextDifference,
     PreviousDifference,
@@ -336,6 +340,8 @@ impl Action {
             ToggleStickyScroll => t!("cmd-toggle-sticky-scroll"),
             ToggleWordWrap => t!("cmd-toggle-word-wrap"),
             ToggleMinimap => t!("cmd-toggle-minimap"),
+            ToggleLineNumbers => t!("cmd-toggle-line-numbers"),
+            ToggleStatusBar => t!("cmd-toggle-status-bar"),
             NextDifference => t!("cmd-next-difference"),
             PreviousDifference => t!("cmd-previous-difference"),
             GitShowChanges => t!("cmd-git-show-changes"),
@@ -505,6 +511,8 @@ impl Action {
             ToggleStickyScroll => "Toggle Editor Sticky Scroll",
             ToggleWordWrap => "Toggle Word Wrap",
             ToggleMinimap => "Toggle Minimap",
+            ToggleLineNumbers => "Toggle Line Numbers",
+            ToggleStatusBar => "Toggle Status Bar",
             NextDifference => "Go to Next Difference",
             PreviousDifference => "Go to Previous Difference",
             GitShowChanges => "Git: Open Changes",
@@ -621,12 +629,13 @@ impl Action {
             RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
             ToggleSidebar | FocusSidebar | ShowFiles | ZoomIn | ZoomOut | ResetZoom | ThemeAuto
             | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | ToggleMinimap
-            | TogglePreview | NextDifference | PreviousDifference | GitShowChanges | GitShowLog
-            | GitSwitchWorktree | GitNewWorktree | GitFileHistory | GitBlame | ShowCommit
-            | GitRevertChange | ToggleTerminal | ClearTerminal | NewTerminal | CloseTerminal
-            | NextTerminal | PreviousTerminal | FindInTerminal | MaximizeTerminal
-            | RenameTerminal | PreviousCommand | NextCommand | FoldOutput | UnfoldOutput
-            | NextError | PreviousError | SendToTerminal => Group::View,
+            | ToggleLineNumbers | ToggleStatusBar | TogglePreview | NextDifference
+            | PreviousDifference | GitShowChanges | GitShowLog | GitSwitchWorktree
+            | GitNewWorktree | GitFileHistory | GitBlame | ShowCommit | GitRevertChange
+            | ToggleTerminal | ClearTerminal | NewTerminal | CloseTerminal | NextTerminal
+            | PreviousTerminal | FindInTerminal | MaximizeTerminal | RenameTerminal
+            | PreviousCommand | NextCommand | FoldOutput | UnfoldOutput | NextError
+            | PreviousError | SendToTerminal => Group::View,
         }
     }
 
@@ -889,6 +898,8 @@ pub const ACTIONS: &[Action] = {
         ToggleStickyScroll,
         ToggleWordWrap,
         ToggleMinimap,
+        ToggleLineNumbers,
+        ToggleStatusBar,
         TogglePreview,
         ShowCommit,
         GitShowChanges,

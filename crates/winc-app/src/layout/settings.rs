@@ -59,6 +59,7 @@ impl SettingsPage {
                         Setting::UiFont,
                         Setting::UiSize,
                     ]),
+                    plain(vec![Setting::StatusBar, Setting::RestoreWindow]),
                     Section {
                         title: Some(t!("settings-light-theme")),
                         items: vec![Setting::LightTheme],
@@ -85,6 +86,7 @@ impl SettingsPage {
                     Setting::StickyScroll,
                     Setting::WordWrap,
                     Setting::Minimap,
+                    Setting::LineNumbers,
                 ]),
                 plain(vec![Setting::RemoteImages]),
             ],
@@ -183,6 +185,12 @@ pub enum Setting {
     WordWrap,
     /// 编辑区右侧的缩略图。
     Minimap,
+    /// 显示行号。
+    LineNumbers,
+    /// 显示状态栏。
+    StatusBar,
+    /// 记住窗口大小和位置。
+    RestoreWindow,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
     /// Markdown 预览联网加载网址的图片。
@@ -251,7 +259,9 @@ impl Setting {
             | Setting::DarkTheme
             | Setting::UiFont
             | Setting::UiSize
-            | Setting::SystemTitleBar => SettingsPage::Appearance,
+            | Setting::SystemTitleBar
+            | Setting::StatusBar
+            | Setting::RestoreWindow => SettingsPage::Appearance,
             Setting::EditorFont
             | Setting::EditorSize
             | Setting::TabWidth
@@ -262,6 +272,7 @@ impl Setting {
             | Setting::StickyScroll
             | Setting::WordWrap
             | Setting::Minimap
+            | Setting::LineNumbers
             | Setting::RemoteImages => SettingsPage::Editor,
             Setting::Version | Setting::Updates | Setting::CheckUpdates => SettingsPage::About,
             Setting::FormatOnSave
@@ -295,6 +306,9 @@ impl Setting {
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::WordWrap => t!("settings-word-wrap"),
             Setting::Minimap => t!("settings-minimap"),
+            Setting::LineNumbers => t!("settings-line-numbers"),
+            Setting::StatusBar => t!("settings-status-bar"),
+            Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::CompactFolders => t!("settings-compact-folders"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::CheckUpdates => t!("settings-check-updates"),
@@ -327,6 +341,9 @@ impl Setting {
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
+            Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
+            Setting::StatusBar => Some(t!("settings-status-bar-desc")),
+            Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
@@ -355,6 +372,9 @@ impl Setting {
             | Setting::StickyScroll
             | Setting::WordWrap
             | Setting::Minimap
+            | Setting::LineNumbers
+            | Setting::StatusBar
+            | Setting::RestoreWindow
             | Setting::RemoteImages
             | Setting::CheckUpdates
             | Setting::FormatOnSave

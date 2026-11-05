@@ -1,5 +1,8 @@
 //! 事件循环：处理窗口事件和后台送回的事件，并安排下一次唤醒。
 
+use super::placement::{
+    DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, place, screens, window_position,
+};
 use super::*;
 
 impl ApplicationHandler<UserEvent> for App {
@@ -18,14 +21,28 @@ impl ApplicationHandler<UserEvent> for App {
             .workspace
             .as_ref()
             .map_or("winc", |w| w.name.as_str());
+        // 测量时窗口的大小要固定，结果才能比较。
+        let saved = self
+            .state
+            .window
+            .filter(|_| self.config.restore_window != Some(false) && !self.bench.silent());
+        let placed = saved.map(|frame| place(&frame, &screens(event_loop)));
+        let (width, height) =
+            placed.map_or((DEFAULT_WIDTH, DEFAULT_HEIGHT), |p| (p.width, p.height));
         let mut attributes = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(LogicalSize::new(1280.0, 820.0))
-            .with_min_inner_size(LogicalSize::new(640.0, 420.0))
+            .with_inner_size(LogicalSize::new(width, height))
+            .with_min_inner_size(LogicalSize::new(MIN_WIDTH, MIN_HEIGHT))
             .with_theme(forced_theme(&self.theme_choice))
             .with_visible(false);
+        // 从已有窗口打开的新窗口沿用大小，位置仍然错开。
         if let Some(position) = self.cascade.take() {
             attributes = attributes.with_position(position);
+        } else if let (Some(frame), Some(placed)) = (saved, placed) {
+            attributes = attributes.with_maximized(frame.maximized);
+            if let Some(at) = placed.position {
+                attributes = attributes.with_position(window_position(at, frame.scale));
+            }
         }
 
         // 由应用绘制标题栏时不要系统的边框和标题栏（见 `App::sync_title_bar`）。
@@ -63,6 +80,9 @@ impl ApplicationHandler<UserEvent> for App {
 
         #[cfg(target_os = "macos")]
         crate::macos::keep_title_bar_drags(&window);
+
+        // 一开始就最大化时量不到还原后的大小，先用记下的。
+        self.window_frame = saved;
 
         // 测量时窗口透明且鼠标点击穿透，必须在显示之前设置，保证没有任何一帧可见。
         #[cfg(target_os = "macos")]
@@ -115,6 +135,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.renderer = Some(renderer);
         self.measure_fonts();
         self.window = Some(window.clone());
+        self.note_window_frame();
         window.set_ime_allowed(true);
         self.place_traffic_lights();
         self.install_system_hooks();
@@ -176,7 +197,9 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => self.request_close_window(),
             WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::Moved(_) => self.note_window_frame(),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.note_window_frame();
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize();
                 }
@@ -531,6 +554,8 @@ impl App {
 
         earliest(&mut wake, self.scrollbar_tick(now));
 
+        earliest(&mut wake, self.settings_scroll_tick(now));
+
         earliest(&mut wake, self.format_progress_tick(now));
 
         earliest(&mut wake, self.log_tick(now));
@@ -565,6 +590,7 @@ impl App {
         if self.backup_pending() {
             self.back_up_for_quit();
         }
+        self.remember_window();
         self.save_session();
     }
 

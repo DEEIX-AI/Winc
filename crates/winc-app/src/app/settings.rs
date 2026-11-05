@@ -71,7 +71,17 @@ pub struct SettingsState {
     pub switch_slide: Option<(Setting, super::animation::Clock)>,
     /// 出现、消失动画用的快照，动画开头画一次存下来，动画结束就释放。
     pub cache: Option<DialogCache>,
+    /// 设置页滚动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
+    pub scroll_base: Option<winc_render::Snapshot>,
+    /// 最近一次滚动的时刻；未在滚动时为 `None`。
+    pub scrolled_at: Option<Instant>,
 }
+
+/// 停止滚动后保留快照的时长（毫秒）。
+///
+/// 取值约为 60 Hz 下 9 帧的间隔，滚动事件短暂间断时不必重新保存快照。这段时间内浮层下方的变化在
+/// 释放快照后统一绘制。
+const SCROLL_BASE_KEEP: Duration = Duration::from_millis(150);
 
 /// 设置浮层出现、消失的动画用的两张快照：动画开头画一次，途中每帧直接拿来用。
 #[derive(Debug)]
@@ -211,6 +221,8 @@ impl App {
             .clock(super::animation::DIALOG_OUT)
             .map(|clock| (false, clock));
         self.settings.cache = None;
+        self.settings.scroll_base = None;
+        self.settings.scrolled_at = None;
         self.settings.mode_slide = None;
         self.settings.switch_slide = None;
         self.settings.error = None;
@@ -389,7 +401,28 @@ impl App {
             self.settings_layout().max_scroll()
         };
         self.settings.scroll = (self.settings.scroll - dy).clamp(0.0, max);
+        self.settings.scrolled_at = Some(Instant::now());
         self.request_redraw();
+    }
+
+    /// 当前帧是否可以使用保存的快照：设置页正在滚动，且快照与窗口的尺寸、缩放比例相同。
+    pub(crate) fn settings_reuses_base(&self, bounds: Rect, scale: f32) -> bool {
+        self.settings.open
+            && self.settings.motion.is_none()
+            && self.settings.scrolled_at.is_some()
+            && (self.settings.scroll_base.as_ref()).is_some_and(|b| b.covers(bounds, scale))
+    }
+
+    /// 滚动结束后释放快照并请求重绘，显示滚动期间浮层下方的变化；返回下一次唤醒的时刻。
+    pub(crate) fn settings_scroll_tick(&mut self, now: Instant) -> Option<Instant> {
+        let due = self.settings.scrolled_at? + SCROLL_BASE_KEEP;
+        if now < due {
+            return Some(due);
+        }
+        self.settings.scrolled_at = None;
+        self.settings.scroll_base = None;
+        self.request_redraw();
+        None
     }
 
     /// 处理 `←` `→`（`forward` 为 `true` 时为 `→`）：数值减一或加一，主题在缩略图之间移动一张。
@@ -493,6 +526,9 @@ impl App {
             Setting::StickyScroll => self.config.sticky_scroll != Some(false),
             Setting::WordWrap => self.config.word_wrap == Some(true),
             Setting::Minimap => self.config.minimap == Some(true),
+            Setting::LineNumbers => self.config.line_numbers != Some(false),
+            Setting::StatusBar => self.config.status_bar != Some(false),
+            Setting::RestoreWindow => self.config.restore_window != Some(false),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::CheckUpdates => self.config.update_auto_check != Some(false),
@@ -524,6 +560,9 @@ impl App {
             Setting::StickyScroll => self.config.sticky_scroll = Some(on),
             Setting::WordWrap => self.config.word_wrap = Some(on),
             Setting::Minimap => self.config.minimap = Some(on),
+            Setting::LineNumbers => self.config.line_numbers = Some(on),
+            Setting::StatusBar => self.config.status_bar = Some(on),
+            Setting::RestoreWindow => self.config.restore_window = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::CheckUpdates => self.config.update_auto_check = Some(on),
@@ -540,8 +579,15 @@ impl App {
         if setting == Setting::WordWrap {
             self.word_wrap_changed();
         }
-        if setting == Setting::Minimap {
+        if matches!(
+            setting,
+            Setting::Minimap | Setting::LineNumbers | Setting::StatusBar
+        ) {
             self.relayout();
+        }
+        // 关掉以后不再沿用：之后再打开时从下一次关闭窗口开始记录。
+        if setting == Setting::RestoreWindow && !on {
+            self.update_state(|state| state.window = None);
         }
         if setting == Setting::CompactFolders {
             self.apply_compact_folders();
@@ -929,7 +975,9 @@ impl App {
             old.sticky_scroll != new.sticky_scroll,
         );
         let images = old.markdown_remote_images != new.markdown_remote_images;
-        let minimap = old.minimap != new.minimap;
+        let minimap = old.minimap != new.minimap
+            || old.line_numbers != new.line_numbers
+            || old.status_bar != new.status_bar;
         let compact = old.compact_folders != new.compact_folders;
         // 窗口字体同步。
         let glyph_language = old.language != new.language

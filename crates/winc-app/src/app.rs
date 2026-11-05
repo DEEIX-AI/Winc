@@ -806,6 +806,8 @@ pub struct App {
     pub fold_motion: Option<FoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
     pub(crate) scroll_glide: Option<ScrollGlide>,
+    /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
+    pub(crate) wheel_glide: Option<input::mouse::WheelGlide>,
     /// 文件树中正在改名字的项和输入框；没有时为 `None`。
     pub name_input: Option<NameInput>,
     /// 在文件树中按住的项；拖动该项可移动到其他目录。
@@ -1003,6 +1005,8 @@ pub struct App {
     pub(crate) config_rev: u64,
     /// 新窗口的位置：相对打开它的窗口往右下错开一段，建窗口时用一次。
     pub(crate) cascade: Option<winit::dpi::Position>,
+    /// 窗口没有最大化、全屏时的大小和位置，关闭时记下来。
+    pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口和打开它的窗口共用的字体和字形缓存（建渲染器时用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 窗口完全看不见（被挡住、最小化、在别的桌面上）：不画，屏幕上那块画面标成可清除。
