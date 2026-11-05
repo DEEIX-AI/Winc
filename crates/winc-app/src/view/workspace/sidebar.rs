@@ -825,11 +825,11 @@ fn draw_name_input(
 /// 合并显示的目录中没有突出的各级的不透明度（经验值）：比突出的那一级淡，仍能看清。
 const CHAIN_DIM: f32 = 0.6;
 /// 合并显示的目录之间分隔符的不透明度（经验值）：比目录名淡，一眼能分出各级。
-const CHAIN_SEPARATOR: f32 = 0.45;
+pub(in crate::view) const CHAIN_SEPARATOR: f32 = 0.45;
 /// 合并显示的目录之间分隔符两侧各留的空白（逻辑像素，经验值）。
-const CHAIN_GAP: f32 = 3.0;
+pub(in crate::view) const CHAIN_GAP: f32 = 4.0;
 /// 合并显示的目录放不下时代替被折叠的各级的记号。
-const CHAIN_FOLD: &str = "…";
+pub(in crate::view) const CHAIN_FOLD: &str = "…";
 
 /// 返回文件树一行内名称起点的 x 坐标：位于缩进、箭头和图标之后，再加上横向滚动偏移
 /// `shift`（为负值）。
@@ -1082,7 +1082,7 @@ fn chain_folded(
 /// `widths` 是各级名字的宽度，`step` 是相邻两部分之间分隔符和留白的宽度，`fold` 是折叠记号的宽度。
 /// 第一级和当前的一级 `current` 始终显示，最后一级放得下就显示；还有空间时从离 `current` 近的
 /// 各级依次补上，距离相同时先补靠后的。
-fn fold_chain(
+pub(in crate::view) fn fold_chain(
     widths: &[f32],
     step: f32,
     fold: f32,

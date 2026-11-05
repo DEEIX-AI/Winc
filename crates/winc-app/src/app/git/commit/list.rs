@@ -387,6 +387,24 @@ impl App {
     }
 
     /// 以动画收起或展开第 `row` 行（组或目录），滚动位置不超过新的末尾。
+    /// 递归收起或展开第 `row` 行的目录（`⌥` 单击）：展开的目录连同各级子目录一起收起，收起的
+    /// 目录展开到底。只改内存中的记录，不访问磁盘。
+    pub(super) fn toggle_commit_dir_recursively(&mut self, row: usize) {
+        let before = self.commit_rows();
+        let (Some(CommitRow::Dir { group, dir, .. }), Some(status), Some(root)) = (
+            before.get(row),
+            self.git.status.as_ref(),
+            self.git.root.as_deref(),
+        ) else {
+            return;
+        };
+        let collapse = !self.commit.dir_collapsed(*group, dir);
+        self.commit
+            .set_dir_tree_collapsed(status, root, (*group, dir), collapse);
+        self.start_commit_motion(Rc::clone(&before), row);
+        self.commit.scroll = self.commit.scroll.min(self.commit_max_scroll());
+    }
+
     pub(super) fn toggle_commit_row(&mut self, row: usize) {
         let before = self.commit_rows();
         match before.get(row) {

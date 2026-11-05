@@ -777,6 +777,10 @@ impl App {
                 self.focus = Focus::CommitList;
                 self.select_commit_rows(row);
             }
+            // `⌥` 单击目录：递归收起或展开。
+            CommitTarget::Dir(row) if self.modifiers.alt_key() => {
+                self.toggle_commit_dir_recursively(row);
+            }
             CommitTarget::Dir(row) => self.toggle_commit_row(row),
             CommitTarget::DirCheck(row) => {
                 let rows = self.commit_rows();

@@ -143,6 +143,35 @@ impl CommitState {
         self.layout += 1;
     }
 
+    /// 收起（`collapse` 为真）或展开组 `group` 里的目录 `dir` 和它下面的各级目录。
+    pub(super) fn set_dir_tree_collapsed(
+        &mut self,
+        status: &Status,
+        root: &Path,
+        (group, dir): (CommitGroup, &Path),
+        collapse: bool,
+    ) {
+        // 收起的目录下面的行不会排出来：先全部展开排一遍，才看得到各级目录。
+        let collapsed = std::mem::take(&mut self.collapsed_dirs[group.index()]);
+        let all = self.build_rows(status, root);
+        self.collapsed_dirs[group.index()] = collapsed;
+        let under = all.iter().filter_map(|row| match row {
+            CommitRow::Dir {
+                group: g, dir: d, ..
+            } if *g == group && d.starts_with(dir) => Some(d.clone()),
+            _ => None,
+        });
+        let dirs = &mut self.collapsed_dirs[group.index()];
+        for path in under {
+            if collapse {
+                dirs.insert(path);
+            } else {
+                dirs.remove(&path);
+            }
+        }
+        self.layout += 1;
+    }
+
     /// 设定平铺（`true`）或按目录排成树。
     pub(crate) fn set_flat(&mut self, flat: bool) {
         if self.flat != flat {
