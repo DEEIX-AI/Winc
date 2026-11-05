@@ -432,6 +432,9 @@ impl App {
         }
 
         let from = std::mem::replace(&mut self.sidebar_view, view);
+        if (from == SidebarView::Commit) != (view == SidebarView::Commit) {
+            std::mem::swap(&mut self.panel_width, &mut self.stashed_panel_width);
+        }
         self.view_slide = self
             .clock(crate::app::animation::VIEW_SLIDE)
             .map(|clock| (from, clock));

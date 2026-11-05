@@ -1628,3 +1628,53 @@ fn a_rewritten_branch_is_not_force_pushed_without_confirmation() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&remote);
 }
+
+#[test]
+fn the_commit_view_keeps_its_own_sidebar_width() {
+    use crate::theme::{DEFAULT_COMMIT_PANEL_WIDTH, DEFAULT_PANEL_WIDTH};
+
+    let Some((mut app, root)) = git_app("git-commit-width", false) else {
+        return;
+    };
+    paint(&mut app);
+    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.panel_width, DEFAULT_COMMIT_PANEL_WIDTH);
+
+    // 拖动分隔条只改提交视图的宽度，并记进状态。
+    let splitter = app.layout.sidebar.right();
+    let y = app.layout.sidebar.y + 100.0;
+    app.drag = crate::app::Drag::Splitter {
+        start_x: splitter,
+        start_width: app.panel_width,
+    };
+    app.on_mouse_move(splitter + 40.0, y);
+    app.on_mouse_up(MouseButton::Left);
+    let dragged = DEFAULT_COMMIT_PANEL_WIDTH + 40.0;
+    assert_eq!(app.panel_width, dragged);
+    assert_eq!(app.state.commit_panel_width, Some(dragged));
+
+    // 切到文件树还是它的宽度；切回来还是拖过的宽度。
+    app.show_files();
+    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    // 在文件树里拖动不写状态。
+    app.remember_commit_panel_width();
+    assert_eq!(app.state.commit_panel_width, Some(dragged));
+    app.run_action(Action::ShowCommit);
+    assert_eq!(app.panel_width, dragged);
+
+    // 搜索和文件树共用一个宽度。
+    app.show_files();
+    app.set_sidebar_view(SidebarView::Search);
+    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+
+    // 新窗口、下次启动从状态恢复，太窄的值抬到最小宽度。
+    app.show_files();
+    app.state.commit_panel_width = Some(10.0);
+    app.restore_commit_panel_width();
+    app.run_action(Action::ShowCommit);
+    assert_eq!(app.panel_width, crate::theme::MIN_PANEL_WIDTH);
+
+    let _ = std::fs::remove_dir_all(&root);
+}

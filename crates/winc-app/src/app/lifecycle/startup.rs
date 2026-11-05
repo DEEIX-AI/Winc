@@ -110,6 +110,7 @@ impl App {
             tree_overflow: None,
             scrollbars: Scrollbars::default(),
             panel_width: DEFAULT_PANEL_WIDTH,
+            stashed_panel_width: crate::theme::DEFAULT_COMMIT_PANEL_WIDTH,
             split_share: None,
             panel_visible,
             sidebar_motion: None,

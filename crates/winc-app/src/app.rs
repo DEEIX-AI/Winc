@@ -750,6 +750,8 @@ pub struct App {
 
     // 侧栏和文件树
     panel_width: f32,
+    /// 没在显示的那一组视图的侧栏宽度：提交视图和其他视图（文件、搜索）各记各的，切换时互换。
+    stashed_panel_width: f32,
     /// 分栏预览时源代码一侧占编辑区宽度的比例，0 到 1；`None` 表示各占一半。拖动中间的分隔线
     /// 时改变，所有分栏的标签共用。
     pub(crate) split_share: Option<f32>,

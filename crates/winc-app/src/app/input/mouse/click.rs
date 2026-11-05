@@ -151,9 +151,14 @@ impl App {
             }
             _ if self.name_input.is_some() => self.submit_name_input(),
             Target::Search => self.click_search(x, y),
-            // 双击分隔条恢复默认宽度。
+            // 双击分隔条恢复这一组视图的默认宽度。
             Target::Splitter if self.click_count(x, y) == 2 => {
-                self.panel_width = DEFAULT_PANEL_WIDTH;
+                self.panel_width = if self.sidebar_view == SidebarView::Commit {
+                    crate::theme::DEFAULT_COMMIT_PANEL_WIDTH
+                } else {
+                    DEFAULT_PANEL_WIDTH
+                };
+                self.remember_commit_panel_width();
                 self.relayout();
                 self.request_redraw();
             }
