@@ -129,6 +129,7 @@ const EDITOR: &[Field] = &[
     bool_field!("openFolderInNewWindow", open_folder_in_new_window),
     bool_field!("stickyScroll", sticky_scroll),
     bool_field!("wordWrap", word_wrap),
+    bool_field!("minimap", minimap),
 ];
 
 /// `ui` 一节。

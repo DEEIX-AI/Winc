@@ -336,6 +336,8 @@ impl Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hover {
     None,
+    /// 编辑区右侧的缩略图。
+    Minimap,
     /// 应用绘制的标题栏上的窗口按钮。
     WindowControl(WindowControl),
     /// 可以拖动改变窗口大小的边缘，参数是方向。
@@ -530,6 +532,11 @@ enum Drag {
     LogDivider {
         start_x: f32,
         start_width: f32,
+    },
+    /// 拖动缩略图的滑块；指针在纵坐标 `from`（逻辑像素）时，滚动位置是 `scroll`。
+    Minimap {
+        from: f32,
+        scroll: f32,
     },
     /// 拖动滚动条。
     ///
@@ -777,6 +784,8 @@ pub struct App {
     pub tree_scroll_x: f32,
     /// 文件树中最宽一行的内容宽度，横向滚动范围和滑块据此计算；绘制时量出。
     pub tree_content_w: f32,
+    /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
+    pub text_content_w: f32,
     /// 文件树中连续键入的字符与最后一次键入的时刻，用于跳到名称以这些字符开头的行
     /// （`App::on_key_tree`）。
     pub(crate) tree_typed: Option<(String, std::time::Instant)>,

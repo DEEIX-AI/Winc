@@ -91,6 +91,74 @@ impl App {
         self.flash(message);
     }
 
+    /// 返回缩略图最上面显示的行和滑块的位置。
+    fn minimap_place(&self) -> (usize, Rect) {
+        let area = self.layout.minimap;
+        let scroll = self.editor.active().map_or(0.0, |doc| doc.scroll_line);
+        let shown = (area.h / MINIMAP_ROW).ceil() as usize;
+        let first = crate::layout::minimap_first_row(
+            self.row_count(),
+            shown,
+            scroll,
+            self.max_scroll_line(),
+        );
+        let slider = Rect::new(
+            area.x,
+            area.y + (scroll - first as f32) * MINIMAP_ROW,
+            area.w,
+            self.visible_lines() as f32 * MINIMAP_ROW,
+        );
+        (first, slider)
+    }
+
+    /// 返回绘制缩略图所需的状态：最上面显示的行、滑块的位置，以及滑块是否加深。
+    pub(crate) fn minimap_view(&self) -> (usize, Rect, bool) {
+        let active = self.hover == Hover::Minimap || matches!(self.drag, Drag::Minimap { .. });
+        let (first, slider) = self.minimap_place();
+        (first, slider, active)
+    }
+
+    /// 在缩略图上按下，开始拖动滑块。
+    ///
+    /// 点在滑块外时视为按在滑块中心：滑块移到指针下面，之后继续按指针的位移拖动。
+    pub(in crate::app) fn press_minimap(&mut self, y: f32) {
+        let (_, slider) = self.minimap_place();
+        let scroll = self.editor.active().map_or(0.0, |doc| doc.scroll_line);
+        let from = if y < slider.y || y >= slider.bottom() {
+            slider.y + slider.h / 2.0
+        } else {
+            y
+        };
+        self.drag = Drag::Minimap { from, scroll };
+        self.drag_minimap(y, from, scroll);
+    }
+
+    /// 拖动缩略图的滑块：滚动位置从按下时的 `scroll` 起，按指针相对按下点 `from` 的位移变化，
+    /// 指针不动时滚动位置不变。
+    ///
+    /// 滑块滚到底时的位置就是它能移动的距离，滑块因此跟着指针移动。
+    pub(in crate::app) fn drag_minimap(&mut self, y: f32, from: f32, scroll: f32) {
+        let total = self.row_count();
+        let shown = (self.layout.minimap.h / MINIMAP_ROW).ceil() as usize;
+        let max = self.max_scroll_line();
+        let first = crate::layout::minimap_first_row(total, shown, max, max);
+        let room = (max - first as f32) * MINIMAP_ROW;
+        if room > 0.0 {
+            self.set_minimap_scroll(scroll + (y - from) / room * max);
+        }
+    }
+
+    /// 把当前文档滚动到第 `line` 行（可以有小数），不播放平滑滚动。
+    fn set_minimap_scroll(&mut self, line: f32) {
+        let max = self.max_scroll_line();
+        self.scroll_glide = None;
+        if let Some(doc) = self.editor.active_mut() {
+            doc.scroll_line = line.clamp(0.0, max);
+        }
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
     /// 返回当前文档的文件行数；没有打开文档时为 0。
     pub(super) fn line_count(&self) -> usize {
         self.editor.active().map_or(0, |d| d.text().line_count())
@@ -308,8 +376,6 @@ impl App {
     /// 把当前文档的纵向和横向滚动位置限制在有效范围内。
     pub(in crate::app) fn clamp_scroll(&mut self) {
         let max_scroll = self.max_scroll_line();
-        let width = self.layout.text.w;
-        let visible = self.visible_lines() + 1;
         let cell = self.cell;
         let tab_width = self.editor.active_tab_width();
 
@@ -332,7 +398,33 @@ impl App {
             return;
         }
 
-        // 横向滚动范围只按可见行中最长的一行限制。
+        let max_x = self.text_max_scroll_x();
+        if let Some(doc) = self.editor.active_mut() {
+            doc.scroll_x = doc.scroll_x.clamp(0.0, max_x);
+        }
+    }
+
+    /// 返回编辑区水平滚动条的轨道：文字区，右端让出竖直滚动条。
+    pub(crate) fn text_hscroll_track(&self) -> Rect {
+        let t = self.layout.text;
+        Rect::new(t.x, t.y, (t.w - SCROLLBAR_HIT).max(0.0), t.h)
+    }
+
+    /// 返回当前文档文字的最大横向滚动量（逻辑像素）；差异视图和自动换行时为 0。
+    ///
+    /// 范围只按可见行中最长的一行计算。
+    pub(crate) fn text_max_scroll_x(&mut self) -> f32 {
+        let width = self.layout.text.w;
+        let visible = self.visible_lines() + 1;
+        let cell = self.cell;
+        let tab_width = self.editor.active_tab_width();
+        let Some(doc) = self.editor.active_mut() else {
+            return 0.0;
+        };
+        if doc.diff.is_some() || doc.is_wrapping() {
+            return 0.0;
+        }
+
         let segments =
             doc.folds()
                 .segments(doc.scroll_line as usize, visible, doc.text().line_count());
@@ -356,8 +448,7 @@ impl App {
                     std::ops::ControlFlow::Continue(())
                 });
         }
-        let max_x = (widest as f32 * cell - width + TEXT_PAD + cell * 8.0).max(0.0);
-        doc.scroll_x = doc.scroll_x.clamp(0.0, max_x);
+        (widest as f32 * cell - width + TEXT_PAD + cell * 8.0).max(0.0)
     }
 
     /// 写入剪贴板。

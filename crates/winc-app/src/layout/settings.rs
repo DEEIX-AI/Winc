@@ -83,6 +83,7 @@ impl SettingsPage {
                     Setting::RestoreFolder,
                     Setting::StickyScroll,
                     Setting::WordWrap,
+                    Setting::Minimap,
                 ]),
                 plain(vec![Setting::RemoteImages]),
             ],
@@ -179,6 +180,8 @@ pub enum Setting {
     StickyScroll,
     /// 自动换行。
     WordWrap,
+    /// 编辑区右侧的缩略图。
+    Minimap,
     /// Markdown 预览联网加载网址的图片。
     RemoteImages,
     /// 定时检查更新。
@@ -254,6 +257,7 @@ impl Setting {
             | Setting::RestoreFolder
             | Setting::StickyScroll
             | Setting::WordWrap
+            | Setting::Minimap
             | Setting::RemoteImages => SettingsPage::Editor,
             Setting::Version | Setting::Updates | Setting::CheckUpdates => SettingsPage::About,
             Setting::FormatOnSave
@@ -286,6 +290,7 @@ impl Setting {
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::WordWrap => t!("settings-word-wrap"),
+            Setting::Minimap => t!("settings-minimap"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::CheckUpdates => t!("settings-check-updates"),
             Setting::Version => t!("settings-version"),
@@ -316,6 +321,7 @@ impl Setting {
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
+            Setting::Minimap => Some(t!("settings-minimap-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
@@ -342,6 +348,7 @@ impl Setting {
             | Setting::RestoreFolder
             | Setting::StickyScroll
             | Setting::WordWrap
+            | Setting::Minimap
             | Setting::RemoteImages
             | Setting::CheckUpdates
             | Setting::FormatOnSave

@@ -105,6 +105,138 @@ fn mix_matches_per_channel() {
 }
 
 #[test]
+fn lerp_matches_per_channel() {
+    let per_channel = |d: u32, s: u32, a: u32| {
+        let ch = |shift: u32| {
+            let (d, s) = ((d >> shift) & 0xff, (s >> shift) & 0xff);
+            ((d * (256 - a) + s * a) >> 8) << shift
+        };
+        0xff00_0000 | ch(16) | ch(8) | ch(0)
+    };
+    let values = [0x00u32, 0x01, 0x7f, 0x80, 0xfe, 0xff];
+    for &d in &values {
+        for &s in &values {
+            let (d, s) = (d << 16 | (255 - d) << 8 | d, s << 16 | s << 8 | (255 - s));
+            for a in 0..=256 {
+                assert_eq!(lerp(d, s, a), per_channel(d, s, a), "{d:x} {s:x} {a}");
+            }
+        }
+    }
+}
+
+#[test]
+fn span_loops_match_the_single_pixel_functions() {
+    let row: Vec<u32> = (0..1031u32)
+        .map(|i| 0xff00_0000 | ((i * 89) & 0xff) << 16 | ((i * 3) & 0xff) << 8 | ((i * 17) & 0xff))
+        .collect();
+    let other: Vec<u32> = row.iter().rev().copied().collect();
+    let weights: Vec<u32> = (0..row.len() as u32).map(|i| i % 257).collect();
+    let run = |f: &dyn Fn(&mut [u32])| {
+        let mut out = row.clone();
+        f(&mut out);
+        out
+    };
+    for (color, a) in [(0x00c8_4010, 0), (0x80c8_4010, 128), (0xfe01_ff7f, 256)] {
+        let sa = a.min(255);
+
+        // 半透明矩形按颜色自带的透明度铺满，结果与逐像素调用 `blend` 相同。
+        let want: Vec<u32> = row.iter().map(|&p| blend(p, color, 255)).collect();
+        assert_eq!(run(&|o| wide::mix_span(o, color, color >> 24)), want);
+        let want: Vec<u32> = row.iter().map(|&p| mix(p, color, sa)).collect();
+        assert_eq!(run(&|o| wide::mix_span(o, color, sa)), want);
+
+        let want: Vec<u32> = other.iter().map(|&s| lerp(s, color, a)).collect();
+        assert_eq!(run(&|o| wide::lerp_to_color(o, &other, color, a)), want);
+
+        let want: Vec<u32> = (0..row.len()).map(|i| lerp(other[i], row[i], a)).collect();
+        assert_eq!(run(&|o| wide::lerp_rows(o, &other, &row, a)), want);
+
+        let want: Vec<u32> = (0..row.len()).map(|i| lerp(row[i], other[i], a)).collect();
+        assert_eq!(run(&|o| wide::lerp_onto(o, &other, a)), want);
+
+        let want: Vec<u32> = (0..row.len())
+            .map(|i| lerp(row[i], lerp(row[i], other[i], weights[i]), a))
+            .collect();
+        assert_eq!(
+            run(&|o| wide::lerp_pairs_onto(o, &row, &other, &weights, a)),
+            want
+        );
+    }
+}
+
+/// 逐像素判断覆盖率、按四个相邻像素取样的合成结果，与 `Canvas::blend_layer` 的算法无关。
+fn reference_layer(
+    (w, h): (usize, usize),
+    under: u32,
+    layer: &[u32],
+    (opacity, scale, radius): (f32, f32, f32),
+) -> Vec<u32> {
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let (hw, hh, r) = (cx * scale, cy * scale, radius * scale);
+    let channel = |p: u32, shift: u32| (p >> shift) & 0xff;
+    let mut out = vec![under; w * h];
+    for y in 0..h {
+        let py = (y as f32 + 0.5 - cy).abs();
+        let sy = (cy + (y as f32 + 0.5 - cy) / scale - 0.5).clamp(0.0, (h - 1) as f32);
+        let (y0, fy) = (sy.floor() as usize, ((sy - sy.floor()) * 256.0) as u32);
+        let y1 = (y0 + 1).min(h - 1);
+        for x in 0..w {
+            let px = (x as f32 + 0.5 - cx).abs();
+            if px > hw + 1.0 || py > hh + 1.0 {
+                continue;
+            }
+            let qx = px - (hw - r);
+            let qy = py - (hh - r);
+            let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+            let a = (opacity * (0.5 - d).clamp(0.0, 1.0) * 256.0).round() as u32;
+            let sx = (cx + (x as f32 + 0.5 - cx) / scale - 0.5).clamp(0.0, (w - 1) as f32);
+            let (x0, fx) = (sx.floor() as usize, ((sx - sx.floor()) * 256.0) as u32);
+            let x1 = (x0 + 1).min(w - 1);
+            let ch = |shift: u32| {
+                let c = |px: usize, py: usize| channel(layer[py * w + px], shift);
+                let top = c(x0, y0) * (256 - fx) + c(x1, y0) * fx;
+                let bottom = c(x0, y1) * (256 - fx) + c(x1, y1) * fx;
+                let s = (top * (256 - fy) + bottom * fy) >> 16;
+                let d = channel(under, shift);
+                ((d * (256 - a) + s * a) >> 8) << shift
+            };
+            out[y * w + x] = 0xff00_0000 | ch(16) | ch(8) | ch(0);
+        }
+    }
+    out
+}
+
+#[test]
+fn composite_matches_the_pixel_by_pixel_result() {
+    let (w, h) = (41usize, 29usize);
+    let under = 0xff20_3040u32;
+    let layer: Vec<u32> = (0..w * h)
+        .map(|i| 0xff00_0000 | ((i as u32 * 7) & 0xff) << 16 | ((i as u32 * 13) & 0xff) << 8 | 0x55)
+        .collect();
+    let area = IRect::new(0, 0, w as i32, h as i32);
+    for opacity in [0.0, 0.25, 0.6, 1.0] {
+        for scale in [0.5, 0.9, 0.97, 1.0] {
+            for radius in [0.0, 3.0, 8.0, 14.0] {
+                let mut px = vec![under; w * h];
+                canvas(&mut px, w, h).blend_layer(area, &layer, opacity, scale, radius);
+                let expected = reference_layer((w, h), under, &layer, (opacity, scale, radius));
+                for (i, (&got, &want)) in px.iter().zip(&expected).enumerate() {
+                    // 缩放时纵向、横向分两步取整，每个通道最多相差 2。
+                    let tolerance = if scale == 1.0 { 0 } else { 2 };
+                    for shift in [16, 8, 0] {
+                        let (g, e) = ((got >> shift) & 0xff, (want >> shift) & 0xff);
+                        assert!(
+                            g.abs_diff(e) <= tolerance,
+                            "pixel {i}: {got:x} vs {want:x}, {opacity} {scale} {radius}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn div255_exact() {
     for x in 0..=255 * 255 {
         assert_eq!(div255(x), (x as f32 / 255.0).round() as u32, "x={x}");

@@ -74,12 +74,7 @@ impl Shell {
     ///
     /// 第一次调用要先取到环境，会等待。
     pub fn find(&self, name: &str) -> Option<PathBuf> {
-        let path = self
-            .vars()
-            .iter()
-            .find(|(k, _)| k == "PATH")
-            .map(|(_, v)| v);
-        find_in_path(name, path.map(OsString::as_os_str))
+        find_in_path(name, path_value(self.vars(), cfg!(windows)))
     }
 
     /// 返回运行 `program` 的命令：环境换成用户 shell 的环境，并设置 `NO_COLOR=1`。
@@ -93,6 +88,21 @@ impl Shell {
             .env("NO_COLOR", "1");
         command
     }
+}
+
+/// 返回环境 `vars` 中 `PATH` 的值。
+///
+/// Windows 上环境变量名不区分大小写，系统默认写作 `Path`；`ignore_case` 为真时按此比较。
+fn path_value(vars: &Vars, ignore_case: bool) -> Option<&OsStr> {
+    vars.iter()
+        .find(|(name, _)| {
+            if ignore_case {
+                name.eq_ignore_ascii_case("PATH")
+            } else {
+                name == "PATH"
+            }
+        })
+        .map(|(_, value)| value.as_os_str())
 }
 
 /// 在 `path`（`PATH` 的值）中查找程序；只考虑绝对路径的目录。

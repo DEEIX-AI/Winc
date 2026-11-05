@@ -32,6 +32,8 @@ pub enum PanelButton {
     Word,
     /// 使用正则表达式。
     Regex,
+    /// 也搜索被忽略的文件。
+    Ignored,
     /// 全部替换。
     ReplaceAll,
     /// 结果统计行右端的「过滤」按钮：展开或收起「包含」「排除」两个输入。
@@ -95,6 +97,8 @@ pub struct PanelParts {
     pub replace_band: Rect,
     /// 替换输入框内的「全部替换」按钮，和查找输入框里的「过滤」按钮对齐；收起替换时尺寸为 0。
     pub replace_all: Rect,
+    /// 「排除」输入框内的「也搜索被忽略的文件」开关；收起时尺寸为 0。
+    pub ignored_toggle: Rect,
     /// 查找输入框最右端的「过滤」按钮：展开或收起「包含」「排除」。
     pub details: Rect,
     /// 「包含」输入框；收起时尺寸为 0。
@@ -115,8 +119,15 @@ impl PanelParts {
     /// `panel` 为侧栏中顶栏以下的区域；`replace_shown` 为替换行展开的比例（0 为收起，
     /// 1 为完全展开），`details_shown` 为「包含」「排除」两行展开的比例；
     /// `summary` 表示结果统计行是否有内容。展开途中各行只占比例对应的高度，
-    /// 下方的行随之移动；输入框尺寸不变，从上一行下方滑出。
-    pub fn new(panel: Rect, replace_shown: f32, details_shown: f32, summary: bool) -> PanelParts {
+    /// 下方的行随之移动；输入框尺寸不变，从上一行下方滑出。`heights` 是查找、替换输入框的高度，
+    /// 文字折成多行时大于 [`PANEL_FIELD`]。
+    pub fn new(
+        panel: Rect,
+        replace_shown: f32,
+        details_shown: f32,
+        summary: bool,
+        heights: (f32, f32),
+    ) -> PanelParts {
         let header = Rect::new(panel.x, panel.y, panel.w, SIDEBAR_HEADER);
         let right = header.right() - 8.0;
         let count = PanelTool::ALL.len();
@@ -127,9 +138,15 @@ impl PanelParts {
         let width = (right - left).max(0.0);
         let mut y = header.bottom() + SIDEBAR_FIRST;
 
-        let query = Rect::new(left, y, width, PANEL_FIELD);
+        let query = Rect::new(left, y, width, heights.0);
         let inset = (PANEL_FIELD - PANEL_TOGGLE_H) / 2.0;
-        let expand = Rect::new(left + inset, y + inset, 20.0, PANEL_TOGGLE_H);
+        // 箭头在输入框的高度上居中，其余按钮留在第一行。
+        let expand = Rect::new(
+            left + inset,
+            y + (heights.0 - PANEL_TOGGLE_H) / 2.0,
+            20.0,
+            PANEL_TOGGLE_H,
+        );
         // 开关、「过滤」在输入框内靠右，从右往左排：都是正方形，彼此相隔 `BUTTON_GAP`。
         let toggle = |right: f32, y: f32| {
             Rect::new(
@@ -156,19 +173,20 @@ impl PanelParts {
 
         let row = PANEL_GAP + PANEL_FIELD;
         let (replace, replace_all, replace_band) = if replace_shown > 0.0 {
-            let (area, shift) = band(&mut y, replace_shown, row);
+            let (area, shift) = band(&mut y, replace_shown, PANEL_GAP + heights.1);
             let top = area.y + shift + PANEL_GAP;
-            let field = Rect::new(left, top, width, PANEL_FIELD);
+            let field = Rect::new(left, top, width, heights.1);
             (field, toggle(field.right() - inset, top), area)
         } else {
             Default::default()
         };
 
-        let (include, exclude, details_band) = if details_shown > 0.0 {
+        let (include, exclude, details_band, ignored_toggle) = if details_shown > 0.0 {
             let (area, shift) = band(&mut y, details_shown, 2.0 * row);
             let include = Rect::new(left, area.y + shift + PANEL_GAP, width, PANEL_FIELD);
             let exclude = Rect::new(left, include.bottom() + PANEL_GAP, width, PANEL_FIELD);
-            (include, exclude, area)
+            let toggle = toggle(exclude.right() - inset, exclude.y);
+            (include, exclude, area, toggle)
         } else {
             Default::default()
         };
@@ -194,6 +212,7 @@ impl PanelParts {
             case_toggle,
             word_toggle,
             regex_toggle,
+            ignored_toggle,
             replace,
             replace_all,
             replace_band,
@@ -215,6 +234,7 @@ impl PanelParts {
             (self.case_toggle, PanelButton::Case),
             (self.word_toggle, PanelButton::Word),
             (self.regex_toggle, PanelButton::Regex),
+            (self.ignored_toggle, PanelButton::Ignored),
             (self.details, PanelButton::Details),
         ]
         .into_iter()

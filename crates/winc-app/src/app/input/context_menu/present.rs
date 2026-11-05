@@ -316,12 +316,23 @@ impl App {
             MenuTarget::Project => {
                 let root = self.editor.root();
                 let current = root.and_then(|r| self.state.recent.iter().position(|p| p == r));
-                let mut menu = crate::app::git::worktree::worktree_entries(
+                // 有多个仓库时列在最上面，点了切换。
+                let repositories = self.git.repositories.len();
+                let mut menu: Vec<MenuEntry> = Vec::new();
+                if repositories >= 2 {
+                    menu.push(MenuEntry::Item(MenuCommand::RepositoryHeading, false));
+                    menu.extend(
+                        (0..repositories)
+                            .map(|i| MenuEntry::Item(MenuCommand::SwitchRepository(i), true)),
+                    );
+                    menu.push(MenuEntry::Separator);
+                }
+                menu.extend(crate::app::git::worktree::worktree_entries(
                     &self.git.worktrees,
                     self.git.current_worktree(),
                     self.git.status.is_some(),
                     self.branch.running.is_some(),
-                );
+                ));
                 menu.extend(project_menu(
                     self.state.recent.len(),
                     current,
@@ -675,6 +686,12 @@ impl App {
             MenuCommand::OpenWorktree(_)
             | MenuCommand::OpenWorktreeHere(_)
             | MenuCommand::RemoveWorktree(_) => self.worktree_label(command),
+            MenuCommand::SwitchRepository(i) => MenuLabel {
+                title: self.git_repository_name(i),
+                subtitle: self.git_repository_detail(i),
+                tooltip: (self.git.repositories.get(i))
+                    .map(|repo| winc_editor::display_path(repo, None)),
+            },
             MenuCommand::ToolAuto | MenuCommand::ToolPreset(_) => self.tool_label(command),
             MenuCommand::LogCheckout | MenuCommand::LogCherryPick | MenuCommand::LogNewWorktree => {
                 self.log_commit_label(command)
@@ -915,6 +932,9 @@ impl App {
         if let MenuCommand::OpenWorktree(i) = command {
             return self.git.current_worktree() == Some(i);
         }
+        if let MenuCommand::SwitchRepository(i) = command {
+            return self.git.repositories.get(i) == self.git.root.as_ref();
+        }
         if command == MenuCommand::ToggleBlame {
             return self.editor.active().is_some_and(|d| self.blame.is_on(d.id));
         }
@@ -1022,9 +1042,9 @@ impl App {
             MenuCommand::OpenRecent(_) | MenuCommand::OpenRecentInNewWindow(_) => {
                 Some(MenuIcon::Folder)
             }
-            MenuCommand::OpenWorktree(_) | MenuCommand::OpenWorktreeHere(_) => {
-                Some(MenuIcon::Worktree)
-            }
+            MenuCommand::OpenWorktree(_)
+            | MenuCommand::OpenWorktreeHere(_)
+            | MenuCommand::SwitchRepository(_) => Some(MenuIcon::Worktree),
             MenuCommand::ShowTab(i) => self.editor.documents.get(i).map(|_| MenuIcon::Tab(i)),
             _ => None,
         }
@@ -1130,6 +1150,7 @@ impl App {
 
     /// 处理对项目名的点击：在项目名下方弹出最近项目菜单。
     pub(in crate::app) fn open_project_menu(&mut self) {
+        self.git_discover();
         let hit = self.project_hit;
         self.open_button_menu(MenuButton::Project, MenuTarget::Project, menu_below(hit));
     }

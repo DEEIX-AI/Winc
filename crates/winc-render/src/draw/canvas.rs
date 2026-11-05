@@ -6,6 +6,8 @@
 use std::f32::consts::TAU;
 use std::ops::Range;
 
+mod wide;
+
 /// 物理像素下的矩形，左闭右开：包含 `(x0, y0)`，不含 `(x1, y1)`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IRect {
@@ -63,28 +65,17 @@ pub(crate) struct Canvas<'a> {
     pub stride: usize,
 }
 
-/// 双线性混合四个不透明像素：横向权重 `fx`、纵向权重 `fy`，单位是 1/256。
-///
-/// 像素依次是左上、右上、左下、右下。
-#[inline(always)]
-fn bilinear4([p00, p10, p01, p11]: [u32; 4], fx: u32, fy: u32) -> u32 {
-    let ch = |shift: u32| {
-        let c = |p: u32| (p >> shift) & 0xff;
-        let top = c(p00) * (256 - fx) + c(p10) * fx;
-        let bottom = c(p01) * (256 - fx) + c(p11) * fx;
-        ((top * (256 - fy) + bottom * fy) >> 16) << shift
-    };
-    0xff00_0000 | ch(16) | ch(8) | ch(0)
-}
-
 /// 按权重 `a`（单位 1/256，取值 0–256）从不透明像素 `d` 过渡到 `s`。
+///
+/// 红、蓝两个通道放在同一个 32 位整数里相隔 16 位的两格，一次乘法同时算两个通道；每格最大
+/// 255 × 256 = 65280，不超过 16 位，格之间不会进位，结果与逐个通道计算完全相同（见测试
+/// `lerp_matches_per_channel`），循环里也没有分支。
 #[inline(always)]
 fn lerp(d: u32, s: u32, a: u32) -> u32 {
-    let ch = |shift: u32| {
-        let (d, s) = ((d >> shift) & 0xff, (s >> shift) & 0xff);
-        ((d * (256 - a) + s * a) >> 8) << shift
-    };
-    0xff00_0000 | ch(16) | ch(8) | ch(0)
+    let da = 256 - a;
+    let rb = ((d & 0x00ff_00ff) * da + (s & 0x00ff_00ff) * a) >> 8;
+    let g = ((d & 0x0000_ff00) * da + (s & 0x0000_ff00) * a) >> 8;
+    0xff00_0000 | (rb & 0x00ff_00ff) | (g & 0x0000_ff00)
 }
 
 /// 返回 `x / 255` 四舍五入后的整数，对 `0..=65025` 精确（见测试 `div255_exact`）。
@@ -422,9 +413,7 @@ impl Canvas<'_> {
             return;
         }
         for (dst, src) in self.paste_rows(area, px) {
-            for (out, &p) in self.px[dst].iter_mut().zip(&px[src]) {
-                *out = lerp(p, tint, a);
-            }
+            wide::lerp_to_color(&mut self.px[dst], &px[src], tint, a);
         }
     }
 
@@ -432,8 +421,8 @@ impl Canvas<'_> {
     /// 半径 `radius`（物理像素）的圆角矩形，以中心缩放 `scale`，再按不透明度 `opacity`（0–1）叠上。
     ///
     /// 整层画完再一次性叠上去，半透明的卡片才不会透出它自己底下的边框和底色；圆角外面、缩小后
-    /// 空出来的地方不动，边缘按覆盖率柔化。缩放按双线性取样，一帧的代价与面积成正比（经验值：
-    /// 2× 屏上设置卡片大小约 3 ms）。
+    /// 空出来的地方不动，边缘按覆盖率柔化。缩放按双线性取样：每行先在纵向混合出一行像素，再在
+    /// 横向取样。每行的内部整段覆盖率相同，只有边缘和圆角逐像素计算覆盖率。
     pub fn blend_layer(
         &mut self,
         area: IRect,
@@ -465,48 +454,82 @@ impl Canvas<'_> {
         let (xs, ys) = (samples(w, cx), samples(h, cy));
         let scaled = (scale - 1.0).abs() >= 1e-4;
         let full = (opacity * 256.0).round() as u32;
+        // 边缘和圆角上的覆盖率（单位 1/256）：按像素中心到圆角矩形的距离计算。
+        let edge = |px: f32, py: f32| {
+            let qx = px - (hw - r);
+            let qy = py - (hh - r);
+            let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+            (opacity * (0.5 - d).clamp(0.0, 1.0) * 256.0).round() as u32
+        };
+        let columns = if scaled { w } else { 0 };
+        let (mut blended, mut before, mut after) = (
+            vec![0u32; columns],
+            vec![0u32; columns],
+            vec![0u32; columns],
+        );
+        let weights: Vec<u32> = xs.iter().map(|&(_, _, fx)| fx).collect();
 
         for (y, &(y0, y1, fy)) in ys.iter().enumerate() {
             let py = (y as f32 + 0.5 - cy).abs();
             if py > hh + 1.0 {
                 continue;
             }
-            let row = (area.y0 as usize + y) * self.stride + area.x0 as usize;
-            for (x, &(x0, x1, fx)) in xs.iter().enumerate() {
-                let px = (x as f32 + 0.5 - cx).abs();
-                if px > hw + 1.0 {
-                    continue;
-                }
-                // 离边一个像素以上、又不在圆角那一块里：整像素覆盖；否则按像素中心到圆角矩形的距离算覆盖率。
-                let inside =
-                    px < hw - 1.0 && py < hh - 1.0 && (px < hw - r - 1.0 || py < hh - r - 1.0);
-                let a = if inside {
-                    full
+            // 这一行里离边一个像素以上、又不在圆角那一块的列：`inner.0..inner.1`。
+            let half = if py >= hh - 1.0 {
+                0.0
+            } else if py < hh - r - 1.0 {
+                hw - 1.0
+            } else {
+                hw - r - 1.0
+            };
+            let inner = if half > 0.0 {
+                let from = ((cx - half - 0.5).floor() as isize + 1).clamp(0, w as isize) as usize;
+                let to = ((cx + half - 0.5).ceil() as isize).clamp(0, w as isize) as usize;
+                (from, to.max(from))
+            } else {
+                (w, w)
+            };
+            let source: &[u32] = if scaled {
+                let (top, bottom) = (&layer[y0 * w..][..w], &layer[y1 * w..][..w]);
+                wide::lerp_rows(&mut blended, top, bottom, fy);
+                &blended
+            } else {
+                &layer[y * w..][..w]
+            };
+            let sample = |x: usize| {
+                if scaled {
+                    let (x0, x1, fx) = xs[x];
+                    lerp(source[x0], source[x1], fx)
                 } else {
-                    let qx = px - (hw - r);
-                    let qy = py - (hh - r);
-                    let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
-                    (opacity * (0.5 - d).clamp(0.0, 1.0) * 256.0).round() as u32
-                };
-                if a == 0 {
-                    continue;
+                    source[x]
                 }
-                let top = if scaled {
-                    bilinear4(
-                        [
-                            layer[y0 * w + x0],
-                            layer[y0 * w + x1],
-                            layer[y1 * w + x0],
-                            layer[y1 * w + x1],
-                        ],
-                        fx,
-                        fy,
-                    )
-                } else {
-                    layer[y * w + x]
-                };
-                let i = row + x;
-                self.px[i] = lerp(self.px[i], top, a);
+            };
+            let row = &mut self.px[(area.y0 as usize + y) * self.stride + area.x0 as usize..][..w];
+            let (left, rest) = row.split_at_mut(inner.0.min(w));
+            let (middle, right) = rest.split_at_mut(inner.1.min(w) - inner.0.min(w));
+
+            if scaled {
+                // 先取出每列的两个相邻像素，混合的循环只读连续的内存，可以被向量化。
+                let (span, fxs) = (&xs[inner.0..inner.1], &weights[inner.0..inner.1]);
+                let (first, second) = (&mut before[..span.len()], &mut after[..span.len()]);
+                for ((a, b), &(x0, x1, _)) in first.iter_mut().zip(&mut *second).zip(span) {
+                    (*a, *b) = (source[x0], source[x1]);
+                }
+                wide::lerp_pairs_onto(middle, first, second, fxs, full);
+            } else {
+                wide::lerp_onto(middle, &source[inner.0..inner.1], full);
+            }
+            for (part, start) in [(left, 0), (right, inner.1)] {
+                for (p, x) in part.iter_mut().zip(start..) {
+                    let px = (x as f32 + 0.5 - cx).abs();
+                    if px > hw + 1.0 {
+                        continue;
+                    }
+                    let a = edge(px, py);
+                    if a > 0 {
+                        *p = lerp(*p, sample(x), a);
+                    }
+                }
             }
         }
     }
@@ -551,7 +574,7 @@ impl Canvas<'_> {
                 if opaque {
                     row.fill(color);
                 } else {
-                    row.iter_mut().for_each(|p| *p = blend(*p, color, 255));
+                    wide::mix_span(row, color, color >> 24);
                 }
             }
         }
@@ -636,7 +659,7 @@ impl Canvas<'_> {
                 if opaque {
                     mid.fill(color);
                 } else {
-                    mid.iter_mut().for_each(|p| *p = blend(*p, color, 255));
+                    wide::mix_span(mid, color, color >> 24);
                 }
 
                 for (start, part) in [(a, left), (mid1, right)] {

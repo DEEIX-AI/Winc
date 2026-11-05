@@ -109,6 +109,7 @@ menu-table-align-right = Align Right
 ## Git menu items
 
 menu-worktrees-heading = Worktrees
+menu-repositories-heading = Repositories
 menu-new-worktree = New Worktree…
 menu-prune-worktrees = Prune Stale Worktrees
 menu-git-fetch = Fetch

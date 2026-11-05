@@ -1,6 +1,7 @@
 //! 滚动条上的标注，以及选中的文字在文件里和屏幕上的其他出现。
 
 use super::*;
+use crate::layout::hscrollbar_thumb;
 
 /// 绘制编辑区的滚动条，同时是概览标尺。
 ///
@@ -66,6 +67,21 @@ pub(super) fn draw_editor_scrollbar(app: &mut App, frame: &mut Frame<'_>, index:
     if look.opacity > 0.0 {
         let color = p.ruler_caret.alpha(p.ruler_caret.a * look.opacity);
         ruler.line(frame, caret, color);
+    }
+
+    let max_x = app.text_max_scroll_x();
+    let track = app.text_hscroll_track();
+    app.text_content_w = if max_x > 0.0 { track.w + max_x } else { 0.0 };
+    let scroll_x = app.editor.documents[index].scroll_x;
+    let thumb = hscrollbar_thumb(track, scroll_x, app.text_content_w);
+    let look = app.scrollbar_look(
+        ScrollArea::EditorHorizontal,
+        owner,
+        scroll_x,
+        thumb.map(|_| track),
+    );
+    if let Some(thumb) = thumb {
+        draw_thumb(frame, p, thumb, look);
     }
 }
 

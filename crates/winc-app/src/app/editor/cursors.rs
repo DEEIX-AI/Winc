@@ -125,8 +125,8 @@ impl App {
     /// `⌥` 拖动：从按下处 `origin`（字符偏移）选到鼠标所在处，作为新加的选区；其余选区不变。
     pub(in crate::app) fn drag_add_selection(&mut self, x: f32, y: f32, origin: usize) {
         let t = self.layout.text;
-        let scrolled = self.scroll_while_dragging(y);
-        if let Some(pos) = self.pos_at(x.max(t.x), y.clamp(t.y, t.bottom() - 1.0))
+        let scrolled = self.scroll_while_dragging(Some(x), y);
+        if let Some(pos) = self.pos_at(x.clamp(t.x, t.right()), y.clamp(t.y, t.bottom() - 1.0))
             && let Some(doc) = self.editor.active_mut()
         {
             doc.set_primary(Selection::new(origin, pos));
@@ -185,12 +185,13 @@ impl App {
         Some((line, cell))
     }
 
-    /// 列选择的拖动：从按下处 `anchor`（行，显示列）框到鼠标所在处；拖出上下边缘时自动滚动。
+    /// 列选择的拖动：从按下处 `anchor`（行，显示列）框到鼠标所在处；拖出边缘时自动滚动。
     pub(in crate::app) fn drag_columns(&mut self, x: f32, y: f32, anchor: (usize, usize)) {
         let t = self.layout.text;
-        let scrolled = self.scroll_while_dragging(y);
+        let scrolled = self.scroll_while_dragging(Some(x), y);
         let tab_width = self.editor.active_tab_width();
-        if let Some(head) = self.line_cell_at(x.max(t.x), y.clamp(t.y, t.bottom() - 1.0))
+        if let Some(head) =
+            self.line_cell_at(x.clamp(t.x, t.right()), y.clamp(t.y, t.bottom() - 1.0))
             && let Some(doc) = self.editor.active_mut()
         {
             doc.select_columns(anchor, head, tab_width);

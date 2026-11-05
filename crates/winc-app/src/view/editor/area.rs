@@ -214,6 +214,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
 
     app.folded_hits = scratch.folded_hits;
     draw_sticky(app, frame, index);
+    minimap::draw_minimap(app, frame, index);
     // 滚动条绘制在固定行的上层，使滚动条从上到下是完整的一条。
     draw_editor_scrollbar(app, frame, index);
 

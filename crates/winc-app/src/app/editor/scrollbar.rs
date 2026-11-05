@@ -25,6 +25,8 @@ const SCROLLBAR_HEAT: Duration = Duration::from_millis(150);
 pub(crate) enum ScrollArea {
     /// 编辑区的竖直滚动条。
     Editor,
+    /// 编辑区的水平滚动条。
+    EditorHorizontal,
     /// 文件树的竖直滚动条。
     Tree,
     /// 文件树的水平滚动条。
@@ -41,8 +43,9 @@ pub(crate) enum ScrollArea {
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 7] = [
+    const ALL: [ScrollArea; 8] = [
         ScrollArea::Editor,
+        ScrollArea::EditorHorizontal,
         ScrollArea::Tree,
         ScrollArea::TreeHorizontal,
         ScrollArea::Panel,
@@ -55,6 +58,7 @@ impl ScrollArea {
     pub(crate) fn bar(self) -> Option<Scrollbar> {
         match self {
             ScrollArea::Editor => Some(Scrollbar::Editor),
+            ScrollArea::EditorHorizontal => Some(Scrollbar::EditorHorizontal),
             ScrollArea::Tree => Some(Scrollbar::Tree),
             ScrollArea::TreeHorizontal => Some(Scrollbar::TreeHorizontal),
             ScrollArea::Panel => Some(Scrollbar::Panel),
@@ -65,7 +69,10 @@ impl ScrollArea {
     }
 
     fn horizontal(self) -> bool {
-        self == ScrollArea::TreeHorizontal
+        matches!(
+            self,
+            ScrollArea::EditorHorizontal | ScrollArea::TreeHorizontal
+        )
     }
 }
 
@@ -141,6 +148,7 @@ impl ThumbLook {
 impl App {
     /// 开始绘制新的一帧：清除上一帧记下的可滚动区域，由本帧绘制的滚动条重新登记。
     pub(crate) fn begin_scrollbars(&mut self) {
+        self.text_content_w = 0.0;
         for reveal in &mut self.scrollbars.reveals {
             reveal.area = None;
         }

@@ -397,14 +397,30 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
         })
         .collect();
     fit_tabs(&mut widths, room);
-    // 最窄时仍放不下：标签栏横向滚动，正在看的标签始终可见；超出的部分裁剪，「+」始终显示。
-    // 还没有标签（刚打开、shell 尚未启动）时不滚动。
+    // 最窄时仍放不下：标签栏可以横向滚动，切换标签或增减标签时滚到正在看的标签；超出的部分裁剪，
+    // 「+」始终显示。还没有标签（刚打开、shell 尚未启动）时不滚动。
     let span = |n: usize| {
         let n = n.min(widths.len());
         widths[..n].iter().sum::<f32>() + TAB_GAP * n.saturating_sub(1) as f32
     };
     let total = span(widths.len());
-    let scroll = (span(app.terminal.active + 1) - room).clamp(0.0, (total - room).max(0.0));
+    let max_scroll = (total - room).max(0.0);
+    let active = app.terminal.active;
+    let current = app
+        .terminal
+        .tabs
+        .get(active)
+        .map(|tab| (tab.id, widths.len()));
+    let strip = &mut app.terminal.strip;
+    let mut scroll = strip.scroll;
+    if strip.revealed != current {
+        strip.revealed = current;
+        let start = (span(active + 1) - widths.get(active).copied().unwrap_or(0.0)).max(0.0);
+        scroll = scroll.min(start).max(span(active + 1) - room);
+    }
+    let scroll = scroll.clamp(0.0, max_scroll);
+    strip.scroll = scroll;
+    strip.max_scroll = max_scroll;
     let area = Rect::new(left, header.y, room.max(0.0), header.h).intersect(header);
     app.terminal.strip.widths.clone_from(&widths);
     app.terminal.strip.left = left - scroll;

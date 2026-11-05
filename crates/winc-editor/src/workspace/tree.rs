@@ -119,6 +119,9 @@ pub(crate) const HIDDEN: &[&str] = &[
 ///
 /// 遵守各级 `.gitignore`、`.ignore` 和全局的忽略规则，不进入指向目录的符号链接，跳过
 /// [`HIDDEN`] 中的名字；指向文件的符号链接是否收录由 [`is_listed_file`] 判断。
+///
+/// 在版本库内时 `.gitignore` 只到版本库的根目录为止，与 Git 相同，上级目录的规则不影响版本库。
+/// 不在版本库内时 `.gitignore` 同样生效：下载的源码包也不会列出 `node_modules` 这类目录。
 pub(crate) fn walker(dir: &Path) -> WalkBuilder {
     let mut builder = WalkBuilder::new(dir);
     // `hidden(false)` 关闭 `ignore` 对以 `.` 开头的名字的过滤：`.github`、`.editorconfig`
@@ -130,10 +133,28 @@ pub(crate) fn walker(dir: &Path) -> WalkBuilder {
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .require_git(false)
+        .require_git(in_repository(dir))
         .follow_links(false)
         .filter_entry(|entry| !HIDDEN.contains(&entry.file_name().to_string_lossy().as_ref()));
     builder
+}
+
+/// 同 [`walker`]，但不遵守忽略规则，只跳过 [`HIDDEN`] 中的名字。
+pub(crate) fn walker_with_ignored(dir: &Path) -> WalkBuilder {
+    let mut builder = walker(dir);
+    builder
+        .parents(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false);
+    builder
+}
+
+/// `dir` 或它的某一级上级目录是否是版本库的根目录。
+fn in_repository(dir: &Path) -> bool {
+    dir.ancestors()
+        .any(|dir| dir.join(".git").exists() || dir.join(".jj").exists())
 }
 
 /// 判断类型为 `kind` 的目录项 `path` 是否作为文件收录：普通文件，或指向普通文件的符号链接。

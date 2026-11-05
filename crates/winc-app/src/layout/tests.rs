@@ -371,3 +371,11 @@ fn keys_header_matches_the_full_keys_layout() {
     assert_eq!(KeysLayout::header(body), (keys.search, keys.record));
     assert!(keys.search.contains(keys.record.x, keys.record.y));
 }
+
+#[test]
+fn the_minimap_moves_only_when_the_document_does_not_fit() {
+    assert_eq!(minimap_first_row(100, 200, 50.0, 80.0), 0);
+    assert_eq!(minimap_first_row(1000, 200, 0.0, 950.0), 0);
+    assert_eq!(minimap_first_row(1000, 200, 950.0, 950.0), 800);
+    assert_eq!(minimap_first_row(1000, 200, 475.0, 950.0), 400);
+}

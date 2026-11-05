@@ -29,6 +29,33 @@ fn files(search: &ProjectSearch) -> Vec<&str> {
 }
 
 #[test]
+fn ignored_files_are_searched_only_when_asked() {
+    let dir = scratch("include-ignored");
+    write(&dir, ".gitignore", b"dist/\n");
+    write(&dir, "src/main.rs", b"needle\n");
+    write(&dir, "dist/out.js", b"needle\n");
+    write(&dir, ".git/config", b"needle\n");
+    let names = |include_ignored: bool, exclude: &str| {
+        let q = Query {
+            include_ignored,
+            exclude: exclude.to_owned(),
+            ..query("needle")
+        };
+        let found = search(&dir, &q);
+        files(&found)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(false, ""), ["src/main.rs"]);
+    // `.git` 这类目录始终不搜索。
+    assert_eq!(names(true, ""), ["dist/out.js", "src/main.rs"]);
+    // 「排除」规则仍然生效。
+    assert_eq!(names(true, "*.js"), ["src/main.rs"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn finds_matches_and_respects_ignore_rules() {
     let dir = scratch("ignore");
     write(&dir, ".gitignore", b"target/\n*.log\n!keep.log\n");

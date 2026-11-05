@@ -61,6 +61,11 @@ impl SharedGit {
         Ok(slot.get_or_insert(found).clone())
     }
 
+    /// 记下已经找到的 `git`，不再查找。
+    pub(super) fn keep(&self, git: Git) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(git);
+    }
+
     /// 清除找到的 git（关闭目录、关闭 Git 模块时），下次用到时重新查找。
     pub(super) fn forget(&self) {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
@@ -141,10 +146,21 @@ struct DiffTab {
     oid: Option<String>,
 }
 
+/// 项目菜单最多读取分支和改动数的仓库数（个，经验值）：每个要运行一次 `git status`。
+const SUMMARY_REPOSITORIES: usize = 32;
+
 /// Git 模块的状态。
 pub(crate) struct GitState {
-    /// 打开的目录所在仓库的根目录；模块关着、不在仓库里时为 `None`。
+    /// 当前仓库的根目录；模块关着、目录里没有仓库时为 `None`。
     pub root: Option<PathBuf>,
+    /// 打开的目录里可用的仓库，见 [`App::git_discover`]；项目菜单在有多个时列出。
+    pub repositories: Vec<PathBuf>,
+    /// 上次跟随的标签（[`App::git_follow_active`]）：切换标签时才查找文件所在的仓库。
+    followed: Option<DocumentId>,
+    /// 各仓库最近一次读到的状态：项目菜单据此显示分支和改动数，切换过去时先显示它，不必等待。
+    summaries: Arc<Mutex<HashMap<PathBuf, Status>>>,
+    /// 正在运行的读取；重新读取时取消。
+    summaries_running: Option<Cancel>,
     /// 找到的 git，第一次用到时在后台找，所有后台任务共用（[`SharedGit`]）。
     pub(super) tool: SharedGit,
     /// 最近一次成功的 `git status`。
@@ -188,6 +204,10 @@ impl Default for GitState {
         let (sender, receiver) = channel();
         GitState {
             root: None,
+            repositories: Vec::new(),
+            followed: None,
+            summaries: Arc::default(),
+            summaries_running: None,
             tool: SharedGit::default(),
             status: None,
             branches: Vec::new(),
@@ -341,16 +361,182 @@ impl App {
     }
 
     /// 打开的目录变了、或者模块开关变了：重新确定仓库，并刷新一次。
+    ///
+    /// 目录本身不是仓库、第一层子目录里有仓库时用第一个，其余的在项目菜单里切换。
     pub(super) fn git_folder_changed(&mut self) {
-        let root = if self.git_enabled() {
-            self.editor.root().and_then(git::find_root)
-        } else {
-            None
+        self.git.repositories.clear();
+        self.git.followed = None;
+        self.git
+            .summaries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        self.git_discover();
+        let root = self.git.repositories.first().cloned();
+        self.git_set_root(root);
+    }
+
+    /// 重新查找打开的目录里的仓库；已经加入的（打开过其中文件的）只要还在就保留。
+    pub(in crate::app) fn git_discover(&mut self) {
+        let Some(dir) = self.editor.root().filter(|_| self.git_enabled()) else {
+            self.git.repositories.clear();
+            return;
         };
+        let mut found = git::find_repositories(dir);
+        let kept = self
+            .git
+            .repositories
+            .iter()
+            .filter(|repo| !found.contains(repo) && repo.join(".git").exists());
+        let kept: Vec<PathBuf> = kept.cloned().collect();
+        found.extend(kept);
+        self.git.repositories = found;
+        self.git_read_summaries();
+    }
+
+    /// 在后台读取各仓库的分支和改动数，项目菜单下次打开时显示；只有一个仓库时不读。
+    ///
+    /// 系统菜单弹出后内容不能再变，因此提前读好。最多读 [`SUMMARY_REPOSITORIES`] 个。
+    fn git_read_summaries(&mut self) {
+        if let Some(cancel) = self.git.summaries_running.take() {
+            cancel.cancel();
+        }
+        if self.git.repositories.len() < 2 {
+            return;
+        }
+        let cancel = Cancel::default();
+        self.git.summaries_running = Some(cancel.clone());
+        let repositories = self.git.repositories.clone();
+        let summaries = Arc::clone(&self.git.summaries);
+        self.spawn_git(UserEvent::GitStatus, move |tool| {
+            let Ok(git) = tool else {
+                return;
+            };
+            for root in repositories.into_iter().take(SUMMARY_REPOSITORIES) {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                if let Ok(status) = git.status(&root, &cancel) {
+                    summaries
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(root, status);
+                }
+            }
+        });
+    }
+
+    /// 返回第 `index` 个仓库在项目菜单里的小字：分支和改动数；还没读到时为 `None`。当前仓库用
+    /// 最新的状态。
+    pub(in crate::app) fn git_repository_detail(&self, index: usize) -> Option<String> {
+        let repo = self.git.repositories.get(index)?;
+        let (head, changes) = match &self.git.status {
+            Some(status) if self.git.root.as_ref() == Some(repo) => {
+                (status.head.clone(), status.entries.len())
+            }
+            _ => {
+                let summaries = self
+                    .git
+                    .summaries
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                let status = summaries.get(repo)?;
+                (status.head.clone(), status.entries.len())
+            }
+        };
+        let head = match head? {
+            git::Head::Branch(name) => name,
+            git::Head::Detached(oid) => t!("git-worktree-detached", oid = oid.as_str()),
+        };
+        Some(if changes == 0 {
+            head
+        } else {
+            t!("git-repository-detail", head = head, count = changes)
+        })
+    }
+
+    /// 返回第 `index` 个仓库在菜单里显示的名字：相对打开的目录的路径，目录本身用目录名。
+    pub(crate) fn git_repository_name(&self, index: usize) -> String {
+        let Some(repo) = self.git.repositories.get(index) else {
+            return String::new();
+        };
+        let relative = self
+            .editor
+            .root()
+            .and_then(|root| repo.strip_prefix(root).ok());
+        match relative {
+            Some(path) if !path.as_os_str().is_empty() => path.display().to_string(),
+            _ => repo.file_name().map_or_else(
+                || repo.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+        }
+    }
+
+    /// 切换到项目菜单里的第 `index` 个仓库。
+    pub(in crate::app) fn git_switch_repository(&mut self, index: usize) {
+        if let Some(root) = self.git.repositories.get(index).cloned() {
+            self.git_set_root(Some(root));
+        }
+    }
+
+    /// 当前标签换了文件时，把文件所在的仓库加入列表，并切换过去。
+    ///
+    /// 正在看提交视图时不切换，否则列表会突然换成另一个仓库的改动，有可能提交错仓库；正在提交、
+    /// 拉取推送，或提交信息已写了字时也不切换，切换会丢掉这些内容。这些情况下只加入列表。
+    pub(in crate::app) fn git_follow_active(&mut self) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        if self.git.followed == Some(doc.id) || !self.git_enabled() {
+            return;
+        }
+        self.git.followed = Some(doc.id);
+        let (Some(dir), Some(folder)) = (
+            doc.path.as_deref().and_then(Path::parent),
+            self.editor.root(),
+        ) else {
+            return;
+        };
+        // 目录之外的文件不改变当前仓库。
+        if !dir.starts_with(folder) {
+            return;
+        }
+        let Some(root) = git::find_root(dir) else {
+            return;
+        };
+        if !self.git.repositories.contains(&root) {
+            self.git.repositories.push(root.clone());
+            self.git_read_summaries();
+        }
+        let stay = self.sidebar_view == SidebarView::Commit
+            || self.commit.busy
+            || self.branch.running.is_some()
+            || !self.commit.message.text().is_empty();
+        if !stay {
+            self.git_set_root(Some(root));
+        }
+    }
+
+    /// 把当前仓库换成 `root`；没有变化时什么也不做。
+    fn git_set_root(&mut self, root: Option<PathBuf>) {
         if root == self.git.root {
             return;
         }
+        // 留下要离开的仓库的状态，切回来时马上能显示。
+        if let (Some(old), Some(status)) = (self.git.root.clone(), self.git.status.take()) {
+            self.git
+                .summaries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(old, status);
+        }
+        // 只是换一个仓库时 git 还是那个 git，不必重新查找，也不必重新检查已经检查过的仓库配置。
+        let tool = root.as_ref().and(self.git.tool.get());
         self.git.clear();
+        if let Some(tool) = tool {
+            self.git.tool.keep(tool);
+        }
         self.changes.forget();
         self.blame.clear();
         // 旧仓库还在做的分支操作、提交是那边的：这里不再显示「正在拉取…」、不拦着新仓库的操作，
@@ -360,6 +546,22 @@ impl App {
         self.reset_commit_view();
         self.git.ignored = root.as_deref().map(Ignored::new);
         self.git.root = root;
+        // 先显示上次读到的状态，后台读完以后再更新，提交视图不会闪成「正在读取」。
+        let known = self.git.root.as_ref().and_then(|root| {
+            self.git
+                .summaries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(root)
+        });
+        if let (Some(status), Some(root)) = (known, self.git.root.as_deref()) {
+            self.commit.head_is(status.oid.as_deref());
+            self.changes.head_is(status.oid.as_deref());
+            self.git.decorations = status.decorations(root);
+            self.git.ignored_paths = status.ignored.iter().cloned().collect();
+            self.git.status = Some(status);
+            self.git.generation += 1;
+        }
         // 不在仓库里了：提交视图没有了，回到文件树；焦点在提交视图里的要拿出来，否则键入的字
         // 会进到看不见的输入框。
         if self.git.root.is_none() {
