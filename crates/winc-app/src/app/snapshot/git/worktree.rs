@@ -88,7 +88,7 @@ fn worktrees_show_in_the_project_menu_and_the_branch_menu() {
         .iter()
         .position(|b| b.name == "feat")
         .unwrap();
-    app.open_context_menu(MenuTarget::Branch, (0.0, 0.0));
+    app.open_context_menu(MenuTarget::BranchOps(feat), (0.0, 0.0));
     let commands = menu_commands(&app);
     let checkout = MenuCommand::GitBranch(BranchOp::Checkout, feat);
     assert!(commands.contains(&(checkout, true)));

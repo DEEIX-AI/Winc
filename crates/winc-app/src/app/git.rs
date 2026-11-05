@@ -94,6 +94,8 @@ struct Refs {
     branches: Vec<Branch>,
     /// 储藏，最新的在前。
     stashes: Vec<Stash>,
+    /// 最近切换到过的分支名，最近的在前。
+    recent_branches: Vec<String>,
     /// 取不到（git 太旧、超时）时为 `None`，保留此前的列表：否则被占用的分支、窗口标题、新建
     /// 工作树存放在哪儿都会跟着出错。
     worktrees: Option<Vec<Worktree>>,
@@ -169,6 +171,8 @@ pub(crate) struct GitState {
     pub branches: Vec<Branch>,
     /// 储藏，最新的在前，和状态一起刷新。
     pub stashes: Vec<Stash>,
+    /// 最近切换到过的分支名，最近的在前，和状态一起刷新。
+    pub recent_branches: Vec<String>,
     /// 仓库的工作树，主工作树在最前面，和状态一起刷新；只有一个工作树时为空。
     pub worktrees: Vec<Worktree>,
     /// 最近一次刷新失败的原因（找不到 git、git 报错）；成功以后清掉。
@@ -214,6 +218,7 @@ impl Default for GitState {
             status: None,
             branches: Vec::new(),
             stashes: Vec::new(),
+            recent_branches: Vec::new(),
             worktrees: Vec::new(),
             problem: None,
             generation: 0,
@@ -641,6 +646,7 @@ impl App {
                 (Ok(git), Ok(_)) if refs => Some(Refs {
                     branches: git.branches(&root, &cancel).unwrap_or_default(),
                     stashes: git.stashes(&root, &cancel).unwrap_or_default(),
+                    recent_branches: git.recent_branches(&root, &cancel).unwrap_or_default(),
                     worktrees: git.worktrees(&root, &cancel).ok(),
                 }),
                 _ => None,
@@ -694,8 +700,10 @@ impl App {
                     }
                     self.git.status = Some(status);
                     if let Some(refs) = outcome.refs {
-                        self.git.branches = refs.branches;
+                        let before = std::mem::replace(&mut self.git.branches, refs.branches);
                         self.git.stashes = refs.stashes;
+                        self.git.recent_branches = refs.recent_branches;
+                        self.branch_picker_refreshed(&before);
                         if let Some(worktrees) = refs.worktrees
                             && self.git.worktrees != worktrees
                         {

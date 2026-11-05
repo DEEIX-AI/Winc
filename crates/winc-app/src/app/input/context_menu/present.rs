@@ -562,9 +562,14 @@ impl App {
             MenuTarget::Branch => crate::app::git::branch::branch_menu(
                 &self.git.branches,
                 &self.git.stashes,
+                self.git.status.as_ref().and_then(|s| s.operation),
+                self.branch.running.is_some(),
+            ),
+            MenuTarget::BranchOps(index) => crate::app::git::branch::branch_ops(
+                *index,
+                &self.git.branches,
                 &self.git.held_branches(),
                 &self.git.stale_branches(),
-                self.git.status.as_ref().and_then(|s| s.operation),
                 self.branch.running.is_some(),
             ),
         };
@@ -601,7 +606,9 @@ impl App {
 
         // 菜单项是否打勾、显示什么取决于目标，因此先记录目标，再准备菜单项。
         let (branches, stashes) = match target {
-            MenuTarget::Branch => (self.git.branches.clone(), self.git.stashes.clone()),
+            MenuTarget::Branch | MenuTarget::BranchOps(_) => {
+                (self.git.branches.clone(), self.git.stashes.clone())
+            }
             MenuTarget::LogBranch | MenuTarget::FormBase => (self.git.branches.clone(), Vec::new()),
             _ => Default::default(),
         };
@@ -686,19 +693,17 @@ impl App {
                         children: Vec::new(),
                     })
                 }
-                MenuEntry::Submenu(title, items) | MenuEntry::CheckedSubmenu(title, items) => {
-                    Some(Prepared {
-                        label: MenuLabel::plain(title),
-                        key: Default::default(),
-                        icon: None,
-                        icon_size: MENU_ICON,
-                        enabled: true,
-                        checked: matches!(entry, MenuEntry::CheckedSubmenu(..)),
-                        alternate: false,
-                        tag: 0,
-                        children: self.prepare_menu(items, context, numbered),
-                    })
-                }
+                MenuEntry::Submenu(title, items) => Some(Prepared {
+                    label: MenuLabel::plain(title),
+                    key: Default::default(),
+                    icon: None,
+                    icon_size: MENU_ICON,
+                    enabled: true,
+                    checked: false,
+                    alternate: false,
+                    tag: 0,
+                    children: self.prepare_menu(items, context, numbered),
+                }),
                 MenuEntry::Separator => None,
             })
             .collect()
@@ -1209,12 +1214,6 @@ impl App {
         self.git_discover();
         let hit = self.project_hit;
         self.open_button_menu(MenuButton::Project, MenuTarget::Project, menu_below(hit));
-    }
-
-    /// 处理对侧栏标题行里分支名的点击：在它下方弹出分支菜单（和状态栏的分支名同一个菜单）。
-    pub(in crate::app) fn open_sidebar_branch_menu(&mut self) {
-        let hit = self.branch_hit;
-        self.open_button_menu(MenuButton::Branch, MenuTarget::Branch, menu_below(hit));
     }
 
     /// 从按钮 `button` 上弹出 `target` 的菜单（在 `at` 处，见 [`App::open_context_menu`]）：系统

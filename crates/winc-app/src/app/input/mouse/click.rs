@@ -166,7 +166,7 @@ impl App {
             Target::TreeTool(tool) => self.run_tree_tool(tool),
             Target::TreeMore => self.open_tree_tools_menu(),
             Target::ProjectName => self.open_project_menu(),
-            Target::BranchName => self.open_sidebar_branch_menu(),
+            Target::BranchName => self.open_branch_picker(),
             Target::SidebarButton => self.toggle_sidebar(),
             Target::NewTab => self.new_file(),
             Target::TabList => self.open_tab_list_menu(),

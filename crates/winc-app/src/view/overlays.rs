@@ -330,7 +330,12 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         let cy = bar.y + bar.h / 2.0;
         icons::magnifier(frame, (x, cy), p.text_dim, bar);
 
-        let total = if app_mut.picker_lists_commands() {
+        let total = if app_mut.picker_lists_branches() {
+            t!(
+                "git-branch-picker-count",
+                count = app_mut.git.branches.len()
+            )
+        } else if app_mut.picker_lists_commands() {
             t!(
                 "workspace-picker-commands",
                 count = app_mut.picker_hits.len()
@@ -361,7 +366,11 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         bar.h,
     );
 
-    let placeholder = t!("workspace-picker-placeholder");
+    let placeholder = if app.picker_lists_branches() {
+        t!("git-branch-picker-placeholder")
+    } else {
+        t!("workspace-picker-placeholder")
+    };
     let caret = {
         let app_mut = &mut *app;
         let focused = app_mut.focus == Focus::Picker;
@@ -387,6 +396,10 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         rect,
     );
 
+    if app.picker_lists_branches() {
+        draw_branch_rows(app, frame, &parts);
+        return;
+    }
     if app.picker_lists_commands() {
         draw_palette_rows(app, frame, &parts);
         return;
@@ -506,6 +519,92 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
                 marked_label(frame, app, size, at, &shown, &in_dir, p.text_dim, clip);
             }
         }
+    }
+}
+
+/// 绘制分支选择器的各行：「Git 操作」、分组标题、按 `/` 分层的目录和分支。当前分支打勾，鼠标
+/// 所在行和选中行的右端是打开操作菜单的「⋯」。
+fn draw_branch_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
+    use crate::app::git::branch::picker::{BranchRow, BranchSection, more_button};
+
+    let p = app.palette;
+    let list = parts.list;
+    let rows = app.picker_branch_rows.as_deref().unwrap_or_default();
+    if rows.is_empty() {
+        let row = Rect::new(list.x, list.y, list.w, list.h.min(PICKER_ROW));
+        let empty = t!("git-branch-picker-empty");
+        ui_text(
+            frame,
+            app,
+            list.x + PICKER_ICON_X,
+            row,
+            empty,
+            p.text_dim,
+            list,
+        );
+        return;
+    }
+
+    let scroll = app.picker_scroll;
+    for i in parts.visible(scroll, rows.len()) {
+        let row = parts.row(i, scroll);
+        let clip = row.intersect(list);
+        let (depth, label) = match &rows[i] {
+            BranchRow::Heading(section) => {
+                let title = match section {
+                    BranchSection::Recent => t!("git-branch-picker-recent"),
+                    BranchSection::Local => t!("menu-git-local-branches"),
+                    BranchSection::Remote => t!("menu-git-remote-branches"),
+                };
+                ui_text_small(
+                    frame,
+                    app,
+                    row.x + PICKER_ICON_X,
+                    row,
+                    title,
+                    p.text_dim,
+                    clip,
+                );
+                continue;
+            }
+            BranchRow::Actions => (0, t!("git-branch-picker-actions")),
+            BranchRow::Folder { depth, label, .. } | BranchRow::Branch { depth, label, .. } => {
+                (*depth, label.as_str())
+            }
+        };
+        draw_pick_row(app, frame, row, i, clip);
+
+        // 行首一列是目录的箭头、当前分支的勾，名字从它后面开始。
+        let lead = row.x + PICKER_ICON_X + depth as f32 * crate::theme::TREE_INDENT;
+        let mark = (lead + 6.0, row.y + row.h / 2.0);
+        let mut right = row.right() - 14.0;
+        match &rows[i] {
+            BranchRow::Folder { open, count, .. } => {
+                let way = if *open {
+                    Direction::Down
+                } else {
+                    Direction::Right
+                };
+                icons::chevron(frame, mark, 6.0, way, p.text_dim, clip);
+                let count = count.to_string();
+                right -= frame.measure(FontKind::Ui, app.fonts.ui_small, &count);
+                ui_text_small(frame, app, right, row, &count, p.text_dim, clip);
+            }
+            BranchRow::Branch { index, .. } => {
+                if app.git.branches.get(*index).is_some_and(|b| b.current) {
+                    icons::check(frame, mark, 10.0, p.accent, clip);
+                }
+            }
+            _ => icons::more(frame, mark, p.text_dim, clip),
+        }
+        if matches!(rows[i], BranchRow::Branch { .. })
+            && (i == app.picker_selected || app.hover == Hover::PickerRow(i))
+        {
+            icons::more(frame, center(more_button(row)), p.text_dim, clip);
+        }
+        let marked = app.branch_picker_matched(label);
+        let at = (lead + 18.0, row);
+        marked_label(frame, app, app.fonts.ui, at, label, &marked, p.text, clip);
     }
 }
 

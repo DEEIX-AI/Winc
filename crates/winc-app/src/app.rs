@@ -916,6 +916,10 @@ pub struct App {
     pub(crate) navigation: editor::navigation::Navigation,
     /// 转到定义找到多个位置时，卡片中列出的位置。
     pub picker_places: Option<editor::definition::Places>,
+    /// 面板列出分支（分支选择器）时的各行。
+    pub picker_branch_rows: Option<Vec<git::branch::picker::BranchRow>>,
+    /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
+    pub branch_folders: std::collections::HashSet<(bool, String)>,
     /// 正在后台项目中进行的定义查找。
     definitions: Option<editor::definition::DefinitionSearch>,
 

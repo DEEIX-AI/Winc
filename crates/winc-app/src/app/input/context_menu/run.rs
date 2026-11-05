@@ -18,6 +18,11 @@ impl App {
             return;
         }
 
+        // 选择器里的菜单选了一项：操作开始，选择器不再需要；取消时选择器留着。
+        if matches!(menu.target, MenuTarget::Branch | MenuTarget::BranchOps(_)) {
+            self.close_branch_picker();
+        }
+
         match menu.target {
             MenuTarget::Tree(path) => self.run_tree_command(command, path),
             MenuTarget::Tab(id) => self.run_tab_command(command, id),
@@ -140,7 +145,7 @@ impl App {
             | MenuTarget::LineEnding(id)
             | MenuTarget::Encoding(id)
             | MenuTarget::Language(id) => self.run_status_command(command, id),
-            MenuTarget::Branch => match command {
+            MenuTarget::Branch | MenuTarget::BranchOps(_) => match command {
                 MenuCommand::GitBranch(op, i) => {
                     if let Some(branch) = menu.branches.get(i).cloned() {
                         self.run_branch_op(op, branch);

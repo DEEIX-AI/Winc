@@ -62,6 +62,26 @@ pub(super) fn summary(output: &[u8]) -> String {
         .to_owned()
 }
 
+/// 解析引用日志里的 `checkout: moving from A to B`：`B` 比 `A` 新，较新的行在前，返回不重复的
+/// 分支名，最近的在前。
+pub(super) fn parse_recent_branches(output: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let Some(moved) = line.strip_prefix("checkout: moving from ") else {
+            continue;
+        };
+        let Some((from, to)) = moved.rsplit_once(" to ") else {
+            continue;
+        };
+        for name in [to, from] {
+            if !names.iter().any(|known| known == name) {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names
+}
+
 /// 解析 `git for-each-ref` 的输出（每行的引用名、`*` 或空格、上游之间用 NUL 隔开）。
 ///
 /// 本地的分支在前，远程的在后，各自按名字排列；远程的 `HEAD` 指针不列。

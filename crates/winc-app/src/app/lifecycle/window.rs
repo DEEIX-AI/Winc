@@ -206,7 +206,12 @@ impl App {
         let picker_rows = if self.picker_open {
             let room =
                 (h - status_height - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
-            let most = ((room / PICKER_ROW).floor() as usize).clamp(1, PICKER_MAX_ROWS);
+            let max = if self.picker_lists_branches() {
+                crate::app::git::branch::picker::BRANCH_PICKER_ROWS
+            } else {
+                PICKER_MAX_ROWS
+            };
+            let most = ((room / PICKER_ROW).floor() as usize).clamp(1, max);
             self.picker_hits.len().clamp(1, most)
         } else {
             0

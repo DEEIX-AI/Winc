@@ -101,12 +101,15 @@ fn long_repo(dir: &Path) -> bool {
     true
 }
 
-/// 弹出分支菜单并选中 `command`；测试中没有系统菜单，选中即执行。
+/// 弹出 `command` 所在的分支菜单并选中它；测试中没有系统菜单，选中即执行。
 fn choose_in_branch_menu(app: &mut App, command: crate::app::MenuCommand) {
-    app.open_context_menu(
-        crate::app::input::context_menu::MenuTarget::Branch,
-        (0.0, 0.0),
-    );
+    use crate::app::MenuCommand::GitBranch;
+    use crate::app::input::context_menu::MenuTarget;
+    let target = match command {
+        GitBranch(_, index) => MenuTarget::BranchOps(index),
+        _ => MenuTarget::Branch,
+    };
+    app.open_context_menu(target, (0.0, 0.0));
     app.run_menu_command(command);
 }
 

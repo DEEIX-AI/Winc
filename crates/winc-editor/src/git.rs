@@ -601,6 +601,25 @@ impl Git {
         Ok(parse_branches(&String::from_utf8_lossy(&stdout)))
     }
 
+    /// 返回最近切换到过的分支名，最近的在前，不重复（来自 `HEAD` 的引用日志）。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败或超时时返回原因。
+    pub fn recent_branches(&self, root: &Path, cancel: &Cancel) -> Result<Vec<String>, String> {
+        let mut command = self.command(root);
+        command.args([
+            "log",
+            "--walk-reflogs",
+            "--format=%gs",
+            "--grep-reflog=checkout: moving from",
+            "--max-count=200",
+            "HEAD",
+        ]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        Ok(parse_recent_branches(&String::from_utf8_lossy(&stdout)))
+    }
+
     /// 在仓库 `root` 里运行会改动仓库的 `git` 操作 `args`（如 `["pull"]`），返回 `git` 的结论。
     ///
     /// 分支名、提交号、储藏名等来自仓库或用户的参数之前必须加 `--end-of-options`，否则仓库里名为

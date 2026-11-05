@@ -238,7 +238,7 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
     // 只在完整放得下时才绘制（`ContextBar::split`），名字不截短。
     let pill = Rect::new(hit.right() + CONTEXT_GAP, hit.y, branch_w, hit.h);
     let hovered = app.hover == Hover::BranchName;
-    let open = app.menu_button == Some(MenuButton::Branch);
+    let open = app.picker_lists_branches();
     draw_button(frame, p, pill, clip, hovered, open);
     let cy = icon_center_y(app, header, app.fonts.ui_small);
     let color = if hovered || open {

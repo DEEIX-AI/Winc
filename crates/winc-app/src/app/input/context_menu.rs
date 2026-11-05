@@ -52,8 +52,6 @@ const MENU_GAP: f32 = 4.0;
 pub enum MenuButton {
     /// 侧栏顶部的项目名。
     Project,
-    /// 侧栏顶部项目名后面的当前分支。
-    Branch,
     /// 提交视图标题行的「⋯」。
     CommitMore,
     /// 提交视图「提交 ⌄」拆分按钮的箭头。
@@ -564,8 +562,10 @@ pub enum MenuTarget {
     Encoding(DocumentId),
     /// 状态栏中一个文档的语言。
     Language(DocumentId),
-    /// 状态栏、侧栏标题行中的分支名。
+    /// 分支选择器的「Git 操作」。
     Branch,
+    /// 分支选择器里第几个分支（[`crate::app::git::GitState::branches`] 的下标）的操作。
+    BranchOps(usize),
     /// 提交视图标题行的「⋯」。
     CommitMore,
     /// 提交视图「提交 ⌄」拆分按钮的箭头。
@@ -610,9 +610,6 @@ pub enum MenuEntry {
     Separator,
     /// 子菜单，参数为标题和子项。
     Submenu(String, Vec<MenuEntry>),
-    /// 打勾的子菜单（分支菜单里的当前分支）：勾画在系统菜单的勾选列里，和别的项的文字
-    /// 对齐，不写进标题。
-    CheckedSubmenu(String, Vec<MenuEntry>),
 }
 
 impl MenuEntry {
@@ -632,7 +629,7 @@ impl MenuEntry {
                             return Some(*command);
                         }
                     }
-                    MenuEntry::Submenu(_, items) | MenuEntry::CheckedSubmenu(_, items) => {
+                    MenuEntry::Submenu(_, items) => {
                         if let Some(command) = walk(items, seen, tag) {
                             return Some(command);
                         }
@@ -651,9 +648,7 @@ impl MenuEntry {
             MenuEntry::Item(c, enabled) | MenuEntry::Alternate(c, enabled) => {
                 *c == command && *enabled
             }
-            MenuEntry::Submenu(_, items) | MenuEntry::CheckedSubmenu(_, items) => {
-                MenuEntry::offers(items, command)
-            }
+            MenuEntry::Submenu(_, items) => MenuEntry::offers(items, command),
             MenuEntry::Separator => false,
         })
     }

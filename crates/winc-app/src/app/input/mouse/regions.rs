@@ -180,6 +180,10 @@ impl App {
         if let Some(index) = parts.row_at(y, self.picker_scroll)
             && index < self.picker_hits.len()
         {
+            if self.picker_lists_branches() {
+                self.click_branch_row(index, x);
+                return true;
+            }
             self.picker_selected = index;
             self.picker_accept();
         }
@@ -210,7 +214,7 @@ impl App {
             return true;
         }
         if self.branch_hit.contains(x, y) {
-            self.open_sidebar_branch_menu();
+            self.open_branch_picker();
             return true;
         }
 

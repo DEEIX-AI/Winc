@@ -1132,3 +1132,15 @@ fn undoing_a_commit_keeps_its_changes_staged() {
     assert_eq!(sh(&["diff", "--cached", "--name-only"]), "a.rs\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn recent_branches_keep_the_latest_switch_of_each_branch() {
+    let output = "checkout: moving from main to feature/login\n\
+                  checkout: moving from dev to main\n\
+                  checkout: moving from main to dev\n\
+                  checkout: moving from dev to feature/login\n";
+    assert_eq!(
+        parse_recent_branches(output),
+        ["feature/login", "main", "dev"]
+    );
+}

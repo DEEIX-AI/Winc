@@ -614,6 +614,9 @@ impl App {
                 self.picker_move(false);
                 return;
             }
+            // 分支选择器没有输入查询时，左右键展开、收起目录，右键打开分支的操作菜单。
+            Key::Named(NamedKey::ArrowRight) if self.branch_picker_side(true) => return,
+            Key::Named(NamedKey::ArrowLeft) if self.branch_picker_side(false) => return,
             // macOS 上 `⌃N` / `⌃P` 也可以上下选择（Cocoa 文本系统的标准按键绑定）。
             Key::Character(c) if ctrl && c.as_str() == "n" => {
                 self.picker_move(true);

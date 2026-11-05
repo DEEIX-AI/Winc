@@ -297,6 +297,14 @@ git-operation-banner-conflicts = { $count ->
 git-operation-abort = Abort
 git-commit-message-placeholder = Commit message ({ $key } to commit)
 git-commit-message-amend-placeholder = Amended commit message
+git-branch-picker-placeholder = Search branches
+git-branch-picker-count = { $count ->
+    [one] 1 branch
+   *[other] { $count } branches
+}
+git-branch-picker-empty = No matching branches
+git-branch-picker-actions = Git Actions
+git-branch-picker-recent = Recent
 git-commit-button = Commit
 git-commit-button-files = { $count ->
     [one] Commit 1 File

@@ -60,13 +60,16 @@ impl App {
             self.click_update();
             return;
         }
+        // 分支选择器不依赖当前文档。
+        if item == StatusItem::Branch {
+            self.open_branch_picker();
+            return;
+        }
         let Some(&(rect, _)) = self.status_hits.iter().find(|&&(_, i)| i == item) else {
             return;
         };
         let target = match (item, self.editor.active().map(|d| d.id)) {
-            // 分支菜单不依赖当前文档。
-            (StatusItem::Branch, _) => MenuTarget::Branch,
-            (_, None) => return,
+            (StatusItem::Branch, _) | (_, None) => return,
             (StatusItem::Indent, Some(id)) => MenuTarget::Indent(id),
             (StatusItem::LineEnding, Some(id)) => MenuTarget::LineEnding(id),
             (StatusItem::Encoding, Some(id)) => MenuTarget::Encoding(id),

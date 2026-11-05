@@ -1,7 +1,7 @@
-//! Git 的分支菜单：点状态栏的分支名弹出。
+//! Git 的分支操作：点状态栏、侧栏的分支名打开分支选择器（见 `picker`）。
 //!
-//! 顶上是日志、获取、拉取、推送、新建分支、新建工作树和储藏，下面每个本地分支、远程分支各有
-//! 子菜单：签出、在新工作树中签出、从这里新建分支、合并到当前分支、变基、删除。操作都在
+//! 选择器的「Git 操作」是获取、拉取、推送、新建分支、新建工作树和储藏的菜单；每个分支另有操作
+//! 菜单：签出、在新工作树中签出、从这里新建分支、合并到当前分支、变基、删除。操作都在
 //! 后台运行，同一时刻只做一件，运行期间状态栏的分支名后面写着在做什么；做完在状态栏说结论
 //! （失败时右上角说原因）、刷新仓库状态，并重新读被改动过的文件。
 
@@ -131,23 +131,16 @@ impl Default for BranchState {
     }
 }
 
-/// 分支菜单的菜单项。
-///
-/// `branches` 是本地分支在前、远程分支在后的列表，当前分支只能新建分支；`held` 是被别的工作树
-/// 签出的本地分支，它们的「签出」是切到那个工作树，不能删除；`stale` 是被目录已经不在的工作树
-/// 占着的分支，git 仍然不允许签出、删除，要先清理。
+/// 「Git 操作」菜单的菜单项：`branches` 用来判断当前分支有没有上游。
 pub(crate) fn branch_menu(
     branches: &[Branch],
     stashes: &[Stash],
-    held: &[&str],
-    stale: &[&str],
     operation: Option<Operation>,
     busy: bool,
 ) -> Vec<MenuEntry> {
     use MenuCommand::*;
     // 当前分支没有上游时拉取不了（推送可以：推上去并设为上游），灰掉，小字写着原因。
     let upstream = branches.iter().any(|b| b.current && b.upstream.is_some());
-    let current = branches.iter().find(|b| b.current).map(|b| b.name.as_str());
     let mut entries = Vec::new();
     // 合并、变基停下来等着处理冲突：最上面是继续和中止。
     if operation.is_some() {
@@ -183,75 +176,56 @@ pub(crate) fn branch_menu(
             items,
         ));
     }
-    // 本地分支：一个分支一个子菜单；当前分支在系统菜单的勾选列里打勾（和别的分支名对齐），
-    // 子菜单里只有「从这里新建分支」。
-    let ops = |i: usize, branch: &Branch| -> Vec<MenuEntry> {
-        BranchOp::ALL
-            .into_iter()
-            .filter(|op| match op {
-                // 当前分支不能签出、合并、变基、删除自己。
-                _ if branch.current => *op == BranchOp::NewFrom,
-                // 已经在其他工作树里签出着、又是当前分支（`origin/main` 在 `main` 上）：
-                // 不能再签出该分支。
-                BranchOp::NewWorktree => {
-                    let local = local_name(branch);
-                    !held.contains(&local) && !stale.contains(&local) && Some(local) != current
-                }
-                // 远程分支不在这里删除。
-                BranchOp::Delete => !branch.remote,
-                _ => true,
-            })
-            .map(|op| {
-                // 被别的工作树签出的分支 git 不允许删除；签出就是切到那个工作树，不改仓库，忙的时候
-                // 也能点。远程分支看签出后的本地分支。
-                let elsewhere = held.contains(&local_name(branch));
-                let gone = stale.contains(&local_name(branch));
-                let enabled = match op {
-                    BranchOp::Delete => !busy && !elsewhere && !gone,
-                    BranchOp::Checkout if elsewhere => true,
-                    BranchOp::Checkout if gone => false,
-                    _ => !busy,
-                };
-                MenuEntry::Item(GitBranch(op, i), enabled)
-            })
-            .collect()
-    };
-    let local: Vec<_> = branches
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| !b.remote)
-        .collect();
-    if !local.is_empty() {
-        entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::Item(GitHeading(false), false));
-        for (i, branch) in local {
-            let items = ops(i, branch);
-            entries.push(if branch.current {
-                MenuEntry::CheckedSubmenu(branch.name.clone(), items)
-            } else {
-                MenuEntry::Submenu(branch.name.clone(), items)
-            });
-        }
-    }
-    // 远程分支按远程收进子菜单（「origin ▸」），里面写去掉远程名的分支名：远程分支常常很多，
-    // 平铺在第一层会把菜单拉得很长。
-    let mut remotes: Vec<(&str, Vec<MenuEntry>)> = Vec::new();
-    for (i, branch) in branches.iter().enumerate().filter(|(_, b)| b.remote) {
-        let (remote, name) = branch.name.split_once('/').unwrap_or(("", &branch.name));
-        let item = MenuEntry::Submenu(name.to_owned(), ops(i, branch));
-        match remotes.iter_mut().find(|(r, _)| *r == remote) {
-            Some((_, items)) => items.push(item),
-            None => remotes.push((remote, vec![item])),
-        }
-    }
-    if !remotes.is_empty() {
-        entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::Item(GitHeading(true), false));
-        for (remote, items) in remotes {
-            entries.push(MenuEntry::Submenu(remote.to_owned(), items));
-        }
-    }
     entries
+}
+
+/// 分支选择器里第 `index` 个分支的操作菜单：签出、在新工作树中签出、从这里新建分支、合并、变基、
+/// 删除。
+///
+/// `branches` 是本地分支在前、远程分支在后的列表，当前分支只能新建分支；`held` 是被别的工作树
+/// 签出的本地分支，它们的「签出」是切到那个工作树，不能删除；`stale` 是被目录已经不在的工作树
+/// 占着的分支，git 仍然不允许签出、删除，要先清理。
+pub(crate) fn branch_ops(
+    index: usize,
+    branches: &[Branch],
+    held: &[&str],
+    stale: &[&str],
+    busy: bool,
+) -> Vec<MenuEntry> {
+    use MenuCommand::GitBranch;
+    let Some(branch) = branches.get(index) else {
+        return Vec::new();
+    };
+    let current = branches.iter().find(|b| b.current).map(|b| b.name.as_str());
+    BranchOp::ALL
+        .into_iter()
+        .filter(|op| match op {
+            // 当前分支不能签出、合并、变基、删除自己。
+            _ if branch.current => *op == BranchOp::NewFrom,
+            // 已经在其他工作树里签出着、又是当前分支（`origin/main` 在 `main` 上）：
+            // 不能再签出该分支。
+            BranchOp::NewWorktree => {
+                let local = local_name(branch);
+                !held.contains(&local) && !stale.contains(&local) && Some(local) != current
+            }
+            // 远程分支不在这里删除。
+            BranchOp::Delete => !branch.remote,
+            _ => true,
+        })
+        .map(|op| {
+            // 被别的工作树签出的分支 git 不允许删除；签出就是切到那个工作树，不改仓库，忙的时候
+            // 也能点。远程分支看签出后的本地分支。
+            let elsewhere = held.contains(&local_name(branch));
+            let gone = stale.contains(&local_name(branch));
+            let enabled = match op {
+                BranchOp::Delete => !busy && !elsewhere && !gone,
+                BranchOp::Checkout if elsewhere => true,
+                BranchOp::Checkout if gone => false,
+                _ => !busy,
+            };
+            MenuEntry::Item(GitBranch(op, index), enabled)
+        })
+        .collect()
 }
 
 /// 签出分支 `branch` 得到的本地分支名：远程分支去掉远程名（`origin/dev` → `dev`）。
@@ -590,6 +564,8 @@ fn abort_what(operation: Operation) -> &'static str {
         Operation::Revert => t!("git-op-abort-revert"),
     }
 }
+
+pub(crate) mod picker;
 
 #[cfg(test)]
 mod tests;

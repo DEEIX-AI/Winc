@@ -124,6 +124,7 @@ impl App {
 
         self.finish_name_input();
         self.picker_places = None;
+        self.picker_branch_rows = None;
         self.picker_open = true;
         self.picker_doc = self.editor.active().map(|d| d.id);
         self.picker_input.set_text("");
@@ -143,6 +144,7 @@ impl App {
         self.drop_symbols();
         self.picker.forget_query();
         self.picker_open = false;
+        self.picker_branch_rows = None;
         self.places_in = None;
         if let Some(places) = self.picker_places.take()
             && let Some(clock) = self.clock(POPUP_OUT)
@@ -282,6 +284,12 @@ impl App {
             self.places_refresh();
             return;
         }
+        if self.picker_lists_branches() {
+            self.picker_goto = None;
+            self.drop_symbols();
+            self.branch_picker_refresh();
+            return;
+        }
         if self.picker_lists_symbols() {
             self.picker_goto = None;
             self.symbols_refresh();
@@ -384,7 +392,9 @@ impl App {
             return;
         }
 
-        let files = !self.picker_lists_commands() && !self.picker_lists_symbols();
+        let files = !self.picker_lists_commands()
+            && !self.picker_lists_symbols()
+            && !self.picker_lists_branches();
         if self.picker_open && files && self.picker_places.is_none() {
             let scroll = self.picker_scroll;
             self.picker_refresh();
@@ -421,7 +431,9 @@ impl App {
         }
 
         let last = self.picker_hits.len() - 1;
-        self.picker_selected = if down {
+        self.picker_selected = if self.picker_lists_branches() {
+            self.branch_picker_step(down)
+        } else if down {
             (self.picker_selected + 1).min(last)
         } else {
             self.picker_selected.saturating_sub(1)
@@ -435,7 +447,7 @@ impl App {
     }
 
     /// 滚动结果列表，使选中项进入可见范围。
-    fn picker_reveal(&mut self) {
+    pub(in crate::app) fn picker_reveal(&mut self) {
         let height = view::picker_span(self);
         if height <= 0.0 {
             return;
@@ -452,6 +464,10 @@ impl App {
     pub(in crate::app) fn picker_accept(&mut self) {
         if self.picker_places.is_some() {
             self.places_accept();
+            return;
+        }
+        if self.picker_lists_branches() {
+            self.branch_picker_accept();
             return;
         }
         if self.picker_lists_commands() {

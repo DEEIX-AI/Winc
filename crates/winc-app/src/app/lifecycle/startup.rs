@@ -188,6 +188,8 @@ impl App {
             pending_chord: None,
             picker_symbols: None,
             picker_places: None,
+            picker_branch_rows: None,
+            branch_folders: Default::default(),
             definitions: None,
             settings: SettingsState::default(),
             format: FormatState::new(formatter()),
