@@ -280,9 +280,21 @@ fn comparing_elsewhere_then_applying_matches_comparing_in_place() {
         (b.hunks.clone(), b.keys.clone())
     );
     assert_eq!(a.rows, b.rows);
-    // 左侧的选区：取出选中的文本。
-    b.left_selection = Some((b.old.text.line_to_char(2), b.old.text.line_to_char(4)));
-    assert_eq!(b.left_selected().as_deref(), Some("line 2\nline 3\n"));
+    // 只读一侧的选区：取出选中的文本。
+    let range = (b.old.text.line_to_char(2), b.old.text.line_to_char(4));
+    b.read_selection = Some(ReadSelection { side: LEFT, range });
+    assert_eq!(b.read_selected().as_deref(), Some("line 2\nline 3\n"));
+    let range = (b.new.text.line_to_char(0), b.new.text.line_to_char(1));
+    b.read_selection = Some(ReadSelection { side: RIGHT, range });
+    assert_eq!(b.read_selected(), Some(b.new.text.line(0).to_string()));
+    // 光标在选区的终点；没有选中内容时也有光标。
+    assert_eq!(b.read_caret(), Some((RIGHT, range.1)));
+    b.read_selection = Some(ReadSelection {
+        side: RIGHT,
+        range: (range.0, range.0),
+    });
+    assert_eq!(b.read_selected(), None);
+    assert_eq!(b.read_caret(), Some((RIGHT, range.0)));
 }
 
 #[test]

@@ -16,7 +16,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use winc_core::{Lines, Selection, movement};
 
 use winc_editor::background;
-use winc_editor::diff_view::{Compared, DiffView, LEFT, RIGHT, SideRow};
+use winc_editor::diff_view::{Compared, DiffView, LEFT, RIGHT, ReadSelection, SideRow};
 use winc_editor::{Document, DocumentId};
 use winc_i18n::t;
 use winc_render::Rect;
@@ -645,7 +645,7 @@ impl App {
         let view = self.editor.active_mut()?.diff.as_deref_mut()?;
         view.new.path.as_ref()?;
         view.editing = true;
-        view.left_selection = None;
+        view.read_selection = None;
         self.in_diff_source(f)
     }
 
@@ -662,7 +662,7 @@ impl App {
             let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut()) else {
                 return false;
             };
-            if view.left_selection.take().is_some() {
+            if view.read_selection.take().is_some() {
                 self.request_redraw();
                 return true;
             }
@@ -691,19 +691,21 @@ impl App {
     /// 参与转发的命令由 [`Action::edits_in_diff`] 判定；返回 `None` 表示该命令不由右侧处理。
     pub(super) fn diff_edit_action(&mut self, action: Action) -> Option<bool> {
         use Action::*;
-        // 左侧有选区时：复制选中的，全选选中整个左侧。
+        // 只读的一侧有选区时：复制选中的，全选选中这一侧的全部内容。
         if let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut())
-            && view.left_selection.is_some()
+            && let Some(selection) = view.read_selection
         {
             match action {
                 Copy => {
-                    if let Some(text) = view.left_selected() {
+                    if let Some(text) = view.read_selected() {
                         self.set_clipboard(text, false);
                     }
                     return Some(true);
                 }
                 SelectAll => {
-                    view.left_selection = Some((0, view.old.text.len_chars()));
+                    let side = selection.side;
+                    let range = (0, view.side(side).text.len_chars());
+                    view.read_selection = Some(ReadSelection { side, range });
                     self.request_redraw();
                     return Some(true);
                 }

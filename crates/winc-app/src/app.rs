@@ -561,8 +561,10 @@ enum Drag {
     DiffColumns {
         anchor: (usize, usize),
     },
-    /// 在差异的左侧拖选；`unit`、`origin` 的含义同 [`Drag::DiffSelect`]，按左侧文本算。
-    DiffSelectLeft {
+    /// 在差异只读的一侧拖选；`unit`、`origin` 的含义同 [`Drag::DiffSelect`]，按第 `side` 侧的
+    /// 文本算。
+    DiffSelectRead {
+        side: usize,
         unit: diff::SelectUnit,
         origin: (usize, usize),
     },

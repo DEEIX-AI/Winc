@@ -175,7 +175,7 @@ fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
     app.on_mouse_up(MouseButton::Left);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
     assert!(!view.editing);
-    let selected = view.left_selected().unwrap();
+    let selected = view.read_selected().unwrap();
     assert!(
         selected.contains('\n') && selected.starts_with("et value_"),
         "{selected:?}"
@@ -183,7 +183,7 @@ fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
     assert!(app.run_action(Action::Copy));
     assert!(app.run_action(Action::SelectAll));
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-    assert_eq!(view.left_selected().unwrap(), view.old.text.to_string());
+    assert_eq!(view.read_selected().unwrap(), view.old.text.to_string());
     click(&mut app, at);
     assert!(
         app.editor
@@ -192,7 +192,7 @@ fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
             .diff
             .as_deref()
             .unwrap()
-            .left_selection
+            .read_selection
             .is_none()
     );
 
@@ -616,17 +616,108 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     press(&mut app, word);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
     assert!(!view.editing);
-    assert_eq!(view.left_selected().unwrap(), "value_5");
+    assert_eq!(view.read_selected().unwrap(), "value_5");
     app.last_click = None;
     let point = at(&app, LEFT, 9, 0, true);
     click(&mut app, point);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-    assert_eq!(view.left_selected().unwrap(), "let value_9 = 9;\n");
+    assert_eq!(view.read_selected().unwrap(), "let value_9 = 9;\n");
     let point = at(&app, LEFT, 9, 3, false);
     right_click(&mut app, point);
     assert_eq!(menu_commands(&app), vec![(MenuCommand::Copy, true)]);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-    assert_eq!(view.left_selected().unwrap(), "let value_9 = 9;\n");
+    assert_eq!(view.read_selected().unwrap(), "let value_9 = 9;\n");
+}
+
+#[test]
+fn a_read_only_right_side_selects_and_copies_like_the_left() {
+    use crate::app::input::context_menu::MenuCommand;
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT};
+
+    let dir = sample_folder("diff-read-only-right");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    // 日志里打开的差异：两侧都是历史版本，都没有路径。
+    let language = winc_syntax::detect("main.rs");
+    let side = |text: &str| DiffSide::new("abc1234", text, None, language);
+    let view = DiffView::new(
+        side("let old = 1;\n"),
+        side("let fresh = 2;\nlet more = 3;\n"),
+    );
+    app.editor.show_diff_in(None, "main.rs", view);
+    paint(&mut app);
+
+    let at = |app: &App, side: usize, line: usize, col: usize, gutter: bool| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let pane = parts.panes[side];
+        let y = parts.body.y + app.fonts.line_height * (line as f32 + 0.5);
+        let x = if gutter {
+            pane.gutter.x + pane.gutter.w / 2.0
+        } else {
+            pane.text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell * col as f32
+        };
+        (x, y)
+    };
+    let selected = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        assert!(!view.editing);
+        view.read_selection
+            .map(|s| s.side)
+            .zip(view.read_selected())
+    };
+
+    // 拖选一段。
+    let (from, to) = (at(&app, RIGHT, 0, 4, false), at(&app, RIGHT, 0, 9, false));
+    app.on_mouse_move(from.0, from.1);
+    assert!(app.over_diff_text(from.0, from.1));
+    assert!(!app.over_diff_editable(from.0, from.1));
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(to.0, to.1);
+    app.on_mouse_up(MouseButton::Left);
+    assert_eq!(selected(&app), Some((RIGHT, "fresh".to_owned())));
+
+    // 光标在拖到的地方；选区画得出来，⌘C 复制的是右侧。
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.read_caret(), Some((RIGHT, 9)));
+    paint(&mut app);
+    assert!(app.run_action(Action::Copy));
+    assert_eq!(app.copied.as_deref(), Some("fresh"));
+
+    // ⌘A 选中右侧全部。
+    assert!(app.run_action(Action::SelectAll));
+    let all = "let fresh = 2;\nlet more = 3;\n".to_owned();
+    assert_eq!(selected(&app), Some((RIGHT, all)));
+    // 光标落在末尾换行符之后：没有对应的显示行，绘制在最后一行下面。
+    paint(&mut app);
+
+    // 点行号选整行；右键只有复制，选区保留。
+    app.last_click = None;
+    let number = at(&app, RIGHT, 1, 0, true);
+    click(&mut app, number);
+    let line = "let more = 3;\n".to_owned();
+    assert_eq!(selected(&app), Some((RIGHT, line.clone())));
+    let inside = at(&app, RIGHT, 1, 3, false);
+    right_click(&mut app, inside);
+    assert_eq!(menu_commands(&app), vec![(MenuCommand::Copy, true)]);
+    assert_eq!(selected(&app), Some((RIGHT, line)));
+    app.dismiss_popup();
+
+    // 选区只有一个：双击左侧换到左侧。
+    app.last_click = None;
+    let left = at(&app, LEFT, 0, 4, false);
+    click(&mut app, left);
+    click(&mut app, left);
+    assert_eq!(selected(&app), Some((LEFT, "old".to_owned())));
+
+    // 单击放下光标，没有选中内容；点到别处之前光标一直在。
+    app.last_click = None;
+    let spot = at(&app, RIGHT, 1, 4, false);
+    click(&mut app, spot);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.read_selected(), None);
+    assert_eq!(view.read_caret(), Some((RIGHT, 19)));
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
