@@ -927,6 +927,13 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置何时显示空格和制表符。
+    pub(in crate::app) fn set_render_whitespace(&mut self, choice: winc_config::RenderWhitespace) {
+        self.config.render_whitespace = Some(choice);
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 把配置中修改过的项写回配置文件，再改用文件中的配置，使程序运行期间手动修改的项生效。
     ///
     /// 写入失败时提示原因，不影响继续使用，下次写回时再写入这些项。原文件无法解析或含有注释时，

@@ -29,6 +29,11 @@ settings-auto-save = 自动保存
 settings-hot-exit = 热退出
 settings-restore-folder = 启动时恢复上次的目录
 settings-sticky-scroll = 粘滞滚动
+settings-render-whitespace = 显示空白符
+settings-render-whitespace-none = 不显示
+settings-render-whitespace-selection = 选中时
+settings-render-whitespace-trailing = 行尾
+settings-render-whitespace-all = 全部
 settings-word-wrap = 自动换行
 settings-compact-folders = 紧凑文件夹
 settings-minimap = 缩略图
@@ -48,11 +53,11 @@ settings-key-search = 搜索快捷键
 
 ## 设置项的说明。
 
-settings-tab-width-desc = 制表符的显示宽度（以空格为单位）；空格缩进按文件内容判断
 settings-auto-save-desc = 切换标签页或应用时自动保存修改
 settings-hot-exit-desc = 退出时无需逐个确认保存，下次启动时恢复未保存的修改
 settings-restore-folder-desc = 退出时记录打开的目录和标签页，下次启动时恢复
 settings-sticky-scroll-desc = 滚动时将当前函数、类和标题固定在编辑区顶部
+settings-render-whitespace-desc = 用圆点和箭头标记空格与制表符，不影响文件内容
 settings-word-wrap-desc = 长行按编辑区宽度折行显示，不修改文件内容
 settings-compact-folders-desc = 在文件树中将连续的单一子目录合并为一行
 settings-minimap-desc = 在编辑区右侧显示代码概览，可点击或拖动以滚动

@@ -137,6 +137,7 @@ cmd-toggle-word-wrap = 切换自动换行
 cmd-toggle-minimap = 切换缩略图
 cmd-toggle-line-numbers = 显示或隐藏行号
 cmd-toggle-status-bar = 显示或隐藏状态栏
+cmd-toggle-whitespace = 切换显示空白符
 cmd-next-difference = 下一处更改
 cmd-previous-difference = 上一处更改
 cmd-next-diff-file = 下一个文件

@@ -8,13 +8,17 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use winc_config::RenderWhitespace;
 use winc_core::text::{self, MAX_LINE_CHARS};
 use winc_core::wrap::{self, Breaks};
 use winc_core::{Lines, Selection};
 use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT, SideRow};
 use winc_i18n::t;
 
-use super::editor::{HIGHLIGHT_BUDGET, caret_bar, draw_caret, draw_glyphs};
+use super::editor::{
+    HIGHLIGHT_BUDGET, caret_bar, draw_caret, draw_glyphs, draw_whitespace_mark,
+    trailing_whitespace, whitespace_shown,
+};
 use super::*;
 use crate::app::{
     DIFF_GUTTER_PAD, DIFF_TEXT_PAD, DiffParts, DiffTarget, Focus, HunkKind, diff_parts,
@@ -719,6 +723,30 @@ fn draw_body(
             let to = origin_x + at(range.end) * app.cell;
             Rect::new(from, pane.text.y, (to - from).max(0.0), pane.text.h).intersect(pane.text)
         };
+
+        // 空白符垫在字下面，和编辑区用同一个设置。
+        let whitespace = app.config.render_whitespace.unwrap_or_default();
+        if whitespace != RenderWhitespace::None {
+            let trailing = trailing_whitespace(&chars);
+            for col in range.clone() {
+                let Some(&c) = chars.get(col).filter(|c| matches!(c, ' ' | '\t')) else {
+                    continue;
+                };
+                let in_selection = || {
+                    let mut near = selections[skip..].iter().take_while(|s| s.0.0 <= line);
+                    near.any(|&(start, end)| start <= (line, col) && (line, col) < end)
+                };
+                if whitespace_shown(whitespace, col, trailing, in_selection) {
+                    let x = origin_x + at(col) * app.cell;
+                    if x > clip.right() {
+                        break;
+                    }
+                    let width = (at(col + 1) - at(col)) * app.cell;
+                    draw_whitespace_mark(app, frame, c, (x, y), width, clip);
+                }
+            }
+        }
+
         draw_glyphs(
             app,
             frame,

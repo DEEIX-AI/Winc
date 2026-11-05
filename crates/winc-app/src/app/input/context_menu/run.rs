@@ -117,6 +117,13 @@ impl App {
                     self.set_locale_choice(choice);
                 }
             }
+            MenuTarget::Whitespace => {
+                if let MenuCommand::Whitespace(i) = command
+                    && let Some(&choice) = winc_config::RenderWhitespace::ALL.get(i)
+                {
+                    self.set_render_whitespace(choice);
+                }
+            }
             MenuTarget::Font(setting) => match command {
                 MenuCommand::FontDefault => self.settings_choose_font(setting, None),
                 MenuCommand::Font(i) => {

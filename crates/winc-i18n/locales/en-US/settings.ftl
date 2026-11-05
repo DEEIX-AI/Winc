@@ -29,6 +29,11 @@ settings-auto-save = Auto Save
 settings-hot-exit = Hot Exit
 settings-restore-folder = Restore Last Folder on Launch
 settings-sticky-scroll = Sticky Scroll
+settings-render-whitespace = Render Whitespace
+settings-render-whitespace-none = None
+settings-render-whitespace-selection = Selection
+settings-render-whitespace-trailing = Trailing
+settings-render-whitespace-all = All
 settings-word-wrap = Word Wrap
 settings-compact-folders = Compact Folders
 settings-minimap = Minimap
@@ -48,11 +53,11 @@ settings-key-search = Search Shortcuts
 
 ## Setting descriptions.
 
-settings-tab-width-desc = Display width of a tab, in spaces; space indentation follows the file
 settings-auto-save-desc = Save changes automatically when switching tabs or apps
 settings-hot-exit-desc = Quit without confirming each file, and restore unsaved changes on next launch
 settings-restore-folder-desc = Remember the open folder and tabs on quit, and restore them on next launch
 settings-sticky-scroll-desc = Pin the current function, class and heading to the top of the editor while scrolling
+settings-render-whitespace-desc = Mark spaces and tabs with dots and arrows without changing the file
 settings-word-wrap-desc = Wrap long lines to the editor width without changing the file
 settings-compact-folders-desc = Show chains of single child folders as one row in the file tree
 settings-minimap-desc = Show a code overview to the right of the editor; click or drag to scroll
