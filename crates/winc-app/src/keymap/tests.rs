@@ -459,3 +459,55 @@ fn a_key_taken_by_the_input_method_still_matches_with_ctrl() {
         None
     );
 }
+
+#[test]
+fn diff_navigation_keys_reach_their_commands_from_key_events() {
+    use winit::keyboard::{
+        Key, KeyCode as Code, KeyLocation, ModifiersState, NamedKey, PhysicalKey,
+    };
+
+    let shift = ModifiersState::SHIFT;
+    let alt = ModifiersState::ALT;
+    let cases = [
+        (
+            NamedKey::F7,
+            Code::F7,
+            ModifiersState::empty(),
+            Action::NextDifference,
+        ),
+        (NamedKey::F7, Code::F7, shift, Action::PreviousDifference),
+        (NamedKey::F5, Code::F5, alt, Action::NextDifference),
+        (
+            NamedKey::F5,
+            Code::F5,
+            alt | shift,
+            Action::PreviousDifference,
+        ),
+        (
+            NamedKey::F8,
+            Code::F8,
+            ModifiersState::empty(),
+            Action::NextDiffFile,
+        ),
+        (NamedKey::F8, Code::F8, shift, Action::PreviousDiffFile),
+    ];
+    for os in ALL_OS {
+        let table = bindings(os);
+        for (named, code, mods, action) in cases {
+            let stroke = Stroke::from_event(
+                &Key::Named(named),
+                "",
+                PhysicalKey::Code(code),
+                KeyLocation::Standard,
+                mods,
+            )
+            .unwrap();
+            let found = lookup(&table, stroke, None, Context::Editor);
+            assert!(
+                matches!(&found, Lookup::Run(actions) if actions.contains(&action)),
+                "{os:?} {named:?} {mods:?}"
+            );
+            assert!(action.navigates_diff());
+        }
+    }
+}

@@ -61,6 +61,18 @@ impl App {
         self.request_redraw();
     }
 
+    /// 清除 [`App::flash`] 显示的消息：状态已经变化，消息不再成立时调用。
+    ///
+    /// 隐藏状态栏时消息显示在提示条上，清除提示条。
+    pub(crate) fn clear_flash(&mut self) {
+        self.status_message = None;
+        self.status_until = None;
+        if !self.status_bar_shown() {
+            self.clear_notice();
+        }
+        self.request_redraw();
+    }
+
     /// 在编辑区右上角显示一条提示，显示时间为 [`NOTICE_DURATION`]，用于出错、冲突、未保存等
     /// 需要用户注意的情况。
     ///

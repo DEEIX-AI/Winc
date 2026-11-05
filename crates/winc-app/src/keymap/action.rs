@@ -647,6 +647,15 @@ impl Action {
         }
     }
 
+    /// 是否是在差异里导航的命令：跳到改动、切换文件。
+    pub fn navigates_diff(self) -> bool {
+        use Action::*;
+        matches!(
+            self,
+            NextDifference | PreviousDifference | NextDiffFile | PreviousDiffFile
+        )
+    }
+
     /// 光标在差异标签右侧时，是否把命令交给右侧对应的源文档执行。
     ///
     /// 「编辑」分组的命令默认都交给右侧，新加的编辑命令在差异里也能直接用；另外加上保存和

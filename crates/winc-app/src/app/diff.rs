@@ -1004,7 +1004,11 @@ impl App {
             }
         };
         match target {
-            Some(hunk) => self.go_to_hunk(hunk),
+            // 跳转成功后，上一次「没有更多改动」的提示不再成立。
+            Some(hunk) => {
+                self.clear_flash();
+                self.go_to_hunk(hunk);
+            }
             None => {
                 let message = if view.is_identical() {
                     t!("git-diff-identical-sides")

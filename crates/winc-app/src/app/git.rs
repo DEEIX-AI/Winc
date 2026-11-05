@@ -1077,13 +1077,6 @@ impl App {
             }
             self.relayout();
             self.clamp_scroll();
-            // 打开时停在第一处改动，这一处就是当前段，`F7` 从下一处开始。不移动光标：连续预览时不
-            // 必为每个文件在后台打开文档。
-            let doc = &mut self.editor.documents[index];
-            let scroll = doc.scroll_line;
-            if let Some(view) = doc.diff.as_deref_mut().filter(|v| !v.hunks.is_empty()) {
-                view.focus = Some((0, scroll));
-            }
             self.land_diff_file();
             self.request_redraw();
         }

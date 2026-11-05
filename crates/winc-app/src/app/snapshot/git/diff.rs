@@ -40,10 +40,17 @@ fn show_changes_opens_a_side_by_side_diff_and_walks_it() {
         let doc = app.editor.active().unwrap();
         doc.diff.as_deref().unwrap().current_hunk(doc.scroll_line)
     };
-    let first = current(&app).unwrap();
+    // 打开时停在第一处，没有标记；第一次跳转标记第一处，之后依次往下。
+    let focus = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        view.focus.map(|f| f.0)
+    };
+    assert_eq!(current(&app), Some(0));
+    assert_eq!(focus(&app), None);
     app.press_diff(DiffTarget::Next);
-    let second = current(&app).unwrap();
-    assert!(second > first);
+    assert_eq!(focus(&app), Some(0));
+    app.press_diff(DiffTarget::Next);
+    assert_eq!(current(&app), Some(1));
     assert!(app.run_action(Action::NextDifference));
     assert_eq!(current(&app), Some(2));
     // 到了最后一处再往下：第一次只提示，再按一次进入下一个改动的文件；往回同样要按两次，回到
@@ -767,7 +774,11 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     assert!(title(&app).starts_with("main.rs"));
     assert!(app.diff_steps_files());
 
-    // 跳到改动：这一段成为当前段。文件已经打开，光标移到它的文档里，键入的字进右侧。
+    // 打开时不标记。第一次跳转标记第一处；文件已经打开，光标移到它的文档里，键入的字进右侧。
+    assert_eq!(focus(&app), None);
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(focus(&app), Some(0));
+    assert_eq!(caret_line(&app), 5);
     assert!(app.run_action(Action::NextDifference));
     assert_eq!(focus(&app), Some(1));
     assert_eq!(caret_line(&app), 50);
@@ -849,6 +860,119 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
 }
 
 #[test]
+fn moving_to_a_change_clears_the_message_about_having_none() {
+    let dir = search_folder("git-diff-messages");
+    if !long_repo(&dir) {
+        return;
+    }
+    std::fs::remove_file(dir.join("src/new.rs")).unwrap();
+    let main = winc_editor::canonical_path(&dir.join("src/main.rs"));
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.git_refresh();
+    app.fetch_changes(&main, Target::Open);
+    paint(&mut app);
+    let focus = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        view.focus.map(|f| f.0)
+    };
+
+    // 刚打开时往回没有改动；往下跳到第一处以后，这条提示不再成立。
+    assert!(app.run_action(Action::PreviousDifference));
+    assert_eq!(app.status_message.as_deref(), Some("没有上一处更改"));
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(focus(&app), Some(0));
+    assert_eq!(app.status_message, None);
+
+    // 走到头时提示方向对应的消息；反方向跳转后提示清除，不留下相反的消息。
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(focus(&app), Some(1));
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(app.status_message.as_deref(), Some("没有下一处更改"));
+    assert!(app.run_action(Action::PreviousDifference));
+    assert_eq!(focus(&app), Some(0));
+    assert_eq!(app.status_message, None);
+    assert!(app.run_action(Action::PreviousDifference));
+    assert_eq!(app.status_message.as_deref(), Some("没有上一处更改"));
+
+    // 隐藏状态栏时消息在提示条上，同样清除。
+    app.settings_toggle(Setting::StatusBar);
+    assert!(app.run_action(Action::PreviousDifference));
+    assert_eq!(app.notice.as_deref(), Some("没有上一处更改"));
+    assert!(app.run_action(Action::NextDifference));
+    assert_eq!(focus(&app), Some(1));
+    assert_eq!(app.notice, None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn diff_navigation_keys_work_with_focus_in_the_commit_list() {
+    use crate::keymap::{KeyCode, Mods, Stroke};
+
+    let dir = search_folder("git-diff-list-keys");
+    if !long_repo(&dir) {
+        return;
+    }
+    std::fs::remove_file(dir.join("src/new.rs")).unwrap();
+    std::fs::write(dir.join("src/zeta.rs"), "a\n").unwrap();
+    let main = winc_editor::canonical_path(&dir.join("src/main.rs"));
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.git_refresh();
+    app.fetch_changes(&main, Target::Open);
+    paint(&mut app);
+    let f = |n: u8, mods: Mods| Stroke {
+        key: KeyCode::F(n),
+        mods,
+    };
+    let focus = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        view.focus.map(|f| f.0)
+    };
+    let title = |app: &App| app.editor.active().unwrap().title.clone().unwrap();
+
+    // 点了列表里的文件以后焦点留在列表：跳到改动、切换文件都生效，焦点不移动。
+    app.focus = Focus::CommitList;
+    assert!(app.on_shortcut(f(7, Mods::NONE)));
+    assert_eq!(focus(&app), Some(0));
+    assert!(app.on_shortcut(f(5, Mods::ALT)));
+    assert_eq!(focus(&app), Some(1));
+    assert!(app.on_shortcut(f(7, Mods::SHIFT)));
+    assert_eq!(focus(&app), Some(0));
+    assert!(app.on_shortcut(f(5, Mods::ALT | Mods::SHIFT)));
+    assert_eq!(app.focus, Focus::CommitList);
+    assert!(app.on_shortcut(f(8, Mods::NONE)));
+    assert!(title(&app).starts_with("zeta.rs"), "{}", title(&app));
+    assert!(app.on_shortcut(f(8, Mods::SHIFT)));
+    assert!(title(&app).starts_with("main.rs"), "{}", title(&app));
+    assert_eq!(app.focus, Focus::CommitList);
+
+    // 其他键仍然由列表处理；焦点在文件树时不操作差异。
+    assert!(!app.on_shortcut(Stroke {
+        key: KeyCode::Down,
+        mods: Mods::NONE,
+    }));
+    app.focus = Focus::Tree;
+    assert!(!app.on_shortcut(f(7, Mods::NONE)));
+
+    // 当前标签不是差异时，提交列表不接这些键。
+    app.focus = Focus::CommitList;
+    let tab = app.editor.active.unwrap();
+    app.close_tab(tab);
+    assert!(!app.editor.active().is_some_and(|d| d.diff.is_some()));
+    assert!(!app.on_shortcut(f(7, Mods::NONE)));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn typing_at_the_read_caret_opens_the_file_and_edits_there() {
     use crate::app::diff::edits_text;
     use winit::keyboard::{Key, NamedKey};
@@ -892,7 +1016,7 @@ fn typing_at_the_read_caret_opens_the_file_and_edits_there() {
         .iter()
         .find(|d| d.path.as_deref() == Some(&main));
     let text = source.unwrap().text().rope().unwrap().to_string();
-    assert!(text.contains("Xlet value_51 = 51;"), "{text}");
+    assert!(text.contains("Xlet value_5 = 500;"), "{text}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
