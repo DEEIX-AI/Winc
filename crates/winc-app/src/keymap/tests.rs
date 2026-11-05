@@ -1,5 +1,5 @@
 //! `keymap` 的测试：三个系统上绑定表不冲突、组合键等第二段、「快捷键」页的行合并与搜索，
-//! 以及差异标签接手的命令清单。
+//! 差异标签接手的命令清单，以及输入法接管的按键。
 
 use super::*;
 
@@ -417,4 +417,42 @@ fn the_tree_gets_plain_letters_and_paging_keys() {
             );
         }
     }
+}
+
+#[test]
+fn a_key_taken_by_the_input_method_still_matches_with_ctrl() {
+    use winit::keyboard::{
+        Key, KeyCode as Code, KeyLocation, ModifiersState, NamedKey, PhysicalKey,
+    };
+
+    let stroke = |physical, m| {
+        let key = Key::Named(NamedKey::Process);
+        Stroke::from_event(&key, "", physical, KeyLocation::Standard, m)
+    };
+    let comma = PhysicalKey::Code(Code::Comma);
+
+    assert_eq!(
+        stroke(comma, ModifiersState::CONTROL),
+        Some(Stroke {
+            key: KeyCode::Char(','),
+            mods: Mods::CTRL,
+        })
+    );
+    assert_eq!(
+        stroke(
+            PhysicalKey::Code(Code::KeyS),
+            ModifiersState::CONTROL | ModifiersState::ALT
+        ),
+        Some(Stroke {
+            key: KeyCode::Char('s'),
+            mods: Mods::CTRL | Mods::ALT,
+        })
+    );
+    // 没按 Ctrl 是在打字；不对应字符的键没有快捷键可匹配。
+    assert_eq!(stroke(comma, ModifiersState::empty()), None);
+    assert_eq!(stroke(comma, ModifiersState::SHIFT), None);
+    assert_eq!(
+        stroke(PhysicalKey::Code(Code::F1), ModifiersState::CONTROL),
+        None
+    );
 }

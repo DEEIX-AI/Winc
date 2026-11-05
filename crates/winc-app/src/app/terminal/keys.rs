@@ -302,73 +302,10 @@ impl App {
 /// 发不出 ⌃C。这里按 `key` 给出的键位取字：`KeyC` 换成 `c`，字母、数字与标点同理；键面
 /// 已经是 ASCII 时原样返回。
 fn latin(c: char, key: PhysicalKey) -> char {
-    use winit::keyboard::KeyCode as K;
     if c.is_ascii() {
         return c;
     }
-    let PhysicalKey::Code(code) = key else {
-        return c;
-    };
-    const LETTERS: [K; 26] = [
-        K::KeyA,
-        K::KeyB,
-        K::KeyC,
-        K::KeyD,
-        K::KeyE,
-        K::KeyF,
-        K::KeyG,
-        K::KeyH,
-        K::KeyI,
-        K::KeyJ,
-        K::KeyK,
-        K::KeyL,
-        K::KeyM,
-        K::KeyN,
-        K::KeyO,
-        K::KeyP,
-        K::KeyQ,
-        K::KeyR,
-        K::KeyS,
-        K::KeyT,
-        K::KeyU,
-        K::KeyV,
-        K::KeyW,
-        K::KeyX,
-        K::KeyY,
-        K::KeyZ,
-    ];
-    const DIGITS: [K; 10] = [
-        K::Digit0,
-        K::Digit1,
-        K::Digit2,
-        K::Digit3,
-        K::Digit4,
-        K::Digit5,
-        K::Digit6,
-        K::Digit7,
-        K::Digit8,
-        K::Digit9,
-    ];
-    if let Some(i) = LETTERS.iter().position(|&k| k == code) {
-        return char::from(b'a' + i as u8);
-    }
-    if let Some(i) = DIGITS.iter().position(|&k| k == code) {
-        return char::from(b'0' + i as u8);
-    }
-    match code {
-        K::Minus => '-',
-        K::Equal => '=',
-        K::BracketLeft => '[',
-        K::BracketRight => ']',
-        K::Backslash => '\\',
-        K::Semicolon => ';',
-        K::Quote => '\'',
-        K::Comma => ',',
-        K::Period => '.',
-        K::Slash => '/',
-        K::Backquote => '`',
-        _ => c,
-    }
+    crate::keymap::us_char(key).unwrap_or(c)
 }
 
 /// ⇧ 加上键上的字符（美式键盘的排法）：Meta 组合要发 `ESC !` 这样的字符时用。
