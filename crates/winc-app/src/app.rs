@@ -1003,6 +1003,8 @@ pub struct App {
     pub(crate) config_rev: u64,
     /// 新窗口的位置：相对打开它的窗口往右下错开一段，建窗口时用一次。
     pub(crate) cascade: Option<winit::dpi::Position>,
+    /// 窗口没有最大化、全屏时的大小和位置，关闭时记下来。
+    pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口和打开它的窗口共用的字体和字形缓存（建渲染器时用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 窗口完全看不见（被挡住、最小化、在别的桌面上）：不画，屏幕上那块画面标成可清除。

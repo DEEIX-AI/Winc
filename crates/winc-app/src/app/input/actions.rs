@@ -311,6 +311,8 @@ impl App {
             ToggleStickyScroll => self.settings_toggle(crate::layout::Setting::StickyScroll),
             TogglePreview => self.toggle_preview(),
             ToggleWordWrap => self.settings_toggle(crate::layout::Setting::WordWrap),
+            ToggleLineNumbers => self.settings_toggle(crate::layout::Setting::LineNumbers),
+            ToggleStatusBar => self.settings_toggle(crate::layout::Setting::StatusBar),
             ToggleMinimap => self.settings_toggle(crate::layout::Setting::Minimap),
             // 差异标签里在两侧的改动之间跳；普通文件里在行号栏标出的改动之间跳。
             NextDifference | PreviousDifference => {

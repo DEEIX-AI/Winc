@@ -58,6 +58,12 @@ pub struct Config {
     pub word_wrap: Option<bool>,
     /// 在编辑区右侧显示缩略图，默认为否。
     pub minimap: Option<bool>,
+    /// 在行号栏显示行号，默认为是；关闭后折叠箭头、书签和改动标记仍然显示。
+    pub line_numbers: Option<bool>,
+    /// 显示窗口底部的状态栏，默认为是。
+    pub status_bar: Option<bool>,
+    /// 新窗口沿用上次关闭时的大小和位置，默认为是。
+    pub restore_window: Option<bool>,
     /// 配色：`auto` 跟随系统，`dark` 或 `light` 强制指定。
     pub theme: Option<ThemeChoice>,
     /// 浅色外观时用的主题（主题的名字，如 `paper`）；没写时用默认的。

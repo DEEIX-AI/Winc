@@ -49,7 +49,13 @@ const NOTICE_ACTION_DURATION: Duration = Duration::from_secs(10);
 
 impl App {
     /// 在状态栏显示一条临时消息，显示时间为 [`FLASH_DURATION`]，用于操作结果和一般提示。
+    ///
+    /// 隐藏状态栏时改用右上角的提示（[`App::notify`]），否则这条消息看不到。
     pub(crate) fn flash(&mut self, message: impl Into<String>) {
+        if !self.status_bar_shown() {
+            self.notify(message);
+            return;
+        }
         self.status_message = Some(message.into());
         self.status_until = Some(Instant::now() + FLASH_DURATION);
         self.request_redraw();

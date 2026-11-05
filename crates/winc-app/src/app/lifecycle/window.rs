@@ -96,6 +96,11 @@ impl App {
         self.request_redraw();
     }
 
+    /// 是否显示状态栏（`statusBar`）。
+    pub(crate) fn status_bar_shown(&self) -> bool {
+        self.config.status_bar != Some(false)
+    }
+
     /// 新窗口放在哪里：比本窗口往右下错开，形成层叠。
     pub(crate) fn cascade_from(&self) -> Option<winit::dpi::Position> {
         // 错开的距离（逻辑像素），和 macOS 标题栏的高度接近。
@@ -182,6 +187,12 @@ impl App {
         };
         let (w, h) = renderer.logical_size();
 
+        // 隐藏状态栏时留下和窗口其他三边一样的边距，卡片不贴着窗口底边。
+        let status_height = if self.status_bar_shown() {
+            STATUS_HEIGHT
+        } else {
+            ISLAND_MARGIN
+        };
         let rows = match (
             self.search_open && self.editor.active.is_some(),
             self.replace_open,
@@ -194,14 +205,23 @@ impl App {
         // `PICKER_MAX_ROWS` 行，且不能延伸到状态栏。
         let picker_rows = if self.picker_open {
             let room =
-                (h - STATUS_HEIGHT - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
+                (h - status_height - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
             let most = ((room / PICKER_ROW).floor() as usize).clamp(1, PICKER_MAX_ROWS);
             self.picker_hits.len().clamp(1, most)
         } else {
             0
         };
         let (panel, shown) = (self.panel_width, self.sidebar_shown());
-        self.layout = Layout::compute(w, h, panel, shown, rows, picker_rows, self.gutter_width());
+        self.layout = Layout::compute(
+            w,
+            h,
+            panel,
+            shown,
+            rows,
+            picker_rows,
+            self.gutter_width(),
+            status_height,
+        );
         self.place_places();
         self.animate_picker((w, h));
         if let Some(bottom) = self.places_bottom {

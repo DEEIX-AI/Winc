@@ -147,11 +147,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，再下面是两组
-    // 主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；
-    // 到头后不再变化。
+    // 浅色主题（语言下面是界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，然后是状态栏和
+    // 记住窗口两个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：
+    // → 换到下一个，外观回到深色；到头后不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..3 + title_bar {
+    for _ in 0..5 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -837,4 +837,71 @@ fn the_language_and_ui_font_controls_line_up() {
     assert_eq!((menu.x, menu.w), (language.x, language.w));
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn line_numbers_and_the_status_bar_can_be_hidden() {
+    let dir = sample_folder("settings-chrome");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    paint(&mut app);
+    let (gutter, text, editor_bottom) = (
+        app.layout.gutter.w,
+        app.layout.text.w,
+        app.layout.editor.bottom(),
+    );
+    assert!(!app.status_hits.is_empty());
+
+    // 行号：行号栏变窄，文字区域变宽，折叠箭头和书签的空白还在。
+    assert!(app.switch_on(Setting::LineNumbers));
+    assert!(app.run_action(crate::keymap::Action::ToggleLineNumbers));
+    assert!(!app.switch_on(Setting::LineNumbers));
+    assert_eq!(app.config.line_numbers, Some(false));
+    assert_eq!(app.layout.gutter.w, 2.0 * crate::theme::GUTTER_PADDING);
+    assert!(app.layout.gutter.w < gutter);
+    assert!(app.layout.text.w > text);
+    paint(&mut app);
+
+    // 状态栏：底部只留下边距，卡片变高，点不到状态栏上的项。
+    assert!(app.switch_on(Setting::StatusBar));
+    assert!(app.run_action(crate::keymap::Action::ToggleStatusBar));
+    assert_eq!(app.config.status_bar, Some(false));
+    assert_eq!(app.layout.status.h, crate::theme::ISLAND_MARGIN);
+    assert!(app.layout.editor.bottom() > editor_bottom);
+    paint(&mut app);
+    assert!(app.status_hits.is_empty());
+    assert!(app.crumb_hits.is_empty());
+
+    // 短提示本来显示在状态栏上，隐藏后改到右上角。
+    app.flash("copied");
+    assert_eq!(app.status_message, None);
+    assert_eq!(app.notice.as_deref(), Some("copied"));
+
+    // 命令面板能把它们打开回来。
+    assert!(app.run_action(crate::keymap::Action::ToggleStatusBar));
+    assert!(app.run_action(crate::keymap::Action::ToggleLineNumbers));
+    assert_eq!(app.layout.gutter.w, gutter);
+    assert_eq!(app.layout.editor.bottom(), editor_bottom);
+    paint(&mut app);
+    assert!(!app.status_hits.is_empty());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn turning_off_window_restore_forgets_the_saved_frame() {
+    let dir = sample_folder("settings-window");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.state.window = Some(winc_config::WindowFrame {
+        position: Some((10.0, 20.0)),
+        width: 900.0,
+        height: 600.0,
+        scale: 1.0,
+        maximized: false,
+    });
+    assert!(app.switch_on(Setting::RestoreWindow));
+    app.settings_toggle(Setting::RestoreWindow);
+    assert_eq!(app.config.restore_window, Some(false));
+    assert_eq!(app.state.window, None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

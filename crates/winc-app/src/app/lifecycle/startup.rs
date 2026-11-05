@@ -232,6 +232,7 @@ impl App {
             shared: Default::default(),
             config_rev: 0,
             cascade: None,
+            window_frame: None,
             glyphs_from: None,
             occluded: false,
             next_frame: None,

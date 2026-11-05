@@ -493,6 +493,9 @@ impl App {
             Setting::StickyScroll => self.config.sticky_scroll != Some(false),
             Setting::WordWrap => self.config.word_wrap == Some(true),
             Setting::Minimap => self.config.minimap == Some(true),
+            Setting::LineNumbers => self.config.line_numbers != Some(false),
+            Setting::StatusBar => self.config.status_bar != Some(false),
+            Setting::RestoreWindow => self.config.restore_window != Some(false),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::CheckUpdates => self.config.update_auto_check != Some(false),
@@ -524,6 +527,9 @@ impl App {
             Setting::StickyScroll => self.config.sticky_scroll = Some(on),
             Setting::WordWrap => self.config.word_wrap = Some(on),
             Setting::Minimap => self.config.minimap = Some(on),
+            Setting::LineNumbers => self.config.line_numbers = Some(on),
+            Setting::StatusBar => self.config.status_bar = Some(on),
+            Setting::RestoreWindow => self.config.restore_window = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::CheckUpdates => self.config.update_auto_check = Some(on),
@@ -540,8 +546,15 @@ impl App {
         if setting == Setting::WordWrap {
             self.word_wrap_changed();
         }
-        if setting == Setting::Minimap {
+        if matches!(
+            setting,
+            Setting::Minimap | Setting::LineNumbers | Setting::StatusBar
+        ) {
             self.relayout();
+        }
+        // 关掉以后不再沿用：之后再打开时从下一次关闭窗口开始记录。
+        if setting == Setting::RestoreWindow && !on {
+            self.update_state(|state| state.window = None);
         }
         if setting == Setting::CompactFolders {
             self.apply_compact_folders();
@@ -929,7 +942,9 @@ impl App {
             old.sticky_scroll != new.sticky_scroll,
         );
         let images = old.markdown_remote_images != new.markdown_remote_images;
-        let minimap = old.minimap != new.minimap;
+        let minimap = old.minimap != new.minimap
+            || old.line_numbers != new.line_numbers
+            || old.status_bar != new.status_bar;
         let compact = old.compact_folders != new.compact_folders;
         // 窗口字体同步。
         let glyph_language = old.language != new.language
