@@ -313,6 +313,12 @@ impl App {
             ToggleWordWrap => self.settings_toggle(crate::layout::Setting::WordWrap),
             ToggleLineNumbers => self.settings_toggle(crate::layout::Setting::LineNumbers),
             ToggleStatusBar => self.settings_toggle(crate::layout::Setting::StatusBar),
+            // 其他选项都按「全部显示」切换；再次切换时不显示。
+            ToggleWhitespace => {
+                use winc_config::RenderWhitespace::{All, None};
+                let all = self.config.render_whitespace == Some(All);
+                self.set_render_whitespace(if all { None } else { All });
+            }
             ToggleMinimap => self.settings_toggle(crate::layout::Setting::Minimap),
             // 差异标签里在两侧的改动之间跳；普通文件里在行号栏标出的改动之间跳。
             NextDifference | PreviousDifference => {

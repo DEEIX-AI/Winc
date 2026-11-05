@@ -58,6 +58,8 @@ pub struct Config {
     pub word_wrap: Option<bool>,
     /// 在编辑区右侧显示缩略图，默认为否。
     pub minimap: Option<bool>,
+    /// 何时显示空格和制表符，默认为选中时。
+    pub render_whitespace: Option<RenderWhitespace>,
     /// 差异单栏显示：新旧内容上下排列，默认为否（左右并排）。
     pub diff_inline: Option<bool>,
     /// 在行号栏显示行号，默认为是；关闭后折叠箭头、书签和改动标记仍然显示。
@@ -162,6 +164,30 @@ impl OptionAsMeta {
             OptionAsMeta::None => "none",
         }
     }
+}
+
+/// 何时显示空格和制表符。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderWhitespace {
+    /// 不显示。
+    None,
+    /// 只显示选中文字里的。
+    #[default]
+    Selection,
+    /// 只显示行尾的。
+    Trailing,
+    /// 全部显示。
+    All,
+}
+
+impl RenderWhitespace {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [RenderWhitespace; 4] = [
+        RenderWhitespace::None,
+        RenderWhitespace::Selection,
+        RenderWhitespace::Trailing,
+        RenderWhitespace::All,
+    ];
 }
 
 /// 配色方案的选择。

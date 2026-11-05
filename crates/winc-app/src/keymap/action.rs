@@ -154,6 +154,8 @@ pub enum Action {
     ToggleLineNumbers,
     /// 显示或隐藏状态栏。
     ToggleStatusBar,
+    /// 全部显示或不显示空白符。
+    ToggleWhitespace,
     TogglePreview,
     NextDifference,
     PreviousDifference,
@@ -348,6 +350,7 @@ impl Action {
             ToggleMinimap => t!("cmd-toggle-minimap"),
             ToggleLineNumbers => t!("cmd-toggle-line-numbers"),
             ToggleStatusBar => t!("cmd-toggle-status-bar"),
+            ToggleWhitespace => t!("cmd-toggle-whitespace"),
             NextDifference => t!("cmd-next-difference"),
             PreviousDifference => t!("cmd-previous-difference"),
             NextDiffFile => t!("cmd-next-diff-file"),
@@ -522,6 +525,7 @@ impl Action {
             ToggleMinimap => "Toggle Minimap",
             ToggleLineNumbers => "Toggle Line Numbers",
             ToggleStatusBar => "Toggle Status Bar",
+            ToggleWhitespace => "Toggle Render Whitespace",
             NextDifference => "Go to Next Difference",
             PreviousDifference => "Go to Previous Difference",
             NextDiffFile => "Go to Next File in Diff",
@@ -641,13 +645,14 @@ impl Action {
             RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
             ToggleSidebar | FocusSidebar | ShowFiles | ZoomIn | ZoomOut | ResetZoom | ThemeAuto
             | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | ToggleMinimap
-            | ToggleLineNumbers | ToggleStatusBar | TogglePreview | NextDifference
-            | PreviousDifference | NextDiffFile | PreviousDiffFile | ToggleDiffLayout
-            | GitShowChanges | GitShowLog | GitSwitchWorktree | GitNewWorktree | GitFileHistory
-            | GitBlame | ShowCommit | GitRevertChange | ToggleTerminal | ClearTerminal
-            | NewTerminal | CloseTerminal | NextTerminal | PreviousTerminal | FindInTerminal
-            | MaximizeTerminal | RenameTerminal | PreviousCommand | NextCommand | FoldOutput
-            | UnfoldOutput | NextError | PreviousError | SendToTerminal => Group::View,
+            | ToggleLineNumbers | ToggleStatusBar | ToggleWhitespace | TogglePreview
+            | NextDifference | PreviousDifference | NextDiffFile | PreviousDiffFile
+            | ToggleDiffLayout | GitShowChanges | GitShowLog | GitSwitchWorktree
+            | GitNewWorktree | GitFileHistory | GitBlame | ShowCommit | GitRevertChange
+            | ToggleTerminal | ClearTerminal | NewTerminal | CloseTerminal | NextTerminal
+            | PreviousTerminal | FindInTerminal | MaximizeTerminal | RenameTerminal
+            | PreviousCommand | NextCommand | FoldOutput | UnfoldOutput | NextError
+            | PreviousError | SendToTerminal => Group::View,
         }
     }
 
@@ -921,6 +926,7 @@ pub const ACTIONS: &[Action] = {
         ToggleMinimap,
         ToggleLineNumbers,
         ToggleStatusBar,
+        ToggleWhitespace,
         TogglePreview,
         ShowCommit,
         GitShowChanges,

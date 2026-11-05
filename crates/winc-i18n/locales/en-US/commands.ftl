@@ -137,6 +137,7 @@ cmd-toggle-word-wrap = Toggle Word Wrap
 cmd-toggle-minimap = Toggle Minimap
 cmd-toggle-line-numbers = Show or Hide Line Numbers
 cmd-toggle-status-bar = Show or Hide Status Bar
+cmd-toggle-whitespace = Toggle Render Whitespace
 cmd-next-difference = Next Change
 cmd-previous-difference = Previous Change
 cmd-next-diff-file = Next File

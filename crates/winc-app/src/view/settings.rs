@@ -356,6 +356,9 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             let (text, dim) = if row.setting == Setting::Language {
                 let choice = app.config.language.unwrap_or_default();
                 (crate::layout::locale_label(choice).to_owned(), false)
+            } else if row.setting == Setting::RenderWhitespace {
+                let choice = app.config.render_whitespace.unwrap_or_default();
+                (crate::layout::whitespace_label(choice).to_owned(), false)
             } else {
                 match app.skipped_on_save() {
                     Some(names) => (names, false),

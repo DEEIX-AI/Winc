@@ -480,6 +480,13 @@ pub fn locale_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回「空白符」菜单的菜单项，当前的选择打勾。
+pub fn whitespace_menu() -> Vec<MenuEntry> {
+    (0..winc_config::RenderWhitespace::ALL.len())
+        .map(|i| MenuEntry::Item(MenuCommand::Whitespace(i), true))
+        .collect()
+}
+
 /// 返回字体菜单的菜单项：第一项是系统默认，然后是已安装的字族，当前的选择打勾。
 ///
 /// 编辑器字体直接列出等宽字体，其余字体收进子菜单；界面字体全部直接列出。
