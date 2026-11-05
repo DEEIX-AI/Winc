@@ -34,8 +34,14 @@ impl ApplicationHandler<UserEvent> for App {
         // Windows 上去掉系统边框的窗口默认也没有阴影，和其他窗口叠在一起时分不清边界。
         #[cfg(windows)]
         {
-            use winit::platform::windows::WindowAttributesExtWindows;
+            use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
             attributes = attributes.with_undecorated_shadow(true);
+            // 图标由构建脚本嵌入可执行文件；窗口类没有默认图标，要在这里指定。
+            if let Ok(icon) = winit::window::Icon::from_resource(1, None) {
+                attributes = attributes
+                    .with_window_icon(Some(icon.clone()))
+                    .with_taskbar_icon(Some(icon));
+            }
         }
         #[cfg(target_os = "macos")]
         {

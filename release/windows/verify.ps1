@@ -7,6 +7,9 @@ $bundle = "$root/target/$Target/release/bundle"
 $work = Join-Path $env:RUNNER_TEMP 'winc-installer-verification'
 New-Item -ItemType Directory -Force $work | Out-Null
 $update = "$root/crates/winc-app/src/updates/installer/update.ps1"
+# File associations and the file manager take the icon from the executable itself.
+$shell = Add-Type -Name Shell -Namespace WincVerify -PassThru -MemberDefinition '[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconEx(string file, int index, IntPtr large, IntPtr small, uint count);'
+if ($shell::ExtractIconEx("$root/target/$Target/release/winc.exe", -1, [IntPtr]::Zero, [IntPtr]::Zero, 0) -lt 1) { throw 'winc.exe has no embedded icon' }
 foreach ($kind in @('nsis', 'msi')) {
     $directory = Join-Path $work "$kind installation with spaces"
     $suffix = if ($kind -eq 'nsis') { '-setup.exe' } else { '.msi' }
