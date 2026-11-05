@@ -3,6 +3,7 @@
 //! 纵向和横向滚动、固定在顶部的目录，以及放不下的名称在编辑区上方的延续绘制都在这里处理；
 //! 每一行的矩形和点击命中由 `app::tree` 在绘制时记录。
 
+use std::borrow::Cow;
 use std::f32::consts::FRAC_PI_2;
 use std::path::{Path, PathBuf};
 
@@ -11,12 +12,14 @@ use winc_editor::{Entry, EntryKind};
 use winc_i18n::t;
 
 use super::*;
-use crate::app::{DropZone, Focus, NameInput, TreeMotion};
+use crate::app::animation::stage;
+use crate::app::{DropZone, Focus, LabelCause, LabelView, NameInput, TreeMotion};
 use crate::icons::Direction;
 use crate::layout::{
     SidebarView, TREE_NAME_MIN, TreeTool, folding_tools, hscrollbar_thumb, tree_row_slot,
     tree_tools,
 };
+use crate::theme::SCROLLBAR_HIT;
 
 /// 绘制侧栏：
 ///
@@ -365,6 +368,8 @@ fn draw_tree_tool_icon(
 
 /// 绘制文件树：选中行和悬停行是内缩的圆角块。
 fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
+    let animate = app.animate_tree_labels();
+    app.tree_labels.begin_frame(animate);
     let p = app.palette;
     let tree = app.layout.tree;
 
@@ -521,6 +526,7 @@ fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
 
     draw_sticky(app, frame, rows, &mut segments);
     app.tree_segments = segments;
+    app.tree_labels.end_frame();
 
     draw_scrollbar(app, frame, ScrollArea::Tree, 0, tree, scroll, content);
 
@@ -575,14 +581,44 @@ fn draw_tree_entry(
         tree.right() - 12.0
     } - label_x;
     let folded = chain_folded(app, frame, entry, room);
+    let full = label_width(app, frame, entry);
+    // 悬停和收回时名字的内容、宽度都缓动；放不下的普通名字收回到侧栏边缘。
+    let shown: Vec<Cow<'_, str>> = match &folded {
+        Some((parts, _)) if !hovered => parts.iter().map(|&part| part_name(entry, part)).collect(),
+        Some(_) => entry
+            .chain()
+            .iter()
+            .map(|p| winc_editor::segment_name(p))
+            .collect(),
+        None => vec![Cow::Borrowed(entry.name.as_str())],
+    };
+    let target = match &folded {
+        Some((_, width)) if !hovered => *width,
+        _ if hovered => full,
+        _ => full.min(room.max(0.0)),
+    };
+    let cause = LabelCause {
+        hovered,
+        levels: entry.chain().len(),
+        current: chain_current(app, entry),
+    };
+    let view = app
+        .tree_labels
+        .sync(label_key(entry), cause, &shown, target);
     let label_end = match &folded {
-        Some((_, width)) if !hovered => label_x + width,
-        _ => label_x + label_width(app, frame, entry),
+        None if !hovered => label_x + full,
+        _ => label_x + view.width,
     };
     let overflows = label_overflows(tree, label_end);
     let pill = tree_row_pill(row, overflows);
 
-    let background = row_color(p, selected, app.focus == Focus::Tree, hovered);
+    let focused = app.focus == Focus::Tree;
+    let retracting = !hovered && view.progress < 1.0 && label_x + view.width > tree.right() - 12.0;
+    let background = if retracting {
+        retracting_color(p, selected, focused, view.progress)
+    } else {
+        row_color(p, selected, focused, hovered)
+    };
     if let Some(color) = background {
         frame.rect_corners(pill.0, color, pill.1, clip);
     }
@@ -635,8 +671,21 @@ fn draw_tree_entry(
     let color = tree_entry_color(app, entry, selected);
     let text_clip = Rect::new(clip.x, clip.y, (text_right - clip.x).max(0.0), clip.h);
     let text_clip = text_clip.intersect(clip);
+    // 内容变化途中，名字只露出到当前宽度。
+    let text_clip = if view.old.is_empty() {
+        text_clip
+    } else {
+        let w = (label_x + view.width + CHAIN_GAP - text_clip.x).max(0.0);
+        Rect::new(text_clip.x, text_clip.y, w.min(text_clip.w), text_clip.h)
+    };
+    draw_old_label(app, frame, (label_x, row), &view, color, text_clip);
     if entry.chain().is_empty() {
-        ui_text(frame, app, label_x, row, &label, color, text_clip);
+        let shown = if view.common > 0 {
+            color
+        } else {
+            color.alpha(color.a * view.alpha)
+        };
+        ui_text(frame, app, label_x, row, &label, shown, text_clip);
     } else {
         let style = (color, selected);
         let parts = folded
@@ -647,7 +696,7 @@ fn draw_tree_entry(
             app,
             frame,
             entry,
-            (label_x, row, parts),
+            (label_x, row, parts, Some(&view)),
             style,
             text_clip,
             |left, right, path| {
@@ -660,9 +709,11 @@ fn draw_tree_entry(
 
     // 截断的名字逐渐淡出，避免在半个字处直接截断。悬停时不淡：完整名称继续绘制在编辑区上方
     // （[`draw_tree_overflow`]），淡出会使两段接不上。
-    if cut && !hovered {
+    // 收回途中名字还连着编辑区上方那一段，到最后才淡出，名字不会先变暗、再缩回来。
+    let reach = NAME_FADE * stage(view.progress, FADE_FROM, 1.0);
+    if cut && !hovered && reach > 0.0 {
         let solid = background.map_or(p.sidebar_bg, |c| panel::over(p.sidebar_bg, c));
-        let edge = Rect::new(text_right - NAME_FADE, row.y, NAME_FADE, row.h);
+        let edge = Rect::new(text_right - reach, row.y, reach, row.h);
         frame.within(clip, |frame| fade(frame, edge, solid, false));
     }
 
@@ -680,7 +731,7 @@ fn draw_tree_entry(
     }
 
     // 横向滚动范围按折叠后的宽度计算，鼠标移到这一行上时滚动条不变。
-    let end = folded.map_or(label_end, |(_, width)| label_x + width);
+    let end = folded.map_or(label_x + full, |(_, width)| label_x + width);
     end - shift - row.x
 }
 
@@ -822,6 +873,8 @@ fn draw_name_input(
     *ime = caret;
 }
 
+/// 名字收回时，末尾的淡出从过渡的这个进度开始出现（经验值）：名字已基本缩回侧栏。
+const FADE_FROM: f32 = 0.7;
 /// 合并显示的目录中没有突出的各级的不透明度（经验值）：比突出的那一级淡，仍能看清。
 const CHAIN_DIM: f32 = 0.6;
 /// 合并显示的目录之间分隔符的不透明度（经验值）：比目录名淡，一眼能分出各级。
@@ -917,9 +970,71 @@ pub(in crate::view) fn draw_tree_overflow(app: &App, frame: &mut Frame<'_>) {
     let Some(entry) = ws.rows().get(index) else {
         return;
     };
+    let view = app.tree_labels.peek(label_key(entry));
+    draw_overflow_band(app, frame, (entry, index), rect, view.as_ref(), false);
+}
 
+/// 绘制鼠标移开后正在收回的名字：不响应点击，收回到侧栏边缘时消失。
+pub(in crate::view) fn draw_tree_overflow_closing(app: &App, frame: &mut Frame<'_>) {
+    // 文件树不在显示时不画：动画途中隐藏了侧栏或切换到其他视图。
+    if !app.sidebar_open() || app.sidebar_view != SidebarView::Files {
+        return;
+    }
+    let Some(ws) = &app.editor.workspace else {
+        return;
+    };
+    let open = app.tree_overflow.map(|(_, index)| index);
+    let tree = app.layout.tree;
+    for (key, view) in app.tree_labels.moving_rows() {
+        let Some(index) = ws.row_of(&key).filter(|&index| Some(index) != open) else {
+            continue;
+        };
+        let entry = &ws.rows()[index];
+        let row = overflow_row(app, index);
+        let end = tree_label_x(row, entry.depth, -app.tree_scroll_x) + view.width;
+        let right = (end + 8.0).min(app.layout.window.right() - 8.0);
+        let rect = Rect::new(tree.right(), row.y + 1.0, right - tree.right(), row.h - 2.0);
+        if rect.w > 0.0 {
+            draw_overflow_band(app, frame, (entry, index), rect, Some(&view), true);
+        }
+    }
+}
+
+/// 返回第 `index` 行在文件树中的矩形；固定在顶部的目录在固定的位置。
+fn overflow_row(app: &App, index: usize) -> Rect {
+    let tree = app.layout.tree;
+    match app.tree_sticky().into_iter().find(|s| s.index == index) {
+        Some(sticky) => sticky.rect,
+        None => tree_row_slot(tree, app.tree_scroll, app.tree_slot_of(index), None, 0.0).0,
+    }
+}
+
+/// 在 `rect` 中绘制第 `index` 行超出侧栏的部分，按 `view` 的当前宽度露出。
+///
+/// `closing` 为真时显示收回途中的旧内容，否则显示这一行的完整名字。
+fn draw_overflow_band(
+    app: &App,
+    frame: &mut Frame<'_>,
+    (entry, index): (&Entry, usize),
+    rect: Rect,
+    view: Option<&LabelView>,
+    closing: bool,
+) {
+    let Some(ws) = &app.editor.workspace else {
+        return;
+    };
     let p = app.palette;
     let tree = app.layout.tree;
+    let row = Rect::new(tree.x, rect.y - 1.0, tree.w, rect.h + 2.0);
+    let x = tree_label_x(row, entry.depth, -app.tree_scroll_x);
+    // 命中范围按完整宽度计算，绘制时才按当前宽度露出：过渡途中鼠标移过去不会落空。
+    let right = view.map_or(rect.right(), |v| rect.right().min(x + v.width + 8.0));
+    if right <= rect.x {
+        return;
+    }
+    // 这一行在最上层：底色从滚动条的范围起，滚动条只被这一行的高度挡住，上下两段照常显示。
+    let left = tree.right() - SCROLLBAR_HIT;
+    let rect = Rect::new(left, rect.y, right - left, rect.h);
     let clip = Rect::new(rect.x, tree.y, rect.w, tree.h);
     let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
     let selected = ws.is_selected(index);
@@ -928,13 +1043,44 @@ pub(in crate::view) fn draw_tree_overflow(app: &App, frame: &mut Frame<'_>) {
     // 底层先垫一层侧栏底色，再叠半透明的选中色，使颜色与文件树中的那一段一致。
     frame.rect_corners(rect, p.sidebar_bg, radii, clip);
 
-    if let Some(color) = row_color(p, selected, focused, true) {
+    // 收回时与侧栏内的那一段用同一个底色，一起淡出，两段不割裂。
+    let tint = match view.filter(|_| closing) {
+        Some(view) => retracting_color(p, selected, focused, view.progress),
+        None => row_color(p, selected, focused, true),
+    };
+    if let Some(color) = tint {
         frame.rect_corners(rect, color, radii, clip);
     }
 
-    let row = Rect::new(tree.x, rect.y - 1.0, tree.w, rect.h + 2.0);
     let color = tree_entry_color(app, entry, selected);
-    let x = tree_label_x(row, entry.depth, -app.tree_scroll_x);
+    if let Some(view) = view.filter(|view| closing && !view.old.is_empty()) {
+        // 收回中的内容：相同的前缀不淡，其余随过渡淡出。
+        let step = chain_step(app, frame);
+        let separator = color.alpha(color.a * CHAIN_SEPARATOR);
+        let mut at = x;
+        for (k, name) in view.old.iter().enumerate() {
+            let alpha = if k < view.common { 1.0 } else { view.old_alpha };
+            let width = frame.measure(FontKind::Ui, app.fonts.ui, name);
+            ui_text(
+                frame,
+                app,
+                at,
+                row,
+                name,
+                color.alpha(color.a * alpha),
+                clip,
+            );
+            if k + 1 < view.old.len() {
+                let bar = separator.alpha(separator.a * alpha);
+                ui_text(frame, app, at + width + CHAIN_GAP, row, "/", bar, clip);
+            }
+            at += width + step;
+        }
+        return;
+    }
+    if let Some(view) = view {
+        draw_old_label(app, frame, (x, row), view, color, clip);
+    }
     if entry.chain().is_empty() {
         ui_text(frame, app, x, row, &entry.label(), color, clip);
     } else {
@@ -942,11 +1088,74 @@ pub(in crate::view) fn draw_tree_overflow(app: &App, frame: &mut Frame<'_>) {
             app,
             frame,
             entry,
-            (x, row, None),
+            (x, row, None, view),
             (color, selected),
             clip,
             |_, _, _| {},
         );
+    }
+}
+
+/// 返回名字收回途中这一行的底色：选中的行不变，其余是悬停的底色随进度 `progress` 淡出。
+fn retracting_color(p: &Palette, selected: bool, focused: bool, progress: f32) -> Option<Color> {
+    row_color(p, selected, focused, false).or_else(|| {
+        row_color(p, selected, focused, true).map(|color| color.alpha(color.a * (1.0 - progress)))
+    })
+}
+
+/// 返回当前的一级在合并显示的目录中的下标：选中了其中某一级时是那一级，否则是最后一级；没有
+/// 合并时为 0。
+fn chain_current(app: &App, entry: &Entry) -> usize {
+    let chain = entry.chain();
+    let segment = app.editor.workspace.as_ref().and_then(|w| w.segment());
+    chain
+        .iter()
+        .position(|path| Some(path.as_path()) == segment)
+        .unwrap_or(chain.len().saturating_sub(1))
+}
+
+/// 返回这一行过渡状态的键：合并显示时是最上一级，展开、收起前后不变。
+fn label_key(entry: &Entry) -> &Path {
+    entry.chain().first().unwrap_or(&entry.path)
+}
+
+/// 返回折叠后一部分的显示名。
+fn part_name<'a>(entry: &'a Entry, part: Option<usize>) -> Cow<'a, str> {
+    part.map_or(Cow::Borrowed(CHAIN_FOLD), |i| {
+        winc_editor::segment_name(&entry.chain()[i])
+    })
+}
+
+/// 返回相邻两部分的间距：分隔符和两侧的留白。
+fn chain_step(app: &App, frame: &mut Frame<'_>) -> f32 {
+    frame.measure(FontKind::Ui, app.fonts.ui, "/") + CHAIN_GAP * 2.0
+}
+
+/// 绘制过渡中淡出的旧内容，相同的前缀由新内容绘制，这里跳过。
+fn draw_old_label(
+    app: &App,
+    frame: &mut Frame<'_>,
+    (start, row): (f32, Rect),
+    view: &LabelView,
+    color: Color,
+    clip: Rect,
+) {
+    if view.old.is_empty() {
+        return;
+    }
+    let step = chain_step(app, frame);
+    let text = color.alpha(color.a * view.old_alpha);
+    let separator = color.alpha(color.a * CHAIN_SEPARATOR * view.old_alpha);
+    let mut x = start;
+    for (k, name) in view.old.iter().enumerate() {
+        let width = frame.measure(FontKind::Ui, app.fonts.ui, name);
+        if k >= view.common {
+            ui_text(frame, app, x, row, name, text, clip);
+        }
+        if k + 1 < view.old.len() && k + 1 > view.common {
+            ui_text(frame, app, x + width + CHAIN_GAP, row, "/", separator, clip);
+        }
+        x += width + step;
     }
 }
 
@@ -971,12 +1180,13 @@ fn label_width(app: &App, frame: &mut Frame<'_>, entry: &Entry) -> f32 {
 /// 时突出选中的那一级。突出的一级用文字颜色（`style` 的第一项），其余按 [`CHAIN_DIM`] 变淡，被 Git
 /// 忽略等本身较淡的文字也能分出是哪一级。分隔符和留白归入相邻的两级，各占一半。
 ///
-/// `at` 的第三项是要显示的各部分（见 [`fold_chain`]），`None` 时显示全部。
+/// `at` 的第三项是要显示的各部分（见 [`fold_chain`]），`None` 时显示全部；第四项是过渡的绘制
+/// 参数，相同的前缀之后的部分按它淡入。
 fn draw_chain(
     app: &App,
     frame: &mut Frame<'_>,
     entry: &Entry,
-    (start, row, parts): (f32, Rect, Option<&[Option<usize>]>),
+    (start, row, parts, view): (f32, Rect, Option<&[Option<usize>]>, Option<&LabelView>),
     (color, selected): (Color, bool),
     clip: Rect,
     mut report: impl FnMut(f32, f32, &Path),
@@ -1005,6 +1215,9 @@ fn draw_chain(
     };
     let mut x = start;
     for (k, part) in parts.iter().enumerate() {
+        let fade = view
+            .filter(|view| k >= view.common)
+            .map_or(1.0, |view| view.alpha);
         let width = match part {
             Some(i) => {
                 let path = &chain[*i];
@@ -1032,18 +1245,21 @@ fn draw_chain(
                 } else {
                     text
                 };
+                let text = text.alpha(text.a * fade);
                 ui_text(frame, app, x, row, &name, text, clip);
                 let left = if k == 0 { x } else { x - step / 2.0 };
                 report(left, x + width + step / 2.0, path);
                 width
             }
             None => {
-                ui_text(frame, app, x, row, CHAIN_FOLD, separator, clip);
+                let mark = separator.alpha(separator.a * fade);
+                ui_text(frame, app, x, row, CHAIN_FOLD, mark, clip);
                 frame.measure(FontKind::Ui, app.fonts.ui, CHAIN_FOLD)
             }
         };
         if k + 1 < parts.len() {
-            ui_text(frame, app, x + width + CHAIN_GAP, row, "/", separator, clip);
+            let bar = separator.alpha(separator.a * fade);
+            ui_text(frame, app, x + width + CHAIN_GAP, row, "/", bar, clip);
         }
         x += width + step;
     }
@@ -1068,12 +1284,13 @@ fn chain_folded(
         .collect();
     let step = frame.measure(FontKind::Ui, size, "/") + CHAIN_GAP * 2.0;
     let fold = frame.measure(FontKind::Ui, size, CHAIN_FOLD);
-    let segment = app.editor.workspace.as_ref().and_then(|w| w.segment());
-    let current = chain
-        .iter()
-        .position(|path| Some(path.as_path()) == segment)
-        .unwrap_or(chain.len() - 1);
-    Some(fold_chain(&widths, step, fold, current, room))
+    Some(fold_chain(
+        &widths,
+        step,
+        fold,
+        chain_current(app, entry),
+        room,
+    ))
 }
 
 /// 折叠放不进 `room` 的目录链，返回从左到右要显示的各部分（`Some` 是目录的下标，`None` 是一处折叠）

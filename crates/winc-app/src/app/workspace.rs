@@ -19,4 +19,5 @@ pub(super) mod tab_drag;
 pub(super) mod tool_fold;
 pub(super) mod tree;
 pub(super) mod tree_drag;
+pub(super) mod tree_label;
 pub(super) mod watch;

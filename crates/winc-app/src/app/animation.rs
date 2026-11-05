@@ -270,6 +270,7 @@ impl App {
 
         settle(&mut self.sidebar_motion, |m| m.clock);
         settle(&mut self.tree_motion, |m| m.clock);
+        self.tree_labels.settle();
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
         settle(&mut self.global.field_motion, |m| m.2);
@@ -343,6 +344,7 @@ impl App {
     pub(super) fn animating(&self) -> bool {
         self.sidebar_motion.is_some()
             || self.tree_motion.is_some()
+            || self.tree_labels.moving()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
             || self.global.field_motion.is_some()

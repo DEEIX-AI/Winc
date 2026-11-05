@@ -44,7 +44,10 @@ use overlays::{
 };
 pub(crate) use overlays::{picker_parts, picker_span};
 use status::draw_status;
-use workspace::sidebar::{draw_sidebar, draw_sidebar_button, draw_tree_overflow, tree_overflow};
+use workspace::sidebar::{
+    draw_sidebar, draw_sidebar_button, draw_tree_overflow, draw_tree_overflow_closing,
+    tree_overflow,
+};
 use workspace::top_bar::{draw_top_bar, draw_window_controls};
 
 /// 绘制一帧界面，并重置、重新收集本帧的命中区域（文件树工具栏、项目名等）。
@@ -93,6 +96,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_status(app, frame);
     draw_island_corners(app, frame);
     draw_file_drop(app, frame);
+    draw_tree_overflow_closing(app, frame);
     draw_tree_overflow(app, frame);
     git::commit::draw_commit_overflow(app, frame);
     git::changes::draw_change_popup(app, frame);

@@ -135,6 +135,7 @@ impl App {
             tree_content_w: 0.0,
             tree_segments: Vec::new(),
             tree_hover_segment: None,
+            tree_labels: Default::default(),
             text_content_w: 0.0,
             tree_typed: None,
             tree_motion: None,

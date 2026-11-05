@@ -1200,3 +1200,259 @@ fn option_clicking_a_folder_expands_and_collapses_it_all_the_way() {
     click(&mut app, winit::keyboard::ModifiersState::empty());
     assert_eq!(labels(&app), ["a", "b", "d", "other"]);
 }
+
+#[test]
+fn expanding_a_folder_lengthens_its_label_with_a_transition() {
+    let dir = sample_folder("label-expand");
+    let root = dir.join("project");
+    std::fs::create_dir_all(root.join("src/main/java/a")).unwrap();
+    std::fs::create_dir_all(root.join("src/main/java/b")).unwrap();
+    let mut app = app_with(&root, true);
+    app.tree_labels.animate_without_window = true;
+    let root = app.editor.root().unwrap().to_path_buf();
+    paint(&mut app);
+    let row = row_of(&app, "src");
+    assert!(!app.tree_labels.moving());
+
+    app.editor.workspace.as_mut().unwrap().toggle(row);
+    paint(&mut app);
+    let view = app.tree_labels.peek(&root.join("src")).unwrap();
+    assert!(app.tree_labels.moving());
+    assert_eq!(view.old, ["src"]);
+    assert_eq!(view.common, 1);
+}
+
+#[test]
+fn a_long_name_slides_out_on_hover_and_back_when_the_pointer_leaves() {
+    let dir = sample_folder("label-hover");
+    let long = "a_very_long_file_name_that_does_not_fit_in_the_sidebar_at_all.txt";
+    std::fs::write(dir.join(long), "").unwrap();
+    let mut app = app_with(&dir, true);
+    app.tree_labels.animate_without_window = true;
+    app.panel_width = 230.0;
+    let dir = app.editor.root().unwrap().to_path_buf();
+    paint(&mut app);
+    let row = row_of(&app, "a_very_long");
+    let key = dir.join(long);
+    let at_rest = app.tree_labels.peek(&key).unwrap().width;
+    assert!(!app.tree_labels.moving());
+
+    // 移上去：完整的命中范围立即生效，绘制的宽度从侧栏边缘开始缓动。
+    let y = app.tree_row_top(row) + TREE_ROW / 2.0;
+    app.on_mouse_move(app.layout.tree.x + 60.0, y);
+    paint(&mut app);
+    let (rect, _) = app.tree_overflow.unwrap();
+    let view = app.tree_labels.peek(&key).unwrap();
+    assert!(app.tree_labels.moving());
+    assert!(view.old.is_empty());
+    assert!(
+        view.width < rect.right() - app.layout.tree.x,
+        "{}",
+        view.width
+    );
+    assert!(
+        (view.width - at_rest).abs() < 40.0,
+        "{} {at_rest}",
+        view.width
+    );
+
+    // 移开：不再响应，宽度缓动回去。
+    app.on_mouse_move(
+        app.layout.window.right() - 20.0,
+        app.layout.window.bottom() - 40.0,
+    );
+    paint(&mut app);
+    assert_eq!(app.tree_overflow, None);
+    assert!(app.tree_labels.moving());
+}
+
+#[test]
+fn a_row_that_does_not_fit_covers_the_tree_scrollbar() {
+    let dir = sample_folder("overflow-scrollbar");
+    let long = "a_very_long_file_name_that_does_not_fit_in_the_sidebar_at_all.txt";
+    std::fs::write(dir.join(long), "").unwrap();
+    for i in 0..80 {
+        std::fs::write(dir.join(format!("z{i:02}.txt")), "").unwrap();
+    }
+    let mut app = app_with(&dir, true);
+    app.panel_width = 230.0;
+    paint(&mut app);
+    let row = row_of(&app, "a_very_long");
+    let top = app.tree_row_top(row) + TREE_ROW / 2.0;
+    let other = app.tree_row_top(row + 2) + TREE_ROW / 2.0;
+    let x = app.layout.tree.right() - 3.0;
+
+    // 名称放得下的行：滚动条照常响应。
+    app.on_mouse_move(x, other);
+    assert!(matches!(app.hover, Hover::Scrollbar(_)), "{:?}", app.hover);
+
+    // 从左边移到放不下名称的一行：经过滚动条时仍算在这一行上，名称不收起。
+    app.on_mouse_move(x - 40.0, top);
+    paint(&mut app);
+    assert!(app.tree_overflow.is_some());
+    app.on_mouse_move(x, top);
+    paint(&mut app);
+    assert_eq!(app.hover, Hover::TreeRow(row));
+    assert!(app.tree_overflow.is_some());
+}
+
+#[test]
+fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
+    let dir = sample_folder("overflow-over-thumb");
+    for i in 0..80 {
+        let name = format!("z{i:02}_a_very_long_file_name_that_does_not_fit_in_the_sidebar.txt");
+        std::fs::write(dir.join(name), "").unwrap();
+    }
+    let mut app = app_with(&dir, true);
+    app.panel_width = 230.0;
+    paint(&mut app);
+    let tree = app.layout.tree;
+    let gutter = tree.right() - 4.0;
+
+    // 从行内移到右边缘：这一行优先，也不唤出滚动条。
+    let row = row_of(&app, "z05");
+    let top = app.tree_row_top(row);
+    app.on_mouse_move(tree.x + 60.0, top + TREE_ROW / 2.0);
+    paint(&mut app);
+    assert!(app.tree_overflow.is_some());
+    app.on_mouse_move(gutter, top + TREE_ROW / 2.0);
+    paint(&mut app);
+    assert_eq!(app.hover, Hover::TreeRow(row));
+    assert_eq!(app.scrollbar_shown(ScrollArea::Tree), 0.0);
+
+    // 沿边缘移到下一行：那一行还没展开，滚动条接管，拿得到。
+    app.on_mouse_move(gutter, top + TREE_ROW * 1.5);
+    assert!(matches!(app.hover, Hover::Scrollbar(_)), "{:?}", app.hover);
+    paint(&mut app);
+    assert_eq!(app.tree_overflow, None);
+    assert_eq!(app.scrollbar_shown(ScrollArea::Tree), 1.0);
+
+    // 滚动时滚动条在显示：展开的一行盖住滑块，下一行不盖。
+    app.on_mouse_move(tree.x + 60.0, tree.y + 30.0);
+    app.on_wheel(MouseScrollDelta::LineDelta(0.0, -1.0));
+    paint(&mut app);
+    let total = app.editor.workspace.as_ref().unwrap().rows().len() as f32 * TREE_ROW;
+    let thumb = crate::layout::scrollbar_thumb(tree, app.tree_scroll, total).unwrap();
+    let y = thumb.y + thumb.h / 2.0;
+    let row = app.tree_row_at(y).unwrap();
+    let top = app.tree_row_top(row);
+    app.on_mouse_move(tree.x + 60.0, top + TREE_ROW / 2.0);
+    paint(&mut app);
+    assert!(app.tree_overflow.is_some());
+    assert!(app.scrollbar_shown(ScrollArea::Tree) > 0.0);
+    let pixel = |app: &App, x: f32, y: f32| {
+        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
+        image.pixels[y * image.width as usize + x]
+    };
+    let x = thumb.x + thumb.w / 2.0;
+    assert_eq!(pixel(&app, x, top + 4.0), pixel(&app, x - 20.0, top + 4.0));
+    let below = top + TREE_ROW + 4.0;
+    assert_ne!(pixel(&app, x, below), pixel(&app, x - 20.0, below));
+}
+
+#[test]
+fn a_retracting_name_shares_one_background_across_the_sidebar_edge() {
+    let dir = sample_folder("retract-background");
+    let long = "a_very_long_file_name_that_does_not_fit_in_the_sidebar_at_all.txt";
+    std::fs::write(dir.join(long), "").unwrap();
+    let mut app = app_with(&dir, true);
+    app.tree_labels.animate_without_window = true;
+    app.panel_width = 230.0;
+    paint(&mut app);
+    let row = row_of(&app, "a_very_long");
+    let top = app.tree_row_top(row);
+    let tree = app.layout.tree;
+    app.on_mouse_move(tree.x + 60.0, top + TREE_ROW / 2.0);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    paint(&mut app);
+    app.settle_animations();
+    paint(&mut app);
+
+    // 移开后刚开始收回：侧栏内和溢出的那一段底色相同。
+    app.on_mouse_move(
+        app.layout.window.right() - 20.0,
+        app.layout.window.bottom() - 40.0,
+    );
+    paint(&mut app);
+    assert!(app.tree_labels.moving());
+    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let pixel = |x: f32, y: f32| {
+        let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
+        image.pixels[y * image.width as usize + x]
+    };
+    let y = top + 4.0;
+    let (inside, outside) = (pixel(tree.right() - 30.0, y), pixel(tree.right() + 6.0, y));
+    for shift in [16, 8, 0] {
+        let (a, b) = ((inside >> shift) & 0xff, (outside >> shift) & 0xff);
+        assert!(a.abs_diff(b) <= 3, "{inside:x} {outside:x}");
+    }
+}
+
+#[test]
+fn resizing_the_sidebar_and_scrolling_sideways_do_not_animate_labels() {
+    let dir = sample_folder("label-resize");
+    let root = dir.join("project");
+    let names = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    let deep: PathBuf = names.iter().collect();
+    std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
+    std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
+    let long = "a_very_long_file_name_that_does_not_fit_in_the_sidebar_at_all.txt";
+    std::fs::write(root.join(long), "").unwrap();
+    let mut app = app_with(&root, true);
+    app.panel_width = 230.0;
+    let row = row_of(&app, "alpha");
+    app.editor.workspace.as_mut().unwrap().toggle(row);
+    paint(&mut app);
+    app.tree_labels.animate_without_window = true;
+    paint(&mut app);
+    assert!(!app.tree_labels.moving());
+
+    for width in [250.0, 300.0, 210.0] {
+        app.panel_width = width;
+        paint(&mut app);
+        assert!(!app.tree_labels.moving(), "{width}");
+    }
+    app.tree_scroll_x = 30.0;
+    paint(&mut app);
+    assert!(!app.tree_labels.moving());
+}
+
+#[test]
+fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
+    let dir = sample_folder("label-hidden");
+    let long = "a_very_long_file_name_that_does_not_fit_in_the_sidebar_at_all.txt";
+    std::fs::write(dir.join(long), "").unwrap();
+    let mut app = app_with(&dir, true);
+    app.tree_labels.animate_without_window = true;
+    app.panel_width = 230.0;
+    paint(&mut app);
+    let row = row_of(&app, "a_very_long");
+    let top = app.tree_row_top(row);
+    let tree = app.layout.tree;
+    app.on_mouse_move(tree.x + 60.0, top + TREE_ROW / 2.0);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    paint(&mut app);
+    app.settle_animations();
+    paint(&mut app);
+    app.on_mouse_move(
+        app.layout.window.right() - 20.0,
+        app.layout.window.bottom() - 40.0,
+    );
+    paint(&mut app);
+    assert!(app.tree_labels.moving());
+
+    // 切到搜索视图：编辑区上方恢复背景色，不留下收回中的名字。
+    app.sidebar_view = SidebarView::Search;
+    paint(&mut app);
+    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let pixel = |x: f32, y: f32| {
+        let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
+        image.pixels[y * image.width as usize + x]
+    };
+    let band = pixel(app.layout.tree.right() + 40.0, top + 4.0);
+    let below = pixel(app.layout.tree.right() + 40.0, top + 4.0 + TREE_ROW * 3.0);
+    assert_eq!(band, below);
+}
