@@ -729,8 +729,6 @@ pub const SETTINGS_LINK_W: f32 = 120.0;
 pub const SETTINGS_LINK_H: f32 = 30.0;
 /// 控件的高度。
 pub const SETTINGS_CONTROL_H: f32 = 28.0;
-/// 字体名输入框的宽度。
-pub const SETTINGS_FONT_W: f32 = 200.0;
 /// 点击后弹出菜单的选择控件（工具名、排除的语言）的宽度；比字体名输入框窄，为左侧名称下方的
 /// 说明文字留出更多空间。
 pub const SETTINGS_CHOICE_W: f32 = 150.0;

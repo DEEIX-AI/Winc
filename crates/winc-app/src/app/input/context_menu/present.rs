@@ -312,6 +312,7 @@ impl App {
             }
             MenuTarget::SkipOnSave => skip_menu(&self.settings.languages.format),
             MenuTarget::Locale => locale_menu(),
+            &MenuTarget::Font(setting) => font_menu(setting),
             &MenuTarget::Tool(task, id) => {
                 let row = self.settings.tool_row(tool_setting(task, id));
                 let install = row.is_some_and(|r| !r.install.is_empty());
@@ -577,7 +578,22 @@ impl App {
         // 状态栏的菜单行为类似弹出式按钮：当前选中的项显示在被点击的位置上。
         let at_checked = matches!(target, MenuTarget::Indent(_) | MenuTarget::LineEnding(_));
         // 拆分按钮的菜单：`at` 是菜单的右上角，菜单往左展开。
-        let right_aligned = matches!(target, MenuTarget::CommitButton | MenuTarget::TabList);
+        let right_aligned = matches!(
+            target,
+            MenuTarget::CommitButton
+                | MenuTarget::TabList
+                | MenuTarget::Locale
+                | MenuTarget::Font(_)
+        );
+        // 设置中语言、字体的菜单不窄于弹出它的控件。
+        let control = match target {
+            MenuTarget::Locale => Some(Setting::Language),
+            MenuTarget::Font(setting) => Some(setting),
+            _ => None,
+        };
+        let min_width = control
+            .and_then(|setting| self.settings_layout().row(setting).map(|row| row.control.w))
+            .unwrap_or(0.0);
 
         // 菜单项是否打勾、显示什么取决于目标，因此先记录目标，再准备菜单项。
         let (branches, stashes) = match target {
@@ -599,7 +615,9 @@ impl App {
         if !cfg!(target_os = "macos") || self.window.is_none() {
             let rows = self.popup_rows(&entries, context, &mut 0);
             if let Some(menu) = &mut self.context_menu {
-                menu.popup = Some(PopupMenu::new(rows, at, (at_checked, right_aligned)));
+                let mut popup = PopupMenu::new(rows, at, (at_checked, right_aligned));
+                popup.min_width = min_width;
+                menu.popup = Some(popup);
             }
             self.request_redraw();
             return;
@@ -619,7 +637,13 @@ impl App {
                 .map(|p| p.as_ref().map(Prepared::item))
                 .collect();
             let at = (f64::from(at.0), f64::from(at.1));
-            crate::macos::popup_menu(&window, &items, at, at_checked, right_aligned);
+            let place = crate::macos::MenuPlace {
+                at,
+                at_checked,
+                right_aligned,
+                min_width: f64::from(min_width),
+            };
+            crate::macos::popup_menu(&window, &items, place);
         }
     }
 
@@ -1028,6 +1052,25 @@ impl App {
             MenuCommand::Locale(i) => {
                 winc_i18n::LocaleChoice::ALL.get(i)
                     == Some(&self.config.language.unwrap_or_default())
+            }
+            MenuCommand::FontDefault | MenuCommand::Font(_) => {
+                let Some(ContextMenu {
+                    target: MenuTarget::Font(setting),
+                    ..
+                }) = &self.context_menu
+                else {
+                    return false;
+                };
+                let current = match setting {
+                    Setting::UiFont => &self.config.ui_font,
+                    _ => &self.config.editor_font,
+                };
+                match command {
+                    MenuCommand::Font(i) => winc_render::installed_fonts()
+                        .get(i)
+                        .is_some_and(|family| current.as_deref() == Some(family.name.as_str())),
+                    _ => current.is_none(),
+                }
             }
             MenuCommand::ToolAuto => language.is_some() && configured.is_none(),
             MenuCommand::ToolPreset(i) => {

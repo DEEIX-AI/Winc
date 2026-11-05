@@ -117,6 +117,15 @@ impl App {
                     self.set_locale_choice(choice);
                 }
             }
+            MenuTarget::Font(setting) => match command {
+                MenuCommand::FontDefault => self.settings_choose_font(setting, None),
+                MenuCommand::Font(i) => {
+                    if let Some(family) = winc_render::installed_fonts().get(i) {
+                        self.settings_choose_font(setting, Some(family.name.clone()));
+                    }
+                }
+                _ => {}
+            },
             MenuTarget::Tool(task, id) => {
                 self.settings_choose_tool(tool_setting(task, id), command)
             }

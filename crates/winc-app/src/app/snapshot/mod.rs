@@ -259,6 +259,9 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
         SettingsPart::Field(s) | SettingsPart::Switch(s) | SettingsPart::Action(s) => {
             layout.row(s).unwrap().control
         }
+        SettingsPart::FontMenu(s) => {
+            crate::layout::font_menu_button(layout.row(s).unwrap().control)
+        }
         SettingsPart::Decrease(s) => StepperParts::new(layout.row(s).unwrap().control).minus,
         SettingsPart::Increase(s) => StepperParts::new(layout.row(s).unwrap().control).plus,
         SettingsPart::Theme(choice) => {

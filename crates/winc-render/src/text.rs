@@ -2,6 +2,7 @@
 
 use super::*;
 pub(crate) mod font;
+pub(crate) mod font_list;
 pub(crate) mod font_path;
 pub(crate) mod glyphs;
 pub(crate) mod outline;

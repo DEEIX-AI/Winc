@@ -741,3 +741,100 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     assert!(!app.can_check_updates());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_font_can_be_chosen_from_the_menu() {
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+    use crate::layout::{SettingsPart, font_menu_button};
+
+    let dir = search_folder("settings-font-menu");
+    let mut app = app_with(&dir, false);
+    app.open_settings();
+    app.settings_show_page(Setting::EditorFont.page());
+    paint(&mut app);
+
+    // 点输入框右端的按钮弹出字体菜单；点其余位置仍是输入框。
+    let row = *app.settings_layout().row(Setting::EditorFont).unwrap();
+    let button = font_menu_button(row.control);
+    let (x, y) = (button.x + button.w / 2.0, button.y + button.h / 2.0);
+    assert_eq!(
+        app.settings_part_at(x, y),
+        Some(SettingsPart::FontMenu(Setting::EditorFont))
+    );
+    assert_eq!(
+        app.settings_part_at(button.x - 4.0, y),
+        Some(SettingsPart::Field(Setting::EditorFont))
+    );
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert_eq!(
+        app.context_menu.as_ref().map(|m| &m.target),
+        Some(&MenuTarget::Font(Setting::EditorFont))
+    );
+    assert!(app.settings.editing.is_none());
+    assert!(app.menu_checked(MenuCommand::FontDefault));
+    app.context_menu = None;
+    paint(&mut app);
+
+    // 编辑器字体直接列出等宽字体，其余字体在子菜单里；界面字体全部直接列出。
+    let fonts = winc_render::installed_fonts();
+    let listed = |setting| {
+        crate::app::input::context_menu::font_menu(setting)
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    crate::app::input::context_menu::MenuEntry::Item(MenuCommand::Font(_), _)
+                )
+            })
+            .count()
+    };
+    assert_eq!(listed(Setting::UiFont), fonts.len());
+    assert_eq!(
+        listed(Setting::EditorFont),
+        fonts.iter().filter(|family| family.monospace).count()
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        // 选中后立刻生效并写入配置，再选「系统默认」清除。
+        let menlo = fonts.iter().position(|f| f.name == "Menlo").unwrap();
+        app.settings_open_menu(Setting::EditorFont);
+        app.run_menu_command(MenuCommand::Font(menlo));
+        assert_eq!(app.config.editor_font.as_deref(), Some("Menlo"));
+        assert_eq!(app.settings.error, None);
+
+        app.settings_open_menu(Setting::EditorFont);
+        assert!(app.menu_checked(MenuCommand::Font(menlo)));
+        app.run_menu_command(MenuCommand::FontDefault);
+        assert_eq!(app.config.editor_font, None);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_language_and_ui_font_controls_line_up() {
+    let dir = search_folder("settings-language-width");
+    let mut app = app_with(&dir, false);
+    app.open_settings();
+    app.settings_show_page(Setting::Language.page());
+    let layout = app.settings_layout();
+    let control = |setting| layout.row(setting).unwrap().control;
+    let (language, font) = (control(Setting::Language), control(Setting::UiFont));
+    assert_eq!((language.x, language.w), (font.x, font.w));
+    assert_eq!(Setting::Language.description(), None);
+    // 与模式分段控件同宽。
+    let theme = control(Setting::Theme);
+    assert_eq!((language.x, language.w), (theme.x, theme.w));
+
+    // 语言菜单比控件短，打开后与控件同宽并对齐。
+    app.settings_open_menu(Setting::Language);
+    paint(&mut app);
+    let popup = app.context_menu.as_ref().unwrap().popup.as_ref().unwrap();
+    let menu = popup.levels[0].rect;
+    assert_eq!((menu.x, menu.w), (language.x, language.w));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

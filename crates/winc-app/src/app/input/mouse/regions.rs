@@ -99,6 +99,7 @@ impl App {
                     self.settings_start_editing(setting);
                 }
             }
+            Some(SettingsPart::FontMenu(setting)) => self.settings_open_menu(setting),
             Some(SettingsPart::Decrease(setting)) => {
                 self.settings.selected = setting;
                 self.settings_adjust(setting, false);

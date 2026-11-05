@@ -184,6 +184,8 @@ impl App {
         self.settings.hover = None;
         self.settings.languages = ToolLanguages::default();
         self.refresh_format_rows(true);
+        // 列出字体要读取字体文件，先在后台读好，打开字体菜单时不必等待。
+        std::thread::spawn(winc_render::installed_fonts);
         // 能否找到工具取决于用户 shell 中的 `PATH`，因此在后台获取该环境，取到之后再补上提醒。
         if let Some(proxy) = self.proxy.clone() {
             self.format.formatter.prepare(move || {
@@ -422,6 +424,7 @@ impl App {
                 self.set_theme_choice(THEME_CHOICES[next].0);
             }
             SettingControl::Switch => self.settings_set_switch(setting, forward),
+            SettingControl::Font if forward => self.settings_open_menu(setting),
             SettingControl::Font
             | SettingControl::Command
             | SettingControl::Action
@@ -730,6 +733,15 @@ impl App {
         }
 
         self.request_redraw();
+    }
+
+    /// 应用字体菜单中选中的字体；`None` 表示系统默认。
+    ///
+    /// 字体不能使用时配置保持原值，原因显示在该行。
+    pub(in crate::app) fn settings_choose_font(&mut self, setting: Setting, value: Option<String>) {
+        self.settings.editing_original = self.font_setting(setting).clone();
+        self.settings_commit_font(setting, value);
+        self.settings.editing_original = None;
     }
 
     /// 放大或缩小编辑区的字号（`⌘+` `⌘−`），`⌘0` 还原（`up` 为 `None`）。
