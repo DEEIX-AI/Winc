@@ -233,6 +233,9 @@ fn draw_header(
     }
 }
 
+/// 一个选区的起点和终点（行，列），起点在前。
+type Span = ((usize, usize), (usize, usize));
+
 /// 右侧的光标和选区，按右侧的行号和列（字符）算。
 #[derive(Default)]
 struct EditState {
@@ -242,27 +245,30 @@ struct EditState {
     caret: (usize, usize),
     /// 其余光标所在的（行，列）（多光标），只有落在看得见的几行里的，按位置排好。
     carets: Vec<(usize, usize)>,
-    /// 各个选区的起点和终点（行，列），起点在前，按位置排好；只有和看得见的几行相交的，
-    /// 没有选中内容的选区不在里面。
-    selections: Vec<((usize, usize), (usize, usize))>,
-    /// 左侧的选区（起点、终点，行、列），只标左侧文档里的选区；没有选中内容时为 `None`。
-    left: Option<((usize, usize), (usize, usize))>,
+    /// 各个选区，按位置排好；只有和看得见的几行相交的，没有选中内容的选区不在里面。
+    selections: Vec<Span>,
+    /// 只读一侧的选区：（哪一侧，选区）；没有选中内容时为 `None`。
+    read: Option<(usize, Span)>,
+    /// 只读一侧的光标：（哪一侧，（行，列））。
+    read_caret: Option<(usize, (usize, usize))>,
     /// 查找条开着、查的是右侧的文档时为它的标识：右侧要标出匹配。
     searched: Option<winc_editor::DocumentId>,
 }
 
 /// 读出右侧对应文档的光标和选区；多光标只取右侧文档第 `lines` 行（左闭右开）里看得见的。
 fn edit_state(app: &App, view: &DiffView, lines: Range<usize>) -> EditState {
-    // 左侧的选区按左侧文本换成（行，列）。
-    let left = view.left_selection.and_then(|(a, b)| {
-        let text = &view.old.text;
-        let at = |pos: usize| {
-            let pos = pos.min(text.len_chars());
-            let line = text.char_to_line(pos);
-            (line, pos - text.line_to_char(line))
-        };
-        (a != b).then(|| (at(a.min(b)), at(a.max(b))))
+    // 只读一侧的选区和光标按这一侧的文本换成（行，列）。
+    let at = |side: usize, pos: usize| {
+        let text = &view.side(side).text;
+        let pos = pos.min(text.len_chars());
+        let line = text.char_to_line(pos);
+        (line, pos - text.line_to_char(line))
+    };
+    let read = view.read_selection.and_then(|selection| {
+        let (side, (a, b)) = (selection.side, selection.range);
+        (a != b).then(|| (side, (at(side, a.min(b)), at(side, a.max(b)))))
     });
+    let read_caret = view.read_caret().map(|(side, pos)| (side, at(side, pos)));
     let Some(source) = view.new.path.as_deref().and_then(|path| {
         app.editor
             .documents
@@ -270,7 +276,8 @@ fn edit_state(app: &App, view: &DiffView, lines: Range<usize>) -> EditState {
             .find(|d| d.path.as_deref() == Some(path))
     }) else {
         return EditState {
-            left,
+            read,
+            read_caret,
             ..EditState::default()
         };
     };
@@ -302,7 +309,8 @@ fn edit_state(app: &App, view: &DiffView, lines: Range<usize>) -> EditState {
             .map(|s| text.pos_to_line_col(s.head))
             .collect(),
         selections,
-        left,
+        read,
+        read_caret,
         searched: (app.layout.search.h > 0.0 && app.search.document() == Some(source.id))
             .then_some(source.id),
     }
@@ -345,6 +353,7 @@ fn draw_body(
     let tab_width = app.editor.tab_width;
     // 光标只在编辑区有焦点时绘制，和编辑器一样。
     let carets_shown = edit.editing && app.focus == Focus::Editor;
+    let read_caret = edit.read_caret.filter(|_| app.focus == Focus::Editor);
     // 第 `side` 侧显示行 `row` 的顶边。
     let row_y = |side: usize, row: usize| body.y + (row as f32 - scroll.rows[side]) * lh;
     let mut chars: Vec<char> = Vec::with_capacity(256);
@@ -515,11 +524,12 @@ fn draw_body(
                 }
             }
 
-            // 选区垫在字下面：右侧是文档的各个选区（光标在右侧时），左侧是左侧自己的选区。
+            // 选区垫在字下面：光标在右侧时是右侧文档的各个选区，只读的一侧是它自己的选区。
             // 选区按位置排好、互不重叠，二分找到第一个够得着这一行的。
-            let selections = match side {
-                RIGHT if edit.editing => &edit.selections[..],
-                LEFT => edit.left.as_slice(),
+            let read = edit.read.as_ref().filter(|read| read.0 == side);
+            let selections = match (side, read) {
+                (RIGHT, _) if edit.editing => &edit.selections[..],
+                (_, Some(read)) => std::slice::from_ref(&read.1),
                 _ => &[],
             };
             let skip = selections.partition_point(|s| s.1.0 < line);
@@ -573,6 +583,32 @@ fn draw_body(
                     app.ime_cursor = Some(draw_caret(app, frame, x, y, baseline, pane.text));
                 }
             }
+            // 只读的一侧不能输入，不需要输入法的候选窗跟着。
+            if let Some((caret_side, (caret_line, col))) = read_caret
+                && caret_side == side
+                && caret_line == line
+                && breaks.row_of(col) == part
+            {
+                let x = origin_x + at(col) * app.cell;
+                caret_bar(app, frame, x, y, pane.text);
+            }
+        }
+    }
+
+    // 只读一侧的光标在文件末尾换行符之后的空行上：绘制在最后一行下面。
+    if let Some((side, (line, _))) = read_caret
+        && view.row_of(side, line) == view.rows[side].len()
+    {
+        let y = row_y(side, view.rows[side].len());
+        if y >= body.y && y < body.bottom() {
+            let pane = parts.panes[side];
+            caret_bar(
+                app,
+                frame,
+                pane.text.x + DIFF_TEXT_PAD - scroll.x,
+                y,
+                pane.text,
+            );
         }
     }
 

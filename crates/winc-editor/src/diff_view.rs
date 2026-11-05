@@ -148,6 +148,15 @@ impl Compared {
     }
 }
 
+/// 差异只读一侧的选区：只能选中、复制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadSelection {
+    /// 在哪一侧：[`LEFT`] 或 [`RIGHT`]。
+    pub side: usize,
+    /// 起点和终点，按这一侧文本的字符偏移。
+    pub range: (usize, usize),
+}
+
 /// 并排差异视图。
 #[derive(Debug)]
 pub struct DiffView {
@@ -195,10 +204,10 @@ pub struct DiffView {
     pub source: Option<u64>,
     /// 光标在右侧：键入的字进右侧对应的文档。
     pub editing: bool,
-    /// 左侧的选区（起点，终点），按左侧文本的字符偏移；左侧只读，只能选中、复制。
+    /// 只读一侧的选区：左侧总是只读，右侧不是工作区里的文件时也只读（历史版本、已删除的文件）。
     ///
     /// 没有时为 `None`。
-    pub left_selection: Option<(usize, usize)>,
+    pub read_selection: Option<ReadSelection>,
     /// 每段改动的 [`diff::hunk_key`]，下标同 `hunks`：按块提交时按它认出勾掉的改动。
     pub keys: Vec<u64>,
     /// 这份差异对应仓库里的哪个文件（和仓库状态里的路径同一种写法）；不是 Git 的差异时为
@@ -234,7 +243,7 @@ impl DiffView {
             widest: std::cell::Cell::new(None),
             source: None,
             editing: false,
-            left_selection: None,
+            read_selection: None,
             keys,
             repo_path: None,
         };
@@ -284,10 +293,10 @@ impl DiffView {
     pub fn inherit(&mut self, old: &DiffView) {
         self.editing = old.editing;
         self.pinned.clone_from(&old.pinned);
-        // 左侧没变（`HEAD` 没变）时选区仍然有效。
-        if self.old.text == old.old.text {
-            self.left_selection = old.left_selection;
-        }
+        // 选区所在的一侧没变（例如 `HEAD` 没变）时选区仍然有效。
+        self.read_selection = old
+            .read_selection
+            .filter(|s| self.side(s.side).text == old.side(s.side).text);
         if self.repo_path.is_none() {
             self.repo_path.clone_from(&old.repo_path);
         }
@@ -523,11 +532,27 @@ impl DiffView {
         }
     }
 
-    /// 左侧选中的文本；没有选中内容时为 `None`。
-    pub fn left_selected(&self) -> Option<String> {
-        let (a, b) = self.left_selection?;
-        let (from, to) = (a.min(b), a.max(b).min(self.old.text.len_chars()));
-        (from < to).then(|| self.old.text.slice(from..to).to_string())
+    /// 第 `side` 侧的内容。
+    pub fn side(&self, side: usize) -> &DiffSide {
+        if side == LEFT { &self.old } else { &self.new }
+    }
+
+    /// 只读一侧的光标：（哪一侧，字符偏移），在选区的终点。
+    ///
+    /// 没有选区、这一侧没有内容（文件不存在、已删除）时为 `None`。
+    pub fn read_caret(&self) -> Option<(usize, usize)> {
+        let selection = self.read_selection?;
+        let len = self.side(selection.side).text.len_chars();
+        (len > 0).then(|| (selection.side, selection.range.1.min(len)))
+    }
+
+    /// 只读一侧选中的文本；没有选中内容时为 `None`。
+    pub fn read_selected(&self) -> Option<String> {
+        let selection = self.read_selection?;
+        let text = &self.side(selection.side).text;
+        let (a, b) = selection.range;
+        let (from, to) = (a.min(b), a.max(b).min(text.len_chars()));
+        (from < to).then(|| text.slice(from..to).to_string())
     }
 
     /// 第 `hunk` 段改动左侧的文本（含换行符），用来把右侧的这一段换回去。
