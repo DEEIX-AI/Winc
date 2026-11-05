@@ -14,6 +14,7 @@ terminal-helper-start-failed = Couldn’t start the terminal helper: { $error }
 terminal-helper-exited = The terminal helper exited
 terminal-helper-version-mismatch = The terminal helper’s version doesn’t match winc; reinstall winc
 terminal-process-exited = Process exited (code { $code })
+terminal-disconnected = Terminal connection lost
 terminal-restart = ↩ Restart
 terminal-close-hint = ⌘W Close
 

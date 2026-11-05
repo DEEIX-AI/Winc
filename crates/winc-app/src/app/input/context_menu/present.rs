@@ -441,7 +441,7 @@ impl App {
                 let Some(tab) = self.terminal.tab() else {
                     return;
                 };
-                let running = tab.exited.is_none() && !self.terminal.crashed;
+                let running = tab.ended.is_none() && !self.terminal.crashed;
                 let block = block.and_then(|id| {
                     let b = tab.blocks.iter().find(|b| b.id == id)?;
                     Some((!b.text.is_empty(), self.terminal_can_rerun(id)))

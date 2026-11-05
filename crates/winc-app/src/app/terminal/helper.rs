@@ -93,8 +93,8 @@ impl App {
         }
     }
 
-    /// 重新开始：辅助进程退出了时所有标签在各自最后的目录里重开；shell 退出了时只重开正在看的
-    /// 这一个，还在原来的位置。
+    /// 重新开始：辅助进程退出了时所有标签在各自最后的目录里重开；shell 退出了或者伪终端断开了时
+    /// 只重开正在看的这一个，还在原来的位置。
     pub(in crate::app) fn restart_terminal_tab(&mut self) {
         // 正在改的名字先定下来：重开以后标签换了编号，输入框找不到它了。
         self.finish_terminal_rename(true);
@@ -205,7 +205,7 @@ impl App {
         t.resize_due = None;
         let active = t.active;
         for (i, tab) in t.tabs.iter_mut().enumerate() {
-            if i != active || tab.size == size || tab.exited.is_some() {
+            if i != active || tab.size == size || tab.ended.is_some() {
                 continue;
             }
             match tab.resizing {
@@ -438,7 +438,12 @@ impl App {
             }
             FromHelper::Exited { tab: id, code } => {
                 if let Some(tab) = t.by_id(id) {
-                    tab.exited = Some(code);
+                    tab.ended = Some(TabEnd::Exited(code));
+                }
+            }
+            FromHelper::Disconnected { tab: id } => {
+                if let Some(tab) = t.by_id(id) {
+                    tab.ended = Some(TabEnd::Disconnected);
                 }
             }
             FromHelper::Failed { tab: id, message } => {
