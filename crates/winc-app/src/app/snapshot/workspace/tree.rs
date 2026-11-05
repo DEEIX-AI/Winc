@@ -1364,9 +1364,8 @@ fn a_retracting_name_shares_one_background_across_the_sidebar_edge() {
     let top = app.tree_row_top(row);
     let tree = app.layout.tree;
     app.on_mouse_move(tree.x + 60.0, top + TREE_ROW / 2.0);
-    std::thread::sleep(std::time::Duration::from_millis(300));
     paint(&mut app);
-    app.settle_animations();
+    app.tree_labels.finish();
     paint(&mut app);
 
     // 移开后刚开始收回：侧栏内和溢出的那一段底色相同。
@@ -1433,9 +1432,8 @@ fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
     let top = app.tree_row_top(row);
     let tree = app.layout.tree;
     app.on_mouse_move(tree.x + 60.0, top + TREE_ROW / 2.0);
-    std::thread::sleep(std::time::Duration::from_millis(300));
     paint(&mut app);
-    app.settle_animations();
+    app.tree_labels.finish();
     paint(&mut app);
     app.on_mouse_move(
         app.layout.window.right() - 20.0,

@@ -31,7 +31,7 @@ impl App {
     }
 
     /// 文本区宽度是否正在逐帧变化：侧栏或终端面板的动画进行中，或者正在拖动两者的分隔条。
-    fn text_width_changing(&self) -> bool {
+    pub(in crate::app) fn text_width_changing(&self) -> bool {
         self.sidebar_motion.is_some()
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
@@ -45,6 +45,9 @@ impl App {
     ///
     /// 重新断行后，屏幕最上面的那一行文字保持在原位，不会因为它上方各行的段数变化而移位。
     pub(in crate::app) fn sync_wrap(&mut self) {
+        if self.sync_diff_wrap() {
+            return;
+        }
         let width = (self.config.word_wrap == Some(true)).then(|| self.wrap_cells());
         let tab_width = self.editor.active_tab_width();
         let resizing = self.text_width_changing();
@@ -81,6 +84,10 @@ impl App {
         self.relayout();
         self.ensure_caret_visible();
         let message = match (self.config.word_wrap == Some(true), self.editor.active()) {
+            (true, Some(doc)) if doc.diff.as_deref().is_some_and(|v| !v.is_wrapping()) => {
+                t!("editor-word-wrap-on-large")
+            }
+            (true, Some(doc)) if doc.diff.is_some() => t!("editor-word-wrap-on"),
             (true, Some(doc)) if !doc.is_wrapping() && doc.is_large() => {
                 t!("editor-word-wrap-on-large")
             }
@@ -384,6 +391,10 @@ impl App {
         };
         doc.scroll_line = doc.scroll_line.clamp(0.0, max_scroll);
         if let Some(view) = doc.diff.as_deref() {
+            if view.is_wrapping() {
+                doc.scroll_x = 0.0;
+                return;
+            }
             // 差异的两侧共用一个横向滚动位置，按两侧最长的一行、半个编辑区宽的文字区限制。
             let text_w = crate::app::diff_parts(self.layout.editor, view, cell).panes[1]
                 .text

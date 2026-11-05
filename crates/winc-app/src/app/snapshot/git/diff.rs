@@ -811,3 +811,122 @@ fn shoot_diff_long_deletion() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 建一个仓库：`src/wrap.rs` 里有几行很长的代码，工作区里改了其中一行。
+fn long_lines_repo(name: &str) -> Option<(PathBuf, PathBuf)> {
+    let dir = search_folder(name);
+    if !make_repo(&dir) {
+        return None;
+    }
+    let long = |tag: &str| {
+        format!(
+            "    let {tag} = {};\n",
+            "value + other * third, ".repeat(16)
+        )
+    };
+    let text = format!("fn main() {{\n{}{}}}\n", long("first"), long("second"));
+    let file = dir.join("src/wrap.rs");
+    std::fs::write(&file, &text).unwrap();
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-q", "-m", "long"]);
+    let changed = text.replace("let second = value", "let second = changed");
+    std::fs::write(&file, changed).unwrap();
+    Some((dir, winc_editor::canonical_path(&file)))
+}
+
+#[test]
+fn word_wrap_applies_to_the_diff_view() {
+    use crate::app::diff::DIFF_TEXT_PAD;
+
+    let Some((dir, file)) = long_lines_repo("git-diff-wrap") else {
+        return;
+    };
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.fetch_changes(&file, Target::Open);
+    paint(&mut app);
+    fn view(app: &App) -> &winc_editor::diff_view::DiffView {
+        app.editor.active().unwrap().diff.as_deref().unwrap()
+    }
+    assert!(!view(&app).is_wrapping());
+    let plain = view(&app).rows[RIGHT].len();
+    app.editor.active_mut().unwrap().scroll_x = 80.0;
+
+    // 打开：长行分成几段，横向不再滚动。
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    assert!(view(&app).is_wrapping());
+    assert!(view(&app).rows[RIGHT].len() > plain);
+    assert_eq!(app.editor.active().unwrap().scroll_x, 0.0);
+
+    // 改了的字只标在它所在的那一段：改动的后续各段开头没有标记。
+    {
+        let view = view(&app);
+        let row = view.rows[RIGHT]
+            .iter()
+            .position(|r| {
+                matches!(
+                    r,
+                    SideRow::Line {
+                        hunk: Some(_),
+                        part: 1,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let SideRow::Line { line, .. } = view.rows[RIGHT][row] else {
+            unreachable!();
+        };
+        let indent = view.breaks(RIGHT, line).indent as f32;
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let lh = app.fonts.line_height;
+        let scroll = view.side_scroll(RIGHT, 0.0, parts.body.h / lh);
+        let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + indent * app.cell;
+        let y = parts.body.y + (row as f32 - scroll) * lh + 3.0;
+        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let pixel = |x: f32, y: f32| {
+            let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
+            image.pixels[y * image.width as usize + x]
+        };
+        assert_eq!(pixel(x + 0.5, y), pixel(x - 6.0, y));
+    }
+
+    // 点在一行的第二段上：光标落在这一段里对应的列。
+    let (row, line) = view(&app).rows[RIGHT]
+        .iter()
+        .enumerate()
+        .find_map(|(i, r)| match r {
+            SideRow::Line { line, part: 1, .. } => Some((i, *line)),
+            _ => None,
+        })
+        .unwrap();
+    let breaks = view(&app).breaks(RIGHT, line);
+    let parts = crate::app::diff_parts(app.layout.editor, view(&app), app.cell);
+    let scroll = view(&app).side_scroll(RIGHT, 0.0, parts.body.h / app.fonts.line_height);
+    let y = parts.body.y + (row as f32 - scroll + 0.5) * app.fonts.line_height;
+    let cells = breaks.indent + 2;
+    let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + (cells as f32 + 0.3) * app.cell;
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    let source = app
+        .editor
+        .documents
+        .iter()
+        .find(|d| d.path.as_deref() == Some(file.as_path()))
+        .unwrap();
+    let (at, col) = source.text().pos_to_line_col(source.selection.head);
+    assert_eq!((at, col), (line, breaks.start_of(1) + 2));
+    paint(&mut app);
+
+    // 关闭：回到一行一个显示行。
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    assert!(!view(&app).is_wrapping());
+    assert_eq!(view(&app).rows[RIGHT].len(), plain);
+    let _ = std::fs::remove_dir_all(&dir);
+}
