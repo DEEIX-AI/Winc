@@ -498,7 +498,7 @@ pub fn diff_menu(right: bool, on_hunk: bool) -> Vec<MenuEntry> {
 }
 
 /// 返回项目名菜单的菜单项：最近的目录（不含当前目录；按住 `⌥` 时是「在新窗口中打开」），之后是
-/// 「打开目录…」「关闭目录」。
+/// 「打开目录…」「关闭目录」；已安装 WSL 时另有「打开 WSL 目录…」。
 ///
 /// `recent` 为最近列表的长度，`current` 为当前目录在最近列表中的位置，`opened` 表示是否已经
 /// 打开目录（没有打开时「关闭目录」不可用）。
@@ -518,6 +518,9 @@ pub fn project_menu(recent: usize, current: Option<usize>, opened: bool) -> Vec<
         menu.push(Separator);
     }
     menu.push(Item(MenuCommand::OpenFolder, true));
+    if winc_editor::wsl::available() {
+        menu.push(Item(MenuCommand::OpenWslFolder, true));
+    }
     menu.push(Item(MenuCommand::CloseFolder, opened));
     menu
 }
