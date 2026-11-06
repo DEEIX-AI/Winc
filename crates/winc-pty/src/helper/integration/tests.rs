@@ -47,11 +47,12 @@ fn only_plain_entry_into_the_default_shell_is_injected() {
 fn environment_for_wsl_keeps_what_the_user_forwards() {
     let mut env = vec![(b"WSLENV".to_vec(), b"GOPATH/l".to_vec())];
     forward_to_wsl(&mut env);
-    assert_eq!(env[0].1, b"GOPATH/l:WINC_NONCE:WINC_PROMPT");
+    let forwarded = b"GOPATH/l:WINC_NONCE:WINC_PROMPT:COLORTERM:TERM_PROGRAM:TERM_PROGRAM_VERSION";
+    assert_eq!(env[0].1, forwarded);
 
     let mut env = Vec::new();
     forward_to_wsl(&mut env);
-    assert_eq!(env[0].1, b"WINC_NONCE:WINC_PROMPT");
+    assert_eq!(env[0].1, WSL_ENV);
 }
 
 #[cfg(unix)]

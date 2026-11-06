@@ -139,6 +139,25 @@ fn the_tab_learns_a_command_ended_even_without_more_output() {
     c.until(|_, m| name(m).is_some_and(|n| n != "perl"));
 }
 
+/// 回车的回显发帧时命令还没启动，之后没有新的输出：发帧之后再查一次，才能发现它。
+#[test]
+fn a_silent_command_is_still_found_as_the_foreground_process() {
+    let mut c = Client::start();
+    c.spawn(1, "/bin/sh", &["-i"]);
+    let send = |c: &mut Client, bytes: &[u8]| {
+        c.send(ToHelper::Input {
+            tab: 1,
+            bytes: bytes.to_vec(),
+            rest: 0,
+        });
+    };
+    send(&mut c, b"sleep 0.1; cat");
+    // 等过查询间隔（300 ms）：回车的回显发帧时立即查询，这时 shell 还没有启动命令。
+    thread::sleep(Duration::from_millis(500));
+    send(&mut c, b"\n");
+    c.until(|_, m| matches!(m, FromHelper::Process { name, .. } if name == "cat"));
+}
+
 #[test]
 fn closing_the_last_tab_ends_the_helper_and_its_processes() {
     let mut c = Client::start();
@@ -183,6 +202,43 @@ fn closing_a_tab_also_ends_a_foreground_job_that_ignores_hangup() {
     };
     assert!(status.success());
     assert!(!alive(pid), "忽略 SIGHUP 的前台作业还活着");
+}
+
+/// 主程序关闭标签后马上退出（关闭最后一个标签、切换目录）：忽略 SIGHUP 的前台作业仍要结束。
+#[test]
+fn closing_the_last_tab_and_going_away_still_ends_the_job() {
+    let mut c = Client::start();
+    let job = r#"$SIG{HUP} = "IGNORE"; $| = 1; print "$$\n"; sleep 100"#;
+    c.spawn(1, "/bin/sh", &["-c", &format!("set -m; perl -e '{job}'")]);
+    let last = |c: &Client| c.text().trim().lines().last().map(str::to_owned);
+    c.until(|c, _| last(c).is_some_and(|l| l.parse::<i32>().is_ok()));
+    let pid: i32 = last(&c).unwrap().parse().unwrap();
+
+    c.send(ToHelper::Close { tab: 1 });
+    drop(c.stdin.take());
+    let deadline = Instant::now() + WAIT + Duration::from_secs(2);
+    while alive(pid) {
+        assert!(Instant::now() < deadline, "忽略 SIGHUP 的前台作业还活着");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// 主程序直接退出时，打开着的标签里忽略 SIGHUP 的前台作业同样要结束。
+#[test]
+fn going_away_with_a_tab_open_also_ends_a_job_that_ignores_hangup() {
+    let mut c = Client::start();
+    let job = r#"$SIG{HUP} = "IGNORE"; $| = 1; print "$$\n"; sleep 100"#;
+    c.spawn(1, "/bin/sh", &["-c", &format!("set -m; perl -e '{job}'")]);
+    let last = |c: &Client| c.text().trim().lines().last().map(str::to_owned);
+    c.until(|c, _| last(c).is_some_and(|l| l.parse::<i32>().is_ok()));
+    let pid: i32 = last(&c).unwrap().parse().unwrap();
+
+    drop(c.stdin.take());
+    let deadline = Instant::now() + WAIT + Duration::from_secs(2);
+    while alive(pid) {
+        assert!(Instant::now() < deadline, "忽略 SIGHUP 的前台作业还活着");
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

@@ -278,10 +278,15 @@ impl App {
         if self.terminal.error.is_none() && !self.terminal.want.is_empty() {
             self.blur_terminal_tab();
         }
-        let cwd = self.terminal_cwd();
-        let shell = self.config.terminal_shell.clone();
+        // 只有新建标签时才用到；每次重绘都会运行到这里，不必每次都读取配置和拼接路径。
+        let spawn = (!self.terminal.want.is_empty()).then(|| {
+            (
+                self.terminal_cwd(),
+                self.config.terminal_shell.clone(),
+                integration_dir(&self.config),
+            )
+        });
         let scrollback = self.config.terminal_scrollback.unwrap_or(SCROLLBACK);
-        let integration = integration_dir(&self.config);
         let prompt = self.config.terminal_prompt != Some(false);
         let t = &mut self.terminal;
         let Some(client) = &t.client else {
@@ -309,7 +314,7 @@ impl App {
                 }
             }
         }
-        if t.error.is_none() {
+        if let Some((cwd, shell, integration)) = spawn.filter(|_| t.error.is_none()) {
             let names = std::mem::take(&mut t.want_names);
             // 等着送的输入给建好以后要看的那个标签：新建的（排在最后），或者重开时原来看的那个。
             let target = t
@@ -380,21 +385,33 @@ impl App {
     }
 
     /// 读线程叫醒了事件循环：把收到的消息取完。
+    ///
+    /// 只有消息改变了界面上的内容时才重绘：后台标签和收起的面板持续发送标题、进程、命令块时不重绘
+    /// 窗口。提示通过 `notify`、`flash` 显示，它们自行请求重绘。
     pub(in crate::app) fn poll_terminal(&mut self) {
+        let before = self.terminal.visible_state();
+        let mut shown = false;
         loop {
             let Some(client) = &self.terminal.client else {
+                self.request_redraw();
                 return;
             };
             match client.poll() {
-                Poll::Message(message) => self.terminal_message(message),
+                Poll::Message(message) => {
+                    shown |= self.terminal.message_is_shown(&message);
+                    self.terminal_message(message);
+                }
                 Poll::Empty => break,
                 Poll::Closed => {
                     self.terminal_helper_gone();
+                    shown = true;
                     break;
                 }
             }
         }
-        self.request_redraw();
+        if shown || self.terminal.visible_state() != before {
+            self.request_redraw();
+        }
     }
 
     /// 处理辅助进程发来的一条消息。
@@ -500,6 +517,7 @@ impl App {
                     }
                 }
                 Event::Cwd(path) => {
+                    let path = local_cwd(self.editor.root(), path);
                     if let Some(tab) = t.by_id(id) {
                         tab.cwd = path;
                     }
@@ -579,6 +597,17 @@ fn helper_path() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
+/// 把 shell 报告的工作目录 `path` 转换为本机路径：打开的目录 `root` 位于 WSL 发行版中时，绝对路径
+/// 属于同一发行版。重启标签和恢复现场都使用该目录。
+fn local_cwd(root: Option<&std::path::Path>, path: Vec<u8>) -> Vec<u8> {
+    match root {
+        Some(root) => {
+            os_bytes(winc_editor::wsl::from_terminal(root, bytes_path(&path)).as_os_str())
+        }
+        None => path,
+    }
+}
+
 /// shell 集成脚本放在哪里（配置目录下的 `shell`）；`terminal.shellIntegration` 关了时不注入。
 fn integration_dir(config: &winc_config::Config) -> Option<Vec<u8>> {
     if config.terminal_shell_integration == Some(false) {
@@ -607,6 +636,12 @@ struct Launch {
 /// 设置了 `shell` 时运行该命令。在 Windows（`windows`）上且 `cwd` 位于 WSL 发行版中时，进入对应的
 /// 发行版和目录：目录由 `wsl.exe` 的参数指定，进程本身从家目录启动。其余情况运行默认 shell。
 fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch {
+    // Windows 上 `/` 开头的目录来自 WSL 中的 shell，不是 Windows 程序可用的工作目录。
+    let cwd = if windows && cwd.first() == Some(&b'/') {
+        Vec::new()
+    } else {
+        cwd
+    };
     let mut words = shell.into_iter().flat_map(str::split_whitespace);
     if let Some(program) = words.next() {
         return Launch {

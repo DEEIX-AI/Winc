@@ -136,7 +136,7 @@ impl Layout {
 }
 
 /// 终端不能再用的原因。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TabEnd {
     /// shell 退出了：退出码。
     Exited(i32),

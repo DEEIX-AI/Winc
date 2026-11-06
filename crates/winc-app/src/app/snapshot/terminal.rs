@@ -8,6 +8,7 @@ use super::editor::navigation::press;
 use super::*;
 use crate::app::terminal::{self, TermTab};
 use crate::keymap::KeyCode::Char;
+use winc_pty::protocol::{Event, FromHelper};
 
 /// 本地仿真按开启 shell 集成处理时，集成脚本在 OSC 133 标记中带回的随机数。
 ///
@@ -62,6 +63,63 @@ pub(super) fn cell_center(app: &App, row: usize, col: usize) -> (f32, f32) {
 }
 
 pub(super) use super::click;
+
+#[test]
+fn only_messages_for_what_is_shown_need_a_repaint() {
+    let dir = sample_folder("terminal-shown");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "");
+    add_tab(&mut app, "bash", "");
+    let tabs: Vec<u16> = app.terminal.tabs.iter().map(|tab| tab.id).collect();
+    let (hidden, active) = (tabs[0], tabs[1]);
+    let blocks = |tab| FromHelper::Blocks {
+        tab,
+        blocks: Vec::new(),
+        early: false,
+    };
+    let t = &app.terminal;
+    assert!(t.message_is_shown(&blocks(active)));
+    assert!(!t.message_is_shown(&blocks(hidden)));
+    let bell = FromHelper::Event {
+        tab: active,
+        event: Event::Bell,
+    };
+    assert!(!t.message_is_shown(&bell));
+
+    // 面板收起后，正在看的标签也不显示。
+    app.terminal.open = false;
+    assert!(!app.terminal.message_is_shown(&blocks(active)));
+}
+
+#[test]
+fn the_visible_state_follows_what_the_tab_strip_and_status_bar_show() {
+    let dir = sample_folder("terminal-visible");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "");
+    add_tab(&mut app, "bash", "");
+    let hidden = app.terminal.tabs[0].id;
+    let title = |title: &str| FromHelper::Event {
+        tab: hidden,
+        event: Event::Title(title.to_owned()),
+    };
+
+    app.terminal_message(title("build"));
+    let before = app.terminal.visible_state();
+    // 标题没有变化：不需要重绘。
+    app.terminal_message(title("build"));
+    assert_eq!(app.terminal.visible_state(), before);
+    // 后台标签的名字显示在标签栏上。
+    app.terminal_message(title("test"));
+    assert_ne!(app.terminal.visible_state(), before);
+
+    // 面板收起后，标签名不可见，未读标记仍然显示在状态栏上。
+    app.terminal.open = false;
+    let closed = app.terminal.visible_state();
+    app.terminal_message(title("spinner"));
+    assert_eq!(app.terminal.visible_state(), closed);
+    app.terminal.tabs[0].unseen = Some(false);
+    assert_ne!(app.terminal.visible_state(), closed);
+}
 
 #[test]
 fn the_panel_takes_its_room_from_the_editor_card() {

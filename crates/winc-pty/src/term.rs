@@ -513,7 +513,7 @@ impl Emulator {
             modes: Modes(Modes::ALT_SCROLL),
             cursor_visible: true,
             shape: CursorShape::Block,
-            blink: false,
+            blink: true,
             tabs: Vec::new(),
             charsets: [false; 2],
             shift_out: false,
@@ -598,7 +598,16 @@ impl Emulator {
             }
             _ => 0,
         };
-        let row = self.cursor().row;
+        let cursor = self.cursor();
+        let row = cursor.row;
+        // 提示符总是逻辑行的开头。上一行可能因 zsh 的 `PROMPT_SP` 写满而折行，不断开时重排会把它和
+        // 提示符合成一行。
+        if flag == Marks::PROMPT
+            && cursor.col == 0
+            && let Some(above) = row.checked_sub(1)
+        {
+            self.primary.rows[above].wrapped = false;
+        }
         let marks = &mut self.primary.rows[row].marks;
         marks.flags |= flag;
         if flag == Marks::DONE {

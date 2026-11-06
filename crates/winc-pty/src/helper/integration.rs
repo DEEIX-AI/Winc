@@ -42,9 +42,10 @@ const WSL: &[(&str, &str)] = &[("wsl.sh", include_str!("../../shell/wsl.sh"))];
 #[cfg(any(windows, test))]
 const WSL_RUN: &str = r#"d=$(wslpath -u "$0" 2>/dev/null) && [ -r "$d/wsl.sh" ] && exec sh "$d/wsl.sh" "$d"; unset WINC_NONCE; exec "${SHELL:-/bin/sh}" -l"#;
 
-/// 通过 `WSLENV` 从 Windows 传给发行版的环境变量。
+/// 通过 `WSLENV` 从 Windows 传给发行版的环境变量：集成脚本用到的变量，以及程序据此判断终端能力的
+/// 变量。
 #[cfg(any(windows, test))]
-const WSL_ENV: &[u8] = b"WINC_NONCE:WINC_PROMPT";
+const WSL_ENV: &[u8] = b"WINC_NONCE:WINC_PROMPT:COLORTERM:TERM_PROGRAM:TERM_PROGRAM_VERSION";
 
 /// 环境变量表，每项是（键，值）。
 type Env = Vec<(Vec<u8>, Vec<u8>)>;
@@ -151,7 +152,6 @@ pub fn inject_wsl(
         }
     };
     set(env, b"WINC_NONCE", nonce.clone().into_bytes());
-    forward_to_wsl(env);
     args.extend(
         ["--exec", "sh", "-c", WSL_RUN, &text]
             .iter()
@@ -163,25 +163,29 @@ pub fn inject_wsl(
 /// `program` 和 `args` 是否仅表示进入发行版的默认 shell；带其他选项或要运行的命令时返回 `false`。
 #[cfg(any(windows, test))]
 fn opens_default_wsl_shell(program: &[u8], args: &[Vec<u8>]) -> bool {
+    is_wsl(program)
+        && args.chunks(2).all(|pair| {
+            pair.len() == 2
+                && matches!(
+                    pair[0].as_slice(),
+                    b"-d" | b"--distribution" | b"--cd" | b"-u" | b"--user"
+                )
+        })
+}
+
+/// `program` 是否是 `wsl.exe`。
+#[cfg(any(windows, test))]
+pub fn is_wsl(program: &[u8]) -> bool {
     let name = program
         .rsplit(|&b| b == b'/' || b == b'\\')
         .next()
         .unwrap_or(program);
-    if !name.eq_ignore_ascii_case(b"wsl.exe") && !name.eq_ignore_ascii_case(b"wsl") {
-        return false;
-    }
-    args.chunks(2).all(|pair| {
-        pair.len() == 2
-            && matches!(
-                pair[0].as_slice(),
-                b"-d" | b"--distribution" | b"--cd" | b"-u" | b"--user"
-            )
-    })
+    name.eq_ignore_ascii_case(b"wsl.exe") || name.eq_ignore_ascii_case(b"wsl")
 }
 
 /// 把 `WSL_ENV` 追加到 `WSLENV`，并保留已有的值：`wsl.exe` 只向发行版传递其中列出的变量。
 #[cfg(any(windows, test))]
-fn forward_to_wsl(env: &mut Env) {
+pub fn forward_to_wsl(env: &mut Env) {
     let mut list = take(env, b"WSLENV").unwrap_or_default();
     if !list.is_empty() {
         list.push(b':');

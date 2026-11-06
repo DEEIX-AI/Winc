@@ -349,7 +349,8 @@ pub(super) fn draw_cursor(
         edge(Rect::new(at.right() - 1.0, at.y, 1.0, at.h));
         return;
     }
-    if !app.caret_visible {
+    // 程序要求不闪烁时（DECSCUSR 2、4、6）一直显示。
+    if !app.caret_visible && tab.cursor.blink {
         return;
     }
     match tab.cursor.shape {

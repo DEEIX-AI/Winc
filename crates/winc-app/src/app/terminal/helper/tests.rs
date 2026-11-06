@@ -114,6 +114,34 @@ fn other_folders_use_the_default_shell() {
 }
 
 #[test]
+fn a_directory_reported_by_a_wsl_shell_is_not_a_windows_working_directory() {
+    let (program, _, cwd) = launched(None, "/home/me", true);
+    assert_eq!((program, cwd.as_str()), (None, ""));
+    let (_, _, cwd) = launched(Some("wsl.exe -d Debian"), "/home/me", true);
+    assert_eq!(cwd, "");
+    // 其他平台上是普通目录。
+    let (_, _, cwd) = launched(None, "/home/me", false);
+    assert_eq!(cwd, "/home/me");
+}
+
+#[test]
+fn working_directories_stay_as_reported_outside_a_distribution() {
+    let path = b"/home/me".to_vec();
+    assert_eq!(local_cwd(None, path.clone()), path);
+    assert_eq!(local_cwd(Some(Path::new("/work")), path.clone()), path);
+}
+
+#[cfg(windows)]
+#[test]
+fn working_directories_in_a_distribution_become_windows_paths() {
+    let root = Path::new(r"\\wsl.localhost\Ubuntu\work");
+    assert_eq!(
+        local_cwd(Some(root), b"/home/me".to_vec()),
+        br"\\wsl.localhost\Ubuntu\home\me".to_vec()
+    );
+}
+
+#[test]
 fn the_shell_setting_takes_priority() {
     let (program, args, cwd) = launched(Some("wsl.exe -d Debian"), r"C:\work", true);
     assert_eq!(program.as_deref(), Some("wsl.exe"));

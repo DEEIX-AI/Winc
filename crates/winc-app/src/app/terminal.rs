@@ -202,6 +202,41 @@ impl TerminalPanel {
         self.tabs.get_mut(self.active)
     }
 
+    /// 返回面板之外也可见的状态和标签栏内容的摘要，用于判断一批消息是否改变了界面。
+    ///
+    /// 标签名和结束状态只显示在面板里，面板收起时不计入；未读标记同时显示在状态栏。
+    pub(in crate::app) fn visible_state(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (self.open, self.active, self.crashed, &self.error).hash(&mut hasher);
+        for tab in &self.tabs {
+            tab.unseen.hash(&mut hasher);
+            if self.open {
+                (tab.id, tab.label(), tab.ended).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// 消息是否作用于正在显示的内容。标题、进程、未读标记等的变化由 [`Self::visible_state`] 判断。
+    pub(in crate::app) fn message_is_shown(&self, message: &FromHelper) -> bool {
+        let shows = |id: u16| self.open && self.tab().is_some_and(|tab| tab.id == id);
+        match message {
+            FromHelper::Hello { .. } | FromHelper::History { .. } | FromHelper::Failed { .. } => {
+                true
+            }
+            FromHelper::Frame { tab, .. } | FromHelper::Blocks { tab, .. } => shows(*tab),
+            FromHelper::Event {
+                tab,
+                event: Event::Link(..),
+            } => shows(*tab),
+            FromHelper::Event { .. }
+            | FromHelper::Process { .. }
+            | FromHelper::Exited { .. }
+            | FromHelper::Disconnected { .. } => false,
+        }
+    }
+
     fn index_of(&self, id: u16) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
     }

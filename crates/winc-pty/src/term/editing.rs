@@ -246,8 +246,14 @@ impl Emulator {
             }
             2 => {
                 self.keep_screen_in_history();
+                let marks = self.prompt_marks();
                 for row in 0..self.rows {
                     self.erase_row(row);
+                }
+                // shell 重画提示符时不再发送 `A`，命令块仍依赖该标记。
+                if let Some(marks) = marks {
+                    self.primary.rows[self.primary.cursor.row].marks = marks;
+                    self.blocks.dirty = true;
                 }
             }
             3 => {
@@ -269,14 +275,17 @@ impl Emulator {
     /// - 备用屏，或屏幕为空。
     /// - 回滚缓冲刚被程序清空（`history_erased`）：`clear` 命令可能先清回滚缓冲再清屏。
     /// - 内容与上一次移入的完全相同（`last_kept`）：程序反复重绘同样的画面。
+    /// - 当前提示符及其下方的行：提示符由 shell 重画，不属于历史内容。
     fn keep_screen_in_history(&mut self) {
         if self.alt || self.history_erased {
             return;
         }
-        let Some(last) = self.primary.rows.iter().rposition(|row| !row.is_blank()) else {
+        let end = self.prompt_row().unwrap_or(self.rows);
+        let rows = &self.primary.rows[..end];
+        let Some(last) = rows.iter().rposition(|row| !row.is_blank()) else {
             return;
         };
-        let screen = &self.primary.rows[..=last];
+        let screen = &rows[..=last];
         if self.last_kept.as_deref() == Some(screen) {
             return;
         }
@@ -286,6 +295,22 @@ impl Emulator {
         self.scroll_up(last + 1);
         (self.top, self.bottom) = region;
         self.last_kept = Some(kept);
+    }
+
+    /// 返回 shell 停在提示符上时，主屏上提示符第一行的行号。
+    fn prompt_row(&self) -> Option<usize> {
+        if !self.blocks.at_prompt {
+            return None;
+        }
+        (self.primary.rows.iter()).rposition(|row| row.marks.flags & Marks::PROMPT != 0)
+    }
+
+    /// 返回擦除整屏后要保留的提示符标记；程序同时清空了回滚缓冲或位于备用屏时为 `None`。
+    fn prompt_marks(&self) -> Option<Marks> {
+        if self.alt || self.history_erased {
+            return None;
+        }
+        self.prompt_row().map(|row| self.primary.rows[row].marks)
     }
 
     /// 擦除行内容（EL）：0 从光标到行尾，1 从行首到光标，2 整行。
@@ -302,16 +327,23 @@ impl Emulator {
 
     /// 清空回滚缓冲和屏幕，光标所在行移到第一行（⌘K）。
     pub(super) fn clear_all(&mut self) {
-        let cursor = self.cursor();
-        let (cols, rows) = (self.cols, self.rows);
-        let screen = self.screen_mut();
-        let kept = screen.rows.remove(cursor.row);
-        screen.rows.clear();
-        screen.rows.push(kept);
-        screen
-            .rows
-            .resize_with(rows, || Row::new(cols, Color::Default));
-        screen.cursor.row = 0;
+        // 备用屏由全屏程序自行绘制，只清空回滚缓冲。
+        if !self.alt {
+            let cursor = self.cursor();
+            // 从提示符第一行保留到光标所在行：只保留最后一行时，多行提示符的其余行要到下一个提示符
+            // 才恢复。
+            let start = (self.prompt_row())
+                .filter(|&row| row <= cursor.row)
+                .unwrap_or(cursor.row);
+            let (cols, rows) = (self.cols, self.rows);
+            let screen = &mut self.primary;
+            let kept: Vec<Row> = screen.rows.drain(start..=cursor.row).collect();
+            screen.rows = kept;
+            screen
+                .rows
+                .resize_with(rows, || Row::new(cols, Color::Default));
+            screen.cursor.row = cursor.row - start;
+        }
         self.last_kept = None;
         self.history.clear();
         self.blocks.dirty = true;

@@ -725,8 +725,9 @@ impl Emulator {
             _ => return,
         };
         // `A` 之后可以带 `redraw=1` 或 `redraw=0`，表示 shell 改宽度时是否自行重画整个提示符。
-        // 没有携带参数时不改动（提示符主题也可能发送 `A`）。
-        if flag == Marks::PROMPT {
+        // 没有携带参数时不改动（提示符主题也可能发送 `A`）。命令运行期间收到的 `A` 来自命令的输出
+        // （远程 shell、日志文件），不代表本地 shell 会重画。
+        if flag == Marks::PROMPT && !self.blocks.running() {
             for param in params.get(2..).unwrap_or_default() {
                 match *param {
                     b"redraw=1" => self.blocks.redraws_prompt = true,
