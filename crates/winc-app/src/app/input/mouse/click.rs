@@ -40,7 +40,7 @@ impl App {
         if matches!(button, MouseButton::Middle | MouseButton::Right)
             && !self.settings.open
             && self.form_dialog.is_none()
-            && crate::app::terminal::grid_rect(l.terminal, self.fonts.line_height).contains(x, y)
+            && self.terminal_view().contains(x, y)
             && self
                 .terminal
                 .tab()
@@ -249,8 +249,7 @@ impl App {
             }
             Target::Editor => self.click_editor(x, y),
             Target::Terminal => {
-                let grid = crate::app::terminal::grid_rect(l.terminal, self.fonts.line_height);
-                if grid.contains(x, y) {
+                if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
                 } else {
                     self.focus = Focus::Terminal;

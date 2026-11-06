@@ -332,6 +332,23 @@ pub fn refresh(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Re
     refresh_turned(frame, center, 0.0, color, clip);
 }
 
+/// 回车图标的宽度（逻辑像素）。
+pub const RETURN_KEY_WIDTH: f32 = 10.0;
+
+/// 绘制回车键（↩）图标，约 10×9：从右上方向下，再折向左，末端为箭头。
+pub fn return_key(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let half = RETURN_KEY_WIDTH / 2.0;
+    let (right, left, top, bottom) = (cx + half, cx - half, cy - 4.5, cy + 2.0);
+    let arm = 2.5;
+    let shapes = [
+        Stroke::Line(right, top, right, bottom),
+        Stroke::Line(right, bottom, left, bottom),
+        Stroke::Line(left, bottom, left + arm, bottom - arm),
+        Stroke::Line(left, bottom, left + arm, bottom + arm),
+    ];
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
 /// 绘制「发布」图标，约 10×11，和「刷新」图标等高：向上的箭头，下面是托盘。
 pub fn upload(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     let (top, bottom) = (cy - RING, cy + RING);

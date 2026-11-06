@@ -45,7 +45,7 @@ pub(crate) use tab::{Point, Selection, Unit};
 pub(crate) use tab::{SETTLE, TabEnd, TermTab, ViewRow};
 
 /// 面板在下面时的默认高度（逻辑像素，含标签栏）。
-pub(crate) const DEFAULT_HEIGHT: f32 = 240.0;
+pub(crate) const DEFAULT_HEIGHT: f32 = 242.0;
 /// 面板在下面时的最矮高度（逻辑像素，含标签栏）：标签栏加几行。
 pub(crate) const MIN_HEIGHT: f32 = 96.0;
 /// 在下面拖高面板时给编辑区至少留的高度（逻辑像素）。
@@ -56,9 +56,8 @@ pub(crate) const DEFAULT_WIDTH: f32 = 480.0;
 pub(crate) const MIN_WIDTH: f32 = 280.0;
 /// 面板在右边时至少给编辑区留的宽度（逻辑像素，经验值）。
 pub(crate) const EDITOR_MIN_WIDTH: f32 = 360.0;
-/// 面板在下面时标签栏的高度（逻辑像素）：`TAB_HEIGHT` 上下各留 4；面板在右边时用 `TOP_BAR`，
-/// 见 [`header_height`]。
-pub(crate) const HEADER: f32 = crate::theme::TAB_HEIGHT + 8.0;
+/// 面板在下面时标签栏的高度（逻辑像素）：`TAB_HEIGHT` 上下各留 5。
+const HEADER: f32 = crate::theme::TAB_HEIGHT + 10.0;
 /// 网格右边和下方的留白（逻辑像素）。
 pub(crate) const PAD: f32 = 8.0;
 /// 网格左边的留白（逻辑像素），命令块的色带画在这里。
@@ -242,7 +241,7 @@ impl TerminalPanel {
 }
 
 /// 面板标签栏的高度（逻辑像素）：`card` 从顶栏那一行开始时（面板在右边）用 `TOP_BAR`，
-/// 让终端标签和文件标签排在同一行；面板在下面时用 `HEADER`。
+/// 使终端标签和文件标签排在同一行；面板在下面时用 `HEADER`。
 pub(crate) fn header_height(card: Rect) -> f32 {
     if card.y < TOP_BAR_END {
         TOP_BAR
@@ -251,11 +250,21 @@ pub(crate) fn header_height(card: Rect) -> f32 {
     }
 }
 
+/// 第一个标签离面板左边的距离（逻辑像素），与标签上下的留白相同。
+pub(crate) fn tab_inset(card: Rect) -> f32 {
+    (header_height(card) - crate::theme::TAB_HEIGHT) / 2.0
+}
+
+/// 面板放不下一整行的零头（行，`0.0..1.0`）。
+pub(crate) fn grid_slack(card: Rect, line_height: f32) -> f32 {
+    (grid_rect(card, line_height).y - card.y - header_height(card)) / line_height
+}
+
 /// 面板里放网格的区域：标签栏以下，左边留出画命令块色带的 [`GUTTER`]，右边和底下留 [`PAD`]，
 /// 高度正好是整数行。
 pub(crate) fn grid_rect(card: Rect, line_height: f32) -> Rect {
-    // 放不下一整行的零头留在上面：网格贴着面板下边。面板在下面时上边随拖动移动，如果贴着
-    // 上边，每动一点整屏都跟着上下动，多出一行时又跳回去。
+    // 放不下一整行的零头留在上面，网格贴着面板下边：拖动分隔条时动的是面板上边，内容不跟着移动。
+    // 零头处显示网格上面一行的下半截，见 `TermTab::viewport`。
     let header = header_height(card);
     let h = (card.h - header - PAD).max(0.0);
     let rows = (h / line_height).floor();

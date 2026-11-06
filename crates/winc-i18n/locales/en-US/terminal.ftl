@@ -9,14 +9,13 @@ terminal-module-disabled = The terminal module isn’t enabled
 
 ## Terminal helper
 
-terminal-helper-missing = Terminal helper winc-pty not found (in a development build, run cargo build -p winc-pty first)
+terminal-helper-missing = Couldn’t find the terminal helper; reinstall winc
 terminal-helper-start-failed = Couldn’t start the terminal helper: { $error }
 terminal-helper-exited = The terminal helper exited
 terminal-helper-version-mismatch = The terminal helper’s version doesn’t match winc; reinstall winc
 terminal-process-exited = Process exited (code { $code })
 terminal-disconnected = Terminal connection lost
-terminal-restart = ↩ Restart
-terminal-close-hint = { $key } Close
+terminal-restart = Restart
 terminal-restart-confirm = Restart this terminal?
 terminal-restart-confirm-detail = The connection to this terminal was lost. Restarting ends any programs still running in it.
 terminal-restart-confirm-action = Restart

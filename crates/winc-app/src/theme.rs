@@ -636,6 +636,8 @@ pub const TREE_INDENT: f32 = 16.0;
 pub const TAB_HEIGHT: f32 = 26.0;
 /// 标签之间的间距。
 pub const TAB_GAP: f32 = 4.0;
+/// 第一个文件标签离标签栏左边的距离（逻辑像素），与标签上下的留白相同。
+pub const TAB_INSET: f32 = (TOP_BAR - TAB_HEIGHT) / 2.0;
 /// 标签的最大宽度。
 ///
 /// 标签宽度贴合文件名，文件名更长时截短；所有标签放不下时横向滚动。

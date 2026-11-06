@@ -10,7 +10,7 @@ use winc_pty::input::{self, Button, MouseAction};
 use winc_pty::protocol::Modes;
 
 use super::tab::{Point, Selection, Unit, ViewRow};
-use super::{App, Focus, grid_rect};
+use super::{App, Focus};
 use crate::app::Drag;
 
 /// 命令块上可以点的地方。
@@ -23,24 +23,31 @@ pub(crate) enum BlockHit {
 }
 
 impl App {
-    /// 窗口坐标落在网格的哪一行（网格上的第几行，超出网格的夹到边上）。
-    fn terminal_view_row(&self, y: f32) -> Option<usize> {
-        let tab = self.terminal.tab()?;
-        let grid = grid_rect(self.layout.terminal, self.fonts.line_height);
-        let row = ((y - grid.y) / self.fonts.line_height).floor().max(0.0) as usize;
-        Some(row.min(tab.grid_rows().max(1) - 1))
+    /// 窗口坐标落在第几个显示行（超出内容区域的夹到边上）。
+    fn terminal_display_row(&self, y: f32) -> u64 {
+        let view = self.terminal_view();
+        let (first, origin) = self.terminal_origin();
+        let y = y.clamp(view.y, view.bottom() - 0.5);
+        first + ((y - origin) / self.fonts.line_height).floor().max(0.0) as u64
     }
 
-    /// 网格第 `row` 行上显示的是不是终端里的一行字：吸顶的命令行和折起的那一行不是。
-    pub(in crate::app) fn terminal_shows_line(&self, row: usize) -> bool {
+    /// 窗口坐标 `y` 是否落在吸顶行上。
+    fn terminal_on_sticky(&self, y: f32) -> bool {
+        let band = self.terminal_sticky_band();
+        let sticky = self.terminal.tab().is_some_and(|t| t.sticky().is_some());
+        sticky && y < band.bottom()
+    }
+
+    /// 窗口坐标 `y` 上显示的是不是终端里的一行字：吸顶的命令行和折起的那一行不是。
+    pub(in crate::app) fn terminal_shows_line(&self, y: f32) -> bool {
         let Some(tab) = self.terminal.tab() else {
             return false;
         };
-        if row == 0 && tab.sticky().is_some() {
+        if self.terminal_on_sticky(y) {
             return false;
         }
         matches!(
-            tab.row_at(tab.view_top() + row as u64),
+            tab.row_at(self.terminal_display_row(y)),
             Some(ViewRow::Line(_))
         )
     }
@@ -50,11 +57,10 @@ impl App {
     /// 往上翻着、或者落在回滚缓冲的行上时没有对应的屏幕行，返回 `None`。
     fn terminal_cell(&self, x: f32, y: f32) -> Option<(u16, u16)> {
         let tab = self.terminal.tab()?;
-        let grid = grid_rect(self.layout.terminal, self.fonts.line_height);
+        let grid = self.terminal_grid();
         let col = ((x - grid.x) / self.cell).floor().max(0.0) as usize;
         let cols = usize::from(tab.size.cols).max(1);
-        let row = self.terminal_view_row(y)?;
-        let line = match tab.row_at(tab.view_top() + row as u64)? {
+        let line = match tab.row_at(self.terminal_display_row(y))? {
             ViewRow::Line(line) => line,
             ViewRow::Fold(..) => return None,
         };
@@ -69,11 +75,12 @@ impl App {
     /// 盖着的那一行看不见，算它下面一行。
     pub(super) fn terminal_point(&self, x: f32, y: f32, between: bool) -> Option<Point> {
         let tab = self.terminal.tab()?;
-        let grid = grid_rect(self.layout.terminal, self.fonts.line_height);
-        let mut row = self.terminal_view_row(y)? as u64;
-        if row == 0 && tab.sticky().is_some() {
-            row = 1;
-        }
+        let grid = self.terminal_grid();
+        let y = if self.terminal_on_sticky(y) {
+            self.terminal_sticky_band().bottom()
+        } else {
+            y
+        };
         let cells = (x - grid.x) / self.cell;
         let col = if between {
             cells.round()
@@ -81,9 +88,8 @@ impl App {
             cells.floor()
         };
         let col = (col.max(0.0) as usize).min(usize::from(tab.size.cols));
-        let top = tab.view_top();
         let last = tab.display_len().checked_sub(1)?;
-        let row = tab.row_at((top + row).min(last))?;
+        let row = tab.row_at(self.terminal_display_row(y).min(last))?;
         Some(Point {
             line: row.line(tab),
             col,
@@ -93,17 +99,16 @@ impl App {
     /// 窗口坐标落在命令块的哪个可以点的地方：吸顶的命令行、色带（网格左边）、折起的那一行。
     pub(in crate::app) fn terminal_block_hit(&self, x: f32, y: f32) -> Option<BlockHit> {
         let tab = self.terminal.tab()?;
-        let grid = grid_rect(self.layout.terminal, self.fonts.line_height);
-        if y < grid.y || y >= grid.bottom() || x >= grid.right() {
+        let view = self.terminal_view();
+        if y < view.y || y >= view.bottom() || x >= view.right() {
             return None;
         }
-        let row = self.terminal_view_row(y)?;
-        if row == 0 && tab.sticky().is_some() {
+        if self.terminal_on_sticky(y) {
             return Some(BlockHit::Sticky);
         }
-        let block = match tab.row_at(tab.view_top() + row as u64)? {
+        let block = match tab.row_at(self.terminal_display_row(y))? {
             ViewRow::Fold(block, _) => block,
-            ViewRow::Line(line) if x < grid.x => tab.block_at(line)?,
+            ViewRow::Line(line) if x < view.x => tab.block_at(line)?,
             ViewRow::Line(_) => return None,
         };
         tab.blocks[block]
@@ -118,14 +123,13 @@ impl App {
     /// 右键菜单用。
     pub(in crate::app) fn terminal_block_under(&self, x: f32, y: f32) -> Option<u32> {
         let tab = self.terminal.tab()?;
-        let grid = grid_rect(self.layout.terminal, self.fonts.line_height);
-        if y < grid.y || y >= grid.bottom() || x >= grid.right() {
+        let view = self.terminal_view();
+        if y < view.y || y >= view.bottom() || x >= view.right() {
             return None;
         }
-        let row = self.terminal_view_row(y)?;
-        let block = match (row, tab.sticky()) {
-            (0, Some(block)) => block,
-            _ => match tab.row_at(tab.view_top() + row as u64)? {
+        let block = match tab.sticky().filter(|_| self.terminal_on_sticky(y)) {
+            Some(block) => block,
+            None => match tab.row_at(self.terminal_display_row(y))? {
                 ViewRow::Fold(block, _) => block,
                 ViewRow::Line(line) => tab.block_at(line)?,
             },
@@ -234,10 +238,10 @@ impl App {
                 }
             }
             Drag::TerminalSelect => {
-                let grid = grid_rect(self.layout.terminal, self.fonts.line_height);
-                if y < grid.y {
+                let view = self.terminal_view();
+                if y < view.y {
                     self.scroll_terminal(1);
-                } else if y >= grid.bottom() {
+                } else if y >= view.bottom() {
                     self.scroll_terminal(-1);
                 }
                 let between = self
@@ -293,13 +297,20 @@ impl App {
 
     /// 滚轮在终端上（`dy` 是逻辑像素，正数往上）。
     ///
-    /// 攒够一行才动一行。
+    /// 翻回滚缓冲时按像素移动；上报给程序、改发方向键时攒够一行才发一次。
     pub(in crate::app) fn terminal_wheel(&mut self, dy: f32) {
         let line_height = self.fonts.line_height;
         let reports = self.terminal_reports_mouse();
         let Some(tab) = self.terminal.tab_mut() else {
             return;
         };
+        if !reports && !tab.modes.has(Modes::ALT_SCREEN) {
+            let (position, _) = tab.scroll_position();
+            tab.set_scroll_position(position + f64::from(dy / line_height));
+            self.fetch_terminal_history();
+            self.request_redraw();
+            return;
+        }
         tab.scroll_rest += dy / line_height;
         let lines = tab.scroll_rest.trunc();
         tab.scroll_rest -= lines;
@@ -317,22 +328,18 @@ impl App {
             for _ in 0..lines.unsigned_abs().min(10) {
                 self.report_terminal_mouse(button, MouseAction::Press, self.mouse);
             }
-        } else if modes.has(Modes::ALT_SCREEN) {
+        } else if modes.has(Modes::ALT_SCROLL) {
             // 备用屏上没有回滚缓冲：分页器里滚轮换成方向键。
-            if modes.has(Modes::ALT_SCROLL) {
-                let key = if lines > 0 {
-                    input::Key::Up
-                } else {
-                    input::Key::Down
-                };
-                let mut bytes = Vec::new();
-                for _ in 0..lines.unsigned_abs().min(10) {
-                    input::encode(key, input::Mods::default(), modes, 0, &mut bytes);
-                }
-                self.terminal_input(bytes);
+            let key = if lines > 0 {
+                input::Key::Up
+            } else {
+                input::Key::Down
+            };
+            let mut bytes = Vec::new();
+            for _ in 0..lines.unsigned_abs().min(10) {
+                input::encode(key, input::Mods::default(), modes, 0, &mut bytes);
             }
-        } else {
-            self.scroll_terminal(lines);
+            self.terminal_input(bytes);
         }
     }
 }

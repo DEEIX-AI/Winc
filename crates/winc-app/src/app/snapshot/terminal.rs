@@ -54,7 +54,7 @@ pub(super) fn serve(app: &mut App, term: &winc_pty::Terminal) {
 
 /// 网格上第 `row` 行第 `col` 格的中心。
 pub(super) fn cell_center(app: &App, row: usize, col: usize) -> (f32, f32) {
-    let grid = terminal::grid_rect(app.layout.terminal, app.fonts.line_height);
+    let grid = app.terminal_grid();
     (
         grid.x + (col as f32 + 0.5) * app.cell,
         grid.y + (row as f32 + 0.5) * app.fonts.line_height,
@@ -472,6 +472,125 @@ fn find_scans_in_slices_from_the_bottom() {
     assert_eq!(find.current, Some(3));
     assert_eq!(find.matches[3].0, newest);
     assert_eq!(selected(&app), "Warning");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_panel_keeps_the_dragged_height_without_a_gap_under_the_tabs() {
+    let dir = sample_folder("terminal-no-gap");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "$ ");
+    let line = app.fonts.line_height;
+    let height = app.layout.terminal.h + (line / 2.0).round();
+    app.terminal.height = height;
+    app.relayout();
+    assert_eq!(app.layout.terminal.h, height);
+
+    // 上面没有内容：内容贴着标签栏，零头留在下面。
+    let top = app.terminal_view().y;
+    assert_eq!(app.terminal_grid().y, top);
+
+    // 上面有内容：网格贴着面板下边，零头处显示上一行的下半截。
+    let output: String = (0..60).map(|i| format!("line {i}\r\n")).collect();
+    let term = add_tab(&mut app, "zsh", &output);
+    serve(&mut app, &term);
+    let grid = app.terminal_grid();
+    assert!(grid.y > top);
+    assert!(grid.y - top < line);
+    let tab = app.terminal.tab().unwrap();
+    let above = tab.row_at(tab.view_top() - 1).unwrap();
+    let terminal::ViewRow::Line(number) = above else {
+        panic!("上一行应当是普通的行");
+    };
+    assert!(tab.line(number).is_some(), "上一行要先取回来");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_wheel_moves_rows_by_pixels_and_clicks_follow_them() {
+    let dir = sample_folder("terminal-pixel-scroll");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "");
+    app.terminal.height = terminal::DEFAULT_HEIGHT + 7.0;
+    app.relayout();
+    let output: String = (0..80).map(|i| format!("line {i}\r\n")).collect();
+    let term = add_tab(&mut app, "zsh", &output);
+    app.relayout();
+    serve(&mut app, &term);
+    let lh = app.fonts.line_height;
+
+    // 每次滚动 3 逻辑像素：同一行每次都移动 3 逻辑像素。
+    let y_of = |app: &App, row: u64| {
+        let (first, origin) = app.terminal_origin();
+        origin + (row as f32 - first as f32) * lh
+    };
+    let row = app.terminal.tab().unwrap().view_top();
+    let mut last = y_of(&app, row);
+    for _ in 0..40 {
+        app.terminal_wheel(3.0);
+        serve(&mut app, &term);
+        let y = y_of(&app, row);
+        assert!((y - last - 3.0).abs() < 1.01, "移动了 {}", y - last);
+        last = y;
+    }
+
+    // 点在视口最上面只露出一部分的行上：选中的就是这一行。
+    let tab = app.terminal.tab().unwrap();
+    let (first, origin) = app.terminal_origin();
+    let top = app.terminal_view().y;
+    assert!(origin < top);
+    let line = tab.row_at(first).unwrap().line(tab);
+    let x = app.terminal_view().x + app.cell * 0.5;
+    app.on_mouse_move(x, top + 0.5);
+    app.on_mouse_down(MouseButton::Left);
+    let tab = app.terminal.tab().unwrap();
+    assert_eq!(tab.selection.map(|s| s.anchor.line), Some(line));
+    app.on_mouse_up(MouseButton::Left);
+
+    // 翻到顶后不再动，第一行贴着标签栏；键入回到最新的输出，不留不足一行的滚动量。
+    app.terminal_wheel(1.0e7);
+    assert_eq!(app.terminal.tab().unwrap().viewport(), (0, 0.0));
+    assert_eq!(app.terminal_origin().1, top);
+    app.terminal_wheel(-lh * 0.5);
+    let tab = app.terminal.tab().unwrap();
+    assert!(tab.scroll_frac > 0.0 && tab.view_top() > 0);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
+    let dir = sample_folder("terminal-tab-bar-gaps");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "");
+    for _ in 0..20 {
+        add_tab(&mut app, "zsh", "");
+    }
+    app.terminal.active = 0;
+    paint(&mut app);
+    let card = app.layout.terminal;
+    let hit = |app: &App, wanted: terminal::HeaderHit| {
+        (app.terminal.hits.iter())
+            .find(|(_, hit)| *hit == wanted)
+            .map(|(rect, _)| *rect)
+            .unwrap()
+    };
+
+    // 标签放不下：第一个标签上、下、左的留白相同。
+    let tab = hit(&app, terminal::HeaderHit::Tab(0));
+    assert_eq!(tab.x - card.x, tab.y - card.y);
+    assert_eq!(tab.x - card.x, app.terminal_view().y - tab.bottom());
+    assert_eq!(tab.x - card.x, 5.0);
+
+    // 「+」、切换位置、收起三个按钮间距相同，尺寸和间距与编辑区标签栏一致。
+    let new = hit(&app, terminal::HeaderHit::New);
+    let position = hit(&app, terminal::HeaderHit::Position);
+    let hide = hit(&app, terminal::HeaderHit::Hide);
+    assert_eq!(position.x - new.right(), crate::theme::TAB_GAP);
+    assert_eq!(hide.x - position.right(), crate::theme::TAB_GAP);
+    assert_eq!(new.w, crate::theme::BUTTON);
+    assert_eq!(card.right() - hide.right(), 8.0);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

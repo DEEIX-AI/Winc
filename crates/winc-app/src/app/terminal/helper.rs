@@ -3,6 +3,55 @@
 use super::*;
 
 impl App {
+    /// 面板里放网格的区域。
+    ///
+    /// 网格上面还有内容时贴着面板下边（[`grid_rect`]）；没有内容时和备用屏贴着标签栏，零头留在
+    /// 下面，此时增减行数不会有历史行进出网格，拖动分隔条时内容也不会跳。网格装满后切换到贴着下边
+    /// 时，原来的第一行成为零头处的半行，位置不变。
+    pub(crate) fn terminal_grid(&self) -> Rect {
+        let card = self.layout.terminal;
+        let grid = grid_rect(card, self.fonts.line_height);
+        let below = |tab: &TermTab| tab.view_top() > 0 && !tab.modes.has(Modes::ALT_SCREEN);
+        if self.terminal.tab().is_some_and(below) {
+            return grid;
+        }
+        Rect {
+            y: card.y + header_height(card),
+            ..grid
+        }
+    }
+
+    /// 显示终端内容的区域：从标签栏下沿到网格下沿，左右与网格相同。
+    pub(crate) fn terminal_view(&self) -> Rect {
+        let grid = self.terminal_grid();
+        let top = self.layout.terminal.y + header_height(self.layout.terminal);
+        Rect::new(grid.x, top, grid.w, grid.bottom() - top)
+    }
+
+    /// 视口最上面露出的显示行和它上沿的窗口坐标（对齐物理像素，文字不因滚动变模糊）。
+    pub(crate) fn terminal_origin(&self) -> (u64, f32) {
+        let top = self.layout.terminal.y + header_height(self.layout.terminal);
+        let Some((first, cut)) = self.terminal.tab().map(TermTab::viewport) else {
+            return (0, top);
+        };
+        let scale = (self.renderer.as_ref()).map_or(1.0, winc_render::Renderer::scale_factor);
+        let y = top - cut * self.fonts.line_height;
+        (first, (y * scale).round() / scale)
+    }
+
+    /// 吸顶行露出的区域：紧贴标签栏，被下一条命令的提示符顶上去时变矮。
+    pub(crate) fn terminal_sticky_band(&self) -> Rect {
+        let card = self.layout.terminal;
+        let lh = self.fonts.line_height;
+        let push = self.terminal.tab().map_or(0.0, TermTab::sticky_push);
+        Rect::new(
+            card.x,
+            card.y + header_height(card),
+            card.w,
+            lh * (1.0 - push),
+        )
+    }
+
     /// 启动辅助进程（已经在跑时什么也不做）。
     ///
     /// 终端标签在握手以后、知道面板尺寸时再建
@@ -12,6 +61,7 @@ impl App {
             return;
         }
         let Some(path) = helper_path() else {
+            eprintln!("winc: 未找到 winc-pty（开发环境下请先运行 cargo build -p winc-pty）");
             self.terminal.error = Some(winc_i18n::t!("terminal-helper-missing").into());
             return;
         };
@@ -216,8 +266,10 @@ impl App {
             return;
         }
         let size = self.terminal_size();
+        let slack = grid_slack(self.layout.terminal, self.fonts.line_height);
         for tab in &mut self.terminal.tabs {
             tab.shown = usize::from(size.rows);
+            tab.slack = slack;
         }
         if !self.terminal.ready {
             return;
@@ -289,6 +341,7 @@ impl App {
                     });
                 }
                 let mut tab = TermTab::new(id, size);
+                tab.slack = slack;
                 tab.name = names.get(i).cloned().unwrap_or_default();
                 t.tabs.push(tab);
                 t.active = t.tabs.len() - 1;

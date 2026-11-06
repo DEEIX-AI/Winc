@@ -19,8 +19,6 @@ pub(crate) const TAB_MAX: f32 = 220.0;
 pub(crate) const TAB_SQUEEZED: f32 = 72.0;
 /// 标签之间的间距（逻辑像素）。
 pub(crate) const TAB_GAP: f32 = 4.0;
-/// 第一个标签离面板左边的距离（逻辑像素）。
-pub(crate) const STRIP_X: f32 = 6.0;
 /// 按下以后横向移动超过多远才算拖动（逻辑像素，经验值），不足时仍按单击处理。
 const THRESHOLD: f32 = 4.0;
 
@@ -368,21 +366,50 @@ pub(crate) fn fit_tabs(widths: &mut [f32], room: f32) {
     if widths.iter().sum::<f32>() <= room {
         return;
     }
-    // 找一个上限：比它窄的标签不动，其余的都变成它，加起来正好放得下。先按平分算，再把比它
-    // 窄的标签省下的地方分给其余标签，直到不再变（每轮至少多一个标签不动，最多循环标签数轮）。
-    let mut cap = room / widths.len() as f32;
-    loop {
-        let narrow = widths.iter().filter(|&&w| w < cap);
-        let (sum, count) = narrow.fold((0.0, 0), |(s, n), w| (s + w, n + 1));
-        let next = (room - sum) / (widths.len() - count).max(1) as f32;
-        if next <= cap || count == widths.len() {
-            break;
-        }
-        cap = next;
-    }
+    let cap = shared_limit(widths, room);
     for w in widths {
         *w = w.min(cap).max(TAB_SQUEEZED).floor();
     }
+}
+
+/// 找一个上限：比它小的项不动，其余的项都取它，加起来正好等于 `room`。
+///
+/// 先按平分算，再把较小的项省下的部分分给其余项，直到不再变化（每轮至少多一项不动，最多循环
+/// 项数轮）。
+fn shared_limit(values: &[f32], room: f32) -> f32 {
+    let mut cap = room / values.len().max(1) as f32;
+    loop {
+        let narrow = values.iter().filter(|&&w| w < cap);
+        let (sum, count) = narrow.fold((0.0, 0), |(s, n), w| (s + w, n + 1));
+        let next = (room - sum) / (values.len() - count).max(1) as f32;
+        if next <= cap || count == values.len() {
+            return cap;
+        }
+        cap = next;
+    }
+}
+
+/// 按名字需要的宽度 `names`（含内边距）排出放进 `room` 的各标签宽度。
+///
+/// 放得下时每个标签宽 [`TAB_MIN`]～[`TAB_MAX`]。放不下时先收掉名字之外的留白：留白最多的先收，
+/// 名字仍然完整；留白收完还放不下时，再按 [`fit_tabs`] 截短最长的名字。
+pub(crate) fn fit_named_tabs(names: &[f32], room: f32) -> Vec<f32> {
+    let names: Vec<f32> = (names.iter())
+        .map(|&w| w.clamp(TAB_SQUEEZED, TAB_MAX))
+        .collect();
+    let wanted: Vec<f32> = names.iter().map(|&w| w.max(TAB_MIN)).collect();
+    let gaps = TAB_GAP * names.len().saturating_sub(1) as f32;
+    let spare = room - gaps - names.iter().sum::<f32>();
+    if spare <= 0.0 {
+        let mut widths = names;
+        fit_tabs(&mut widths, room);
+        return widths;
+    }
+    let blanks: Vec<f32> = wanted.iter().zip(&names).map(|(w, n)| w - n).collect();
+    let limit = shared_limit(&blanks, spare);
+    (names.iter().zip(&blanks))
+        .map(|(name, blank)| (name + blank.min(limit)).floor())
+        .collect()
 }
 
 #[cfg(test)]

@@ -18,18 +18,27 @@ use winc_render::{Color, FontKind, Frame, Rect};
 use super::*;
 use crate::app::Focus;
 use crate::app::MARK_W;
-use crate::app::terminal::strip::{STRIP_X, TAB_GAP, TAB_MAX, TAB_MIN, fit_tabs};
+use crate::app::terminal::strip::{TAB_GAP, fit_named_tabs};
 use crate::app::terminal::{
-    BAND_X, BlockHit, HeaderHit, TabEnd, TermTab, ViewRow, format_duration, grid_rect,
-    header_height,
+    BAND_X, BlockHit, HeaderHit, TabEnd, TermTab, ViewRow, format_duration, header_height,
+    tab_inset,
 };
-use crate::keymap::{self, Action};
-use crate::theme::readable;
+use crate::theme::{BUTTON, readable};
 
 /// 标签栏上一个标签的高度（逻辑像素），与编辑区的标签相同。
 const TAB_H: f32 = crate::theme::TAB_HEIGHT;
 /// 查找框的宽度（逻辑像素）。
 const FIND_W: f32 = 220.0;
+/// 最右端的按钮离面板右边的距离（逻辑像素），与编辑区标签栏相同。
+const BUTTONS_END: f32 = 8.0;
+/// 成功命令色带的不透明度（0–1）：大多数命令都成功，满色的长条会比失败的红色更显眼。
+///
+/// 取自调参：对照深色和浅色主题，长输出旁的色带可辨认且不抢正文。鼠标悬停时恢复满色。
+const SUCCESS_BAND_ALPHA: f32 = 0.45;
+/// 「重新启动」按钮上回车图标占的宽度，含与文字的间距（逻辑像素）。
+const RESTART_ICON: f32 = icons::RETURN_KEY_WIDTH + 5.0;
+/// 显示命令时长的下限（毫秒）：时长保留一位小数（秒），不足该值时会显示为 0.0 s。
+const MIN_SHOWN_DURATION: u32 = 50;
 
 /// 绘制终端面板。
 ///
@@ -45,7 +54,7 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
     frame.rect(card, p.editor_bg);
     draw_header(app, frame, card);
 
-    let grid = grid_rect(card, app.fonts.line_height);
+    let grid = app.terminal_grid();
     if let Some(error) = &app.terminal.error {
         let row = Rect::new(grid.x, grid.y, grid.w, app.fonts.line_height);
         ui_text(frame, app, grid.x, row, error, p.error, grid);
@@ -71,27 +80,31 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
         bright: app.config.terminal_bold_is_bright == Some(true),
     };
     let find = app.terminal.find.as_ref().filter(|f| f.tab == tab.id);
-    let view = tab.view();
     let jumped = tab
         .jump
         .and_then(|id| tab.blocks.iter().find(|b| b.id == id));
-    let mut cursor_row = None;
-    for (r, &view_row) in view.iter().enumerate() {
-        let y = grid.y + r as f32 * lh;
-        if y + lh > grid.bottom() + 0.5 {
+    let mut cursor_y = None;
+    // 色带和文字裁到内容区域：滚动时最上面和最下面的行只露出一部分。
+    let view = app.terminal_view();
+    let band_clip = Rect::new(card.x, view.y, card.w, view.h);
+    let (first, origin) = app.terminal_origin();
+    let count = tab.grid_rows() as u64 + 2;
+    for (r, view_row) in tab.rows_from(first, count).into_iter().enumerate() {
+        let y = origin + r as f32 * lh;
+        if y >= view.bottom() {
             break;
         }
         let row = Rect::new(grid.x, y, grid.w, lh);
-        draw_band(app, frame, tab, view_row, row, card);
+        draw_band(app, frame, tab, view_row, row, band_clip);
         let number = match view_row {
             ViewRow::Line(number) => number,
             ViewRow::Fold(block, hidden) => {
-                draw_fold(app, frame, row, (block, hidden), grid);
+                draw_fold(app, frame, row, (block, hidden), view);
                 continue;
             }
         };
         if number == tab.history.1 + u64::from(tab.cursor.row) {
-            cursor_row = Some(r);
+            cursor_y = Some(y);
         }
         let Some(line) = tab.line(number) else {
             continue;
@@ -127,7 +140,7 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
             marks.push((start, end.min(usize::from(tab.size.cols)), selection));
         }
         let baseline = baseline_in(row, ascent, descent);
-        draw_line(app, frame, &colors, line, row, baseline, &marks, grid);
+        draw_line(app, frame, &colors, line, row, baseline, &marks, view);
         // 按住 ⌘ 时鼠标下的链接：强调色的下划线。
         if let Some(link) = app
             .terminal
@@ -141,12 +154,12 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
                 (link.end - link.start) as f32 * cell,
                 1.0,
             );
-            frame.rect_clipped(under, p.accent, 0.0, grid);
+            frame.rect_clipped(under, p.accent, 0.0, view);
         }
         if let Some(block) = tab.block_at(number).map(|i| &tab.blocks[i])
             && block.command == number
         {
-            draw_outcome(app, frame, block, line, row, grid);
+            draw_outcome(app, frame, block, line, row, view);
         }
     }
     if let Some(block) = tab.sticky() {
@@ -155,9 +168,20 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
     if let Some((Some(thumb), look)) = bar {
         draw_thumb(frame, p, thumb, look);
     }
+    if tab.ended.is_some() || app.terminal.crashed {
+        // 往上翻着时看不到最后一行，也不写说明；↩ 仍然可以重新启动。
+        if let Some(y) = cursor_y {
+            let blank = (tab.rows.get(usize::from(tab.cursor.row)))
+                .is_none_or(|line| line.trimmed().is_empty());
+            let y = (y + if blank { 0.0 } else { lh }).min(view.bottom() - lh);
+            let row = Rect::new(grid.x, y, grid.w, lh);
+            draw_end_notice(app, frame, row, view);
+        }
+        return;
+    }
 
     // 往上翻着时光标不在可见范围里。
-    let Some(r) = cursor_row else {
+    let Some(y) = cursor_y else {
         return;
     };
     let cursor = tab.cursor;
@@ -165,7 +189,6 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
         return;
     };
     let x = grid.x + f32::from(cursor.col) * cell;
-    let y = grid.y + r as f32 * lh;
     let at = Rect::new(
         x,
         y,
@@ -175,13 +198,10 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
     if focused {
         app.ime_cursor = Some(Rect::new(x, y, cell, lh));
     }
-    if tab.ended.is_some() || app.terminal.crashed {
-        return;
-    }
     if focused && !app.preedit.is_empty() {
-        draw_preedit(app, frame, (x, y), baseline_in(at, ascent, descent), grid);
+        draw_preedit(app, frame, (x, y), baseline_in(at, ascent, descent), view);
     } else if cursor.visible && tab.settle.is_none() {
-        draw_cursor(app, frame, tab, at, focused, grid);
+        draw_cursor(app, frame, tab, at, focused, view);
     }
 }
 
@@ -190,7 +210,7 @@ fn band_color(p: &Palette, block: &Block) -> Option<Color> {
     block.output?;
     Some(match block.exit {
         _ if block.running() => p.text_dim,
-        Some(0) => p.git_added,
+        Some(0) => p.git_added.alpha(SUCCESS_BAND_ALPHA),
         Some(_) => p.error,
         None => p.text_dim,
     })
@@ -218,7 +238,11 @@ fn draw_band(app: &App, frame: &mut Frame<'_>, tab: &TermTab, row: ViewRow, at: 
     let top = if line == block.prompt { 2.0 } else { 0.0 };
     let bottom = if last { 2.0 } else { 0.0 };
     let lit = index.is_some_and(|i| app.hover == Hover::TerminalBlock(BlockHit::Band(i)));
-    let w = if lit { MARK_W + 1.0 } else { MARK_W };
+    let (w, color) = if lit {
+        (MARK_W + 1.0, color.alpha(1.0))
+    } else {
+        (MARK_W, color)
+    };
     let bar = Rect::new(card.x + BAND_X, at.y + top, w, at.h - top - bottom);
     frame.rect_clipped(bar, color, 0.0, card);
 }
@@ -286,7 +310,9 @@ fn draw_outcome(
     let Some(exit) = block.exit.filter(|_| block.output.is_some()) else {
         return;
     };
-    let duration = block.duration.map(format_duration);
+    let duration = (block.duration)
+        .filter(|&ms| ms >= MIN_SHOWN_DURATION)
+        .map(format_duration);
     if exit == 0 && block.duration.is_none_or(|d| d < 1000) {
         return;
     }
@@ -330,31 +356,37 @@ fn draw_sticky(
     card: Rect,
 ) {
     let p = app.palette;
-    let grid = grid_rect(card, app.fonts.line_height);
+    let grid = app.terminal_grid();
     let lh = app.fonts.line_height;
     let block = &tab.blocks[index];
-    let band = Rect::new(card.x, grid.y, card.w, lh);
+    // 紧贴标签栏；下一条命令的提示符上来时文字随底色的下沿一起往上走。
+    let band = app.terminal_sticky_band();
     let covered = frame.covered(band, 0.0);
-    frame.shadow(band, 0.0, 6.0, 0.0, p.shadow, Some(covered));
+    // 阴影只落在内容上：扩散到标签栏会使标签下方的留白看起来比上方窄。
+    let content = Rect::new(card.x, band.y, card.w, card.bottom() - band.y);
+    frame.within(content, |frame| {
+        frame.shadow(band, 0.0, 6.0, 0.0, p.shadow, Some(covered));
+    });
     frame.rect_clipped(band, p.editor_bg, 0.0, card);
+    let row = Rect::new(grid.x, band.bottom() - lh, grid.w, lh);
+    let clip = Rect::new(grid.x, band.y, grid.w, band.h);
     if app.hover == Hover::TerminalBlock(BlockHit::Sticky) {
-        let hover = Rect::new(grid.x - 4.0, grid.y, grid.w + 4.0, lh);
-        frame.rect_clipped(hover, p.hover, RADIUS_ROW, card);
+        let hover = Rect::new(grid.x - 4.0, row.y, grid.w + 4.0, lh);
+        frame.rect_clipped(hover, p.hover, RADIUS_ROW, band);
     }
     if let Some(color) = band_color(p, block) {
-        let bar = Rect::new(card.x + BAND_X, grid.y + 2.0, MARK_W, lh - 4.0);
-        frame.rect_clipped(bar, color, 0.0, card);
+        let bar = Rect::new(card.x + BAND_X, row.y + 2.0, MARK_W, lh - 4.0);
+        frame.rect_clipped(bar, color, 0.0, band);
     }
-    let row = Rect::new(grid.x, grid.y, grid.w, lh);
     let baseline = baseline_in(row, app.mono_metrics.ascent, app.mono_metrics.descent);
     match tab.sticky_line(index) {
         Some(line) => {
-            draw_line(app, frame, colors, line, row, baseline, &[], grid);
-            draw_outcome(app, frame, block, line, row, grid);
+            draw_line(app, frame, colors, line, row, baseline, &[], clip);
+            draw_outcome(app, frame, block, line, row, clip);
         }
         None => {
             let text = format!("$ {}", block.text);
-            ui_text(frame, app, grid.x, row, &text, p.text_muted, grid);
+            ui_text(frame, app, grid.x, row, &text, p.text_muted, clip);
         }
     }
 }
@@ -366,7 +398,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     let p = app.palette;
     let header = Rect::new(card.x, card.y, card.w, header_height(card));
     let y = card.y + (header.h - TAB_H) / 2.0;
-    let left = card.x + STRIP_X;
+    let left = card.x + tab_inset(card);
     // 面板在右边时标签栏在顶栏那一行，右端让给窗口按钮（由应用绘制标题栏时）。
     let controls = app.layout.controls;
     let end = if controls.w > 0.0 && controls.y < header.bottom() && controls.x < header.right() {
@@ -374,31 +406,34 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     } else {
         header.right()
     };
-    let hide = Rect::new(end - 6.0 - TAB_H, y, TAB_H, TAB_H);
-    let position = Rect::new(hide.x - 2.0 - TAB_H, y, TAB_H, TAB_H);
-    let rest = Rect::new(header.x, header.y, position.x - 4.0 - header.x, header.h);
+    // 按钮的尺寸和间距与编辑区标签栏相同；标签放不下时「+」紧贴切换位置的按钮。
+    let button_y = card.y + (header.h - BUTTON) / 2.0;
+    let hide = Rect::new(end - BUTTONS_END - BUTTON, button_y, BUTTON, BUTTON);
+    let position = Rect::new(hide.x - TAB_GAP - BUTTON, button_y, BUTTON, BUTTON);
+    let rest = Rect::new(
+        header.x,
+        header.y,
+        position.x - TAB_GAP - header.x,
+        header.h,
+    );
     // 标签和「+」放得下的宽度：右边留出查找框，或者「重新启动」那一组。
     let side = if app.terminal.find.is_some() {
-        FIND_W + 4.0
+        FIND_W + 4.0 + TAB_GAP
     } else {
-        restart_width(app, frame)
+        0.0
     };
-    let room = rest.right() - side - 8.0 - left - TAB_GAP - TAB_H;
-    let mut widths: Vec<f32> = app
-        .terminal
-        .tabs
-        .iter()
+    let room = rest.right() - side - left - TAB_GAP - BUTTON;
+    let names: Vec<f32> = (app.terminal.tabs.iter())
         .map(|tab| {
             // 正在改名字的标签跟着输入的字变宽。
             let label = match &app.terminal.rename {
                 Some((id, field)) if *id == tab.id => field.text(),
                 _ => tab.label(),
             };
-            let text = frame.measure(FontKind::Ui, app.fonts.ui, label);
-            (text + 36.0).clamp(TAB_MIN, TAB_MAX)
+            frame.measure(FontKind::Ui, app.fonts.ui, label) + 36.0
         })
         .collect();
-    fit_tabs(&mut widths, room);
+    let widths = fit_named_tabs(&names, room);
     // 最窄时仍放不下：标签栏可以横向滚动，切换标签或增减标签时滚到正在看的标签；超出的部分裁剪，
     // 「+」始终显示。还没有标签（刚打开、shell 尚未启动）时不滚动。
     let span = |n: usize| {
@@ -495,15 +530,28 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     if caret.is_some() {
         app.ime_cursor = caret;
     }
+    // 放不下时被裁掉的一端渐隐，强度随离两端的距离变化，与编辑区标签栏相同。
+    let edge = workspace::top_bar::TAB_FADE;
+    for (hidden, x, opaque_left) in [
+        (scroll, area.x, true),
+        (max_scroll - scroll, area.right() - edge, false),
+    ] {
+        if hidden > 0.0 {
+            let rect = Rect::new(x, y, edge, TAB_H);
+            frame.with_opacity((hidden / edge).min(1.0), |frame| {
+                super::fade(frame, rect, p.editor_bg, opaque_left);
+            });
+        }
+    }
 
-    let new = Rect::new(x.min(area.right() + TAB_GAP), y, TAB_H, TAB_H);
+    let new = Rect::new(x.min(area.right() + TAB_GAP), button_y, BUTTON, BUTTON);
     if app.hover == Hover::TerminalHeader(HeaderHit::New) {
         frame.rect_clipped(new, p.hover, RADIUS_ROW, header);
     }
     icons::plus(
         frame,
-        (new.x + TAB_H / 2.0, new.y + TAB_H / 2.0),
-        8.0,
+        (new.x + BUTTON / 2.0, new.y + BUTTON / 2.0),
+        9.0,
         p.text_muted,
         header,
     );
@@ -513,7 +561,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     if app.hover == Hover::TerminalHeader(HeaderHit::Position) {
         frame.rect_clipped(position, p.hover, RADIUS_ROW, header);
     }
-    let center = (position.x + TAB_H / 2.0, position.y + TAB_H / 2.0);
+    let center = (position.x + BUTTON / 2.0, position.y + BUTTON / 2.0);
     icons::panel(frame, center, !app.terminal_right(), p.text_muted, header);
     hits.push((position, HeaderHit::Position));
 
@@ -526,15 +574,13 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     } else {
         icons::Direction::Down
     };
-    let center = (hide.x + TAB_H / 2.0, hide.y + TAB_H / 2.0);
+    let center = (hide.x + BUTTON / 2.0, hide.y + BUTTON / 2.0);
     icons::chevron(frame, center, 8.0, toward, p.text_muted, header);
     hits.push((hide, HeaderHit::Hide));
     app.terminal.hits = hits;
 
     if app.terminal.find.is_some() {
         draw_find(app, frame, rest);
-    } else {
-        draw_restart(app, frame, rest);
     }
 }
 
@@ -602,76 +648,57 @@ fn draw_tab(
 ) {
     workspace::top_bar::draw_tab_fill(frame, app.palette, rect, active, hovered, clip);
     let text = Rect::new(rect.x + 10.0, rect.y, rect.w - 32.0, TAB_H);
-    let label = ellipsize(frame, label, app.fonts.ui, text.w);
+    // 路径的两端都有用；命令和进程名从头读，开头足以辨认。
+    let label = if label.contains(['/', '\\']) {
+        ellipsize(frame, label, app.fonts.ui, text.w)
+    } else {
+        truncate_end(frame, label, app.fonts.ui, text.w)
+    };
     let clip = text.intersect(clip);
     ui_text(frame, app, text.x, text, &label, color, clip);
 }
 
-/// 返回「重新启动」按钮上的字。
-fn restart_label() -> &'static str {
-    t!("terminal-restart")
-}
-
-/// 标签栏右端「重新启动」那一组的说明和颜色、怎么关掉；终端还能用时为 `None`。
-fn restart_texts(app: &App) -> Option<(String, Color, String)> {
+/// 终端结束时的说明和颜色：shell 退出了、伪终端断开了、或者辅助进程退出了；还能用时为 `None`。
+fn end_note(app: &App) -> Option<(String, Color)> {
     let p = app.palette;
     if app.terminal.crashed {
-        Some((
-            t!("terminal-helper-exited").to_string(),
-            p.error,
-            String::new(),
-        ))
-    } else {
-        let (note, color) = match app.terminal.tab()?.ended? {
-            TabEnd::Exited(code) => (t!("terminal-process-exited", code = code), p.text_dim),
-            TabEnd::Disconnected => (t!("terminal-disconnected").to_string(), p.error),
-        };
-        // 快捷键可以改，也可以解除绑定：解除以后不写这一段。
-        let close = keymap::shortcut(Action::CloseTerminal)
-            .map_or(String::new(), |key| t!("terminal-close-hint", key = key));
-        Some((note, color, close))
+        return Some((t!("terminal-helper-exited").to_string(), p.error));
     }
+    Some(match app.terminal.tab()?.ended? {
+        TabEnd::Exited(code) => (t!("terminal-process-exited", code = code), p.text_dim),
+        TabEnd::Disconnected => (t!("terminal-disconnected").to_string(), p.error),
+    })
 }
 
-/// 「重新启动」那一组从说明的左边到标签栏右边一共多宽，标签按它让出地方；终端还能用时为 0。
-fn restart_width(app: &App, frame: &mut Frame<'_>) -> f32 {
-    let Some((note, _, close)) = restart_texts(app) else {
-        return 0.0;
-    };
-    let measure = |frame: &mut Frame<'_>, s: &str| frame.measure(FontKind::Ui, app.fonts.ui, s);
-    let texts = measure(frame, &close) + measure(frame, restart_label()) + measure(frame, &note);
-    // 右边留白 12，「关闭」和按钮间隔 8，按钮左右各 8，按钮和说明间隔 10。
-    texts + 12.0 + 8.0 + 16.0 + 10.0
-}
-
-/// shell 退出了、伪终端断开了、或者辅助进程退出了时，标签栏右端（位置按钮左边）：说明、
-/// 「重新启动」按钮（↩ 也行）、怎么关掉。
-fn draw_restart(app: &mut App, frame: &mut Frame<'_>, header: Rect) {
+/// 终端结束后写在最后一行下面的一行：说明和「重新启动」按钮（↩ 也行）。
+fn draw_end_notice(app: &mut App, frame: &mut Frame<'_>, row: Rect, clip: Rect) {
     let p = app.palette;
-    let Some((note, color, close)) = restart_texts(app) else {
+    let Some((note, color)) = end_note(app) else {
         return;
     };
-    let label = restart_label();
-    let measure = |frame: &mut Frame<'_>, s: &str| frame.measure(FontKind::Ui, app.fonts.ui, s);
-    let (note_w, label_w, close_w) = (
-        measure(frame, &note),
-        measure(frame, label) + 16.0,
-        measure(frame, &close),
+    // 屏幕写满时写在最后一行上，盖住那一行。
+    frame.rect_clipped(row, p.editor_bg, 0.0, clip);
+    ui_text(frame, app, row.x, row, &note, color, clip);
+    let label = t!("terminal-restart");
+    let note_w = frame.measure(FontKind::Ui, app.fonts.ui, &note);
+    let label_w = frame.measure(FontKind::Ui, app.fonts.ui, label);
+    let button = Rect::new(
+        row.x + note_w + 10.0,
+        row.y,
+        label_w + RESTART_ICON + 12.0,
+        row.h,
     );
-    let mut x = header.right() - 12.0 - close_w;
-    ui_text(frame, app, x, header, &close, p.text_dim, header);
-    x -= label_w + 8.0;
-    let button = Rect::new(x, header.y + (header.h - TAB_H) / 2.0, label_w, TAB_H);
-    let fill = if app.hover == Hover::TerminalHeader(HeaderHit::Restart) {
-        p.hover
-    } else {
-        p.tab_fill
-    };
-    frame.rect_clipped(button, fill, RADIUS_ROW, header);
-    ui_text(frame, app, x + 8.0, header, label, p.text, header);
+    let hovered = app.hover == Hover::TerminalHeader(HeaderHit::Restart);
+    let fill = if hovered { p.hover } else { p.tab_fill };
+    frame.rect_clipped(button, fill, RADIUS_ROW, clip);
+    let icon = (
+        button.x + 6.0 + icons::RETURN_KEY_WIDTH / 2.0,
+        button.y + button.h / 2.0,
+    );
+    icons::return_key(frame, icon, p.text, clip);
+    let text = button.x + 6.0 + RESTART_ICON;
+    ui_text(frame, app, text, row, label, p.text, clip);
     app.terminal.hits.push((button, HeaderHit::Restart));
-    x -= note_w + 10.0;
-    ui_text(frame, app, x, header, &note, color, header);
 }
 
 /// 查找框：绘制在标签栏 `header` 的右端，左边写第几处、共几处。
