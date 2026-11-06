@@ -52,6 +52,8 @@ struct Pending {
     paths: HashSet<PathBuf>,
     rescan: bool,
     git: bool,
+    /// 是否超出了系统允许的监视数量且尚未告知用户。
+    limit: bool,
     /// 在打开的目录之外另外监视的公共 Git 目录。
     git_dir: Option<PathBuf>,
     /// 收集到第一条变化后是否已唤醒过界面线程；在 [`Watcher::take`] 取走之前不再重复唤醒。
@@ -79,7 +81,7 @@ impl Pending {
 
     /// 是否该唤醒界面线程：有内容且这一批还没有唤醒过；返回 `true` 时记为已唤醒。
     fn wake_due(&mut self) -> bool {
-        let due = !self.woken && (self.rescan || self.git || !self.paths.is_empty());
+        let due = !self.woken && (self.rescan || self.git || self.limit || !self.paths.is_empty());
         self.woken |= due;
         due
     }
@@ -174,12 +176,24 @@ impl Watcher {
 
     /// 变化通知是否可靠：为假时调用方应在窗口获得焦点时自行重新检查。
     ///
-    /// 经文件共享监视 WSL 发行版中的目录时通知不一定送达；发行版内的监视程序退出后不再有通知。
+    /// 经文件共享监视 WSL 发行版中的目录时通知不一定送达；发行版内的监视程序开始监视之前和退出之后
+    /// 都没有通知。
     pub fn reliable(&self) -> bool {
         match &self.inner {
             Inner::System(_) => crate::wsl::locate_here(&self.root).is_none(),
-            Inner::Distro(helper) => helper.alive(),
+            Inner::Distro(helper) => helper.live(),
         }
+    }
+
+    /// 发行版内的监视程序是否监视过后退出了（如发行版被关闭）：发行版恢复后可以重新启动监视。
+    pub fn exited(&self) -> bool {
+        matches!(&self.inner, Inner::Distro(helper) if helper.exited())
+    }
+
+    /// 是否刚超出系统允许的监视数量；同一次只返回一次 `true`。
+    pub fn take_limit(&self) -> bool {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        std::mem::take(&mut pending.limit)
     }
 
     /// 让监视跟上当前仓库的公共 Git 目录 `dir`：不在打开的目录里时（附属工作树、打开的是仓库的

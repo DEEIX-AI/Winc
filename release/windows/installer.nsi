@@ -146,7 +146,21 @@ Section "winc" SEC_MAIN
   SetOutPath "$INSTDIR"
   File "${SOURCE}\winc.exe"
   File "${SOURCE}\winc-pty.exe"
-  File "${SOURCE}\winc-watch"
+  ; winc-watch runs inside a WSL distribution and exits shortly after winc does, so the file can
+  ; still be open here. Waits up to 5 s; a helper that stays open keeps the old copy, which only
+  ; affects file watching until the next update.
+  SetOverwrite try
+  StrCpy $1 0
+  watcher_install:
+    ClearErrors
+    File "${SOURCE}\winc-watch"
+    IfErrors 0 watcher_installed
+    IntOp $1 $1 + 1
+    IntCmp $1 20 watcher_installed
+    Sleep 250
+    Goto watcher_install
+  watcher_installed:
+  SetOverwrite on
   File "${SOURCE}\winc.ico"
   File "${SOURCE}\LICENSE"
   File "${SOURCE}\NOTICE"
@@ -179,7 +193,16 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\winc.lnk"
   Delete "$INSTDIR\winc.exe"
   Delete "$INSTDIR\winc-pty.exe"
-  Delete "$INSTDIR\winc-watch"
+  ; See the note in the install section: winc-watch can still be running for a moment.
+  StrCpy $1 0
+  watcher_delete:
+    Delete "$INSTDIR\winc-watch"
+    IfFileExists "$INSTDIR\winc-watch" 0 watcher_deleted
+    IntOp $1 $1 + 1
+    IntCmp $1 20 watcher_deleted
+    Sleep 250
+    Goto watcher_delete
+  watcher_deleted:
   Delete "$INSTDIR\winc.ico"
   Delete "$INSTDIR\winc-installation"
   Delete "$INSTDIR\LICENSE"

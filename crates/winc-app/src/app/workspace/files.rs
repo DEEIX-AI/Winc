@@ -788,6 +788,7 @@ impl App {
         // 启动监视。工作树、子模块的 `.git` 是文件，真正的目录在其他位置。仓库根位于已监视的目录
         // 中、`.git` 是目录时，它的变化已由监视报告，不必每次窗口重新获得焦点都启动 git。
         self.git_discover();
+        self.restart_exited_watcher();
         let live = self
             .watcher
             .as_ref()
