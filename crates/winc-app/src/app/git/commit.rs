@@ -6,6 +6,8 @@
 //! 标签里打开差异。绘制在 `view/git/commit.rs`，点击区域见 `commit_hits`。
 
 mod actions;
+pub(in crate::app) use actions::COMMITTED_SHOWN;
+pub(crate) use actions::SyncState;
 mod list;
 mod state;
 
@@ -27,11 +29,12 @@ use winc_render::Rect;
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
+use super::branch::branch_menu;
 use super::unusable;
-use crate::app::input::context_menu::{MenuButton, MenuTarget, menu_below};
-use crate::app::{App, Focus, UserEvent};
+use crate::app::input::context_menu::{MenuButton, MenuCommand, MenuTarget, menu_below};
+use crate::app::{AlertButton, App, Focus, GitAnchor, UserEvent};
 use crate::field::TextField;
-use crate::theme::{SIDEBAR_FIRST, SIDEBAR_GAP, SIDEBAR_HEADER, SIDEBAR_LIST_GAP, TOP_BAR_END};
+use crate::theme::{SIDEBAR_GAP, SIDEBAR_HEADER, SIDEBAR_LIST_GAP, TOP_BAR_END};
 
 /// 列表一行的高度（逻辑像素），取侧栏列表统一的行高。
 pub(crate) const COMMIT_ROW: f32 = 24.0;
@@ -45,6 +48,8 @@ const BANNER_H: f32 = 28.0;
 ///
 /// 取 `BANNER_H`，两处单行栏等高。
 const UNDO_H: f32 = 28.0;
+/// Git 上下文一行的高度（逻辑像素），与行内的按钮同高（`BUTTON_SMALL`）。
+const CONTEXT_ROW: f32 = 24.0;
 /// 说明条右端「中止」按钮的宽度（逻辑像素）。
 ///
 /// 40 是经验值：「中止」两个字加左右各 8 像素的留白。
@@ -330,6 +335,12 @@ pub enum CommitTarget {
     OpenFile(usize),
     /// 悬停文件行时右端的「回滚」按钮，参数同 [`CommitTarget::File`]。
     RevertFile(usize),
+    /// Git 上下文的位置行：展开位置选择器。
+    Location,
+    /// Git 上下文的分支行：展开分支选择器。
+    Branch,
+    /// 分支行右端的同步控件：同步、发布或获取，见 [`App::git_sync`]。
+    Sync,
     /// 拆分按钮左边的「提交」。
     Commit,
     /// 拆分按钮右边的下拉箭头：弹「提交并推送」「修改上一次提交」。
@@ -364,6 +375,10 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
+    /// 位置行；只有一个位置时没有。
+    pub location: Option<Rect>,
+    /// 分支行。
+    pub branch: Rect,
     /// 视图底部「上一次提交」那一栏（整个侧栏宽）及其右端的「⋯」按钮。
     ///
     /// 上一次提交不能撤销（已经推送、不在分支上、有进行中的操作）时为 `None`。
@@ -403,6 +418,8 @@ pub(crate) struct CommitState {
     pub amend: bool,
     /// 打开「修改上一次提交」之前由用户填写的提交信息，关闭该模式时恢复。
     draft: Option<String>,
+    /// 各位置写了一半的提交信息：切换仓库、工作树时不丢。
+    drafts: HashMap<PathBuf, String>,
     /// 勾选（`excluded`）每变一次加 1，见 [`CommitRows::members_state`]。
     checks: u64,
     /// 用户取消勾选的文件；其余已跟踪的文件都勾着。
@@ -491,6 +508,7 @@ impl Default for CommitState {
             message_motion: None,
             amend: false,
             draft: None,
+            drafts: HashMap::new(),
             excluded: HashSet::new(),
             included: HashSet::new(),
             skipped: HashMap::new(),
@@ -600,9 +618,16 @@ impl App {
         let inner_x = panel.x + MARGIN;
         let inner_w = (panel.w - 2.0 * MARGIN).max(0.0);
 
+        // Git 上下文：写在哪、在哪个分支、和上游差多少，提交前一眼能看到。
+        let context_h = self.commit_context_height();
+        let context_y = header.bottom();
+        let row = |i: f32| Rect::new(inner_x, context_y + i * CONTEXT_ROW, inner_w, CONTEXT_ROW);
+        let location = self.git_has_locations().then(|| row(0.0));
+        let branch = row(if location.is_some() { 1.0 } else { 0.0 });
+        let top = context_y + context_h;
         let banner_h = self.commit_banner_height();
         let banner = (banner_h > 0.0).then(|| {
-            let rect = Rect::new(inner_x, header.bottom() + SIDEBAR_FIRST, inner_w, BANNER_H);
+            let rect = Rect::new(inner_x, top, inner_w, BANNER_H);
             let w = BANNER_ABORT_W.min(rect.w);
             let abort = Rect::new(rect.right() - 2.0 - w, rect.y + 2.0, w, rect.h - 4.0);
             (rect, abort)
@@ -612,7 +637,7 @@ impl App {
             .commit
             .message_motion
             .map_or(settled_h, |(from, clock)| clock.between(from, settled_h));
-        let message_y = header.bottom() + SIDEBAR_FIRST + banner_h;
+        let message_y = top + banner_h;
         let message = Rect::new(inner_x, message_y, inner_w, message_h);
         let message_settled = Rect::new(inner_x, message_y, inner_w, settled_h);
         let button_y = message.bottom() + SIDEBAR_GAP;
@@ -632,6 +657,8 @@ impl App {
         CommitParts {
             header,
             tools,
+            location,
+            branch,
             banner,
             message,
             message_settled,
@@ -642,20 +669,22 @@ impl App {
         }
     }
 
-    /// 提交按钮要写明的范围：勾上的文件数和当前分支（游离 `HEAD` 时没有）。
+    /// 提交按钮要写明的范围：勾上的文件数；分支就写在上方的分支行里。
     ///
     /// 修改提交、合并或变基暂停时按钮另有说法，没有勾选时也不写范围，都返回 `None`。
-    pub(crate) fn commit_scope(&self) -> Option<(usize, Option<&str>)> {
+    pub(crate) fn commit_scope(&self) -> Option<usize> {
         let status = self.git.status.as_ref()?;
         if self.commit.amend || status.operation.is_some() {
             return None;
         }
         let count = self.commit.checked_entries(status).count();
-        let branch = match &status.head {
-            Some(Head::Branch(name)) => Some(name.as_str()),
-            _ => None,
-        };
-        (count > 0).then_some((count, branch))
+        (count > 0).then_some(count)
+    }
+
+    /// Git 上下文及其下方间隔的总高度（逻辑像素）。
+    fn commit_context_height(&self) -> f32 {
+        let rows = if self.git_has_locations() { 2.0 } else { 1.0 };
+        rows * CONTEXT_ROW + SIDEBAR_GAP
     }
 
     /// 可以撤销的上一次提交：`HEAD` 在分支上，指向的提交还没推送到上游（没有上游，或者本地
@@ -692,7 +721,7 @@ impl App {
         let lines = self.commit.message_lines.clamp(1, MESSAGE_MAX_LINES);
         let want = lines as f32 * MESSAGE_LINE + 2.0 * MESSAGE_PAD;
         let fixed = SIDEBAR_HEADER
-            + SIDEBAR_FIRST
+            + self.commit_context_height()
             + self.commit_banner_height()
             + SIDEBAR_GAP
             + BUTTON_H
@@ -875,7 +904,9 @@ impl App {
                     self.confirm_rollback(vec![path]);
                 }
             }
-            CommitTarget::Commit if self.commit_sync().is_some() => self.git_sync(),
+            CommitTarget::Location => self.open_location_picker(),
+            CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
+            CommitTarget::Sync => self.git_sync(),
             CommitTarget::Commit => self.git_commit(),
             CommitTarget::Abort => self.confirm_abort(),
             CommitTarget::LastCommit => {
@@ -908,7 +939,7 @@ impl App {
     pub(in crate::app) fn commit_more_menu(
         &self,
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
-        use crate::app::input::context_menu::{MenuCommand, MenuEntry};
+        use crate::app::input::context_menu::MenuEntry;
         let anything_checked = self
             .git
             .status
@@ -930,11 +961,22 @@ impl App {
             MenuEntry::Item(MenuCommand::CommitExpandAll, !all_expanded),
             MenuEntry::Item(MenuCommand::CommitCollapseAll, !all_collapsed),
             MenuEntry::Separator,
+        ]
+        .into_iter()
+        .chain(branch_menu(
+            &self.git.branches,
+            &self.git.stashes,
+            self.git.status.as_ref().and_then(|s| s.operation),
+            self.branch.running.is_some(),
+        ))
+        .chain([
+            MenuEntry::Separator,
             MenuEntry::Item(
                 MenuCommand::CommitRollback,
                 anything_checked && !self.commit.busy,
             ),
-        ]
+        ])
+        .collect()
     }
 
     /// 「提交 ⌄」拆分按钮右边箭头的菜单：提交并推送（合并、变基停着时没有推送这回事，灰显），
@@ -953,13 +995,9 @@ impl App {
     }
 
     /// 「提交 ⌄」的菜单选了 `command`。
-    pub(in crate::app) fn run_commit_button_command(
-        &mut self,
-        command: crate::app::input::context_menu::MenuCommand,
-    ) {
-        use crate::app::input::context_menu::MenuCommand;
+    pub(in crate::app) fn run_commit_button_command(&mut self, command: MenuCommand) {
         match command {
-            MenuCommand::CommitPush => self.ask_commit_and_push(),
+            MenuCommand::CommitPush => self.confirm_commit_and_push(),
             MenuCommand::CommitAmend => self.toggle_amend(),
             _ => {}
         }
@@ -976,21 +1014,6 @@ impl App {
         }
     }
 
-    /// 用状态文件里记下的提交视图宽度（启动、新开窗口时）。
-    pub(crate) fn restore_commit_panel_width(&mut self) {
-        if let Some(width) = self.state.commit_panel_width {
-            self.stashed_panel_width = width.max(crate::theme::MIN_PANEL_WIDTH);
-        }
-    }
-
-    /// 正在看提交视图时，把侧栏宽度记进状态文件：以后打开的窗口、下次启动都用这个宽度。
-    pub(in crate::app) fn remember_commit_panel_width(&mut self) {
-        if self.sidebar_view == crate::layout::SidebarView::Commit {
-            let width = self.panel_width.round();
-            self.update_state(|state| state.commit_panel_width = Some(width));
-        }
-    }
-
     /// 在按目录排成树和平铺之间切换更改列表。
     ///
     /// 记进状态文件：以后打开的窗口、下次启动都用同一种显示方式。
@@ -1004,11 +1027,7 @@ impl App {
     }
 
     /// 提交视图标题行「⋯」的菜单选了 `command`。
-    pub(in crate::app) fn run_commit_more_command(
-        &mut self,
-        command: crate::app::input::context_menu::MenuCommand,
-    ) {
-        use crate::app::input::context_menu::MenuCommand;
+    pub(in crate::app) fn run_commit_more_command(&mut self, command: MenuCommand) {
         match command {
             MenuCommand::CommitRefresh => self.git_refresh(),
             MenuCommand::CommitRollback => self.ask_rollback(),
@@ -1018,7 +1037,7 @@ impl App {
                     .collapse_all(command == MenuCommand::CommitCollapseAll);
                 self.commit.scroll = self.commit.scroll.min(self.commit_max_scroll());
             }
-            _ => {}
+            _ => self.run_branch_command(command),
         }
         self.request_redraw();
     }
@@ -1199,7 +1218,7 @@ impl App {
             return;
         };
         match command {
-            MenuCommand::CommitUndo => self.ask_undo_commit(&last),
+            MenuCommand::CommitUndo => self.confirm_undo_commit(&last),
             MenuCommand::CommitCopyOid => {
                 let short = last.oid.chars().take(7).collect::<String>();
                 self.flash(t!("git-log-copied-oid", commit = short.as_str()));
@@ -1209,22 +1228,17 @@ impl App {
         }
     }
 
-    /// 先请用户确认，确认后撤销上一次提交；没有窗口（测试中）时直接撤销。
-    fn ask_undo_commit(&mut self, last: &LastCommit) {
-        if self.window.is_some() {
-            let message = t!("git-undo-commit-confirm", subject = last.subject.as_str());
-            use crate::app::AlertButton;
-            let buttons = vec![
-                AlertButton::new(t!("git-undo-commit-confirm-button")),
-                AlertButton::cancel(t!("common-cancel")),
-            ];
-            let detail = t!("git-undo-commit-confirm-detail");
-            self.show_alert(&message, detail, buttons, None, |index, _| {
-                (index == 0).then_some(UserEvent::GitUndoCommit)
-            });
-            return;
-        }
-        self.undo_last_commit();
+    /// 用提示框询问，确认后撤销上一次提交。更改还在，确认按钮不标记为危险操作。
+    fn confirm_undo_commit(&mut self, last: &LastCommit) {
+        let message = t!("git-undo-commit-confirm", subject = last.subject.as_str());
+        let detail = t!("git-undo-commit-confirm-detail");
+        let buttons = vec![
+            AlertButton::new(t!("git-undo-commit-confirm-button")),
+            AlertButton::cancel(t!("common-cancel")),
+        ];
+        self.show_alert(&message, detail, buttons, None, |choice, _| {
+            (choice == 0).then_some(UserEvent::GitUndoCommit)
+        });
     }
 
     /// 撤销上一次提交：分支退回上一个提交，改动留在暂存区并保持勾选，提交信息填回输入框（输入框里

@@ -94,6 +94,10 @@ pub struct Branch {
     ///
     /// 提交、推送、获取使分支移动时随之变化，据此判断开着的日志是否需要重新读取。
     pub oid: String,
+    /// 分支指向的提交的提交时间（Unix 秒）。
+    pub time: i64,
+    /// 提交时间在本机时区的写法「2026-10-26 14:32」。
+    pub local: String,
 }
 /// 日志里的一个提交。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -489,6 +493,15 @@ impl std::fmt::Display for Unavailable {
     }
 }
 
+/// [`Git::delete_branch`] 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchDeleted {
+    /// 已删除，内容是 `git` 的结论。
+    Done(String),
+    /// 分支未完全合并，需要强制删除，尚未删除。
+    NeedsForce,
+}
+
 /// 系统里可用的 `git`。
 #[derive(Debug, Clone)]
 pub struct Git {
@@ -593,7 +606,8 @@ impl Git {
         let mut command = self.command(root);
         command.args([
             "for-each-ref",
-            "--format=%(refname)%00%(HEAD)%00%(upstream:short)%00%(objectname)",
+            "--format=%(refname)%00%(HEAD)%00%(upstream:short)%00%(objectname)\
+             %00%(committerdate:unix)%00%(committerdate:format-local:%Y-%m-%d %H:%M)",
             "refs/heads",
             "refs/remotes",
         ]);
@@ -648,6 +662,33 @@ impl Git {
                 }
             }
             Err(e) => Err(describe(&e)),
+        }
+    }
+
+    /// 删除本地分支 `name`。
+    ///
+    /// `force` 时用 `--force` 连同未合并的提交一起删除；否则分支未完全合并时返回
+    /// [`BranchDeleted::NeedsForce`]，不改动仓库。
+    ///
+    /// # Errors
+    ///
+    /// 分支不存在、被某个工作树签出等其他失败时返回 `git` 给出的原因。
+    pub fn delete_branch(
+        &self,
+        root: &Path,
+        name: &str,
+        force: bool,
+    ) -> Result<BranchDeleted, String> {
+        let mut args = vec!["branch", "--delete"];
+        if force {
+            args.push("--force");
+        }
+        args.extend(["--end-of-options", name]);
+        match self.operate(root, &args) {
+            Ok(summary) => Ok(BranchDeleted::Done(summary)),
+            // 报错固定为英文（`LC_ALL=C`），分支名不含空格，不会和这句话混淆。
+            Err(e) if !force && e.contains("is not fully merged") => Ok(BranchDeleted::NeedsForce),
+            Err(e) => Err(e),
         }
     }
 

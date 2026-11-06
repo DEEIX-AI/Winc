@@ -620,8 +620,6 @@ pub const SIDEBAR_FIRST: f32 = SIDEBAR_GAP - (SIDEBAR_HEADER - BUTTON_SMALL) / 2
 pub const SIDEBAR_LIST_GAP: f32 = SIDEBAR_GAP / 2.0;
 /// 侧栏的默认宽度。
 pub const DEFAULT_PANEL_WIDTH: f32 = 300.0;
-/// 提交视图的侧栏默认宽度：提交按钮要写明文件数和分支，文件行要写所在目录，比文件树需要的宽度大。
-pub const DEFAULT_COMMIT_PANEL_WIDTH: f32 = 340.0;
 /// 侧栏的最小宽度。
 ///
 /// macOS 上要恰好放下顶部的红绿灯（右端 80）、侧栏开关和靠右的视图切换（文件、搜索、提交三段

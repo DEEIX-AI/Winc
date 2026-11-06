@@ -10,9 +10,9 @@ pub(crate) mod branch;
 pub(super) mod changes;
 pub(super) mod commit;
 pub(crate) mod form;
+pub(crate) mod location_picker;
 pub(crate) mod log;
 pub(crate) mod merge;
-pub(crate) mod repository_picker;
 pub(crate) mod worktree;
 
 use std::collections::{HashMap, HashSet};
@@ -149,7 +149,8 @@ struct DiffTab {
     oid: Option<String>,
 }
 
-/// 项目菜单最多读取分支和改动数的仓库数（个，经验值）：每个要运行一次 `git status`。
+/// 最多读取分支和改动数的位置数（个）：每个要运行一次 `git status`，放着很多仓库的目录不至于
+/// 在后台占用太多进程。
 const SUMMARY_REPOSITORIES: usize = 32;
 
 /// 后台深层查找的结果：（查找的目录，找到的仓库）。
@@ -159,12 +160,14 @@ type ScannedRepositories = (PathBuf, Vec<PathBuf>);
 pub(crate) struct GitState {
     /// 当前仓库的根目录；模块关着、目录里没有仓库时为 `None`。
     pub root: Option<PathBuf>,
-    /// 打开的目录里可用的仓库，见 [`App::git_discover`]；项目菜单和仓库选择器在有多个时列出。
+    /// 打开的目录里可用的仓库，见 [`App::git_discover`]；位置选择器在有多个时列出。
     pub repositories: Vec<PathBuf>,
     /// 上次跟随的标签（[`App::git_follow_active`]）：切换标签时才查找文件所在的仓库。
     followed: Option<DocumentId>,
-    /// 各仓库最近一次读到的状态：项目菜单据此显示分支和改动数，切换过去时先显示它，不必等待。
+    /// 各仓库最近一次读到的状态：位置选择器据此显示分支和改动数，切换过去时先显示它，不必等待。
     summaries: Arc<Mutex<HashMap<PathBuf, Status>>>,
+    /// 各仓库最近一次读到的工作树：位置选择器据此把它们列在仓库下面。
+    summary_worktrees: Arc<Mutex<HashMap<PathBuf, Vec<Worktree>>>>,
     /// 正在运行的读取；重新读取时取消。
     summaries_running: Option<Cancel>,
     /// 后台深层查找（[`App::git_scan_repositories`]）的结果。
@@ -221,6 +224,7 @@ impl Default for GitState {
             repositories: Vec::new(),
             followed: None,
             summaries: Arc::default(),
+            summary_worktrees: Arc::default(),
             summaries_running: None,
             scanned: Arc::default(),
             scan_running: None,
@@ -380,13 +384,18 @@ impl App {
 
     /// 打开的目录变了、或者模块开关变了：重新确定仓库，并刷新一次。
     ///
-    /// 目录本身不是仓库、第一层子目录里有仓库时用第一个，其余的在仓库选择器里切换；更深的仓库由
+    /// 目录本身不是仓库、第一层子目录里有仓库时用第一个，其余的在位置选择器里切换；更深的仓库由
     /// 后台查找（[`App::git_scan_repositories`]）加入。
     pub(super) fn git_folder_changed(&mut self) {
         self.git.repositories.clear();
         self.git.followed = None;
         self.git
             .summaries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        self.git
+            .summary_worktrees
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
@@ -453,7 +462,7 @@ impl App {
             let root = self.git.repositories.first().cloned();
             self.git_set_root(root);
         }
-        self.repository_picker_refreshed();
+        self.location_picker_refreshed();
         self.request_redraw();
     }
 
@@ -475,65 +484,53 @@ impl App {
         self.git_read_summaries();
     }
 
-    /// 在后台读取各仓库的分支和改动数，项目菜单下次打开时显示；只有一个仓库时不读。
+    /// 在后台读取各仓库的工作树，以及每个工作树的分支和改动数，位置选择器和位置行据此显示；只有
+    /// 一个位置时不读。
     ///
-    /// 系统菜单弹出后内容不能再变，因此提前读好。最多读 [`SUMMARY_REPOSITORIES`] 个。
+    /// 最多读 [`SUMMARY_REPOSITORIES`] 个位置。
     fn git_read_summaries(&mut self) {
         if let Some(cancel) = self.git.summaries_running.take() {
             cancel.cancel();
         }
-        if self.git.repositories.len() < 2 {
+        if !self.git_has_locations() {
             return;
         }
         let cancel = Cancel::default();
         self.git.summaries_running = Some(cancel.clone());
         let repositories = self.git.repositories.clone();
         let summaries = Arc::clone(&self.git.summaries);
+        let worktrees = Arc::clone(&self.git.summary_worktrees);
         self.spawn_git(UserEvent::GitStatus, move |tool| {
             let Ok(git) = tool else {
                 return;
             };
-            for root in repositories.into_iter().take(SUMMARY_REPOSITORIES) {
-                if cancel.is_cancelled() {
-                    return;
-                }
-                if let Ok(status) = git.status(&root, &cancel) {
-                    summaries
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .insert(root, status);
+            let mut left = SUMMARY_REPOSITORIES;
+            for root in repositories {
+                let trees = git.worktrees(&root, &cancel).unwrap_or_default();
+                let paths: Vec<PathBuf> = if trees.is_empty() {
+                    vec![root.clone()]
+                } else {
+                    let usable = trees.iter().filter(|w| w.head.is_some() && !w.prunable);
+                    usable.map(|w| w.path.clone()).collect()
+                };
+                worktrees
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(root, trees);
+                for path in paths {
+                    if cancel.is_cancelled() || left == 0 {
+                        return;
+                    }
+                    left -= 1;
+                    if let Ok(status) = git.status(&path, &cancel) {
+                        summaries
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(path, status);
+                    }
                 }
             }
         });
-    }
-
-    /// 返回第 `index` 个仓库在项目菜单里的小字：分支和改动数；还没读到时为 `None`。当前仓库用
-    /// 最新的状态。
-    pub(crate) fn git_repository_detail(&self, index: usize) -> Option<String> {
-        let repo = self.git.repositories.get(index)?;
-        let (head, changes) = match &self.git.status {
-            Some(status) if self.git.root.as_ref() == Some(repo) => {
-                (status.head.clone(), status.entries.len())
-            }
-            _ => {
-                let summaries = self
-                    .git
-                    .summaries
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                let status = summaries.get(repo)?;
-                (status.head.clone(), status.entries.len())
-            }
-        };
-        let head = match head? {
-            git::Head::Branch(name) => name,
-            git::Head::Detached(oid) => t!("git-worktree-detached", oid = oid.as_str()),
-        };
-        Some(if changes == 0 {
-            head
-        } else {
-            t!("git-repository-detail", head = head, count = changes)
-        })
     }
 
     /// 返回第 `index` 个仓库在菜单里显示的名字：相对打开的目录的路径，目录本身用目录名。
@@ -554,7 +551,7 @@ impl App {
         }
     }
 
-    /// 切换到项目菜单里的第 `index` 个仓库。
+    /// 切换到第 `index` 个仓库。
     pub(in crate::app) fn git_switch_repository(&mut self, index: usize) {
         if let Some(root) = self.git.repositories.get(index).cloned() {
             self.git_set_root(Some(root));
@@ -604,6 +601,10 @@ impl App {
         if root == self.git.root {
             return;
         }
+        // 写了一半的提交信息按位置留着，切回来时还在。
+        if let Some(old) = self.git.root.clone() {
+            self.commit.keep_draft(old);
+        }
         // 留下要离开的仓库的状态，切回来时马上能显示。
         if let (Some(old), Some(status)) = (self.git.root.clone(), self.git.status.take()) {
             self.git
@@ -621,12 +622,15 @@ impl App {
         self.changes.forget();
         self.blame.clear();
         // 旧仓库还在做的分支操作、提交是那边的：这里不再显示「正在拉取…」、不拦着新仓库的操作，
-        // 写了一半的提交信息、「修改上一次提交」也不带过来。做完时只说一声（见 `poll_branch_ops`、
-        // `poll_commit`）。
+        // 「修改上一次提交」也不带过来。做完时只说一声（见 `poll_branch_ops`、`poll_commit`）。
         self.branch.running = None;
+        self.branch.finished = None;
         self.reset_commit_view();
         self.git.ignored = root.as_deref().map(Ignored::new);
         self.git.root = root;
+        if let Some(root) = self.git.root.clone() {
+            self.commit.restore_draft(&root);
+        }
         // 先显示上次读到的状态，后台读完以后再更新，提交视图不会闪成「正在读取」。
         let known = self.git.root.as_ref().and_then(|root| {
             self.git
@@ -782,6 +786,8 @@ impl App {
                             && self.git.worktrees != worktrees
                         {
                             self.git.worktrees = worktrees;
+                            self.git_read_summaries();
+                            self.location_picker_refreshed();
                             self.update_window_title();
                         }
                     }

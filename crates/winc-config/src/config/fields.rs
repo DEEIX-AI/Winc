@@ -277,7 +277,6 @@ const TERMINAL: &[Field] = &[
 /// `git` 一节。
 const GIT: &[Field] = &[
     bool_field!("enabled", git_enabled),
-    bool_field!("confirmSync", confirm_sync),
     Field {
         key: "repositoryScanDepth",
         read: |config, value, name, problems| {

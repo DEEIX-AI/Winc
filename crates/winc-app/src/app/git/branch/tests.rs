@@ -1,4 +1,4 @@
-//! 分支菜单的测试：「Git 操作」的拉取、被占用的分支不能签出到新工作树。
+//! 分支操作的测试：提交视图「⋯」里的拉取、被占用的分支不能签出到新工作树。
 
 use super::*;
 
@@ -25,6 +25,8 @@ fn branch(name: &str, remote: bool, current: bool, upstream: Option<&str>) -> Br
         current,
         upstream: upstream.map(str::to_owned),
         oid: String::new(),
+        time: 0,
+        local: String::new(),
     }
 }
 
@@ -67,4 +69,39 @@ fn branches_held_by_another_worktree_cannot_go_into_a_new_one() {
         })
         .collect();
     assert_eq!(offered, [1]);
+}
+
+#[test]
+fn branch_ops_are_grouped_with_separators() {
+    use BranchOp::*;
+    use MenuCommand::GitBranch;
+
+    let branches = [
+        branch("main", false, true, None),
+        branch("feat", false, false, None),
+        branch("origin/feat", true, false, None),
+    ];
+    let item = |op, i| MenuEntry::Item(GitBranch(op, i), true);
+    assert_eq!(
+        branch_ops(1, &branches, &[], &[], false),
+        [
+            item(Checkout, 1),
+            item(NewWorktree, 1),
+            item(NewFrom, 1),
+            MenuEntry::Separator,
+            item(Compare, 1),
+            MenuEntry::Separator,
+            item(Merge, 1),
+            item(Rebase, 1),
+            MenuEntry::Separator,
+            item(Delete, 1),
+        ]
+    );
+    // 空的组不留分隔线：当前分支只有一项，远程分支最后没有删除。
+    assert_eq!(
+        branch_ops(0, &branches, &[], &[], false),
+        [item(NewFrom, 0)]
+    );
+    let remote = branch_ops(2, &branches, &[], &[], false);
+    assert_eq!(remote.last(), Some(&item(Rebase, 2)));
 }

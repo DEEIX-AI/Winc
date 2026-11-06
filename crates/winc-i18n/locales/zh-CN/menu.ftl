@@ -45,13 +45,6 @@ menu-form-base-current-commit = 当前提交
 
 menu-git-current-branch = 当前分支
 menu-git-switch-to-worktree = 切换到工作树「{ $name }」
-menu-git-checkout = 签出
-menu-git-checkout-in-new-worktree = 在新工作树中签出
-menu-git-new-branch-from = 从「{ $branch }」新建分支…
-menu-git-compare-with = 与「{ $branch }」比较
-menu-git-merge-into = 将「{ $branch }」合并到「{ $target }」
-menu-git-rebase-onto = 将「{ $current }」变基到「{ $branch }」
-menu-git-delete = 删除
 menu-git-checkout-stale-worktree = 所在工作树的目录已不存在，请先清理失效的工作树
 menu-git-finish-operation = 完成{ $operation }…
 menu-git-continue-operation = 继续{ $operation }
@@ -102,10 +95,7 @@ menu-table-align-right = 右对齐
 
 ## Git 菜单项
 
-menu-worktrees-heading = 工作树
-menu-repositories-heading = 仓库
 menu-new-worktree = 新建工作树…
-menu-prune-worktrees = 清理失效的工作树
 menu-git-fetch = 获取
 menu-git-pull = 拉取
 menu-git-push = 推送

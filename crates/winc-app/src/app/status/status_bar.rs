@@ -9,6 +9,7 @@ use winc_editor::{DocumentId, Encoding, EncodingRead};
 use winc_i18n::t;
 
 use super::*;
+use crate::app::GitAnchor;
 use crate::app::input::context_menu::{MenuTarget, indent_size_title};
 use crate::app::status::breadcrumb::MENU_TITLE_INSET;
 use crate::app::workspace::watch::DiskBack;
@@ -24,7 +25,7 @@ pub enum StatusItem {
     Encoding,
     /// 文档的语言：手动改用别的语言（没保存过的文件选了语言才能格式化），或按文件名重新识别。
     Language,
-    /// Git 的当前分支：点了弹分支菜单。
+    /// Git 的当前分支：点了展开分支选择器。
     Branch,
     /// 终端面板的开关（终端模块开着时在设置按钮左边）。
     Terminal,
@@ -62,7 +63,7 @@ impl App {
         }
         // 分支选择器不依赖当前文档。
         if item == StatusItem::Branch {
-            self.open_branch_picker();
+            self.open_branch_picker(GitAnchor::Status);
             return;
         }
         let Some(&(rect, _)) = self.status_hits.iter().find(|&&(_, i)| i == item) else {

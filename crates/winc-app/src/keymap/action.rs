@@ -167,7 +167,7 @@ pub enum Action {
     ToggleDiffLayout,
     GitShowChanges,
     GitShowLog,
-    /// 打开仓库选择器。
+    /// 打开提交视图并展开位置选择器。
     GitSwitchRepository,
     GitSwitchWorktree,
     GitNewWorktree,

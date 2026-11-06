@@ -43,43 +43,56 @@ fn plan(app: &mut App, name: &str) -> crate::app::git::form::FormPlan {
 }
 
 #[test]
-fn worktrees_show_in_the_project_menu_and_the_branch_menu() {
+fn worktrees_show_in_the_location_picker_and_the_branch_menu() {
     use crate::app::git::branch::BranchOp;
     use crate::app::input::context_menu::{MenuCommand, MenuTarget};
 
     let Some((mut app, root)) = git_app("git-worktrees", false) else {
         return;
     };
-    // 只有一个工作树：项目菜单里没有工作树一组。
-    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
-    assert!(!menu_commands(&app).contains(&(MenuCommand::WorktreeHeading, false)));
+    // 只有一个工作树：没有位置行。
+    assert!(!app.git_has_locations());
 
     let linked = add_worktree(&root);
     app.git_refresh();
     assert_eq!(app.git.worktrees.len(), 2);
     assert_eq!(app.git.current_worktree(), Some(0));
 
-    // 项目菜单：两个工作树，当前的打勾、没有「在当前窗口打开」；另一个下面写着分支。
-    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
-    let commands = menu_commands(&app);
-    for command in [
-        (MenuCommand::OpenWorktree(0), true),
-        (MenuCommand::OpenWorktree(1), true),
-        (MenuCommand::OpenWorktreeHere(1), true),
-    ] {
-        assert!(commands.contains(&command), "{command:?} in {commands:?}");
-    }
-    assert!(!commands.contains(&(MenuCommand::OpenWorktreeHere(0), true)));
-    assert!(app.menu_checked(MenuCommand::OpenWorktree(0)));
-    let label = app.menu_label(MenuCommand::OpenWorktree(1));
-    assert_eq!(label.title, winc_editor::display_name(&linked));
-    assert_eq!(label.subtitle.as_deref(), Some("feat"));
-    let here = app.menu_label(MenuCommand::OpenWorktreeHere(1));
-    assert!(
-        here.title.starts_with("在当前窗口中打开「"),
-        "{}",
-        here.title
+    // 位置选择器：两个工作树排在仓库下面，当前的选中，另一个写着分支。
+    assert!(app.git_has_locations());
+    app.run_action(Action::ShowCommit);
+    app.open_location_picker();
+    let rows = app.picker_location_rows.clone().unwrap();
+    let places: Vec<_> = rows
+        .iter()
+        .filter_map(|row| match row {
+            crate::app::git::location_picker::LocationRow::Place(place) => Some(place.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(places.len(), 2);
+    assert!(places[0].current);
+    assert_eq!(places[1].label, winc_editor::display_name(&linked));
+    assert_eq!(places[1].worktree, Some(1));
+    // 操作菜单：主工作树和当前的工作树不能移除，附属的可以。
+    app.open_context_menu(
+        MenuTarget::Location(places[1].path.clone(), Some(1)),
+        (0.0, 0.0),
     );
+    let commands = menu_commands(&app);
+    assert!(commands.contains(&(MenuCommand::LocationNewWindow, true)));
+    assert!(commands.contains(&(MenuCommand::LocationRemove, true)));
+    app.open_context_menu(
+        MenuTarget::Location(places[0].path.clone(), Some(0)),
+        (0.0, 0.0),
+    );
+    assert!(
+        !menu_commands(&app)
+            .iter()
+            .any(|(c, _)| *c == MenuCommand::LocationRemove)
+    );
+    app.context_menu = None;
+    app.close_picker();
 
     // 分支菜单：`feat` 已被其他工作树签出，「签出」表示切换过去，且不能删除。
     let feat = app
@@ -130,8 +143,8 @@ fn worktrees_are_created_removed_and_pruned() {
     std::fs::write(root.join(".env"), "KEY=1").unwrap();
     app.config.git_worktree_copy = vec![".env".to_owned()];
 
-    // 只有一个工作树：项目菜单中也能新建，分支菜单中显示创建位置。
-    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
+    // 只有一个工作树：提交视图的「⋯」里也能新建，分支菜单中显示创建位置。
+    app.open_context_menu(MenuTarget::CommitMore, (0.0, 0.0));
     assert!(menu_commands(&app).contains(&(MenuCommand::NewWorktree, true)));
     assert_eq!(
         app.worktree_dir_hint("feat/x"),
@@ -221,8 +234,10 @@ fn worktrees_are_created_removed_and_pruned() {
     // 移除：有改动也能移除（确认框写明），目录被删除，已合并的分支一起删掉。
     std::fs::write(feat.join("scratch.txt"), "x").unwrap();
     let i = at(&app, &feat);
-    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
-    assert!(menu_commands(&app).contains(&(MenuCommand::RemoveWorktree(i), true)));
+    let target = MenuTarget::Location(feat.clone(), Some(i));
+    app.open_context_menu(target, (0.0, 0.0));
+    assert!(menu_commands(&app).contains(&(MenuCommand::LocationRemove, true)));
+    app.context_menu = None;
     app.remove_worktree(i);
     assert!(!feat.exists());
     assert_eq!(app.git.worktrees.len(), 2);
@@ -239,8 +254,6 @@ fn worktrees_are_created_removed_and_pruned() {
     assert!(stale.contains("请先清理"), "{stale}");
     create(&mut app, "other");
     assert_eq!(app.git.worktrees.len(), 2);
-    app.open_context_menu(MenuTarget::Project, (0.0, 0.0));
-    assert!(menu_commands(&app).contains(&(MenuCommand::PruneWorktrees, true)));
     app.prune_worktrees();
     assert!(app.git.worktrees.len() < 2);
 
@@ -260,12 +273,33 @@ fn snapshot_worktree_badge() {
         };
         let linked = add_worktree(&root);
         app.git_refresh();
+        app.run_action(Action::ShowCommit);
+        shoot(&mut app, &format!("worktree-main-{theme}"));
         app.open_worktree(1, false);
         app.git_refresh();
         shoot(&mut app, &format!("worktree-badge-{theme}"));
         let _ = std::fs::remove_dir_all(&linked);
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+
+/// 项目就是这个仓库时，主工作树的位置行写「主工作树」，不重复项目名；附属工作树写仓库和工作树。
+#[test]
+fn the_location_row_does_not_repeat_the_project_name() {
+    let Some((mut app, root)) = git_app("git-location-label", false) else {
+        return;
+    };
+    let linked = add_worktree(&root);
+    app.git_refresh();
+    let main = winc_i18n::t!("git-location-main-worktree").to_owned();
+    assert_eq!(app.git_location_label(), (main, None));
+
+    app.open_worktree(1, false);
+    app.git_refresh();
+    let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(app.git_location_label(), (name(&root), Some(name(&linked))));
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 对话框中的选择全部生效：从选定的起点新建、建在选定的目录下、不复制被忽略的文件、在当前窗口打开。

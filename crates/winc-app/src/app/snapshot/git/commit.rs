@@ -1,6 +1,11 @@
 //! 提交视图的测试：改动列表、勾选、提交、菜单、提交信息、滚动与固定行、折叠、长文件名。
 
 use super::*;
+use std::time::Duration;
+
+use crate::app::SyncState;
+use crate::app::animation::{Clock, TREE_ANIMATION};
+use crate::app::git::commit::COMMITTED_SHOWN;
 
 /// 创建含大量深层新文件（已暂存）的仓库：`assets/pets/a`、`assets/pets/b` 下各 12 张图，
 /// 另加 3 个散文件。
@@ -1345,6 +1350,13 @@ fn the_last_local_commit_can_be_undone() {
         [MenuCommand::CommitUndo, MenuCommand::CommitCopyOid]
     );
     app.run_menu_command(MenuCommand::CommitUndo);
+    // 先用提示框询问，确认按钮不标记为危险操作；确认后才撤销。
+    assert_eq!(
+        app.git.status.as_ref().unwrap().oid.as_deref(),
+        Some(oid.as_str())
+    );
+    assert!(!app.alert.as_ref().unwrap().buttons[0].destructive);
+    press_alert(&mut app, 0);
     let status = app.git.status.clone().unwrap();
     assert_eq!(status.oid.as_deref(), Some(first.as_str()));
     assert!(!status.entries.is_empty());
@@ -1421,6 +1433,144 @@ fn partly_staged_files_commit_only_their_staged_part() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 同步控件是一个按钮：提交数写在图标左边，运行时图标在原位转动，操作名写在提示里。
+#[test]
+fn the_sync_control_stays_one_button() {
+    let Some((mut app, root)) = git_app("git-sync-running", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+    git_in(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+    git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let sync = |app: &App| {
+        (app.commit_hits.iter())
+            .find(|(_, t)| *t == CommitTarget::Sync)
+            .unwrap()
+            .0
+    };
+    let tool = app.commit_parts().tools[2].0;
+    let ahead = sync(&app);
+    assert_eq!(ahead.right(), tool.right());
+    assert!(ahead.w > tool.w);
+
+    // 运行时宽度不变，分支名不会跟着动。
+    app.branch.running = Some("获取".into());
+    paint(&mut app);
+    assert_eq!(sync(&app), ahead);
+    app.on_mouse_move(ahead.x + 4.0, ahead.y + 4.0);
+    let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
+    assert_eq!(tip.as_deref(), Some("正在获取…"));
+
+    // 不在分支上时只有图标，操作仍在同一个位置显示。
+    app.branch.running = None;
+    git_in(&root, &["checkout", "-q", "--detach"]);
+    app.git_refresh();
+    paint(&mut app);
+    assert_eq!(sync(&app).w, tool.w);
+    assert_eq!(sync(&app).right(), tool.right());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 操作成功后同步控件显示对勾，随后回到当前状态；失败和新操作都不留对勾。
+#[test]
+fn the_sync_control_confirms_a_finished_operation() {
+    let Some((mut app, root)) = git_app("git-sync-done", false) else {
+        return;
+    };
+    let remote = root.with_extension("done-remote.git");
+    let _ = std::fs::remove_dir_all(&remote);
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "one"]);
+    git_in(&root, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_in(
+        &root,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git_in(&root, &["push", "-q", "-u", "origin", "main"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+
+    app.press_commit(CommitTarget::Sync);
+    assert!(app.branch.finished.is_some());
+
+    // 新操作开始时不再显示上一个的结果。
+    app.branch.finished = Some(Clock::stopped(COMMITTED_SHOWN, Duration::from_millis(800)));
+    git_in(
+        &root,
+        &["remote", "set-url", "origin", "/nonexistent/repo.git"],
+    );
+    app.press_commit(CommitTarget::Sync);
+    assert!(app.branch.finished.is_none());
+    assert!(app.branch.running.is_none());
+
+    // 中途是不透明的对勾，两端完全透明。
+    let at = |ms| Clock::stopped(COMMITTED_SHOWN, Duration::from_millis(ms));
+    assert_eq!(at(0).pulse(TREE_ANIMATION), 0.0);
+    assert_eq!(at(800).pulse(TREE_ANIMATION), 1.0);
+    assert_eq!(at(1600).pulse(TREE_ANIMATION), 0.0);
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&remote);
+}
+
+/// 和上游一致时点击同步控件获取远程更新：提示写明这一点，获取到的新提交随后显示出来。
+#[test]
+fn the_sync_control_fetches_when_in_sync() {
+    let Some((mut app, root)) = git_app("git-sync-fetch", false) else {
+        return;
+    };
+    let remote = root.with_extension("fetch-remote.git");
+    let _ = std::fs::remove_dir_all(&remote);
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "one"]);
+    git_in(&root, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_in(
+        &root,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git_in(&root, &["push", "-q", "-u", "origin", "main"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    git_in(&root, &["push", "-q", "origin", "main"]);
+    git_in(&root, &["reset", "-q", "--hard", "HEAD~1"]);
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.git_sync_state(), SyncState::InSync);
+    let rect = (app.commit_hits.iter())
+        .find(|(_, t)| *t == CommitTarget::Sync)
+        .unwrap()
+        .0;
+    app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
+    let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
+    assert_eq!(
+        tip.as_deref(),
+        Some("已与 origin/main 同步。点击获取远程更新")
+    );
+
+    app.press_commit(CommitTarget::Sync);
+    assert_eq!(app.git_sync_state(), SyncState::Pull(1));
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&remote);
+}
+
 #[test]
 fn a_clean_branch_ahead_of_its_upstream_turns_the_commit_button_into_sync() {
     let Some((mut app, root)) = git_app("git-commit-sync", false) else {
@@ -1444,33 +1594,22 @@ fn a_clean_branch_ahead_of_its_upstream_turns_the_commit_button_into_sync() {
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.commit_sync(), Some((1, 0)));
-    let button = app.commit_parts().commit;
+    assert_eq!(app.git_sync_state(), SyncState::Push(1));
+    let button = (app.commit_hits.iter())
+        .find(|(_, t)| *t == CommitTarget::Sync)
+        .unwrap()
+        .0;
     app.on_mouse_move(button.x + 4.0, button.y + 4.0);
     let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
     assert_eq!(tip.as_deref(), Some("与 origin/main 同步"));
 
-    // 有改动或在修改上一次提交时按钮仍用于提交。
+    // 在修改上一次提交时不显示；有改动时还在，提交按钮不再兼做同步。
     app.commit.amend = true;
-    assert_eq!(app.commit_sync(), None);
+    assert_eq!(app.git_sync_state(), SyncState::Hidden);
     app.commit.amend = false;
     std::fs::write(root.join("new.txt"), "x\n").unwrap();
     app.git_refresh();
-    assert_eq!(app.commit_sync(), None);
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// 截图：同步进行中的「提交」按钮（`commit-syncing`），检查加载图标与文字是否对齐。
-#[test]
-#[ignore = "截图，手动运行"]
-fn shoot_commit_button_syncing() {
-    let Some((mut app, root)) = git_app("git-commit-syncing", false) else {
-        return;
-    };
-    app.run_action(Action::ShowCommit);
-    app.branch.running = Some(winc_i18n::t!("git-op-sync").to_owned());
-    shoot(&mut app, "commit-syncing");
-    app.branch.running = None;
+    assert_eq!(app.git_sync_state(), SyncState::Push(1));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1516,7 +1655,7 @@ fn untracked_files_stay_out_of_the_commit_until_checked() {
         None
     );
     assert_eq!(app.commit_files(), [main.clone(), new.clone()]);
-    assert_eq!(app.commit_scope(), Some((1, Some("main"))));
+    assert_eq!(app.commit_scope(), Some(1));
 
     // 收起和展开不改变勾选；收起时切换文件跳过这一组。
     app.press_commit(CommitTarget::Group(CommitGroup::Untracked));
@@ -1527,7 +1666,7 @@ fn untracked_files_stay_out_of_the_commit_until_checked() {
 
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
     assert!(app.commit.checked(entry));
-    assert_eq!(app.commit_scope(), Some((2, Some("main"))));
+    assert_eq!(app.commit_scope(), Some(2));
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
     assert!(!app.commit.checked(entry));
 
@@ -1562,7 +1701,7 @@ fn the_commit_button_names_its_scope_only_for_a_plain_commit() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.commit_scope(), Some((1, Some("main"))));
+    assert_eq!(app.commit_scope(), Some(1));
 
     // 没有勾选、修改上一次提交时都不写范围。
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
@@ -1572,10 +1711,10 @@ fn the_commit_button_names_its_scope_only_for_a_plain_commit() {
     assert_eq!(app.commit_scope(), None);
     app.commit.amend = false;
 
-    // 游离 `HEAD`：只写文件数。
+    // 游离 `HEAD` 时也写文件数，分支写在上方的分支行里。
     git_in(&root, &["checkout", "-q", "--detach"]);
     app.git_refresh();
-    assert_eq!(app.commit_scope(), Some((1, None)));
+    assert_eq!(app.commit_scope(), Some(1));
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1609,29 +1748,30 @@ fn a_rewritten_branch_is_not_force_pushed_without_confirmation() {
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert!(app.commit_sync().is_some());
+    assert!(matches!(app.git_sync_state(), SyncState::Both { .. }));
 
-    // 同步发现需要强制推送：只询问，上游不变。
-    app.press_commit(CommitTarget::Commit);
+    // 同步发现需要强制推送：只用提示框询问，确认按钮标记为危险操作，上游不变。
+    app.press_commit(CommitTarget::Sync);
     assert_eq!(pushed(&root), before);
-    assert_eq!(app.status_message.as_deref(), Some("要强制推送吗？"));
-    // 「不再询问」只影响普通同步：写入配置后，强制推送仍然要确认。
-    app.handle_event(UserEvent::GitSync(true));
-    assert_eq!(app.config.confirm_sync, Some(false));
+    assert!(app.alert.as_ref().unwrap().buttons[0].destructive);
+    // 取消后还是不推送，可以再问一次。
+    press_alert(&mut app, 1);
     assert_eq!(pushed(&root), before);
+    app.press_commit(CommitTarget::Sync);
 
     // 确认后才替换上游。
-    app.handle_event(UserEvent::GitForcePush);
+    press_alert(&mut app, 0);
     assert_ne!(pushed(&root), before);
-    assert!(app.commit_sync().is_none());
+    assert_eq!(app.git_sync_state(), SyncState::InSync);
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&remote);
 }
 
+/// 所有视图共用一个侧栏宽度：切换不变，用真实的鼠标事件拖动分隔条，新窗口、下次启动也沿用。
 #[test]
-fn the_commit_view_keeps_its_own_sidebar_width() {
-    use crate::theme::{DEFAULT_COMMIT_PANEL_WIDTH, DEFAULT_PANEL_WIDTH};
+fn the_sidebar_keeps_one_width_across_views() {
+    use crate::theme::DEFAULT_PANEL_WIDTH;
 
     let Some((mut app, root)) = git_app("git-commit-width", false) else {
         return;
@@ -1640,40 +1780,49 @@ fn the_commit_view_keeps_its_own_sidebar_width() {
     assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.panel_width, DEFAULT_COMMIT_PANEL_WIDTH);
-
-    // 拖动分隔条只改提交视图的宽度，并记进状态。
-    let splitter = app.layout.sidebar.right();
-    let y = app.layout.sidebar.y + 100.0;
-    app.drag = crate::app::Drag::Splitter {
-        start_x: splitter,
-        start_width: app.panel_width,
-    };
-    app.on_mouse_move(splitter + 40.0, y);
-    app.on_mouse_up(MouseButton::Left);
-    let dragged = DEFAULT_COMMIT_PANEL_WIDTH + 40.0;
-    assert_eq!(app.panel_width, dragged);
-    assert_eq!(app.state.commit_panel_width, Some(dragged));
-
-    // 切到文件树还是它的宽度；切回来还是拖过的宽度。
-    app.show_files();
     assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
-    // 在文件树里拖动不写状态。
-    app.remember_commit_panel_width();
-    assert_eq!(app.state.commit_panel_width, Some(dragged));
+
+    // 提交视图里按住分隔条拖动：列表、提交信息框旁边都能拖。
+    let drag = |app: &mut App, y: f32, by: f32| {
+        let x = app.layout.splitter.x + 1.0;
+        app.on_mouse_move(x, y);
+        assert_eq!(app.hover, Hover::Splitter);
+        app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_move(x + by, y);
+        app.on_mouse_up(MouseButton::Left);
+        paint(app);
+    };
+    let message = app.commit_parts().message;
+    drag(&mut app, message.y + 4.0, 40.0);
+    let dragged = DEFAULT_PANEL_WIDTH + 40.0;
+    assert_eq!(app.panel_width, dragged);
+    assert_eq!(app.state.panel_width, Some(dragged));
+
+    // 切到文件树、搜索还是这个宽度。
+    app.show_files();
+    assert_eq!(app.panel_width, dragged);
+    app.set_sidebar_view(SidebarView::Search);
+    assert_eq!(app.panel_width, dragged);
+
+    // 文件树里拖动，切回提交视图也是拖过的宽度。
+    app.show_files();
+    paint(&mut app);
+    drag(&mut app, 400.0, -20.0);
+    let dragged = dragged - 20.0;
+    assert_eq!(app.state.panel_width, Some(dragged));
     app.run_action(Action::ShowCommit);
     assert_eq!(app.panel_width, dragged);
 
-    // 搜索和文件树共用一个宽度。
-    app.show_files();
-    app.set_sidebar_view(SidebarView::Search);
-    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    // 记下的宽度比这个窗口放得下的大：从看到的宽度开始拖，一动就有反应。
+    app.panel_width = 5000.0;
+    paint(&mut app);
+    let shown = app.layout.window.w - 320.0;
+    drag(&mut app, 400.0, -20.0);
+    assert_eq!(app.panel_width, shown - 20.0);
 
     // 新窗口、下次启动从状态恢复，太窄的值抬到最小宽度。
-    app.show_files();
-    app.state.commit_panel_width = Some(10.0);
-    app.restore_commit_panel_width();
-    app.run_action(Action::ShowCommit);
+    app.state.panel_width = Some(10.0);
+    app.restore_panel_width();
     assert_eq!(app.panel_width, crate::theme::MIN_PANEL_WIDTH);
 
     let _ = std::fs::remove_dir_all(&root);

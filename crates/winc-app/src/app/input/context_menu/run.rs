@@ -1,4 +1,4 @@
-//! 执行菜单里选中的命令，以及几个命令共用的动作（复制路径、改名、删除、在目录中查找）。
+ //! 执行菜单里选中的命令，以及几个命令共用的动作（复制路径、改名、删除、在目录中查找）。
 
 use winc_i18n::t;
 
@@ -19,11 +19,11 @@ impl App {
         }
 
         // 选择器里的菜单选了一项：操作开始，选择器不再需要；取消时选择器留着。
-        if matches!(menu.target, MenuTarget::Branch | MenuTarget::BranchOps(_)) {
-            self.close_branch_picker();
-        }
-        if matches!(menu.target, MenuTarget::Project) {
-            self.close_repository_picker();
+        if matches!(
+            menu.target,
+            MenuTarget::BranchOps(_) | MenuTarget::Location(..)
+        ) {
+            self.close_picker();
         }
 
         match menu.target {
@@ -94,12 +94,6 @@ impl App {
             MenuTarget::Project => match command {
                 MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
                 MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
-                MenuCommand::SwitchRepository(i) => self.git_switch_repository(i),
-                MenuCommand::OpenWorktree(i) => self.open_worktree(i, true),
-                MenuCommand::OpenWorktreeHere(i) => self.open_worktree(i, false),
-                MenuCommand::NewWorktree => self.open_worktree_dialog(),
-                MenuCommand::RemoveWorktree(i) => self.remove_worktree(i),
-                MenuCommand::PruneWorktrees => self.prune_worktrees(),
                 MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
                 MenuCommand::CloseFolder => self.close_folder(),
                 _ => {}
@@ -148,20 +142,31 @@ impl App {
             | MenuTarget::LineEnding(id)
             | MenuTarget::Encoding(id)
             | MenuTarget::Language(id) => self.run_status_command(command, id),
-            MenuTarget::Branch | MenuTarget::BranchOps(_) => match command {
-                MenuCommand::GitBranch(op, i) => {
-                    if let Some(branch) = menu.branches.get(i).cloned() {
-                        self.run_branch_op(op, branch);
+            MenuTarget::BranchOps(_) => {
+                if let MenuCommand::GitBranch(op, i) = command
+                    && let Some(branch) = menu.branches.get(i).cloned()
+                {
+                    self.run_branch_op(op, branch);
+                }
+            }
+            MenuTarget::Location(path, worktree) => match command {
+                MenuCommand::LocationNewWindow => self.open_in_new_window(&path),
+                MenuCommand::LocationReveal => self.reveal_in_file_manager(&path),
+                MenuCommand::LocationRemove => {
+                    if let Some(i) = worktree {
+                        self.remove_worktree(i);
                     }
                 }
+                _ => {}
+            },
+            MenuTarget::CommitMore => match command {
                 MenuCommand::GitStashOp(op, i) => {
                     if let Some(stash) = menu.stashes.get(i).cloned() {
                         self.run_stash_op(op, stash);
                     }
                 }
-                _ => self.run_branch_command(command),
+                _ => self.run_commit_more_command(command),
             },
-            MenuTarget::CommitMore => self.run_commit_more_command(command),
             MenuTarget::CommitButton => self.run_commit_button_command(command),
             MenuTarget::LastCommit => self.run_last_commit_command(command),
             MenuTarget::TabList => {

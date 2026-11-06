@@ -6,7 +6,7 @@ use winc_i18n::t;
 use winc_render::{Frame, Rect};
 
 use super::*;
-use crate::app::{Focus, ResultRow};
+use crate::app::{Focus, ResultRow, SyncState};
 use crate::layout::{
     PANEL_CHEVRON, PANEL_LEFT, PANEL_TEXT, PanelButton, PanelParts, PanelTool, RowAction,
     SearchButton, SidebarView, row_actions,
@@ -838,12 +838,6 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             if app.commit.busy {
                 return None;
             }
-            // 用于同步时写明同步的上游分支，没有快捷键。
-            if app.commit_sync().is_some() {
-                let current = app.git.branches.iter().find(|b| b.current)?;
-                let upstream = current.upstream.as_deref()?;
-                return Some((parts.commit, t!("workspace-tip-sync", upstream = upstream)));
-            }
             if let Some(reason) = app.commit.blocker(status) {
                 return Some((parts.commit, reason));
             }
@@ -881,6 +875,22 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             }
             let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;
             Some((rect, t!("workspace-tip-commit-staged-only").to_owned()))
+        }
+        // 同步控件上没有文字，要做的事写在这里。
+        Hover::Commit(target @ CommitTarget::Sync) => {
+            let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;
+            let upstream = (app.git.branches.iter())
+                .find(|b| b.current)
+                .and_then(|b| b.upstream.as_deref())
+                .unwrap_or_default();
+            let label = match (app.branch.running.as_deref(), app.git_sync_state()) {
+                (Some(task), _) => t!("workspace-status-branch-running", task = task),
+                (None, SyncState::Publish) => t!("git-tip-publish").to_owned(),
+                (None, SyncState::InSync) => t!("git-tip-in-sync", upstream = upstream),
+                (None, SyncState::Hidden) => t!("git-tip-fetch").to_owned(),
+                (None, _) => t!("workspace-tip-sync", upstream = upstream),
+            };
+            Some((rect, label))
         }
         Hover::Commit(CommitTarget::CommitMenu) => Some((
             app.commit_parts().commit_menu,

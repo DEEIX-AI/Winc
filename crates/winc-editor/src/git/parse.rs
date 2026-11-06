@@ -82,7 +82,8 @@ pub(super) fn parse_recent_branches(output: &str) -> Vec<String> {
     names
 }
 
-/// 解析 `git for-each-ref` 的输出（每行的引用名、`*` 或空格、上游之间用 NUL 隔开）。
+/// 解析 `git for-each-ref` 的输出（每行的引用名、`*` 或空格、上游、提交号、提交时间、本机时区的
+/// 提交时间之间用 NUL 隔开）。
 ///
 /// 本地的分支在前，远程的在后，各自按名字排列；远程的 `HEAD` 指针不列。
 pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
@@ -95,6 +96,11 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
         };
         let upstream = fields.next().filter(|u| !u.is_empty()).map(str::to_owned);
         let oid = fields.next().unwrap_or_default().to_owned();
+        let time = fields
+            .next()
+            .and_then(|t| t.parse().ok())
+            .unwrap_or_default();
+        let date = fields.next().unwrap_or_default().to_owned();
         if let Some(name) = name.strip_prefix("refs/heads/") {
             local.push(Branch {
                 name: name.to_owned(),
@@ -102,6 +108,8 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
                 current: head == "*",
                 upstream,
                 oid,
+                time,
+                local: date,
             });
         } else if let Some(name) = name.strip_prefix("refs/remotes/") {
             if name.ends_with("/HEAD") {
@@ -113,6 +121,8 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
                 current: false,
                 upstream: None,
                 oid,
+                time,
+                local: date,
             });
         }
     }

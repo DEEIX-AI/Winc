@@ -118,8 +118,6 @@ pub struct Config {
     pub terminal_right: Option<bool>,
     /// 是否启用 Git 模块（文件状态、分支、变更视图），默认为否。
     pub git_enabled: Option<bool>,
-    /// 同步、提交并推送之前是否询问，默认询问；提示框上勾选「不再询问」时写为否。
-    pub confirm_sync: Option<bool>,
     /// 在打开的目录下查找仓库的层数，默认见 [`Config::REPOSITORY_SCAN_DEPTH`]，可用范围见
     /// [`Config::REPOSITORY_SCAN_DEPTH_RANGE`]。
     pub repository_scan_depth: Option<usize>,

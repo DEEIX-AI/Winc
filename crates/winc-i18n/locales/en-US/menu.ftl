@@ -45,13 +45,6 @@ menu-form-base-current-commit = Current Commit
 
 menu-git-current-branch = Current Branch
 menu-git-switch-to-worktree = Switch to Worktree “{ $name }”
-menu-git-checkout = Check Out
-menu-git-checkout-in-new-worktree = Check Out in New Worktree
-menu-git-new-branch-from = New Branch from “{ $branch }”…
-menu-git-compare-with = Compare with “{ $branch }”
-menu-git-merge-into = Merge “{ $branch }” into “{ $target }”
-menu-git-rebase-onto = Rebase “{ $current }” onto “{ $branch }”
-menu-git-delete = Delete
 menu-git-checkout-stale-worktree = The worktree’s folder no longer exists. Prune stale worktrees first
 menu-git-finish-operation = Finish { $operation }…
 menu-git-continue-operation = Continue { $operation }
@@ -108,10 +101,7 @@ menu-table-align-right = Align Right
 
 ## Git menu items
 
-menu-worktrees-heading = Worktrees
-menu-repositories-heading = Repositories
 menu-new-worktree = New Worktree…
-menu-prune-worktrees = Prune Stale Worktrees
 menu-git-fetch = Fetch
 menu-git-pull = Pull
 menu-git-push = Push

@@ -117,7 +117,10 @@ fn draw_group(
                 pill,
                 bar,
                 app.hover == Hover::Status(item),
-                app.menu_button == Some(MenuButton::Status(item)),
+                app.menu_button == Some(MenuButton::Status(item))
+                    || (item == StatusItem::Branch
+                        && app.picker_lists_branches()
+                        && app.picker_anchor == crate::app::GitAnchor::Status),
             );
             hits.push((pill, item));
         }
@@ -397,7 +400,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     // Git 模块开着、目录在仓库里时，右侧一组的最左边是分支名，有上游时跟着领先落后的提交数，
-    // 有分支操作在跑时跟着在做什么。点了弹分支菜单。
+    // 有分支操作在跑时跟着在做什么。点了展开分支选择器。
     // 开关模块、换仓库时淡入淡出（`App::track_modules`），消失途中用最后绘制的分支名；左边的
     // 路径能占的宽度跟着慢慢变。
     let live = app
