@@ -359,6 +359,17 @@ impl App {
             return Some((Scrollbar::Terminal, grab(y, thumb.y, thumb.h)));
         }
 
+        // 预览（分栏时在右边，只看预览时占满编辑区）：先于编辑区认，只看预览时两者重叠。
+        let preview = self.markdown.area;
+        if preview.contains(x, y) {
+            if x < preview.right() - SCROLLBAR_HIT {
+                return None;
+            }
+            let scroll = self.markdown.scroll();
+            let thumb = scrollbar_thumb(preview, scroll, self.markdown.height)?;
+            return Some((Scrollbar::Markdown, grab(y, thumb.y, thumb.h)));
+        }
+
         let editor = self.scroll_track();
         let doc = self.editor.active()?;
         if editor.contains(x, y) && x >= editor.right() - SCROLLBAR_HIT {

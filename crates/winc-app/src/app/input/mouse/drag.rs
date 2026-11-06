@@ -213,6 +213,18 @@ impl App {
                 grab,
             } => self.drag_terminal_scrollbar(y, grab),
             Drag::Scrollbar {
+                bar: Scrollbar::Markdown,
+                grab,
+            } => {
+                let area = self.markdown.area;
+                let content = self.markdown.height;
+                if let Some(thumb) = scrollbar_thumb(area, 0.0, content) {
+                    let max = content - area.h;
+                    let to = scroll_for_thumb(area.y, area.h, thumb.h, y, grab, max);
+                    self.scroll_markdown_to(to);
+                }
+            }
+            Drag::Scrollbar {
                 bar: Scrollbar::Editor,
                 grab,
             } => {

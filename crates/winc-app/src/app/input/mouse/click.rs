@@ -123,9 +123,13 @@ impl App {
             return;
         }
 
-        // 点在预览以外：预览的选区和焦点不要了（`click_markdown` 再拿回来）。
+        // 点在预览以外：预览的选区和焦点不要了（`click_markdown` 再拿回来）。拖预览的滚动条不算。
         let target = self.target_at(x, y);
-        if !matches!(target, Target::MarkdownText) && self.markdown.focused {
+        let keeps_preview = matches!(
+            target,
+            Target::MarkdownText | Target::Scrollbar(Scrollbar::Markdown, _)
+        );
+        if !keeps_preview && self.markdown.focused {
             self.markdown.focused = false;
             self.markdown.selection = None;
         }
