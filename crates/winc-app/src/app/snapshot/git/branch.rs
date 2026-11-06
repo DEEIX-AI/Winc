@@ -496,6 +496,72 @@ fn the_picker_lines_up_with_the_context_rows() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 储藏并签出失败时把更改恢复回来，错误里写明。
+#[test]
+fn a_failed_switch_restores_the_stashed_changes() {
+    let Some((mut app, root)) = picker_repo("git-stash-restore", false) else {
+        return;
+    };
+    let file = root.join("a.txt");
+    std::fs::write(&file, "changed\n").unwrap();
+    app.git_refresh();
+    let changed = app.git.status.as_ref().unwrap().entries.len();
+    assert!(changed > 0);
+    let mut missing = (app.git.branches.iter())
+        .find(|b| b.name == "fix/one")
+        .unwrap()
+        .clone();
+    missing.name = "no-such-branch".to_owned();
+    app.stash_then_checkout(missing);
+    app.git_refresh();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "changed\n");
+    assert!(app.git.stashes.is_empty());
+    assert_eq!(app.git.status.as_ref().unwrap().entries.len(), changed);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 菜单里的拉取能处理分叉的分支，和同步一样；不在分支上时不能推送。
+#[test]
+fn the_status_menu_pulls_diverged_branches_and_needs_a_branch_to_push() {
+    use crate::app::StatusItem;
+    use crate::app::input::context_menu::MenuCommand;
+
+    let Some((mut app, root)) = picker_repo("git-pull-diverged", false) else {
+        return;
+    };
+    let remote = root.with_extension("pull-remote.git");
+    let _ = std::fs::remove_dir_all(&remote);
+    git_in(&root, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_in(
+        &root,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git_in(&root, &["push", "-q", "-u", "origin", "main"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+    git_in(&root, &["push", "-q", "origin", "main"]);
+    git_in(&root, &["reset", "-q", "--hard", "HEAD~1"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "ours"]);
+    app.git_refresh();
+    assert!(matches!(
+        app.git_sync_state(),
+        crate::app::SyncState::Both { .. }
+    ));
+    app.run_branch_command(MenuCommand::GitPull);
+    app.git_refresh();
+    assert_eq!(app.git.status.as_ref().unwrap().behind, 0);
+
+    git_in(&root, &["checkout", "-q", "--detach"]);
+    app.git_refresh();
+    app.open_path(&root.join("src/main.rs"));
+    paint(&mut app);
+    app.open_status_menu(StatusItem::Branch);
+    assert!(menu_commands(&app).contains(&(MenuCommand::GitPush, false)));
+    app.dismiss_popup();
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&remote);
+}
+
 /// 新建分支的说明折行时面板跟着变高，说明文字不被裁掉；只有一行时和列表的一行一样高。
 #[test]
 fn the_picker_grows_with_the_note_when_creating_a_branch() {

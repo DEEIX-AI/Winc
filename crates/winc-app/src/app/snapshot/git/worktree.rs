@@ -371,6 +371,63 @@ fn a_missing_worktree_is_cleaned_up_from_its_menu() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 打开的目录里有多个仓库时项目就是这个目录，选中其中的附属工作树也不变。
+#[test]
+fn the_project_name_stays_the_folder_with_several_repositories() {
+    let dir = search_folder("git-project-folder");
+    let a = dir.join("a");
+    let b = dir.join("b");
+    for repo in [&a, &b] {
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+        if !make_repo(repo) {
+            return;
+        }
+    }
+    let linked = dir.join("c");
+    git_in(
+        &a,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let mut app = app_with(&dir, false);
+    app.config.repository_scan_depth = Some(1);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let folder = app.editor.workspace.as_ref().unwrap().name.clone();
+    let index = (app.git.repositories.iter())
+        .position(|repo| repo.ends_with("c"))
+        .unwrap();
+    app.git_switch_repository(index);
+    app.git_refresh();
+    assert!(app.git.main_worktree().is_some());
+    assert_eq!(app.project_name(), Some(folder));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 同一个仓库的工作树之间切换时读过的状态留着，换到别的仓库时不留。
+#[test]
+fn only_worktrees_of_the_repository_share_its_state() {
+    let Some((mut app, root)) = git_app("git-worktree-share", false) else {
+        return;
+    };
+    let linked = add_worktree(&root);
+    app.git_refresh();
+    assert!(app.git.shares_repository(&linked));
+    assert!(app.git.shares_repository(&root));
+    assert!(!app.git.shares_repository(Path::new("/elsewhere")));
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 只有一个仓库时工作树直接列出，没有分组标题和缩进。
 #[test]
 fn a_single_repository_lists_its_worktrees_flat() {
@@ -572,10 +629,9 @@ fn the_location_row_tells_when_other_worktrees_have_changes() {
     };
     assert_eq!(tip(&mut app), None);
 
-    // 其他位置的状态在打开选择器时重读。
+    // 刷新时其他位置的状态也重读，不用打开选择器。
     std::fs::write(linked.join("new.txt"), "x").unwrap();
-    app.open_location_picker();
-    app.close_picker();
+    app.git_refresh();
     paint(&mut app);
     let text = tip(&mut app);
     assert_eq!(text.as_deref(), Some("其他 1 个工作树有未提交的更改"));

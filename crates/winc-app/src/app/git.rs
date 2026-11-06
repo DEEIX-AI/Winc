@@ -95,6 +95,8 @@ struct Refs {
     branches: Vec<Branch>,
     /// 仓库配置的远程名。
     remotes: Vec<String>,
+    /// 仓库的公共 Git 目录；取不到时为 `None`。
+    common_dir: Option<PathBuf>,
     /// 储藏，最新的在前。
     stashes: Vec<Stash>,
     /// 最近切换到过的分支名，最近的在前。
@@ -280,10 +282,7 @@ impl GitState {
     /// `next` 是同一个仓库的另一个工作树时，工作树列表和远程是共用的，留下来：徽章、位置行和同步
     /// 控件在后台读完之前就是对的，不会闪一下。
     pub(in crate::app) fn clear_for(&mut self, next: Option<&Path>) {
-        let same_repository = self
-            .worktrees
-            .iter()
-            .any(|w| Some(w.path.as_path()) == next);
+        let same_repository = next.is_some_and(|next| self.shares_repository(next));
         let worktrees = std::mem::take(&mut self.worktrees);
         let remotes = std::mem::take(&mut self.remotes);
         self.clear();
@@ -413,16 +412,20 @@ impl App {
     pub(super) fn git_folder_changed(&mut self) {
         self.git.repositories.clear();
         self.git.followed = None;
-        self.git
-            .summaries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
-        self.git
-            .summary_worktrees
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        // 换到同一个仓库的另一个工作树时，读过的状态还有用：切过去马上能显示，不用等后台读完。
+        let same_repository = (self.editor.root()).is_some_and(|r| self.git.shares_repository(r));
+        if !same_repository {
+            self.git
+                .summaries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+            self.git
+                .summary_worktrees
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+        }
         self.git_discover();
         let root = self.git.repositories.first().cloned();
         self.git_set_root(root);
@@ -512,7 +515,7 @@ impl App {
     /// 一个位置时不读。
     ///
     /// 最多读 [`SUMMARY_REPOSITORIES`] 个位置。
-    fn git_read_summaries(&mut self) {
+    pub(in crate::app) fn git_read_summaries(&mut self) {
         if let Some(cancel) = self.git.summaries_running.take() {
             cancel.cancel();
         }
@@ -747,6 +750,7 @@ impl App {
                 (Ok(git), Ok(_)) if refs => Some(Refs {
                     branches: git.branches(&root, &cancel).unwrap_or_default(),
                     remotes: git.remotes(&root, &cancel).unwrap_or_default(),
+                    common_dir: git.common_dir(&root, &cancel).ok(),
                     stashes: git.stashes(&root, &cancel).unwrap_or_default(),
                     recent_branches: git.recent_branches(&root, &cancel).unwrap_or_default(),
                     worktrees: git.worktrees(&root, &cancel).ok(),
@@ -807,14 +811,23 @@ impl App {
                         self.git.stashes = refs.stashes;
                         self.git.recent_branches = refs.recent_branches;
                         self.git.remotes = refs.remotes;
+                        if let Some(watcher) = &mut self.watcher {
+                            watcher.watch_git_dir(refs.common_dir.as_deref());
+                        }
                         self.branch_picker_refreshed(&before);
+                        let mut listed = false;
                         if let Some(worktrees) = refs.worktrees
                             && self.git.worktrees != worktrees
                         {
                             self.git.worktrees = worktrees;
-                            self.git_read_summaries();
                             self.location_picker_refreshed();
                             self.update_window_title();
+                            listed = true;
+                        }
+                        // 其他位置也可能变了：`.git` 变了或用户点了刷新才走到这里。看不见它们时
+                        // 不读，切到提交视图、打开选择器时会读。
+                        if listed || self.commit_shown() || self.picker_lists_locations() {
+                            self.git_read_summaries();
                         }
                     }
                     self.git.problem = None;

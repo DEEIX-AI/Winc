@@ -521,11 +521,14 @@ impl App {
                     self.git_sync_state(),
                     SyncState::Push(_) | SyncState::Pull(_) | SyncState::Both { .. }
                 );
+                let on_branch = (self.git.status.as_ref())
+                    .is_some_and(|s| matches!(s.head, Some(winc_editor::git::Head::Branch(_))));
                 let usable = [
                     idle && differs,
                     idle && !self.git.remotes.is_empty(),
                     idle && self.has_upstream(),
-                    idle && !self.git.remotes.is_empty(),
+                    // 不在分支上时没有东西可以推送。
+                    idle && on_branch && !self.git.remotes.is_empty(),
                 ];
                 status_branch_menu(&self.git.branches, &self.git.stale_branches(), usable)
             }

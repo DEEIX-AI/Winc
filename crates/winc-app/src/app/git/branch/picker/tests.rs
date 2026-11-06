@@ -9,6 +9,7 @@ fn branch(name: &str, remote: bool, current: bool) -> Branch {
         remote,
         current,
         upstream: None,
+        gone: false,
         oid: String::new(),
         time: 0,
         local: String::new(),

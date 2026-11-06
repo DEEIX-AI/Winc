@@ -1586,6 +1586,61 @@ fn the_sync_control_follows_the_remotes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 上游被删除的分支：已经发布过的提交不能撤销；发布时推到它原来配置的远程，不是排在第一个的远程。
+#[test]
+fn a_deleted_upstream_keeps_its_commits_and_its_remote() {
+    let Some((mut app, root)) = git_app("git-sync-gone", false) else {
+        return;
+    };
+    let bare = |name: &str| root.with_extension(name);
+    let (first, wanted) = (bare("gone-a.git"), bare("gone-z.git"));
+    for (name, dir) in [("a-fork", &first), ("z-origin", &wanted)] {
+        let _ = std::fs::remove_dir_all(dir);
+        git_in(&root, &["init", "-q", "--bare", dir.to_str().unwrap()]);
+        git_in(&root, &["remote", "add", name, dir.to_str().unwrap()]);
+    }
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "one"]);
+    git_in(&root, &["push", "-q", "-u", "z-origin", "main"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    git_in(&root, &["push", "-q", "z-origin", "main"]);
+    git_in(&wanted, &["update-ref", "-d", "refs/heads/main"]);
+    git_in(&root, &["update-ref", "-d", "refs/remotes/z-origin/main"]);
+    app.git_refresh();
+    paint(&mut app);
+    let branch = (app.git.branches.iter()).find(|b| b.current).unwrap();
+    assert!(branch.upstream.is_none() && branch.gone);
+    let oid = app.git.status.as_ref().unwrap().oid.clone().unwrap();
+    app.commit.last = Some(winc_editor::git::LastCommit {
+        oid,
+        subject: "two".to_owned(),
+        message: String::new(),
+        time: 0,
+        local: String::new(),
+    });
+    assert!(app.commit_undoable().is_none());
+    app.commit.last = None;
+
+    assert_eq!(app.git_sync_state(), SyncState::Publish);
+    app.press_commit(CommitTarget::Sync);
+    let remote_has = |dir: &Path| {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--verify", "--quiet", "refs/heads/main"])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    assert!(remote_has(&wanted));
+    assert!(!remote_has(&first));
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&first);
+    let _ = std::fs::remove_dir_all(&wanted);
+}
+
 /// 操作成功后同步控件显示对勾，随后回到当前状态；失败和新操作都不留对勾。
 #[test]
 fn the_sync_control_confirms_a_finished_operation() {

@@ -24,6 +24,7 @@ fn branch(name: &str, remote: bool, current: bool, upstream: Option<&str>) -> Br
         remote,
         current,
         upstream: upstream.map(str::to_owned),
+        gone: false,
         oid: String::new(),
         time: 0,
         local: String::new(),

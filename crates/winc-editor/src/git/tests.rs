@@ -265,6 +265,8 @@ fn an_upstream_that_no_longer_exists_counts_as_none() {
         branch.upstream.as_deref()
     };
     assert_eq!(upstream("gone"), None);
+    assert!(branches.iter().any(|b| b.name == "gone" && b.gone));
+    assert!(branches.iter().all(|b| b.name == "gone" || !b.gone));
     assert_eq!(upstream("kept"), Some("origin/kept"));
     // 上游可以是本地分支；和本地分支同名时 `git` 写成带 `remotes/` 的形式。
     assert_eq!(upstream("local"), Some("kept"));

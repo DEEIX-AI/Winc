@@ -302,6 +302,16 @@ fn quick_branches(branches: &[Branch], recent: &[String]) -> Vec<usize> {
     out
 }
 
+/// 分支排序用的值，大的在前：当前分支最前，本地分支按最后一次提交的时间，远程分支都一样（再按
+/// 名字）。
+pub(in crate::app) fn branch_rank(branch: &Branch) -> i64 {
+    match (branch.remote, branch.current) {
+        (true, _) => 0,
+        (false, true) => i64::MAX,
+        (false, false) => branch.time,
+    }
+}
+
 /// 排一组分支的树时不变的条件。
 struct Tree<'a> {
     branches: &'a [Branch],
@@ -331,10 +341,7 @@ impl Tree<'_> {
                 None => leaves.push((index, name)),
             }
         }
-        let time = |index: usize| {
-            let branch = (!self.remote).then(|| self.branches.get(index)).flatten();
-            branch.map_or(0, |b| if b.current { i64::MAX } else { b.time })
-        };
+        let time = |index: usize| self.branches.get(index).map_or(0, branch_rank);
         let mut nodes: Vec<_> = (folders.into_iter())
             .map(|(folder, sub)| {
                 let newest = sub.iter().map(|&(i, _)| time(i)).max().unwrap_or(0);

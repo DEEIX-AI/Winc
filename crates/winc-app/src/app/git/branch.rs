@@ -286,9 +286,7 @@ impl App {
             GitFetch => self.git_operate(t!("git-op-fetch").into(), |git, root| {
                 git.operate(root, &["fetch", "--all", "--prune"])
             }),
-            GitPull => self.git_operate(t!("git-op-pull").into(), |git, root| {
-                git.operate(root, &["pull"])
-            }),
+            GitPull => self.git_operate(t!("git-op-pull").into(), |git, root| git.pull(root)),
             GitPush => {
                 let upstream = self.has_upstream();
                 self.git_operate(t!("git-op-push").into(), move |git, root| {
@@ -390,7 +388,7 @@ impl App {
 
     /// 储藏工作区和暂存区里的改动（含未跟踪的文件），再切换到 `branch`。
     ///
-    /// 切换失败时储藏还在，失败的原因说明了为什么没有切过去，用户可以从储藏里恢复。
+    /// 切换失败时把储藏恢复回来，失败的原因里写明更改在哪儿。
     pub(in crate::app) fn stash_then_checkout(&mut self, branch: Branch) {
         let local = local_name(&branch).to_owned();
         let track =
@@ -412,14 +410,21 @@ impl App {
                         &message,
                     ],
                 )?;
-                if track {
+                let switched = if track {
                     git.operate(
                         root,
                         &["switch", "--track", "--end-of-options", &branch.name],
                     )
                 } else {
                     git.operate(root, &["switch", "--end-of-options", &local])
-                }
+                };
+                switched.map_err(|error| {
+                    let error = error.as_str();
+                    match git.operate(root, &["stash", "pop"]) {
+                        Ok(_) => t!("git-switch-failed-restored", error = error),
+                        Err(_) => t!("git-switch-failed-stashed", error = error),
+                    }
+                })
             },
         );
     }

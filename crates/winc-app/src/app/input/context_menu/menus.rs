@@ -314,8 +314,7 @@ fn branch_tree(
         menu
     }
     let time = |index: usize| {
-        let branch = branches.get(index).filter(|b| !b.remote);
-        branch.map_or(0, |b| if b.current { i64::MAX } else { b.time })
+        (branches.get(index)).map_or(0, crate::app::git::branch::picker::branch_rank)
     };
     let mut sorted: Vec<(usize, &str, &str)> = names
         .iter()

@@ -110,6 +110,7 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
                 remote: false,
                 current: head == "*",
                 upstream,
+                gone: false,
                 oid,
                 time,
                 local: date,
@@ -123,6 +124,7 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
                 remote: true,
                 current: false,
                 upstream: None,
+                gone: false,
                 oid,
                 time,
                 local: date,
@@ -144,6 +146,7 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
         });
         if gone {
             branch.upstream = None;
+            branch.gone = true;
         }
     }
     local

@@ -702,7 +702,8 @@ impl App {
             return None;
         };
         let branch = self.git.branches.iter().find(|b| b.current && !b.remote)?;
-        (branch.upstream.is_none() || status.ahead > 0).then_some(last)
+        // 上游已不存在的分支推送过，分不清这个提交发布了没有，按发布过算。
+        ((branch.upstream.is_none() && !branch.gone) || status.ahead > 0).then_some(last)
     }
 
     /// 返回说明条及其下方间隔的总高度；没有暂停的合并、变基等操作时为 0。

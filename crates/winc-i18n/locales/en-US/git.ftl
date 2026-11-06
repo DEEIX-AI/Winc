@@ -331,6 +331,8 @@ git-switch-dirty-detail = { $count ->
 }
 git-switch-carry = Migrate Changes
 git-switch-stash = Stash and Check Out
+git-switch-failed-restored = { $error } (your uncommitted changes were restored)
+git-switch-failed-stashed = { $error } (your uncommitted changes are still in the stash and can be restored from the stash list)
 git-switch-stash-message = Changes on { $branch } before switching branches
 git-commit-button-nothing = No Changes to Commit
 git-branch-picker-empty = No matching branches

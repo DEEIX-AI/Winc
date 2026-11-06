@@ -88,8 +88,12 @@ pub struct Branch {
     pub remote: bool,
     /// 是否是当前分支。
     pub current: bool,
-    /// 跟踪的上游分支（`origin/main`）；没有时为 `None`。
+    /// 跟踪的上游分支（`origin/main`）；没有，或者上游引用已不存在时为 `None`。
     pub upstream: Option<String>,
+    /// 配了上游，但上游引用已不存在（远程分支被删除后获取时清掉了）。
+    ///
+    /// 这样的分支推送过，不能和从未推送过的分支一样看待。
+    pub gone: bool,
     /// 该分支指向的完整提交号。
     ///
     /// 提交、推送、获取使分支移动时随之变化，据此判断开着的日志是否需要重新读取。
@@ -632,6 +636,19 @@ impl Git {
             .collect())
     }
 
+    /// 返回 `root` 所在仓库的公共 Git 目录：提交、分支都记在这里，附属工作树也用它。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败或超时时返回原因。
+    pub fn common_dir(&self, root: &Path, cancel: &Cancel) -> Result<PathBuf, String> {
+        let mut command = self.command(root);
+        command.args(["rev-parse", "--git-common-dir"]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        // 在主工作树里是相对路径，相对于运行的目录。
+        Ok(root.join(String::from_utf8_lossy(&stdout).trim()))
+    }
+
     /// 返回最近切换到过的分支名，最近的在前，不重复（来自 `HEAD` 的引用日志）。
     ///
     /// # Errors
@@ -724,13 +741,37 @@ impl Git {
         let remotes = self.remotes(root, &Cancel::default())?;
         // 远程名来自仓库的配置，`git` 允许以 `-` 开头的远程名（`--receive-pack=…` 会运行命令）：
         // 跳过这样的远程，推送时另外加 `--end-of-options`。
-        let Some(remote) = remotes.iter().find(|r| !r.starts_with('-')) else {
+        let usable: Vec<&String> = remotes.iter().filter(|r| !r.starts_with('-')).collect();
+        let preferred = self.preferred_remote(root);
+        let chosen = preferred
+            .iter()
+            .find_map(|name| usable.iter().find(|remote| ***remote == *name).copied());
+        let Some(remote) = chosen.or(usable.first().copied()) else {
             return Err(winc_i18n::t!("git-push-no-remote").to_owned());
         };
         self.operate(
             root,
             &["push", "--set-upstream", "--end-of-options", remote, "HEAD"],
         )
+    }
+
+    /// 当前分支配置的推送目标，优先的在前，顺序和 `git push` 选择远程时相同；上游已不存在的分支
+    /// 仍然留着 `branch.<名字>.remote`。
+    fn preferred_remote(&self, root: &Path) -> Vec<String> {
+        let cancel = Cancel::default();
+        let mut command = self.command(root);
+        command.args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+        let branch = self.run(&mut command, STATUS_TIMEOUT, &cancel);
+        let branch = branch.map(|out| String::from_utf8_lossy(&out).trim().to_owned());
+        let branch = branch.unwrap_or_default();
+        [
+            format!("branch.{branch}.pushRemote"),
+            "remote.pushDefault".to_owned(),
+            format!("branch.{branch}.remote"),
+        ]
+        .iter()
+        .filter_map(|key| self.config(root, key, &cancel))
+        .collect()
     }
 
     /// 返回 `path` 在 `HEAD` 里的内容，见 [`Git::content_at`]。
