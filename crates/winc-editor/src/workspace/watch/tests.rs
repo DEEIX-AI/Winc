@@ -228,3 +228,52 @@ fn hidden_folders_are_dropped() {
     assert!(!hidden(root, Path::new("/p/.github/ci.yml")));
     assert!(!hidden(root, Path::new("/p/src/main.rs")));
 }
+
+/// 运行一段代替监视程序的脚本，把它监视的目录作为打开的目录。
+#[cfg(unix)]
+fn in_distro(dir: &Path, script: &str) -> (Watcher, std::sync::mpsc::Receiver<()>) {
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", script]);
+    let (sender, woken) = std::sync::mpsc::channel();
+    let to_local = |path: &str| PathBuf::from(path);
+    let wake = move || {
+        let _ = sender.send(());
+    };
+    (Watcher::in_distro(dir, command, to_local, wake).unwrap(), woken)
+}
+
+#[cfg(unix)]
+#[test]
+fn reports_from_the_distribution_arrive_like_system_notifications() {
+    let dir = crate::test_util::scratch("watch-distro");
+    let file = dir.join("a b.txt");
+    let script = format!(
+        r#"printf 'S\0P{}\0P{}/.git/HEAD\0'; cat >/dev/null"#,
+        file.display(),
+        dir.display()
+    );
+    let (watcher, woken) = in_distro(&dir, &script);
+    woken.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(watcher.reliable());
+    let mut changes = watcher.take();
+    while !changes.git || changes.paths.is_empty() {
+        std::thread::sleep(Duration::from_millis(10));
+        let more = watcher.take();
+        changes.git |= more.git;
+        changes.paths.extend(more.paths);
+    }
+    assert_eq!(changes.paths, [file]);
+    assert!(!changes.rescan);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_helper_that_exits_asks_for_one_rescan_and_stops_being_reliable() {
+    let dir = crate::test_util::scratch("watch-distro-exit");
+    let (watcher, woken) = in_distro(&dir, "exit 1");
+    woken.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(watcher.take().rescan);
+    assert!(!watcher.reliable());
+    let _ = std::fs::remove_dir_all(&dir);
+}

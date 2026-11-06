@@ -4,9 +4,11 @@
 //! 换算。换算本身不依赖平台；仅在 Windows 上生效的入口在各自的文档中说明。
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
+use crate::shell::environment;
 use crate::shell::process::{self, Cancel};
 
 /// 访问发行版文件系统的主机名：`wsl.localhost` 是当前的写法，`wsl$` 是早期的写法，两者均可用。
@@ -18,6 +20,14 @@ pub(crate) const GIT_ENV: &str =
 
 /// 通过 `WSLENV` 传给发行版内格式化工具的环境变量。
 pub(crate) const FORMAT_ENV: &str = "WINC_FILE:NO_COLOR";
+
+/// 用用户的 shell 以交互式登录方式运行 `$0` 的脚本。
+///
+/// 版本管理工具（如 nvm）的初始化通常写在只有交互式 shell 才读取的文件中。
+const LOGIN_SHELL: &str = r#"exec "${SHELL:-/bin/sh}" -i -l -c "$0""#;
+
+/// 已查询过的各发行版用户 `PATH`：（发行版名称，值）；查询失败时值为 `None`。
+static LOGIN_PATHS: Mutex<Vec<(String, Option<String>)>> = Mutex::new(Vec::new());
 
 /// 在发行版内核对并复制文件权限的脚本：`$1` 是原文件，`$2` 是临时文件。
 ///
@@ -124,23 +134,107 @@ pub(crate) fn enter(command: &mut Command, distro: &str) {
     command.args(["-d", distro]).env("WSL_UTF8", "1");
 }
 
-/// 让 `command`（`wsl.exe`）在发行版的目录 `dir` 中，通过登录 shell 运行随后追加的程序和参数。
+/// 返回发行版 `distro` 中用户配置的 `PATH`；无法取得时返回 `None`。
 ///
-/// 登录 shell 提供用户配置的 `PATH`。
-pub(crate) fn enter_login(command: &mut Command, distro: &str, dir: &str) {
+/// 运行用户的 shell 可能较慢，启动脚本还可能等到 [`QUERY_TIMEOUT`]，因此每个发行版在进程内只查询
+/// 一次，失败的结果同样保留。
+pub(crate) fn login_path(distro: &str) -> Option<String> {
+    let paths = || LOGIN_PATHS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, path)) = paths().iter().find(|(name, _)| name == distro) {
+        return path.clone();
+    }
+    let mut command = Command::new("wsl.exe");
+    enter(&mut command, distro);
+    command
+        .args([
+            "--exec",
+            "sh",
+            "-c",
+            LOGIN_SHELL,
+            &environment::print_script(),
+        ])
+        // 用户的启动脚本可据此跳过只应在打开终端时运行的内容（启动 tmux、代理进程等）。
+        .env("WINC_RESOLVING_ENVIRONMENT", "1")
+        .env("WSLENV", "WINC_RESOLVING_ENVIRONMENT")
+        .stderr(Stdio::null());
+    let path = process::run(&mut command, Vec::new(), QUERY_TIMEOUT, &Cancel::default())
+        .ok()
+        .and_then(|output| environment::path_in(&output.stdout));
+    paths().push((distro.to_owned(), path.clone()));
+    path
+}
+
+/// 让 `command`（`wsl.exe`）在 `path` 下运行随后的 shell 脚本和参数；`path` 是 `None` 时由登录
+/// shell 提供 `PATH`。
+fn enter_shell(command: &mut Command, path: Option<&str>) {
+    match path {
+        Some(path) => command.args(["--exec", "env", &format!("PATH={path}"), "sh", "-c"]),
+        None => command.args(["--exec", "sh", "-lc"]),
+    };
+}
+
+/// 让 `command`（`wsl.exe`）在发行版的目录 `dir` 中，以 `path` 运行随后追加的程序和参数。
+pub(crate) fn enter_login(command: &mut Command, distro: &str, dir: &str, path: Option<&str>) {
     enter(command, distro);
-    command.args(["--cd", dir, "--exec", "sh", "-lc", r#"exec "$0" "$@""#]);
+    command.args(["--cd", dir]);
+    enter_shell(command, path);
+    command.arg(r#"exec "$0" "$@""#);
+}
+
+/// 返回发行版 `distro` 的根目录：优先使用 `wsl.localhost`，早期系统只有 `wsl$`。
+#[must_use]
+pub fn distro_root(distro: &str) -> PathBuf {
+    let current = Path::new(r"\\wsl.localhost").join(distro);
+    if current.exists() {
+        current
+    } else {
+        Path::new(r"\\wsl$").join(distro)
+    }
+}
+
+/// 把发行版 `distro` 中的命令行参数 `path` 转换为本机路径：`/` 开头的是发行版内的绝对路径，相对
+/// 路径由启动进程的工作目录决定，原样返回。
+#[must_use]
+pub fn from_distro(distro: &str, path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix('/') {
+        Some(rest) => rest
+            .split('/')
+            .fold(distro_root(distro), |dir, part| dir.join(part)),
+        None => path,
+    }
 }
 
 /// 在发行版 `distro` 中查找程序 `name` 的绝对路径；未找到或查询失败时返回 `None`。
-pub(crate) fn find_program(mut command: Command, distro: &str, name: &str) -> Option<PathBuf> {
+pub(crate) fn find_program(distro: &str, path: Option<&str>, name: &str) -> Option<PathBuf> {
+    let mut command = Command::new("wsl.exe");
     enter(&mut command, distro);
-    command.args(["--exec", "sh", "-lc", r#"command -v "$0""#, name]);
+    enter_shell(&mut command, path);
+    command.args([r#"command -v "$0""#, name]);
     let output = process::run(&mut command, Vec::new(), QUERY_TIMEOUT, &Cancel::default()).ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    // 启动脚本可能输出其他内容，`command -v` 的结果在最后一行。
+    output
+        .status
+        .success()
+        .then(|| linux_program(&output.stdout))
+        .flatten()
+}
+
+/// 从 `command -v` 的输出中取出发行版内的程序路径。
+///
+/// 启动脚本可能输出其他内容，结果在最后一行。`/mnt/` 下的是 WSL 从 Windows 的 `PATH` 带来的 Windows
+/// 程序，它们无法处理发行版内的路径，按未找到处理。
+fn linux_program(output: &[u8]) -> Option<PathBuf> {
+    let text = String::from_utf8_lossy(output);
     let last = text.lines().next_back()?.trim();
-    (output.status.success() && last.starts_with('/')).then(|| PathBuf::from(last))
+    (last.starts_with('/') && !last.starts_with("/mnt/")).then(|| PathBuf::from(last))
+}
+
+/// `path` 所在的位置当前能否访问：发行版中的路径取决于发行版的根目录，其他路径总是返回 `true`。
+///
+/// 发行版已注销或文件共享不可用时，其中的路径同样报告不存在，这不代表文件已被删除。
+#[must_use]
+pub fn reachable(path: &Path) -> bool {
+    locate_here(path).is_none_or(|place| place.windows_path("/").exists())
 }
 
 /// 让临时文件 `temp` 改名替换 `target` 后保持 `target` 的权限和属主。

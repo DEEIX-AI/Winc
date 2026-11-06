@@ -15,7 +15,7 @@ cmd-new-file = New File
 cmd-new-window = New Window
 cmd-open-file = Open…
 cmd-open-folder = Open Folder…
-cmd-open-wsl-folder = Open WSL Folder…
+cmd-open-wsl-folder = Open WSL Folder
 cmd-save = Save
 cmd-save-as = Save As…
 cmd-close-tab = Close Tab
@@ -194,6 +194,7 @@ cmd-cli-usage =
       -h, --help            Show this help
 cmd-cli-unknown-option = Unrecognized option “{ $flag }”
 cmd-cli-wait-needs-file = --wait requires a file
+cmd-cli-wsl-needs-name = --wsl requires a distribution name
 cmd-cli-wait-needs-openable-file = --wait requires at least one file that can be opened
 cmd-cli-wait-folder = “{ $path }” is a folder; --wait can only open files
 cmd-cli-open-failed = Couldn’t open “{ $path }”: { $error }

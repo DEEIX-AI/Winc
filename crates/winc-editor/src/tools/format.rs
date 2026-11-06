@@ -642,8 +642,8 @@ impl Formatter {
                 .flatten()
                 .map(|program| PathBuf::from(program.path)),
             Program::Search(name) => {
-                let command = self.0.shell.command(Path::new("wsl.exe"));
-                crate::wsl::find_program(command, &place.distro, name)
+                let path = crate::wsl::login_path(&place.distro);
+                crate::wsl::find_program(&place.distro, path.as_deref(), name)
             }
         }
     }
@@ -732,7 +732,8 @@ impl Formatter {
         let mut command = match place.zip(crate::wsl::locate_here(cwd)) {
             Some((place, cwd)) => {
                 let mut command = self.0.shell.command(Path::new("wsl.exe"));
-                crate::wsl::enter_login(&mut command, &place.distro, &cwd.path);
+                let path = crate::wsl::login_path(&place.distro);
+                crate::wsl::enter_login(&mut command, &place.distro, &cwd.path, path.as_deref());
                 command.env("WSLENV", crate::wsl::FORMAT_ENV).arg(&program);
                 command
             }

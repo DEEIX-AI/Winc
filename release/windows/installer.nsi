@@ -133,6 +133,14 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "DEEIX"
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend
 
+; Adds the command-line launchers to the user's Path or removes them. A failure leaves winc usable.
+!macro UpdateUserPath ACTION
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\path.ps1" "${SOURCE}\path.ps1"
+  nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\path.ps1" -Action ${ACTION} -Directory "$INSTDIR\bin"'
+  Pop $0
+!macroend
+
 Section "winc" SEC_MAIN
   SetShellVarContext current
   SetOutPath "$INSTDIR"
@@ -142,6 +150,11 @@ Section "winc" SEC_MAIN
   File "${SOURCE}\LICENSE"
   File "${SOURCE}\NOTICE"
   File "${SOURCE}\nsis\winc-installation"
+  SetOutPath "$INSTDIR\bin"
+  File "${SOURCE}\bin\winc"
+  File "${SOURCE}\bin\winc.cmd"
+  SetOutPath "$INSTDIR"
+  !insertmacro UpdateUserPath "Add"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "Software\DEEIX\winc" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\winc" "DisplayName" "winc"
@@ -170,6 +183,10 @@ Section "Uninstall"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\NOTICE"
   Delete "$INSTDIR\uninstall.exe"
+  !insertmacro UpdateUserPath "Remove"
+  Delete "$INSTDIR\bin\winc"
+  Delete "$INSTDIR\bin\winc.cmd"
+  RMDir "$INSTDIR\bin"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\DEEIX\winc"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\winc"

@@ -15,7 +15,7 @@ cmd-new-file = 新建文件
 cmd-new-window = 新建窗口
 cmd-open-file = 打开…
 cmd-open-folder = 打开目录…
-cmd-open-wsl-folder = 打开 WSL 目录…
+cmd-open-wsl-folder = 打开 WSL 目录
 cmd-save = 保存
 cmd-save-as = 另存为…
 cmd-close-tab = 关闭标签页
@@ -194,6 +194,7 @@ cmd-cli-usage =
       -h, --help            显示这些说明
 cmd-cli-unknown-option = 无法识别的选项「{ $flag }」
 cmd-cli-wait-needs-file = --wait 需要指定文件
+cmd-cli-wsl-needs-name = --wsl 需要指定发行版名称
 cmd-cli-wait-needs-openable-file = --wait 需要至少一个可以打开的文件
 cmd-cli-wait-folder = 「{ $path }」是目录，--wait 只能打开文件
 cmd-cli-open-failed = 无法打开「{ $path }」：{ $error }

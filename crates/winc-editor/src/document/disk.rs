@@ -283,9 +283,10 @@ impl Document {
         let Some(path) = &self.path else {
             return false;
         };
-        fs::metadata(path).map_or(true, |metadata| {
-            !metadata.permissions().readonly() && !self.disk_differs(&metadata)
-        })
+        fs::metadata(path).map_or_else(
+            |_| crate::wsl::reachable(path),
+            |metadata| !metadata.permissions().readonly() && !self.disk_differs(&metadata),
+        )
     }
 
     /// 文件在最近一次读写时还在，现在磁盘上没有了（被其他程序删除、移动、重命名，或切换分支）。
@@ -299,6 +300,7 @@ impl Document {
         };
         self.disk_mtime.is_some()
             && fs::metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+            && crate::wsl::reachable(path)
     }
 
     /// 磁盘文件是否与最近一次读写时不同：修改时间或大小变了。
