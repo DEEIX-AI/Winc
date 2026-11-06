@@ -114,6 +114,8 @@ pub enum MenuCommand {
     LocationReveal,
     /// 位置选择器的操作菜单：移除这个工作树。
     LocationRemove,
+    /// 位置选择器的操作菜单：清理目录已不存在的工作树。
+    LocationPrune,
     Cut,
     Copy,
     Paste,
@@ -330,6 +332,7 @@ impl MenuCommand {
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
             MenuCommand::LocationNewWindow => t!("git-location-new-window"),
             MenuCommand::LocationRemove => t!("git-location-remove"),
+            MenuCommand::LocationPrune => t!("git-location-prune"),
             MenuCommand::GitFetch => t!("menu-git-fetch"),
             MenuCommand::GitPull => t!("menu-git-pull"),
             MenuCommand::GitPush => t!("menu-git-push"),

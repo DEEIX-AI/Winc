@@ -37,6 +37,8 @@ const TEXT_LEFT: f32 = 32.0;
 const ROW_BUTTON_GAP: f32 = 2.0;
 /// 名字右边到右端文字的最小间距（逻辑像素）。
 const NAME_GAP: f32 = 8.0;
+/// 名字后面的小圆点占的宽度（逻辑像素）：6 的间距加 5 的直径。
+const NAME_DOT_ROOM: f32 = 11.0;
 /// 选中行上徽标底色和按钮悬停底色的不透明度：比次要文字弱得多，只从实底上浮出一层。
 const ON_BAND: f32 = 0.2;
 
@@ -171,9 +173,9 @@ impl Line {
         )
     }
 
-    /// 行右端文字的右边。
+    /// 行右端文字的右边：右边留出「⋯」一列，选中一行时其他内容不移动，各行的列对得上。
     fn right(&self) -> f32 {
-        self.row.right() - CONTENT
+        self.row.right() - GUTTER - ROW_BUTTON_GAP - BUTTON_SMALL - 4.0
     }
 
     /// 在图标一列画第 `i` 行展开、收起的箭头：这一行正在展开或收起时跟着动画转到对应角度。
@@ -207,6 +209,34 @@ impl Line {
         marked_label(frame, app, size, at, &shown, &marked, color, self.clip);
     }
 
+    /// 同 [`Line::draw_name`]，`dotted` 时名字后面有一个小圆点，表示有未提交的更改。
+    fn draw_dotted_name(
+        &self,
+        app: &App,
+        frame: &mut Frame<'_>,
+        (x, right): (f32, f32),
+        name: &str,
+        color: Color,
+        dotted: bool,
+    ) {
+        if !dotted {
+            self.draw_name(app, frame, (x, right), name, color);
+            return;
+        }
+        let room = (right - NAME_DOT_ROOM).max(x);
+        self.draw_name(app, frame, (x, room), name, color);
+        let width = frame
+            .measure(FontKind::Ui, app.fonts.ui, name)
+            .min(room - x);
+        let ink = if self.selected {
+            self.text
+        } else {
+            app.palette.accent
+        };
+        let dot = Rect::new(x + width + 6.0, self.cy - 2.5, 5.0, 5.0);
+        frame.rect_clipped(dot, ink, 2.5, self.clip);
+    }
+
     /// 在 `right` 左边绘制次要文字，把 `right` 移到文字左边。
     fn draw_meta(&self, app: &App, frame: &mut Frame<'_>, right: &mut f32, text: &str) {
         let size = app.fonts.ui_small;
@@ -235,7 +265,6 @@ impl Line {
         app: &App,
         frame: &mut Frame<'_>,
         i: usize,
-        right: &mut f32,
         hits: &mut Vec<(Rect, PickerPart)>,
     ) {
         if !self.selected {
@@ -252,7 +281,6 @@ impl Line {
         self.draw_row_button(app, frame, button, part);
         icons::more(frame, center(button), self.text, self.clip);
         hits.push((button, part));
-        *right = button.x - 4.0;
     }
 
     /// 绘制行内按钮悬停时的底色。
@@ -302,23 +330,21 @@ fn draw_location_rows(
             } => {
                 line.draw_fold(app, frame, (i, 0, *open));
                 let mut right = line.right();
-                if *changes > 0 {
-                    line.draw_pill(app, frame, &mut right, *changes);
-                }
-                if !*open {
-                    let note = t!("git-location-count", count = *count);
-                    line.draw_meta(app, frame, &mut right, &note);
-                }
+                let note = t!("git-location-count", count = *count);
+                line.draw_meta(app, frame, &mut right, &note);
                 let at = (line.columns(0).1, right - NAME_GAP);
-                line.draw_name(app, frame, at, label, line.text);
+                // 展开时各行有自己的圆点。
+                let dotted = !*open && *changes > 0;
+                line.draw_dotted_name(app, frame, at, label, line.text, dotted);
             }
             LocationRow::Place(place) => draw_place_row(app, frame, &line, i, place, hits),
         }
     }
 }
 
-/// 绘制第 `i` 行的一个位置：当前位置打勾，右端淡色写分支和与上游的差异，未提交的更改数是小圆角
-/// 徽标，目录已不在的写明并给「清理」。
+/// 绘制第 `i` 行的一个位置，和分支行的结构相同：名字、右端一段淡色文字，操作都在选中行的「⋯」里。
+///
+/// 当前位置打勾，右端写分支和与上游的差异，目录已不在的写明；有未提交的更改时名字后面有小圆点。
 fn draw_place_row(
     app: &App,
     frame: &mut Frame<'_>,
@@ -331,33 +357,14 @@ fn draw_place_row(
     if place.current {
         icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
     }
-    let size = app.fonts.ui_small;
-    let row = line.row;
     let mut right = line.right();
+    if place.worktree.is_some() || !place.missing {
+        line.draw_more(app, frame, i, hits);
+    }
+    let state = app.place_state(&place.path);
     if place.missing {
-        if place.worktree.is_some() {
-            let part = PickerPart::Prune(i);
-            let label = t!("git-location-prune");
-            let w = frame.measure(FontKind::Ui, size, label) + 16.0;
-            let x = row.right() - GUTTER - ROW_BUTTON_GAP - w;
-            let button = Rect::new(x, row.y + 2.0, w, row.h - 4.0);
-            line.draw_row_button(app, frame, button, part);
-            let color = if line.selected {
-                line.text
-            } else {
-                app.palette.text_muted
-            };
-            ui_text_small(frame, app, button.x + 8.0, button, label, color, line.clip);
-            hits.push((button, part));
-            right = button.x - 4.0;
-        }
         line.draw_meta(app, frame, &mut right, t!("git-worktree-missing"));
     } else {
-        line.draw_more(app, frame, i, &mut right, hits);
-        let state = app.place_state(&place.path);
-        if state.changes > 0 {
-            line.draw_pill(app, frame, &mut right, state.changes);
-        }
         let mut meta = state.head.clone().unwrap_or_default();
         if state.behind > 0 {
             meta.push_str(&format!(" ↓{}", state.behind));
@@ -365,12 +372,19 @@ fn draw_place_row(
         if state.ahead > 0 {
             meta.push_str(&format!(" ↑{}", state.ahead));
         }
-        let shown = ellipsize(frame, &meta, size, row.w * 0.45);
+        let shown = ellipsize(frame, &meta, app.fonts.ui_small, line.row.w * 0.45);
         line.draw_meta(app, frame, &mut right, &shown);
     }
     let color = if place.missing { line.dim } else { line.text };
-    let at = (text, right - NAME_GAP);
-    line.draw_name(app, frame, at, &place.label, color);
+    let dotted = !place.missing && state.changes > 0;
+    line.draw_dotted_name(
+        app,
+        frame,
+        (text, right - NAME_GAP),
+        &place.label,
+        color,
+        dotted,
+    );
 }
 
 /// 绘制分支选择器的各行：分组标题、按 `/` 分层的目录和分支，以及「新建分支」。
@@ -502,7 +516,7 @@ fn draw_branch_row(
         icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
     }
     let mut right = line.right();
-    line.draw_more(app, frame, i, &mut right, hits);
+    line.draw_more(app, frame, i, hits);
     let held = branch
         .filter(|b| !b.remote)
         .and_then(|b| app.git.worktree_holding(local_name(b)))
@@ -511,9 +525,7 @@ fn draw_branch_row(
     let meta = match (held, current, branch) {
         (Some(name), ..) => Some(name),
         (_, true, _) => Some(t!("git-branch-picker-current").to_owned()),
-        (_, _, Some(b)) if !b.remote && !line.selected => {
-            Some(display_local(&b.local, b.time, row.now))
-        }
+        (_, _, Some(b)) if !b.remote => Some(display_local(&b.local, b.time, row.now)),
         _ => None,
     };
     if let Some(meta) = meta {
@@ -610,17 +622,20 @@ fn draw_footer(
         PickerPart::NewWorktree,
         t!("git-branch-picker-new-worktree"),
     );
+    let in_repository = app.location_new_worktree_label();
     let entries: &[(PickerPart, &str)] = if app.picker_create.is_some() {
         &[(PickerPart::Back, t!("git-picker-back"))]
     } else if app.picker_lists_locations() {
-        &[new_worktree]
+        &[(PickerPart::NewWorktree, in_repository.as_str())]
     } else {
         &[new_branch, new_worktree]
     };
     let mut x = foot.x + GUTTER;
     let y = foot.bottom() - GUTTER - BUTTON_SMALL;
     for &(part, text) in entries {
-        let w = TEXT_LEFT - GUTTER + frame.measure(FontKind::Ui, size, text) + 8.0;
+        let room = foot.w - 2.0 * GUTTER - (TEXT_LEFT - GUTTER) - 8.0;
+        let text = fit(frame, text, size, room, false);
+        let w = TEXT_LEFT - GUTTER + frame.measure(FontKind::Ui, size, &text) + 8.0;
         let button = Rect::new(x, y, w, BUTTON_SMALL);
         let hovered = app.hover == Hover::PickerPart(part);
         draw_button(frame, p, button, foot, hovered, false);
@@ -639,7 +654,7 @@ fn draw_footer(
             app,
             x + TEXT_LEFT - GUTTER,
             button,
-            text,
+            &text,
             color,
             foot,
         );

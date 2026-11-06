@@ -18,14 +18,17 @@ use crate::app::{
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
-    BADGE_CENTER, BADGE_ROOM, CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, fold_chain, git_color,
+    BADGE_CENTER, BADGE_ROOM, CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, ContextBar, fold_chain,
+    git_color,
 };
 use crate::view::*;
 
 /// Git 上下文按钮里文字右边到按钮右边的宽度（逻辑像素）：空隙加下拉箭头。
 const CONTEXT_PICK_TAIL: f32 = 18.0;
-/// Git 上下文右端文字的右边离行右边的距离（逻辑像素）：对着标题行工具按钮里图标的右边。
-const CONTEXT_TEXT_RIGHT: f32 = 6.0;
+/// 位置按钮里图标中心和文字左边离按钮左边的距离（逻辑像素）：图标 12 宽，左右各留 6。
+const LOCATION_LEAD: (f32, f32) = (12.0, 24.0);
+/// 项目按钮和位置按钮之间的距离（逻辑像素）。
+const LOCATION_GAP: f32 = 4.0;
 /// 同步控件里提交数左边的留白（逻辑像素）。
 const SYNC_TEXT_LEFT: f32 = 8.0;
 
@@ -107,11 +110,11 @@ fn draw_header(
     }
 }
 
-/// 绘制 Git 上下文：位置行（只有一个位置时没有）和分支行。
+/// 绘制 Git 上下文：项目名后面的位置按钮（只有一个位置时没有）和分支行。
 ///
 /// 提交之前要确认的事都在这里：写在哪个仓库和工作树、在哪个分支、和上游差多少。切换用的面板从
-/// 这两行下面展开，下一步要做的同步就在分支行右端。两行都是项目名下面的一层：图标对着项目徽章，
-/// 文字对着项目名，比项目名小一号；分支是提交前最要确认的，用正文色，位置淡一档。
+/// 下面展开，下一步要做的同步就在分支行右端。分支行图标对着项目徽章，文字对着项目名，比项目名
+/// 小一号；分支是提交前最要确认的，用正文色，位置淡一档。
 fn draw_context(
     app: &App,
     frame: &mut Frame<'_>,
@@ -119,20 +122,22 @@ fn draw_context(
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
     let clip = app.layout.sidebar;
-    if let Some(row) = parts.location {
-        draw_location_row(app, frame, row, clip, hits);
+    if let Some(span) = location_span(app, frame) {
+        draw_location_row(app, frame, parts, span, clip, hits);
     }
     draw_branch_row(app, frame, parts.branch, clip, hits);
 }
 
 /// 绘制 Git 上下文一行左边的按钮：图标、名字和下拉箭头，宽度贴合文字。
 ///
-/// `names` 是名字的各段和各自的颜色；不超过 `right`，放不下时从末尾截短。
+/// `(center, room)` 是图标中心离按钮左边的距离和文字的左边距。`names` 是名字的各段和各自的颜色；
+/// 不超过 `right`，放不下时从末尾截短。
 #[allow(clippy::too_many_arguments)]
 fn draw_context_pick(
     app: &App,
     frame: &mut Frame<'_>,
     row: Rect,
+    (icon_at, room_left): (f32, f32),
     right: f32,
     target: CommitTarget,
     open: bool,
@@ -143,7 +148,7 @@ fn draw_context_pick(
 ) {
     let p = app.palette;
     let size = app.fonts.ui_small;
-    let room = (right - row.x - BADGE_ROOM - CONTEXT_PICK_TAIL).max(0.0);
+    let room = (right - row.x - room_left - CONTEXT_PICK_TAIL).max(0.0);
     let full: f32 = names
         .iter()
         .map(|(text, _)| frame.measure(FontKind::Ui, size, text))
@@ -151,7 +156,7 @@ fn draw_context_pick(
     let pick = Rect::new(
         row.x,
         row.y,
-        BADGE_ROOM + full.min(room) + CONTEXT_PICK_TAIL,
+        room_left + full.min(room) + CONTEXT_PICK_TAIL,
         row.h,
     );
     let hovered = app.hover == Hover::Commit(target);
@@ -161,10 +166,10 @@ fn draw_context_pick(
     let cy = icon_center_y(app, row, size);
     icon(
         frame,
-        (pick.x + BADGE_CENTER, cy),
+        (pick.x + icon_at, cy),
         if lit { p.text } else { p.text_muted },
     );
-    let mut x = pick.x + BADGE_ROOM;
+    let mut x = pick.x + room_left;
     let limit = x + room;
     for (text, color) in names {
         let shown = fit(frame, text, size, (limit - x).max(0.0), false);
@@ -178,11 +183,39 @@ fn draw_context_pick(
     icons::chevron(frame, (x + 9.0, cy), 5.5, Direction::Down, p.text_dim, clip);
 }
 
-/// 绘制位置行：仓库，打开的是附属工作树时后面写工作树；右端写还有几处有未提交的更改。
+/// 项目名后面的位置按钮的左右边：有多个位置时才有，放在项目按钮和工具按钮之间。
+///
+/// 放得下时紧贴项目按钮；放不下时位置按钮最多让到一半，再由项目名截短。
+pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option<(f32, f32)> {
+    if !app.git_has_locations() {
+        return None;
+    }
+    let bar = ContextBar::new(app, frame);
+    let right = app.commit_parts().tools[0].0.x - 4.0;
+    let (repository, worktree) = app.git_location_label();
+    let mut text = frame.measure(FontKind::Ui, app.fonts.ui_small, &repository);
+    if let Some(worktree) = worktree.as_deref() {
+        text += frame.measure(FontKind::Ui, app.fonts.ui_small, &format!(" › {worktree}"));
+    }
+    let width = LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL;
+    let room = (right - bar.left() - LOCATION_GAP).max(0.0);
+    let project = bar.project_full();
+    if project + width <= room {
+        let left = bar.left() + project + LOCATION_GAP;
+        return Some((left, left + width));
+    }
+    Some((right - width.min((room - project).max(room / 2.0)), right))
+}
+
+/// 绘制项目名后面的位置按钮：仓库，打开的是附属工作树时后面写工作树。
+///
+/// 其他位置有未提交的更改时，文件夹图标右上角有一个强调色的小圆点，和视图标签上的圆点同一个
+/// 意思；几个写在悬停提示里，是哪几个在位置选择器里。
 fn draw_location_row(
     app: &App,
     frame: &mut Frame<'_>,
-    row: Rect,
+    parts: &CommitParts,
+    (left, right): (f32, f32),
     clip: Rect,
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
@@ -193,34 +226,31 @@ fn draw_location_row(
         names.push((" › ", p.text_dim));
         names.push((worktree, p.text_muted));
     }
-    let others = app.git_other_changes();
-    let size = app.fonts.ui_small;
-    let mut right = row.right();
-    if others > 0 {
-        let text = t!("git-other-changes", count = others);
-        let w = frame.measure(FontKind::Ui, size, &text);
-        let full: f32 = (names.iter())
-            .map(|(name, _)| frame.measure(FontKind::Ui, size, name))
-            .sum();
-        // 放不下时只留名字：名字是这一行的正事。
-        let hint = CONTEXT_TEXT_RIGHT + w + 11.0 + 6.0;
-        if BADGE_ROOM + full + CONTEXT_PICK_TAIL + hint <= row.w {
-            let x = right - CONTEXT_TEXT_RIGHT - w;
-            ui_text_small(frame, app, x, row, &text, p.text_dim, clip);
-            let cy = icon_center_y(app, row, size);
-            let dot = Rect::new(x - 11.0, cy - 3.0, 6.0, 6.0);
-            frame.rect_clipped(dot, p.accent, 3.0, clip);
-            right = dot.x - 6.0;
-        }
-    }
+    let open = app.picker_lists_locations();
+    let lit = open || app.hover == Hover::Commit(CommitTarget::Location);
+    let dotted = app.git_other_changes() > 0;
+    let tool = parts.tools[0].0;
+    let row = Rect::new(left, tool.y, (right - left).max(0.0), tool.h);
     draw_context_pick(
         app,
         frame,
         row,
+        LOCATION_LEAD,
         right,
         CommitTarget::Location,
-        app.picker_lists_locations(),
-        |frame, center, color| icons::folder_small(frame, center, color, clip),
+        open,
+        |frame, (x, y), color| {
+            icons::folder_small(frame, (x, y), color, clip);
+            if dotted {
+                let dot = Rect::new(x + 3.5, y - 7.0, 5.0, 5.0);
+                let ring = dot.inset(-1.0, -1.0);
+                frame.rect_clipped(ring, p.sidebar_bg, 3.5, clip);
+                if lit {
+                    frame.rect_clipped(ring, p.hover, 3.5, clip);
+                }
+                frame.rect_clipped(dot, p.accent, 2.5, clip);
+            }
+        },
         &names,
         clip,
         hits,
@@ -256,6 +286,7 @@ fn draw_branch_row(
         app,
         frame,
         row,
+        (BADGE_CENTER, BADGE_ROOM),
         right,
         CommitTarget::Branch,
         app.picker_lists_branches() && app.picker_anchor == crate::app::GitAnchor::Branch,

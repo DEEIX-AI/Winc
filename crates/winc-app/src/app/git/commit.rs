@@ -375,7 +375,7 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
-    /// 位置行；只有一个位置时没有。
+    /// 位置选择面板对着的区域：标题行里内容的范围；只有一个位置时没有。
     pub location: Option<Rect>,
     /// 分支行。
     pub branch: Rect,
@@ -621,9 +621,10 @@ impl App {
         // Git 上下文：写在哪、在哪个分支、和上游差多少，提交前一眼能看到。
         let context_h = self.commit_context_height();
         let context_y = header.bottom();
-        let row = |i: f32| Rect::new(inner_x, context_y + i * CONTEXT_ROW, inner_w, CONTEXT_ROW);
-        let location = self.git_has_locations().then(|| row(0.0));
-        let branch = row(if location.is_some() { 1.0 } else { 0.0 });
+        let branch = Rect::new(inner_x, context_y, inner_w, CONTEXT_ROW);
+        // 位置按钮在标题行上，选择面板从标题行下面展开，和各行同宽。
+        let location =
+            (self.git_has_locations()).then(|| Rect::new(inner_x, header.y, inner_w, header.h));
         let top = context_y + context_h;
         let banner_h = self.commit_banner_height();
         let banner = (banner_h > 0.0).then(|| {
@@ -683,8 +684,7 @@ impl App {
 
     /// Git 上下文及其下方间隔的总高度（逻辑像素）。
     fn commit_context_height(&self) -> f32 {
-        let rows = if self.git_has_locations() { 2.0 } else { 1.0 };
-        rows * CONTEXT_ROW + SIDEBAR_GAP
+        CONTEXT_ROW + SIDEBAR_GAP
     }
 
     /// 可以撤销的上一次提交：`HEAD` 在分支上，指向的提交还没推送到上游（没有上游，或者本地

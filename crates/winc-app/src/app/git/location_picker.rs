@@ -232,7 +232,13 @@ impl App {
         let query = needle(self.picker_input.text());
         let searching = !query.is_empty();
         let mut rows = Vec::new();
-        for (label, path, places) in self.location_groups() {
+        let groups = self.location_groups();
+        // 只有一个仓库时分组标题没有信息量，工作树直接列出来。
+        let single = groups.len() == 1;
+        for (label, path, mut places) in groups {
+            if single {
+                places.iter_mut().for_each(|place| place.depth = 0);
+            }
             let hit = |place: &Place| {
                 !searching
                     || rate(
@@ -241,7 +247,7 @@ impl App {
                     )
                     .is_some()
             };
-            if places.len() == 1 {
+            if single || places.len() == 1 {
                 rows.extend(
                     places
                         .into_iter()
@@ -301,17 +307,21 @@ impl App {
             .count()
     }
 
-    /// 位置行上写的内容：仓库的名字，以及打开的是附属工作树时工作树的名字。项目就是这个仓库、打开的
-    /// 又是主工作树时，再写一遍仓库名没有信息量，改写「主工作树」。
+    /// 位置行上写的内容：仓库的名字，以及打开的是附属工作树时工作树的名字。
+    ///
+    /// 项目名已经写了仓库时位置行只写工作树：主工作树写「主工作树」，附属工作树写它自己的名字。
     pub(crate) fn git_location_label(&self) -> (String, Option<String>) {
         let groups = self.location_groups();
         let current = groups.iter().find_map(|(label, _, places)| {
             let place = places.iter().find(|p| p.current)?;
             let main = self.git.worktrees.first().map(|w| w.path.as_path());
+            let project = self.editor.workspace.as_ref().map(|w| w.name.as_str());
             if place.depth > 0 && Some(place.path.as_path()) != main {
+                if project == Some(place.label.as_str()) {
+                    return Some((place.label.clone(), None));
+                }
                 return Some((label.clone(), Some(place.label.clone())));
             }
-            let project = self.editor.workspace.as_ref().map(|w| w.name.as_str());
             let name = if places.len() > 1 && project == Some(label.as_str()) {
                 &place.label
             } else {
@@ -320,6 +330,17 @@ impl App {
             Some((name.clone(), None))
         });
         current.unwrap_or_default()
+    }
+
+    /// 位置选择器底部「新建工作树」的文字：有多个仓库时写明建在当前仓库。
+    pub(crate) fn location_new_worktree_label(&self) -> String {
+        match self.git.root.as_deref() {
+            Some(root) if self.git.repositories.len() >= 2 => {
+                let repository = winc_editor::display_name(root);
+                t!("git-location-new-worktree-in", repository = repository)
+            }
+            _ => t!("git-branch-picker-new-worktree").to_owned(),
+        }
     }
 
     /// 确认选中的行：组展开或收起，位置切换过去。
@@ -338,8 +359,13 @@ impl App {
     /// 切换到位置 `place`：打开的目录里的仓库只换当前仓库，其余的（别处的工作树）在当前窗口打开
     /// 那个目录，文件树和编辑区跟着换。
     fn go_to_place(&mut self, place: &Place) {
+        // 和失效的分支一样：点了弹出它能做的事。
         if place.missing {
-            self.flash(t!("git-worktree-missing"));
+            if place.worktree.is_some() {
+                self.open_location_row_menu(self.picker_selected, place);
+            } else {
+                self.flash(t!("git-worktree-missing"));
+            }
             return;
         }
         self.close_picker();

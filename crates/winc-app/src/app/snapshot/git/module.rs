@@ -3,6 +3,36 @@
 use super::*;
 
 /// 目录本身不是仓库、下面有几个仓库时：都能找到，可以切换，打开文件时跟过去。
+/// 有多个仓库时「新建工作树」写明建在当前仓库，切换仓库后跟着变；只有一个仓库时不写。
+#[test]
+fn the_new_worktree_button_names_the_repository_among_several() {
+    let dir = search_folder("git-new-worktree-label");
+    let (a, b) = (dir.join("a"), dir.join("b"));
+    for repo in [&a, &b] {
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+        if !make_repo(repo) {
+            return;
+        }
+    }
+    let mut app = app_with(&dir, false);
+    app.config.repository_scan_depth = Some(1);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    assert_eq!(app.location_new_worktree_label(), "在「a」中新建工作树");
+    app.git_switch_repository(1);
+    assert_eq!(app.location_new_worktree_label(), "在「b」中新建工作树");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let Some((app, root)) = git_app("git-new-worktree-one", false) else {
+        return;
+    };
+    assert_eq!(app.location_new_worktree_label(), "新建工作树");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_folder_of_repositories_can_switch_between_them() {
     let dir = search_folder("git-repositories");

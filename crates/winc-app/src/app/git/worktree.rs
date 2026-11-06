@@ -93,6 +93,17 @@ pub(crate) fn worktree_name(worktree: &Worktree) -> String {
 }
 
 impl App {
+    /// 上下文栏上的项目名：打开的是附属工作树时写它所属的仓库，同一个仓库的工作树之间切换时不变；
+    /// 工作树的名字写在位置行上。没有打开目录时为 `None`。
+    pub(crate) fn project_name(&self) -> Option<String> {
+        let folder = self.editor.workspace.as_ref()?;
+        Some(
+            self.git
+                .main_worktree()
+                .map_or_else(|| folder.name.clone(), worktree_name),
+        )
+    }
+
     /// 打开第 `i` 个工作树：`new_window` 时在新窗口（已经开着就切到那个窗口），否则在当前窗口
     /// 打开；`i` 是当前工作树时什么都不做。
     pub(in crate::app) fn open_worktree(&mut self, i: usize, new_window: bool) {

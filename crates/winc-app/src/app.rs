@@ -471,6 +471,7 @@ impl Hover {
                 | Hover::Commit(
                     CommitTarget::Log
                         | CommitTarget::Sync
+                        | CommitTarget::Location
                         | CommitTarget::Layout
                         | CommitTarget::More
                         | CommitTarget::Commit

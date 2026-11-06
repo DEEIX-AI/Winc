@@ -152,6 +152,10 @@ impl App {
             MenuTarget::Location(path, worktree) => match command {
                 MenuCommand::LocationNewWindow => self.open_in_new_window(&path),
                 MenuCommand::LocationReveal => self.reveal_in_file_manager(&path),
+                MenuCommand::LocationPrune => {
+                    self.close_picker();
+                    self.prune_worktrees();
+                }
                 MenuCommand::LocationRemove => {
                     if let Some(i) = worktree {
                         self.remove_worktree(i);

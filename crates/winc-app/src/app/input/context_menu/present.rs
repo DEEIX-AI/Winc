@@ -542,12 +542,16 @@ impl App {
             // 目录菜单不经过这里（`App::open_crumb_menu`）。
             MenuTarget::Folder => return,
             MenuTarget::Location(_, worktree) => {
+                let missing = worktree
+                    .and_then(|i| self.git.worktrees.get(i))
+                    .is_some_and(|w| w.prunable);
                 let removable = worktree.is_some_and(|i| {
                     i > 0
                         && self.git.current_worktree() != Some(i)
                         && self.git.worktrees.get(i).is_some_and(|w| !w.locked)
                         && self.branch.running.is_none()
                 });
+                let idle = self.branch.running.is_none();
                 let mut menu = vec![
                     MenuEntry::Item(MenuCommand::LocationNewWindow, true),
                     MenuEntry::Item(MenuCommand::LocationReveal, true),
@@ -555,6 +559,10 @@ impl App {
                 if worktree.is_some_and(|i| i > 0) {
                     menu.push(MenuEntry::Separator);
                     menu.push(MenuEntry::Item(MenuCommand::LocationRemove, removable));
+                }
+                // 目录已不在：打不开，也没有东西可以移除，只能清理。
+                if missing {
+                    menu = vec![MenuEntry::Item(MenuCommand::LocationPrune, idle)];
                 }
                 menu
             }

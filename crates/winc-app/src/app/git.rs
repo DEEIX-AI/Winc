@@ -275,6 +275,24 @@ impl GitState {
             .any(|p| self.ignored_paths.contains(p))
     }
 
+    /// 换到仓库 `next` 之前清空状态。
+    ///
+    /// `next` 是同一个仓库的另一个工作树时，工作树列表和远程是共用的，留下来：徽章、位置行和同步
+    /// 控件在后台读完之前就是对的，不会闪一下。
+    pub(in crate::app) fn clear_for(&mut self, next: Option<&Path>) {
+        let same_repository = self
+            .worktrees
+            .iter()
+            .any(|w| Some(w.path.as_path()) == next);
+        let worktrees = std::mem::take(&mut self.worktrees);
+        let remotes = std::mem::take(&mut self.remotes);
+        self.clear();
+        if same_repository {
+            self.worktrees = worktrees;
+            self.remotes = remotes;
+        }
+    }
+
     /// 停掉正在运行的刷新，清空状态。
     ///
     /// 找不到 git 的结论也清掉，下次重新找。
@@ -621,7 +639,7 @@ impl App {
         }
         // 只是换一个仓库时 git 还是那个 git，不必重新查找，也不必重新检查已经检查过的仓库配置。
         let tool = root.as_ref().and(self.git.tool.get());
-        self.git.clear();
+        self.git.clear_for(root.as_deref());
         if let Some(tool) = tool {
             self.git.tool.keep(tool);
         }

@@ -48,6 +48,10 @@ impl App {
         if !on_branch || status.operation.is_some() || self.commit.amend {
             return SyncState::Hidden;
         }
+        // 分支列表还没读到时不知道有没有上游。
+        if self.git.branches.is_empty() {
+            return SyncState::Hidden;
+        }
         if !self.has_upstream() {
             return SyncState::Publish;
         }

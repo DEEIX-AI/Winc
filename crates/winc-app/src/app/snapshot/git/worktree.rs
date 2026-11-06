@@ -25,6 +25,8 @@ fn add_worktree(root: &Path) -> PathBuf {
 fn fill_dialog(app: &mut App, name: &str) {
     app.close_form_dialog();
     app.open_worktree_dialog();
+    // 留在当前目录，接着检查仓库里的变化。
+    app.form_dialog.as_mut().unwrap().new_window = true;
     app.edit_field(|f| f.insert(name));
 }
 
@@ -107,6 +109,18 @@ fn worktrees_show_in_the_location_picker_and_the_branch_menu() {
     assert!(commands.contains(&(checkout, true)));
     assert!(commands.contains(&(MenuCommand::GitBranch(BranchOp::Delete, feat), false)));
     assert!(app.menu_label(checkout).title.starts_with("切换到工作树「"));
+    // 切换在当前窗口完成，和位置选择器、分支选择器一样。
+    app.context_menu = None;
+    choose_in_branch_menu(&mut app, checkout);
+    assert_eq!(app.editor.root(), Some(linked.as_path()));
+    app.switch_folder(&root);
+    assert_eq!(app.editor.root(), Some(root.as_path()));
+    app.git_refresh();
+
+    // 新建工作树默认也在当前窗口打开，要新窗口时再勾选。
+    app.open_worktree_dialog();
+    assert!(!app.form_dialog.as_ref().unwrap().new_window);
+    app.close_form_dialog();
 
     // 在当前窗口打开：工作区切换到该目录；在该工作树中查看，主工作树是另一项，`main` 被占用。
     app.open_worktree(1, false);
@@ -283,7 +297,202 @@ fn snapshot_worktree_badge() {
     }
 }
 
-/// 项目就是这个仓库时，主工作树的位置行写「主工作树」，不重复项目名；附属工作树写仓库和工作树。
+/// 同一个仓库的工作树之间切换时，后台读完之前徽章的依据就是对的；换到别的仓库时不留。
+#[test]
+fn switching_worktrees_keeps_what_they_share_until_the_refresh() {
+    let Some((mut app, root)) = git_app("git-worktree-keep", false) else {
+        return;
+    };
+    let linked = add_worktree(&root);
+    git_in(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
+    app.git_refresh();
+    assert!(app.git.main_worktree().is_none());
+
+    app.git.clear_for(Some(linked.as_path()));
+    app.git.root = Some(linked.clone());
+    assert_eq!(
+        app.git.main_worktree().map(|w| w.path.as_path()),
+        Some(root.as_path())
+    );
+    assert_eq!(app.git.remotes, ["origin"]);
+    // 分支列表还没读到，不提示发布。
+    app.git.status = Some(winc_editor::git::Status {
+        head: Some(Head::Branch("feat".to_owned())),
+        ..Default::default()
+    });
+    assert_eq!(app.git_sync_state(), crate::app::SyncState::Hidden);
+
+    app.git.clear_for(Some(Path::new("/elsewhere")));
+    assert!(app.git.worktrees.is_empty());
+    assert!(app.git.remotes.is_empty());
+
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 目录已不在的工作树和失效的分支一样：行内没有按钮，点击弹出菜单，菜单里只有清理。
+#[test]
+fn a_missing_worktree_is_cleaned_up_from_its_menu() {
+    use crate::app::git::location_picker::LocationRow;
+    use crate::app::input::context_menu::MenuCommand;
+
+    let Some((mut app, root)) = git_app("git-location-missing", false) else {
+        return;
+    };
+    let linked = add_worktree(&root);
+    std::fs::remove_dir_all(&linked).unwrap();
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    app.open_location_picker();
+    let rows = app.picker_location_rows.clone().unwrap();
+    app.picker_selected = rows
+        .iter()
+        .position(|row| matches!(row, LocationRow::Place(place) if place.missing))
+        .unwrap();
+    paint(&mut app);
+    let more = PickerPart::More(app.picker_selected);
+    assert!(app.picker_part_hits.iter().any(|(_, part)| *part == more));
+
+    app.location_picker_accept();
+    assert_eq!(menu_commands(&app), [(MenuCommand::LocationPrune, true)]);
+    assert!(app.picker_lists_locations());
+    app.context_menu = None;
+    app.close_picker();
+    app.prune_worktrees();
+    assert!(app.git.worktrees.iter().all(|w| !w.prunable));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 只有一个仓库时工作树直接列出，没有分组标题和缩进。
+#[test]
+fn a_single_repository_lists_its_worktrees_flat() {
+    use crate::app::git::location_picker::LocationRow;
+
+    let Some((mut app, root)) = git_app("git-location-flat", false) else {
+        return;
+    };
+    let linked = add_worktree(&root);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    app.open_location_picker();
+    let rows = app.picker_location_rows.clone().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| match row {
+        LocationRow::Place(place) => place.depth == 0,
+        LocationRow::Repository { .. } => false,
+    }));
+    // 位置行的写法不受影响。
+    app.close_picker();
+    let main = winc_i18n::t!("git-location-main-worktree").to_owned();
+    assert_eq!(app.git_location_label(), (main, None));
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 位置按钮和项目名在同一行，分支行上移，放不下时项目名和位置都不压到工具按钮。
+#[test]
+fn the_location_shares_the_row_with_the_project() {
+    let Some((mut app, root)) = git_app("git-location-header", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let single = app.commit_parts();
+    let linked = add_worktree(&root);
+    app.git_refresh();
+    paint(&mut app);
+    let parts = app.commit_parts();
+    assert_eq!(parts.branch, single.branch);
+    assert_eq!(parts.message, single.message);
+
+    let location = (app.commit_hits.iter())
+        .find(|(_, t)| *t == CommitTarget::Location)
+        .unwrap()
+        .0;
+    let tools = parts.tools[0].0;
+    assert_eq!(location.y, tools.y);
+    assert!(app.project_hit.right() <= location.x);
+    assert!(location.right() <= tools.x);
+
+    // 放得下时项目名不截短：按钮紧贴位置按钮，中间只有固定的间距。
+    for name in ["w", "wi", "winc", "test", "project", "项目"] {
+        app.editor.workspace.as_mut().unwrap().name = name.to_owned();
+        paint(&mut app);
+        let location = (app.commit_hits.iter())
+            .find(|(_, t)| *t == CommitTarget::Location)
+            .unwrap()
+            .0;
+        let gap = location.x - app.project_hit.right();
+        assert!((gap - 4.0).abs() < 1.0, "{name}: {gap}");
+    }
+
+    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    let location = (app.commit_hits.iter())
+        .find(|(_, t)| *t == CommitTarget::Location)
+        .unwrap()
+        .0;
+    assert!(app.project_hit.right() <= location.x);
+    assert!(location.right() <= app.commit_parts().tools[0].0.x);
+
+    app.open_location_picker();
+    paint(&mut app);
+    assert!(app.layout.picker.y >= app.commit_parts().header.bottom());
+
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 其他工作树有更改时位置行有悬停提示；没有时不提示。
+#[test]
+fn the_location_row_tells_when_other_worktrees_have_changes() {
+    let Some((mut app, root)) = git_app("git-location-others", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "all"]);
+    let linked = add_worktree(&root);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let tip = |app: &mut App| {
+        let rect = (app.commit_hits.iter())
+            .find(|(_, t)| *t == CommitTarget::Location)
+            .unwrap()
+            .0;
+        app.on_mouse_move(900.0, 500.0);
+        app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
+        assert!(app.tooltip_since.is_some());
+        crate::view::tests::tooltip(app).map(|(_, text)| text)
+    };
+    assert_eq!(tip(&mut app), None);
+
+    // 其他位置的状态在打开选择器时重读。
+    std::fs::write(linked.join("new.txt"), "x").unwrap();
+    app.open_location_picker();
+    app.close_picker();
+    paint(&mut app);
+    let text = tip(&mut app);
+    assert_eq!(text.as_deref(), Some("其他 1 个工作树有未提交的更改"));
+
+    // 选择器开着时每一行都写着。
+    app.open_location_picker();
+    paint(&mut app);
+    assert_eq!(crate::view::tests::tooltip(&app), None);
+
+    let _ = std::fs::remove_dir_all(&linked);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 项目名始终是仓库，位置行写工作树：主工作树写「主工作树」，附属工作树写它自己的名字。
 #[test]
 fn the_location_row_does_not_repeat_the_project_name() {
     let Some((mut app, root)) = git_app("git-location-label", false) else {
@@ -291,13 +500,15 @@ fn the_location_row_does_not_repeat_the_project_name() {
     };
     let linked = add_worktree(&root);
     app.git_refresh();
+    let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
     let main = winc_i18n::t!("git-location-main-worktree").to_owned();
     assert_eq!(app.git_location_label(), (main, None));
+    assert_eq!(app.project_name(), Some(name(&root)));
 
     app.open_worktree(1, false);
     app.git_refresh();
-    let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
-    assert_eq!(app.git_location_label(), (name(&root), Some(name(&linked))));
+    assert_eq!(app.git_location_label(), (name(&linked), None));
+    assert_eq!(app.project_name(), Some(name(&root)));
     let _ = std::fs::remove_dir_all(&linked);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -439,7 +650,7 @@ fn form_dialog_moves_focus_with_tab_and_keeps_failures_in_the_card() {
     app.modifiers = ModifiersState::empty();
     assert_eq!(focus(&app), DialogPart::NewWindow);
     key(&mut app, NamedKey::Space);
-    assert!(!app.form_dialog.as_ref().unwrap().new_window);
+    assert!(app.form_dialog.as_ref().unwrap().new_window);
     let name = |app: &App| app.form_dialog.as_ref().unwrap().name.text().to_owned();
     assert!(app.dialog_key(&Key::Character("x".into()), "x", false));
     assert_eq!(name(&app), "feat/keys");

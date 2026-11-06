@@ -342,7 +342,7 @@ impl App {
         match op {
             // 分支已经在其他工作树里签出：git 不允许重复签出，改为切到该工作树。
             BranchOp::Checkout if let Some(i) = self.git.worktree_holding(local_name(&branch)) => {
-                self.open_worktree(i, true);
+                self.open_worktree(i, false);
             }
             BranchOp::NewWorktree => self.new_worktree_for(&branch),
             BranchOp::Checkout if branch.remote => {

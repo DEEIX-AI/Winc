@@ -42,8 +42,6 @@ pub enum GitAnchor {
 pub enum PickerPart {
     /// 第几行行尾的「⋯」。
     More(usize),
-    /// 第几行行尾的「清理」（目录已不在的工作树）。
-    Prune(usize),
     /// 底栏的「新建分支」。
     NewBranch,
     /// 底栏的「新建工作树」。
@@ -549,10 +547,6 @@ impl App {
     pub(in crate::app) fn press_picker_part(&mut self, part: PickerPart) {
         match part {
             PickerPart::More(row) => self.press_picker_more(row),
-            PickerPart::Prune(_) => {
-                self.close_picker();
-                self.prune_worktrees();
-            }
             PickerPart::NewBranch => self.start_branch_create(None),
             PickerPart::NewWorktree => {
                 self.close_picker();

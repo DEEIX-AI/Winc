@@ -44,7 +44,9 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     if app.sidebar_view == SidebarView::Commit {
-        let right = app.commit_parts().tools[0].0.x - 4.0;
+        let tools = app.commit_parts().tools[0].0.x - 4.0;
+        // 上下文栏自己会在右边留出 4 的间距。
+        let right = git::commit::location_span(app, frame).map_or(tools, |(left, _)| left);
         let bar = ContextBar::new(app, frame);
         draw_context_bar(app, frame, &bar, right);
         if let Some(caret) = git::commit::draw_commit(app, frame) {
@@ -101,7 +103,7 @@ pub(in crate::view) const BADGE_CENTER: f32 = 16.0;
 ///
 /// 项目按钮三个视图（文件、搜索、提交）都一样，切换视图时不动：首字母徽章、项目名和下拉箭头，
 /// 点了弹项目菜单（最近的目录、打开目录、关闭目录）。
-pub(super) struct ContextBar {
+pub(in crate::view) struct ContextBar {
     /// 项目名；没有打开目录时是「未打开目录」。
     project: String,
     /// 打开了目录（可以绘制徽章，名称用正文色）。
@@ -114,12 +116,11 @@ pub(super) struct ContextBar {
 
 impl ContextBar {
     /// 读出当前的项目名，并量出完整显示时的文字宽度。
-    pub(super) fn new(app: &App, frame: &mut Frame<'_>) -> Self {
+    pub(in crate::view) fn new(app: &App, frame: &mut Frame<'_>) -> Self {
         let opened = app.editor.workspace.is_some();
-        let project = app.editor.workspace.as_ref().map_or_else(
-            || t!("workspace-sidebar-no-folder").to_owned(),
-            |w| w.name.clone(),
-        );
+        let project = app
+            .project_name()
+            .unwrap_or_else(|| t!("workspace-sidebar-no-folder").to_owned());
         let project_w = frame.measure(FontKind::Ui, app.fonts.ui, &project);
         ContextBar {
             project,
@@ -135,8 +136,13 @@ impl ContextBar {
         if self.opened { BADGE_ROOM } else { 6.0 }
     }
 
+    /// 项目按钮的左边。
+    pub(in crate::view) fn left(&self) -> f32 {
+        self.left
+    }
+
     /// 项目按钮完整显示时的宽度。
-    fn project_full(&self) -> f32 {
+    pub(in crate::view) fn project_full(&self) -> f32 {
         self.name_offset() + self.project_w + 18.0
     }
 }
@@ -147,7 +153,10 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
     let p = app.palette;
     let header = app.layout.sidebar_header;
     let clip = header.intersect(app.layout.sidebar);
-    let project_w = bar.project_full().min((right - 4.0 - bar.left).max(0.0));
+    let room = (right - 4.0 - bar.left).max(0.0);
+    // 留 0.5 的余量：刚好放得下时，浮点运算的误差不应该让名字被截短。
+    let fits = bar.project_full() <= room + 0.5;
+    let project_w = if fits { bar.project_full() } else { room };
     let name_x = bar.left + bar.name_offset();
 
     // 项目：徽章一直在；名称太长时从末尾截短，其后是下拉箭头。
@@ -157,7 +166,11 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
         20.0,
         20.0,
     );
-    let name_max = (bar.left + project_w - 18.0 - name_x).max(0.0);
+    let name_max = if fits {
+        f32::INFINITY
+    } else {
+        (bar.left + project_w - 18.0 - name_x).max(0.0)
+    };
     let name = truncate_end(frame, &bar.project, app.fonts.ui, name_max);
     let name_end = name_x + frame.measure(FontKind::Ui, app.fonts.ui, &name);
     let hit = Rect::new(
@@ -180,23 +193,18 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
 
 /// 绘制项目名前面的徽章：圆角方块内是项目名的前两个字母或数字（大写），没有时用「W」。
 ///
-/// 打开的是附属工作树时，徽章用主工作树的名字和颜色（看得出是哪个仓库；名字写的是工作树自己
-/// 的目录，分得出是哪一个），右下角加一个工作树记号。
+/// 打开的是附属工作树时，徽章用主工作树的颜色（同一个仓库的工作树颜色相同），右下角加一个工作树
+/// 记号。
 fn draw_badge(app: &App, frame: &mut Frame<'_>, rect: Rect, project: &str, header: Rect) {
     let main = app.git.main_worktree();
-    let (project, color) = match main {
-        Some(main) => (
-            crate::app::git::worktree::worktree_name(main),
-            app.state.badge_color(&main.path),
-        ),
-        None => (
-            project.to_owned(),
-            app.editor
-                .root()
-                .map_or(0, |root| app.state.badge_color(root)),
-        ),
+    let color = match main {
+        Some(main) => app.state.badge_color(&main.path),
+        None => app
+            .editor
+            .root()
+            .map_or(0, |root| app.state.badge_color(root)),
     };
-    let badge = app.palette.project_badge(&project, color);
+    let badge = app.palette.project_badge(project, color);
     frame.rect_clipped(rect, badge.background, 6.0, header);
 
     let w = frame.measure(FontKind::Ui, app.fonts.initials, &badge.initials);

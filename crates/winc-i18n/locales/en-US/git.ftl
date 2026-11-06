@@ -298,14 +298,19 @@ git-location-main-worktree = Main worktree
 git-location-only-one = This folder has only one repository and worktree
 git-location-new-window = Open in New Window
 git-location-remove = Remove Worktree…
-git-location-prune = Clean Up
+git-location-prune = Clean Up Stale Worktrees
+git-location-new-worktree-in = New Worktree in “{ $repository }”
 git-location-count = { $count ->
     [one] 1 worktree
    *[other] { $count } worktrees
 }
-git-other-changes = { $count ->
-    [one] 1 other location has changes
-   *[other] { $count } other locations have changes
+git-tip-other-worktrees = { $count ->
+    [one] 1 other worktree has uncommitted changes
+   *[other] { $count } other worktrees have uncommitted changes
+}
+git-tip-other-locations = { $count ->
+    [one] 1 other repository or worktree has uncommitted changes
+   *[other] { $count } other repositories or worktrees have uncommitted changes
 }
 git-tip-fetch = Fetch from remotes
 git-tip-in-sync = Fetch from remotes (in sync with { $upstream })

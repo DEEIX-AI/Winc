@@ -903,6 +903,20 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label))
         }
+        // 选择器开着时每一行都写着，不再提示。
+        Hover::Commit(target @ CommitTarget::Location) if !app.picker_lists_locations() => {
+            let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;
+            let count = app.git_other_changes();
+            (count > 0).then(|| {
+                let label = if app.git.repositories.len() >= 2 {
+                    t!("git-tip-other-locations", count = count)
+                } else {
+                    t!("git-tip-other-worktrees", count = count)
+                };
+                (rect, label)
+            })
+        }
+        Hover::Commit(CommitTarget::Location) => None,
         Hover::Commit(CommitTarget::CommitMenu) => Some((
             app.commit_parts().commit_menu,
             t!("workspace-tip-commit-menu").to_owned(),
