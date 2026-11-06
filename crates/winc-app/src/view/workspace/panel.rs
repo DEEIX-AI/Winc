@@ -887,8 +887,19 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 (Some(task), _) => t!("workspace-status-branch-running", task = task),
                 (None, SyncState::Publish) => t!("git-tip-publish").to_owned(),
                 (None, SyncState::InSync) => t!("git-tip-in-sync", upstream = upstream),
-                (None, SyncState::Hidden) => t!("git-tip-fetch").to_owned(),
-                (None, _) => t!("workspace-tip-sync", upstream = upstream),
+                (None, SyncState::Push(count)) => {
+                    t!("git-tip-push", count = count, upstream = upstream)
+                }
+                (None, SyncState::Pull(count)) => {
+                    t!("git-tip-pull", count = count, upstream = upstream)
+                }
+                (None, SyncState::Both { ahead, behind }) => t!(
+                    "git-tip-both",
+                    ahead = ahead,
+                    behind = behind,
+                    upstream = upstream
+                ),
+                (None, SyncState::NoRemote | SyncState::Hidden) => t!("git-tip-fetch").to_owned(),
             };
             Some((rect, label))
         }

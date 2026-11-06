@@ -1486,6 +1486,106 @@ fn the_sync_control_stays_one_button() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 真实的鼠标移动会开始提示的计时；提示写明要做的事和提交数。
+#[test]
+fn the_sync_control_explains_what_it_will_do() {
+    let Some((mut app, root)) = git_app("git-sync-tips", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "a"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "b"]);
+    git_in(&root, &["checkout", "-q", "-b", "other", "HEAD~1"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "c"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "d"]);
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git_in(&root, &["checkout", "-q", "main"]);
+    git_in(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
+    git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert!(matches!(
+        app.git_sync_state(),
+        SyncState::Both {
+            ahead: 1,
+            behind: 2
+        }
+    ));
+    let rect = (app.commit_hits.iter())
+        .find(|(_, t)| *t == CommitTarget::Sync)
+        .unwrap()
+        .0;
+    app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
+    assert!(app.tooltip_since.is_some());
+    let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
+    assert_eq!(
+        tip.as_deref(),
+        Some("与 origin/main 同步：拉取 2 个提交，推送 1 个提交")
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 没有远程时不显示控件；配了远程、上游被删除时都是发布。
+#[test]
+fn the_sync_control_follows_the_remotes() {
+    let Some((mut app, root)) = git_app("git-sync-remotes", false) else {
+        return;
+    };
+    let sync = |app: &App| {
+        app.commit_hits
+            .iter()
+            .any(|(_, t)| *t == CommitTarget::Sync)
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "a"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.git_sync_state(), SyncState::NoRemote);
+    assert!(!sync(&app));
+
+    // 操作的进度仍然显示在这里。
+    app.branch.running = Some("签出".into());
+    paint(&mut app);
+    assert!(sync(&app));
+    app.branch.running = None;
+
+    // 刚配好的远程还没有任何远程分支，一样可以发布。
+    git_in(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
+    app.git_refresh();
+    paint(&mut app);
+    assert_eq!(app.git_sync_state(), SyncState::Publish);
+    assert!(sync(&app));
+
+    // 上游被删除后不再写已同步。
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
+    app.git_refresh();
+    assert_eq!(app.git_sync_state(), SyncState::InSync);
+    git_in(&root, &["update-ref", "-d", "refs/remotes/origin/main"]);
+    app.git_refresh();
+    assert_eq!(app.git_sync_state(), SyncState::Publish);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 操作成功后同步控件显示对勾，随后回到当前状态；失败和新操作都不留对勾。
 #[test]
 fn the_sync_control_confirms_a_finished_operation() {
@@ -1561,7 +1661,7 @@ fn the_sync_control_fetches_when_in_sync() {
     let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
     assert_eq!(
         tip.as_deref(),
-        Some("已与 origin/main 同步。点击获取远程更新")
+        Some("获取远程更新（已与 origin/main 同步）")
     );
 
     app.press_commit(CommitTarget::Sync);
@@ -1601,7 +1701,7 @@ fn a_clean_branch_ahead_of_its_upstream_turns_the_commit_button_into_sync() {
         .0;
     app.on_mouse_move(button.x + 4.0, button.y + 4.0);
     let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
-    assert_eq!(tip.as_deref(), Some("与 origin/main 同步"));
+    assert_eq!(tip.as_deref(), Some("推送 1 个提交到 origin/main"));
 
     // 在修改上一次提交时不显示；有改动时还在，提交按钮不再兼做同步。
     app.commit.amend = true;

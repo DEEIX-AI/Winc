@@ -615,6 +615,23 @@ impl Git {
         Ok(parse_branches(&String::from_utf8_lossy(&stdout)))
     }
 
+    /// 返回仓库配置的远程名。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败或超时时返回原因。
+    pub fn remotes(&self, root: &Path, cancel: &Cancel) -> Result<Vec<String>, String> {
+        let mut command = self.command(root);
+        command.arg("remote");
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        Ok(String::from_utf8_lossy(&stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|remote| !remote.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+
     /// 返回最近切换到过的分支名，最近的在前，不重复（来自 `HEAD` 的引用日志）。
     ///
     /// # Errors
@@ -704,17 +721,10 @@ impl Git {
         if has_upstream {
             return self.operate(root, &["push"]);
         }
-        let mut command = self.command(root);
-        command.arg("remote");
-        let remotes = self.run(&mut command, STATUS_TIMEOUT, &Cancel::default())?;
-        let remotes = String::from_utf8_lossy(&remotes);
+        let remotes = self.remotes(root, &Cancel::default())?;
         // 远程名来自仓库的配置，`git` 允许以 `-` 开头的远程名（`--receive-pack=…` 会运行命令）：
         // 跳过这样的远程，推送时另外加 `--end-of-options`。
-        let Some(remote) = remotes
-            .lines()
-            .map(str::trim)
-            .find(|r| !r.is_empty() && !r.starts_with('-'))
-        else {
+        let Some(remote) = remotes.iter().find(|r| !r.starts_with('-')) else {
             return Err(winc_i18n::t!("git-push-no-remote").to_owned());
         };
         self.operate(

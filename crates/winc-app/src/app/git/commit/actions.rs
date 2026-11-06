@@ -9,7 +9,9 @@ use crate::app::git::branch::Then;
 /// 分支行右端同步控件的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncState {
-    /// 没有可同步的：不在分支上、有进行中的操作、在修改上一次提交，或者没有任何远程。
+    /// 仓库没有配置远程。
+    NoRemote,
+    /// 这时不同步：不在分支上、有进行中的操作，或者在修改上一次提交。
     Hidden,
     /// 和上游一致。
     InSync,
@@ -39,17 +41,15 @@ impl App {
         let Some(status) = self.git.status.as_ref() else {
             return SyncState::Hidden;
         };
+        if self.git.remotes.is_empty() {
+            return SyncState::NoRemote;
+        }
         let on_branch = matches!(status.head, Some(Head::Branch(_)));
         if !on_branch || status.operation.is_some() || self.commit.amend {
             return SyncState::Hidden;
         }
         if !self.has_upstream() {
-            let remote = self.git.branches.iter().any(|b| b.remote);
-            return if remote {
-                SyncState::Publish
-            } else {
-                SyncState::Hidden
-            };
+            return SyncState::Publish;
         }
         match (status.ahead, status.behind) {
             (0, 0) => SyncState::InSync,
@@ -66,7 +66,7 @@ impl App {
             SyncState::Push(_) | SyncState::Pull(_) | SyncState::Both { .. } => {
                 self.run_git_sync(false);
             }
-            SyncState::Hidden | SyncState::InSync => {
+            SyncState::NoRemote | SyncState::Hidden | SyncState::InSync => {
                 self.run_branch_command(MenuCommand::GitFetch);
             }
         }

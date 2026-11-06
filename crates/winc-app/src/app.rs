@@ -470,6 +470,7 @@ impl Hover {
                 | Hover::Blame(_)
                 | Hover::Commit(
                     CommitTarget::Log
+                        | CommitTarget::Sync
                         | CommitTarget::Layout
                         | CommitTarget::More
                         | CommitTarget::Commit

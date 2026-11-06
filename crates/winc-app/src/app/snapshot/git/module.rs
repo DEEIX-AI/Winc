@@ -516,6 +516,15 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
             "feature/a-very-long-branch-name-for-the-sidebar-that-does-not-fit",
         ],
     );
+    git_in(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
     app.git_refresh();
     app.panel_width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);

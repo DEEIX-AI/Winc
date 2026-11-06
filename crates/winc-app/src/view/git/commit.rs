@@ -237,7 +237,9 @@ fn draw_branch_row(
 ) {
     let p = app.palette;
     let mut right = row.right();
-    if app.git.status.is_some() {
+    // 没有远程时没有东西可同步；但操作的进度和结果仍然显示在这里。
+    let active = app.branch.running.is_some() || app.branch.finished.is_some();
+    if app.git.status.is_some() && (active || app.git_sync_state() != SyncState::NoRemote) {
         right = draw_sync(app, frame, row, clip, hits) - BUTTON_GAP;
     }
     let head = app
@@ -282,7 +284,9 @@ fn draw_sync(
         SyncState::Push(ahead) => format!("↑{ahead}"),
         SyncState::Pull(behind) => format!("↓{behind}"),
         SyncState::Both { ahead, behind } => format!("↓{behind} ↑{ahead}"),
-        SyncState::Publish | SyncState::InSync | SyncState::Hidden => String::new(),
+        SyncState::Publish | SyncState::InSync | SyncState::NoRemote | SyncState::Hidden => {
+            String::new()
+        }
     };
     let width = if counts.is_empty() {
         BUTTON_SMALL

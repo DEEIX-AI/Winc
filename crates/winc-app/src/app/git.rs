@@ -93,6 +93,8 @@ struct Outcome {
 struct Refs {
     /// 本地和远程分支，本地的在前。
     branches: Vec<Branch>,
+    /// 仓库配置的远程名。
+    remotes: Vec<String>,
     /// 储藏，最新的在前。
     stashes: Vec<Stash>,
     /// 最近切换到过的分支名，最近的在前。
@@ -180,6 +182,8 @@ pub(crate) struct GitState {
     pub status: Option<Status>,
     /// 本地和远程分支（本地的在前），和状态一起刷新。
     pub branches: Vec<Branch>,
+    /// 仓库配置的远程名，和状态一起刷新。
+    pub remotes: Vec<String>,
     /// 储藏，最新的在前，和状态一起刷新。
     pub stashes: Vec<Stash>,
     /// 最近切换到过的分支名，最近的在前，和状态一起刷新。
@@ -231,6 +235,7 @@ impl Default for GitState {
             tool: SharedGit::default(),
             status: None,
             branches: Vec::new(),
+            remotes: Vec::new(),
             stashes: Vec::new(),
             recent_branches: Vec::new(),
             worktrees: Vec::new(),
@@ -283,6 +288,7 @@ impl GitState {
         self.tool.forget();
         self.status = None;
         self.branches.clear();
+        self.remotes.clear();
         self.stashes.clear();
         self.worktrees.clear();
         self.problem = None;
@@ -722,6 +728,7 @@ impl App {
             let refs = match (&tool, &status) {
                 (Ok(git), Ok(_)) if refs => Some(Refs {
                     branches: git.branches(&root, &cancel).unwrap_or_default(),
+                    remotes: git.remotes(&root, &cancel).unwrap_or_default(),
                     stashes: git.stashes(&root, &cancel).unwrap_or_default(),
                     recent_branches: git.recent_branches(&root, &cancel).unwrap_or_default(),
                     worktrees: git.worktrees(&root, &cancel).ok(),
@@ -781,6 +788,7 @@ impl App {
                         let before = std::mem::replace(&mut self.git.branches, refs.branches);
                         self.git.stashes = refs.stashes;
                         self.git.recent_branches = refs.recent_branches;
+                        self.git.remotes = refs.remotes;
                         self.branch_picker_refreshed(&before);
                         if let Some(worktrees) = refs.worktrees
                             && self.git.worktrees != worktrees

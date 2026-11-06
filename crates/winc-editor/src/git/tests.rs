@@ -255,6 +255,23 @@ fn branches_list_local_first_and_skip_remote_head() {
 }
 
 #[test]
+fn an_upstream_that_no_longer_exists_counts_as_none() {
+    let output = "refs/heads/gone\0 \0origin/gone\0a\nrefs/heads/kept\0 \0origin/kept\0b\n\
+                  refs/heads/local\0 \0kept\0c\nrefs/heads/origin/kept\0 \0remotes/origin/kept\0d\n\
+                  refs/remotes/origin/kept\0 \0\0b\n";
+    let branches = parse_branches(output);
+    let upstream = |name: &str| {
+        let branch = branches.iter().find(|b| b.name == name).unwrap();
+        branch.upstream.as_deref()
+    };
+    assert_eq!(upstream("gone"), None);
+    assert_eq!(upstream("kept"), Some("origin/kept"));
+    // 上游可以是本地分支；和本地分支同名时 `git` 写成带 `remotes/` 的形式。
+    assert_eq!(upstream("local"), Some("kept"));
+    assert_eq!(upstream("origin/kept"), Some("remotes/origin/kept"));
+}
+
+#[test]
 fn failures_pick_the_line_that_explains() {
     let push = b"To github.com:a/b.git\n ! [rejected]        main -> main (fetch first)\n\
                      error: failed to push some refs to 'github.com:a/b.git'\nhint: Updates were rejected\n";

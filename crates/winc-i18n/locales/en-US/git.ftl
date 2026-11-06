@@ -308,8 +308,17 @@ git-other-changes = { $count ->
    *[other] { $count } other locations have changes
 }
 git-tip-fetch = Fetch from remotes
-git-tip-in-sync = In sync with { $upstream }. Click to fetch from remotes
-git-tip-publish = Push this branch to a remote
+git-tip-in-sync = Fetch from remotes (in sync with { $upstream })
+git-tip-push = { $count ->
+    [one] Push 1 commit
+   *[other] Push { $count } commits
+} to { $upstream }
+git-tip-pull = { $count ->
+    [one] Pull 1 commit
+   *[other] Pull { $count } commits
+} from { $upstream }
+git-tip-both = Sync with { $upstream }: pull { $behind }, push { $ahead }
+git-tip-publish = Publish Branch: push to a remote and set the upstream
 git-switch-dirty = Check out “{ $branch }” with uncommitted changes?
 git-switch-dirty-detail = { $count ->
     [one] 1 file in “{ $current }” has uncommitted changes. Migrated changes stay in the working tree; stashed changes can be restored at any time.
