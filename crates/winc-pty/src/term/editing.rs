@@ -1,5 +1,6 @@
 //! 修改屏幕内容：写入字符、换行、反向换行、滚动、插入行、删除行和擦除。
 
+use super::width::{Cluster, Step};
 use super::*;
 
 impl Emulator {
@@ -21,6 +22,7 @@ impl Emulator {
                 screen.rows[row].write(col, c, &pen, false);
                 self.damage.row(row);
                 self.last_char = Some(c);
+                self.cluster = Cluster::Narrow(c);
                 return;
             }
         }
@@ -30,7 +32,11 @@ impl Emulator {
         } else {
             c
         };
-        let width = crate::term::width::char_width(c);
+        let width = match self.cluster.next(c) {
+            Step::Advance(width) => width,
+            Step::Combine => 0,
+            Step::Widen => return self.widen_previous(c),
+        };
 
         if width == 0 {
             // 组合字符并入前一个字符；在行首没有前一个字符时丢弃。
@@ -97,6 +103,53 @@ impl Emulator {
         }
         self.screen_mut().cursor = cursor;
         self.last_char = Some(c);
+    }
+
+    /// 前一个字后面来了 VS16：把它加宽到两格，并入 `selector`。
+    ///
+    /// 前一个字在最后一格时和宽字符的折行相同：留一个占位空格，移到下一行；不自动换行时放不下，
+    /// 丢弃 `selector`，该字仍占一格。
+    fn widen_previous(&mut self, selector: char) {
+        let cursor = self.cursor();
+        let col = if cursor.pending_wrap {
+            cursor.col
+        } else if cursor.col > 0 {
+            cursor.col - 1
+        } else {
+            return;
+        };
+        let cols = self.cols;
+        if col + 2 <= cols {
+            let row = &mut self.screen_mut().rows[cursor.row];
+            row.widen(col);
+            row.push_combining(col, selector);
+            self.damage.row(cursor.row);
+            let screen = self.screen_mut();
+            screen.cursor.col = (col + 2).min(cols - 1);
+            screen.cursor.pending_wrap = col + 2 >= cols;
+            return;
+        }
+        if !self.autowrap || cols < 2 {
+            return;
+        }
+        let base = self.screen_mut().rows[cursor.row].cells[col].ch;
+        let row = &mut self.screen_mut().rows[cursor.row];
+        row.erase(col, cols, Color::Default);
+        row.cells[col]
+            .attrs
+            .set(crate::protocol::Attrs::FILLER, true);
+        row.wrapped = true;
+        self.damage.row(cursor.row);
+        self.linefeed();
+        let pen = self.pen;
+        let next = self.cursor().row;
+        let row = &mut self.screen_mut().rows[next];
+        row.write(0, base, &pen, true);
+        row.push_combining(0, selector);
+        self.damage.row(next);
+        let screen = self.screen_mut();
+        screen.cursor.col = 2.min(cols - 1);
+        screen.cursor.pending_wrap = cols <= 2;
     }
 
     /// 把光标下移一行；光标在滚动区域底边时整个区域向上滚动。

@@ -1407,3 +1407,103 @@ fn the_cursor_blinks_until_a_program_asks_for_a_steady_one() {
     feed(&mut t, "\x1bc");
     assert_eq!(blink(&mut t), Some(true));
 }
+
+#[test]
+fn emoji_clusters_move_the_cursor_two_cells() {
+    for text in [
+        "⚠\u{fe0f}",
+        "👍\u{1f3fd}",
+        "🧑\u{200d}💻",
+        "👨\u{200d}👩\u{200d}👧",
+    ] {
+        let mut t = term(20, 2);
+        feed(&mut t, text);
+        assert_eq!(t.cursor(), (0, 2), "{text}");
+        feed(&mut t, "x");
+        assert_eq!(t.cursor(), (0, 3), "{text}");
+        // 文字完整保留，供复制。
+        assert_eq!(t.screen_text().trim(), format!("{text}x"), "{text}");
+    }
+}
+
+#[test]
+fn a_full_width_line_with_emoji_does_not_wrap() {
+    // 工具按字素簇算出刚好写满一行时，不能多出一行。
+    let mut t = term(10, 3);
+    feed(&mut t, "12345678⚠\u{fe0f}");
+    assert_eq!(t.cursor().0, 0);
+    feed(&mut t, "\r\nnext");
+    assert_eq!(t.cursor().0, 1);
+}
+
+#[test]
+fn widening_at_the_last_column_wraps_like_a_wide_character() {
+    let mut t = term(4, 3);
+    feed(&mut t, "abc⚠\u{fe0f}");
+    assert_eq!(t.cursor(), (1, 2));
+    let screen = t.screen_text();
+    let lines: Vec<&str> = screen.lines().collect();
+    assert_eq!(lines[0].trim_end(), "abc");
+    assert_eq!(lines[1].trim_end(), "⚠\u{fe0f}");
+}
+
+#[test]
+fn a_control_sequence_ends_the_cluster() {
+    // 光标移动之后的 VS16 不属于移动之前的字。
+    let mut t = term(20, 2);
+    feed(&mut t, "⚠\x1b[1;5H\u{fe0f}");
+    assert_eq!(t.cursor(), (0, 4));
+}
+
+#[test]
+fn reflow_keeps_the_width_of_emoji_clusters() {
+    let mut t = term(4, 3);
+    feed(&mut t, "⚠\u{fe0f}🧑\u{200d}💻ab");
+    t.resize(size(20, 3));
+    assert_eq!(t.screen_text().trim(), "⚠\u{fe0f}🧑\u{200d}💻ab");
+    assert_eq!(t.cursor(), (0, 6));
+}
+
+#[test]
+fn the_grapheme_mode_reports_as_always_on() {
+    let mut t = term(20, 2);
+    feed(&mut t, "\x1b[?2027$p");
+    assert_eq!(t.take_responses(), b"\x1b[?2027;3$y");
+}
+
+fn theme(bg: [u8; 3]) -> Theme {
+    Theme {
+        fg: [0; 3],
+        bg,
+        cursor: [0; 3],
+        palette: [[0; 3]; 16],
+    }
+}
+
+#[test]
+fn the_color_scheme_is_answered_and_followed_when_requested() {
+    let mut t = term(20, 2);
+    // 没有主题时不回答。
+    feed(&mut t, "\x1b[?996n");
+    assert!(t.take_responses().is_empty());
+
+    t.set_theme(Some(theme([20, 20, 20])));
+    feed(&mut t, "\x1b[?996n");
+    assert_eq!(t.take_responses(), b"\x1b[?997;1n");
+
+    // 没有要求通知时，主题变化不发送。
+    t.set_theme(Some(theme([250, 250, 250])));
+    assert!(t.take_responses().is_empty());
+    feed(&mut t, "\x1b[?2031h\x1b[?2031$p");
+    assert_eq!(t.take_responses(), b"\x1b[?2031;1$y");
+
+    // 明暗变化时通知一次，同样明暗的主题不重复通知。
+    t.set_theme(Some(theme([10, 10, 10])));
+    assert_eq!(t.take_responses(), b"\x1b[?997;1n");
+    t.set_theme(Some(theme([30, 30, 30])));
+    assert!(t.take_responses().is_empty());
+
+    feed(&mut t, "\x1b[?2031l");
+    t.set_theme(Some(theme([250, 250, 250])));
+    assert!(t.take_responses().is_empty());
+}

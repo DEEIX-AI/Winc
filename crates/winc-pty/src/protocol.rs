@@ -420,6 +420,12 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// 主题是否是深色：背景的相对亮度低于一半（亮度权重依据 ITU-R BT.601）。
+    pub fn is_dark(&self) -> bool {
+        let [r, g, b] = self.bg.map(u32::from);
+        299 * r + 587 * g + 114 * b < 500 * 255
+    }
+
     /// 返回 256 色表中第 `index` 个颜色：0–15 取主题色，16–231 是 6×6×6 色块，232–255 是灰阶
     /// （依据 xterm 的色表规则）。
     pub fn color(&self, index: u8) -> [u8; 3] {

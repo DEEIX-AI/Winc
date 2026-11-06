@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use winc_pty::protocol::{Attrs, Block, Cursor, Frame, Line, Modes, Size};
-use winc_pty::width::char_width;
+use winc_pty::width::cells;
 
 /// 看回滚时在可见范围上下各多缓存几屏的历史行（屏，经验值）：向上滚动时先有一段已缓存的
 /// 行，不必每行都等辅助进程回答。
@@ -1048,8 +1048,7 @@ fn is_word(c: char) -> bool {
 fn cell_chars(text: &str) -> Vec<(usize, usize, char)> {
     let mut out = Vec::with_capacity(text.len());
     let mut col = 0;
-    for c in text.chars() {
-        let w = char_width(c);
+    for (c, w) in cells(text) {
         if w == 0 {
             continue;
         }
@@ -1064,8 +1063,7 @@ pub(crate) fn cells_text(line: &Line, start: usize, end: usize) -> String {
     let mut out = String::new();
     let mut col = 0;
     let mut inside = false;
-    for c in line.text.chars() {
-        let w = char_width(c);
+    for (c, w) in cells(&line.text) {
         if w == 0 {
             if inside {
                 out.push(c);

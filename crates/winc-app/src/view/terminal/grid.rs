@@ -1,6 +1,7 @@
 //! 网格的绘制：终端颜色换算、按样式分段绘制一行、光标、输入法组字。
 
 use super::*;
+use winc_pty::width::{char_width, is_emoji_tail};
 use winc_render::Stroke;
 
 /// 把终端的颜色换成界面颜色。
@@ -120,18 +121,17 @@ pub(super) fn segments(line: &Line) -> Vec<Segment<'_>> {
 
     let mut out = Vec::with_capacity(runs.len());
     let (mut col, mut byte) = (0, 0);
-    let mut chars = line.text.char_indices().peekable();
+    let mut chars = cells(&line.text).peekable();
     for (i, run) in runs.iter().enumerate() {
         let until = runs.get(i + 1).map_or(usize::MAX, |r| usize::from(r.start));
         let (start, from) = (col, byte);
-        while let Some(&(at, c)) = chars.peek() {
-            let w = char_width(c);
+        while let Some(&(c, w)) = chars.peek() {
             // 组合字符跟着前一个字，留在这一段里。
             if w > 0 && col >= until {
                 break;
             }
             col += w;
-            byte = at + c.len_utf8();
+            byte += c.len_utf8();
             chars.next();
         }
         out.push(Segment {
@@ -198,10 +198,12 @@ pub(super) fn draw_line(
         // 前一个占格子的字：所在列和占几格，组合字符画在它上面。
         let mut base: Option<(usize, usize)> = None;
         if !attrs.has(Attrs::HIDDEN) {
-            for c in part.text.chars() {
-                let w = char_width(c);
+            for (c, w) in cells(part.text) {
                 if w == 0 {
-                    // 组合字符（重音符号、变体选择符）不占格子。字形不占宽度时（多数字体），原点
+                    if is_emoji_tail(c) {
+                        continue;
+                    }
+                    // 组合字符（重音符号）不占格子。字形不占宽度时（多数字体），原点
                     // 放在所附的字结束处、不做居中，与编辑区的画法相同：字形自带向左的偏移，落在
                     // 前一个字上。有的等宽字体给组合字符一整格的宽度、字形画在这一格里：那就和
                     // 前一个字画在同一格里。
@@ -313,8 +315,7 @@ fn draw_underline(
 /// 第 `col` 格上的字占几格（光标盖住宽字符时绘制成两格宽）。
 pub(super) fn width_at(line: &Line, col: usize) -> usize {
     let mut at = 0;
-    for c in line.text.chars() {
-        let w = char_width(c);
+    for (_, w) in cells(&line.text) {
         if w == 0 {
             continue;
         }
@@ -378,7 +379,9 @@ pub(super) fn draw_cursor(
                     at.x,
                     baseline,
                     app.cell,
-                    char_width(c).max(1),
+                    tab.rows
+                        .get(row)
+                        .map_or(1, |line| width_at(line, col).max(1)),
                     c,
                     p.editor_bg,
                     clip,
@@ -391,8 +394,7 @@ pub(super) fn draw_cursor(
 /// 返回第 `col` 格上的字符；落在宽字符的后半格或空白处时返回 `None`。
 pub(super) fn char_at(line: &Line, col: usize) -> Option<char> {
     let mut at = 0;
-    for c in line.text.chars() {
-        let w = char_width(c);
+    for (c, w) in cells(&line.text) {
         if w == 0 {
             continue;
         }

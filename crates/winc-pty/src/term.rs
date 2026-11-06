@@ -189,8 +189,14 @@ impl Terminal {
     }
 
     /// 设置回答颜色查询用的主题；为 `None` 时不回答颜色查询。
+    ///
+    /// 程序用模式 2031 要求过通知、明暗发生变化时，回答新的明暗。
     pub fn set_theme(&mut self, theme: Option<Theme>) {
+        let before = self.emu.theme.as_ref().map(Theme::is_dark);
         self.emu.theme = theme;
+        if self.emu.scheme_reports && self.emu.theme.as_ref().map(Theme::is_dark) != before {
+            self.emu.report_color_scheme();
+        }
     }
 
     /// 设置 shell 集成脚本报告命令行时附带的随机数。
@@ -469,6 +475,10 @@ struct Emulator {
     shift_out: bool,
     /// 最后写入的字符，供 `CSI b`（REP）重复。
     last_char: Option<char>,
+    /// 前面写入的字符组成的 emoji 字素簇；移动光标等控制序列之后重新开始。
+    cluster: width::Cluster,
+    /// 程序是否要求在明暗主题变化时收到通知（模式 2031）。
+    scheme_reports: bool,
     /// 记下的超链接地址。
     links: Links,
     /// 同步输出（模式 2026）是否打开。
@@ -518,6 +528,8 @@ impl Emulator {
             charsets: [false; 2],
             shift_out: false,
             last_char: None,
+            cluster: width::Cluster::None,
+            scheme_reports: false,
             links: Links::default(),
             sync: false,
             theme: None,

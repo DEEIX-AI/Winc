@@ -5,6 +5,7 @@
 
 mod common;
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use common::{Client, SIZE, WAIT};
@@ -35,6 +36,29 @@ fn skip_under_wine() -> bool {
 /// 系统 `cmd.exe` 的路径。
 fn cmd() -> String {
     std::env::var("COMSPEC").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into())
+}
+
+/// `winc-pty` 旁边有发布的 `conpty.dll` 和 `OpenConsole.exe` 时，控制台运行在这个程序中。
+///
+/// 这两个文件不随 `cargo` 构建，由 CI 用 `release/windows/conpty.ps1` 放好后单独运行本测试。
+#[test]
+fn the_bundled_console_host_runs_when_it_is_present() {
+    let dir = Path::new(env!("CARGO_BIN_EXE_winc-pty")).parent().unwrap();
+    let host = dir.join("OpenConsole.exe");
+    if skip_under_wine() {
+        return;
+    }
+    if !host.is_file() || !dir.join("conpty.dll").is_file() {
+        eprintln!("跳过：winc-pty 旁边没有 conpty.dll 和 OpenConsole.exe");
+        return;
+    }
+    let script = format!(
+        "if (Get-Process OpenConsole | Where-Object Path -eq '{}') {{ 'found' }} else {{ exit 4 }}",
+        host.display()
+    );
+    let mut c = Client::start();
+    c.spawn(1, "powershell.exe", &["-NoProfile", "-Command", &script]);
+    assert_eq!(c.until_exit_showing(|t| t.contains("found")), 0);
 }
 
 #[test]

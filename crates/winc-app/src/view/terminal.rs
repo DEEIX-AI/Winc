@@ -12,7 +12,7 @@ use grid::*;
 
 use winc_i18n::t;
 use winc_pty::protocol::{Attrs, Block, Color as TermColor, Line, Modes, Style, Underline};
-use winc_pty::width::char_width;
+use winc_pty::width::cells;
 use winc_render::{Color, FontKind, Frame, Rect};
 
 use super::*;
@@ -323,7 +323,7 @@ fn draw_outcome(
     let time_w = duration.as_deref().map_or(0.0, |d| measure(frame, d) + 8.0);
     let w = icon + code_w + time_w;
     let x = row.right() - w - 4.0;
-    let used = line.trimmed().chars().map(char_width).sum::<usize>() as f32 * app.cell;
+    let used = cells(line.trimmed()).map(|(_, w)| w).sum::<usize>() as f32 * app.cell;
     if row.x + used + 2.0 * app.cell > x {
         return;
     }
