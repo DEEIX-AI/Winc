@@ -213,6 +213,20 @@ impl App {
                 grab,
             } => self.drag_terminal_scrollbar(y, grab),
             Drag::Scrollbar {
+                bar: Scrollbar::Markdown,
+                grab,
+            } => {
+                // 分栏时左边的文字跟着滚（见 `scroll_markdown_to`）。
+                if let Some(area) = crate::app::preview::markdown::shown_area(self) {
+                    let content = self.markdown.height;
+                    let max = (content - area.h).max(0.0);
+                    if let Some(thumb) = scrollbar_thumb(area, 0.0, content) {
+                        let y = scroll_for_thumb(area.y, area.h, thumb.h, y, grab, max);
+                        self.scroll_markdown_to(y);
+                    }
+                }
+            }
+            Drag::Scrollbar {
                 bar: Scrollbar::Editor,
                 grab,
             } => {

@@ -359,6 +359,15 @@ impl App {
             return Some((Scrollbar::Terminal, grab(y, thumb.y, thumb.h)));
         }
 
+        // Markdown 预览：分栏时在右半边，只看预览时盖住整个编辑区，先于编辑区的滚动条认。
+        if let Some(area) = crate::app::preview::markdown::shown_area(self)
+            && area.contains(x, y)
+            && x >= area.right() - SCROLLBAR_HIT
+            && let Some(thumb) = scrollbar_thumb(area, self.markdown.scroll(), self.markdown.height)
+        {
+            return Some((Scrollbar::Markdown, grab(y, thumb.y, thumb.h)));
+        }
+
         let editor = self.scroll_track();
         let doc = self.editor.active()?;
         if editor.contains(x, y) && x >= editor.right() - SCROLLBAR_HIT {
@@ -478,7 +487,9 @@ impl App {
         // 日志详情里能选的字上（不是能点的提交号、文件）：文字光标。
         let in_field = self.field_at(x, y).is_some()
             || matches!(self.drag, Drag::LogText | Drag::MarkdownText)
-            || (self.markdown.area.contains(x, y) && self.markdown_link_at(x, y).is_none())
+            || (self.markdown.area.contains(x, y)
+                && self.markdown_link_at(x, y).is_none()
+                && !matches!(self.hover, Hover::Scrollbar(Scrollbar::Markdown)))
             || (self.log_active()
                 && crate::layout::hit(&self.log.hits, x, y).is_none()
                 && self.log_text_at(x, y, false).is_some());

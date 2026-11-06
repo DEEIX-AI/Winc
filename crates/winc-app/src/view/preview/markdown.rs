@@ -459,14 +459,18 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         app.request_markdown_pixels(&path, size);
     }
 
-    // 内容比区域高时，右边画一道细的滚动条（只是指示位置）。
-    if max > 0.0 {
-        let total = app.markdown.height;
-        let thumb = (area.h * area.h / total).max(24.0);
-        let y = area.y + (area.h - thumb) * scroll / max;
-        let bar = Rect::new(area.right() - 7.0, y + 2.0, 4.0, thumb - 4.0);
-        frame.rect_clipped(bar, p.scrollbar, 2.0, area);
-    }
+    // 内容比区域高时右边有滚动条，和编辑区的一样自动隐藏，可以拖动。
+    let owner = app.markdown.doc.map_or(0, |id| id.0);
+    let content = app.markdown.height;
+    super::super::draw_scrollbar(
+        app,
+        frame,
+        crate::app::ScrollArea::Markdown,
+        owner,
+        area,
+        scroll,
+        content,
+    );
 }
 
 /// 重排之前各顶层块的排版和绘制位置，重排后据此计算过渡动画（见 `BlockMotion`）。
