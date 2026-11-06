@@ -274,6 +274,15 @@ fn an_upstream_that_no_longer_exists_counts_as_none() {
 }
 
 #[test]
+fn failures_read_utf16_messages_from_wsl() {
+    let message: Vec<u8> = "There is no distribution\r\n"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    assert_eq!(failure(&message), "There is no distribution");
+}
+
+#[test]
 fn failures_pick_the_line_that_explains() {
     let push = b"To github.com:a/b.git\n ! [rejected]        main -> main (fetch first)\n\
                      error: failed to push some refs to 'github.com:a/b.git'\nhint: Updates were rejected\n";

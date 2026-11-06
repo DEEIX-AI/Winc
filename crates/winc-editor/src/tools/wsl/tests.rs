@@ -1,4 +1,5 @@
-//! `wsl` 的测试：识别发行版中的路径，以及两种路径写法之间的换算。
+//! `wsl` 的测试：识别发行版中的路径、两种路径写法之间的换算、进入发行版的命令，以及保存时保持
+//! 文件权限的脚本。
 
 use super::*;
 
@@ -67,6 +68,64 @@ fn only_windows_uses_the_conversion() {
     assert!(!available());
     assert_eq!(temp_dir(Path::new("/repo")), std::env::temp_dir());
     assert_eq!(temp_dir(root), std::env::temp_dir());
+    let linux = PathBuf::from("/home/me/a.rs");
+    assert_eq!(from_terminal(root, linux.clone()), linux);
+}
+
+#[test]
+fn programs_run_through_a_login_shell_in_the_directory() {
+    let mut command = Command::new("wsl.exe");
+    enter_login(&mut command, "Ubuntu", "/home/me/app");
+    let args: Vec<_> = command.get_args().collect();
+    assert_eq!(
+        args,
+        [
+            "-d",
+            "Ubuntu",
+            "--cd",
+            "/home/me/app",
+            "--exec",
+            "sh",
+            "-lc",
+            r#"exec "$0" "$@""#,
+        ]
+    );
+    let utf8 = command.get_envs().find(|(name, _)| *name == "WSL_UTF8");
+    assert_eq!(utf8.and_then(|(_, value)| value), Some("1".as_ref()));
+}
+
+// `stat -c` 是 Linux 上 `stat` 的写法，与发行版内运行脚本的环境相同。
+#[cfg(target_os = "linux")]
+#[test]
+fn the_identity_script_copies_the_mode_and_refuses_hard_links() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = crate::test_util::scratch("wsl-keep-identity");
+    let target = dir.join("run.sh");
+    let temp = dir.join("run.sh.tmp");
+    let run = || {
+        Command::new("sh")
+            .args(["-c", KEEP_IDENTITY, "sh"])
+            .args([&target, &temp])
+            .status()
+            .unwrap()
+            .success()
+    };
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    std::fs::write(&target, "a").unwrap();
+    std::fs::write(&temp, "b").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o751)).unwrap();
+    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    assert!(run());
+    assert_eq!(mode(&temp), 0o751);
+
+    // 有多个硬链接时改名替换会使其他名字指向旧内容，因此拒绝，权限也不改动。
+    std::fs::hard_link(&target, dir.join("other")).unwrap();
+    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(!run());
+    assert_eq!(mode(&temp), 0o600);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -85,6 +144,19 @@ fn windows_converts_paths_inside_a_distribution() {
     assert_eq!(resolve(root, ".git"), root.join(".git"));
     let other = Path::new(r"\\wsl.localhost\Ubuntu\repo.worktrees\feat");
     assert_eq!(git_arg(root, other), "/repo.worktrees/feat");
+    assert_eq!(
+        from_terminal(root, PathBuf::from("/home/me/a.rs")),
+        PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me\a.rs")
+    );
+    assert_eq!(
+        from_terminal(root, PathBuf::from("a.rs")),
+        PathBuf::from("a.rs")
+    );
+    let local = Path::new(r"C:\repo");
+    assert_eq!(
+        from_terminal(local, PathBuf::from("/a")),
+        PathBuf::from("/a")
+    );
     let temp = temp_dir(root);
     assert_eq!(temp, PathBuf::from(r"\\wsl.localhost\Ubuntu\tmp"));
     assert_eq!(

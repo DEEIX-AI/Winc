@@ -1079,8 +1079,9 @@ impl Git {
             return command;
         };
         let mut command = self.shell.command(Path::new("wsl.exe"));
+        crate::wsl::enter(&mut command, &place.distro);
         command
-            .args(["-d", &place.distro, "--exec", "git", "-C", &place.path])
+            .args(["--exec", "git", "-C", &place.path])
             .env("WSLENV", crate::wsl::GIT_ENV);
         command
     }
@@ -1092,8 +1093,9 @@ impl Git {
     fn file_mode(&self, path: &Path, cancel: &Cancel) -> Result<&'static str, String> {
         if let Some(place) = crate::wsl::locate_here(path) {
             let mut command = self.shell.command(Path::new("wsl.exe"));
+            crate::wsl::enter(&mut command, &place.distro);
             command
-                .args(["-d", &place.distro, "--exec", "test", "-x", &place.path])
+                .args(["--exec", "test", "-x", &place.path])
                 .stderr(Stdio::piped());
             let output = process::run(&mut command, Vec::new(), SHOW_TIMEOUT, cancel)
                 .map_err(|e| describe(&e))?;
