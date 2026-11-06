@@ -28,6 +28,12 @@ impl App {
             Target::Change(target) => Hover::Change(target),
             Target::Merge(target) => Hover::Merge(target),
             Target::Conflict(action) => Hover::ConflictButton(action),
+            Target::Picker
+                if let Some(&(_, part)) =
+                    (self.picker_part_hits.iter()).find(|(rect, _)| rect.contains(x, y)) =>
+            {
+                Hover::PickerPart(part)
+            }
             Target::Picker => view::picker_parts(self, l.picker)
                 .row_at(y, self.picker_scroll)
                 .filter(|&i| i < self.picker_hits.len())
@@ -45,7 +51,6 @@ impl App {
             Target::Splitter => Hover::Splitter,
             Target::TreeTool(tool) => Hover::TreeTool(tool),
             Target::ProjectName => Hover::ProjectName,
-            Target::BranchName => Hover::BranchName,
             Target::SidebarButton => Hover::SidebarButton,
             Target::NewTab => Hover::NewTab,
             Target::TabList => Hover::TabList,
@@ -158,9 +163,6 @@ impl App {
         }
         if self.project_hit.contains(x, y) {
             return Target::ProjectName;
-        }
-        if self.branch_hit.contains(x, y) {
-            return Target::BranchName;
         }
         if l.sidebar_button.contains(x, y) {
             return Target::SidebarButton;
@@ -563,7 +565,6 @@ pub(super) enum Target {
     Splitter,
     TreeTool(crate::layout::TreeTool),
     ProjectName,
-    BranchName,
     SidebarButton,
     NewTab,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。
