@@ -276,10 +276,11 @@ impl Emulator {
         let Some(last) = self.primary.rows.iter().rposition(|row| !row.is_blank()) else {
             return;
         };
-        let kept = self.primary.rows[..=last].to_vec();
-        if self.last_kept.as_ref() == Some(&kept) {
+        let screen = &self.primary.rows[..=last];
+        if self.last_kept.as_deref() == Some(screen) {
             return;
         }
+        let kept = screen.to_vec();
         let region = (self.top, self.bottom);
         (self.top, self.bottom) = (0, self.rows);
         self.scroll_up(last + 1);

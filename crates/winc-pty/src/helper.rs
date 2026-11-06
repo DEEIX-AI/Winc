@@ -6,7 +6,6 @@
 //! 发帧按额度：伪终端的输出随到随解析，只有主程序给了额度、屏幕又变了的终端才发一帧，中间状态
 //! 直接跳过。
 
-#[cfg(unix)]
 mod integration;
 #[cfg(unix)]
 mod pty;
@@ -420,7 +419,7 @@ impl Helper {
         id: u16,
         program: Option<Vec<u8>>,
         mut args: Vec<Vec<u8>>,
-        mut login: bool,
+        #[cfg_attr(windows, allow(unused_mut))] mut login: bool,
         cwd: &[u8],
         env: Vec<(Vec<u8>, Vec<u8>)>,
         scrollback: u32,
@@ -451,11 +450,14 @@ impl Helper {
             });
             return;
         };
-        // shell 集成脚本只支持 Unix 上的 shell：其他平台不注入，只是没有命令块。
+        // 集成脚本只适用于 Unix shell。Windows 上仅注入 WSL 发行版内的 shell，其他 shell 不提供命令块。
         #[cfg(unix)]
         let nonce = integration
             .and_then(|dir| integration::inject(&dir, &path, &mut args, &mut login, &mut env));
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        let nonce =
+            integration.and_then(|dir| integration::inject_wsl(&dir, &path, &mut args, &mut env));
+        #[cfg(not(any(unix, windows)))]
         let nonce: Option<_> = {
             let _ = (integration, &mut login, &mut args, &mut env);
             None
