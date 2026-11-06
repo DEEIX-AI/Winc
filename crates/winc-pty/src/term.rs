@@ -436,6 +436,12 @@ struct Emulator {
     alt: bool,
     /// 滚出屏幕顶部的行。
     history: History,
+    /// 回滚缓冲刚被程序清空（ED 3），之后还没有写入内容。
+    ///
+    /// 此时再擦除整屏是一次完整的清屏（`clear` 命令），屏幕内容不再移入回滚缓冲。
+    history_erased: bool,
+    /// 上一次清屏时移入回滚缓冲的行；之后有其他行滚入回滚缓冲时清除。
+    last_kept: Option<Vec<Row>>,
     /// 当前画笔，写入字符时使用。
     pen: Style,
     /// 滚动区域的首末行 `top..bottom`。
@@ -496,6 +502,8 @@ impl Emulator {
             alternate: Screen::new(cols, rows),
             alt: false,
             history: History::new(scrollback),
+            history_erased: false,
+            last_kept: None,
             pen: Style::default(),
             top: 0,
             bottom: rows,

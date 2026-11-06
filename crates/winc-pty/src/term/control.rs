@@ -241,6 +241,7 @@ impl Emulator {
         self.primary = Screen::new(cols, rows);
         self.alternate = Screen::new(cols, rows);
         self.alt = false;
+        self.last_kept = None;
         self.soft_reset();
         self.modes = Modes(Modes::ALT_SCROLL);
         self.shape = CursorShape::Block;

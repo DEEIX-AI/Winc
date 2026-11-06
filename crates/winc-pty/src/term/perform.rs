@@ -80,6 +80,7 @@ impl Args {
 
 impl Perform for Emulator {
     fn print(&mut self, c: char) {
+        self.history_erased = false;
         self.write_char(c);
     }
 

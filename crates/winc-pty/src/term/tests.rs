@@ -1070,3 +1070,156 @@ fn base64_encode(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// 只统计内容，去掉回滚缓冲里的空行。
+fn history_lines(t: &Terminal) -> Vec<String> {
+    let mut lines = history_text(t);
+    lines.retain(|line| !line.is_empty());
+    lines
+}
+
+#[test]
+fn refreshing_the_screen_with_newlines_keeps_earlier_output() {
+    // Vite 的做法：先用换行把屏幕内容推进回滚缓冲，再回到左上角擦除到末尾。
+    let mut t = term(80, 10);
+    for i in 0..30 {
+        feed(&mut t, &format!("build {i}\r\n"));
+    }
+    for i in 0..3 {
+        feed(&mut t, &"\n".repeat(9));
+        feed(&mut t, "\x1b[1;1H\x1b[0J");
+        feed(&mut t, &format!("hmr update (x{i})\r\n"));
+    }
+    let history = history_lines(&t);
+    assert_eq!(history[0], "build 0");
+    assert!(history.iter().any(|line| line == "build 29"));
+}
+
+#[test]
+fn erasing_the_screen_moves_its_content_into_the_scrollback() {
+    let mut t = term(20, 4);
+    feed(&mut t, "one\r\ntwo\r\n");
+    feed(&mut t, "\x1b[2J\x1b[H");
+    assert_eq!(history_text(&t), ["one", "two"]);
+    assert_eq!(t.cursor(), (0, 0));
+    assert!(t.screen_text().trim().is_empty());
+
+    // 行号连续：之后的输出接在后面。
+    feed(&mut t, "three\r\n\x1b[2J");
+    assert_eq!(history_text(&t), ["one", "two", "three"]);
+}
+
+#[test]
+fn erasing_an_empty_screen_adds_nothing() {
+    let mut t = term(20, 4);
+    feed(&mut t, "\x1b[2J\x1b[2J");
+    assert!(history_text(&t).is_empty());
+    // 重复清屏不产生重复的空行。
+    feed(&mut t, "x\x1b[2J\x1b[2J");
+    assert_eq!(history_text(&t), ["x"]);
+}
+
+#[test]
+fn the_clear_command_leaves_nothing_behind_in_either_order() {
+    for sequence in ["\x1b[H\x1b[2J\x1b[3J", "\x1b[3J\x1b[H\x1b[2J"] {
+        let mut t = term(20, 4);
+        feed(&mut t, "one\r\ntwo\r\n");
+        feed(&mut t, sequence);
+        assert!(history_text(&t).is_empty(), "{sequence:?}");
+        assert!(t.screen_text().trim().is_empty());
+    }
+}
+
+#[test]
+fn output_after_clearing_the_scrollback_is_kept_by_the_next_erase() {
+    let mut t = term(20, 4);
+    feed(&mut t, "\x1b[3Jnew\x1b[2J");
+    assert_eq!(history_text(&t), ["new"]);
+}
+
+#[test]
+fn erasing_keeps_the_scroll_region_and_ignores_it_for_the_scrollback() {
+    let mut t = term(20, 6);
+    feed(&mut t, "top\r\n\x1b[3;5r\x1b[2;1Hmiddle\x1b[2J");
+    assert_eq!(history_text(&t), ["top", "middle"]);
+    // 区域没有变化：第 3 到 5 行内的滚动不进回滚缓冲。
+    feed(&mut t, "\x1b[5;1Hx\r\n");
+    assert_eq!(history_text(&t), ["top", "middle"]);
+}
+
+#[test]
+fn the_alternate_screen_is_not_kept_when_erased() {
+    let mut t = term(20, 4);
+    feed(&mut t, "\x1b[?1049hfull screen\x1b[2J");
+    assert!(history_text(&t).is_empty());
+}
+
+#[test]
+fn clearing_from_the_top_left_corner_keeps_the_screen() {
+    // `console.clear()` 的序列。
+    let mut t = term(20, 4);
+    feed(&mut t, "one\r\ntwo\r\n\x1b[1;1H\x1b[0J");
+    assert_eq!(history_text(&t), ["one", "two"]);
+    assert!(t.screen_text().trim().is_empty());
+}
+
+#[test]
+fn clearing_from_elsewhere_keeps_nothing() {
+    let mut t = term(20, 4);
+    feed(&mut t, "one\r\ntwo\x1b[2;1H\x1b[0J");
+    assert!(history_text(&t).is_empty());
+    assert!(t.screen_text().contains("one"));
+    assert!(!t.screen_text().contains("two"));
+
+    let mut t = term(20, 4);
+    feed(&mut t, "\x1b[?1049hfull\x1b[H\x1b[J");
+    assert!(history_text(&t).is_empty());
+
+    // 先清回滚缓冲，再从左上角清屏。
+    let mut t = term(20, 4);
+    feed(&mut t, "one\r\n\x1b[3J\x1b[H\x1b[J");
+    assert!(history_text(&t).is_empty());
+    assert!(t.screen_text().trim().is_empty());
+}
+
+#[test]
+fn redrawing_the_same_screen_is_kept_once() {
+    let mut t = term(20, 4);
+    for _ in 0..5 {
+        feed(&mut t, "\x1b[H\x1b[Jsame\r\nframe\r\n");
+    }
+    feed(&mut t, "\x1b[H\x1b[J");
+    assert_eq!(history_text(&t), ["same", "frame"]);
+}
+
+#[test]
+fn different_screens_are_all_kept() {
+    let mut t = term(20, 4);
+    for frame in ["a", "b", "a"] {
+        feed(&mut t, &format!("{frame}\x1b[2J\x1b[H"));
+    }
+    assert_eq!(history_text(&t), ["a", "b", "a"]);
+}
+
+#[test]
+fn the_same_screen_is_kept_again_after_other_output_scrolled() {
+    let mut t = term(20, 2);
+    feed(&mut t, "same\x1b[2J\x1b[H");
+    // 其他输出滚入回滚缓冲后，相同的画面不再是连续重复。
+    feed(&mut t, "x\r\ny\r\nz\x1b[2J\x1b[H");
+    feed(&mut t, "same\x1b[2J\x1b[H");
+    let history = history_text(&t);
+    assert_eq!(
+        history.iter().filter(|line| *line == "same").count(),
+        2,
+        "{history:?}"
+    );
+}
+
+#[test]
+fn clearing_the_scrollback_forgets_the_last_kept_screen() {
+    let mut t = term(20, 4);
+    feed(&mut t, "same\x1b[2J\x1b[H\x1b[3J");
+    feed(&mut t, "same\x1b[2J\x1b[H");
+    assert_eq!(history_text(&t), ["same"]);
+}

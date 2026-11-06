@@ -143,6 +143,7 @@ impl Emulator {
             let mut row = screen.rows.remove(top);
             if to_history {
                 self.history.push_row(&row);
+                self.last_kept = None;
             }
             row.reset(cols, bg);
             screen.rows.insert(bottom - 1, row);
@@ -222,10 +223,16 @@ impl Emulator {
     }
 
     /// 擦除屏幕内容（ED）：0 从光标到末尾，1 从开头到光标，2 整屏，3 回滚缓冲。
+    ///
+    /// 主屏上擦除整屏（2，或光标在左上角时的 0）之前，先把有内容的行移入回滚缓冲，用清屏刷新输出的
+    /// 程序之后仍可翻看之前的内容，条件见 `keep_screen_in_history`。
     pub(super) fn erase_display(&mut self, mode: u16) {
         let cursor = self.cursor();
         match mode {
             0 => {
+                if (cursor.row, cursor.col) == (0, 0) {
+                    self.keep_screen_in_history();
+                }
                 self.erase_cells(cursor.row, cursor.col, self.cols);
                 for row in cursor.row + 1..self.rows {
                     self.erase_row(row);
@@ -238,11 +245,14 @@ impl Emulator {
                 self.erase_cells(cursor.row, 0, cursor.col + 1);
             }
             2 => {
+                self.keep_screen_in_history();
                 for row in 0..self.rows {
                     self.erase_row(row);
                 }
             }
             3 => {
+                self.history_erased = true;
+                self.last_kept = None;
                 self.history.clear();
                 self.blocks.dirty = true;
                 self.damage.reset = true;
@@ -251,6 +261,30 @@ impl Emulator {
             _ => {}
         }
         self.screen_mut().cursor.pending_wrap = false;
+    }
+
+    /// 把主屏第一行到最后一个有内容的行移入回滚缓冲，不受滚动区域限制。
+    ///
+    /// 以下情况不移入：
+    /// - 备用屏，或屏幕为空。
+    /// - 回滚缓冲刚被程序清空（`history_erased`）：`clear` 命令可能先清回滚缓冲再清屏。
+    /// - 内容与上一次移入的完全相同（`last_kept`）：程序反复重绘同样的画面。
+    fn keep_screen_in_history(&mut self) {
+        if self.alt || self.history_erased {
+            return;
+        }
+        let Some(last) = self.primary.rows.iter().rposition(|row| !row.is_blank()) else {
+            return;
+        };
+        let kept = self.primary.rows[..=last].to_vec();
+        if self.last_kept.as_ref() == Some(&kept) {
+            return;
+        }
+        let region = (self.top, self.bottom);
+        (self.top, self.bottom) = (0, self.rows);
+        self.scroll_up(last + 1);
+        (self.top, self.bottom) = region;
+        self.last_kept = Some(kept);
     }
 
     /// 擦除行内容（EL）：0 从光标到行尾，1 从行首到光标，2 整行。
@@ -277,6 +311,7 @@ impl Emulator {
             .rows
             .resize_with(rows, || Row::new(cols, Color::Default));
         screen.cursor.row = 0;
+        self.last_kept = None;
         self.history.clear();
         self.blocks.dirty = true;
         self.damage.reset = true;

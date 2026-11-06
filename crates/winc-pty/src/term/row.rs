@@ -209,6 +209,11 @@ impl Row {
         self.cells[at] = Cell::blank(self.cells[at].bg);
     }
 
+    /// 这一行是否没有任何内容。
+    pub fn is_blank(&self) -> bool {
+        self.cells.iter().all(Cell::is_empty)
+    }
+
     /// 擦掉 `start..end` 这些格，填成背景色为 `bg` 的空格。
     pub fn erase(&mut self, start: usize, end: usize, bg: Color) {
         let end = end.min(self.cells.len());
