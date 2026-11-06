@@ -63,7 +63,7 @@ menu-git-pull-behind = { $count ->
     }
 menu-git-pull-from = From { $upstream }
 menu-git-pull-no-upstream = The current branch has no upstream
-menu-git-fetch-desc = Sync remote updates
+menu-git-fetch-desc = Download remote updates without changing local branches
 
 ## Context menu items
 
@@ -102,6 +102,9 @@ menu-table-align-right = Align Right
 ## Git menu items
 
 menu-new-worktree = New Worktree…
+menu-git-new-branch = New Branch…
+menu-git-sync = Sync
+menu-git-sync-desc = Pull and push commits
 menu-git-fetch = Fetch
 menu-git-pull = Pull
 menu-git-push = Push

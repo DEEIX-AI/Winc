@@ -1230,13 +1230,16 @@ impl App {
 
     /// 用提示框询问，确认后撤销上一次提交。更改还在，确认按钮不标记为危险操作。
     fn confirm_undo_commit(&mut self, last: &LastCommit) {
-        let message = t!("git-undo-commit-confirm", subject = last.subject.as_str());
-        let detail = t!("git-undo-commit-confirm-detail");
+        let message = t!("git-undo-commit-confirm");
+        let detail = t!(
+            "git-undo-commit-confirm-detail",
+            subject = last.subject.as_str()
+        );
         let buttons = vec![
             AlertButton::new(t!("git-undo-commit-confirm-button")),
             AlertButton::cancel(t!("common-cancel")),
         ];
-        self.show_alert(&message, detail, buttons, None, |choice, _| {
+        self.show_alert(message, &detail, buttons, None, |choice, _| {
             (choice == 0).then_some(UserEvent::GitUndoCommit)
         });
     }

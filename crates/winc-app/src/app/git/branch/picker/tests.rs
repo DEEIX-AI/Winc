@@ -98,6 +98,60 @@ fn only_the_current_branchs_folder_starts_open() {
 }
 
 #[test]
+fn local_branches_are_listed_by_their_last_commit() {
+    let at = |name: &str, time: i64| Branch {
+        time,
+        ..branch(name, false, false)
+    };
+    let branches = [
+        at("old", 1),
+        at("feature/a", 2),
+        at("feature/b", 9),
+        at("new", 5),
+        at("tie-b", 3),
+        at("tie-a", 3),
+        Branch {
+            time: 1,
+            ..branch("current", false, true)
+        },
+        branch("origin/z", true, false),
+        branch("origin/a", true, false),
+    ];
+    let opened = HashSet::from([(true, String::new())]);
+    assert_eq!(
+        outline(&rows(&branches, &[], "", &opened)),
+        [
+            "Local",
+            "current",
+            "> feature 2",
+            "new",
+            "tie-a",
+            "tie-b",
+            "old",
+            "v remotes 2",
+            "a",
+            "z",
+        ]
+    );
+
+    // 状态栏的菜单是同样的顺序。
+    use crate::app::input::context_menu::{MenuCommand, MenuEntry, status_branch_menu};
+    let menu = status_branch_menu(&branches, &[], [true; 4]);
+    let order: Vec<String> = (menu.iter())
+        .take_while(|entry| !matches!(entry, MenuEntry::Separator))
+        .map(|entry| match entry {
+            MenuEntry::Item(MenuCommand::StatusBranch(i), _) => branches[*i].name.clone(),
+            MenuEntry::Submenu(title, _) => format!("{title}/"),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        order[..6],
+        ["current", "feature/", "new", "tie-a", "tie-b", "old"]
+    );
+}
+
+#[test]
 fn toggled_folders_flip_their_default_state() {
     let toggled = HashSet::from([
         (false, "feature".to_owned()),

@@ -515,6 +515,21 @@ impl App {
                 .map(|i| MenuEntry::Item(MenuCommand::ShowTab(i), true))
                 .collect(),
             MenuTarget::LogBranch => log_branch_menu(&self.git.branches),
+            MenuTarget::StatusBranches => {
+                let idle = self.branch.running.is_none();
+                let differs = matches!(
+                    self.git_sync_state(),
+                    SyncState::Push(_) | SyncState::Pull(_) | SyncState::Both { .. }
+                );
+                let usable = [
+                    idle && differs,
+                    idle && !self.git.remotes.is_empty(),
+                    idle && self.has_upstream(),
+                    idle && !self.git.remotes.is_empty(),
+                ];
+                status_branch_menu(&self.git.branches, &self.git.stale_branches(), usable)
+            }
+            MenuTarget::StatusPlaces(_) => self.location_menu(),
             MenuTarget::FormBase => form_base_menu(&self.git.branches),
             MenuTarget::LogFile(_, path) => {
                 log_file_menu(path.exists(), self.relative_path(path).is_some())
@@ -610,7 +625,9 @@ impl App {
             MenuTarget::BranchOps(_) | MenuTarget::CommitMore => {
                 (self.git.branches.clone(), self.git.stashes.clone())
             }
-            MenuTarget::LogBranch | MenuTarget::FormBase => (self.git.branches.clone(), Vec::new()),
+            MenuTarget::LogBranch | MenuTarget::FormBase | MenuTarget::StatusBranches => {
+                (self.git.branches.clone(), Vec::new())
+            }
             _ => Default::default(),
         };
         self.context_menu = Some(ContextMenu {
@@ -738,6 +755,19 @@ impl App {
                     ..MenuLabel::plain(command.label())
                 }
             }
+            MenuCommand::StatusBranch(i) => {
+                let branch = self.git.branches.get(i);
+                let local = branch.filter(|b| !b.remote).map(|b| b.name.as_str());
+                let holder = local
+                    .and_then(|name| self.git.worktree_holding(name))
+                    .and_then(|i| self.git.worktrees.get(i))
+                    .map(crate::app::git::worktree::worktree_name);
+                MenuLabel {
+                    subtitle: holder,
+                    ..MenuLabel::plain(branch.map_or("", |b| b.name.as_str()))
+                }
+            }
+            MenuCommand::StatusPlace(i) => self.location_menu_label(i),
             MenuCommand::LogBranch(i @ 1..) => {
                 MenuLabel::plain(self.git.branches.get(i - 1).map_or("", |b| b.name.as_str()))
             }
@@ -753,6 +783,7 @@ impl App {
             }
             MenuCommand::GitBranch(..)
             | MenuCommand::GitFetch
+            | MenuCommand::StatusSync
             | MenuCommand::GitPush
             | MenuCommand::GitPull
             | MenuCommand::GitContinue
@@ -853,6 +884,7 @@ impl App {
                 Some(t!("menu-git-checkout-stale-worktree").to_owned())
             }
             (MenuCommand::GitFetch, _) => Some(t!("menu-git-fetch-desc").to_owned()),
+            (MenuCommand::StatusSync, _) => Some(t!("menu-git-sync-desc").to_owned()),
             (MenuCommand::GitContinue, _) => Some(t!("menu-git-continue-desc").to_owned()),
             (MenuCommand::GitAbort, _) => Some(t!("menu-git-abort-desc").to_owned()),
             (MenuCommand::GitPush, Some(up)) if ahead > 0 => {
@@ -963,6 +995,12 @@ impl App {
             .map(|v| &v.query);
         if let MenuCommand::FormBase(i) = command {
             return self.form_base_chosen(i);
+        }
+        if let MenuCommand::StatusBranch(i) = command {
+            return self.git.branches.get(i).is_some_and(|b| b.current);
+        }
+        if let MenuCommand::StatusPlace(i) = command {
+            return self.location_places().get(i).is_some_and(|p| p.current);
         }
         match (command, query) {
             (MenuCommand::LogBranch(i), Some(q)) => {

@@ -41,6 +41,29 @@ impl App {
                     self.choose_form_base(base.map(|b| b.name.clone()));
                 }
             }
+            MenuTarget::StatusBranches => match command {
+                MenuCommand::StatusBranch(i) => {
+                    if let Some(chosen) = menu.branches.get(i) {
+                        self.pick_branch_named(chosen);
+                    }
+                }
+                MenuCommand::StatusSync => self.git_sync(),
+                MenuCommand::GitFetch | MenuCommand::GitPull | MenuCommand::GitPush => {
+                    self.run_branch_command(command);
+                }
+                MenuCommand::StatusNewBranch => self.open_branch_dialog(None, None),
+                MenuCommand::NewWorktree => self.open_worktree_dialog(),
+                _ => {}
+            },
+            MenuTarget::StatusPlaces(places) => match command {
+                MenuCommand::StatusPlace(i) => {
+                    if let Some(place) = places.get(i) {
+                        self.go_to_place(place);
+                    }
+                }
+                MenuCommand::NewWorktree => self.open_worktree_dialog(),
+                _ => {}
+            },
             MenuTarget::LogBranch => {
                 if let MenuCommand::LogBranch(i) = command {
                     let branch = i.checked_sub(1).and_then(|i| menu.branches.get(i));

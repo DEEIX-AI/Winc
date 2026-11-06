@@ -15,6 +15,7 @@ use winc_i18n::t;
 use winc_render::Image;
 
 use super::*;
+use crate::app::git::location_picker::Place;
 use crate::icons;
 use crate::keymap::{self, Action, Context, Stroke};
 use crate::layout::{goto_bar, hit};
@@ -207,6 +208,14 @@ pub enum MenuCommand {
     FileHistory,
     /// 日志的分支筛选：0 是全部分支，`i + 1` 是分支列表里第 `i` 个分支。
     LogBranch(usize),
+    /// 状态栏的分支菜单：切换到弹出菜单时分支列表里的第几个分支。
+    StatusBranch(usize),
+    /// 状态栏的分支菜单：和上游同步。
+    StatusSync,
+    /// 状态栏的分支菜单：新建分支。
+    StatusNewBranch,
+    /// 状态栏的位置菜单：切换到第几个位置。
+    StatusPlace(usize),
     /// 新建工作树的起点：0 是当前分支，`i + 1` 是分支列表里第 `i` 个分支。
     FormBase(usize),
     /// 日志的作者筛选：0 是全部作者，`i + 1` 是作者菜单里第 `i` 个作者。
@@ -332,6 +341,10 @@ impl MenuCommand {
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
             MenuCommand::LocationNewWindow => t!("git-location-new-window"),
             MenuCommand::LocationRemove => t!("git-location-remove"),
+            MenuCommand::StatusNewBranch => t!("menu-git-new-branch"),
+            MenuCommand::StatusSync => t!("menu-git-sync"),
+            // 文字来自当时的分支和位置（`App::menu_label`）。
+            MenuCommand::StatusBranch(_) | MenuCommand::StatusPlace(_) => "",
             MenuCommand::LocationPrune => t!("git-location-prune"),
             MenuCommand::GitFetch => t!("menu-git-fetch"),
             MenuCommand::GitPull => t!("menu-git-pull"),
@@ -572,6 +585,10 @@ pub enum MenuTarget {
     LogBranch,
     /// 新建工作树对话框的「基于」。
     FormBase,
+    /// 状态栏的分支菜单。
+    StatusBranches,
+    /// 状态栏的位置菜单：弹出时的各个位置，菜单项按下标对应。
+    StatusPlaces(Vec<Place>),
     /// 日志标题栏的「作者」下拉。
     LogAuthor,
     /// 日志里的一个提交（完整的提交号）。

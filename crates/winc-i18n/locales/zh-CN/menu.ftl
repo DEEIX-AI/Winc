@@ -57,7 +57,7 @@ menu-git-push-set-upstream = 推送「{ $branch }」并设为上游
 menu-git-pull-behind = { $count } 个提交 ← { $upstream }
 menu-git-pull-from = 从 { $upstream }
 menu-git-pull-no-upstream = 当前分支没有上游
-menu-git-fetch-desc = 同步远程更新
+menu-git-fetch-desc = 下载远程更新，不改动本地分支
 
 ## 右键菜单项
 
@@ -96,6 +96,9 @@ menu-table-align-right = 右对齐
 ## Git 菜单项
 
 menu-new-worktree = 新建工作树…
+menu-git-new-branch = 新建分支…
+menu-git-sync = 同步
+menu-git-sync-desc = 拉取并推送提交
 menu-git-fetch = 获取
 menu-git-pull = 拉取
 menu-git-push = 推送

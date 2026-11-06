@@ -1,4 +1,4 @@
-//! 分支选择器：从提交视图的分支行或状态栏的分支名就地展开，只用来选分支。
+//! 分支选择器：从提交视图的分支行就地展开，只用来选分支。
 //!
 //! 依次是最近使用、本地分支和可以展开的远程分支，分支名按 `/` 分层，只展开当前分支所在的目录。
 //! 同一个分支只列一次：本地分支一屏放得下时不单列最近使用，单列时下面不再重复；已有本地分支的
@@ -19,7 +19,6 @@ use crate::app::input::context_menu::MenuTarget;
 use crate::app::input::palette::{matched, needle, rate};
 use crate::app::{AlertButton, App, Clock, Focus, PICKER_ROW, UserEvent};
 use crate::layout::{MENU_PICKER_BAR, MENU_PICKER_PAD};
-use crate::theme::TOP_BAR_END;
 
 /// 最近使用的分支最多列出几个（个）：加上标题不超过选择面板一半的行数，本地分支仍在首屏。
 const RECENT_BRANCHES: usize = 5;
@@ -33,8 +32,6 @@ pub enum GitAnchor {
     Branch,
     /// 提交视图的位置行下方。
     Location,
-    /// 状态栏的分支名上方。
-    Status,
 }
 
 /// 选择面板里除了各行以外可以点的地方。
@@ -71,8 +68,6 @@ impl BranchCreate {
 /// 选择面板最小、最大的宽度（逻辑像素）：平时和 Git 上下文的行一样宽，两边对齐。最小宽度放得下
 /// 较长的分支名和后面的时间；最大宽度与窗口内绘制的菜单相同，名字和右端的文字不至于隔得太远。
 const GIT_PICKER_WIDTH: (f32, f32) = (260.0, 420.0);
-/// 从状态栏展开时面板的宽度（逻辑像素）：没有可以对齐的行，用默认宽度的侧栏里行的宽度。
-const GIT_PICKER_STATUS_WIDTH: f32 = 275.0;
 /// 选择面板最多同时显示的行数（行）：分支常常成组展开，比文件列表多留一些行。
 const GIT_PICKER_ROWS: usize = 16;
 /// 新建分支时说明文字一行的高度（逻辑像素）：小号字 12 的 1.5 倍。
@@ -217,6 +212,7 @@ pub fn branch_rows(list: &BranchList<'_>) -> Vec<BranchRow> {
             .collect()
     };
     let tree = |remote| Tree {
+        branches,
         remote,
         searching,
         current,
@@ -260,7 +256,7 @@ pub fn branch_rows(list: &BranchList<'_>) -> Vec<BranchRow> {
 }
 
 /// 远程分支 `remote` 是否已有本地分支：同名，或者有本地分支跟踪它。
-fn has_local_branch(branches: &[Branch], remote: &Branch) -> bool {
+pub(in crate::app) fn has_local_branch(branches: &[Branch], remote: &Branch) -> bool {
     let name = local_name(remote);
     (branches.iter().filter(|b| !b.remote))
         .any(|b| b.name == name || b.upstream.as_deref() == Some(remote.name.as_str()))
@@ -308,6 +304,7 @@ fn quick_branches(branches: &[Branch], recent: &[String]) -> Vec<usize> {
 
 /// 排一组分支的树时不变的条件。
 struct Tree<'a> {
+    branches: &'a [Branch],
     remote: bool,
     searching: bool,
     current: Option<&'a str>,
@@ -315,7 +312,10 @@ struct Tree<'a> {
 }
 
 impl Tree<'_> {
-    /// 把 `items`（下标、去掉 `prefix` 的分支名）排成一层：先是目录，再是分支。
+    /// 把 `items`（下标、去掉 `prefix` 的分支名）排成一层。
+    ///
+    /// 本地分支里当前分支（或它所在的目录）在最前，其余按最后一次提交的时间排，最近的在前，目录按
+    /// 里面最近的分支算；时间相同时目录在前，再按名字。远程分支只按名字。
     fn push(
         &self,
         items: Vec<(usize, &str)>,
@@ -331,7 +331,32 @@ impl Tree<'_> {
                 None => leaves.push((index, name)),
             }
         }
-        for (folder, mut sub) in folders {
+        let time = |index: usize| {
+            let branch = (!self.remote).then(|| self.branches.get(index)).flatten();
+            branch.map_or(0, |b| if b.current { i64::MAX } else { b.time })
+        };
+        let mut nodes: Vec<_> = (folders.into_iter())
+            .map(|(folder, sub)| {
+                let newest = sub.iter().map(|&(i, _)| time(i)).max().unwrap_or(0);
+                (newest, false, folder, sub)
+            })
+            .chain(
+                leaves
+                    .into_iter()
+                    .map(|(i, name)| (time(i), true, name, vec![(i, name)])),
+            )
+            .collect();
+        nodes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(b.2)));
+        for (_, leaf, folder, mut sub) in nodes {
+            if leaf {
+                let (index, name) = sub[0];
+                rows.push(BranchRow::Branch {
+                    index,
+                    depth,
+                    label: name.to_owned(),
+                });
+                continue;
+            }
             // 只有一个子目录、没有分支：和子目录合成一行。
             let mut label = folder.to_owned();
             while let Some(next) = only_folder(&sub) {
@@ -361,11 +386,6 @@ impl Tree<'_> {
                 self.push(sub, &format!("{path}/"), depth + 1, rows);
             }
         }
-        rows.extend(leaves.into_iter().map(|(index, name)| BranchRow::Branch {
-            index,
-            depth,
-            label: name.to_owned(),
-        }));
     }
 }
 
@@ -488,8 +508,7 @@ impl App {
         })
     }
 
-    /// 把面板摆到触发它的按钮旁边：提交视图的行下方，左右和行对齐；状态栏的分支名上方，右边和
-    /// 分支名对齐。放不下全部行时滚动。
+    /// 把面板摆到触发它的按钮下方，左右和提交视图的行对齐。放不下全部行时滚动。
     pub(in crate::app) fn place_git_picker(&mut self) {
         if !self.picker_open || !self.picker_is_git() {
             return;
@@ -509,38 +528,22 @@ impl App {
         let height = |h: f32| {
             (self.picker_fold.as_ref()).map_or(h, |fold| fold.clock.between(fold.before.height, h))
         };
-        self.layout.picker = match self.picker_anchor {
-            GitAnchor::Status => {
-                let Some(&(item, _)) = (self.status_hits.iter())
-                    .find(|(_, item)| *item == crate::app::StatusItem::Branch)
-                else {
-                    return;
-                };
-                let bottom = item.y - GIT_PICKER_GAP;
-                let w = GIT_PICKER_STATUS_WIDTH.min(most);
-                let h = height(chrome + list(bottom - TOP_BAR_END));
-                let x = (item.right() - w).max(8.0).round();
-                Rect::new(x, bottom - h, w, h)
-            }
-            anchor => {
-                let parts = self.commit_parts();
-                let row = match anchor {
-                    GitAnchor::Location => parts.location.unwrap_or(parts.branch),
-                    _ => parts.branch,
-                };
-                let y = row.bottom() + GIT_PICKER_GAP;
-                // 底边离侧栏的距离和左右两边一样。
-                let sidebar = self.layout.sidebar;
-                let room = sidebar.bottom() - (row.x - sidebar.x) - y;
-                let w = row
-                    .w
-                    .clamp(GIT_PICKER_WIDTH.0, GIT_PICKER_WIDTH.1)
-                    .min(most);
-                let h = height(chrome + list(room));
-                let x = row.x.min(window.right() - 8.0 - w).max(8.0);
-                Rect::new(x, y, w, h)
-            }
+        let parts = self.commit_parts();
+        let row = match self.picker_anchor {
+            GitAnchor::Location => parts.location.unwrap_or(parts.branch),
+            GitAnchor::Branch => parts.branch,
         };
+        let y = row.bottom() + GIT_PICKER_GAP;
+        // 底边离侧栏的距离和左右两边一样。
+        let sidebar = self.layout.sidebar;
+        let room = sidebar.bottom() - (row.x - sidebar.x) - y;
+        let w = row
+            .w
+            .clamp(GIT_PICKER_WIDTH.0, GIT_PICKER_WIDTH.1)
+            .min(most);
+        let h = height(chrome + list(room));
+        let x = row.x.min(window.right() - 8.0 - w).max(8.0);
+        self.layout.picker = Rect::new(x, y, w, h);
     }
 
     /// 点了选择面板里的 `part`。
@@ -711,6 +714,16 @@ impl App {
             Some(BranchRow::Branch { index, .. }) => self.pick_branch(index),
             Some(BranchRow::Create(name)) => self.create_branch_from_picker(name, None),
             Some(BranchRow::Heading(_)) | None => {}
+        }
+    }
+
+    /// 选了分支 `chosen`（弹出菜单时列表里的那一个）：按名字在最新的列表里找到它再切换，菜单打开
+    /// 期间列表可能已经变了。
+    pub(in crate::app) fn pick_branch_named(&mut self, chosen: &Branch) {
+        let index = (self.git.branches.iter())
+            .position(|b| b.name == chosen.name && b.remote == chosen.remote);
+        if let Some(index) = index {
+            self.pick_branch(index);
         }
     }
 

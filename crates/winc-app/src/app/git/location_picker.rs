@@ -10,7 +10,7 @@ use std::sync::PoisonError;
 use winc_editor::git::{Head, Status, Worktree};
 use winc_i18n::t;
 
-use crate::app::input::context_menu::MenuTarget;
+use crate::app::input::context_menu::{MenuCommand, MenuEntry, MenuLabel, MenuTarget};
 use crate::app::input::palette::{needle, rate};
 use crate::app::{App, Focus, GitAnchor};
 
@@ -343,6 +343,58 @@ impl App {
         }
     }
 
+    /// 所有位置，顺序和状态栏位置菜单的编号一致（[`App::location_menu`]）。
+    pub(in crate::app) fn location_places(&self) -> Vec<Place> {
+        (self.location_groups().into_iter())
+            .flat_map(|(_, _, places)| places)
+            .collect()
+    }
+
+    /// 状态栏位置菜单的菜单项：只有一个仓库时直接列工作树，多个仓库时有多个工作树的仓库收进子
+    /// 菜单；最后是新建工作树。
+    pub(in crate::app) fn location_menu(&self) -> Vec<MenuEntry> {
+        let groups = self.location_groups();
+        let single = groups.len() == 1;
+        let mut next = 0;
+        let mut menu = Vec::new();
+        for (label, _, places) in groups {
+            let items: Vec<MenuEntry> = (places.iter())
+                .map(|place| {
+                    let item = MenuEntry::Item(MenuCommand::StatusPlace(next), !place.missing);
+                    next += 1;
+                    item
+                })
+                .collect();
+            if single || items.len() == 1 {
+                menu.extend(items);
+            } else {
+                menu.push(MenuEntry::Submenu(label, items));
+            }
+        }
+        menu.extend([
+            MenuEntry::Separator,
+            MenuEntry::Item(MenuCommand::NewWorktree, true),
+        ]);
+        menu
+    }
+
+    /// 状态栏位置菜单第 `i` 项的文字：名字，下面一行是分支。
+    pub(in crate::app) fn location_menu_label(&self, i: usize) -> MenuLabel {
+        let places = self.location_places();
+        let Some(place) = places.get(i) else {
+            return MenuLabel::plain("");
+        };
+        let subtitle = if place.missing {
+            Some(t!("git-worktree-missing").to_owned())
+        } else {
+            self.place_state(&place.path).head
+        };
+        MenuLabel {
+            subtitle,
+            ..MenuLabel::plain(&place.label)
+        }
+    }
+
     /// 确认选中的行：组展开或收起，位置切换过去。
     pub(in crate::app) fn location_picker_accept(&mut self) {
         let row = (self.picker_location_rows.as_ref())
@@ -358,7 +410,7 @@ impl App {
 
     /// 切换到位置 `place`：打开的目录里的仓库只换当前仓库，其余的（别处的工作树）在当前窗口打开
     /// 那个目录，文件树和编辑区跟着换。
-    fn go_to_place(&mut self, place: &Place) {
+    pub(in crate::app) fn go_to_place(&mut self, place: &Place) {
         // 和失效的分支一样：点了弹出它能做的事。
         if place.missing {
             if place.worktree.is_some() {

@@ -410,8 +410,9 @@ fn draw_branch_rows(
             draw_heading(app, frame, parts, i, *section);
             continue;
         }
-        // 远程分支一组和其他分组一样，上沿有分隔线；选中时底色盖住它。
-        if matches!(rows[i], BranchRow::Remotes { .. }) && i > 0 {
+        // 展开的远程分支一组和其他分组一样，上沿有分隔线；选中时底色盖住它。收起时只有这一行，
+        // 下面紧接着底栏的分隔线，再画一条就太密了。
+        if matches!(rows[i], BranchRow::Remotes { open: true, .. }) && i > 0 {
             let (row, clip) = placed_row(app, parts, i);
             draw_divider(frame, app.palette, row, row.y + 1.0, clip);
         }

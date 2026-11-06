@@ -1,7 +1,7 @@
-//! 状态栏右侧可点击的项：缩进、行尾、编码、语言、分支、终端开关和设置。
+//! 状态栏右侧可点击的项：缩进、行尾、编码、语言、工作树、分支、终端开关和设置。
 //!
-//! 点击缩进、行尾、编码、语言时，在该项处弹出系统菜单；菜单命令由 [`App::run_status_command`]
-//! 执行。
+//! 点击缩进、行尾、编码、语言、工作树、分支时，在该项处弹出系统菜单；文档的几项由
+//! [`App::run_status_command`] 执行。
 
 use winc_core::{Indent, LineEnding};
 use winc_editor::encoding::CHOICES;
@@ -9,7 +9,6 @@ use winc_editor::{DocumentId, Encoding, EncodingRead};
 use winc_i18n::t;
 
 use super::*;
-use crate::app::GitAnchor;
 use crate::app::input::context_menu::{MenuTarget, indent_size_title};
 use crate::app::status::breadcrumb::MENU_TITLE_INSET;
 use crate::app::workspace::watch::DiskBack;
@@ -25,7 +24,9 @@ pub enum StatusItem {
     Encoding,
     /// 文档的语言：手动改用别的语言（没保存过的文件选了语言才能格式化），或按文件名重新识别。
     Language,
-    /// Git 的当前分支：点了展开分支选择器。
+    /// 当前的仓库或工作树（有多个位置时才有）：点了弹出系统菜单切换。
+    Worktree,
+    /// Git 的当前分支：点了弹出系统菜单切换。
     Branch,
     /// 终端面板的开关（终端模块开着时在设置按钮左边）。
     Terminal,
@@ -61,16 +62,14 @@ impl App {
             self.click_update();
             return;
         }
-        // 分支选择器不依赖当前文档。
-        if item == StatusItem::Branch {
-            self.open_branch_picker(GitAnchor::Status);
-            return;
-        }
         let Some(&(rect, _)) = self.status_hits.iter().find(|&&(_, i)| i == item) else {
             return;
         };
         let target = match (item, self.editor.active().map(|d| d.id)) {
-            (StatusItem::Branch, _) | (_, None) => return,
+            // 这两个菜单不依赖当前文档。
+            (StatusItem::Branch, _) => MenuTarget::StatusBranches,
+            (StatusItem::Worktree, _) => MenuTarget::StatusPlaces(self.location_places()),
+            (_, None) => return,
             (StatusItem::Indent, Some(id)) => MenuTarget::Indent(id),
             (StatusItem::LineEnding, Some(id)) => MenuTarget::LineEnding(id),
             (StatusItem::Encoding, Some(id)) => MenuTarget::Encoding(id),

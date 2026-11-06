@@ -770,7 +770,10 @@ fn the_log_opens_from_the_commit_view_button_and_the_branch_menu_starts_with_fet
         Some(&MenuEntry::Item(MenuCommand::GitFetch, true))
     );
     let label = app.menu_label(MenuCommand::GitFetch);
-    assert_eq!(label.subtitle.as_deref(), Some("同步远程更新"));
+    assert_eq!(
+        label.subtitle.as_deref(),
+        Some("下载远程更新，不改动本地分支")
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

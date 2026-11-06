@@ -270,8 +270,8 @@ fn the_branch_row_opens_the_picker_below_it_and_enter_switches() {
     let row = app.commit_parts().branch;
     assert_eq!(app.layout.picker.x, row.x);
     assert!(app.layout.picker.y >= row.bottom());
-    // 其余目录默认收起，当前分支不在目录里时目录都收着。
-    assert_eq!(picker_labels(&app), ["feature", "fix", "main"]);
+    // 当前分支在最前；其余目录默认收起，当前分支不在目录里时目录都收着。
+    assert_eq!(picker_labels(&app), ["main", "feature", "fix"]);
 
     // 搜索展开目录，回车切换并关闭。
     app.picker_input.set_text("search");
@@ -493,11 +493,6 @@ fn the_picker_lines_up_with_the_context_rows() {
     assert_eq!(card.x - sidebar.x, sidebar.right() - card.right());
     assert!(sidebar.bottom() - card.bottom() >= card.x - sidebar.x);
 
-    // 从状态栏展开时没有可以对齐的行，宽度和默认宽度的提交视图里一样。
-    app.close_picker();
-    app.open_branch_picker(GitAnchor::Status);
-    paint(&mut app);
-    assert_eq!(app.layout.picker.w, row.w);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -682,9 +677,6 @@ fn shoot_branch_picker() {
         app.open_branch_picker(GitAnchor::Branch);
         app.start_branch_create(None);
         shoot(&mut app, &format!("branch-picker-create-{theme}"));
-        app.close_picker();
-        app.open_branch_picker(GitAnchor::Status);
-        shoot(&mut app, &format!("branch-picker-status-{theme}"));
         app.close_picker();
         for branch in ["dev", "feature/login"] {
             git_in(
