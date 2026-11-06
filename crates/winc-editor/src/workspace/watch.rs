@@ -122,17 +122,23 @@ impl Watcher {
     /// 子目录）另外监视它，提交、分支这些状态都记在那里。监视不了时打开的目录照常监视。
     pub fn watch_git_dir(&mut self, dir: Option<&Path>) {
         let dir = dir.filter(|dir| !dir.starts_with(&self.root));
-        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        if pending.git_dir.as_deref() == dir {
-            return;
-        }
-        if let Some(old) = pending.git_dir.take() {
+        // 系统监视器改动时要等监视线程回复，而监视线程送通知时要拿这把锁：改动之前先放开，否则两边
+        // 互相等待。
+        let old = {
+            let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            if pending.git_dir.as_deref() == dir {
+                return;
+            }
+            std::mem::replace(&mut pending.git_dir, dir.map(Path::to_path_buf))
+        };
+        if let Some(old) = old {
             let _ = self.inner.unwatch(&old);
         }
         if let Some(dir) = dir
-            && self.inner.watch(dir, RecursiveMode::Recursive).is_ok()
+            && self.inner.watch(dir, RecursiveMode::Recursive).is_err()
         {
-            pending.git_dir = Some(dir.to_path_buf());
+            let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            pending.git_dir = None;
         }
     }
 

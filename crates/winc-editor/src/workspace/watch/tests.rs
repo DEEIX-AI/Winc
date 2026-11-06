@@ -93,6 +93,44 @@ fn a_git_directory_outside_the_folder_is_watched() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// 监视线程一边送通知、界面线程一边改监视的目录时不会互相等待：系统监视器处理改动时要等监视线程
+/// 回复，而监视线程送通知时要拿累积变化的锁，改动期间不能拿着这把锁。
+#[test]
+fn changing_the_git_directory_while_events_arrive_does_not_deadlock() {
+    let dir = scratch("watch-deadlock");
+    let (folder, git) = (dir.join("folder"), dir.join("main/.git"));
+    fs::create_dir_all(&folder).unwrap();
+    fs::create_dir_all(git.join("refs")).unwrap();
+    let mut watcher = Watcher::start(&folder, || {}).unwrap();
+
+    let writing = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let writer = {
+        let (writing, folder) = (Arc::clone(&writing), folder.clone());
+        std::thread::spawn(move || {
+            let mut i = 0u32;
+            while writing.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = fs::write(folder.join(format!("{}.txt", i % 8)), "x");
+                i += 1;
+            }
+        })
+    };
+    let (done, finished) = mpsc::channel();
+    let git_dir = git.clone();
+    std::thread::spawn(move || {
+        for _ in 0..200 {
+            watcher.watch_git_dir(Some(&git_dir));
+            watcher.watch_git_dir(None);
+        }
+        let _ = done.send(());
+    });
+    let result = finished.recv_timeout(Duration::from_secs(30));
+    writing.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = writer.join();
+    assert!(result.is_ok(), "改监视的目录时卡住了");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn changes_inside_the_folder_are_reported() {
     let dir = scratch("events");
