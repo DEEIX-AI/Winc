@@ -28,7 +28,7 @@ foreach ($kind in @('nsis', 'msi')) {
             $process = Start-Process msiexec.exe -ArgumentList "/i `"$setup`" /qn /norestart INSTALLFOLDER=`"$directory`"" -Wait -PassThru
         }
         if ($process.ExitCode -notin @(0, 1641, 3010)) { throw "$kind installation failed: $($process.ExitCode)" }
-        foreach ($file in @('winc.exe', 'winc-pty.exe', 'winc-installation', 'bin/winc', 'bin/winc.cmd')) {
+        foreach ($file in @('winc.exe', 'winc-pty.exe', 'winc-installation', 'winc-watch', 'bin/winc', 'bin/winc.cmd')) {
             if (-not (Test-Path "$directory/$file")) { throw "${kind}: missing $file" }
         }
         if ((Get-Content "$directory/bin/winc" -Raw) -match "`r") { throw "${kind}: bin/winc has CRLF line endings" }
@@ -57,4 +57,4 @@ foreach ($kind in @('nsis', 'msi')) {
     if (Test-Path -LiteralPath "$classes\winc.JSON") { throw "${kind}: uninstall left the file type behind" }
 }
 Expand-Archive "$bundle/portable/Winc-$version-windows-x64-portable.zip" "$work/portable" -Force
-if ((Test-Path "$work/portable/winc-installation") -or -not (Test-Path "$work/portable/winc-pty.exe") -or -not (Test-Path "$work/portable/bin/winc")) { throw 'invalid portable layout' }
+if ((Test-Path "$work/portable/winc-installation") -or -not (Test-Path "$work/portable/winc-pty.exe") -or -not (Test-Path "$work/portable/bin/winc") -or -not (Test-Path "$work/portable/winc-watch")) { throw 'invalid portable layout' }

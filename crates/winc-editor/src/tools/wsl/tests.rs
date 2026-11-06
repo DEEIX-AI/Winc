@@ -119,6 +119,59 @@ fn programs_use_the_path_of_the_login_shell_when_known() {
 }
 
 #[test]
+fn the_watcher_runs_from_the_windows_installation() {
+    let place = locate(Path::new(r"\\wsl.localhost\Ubuntu\home\me\my app")).unwrap();
+    let command = watch_command(&place, Path::new(r"C:\Program Files\winc\winc-watch"));
+    let args: Vec<_> = command.get_args().collect();
+    assert_eq!(
+        args,
+        [
+            "-d",
+            "Ubuntu",
+            "--exec",
+            "sh",
+            "-c",
+            RUN_WINDOWS_FILE,
+            r"C:\Program Files\winc\winc-watch",
+            "/home/me/my app",
+        ]
+    );
+}
+
+// `wslpath` 只存在于发行版中，这里用同名脚本代替，验证空格和参数的传递。
+#[cfg(unix)]
+#[test]
+fn the_run_script_converts_the_path_and_keeps_the_arguments() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = crate::test_util::scratch("wsl-run-file");
+    let write_script = |name: &str, text: String| {
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let program = dir.join("my helper");
+    write_script("my helper", "#!/bin/sh\nprintf '%s|' \"$@\"\n".to_owned());
+    write_script(
+        "wslpath",
+        format!("#!/bin/sh\nprintf '%s' '{}'\n", program.display()),
+    );
+    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            RUN_WINDOWS_FILE,
+            r"C:\winc\winc-watch",
+            "/home/my app",
+        ])
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "/home/my app|");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn windows_programs_on_the_windows_path_do_not_count() {
     let found = |text: &[u8]| linux_program(text);
     assert_eq!(

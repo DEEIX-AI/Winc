@@ -239,7 +239,10 @@ fn in_distro(dir: &Path, script: &str) -> (Watcher, std::sync::mpsc::Receiver<()
     let wake = move || {
         let _ = sender.send(());
     };
-    (Watcher::in_distro(dir, command, to_local, wake).unwrap(), woken)
+    (
+        Watcher::in_distro(dir, command, to_local, wake).unwrap(),
+        woken,
+    )
 }
 
 #[cfg(unix)]

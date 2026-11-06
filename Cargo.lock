@@ -3184,6 +3184,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "winc-watch"
+version = "0.1.502"
+dependencies = [
+ "notify",
+ "winc-config",
+]
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

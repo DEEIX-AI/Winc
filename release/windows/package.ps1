@@ -25,11 +25,12 @@ $launcher = [IO.File]::ReadAllText("$PSScriptRoot/winc").Replace("`r`n", "`n")
 [IO.File]::WriteAllText("$stage/bin/winc", $launcher, (New-Object Text.UTF8Encoding $false))
 Copy-Item "$PSScriptRoot/winc.cmd" "$stage/bin/winc.cmd" -Force
 Copy-Item "$PSScriptRoot/path.ps1" $stage -Force
+Copy-Item "$root/target/x86_64-unknown-linux-musl/release/winc-watch" $stage -Force
 if ($Phase -eq 'portable') {
     $portable = "$bundle/portable"
     New-Item -ItemType Directory -Force $portable | Out-Null
     # Enumerate the files: installer markers never enter a portable archive.
-    Compress-Archive -Path "$stage/winc.exe", "$stage/winc-pty.exe", "$stage/bin", "$stage/LICENSE", "$stage/NOTICE", "$stage/winc.ico" -DestinationPath "$portable/$stem-portable.zip" -Force
+    Compress-Archive -Path "$stage/winc.exe", "$stage/winc-pty.exe", "$stage/winc-watch", "$stage/bin", "$stage/LICENSE", "$stage/NOTICE", "$stage/winc.ico" -DestinationPath "$portable/$stem-portable.zip" -Force
     return
 }
 

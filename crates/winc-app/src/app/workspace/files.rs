@@ -788,9 +788,10 @@ impl App {
         // 启动监视。工作树、子模块的 `.git` 是文件，真正的目录在其他位置。仓库根位于已监视的目录
         // 中、`.git` 是目录时，它的变化已由监视报告，不必每次窗口重新获得焦点都启动 git。
         self.git_discover();
-        // 发行版的目录经 Windows 访问，变化通知不一定送达，因此同样在获得焦点时重新检查。
-        let live = self.watcher.is_some()
-            && !(self.editor.root()).is_some_and(|r| winc_editor::wsl::locate_here(r).is_some());
+        let live = self
+            .watcher
+            .as_ref()
+            .is_some_and(winc_editor::Watcher::reliable);
         let watched = (self.watcher.as_ref().filter(|_| live)).zip(self.git.root.as_deref());
         if !watched
             .is_some_and(|(w, root)| root.starts_with(w.root()) && root.join(".git").is_dir())

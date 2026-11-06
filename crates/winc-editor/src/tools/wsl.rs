@@ -26,6 +26,9 @@ pub(crate) const FORMAT_ENV: &str = "WINC_FILE:NO_COLOR";
 /// 版本管理工具（如 nvm）的初始化通常写在只有交互式 shell 才读取的文件中。
 const LOGIN_SHELL: &str = r#"exec "${SHELL:-/bin/sh}" -i -l -c "$0""#;
 
+/// 运行 Windows 路径 `$0` 处的 Linux 程序的脚本：`wslpath` 按发行版的挂载配置换算路径。
+const RUN_WINDOWS_FILE: &str = r#"exec "$(wslpath -u "$0")" "$@""#;
+
 /// 已查询过的各发行版用户 `PATH`：（发行版名称，值）；查询失败时值为 `None`。
 static LOGIN_PATHS: Mutex<Vec<(String, Option<String>)>> = Mutex::new(Vec::new());
 
@@ -217,6 +220,28 @@ pub(crate) fn find_program(distro: &str, path: Option<&str>, name: &str) -> Opti
         .success()
         .then(|| linux_program(&output.stdout))
         .flatten()
+}
+
+/// 返回发行版内的监视程序 `winc-watch` 的路径（在主程序旁边）；不存在时返回 `None`。
+///
+/// 环境变量 `WINC_WATCH` 可以指定其他路径，用于开发时运行。
+pub(crate) fn watch_helper() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("WINC_WATCH") {
+        return Some(path.into());
+    }
+    let path = std::env::current_exe().ok()?.parent()?.join("winc-watch");
+    path.exists().then_some(path)
+}
+
+/// 返回在发行版内监视位置 `place` 的命令。程序直接从 Windows 的安装目录运行，不复制到发行版。
+pub(crate) fn watch_command(place: &Location, helper: &Path) -> Command {
+    let mut command = Command::new("wsl.exe");
+    enter(&mut command, &place.distro);
+    command
+        .args(["--exec", "sh", "-c", RUN_WINDOWS_FILE])
+        .arg(helper)
+        .arg(&place.path);
+    command
 }
 
 /// 从 `command -v` 的输出中取出发行版内的程序路径。
