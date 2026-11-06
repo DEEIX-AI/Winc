@@ -29,9 +29,34 @@ impl CommitState {
         None
     }
 
+    /// 把正在写的提交信息记到位置 `root` 名下；什么都没写时清掉记录。
+    pub(in crate::app) fn keep_draft(&mut self, root: PathBuf) {
+        let text = if self.amend {
+            self.draft.clone().unwrap_or_default()
+        } else {
+            self.message.text().to_owned()
+        };
+        if text.trim().is_empty() {
+            self.drafts.remove(&root);
+        } else {
+            self.drafts.insert(root, text);
+        }
+    }
+
+    /// 填回位置 `root` 名下记着的提交信息。
+    pub(in crate::app) fn restore_draft(&mut self, root: &Path) {
+        if let Some(text) = self.drafts.remove(root) {
+            self.message.set_text(&text);
+        }
+    }
+
     /// 文件 `entry` 是否勾上。
     pub fn checked(&self, entry: &Entry) -> bool {
-        !self.excluded.contains(&entry.path)
+        if entry.untracked() {
+            self.included.contains(&entry.path)
+        } else {
+            !self.excluded.contains(&entry.path)
+        }
     }
 
     /// 文件的勾选框：`Some(true)` 整个提交，`Some(false)` 只提交一部分改动，`None` 不提交。
@@ -139,6 +164,35 @@ impl CommitState {
         let dirs = &mut self.collapsed_dirs[group.index()];
         if !dirs.remove(&dir) {
             dirs.insert(dir);
+        }
+        self.layout += 1;
+    }
+
+    /// 收起（`collapse` 为真）或展开组 `group` 里的目录 `dir` 和它下面的各级目录。
+    pub(super) fn set_dir_tree_collapsed(
+        &mut self,
+        status: &Status,
+        root: &Path,
+        (group, dir): (CommitGroup, &Path),
+        collapse: bool,
+    ) {
+        // 收起的目录下面的行不会排出来：先全部展开排一遍，才看得到各级目录。
+        let collapsed = std::mem::take(&mut self.collapsed_dirs[group.index()]);
+        let all = self.build_rows(status, root);
+        self.collapsed_dirs[group.index()] = collapsed;
+        let under = all.iter().filter_map(|row| match row {
+            CommitRow::Dir {
+                group: g, dir: d, ..
+            } if *g == group && d.starts_with(dir) => Some(d.clone()),
+            _ => None,
+        });
+        let dirs = &mut self.collapsed_dirs[group.index()];
+        for path in under {
+            if collapse {
+                dirs.insert(path);
+            } else {
+                dirs.remove(&path);
+            }
         }
         self.layout += 1;
     }
@@ -286,7 +340,9 @@ impl CommitState {
         self.skipped.remove(&path);
         if on {
             self.excluded.remove(&path);
+            self.included.insert(path);
         } else {
+            self.included.remove(&path);
             self.excluded.insert(path);
         }
     }

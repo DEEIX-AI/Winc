@@ -11,7 +11,10 @@ use ropey::Rope;
 use winc_core::Lines;
 use winc_core::diff::{self, LineHunk};
 use winc_core::text::{self, MAX_LINE_CHARS};
+use winc_core::wrap::Breaks;
 use winc_syntax::{Highlighter, Language};
+
+use crate::editing::folding::line_breaks;
 
 /// 改动前后各自保留的未改动行数（行）。
 ///
@@ -24,6 +27,9 @@ pub const CONTEXT: usize = 4;
 /// 整段都已改动时，逐词标记不再有区分度，只标出整行即可，因此内容上的依据不构成约束；数值的大小
 /// 取自调参：逐词比较的耗时与改动段的行数成正比，行数越多，重新比较所需的时间越长。
 const INLINE_LIMIT: usize = 200;
+
+/// 自动换行的行数上限（行，经验值）：整篇断行约每 20 万行 115 ms，再多打字时会明显卡顿。
+pub const WRAP_LINES: usize = 200_000;
 
 /// 差异的一侧。
 #[derive(Debug)]
@@ -76,6 +82,8 @@ pub enum SideRow {
         line: usize,
         /// 所在的改动。
         hunk: Option<usize>,
+        /// 自动换行时这一行的第几段（从 0 起）；不换行时为 0。
+        part: usize,
     },
     /// 折起来的一段没改的行：`gap` 是第几段没改的内容（第一段改动之前是 0），`lines` 是这一侧
     /// 折起来的行。
@@ -140,6 +148,44 @@ impl Compared {
     }
 }
 
+/// 单栏时滚动位置和各侧显示行之间的换算表。
+///
+/// 从差异里取出来单独持有：绘制时要同时修改差异两侧的着色状态。
+#[derive(Debug, Clone)]
+pub struct UnifiedMap(Vec<(f32, [f32; 2])>);
+
+impl UnifiedMap {
+    /// 第 `side` 侧显示行 `row` 在滚动位置上的哪里。
+    ///
+    /// 每段改动先是左侧的行，后面接右侧的行。这一侧在一段改动里没有行时，取这段改动的结尾。
+    pub fn pos_of(&self, side: usize, row: f32) -> f32 {
+        let i = self.0.partition_point(|k| k.1[side] <= row);
+        if i % 2 == 1 {
+            let (start, from) = self.0[i - 1];
+            let (_, to) = self.0[i];
+            let before = if side == RIGHT {
+                to[LEFT] - from[LEFT]
+            } else {
+                0.0
+            };
+            return start + before + row - from[side];
+        }
+        let (at, last) = i
+            .checked_sub(1)
+            .map_or((0.0, 0.0), |i| (self.0[i].0, self.0[i].1[side]));
+        at + row - last
+    }
+}
+
+/// 差异只读一侧的选区：只能选中、复制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadSelection {
+    /// 在哪一侧：[`LEFT`] 或 [`RIGHT`]。
+    pub side: usize,
+    /// 起点和终点，按这一侧文本的字符偏移。
+    pub range: (usize, usize),
+}
+
 /// 并排差异视图。
 #[derive(Debug)]
 pub struct DiffView {
@@ -160,6 +206,12 @@ pub struct DiffView {
     knots: Vec<(f32, [f32; 2])>,
     /// 是否折起长段没改的内容。
     collapse: bool,
+    /// 单栏显示：没改的行只显示一次，每段改动先是左侧的行，后面接右侧的行。
+    unified: bool,
+    /// 自动换行的（断行宽度，Tab 宽度），单位是显示列；不换行时为 `None`。
+    ///
+    /// 两侧用同一个宽度：没改的行两侧断法相同、行数相等，滚动位置的换算才成立。
+    wrap: Option<(usize, usize)>,
     /// 上一次跳到的是第几段改动，和跳过去以后的滚动位置。
     ///
     /// 滚动位置没变时，「上一处」「下一处」和「第几处」按它算：最后几段改动滚不到顶上（编辑区滚过
@@ -183,10 +235,10 @@ pub struct DiffView {
     pub source: Option<u64>,
     /// 光标在右侧：键入的字进右侧对应的文档。
     pub editing: bool,
-    /// 左侧的选区（起点，终点），按左侧文本的字符偏移；左侧只读，只能选中、复制。
+    /// 只读一侧的选区：左侧总是只读，右侧不是工作区里的文件时也只读（历史版本、已删除的文件）。
     ///
     /// 没有时为 `None`。
-    pub left_selection: Option<(usize, usize)>,
+    pub read_selection: Option<ReadSelection>,
     /// 每段改动的 [`diff::hunk_key`]，下标同 `hunks`：按块提交时按它认出勾掉的改动。
     pub keys: Vec<u64>,
     /// 这份差异对应仓库里的哪个文件（和仓库状态里的路径同一种写法）；不是 Git 的差异时为
@@ -215,13 +267,15 @@ impl DiffView {
             hunk_rows: [Vec::new(), Vec::new()],
             knots: Vec::new(),
             collapse: true,
+            unified: false,
+            wrap: None,
             focus: None,
             expanded: Vec::new(),
             pinned: None,
             widest: std::cell::Cell::new(None),
             source: None,
             editing: false,
-            left_selection: None,
+            read_selection: None,
             keys,
             repo_path: None,
         };
@@ -271,18 +325,105 @@ impl DiffView {
     pub fn inherit(&mut self, old: &DiffView) {
         self.editing = old.editing;
         self.pinned.clone_from(&old.pinned);
-        // 左侧没变（`HEAD` 没变）时选区仍然有效。
-        if self.old.text == old.old.text {
-            self.left_selection = old.left_selection;
-        }
+        // 选区所在的一侧没变（例如 `HEAD` 没变）时选区仍然有效。
+        self.read_selection = old
+            .read_selection
+            .filter(|s| self.side(s.side).text == old.side(s.side).text);
         if self.repo_path.is_none() {
             self.repo_path.clone_from(&old.repo_path);
         }
         self.collapse = old.collapse;
+        self.unified = old.unified;
+        self.wrap = old.wrap;
         if old.hunks.len() == self.hunks.len() {
             self.expanded = old.expanded.clone();
         }
         self.layout();
+    }
+
+    /// 设置自动换行：`wrap` 是（断行宽度，Tab 宽度），单位是显示列，`None` 表示不换行。
+    ///
+    /// 两侧合起来超过 [`WRAP_LINES`] 行时不换行：每次编辑都要重新断行。设置变了时返回 `true`。
+    pub fn set_wrap(&mut self, wrap: Option<(usize, usize)>) -> bool {
+        let lines = self.old.text.len_lines().max(self.new.text.len_lines());
+        let wrap = wrap.filter(|_| lines <= WRAP_LINES);
+        if self.wrap == wrap {
+            return false;
+        }
+        self.wrap = wrap;
+        self.layout();
+        true
+    }
+
+    /// 自动换行的（断行宽度，Tab 宽度），单位是显示列；不换行时为 `None`。
+    pub fn wrap(&self) -> Option<(usize, usize)> {
+        self.wrap
+    }
+
+    /// 是否自动换行。
+    pub fn is_wrapping(&self) -> bool {
+        self.wrap.is_some()
+    }
+
+    /// 第 `side` 侧第 `line` 行的分段；不换行时只有一段。
+    pub fn breaks(&self, side: usize, line: usize) -> Breaks {
+        let text = if side == LEFT {
+            &self.old.text
+        } else {
+            &self.new.text
+        };
+        match self.wrap {
+            Some((width, tab_width)) if line < text.len_lines() => {
+                line_breaks(text, line, width, tab_width)
+            }
+            _ => Breaks::default(),
+        }
+    }
+
+    /// 第 `side` 侧第 `line` 行第 `col` 个字符所在的显示行；折起来时是折起来的那一行。
+    pub fn row_of_col(&self, side: usize, line: usize, col: usize) -> usize {
+        let row = self.row_of(side, line);
+        match self.rows[side].get(row) {
+            Some(SideRow::Line { line: at, .. }) if *at == line => {
+                row + self.breaks(side, line).row_of(col)
+            }
+            _ => row,
+        }
+    }
+
+    /// 把第 `side` 侧显示行 `row` 里第 `cell` 个显示列换算成这一整行的显示列。
+    ///
+    /// 超出这一段时停在这一段的最后一个字符之前，不落到下一段。
+    pub fn cell_in_row(&self, side: usize, row: usize, cell: usize) -> usize {
+        let (Some((_, tab_width)), Some(SideRow::Line { line, part, .. })) =
+            (self.wrap, self.rows[side].get(row))
+        else {
+            return cell;
+        };
+        let breaks = self.breaks(side, *line);
+        if breaks.starts.is_empty() {
+            return cell;
+        }
+        let text = if side == LEFT {
+            &self.old.text
+        } else {
+            &self.new.text
+        };
+        let chars: Vec<char> = text
+            .line(*line)
+            .chars()
+            .take_while(|c| *c != '\n' && *c != '\r')
+            .take(MAX_LINE_CHARS)
+            .collect();
+        let prefix = text::prefix_cells(&chars, tab_width);
+        let range = breaks.range(*part, chars.len());
+        let inner = cell.saturating_sub(breaks.indent_of(*part));
+        let end = if range.end < chars.len() {
+            prefix[range.end.saturating_sub(1).max(range.start)]
+        } else {
+            prefix[range.end]
+        };
+        (prefix[range.start] + inner).min(end)
     }
 
     /// 右侧的显示行数。
@@ -306,6 +447,9 @@ impl DiffView {
     /// 行数，短的一侧按比例跟着走（一侧是 0 行时停在原地）。只按右侧的行数滚时，左侧删掉的一大段
     /// 在右侧只是一个点，一滚就跳过去，比半屏长的部分永远看不到。
     pub fn row_at(&self, side: usize, pos: f32) -> f32 {
+        if self.unified {
+            return self.unified_row_at(side, pos);
+        }
         // 分段点按滚动位置排好了：二分找到第一个不在 `pos` 之前的，在它和前一个之间插值。
         let i = self.knots.partition_point(|k| k.0 < pos);
         let from = self.knot(side, i);
@@ -332,6 +476,9 @@ impl DiffView {
     ///
     /// 这一侧在一段改动里停着不动（0 行）时取这段改动的开头。
     pub fn pos_of(&self, side: usize, row: f32) -> f32 {
+        if self.unified {
+            return self.unified_map().pos_of(side, row);
+        }
         // 每一侧的显示行也随分段点递增：二分找到第一个不在 `row` 之前的。
         let i = self.knots.partition_point(|k| k.1[side] < row);
         let from = self.knot(side, i);
@@ -350,9 +497,108 @@ impl DiffView {
     /// 两侧在同一个对齐点上对齐：滚过半屏以后，对齐点位于视图中间；离开头不到半屏时，对齐点随之
     /// 向上移动，在开头时位于顶边，两侧一起停在第一行。
     pub fn side_scroll(&self, side: usize, pos: f32, visible: f32) -> f32 {
+        // 单栏只有一列，不需要对齐两侧。
+        if self.unified {
+            return self.row_at(side, pos);
+        }
         let anchor = pos.min(visible / 2.0).max(0.0);
         let center = self.row_at(side, pos + anchor);
         (center - anchor).clamp(0.0, self.rows[side].len() as f32)
+    }
+
+    /// 第 `side` 侧最上面显示到 `row` 时的滚动位置（[`DiffView::side_scroll`] 反过来）。
+    ///
+    /// 离开头不到半屏时对齐点随滚动移动，没有直接的反算公式，改用二分查找。
+    pub fn pos_of_top(&self, side: usize, row: f32, visible: f32) -> f32 {
+        if self.unified {
+            return self.pos_of(side, row);
+        }
+        let half = visible / 2.0;
+        let pos = self.pos_of(side, row + half) - half;
+        if pos >= half {
+            return pos;
+        }
+        let (mut low, mut high) = (0.0, half.max(0.0));
+        for _ in 0..24 {
+            let mid = (low + high) / 2.0;
+            if self.side_scroll(side, mid, visible) < row {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        high
+    }
+
+    /// 是否单栏显示。
+    pub fn is_unified(&self) -> bool {
+        self.unified
+    }
+
+    /// 切换单栏显示和并排显示。
+    ///
+    /// 滚动位置的换算随之改变，调用方负责换算滚动位置。
+    pub fn set_unified(&mut self, on: bool) {
+        if self.unified != on {
+            self.unified = on;
+            self.layout();
+        }
+    }
+
+    /// 单栏时滚动位置和各侧显示行之间的换算表。
+    pub fn unified_map(&self) -> UnifiedMap {
+        UnifiedMap(self.knots.clone())
+    }
+
+    /// 单栏第 `index` 个显示行（从 0 起）属于哪一侧的哪个显示行：（哪一侧，显示行）。
+    ///
+    /// 没改的行和折起来的一段算右侧。超出最后一行时为 `None`。
+    pub fn unified_row(&self, index: usize) -> Option<(usize, usize)> {
+        let pos = index as f32;
+        let i = self.knots.partition_point(|k| k.0 <= pos);
+        let (side, row) = if i % 2 == 1 {
+            let (start, from) = self.knots[i - 1];
+            let (_, to) = self.knots[i];
+            let (old, offset) = (to[LEFT] - from[LEFT], pos - start);
+            if offset < old {
+                (LEFT, from[LEFT] + offset)
+            } else {
+                (RIGHT, from[RIGHT] + offset - old)
+            }
+        } else {
+            let (at, row) = self.knot(RIGHT, i);
+            (RIGHT, row + pos - at)
+        };
+        let row = row as usize;
+        (row < self.rows[side].len()).then_some((side, row))
+    }
+
+    /// 单栏时滚动位置 `pos` 上第 `side` 侧对着的显示行：在另一侧的行上时是这一侧接下来的行。
+    fn unified_row_at(&self, side: usize, pos: f32) -> f32 {
+        let i = self.knots.partition_point(|k| k.0 <= pos);
+        if i % 2 == 1 {
+            let (start, from) = self.knots[i - 1];
+            let (_, to) = self.knots[i];
+            let (old, offset) = (to[LEFT] - from[LEFT], pos - start);
+            return if side == LEFT {
+                from[LEFT] + offset.min(old)
+            } else {
+                from[RIGHT] + (offset - old).max(0.0)
+            };
+        }
+        let (at, row) = self.knot(side, i);
+        row + pos - at
+    }
+
+    /// 滚动位置为 `pos`、可见 `visible` 行时，从顶边往下第 `below` 行（可以有小数）对着的第
+    /// `side` 侧的显示行。
+    pub fn row_under(&self, side: usize, pos: f32, visible: f32, below: f32) -> usize {
+        let row = if self.unified {
+            self.row_at(side, (pos + below).floor())
+        } else {
+            self.side_scroll(side, pos, visible) + below
+        };
+        row.floor().max(0.0) as usize
     }
 
     /// 计算滚动位置为 `pos`、可见 `visible` 行时左侧的滚动位置，换算方式同
@@ -403,11 +649,27 @@ impl DiffView {
         }
     }
 
-    /// 左侧选中的文本；没有选中内容时为 `None`。
-    pub fn left_selected(&self) -> Option<String> {
-        let (a, b) = self.left_selection?;
-        let (from, to) = (a.min(b), a.max(b).min(self.old.text.len_chars()));
-        (from < to).then(|| self.old.text.slice(from..to).to_string())
+    /// 第 `side` 侧的内容。
+    pub fn side(&self, side: usize) -> &DiffSide {
+        if side == LEFT { &self.old } else { &self.new }
+    }
+
+    /// 只读一侧的光标：（哪一侧，字符偏移），在选区的终点。
+    ///
+    /// 没有选区、这一侧没有内容（文件不存在、已删除）时为 `None`。
+    pub fn read_caret(&self) -> Option<(usize, usize)> {
+        let selection = self.read_selection?;
+        let len = self.side(selection.side).text.len_chars();
+        (len > 0).then(|| (selection.side, selection.range.1.min(len)))
+    }
+
+    /// 只读一侧选中的文本；没有选中内容时为 `None`。
+    pub fn read_selected(&self) -> Option<String> {
+        let selection = self.read_selection?;
+        let text = &self.side(selection.side).text;
+        let (a, b) = selection.range;
+        let (from, to) = (a.min(b), a.max(b).min(text.len_chars()));
+        (from < to).then(|| text.slice(from..to).to_string())
     }
 
     /// 第 `hunk` 段改动左侧的文本（含换行符），用来把右侧的这一段换回去。
@@ -556,6 +818,12 @@ impl DiffView {
         widest(&self.old.text).max(widest(&self.new.text))
     }
 
+    /// 把第 `side` 侧第 `line` 行的各段追加到 `rows`。
+    fn push_line(&self, rows: &mut Vec<SideRow>, side: usize, line: usize, hunk: Option<usize>) {
+        let parts = self.breaks(side, line).rows();
+        rows.extend((0..parts).map(|part| SideRow::Line { line, hunk, part }));
+    }
+
     /// 按改动和折叠状态重新排出两侧的显示行。
     fn layout(&mut self) {
         let mut rows = [Vec::new(), Vec::new()];
@@ -584,14 +852,8 @@ impl DiffView {
                 && len > head + tail + 1;
             let same = |rows: &mut [Vec<SideRow>; 2], range: Range<usize>| {
                 for i in range {
-                    rows[LEFT].push(SideRow::Line {
-                        line: a + i,
-                        hunk: None,
-                    });
-                    rows[RIGHT].push(SideRow::Line {
-                        line: b + i,
-                        hunk: None,
-                    });
+                    self.push_line(&mut rows[LEFT], LEFT, a + i, None);
+                    self.push_line(&mut rows[RIGHT], RIGHT, b + i, None);
                 }
             };
             if fold {
@@ -643,10 +905,9 @@ impl DiffView {
             let Some(h) = self.hunks.get(gap) else { break };
             for (side, lines) in [(LEFT, &h.old), (RIGHT, &h.new)] {
                 let start = rows[side].len();
-                rows[side].extend(lines.clone().map(|line| SideRow::Line {
-                    line,
-                    hunk: Some(gap),
-                }));
+                for line in lines.clone() {
+                    self.push_line(&mut rows[side], side, line, Some(gap));
+                }
                 hunk_rows[side].push(start..rows[side].len());
             }
             (a, b) = (h.old.end, h.new.end);
@@ -658,7 +919,12 @@ impl DiffView {
         for (l, r) in hunk_rows[LEFT].iter().zip(&hunk_rows[RIGHT]) {
             pos += r.start - prev[RIGHT];
             knots.push((pos as f32, [l.start as f32, r.start as f32]));
-            pos += l.len().max(r.len());
+            // 并排时每段改动占长的那一侧的行数，单栏时两侧的行上下排开。
+            pos += if self.unified {
+                l.len() + r.len()
+            } else {
+                l.len().max(r.len())
+            };
             knots.push((pos as f32, [l.end as f32, r.end as f32]));
             prev = [l.end, r.end];
         }

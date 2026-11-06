@@ -194,6 +194,7 @@ fn resting_on_a_closed_folder_opens_it_and_the_edges_scroll() {
         std::fs::write(dir.join(format!("zz_{i:02}.txt")), "").unwrap();
     }
     let mut app = app_with(&dir, false);
+    app.editor.workspace.as_mut().unwrap().set_compact(false);
     paint(&mut app);
 
     // 停在收起的 `lib` 上，停留足够久后自动展开，可以继续放入 `deep`。

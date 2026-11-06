@@ -16,10 +16,16 @@ pub struct BraceKey {
 }
 
 impl App {
-    /// 返回行号栏的宽度（逻辑像素）：随行数的位数变化，至少按 2 位计算。
+    /// 返回行号栏的宽度（逻辑像素）：随行数的位数变化，至少按 2 位计算；不显示行号时只留两侧
+    /// 给折叠箭头、书签和改动标记的空白。
     pub(in crate::app) fn gutter_width(&self) -> f32 {
         let digits = self.line_count().max(1).ilog10() as usize + 1;
-        digits.max(2) as f32 * self.cell + 2.0 * GUTTER_PADDING + self.blame_width()
+        let numbers = if self.config.line_numbers == Some(false) {
+            0.0
+        } else {
+            digits.max(2) as f32 * self.cell
+        };
+        numbers + 2.0 * GUTTER_PADDING + self.blame_width()
     }
 
     /// 返回自动换行时一个显示行可容纳的单元格数，至少 10 格（经验值，窗口极窄时仍能显示几个字）。
@@ -31,7 +37,7 @@ impl App {
     }
 
     /// 文本区宽度是否正在逐帧变化：侧栏或终端面板的动画进行中，或者正在拖动两者的分隔条。
-    fn text_width_changing(&self) -> bool {
+    pub(in crate::app) fn text_width_changing(&self) -> bool {
         self.sidebar_motion.is_some()
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
@@ -45,6 +51,9 @@ impl App {
     ///
     /// 重新断行后，屏幕最上面的那一行文字保持在原位，不会因为它上方各行的段数变化而移位。
     pub(in crate::app) fn sync_wrap(&mut self) {
+        if self.sync_diff_wrap() {
+            return;
+        }
         let width = (self.config.word_wrap == Some(true)).then(|| self.wrap_cells());
         let tab_width = self.editor.active_tab_width();
         let resizing = self.text_width_changing();
@@ -76,11 +85,16 @@ impl App {
         }
     }
 
-    /// 处理自动换行开关的变化：重新断行，滚动到光标，并在状态栏提示结果。
+    /// 处理自动换行开关的变化：重新断行，视图顶部的文本行保持不动，并在状态栏提示结果。
     pub(in crate::app) fn word_wrap_changed(&mut self) {
+        // 正在进行的平滑滚动按断行前的显示行计算，断行后已不再对应原来的内容。
+        self.scroll_glide = None;
         self.relayout();
-        self.ensure_caret_visible();
         let message = match (self.config.word_wrap == Some(true), self.editor.active()) {
+            (true, Some(doc)) if doc.diff.as_deref().is_some_and(|v| !v.is_wrapping()) => {
+                t!("editor-word-wrap-on-large")
+            }
+            (true, Some(doc)) if doc.diff.is_some() => t!("editor-word-wrap-on"),
             (true, Some(doc)) if !doc.is_wrapping() && doc.is_large() => {
                 t!("editor-word-wrap-on-large")
             }
@@ -384,6 +398,10 @@ impl App {
         };
         doc.scroll_line = doc.scroll_line.clamp(0.0, max_scroll);
         if let Some(view) = doc.diff.as_deref() {
+            if view.is_wrapping() {
+                doc.scroll_x = 0.0;
+                return;
+            }
             // 差异的两侧共用一个横向滚动位置，按两侧最长的一行、半个编辑区宽的文字区限制。
             let text_w = crate::app::diff_parts(self.layout.editor, view, cell).panes[1]
                 .text

@@ -11,6 +11,8 @@ mod wrapping;
 
 use wrapping::*;
 
+pub(crate) use wrapping::line_breaks;
+
 use std::ops::{ControlFlow, Range};
 use std::rc::Rc;
 

@@ -19,8 +19,8 @@ mod window_menu;
 
 pub use app_menu::{add_settings_menu, intercept_quit, on_menu_command, on_open_files, on_reopen};
 pub use dialogs::{
-    AlertButton, MOD_COMMAND, MenuIcon, MenuItem, Panel, alert, key_equivalent, popup_menu,
-    show_panel,
+    AlertButton, MOD_COMMAND, MenuIcon, MenuItem, MenuPlace, Panel, alert, key_equivalent,
+    popup_menu, show_panel,
 };
 pub use display_link::DisplayLink;
 pub use files::{default_browser, move_to_trash};

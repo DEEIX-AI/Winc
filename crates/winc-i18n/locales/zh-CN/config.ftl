@@ -11,6 +11,7 @@ config-project-unsupported-key = 项目设置仅支持 format，已忽略 { $key
 ## 各项设置的值不符合要求时。
 
 config-theme-invalid = { $name } 的值只能是 auto、dark 或 light，已忽略
+config-render-whitespace-invalid = { $name } 的值只能是 none、selection、trailing 或 all，已忽略
 config-language-invalid = { $name } 的值只能是 auto、zh-CN 或 en-US，已忽略
 config-not-integer = { $name } 应为整数（当前为 { $value }），已忽略
 config-not-string = { $name } 应为字符串，已忽略
@@ -29,5 +30,6 @@ config-not-number = { $name } 应为数字，已忽略
 config-out-of-range = { $setting } 超出{ $label }范围（{ $range }），已忽略
 config-label-font-size = 字号
 config-label-tab-width = 制表符长度
+config-label-repository-scan-depth = 仓库扫描深度
 config-label-lines = 行数
 config-label-contrast = 对比度

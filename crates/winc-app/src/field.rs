@@ -391,10 +391,13 @@ impl TextField {
                 .filter(|&c| c == '\n' || (!c.is_control() && accept(c)))
                 .collect()
         } else {
-            let line = text
-                .split(['\n', '\r'])
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or_default();
+            // 含换行时取第一个非空行；不含换行时原样使用，键入的空格本身就是内容。
+            let line = if text.contains(['\n', '\r']) {
+                let mut lines = text.split(['\n', '\r']);
+                lines.find(|l| !l.trim().is_empty()).unwrap_or_default()
+            } else {
+                text
+            };
             line.chars()
                 .filter(|&c| !c.is_control() && accept(c))
                 .collect()

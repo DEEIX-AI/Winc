@@ -1,5 +1,8 @@
 //! 事件循环：处理窗口事件和后台送回的事件，并安排下一次唤醒。
 
+use super::placement::{
+    DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, place, screens, window_position,
+};
 use super::*;
 
 impl ApplicationHandler<UserEvent> for App {
@@ -18,14 +21,28 @@ impl ApplicationHandler<UserEvent> for App {
             .workspace
             .as_ref()
             .map_or("winc", |w| w.name.as_str());
+        // 测量时窗口的大小要固定，结果才能比较。
+        let saved = self
+            .state
+            .window
+            .filter(|_| self.config.restore_window != Some(false) && !self.bench.silent());
+        let placed = saved.map(|frame| place(&frame, &screens(event_loop)));
+        let (width, height) =
+            placed.map_or((DEFAULT_WIDTH, DEFAULT_HEIGHT), |p| (p.width, p.height));
         let mut attributes = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(LogicalSize::new(1280.0, 820.0))
-            .with_min_inner_size(LogicalSize::new(640.0, 420.0))
+            .with_inner_size(LogicalSize::new(width, height))
+            .with_min_inner_size(LogicalSize::new(MIN_WIDTH, MIN_HEIGHT))
             .with_theme(forced_theme(&self.theme_choice))
             .with_visible(false);
+        // 从已有窗口打开的新窗口沿用大小，位置仍然错开。
         if let Some(position) = self.cascade.take() {
             attributes = attributes.with_position(position);
+        } else if let (Some(frame), Some(placed)) = (saved, placed) {
+            attributes = attributes.with_maximized(frame.maximized);
+            if let Some(at) = placed.position {
+                attributes = attributes.with_position(window_position(at, frame.scale));
+            }
         }
 
         // 由应用绘制标题栏时不要系统的边框和标题栏（见 `App::sync_title_bar`）。
@@ -34,8 +51,14 @@ impl ApplicationHandler<UserEvent> for App {
         // Windows 上去掉系统边框的窗口默认也没有阴影，和其他窗口叠在一起时分不清边界。
         #[cfg(windows)]
         {
-            use winit::platform::windows::WindowAttributesExtWindows;
+            use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
             attributes = attributes.with_undecorated_shadow(true);
+            // 图标由构建脚本嵌入可执行文件；窗口类没有默认图标，要在这里指定。
+            if let Ok(icon) = winit::window::Icon::from_resource(1, None) {
+                attributes = attributes
+                    .with_window_icon(Some(icon.clone()))
+                    .with_taskbar_icon(Some(icon));
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -57,6 +80,9 @@ impl ApplicationHandler<UserEvent> for App {
 
         #[cfg(target_os = "macos")]
         crate::macos::keep_title_bar_drags(&window);
+
+        // 一开始就最大化时量不到还原后的大小，先用记下的。
+        self.window_frame = saved;
 
         // 测量时窗口透明且鼠标点击穿透，必须在显示之前设置，保证没有任何一帧可见。
         #[cfg(target_os = "macos")]
@@ -109,6 +135,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.renderer = Some(renderer);
         self.measure_fonts();
         self.window = Some(window.clone());
+        self.note_window_frame();
         window.set_ime_allowed(true);
         self.place_traffic_lights();
         self.install_system_hooks();
@@ -170,7 +197,9 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => self.request_close_window(),
             WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::Moved(_) => self.note_window_frame(),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.note_window_frame();
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize();
                 }
@@ -296,8 +325,13 @@ impl App {
             UserEvent::GitAbort => {
                 self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitAbort);
             }
+            UserEvent::GitSwitchBranch(branch, stash) => self.switch_branch(branch, stash),
+            UserEvent::GitForcePush => self.run_git_sync(true),
+            UserEvent::GitCommitAndPush => self.git_commit_and_push(),
+            UserEvent::GitUndoCommit => self.undo_last_commit(),
             UserEvent::ReplaceAllConfirmed(total) => self.replace_all_confirmed(total),
             UserEvent::TerminalClose(id) => self.confirmed_terminal_close(id),
+            UserEvent::TerminalRestart(id) => self.confirmed_terminal_restart(id),
             UserEvent::TerminalPaste(id, text) => self.confirmed_terminal_paste(id, text),
             UserEvent::TerminalQuit(ok) => {
                 if let Some(request) = self.quit_confirming.take()
@@ -458,14 +492,18 @@ impl App {
         }
 
         // 光标闪烁的定时唤醒需要同时满足：窗口有焦点、看得见（被完全遮住时不绘制）、焦点位于
-        // 可输入位置、当前文档可以编辑文字（或光标在差异右侧）、没有进行中的输入法组字；图片
-        // 预览和无法打开的文件不显示光标。离上次输入超过 `BLINK_STOP` 后光标停在亮着的状态。
+        // 可输入位置、当前文档可以编辑文字（或光标在差异里）、没有进行中的输入法组字；图片预览和
+        // 无法打开的文件不显示光标。离上次输入超过 `BLINK_STOP` 后光标停在亮着的状态。
         let typing = self.focus.is_field()
             || (self.focus == Focus::Terminal
-                && self.terminal.tab().is_some_and(|t| t.exited.is_none()))
+                && self.terminal.tab().is_some_and(|t| t.ended.is_none()))
             || (self.focus == Focus::Editor
                 && self.editor.active().is_some_and(|doc| {
-                    doc.edits_text() || doc.diff.as_deref().is_some_and(|v| v.editing)
+                    doc.edits_text()
+                        || doc
+                            .diff
+                            .as_deref()
+                            .is_some_and(|v| v.editing || v.read_caret().is_some())
                 }));
 
         let blinking = now.duration_since(self.blink_epoch) < BLINK_STOP;
@@ -520,6 +558,8 @@ impl App {
 
         earliest(&mut wake, self.scrollbar_tick(now));
 
+        earliest(&mut wake, self.settings_scroll_tick(now));
+
         earliest(&mut wake, self.format_progress_tick(now));
 
         earliest(&mut wake, self.log_tick(now));
@@ -554,6 +594,7 @@ impl App {
         if self.backup_pending() {
             self.back_up_for_quit();
         }
+        self.remember_window();
         self.save_session();
     }
 

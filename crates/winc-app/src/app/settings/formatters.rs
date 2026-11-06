@@ -268,7 +268,23 @@ impl App {
                 (MenuTarget::AddLanguage(Task::Fix), row.row.inset(4.0, 4.0))
             }
             Setting::SkipOnSave => (MenuTarget::SkipOnSave, row.control),
-            Setting::Language => (MenuTarget::Locale, row.control),
+            // 右边对齐控件：不长于控件时与控件同宽，字体名更长时向左展开。
+            Setting::Language => {
+                self.settings.selected = setting;
+                let (_, y) = menu_below(row.control);
+                return self.open_context_menu(MenuTarget::Locale, (row.control.right(), y));
+            }
+            Setting::RenderWhitespace => {
+                self.settings.selected = setting;
+                let (_, y) = menu_below(row.control);
+                return self.open_context_menu(MenuTarget::Whitespace, (row.control.right(), y));
+            }
+            Setting::UiFont | Setting::EditorFont => {
+                self.settings.selected = setting;
+                let (_, y) = menu_below(row.control);
+                let target = MenuTarget::Font(setting);
+                return self.open_context_menu(target, (row.control.right(), y));
+            }
             Setting::FormatCommand(id) => (MenuTarget::Tool(Task::Format, id), row.control),
             Setting::FixCommand(id) => (MenuTarget::Tool(Task::Fix, id), row.control),
             Setting::Updates => return self.settings_check_updates(),

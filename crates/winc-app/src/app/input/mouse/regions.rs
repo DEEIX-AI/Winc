@@ -18,9 +18,6 @@ impl App {
         if self.project_hit.contains(x, y) {
             return Some(Hover::ProjectName);
         }
-        if self.branch_hit.contains(x, y) {
-            return Some(Hover::BranchName);
-        }
 
         // 提交视图：输入框之外按绘制时记下的位置找。
         if self.commit_shown() && y >= self.panel_rect().y {
@@ -99,6 +96,7 @@ impl App {
                     self.settings_start_editing(setting);
                 }
             }
+            Some(SettingsPart::FontMenu(setting)) => self.settings_open_menu(setting),
             Some(SettingsPart::Decrease(setting)) => {
                 self.settings.selected = setting;
                 self.settings_adjust(setting, false);
@@ -163,6 +161,12 @@ impl App {
             return true;
         }
 
+        if let Some(&(_, part)) = self.picker_part_hits.iter().find(|(r, _)| r.contains(x, y)) {
+            self.focus = Focus::Picker;
+            self.press_picker_part(part);
+            return true;
+        }
+
         let parts = view::picker_parts(self, rect);
 
         if parts.bar.contains(x, y) {
@@ -179,8 +183,11 @@ impl App {
         if let Some(index) = parts.row_at(y, self.picker_scroll)
             && index < self.picker_hits.len()
         {
-            self.picker_selected = index;
-            self.picker_accept();
+            // 分组标题点了没有反应。
+            if self.picker_row_selectable(index) {
+                self.picker_selected = index;
+                self.picker_accept();
+            }
         }
 
         true
@@ -206,10 +213,6 @@ impl App {
         }
         if self.project_hit.contains(x, y) {
             self.open_project_menu();
-            return true;
-        }
-        if self.branch_hit.contains(x, y) {
-            self.open_sidebar_branch_menu();
             return true;
         }
 
@@ -340,6 +343,7 @@ impl App {
             return;
         };
         let sticky = self.tree_sticky_at(y).map(|s| s.level);
+        let segment = self.tree_segment_at(index, x);
         let Some(ws) = &mut self.editor.workspace else {
             return;
         };
@@ -352,7 +356,7 @@ impl App {
             return;
         }
         if !(ws.multi_selected() && ws.is_selected(index)) {
-            ws.select(Some(index));
+            ws.select_segment(index, segment.as_deref());
         }
         let mut drag = TreeDrag::new(ws, index, (x, y));
         drag.sticky = sticky;

@@ -1,7 +1,7 @@
-//! 状态栏右侧可点击的项：缩进、行尾、编码、语言、分支和终端开关。
+//! 状态栏右侧可点击的项：缩进、行尾、编码、语言、工作树、分支、终端开关和设置。
 //!
-//! 点击缩进、行尾、编码、语言时，在该项处弹出系统菜单；菜单命令由 [`App::run_status_command`]
-//! 执行。
+//! 点击缩进、行尾、编码、语言、工作树、分支时，在该项处弹出系统菜单；文档的几项由
+//! [`App::run_status_command`] 执行。
 
 use winc_core::{Indent, LineEnding};
 use winc_editor::encoding::CHOICES;
@@ -24,10 +24,14 @@ pub enum StatusItem {
     Encoding,
     /// 文档的语言：手动改用别的语言（没保存过的文件选了语言才能格式化），或按文件名重新识别。
     Language,
-    /// Git 的当前分支：点了弹分支菜单。
+    /// 当前的仓库或工作树（有多个位置时才有）：点了弹出系统菜单切换。
+    Worktree,
+    /// Git 的当前分支：点了弹出系统菜单切换。
     Branch,
-    /// 终端面板的开关（终端模块开着时在最右边）。
+    /// 终端面板的开关（终端模块开着时在设置按钮左边）。
     Terminal,
+    /// 设置按钮（始终在最右边）：点了打开设置。
+    Settings,
     /// 后台检查找到了新版本：点了打开更新窗口。
     Update,
 }
@@ -43,10 +47,13 @@ pub fn indent_label(indent: Indent, tab_width: usize) -> String {
 }
 
 impl App {
-    /// 响应状态栏上 `item` 的点击：在该项处弹出菜单；终端开关直接开关面板。
+    /// 响应状态栏上 `item` 的点击：在该项处弹出菜单；终端开关直接开关面板，设置按钮直接打开设置。
     pub(in crate::app) fn open_status_menu(&mut self, item: StatusItem) {
         if item == StatusItem::Terminal {
             return self.click_terminal_button();
+        }
+        if item == StatusItem::Settings {
+            return self.open_settings();
         }
         if item == StatusItem::Update {
             #[cfg(target_os = "macos")]
@@ -59,14 +66,15 @@ impl App {
             return;
         };
         let target = match (item, self.editor.active().map(|d| d.id)) {
-            // 分支菜单不依赖当前文档。
-            (StatusItem::Branch, _) => MenuTarget::Branch,
+            // 这两个菜单不依赖当前文档。
+            (StatusItem::Branch, _) => MenuTarget::StatusBranches,
+            (StatusItem::Worktree, _) => MenuTarget::StatusPlaces(self.location_places()),
             (_, None) => return,
             (StatusItem::Indent, Some(id)) => MenuTarget::Indent(id),
             (StatusItem::LineEnding, Some(id)) => MenuTarget::LineEnding(id),
             (StatusItem::Encoding, Some(id)) => MenuTarget::Encoding(id),
             (StatusItem::Language, Some(id)) => MenuTarget::Language(id),
-            (StatusItem::Terminal | StatusItem::Update, _) => return,
+            (StatusItem::Terminal | StatusItem::Settings | StatusItem::Update, _) => return,
         };
         self.open_button_menu(
             MenuButton::Status(item),

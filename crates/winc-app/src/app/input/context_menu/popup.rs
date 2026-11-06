@@ -93,6 +93,8 @@ pub(crate) struct PopupMenu {
     pub right_aligned: bool,
     /// 打勾的那一行对准 `at`（状态栏的缩进、行尾菜单，和弹出式按钮一样）。
     pub at_checked: bool,
+    /// 第一级菜单的最小宽度（逻辑像素）；没有要求时为 0。
+    pub min_width: f32,
     /// 目录菜单：当前文件的路径，展开目录时据此给它的各级上层目录打勾；其他菜单为 `None`。
     pub current: Option<PathBuf>,
 }
@@ -110,6 +112,7 @@ impl PopupMenu {
             at,
             at_checked: flags.0,
             right_aligned: flags.1,
+            min_width: 0.0,
             current: None,
         }
     }
@@ -264,11 +267,11 @@ impl App {
                 }
                 // 按住 `⌥` 才出现的备选项不显示，只占一个编号。
                 MenuEntry::Alternate(..) => *numbered += 1,
-                MenuEntry::Submenu(title, items) | MenuEntry::CheckedSubmenu(title, items) => {
+                MenuEntry::Submenu(title, items) => {
                     let children = self.popup_rows(items, context, numbered);
                     rows.push(PopupRow::Submenu {
                         label: MenuLabel::plain(title),
-                        checked: matches!(entry, MenuEntry::CheckedSubmenu(..)),
+                        checked: false,
                         rows: children,
                     });
                 }

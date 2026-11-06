@@ -198,6 +198,13 @@ fn multiline_fields_keep_newlines_and_move_by_rows() {
     let mut single = TextField::default();
     single.insert("\r\nfoo\nbar");
     assert_eq!(single.text(), "foo");
+    // 单独键入的空格是内容；只有空白的多行内容仍然不插入。
+    let mut single = TextField::default();
+    single.insert("Maple");
+    assert!(single.insert(" "));
+    single.insert("Mono");
+    assert_eq!(single.text(), "Maple Mono");
+    assert!(!single.insert(" \n "));
 
     // Home、End 到这一行（按换行符分）的两端。
     let second = "第一行\n".len();

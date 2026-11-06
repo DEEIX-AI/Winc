@@ -40,8 +40,31 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let covered = frame.covered(layout.card, RADIUS_CARD);
     frame.rect_except(app.layout.window, p.scrim, 0.0, covered);
+    // 开始滚动时保存已绘制的窗口和遮罩，滚动期间不再重绘（`draw_scrolling`）。
+    if app.settings.scrolled_at.is_some() && app.settings.scroll_base.is_none() {
+        app.settings.scroll_base = Some(frame.snapshot(frame.bounds()));
+    }
     super::draw_card_frame(frame, p, layout.card, RADIUS_CARD);
     draw_dialog(app, frame, &layout);
+}
+
+/// 绘制设置页滚动期间的一帧：恢复保存的窗口画面（含遮罩），只重绘卡片，返回 `true`。
+///
+/// 没有快照，或窗口尺寸、缩放比例已变化时返回 `false`，由调用方完整绘制并重新保存快照。
+pub(crate) fn draw_scrolling(app: &mut App, frame: &mut Frame<'_>) -> bool {
+    if !app.settings_reuses_base(frame.bounds(), frame.scale()) {
+        return false;
+    }
+    let Some(base) = app.settings.scroll_base.take() else {
+        return false;
+    };
+    // `tint` 全透明时 `restore_tinted` 原样恢复快照。
+    frame.restore_tinted(&base, app.palette.scrim.alpha(0.0));
+    app.settings.scroll_base = Some(base);
+    let layout = app.settings_layout();
+    super::draw_card_frame(frame, app.palette, layout.card, RADIUS_CARD);
+    draw_dialog(app, frame, &layout);
+    true
 }
 
 /// 设置浮层出现、消失的动画途中：有开头存下的快照时，直接拿来绘制这一帧，返回 `true`；没有
@@ -333,6 +356,9 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             let (text, dim) = if row.setting == Setting::Language {
                 let choice = app.config.language.unwrap_or_default();
                 (crate::layout::locale_label(choice).to_owned(), false)
+            } else if row.setting == Setting::RenderWhitespace {
+                let choice = app.config.render_whitespace.unwrap_or_default();
+                (crate::layout::whitespace_label(choice).to_owned(), false)
             } else {
                 match app.skipped_on_save() {
                     Some(names) => (names, false),
@@ -516,6 +542,9 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     let rect = row.control;
     let editing = matches!(&app.settings.editing, Some((s, _)) if *s == row.setting);
     let hovered = app.settings.hover == Some(SettingsPart::Field(row.setting));
+    let font = row.setting.control() == SettingControl::Font;
+    let on_menu = font && app.settings.hover == Some(SettingsPart::FontMenu(row.setting));
+    let hovered = hovered || on_menu;
     let (configured, placeholder) = match row.setting {
         Setting::UiFont => (app.config.ui_font.clone(), t!("settings-font-default")),
         Setting::FormatCommand(_) | Setting::FixCommand(_) => {
@@ -523,7 +552,24 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         }
         _ => (app.config.editor_font.clone(), t!("settings-font-default")),
     };
-    let area = rect.inset(10.0, 0.0);
+    // 字体输入框的文字不进入右端的下拉按钮。
+    let area = if font {
+        let button = crate::layout::font_menu_button(rect);
+        Rect::new(
+            rect.x + 10.0,
+            rect.y,
+            (button.x - rect.x - 10.0).max(0.0),
+            rect.h,
+        )
+    } else {
+        rect.inset(10.0, 0.0)
+    };
+    let draw_arrows = |app: &App, frame: &mut Frame<'_>| {
+        if font {
+            let arrows = (rect.right() - 13.0, rect.y + rect.h / 2.0);
+            icons::up_down(frame, arrows, app.palette.text_dim, clip);
+        }
+    };
 
     if editing {
         let ring = if matches!(&app.settings.error, Some((s, _)) if *s == row.setting) {
@@ -538,6 +584,11 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         let (setting, mut field) = app.settings.editing.take().expect("刚刚判断过在编辑");
         let caret = draw_bar_field(app, frame, area, &mut field, placeholder, focused);
         app.settings.editing = Some((setting, field));
+        if on_menu {
+            let button = crate::layout::font_menu_button(rect);
+            frame.rect_clipped(button, p.hover, RADIUS_ROW, clip);
+        }
+        draw_arrows(app, frame);
         return caret;
     }
 
@@ -552,6 +603,7 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     let text = ellipsize(frame, &text, app.fonts.ui, area.w);
     let w = frame.measure(FontKind::Ui, app.fonts.ui, &text);
     ui_text(frame, app, area.right() - w, area, &text, color, area);
+    draw_arrows(app, frame);
     None
 }
 

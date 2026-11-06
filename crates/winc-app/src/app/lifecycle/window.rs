@@ -65,7 +65,7 @@ impl App {
 
     /// 窗口是否完全看不见（见 `occluded`）；看得见时，或者测量时（窗口透明，系统当它看不见）
     /// 为假。
-    pub(super) fn unseen(&self) -> bool {
+    pub(in crate::app) fn unseen(&self) -> bool {
         self.occluded && !self.bench.silent()
     }
 
@@ -94,6 +94,11 @@ impl App {
             window.focus_window();
         }
         self.request_redraw();
+    }
+
+    /// 是否显示状态栏（`statusBar`）。
+    pub(crate) fn status_bar_shown(&self) -> bool {
+        self.config.status_bar != Some(false)
     }
 
     /// 新窗口放在哪里：比本窗口往右下错开，形成层叠。
@@ -160,7 +165,7 @@ impl App {
     /// 重新计算各区域的矩形。
     ///
     /// 窗口尺寸、面板宽度、标签或预览状态变化后调用；面板跟着焦点关闭也在这一步完成。
-    pub(in crate::app) fn relayout(&mut self) {
+    pub(crate) fn relayout(&mut self) {
         // 面板打开以后换了标签（⌘W、切换标签、后退前进、新建文件）：面板里的符号、书签、用法
         // 都属于原来的文档，回车会在新标签里跳到错误的位置，所以关掉。`close_picker` 会再次
         // 调用本函数，那时面板已经关了。
@@ -182,6 +187,12 @@ impl App {
         };
         let (w, h) = renderer.logical_size();
 
+        // 隐藏状态栏时留下和窗口其他三边一样的边距，卡片不贴着窗口底边。
+        let status_height = if self.status_bar_shown() {
+            STATUS_HEIGHT
+        } else {
+            ISLAND_MARGIN
+        };
         let rows = match (
             self.search_open && self.editor.active.is_some(),
             self.replace_open,
@@ -194,15 +205,25 @@ impl App {
         // `PICKER_MAX_ROWS` 行，且不能延伸到状态栏。
         let picker_rows = if self.picker_open {
             let room =
-                (h - STATUS_HEIGHT - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
+                (h - status_height - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
             let most = ((room / PICKER_ROW).floor() as usize).clamp(1, PICKER_MAX_ROWS);
             self.picker_hits.len().clamp(1, most)
         } else {
             0
         };
         let (panel, shown) = (self.panel_width, self.sidebar_shown());
-        self.layout = Layout::compute(w, h, panel, shown, rows, picker_rows, self.gutter_width());
+        self.layout = Layout::compute(
+            w,
+            h,
+            panel,
+            shown,
+            rows,
+            picker_rows,
+            self.gutter_width(),
+            status_height,
+        );
         self.place_places();
+        self.place_git_picker();
         self.animate_picker((w, h));
         if let Some(bottom) = self.places_bottom {
             self.layout.picker.y = bottom - self.layout.picker.h;
@@ -411,7 +432,11 @@ impl App {
     /// 编辑区每帧都先用不透明的 `editor_bg` 整个铺一遍（`view::editor::draw_editor`），告诉渲染器
     /// 那一块不必先铺窗口背景色。
     pub(in crate::app) fn cover_frame(&self, renderer: &mut winc_render::Renderer) {
-        if self.palette.editor_bg.a >= 1.0 {
+        let (window, scale) = (self.layout.window, renderer.scale_factor());
+        if self.settings_reuses_base(window, scale) {
+            // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。
+            renderer.cover_next_frame(window);
+        } else if self.palette.editor_bg.a >= 1.0 {
             renderer.cover_next_frame(self.layout.editor);
         }
     }
@@ -435,6 +460,7 @@ impl App {
             return;
         }
         self.settle_animations();
+        self.advance_wheel_glide();
         self.continue_drag_scroll();
         self.track_modules();
         self.track_search_rows();

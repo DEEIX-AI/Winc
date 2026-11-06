@@ -6,6 +6,9 @@ use crate::root;
 
 /// 在 `out` 中生成 `winc.png`（256 像素）和含四种尺寸的 `winc.ico`。
 ///
+/// 嵌入 Windows 可执行文件的 `crates/winc-app/assets/winc.ico` 是其中一次的结果，提交在仓库里
+/// （构建 Windows 版本时不必渲染 SVG）；改了 SVG 以后要把新生成的文件复制过去，否则测试失败。
+///
 /// # Errors
 ///
 /// 读取、解析 SVG 或写入图标失败时返回原因。
@@ -52,3 +55,6 @@ pub fn write(out: &Path) -> Result<(), String> {
     }
     std::fs::write(out.join("winc.ico"), ico).map_err(io)
 }
+
+#[cfg(test)]
+mod tests;

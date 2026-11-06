@@ -370,10 +370,11 @@ fn status_bar_changes_indentation_and_line_endings() {
     ));
     app.context_menu = None;
 
-    // 仅供查看的输出标签（格式化输出）没有可点击的状态栏项。
+    // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮。
     app.editor.show_output("格式化输出", "x\n");
     paint(&mut app);
-    assert!(app.status_hits.is_empty());
+    let items: Vec<StatusItem> = app.status_hits.iter().map(|&(_, item)| item).collect();
+    assert_eq!(items, [StatusItem::Settings]);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -669,6 +670,32 @@ fn word_wrap_folds_long_lines_to_the_editor_width() {
     paint(&mut app);
     assert_eq!(app.row_count(), 64);
     assert_eq!(app.status_message.as_deref(), Some("已关闭自动换行"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn toggling_word_wrap_keeps_the_top_line_in_place() {
+    let dir = sample_folder("word-wrap-top");
+    let long = "word ".repeat(80);
+    let text: String = (0..200).map(|i| format!("{i} {long}\n")).collect();
+    let path = dir.join("long.txt");
+    std::fs::write(&path, text).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+
+    // 光标留在开头，视图滚到中间：开关不把视图带回光标。
+    app.editor.active_mut().unwrap().scroll_line = 100.5;
+    app.run_action(Action::ToggleWordWrap);
+    paint(&mut app);
+    let doc = app.editor.active().unwrap();
+    assert!(doc.is_wrapping());
+    assert_eq!(doc.line_of_row(doc.scroll_line as usize), 100);
+    assert_eq!(doc.scroll_line.fract(), 0.5);
+
+    app.run_action(Action::ToggleWordWrap);
+    paint(&mut app);
+    assert_eq!(app.editor.active().unwrap().scroll_line, 100.5);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

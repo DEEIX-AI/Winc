@@ -39,11 +39,13 @@ pub(crate) enum ScrollArea {
     Settings,
     /// 终端面板的回滚缓冲。
     Terminal,
+    /// Markdown 预览。
+    Markdown,
 }
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 8] = [
+    const ALL: [ScrollArea; 9] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::Tree,
@@ -52,6 +54,7 @@ impl ScrollArea {
         ScrollArea::Commit,
         ScrollArea::Settings,
         ScrollArea::Terminal,
+        ScrollArea::Markdown,
     ];
 
     /// 该区域可以拖动的滚动条；不能拖动时为 `None`。
@@ -65,6 +68,7 @@ impl ScrollArea {
             ScrollArea::Commit => Some(Scrollbar::Commit),
             ScrollArea::Settings => None,
             ScrollArea::Terminal => Some(Scrollbar::Terminal),
+            ScrollArea::Markdown => Some(Scrollbar::Markdown),
         }
     }
 
@@ -230,6 +234,10 @@ impl App {
         let dialog = self.form_dialog.is_some();
         let hovered = ScrollArea::ALL.into_iter().find(|&area| {
             if dialog || settings != (area == ScrollArea::Settings) {
+                return false;
+            }
+            // 鼠标在展开了完整名称的一行上：不唤出文件树的滚动条。
+            if area == ScrollArea::Tree && self.over_tree_overflow_row(y) {
                 return false;
             }
             self.scrollbars.reveals[area as usize]

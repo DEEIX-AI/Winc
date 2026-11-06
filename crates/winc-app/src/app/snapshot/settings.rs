@@ -9,6 +9,59 @@ use super::*;
 use winc_editor::format::{PRESETS, Task};
 
 #[test]
+fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
+    use std::time::{Duration, Instant};
+
+    let dir = sample_folder("settings-scroll-base");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.open_settings();
+    app.settings.motion = None;
+    paint(&mut app);
+    assert!(app.settings.scroll_base.is_none());
+
+    // 第一帧完整绘制并保存快照。
+    app.settings_scroll_by(-10.0);
+    paint(&mut app);
+    assert!(app.settings.scroll_base.is_some());
+    let window = app.layout.window;
+    let scale = app.renderer.as_ref().unwrap().scale_factor();
+    assert!(app.settings_reuses_base(window, scale));
+
+    // 之后的帧使用快照，画面与完整绘制相同。
+    app.settings_scroll_by(-30.0);
+    paint(&mut app);
+    let reused = app
+        .renderer
+        .as_ref()
+        .unwrap()
+        .image()
+        .unwrap()
+        .pixels
+        .clone();
+
+    // 停止滚动后释放快照并重绘。
+    let now = Instant::now();
+    assert!(app.settings_scroll_tick(now).is_some());
+    assert!(app.settings.scroll_base.is_some());
+    assert_eq!(app.settings_scroll_tick(now + Duration::from_secs(1)), None);
+    assert!(app.settings.scroll_base.is_none());
+    assert!(!app.settings_reuses_base(window, scale));
+    paint(&mut app);
+    let full = &app.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
+
+    // 关闭设置时释放快照。
+    app.settings_scroll_by(-10.0);
+    paint(&mut app);
+    app.close_settings();
+    assert!(app.settings.scroll_base.is_none());
+    assert_eq!(app.settings.scrolled_at, None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn zoom_changes_the_editor_font_size_and_resets() {
     let dir = search_folder("zoom");
     let mut app = app_with(&dir, false);
@@ -126,8 +179,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::AddFixLanguage);
 
-    // 主题：← → 在三个选项之间切换，到头后不再变化。
-    for _ in 0..30 {
+    // 主题：← → 在三个选项之间切换，到头后不再变化。步数按全部设置项计算，原因同上。
+    for _ in 0..Setting::all(&app.settings.languages).len() {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::Theme);
@@ -147,11 +200,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，再下面是两组
-    // 主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；
-    // 到头后不再变化。
+    // 浅色主题（语言下面是界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，然后是状态栏和
+    // 记住窗口两个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：
+    // → 换到下一个，外观回到深色；到头后不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..3 + title_bar {
+    for _ in 0..5 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -739,5 +792,169 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     assert!(app.can_check_updates());
     *app.shared.update_state.borrow_mut() = UpdateState::Checking;
     assert!(!app.can_check_updates());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_font_can_be_chosen_from_the_menu() {
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+    use crate::layout::{SettingsPart, font_menu_button};
+
+    let dir = search_folder("settings-font-menu");
+    let mut app = app_with(&dir, false);
+    app.open_settings();
+    app.settings_show_page(Setting::EditorFont.page());
+    paint(&mut app);
+
+    // 点输入框右端的按钮弹出字体菜单；点其余位置仍是输入框。
+    let row = *app.settings_layout().row(Setting::EditorFont).unwrap();
+    let button = font_menu_button(row.control);
+    let (x, y) = (button.x + button.w / 2.0, button.y + button.h / 2.0);
+    assert_eq!(
+        app.settings_part_at(x, y),
+        Some(SettingsPart::FontMenu(Setting::EditorFont))
+    );
+    assert_eq!(
+        app.settings_part_at(button.x - 4.0, y),
+        Some(SettingsPart::Field(Setting::EditorFont))
+    );
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert_eq!(
+        app.context_menu.as_ref().map(|m| &m.target),
+        Some(&MenuTarget::Font(Setting::EditorFont))
+    );
+    assert!(app.settings.editing.is_none());
+    assert!(app.menu_checked(MenuCommand::FontDefault));
+    app.context_menu = None;
+    paint(&mut app);
+
+    // 编辑器字体直接列出等宽字体，其余字体在子菜单里；界面字体全部直接列出。
+    let fonts = winc_render::installed_fonts();
+    let listed = |setting| {
+        crate::app::input::context_menu::font_menu(setting)
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    crate::app::input::context_menu::MenuEntry::Item(MenuCommand::Font(_), _)
+                )
+            })
+            .count()
+    };
+    assert_eq!(listed(Setting::UiFont), fonts.len());
+    assert_eq!(
+        listed(Setting::EditorFont),
+        fonts.iter().filter(|family| family.monospace).count()
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        // 选中后立刻生效并写入配置，再选「系统默认」清除。
+        let menlo = fonts.iter().position(|f| f.name == "Menlo").unwrap();
+        app.settings_open_menu(Setting::EditorFont);
+        app.run_menu_command(MenuCommand::Font(menlo));
+        assert_eq!(app.config.editor_font.as_deref(), Some("Menlo"));
+        assert_eq!(app.settings.error, None);
+
+        app.settings_open_menu(Setting::EditorFont);
+        assert!(app.menu_checked(MenuCommand::Font(menlo)));
+        app.run_menu_command(MenuCommand::FontDefault);
+        assert_eq!(app.config.editor_font, None);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_language_and_ui_font_controls_line_up() {
+    let dir = search_folder("settings-language-width");
+    let mut app = app_with(&dir, false);
+    app.open_settings();
+    app.settings_show_page(Setting::Language.page());
+    let layout = app.settings_layout();
+    let control = |setting| layout.row(setting).unwrap().control;
+    let (language, font) = (control(Setting::Language), control(Setting::UiFont));
+    assert_eq!((language.x, language.w), (font.x, font.w));
+    assert_eq!(Setting::Language.description(), None);
+    // 与模式分段控件同宽。
+    let theme = control(Setting::Theme);
+    assert_eq!((language.x, language.w), (theme.x, theme.w));
+
+    // 语言菜单比控件短，打开后与控件同宽并对齐。
+    app.settings_open_menu(Setting::Language);
+    paint(&mut app);
+    let popup = app.context_menu.as_ref().unwrap().popup.as_ref().unwrap();
+    let menu = popup.levels[0].rect;
+    assert_eq!((menu.x, menu.w), (language.x, language.w));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn line_numbers_and_the_status_bar_can_be_hidden() {
+    let dir = sample_folder("settings-chrome");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    paint(&mut app);
+    let (gutter, text, editor_bottom) = (
+        app.layout.gutter.w,
+        app.layout.text.w,
+        app.layout.editor.bottom(),
+    );
+    assert!(!app.status_hits.is_empty());
+
+    // 行号：行号栏变窄，文字区域变宽，折叠箭头和书签的空白还在。
+    assert!(app.switch_on(Setting::LineNumbers));
+    assert!(app.run_action(crate::keymap::Action::ToggleLineNumbers));
+    assert!(!app.switch_on(Setting::LineNumbers));
+    assert_eq!(app.config.line_numbers, Some(false));
+    assert_eq!(app.layout.gutter.w, 2.0 * crate::theme::GUTTER_PADDING);
+    assert!(app.layout.gutter.w < gutter);
+    assert!(app.layout.text.w > text);
+    paint(&mut app);
+
+    // 状态栏：底部只留下边距，卡片变高，点不到状态栏上的项。
+    assert!(app.switch_on(Setting::StatusBar));
+    assert!(app.run_action(crate::keymap::Action::ToggleStatusBar));
+    assert_eq!(app.config.status_bar, Some(false));
+    assert_eq!(app.layout.status.h, crate::theme::ISLAND_MARGIN);
+    assert!(app.layout.editor.bottom() > editor_bottom);
+    paint(&mut app);
+    assert!(app.status_hits.is_empty());
+    assert!(app.crumb_hits.is_empty());
+
+    // 短提示本来显示在状态栏上，隐藏后改到右上角。
+    app.flash("copied");
+    assert_eq!(app.status_message, None);
+    assert_eq!(app.notice.as_deref(), Some("copied"));
+
+    // 命令面板能把它们打开回来。
+    assert!(app.run_action(crate::keymap::Action::ToggleStatusBar));
+    assert!(app.run_action(crate::keymap::Action::ToggleLineNumbers));
+    assert_eq!(app.layout.gutter.w, gutter);
+    assert_eq!(app.layout.editor.bottom(), editor_bottom);
+    paint(&mut app);
+    assert!(!app.status_hits.is_empty());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn turning_off_window_restore_forgets_the_saved_frame() {
+    let dir = sample_folder("settings-window");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.state.window = Some(winc_config::WindowFrame {
+        position: Some((10.0, 20.0)),
+        width: 900.0,
+        height: 600.0,
+        scale: 1.0,
+        maximized: false,
+    });
+    assert!(app.switch_on(Setting::RestoreWindow));
+    app.settings_toggle(Setting::RestoreWindow);
+    assert_eq!(app.config.restore_window, Some(false));
+    assert_eq!(app.state.window, None);
+
     std::fs::remove_dir_all(&dir).unwrap();
 }

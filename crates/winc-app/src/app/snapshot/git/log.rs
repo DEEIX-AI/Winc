@@ -141,10 +141,12 @@ fn stepping_past_the_last_change_opens_the_commits_next_file() {
     app.press_log(LogTarget::File(0));
     let title = |app: &App| app.editor.active().unwrap().title.clone().unwrap();
     assert!(title(&app).starts_with("a.txt · "));
-    // 每个文件只有一处改动：按 `F7` 跳到该处，再按一次切换到下一个文件，仍在同一标签中；
-    // 在第一个文件中向前跳转时没有上一个文件。
+    // 每个文件只有一处改动：按 `F7` 跳到该处，再按提示「再按一次」，第三次切换到下一个文件，仍在
+    // 同一标签中；在第一个文件中向前跳转时没有上一个文件。
     let tabs = app.editor.documents.len();
     app.run_action(Action::NextDifference);
+    app.run_action(Action::NextDifference);
+    assert!(title(&app).starts_with("a.txt · "));
     app.run_action(Action::NextDifference);
     assert!(title(&app).starts_with("b.txt · "));
     assert_eq!(app.editor.documents.len(), tabs);
@@ -722,7 +724,7 @@ fn log_compares_two_commits_or_a_branch_and_the_branch_menu_stashes() {
         std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
         "fn main() { changed(); }\n"
     );
-    let menu = branch_menu(&app.git.branches, &app.git.stashes, &[], &[], None, false);
+    let menu = branch_menu(&app.git.branches, &app.git.stashes, None, false);
     assert!(
         menu.iter()
             .any(|e| matches!(e, MenuEntry::Submenu(title, _) if title == "储藏（1）"))
@@ -762,13 +764,16 @@ fn the_log_opens_from_the_commit_view_button_and_the_branch_menu_starts_with_fet
     assert!(app.log_active());
 
     // 分支菜单不再重复列出日志入口，最上面是「获取」，下方写明作用。
-    let menu = branch_menu(&app.git.branches, &app.git.stashes, &[], &[], None, false);
+    let menu = branch_menu(&app.git.branches, &app.git.stashes, None, false);
     assert_eq!(
         menu.first(),
         Some(&MenuEntry::Item(MenuCommand::GitFetch, true))
     );
     let label = app.menu_label(MenuCommand::GitFetch);
-    assert_eq!(label.subtitle.as_deref(), Some("同步远程更新"));
+    assert_eq!(
+        label.subtitle.as_deref(),
+        Some("下载远程更新，不改动本地分支")
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

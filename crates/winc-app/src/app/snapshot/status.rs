@@ -9,6 +9,42 @@ use crate::app::status::motion::STATUS_SLIDE;
 use std::time::Duration;
 
 #[test]
+fn the_settings_button_stays_at_the_right_end_of_the_status_bar() {
+    let dir = sample_folder("status-settings");
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::TerminalModule);
+    paint(&mut app);
+    fn pill(app: &App, wanted: StatusItem) -> Option<Rect> {
+        let hit = app.status_hits.iter().find(|(_, item)| *item == wanted);
+        hit.map(|(rect, _)| *rect)
+    }
+
+    // 最右边是设置，终端开关在它左边。
+    let settings = pill(&app, StatusItem::Settings).unwrap();
+    assert!(pill(&app, StatusItem::Terminal).unwrap().right() < settings.x);
+    assert!(settings.right() < app.layout.status.right());
+
+    // 悬停时提示命令名，点击打开设置。
+    let at = (settings.x + settings.w / 2.0, settings.y + settings.h / 2.0);
+    app.on_mouse_move(at.0, at.1);
+    assert_eq!(app.hover, Hover::Status(StatusItem::Settings));
+    assert!(app.hover.has_tooltip());
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(app.settings.open);
+    app.close_settings();
+    paint(&mut app);
+
+    // 关掉终端模块：设置按钮的位置不变。
+    app.settings_toggle(Setting::TerminalModule);
+    paint(&mut app);
+    assert!(pill(&app, StatusItem::Terminal).is_none());
+    assert_eq!(pill(&app, StatusItem::Settings), Some(settings));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn every_crumb_opens_the_folder_it_names() {
     let dir = search_folder("breadcrumb");
     std::fs::create_dir_all(dir.join(".git")).unwrap();

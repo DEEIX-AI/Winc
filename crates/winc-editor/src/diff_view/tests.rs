@@ -16,7 +16,11 @@ fn numbered(n: usize) -> String {
 }
 
 fn line(line: usize, hunk: Option<usize>) -> SideRow {
-    SideRow::Line { line, hunk }
+    SideRow::Line {
+        line,
+        hunk,
+        part: 0,
+    }
 }
 
 #[test]
@@ -276,9 +280,21 @@ fn comparing_elsewhere_then_applying_matches_comparing_in_place() {
         (b.hunks.clone(), b.keys.clone())
     );
     assert_eq!(a.rows, b.rows);
-    // 左侧的选区：取出选中的文本。
-    b.left_selection = Some((b.old.text.line_to_char(2), b.old.text.line_to_char(4)));
-    assert_eq!(b.left_selected().as_deref(), Some("line 2\nline 3\n"));
+    // 只读一侧的选区：取出选中的文本。
+    let range = (b.old.text.line_to_char(2), b.old.text.line_to_char(4));
+    b.read_selection = Some(ReadSelection { side: LEFT, range });
+    assert_eq!(b.read_selected().as_deref(), Some("line 2\nline 3\n"));
+    let range = (b.new.text.line_to_char(0), b.new.text.line_to_char(1));
+    b.read_selection = Some(ReadSelection { side: RIGHT, range });
+    assert_eq!(b.read_selected(), Some(b.new.text.line(0).to_string()));
+    // 光标在选区的终点；没有选中内容时也有光标。
+    assert_eq!(b.read_caret(), Some((RIGHT, range.1)));
+    b.read_selection = Some(ReadSelection {
+        side: RIGHT,
+        range: (range.0, range.0),
+    });
+    assert_eq!(b.read_selected(), None);
+    assert_eq!(b.read_caret(), Some((RIGHT, range.0)));
 }
 
 #[test]
@@ -324,4 +340,151 @@ mod measure {
             eprintln!("{n} 行：{:?} / 次", start.elapsed() / 20);
         }
     }
+}
+
+#[test]
+fn wrapping_gives_each_part_of_a_long_line_its_own_row() {
+    let long = "word ".repeat(10);
+    let text = format!("short\n{long}\nend\n");
+    let mut view = view(&text, &format!("{text}added\n"));
+    assert_eq!(view.rows[LEFT].len(), 3);
+    assert!(view.set_wrap(Some((20, 4))));
+    assert!(view.is_wrapping());
+    assert!(!view.set_wrap(Some((20, 4))));
+
+    // 没改的行两侧断法相同，行数相等。
+    let parts = view.breaks(LEFT, 1).rows();
+    assert!(parts > 1);
+    assert_eq!(view.rows[LEFT].len(), 2 + parts);
+    assert_eq!(view.rows[RIGHT].len(), 3 + parts);
+    assert_eq!(
+        view.rows[LEFT][2],
+        SideRow::Line {
+            line: 1,
+            hunk: None,
+            part: 1
+        }
+    );
+
+    // 改动的显示行和滚动位置跟着多出来的段走。
+    assert_eq!(view.hunk_rows[RIGHT][0], 2 + parts..3 + parts);
+    assert_eq!(view.row_at(RIGHT, (2 + parts) as f32), (2 + parts) as f32);
+
+    // 行号查到的是第一段，字符查到它所在的那一段。
+    assert_eq!(view.row_of(LEFT, 1), 1);
+    let second = view.breaks(LEFT, 1).start_of(1);
+    assert_eq!(view.row_of_col(LEFT, 1, second), 2);
+    assert_eq!(view.row_of_col(LEFT, 1, 0), 1);
+
+    assert!(view.set_wrap(None));
+    assert_eq!(view.rows[LEFT].len(), 3);
+}
+
+#[test]
+fn a_cell_in_a_wrapped_row_maps_to_the_whole_line() {
+    let long = format!("    {}", "word ".repeat(10));
+    let mut view = view(&format!("{long}\n"), &format!("{long}\nmore\n"));
+    view.set_wrap(Some((20, 4)));
+    let breaks = view.breaks(LEFT, 0);
+    assert_eq!(breaks.indent, 4);
+    let start = breaks.start_of(1);
+
+    // 第一段不变；第二段先去掉缩进，再加上这一段开头的列。
+    assert_eq!(view.cell_in_row(LEFT, 0, 3), 3);
+    assert_eq!(view.cell_in_row(LEFT, 1, 4), start);
+    assert_eq!(view.cell_in_row(LEFT, 1, 6), start + 2);
+    assert_eq!(view.cell_in_row(LEFT, 1, 0), start);
+    // 超出这一段时不落到下一段。
+    let next = breaks.start_of(2);
+    assert!(view.cell_in_row(LEFT, 1, 1000) < next);
+
+    // 不换行时不换算。
+    view.set_wrap(None);
+    assert_eq!(view.cell_in_row(LEFT, 0, 7), 7);
+}
+
+#[test]
+fn the_top_row_maps_back_to_its_scroll_position() {
+    // 一段删除让两侧不等长：开头半屏内、停在删除处、越过删除之后都能反算回来。
+    let old = numbered(100);
+    let new: String = old
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !(30..80).contains(i))
+        .map(|(_, l)| format!("{l}\n"))
+        .collect();
+    let mut v = view(&old, &new);
+    v.set_collapse(false, 0);
+    for row in [0.0, 5.0, 19.5, 20.0, 30.0, 40.25] {
+        let pos = v.pos_of_top(RIGHT, row, 20.0);
+        assert!(
+            (v.side_scroll(RIGHT, pos, 20.0) - row).abs() < 0.01,
+            "{row}"
+        );
+    }
+}
+
+#[test]
+fn folded_rows_are_not_wrapped_and_a_rebuilt_view_keeps_wrapping() {
+    let long = "word ".repeat(10);
+    let lines: String = (0..40).map(|i| format!("{long}{i}\n")).collect();
+    let mut first = view(&lines, &format!("{lines}added\n"));
+    first.set_wrap(Some((20, 4)));
+    assert!(matches!(first.rows[LEFT][0], SideRow::Fold { .. }));
+
+    let mut next = view(&lines, &format!("{lines}other\n"));
+    next.inherit(&first);
+    assert!(next.is_wrapping());
+    assert_eq!(next.rows[LEFT].len(), first.rows[LEFT].len());
+}
+
+#[test]
+fn the_unified_layout_lists_old_rows_before_new_rows() {
+    let old = "same\nold 1\nold 2\nsame\ngone\nsame\n";
+    let new = "same\nnew 1\nsame\nsame\nadded\n";
+    let mut v = view(old, new);
+    v.set_unified(true);
+    assert!(v.is_unified());
+    let rows: Vec<_> = (0..v.scroll_rows())
+        .map(|i| v.unified_row(i).unwrap())
+        .collect();
+    assert_eq!(v.unified_row(rows.len()), None);
+    // 每一行只出现一次，两侧各自按顺序排列；改动里左侧的行在右侧的行前面。
+    for side in [LEFT, RIGHT] {
+        let of_side: Vec<_> = rows.iter().filter(|r| r.0 == side).map(|r| r.1).collect();
+        assert!(of_side.windows(2).all(|w| w[0] < w[1]), "{of_side:?}");
+    }
+    let first = &v.hunk_rows;
+    let at = v.hunk_pos(0) as usize;
+    let old_rows = first[LEFT][0].len();
+    assert_eq!(rows[at], (LEFT, first[LEFT][0].start));
+    assert_eq!(rows[at + old_rows], (RIGHT, first[RIGHT][0].start));
+    // 没改的行算右侧，只显示一次：总行数是右侧的行数加上左侧在改动里的行数。
+    let changed: usize = first[LEFT].iter().map(|r| r.len()).sum();
+    assert_eq!(rows.len(), v.rows[RIGHT].len() + changed);
+
+    // 滚动位置和显示行互相换算。
+    let map = v.unified_map();
+    for (index, &(side, row)) in rows.iter().enumerate() {
+        assert_eq!(v.pos_of(side, row as f32), index as f32, "{side} {row}");
+        assert_eq!(map.pos_of(side, row as f32), index as f32, "{side} {row}");
+        assert_eq!(v.row_at(side, index as f32), row as f32, "{side} {row}");
+        assert_eq!(v.row_under(side, 0.0, 10.0, index as f32), row);
+    }
+
+    // 切回并排，排布恢复。
+    let side_by_side = view(old, new);
+    v.set_unified(false);
+    assert_eq!(v.scroll_rows(), side_by_side.scroll_rows());
+    assert_eq!(v.rows, side_by_side.rows);
+}
+
+#[test]
+fn a_unified_view_stays_unified_after_comparing_again() {
+    let mut a = view("one\ntwo\n", "one\nTWO\n");
+    a.set_unified(true);
+    let mut b = view("one\ntwo\n", "one\ntwo!\n");
+    b.inherit(&a);
+    assert!(b.is_unified());
+    assert_eq!(b.scroll_rows(), 3);
 }

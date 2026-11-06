@@ -1,5 +1,5 @@
 //! `keymap` 的测试：三个系统上绑定表不冲突、组合键等第二段、「快捷键」页的行合并与搜索，
-//! 以及差异标签接手的命令清单。
+//! 差异标签接手的命令清单，以及输入法接管的按键。
 
 use super::*;
 
@@ -80,6 +80,11 @@ fn default_key_labels_per_system() {
     // 多光标的默认键位。
     assert_eq!(label(Os::Mac, Action::AddCursorBelow), ["⌥⌘↓"]);
     assert_eq!(label(Os::Windows, Action::AddCursorAbove), ["Ctrl+Alt+↑"]);
+    assert_eq!(label(Os::Mac, Action::NextDifference)[0], "F7");
+    assert_eq!(label(Os::Mac, Action::PreviousDifference)[0], "⇧F7");
+    assert_eq!(label(Os::Mac, Action::CloseTerminal), ["⌘W"]);
+    assert_eq!(label(Os::Windows, Action::CloseTerminal), ["Ctrl+Shift+W"]);
+    assert_eq!(label(Os::Linux, Action::CloseTerminal), ["Ctrl+Shift+W"]);
     assert_eq!(label(Os::Linux, Action::AddCursorAbove), ["Shift+Alt+↑"]);
     assert_eq!(label(Os::Mac, Action::AddNextOccurrence), ["⌘D"]);
     assert_eq!(label(Os::Mac, Action::SkipToNextOccurrence), ["⌘K ⌘D"]);
@@ -101,6 +106,17 @@ fn default_key_labels_per_system() {
     assert_eq!(
         label(Os::Windows, Action::ShowCommands),
         ["Ctrl+Shift+P", "F1"]
+    );
+    assert_eq!(label(Os::Mac, Action::Settings), ["⌘,"]);
+    assert_eq!(
+        label(Os::Windows, Action::Settings),
+        ["Ctrl+,", "Ctrl+Alt+S"]
+    );
+    assert_eq!(label(Os::Linux, Action::Settings), ["Ctrl+,", "Ctrl+Alt+S"]);
+    // 备用键在编辑区之外同样生效。
+    assert_eq!(
+        runs(Os::Windows, ctrl | alt, KeyCode::Char('s'), Context::Other),
+        Some(Action::Settings)
     );
     assert_eq!(label(Os::Mac, Action::Format), ["⌥⇧F"]);
     assert_eq!(label(Os::Linux, Action::Format), ["Ctrl+Shift+I"]);
@@ -404,6 +420,96 @@ fn the_tree_gets_plain_letters_and_paging_keys() {
                 None,
                 "{os:?} {key:?}"
             );
+        }
+    }
+}
+
+#[test]
+fn a_key_taken_by_the_input_method_still_matches_with_ctrl() {
+    use winit::keyboard::{
+        Key, KeyCode as Code, KeyLocation, ModifiersState, NamedKey, PhysicalKey,
+    };
+
+    let stroke = |physical, m| {
+        let key = Key::Named(NamedKey::Process);
+        Stroke::from_event(&key, "", physical, KeyLocation::Standard, m)
+    };
+    let comma = PhysicalKey::Code(Code::Comma);
+
+    assert_eq!(
+        stroke(comma, ModifiersState::CONTROL),
+        Some(Stroke {
+            key: KeyCode::Char(','),
+            mods: Mods::CTRL,
+        })
+    );
+    assert_eq!(
+        stroke(
+            PhysicalKey::Code(Code::KeyS),
+            ModifiersState::CONTROL | ModifiersState::ALT
+        ),
+        Some(Stroke {
+            key: KeyCode::Char('s'),
+            mods: Mods::CTRL | Mods::ALT,
+        })
+    );
+    // 没按 Ctrl 是在打字；不对应字符的键没有快捷键可匹配。
+    assert_eq!(stroke(comma, ModifiersState::empty()), None);
+    assert_eq!(stroke(comma, ModifiersState::SHIFT), None);
+    assert_eq!(
+        stroke(PhysicalKey::Code(Code::F1), ModifiersState::CONTROL),
+        None
+    );
+}
+
+#[test]
+fn diff_navigation_keys_reach_their_commands_from_key_events() {
+    use winit::keyboard::{
+        Key, KeyCode as Code, KeyLocation, ModifiersState, NamedKey, PhysicalKey,
+    };
+
+    let shift = ModifiersState::SHIFT;
+    let alt = ModifiersState::ALT;
+    let cases = [
+        (
+            NamedKey::F7,
+            Code::F7,
+            ModifiersState::empty(),
+            Action::NextDifference,
+        ),
+        (NamedKey::F7, Code::F7, shift, Action::PreviousDifference),
+        (NamedKey::F5, Code::F5, alt, Action::NextDifference),
+        (
+            NamedKey::F5,
+            Code::F5,
+            alt | shift,
+            Action::PreviousDifference,
+        ),
+        (
+            NamedKey::F8,
+            Code::F8,
+            ModifiersState::empty(),
+            Action::NextDiffFile,
+        ),
+        (NamedKey::F8, Code::F8, shift, Action::PreviousDiffFile),
+    ];
+    for os in ALL_OS {
+        let table = bindings(os);
+        for (named, code, mods, action) in cases {
+            let stroke = Stroke::from_event(
+                &Key::Named(named),
+                "",
+                PhysicalKey::Code(code),
+                KeyLocation::Standard,
+                mods,
+            )
+            .unwrap();
+            let found = lookup(&table, stroke, None, Context::Editor);
+            assert!(
+                matches!(&found, Lookup::Run(actions) if actions.contains(&action)),
+                "{os:?} {named:?} {mods:?}"
+            );
+            assert!(action.navigates_diff());
         }
     }
 }

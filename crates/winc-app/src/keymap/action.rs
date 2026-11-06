@@ -150,11 +150,25 @@ pub enum Action {
     ToggleWordWrap,
     /// 显示或隐藏编辑区右侧的缩略图。
     ToggleMinimap,
+    /// 显示或隐藏行号。
+    ToggleLineNumbers,
+    /// 显示或隐藏状态栏。
+    ToggleStatusBar,
+    /// 全部显示或不显示空白符。
+    ToggleWhitespace,
     TogglePreview,
     NextDifference,
     PreviousDifference,
+    /// 差异里的下一个文件。
+    NextDiffFile,
+    /// 差异里的上一个文件。
+    PreviousDiffFile,
+    /// 切换差异的单栏显示和并排显示。
+    ToggleDiffLayout,
     GitShowChanges,
     GitShowLog,
+    /// 打开提交视图并展开位置选择器。
+    GitSwitchRepository,
     GitSwitchWorktree,
     GitNewWorktree,
     GitFileHistory,
@@ -336,10 +350,17 @@ impl Action {
             ToggleStickyScroll => t!("cmd-toggle-sticky-scroll"),
             ToggleWordWrap => t!("cmd-toggle-word-wrap"),
             ToggleMinimap => t!("cmd-toggle-minimap"),
+            ToggleLineNumbers => t!("cmd-toggle-line-numbers"),
+            ToggleStatusBar => t!("cmd-toggle-status-bar"),
+            ToggleWhitespace => t!("cmd-toggle-whitespace"),
             NextDifference => t!("cmd-next-difference"),
             PreviousDifference => t!("cmd-previous-difference"),
+            NextDiffFile => t!("cmd-next-diff-file"),
+            PreviousDiffFile => t!("cmd-previous-diff-file"),
+            ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
             GitShowLog => t!("cmd-git-show-log"),
+            GitSwitchRepository => t!("cmd-git-switch-repository"),
             GitSwitchWorktree => t!("cmd-git-switch-worktree"),
             GitNewWorktree => t!("cmd-git-new-worktree"),
             GitFileHistory => t!("cmd-git-file-history"),
@@ -505,10 +526,17 @@ impl Action {
             ToggleStickyScroll => "Toggle Editor Sticky Scroll",
             ToggleWordWrap => "Toggle Word Wrap",
             ToggleMinimap => "Toggle Minimap",
+            ToggleLineNumbers => "Toggle Line Numbers",
+            ToggleStatusBar => "Toggle Status Bar",
+            ToggleWhitespace => "Toggle Render Whitespace",
             NextDifference => "Go to Next Difference",
             PreviousDifference => "Go to Previous Difference",
+            NextDiffFile => "Go to Next File in Diff",
+            PreviousDiffFile => "Go to Previous File in Diff",
+            ToggleDiffLayout => "Toggle Inline Diff",
             GitShowChanges => "Git: Open Changes",
             GitShowLog => "Git: Show Log",
+            GitSwitchRepository => "Git: Switch Repository",
             GitSwitchWorktree => "Git: Switch Worktree…",
             GitNewWorktree => "Git: New Worktree…",
             GitFileHistory => "Git: Show File History",
@@ -621,13 +649,24 @@ impl Action {
             RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
             ToggleSidebar | FocusSidebar | ShowFiles | ZoomIn | ZoomOut | ResetZoom | ThemeAuto
             | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | ToggleMinimap
-            | TogglePreview | NextDifference | PreviousDifference | GitShowChanges | GitShowLog
+            | ToggleLineNumbers | ToggleStatusBar | ToggleWhitespace | TogglePreview
+            | NextDifference | PreviousDifference | NextDiffFile | PreviousDiffFile
+            | ToggleDiffLayout | GitShowChanges | GitShowLog | GitSwitchRepository
             | GitSwitchWorktree | GitNewWorktree | GitFileHistory | GitBlame | ShowCommit
             | GitRevertChange | ToggleTerminal | ClearTerminal | NewTerminal | CloseTerminal
             | NextTerminal | PreviousTerminal | FindInTerminal | MaximizeTerminal
             | RenameTerminal | PreviousCommand | NextCommand | FoldOutput | UnfoldOutput
             | NextError | PreviousError | SendToTerminal => Group::View,
         }
+    }
+
+    /// 是否是在差异里导航的命令：跳到改动、切换文件。
+    pub fn navigates_diff(self) -> bool {
+        use Action::*;
+        matches!(
+            self,
+            NextDifference | PreviousDifference | NextDiffFile | PreviousDiffFile
+        )
     }
 
     /// 光标在差异标签右侧时，是否把命令交给右侧对应的源文档执行。
@@ -683,6 +722,7 @@ impl Action {
         match self {
             Action::GitShowChanges
             | Action::GitShowLog
+            | Action::GitSwitchRepository
             | Action::GitSwitchWorktree
             | Action::GitNewWorktree
             | Action::GitFileHistory
@@ -889,10 +929,14 @@ pub const ACTIONS: &[Action] = {
         ToggleStickyScroll,
         ToggleWordWrap,
         ToggleMinimap,
+        ToggleLineNumbers,
+        ToggleStatusBar,
+        ToggleWhitespace,
         TogglePreview,
         ShowCommit,
         GitShowChanges,
         GitShowLog,
+        GitSwitchRepository,
         GitSwitchWorktree,
         GitNewWorktree,
         GitFileHistory,
@@ -916,5 +960,8 @@ pub const ACTIONS: &[Action] = {
         SendToTerminal,
         NextDifference,
         PreviousDifference,
+        NextDiffFile,
+        PreviousDiffFile,
+        ToggleDiffLayout,
     ]
 };

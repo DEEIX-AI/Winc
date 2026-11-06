@@ -7,11 +7,15 @@ impl App {
     ///
     /// `proxy` 为事件循环的代理，测试中传 `None`。
     pub fn new(
-        editor: Editor,
+        mut editor: Editor,
         proxy: Option<crate::winc::WindowProxy>,
         bench: Bench,
         config: Config,
     ) -> Self {
+        // 启动时打开的目录在界面创建之前读入，这里补上文件树的显示方式。
+        if let Some(ws) = &mut editor.workspace {
+            ws.set_compact(config.compact_folders != Some(false));
+        }
         // 启动时恢复的标签同样计入最近打开的文件，当前标签排在最前。
         let recent_files = {
             let active = editor.active().and_then(|d| d.path.clone());
@@ -99,7 +103,6 @@ impl App {
             key_path_scan: None,
             folded_hits: Vec::new(),
             project_hit: Rect::default(),
-            branch_hit: Rect::default(),
             tree_tools: Vec::new(),
             tree_more: None,
             tool_fold: ToolFold::default(),
@@ -122,6 +125,7 @@ impl App {
             dialog_card: Default::default(),
             alert_card: Default::default(),
             picker_motion: None,
+            picker_fold: None,
             sidebar_view: SidebarView::Files,
             view_slide: None,
             module_fx: Default::default(),
@@ -129,11 +133,15 @@ impl App {
             tree_scroll: 0.0,
             tree_scroll_x: 0.0,
             tree_content_w: 0.0,
+            tree_segments: Vec::new(),
+            tree_hover_segment: None,
+            tree_labels: Default::default(),
             text_content_w: 0.0,
             tree_typed: None,
             tree_motion: None,
             fold_motion: None,
             scroll_glide: None,
+            wheel_glide: None,
             tree_drag: None,
             file_hover: None,
             name_input: None,
@@ -180,6 +188,13 @@ impl App {
             pending_chord: None,
             picker_symbols: None,
             picker_places: None,
+            picker_branch_rows: None,
+            picker_location_rows: None,
+            picker_anchor: GitAnchor::Branch,
+            picker_create: None,
+            picker_part_hits: Vec::new(),
+            location_toggled: Default::default(),
+            branch_folders: Default::default(),
             definitions: None,
             settings: SettingsState::default(),
             format: FormatState::new(formatter()),
@@ -192,6 +207,9 @@ impl App {
             branch: git::branch::BranchState::default(),
             merge: git::merge::MergeState::default(),
             diff_fade: None,
+            diff_pulse: None,
+            diff_land: None,
+            diff_cross: None,
             rediff: diff::RediffState::default(),
             prompt_kind: PromptKind::GoTo,
             context_menu: None,
@@ -225,6 +243,7 @@ impl App {
             shared: Default::default(),
             config_rev: 0,
             cascade: None,
+            window_frame: None,
             glyphs_from: None,
             occluded: false,
             next_frame: None,

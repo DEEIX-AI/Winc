@@ -7,6 +7,7 @@ workspace-quoted-name = 「{ $name }」
 
 ## 文件树和侧栏
 
+workspace-tree-expand-limit = 目录太多，只展开了前 { $count } 个
 workspace-tree-invalid-name = 名称无效
 workspace-tree-name-taken = 已存在同名项
 workspace-tree-cannot-rename = 无法重命名此项
@@ -164,7 +165,6 @@ workspace-tip-continue-rebase = 继续变基
 workspace-tip-finish-operation = 完成{ $operation }
 workspace-tip-amend = 修改上一次提交
 workspace-tip-commit-to = 提交到 { $branch }
-workspace-tip-sync = 与 { $upstream } 同步
 workspace-tip-commit = 提交
 workspace-tip-open-file = 打开文件
 workspace-tip-revert-change = 回滚更改
@@ -179,6 +179,10 @@ workspace-tip-next-conflict = 下一处冲突
 workspace-tip-worktree-of = 「{ $name }」的工作树 · { $path }
 workspace-tip-previous-change = 上一处更改
 workspace-tip-next-change = 下一处更改
+workspace-tip-previous-file = 上一个文件
+workspace-tip-next-file = 下一个文件
+workspace-tip-diff-inline = 切换为单栏视图
+workspace-tip-diff-side-by-side = 切换为并排视图
 workspace-tip-open-diff = 在差异视图中打开
 workspace-tip-close-esc = 关闭（Esc）
 workspace-tip-revert-to-left = 回滚更改（恢复为左侧内容）

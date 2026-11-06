@@ -37,10 +37,11 @@ pub use editor::format::{FormatState, ToolAnswer};
 pub use editor::hint::NameHint;
 pub(crate) use editor::scrollbar::{ScrollArea, Scrollbars, ThumbLook};
 pub use editor::sticky::{StickyCache, StickyRow};
+pub(crate) use git::branch::picker::{BranchCreate, GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitOverflow, CommitParts, CommitRow, CommitRows, CommitTarget, MESSAGE_LINE,
-    MESSAGE_PAD,
+    MESSAGE_PAD, SyncState,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -74,6 +75,7 @@ use workspace::tree::SidebarMotion;
 pub(crate) use workspace::tree::tree_max_scroll;
 pub use workspace::tree::{NameInput, TreeMotion};
 pub use workspace::tree_drag::TreeDrag;
+pub use workspace::tree_label::{LabelCause, LabelView, TreeLabels};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -206,6 +208,14 @@ pub enum UserEvent {
     GitRollback(Vec<PathBuf>),
     /// 确认框上确认了中止进行中的合并、变基等操作。
     GitAbort,
+    /// 提示框上选了切换到这个分支；`true` 是先储藏未提交的更改，否则把它们带过去。
+    GitSwitchBranch(winc_editor::git::Branch, bool),
+    /// 确认框上确认了强制推送当前分支。
+    GitForcePush,
+    /// 提示框上确认了提交勾上的文件并推送。
+    GitCommitAndPush,
+    /// 提示框上确认了撤销上一次提交。
+    GitUndoCommit,
     /// 后台取到了某个文件在 `HEAD` 里的内容（行号栏改动标记的基准）。
     GitBase,
     /// 后台的分支操作（获取、拉取、推送、签出……）做完了。
@@ -216,6 +226,8 @@ pub enum UserEvent {
     Terminal,
     /// 确认框上确认了关掉这个终端标签（里面还有程序在运行）。
     TerminalClose(u16),
+    /// 确认框上确认了重新启动这个终端标签（伪终端断开了，里面的程序可能还在运行）。
+    TerminalRestart(u16),
     /// 退出或关闭窗口前的确认结果（终端中有程序在运行）：用户确认时为真，取消时为假。
     TerminalQuit(bool),
     /// 确认框上确认了把文字粘贴到指定的终端标签（多行、程序没有开启括号粘贴）。
@@ -346,9 +358,9 @@ pub enum Hover {
     Merge(git::merge::MergeTarget),
     /// 快速打开面板或位置浮窗中的一行，参数是第几条结果（从 0 起）。
     PickerRow(usize),
+    /// 选择面板里的一个按钮。
+    PickerPart(PickerPart),
     ProjectName,
-    /// 侧栏标题行的当前分支。
-    BranchName,
     SidebarButton,
     NewTab,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」，用于列出全部标签。
@@ -426,7 +438,7 @@ impl Hover {
             self,
             Hover::TreeTool(_)
                 | Hover::TerminalHeader(terminal::HeaderHit::Position | terminal::HeaderHit::Hide)
-                | Hover::Status(StatusItem::Terminal)
+                | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
                 | Hover::Tab(..)
@@ -458,6 +470,8 @@ impl Hover {
                 | Hover::Blame(_)
                 | Hover::Commit(
                     CommitTarget::Log
+                        | CommitTarget::Sync
+                        | CommitTarget::Location
                         | CommitTarget::Layout
                         | CommitTarget::More
                         | CommitTarget::Commit
@@ -469,6 +483,9 @@ impl Hover {
                 | Hover::Diff(
                     DiffTarget::Previous
                         | DiffTarget::Next
+                        | DiffTarget::PreviousFile
+                        | DiffTarget::NextFile
+                        | DiffTarget::Layout
                         | DiffTarget::Collapse
                         | DiffTarget::Revert(_)
                         | DiffTarget::Include(_)
@@ -558,8 +575,10 @@ enum Drag {
     DiffColumns {
         anchor: (usize, usize),
     },
-    /// 在差异的左侧拖选；`unit`、`origin` 的含义同 [`Drag::DiffSelect`]，按左侧文本算。
-    DiffSelectLeft {
+    /// 在差异只读的一侧拖选；`unit`、`origin` 的含义同 [`Drag::DiffSelect`]，按第 `side` 侧的
+    /// 文本算。
+    DiffSelectRead {
+        side: usize,
         unit: diff::SelectUnit,
         origin: (usize, usize),
     },
@@ -719,8 +738,6 @@ pub struct App {
     pub folded_hits: Vec<(Rect, usize)>,
     /// 侧栏标题行项目名的可点击区域，绘制时填入。
     pub project_hit: Rect,
-    /// 侧栏标题行里当前分支按钮的位置，绘制时填入；不显示分支时为空。
-    pub branch_hit: Rect,
     /// 文件树工具栏各按钮的位置，绘制时填入，点击时使用。
     pub tree_tools: Vec<(Rect, TreeTool)>,
     /// 工具栏收起后「⋯」按钮的位置；所有按钮都放得下时为 `None`。
@@ -743,6 +760,8 @@ pub struct App {
     /// ⌘P 面板上次排版时的高度，以及当时的窗口大小。
     picker_height: Option<(f32, (f32, f32))>,
     picker_motion: Option<PickerMotion>,
+    /// 分支、位置选择器里正在展开或收起的目录、组的动画。
+    pub(crate) picker_fold: Option<git::branch::picker::PickerFold>,
     /// 位置浮窗（定义、用法、书签）在名字上方时，浮窗底边的纵坐标：高度变化时底边不动，
     /// 顶边移动。
     ///
@@ -784,6 +803,12 @@ pub struct App {
     pub tree_scroll_x: f32,
     /// 文件树中最宽一行的内容宽度，横向滚动范围和滑块据此计算；绘制时量出。
     pub tree_content_w: f32,
+    /// 屏幕上合并显示的目录占的横向范围：所在行的下标、左右边界（逻辑像素）和目录路径；绘制时量出。
+    pub tree_segments: Vec<(usize, f32, f32, PathBuf)>,
+    /// 鼠标所在的合并显示的目录；不在这样的目录上时为 `None`。
+    pub tree_hover_segment: Option<PathBuf>,
+    /// 文件树各行名字的过渡状态。
+    pub tree_labels: TreeLabels,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
     /// 文件树中连续键入的字符与最后一次键入的时刻，用于跳到名称以这些字符开头的行
@@ -795,6 +820,8 @@ pub struct App {
     pub fold_motion: Option<FoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
     pub(crate) scroll_glide: Option<ScrollGlide>,
+    /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
+    pub(crate) wheel_glide: Option<input::mouse::WheelGlide>,
     /// 文件树中正在改名字的项和输入框；没有时为 `None`。
     pub name_input: Option<NameInput>,
     /// 在文件树中按住的项；拖动该项可移动到其他目录。
@@ -892,6 +919,20 @@ pub struct App {
     pub(crate) navigation: editor::navigation::Navigation,
     /// 转到定义找到多个位置时，卡片中列出的位置。
     pub picker_places: Option<editor::definition::Places>,
+    /// 面板列出分支（分支选择器）时的各行。
+    pub picker_branch_rows: Option<Vec<git::branch::picker::BranchRow>>,
+    /// 面板列出位置（位置选择器）时的各行。
+    pub picker_location_rows: Option<Vec<git::location_picker::LocationRow>>,
+    /// 分支选择器、位置选择器从哪儿展开。
+    pub picker_anchor: GitAnchor,
+    /// 正在分支选择器里新建分支。
+    pub picker_create: Option<BranchCreate>,
+    /// 选择面板这一帧画出来的按钮：点击、悬停都按它们认。
+    pub picker_part_hits: Vec<(Rect, PickerPart)>,
+    /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。
+    pub location_toggled: std::collections::HashSet<PathBuf>,
+    /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
+    pub branch_folders: std::collections::HashSet<(bool, String)>,
     /// 正在后台项目中进行的定义查找。
     definitions: Option<editor::definition::DefinitionSearch>,
 
@@ -920,6 +961,13 @@ pub struct App {
     pub merge: git::merge::MergeState,
     /// 差异里「»」换掉一段改动以后正在淡出的颜色。
     pub diff_fade: Option<diff::DiffFade>,
+    /// 跳到一处改动时那一段的短暂高亮；没有时为 `None`。
+    pub(crate) diff_pulse: Option<Clock>,
+    /// 差异切换文件时，新文件打开以后停在哪里：`true` 是最后一处改动，`false` 是第一处；没有在切换
+    /// 文件时为 `None`。
+    pub(crate) diff_land: Option<bool>,
+    /// 差异走到头时等待再按一次的状态和提示的时刻；没有在等待时为 `None`。
+    pub(crate) diff_cross: Option<(Instant, diff::DiffCross)>,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: diff::RediffState,
     /// 跳转条现在用来输入什么。
@@ -992,6 +1040,8 @@ pub struct App {
     pub(crate) config_rev: u64,
     /// 新窗口的位置：相对打开它的窗口往右下错开一段，建窗口时用一次。
     pub(crate) cascade: Option<winit::dpi::Position>,
+    /// 窗口没有最大化、全屏时的大小和位置，关闭时记下来。
+    pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口和打开它的窗口共用的字体和字形缓存（建渲染器时用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 窗口完全看不见（被挡住、最小化、在别的桌面上）：不画，屏幕上那块画面标成可清除。

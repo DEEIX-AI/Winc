@@ -130,6 +130,34 @@ const EDITOR: &[Field] = &[
     bool_field!("stickyScroll", sticky_scroll),
     bool_field!("wordWrap", word_wrap),
     bool_field!("minimap", minimap),
+    Field {
+        key: "renderWhitespace",
+        read: |config, value, name, problems| {
+            config.render_whitespace = match value.as_str() {
+                Some("none") => Some(RenderWhitespace::None),
+                Some("selection") => Some(RenderWhitespace::Selection),
+                Some("trailing") => Some(RenderWhitespace::Trailing),
+                Some("all") => Some(RenderWhitespace::All),
+                _ => {
+                    problems.push(t!("config-render-whitespace-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| {
+            let value = match config.render_whitespace? {
+                RenderWhitespace::None => "none",
+                RenderWhitespace::Selection => "selection",
+                RenderWhitespace::Trailing => "trailing",
+                RenderWhitespace::All => "all",
+            };
+            Some(Json::String(value.to_owned()))
+        },
+    },
+    bool_field!("diffInline", diff_inline),
+    bool_field!("lineNumbers", line_numbers),
+    bool_field!("statusBar", status_bar),
+    bool_field!("restoreWindow", restore_window),
 ];
 
 /// `ui` 一节。
@@ -161,7 +189,10 @@ const UI: &[Field] = &[
 ];
 
 /// `tree` 一节。
-const TREE: &[Field] = &[bool_field!("confirmDragAndDrop", confirm_drag_and_drop)];
+const TREE: &[Field] = &[
+    bool_field!("confirmDragAndDrop", confirm_drag_and_drop),
+    bool_field!("compactFolders", compact_folders),
+];
 
 /// `markdown` 一节。
 const MARKDOWN: &[Field] = &[bool_field!("remoteImages", markdown_remote_images)];
@@ -246,6 +277,28 @@ const TERMINAL: &[Field] = &[
 /// `git` 一节。
 const GIT: &[Field] = &[
     bool_field!("enabled", git_enabled),
+    Field {
+        key: "repositoryScanDepth",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-repository-scan-depth");
+            let range = Config::REPOSITORY_SCAN_DEPTH_RANGE;
+            config.repository_scan_depth = read_number(value, name, range, label, problems)
+                .filter(|v| {
+                    let whole = v.fract() == 0.0;
+                    if !whole {
+                        let value = v.to_string();
+                        problems.push(t!("config-not-integer", name = name, value = value));
+                    }
+                    whole
+                })
+                .map(|v| v as usize)
+        },
+        write: |config| {
+            config
+                .repository_scan_depth
+                .map(|depth| Json::Number(depth as f64))
+        },
+    },
     string_field!("worktreeRoot", git_worktree_root),
     Field {
         key: "worktreeCopy",

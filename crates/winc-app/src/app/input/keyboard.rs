@@ -7,11 +7,11 @@ use std::time::Instant;
 
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, KeyEvent};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyLocation, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use winc_core::Selection;
-use winc_editor::{Command, EntryKind};
+use winc_editor::{Command, EntryKind, segment_name};
 
 use crate::app::{App, Focus, ResultRow};
 use crate::field::{TextField, Unit};
@@ -84,7 +84,12 @@ impl App {
 
         // 快捷键都定义在键位表中，先查表；不是快捷键的按键（打字、方向键、回车）再交给
         // 焦点所在的部件。
-        let stroke = Stroke::from_event(&event.logical_key, &base, event.location, m);
+        let stroke = self.stroke_of(
+            &event.logical_key,
+            &base,
+            event.physical_key,
+            event.location,
+        );
         if let Some(stroke) = stroke
             && self.on_shortcut(stroke)
         {
@@ -132,6 +137,23 @@ impl App {
         }
     }
 
+    /// 将一次按键转换为 [`Stroke`]，参数含义见 [`Stroke::from_event`]。
+    ///
+    /// 输入法正在组字时，它接管的按键属于组字，不作为快捷键。
+    pub(in crate::app) fn stroke_of(
+        &self,
+        key: &Key,
+        base: &str,
+        physical: PhysicalKey,
+        location: KeyLocation,
+    ) -> Option<Stroke> {
+        let composing = !self.preedit.is_empty() || !self.field_preedit.is_empty();
+        if composing && *key == Key::Named(NamedKey::Process) {
+            return None;
+        }
+        Stroke::from_event(key, base, physical, location, self.modifiers)
+    }
+
     /// 是否已作为快捷键处理按键 `stroke`。
     ///
     /// 是快捷键则执行并返回 `true`；是两步组合键的第一步则等待第二步，同样返回 `true`。
@@ -157,6 +179,16 @@ impl App {
                 }
             }
             return true;
+        }
+
+        // 在提交列表里点文件后焦点留在列表上，差异显示在编辑区：在差异里导航的快捷键也要生效，焦点
+        // 不移动，上下键仍然在列表里选文件。
+        if self.focus == Focus::CommitList
+            && self.diff_active()
+            && let Lookup::Run(actions) = keymap::lookup(table, stroke, None, Context::Editor)
+            && let Some(&action) = actions.iter().find(|a| a.navigates_diff())
+        {
+            return self.run_action(action);
         }
 
         match keymap::lookup(table, stroke, None, context) {
@@ -504,7 +536,7 @@ impl App {
 
     /// 处理快捷键页搜索框中的按键：先交给 `keys_page_stroke`，未处理的再交给输入框。
     fn on_key_search_keys(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let stroke = Stroke::from_event(&event.logical_key, base, event.location, self.modifiers);
+        let stroke = self.stroke_of(&event.logical_key, base, event.physical_key, event.location);
         if let Some(stroke) = stroke
             && self.keys_page_stroke(stroke)
         {
@@ -567,6 +599,10 @@ impl App {
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
+                if self.picker_create.is_some() {
+                    self.cancel_branch_create();
+                    return;
+                }
                 self.close_picker();
                 return;
             }
@@ -580,6 +616,17 @@ impl App {
             }
             Key::Named(NamedKey::ArrowUp) => {
                 self.picker_move(false);
+                return;
+            }
+            // 分支、位置选择器没有输入查询时，左右键展开、收起目录，右键打开操作菜单。
+            Key::Named(NamedKey::ArrowRight)
+                if self.branch_picker_side(true) || self.location_picker_side(true) =>
+            {
+                return;
+            }
+            Key::Named(NamedKey::ArrowLeft)
+                if self.branch_picker_side(false) || self.location_picker_side(false) =>
+            {
                 return;
             }
             // macOS 上 `⌃N` / `⌃P` 也可以上下选择（Cocoa 文本系统的标准按键绑定）。
@@ -722,7 +769,14 @@ impl App {
             let hit = (start..count)
                 .chain(0..start)
                 .map(|i| i % count)
-                .find(|&i| rows[i].name.to_lowercase().starts_with(&word));
+                .find(|&i| {
+                    let matches = |name: &str| name.to_lowercase().starts_with(&word);
+                    matches(&rows[i].name)
+                        || rows[i]
+                            .chain()
+                            .iter()
+                            .any(|path| matches(&segment_name(path)))
+                });
             self.tree_typed = Some((word, now));
             let Some(hit) = hit else {
                 return;
@@ -740,6 +794,13 @@ impl App {
                 ws.select(Some(to));
             }
         };
+        let chain = entry.chain();
+        let at = chain
+            .iter()
+            .position(|path| Some(path.as_path()) == ws.current_path());
+        let previous = at.and_then(|i| chain.get(i.checked_sub(1)?)).cloned();
+        let next = at.and_then(|i| chain.get(i + 1)).cloned();
+
         match key {
             Key::Named(NamedKey::Home) => jump(0, ws),
             Key::Named(NamedKey::End) => jump(count - 1, ws),
@@ -756,6 +817,13 @@ impl App {
                 } else {
                     ws.select(Some(next));
                 }
+            }
+            // 合并显示的一行：左右键先在各级目录之间移动，到头才收起、展开或换行。
+            Key::Named(NamedKey::ArrowLeft) if previous.is_some() => {
+                ws.select_segment(selected, previous.as_deref());
+            }
+            Key::Named(NamedKey::ArrowRight) if next.is_some() => {
+                ws.select_segment(selected, next.as_deref());
             }
             Key::Named(NamedKey::ArrowRight) if is_dir && !entry.expanded => expand = Some(true),
             Key::Named(NamedKey::ArrowRight) if is_dir => {

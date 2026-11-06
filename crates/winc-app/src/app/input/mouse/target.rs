@@ -28,6 +28,12 @@ impl App {
             Target::Change(target) => Hover::Change(target),
             Target::Merge(target) => Hover::Merge(target),
             Target::Conflict(action) => Hover::ConflictButton(action),
+            Target::Picker
+                if let Some(&(_, part)) =
+                    (self.picker_part_hits.iter()).find(|(rect, _)| rect.contains(x, y)) =>
+            {
+                Hover::PickerPart(part)
+            }
             Target::Picker => view::picker_parts(self, l.picker)
                 .row_at(y, self.picker_scroll)
                 .filter(|&i| i < self.picker_hits.len())
@@ -45,7 +51,6 @@ impl App {
             Target::Splitter => Hover::Splitter,
             Target::TreeTool(tool) => Hover::TreeTool(tool),
             Target::ProjectName => Hover::ProjectName,
-            Target::BranchName => Hover::BranchName,
             Target::SidebarButton => Hover::SidebarButton,
             Target::NewTab => Hover::NewTab,
             Target::TabList => Hover::TabList,
@@ -148,7 +153,9 @@ impl App {
         if l.search.contains(x, y) {
             return Target::Search;
         }
-        if self.panel_visible && l.splitter.contains(x, y) {
+        // 名称放不下的一行盖在分隔条上：这一行优先，其余各行照常可以拖动分隔条。
+        let over_row = self.over_tree_overflow_row(y);
+        if self.panel_visible && !over_row && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
         if let Some(tool) = hit(&self.tree_tools, x, y) {
@@ -156,9 +163,6 @@ impl App {
         }
         if self.project_hit.contains(x, y) {
             return Target::ProjectName;
-        }
-        if self.branch_hit.contains(x, y) {
-            return Target::BranchName;
         }
         if l.sidebar_button.contains(x, y) {
             return Target::SidebarButton;
@@ -192,7 +196,11 @@ impl App {
         if let Some((hunk, _)) = self.ruler_change_at(x, y) {
             return Target::RulerChange(hunk);
         }
-        if let Some((bar, grab)) = self.scrollbar_at(x, y) {
+        // 名称放不下的一行同样盖在文件树的滚动条上，不会一进滚动条就收起。
+        if let Some((bar, grab)) = self
+            .scrollbar_at(x, y)
+            .filter(|(bar, _)| !(over_row && *bar == Scrollbar::Tree))
+        {
             return Target::Scrollbar(bar, grab);
         }
         if l.minimap.contains(x, y) {
@@ -351,6 +359,17 @@ impl App {
             return Some((Scrollbar::Terminal, grab(y, thumb.y, thumb.h)));
         }
 
+        // 预览（分栏时在右边，只看预览时占满编辑区）：先于编辑区认，只看预览时两者重叠。
+        let preview = self.markdown.area;
+        if preview.contains(x, y) {
+            if x < preview.right() - SCROLLBAR_HIT {
+                return None;
+            }
+            let scroll = self.markdown.scroll();
+            let thumb = scrollbar_thumb(preview, scroll, self.markdown.height)?;
+            return Some((Scrollbar::Markdown, grab(y, thumb.y, thumb.h)));
+        }
+
         let editor = self.scroll_track();
         let doc = self.editor.active()?;
         if editor.contains(x, y) && x >= editor.right() - SCROLLBAR_HIT {
@@ -378,6 +397,14 @@ impl App {
 
     /// 窗口坐标 (`x`, `y`)（逻辑像素）是否位于文件树中放不下的文件名向右展开、覆盖到编辑区上方
     /// 的那一段区域内。
+    /// 纵坐标 `y` 是否在正在显示完整名称的那一行上：这一行在最上层，盖住分隔条和文件树的滚动条。
+    ///
+    /// 只有已经展开的一行优先。沿着边缘上下移动到别的行时，那一行还没有展开，滚动条照常响应。
+    pub(in crate::app) fn over_tree_overflow_row(&self, y: f32) -> bool {
+        self.tree_overflow
+            .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y))
+    }
+
     pub(in crate::app) fn in_tree_overflow(&self, x: f32, y: f32) -> bool {
         self.tree_overflow
             .is_some_and(|(rect, _)| rect.contains(x, y))
@@ -399,6 +426,7 @@ impl App {
             self.set_hover(hover);
             self.update_cursor_icon();
         }
+        self.track_tree_segment();
     }
 
     /// `(x, y)` 是否在编辑区右上角的卡片（冲突卡片、提示条）上：卡片浮在文字上面，点击、
@@ -548,7 +576,6 @@ pub(super) enum Target {
     Splitter,
     TreeTool(crate::layout::TreeTool),
     ProjectName,
-    BranchName,
     SidebarButton,
     NewTab,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。

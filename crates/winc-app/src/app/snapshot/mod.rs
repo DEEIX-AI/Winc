@@ -179,8 +179,7 @@ fn menu_commands(app: &App) -> Vec<(MenuCommand, bool)> {
                 | crate::app::input::context_menu::MenuEntry::Alternate(c, enabled) => {
                     out.push((*c, *enabled))
                 }
-                crate::app::input::context_menu::MenuEntry::Submenu(_, items)
-                | crate::app::input::context_menu::MenuEntry::CheckedSubmenu(_, items) => {
+                crate::app::input::context_menu::MenuEntry::Submenu(_, items) => {
                     flatten(items, out)
                 }
                 crate::app::input::context_menu::MenuEntry::Separator => {}
@@ -258,6 +257,9 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
         SettingsPart::Page(page) => layout.pages.iter().find(|(p, _)| *p == page).unwrap().1,
         SettingsPart::Field(s) | SettingsPart::Switch(s) | SettingsPart::Action(s) => {
             layout.row(s).unwrap().control
+        }
+        SettingsPart::FontMenu(s) => {
+            crate::layout::font_menu_button(layout.row(s).unwrap().control)
         }
         SettingsPart::Decrease(s) => StepperParts::new(layout.row(s).unwrap().control).minus,
         SettingsPart::Increase(s) => StepperParts::new(layout.row(s).unwrap().control).plus,

@@ -7,7 +7,7 @@
 //! 两段组合键（如 `⌘K ⌘S`）在按下第一段后返回 [`Lookup::Chord`]。
 
 use winc_i18n::t;
-use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey, PhysicalKey};
 
 mod action;
 mod page;
@@ -118,6 +118,74 @@ pub enum KeyCode {
     PageDown,
 }
 
+/// 返回物理键 `key` 在美式键盘上的字符（字母为小写）；不是字母、数字或标点键时返回 `None`。
+pub fn us_char(key: PhysicalKey) -> Option<char> {
+    use winit::keyboard::KeyCode as K;
+    let PhysicalKey::Code(code) = key else {
+        return None;
+    };
+    const LETTERS: [K; 26] = [
+        K::KeyA,
+        K::KeyB,
+        K::KeyC,
+        K::KeyD,
+        K::KeyE,
+        K::KeyF,
+        K::KeyG,
+        K::KeyH,
+        K::KeyI,
+        K::KeyJ,
+        K::KeyK,
+        K::KeyL,
+        K::KeyM,
+        K::KeyN,
+        K::KeyO,
+        K::KeyP,
+        K::KeyQ,
+        K::KeyR,
+        K::KeyS,
+        K::KeyT,
+        K::KeyU,
+        K::KeyV,
+        K::KeyW,
+        K::KeyX,
+        K::KeyY,
+        K::KeyZ,
+    ];
+    const DIGITS: [K; 10] = [
+        K::Digit0,
+        K::Digit1,
+        K::Digit2,
+        K::Digit3,
+        K::Digit4,
+        K::Digit5,
+        K::Digit6,
+        K::Digit7,
+        K::Digit8,
+        K::Digit9,
+    ];
+    if let Some(i) = LETTERS.iter().position(|&k| k == code) {
+        return Some(char::from(b'a' + i as u8));
+    }
+    if let Some(i) = DIGITS.iter().position(|&k| k == code) {
+        return Some(char::from(b'0' + i as u8));
+    }
+    Some(match code {
+        K::Minus => '-',
+        K::Equal => '=',
+        K::BracketLeft => '[',
+        K::BracketRight => ']',
+        K::Backslash => '\\',
+        K::Semicolon => ';',
+        K::Quote => '\'',
+        K::Comma => ',',
+        K::Period => '.',
+        K::Slash => '/',
+        K::Backquote => '`',
+        _ => return None,
+    })
+}
+
 /// 一次按键：一个键加上修饰键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stroke {
@@ -132,9 +200,13 @@ impl Stroke {
     ///
     /// `base` 是按下该键时输入的字符。单独按修饰键、`base` 含多个字符
     /// 或键无法识别时返回 `None`。
+    ///
+    /// 输入法接管的按键不携带字符，按住 Ctrl 时按物理键 `physical` 取字符，使快捷键仍然生效；
+    /// 没按 Ctrl 时是在打字，返回 `None`。
     pub fn from_event(
         key: &Key,
         base: &str,
+        physical: PhysicalKey,
         location: KeyLocation,
         m: ModifiersState,
     ) -> Option<Stroke> {
@@ -152,6 +224,7 @@ impl Stroke {
                 NamedKey::ArrowRight => KeyCode::Right,
                 NamedKey::PageUp => KeyCode::PageUp,
                 NamedKey::PageDown => KeyCode::PageDown,
+                NamedKey::Process if m.control_key() => KeyCode::Char(us_char(physical)?),
                 named => {
                     let n = function_key(named)?;
                     KeyCode::F(n)

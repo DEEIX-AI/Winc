@@ -18,6 +18,10 @@ pub(super) const TREE_ANIMATION: Duration = Duration::from_millis(160);
 ///
 /// 时长足以让用户看清滚动方向，连续翻页时也不会明显滞后于按键。
 pub(super) const SCROLL_GLIDE: Duration = Duration::from_millis(125);
+/// 差异跳到一处改动时那一段高亮的时长（毫秒）。
+///
+/// 长于 [`SCROLL_GLIDE`]，滚动结束后高亮还持续约 475 ms，跳转距离很近时同样能看清落点。
+pub(super) const DIFF_PULSE: Duration = Duration::from_millis(600);
 /// 代码折叠、展开的动画时长，取 [`TREE_ANIMATION`]，使两种展开收起的节奏统一。
 pub(super) const FOLD_ANIMATION: Duration = TREE_ANIMATION;
 /// `⌘P` 面板高度变化的动画时长，取 [`TREE_ANIMATION`]。
@@ -146,6 +150,15 @@ impl Clock {
         }
     }
 
+    /// 返回停在 `at` 的时钟：测试里的进度不随实际时间变化。
+    #[cfg(test)]
+    pub(crate) fn stopped(duration: Duration, at: Duration) -> Clock {
+        Clock {
+            frozen: Some(at),
+            ..Clock::new(duration)
+        }
+    }
+
     fn elapsed(&self) -> Duration {
         #[cfg(test)]
         if let Some(at) = self.frozen {
@@ -174,6 +187,13 @@ impl Clock {
     /// 返回淡出途中的不透明度：按未加缓动的进度从 1 平滑降到 0。
     pub fn fade_out(&self) -> f32 {
         1.0 - stage(self.linear(), 0.0, 1.0)
+    }
+
+    /// 返回先淡入、停留、再淡出途中的不透明度，淡入和淡出各用 `edge`。
+    pub fn pulse(&self, edge: Duration) -> f32 {
+        let edge = (edge.as_secs_f32() / self.duration.as_secs_f32()).min(0.5);
+        let t = self.linear();
+        stage(t, 0.0, edge) * (1.0 - stage(t, 1.0 - edge, 1.0))
     }
 
     /// 创建与 `self` 同时开始、时长为 `duration` 的时钟。
@@ -270,6 +290,7 @@ impl App {
 
         settle(&mut self.sidebar_motion, |m| m.clock);
         settle(&mut self.tree_motion, |m| m.clock);
+        self.tree_labels.settle();
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
         settle(&mut self.global.field_motion, |m| m.2);
@@ -277,8 +298,12 @@ impl App {
         settle(&mut self.fold_motion, |m| m.clock);
         settle(&mut self.scroll_glide, |g| g.clock);
         settle(&mut self.picker_motion, |m| m.clock);
+        settle(&mut self.picker_fold, |f| f.clock);
         if self.places_in.is_some_and(|c| c.done()) {
             self.places_in = None;
+        }
+        if self.branch.finished.is_some_and(|c| c.done()) {
+            self.branch.finished = None;
         }
         settle(&mut self.places_out, |g| g.clock);
         if self.notice_in.is_some_and(|c| c.done()) {
@@ -286,6 +311,9 @@ impl App {
         }
         settle(&mut self.notice_out, |g| g.clock);
         settle(&mut self.diff_fade, |f| f.clock);
+        if self.diff_pulse.is_some_and(|c| c.done()) {
+            self.diff_pulse = None;
+        }
         settle(&mut self.view_slide, |s| s.1);
         settle(&mut self.settings.motion, |m| m.1);
         self.picker_card.settle();
@@ -343,6 +371,7 @@ impl App {
     pub(super) fn animating(&self) -> bool {
         self.sidebar_motion.is_some()
             || self.tree_motion.is_some()
+            || self.tree_labels.moving()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
             || self.global.field_motion.is_some()
@@ -351,12 +380,15 @@ impl App {
             || self.global.rows_moving()
             || self.fold_motion.is_some()
             || self.scroll_glide.is_some()
+            || self.wheel_glide.is_some()
             || self.picker_motion.is_some()
+            || self.picker_fold.is_some()
             || self.places_in.is_some()
             || self.places_out.is_some()
             || self.notice_in.is_some()
             || self.notice_out.is_some()
             || self.diff_fade.is_some()
+            || self.diff_pulse.is_some()
             || self.view_slide.is_some()
             || self.settings.motion.is_some()
             || self.picker_card.motion.is_some()
@@ -378,7 +410,8 @@ impl App {
             || self.scrollbars_animating()
             || self.markdown.motion.is_some()
             || self.status_motion.moving()
-            || self.commit_syncing()
+            || ((self.branch.running.is_some() || self.branch.finished.is_some())
+                && self.commit_shown())
     }
 }
 

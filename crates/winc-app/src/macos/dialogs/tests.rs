@@ -92,6 +92,7 @@ fn panel_messages_match_appkit_signatures() {
         bool_setter
     );
     assert_eq!(encoding(c"NSMenu", sel!(addItem:), true), "v@:@");
+    assert_eq!(encoding(c"NSMenu", sel!(setMinimumWidth:), true), "v@:d");
     assert_eq!(
         encoding(
             c"NSMenu",

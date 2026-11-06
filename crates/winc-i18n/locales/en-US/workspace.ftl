@@ -7,6 +7,7 @@ workspace-quoted-name = “{ $name }”
 
 ## File tree and sidebar
 
+workspace-tree-expand-limit = Too many folders. Only the first { $count } were expanded.
 workspace-tree-invalid-name = Invalid name
 workspace-tree-name-taken = An item with this name already exists
 workspace-tree-cannot-rename = This item can’t be renamed
@@ -224,7 +225,6 @@ workspace-tip-continue-rebase = Continue rebase
 workspace-tip-finish-operation = Complete { $operation }
 workspace-tip-amend = Amend last commit
 workspace-tip-commit-to = Commit to { $branch }
-workspace-tip-sync = Sync with { $upstream }
 workspace-tip-commit = Commit
 workspace-tip-open-file = Open file
 workspace-tip-revert-change = Revert change
@@ -239,6 +239,10 @@ workspace-tip-next-conflict = Next conflict
 workspace-tip-worktree-of = Worktree of “{ $name }” · { $path }
 workspace-tip-previous-change = Previous change
 workspace-tip-next-change = Next change
+workspace-tip-previous-file = Previous file
+workspace-tip-next-file = Next file
+workspace-tip-diff-inline = Switch to inline view
+workspace-tip-diff-side-by-side = Switch to side-by-side view
 workspace-tip-open-diff = Open in diff view
 workspace-tip-close-esc = Close (Esc)
 workspace-tip-revert-to-left = Revert change (restore left side)

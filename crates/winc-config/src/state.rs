@@ -40,10 +40,14 @@ pub struct State {
     ///
     /// `false`（默认）时平铺，每个文件一行。所有窗口和仓库共用，下次启动沿用。
     pub commit_tree: bool,
+    /// 侧栏宽度（逻辑像素）；`None` 表示没有调整过。所有视图、窗口和仓库共用，下次启动沿用。
+    pub panel_width: Option<f32>,
     /// 能预览的文件（SVG、Markdown、表格）打开时的显示方式：`"split"`（分栏）或 `"preview"`
     /// （只看预览）；`None` 表示源代码。记录用户最近一次在标签栏右端选择的方式，下次启动
     /// 沿用。
     pub preview_mode: Option<String>,
+    /// 上次关闭的窗口的大小和位置；没有记录时为 `None`。
+    pub window: Option<WindowFrame>,
     /// 最近列表里每个目录的徽章颜色（值在 `0..BADGE_COLORS` 之内），互不相同。
     ///
     /// 目录第一次进入最近列表时，选一个其他目录未使用的颜色，之后保持不变，使项目名旁和最近
@@ -64,6 +68,21 @@ pub struct State {
 ///
 /// 取 50（经验值），作用于工具选择和已信任仓库两项列表。
 const MAX_TOOL_CHOICES: usize = 50;
+
+/// 窗口没有最大化、全屏时的大小和位置，以及关闭时是否最大化。
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct WindowFrame {
+    /// 窗口外框左上角的（横，纵）坐标（物理像素）；系统不告诉应用窗口的位置时为 `None`。
+    pub position: Option<(f64, f64)>,
+    /// 内容区的宽度（逻辑像素）。
+    pub width: f64,
+    /// 内容区的高度（逻辑像素）。
+    pub height: f64,
+    /// 记录时窗口所在显示器的缩放比例，用于在物理像素和逻辑像素之间换算。
+    pub scale: f64,
+    /// 关闭时是否最大化。
+    pub maximized: bool,
+}
 
 /// 一个目录的现场：按顺序排列的标签、活动标签的下标，以及各文件的书签。
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -305,6 +324,14 @@ impl State {
             .get("commitTree")
             .and_then(Json::as_bool)
             .unwrap_or(false);
+        state.panel_width = root
+            .get("panelWidth")
+            .and_then(Json::as_number)
+            .map(|width| width as f32);
+        state.window = root
+            .get("window")
+            .and_then(Json::as_object)
+            .and_then(window_frame);
         state.preview_mode = root
             .get("previewMode")
             .and_then(Json::as_str)
@@ -370,8 +397,24 @@ impl State {
         if self.commit_tree {
             fields.push(("commitTree", Json::Bool(true)));
         }
+        if let Some(width) = self.panel_width {
+            fields.push(("panelWidth", Json::Number(f64::from(width))));
+        }
         if let Some(mode) = &self.preview_mode {
             fields.push(("previewMode", Json::String(mode.clone())));
+        }
+        if let Some(frame) = &self.window {
+            let mut window = vec![
+                ("width", Json::Number(frame.width)),
+                ("height", Json::Number(frame.height)),
+                ("scale", Json::Number(frame.scale)),
+                ("maximized", Json::Bool(frame.maximized)),
+            ];
+            if let Some((x, y)) = frame.position {
+                window.push(("x", Json::Number(x)));
+                window.push(("y", Json::Number(y)));
+            }
+            fields.push(("window", Json::object(window)));
         }
 
         let badges = self.badges.iter().map(|(folder, color)| {
@@ -627,6 +670,22 @@ pub fn state_path() -> Option<PathBuf> {
     }?;
 
     Some(dir.join("state.json"))
+}
+
+/// 从 `state.json` 的 `window` 一节读出窗口的大小和位置；缺项或者数值不合理时为 `None`。
+fn window_frame(json: &std::collections::BTreeMap<String, Json>) -> Option<WindowFrame> {
+    let number = |key: &str| json.get(key).and_then(Json::as_number);
+    let (width, height, scale) = (number("width")?, number("height")?, number("scale")?);
+    (width > 0.0 && height > 0.0 && scale > 0.0).then_some(WindowFrame {
+        position: number("x").zip(number("y")),
+        width,
+        height,
+        scale,
+        maximized: json
+            .get("maximized")
+            .and_then(Json::as_bool)
+            .unwrap_or(false),
+    })
 }
 
 #[cfg(test)]
