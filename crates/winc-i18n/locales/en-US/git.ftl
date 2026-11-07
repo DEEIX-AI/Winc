@@ -368,17 +368,10 @@ git-operation-abort = Abort
 git-commit-message-placeholder = Commit message ({ $key } to commit)
 git-commit-message-amend-placeholder = Amended commit message
 git-branch-picker-placeholder = Search or create a branch
-git-branch-picker-name = New branch name
-git-branch-picker-from = Create from { $branch }
-git-branch-picker-from-carry = { $count ->
-    [one] Create from { $branch }. Uncommitted changes in 1 file stay in the working tree.
-   *[other] Create from { $branch }. Uncommitted changes in { $count } files stay in the working tree.
-}
 git-branch-picker-new = New Branch
 git-branch-picker-new-worktree = New Worktree
 git-branch-picker-create-row = Create branch “{ $name }”
 git-branch-picker-current = Current
-git-picker-back = Back
 git-location-picker-placeholder = Search repositories and worktrees
 git-location-picker-empty = No matching repositories or worktrees
 git-location-main-worktree = Main worktree

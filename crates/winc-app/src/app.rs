@@ -35,7 +35,7 @@ pub use editor::format::{FormatState, ToolAnswer};
 pub use editor::hint::NameHint;
 pub(crate) use editor::scrollbar::{ScrollArea, Scrollbars, ThumbLook};
 pub use editor::sticky::{StickyCache, StickyRow};
-pub(crate) use git::branch::picker::{BranchCreate, GitAnchor, PickerPart};
+pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
@@ -951,8 +951,6 @@ pub struct App {
     pub picker_location_rows: Option<Vec<git::location_picker::LocationRow>>,
     /// 分支选择器、位置选择器从哪儿展开。
     pub picker_anchor: GitAnchor,
-    /// 正在分支选择器里新建分支。
-    pub picker_create: Option<BranchCreate>,
     /// 选择面板这一帧画出来的按钮：点击、悬停都按它们认。
     pub picker_part_hits: Vec<(Rect, PickerPart)>,
     /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。

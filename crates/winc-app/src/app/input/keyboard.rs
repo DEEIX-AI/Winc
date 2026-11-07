@@ -616,10 +616,6 @@ impl App {
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
-                if self.picker_create.is_some() {
-                    self.cancel_branch_create();
-                    return;
-                }
                 self.close_picker();
                 return;
             }

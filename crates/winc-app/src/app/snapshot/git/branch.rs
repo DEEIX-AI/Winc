@@ -359,24 +359,16 @@ fn the_search_box_can_create_a_branch() {
     assert!(!app.picker_open);
     assert_eq!(head_name(&app).as_deref(), Some("brand-new"));
 
-    // 底栏的「新建分支」：输入框改写名字，重名时说明原因，不关面板。
+    // 底栏的「新建分支」：关掉选择器，打开新建分支的对话框（基于当前分支）。
     app.open_branch_picker(GitAnchor::Branch);
     paint(&mut app);
     app.press_picker_part(PickerPart::NewBranch);
-    assert!(app.picker_create.is_some());
-    app.picker_input.set_text("main");
-    app.picker_refresh();
-    app.picker_accept();
-    assert!(app.picker_open);
-    assert!(app.picker_create.as_ref().unwrap().problem.is_some());
-    // 返回列表；再写一个能用的名字。
-    app.press_picker_part(PickerPart::Back);
-    assert!(app.picker_create.is_none());
-    app.press_picker_part(PickerPart::NewBranch);
-    app.picker_input.set_text("second");
-    app.picker_refresh();
-    app.picker_accept();
-    assert_eq!(head_name(&app).as_deref(), Some("second"));
+    assert!(!app.picker_open);
+    let kind = app.form_dialog.as_ref().map(|dialog| dialog.kind.clone());
+    assert_eq!(
+        kind,
+        Some(crate::app::git::form::FormKind::Branch { at: None })
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -738,10 +730,6 @@ fn the_status_bar_opens_the_branch_picker_with_the_sync_actions() {
         MenuCommand::GitPullRebase
     );
     app.modifiers = winit::keyboard::ModifiersState::empty();
-
-    // 新建分支时没有这一行。
-    app.start_branch_create(None);
-    assert!(!app.picker_has_actions());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -802,31 +790,6 @@ fn shoot_status_branch_picker() {
     paint(&mut app);
     app.open_status_menu(StatusItem::Branch);
     shoot(&mut app, "branch-picker-status");
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// 新建分支的说明折行时面板跟着变高，说明文字不被裁掉；只有一行时和列表的一行一样高。
-#[test]
-fn the_picker_grows_with_the_note_when_creating_a_branch() {
-    let Some((mut app, root)) = picker_repo("git-picker-note", false) else {
-        return;
-    };
-    app.open_branch_picker(GitAnchor::Branch);
-    app.start_branch_create(None);
-    paint(&mut app);
-    let list = |app: &App| crate::view::picker_parts(app, app.layout.picker).list.h;
-    assert_eq!(list(&app), crate::app::PICKER_ROW);
-    let short = app.layout.picker.h;
-
-    let from = "feature/a-branch-name-long-enough-to-wrap-the-note-under-the-search-box";
-    app.start_branch_create(Some(from.to_owned()));
-    // 第一次绘制量出行数；离屏绘制时重新布局不生效，第二次绘制才按行数排。
-    paint(&mut app);
-    paint(&mut app);
-    let lines = app.picker_create.as_ref().map_or(0, |create| create.lines);
-    assert!(lines >= 2, "{lines}");
-    assert!(app.layout.picker.h > short);
-    assert!(list(&app) >= lines as f32 * crate::app::git::branch::picker::CREATE_NOTE_LINE);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -984,9 +947,9 @@ fn shoot_branch_picker() {
         shoot(&mut app, &format!("branch-picker-dirty-{theme}"));
         app.alert = None;
         app.open_branch_picker(GitAnchor::Branch);
-        app.start_branch_create(None);
-        shoot(&mut app, &format!("branch-picker-create-{theme}"));
-        app.close_picker();
+        app.press_picker_part(PickerPart::NewBranch);
+        shoot(&mut app, &format!("branch-dialog-{theme}"));
+        app.close_form_dialog();
         for branch in ["dev", "feature/login"] {
             git_in(
                 &root,

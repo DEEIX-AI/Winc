@@ -192,7 +192,6 @@ impl App {
             picker_branch_rows: None,
             picker_location_rows: None,
             picker_anchor: GitAnchor::Branch,
-            picker_create: None,
             picker_part_hits: Vec::new(),
             location_toggled: Default::default(),
             branch_folders: Default::default(),

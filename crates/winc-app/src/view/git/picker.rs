@@ -16,13 +16,10 @@ use winc_i18n::t;
 use super::super::popup_menu::band_ink;
 use super::commit::draw_count_pill_in;
 use crate::app::git::branch::local_name;
-use crate::app::git::branch::picker::{
-    BranchCreate, BranchRow, BranchSection, CREATE_NOTE_LINE, CREATE_NOTE_PAD,
-};
+use crate::app::git::branch::picker::{BranchRow, BranchSection};
 use crate::app::git::location_picker::{LocationRow, Place};
 use crate::app::git::log::display_local;
 use crate::app::{Focus, PICKER_ROW, PickerPart};
-use crate::icons::Direction;
 use crate::layout::PickerParts;
 use crate::view::*;
 
@@ -48,8 +45,6 @@ const ON_BAND: f32 = 0.2;
 
 /// 绘制选择器：卡片、搜索框、列表和底栏，并记下列表以外可以点的地方。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
-    let width = app.layout.picker.w;
-    measure_create_note(app, frame, width);
     let rect = app.layout.picker;
     if rect.w <= 0.0 || rect.h <= 0.0 {
         return;
@@ -60,9 +55,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     let mut hits = Vec::new();
     draw_actions(app, frame, &parts, &mut hits);
-    if app.picker_create.is_some() {
-        draw_create_note(app, frame, &parts);
-    } else if app.picker_lists_locations() {
+    if app.picker_lists_locations() {
         draw_location_rows(app, frame, &parts, &mut hits);
     } else {
         draw_branch_rows(app, frame, &parts, &mut hits);
@@ -71,7 +64,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     app.picker_part_hits = hits;
 }
 
-/// 绘制内嵌的搜索框：左边是放大镜，新建分支时换成加号。
+/// 绘制内嵌的搜索框：左边是放大镜。
 fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     let p = app.palette;
     let field = Rect::new(
@@ -83,14 +76,8 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     let focused = app.focus == Focus::Picker;
     field_box(app, frame, field, p.popup_bg, focused, false);
     let icon = (bar.x + ICON_CENTER, field.y + field.h / 2.0);
-    if app.picker_create.is_some() {
-        icons::plus(frame, icon, 9.0, p.text_dim, field);
-    } else {
-        icons::magnifier(frame, icon, p.text_dim, field);
-    }
-    let placeholder = if app.picker_create.is_some() {
-        t!("git-branch-picker-name")
-    } else if app.picker_lists_locations() {
+    icons::magnifier(frame, icon, p.text_dim, field);
+    let placeholder = if app.picker_lists_locations() {
         t!("git-location-picker-placeholder")
     } else {
         t!("git-branch-picker-placeholder")
@@ -614,76 +601,6 @@ fn draw_branch_row(
     line.draw_name(app, frame, at, row.label, line.text);
 }
 
-/// 新建分支时列表区的说明：从哪里创建，未提交的更改会不会带过去，名字不能用的原因。
-fn draw_create_note(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
-    let p = app.palette;
-    let list = parts.list;
-    let Some(create) = app.picker_create.as_ref() else {
-        return;
-    };
-    let x = list.x + TEXT_LEFT;
-    let size = app.fonts.ui_small;
-    let room = create_note_room(list.w);
-    let note = create_note(app, create);
-    let pieces = [
-        (Some(note.as_str()), p.text_muted),
-        (create.problem.as_deref(), p.error),
-    ];
-    let mut y = list.y + CREATE_NOTE_PAD;
-    for (text, color) in pieces {
-        let Some(text) = text else {
-            continue;
-        };
-        for piece in super::log::wrap(frame, size, text, room) {
-            let row = Rect::new(x, y, room, CREATE_NOTE_LINE);
-            ui_text_small(frame, app, x, row, piece, color, list);
-            y += CREATE_NOTE_LINE;
-        }
-    }
-}
-
-/// 说明文字可用的宽度：面板宽 `width` 时，从文字一列到内容的右边。
-fn create_note_room(width: f32) -> f32 {
-    (width - TEXT_LEFT - CONTENT).max(0.0)
-}
-
-/// 把说明文字按面板宽 `width` 折行，记下行数；行数变了时重新布局。
-fn measure_create_note(app: &mut App, frame: &mut Frame<'_>, width: f32) {
-    let Some(create) = app.picker_create.as_ref() else {
-        return;
-    };
-    let size = app.fonts.ui_small;
-    let room = create_note_room(width);
-    let note = create_note(app, create);
-    let problem = (create.problem.as_deref())
-        .map_or(0, |text| super::log::wrap(frame, size, text, room).len());
-    let lines = super::log::wrap(frame, size, &note, room).len() + problem;
-    if create.lines != lines {
-        if let Some(create) = app.picker_create.as_mut() {
-            create.lines = lines;
-        }
-        app.relayout();
-    }
-}
-
-/// 说明文字：从哪里创建，未提交的更改会不会带过去。
-fn create_note(app: &App, create: &BranchCreate) -> String {
-    let current = (app.git.branches.iter())
-        .find(|b| b.current)
-        .map(|b| b.name.as_str());
-    let from = create.from.as_deref().or(current).unwrap_or("HEAD");
-    let changes = app.git.status.as_ref().map_or(0, |s| s.entries.len());
-    if changes > 0 && create.from.is_none() {
-        t!(
-            "git-branch-picker-from-carry",
-            branch = from,
-            count = changes
-        )
-    } else {
-        t!("git-branch-picker-from", branch = from)
-    }
-}
-
 /// 绘制列表下方的底栏：上沿一条分隔线，里面是新建的入口，图标和字的位置与各行相同。
 fn draw_footer(
     app: &App,
@@ -702,9 +619,7 @@ fn draw_footer(
         t!("git-branch-picker-new-worktree"),
     );
     let in_repository = app.location_new_worktree_label();
-    let entries: &[(PickerPart, &str)] = if app.picker_create.is_some() {
-        &[(PickerPart::Back, t!("git-picker-back"))]
-    } else if app.picker_lists_locations() {
+    let entries: &[(PickerPart, &str)] = if app.picker_lists_locations() {
         &[(PickerPart::NewWorktree, in_repository.as_str())]
     } else {
         &[new_branch, new_worktree]
@@ -723,11 +638,7 @@ fn draw_footer(
             x + ICON_CENTER - GUTTER,
             icon_center_y(app, button, app.fonts.ui),
         );
-        if part == PickerPart::Back {
-            icons::chevron(frame, icon, 6.0, Direction::Left, color, foot);
-        } else {
-            icons::plus(frame, icon, 8.0, color, foot);
-        }
+        icons::plus(frame, icon, 8.0, color, foot);
         ui_text_small(
             frame,
             app,
