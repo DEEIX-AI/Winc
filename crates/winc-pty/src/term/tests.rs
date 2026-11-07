@@ -275,9 +275,11 @@ fn colour_queries_use_the_theme() {
         ..Theme::default()
     }));
     feed(&mut t, "\x1b]11;?\x1b\\\x1b]4;1;?\x07");
+    // 回答的结束符和查询相同；Windows 上一律用 ST，见 `osc_dispatch`。
+    let bell = if cfg!(windows) { "\x1b\\" } else { "\x07" };
     assert_eq!(
         String::from_utf8(t.take_responses()).unwrap(),
-        "\x1b]11;rgb:1818/1a1a/1e1e\x1b\\\x1b]4;1;rgb:ffff/0000/0000\x07"
+        format!("\x1b]11;rgb:1818/1a1a/1e1e\x1b\\\x1b]4;1;rgb:ffff/0000/0000{bell}")
     );
 }
 
