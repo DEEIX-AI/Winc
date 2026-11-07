@@ -414,6 +414,78 @@ fn exits_are_reported_only_when_unseen() {
     clean(&dir);
 }
 
+/// 没有运行时没有停止按钮，运行按钮紧贴位置按钮；运行时多一个停止按钮。
+#[test]
+fn the_stop_button_appears_only_while_running() {
+    let (mut app, dir, _log) = app_with_configs("run-stop-button");
+    let hit = |app: &App, want: HeaderHit| {
+        let hits = &app.terminal.hits;
+        hits.iter().find(|(_, h)| *h == want).map(|(rect, _)| *rect)
+    };
+    let start = HeaderHit::Run(RunButton::Start);
+    let stop = HeaderHit::Run(RunButton::Stop);
+    app.new_terminal_tab_in(Vec::new());
+    paint(&mut app);
+    assert!(hit(&app, stop).is_none());
+    let position = hit(&app, HeaderHit::Position).unwrap();
+    let idle = hit(&app, start).unwrap();
+    assert_eq!(position.x - idle.right(), crate::theme::TAB_GAP);
+
+    run_current(&mut app);
+    paint(&mut app);
+    let running = hit(&app, stop).unwrap();
+    assert_eq!(position.x - running.right(), crate::theme::TAB_GAP);
+    let moved = hit(&app, start).unwrap();
+    assert_eq!(running.x - moved.right(), crate::theme::TAB_GAP);
+    clean(&dir);
+}
+
+/// 停止按钮淡入、淡出，运行按钮跟着滑动；消失的过程中已经点不了。
+#[test]
+fn the_stop_button_fades_and_the_run_button_slides() {
+    use std::time::Duration;
+    let (mut app, dir, _log) = app_with_configs("run-stop-motion");
+    let hit = |app: &App, want: HeaderHit| {
+        let hits = &app.terminal.hits;
+        hits.iter().find(|(_, h)| *h == want).map(|(rect, _)| *rect)
+    };
+    let start = HeaderHit::Run(RunButton::Start);
+    let stop = HeaderHit::Run(RunButton::Stop);
+    app.new_terminal_tab_in(Vec::new());
+    paint(&mut app);
+    let idle = hit(&app, start).unwrap().x;
+    let moved = idle - crate::theme::BUTTON - crate::theme::TAB_GAP;
+
+    // 开始运行，动画走到一半：运行按钮在两个位置之间，停止按钮已经能点。
+    app.terminal.strip.frozen = Some(Duration::from_millis(60));
+    run_current(&mut app);
+    paint(&mut app);
+    let x = hit(&app, start).unwrap().x;
+    assert!(moved < x && x < idle, "{moved} < {x} < {idle}");
+    assert!(hit(&app, stop).is_some());
+    assert!(app.terminal.strip.animating());
+
+    clean(&dir);
+
+    // 没有动画时直接到位。
+    let (mut app, dir, _log) = app_with_configs("run-stop-motion-end");
+    app.new_terminal_tab_in(Vec::new());
+    paint(&mut app);
+    run_current(&mut app);
+    paint(&mut app);
+    assert_eq!(hit(&app, start).unwrap().x, moved);
+    let id = app.terminal.tab().unwrap().id;
+
+    // 运行结束，动画走到一半：运行按钮往回滑，停止按钮已经点不了。
+    app.terminal.strip.frozen = Some(Duration::from_millis(60));
+    app.terminal_message(FromHelper::Exited { tab: id, code: 0 });
+    paint(&mut app);
+    let x = hit(&app, start).unwrap().x;
+    assert!(moved < x && x < idle, "{moved} < {x} < {idle}");
+    assert!(hit(&app, stop).is_none());
+    clean(&dir);
+}
+
 /// 菜单显示每个配置的命令，正在运行的有标记。
 #[test]
 fn the_menu_shows_commands_and_what_is_running() {

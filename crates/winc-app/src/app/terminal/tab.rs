@@ -164,6 +164,8 @@ pub(crate) struct TermTab {
     pub process: String,
     /// 这个终端不能再用了：为什么；还能用时为 `None`。
     pub ended: Option<TabEnd>,
+    /// 从菜单选的 shell 的启动命令；`None` 是默认 shell。
+    pub shell: Option<String>,
     /// 标签运行的配置；普通的 shell 标签为 `None`。
     pub run: Option<winc_config::RunConfig>,
     /// 程序退出后重新运行配置。
@@ -252,6 +254,7 @@ impl TermTab {
             title: String::new(),
             process: String::new(),
             ended: None,
+            shell: None,
             run: None,
             rerun: false,
             stopped: false,
@@ -1092,37 +1095,29 @@ pub(crate) fn cells_text(line: &Line, start: usize, end: usize) -> String {
     out
 }
 
-/// 在一行文字里找 `needle`（已按是否区分大小写处理好）出现的格子范围。
-pub(crate) fn find_in_line(line: &str, needle: &str, case_sensitive: bool) -> Vec<(usize, usize)> {
-    if needle.is_empty() {
-        return Vec::new();
-    }
-    let hay: Vec<(usize, usize, char)> = cell_chars(line);
-    let text: String = hay.iter().map(|&(_, _, c)| c).collect();
-    let (text, needle) = if case_sensitive {
-        (text, needle.to_string())
+/// 返回一行参与查找的文字：软换行时去掉行末的占位空格（宽字符无法放入最后一格时产生）。
+pub(crate) fn logical_text(line: &Line) -> &str {
+    let filler =
+        line.wrapped && (line.runs.last()).is_some_and(|run| run.style.attrs.has(Attrs::FILLER));
+    if filler {
+        line.text.strip_suffix(' ').unwrap_or(&line.text)
     } else {
-        (text.to_lowercase(), needle.to_lowercase())
-    };
-    // 小写化可能改变字数（极少见的字母），这时按原样不区分大小写也找不准，宁可不报。
-    if text.chars().count() != hay.len() {
-        return Vec::new();
+        &line.text
     }
-    let chars: Vec<char> = text.chars().collect();
-    let pattern: Vec<char> = needle.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + pattern.len() <= chars.len() {
-        if chars[i..i + pattern.len()] == pattern[..] {
-            let (start, ..) = hay[i];
-            let (col, w, _) = hay[i + pattern.len() - 1];
-            out.push((start, col + w));
-            i += pattern.len();
-        } else {
-            i += 1;
+}
+
+/// 返回字节偏移 `byte` 在文字 `text` 中对应的格。
+pub(crate) fn col_at(text: &str, byte: usize) -> usize {
+    let mut seen = 0;
+    let mut col = 0;
+    for (c, width) in cells(text) {
+        if seen >= byte {
+            break;
         }
+        seen += c.len_utf8();
+        col += width;
     }
-    out
+    col
 }
 
 #[cfg(test)]

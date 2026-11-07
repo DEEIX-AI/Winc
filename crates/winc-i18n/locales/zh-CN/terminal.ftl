@@ -65,6 +65,7 @@ terminal-paste-confirm-detail = 终端里的程序没有开启括号粘贴，每
 
 ## 运行配置。
 
+terminal-shell-select = 选择 Shell
 terminal-run-select = 选择运行配置
 terminal-run-again = 重新运行
 terminal-run-confirm = 要运行「{ $name }」吗？

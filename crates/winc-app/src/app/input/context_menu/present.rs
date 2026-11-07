@@ -522,6 +522,9 @@ impl App {
                     MenuEntry::Item(MenuCommand::RunEdit, true),
                 ])
                 .collect(),
+            MenuTarget::TerminalShells => (0..self.terminal_shell_list().len())
+                .map(|i| MenuEntry::Item(MenuCommand::NewTerminalShell(i), true))
+                .collect(),
             MenuTarget::LogBranch => log_branch_menu(&self.git.branches),
             MenuTarget::StatusBranches => {
                 let idle = self.branch.running.is_none();
@@ -759,6 +762,26 @@ impl App {
                 MenuLabel {
                     title: config.map(|c| c.name.clone()).unwrap_or_default(),
                     subtitle,
+                    tooltip: None,
+                }
+            }
+            MenuCommand::TerminalDock => {
+                let title = if self.terminal_right() {
+                    t!("terminal-dock-bottom")
+                } else {
+                    t!("terminal-dock-right")
+                };
+                MenuLabel {
+                    title: title.to_owned(),
+                    subtitle: None,
+                    tooltip: None,
+                }
+            }
+            MenuCommand::NewTerminalShell(i) => {
+                let shell = self.terminal_shell_list().into_iter().nth(i);
+                MenuLabel {
+                    title: shell.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
+                    subtitle: shell.map(|s| s.command),
                     tooltip: None,
                 }
             }

@@ -211,6 +211,11 @@ impl App {
                 MenuCommand::RunEdit => self.edit_run_configs(),
                 _ => {}
             },
+            MenuTarget::TerminalShells => {
+                if let MenuCommand::NewTerminalShell(i) = command {
+                    self.new_terminal_with_shell(i);
+                }
+            }
             MenuTarget::TreeTools => {
                 if let Some(tool) = tree_tool_of(command) {
                     self.run_tree_tool(tool);
@@ -296,6 +301,7 @@ impl App {
             MenuCommand::TerminalFind => self.open_terminal_find(),
             MenuCommand::TerminalClear => self.clear_terminal(),
             MenuCommand::TerminalMaximize => self.toggle_terminal_maximized(),
+            MenuCommand::TerminalDock => self.toggle_terminal_position(),
             MenuCommand::NewTerminal => self.new_terminal_tab(),
             MenuCommand::CloseTerminal => self.close_terminal_tab(self.terminal.active),
             _ => {}

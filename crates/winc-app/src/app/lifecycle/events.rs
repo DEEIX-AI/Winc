@@ -334,6 +334,10 @@ impl App {
             UserEvent::RunApproved(config) => self.approved_run(*config),
             UserEvent::TerminalClose(id) => self.confirmed_terminal_close(id),
             UserEvent::TerminalRestart(id) => self.confirmed_terminal_restart(id),
+            UserEvent::TerminalShells(shells) => {
+                self.terminal.shells = shells;
+                self.request_redraw();
+            }
             UserEvent::TerminalPaste(id, text) => self.confirmed_terminal_paste(id, text),
             UserEvent::TerminalQuit(ok) => {
                 if let Some(request) = self.quit_confirming.take()

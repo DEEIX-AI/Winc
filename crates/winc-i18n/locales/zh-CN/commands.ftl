@@ -163,6 +163,7 @@ cmd-close-terminal = 终端：关闭标签页
 cmd-next-terminal = 终端：下一个标签页
 cmd-previous-terminal = 终端：上一个标签页
 cmd-find-in-terminal = 终端：查找
+cmd-toggle-terminal-position = 终端：切换面板位置
 cmd-maximize-terminal = 终端：最大化面板
 cmd-rename-terminal = 终端：重命名
 cmd-previous-command = 终端：上一条命令

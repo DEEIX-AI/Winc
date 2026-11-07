@@ -14,6 +14,7 @@ pub(crate) mod link;
 mod locate;
 mod pointer;
 pub(crate) mod run;
+pub(crate) mod shells;
 pub(crate) mod strip;
 mod tab;
 
@@ -38,7 +39,7 @@ use super::{App, CloseRequest, Focus, UserEvent};
 use crate::theme::{Palette, TOP_BAR, TOP_BAR_END};
 
 pub(crate) use blocks::{ErrorNav, format_duration};
-pub(crate) use find::TermFind;
+pub(crate) use find::{FIND_OPTIONS_MIN, FindPart, TermFind};
 pub(crate) use link::TermLink;
 pub(crate) use pointer::BlockHit;
 #[cfg(all(test, unix))]
@@ -106,12 +107,16 @@ pub(crate) enum HeaderHit {
     New,
     /// 「重新启动」：shell 退出了、或者辅助进程退出了时。
     Restart,
-    /// 把面板挪到编辑区右边，或者挪回下面。
-    Position,
     /// 收起面板（和状态栏上的终端按钮一样）。
     Hide,
+    /// 「+」右边选 shell 的按钮。
+    ShellMenu,
+    /// 把面板挪到编辑区右边，或者挪回下面。
+    Position,
     /// 运行配置的按钮。
     Run(run::RunButton),
+    /// 查找条的一部分。
+    Find(FindPart),
 }
 
 /// 面板出现、收起、换位置的动画（见 [`App::terminal_shown`]）。
@@ -158,6 +163,12 @@ pub(crate) struct TerminalPanel {
     /// `want` 里各标签的名字（恢复现场、重新启动时带上用户起的名字），和 `want` 一一对应；
     /// 数量不足的部分视为没有名字。
     want_names: Vec<String>,
+    /// `want` 里各标签的 shell，和 `want` 一一对应；`None` 或数量不足的部分用默认 shell。
+    pub want_shells: Vec<Option<String>>,
+    /// 本机可选的 shell（[`shells`]），检测完成前为空。
+    pub shells: Vec<shells::ShellChoice>,
+    /// 是否已经开始检测本机的 shell。
+    shells_detected: bool,
     /// `want` 里的标签都建好以后看第几个（恢复上次的现场时）；`None` 是最后建的那个。
     want_active: Option<usize>,
     /// 等着启动的运行配置。
@@ -398,12 +409,15 @@ impl App {
             .collect();
         let pending = (0..t.want.len()).map(|i| t.want_names.get(i).cloned().unwrap_or_default());
         let names = shells().map(|tab| tab.name.clone()).chain(pending);
+        let pending = (0..t.want.len()).map(|i| t.want_shells.get(i).cloned().flatten());
+        let commands = shells().map(|tab| tab.shell.clone()).chain(pending);
         let before = t.tabs.iter().take(t.active).filter(|tab| tab.run.is_some());
         let active = t.active - before.count();
         (!tabs.is_empty()).then(|| TerminalSession {
             active: t.want_active.unwrap_or(active),
             tabs,
             names: names.collect(),
+            shells: commands.map(Option::unwrap_or_default).collect(),
             open: t.open,
             height: t.height,
             width: t.width,
@@ -422,6 +436,12 @@ impl App {
         let tabs = session.tabs.iter();
         t.want = tabs.map(|p| os_bytes(p.as_os_str())).collect();
         t.want_names.clone_from(&session.names);
+        let saved = session.shells.iter();
+        t.want_shells = saved
+            .map(|command| {
+                Some(command.clone()).filter(|c| !c.is_empty() && shells::still_usable(c))
+            })
+            .collect();
         t.want_active = Some(session.active);
         if session.height > 0.0 {
             t.height = session.height;
@@ -450,6 +470,7 @@ impl App {
         t.tabs.clear();
         t.want.clear();
         t.want_names.clear();
+        t.want_shells.clear();
         t.want_active = None;
         t.active = 0;
         t.client = None;
@@ -668,6 +689,11 @@ impl App {
 
     /// 在 `cwd` 新建一个终端标签（空的是打开的目录）。
     pub(super) fn new_terminal_tab_in(&mut self, cwd: Vec<u8>) {
+        self.new_terminal_tab_with(cwd, None);
+    }
+
+    /// 在 `cwd` 用 `shell` 新建一个终端标签（`None` 是默认 shell）。
+    pub(super) fn new_terminal_tab_with(&mut self, cwd: Vec<u8>, shell: Option<String>) {
         if !self.terminal.open {
             // 打开面板时没有标签、也没有恢复的标签要建，会先放一个默认的：换成这个默认标签。
             // 恢复的那些标签（面板收着时退出的）留着，这个默认标签加在后面。
@@ -676,9 +702,13 @@ impl App {
             if empty {
                 self.terminal.want.clear();
                 self.terminal.want_names.clear();
+                self.terminal.want_shells.clear();
             }
         }
-        self.terminal.want.push(cwd);
+        let t = &mut self.terminal;
+        t.want_shells.resize(t.want.len(), None);
+        t.want_shells.push(shell);
+        t.want.push(cwd);
         // 新建的这一个就是要看的，不再切回恢复时记着的那一个。
         self.terminal.want_active = None;
         self.focus = Focus::Terminal;

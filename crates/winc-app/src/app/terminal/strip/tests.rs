@@ -49,3 +49,13 @@ fn short_names_count_with_the_narrowest_tab_width() {
     assert!(widths.iter().sum::<f32>() <= 400.0, "{widths:?}");
     assert_eq!(widths[0], TAB_SQUEEZED);
 }
+
+#[test]
+fn narrowed_tabs_ignore_the_rounding_of_their_widths() {
+    // 名字短的按 `TAB_MIN` 算，取整少的不足 1 不算变窄。
+    assert!(!tabs_narrowed(&[50.0, 130.5], &[TAB_MIN, 130.0]));
+    assert!(tabs_narrowed(&[50.0, 50.0], &[TAB_MIN, 100.0]));
+    // 名字本身超过上限时按上限算。
+    assert!(!tabs_narrowed(&[500.0], &[TAB_MAX]));
+    assert!(tabs_narrowed(&[500.0], &[TAB_SQUEEZED]));
+}

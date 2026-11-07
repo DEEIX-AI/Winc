@@ -163,6 +163,7 @@ cmd-close-terminal = Terminal: Close Tab
 cmd-next-terminal = Terminal: Next Tab
 cmd-previous-terminal = Terminal: Previous Tab
 cmd-find-in-terminal = Terminal: Find
+cmd-toggle-terminal-position = Terminal: Toggle Panel Position
 cmd-maximize-terminal = Terminal: Maximize Panel
 cmd-rename-terminal = Terminal: Rename
 cmd-previous-command = Terminal: Previous Command

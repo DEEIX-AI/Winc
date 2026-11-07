@@ -18,17 +18,15 @@ use winc_render::{Color, FontKind, Frame, Rect};
 use super::*;
 use crate::app::Focus;
 use crate::app::MARK_W;
-use crate::app::terminal::strip::{TAB_GAP, fit_named_tabs};
+use crate::app::terminal::strip::{TAB_GAP, fit_named_tabs, tabs_narrowed};
 use crate::app::terminal::{
-    BAND_X, BlockHit, HeaderHit, TabEnd, TermTab, ViewRow, format_duration, header_height,
-    tab_inset,
+    BAND_X, BlockHit, FIND_OPTIONS_MIN, FindPart, HeaderHit, TabEnd, TermTab, ViewRow,
+    format_duration, header_height, tab_inset,
 };
-use crate::theme::{BUTTON, readable};
+use crate::theme::{BUTTON, BUTTON_GAP, BUTTON_SMALL, RADIUS_TAB, TOGGLE_W, readable};
 
 /// 标签栏上一个标签的高度（逻辑像素），与编辑区的标签相同。
 const TAB_H: f32 = crate::theme::TAB_HEIGHT;
-/// 查找框的宽度（逻辑像素）。
-const FIND_W: f32 = 220.0;
 /// 最右端的按钮离面板右边的距离（逻辑像素），与编辑区标签栏相同。
 const BUTTONS_END: f32 = 8.0;
 /// 成功命令色带的不透明度（0–1）：大多数命令都成功，满色的长条会比失败的红色更显眼。
@@ -44,6 +42,12 @@ const MIN_SHOWN_DURATION: u32 = 50;
 ///
 /// 面板关着时什么也不绘制。
 pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
+    draw_panel(app, frame);
+    draw_find(app, frame);
+}
+
+/// 绘制标签栏和内容区，查找条之外的部分。
+fn draw_panel(app: &mut App, frame: &mut Frame<'_>) {
     let card = app.layout.terminal;
     app.terminal.hits.clear();
     if card.h <= 0.0 || card.w <= 0.0 {
@@ -79,6 +83,12 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
         min: app.terminal_contrast(),
         bright: app.config.terminal_bold_is_bright == Some(true),
     };
+    // 整屏反色时默认底色同样反转；标签栏属于面板，不反转。
+    if colors.reverse {
+        let top = card.y + header_height(card);
+        let content = Rect::new(card.x, top, card.w, card.bottom() - top);
+        frame.rect(content, colors.default_bg());
+    }
     let find = app.terminal.find.as_ref().filter(|f| f.tab == tab.id);
     let jumped = tab
         .jump
@@ -114,23 +124,6 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
         if jumped.is_some_and(|b| b.command == number) {
             marks.push((0, usize::from(tab.size.cols), p.current_line));
         }
-        if let Some(find) = find {
-            // 匹配按位置从上到下排列：二分找到这一行的第一处，每帧的开销与匹配总数无关。
-            let first = find
-                .matches
-                .partition_point(|(start, _)| start.line < number);
-            let here = find.matches[first..]
-                .iter()
-                .take_while(|(start, _)| start.line == number);
-            for (i, &(start, end)) in (first..).zip(here) {
-                let color = if find.current == Some(i) {
-                    p.search_current
-                } else {
-                    p.search_match
-                };
-                marks.push((start.col, end.col, color));
-            }
-        }
         if let Some((start, end)) = tab.selected_cols(number) {
             let selection = if focused {
                 p.selection
@@ -138,6 +131,29 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
                 p.selected_inactive
             };
             marks.push((start, end.min(usize::from(tab.size.cols)), selection));
+        }
+        // 匹配绘制在选区之上：当前匹配同时也是选区，否则无法与其他匹配区分。
+        if let Some(find) = find {
+            // 匹配按位置升序排列：二分查找与这一行相交的第一处，每帧开销与匹配总数无关。软换行的
+            // 匹配可能跨多行。
+            let first = find.matches.partition_point(|(_, end)| end.line < number);
+            let here = find.matches[first..]
+                .iter()
+                .take_while(|(start, _)| start.line <= number);
+            for (i, &(start, end)) in (first..).zip(here) {
+                let color = if find.current == Some(i) {
+                    p.search_current
+                } else {
+                    p.search_match
+                };
+                let from = if start.line == number { start.col } else { 0 };
+                let to = if end.line == number {
+                    end.col
+                } else {
+                    usize::from(tab.size.cols)
+                };
+                marks.push((from, to, color));
+            }
         }
         let baseline = baseline_in(row, ascent, descent);
         draw_line(app, frame, &colors, line, row, baseline, &marks, view);
@@ -164,6 +180,9 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
     }
     if let Some(block) = tab.sticky() {
         draw_sticky(app, frame, tab, &colors, block, card);
+    }
+    if let Some(find) = find {
+        draw_find_marks(frame, app, tab, find, card, view);
     }
     if let Some((Some(thumb), look)) = bar {
         draw_thumb(frame, p, thumb, look);
@@ -195,13 +214,16 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
         cell * width_at(line, usize::from(cursor.col)) as f32,
         lh,
     );
+    let start = preedit_x(x, &app.preedit, cell, view.right());
     if focused {
-        app.ime_cursor = Some(Rect::new(x, y, cell, lh));
+        // 候选窗对齐组字文字的左边；组字文字超出左边界时对齐可见范围。
+        app.ime_cursor = Some(Rect::new(start.max(view.x), y, cell, lh));
     }
     if focused && !app.preedit.is_empty() {
-        draw_preedit(app, frame, (x, y), baseline_in(at, ascent, descent), view);
+        let baseline = baseline_in(at, ascent, descent);
+        draw_preedit(app, frame, (start, y), baseline, view);
     } else if cursor.visible && tab.settle.is_none() {
-        draw_cursor(app, frame, tab, at, focused, view);
+        draw_cursor(app, frame, &colors, tab, at, focused, view);
     }
 }
 
@@ -367,7 +389,7 @@ fn draw_sticky(
     frame.within(content, |frame| {
         frame.shadow(band, 0.0, 6.0, 0.0, p.shadow, Some(covered));
     });
-    frame.rect_clipped(band, p.editor_bg, 0.0, card);
+    frame.rect_clipped(band, colors.default_bg(), 0.0, card);
     let row = Rect::new(grid.x, band.bottom() - lh, grid.w, lh);
     let clip = Rect::new(grid.x, band.y, grid.w, band.h);
     if app.hover == Hover::TerminalBlock(BlockHit::Sticky) {
@@ -391,10 +413,11 @@ fn draw_sticky(
     }
 }
 
-/// 标签栏：各个标签（当前标签凸起，悬停或正在看时露出关闭按钮）、「+」；右边是查找框
-/// （或者 shell 退出以后怎么重新开始），最右端是切换面板位置、收起面板两个按钮。
+/// 标签栏：各个标签（当前标签凸起，悬停或正在看时露出关闭按钮）、「+」；右边是运行配置的按钮，
+/// 最右端是切换面板位置、收起面板两个按钮。
 fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     app.note_terminal_tabs();
+    app.note_stop_button();
     let p = app.palette;
     let header = Rect::new(card.x, card.y, card.w, header_height(card));
     let y = card.y + (header.h - TAB_H) / 2.0;
@@ -406,20 +429,21 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     } else {
         header.right()
     };
-    // 按钮的尺寸和间距与编辑区标签栏相同；标签放不下时「+」紧贴切换位置的按钮。
+    // 按钮的尺寸和间距与编辑区标签栏相同；标签放不下时「+」紧贴右边的按钮。
     let button_y = card.y + (header.h - BUTTON) / 2.0;
     let hide = Rect::new(end - BUTTONS_END - BUTTON, button_y, BUTTON, BUTTON);
     let position = Rect::new(hide.x - TAB_GAP - BUTTON, button_y, BUTTON, BUTTON);
     let run = run_buttons(app, frame, left, position.x - TAB_GAP, button_y);
-    let rest_end = run.map_or(position.x, |[menu, ..]| menu.x) - TAB_GAP;
-    let rest = Rect::new(header.x, header.y, rest_end - header.x, header.h);
-    // 标签和「+」放得下的宽度：右边留出查找框，或者「重新启动」那一组。
-    let side = if app.terminal.find.is_some() {
-        FIND_W + 4.0 + TAB_GAP
+    // 标签和「+」放得下的宽度。
+    let rest = run.map_or(position.x, |[menu, ..]| menu.x) - TAB_GAP;
+    // 能选的 shell 不止一个时，「+」右边是选 shell 的按钮。
+    let shell_menu = app.terminal_shell_list().len() > 1;
+    let room = rest - left - TAB_GAP - BUTTON;
+    let room = if shell_menu {
+        room - TAB_GAP - BUTTON
     } else {
-        0.0
+        room
     };
-    let room = rest.right() - side - left - TAB_GAP - BUTTON;
     let names: Vec<f32> = (app.terminal.tabs.iter())
         .map(|tab| {
             // 正在改名字的标签跟着输入的字变宽。
@@ -541,7 +565,15 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
         }
     }
 
-    let new = Rect::new(x.min(area.right() + TAB_GAP), button_y, BUTTON, BUTTON);
+    // 标签已经收窄时「+」固定在最右端：新建标签时其他标签立即收窄、新标签从零宽展开，按当前宽度
+    // 计算会使「+」先左移，再随动画右移。
+    let end = area.right() + TAB_GAP;
+    let new_x = if tabs_narrowed(&names, &widths) {
+        end
+    } else {
+        x.min(end)
+    };
+    let new = Rect::new(new_x, button_y, BUTTON, BUTTON);
     if app.hover == Hover::TerminalHeader(HeaderHit::New) {
         frame.rect_clipped(new, p.hover, RADIUS_ROW, header);
     }
@@ -553,6 +585,16 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
         header,
     );
     hits.push((new, HeaderHit::New));
+    if shell_menu {
+        use crate::app::MenuButton;
+        let menu = Rect::new(new.right() + TAB_GAP, button_y, BUTTON, BUTTON);
+        let on = app.hover == Hover::TerminalHeader(HeaderHit::ShellMenu);
+        let open = app.menu_button == Some(MenuButton::TerminalShells);
+        draw_button(frame, p, menu, header, on, open);
+        let direction = icons::Direction::Down;
+        icons::chevron(frame, center(menu), 8.0, direction, p.text_muted, header);
+        hits.push((menu, HeaderHit::ShellMenu));
+    }
 
     // 右端：切换面板的位置（编辑区右边或下面），图标绘制的是点下去以后的位置。
     if app.hover == Hover::TerminalHeader(HeaderHit::Position) {
@@ -572,16 +614,12 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
         icons::Direction::Down
     };
     let center = (hide.x + BUTTON / 2.0, hide.y + BUTTON / 2.0);
-    icons::chevron(frame, center, 8.0, toward, p.text_muted, header);
+    icons::collapse(frame, center, toward, p.text_muted, header);
     hits.push((hide, HeaderHit::Hide));
     if let Some(run) = run {
         draw_run_buttons(app, frame, run, header, &mut hits);
     }
     app.terminal.hits = hits;
-
-    if app.terminal.find.is_some() {
-        draw_find(app, frame, rest);
-    }
 }
 
 /// 配置名按钮最宽多少（逻辑像素），约容纳 8 个汉字；更长的名字截短。
@@ -607,22 +645,26 @@ pub(super) fn run_menu_width(name: f32, room: f32) -> Option<f32> {
 
 /// 运行配置的按钮在标签栏上的位置（配置名，运行，停止）。
 ///
-/// 还没有配置时只有运行按钮，点击后生成配置文件；没有打开目录或太窄时没有按钮。
+/// 还没有配置时只有运行按钮，点击后生成配置文件；没有打开目录或太窄时没有按钮。停止按钮只在运行时
+/// 出现，其余时候运行按钮贴着右边。
 fn run_buttons(app: &App, frame: &mut Frame<'_>, left: f32, end: f32, y: f32) -> Option<[Rect; 3]> {
     app.editor.root()?;
-    let stop = Rect::new(end - BUTTON, y, BUTTON, BUTTON);
-    let start = Rect::new(stop.x - TAB_GAP - BUTTON, y, BUTTON, BUTTON);
+    let last = Rect::new(end - BUTTON, y, BUTTON, BUTTON);
     let Some(config) = app.run.current() else {
-        let start = Rect::new(end - BUTTON, y, BUTTON, BUTTON);
-        return (end - left - BUTTON >= RUN_TABS_MIN).then_some([start; 3]);
+        return (end - left - BUTTON >= RUN_TABS_MIN).then_some([last; 3]);
     };
+    // 停止按钮出现、消失时，运行按钮、配置名和标签跟着滑动。
+    let share = app.terminal.strip.stop_share(app.run_config_running());
+    let start = Rect::new(last.x - share * (TAB_GAP + BUTTON), y, BUTTON, BUTTON);
     let name = frame.measure(FontKind::Ui, app.fonts.ui, &config.name);
-    let menu = run_menu_width(name, end - left)?;
+    // `run_menu_width` 按运行、停止两个按钮算：没有停止按钮时多出一个的位置。
+    let spare = (1.0 - share) * (BUTTON + TAB_GAP);
+    let menu = run_menu_width(name, end - left + spare)?;
     let menu = Rect::new(start.x - TAB_GAP - menu, y, menu, BUTTON);
-    Some([menu, start, stop])
+    Some([menu, start, last])
 }
 
-/// 绘制运行配置的按钮：配置名和下拉箭头，运行（运行中是重新运行），停止（运行中才可用）。
+/// 绘制运行配置的按钮：配置名和下拉箭头，运行（运行中是重新运行），停止（运行中才有）。
 fn draw_run_buttons(
     app: &App,
     frame: &mut Frame<'_>,
@@ -671,20 +713,15 @@ fn draw_run_buttons(
     }
     hits.push((start, HeaderHit::Run(RunButton::Start)));
 
-    draw_button(
-        frame,
-        p,
-        stop,
-        header,
-        running && hovered(RunButton::Stop),
-        false,
-    );
-    if running {
+    // 淡出期间不再响应点击。
+    let share = app.terminal.strip.stop_share(running);
+    frame.with_opacity(share, |frame| {
+        let on = running && hovered(RunButton::Stop);
+        draw_button(frame, p, stop, header, on, false);
         icons::stop(frame, center(stop), p.error, header);
+    });
+    if running {
         hits.push((stop, HeaderHit::Run(RunButton::Stop)));
-    } else {
-        let color = p.text_muted;
-        frame.with_opacity(0.4, |frame| icons::stop(frame, center(stop), color, header));
     }
 }
 
@@ -721,9 +758,13 @@ fn draw_terminal_tab(
     };
     let state = (active, hovered);
     draw_tab(app, frame, rect, clip, tab.label(), state, color);
-    // 不在看时有命令结束了：左上角一个小点，失败了是红的。
-    if let Some(failed) = tab.unseen {
-        let dot = if failed { p.error } else { p.accent };
+    // 左上角的圆点：未查看的命令结束时为强调色，命令失败时为红色；否则标签内有程序运行时为灰色。
+    let dot = match tab.unseen {
+        Some(true) => Some(p.error),
+        Some(false) => Some(p.accent),
+        None => tab.busy().map(|_| p.text_dim),
+    };
+    if let Some(dot) = dot {
         let at = Rect::new(rect.x + 3.0, rect.y + 3.0, 5.0, 5.0);
         frame.rect_clipped(at, dot, 2.5, clip);
     }
@@ -816,32 +857,132 @@ fn draw_end_notice(app: &mut App, frame: &mut Frame<'_>, row: Rect, clip: Rect) 
     app.terminal.hits.push((button, HeaderHit::Restart));
 }
 
-/// 查找框：绘制在标签栏 `header` 的右端，左边写第几处、共几处。
-///
-/// `header` 不含最右端的位置按钮。
-fn draw_find(app: &mut App, frame: &mut Frame<'_>, header: Rect) {
+/// 在滚动条轨道上标出匹配的位置，当前匹配用强调色。匹配超过上限时等间隔取样。
+fn draw_find_marks(
+    frame: &mut Frame<'_>,
+    app: &App,
+    tab: &TermTab,
+    find: &crate::app::terminal::TermFind,
+    card: Rect,
+    view: Rect,
+) {
+    /// 绘制的标记数量上限（个）：轨道高度的物理像素数远小于该值，超出的标记会落在相同像素上。
+    const MAX_MARKS: usize = 2000;
+    /// 标记的宽和高（逻辑像素）：宽度小于滚动条滑块，高度保证 1× 屏幕上至少 2 个物理像素。
+    const MARK_SIZE: (f32, f32) = (4.0, 2.0);
     let p = app.palette;
+    let lh = app.fonts.line_height;
+    let content = (tab.display_len() as f32 * lh).max(view.h).max(1.0);
+    let x = card.right() - 2.0 - MARK_SIZE.0;
+    let mark = |frame: &mut Frame<'_>, at: usize, color: Color| {
+        let display = tab.display_of(find.matches[at].0.line) as f32;
+        let y = view.y + display * lh / content * view.h;
+        let rect = Rect::new(x, y, MARK_SIZE.0, MARK_SIZE.1);
+        frame.rect_clipped(rect, color, 0.0, view_clip(card, view));
+    };
+    let step = (find.matches.len() / MAX_MARKS).max(1);
+    for at in (0..find.matches.len()).step_by(step) {
+        mark(frame, at, p.search_current);
+    }
+    if let Some(current) = find.current.filter(|&i| i < find.matches.len()) {
+        mark(frame, current, p.accent);
+    }
+}
+
+/// 标记的裁剪范围：纵向为内容区，横向为面板，标记位于内容区右侧的留白内。
+fn view_clip(card: Rect, view: Rect) -> Rect {
+    Rect::new(card.x, view.y, card.w, view.h)
+}
+
+/// 查找条：浮在内容区右上角，与编辑区的查找条样式相同。
+///
+/// 从左到右是输入框、第几处和共几处、三个选项、上一处、下一处、关闭；没有匹配时上一处、下一处置灰。
+fn draw_find(app: &mut App, frame: &mut Frame<'_>) {
+    let p = app.palette;
+    let Some(bar) = app.terminal_find_bar() else {
+        return;
+    };
     let Some(mut find) = app.terminal.find.take() else {
         return;
     };
     let focused = app.focus == Focus::TerminalFind;
-    let area = Rect::new(
-        header.right() - 4.0 - FIND_W,
-        header.y + (header.h - TAB_H) / 2.0,
-        FIND_W,
-        TAB_H,
+    // 只绘制细边框：查找条紧邻标签栏，阴影会投到标签栏上。
+    let covered = frame.covered(bar, RADIUS_TAB);
+    let edge = bar.inset(-1.0, -1.0);
+    frame.rect_except(edge, p.popup_border, RADIUS_TAB + 1.0, covered);
+    frame.rounded(bar, p.popup_bg, RADIUS_TAB);
+    let inset = (bar.h - BUTTON_SMALL) / 2.0;
+    let button = |i: f32| {
+        let x = bar.right() - inset - BUTTON_SMALL - i * (BUTTON_SMALL + BUTTON_GAP);
+        Rect::new(x, bar.y + inset, BUTTON_SMALL, BUTTON_SMALL)
+    };
+    let (close, next, previous) = (button(0.0), button(1.0), button(2.0));
+    let hovered = |part| app.hover == Hover::TerminalHeader(HeaderHit::Find(part));
+    let can_step = !find.matches.is_empty();
+    let step = if can_step { p.text_muted } else { p.text_dim };
+    for (rect, part) in [(previous, FindPart::Previous), (next, FindPart::Next)] {
+        draw_button(frame, p, rect, bar, can_step && hovered(part), false);
+    }
+    draw_button(frame, p, close, bar, hovered(FindPart::Close), false);
+    icons::chevron(
+        frame,
+        center(previous),
+        8.0,
+        icons::Direction::Up,
+        step,
+        bar,
     );
-    frame.rect_clipped(area, p.hover, RADIUS_ROW, header);
-    if focused {
-        let edge = p.accent;
-        frame.rect_clipped(
-            Rect::new(area.x, area.bottom() - 1.0, area.w, 1.0),
-            edge,
-            0.0,
-            header,
+    icons::chevron(frame, center(next), 8.0, icons::Direction::Down, step, bar);
+    icons::close(frame, center(close), 7.0, p.text_muted, bar);
+
+    // 选项位于按钮左侧，查找条窄于 `FIND_OPTIONS_MIN` 时不显示。
+    let option = |i: f32| {
+        let x = previous.x - 6.0 - (3.0 - i) * (TOGGLE_W + BUTTON_GAP) + BUTTON_GAP;
+        Rect::new(x, previous.y, TOGGLE_W, BUTTON_SMALL)
+    };
+    let options = [
+        (option(0.0), find.options.case_sensitive, FindPart::Case),
+        (option(1.0), find.options.whole_word, FindPart::Word),
+        (option(2.0), find.options.regex, FindPart::Regex),
+    ];
+    let show_options = bar.w >= FIND_OPTIONS_MIN;
+    if show_options {
+        draw_search_options(
+            app,
+            frame,
+            options.map(|(rect, on, part)| (rect, on, hovered(part))),
+            bar,
         );
     }
-    let field = Rect::new(area.x + 8.0, area.y, area.w - 16.0, area.h);
+    let count = match (
+        find.field.text().is_empty(),
+        find.matches.len(),
+        find.current,
+    ) {
+        (true, ..) => String::new(),
+        _ if find.invalid => t!("workspace-find-regex-invalid").into(),
+        (false, 0, _) if !find.loaded => t!("terminal-find-searching").into(),
+        (false, 0, _) => t!("terminal-find-no-results").into(),
+        (false, n, Some(i)) => format!("{}/{n}", i + 1),
+        (false, n, None) => format!("{n}"),
+    };
+    let failed = find.invalid || (!count.is_empty() && find.loaded && !can_step);
+    let count_color = if failed { p.error } else { p.text_dim };
+    // 计数靠选项（没有选项时是按钮）左边，输入框用剩下的宽度。
+    let right = if show_options {
+        options[0].0.x - 6.0
+    } else {
+        previous.x - 6.0
+    };
+    let count_x = right - frame.measure(FontKind::Ui, app.fonts.ui_small, &count);
+    ui_text_small(frame, app, count_x, bar, &count, count_color, bar);
+    let text_right = if count.is_empty() {
+        right
+    } else {
+        count_x - 10.0
+    };
+    let left = bar.x + 12.0;
+    let field = Rect::new(left, bar.y, (text_right - left).max(0.0), bar.h);
     let caret = draw_bar_field(
         app,
         frame,
@@ -853,30 +994,19 @@ fn draw_find(app: &mut App, frame: &mut Frame<'_>, header: Rect) {
     if focused && caret.is_some() {
         app.ime_cursor = caret;
     }
-    let count = match (
-        find.field.text().is_empty(),
-        find.matches.len(),
-        find.current,
-    ) {
-        (true, ..) => String::new(),
-        (false, 0, _) if !find.loaded => t!("terminal-find-searching").into(),
-        (false, 0, _) => t!("terminal-find-no-results").into(),
-        (false, n, Some(i)) => format!("{}/{n}", i + 1),
-        (false, n, None) => format!("{n}"),
-    };
-    if !count.is_empty() {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, &count);
-        ui_text(
-            frame,
-            app,
-            area.x - 10.0 - w,
-            header,
-            &count,
-            p.text_muted,
-            header,
-        );
-    }
     app.terminal.find = Some(find);
+    // 排在命中列表最前：查找条覆盖下方内容，优先响应点击。
+    let shown = options.into_iter().filter(|_| show_options);
+    let hits = shown
+        .map(|(rect, _, part)| (rect, HeaderHit::Find(part)))
+        .chain([
+            (previous, HeaderHit::Find(FindPart::Previous)),
+            (next, HeaderHit::Find(FindPart::Next)),
+            (close, HeaderHit::Find(FindPart::Close)),
+            (bar, HeaderHit::Find(FindPart::Bar)),
+        ]);
+    let hits: Vec<_> = hits.collect();
+    app.terminal.hits.splice(0..0, hits);
 }
 
 #[cfg(test)]

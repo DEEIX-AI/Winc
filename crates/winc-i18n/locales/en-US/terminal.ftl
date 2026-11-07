@@ -81,6 +81,7 @@ terminal-paste-confirm-detail = The program in the terminal hasn’t enabled bra
 
 ## 运行配置。
 
+terminal-shell-select = Select Shell
 terminal-run-select = Select Run Configuration
 terminal-run-again = Run Again
 terminal-run-confirm = Run “{ $name }”?

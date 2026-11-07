@@ -801,6 +801,24 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
     use crate::keymap::Action;
     use crate::layout::with_key;
     match app.hover {
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::ShellMenu) => {
+            let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+            Some((rect, t!("terminal-shell-select").to_owned()))
+        }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Find(part)) => {
+            use crate::app::terminal::FindPart;
+            let label = match part {
+                FindPart::Bar => return None,
+                FindPart::Previous => t!("cmd-find-previous"),
+                FindPart::Next => t!("cmd-find-next"),
+                FindPart::Close => t!("workspace-find-close"),
+                FindPart::Case => t!("workspace-find-match-case"),
+                FindPart::Word => t!("workspace-find-whole-word"),
+                FindPart::Regex => t!("workspace-find-use-regex"),
+            };
+            let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+            Some((rect, label.to_owned()))
+        }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Position) => {
             let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
             let label = if app.terminal_right() {

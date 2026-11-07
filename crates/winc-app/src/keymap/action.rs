@@ -189,6 +189,7 @@ pub enum Action {
     PreviousTerminal,
     FindInTerminal,
     MaximizeTerminal,
+    ToggleTerminalPosition,
     RenameTerminal,
     PreviousCommand,
     NextCommand,
@@ -384,6 +385,7 @@ impl Action {
             PreviousTerminal => t!("cmd-previous-terminal"),
             FindInTerminal => t!("cmd-find-in-terminal"),
             MaximizeTerminal => t!("cmd-maximize-terminal"),
+            ToggleTerminalPosition => t!("cmd-toggle-terminal-position"),
             RenameTerminal => t!("cmd-rename-terminal"),
             PreviousCommand => t!("cmd-previous-command"),
             NextCommand => t!("cmd-next-command"),
@@ -563,6 +565,7 @@ impl Action {
             PreviousTerminal => "Terminal: Previous Tab",
             FindInTerminal => "Terminal: Find",
             MaximizeTerminal => "Terminal: Maximize Panel",
+            ToggleTerminalPosition => "Terminal: Toggle Panel Position",
             RenameTerminal => "Terminal: Rename",
             PreviousCommand => "Terminal: Previous Command",
             NextCommand => "Terminal: Next Command",
@@ -700,6 +703,7 @@ impl Action {
             | PreviousTerminal
             | FindInTerminal
             | MaximizeTerminal
+            | ToggleTerminalPosition
             | RenameTerminal
             | PreviousCommand
             | NextCommand
@@ -791,6 +795,7 @@ impl Action {
             | Action::PreviousTerminal
             | Action::FindInTerminal
             | Action::MaximizeTerminal
+            | Action::ToggleTerminalPosition
             | Action::RenameTerminal
             | Action::PreviousCommand
             | Action::NextCommand
@@ -1004,6 +1009,7 @@ pub const ACTIONS: &[Action] = {
         ClearTerminal,
         FindInTerminal,
         MaximizeTerminal,
+        ToggleTerminalPosition,
         RenameTerminal,
         CloseTerminal,
         NextTerminal,

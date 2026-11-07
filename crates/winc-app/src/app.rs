@@ -230,6 +230,8 @@ pub enum UserEvent {
     TerminalClose(u16),
     /// 确认框上确认了重新启动这个终端标签（伪终端断开了，里面的程序可能还在运行）。
     TerminalRestart(u16),
+    /// 本机的 shell 检测完了。
+    TerminalShells(Vec<terminal::shells::ShellChoice>),
     /// 退出或关闭窗口前的确认结果（终端中有程序在运行）：用户确认时为真，取消时为假。
     TerminalQuit(bool),
     /// 确认框上确认了把文字粘贴到指定的终端标签（多行、程序没有开启括号粘贴）。
@@ -441,6 +443,8 @@ impl Hover {
             Hover::TreeTool(_)
                 | Hover::TerminalHeader(
                     terminal::HeaderHit::Position
+                        | terminal::HeaderHit::ShellMenu
+                        | terminal::HeaderHit::Find(_)
                         | terminal::HeaderHit::Hide
                         | terminal::HeaderHit::Run(_),
                 )

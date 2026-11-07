@@ -102,7 +102,15 @@ impl App {
 
     /// 输入法提交的文字。
     pub(in crate::app) fn terminal_commit(&mut self, text: &str) {
+        self.clear_terminal_selection();
         self.terminal_input(text.as_bytes().to_vec());
+    }
+
+    /// 清除当前标签的选区。
+    fn clear_terminal_selection(&mut self) {
+        if let Some(tab) = self.terminal.tab_mut() {
+            tab.selection = None;
+        }
     }
 
     /// 滚动条的（轨道，往下滚过的高度，内容高度），绘制、点击和拖动共用。
@@ -195,6 +203,17 @@ impl App {
         }
         let (modes, keyboard) = (tab.modes, tab.keyboard);
         if let Some(bytes) = self.encode_terminal_key(event, modes, keyboard) {
+            // 输入文字时清除选区，否则 ⌘C 会复制旧内容；方向键和快捷键保留选区。
+            let mods = self.terminal_mods();
+            let typed = event.text.as_deref().is_some_and(|text| {
+                !text.chars().any(char::is_control)
+                    && !mods.ctrl
+                    && !mods.alt
+                    && !self.modifiers.super_key()
+            });
+            if typed {
+                self.clear_terminal_selection();
+            }
             self.terminal_input(bytes);
         }
     }

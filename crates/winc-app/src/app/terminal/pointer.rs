@@ -1,8 +1,8 @@
 //! 终端里的鼠标：选字、滚轮翻回滚缓冲，以及程序要了鼠标时上报给它。
 //!
 //! 程序开了鼠标上报（全屏程序）时，按键、拖动、滚轮都编码后发给程序；按住 ⇧ 时仍然由
-//! 终端自己选字。没开时：单击拖动按字选、双击选词、三击选行；滚轮在主屏上翻回滚缓冲，在备用屏
-//! 上（分页器）换成 ↑ ↓。
+//! 终端自己选字。没开时：单击拖动按字选、双击选词、三击选行，⇧ 单击扩展选区，⌥ 单击移动 shell
+//! 的光标；滚轮在主屏上滚动回滚缓冲，在备用屏上（分页器）换成 ↑ ↓。
 
 use winit::event::MouseButton;
 
@@ -211,6 +211,18 @@ impl App {
         if button != MouseButton::Left || self.terminal_block_click(x, y) {
             return;
         }
+        if self.modifiers.alt_key() && self.move_shell_cursor(x, y) {
+            return;
+        }
+        // ⇧ 单击：保留选区起点，把终点移到点击处，之后可以继续拖动。
+        if self.modifiers.shift_key()
+            && let Some(head) = self.terminal_point(x, y, true)
+            && let Some(selection) = self.terminal.tab_mut().and_then(|t| t.selection.as_mut())
+        {
+            selection.head = head;
+            self.drag = Drag::TerminalSelect;
+            return;
+        }
         let unit = match self.click_count(x, y) {
             1 => Unit::Char,
             2 => Unit::Word,
@@ -238,12 +250,7 @@ impl App {
                 }
             }
             Drag::TerminalSelect => {
-                let view = self.terminal_view();
-                if y < view.y {
-                    self.scroll_terminal(1);
-                } else if y >= view.bottom() {
-                    self.scroll_terminal(-1);
-                }
+                self.terminal_drag_scroll(y);
                 let between = self
                     .terminal
                     .tab()
@@ -259,6 +266,66 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// 拖选时鼠标位于内容区上下之外：按超出的距离滚动回滚缓冲，滚动量按经过的时间计算。
+    ///
+    /// 鼠标静止时仍逐帧滚动（[`App::drag_autoscrolling`]），速度不受鼠标事件频率影响。
+    fn terminal_drag_scroll(&mut self, y: f32) {
+        let view = self.terminal_view();
+        let outside = if y < view.y {
+            view.y - y
+        } else if y >= view.bottom() {
+            view.bottom() - y
+        } else {
+            0.0
+        };
+        if outside == 0.0 {
+            self.drag_scrolled_at = None;
+            return;
+        }
+        let lines = self.drag_scroll_lines(outside.abs() / self.fonts.line_height);
+        if let Some(tab) = self.terminal.tab_mut() {
+            let (position, _) = tab.scroll_position();
+            tab.set_scroll_position(position + f64::from(lines.copysign(outside)));
+        }
+        self.fetch_terminal_history();
+    }
+
+    /// ⌥ 单击：发送相应次数的方向键，把 shell 的光标移到点击处；已处理时返回真。
+    ///
+    /// 仅在光标确定位于输入行时生效：有 shell 集成、最后一个块尚未运行、点击处与光标同行。软换行的
+    /// 输入和提示符不做特殊处理，方向键越界时由 shell 忽略。
+    fn move_shell_cursor(&mut self, x: f32, y: f32) -> bool {
+        let Some(point) = self.terminal_point(x, y, true) else {
+            return false;
+        };
+        let Some(tab) = self.terminal.tab() else {
+            return false;
+        };
+        let at_prompt = tab
+            .blocks
+            .last()
+            .is_some_and(|block| block.output.is_none());
+        let line = tab.history.1 + u64::from(tab.cursor.row);
+        if !at_prompt
+            || tab.modes.has(Modes::ALT_SCREEN)
+            || tab.ended.is_some()
+            || point.line != line
+        {
+            return false;
+        }
+        let Some(row) = tab.rows.get(usize::from(tab.cursor.row)) else {
+            return false;
+        };
+        let (key, count) = input::cursor_steps(&row.text, usize::from(tab.cursor.col), point.col);
+        let (modes, keyboard) = (tab.modes, tab.keyboard);
+        let mut bytes = Vec::new();
+        for _ in 0..count {
+            input::encode(key, input::Mods::default(), modes, keyboard, &mut bytes);
+        }
+        self.terminal_input(bytes);
+        true
     }
 
     /// 没按键时在网格上移动：程序要了所有移动（1003）时上报，同一格里不重复报。

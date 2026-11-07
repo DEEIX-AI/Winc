@@ -49,6 +49,7 @@ fn sample() -> State {
                 terminal: Some(TerminalSession {
                     tabs: vec![PathBuf::from("/a/项目"), PathBuf::from("/a/项目/src")],
                     names: vec![String::new(), "服务".into()],
+                    shells: vec![String::new(), "/bin/bash".into()],
                     active: 1,
                     open: true,
                     height: 320.0,

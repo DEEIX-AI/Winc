@@ -189,11 +189,9 @@ fn find_reports_cell_ranges() {
         text: "中文 Error error".into(),
         ..Line::default()
     };
-    assert_eq!(
-        find_in_line(&line.text, "error", false),
-        [(5, 10), (11, 16)]
-    );
-    assert_eq!(find_in_line(&line.text, "Error", true), [(5, 10)]);
+    // 字节偏移换算成格：宽字符占两格。
+    assert_eq!(col_at(&line.text, "中文".len()), 4);
+    assert_eq!(col_at(&line.text, 0), 0);
     assert_eq!(cells_text(&line, 0, 4), "中文");
     // 从「中」的后半格选起：「中」也复制上。
     assert_eq!(cells_text(&line, 1, 3), "中文");

@@ -358,6 +358,7 @@ impl App {
             if empty {
                 self.terminal.want.clear();
                 self.terminal.want_names.clear();
+                self.terminal.want_shells.clear();
             }
         }
         self.focus = focus;

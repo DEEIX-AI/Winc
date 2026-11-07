@@ -57,6 +57,7 @@ impl App {
     /// 终端标签在握手以后、知道面板尺寸时再建
     /// （[`App::sync_terminal`]）。
     pub(super) fn start_terminal(&mut self) {
+        self.detect_terminal_shells();
         if self.terminal.client.is_some() {
             return;
         }
@@ -192,6 +193,7 @@ impl App {
             t.want_active = Some(t.active - before.count());
             t.tabs.retain(|tab| tab.run.is_none());
             t.want_names = t.tabs.iter().map(|tab| tab.name.clone()).collect();
+            t.want_shells = t.tabs.iter().map(|tab| tab.shell.clone()).collect();
             t.want = t.tabs.drain(..).map(|tab| tab.cwd).collect();
             if t.want.is_empty() {
                 t.want.push(Vec::new());
@@ -211,10 +213,11 @@ impl App {
             self.start_run(config);
             return;
         }
-        let (cwd, name, old) = (tab.cwd.clone(), tab.name.clone(), tab.id);
+        let (cwd, name, old, shell) =
+            (tab.cwd.clone(), tab.name.clone(), tab.id, tab.shell.clone());
         // 先建新的再关旧的：关掉最后一个标签时辅助进程跟着退出（见 `close_terminal_tab_now`），
         // 只有这一个标签时不必为了重开换一个辅助进程。
-        self.new_terminal_tab_in(cwd);
+        self.new_terminal_tab_with(cwd, shell);
         if let Some(index) = self.terminal.tabs.iter().position(|tab| tab.id == old) {
             self.close_terminal_tab_now(index);
         }
@@ -326,6 +329,7 @@ impl App {
         }
         if let Some((cwd, shell, integration)) = spawn.filter(|_| t.error.is_none()) {
             let names = std::mem::take(&mut t.want_names);
+            let shells = std::mem::take(&mut t.want_shells);
             // 等着送的输入给建好以后要看的那个标签：新建的（排在最后），或者重开时原来看的那个。
             let target = t
                 .want_active
@@ -334,7 +338,8 @@ impl App {
                 t.next_id = t.next_id.wrapping_add(1);
                 let id = t.next_id;
                 let dir = if want.is_empty() { cwd.clone() } else { want };
-                let launch = launch(shell.as_deref(), dir, cfg!(windows));
+                let chosen = shells.get(i).cloned().flatten();
+                let launch = launch(chosen.as_deref().or(shell.as_deref()), dir, cfg!(windows));
                 client.send(&ToHelper::Spawn {
                     tab: id,
                     program: launch.program,
@@ -359,6 +364,7 @@ impl App {
                 let mut tab = TermTab::new(id, size);
                 tab.slack = slack;
                 tab.name = names.get(i).cloned().unwrap_or_default();
+                tab.shell = chosen;
                 t.tabs.push(tab);
                 t.active = t.tabs.len() - 1;
                 t.focus_sent = false;
@@ -484,6 +490,8 @@ impl App {
                     }
                     tab.credit_due = true;
                 }
+                self.terminal_find_output(id);
+                let t = &mut self.terminal;
                 if resized {
                     t.resize_due = Some(Instant::now());
                 }

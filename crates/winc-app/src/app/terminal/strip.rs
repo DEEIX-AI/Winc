@@ -74,6 +74,10 @@ pub(crate) struct Strip {
     slides: Vec<(u16, f32, Clock)>,
     /// 按住的标签；没按住时为 `None`。
     drag: Option<Drag>,
+    /// 上一帧是否有停止按钮；尚未绘制时为 `None`。
+    stop_shown: Option<bool>,
+    /// 停止按钮正在出现或消失的时钟。
+    stop_motion: Option<Clock>,
     /// 测试里没有窗口、没有时钟：设置后动画都停在这一时刻。
     #[cfg(test)]
     pub frozen: Option<std::time::Duration>,
@@ -106,9 +110,22 @@ impl Strip {
             .map_or(0.0, |s| s.2.between(s.1, 0.0))
     }
 
+    /// 停止按钮的显示比例（0 到 1）：`running` 表示配置是否在运行，决定动画结束时按钮是否保留。
+    pub fn stop_share(&self, running: bool) -> f32 {
+        match (&self.stop_motion, running) {
+            (Some(clock), true) => clock.progress(),
+            (Some(clock), false) => clock.fade_out(),
+            (None, true) => 1.0,
+            (None, false) => 0.0,
+        }
+    }
+
     /// 是否有出现、消失或滑动的动画还没结束。
     pub fn animating(&self) -> bool {
-        !self.opening.is_empty() || !self.closing.is_empty() || !self.slides.is_empty()
+        !self.opening.is_empty()
+            || !self.closing.is_empty()
+            || !self.slides.is_empty()
+            || self.stop_motion.is_some()
     }
 
     /// 去掉结束了的动画。
@@ -116,6 +133,7 @@ impl Strip {
         self.opening.retain(|(_, c)| !c.done());
         self.closing.retain(|g| !g.clock.done());
         self.slides.retain(|s| !s.2.done());
+        self.stop_motion = self.stop_motion.take().filter(|clock| !clock.done());
     }
 }
 
@@ -126,6 +144,20 @@ impl App {
             return Some(Clock::frozen(at, TAB_SLIDE));
         }
         self.clock(TAB_SLIDE)
+    }
+
+    /// 绘制标签栏前调用：配置开始或结束运行时启动停止按钮的淡入、淡出，首次绘制时直接到位。
+    pub(crate) fn note_stop_button(&mut self) {
+        let running = self.run_config_running();
+        if self
+            .terminal
+            .strip
+            .stop_shown
+            .is_some_and(|shown| shown != running)
+        {
+            self.terminal.strip.stop_motion = self.strip_clock();
+        }
+        self.terminal.strip.stop_shown = Some(running);
     }
 
     /// 画标签栏前调用：比上一帧正好多出一个标签时，它从零宽长出来、淡入。
@@ -410,6 +442,18 @@ pub(crate) fn fit_named_tabs(names: &[f32], room: f32) -> Vec<f32> {
     (names.iter().zip(&blanks))
         .map(|(name, blank)| (name + blank.min(limit)).floor())
         .collect()
+}
+
+/// 标签宽度 `widths` 是否已窄于名字宽度 `names` 对应的期望宽度，即标签栏空间不足。
+///
+/// [`fit_named_tabs`] 向下取整造成的不足 1 个逻辑像素的差值不算收窄。
+pub(crate) fn tabs_narrowed(names: &[f32], widths: &[f32]) -> bool {
+    let wanted = names
+        .iter()
+        .map(|&w| w.clamp(TAB_SQUEEZED, TAB_MAX).max(TAB_MIN));
+    wanted
+        .zip(widths)
+        .any(|(wanted, width)| *width <= wanted - 1.0)
 }
 
 #[cfg(test)]

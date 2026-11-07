@@ -110,6 +110,9 @@ pub struct TerminalSession {
     pub tabs: Vec<PathBuf>,
     /// 各标签上用户起的名字，和 `tabs` 一一对应；空的是没起，比 `tabs` 短时后面的都没起。
     pub names: Vec<String>,
+    /// 各标签从菜单选的 shell 的启动命令，和 `tabs` 一一对应；空的是默认 shell，比 `tabs` 短时
+    /// 后面的都是默认 shell。
+    pub shells: Vec<String>,
     /// 正在看的标签在 `tabs` 中的下标（从 0 起）。
     pub active: usize,
     /// 面板是否展开。
@@ -229,6 +232,10 @@ impl State {
                     .filter_map(Json::as_str)
                     .map(PathBuf::from)
                     .collect();
+                let shells = t.get("shells").and_then(Json::as_array).map(|shells| {
+                    let shells = shells.iter().map(|s| s.as_str().unwrap_or_default());
+                    shells.map(str::to_owned).collect()
+                });
                 let names = t.get("names").and_then(Json::as_array).map(|names| {
                     let names = names.iter().map(|n| n.as_str().unwrap_or_default());
                     names.map(str::to_owned).collect()
@@ -237,6 +244,7 @@ impl State {
                     active: number("active").map_or(0, |n| (n as usize).min(tabs.len() - 1)),
                     tabs,
                     names: names.unwrap_or_default(),
+                    shells: shells.unwrap_or_default(),
                     open: t.get("open").and_then(Json::as_bool).unwrap_or(false),
                     height: number("height").unwrap_or(0.0) as f32,
                     width: number("width").unwrap_or(0.0) as f32,
@@ -458,6 +466,11 @@ impl State {
                 if t.names.iter().any(|n| !n.is_empty()) {
                     let names = t.names.iter().map(|n| Json::String(n.clone()));
                     fields.push(("names", Json::Array(names.collect())));
+                }
+                // 都是默认 shell 时不写。
+                if t.shells.iter().any(|s| !s.is_empty()) {
+                    let shells = t.shells.iter().map(|s| Json::String(s.clone()));
+                    fields.push(("shells", Json::Array(shells.collect())));
                 }
                 items.push(("terminal", Json::object(fields)));
             }

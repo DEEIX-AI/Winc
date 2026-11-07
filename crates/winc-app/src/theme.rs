@@ -236,6 +236,10 @@ pub(crate) fn readable(fg: Color, bg: Color, min: f32) -> Color {
     } else {
         far
     };
+    // 反向调整时直接取纯黑或纯白：原有颜色已无法保留，取刚好达标的中间值时文字呈灰色。
+    if toward == far {
+        return far;
+    }
     // 翻到另一头时要先越过底色，对比度先变小再变大：只算越过以后的。
     let past = |c: Color| (luminance(c) > luminance(bg)) == (toward == WHITE);
     // 二分找最小的调和比例：越过底色以后，对比度随比例单调变大。
