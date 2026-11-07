@@ -190,7 +190,14 @@ impl App {
             Target::Tab(index, true) => {
                 self.close_pressed = self.editor.documents.get(index).map(|d| d.id);
             }
-            Target::Tab(index, false) => self.press_tab(index, x),
+            Target::Tab(index, false) => {
+                // 双击预览标签使其成为普通标签。
+                let double = self.click_count(x, y) == 2;
+                self.press_tab(index, x);
+                if double {
+                    self.keep_tab(index);
+                }
+            }
             Target::RulerChange(hunk) => self.go_to_change(hunk),
             Target::Scrollbar(bar, grab) => self.grab_scrollbar(bar, grab),
             Target::Minimap => self.press_minimap(y),
