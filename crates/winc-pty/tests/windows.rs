@@ -33,6 +33,26 @@ fn skip_under_wine() -> bool {
     wine
 }
 
+/// 在标签 1 里用测试进程的完整环境启动 `program`。
+///
+/// [`Client::spawn`] 只给最小的环境：`PATH` 查不到系统程序，`ping`、PowerShell 也无法初始化。
+fn spawn_with_full_env(c: &mut Client, program: &str, args: &[&str]) {
+    c.send(ToHelper::Spawn {
+        tab: 1,
+        program: Some(program.into()),
+        args: args.iter().map(|arg| arg.as_bytes().to_vec()).collect(),
+        login: false,
+        cwd: b"/".to_vec(),
+        env: std::env::vars()
+            .map(|(k, v)| (k.into_bytes(), v.into_bytes()))
+            .collect(),
+        scrollback: 100,
+        size: SIZE,
+        integration: None,
+        banner: Vec::new(),
+    });
+}
+
 /// 系统 `cmd.exe` 的路径。
 fn cmd() -> String {
     std::env::var("COMSPEC").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into())
@@ -57,7 +77,11 @@ fn the_bundled_console_host_runs_when_it_is_present() {
         host.display()
     );
     let mut c = Client::start();
-    c.spawn(1, "powershell.exe", &["-NoProfile", "-Command", &script]);
+    spawn_with_full_env(
+        &mut c,
+        "powershell.exe",
+        &["-NoProfile", "-Command", &script],
+    );
     assert_eq!(c.until_exit_showing(|t| t.contains("found")), 0);
 }
 
@@ -143,22 +167,8 @@ fn losing_the_pseudo_console_is_reported_while_the_shell_runs() {
     }
     let mut c = Client::start();
     // `ping` 不读写控制台，伪终端不在了也继续运行；它要用到完整的环境才能初始化网络。
-    c.send(ToHelper::Spawn {
-        tab: 1,
-        program: Some(cmd().into()),
-        args: ["/c", "echo ready& ping -n 60 127.0.0.1 >NUL"]
-            .map(|arg| arg.as_bytes().to_vec())
-            .to_vec(),
-        login: false,
-        cwd: b"/".to_vec(),
-        env: std::env::vars()
-            .map(|(k, v)| (k.into_bytes(), v.into_bytes()))
-            .collect(),
-        scrollback: 100,
-        size: SIZE,
-        integration: None,
-        banner: Vec::new(),
-    });
+    let args = ["/c", "echo ready& ping -n 60 127.0.0.1 >NUL"];
+    spawn_with_full_env(&mut c, &cmd(), &args);
     c.until_text("ready");
 
     assert_eq!(kill_pseudo_console(c.child.id()), 1);
