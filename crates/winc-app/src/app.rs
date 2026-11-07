@@ -485,6 +485,7 @@ impl Hover {
                         | git::log::LogTarget::Line(..)
                 )
                 | Hover::Blame(_)
+                | Hover::PickerPart(PickerPart::Pull | PickerPart::Push | PickerPart::Fetch)
                 | Hover::Commit(
                     CommitTarget::Log
                         | CommitTarget::Sync

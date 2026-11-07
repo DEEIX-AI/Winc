@@ -1,7 +1,8 @@
 //! 分支、位置选择器：从 Git 上下文或状态栏展开的菜单式浮层。
 //!
-//! 卡片、行高和选中行的强调色实底都与窗口内绘制的菜单相同；顶部多一个内嵌的搜索框，底部多一栏新建
-//! 的入口。选中项跟着鼠标走，同一时刻只有一行高亮，行尾的「⋯」也只在这一行。
+//! 卡片、行高和选中行的强调色实底都与窗口内绘制的菜单相同；顶部多一个内嵌的搜索框（分支选择器在
+//! 它下面还有一排拉取、推送、获取），底部多一栏新建的入口。选中项跟着鼠标走，同一时刻只有一行
+//! 高亮，行尾的「⋯」也只在这一行。
 //!
 //! 卡片里的竖线从上到下是同几条：搜索框、选中行的底色、分隔线和底栏的按钮两边对着 `GUTTER`，它们
 //! 里面的内容对着 `CONTENT`；放大镜、勾、箭头和底栏的加号是一列，搜索框的字、分组标题、各行的名字
@@ -55,6 +56,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_search(app, frame, parts.bar);
 
     let mut hits = Vec::new();
+    draw_actions(app, frame, &parts, &mut hits);
     if app.picker_create.is_some() {
         draw_create_note(app, frame, &parts);
     } else if app.picker_lists_locations() {
@@ -97,6 +99,52 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     app.picker_input = input;
     if caret.is_some() {
         app.ime_cursor = caret;
+    }
+}
+
+/// 绘制搜索框下面的拉取、推送、获取：三个一样宽的按钮，和上游差的提交数写在名字后面（「拉取
+/// ↓2」「推送 ↑1」）；按住 ⌥ 时拉取写成拉取并变基。不能用的灰掉，原因写在悬停提示里。
+fn draw_actions(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &PickerParts,
+    hits: &mut Vec<(Rect, PickerPart)>,
+) {
+    let area = parts.actions;
+    if area.h <= 0.0 {
+        return;
+    }
+    let p = app.palette;
+    let (ahead, behind) = (app.git.status.as_ref()).map_or((0, 0), |s| (s.ahead, s.behind));
+    let size = app.fonts.ui_small;
+    let inner = area.w - 2.0 * GUTTER;
+    // 按钮之间的间距与标签之间的相同（`TAB_GAP`）。
+    let w = ((inner - 2.0 * TAB_GAP) / 3.0).floor();
+    let actions = [PickerPart::Pull, PickerPart::Push, PickerPart::Fetch];
+    for (i, part) in actions.into_iter().enumerate() {
+        let x = area.x + GUTTER + i as f32 * (w + TAB_GAP);
+        let rect = Rect::new(x, area.y, w, BUTTON_SMALL);
+        let enabled = app.picker_action_enabled(part);
+        let hovered = enabled && app.hover == Hover::PickerPart(part);
+        let fill = if hovered {
+            p.selected_inactive
+        } else {
+            p.hover
+        };
+        frame.rounded(rect, fill, RADIUS_ROW);
+        let name = app.picker_action_command(part).label();
+        let text = match part {
+            PickerPart::Pull if behind > 0 => format!("{name} ↓{behind}"),
+            PickerPart::Push if ahead > 0 => format!("{name} ↑{ahead}"),
+            _ => name.to_owned(),
+        };
+        let text = fit(frame, &text, size, (w - 8.0).max(0.0), false);
+        let text_w = frame.measure(FontKind::Ui, size, &text);
+        let text_x = (rect.x + (rect.w - text_w) / 2.0).round();
+        let color = if enabled { p.text } else { p.text_dim };
+        ui_text_small(frame, app, text_x, rect, &text, color, area);
+        // 不能用时也记下：悬停提示写明原因，点了不做事。
+        hits.push((rect, part));
     }
 }
 
@@ -500,8 +548,8 @@ struct BranchLine<'a> {
     now: i64,
 }
 
-/// 绘制第 `i` 行的一个分支：当前分支打勾，右端淡色写「当前」，被别的工作树占着的写那个工作树，
-/// 其余写最后一次提交的时间；选中行的右端是「⋯」，时间让出位置。
+/// 绘制第 `i` 行的一个分支：当前分支打勾，右端淡色写它的上游（没有上游时写「当前」），被别的
+/// 工作树占着的写那个工作树，其余写最后一次提交的时间；选中行的右端是「⋯」，时间让出位置。
 fn draw_branch_row(
     app: &App,
     frame: &mut Frame<'_>,
@@ -525,7 +573,9 @@ fn draw_branch_row(
         .map(crate::app::git::worktree::worktree_name);
     let meta = match (held, current, branch) {
         (Some(name), ..) => Some(name),
-        (_, true, _) => Some(t!("git-branch-picker-current").to_owned()),
+        (_, true, Some(b)) => {
+            Some((b.upstream.clone()).unwrap_or_else(|| t!("git-branch-picker-current").to_owned()))
+        }
         (_, _, Some(b)) if !b.remote => Some(display_local(&b.local, b.time, row.now)),
         _ => None,
     };

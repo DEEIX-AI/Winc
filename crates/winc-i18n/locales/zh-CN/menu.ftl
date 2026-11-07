@@ -96,9 +96,6 @@ menu-table-align-right = 右对齐
 ## Git 菜单项
 
 menu-new-worktree = 新建工作树…
-menu-git-new-branch = 新建分支…
-menu-git-sync = 同步
-menu-git-sync-desc = 拉取并推送提交
 menu-git-fetch = 获取
 menu-git-pull = 拉取
 menu-git-push = 推送

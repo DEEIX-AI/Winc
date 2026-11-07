@@ -2329,7 +2329,7 @@ fn a_shorter_list_is_visible_after_scrolling_far_down() {
     );
 }
 
-/// 「⋯」的分组：刷新，同步，本地更改，远程仓库，视图；新建分支和工作树只在分支选择器里。
+/// 「⋯」的分组：储藏，远程仓库，视图，输出；同步、新建分支和工作树只在分支选择器里。
 #[test]
 fn the_commit_more_menu_keeps_each_action_in_one_group() {
     use crate::app::input::context_menu::{MenuCommand, MenuEntry};
@@ -2351,14 +2351,18 @@ fn the_commit_more_menu_keeps_each_action_in_one_group() {
         })
         .collect();
     let at = |command| (groups.iter()).position(|group| group.contains(&Some(command)));
-    assert_eq!(at(MenuCommand::GitFetch), Some(0));
-    assert_eq!(at(MenuCommand::GitPush), Some(0));
-    assert_eq!(at(MenuCommand::GitStash), Some(1));
+    assert_eq!(at(MenuCommand::GitStash), Some(0));
     assert_eq!(at(MenuCommand::CommitTree), Some(groups.len() - 2));
     assert_eq!(at(MenuCommand::CommitExpandAll), Some(groups.len() - 2));
     assert_eq!(at(MenuCommand::GitShowOutput), Some(groups.len() - 1));
-    // 刷新是标题行上的按钮，新建工作树在分支选择器里，这里都不重复。
-    assert_eq!(at(MenuCommand::NewWorktree), None);
+    // 刷新是标题行上的按钮，拉取、推送、获取和新建工作树在分支选择器里，这里都不重复。
+    for command in [
+        MenuCommand::GitFetch,
+        MenuCommand::GitPush,
+        MenuCommand::NewWorktree,
+    ] {
+        assert_eq!(at(command), None, "{command:?}");
+    }
     // 没有上游时两种拉取都写明原因。
     for command in [MenuCommand::GitPull, MenuCommand::GitPullRebase] {
         assert!(app.menu_label(command).subtitle.is_some(), "{command:?}");

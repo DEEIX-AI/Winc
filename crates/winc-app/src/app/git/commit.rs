@@ -1103,11 +1103,10 @@ impl App {
         self.request_redraw();
     }
 
-    /// 提交视图标题行「⋯」的菜单：Git 操作（继续和中止、同步、储藏、远程仓库，见
-    /// [`branch_menu`]）；以树形
-    /// 显示（排成树时打勾）、全部展开、全部折叠（已经是那样的灰显）；显示 Git 输出。
+    /// 提交视图标题行「⋯」的菜单：Git 操作（继续和中止、储藏、远程仓库，见 [`branch_menu`]）；
+    /// 以树形显示（排成树时打勾）、全部展开、全部折叠（已经是那样的灰显）；显示 Git 输出。
     ///
-    /// 刷新是标题行上的按钮，回滚勾选的文件在组标题上，这里不重复。
+    /// 刷新是标题行上的按钮，拉取、推送、获取在分支选择器里，回滚勾选的文件在组标题上，这里不重复。
     pub(in crate::app) fn commit_more_menu(
         &self,
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
@@ -1123,7 +1122,6 @@ impl App {
         let all_expanded = shown().all(|group| !self.commit.group_collapsed(group))
             && self.commit.collapsed_dirs.iter().all(HashSet::is_empty);
         let mut entries = branch_menu(
-            &self.git.branches,
             &self.git.stashes,
             &self.git.remote_list,
             self.git.status.as_ref().and_then(|s| s.operation),

@@ -206,20 +206,16 @@ impl Default for BranchState {
     }
 }
 
-/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续和中止，同步，储藏，远程仓库。
+/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续和中止，储藏，远程仓库。
 ///
-/// `branches` 用来判断当前分支有没有上游。新建分支和工作树在分支选择器里，回滚勾选的文件在组
-/// 标题上，这里不再列出。
+/// 拉取、推送、获取和新建分支、工作树都在分支选择器里，回滚勾选的文件在组标题上，这里不再列出。
 pub(crate) fn branch_menu(
-    branches: &[Branch],
     stashes: &[Stash],
     remotes: &[Remote],
     operation: Option<Operation>,
     busy: bool,
 ) -> Vec<MenuEntry> {
     use MenuCommand::*;
-    // 当前分支没有上游时拉取不了（推送可以：推上去并设为上游），灰掉，小字写着原因。
-    let upstream = branches.iter().any(|b| b.current && b.upstream.is_some());
     let mut entries = Vec::new();
     // 合并、变基停下来等着处理冲突：最上面是继续和中止。
     if operation.is_some() {
@@ -227,14 +223,7 @@ pub(crate) fn branch_menu(
         entries.push(MenuEntry::Item(GitAbort, !busy));
         entries.push(MenuEntry::Separator);
     }
-    entries.extend([
-        MenuEntry::Item(GitFetch, !busy),
-        MenuEntry::Item(GitPull, !busy && upstream),
-        MenuEntry::Item(GitPullRebase, !busy && upstream),
-        MenuEntry::Item(GitPush, !busy),
-        MenuEntry::Separator,
-        MenuEntry::Item(GitStash, !busy),
-    ]);
+    entries.push(MenuEntry::Item(GitStash, !busy));
     // 储藏：一条一个子菜单（应用、应用并删除、删除）。
     if !stashes.is_empty() {
         let items = stashes

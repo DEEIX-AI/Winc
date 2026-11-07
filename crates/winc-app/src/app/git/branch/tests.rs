@@ -31,14 +31,27 @@ fn branch(name: &str, remote: bool, current: bool, upstream: Option<&str>) -> Br
     }
 }
 
+/// 拉取、推送、获取在分支选择器里，「⋯」里不再重复；最上面是储藏。
 #[test]
-fn the_actions_menu_offers_pull_only_with_an_upstream() {
-    let with = [branch("main", false, true, Some("origin/main"))];
-    let menu = branch_menu(&with, &[], &[], None, false);
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::GitPull, true)));
-    let without = [branch("main", false, true, None)];
-    let menu = branch_menu(&without, &[], &[], None, false);
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::GitPull, false)));
+fn the_actions_menu_leaves_syncing_to_the_branch_picker() {
+    let menu = branch_menu(&[], &[], None, false);
+    assert_eq!(
+        menu.first(),
+        Some(&MenuEntry::Item(MenuCommand::GitStash, true))
+    );
+    for command in [
+        MenuCommand::GitFetch,
+        MenuCommand::GitPull,
+        MenuCommand::GitPullRebase,
+        MenuCommand::GitPush,
+    ] {
+        assert!(
+            !menu
+                .iter()
+                .any(|e| matches!(e, MenuEntry::Item(c, _) if *c == command)),
+            "{command:?}"
+        );
+    }
 }
 
 #[test]

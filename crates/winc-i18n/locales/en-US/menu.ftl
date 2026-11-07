@@ -102,9 +102,6 @@ menu-table-align-right = Align Right
 ## Git menu items
 
 menu-new-worktree = New Worktree…
-menu-git-new-branch = New Branch…
-menu-git-sync = Sync
-menu-git-sync-desc = Pull and push commits
 menu-git-fetch = Fetch
 menu-git-pull = Pull
 menu-git-push = Push

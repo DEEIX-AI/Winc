@@ -296,7 +296,13 @@ pub(crate) fn picker_parts(app: &App, card: Rect) -> PickerParts {
     if app.picker_places.is_some() {
         PickerParts::places(card)
     } else if app.picker_is_git() {
-        PickerParts::menu(card, crate::app::git::branch::picker::GIT_PICKER_FOOT)
+        use crate::app::git::branch::picker::{GIT_PICKER_ACTIONS, GIT_PICKER_FOOT};
+        let actions = if app.picker_has_actions() {
+            GIT_PICKER_ACTIONS
+        } else {
+            0.0
+        };
+        PickerParts::menu(card, actions, GIT_PICKER_FOOT)
     } else {
         PickerParts::new(card)
     }

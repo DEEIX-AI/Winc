@@ -868,6 +868,22 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, with_key(t!("cmd-settings"), Some(Action::Settings))))
         }
         // 提交按钮：无法提交时显示原因，可以提交时显示提交目标和快捷键。
+        // 分支选择器的拉取、推送、获取：写明会做什么（和谁差几个提交、推到哪儿）；不能用时写原因。
+        Hover::PickerPart(
+            part @ (crate::app::PickerPart::Pull
+            | crate::app::PickerPart::Push
+            | crate::app::PickerPart::Fetch),
+        ) => {
+            let rect = app.picker_part_hits.iter().find(|(_, p)| *p == part)?.0;
+            let command = app.picker_action_command(part);
+            let label = app.menu_label(command);
+            let tip = if app.git.remotes.is_empty() {
+                t!("git-push-no-remote").to_owned()
+            } else {
+                label.subtitle.unwrap_or(label.title)
+            };
+            Some((rect, tip))
+        }
         Hover::Commit(CommitTarget::Commit) => {
             use winc_editor::git::{Head, Operation};
             let parts = app.commit_parts();
