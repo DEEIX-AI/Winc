@@ -30,6 +30,16 @@ use crate::layout::{
 use crate::theme::*;
 use crate::view;
 
+/// 鼠标滚轮滚动一格的距离（逻辑像素）；macOS 上不使用。
+///
+/// 依据滚轮一格的增量：Windows 的 `WHEEL_DELTA` 和 Wayland 的 `axis_value120` 都将一格记为 120，
+/// 每单位合 1 逻辑像素。
+#[cfg(not(target_os = "macos"))]
+const WHEEL_NOTCH: f32 = 120.0;
+/// Windows 上滚轮一格默认滚动的行数（行），依据 `SPI_GETWHEELSCROLLLINES` 的默认值。
+#[cfg(windows)]
+const WHEEL_LINES: f32 = 3.0;
+
 /// 鼠标滚轮单次滚动的过渡状态：一格的距离分多帧完成。
 ///
 /// 每帧调用与直接滚动相同的分发逻辑，因此对各滚动区域都生效，各区域的滚动上限不变。
@@ -98,9 +108,9 @@ impl App {
         self.scroll_glide = None;
         let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
         let (dx, dy) = match delta {
-            // 滚轮一格滚 3 行；`cell` 与行高都是逻辑像素。
             MouseScrollDelta::LineDelta(x, y) => {
-                (x * self.cell * 3.0, y * self.fonts.line_height * 3.0)
+                let (step_x, step_y) = self.wheel_step();
+                (x * step_x, y * step_y)
             }
             MouseScrollDelta::PixelDelta(p) => (p.x as f32 / scale, p.y as f32 / scale),
         };
@@ -126,6 +136,37 @@ impl App {
         };
         let (mouse_x, mouse_y) = self.mouse;
         (x.abs() >= 1.0 || y.abs() >= 1.0) && !self.layout.terminal.contains(mouse_x, mouse_y)
+    }
+
+    /// 鼠标滚轮滚动一格的距离（逻辑像素），依次为横向和竖直。
+    ///
+    /// - 终端中为 3 行：每行作为一次滚轮事件发给终端中的程序。
+    /// - macOS 上为 3 行：系统按滚动的速度增加每格的行数。
+    /// - Windows 上为 `WHEEL_NOTCH`，按系统设置的行数相对默认的 `WHEEL_LINES` 缩放；设置为
+    ///   一次滚动一屏时为编辑区的一屏。横向按系统设置的字符数，每个字符一个字符宽度。
+    /// - 其他系统上为 `WHEEL_NOTCH`。
+    pub(in crate::app) fn wheel_step(&self) -> (f32, f32) {
+        let lines = (self.cell * 3.0, self.fonts.line_height * 3.0);
+        let (x, y) = self.mouse;
+        if self.layout.terminal.contains(x, y) {
+            return lines;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            lines
+        }
+        #[cfg(windows)]
+        {
+            let (rows, chars) = crate::windows::wheel_scroll_amounts();
+            let line = self.fonts.line_height;
+            let page = (self.layout.text.h - line).max(line);
+            let y = rows.map_or(page, |rows| rows as f32 / WHEEL_LINES * WHEEL_NOTCH);
+            (chars as f32 * self.cell, y)
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            (WHEEL_NOTCH, WHEEL_NOTCH)
+        }
     }
 
     /// 追加滚动距离 `delta`（逻辑像素）：未完成的距离计入新的总距离，按 `clock` 重新计时。

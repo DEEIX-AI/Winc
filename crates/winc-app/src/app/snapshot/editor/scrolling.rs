@@ -1,5 +1,5 @@
-//! 编辑区滚动与焦点的测试：跳转时的平滑滚动、鼠标滚轮的过渡、查找把远处的匹配滚到正中、拖选
-//! 停在编辑区外时的持续滚动，以及有无焦点时选区与当前行的绘制。
+//! 编辑区滚动与焦点的测试：跳转时的平滑滚动、鼠标滚轮的过渡和每格的距离、查找把远处的匹配滚到
+//! 正中、拖选停在编辑区外时的持续滚动，以及有无焦点时选区与当前行的绘制。
 
 use std::time::Duration;
 
@@ -221,4 +221,23 @@ fn a_mouse_wheel_notch_glides_and_a_trackpad_follows_directly() {
     assert!(app.wheel_glide.is_none());
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_mouse_wheel_notch_scrolls_the_platform_distance() {
+    let (mut app, dir) = long_file("wheel-step");
+    let text = app.layout.text;
+    let lines = (app.cell * 3.0, app.fonts.line_height * 3.0);
+    app.on_mouse_move(text.x + 20.0, text.y + 20.0);
+    // 编辑区中：macOS 上为 3 行；Windows 上随系统设置变化，不检查；其他系统上为 120 像素
+    // （`WHEEL_NOTCH`）。
+    if cfg!(target_os = "macos") {
+        assert_eq!(app.wheel_step(), lines);
+    } else if !cfg!(windows) {
+        assert_eq!(app.wheel_step(), (120.0, 120.0));
+    }
+    // 终端中各系统上都为 3 行。
+    app.layout.terminal = text;
+    assert_eq!(app.wheel_step(), lines);
+    let _ = std::fs::remove_dir_all(&dir);
 }
