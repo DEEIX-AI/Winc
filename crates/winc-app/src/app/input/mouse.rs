@@ -245,7 +245,9 @@ impl App {
             // 提交信息框里的文字超出最大行数时在框内滚动；上限在绘制时按文字的行数收紧。
             let view = &mut self.commit.message.view;
             view.scroll = (view.scroll - dy).max(0.0);
-        } else if self.commit_shown() && self.commit_parts().list.contains(x, y) {
+        } else if self.commit_shown()
+            && (self.commit_parts().list.contains(x, y) || self.in_commit_overflow(x, y))
+        {
             let max = self.commit_max_scroll();
             self.commit.scroll = (self.commit.scroll - dy).clamp(0.0, max);
             self.set_hover(self.hover_at(x, y));

@@ -16,8 +16,11 @@ use super::*;
 /// 储藏一组展开时最多占几行（行），连同「还有 N 条」：再多会把上面的改动列表挤得太矮。
 pub(crate) const STASH_ROWS: usize = 5;
 
-/// 储藏一组收着时的高度（逻辑像素）：标题一行，上下各留 `SIDEBAR_LIST_GAP`。
-const STASH_CLOSED: f32 = COMMIT_ROW + 2.0 * SIDEBAR_LIST_GAP;
+/// 储藏一组上下各留的空隙（逻辑像素）：列表间隔（`SIDEBAR_LIST_GAP`）的一半。这一组上下都是
+/// 分隔线，分隔线本身已经隔开了相邻区域，留半个间隔即可。
+pub(crate) const STASH_GAP: f32 = SIDEBAR_LIST_GAP / 2.0;
+/// 储藏一组收着时的高度（逻辑像素）：标题一行，上下各留 [`STASH_GAP`]。
+const STASH_CLOSED: f32 = COMMIT_ROW + 2.0 * STASH_GAP;
 
 /// 正在预览标签里看的一条储藏。
 #[derive(Debug, Clone)]

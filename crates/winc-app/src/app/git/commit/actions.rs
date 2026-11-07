@@ -208,7 +208,7 @@ impl App {
         let staged: Vec<PathBuf> = self
             .commit
             .checked_entries(status)
-            .filter(|e| e.partly_staged() && !self.commit.skips_hunks(e))
+            .filter(|e| self.commit.staged_only(e))
             .filter(|_| status.operation.is_none())
             .map(|e| e.path.clone())
             .collect();
@@ -533,9 +533,19 @@ fn partial_content(
     let (Ok(head), Ok(disk)) = (String::from_utf8(head), String::from_utf8(disk)) else {
         return Err(t!("git-commit-partial-not-utf8", name = name));
     };
-    let content = winc_core::diff::pick_changes(&head, &disk, |key, old| {
-        (skipped.iter().find(|s| s.matches(key, &old)))
-            .map_or(winc_core::diff::Pick::Apply, |skip| skip.pick(key))
+    // 各段改动和勾掉的记录一一对应（见 `state::assign`），内容相同的几处各按各的勾选提交。
+    use winc_core::diff::{Pick, hunk_key, line_hunks, lines, pick_changes};
+    let (a, b) = (lines(&head), lines(&disk));
+    let all: Vec<(u64, std::ops::Range<usize>)> = (line_hunks(&head, &disk).into_iter())
+        .map(|h| {
+            let key = hunk_key(a[h.old.clone()].iter().copied(), b[h.new].iter().copied());
+            (key, h.old)
+        })
+        .collect();
+    let picks = super::state::picks(skipped, &all);
+    let content = pick_changes(&head, &disk, |key, old| {
+        (all.iter().position(|(k, o)| *k == key && *o == old))
+            .map_or(Pick::Apply, |h| picks[h].clone())
     });
     Ok(Partial {
         path: path.to_path_buf(),

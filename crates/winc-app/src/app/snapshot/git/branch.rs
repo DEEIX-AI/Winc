@@ -1014,36 +1014,46 @@ fn shoot_branch_picker() {
     }
 }
 
-/// 分支选择器里选中项跟着鼠标走；鼠标移到各行之外时回到之前选中的那一行（打开时是当前分支），
-/// 不停在最后经过的那一行。用键盘移动以后以键盘为准。
+/// 分支选择器中鼠标所在的行与键盘选中的行相互独立：鼠标移动不改变选中项（打开时是当前分支），
+/// 鼠标所在的行显示自己的「⋯」；鼠标移出后选中项保持不变。
 #[test]
-fn the_picker_selection_returns_to_the_current_branch_when_the_pointer_leaves() {
-    let Some((mut app, root)) = picker_repo("git-picker-rest", false) else {
+fn hovering_a_picker_row_leaves_the_selection_alone() {
+    let Some((mut app, root)) = picker_repo("git-picker-hover", false) else {
         return;
     };
+    git_in(&root, &["branch", "topic"]);
+    app.git_refresh();
     app.open_branch_picker(GitAnchor::Branch);
+    paint(&mut app);
     let current = app.picker_selected;
-    let other = (0..app.picker_hits.len())
-        .find(|&r| r != current && app.picker_row_selectable(r))
+    let rows = app.picker_branch_rows.clone().unwrap();
+    let other = (0..rows.len())
+        .find(|&r| {
+            r != current
+                && matches!(
+                    rows[r],
+                    crate::app::git::branch::picker::BranchRow::Branch { .. }
+                )
+        })
         .unwrap();
+    let more = |app: &App, row| {
+        (app.picker_part_hits.iter()).any(|(_, p)| *p == crate::app::PickerPart::More(row))
+    };
+    assert!(more(&app, current));
+    assert!(!more(&app, other));
 
-    app.hover = Hover::PickerRow(other);
-    app.follow_picker_hover();
-    assert_eq!(app.picker_selected, other);
-    // 移到这一行的「⋯」上还是这一行。
-    app.hover = Hover::PickerPart(crate::app::PickerPart::More(other));
-    app.follow_picker_hover();
-    assert_eq!(app.picker_selected, other);
-    app.hover = Hover::None;
-    app.follow_picker_hover();
+    let parts = crate::view::picker_parts(&app, app.layout.picker);
+    let row = parts.row(other, app.picker_scroll);
+    app.on_mouse_move(row.x + 40.0, row.y + row.h / 2.0);
+    assert_eq!(app.hover, Hover::PickerRow(other));
+    paint(&mut app);
     assert_eq!(app.picker_selected, current);
+    assert!(more(&app, other) && more(&app, current));
 
-    // 键盘定下的选中项，鼠标离开以后不再改回去。
-    app.hover = Hover::PickerRow(other);
-    app.follow_picker_hover();
-    app.picker_rest = None;
-    app.hover = Hover::None;
-    app.follow_picker_hover();
-    assert_eq!(app.picker_selected, other);
+    let card = app.layout.picker;
+    app.on_mouse_move(card.right() + 40.0, card.y + 10.0);
+    paint(&mut app);
+    assert_eq!(app.picker_selected, current);
+    assert!(!more(&app, other));
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -181,7 +181,10 @@ fn placed_row(app: &App, parts: &PickerParts, i: usize) -> (Rect, Rect) {
 struct Line {
     row: Rect,
     clip: Rect,
+    /// 键盘选中的行：强调色底，回车作用在它上面。
     selected: bool,
+    /// 鼠标所在的行：浅色底。与选中的行相互独立，鼠标移动不改变选中项。
+    hovered: bool,
     /// 名字的颜色。
     text: Color,
     /// 次要文字和箭头的颜色。
@@ -191,17 +194,25 @@ struct Line {
 }
 
 impl Line {
-    /// 开始绘制第 `i` 行：选中时先铺底色，文字改用底色上的颜色。
+    /// 开始绘制第 `i` 行：选中时先铺强调色底，文字改用底色上的颜色；鼠标所在的行铺浅色底。
     fn begin(app: &App, frame: &mut Frame<'_>, parts: &PickerParts, i: usize) -> Line {
         let p = app.palette;
         let (row, clip) = placed_row(app, parts, i);
         let selected = (app.picker_fold.as_ref()).map_or(app.picker_selected, |fold| {
             fold.drawn_index(app.picker_selected)
         }) == i;
+        // 展开、收起的动画期间各行的位置在变化，悬停记录的行号与绘制位置不对应，因此不画悬停。
+        let hovered = app.picker_fold.is_none()
+            && matches!(app.hover,
+                Hover::PickerRow(r) | Hover::PickerPart(PickerPart::More(r)) if r == i);
+        let band = row.inset(GUTTER, 1.0);
         let (text, dim) = if selected {
-            frame.rect_clipped(row.inset(GUTTER, 1.0), p.accent_fill, RADIUS_ROW, clip);
+            frame.rect_clipped(band, p.accent_fill, RADIUS_ROW, clip);
             band_ink(p)
         } else {
+            if hovered {
+                frame.rect_clipped(band, p.hover, RADIUS_ROW, clip);
+            }
             (p.text, p.text_dim)
         };
         let cy = icon_center_y(app, row, app.fonts.ui);
@@ -209,6 +220,7 @@ impl Line {
             row,
             clip,
             selected,
+            hovered,
             text,
             dim,
             cy,
@@ -316,8 +328,8 @@ impl Line {
         *right = self.end() - frame.measure(FontKind::Ui, app.fonts.ui_small, &text) - 12.0 - 6.0;
     }
 
-    /// 绘制第 `i` 行行尾的「⋯」，记下它的位置，返回按钮左边可以写名字的右边；只有选中行才有，
-    /// 其余行返回 `None`。按钮盖在行右端文字的位置上，选中行不写那段文字。
+    /// 绘制第 `i` 行行尾的「⋯」，记下它的位置，返回按钮左边可以写名字的右边；选中的行和鼠标
+    /// 所在的行才有，其余行返回 `None`。按钮盖在行右端文字的位置上，这两行不写那段文字。
     fn draw_more(
         &self,
         app: &App,
@@ -325,7 +337,7 @@ impl Line {
         i: usize,
         hits: &mut Vec<(Rect, PickerPart)>,
     ) -> Option<f32> {
-        if !self.selected {
+        if !self.selected && !self.hovered {
             return None;
         }
         let part = PickerPart::More(i);
@@ -562,7 +574,7 @@ struct BranchLine<'a> {
 }
 
 /// 绘制第 `i` 行的一个分支：当前分支打勾，右端淡色写它的上游（没有上游时写「当前」），被别的
-/// 工作树占着的写那个工作树，其余写最后一次提交的时间，都靠右对齐；选中行（鼠标所在的行）的右端
+/// 工作树占着的写那个工作树，其余写最后一次提交的时间，都靠右对齐；选中的行和鼠标所在的行右端
 /// 换成「⋯」。
 fn draw_branch_row(
     app: &App,

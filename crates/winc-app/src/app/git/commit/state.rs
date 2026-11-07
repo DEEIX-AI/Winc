@@ -68,11 +68,52 @@ impl CommitState {
     pub fn file_state(&self, entry: &Entry) -> Option<bool> {
         if !self.checked(entry) {
             None
-        } else if self.skips_hunks(entry) || entry.partly_staged() {
+        } else if self.skips_hunks(entry) || self.staged_only(entry) {
             Some(false)
         } else {
             Some(true)
         }
+    }
+
+    /// 只暂存了一部分的文件 `entry` 是否按暂存区提交：已勾选，且尚未在差异中修改过各处的勾选。
+    ///
+    /// 在差异中修改过勾选以后按处选择；此后全部勾上时提交整个文件，而不是暂存区里的版本。重新
+    /// 勾选文件本身时恢复为按暂存区提交。
+    pub fn staged_only(&self, entry: &Entry) -> bool {
+        entry.partly_staged() && self.checked(entry) && !self.skipped.contains_key(&entry.path)
+    }
+
+    /// 把只暂存了一部分的文件 `entry` 切换为按处选择：将暂存区里的版本折算成各处的勾选并记录
+    /// 下来（`staged` 见 [`CommitState::hunk_inclusions`]，`all` 是各段改动的键、在 `HEAD` 中的
+    /// 行区间和新行数）。之后在差异中修改的是这份记录，提交时只提交勾上的部分。
+    pub fn adopt_staged(
+        &mut self,
+        entry: &Entry,
+        staged: &[(u64, Pick)],
+        all: &[(u64, Range<usize>, usize)],
+    ) {
+        if !self.staged_only(entry) {
+            return;
+        }
+        let changes: Vec<(u64, Range<usize>)> = all
+            .iter()
+            .map(|(key, old, _)| (*key, old.clone()))
+            .collect();
+        let skips = (all.iter().enumerate())
+            .filter_map(
+                |(h, (key, old, new_len))| match staged_pick(staged, &changes, h) {
+                    Some(Pick::Apply) => None,
+                    Some(Pick::Lines(set)) => Some(Skip::with_lines(
+                        *key,
+                        old,
+                        set.clone(),
+                        old.len() + new_len,
+                    )),
+                    Some(Pick::Skip) | None => Some(Skip::whole(&(*key, old.clone()))),
+                },
+            )
+            .collect();
+        self.skipped.insert(entry.path.clone(), skips);
     }
 
     /// 文件 `entry` 是否在差异里勾掉了其中几处改动。
@@ -80,59 +121,68 @@ impl CommitState {
         self.skipped.get(&entry.path).is_some_and(|s| !s.is_empty())
     }
 
-    /// 返回文件 `entry` 里的一处改动的提交方式：`key` 是它的内容，`old` 是它在 `HEAD` 里的行。
-    pub fn hunk_inclusion(&self, entry: &Entry, key: u64, old: &Range<usize>) -> Pick {
+    /// 返回文件 `entry` 现在各段改动的提交方式，下标同 `all`（各段改动的键和在 `HEAD` 中的行
+    /// 区间）。
+    ///
+    /// 只暂存了一部分的文件按暂存区提交时（见 [`CommitState::staged_only`]），按 `staged`（各段
+    /// 改动中已暂存的部分，见 `DiffView::staged`）返回；不在其中的改动未暂存，返回不提交。
+    pub fn hunk_inclusions(
+        &self,
+        entry: &Entry,
+        all: &[(u64, Range<usize>)],
+        staged: Option<&[(u64, Pick)]>,
+    ) -> Vec<Pick> {
         if !self.checked(entry) {
-            return Pick::Skip;
+            return vec![Pick::Skip; all.len()];
         }
-        (self.skipped.get(&entry.path))
-            .and_then(|skips| skips.iter().find(|s| s.matches(key, old)))
-            .map_or(Pick::Apply, |skip| skip.pick(key))
+        if let Some(staged) = staged.filter(|_| self.staged_only(entry)) {
+            return (0..all.len())
+                .map(|h| staged_pick(staged, all, h).cloned().unwrap_or(Pick::Skip))
+                .collect();
+        }
+        let skips = self.skipped.get(&entry.path).map_or(&[][..], Vec::as_slice);
+        picks(skips, all)
     }
 
-    /// 勾上或勾掉文件 `entry` 里的一处改动（`key`、`old` 见 [`CommitState::hunk_inclusion`]）；
-    /// `all` 是该文件现在所有的改动。
+    /// 勾上或勾掉文件 `entry` 的第 `hunk` 处改动；`all` 是该文件现在所有改动的键和在 `HEAD` 中的
+    /// 行区间。
     ///
     /// 文件没勾时勾上一处：文件勾上，只提交这一处；一处都不剩时文件也勾掉。
-    pub fn toggle_hunk(
-        &mut self,
-        entry: &Entry,
-        key: u64,
-        old: &Range<usize>,
-        all: &[(u64, Range<usize>)],
-    ) {
+    pub fn toggle_hunk(&mut self, entry: &Entry, hunk: usize, all: &[(u64, Range<usize>)]) {
+        if hunk >= all.len() {
+            return;
+        }
         if !self.checked(entry) {
             self.set_checked(entry, true);
-            let others = all
-                .iter()
-                .filter(|(k, _)| *k != key)
-                .map(Skip::whole)
+            let others = (all.iter().enumerate())
+                .filter(|(h, _)| *h != hunk)
+                .map(|(_, change)| Skip::whole(change))
                 .collect();
             self.skipped.insert(entry.path.clone(), others);
             return;
         }
         let mut fresh = self.refreshed_skips(entry, all);
-        match fresh.iter().position(|s| s.matches(key, old)) {
-            Some(i) => {
-                fresh.remove(i);
-            }
-            None => fresh.push(Skip::whole(&(key, old.clone()))),
-        }
-        self.store_skips(entry, fresh, all);
+        fresh[hunk] = match fresh[hunk] {
+            Some(_) => None,
+            None => Some(Skip::whole(&all[hunk])),
+        };
+        self.store_skips(entry, fresh);
     }
 
-    /// 勾上或勾掉文件 `entry` 里一处改动的一行。
+    /// 勾上或勾掉文件 `entry` 的第 `hunk` 处改动中的一行。
     ///
-    /// `key`、`old` 见 [`CommitState::hunk_inclusion`]；`new_len` 是这处改动的新行数，`line` 是
-    /// （侧，相对这处改动开头的行号），`all` 是该文件现在所有的改动。文件没勾时勾上一行：文件
-    /// 勾上，只提交这一行。
+    /// `new_len` 是这处改动的新行数，`line` 是（侧，相对这处改动开头的行号），`all` 同
+    /// [`CommitState::toggle_hunk`]。文件没勾时勾上一行：文件勾上，只提交这一行。
     pub fn toggle_line(
         &mut self,
         entry: &Entry,
-        (key, old, new_len): (u64, &Range<usize>, usize),
+        (hunk, new_len): (usize, usize),
         (side, line): (usize, usize),
         all: &[(u64, Range<usize>)],
     ) {
+        let Some((key, old)) = all.get(hunk).cloned() else {
+            return;
+        };
         let total = old.len() + new_len;
         let except = || {
             let mut set = full_set(old.len(), new_len);
@@ -141,66 +191,64 @@ impl CommitState {
         };
         if !self.checked(entry) {
             self.set_checked(entry, true);
-            let mut fresh: Vec<Skip> = all
-                .iter()
-                .filter(|(k, _)| *k != key)
-                .map(Skip::whole)
+            let mut fresh: Vec<Skip> = (all.iter().enumerate())
+                .filter(|(h, _)| *h != hunk)
+                .map(|(_, change)| Skip::whole(change))
                 .collect();
-            fresh.push(Skip::with_lines(key, old, except(), total));
+            fresh.push(Skip::with_lines(key, &old, except(), total));
             fresh.retain(|s| !s.is_empty());
             self.skipped.insert(entry.path.clone(), fresh);
             return;
         }
         let mut fresh = self.refreshed_skips(entry, all);
-        let lines = match fresh.iter().position(|s| s.key == key) {
-            Some(i) => {
-                let skip = fresh.remove(i);
-                match skip.lines {
-                    Some(mut set) => {
-                        toggle_in(&mut set, side, line);
-                        set
-                    }
-                    None => except(),
-                }
+        let lines = match fresh[hunk].take() {
+            Some(Skip {
+                lines: Some(mut set),
+                ..
+            }) => {
+                toggle_in(&mut set, side, line);
+                set
             }
+            Some(_) => except(),
             None => {
                 let mut set = LineSet::default();
                 toggle_in(&mut set, side, line);
                 set
             }
         };
-        fresh.push(Skip::with_lines(key, old, lines, total));
-        fresh.retain(|s| !s.is_empty());
-        self.store_skips(entry, fresh, all);
+        fresh[hunk] = Some(Skip::with_lines(key, &old, lines, total)).filter(|s| !s.is_empty());
+        self.store_skips(entry, fresh);
     }
 
-    /// 返回文件 `entry` 已勾掉的改动在现在的 `all` 上的记录。
+    /// 返回文件 `entry` 已勾掉的改动在现在的 `all` 上的记录，下标同 `all`（见 [`assign`]）。
     ///
     /// 内容相同的改动沿用原来的记录；内容变了的改动行号不再对应，按整处勾掉记录，不会被算回要
     /// 提交的改动；认不出的记录被丢弃。
-    fn refreshed_skips(&self, entry: &Entry, all: &[(u64, Range<usize>)]) -> Vec<Skip> {
+    fn refreshed_skips(&self, entry: &Entry, all: &[(u64, Range<usize>)]) -> Vec<Option<Skip>> {
         let skips = self.skipped.get(&entry.path).map_or(&[][..], Vec::as_slice);
-        all.iter()
-            .filter_map(|(key, old)| {
-                let found = skips.iter().find(|s| s.matches(*key, old))?;
-                Some(if found.key == *key {
-                    Skip {
-                        old: old.clone(),
-                        ..found.clone()
+        (assign(skips, all).into_iter().zip(all))
+            .map(|(found, (key, old))| {
+                found.map(|found| {
+                    if found.key == *key {
+                        Skip {
+                            old: old.clone(),
+                            ..found.clone()
+                        }
+                    } else {
+                        Skip::whole(&(*key, old.clone()))
                     }
-                } else {
-                    Skip::whole(&(*key, old.clone()))
                 })
             })
             .collect()
     }
 
-    /// 记下文件 `entry` 勾掉的改动；所有改动都整处勾掉时文件也勾掉。
-    fn store_skips(&mut self, entry: &Entry, skips: Vec<Skip>, all: &[(u64, Range<usize>)]) {
-        let none_left = all
+    /// 记下文件 `entry` 勾掉的改动（下标同各段改动）；所有改动都整处勾掉时文件也勾掉。
+    fn store_skips(&mut self, entry: &Entry, skips: Vec<Option<Skip>>) {
+        let none_left = skips
             .iter()
-            .all(|(key, old)| (skips.iter()).any(|s| s.lines.is_none() && s.matches(*key, old)));
-        self.skipped.insert(entry.path.clone(), skips);
+            .all(|s| s.as_ref().is_some_and(|s| s.lines.is_none()));
+        self.skipped
+            .insert(entry.path.clone(), skips.into_iter().flatten().collect());
         if none_left {
             self.set_checked(entry, false);
         }
@@ -502,11 +550,8 @@ impl Skip {
         }
     }
 
-    /// 一处改动（内容 `key`，在 `HEAD` 里的行 `old`）是不是勾掉的这一处。
-    pub(super) fn matches(&self, key: u64, old: &Range<usize>) -> bool {
-        if self.key == key {
-            return true;
-        }
+    /// 内容变了的一处改动（在 `HEAD` 里的行 `old`）和这条记录的位置是否重叠：重叠时视为同一处。
+    fn overlaps(&self, old: &Range<usize>) -> bool {
         if self.old.is_empty() || old.is_empty() {
             // 纯新增：插入位置挨着或落在另一段里。
             self.old.start <= old.end && old.start <= self.old.end
@@ -514,6 +559,62 @@ impl Skip {
             self.old.start < old.end && old.start < self.old.end
         }
     }
+}
+
+/// 把勾掉的记录 `skips` 对应到现在的各段改动 `all`（键、在 `HEAD` 中的行区间）上，返回每段
+/// 改动对应的记录，下标同 `all`；一条记录最多对应一段改动。
+///
+/// 内容相同的改动可能有几处（例如两处加入了同一行），键相同，只按键对应会把一条记录同时算到这
+/// 几处上：勾掉一处时几处一起显示为勾掉，再勾上时只去掉其中一份，无法勾回。因此依次按三种条件
+/// 对应，每次只用还没对应上的记录：键和位置都相同；键相同、位置最近（上方增删了行时位置会变）；
+/// 内容变了、位置重叠（见 [`Skip::overlaps`]）。
+pub(super) fn assign<'a>(skips: &'a [Skip], all: &[(u64, Range<usize>)]) -> Vec<Option<&'a Skip>> {
+    let mut taken = vec![false; skips.len()];
+    let mut found: Vec<Option<usize>> = vec![None; all.len()];
+    for round in 0..3 {
+        for (h, (key, old)) in all.iter().enumerate() {
+            if found[h].is_some() {
+                continue;
+            }
+            let mut free = (0..skips.len()).filter(|&i| !taken[i]);
+            let pick = match round {
+                0 => free.find(|&i| skips[i].key == *key && skips[i].old == *old),
+                1 => free
+                    .filter(|&i| skips[i].key == *key)
+                    .min_by_key(|&i| skips[i].old.start.abs_diff(old.start)),
+                _ => free.find(|&i| skips[i].key != *key && skips[i].overlaps(old)),
+            };
+            if let Some(i) = pick {
+                taken[i] = true;
+                found[h] = Some(i);
+            }
+        }
+    }
+    found.into_iter().map(|i| i.map(|i| &skips[i])).collect()
+}
+
+/// 按勾掉的记录 `skips` 返回各段改动 `all` 的提交方式，下标同 `all`（见 [`assign`]）。
+pub(super) fn picks(skips: &[Skip], all: &[(u64, Range<usize>)]) -> Vec<Pick> {
+    (assign(skips, all).into_iter().zip(all))
+        .map(|(skip, (key, _))| skip.map_or(Pick::Apply, |skip| skip.pick(*key)))
+        .collect()
+}
+
+/// 第 `hunk` 处改动在暂存区里的部分（`staged` 见 `DiffView::staged`，`all` 同 [`assign`]）。
+///
+/// `staged` 和 `all` 来自同一份差异时逐段对应，按下标取，内容相同的几处各取各的；差异在那之后
+/// 变了（编辑器里又改过）时按键找。
+fn staged_pick<'a>(
+    staged: &'a [(u64, Pick)],
+    all: &[(u64, Range<usize>)],
+    hunk: usize,
+) -> Option<&'a Pick> {
+    let aligned = staged.len() == all.len() && staged.iter().zip(all).all(|(s, a)| s.0 == a.0);
+    if aligned {
+        return staged.get(hunk).map(|(_, p)| p);
+    }
+    let key = all.get(hunk)?.0;
+    staged.iter().find(|(k, _)| *k == key).map(|(_, p)| p)
 }
 
 /// 两个相对路径按文件视图的自然顺序比（逐级比名字，`2.png` 在 `10.png` 前面）。

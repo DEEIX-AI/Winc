@@ -145,7 +145,6 @@ impl App {
         self.drop_symbols();
         self.picker.forget_query();
         self.picker_open = false;
-        self.picker_rest = None;
         self.picker_branch_rows = None;
         self.picker_location_rows = None;
         self.picker_create = None;

@@ -39,7 +39,7 @@ pub(crate) use git::branch::picker::{BranchCreate, GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, SyncState,
+    CommitRows, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, STASH_GAP, SyncState,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -905,9 +905,6 @@ pub struct App {
     pub picker_hits: Vec<usize>,
     /// 当前选中的结果在 `picker_hits` 中的序号（从 0 起）。
     pub picker_selected: usize,
-    /// 分支、位置选择器里选中项跟着鼠标走之前选中的那一行：鼠标离开各行时回到这里（打开时是
-    /// 当前分支，或键盘移到的那一行）；选中项没有被鼠标带走时为 `None`。
-    pub(crate) picker_rest: Option<usize>,
     /// 结果开头属于「最近打开」的条数（未输入查询时列在最前面）。
     pub picker_recent: usize,
     /// 查询末尾的 `:行` 或 `:行:列`，打开文件后跳转到该位置。

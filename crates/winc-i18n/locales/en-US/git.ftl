@@ -609,6 +609,7 @@ git-change-none-at-caret = No change on the current line
 
 git-diff-side-worktree = Working Tree
 git-diff-side-worktree-unsaved = Working Tree · Unsaved
+git-diff-staged-only = Staged part only
 git-diff-identical-sides = Both sides are identical
 git-diff-none-at-caret = No change at the cursor
 git-diff-revert-failed = Couldn't revert the change: { $error }

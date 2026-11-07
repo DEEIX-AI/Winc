@@ -468,6 +468,41 @@ pub fn pick_changes(old: &str, new: &str, pick: impl Fn(u64, Range<usize>) -> Pi
     out
 }
 
+/// 返回从 `old` 到 `new` 的各段改动里已经在 `staged` 里的部分：每段改动的 [`hunk_key`] 和按
+/// [`pick_changes`] 的写法表示的处理方式。
+///
+/// 用于只暂存了一部分的文件：`old` 是上一次提交里的版本，`new` 是工作区，`staged` 是暂存区。
+/// 旧行在 `staged` 中仍然存在时视为未删除，新行在 `staged` 中存在时视为已加入。按这些处理方式
+/// 应用到 `old` 上，结果通常等于 `staged`；暂存之后又修改过同一处时无法精确还原，结果是与
+/// `staged` 最接近的组合。
+pub fn staged_picks(old: &str, new: &str, staged: &str) -> Vec<(u64, Pick)> {
+    let (a, b, s) = (lines(old), lines(new), lines(staged));
+    let removed: BTreeSet<usize> = hunks(&a, &s).into_iter().flat_map(|(o, _)| o).collect();
+    let unstaged: BTreeSet<usize> = hunks(&b, &s).into_iter().flat_map(|(n, _)| n).collect();
+    hunks(&a, &b)
+        .into_iter()
+        .map(|(o, n)| {
+            let key = hunk_key(a[o.clone()].iter().copied(), b[n.clone()].iter().copied());
+            let set = LineSet {
+                old: (o.clone().filter(|i| !removed.contains(i)))
+                    .map(|i| i - o.start)
+                    .collect(),
+                new: (n.clone().filter(|j| unstaged.contains(j)))
+                    .map(|j| j - n.start)
+                    .collect(),
+            };
+            let pick = if set.old.is_empty() && set.new.is_empty() {
+                Pick::Apply
+            } else if set.old.len() == o.len() && set.new.len() == n.len() {
+                Pick::Skip
+            } else {
+                Pick::Lines(set)
+            };
+            (key, pick)
+        })
+        .collect()
+}
+
 /// 按行切分文本，每行保留自己的换行符（`\n`、`\r\n` 或单独的 `\r`）。
 ///
 /// 最后一行没有换行符时也算一行，以换行符结尾时不多出一个空行；行号与 [`line_hunks`] 一致。

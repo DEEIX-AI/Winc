@@ -2337,36 +2337,35 @@ fn line_checks_keep_their_state_until_the_change_is_edited() {
         .clone();
     let (key, old) = (7, 0..2);
     let all = [(key, old.clone())];
-    let inclusion = |app: &App, key| app.commit.hunk_inclusion(&entry, key, &old);
+    let inclusion = |app: &App, key| {
+        app.commit
+            .hunk_inclusions(&entry, &[(key, old.clone())], None)[0]
+            .clone()
+    };
     assert_eq!(inclusion(&app, key), Pick::Apply);
 
     // 勾掉一行：按行提交。再勾回来：整处提交。
-    app.commit
-        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     assert!(matches!(inclusion(&app, key), Pick::Lines(_)));
-    app.commit
-        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     assert_eq!(inclusion(&app, key), Pick::Apply);
 
     // 内容变了：行号不再对应，整处不提交。
-    app.commit
-        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     assert_eq!(inclusion(&app, key + 1), Pick::Skip);
 
     // 整段的勾选框把只提交部分行的改动恢复为整处提交。
-    app.commit.toggle_hunk(&entry, key, &old, &all);
+    app.commit.toggle_hunk(&entry, 0, &all);
     assert_eq!(inclusion(&app, key), Pick::Apply);
 
     // 所有行都勾掉时文件也勾掉。
     for (side, line) in [(LEFT, 0), (LEFT, 1), (RIGHT, 0)] {
-        app.commit
-            .toggle_line(&entry, (key, &old, 1), (side, line), &all);
+        app.commit.toggle_line(&entry, (0, 1), (side, line), &all);
     }
     assert_eq!(app.commit.file_state(&entry), None);
 
     // 文件没勾时勾上一行：文件勾上，只提交这一行。
-    app.commit
-        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     let Pick::Lines(set) = inclusion(&app, key) else {
         panic!("应当按行提交");
     };
@@ -2617,7 +2616,10 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     // 收着时只有标题一行，在列表下面。
     let parts = app.commit_parts();
     let section = parts.stashes.unwrap();
-    assert_eq!(section.h, COMMIT_ROW + 2.0 * crate::theme::SIDEBAR_LIST_GAP);
+    assert_eq!(
+        section.h,
+        COMMIT_ROW + 2.0 * crate::app::git::commit::STASH_GAP
+    );
     assert!(parts.list.bottom() <= section.y);
     assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
     app.press_commit(CommitTarget::Stashes);
@@ -2860,4 +2862,182 @@ fn committed_rows_fade_out_instead_of_vanishing() {
     app.settle_animations();
     assert!(app.commit.shift.is_none());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 只暂存了一部分的文件：差异中各处的勾选按暂存区显示（已暂存的一处勾选，未暂存的不勾选），
+/// 标题栏注明只提交已暂存的部分；首次点击勾选框后从当前状态切换为按处选择，全部勾上时提交整个
+/// 文件。
+#[test]
+fn a_partly_staged_file_shows_its_staged_hunks_in_the_diff() {
+    use winc_core::diff::Pick;
+    let dir = search_folder("git-partly-staged-diff");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let root = app.git.root.clone().unwrap();
+    let file = root.join("src/main.rs");
+    let both = std::fs::read_to_string(&file).unwrap();
+    // 只暂存第一处（value_5），第二处（删掉 value_50）留在工作区。
+    let first: String = (0..60)
+        .map(|i| match i {
+            5 => "let value_5 = 500;\n".to_owned(),
+            i => format!("let value_{i} = {i};\n"),
+        })
+        .collect();
+    std::fs::write(&file, &first).unwrap();
+    git_in(&root, &["add", "src/main.rs"]);
+    std::fs::write(&file, &both).unwrap();
+    app.git_refresh();
+    let entry = (app.git.status.as_ref().unwrap().entries.iter())
+        .find(|e| e.path == file)
+        .unwrap()
+        .clone();
+    assert!(entry.partly_staged());
+    assert!(app.commit.staged_only(&entry));
+
+    app.git_preview_changes(&file);
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.hunks.len(), 2);
+    let staged = view.staged.clone().expect("staged version read");
+    let all: Vec<_> = (view.keys.iter().zip(&view.hunks))
+        .map(|(&key, h)| (key, h.old.clone()))
+        .collect();
+    let picks = app.commit.hunk_inclusions(&entry, &all, Some(&staged));
+    assert_eq!(picks, [Pick::Apply, Pick::Skip]);
+    assert_eq!(app.commit.file_state(&entry), Some(false));
+
+    // 勾上第二处：切换为按处选择，两处都勾上，提交整个文件。
+    app.press_diff(DiffTarget::Include(1));
+    assert!(!app.commit.staged_only(&entry));
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let all: Vec<_> = (view.keys.iter().zip(&view.hunks))
+        .map(|(&key, h)| (key, h.old.clone()))
+        .collect();
+    let picks = app.commit.hunk_inclusions(&entry, &all, Some(&staged));
+    assert_eq!(picks, [Pick::Apply, Pick::Apply]);
+    assert_eq!(app.commit.file_state(&entry), Some(true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 显示全名的改动行覆盖列表的滚动条：鼠标移到这一行的右端时仍悬停在这一行上（全名保持显示），
+/// 在伸出侧栏的部分上滚动时滚动的是改动列表。
+#[test]
+fn the_full_name_row_covers_the_scrollbar_like_the_file_tree() {
+    use winit::event::MouseScrollDelta;
+    let Some((dir, long)) = long_name_repo("git-commit-overflow-bar") else {
+        return;
+    };
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let status = app.git.status.clone().unwrap();
+    let rows = app.commit_rows();
+    let (i, index) = (rows.iter().enumerate())
+        .find_map(|(i, r)| match r {
+            CommitRow::File { index, .. } if status.entries[*index].path.ends_with(&long) => {
+                Some((i, *index))
+            }
+            _ => None,
+        })
+        .unwrap();
+    let list = app.commit_parts().list;
+    assert!(app.commit_max_scroll() > 0.0, "list must scroll");
+    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+    app.on_mouse_move(list.x + 120.0, y);
+    paint(&mut app);
+    let spill = app.commit.overflow.and_then(|o| o.spill).unwrap();
+
+    // 移到滚动条的可点击范围内：仍悬停在这一行上，全名保持显示。
+    app.on_mouse_move(list.right() - 3.0, y);
+    paint(&mut app);
+    assert_eq!(app.hover, Hover::Commit(CommitTarget::File(index)));
+    assert!(app.commit.overflow.is_some_and(|o| o.row == i));
+
+    // 在伸出侧栏的部分上滚动：滚动的是改动列表。
+    app.on_mouse_move(spill.x + 20.0, y);
+    let before = app.commit.scroll;
+    app.on_wheel(MouseScrollDelta::LineDelta(0.0, -2.0));
+    assert!(app.commit.scroll > before, "{} {before}", app.commit.scroll);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 两处改动内容相同（加入了同样的一行）时各自勾选：勾掉其中一处只有这一处不提交，再点一次能
+/// 勾回来；提交时也只少了勾掉的那一处。
+#[test]
+fn identical_changes_are_checked_one_by_one() {
+    use winc_core::diff::Pick;
+    let dir = search_folder("git-identical-hunks");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let root = app.git.root.clone().unwrap();
+    let file = root.join("src/main.rs");
+    let disk = std::fs::read_to_string(&file).unwrap();
+    let disk = disk
+        .replace(
+            "let value_20 = 20;\n",
+            "let value_20 = 20;\nlet same = 1;\n",
+        )
+        .replace(
+            "let value_40 = 40;\n",
+            "let value_40 = 40;\nlet same = 1;\n",
+        );
+    std::fs::write(&file, &disk).unwrap();
+    app.git_refresh();
+    app.git_preview_changes(&file);
+    paint(&mut app);
+    let picks = |app: &App| -> Vec<Pick> {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        let entry = app.diff_entry(view).unwrap();
+        let all: Vec<_> = (view.keys.iter().zip(&view.hunks))
+            .map(|(&k, h)| (k, h.old.clone()))
+            .collect();
+        app.commit
+            .hunk_inclusions(entry, &all, view.staged.as_deref())
+    };
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let same: Vec<usize> = (0..view.hunks.len())
+        .filter(|&h| (0..view.hunks.len()).any(|o| o != h && view.keys[o] == view.keys[h]))
+        .collect();
+    assert_eq!(same.len(), 2, "two changes with the same content");
+    let (first, second) = (same[0], same[1]);
+
+    // 勾掉第二处：只有它不勾；再点一次勾回来。
+    app.press_diff(DiffTarget::Include(second));
+    let now = picks(&app);
+    assert_eq!((&now[first], &now[second]), (&Pick::Apply, &Pick::Skip));
+    app.press_diff(DiffTarget::Include(second));
+    assert!(picks(&app).iter().all(|p| *p == Pick::Apply));
+
+    // 勾掉第一处后提交：只少了第一处加的那一行。
+    app.press_diff(DiffTarget::Include(first));
+    let now = picks(&app);
+    assert_eq!((&now[first], &now[second]), (&Pick::Skip, &Pick::Apply));
+    app.commit.message.set_text("only the second");
+    app.git_commit();
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["show", "HEAD:src/main.rs"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap();
+    assert_eq!(head.matches("let same = 1;").count(), 1, "{head}");
+    assert!(head.contains("let value_40 = 40;\nlet same = 1;"), "{head}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

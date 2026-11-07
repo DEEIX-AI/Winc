@@ -613,8 +613,6 @@ impl App {
     /// 其余按键交给输入框，因为面板的输入部分就是一个普通的单行输入框。
     fn on_key_picker(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
         let ctrl = cfg!(target_os = "macos") && self.modifiers.control_key();
-        // 用键盘操作以后，选中项是键盘定的，鼠标离开时不再回到之前那一行。
-        self.picker_rest = None;
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {

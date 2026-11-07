@@ -19,7 +19,7 @@ use crate::app::animation::TREE_ANIMATION;
 use crate::app::git::location_picker::LocationRow;
 use crate::app::input::context_menu::{MenuCommand, MenuTarget};
 use crate::app::input::palette::{matched, needle, rate};
-use crate::app::{AlertButton, App, Clock, Focus, Hover, PICKER_ROW, UserEvent};
+use crate::app::{AlertButton, App, Clock, Focus, PICKER_ROW, UserEvent};
 use crate::layout::{MENU_PICKER_BAR, MENU_PICKER_PAD};
 
 /// 最近使用的分支最多列出几个（个）：加上标题不超过选择面板一半的行数，本地分支仍在首屏。
@@ -615,7 +615,6 @@ impl App {
     /// 点了第 `row` 行行尾的「⋯」。
     fn press_picker_more(&mut self, row: usize) {
         self.picker_selected = row;
-        self.picker_rest = None;
         let branch = (self.picker_branch_rows.as_ref()).and_then(|rows| match rows.get(row) {
             Some(BranchRow::Branch { index, .. }) => Some(*index),
             _ => None,
@@ -630,36 +629,6 @@ impl App {
         });
         if let Some(place) = place {
             self.open_location_row_menu(row, &place);
-        }
-    }
-
-    /// 鼠标移动以后：分支、位置选择器里选中项跟着鼠标所在的行走，只有一个高亮，行尾的「⋯」也在
-    /// 这一行；移到各行之外（搜索框、底栏、面板外面）时回到鼠标带走之前选中的那一行。
-    pub(in crate::app) fn follow_picker_hover(&mut self) {
-        if !self.picker_open || !self.picker_is_git() {
-            return;
-        }
-        let row = match self.hover {
-            Hover::PickerRow(row) => Some(row).filter(|&row| self.picker_row_selectable(row)),
-            // 行尾的「⋯」属于选中的那一行。
-            Hover::PickerPart(PickerPart::More(row)) => Some(row),
-            _ => None,
-        };
-        let to = match row {
-            Some(row) => {
-                self.picker_rest.get_or_insert(self.picker_selected);
-                row
-            }
-            None => match self.picker_rest.take() {
-                Some(rest) if rest < self.picker_hits.len() && self.picker_row_selectable(rest) => {
-                    rest
-                }
-                _ => return,
-            },
-        };
-        if to != self.picker_selected {
-            self.picker_selected = to;
-            self.request_redraw();
         }
     }
 
@@ -811,8 +780,6 @@ impl App {
     }
 
     fn set_branch_rows(&mut self, rows: Vec<BranchRow>) {
-        // 各行变了，原来的下标可能指向别的行：以现在选中的为准。
-        self.picker_rest = None;
         self.picker_hits = (0..rows.len()).collect();
         self.picker_branch_rows = Some(rows);
     }

@@ -561,7 +561,7 @@ fn draw_stashes(
     );
     let size = app.fonts.ui_small;
     let band = |row: usize| {
-        let y = area.y + SIDEBAR_LIST_GAP + row as f32 * COMMIT_ROW;
+        let y = area.y + crate::app::STASH_GAP + row as f32 * COMMIT_ROW;
         Rect::new(area.x + 8.0, y, area.w - 16.0, COMMIT_ROW)
     };
     let shade = |band: Rect| Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
@@ -670,7 +670,7 @@ fn draw_stashes(
     }
 }
 
-/// 没有改动时列表区的空状态：一个淡色的对勾徽标，下面是「没有要提交的更改」和当前分支与上游的
+/// 没有改动时列表区的空状态：「没有要提交的更改」，下面是当前分支与上游的
 /// 关系（已同步、领先、落后、还没发布），有上游时再一行淡色写上游的名字（很长时截短，不和关系
 /// 挤在一行里折断）；有事可做时最下面是一个强调色的按钮（推送、拉取、同步或发布），只写动作。
 ///
@@ -684,24 +684,13 @@ fn draw_empty(
     let p = app.palette;
     let list = parts.list;
     let (label, detail, upstream) = next_step(app);
-    let (top, bottom) = draw_empty_state_under(
+    let bottom = draw_empty_state(
         app,
         frame,
         (list, sidebar_span(app)),
-        EMPTY_BADGE + EMPTY_BADGE_GAP,
         t!("git-commit-view-empty"),
         Some(&detail),
     );
-    let badge = Rect::new(
-        (list.x + (list.w - EMPTY_BADGE) / 2.0).round(),
-        top,
-        EMPTY_BADGE,
-        EMPTY_BADGE,
-    );
-    if badge.y >= list.y {
-        frame.rect_clipped(badge, p.hover, EMPTY_BADGE / 2.0, list);
-        icons::check(frame, center(badge), 13.0, p.text_muted, list);
-    }
     let mut bottom = bottom;
     if let Some(upstream) = upstream {
         let size = app.fonts.ui_small;
@@ -741,11 +730,6 @@ fn draw_empty(
         hits.push((rect, CommitTarget::NextStep));
     }
 }
-
-/// 空状态上面对勾徽标的直径（逻辑像素）：比标题的字高一截，看得出是图标而不是字。
-const EMPTY_BADGE: f32 = 36.0;
-/// 对勾徽标和下面标题之间的距离（逻辑像素）。
-const EMPTY_BADGE_GAP: f32 = 10.0;
 
 /// 没有改动时的下一步：按钮上的动作（和上游一致、没有远程或这时不同步时为 `None`）、写在标题
 /// 下面的当前分支与上游的关系，以及上游的名字（没有上游时为 `None`）。
@@ -1268,6 +1252,10 @@ fn draw_row(
                 name_clip,
             );
             if let Some(spill) = spill {
+                // 显示全名的这一行覆盖列表右边的滚动条（见 `draw_commit_overflow`）：行底色右边到
+                // 侧栏边缘的区域同样属于这一行，鼠标移入时全名保持显示。
+                let edge = Rect::new(band.right(), y, list.right() - band.right(), COMMIT_ROW);
+                hits.push((edge, CommitTarget::Dir(i)));
                 hits.push((spill, CommitTarget::Dir(i)));
             }
             let check = Rect::new(dir_check - 8.0, y + 4.0, 16.0, 16.0);
@@ -1399,6 +1387,10 @@ fn draw_row(
                 frame.within(name_clip, |frame| fade(frame, edge, solid, false));
             }
             if let Some(spill) = spill {
+                // 显示全名的这一行覆盖列表右边的滚动条（见 `draw_commit_overflow`）：行底色右边到
+                // 侧栏边缘的区域同样属于这一行，鼠标移入时全名保持显示。
+                let edge = Rect::new(band.right(), y, list.right() - band.right(), COMMIT_ROW);
+                hits.push((edge, CommitTarget::File(index)));
                 hits.push((spill, CommitTarget::File(index)));
             }
             let check = Rect::new(file_check - 8.0, y + 4.0, 16.0, 16.0);
@@ -1905,7 +1897,10 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     if right <= spill.x {
         return;
     }
-    let spill = Rect::new(spill.x, spill.y, right - spill.x, spill.h);
+    // 这一行绘制在最上层：底色从滚动条的可点击范围开始，覆盖这一行高度内的滚动条，滚动条不会
+    // 穿过全名；滚动条在这一行上下的部分正常显示。
+    let left = list.right() - SCROLLBAR_HIT;
+    let spill = Rect::new(left, spill.y, right - left, spill.h);
     let p = app.palette;
     let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
     // 先垫一层侧栏底色，再叠半透明的悬停色，与列表里那一行的底色相同。
@@ -1959,12 +1954,8 @@ pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame
         if right <= list.right() {
             continue;
         }
-        let rect = Rect::new(
-            list.right(),
-            y + 1.0,
-            right - list.right(),
-            COMMIT_ROW - 2.0,
-        );
+        let left = list.right() - SCROLLBAR_HIT;
+        let rect = Rect::new(left, y + 1.0, right - left, COMMIT_ROW - 2.0);
         let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
         frame.rect_corners(rect, p.sidebar_bg, radii, rect);
         let selected = match &rows[row] {
@@ -1985,7 +1976,7 @@ pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame
             if view.old.is_empty() || k < view.common {
                 1.0
             } else {
-                view.old_alpha
+                crossfade(&view).0
             }
         };
         if text.folder {
@@ -2207,8 +2198,17 @@ fn parts_width<S: AsRef<str>>(app: &App, frame: &mut Frame<'_>, parts: &[S], fol
     width
 }
 
-/// 画改动行名字过渡中的一帧：旧内容按 `view` 淡出（相同的前缀不画，由新内容画），新内容 `parts`
-/// 随后淡入。返回新内容末尾的 x 坐标（逻辑像素）。
+/// 名字过渡中旧内容和新内容的不透明度：随进度此消彼长，两者之和始终为 1。
+///
+/// 改动行截短的目录与全名的写法不同（`crates/winc-app/…` 与 `…/app/git`），先淡出旧内容、再淡入
+/// 新内容（`LabelView` 的 `old_alpha`、`alpha`）时，中间有一段两者都接近透明，文字会短暂消失；
+/// 交叉淡化使任意时刻都有可见的文字。
+fn crossfade(view: &LabelView) -> (f32, f32) {
+    (1.0 - view.progress, view.progress)
+}
+
+/// 画改动行名字过渡中的一帧：旧内容淡出、新内容 `parts` 同时淡入（见 [`crossfade`]），相同的
+/// 前缀只由新内容画一次。返回新内容末尾的 x 坐标（逻辑像素）。
 fn draw_name<S: AsRef<str>>(
     app: &App,
     frame: &mut Frame<'_>,
@@ -2217,8 +2217,9 @@ fn draw_name<S: AsRef<str>>(
     clip: Rect,
 ) -> f32 {
     let common = view.common;
-    let old = |k: usize| if k < common { 0.0 } else { view.old_alpha };
-    let new = |k: usize| if k < common { 1.0 } else { view.alpha };
+    let (old_alpha, new_alpha) = crossfade(view);
+    let old = |k: usize| if k < common { 0.0 } else { old_alpha };
+    let new = |k: usize| if k < common { 1.0 } else { new_alpha };
     if folder {
         draw_dir_parts(app, frame, (x, band), &view.old, old, clip);
         draw_dir_parts(app, frame, (x, band), parts, new, clip)

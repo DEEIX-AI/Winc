@@ -590,19 +590,6 @@ fn draw_empty_state(
     title: &str,
     detail: Option<&str>,
 ) -> f32 {
-    draw_empty_state_under(app, frame, (area, span), 0.0, title, detail).1
-}
-
-/// 同 [`draw_empty_state`]，标题上面再留出 `lead`（逻辑像素）高放一个图标，整块（连同图标）
-/// 一起居中。返回整块的上沿（图标从这里画）和最后一行的下沿。
-fn draw_empty_state_under(
-    app: &App,
-    frame: &mut Frame<'_>,
-    (area, span): (Rect, Rect),
-    lead: f32,
-    title: &str,
-    detail: Option<&str>,
-) -> (f32, f32) {
     // 每行高 22 逻辑像素：正文一行 20，两行之间留 2。
     const ROW: f32 = 22.0;
     let p = app.palette;
@@ -622,15 +609,15 @@ fn draw_empty_state_under(
         }
         lines.push((&detail[start..], size, p.text_dim));
     }
-    let block = lead + lines.len() as f32 * ROW;
+    let block = lines.len() as f32 * ROW;
     let top = (span.y + span.h * 0.45 - block / 2.0).max(area.y + 16.0);
     for (i, (text, size, color)) in lines.iter().enumerate() {
-        let row = Rect::new(area.x, top + lead + i as f32 * ROW, area.w, ROW);
+        let row = Rect::new(area.x, top + i as f32 * ROW, area.w, ROW);
         let w = frame.measure(FontKind::Ui, *size, text);
         let x = area.x + ((area.w - w) / 2.0).max(16.0);
         label(frame, app, *size, (x, row), text, *color, area);
     }
-    (top, top + block)
+    top + block
 }
 
 /// 在 `rect` 内垂直居中绘制一段字号为 `size`、没有小写字母的界面文本，返回文本末尾的 x 坐标。

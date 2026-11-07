@@ -931,8 +931,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         // 只暂存了一部分的文件：勾选框是「−」，说明只提交已暂存的内容。其他文件的勾选框没有提示。
         Hover::Commit(target @ CommitTarget::Check(i)) => {
             let entry = app.git.status.as_ref()?.entries.get(i)?;
-            let staged_only = entry.partly_staged() && !app.commit.skips_hunks(entry);
-            if !staged_only || !app.commit.checked(entry) {
+            if !app.commit.staged_only(entry) {
                 return None;
             }
             let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;

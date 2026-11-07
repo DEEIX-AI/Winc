@@ -11,7 +11,7 @@ pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::SyncState;
 mod list;
 mod stash;
-pub(crate) use stash::StashView;
+pub(crate) use stash::{STASH_GAP, StashView};
 mod state;
 
 use state::*;
@@ -805,17 +805,19 @@ impl App {
         });
 
         let share = self.commit_card_share();
+        let card_share = share;
         let (card, message, message_settled, amend, commit, commit_menu) = if share > 0.0 {
             self.commit_card_parts(panel, inner_x, inner_w, share)
         } else {
             Default::default()
         };
-        // 「上一次提交」在视图底部，有提交卡片时在卡片上面；改动列表在它上面结束。提交以后还有
-        // 没勾的文件（未跟踪的默认不勾）时卡片一直在，栏不能因此不出现。
+        // 「上一次提交」在视图底部，有提交卡片时紧接在卡片上沿：栏内上下各留 4，文字到上方分隔线
+        // 和到卡片的距离相等，两者之间没有 `SIDEBAR_LIST_GAP`。改动列表在它上面结束。提交以后
+        // 仍有未勾选的文件（未跟踪的文件默认不勾选）时卡片保持显示，栏同样显示。
         // 拉开、收起的途中栏按露出的高度算，里面的东西贴着上沿，从下沿底下露出来。
         let share = self.commit.undo.share(self.commit_undoable().is_some());
         let undo = (share > 0.0).then(|| {
-            let bottom = card.map_or(panel.bottom(), |card| card.y - SIDEBAR_LIST_GAP);
+            let bottom = card.map_or(panel.bottom(), |card| card.y);
             let bar = Rect::new(panel.x, bottom - UNDO_H * share, panel.w, UNDO_H * share);
             // 「⋯」比标题行的工具按钮小，中心和它们对齐，从上到下是一列。
             let h = UNDO_H - 8.0;
@@ -827,10 +829,11 @@ impl App {
         let list_y = banner.map_or(branch.bottom(), |(rect, _)| rect.bottom()) + SIDEBAR_LIST_GAP;
         let above = match (undo, card) {
             (Some((bar, ..)), _) => bar.y,
-            (None, Some(card)) => card.y - SIDEBAR_LIST_GAP,
+            // 卡片滑入、滑出时这段间隔按露出比例伸缩，卡片完全收起时列表的下沿与视图底部重合。
+            (None, Some(card)) => card.y - SIDEBAR_LIST_GAP * card_share,
             (None, None) => panel.bottom(),
         };
-        // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `SIDEBAR_LIST_GAP`。
+        // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `STASH_GAP`。
         let h = self.stash_section_height();
         let stashes = (h > 0.0).then(|| Rect::new(panel.x, above - h, panel.w, h));
         let list_end = stashes.map_or(above, |rect| rect.y);
@@ -861,7 +864,7 @@ impl App {
     /// 上一次提交，没有这个勾选框。
     ///
     /// `share` 是卡片露出的比例（见 [`App::commit_card_share`]）：不到 1 时整张卡片往下移，没露
-    /// 出的部分连同上方的间隔在视图底部下面。
+    /// 出的部分在视图底部下面。
     fn commit_card_parts(
         &self,
         panel: Rect,
@@ -875,7 +878,7 @@ impl App {
             .message_motion
             .map_or(settled_h, |(from, clock)| clock.between(from, settled_h));
         let card_h = message_h + FOOTER_H + CARD_INSET;
-        let sunk = (1.0 - share) * (card_h + MARGIN + SIDEBAR_LIST_GAP);
+        let sunk = (1.0 - share) * (card_h + MARGIN);
         let card = Rect::new(
             inner_x,
             panel.bottom() - MARGIN - card_h + sunk,

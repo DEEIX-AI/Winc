@@ -482,6 +482,7 @@ git-change-none-at-caret = 光标所在行没有更改
 git-diff-side-worktree = 工作区
 git-diff-side-worktree-unsaved = 工作区 · 未保存
 git-diff-identical-sides = 两侧内容相同
+git-diff-staged-only = 仅提交已暂存的部分
 git-diff-none-at-caret = 光标处没有更改
 git-diff-revert-failed = 无法回滚更改：{ $error }
 
