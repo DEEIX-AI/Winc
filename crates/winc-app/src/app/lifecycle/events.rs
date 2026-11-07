@@ -310,6 +310,7 @@ impl App {
             UserEvent::Searched => self.poll_global(),
             UserEvent::Definitions => self.poll_definitions(),
             UserEvent::FilesChanged => self.files_changed(),
+            UserEvent::GitQuestion => self.poll_git_questions(),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
             | UserEvent::GitCommit

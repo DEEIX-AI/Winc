@@ -222,6 +222,8 @@ pub enum UserEvent {
     GitBase,
     /// 后台的分支操作（获取、拉取、推送、签出……）做完了。
     GitOperated,
+    /// 后台的 Git 操作发来了输入请求。
+    GitQuestion,
     /// 后台取到了日志的一批提交、一个提交的详情或一个文件的差异。
     GitLog,
     /// 终端的辅助进程发来了消息。

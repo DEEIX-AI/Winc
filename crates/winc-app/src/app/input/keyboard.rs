@@ -513,10 +513,12 @@ impl App {
 
     /// 处理对话框自身响应的按键（见 [`App::on_key_dialog`]）；按键须交给名称输入框时返回 `false`。
     pub(in crate::app) fn dialog_key(&mut self, key: &Key, base: &str, cmd: bool) -> bool {
-        let on_name = self
-            .form_dialog
-            .as_ref()
-            .is_none_or(|d| d.focus == crate::layout::DialogPart::Branch);
+        let on_name = self.form_dialog.as_ref().is_none_or(|d| {
+            matches!(
+                d.focus,
+                crate::layout::DialogPart::Branch | crate::layout::DialogPart::Password
+            )
+        });
         match key {
             Key::Named(NamedKey::Escape) => self.close_form_dialog(),
             Key::Named(NamedKey::Tab) => self.form_focus_move(self.modifiers.shift_key()),

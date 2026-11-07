@@ -357,6 +357,7 @@ impl App {
             }
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),
+            GitShowOutput => self.show_git_output(),
             GitSwitchRepository => self.switch_location(),
             GitSwitchWorktree => self.switch_location(),
             GitNewWorktree => self.open_worktree_dialog(),

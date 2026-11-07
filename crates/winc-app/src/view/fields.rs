@@ -1,5 +1,7 @@
 //! 输入框的绘制：会换行的多行输入区、单行的输入条，以及插入点。
 
+use std::borrow::Cow;
+
 use super::*;
 
 /// 多行输入框的行高（逻辑像素）。
@@ -268,6 +270,14 @@ fn draw_field_caret(frame: &mut Frame<'_>, p: &Palette, x: f32, row: Rect, clip:
 /// 供点击和拖选时使用。
 ///
 /// 有焦点时返回光标的矩形，供输入法候选框定位。
+/// 遮盖输入框中代表一个字素的圆点。
+const MASK: &str = "●";
+
+/// 返回把 `text` 的每个字素换成 [`MASK`] 的文字。
+fn mask_text(text: &str) -> String {
+    MASK.repeat(text.graphemes(true).count())
+}
+
 pub(super) fn draw_bar_field(
     app: &App,
     frame: &mut Frame<'_>,
@@ -282,6 +292,14 @@ pub(super) fn draw_bar_field(
     } else {
         ""
     };
+    let masked = field.is_masked();
+    // 遮盖输入框把每个字素绘制为一个圆点，输入法组字中的文本同样遮盖。
+    let preedit: Cow<'_, str> = if masked {
+        Cow::Owned(mask_text(preedit))
+    } else {
+        Cow::Borrowed(preedit)
+    };
+    let preedit = preedit.as_ref();
 
     // 记录每个字素簇（grapheme）边界相对文本起点的 x 偏移（逻辑像素）。界面字体不做字距调整，
     // 逐个字素量出的宽度之和与整段文本的宽度相同。文字和字号都没变时沿用上一帧量好的结果
@@ -298,7 +316,8 @@ pub(super) fn draw_bar_field(
         let mut width = 0.0;
         stops.push((0, 0.0));
         for (start, grapheme) in field.text().grapheme_indices(true) {
-            width += frame.measure(FontKind::Ui, size, grapheme);
+            let shown = if masked { MASK } else { grapheme };
+            width += frame.measure(FontKind::Ui, size, shown);
             stops.push((start + grapheme.len(), width));
         }
         field.view.measured = Some((field.text().to_owned(), size));
@@ -366,7 +385,12 @@ pub(super) fn draw_bar_field(
     // 输入法组字中的文本插在光标处，绘制在光标前后两段文本之间。
     let color = if focused { p.text } else { p.text_muted };
     let (before, after) = text.split_at(field.caret());
-    let mut x = ui_text(frame, app, origin, area, before, color, area);
+    let (before, after): (Cow<'_, str>, Cow<'_, str>) = if masked {
+        (mask_text(before).into(), mask_text(after).into())
+    } else {
+        (before.into(), after.into())
+    };
+    let mut x = ui_text(frame, app, origin, area, &before, color, area);
 
     if !preedit.is_empty() {
         let start = x;
@@ -375,7 +399,7 @@ pub(super) fn draw_bar_field(
         frame.rect_clipped(underline, p.accent, 0.0, area);
     }
 
-    ui_text(frame, app, x, area, after, color, area);
+    ui_text(frame, app, x, area, &after, color, area);
 
     // 有选区时不显示光标，选区本身已指示位置。
     if focused && app.caret_visible && from == to {

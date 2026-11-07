@@ -10,9 +10,11 @@ pub mod merge;
 
 mod commit;
 mod ignored;
+mod output;
 mod parse;
 mod sync;
 
+pub use output::output_text;
 pub use sync::Synced;
 mod trust;
 mod worktree;
@@ -515,6 +517,20 @@ pub struct Git {
     shell: Shell,
     /// 各仓库的配置检查结果和信任状态，[`Git`] 的各个副本共用。
     trust: Arc<Mutex<Trust>>,
+    /// 处理输入请求的 askpass 程序，见 [`Git::with_askpass`]。
+    askpass: Option<Askpass>,
+}
+
+/// 传递 [`Askpass::endpoint`] 的环境变量名。
+pub const ASKPASS_ENDPOINT: &str = "WINC_GIT_ASKPASS";
+
+/// `git`、`ssh` 需要用户输入时运行的 askpass 程序。
+#[derive(Debug, Clone)]
+pub struct Askpass {
+    /// 程序路径：程序以提示文字为参数启动，把答复写到标准输出。
+    pub program: PathBuf,
+    /// 程序连接的本地端点，由环境变量 [`ASKPASS_ENDPOINT`] 传递。
+    pub endpoint: OsString,
 }
 
 impl Git {
@@ -541,6 +557,7 @@ impl Git {
             program,
             shell: shell.clone(),
             trust: Arc::default(),
+            askpass: None,
         })
     }
 
@@ -684,8 +701,12 @@ impl Git {
     ///
     /// 失败时返回 `git` 给出的原因：优先取 `error::`、`fatal::`、`! [rejected]` 这样的行。
     pub fn operate(&self, root: &Path, args: &[&str]) -> Result<String, String> {
-        self.require_trust(root)?;
+        if let Err(refused) = self.require_trust(root) {
+            output::record(root, args, None, refused.as_bytes());
+            return Err(refused);
+        }
         let mut command = self.command(root);
+        self.ask_through(root, &mut command);
         command.args(args).stderr(Stdio::piped());
         match process::run(
             &mut command,
@@ -696,14 +717,44 @@ impl Git {
             Ok(output) => {
                 let mut text = output.stderr;
                 text.extend_from_slice(&output.stdout);
+                output::record(root, args, output.status.code(), &text);
                 if output.status.success() {
                     Ok(summary(&text))
                 } else {
                     Err(failure(&text))
                 }
             }
-            Err(e) => Err(describe(&e)),
+            Err(e) => {
+                let reason = describe(&e);
+                output::record(root, args, None, reason.as_bytes());
+                Err(reason)
+            }
         }
+    }
+
+    /// 返回使用 `askpass` 处理输入请求的副本；`None` 表示需要输入时直接失败。
+    #[must_use]
+    pub fn with_askpass(mut self, askpass: Option<Askpass>) -> Self {
+        self.askpass = askpass;
+        self
+    }
+
+    /// 为 `command` 设置 [`Git::with_askpass`] 指定的 askpass 程序。
+    ///
+    /// WSL 发行版内的 `git` 无法运行 Windows 程序，不作设置。`git` 优先使用凭据助手，没有结果时才
+    /// 运行该程序。`SSH_ASKPASS_REQUIRE` 使 `ssh` 不依赖 `DISPLAY` 和控制终端。
+    fn ask_through(&self, root: &Path, command: &mut Command) {
+        let Some(askpass) = &self.askpass else {
+            return;
+        };
+        if crate::wsl::locate_here(root).is_some() {
+            return;
+        }
+        command
+            .env("GIT_ASKPASS", &askpass.program)
+            .env("SSH_ASKPASS", &askpass.program)
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env(ASKPASS_ENDPOINT, &askpass.endpoint);
     }
 
     /// 删除本地分支 `name`。
@@ -1047,7 +1098,7 @@ impl Git {
             // 不获取可选的锁（例如刷新索引）：后台运行的 `git` 不能和用户在同一仓库里运行的
             // `git` 抢同一把锁。
             .env("GIT_OPTIONAL_LOCKS", "0")
-            // 需要输入密码时直接失败，不阻塞等待输入。
+            // 禁用终端提示：没有 askpass 程序（见 `Git::ask_through`）时直接失败，不阻塞进程。
             .env("GIT_TERMINAL_PROMPT", "0")
             // 不打开编辑器：`rebase --continue` 等操作会打开它修改提交信息，这里沿用原来的信息。
             .env("GIT_EDITOR", ":")

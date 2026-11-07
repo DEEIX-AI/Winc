@@ -10,6 +10,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod askpass;
 mod bench;
 mod cli;
 mod crash;
@@ -54,6 +55,10 @@ use bench::Bench;
 use winc::{Envelope, Winc};
 
 fn main() {
+    // 作为 `git`、`ssh` 的 askpass 程序启动时不创建窗口。
+    if let Some(code) = askpass::helper() {
+        std::process::exit(code);
+    }
     shell_command::enter_real_path();
     crash::install();
     #[cfg(windows)]

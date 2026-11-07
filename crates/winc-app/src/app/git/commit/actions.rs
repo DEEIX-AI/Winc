@@ -5,6 +5,7 @@ use winc_i18n::t;
 
 use super::*;
 use crate::app::git::branch::Then;
+use crate::app::lifecycle::notice::NoticeAction;
 
 /// 分支行右端同步控件的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,9 +391,10 @@ impl App {
                         let name = winc_editor::display_name(&root);
                         match result {
                             Ok(oid) => self.flash(t!("git-commit-done-in", name = name, oid = oid)),
-                            Err(e) => {
-                                self.notify(t!("git-commit-failed-in", name = name, error = e))
-                            }
+                            Err(e) => self.notify_with(
+                                t!("git-commit-failed-in", name = name, error = e),
+                                NoticeAction::GitOutput,
+                            ),
                         }
                         continue;
                     }
@@ -421,7 +423,10 @@ impl App {
                         }
                         Err(e) => {
                             self.commit.push_after = false;
-                            self.notify(t!("git-commit-failed", error = e));
+                            self.notify_with(
+                                t!("git-commit-failed", error = e),
+                                NoticeAction::GitOutput,
+                            );
                         }
                     }
                     self.git_refresh();

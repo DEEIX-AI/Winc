@@ -12,11 +12,13 @@ use winc_editor::git::{Branch, BranchDeleted, Git, Operation, Stash};
 use winc_i18n::t;
 
 use super::commit::COMMITTED_SHOWN;
+use super::question;
 use super::unusable;
 use super::worktree::RemoveCheck;
 use crate::app::animation::{Clock, TREE_ANIMATION};
 use crate::app::input::context_menu::{MenuCommand, MenuEntry};
 use crate::app::{App, UserEvent};
+use crate::askpass::{Listener, Question};
 
 /// 对一个分支做的事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,6 +118,9 @@ struct Done {
     result: Result<(String, Then), String>,
 }
 
+/// 输入请求从后台线程到界面线程的通道，每项是所属操作的编号和请求。
+type QuestionChannel = (Sender<(u64, Question)>, Receiver<(u64, Question)>);
+
 /// 分支操作的状态。
 pub(crate) struct BranchState {
     /// 正在做的事；状态栏的分支名后面写着它。
@@ -123,8 +128,16 @@ pub(crate) struct BranchState {
     /// 上一个操作成功后，同步控件显示对勾的时钟。
     pub finished: Option<Clock>,
     /// 起过几个操作；正在做的是第几个。
-    pub(super) started: u64,
+    pub(in crate::app) started: u64,
     results: (Sender<Done>, Receiver<Done>),
+    /// 后台送达的输入请求及其所属操作的编号。
+    pub(super) questions: QuestionChannel,
+    /// 对话框正在处理的请求：所属操作的编号和答复通道；丢弃通道表示取消。
+    pub(in crate::app) asking: Option<(u64, Sender<String>)>,
+    /// 用户是否取消了当前操作的输入请求；为真时该操作的失败不按错误提示。
+    pub(in crate::app) declined: bool,
+    /// 登录对话框中填写的密码及其远程地址，用于答复随后的密码请求，操作结束时清除。
+    pub(in crate::app) password: Option<(String, String)>,
 }
 
 impl Default for BranchState {
@@ -134,6 +147,10 @@ impl Default for BranchState {
             finished: None,
             started: 0,
             results: channel(),
+            questions: channel(),
+            asking: None,
+            declined: false,
+            password: None,
         }
     }
 }
@@ -587,11 +604,19 @@ impl App {
         let sender = self.branch.results.0.clone();
         self.branch.running = Some(what.clone());
         self.branch.finished = None;
+        self.branch.declined = false;
         self.branch.started += 1;
         let id = self.branch.started;
+        let wake = self.proxy.clone();
+        let questions = self.branch.questions.0.clone();
         self.spawn_git(UserEvent::GitOperated, move |tool| {
             let result = match tool {
-                Ok(git) => work(&git, &root),
+                Ok(git) => {
+                    // 端点只在操作期间存在，`listener` 在本分支结束时被丢弃。
+                    let listener = wake.and_then(|proxy| question::listen(proxy, questions, id));
+                    let askpass = listener.as_ref().and_then(Listener::askpass);
+                    work(&git.with_askpass(askpass), &root)
+                }
                 Err(e) => Err(unusable(&e)),
             };
             let _ = sender.send(Done {
@@ -614,6 +639,7 @@ impl App {
     /// 收下后台做完的分支操作。
     pub(in crate::app) fn poll_branch_ops(&mut self) {
         while let Ok(done) = self.branch.results.1.try_recv() {
+            self.end_git_questions(done.id);
             // 做的时候换了目录（换的时候 `running` 已经清掉，见 `git_folder_changed`）：只说一声在
             // 哪个仓库里做完了；新建的工作树仍然打开，检查完的不再移除。换回原来的目录、又起了新
             // 操作时根目录对得上但不是正在做的这个，同样按旧结果处理，不清掉新操作的 `running`。
@@ -637,7 +663,8 @@ impl App {
                     }
                     Err(e) => {
                         let what = done.what;
-                        self.notify(t!("git-op-failed-in", name = name, what = what, error = e));
+                        let message = t!("git-op-failed-in", name = name, what = &what, error = e);
+                        self.report_git_failure(&what, message);
                     }
                 }
                 continue;
@@ -665,7 +692,11 @@ impl App {
                     let _ = self.clock(COMMITTED_SHOWN);
                     self.branch.finished = Some(Clock::new(COMMITTED_SHOWN));
                 }
-                Err(e) => self.notify(t!("git-op-failed", what = done.what, error = e)),
+                Err(e) => {
+                    let what = done.what;
+                    let message = t!("git-op-failed", what = &what, error = e);
+                    self.report_git_failure(&what, message);
+                }
             }
             // 切换分支、拉取、合并都会改工作区里的文件。
             self.check_disk();

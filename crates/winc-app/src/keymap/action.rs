@@ -167,6 +167,8 @@ pub enum Action {
     ToggleDiffLayout,
     GitShowChanges,
     GitShowLog,
+    /// 在只读标签中打开 Git 操作的输出。
+    GitShowOutput,
     /// 打开提交视图并展开位置选择器。
     GitSwitchRepository,
     GitSwitchWorktree,
@@ -369,6 +371,7 @@ impl Action {
             ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
             GitShowLog => t!("cmd-git-show-log"),
+            GitShowOutput => t!("cmd-git-show-output"),
             GitSwitchRepository => t!("cmd-git-switch-repository"),
             GitSwitchWorktree => t!("cmd-git-switch-worktree"),
             GitNewWorktree => t!("cmd-git-new-worktree"),
@@ -551,6 +554,7 @@ impl Action {
             ToggleDiffLayout => "Toggle Inline Diff",
             GitShowChanges => "Git: Open Changes",
             GitShowLog => "Git: Show Log",
+            GitShowOutput => "Git: Show Output",
             GitSwitchRepository => "Git: Switch Repository",
             GitSwitchWorktree => "Git: Switch Worktree…",
             GitNewWorktree => "Git: New Worktree…",
@@ -702,6 +706,7 @@ impl Action {
             | ToggleDiffLayout
             | GitShowChanges
             | GitShowLog
+            | GitShowOutput
             | GitSwitchRepository
             | GitSwitchWorktree
             | GitNewWorktree
@@ -794,6 +799,7 @@ impl Action {
         match self {
             Action::GitShowChanges
             | Action::GitShowLog
+            | Action::GitShowOutput
             | Action::GitSwitchRepository
             | Action::GitSwitchWorktree
             | Action::GitNewWorktree
@@ -1012,6 +1018,7 @@ pub const ACTIONS: &[Action] = {
         ShowCommit,
         GitShowChanges,
         GitShowLog,
+        GitShowOutput,
         GitSwitchRepository,
         GitSwitchWorktree,
         GitNewWorktree,

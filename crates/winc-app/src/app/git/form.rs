@@ -1,9 +1,9 @@
 //! Git 的表单对话框：「新建工作树」「新建分支」。
 //!
-//! 窗口正中的功能对话框，填名称、选起点，按「创建」执行；和设置浮层同属模态卡片，两种表单共用一套
-//! 状态、几何和绘制，只是行和选项不同（[`FormKind`]）。按「创建」会做什么跟着输入的名称变
-//! （[`FormPlan`]）：新建工作树时可能是新建分支、签出已有的、跟踪远程的，或者已经在别的工作树
-//! 里签出着（主按钮换成「打开」）；不能做的原因写在框里。
+//! 窗口正中的功能对话框，填名称、选起点，按「创建」执行；和设置浮层同属模态卡片，各种表单共用一套
+//! 状态、几何和绘制，只是行和选项不同（[`FormKind`]）。`git`、`ssh` 的输入请求同样使用该对话框。
+//! 按「创建」执行的操作随输入的名称变化（[`FormPlan`]）：新建工作树时可能是新建分支、签出已有的、
+//! 跟踪远程的，或者已经在别的工作树里签出着（主按钮换成「打开」）；不能做的原因写在框里。
 
 use std::path::PathBuf;
 
@@ -12,9 +12,11 @@ use winc_i18n::t;
 
 use super::branch::local_name;
 use super::log::short;
+use super::question::QuestionView;
 use super::worktree::NameTarget;
 use crate::app::editor::find::ref_name_field;
 use crate::app::{App, Focus, Hover, TextField};
+use crate::askpass::Prompt;
 use crate::layout::{DialogLayout, DialogPart};
 
 /// 表单对话框是哪一种。
@@ -27,6 +29,8 @@ pub(crate) enum FormKind {
     /// `at` 是日志里选的提交（完整的提交号），从它新建时「基于」不能改；`None` 时「基于」可以
     /// 选分支。
     Branch { at: Option<String> },
+    /// `git`、`ssh` 的输入请求，见 [`super::question`]。
+    Question(Prompt),
 }
 
 /// 表单对话框的状态。
@@ -35,6 +39,8 @@ pub(crate) struct FormDialog {
     pub kind: FormKind,
     /// 名称的输入框；打开对话框时就在这里输入。
     pub name: TextField,
+    /// 登录对话框的密码框；其他表单不显示。
+    pub password: TextField,
     /// 新分支从哪个分支开始；`None` 是当前分支（游离时是当前提交）。
     pub base: Option<String>,
     /// 用「位置」右端的目录按钮选的目录，工作树建在它下面；`None` 是默认位置（见
@@ -102,6 +108,14 @@ impl App {
         if self.form_dialog.is_some() {
             return;
         }
+        self.show_form_dialog(kind, ref_name_field(), DialogPart::Branch);
+        if let Some(dialog) = &mut self.form_dialog {
+            dialog.base = base;
+        }
+    }
+
+    /// 关闭其他浮层，显示表单对话框：`name` 是它的输入框，`focus` 是一开始的键盘焦点。
+    pub(super) fn show_form_dialog(&mut self, kind: FormKind, name: TextField, focus: DialogPart) {
         if self.picker_open {
             self.close_picker();
         }
@@ -117,14 +131,15 @@ impl App {
         };
         self.form_dialog = Some(FormDialog {
             kind,
-            name: ref_name_field(),
-            base,
+            name,
+            password: TextField::masked(),
+            base: None,
             folder: None,
             copy: true,
             new_window: false,
             checkout: true,
             hover: None,
-            focus: DialogPart::Branch,
+            focus,
             running: None,
             error: None,
             back,
@@ -139,6 +154,9 @@ impl App {
         let Some(dialog) = self.form_dialog.take() else {
             return;
         };
+        if matches!(dialog.kind, FormKind::Question(_)) {
+            self.decline_git_question();
+        }
         self.field_preedit.clear();
         if self.focus == Focus::Dialog {
             self.focus = dialog.back;
@@ -151,6 +169,15 @@ impl App {
     pub(crate) fn dialog_layout(&self) -> DialogLayout {
         let window = self.layout.window;
         match self.form_dialog.as_ref().map(|d| &d.kind) {
+            Some(FormKind::Question(prompt)) => {
+                let view = QuestionView::of(prompt);
+                DialogLayout::question(
+                    window,
+                    view.message_lines,
+                    view.values.len(),
+                    view.inputs.len(),
+                )
+            }
             Some(FormKind::Branch { .. }) => {
                 DialogLayout::compute(window, false, &[DialogPart::Checkout])
             }
@@ -176,6 +203,16 @@ impl App {
         match &dialog.kind {
             FormKind::Worktree => self.worktree_plan(dialog),
             FormKind::Branch { at } => self.branch_plan(dialog, at.as_deref()),
+            FormKind::Question(prompt) => FormPlan {
+                problem: None,
+                confirm: QuestionView::of(prompt).confirm,
+                // 用户名为空的登录请求必然失败；密码和口令允许为空。
+                enabled: !matches!(prompt, Prompt::Username { .. })
+                    || !dialog.name.text().is_empty(),
+                base: String::new(),
+                base_enabled: false,
+                dir: None,
+            },
         }
     }
 
@@ -281,6 +318,10 @@ impl App {
         if dialog.running.is_some() || !self.form_plan(dialog).enabled {
             return;
         }
+        if matches!(dialog.kind, FormKind::Question(_)) {
+            self.answer_git_question();
+            return;
+        }
         // 须在发起操作前记录编号：没有窗口时（测试中）后台操作会同步完成。
         let next = self.branch.started + 1;
         let kind = dialog.kind.clone();
@@ -299,6 +340,7 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
+            FormKind::Question(_) => {}
         }
         // 已发起 git 操作时，待其完成后再关闭（[`App::form_operation_done`]），期间按钮显示
         // 「正在创建…」；未发起操作（上一个操作未完成、直接打开已有的工作树）时不等待。
@@ -339,7 +381,14 @@ impl App {
         };
         let plan = self.form_plan(dialog);
         let layout = self.dialog_layout();
-        let mut order = vec![DialogPart::Branch];
+        let mut order = Vec::new();
+        // 无需输入的请求没有输入框，只有登录对话框有密码框。
+        if layout.branch.w > 0.0 {
+            order.push(DialogPart::Branch);
+        }
+        if layout.password.w > 0.0 {
+            order.push(DialogPart::Password);
+        }
         if plan.base_enabled {
             order.push(DialogPart::Base);
         }
@@ -361,8 +410,13 @@ impl App {
             return;
         };
         let n = order.len();
-        let at = order.iter().position(|&p| p == dialog.focus).unwrap_or(0);
-        let next = if back { (at + n - 1) % n } else { (at + 1) % n };
+        // 焦点不在任何部件上时（无需输入的请求刚打开时），`Tab` 从第一个部件开始。
+        let next = match order.iter().position(|&p| p == dialog.focus) {
+            Some(at) if back => (at + n - 1) % n,
+            Some(at) => (at + 1) % n,
+            None if back => n - 1,
+            None => 0,
+        };
         dialog.focus = order[next];
         self.field_preedit.clear();
         self.request_redraw();
@@ -447,14 +501,19 @@ impl App {
     pub(in crate::app) fn click_form_dialog(&mut self, x: f32, y: f32) {
         let layout = self.dialog_layout();
         if !layout.card.contains(x, y) {
-            self.close_form_dialog();
+            // 点击卡片外部不关闭询问对话框：关闭表示取消，会使正在进行的操作失败。
+            let asking = (self.form_dialog.as_ref())
+                .is_some_and(|d| matches!(d.kind, FormKind::Question(_)));
+            if !asking {
+                self.close_form_dialog();
+            }
             return;
         }
         match self.dialog_part_at(x, y) {
-            Some(DialogPart::Branch) => {
+            Some(part @ (DialogPart::Branch | DialogPart::Password)) => {
                 self.focus = Focus::Dialog;
                 if let Some(dialog) = &mut self.form_dialog {
-                    dialog.focus = DialogPart::Branch;
+                    dialog.focus = part;
                 }
                 self.click_field(x, y);
             }
@@ -469,7 +528,7 @@ impl App {
         match part {
             DialogPart::Close | DialogPart::Cancel => self.close_form_dialog(),
             DialogPart::Confirm => self.submit_form_dialog(),
-            DialogPart::Branch => self.submit_form_dialog(),
+            DialogPart::Branch | DialogPart::Password => self.submit_form_dialog(),
             DialogPart::Base => {
                 use crate::app::input::context_menu::{MenuTarget, menu_below};
                 let base = self.dialog_layout().base;

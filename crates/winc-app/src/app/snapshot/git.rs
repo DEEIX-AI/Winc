@@ -24,6 +24,7 @@ mod log;
 mod log_details;
 mod merge;
 mod module;
+mod question;
 mod worktree;
 
 /// 机器上没有可用的 git 时跳过该测试并返回 `true`。

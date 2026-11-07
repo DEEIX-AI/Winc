@@ -13,6 +13,7 @@ pub(crate) mod form;
 pub(crate) mod location_picker;
 pub(crate) mod log;
 pub(crate) mod merge;
+pub(crate) mod question;
 pub(crate) mod worktree;
 
 use std::collections::{HashMap, HashSet};

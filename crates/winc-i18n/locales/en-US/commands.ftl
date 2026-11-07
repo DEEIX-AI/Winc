@@ -146,6 +146,7 @@ cmd-previous-diff-file = Previous File
 cmd-toggle-diff-layout = Toggle Inline Diff
 cmd-git-show-changes = Git: Show Changes
 cmd-git-show-log = Git: Show Log
+cmd-git-show-output = Git: Show Output
 cmd-git-switch-repository = Git: Switch Repository
 cmd-git-switch-worktree = Git: Switch Worktree…
 cmd-git-new-worktree = Git: New Worktree…

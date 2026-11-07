@@ -1,4 +1,4 @@
-//! 功能对话框（新建工作树、新建分支）的绘制。
+//! 功能对话框（新建工作树、新建分支）和 Git 询问对话框的绘制。
 //!
 //! 淡遮罩上方是编辑区底色的卡片：标题行与关闭按钮，表单（标签、输入框、勾选框），右下角「取消」
 //! 「创建」。输入框与按钮使用提交视图的样式（[`field_box`]）；名称不可用时外圈为错误色、「创建」
@@ -12,7 +12,8 @@ use winc_render::{FontKind, Frame, Rect, Stroke};
 
 use super::*;
 use crate::app::git::form::{FormKind, FormPlan};
-use crate::layout::{DialogLayout, DialogPart};
+use crate::app::git::question::QuestionView;
+use crate::layout::{DialogLayout, DialogPart, QUESTION_LINE_H};
 
 /// 绘制对话框：遮罩，再绘制卡片（淡入途中按 [`draw_moving_card`] 整张叠上去）。
 pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
@@ -72,6 +73,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
             [t!("common-dialog-name"), t!("common-dialog-base"), ""],
             t!("common-dialog-branch-placeholder"),
         ),
+        FormKind::Question(_) => return draw_question(app, frame, layout),
     };
     let card = layout.card;
     frame.rounded(card, p.editor_bg, RADIUS_CARD);
@@ -104,7 +106,14 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         );
     }
 
-    draw_branch(app, frame, layout, &plan, placeholder);
+    draw_field(
+        app,
+        frame,
+        layout.branch,
+        DialogPart::Branch,
+        &plan,
+        placeholder,
+    );
 
     // 基于：能选时右端一对上下小箭头，悬停铺浅色；签出已有的分支时没有起点可选，字是淡的。
     let base = layout.base;
@@ -188,6 +197,114 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     }
 }
 
+/// 绘制 `git`、`ssh` 的输入请求：标题行、说明文字、只读信息、输入框和底部按钮。
+fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
+    let p = app.palette;
+    let Some(dialog) = &app.form_dialog else {
+        return;
+    };
+    let FormKind::Question(prompt) = &dialog.kind else {
+        return;
+    };
+    let view = QuestionView::of(prompt);
+    let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
+    let card = layout.card;
+    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+
+    let header = layout.header;
+    ui_text(
+        frame,
+        app,
+        header.x + SETTINGS_PAD,
+        header,
+        &view.title,
+        p.text,
+        card,
+    );
+    let close = layout.close;
+    let closing = hover == Some(DialogPart::Close);
+    draw_button(frame, p, close, card, closing, false);
+    icons::close(frame, center(close), 7.0, p.text_muted, close);
+
+    if let Some(message) = &view.message {
+        let area = layout.message;
+        let lines: Vec<&str> = (message.lines())
+            .flat_map(|line| super::git::log::wrap(frame, app.fonts.ui, line, area.w))
+            .take(view.message_lines)
+            .collect();
+        for (i, line) in lines.into_iter().enumerate() {
+            let y = area.y + i as f32 * QUESTION_LINE_H;
+            let row = Rect::new(area.x, y, area.w, QUESTION_LINE_H);
+            ui_text(frame, app, area.x, row, line, p.text_muted, area);
+        }
+    }
+
+    let labels = (view.values.iter().map(|v| v.label)).chain(view.inputs.iter().map(|i| i.label));
+    for (rect, text) in layout.labels.iter().zip(labels) {
+        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        ui_text(
+            frame,
+            app,
+            rect.right() - w,
+            *rect,
+            text,
+            p.text_muted,
+            card,
+        );
+    }
+    for (rect, value) in layout.values.iter().zip(&view.values) {
+        let area = rect.inset(DIALOG_FIELD_INSET, 0.0);
+        if value.mono {
+            super::git::log::mono(app, frame, (area.x, area), &value.text, p.text, area);
+        } else {
+            let text = ellipsize(frame, &value.text, app.fonts.ui, area.w);
+            ui_text(frame, app, area.x, area, &text, p.text, area);
+        }
+    }
+
+    for (i, (input, part)) in view
+        .inputs
+        .iter()
+        .zip([DialogPart::Branch, DialogPart::Password])
+        .enumerate()
+    {
+        let rect = [layout.branch, layout.password][i];
+        draw_field(app, frame, rect, part, &plan, input.placeholder);
+    }
+    draw_action(
+        app,
+        frame,
+        layout.cancel,
+        t!("common-cancel"),
+        false,
+        true,
+        hover,
+    );
+    draw_action(
+        app,
+        frame,
+        layout.confirm,
+        plan.confirm,
+        true,
+        plan.enabled,
+        hover,
+    );
+    let ring = match focus {
+        DialogPart::Cancel => Some(layout.cancel),
+        DialogPart::Confirm => Some(layout.confirm),
+        _ => None,
+    };
+    if let Some(rect) = ring {
+        focus_outline(
+            frame,
+            rect.inset(-2.0, -2.0),
+            RADIUS_ROW + 2.0,
+            p.accent,
+            card,
+        );
+    }
+}
+
 /// 沿 `rect` 绘制圆角半径为 `r` 的细线，用于表示键盘焦点。
 fn focus_outline(frame: &mut Frame<'_>, rect: Rect, r: f32, color: Color, clip: Rect) {
     let r = r.min(rect.w / 2.0).min(rect.h / 2.0);
@@ -236,23 +353,20 @@ fn draw_error(app: &App, frame: &mut Frame<'_>, layout: &DialogLayout, error: &s
     }
 }
 
-/// 绘制分支名的输入框：有焦点时与设置中正在编辑的输入框相同，编辑区底色、外圈强调色。
+/// 绘制 `part` 对应的输入框：有焦点时与设置中正在编辑的输入框相同，编辑区底色、外圈强调色。
 ///
 /// 名字不可用时外圈是错误色，原因用错误色小字写在框的右端（最多占框的六成，输入的字在它左边）。
-fn draw_branch(
+fn draw_field(
     app: &mut App,
     frame: &mut Frame<'_>,
-    layout: &DialogLayout,
+    rect: Rect,
+    part: DialogPart,
     plan: &FormPlan,
     placeholder: &str,
 ) {
     let p = app.palette;
-    let rect = layout.branch;
     let focused = app.focus == crate::app::Focus::Dialog
-        && app
-            .form_dialog
-            .as_ref()
-            .is_some_and(|d| d.focus == DialogPart::Branch);
+        && app.form_dialog.as_ref().is_some_and(|d| d.focus == part);
     field_box(
         app,
         frame,
@@ -272,7 +386,12 @@ fn draw_branch(
         ui_text_small(frame, app, area.right() - w, rect, &text, p.error, rect);
         area.w = (area.w - w - 12.0).max(0.0);
     }
-    let caret = draw_bar_field(app, frame, area, &mut dialog.name, placeholder, focused);
+    let field = if part == DialogPart::Password {
+        &mut dialog.password
+    } else {
+        &mut dialog.name
+    };
+    let caret = draw_bar_field(app, frame, area, field, placeholder, focused);
     app.form_dialog = Some(dialog);
     if caret.is_some() {
         app.ime_cursor = caret;

@@ -4,8 +4,17 @@
 //! 外框沿用设置浮层的尺寸：[`SETTINGS_HEADER`] 高的标题行和关闭按钮，左右、底下留
 //! [`SETTINGS_PAD`]；框 [`DIALOG_FIELD_H`] 高（与提交信息框、侧栏搜索框相同），按钮
 //! [`SETTINGS_CONTROL_H`] 高（与「提交」按钮相同）。名称列取 [`DIALOG_LABEL_W`]。
+//!
+//! `git`、`ssh` 的输入请求使用 [`DialogLayout::question`]：说明文字占整行，其下是只读信息和输入框。
 
 use super::*;
+
+/// 说明文字的行高（逻辑像素）。
+pub const QUESTION_LINE_H: f32 = 18.0;
+/// 询问对话框的宽度（逻辑像素）：等宽小字号的 SHA-256 指纹（50 个字符）可以在一行内完整显示。
+const QUESTION_W: f32 = 520.0;
+/// 询问对话框的名称列宽度（逻辑像素）：容纳英文名称中最长的 `Fingerprint`。
+const QUESTION_LABEL_W: f32 = 76.0;
 
 /// 对话框里可以点的部件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,8 +25,10 @@ pub enum DialogPart {
     Cancel,
     /// 主按钮（「创建」）。
     Confirm,
-    /// 分支名的输入框。
+    /// 分支名的输入框；询问对话框中是第一个输入框。
     Branch,
+    /// 登录对话框的密码框。
+    Password,
     /// 「基于」的分支菜单。
     Base,
     /// 「位置」右端选目录的按钮。
@@ -35,6 +46,12 @@ pub enum DialogPart {
 pub struct DialogLayout {
     /// 卡片。
     pub card: Rect,
+    /// 询问对话框的说明文字；没有说明时为空矩形。
+    pub message: Rect,
+    /// 询问对话框的只读信息行。
+    pub values: Vec<Rect>,
+    /// 登录对话框的密码框；其他对话框为空矩形。
+    pub password: Rect,
     /// 顶部的标题行。
     pub header: Rect,
     /// 关闭按钮。
@@ -134,6 +151,9 @@ impl DialogLayout {
 
         DialogLayout {
             card: at(Rect::new(0.0, 0.0, w, h)),
+            message: Rect::default(),
+            values: Vec::new(),
+            password: Rect::default(),
             header: at(header),
             close: at(close),
             labels: labels.into_iter().map(at).collect(),
@@ -143,6 +163,74 @@ impl DialogLayout {
             options: options.into_iter().map(|(p, r)| (p, at(r))).collect(),
             cancel: at(cancel),
             confirm: at(confirm),
+        }
+    }
+
+    /// 计算询问对话框的几何：`lines` 是说明文字的行数，`values` 是只读信息的行数，`inputs` 是输入框
+    /// 的个数（最多 2 个）。
+    ///
+    /// 窗口太窄时卡片缩到窗口以内，位置规则与 [`DialogLayout::compute`] 相同。标签在 `labels` 中
+    /// 按只读信息、输入框的顺序排列。
+    pub fn question(window: Rect, lines: usize, values: usize, inputs: usize) -> Self {
+        let w = QUESTION_W.min(window.w - SETTINGS_MARGIN * 2.0).max(0.0);
+        let inner = (w - SETTINGS_PAD * 2.0).max(0.0);
+        let x = SETTINGS_PAD;
+        let cx = x + QUESTION_LABEL_W + DIALOG_LABEL_GAP;
+        let cw = (inner - QUESTION_LABEL_W - DIALOG_LABEL_GAP).max(0.0);
+        let header = Rect::new(0.0, 0.0, w, SETTINGS_HEADER);
+        let close = Rect::new(
+            w - 12.0 - BUTTON,
+            (SETTINGS_HEADER - BUTTON) / 2.0,
+            BUTTON,
+            BUTTON,
+        );
+        let mut y = header.bottom() + 4.0;
+        let message = Rect::new(x, y, inner, lines as f32 * QUESTION_LINE_H);
+        if lines > 0 {
+            y = message.bottom() + DIALOG_GAP + 2.0;
+        }
+        let mut labels = Vec::new();
+        let mut row = |y: &mut f32| {
+            labels.push(Rect::new(x, *y, QUESTION_LABEL_W, DIALOG_FIELD_H));
+            let control = Rect::new(cx, *y, cw, DIALOG_FIELD_H);
+            *y += DIALOG_FIELD_H + DIALOG_GAP;
+            control
+        };
+        let rows: Vec<Rect> = (0..values).map(|_| row(&mut y)).collect();
+        let fields: Vec<Rect> = (0..inputs).map(|_| row(&mut y)).collect();
+        y += 6.0;
+        let confirm = Rect::new(
+            x + inner - DIALOG_BUTTON_W,
+            y,
+            DIALOG_BUTTON_W,
+            SETTINGS_CONTROL_H,
+        );
+        let cancel = Rect::new(
+            confirm.x - 8.0 - DIALOG_BUTTON_W,
+            y,
+            DIALOG_BUTTON_W,
+            SETTINGS_CONTROL_H,
+        );
+        let h = confirm.bottom() + SETTINGS_PAD;
+        let room = (window.h - h).max(0.0);
+        let (dx, dy) = (
+            (window.x + (window.w - w) / 2.0).round(),
+            (window.y + room * 0.42).round(),
+        );
+        let at = |r: Rect| Rect::new(r.x + dx, r.y + dy, r.w, r.h);
+        let field = |i: usize| fields.get(i).map_or(Rect::default(), |&r| at(r));
+        DialogLayout {
+            card: at(Rect::new(0.0, 0.0, w, h)),
+            message: at(message),
+            values: rows.iter().map(|&r| at(r)).collect(),
+            password: field(1),
+            header: at(header),
+            close: at(close),
+            labels: labels.into_iter().map(at).collect(),
+            branch: field(0),
+            cancel: at(cancel),
+            confirm: at(confirm),
+            ..DialogLayout::default()
         }
     }
 
@@ -156,6 +244,7 @@ impl DialogLayout {
             (self.cancel, DialogPart::Cancel),
             (self.confirm, DialogPart::Confirm),
             (self.branch, DialogPart::Branch),
+            (self.password, DialogPart::Password),
             (self.base, DialogPart::Base),
         ];
         // 选目录的按钮叠在「位置」框里面，先匹配这一项。
