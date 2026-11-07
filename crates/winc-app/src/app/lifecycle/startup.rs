@@ -192,7 +192,6 @@ impl App {
             picker_branch_rows: None,
             picker_location_rows: None,
             picker_anchor: GitAnchor::Branch,
-            picker_create: None,
             picker_part_hits: Vec::new(),
             location_toggled: Default::default(),
             branch_folders: Default::default(),
@@ -240,12 +239,16 @@ impl App {
             window: None,
             renderer: None,
             proxy,
+            #[cfg(target_os = "macos")]
+            traffic_lights: None,
             key: None,
             shared: Default::default(),
             config_rev: 0,
             cascade: None,
             window_frame: None,
             glyphs_from: None,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            activation: None,
             occluded: false,
             next_frame: None,
             #[cfg(target_os = "macos")]

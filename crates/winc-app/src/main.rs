@@ -33,6 +33,8 @@ mod trash;
 #[cfg(not(target_os = "macos"))]
 mod updates;
 mod view;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod wayland;
 mod winc;
 #[cfg(windows)]
 mod windows;
@@ -305,7 +307,7 @@ fn hand_over(args: &cli::Args) -> bool {
             ..t.clone()
         })
         .collect();
-    instance::forward_to_app(&targets)
+    instance::forward_to_app(&targets, instance::launch_token().as_deref())
 }
 
 /// 设置界面语言，并让汉字按界面语言的字形显示，返回字形所用的语言是否发生变化。

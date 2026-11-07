@@ -221,7 +221,7 @@ git-log-hint-exit-compare = Exit Compare
 git-log-hint-click = Click
 git-log-hint-view-commit = View Single Commit
 git-log-hint-double-click = Double-Click
-git-log-hint-cmd-click = ⌘-Click
+git-log-hint-cmd-click = { $key }-Click
 git-log-hint-compare = Compare
 git-log-hint-go-back = Back
 
@@ -368,17 +368,10 @@ git-operation-abort = Abort
 git-commit-message-placeholder = Commit message ({ $key } to commit)
 git-commit-message-amend-placeholder = Amended commit message
 git-branch-picker-placeholder = Search or create a branch
-git-branch-picker-name = New branch name
-git-branch-picker-from = Create from { $branch }
-git-branch-picker-from-carry = { $count ->
-    [one] Create from { $branch }. Uncommitted changes in 1 file stay in the working tree.
-   *[other] Create from { $branch }. Uncommitted changes in { $count } files stay in the working tree.
-}
 git-branch-picker-new = New Branch
 git-branch-picker-new-worktree = New Worktree
 git-branch-picker-create-row = Create branch “{ $name }”
 git-branch-picker-current = Current
-git-picker-back = Back
 git-location-picker-placeholder = Search repositories and worktrees
 git-location-picker-empty = No matching repositories or worktrees
 git-location-main-worktree = Main worktree
@@ -484,7 +477,8 @@ git-disk-conflict-side-disk = Version on Disk
 git-disk-conflict-side-unsaved = Unsaved Changes
 git-disk-conflict-identical = “{ $name }” matches the version on disk; the conflict is resolved
 git-disk-conflict-compare-title = Compare: { $name }
-git-disk-conflict-took-disk = “{ $name }” now uses the version on disk. Press ⌘Z to restore your unsaved changes
+git-disk-conflict-took-disk-key = “{ $name }” now uses the version on disk. Press { $key } to restore your unsaved changes
+git-disk-conflict-took-disk = “{ $name }” now uses the version on disk. Undo to restore your unsaved changes
 git-disk-conflict-reloaded = Reloaded “{ $name }”; unsaved changes were discarded
 git-disk-conflict-overwrite = Overwrite
 git-disk-conflict-modified = “{ $name }” was modified by another app

@@ -181,13 +181,13 @@ workspace-goto-total = { $count ->
     }
 workspace-stash-title = Stash Changes
 workspace-stash-placeholder = Message (optional)
-workspace-stash-hint = Includes untracked files · ↩ Stash
+workspace-stash-hint = Includes untracked files · { common-key-enter } Stash
 workspace-rename-branch-title = Rename Branch
 workspace-rename-branch-placeholder = Branch name
-workspace-rename-branch-hint = Currently { $name } · ↩ Rename
+workspace-rename-branch-hint = Currently { $name } · { common-key-enter } Rename
 workspace-tag-title = New Tag
 workspace-tag-placeholder = Tag name
-workspace-tag-hint = From { $commit } · ↩ Create
+workspace-tag-hint = From { $commit } · { common-key-enter } Create
 
 ## Quick open
 
@@ -351,7 +351,8 @@ workspace-notice-show-output = Show Output
 workspace-notice-install = How to Install
 workspace-notice-open-settings = Open Settings
 workspace-format-output-title = Formatter Output
-workspace-font-missing = Couldn’t use the configured fonts { $fonts }; using the default font instead (press ⌘, to open Settings)
+workspace-font-missing-key = Couldn’t use the configured fonts { $fonts }; using the default font instead (press { $key } to open Settings)
+workspace-font-missing = Couldn’t use the configured fonts { $fonts }; using the default font instead
 workspace-font-missing-item = { $key } “{ $name }”
 workspace-font-unusable = This font can’t be used; choose another font
 workspace-stdin-title = Standard Input
