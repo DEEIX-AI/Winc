@@ -455,6 +455,23 @@ impl App {
         }
     }
 
+    /// 窗口建好时按现场恢复终端：启动时恢复的目录在窗口创建之前打开，当时还不能启动辅助进程。
+    ///
+    /// 面板直接到位，没有打开动画；测量启动时间时不恢复。
+    pub(in crate::app) fn restore_terminal_for_window(&mut self) {
+        if self.bench.silent() {
+            return;
+        }
+        let session = self
+            .editor
+            .root()
+            .and_then(|root| self.state.session_for(root));
+        if let Some(terminal) = session.and_then(|session| session.terminal.clone()) {
+            self.restore_terminal(&terminal);
+            self.terminal.motion = None;
+        }
+    }
+
     /// 换目录或关闭目录时关掉所有终端标签，挂断其中的 shell，不确认、不收起面板。
     ///
     /// 调用方须先确认运行中的程序（[`Self::confirm_terminal_quit`]），并把标签记入原目录的

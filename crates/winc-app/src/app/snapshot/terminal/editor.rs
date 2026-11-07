@@ -1140,3 +1140,65 @@ fn code_sent_to_an_exited_shell_starts_it_again() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// 启动时恢复的目录在窗口创建之前打开，窗口建好以后按现场恢复终端：开着的面板、标签和目录。
+#[test]
+fn the_first_window_restores_the_terminal_panel() {
+    let dir = sample_folder("terminal-first-window");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "$ ");
+    app.terminal.tabs[0].cwd = b"/tmp/a".to_vec();
+    app.terminal.height = 300.0;
+    app.remember_session();
+    let state = app.state.clone();
+    let root = app.editor.root().unwrap().to_path_buf();
+
+    // 上次开着：恢复后开着，没有打开动画，高度不变，标签在原来的目录里。
+    let open = |open: bool| {
+        let mut session = state.session_for(&root).unwrap().clone();
+        session.terminal.as_mut().unwrap().open = open;
+        let mut state = state.clone();
+        state.set_session(session);
+        let mut app = app_with(&dir.join("short.rs"), false);
+        app.state = state;
+        app.config.terminal_enabled = Some(true);
+        app.attach_idle_helper();
+        app.restore_terminal_for_window();
+        app
+    };
+    let mut app = open(true);
+    assert!(app.terminal.open);
+    assert!(app.terminal.motion.is_none());
+    assert_eq!(app.terminal.height, 300.0);
+    assert_eq!(app.terminal.want, [b"/tmp/a".to_vec()]);
+    app.relayout();
+    assert_eq!(app.terminal.tabs.len(), 1);
+
+    // 上次收着：恢复后收着，打开面板时才建标签。
+    let mut app = open(false);
+    assert!(!app.terminal.open);
+    app.relayout();
+    assert!(app.terminal.tabs.is_empty());
+    app.toggle_terminal();
+    app.relayout();
+    assert_eq!(app.terminal.tabs.len(), 1);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 停靠位置写进配置文件，下次启动读回来。
+#[test]
+fn the_panel_position_survives_a_restart() {
+    let dir = sample_folder("terminal-position");
+    let path = dir.join("config.json");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config_path = Some(path.clone());
+    show_terminal(&mut app, "$ ");
+    app.toggle_terminal_position();
+    let (config, _) = winc_config::Config::load_from(&path);
+    assert_eq!(config.terminal_right, Some(true));
+    app.toggle_terminal_position();
+    let (config, _) = winc_config::Config::load_from(&path);
+    assert_eq!(config.terminal_right, Some(false));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
