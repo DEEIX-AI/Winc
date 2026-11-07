@@ -184,7 +184,10 @@ impl ApplicationHandler<UserEvent> for App {
 
         if !missing.is_empty() {
             let fonts = missing.join(winc_i18n::t!("workspace-list-separator"));
-            let message = winc_i18n::t!("workspace-font-missing", fonts = fonts);
+            let message = match crate::keymap::shortcut(crate::keymap::Action::Settings) {
+                Some(key) => winc_i18n::t!("workspace-font-missing-key", fonts = fonts, key = key),
+                None => winc_i18n::t!("workspace-font-missing", fonts = fonts),
+            };
             eprintln!("winc: {message}");
             self.notify(message);
         }

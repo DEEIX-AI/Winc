@@ -10,6 +10,10 @@ common-reveal-in-folder = { $platform ->
     [windows] 在文件资源管理器中显示
    *[other] 在目录中显示
 }
+common-key-enter = { $platform ->
+    [macos] ↩
+   *[other] Enter
+}
 common-close = 关闭
 common-close-dialog-first = 窗口上已有对话框，请先关闭它
 

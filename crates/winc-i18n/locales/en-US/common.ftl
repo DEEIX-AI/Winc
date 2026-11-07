@@ -10,6 +10,10 @@ common-reveal-in-folder = { $platform ->
     [windows] Reveal in File Explorer
    *[other] Show in Folder
 }
+common-key-enter = { $platform ->
+    [macos] ↩
+   *[other] Enter
+}
 common-close = Close
 common-close-dialog-first = A dialog is already open in this window; close it first
 

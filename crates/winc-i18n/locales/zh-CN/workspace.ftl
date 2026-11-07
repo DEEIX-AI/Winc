@@ -133,13 +133,13 @@ workspace-goto-placeholder = 行:列
 workspace-goto-total = 共 { $count } 行
 workspace-stash-title = 储藏更改
 workspace-stash-placeholder = 说明（可选）
-workspace-stash-hint = 含未跟踪的文件 · ↩ 储藏
+workspace-stash-hint = 含未跟踪的文件 · { common-key-enter } 储藏
 workspace-rename-branch-title = 重命名分支
 workspace-rename-branch-placeholder = 分支名称
-workspace-rename-branch-hint = 当前为 { $name } · ↩ 重命名
+workspace-rename-branch-hint = 当前为 { $name } · { common-key-enter } 重命名
 workspace-tag-title = 新建标签
 workspace-tag-placeholder = 标签名称
-workspace-tag-hint = 基于 { $commit } · ↩ 创建
+workspace-tag-hint = 基于 { $commit } · { common-key-enter } 创建
 
 ## 快速打开
 
@@ -276,7 +276,8 @@ workspace-notice-show-output = 查看输出
 workspace-notice-install = 安装方法
 workspace-notice-open-settings = 打开设置
 workspace-format-output-title = 格式化输出
-workspace-font-missing = 无法使用配置中的字体 { $fonts }，已改用默认字体（按 ⌘, 打开设置）
+workspace-font-missing-key = 无法使用配置中的字体 { $fonts }，已改用默认字体（按 { $key } 打开设置）
+workspace-font-missing = 无法使用配置中的字体 { $fonts }，已改用默认字体
 workspace-font-missing-item = { $key }「{ $name }」
 workspace-font-unusable = 无法使用此字体，请选择其他字体
 workspace-stdin-title = 标准输入
