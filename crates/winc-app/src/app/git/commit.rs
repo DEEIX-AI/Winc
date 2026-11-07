@@ -126,6 +126,15 @@ pub(crate) struct CommitOverflow {
     pub actions: Option<(Rect, Rect)>,
 }
 
+/// 改动列表里一行名字的过渡状态的键（见 `TreeLabels`）：滚动、展开收起前后不变。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum CommitName {
+    /// 一个目录：同一个目录可以同时出现在几组里，连同组区分。
+    Dir(CommitGroup, PathBuf),
+    /// 一个文件（`Status::entries` 里的路径）。
+    File(PathBuf),
+}
+
 /// 改动列表里的一组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommitGroup {
@@ -565,6 +574,8 @@ pub(crate) struct CommitState {
     /// 鼠标停着的那一行名字放不下时，这一行写全名（每帧绘制前算，见
     /// `view::commit::commit_overflow`）。
     pub(crate) overflow: Option<CommitOverflow>,
+    /// 各行名字随鼠标展开、收回的过渡，和文件树的名字一样。
+    pub(crate) names: crate::app::TreeLabels<CommitName>,
     /// 选中的文件；多选时是当前行（键盘从这里移动，预览的是它）。
     pub selected: Option<PathBuf>,
     /// 多选时选中的各个文件；为空时只有 `selected` 算选中。
@@ -651,6 +662,7 @@ impl Default for CommitState {
             scroll: 0.0,
             motion: None,
             overflow: None,
+            names: Default::default(),
             selected: None,
             marked: HashSet::new(),
             anchor: None,
@@ -1044,6 +1056,13 @@ impl App {
     /// 鼠标没在拖东西、侧栏也没在开合：可以在悬停的行上展开写不下的名字。
     pub(crate) fn idle_pointer(&self) -> bool {
         self.sidebar_motion.is_none() && matches!(self.drag, crate::app::Drag::None)
+    }
+
+    /// 窗口坐标的 `y` 是否落在写全名的那一改动行上：鼠标在这一行上时不唤出列表的滚动条，
+    /// 和文件树相同。
+    pub(in crate::app) fn over_commit_overflow_row(&self, y: f32) -> bool {
+        self.commit_shown()
+            && (self.commit.overflow).is_some_and(|o| (o.y..o.y + COMMIT_ROW).contains(&y))
     }
 
     /// 窗口坐标 (`x`, `y`) 是否在改动行伸出侧栏的那一段名字上。

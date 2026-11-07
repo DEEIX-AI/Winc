@@ -6,6 +6,7 @@
 //! 状态字母；悬停时状态字母替换为「打开文件」「回滚」两个按钮。改动行不显示行数。
 //! 坐标均为逻辑像素。
 
+use std::borrow::Cow;
 use std::f32::consts::FRAC_PI_2;
 use std::path::Path;
 
@@ -14,13 +15,13 @@ use winc_i18n::t;
 
 use crate::app::git::log::display_local;
 use crate::app::{
-    COMMIT_ROW, CommitGroup, CommitLabels, CommitOverflow, CommitParts, CommitRow, CommitRows,
-    CommitTarget, Focus, MESSAGE_LINE, MESSAGE_PAD, SyncState,
+    COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
+    CommitRows, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE, MESSAGE_PAD, SyncState,
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
     BADGE_CENTER, BADGE_ROOM, CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, ContextBar, fold_chain,
-    git_color,
+    git_color, retracting_color,
 };
 use crate::view::*;
 
@@ -73,6 +74,8 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     }
     let mut hits = Vec::new();
     draw_header(app, frame, &parts, &mut hits);
+    let animate = app.animate_commit_names();
+    app.commit.names.begin_frame(animate);
     match (&app.git.status, &app.git.problem) {
         (Some(status), _) if !status.entries.is_empty() => {
             draw_list(app, frame, &parts, status, &mut hits);
@@ -84,6 +87,7 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
         }
         (None, None) => draw_note(app, frame, &parts, t!("git-commit-view-loading"), false),
     }
+    app.commit.names.end_frame();
     // 列表的滚动条贴在列表右边，盖在固定的行上面；放得下时没有。
     let content = app.commit_max_scroll() + parts.list.h;
     let scroll = app.commit.scroll;
@@ -950,10 +954,18 @@ fn draw_row(
         .overflow
         .filter(|o| o.row == i && (o.y - y).abs() < 0.5);
     let spill = full.and_then(|o| o.spill);
+    // 名字写全名还是截短，按行判断，不看位置：固定在顶部的行和列表里被它盖住的那一行一样。
+    let wanted = app.commit.overflow.is_some_and(|o| o.row == i);
+    let cause = LabelCause {
+        hovered: wanted,
+        levels: 0,
+        current: 0,
+    };
     // 底色上下各让出 1 逻辑像素：相邻两行都有底色（选中的和悬停的）时中间留一道缝。
     let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-    let fill = |frame: &mut Frame<'_>, color: Color| {
-        if spill.is_some() {
+    // 名字收回途中还伸在侧栏外面时，底色同样铺到侧栏边缘。
+    let fill = |frame: &mut Frame<'_>, color: Color, wide: bool| {
+        if spill.is_some() || wide {
             let r = RADIUS_ROW;
             let wide = Rect::new(shade.x, shade.y, list.right() - shade.x, shade.h);
             frame.rect_corners(wide, color, [r, 0.0, 0.0, r], list);
@@ -1046,8 +1058,22 @@ fn draw_row(
                 && members
                     .iter()
                     .all(|&m| app.commit_is_selected(&status.entries[m].path));
-            if let Some(color) = row_color(p, is_selected, focused, hovered || full.is_some()) {
-                fill(frame, color);
+            let icon_x = check_x(level) + ICON;
+            let text_x = icon_x + icons::FOLDER_WIDTH + LABEL_GAP;
+            let room = (!wanted).then(|| (text_clip.right() - text_x).max(0.0));
+            let parts = dir_parts(app, frame, name, room);
+            let width = parts_width(app, frame, &parts, true);
+            let key = CommitName::Dir(*group, dir.clone());
+            let view = app.commit.names.sync(&key, cause, &parts, width);
+            let retracting =
+                !wanted && view.progress < 1.0 && text_x + view.width > text_clip.right();
+            let color = if retracting {
+                retracting_color(p, is_selected, focused, view.progress)
+            } else {
+                row_color(p, is_selected, focused, hovered || full.is_some())
+            };
+            if let Some(color) = color {
+                fill(frame, color, retracting);
             }
             let open = !app.commit.dir_collapsed(*group, dir);
             chevron(
@@ -1066,15 +1092,22 @@ fn draw_row(
             checkbox(frame, dir_check, cy, state);
             // 目录和文件的图标在同一列（宽 `FOLDER_WIDTH`）里居中，名字从同一处开始，
             // 两种行排得整齐。
-            let icon_x = dir_check + ICON;
             icons::folder(frame, (icon_x, (cy - 6.0).round()), open, p.folder, list);
-            let text_x = icon_x + icons::FOLDER_WIDTH + LABEL_GAP;
-            if full.is_some() {
-                draw_dir_label(app, frame, (text_x, band), name, None, list);
+            // 写全名、收回途中名字画到过渡中的宽度为止，侧栏外的部分由 `draw_commit_overflow`
+            // 接着画。
+            let name_clip = if wanted || retracting {
+                let w = (text_x + view.width - list.x).max(0.0);
+                Rect::new(list.x, y, w, COMMIT_ROW).intersect(list)
             } else {
-                let room = (text_clip.right() - text_x).max(0.0);
-                draw_dir_label(app, frame, (text_x, band), name, Some(room), text_clip);
-            }
+                text_clip
+            };
+            draw_name(
+                app,
+                frame,
+                (text_x, band, true, p.text),
+                (&parts, &view),
+                name_clip,
+            );
             if let Some(spill) = spill {
                 hits.push((spill, CommitTarget::Dir(i)));
             }
@@ -1101,20 +1134,53 @@ fn draw_row(
                 Some(overflow) => overflow.actions,
                 None => hovered.then(|| file_actions(band)),
             };
-            if let Some(color) = row_color(p, is_selected, focused, hovered || full.is_some()) {
-                fill(frame, color);
-            }
             // 文件没有箭头：勾选框和同一层目录的勾选框对齐；平铺时没有层级，和组标题的勾选框
             // 对齐。
             let file_check = check_x(file_column(app, *depth));
-            checkbox(frame, file_check, cy, app.commit.file_state(entry));
-
             let name = entry
                 .path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let icon_x = file_check + ICON;
+            let text_x = icon_x + icons::FOLDER_WIDTH + LABEL_GAP;
+            let dir = (app.commit.flat())
+                .then(|| entry.path.parent().and_then(|p| p.strip_prefix(root).ok()))
+                .flatten()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| p.to_string_lossy());
+            // 名字用正文色（删除的文件用次要色），状态是右端一个上色的字母（M、U、D 等）；
+            // 整行名字上色后颜色过多，不易分辨。
+            let change = entry.shown();
+            let letter = change.letter().to_string();
+            let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
+            let letter_x = band.right() - END_CENTER - letter_w / 2.0;
+            // 文件名及平铺时的目录截短到 `text_end` 为止。写全名时按钮跟着名字展开的宽度移动。
+            let text_end = actions.map_or(letter_x - 8.0, |(open, _)| open.x - 4.0);
+            let room = (!wanted).then(|| (text_end - text_x).max(0.0));
+            let parts = file_parts(app, frame, (&name, dir.as_deref()), room);
+            let width = parts_width(app, frame, &parts, false);
+            let key = CommitName::File(entry.path.clone());
+            let view = app.commit.names.sync(&key, cause, &parts, width);
+            let lag = if wanted { width - view.width } else { 0.0 };
+            let actions = actions.map(|(open, revert)| {
+                let back = |r: Rect| Rect::new(r.x - lag, r.y, r.w, r.h);
+                (back(open), back(revert))
+            });
+            let retracting = !wanted && view.progress < 1.0 && text_x + view.width > text_end;
+            let color = if retracting {
+                retracting_color(p, is_selected, focused, view.progress)
+            } else {
+                row_color(p, is_selected, focused, hovered || full.is_some())
+            };
+            if let Some(color) = color {
+                fill(
+                    frame,
+                    color,
+                    retracting && text_x + view.width > text_clip.right(),
+                );
+            }
+            checkbox(frame, file_check, cy, app.commit.file_state(entry));
             // 未跟踪的整个目录在 Git 的输出里只有一项，画目录图标。文件图标在图标那一列里居中。
             if entry.is_dir {
                 icons::folder(frame, (icon_x, (cy - 6.0).round()), false, p.folder, list);
@@ -1122,15 +1188,6 @@ fn draw_row(
                 let inset = (icons::FOLDER_WIDTH - icons::FILE_WIDTH) / 2.0;
                 draw_file_icon(frame, p, (icon_x + inset, cy), &name, list);
             }
-            let text_x = icon_x + icons::FOLDER_WIDTH + LABEL_GAP;
-            // 名字用正文色（删除的文件用次要色），状态是右端一个上色的字母（M、U、D 等）；
-            // 整行名字上色后颜色过多，不易分辨。
-            let change = entry.shown();
-            let letter = change.letter().to_string();
-            let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
-            let letter_x = band.right() - END_CENTER - letter_w / 2.0;
-            // 文件名及平铺时的目录绘制到 `text_end` 为止。
-            let text_end = actions.map_or(letter_x - 8.0, |(open, _)| open.x - 4.0);
             if let Some(actions) = actions {
                 draw_file_actions(app, frame, actions, index, list);
                 // 伸出侧栏的按钮同样可以点击，命中区域不裁到列表内。
@@ -1147,43 +1204,30 @@ fn draw_row(
                     hits.push((rect, target));
                 }
             } else if full.is_none() {
-                ui_text_small(
-                    frame,
-                    app,
-                    letter_x,
-                    band,
-                    &letter,
-                    git_color(p, change),
-                    list,
-                );
+                // 收回途中名字还盖着状态字母那一块：字母随过渡淡入，不和名字叠在一起。
+                let ink = git_color(p, change);
+                let ink = if retracting {
+                    ink.alpha(ink.a * view.progress)
+                } else {
+                    ink
+                };
+                ui_text_small(frame, app, letter_x, band, &letter, ink, list);
             }
             let color = file_color(change, p);
-            let room = (text_end - text_x).max(0.0);
-            let name_clip =
-                Rect::new(list.x, y, (text_end - list.x).max(0.0), COMMIT_ROW).intersect(list);
-            let name = if full.is_some() {
-                name.into()
+            let name_end = if wanted || retracting {
+                text_x + view.width
             } else {
-                ellipsize(frame, &name, app.fonts.ui, room)
+                text_end
             };
-            let end = ui_text(frame, app, text_x, band, &name, color, name_clip);
-            // 平铺时名字后面淡色写所在目录（放不下从前面截掉，留下最近的几级）。
-            if app.commit.flat()
-                && let Some(parent) = entry
-                    .path
-                    .parent()
-                    .and_then(|p| p.strip_prefix(root).ok())
-                    .filter(|p| !p.as_os_str().is_empty())
-            {
-                let dir = parent.to_string_lossy();
-                let room = (text_end - end - 8.0).max(0.0);
-                let dir = if full.is_some() {
-                    dir
-                } else {
-                    ellipsize(frame, &dir, app.fonts.ui_small, room)
-                };
-                ui_text_small(frame, app, end + 8.0, band, &dir, p.text_dim, name_clip);
-            }
+            let name_clip =
+                Rect::new(list.x, y, (name_end - list.x).max(0.0), COMMIT_ROW).intersect(list);
+            draw_name(
+                app,
+                frame,
+                (text_x, band, false, color),
+                (&parts, &view),
+                name_clip,
+            );
             if let Some(spill) = spill {
                 hits.push((spill, CommitTarget::File(index)));
             }
@@ -1506,7 +1550,7 @@ struct RowText {
     offset: f32,
     name: String,
     dir: Option<String>,
-    /// 名字是并起来的几级目录（`a/b/c`），由 [`draw_dir_label`] 绘制。
+    /// 名字是并起来的几级目录（`a/b/c`），由 [`draw_dir_parts`] 绘制。
     folder: bool,
     color: Color,
     /// 悬停时该行的底色；没有悬停时也是 `Some` 的行同样铺色。
@@ -1595,11 +1639,7 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
         return None;
     }
     let list = app.commit_parts().list;
-    // 固定在顶部的行按固定的位置，不用滚动的偏移。
-    let y = match app.commit_sticky(&rows).iter().find(|s| s.row == row) {
-        Some(s) => s.rect.y,
-        None => list.y + row as f32 * COMMIT_ROW - app.commit.scroll,
-    };
+    let y = row_top(app, &rows, row, list);
     let text = row_text(app, status, root, rows.get(row)?)?;
     let band = Rect::new(list.x + 8.0, y, list.w - 16.0, COMMIT_ROW);
     let end = name_end(app, frame, &text, band);
@@ -1652,6 +1692,9 @@ fn name_end(app: &App, frame: &mut Frame<'_>, text: &RowText, band: Rect) -> f32
 }
 
 /// 在编辑区上面继续绘制放不下的改动行名字：底色、文字和列表里的那一行连成一条。
+///
+/// 命中范围按全名算（见 [`commit_overflow`]），画的时候按名字展开到的宽度露出，和文件树相同：
+/// 过渡途中鼠标移过去不会落空。
 pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     let Some(CommitOverflow {
         row,
@@ -1669,6 +1712,29 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     let Some(text) = rows.get(row).and_then(|r| row_text(app, status, root, r)) else {
         return;
     };
+    let Some(view) = app.commit.names.peek(&name_key(status, &rows[row])) else {
+        return;
+    };
+    let list = app.commit_parts().list;
+    let band = Rect::new(list.x + 8.0, y, list.w - 16.0, COMMIT_ROW);
+    let x = band.x + text.offset;
+    // 按钮跟着名字移动（见 `draw_row`），露出的部分到按钮为止；目录行露到名字后面 8。
+    let parts = full_parts(&text);
+    let width = parts_width(app, frame, &parts, text.folder);
+    let lag = width - view.width;
+    let actions = actions.map(|(open, revert)| {
+        let back = |r: Rect| Rect::new(r.x - lag, r.y, r.w, r.h);
+        (back(open), back(revert))
+    });
+    let right = match actions {
+        Some((_, revert)) => revert.right() + 4.0,
+        None => x + view.width + 8.0,
+    }
+    .min(spill.right());
+    if right <= spill.x {
+        return;
+    }
+    let spill = Rect::new(spill.x, spill.y, right - spill.x, spill.h);
     let p = app.palette;
     let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
     // 先垫一层侧栏底色，再叠半透明的悬停色，与列表里那一行的底色相同。
@@ -1676,29 +1742,124 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     if let Some(color) = text.shade {
         frame.rect_corners(spill, color, radii, spill);
     }
-    let list = app.commit_parts().list;
-    let band = Rect::new(list.x + 8.0, y, list.w - 16.0, COMMIT_ROW);
     let clip = Rect::new(spill.x, y, spill.w, COMMIT_ROW);
-    let x = band.x + text.offset;
     // 有按钮时名字在按钮之前截断。
     let text_clip = match actions {
         Some((open, _)) => Rect::new(clip.x, clip.y, (open.x - 4.0 - clip.x).max(0.0), clip.h),
         None => clip,
     };
-    let end = if text.folder {
-        draw_dir_label(app, frame, (x, band), &text.name, None, text_clip)
-    } else {
-        ui_text(frame, app, x, band, &text.name, text.color, text_clip)
-    };
-    if let Some(dir) = &text.dir {
-        ui_text_small(frame, app, end + 8.0, band, dir, p.text_dim, text_clip);
-    }
+    let style = (x, band, text.folder, text.color);
+    draw_name(app, frame, style, (&parts, &view), text_clip);
     if let (Some(actions), CommitRow::File { index, .. }) = (actions, &rows[row]) {
         draw_file_actions(app, frame, actions, *index, clip);
     }
 }
 
-/// 返回并起来的几级目录（`Sources/DEEIXPET`）画出来的宽度（逻辑像素），见 [`draw_dir_label`]。
+/// 绘制鼠标移开后正在收回、还伸在侧栏外面的改动行名字：不响应点击，收回到侧栏边缘时消失。
+///
+/// 底色和列表里的那一段一起淡出（`retracting_color`），写的是收回前的全名，与文件树相同。
+pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame<'_>) {
+    if !app.commit_shown() || !app.commit.names.moving() {
+        return;
+    }
+    let (Some(status), Some(root)) = (app.git.status.as_ref(), app.git.root.as_deref()) else {
+        return;
+    };
+    let p = app.palette;
+    let rows = app.commit_rows();
+    let list = app.commit_parts().list;
+    let open = app.commit.overflow.map(|o| o.row);
+    let window = app.layout.window.right() - 8.0;
+    let focused = app.focus == Focus::CommitList;
+    for (key, view) in app.commit.names.moving_rows() {
+        let Some(row) = (0..rows.len()).find(|&i| name_key(status, &rows[i]) == key) else {
+            continue;
+        };
+        if Some(row) == open || app.commit.motion.as_ref().is_some_and(|m| row > m.parent) {
+            continue;
+        }
+        let Some(text) = row_text(app, status, root, &rows[row]) else {
+            continue;
+        };
+        let y = row_top(app, &rows, row, list);
+        let band = Rect::new(list.x + 8.0, y, list.w - 16.0, COMMIT_ROW);
+        let x = band.x + text.offset;
+        let right = (x + view.width + 8.0).min(window);
+        if right <= list.right() {
+            continue;
+        }
+        let rect = Rect::new(
+            list.right(),
+            y + 1.0,
+            right - list.right(),
+            COMMIT_ROW - 2.0,
+        );
+        let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
+        frame.rect_corners(rect, p.sidebar_bg, radii, rect);
+        let selected = match &rows[row] {
+            CommitRow::File { index, .. } => app.commit_is_selected(&status.entries[*index].path),
+            _ => false,
+        };
+        if let Some(color) = retracting_color(p, selected, focused, view.progress) {
+            frame.rect_corners(rect, color, radii, rect);
+        }
+        let clip = Rect::new(rect.x, y, rect.w, COMMIT_ROW);
+        // 收回前的全名：相同的前缀不淡，其余随过渡淡出。内容没变（只是宽度在收）时照写全名。
+        let parts: Vec<Cow<'_, str>> = if view.old.is_empty() {
+            full_parts(&text)
+        } else {
+            view.old.iter().map(|s| Cow::Borrowed(s.as_str())).collect()
+        };
+        let alpha = |k: usize| {
+            if view.old.is_empty() || k < view.common {
+                1.0
+            } else {
+                view.old_alpha
+            }
+        };
+        if text.folder {
+            draw_dir_parts(app, frame, (x, band), &parts, alpha, clip);
+        } else {
+            draw_file_parts(app, frame, (x, band), &parts, (text.color, alpha), clip);
+        }
+    }
+}
+
+/// 改动行 `row` 名字过渡状态的键（见 [`CommitName`]）；组标题行没有名字，不会用到。
+fn name_key(status: &Status, row: &CommitRow) -> CommitName {
+    match row {
+        CommitRow::Dir { group, dir, .. } => CommitName::Dir(*group, dir.clone()),
+        CommitRow::File { index, .. } => CommitName::File(
+            status
+                .entries
+                .get(*index)
+                .map(|e| e.path.clone())
+                .unwrap_or_default(),
+        ),
+        CommitRow::Group(group) => CommitName::Dir(*group, Default::default()),
+    }
+}
+
+/// 改动行全名的各部分（见 [`dir_parts`]、[`file_parts`]），不截短。
+fn full_parts(text: &RowText) -> Vec<Cow<'_, str>> {
+    if text.folder {
+        text.name.split('/').map(Cow::Borrowed).collect()
+    } else {
+        let mut parts = vec![Cow::Borrowed(text.name.as_str())];
+        parts.extend(text.dir.as_deref().map(Cow::Borrowed));
+        parts
+    }
+}
+
+/// 第 `row` 行的上沿（逻辑像素）：固定在顶部的行按固定的位置，其余按滚动的偏移。
+fn row_top(app: &App, rows: &CommitRows, row: usize, list: Rect) -> f32 {
+    match app.commit_sticky(rows).iter().find(|s| s.row == row) {
+        Some(s) => s.rect.y,
+        None => list.y + row as f32 * COMMIT_ROW - app.commit.scroll,
+    }
+}
+
+/// 返回并起来的几级目录（`Sources/DEEIXPET`）画出来的宽度（逻辑像素），见 [`draw_dir_parts`]。
 fn dir_label_width(app: &App, frame: &mut Frame<'_>, label: &str) -> f32 {
     let size = app.fonts.ui;
     let parts = label.split('/').count() as f32;
@@ -1710,43 +1871,172 @@ fn dir_label_width(app: &App, frame: &mut Frame<'_>, label: &str) -> f32 {
     names + (parts - 1.0) * slash
 }
 
-/// 画目录行的名字。
-///
-/// 只有一个子目录的几级并成一行，样式与文件树中合并显示的目录相同。放不下 `room`（逻辑像素）时
-/// 折叠中间的各级（见 [`fold_chain`]），目录名不会被截成半个。返回名字末尾的 x 坐标（逻辑像素）。
-fn draw_dir_label(
+/// 目录行名字的各部分：并起来的几级目录各是一部分；放不下 `room`（逻辑像素）时折叠中间的各级
+/// （见 [`fold_chain`]），折掉的几级换成一个 `CHAIN_FOLD`，目录名不会被截成半个。
+fn dir_parts<'a>(
+    app: &App,
+    frame: &mut Frame<'_>,
+    label: &'a str,
+    room: Option<f32>,
+) -> Vec<Cow<'a, str>> {
+    let names: Vec<&str> = label.split('/').collect();
+    let Some(room) = room else {
+        return names.into_iter().map(Cow::Borrowed).collect();
+    };
+    let size = app.fonts.ui;
+    let widths: Vec<f32> = (names.iter())
+        .map(|name| frame.measure(FontKind::Ui, size, name))
+        .collect();
+    let step = frame.measure(FontKind::Ui, size, "/") + 2.0 * CHAIN_GAP;
+    let fold = frame.measure(FontKind::Ui, size, CHAIN_FOLD);
+    let (parts, _) = fold_chain(&widths, step, fold, names.len() - 1, room);
+    (parts.into_iter())
+        .map(|part| Cow::Borrowed(part.map_or(CHAIN_FOLD, |i| names[i])))
+        .collect()
+}
+
+/// 画目录行名字的各部分 `parts`（见 [`dir_parts`]），之间是「/」，样式与文件树中合并显示的目录
+/// 相同。第 k 部分的不透明度是 `alpha(k)`，它前面的「/」取两边较淡的一个，为 0 的不画；返回
+/// 名字末尾的 x 坐标（逻辑像素）。
+fn draw_dir_parts<S: AsRef<str>>(
     app: &App,
     frame: &mut Frame<'_>,
     (x, band): (f32, Rect),
-    label: &str,
-    room: Option<f32>,
+    parts: &[S],
+    alpha: impl Fn(usize) -> f32,
     clip: Rect,
 ) -> f32 {
     let p = app.palette;
     let size = app.fonts.ui;
-    let names: Vec<&str> = label.split('/').collect();
-    let widths: Vec<f32> = names
-        .iter()
-        .map(|name| frame.measure(FontKind::Ui, size, name))
-        .collect();
-    let slash = frame.measure(FontKind::Ui, size, "/");
-    let step = slash + 2.0 * CHAIN_GAP;
-    let fold = frame.measure(FontKind::Ui, size, CHAIN_FOLD);
-    let parts = match room {
-        Some(room) => fold_chain(&widths, step, fold, names.len() - 1, room).0,
-        None => (0..names.len()).map(Some).collect(),
-    };
     let separator = p.text.alpha(p.text.a * CHAIN_SEPARATOR);
+    let slash = frame.measure(FontKind::Ui, size, "/");
     let mut x = x;
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            x += CHAIN_GAP;
-            x = ui_text(frame, app, x, band, "/", separator, clip) + CHAIN_GAP;
+    for (k, part) in parts.iter().enumerate() {
+        let part = part.as_ref();
+        if k > 0 {
+            let a = alpha(k - 1).min(alpha(k));
+            if a > 0.0 {
+                let color = separator.alpha(separator.a * a);
+                ui_text(frame, app, x + CHAIN_GAP, band, "/", color, clip);
+            }
+            x += slash + 2.0 * CHAIN_GAP;
         }
-        x = match part {
-            Some(index) => ui_text(frame, app, x, band, names[*index], p.text, clip),
-            None => ui_text(frame, app, x, band, CHAIN_FOLD, separator, clip),
+        let color = if part == CHAIN_FOLD {
+            separator
+        } else {
+            p.text
+        };
+        let a = alpha(k);
+        x = if a > 0.0 {
+            ui_text(frame, app, x, band, part, color.alpha(color.a * a), clip)
+        } else {
+            x + frame.measure(FontKind::Ui, size, part)
         };
     }
     x
+}
+
+/// 文件行名字的各部分：文件名，平铺时再加所在目录 `dir`；放不下 `room`（逻辑像素）时各自从中间
+/// 截短，目录只用文件名剩下的地方。
+fn file_parts<'a>(
+    app: &App,
+    frame: &mut Frame<'_>,
+    (name, dir): (&'a str, Option<&'a str>),
+    room: Option<f32>,
+) -> Vec<Cow<'a, str>> {
+    let name = match room {
+        Some(room) => ellipsize(frame, name, app.fonts.ui, room),
+        None => Cow::Borrowed(name),
+    };
+    let mut parts = vec![name];
+    if let Some(dir) = dir {
+        let dir = match room {
+            Some(room) => {
+                let used = frame.measure(FontKind::Ui, app.fonts.ui, &parts[0]) + DIR_GAP;
+                ellipsize(frame, dir, app.fonts.ui_small, (room - used).max(0.0))
+            }
+            None => Cow::Borrowed(dir),
+        };
+        parts.push(dir);
+    }
+    parts
+}
+
+/// 画文件行名字的各部分 `parts`（见 [`file_parts`]）：文件名用 `color`，后面的目录用小一号的
+/// 淡色；不透明度和 [`draw_dir_parts`] 一样由 `alpha` 给出。返回名字末尾的 x 坐标（逻辑像素）。
+fn draw_file_parts<S: AsRef<str>>(
+    app: &App,
+    frame: &mut Frame<'_>,
+    (x, band): (f32, Rect),
+    parts: &[S],
+    (color, alpha): (Color, impl Fn(usize) -> f32),
+    clip: Rect,
+) -> f32 {
+    let p = app.palette;
+    let mut x = x;
+    for (k, part) in parts.iter().enumerate() {
+        let (size, ink, start) = if k == 0 {
+            (app.fonts.ui, color, x)
+        } else {
+            (app.fonts.ui_small, p.text_dim, x + DIR_GAP)
+        };
+        let a = alpha(k);
+        let ink = ink.alpha(ink.a * a);
+        x = match (k, a > 0.0) {
+            (0, true) => ui_text(frame, app, start, band, part.as_ref(), ink, clip),
+            (_, true) => ui_text_small(frame, app, start, band, part.as_ref(), ink, clip),
+            (_, false) => start + frame.measure(FontKind::Ui, size, part.as_ref()),
+        };
+    }
+    x
+}
+
+/// 平铺时文件名和后面的目录之间的距离（逻辑像素）。
+const DIR_GAP: f32 = 8.0;
+
+/// 改动行名字各部分 `parts` 画出来的宽度（逻辑像素）；`folder` 为真时是目录行。
+fn parts_width<S: AsRef<str>>(app: &App, frame: &mut Frame<'_>, parts: &[S], folder: bool) -> f32 {
+    let size = app.fonts.ui;
+    let measure = |frame: &mut Frame<'_>, k: usize, part: &str| {
+        let size = if k == 0 || folder {
+            size
+        } else {
+            app.fonts.ui_small
+        };
+        frame.measure(FontKind::Ui, size, part)
+    };
+    let gap = if folder {
+        frame.measure(FontKind::Ui, size, "/") + 2.0 * CHAIN_GAP
+    } else {
+        DIR_GAP
+    };
+    let mut width = 0.0;
+    for (k, part) in parts.iter().enumerate() {
+        if k > 0 {
+            width += gap;
+        }
+        width += measure(frame, k, part.as_ref());
+    }
+    width
+}
+
+/// 画改动行名字过渡中的一帧：旧内容按 `view` 淡出（相同的前缀不画，由新内容画），新内容 `parts`
+/// 随后淡入。返回新内容末尾的 x 坐标（逻辑像素）。
+fn draw_name<S: AsRef<str>>(
+    app: &App,
+    frame: &mut Frame<'_>,
+    (x, band, folder, color): (f32, Rect, bool, Color),
+    (parts, view): (&[S], &LabelView),
+    clip: Rect,
+) -> f32 {
+    let common = view.common;
+    let old = |k: usize| if k < common { 0.0 } else { view.old_alpha };
+    let new = |k: usize| if k < common { 1.0 } else { view.alpha };
+    if folder {
+        draw_dir_parts(app, frame, (x, band), &view.old, old, clip);
+        draw_dir_parts(app, frame, (x, band), parts, new, clip)
+    } else {
+        draw_file_parts(app, frame, (x, band), &view.old, (color, old), clip);
+        draw_file_parts(app, frame, (x, band), parts, (color, new), clip)
+    }
 }

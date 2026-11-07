@@ -99,6 +99,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_file_drop(app, frame);
     draw_tree_overflow_closing(app, frame);
     draw_tree_overflow(app, frame);
+    git::commit::draw_commit_overflow_closing(app, frame);
     git::commit::draw_commit_overflow(app, frame);
     git::changes::draw_change_popup(app, frame);
 

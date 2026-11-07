@@ -291,6 +291,7 @@ impl App {
         settle(&mut self.sidebar_motion, |m| m.clock);
         settle(&mut self.tree_motion, |m| m.clock);
         self.tree_labels.settle();
+        self.commit.names.settle();
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
         settle(&mut self.commit.stash_motion, |m| m.1);
@@ -375,6 +376,7 @@ impl App {
         self.sidebar_motion.is_some()
             || self.tree_motion.is_some()
             || self.tree_labels.moving()
+            || self.commit.names.moving()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
             || self.commit.stash_motion.is_some()

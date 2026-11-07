@@ -1317,6 +1317,74 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 改动行的长名字和文件树一样随鼠标滑出、收回：命中范围立即按全名，画出的宽度从截短的宽度
+/// 缓动过去，截短的名字淡出、全名淡入；移开以后宽度缓动回去，这一行上不再唤出滚动条。
+#[test]
+fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
+    let Some((dir, long)) = long_name_repo("git-commit-name-slide") else {
+        return;
+    };
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.commit.names.animate_without_window = true;
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let status = app.git.status.clone().unwrap();
+    let entry = (status.entries.iter())
+        .find(|e| e.path.ends_with(&long))
+        .unwrap();
+    let key = CommitName::File(entry.path.clone());
+    let rows = app.commit_rows();
+    let i = (rows.iter())
+        .position(|r| matches!(r, CommitRow::File { index, .. } if status.entries[*index].path == entry.path))
+        .unwrap();
+    let rest = app.commit.names.peek(&key).unwrap();
+    assert!(!app.commit.names.moving());
+
+    let list = app.commit_parts().list;
+    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+    app.on_mouse_move(list.x + 120.0, y);
+    paint(&mut app);
+    let overflow = app.commit.overflow.expect("long name spills");
+    let (_, revert) = overflow.actions.unwrap();
+    let view = app.commit.names.peek(&key).unwrap();
+    assert!(app.commit.names.moving());
+    assert!(view.width < revert.x - list.x, "{}", view.width);
+    assert!(
+        (view.width - rest.width).abs() < 40.0,
+        "{} {}",
+        view.width,
+        rest.width
+    );
+    assert!(!view.old.is_empty());
+    assert!(app.over_commit_overflow_row(y));
+
+    app.commit.names.finish();
+    paint(&mut app);
+    let out = app.commit.names.peek(&key).unwrap();
+    assert!(out.width > rest.width + 40.0);
+
+    // 移开：命中范围立即消失，宽度从全名开始缓动回去。
+    app.on_mouse_move(list.x + 120.0, list.bottom() - 4.0);
+    paint(&mut app);
+    assert!(app.commit.overflow.is_none_or(|o| o.row != i));
+    let back = app.commit.names.peek(&key).unwrap();
+    assert!(app.commit.names.moving());
+    assert!(
+        back.width > rest.width + 40.0,
+        "{} {}",
+        back.width,
+        rest.width
+    );
+    app.commit.names.finish();
+    paint(&mut app);
+    assert_eq!(app.commit.names.peek(&key).unwrap().width, rest.width);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_commit_overflow() {

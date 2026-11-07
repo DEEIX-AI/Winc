@@ -1016,7 +1016,12 @@ fn draw_overflow_band(
 }
 
 /// 返回名字收回途中这一行的底色：选中的行不变，其余是悬停的底色随进度 `progress` 淡出。
-fn retracting_color(p: &Palette, selected: bool, focused: bool, progress: f32) -> Option<Color> {
+pub(in crate::view) fn retracting_color(
+    p: &Palette,
+    selected: bool,
+    focused: bool,
+    progress: f32,
+) -> Option<Color> {
     row_color(p, selected, focused, false).or_else(|| {
         row_color(p, selected, focused, true).map(|color| color.alpha(color.a * (1.0 - progress)))
     })
