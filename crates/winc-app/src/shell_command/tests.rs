@@ -125,12 +125,12 @@ fn the_authorized_script_quotes_paths() {
     let command = authorized_command(&placement, true);
     assert_eq!(
         command,
-        "/bin/mkdir -p '/usr/local/bin' && /bin/ln -sfn \
-         '/Applications/Bob'\\''s \"Apps\"/winc.app/Contents/MacOS/winc' '/usr/local/bin/winc'"
+        "/bin/mkdir -p /usr/local/bin && /bin/ln -sfn \
+         '/Applications/Bob'\\''s \"Apps\"/winc.app/Contents/MacOS/winc' /usr/local/bin/winc"
     );
     assert_eq!(
         authorized_command(&placement, false),
-        "/bin/rm -f '/usr/local/bin/winc'"
+        "/bin/rm -f /usr/local/bin/winc"
     );
     // AppleScript 字符串内的反斜杠和双引号要转义。
     assert_eq!(
@@ -157,4 +157,133 @@ fn waiting_and_new_instances_stay_in_the_foreground() {
         ..Args::default()
     };
     assert!(stays_in_foreground(&new_instance));
+}
+
+#[test]
+fn launching_a_bundle_passes_absolute_targets() {
+    use crate::cli::Target;
+    let target = |path: &str, line, col| Target {
+        path: path.into(),
+        line,
+        col,
+    };
+    let bundle = Path::new("/Applications/My Apps/winc.app");
+    let none = open_arguments(bundle, &Args::default());
+    assert_eq!(none, ["-n", "-a", "/Applications/My Apps/winc.app"]);
+
+    let args = Args {
+        targets: vec![
+            target("/p", None, None),
+            target("/a b.rs", Some(11), Some(4)),
+            target("/c.rs", Some(0), None),
+            target("relative", None, None),
+        ],
+        ..Args::default()
+    };
+    let cwd = std::env::current_dir().unwrap().join("relative");
+    let out = open_arguments(bundle, &args);
+    assert_eq!(&out[3..7], ["--args", "/p", "/a b.rs:12:5", "/c.rs:1"]);
+    assert_eq!(out[7], cwd.as_os_str());
+}
+
+#[test]
+fn only_unreadable_targets_are_reported() {
+    use crate::cli::Target;
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, placement) = sandbox();
+    let locked = dir.join("locked.txt");
+    std::fs::write(&locked, "").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let target = |path: std::path::PathBuf| Target {
+        path,
+        line: None,
+        col: None,
+    };
+    let mut args = Args {
+        targets: vec![
+            target(locked.clone()),
+            target(placement.target.clone()),
+            target(dir.join("not-yet-created.rs")),
+            target(dir.clone()),
+        ],
+        ..Args::default()
+    };
+    let readable_as_root = std::fs::File::open(&locked).is_ok();
+    let failed = report_unreadable(&mut args);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    // root 不受文件权限限制（容器里的测试以 root 运行）。
+    assert_eq!(failed, !readable_as_root);
+    assert_eq!(args.targets.len(), if readable_as_root { 4 } else { 3 });
+
+    // 临时打开留在前台，由后续流程报告。
+    let mut wait = Args {
+        wait: true,
+        targets: vec![target(dir.join("x"))],
+        ..Args::default()
+    };
+    assert!(!report_unreadable(&mut wait));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 相对路径的链接属于其他程序，目标是否存在都不改动；判断与当前工作目录无关。
+#[test]
+fn relative_links_belong_to_other_programs() {
+    let (dir, placement) = sandbox();
+    let bin = placement.link.parent().unwrap();
+    std::fs::create_dir_all(bin).unwrap();
+    std::os::unix::fs::symlink("../Cellar/other/1.0/bin/winc", &placement.link).unwrap();
+    assert_eq!(install(&placement), Outcome::Occupied);
+    assert_eq!(uninstall(&placement), Outcome::Occupied);
+    assert!(std::fs::symlink_metadata(&placement.link).is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 安装失败时不留下临时链接。
+#[test]
+fn a_failed_install_leaves_no_temporary_link() {
+    let (dir, placement) = sandbox();
+    let bin = placement.link.parent().unwrap();
+    std::fs::create_dir_all(bin).unwrap();
+    // 目录不可写时临时链接创建不出来；root 不受限时安装成功，同样没有临时链接。
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let _ = install(&placement);
+    std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(std::fs::symlink_metadata(placement.link.with_file_name(".winc.tmp")).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 命名管道不会被打开：没有写入端时打开会一直阻塞。
+#[test]
+fn a_named_pipe_is_not_opened() {
+    let (dir, _) = sandbox();
+    let pipe = dir.join("pipe");
+    let made = std::process::Command::new("mkfifo").arg(&pipe).status();
+    if made.is_ok_and(|status| status.success()) {
+        assert_eq!(unreadable(&pipe), None);
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_display_is_needed_to_go_to_the_background() {
+    use std::ffi::OsStr;
+    assert!(!has_display(None, None));
+    assert!(!has_display(Some(OsStr::new("")), None));
+    assert!(has_display(Some(OsStr::new(":0")), None));
+    assert!(has_display(None, Some(OsStr::new("wayland-0"))));
+}
+
+/// 只有程序位于 `APPDIR` 内才算 AppImage：内置终端里运行其他安装方式的 `winc` 时变量同样存在。
+#[test]
+fn inherited_appimage_variables_are_ignored() {
+    use std::ffi::OsStr;
+    let image = Some(OsStr::new("/opt/winc.AppImage"));
+    let mount = Some(OsStr::new("/tmp/.mount_winc"));
+    assert_eq!(
+        appimage_of(Path::new("/tmp/.mount_winc/usr/bin/winc"), mount, image),
+        Some("/opt/winc.AppImage".into())
+    );
+    assert_eq!(appimage_of(Path::new("/usr/bin/winc"), mount, image), None);
+    assert_eq!(appimage_of(Path::new("/usr/bin/winc"), None, image), None);
 }
