@@ -75,6 +75,7 @@ git-op-rebase-onto = rebasing onto “{ $name }”
 git-op-delete-branch = deleting branch “{ $name }”
 git-op-new-branch = creating branch “{ $name }”
 git-op-new-tag = creating tag “{ $name }”
+git-op-unstage = unstaging
 git-op-canceled = Canceled { $what }
 git-question-sign-in = Sign In to { $host }
 git-question-unlock-key = Unlock SSH Key

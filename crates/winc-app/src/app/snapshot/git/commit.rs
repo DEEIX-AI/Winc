@@ -1982,3 +1982,189 @@ fn the_sidebar_keeps_one_width_across_views() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn commit_only_the_checked_lines() {
+    let dir = search_folder("git-partial-lines");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let root = app.git.root.clone().unwrap();
+    let file = root.join("src/main.rs");
+    let disk = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        disk.replace(
+            "let value_5 = 500;\n",
+            "let value_5 = 500;\nlet added_a = 1;\nlet added_b = 2;\n",
+        ),
+    )
+    .unwrap();
+    app.git_refresh();
+    app.git_preview_changes(&file);
+    paint(&mut app);
+
+    // 找到 `added_b` 所在的行并把它勾掉，同时只提交第一处改动。
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let text = std::fs::read_to_string(&file).unwrap();
+    let line = text.lines().position(|l| l == "let added_b = 2;").unwrap();
+    let hunk = view
+        .hunks
+        .iter()
+        .position(|h| h.new.contains(&line))
+        .unwrap();
+    let hunks = view.hunks.len();
+    app.press_diff(DiffTarget::IncludeLine(RIGHT, line));
+    paint(&mut app);
+    assert!(
+        app.diff_hits
+            .iter()
+            .any(|(_, t)| *t == DiffTarget::IncludeLine(RIGHT, line))
+    );
+    let status = app.git.status.clone().unwrap();
+    let entry = status.entries.iter().find(|e| e.path == file).unwrap();
+    assert_eq!(app.commit.file_state(entry), Some(false));
+    for other in (0..hunks).filter(|&h| h != hunk) {
+        app.press_diff(DiffTarget::Include(other));
+    }
+
+    app.commit.message.set_text("only added_a");
+    app.git_commit();
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["show", "HEAD:src/main.rs"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap();
+    assert!(head.contains("let added_a = 1;"), "{head}");
+    assert!(!head.contains("added_b"), "{head}");
+    // 没提交的行还在工作区里。
+    assert!(std::fs::read_to_string(&file).unwrap().contains("added_b"));
+}
+
+#[test]
+fn line_checks_keep_their_state_until_the_change_is_edited() {
+    use winc_core::diff::Pick;
+    use winc_editor::diff_view::LEFT;
+    let dir = search_folder("git-line-state");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let file = app.git.root.clone().unwrap().join("src/main.rs");
+    let status = app.git.status.clone().unwrap();
+    let entry = status
+        .entries
+        .iter()
+        .find(|e| e.path == file)
+        .unwrap()
+        .clone();
+    let (key, old) = (7, 0..2);
+    let all = [(key, old.clone())];
+    let inclusion = |app: &App, key| app.commit.hunk_inclusion(&entry, key, &old);
+    assert_eq!(inclusion(&app, key), Pick::Apply);
+
+    // 勾掉一行：按行提交。再勾回来：整处提交。
+    app.commit
+        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    assert!(matches!(inclusion(&app, key), Pick::Lines(_)));
+    app.commit
+        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    assert_eq!(inclusion(&app, key), Pick::Apply);
+
+    // 内容变了：行号不再对应，整处不提交。
+    app.commit
+        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    assert_eq!(inclusion(&app, key + 1), Pick::Skip);
+
+    // 整段的勾选框把只提交部分行的改动恢复为整处提交。
+    app.commit.toggle_hunk(&entry, key, &old, &all);
+    assert_eq!(inclusion(&app, key), Pick::Apply);
+
+    // 所有行都勾掉时文件也勾掉。
+    for (side, line) in [(LEFT, 0), (LEFT, 1), (RIGHT, 0)] {
+        app.commit
+            .toggle_line(&entry, (key, &old, 1), (side, line), &all);
+    }
+    assert_eq!(app.commit.file_state(&entry), None);
+
+    // 文件没勾时勾上一行：文件勾上，只提交这一行。
+    app.commit
+        .toggle_line(&entry, (key, &old, 1), (RIGHT, 0), &all);
+    let Pick::Lines(set) = inclusion(&app, key) else {
+        panic!("应当按行提交");
+    };
+    assert_eq!(set.old.len(), 2);
+    assert!(set.new.is_empty());
+}
+
+/// 回滚新加入的文件会把它移到废纸篓，取消暂存只改变暂存区，文件保留。
+#[test]
+fn unstaging_a_new_file_keeps_it_on_disk() {
+    let dir = search_folder("git-unstage");
+    if !make_repo(&dir) {
+        return;
+    }
+    git_in(&dir, &["add", "src/new.rs"]);
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let file = app.git.root.clone().unwrap().join("src/new.rs");
+    let staged = |app: &App| {
+        let status = app.git.status.as_ref().unwrap();
+        let entry = status.entries.iter().find(|e| e.path == file).unwrap();
+        entry.staged.is_some()
+    };
+    assert!(staged(&app));
+    app.run_commit_file_command(MenuCommand::GitUnstageFile, file.clone());
+    app.git_refresh();
+    assert!(!staged(&app));
+    assert!(file.exists());
+}
+
+/// 只提交部分行的改动：截图用于检查行勾选框、整段勾选框的「部分」状态和不提交行的底色。
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_partial_lines() {
+    let dir = search_folder("git-lines-shot");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let root = app.git.root.clone().unwrap();
+    let file = root.join("src/main.rs");
+    let disk = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        disk.replace(
+            "let value_5 = 500;\n",
+            "let value_5 = 500;\nlet added_a = 1;\nlet added_b = 2;\nlet added_c = 3;\n",
+        ),
+    )
+    .unwrap();
+    app.git_refresh();
+    app.git_preview_changes(&file);
+    paint(&mut app);
+    let text = std::fs::read_to_string(&file).unwrap();
+    let line = text.lines().position(|l| l == "let added_b = 2;").unwrap();
+    app.press_diff(DiffTarget::IncludeLine(RIGHT, line));
+    shoot(&mut app, "diff-partial-lines");
+    app.press_diff(DiffTarget::Layout);
+    shoot(&mut app, "diff-partial-lines-unified");
+}

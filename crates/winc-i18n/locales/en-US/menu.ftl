@@ -111,6 +111,7 @@ menu-git-push = Push
 menu-git-continue = Continue
 menu-git-show-diff = Show Diff
 menu-git-open-file = Open File
+menu-git-unstage = Unstage
 menu-git-roll-back = Roll Back…
 menu-git-roll-back-change = Roll Back This Change
 menu-git-file-history = Show File History

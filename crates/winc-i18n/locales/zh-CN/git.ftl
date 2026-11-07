@@ -75,6 +75,7 @@ git-op-rebase-onto = 变基到「{ $name }」
 git-op-delete-branch = 删除分支「{ $name }」
 git-op-new-branch = 新建分支「{ $name }」
 git-op-new-tag = 新建标签「{ $name }」
+git-op-unstage = 取消暂存
 git-op-canceled = 已取消{ $what }
 git-question-sign-in = 登录 { $host }
 git-question-unlock-key = 解锁 SSH 私钥

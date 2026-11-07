@@ -1058,6 +1058,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                     Some(Action::GitRevertChange),
                 ),
                 DiffTarget::Include(_) => t!("workspace-tip-include-change").to_owned(),
+                DiffTarget::IncludeLine(..) => t!("workspace-tip-include-line").to_owned(),
                 _ if app.editor.active()?.diff.as_deref()?.collapses() => {
                     t!("workspace-tip-expand-unchanged").to_owned()
                 }

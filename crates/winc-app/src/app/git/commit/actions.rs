@@ -530,8 +530,9 @@ fn partial_content(
     let (Ok(head), Ok(disk)) = (String::from_utf8(head), String::from_utf8(disk)) else {
         return Err(t!("git-commit-partial-not-utf8", name = name));
     };
-    let content = winc_core::diff::pick_hunks(&head, &disk, |key, old| {
-        !skipped.iter().any(|s| s.matches(key, &old))
+    let content = winc_core::diff::pick_changes(&head, &disk, |key, old| {
+        (skipped.iter().find(|s| s.matches(key, &old)))
+            .map_or(winc_core::diff::Pick::Apply, |skip| skip.pick(key))
     });
     Ok(Partial {
         path: path.to_path_buf(),

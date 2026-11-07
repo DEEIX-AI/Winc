@@ -247,6 +247,7 @@ workspace-tip-open-diff = Open in diff view
 workspace-tip-close-esc = Close (Esc)
 workspace-tip-revert-to-left = Revert change (restore left side)
 workspace-tip-include-change = Include this change in the commit
+workspace-tip-include-line = Include this line in the commit
 workspace-tip-expand-unchanged = Expand all unchanged regions
 workspace-tip-collapse-unchanged = Collapse unchanged regions
 workspace-tip-close-tab = Close

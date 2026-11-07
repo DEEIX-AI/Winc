@@ -46,6 +46,25 @@ pub fn line_checkbox(
     }
 }
 
+/// 绘制只包含部分内容的勾选框：样式与 [`line_checkbox`] 勾上时相同，框内是一条横线。
+///
+/// `hover` 是悬停时的底色。
+pub fn line_checkbox_mixed(
+    frame: &mut Frame<'_>,
+    center: (f32, f32),
+    size: f32,
+    hover: Option<Color>,
+    accent: Color,
+    clip: Rect,
+) {
+    line_button_hover(frame, center, hover, clip);
+    let rect = checkbox_rect(center, size);
+    frame.stroke(&checkbox_outline(rect), 1.2, accent, clip);
+    let (inset, y) = (size * 0.25, rect.y + rect.h / 2.0);
+    let mark = [Stroke::Line(rect.x + inset, y, rect.right() - inset, y)];
+    frame.stroke(&mark, MARK_STROKE, accent, clip);
+}
+
 /// 绘制差异视图里的「»」按钮（用左侧替换这一段）：两道朝右的箭头，强调色，笔宽和勾选框的勾
 /// 一样，大小和勾选框的框相当。
 ///

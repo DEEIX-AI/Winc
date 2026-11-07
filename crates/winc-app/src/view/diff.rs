@@ -3,12 +3,13 @@
 //!
 //! 两侧各绘制各的行，行号挨着中间的带子。每段改动按类型上色（新增绿、删除灰、修改蓝，都是主题里
 //! 配好的柔和色），两侧的底色与带子同色，一侧没有行时那一侧在插入的位置绘制一道线；改了的字再
-//! 深一层。「»」在左侧行号的左边，把左侧的一段换到右侧。
+//! 深一层。并排时「»」和改动勾选框都在带子上，「»」把左侧的一段换到右侧；两侧行号外侧是行勾选框。
 
 use std::fmt::Write as _;
 use std::ops::Range;
 
 use winc_config::RenderWhitespace;
+use winc_core::diff::Pick;
 use winc_core::text::{self, MAX_LINE_CHARS};
 use winc_core::wrap::{self, Breaks};
 use winc_core::{Lines, Selection};
@@ -28,6 +29,10 @@ use crate::layout::{GIT_LANE, Ruler, editor_content_height};
 
 /// 中间一栏勾选框的边长（逻辑像素）；「»」按钮的图标和它一样大，左右成对。
 const DIFF_BUTTON: f32 = 13.0;
+/// 行勾选框的边长（逻辑像素）：小于整段改动的勾选框，以示层级。
+const LINE_CHECK_SIZE: f32 = 11.0;
+/// 不提交的行的底色相对正常底色的不透明度：仍可辨认是改动，又能与提交的行区分。
+const SKIPPED_LINE_ALPHA: f32 = 0.35;
 /// 工具栏按钮的边长（逻辑像素）。
 const BUTTON: f32 = 24.0;
 /// 返回一处改动使用的颜色：只在右侧新增的绿、只在左侧删掉的灰、两侧都有（修改）的蓝。
@@ -473,6 +478,12 @@ fn draw_body(
     let hunk_y =
         |view: &DiffView, h: usize| unified.then(|| body.y + (view.hunk_pos(h) - pos) * lh);
     let drawn = drawn_rows(view, body, scroll, pos, lh);
+    // 各段改动的提交方式；文件不在提交视图里时为空，不绘制任何勾选框。
+    let inclusions: Vec<Pick> = app.diff_entry(view).map_or_else(Vec::new, |entry| {
+        (view.keys.iter().zip(&view.hunks))
+            .map(|(&key, hunk)| app.commit.hunk_inclusion(entry, key, &hunk.old))
+            .collect()
+    });
     let mut chars: Vec<char> = Vec::with_capacity(256);
     let mut tokens = Vec::with_capacity(32);
     let mut number = String::new();
@@ -551,9 +562,31 @@ fn draw_body(
             }
         };
         let shade = hunk.map(|h| row_shade(view, h));
+        // 只提交部分行的改动里，不提交的行底色变淡。
+        let line_skipped = hunk.is_some_and(|h| {
+            let start = if side == LEFT {
+                view.hunks[h].old.start
+            } else {
+                view.hunks[h].new.start
+            };
+            matches!(inclusions.get(h), Some(Pick::Lines(set))
+                if (if side == LEFT { &set.old } else { &set.new }).contains(&(line - start)))
+        });
         if let Some(shade) = shade {
-            frame.rect_clipped(band, shade.line, 0.0, body);
-            if unified && part == 0 {
+            let fill = if line_skipped {
+                shade.line.alpha(shade.line.a * SKIPPED_LINE_ALPHA)
+            } else {
+                shade.line
+            };
+            frame.rect_clipped(band, fill, 0.0, body);
+            // 单栏时行勾选框显示在加减号的位置。
+            let line_check = hunk
+                .and_then(|h| inclusions.get(h))
+                .is_some_and(|inclusion| {
+                    matches!(inclusion, Pick::Lines(_))
+                        || app.hover == Hover::Diff(DiffTarget::IncludeLine(side, line))
+                });
+            if unified && part == 0 && !line_check {
                 let sign = if side == LEFT { "−" } else { "+" };
                 frame.text(
                     FontKind::Mono,
@@ -598,6 +631,27 @@ fn draw_body(
                 p.gutter_text,
                 pane.gutter,
             );
+        }
+
+        // 行勾选框：只提交部分行的改动一直显示；其他改动在鼠标移到这一格时显示。
+        if let (0, Some(inclusion)) = (part, hunk.and_then(|h| inclusions.get(h))) {
+            let cell = parts.line_checks[side];
+            let rect = Rect::new(cell.x, y, cell.w, lh);
+            let hovered = app.hover == Hover::Diff(DiffTarget::IncludeLine(side, line));
+            if hovered || matches!(inclusion, Pick::Lines(_)) {
+                let on = !line_skipped && !matches!(inclusion, Pick::Skip);
+                icons::line_checkbox(
+                    frame,
+                    (rect.x + rect.w / 2.0, y + lh / 2.0),
+                    LINE_CHECK_SIZE,
+                    on,
+                    None,
+                    p.accent,
+                    p.text_dim.alpha(0.7),
+                    body,
+                );
+            }
+            hits.push((rect.intersect(body), DiffTarget::IncludeLine(side, line)));
         }
 
         let text_side = if side == LEFT {
@@ -867,10 +921,9 @@ fn draw_body(
         }
     }
 
-    // 勾选框：每段改动右侧第一行（右侧没有行时是插入的那道线）旁边，提交时包含这一处改动。
+    // 改动勾选框：与每段改动右侧第一行（右侧没有行时是插入的那道线）同高，提交时包含这一处改动。
     // 文件不在提交视图里时不绘制。
-    if let Some(entry) = app.diff_entry(view) {
-        let checks = parts.checks;
+    if !inclusions.is_empty() {
         for (h, rows) in view.hunk_rows[RIGHT].iter().enumerate() {
             let mid = if let Some(y) = hunk_y(view, h) {
                 y + lh / 2.0
@@ -883,34 +936,39 @@ fn draw_body(
                 continue;
             }
             let mid = mid.max(body.y + 10.0);
-            let on = view
-                .keys
-                .get(h)
-                .is_some_and(|&k| app.commit.hunk_on(entry, k, &view.hunks[h].old));
-            let c = (checks.x + checks.w / 2.0, mid);
+            let c = (parts.include_x, mid);
             // 和左边的「»」一套线条图标（`icons::line_checkbox`），悬停时才有底色。
             let hovered = app.hover == Hover::Diff(DiffTarget::Include(h));
-            icons::line_checkbox(
-                frame,
-                c,
-                DIFF_BUTTON,
-                on,
-                hovered.then_some(p.hover),
-                p.accent,
-                p.text_dim.alpha(0.7),
-                body,
-            );
+            match inclusions.get(h) {
+                Some(Pick::Lines(_)) => icons::line_checkbox_mixed(
+                    frame,
+                    c,
+                    DIFF_BUTTON,
+                    hovered.then_some(p.hover),
+                    p.accent,
+                    body,
+                ),
+                inclusion => icons::line_checkbox(
+                    frame,
+                    c,
+                    DIFF_BUTTON,
+                    matches!(inclusion, Some(Pick::Apply)),
+                    hovered.then_some(p.hover),
+                    p.accent,
+                    p.text_dim.alpha(0.7),
+                    body,
+                ),
+            }
             let rect = Rect::new(c.0 - 10.0, c.1 - 10.0, 20.0, 20.0);
             hits.push((rect.intersect(body), DiffTarget::Include(h)));
         }
     }
 
-    // 「»」：每段改动左侧第一行（左侧没有行时是插入的那道线）旁边，用左侧替换右侧这一段（回滚
+    // 「»」：与每段改动左侧第一行（左侧没有行时是插入的那道线）同高，用左侧替换右侧这一段（回滚
     // 这一处改动）。右侧不是工作区的文件时不绘制。
     // 左侧整个是空的（新文件）时也不绘制：用左侧替换就是把整个文件清空，这不是一处改动该有的
     // 操作；新文件的回滚在提交视图里进行。
     if view.new.path.is_some() && !empty_side[LEFT] {
-        let arrows = parts.arrows;
         for (h, rows) in view.hunk_rows[LEFT].iter().enumerate() {
             let mid = if let Some(y) = hunk_y(view, h) {
                 y + lh / 2.0
@@ -925,7 +983,7 @@ fn draw_body(
             // 和右边的勾选框一套线条图标：强调色、一样的笔宽，悬停时才有底色。
             // 贴着顶边的（文件开头插入的）下移半个按钮高度，避免被标题栏裁掉。
             let mid = mid.max(body.y + 10.0);
-            let c = (arrows.x + arrows.w / 2.0, mid);
+            let c = (parts.revert_x, mid);
             let hovered = app.hover == Hover::Diff(DiffTarget::Revert(h));
             icons::line_replace(frame, c, hovered.then_some(p.hover), p.accent, body);
             let rect = Rect::new(c.0 - 10.0, c.1 - 10.0, 20.0, 20.0);

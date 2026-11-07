@@ -222,7 +222,7 @@ fn inline_changes_mark_whole_words() {
 }
 
 #[test]
-fn pick_hunks_applies_only_the_chosen_changes() {
+fn pick_changes_applies_only_the_chosen_changes() {
     let old = "a\nb\nc\nd\ne\n";
     let new = "a\nB\nc\nd\nx\ne\n";
     let (a, b) = (lines(old), lines(new));
@@ -234,15 +234,64 @@ fn pick_hunks_applies_only_the_chosen_changes() {
         )
     };
     let first = key(&hunks[0]);
-    assert_eq!(pick_hunks(old, new, |k, _| k == first), "a\nB\nc\nd\ne\n");
+    let only = |keep: bool| if keep { Pick::Apply } else { Pick::Skip };
     assert_eq!(
-        pick_hunks(old, new, |k, _| k != first),
+        pick_changes(old, new, |k, _| only(k == first)),
+        "a\nB\nc\nd\ne\n"
+    );
+    assert_eq!(
+        pick_changes(old, new, |k, _| only(k != first)),
         "a\nb\nc\nd\nx\ne\n"
     );
-    assert_eq!(pick_hunks(old, new, |_, _| true), new);
-    assert_eq!(pick_hunks(old, new, |_, _| false), old);
+    assert_eq!(pick_changes(old, new, |_, _| Pick::Apply), new);
+    assert_eq!(pick_changes(old, new, |_, _| Pick::Skip), old);
     // 按旧文本的行区间认：第二段在旧文本里是插在第 4 行的位置。
-    assert_eq!(pick_hunks(old, new, |_, o| o != (4..4)), "a\nB\nc\nd\ne\n");
+    assert_eq!(
+        pick_changes(old, new, |_, o| only(o != (4..4))),
+        "a\nB\nc\nd\ne\n"
+    );
     // 插入与删除互换后是不同的改动，键也不同。
     assert_ne!(hunk_key(["a\n"], []), hunk_key([], ["a\n"]));
+}
+
+/// 返回只跳过 `old`、`new` 所列行的 [`Pick`]。
+fn skipping(old: &[usize], new: &[usize]) -> Pick {
+    Pick::Lines(LineSet {
+        old: old.iter().copied().collect(),
+        new: new.iter().copied().collect(),
+    })
+}
+
+#[test]
+fn pick_changes_applies_single_lines_of_a_change() {
+    let old = "a\nb\nc\nz\n";
+    let new = "a\nB\nC\nD\nz\n";
+    let apply = |old_lines: &[usize], new_lines: &[usize]| {
+        pick_changes(old, new, |_, _| skipping(old_lines, new_lines))
+    };
+    // 不跳过任何行等于应用整段；跳过全部行等于不应用。
+    assert_eq!(apply(&[], &[]), new);
+    assert_eq!(apply(&[0, 1], &[0, 1, 2]), old);
+    // 只加入部分新行，旧行全部删除。
+    assert_eq!(apply(&[], &[1]), "a\nB\nD\nz\n");
+    // 保留的旧行排在加入的新行之前。
+    assert_eq!(apply(&[1], &[1, 2]), "a\nc\nB\nz\n");
+}
+
+#[test]
+fn pick_changes_keeps_kept_lines_apart_at_the_end_of_the_file() {
+    // 旧文本末尾没有换行符，保留它之后再接新行时需要补上。
+    assert_eq!(
+        pick_changes("a\nb", "a\nc\n", |_, _| skipping(&[0], &[])),
+        "a\nb\nc\n"
+    );
+    assert_eq!(
+        pick_changes("a\r\nb", "a\r\nc\r\n", |_, _| skipping(&[0], &[])),
+        "a\r\nb\r\nc\r\n"
+    );
+    // 新文本末尾没有换行符，未加入最后一行时前面的行保持原样。
+    assert_eq!(
+        pick_changes("a\n", "a\nb\nc", |_, _| skipping(&[], &[1])),
+        "a\nb\n"
+    );
 }

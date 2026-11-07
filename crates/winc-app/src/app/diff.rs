@@ -36,7 +36,9 @@ const DIFF_ARROWS: f32 = 22.0;
 /// 右侧行号右边放勾选框的一列的宽度（逻辑像素）：按块提交时勾选每处改动。
 const DIFF_CHECKS: f32 = 22.0;
 /// 两侧行号之间连接改动的带子的宽度（逻辑像素）。
-const DIFF_RIBBON: f32 = 36.0;
+const DIFF_RIBBON: f32 = 48.0;
+/// 带子上的按钮中心到带子边缘的距离（逻辑像素）：两个 20 宽的悬停底色之间留 4 的间隙。
+const DIFF_RIBBON_BUTTON_INSET: f32 = 12.0;
 /// 行号左右各留的空白（逻辑像素）。
 pub(crate) const DIFF_GUTTER_PAD: f32 = 10.0;
 /// 单栏时加减号那一列的宽度，按字符宽度的倍数算：一个字符加一点间距。
@@ -163,6 +165,8 @@ pub enum DiffTarget {
     Revert(usize),
     /// 提交时是否包含第几段改动。
     Include(usize),
+    /// 提交时是否包含一行：（侧，行号，从 0 起）。
+    IncludeLine(usize, usize),
 }
 
 /// 差异里点击、拖选的单位：单击按字，双击按词，三击（或点在行号上）按行。
@@ -243,12 +247,18 @@ pub(crate) struct DiffParts {
     pub body: Rect,
     /// 左侧（改之前）和右侧（改之后）。
     pub panes: [DiffPane; 2],
-    /// 左侧行号左边放「»」的一列。
+    /// 左侧行号左边的一列：并排时放左侧的行勾选框，单栏时放「»」。
     pub arrows: Rect,
     /// 两侧行号之间连接改动的带子。
     pub ribbon: Rect,
-    /// 右侧行号右边放勾选框的一列。
+    /// 右侧行号右边的一列：并排时放右侧的行勾选框，单栏时放改动勾选框。
     pub checks: Rect,
+    /// 两侧放行勾选框的一列：并排时是 `arrows` 和 `checks`，单栏时都是加减号一列。
+    pub line_checks: [Rect; 2],
+    /// 「»」按钮的中心横坐标（逻辑像素）。
+    pub revert_x: f32,
+    /// 改动勾选框的中心横坐标（逻辑像素）。
+    pub include_x: f32,
 }
 
 impl App {
@@ -281,6 +291,7 @@ impl App {
             }
             DiffTarget::Revert(hunk) => self.revert_diff_hunk(hunk),
             DiffTarget::Include(hunk) => self.toggle_diff_hunk(hunk),
+            DiffTarget::IncludeLine(side, line) => self.toggle_diff_line(side, line),
         }
         self.request_redraw();
     }
@@ -314,6 +325,41 @@ impl App {
             return;
         };
         self.commit.toggle_hunk(&entry, key, &old, &all);
+        self.request_redraw();
+    }
+
+    /// 勾上或勾掉 `side` 侧第 `line` 行：提交时只提交勾上的行。
+    fn toggle_diff_line(&mut self, side: usize, line: usize) {
+        let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
+            return;
+        };
+        let range = |h: &winc_core::diff::LineHunk| {
+            if side == LEFT {
+                h.old.clone()
+            } else {
+                h.new.clone()
+            }
+        };
+        let Some(hunk) = view.hunks.iter().position(|h| range(h).contains(&line)) else {
+            return;
+        };
+        let target = &view.hunks[hunk];
+        let (old, new_len, start) = (target.old.clone(), target.new.len(), range(target).start);
+        let Some(&key) = view.keys.get(hunk) else {
+            return;
+        };
+        let all: Vec<(u64, std::ops::Range<usize>)> = view
+            .keys
+            .iter()
+            .zip(&view.hunks)
+            .map(|(&k, h)| (k, h.old.clone()))
+            .collect();
+        let Some(entry) = self.diff_entry(view).cloned() else {
+            return;
+        };
+        let offset = line - start;
+        self.commit
+            .toggle_line(&entry, (key, &old, new_len), (side, offset), &all);
         self.request_redraw();
     }
 
@@ -1086,16 +1132,14 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
     let gutter_w = (digits * cell + 2.0 * DIFF_GUTTER_PAD).round();
     let column = |x: f32, w: f32| Rect::new(x, body.y, w, body.h);
     if view.is_unified() {
-        // 单栏：「»」、改之前的行号、改之后的行号、勾选框、加减号，其余都是文字。
+        // 单栏：「»」、改之前的行号、改之后的行号、勾选框、加减号（行勾选框与之同列）和文字。
         let arrows = column(editor.x, DIFF_ARROWS);
         let left_gutter = column(arrows.right(), gutter_w);
         let right_gutter = column(left_gutter.right(), gutter_w);
         let checks = column(right_gutter.right(), DIFF_CHECKS);
         let sign = (DIFF_SIGN_CELLS * cell).round();
-        let text = column(
-            checks.right() + sign,
-            (editor.right() - checks.right() - sign).max(0.0),
-        );
+        let lines = column(checks.right(), sign);
+        let text = column(lines.right(), (editor.right() - lines.right()).max(0.0));
         let rect = column(editor.x, editor.w);
         return DiffParts {
             header,
@@ -1113,8 +1157,11 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
                 },
             ],
             arrows,
-            ribbon: column(checks.right(), 0.0),
+            ribbon: column(lines.right(), 0.0),
             checks,
+            line_checks: [lines, lines],
+            revert_x: arrows.x + arrows.w / 2.0,
+            include_x: checks.x + checks.w / 2.0,
         };
     }
     let middle = DIFF_ARROWS + 2.0 * gutter_w + DIFF_RIBBON + DIFF_CHECKS;
@@ -1145,5 +1192,9 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
         arrows,
         ribbon,
         checks,
+        line_checks: [arrows, checks],
+        // 并排时改动级的两个按钮都在中间的带子上，两侧的列留给行勾选框。
+        revert_x: ribbon.x + DIFF_RIBBON_BUTTON_INSET,
+        include_x: ribbon.right() - DIFF_RIBBON_BUTTON_INSET,
     }
 }

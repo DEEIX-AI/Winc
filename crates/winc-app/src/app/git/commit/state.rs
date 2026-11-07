@@ -1,5 +1,8 @@
 //! 勾选和折叠的状态，以及按目录分层排好的改动列表。
 
+use winc_core::diff::{LineSet, Pick};
+use winc_editor::diff_view::LEFT;
+
 use super::*;
 
 impl CommitState {
@@ -77,17 +80,18 @@ impl CommitState {
         self.skipped.get(&entry.path).is_some_and(|s| !s.is_empty())
     }
 
-    /// 文件 `entry` 里的一处改动是否提交：`key` 是它的内容，`old` 是它在 `HEAD` 里的行。
-    pub fn hunk_on(&self, entry: &Entry, key: u64, old: &Range<usize>) -> bool {
-        self.checked(entry)
-            && !self
-                .skipped
-                .get(&entry.path)
-                .is_some_and(|s| s.iter().any(|s| s.matches(key, old)))
+    /// 返回文件 `entry` 里的一处改动的提交方式：`key` 是它的内容，`old` 是它在 `HEAD` 里的行。
+    pub fn hunk_inclusion(&self, entry: &Entry, key: u64, old: &Range<usize>) -> Pick {
+        if !self.checked(entry) {
+            return Pick::Skip;
+        }
+        (self.skipped.get(&entry.path))
+            .and_then(|skips| skips.iter().find(|s| s.matches(key, old)))
+            .map_or(Pick::Apply, |skip| skip.pick(key))
     }
 
-    /// 勾上或勾掉文件 `entry` 里的一处改动（`key`、`old` 见 [`CommitState::hunk_on`]）；`all`
-    /// 是该文件现在所有的改动。
+    /// 勾上或勾掉文件 `entry` 里的一处改动（`key`、`old` 见 [`CommitState::hunk_inclusion`]）；
+    /// `all` 是该文件现在所有的改动。
     ///
     /// 文件没勾时勾上一处：文件勾上，只提交这一处；一处都不剩时文件也勾掉。
     pub fn toggle_hunk(
@@ -97,33 +101,106 @@ impl CommitState {
         old: &Range<usize>,
         all: &[(u64, Range<usize>)],
     ) {
-        let skip = |(key, old): &(u64, Range<usize>)| Skip {
-            key: *key,
-            old: old.clone(),
-        };
         if !self.checked(entry) {
             self.set_checked(entry, true);
-            let others = all.iter().filter(|(k, _)| *k != key).map(skip).collect();
+            let others = all
+                .iter()
+                .filter(|(k, _)| *k != key)
+                .map(Skip::whole)
+                .collect();
             self.skipped.insert(entry.path.clone(), others);
             return;
         }
-        let skipped = self.skipped.entry(entry.path.clone()).or_default();
-        // 换成现在的样子：认得出的留下（内容变了的换成新的 key），认不出的丢弃。
-        let mut fresh: Vec<Skip> = all
-            .iter()
-            .filter(|(k, o)| skipped.iter().any(|s| s.matches(*k, o)))
-            .map(skip)
-            .collect();
+        let mut fresh = self.refreshed_skips(entry, all);
         match fresh.iter().position(|s| s.matches(key, old)) {
             Some(i) => {
                 fresh.remove(i);
             }
-            None => fresh.push(skip(&(key, old.clone()))),
+            None => fresh.push(Skip::whole(&(key, old.clone()))),
         }
+        self.store_skips(entry, fresh, all);
+    }
+
+    /// 勾上或勾掉文件 `entry` 里一处改动的一行。
+    ///
+    /// `key`、`old` 见 [`CommitState::hunk_inclusion`]；`new_len` 是这处改动的新行数，`line` 是
+    /// （侧，相对这处改动开头的行号），`all` 是该文件现在所有的改动。文件没勾时勾上一行：文件
+    /// 勾上，只提交这一行。
+    pub fn toggle_line(
+        &mut self,
+        entry: &Entry,
+        (key, old, new_len): (u64, &Range<usize>, usize),
+        (side, line): (usize, usize),
+        all: &[(u64, Range<usize>)],
+    ) {
+        let total = old.len() + new_len;
+        let except = || {
+            let mut set = full_set(old.len(), new_len);
+            toggle_in(&mut set, side, line);
+            set
+        };
+        if !self.checked(entry) {
+            self.set_checked(entry, true);
+            let mut fresh: Vec<Skip> = all
+                .iter()
+                .filter(|(k, _)| *k != key)
+                .map(Skip::whole)
+                .collect();
+            fresh.push(Skip::with_lines(key, old, except(), total));
+            fresh.retain(|s| !s.is_empty());
+            self.skipped.insert(entry.path.clone(), fresh);
+            return;
+        }
+        let mut fresh = self.refreshed_skips(entry, all);
+        let lines = match fresh.iter().position(|s| s.key == key) {
+            Some(i) => {
+                let skip = fresh.remove(i);
+                match skip.lines {
+                    Some(mut set) => {
+                        toggle_in(&mut set, side, line);
+                        set
+                    }
+                    None => except(),
+                }
+            }
+            None => {
+                let mut set = LineSet::default();
+                toggle_in(&mut set, side, line);
+                set
+            }
+        };
+        fresh.push(Skip::with_lines(key, old, lines, total));
+        fresh.retain(|s| !s.is_empty());
+        self.store_skips(entry, fresh, all);
+    }
+
+    /// 返回文件 `entry` 已勾掉的改动在现在的 `all` 上的记录。
+    ///
+    /// 内容相同的改动沿用原来的记录；内容变了的改动行号不再对应，按整处勾掉记录，不会被算回要
+    /// 提交的改动；认不出的记录被丢弃。
+    fn refreshed_skips(&self, entry: &Entry, all: &[(u64, Range<usize>)]) -> Vec<Skip> {
+        let skips = self.skipped.get(&entry.path).map_or(&[][..], Vec::as_slice);
+        all.iter()
+            .filter_map(|(key, old)| {
+                let found = skips.iter().find(|s| s.matches(*key, old))?;
+                Some(if found.key == *key {
+                    Skip {
+                        old: old.clone(),
+                        ..found.clone()
+                    }
+                } else {
+                    Skip::whole(&(*key, old.clone()))
+                })
+            })
+            .collect()
+    }
+
+    /// 记下文件 `entry` 勾掉的改动；所有改动都整处勾掉时文件也勾掉。
+    fn store_skips(&mut self, entry: &Entry, skips: Vec<Skip>, all: &[(u64, Range<usize>)]) {
         let none_left = all
             .iter()
-            .all(|(k, o)| fresh.iter().any(|s| s.matches(*k, o)));
-        *skipped = fresh;
+            .all(|(key, old)| (skips.iter()).any(|s| s.lines.is_none() && s.matches(*key, old)));
+        self.skipped.insert(entry.path.clone(), skips);
         if none_left {
             self.set_checked(entry, false);
         }
@@ -366,9 +443,65 @@ pub struct Skip {
     key: u64,
     /// 在 `HEAD` 里的行；纯新增时是插入位置上的空区间。
     old: Range<usize>,
+    /// 只勾掉其中几行时的这些行；`None` 表示整处勾掉。行号只在内容等于 `key` 时有效。
+    lines: Option<LineSet>,
+}
+
+/// 把 `side` 侧第 `line` 行（相对改动开头）加入或移出 `set`。
+fn toggle_in(set: &mut LineSet, side: usize, line: usize) {
+    let lines = if side == LEFT {
+        &mut set.old
+    } else {
+        &mut set.new
+    };
+    if !lines.remove(&line) {
+        lines.insert(line);
+    }
+}
+
+/// 返回包含一处改动全部行的集合。
+fn full_set(old: usize, new: usize) -> LineSet {
+    LineSet {
+        old: (0..old).collect(),
+        new: (0..new).collect(),
+    }
 }
 
 impl Skip {
+    /// 创建整处勾掉的记录。
+    fn whole((key, old): &(u64, Range<usize>)) -> Skip {
+        Skip {
+            key: *key,
+            old: old.clone(),
+            lines: None,
+        }
+    }
+
+    /// 创建勾掉 `lines` 的记录：`total` 是这处改动的总行数，全部勾掉时按整处记录。
+    fn with_lines(key: u64, old: &Range<usize>, lines: LineSet, total: usize) -> Skip {
+        let whole = lines.old.len() + lines.new.len() == total;
+        Skip {
+            key,
+            old: old.clone(),
+            lines: (!whole).then_some(lines),
+        }
+    }
+
+    /// 是否没有勾掉任何行。
+    fn is_empty(&self) -> bool {
+        self.lines
+            .as_ref()
+            .is_some_and(|set| set.old.is_empty() && set.new.is_empty())
+    }
+
+    /// 返回内容为 `key` 的改动在这条记录下的提交方式。
+    pub(super) fn pick(&self, key: u64) -> Pick {
+        match &self.lines {
+            Some(lines) if self.key == key => Pick::Lines(lines.clone()),
+            _ => Pick::Skip,
+        }
+    }
+
     /// 一处改动（内容 `key`，在 `HEAD` 里的行 `old`）是不是勾掉的这一处。
     pub(super) fn matches(&self, key: u64, old: &Range<usize>) -> bool {
         if self.key == key {

@@ -124,7 +124,7 @@ pub struct Compared {
 impl Compared {
     /// 比较 `old` 和 `new`。
     ///
-    /// 按块提交用的 key 直接从比较时切好的行算（与 `diff::pick_hunks` 的切法相同），不再把每段
+    /// 按块提交用的 key 直接从比较时切好的行算（与 `diff::pick_changes` 的切法相同），不再把每段
     /// 改动的每一行另外复制成 `String`。
     pub fn new(old: &Rope, new: &Rope) -> Compared {
         let (a, b) = (old.to_string(), new.to_string());

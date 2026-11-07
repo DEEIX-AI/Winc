@@ -187,6 +187,7 @@ workspace-tip-open-diff = 在差异视图中打开
 workspace-tip-close-esc = 关闭（Esc）
 workspace-tip-revert-to-left = 回滚更改（恢复为左侧内容）
 workspace-tip-include-change = 提交时包含此更改
+workspace-tip-include-line = 提交时包含此行
 workspace-tip-expand-unchanged = 展开所有未更改的内容
 workspace-tip-collapse-unchanged = 折叠未更改的内容
 workspace-tip-close-tab = 关闭

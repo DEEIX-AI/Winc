@@ -1090,6 +1090,11 @@ impl App {
                 }
             }
             MenuCommand::GitRollbackFile => self.confirm_rollback(vec![path]),
+            MenuCommand::GitUnstageFile => {
+                self.git_operate(t!("git-op-unstage").into(), move |git, root| {
+                    git.unstage(root, &[path]).map(|()| String::new())
+                });
+            }
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }
