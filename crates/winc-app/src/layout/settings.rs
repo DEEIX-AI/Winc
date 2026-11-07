@@ -480,6 +480,24 @@ pub const THEME_CHOICES: [(ThemeChoice, Label); 3] = [
     (ThemeChoice::Dark, || t!("settings-theme-dark")),
 ];
 
+/// 设置页滚动条的轨道：贴着滚动区域 `area`（正文或快捷键列表）的右边，宽 4，上下各让出 4。
+pub fn settings_track(area: Rect) -> Rect {
+    Rect::new(area.right() - 7.0, area.y + 4.0, 4.0, area.h - 8.0)
+}
+
+/// 设置页滚动条的滑块：`area` 为滚动区域，`scroll`、`max` 为滚动量和最大滚动量；内容放得下时
+/// 返回 `None`。
+///
+/// 绘制、点击和拖动都用这份几何。滑块的长度和位置按轨道折算，滚到底时滑块到达轨道末端。
+pub fn settings_thumb(area: Rect, scroll: f32, max: f32) -> Option<Rect> {
+    if max <= 0.0 {
+        return None;
+    }
+    let track = settings_track(area);
+    let thumb = scrollbar_thumb(track, scroll, max + track.h)?;
+    Some(Rect::new(track.x, thumb.y, track.w, thumb.h))
+}
+
 /// 「关于」页的版本号：版本和处理器架构，例如「0.1.368 (arm64)」。
 pub fn version_label() -> String {
     let arch = match std::env::consts::ARCH {

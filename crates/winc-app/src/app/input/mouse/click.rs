@@ -327,7 +327,7 @@ impl App {
 
     /// 按下滚动条 `bar`，抓住滑块 `grab` 处开始拖；点在轨道上时滑块立即跳到鼠标处，
     /// 无需等待鼠标移动。
-    fn grab_scrollbar(&mut self, bar: Scrollbar, grab: f32) {
+    pub(super) fn grab_scrollbar(&mut self, bar: Scrollbar, grab: f32) {
         self.scroll_glide = None;
         self.drag = Drag::Scrollbar { bar, grab };
         let (x, y) = self.mouse;
