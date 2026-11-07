@@ -464,6 +464,7 @@ impl App {
         self.advance_wheel_glide();
         self.continue_drag_scroll();
         self.track_modules();
+        self.track_commit_bars();
         self.track_search_rows();
         self.git_follow_active();
         self.relayout();

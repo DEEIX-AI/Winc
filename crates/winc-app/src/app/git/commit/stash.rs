@@ -1,5 +1,8 @@
 //! 提交视图底部的储藏：一组可以收起的行，每条储藏一行。
 //!
+//! 一组贴在改动列表下面，展开、收起时像抽屉一样往上拉开、往下收回：标题跟着上升，各行从下沿底下
+//! 露出来，上面的改动列表随之变矮，节奏和文件树展开一个目录相同（`TREE_ANIMATION`）。
+//!
 //! 悬停时右端是「应用」和「⋯」（应用、应用并删除、删除），右键同样是这个菜单。点一下在单独的
 //! 预览标签里打开这条储藏的第一个改动文件，差异标签里的上一个、下一个文件在这条储藏的文件之间切换；
 //! 储藏时一起收进去的未跟踪文件排在后面。直接列出的条数有上限，再多时最后一行是「还有 N 条」，点了
@@ -12,6 +15,9 @@ use super::*;
 
 /// 储藏一组展开时最多占几行（行），连同「还有 N 条」：再多会把上面的改动列表挤得太矮。
 pub(crate) const STASH_ROWS: usize = 5;
+
+/// 储藏一组收着时的高度（逻辑像素）：标题一行，上下各留 `SIDEBAR_LIST_GAP`。
+const STASH_CLOSED: f32 = COMMIT_ROW + 2.0 * SIDEBAR_LIST_GAP;
 
 /// 正在预览标签里看的一条储藏。
 #[derive(Debug, Clone)]
@@ -41,19 +47,42 @@ impl App {
         }
     }
 
-    /// 储藏一组占的行数：标题一行，展开时再加上各条储藏和「还有 N 条」；没有储藏时为 0。
-    pub(crate) fn stash_section_rows(&self) -> usize {
-        let count = self.git.stashes.len();
-        match (count, self.commit.stash_open) {
-            (0, _) => 0,
-            (_, false) => 1,
-            (n, true) => 1 + n.min(STASH_ROWS),
-        }
+    /// 储藏一组展开时，标题下面的行数：各条储藏和「还有 N 条」。
+    pub(crate) fn stash_open_rows(&self) -> usize {
+        self.git.stashes.len().min(STASH_ROWS)
     }
 
-    /// 点了储藏一组的标题：收起或展开。
+    /// 储藏一组占的高度（逻辑像素）：收着时是 [`STASH_CLOSED`]，展开时再加上
+    /// [`App::stash_open_rows`] 行；展开、收起的途中按时钟过渡。没有储藏时为 0。
+    pub(crate) fn stash_section_height(&self) -> f32 {
+        if self.git.stashes.is_empty() {
+            return 0.0;
+        }
+        let settled = if self.commit.stash_open {
+            STASH_CLOSED + self.stash_open_rows() as f32 * COMMIT_ROW
+        } else {
+            STASH_CLOSED
+        };
+        (self.commit.stash_motion).map_or(settled, |(from, clock)| clock.between(from, settled))
+    }
+
+    /// 储藏一组标题上的箭头转到哪儿：0 朝右（收着），1 朝下（展开）。
+    ///
+    /// 按一组现在拉开了多少算，途中再点一下往回收时箭头和高度一起从当时的位置往回走。
+    pub(crate) fn stash_chevron(&self) -> f32 {
+        let span = self.stash_open_rows() as f32 * COMMIT_ROW;
+        if span <= 0.0 {
+            return 0.0;
+        }
+        ((self.stash_section_height() - STASH_CLOSED) / span).clamp(0.0, 1.0)
+    }
+
+    /// 点了储藏一组的标题：收起或展开，从现在的高度过渡过去。
     pub(super) fn toggle_stashes(&mut self) {
+        let from = self.stash_section_height();
         self.commit.stash_open = !self.commit.stash_open;
+        let clock = self.clock(crate::app::animation::TREE_ANIMATION);
+        self.commit.stash_motion = clock.map(|clock| (from, clock));
         self.commit.scroll = self.commit.scroll.min(self.commit_max_scroll());
     }
 

@@ -293,6 +293,9 @@ impl App {
         self.tree_labels.settle();
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
+        settle(&mut self.commit.stash_motion, |m| m.1);
+        settle(&mut self.commit.card.motion, |m| m.1);
+        settle(&mut self.commit.undo.motion, |m| m.1);
         settle(&mut self.global.field_motion, |m| m.2);
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.fold_motion, |m| m.clock);
@@ -374,6 +377,9 @@ impl App {
             || self.tree_labels.moving()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
+            || self.commit.stash_motion.is_some()
+            || self.commit.card.motion.is_some()
+            || self.commit.undo.motion.is_some()
             || self.global.field_motion.is_some()
             || self.global.motion.is_some()
             || self.drag_autoscrolling()

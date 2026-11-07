@@ -576,6 +576,54 @@ fn shoot_commit_stashes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 截图：动画途中的三帧：储藏一组拉开到三分之一，提交完以后提交卡片滑出到一半，推送以后
+/// 「上一次提交」收起到三分之一。
+#[test]
+#[ignore]
+fn shoot_commit_motion() {
+    let Some((mut app, root)) = git_app("commit-motion", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    for note in ["改登录", "试一下新写法", "调日志刷新"] {
+        std::fs::write(
+            root.join("src/main.rs"),
+            format!("fn main() {{ {note:?}; }}\n"),
+        )
+        .unwrap();
+        git_in(&root, &["stash", "push", "-q", "-m", note]);
+    }
+    std::fs::write(root.join("src/main.rs"), "fn main() { now(); }\n").unwrap();
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let closed = app.commit_parts().stashes.unwrap().h;
+    app.press_commit(CommitTarget::Stashes);
+    app.commit.stash_motion = Some((closed, Clock::frozen(TREE_ANIMATION / 3, TREE_ANIMATION)));
+    shoot(&mut app, "commit-stash-opening");
+
+    app.commit.stash_motion = None;
+    git_in(&root, &["commit", "-q", "-am", "now"]);
+    app.git_refresh();
+    app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    shoot(&mut app, "commit-card-leaving");
+
+    // 推送了：「上一次提交」收起到一半。
+    app.commit.card.motion = None;
+    git_in(
+        &root,
+        &["remote", "add", "origin", "https://example.invalid/r.git"],
+    );
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
+    app.track_commit_bars();
+    app.git_refresh();
+    app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 3, TREE_ANIMATION)));
+    shoot(&mut app, "commit-undo-folding");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 截图：没有改动的提交视图（居中的「没有更改」，没有提交卡片），深浅两套配色。
 #[test]
 #[ignore]
@@ -2532,6 +2580,136 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     app.git_refresh();
     assert!(root.join("notes.txt").exists());
     assert_eq!(app.git.stashes.len(), 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 储藏一组像抽屉一样拉开：途中一组的高度和箭头的角度都在两端之间，上面的改动列表跟着变矮，
+/// 还在移动的行不响应点击；停稳以后各行才能点。
+#[test]
+fn the_stash_group_opens_like_a_drawer() {
+    let Some((mut app, root)) = git_app("git-commit-stash-drawer", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    std::fs::write(root.join("src/main.rs"), "fn main() { stashed(); }\n").unwrap();
+    git_in(&root, &["stash", "push", "-q", "-m", "试一下新写法"]);
+    std::fs::write(root.join("src/main.rs"), "fn main() { now(); }\n").unwrap();
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let closed = app.commit_parts().stashes.unwrap();
+    app.press_commit(CommitTarget::Stashes);
+    let open = app.commit_parts().stashes.unwrap();
+    assert_eq!(open.h, closed.h + COMMIT_ROW);
+
+    app.commit.stash_motion = Some((closed.h, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    let parts = app.commit_parts();
+    let half = parts.stashes.unwrap();
+    assert!(closed.h < half.h && half.h < open.h, "{half:?}");
+    assert_eq!(half.bottom(), open.bottom());
+    assert_eq!(parts.list.bottom(), half.y);
+    assert!(0.0 < app.stash_chevron() && app.stash_chevron() < 1.0);
+    assert!(app.animating());
+    paint(&mut app);
+    let has = |app: &App, target| (app.commit_hits.iter()).any(|(_, t)| *t == target);
+    assert!(has(&app, CommitTarget::Stashes));
+    assert!(!has(&app, CommitTarget::Stash(0)));
+
+    app.commit.stash_motion = Some((closed.h, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
+    app.settle_animations();
+    assert!(app.commit.stash_motion.is_none());
+    paint(&mut app);
+    assert!(has(&app, CommitTarget::Stash(0)));
+    assert_eq!(app.stash_chevron(), 1.0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 上一次提交推送以后「上一次提交」那一栏收起：途中栏变矮、照样写着那个提交，上面的改动列表
+/// 跟着变高，「撤销」不再响应点击；停稳以后栏不再占地方。
+#[test]
+fn the_last_commit_bar_folds_away_once_it_is_pushed() {
+    let Some((mut app, root)) = git_app("git-undo-fold", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "加上改动"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    app.track_commit_bars();
+    let (bar, ..) = app.commit_parts().undo.unwrap();
+
+    // 推送了：远程分支指向同一个提交，不能再撤销。
+    git_in(
+        &root,
+        &["remote", "add", "origin", "https://example.invalid/r.git"],
+    );
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
+    app.git_refresh();
+    assert!(app.commit_undoable().is_none());
+    app.track_commit_bars();
+    let gone = app.commit_parts();
+    assert!(gone.undo.is_none());
+
+    app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    let parts = app.commit_parts();
+    let (half, ..) = parts.undo.unwrap();
+    assert!(0.0 < half.h && half.h < bar.h, "{half:?}");
+    assert_eq!(half.bottom(), bar.bottom());
+    assert_eq!(parts.list.bottom(), half.y);
+    assert_eq!(app.commit_undo_shown().unwrap().subject, "加上改动");
+    paint(&mut app);
+    assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Undo));
+
+    app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
+    app.settle_animations();
+    assert!(app.commit.undo.motion.is_none());
+    assert_eq!(app.commit_parts().list, gone.list);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 改动都提交以后提交卡片滑出视图底部：途中卡片大小不变、整体往下移，上面的改动列表跟着变高，
+/// 卡片上的按钮不再响应点击；停稳以后卡片不再占地方。
+#[test]
+fn the_commit_card_slides_away_once_nothing_is_left_to_commit() {
+    let Some((mut app, root)) = git_app("git-commit-card-slide", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let rest = app.commit_parts();
+    let card = rest.card.unwrap();
+    // 测试里没有窗口，记下的只是「上一帧显示着卡片」，不会开始过渡。
+    app.track_commit_bars();
+    assert!(app.commit.card.motion.is_none());
+
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    app.git_refresh();
+    app.track_commit_bars();
+    assert!(app.commit.card.motion.is_none());
+    let gone = app.commit_parts();
+    assert!(gone.card.is_none());
+
+    app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    let parts = app.commit_parts();
+    let half = parts.card.unwrap();
+    assert_eq!((half.x, half.w, half.h), (card.x, card.w, card.h));
+    assert!(
+        card.y < half.y && half.y < app.layout.sidebar.bottom(),
+        "{half:?}"
+    );
+    assert!(rest.list.bottom() < parts.list.bottom());
+    assert!(parts.list.bottom() < gone.list.bottom());
+    paint(&mut app);
+    assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Commit));
+
+    app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
+    app.settle_animations();
+    assert!(app.commit.card.motion.is_none());
+    assert_eq!(app.commit_parts().list, gone.list);
     let _ = std::fs::remove_dir_all(&root);
 }
 

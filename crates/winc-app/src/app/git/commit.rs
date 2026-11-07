@@ -477,6 +477,41 @@ enum Outcome {
 /// 排好的各行的缓存键：排它时的（`GitState::generation`、`CommitState::layout`）。
 type RowsKey = (u64, u64);
 
+/// 提交视图底部随内容出现、消失的一块（提交卡片、上一次提交）：上一帧的状态和过渡。
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Slide {
+    /// 上一帧是否显示；还没读到仓库状态时为 `None`。
+    shown: Option<bool>,
+    /// 起始露出比例（0–1）与时钟；不在过渡中时为 `None`。
+    pub(crate) motion: Option<(f32, crate::app::animation::Clock)>,
+}
+
+impl Slide {
+    /// 露出的比例：0 表示完全收起，1 表示完全露出；`present` 是本帧该不该显示，过渡途中跟着时钟。
+    pub(crate) fn share(&self, present: bool) -> f32 {
+        let target = f32::from(u8::from(present));
+        (self.motion).map_or(target, |(from, clock)| clock.between(from, target))
+    }
+
+    /// 本帧该不该显示（`present`，`None` 表示还没读到仓库状态）是否和上一帧不同。
+    fn changes(&self, present: Option<bool>) -> bool {
+        matches!((self.shown, present), (Some(last), Some(now)) if last != now)
+    }
+
+    /// 与上一帧比较，变了时从当时露出的比例往另一端过渡：中途反向时不跳。`present` 为 `None`
+    /// 时只记下；`clock` 为 `None` 时直接到终态。
+    fn track(&mut self, present: Option<bool>, clock: Option<crate::app::animation::Clock>) {
+        if !self.changes(present) {
+            self.shown = present;
+            return;
+        }
+        let before = f32::from(u8::from(self.shown == Some(true)));
+        let from = (self.motion).map_or(before, |(from, c)| c.between(from, before));
+        self.shown = present;
+        self.motion = clock.map(|clock| (from, clock));
+    }
+}
+
 /// 提交视图的状态。
 pub(crate) struct CommitState {
     /// 提交信息，可以多行。
@@ -485,6 +520,12 @@ pub(crate) struct CommitState {
     pub message_lines: usize,
     /// 行数变化后框高过渡的起始高度（逻辑像素）与时钟；不在过渡中时为 `None`。
     pub message_motion: Option<(f32, crate::app::animation::Clock)>,
+    /// 提交卡片滑进、滑出（见 [`App::track_commit_bars`]）。
+    pub(crate) card: Slide,
+    /// 「上一次提交」那一栏拉开、收起。
+    pub(crate) undo: Slide,
+    /// 最近一帧画的上一次提交：栏收起途中（已经推送、撤销）照样写着它。
+    undo_drawn: Option<LastCommit>,
     /// 是否修改上一次提交。
     pub amend: bool,
     /// 打开「修改上一次提交」之前由用户填写的提交信息，关闭该模式时恢复。
@@ -545,6 +586,8 @@ pub(crate) struct CommitState {
     pub(crate) labels: CommitLabels,
     /// 储藏一组是否展开（默认收起：储藏是暂时放到一边的东西，平时不必占地方）。
     pub(crate) stash_open: bool,
+    /// 储藏一组展开、收起的过渡：起始高度（逻辑像素）和时钟；不在过渡中时为 `None`。
+    pub(crate) stash_motion: Option<(f32, crate::app::animation::Clock)>,
     /// 正在储藏的预览标签里看的一条储藏。
     pub(crate) stash_view: Option<StashView>,
     /// 储藏的预览标签：和改动列表的预览标签分开，那个标签跟着工作区里的文件刷新。
@@ -588,6 +631,9 @@ impl Default for CommitState {
             message: TextField::multiline(),
             message_lines: 1,
             message_motion: None,
+            card: Slide::default(),
+            undo: Slide::default(),
+            undo_drawn: None,
             amend: false,
             draft: None,
             drafts: HashMap::new(),
@@ -614,6 +660,7 @@ impl Default for CommitState {
             refreshed: None,
             labels: CommitLabels::default(),
             stash_open: false,
+            stash_motion: None,
             stash_view: None,
             stash_preview: None,
             push_after: false,
@@ -720,19 +767,22 @@ impl App {
             (rect, abort)
         });
 
-        let (card, message, message_settled, amend, commit, commit_menu) =
-            if self.commit_compose_shown() {
-                self.commit_card_parts(panel, inner_x, inner_w)
-            } else {
-                Default::default()
-            };
+        let share = self.commit_card_share();
+        let (card, message, message_settled, amend, commit, commit_menu) = if share > 0.0 {
+            self.commit_card_parts(panel, inner_x, inner_w, share)
+        } else {
+            Default::default()
+        };
         // 「上一次提交」在视图底部，有提交卡片时在卡片上面；改动列表在它上面结束。提交以后还有
         // 没勾的文件（未跟踪的默认不勾）时卡片一直在，栏不能因此不出现。
-        let undo = self.commit_undoable().is_some().then(|| {
+        // 拉开、收起的途中栏按露出的高度算，里面的东西贴着上沿，从下沿底下露出来。
+        let share = self.commit.undo.share(self.commit_undoable().is_some());
+        let undo = (share > 0.0).then(|| {
             let bottom = card.map_or(panel.bottom(), |card| card.y - SIDEBAR_LIST_GAP);
-            let bar = Rect::new(panel.x, bottom - UNDO_H, panel.w, UNDO_H);
-            let h = bar.h - 8.0;
-            let more = Rect::new(inner_x + inner_w - h, bar.y + 4.0, h, h);
+            let bar = Rect::new(panel.x, bottom - UNDO_H * share, panel.w, UNDO_H * share);
+            // 「⋯」比标题行的工具按钮小，中心和它们对齐，从上到下是一列。
+            let h = UNDO_H - 8.0;
+            let more = Rect::new(inner_x + inner_w - (TOOL + h) / 2.0, bar.y + 4.0, h, h);
             let w = self.commit.labels.undo + 2.0 * UNDO_PAD;
             let undo = Rect::new(more.x - BUTTON_GAP - w, more.y, w, h);
             (bar, undo, more)
@@ -744,11 +794,8 @@ impl App {
             (None, None) => panel.bottom(),
         };
         // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `SIDEBAR_LIST_GAP`。
-        let rows = self.stash_section_rows();
-        let stashes = (rows > 0).then(|| {
-            let h = rows as f32 * COMMIT_ROW + 2.0 * SIDEBAR_LIST_GAP;
-            Rect::new(panel.x, above - h, panel.w, h)
-        });
+        let h = self.stash_section_height();
+        let stashes = (h > 0.0).then(|| Rect::new(panel.x, above - h, panel.w, h));
         let list_end = stashes.map_or(above, |rect| rect.y);
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
@@ -775,11 +822,15 @@ impl App {
     /// 卡片贴着视图底部，信息变长时往上长。底行左边是「修改上次提交」，提交按钮按文字宽度靠右；
     /// 一行放不下两样时按钮占满整行，「修改上次提交」收进按钮的菜单。进行中的合并、变基不能修改
     /// 上一次提交，没有这个勾选框。
+    ///
+    /// `share` 是卡片露出的比例（见 [`App::commit_card_share`]）：不到 1 时整张卡片往下移，没露
+    /// 出的部分连同上方的间隔在视图底部下面。
     fn commit_card_parts(
         &self,
         panel: Rect,
         inner_x: f32,
         inner_w: f32,
+        share: f32,
     ) -> (Option<Rect>, Rect, Rect, Option<Rect>, Rect, Rect) {
         let settled_h = self.commit_message_target(panel.h);
         let message_h = self
@@ -787,7 +838,13 @@ impl App {
             .message_motion
             .map_or(settled_h, |(from, clock)| clock.between(from, settled_h));
         let card_h = message_h + FOOTER_H + CARD_INSET;
-        let card = Rect::new(inner_x, panel.bottom() - MARGIN - card_h, inner_w, card_h);
+        let sunk = (1.0 - share) * (card_h + MARGIN + SIDEBAR_LIST_GAP);
+        let card = Rect::new(
+            inner_x,
+            panel.bottom() - MARGIN - card_h + sunk,
+            inner_w,
+            card_h,
+        );
         let message = Rect::new(card.x, card.y, card.w, message_h);
         let message_settled = Rect::new(card.x, card.y, card.w, settled_h);
         let footer = Rect::new(
@@ -843,6 +900,42 @@ impl App {
             && !self.commit.busy
             && !self.commit.amend
             && (self.git.status.as_ref()).is_some_and(|s| s.operation.is_none())
+    }
+
+    /// 提交卡片露出的比例：0 表示完全收在视图底部下面，1 表示完全露出；滑进、滑出途中跟着时钟。
+    pub(crate) fn commit_card_share(&self) -> f32 {
+        self.commit.card.share(self.commit_compose_shown())
+    }
+
+    /// 栏里写的上一次提交：能撤销时是它，收起途中是最近一帧画的那个。
+    pub(crate) fn commit_undo_shown(&self) -> Option<&LastCommit> {
+        (self.commit_undoable()).or(self.commit.undo_drawn.as_ref())
+    }
+
+    /// 每帧绘制前调用：与上一帧比较是否显示提交卡片（见 [`App::commit_compose_shown`]）和
+    /// 「上一次提交」（见 [`App::commit_undoable`]）。
+    ///
+    /// 卡片出现时从视图底部滑上来，消失时（提交完、改动都没了）滑下去；上一次提交在提交以后拉开，
+    /// 推送、撤销以后收起。上面的改动列表和储藏跟着移动。刚读到仓库状态（启动、换仓库）时和提交
+    /// 视图不在屏幕上时直接到终态：它们本来就在那里，切到提交视图时也不补放动画。
+    pub(in crate::app) fn track_commit_bars(&mut self) {
+        let known = self.git.status.is_some();
+        let card = known.then(|| self.commit_compose_shown());
+        let undoable = self.commit_undoable();
+        let undo = known.then_some(undoable.is_some());
+        if let Some(last) = undoable
+            && self.commit.undo_drawn.as_ref() != Some(last)
+        {
+            self.commit.undo_drawn = Some(last.clone());
+        }
+        let changing = self.commit.card.changes(card) || self.commit.undo.changes(undo);
+        let clock = if changing && self.commit_shown() {
+            self.clock(crate::app::animation::TREE_ANIMATION)
+        } else {
+            None
+        };
+        self.commit.card.track(card, clock);
+        self.commit.undo.track(undo, clock);
     }
 
     /// 能不能修改上一次提交：已经有提交，没有进行中的合并、变基。

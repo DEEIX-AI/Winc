@@ -458,15 +458,23 @@ fn draw_banner(
 /// 上一次提交（视图底部，有提交卡片时在卡片上面）：上沿一条分隔线，左边是提交信息的第一行，
 /// 右边淡色写提交时间，最右端是「撤销」和「⋯」（修改上一次提交、复制提交号）。
 ///
-/// 只在上一次提交还没推送时出现（见 `App::commit_undoable`）。
+/// 只在上一次提交还没推送时出现（见 `App::commit_undoable`）；拉开、收起的途中按栏露出的高度
+/// 裁掉。
 fn draw_undo(
     app: &App,
     frame: &mut Frame<'_>,
     parts: &CommitParts,
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
-    let (Some((bar, undo, more)), Some(last)) = (parts.undo, app.commit_undoable()) else {
+    let (Some((bar, undo, more)), Some(last)) = (parts.undo, app.commit_undo_shown()) else {
         return;
+    };
+    // 收起途中（已经推送、撤销）不能再撤销，不响应点击。
+    let mut leaving = Vec::new();
+    let hits = if app.commit_undoable().is_some() {
+        hits
+    } else {
+        &mut leaving
     };
     let p = app.palette;
     let clip = app.layout.sidebar.intersect(bar);
@@ -516,7 +524,8 @@ fn draw_undo(
 }
 
 /// 储藏一组的标题和各条储藏的名字离底色左边的距离（逻辑像素）：标题紧跟在箭头后面，和改动列表组
-/// 标题的箭头同一列；各条储藏再缩进一层（`INDENT`）。
+/// 标题的箭头同一列。各条储藏和标题的文字对齐：行前面没有勾选框和图标，再缩进一层只会留下
+/// 一块空白。
 const STASH_TITLE: f32 = ARROW + 10.0;
 /// 储藏那一行悬停时「应用」文字两侧的留白（逻辑像素），和「上一次提交」那一栏的「撤销」相同。
 const STASH_APPLY_PAD: f32 = 6.0;
@@ -550,12 +559,11 @@ fn draw_stashes(
 
     // 标题：和改动列表的组标题一样，小一号的次要色字，右端一个写数量的徽标。
     let head = band(0);
-    let open = app.commit.stash_open;
     if app.hover == Hover::Commit(CommitTarget::Stashes) {
         frame.rect_clipped(shade(head), p.hover, RADIUS_ROW, clip);
     }
     let cy = head.y + head.h / 2.0;
-    let turned = if open { FRAC_PI_2 } else { 0.0 };
+    let turned = app.stash_chevron() * FRAC_PI_2;
     icons::chevron_turned(frame, (head.x + ARROW, cy), 6.0, turned, p.text_dim, clip);
     let title = t!("git-stash-group");
     label(
@@ -569,9 +577,13 @@ fn draw_stashes(
     );
     draw_count_pill(app, frame, head, &app.git.stashes.len().to_string(), clip);
     hits.push((head, CommitTarget::Stashes));
-    if !open {
+    // 展开、收起的途中各行跟着标题移动，露出多少由一组的范围裁掉；这时行还没停稳，不响应点击。
+    let moving = app.commit.stash_motion.is_some();
+    if !app.commit.stash_open && !moving {
         return;
     }
+    let mut still = Vec::new();
+    let hits = if moving { &mut still } else { hits };
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -593,7 +605,7 @@ fn draw_stashes(
             frame.rect_clipped(shade(row), color, RADIUS_ROW, clip);
         }
         // 右端：平时是分支和时间，悬停时换成「应用」和「⋯」。
-        let mut right = row.right() - 8.0;
+        let mut right = row.right() - END_PAD;
         if hovered {
             let (_, more) = file_actions(row);
             let on = app.hover == Hover::Commit(CommitTarget::StashMenu(i));
@@ -623,13 +635,13 @@ fn draw_stashes(
                 Some(branch) => format!("{branch} · {time}"),
                 None => time,
             };
-            let room = (right - row.x - STASH_TITLE - INDENT) / 2.0;
+            let room = (right - row.x - STASH_TITLE) / 2.0;
             let meta = fit(frame, &meta, size, room.max(0.0), false);
             let w = frame.measure(FontKind::Ui, size, &meta);
             ui_text_small(frame, app, right - w, row, &meta, p.text_dim, clip);
             right -= w + 8.0;
         }
-        let x = row.x + STASH_TITLE + INDENT;
+        let x = row.x + STASH_TITLE;
         let name = crate::app::git::branch::stash_title(stash);
         let name = fit(frame, &name, app.fonts.ui, (right - x).max(0.0), false);
         let room = clip.intersect(Rect::new(row.x, row.y, (right - row.x).max(0.0), row.h));
@@ -643,7 +655,7 @@ fn draw_stashes(
             frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
         }
         let text = t!("git-stash-more", count = rest);
-        let x = row.x + STASH_TITLE + INDENT;
+        let x = row.x + STASH_TITLE;
         ui_text_small(frame, app, x, row, &text, p.text_muted, clip);
         hits.push((row, CommitTarget::StashMore));
     }
@@ -1116,7 +1128,7 @@ fn draw_row(
             let change = entry.shown();
             let letter = change.letter().to_string();
             let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
-            let letter_x = band.right() - 10.0 - letter_w;
+            let letter_x = band.right() - END_CENTER - letter_w / 2.0;
             // 文件名及平铺时的目录绘制到 `text_end` 为止。
             let text_end = actions.map_or(letter_x - 8.0, |(open, _)| open.x - 4.0);
             if let Some(actions) = actions {
@@ -1182,7 +1194,7 @@ fn draw_row(
     }
 }
 
-/// 在 `row` 右端画一个写着 `count` 的小圆角徽标。
+/// 在行底色 `row` 右端画一个写着 `count` 的小圆角徽标，右边和行右端的悬停按钮对齐。
 pub(in crate::view) fn draw_count_pill(
     app: &App,
     frame: &mut Frame<'_>,
@@ -1191,6 +1203,8 @@ pub(in crate::view) fn draw_count_pill(
     clip: Rect,
 ) {
     let p = app.palette;
+    // 徽标右边和悬停按钮的右边缘对齐（`draw_count_pill_in` 留 4）。
+    let row = Rect::new(row.x, row.y, row.w + 4.0 - END_PAD, row.h);
     draw_count_pill_in(app, frame, row, count, (p.hover, p.text_muted), clip);
 }
 
@@ -1230,10 +1244,19 @@ fn chevron(
 /// 改动行悬停时右端按钮的边长（逻辑像素，经验值）。
 const ACTION: f32 = 20.0;
 
+/// 行右端那一列的中心离行底色右边的距离（逻辑像素）：悬停的按钮、状态字母都以它为中心。
+///
+/// 行底色离侧栏右边 8，加上 12 正好是 20：标题行的工具按钮、分支行的同步图标（离侧栏右边 8，
+/// 宽 24）的中心也在这里，从上到下是一列。
+const END_CENTER: f32 = 12.0;
+/// 行右端靠右排的东西（数量徽标、储藏的时间）离行底色右边的距离（逻辑像素）：和悬停按钮的右边缘
+/// 对齐。
+const END_PAD: f32 = END_CENTER - ACTION / 2.0;
+
 /// 返回改动行 `band` 悬停时右端「打开文件」「回滚」两个按钮的位置。
 fn file_actions(band: Rect) -> (Rect, Rect) {
     let y = band.y + (band.h - ACTION) / 2.0;
-    let revert = Rect::new(band.right() - 4.0 - ACTION, y, ACTION, ACTION);
+    let revert = Rect::new(band.right() - END_PAD - ACTION, y, ACTION, ACTION);
     let open = Rect::new(revert.x - 2.0 - ACTION, y, ACTION, ACTION);
     (open, revert)
 }
@@ -1292,7 +1315,28 @@ fn message_area(app: &App, rect: Rect) -> Rect {
 ///
 /// 整张卡片就是提交信息的输入框：平时没有边框，铺一层比侧栏深一点的中性底色；有焦点时换成
 /// 编辑区的底色，外圈画强调色，和搜索框一样。
+///
+/// 卡片滑进、滑出时有一部分在视图底部下面，整张裁在侧栏里；滑出途中已经不该再提交，不响应
+/// 点击。
 fn draw_compose(
+    app: &mut App,
+    frame: &mut Frame<'_>,
+    parts: &CommitParts,
+    wrap: AreaWrap,
+    hits: &mut Vec<(Rect, CommitTarget)>,
+) -> Option<Rect> {
+    let panel = app.layout.sidebar;
+    let mut leaving = Vec::new();
+    let hits = if app.commit_compose_shown() {
+        hits
+    } else {
+        &mut leaving
+    };
+    frame.within(panel, |frame| draw_card(app, frame, parts, wrap, hits))
+}
+
+/// 绘制提交卡片本身，见 [`draw_compose`]。
+fn draw_card(
     app: &mut App,
     frame: &mut Frame<'_>,
     parts: &CommitParts,
