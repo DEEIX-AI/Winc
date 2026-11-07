@@ -25,9 +25,7 @@ use animation::{
     EXIT_FADE, FOLD_ANIMATION, PICKER_ANIMATION, POPUP_IN, POPUP_OUT, SIDEBAR_ANIMATION, TAB_SLIDE,
     TREE_ANIMATION,
 };
-pub(crate) use diff::{
-    DIFF_GUTTER_PAD, DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts,
-};
+pub(crate) use diff::{DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts};
 pub use editor::conflict::{ConflictAction, OverwriteChoice};
 pub use editor::editing::BraceKey;
 pub use editor::editing::ScrollGlide;
@@ -40,8 +38,8 @@ pub use editor::sticky::{StickyCache, StickyRow};
 pub(crate) use git::branch::picker::{BranchCreate, GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
-    COMMIT_ROW, CommitOverflow, CommitParts, CommitRow, CommitRows, CommitTarget, MESSAGE_LINE,
-    MESSAGE_PAD, SyncState,
+    COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
+    CommitRows, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, STASH_GAP, SyncState,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -222,6 +220,10 @@ pub enum UserEvent {
     GitBase,
     /// 后台的分支操作（获取、拉取、推送、签出……）做完了。
     GitOperated,
+    /// 后台的 Git 操作发来了输入请求。
+    GitQuestion,
+    /// 后台读取好了三栏合并的两侧。
+    GitMergeSides,
     /// 后台取到了日志的一批提交、一个提交的详情或一个文件的差异。
     GitLog,
     /// 终端的辅助进程发来了消息。
@@ -270,6 +272,8 @@ pub enum PromptKind {
     Stash,
     /// 新标签的名字；`at` 是打在哪个提交上（完整的提交号）。
     NewTag { at: String },
+    /// 分支的新名字；`old` 是现在的名字。
+    RenameBranch { old: String },
 }
 
 /// 键盘焦点所在的区域。
@@ -481,16 +485,18 @@ impl Hover {
                         | git::log::LogTarget::Line(..)
                 )
                 | Hover::Blame(_)
+                | Hover::PickerPart(PickerPart::Pull | PickerPart::Push | PickerPart::Fetch)
                 | Hover::Commit(
                     CommitTarget::Log
                         | CommitTarget::Sync
                         | CommitTarget::Location
-                        | CommitTarget::Layout
+                        | CommitTarget::Refresh
                         | CommitTarget::More
                         | CommitTarget::Commit
                         | CommitTarget::CommitMenu
                         | CommitTarget::OpenFile(_)
                         | CommitTarget::RevertFile(_)
+                        | CommitTarget::GroupRevert(_)
                         | CommitTarget::Check(_)
                 )
                 | Hover::Diff(
@@ -502,6 +508,7 @@ impl Hover {
                         | DiffTarget::Collapse
                         | DiffTarget::Revert(_)
                         | DiffTarget::Include(_)
+                        | DiffTarget::IncludeLine(..)
                 )
                 | Hover::Merge(git::merge::MergeTarget::Previous | git::merge::MergeTarget::Next)
         )
@@ -1124,6 +1131,7 @@ impl App {
             UserEvent::GitCommit => self.poll_commit(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
+            UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
             UserEvent::GitBlame => self.poll_blame(),
             UserEvent::Reread => self.poll_rereads(),

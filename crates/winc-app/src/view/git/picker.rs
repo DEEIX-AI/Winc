@@ -1,7 +1,8 @@
 //! 分支、位置选择器：从 Git 上下文或状态栏展开的菜单式浮层。
 //!
-//! 卡片、行高和选中行的强调色实底都与窗口内绘制的菜单相同；顶部多一个内嵌的搜索框，底部多一栏新建
-//! 的入口。选中项跟着鼠标走，同一时刻只有一行高亮，行尾的「⋯」也只在这一行。
+//! 卡片、行高和选中行的强调色实底都与窗口内绘制的菜单相同；顶部多一个内嵌的搜索框（分支选择器在
+//! 它下面还有一排拉取、推送、获取），底部多一栏新建的入口。选中项跟着鼠标走，同一时刻只有一行
+//! 高亮，行尾的「⋯」也只在这一行。
 //!
 //! 卡片里的竖线从上到下是同几条：搜索框、选中行的底色、分隔线和底栏的按钮两边对着 `GUTTER`，它们
 //! 里面的内容对着 `CONTENT`；放大镜、勾、箭头和底栏的加号是一列，搜索框的字、分组标题、各行的名字
@@ -37,6 +38,9 @@ const TEXT_LEFT: f32 = 32.0;
 const ROW_BUTTON_GAP: f32 = 2.0;
 /// 名字右边到右端文字的最小间距（逻辑像素）。
 const NAME_GAP: f32 = 8.0;
+/// 行右端文字（时间、上游）的右边比「⋯」按钮的右边缘让进的距离（逻辑像素）：和按钮里图标的
+/// 右侧差不多齐，不贴着底色的圆角。
+const META_PAD: f32 = 6.0;
 /// 名字后面的小圆点占的宽度（逻辑像素）：6 的间距加 5 的直径。
 const NAME_DOT_ROOM: f32 = 11.0;
 /// 选中行上徽标底色和按钮悬停底色的不透明度：比次要文字弱得多，只从实底上浮出一层。
@@ -55,6 +59,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_search(app, frame, parts.bar);
 
     let mut hits = Vec::new();
+    draw_actions(app, frame, &parts, &mut hits);
     if app.picker_create.is_some() {
         draw_create_note(app, frame, &parts);
     } else if app.picker_lists_locations() {
@@ -100,6 +105,52 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     }
 }
 
+/// 绘制搜索框下面的拉取、推送、获取：三个一样宽的按钮，和上游差的提交数写在名字后面（「拉取
+/// ↓2」「推送 ↑1」）；按住 ⌥ 时拉取写成拉取并变基。不能用的灰掉，原因写在悬停提示里。
+fn draw_actions(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &PickerParts,
+    hits: &mut Vec<(Rect, PickerPart)>,
+) {
+    let area = parts.actions;
+    if area.h <= 0.0 {
+        return;
+    }
+    let p = app.palette;
+    let (ahead, behind) = (app.git.status.as_ref()).map_or((0, 0), |s| (s.ahead, s.behind));
+    let size = app.fonts.ui_small;
+    let inner = area.w - 2.0 * GUTTER;
+    // 按钮之间的间距与标签之间的相同（`TAB_GAP`）。
+    let w = ((inner - 2.0 * TAB_GAP) / 3.0).floor();
+    let actions = [PickerPart::Pull, PickerPart::Push, PickerPart::Fetch];
+    for (i, part) in actions.into_iter().enumerate() {
+        let x = area.x + GUTTER + i as f32 * (w + TAB_GAP);
+        let rect = Rect::new(x, area.y, w, BUTTON_SMALL);
+        let enabled = app.picker_action_enabled(part);
+        let hovered = enabled && app.hover == Hover::PickerPart(part);
+        let fill = if hovered {
+            p.selected_inactive
+        } else {
+            p.hover
+        };
+        frame.rounded(rect, fill, RADIUS_ROW);
+        let name = app.picker_action_command(part).label();
+        let text = match part {
+            PickerPart::Pull if behind > 0 => format!("{name} ↓{behind}"),
+            PickerPart::Push if ahead > 0 => format!("{name} ↑{ahead}"),
+            _ => name.to_owned(),
+        };
+        let text = fit(frame, &text, size, (w - 8.0).max(0.0), false);
+        let text_w = frame.measure(FontKind::Ui, size, &text);
+        let text_x = (rect.x + (rect.w - text_w) / 2.0).round();
+        let color = if enabled { p.text } else { p.text_dim };
+        ui_text_small(frame, app, text_x, rect, &text, color, area);
+        // 不能用时也记下：悬停提示写明原因，点了不做事。
+        hits.push((rect, part));
+    }
+}
+
 /// 这一帧要画的行：展开、收起的动画期间下面的行往上收，视口里能多露出几行。
 fn drawn_rows(app: &App, parts: &PickerParts, count: usize) -> Range<usize> {
     let scroll = app.picker_drawn_scroll();
@@ -130,7 +181,10 @@ fn placed_row(app: &App, parts: &PickerParts, i: usize) -> (Rect, Rect) {
 struct Line {
     row: Rect,
     clip: Rect,
+    /// 键盘选中的行：强调色底，回车作用在它上面。
     selected: bool,
+    /// 鼠标所在的行：浅色底。与选中的行相互独立，鼠标移动不改变选中项。
+    hovered: bool,
     /// 名字的颜色。
     text: Color,
     /// 次要文字和箭头的颜色。
@@ -140,17 +194,25 @@ struct Line {
 }
 
 impl Line {
-    /// 开始绘制第 `i` 行：选中时先铺底色，文字改用底色上的颜色。
+    /// 开始绘制第 `i` 行：选中时先铺强调色底，文字改用底色上的颜色；鼠标所在的行铺浅色底。
     fn begin(app: &App, frame: &mut Frame<'_>, parts: &PickerParts, i: usize) -> Line {
         let p = app.palette;
         let (row, clip) = placed_row(app, parts, i);
         let selected = (app.picker_fold.as_ref()).map_or(app.picker_selected, |fold| {
             fold.drawn_index(app.picker_selected)
         }) == i;
+        // 展开、收起的动画期间各行的位置在变化，悬停记录的行号与绘制位置不对应，因此不画悬停。
+        let hovered = app.picker_fold.is_none()
+            && matches!(app.hover,
+                Hover::PickerRow(r) | Hover::PickerPart(PickerPart::More(r)) if r == i);
+        let band = row.inset(GUTTER, 1.0);
         let (text, dim) = if selected {
-            frame.rect_clipped(row.inset(GUTTER, 1.0), p.accent_fill, RADIUS_ROW, clip);
+            frame.rect_clipped(band, p.accent_fill, RADIUS_ROW, clip);
             band_ink(p)
         } else {
+            if hovered {
+                frame.rect_clipped(band, p.hover, RADIUS_ROW, clip);
+            }
             (p.text, p.text_dim)
         };
         let cy = icon_center_y(app, row, app.fonts.ui);
@@ -158,6 +220,7 @@ impl Line {
             row,
             clip,
             selected,
+            hovered,
             text,
             dim,
             cy,
@@ -173,9 +236,14 @@ impl Line {
         )
     }
 
-    /// 行右端文字的右边：右边留出「⋯」一列，选中一行时其他内容不移动，各行的列对得上。
+    /// 行右端那一列的右边：选中行「⋯」按钮的右边缘，数量徽标也对齐到这里。
+    fn end(&self) -> f32 {
+        self.row.right() - GUTTER - ROW_BUTTON_GAP
+    }
+
+    /// 行右端文字（时间、上游）的右边：比按钮的右边缘让进 [`META_PAD`]，和按钮里的图标差不多齐。
     fn right(&self) -> f32 {
-        self.row.right() - GUTTER - ROW_BUTTON_GAP - BUTTON_SMALL - 4.0
+        self.end() - META_PAD
     }
 
     /// 在图标一列画第 `i` 行展开、收起的箭头：这一行正在展开或收起时跟着动画转到对应角度。
@@ -244,7 +312,7 @@ impl Line {
         ui_text_small(frame, app, *right, self.row, text, self.dim, self.clip);
     }
 
-    /// 在 `right` 左边绘制数量徽标，把 `right` 移到徽标左边。
+    /// 在行右端绘制数量徽标，把 `right` 移到徽标左边。
     fn draw_pill(&self, app: &App, frame: &mut Frame<'_>, right: &mut f32, count: usize) {
         let p = app.palette;
         let colors = if self.selected {
@@ -254,26 +322,28 @@ impl Line {
         };
         let text = count.to_string();
         let row = self.row;
-        let band = Rect::new(row.x, row.y, *right + 4.0 - row.x, row.h);
+        // 徽标右边和「⋯」按钮的右边缘对齐（`draw_count_pill_in` 留 4）。
+        let band = Rect::new(row.x, row.y, self.end() + 4.0 - row.x, row.h);
         draw_count_pill_in(app, frame, band, &text, colors, self.clip);
-        *right -= frame.measure(FontKind::Ui, app.fonts.ui_small, &text) + 12.0 + 6.0;
+        *right = self.end() - frame.measure(FontKind::Ui, app.fonts.ui_small, &text) - 12.0 - 6.0;
     }
 
-    /// 绘制第 `i` 行行尾的「⋯」，记下它的位置；只有选中行才有。把 `right` 移到按钮左边。
+    /// 绘制第 `i` 行行尾的「⋯」，记下它的位置，返回按钮左边可以写名字的右边；选中的行和鼠标
+    /// 所在的行才有，其余行返回 `None`。按钮盖在行右端文字的位置上，这两行不写那段文字。
     fn draw_more(
         &self,
         app: &App,
         frame: &mut Frame<'_>,
         i: usize,
         hits: &mut Vec<(Rect, PickerPart)>,
-    ) {
-        if !self.selected {
-            return;
+    ) -> Option<f32> {
+        if !self.selected && !self.hovered {
+            return None;
         }
         let part = PickerPart::More(i);
         let row = self.row;
         let button = Rect::new(
-            row.right() - GUTTER - ROW_BUTTON_GAP - BUTTON_SMALL,
+            self.end() - BUTTON_SMALL,
             row.y + 2.0,
             BUTTON_SMALL,
             row.h - 4.0,
@@ -281,6 +351,7 @@ impl Line {
         self.draw_row_button(app, frame, button, part);
         icons::more(frame, center(button), self.text, self.clip);
         hits.push((button, part));
+        Some(button.x - ROW_BUTTON_GAP)
     }
 
     /// 绘制行内按钮悬停时的底色。
@@ -358,11 +429,13 @@ fn draw_place_row(
         icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
     }
     let mut right = line.right();
-    if place.worktree.is_some() || !place.missing {
-        line.draw_more(app, frame, i, hits);
-    }
+    let more = (place.worktree.is_some() || !place.missing)
+        .then(|| line.draw_more(app, frame, i, hits))
+        .flatten();
     let state = app.place_state(&place.path);
-    if place.missing {
+    if let Some(at) = more {
+        right = at + NAME_GAP;
+    } else if place.missing {
         line.draw_meta(app, frame, &mut right, t!("git-worktree-missing"));
     } else {
         let mut meta = state.head.clone().unwrap_or_default();
@@ -500,8 +573,9 @@ struct BranchLine<'a> {
     now: i64,
 }
 
-/// 绘制第 `i` 行的一个分支：当前分支打勾，右端淡色写「当前」，被别的工作树占着的写那个工作树，
-/// 其余写最后一次提交的时间；选中行的右端是「⋯」，时间让出位置。
+/// 绘制第 `i` 行的一个分支：当前分支打勾，右端淡色写它的上游（没有上游时写「当前」），被别的
+/// 工作树占着的写那个工作树，其余写最后一次提交的时间，都靠右对齐；选中的行和鼠标所在的行右端
+/// 换成「⋯」。
 fn draw_branch_row(
     app: &App,
     frame: &mut Frame<'_>,
@@ -517,7 +591,7 @@ fn draw_branch_row(
         icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
     }
     let mut right = line.right();
-    line.draw_more(app, frame, i, hits);
+    let more = line.draw_more(app, frame, i, hits);
     let held = branch
         .filter(|b| !b.remote)
         .and_then(|b| app.git.worktree_holding(local_name(b)))
@@ -525,12 +599,16 @@ fn draw_branch_row(
         .map(crate::app::git::worktree::worktree_name);
     let meta = match (held, current, branch) {
         (Some(name), ..) => Some(name),
-        (_, true, _) => Some(t!("git-branch-picker-current").to_owned()),
+        (_, true, Some(b)) => {
+            Some((b.upstream.clone()).unwrap_or_else(|| t!("git-branch-picker-current").to_owned()))
+        }
         (_, _, Some(b)) if !b.remote => Some(display_local(&b.local, b.time, row.now)),
         _ => None,
     };
-    if let Some(meta) = meta {
-        line.draw_meta(app, frame, &mut right, &meta);
+    match (more, meta) {
+        (Some(at), _) => right = at + NAME_GAP,
+        (None, Some(meta)) => line.draw_meta(app, frame, &mut right, &meta),
+        (None, None) => {}
     }
     let at = (text, right - NAME_GAP);
     line.draw_name(app, frame, at, row.label, line.text);

@@ -23,7 +23,7 @@ pub fn app_socket_path() -> Option<PathBuf> {
 /// 返回当前用户私有目录中名为 `winc-{name}.{extension}` 的文件路径。
 ///
 /// 路径长度超出系统对套接字路径的限制时返回 `None`。
-fn private_file(name: &str, extension: &str) -> Option<PathBuf> {
+pub(crate) fn private_file(name: &str, extension: &str) -> Option<PathBuf> {
     // 限制取下限：macOS 的套接字路径最多 104 字节（含结尾的 NUL），Linux 为 108 字节，
     // 这里按 104 字节减去结尾 NUL 占用的 1 字节，路径本身不得超过 103 字节。
     const LIMIT: usize = 103;
@@ -347,7 +347,7 @@ mod imp {
     /// 创建一个等待连接的管道实例；`first` 为真时要求它是该名字的第一个实例。
     ///
     /// 其他进程先创建了同名的管道时返回 `None`，目标不会被交给该管道。
-    fn create(name: &[u16], first: bool) -> Option<File> {
+    pub(crate) fn create(name: &[u16], first: bool) -> Option<File> {
         let flags = PIPE_ACCESS_DUPLEX
             | if first {
                 FILE_FLAG_FIRST_PIPE_INSTANCE
@@ -378,7 +378,7 @@ mod imp {
     }
 
     /// 是否已有客户端连上管道 `pipe`；调用之前已连上的也算已连接。
-    fn connect(pipe: &File) -> bool {
+    pub(crate) fn connect(pipe: &File) -> bool {
         use std::os::windows::io::AsRawHandle;
         // SAFETY: 句柄有效且归 `pipe` 所有；不使用重叠 I/O，调用阻塞到有客户端连上为止。
         let ok = unsafe { ConnectNamedPipe(pipe.as_raw_handle(), std::ptr::null_mut()) };
@@ -499,6 +499,8 @@ mod imp {
 }
 
 pub use imp::{Listener, forward_to_app};
+#[cfg(windows)]
+pub(crate) use imp::{connect as connect_pipe, create as create_pipe};
 
 /// 「整个应用」这一角色的持有凭据。
 ///

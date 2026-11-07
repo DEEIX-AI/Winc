@@ -278,7 +278,7 @@ impl App {
             (Focus::GlobalExclude, shown && g.details_open, &g.exclude),
             (
                 Focus::CommitMessage,
-                self.commit_shown(),
+                self.commit_shown() && self.commit_compose_shown(),
                 &self.commit.message,
             ),
         ];

@@ -255,6 +255,10 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.terminal.open {
                     self.update_terminal_link();
                 }
+                // 按住 ⌥ 时分支选择器里的「拉取」换成「拉取并变基」，提交按钮换成「提交并推送」。
+                if (self.picker_open && self.picker_has_actions()) || self.commit_shown() {
+                    self.request_redraw();
+                }
                 // 拖动文件树项时按下、松开 ⌥ 在移动和复制之间切换：放置目标和拖动卡片跟着变。
                 if self.tree_dragging().is_some() {
                     let (x, y) = self.mouse;
@@ -310,11 +314,13 @@ impl App {
             UserEvent::Searched => self.poll_global(),
             UserEvent::Definitions => self.poll_definitions(),
             UserEvent::FilesChanged => self.files_changed(),
+            UserEvent::GitQuestion => self.poll_git_questions(),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
             | UserEvent::GitCommit
             | UserEvent::GitBase
             | UserEvent::GitOperated
+            | UserEvent::GitMergeSides
             | UserEvent::GitLog
             | UserEvent::GitBlame
             | UserEvent::Reread

@@ -1,5 +1,7 @@
-//! 分支选择器：从提交视图的分支行就地展开，只用来选分支。
+//! 分支选择器：从提交视图的分支行就地展开，或者从状态栏的分支名往上展开，两处是同一个面板。
 //!
+//! 搜索框下面是一排拉取、推送、获取（按住 ⌥ 时拉取换成拉取并变基）：分支和同步都在这里，
+//! 状态栏不再另有一套分支菜单。
 //! 依次是最近使用、本地分支和可以展开的远程分支，分支名按 `/` 分层，只展开当前分支所在的目录。
 //! 同一个分支只列一次：本地分支一屏放得下时不单列最近使用，单列时下面不再重复；已有本地分支的
 //! 远程分支只在搜索时列出。
@@ -15,7 +17,7 @@ use winc_render::Rect;
 use super::local_name;
 use crate::app::animation::TREE_ANIMATION;
 use crate::app::git::location_picker::LocationRow;
-use crate::app::input::context_menu::MenuTarget;
+use crate::app::input::context_menu::{MenuCommand, MenuTarget};
 use crate::app::input::palette::{matched, needle, rate};
 use crate::app::{AlertButton, App, Clock, Focus, PICKER_ROW, UserEvent};
 use crate::layout::{MENU_PICKER_BAR, MENU_PICKER_PAD};
@@ -32,6 +34,8 @@ pub enum GitAnchor {
     Branch,
     /// 提交视图的位置行下方。
     Location,
+    /// 状态栏的分支名上方：侧栏收起、看着文件视图时也能切换分支和同步。
+    Status,
 }
 
 /// 选择面板里除了各行以外可以点的地方。
@@ -39,6 +43,12 @@ pub enum GitAnchor {
 pub enum PickerPart {
     /// 第几行行尾的「⋯」。
     More(usize),
+    /// 搜索框下面的「拉取」；按住 ⌥ 时是拉取并变基。
+    Pull,
+    /// 搜索框下面的「推送」。
+    Push,
+    /// 搜索框下面的「获取」。
+    Fetch,
     /// 底栏的「新建分支」。
     NewBranch,
     /// 底栏的「新建工作树」。
@@ -79,6 +89,12 @@ const GIT_PICKER_GAP: f32 = 4.0;
 /// 选择面板底栏的高度（逻辑像素）：上面留 4，`BUTTON_SMALL` 高的按钮，下面留 6，和顶部的搜索行
 /// 对称。
 pub const GIT_PICKER_FOOT: f32 = 34.0;
+/// 分支选择器搜索框下面拉取、推送、获取一行的高度（逻辑像素）：`BUTTON_SMALL` 高的按钮，下面留
+/// 4，和搜索框下沿到这一行的距离相同。
+pub const GIT_PICKER_ACTIONS: f32 = 28.0;
+/// 从状态栏展开时面板的宽度（逻辑像素）：和默认宽度的侧栏里从分支行展开时一样宽（侧栏 300
+/// 减去两边各 8 的边距）。
+const STATUS_PICKER_W: f32 = crate::theme::DEFAULT_PANEL_WIDTH - 16.0;
 
 /// 分支选择器的分组标题。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -525,6 +541,12 @@ impl App {
         let chrome = MENU_PICKER_BAR + MENU_PICKER_PAD + GIT_PICKER_FOOT;
         let note = self.picker_create.as_ref().map(BranchCreate::height);
         let wanted = self.picker_hits.len().clamp(1, GIT_PICKER_ROWS);
+        let chrome = chrome
+            + if self.picker_has_actions() {
+                GIT_PICKER_ACTIONS
+            } else {
+                0.0
+            };
         let list = |room: f32| {
             note.unwrap_or_else(|| {
                 let fit = ((room - chrome) / PICKER_ROW).floor() as usize;
@@ -535,10 +557,25 @@ impl App {
         let height = |h: f32| {
             (self.picker_fold.as_ref()).map_or(h, |fold| fold.clock.between(fold.before.height, h))
         };
+        if self.picker_anchor == GitAnchor::Status {
+            // 从状态栏往上展开：底边贴着分支名的上沿，右边和它对齐，放不下时往左挪。
+            let Some(&(item, _)) =
+                (self.status_hits.iter()).find(|(_, i)| *i == crate::app::StatusItem::Branch)
+            else {
+                return;
+            };
+            let bottom = item.y - GIT_PICKER_GAP;
+            let room = bottom - crate::theme::TOP_BAR_END;
+            let w = STATUS_PICKER_W.min(most);
+            let h = height(chrome + list(room));
+            let x = (item.right() - w).min(window.right() - 8.0 - w).max(8.0);
+            self.layout.picker = Rect::new(x, bottom - h, w, h);
+            return;
+        }
         let parts = self.commit_parts();
         let row = match self.picker_anchor {
             GitAnchor::Location => parts.location.unwrap_or(parts.branch),
-            GitAnchor::Branch => parts.branch,
+            GitAnchor::Branch | GitAnchor::Status => parts.branch,
         };
         let y = row.bottom() + GIT_PICKER_GAP;
         // 底边离侧栏的距离和左右两边一样。
@@ -557,6 +594,14 @@ impl App {
     pub(in crate::app) fn press_picker_part(&mut self, part: PickerPart) {
         match part {
             PickerPart::More(row) => self.press_picker_more(row),
+            PickerPart::Pull | PickerPart::Push | PickerPart::Fetch => {
+                if !self.picker_action_enabled(part) {
+                    return;
+                }
+                let command = self.picker_action_command(part);
+                self.close_picker();
+                self.run_branch_command(command);
+            }
             PickerPart::NewBranch => self.start_branch_create(None),
             PickerPart::NewWorktree => {
                 self.close_picker();
@@ -596,6 +641,51 @@ impl App {
     /// 面板是否正在列出分支。
     pub(crate) fn picker_lists_branches(&self) -> bool {
         self.picker_branch_rows.is_some()
+    }
+
+    /// 搜索框下面有没有拉取、推送、获取一行：列出分支、不在新建分支时有。
+    pub(crate) fn picker_has_actions(&self) -> bool {
+        self.picker_lists_branches() && self.picker_create.is_none()
+    }
+
+    /// 拉取、推送、获取（`part`）对应的 Git 操作：按住 ⌥ 时拉取是拉取并变基。
+    pub(crate) fn picker_action_command(&self, part: PickerPart) -> MenuCommand {
+        match part {
+            PickerPart::Pull if self.modifiers.alt_key() => MenuCommand::GitPullRebase,
+            PickerPart::Pull => MenuCommand::GitPull,
+            PickerPart::Push => MenuCommand::GitPush,
+            _ => MenuCommand::GitFetch,
+        }
+    }
+
+    /// 拉取、推送、获取（`part`）现在能不能用：有 Git 操作在跑时都不能；没有远程时都不能；拉取要
+    /// 当前分支有上游；推送要在分支上（没有上游时推上去并设为上游）。
+    pub(crate) fn picker_action_enabled(&self, part: PickerPart) -> bool {
+        if self.branch.running.is_some() || self.git.remotes.is_empty() {
+            return false;
+        }
+        let on_branch = (self.git.status.as_ref())
+            .is_some_and(|s| matches!(s.head, Some(winc_editor::git::Head::Branch(_))));
+        match part {
+            PickerPart::Pull => self.has_upstream(),
+            PickerPart::Push => on_branch,
+            _ => true,
+        }
+    }
+
+    /// 命令「Git：切换分支…」：提交视图开着时从分支行展开分支选择器，否则从状态栏的分支名；状态栏
+    /// 也收着时先打开提交视图。
+    pub(in crate::app) fn switch_branch_from_command(&mut self) {
+        if self.commit_shown() {
+            return self.open_branch_picker(GitAnchor::Branch);
+        }
+        let on_status =
+            (self.status_hits.iter()).any(|(_, i)| *i == crate::app::StatusItem::Branch);
+        if on_status {
+            return self.open_branch_picker(GitAnchor::Status);
+        }
+        self.show_commit();
+        self.open_branch_picker(GitAnchor::Branch);
     }
 
     /// 从 `anchor` 展开分支选择器。
@@ -724,19 +814,9 @@ impl App {
         }
     }
 
-    /// 选了分支 `chosen`（弹出菜单时列表里的那一个）：按名字在最新的列表里找到它再切换，菜单打开
-    /// 期间列表可能已经变了。
-    pub(in crate::app) fn pick_branch_named(&mut self, chosen: &Branch) {
-        let index = (self.git.branches.iter())
-            .position(|b| b.name == chosen.name && b.remote == chosen.remote);
-        if let Some(index) = index {
-            self.pick_branch(index);
-        }
-    }
-
     /// 选了第 `index` 个分支：当前分支只关闭选择器；被别的工作树占着时切到那个工作树；不能签出
     /// 的（工作树目录已不在）打开操作菜单，灰掉的菜单项说明原因；有未提交的更改时先询问。
-    fn pick_branch(&mut self, index: usize) {
+    pub(in crate::app) fn pick_branch(&mut self, index: usize) {
         let Some(branch) = self.git.branches.get(index).cloned() else {
             return;
         };
