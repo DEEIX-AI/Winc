@@ -56,6 +56,7 @@ fn sample() -> State {
                     width: 0.0,
                 }),
                 run: Some("后端".into()),
+                sidebar_hidden: true,
             },
             Session {
                 folder: PathBuf::from("/b"),
@@ -64,6 +65,7 @@ fn sample() -> State {
                 bookmarks: Vec::new(),
                 terminal: None,
                 run: None,
+                sidebar_hidden: false,
             },
         ],
         last: Some(PathBuf::from("/a/项目")),
@@ -220,6 +222,7 @@ fn sessions_are_kept_per_folder() {
         bookmarks: Vec::new(),
         terminal: None,
         run: None,
+        sidebar_hidden: false,
     });
     assert_eq!(state.sessions.len(), 2);
     assert_eq!(state.sessions[0].folder, PathBuf::from("/b"));
