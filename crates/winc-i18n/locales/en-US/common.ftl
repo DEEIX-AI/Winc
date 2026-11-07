@@ -58,3 +58,17 @@ common-dialog-copy-ignored = Copy Ignored Files
 common-dialog-open-in-new-window = Open in New Window
 common-dialog-checkout-after-create = Check Out After Creating
 common-dialog-creating = Creating…
+
+## Move to the Applications folder
+
+app-move-title = Move winc to the Applications folder?
+app-move-detail = winc is running directly from “{ $folder }” and can’t update itself. After it moves to the Applications folder, the original is moved to the Trash and only this copy of winc stays on your Mac.
+app-move-detail-image = winc is running from a disk image and can’t update itself. After it moves to the Applications folder, the disk image is ejected and only this copy of winc stays on your Mac.
+app-move-button = Move to Applications Folder
+app-move-stay = Don’t Move
+app-move-failed = Couldn’t move to the Applications folder: { $error }
+app-move-target-running = The copy of winc in the Applications folder is running. Quit it first
+app-move-trash-failed = Couldn’t move “{ $path }” to the Trash
+app-move-copy-failed = Copying failed ({ $status })
+app-move-relaunch-failed = Couldn’t relaunch winc: { $error }
+app-move-unknown-location = Couldn’t determine where winc is

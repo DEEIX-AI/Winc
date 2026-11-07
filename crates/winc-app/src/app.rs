@@ -129,6 +129,13 @@ pub enum UserEvent {
     /// 重画。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     TrafficLightsMoved,
+    /// 询问是否将应用移到「应用程序」文件夹（见 `crate::macos::install`）；在窗口显示后处理，
+    /// 提示框依附于窗口。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    OfferMoveToApplications,
+    /// 「移到「应用程序」文件夹」提示框中的选择：是否移动，以及是否勾选「不再询问」。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    MoveToApplications(bool, bool),
     /// 选择面板打不开：哪一次选择，以及原因（没有门户时为 `None`）；只有经桌面门户选择的平台
     /// 有这种情况。
     #[cfg(all(unix, not(target_os = "macos")))]

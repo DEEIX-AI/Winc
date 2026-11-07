@@ -12,6 +12,7 @@ mod dialogs;
 mod display_link;
 mod files;
 mod folder_menu;
+pub mod install;
 mod pasteboard;
 mod updates;
 mod window;

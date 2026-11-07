@@ -154,6 +154,11 @@ impl ApplicationHandler<UserEvent> for App {
             );
         }
         self.place_traffic_lights();
+        // 在窗口显示后询问：提示框依附于窗口。
+        #[cfg(target_os = "macos")]
+        if let Some(proxy) = &self.proxy {
+            let _ = proxy.send_event(UserEvent::OfferMoveToApplications);
+        }
         self.install_system_hooks();
         // 启动时恢复的目录在事件循环创建之前打开，此时才能开始监视、读取运行配置和恢复终端、侧栏。
         self.watch_folder();
@@ -402,6 +407,15 @@ impl App {
             UserEvent::Pasted(result) => self.pasted_into_tree(result),
             UserEvent::Copied(copies, failures) => self.copied_into_tree(copies, failures),
             UserEvent::Reopen => self.show_window(),
+            #[cfg(target_os = "macos")]
+            UserEvent::OfferMoveToApplications => self.offer_move_to_applications(),
+            #[cfg(target_os = "macos")]
+            UserEvent::MoveToApplications(accept, never) => {
+                self.answer_move_to_applications(accept, never);
+            }
+            // 只有 macOS 发出这两个事件。
+            #[cfg(not(target_os = "macos"))]
+            UserEvent::OfferMoveToApplications | UserEvent::MoveToApplications(..) => {}
             UserEvent::TrafficLightsMoved => {
                 self.relayout();
                 self.request_redraw();

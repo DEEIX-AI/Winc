@@ -302,15 +302,20 @@ fn fill_volume(volume: &Path, app: &Path, background: &Path, icon: &Path) -> Res
     // 卷图标用应用图标：挂载后在桌面和侧边栏中显示。
     let volume_icon = volume.join(".VolumeIcon.icns");
     std::fs::copy(icon, &volume_icon).map_err(io)?;
+    // 卷根目录的 `.metadata_never_index` 使聚焦（Spotlight）不为挂载后的卷建立索引，卷中的
+    // winc.app 不会经由索引登记为应用，「打开方式」等列表中不出现安装包内的副本。
+    let never_index = volume.join(".metadata_never_index");
+    std::fs::write(&never_index, b"").map_err(io)?;
     // 不给 winc.app 设「隐藏扩展名」：该标志存在包根目录的文件信息里，装到「应用程序」以后
     // `codesign --verify --strict` 会把这个标志当成多余的附加数据而判定签名无效。
     set_finder_flags(volume, HAS_CUSTOM_ICON)?;
-    // 打开「显示隐藏文件」后仍不显示 `.background` 和 `.VolumeIcon.icns`：两个条目都置上
-    // `hidden` 标志。
+    // 打开「显示隐藏文件」后仍不显示 `.background`、`.VolumeIcon.icns` 和
+    // `.metadata_never_index`：这几个条目都置上 `hidden` 标志。
     run(Command::new("chflags")
         .arg("hidden")
         .arg(&hidden)
-        .arg(&volume_icon))?;
+        .arg(&volume_icon)
+        .arg(&never_index))?;
 
     let mount_point = format!("/Volumes/{VOLUME_NAME}");
     let alias = finder::alias(volume, VOLUME_NAME, &mount_point, &picture).map_err(io)?;
