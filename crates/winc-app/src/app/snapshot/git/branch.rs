@@ -359,7 +359,7 @@ fn the_search_box_can_create_a_branch() {
     assert!(!app.picker_open);
     assert_eq!(head_name(&app).as_deref(), Some("brand-new"));
 
-    // 底栏的「新建分支」：关掉选择器，打开新建分支的对话框（基于当前分支）。
+    // 底栏的「新建分支」：关闭选择器，打开新建分支的对话框（基于当前分支）。
     app.open_branch_picker(GitAnchor::Branch);
     paint(&mut app);
     app.press_picker_part(PickerPart::NewBranch);

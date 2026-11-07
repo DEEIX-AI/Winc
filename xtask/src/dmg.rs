@@ -493,6 +493,18 @@ fn dmg_background(work: &Path, output: &Path) -> Result<(), String> {
 /// 应用图标的源文件，相对 workspace 根目录。
 const ICON_SOURCE: &str = "crates/winc-app/assets/icon.svg";
 
+/// `ICON_SOURCE` 中图标底板的宽度（像素），以 1024 × 1024 的画布计，即底板 `<rect>` 的 `width`。
+///
+/// 底板接近铺满画布，Windows、Linux 的图标按原样使用；macOS 的图标缩小到 [`MACOS_ICON_TILE`]。
+pub(crate) const ICON_TILE: f32 = 920.0;
+
+/// macOS 应用图标中底板的边长（像素），以 1024 × 1024 的画布计。
+///
+/// 依据 Apple Design Resources 中的 macOS 应用图标模板：底板 824 × 824，四周各留 100，留白用于
+/// 系统绘制的阴影。macOS 15 及更早的版本按原样显示图标，底板超出该尺寸时，程序坞中的显示尺寸
+/// 大于按模板制作的图标。
+pub(crate) const MACOS_ICON_TILE: f32 = 824.0;
+
 /// `.icns` 的文件名（不含扩展名），也是 `Info.plist` 中 `CFBundleIconFile` 的值。
 const ICON_NAME: &str = "winc";
 
@@ -535,7 +547,7 @@ fn app_icon(work: &Path, output: &Path) -> Result<(), String> {
             1 => format!("icon_{size}x{size}.png"),
             _ => format!("icon_{size}x{size}@{scale}x.png"),
         };
-        let pixels = picture.render(size * scale, size * scale);
+        let pixels = macos_icon(&picture, size * scale);
         write_png(&iconset.join(name), &pixels)?;
     }
 
@@ -544,6 +556,31 @@ fn app_icon(work: &Path, output: &Path) -> Result<(), String> {
         .arg(output)
         .arg(&iconset))?;
     std::fs::remove_dir_all(&iconset).map_err(io)
+}
+
+/// 将应用图标渲染为边长 `size`（像素）的 macOS 图标。
+///
+/// 整个图标按 [`MACOS_ICON_TILE`] 与 [`ICON_TILE`] 之比缩小后居中放在透明画布上，底板因此位于
+/// 模板规定的位置。
+pub(crate) fn macos_icon(
+    picture: &winc_preview::image::Picture,
+    size: u32,
+) -> winc_preview::image::Pixels {
+    let inner = ((size as f32) * MACOS_ICON_TILE / ICON_TILE).round() as u32;
+    let art = picture.render(inner, inner);
+    let offset = (size - inner) / 2;
+    let row = 4 * size as usize;
+    let mut rgba = vec![0; row * size as usize];
+    for y in 0..inner as usize {
+        let from = &art.rgba[y * 4 * inner as usize..(y + 1) * 4 * inner as usize];
+        let at = (y + offset as usize) * row + 4 * offset as usize;
+        rgba[at..at + from.len()].copy_from_slice(from);
+    }
+    winc_preview::image::Pixels {
+        width: size,
+        height: size,
+        rgba,
+    }
 }
 
 /// 把 RGBA 像素（未预乘）写成 PNG。

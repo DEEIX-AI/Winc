@@ -575,8 +575,8 @@ impl App {
                 self.close_picker();
                 self.run_branch_command(command);
             }
-            // 新建分支用表单对话框（名称、基于，与「基于此分支新建分支…」相同），不在选择器里
-            // 另开一屏。
+            // 新建分支使用窗口正中的表单对话框（名称、基于、创建后签出），与命令面板和分支菜单中
+            // 的「新建分支」共用。
             PickerPart::NewBranch => {
                 self.close_picker();
                 self.open_branch_dialog(None, None);

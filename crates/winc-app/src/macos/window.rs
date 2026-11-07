@@ -84,13 +84,13 @@ const STYLE_FULL_SCREEN: usize = 1 << 14;
 
 /// 窗口的红绿灯：窗口模式下放进顶栏并垂直居中，全屏时交还给 `AppKit`。
 ///
-/// 全屏时 `AppKit` 在屏幕顶部滑出的标题栏里绘制红绿灯，按它自己的位置摆放。因此进入全屏的过渡
-/// 开始时把按钮恢复到 `AppKit` 原来的位置。退出全屏的过渡期间 `AppKit` 会重新排布标题栏，把按钮
-/// 放回默认位置，摆放的结果保持不住：过渡开始时隐藏标题栏容器，过渡结束后按窗口模式摆放，再显示
-/// 出来，过渡中看不到按钮跳动。
+/// 全屏时 `AppKit` 在屏幕顶部显示的标题栏中绘制红绿灯，并按其默认位置排列。因此进入全屏的过渡
+/// 开始时，按钮恢复到 `AppKit` 原来的位置。退出全屏的过渡期间，`AppKit` 重新排布标题栏，按钮回到
+/// 默认位置，此时摆放的位置不会保留：过渡开始时隐藏标题栏容器，过渡结束后按窗口模式摆放并重新
+/// 显示，过渡期间按钮的位置不会变化。
 ///
-/// 这些处理在通知发出时同步完成：监听不指定队列，通知中心在发出通知的线程（主线程）上直接调用。
-/// 经过事件循环再处理时，过渡的前几帧仍是旧的位置。释放时注销监听。
+/// 上述处理在通知发出时同步完成：监听不指定队列，通知中心在发出通知的线程（主线程）上直接调用
+/// 回调。若经事件循环处理，过渡的前几帧仍使用原来的位置。释放时注销监听。
 pub struct TrafficLights {
     shared: std::rc::Rc<Lights>,
     tokens: Vec<Retained<AnyObject>>,
@@ -108,13 +108,13 @@ struct Lights {
     native: std::cell::Cell<Option<(CGRect, [CGPoint; 3])>>,
     /// 窗口是否处于全屏或正在进入全屏；在全屏过渡开始时更新，早于 winit 报告的状态。
     fullscreen: std::cell::Cell<bool>,
-    /// 按钮位置变了以后调用，由应用重新计算布局、重画。
+    /// 按钮位置改变后调用，由应用重新计算布局并重画。
     moved: Box<dyn Fn()>,
 }
 
 impl TrafficLights {
     /// 管理 `window` 的红绿灯：按钮放进高 `bar_height` 的顶栏并垂直居中，第一个按钮距窗口左
-    /// 边缘 `left`（逻辑像素）；全屏过渡中按钮的位置变了以后调用 `moved`。取不到 `NSWindow` 时
+    /// 边缘 `left`（逻辑像素）；全屏过渡中按钮的位置改变后调用 `moved`。取不到 `NSWindow` 时
     /// 返回 `None`。
     pub fn new(
         window: &Window,
@@ -283,7 +283,7 @@ impl Lights {
         }
     }
 
-    /// 隐藏或显示标题栏容器（连同里面的红绿灯）；取不到时不做任何事。
+    /// 隐藏或显示标题栏容器（连同其中的红绿灯）；取不到容器时不做处理。
     fn set_hidden(&self, hidden: bool) {
         let ns_window = &*self.window;
         // SAFETY: 同 [`Lights::place`]；`setHidden:` 是 NSView 的公开方法。
@@ -295,7 +295,7 @@ impl Lights {
         }
     }
 
-    /// 把标题栏容器和三个按钮恢复到第一次摆放之前 `AppKit` 给出的位置；还没摆放过时不做任何事。
+    /// 将标题栏容器和三个按钮恢复到首次摆放之前 `AppKit` 给出的位置；尚未摆放时不做处理。
     fn restore(&self) {
         let Some((frame, origins)) = self.native.get() else {
             return;
@@ -362,11 +362,11 @@ fn add_cannot_move_window(class: &AnyClass) -> bool {
 /// 处理双击顶栏：按系统的「连按窗口标题栏」偏好（`AppleActionOnDoubleClick`）缩放或最小化窗口，
 /// 偏好为「无操作」时不处理。
 ///
-/// 缩放、最小化在当前事件处理完之后才开始（`performSelector:withObject:afterDelay:`，延迟为 0）。
-/// 双击由应用自己的鼠标处理识别，在 winit 的事件回调里同步调用 `zoom:` 时，`AppKit` 在这一次调用
-/// 内播完整个缩放动画，winit 把其间窗口大小的变化都留到回调返回后才派发：动画过程中界面一帧都
-/// 不重画，结束时才跳到新的大小。从运行循环开始动画时，每一帧的大小变化都同步派发，界面随窗口
-/// 逐帧重新布局（见 `WindowEvent::Resized` 的处理）。
+/// 缩放、最小化在当前事件处理完毕后开始（`performSelector:withObject:afterDelay:`，延迟为 0）。
+/// 双击由应用的鼠标处理识别；若在 winit 的事件回调中同步调用 `zoom:`，`AppKit` 在这次调用内执行
+/// 完整个缩放动画，winit 将其间所有窗口大小变化推迟到回调返回后派发，动画期间界面不重画，结束时
+/// 直接显示新的大小。由运行循环开始动画时，每一帧的大小变化都同步派发，界面随窗口逐帧重新布局
+/// （见 `WindowEvent::Resized` 的处理）。
 pub fn title_bar_double_click(window: &Window) {
     let action = match action_on_double_click().as_deref() {
         Some("Minimize") => sel!(miniaturize:),
