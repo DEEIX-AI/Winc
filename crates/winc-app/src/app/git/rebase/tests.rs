@@ -33,22 +33,22 @@ fn an_unchanged_list_has_nothing_to_do() {
 fn the_first_kept_commit_cannot_be_squashed() {
     let mut form = RebaseForm::new(plan(&["a", "b"]));
     form.rows[0].action = RebaseAction::Squash;
-    assert!(form.problem().is_some());
+    assert!(form.problem("").is_some());
     form.rows[0].action = RebaseAction::Drop;
     form.rows[1].action = RebaseAction::Fixup;
-    assert!(form.problem().is_some());
+    assert!(form.problem("").is_some());
     form.rows[1].action = RebaseAction::Pick;
-    assert!(form.problem().is_none());
+    assert!(form.problem("").is_none());
     form.rows[1].action = RebaseAction::Squash;
     form.rows[0].action = RebaseAction::Pick;
-    assert!(form.problem().is_none());
+    assert!(form.problem("").is_none());
 }
 
 #[test]
 fn dropping_everything_is_refused() {
     let mut form = RebaseForm::new(plan(&["a"]));
     form.rows[0].action = RebaseAction::Drop;
-    assert!(form.problem().is_some());
+    assert!(form.problem("").is_some());
 }
 
 #[test]
@@ -62,4 +62,20 @@ fn steps_follow_the_list_order() {
     assert_eq!(steps[0].message.as_deref(), Some("new"));
     assert_eq!(steps[1].oid, "a");
     assert_eq!(steps[1].action, RebaseAction::Pick);
+}
+
+/// 回归：信息为空时 `git commit` 会中止，变基会停在这个提交上。
+#[test]
+fn a_reworded_commit_needs_a_message() {
+    let mut form = RebaseForm::new(plan(&["a", "b"]));
+    form.rows[0].action = RebaseAction::Reword;
+    form.rows[0].message = Some("kept".into());
+    assert!(form.problem("kept").is_none());
+    // 选中行以信息框的内容为准，其余行以存下的信息为准。
+    assert!(form.problem("").is_some());
+    assert!(form.problem(" \n ").is_some());
+    form.selected = 1;
+    assert!(form.problem("").is_none());
+    form.rows[0].message = Some(String::new());
+    assert!(form.problem("anything").is_some());
 }

@@ -116,3 +116,91 @@ fn cloning_refuses_the_ext_protocol() {
     assert!(!marker.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 回归：远程名来自仓库配置，以 `-` 开头时不能被当成 `git push` 的选项，否则能运行任意命令。
+#[cfg(unix)]
+#[test]
+fn a_remote_name_is_never_parsed_as_an_option() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let shell = Shell::with_vars(std::env::vars_os().collect());
+    let Ok(git) = Git::find(&shell) else {
+        return;
+    };
+    let dir = crate::test_util::scratch("remote-option");
+    let root = winc_config::files::canonicalize(&dir).unwrap();
+    git.init(&root).unwrap();
+    let commit = [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "first",
+    ];
+    git.operate(&root, &commit).unwrap();
+    git.operate(&root, &["tag", "x"]).unwrap();
+
+    // `--receive-pack` 被当成选项时，`refs/tags/x` 成了要推送到的本地仓库，脚本随之运行。
+    let script = root.join("evil");
+    std::fs::write(&script, "#!/bin/sh\ntouch ran\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git.operate(&root, &["init", "--bare", "refs/tags/x"])
+        .unwrap();
+    let key = "remote.--receive-pack=./evil.url";
+    git.operate(&root, &["config", key, "/nonexistent"])
+        .unwrap();
+    assert_eq!(git.default_remote(&root).unwrap(), "--receive-pack=./evil");
+
+    assert!(git.push_tag(&root, "x").is_err());
+    assert!(git.delete_remote_tag(&root, "x").is_err());
+    assert!(!root.join("ran").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_tag_can_be_pushed_and_deleted_from_the_remote() {
+    let shell = Shell::with_vars(std::env::vars_os().collect());
+    let Ok(git) = Git::find(&shell) else {
+        return;
+    };
+    let dir = crate::test_util::scratch("remote-tag");
+    let root = winc_config::files::canonicalize(&dir).unwrap();
+    let source = root.join("source");
+    std::fs::create_dir(&source).unwrap();
+    git.init(&source).unwrap();
+    let commit = [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "first",
+    ];
+    git.operate(&source, &commit).unwrap();
+    git.operate(&source, &["tag", "x"]).unwrap();
+    git.operate(&root, &["init", "--bare", "bare"]).unwrap();
+    let bare = root.join("bare");
+    let url = bare.to_str().unwrap();
+    git.operate(&source, &["remote", "add", "--", "origin", url])
+        .unwrap();
+
+    let exists = || {
+        git.operate(&bare, &["rev-parse", "--verify", "refs/tags/x"])
+            .is_ok()
+    };
+    assert!(!exists());
+    git.push_tag(&source, "x").unwrap();
+    assert!(exists());
+    git.delete_remote_tag(&source, "x").unwrap();
+    assert!(!exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

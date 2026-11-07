@@ -194,7 +194,7 @@ impl App {
         self.git_operate_then(
             t!("git-op-remote-remove", name = name.as_str()),
             move |git, root| {
-                git.operate(root, &["remote", "remove", &name])
+                git.operate(root, &["remote", "remove", "--", &name])
                     .map(|summary| (summary, Then::Refresh))
             },
         );
@@ -205,11 +205,7 @@ impl App {
         match op {
             TagOp::Push => self.git_operate(
                 t!("git-op-tag-push", name = name.as_str()),
-                move |git, root| {
-                    let remote = git.default_remote(root)?;
-                    let spec = format!("refs/tags/{name}");
-                    git.operate(root, &["push", &remote, &spec])
-                },
+                move |git, root| git.push_tag(root, &name),
             ),
             TagOp::Delete => self.confirm_log(LogConfirmed::DeleteTag(name, TagTarget::Local)),
             TagOp::DeleteRemote => {
@@ -227,11 +223,7 @@ impl App {
             ),
             TagTarget::Remote => self.git_operate(
                 t!("git-op-tag-delete-remote", name = name.as_str()),
-                move |git, root| {
-                    let remote = git.default_remote(root)?;
-                    let spec = format!("refs/tags/{name}");
-                    git.operate(root, &["push", &remote, "--delete", &spec])
-                },
+                move |git, root| git.delete_remote_tag(root, &name),
             ),
         }
     }

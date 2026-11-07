@@ -692,6 +692,13 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
     let Some(dir) = deep_changes_repo("git-sticky") else {
         return;
     };
+    // `b` 目录之后再放一批文件：滚动范围足够大，下面滚到 `b` 目录中间的位置才能到达。
+    let more = dir.join("assets/pets/c");
+    std::fs::create_dir_all(&more).unwrap();
+    for i in 0..40 {
+        std::fs::write(more.join(format!("{i}.png")), "x").unwrap();
+    }
+    git_in(&dir, &["add", "-A"]);
     let mut app = app_with(&dir, false);
     // 默认显示为列表；本测试检查按目录排列的树形视图。
     app.commit.set_flat(false);
@@ -713,6 +720,7 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
         .position(|r| matches!(r, CommitRow::Dir { label, .. } if label == "b"))
         .unwrap();
     app.commit.scroll = (b + 4) as f32 * COMMIT_ROW;
+    assert!(app.commit.scroll <= app.commit_max_scroll());
     paint(&mut app);
     let sticky = app.commit_sticky(&rows);
     let pinned: Vec<usize> = sticky.iter().map(|s| s.row).collect();
@@ -2167,4 +2175,51 @@ fn snapshot_partial_lines() {
     shoot(&mut app, "diff-partial-lines");
     app.press_diff(DiffTarget::Layout);
     shoot(&mut app, "diff-partial-lines-unified");
+}
+
+/// 回归：滚动到长列表下方后提交，剩下的改动比滚动位置少，列表不能一片空白。
+#[test]
+fn a_shorter_list_is_visible_after_scrolling_far_down() {
+    let Some(dir) = deep_changes_repo("git-commit-shrink") else {
+        return;
+    };
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.show_commit();
+    paint(&mut app);
+    let max = app.commit_max_scroll();
+    assert!(max > 0.0, "样本需要超出列表高度");
+    app.commit.scroll = max;
+    paint(&mut app);
+
+    // 只留下一个改动：其余的全部提交到仓库。
+    let keep = dir.join("kept-change.txt");
+    git_in(&dir, &["add", "--all"]);
+    git_in(
+        &dir,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "all",
+        ],
+    );
+    std::fs::write(&keep, "x").unwrap();
+    app.git_refresh();
+    paint(&mut app);
+
+    assert!(app.commit.scroll <= app.commit_max_scroll());
+    assert_eq!(app.commit.scroll, 0.0);
+    assert!(
+        (app.commit_hits.iter()).any(|(_, target)| matches!(target, CommitTarget::File(_))),
+        "列表应当画出剩下的改动"
+    );
 }

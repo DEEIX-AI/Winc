@@ -35,6 +35,8 @@ pub(crate) const DIFF_HEADER: f32 = 36.0;
 const DIFF_ARROWS: f32 = 22.0;
 /// 右侧行号右边放勾选框的一列的宽度（逻辑像素）：按块提交时勾选每处改动。
 const DIFF_CHECKS: f32 = 22.0;
+/// 并排时行号栏里放行勾选框的宽度（逻辑像素）：容纳边长 11 的勾选框和两侧各 3 的留白。
+const DIFF_LINE_CHECK: f32 = 18.0;
 /// 两侧行号之间连接改动的带子的宽度（逻辑像素）。
 const DIFF_RIBBON: f32 = 48.0;
 /// 带子上的按钮中心到带子边缘的距离（逻辑像素）：两个 20 宽的悬停底色之间留 4 的间隙。
@@ -233,6 +235,8 @@ pub(crate) struct DiffPane {
     pub rect: Rect,
     /// 行号栏。
     pub gutter: Rect,
+    /// 行号右端的横坐标（逻辑像素）；行号靠这里右对齐。
+    pub number_end: f32,
     /// 文字区。
     pub text: Rect,
 }
@@ -247,13 +251,11 @@ pub(crate) struct DiffParts {
     pub body: Rect,
     /// 左侧（改之前）和右侧（改之后）。
     pub panes: [DiffPane; 2],
-    /// 左侧行号左边的一列：并排时放左侧的行勾选框，单栏时放「»」。
-    pub arrows: Rect,
     /// 两侧行号之间连接改动的带子。
     pub ribbon: Rect,
-    /// 右侧行号右边的一列：并排时放右侧的行勾选框，单栏时放改动勾选框。
+    /// 单栏时右侧行号右边放改动勾选框的一列；并排时宽度为 0，勾选框在带子上。
     pub checks: Rect,
-    /// 两侧放行勾选框的一列：并排时是 `arrows` 和 `checks`，单栏时都是加减号一列。
+    /// 两侧放行勾选框的一列：并排时在行号栏靠文字一侧，单栏时都是加减号一列。
     pub line_checks: [Rect; 2],
     /// 「»」按钮的中心横坐标（逻辑像素）。
     pub revert_x: f32,
@@ -1148,15 +1150,16 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
                 DiffPane {
                     rect,
                     gutter: left_gutter,
+                    number_end: left_gutter.right() - DIFF_GUTTER_PAD,
                     text,
                 },
                 DiffPane {
                     rect,
                     gutter: right_gutter,
+                    number_end: right_gutter.right() - DIFF_GUTTER_PAD,
                     text,
                 },
             ],
-            arrows,
             ribbon: column(lines.right(), 0.0),
             checks,
             line_checks: [lines, lines],
@@ -1164,16 +1167,25 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
             include_x: checks.x + checks.w / 2.0,
         };
     }
-    let middle = DIFF_ARROWS + 2.0 * gutter_w + DIFF_RIBBON + DIFF_CHECKS;
+    // 能按行勾选的差异：行号栏靠文字一侧留出行勾选框的位置，比行号两边的留白多出的部分加宽。
+    let line_w = if view.repo_path.is_some() {
+        DIFF_LINE_CHECK
+    } else {
+        0.0
+    };
+    let extra = (line_w - DIFF_GUTTER_PAD).max(0.0);
+    let gutter_w = gutter_w + extra;
+    let middle = 2.0 * gutter_w + DIFF_RIBBON;
     let text_w = ((editor.w - middle) / 2.0).max(0.0).floor();
 
     let left_text = column(editor.x, text_w);
-    let arrows = column(left_text.right(), DIFF_ARROWS);
-    let left_gutter = column(arrows.right(), gutter_w);
+    let left_gutter = column(left_text.right(), gutter_w);
     let ribbon = column(left_gutter.right(), DIFF_RIBBON);
     let right_gutter = column(ribbon.right(), gutter_w);
-    let checks = column(right_gutter.right(), DIFF_CHECKS);
-    let right_text = column(checks.right(), (editor.right() - checks.right()).max(0.0));
+    let right_text = column(
+        right_gutter.right(),
+        (editor.right() - right_gutter.right()).max(0.0),
+    );
     DiffParts {
         header,
         body,
@@ -1181,19 +1193,23 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
             DiffPane {
                 rect: column(editor.x, left_gutter.right() - editor.x),
                 gutter: left_gutter,
+                number_end: left_gutter.right() - DIFF_GUTTER_PAD,
                 text: left_text,
             },
             DiffPane {
                 rect: column(right_gutter.x, editor.right() - right_gutter.x),
                 gutter: right_gutter,
+                number_end: right_gutter.right() - DIFF_GUTTER_PAD - extra,
                 text: right_text,
             },
         ],
-        arrows,
         ribbon,
-        checks,
-        line_checks: [arrows, checks],
-        // 并排时改动级的两个按钮都在中间的带子上，两侧的列留给行勾选框。
+        checks: column(right_gutter.right(), 0.0),
+        line_checks: [
+            column(left_gutter.x, line_w),
+            column(right_gutter.right() - line_w, line_w),
+        ],
+        // 改动级的两个按钮都在中间的带子上。
         revert_x: ribbon.x + DIFF_RIBBON_BUTTON_INSET,
         include_x: ribbon.right() - DIFF_RIBBON_BUTTON_INSET,
     }

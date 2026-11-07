@@ -85,6 +85,31 @@ impl Git {
         Ok(parse_remotes(&String::from_utf8_lossy(&stdout)))
     }
 
+    /// 把标签 `name` 推送到默认的远程仓库，返回 `git` 的结论。
+    ///
+    /// 远程名来自仓库配置，可能以 `-` 开头，因此放在 `--end-of-options` 之后，不能被解析成选项。
+    ///
+    /// # Errors
+    ///
+    /// 没有配置远程仓库或 `git` 运行失败时返回原因。
+    pub fn push_tag(&self, root: &Path, name: &str) -> Result<String, String> {
+        let remote = self.default_remote(root)?;
+        let spec = format!("refs/tags/{name}");
+        self.operate(root, &["push", "--end-of-options", &remote, &spec])
+    }
+
+    /// 从默认的远程仓库删除标签 `name`，返回 `git` 的结论；远程名的处理同 [`Git::push_tag`]。
+    ///
+    /// # Errors
+    ///
+    /// 没有配置远程仓库或 `git` 运行失败时返回原因。
+    pub fn delete_remote_tag(&self, root: &Path, name: &str) -> Result<String, String> {
+        let remote = self.default_remote(root)?;
+        let spec = format!("refs/tags/{name}");
+        let args = ["push", "--delete", "--end-of-options", &remote, &spec];
+        self.operate(root, &args)
+    }
+
     /// 返回推送和删除标签使用的远程仓库：优先 `origin`，否则第一个。
     ///
     /// # Errors

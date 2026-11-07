@@ -99,16 +99,32 @@ impl RebaseForm {
     }
 
     /// 返回不能开始的原因；可以开始或没有更改时返回 `None`。
-    pub(super) fn problem(&self) -> Option<&'static str> {
+    ///
+    /// `editing` 是信息框的内容：选中行正在编辑的信息还没有存入该行。信息为空时 `git commit` 会
+    /// 中止，变基因此停在这个提交上。
+    pub(super) fn problem(&self, editing: &str) -> Option<&'static str> {
         let mut kept = self
             .rows
             .iter()
             .filter(|row| row.action != RebaseAction::Drop);
         match kept.next().map(|row| row.action) {
-            None => Some(t!("git-rebase-all-dropped")),
-            Some(RebaseAction::Squash | RebaseAction::Fixup) => Some(t!("git-rebase-first-squash")),
-            Some(_) => None,
+            None => return Some(t!("git-rebase-all-dropped")),
+            Some(RebaseAction::Squash | RebaseAction::Fixup) => {
+                return Some(t!("git-rebase-first-squash"));
+            }
+            Some(_) => {}
         }
+        let empty = (self.rows.iter().enumerate())
+            .filter(|(_, row)| row.action == RebaseAction::Reword)
+            .any(|(i, row)| {
+                let message = if i == self.selected {
+                    editing
+                } else {
+                    row.message.as_deref().unwrap_or_default()
+                };
+                message.trim().is_empty()
+            });
+        empty.then(|| t!("git-rebase-empty-message"))
     }
 
     /// 与打开对话框时相比是否有更改。
@@ -336,8 +352,10 @@ impl App {
     }
 
     /// 返回交互式变基对话框的 [`FormPlan`]。
-    pub(super) fn rebase_plan(&self, form: &RebaseForm) -> FormPlan {
-        let problem = form.problem();
+    ///
+    /// `editing` 是信息框的内容（见 [`RebaseForm::problem`]）。
+    pub(super) fn rebase_plan(&self, form: &RebaseForm, editing: &str) -> FormPlan {
+        let problem = form.problem(editing);
         FormPlan {
             enabled: problem.is_none() && form.changed(),
             problem: problem.map(str::to_owned),

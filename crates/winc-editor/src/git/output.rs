@@ -40,14 +40,16 @@ pub fn output_text() -> String {
 /// 返回一条命令结果的文本。
 fn entry(root: &Path, args: &[&str], code: Option<i32>, output: &str) -> String {
     let command = redact(&args.join(" "));
-    let output = redact(tail(output.trim_end(), TEXT_LIMIT));
+    // 先替换再截断：截断点落在地址中间时，剩下的凭据前面已经没有 `://`，认不出来。
+    let output = redact(output.trim_end());
+    let output = tail(&output, TEXT_LIMIT);
     let status = match code {
         Some(code) => winc_i18n::t!("git-output-exit-code", code = code.to_string()),
         None => winc_i18n::t!("git-output-no-exit-code").to_owned(),
     };
     let mut entry = format!("{}\n$ git {command}\n", root.display());
     if !output.is_empty() {
-        entry.push_str(&output);
+        entry.push_str(output);
         entry.push('\n');
     }
     entry.push_str(&status);

@@ -225,7 +225,7 @@ impl App {
         match &dialog.kind {
             FormKind::Worktree => self.worktree_plan(dialog),
             FormKind::Branch { at } => self.branch_plan(dialog, at.as_deref()),
-            FormKind::Rebase(form) => self.rebase_plan(form),
+            FormKind::Rebase(form) => self.rebase_plan(form, dialog.name.text()),
             FormKind::Clone => self.clone_plan(dialog.name.text().trim(), dialog.folder.as_deref()),
             FormKind::Remote { editing } => {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())

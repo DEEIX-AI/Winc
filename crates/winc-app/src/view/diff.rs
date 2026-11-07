@@ -3,7 +3,8 @@
 //!
 //! 两侧各绘制各的行，行号挨着中间的带子。每段改动按类型上色（新增绿、删除灰、修改蓝，都是主题里
 //! 配好的柔和色），两侧的底色与带子同色，一侧没有行时那一侧在插入的位置绘制一道线；改了的字再
-//! 深一层。并排时「»」和改动勾选框都在带子上，「»」把左侧的一段换到右侧；两侧行号外侧是行勾选框。
+//! 深一层。并排时「»」和改动勾选框都在带子上，「»」把左侧的一段换到右侧；行勾选框在行号栏靠文字
+//! 一侧。折起来的一段同样用带子连接。
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -21,9 +22,7 @@ use super::editor::{
     trailing_whitespace, whitespace_shown,
 };
 use super::*;
-use crate::app::{
-    DIFF_GUTTER_PAD, DIFF_TEXT_PAD, DiffParts, DiffTarget, Focus, HunkKind, diff_parts,
-};
+use crate::app::{DIFF_TEXT_PAD, DiffParts, DiffTarget, Focus, HunkKind, diff_parts};
 use crate::icons::Direction;
 use crate::layout::{GIT_LANE, Ruler, editor_content_height};
 
@@ -287,6 +286,26 @@ fn draw_header(
             let rest = format!(" · {rest}");
             end = ui_text(frame, app, end, header, &rest, p.text_dim, clip);
         }
+        // 文件路径写在第一个标题后面（单栏写在最后），从中间截短。
+        if side == if view.is_unified() { RIGHT } else { LEFT } {
+            let path = view.repo_path.as_deref().map(|path| {
+                let root = app.git.root.as_deref();
+                let relative = root
+                    .and_then(|root| path.strip_prefix(root).ok())
+                    .unwrap_or(path);
+                relative.display().to_string()
+            });
+            if let Some(path) = path {
+                let x = end + 12.0;
+                let path = ellipsize(
+                    frame,
+                    &path,
+                    app.fonts.ui_small,
+                    (clip.right() - x).max(0.0),
+                );
+                ui_text_small(frame, app, x, header, &path, p.text_dim, clip);
+            }
+        }
         after = view.is_unified().then_some(end);
     }
 }
@@ -531,10 +550,7 @@ fn draw_body(
                     p.hover.alpha(p.hover.a * 0.6)
                 };
                 frame.rect_clipped(band, fill, 0.0, body);
-                let icon = (
-                    pane.gutter.right() - DIFF_GUTTER_PAD - app.cell / 2.0,
-                    y + lh / 2.0,
-                );
+                let icon = (pane.number_end - app.cell / 2.0, y + lh / 2.0);
                 let color = if hovered { p.text_muted } else { p.text_dim };
                 icons::up_down(frame, icon, color, pane.gutter);
                 let label = t!("editor-diff-unchanged-lines", count = lines.len());
@@ -603,8 +619,7 @@ fn draw_body(
             number.clear();
             let _ = write!(number, "{}", line + 1);
             let gutter = parts.panes[LEFT].gutter;
-            let number_x =
-                gutter.right() - DIFF_GUTTER_PAD - number.chars().count() as f32 * app.cell;
+            let number_x = parts.panes[LEFT].number_end - number.chars().count() as f32 * app.cell;
             frame.text(
                 FontKind::Mono,
                 app.fonts.code,
@@ -620,8 +635,7 @@ fn draw_body(
         if part == 0 {
             number.clear();
             let _ = write!(number, "{}", line + 1);
-            let number_x =
-                pane.gutter.right() - DIFF_GUTTER_PAD - number.chars().count() as f32 * app.cell;
+            let number_x = pane.number_end - number.chars().count() as f32 * app.cell;
             frame.text(
                 FontKind::Mono,
                 app.fonts.code,
@@ -702,7 +716,13 @@ fn draw_body(
                 (&marks.new, hunk.new.start)
             };
             let word = shade.word;
-            for mark in lines.get(line - start).into_iter().flatten() {
+            let marks = lines.get(line - start).map_or(&[][..], Vec::as_slice);
+            let marks = if winc_editor::diff_view::marks_cover_line(&chars, marks) {
+                &[][..]
+            } else {
+                marks
+            };
+            for mark in marks {
                 let end = mark.end.min(chars.len());
                 let from = (mark.start..end)
                     .find(|&c| !chars[c].is_whitespace())
@@ -888,6 +908,23 @@ fn draw_body(
 
     // 带子：每段改动从左侧的改动行连到右侧的改动行；一侧没有行时那一侧绘制一道线。
     let ribbon = parts.ribbon;
+    // 折起来的一段两侧不一定同高：用与折叠行相同的淡底连起来，看得出是同一段。
+    if !unified {
+        let fill = p.hover.alpha(p.hover.a * 0.6);
+        let shade = DiffShade {
+            line: fill,
+            word: fill,
+            edge: fill,
+            mark: fill,
+        };
+        for &(left, right) in &view.fold_rows {
+            let (l0, r0) = (row_y(LEFT, left), row_y(RIGHT, right));
+            if (l0 + lh).max(r0 + lh) < body.y || l0.min(r0) > body.bottom() {
+                continue;
+            }
+            draw_ribbon(frame, ribbon, (l0, l0 + lh), (r0, r0 + lh), shade, body);
+        }
+    }
     let hunks = if view.one_side_empty() {
         &[][..]
     } else {
@@ -997,7 +1034,7 @@ fn draw_body(
 ///
 /// 逐列绘制：每列一段底色，上下沿各一段和前一列相连的边线。不用抗锯齿的笔画（按像素
 /// 算距离，大块曲线每帧要一两毫秒），逐列的矩形在滚动时每帧绘制开销也较小。
-fn draw_ribbon(
+pub(in crate::view) fn draw_ribbon(
     frame: &mut Frame<'_>,
     area: Rect,
     left: (f32, f32),

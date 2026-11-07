@@ -25,9 +25,7 @@ use animation::{
     EXIT_FADE, FOLD_ANIMATION, PICKER_ANIMATION, POPUP_IN, POPUP_OUT, SIDEBAR_ANIMATION, TAB_SLIDE,
     TREE_ANIMATION,
 };
-pub(crate) use diff::{
-    DIFF_GUTTER_PAD, DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts,
-};
+pub(crate) use diff::{DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts};
 pub use editor::conflict::{ConflictAction, OverwriteChoice};
 pub use editor::editing::BraceKey;
 pub use editor::editing::ScrollGlide;

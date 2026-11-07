@@ -176,9 +176,9 @@ fn snapshot_rebase_dialog() {
     };
     letter(&mut app, "p");
     key(&mut app, NamedKey::ArrowDown);
-    letter(&mut app, "s");
+    letter(&mut app, "d");
     key(&mut app, NamedKey::ArrowDown);
-    letter(&mut app, "r");
+    letter(&mut app, "f");
     std::thread::sleep(std::time::Duration::from_millis(400));
     shoot(&mut app, "git-rebase");
 }

@@ -392,7 +392,17 @@ fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         };
         let room = (band.right() - 8.0 - text_x).max(0.0);
         let subject = ellipsize(frame, subject, app.fonts.ui, room);
-        ui_text(frame, app, text_x, band, &subject, color, list);
+        // 压缩、修正的提交并入上一行，说明的颜色淡一层；丢弃的提交加删除线。
+        let merged = matches!(
+            row.action,
+            winc_editor::git::RebaseAction::Squash | winc_editor::git::RebaseAction::Fixup
+        );
+        let subject_color = if merged { p.text_muted } else { color };
+        let end = ui_text(frame, app, text_x, band, &subject, subject_color, list);
+        if dropped {
+            let strike = Rect::new(text_x, band.y + band.h / 2.0, (end - text_x).max(0.0), 1.0);
+            frame.rect_clipped(strike, p.text_dim, 0.0, list);
+        }
     }
 
     // 信息框：只在改写时可以编辑。
@@ -427,29 +437,60 @@ fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         }
     }
 
-    // 上移、下移。
-    for (rect, direction, part) in [
-        (layout.values[0], icons::Direction::Up, DialogPart::RebaseUp),
+    // 行数超过列表高度时右边缘一条滑块，表示还有未显示的提交。
+    let content = form.rows.len() as f32 * REBASE_ROW_H;
+    if content > list.h && list.h > 0.0 {
+        let h = (list.h * list.h / content).max(16.0);
+        let y = list.y + (list.h - h) * (form.scroll / (content - list.h)).clamp(0.0, 1.0);
+        let thumb = Rect::new(list.right() - 3.0, y, 3.0, h);
+        frame.rect_clipped(thumb, p.text_dim.alpha(0.5), 1.5, list);
+    }
+
+    // 上移、下移：选中的行已在首尾时变淡。
+    let last = form.rows.len().saturating_sub(1);
+    for (rect, direction, part, enabled) in [
+        (
+            layout.values[0],
+            icons::Direction::Up,
+            DialogPart::RebaseUp,
+            form.selected > 0,
+        ),
         (
             layout.values[1],
             icons::Direction::Down,
             DialogPart::RebaseDown,
+            form.selected < last,
         ),
     ] {
-        draw_button(frame, p, rect, card, hover == Some(part), false);
-        icons::chevron(frame, center(rect), 9.0, direction, p.text_muted, rect);
+        draw_button(frame, p, rect, card, enabled && hover == Some(part), false);
+        let color = if enabled {
+            p.text_muted
+        } else {
+            p.text_dim.alpha(0.4)
+        };
+        icons::chevron(frame, center(rect), 9.0, direction, color, rect);
     }
-    if let Some(problem) = &plan.problem {
-        let left = layout.values[1].right() + 12.0;
-        let row = Rect::new(
-            left,
-            layout.cancel.y,
-            (layout.cancel.x - 12.0 - left).max(0.0),
-            layout.cancel.h,
-        );
-        let problem = ellipsize(frame, problem, app.fonts.ui_small, row.w);
-        ui_text_small(frame, app, left, row, &problem, p.error, card);
-    }
+    // 上移、下移按钮和底部按钮之间：不能开始的原因，否则是键盘操作的说明。
+    let left = layout.values[1].right() + 12.0;
+    let row = Rect::new(
+        left,
+        layout.cancel.y,
+        (layout.cancel.x - 12.0 - left).max(0.0),
+        layout.cancel.h,
+    );
+    let (note, color) = match &plan.problem {
+        Some(problem) => (problem.clone(), p.error),
+        None => {
+            let alt = if cfg!(target_os = "macos") {
+                "⌥"
+            } else {
+                "Alt+"
+            };
+            (t!("git-rebase-hint", alt = alt), p.text_dim)
+        }
+    };
+    let note = ellipsize(frame, &note, app.fonts.ui_small, row.w);
+    ui_text_small(frame, app, left, row, &note, color, card);
     draw_action(
         app,
         frame,

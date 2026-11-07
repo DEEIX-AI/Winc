@@ -289,6 +289,17 @@ pub fn resolution(text: &Rope, conflict: &Conflict, pick: Pick) -> String {
     out
 }
 
+/// 文件和一侧版本之间对应的一段。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignSegment {
+    /// 文件中的行区间；这一侧有、文件中没有时是插入位置上的空区间。
+    pub file: Range<usize>,
+    /// 这一侧的行区间；文件中有、这一侧没有时是插入位置上的空区间。
+    pub side: Range<usize>,
+    /// 第几段冲突；`git` 已自动合并的改动为 `None`。
+    pub conflict: Option<usize>,
+}
+
 /// 一段冲突在 [`SideAlign`] 中的位置。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AlignedConflict {
@@ -311,6 +322,8 @@ pub struct SideAlign {
     hunks: Vec<LineHunk>,
     /// 各段冲突在这一侧的行区间，下标同传入的冲突。
     pub blocks: Vec<Range<usize>>,
+    /// 要连接的各段，创建时算好：绘制每帧都要用。
+    segments: Vec<AlignSegment>,
 }
 
 impl SideAlign {
@@ -346,6 +359,7 @@ impl SideAlign {
             conflicts: aligned,
             hunks: line_hunks(&resolved, side),
             blocks: Vec::new(),
+            segments: Vec::new(),
         };
         align.blocks = (align.conflicts.iter())
             .map(|c| {
@@ -353,6 +367,7 @@ impl SideAlign {
                 begin..align.resolved_to_side(c.start + c.length).max(begin)
             })
             .collect();
+        align.segments = align.build_segments();
         align
     }
 
@@ -386,9 +401,47 @@ impl SideAlign {
         line.saturating_add_signed(shift)
     }
 
-    /// 返回这一侧中与解决后的文本不同的行区间，按位置排列。
-    pub fn changed(&self) -> impl Iterator<Item = Range<usize>> + '_ {
-        self.hunks.iter().map(|hunk| hunk.new.clone())
+    /// 返回这一侧与文件之间要连接的各段，按位置排列：各段冲突和 `git` 已自动合并的改动。
+    pub fn segments(&self) -> &[AlignSegment] {
+        &self.segments
+    }
+
+    /// 计算 [`SideAlign::segments`] 的结果。
+    fn build_segments(&self) -> Vec<AlignSegment> {
+        let mut segments: Vec<AlignSegment> = (self.conflicts.iter().zip(&self.blocks).enumerate())
+            .map(|(i, (conflict, block))| AlignSegment {
+                file: conflict.lines.clone(),
+                side: block.clone(),
+                conflict: Some(i),
+            })
+            .collect();
+        for hunk in &self.hunks {
+            // 冲突本身已经单独列出，其中的差别不再算作自动合并的改动。
+            let overlaps = (self.conflicts.iter())
+                .any(|c| hunk.old.start < c.start + c.length && c.start < hunk.old.end);
+            if overlaps {
+                continue;
+            }
+            segments.push(AlignSegment {
+                file: self.resolved_to_file(hunk.old.start)..self.resolved_to_file(hunk.old.end),
+                side: hunk.new.clone(),
+                conflict: None,
+            });
+        }
+        segments.sort_by_key(|segment| segment.file.start);
+        segments
+    }
+
+    /// 返回文件中对应解决后的文本第 `line` 行的行号。
+    fn resolved_to_file(&self, line: usize) -> usize {
+        let mut shift = 0;
+        for conflict in &self.conflicts {
+            if line < conflict.start + conflict.length {
+                break;
+            }
+            shift = conflict.lines.end - (conflict.start + conflict.length);
+        }
+        line + shift
     }
 }
 

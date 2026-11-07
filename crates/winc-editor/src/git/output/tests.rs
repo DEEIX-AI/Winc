@@ -44,3 +44,13 @@ fn long_output_keeps_its_end_on_a_character_boundary() {
     assert_eq!(tail("甲乙丙", 7), "乙丙");
     assert_eq!(tail("甲乙丙", 100), "甲乙丙");
 }
+
+/// 回归：截断点落在地址中间时，开头剩下的凭据没有 `://`，必须在截断之前替换。
+#[test]
+fn truncation_never_exposes_credentials() {
+    let url = "https://me:secret@host/a.git\n";
+    let cut = url.find("secret").unwrap() + 2;
+    let output = format!("{url}{}", "x".repeat(TEXT_LIMIT - (url.len() - cut)));
+    let text = entry(Path::new("/r"), &["push"], Some(1), &output);
+    assert!(!text.contains("cret"), "{}", &text[..80]);
+}

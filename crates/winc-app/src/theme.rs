@@ -322,8 +322,8 @@ struct Tokens {
     warning: Color,
     /// Git 状态：修改、新增、删除、冲突。
     ///
-    /// 文件名、行号栏标记、差异的底色都从这里来，同一种
-    /// 改动在哪里都是同一个颜色。
+    /// 文件名、行号栏标记、差异的底色都从这里来，同一种改动在哪里都是同一个颜色；差异里的删除
+    /// 例外，见 [`DELETED_DARK`]。
     git: [Color; 4],
     /// 当前标签是否带强调色；为 `false` 时是凸起的一块灰。
     tinted_tab: bool,
@@ -354,6 +354,11 @@ const fn mix(fg: Color, bg: Color, t: f32) -> Color {
 ///
 /// 四档比例依次用于行、行内改动的字、边线和行号栏标记；深色主题叠得浓一些，否则在深色底上
 /// 看不出来。比例取自调参，按两种配色下改动可见程度相当校准。
+/// 深色主题下差异里删除的颜色：比编辑区底色亮、不带色相的灰。
+const DELETED_DARK: Color = palettes::hex(0x868A91);
+/// 浅色主题下差异里删除的颜色：比编辑区底色暗、不带色相的灰。
+const DELETED_LIGHT: Color = palettes::hex(0x8C8F99);
+
 const fn shade(mark: Color, card: Color, dark: bool) -> DiffShade {
     let t = if dark {
         [0.14, 0.27, 0.36, 0.75]
@@ -454,7 +459,12 @@ impl Palette {
             git_conflict: t.git[3],
             diff_modified: shade(t.git[0], t.card, dark),
             diff_added: shade(t.git[1], t.card, dark),
-            diff_deleted: shade(t.git[2], t.card, dark),
+            // 删除用中性灰，不随主题的 Git 状态色变红：红色留给合并冲突。
+            diff_deleted: shade(
+                if dark { DELETED_DARK } else { DELETED_LIGHT },
+                t.card,
+                dark,
+            ),
             syntax_text: t.syntax[0],
             syntax_keyword: t.syntax[1],
             syntax_builtin: t.syntax[2],

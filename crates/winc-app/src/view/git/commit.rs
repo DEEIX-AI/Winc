@@ -43,6 +43,11 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     app.commit.message = field;
     app.set_commit_message_lines(wrap.lines());
     let parts = app.commit_parts();
+    // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
+    // 展开、收起的动画中列表按动画结束时的行计算，由动画自己处理。
+    if app.commit.motion.is_none() && app.git.status.is_some() {
+        app.commit.scroll = app.commit.scroll.min(app.commit_max_scroll());
+    }
     let mut hits = Vec::new();
     draw_header(app, frame, &parts, &mut hits);
     match (&app.git.status, &app.git.problem) {

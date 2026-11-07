@@ -140,7 +140,7 @@ fn sides_align_with_the_conflicted_file() {
     assert_eq!(theirs.blocks.first(), Some(&(2..3)));
     assert_eq!(theirs.side_line(0), 0);
     assert_eq!(theirs.side_line(8), 3);
-    assert_eq!(theirs.changed().count(), 0);
+    assert!(theirs.segments().iter().all(|s| s.conflict.is_some()));
 }
 
 #[test]
@@ -148,7 +148,8 @@ fn lines_changed_on_one_side_only_are_reported() {
     let text = Rope::from_str("a\n<<<<<<< H\nx\n=======\ny\n>>>>>>> b\nC\n");
     let conflicts = find_conflicts(&text);
     let ours = SideAlign::new(&text, &conflicts, "a\nx\nc\n", Pick::Ours);
-    assert_eq!(ours.changed().next(), Some(2..3));
+    let merged = ours.segments().iter().find(|s| s.conflict.is_none());
+    assert_eq!(merged.map(|s| s.side.clone()), Some(2..3));
 }
 
 #[test]
@@ -157,4 +158,24 @@ fn a_file_without_conflicts_aligns_line_by_line() {
     let align = SideAlign::new(&text, &[], "a\nb\n", Pick::Ours);
     assert!(align.blocks.is_empty());
     assert_eq!(align.side_line(1), 1);
+}
+
+#[test]
+fn segments_connect_conflicts_and_merged_changes_to_the_file() {
+    let text = Rope::from_str("a\n<<<<<<< H\nx\n=======\ny\n>>>>>>> b\nm\nC\n");
+    let conflicts = find_conflicts(&text);
+    let ours = SideAlign::new(&text, &conflicts, "a\nx\nm\nc\n", Pick::Ours);
+    let segments = ours.segments();
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].conflict, Some(0));
+    assert_eq!(
+        (segments[0].file.clone(), segments[0].side.clone()),
+        (1..6, 1..2)
+    );
+    // 冲突之后的行号按文件计算：解决后的第 3 行是文件的第 7 行。
+    assert_eq!(segments[1].conflict, None);
+    assert_eq!(
+        (segments[1].file.clone(), segments[1].side.clone()),
+        (7..8, 3..4)
+    );
 }

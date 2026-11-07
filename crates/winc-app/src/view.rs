@@ -88,6 +88,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     draw_top_bar(app, frame);
     draw_sidebar_button(app, frame);
+    app.sync_merge_panes();
     draw_editor(app, frame);
     editor::draw_split(app, frame);
     git::merge::draw_side_panes(app, frame);
