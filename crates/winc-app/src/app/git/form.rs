@@ -31,6 +31,21 @@ pub(crate) enum FormKind {
     Branch { at: Option<String> },
     /// `git`、`ssh` 的输入请求，见 [`super::question`]。
     Question(Prompt),
+    /// 克隆仓库：地址、位置。
+    Clone,
+    /// 添加远程仓库，或修改 `editing` 的地址。
+    Remote { editing: Option<String> },
+}
+
+impl FormKind {
+    /// 返回使用询问对话框版式的表单的内容；其他表单返回 `None`。
+    pub(crate) fn view(&self) -> Option<QuestionView> {
+        match self {
+            FormKind::Question(prompt) => Some(QuestionView::of(prompt)),
+            FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
+            FormKind::Worktree | FormKind::Branch { .. } | FormKind::Clone => None,
+        }
+    }
 }
 
 /// 表单对话框的状态。
@@ -39,8 +54,8 @@ pub(crate) struct FormDialog {
     pub kind: FormKind,
     /// 名称的输入框；打开对话框时就在这里输入。
     pub name: TextField,
-    /// 登录对话框的密码框；其他表单不显示。
-    pub password: TextField,
+    /// 询问对话框的第二个输入框：登录的密码（遮盖）、远程仓库的地址；其他表单不显示。
+    pub second: TextField,
     /// 新分支从哪个分支开始；`None` 是当前分支（游离时是当前提交）。
     pub base: Option<String>,
     /// 用「位置」右端的目录按钮选的目录，工作树建在它下面；`None` 是默认位置（见
@@ -132,7 +147,7 @@ impl App {
         self.form_dialog = Some(FormDialog {
             kind,
             name,
-            password: TextField::masked(),
+            second: TextField::masked(),
             base: None,
             folder: None,
             copy: true,
@@ -169,15 +184,13 @@ impl App {
     pub(crate) fn dialog_layout(&self) -> DialogLayout {
         let window = self.layout.window;
         match self.form_dialog.as_ref().map(|d| &d.kind) {
-            Some(FormKind::Question(prompt)) => {
-                let view = QuestionView::of(prompt);
-                DialogLayout::question(
-                    window,
-                    view.message_lines,
-                    view.values.len(),
-                    view.inputs.len(),
-                )
-            }
+            Some(FormKind::Clone) => DialogLayout::clone_form(window),
+            Some(kind) if let Some(view) = kind.view() => DialogLayout::question(
+                window,
+                view.message_lines,
+                view.values.len(),
+                view.inputs.len(),
+            ),
             Some(FormKind::Branch { .. }) => {
                 DialogLayout::compute(window, false, &[DialogPart::Checkout])
             }
@@ -203,6 +216,10 @@ impl App {
         match &dialog.kind {
             FormKind::Worktree => self.worktree_plan(dialog),
             FormKind::Branch { at } => self.branch_plan(dialog, at.as_deref()),
+            FormKind::Clone => self.clone_plan(dialog.name.text().trim(), dialog.folder.as_deref()),
+            FormKind::Remote { editing } => {
+                self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
+            }
             FormKind::Question(prompt) => FormPlan {
                 problem: None,
                 confirm: QuestionView::of(prompt).confirm,
@@ -341,6 +358,8 @@ impl App {
                 self.git_new_branch(name, from, checkout);
             }
             FormKind::Question(_) => {}
+            FormKind::Clone => self.submit_clone(),
+            FormKind::Remote { editing } => self.submit_remote(editing),
         }
         // 已发起 git 操作时，待其完成后再关闭（[`App::form_operation_done`]），期间按钮显示
         // 「正在创建…」；未发起操作（上一个操作未完成、直接打开已有的工作树）时不等待。
@@ -382,12 +401,12 @@ impl App {
         let plan = self.form_plan(dialog);
         let layout = self.dialog_layout();
         let mut order = Vec::new();
-        // 无需输入的请求没有输入框，只有登录对话框有密码框。
+        // 无需输入的请求没有输入框；第二个输入框只用于登录和添加远程仓库。
         if layout.branch.w > 0.0 {
             order.push(DialogPart::Branch);
         }
-        if layout.password.w > 0.0 {
-            order.push(DialogPart::Password);
+        if layout.second.w > 0.0 {
+            order.push(DialogPart::Second);
         }
         if plan.base_enabled {
             order.push(DialogPart::Base);
@@ -510,7 +529,7 @@ impl App {
             return;
         }
         match self.dialog_part_at(x, y) {
-            Some(part @ (DialogPart::Branch | DialogPart::Password)) => {
+            Some(part @ (DialogPart::Branch | DialogPart::Second)) => {
                 self.focus = Focus::Dialog;
                 if let Some(dialog) = &mut self.form_dialog {
                     dialog.focus = part;
@@ -528,7 +547,7 @@ impl App {
         match part {
             DialogPart::Close | DialogPart::Cancel => self.close_form_dialog(),
             DialogPart::Confirm => self.submit_form_dialog(),
-            DialogPart::Branch | DialogPart::Password => self.submit_form_dialog(),
+            DialogPart::Branch | DialogPart::Second => self.submit_form_dialog(),
             DialogPart::Base => {
                 use crate::app::input::context_menu::{MenuTarget, menu_below};
                 let base = self.dialog_layout().base;

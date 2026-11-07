@@ -59,7 +59,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
 
     // 菜单里：当前分支只能「从这里新建」，别的分支能检出、新建、比较、合并、变基、删除。
     // 没有上游：拉取灰显。
-    let menu = branch_menu(&app.git.branches, &app.git.stashes, None, false);
+    let menu = branch_menu(&app.git.branches, &app.git.stashes, &[], None, false);
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::GitPull, false)));
     let ops = |app: &App, name: &str| {
         branch_ops(index_of(app, name), &app.git.branches, &[], &[], false)
@@ -67,8 +67,8 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
             .filter(|entry| matches!(entry, MenuEntry::Item(..)))
             .count()
     };
-    assert_eq!(ops(&app, "featurex"), 1);
-    assert_eq!(ops(&app, "main"), 7);
+    assert_eq!(ops(&app, "featurex"), 2);
+    assert_eq!(ops(&app, "main"), 8);
 
     // 检出 main，再删除 featurex。
     let main = index_of(&app, "main");

@@ -12,7 +12,6 @@ use winc_render::{FontKind, Frame, Rect, Stroke};
 
 use super::*;
 use crate::app::git::form::{FormKind, FormPlan};
-use crate::app::git::question::QuestionView;
 use crate::layout::{DialogLayout, DialogPart, QUESTION_LINE_H};
 
 /// 绘制对话框：遮罩，再绘制卡片（淡入途中按 [`draw_moving_card`] 整张叠上去）。
@@ -73,7 +72,10 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
             [t!("common-dialog-name"), t!("common-dialog-base"), ""],
             t!("common-dialog-branch-placeholder"),
         ),
-        FormKind::Question(_) => return draw_question(app, frame, layout),
+        FormKind::Question(_) | FormKind::Remote { .. } => {
+            return draw_question(app, frame, layout);
+        }
+        FormKind::Clone => return draw_clone(app, frame, layout),
     };
     let card = layout.card;
     frame.rounded(card, p.editor_bg, RADIUS_CARD);
@@ -203,11 +205,11 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     let Some(dialog) = &app.form_dialog else {
         return;
     };
-    let FormKind::Question(prompt) = &dialog.kind else {
+    let Some(view) = dialog.kind.view() else {
         return;
     };
-    let view = QuestionView::of(prompt);
     let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
+    let (running, error) = (dialog.running.is_some(), dialog.error.clone());
     let card = layout.card;
     frame.rounded(card, p.editor_bg, RADIUS_CARD);
 
@@ -265,10 +267,10 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     for (i, (input, part)) in view
         .inputs
         .iter()
-        .zip([DialogPart::Branch, DialogPart::Password])
+        .zip([DialogPart::Branch, DialogPart::Second])
         .enumerate()
     {
-        let rect = [layout.branch, layout.password][i];
+        let rect = [layout.branch, layout.second][i];
         draw_field(app, frame, rect, part, &plan, input.placeholder);
     }
     draw_action(
@@ -280,16 +282,106 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         true,
         hover,
     );
+    let enabled = plan.enabled && !running;
     draw_action(
         app,
         frame,
         layout.confirm,
         plan.confirm,
         true,
-        plan.enabled,
+        enabled,
         hover,
     );
+    if let Some(error) = error {
+        draw_error(app, frame, layout, &error);
+    }
     let ring = match focus {
+        DialogPart::Cancel => Some(layout.cancel),
+        DialogPart::Confirm => Some(layout.confirm),
+        _ => None,
+    };
+    if let Some(rect) = ring {
+        focus_outline(
+            frame,
+            rect.inset(-2.0, -2.0),
+            RADIUS_ROW + 2.0,
+            p.accent,
+            card,
+        );
+    }
+}
+
+/// 绘制克隆仓库的对话框：标题行、地址、位置和底部按钮。
+fn draw_clone(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
+    let p = app.palette;
+    let Some(dialog) = &app.form_dialog else {
+        return;
+    };
+    let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
+    let (running, error) = (dialog.running.is_some(), dialog.error.clone());
+    let card = layout.card;
+    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    let header = layout.header;
+    let title = t!("git-clone-title");
+    ui_text(
+        frame,
+        app,
+        header.x + SETTINGS_PAD,
+        header,
+        title,
+        p.text,
+        card,
+    );
+    let close = layout.close;
+    let closing = hover == Some(DialogPart::Close);
+    draw_button(frame, p, close, card, closing, false);
+    icons::close(frame, center(close), 7.0, p.text_muted, close);
+    let labels = [t!("git-clone-url"), t!("common-dialog-location")];
+    for (rect, text) in layout.labels.iter().zip(labels) {
+        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        ui_text(
+            frame,
+            app,
+            rect.right() - w,
+            *rect,
+            text,
+            p.text_muted,
+            card,
+        );
+    }
+    let placeholder = t!("git-clone-url-placeholder");
+    draw_field(
+        app,
+        frame,
+        layout.branch,
+        DialogPart::Branch,
+        &plan,
+        placeholder,
+    );
+    if let Some((rect, change)) = layout.location {
+        draw_location(app, frame, layout, rect, change, &plan, false);
+    }
+    draw_action(
+        app,
+        frame,
+        layout.cancel,
+        t!("common-cancel"),
+        false,
+        true,
+        hover,
+    );
+    let confirm = if running {
+        t!("git-clone-running")
+    } else {
+        plan.confirm
+    };
+    let enabled = plan.enabled && !running;
+    draw_action(app, frame, layout.confirm, confirm, true, enabled, hover);
+    if let Some(error) = error {
+        draw_error(app, frame, layout, &error);
+    }
+    let ring = match focus {
+        DialogPart::Change => layout.location.map(|(_, change)| change),
         DialogPart::Cancel => Some(layout.cancel),
         DialogPart::Confirm => Some(layout.confirm),
         _ => None,
@@ -373,21 +465,22 @@ fn draw_field(
         rect,
         p.editor_bg,
         focused,
-        focused && plan.problem.is_some(),
+        focused && part == DialogPart::Branch && plan.problem.is_some(),
     );
     let Some(mut dialog) = app.form_dialog.take() else {
         return;
     };
     let mut area = rect.inset(DIALOG_FIELD_INSET, 0.0);
-    if let Some(problem) = &plan.problem {
+    // 原因只写在第一个输入框里，第二个输入框留给输入的内容。
+    if let Some(problem) = plan.problem.as_ref().filter(|_| part == DialogPart::Branch) {
         let size = app.fonts.ui_small;
         let text = ellipsize(frame, problem, size, (area.w * 0.6).round());
         let w = frame.measure(FontKind::Ui, size, &text);
         ui_text_small(frame, app, area.right() - w, rect, &text, p.error, rect);
         area.w = (area.w - w - 12.0).max(0.0);
     }
-    let field = if part == DialogPart::Password {
-        &mut dialog.password
+    let field = if part == DialogPart::Second {
+        &mut dialog.second
     } else {
         &mut dialog.name
     };

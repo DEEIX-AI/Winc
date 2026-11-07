@@ -272,6 +272,8 @@ pub enum PromptKind {
     Stash,
     /// 新标签的名字；`at` 是打在哪个提交上（完整的提交号）。
     NewTag { at: String },
+    /// 分支的新名字；`old` 是现在的名字。
+    RenameBranch { old: String },
 }
 
 /// 键盘焦点所在的区域。

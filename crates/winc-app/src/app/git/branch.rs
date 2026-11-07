@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use winc_editor::git::{Branch, BranchDeleted, Git, Operation, Stash};
+use winc_editor::git::{Branch, BranchDeleted, Git, Operation, Remote, Stash};
 use winc_i18n::t;
 
 use super::commit::COMMITTED_SHOWN;
@@ -33,6 +33,8 @@ pub enum BranchOp {
     Merge,
     /// 把当前分支变基到该分支上。
     Rebase,
+    /// 重命名（输入新名字），只用于本地分支。
+    Rename,
     /// 删除（先确认；未合并的再确认一次才强制删除）。
     Delete,
     /// 和当前分支比较：打开日志，列出从当前分支到它改了的文件。
@@ -45,7 +47,7 @@ impl BranchOp {
         &[BranchOp::Checkout, BranchOp::NewWorktree, BranchOp::NewFrom],
         &[BranchOp::Compare],
         &[BranchOp::Merge, BranchOp::Rebase],
-        &[BranchOp::Delete],
+        &[BranchOp::Rename, BranchOp::Delete],
     ];
 
     /// 菜单里的文字：不写分支名。菜单是从这个分支的那一行弹出来的，另一边总是当前分支。
@@ -56,8 +58,53 @@ impl BranchOp {
             BranchOp::NewFrom => t!("git-branch-new-from"),
             BranchOp::Merge => t!("git-branch-merge-into-current"),
             BranchOp::Rebase => t!("git-branch-rebase-current-onto"),
+            BranchOp::Rename => t!("git-branch-rename"),
             BranchOp::Delete => t!("git-branch-delete"),
             BranchOp::Compare => t!("git-branch-compare-with-current"),
+        }
+    }
+}
+
+/// 对日志里一个标签做的事。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TagOp {
+    /// 推送到远程仓库。
+    Push,
+    /// 删除本地标签（先确认）。
+    Delete,
+    /// 从远程仓库删除（先确认）。
+    DeleteRemote,
+}
+
+impl TagOp {
+    /// 全部操作，顺序就是子菜单里的顺序。
+    pub const ALL: [TagOp; 3] = [TagOp::Push, TagOp::Delete, TagOp::DeleteRemote];
+
+    /// 子菜单里的文字。
+    pub fn label(self) -> &'static str {
+        match self {
+            TagOp::Push => t!("git-tag-push"),
+            TagOp::Delete => t!("git-tag-delete"),
+            TagOp::DeleteRemote => t!("git-tag-delete-remote"),
+        }
+    }
+}
+
+/// 对一个远程仓库做的事。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RemoteOp {
+    /// 修改地址。
+    Edit,
+    /// 移除（先确认）。
+    Remove,
+}
+
+impl RemoteOp {
+    /// 子菜单里的文字。
+    pub fn label(self) -> &'static str {
+        match self {
+            RemoteOp::Edit => t!("git-remote-edit"),
+            RemoteOp::Remove => t!("git-remote-remove"),
         }
     }
 }
@@ -93,8 +140,10 @@ pub(super) enum Then {
     Nothing,
     /// 工作树变了：重新取工作树列表。
     Refresh,
-    /// 新建了工作树：重新取列表，打开它；`true` 是在新窗口打开。
+    /// 新建了工作树或克隆了仓库：重新取列表，打开它；`true` 是在新窗口打开。
     Open(PathBuf, bool),
+    /// 当前目录成为了仓库：重新查找仓库。
+    Rescan,
     /// 检查完要移除的工作树：确认以后移除（[`App::confirm_remove_worktree`]），不说做完了。
     ConfirmRemove(RemoveCheck),
     /// 同步需要强制推送：确认以后推送（[`App::confirm_force_push`]），不说做完了；内容是上游将被
@@ -111,8 +160,8 @@ pub(super) enum Then {
 struct Done {
     /// 第几个操作（[`BranchState::started`]）：换目录以后又起了新操作时，认得出这是之前的。
     id: u64,
-    /// 在哪个仓库里做的。
-    root: PathBuf,
+    /// 在哪个仓库里做的；操作开始时当前目录不是仓库时为 `None`。
+    root: Option<PathBuf>,
     /// 做的是什么（「推送」「签出「dev」」），用在提示里。
     what: String,
     result: Result<(String, Then), String>,
@@ -159,6 +208,7 @@ impl Default for BranchState {
 pub(crate) fn branch_menu(
     branches: &[Branch],
     stashes: &[Stash],
+    remotes: &[Remote],
     operation: Option<Operation>,
     busy: bool,
 ) -> Vec<MenuEntry> {
@@ -175,6 +225,7 @@ pub(crate) fn branch_menu(
     entries.extend([
         MenuEntry::Item(GitFetch, !busy),
         MenuEntry::Item(GitPull, !busy && upstream),
+        MenuEntry::Item(GitPullRebase, !busy && upstream),
         MenuEntry::Item(GitPush, !busy),
         MenuEntry::Separator,
         MenuEntry::Item(GitNewBranch, !busy),
@@ -200,6 +251,21 @@ pub(crate) fn branch_menu(
             items,
         ));
     }
+    // 远程仓库：每个一个子菜单（修改地址、移除），最后是添加。
+    let mut items: Vec<MenuEntry> = (remotes.iter().enumerate())
+        .map(|(i, remote)| {
+            let ops = [RemoteOp::Edit, RemoteOp::Remove]
+                .into_iter()
+                .map(|op| MenuEntry::Item(GitRemote(op, i), !busy))
+                .collect();
+            MenuEntry::Submenu(remote.name.clone(), ops)
+        })
+        .collect();
+    if !items.is_empty() {
+        items.push(MenuEntry::Separator);
+    }
+    items.push(MenuEntry::Item(GitAddRemote, !busy));
+    entries.push(MenuEntry::Submenu(t!("git-remotes-menu").to_owned(), items));
     entries
 }
 
@@ -226,15 +292,15 @@ pub(crate) fn branch_ops(
             .copied()
             .filter(|op| match op {
                 // 当前分支不能签出、合并、变基、删除自己。
-                _ if branch.current => *op == BranchOp::NewFrom,
+                _ if branch.current => matches!(op, BranchOp::NewFrom | BranchOp::Rename),
                 // 已经在其他工作树里签出着、又是当前分支（`origin/main` 在 `main` 上）：
                 // 不能再签出该分支。
                 BranchOp::NewWorktree => {
                     let local = local_name(branch);
                     !held.contains(&local) && !stale.contains(&local) && Some(local) != current
                 }
-                // 远程分支不在这里删除。
-                BranchOp::Delete => !branch.remote,
+                // 远程分支不在这里删除、重命名。
+                BranchOp::Delete | BranchOp::Rename => !branch.remote,
                 _ => true,
             })
             .map(|op| {
@@ -306,6 +372,19 @@ impl App {
                 git.operate(root, &["fetch", "--all", "--prune"])
             }),
             GitPull => self.git_operate(t!("git-op-pull").into(), |git, root| git.pull(root)),
+            GitPullRebase => self.git_operate(t!("git-op-pull-rebase").into(), |git, root| {
+                git.operate(root, &["pull", "--rebase"])
+            }),
+            GitAddRemote => self.open_remote_dialog(None),
+            GitRemote(op, i) => {
+                let Some(remote) = self.git.remote_list.get(i).cloned() else {
+                    return;
+                };
+                match op {
+                    RemoteOp::Edit => self.open_remote_dialog(Some(remote)),
+                    RemoteOp::Remove => self.confirm_remove_remote(remote.name),
+                }
+            }
             GitPush => {
                 let upstream = self.has_upstream();
                 self.git_operate(t!("git-op-push").into(), move |git, root| {
@@ -400,6 +479,7 @@ impl App {
                 t!("git-op-rebase-onto", name = name.as_str()),
                 move |git, root| git.operate(root, &["rebase", "--end-of-options", &name]),
             ),
+            BranchOp::Rename => self.open_rename_prompt(name),
             BranchOp::Delete => self.confirm_delete_branch(name),
             BranchOp::Compare => self.git_compare_branch(&name),
         }
@@ -577,6 +657,20 @@ impl App {
         );
     }
 
+    /// 把本地分支 `old` 重命名为 `name`；名字不合法或已被占用时由 `git` 说明原因。
+    pub(in crate::app) fn git_rename_branch(&mut self, old: String, name: &str) {
+        let name = name.trim().to_owned();
+        if name.is_empty() || name == old {
+            return;
+        }
+        self.git_operate(
+            t!("git-op-rename-branch", name = old.as_str()),
+            move |git, root| {
+                git.operate(root, &["branch", "--move", "--end-of-options", &old, &name])
+            },
+        );
+    }
+
     /// 在后台做一件会改仓库的事 `what`，同一时刻只做一件。
     pub(super) fn git_operate(
         &mut self,
@@ -594,13 +688,24 @@ impl App {
         what: String,
         work: impl FnOnce(&Git, &Path) -> Result<(String, Then), String> + Send + 'static,
     ) {
+        let Some(root) = self.git.root.clone() else {
+            return;
+        };
+        self.git_operate_in(root, what, work);
+    }
+
+    /// 和 [`App::git_operate_then`] 一样，但在目录 `dir` 中进行，`dir` 可以不是当前仓库。
+    pub(super) fn git_operate_in(
+        &mut self,
+        dir: PathBuf,
+        what: String,
+        work: impl FnOnce(&Git, &Path) -> Result<(String, Then), String> + Send + 'static,
+    ) {
         if self.branch.running.is_some() {
             self.flash(t!("git-op-busy"));
             return;
         }
-        let Some(root) = self.git.root.clone() else {
-            return;
-        };
+        let root = self.git.root.clone();
         let sender = self.branch.results.0.clone();
         self.branch.running = Some(what.clone());
         self.branch.finished = None;
@@ -615,7 +720,7 @@ impl App {
                     // 端点只在操作期间存在，`listener` 在本分支结束时被丢弃。
                     let listener = wake.and_then(|proxy| question::listen(proxy, questions, id));
                     let askpass = listener.as_ref().and_then(Listener::askpass);
-                    work(&git.with_askpass(askpass), &root)
+                    work(&git.with_askpass(askpass), &dir)
                 }
                 Err(e) => Err(unusable(&e)),
             };
@@ -644,8 +749,9 @@ impl App {
             // 哪个仓库里做完了；新建的工作树仍然打开，检查完的不再移除。换回原来的目录、又起了新
             // 操作时根目录对得上但不是正在做的这个，同样按旧结果处理，不清掉新操作的 `running`。
             let stale = self.branch.running.is_none() || self.branch.started != done.id;
-            if stale || self.git.root.as_deref() != Some(done.root.as_path()) {
-                let name = winc_editor::display_name(&done.root);
+            if stale || self.git.root != done.root {
+                let root = done.root.unwrap_or_default();
+                let name = winc_editor::display_name(&root);
                 match done.result {
                     Ok((
                         _,

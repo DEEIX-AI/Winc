@@ -330,6 +330,7 @@ impl App {
             Then::Refresh => {}
             Then::Open(path, true) => self.open_in_new_window(&path),
             Then::Open(path, false) => return self.switch_folder(&path),
+            Then::Rescan => return self.git_folder_changed(),
         }
         self.git_refresh();
     }

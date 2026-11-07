@@ -724,7 +724,7 @@ fn log_compares_two_commits_or_a_branch_and_the_branch_menu_stashes() {
         std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
         "fn main() { changed(); }\n"
     );
-    let menu = branch_menu(&app.git.branches, &app.git.stashes, None, false);
+    let menu = branch_menu(&app.git.branches, &app.git.stashes, &[], None, false);
     assert!(
         menu.iter()
             .any(|e| matches!(e, MenuEntry::Submenu(title, _) if title == "储藏（1）"))
@@ -764,7 +764,7 @@ fn the_log_opens_from_the_commit_view_button_and_the_branch_menu_starts_with_fet
     assert!(app.log_active());
 
     // 分支菜单不再重复列出日志入口，最上面是「获取」，下方写明作用。
-    let menu = branch_menu(&app.git.branches, &app.git.stashes, None, false);
+    let menu = branch_menu(&app.git.branches, &app.git.stashes, &[], None, false);
     assert_eq!(
         menu.first(),
         Some(&MenuEntry::Item(MenuCommand::GitFetch, true))
@@ -826,7 +826,7 @@ fn a_tag_can_be_created_on_a_commit_from_the_log() {
         .oid
         .clone();
     // 右键菜单里有「新建标签…」和「复制短提交号」。
-    let menu = crate::app::input::context_menu::log_commit_menu(true, "main");
+    let menu = crate::app::input::context_menu::log_commit_menu(true, "main", &[]);
     for command in [MenuCommand::LogNewTag, MenuCommand::LogCopyShortOid] {
         assert!(
             menu.contains(&MenuEntry::Item(command, true)),

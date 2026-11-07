@@ -60,6 +60,34 @@ const OTHER_CONFIRM_LINES: usize = 8;
 const HOST_KEY_LINES: usize = 1;
 
 impl QuestionView {
+    /// 返回添加远程仓库（`editing` 为 `None`）或修改其地址的对话框内容。
+    pub(crate) fn remote(editing: Option<&str>) -> QuestionView {
+        let input = |label, placeholder| QuestionInput { label, placeholder };
+        let url = input(t!("git-remote-url"), t!("git-remote-url-placeholder"));
+        match editing {
+            Some(name) => QuestionView {
+                title: t!("git-remote-edit-title").to_owned(),
+                message: None,
+                message_lines: 0,
+                values: vec![QuestionValue {
+                    label: t!("git-remote-name"),
+                    text: name.to_owned(),
+                    mono: false,
+                }],
+                inputs: vec![url],
+                confirm: t!("git-remote-save-button"),
+            },
+            None => QuestionView {
+                title: t!("git-remote-add-title").to_owned(),
+                message: None,
+                message_lines: 0,
+                values: Vec::new(),
+                inputs: vec![input(t!("git-remote-name"), "origin"), url],
+                confirm: t!("git-remote-add-button"),
+            },
+        }
+    }
+
     /// 返回 `prompt` 对应的对话框内容。
     pub(crate) fn of(prompt: &Prompt) -> QuestionView {
         let value = |label, text: &str| QuestionValue {
@@ -232,12 +260,12 @@ impl App {
             dialog.name.text().replace(['\r', '\n'], "")
         };
         if let Prompt::Username { server } = prompt {
-            if dialog.password.text().is_empty() && dialog.focus == DialogPart::Branch {
-                dialog.focus = DialogPart::Password;
+            if dialog.second.text().is_empty() && dialog.focus == DialogPart::Branch {
+                dialog.focus = DialogPart::Second;
                 self.request_redraw();
                 return;
             }
-            let password = dialog.password.text().replace(['\r', '\n'], "");
+            let password = dialog.second.text().replace(['\r', '\n'], "");
             self.branch.password = Some((server.clone(), password));
         }
         if let Some((_, reply)) = self.branch.asking.take() {

@@ -8,7 +8,7 @@ mod compare;
 mod details;
 mod filter;
 mod keys;
-mod menus;
+pub(crate) mod menus;
 mod time;
 
 pub(crate) use time::*;
@@ -201,6 +201,10 @@ pub enum LogConfirmed {
     DropStash(winc_editor::git::Stash),
     /// 删除一个本地分支；第二项为真时连同未合并的提交一起删除（[`App::run_delete_branch`]）。
     DeleteBranch(String, bool),
+    /// 删除一个标签。
+    DeleteTag(String, winc_editor::git::TagTarget),
+    /// 移除一个远程仓库。
+    RemoveRemote(String),
 }
 
 /// 一个提交上的本地分支：签出时优先签出它，不进入分离的 `HEAD`。

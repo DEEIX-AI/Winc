@@ -48,7 +48,10 @@ impl App {
                     }
                 }
                 MenuCommand::StatusSync => self.git_sync(),
-                MenuCommand::GitFetch | MenuCommand::GitPull | MenuCommand::GitPush => {
+                MenuCommand::GitFetch
+                | MenuCommand::GitPull
+                | MenuCommand::GitPullRebase
+                | MenuCommand::GitPush => {
                     self.run_branch_command(command);
                 }
                 MenuCommand::StatusNewBranch => self.open_branch_dialog(None, None),

@@ -14,6 +14,7 @@ pub(crate) mod location_picker;
 pub(crate) mod log;
 pub(crate) mod merge;
 pub(crate) mod question;
+mod repository;
 pub(crate) mod worktree;
 
 use std::collections::{HashMap, HashSet};
@@ -96,6 +97,8 @@ struct Refs {
     branches: Vec<Branch>,
     /// 仓库配置的远程名。
     remotes: Vec<String>,
+    /// 仓库配置的远程仓库和地址。
+    remote_list: Vec<winc_editor::git::Remote>,
     /// 仓库的公共 Git 目录；取不到时为 `None`。
     common_dir: Option<PathBuf>,
     /// 储藏，最新的在前。
@@ -187,6 +190,8 @@ pub(crate) struct GitState {
     pub branches: Vec<Branch>,
     /// 仓库配置的远程名，和状态一起刷新。
     pub remotes: Vec<String>,
+    /// 仓库配置的远程仓库和地址，和状态一起刷新。
+    pub remote_list: Vec<winc_editor::git::Remote>,
     /// 储藏，最新的在前，和状态一起刷新。
     pub stashes: Vec<Stash>,
     /// 最近切换到过的分支名，最近的在前，和状态一起刷新。
@@ -239,6 +244,7 @@ impl Default for GitState {
             status: None,
             branches: Vec::new(),
             remotes: Vec::new(),
+            remote_list: Vec::new(),
             stashes: Vec::new(),
             recent_branches: Vec::new(),
             worktrees: Vec::new(),
@@ -307,6 +313,7 @@ impl GitState {
         self.status = None;
         self.branches.clear();
         self.remotes.clear();
+        self.remote_list.clear();
         self.stashes.clear();
         self.worktrees.clear();
         self.problem = None;
@@ -751,6 +758,7 @@ impl App {
                 (Ok(git), Ok(_)) if refs => Some(Refs {
                     branches: git.branches(&root, &cancel).unwrap_or_default(),
                     remotes: git.remotes(&root, &cancel).unwrap_or_default(),
+                    remote_list: git.remote_list(&root, &cancel).unwrap_or_default(),
                     common_dir: git.common_dir(&root, &cancel).ok(),
                     stashes: git.stashes(&root, &cancel).unwrap_or_default(),
                     recent_branches: git.recent_branches(&root, &cancel).unwrap_or_default(),
@@ -812,6 +820,7 @@ impl App {
                         self.git.stashes = refs.stashes;
                         self.git.recent_branches = refs.recent_branches;
                         self.git.remotes = refs.remotes;
+                        self.git.remote_list = refs.remote_list;
                         if let Some(watcher) = &mut self.watcher {
                             watcher.watch_git_dir(refs.common_dir.as_deref());
                         }

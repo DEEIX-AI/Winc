@@ -552,14 +552,18 @@ impl App {
             MenuTarget::LogFile(_, path) => {
                 log_file_menu(path.exists(), self.relative_path(path).is_some())
             }
-            MenuTarget::LogCommit(_) => {
+            MenuTarget::LogCommit(oid) => {
+                let commit = self.log_commit(oid);
+                let tags: Vec<&str> = (commit.iter().flat_map(|c| &c.refs))
+                    .filter_map(crate::app::git::log::menus::tag_name)
+                    .collect();
                 let busy = self.branch.running.is_some()
                     || self
                         .git
                         .status
                         .as_ref()
                         .is_some_and(|s| s.operation.is_some());
-                log_commit_menu(!busy, &self.current_branch_label())
+                log_commit_menu(!busy, &self.current_branch_label(), &tags)
             }
             MenuTarget::LogAuthor => {
                 let mut menu = vec![

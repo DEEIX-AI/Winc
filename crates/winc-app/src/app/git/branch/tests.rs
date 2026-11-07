@@ -10,7 +10,7 @@ impl App {
         // 换目录之前起的操作：编号比后来起的都小。
         let _ = self.branch.results.0.send(Done {
             id: 0,
-            root: root.into(),
+            root: Some(root.into()),
             what,
             result: Ok((String::new(), Then::Nothing)),
         });
@@ -34,11 +34,11 @@ fn branch(name: &str, remote: bool, current: bool, upstream: Option<&str>) -> Br
 #[test]
 fn the_actions_menu_offers_pull_only_with_an_upstream() {
     let with = [branch("main", false, true, Some("origin/main"))];
-    let menu = branch_menu(&with, &[], None, false);
+    let menu = branch_menu(&with, &[], &[], None, false);
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::GitPull, true)));
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::NewWorktree, true)));
     let without = [branch("main", false, true, None)];
-    let menu = branch_menu(&without, &[], None, false);
+    let menu = branch_menu(&without, &[], &[], None, false);
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::GitPull, false)));
 }
 
@@ -95,13 +95,14 @@ fn branch_ops_are_grouped_with_separators() {
             item(Merge, 1),
             item(Rebase, 1),
             MenuEntry::Separator,
+            item(Rename, 1),
             item(Delete, 1),
         ]
     );
-    // 空的组不留分隔线：当前分支只有一项，远程分支最后没有删除。
+    // 空的组不留分隔线：当前分支只能新建和重命名，远程分支最后没有删除。
     assert_eq!(
         branch_ops(0, &branches, &[], &[], false),
-        [item(NewFrom, 0)]
+        [item(NewFrom, 0), MenuEntry::Separator, item(Rename, 0)]
     );
     let remote = branch_ops(2, &branches, &[], &[], false);
     assert_eq!(remote.last(), Some(&item(Rebase, 2)));

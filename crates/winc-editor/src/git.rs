@@ -12,9 +12,11 @@ mod commit;
 mod ignored;
 mod output;
 mod parse;
+mod remote;
 mod sync;
 
 pub use output::output_text;
+pub use remote::{Remote, TagTarget, repository_dir_name};
 pub use sync::Synced;
 mod trust;
 mod worktree;
@@ -705,15 +707,20 @@ impl Git {
             output::record(root, args, None, refused.as_bytes());
             return Err(refused);
         }
+        self.run_operation(root, args, OPERATION_TIMEOUT)
+    }
+
+    /// 在目录 `root` 里运行 `git args`，记录输出，返回 `git` 的结论；调用方负责信任检查。
+    fn run_operation(
+        &self,
+        root: &Path,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<String, String> {
         let mut command = self.command(root);
         self.ask_through(root, &mut command);
         command.args(args).stderr(Stdio::piped());
-        match process::run(
-            &mut command,
-            Vec::new(),
-            OPERATION_TIMEOUT,
-            &Cancel::default(),
-        ) {
+        match process::run(&mut command, Vec::new(), timeout, &Cancel::default()) {
             Ok(output) => {
                 let mut text = output.stderr;
                 text.extend_from_slice(&output.stdout);

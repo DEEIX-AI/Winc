@@ -234,6 +234,11 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
                 t!("workspace-stash-placeholder"),
                 t!("workspace-stash-hint").to_owned(),
             ),
+            crate::app::PromptKind::RenameBranch { old } => (
+                t!("workspace-rename-branch-title"),
+                t!("workspace-rename-branch-placeholder"),
+                t!("workspace-rename-branch-hint", name = old.as_str()),
+            ),
             crate::app::PromptKind::NewTag { at } => (
                 t!("workspace-tag-title"),
                 t!("workspace-tag-placeholder"),

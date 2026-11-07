@@ -194,6 +194,12 @@ pub enum MenuCommand {
     GitFetch,
     /// Git：拉取。
     GitPull,
+    /// 拉取并把本地提交变基到上游（`pull --rebase`）。
+    GitPullRebase,
+    /// 添加远程仓库。
+    GitAddRemote,
+    /// 对第几个远程仓库做的事。
+    GitRemote(crate::app::git::branch::RemoteOp, usize),
     /// Git：推送当前分支。
     GitPush,
     /// Git：新建分支（从当前分支）。
@@ -252,6 +258,8 @@ pub enum MenuCommand {
     LogResetHard,
     /// 日志里的提交：在这里打一个标签（输入名字）。
     LogNewTag,
+    /// 对提交上第几个标签做的事。
+    LogTag(crate::app::git::branch::TagOp, usize),
     /// 日志里的提交：复制完整的提交号。
     LogCopyOid,
     /// 日志里的提交：复制前 7 位提交号。
@@ -369,6 +377,9 @@ impl MenuCommand {
             MenuCommand::GitFetch => t!("menu-git-fetch"),
             MenuCommand::GitPull => t!("menu-git-pull"),
             MenuCommand::GitPush => t!("menu-git-push"),
+            MenuCommand::GitPullRebase => t!("menu-git-pull-rebase"),
+            MenuCommand::GitAddRemote => t!("git-remote-add"),
+            MenuCommand::GitRemote(op, _) => op.label(),
             MenuCommand::GitNewBranch => t!("git-branch-new-from"),
             MenuCommand::GitContinue => t!("menu-git-continue"),
             MenuCommand::GitShowDiff => t!("menu-git-show-diff"),
@@ -386,6 +397,7 @@ impl MenuCommand {
             MenuCommand::LogResetMixed => t!("menu-log-reset-mixed"),
             MenuCommand::LogResetHard => t!("menu-log-reset-hard"),
             MenuCommand::LogNewTag => t!("menu-log-new-tag"),
+            MenuCommand::LogTag(op, _) => op.label(),
             MenuCommand::LogCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),

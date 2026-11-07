@@ -358,6 +358,8 @@ impl App {
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),
             GitShowOutput => self.show_git_output(),
+            GitClone => self.open_clone_dialog(),
+            GitInit => self.git_init(),
             GitSwitchRepository => self.switch_location(),
             GitSwitchWorktree => self.switch_location(),
             GitNewWorktree => self.open_worktree_dialog(),
@@ -399,9 +401,13 @@ impl App {
     }
 
     /// 命令当前是否可用：属于某个模块的命令只在模块开着时可用。
-    pub(super) fn action_available(&self, action: Action) -> bool {
+    pub(in crate::app) fn action_available(&self, action: Action) -> bool {
         match action {
             Action::RunConfiguration if self.editor.root().is_none() => return false,
+            // 只有打开的目录还不是仓库时才能初始化。
+            Action::GitInit if self.editor.root().is_none() || self.git.root.is_some() => {
+                return false;
+            }
             Action::StopConfiguration if !self.run_config_running() => return false,
             Action::EditRunConfigurations if self.editor.root().is_none() => return false,
             // Windows 安装包、deb 包已经把 `winc` 放进 `PATH`，没有要安装的。

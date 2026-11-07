@@ -29,8 +29,8 @@ impl App {
             Focus::KeySearch => Some(&mut self.settings.keys_query),
             Focus::LogFilter => Some(&mut self.log.filter),
             Focus::Dialog => self.form_dialog.as_mut().map(|d| {
-                if d.focus == crate::layout::DialogPart::Password {
-                    &mut d.password
+                if d.focus == crate::layout::DialogPart::Second {
+                    &mut d.second
                 } else {
                     &mut d.name
                 }

@@ -27,8 +27,8 @@ pub enum DialogPart {
     Confirm,
     /// 分支名的输入框；询问对话框中是第一个输入框。
     Branch,
-    /// 登录对话框的密码框。
-    Password,
+    /// 询问对话框的第二个输入框：登录的密码、远程仓库的地址。
+    Second,
     /// 「基于」的分支菜单。
     Base,
     /// 「位置」右端选目录的按钮。
@@ -50,8 +50,8 @@ pub struct DialogLayout {
     pub message: Rect,
     /// 询问对话框的只读信息行。
     pub values: Vec<Rect>,
-    /// 登录对话框的密码框；其他对话框为空矩形。
-    pub password: Rect,
+    /// 询问对话框的第二个输入框；其他对话框为空矩形。
+    pub second: Rect,
     /// 顶部的标题行。
     pub header: Rect,
     /// 关闭按钮。
@@ -153,7 +153,7 @@ impl DialogLayout {
             card: at(Rect::new(0.0, 0.0, w, h)),
             message: Rect::default(),
             values: Vec::new(),
-            password: Rect::default(),
+            second: Rect::default(),
             header: at(header),
             close: at(close),
             labels: labels.into_iter().map(at).collect(),
@@ -223,7 +223,7 @@ impl DialogLayout {
             card: at(Rect::new(0.0, 0.0, w, h)),
             message: at(message),
             values: rows.iter().map(|&r| at(r)).collect(),
-            password: field(1),
+            second: field(1),
             header: at(header),
             close: at(close),
             labels: labels.into_iter().map(at).collect(),
@@ -232,6 +232,20 @@ impl DialogLayout {
             confirm: at(confirm),
             ..DialogLayout::default()
         }
+    }
+
+    /// 计算克隆仓库对话框的几何：地址和位置两行，版式与询问对话框相同。
+    pub fn clone_form(window: Rect) -> Self {
+        let mut layout = Self::question(window, 0, 0, 2);
+        let rect = std::mem::take(&mut layout.second);
+        let change = Rect::new(
+            rect.right() - 2.0 - DIALOG_CHANGE_W,
+            rect.y + 2.0,
+            DIALOG_CHANGE_W,
+            rect.h - 4.0,
+        );
+        layout.location = Some((rect, change));
+        layout
     }
 
     /// 返回 `(x, y)` 处可点击的部件；落在部件之外时返回 `None`。
@@ -244,7 +258,7 @@ impl DialogLayout {
             (self.cancel, DialogPart::Cancel),
             (self.confirm, DialogPart::Confirm),
             (self.branch, DialogPart::Branch),
-            (self.password, DialogPart::Password),
+            (self.second, DialogPart::Second),
             (self.base, DialogPart::Base),
         ];
         // 选目录的按钮叠在「位置」框里面，先匹配这一项。

@@ -967,6 +967,7 @@ impl App {
         .chain(branch_menu(
             &self.git.branches,
             &self.git.stashes,
+            &self.git.remote_list,
             self.git.status.as_ref().and_then(|s| s.operation),
             self.branch.running.is_some(),
         ))

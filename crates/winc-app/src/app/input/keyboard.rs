@@ -516,7 +516,7 @@ impl App {
         let on_name = self.form_dialog.as_ref().is_none_or(|d| {
             matches!(
                 d.focus,
-                crate::layout::DialogPart::Branch | crate::layout::DialogPart::Password
+                crate::layout::DialogPart::Branch | crate::layout::DialogPart::Second
             )
         });
         match key {

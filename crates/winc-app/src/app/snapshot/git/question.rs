@@ -74,7 +74,7 @@ fn signing_in_collects_both_fields_and_answers_the_password_request() {
     let (mut app, usernames) = asking("question-sign-in", username());
     typed(&mut app, "me");
     enter(&mut app);
-    assert_eq!(focus(&app), DialogPart::Password);
+    assert_eq!(focus(&app), DialogPart::Second);
     assert!(usernames.try_recv().is_err());
     typed(&mut app, "s3cret");
     enter(&mut app);
@@ -196,12 +196,12 @@ fn clicking_outside_does_not_cancel_the_operation() {
 #[test]
 fn clicking_the_password_field_moves_the_typing_there() {
     let (mut app, _answers) = asking("question-click", username());
-    let rect = app.dialog_layout().password;
+    let rect = app.dialog_layout().second;
     app.click_form_dialog(rect.x + 5.0, rect.y + 5.0);
-    assert_eq!(focus(&app), DialogPart::Password);
+    assert_eq!(focus(&app), DialogPart::Second);
     typed(&mut app, "s");
     let dialog = app.form_dialog.as_ref().unwrap();
-    assert_eq!(dialog.password.text(), "s");
+    assert_eq!(dialog.second.text(), "s");
     assert_eq!(dialog.name.text(), "");
 }
 

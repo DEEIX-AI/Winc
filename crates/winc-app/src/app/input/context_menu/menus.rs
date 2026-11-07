@@ -170,15 +170,26 @@ pub fn tab_menu(
 /// `enabled` 为 `false`（另一个 Git 操作还在运行，或者正停在合并、变基中间）时，会修改
 /// 仓库的几项灰显。`branch` 是当前分支名（分离的 `HEAD` 时为「HEAD」），写进重置子菜单
 /// 的标题。
-pub fn log_commit_menu(enabled: bool, branch: &str) -> Vec<MenuEntry> {
+pub fn log_commit_menu(enabled: bool, branch: &str, tags: &[&str]) -> Vec<MenuEntry> {
+    use crate::app::git::branch::TagOp;
     use MenuCommand::*;
     use MenuEntry::{Item, Separator, Submenu};
 
-    vec![
+    let mut menu = vec![
         Item(LogCheckout, enabled),
         Item(LogNewWorktree, enabled),
         Item(LogNewBranch, enabled),
         Item(LogNewTag, enabled),
+    ];
+    // 提交上的标签：每个一个子菜单（推送、删除、从远程删除）。
+    for (i, name) in tags.iter().enumerate() {
+        let ops = TagOp::ALL
+            .into_iter()
+            .map(|op| Item(LogTag(op, i), enabled))
+            .collect();
+        menu.push(Submenu(t!("menu-log-tag", name = *name), ops));
+    }
+    menu.extend([
         Separator,
         Item(LogCherryPick, enabled),
         Item(LogRevert, enabled),
@@ -195,7 +206,8 @@ pub fn log_commit_menu(enabled: bool, branch: &str) -> Vec<MenuEntry> {
         Item(LogCopyOid, true),
         Item(LogCopyShortOid, true),
         Item(LogCopyMessage, true),
-    ]
+    ]);
+    menu
 }
 
 /// 日志详情里一个改动文件的右键菜单：显示这次的差异、打开工作区里的文件、显示文件历史，
@@ -273,6 +285,7 @@ pub fn status_branch_menu(
         Item(StatusSync, sync),
         Item(GitFetch, fetch),
         Item(GitPull, pull),
+        Item(GitPullRebase, pull),
         Item(GitPush, push),
         Separator,
         Item(StatusNewBranch, true),

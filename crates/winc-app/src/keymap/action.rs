@@ -169,6 +169,10 @@ pub enum Action {
     GitShowLog,
     /// 在只读标签中打开 Git 操作的输出。
     GitShowOutput,
+    /// 克隆仓库。
+    GitClone,
+    /// 在当前目录中初始化仓库。
+    GitInit,
     /// 打开提交视图并展开位置选择器。
     GitSwitchRepository,
     GitSwitchWorktree,
@@ -372,6 +376,8 @@ impl Action {
             GitShowChanges => t!("cmd-git-show-changes"),
             GitShowLog => t!("cmd-git-show-log"),
             GitShowOutput => t!("cmd-git-show-output"),
+            GitClone => t!("cmd-git-clone"),
+            GitInit => t!("cmd-git-init"),
             GitSwitchRepository => t!("cmd-git-switch-repository"),
             GitSwitchWorktree => t!("cmd-git-switch-worktree"),
             GitNewWorktree => t!("cmd-git-new-worktree"),
@@ -555,6 +561,8 @@ impl Action {
             GitShowChanges => "Git: Open Changes",
             GitShowLog => "Git: Show Log",
             GitShowOutput => "Git: Show Output",
+            GitClone => "Git: Clone Repository…",
+            GitInit => "Git: Initialize Repository",
             GitSwitchRepository => "Git: Switch Repository",
             GitSwitchWorktree => "Git: Switch Worktree…",
             GitNewWorktree => "Git: New Worktree…",
@@ -707,6 +715,8 @@ impl Action {
             | GitShowChanges
             | GitShowLog
             | GitShowOutput
+            | GitClone
+            | GitInit
             | GitSwitchRepository
             | GitSwitchWorktree
             | GitNewWorktree
@@ -800,6 +810,8 @@ impl Action {
             Action::GitShowChanges
             | Action::GitShowLog
             | Action::GitShowOutput
+            | Action::GitClone
+            | Action::GitInit
             | Action::GitSwitchRepository
             | Action::GitSwitchWorktree
             | Action::GitNewWorktree
@@ -1019,6 +1031,8 @@ pub const ACTIONS: &[Action] = {
         GitShowChanges,
         GitShowLog,
         GitShowOutput,
+        GitClone,
+        GitInit,
         GitSwitchRepository,
         GitSwitchWorktree,
         GitNewWorktree,
