@@ -240,6 +240,8 @@ impl App {
             window: None,
             renderer: None,
             proxy,
+            #[cfg(target_os = "macos")]
+            traffic_lights: None,
             key: None,
             shared: Default::default(),
             config_rev: 0,

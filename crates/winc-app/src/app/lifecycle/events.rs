@@ -137,6 +137,22 @@ impl ApplicationHandler<UserEvent> for App {
         self.window = Some(window.clone());
         self.note_window_frame();
         window.set_ime_allowed(true);
+        #[cfg(target_os = "macos")]
+        {
+            let proxy = self.proxy.clone();
+            self.traffic_lights = crate::macos::TrafficLights::new(
+                &window,
+                // 这三个按钮在卡片顶部的顶栏里垂直居中：顶栏上方有 `ISLAND_MARGIN` 的留白，
+                // 按钮按高度为留白两倍加顶栏高度的区域居中。
+                f64::from(2.0 * crate::theme::ISLAND_MARGIN + crate::theme::TOP_BAR),
+                f64::from(crate::theme::TRAFFIC_LIGHT_LEFT),
+                move || {
+                    if let Some(proxy) = &proxy {
+                        let _ = proxy.send_event(UserEvent::TrafficLightsMoved);
+                    }
+                },
+            );
+        }
         self.place_traffic_lights();
         self.install_system_hooks();
         // 启动时恢复的目录在事件循环创建之前打开，此时才能开始监视、读取运行配置和恢复终端、侧栏。
@@ -207,10 +223,16 @@ impl ApplicationHandler<UserEvent> for App {
                     renderer.resize();
                 }
 
+                // 红绿灯先摆好，布局按它这一次的位置计算。
+                self.place_traffic_lights();
                 self.relayout();
                 self.clamp_scroll();
-                self.place_traffic_lights();
+                // 拖动边缘、双击标题栏缩放时，winit 在窗口每一帧改变大小时同步发出这个事件，新的
+                // 窗口大小随这一帧的 Core Animation 事务提交。在这里同步绘制，新画面在同一事务中
+                // 提交，与窗口大小一起显示；只标记待重画时要等之后的事件循环才绘制，期间显示的是
+                // 上一帧的画面（固定在左上角），内容跟不上窗口。
                 self.request_redraw();
+                self.redraw();
             }
             // 配置中固定了主题时不跟随系统外观。
             WindowEvent::ThemeChanged(theme) => {
@@ -380,6 +402,10 @@ impl App {
             UserEvent::Pasted(result) => self.pasted_into_tree(result),
             UserEvent::Copied(copies, failures) => self.copied_into_tree(copies, failures),
             UserEvent::Reopen => self.show_window(),
+            UserEvent::TrafficLightsMoved => {
+                self.relayout();
+                self.request_redraw();
+            }
             // ⌘, 由菜单项接管，不会进入按键处理；设置已打开时再次触发，则在这里关闭设置。窗口
             // 已关闭时先重新显示窗口。
             UserEvent::OpenSettings if self.settings.open && !self.window_hidden => {

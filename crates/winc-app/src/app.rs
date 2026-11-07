@@ -125,6 +125,10 @@ pub enum UserEvent {
     /// 菜单栏的「设置…」（或 ⌘,）被触发；设置已打开时关闭设置。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     OpenSettings,
+    /// macOS 上全屏过渡中红绿灯的位置变了（见 `crate::macos::TrafficLights`）：重新计算布局并
+    /// 重画。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    TrafficLightsMoved,
     /// 选择面板打不开：哪一次选择，以及原因（没有门户时为 `None`）；只有经桌面门户选择的平台
     /// 有这种情况。
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -1054,6 +1058,9 @@ pub struct App {
     /// 后台线程和系统回调通过该代理把事件送回事件循环（带着本窗口的编号，见 [`crate::winc`]）；
     /// 测试中没有事件循环，为 `None`。
     proxy: Option<crate::winc::WindowProxy>,
+    /// 窗口的红绿灯（见 [`crate::macos::TrafficLights`]），窗口创建后才有，随窗口一同释放。
+    #[cfg(target_os = "macos")]
+    traffic_lights: Option<crate::macos::TrafficLights>,
     /// 本窗口在进程里的编号；测试中单独建的 `App` 没有。
     pub(crate) key: Option<crate::winc::WindowKey>,
     /// 各窗口共用的状态：别的窗口开着什么、剪切的文件，以及请应用层做的事。

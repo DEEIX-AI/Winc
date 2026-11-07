@@ -141,20 +141,15 @@ impl App {
         }
     }
 
-    /// 把窗口左上角的三个控制按钮放进顶栏并垂直居中，并按它们的实际位置调整右侧按钮的
-    /// 布局。
+    /// 把窗口左上角的三个控制按钮放进顶栏并垂直居中（见 `crate::macos::TrafficLights`），
+    /// 并按它们的实际位置调整右侧按钮的布局。
     ///
-    /// 切换窗口外观或修改标题后 `AppKit` 会把它们恢复到默认位置，因此需要再次摆放。
+    /// 切换窗口外观、修改标题或改变窗口大小后 `AppKit` 会把它们恢复到默认位置，因此需要再次
+    /// 摆放。
     pub(super) fn place_traffic_lights(&self) {
         #[cfg(target_os = "macos")]
-        if let Some(window) = &self.window
-            && let Some(end) = crate::macos::place_traffic_lights(
-                window,
-                // 这三个按钮在卡片顶部的顶栏里垂直居中：顶栏上方有 `ISLAND_MARGIN` 的留白，
-                // 按钮按高度为留白两倍加顶栏高度的区域居中。
-                (2.0 * ISLAND_MARGIN + TOP_BAR) as f64,
-                TRAFFIC_LIGHT_LEFT as f64,
-            )
+        if let (Some(window), Some(lights)) = (&self.window, &self.traffic_lights)
+            && let Some(end) = lights.place()
             && crate::layout::set_traffic_lights_end(end as f32)
         {
             // 每次重绘都会重新计算布局。

@@ -30,7 +30,7 @@ pub use folder_menu::{FolderItem, on_folder_menu, popup_folder_menu};
 pub use pasteboard::{pasteboard_has_image, pasteboard_png};
 pub use updates::{check as check_for_updates, start as start_updates};
 pub use window::{
-    has_sheet, keep_title_bar_drags, make_invisible, mouse_location, place_traffic_lights,
+    TrafficLights, has_sheet, keep_title_bar_drags, make_invisible, mouse_location,
     preferred_language, reduce_motion, show_without_focus, title_bar_double_click,
 };
 pub use window_menu::add_window_menus;
