@@ -471,7 +471,8 @@ pub struct Backup {
 ///
 /// - macOS：`~/Library/Application Support/winc/config.json`
 /// - Linux：`$XDG_CONFIG_HOME/winc/config.json`，未设置时为 `~/.config/winc/config.json`
-/// - Windows：`%APPDATA%\winc\config.json`，未设置时使用 `HOME` 环境变量指向的目录
+/// - Windows：`%APPDATA%\winc\config.json`，未设置时使用 `HOME` 环境变量指向的目录；便携版放在
+///   便携数据目录中（见 [`crate::files::portable_dir`]）
 ///
 /// 不读取系统级配置（如 `/etc/winc/config.json`）：只支持用户级配置。
 pub fn config_path() -> Option<PathBuf> {

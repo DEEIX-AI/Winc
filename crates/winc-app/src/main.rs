@@ -87,6 +87,11 @@ fn main() {
     let bench = Bench::from_env();
     bench.on_start();
 
+    // 便携版首次运行时导入用户目录中的配置和状态，须在读取配置之前；测量时不读写状态，不导入。
+    if !bench.silent() {
+        winc_config::files::import_into_portable();
+    }
+
     // 配置必须在加载字体之前读出，第一帧即使用用户指定的字体和字号。读入配置时的问题按系统语言
     // 描述（语言已在处理参数之前设定），界面语言随后按配置设定。
     let (config, problems) = Config::load();
