@@ -383,6 +383,7 @@ impl App {
         let Some(index) = self.tree_row_at(y) else {
             return;
         };
+        let count = self.click_count(x, y);
         let sticky = self.tree_sticky_at(y).map(|s| s.level);
         let segment = self.tree_segment_at(index, x);
         let Some(ws) = &mut self.editor.workspace else {
@@ -401,6 +402,7 @@ impl App {
         }
         let mut drag = TreeDrag::new(ws, index, (x, y));
         drag.sticky = sticky;
+        drag.keep = count == 2;
         self.tree_drag = Some(drag);
     }
 

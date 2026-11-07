@@ -857,6 +857,8 @@ pub struct App {
     pub(crate) wheel_glide: Option<input::mouse::WheelGlide>,
     /// 上一次鼠标滚轮整格滚动的时刻，用于按两格的间隔确定过渡时长。
     wheel_at: Option<Instant>,
+    /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
+    preview_tab: Option<winc_editor::DocumentId>,
     /// 文件树中正在改名字的项和输入框；没有时为 `None`。
     pub name_input: Option<NameInput>,
     /// 在文件树中按住的项；拖动该项可移动到其他目录。

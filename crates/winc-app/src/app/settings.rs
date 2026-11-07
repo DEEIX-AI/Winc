@@ -546,6 +546,7 @@ impl App {
             Setting::StatusBar => self.config.status_bar != Some(false),
             Setting::RestoreWindow => self.config.restore_window != Some(false),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
+            Setting::PreviewOnClick => self.config.preview_on_click == Some(true),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::CheckUpdates => self.config.update_auto_check != Some(false),
             Setting::SystemTitleBar => self.config.ui_native_title_bar == Some(true),
@@ -581,6 +582,7 @@ impl App {
             Setting::StatusBar => self.config.status_bar = Some(on),
             Setting::RestoreWindow => self.config.restore_window = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
+            Setting::PreviewOnClick => self.config.preview_on_click = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::CheckUpdates => self.config.update_auto_check = Some(on),
             Setting::SystemTitleBar => self.config.ui_native_title_bar = Some(on),
@@ -604,6 +606,10 @@ impl App {
         }
         if setting == Setting::DiffInline {
             self.apply_diff_layout();
+        }
+        // 关闭预览标签时，现有的预览标签成为普通标签。
+        if setting == Setting::PreviewOnClick && !on {
+            self.preview_tab = None;
         }
         // 关掉以后不再沿用：之后再打开时从下一次关闭窗口开始记录。
         if setting == Setting::RestoreWindow && !on {

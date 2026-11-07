@@ -144,6 +144,7 @@ impl App {
             scroll_glide: None,
             wheel_glide: None,
             wheel_at: None,
+            preview_tab: None,
             tree_drag: None,
             file_hover: None,
             name_input: None,

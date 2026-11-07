@@ -97,6 +97,7 @@ impl SettingsPage {
                 ]),
                 plain(vec![
                     Setting::CompactFolders,
+                    Setting::PreviewOnClick,
                     Setting::DiffInline,
                     Setting::RemoteImages,
                 ]),
@@ -208,6 +209,8 @@ pub enum Setting {
     RestoreWindow,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
+    /// 预览标签：在文件树中单击文件时在预览标签中打开。
+    PreviewOnClick,
     /// Markdown 预览联网加载网址的图片。
     RemoteImages,
     /// 定时检查更新。
@@ -284,6 +287,7 @@ impl Setting {
             | Setting::HotExit
             | Setting::RestoreFolder
             | Setting::CompactFolders
+            | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::WordWrap
             | Setting::Minimap
@@ -329,6 +333,7 @@ impl Setting {
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::CompactFolders => t!("settings-compact-folders"),
+            Setting::PreviewOnClick => t!("settings-preview-on-click"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::CheckUpdates => t!("settings-check-updates"),
             Setting::Version => t!("settings-version"),
@@ -366,6 +371,7 @@ impl Setting {
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
+            Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
             Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
             Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
@@ -397,6 +403,7 @@ impl Setting {
             | Setting::HotExit
             | Setting::RestoreFolder
             | Setting::CompactFolders
+            | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::WordWrap
             | Setting::Minimap
