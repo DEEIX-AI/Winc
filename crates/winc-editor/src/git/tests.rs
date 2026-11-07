@@ -1381,3 +1381,26 @@ fn operations_ask_through_the_askpass_program_and_keep_their_output() {
     assert!(!output.contains("s3cret"), "{output}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 储藏的说明开头写着储藏时的分支：「On 分支:」是带说明的，「WIP on 分支:」是没写说明的。
+#[test]
+fn a_stash_knows_the_branch_it_was_made_on() {
+    let stash = |message: &str| Stash {
+        name: "stash@{0}".into(),
+        oid: String::new(),
+        parents: Vec::new(),
+        time: 0,
+        local: String::new(),
+        message: message.into(),
+    };
+    assert_eq!(stash("On main: 试一下").branch(), Some("main"));
+    assert_eq!(
+        stash("WIP on feature/a: 1a2b3c4 改登录").branch(),
+        Some("feature/a")
+    );
+    assert_eq!(
+        stash("WIP on (no branch): 1a2b3c4 x").branch(),
+        Some("(no branch)")
+    );
+    assert_eq!(stash("autostash").branch(), None);
+}

@@ -228,6 +228,7 @@ workspace-tip-continue-rebase = Continue rebase
 workspace-tip-finish-operation = Complete { $operation }
 workspace-tip-amend = Amend last commit
 workspace-tip-commit-to = Commit to { $branch }
+workspace-tip-commit-push-to = Commit and push { $branch }
 workspace-tip-commit = Commit
 workspace-tip-open-file = Open file
 workspace-tip-revert-change = Revert change

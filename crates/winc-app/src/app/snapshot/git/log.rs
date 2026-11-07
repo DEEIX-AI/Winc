@@ -629,9 +629,9 @@ fn log_commit_menu_checks_out_branches_picks_reverts_and_resets() {
 
 #[test]
 fn log_compares_two_commits_or_a_branch_and_the_branch_menu_stashes() {
-    use crate::app::git::branch::{StashOp, branch_menu};
+    use crate::app::git::branch::StashOp;
     use crate::app::git::log::LogTarget;
-    use crate::app::input::context_menu::{MenuCommand, MenuEntry};
+    use crate::app::input::context_menu::MenuCommand;
     use winc_editor::git::Change;
 
     let Some((mut app, root)) = git_app("git-compare", false) else {
@@ -724,11 +724,13 @@ fn log_compares_two_commits_or_a_branch_and_the_branch_menu_stashes() {
         std::fs::read_to_string(root.join("src/main.rs")).unwrap(),
         "fn main() { changed(); }\n"
     );
-    let menu = branch_menu(&app.git.stashes, &[], None, false);
-    assert!(
-        menu.iter()
-            .any(|e| matches!(e, MenuEntry::Submenu(title, _) if title == "储藏（1）"))
-    );
+    // 改动列表下面多了储藏一组，展开后列出这一条。
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert!(app.commit_parts().stashes.is_some());
+    app.press_commit(CommitTarget::Stashes);
+    paint(&mut app);
+    assert!((app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
 
     // 应用并删除：改动恢复，储藏被移除。
     choose_in_branch_menu(&mut app, MenuCommand::GitStashOp(StashOp::Pop, 0));
@@ -764,7 +766,7 @@ fn the_log_opens_from_the_commit_view_button_and_the_branch_menu_starts_with_fet
     assert!(app.log_active());
 
     // 「⋯」不再重复列出日志入口和同步，最上面是储藏；获取在分支选择器里，悬停提示写明作用。
-    let menu = branch_menu(&app.git.stashes, &[], None, false);
+    let menu = branch_menu(&[], None, false);
     assert_eq!(
         menu.first(),
         Some(&MenuEntry::Item(MenuCommand::GitStash, true))

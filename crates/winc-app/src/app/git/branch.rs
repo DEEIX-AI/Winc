@@ -206,11 +206,11 @@ impl Default for BranchState {
     }
 }
 
-/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续和中止，储藏，远程仓库。
+/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续和中止，储藏更改，远程仓库。
 ///
-/// 拉取、推送、获取和新建分支、工作树都在分支选择器里，回滚勾选的文件在组标题上，这里不再列出。
+/// 拉取、推送、获取和新建分支、工作树都在分支选择器里，各条储藏在改动列表下面的储藏一组里，回滚
+/// 勾选的文件在组标题上，这里不再列出。
 pub(crate) fn branch_menu(
-    stashes: &[Stash],
     remotes: &[Remote],
     operation: Option<Operation>,
     busy: bool,
@@ -224,25 +224,6 @@ pub(crate) fn branch_menu(
         entries.push(MenuEntry::Separator);
     }
     entries.push(MenuEntry::Item(GitStash, !busy));
-    // 储藏：一条一个子菜单（应用、应用并删除、删除）。
-    if !stashes.is_empty() {
-        let items = stashes
-            .iter()
-            .enumerate()
-            .map(|(i, stash)| {
-                let mut ops: Vec<MenuEntry> = StashOp::ALL
-                    .into_iter()
-                    .map(|op| MenuEntry::Item(GitStashOp(op, i), !busy))
-                    .collect();
-                ops.insert(2, MenuEntry::Separator);
-                MenuEntry::Submenu(stash_title(stash), ops)
-            })
-            .collect();
-        entries.push(MenuEntry::Submenu(
-            t!("git-stash-menu", count = stashes.len()),
-            items,
-        ));
-    }
     entries.push(MenuEntry::Separator);
     // 远程仓库：每个一个子菜单（修改地址、移除），最后是添加。
     let mut items: Vec<MenuEntry> = (remotes.iter().enumerate())
@@ -260,6 +241,22 @@ pub(crate) fn branch_menu(
     items.push(MenuEntry::Item(GitAddRemote, !busy));
     entries.push(MenuEntry::Submenu(t!("git-remotes-menu").to_owned(), items));
     entries
+}
+
+/// 第 `index` 条储藏的菜单：应用、应用并删除，分隔线，删除（删除先确认）。
+pub(crate) fn stash_ops(index: usize, busy: bool) -> Vec<MenuEntry> {
+    let mut ops: Vec<MenuEntry> = (StashOp::ALL.into_iter())
+        .map(|op| MenuEntry::Item(MenuCommand::GitStashOp(op, index), !busy))
+        .collect();
+    ops.insert(2, MenuEntry::Separator);
+    ops
+}
+
+/// 全部储藏的菜单，每条一个子菜单（见 [`stash_ops`]）：提交视图里储藏多到列不下时弹出。
+pub(crate) fn stash_menu(stashes: &[Stash], busy: bool) -> Vec<MenuEntry> {
+    (stashes.iter().enumerate())
+        .map(|(i, stash)| MenuEntry::Submenu(stash_title(stash), stash_ops(i, busy)))
+        .collect()
 }
 
 /// 分支选择器里第 `index` 个分支的操作菜单：按 `BranchOp::GROUPS` 分组，组之间有分隔线。
@@ -558,13 +555,13 @@ impl App {
             let detail = t!("git-stash-drop-confirm-detail");
             let button = t!("git-stash-drop-confirm-button");
             self.show_confirm(&message, detail, button, move |ok| {
-                let op = super::log::LogConfirmed::DropStash(stash.clone());
+                let op = super::log::LogConfirmed::DropStash(Box::new(stash.clone()));
                 ok.then_some(UserEvent::GitLogConfirmed(op))
             });
             return;
         }
         // 没有窗口（测试中）时直接删除。
-        self.run_log_confirmed(super::log::LogConfirmed::DropStash(stash));
+        self.run_log_confirmed(super::log::LogConfirmed::DropStash(Box::new(stash)));
     }
 
     /// 删除分支前先确认。

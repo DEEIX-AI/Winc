@@ -363,6 +363,27 @@ impl App {
             GitSwitchRepository => self.switch_location(),
             GitSwitchWorktree => self.switch_location(),
             GitNewWorktree => self.open_worktree_dialog(),
+            // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
+            GitSwitchBranch | GitNewBranch | GitStash | GitSync | GitFetch | GitPull
+            | GitPullRebase | GitPush
+                if self.git.root.is_none() =>
+            {
+                self.flash(winc_i18n::t!("git-not-a-repository"));
+            }
+            GitSwitchBranch => self.switch_branch_from_command(),
+            GitNewBranch => self.open_branch_dialog(None, None),
+            GitStash => self.open_stash_prompt(),
+            GitSync => self.git_sync(),
+            GitFetch | GitPull | GitPullRebase | GitPush => {
+                use crate::app::input::context_menu::MenuCommand;
+                let command = match action {
+                    GitFetch => MenuCommand::GitFetch,
+                    GitPull => MenuCommand::GitPull,
+                    GitPullRebase => MenuCommand::GitPullRebase,
+                    _ => MenuCommand::GitPush,
+                };
+                self.run_branch_command(command);
+            }
             GitFileHistory => self.git_current_file_history(),
             GitBlame => self.toggle_blame(),
             GitRevertChange if self.editor.active().is_some_and(|d| d.diff.is_some()) => {

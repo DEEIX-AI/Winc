@@ -167,8 +167,25 @@ pub struct Stash {
     pub name: String,
     /// 储藏对应的提交号（完整的对象号），不随其他储藏的增删改变。
     pub oid: String,
+    /// 储藏提交的各个父提交：第一个是储藏时的 `HEAD`，第二个是暂存区，连同未跟踪的文件一起储藏时
+    /// 第三个是那些文件。
+    pub parents: Vec<String>,
+    /// 储藏的时间（Unix 秒）。
+    pub time: i64,
+    /// 储藏时的本地时间，「2026-11-07 14:32」。
+    pub local: String,
     /// `git` 记下的说明：「On main: 说明」或「WIP on main: 提交号 说明」。
     pub message: String,
+}
+
+impl Stash {
+    /// 储藏时所在的分支：说明开头「On 分支:」「WIP on 分支:」里的分支；分离 `HEAD` 时 `git` 写
+    /// 「(no branch)」，原样返回。说明不是这两种写法时为 `None`。
+    pub fn branch(&self) -> Option<&str> {
+        let rest =
+            (self.message.strip_prefix("WIP on ")).or_else(|| self.message.strip_prefix("On "))?;
+        rest.split_once(": ").map(|(branch, _)| branch)
+    }
 }
 
 /// 逐行追溯（`git blame`）的结果：每一行最后一次由哪次提交改动。
@@ -958,15 +975,32 @@ impl Git {
     /// `git` 运行失败时返回原因。
     pub fn stashes(&self, root: &Path, cancel: &Cancel) -> Result<Vec<Stash>, String> {
         let mut command = self.command(root);
-        command.args(["stash", "list", "--format=%gd%x1f%H%x1f%gs"]);
+        // 时间用 `%ci`（提交者的本地时间）的前 16 个字符：`--date` 会把 `%gd` 换成按日期的写法
+        // （`stash@{2026-…}`），不能用来格式化 `%cd`。
+        command.args([
+            "stash",
+            "list",
+            "--format=%gd%x1f%H%x1f%P%x1f%ct%x1f%ci%x1f%gs",
+        ]);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
         Ok(String::from_utf8_lossy(&stdout)
             .lines()
             .filter_map(|line| {
-                let mut fields = line.splitn(3, '\u{1f}');
+                let mut fields = line.splitn(6, '\u{1f}');
+                let (name, oid) = (fields.next()?, fields.next()?);
+                let parents = fields
+                    .next()?
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
+                let time = fields.next()?.parse().unwrap_or(0);
+                let local = fields.next()?.chars().take(16).collect();
                 Some(Stash {
-                    name: fields.next()?.to_owned(),
-                    oid: fields.next()?.to_owned(),
+                    name: name.to_owned(),
+                    oid: oid.to_owned(),
+                    parents,
+                    time,
+                    local,
                     message: fields.next()?.to_owned(),
                 })
             })

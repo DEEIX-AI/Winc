@@ -745,6 +745,40 @@ fn the_status_bar_opens_the_branch_picker_with_the_sync_actions() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 命令面板里的「Git：切换分支…」：提交视图开着时从分支行展开，看着文件视图时从状态栏展开；
+/// 不在仓库里时同步一类的命令只说明一声。
+#[test]
+fn the_switch_branch_command_opens_the_picker_where_it_can_be_seen() {
+    use crate::app::GitAnchor;
+
+    let Some((mut app, root)) = picker_repo("git-picker-command", false) else {
+        return;
+    };
+    app.run_action(Action::GitSwitchBranch);
+    assert!(app.picker_open && app.picker_lists_branches());
+    assert_eq!(app.picker_anchor, GitAnchor::Branch);
+    app.close_picker();
+    app.run_action(Action::ShowFiles);
+    app.open_path(&root.join("src/main.rs"));
+    paint(&mut app);
+    app.run_action(Action::GitSwitchBranch);
+    assert_eq!(app.picker_anchor, GitAnchor::Status);
+    app.close_picker();
+    for action in [
+        Action::GitFetch,
+        Action::GitPull,
+        Action::GitPush,
+        Action::GitStash,
+    ] {
+        assert_eq!(
+            action.module(),
+            Some(crate::keymap::Module::Git),
+            "{action:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 截图：从状态栏打开的分支选择器（侧栏收着），搜索框下面是拉取、推送、获取
 /// （`branch-picker-status`）。
 #[test]

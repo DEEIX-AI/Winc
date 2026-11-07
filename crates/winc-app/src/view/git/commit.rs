@@ -98,6 +98,7 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     );
     draw_context(app, frame, &parts, &mut hits);
     draw_banner(app, frame, &parts, &mut hits);
+    draw_stashes(app, frame, &parts, &mut hits);
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
     app.commit_hits = hits;
@@ -512,6 +513,140 @@ fn draw_undo(
     };
     icons::more(frame, center(more), color, clip);
     hits.push((more, CommitTarget::LastCommit));
+}
+
+/// 储藏一组的标题和各条储藏的名字离底色左边的距离（逻辑像素）：标题紧跟在箭头后面，和改动列表组
+/// 标题的箭头同一列；各条储藏再缩进一层（`INDENT`）。
+const STASH_TITLE: f32 = ARROW + 10.0;
+/// 储藏那一行悬停时「应用」文字两侧的留白（逻辑像素），和「上一次提交」那一栏的「撤销」相同。
+const STASH_APPLY_PAD: f32 = 6.0;
+
+/// 绘制改动列表下面的储藏一组：上沿一条分隔线；标题是箭头、「储藏」和数量；展开时下面每条储藏一行，
+/// 右端淡色写储藏时的分支和时间，悬停时换成「应用」和「⋯」；正在预览标签里看的那一条底色同选中。
+/// 储藏太多时最后一行是「还有 N 条」。
+fn draw_stashes(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &CommitParts,
+    hits: &mut Vec<(Rect, CommitTarget)>,
+) {
+    let Some(area) = parts.stashes else {
+        return;
+    };
+    let p = app.palette;
+    let clip = app.layout.sidebar.intersect(area);
+    frame.rect_clipped(
+        Rect::new(area.x, area.y, area.w, 1.0),
+        p.separator,
+        0.0,
+        clip,
+    );
+    let size = app.fonts.ui_small;
+    let band = |row: usize| {
+        let y = area.y + SIDEBAR_LIST_GAP + row as f32 * COMMIT_ROW;
+        Rect::new(area.x + 8.0, y, area.w - 16.0, COMMIT_ROW)
+    };
+    let shade = |band: Rect| Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
+
+    // 标题：和改动列表的组标题一样，小一号的次要色字，右端一个写数量的徽标。
+    let head = band(0);
+    let open = app.commit.stash_open;
+    if app.hover == Hover::Commit(CommitTarget::Stashes) {
+        frame.rect_clipped(shade(head), p.hover, RADIUS_ROW, clip);
+    }
+    let cy = head.y + head.h / 2.0;
+    let turned = if open { FRAC_PI_2 } else { 0.0 };
+    icons::chevron_turned(frame, (head.x + ARROW, cy), 6.0, turned, p.text_dim, clip);
+    let title = t!("git-stash-group");
+    label(
+        frame,
+        app,
+        size,
+        (head.x + STASH_TITLE, head),
+        title,
+        p.text_muted,
+        clip,
+    );
+    draw_count_pill(app, frame, head, &app.git.stashes.len().to_string(), clip);
+    hits.push((head, CommitTarget::Stashes));
+    if !open {
+        return;
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let viewing = (app.commit.stash_view.as_ref())
+        .filter(|_| app.editor.active().map(|d| d.id) == app.commit.stash_preview)
+        .map(|view| view.oid.as_str());
+    let shown = app.shown_stashes();
+    for (i, stash) in shown.iter().enumerate() {
+        let row = band(i + 1);
+        let hovered = matches!(
+            app.hover,
+            Hover::Commit(
+                CommitTarget::Stash(h) | CommitTarget::StashApply(h) | CommitTarget::StashMenu(h)
+            ) if h == i
+        );
+        let selected = viewing == Some(stash.oid.as_str());
+        if let Some(color) = row_color(p, selected, false, hovered) {
+            frame.rect_clipped(shade(row), color, RADIUS_ROW, clip);
+        }
+        // 右端：平时是分支和时间，悬停时换成「应用」和「⋯」。
+        let mut right = row.right() - 8.0;
+        if hovered {
+            let (_, more) = file_actions(row);
+            let on = app.hover == Hover::Commit(CommitTarget::StashMenu(i));
+            draw_button(frame, p, more, clip, on, false);
+            let color = if on { p.text } else { p.text_muted };
+            icons::more(frame, center(more), color, clip);
+            hits.push((more, CommitTarget::StashMenu(i)));
+            let text = t!("git-stash-apply");
+            let w = frame.measure(FontKind::Ui, size, text) + 2.0 * STASH_APPLY_PAD;
+            let apply = Rect::new(more.x - BUTTON_GAP - w, more.y, w, more.h);
+            let on = app.hover == Hover::Commit(CommitTarget::StashApply(i));
+            draw_button(frame, p, apply, clip, on, false);
+            ui_text_small(
+                frame,
+                app,
+                apply.x + STASH_APPLY_PAD,
+                apply,
+                text,
+                p.accent,
+                clip,
+            );
+            hits.push((apply, CommitTarget::StashApply(i)));
+            right = apply.x - 6.0;
+        } else {
+            let time = display_local(&stash.local, stash.time, now);
+            let meta = match stash.branch() {
+                Some(branch) => format!("{branch} · {time}"),
+                None => time,
+            };
+            let room = (right - row.x - STASH_TITLE - INDENT) / 2.0;
+            let meta = fit(frame, &meta, size, room.max(0.0), false);
+            let w = frame.measure(FontKind::Ui, size, &meta);
+            ui_text_small(frame, app, right - w, row, &meta, p.text_dim, clip);
+            right -= w + 8.0;
+        }
+        let x = row.x + STASH_TITLE + INDENT;
+        let name = crate::app::git::branch::stash_title(stash);
+        let name = fit(frame, &name, app.fonts.ui, (right - x).max(0.0), false);
+        let room = clip.intersect(Rect::new(row.x, row.y, (right - row.x).max(0.0), row.h));
+        label(frame, app, app.fonts.ui, (x, row), &name, p.text, room);
+        hits.push((row, CommitTarget::Stash(i)));
+    }
+    let rest = app.git.stashes.len() - shown.len();
+    if rest > 0 {
+        let row = band(shown.len() + 1);
+        if app.hover == Hover::Commit(CommitTarget::StashMore) {
+            frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
+        }
+        let text = t!("git-stash-more", count = rest);
+        let x = row.x + STASH_TITLE + INDENT;
+        ui_text_small(frame, app, x, row, &text, p.text_muted, clip);
+        hits.push((row, CommitTarget::StashMore));
+    }
 }
 
 /// 没有改动时列表区的空状态：居中的「没有更改」，下面一行淡色说明；和上游有差别时再下面是下一步
@@ -1281,6 +1416,7 @@ fn commit_button_text(app: &App) -> (String, f32) {
     let clean = (app.git.status.as_ref()).is_some_and(|s| s.entries.is_empty());
     let text = match (busy, operation, app.commit.amend) {
         _ if let Some((oid, _)) = done => t!("git-commit-button-committed", oid = oid.as_str()),
+        _ if app.commit_pushes() => return (t!("menu-commit-and-push").to_owned(), 16.0),
         (true, ..) => t!("git-commit-button-committing").to_owned(),
         (false, Some(Operation::Rebase), _) => t!("git-commit-button-continue-rebase").to_owned(),
         (false, Some(Operation::Merge), _) => t!("git-commit-button-finish-merge").to_owned(),

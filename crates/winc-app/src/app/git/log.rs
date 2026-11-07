@@ -198,7 +198,9 @@ pub enum LogConfirmed {
     /// 把当前分支硬重置到这个提交。
     ResetHard(String),
     /// 删除一条储藏；执行时按提交号查找（[`winc_editor::git::Git::stash`]）。
-    DropStash(winc_editor::git::Stash),
+    ///
+    /// 装在 `Box` 里：储藏带着父提交、时间和说明，直接放在这里会让送回事件循环的每个事件都变大。
+    DropStash(Box<winc_editor::git::Stash>),
     /// 删除一个本地分支；第二项为真时连同未合并的提交一起删除（[`App::run_delete_branch`]）。
     DeleteBranch(String, bool),
     /// 删除一个标签。
@@ -1056,7 +1058,7 @@ impl App {
 
 /// 在后台准备一个文件在两个版本之间的差异：左边是 `old` 里的版本（改名的取旧路径；`None` 是根
 /// 提交之前，什么都没有），右边是 `new` 里的。
-fn commit_diff(
+pub(in crate::app) fn commit_diff(
     git: &Git,
     root: &Path,
     old_rev: Option<&str>,

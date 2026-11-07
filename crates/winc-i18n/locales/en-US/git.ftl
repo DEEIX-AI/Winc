@@ -43,7 +43,12 @@ git-branch-force-delete-confirm = Branch “{ $name }” isn't fully merged. Del
 git-branch-force-delete-confirm-detail = Commits that exist only on this branch may be lost.
 git-branch-force-delete-confirm-button = Delete Anyway
 git-branch-compare-with-current = Compare with Current Branch
-git-stash-menu = Stashes ({ $count })
+git-stash-group = Stashes
+git-stash-more = { $count ->
+    [one] 1 more stash…
+   *[other] { $count } more stashes…
+}
+git-stash-no-files = This stash has no changes to show
 git-stash-apply = Apply
 git-stash-pop = Pop
 git-stash-drop = Drop…

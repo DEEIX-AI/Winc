@@ -34,7 +34,7 @@ fn branch(name: &str, remote: bool, current: bool, upstream: Option<&str>) -> Br
 /// 拉取、推送、获取在分支选择器里，「⋯」里不再重复；最上面是储藏。
 #[test]
 fn the_actions_menu_leaves_syncing_to_the_branch_picker() {
-    let menu = branch_menu(&[], &[], None, false);
+    let menu = branch_menu(&[], None, false);
     assert_eq!(
         menu.first(),
         Some(&MenuEntry::Item(MenuCommand::GitStash, true))

@@ -1,14 +1,17 @@
-//! Git 的提交视图（侧栏）：改动列表、勾选、回滚、提交信息、提交和修改上一次提交。
+//! Git 的提交视图（侧栏）：改动列表、勾选、回滚、储藏、提交信息、提交和修改上一次提交。
 //!
-//! 视图自上而下是标题行、说明条（合并、变基暂停时才有）、提交信息（1 至 8 行）、「提交 ⌄」
-//! 拆分按钮和改动列表，底部是上一次提交（未推送时可撤销）；列表分「冲突」「更改」两组，默认
-//! 都勾选。提交只含勾选的文件（`git commit --only`），冲突未解决时拒绝提交；选中文件时在预览
-//! 标签里打开差异。绘制在 `view/git/commit.rs`，点击区域见 `commit_hits`。
+//! 视图自上而下是标题行、分支行、说明条（合并、变基暂停时才有）、改动列表、储藏（有储藏时）、
+//! 上一次提交（未推送时可撤销），最下面是提交卡片（提交信息 2 至 8 行，「修改上次提交」和「提交
+//! ⌄」）；列表分「冲突」「更改」「未跟踪的文件」三组。提交只含勾选的文件（`git commit --only`），
+//! 冲突未解决时拒绝提交；选中文件时在预览标签里打开差异。绘制在 `view/git/commit.rs`，点击区域见
+//! `commit_hits`。
 
 mod actions;
 pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::SyncState;
 mod list;
+mod stash;
+pub(crate) use stash::StashView;
 mod state;
 
 use state::*;
@@ -354,6 +357,16 @@ pub enum CommitTarget {
     GroupCheck(CommitGroup),
     /// 悬停组标题时右端的「回滚」按钮：回滚这一组里勾上的文件（先确认）。
     GroupRevert(CommitGroup),
+    /// 储藏一组的标题：收起或展开。
+    Stashes,
+    /// 第几条储藏（`GitState::stashes` 的下标）那一行：在预览标签里看它的改动。
+    Stash(usize),
+    /// 悬停储藏那一行时右端的「应用」。
+    StashApply(usize),
+    /// 悬停储藏那一行时右端的「⋯」：应用、应用并删除、删除。
+    StashMenu(usize),
+    /// 储藏太多时最后一行的「还有 N 条」：弹出全部储藏的菜单。
+    StashMore,
     /// 目录那一行：收起或展开。
     ///
     /// 参数是它在绘制时的行号（[`App::commit_rows`] 的下标）。
@@ -432,6 +445,8 @@ pub(crate) struct CommitParts {
     ///
     /// 上一次提交不能撤销（已经推送、不在分支上、有进行中的操作）时为 `None`。
     pub undo: Option<(Rect, Rect, Rect)>,
+    /// 储藏一组（整个侧栏宽，上沿一条分隔线），在改动列表下面；没有储藏时为 `None`。
+    pub stashes: Option<Rect>,
     /// 改动列表。
     pub list: Rect,
 }
@@ -450,6 +465,13 @@ enum Outcome {
     Undone(Result<(), String>, LastCommit, PathBuf),
     /// 回滚完成：回滚的文件数，或者失败的原因；在哪个仓库里回滚的。
     RolledBack(Result<usize, String>, PathBuf),
+    /// 取回了一条储藏（提交号、名字）改动的文件。
+    StashFiles(String, String, stash::StashFiles),
+    /// 准备好了储藏里一个文件的差异（标签的标题），或者失败的原因。
+    StashDiff(
+        String,
+        Result<Box<winc_editor::diff_view::DiffView>, String>,
+    ),
 }
 
 /// 排好的各行的缓存键：排它时的（`GitState::generation`、`CommitState::layout`）。
@@ -521,6 +543,12 @@ pub(crate) struct CommitState {
     pub(crate) refreshed: Option<Instant>,
     /// 绘制时量好的文字宽度，见 [`CommitLabels`]。
     pub(crate) labels: CommitLabels,
+    /// 储藏一组是否展开（默认收起：储藏是暂时放到一边的东西，平时不必占地方）。
+    pub(crate) stash_open: bool,
+    /// 正在储藏的预览标签里看的一条储藏。
+    pub(crate) stash_view: Option<StashView>,
+    /// 储藏的预览标签：和改动列表的预览标签分开，那个标签跟着工作区里的文件刷新。
+    pub(crate) stash_preview: Option<DocumentId>,
     /// 提交成功以后继续推送（「提交并推送」）。
     push_after: bool,
     /// `HEAD` 指向的提交，「上一次提交」那一行用。
@@ -585,6 +613,9 @@ impl Default for CommitState {
             committed: None,
             refreshed: None,
             labels: CommitLabels::default(),
+            stash_open: false,
+            stash_view: None,
+            stash_preview: None,
             push_after: false,
             last: None,
             last_for: None,
@@ -707,11 +738,18 @@ impl App {
             (bar, undo, more)
         });
         let list_y = banner.map_or(branch.bottom(), |(rect, _)| rect.bottom()) + SIDEBAR_LIST_GAP;
-        let list_end = match (undo, card) {
+        let above = match (undo, card) {
             (Some((bar, ..)), _) => bar.y,
             (None, Some(card)) => card.y - SIDEBAR_LIST_GAP,
             (None, None) => panel.bottom(),
         };
+        // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `SIDEBAR_LIST_GAP`。
+        let rows = self.stash_section_rows();
+        let stashes = (rows > 0).then(|| {
+            let h = rows as f32 * COMMIT_ROW + 2.0 * SIDEBAR_LIST_GAP;
+            Rect::new(panel.x, above - h, panel.w, h)
+        });
+        let list_end = stashes.map_or(above, |rect| rect.y);
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
             header,
@@ -726,6 +764,7 @@ impl App {
             commit,
             commit_menu,
             undo,
+            stashes,
             list,
         }
     }
@@ -795,6 +834,15 @@ impl App {
             || status.operation.is_some()
             || self.commit.amend
             || self.commit.busy
+    }
+
+    /// 提交按钮现在是不是「提交并推送」：按住 ⌥ 时是（和项目菜单里 ⌥ 换出备选项一样），合并、变基
+    /// 停着时、修改上一次提交时、正在提交时不是：前两种推送没有意义或要强制推送。
+    pub(crate) fn commit_pushes(&self) -> bool {
+        self.modifiers.alt_key()
+            && !self.commit.busy
+            && !self.commit.amend
+            && (self.git.status.as_ref()).is_some_and(|s| s.operation.is_none())
     }
 
     /// 能不能修改上一次提交：已经有提交，没有进行中的合并、变基。
@@ -951,6 +999,9 @@ impl App {
                 | CommitTarget::RevertFile(_)
                 | CommitTarget::Dir(_)
                 | CommitTarget::DirCheck(_)
+                | CommitTarget::Stash(_)
+                | CommitTarget::StashApply(_)
+                | CommitTarget::StashMenu(_)
         );
         if indexed && self.commit.hits_generation != self.git.generation {
             self.request_redraw();
@@ -986,6 +1037,29 @@ impl App {
                 }
             }
             CommitTarget::GroupRevert(group) => self.ask_rollback(group),
+            CommitTarget::Stashes => self.toggle_stashes(),
+            CommitTarget::Stash(i) => self.show_stash(i),
+            CommitTarget::StashApply(i) => {
+                if let Some(stash) = self.git.stashes.get(i).cloned() {
+                    self.run_stash_op(super::branch::StashOp::Apply, stash);
+                }
+            }
+            CommitTarget::StashMenu(i) => {
+                let Some(&(rect, _)) =
+                    (self.commit_hits.iter()).find(|(_, t)| *t == CommitTarget::StashMenu(i))
+                else {
+                    return;
+                };
+                self.open_context_menu(MenuTarget::StashRow(i), menu_below(rect));
+            }
+            CommitTarget::StashMore => {
+                let Some(&(rect, _)) =
+                    (self.commit_hits.iter()).find(|(_, t)| *t == CommitTarget::StashMore)
+                else {
+                    return;
+                };
+                self.open_context_menu(MenuTarget::StashList, (rect.x + 8.0, rect.bottom()));
+            }
             // ⌘ 单击目录把它下面的文件加入或移出选区，⇧ 单击选到它：只改选区，不收起展开。
             CommitTarget::Dir(row) if self.command_held() => {
                 self.focus = Focus::CommitList;
@@ -1069,6 +1143,8 @@ impl App {
             CommitTarget::Location => self.open_location_picker(),
             CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
             CommitTarget::Sync => self.git_sync(),
+            // 按住 ⌥ 时按钮写的是「提交并推送」（见 `App::commit_pushes`）。
+            CommitTarget::Commit if self.commit_pushes() => self.confirm_commit_and_push(),
             CommitTarget::Commit => self.git_commit(),
             CommitTarget::Amend => self.toggle_amend(),
             CommitTarget::NextStep => self.git_sync(),
@@ -1122,7 +1198,6 @@ impl App {
         let all_expanded = shown().all(|group| !self.commit.group_collapsed(group))
             && self.commit.collapsed_dirs.iter().all(HashSet::is_empty);
         let mut entries = branch_menu(
-            &self.git.stashes,
             &self.git.remote_list,
             self.git.status.as_ref().and_then(|s| s.operation),
             self.branch.running.is_some(),
@@ -1292,6 +1367,9 @@ impl App {
     /// 提交信息里自己处理的键；不是这些键时返回 `false`，交给输入框的通用处理。
     pub(in crate::app) fn commit_message_key(&mut self, key: &Key, cmd: bool, shift: bool) -> bool {
         match key {
+            Key::Named(NamedKey::Enter) if cmd && self.commit_pushes() => {
+                self.confirm_commit_and_push();
+            }
             Key::Named(NamedKey::Enter) if cmd => self.git_commit(),
             Key::Named(NamedKey::Enter) => self.edit_field(|f| f.insert("\n")),
             // 提交信息不接受制表符，因此 `Tab` 移到改动列表；列表中按 `Tab` 返回提交信息。

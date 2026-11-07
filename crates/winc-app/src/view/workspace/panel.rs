@@ -867,7 +867,6 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
             Some((rect, with_key(t!("cmd-settings"), Some(Action::Settings))))
         }
-        // 提交按钮：无法提交时显示原因，可以提交时显示提交目标和快捷键。
         // 分支选择器的拉取、推送、获取：写明会做什么（和谁差几个提交、推到哪儿）；不能用时写原因。
         Hover::PickerPart(
             part @ (crate::app::PickerPart::Pull
@@ -884,6 +883,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, tip))
         }
+        // 提交按钮：无法提交时显示原因，可以提交时显示提交目标和快捷键；按住 ⌥ 时是提交并推送。
         Hover::Commit(CommitTarget::Commit) => {
             use winc_editor::git::{Head, Operation};
             let parts = app.commit_parts();
@@ -898,13 +898,17 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 (Some(Operation::Rebase), _) => t!("workspace-tip-continue-rebase").to_owned(),
                 (Some(op), _) => t!("workspace-tip-finish-operation", operation = op.label()),
                 (None, _) if app.commit.amend => t!("workspace-tip-amend").to_owned(),
+                (None, Some(Head::Branch(b))) if app.commit_pushes() => {
+                    t!("workspace-tip-commit-push-to", branch = b.as_str())
+                }
                 (None, Some(Head::Branch(b))) => t!("workspace-tip-commit-to", branch = b.as_str()),
                 (None, _) => t!("workspace-tip-commit").to_owned(),
             };
-            let key = if cfg!(target_os = "macos") {
-                "⌘↩"
-            } else {
-                "Ctrl+Enter"
+            let key = match (cfg!(target_os = "macos"), app.commit_pushes()) {
+                (true, true) => "⌥⌘↩",
+                (true, false) => "⌘↩",
+                (false, true) => "Ctrl+Alt+Enter",
+                (false, false) => "Ctrl+Enter",
             };
             Some((
                 parts.commit,

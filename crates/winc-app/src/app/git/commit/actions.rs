@@ -378,6 +378,8 @@ impl App {
     pub(in crate::app) fn poll_commit(&mut self) {
         while let Ok(outcome) = self.commit.results.1.try_recv() {
             match outcome {
+                Outcome::StashFiles(oid, name, files) => self.stash_files_arrived(oid, name, files),
+                Outcome::StashDiff(title, view) => self.stash_diff_arrived(title, view),
                 Outcome::LastMessage(message) => {
                     // 等结果的时候用户已经关闭了「修改上一次提交」，就不填。
                     if self.commit.amend {

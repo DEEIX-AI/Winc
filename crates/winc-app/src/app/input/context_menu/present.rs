@@ -148,6 +148,8 @@ impl App {
             MenuTarget::Tree(row.map(|i| segment.unwrap_or_else(|| ws.rows()[i].path.clone())))
         } else if let Some((path, m)) = self.search_context_target(x, y) {
             MenuTarget::SearchResult(path, m)
+        } else if let Some(i) = self.stash_context_target(x, y) {
+            MenuTarget::StashRow(i)
         } else if let Some(path) = self.commit_context_target(x, y) {
             MenuTarget::CommitFile(path)
         } else if let Some((i, path)) = self.log_file_context_target(x, y) {
@@ -184,6 +186,19 @@ impl App {
         self.global.select_row(index);
         self.focus = Focus::Results;
         self.global.selected.clone()
+    }
+
+    /// 右键点在提交视图里的一条储藏上：返回它是第几条储藏。
+    fn stash_context_target(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.commit_shown() || self.commit.hits_generation != self.git.generation {
+            return None;
+        }
+        match hit(&self.commit_hits, x, y)? {
+            CommitTarget::Stash(i) | CommitTarget::StashApply(i) | CommitTarget::StashMenu(i) => {
+                Some(i)
+            }
+            _ => None,
+        }
     }
 
     /// 右键点在提交视图改动列表里的一个文件上：选中它（不打开预览），返回它的路径。
@@ -513,6 +528,13 @@ impl App {
                 search_result_menu(m.is_none(), self.global.replace_open)
             }
             MenuTarget::CommitMore => self.commit_more_menu(),
+            MenuTarget::StashRow(i) => {
+                crate::app::git::branch::stash_ops(*i, self.branch.running.is_some())
+            }
+            MenuTarget::StashList => {
+                let busy = self.branch.running.is_some();
+                crate::app::git::branch::stash_menu(&self.git.stashes, busy)
+            }
             MenuTarget::CommitButton => self.commit_button_menu(),
             MenuTarget::LastCommit => self.last_commit_menu(),
             MenuTarget::TreeTools => self.tree_tools_menu(),
@@ -632,6 +654,9 @@ impl App {
         let (branches, stashes) = match target {
             MenuTarget::BranchOps(_) | MenuTarget::CommitMore => {
                 (self.git.branches.clone(), self.git.stashes.clone())
+            }
+            MenuTarget::StashRow(_) | MenuTarget::StashList => {
+                (Vec::new(), self.git.stashes.clone())
             }
             MenuTarget::LogBranch | MenuTarget::FormBase => (self.git.branches.clone(), Vec::new()),
             _ => Default::default(),

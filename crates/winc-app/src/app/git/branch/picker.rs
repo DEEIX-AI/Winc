@@ -673,6 +673,21 @@ impl App {
         }
     }
 
+    /// 命令「Git：切换分支…」：提交视图开着时从分支行展开分支选择器，否则从状态栏的分支名；状态栏
+    /// 也收着时先打开提交视图。
+    pub(in crate::app) fn switch_branch_from_command(&mut self) {
+        if self.commit_shown() {
+            return self.open_branch_picker(GitAnchor::Branch);
+        }
+        let on_status =
+            (self.status_hits.iter()).any(|(_, i)| *i == crate::app::StatusItem::Branch);
+        if on_status {
+            return self.open_branch_picker(GitAnchor::Status);
+        }
+        self.show_commit();
+        self.open_branch_picker(GitAnchor::Branch);
+    }
+
     /// 从 `anchor` 展开分支选择器。
     pub(in crate::app) fn open_branch_picker(&mut self, anchor: crate::app::GitAnchor) {
         self.finish_name_input();

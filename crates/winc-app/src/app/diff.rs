@@ -966,11 +966,14 @@ impl App {
 
     /// 打开同一批文件中的下一个（`forward`）或上一个文件，返回是否已打开。
     ///
-    /// 差异由日志打开时是同一提交的文件，否则是提交视图列出的文件，都在当前标签里切换。`last` 表示
+    /// 差异由储藏打开时是同一条储藏的文件，由日志打开时是同一提交的文件，否则是提交视图列出的
+    /// 文件，都在当前标签里切换。`last` 表示
     /// 打开后停在最后一处改动，否则停在第一处。
     fn enter_diff_file(&mut self, forward: bool, last: bool) -> bool {
         self.diff_land = Some(last);
-        let entered = self.step_log_file(forward) || self.step_changed_file(forward);
+        let entered = self.step_stash_file(forward)
+            || self.step_log_file(forward)
+            || self.step_changed_file(forward);
         if !entered {
             self.diff_land = None;
         }
@@ -994,6 +997,9 @@ impl App {
 
     /// 下一个（`forward`）或上一个文件的文件名；没有更多文件时为 `None`。
     fn next_diff_file_name(&self, forward: bool) -> Option<String> {
+        if let Some((_, name, _)) = self.next_stash_file(forward) {
+            return Some(name);
+        }
         if let Some((_, _, name, _)) = self.next_log_file(forward) {
             return Some(name);
         }
@@ -1037,12 +1043,13 @@ impl App {
         });
     }
 
-    /// 当前差异标签能不能切换文件：由日志或提交视图打开，或者是工作区文件的 Git 差异。
+    /// 当前差异标签能不能切换文件：由日志、提交视图或储藏打开，或者是工作区文件的 Git 差异。
     pub(crate) fn diff_steps_files(&self) -> bool {
         let Some(id) = self.editor.active().map(|d| d.id) else {
             return false;
         };
-        self.steps_log_files(id) || self.steps_changed_files(id)
+        let stash = self.commit.stash_view.is_some() && self.commit.stash_preview == Some(id);
+        stash || self.steps_log_files(id) || self.steps_changed_files(id)
     }
 
     /// 滚动到下一处（`forward`）或上一处改动。

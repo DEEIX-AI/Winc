@@ -539,6 +539,43 @@ fn shoot_commit_widths() {
     }
 }
 
+/// 截图：改动列表下面展开的储藏一组（`commit-stashes`），鼠标停在第一条上（「应用」和「⋯」），
+/// 储藏超过五条时最后一行是「还有 N 条」。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_commit_stashes() {
+    let Some((mut app, root)) = git_app("commit-stashes", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    for (i, note) in [
+        "改登录",
+        "试一下新写法",
+        "调日志刷新",
+        "备份配置",
+        "临时打点",
+        "旧方案",
+    ]
+    .iter()
+    .enumerate()
+    {
+        std::fs::write(root.join("src/main.rs"), format!("fn main() {{ {i}; }}\n")).unwrap();
+        git_in(&root, &["stash", "push", "-q", "-m", note]);
+    }
+    std::fs::write(root.join("src/main.rs"), "fn main() { now(); }\n").unwrap();
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    app.press_commit(CommitTarget::Stashes);
+    paint(&mut app);
+    let (row, _) = *(app.commit_hits.iter())
+        .find(|(_, t)| *t == CommitTarget::Stash(0))
+        .unwrap();
+    app.on_mouse_move(row.x + 20.0, row.y + row.h / 2.0);
+    shoot(&mut app, "commit-stashes");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 截图：没有改动的提交视图（居中的「没有更改」，没有提交卡片），深浅两套配色。
 #[test]
 #[ignore]
@@ -2438,5 +2475,95 @@ fn the_refresh_button_spins_for_at_least_one_turn() {
     let turn = Duration::from_secs_f32(1.0 / crate::theme::SPIN_SPEED);
     app.commit.refreshed = Instant::now().checked_sub(turn);
     assert!(!app.commit_refreshing());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 改动列表下面的储藏一组：默认收起；展开后每条一行。点一下在储藏的预览标签里打开它的第一个文件，
+/// 差异里的下一个文件在这条储藏的文件之间切换，一起收进去的未跟踪文件排在后面；悬停时的「应用」
+/// 把改动放回工作区。
+#[test]
+fn stashes_are_listed_below_the_changes_and_open_their_files() {
+    let Some((mut app, root)) = git_app("git-commit-stashes", false) else {
+        return;
+    };
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    std::fs::write(root.join("src/main.rs"), "fn main() { stashed(); }\n").unwrap();
+    std::fs::write(root.join("notes.txt"), "draft\n").unwrap();
+    git_in(&root, &["stash", "push", "-q", "-u", "-m", "试一下新写法"]);
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let stash = app.git.stashes[0].clone();
+    assert_eq!(stash.branch(), Some("main"));
+    assert_eq!(stash.parents.len(), 3);
+
+    // 收着时只有标题一行，在列表下面。
+    let parts = app.commit_parts();
+    let section = parts.stashes.unwrap();
+    assert_eq!(section.h, COMMIT_ROW + 2.0 * crate::theme::SIDEBAR_LIST_GAP);
+    assert!(parts.list.bottom() <= section.y);
+    assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
+    app.press_commit(CommitTarget::Stashes);
+    paint(&mut app);
+    assert!((app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
+
+    // 点一下：两个文件，已跟踪的在前；预览标签里是第一个，标题写着储藏的名字。
+    app.press_commit(CommitTarget::Stash(0));
+    let view = app.commit.stash_view.clone().unwrap();
+    let names: Vec<String> = (view.files.iter())
+        .map(|(f, ..)| winc_editor::display_name(&f.path).into_owned())
+        .collect();
+    assert_eq!(names, ["main.rs", "notes.txt"]);
+    assert!(view.files[1].1.is_none());
+    let doc = app.editor.active().unwrap();
+    assert!(doc.diff.is_some());
+    assert_eq!(app.commit.stash_preview, Some(doc.id));
+    assert!(doc.name().contains("stash@{0}"));
+    assert!(app.diff_steps_files());
+    // 下一个文件是一起收进去的未跟踪文件。
+    app.step_diff_file(true);
+    assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 1);
+    assert!(app.editor.active().unwrap().name().contains("notes.txt"));
+    assert_eq!(app.next_stash_file(true), None);
+
+    // 「应用」：改动回到工作区，储藏还在。
+    app.press_commit(CommitTarget::StashApply(0));
+    app.git_refresh();
+    assert!(root.join("notes.txt").exists());
+    assert_eq!(app.git.stashes.len(), 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// ⌥ 按着时提交按钮写「提交并推送」，点了先问再提交、推送；修改上一次提交时不换。
+#[test]
+fn holding_option_turns_commit_into_commit_and_push() {
+    let Some((mut app, root)) = git_app("git-commit-option", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    app.edit_field(|f| f.insert("修复"));
+    paint(&mut app);
+    let button = app.commit_parts().commit;
+    app.on_mouse_move(button.x + button.w / 2.0, button.y + button.h / 2.0);
+    let tip = |app: &App| crate::view::tests::tooltip(app).map(|(_, text)| text);
+    assert!(!app.commit_pushes());
+    assert!(
+        tip(&app).is_some_and(|t| t.starts_with("提交到 main")),
+        "{:?}",
+        tip(&app)
+    );
+    app.modifiers = winit::keyboard::ModifiersState::ALT;
+    assert!(app.commit_pushes());
+    paint(&mut app);
+    assert!(
+        tip(&app).is_some_and(|t| t.starts_with("提交并推送 main")),
+        "{:?}",
+        tip(&app)
+    );
+    app.commit.amend = true;
+    assert!(!app.commit_pushes());
+    app.commit.amend = false;
+    app.modifiers = winit::keyboard::ModifiersState::empty();
     let _ = std::fs::remove_dir_all(&root);
 }
