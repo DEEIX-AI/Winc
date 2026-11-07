@@ -99,6 +99,8 @@ pub struct Session {
     pub terminal: Option<TerminalSession>,
     /// 选中的运行配置的名字。
     pub run: Option<String>,
+    /// 侧栏是否收起；没有记录过的目录为 `false`，打开时显示文件树。
+    pub sidebar_hidden: bool,
 }
 
 /// 现场里的终端面板：各标签的工作目录（按标签栏中的顺序）、正在看的标签、面板开着没有、大小。
@@ -257,6 +259,7 @@ impl State {
                 bookmarks,
                 terminal,
                 run: s.get("run").and_then(Json::as_str).map(str::to_owned),
+                sidebar_hidden: (s.get("sidebarHidden").and_then(Json::as_bool)).unwrap_or(false),
             })
         };
 
@@ -476,6 +479,10 @@ impl State {
             }
             if let Some(run) = &session.run {
                 items.push(("run", Json::String(run.clone())));
+            }
+            // 展开是默认状态，不写。
+            if session.sidebar_hidden {
+                items.push(("sidebarHidden", Json::Bool(true)));
             }
             Json::object(items)
         });
