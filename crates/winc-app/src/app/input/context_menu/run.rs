@@ -206,6 +206,11 @@ impl App {
                     self.activate_tab(i);
                 }
             }
+            MenuTarget::RunConfigs => match command {
+                MenuCommand::RunSelect(i) => self.select_run_config(i),
+                MenuCommand::RunEdit => self.edit_run_configs(),
+                _ => {}
+            },
             MenuTarget::TreeTools => {
                 if let Some(tool) = tree_tool_of(command) {
                     self.run_tree_tool(tool);

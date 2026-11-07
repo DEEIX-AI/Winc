@@ -356,6 +356,9 @@ impl App {
             GitRevertChange => self.revert_change_at_caret(),
             ShowCommit => self.show_commit(),
             ToggleTerminal => self.toggle_terminal(),
+            RunConfiguration => self.run_current_config(),
+            StopConfiguration => self.stop_current_config(),
+            EditRunConfigurations => self.edit_run_configs(),
             ClearTerminal => self.clear_terminal(),
             NewTerminal => self.new_terminal_tab(),
             CloseTerminal => self.close_terminal_tab(self.terminal.active),
@@ -379,6 +382,12 @@ impl App {
 
     /// 命令当前是否可用：属于某个模块的命令只在模块开着时可用。
     pub(super) fn action_available(&self, action: Action) -> bool {
+        match action {
+            Action::RunConfiguration if self.editor.root().is_none() => return false,
+            Action::StopConfiguration if !self.run_config_running() => return false,
+            Action::EditRunConfigurations if self.editor.root().is_none() => return false,
+            _ => {}
+        }
         match action.module() {
             Some(crate::keymap::Module::Git) => self.git_enabled(),
             Some(crate::keymap::Module::Terminal) => self.terminal_enabled(),

@@ -164,6 +164,12 @@ pub(crate) struct TermTab {
     pub process: String,
     /// 这个终端不能再用了：为什么；还能用时为 `None`。
     pub ended: Option<TabEnd>,
+    /// 标签运行的配置；普通的 shell 标签为 `None`。
+    pub run: Option<winc_config::RunConfig>,
+    /// 程序退出后重新运行配置。
+    pub rerun: bool,
+    /// 程序是用户停止的，不是自己退出的。
+    pub stopped: bool,
     /// 最近一次告诉辅助进程的尺寸。
     pub size: Size,
     /// 收到了一帧还没给额度。
@@ -246,6 +252,9 @@ impl TermTab {
             title: String::new(),
             process: String::new(),
             ended: None,
+            run: None,
+            rerun: false,
+            stopped: false,
             size,
             credit_due: false,
             history: (0, 0),
@@ -382,6 +391,9 @@ impl TermTab {
         // 伪终端断开时程序可能还在运行，关掉标签会结束它们，仍然要确认。
         if matches!(self.ended, Some(TabEnd::Exited(_))) {
             return None;
+        }
+        if let Some(run) = &self.run {
+            return Some(&run.name);
         }
         if let Some(block) = self.blocks.last().filter(|b| b.running()) {
             let text = block.text.trim();

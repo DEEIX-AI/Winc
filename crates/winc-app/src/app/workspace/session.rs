@@ -156,6 +156,7 @@ impl App {
             self.note_recent_file();
         }
         self.switch_terminal(session.as_ref().and_then(|s| s.terminal.as_ref()));
+        self.switch_run_configs(session.as_ref().and_then(|s| s.run.clone()));
 
         self.relayout();
         self.ensure_caret_visible();
@@ -310,6 +311,7 @@ impl App {
         }
 
         let terminal = self.terminal_session();
+        let run = self.run.selected.clone();
         let bookmarks = self
             .editor
             .all_bookmarks()
@@ -323,6 +325,7 @@ impl App {
                 active,
                 bookmarks,
                 terminal,
+                run,
             });
         });
     }

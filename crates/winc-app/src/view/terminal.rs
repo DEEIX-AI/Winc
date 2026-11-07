@@ -410,12 +410,9 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     let button_y = card.y + (header.h - BUTTON) / 2.0;
     let hide = Rect::new(end - BUTTONS_END - BUTTON, button_y, BUTTON, BUTTON);
     let position = Rect::new(hide.x - TAB_GAP - BUTTON, button_y, BUTTON, BUTTON);
-    let rest = Rect::new(
-        header.x,
-        header.y,
-        position.x - TAB_GAP - header.x,
-        header.h,
-    );
+    let run = run_buttons(app, frame, left, position.x - TAB_GAP, button_y);
+    let rest_end = run.map_or(position.x, |[menu, ..]| menu.x) - TAB_GAP;
+    let rest = Rect::new(header.x, header.y, rest_end - header.x, header.h);
     // 标签和「+」放得下的宽度：右边留出查找框，或者「重新启动」那一组。
     let side = if app.terminal.find.is_some() {
         FIND_W + 4.0 + TAB_GAP
@@ -577,10 +574,117 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     let center = (hide.x + BUTTON / 2.0, hide.y + BUTTON / 2.0);
     icons::chevron(frame, center, 8.0, toward, p.text_muted, header);
     hits.push((hide, HeaderHit::Hide));
+    if let Some(run) = run {
+        draw_run_buttons(app, frame, run, header, &mut hits);
+    }
     app.terminal.hits = hits;
 
     if app.terminal.find.is_some() {
         draw_find(app, frame, rest);
+    }
+}
+
+/// 配置名按钮最宽多少（逻辑像素），约容纳 8 个汉字；更长的名字截短。
+const RUN_NAME_MAX: f32 = 104.0;
+
+/// 配置名按钮中文字之外的宽度（逻辑像素）：左边距 8、下拉箭头及其边距 20。
+pub(super) const RUN_NAME_CHROME: f32 = 28.0;
+
+/// 留给标签和「+」的最小宽度（逻辑像素），约容纳两个标签；放不下配置名时只保留下拉箭头。
+const RUN_TABS_MIN: f32 = 240.0;
+
+/// 返回配置名按钮的宽度：`name` 是名字的宽度，`room` 是标签栏可用的总宽度。
+///
+/// 面板窄时只保留下拉箭头，配置名可在菜单中看到；再窄时返回 `None`，用命令面板运行。
+pub(super) fn run_menu_width(name: f32, room: f32) -> Option<f32> {
+    let buttons = (BUTTON + TAB_GAP) * 2.0;
+    // 向上取整：绘制时从按钮宽度减回文字宽度，浮点误差不能让放得下的名字被截短。
+    let full = name.min(RUN_NAME_MAX).ceil() + RUN_NAME_CHROME;
+    [full, BUTTON]
+        .into_iter()
+        .find(|menu| room - menu - buttons >= RUN_TABS_MIN)
+}
+
+/// 运行配置的按钮在标签栏上的位置（配置名，运行，停止）。
+///
+/// 还没有配置时只有运行按钮，点击后生成配置文件；没有打开目录或太窄时没有按钮。
+fn run_buttons(app: &App, frame: &mut Frame<'_>, left: f32, end: f32, y: f32) -> Option<[Rect; 3]> {
+    app.editor.root()?;
+    let stop = Rect::new(end - BUTTON, y, BUTTON, BUTTON);
+    let start = Rect::new(stop.x - TAB_GAP - BUTTON, y, BUTTON, BUTTON);
+    let Some(config) = app.run.current() else {
+        let start = Rect::new(end - BUTTON, y, BUTTON, BUTTON);
+        return (end - left - BUTTON >= RUN_TABS_MIN).then_some([start; 3]);
+    };
+    let name = frame.measure(FontKind::Ui, app.fonts.ui, &config.name);
+    let menu = run_menu_width(name, end - left)?;
+    let menu = Rect::new(start.x - TAB_GAP - menu, y, menu, BUTTON);
+    Some([menu, start, stop])
+}
+
+/// 绘制运行配置的按钮：配置名和下拉箭头，运行（运行中是重新运行），停止（运行中才可用）。
+fn draw_run_buttons(
+    app: &App,
+    frame: &mut Frame<'_>,
+    [menu, start, stop]: [Rect; 3],
+    header: Rect,
+    hits: &mut Vec<(Rect, HeaderHit)>,
+) {
+    use crate::app::MenuButton;
+    use crate::app::terminal::run::RunButton;
+    let p = app.palette;
+    let hovered = |button| app.hover == Hover::TerminalHeader(HeaderHit::Run(button));
+    let center = |rect: Rect| (rect.x + BUTTON / 2.0, rect.y + BUTTON / 2.0);
+    let Some(config) = app.run.current() else {
+        let on = hovered(RunButton::Start);
+        draw_button(frame, p, start, header, on, false);
+        let color = if on { p.text } else { p.text_muted };
+        icons::play(frame, center(start), color, header);
+        hits.push((start, HeaderHit::Run(RunButton::Start)));
+        return;
+    };
+    let running = app.run_config_running();
+    let open = app.menu_button == Some(MenuButton::RunConfigs);
+
+    draw_button(frame, p, menu, header, hovered(RunButton::Menu), open);
+    let color = if open || hovered(RunButton::Menu) {
+        p.text
+    } else {
+        p.text_muted
+    };
+    let arrow = if menu.w > BUTTON {
+        let room = menu.w - RUN_NAME_CHROME;
+        let name = ellipsize(frame, &config.name, app.fonts.ui, room);
+        ui_text(frame, app, menu.x + 8.0, menu, &name, color, menu);
+        (menu.right() - 12.0, menu.y + menu.h / 2.0)
+    } else {
+        center(menu)
+    };
+    icons::chevron(frame, arrow, 8.0, icons::Direction::Down, color, menu);
+    hits.push((menu, HeaderHit::Run(RunButton::Menu)));
+
+    draw_button(frame, p, start, header, hovered(RunButton::Start), false);
+    if running {
+        icons::refresh(frame, center(start), p.git_added, header);
+    } else {
+        icons::play(frame, center(start), p.git_added, header);
+    }
+    hits.push((start, HeaderHit::Run(RunButton::Start)));
+
+    draw_button(
+        frame,
+        p,
+        stop,
+        header,
+        running && hovered(RunButton::Stop),
+        false,
+    );
+    if running {
+        icons::stop(frame, center(stop), p.error, header);
+        hits.push((stop, HeaderHit::Run(RunButton::Stop)));
+    } else {
+        let color = p.text_muted;
+        frame.with_opacity(0.4, |frame| icons::stop(frame, center(stop), color, header));
     }
 }
 
@@ -664,7 +768,14 @@ fn end_note(app: &App) -> Option<(String, Color)> {
     if app.terminal.crashed {
         return Some((t!("terminal-helper-exited").to_string(), p.error));
     }
-    Some(match app.terminal.tab()?.ended? {
+    let tab = app.terminal.tab()?;
+    Some(match tab.ended? {
+        TabEnd::Exited(_) if tab.run.is_some() && tab.stopped => {
+            (t!("terminal-run-stopped").to_string(), p.text_dim)
+        }
+        TabEnd::Exited(0) if tab.run.is_some() => {
+            (t!("terminal-run-finished").to_string(), p.text_dim)
+        }
         TabEnd::Exited(code) => (t!("terminal-process-exited", code = code), p.text_dim),
         TabEnd::Disconnected => (t!("terminal-disconnected").to_string(), p.error),
     })
@@ -679,7 +790,11 @@ fn draw_end_notice(app: &mut App, frame: &mut Frame<'_>, row: Rect, clip: Rect) 
     // 屏幕写满时写在最后一行上，盖住那一行。
     frame.rect_clipped(row, p.editor_bg, 0.0, clip);
     ui_text(frame, app, row.x, row, &note, color, clip);
-    let label = t!("terminal-restart");
+    // 运行配置的标签再次运行的是配置，不是打开 shell。
+    let label = match app.terminal.tab() {
+        Some(tab) if tab.run.is_some() && !app.terminal.crashed => t!("terminal-run-again"),
+        _ => t!("terminal-restart"),
+    };
     let note_w = frame.measure(FontKind::Ui, app.fonts.ui, &note);
     let label_w = frame.measure(FontKind::Ui, app.fonts.ui, label);
     let button = Rect::new(

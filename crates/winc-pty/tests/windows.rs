@@ -61,6 +61,19 @@ fn the_bundled_console_host_runs_when_it_is_present() {
     assert_eq!(c.until_exit_showing(|t| t.contains("found")), 0);
 }
 
+/// 停止结束程序，退出照常报告。
+#[test]
+fn stop_ends_the_program() {
+    if skip_under_wine() {
+        return;
+    }
+    let mut c = Client::start();
+    c.spawn(1, &cmd(), &["/q", "/k", "echo started"]);
+    c.until_text("started");
+    c.send(ToHelper::Stop { tab: 1 });
+    c.until_exit();
+}
+
 #[test]
 fn a_program_runs_in_a_pseudo_console_and_reports_its_exit_code() {
     if skip_under_wine() {
@@ -144,6 +157,7 @@ fn losing_the_pseudo_console_is_reported_while_the_shell_runs() {
         scrollback: 100,
         size: SIZE,
         integration: None,
+        banner: Vec::new(),
     });
     c.until_text("ready");
 

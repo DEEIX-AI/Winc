@@ -19,7 +19,7 @@ pub const MAGIC: [u8; 8] = *b"winc-pty";
 /// 协议版本号。
 ///
 /// 消息的格式每变化一次加一。
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 6;
 /// 一条消息的长度上限（字节，64 MiB）。
 ///
 /// 超过上限的消息视为对方出错并断开连接，避免一个错误的长度使对端分配数 GB 内存。
@@ -470,6 +470,8 @@ pub enum ToHelper {
         size: Size,
         /// shell 集成脚本所在的目录；为 `None` 时不注入。
         integration: Option<Vec<u8>>,
+        /// 程序启动前先写进终端的内容，不经过程序（运行配置的命令行）；为空时不写。
+        banner: Vec<u8>,
     },
     /// 写进伪终端的字节（按键已经编码好）。
     Input {
@@ -517,6 +519,13 @@ pub enum ToHelper {
     },
     /// 主题变化。
     Theme(Theme),
+    /// 结束终端里的程序但保留终端：挂断它的进程组，到期仍未退出时强制结束。
+    ///
+    /// 内容和回滚缓冲保留到 [`ToHelper::Close`]，退出时照常发 [`FromHelper::Exited`]。
+    Stop {
+        /// 标签号。
+        tab: u16,
+    },
 }
 
 /// 辅助进程发给主程序的消息。

@@ -187,10 +187,15 @@ impl App {
         let t = &mut self.terminal;
         if t.crashed {
             t.crashed = false;
+            // 重开以后还看着原来看的那一个。运行配置的标签不重开，程序由用户决定是否再次运行。
+            let before = t.tabs.iter().take(t.active).filter(|tab| tab.run.is_some());
+            t.want_active = Some(t.active - before.count());
+            t.tabs.retain(|tab| tab.run.is_none());
             t.want_names = t.tabs.iter().map(|tab| tab.name.clone()).collect();
-            // 重开以后还看着原来看的那一个。
-            t.want_active = Some(t.active);
             t.want = t.tabs.drain(..).map(|tab| tab.cwd).collect();
+            if t.want.is_empty() {
+                t.want.push(Vec::new());
+            }
             t.active = 0;
             self.start_terminal();
             self.relayout();
@@ -202,6 +207,10 @@ impl App {
         let Some(tab) = t.tabs.get(index) else {
             return;
         };
+        if let Some(config) = tab.run.clone() {
+            self.start_run(config);
+            return;
+        }
         let (cwd, name, old) = (tab.cwd.clone(), tab.name.clone(), tab.id);
         // 先建新的再关旧的：关掉最后一个标签时辅助进程跟着退出（见 `close_terminal_tab_now`），
         // 只有这一个标签时不必为了重开换一个辅助进程。
@@ -275,7 +284,8 @@ impl App {
             return;
         }
         // 要建新标签：建好以后看的是别的标签，原来那个先失去焦点（1004）。
-        if self.terminal.error.is_none() && !self.terminal.want.is_empty() {
+        let waiting = !self.terminal.want.is_empty() || !self.terminal.run_queue.is_empty();
+        if self.terminal.error.is_none() && waiting {
             self.blur_terminal_tab();
         }
         // 只有新建标签时才用到；每次重绘都会运行到这里，不必每次都读取配置和拼接路径。
@@ -335,6 +345,7 @@ impl App {
                     scrollback,
                     size,
                     integration: integration.clone(),
+                    banner: Vec::new(),
                 });
                 if t.tabs.len() == target
                     && let Some(bytes) = t.pending_input.take()
@@ -356,6 +367,34 @@ impl App {
                 t.active = active.min(t.tabs.len().saturating_sub(1));
             }
         }
+        let mut replaced = Vec::new();
+        if t.error.is_none() {
+            for start in std::mem::take(&mut t.run_queue) {
+                t.next_id = t.next_id.wrapping_add(1);
+                let id = t.next_id;
+                client.send(&ToHelper::Spawn {
+                    tab: id,
+                    program: start.launch.program,
+                    args: start.launch.args,
+                    login: start.launch.login,
+                    cwd: start.launch.cwd,
+                    env: start.env,
+                    scrollback,
+                    size,
+                    integration: None,
+                    banner: start.banner,
+                });
+                let mut tab = TermTab::new(id, size);
+                tab.slack = slack;
+                tab.name.clone_from(&start.config.name);
+                tab.run = Some(start.config);
+                t.tabs.push(tab);
+                t.active = t.tabs.len() - 1;
+                t.focus_sent = false;
+                replaced.extend(start.replaces.map(|old| (id, old)));
+            }
+        }
+        self.retire_run_tabs(replaced);
         self.fetch_terminal_history();
     }
 
@@ -547,8 +586,17 @@ impl App {
                 }
             }
             FromHelper::Exited { tab: id, code } => {
+                let mut again = None;
+                self.run_tab_exited(id, code);
+                let t = &mut self.terminal;
                 if let Some(tab) = t.by_id(id) {
                     tab.ended = Some(TabEnd::Exited(code));
+                    if std::mem::take(&mut tab.rerun) {
+                        again.clone_from(&tab.run);
+                    }
+                }
+                if let Some(config) = again {
+                    self.start_run(config);
                 }
             }
             FromHelper::Disconnected { tab: id } => {
@@ -623,19 +671,19 @@ fn integration_dir(config: &winc_config::Config) -> Option<Vec<u8>> {
 /// `terminal.prompt` 关了时加上 `WINC_PROMPT=0`，集成脚本就不替换默认的提示符。
 /// 新终端的启动方式：程序、参数和工作目录。
 #[derive(Debug, PartialEq, Eq)]
-struct Launch {
+pub(super) struct Launch {
     /// 要运行的程序；`None` 表示用户的默认 shell。
-    program: Option<Vec<u8>>,
-    args: Vec<Vec<u8>>,
-    login: bool,
-    cwd: Vec<u8>,
+    pub(super) program: Option<Vec<u8>>,
+    pub(super) args: Vec<Vec<u8>>,
+    pub(super) login: bool,
+    pub(super) cwd: Vec<u8>,
 }
 
 /// 返回在目录 `cwd` 新建终端时的启动方式。
 ///
 /// 设置了 `shell` 时运行该命令。在 Windows（`windows`）上且 `cwd` 位于 WSL 发行版中时，进入对应的
 /// 发行版和目录：目录由 `wsl.exe` 的参数指定，进程本身从家目录启动。其余情况运行默认 shell。
-fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch {
+pub(super) fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch {
     // Windows 上 `/` 开头的目录来自 WSL 中的 shell，不是 Windows 程序可用的工作目录。
     let cwd = if windows && cwd.first() == Some(&b'/') {
         Vec::new()
@@ -672,7 +720,7 @@ fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch {
     }
 }
 
-fn environment(prompt: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
+pub(super) fn environment(prompt: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
     let mut env: Vec<_> = std::env::vars_os()
         .filter(|(k, _)| k != "WINC_PROMPT")
         .map(|(k, v)| (os_bytes(&k), os_bytes(&v)))

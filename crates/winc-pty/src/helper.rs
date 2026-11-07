@@ -89,6 +89,8 @@ struct Tab {
     process_due: bool,
     /// 这次查询之后是否还要再查一次：发帧时命令可能还没启动，没有输出的命令不会再发帧。
     process_recheck: bool,
+    /// 收到 [`ToHelper::Stop`] 以后：挂断时的前台作业，以及到期仍未退出时强制结束的时刻。
+    stopping: Option<(Option<pty::Pid>, Instant)>,
 }
 
 /// 已经关掉、等进程组退出的终端。
@@ -316,13 +318,20 @@ impl Helper {
             .filter(|t| t.credit)
             .filter_map(|t| t.sync_since.map(|s| s + SYNC_TIMEOUT));
         let kills = self.closing.iter().filter_map(|c| c.kill_at);
+        let stops = (self.tabs.values()).filter_map(|t| t.stopping.map(|(_, at)| at));
         let jobs = (self.closing.iter())
             .filter(|c| c.reaped && c.job.is_some())
             .map(|_| now + JOB_POLL);
         let processes = (self.tabs.values())
             .filter(|t| t.process_due)
             .map(|t| t.process_checked.map_or(now, |at| at + PROCESS_INTERVAL));
-        match sync.chain(kills).chain(jobs).chain(processes).min() {
+        match sync
+            .chain(kills)
+            .chain(stops)
+            .chain(jobs)
+            .chain(processes)
+            .min()
+        {
             Some(at) => at.saturating_duration_since(now).as_millis().min(1000) as i32 + 1,
             None => -1,
         }
@@ -362,6 +371,7 @@ impl Helper {
                 scrollback,
                 size,
                 integration,
+                banner,
             } => self.spawn(
                 tab,
                 program,
@@ -372,6 +382,7 @@ impl Helper {
                 scrollback,
                 size,
                 integration,
+                &banner,
             ),
             ToHelper::Input { tab, bytes, rest } => {
                 let Some(tab) = self.tabs.get_mut(&tab) else {
@@ -428,6 +439,19 @@ impl Helper {
                     self.close(pty);
                 }
             }
+            ToHelper::Stop { tab } => {
+                if let Some(tab) = self.tabs.get_mut(&tab)
+                    && let Some(pty) = &tab.pty
+                    && tab.stopping.is_none()
+                {
+                    let job = pty.foreground_group();
+                    pty.hang_up();
+                    if let Some(job) = job {
+                        pty::hang_up_job(job);
+                    }
+                    tab.stopping = Some((job, Instant::now() + HANGUP_GRACE));
+                }
+            }
             ToHelper::Theme(theme) => {
                 self.theme = Some(theme);
                 for tab in self.tabs.values_mut() {
@@ -450,6 +474,7 @@ impl Helper {
         scrollback: u32,
         size: Size,
         integration: Option<Vec<u8>>,
+        banner: &[u8],
     ) {
         if self.tabs.contains_key(&id) {
             self.send(&FromHelper::Failed {
@@ -521,6 +546,7 @@ impl Helper {
                 );
                 term.resize(size);
                 term.set_theme(self.theme);
+                term.feed(banner);
                 if let Some(nonce) = nonce {
                     term.set_nonce(nonce);
                 }
@@ -538,6 +564,7 @@ impl Helper {
                         process_checked: None,
                         process_due: false,
                         process_recheck: false,
+                        stopping: None,
                     },
                 );
                 self.spawned = true;
@@ -609,6 +636,19 @@ impl Helper {
                     pty::kill_job(job);
                 }
                 closing.kill_at = None;
+            }
+        }
+        for tab in self.tabs.values_mut() {
+            if let Some((job, at)) = tab.stopping
+                && now >= at
+            {
+                if let Some(pty) = &tab.pty {
+                    pty.kill(false);
+                }
+                if let Some(job) = job {
+                    pty::kill_job(job);
+                }
+                tab.stopping = None;
             }
         }
     }

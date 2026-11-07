@@ -97,6 +97,8 @@ pub struct Session {
     pub bookmarks: Vec<(PathBuf, Vec<usize>)>,
     /// 终端面板；终端里没有标签时为 `None`。
     pub terminal: Option<TerminalSession>,
+    /// 选中的运行配置的名字。
+    pub run: Option<String>,
 }
 
 /// 现场里的终端面板：各标签的工作目录（按标签栏中的顺序）、正在看的标签、面板开着没有、大小。
@@ -246,6 +248,7 @@ impl State {
                 active,
                 bookmarks,
                 terminal,
+                run: s.get("run").and_then(Json::as_str).map(str::to_owned),
             })
         };
 
@@ -457,6 +460,9 @@ impl State {
                     fields.push(("names", Json::Array(names.collect())));
                 }
                 items.push(("terminal", Json::object(fields)));
+            }
+            if let Some(run) = &session.run {
+                items.push(("run", Json::String(run.clone())));
             }
             Json::object(items)
         });

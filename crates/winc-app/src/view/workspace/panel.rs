@@ -817,6 +817,25 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 with_key(t!("terminal-hide-panel"), Some(Action::ToggleTerminal)),
             ))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Run(button)) => {
+            use crate::app::terminal::run::RunButton;
+            let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+            let label = match button {
+                RunButton::Menu => t!("terminal-run-select").to_owned(),
+                RunButton::Start if app.run.list.is_empty() => t!("terminal-run-add").to_owned(),
+                RunButton::Start if app.run_config_running() => {
+                    with_key(t!("terminal-run-again"), Some(Action::RunConfiguration))
+                }
+                RunButton::Start => {
+                    with_key(t!("cmd-run-configuration"), Some(Action::RunConfiguration))
+                }
+                RunButton::Stop => with_key(
+                    t!("cmd-stop-configuration"),
+                    Some(Action::StopConfiguration),
+                ),
+            };
+            Some((rect, label))
+        }
         Hover::Status(item @ crate::app::StatusItem::Terminal) => {
             let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
             let label = if app.terminal.open {

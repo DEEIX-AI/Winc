@@ -107,6 +107,38 @@ fn queries_are_answered_through_the_pty() {
     c.until_exit_showing(|t| t.ends_with("[1;3R"));
 }
 
+/// 启动前写进终端的内容排在程序输出之前，不会传给程序。
+#[test]
+fn the_banner_comes_before_the_output() {
+    let mut c = Client::start();
+    c.send(ToHelper::Spawn {
+        tab: 1,
+        program: Some(b"/bin/sh".to_vec()),
+        args: vec![b"-c".to_vec(), b"echo output".to_vec()],
+        login: false,
+        cwd: b"/".to_vec(),
+        env: vec![(b"PATH".to_vec(), b"/usr/bin:/bin".to_vec())],
+        scrollback: 100,
+        size: SIZE,
+        integration: None,
+        banner: b"> command\r\n".to_vec(),
+    });
+    c.until_exit_showing(|t| t.contains("output"));
+    assert!(c.text().starts_with("> command\noutput"), "{}", c.text());
+}
+
+/// 停止结束忽略挂断的程序，到期强制结束；终端的内容保留，退出照常报告。
+#[test]
+fn stop_ends_the_program_and_keeps_the_terminal() {
+    let mut c = Client::start();
+    let script = "trap '' HUP; echo started; while :; do sleep 1; done";
+    c.spawn(1, "/bin/sh", &["-c", script]);
+    c.until_text("started");
+    c.send(ToHelper::Stop { tab: 1 });
+    assert_eq!(c.until_exit(), 128 + 9);
+    assert!(c.text().contains("started"));
+}
+
 #[test]
 fn a_missing_program_fails_to_start() {
     let mut c = Client::start();

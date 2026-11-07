@@ -62,3 +62,22 @@ terminal-close-confirm = 要结束「{ $name }」吗？
 terminal-close-confirm-detail = 关掉这个终端标签会结束里面正在运行的程序。
 terminal-paste-confirm = 要把 { $count } 行文字粘贴到终端吗？
 terminal-paste-confirm-detail = 终端里的程序没有开启括号粘贴，每一行会作为单独的命令立即执行。
+
+## 运行配置。
+
+terminal-run-select = 选择运行配置
+terminal-run-again = 重新运行
+terminal-run-confirm = 要运行「{ $name }」吗？
+terminal-run-confirm-detail = 此命令来自项目的 .winc/run.json，将以当前用户的权限执行。请仅在信任此项目时运行。
+terminal-run-confirm-detected = 此命令由 Winc 根据项目文件生成，将执行项目中的代码。请仅在信任此项目时运行。
+terminal-run-confirm-command = 命令：{ $command }
+terminal-run-confirm-cwd = 工作目录：{ $cwd }
+terminal-run-confirm-env = 环境变量：{ $variable }
+terminal-run-confirm-action = 运行
+terminal-run-config-problem = 运行配置（.winc/run.json）：{ $problem }
+terminal-run-create-failed = 无法创建运行配置：{ $error }
+terminal-run-add = 添加运行配置
+terminal-run-stopped = 已停止
+terminal-run-finished = 已完成
+terminal-run-failed = 「{ $name }」运行失败（退出码 { $code }）
+terminal-run-menu-running = 运行中 · { $command }

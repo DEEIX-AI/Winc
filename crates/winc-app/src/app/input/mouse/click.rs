@@ -263,6 +263,10 @@ impl App {
                 self.click_field(x, y);
                 self.request_redraw();
             }
+            // 运行配置的按钮不移动焦点，不打断正在进行的编辑。
+            Target::TerminalHeader(crate::app::terminal::HeaderHit::Run(button)) => {
+                self.press_run_button(button);
+            }
             Target::TerminalHeader(hit) => {
                 use crate::app::terminal::HeaderHit;
                 self.focus = Focus::Terminal;
@@ -278,6 +282,7 @@ impl App {
                     HeaderHit::Restart => self.request_terminal_restart(),
                     HeaderHit::Position => self.toggle_terminal_position(),
                     HeaderHit::Hide => self.click_terminal_button(),
+                    HeaderHit::Run(_) => {}
                 }
             }
             // 双击分隔线恢复为左右各占一半，单击按住开始拖动。

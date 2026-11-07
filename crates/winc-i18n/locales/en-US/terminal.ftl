@@ -78,3 +78,22 @@ terminal-paste-confirm = { $count ->
        *[other] Paste { $count } lines into the terminal?
     }
 terminal-paste-confirm-detail = The program in the terminal hasn’t enabled bracketed paste, so each line will run as a separate command right away.
+
+## 运行配置。
+
+terminal-run-select = Select Run Configuration
+terminal-run-again = Run Again
+terminal-run-confirm = Run “{ $name }”?
+terminal-run-confirm-detail = This command comes from the project’s .winc/run.json and runs with your user permissions. Run it only if you trust this project.
+terminal-run-confirm-detected = Winc generated this command from the project’s files, and it runs code from the project. Run it only if you trust this project.
+terminal-run-confirm-command = Command: { $command }
+terminal-run-confirm-cwd = Working directory: { $cwd }
+terminal-run-confirm-env = Environment variable: { $variable }
+terminal-run-confirm-action = Run
+terminal-run-config-problem = Run configurations (.winc/run.json): { $problem }
+terminal-run-create-failed = Couldn’t create run configurations: { $error }
+terminal-run-add = Add Run Configuration
+terminal-run-stopped = Stopped
+terminal-run-finished = Completed
+terminal-run-failed = “{ $name }” failed (exit code { $code })
+terminal-run-menu-running = Running · { $command }

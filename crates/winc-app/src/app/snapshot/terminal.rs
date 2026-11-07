@@ -3,6 +3,7 @@
 
 mod blocks;
 mod editor;
+mod run;
 
 use super::editor::navigation::press;
 use super::*;
@@ -641,11 +642,16 @@ fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
     assert_eq!(tab.x - card.x, app.terminal_view().y - tab.bottom());
     assert_eq!(tab.x - card.x, 5.0);
 
-    // 「+」、切换位置、收起三个按钮间距相同，尺寸和间距与编辑区标签栏一致。
+    // 「+」、运行、切换位置、收起四个按钮间距相同，尺寸和间距与编辑区标签栏一致。
     let new = hit(&app, terminal::HeaderHit::New);
+    let run = hit(
+        &app,
+        terminal::HeaderHit::Run(terminal::run::RunButton::Start),
+    );
     let position = hit(&app, terminal::HeaderHit::Position);
     let hide = hit(&app, terminal::HeaderHit::Hide);
-    assert_eq!(position.x - new.right(), crate::theme::TAB_GAP);
+    assert_eq!(run.x - new.right(), crate::theme::TAB_GAP);
+    assert_eq!(position.x - run.right(), crate::theme::TAB_GAP);
     assert_eq!(hide.x - position.right(), crate::theme::TAB_GAP);
     assert_eq!(new.w, crate::theme::BUTTON);
     assert_eq!(card.right() - hide.right(), 8.0);

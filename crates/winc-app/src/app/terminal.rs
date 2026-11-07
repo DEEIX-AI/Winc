@@ -13,6 +13,7 @@ mod keys;
 pub(crate) mod link;
 mod locate;
 mod pointer;
+pub(crate) mod run;
 pub(crate) mod strip;
 mod tab;
 
@@ -109,6 +110,8 @@ pub(crate) enum HeaderHit {
     Position,
     /// 收起面板（和状态栏上的终端按钮一样）。
     Hide,
+    /// 运行配置的按钮。
+    Run(run::RunButton),
 }
 
 /// 面板出现、收起、换位置的动画（见 [`App::terminal_shown`]）。
@@ -157,6 +160,8 @@ pub(crate) struct TerminalPanel {
     want_names: Vec<String>,
     /// `want` 里的标签都建好以后看第几个（恢复上次的现场时）；`None` 是最后建的那个。
     want_active: Option<usize>,
+    /// 等着启动的运行配置。
+    run_queue: Vec<run::RunStart>,
     /// 新建的标签起来以后先写给它的输入（⌃⇧↩ 发代码时还没有终端）。
     pub pending_input: Option<Vec<u8>>,
     /// 辅助进程意外退出了：标签和最后一屏还留着，等用户重新启动。
@@ -385,16 +390,18 @@ impl App {
     pub(super) fn terminal_session(&self) -> Option<TerminalSession> {
         let t = &self.terminal;
         // 还没建出来的（面板收着时恢复的）也算。
-        let tabs: Vec<PathBuf> = t
-            .tabs
-            .iter()
+        // 运行配置的标签不恢复。
+        let shells = || t.tabs.iter().filter(|tab| tab.run.is_none());
+        let tabs: Vec<PathBuf> = shells()
             .map(|tab| bytes_path(&tab.cwd))
             .chain(t.want.iter().map(|cwd| bytes_path(cwd)))
             .collect();
         let pending = (0..t.want.len()).map(|i| t.want_names.get(i).cloned().unwrap_or_default());
-        let names = t.tabs.iter().map(|tab| tab.name.clone()).chain(pending);
+        let names = shells().map(|tab| tab.name.clone()).chain(pending);
+        let before = t.tabs.iter().take(t.active).filter(|tab| tab.run.is_some());
+        let active = t.active - before.count();
         (!tabs.is_empty()).then(|| TerminalSession {
-            active: t.want_active.unwrap_or(t.active),
+            active: t.want_active.unwrap_or(active),
             tabs,
             names: names.collect(),
             open: t.open,
@@ -727,7 +734,7 @@ impl App {
         // 最后一个关掉了（也没有等着建的）：辅助进程自己会退出，连接马上放掉（关掉它的
         // stdin）。之后新建的标签由下一个辅助进程建，不发给正在退出的这一个（发了也收不到，
         // 还会被当成辅助进程中止）。
-        let last = t.tabs.is_empty() && t.want.is_empty();
+        let last = t.tabs.is_empty() && t.want.is_empty() && t.run_queue.is_empty();
         if last {
             t.client = None;
             t.ready = false;
@@ -748,7 +755,7 @@ impl App {
 
     /// 清理已删除标签的相关状态：还没回来的取行请求（辅助进程不会再答）、查找、F8、链接、
     /// 改名字的输入框；焦点在它的输入框里时回到终端。
-    fn forget_terminal_tab(&mut self, id: u16) {
+    pub(in crate::app::terminal) fn forget_terminal_tab(&mut self, id: u16) {
         let t = &mut self.terminal;
         t.requests.retain(|&(_, tab, _)| tab != id);
         if t.find.as_ref().is_some_and(|f| f.tab == id) {

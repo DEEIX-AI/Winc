@@ -30,7 +30,16 @@ impl App {
         let body = format!("#!/bin/sh\nexec cat > '{}'\n", log.display());
         std::fs::write(&script, body).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        self.terminal.client = Client::start(&script, || {}).ok();
+        // 别的测试线程 fork 时会短暂继承这个脚本的写入端，此时执行得到 `ExecutableFileBusy`。
+        let mut client = Client::start(&script, || {});
+        for _ in 0..100 {
+            if !matches!(&client, Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            client = Client::start(&script, || {});
+        }
+        self.terminal.client = Some(client.expect("启动记录消息的脚本"));
         self.terminal.ready = true;
         let t = &mut self.terminal;
         t.next_id = t.tabs.iter().map(|tab| tab.id).fold(t.next_id, u16::max);

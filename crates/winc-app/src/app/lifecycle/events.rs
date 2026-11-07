@@ -139,8 +139,9 @@ impl ApplicationHandler<UserEvent> for App {
         window.set_ime_allowed(true);
         self.place_traffic_lights();
         self.install_system_hooks();
-        // 启动时恢复的目录在事件循环创建之前打开，此时才能开始监视。
+        // 启动时恢复的目录在事件循环创建之前打开，此时才能开始监视和读取运行配置。
         self.watch_folder();
+        self.load_run_configs_for_window();
 
         // 开启「保存时格式化」时，启动后在后台预先取得用户 shell 的环境，避免第一次 ⌘S 等待；
         // shell 初始化脚本较慢时取环境会耗时较长，耗时取决于用户的配置。测量时不取，避免干扰
@@ -330,6 +331,7 @@ impl App {
             UserEvent::GitCommitAndPush => self.git_commit_and_push(),
             UserEvent::GitUndoCommit => self.undo_last_commit(),
             UserEvent::ReplaceAllConfirmed(total) => self.replace_all_confirmed(total),
+            UserEvent::RunApproved(config) => self.approved_run(*config),
             UserEvent::TerminalClose(id) => self.confirmed_terminal_close(id),
             UserEvent::TerminalRestart(id) => self.confirmed_terminal_restart(id),
             UserEvent::TerminalPaste(id, text) => self.confirmed_terminal_paste(id, text),
