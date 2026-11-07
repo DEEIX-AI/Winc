@@ -850,6 +850,7 @@ impl App {
             | MenuCommand::StatusSync
             | MenuCommand::GitPush
             | MenuCommand::GitPull
+            | MenuCommand::GitPullRebase
             | MenuCommand::GitContinue
             | MenuCommand::GitAbort => self.git_label(command),
             _ => MenuLabel::plain(command.label()),
@@ -960,7 +961,9 @@ impl App {
                 Some(t!("menu-git-pull-behind", count = behind, upstream = up))
             }
             (MenuCommand::GitPull, Some(up)) => Some(t!("menu-git-pull-from", upstream = up)),
-            (MenuCommand::GitPull, None) => Some(t!("menu-git-pull-no-upstream").to_owned()),
+            (MenuCommand::GitPull | MenuCommand::GitPullRebase, None) => {
+                Some(t!("menu-git-pull-no-upstream").to_owned())
+            }
             _ => None,
         };
         MenuLabel {
@@ -1051,6 +1054,9 @@ impl App {
         }
         if command == MenuCommand::CommitAmend {
             return self.commit.amend;
+        }
+        if command == MenuCommand::CommitTree {
+            return !self.commit.flat();
         }
         if command == MenuCommand::TerminalMaximize {
             return self.terminal.maximized;

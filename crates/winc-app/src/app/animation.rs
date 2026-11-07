@@ -410,7 +410,9 @@ impl App {
             || self.scrollbars_animating()
             || self.markdown.motion.is_some()
             || self.status_motion.moving()
-            || ((self.branch.running.is_some() || self.branch.finished.is_some())
+            || ((self.branch.running.is_some()
+                || self.branch.finished.is_some()
+                || self.commit_refreshing())
                 && self.commit_shown())
     }
 }

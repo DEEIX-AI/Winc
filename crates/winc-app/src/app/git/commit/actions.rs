@@ -291,13 +291,14 @@ impl App {
     }
 
     /// 回滚前先确认（系统确认框）；确认后回滚勾上的文件。
-    pub(super) fn ask_rollback(&mut self) {
+    pub(super) fn ask_rollback(&mut self, group: CommitGroup) {
         let Some(status) = self.git.status.as_ref() else {
             return;
         };
         let paths: Vec<PathBuf> = self
             .commit
             .checked_entries(status)
+            .filter(|e| group.holds(e))
             .map(|e| e.path.clone())
             .collect();
         if paths.is_empty() {

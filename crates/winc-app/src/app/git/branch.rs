@@ -206,7 +206,10 @@ impl Default for BranchState {
     }
 }
 
-/// 提交视图「⋯」里的 Git 操作：`branches` 用来判断当前分支有没有上游。
+/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续和中止，同步，储藏，远程仓库。
+///
+/// `branches` 用来判断当前分支有没有上游。新建分支和工作树在分支选择器里，回滚勾选的文件在组
+/// 标题上，这里不再列出。
 pub(crate) fn branch_menu(
     branches: &[Branch],
     stashes: &[Stash],
@@ -230,8 +233,6 @@ pub(crate) fn branch_menu(
         MenuEntry::Item(GitPullRebase, !busy && upstream),
         MenuEntry::Item(GitPush, !busy),
         MenuEntry::Separator,
-        MenuEntry::Item(GitNewBranch, !busy),
-        MenuEntry::Item(NewWorktree, !busy),
         MenuEntry::Item(GitStash, !busy),
     ]);
     // 储藏：一条一个子菜单（应用、应用并删除、删除）。
@@ -253,6 +254,7 @@ pub(crate) fn branch_menu(
             items,
         ));
     }
+    entries.push(MenuEntry::Separator);
     // 远程仓库：每个一个子菜单（修改地址、移除），最后是添加。
     let mut items: Vec<MenuEntry> = (remotes.iter().enumerate())
         .map(|(i, remote)| {
@@ -273,7 +275,8 @@ pub(crate) fn branch_menu(
 
 /// 分支选择器里第 `index` 个分支的操作菜单：按 `BranchOp::GROUPS` 分组，组之间有分隔线。
 ///
-/// `branches` 是本地分支在前、远程分支在后的列表，当前分支只能新建分支；`held` 是被别的工作树
+/// `branches` 是本地分支在前、远程分支在后的列表，当前分支只能重命名：从当前分支新建分支、工作树
+/// 在分支选择器的底部；`held` 是被别的工作树
 /// 签出的本地分支，它们的「签出」是切到那个工作树，不能删除；`stale` 是被目录已经不在的工作树
 /// 占着的分支，git 仍然不允许签出、删除，要先清理。
 pub(crate) fn branch_ops(
@@ -294,7 +297,7 @@ pub(crate) fn branch_ops(
             .copied()
             .filter(|op| match op {
                 // 当前分支不能签出、合并、变基、删除自己。
-                _ if branch.current => matches!(op, BranchOp::NewFrom | BranchOp::Rename),
+                _ if branch.current => matches!(op, BranchOp::Rename),
                 // 已经在其他工作树里签出着、又是当前分支（`origin/main` 在 `main` 上）：
                 // 不能再签出该分支。
                 BranchOp::NewWorktree => {
@@ -393,8 +396,6 @@ impl App {
                     git.push(root, upstream)
                 });
             }
-            GitNewBranch => self.open_branch_dialog(None, None),
-            NewWorktree => self.open_worktree_dialog(),
             GitStash => self.open_stash_prompt(),
             GitContinue | GitAbort => {
                 let Some(operation) = self.git.status.as_ref().and_then(|s| s.operation) else {
@@ -468,8 +469,7 @@ impl App {
                 move |git, root| git.operate(root, &["switch", "--end-of-options", &name]),
             ),
             BranchOp::NewFrom => {
-                let from = (!branch.current).then_some(name);
-                self.open_branch_dialog(from, None);
+                self.open_branch_dialog(Some(name), None);
             }
             BranchOp::Merge => self.git_operate(
                 t!("git-op-merge", name = name.as_str()),

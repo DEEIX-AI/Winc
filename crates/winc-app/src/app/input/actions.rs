@@ -460,7 +460,7 @@ impl App {
         self.focus = match self.sidebar_view {
             SidebarView::Files => Focus::Tree,
             SidebarView::Search => Focus::GlobalQuery,
-            SidebarView::Commit => Focus::CommitMessage,
+            SidebarView::Commit => self.commit_view_focus(),
         };
     }
 }

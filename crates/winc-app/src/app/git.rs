@@ -866,6 +866,8 @@ impl App {
                 self.refresh_git_diffs();
                 self.prefill_merge_message();
             }
+            // 改动都提交完了，提交卡片随之收起。
+            self.settle_commit_focus();
             self.request_redraw();
         }
     }

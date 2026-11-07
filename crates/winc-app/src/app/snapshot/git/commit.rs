@@ -1,7 +1,7 @@
 //! 提交视图的测试：改动列表、勾选、提交、菜单、提交信息、滚动与固定行、折叠、长文件名。
 
 use super::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::SyncState;
 use crate::app::animation::{Clock, TREE_ANIMATION};
@@ -378,12 +378,12 @@ fn commit_view_commits_only_the_checked_files() {
     std::fs::write(&main, "changed\n").unwrap();
     std::fs::write(root.join("scratch.txt"), "x").unwrap();
     app.git_refresh();
-    app.run_commit_more_command(crate::app::input::context_menu::MenuCommand::CommitRollback);
+    app.press_commit(CommitTarget::GroupRevert(CommitGroup::Changes));
     assert_eq!(std::fs::read_to_string(&main).unwrap(), before);
     assert!(root.join("scratch.txt").exists());
     // 勾上以后，未跟踪的文件移到废纸篓（测试中直接删除）。
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
-    app.run_commit_more_command(crate::app::input::context_menu::MenuCommand::CommitRollback);
+    app.press_commit(CommitTarget::GroupRevert(CommitGroup::Untracked));
     assert!(!root.join("scratch.txt").exists());
     assert!(app.git.status.as_ref().unwrap().entries.is_empty());
 
@@ -493,7 +493,53 @@ fn shoot_commit_view() {
     }
 }
 
-/// 截图：没有改动的提交视图（提交信息在上、「提交 ⌄」、居中的「没有更改」），深浅两套配色。
+/// 截图：侧栏最窄（230）和默认宽度（300）下的提交视图，分支名很长（`commit-width-*`），检查第二、
+/// 三行和提交卡片底行没有互相压住：最窄时「修改上次提交」收进按钮的菜单。另有领先上游、没有更改时
+/// 的空状态和下一步按钮（`commit-width-clean-*`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_commit_widths() {
+    for width in [
+        crate::theme::MIN_PANEL_WIDTH,
+        crate::theme::DEFAULT_PANEL_WIDTH,
+    ] {
+        let name = format!("commit-width-{width}");
+        let Some((mut app, root)) = git_app(&name, false) else {
+            return;
+        };
+        git_in(
+            &root,
+            &[
+                "switch",
+                "-q",
+                "-c",
+                "feature/login-lockout-after-three-tries",
+            ],
+        );
+        app.panel_width = width;
+        app.git_refresh();
+        app.run_action(Action::ShowCommit);
+        app.edit_field(|f| f.insert("修复日志刷新没有反馈"));
+        shoot(&mut app, &name);
+
+        git_in(&root, &["add", "-A"]);
+        git_in(&root, &["commit", "-q", "-m", "修复日志刷新没有反馈"]);
+        git_in(&root, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+        git_in(
+            &root,
+            &["remote", "add", "origin", "https://example.invalid/r.git"],
+        );
+        let upstream = "refs/remotes/origin/feature/login-lockout-after-three-tries";
+        git_in(&root, &["update-ref", upstream, "HEAD~1"]);
+        let set = "--set-upstream-to=origin/feature/login-lockout-after-three-tries";
+        git_in(&root, &["branch", "-q", set]);
+        app.git_refresh();
+        shoot(&mut app, &format!("commit-width-clean-{width}"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// 截图：没有改动的提交视图（居中的「没有更改」，没有提交卡片），深浅两套配色。
 #[test]
 #[ignore]
 fn shoot_commit_empty() {
@@ -605,10 +651,19 @@ fn the_commit_more_menu_greys_out_what_does_not_apply() {
             app.press_commit(CommitTarget::GroupCheck(group));
         }
     }
-    assert!(enabled(&app, MenuCommand::CommitRefresh));
+    assert!(enabled(&app, MenuCommand::CommitTree));
     assert!(!enabled(&app, MenuCommand::CommitExpandAll));
     assert!(enabled(&app, MenuCommand::CommitCollapseAll));
-    assert!(!enabled(&app, MenuCommand::CommitRollback));
+    // 没勾文件时悬停组标题，右端仍是文件数，没有「回滚」。
+    let reverts = |app: &mut App| {
+        let (band, _) = *(app.commit_hits.iter())
+            .find(|(_, t)| *t == CommitTarget::Group(CommitGroup::Changes))
+            .unwrap();
+        app.on_mouse_move(band.x + band.w / 2.0, band.y + band.h / 2.0);
+        paint(app);
+        (app.commit_hits.iter()).any(|(_, t)| matches!(t, CommitTarget::GroupRevert(_)))
+    };
+    assert!(!reverts(&mut app));
 
     app.run_commit_more_command(MenuCommand::CommitCollapseAll);
     let groups = [CommitGroup::Changes];
@@ -619,7 +674,8 @@ fn the_commit_more_menu_greys_out_what_does_not_apply() {
     assert!(groups.iter().all(|g| !app.commit.group_collapsed(*g)));
 
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
-    assert!(enabled(&app, MenuCommand::CommitRollback));
+    paint(&mut app);
+    assert!(reverts(&mut app));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -630,35 +686,41 @@ fn the_commit_message_grows_with_its_text_and_the_list_follows() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    // 自上而下依次是提交信息、「提交 ⌄」和改动列表。空信息时高度为一行，与搜索框同为 24。
+    // 自上而下依次是改动列表和底部的提交卡片；卡片里提交信息在上，底行左边是「修改上次提交」，
+    // 右边是「提交 ⌄」。空信息时高度为两行。
     let one = app.commit_parts();
-    assert_eq!(one.message.h, 24.0);
-    assert_eq!(one.message.h, app.panel_parts().query.h);
-    assert!(one.commit.y > one.message.bottom());
+    let card = one.card.unwrap();
+    assert_eq!(one.message.h, 2.0 * 20.0 + 4.0);
+    assert_eq!(card.bottom(), app.layout.sidebar.bottom() - 8.0);
+    assert!(one.list.bottom() <= card.y);
+    assert!(one.commit.y >= one.message.bottom());
     assert_eq!(one.commit_menu.x, one.commit.right());
-    assert!(one.list.y > one.commit.bottom());
+    assert!(one.commit_menu.right() <= card.right());
+    let amend = one.amend.unwrap();
+    assert!(amend.right() < one.commit.x);
 
-    // 写入三行时框高增加两行，按钮和列表随之下移，留白不变。
+    // 写入三行时框高增加一行，卡片往上长，列表随之变短。
     app.edit_field(|f| f.insert("修复配置读取\n\n启动时不再报错"));
     paint(&mut app);
     let three = app.commit_parts();
     assert_eq!(three.message.h, 3.0 * 20.0 + 4.0);
-    assert_eq!(three.list.y - one.list.y, 2.0 * 20.0);
+    assert_eq!(three.card.unwrap().bottom(), card.bottom());
+    assert_eq!(one.list.bottom() - three.list.bottom(), 20.0);
 
     // 行数超过八行后不再长高，改为在框内滚动。
     app.edit_field(|f| f.insert(&"\n一行".repeat(20)));
     paint(&mut app);
     assert_eq!(app.commit_parts().message.h, 8.0 * 20.0 + 4.0);
 
-    // 清空后框高从八行过渡回一行：途中介于两者之间，文字仍按一行的高度排版。
+    // 清空后框高从八行过渡回两行：途中介于两者之间，文字仍按两行的高度排版。
     use crate::app::animation::{Clock, TREE_ANIMATION};
     app.commit.message.set_text("");
     paint(&mut app);
     let half = Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION);
     app.commit.message_motion = Some((8.0 * 20.0 + 4.0, half));
     let parts = app.commit_parts();
-    assert!(parts.message.h > 24.0 && parts.message.h < 8.0 * 20.0 + 4.0);
-    assert_eq!(parts.message_settled.h, 24.0);
+    assert!(parts.message.h > 44.0 && parts.message.h < 8.0 * 20.0 + 4.0);
+    assert_eq!(parts.message_settled.h, 44.0);
     assert!(app.animating());
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -673,9 +735,31 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
+    // 卡片放得下勾选框时「修改上次提交」在卡片里，菜单里只有提交并推送；侧栏最窄时勾选框收进
+    // 菜单。
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
+    assert!(app.commit_parts().amend.is_some());
+    assert!(!menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
+    let width = app.panel_width;
+    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    assert!(app.commit_parts().amend.is_none());
+    let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
+    app.panel_width = width;
+    paint(&mut app);
+
+    // 回归：主按钮显示没有要提交的更改时，菜单不能再提供「提交并推送」；修改上一次提交仍然可用。
+    let entries = std::mem::take(&mut app.git.status.as_mut().unwrap().entries);
+    let menu = app.commit_button_menu();
+    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, false)));
+    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
+    app.commit.amend = true;
+    let menu = app.commit_button_menu();
+    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
+    app.commit.amend = false;
+    app.git.status.as_mut().unwrap().entries = entries;
 
     // 「修改上一次提交」启用时打勾，按钮写「修改提交」。
     assert!(!app.menu_checked(MenuCommand::CommitAmend));
@@ -878,7 +962,9 @@ fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
 }
 
 #[test]
-fn the_layout_button_switches_the_changes_between_a_tree_and_a_flat_list() {
+fn showing_as_tree_switches_the_changes_between_a_tree_and_a_flat_list() {
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+
     let Some(dir) = deep_changes_repo("git-flat") else {
         return;
     };
@@ -889,7 +975,7 @@ fn the_layout_button_switches_the_changes_between_a_tree_and_a_flat_list() {
     }
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    // 默认平铺：没有目录行，每个文件一行，按路径排；切换按钮在「Git 日志」后面。
+    // 默认平铺：没有目录行，每个文件一行，按路径排；「刷新」在「Git 日志」后面。
     assert!(app.commit.flat());
     let flat = app.commit_rows();
     assert!(!flat.iter().any(|r| matches!(r, CommitRow::Dir { .. })));
@@ -900,7 +986,7 @@ fn the_layout_button_switches_the_changes_between_a_tree_and_a_flat_list() {
     assert_eq!(files, 27);
     let tools = app.commit_parts().tools;
     assert_eq!(tools[0].1, CommitTarget::Log);
-    assert_eq!(tools[1].1, CommitTarget::Layout);
+    assert_eq!(tools[1].1, CommitTarget::Refresh);
     assert!(tools[1].0.x > tools[0].0.x && tools[1].0.x < tools[2].0.x);
     // 平铺时文件不缩进：勾选框和组标题的勾选框在同一列。
     let check_x = |app: &App, want: fn(&CommitTarget) -> bool| {
@@ -913,11 +999,16 @@ fn the_layout_button_switches_the_changes_between_a_tree_and_a_flat_list() {
         group
     );
 
-    // 点切换按钮，按目录排成树；记进状态，以后打开的窗口、下次启动沿用。
-    let button = tools[1].0;
-    let toggle = |app: &mut App| click(app, (button.x + button.w / 2.0, button.y + button.h / 2.0));
+    // 「⋯」里的「以树形显示」：按目录排成树，排成树时打勾；记进状态，以后打开的窗口、下次启动
+    // 沿用。
+    let toggle = |app: &mut App| {
+        app.open_context_menu(MenuTarget::CommitMore, (0.0, 0.0));
+        app.run_menu_command(MenuCommand::CommitTree);
+    };
+    assert!(!app.menu_checked(MenuCommand::CommitTree));
     toggle(&mut app);
     assert!(!app.commit.flat());
+    assert!(app.menu_checked(MenuCommand::CommitTree));
     assert!(
         app.commit_rows()
             .iter()
@@ -1335,16 +1426,25 @@ fn the_last_local_commit_can_be_undone() {
     assert_ne!(second, first);
     assert_eq!(app.commit_undoable().unwrap().subject, "加上改动");
     paint(&mut app);
-    // 「上一次提交」固定在视图底部，改动列表在它上面结束。
+    // 「上一次提交」在提交卡片上面（还有没勾的未跟踪文件，卡片还在），改动列表在它上面结束；
+    // 没有卡片时它在视图底部。
     let parts = app.commit_parts();
-    let (bar, button) = parts.undo.unwrap();
-    assert_eq!(bar.bottom(), app.layout.sidebar.bottom());
+    let (bar, undo, button) = parts.undo.unwrap();
+    match parts.card {
+        Some(card) => assert!(bar.bottom() <= card.y),
+        None => assert_eq!(bar.bottom(), app.layout.sidebar.bottom()),
+    }
     assert_eq!(parts.list.bottom(), bar.y);
-    assert!(
-        app.commit_hits
-            .iter()
-            .any(|(r, t)| *t == CommitTarget::LastCommit && *r == button)
-    );
+    assert!(undo.right() <= button.x);
+    for (rect, target) in [
+        (undo, CommitTarget::Undo),
+        (button, CommitTarget::LastCommit),
+    ] {
+        assert!(
+            (app.commit_hits.iter()).any(|(r, t)| *t == target && *r == rect),
+            "{target:?}"
+        );
+    }
 
     // 撤销：分支退回上一个提交，改动回到列表里，提交信息填回输入框。
     app.press_commit(CommitTarget::LastCommit);
@@ -1355,9 +1455,14 @@ fn the_last_local_commit_can_be_undone() {
     let commands: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
     assert_eq!(
         commands,
-        [MenuCommand::CommitUndo, MenuCommand::CommitCopyOid]
+        [
+            MenuCommand::CommitUndo,
+            MenuCommand::CommitAmend,
+            MenuCommand::CommitCopyOid
+        ]
     );
-    app.run_menu_command(MenuCommand::CommitUndo);
+    // 「撤销」写在栏上，和菜单里的「撤销提交」是同一件事。
+    app.press_commit(CommitTarget::Undo);
     // 先用提示框询问，确认按钮不标记为危险操作；确认后才撤销。
     assert_eq!(
         app.git.status.as_ref().unwrap().oid.as_deref(),
@@ -2222,4 +2327,112 @@ fn a_shorter_list_is_visible_after_scrolling_far_down() {
         (app.commit_hits.iter()).any(|(_, target)| matches!(target, CommitTarget::File(_))),
         "列表应当画出剩下的改动"
     );
+}
+
+/// 「⋯」的分组：刷新，同步，本地更改，远程仓库，视图；新建分支和工作树只在分支选择器里。
+#[test]
+fn the_commit_more_menu_keeps_each_action_in_one_group() {
+    use crate::app::input::context_menu::{MenuCommand, MenuEntry};
+
+    let Some((mut app, root)) = git_app("git-commit-more-groups", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let menu = app.commit_more_menu();
+    let groups: Vec<Vec<Option<MenuCommand>>> = (menu.split(|e| *e == MenuEntry::Separator))
+        .map(|group| {
+            (group.iter())
+                .map(|entry| match entry {
+                    MenuEntry::Item(command, _) => Some(*command),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    let at = |command| (groups.iter()).position(|group| group.contains(&Some(command)));
+    assert_eq!(at(MenuCommand::GitFetch), Some(0));
+    assert_eq!(at(MenuCommand::GitPush), Some(0));
+    assert_eq!(at(MenuCommand::GitStash), Some(1));
+    assert_eq!(at(MenuCommand::CommitTree), Some(groups.len() - 2));
+    assert_eq!(at(MenuCommand::CommitExpandAll), Some(groups.len() - 2));
+    assert_eq!(at(MenuCommand::GitShowOutput), Some(groups.len() - 1));
+    // 刷新是标题行上的按钮，新建工作树在分支选择器里，这里都不重复。
+    assert_eq!(at(MenuCommand::NewWorktree), None);
+    // 没有上游时两种拉取都写明原因。
+    for command in [MenuCommand::GitPull, MenuCommand::GitPullRebase] {
+        assert!(app.menu_label(command).subtitle.is_some(), "{command:?}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 没有更改时不显示提交卡片：空状态下面是下一步（这里是推送领先的一个提交），焦点从看不见的
+/// 提交信息移到改动列表上，`Tab` 也不再把焦点交给它。
+#[test]
+fn a_clean_tree_hides_the_commit_card_and_offers_the_next_step() {
+    let Some((mut app, root)) = git_app("git-commit-clean-card", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert!(app.commit_parts().card.is_some());
+    assert_eq!(app.focus, Focus::CommitMessage);
+
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "base"]);
+    git_in(&root, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+    git_in(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
+    git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+    git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
+    app.git_refresh();
+    paint(&mut app);
+    let parts = app.commit_parts();
+    assert!(parts.card.is_none());
+    assert_eq!(app.focus, Focus::CommitList);
+    let next = (app.commit_hits.iter()).find(|(_, t)| *t == CommitTarget::NextStep);
+    let (rect, _) = *next.unwrap();
+    assert!(parts.list.contains(rect.x, rect.y));
+    app.commit_list_key(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Tab));
+    assert_eq!(app.focus, Focus::CommitList);
+
+    // 打开「修改上一次提交」时卡片回来，填上上一次的信息；关掉后又收起。
+    app.press_commit(CommitTarget::LastCommit);
+    app.run_menu_command(crate::app::input::context_menu::MenuCommand::CommitAmend);
+    paint(&mut app);
+    assert!(app.commit.amend);
+    assert!(app.commit_parts().card.is_some());
+    assert_eq!(app.focus, Focus::CommitMessage);
+    app.press_commit(CommitTarget::Amend);
+    paint(&mut app);
+    assert!(!app.commit.amend);
+    assert!(app.commit_parts().card.is_none());
+    assert_eq!(app.focus, Focus::CommitList);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 「刷新」点下去以后至少转满一圈：读取几十毫秒就结束，只按读取的时长转看不出点过。
+#[test]
+fn the_refresh_button_spins_for_at_least_one_turn() {
+    let Some((mut app, root)) = git_app("git-commit-refresh-spin", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert!(!app.commit_refreshing());
+    app.press_commit(CommitTarget::Refresh);
+    // 测试里读取就地完成，这时转的只是至少一圈的时长。
+    assert!(app.commit_refreshing());
+    assert!(app.animating());
+    let turn = Duration::from_secs_f32(1.0 / crate::theme::SPIN_SPEED);
+    app.commit.refreshed = Instant::now().checked_sub(turn);
+    assert!(!app.commit_refreshing());
+    let _ = std::fs::remove_dir_all(&root);
 }

@@ -136,7 +136,7 @@ impl App {
         self.focus = match self.sidebar_view {
             SidebarView::Files => Focus::Tree,
             SidebarView::Search => Focus::GlobalQuery,
-            SidebarView::Commit => Focus::CommitMessage,
+            SidebarView::Commit => self.commit_view_focus(),
         };
 
         let Some(root) = self.editor.root().map(Path::to_path_buf) else {

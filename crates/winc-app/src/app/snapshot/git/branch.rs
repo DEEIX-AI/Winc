@@ -28,7 +28,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     };
 
     // 新建分支：对话框里输入名称，回车创建并签出。空格这类字符无法输入。
-    app.run_branch_command(MenuCommand::GitNewBranch);
+    app.open_branch_dialog(None, None);
     assert_eq!(app.focus, Focus::Dialog);
     paint(&mut app);
     app.edit_field(|f| f.insert("feature x"));
@@ -41,7 +41,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     assert_eq!(head(&app), "featurex");
 
     // 分支重名时不能创建：原因显示在输入框里，对话框保留；取消「创建后签出」时只创建、不切换。
-    app.run_branch_command(MenuCommand::GitNewBranch);
+    app.open_branch_dialog(None, None);
     app.edit_field(|f| f.insert("main"));
     let plan = app.form_plan(app.form_dialog.as_ref().unwrap());
     assert!(!plan.enabled);
@@ -57,7 +57,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     assert_eq!(head(&app), "featurex");
     assert!(app.git.branches.iter().any(|b| b.name == "side"));
 
-    // 菜单里：当前分支只能「从这里新建」，别的分支能检出、新建、比较、合并、变基、删除。
+    // 菜单里：当前分支只能重命名，别的分支能检出、新建、比较、合并、变基、删除。
     // 没有上游：拉取灰显。
     let menu = branch_menu(&app.git.branches, &app.git.stashes, &[], None, false);
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::GitPull, false)));
@@ -67,7 +67,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
             .filter(|entry| matches!(entry, MenuEntry::Item(..)))
             .count()
     };
-    assert_eq!(ops(&app, "featurex"), 2);
+    assert_eq!(ops(&app, "featurex"), 1);
     assert_eq!(ops(&app, "main"), 8);
 
     // 检出 main，再删除 featurex。

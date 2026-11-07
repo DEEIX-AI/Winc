@@ -416,6 +416,21 @@ git-commit-button-files = { $count ->
     [one] Commit 1 File
    *[other] Commit { $count } Files
 }
+git-commit-amend = Amend Last Commit
+git-commit-undo = Undo
+git-commit-next-push = { $count ->
+    [one] Push 1 Commit
+   *[other] Push { $count } Commits
+}
+git-commit-next-pull = { $count ->
+    [one] Pull 1 Commit
+   *[other] Pull { $count } Commits
+}
+git-commit-next-both = Pull { $behind } and Push { $ahead }
+git-commit-next-publish = Publish Branch
+git-commit-next-to = To { $upstream }
+git-commit-next-from = From { $upstream }
+git-commit-next-with = With { $upstream }
 git-commit-button-amend = Amend Commit
 git-commit-button-committing = Committing…
 git-commit-button-committed = Committed { $oid }
@@ -434,6 +449,7 @@ git-log-filter-author = Author
 git-log-filter-file = File { $path }
 git-log-clear-filter = Clear Filter
 git-log-refreshing = Refreshing…
+git-log-refreshed = Log refreshed
 git-log-loading = Loading…
 git-log-commit-count = { $count ->
     [one] { $count }{ $more } commit

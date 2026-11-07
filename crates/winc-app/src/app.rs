@@ -38,8 +38,8 @@ pub use editor::sticky::{StickyCache, StickyRow};
 pub(crate) use git::branch::picker::{BranchCreate, GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
-    COMMIT_ROW, CommitOverflow, CommitParts, CommitRow, CommitRows, CommitTarget, MESSAGE_LINE,
-    MESSAGE_PAD, SyncState,
+    COMMIT_ROW, CommitGroup, CommitLabels, CommitOverflow, CommitParts, CommitRow, CommitRows,
+    CommitTarget, MESSAGE_LINE, MESSAGE_PAD, SyncState,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -489,12 +489,13 @@ impl Hover {
                     CommitTarget::Log
                         | CommitTarget::Sync
                         | CommitTarget::Location
-                        | CommitTarget::Layout
+                        | CommitTarget::Refresh
                         | CommitTarget::More
                         | CommitTarget::Commit
                         | CommitTarget::CommitMenu
                         | CommitTarget::OpenFile(_)
                         | CommitTarget::RevertFile(_)
+                        | CommitTarget::GroupRevert(_)
                         | CommitTarget::Check(_)
                 )
                 | Hover::Diff(

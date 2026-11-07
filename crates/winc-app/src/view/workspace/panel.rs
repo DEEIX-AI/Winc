@@ -895,10 +895,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 format!("{name}{}{key}", crate::layout::TIP_KEY),
             ))
         }
-        Hover::Commit(target @ (CommitTarget::OpenFile(_) | CommitTarget::RevertFile(_))) => {
+        Hover::Commit(
+            target @ (CommitTarget::OpenFile(_)
+            | CommitTarget::RevertFile(_)
+            | CommitTarget::GroupRevert(_)),
+        ) => {
             let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
                 CommitTarget::OpenFile(_) => t!("workspace-tip-open-file"),
+                CommitTarget::GroupRevert(_) => t!("menu-commit-roll-back"),
                 _ => t!("workspace-tip-revert-change"),
             };
             Some((rect, label.to_owned()))
@@ -971,14 +976,8 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                     with_key(t!("workspace-tip-git-log"), Some(Action::GitShowLog)),
                 ));
             }
-            if target == CommitTarget::Layout {
-                // 说的是点下去会变成什么。
-                let tip = if app.commit.flat() {
-                    t!("workspace-tip-show-as-tree")
-                } else {
-                    t!("workspace-tip-show-as-list")
-                };
-                return Some((rect, tip.to_owned()));
+            if target == CommitTarget::Refresh {
+                return Some((rect, t!("workspace-tip-git-refresh").to_owned()));
             }
             Some((rect, t!("workspace-tip-more-actions").to_owned()))
         }

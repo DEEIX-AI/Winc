@@ -202,8 +202,6 @@ pub enum MenuCommand {
     GitRemote(crate::app::git::branch::RemoteOp, usize),
     /// Git：推送当前分支。
     GitPush,
-    /// Git：新建分支（从当前分支）。
-    GitNewBranch,
     /// Git：继续停下来的合并、变基……（合并是打开提交视图去完成）。
     GitContinue,
     /// 菜单项「Git：中止停下来的合并、变基……」。
@@ -276,21 +274,22 @@ pub enum MenuCommand {
     GitStash,
     /// 提交视图「⋯」：对第几条储藏做的事。
     GitStashOp(crate::app::git::branch::StashOp, usize),
-    /// 提交视图的「⋯」：重新读取仓库状态。
-    CommitRefresh,
+    /// 提交视图的「⋯」：在按目录排成树和平铺之间切换（排成树时打勾）。
+    CommitTree,
     /// 提交视图的「⋯」：展开所有组和目录。
     CommitExpandAll,
     /// 提交视图的「⋯」：收起所有组。
     CommitCollapseAll,
-    /// 提交视图的「⋯」：回滚勾上的文件（先确认）。
-    CommitRollback,
+    /// 提交视图的「⋯」：在只读标签中打开 Git 操作的输出。
+    GitShowOutput,
     /// 撤销上一次提交（先确认）。
     CommitUndo,
     /// 复制上一次提交的提交号。
     CommitCopyOid,
     /// 「提交 ⌄」：提交以后继续推送。
     CommitPush,
-    /// 「提交 ⌄」：开关「修改上一次提交」（开着时打勾）。
+    /// 「提交 ⌄」（卡片太窄、底行放不下勾选框时）和「上一次提交」的「⋯」：开关「修改上一次
+    /// 提交」（开着时打勾）。
     CommitAmend,
     /// 文件树工具栏的「⋯」：刷新目录。
     TreeRefresh,
@@ -384,7 +383,6 @@ impl MenuCommand {
             MenuCommand::GitPullRebase => t!("menu-git-pull-rebase"),
             MenuCommand::GitAddRemote => t!("git-remote-add"),
             MenuCommand::GitRemote(op, _) => op.label(),
-            MenuCommand::GitNewBranch => t!("git-branch-new-from"),
             MenuCommand::GitContinue => t!("menu-git-continue"),
             MenuCommand::GitShowDiff => t!("menu-git-show-diff"),
             MenuCommand::GitOpenFile => t!("menu-git-open-file"),
@@ -409,10 +407,10 @@ impl MenuCommand {
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
             MenuCommand::ToggleBlame => t!("menu-git-blame"),
             MenuCommand::GitStash => t!("menu-git-stash"),
-            MenuCommand::CommitRefresh => t!("menu-commit-refresh"),
+            MenuCommand::CommitTree => t!("menu-commit-tree"),
             MenuCommand::CommitExpandAll => t!("menu-commit-expand-all"),
             MenuCommand::CommitCollapseAll => t!("menu-commit-collapse-all"),
-            MenuCommand::CommitRollback => t!("menu-commit-roll-back"),
+            MenuCommand::GitShowOutput => t!("menu-git-show-output"),
             MenuCommand::CommitUndo => t!("menu-commit-undo"),
             MenuCommand::CommitCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::CommitPush => t!("menu-commit-and-push"),

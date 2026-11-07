@@ -157,9 +157,7 @@ fn worktrees_are_created_removed_and_pruned() {
     std::fs::write(root.join(".env"), "KEY=1").unwrap();
     app.config.git_worktree_copy = vec![".env".to_owned()];
 
-    // 只有一个工作树：提交视图的「⋯」里也能新建，分支菜单中显示创建位置。
-    app.open_context_menu(MenuTarget::CommitMore, (0.0, 0.0));
-    assert!(menu_commands(&app).contains(&(MenuCommand::NewWorktree, true)));
+    // 只有一个工作树：分支菜单中显示创建位置。
     assert_eq!(
         app.worktree_dir_hint("feat/x"),
         format!("{}/feat-x", winc_editor::display_name(&trees))
