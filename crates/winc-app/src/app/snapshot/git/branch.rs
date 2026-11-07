@@ -1013,3 +1013,37 @@ fn shoot_branch_picker() {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// 分支选择器里选中项跟着鼠标走；鼠标移到各行之外时回到之前选中的那一行（打开时是当前分支），
+/// 不停在最后经过的那一行。用键盘移动以后以键盘为准。
+#[test]
+fn the_picker_selection_returns_to_the_current_branch_when_the_pointer_leaves() {
+    let Some((mut app, root)) = picker_repo("git-picker-rest", false) else {
+        return;
+    };
+    app.open_branch_picker(GitAnchor::Branch);
+    let current = app.picker_selected;
+    let other = (0..app.picker_hits.len())
+        .find(|&r| r != current && app.picker_row_selectable(r))
+        .unwrap();
+
+    app.hover = Hover::PickerRow(other);
+    app.follow_picker_hover();
+    assert_eq!(app.picker_selected, other);
+    // 移到这一行的「⋯」上还是这一行。
+    app.hover = Hover::PickerPart(crate::app::PickerPart::More(other));
+    app.follow_picker_hover();
+    assert_eq!(app.picker_selected, other);
+    app.hover = Hover::None;
+    app.follow_picker_hover();
+    assert_eq!(app.picker_selected, current);
+
+    // 键盘定下的选中项，鼠标离开以后不再改回去。
+    app.hover = Hover::PickerRow(other);
+    app.follow_picker_hover();
+    app.picker_rest = None;
+    app.hover = Hover::None;
+    app.follow_picker_hover();
+    assert_eq!(app.picker_selected, other);
+    let _ = std::fs::remove_dir_all(&root);
+}

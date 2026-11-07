@@ -7,12 +7,14 @@
 //! 坐标均为逻辑像素。
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::path::Path;
 
 use winc_editor::git::{Change, Head, Operation, Status};
 use winc_i18n::t;
 
+use crate::app::animation::stage;
 use crate::app::git::log::display_local;
 use crate::app::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
@@ -20,8 +22,8 @@ use crate::app::{
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
-    BADGE_CENTER, BADGE_ROOM, CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, ContextBar, fold_chain,
-    git_color, retracting_color,
+    BADGE_CENTER, BADGE_ROOM, CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, ContextBar, FADE_FROM,
+    NAME_FADE, fold_chain, git_color, retracting_color,
 };
 use crate::view::*;
 
@@ -77,6 +79,9 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     let animate = app.animate_commit_names();
     app.commit.names.begin_frame(animate);
     match (&app.git.status, &app.git.problem) {
+        (Some(status), _) if app.commit.shift.is_some() => {
+            draw_shift(app, frame, &parts, status, &mut hits);
+        }
         (Some(status), _) if !status.entries.is_empty() => {
             draw_list(app, frame, &parts, status, &mut hits);
         }
@@ -665,8 +670,9 @@ fn draw_stashes(
     }
 }
 
-/// 没有改动时列表区的空状态：居中的「没有更改」，下面一行淡色说明；和上游有差别时再下面是下一步
-/// （推送、拉取或发布）的按钮和它的去向。
+/// 没有改动时列表区的空状态：一个淡色的对勾徽标，下面是「没有要提交的更改」和当前分支与上游的
+/// 关系（已同步、领先、落后、还没发布），有上游时再一行淡色写上游的名字（很长时截短，不和关系
+/// 挤在一行里折断）；有事可做时最下面是一个强调色的按钮（推送、拉取、同步或发布），只写动作。
 ///
 /// 正在获取、拉取、推送时按钮灰掉，进度在分支行右端的同步控件上。
 fn draw_empty(
@@ -675,18 +681,41 @@ fn draw_empty(
     parts: &CommitParts,
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
-    let bottom = draw_empty_state(
-        app,
-        frame,
-        (parts.list, sidebar_span(app)),
-        t!("git-commit-view-empty"),
-        Some(t!("git-commit-view-empty-detail")),
-    );
-    let Some((label, caption)) = next_step(app) else {
-        return;
-    };
     let p = app.palette;
     let list = parts.list;
+    let (label, detail, upstream) = next_step(app);
+    let (top, bottom) = draw_empty_state_under(
+        app,
+        frame,
+        (list, sidebar_span(app)),
+        EMPTY_BADGE + EMPTY_BADGE_GAP,
+        t!("git-commit-view-empty"),
+        Some(&detail),
+    );
+    let badge = Rect::new(
+        (list.x + (list.w - EMPTY_BADGE) / 2.0).round(),
+        top,
+        EMPTY_BADGE,
+        EMPTY_BADGE,
+    );
+    if badge.y >= list.y {
+        frame.rect_clipped(badge, p.hover, EMPTY_BADGE / 2.0, list);
+        icons::check(frame, center(badge), 13.0, p.text_muted, list);
+    }
+    let mut bottom = bottom;
+    if let Some(upstream) = upstream {
+        let size = app.fonts.ui_small;
+        let row = Rect::new(list.x, bottom, list.w, 22.0);
+        // 两边和上面的说明一样各留 16，放不下时从中间截短，两端的远程名和分支名都留着。
+        let shown = fit(frame, upstream, size, (list.w - 32.0).max(0.0), true);
+        let w = frame.measure(FontKind::Ui, size, &shown);
+        let x = list.x + ((list.w - w) / 2.0).max(16.0);
+        ui_text_small(frame, app, x, row, &shown, p.text_dim, list);
+        bottom = row.bottom();
+    }
+    let Some(label) = label else {
+        return;
+    };
     let w = (frame.measure(FontKind::Ui, app.fonts.ui, &label) + 2.0 * NEXT_PAD).min(list.w);
     let rect = Rect::new(
         (list.x + (list.w - w) / 2.0).round(),
@@ -699,45 +728,54 @@ fn draw_empty(
     }
     let enabled = app.branch.running.is_none();
     let hovered = app.hover == Hover::Commit(CommitTarget::NextStep);
-    let role = ButtonRole::Normal;
-    draw_action_button(app, frame, rect, &label, role, enabled, hovered);
+    draw_action_button(
+        app,
+        frame,
+        rect,
+        &label,
+        ButtonRole::Primary,
+        enabled,
+        hovered,
+    );
     if enabled {
         hits.push((rect, CommitTarget::NextStep));
     }
-    let Some(caption) = caption else {
-        return;
-    };
-    let size = app.fonts.ui_small;
-    let row = Rect::new(list.x, rect.bottom() + 2.0, list.w, 20.0);
-    // 上游名可能很长：和空状态的说明一样两边各留 16，放不下时从末尾截短。
-    let caption = fit(frame, &caption, size, (list.w - 32.0).max(0.0), false);
-    let w = frame.measure(FontKind::Ui, size, &caption);
-    let x = list.x + ((list.w - w) / 2.0).max(16.0);
-    ui_text_small(frame, app, x, row, &caption, p.text_dim, list);
 }
 
-/// 没有改动时的下一步：按钮上的字和下面淡色写的去向；和上游一致、没有远程或这时不同步时为
-/// `None`。
-fn next_step(app: &App) -> Option<(String, Option<String>)> {
+/// 空状态上面对勾徽标的直径（逻辑像素）：比标题的字高一截，看得出是图标而不是字。
+const EMPTY_BADGE: f32 = 36.0;
+/// 对勾徽标和下面标题之间的距离（逻辑像素）。
+const EMPTY_BADGE_GAP: f32 = 10.0;
+
+/// 没有改动时的下一步：按钮上的动作（和上游一致、没有远程或这时不同步时为 `None`）、写在标题
+/// 下面的当前分支与上游的关系，以及上游的名字（没有上游时为 `None`）。
+fn next_step(app: &App) -> (Option<String>, String, Option<&str>) {
     let upstream = (app.git.branches.iter())
         .find(|b| b.current)
         .and_then(|b| b.upstream.as_deref());
-    Some(match app.git_sync_state() {
+    let (action, relation) = match app.git_sync_state() {
         SyncState::Push(count) => (
-            t!("git-commit-next-push", count = count),
-            upstream.map(|u| t!("git-commit-next-to", upstream = u)),
+            Some(t!("git-commit-next-push")),
+            t!("git-commit-empty-ahead", count = count),
         ),
         SyncState::Pull(count) => (
-            t!("git-commit-next-pull", count = count),
-            upstream.map(|u| t!("git-commit-next-from", upstream = u)),
+            Some(t!("git-commit-next-pull")),
+            t!("git-commit-empty-behind", count = count),
         ),
         SyncState::Both { ahead, behind } => (
-            t!("git-commit-next-both", ahead = ahead, behind = behind),
-            upstream.map(|u| t!("git-commit-next-with", upstream = u)),
+            Some(t!("git-commit-next-both")),
+            t!("git-commit-empty-diverged", ahead = ahead, behind = behind),
         ),
-        SyncState::Publish => (t!("git-commit-next-publish").to_owned(), None),
-        SyncState::InSync | SyncState::NoRemote | SyncState::Hidden => return None,
-    })
+        SyncState::Publish => (
+            Some(t!("git-commit-next-publish")),
+            t!("git-commit-empty-unpublished").to_owned(),
+        ),
+        SyncState::InSync => (None, t!("git-commit-empty-in-sync").to_owned()),
+        SyncState::NoRemote | SyncState::Hidden => {
+            return (None, t!("git-commit-empty-local").to_owned(), None);
+        }
+    };
+    (action.map(str::to_owned), relation, upstream)
 }
 
 /// 列表的位置上写一行说明（没有改动、正在读取、出错的原因）。
@@ -861,6 +899,127 @@ fn draw_list(
     }
 
     draw_sticky(app, frame, &cx, hits);
+}
+
+/// 刷新以后各行过渡中的一帧（见 `CommitShift`）：离开的行按刷新前的状态画，和收起目录一样高度
+/// 收到 0、同时淡出；新出现的行像展开一样长出来、淡入；留下的行跟着上下移动。列表空了、或从空
+/// 变成有时，空状态同时淡入、淡出。
+///
+/// 过渡只有一百多毫秒，其间各行都在移动，不记录命中区域，不画固定在顶部的行。
+fn draw_shift(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &CommitParts,
+    status: &Status,
+    hits: &mut Vec<(Rect, CommitTarget)>,
+) {
+    let Some(shift) = &app.commit.shift else {
+        return;
+    };
+    let list = parts.list;
+    let root = app.git.root.as_deref().unwrap_or(Path::new(""));
+    let multi = app.commit_multi_selected();
+    let rows = app.commit_rows();
+    let old = ListContext {
+        list,
+        status: &shift.status,
+        root,
+        rows: &shift.rows,
+        multi,
+    };
+    let new = ListContext {
+        rows: &rows,
+        status,
+        ..old
+    };
+    let t = shift.clock.progress();
+    let after: HashMap<RowId<'_>, usize> = (0..rows.len())
+        .map(|j| (row_id(status, &rows[j]), j))
+        .collect();
+    let before: HashMap<RowId<'_>, usize> = (0..shift.rows.len())
+        .map(|i| (row_id(&shift.status, &shift.rows[i]), i))
+        .collect();
+
+    // 两个列表为空时空状态一个淡出、一个淡入，另一边的行同时出现或离开。
+    let mut ignored = Vec::new();
+    match (shift.rows.is_empty(), rows.is_empty()) {
+        (true, false) => frame.with_opacity(1.0 - t, |frame| {
+            draw_empty(app, frame, parts, &mut ignored);
+        }),
+        (false, true) => frame.with_opacity(t, |frame| draw_empty(app, frame, parts, hits)),
+        _ => {}
+    }
+
+    // 把两版的行按顺序并成一列：留下的行按新的顺序；离开的行排在它在旧列表里后面那一个留下的
+    // 行之前。离开的行高度从一行收到 0，新出现的从 0 长到一行，留下的行跟着上下移动，彼此不重叠。
+    let mut slots: Vec<(Slot, f32)> = Vec::with_capacity(rows.len() + shift.rows.len());
+    let mut next_old = 0;
+    let mut leave_until = |slots: &mut Vec<(Slot, f32)>, until: usize| {
+        while next_old < until.min(shift.rows.len()) {
+            let id = row_id(&shift.status, &shift.rows[next_old]);
+            if !after.contains_key(&id) {
+                slots.push((Slot::Old(next_old), 1.0 - t));
+            }
+            next_old += 1;
+        }
+    };
+    for j in 0..rows.len() {
+        match before.get(&row_id(status, &rows[j])) {
+            Some(&i) => {
+                leave_until(&mut slots, i);
+                slots.push((Slot::New(j), 1.0));
+            }
+            None => slots.push((Slot::New(j), t)),
+        }
+    }
+    leave_until(&mut slots, shift.rows.len());
+
+    let scroll = shift.scroll + (app.commit.scroll - shift.scroll) * t;
+    let mut y = list.y - scroll;
+    for (slot, share) in slots {
+        let h = COMMIT_ROW * share;
+        let room = Rect::new(list.x, y, list.w, h).intersect(list);
+        if room.h > 0.0 {
+            let (cx, i) = match slot {
+                Slot::Old(i) => (&old, i),
+                Slot::New(j) => (&new, j),
+            };
+            frame.within(room, |frame| {
+                frame.with_opacity(share, |frame| draw_row(app, frame, cx, i, y, &mut ignored));
+            });
+        }
+        y += h;
+    }
+}
+
+/// [`draw_shift`] 里并起来的一格：刷新前的第几行（离开的），或者刷新后的第几行。
+#[derive(Clone, Copy)]
+enum Slot {
+    Old(usize),
+    New(usize),
+}
+
+/// 改动列表里一行是谁，刷新前后用它对上同一行：组、目录（连同所在的组）、文件。文件换了组
+/// （暂存以后）还算同一行，从原来的位置移过去。
+#[derive(PartialEq, Eq, Hash)]
+enum RowId<'a> {
+    Group(CommitGroup),
+    Dir(CommitGroup, &'a Path),
+    File(&'a Path),
+}
+
+/// 状态 `status` 下第 `row` 行的 [`RowId`]。
+fn row_id<'a>(status: &'a Status, row: &'a CommitRow) -> RowId<'a> {
+    match row {
+        CommitRow::Group(group) => RowId::Group(*group),
+        CommitRow::Dir { group, dir, .. } => RowId::Dir(*group, dir),
+        CommitRow::File { index, .. } => RowId::File(
+            status
+                .entries
+                .get(*index)
+                .map_or(Path::new(""), |e| &e.path),
+        ),
+    }
 }
 
 /// 固定在顶部的组、目录：盖住下面滚过去的行，下沿一道细线。
@@ -1168,12 +1327,12 @@ fn draw_row(
                 (back(open), back(revert))
             });
             let retracting = !wanted && view.progress < 1.0 && text_x + view.width > text_end;
-            let color = if retracting {
+            let shade_color = if retracting {
                 retracting_color(p, is_selected, focused, view.progress)
             } else {
                 row_color(p, is_selected, focused, hovered || full.is_some())
             };
-            if let Some(color) = color {
+            if let Some(color) = shade_color {
                 fill(
                     frame,
                     color,
@@ -1228,6 +1387,17 @@ fn draw_row(
                 (&parts, &view),
                 name_clip,
             );
+            // 放不下的名字和文件树一样在截断处淡出，不在半个字处直接切断；收回途中名字还连着侧栏
+            // 外面那一段，到最后才淡出。
+            let content = parts_width(app, frame, &parts, false);
+            let reach = NAME_FADE * stage(view.progress, FADE_FROM, 1.0);
+            if !wanted && text_x + content > name_end + 0.5 && reach > 0.0 {
+                let solid = shade_color.map_or(p.sidebar_bg, |c| {
+                    crate::view::workspace::panel::over(p.sidebar_bg, c)
+                });
+                let edge = Rect::new(name_end - reach, y, reach, COMMIT_ROW);
+                frame.within(name_clip, |frame| fade(frame, edge, solid, false));
+            }
             if let Some(spill) = spill {
                 hits.push((spill, CommitTarget::File(index)));
             }
@@ -1614,7 +1784,8 @@ fn row_text(app: &App, status: &Status, root: &Path, row: &CommitRow) -> Option<
 /// 展开收起的动画途中，被展开、收起的行及其上方各行位置不变，仍显示全名；下方正在移动的行
 /// 返回 `None`。
 pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Option<CommitOverflow> {
-    if !app.commit_shown() || !app.idle_pointer() {
+    // 刷新以后各行还在移动（见 `draw_shift`），按行号对不上。
+    if !app.commit_shown() || !app.idle_pointer() || app.commit.shift.is_some() {
         return None;
     }
     let status = app.git.status.as_ref()?;
@@ -1936,30 +2107,46 @@ fn draw_dir_parts<S: AsRef<str>>(
     x
 }
 
-/// 文件行名字的各部分：文件名，平铺时再加所在目录 `dir`；放不下 `room`（逻辑像素）时各自从中间
-/// 截短，目录只用文件名剩下的地方。
+/// 文件行名字的各部分：文件名，平铺时再加所在目录 `dir`。
+///
+/// 和文件树一样，文件名不截短：放不下 `room`（逻辑像素）时画到 `room` 为止，在截断处淡出。目录
+/// 只用文件名剩下的地方，从前面按级去掉，留下离文件最近的几级（`…/app/git`）：分辨同名文件靠的
+/// 就是它们。
 fn file_parts<'a>(
     app: &App,
     frame: &mut Frame<'_>,
     (name, dir): (&'a str, Option<&'a str>),
     room: Option<f32>,
 ) -> Vec<Cow<'a, str>> {
-    let name = match room {
-        Some(room) => ellipsize(frame, name, app.fonts.ui, room),
-        None => Cow::Borrowed(name),
-    };
-    let mut parts = vec![name];
+    let mut parts = vec![Cow::Borrowed(name)];
     if let Some(dir) = dir {
         let dir = match room {
             Some(room) => {
-                let used = frame.measure(FontKind::Ui, app.fonts.ui, &parts[0]) + DIR_GAP;
-                ellipsize(frame, dir, app.fonts.ui_small, (room - used).max(0.0))
+                let used = frame.measure(FontKind::Ui, app.fonts.ui, name) + DIR_GAP;
+                nearest_dirs(frame, dir, app.fonts.ui_small, room - used)
             }
             None => Cow::Borrowed(dir),
         };
         parts.push(dir);
     }
     parts
+}
+
+/// 把目录 `dir` 从前面按级去掉，直到放得进 `room`（逻辑像素）：`crates/app/git` 依次试
+/// `…/app/git`、`…/git`。只剩一级还放不下时就是它，由绘制时截断淡出。
+fn nearest_dirs<'a>(frame: &mut Frame<'_>, dir: &'a str, size: f32, room: f32) -> Cow<'a, str> {
+    if frame.measure(FontKind::Ui, size, dir) <= room {
+        return Cow::Borrowed(dir);
+    }
+    let mut rest = dir;
+    while let Some((_, tail)) = rest.split_once('/') {
+        rest = tail;
+        let shown = format!("{CHAIN_FOLD}/{rest}");
+        if frame.measure(FontKind::Ui, size, &shown) <= room || !rest.contains('/') {
+            return Cow::Owned(shown);
+        }
+    }
+    Cow::Borrowed(dir)
 }
 
 /// 画文件行名字的各部分 `parts`（见 [`file_parts`]）：文件名用 `color`，后面的目录用小一号的

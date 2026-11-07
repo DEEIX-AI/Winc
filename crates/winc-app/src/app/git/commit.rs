@@ -323,6 +323,28 @@ const STICKY_MAX: usize = 5;
 /// 组、目录展开或收起的动画。
 ///
 /// 子行从父行下方逐渐显示或收回，其后的各行随之移动。
+/// 刷新前后的状态 `old`、`new` 里改动的文件或者它们的状态（改了、新增、删除……）是否不同：只是
+/// 文件内容变了（保存）时相同。
+pub(crate) fn entries_changed(old: &Status, new: &Status) -> bool {
+    old.entries.len() != new.entries.len()
+        || (old.entries.iter().zip(&new.entries))
+            .any(|(a, b)| a.path != b.path || a.shown() != b.shown())
+}
+
+/// 刷新以后改动列表的过渡：离开的行（提交了、回滚了）原地淡出，新出现的行淡入，留下的行从原来
+/// 的位置移到新位置；列表空了或者从空变成有时，空状态同时淡入、淡出。
+///
+/// 离开的行在新的状态里已经没有了，按刷新前的状态和各行绘制。
+pub(crate) struct CommitShift {
+    /// 刷新前的仓库状态。
+    pub status: Status,
+    /// 刷新前的各行。
+    pub rows: Rc<CommitRows>,
+    /// 刷新前列表滚动的距离（逻辑像素）。
+    pub scroll: f32,
+    pub clock: crate::app::animation::Clock,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct CommitMotion {
     /// 动画期间画的各行：展开时是展开以后的，收起时是收起之前的。
@@ -571,6 +593,8 @@ pub(crate) struct CommitState {
     pub scroll: f32,
     /// 正在展开或收起的组、目录的动画。
     pub(crate) motion: Option<CommitMotion>,
+    /// 刷新以后各行的过渡；不在过渡中时为 `None`。
+    pub(crate) shift: Option<CommitShift>,
     /// 鼠标停着的那一行名字放不下时，这一行写全名（每帧绘制前算，见
     /// `view::commit::commit_overflow`）。
     pub(crate) overflow: Option<CommitOverflow>,
@@ -663,6 +687,7 @@ impl Default for CommitState {
             motion: None,
             overflow: None,
             names: Default::default(),
+            shift: None,
             selected: None,
             marked: HashSet::new(),
             anchor: None,
@@ -1056,6 +1081,35 @@ impl App {
     /// 鼠标没在拖东西、侧栏也没在开合：可以在悬停的行上展开写不下的名字。
     pub(crate) fn idle_pointer(&self) -> bool {
         self.sidebar_motion.is_none() && matches!(self.drag, crate::app::Drag::None)
+    }
+
+    /// 仓库状态刷新了，`old` 是刷新前的状态，`rows` 是刷新前的各行（提交视图不在屏幕上时为
+    /// `None`）：改动的文件变了时开始 [`CommitShift`]。
+    ///
+    /// 只是内容变了（保存文件）时文件和各自的状态都不变，不做过渡，列表照常响应点击。组、目录
+    /// 正在展开或收起时也不做，两种动画不叠在一起。
+    pub(in crate::app) fn begin_commit_shift(
+        &mut self,
+        old: Option<Status>,
+        rows: Option<Rc<CommitRows>>,
+    ) {
+        let (Some(old), Some(rows)) = (old, rows) else {
+            return;
+        };
+        let Some(new) = self.git.status.as_ref() else {
+            return;
+        };
+        if !entries_changed(&old, new) || self.commit.motion.is_some() {
+            return;
+        }
+        let scroll = self.commit.scroll;
+        let clock = self.clock(crate::app::animation::TREE_ANIMATION);
+        self.commit.shift = clock.map(|clock| CommitShift {
+            status: old,
+            rows,
+            scroll,
+            clock,
+        });
     }
 
     /// 窗口坐标的 `y` 是否落在写全名的那一改动行上：鼠标在这一行上时不唤出列表的滚动条，

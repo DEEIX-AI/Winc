@@ -129,6 +129,7 @@ impl App {
 
     /// 按查询重新排列各行，选中当前位置（它不在结果里时是第一个位置）。
     pub(in crate::app) fn location_picker_refresh(&mut self) {
+        self.picker_rest = None;
         let rows = self.current_location_rows();
         let current = rows
             .iter()

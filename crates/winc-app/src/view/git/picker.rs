@@ -38,6 +38,9 @@ const TEXT_LEFT: f32 = 32.0;
 const ROW_BUTTON_GAP: f32 = 2.0;
 /// 名字右边到右端文字的最小间距（逻辑像素）。
 const NAME_GAP: f32 = 8.0;
+/// 行右端文字（时间、上游）的右边比「⋯」按钮的右边缘让进的距离（逻辑像素）：和按钮里图标的
+/// 右侧差不多齐，不贴着底色的圆角。
+const META_PAD: f32 = 6.0;
 /// 名字后面的小圆点占的宽度（逻辑像素）：6 的间距加 5 的直径。
 const NAME_DOT_ROOM: f32 = 11.0;
 /// 选中行上徽标底色和按钮悬停底色的不透明度：比次要文字弱得多，只从实底上浮出一层。
@@ -221,9 +224,14 @@ impl Line {
         )
     }
 
-    /// 行右端文字的右边：右边留出「⋯」一列，选中一行时其他内容不移动，各行的列对得上。
+    /// 行右端那一列的右边：选中行「⋯」按钮的右边缘，数量徽标也对齐到这里。
+    fn end(&self) -> f32 {
+        self.row.right() - GUTTER - ROW_BUTTON_GAP
+    }
+
+    /// 行右端文字（时间、上游）的右边：比按钮的右边缘让进 [`META_PAD`]，和按钮里的图标差不多齐。
     fn right(&self) -> f32 {
-        self.row.right() - GUTTER - ROW_BUTTON_GAP - BUTTON_SMALL - 4.0
+        self.end() - META_PAD
     }
 
     /// 在图标一列画第 `i` 行展开、收起的箭头：这一行正在展开或收起时跟着动画转到对应角度。
@@ -292,7 +300,7 @@ impl Line {
         ui_text_small(frame, app, *right, self.row, text, self.dim, self.clip);
     }
 
-    /// 在 `right` 左边绘制数量徽标，把 `right` 移到徽标左边。
+    /// 在行右端绘制数量徽标，把 `right` 移到徽标左边。
     fn draw_pill(&self, app: &App, frame: &mut Frame<'_>, right: &mut f32, count: usize) {
         let p = app.palette;
         let colors = if self.selected {
@@ -302,26 +310,28 @@ impl Line {
         };
         let text = count.to_string();
         let row = self.row;
-        let band = Rect::new(row.x, row.y, *right + 4.0 - row.x, row.h);
+        // 徽标右边和「⋯」按钮的右边缘对齐（`draw_count_pill_in` 留 4）。
+        let band = Rect::new(row.x, row.y, self.end() + 4.0 - row.x, row.h);
         draw_count_pill_in(app, frame, band, &text, colors, self.clip);
-        *right -= frame.measure(FontKind::Ui, app.fonts.ui_small, &text) + 12.0 + 6.0;
+        *right = self.end() - frame.measure(FontKind::Ui, app.fonts.ui_small, &text) - 12.0 - 6.0;
     }
 
-    /// 绘制第 `i` 行行尾的「⋯」，记下它的位置；只有选中行才有。把 `right` 移到按钮左边。
+    /// 绘制第 `i` 行行尾的「⋯」，记下它的位置，返回按钮左边可以写名字的右边；只有选中行才有，
+    /// 其余行返回 `None`。按钮盖在行右端文字的位置上，选中行不写那段文字。
     fn draw_more(
         &self,
         app: &App,
         frame: &mut Frame<'_>,
         i: usize,
         hits: &mut Vec<(Rect, PickerPart)>,
-    ) {
+    ) -> Option<f32> {
         if !self.selected {
-            return;
+            return None;
         }
         let part = PickerPart::More(i);
         let row = self.row;
         let button = Rect::new(
-            row.right() - GUTTER - ROW_BUTTON_GAP - BUTTON_SMALL,
+            self.end() - BUTTON_SMALL,
             row.y + 2.0,
             BUTTON_SMALL,
             row.h - 4.0,
@@ -329,6 +339,7 @@ impl Line {
         self.draw_row_button(app, frame, button, part);
         icons::more(frame, center(button), self.text, self.clip);
         hits.push((button, part));
+        Some(button.x - ROW_BUTTON_GAP)
     }
 
     /// 绘制行内按钮悬停时的底色。
@@ -406,11 +417,13 @@ fn draw_place_row(
         icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
     }
     let mut right = line.right();
-    if place.worktree.is_some() || !place.missing {
-        line.draw_more(app, frame, i, hits);
-    }
+    let more = (place.worktree.is_some() || !place.missing)
+        .then(|| line.draw_more(app, frame, i, hits))
+        .flatten();
     let state = app.place_state(&place.path);
-    if place.missing {
+    if let Some(at) = more {
+        right = at + NAME_GAP;
+    } else if place.missing {
         line.draw_meta(app, frame, &mut right, t!("git-worktree-missing"));
     } else {
         let mut meta = state.head.clone().unwrap_or_default();
@@ -549,7 +562,8 @@ struct BranchLine<'a> {
 }
 
 /// 绘制第 `i` 行的一个分支：当前分支打勾，右端淡色写它的上游（没有上游时写「当前」），被别的
-/// 工作树占着的写那个工作树，其余写最后一次提交的时间；选中行的右端是「⋯」，时间让出位置。
+/// 工作树占着的写那个工作树，其余写最后一次提交的时间，都靠右对齐；选中行（鼠标所在的行）的右端
+/// 换成「⋯」。
 fn draw_branch_row(
     app: &App,
     frame: &mut Frame<'_>,
@@ -565,7 +579,7 @@ fn draw_branch_row(
         icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
     }
     let mut right = line.right();
-    line.draw_more(app, frame, i, hits);
+    let more = line.draw_more(app, frame, i, hits);
     let held = branch
         .filter(|b| !b.remote)
         .and_then(|b| app.git.worktree_holding(local_name(b)))
@@ -579,8 +593,10 @@ fn draw_branch_row(
         (_, _, Some(b)) if !b.remote => Some(display_local(&b.local, b.time, row.now)),
         _ => None,
     };
-    if let Some(meta) = meta {
-        line.draw_meta(app, frame, &mut right, &meta);
+    match (more, meta) {
+        (Some(at), _) => right = at + NAME_GAP,
+        (None, Some(meta)) => line.draw_meta(app, frame, &mut right, &meta),
+        (None, None) => {}
     }
     let at = (text, right - NAME_GAP);
     line.draw_name(app, frame, at, row.label, line.text);

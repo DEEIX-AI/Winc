@@ -2813,3 +2813,51 @@ fn holding_option_turns_commit_into_commit_and_push() {
     app.modifiers = winit::keyboard::ModifiersState::empty();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 提交以后改动列表不是一下子换掉：过渡途中离开的行按刷新前的状态还画着、各行不响应点击，空状态
+/// 同时淡入；只是保存了文件（改动的文件和状态都没变）时不做过渡。
+#[test]
+fn committed_rows_fade_out_instead_of_vanishing() {
+    let Some((mut app, root)) = git_app("git-commit-shift", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let old = app.git.status.clone().unwrap();
+    let rows = app.commit_rows();
+    assert!(!rows.is_empty());
+    let has_rows = |app: &App| {
+        (app.commit_hits.iter())
+            .any(|(_, t)| matches!(t, CommitTarget::File(_) | CommitTarget::Group(_)))
+    };
+    assert!(has_rows(&app));
+
+    // 保存（内容变了，文件和状态都没变）：不算变化。
+    assert!(!crate::app::git::commit::entries_changed(
+        &old,
+        &old.clone()
+    ));
+
+    git_in(&root, &["add", "-A"]);
+    git_in(&root, &["commit", "-q", "-m", "all"]);
+    app.git_refresh();
+    let new = app.git.status.clone().unwrap();
+    assert!(new.entries.is_empty());
+    assert!(crate::app::git::commit::entries_changed(&old, &new));
+
+    app.commit.shift = Some(crate::app::git::commit::CommitShift {
+        status: old,
+        rows,
+        scroll: 0.0,
+        clock: Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION),
+    });
+    assert!(app.animating());
+    paint(&mut app);
+    assert!(!has_rows(&app));
+    assert!(app.commit.overflow.is_none());
+
+    app.commit.shift.as_mut().unwrap().clock = Clock::frozen(TREE_ANIMATION, TREE_ANIMATION);
+    app.settle_animations();
+    assert!(app.commit.shift.is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}

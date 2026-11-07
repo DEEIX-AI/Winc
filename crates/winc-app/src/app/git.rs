@@ -815,7 +815,9 @@ impl App {
                         let count = winc_editor::git::STATUS_LIMIT;
                         self.notify(t!("git-status-truncated", count = count));
                     }
-                    self.git.status = Some(status);
+                    let rows = self.commit_shown().then(|| self.commit_rows());
+                    let old = self.git.status.replace(status);
+                    self.begin_commit_shift(old, rows);
                     if let Some(refs) = outcome.refs {
                         let before = std::mem::replace(&mut self.git.branches, refs.branches);
                         self.git.stashes = refs.stashes;
