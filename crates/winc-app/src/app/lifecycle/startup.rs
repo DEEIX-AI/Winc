@@ -247,6 +247,8 @@ impl App {
             cascade: None,
             window_frame: None,
             glyphs_from: None,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            activation: None,
             occluded: false,
             next_frame: None,
             #[cfg(target_os = "macos")]

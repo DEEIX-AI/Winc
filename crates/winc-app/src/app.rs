@@ -180,11 +180,11 @@ pub enum UserEvent {
     FilesChanged,
     /// 后台读到一段标准输入（`winc -`）。
     StdinRead,
-    /// 新启动的 `winc` 把要打开的目录和文件交给了整个应用（见 [`crate::instance`]）；由应用层
-    /// 决定切到哪个窗口或新建窗口，收不收经通道答复。
+    /// 新启动的 `winc` 把要打开的目录和文件，以及它的激活令牌交给了整个应用（见
+    /// [`crate::instance`]）；由应用层决定切到哪个窗口或新建窗口，收不收经通道答复。
     ///
     /// 不会交到窗口里。
-    Launched(Vec<crate::cli::Target>, std::sync::mpsc::Sender<bool>),
+    Launched(crate::instance::Launch, std::sync::mpsc::Sender<bool>),
     /// 系统交来要打开的文件和目录（拖到程序坞的图标上、文件管理器里的「打开方式」）；与
     /// [`UserEvent::Launched`] 一样由应用层决定开在哪个窗口里。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -1078,6 +1078,9 @@ pub struct App {
     pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口和打开它的窗口共用的字体和字形缓存（建渲染器时用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
+    /// 待使用的激活令牌（见 [`App::set_activation`]）。
+    #[cfg(all(unix, not(target_os = "macos")))]
+    activation: Option<winit::window::ActivationToken>,
     /// 窗口完全看不见（被挡住、最小化、在别的桌面上）：不画，屏幕上那块画面标成可清除。
     occluded: bool,
     /// 动画下一帧的绘制时刻（没有显示链接时按计时器安排）。

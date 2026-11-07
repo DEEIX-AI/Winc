@@ -87,13 +87,34 @@ impl App {
     }
 
     /// 把窗口切到前台：关着的重新显示，最小化的还原。
+    ///
+    /// Wayland 上应用不能自行切到前台，有激活令牌（见 [`App::set_activation`]）时凭令牌请合成器
+    /// 切换；其他情况请系统切换。
     pub(crate) fn raise(&mut self) {
         self.show_window();
         if let Some(window) = &self.window {
             window.set_minimized(false);
-            window.focus_window();
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let activated = (self.activation.take())
+                .is_some_and(|token| crate::wayland::activate(window, token));
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            let activated = false;
+            if !activated {
+                window.focus_window();
+            }
         }
         self.request_redraw();
+    }
+
+    /// 记下新启动的 winc 交来的激活令牌 `token`（见 [`crate::instance::launch_token`]），在下一次
+    /// 建系统窗口或切到前台时使用一次。不使用 X11、Wayland 的平台上忽略。
+    pub(crate) fn set_activation(&mut self, token: Option<String>) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            self.activation = token.map(winit::window::ActivationToken::from_raw);
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let _ = token;
     }
 
     /// 是否显示状态栏（`statusBar`）。

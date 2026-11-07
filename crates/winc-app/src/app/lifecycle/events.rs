@@ -60,6 +60,18 @@ impl ApplicationHandler<UserEvent> for App {
                     .with_taskbar_icon(Some(icon));
             }
         }
+        // Wayland 的 app_id 和 X11 的 WM_CLASS 取自窗口名称，需与桌面项 `winc.desktop` 一致：
+        // 任务栏、停靠栏据此找到图标并归组，窗口规则据此匹配。未设置时 Wayland 不上报 app_id。
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use winit::platform::startup_notify::WindowAttributesExtStartupNotify;
+            use winit::platform::wayland::WindowAttributesExtWayland;
+            attributes = attributes.with_name("winc", "winc");
+            // 激活令牌：Wayland 上新窗口凭它切到前台，X11 上凭它结束启动通知。
+            if let Some(token) = self.activation.take() {
+                attributes = attributes.with_activation_token(token);
+            }
+        }
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
