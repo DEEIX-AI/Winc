@@ -79,7 +79,10 @@ impl ApplicationHandler<UserEvent> for App {
         };
 
         #[cfg(target_os = "macos")]
-        crate::macos::keep_title_bar_drags(&window);
+        {
+            crate::macos::keep_title_bar_drags(&window);
+            crate::macos::capture_inserted_text(&window);
+        }
 
         // 一开始就最大化时量不到还原后的大小，先用记下的。
         self.window_frame = saved;
@@ -296,7 +299,12 @@ impl ApplicationHandler<UserEvent> for App {
                 event,
                 is_synthetic: false,
                 ..
-            } => self.on_key(&event),
+            } => {
+                // 以输入法在按键时直接提交的文字（如拼音输入法下的中文标点）代替按键本身的字符。
+                #[cfg(target_os = "macos")]
+                let event = crate::macos::with_inserted_text(event);
+                self.on_key(&event);
+            }
             WindowEvent::Ime(ime) => self.on_ime(ime),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_inside = true;
