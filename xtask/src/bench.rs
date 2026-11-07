@@ -86,7 +86,8 @@ pub fn bench(runs: usize) -> Result<bool, String> {
         );
     }
 
-    // 快速转动鼠标滚轮：帧间隔、画面落后于滚轮的格数、停下以后到位的耗时。只列出，不对照预算。
+    // 快速转动鼠标滚轮：帧间隔、画面落后于滚轮的格数、最后一格之后画面停止的耗时。只列出，
+    // 不对照预算。
     let wheel = wheel_once(&exe, &large)?;
     for (name, key, unit) in [
         (

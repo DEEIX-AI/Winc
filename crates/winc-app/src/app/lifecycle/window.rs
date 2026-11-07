@@ -498,8 +498,8 @@ impl App {
         };
         let started = Instant::now();
         self.cover_frame(&mut renderer);
-        // Wayland 上随这一帧向合成器请求帧回调：之后的重画等合成器准备好下一帧时才进行，动画按
-        // 合成器的刷新出帧，不按计时器。帧在 `renderer.draw` 中画完并提交，因此在它之前请求。
+        // Wayland 上随本帧向合成器请求帧回调：之后的重画在合成器发出帧回调后进行，动画跟随
+        // 合成器的刷新，而不是计时器。本帧在 `renderer.draw` 中绘制并提交，因此在调用它之前请求。
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(window) = &self.window {
             window.pre_present_notify();
@@ -584,7 +584,7 @@ impl App {
         }
     }
 
-    /// 滚轮测量：到时间时在编辑区上送出一格鼠标滚轮滚动（向下）；返回之后需要唤醒的时刻。
+    /// 滚轮测量：到达送出时刻时，在编辑区上送出一格向下的鼠标滚轮滚动；返回之后需要唤醒的时刻。
     ///
     /// 文件尚未读完时不送出：总行数未定，滚动会停在已读到的末尾。
     pub(in crate::app) fn bench_wheel_tick(&mut self, now: Instant) -> Option<Instant> {

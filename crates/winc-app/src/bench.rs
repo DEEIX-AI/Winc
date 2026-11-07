@@ -221,8 +221,8 @@ impl Bench {
 }
 
 impl Bench {
-    /// 滚轮测量中是否到了送出下一格的时刻，以及之后需要唤醒的时刻；不在滚轮测量中或已送完
-    /// 时返回 `(false, None)`。
+    /// 返回滚轮测量中是否已到送出下一格的时刻，以及之后需要唤醒的时刻；不在滚轮测量中或已
+    /// 全部送出时返回 `(false, None)`。
     pub fn wheel_due(&self, now: Instant) -> (bool, Option<Instant>) {
         match &self.wheel {
             Some(run) if run.sent < WHEEL_NOTCHES => {
@@ -234,7 +234,7 @@ impl Bench {
         }
     }
 
-    /// 记下送出了一格滚轮滚动，这一格应滚动 `lines` 行。
+    /// 记录已送出一格滚轮滚动，该格应滚动 `lines` 行。
     pub fn wheel_sent(&mut self, lines: f32) {
         if let Some(run) = &mut self.wheel {
             let now = Instant::now();

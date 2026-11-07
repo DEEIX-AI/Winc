@@ -76,8 +76,8 @@ impl Drop for DisplayLink {
 
 /// 后台线程：运行时每等到一次合成调用一次 `tick`，暂停时等待。
 ///
-/// 没有待合成的内容时 `DwmFlush` 可能立即返回；两次唤醒的间隔短于半个刷新间隔时，睡到满一个
-/// 刷新间隔，避免空转。
+/// 没有待合成的内容时 `DwmFlush` 可能立即返回；两次唤醒的间隔短于半个刷新间隔时，休眠至满
+/// 一个刷新间隔，避免空转。
 #[allow(unsafe_code)] // DwmFlush
 fn run(shared: &(Mutex<State>, Condvar), refresh: Duration, tick: &dyn Fn()) {
     let (lock, signal) = shared;

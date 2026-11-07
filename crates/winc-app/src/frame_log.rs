@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 /// 两次输出之间的时长。
 ///
-/// 取自调参：足以收集上百帧作统计，卡顿发生后又能很快看到结果。
+/// 取自调参：足以收集上百帧作统计，卡顿发生后 5 s 内即有输出。
 const REPORT_EVERY: Duration = Duration::from_secs(5);
 
 /// 帧日志的状态；未启用时不记录。

@@ -42,18 +42,18 @@ const WHEEL_LINES: f32 = 3.0;
 
 /// 鼠标滚轮过渡的最短时长（毫秒）。
 ///
-/// 等于 60 Hz 屏幕上的 3 帧：更短时过渡只剩一两帧，与直接滚动无异。
+/// 等于 60 Hz 屏幕上的 3 帧：更短时过渡只有一至两帧，与直接滚动没有区别。
 const WHEEL_GLIDE_MIN: Duration = Duration::from_millis(50);
 /// 鼠标滚轮过渡时长与两格间隔之比。
 ///
-/// 由缓出曲线决定：经过一半时长时已完成 87.5%，下一格到来时上一格基本完成，匀速转动滚轮时
-/// 画面落后于滚轮约一格的七分之一。
+/// 由缓出曲线决定：经过一半时长时已完成 87.5%。匀速转动滚轮时，每格到来之前尚未完成的滚动
+/// 稳定在一格的七分之一左右，画面不会越来越落后于滚轮。
 const WHEEL_GLIDE_RATIO: u32 = 2;
 
 /// 返回鼠标滚轮一格的过渡时长：与上一格的间隔 `interval` 的 [`WHEEL_GLIDE_RATIO`] 倍，限制在
 /// [`WHEEL_GLIDE_MIN`] 与 `SCROLL_GLIDE` 之间；没有上一格时为 `SCROLL_GLIDE`。
 ///
-/// 快速转动滚轮时各格间隔短，过渡随之缩短，画面跟得上滚轮；单独的一格按完整时长过渡。
+/// 快速转动滚轮时各格间隔短，过渡随之缩短，画面紧随滚轮；单独的一格按完整时长过渡。
 pub(in crate::app) fn wheel_glide_length(interval: Option<Duration>) -> Duration {
     let full = crate::app::animation::SCROLL_GLIDE;
     interval.map_or(full, |interval| {
@@ -191,11 +191,11 @@ impl App {
         }
     }
 
-    /// 鼠标滚轮这一格的过渡时长（见 [`wheel_glide_length`]），并记下这一格的时刻；画面不随屏幕
-    /// 刷新出帧时为 `None`，直接滚动。
+    /// 返回本格鼠标滚轮滚动的过渡时长（见 [`wheel_glide_length`]），并记录本格的时刻；不使用
+    /// 过渡时返回 `None`，直接滚动。
     ///
-    /// 只有 macOS 上有显示链接时按屏幕刷新出帧。其他情况下按计时器出帧，与屏幕刷新不同步，
-    /// 过渡的各帧间隔不均，只增加绘制量而不更平滑。
+    /// 只有 macOS 上存在显示链接时使用过渡。Windows 上每格立即滚动，不依赖显示链接的节奏；
+    /// 其他系统上按计时器绘制，帧与屏幕刷新不同步，过渡只增加绘制量而不会更平滑。
     fn next_wheel_glide(&mut self) -> Option<Duration> {
         let now = Instant::now();
         let interval = self.wheel_at.replace(now).map(|at| now.duration_since(at));
