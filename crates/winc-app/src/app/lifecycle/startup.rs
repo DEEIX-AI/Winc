@@ -50,6 +50,7 @@ impl App {
         Self {
             editor,
             terminal: terminal::TerminalPanel::default(),
+            run: terminal::run::RunConfigs::default(),
             saved_config: config.clone(),
             config,
             config_path: None,
