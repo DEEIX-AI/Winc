@@ -224,6 +224,8 @@ pub enum UserEvent {
     GitOperated,
     /// 后台的 Git 操作发来了输入请求。
     GitQuestion,
+    /// 后台读取好了三栏合并的两侧。
+    GitMergeSides,
     /// 后台取到了日志的一批提交、一个提交的详情或一个文件的差异。
     GitLog,
     /// 终端的辅助进程发来了消息。
@@ -1129,6 +1131,7 @@ impl App {
             UserEvent::GitCommit => self.poll_commit(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
+            UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
             UserEvent::GitBlame => self.poll_blame(),
             UserEvent::Reread => self.poll_rereads(),

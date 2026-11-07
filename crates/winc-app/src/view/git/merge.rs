@@ -5,10 +5,10 @@
 //! 「两者都要」「对比」，右端是第几处；`|||||||` 写「共同祖先」，`=======` 写「对方 · 分支名」，
 //! `>>>>>>>` 只是一道收尾的细线。
 
-use winc_editor::git::merge::{Conflict, Pick};
+use winc_editor::git::merge::{Conflict, Pick, SideAlign};
 use winc_i18n::t;
 
-use crate::app::git::merge::MergeTarget;
+use crate::app::git::merge::{MergeTarget, PANE_HEADER};
 use crate::view::*;
 
 /// 标记行上的按钮，从左到右；冲突序号用 `usize::MAX` 占位，绘制时换成当前冲突的序号。
@@ -35,6 +35,7 @@ fn label(target: MergeTarget) -> &'static str {
         MergeTarget::Previous => t!("git-merge-previous"),
         MergeTarget::Next => t!("git-merge-next"),
         MergeTarget::MarkResolved => t!("git-merge-mark-resolved"),
+        MergeTarget::ThreePane => t!("git-merge-three-pane"),
     }
 }
 
@@ -136,15 +137,26 @@ pub(in crate::view) fn draw_merge_card(
     let p = app.palette;
     let editor = app.layout.editor;
     let font = app.fonts.ui;
+    let panes = app.merge_panes_shown();
     let (message, buttons): (String, Vec<MergeTarget>) = if count > 0 {
         (
             t!("git-merge-card-conflicts", count = count),
-            vec![
-                MergeTarget::Previous,
-                MergeTarget::Next,
-                MergeTarget::All(Pick::Ours),
-                MergeTarget::All(Pick::Theirs),
-            ],
+            // 三栏时中间较窄，两侧已有采用的按钮，不再显示「全部采用」。
+            if panes {
+                vec![
+                    MergeTarget::Previous,
+                    MergeTarget::Next,
+                    MergeTarget::ThreePane,
+                ]
+            } else {
+                vec![
+                    MergeTarget::Previous,
+                    MergeTarget::Next,
+                    MergeTarget::ThreePane,
+                    MergeTarget::All(Pick::Ours),
+                    MergeTarget::All(Pick::Theirs),
+                ]
+            },
         )
     } else {
         (
@@ -156,7 +168,7 @@ pub(in crate::view) fn draw_merge_card(
         .iter()
         .map(|&b| match b {
             MergeTarget::Previous | MergeTarget::Next => BUTTON_SMALL,
-            b => frame.measure(FontKind::Ui, font, all_label(b)) + 16.0,
+            b => frame.measure(FontKind::Ui, font, all_label(b, panes)) + 16.0,
         })
         .collect();
     let buttons_w: f32 = widths.iter().sum::<f32>() + 4.0 * (widths.len() - 1) as f32;
@@ -221,7 +233,7 @@ pub(in crate::view) fn draw_merge_card(
                     app,
                     rect.x + 8.0,
                     rect,
-                    all_label(target),
+                    all_label(target, panes),
                     p.accent,
                     card,
                 );
@@ -233,10 +245,242 @@ pub(in crate::view) fn draw_merge_card(
     Some(card)
 }
 
-fn all_label(target: MergeTarget) -> &'static str {
+fn all_label(target: MergeTarget, panes: bool) -> &'static str {
     match target {
+        MergeTarget::ThreePane if panes => t!("git-merge-close-three-pane"),
         MergeTarget::All(Pick::Ours) => t!("git-merge-accept-all-current"),
         MergeTarget::All(Pick::Theirs) => t!("git-merge-accept-all-incoming"),
         other => label(other),
     }
+}
+
+/// 三栏合并两侧按钮一列的宽度（逻辑像素）：与差异视图的按钮列相同。
+const PANE_BUTTONS: f32 = 22.0;
+/// 三栏合并两侧行号与文字的间距（逻辑像素）。
+const PANE_PAD: f32 = 8.0;
+
+/// 绘制三栏合并的两侧：标题、行号、代码、冲突的底色和采用按钮。
+///
+/// 三栏的标题行同高，两侧与中间的文档按 [`SideAlign`] 对齐：同一高度的行相对应。
+pub(in crate::view) fn draw_side_panes(app: &mut App, frame: &mut Frame<'_>) {
+    if app.merge.pane_rects[0].w <= 0.0 {
+        return;
+    }
+    let Some(index) = app.editor.active else {
+        return;
+    };
+    let conflicts = app.conflicts(index);
+    let Some(mut panes) = app.merge.panes.take() else {
+        return;
+    };
+    let doc = &app.editor.documents[index];
+    let revision = doc.revision;
+    if panes.aligned.as_ref().is_none_or(|(at, _)| *at != revision)
+        && let Some(rope) = doc.text().rope()
+    {
+        let side = |side: &winc_editor::diff_view::DiffSide, pick| {
+            SideAlign::new(rope, &conflicts, &side.text.to_string(), pick)
+        };
+        panes.aligned = Some((
+            revision,
+            [
+                side(&panes.sides[0], Pick::Ours),
+                side(&panes.sides[1], Pick::Theirs),
+            ],
+        ));
+    }
+    let doc = &app.editor.documents[index];
+    let scroll = doc.scroll_line.max(0.0);
+    let line = doc.line_of_row(scroll.floor() as usize);
+    let fraction = scroll.fract();
+    // 中间一栏的标题行：盖住滚过去的文字，冲突卡片随后画在上面。
+    let editor = app.layout.editor;
+    let header = Rect::new(editor.x, editor.y, editor.w, PANE_HEADER);
+    let p = app.palette;
+    frame.rect(header, p.editor_bg);
+    let title = t!("git-merge-side-result");
+    ui_text(
+        frame,
+        app,
+        header.x + 12.0,
+        header,
+        title,
+        p.text_muted,
+        header,
+    );
+    frame.rect(
+        Rect::new(header.x, header.bottom() - 1.0, header.w, 1.0),
+        p.separator,
+    );
+    let mut hits = Vec::new();
+    for side in 0..2 {
+        let rect = app.merge.pane_rects[side];
+        let Some((_, aligned)) = &panes.aligned else {
+            continue;
+        };
+        let top = aligned[side].side_line(line) as f32 + fraction;
+        draw_side_pane(
+            app,
+            frame,
+            rect,
+            side,
+            &mut panes.sides[side],
+            &aligned[side],
+            top,
+            &mut hits,
+        );
+    }
+    app.merge.hits.extend(hits);
+    app.merge.panes = Some(panes);
+}
+
+/// 绘制三栏合并的一侧：`top` 是标题行下方第一行的行号（可以是小数）。
+#[allow(clippy::too_many_arguments)]
+fn draw_side_pane(
+    app: &mut App,
+    frame: &mut Frame<'_>,
+    rect: Rect,
+    side: usize,
+    source: &mut winc_editor::diff_view::DiffSide,
+    aligned: &SideAlign,
+    top: f32,
+    hits: &mut Vec<(Rect, MergeTarget)>,
+) {
+    let p = app.palette;
+    frame.rect(rect, p.editor_bg);
+    let header = Rect::new(rect.x, rect.y, rect.w, PANE_HEADER);
+    let body = Rect::new(
+        rect.x,
+        header.bottom(),
+        rect.w,
+        (rect.h - PANE_HEADER).max(0.0),
+    );
+    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let lh = app.fonts.line_height;
+    let total = source.text.len_lines();
+    let digits = total.to_string().len().max(2) as f32;
+    let gutter_w = (digits * app.cell + PANE_PAD * 2.0).round();
+    // 左栏的按钮靠中间，在行号右边；右栏的按钮靠中间，在行号左边。
+    let (buttons, gutter, text) = if side == 0 {
+        let buttons = Rect::new(rect.right() - PANE_BUTTONS, body.y, PANE_BUTTONS, body.h);
+        let gutter = Rect::new(buttons.x - gutter_w, body.y, gutter_w, body.h);
+        (
+            buttons,
+            gutter,
+            Rect::new(rect.x, body.y, (gutter.x - rect.x).max(0.0), body.h),
+        )
+    } else {
+        let buttons = Rect::new(rect.x, body.y, PANE_BUTTONS, body.h);
+        let gutter = Rect::new(buttons.right(), body.y, gutter_w, body.h);
+        let x = gutter.right();
+        (
+            buttons,
+            gutter,
+            Rect::new(x, body.y, (rect.right() - x).max(0.0), body.h),
+        )
+    };
+    let shade = if side == 0 {
+        p.diff_modified.line
+    } else {
+        p.diff_added.line
+    };
+    let row_y = |line: usize| body.y + (line as f32 - top) * lh;
+
+    // 冲突的底色和 `git` 自动合入的行的淡底色。
+    for range in aligned.changed() {
+        let band = Rect::new(rect.x, row_y(range.start), rect.w, range.len() as f32 * lh);
+        frame.rect_clipped(band, p.hover, 0.0, body);
+    }
+    for block in &aligned.blocks {
+        let band = Rect::new(rect.x, row_y(block.start), rect.w, block.len() as f32 * lh);
+        frame.rect_clipped(band, shade, 0.0, body);
+    }
+
+    let first = top.floor().max(0.0) as usize;
+    let visible = (body.h / lh).ceil() as usize + 1;
+    let (mut chars, mut tokens) = (Vec::with_capacity(128), Vec::with_capacity(16));
+    let tab_width = app.editor.tab_width;
+    for line in first..(first + visible).min(total) {
+        let band = Rect::new(rect.x, row_y(line), rect.w, lh);
+        let baseline = baseline_in(band, ascent, descent);
+        let number = (line + 1).to_string();
+        let number_x = gutter.right() - PANE_PAD - number.chars().count() as f32 * app.cell;
+        frame.text(
+            FontKind::Mono,
+            app.fonts.code,
+            number_x,
+            baseline,
+            &number,
+            p.gutter_text,
+            gutter,
+        );
+        crate::view::diff::line_chars(source, line, &mut chars);
+        let state =
+            source
+                .highlighter
+                .state_at(&source.text, line, crate::view::editor::HIGHLIGHT_BUDGET);
+        app.highlight_pending |= state.is_none();
+        tokens.clear();
+        let _ = winc_syntax::highlight_line(
+            source.highlighter.language(),
+            &chars,
+            state.unwrap_or_default(),
+            &mut tokens,
+        );
+        crate::view::editor::draw_glyphs(
+            app,
+            frame,
+            &chars,
+            &tokens,
+            text.x + PANE_PAD,
+            baseline,
+            tab_width,
+            text,
+        );
+    }
+
+    // 每段冲突第一行旁边一个采用按钮。
+    let pick = if side == 0 { Pick::Ours } else { Pick::Theirs };
+    for (i, block) in aligned.blocks.iter().enumerate() {
+        let mid = row_y(block.start) + lh / 2.0;
+        if mid < body.y || mid > body.bottom() {
+            continue;
+        }
+        let c = (buttons.x + buttons.w / 2.0, mid);
+        let target = MergeTarget::Pick(i, pick);
+        let hover = (app.hover == Hover::Merge(target)).then_some(p.hover);
+        if side == 0 {
+            icons::line_replace(frame, c, hover, p.accent, body);
+        } else {
+            icons::line_replace_back(frame, c, hover, p.accent, body);
+        }
+        hits.push((
+            Rect::new(c.0 - 10.0, c.1 - 10.0, 20.0, 20.0).intersect(body),
+            target,
+        ));
+    }
+
+    // 标题行和与中间的分隔线。
+    frame.rect(header, p.editor_bg);
+    let title =
+        ellipsize(frame, &source.title, app.fonts.ui, (rect.w - 24.0).max(0.0)).into_owned();
+    ui_text(
+        frame,
+        app,
+        rect.x + 12.0,
+        header,
+        &title,
+        p.text_muted,
+        header,
+    );
+    frame.rect(
+        Rect::new(rect.x, header.bottom() - 1.0, rect.w, 1.0),
+        p.separator,
+    );
+    let edge = if side == 0 {
+        rect.right() - 1.0
+    } else {
+        rect.x
+    };
+    frame.rect(Rect::new(edge, rect.y, 1.0, rect.h), p.separator);
 }

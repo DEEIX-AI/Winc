@@ -13,6 +13,7 @@ use winc_i18n::t;
 use super::branch::local_name;
 use super::log::short;
 use super::question::QuestionView;
+use super::rebase::RebaseForm;
 use super::worktree::NameTarget;
 use crate::app::editor::find::ref_name_field;
 use crate::app::{App, Focus, Hover, TextField};
@@ -35,6 +36,8 @@ pub(crate) enum FormKind {
     Clone,
     /// 添加远程仓库，或修改 `editing` 的地址。
     Remote { editing: Option<String> },
+    /// 交互式变基。
+    Rebase(Box<RebaseForm>),
 }
 
 impl FormKind {
@@ -43,7 +46,10 @@ impl FormKind {
         match self {
             FormKind::Question(prompt) => Some(QuestionView::of(prompt)),
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
-            FormKind::Worktree | FormKind::Branch { .. } | FormKind::Clone => None,
+            FormKind::Worktree
+            | FormKind::Branch { .. }
+            | FormKind::Clone
+            | FormKind::Rebase(_) => None,
         }
     }
 }
@@ -185,6 +191,9 @@ impl App {
         let window = self.layout.window;
         match self.form_dialog.as_ref().map(|d| &d.kind) {
             Some(FormKind::Clone) => DialogLayout::clone_form(window),
+            Some(FormKind::Rebase(form)) => {
+                DialogLayout::rebase(window, form.rows.len(), form.pushed > 0)
+            }
             Some(kind) if let Some(view) = kind.view() => DialogLayout::question(
                 window,
                 view.message_lines,
@@ -216,6 +225,7 @@ impl App {
         match &dialog.kind {
             FormKind::Worktree => self.worktree_plan(dialog),
             FormKind::Branch { at } => self.branch_plan(dialog, at.as_deref()),
+            FormKind::Rebase(form) => self.rebase_plan(form),
             FormKind::Clone => self.clone_plan(dialog.name.text().trim(), dialog.folder.as_deref()),
             FormKind::Remote { editing } => {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
@@ -359,6 +369,7 @@ impl App {
             }
             FormKind::Question(_) => {}
             FormKind::Clone => self.submit_clone(),
+            FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),
         }
         // 已发起 git 操作时，待其完成后再关闭（[`App::form_operation_done`]），期间按钮显示
@@ -399,6 +410,17 @@ impl App {
             return Vec::new();
         };
         let plan = self.form_plan(dialog);
+        if let FormKind::Rebase(form) = &dialog.kind {
+            let mut order = vec![DialogPart::RebaseList];
+            if form.rewording() {
+                order.push(DialogPart::Branch);
+            }
+            order.push(DialogPart::Cancel);
+            if plan.enabled {
+                order.push(DialogPart::Confirm);
+            }
+            return order;
+        }
         let layout = self.dialog_layout();
         let mut order = Vec::new();
         // 无需输入的请求没有输入框；第二个输入框只用于登录和添加远程仓库。
@@ -507,9 +529,18 @@ impl App {
     /// 对话框中窗口坐标 (`x`, `y`) 处的部件；主按钮不能按、起点不能选时不算。
     pub(in crate::app) fn dialog_part_at(&self, x: f32, y: f32) -> Option<DialogPart> {
         let dialog = self.form_dialog.as_ref()?;
-        let part = self.dialog_layout().part_at(x, y)?;
+        let layout = self.dialog_layout();
+        if let FormKind::Rebase(form) = &dialog.kind
+            && let Some(part) = self.rebase_part_at(&layout, form, x, y)
+        {
+            return Some(part);
+        }
+        let part = layout.part_at(x, y)?;
         let plan = self.form_plan(dialog);
         match part {
+            DialogPart::Branch if matches!(&dialog.kind, FormKind::Rebase(form) if !form.rewording()) => {
+                None
+            }
             DialogPart::Confirm if !plan.enabled || dialog.running.is_some() => None,
             DialogPart::Base if !plan.base_enabled => None,
             part => Some(part),
@@ -554,6 +585,11 @@ impl App {
                 self.open_context_menu(MenuTarget::FormBase, menu_below(base));
             }
             DialogPart::Change => self.pick(crate::app::Pick::WorktreeFolder),
+            DialogPart::RebaseList => self.submit_form_dialog(),
+            part @ (DialogPart::RebaseRow(_)
+            | DialogPart::RebaseAction(_)
+            | DialogPart::RebaseUp
+            | DialogPart::RebaseDown) => self.press_rebase_part(part),
             DialogPart::Copy | DialogPart::NewWindow | DialogPart::Checkout => {
                 if let Some(dialog) = &mut self.form_dialog {
                     let option = match part {

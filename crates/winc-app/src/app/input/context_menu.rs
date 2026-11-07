@@ -258,6 +258,10 @@ pub enum MenuCommand {
     LogResetHard,
     /// 日志里的提交：在这里打一个标签（输入名字）。
     LogNewTag,
+    /// 从这个提交开始交互式变基。
+    LogInteractiveRebase,
+    /// 交互式变基列表一行的处理方式。
+    RebaseAction(winc_editor::git::RebaseAction),
     /// 对提交上第几个标签做的事。
     LogTag(crate::app::git::branch::TagOp, usize),
     /// 日志里的提交：复制完整的提交号。
@@ -398,6 +402,8 @@ impl MenuCommand {
             MenuCommand::LogResetHard => t!("menu-log-reset-hard"),
             MenuCommand::LogNewTag => t!("menu-log-new-tag"),
             MenuCommand::LogTag(op, _) => op.label(),
+            MenuCommand::LogInteractiveRebase => t!("menu-log-interactive-rebase"),
+            MenuCommand::RebaseAction(action) => crate::app::git::rebase::action_label(action),
             MenuCommand::LogCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
@@ -626,6 +632,8 @@ pub enum MenuTarget {
     LogBranch,
     /// 新建工作树对话框的「基于」。
     FormBase,
+    /// 交互式变基列表第几行的处理方式。
+    RebaseAction(usize),
     /// 状态栏的分支菜单。
     StatusBranches,
     /// 状态栏的位置菜单：弹出时的各个位置，菜单项按下标对应。

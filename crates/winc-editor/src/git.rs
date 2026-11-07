@@ -12,10 +12,12 @@ mod commit;
 mod ignored;
 mod output;
 mod parse;
+mod rebase;
 mod remote;
 mod sync;
 
 pub use output::output_text;
+pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
 pub use remote::{Remote, TagTarget, repository_dir_name};
 pub use sync::Synced;
 mod trust;
@@ -717,8 +719,20 @@ impl Git {
         args: &[&str],
         timeout: Duration,
     ) -> Result<String, String> {
+        self.run_prepared(root, args, timeout, |_| {})
+    }
+
+    /// 和 [`Git::run_operation`] 相同，运行前由 `prepare` 调整命令，例如设置环境变量。
+    fn run_prepared(
+        &self,
+        root: &Path,
+        args: &[&str],
+        timeout: Duration,
+        prepare: impl FnOnce(&mut Command),
+    ) -> Result<String, String> {
         let mut command = self.command(root);
         self.ask_through(root, &mut command);
+        prepare(&mut command);
         command.args(args).stderr(Stdio::piped());
         match process::run(&mut command, Vec::new(), timeout, &Cancel::default()) {
             Ok(output) => {

@@ -14,6 +14,7 @@ pub(crate) mod location_picker;
 pub(crate) mod log;
 pub(crate) mod merge;
 pub(crate) mod question;
+pub(crate) mod rebase;
 mod repository;
 pub(crate) mod worktree;
 

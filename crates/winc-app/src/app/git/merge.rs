@@ -1,22 +1,32 @@
 //! 在文件里解决合并冲突：每段冲突可分别采用当前、采用对方、两者都要，或打开并排对比。
 //!
-//! 有冲突标记的文件仍然在编辑区打开，不另开三栏窗口：每段冲突当前这一侧铺蓝、对方铺绿、祖先
-//! 铺灰，`<<<<<<<` 那条上有四个按钮。选一边就是一次普通的修改，⌘Z 能撤销；右上角的卡片说还
-//! 剩几处冲突，能跳上一处、下一处、一次全部采用一边，全解决后变成「标记为已解决」（`git add`）。
-//! 绘制在 `view/git/merge.rs`，可以点的地方绘制时记进 `merge.hits`。
+//! 有冲突标记的文件在编辑区打开：每段冲突当前这一侧铺蓝、对方铺绿、祖先铺灰，`<<<<<<<` 那条上
+//! 有四个按钮。选一边就是一次普通的修改，⌘Z 能撤销；右上角的卡片说还剩几处冲突，能跳上一处、
+//! 下一处、一次全部采用一边，全解决后变成「标记为已解决」（`git add`）。
+//!
+//! 卡片上的「三栏合并」在文件两侧显示当前和对方的完整版本：中间仍是可以编辑的文档，两侧只读并随
+//! 中间滚动，每段冲突上有采用这一侧的按钮。绘制在 `view/git/merge.rs`，可以点的地方绘制时记进
+//! `merge.hits`。
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use winc_core::Lines;
 use winc_editor::DocumentId;
 use winc_editor::diff_view::{DiffSide, DiffView};
 use winc_editor::git::Change;
-use winc_editor::git::merge::{self, Conflict, Pick};
+use winc_editor::git::merge::{self, Conflict, Pick, SideAlign};
 use winc_i18n::t;
 use winc_render::Rect;
 
 use super::changes::replace_lines;
-use crate::app::App;
+use crate::app::{App, UserEvent};
+
+/// 三栏合并的标题行高度（逻辑像素）：中间一栏的标题行容纳右上角的冲突卡片。
+pub(crate) const PANE_HEADER: f32 = 48.0;
+/// 三栏合并中一侧的最小宽度（逻辑像素）：约 30 列代码，窗口放不下三栏时不显示两侧。
+const PANE_MIN: f32 = 240.0;
 
 /// 可以点的地方。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +43,28 @@ pub enum MergeTarget {
     All(Pick),
     /// 冲突都解决了：`git add`，标记为已解决。
     MarkResolved,
+    /// 打开或关闭三栏合并。
+    ThreePane,
+}
+
+/// 三栏合并两侧的内容。
+pub(crate) struct MergePanes {
+    /// 对应的文档。
+    pub doc: DocumentId,
+    /// 当前（下标 0）和对方（下标 1）的完整版本。
+    pub sides: [DiffSide; 2],
+    /// 两侧与文档的行对应关系和计算时文档的版本。
+    pub aligned: Option<(u64, [SideAlign; 2])>,
+}
+
+/// 后台读取两侧的结果。
+struct SidesLoaded {
+    /// 对应的文档。
+    doc: DocumentId,
+    /// 文件的路径。
+    path: PathBuf,
+    /// 当前和对方的内容；读取失败时是原因。
+    sides: Result<[Option<Vec<u8>>; 2], String>,
 }
 
 /// 冲突解决的状态。
@@ -44,6 +76,12 @@ pub(crate) struct MergeState {
     pub hits: Vec<(Rect, MergeTarget)>,
     /// 右上角的卡片；没有时为 `None`。
     pub card: Option<Rect>,
+    /// 三栏合并两侧的内容；没有打开时为 `None`。
+    pub panes: Option<MergePanes>,
+    /// 三栏合并两侧的位置；不显示时宽度为 0。
+    pub pane_rects: [Rect; 2],
+    /// 后台读取两侧的结果。
+    loaded: Option<(Sender<SidesLoaded>, Receiver<SidesLoaded>)>,
 }
 
 impl App {
@@ -94,8 +132,137 @@ impl App {
             }
             MergeTarget::All(pick) => self.pick_all_conflicts(pick),
             MergeTarget::MarkResolved => self.mark_resolved(),
+            MergeTarget::ThreePane => self.toggle_merge_panes(),
         }
         self.request_redraw();
+    }
+
+    /// 打开或关闭当前文件的三栏合并；打开时在后台读取暂存阶段里的两侧。
+    fn toggle_merge_panes(&mut self) {
+        if self.merge_panes_shown() {
+            self.merge.panes = None;
+            self.relayout();
+            self.clamp_scroll();
+            return;
+        }
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        let (id, path) = (doc.id, doc.path.clone());
+        let (Some(path), Some(root)) = (path, self.git.root.clone()) else {
+            return;
+        };
+        let sender = self.merge.loaded.get_or_insert_with(channel).0.clone();
+        self.spawn_git(UserEvent::GitMergeSides, move |tool| {
+            let cancel = winc_editor::format::Cancel::default();
+            let sides = tool.map_err(|e| super::unusable(&e)).and_then(|git| {
+                let read = |stage| git.content_at(&root, stage, &path, &cancel);
+                Ok([read(":2")?, read(":3")?])
+            });
+            let _ = sender.send(SidesLoaded {
+                doc: id,
+                path,
+                sides,
+            });
+        });
+    }
+
+    /// 收下后台读取的两侧。
+    pub(in crate::app) fn poll_merge_sides(&mut self) {
+        let Some((_, results)) = &self.merge.loaded else {
+            return;
+        };
+        let results: Vec<SidesLoaded> = results.try_iter().collect();
+        for loaded in results {
+            self.open_merge_panes(loaded);
+        }
+        self.relayout();
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
+    /// 用读取到的两侧打开三栏合并；非 UTF-8 文件无法逐行对应，只提示原因。
+    fn open_merge_panes(&mut self, loaded: SidesLoaded) {
+        let sides = match loaded.sides {
+            Ok(sides) => sides,
+            Err(reason) => return self.notify(reason),
+        };
+        let Some(doc) = self.editor.document(loaded.doc) else {
+            return;
+        };
+        let language = doc.highlighter.language();
+        let labels = self.merge_side_titles(loaded.doc);
+        let [ours, theirs] = sides;
+        let text = |bytes: Option<Vec<u8>>| String::from_utf8(bytes.unwrap_or_default());
+        let (Ok(ours), Ok(theirs)) = (text(ours), text(theirs)) else {
+            let name = winc_editor::display_name(&loaded.path);
+            return self.notify(t!("git-merge-panes-not-utf8", name = name));
+        };
+        let [ours_title, theirs_title] = labels;
+        self.merge.panes = Some(MergePanes {
+            doc: loaded.doc,
+            sides: [
+                DiffSide::new(ours_title, &ours, None, language),
+                DiffSide::new(theirs_title, &theirs, None, language),
+            ],
+            aligned: None,
+        });
+    }
+
+    /// 返回两侧的标题：冲突标记上有名字时写上名字。
+    fn merge_side_titles(&mut self, doc: DocumentId) -> [String; 2] {
+        let index = self.editor.documents.iter().position(|d| d.id == doc);
+        let conflicts = index.map(|i| self.conflicts(i)).unwrap_or_default();
+        let first = conflicts.first();
+        let title = |who: &str, label: Option<&String>| match label {
+            Some(label) if !label.is_empty() => format!("{who} · {label}"),
+            _ => who.to_owned(),
+        };
+        [
+            title(t!("git-merge-side-current"), first.map(|c| &c.ours_label)),
+            title(
+                t!("git-merge-side-incoming"),
+                first.map(|c| &c.theirs_label),
+            ),
+        ]
+    }
+
+    /// 当前标签是否正在显示三栏合并。
+    ///
+    /// 文件不再是冲突状态（已标记为已解决）时两侧没有意义，不再显示。
+    pub(crate) fn merge_panes_shown(&self) -> bool {
+        let id = self.editor.active().map(|d| d.id);
+        self.merge.panes.as_ref().is_some_and(|p| Some(p.doc) == id) && self.active_unmerged()
+    }
+
+    /// 把编辑区切成三栏：两侧各占三分之一，中间是文档；窗口放不下时不显示两侧。
+    pub(in crate::app) fn place_merge_panes(&mut self) {
+        self.merge.pane_rects = [Rect::default(); 2];
+        if !self.merge_panes_shown() || self.layout.editor.w < PANE_MIN * 3.0 {
+            return;
+        }
+        let l = &mut self.layout;
+        let side = (l.editor.w / 3.0).round();
+        self.merge.pane_rects = [
+            Rect::new(l.editor.x, l.editor.y, side, l.editor.h),
+            Rect::new(l.editor.right() - side, l.editor.y, side, l.editor.h),
+        ];
+        l.editor.x += side;
+        l.editor.w -= side * 2.0;
+        l.gutter.x += side;
+        l.gutter.y += PANE_HEADER;
+        l.gutter.h = (l.gutter.h - PANE_HEADER).max(0.0);
+        l.text.x += side;
+        l.text.y += PANE_HEADER;
+        l.text.w = (l.text.w - side * 2.0).max(0.0);
+        l.text.h = (l.text.h - PANE_HEADER).max(0.0);
+        // 查找条贴着文档的右边。
+        l.search.x -= side;
+    }
+
+    /// 坐标 (`x`, `y`) 是否落在三栏合并的两侧。
+    pub(in crate::app) fn in_merge_pane(&self, x: f32, y: f32) -> bool {
+        self.merge.pane_rects.iter().any(|r| r.contains(x, y))
     }
 
     /// 第 `i` 段冲突按 `pick` 解决：整段换成选的那一边。

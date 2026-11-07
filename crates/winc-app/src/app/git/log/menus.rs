@@ -74,6 +74,7 @@ impl App {
             MenuCommand::LogNewBranch => self.open_branch_dialog(None, Some(oid)),
             MenuCommand::LogNewWorktree => self.new_worktree_at(oid, local_branch(&commit)),
             MenuCommand::LogNewTag => self.open_tag_prompt(oid),
+            MenuCommand::LogInteractiveRebase => self.start_interactive_rebase(oid),
             MenuCommand::LogTag(op, i) => {
                 let tag = commit.refs.iter().filter_map(tag_name).nth(i);
                 if let Some(name) = tag {

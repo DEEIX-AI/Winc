@@ -193,6 +193,7 @@ pub fn log_commit_menu(enabled: bool, branch: &str, tags: &[&str]) -> Vec<MenuEn
         Separator,
         Item(LogCherryPick, enabled),
         Item(LogRevert, enabled),
+        Item(LogInteractiveRebase, enabled),
         Submenu(
             t!("menu-log-reset-branch", branch = branch),
             vec![

@@ -326,6 +326,7 @@ impl App {
             | Then::ConfirmRemove(_)
             | Then::ConfirmForcePush(_)
             | Then::ConfirmForceDelete(_)
+            | Then::RebasePlan(_)
             | Then::Warn(_) => return,
             Then::Refresh => {}
             Then::Open(path, true) => self.open_in_new_window(&path),

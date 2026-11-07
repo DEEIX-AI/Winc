@@ -144,6 +144,8 @@ pub(super) enum Then {
     Open(PathBuf, bool),
     /// 当前目录成为了仓库：重新查找仓库。
     Rescan,
+    /// 读取好了交互式变基的范围：打开对话框，不说做完了。
+    RebasePlan(Box<winc_editor::git::RebasePlan>),
     /// 检查完要移除的工作树：确认以后移除（[`App::confirm_remove_worktree`]），不说做完了。
     ConfirmRemove(RemoveCheck),
     /// 同步需要强制推送：确认以后推送（[`App::confirm_force_push`]），不说做完了；内容是上游将被
@@ -757,7 +759,8 @@ impl App {
                         _,
                         Then::ConfirmRemove(_)
                         | Then::ConfirmForcePush(_)
-                        | Then::ConfirmForceDelete(_),
+                        | Then::ConfirmForceDelete(_)
+                        | Then::RebasePlan(_),
                     )) => {}
                     Ok((_, Then::Warn(warning))) => self.notify(warning),
                     Ok((_, then)) => {
@@ -785,6 +788,7 @@ impl App {
                 Ok((_, Then::ConfirmRemove(check))) => self.confirm_remove_worktree(check),
                 Ok((_, Then::ConfirmForcePush(count))) => self.confirm_force_push(count),
                 Ok((_, Then::Warn(warning))) => self.notify(warning),
+                Ok((_, Then::RebasePlan(plan))) => self.open_rebase_dialog(*plan),
                 Ok((_, Then::ConfirmForceDelete(name))) => self.confirm_force_delete_branch(name),
                 Ok((summary, then)) => {
                     if summary.is_empty() {

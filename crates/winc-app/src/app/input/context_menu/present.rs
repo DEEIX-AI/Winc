@@ -548,6 +548,9 @@ impl App {
                 status_branch_menu(&self.git.branches, &self.git.stale_branches(), usable)
             }
             MenuTarget::StatusPlaces(_) => self.location_menu(),
+            MenuTarget::RebaseAction(_) => (crate::app::git::rebase::REBASE_ACTIONS.iter())
+                .map(|&action| MenuEntry::Item(MenuCommand::RebaseAction(action), true))
+                .collect(),
             MenuTarget::FormBase => form_base_menu(&self.git.branches),
             MenuTarget::LogFile(_, path) => {
                 log_file_menu(path.exists(), self.relative_path(path).is_some())

@@ -35,6 +35,7 @@ impl App {
             MenuTarget::SearchResult(path, m) => self.run_search_result_command(command, path, m),
             // 分支、储藏的下标按弹出菜单时的列表解释：菜单打开期间状态刷新后，
             // 最新列表中相同下标的项可能是另一个分支。
+            MenuTarget::RebaseAction(row) => self.run_rebase_action_command(row, command),
             MenuTarget::FormBase => {
                 if let MenuCommand::FormBase(i) = command {
                     let base = i.checked_sub(1).and_then(|i| menu.branches.get(i));

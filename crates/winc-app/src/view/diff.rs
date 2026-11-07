@@ -1076,7 +1076,7 @@ fn draw_overview(
 }
 
 /// 把这一侧第 `line` 行去掉换行符的内容取进 `chars`，最多 [`MAX_LINE_CHARS`] 个字符。
-fn line_chars(side: &DiffSide, line: usize, chars: &mut Vec<char>) {
+pub(in crate::view) fn line_chars(side: &DiffSide, line: usize, chars: &mut Vec<char>) {
     chars.clear();
     if line >= side.text.len_lines() {
         return;

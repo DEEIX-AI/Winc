@@ -183,10 +183,17 @@ impl App {
         if self.alert.is_some() || self.popup_wheel(dy) {
             return;
         }
-        // 对话框不滚动；下方的编辑区和文件树也不动。
+        // 对话框不滚动（交互式变基的列表除外）；下方的编辑区和文件树也不动。
         if self.form_dialog.is_some() {
+            self.rebase_wheel(dy);
             return;
         }
+        // 三栏合并的两侧随中间的文档滚动：滚轮落在两侧时按落在文档上处理。
+        let x = if self.in_merge_pane(x, y) {
+            l.text.x
+        } else {
+            x
+        };
         // 设置浮层打开时滚轮只滚动浮层的分组区，下方的编辑区和文件树不动。
         if self.settings.open {
             if self.settings_layout().body.contains(x, y) {

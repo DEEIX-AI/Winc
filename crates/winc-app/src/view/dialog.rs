@@ -12,7 +12,7 @@ use winc_render::{FontKind, Frame, Rect, Stroke};
 
 use super::*;
 use crate::app::git::form::{FormKind, FormPlan};
-use crate::layout::{DialogLayout, DialogPart, QUESTION_LINE_H};
+use crate::layout::{DialogLayout, DialogPart, QUESTION_LINE_H, REBASE_PILL_W, REBASE_ROW_H};
 
 /// 绘制对话框：遮罩，再绘制卡片（淡入途中按 [`draw_moving_card`] 整张叠上去）。
 pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
@@ -76,6 +76,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
             return draw_question(app, frame, layout);
         }
         FormKind::Clone => return draw_clone(app, frame, layout),
+        FormKind::Rebase(_) => return draw_rebase(app, frame, layout),
     };
     let card = layout.card;
     frame.rounded(card, p.editor_bg, RADIUS_CARD);
@@ -295,6 +296,178 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     if let Some(error) = error {
         draw_error(app, frame, layout, &error);
     }
+    let ring = match focus {
+        DialogPart::Cancel => Some(layout.cancel),
+        DialogPart::Confirm => Some(layout.confirm),
+        _ => None,
+    };
+    if let Some(rect) = ring {
+        focus_outline(
+            frame,
+            rect.inset(-2.0, -2.0),
+            RADIUS_ROW + 2.0,
+            p.accent,
+            card,
+        );
+    }
+}
+
+/// 绘制交互式变基的对话框：标题行、已推送提交的提醒、提交列表、信息框和底部按钮。
+fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
+    let p = app.palette;
+    let Some(dialog) = app.form_dialog.as_ref() else {
+        return;
+    };
+    let FormKind::Rebase(form) = &dialog.kind else {
+        return;
+    };
+    let form = form.clone();
+    let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
+    let card = layout.card;
+    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    let header = layout.header;
+    let title = t!("git-rebase-title");
+    ui_text(
+        frame,
+        app,
+        header.x + SETTINGS_PAD,
+        header,
+        title,
+        p.text,
+        card,
+    );
+    let close = layout.close;
+    let closing = hover == Some(DialogPart::Close);
+    draw_button(frame, p, close, card, closing, false);
+    icons::close(frame, center(close), 7.0, p.text_muted, close);
+    if form.pushed > 0 {
+        let warning = t!("git-rebase-pushed-warning", count = form.pushed);
+        ui_text_small(
+            frame,
+            app,
+            layout.message.x,
+            layout.message,
+            &warning,
+            p.warning,
+            card,
+        );
+    }
+
+    // 列表：处理方式、短提交号、说明；选中的行铺底色，丢弃的行文字变淡。
+    let list = layout.list;
+    let focused_list = focus == DialogPart::RebaseList;
+    for (i, row) in form.rows.iter().enumerate() {
+        let y = list.y + i as f32 * REBASE_ROW_H - form.scroll;
+        let band = Rect::new(list.x, y, list.w, REBASE_ROW_H);
+        if band.bottom() < list.y || band.y > list.bottom() {
+            continue;
+        }
+        if i == form.selected {
+            let fill = if focused_list { p.selection } else { p.hover };
+            frame.rect_clipped(band, fill, RADIUS_ROW, list);
+        } else if hover == Some(DialogPart::RebaseRow(i)) {
+            frame.rect_clipped(band, p.hover, RADIUS_ROW, list);
+        }
+        let dropped = row.action == winc_editor::git::RebaseAction::Drop;
+        let color = if dropped { p.text_dim } else { p.text };
+        let pill = Rect::new(band.x, band.y, REBASE_PILL_W, band.h);
+        if hover == Some(DialogPart::RebaseAction(i)) {
+            frame.rect_clipped(pill, p.hover, RADIUS_ROW, list);
+        }
+        let label = crate::app::git::rebase::action_label(row.action);
+        let accent = row.action != winc_editor::git::RebaseAction::Pick && !dropped;
+        let label_color = if accent { p.accent } else { color };
+        ui_text(frame, app, pill.x + 8.0, pill, label, label_color, list);
+        let arrow = (pill.right() - 12.0, pill.y + pill.h / 2.0);
+        icons::chevron(frame, arrow, 7.0, icons::Direction::Down, p.text_dim, list);
+        let oid_x = pill.right() + 8.0;
+        let oid: String = row.commit.oid.chars().take(7).collect();
+        let end = super::git::log::mono(app, frame, (oid_x, band), &oid, p.text_muted, list);
+        let text_x = end + 10.0;
+        let subject = match (&row.message, row.action) {
+            (Some(message), winc_editor::git::RebaseAction::Reword) => {
+                message.lines().next().unwrap_or_default()
+            }
+            _ => row.commit.subject.as_str(),
+        };
+        let room = (band.right() - 8.0 - text_x).max(0.0);
+        let subject = ellipsize(frame, subject, app.fonts.ui, room);
+        ui_text(frame, app, text_x, band, &subject, color, list);
+    }
+
+    // 信息框：只在改写时可以编辑。
+    let rewording = form.rewording();
+    let field_focused = app.focus == crate::app::Focus::Dialog && focus == DialogPart::Branch;
+    let rect = layout.branch;
+    field_box(
+        app,
+        frame,
+        rect,
+        p.editor_bg,
+        field_focused && rewording,
+        false,
+    );
+    let area = rect.inset(DIALOG_FIELD_INSET, 6.0);
+    if let Some(mut dialog) = app.form_dialog.take() {
+        let focused = field_focused && rewording;
+        let wrap = super::fields::wrap_area_field(app, frame, area.w, &mut dialog.name, focused);
+        let placeholder = t!("git-rebase-message-placeholder");
+        let caret = super::fields::draw_area_field(
+            app,
+            frame,
+            area,
+            &mut dialog.name,
+            wrap,
+            placeholder,
+            focused,
+        );
+        app.form_dialog = Some(dialog);
+        if caret.is_some() {
+            app.ime_cursor = caret;
+        }
+    }
+
+    // 上移、下移。
+    for (rect, direction, part) in [
+        (layout.values[0], icons::Direction::Up, DialogPart::RebaseUp),
+        (
+            layout.values[1],
+            icons::Direction::Down,
+            DialogPart::RebaseDown,
+        ),
+    ] {
+        draw_button(frame, p, rect, card, hover == Some(part), false);
+        icons::chevron(frame, center(rect), 9.0, direction, p.text_muted, rect);
+    }
+    if let Some(problem) = &plan.problem {
+        let left = layout.values[1].right() + 12.0;
+        let row = Rect::new(
+            left,
+            layout.cancel.y,
+            (layout.cancel.x - 12.0 - left).max(0.0),
+            layout.cancel.h,
+        );
+        let problem = ellipsize(frame, problem, app.fonts.ui_small, row.w);
+        ui_text_small(frame, app, left, row, &problem, p.error, card);
+    }
+    draw_action(
+        app,
+        frame,
+        layout.cancel,
+        t!("common-cancel"),
+        false,
+        true,
+        hover,
+    );
+    draw_action(
+        app,
+        frame,
+        layout.confirm,
+        plan.confirm,
+        true,
+        plan.enabled,
+        hover,
+    );
     let ring = match focus {
         DialogPart::Cancel => Some(layout.cancel),
         DialogPart::Confirm => Some(layout.confirm),

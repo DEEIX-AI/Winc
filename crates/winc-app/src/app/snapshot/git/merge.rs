@@ -1,5 +1,9 @@
 //! 合并冲突的测试：标记行上的按钮、「采用对方」与「两者都保留」、标记为已解决并完成合并。
 
+use winc_editor::git::merge::Pick;
+
+use crate::app::git::merge::MergeTarget;
+
 use super::*;
 
 /// 在 `dir` 中做一次会冲突的合并：`main` 与 `other` 修改了 `src/main.rs` 的同一行。
@@ -197,4 +201,131 @@ fn shoot_merge_conflict() {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// 打开有一段冲突的文件：两侧都改了第 2 行，对方还改了第 5 行，后者由 `git` 自动合入。
+fn three_way_app(name: &str) -> Option<(App, PathBuf)> {
+    let dir = search_folder(name);
+    let run = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    let file = dir.join("merged.txt");
+    let mut ready = run(&["init", "-q", "-b", "main"])
+        && run(&["config", "user.name", "t"])
+        && run(&["config", "user.email", "t@t"])
+        && run(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").unwrap();
+    ready = ready && run(&["add", "--all"]) && run(&["commit", "-q", "-m", "base"]);
+    ready = ready && run(&["switch", "-q", "-c", "side"]);
+    std::fs::write(&file, "one\nTWO side\nthree\nfour\nFIVE\n").unwrap();
+    ready = ready && run(&["commit", "-qam", "side"]) && run(&["switch", "-q", "main"]);
+    std::fs::write(&file, "one\nTWO main\nthree\nfour\nfive\n").unwrap();
+    ready = ready && run(&["commit", "-qam", "main"]);
+    if !ready {
+        skip_without_git("无法用 git 建测试仓库");
+        return None;
+    }
+    // 合并必然产生冲突，退出码不为 0。
+    let _ = run(&["merge", "--no-edit", "side"]);
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return None;
+    }
+    app.open_path(&file);
+    paint(&mut app);
+    Some((app, file))
+}
+
+#[test]
+fn the_three_way_view_shows_both_sides_next_to_the_file() {
+    let Some((mut app, file)) = three_way_app("merge-three-way") else {
+        return;
+    };
+    let editor_w = app.layout.editor.w;
+    assert!(app.merge.pane_rects[0].w == 0.0);
+    app.press_merge(MergeTarget::ThreePane);
+    paint(&mut app);
+    assert!(app.merge_panes_shown());
+    let [left, right] = app.merge.pane_rects;
+    assert!(left.w > 0.0 && right.w > 0.0);
+    // 中间夹在两侧之间，文字区跟着文档移动。
+    assert!(app.layout.editor.x >= left.right());
+    assert!(app.layout.editor.right() <= right.x);
+    assert!(app.layout.text.x >= app.layout.editor.x);
+    let panes = app.merge.panes.as_ref().unwrap();
+    assert_eq!(
+        panes.sides[0].text.to_string(),
+        "one\nTWO main\nthree\nfour\nfive\n"
+    );
+    assert_eq!(
+        panes.sides[1].text.to_string(),
+        "one\nTWO side\nthree\nfour\nFIVE\n"
+    );
+
+    // 右栏的按钮采用对方这一段；中间是普通文档，修改可以撤销。
+    let target = MergeTarget::Pick(0, Pick::Theirs);
+    assert!(
+        app.merge
+            .hits
+            .iter()
+            .any(|(rect, t)| *t == target && right.contains(rect.x, rect.y))
+    );
+    app.press_merge(target);
+    let text = app
+        .editor
+        .active()
+        .unwrap()
+        .text()
+        .rope()
+        .unwrap()
+        .to_string();
+    assert!(
+        text.contains("TWO side") && !text.contains("<<<<<<<"),
+        "{text}"
+    );
+    paint(&mut app);
+    // 没有冲突标记但文件还没标记为已解决时，两侧仍然显示。
+    assert!(app.merge_panes_shown());
+
+    // 标记为已解决后两侧收起。
+    app.press_merge(MergeTarget::MarkResolved);
+    app.git_refresh();
+    paint(&mut app);
+    assert!(!app.merge_panes_shown());
+    assert_eq!(app.merge.pane_rects[0].w, 0.0);
+    assert_eq!(app.layout.editor.w, editor_w);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("FIVE"));
+}
+
+#[test]
+fn the_three_way_view_can_be_closed() {
+    let Some((mut app, _file)) = three_way_app("merge-three-way-close") else {
+        return;
+    };
+    let editor_w = app.layout.editor.w;
+    app.press_merge(MergeTarget::ThreePane);
+    paint(&mut app);
+    assert!(app.merge.pane_rects[0].w > 0.0);
+    // 关闭后文档恢复原来的宽度。
+    app.press_merge(MergeTarget::ThreePane);
+    paint(&mut app);
+    assert!(!app.merge_panes_shown());
+    assert_eq!(app.layout.editor.w, editor_w);
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_three_way_view() {
+    let Some((mut app, _file)) = three_way_app("merge-three-way-shot") else {
+        return;
+    };
+    app.press_merge(MergeTarget::ThreePane);
+    paint(&mut app);
+    shoot(&mut app, "git-three-way");
 }

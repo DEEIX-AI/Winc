@@ -129,7 +129,7 @@ pub(crate) fn wrap_area_field(
 /// 文字超出高度时纵向滚动，使光标所在的行始终可见。
 ///
 /// 有焦点时返回光标的矩形，供输入法候选框定位。
-pub(super) fn draw_area_field(
+pub(crate) fn draw_area_field(
     app: &App,
     frame: &mut Frame<'_>,
     area: Rect,

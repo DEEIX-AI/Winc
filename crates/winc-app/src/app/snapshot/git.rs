@@ -25,6 +25,7 @@ mod log_details;
 mod merge;
 mod module;
 mod question;
+mod rebase;
 mod repository;
 mod worktree;
 

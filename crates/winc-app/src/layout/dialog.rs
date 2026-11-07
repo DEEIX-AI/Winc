@@ -16,6 +16,19 @@ const QUESTION_W: f32 = 520.0;
 /// 询问对话框的名称列宽度（逻辑像素）：容纳英文名称中最长的 `Fingerprint`。
 const QUESTION_LABEL_W: f32 = 76.0;
 
+/// 交互式变基对话框的宽度（逻辑像素）：提交说明在一行内可读。
+const REBASE_W: f32 = 640.0;
+/// 交互式变基列表一行的高度（逻辑像素）。
+pub const REBASE_ROW_H: f32 = 28.0;
+/// 交互式变基列表中处理方式一列的宽度（逻辑像素）：容纳最长的文字和下拉箭头。
+pub const REBASE_PILL_W: f32 = 84.0;
+/// 交互式变基列表最多同时显示的行数（行）：更多的提交滚动查看，对话框高度保持在窗口之内。
+const REBASE_ROWS: usize = 10;
+/// 交互式变基信息框的高度（逻辑像素）：容纳约四行文字。
+const REBASE_MESSAGE_H: f32 = 84.0;
+/// 交互式变基上移、下移按钮的边长（逻辑像素）。
+const REBASE_MOVE: f32 = 28.0;
+
 /// 对话框里可以点的部件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogPart {
@@ -29,6 +42,16 @@ pub enum DialogPart {
     Branch,
     /// 询问对话框的第二个输入框：登录的密码、远程仓库的地址。
     Second,
+    /// 交互式变基的列表（键盘焦点）。
+    RebaseList,
+    /// 交互式变基列表的第几行。
+    RebaseRow(usize),
+    /// 交互式变基列表第几行的处理方式。
+    RebaseAction(usize),
+    /// 把选中的行上移。
+    RebaseUp,
+    /// 把选中的行下移。
+    RebaseDown,
     /// 「基于」的分支菜单。
     Base,
     /// 「位置」右端选目录的按钮。
@@ -46,6 +69,8 @@ pub enum DialogPart {
 pub struct DialogLayout {
     /// 卡片。
     pub card: Rect,
+    /// 交互式变基的提交列表；其他对话框为空矩形。
+    pub list: Rect,
     /// 询问对话框的说明文字；没有说明时为空矩形。
     pub message: Rect,
     /// 询问对话框的只读信息行。
@@ -151,6 +176,7 @@ impl DialogLayout {
 
         DialogLayout {
             card: at(Rect::new(0.0, 0.0, w, h)),
+            list: Rect::default(),
             message: Rect::default(),
             values: Vec::new(),
             second: Rect::default(),
@@ -228,6 +254,66 @@ impl DialogLayout {
             close: at(close),
             labels: labels.into_iter().map(at).collect(),
             branch: field(0),
+            cancel: at(cancel),
+            confirm: at(confirm),
+            ..DialogLayout::default()
+        }
+    }
+
+    /// 计算交互式变基对话框的几何：`rows` 是提交数，`warning` 表示有已推送的提交。
+    ///
+    /// `values` 依次是上移、下移按钮，`branch` 是信息框，`message` 是已推送提交的提醒。
+    pub fn rebase(window: Rect, rows: usize, warning: bool) -> Self {
+        let w = REBASE_W.min(window.w - SETTINGS_MARGIN * 2.0).max(0.0);
+        let inner = (w - SETTINGS_PAD * 2.0).max(0.0);
+        let x = SETTINGS_PAD;
+        let header = Rect::new(0.0, 0.0, w, SETTINGS_HEADER);
+        let close = Rect::new(
+            w - 12.0 - BUTTON,
+            (SETTINGS_HEADER - BUTTON) / 2.0,
+            BUTTON,
+            BUTTON,
+        );
+        let mut y = header.bottom() + 4.0;
+        let message = Rect::new(x, y, inner, if warning { QUESTION_LINE_H } else { 0.0 });
+        if warning {
+            y = message.bottom() + DIALOG_GAP;
+        }
+        let list_h = rows.min(REBASE_ROWS) as f32 * REBASE_ROW_H;
+        let list = Rect::new(x, y, inner, list_h);
+        y = list.bottom() + DIALOG_GAP;
+        let field = Rect::new(x, y, inner, REBASE_MESSAGE_H);
+        y = field.bottom() + DIALOG_GAP + 6.0;
+        let confirm = Rect::new(
+            x + inner - DIALOG_BUTTON_W,
+            y,
+            DIALOG_BUTTON_W,
+            SETTINGS_CONTROL_H,
+        );
+        let cancel = Rect::new(
+            confirm.x - 8.0 - DIALOG_BUTTON_W,
+            y,
+            DIALOG_BUTTON_W,
+            SETTINGS_CONTROL_H,
+        );
+        let move_y = y + (SETTINGS_CONTROL_H - REBASE_MOVE) / 2.0;
+        let up = Rect::new(x, move_y, REBASE_MOVE, REBASE_MOVE);
+        let down = Rect::new(up.right() + 4.0, move_y, REBASE_MOVE, REBASE_MOVE);
+        let h = confirm.bottom() + SETTINGS_PAD;
+        let room = (window.h - h).max(0.0);
+        let (dx, dy) = (
+            (window.x + (window.w - w) / 2.0).round(),
+            (window.y + room * 0.42).round(),
+        );
+        let at = |r: Rect| Rect::new(r.x + dx, r.y + dy, r.w, r.h);
+        DialogLayout {
+            card: at(Rect::new(0.0, 0.0, w, h)),
+            list: at(list),
+            message: at(message),
+            values: vec![at(up), at(down)],
+            header: at(header),
+            close: at(close),
+            branch: at(field),
             cancel: at(cancel),
             confirm: at(confirm),
             ..DialogLayout::default()

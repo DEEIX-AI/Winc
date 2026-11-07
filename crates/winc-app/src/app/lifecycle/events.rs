@@ -316,6 +316,7 @@ impl App {
             | UserEvent::GitCommit
             | UserEvent::GitBase
             | UserEvent::GitOperated
+            | UserEvent::GitMergeSides
             | UserEvent::GitLog
             | UserEvent::GitBlame
             | UserEvent::Reread

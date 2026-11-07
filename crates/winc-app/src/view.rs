@@ -90,6 +90,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_sidebar_button(app, frame);
     draw_editor(app, frame);
     editor::draw_split(app, frame);
+    git::merge::draw_side_panes(app, frame);
     terminal::draw_terminal(app, frame);
     draw_window_controls(app, frame);
     draw_status(app, frame);

@@ -519,10 +519,23 @@ impl App {
                 crate::layout::DialogPart::Branch | crate::layout::DialogPart::Second
             )
         });
+        // 交互式变基的信息框是多行的：回车换行，⌘回车开始变基。
+        let multiline = on_name
+            && (self.form_dialog.as_ref())
+                .is_some_and(|d| matches!(d.kind, crate::app::git::form::FormKind::Rebase(_)));
+        if !cmd
+            && !matches!(key, Key::Named(NamedKey::Escape | NamedKey::Tab))
+            && self.rebase_list_key(key, base)
+        {
+            return true;
+        }
         match key {
             Key::Named(NamedKey::Escape) => self.close_form_dialog(),
             Key::Named(NamedKey::Tab) => self.form_focus_move(self.modifiers.shift_key()),
             _ if cmd && base == "w" => self.close_form_dialog(),
+            Key::Named(NamedKey::Enter) if multiline && !cmd => {
+                self.edit_field(|field| field.insert("\n"));
+            }
             Key::Named(NamedKey::Enter) if on_name => self.submit_form_dialog(),
             Key::Named(NamedKey::Enter | NamedKey::Space) if !on_name => self.form_activate(),
             _ if !on_name => {}
