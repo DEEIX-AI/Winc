@@ -227,6 +227,16 @@ impl ApplicationHandler<UserEvent> for App {
             self.display_link =
                 crate::macos::DisplayLink::new(&window, move || redraw.request_redraw());
         }
+        #[cfg(windows)]
+        {
+            let redraw = window.clone();
+            self.display_link = crate::windows::DisplayLink::new(
+                super::window::frame_interval(&window),
+                move || {
+                    redraw.request_redraw();
+                },
+            );
+        }
 
         window.request_redraw();
     }
@@ -637,6 +647,8 @@ impl App {
         earliest(&mut wake, self.scrollbar_tick(now));
 
         earliest(&mut wake, self.settings_scroll_tick(now));
+
+        earliest(&mut wake, self.bench_wheel_tick(now));
 
         earliest(&mut wake, self.format_progress_tick(now));
 

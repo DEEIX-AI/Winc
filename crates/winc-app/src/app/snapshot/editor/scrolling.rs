@@ -224,6 +224,41 @@ fn a_mouse_wheel_notch_glides_and_a_trackpad_follows_directly() {
 }
 
 #[test]
+fn quick_wheel_notches_shorten_the_glide() {
+    use crate::app::input::mouse::wheel_glide_length;
+
+    let ms = Duration::from_millis;
+    // 单独的一格和间隔较长的一格按完整时长过渡。
+    assert_eq!(wheel_glide_length(None), SCROLL_GLIDE);
+    assert_eq!(wheel_glide_length(Some(ms(400))), SCROLL_GLIDE);
+    // 回归：每格都按完整时长重新计时，快速转动滚轮时画面越来越落后于滚轮。过渡时长为间隔的
+    // 两倍，最短 50 毫秒。
+    assert_eq!(wheel_glide_length(Some(ms(40))), ms(80));
+    assert_eq!(wheel_glide_length(Some(ms(8))), ms(50));
+}
+
+#[test]
+fn a_fast_spinning_wheel_keeps_the_view_close() {
+    use crate::app::input::mouse::wheel_glide_length;
+
+    let (mut app, dir) = long_file("wheel-spin");
+    let text = app.layout.text;
+    app.on_mouse_move(text.x + 100.0, text.y + 100.0);
+    let notch = 3.0 * app.fonts.line_height;
+    // 每 10 毫秒一格（滚轮快速转动）：下一格到来时，上一格的过渡进行到 10 毫秒处。
+    let interval = Duration::from_millis(10);
+    let length = wheel_glide_length(Some(interval));
+    for _ in 0..20 {
+        app.start_wheel_glide((0.0, -notch), Clock::stopped(length, interval));
+        app.advance_wheel_glide();
+    }
+    // 画面落后于滚轮约一格；按完整时长重新计时时落后三格以上。
+    let behind = 20.0 * 3.0 - scroll(&app);
+    assert!(behind < 3.0 * 1.2, "{behind}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_mouse_wheel_notch_scrolls_the_platform_distance() {
     let (mut app, dir) = long_file("wheel-step");
     let text = app.layout.text;

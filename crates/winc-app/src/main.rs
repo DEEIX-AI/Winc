@@ -15,6 +15,7 @@ mod bench;
 mod cli;
 mod crash;
 mod field;
+mod frame_log;
 mod icons;
 mod instance;
 mod keymap;

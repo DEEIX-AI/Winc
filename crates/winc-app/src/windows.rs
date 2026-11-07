@@ -1,4 +1,8 @@
-//! Windows 上交由系统的操作，以及读取的系统设置。
+//! Windows 上交由系统的操作，读取的系统设置，以及按屏幕刷新绘制动画的显示链接。
+
+mod display_link;
+
+pub use display_link::DisplayLink;
 
 use std::io;
 use std::os::windows::ffi::OsStrExt;
