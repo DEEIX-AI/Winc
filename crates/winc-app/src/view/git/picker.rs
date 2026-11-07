@@ -16,7 +16,7 @@ use winc_i18n::t;
 use super::super::popup_menu::band_ink;
 use super::commit::draw_count_pill_in;
 use crate::app::git::branch::local_name;
-use crate::app::git::branch::picker::{BranchRow, BranchSection};
+use crate::app::git::branch::picker::{BranchRow, BranchSection, GIT_PICKER_ACTIONS_TOP};
 use crate::app::git::location_picker::{LocationRow, Place};
 use crate::app::git::log::display_local;
 use crate::app::{Focus, PICKER_ROW, PickerPart};
@@ -113,7 +113,7 @@ fn draw_actions(
     let actions = [PickerPart::Pull, PickerPart::Push, PickerPart::Fetch];
     for (i, part) in actions.into_iter().enumerate() {
         let x = area.x + GUTTER + i as f32 * (w + TAB_GAP);
-        let rect = Rect::new(x, area.y, w, BUTTON_SMALL);
+        let rect = Rect::new(x, area.y + GIT_PICKER_ACTIONS_TOP, w, BUTTON_SMALL);
         let enabled = app.picker_action_enabled(part);
         let hovered = enabled && app.hover == Hover::PickerPart(part);
         let fill = if hovered {
@@ -634,10 +634,8 @@ fn draw_footer(
         let hovered = app.hover == Hover::PickerPart(part);
         draw_button(frame, p, button, foot, hovered, false);
         let color = if hovered { p.text } else { p.text_muted };
-        let icon = (
-            x + ICON_CENTER - GUTTER,
-            icon_center_y(app, button, app.fonts.ui),
-        );
+        // 图标与文字按同一字号垂直居中。
+        let icon = (x + ICON_CENTER - GUTTER, icon_center_y(app, button, size));
         icons::plus(frame, icon, 8.0, color, foot);
         ui_text_small(
             frame,

@@ -65,9 +65,11 @@ const GIT_PICKER_GAP: f32 = 4.0;
 /// 选择面板底栏的高度（逻辑像素）：上面留 4，`BUTTON_SMALL` 高的按钮，下面留 6，和顶部的搜索行
 /// 对称。
 pub const GIT_PICKER_FOOT: f32 = 34.0;
-/// 分支选择器搜索框下面拉取、推送、获取一行的高度（逻辑像素）：`BUTTON_SMALL` 高的按钮，下面留
-/// 4，和搜索框下沿到这一行的距离相同。
-pub const GIT_PICKER_ACTIONS: f32 = 28.0;
+/// 分支选择器中拉取、推送、获取一行的高度（逻辑像素）：上下各留 4，中间是 `BUTTON_SMALL` 高的
+/// 按钮。加上搜索行下方的 4，按钮与搜索框相距 8，不贴近搜索框获得焦点时的外框。
+pub const GIT_PICKER_ACTIONS: f32 = 32.0;
+/// 拉取、推送、获取按钮上方的留白（逻辑像素）。
+pub const GIT_PICKER_ACTIONS_TOP: f32 = 4.0;
 /// 从状态栏展开时面板的宽度（逻辑像素）：和默认宽度的侧栏里从分支行展开时一样宽（侧栏 300
 /// 减去两边各 8 的边距）。
 const STATUS_PICKER_W: f32 = crate::theme::DEFAULT_PANEL_WIDTH - 16.0;
