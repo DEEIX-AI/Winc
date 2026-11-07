@@ -164,6 +164,14 @@ cmd-next-terminal = 终端：下一个标签页
 cmd-previous-terminal = 终端：上一个标签页
 cmd-find-in-terminal = 终端：查找
 cmd-toggle-terminal-position = 终端：切换面板位置
+cmd-install-shell-command = Shell 命令：安装 winc 命令
+cmd-uninstall-shell-command = Shell 命令：卸载 winc 命令
+shell-command-installed = 已安装 winc 命令：{ $path }
+shell-command-installed-hint = 已安装 winc 命令：{ $path }。如果终端找不到命令，请把 { $dir } 加入 PATH。
+shell-command-uninstalled = 已卸载 winc 命令
+shell-command-not-installed = 没有安装 winc 命令
+shell-command-occupied = { $path } 已被其他程序占用，未作改动
+shell-command-failed = 无法修改 { $path }：{ $error }
 cmd-maximize-terminal = 终端：最大化面板
 cmd-rename-terminal = 终端：重命名
 cmd-previous-command = 终端：上一条命令
@@ -196,6 +204,7 @@ cmd-cli-usage =
       -w, --wait            等文件的标签都关闭后再退出（例如 git config core.editor "winc -w"）
       -n, --new-instance    不交给正在运行的 winc，另开一个进程（例如在 winc 的终端里运行开发中的版本）
       -h, --help            显示这些说明
+      -v, --version         显示版本号
 cmd-cli-unknown-option = 无法识别的选项「{ $flag }」
 cmd-cli-wait-needs-file = --wait 需要指定文件
 cmd-cli-wsl-needs-name = --wsl 需要指定发行版名称
