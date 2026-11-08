@@ -522,11 +522,7 @@ impl App {
                 commit_selection_menu(any_exists)
             }
             MenuTarget::CommitFile(path) => {
-                let staged = (self.git.status.as_ref()).is_some_and(|status| {
-                    (status.entries.iter())
-                        .any(|e| e.path == *path && e.staged.is_some() && !e.conflicted())
-                });
-                commit_file_menu(path.exists(), self.relative_path(path).is_some(), staged)
+                commit_file_menu(path.exists(), self.relative_path(path).is_some())
             }
             MenuTarget::SearchResult(_, m) => {
                 search_result_menu(m.is_none(), self.global.replace_open)

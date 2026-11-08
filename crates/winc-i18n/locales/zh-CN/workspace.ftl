@@ -179,7 +179,6 @@ workspace-tip-commit-push-to = 提交并推送 { $branch }
 workspace-tip-commit = 提交
 workspace-tip-open-file = 打开文件
 workspace-tip-revert-change = 回滚更改
-workspace-tip-commit-staged-only = 仅提交已暂存的部分，其余更改保留在工作区
 workspace-tip-commit-menu = 更多提交方式
 workspace-tip-git-log = Git 日志
 workspace-tip-git-refresh = 刷新

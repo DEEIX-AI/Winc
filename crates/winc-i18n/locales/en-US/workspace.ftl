@@ -239,7 +239,6 @@ workspace-tip-commit-push-to = Commit and push { $branch }
 workspace-tip-commit = Commit
 workspace-tip-open-file = Open file
 workspace-tip-revert-change = Revert change
-workspace-tip-commit-staged-only = Commits only the staged part; the rest stays in the working tree
 workspace-tip-commit-menu = More commit options
 workspace-tip-git-log = Git log
 workspace-tip-git-refresh = Refresh
