@@ -1196,7 +1196,14 @@ impl App {
                 }
                 _ if view.is_identical() => {
                     self.diff_land = None;
-                    self.flash(t!("git-diff-identical", name = name.as_str()));
+                    // 逐行比较不计换行符的写法，没有改动时两侧的内容仍可能只差换行符。这类差别
+                    // 是否算作修改由 `git` 按 `core.autocrlf` 和文件属性判定，提示只说明差别所在。
+                    let text = if view.old.text == view.new.text {
+                        t!("git-diff-identical", name = name.as_str())
+                    } else {
+                        t!("git-diff-line-endings-only", name = name.as_str())
+                    };
+                    self.flash(text);
                     continue;
                 }
                 Target::Preview(_) => {

@@ -268,6 +268,7 @@ git-diff-head-unreadable = 无法读取「{ $name }」在上次提交中的版�
 git-diff-too-large = 「{ $name }」过大，不显示差异
 git-diff-binary = 「{ $name }」是二进制文件，不显示差异
 git-diff-identical = 「{ $name }」与上次提交时相同
+git-diff-line-endings-only = 「{ $name }」与上次提交时只有换行符不同
 git-diff-side-worktree-deleted = 工作区 · 已删除
 git-diff-side-head-missing = HEAD · 文件不存在
 
