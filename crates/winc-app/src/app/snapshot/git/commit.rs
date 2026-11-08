@@ -573,6 +573,13 @@ fn shoot_commit_stashes() {
         .unwrap();
     app.on_mouse_move(row.x + 20.0, row.y + row.h / 2.0);
     shoot(&mut app, "commit-stashes");
+    // 点开第一条：它的文件列在下面，正在看的那个选中。
+    std::fs::write(root.join("notes.txt"), "draft\n").unwrap();
+    git_in(&root, &["stash", "push", "-q", "-u", "-m", "带一个新文件"]);
+    app.git_refresh();
+    paint(&mut app);
+    app.press_commit(CommitTarget::Stash(0));
+    shoot(&mut app, "commit-stash-files");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -2675,6 +2682,32 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 1);
     assert!(app.editor.active().unwrap().name().contains("notes.txt"));
     assert_eq!(app.next_stash_file(true), None);
+
+    // 储藏那一行下面列出它的两个文件，点第一个在预览标签里换回它。
+    use crate::app::StashLine;
+    let lines = [StashLine::Stash(0), StashLine::File(0), StashLine::File(1)];
+    assert_eq!(app.stash_lines(), lines);
+    paint(&mut app);
+    let section = app.commit_parts().stashes.unwrap();
+    assert_eq!(
+        section.h,
+        4.0 * COMMIT_ROW + 2.0 * crate::app::git::commit::STASH_GAP
+    );
+    assert!((app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::StashFile(1)));
+    app.press_commit(CommitTarget::StashFile(0));
+    assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 0);
+    assert!(app.editor.active().unwrap().name().contains("main.rs"));
+
+    // 再点一下这条储藏：文件收起，预览标签还在；再点又展开。
+    app.press_commit(CommitTarget::Stash(0));
+    assert_eq!(app.stash_lines(), [StashLine::Stash(0)]);
+    assert!(app.editor.active().unwrap().name().contains("main.rs"));
+    app.press_commit(CommitTarget::Stash(0));
+    assert_eq!(app.stash_lines(), lines);
+    // 关掉预览标签：文件不再列出。
+    app.run_action(Action::CloseTab);
+    paint(&mut app);
+    assert_eq!(app.stash_lines(), [StashLine::Stash(0)]);
 
     // 「应用」：改动回到工作区，储藏还在。
     app.press_commit(CommitTarget::StashApply(0));

@@ -44,6 +44,7 @@ git-branch-force-delete-confirm-detail = 只属于此分支的提交可能会丢
 git-branch-force-delete-confirm-button = 仍要删除
 git-branch-compare-with-current = 与当前分支比较
 git-stash-group = 储藏
+git-stash-more-files = 还有 { $count } 个文件
 git-stash-more = 另有 { $count } 个储藏…
 git-stash-no-files = 此储藏中没有可显示的更改
 git-stash-apply = 应用

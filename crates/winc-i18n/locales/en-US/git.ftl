@@ -44,6 +44,10 @@ git-branch-force-delete-confirm-detail = Commits that exist only on this branch 
 git-branch-force-delete-confirm-button = Delete Anyway
 git-branch-compare-with-current = Compare with Current Branch
 git-stash-group = Stashes
+git-stash-more-files = { $count ->
+    [one] { $count } more file
+   *[other] { $count } more files
+}
 git-stash-more = { $count ->
     [one] 1 more stash…
    *[other] { $count } more stashes…

@@ -11,7 +11,7 @@ pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::SyncState;
 mod list;
 mod stash;
-pub(crate) use stash::{STASH_GAP, StashView};
+pub(crate) use stash::{STASH_GAP, StashLine, StashView};
 mod state;
 
 use state::*;
@@ -392,6 +392,8 @@ pub enum CommitTarget {
     Stashes,
     /// 第几条储藏（`GitState::stashes` 的下标）那一行：在预览标签里看它的改动。
     Stash(usize),
+    /// 正在看的储藏下面列出的一个文件（`StashView::files` 的下标）：在预览标签里看它。
+    StashFile(usize),
     /// 悬停储藏那一行时右端的「应用」。
     StashApply(usize),
     /// 悬停储藏那一行时右端的「⋯」：应用、应用并删除、删除。
@@ -634,6 +636,10 @@ pub(crate) struct CommitState {
     pub(crate) stash_motion: Option<(f32, crate::app::animation::Clock)>,
     /// 正在储藏的预览标签里看的一条储藏。
     pub(crate) stash_view: Option<StashView>,
+    /// 正在看的储藏下面的文件是否收起了：再点一下那条储藏时收起、展开。
+    pub(crate) stash_files_folded: bool,
+    /// 上一帧储藏一组的终点高度（逻辑像素），见 [`App::track_stash_height`]。
+    pub(crate) stash_settled: f32,
     /// 储藏的预览标签：和改动列表的预览标签分开，那个标签跟着工作区里的文件刷新。
     pub(crate) stash_preview: Option<DocumentId>,
     /// 提交成功以后继续推送（「提交并推送」）。
@@ -711,6 +717,8 @@ impl Default for CommitState {
             stash_open: false,
             stash_motion: None,
             stash_view: None,
+            stash_files_folded: false,
+            stash_settled: 0.0,
             stash_preview: None,
             push_after: false,
             last: None,
@@ -1240,6 +1248,7 @@ impl App {
                 | CommitTarget::Dir(_)
                 | CommitTarget::DirCheck(_)
                 | CommitTarget::Stash(_)
+                | CommitTarget::StashFile(_)
                 | CommitTarget::StashApply(_)
                 | CommitTarget::StashMenu(_)
         );
@@ -1279,6 +1288,7 @@ impl App {
             CommitTarget::GroupRevert(group) => self.ask_rollback(group),
             CommitTarget::Stashes => self.toggle_stashes(),
             CommitTarget::Stash(i) => self.show_stash(i),
+            CommitTarget::StashFile(at) => self.open_stash_file(at),
             CommitTarget::StashApply(i) => {
                 if let Some(stash) = self.git.stashes.get(i).cloned() {
                     self.run_stash_op(super::branch::StashOp::Apply, stash);

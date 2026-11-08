@@ -18,7 +18,8 @@ use crate::app::animation::stage;
 use crate::app::git::log::display_local;
 use crate::app::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE, MESSAGE_PAD, SyncState,
+    CommitRows, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE, MESSAGE_PAD, StashLine,
+    StashView, SyncState,
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
@@ -53,6 +54,7 @@ const NEXT_PAD: f32 = 12.0;
 pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
     // 提交信息框随内容长高：先按框的宽度折好行（框的宽度和高度无关，卡片和分支行同宽，卡片
     // 收起时也照样折），框的高度按行数定，绘制时继续使用折好的行。
+    app.track_stash_height();
     let row = app.commit_parts().branch;
     let width = message_area(app, Rect::new(row.x, 0.0, row.w, 0.0)).w;
     let focused = app.focus == Focus::CommitMessage;
@@ -537,6 +539,8 @@ fn draw_undo(
 /// 标题的箭头同一列。各条储藏和标题的文字对齐：行前面没有勾选框和图标，再缩进一层只会留下
 /// 一块空白。
 const STASH_TITLE: f32 = ARROW + 10.0;
+/// 正在看的储藏下面各个文件的图标离行左边的距离（逻辑像素）：比储藏名再缩进一级。
+const STASH_FILE: f32 = STASH_TITLE + 12.0;
 /// 储藏那一行悬停时「应用」文字两侧的留白（逻辑像素），和「上一次提交」那一栏的「撤销」相同。
 const STASH_APPLY_PAD: f32 = 6.0;
 
@@ -601,9 +605,36 @@ fn draw_stashes(
     let viewing = (app.commit.stash_view.as_ref())
         .filter(|_| app.editor.active().map(|d| d.id) == app.commit.stash_preview)
         .map(|view| view.oid.as_str());
-    let shown = app.shown_stashes();
-    for (i, stash) in shown.iter().enumerate() {
-        let row = band(i + 1);
+    let listed = app.listed_stash_view();
+    for (n, line) in app.stash_lines().into_iter().enumerate() {
+        let row = band(n + 1);
+        let i = match line {
+            StashLine::Stash(i) => i,
+            StashLine::File(at) => {
+                if let Some(view) = listed {
+                    draw_stash_file(app, frame, row, view, at, clip);
+                    hits.push((row, CommitTarget::StashFile(at)));
+                }
+                continue;
+            }
+            StashLine::MoreFiles(count) => {
+                let text = t!("git-stash-more-files", count = count);
+                let x = row.x + STASH_FILE;
+                ui_text_small(frame, app, x, row, &text, p.text_dim, clip);
+                continue;
+            }
+            StashLine::MoreStashes(rest) => {
+                if app.hover == Hover::Commit(CommitTarget::StashMore) {
+                    frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
+                }
+                let text = t!("git-stash-more", count = rest);
+                let x = row.x + STASH_TITLE;
+                ui_text_small(frame, app, x, row, &text, p.text_muted, clip);
+                hits.push((row, CommitTarget::StashMore));
+                continue;
+            }
+        };
+        let stash = &app.git.stashes[i];
         let hovered = matches!(
             app.hover,
             Hover::Commit(
@@ -658,16 +689,55 @@ fn draw_stashes(
         label(frame, app, app.fonts.ui, (x, row), &name, p.text, room);
         hits.push((row, CommitTarget::Stash(i)));
     }
-    let rest = app.git.stashes.len() - shown.len();
-    if rest > 0 {
-        let row = band(shown.len() + 1);
-        if app.hover == Hover::Commit(CommitTarget::StashMore) {
-            frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
-        }
-        let text = t!("git-stash-more", count = rest);
-        let x = row.x + STASH_TITLE;
-        ui_text_small(frame, app, x, row, &text, p.text_muted, clip);
-        hits.push((row, CommitTarget::StashMore));
+}
+
+/// 绘制正在看的储藏下面的一个文件：比储藏名再缩进一级，文件图标、文件名、淡色的所在目录，右端
+/// 是状态字母；正在看的那个文件铺选中的底色。
+fn draw_stash_file(
+    app: &App,
+    frame: &mut Frame<'_>,
+    row: Rect,
+    view: &StashView,
+    at: usize,
+    clip: Rect,
+) {
+    let p = app.palette;
+    let Some((file, ..)) = view.files.get(at) else {
+        return;
+    };
+    let hovered = app.hover == Hover::Commit(CommitTarget::StashFile(at));
+    let shade = Rect::new(row.x, row.y + 1.0, row.w, row.h - 2.0);
+    if let Some(color) = row_color(p, at == view.at, false, hovered) {
+        frame.rect_clipped(shade, color, RADIUS_ROW, clip);
+    }
+    let size = app.fonts.ui_small;
+    let cy = row.y + row.h / 2.0;
+    let name = winc_editor::display_name(&file.path).into_owned();
+    let x = row.x + STASH_FILE;
+    draw_file_icon(frame, p, (x, cy), &name, clip);
+    let letter = file.change.letter().to_string();
+    let letter_w = frame.measure(FontKind::Ui, size, &letter);
+    let right = row.right() - END_PAD;
+    let ink = git_color(p, file.change);
+    ui_text_small(frame, app, right - letter_w, row, &letter, ink, clip);
+    let text_x = x + icons::FILE_WIDTH + 6.0;
+    let room = (right - letter_w - 8.0 - text_x).max(0.0);
+    let name_w = frame.measure(FontKind::Ui, app.fonts.ui, &name).min(room);
+    let shown = fit(frame, &name, app.fonts.ui, room, false);
+    let color = file_color(file.change, p);
+    let area = clip.intersect(Rect::new(text_x, row.y, room, row.h));
+    label(frame, app, app.fonts.ui, (text_x, row), &shown, color, area);
+    // 所在目录相对仓库根目录，写在名字后面，放不下时截短。
+    let dir = app.editor.root().and_then(|root| {
+        let parent = file.path.parent()?.strip_prefix(root).ok()?;
+        let dir = parent.to_string_lossy().into_owned();
+        (!dir.is_empty()).then_some(dir)
+    });
+    if let Some(dir) = dir {
+        let dir_x = text_x + name_w + 6.0;
+        let dir_room = (text_x + room - dir_x).max(0.0);
+        let dir = fit(frame, &dir, size, dir_room, false);
+        ui_text_small(frame, app, dir_x, row, &dir, p.text_dim, clip);
     }
 }
 
