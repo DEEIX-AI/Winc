@@ -24,7 +24,12 @@ foreach ($kind in @('nsis', 'msi')) {
     # An earlier NSIS version listed winc in each type's OpenWithProgids; installing must remove it.
     # `New-Item -Force` also creates missing parent keys, but it would recreate an existing key and
     # drop other programs' entries, so it runs only when the key is missing.
+    # The Start menu and Windows' app lists show the name Winc. The NSIS shortcut goes in the user's
+    # Start menu, the MSI one in a Winc folder of the machine's; an existing lowercase shortcut must
+    # not keep its name.
+    $menu = if ($kind -eq 'nsis') { [Environment]::GetFolderPath('Programs') } else { Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Winc' }
     if ($kind -eq 'nsis') {
+        Set-Content -LiteralPath (Join-Path $menu 'winc.lnk') -Value ''
         $listing = "$classes\.json\OpenWithProgids"
         if (-not (Test-Path -LiteralPath $listing)) { New-Item -Force -Path $listing | Out-Null }
         New-ItemProperty -Force -LiteralPath $listing -Name 'winc.JSON' -Value '' | Out-Null
@@ -45,6 +50,11 @@ foreach ($kind in @('nsis', 'msi')) {
         $command = (Get-ItemProperty -LiteralPath "$classes\winc.JSON\shell\open\command").'(default)'
         if ($command -ne "`"$directory\winc.exe`" `"%1`"") { throw "${kind}: wrong open command: $command" }
         if ($null -eq (Get-ItemProperty -LiteralPath "$classes\Applications\winc.exe\SupportedTypes").'.json') { throw "${kind}: json is not a supported type" }
+        if ((Get-ItemProperty -LiteralPath "$classes\Applications\winc.exe").FriendlyAppName -cne 'Winc') { throw "${kind}: the application is not named Winc" }
+        $link = Get-ChildItem -LiteralPath $menu -Filter 'winc.lnk'
+        if (@($link).Count -ne 1 -or $link.Name -cne 'Winc.lnk') { throw "${kind}: the Start menu shortcut is not named Winc" }
+        if ($kind -eq 'msi' -and (Get-Item -LiteralPath $menu).Name -cne 'Winc') { throw 'msi: the Start menu folder is not named Winc' }
+        if ($kind -eq 'nsis' -and (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\winc').DisplayName -cne 'Winc') { throw 'nsis: the installed app is not listed as Winc' }
         # A handler listed under a type makes Windows ask which program to use, and for types it runs
         # on double-click (BAT, CMD) the question replaces running the script.
         foreach ($type in @('json', 'txt', 'bat', 'cmd')) {
@@ -76,6 +86,7 @@ foreach ($kind in @('nsis', 'msi')) {
     if ((Get-CommandPath $kind) -contains "$directory\bin") { throw "${kind}: uninstall left bin on the Path" }
     if (Test-Path -LiteralPath "$classes\winc.JSON") { throw "${kind}: uninstall left the file type behind" }
     if (Test-Path -LiteralPath "$classes\Applications\winc.exe") { throw "${kind}: uninstall left the application behind" }
+    if (Test-Path -LiteralPath (Join-Path $menu 'Winc.lnk')) { throw "${kind}: uninstall left the Start menu shortcut behind" }
 }
 Expand-Archive "$bundle/portable/Winc-$version-windows-x64-portable.zip" "$work/portable" -Force
 if ((Test-Path "$work/portable/winc-installation") -or -not (Test-Path "$work/portable/winc-pty.exe") -or -not (Test-Path "$work/portable/conpty.dll") -or -not (Test-Path "$work/portable/OpenConsole.exe") -or -not (Test-Path "$work/portable/bin/winc") -or -not (Test-Path "$work/portable/winc-watch") -or -not (Test-Path "$work/portable/data/README.txt")) { throw 'invalid portable layout' }

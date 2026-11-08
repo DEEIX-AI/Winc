@@ -217,7 +217,7 @@ cmd-cli-usage =
       winc 文件:行[:列]     打开文件并跳到那一行
       winc -                读取标准输入（例如 cargo build 2>&1 | winc -）
       -w, --wait            等文件的标签都关闭后再退出（例如 git config core.editor "winc -w"）
-      -n, --new-instance    不交给正在运行的 winc，另开一个进程（例如在 winc 的终端里运行开发中的版本）
+      -n, --new-instance    不交给正在运行的 Winc，另开一个进程（例如在 Winc 的终端里运行开发中的版本）
       -h, --help            显示这些说明
       -v, --version         显示版本号
 cmd-cli-unknown-option = 无法识别的选项「{ $flag }」

@@ -217,7 +217,7 @@ cmd-cli-usage =
       winc file:line[:col]  Open a file and go to that line
       winc -                Read standard input (e.g. cargo build 2>&1 | winc -)
       -w, --wait            Exit after all of the files’ tabs are closed (e.g. git config core.editor "winc -w")
-      -n, --new-instance    Start a separate process instead of handing off to the running winc
+      -n, --new-instance    Start a separate process instead of handing off to the running Winc
       -h, --help            Show this help
       -v, --version         Show the version
 cmd-cli-unknown-option = Unrecognized option “{ $flag }”
