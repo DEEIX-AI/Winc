@@ -368,5 +368,5 @@ workspace-font-unusable = This font can’t be used; choose another font
 workspace-stdin-title = Standard Input
 workspace-stdin-read-failed = Error reading standard input: { $error }
 workspace-stdin-truncated = Only the first { $size } MB of standard input was read
-workspace-backup-locked = This folder is open in another winc window; unsaved changes in this window won’t be backed up automatically
+workspace-backup-locked = This folder is open in another Winc window; unsaved changes in this window won’t be backed up automatically
 workspace-backup-failed = Couldn’t back up unsaved changes: { $error }
