@@ -31,7 +31,8 @@ pub(super) struct Route {
     pub(super) points: Vec<(f32, f32)>,
     /// 连线文字的中心；没有文字时为 `None`。
     pub(super) label: Option<(f32, f32)>,
-    /// 连线文字所在的最内层子图；没有文字时取两头共同的子图，不在子图里时为 `None`。
+    /// 连线文字所在的最内层子图，决定文字底色；没有文字时取两端共同的最内层子图；不在任何子图
+    /// 中时为 `None`。
     pub(super) group: Option<usize>,
 }
 
@@ -81,13 +82,13 @@ impl Vertex {
     }
 }
 
-/// 一条跨层的边经过的点（去掉环时反过来的边按反过来的方向）。
+/// 一条边经过的真节点与虚节点；去除环时反转的边按反转后的方向排列。
 struct Chain {
-    /// 第几条边。
+    /// 边在 `Flow::edges` 中的下标。
     edge: usize,
-    /// 从起点到终点依次经过的点（真节点和虚节点的编号）。
+    /// 从起点到终点依次经过的点在 `vs` 中的下标。
     points: Vec<usize>,
-    /// 放连线文字的虚节点。
+    /// 中间一层的虚节点在 `vs` 中的下标，连线有文字时放置文字；没有中间层时为 `None`。
     label_at: Option<usize>,
     /// 连线文字所在的最内层子图，同 [`Route::group`]。
     group: Option<usize>,
@@ -305,7 +306,7 @@ pub(super) fn layout(
             }
         }
     }
-    // 3. 跨层的边中间插虚节点；中间的一个装连线上的文字。子图跨过真节点所在的那几层。
+    // 3. 跨层的边插入虚节点，位于中间一层的虚节点放置连线文字。子图跨越其成员所在的各层。
     let span: Vec<Option<(usize, usize)>> = f
         .groups
         .iter()
@@ -314,9 +315,9 @@ pub(super) fn layout(
             Some((ranks.clone().min()?, ranks.max()?))
         })
         .collect();
-    // 虚节点在第 `r` 层时所在的子图：从一头所在的子图往外找，第一个跨过这一层的。两头各找到
-    // 一个时取里面那个，连线在子图跨过的层里从框内走，出了这几层才穿出边框，不必为了绕开
-    // 子图从框外兜圈子；两头找到的互不包含时取二者共同的外层。
+    // 第 `r` 层的虚节点所属的子图：从一端所在的子图逐级向外，取第一个跨越该层的子图；两端各得到
+    // 一个时取内层的一个。连线因此在子图跨越的各层中位于框内，离开这些层后才穿过边框，不需要
+    // 绕到框外。两个结果互不包含时取二者共同的外层子图。
     let around = |home: Option<usize>, r: usize| {
         std::iter::successors(home, |&g| tree.parent[g])
             .find(|&g| span[g].is_some_and(|(top, bottom)| (top..=bottom).contains(&r)))
@@ -385,7 +386,7 @@ pub(super) fn layout(
             group,
         });
     }
-    // 每层左右的边框点（上下连成一串，定横坐标时互相拉齐）。
+    // 子图在每层的左右边框点：同一侧的边框点上下相连，确定横坐标时互相对齐。
     let mut sides: Vec<[Vec<usize>; 2]> = vec![[Vec::new(), Vec::new()]; groups];
     for (g, sp) in span.iter().enumerate() {
         let Some((top, bottom)) = *sp else { continue };
@@ -557,9 +558,9 @@ pub(super) fn layout(
                 lefts.iter().for_each(|&v| x[v] = l);
                 rights.iter().for_each(|&v| x[v] = r);
             }
-            // 拉齐后可能挤到旁边的点，顺序不变：先从右往左把挤到的点往左推开（右边框不动），
-            // 再从左往右往右推开（左边框不动）。框只会往外长，框外的点被推到框外，不会被框盖住；
-            // 推的时候动了另一侧的边框，各层的边框就不再对齐，框外的点会落进框里。
+            // 对齐后的边框可能与相邻的点重叠。保持顺序，先从右向左把重叠的点向左推开，
+            // 再从左向右向右推开；推开时不移动对侧的边框：框只向外扩大，框外的点留在框外。
+            // 若同时移动对侧边框，各层的边框不再对齐，框外的点可能落入框内。
             for layer in &layers {
                 for k in (1..layer.len()).rev() {
                     let (a, b) = (layer[k - 1], layer[k]);

@@ -468,6 +468,22 @@ impl App {
             self.set_cursor_icon(icon);
             return;
         }
+        // 全屏查看的图上：工具栏按钮处显示手形指针，其余位置显示表示可拖动的抓手指针。
+        if let Some(view) = &self.markdown.diagram
+            && (view.area.contains(x, y) || view.grab.is_some())
+            && !self.settings.open
+            && self.form_dialog.is_none()
+        {
+            let icon = if view.grab.is_some() {
+                CursorIcon::Grabbing
+            } else if view.hover.is_some() {
+                CursorIcon::Pointer
+            } else {
+                CursorIcon::Grab
+            };
+            self.set_cursor_icon(icon);
+            return;
+        }
         if self.settings.open {
             // 设置浮层打开时只看浮层自身：字体名输入框、搜索框和正在编辑的输入框上显示文本光标，
             // 链接上显示手形，其余位置显示箭头。

@@ -1,5 +1,5 @@
 //! 文件视图底部大纲的测试：展开、收起与调整高度，符号树与层级、光标所在符号的高亮、收起与
-//! 展开符号、点击与键盘跳转、编辑后的延迟刷新，以及没有符号时的说明。
+//! 展开符号、收起状态的记忆、点击与键盘跳转、编辑后的延迟刷新，以及没有符号时的说明。
 
 use std::time::Instant;
 
@@ -197,6 +197,44 @@ fn clicking_the_outline_jumps_and_folds() {
     assert_eq!(row_names(&app).len(), 5);
     app.press_outline(OutlineTarget::FoldAll);
     assert_eq!(row_names(&app), ["Path", "load_config", "main"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 收起状态按文件记录：关闭标签后重新打开仍保持收起；状态随目录的现场保存，重新打开目录后
+/// 恢复；全部展开后现场中不再记录该文件。
+#[test]
+fn folded_symbols_are_remembered_across_tabs_and_sessions() {
+    let (mut app, dir) = outline_app("outline-remember", false);
+    let file = app.editor.active().unwrap().path.clone().unwrap();
+    app.press_outline(OutlineTarget::Arrow(0));
+    paint(&mut app);
+    assert_eq!(row_names(&app), ["Path", "load_config", "main"]);
+
+    app.run_action(Action::CloseTab);
+    paint(&mut app);
+    app.open_path(&file);
+    paint(&mut app);
+    assert_eq!(row_names(&app), ["Path", "load_config", "main"]);
+
+    app.remember_session();
+    let root = app.editor.root().unwrap().to_path_buf();
+    let state = app.state.clone();
+    let session = state.session_for(&root).unwrap();
+    assert_eq!(session.outline, [(file.clone(), vec!["Path".to_owned()])]);
+
+    // 模拟重新启动：新的界面从保存的现场读入收起状态。
+    let mut again = blank_app(false);
+    again.state = state;
+    again.open_path(&dir);
+    again.open_path(&file);
+    again.run_action(Action::ShowOutline);
+    paint(&mut again);
+    assert_eq!(row_names(&again), ["Path", "load_config", "main"]);
+
+    // 展开后，现场中不再记录该文件。
+    again.press_outline(OutlineTarget::Arrow(0));
+    again.remember_session();
+    assert!(again.state.session_for(&root).unwrap().outline.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

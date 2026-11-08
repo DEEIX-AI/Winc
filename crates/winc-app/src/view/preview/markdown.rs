@@ -18,9 +18,12 @@ use crate::icons;
 use crate::theme::Palette;
 
 mod layout;
+mod viewer;
 
 use layout::{Colors, Cx, Env, Item, LaidBlock, Out, Raw, Span, margins};
 pub(crate) use layout::{DETAILS, Memo};
+pub(crate) use viewer::DiagramLaid;
+pub(in crate::view) use viewer::draw_diagram_view;
 
 /// 正文字号与编辑器字号之比：编辑器字号 13 逻辑像素时，正文为 16 逻辑像素。
 const BASE_RATIO: f32 = 16.0 / 13.0;
@@ -92,6 +95,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     app.markdown.links.clear();
     app.markdown.codes.clear();
     app.markdown.copy = None;
+    app.markdown.expand = None;
     // 第一次解析还没回来：先留空。
     let Some(parsed) = app.markdown.parsed.clone() else {
         return;
@@ -410,17 +414,28 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     ..
                 } => toolbar = Some((at(rect), *align)),
                 Item::Table { .. } => {}
-                Item::Code { rect, text } => {
+                Item::Code {
+                    rect,
+                    text,
+                    diagram,
+                } => {
                     let r = at(rect);
                     md.codes.push(r);
                     if r.contains(mouse.0, mouse.1) && area.contains(mouse.0, mouse.1) {
                         let button = copy_button(r);
-                        frame.rect_clipped(button, p.editor_bg, 6.0, area);
-                        frame.rect_clipped(button, p.text.alpha(0.08), 6.0, area);
-                        let center = (button.x + button.w / 2.0, button.y + button.h / 2.0);
-                        icons::copy(frame, center, p.text_muted, area);
+                        code_button(frame, p, button, area, icons::copy);
                         md.links.push((button, COPY.to_owned()));
                         md.copy = Some(text.clone());
+                        // 图的复制按钮左侧另有全屏查看按钮。
+                        if *diagram {
+                            let expand = Rect {
+                                x: button.x - button.w - 4.0,
+                                ..button
+                            };
+                            code_button(frame, p, expand, area, icons::expand);
+                            md.links.push((expand, EXPAND.to_owned()));
+                            md.expand = Some(text.clone());
+                        }
                     }
                 }
             }
@@ -665,7 +680,7 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
                 let tx = card.x + text_x + depth(*level) * TOC_INDENT;
                 let room = (band.right() - 8.0 - tx).max(0.0);
                 let title = crate::view::ellipsize(frame, title, size, room);
-                // 当前所在节加粗。
+                // 当前所在一节的标题加粗显示。
                 let faux = winc_render::Faux {
                     bold: current == Some(i),
                     ..Default::default()
@@ -1433,6 +1448,20 @@ fn draw_live_caret(
     Rect::new(x + width, y, 2.0, h)
 }
 
+/// 绘制代码块或图右上角的一个按钮：不透明底色遮住下方内容，中间绘制图标 `icon`。
+fn code_button(
+    frame: &mut Frame<'_>,
+    p: &Palette,
+    button: Rect,
+    clip: Rect,
+    icon: fn(&mut Frame<'_>, (f32, f32), Color, Rect),
+) {
+    frame.rect_clipped(button, p.editor_bg, 6.0, clip);
+    frame.rect_clipped(button, p.text.alpha(0.08), 6.0, clip);
+    let center = (button.x + button.w / 2.0, button.y + button.h / 2.0);
+    icon(frame, center, p.text_muted, clip);
+}
+
 /// 返回代码块 `code`（屏幕坐标，逻辑像素）右上角的复制按钮。
 ///
 /// 边长 28 逻辑像素，离代码块右边和上边各 6 逻辑像素（经验值）。
@@ -1545,6 +1574,9 @@ fn table_toolbar(
 ///
 /// 开头的 `\u{1}` 不是合法的 URL 字符，用来和文档里的真实链接区分。
 pub(crate) const COPY: &str = "\u{1}copy:";
+
+/// 图的全屏按钮的「链接」地址：点击后全屏查看 `MarkdownPreview::expand` 中的图。
+pub(crate) const EXPAND: &str = "\u{1}expand";
 
 /// 勾选框链接的地址前缀，其后为 `[ ]` 在原文中的位置（字节偏移）；点击时切换勾选状态。
 pub(crate) const TASK: &str = "\u{1}task:";

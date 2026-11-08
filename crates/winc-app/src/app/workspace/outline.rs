@@ -8,8 +8,11 @@
 //! 内容变化后，等 [`OUTLINE_DELAY`] 内不再变化时提取，连续输入时不逐键重算；尚未读取完的文档
 //! （`Document::is_pending`）等读完再提取。光标所在的符号高亮，移到另一个符号时滚动到可见；
 //! 点击一行跳转到该符号。
+//!
+//! 收起的符号按名字记录，已保存的文件按路径区分，状态随目录的现场（`Session::outline`）保存：
+//! 关闭标签后重新打开、重新启动后均保持收起。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -124,8 +127,11 @@ pub struct OutlineState {
     pub empty: Option<OutlineEmpty>,
     /// 各文档中已收起的符号的路径（见 [`symbol_paths`]）。
     ///
-    /// 按名字而不按行号记，编辑使符号移动位置后仍保持收起。
-    collapsed: HashMap<DocumentId, HashSet<String>>,
+    /// 按名字而不按行号记录，编辑使符号移动位置后仍保持收起。文件首次列出符号时从目录的现场
+    /// 读入，此后以本字段为准。
+    collapsed: HashMap<OutlineDoc, HashSet<String>>,
+    /// 当前列出的符号所属的文档，作为查询 `collapsed` 的键。
+    shown_doc: Option<OutlineDoc>,
     /// 列表的滚动量（逻辑像素）。
     pub scroll: f32,
     /// 键盘选中的符号（[`OutlineState::items`] 的下标）；为 `None` 时选中光标所在的符号。
@@ -153,12 +159,24 @@ impl Default for OutlineState {
             paths: Vec::new(),
             empty: Some(OutlineEmpty::NoFile),
             collapsed: HashMap::new(),
+            shown_doc: None,
             scroll: 0.0,
             selected: None,
             revealed: None,
             hits: Vec::new(),
         }
     }
+}
+
+/// 记录收起状态时区分文档的键。
+///
+/// 已保存的文件按路径区分，关闭后重新打开、重新启动后仍能对应；未保存过的文档按文档标识区分。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum OutlineDoc {
+    /// 磁盘上的文件。
+    File(PathBuf),
+    /// 未保存过的文档。
+    Untitled(DocumentId),
 }
 
 /// 返回各符号的路径：从最外层上级到自身的名字，以 `\u{1f}`（单元分隔符）连接。
@@ -373,8 +391,28 @@ impl App {
         items: Vec<Symbol>,
         empty: Option<OutlineEmpty>,
     ) {
+        let doc = id.map(|id| {
+            match self
+                .editor
+                .documents
+                .iter()
+                .find(|d| d.id == id)
+                .and_then(|d| d.path.clone())
+            {
+                Some(path) => OutlineDoc::File(path),
+                None => OutlineDoc::Untitled(id),
+            }
+        });
+        // 文件首次列出符号时，从目录的现场读入上次的收起状态。
+        if let Some(key @ OutlineDoc::File(path)) = &doc
+            && !self.outline.collapsed.contains_key(key)
+        {
+            let saved = self.saved_outline(path);
+            self.outline.collapsed.insert(key.clone(), saved);
+        }
         let o = &mut self.outline;
         let switched = o.shown != id;
+        o.shown_doc = doc;
         o.empty = empty.or_else(|| items.is_empty().then_some(OutlineEmpty::NoSymbols));
         o.paths = symbol_paths(&items);
         o.items = items;
@@ -391,13 +429,51 @@ impl App {
         self.request_redraw();
     }
 
+    /// 返回目录的现场中记录的、文件 `path` 的大纲里收起的符号。
+    fn saved_outline(&self, path: &Path) -> HashSet<String> {
+        self.editor
+            .root()
+            .and_then(|root| self.state.session_for(root))
+            .and_then(|s| s.outline.iter().find(|(file, _)| file == path))
+            .map(|(_, symbols)| symbols.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// 返回目录 `root` 中各文件的大纲里收起的符号，按路径排序，用于保存现场。
+    ///
+    /// 以现场中已有的记录为基础，本次运行中列出过符号的文件改用当前状态；没有收起符号的文件
+    /// 不记录。
+    pub(in crate::app) fn outline_session(&self, root: &Path) -> Vec<(PathBuf, Vec<String>)> {
+        let mut files: BTreeMap<PathBuf, Vec<String>> = self
+            .state
+            .session_for(root)
+            .map(|s| s.outline.iter().cloned().collect())
+            .unwrap_or_default();
+        for (doc, set) in &self.outline.collapsed {
+            let OutlineDoc::File(path) = doc else {
+                continue;
+            };
+            if !path.starts_with(root) {
+                continue;
+            }
+            if set.is_empty() {
+                files.remove(path);
+            } else {
+                let mut symbols: Vec<String> = set.iter().cloned().collect();
+                symbols.sort_unstable();
+                files.insert(path.clone(), symbols);
+            }
+        }
+        files.into_iter().collect()
+    }
+
     /// 第 `i` 个符号的路径是否记为已收起。
     fn path_collapsed(&self, i: usize) -> bool {
         let o = &self.outline;
-        let (Some(doc), Some(path)) = (o.shown, o.paths.get(i)) else {
+        let (Some(doc), Some(path)) = (&o.shown_doc, o.paths.get(i)) else {
             return false;
         };
-        o.collapsed.get(&doc).is_some_and(|set| set.contains(path))
+        o.collapsed.get(doc).is_some_and(|set| set.contains(path))
     }
 
     /// 当前列出的各行：未被收起的上级挡住的符号（[`OutlineState::items`] 的下标），按顺序排列。
@@ -523,7 +599,7 @@ impl App {
     /// 收起或展开第 `i` 个符号。
     pub(in crate::app) fn toggle_outline(&mut self, i: usize) {
         let o = &mut self.outline;
-        let (Some(doc), Some(path)) = (o.shown, o.paths.get(i)) else {
+        let (Some(doc), Some(path)) = (o.shown_doc.clone(), o.paths.get(i)) else {
             return;
         };
         let set = o.collapsed.entry(doc).or_default();
@@ -550,7 +626,7 @@ impl App {
     pub(in crate::app) fn fold_all_outline(&mut self) {
         let collapse = self.outline_any_expanded();
         let o = &mut self.outline;
-        let Some(doc) = o.shown else {
+        let Some(doc) = o.shown_doc.clone() else {
             return;
         };
         let set = o.collapsed.entry(doc).or_default();

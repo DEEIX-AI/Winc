@@ -857,6 +857,21 @@ pub fn bookmark(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip:
     );
 }
 
+/// 绘制「全屏」图标，约 12×12 逻辑像素：从中心分别指向右上角和左下角的两个箭头。
+pub fn expand(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (near, far, head) = (1.5, 5.0, 3.0);
+    let arrow = |s: f32| {
+        let (tx, ty) = (cx + s * far, cy - s * far);
+        [
+            Stroke::Line(cx + s * near, cy - s * near, tx, ty),
+            Stroke::Line(tx - s * head, ty, tx, ty),
+            Stroke::Line(tx, ty, tx, ty + s * head),
+        ]
+    };
+    frame.stroke(&arrow(1.0), STROKE, color, clip);
+    frame.stroke(&arrow(-1.0), STROKE, color, clip);
+}
+
 /// 绘制「复制」图标，约 12×12：两张错开叠放的圆角方块，前面一张完整，后面一张只露出左上角。
 pub fn copy(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     let (size, r, shift) = (8.0, 1.5, 3.5);

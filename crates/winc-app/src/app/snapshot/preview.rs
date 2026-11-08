@@ -1,4 +1,5 @@
-//! Markdown 预览的测试：三段切换、后台解析、分栏联动滚动、点链接、本地与远程图片、截图与计时。
+//! Markdown 预览的测试：三段切换、后台解析、分栏联动滚动、点链接、本地与远程图片、全屏查看
+//! mermaid 图、截图与计时。
 
 use winc_editor::PreviewMode;
 
@@ -1820,19 +1821,27 @@ fn shoot_rich_markdown() {
     }
 }
 
+/// 能画的 mermaid 图悬停时显示全屏按钮；不支持的图按代码块显示，只有复制按钮。
 #[test]
 fn mermaid_blocks_draw_diagrams_and_fall_back_to_code() {
     let dir = sample_folder("md-mermaid-fallback");
     let path = dir.join("M.md");
     let drawn = "```mermaid\ngraph TD\n  A --> B\n```\n";
     let unknown = "```mermaid\ngantt\n  title 计划\n```\n";
-    for (source, codes) in [(drawn, 0), (unknown, 1)] {
+    let expand = crate::view::preview::markdown::EXPAND;
+    for (source, diagram) in [(drawn, true), (unknown, false)] {
         std::fs::write(&path, source).unwrap();
         let mut app = app_with(&path, false);
         paint(&mut app);
         app.set_preview_mode(PreviewMode::Preview);
         settle(&mut app);
-        assert_eq!(app.markdown.codes.len(), codes, "{source}");
+        let [block] = app.markdown.codes[..] else {
+            panic!("只有一个代码块或图：{source}");
+        };
+        app.on_mouse_move(block.x + block.w / 2.0, block.y + block.h / 2.0);
+        paint(&mut app);
+        let has_expand = app.markdown.links.iter().any(|(_, url)| url == expand);
+        assert_eq!(has_expand, diagram, "{source}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1902,8 +1911,12 @@ fn shoot_html_readme() {
     }
 }
 
-/// mermaid 图的样本：流程图、状态图一张，时序图、饼图一张，子图多的架构图一张（一屏放不下
-/// 全部），以及节点文字多、从左往右的架构图和回边多的状态图一张。
+/// mermaid 图的样本，每项为一个文档：
+///
+/// - 流程图与状态图；
+/// - 时序图与饼图；
+/// - 含多个子图的架构图，高度超过一屏；
+/// - 节点文字较多、从左向右的架构图，以及含多条回边的状态图。
 const DIAGRAMS: [&str; 4] = [
     r#"```mermaid
 flowchart TD
@@ -2133,6 +2146,129 @@ fn shoot_mermaid_diagrams() {
     }
 }
 
+/// 打开内容为 `DIAGRAMS[k]` 的文档，切换到只看预览，鼠标移到第一张图上后点击全屏按钮。
+fn diagram_view_app(name: &str, k: usize, dark: bool) -> (App, PathBuf) {
+    let dir = sample_folder(name);
+    let path = dir.join("MERMAID.md");
+    std::fs::write(&path, DIAGRAMS[k]).unwrap();
+    let mut app = app_with(&path, dark);
+    paint(&mut app);
+    app.set_preview_mode(PreviewMode::Preview);
+    settle(&mut app);
+    let diagram = *app.markdown.codes.first().expect("画出了图");
+    app.on_mouse_move(diagram.x + diagram.w / 2.0, diagram.y + 20.0);
+    paint(&mut app);
+    let expand = crate::view::preview::markdown::EXPAND;
+    let (button, _) = app
+        .markdown
+        .links
+        .iter()
+        .find(|(_, url)| url == expand)
+        .cloned()
+        .expect("鼠标在图上时有全屏按钮");
+    click(
+        &mut app,
+        (button.x + button.w / 2.0, button.y + button.h / 2.0),
+    );
+    paint(&mut app);
+    (app, dir)
+}
+
+/// 全屏查看：图覆盖编辑区并按适应查看区域的倍数显示；工具栏按钮、按键与按住 `⌘` 滚动可以
+/// 缩放，拖动可以平移；`Esc`、关闭按钮或切回源代码时关闭，查看期间输入不写入文档。
+#[test]
+fn diagrams_open_full_screen_and_zoom() {
+    use winit::keyboard::{Key, NamedKey};
+
+    use crate::app::preview::markdown::DiagramTool;
+    let (mut app, dir) = diagram_view_app("md-diagram-view", 0, false);
+    let view = app.markdown.diagram.as_ref().expect("打开了全屏查看");
+    assert_eq!(view.area, app.layout.editor);
+    assert!(view.zoom.is_none());
+    let fit = view.scale();
+    assert!(fit > 1.0, "小图放大到适应窗口：{fit}");
+    let button = |app: &App, tool| {
+        let view = app.markdown.diagram.as_ref().unwrap();
+        let (r, _) = view.buttons.iter().find(|(_, t)| *t == tool).unwrap();
+        (r.x + r.w / 2.0, r.y + r.h / 2.0)
+    };
+    let scale = |app: &App| app.markdown.diagram.as_ref().unwrap().scale();
+
+    let at = button(&app, DiagramTool::ZoomIn);
+    click(&mut app, at);
+    paint(&mut app);
+    assert!((scale(&app) - fit * 1.25).abs() < 1e-3);
+    assert!(app.diagram_view_key(&Key::Character("-".into()), "-", false));
+    assert!((scale(&app) - fit).abs() < 1e-3);
+
+    // 按住 `⌘` 滚动：以鼠标处为中心放大，鼠标处的内容位置不变。
+    let area = app.markdown.diagram.as_ref().unwrap().area;
+    let at = (area.x + area.w / 4.0, area.y + area.h / 3.0);
+    app.on_mouse_move(at.0, at.1);
+    app.modifiers = command_modifiers();
+    // 滚动量以物理像素给出；离屏窗口的缩放倍数为 2，换算为 100 逻辑像素。
+    app.on_wheel(MouseScrollDelta::PixelDelta((0.0, 200.0).into()));
+    app.modifiers = Default::default();
+    paint(&mut app);
+    let view = app.markdown.diagram.as_ref().unwrap();
+    let k = view.scale() / fit;
+    assert!(k > 1.5, "{k}");
+    let (cx, cy) = (at.0 - area.x - area.w / 2.0, at.1 - area.y - area.h / 2.0);
+    assert!((view.pan.0 - (cx - cx * k)).abs() < 0.5);
+    assert!((view.pan.1 - (cy - cy * k)).abs() < 0.5);
+
+    // 拖动平移；点击倍数后恢复适应查看区域的倍数，图居中。
+    let before = view.pan;
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(at.0 + 30.0, at.1 - 10.0);
+    app.on_mouse_up(MouseButton::Left);
+    let view = app.markdown.diagram.as_ref().unwrap();
+    assert!((view.pan.0 - (before.0 + 30.0)).abs() < 1e-3);
+    assert!((view.pan.1 - (before.1 - 10.0)).abs() < 1e-3);
+    assert!(view.grab.is_none());
+    let at = button(&app, DiagramTool::Fit);
+    click(&mut app, at);
+    let view = app.markdown.diagram.as_ref().unwrap();
+    assert_eq!((view.zoom, view.pan), (None, (0.0, 0.0)));
+
+    // 全屏查看期间的输入不写入被遮住的文档。
+    let revision = app.editor.active().unwrap().revision;
+    assert!(app.diagram_view_key(&Key::Character("x".into()), "x", false));
+    assert_eq!(app.editor.active().unwrap().revision, revision);
+
+    assert!(app.diagram_view_key(&Key::Named(NamedKey::Escape), "", false));
+    assert!(app.markdown.diagram.is_none());
+
+    // 关闭按钮关闭全屏查看；切回源代码同样关闭。
+    let (mut app, dir2) = diagram_view_app("md-diagram-view-close", 0, false);
+    let at = button(&app, DiagramTool::Close);
+    click(&mut app, at);
+    assert!(app.markdown.diagram.is_none());
+    let (mut app, dir3) = diagram_view_app("md-diagram-view-source", 0, false);
+    app.set_preview_mode(PreviewMode::Source);
+    paint(&mut app);
+    assert!(app.markdown.diagram.is_none());
+    for dir in [dir, dir2, dir3] {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_diagram_view() {
+    for dark in [false, true] {
+        let (mut app, dir) = diagram_view_app("md-diagram-shot", 3, dark);
+        let theme = if dark { "dark" } else { "light" };
+        shoot(&mut app, &format!("md-diagram-view-{theme}"));
+        // 关闭全屏查看后鼠标仍在图上，截取图右上角的全屏、复制按钮。
+        app.close_diagram_view();
+        let diagram = *app.markdown.codes.first().unwrap();
+        app.on_mouse_move(diagram.right() - 40.0, diagram.y + 20.0);
+        shoot(&mut app, &format!("md-diagram-buttons-{theme}"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_github_extras() {
@@ -2150,6 +2286,36 @@ fn shoot_github_extras() {
             &mut app,
             &format!("md-extras-{}", if dark { "dark" } else { "light" }),
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 计时：`DIAGRAMS` 重复 5 遍组成的文档首次排版的耗时，以及只看预览时滚动 50 帧的耗时；
+/// 同一文档的图按普通代码块显示时的耗时作为对照。
+#[test]
+#[ignore = "计时，手动运行"]
+fn time_mermaid() {
+    for lang in ["mermaid", "text"] {
+        let text = DIAGRAMS
+            .join("\n\n")
+            .repeat(5)
+            .replace("```mermaid", &format!("```{lang}"));
+        let dir = sample_folder("md-time-mermaid");
+        let path = dir.join("MERMAID.md");
+        std::fs::write(&path, &text).unwrap();
+        let mut app = app_with(&path, false);
+        paint(&mut app);
+        app.set_preview_mode(PreviewMode::Preview);
+        app.wait_for_markdown();
+        let started = std::time::Instant::now();
+        paint(&mut app);
+        eprintln!("mermaid 第一次排版 {:?}", started.elapsed());
+        let started = std::time::Instant::now();
+        for i in 0..50 {
+            app.markdown.scroll_to((i * 173) as f32);
+            paint(&mut app);
+        }
+        eprintln!("{lang} 滚 50 次 {:?}", started.elapsed());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

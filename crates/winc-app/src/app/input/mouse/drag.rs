@@ -58,6 +58,11 @@ impl App {
             return;
         }
 
+        // 鼠标位于全屏查看的图上或正在拖动图时，被遮住的部件不响应悬停。
+        if self.diagram_view_mouse_move(x, y) {
+            return;
+        }
+
         self.track_tree_segment();
         if self.tree_drag.is_some() {
             self.drag_tree_item(x, y);

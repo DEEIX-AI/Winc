@@ -21,6 +21,9 @@ use winit::keyboard::{Key, NamedKey};
 use crate::app::{App, UserEvent};
 use crate::system;
 
+mod viewer;
+pub(crate) use viewer::{DiagramTool, DiagramView, MAX_ZOOM, MIN_ZOOM};
+
 /// 后台任务的结果。
 enum Done {
     /// 文档、所依据的文档版本、解析结果。
@@ -143,6 +146,12 @@ pub(crate) struct MarkdownPreview {
     ///
     /// 与排版结果共用同一段文字：鼠标停在代码块上时每帧都要画按钮，不必每帧复制整块。
     pub copy: Option<std::sync::Arc<str>>,
+    /// 上一帧绘制了全屏按钮的图的源码。
+    ///
+    /// `links` 中的按钮只记录 `EXPAND`，点击时从这里取源码，绘制时不必复制源码。
+    pub expand: Option<std::sync::Arc<str>>,
+    /// 全屏查看中的图；未打开全屏查看时为 `None`。
+    pub diagram: Option<DiagramView>,
     /// 鼠标在第几个代码块（`codes` 的序号）上。
     pub code_hover: Option<usize>,
     /// 上一帧画在哪里（分栏的右半边或整个编辑区）；不显示时为空矩形。
@@ -255,6 +264,8 @@ impl Default for MarkdownPreview {
             toc_flash: None,
             codes: Vec::new(),
             copy: None,
+            expand: None,
+            diagram: None,
             code_hover: None,
             area: winc_render::Rect::default(),
             height: 0.0,
@@ -541,12 +552,12 @@ impl App {
             .position(|(rect, _)| rect.contains(x, y))
     }
 
-    /// 第 `index` 个链接是否为预览自身的控件（代码块的复制按钮、折叠块的标题、勾选框），
-    /// 而非正文中的链接。
+    /// 第 `index` 个链接是否为预览自身的控件（代码块的复制按钮、图的全屏按钮、折叠块的标题、
+    /// 勾选框），而非正文中的链接。
     pub(crate) fn markdown_link_is_control(&self, index: usize) -> bool {
-        use crate::view::preview::markdown::{COPY, DETAILS, TABLE, TASK};
+        use crate::view::preview::markdown::{COPY, DETAILS, EXPAND, TABLE, TASK};
         self.markdown.links.get(index).is_some_and(|(_, url)| {
-            [COPY, DETAILS, TABLE, TASK]
+            [COPY, DETAILS, EXPAND, TABLE, TASK]
                 .iter()
                 .any(|prefix| url.starts_with(prefix))
         })
@@ -557,6 +568,10 @@ impl App {
         let Some((_, url)) = self.markdown.links.get(index).cloned() else {
             return;
         };
+        if url == crate::view::preview::markdown::EXPAND {
+            self.open_diagram_view();
+            return;
+        }
         if url == crate::view::preview::markdown::COPY {
             let Some(code) = self.markdown.copy.clone() else {
                 return;

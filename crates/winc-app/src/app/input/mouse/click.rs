@@ -92,6 +92,15 @@ impl App {
             && button == MouseButton::Left
             && self.modifiers.control_key();
         if button == MouseButton::Right || control_click {
+            // 全屏查看的图上不提供右键菜单，被遮住的预览也不响应。
+            if self
+                .markdown
+                .diagram
+                .as_ref()
+                .is_some_and(|v| v.area.contains(x, y))
+            {
+                return;
+            }
             self.context_click(x, y);
             return;
         }
@@ -123,6 +132,11 @@ impl App {
         }
         if self.form_dialog.is_some() {
             self.click_form_dialog(x, y);
+            return;
+        }
+
+        // 全屏查看的图位于编辑区上层，落在其范围内的点击只由查看器处理。
+        if self.diagram_view_mouse_down(x, y) {
             return;
         }
 
