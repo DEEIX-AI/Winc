@@ -1,5 +1,7 @@
 //! 事件循环：处理窗口事件和后台送回的事件，并安排下一次唤醒。
 
+use winc_config::WindowFrame;
+
 use super::placement::{
     DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, place, screens, window_position,
 };
@@ -26,7 +28,22 @@ impl ApplicationHandler<UserEvent> for App {
             .state
             .window
             .filter(|_| self.config.restore_window != Some(false) && !self.bench.silent());
-        let placed = saved.map(|frame| place(&frame, &screens(event_loop)));
+        // 从已有窗口打开的新窗口使用记下的大小（没有记录时用默认大小），位置比打开它的窗口往
+        // 右下错开。错开的位置与记下的位置都按当前的显示器校验，不在任何显示器上时由系统决定。
+        let cascade = self.cascade.take().map(|(at, scale)| WindowFrame {
+            position: Some(at),
+            scale,
+            maximized: false,
+            ..saved.unwrap_or(WindowFrame {
+                position: None,
+                width: DEFAULT_WIDTH,
+                height: DEFAULT_HEIGHT,
+                scale,
+                maximized: false,
+            })
+        });
+        let frame = cascade.or(saved);
+        let placed = frame.map(|frame| place(&frame, &screens(event_loop)));
         let (width, height) =
             placed.map_or((DEFAULT_WIDTH, DEFAULT_HEIGHT), |p| (p.width, p.height));
         let mut attributes = Window::default_attributes()
@@ -35,10 +52,7 @@ impl ApplicationHandler<UserEvent> for App {
             .with_min_inner_size(LogicalSize::new(MIN_WIDTH, MIN_HEIGHT))
             .with_theme(forced_theme(&self.theme_choice))
             .with_visible(false);
-        // 从已有窗口打开的新窗口沿用大小，位置仍然错开。
-        if let Some(position) = self.cascade.take() {
-            attributes = attributes.with_position(position);
-        } else if let (Some(frame), Some(placed)) = (saved, placed) {
+        if let (Some(frame), Some(placed)) = (frame, placed) {
             attributes = attributes.with_maximized(frame.maximized);
             if let Some(at) = placed.position {
                 attributes = attributes.with_position(window_position(at, frame.scale));

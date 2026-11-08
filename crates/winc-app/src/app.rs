@@ -1112,9 +1112,11 @@ pub struct App {
     pub(crate) shared: std::rc::Rc<crate::winc::Shared>,
     /// 配置的版本：本窗口每写一次配置文件加一，应用层据此把新配置发给其他窗口。
     pub(crate) config_rev: u64,
-    /// 新窗口的位置：相对打开它的窗口往右下错开一段，建窗口时用一次。
-    pub(crate) cascade: Option<winit::dpi::Position>,
-    /// 窗口没有最大化、全屏时的大小和位置，关闭时记下来。
+    /// 新窗口的位置（外框左上角，物理像素）和打开它的窗口的缩放比例：比打开它的窗口往右下错开
+    /// 一段。建窗口时按当前的显示器校验后使用一次，见 `App::cascade_from`。
+    pub(crate) cascade: Option<((f64, f64), f64)>,
+    /// 窗口正常显示（没有最大化、全屏、最小化）时的大小和位置：关闭时记下来；最小化期间不更新，
+    /// 从最小化的窗口打开新窗口时按它错开（见 `App::cascade_from`）。
     pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口和打开它的窗口共用的字体和字形缓存（建渲染器时用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
