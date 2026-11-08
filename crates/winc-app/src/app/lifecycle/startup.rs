@@ -175,6 +175,7 @@ impl App {
             picker_input: TextField::default(),
             picker_hits: Vec::new(),
             picker_selected: 0,
+            picker_default: None,
             picker_recent: 0,
             picker_goto: None,
             picker_stale: false,

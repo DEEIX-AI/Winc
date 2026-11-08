@@ -949,6 +949,11 @@ pub struct App {
     pub picker_hits: Vec<usize>,
     /// 当前选中的结果在 `picker_hits` 中的序号（从 0 起）。
     pub picker_selected: usize,
+    /// 分支选择器打开时自动选中的行（`picker_selected` 的值）；移动选中项或输入查询后为 `None`。
+    ///
+    /// 自动选中的行以浅色底显示：它不一定是当前分支（单列最近使用时选中上一个用过的分支，回车即
+    /// 切回），强调色底会被误认为当前分支。当前分支由行首的对勾标出。
+    pub picker_default: Option<usize>,
     /// 结果开头属于「最近打开」的条数（未输入查询时列在最前面）。
     pub picker_recent: usize,
     /// 查询末尾的 `:行` 或 `:行:列`，打开文件后跳转到该位置。

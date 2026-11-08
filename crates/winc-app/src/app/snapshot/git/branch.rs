@@ -1063,3 +1063,45 @@ fn hovering_a_picker_row_leaves_the_selection_alone() {
     assert!(!more(&app, other));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 本地分支多、单列最近使用时，打开面板自动选中上一个用过的分支：以浅色底显示，不与对勾标出的
+/// 当前分支混淆；回车仍切回它。移动选中项或输入查询后改为普通的选中样式，清空查询后恢复。
+#[test]
+fn the_default_branch_row_is_highlighted_softly() {
+    use crate::app::git::branch::picker::{BranchRow, BranchSection};
+
+    let Some((mut app, root)) = picker_repo("git-picker-default", false) else {
+        return;
+    };
+    for k in 0..20 {
+        git_in(&root, &["branch", &format!("topic-{k:02}")]);
+    }
+    git_in(&root, &["checkout", "-q", "topic-07"]);
+    git_in(&root, &["checkout", "-q", "main"]);
+    app.git_refresh();
+    app.open_branch_picker(GitAnchor::Branch);
+    paint(&mut app);
+    let rows = app.picker_branch_rows.clone().unwrap();
+    assert_eq!(rows[0], BranchRow::Heading(BranchSection::Recent));
+    assert!(matches!(
+        &rows[app.picker_selected],
+        BranchRow::Branch { label, .. } if label == "topic-07"
+    ));
+    assert_eq!(app.picker_default, Some(app.picker_selected));
+
+    app.picker_move(true);
+    assert_eq!(app.picker_default, None);
+    app.picker_move(false);
+    assert_eq!(app.picker_default, None);
+
+    app.picker_input.set_text("topic");
+    app.picker_refresh();
+    assert_eq!(app.picker_default, None);
+    app.picker_input.set_text("");
+    app.picker_refresh();
+    assert_eq!(app.picker_default, Some(app.picker_selected));
+    paint(&mut app);
+    app.picker_accept();
+    assert_eq!(head_name(&app).as_deref(), Some("topic-07"));
+    let _ = std::fs::remove_dir_all(&root);
+}
