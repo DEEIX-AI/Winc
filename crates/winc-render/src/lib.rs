@@ -507,6 +507,13 @@ impl Renderer {
         (w as f32 / self.scale, h as f32 / self.scale)
     }
 
+    /// 返回一段文字按字体 `kind`、字号 `size` 排出的宽度（逻辑像素），与绘制时
+    /// [`Frame::measure`] 的结果相同；布局在绘制之前用它折行。
+    pub fn measure(&self, kind: FontKind, size: f32, text: &str) -> f32 {
+        let mut glyphs = self.glyphs.borrow_mut();
+        text.chars().map(|c| glyphs.advance(kind, size, c)).sum()
+    }
+
     /// 返回字体 `kind` 在字号 `size`（逻辑像素）下的度量。
     ///
     /// 等宽字体一格的宽度取字符 `0` 的前进宽度。

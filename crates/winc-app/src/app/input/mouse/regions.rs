@@ -165,7 +165,14 @@ impl App {
                 self.focus = Focus::KeySearch;
                 self.click_field(x, y);
             }
+            Some(SettingsPart::SearchField) => {
+                self.settings_leave_field();
+                self.settings.recording = false;
+                self.focus = Focus::SettingsSearch;
+                self.click_field(x, y);
+            }
             Some(SettingsPart::Copy(setting)) => self.settings_copy_value(setting),
+            Some(SettingsPart::Link(setting)) => self.settings_open_link(setting),
             Some(SettingsPart::Install(id)) => {
                 self.settings_choose_tool(id, MenuCommand::ToolInstall);
             }

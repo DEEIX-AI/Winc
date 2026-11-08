@@ -3,6 +3,9 @@
 settings-language = 语言
 settings-language-auto = 跟随系统
 settings-title = 设置
+settings-search-placeholder = 搜索设置
+settings-search-results = 搜索结果
+settings-search-empty = 未找到匹配的设置
 
 ## 分类与分组。
 
@@ -82,6 +85,10 @@ settings-remote-images-desc = 加载文档中的徽章和截图等网络图片�
 settings-check-updates-desc = 启动时及之后每天检查一次，发现新版本时在状态栏中提示
 settings-system-title-bar-desc = 由桌面环境绘制标题栏和窗口边框
 settings-version = 版本
+settings-version-line = 版本 { $version }
+settings-website = 官网
+settings-license = 开源许可
+settings-link-open-failed = 无法打开链接：{ $error }
 settings-version-copied = 已复制版本号 { $version }
 settings-updates = 软件更新
 settings-check-now = 检查更新

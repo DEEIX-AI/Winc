@@ -17,7 +17,7 @@ use super::editor::format::{task_commands, task_commands_mut};
 use super::input::context_menu::{MenuTarget, menu_below, tool_setting as tool_setting_of};
 use super::*;
 use crate::keymap::{self, Os, Stroke};
-use crate::layout::{KeysLayout, ToolLanguages};
+use crate::layout::{KeysLayout, SettingsView, ToolLanguages};
 
 /// 设置浮层的状态。
 #[derive(Debug, Default)]
@@ -54,6 +54,12 @@ pub struct SettingsState {
     ///
     /// 文字宽度要到绘制时才知道，悬停和点击使用这里记录的位置。
     pub install_links: Vec<(Setting, Rect)>,
+    /// 分类栏顶部的搜索框：按设置项的名称和说明搜索，不为空白时正文换成搜索结果。
+    pub search: TextField,
+    /// 「关于」页顶部的产品图标：渲染时的边长（物理像素）和 RGBA 像素；关闭浮层时释放。
+    ///
+    /// 渲染失败时像素为空，不再重试，图标不显示。
+    pub logo: Option<(u32, Vec<u8>)>,
     /// 快捷键页的搜索框：按命令名或按键搜索。
     pub keys_query: TextField,
     /// 是否正在录制按键：按下的键写入搜索框，不执行。
@@ -194,6 +200,7 @@ impl App {
         self.settings.cache = None;
         self.settings.scroll = 0.0;
         self.settings.selected = Setting::default();
+        self.settings.search.set_text("");
         self.settings.error = self.broken_font(self.settings.selected.page());
         self.settings.keyboard = false;
         self.settings.hover = None;
@@ -234,12 +241,13 @@ impl App {
         self.settings.switch_slide = None;
         self.settings.error = None;
         self.settings.hover = None;
+        self.settings.logo = None;
         self.field_preedit.clear();
 
         self.settings.recording = false;
         if matches!(
             self.focus,
-            Focus::Settings | Focus::Setting | Focus::KeySearch
+            Focus::Settings | Focus::Setting | Focus::KeySearch | Focus::SettingsSearch
         ) {
             self.focus = Focus::Editor;
         }
@@ -253,7 +261,7 @@ impl App {
     /// 链接不可点击。
     pub(super) fn settings_part_at(&self, x: f32, y: f32) -> Option<SettingsPart> {
         let layout = self.settings_layout();
-        if layout.page == SettingsPage::Keys {
+        if layout.page == SettingsPage::Keys && !layout.searching {
             let (search, record) = KeysLayout::header(layout.body);
             if record.contains(x, y) {
                 return Some(SettingsPart::Record);
@@ -267,27 +275,148 @@ impl App {
             .install_links
             .iter()
             .find(|(_, r)| r.contains(x, y) && layout.body.contains(x, y));
-        match link {
-            Some(&(setting, _)) => Some(SettingsPart::Install(setting)),
-            None => layout.part_at(x, y),
+        if let Some(&(setting, _)) = link {
+            return Some(SettingsPart::Install(setting));
+        }
+        match layout.part_at(x, y)? {
+            // 版本号和链接只有文字那一块可点，与悬停底色一致。
+            part @ (SettingsPart::Copy(setting) | SettingsPart::Link(setting)) => {
+                let area = self.settings_value_area(&layout, setting)?;
+                area.contains(x, y).then_some(part)
+            }
+            // 不支持应用内更新时不显示「检查更新」按钮。
+            SettingsPart::Action(Setting::Updates) if !self.updates_supported() => None,
+            part => Some(part),
+        }
+    }
+
+    /// 返回「关于」页中版本号或链接 `setting` 实际占的区域（悬停底色和点击范围）；不在布局
+    /// `layout` 中时返回 `None`。
+    pub(in crate::app) fn settings_value_area(
+        &self,
+        layout: &SettingsLayout,
+        setting: Setting,
+    ) -> Option<Rect> {
+        let row = layout.row(setting)?;
+        let measure = |text: &str| {
+            (self.renderer.as_ref()).map_or(0.0, |r| r.measure(FontKind::Ui, self.fonts.ui, text))
+        };
+        Some(if setting == Setting::Version {
+            let text_w = measure(&crate::layout::version_line());
+            crate::layout::ProductParts::new(row.row).version_area(text_w)
+        } else {
+            let text = crate::layout::about_value(setting).unwrap_or_default();
+            let content = measure(&text) + crate::layout::LINK_ICON_W;
+            crate::layout::value_area(row.control, content)
+        })
+    }
+
+    /// 返回边长 `size`（物理像素）的产品图标（RGBA），首次用到或缩放改变时从应用图标的 SVG
+    /// 渲染并留存。
+    pub(crate) fn product_logo(&mut self, size: u32) -> &[u8] {
+        /// 应用图标，与各平台安装包的图标同一份。
+        const LOGO: &str = include_str!("../../assets/icon.svg");
+        if self.settings.logo.as_ref().is_none_or(|&(s, _)| s != size) {
+            let rgba = winc_preview::svg::load(LOGO, None, None)
+                .map(|picture| picture.render(size, size).rgba)
+                .unwrap_or_default();
+            self.settings.logo = Some((size, rgba));
+        }
+        self.settings.logo.as_ref().map_or(&[], |(_, rgba)| rgba)
+    }
+
+    /// 是否支持应用内更新：不支持时「关于」页只写明原因，不显示「检查更新」按钮。
+    pub(crate) fn updates_supported(&self) -> bool {
+        use crate::winc::UpdateState;
+        !matches!(*self.shared.update_state.borrow(), UpdateState::Off)
+    }
+
+    /// 在浏览器中打开「关于」页的链接 `setting`；打不开时在状态栏说明原因。
+    pub(in crate::app) fn settings_open_link(&mut self, setting: Setting) {
+        self.settings.selected = setting;
+        let Some(url) = crate::layout::about_link(setting) else {
+            return;
+        };
+        if let Err(e) = crate::system::open_url(&url) {
+            self.flash(t!("settings-link-open-failed", error = e.to_string()));
         }
     }
 
     /// 返回设置浮层当前帧的几何布局，绘制、悬停和点击共用同一份。
+    ///
+    /// 说明文字用渲染器量宽度后折行；绘制期间渲染器不在 `App` 中，绘制时改用
+    /// [`Self::settings_layout_with`]，以同一份字形缓存量出相同的结果。
     pub(crate) fn settings_layout(&self) -> SettingsLayout {
-        let page = self.settings.selected.page();
-        let languages = &self.settings.languages;
-        let editing = self.settings.editing.as_ref().map(|(s, _)| *s);
-        let scroll = self.settings.scroll;
-        let terminal = self.module_fx.terminal.share(self.terminal_enabled());
-        SettingsLayout::compute(
-            self.layout.window,
-            page,
-            languages,
-            terminal,
-            editing,
-            scroll,
-        )
+        let size = self.fonts.ui_small;
+        let renderer = self.renderer.as_ref();
+        self.settings_layout_with(&mut |text: &str| {
+            renderer.map_or(0.0, |r| r.measure(FontKind::Ui, size, text))
+        })
+    }
+
+    /// 同 [`Self::settings_layout`]，说明文字（界面小字号）的宽度由 `measure` 给出。
+    pub(crate) fn settings_layout_with(
+        &self,
+        measure: &mut dyn FnMut(&str) -> f32,
+    ) -> SettingsLayout {
+        let view = SettingsView {
+            page: self.settings.selected.page(),
+            query: self.settings.search.text(),
+            languages: &self.settings.languages,
+            terminal: self.module_fx.terminal.share(self.terminal_enabled()),
+            editing: self.settings.editing.as_ref().map(|(s, _)| *s),
+            scroll: self.settings.scroll,
+        };
+        SettingsLayout::compute(self.layout.window, &view, measure)
+    }
+
+    /// 是否在显示搜索结果：分类栏顶部的搜索框不为空白。
+    pub(crate) fn settings_searching(&self) -> bool {
+        !self.settings.search.text().trim().is_empty()
+    }
+
+    /// 返回键盘上下移动经过的设置项：搜索时为搜索结果，否则为各页的全部设置项。
+    fn settings_items(&self) -> Vec<Setting> {
+        let (languages, terminal) = (&self.settings.languages, self.terminal_enabled());
+        if self.settings_searching() {
+            Setting::found(self.settings.search.text(), languages, terminal)
+        } else {
+            Setting::all(languages, terminal)
+        }
+    }
+
+    /// 把焦点移到分类栏顶部的搜索框，全选其中的文字。
+    pub(super) fn focus_settings_search(&mut self) {
+        self.settings_leave_field();
+        self.settings.recording = false;
+        self.settings.search.select_all();
+        self.focus = Focus::SettingsSearch;
+        self.reset_blink();
+        self.request_redraw();
+    }
+
+    /// 搜索框的内容变化后：结果从顶部显示，选中第一条结果；清空后回到选中项所在的页。
+    pub(in crate::app) fn settings_search_changed(&mut self) {
+        self.settings.scroll = 0.0;
+        self.settings.keyboard = false;
+        if let Some(&first) = self.settings_items().first()
+            && self.settings_searching()
+        {
+            self.settings.selected = first;
+        }
+        self.request_redraw();
+    }
+
+    /// 从搜索框进入结果列表：键盘焦点回到浮层，选中第一条结果；没有结果时不处理。
+    pub(super) fn settings_enter_results(&mut self) {
+        let Some(&first) = self.settings_items().first() else {
+            return;
+        };
+        self.settings.selected = first;
+        self.settings.keyboard = true;
+        self.focus = Focus::Settings;
+        self.settings_scroll_into_view();
+        self.request_redraw();
     }
 
     /// 切换到 `page`，并选中该页的第一项。
@@ -300,6 +429,11 @@ impl App {
             return;
         }
         self.settings_leave_field();
+        // 换页即离开搜索结果；选中的结果在该页时仍选中它。
+        if self.settings_searching() {
+            self.settings.search.set_text("");
+            self.settings.scroll = 0.0;
+        }
         if self.settings.selected.page() != page {
             self.settings.selected = page.first();
             self.settings.scroll = 0.0;
@@ -369,7 +503,10 @@ impl App {
     pub(super) fn settings_move(&mut self, down: bool) {
         self.settings_leave_field();
 
-        let all = Setting::all(&self.settings.languages, self.terminal_enabled());
+        let all = self.settings_items();
+        if all.is_empty() {
+            return;
+        }
         let position = all
             .iter()
             .position(|s| *s == self.settings.selected)
@@ -381,7 +518,8 @@ impl App {
         };
 
         self.settings.keyboard = true;
-        if all[next].page() != self.settings.selected.page() {
+        // 搜索结果在同一列中，跨页移动不回到顶部。
+        if all[next].page() != self.settings.selected.page() && !self.settings_searching() {
             self.settings.scroll = 0.0;
             self.settings.error = self.broken_font(all[next].page());
         }
@@ -489,7 +627,8 @@ impl App {
             | SettingControl::Action
             | SettingControl::Choice
             | SettingControl::Search
-            | SettingControl::Value
+            | SettingControl::Product
+            | SettingControl::Link
             | SettingControl::Button => {}
         }
     }
@@ -529,7 +668,8 @@ impl App {
     }
 
     /// 处理 `↩` 或空格：输入框进入编辑，开关切换，格式化命令、「添加语言…」「排除的语言」弹出菜单，
-    /// 数值项和主题项向前一步（等同 `→`），版本号复制到剪贴板，搜索项把焦点移到搜索框。
+    /// 数值项和主题项向前一步（等同 `→`），版本号复制到剪贴板，链接在浏览器中打开，搜索项把焦点移到
+    /// 搜索框。
     pub(super) fn settings_activate(&mut self) {
         self.settings.keyboard = true;
         let setting = self.settings.selected;
@@ -541,7 +681,8 @@ impl App {
             | SettingControl::Action
             | SettingControl::Choice
             | SettingControl::Button => self.settings_open_menu(setting),
-            SettingControl::Value => self.settings_copy_value(setting),
+            SettingControl::Product => self.settings_copy_value(setting),
+            SettingControl::Link => self.settings_open_link(setting),
             SettingControl::Stepper | SettingControl::Themes | SettingControl::ThemeList => {
                 self.settings_step(true)
             }

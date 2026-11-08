@@ -327,6 +327,12 @@ fn snapshot_about_page() {
         let (x, y) = settings_point(&app, SettingsPart::Action(Setting::Updates));
         app.on_mouse_move(x, y);
         shoot(&mut app, &format!("settings-about-{tag}"));
+
+        // 不支持应用内更新：只写明原因，没有按钮；鼠标停在一个链接上。
+        *app.shared.update_state.borrow_mut() = crate::winc::UpdateState::Off;
+        let (x, y) = settings_point(&app, SettingsPart::Link(Setting::Repository));
+        app.on_mouse_move(x, y);
+        shoot(&mut app, &format!("settings-about-off-{tag}"));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -346,6 +352,32 @@ fn snapshot_zoom() {
         shoot(&mut app, &format!("zoom-{zoom}"));
         app.open_settings();
         shoot(&mut app, &format!("zoom-{zoom}-settings"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：分类栏顶部的搜索框，搜索「字号」时各页的结果（`settings-search-*`），以及没有匹配时
+/// 的说明（`settings-search-empty-*`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_settings_search() {
+    let dir = search_folder("settings-search-shot");
+    for (tag, dark) in [("light", false), ("dark", true)] {
+        let mut app = app_with(&dir.join("short.rs"), dark);
+        app.config.terminal_enabled = Some(true);
+        app.open_settings();
+        app.on_mouse_move(4.0, 4.0);
+        shoot(&mut app, &format!("settings-search-idle-{tag}"));
+
+        app.focus_settings_search();
+        app.edit_field(|f| f.insert("字号"));
+        shoot(&mut app, &format!("settings-search-{tag}"));
+
+        app.edit_field(|f| {
+            f.set_text("没有这一项");
+            true
+        });
+        shoot(&mut app, &format!("settings-search-empty-{tag}"));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

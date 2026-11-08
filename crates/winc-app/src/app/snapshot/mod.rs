@@ -252,11 +252,14 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
     let layout = app.settings_layout();
     let rect = match part {
         SettingsPart::Close => layout.close,
+        SettingsPart::SearchField => layout.search,
         SettingsPart::Page(page) => layout.pages.iter().find(|(p, _)| *p == page).unwrap().1,
-        SettingsPart::Field(s)
-        | SettingsPart::Switch(s)
-        | SettingsPart::Action(s)
-        | SettingsPart::Copy(s) => layout.row(s).unwrap().control,
+        SettingsPart::Field(s) | SettingsPart::Switch(s) | SettingsPart::Action(s) => {
+            layout.row(s).unwrap().control
+        }
+        SettingsPart::Copy(s) | SettingsPart::Link(s) => {
+            app.settings_value_area(&layout, s).unwrap()
+        }
         SettingsPart::FontMenu(s) => {
             crate::layout::font_menu_button(layout.row(s).unwrap().control)
         }

@@ -322,6 +322,8 @@ pub enum Focus {
     Settings,
     /// 设置中「快捷键」页的搜索框。
     KeySearch,
+    /// 设置浮层分类栏顶部的搜索框。
+    SettingsSearch,
     /// 侧栏提交视图的提交信息输入框。
     CommitMessage,
     /// 侧栏提交视图的改动列表。

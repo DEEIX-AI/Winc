@@ -3,6 +3,9 @@
 settings-language = Language
 settings-language-auto = System Default
 settings-title = Settings
+settings-search-placeholder = Search Settings
+settings-search-results = Search Results
+settings-search-empty = No matching settings
 
 ## Pages and groups.
 
@@ -82,6 +85,10 @@ settings-remote-images-desc = Load remote images such as badges and screenshots;
 settings-check-updates-desc = Check on launch and once a day, and show new versions in the status bar
 settings-system-title-bar-desc = Use the title bar and window frame drawn by the desktop
 settings-version = Version
+settings-version-line = Version { $version }
+settings-website = Website
+settings-license = License
+settings-link-open-failed = Couldn’t open link: { $error }
 settings-version-copied = Copied version { $version }
 settings-updates = Software Update
 settings-check-now = Check Now

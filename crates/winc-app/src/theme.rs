@@ -757,6 +757,20 @@ pub const SETTINGS_BOTTOM: f32 = 24.0;
 pub const SETTINGS_ROW: f32 = 40.0;
 /// 名称下方还有一行说明文字时的行高。
 pub const SETTINGS_ROW_TALL: f32 = 54.0;
+/// 文字、图标类控件（菜单的值、字体名、数值步进、版本号）的底色在可见内容右侧留出的边距。
+///
+/// 可见内容的右缘与组内分隔线的右端对齐，开关、分段控件、按钮这类有底色的控件右缘也对齐到
+/// 该处；悬停底色因此比可见内容向右多出这段边距。
+pub const SETTINGS_GLYPH_PAD: f32 = 8.0;
+/// 「关于」页顶部产品信息一行的高度：上方留白 20、图标、间隔 10、名称一行 28、间隔 2、版本号
+/// 一行 24，下方留白 16。
+pub const SETTINGS_PRODUCT_H: f32 = 164.0;
+/// 「关于」页顶部产品图标的边长（逻辑像素）。
+pub const SETTINGS_LOGO: f32 = 64.0;
+/// 说明文字折成多行时，每多一行增加的行高：说明文字的行距。
+pub const SETTINGS_DESC_LINE: f32 = 18.0;
+/// 说明文字最多折成的行数；更窄时最后一行在末尾截短。
+pub const SETTINGS_DESC_LINES: usize = 3;
 
 /// 组上方标题行的高度（含与组之间的间距）。
 pub const SETTINGS_TITLE: f32 = 26.0;
