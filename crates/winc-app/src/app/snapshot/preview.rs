@@ -1903,8 +1903,8 @@ fn shoot_html_readme() {
 }
 
 /// mermaid 图的样本：流程图、状态图一张，时序图、饼图一张，子图多的架构图一张（一屏放不下
-/// 全部）。
-const DIAGRAMS: [&str; 3] = [
+/// 全部），以及节点文字多、从左往右的架构图和回边多的状态图一张。
+const DIAGRAMS: [&str; 4] = [
     r#"```mermaid
 flowchart TD
     A[开始] --> B{登录了吗?}
@@ -2006,6 +2006,57 @@ flowchart LR
     end
     x --> a
     c --> y
+```
+"#,
+    r#"# qcAgent 架构图
+
+## 1. 总体架构
+
+```mermaid
+flowchart LR
+    caller[调用方平台]
+    config[配置目录<br/>规则表 · 规则包 · 文档类型表 · 模型档案]
+    subgraph svc[qcAgent 服务（一个代码库，两个入口）]
+        api[qc-api<br/>鉴权 · 校验 · 数据等级闸门<br/>幂等 · 结果复用 · 规则预览]
+        worker[qc-worker<br/>领取任务（租约）· 心跳 / 取消 · 清扫<br/>执行流水线 · 上传结果 · 回调]
+        subgraph rt[运行环境（每个任务一套）]
+            shard[分片 s01 … sNN<br/>容器模式：工具容器 + 每轮一个 pi 容器<br/>本地模式：pi 和执行服务是本机进程]
+            net[容器模式：internal 网络 + 出口代理，只放行模型端点<br/>本地模式（QC_RUNTIME=local）：没有网络隔离]
+        end
+    end
+    model[私有化模型]
+    subgraph store[存储]
+        db[(Postgres / SQLite<br/>任务 · 事件 · 幂等键 · 回调发件箱)]
+        fs[(文件存储（本地目录）<br/>输入（按调用方、内容寻址）<br/>结果 · 审计包)]
+    end
+    caller -- 上传文件 / 提交任务 / 查询 / 取结果 --> api
+    config --> worker
+    api --> db
+    api --> fs
+    worker -- 领取 · 续租 · 写终态 --> db
+    worker -- 读输入 · 写结果和审计包 --> fs
+    worker --> shard
+    shard --> net
+    net --> model
+    worker -. 签名回调（只含任务 ID 和状态） .-> caller
+```
+
+## 2. 任务生命周期
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued: 提交通过校验
+    [*] --> succeeded: 输入与通过验收的旧任务完全相同（复用结果）
+    queued --> running: worker 领取（设置租约）
+    running --> queued: 租约过期（worker 失联），重试次数未用完
+    queued --> failed: 排队超过截止时间（expired）
+    queued --> canceled: 取消
+    running --> canceled: 心跳发现取消，终止 pi 容器
+    running --> succeeded: 有结果（passed 或 degraded）
+    running --> failed: 拿不出结果（input_error / refused / system_error）
+    succeeded --> [*]
+    failed --> [*]
+    canceled --> [*]
 ```
 "#,
 ];

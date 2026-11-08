@@ -665,7 +665,13 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
                 let tx = card.x + text_x + depth(*level) * TOC_INDENT;
                 let room = (band.right() - 8.0 - tx).max(0.0);
                 let title = crate::view::ellipsize(frame, title, size, room);
-                crate::view::ui_text(frame, app, tx, band, &title, p.text, card);
+                // 当前所在节加粗。
+                let faux = winc_render::Faux {
+                    bold: current == Some(i),
+                    ..Default::default()
+                };
+                let baseline = crate::view::ui_baseline(app, band, size);
+                frame.text_faux(FontKind::Ui, faux, size, tx, baseline, &title, p.text, card);
                 hits.push((band, TocTarget::Heading(i)));
             }
         });
