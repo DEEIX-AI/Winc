@@ -2847,6 +2847,99 @@ fn holding_option_turns_commit_into_commit_and_push() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 提交按钮变宽（例如按住 ⌥）到放不下「修改上次提交」时：按钮宽度从原来的宽度过渡到占满整行，
+/// 「修改上次提交」途中还画着、淡出，不响应鼠标，按钮的菜单里已经有这一项；过渡结束后不再排出。
+#[test]
+fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
+    use crate::app::animation::{Clock, TREE_ANIMATION};
+    use crate::app::input::context_menu::{MenuCommand, MenuEntry};
+
+    let Some((mut app, root)) = git_app("git-commit-button-motion", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    app.edit_field(|f| f.insert("修复"));
+    paint(&mut app);
+    let before = app.commit_parts();
+    let from = before.commit.w + before.commit_menu.w;
+    assert!(before.amend.is_some());
+
+    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    let settled = app.commit_parts();
+    let to = settled.commit.w + settled.commit_menu.w;
+    assert!(settled.amend.is_none());
+    assert!(to > from);
+
+    let half = Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION);
+    app.commit.button_motion = Some((from, half));
+    app.commit.amend_motion = Some((false, half));
+    paint(&mut app);
+    let parts = app.commit_parts();
+    let width = parts.commit.w + parts.commit_menu.w;
+    assert!(width > from && width < to, "{from} < {width} < {to}");
+    assert_eq!(parts.commit_menu.right(), settled.commit_menu.right());
+    assert!(parts.amend.is_some());
+    assert!(
+        !app.commit_hits
+            .iter()
+            .any(|(_, t)| *t == CommitTarget::Amend)
+    );
+    let amend = MenuEntry::Item(MenuCommand::CommitAmend, true);
+    assert!(app.commit_button_menu().contains(&amend));
+    assert!(app.animating());
+
+    app.commit.button_motion = None;
+    app.commit.amend_motion = None;
+    assert_eq!(app.commit_parts(), settled);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 截图：侧栏宽度刚好放得下「修改上次提交」和按钮的一种写法、放不下另一种时按下或松开 ⌥，
+/// 按钮变宽：过渡前、过渡的四分之一处、过渡结束。
+#[test]
+#[ignore]
+fn shoot_commit_button_motion() {
+    use crate::app::animation::{Clock, TREE_ANIMATION};
+    use winit::keyboard::ModifiersState;
+
+    let Some((mut app, root)) = git_app("git-commit-button-motion-shot", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    app.edit_field(|f| f.insert("修复"));
+    let fits = |app: &mut App, modifiers| {
+        app.modifiers = modifiers;
+        paint(app);
+        app.commit_parts().amend.is_some()
+    };
+    let [plain, alt] = [ModifiersState::empty(), ModifiersState::ALT];
+    let (from_keys, to_keys) = loop {
+        match (fits(&mut app, plain), fits(&mut app, alt)) {
+            (true, false) => break (plain, alt),
+            (false, true) => break (alt, plain),
+            _ => {}
+        }
+        assert!(app.panel_width > crate::theme::MIN_PANEL_WIDTH);
+        app.panel_width -= 2.0;
+    };
+    app.modifiers = from_keys;
+    shoot(&mut app, "commit-button-before");
+    let before = app.commit_parts();
+    let from = before.commit.w + before.commit_menu.w;
+    app.modifiers = to_keys;
+    paint(&mut app);
+    let quarter = Clock::frozen(TREE_ANIMATION / 4, TREE_ANIMATION);
+    app.commit.button_motion = Some((from, quarter));
+    app.commit.amend_motion = Some((false, quarter));
+    shoot(&mut app, "commit-button-quarter");
+    app.commit.button_motion = None;
+    app.commit.amend_motion = None;
+    shoot(&mut app, "commit-button-after");
+    app.modifiers = plain;
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 提交以后改动列表不是一下子换掉：过渡途中离开的行按刷新前的状态还画着、各行不响应点击，空状态
 /// 同时淡入；只是保存了文件（改动的文件和状态都没变）时不做过渡。
 #[test]

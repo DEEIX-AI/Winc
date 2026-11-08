@@ -38,9 +38,9 @@ const SYNC_TEXT_LEFT: f32 = 8.0;
 /// 「修改上次提交」的勾选框中心离那一段左边的距离（逻辑像素）：边长 12 的勾选框左边留 1，和
 /// 悬停底色的边缘分开。
 const AMEND_CHECK: f32 = 7.0;
-/// 「修改上次提交」的文字离那一段左边的距离（逻辑像素）：勾选框右边再隔 5，和改动列表里勾选框
-/// 与图标的间隔（`LABEL_GAP`）相同。
-const AMEND_TEXT: f32 = 18.0;
+/// 「修改上次提交」的文字离那一段左边的距离（逻辑像素）：勾选框右边再隔 8，和设置里勾选项的
+/// 勾选框与文字的间隔相同。
+const AMEND_TEXT: f32 = 21.0;
 /// 「修改上次提交」文字右边留到悬停底色边缘的距离（逻辑像素），与左边勾选框外的空隙相当。
 const AMEND_END: f32 = 6.0;
 /// 没有更改时空状态和下面「推送」「拉取」按钮之间的距离（逻辑像素）：比说明的两行之间宽，
@@ -63,11 +63,11 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     // 底行的勾选框、按钮和「撤销」按文字宽度排：先量好，排版时就用上了。
     let size = app.fonts.ui_small;
     let (text, icon_w) = commit_button_text(app);
-    app.commit.labels = CommitLabels {
+    app.set_commit_labels(CommitLabels {
         amend: AMEND_TEXT + frame.measure(FontKind::Ui, size, t!("git-commit-amend")) + AMEND_END,
         button: icon_w + frame.measure(FontKind::Ui, size, &text),
         undo: frame.measure(FontKind::Ui, size, t!("git-commit-undo")),
-    };
+    });
     let parts = app.commit_parts();
     // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
     // 展开、收起的动画中列表按动画结束时的行计算，由动画自己处理。
@@ -1588,21 +1588,28 @@ fn draw_card(
     app.commit.message = field;
     let clip = panel.intersect(card);
 
-    // 「修改上次提交」：勾选框连同文字，整段都能点，悬停时铺底色。
+    // 「修改上次提交」：勾选框连同文字，整段都能点，悬停时铺底色。随提交按钮变宽隐去、变窄
+    // 出现时按进度淡出、淡入，过渡中不响应鼠标。
     if let Some(amend) = parts.amend {
-        let hovered = app.hover == Hover::Commit(CommitTarget::Amend);
+        let (shown, fading) = match app.commit.amend_motion {
+            Some((true, clock)) => (clock.progress(), true),
+            Some((false, clock)) => (1.0 - clock.progress(), true),
+            None => (1.0, false),
+        };
+        let fade = |c: Color| c.alpha(c.a * shown);
+        let hovered = !fading && app.hover == Hover::Commit(CommitTarget::Amend);
         draw_button(frame, p, amend, clip, hovered, false);
         let cy = amend.y + amend.h / 2.0;
         let state = app.commit.amend.then_some(true);
-        let border = p.text_dim.alpha(0.55);
+        let border = fade(p.text_dim.alpha(0.55));
         let check = (amend.x + AMEND_CHECK, cy);
         icons::checkbox(
             frame,
             check,
             state,
-            p.accent,
+            fade(p.accent),
             border,
-            p.text_on_accent,
+            fade(p.text_on_accent),
             clip,
         );
         let x = amend.x + AMEND_TEXT;
@@ -1612,10 +1619,12 @@ fn draw_card(
             x,
             amend,
             t!("git-commit-amend"),
-            p.text_muted,
+            fade(p.text_muted),
             clip,
         );
-        hits.push((amend, CommitTarget::Amend));
+        if !fading {
+            hits.push((amend, CommitTarget::Amend));
+        }
     }
 
     // 「提交 ⌄」：强调色的拆分按钮，左边「✓ 提交」，右边一道细竖线隔开下拉箭头。

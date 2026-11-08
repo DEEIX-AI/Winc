@@ -551,6 +551,12 @@ pub(crate) struct CommitState {
     pub message_lines: usize,
     /// 行数变化后框高过渡的起始高度（逻辑像素）与时钟；不在过渡中时为 `None`。
     pub message_motion: Option<(f32, crate::app::animation::Clock)>,
+    /// 提交按钮宽度变化（文字变了，例如按住 ⌥ 换成「提交并推送」）时过渡的起始宽度（逻辑像素，
+    /// 连同下拉箭头）与时钟；不在过渡中时为 `None`。
+    pub button_motion: Option<(f32, crate::app::animation::Clock)>,
+    /// 「修改上次提交」随按钮变宽隐去、变窄出现的过渡：终点是否显示与时钟；不在过渡中时为
+    /// `None`。
+    pub amend_motion: Option<(bool, crate::app::animation::Clock)>,
     /// 提交卡片滑进、滑出（见 [`App::track_commit_bars`]）。
     pub(crate) card: Slide,
     /// 「上一次提交」那一栏拉开、收起。
@@ -669,6 +675,8 @@ impl Default for CommitState {
             message: TextField::multiline(),
             message_lines: 1,
             message_motion: None,
+            button_motion: None,
+            amend_motion: None,
             card: Slide::default(),
             undo: Slide::default(),
             undo_drawn: None,
@@ -911,13 +919,19 @@ impl App {
             0.0
         };
         let compact = beside + fitted <= footer.w;
-        let button_w = if compact { fitted } else { footer.w };
+        let settled_w = if compact { fitted } else { footer.w };
+        let button_w = self
+            .commit
+            .button_motion
+            .map_or(settled_w, |(from, clock)| clock.between(from, settled_w));
         let whole = Rect::new(footer.right() - button_w, footer.y, button_w, FOOTER_H);
         let menu_w = BUTTON_MENU_W.min(whole.w);
         let commit = Rect::new(whole.x, whole.y, whole.w - menu_w, FOOTER_H);
         let commit_menu = Rect::new(commit.right(), whole.y, menu_w, FOOTER_H);
-        let amend =
-            (amendable && compact).then(|| Rect::new(footer.x, footer.y, labels.amend, FOOTER_H));
+        // 隐去的过渡中仍排出「修改上次提交」，由绘制按进度淡出。
+        let leaving = matches!(self.commit.amend_motion, Some((false, _)));
+        let amend = (amendable && (compact || leaving))
+            .then(|| Rect::new(footer.x, footer.y, labels.amend, FOOTER_H));
         (
             Some(card),
             message,
@@ -1088,6 +1102,39 @@ impl App {
         self.commit.message_lines = lines;
         let clock = self.clock(crate::app::animation::TREE_ANIMATION);
         self.commit.message_motion = clock.map(|c| (from, c));
+    }
+
+    /// 记下绘制时量好的文字宽度（见 [`CommitLabels`]）。提交按钮因此变宽、变窄时宽度随之过渡，
+    /// 左边的「修改上次提交」因按钮放不下而隐去、因腾出位置而出现时同时淡出、淡入。
+    ///
+    /// 第一次量出宽度时直接到位，不做过渡。
+    pub(crate) fn set_commit_labels(&mut self, labels: CommitLabels) {
+        if labels == self.commit.labels {
+            return;
+        }
+        let first = self.commit.labels == CommitLabels::default();
+        let before = self.commit_parts();
+        // 「修改上次提交」原本的去向：过渡中按过渡的终点，否则看排没排出来。
+        let motion = self.commit.amend_motion.take();
+        let was = motion.map_or(before.amend.is_some(), |(shown, _)| shown);
+        self.commit.labels = labels;
+        if first {
+            return;
+        }
+        let after = self.commit_parts();
+        let width = |parts: &CommitParts| parts.commit.w + parts.commit_menu.w;
+        let from = width(&before);
+        if (from - width(&after)).abs() >= 0.5 {
+            let clock = self.clock(crate::app::animation::TREE_ANIMATION);
+            self.commit.button_motion = clock.map(|c| (from, c));
+        }
+        let now = after.amend.is_some();
+        self.commit.amend_motion = if was == now {
+            motion
+        } else {
+            self.clock(crate::app::animation::TREE_ANIMATION)
+                .map(|c| (now, c))
+        };
     }
 
     /// 鼠标没在拖东西、侧栏也没在开合：可以在悬停的行上展开写不下的名字。
@@ -1420,7 +1467,9 @@ impl App {
             MenuCommand::CommitPush,
             idle && (!clean || self.commit.amend),
         )];
-        if self.commit_amendable() && self.commit_parts().amend.is_none() {
+        // 正在淡出的「修改上次提交」已经算收进了菜单。
+        let leaving = matches!(self.commit.amend_motion, Some((false, _)));
+        if self.commit_amendable() && (self.commit_parts().amend.is_none() || leaving) {
             entries.push(MenuEntry::Separator);
             entries.push(MenuEntry::Item(MenuCommand::CommitAmend, idle));
         }

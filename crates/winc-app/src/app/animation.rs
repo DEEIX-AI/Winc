@@ -296,6 +296,8 @@ impl App {
         settle(&mut self.commit.actions_slide, |s| s.1);
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
+        settle(&mut self.commit.button_motion, |m| m.1);
+        settle(&mut self.commit.amend_motion, |m| m.1);
         settle(&mut self.commit.stash_motion, |m| m.1);
         settle(&mut self.commit.card.motion, |m| m.1);
         settle(&mut self.commit.undo.motion, |m| m.1);
@@ -383,6 +385,8 @@ impl App {
             || self.commit.shift.is_some()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
+            || self.commit.button_motion.is_some()
+            || self.commit.amend_motion.is_some()
             || self.commit.stash_motion.is_some()
             || self.commit.card.motion.is_some()
             || self.commit.undo.motion.is_some()
