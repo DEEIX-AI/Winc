@@ -168,6 +168,7 @@ impl App {
             pending_jump: None,
             goto_input: None,
             global: GlobalSearch::default(),
+            outline: OutlineState::default(),
             picker: FileIndex::default(),
             picker_open: false,
             picker_doc: None,

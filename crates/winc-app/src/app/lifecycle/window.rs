@@ -258,6 +258,7 @@ impl App {
         self.place_merge_panes();
         self.place_minimap();
 
+        self.place_outline();
         // 侧栏显示搜索面板时没有文件树，点击、悬停和滚动不能落在文件树原来的区域上。
         if self.sidebar_view == SidebarView::Search {
             let tree = self.layout.tree;

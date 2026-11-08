@@ -10,10 +10,12 @@
 mod files;
 mod search;
 mod settings;
+mod symbols;
 
 pub use files::*;
 pub use search::*;
 pub use settings::*;
+pub use symbols::*;
 
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
 

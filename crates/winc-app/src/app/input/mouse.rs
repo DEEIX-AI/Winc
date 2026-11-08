@@ -101,7 +101,10 @@ impl App {
         let was_scrollbar = matches!(self.drag, Drag::Scrollbar { .. });
         let was_divider = matches!(
             self.drag,
-            Drag::Splitter { .. } | Drag::TerminalDivider { .. } | Drag::SplitDivider { .. }
+            Drag::Splitter { .. }
+                | Drag::TerminalDivider { .. }
+                | Drag::SplitDivider { .. }
+                | Drag::OutlineDivider { .. }
         );
         if matches!(self.drag, Drag::TerminalDivider { .. }) {
             self.terminal_dragging(false);
@@ -331,6 +334,10 @@ impl App {
         {
             let max = self.commit_max_scroll();
             self.commit.scroll = (self.commit.scroll - dy).clamp(0.0, max);
+            self.set_hover(self.hover_at(x, y));
+        } else if self.outline_shown() && self.outline_list().contains(x, y) {
+            let max = self.outline_max_scroll();
+            self.outline.scroll = (self.outline.scroll - dy).clamp(0.0, max);
             self.set_hover(self.hover_at(x, y));
         } else if self.panel_shown() && l.sidebar.contains(x, y) {
             let max = self.results_max_scroll();

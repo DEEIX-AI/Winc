@@ -70,6 +70,7 @@ impl App {
             Target::ChangeMark(hunk) => Hover::ChangeMark(hunk),
             Target::Gutter => Hover::Gutter,
             Target::TerminalDivider => Hover::TerminalDivider,
+            Target::OutlineDivider => Hover::OutlineDivider,
             Target::SplitDivider => Hover::SplitDivider,
             Target::TerminalHeader(hit) => Hover::TerminalHeader(hit),
             Target::TerminalBlock(hit) => Hover::TerminalBlock(hit),
@@ -136,10 +137,15 @@ impl App {
         // 搜索结果、改动列表的滚动条位于行的右端，先于行判断。显示全名的那一改动行覆盖在滚动条
         // 之上：鼠标移到这一行的右端时全名保持显示，按下作用于这一行。
         let over_commit_row = self.over_commit_overflow_row(y);
-        if let Some((bar @ (Scrollbar::Panel | Scrollbar::Commit), grab)) = self.scrollbar_at(x, y)
+        if let Some((bar @ (Scrollbar::Panel | Scrollbar::Commit | Scrollbar::Outline), grab)) =
+            self.scrollbar_at(x, y)
             && !(over_commit_row && bar == Scrollbar::Commit)
         {
             return Target::Scrollbar(bar, grab);
+        }
+        // 大纲标题行的上沿跨在文件树和大纲之间，先于两者判定。
+        if self.outline_divider().contains(x, y) {
+            return Target::OutlineDivider;
         }
         if let Some(hover) = self.panel_hover_at(x, y) {
             return Target::Panel(hover);
@@ -313,6 +319,15 @@ impl App {
                 let content = (self.global.rows().len() as f32 + 1.0) * TREE_ROW;
                 let thumb = scrollbar_thumb(results, self.global.scroll, content)?;
                 return Some((Scrollbar::Panel, grab(y, thumb.y, thumb.h)));
+            }
+        }
+        // 大纲的列表。
+        if self.outline_shown() {
+            let list = self.outline_list();
+            if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
+                let content = self.outline_max_scroll() + list.h;
+                let thumb = scrollbar_thumb(list, self.outline.scroll, content)?;
+                return Some((Scrollbar::Outline, grab(y, thumb.y, thumb.h)));
             }
         }
         // 提交视图的改动列表。
@@ -494,6 +509,10 @@ impl App {
             } else {
                 CursorIcon::Default
             }
+        } else if matches!(self.drag, Drag::OutlineDivider { .. })
+            || self.hover == Hover::OutlineDivider
+        {
+            CursorIcon::RowResize
         } else if matches!(self.drag, Drag::TerminalDivider { .. })
             || self.hover == Hover::TerminalDivider
         {
@@ -614,6 +633,8 @@ pub(super) enum Target {
     Terminal,
     /// 编辑区和终端面板之间的间距。
     TerminalDivider,
+    /// 文件视图里大纲标题行的上沿。
+    OutlineDivider,
     /// 分栏预览中间的分隔线。
     SplitDivider,
     /// 编辑区右侧的缩略图。

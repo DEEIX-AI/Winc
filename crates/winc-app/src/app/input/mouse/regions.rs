@@ -19,6 +19,14 @@ impl App {
             return Some(Hover::ProjectName);
         }
 
+        // 文件视图底部的大纲：按绘制时记下的位置找；分隔条由 `Target::Splitter` 处理。
+        if self.layout.outline.contains(x, y) {
+            if self.panel_visible && self.layout.splitter.contains(x, y) {
+                return None;
+            }
+            return Some(hit(&self.outline.hits, x, y).map_or(Hover::None, Hover::Outline));
+        }
+
         // 提交视图：输入框之外按绘制时记下的位置找。
         if self.commit_shown() && y >= self.panel_rect().y {
             // 分隔条由 `Target::Splitter` 处理，写全名的那一行除外：该行覆盖在分隔条之上。
@@ -266,6 +274,19 @@ impl App {
         }
         if self.project_hit.contains(x, y) {
             self.open_project_menu();
+            return true;
+        }
+
+        if self.layout.outline.contains(x, y) {
+            if self.panel_visible && self.layout.splitter.contains(x, y) {
+                return false;
+            }
+            if let Some(target) = hit(&self.outline.hits, x, y) {
+                self.press_outline(target);
+            } else if self.outline_list().contains(x, y) {
+                self.focus = Focus::Outline;
+            }
+            self.request_redraw();
             return true;
         }
 

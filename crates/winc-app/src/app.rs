@@ -62,6 +62,8 @@ pub use status::status_bar::{StatusItem, indent_label};
 pub use workspace::file_drop::DropZone;
 pub use workspace::files::{Pick, PlaceholderAction, TabBar, TabHit};
 pub use workspace::global::{GlobalSearch, ResultRow};
+pub(crate) use workspace::outline::{OUTLINE_GAP, has_children as outline_has_children};
+pub use workspace::outline::{OutlineEmpty, OutlineState, OutlineTarget};
 use workspace::picker::PickerMotion;
 pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
@@ -330,6 +332,8 @@ pub enum Focus {
     CommitMessage,
     /// 侧栏提交视图的改动列表。
     CommitList,
+    /// 侧栏的大纲。
+    Outline,
     /// 日志标签标题栏的筛选输入框。
     LogFilter,
     /// 功能对话框（新建工作树）里的输入框。
@@ -346,6 +350,7 @@ impl Focus {
                 | Focus::Results
                 | Focus::Settings
                 | Focus::CommitList
+                | Focus::Outline
                 | Focus::Terminal
         )
     }
@@ -374,6 +379,8 @@ impl Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hover {
     None,
+    /// 侧栏大纲里的一处（行、箭头、第二行的按钮）。
+    Outline(OutlineTarget),
     /// 编辑区右侧的缩略图。
     Minimap,
     /// 应用绘制的标题栏上的窗口按钮。
@@ -404,6 +411,8 @@ pub enum Hover {
     Splitter,
     /// 编辑区和终端面板之间的间距（拖动改面板的大小）。
     TerminalDivider,
+    /// 文件视图里大纲标题行的上沿（上下拖动改大纲的高度）。
+    OutlineDivider,
     /// 分栏预览中间的分隔线（左右拖动改两半的宽度）。
     SplitDivider,
     /// 终端面板标签栏上的标签、关闭按钮、「+」和位置按钮。
@@ -478,6 +487,7 @@ impl Hover {
                 | Hover::Preview(_)
                 | Hover::Browser
                 | Hover::ViewTab(_)
+                | Hover::Outline(OutlineTarget::FoldAll)
                 | Hover::Search(_)
                 | Hover::Panel(
                     PanelButton::Tool(_)
@@ -572,6 +582,11 @@ enum Drag {
     /// 面板在下面时是纵坐标
     /// 和高度，在右边时是横坐标和宽度。
     TerminalDivider {
+        start: f32,
+        size: f32,
+    },
+    /// 拖大纲标题行的上沿：按下时的纵坐标、符号列表当时的高度（逻辑像素）。
+    OutlineDivider {
         start: f32,
         size: f32,
     },
@@ -914,6 +929,8 @@ pub struct App {
 
     /// 侧栏搜索面板的状态。
     pub global: GlobalSearch,
+    /// 侧栏大纲的状态。
+    pub outline: OutlineState,
 
     // 快速打开
     /// 工作区中各文件的路径与匹配用的索引。

@@ -638,6 +638,8 @@ impl App {
 
         earliest(&mut wake, self.changes_tick(now));
 
+        earliest(&mut wake, self.sync_outline(now));
+
         earliest(&mut wake, self.blame_tick(now));
 
         // 停止绘制后处理空闲的呈现缓冲（每块与窗口一样大）：标成可清除或释放，不必等到下一次
