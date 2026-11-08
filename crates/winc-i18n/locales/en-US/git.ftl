@@ -80,8 +80,6 @@ git-op-rebase-onto = rebasing onto “{ $name }”
 git-op-delete-branch = deleting branch “{ $name }”
 git-op-new-branch = creating branch “{ $name }”
 git-op-new-tag = creating tag “{ $name }”
-git-op-stage = staging
-git-op-unstage = unstaging
 git-op-pull-rebase = pulling with rebase
 git-op-rename-branch = renaming branch “{ $name }”
 git-op-init = initializing the repository
@@ -606,7 +604,6 @@ git-change-none-at-caret = No change on the current line
 
 git-diff-side-worktree = Working Tree
 git-diff-side-worktree-unsaved = Working Tree · Unsaved
-git-diff-staged-only = Staged part only
 git-diff-identical-sides = Both sides are identical
 git-diff-none-at-caret = No change at the cursor
 git-diff-revert-failed = Couldn't roll back the change: { $error }

@@ -21,8 +21,8 @@ impl App {
 
         // 提交视图：输入框之外按绘制时记下的位置找。
         if self.commit_shown() && y >= self.panel_rect().y {
-            // 分隔条由分隔条自己认（`Target::Splitter`）。
-            if self.panel_visible && self.layout.splitter.contains(x, y) {
+            // 分隔条由分隔条自己认（`Target::Splitter`），名字写全的那一行除外：它盖住分隔条。
+            if self.on_splitter_outside_commit_overflow(x, y) {
                 return None;
             }
             return Some(hit(&self.commit_hits, x, y).map_or(Hover::None, Hover::Commit));
@@ -238,6 +238,14 @@ impl App {
         true
     }
 
+    /// (`x`, `y`) 是否在分隔条上、又不在提交视图里名字写全的那一行上：那一行盖住分隔条，和文件树
+    /// 一样（见 [`App::target_at`]）。
+    fn on_splitter_outside_commit_overflow(&self, x: f32, y: f32) -> bool {
+        self.panel_visible
+            && self.layout.splitter.contains(x, y)
+            && !self.over_commit_overflow_row(y)
+    }
+
     /// 是否已处理对侧栏顶部切换按钮或搜索面板的点击。
     pub(super) fn click_panel(&mut self, x: f32, y: f32) -> bool {
         let sidebar = self.layout.sidebar;
@@ -262,7 +270,7 @@ impl App {
         }
 
         if self.commit_shown() && y >= self.panel_rect().y {
-            if self.panel_visible && self.layout.splitter.contains(x, y) {
+            if self.on_splitter_outside_commit_overflow(x, y) {
                 return false;
             }
             if let Some(focus) = self.field_at(x, y) {

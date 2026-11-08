@@ -77,8 +77,6 @@ git-op-rebase-onto = 变基到「{ $name }」
 git-op-delete-branch = 删除分支「{ $name }」
 git-op-new-branch = 新建分支「{ $name }」
 git-op-new-tag = 新建标签「{ $name }」
-git-op-stage = 暂存
-git-op-unstage = 取消暂存
 git-op-pull-rebase = 拉取并变基
 git-op-rename-branch = 重命名分支「{ $name }」
 git-op-init = 初始化仓库
@@ -482,7 +480,6 @@ git-change-none-at-caret = 光标所在行没有更改
 git-diff-side-worktree = 工作区
 git-diff-side-worktree-unsaved = 工作区 · 未保存
 git-diff-identical-sides = 两侧内容相同
-git-diff-staged-only = 仅提交已暂存的部分
 git-diff-none-at-caret = 光标处没有更改
 git-diff-revert-failed = 无法回滚更改：{ $error }
 

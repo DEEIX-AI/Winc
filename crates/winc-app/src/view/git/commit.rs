@@ -1088,7 +1088,8 @@ fn draw_row(
     let focused = app.focus == Focus::CommitList;
     let checkbox = |frame: &mut Frame<'_>, x: f32, cy: f32, state: Option<bool>| {
         let border = p.text_dim.alpha(0.55);
-        icons::soft_checkbox(frame, (x, cy), state, p.accent, border, list);
+        let on_accent = p.text_on_accent;
+        icons::checkbox(frame, (x, cy), state, p.accent, border, on_accent, list);
     };
     let band = Rect::new(list.x + 8.0, y, list.w - 16.0, COMMIT_ROW);
     // 鼠标停着的这一行名字放不下：写全名，状态字母让开；伸出侧栏时底色铺到侧栏边缘、右边是
@@ -1595,7 +1596,15 @@ fn draw_card(
         let state = app.commit.amend.then_some(true);
         let border = p.text_dim.alpha(0.55);
         let check = (amend.x + AMEND_CHECK, cy);
-        icons::soft_checkbox(frame, check, state, p.accent, border, clip);
+        icons::checkbox(
+            frame,
+            check,
+            state,
+            p.accent,
+            border,
+            p.text_on_accent,
+            clip,
+        );
         let x = amend.x + AMEND_TEXT;
         ui_text_small(
             frame,

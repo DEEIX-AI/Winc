@@ -45,9 +45,6 @@ impl App {
             Target::Search => SearchParts::new(l.search)
                 .button_at(x, y)
                 .map_or(Hover::None, Hover::Search),
-            // 提交视图里从写全名的那一行往右移到伸出去的那一段，中间经过分隔条：这一行还算悬停
-            // 着，名字不缩回去又弹出来（按下时仍然可以拖动分隔条）。
-            Target::Splitter if self.over_commit_spill_row(y) => self.hover,
             Target::Splitter => Hover::Splitter,
             Target::TreeTool(tool) => Hover::TreeTool(tool),
             Target::ProjectName => Hover::ProjectName,
@@ -292,14 +289,6 @@ impl App {
             return Target::Editor;
         }
         Target::None
-    }
-
-    /// 提交视图里鼠标所在的高度是不是名字写全、伸出侧栏的那一行。
-    fn over_commit_spill_row(&self, y: f32) -> bool {
-        self.commit_shown()
-            && self.commit.overflow.is_some_and(|o| {
-                o.spill.is_some() && (o.y..o.y + crate::app::COMMIT_ROW).contains(&y)
-            })
     }
 
     /// 返回鼠标所在的可点击滚动条，以及此时按下后抓住滑块的位置。
