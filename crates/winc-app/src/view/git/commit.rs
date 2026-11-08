@@ -390,12 +390,13 @@ fn draw_sync(
         button.y + button.h / 2.0,
     );
     let faded = ink.alpha(ink.a * (1.0 - check));
+    // 同步与远程交换提交，图标与标题行只重读本地的「刷新」不同。
     if leaving {
-        icons::refresh_turned(frame, icon, spin_turn(), faded, clip);
+        icons::sync_turned(frame, icon, spin_turn(), faded, clip);
     } else if state == SyncState::Publish {
         icons::upload(frame, icon, faded, clip);
     } else {
-        icons::refresh(frame, icon, faded, clip);
+        icons::sync(frame, icon, faded, clip);
     }
     if check > 0.0 {
         icons::check(frame, icon, 11.0, p.git_added.alpha(check), clip);
