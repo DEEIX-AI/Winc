@@ -3,6 +3,7 @@
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 #[cfg(unix)]
 mod format;
+mod terminal;
 
 use super::*;
 #[cfg(unix)]
@@ -146,20 +147,22 @@ fn settings_is_a_modal_over_the_whole_window() {
 fn settings_keyboard_walks_every_item_and_adjusts() {
     let dir = search_folder("settings-keys");
     let mut app = app_with(&dir, false);
+    // 终端模块开启时才列出「终端」页。
+    app.config.terminal_enabled = Some(true);
     app.open_settings();
 
-    // 从第一页走到最后一页：依次经过外观、编辑器、格式化、模块各页的每一行、快捷键页的
+    // 从第一页走到最后一页：依次经过外观、编辑器、格式化、终端、模块各页的每一行、快捷键页的
     // 搜索框，最后是关于页的各行，到达末尾后不再移动。越过一页的末项时自动换页，右侧显示该页
     // 内容。
     // 格式化页列出的语言随机器上装了哪些工具而变，步数按全部设置项计算。
     let mut seen = vec![app.settings.selected];
-    for _ in 0..Setting::all(&app.settings.languages).len() + 2 {
+    for _ in 0..Setting::all(&app.settings.languages, true).len() + 2 {
         app.settings_move(true);
         if seen.last() != Some(&app.settings.selected) {
             seen.push(app.settings.selected);
         }
     }
-    assert_eq!(seen, Setting::all(&app.settings.languages));
+    assert_eq!(seen, Setting::all(&app.settings.languages, true));
     assert_eq!(app.settings.selected, Setting::CheckUpdates);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
     // 往回走过关于页的三行，回到快捷键页的搜索框。
@@ -169,18 +172,23 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, Setting::KeySearch);
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
-    // 向回走一步，回到模块页最后的终端开关，再一步是 Git 开关；再走一步，回到格式化页的最后
-    // 一项（修复工具一组的「添加语言…」），焦点回到浮层。
+    // 向回走一步，回到模块页最后的终端开关，焦点回到浮层；再一步是 Git 开关；再走一步，回到
+    // 终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::TerminalModule);
     assert_eq!(app.focus, Focus::Settings);
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
-    assert_eq!(app.settings.selected, Setting::AddFixLanguage);
+    let last = if cfg!(target_os = "macos") {
+        Setting::TerminalOptionAsMeta
+    } else {
+        Setting::TerminalShellIntegration
+    };
+    assert_eq!(app.settings.selected, last);
 
     // 主题：← → 在三个选项之间切换，到头后不再变化。步数按全部设置项计算，原因同上。
-    for _ in 0..Setting::all(&app.settings.languages).len() {
+    for _ in 0..Setting::all(&app.settings.languages, true).len() {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::Theme);
@@ -392,7 +400,17 @@ fn settings_pages_are_listed_on_the_left() {
     app.open_settings();
     paint(&mut app);
 
+    // 终端模块关闭时不列出「终端」页。
+    let pages: Vec<SettingsPage> = (app.settings_layout().pages.iter())
+        .map(|&(page, _)| page)
+        .collect();
+    let expected: Vec<SettingsPage> = (SettingsPage::ALL.into_iter())
+        .filter(|&page| page != SettingsPage::Terminal)
+        .collect();
+    assert_eq!(pages, expected);
+
     // 分类栏列出每一页，每页只放属于该页的设置项；所有页合起来恰好是全部设置，不遗漏也不重复。
+    app.config.terminal_enabled = Some(true);
     let layout = app.settings_layout();
     assert_eq!(layout.pages.len(), SettingsPage::ALL.len());
     for &(_, row) in &layout.pages {
@@ -401,7 +419,7 @@ fn settings_pages_are_listed_on_the_left() {
     let mut listed = Vec::new();
     for page in SettingsPage::ALL {
         let languages = &app.settings.languages;
-        let layout = SettingsLayout::compute(app.layout.window, page, languages, None, 0.0);
+        let layout = SettingsLayout::compute(app.layout.window, page, languages, 1.0, None, 0.0);
         for row in &layout.rows {
             assert_eq!(row.setting.page(), page);
             // 分组下方的文字按钮（添加语言）不在分组内，其余设置项都在分组内。
@@ -418,7 +436,7 @@ fn settings_pages_are_listed_on_the_left() {
             listed.push(Setting::KeySearch);
         }
     }
-    assert_eq!(listed, Setting::all(&app.settings.languages));
+    assert_eq!(listed, Setting::all(&app.settings.languages, true));
 
     // 悬停在分类栏的一项上时记录该项；点击后换页，选中该页的第一项，滚动位置回到顶部。
     let (x, y) = settings_point(&app, SettingsPart::Page(SettingsPage::Editor));

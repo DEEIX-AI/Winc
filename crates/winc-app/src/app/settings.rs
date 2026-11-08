@@ -194,8 +194,10 @@ impl App {
         self.settings.hover = None;
         self.settings.languages = ToolLanguages::default();
         self.refresh_format_rows(true);
-        // 列出字体要读取字体文件，先在后台读好，打开字体菜单时不必等待。
+        // 列出字体要读取字体文件，先在后台读好，打开字体菜单时不必等待；「默认 Shell」菜单中的
+        // shell 同样在后台检测。
         std::thread::spawn(winc_render::installed_fonts);
+        self.detect_terminal_shells();
         // 能否找到工具取决于用户 shell 中的 `PATH`，因此在后台获取该环境，取到之后再补上提醒。
         if let Some(proxy) = self.proxy.clone() {
             self.format.formatter.prepare(move || {
@@ -272,7 +274,15 @@ impl App {
         let languages = &self.settings.languages;
         let editing = self.settings.editing.as_ref().map(|(s, _)| *s);
         let scroll = self.settings.scroll;
-        SettingsLayout::compute(self.layout.window, page, languages, editing, scroll)
+        let terminal = self.module_fx.terminal.share(self.terminal_enabled());
+        SettingsLayout::compute(
+            self.layout.window,
+            page,
+            languages,
+            terminal,
+            editing,
+            scroll,
+        )
     }
 
     /// 切换到 `page`，并选中该页的第一项。
@@ -280,6 +290,10 @@ impl App {
     /// 正在编辑时先离开输入框（见 [`App::settings_leave_field`]）。进入快捷键页时，光标直接
     /// 位于搜索框中。
     pub(super) fn settings_show_page(&mut self, page: SettingsPage) {
+        // 未列出的页（模块关闭后正在淡出的「终端」一项）不切换过去。
+        if !SettingsPage::listed(self.terminal_enabled()).any(|listed| listed == page) {
+            return;
+        }
         self.settings_leave_field();
         if self.settings.selected.page() != page {
             self.settings.selected = page.first();
@@ -350,7 +364,7 @@ impl App {
     pub(super) fn settings_move(&mut self, down: bool) {
         self.settings_leave_field();
 
-        let all = Setting::all(&self.settings.languages);
+        let all = Setting::all(&self.settings.languages, self.terminal_enabled());
         let position = all
             .iter()
             .position(|s| *s == self.settings.selected)
@@ -552,6 +566,12 @@ impl App {
             Setting::SystemTitleBar => self.config.ui_native_title_bar == Some(true),
             Setting::GitModule => self.git_enabled(),
             Setting::TerminalModule => self.terminal_enabled(),
+            Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select == Some(true),
+            Setting::TerminalConfirmClose => self.config.terminal_confirm_close != Some(false),
+            Setting::TerminalPrompt => self.config.terminal_prompt != Some(false),
+            Setting::TerminalShellIntegration => {
+                self.config.terminal_shell_integration != Some(false)
+            }
             _ => false,
         }
     }
@@ -588,6 +608,10 @@ impl App {
             Setting::SystemTitleBar => self.config.ui_native_title_bar = Some(on),
             Setting::GitModule => self.config.git_enabled = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),
+            Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select = Some(on),
+            Setting::TerminalConfirmClose => self.config.terminal_confirm_close = Some(on),
+            Setting::TerminalPrompt => self.config.terminal_prompt = Some(on),
+            Setting::TerminalShellIntegration => self.config.terminal_shell_integration = Some(on),
             _ => return,
         }
         // 由命令切换（如 ⌥Z 自动换行）时设置浮层未打开，看不到开关，不必播放动画。
@@ -650,6 +674,7 @@ impl App {
 
         let current = match tool_setting(setting) {
             Some((task, id)) => task_commands(&self.config, task).get(id).cloned(),
+            None if setting == Setting::TerminalShell => self.config.terminal_shell.clone(),
             None => self.font_setting(setting).clone(),
         };
         let mut field = TextField::default();
@@ -669,12 +694,13 @@ impl App {
     ///
     /// 这样的字体在启动时已改用默认字体，但设置中仍是原来的名字，因此在该行写明原因。
     fn broken_font(&self, page: SettingsPage) -> Option<(Setting, String)> {
-        [Setting::EditorFont, Setting::UiFont]
+        [Setting::EditorFont, Setting::UiFont, Setting::TerminalFont]
             .into_iter()
             .filter(|setting| setting.page() == page)
             .find_map(|setting| {
                 let value = match setting {
                     Setting::UiFont => &self.config.ui_font,
+                    Setting::TerminalFont => &self.config.terminal_font,
                     _ => &self.config.editor_font,
                 };
                 font_error(value).map(|error| (setting, error))
@@ -684,6 +710,7 @@ impl App {
     fn font_setting(&mut self, setting: Setting) -> &mut Option<String> {
         match setting {
             Setting::UiFont => &mut self.config.ui_font,
+            Setting::TerminalFont => &mut self.config.terminal_font,
             _ => &mut self.config.editor_font,
         }
     }
@@ -742,7 +769,7 @@ impl App {
         self.request_redraw();
     }
 
-    /// 提交正在编辑的字体名或格式化命令。
+    /// 提交正在编辑的字体名或命令。
     pub(super) fn settings_commit_field(&mut self) {
         let Some((setting, field)) = self.settings.editing.as_ref() else {
             return;
@@ -752,6 +779,13 @@ impl App {
 
         match tool_setting(setting) {
             Some((task, id)) => self.settings_commit_command(task, id, value),
+            None if setting == Setting::TerminalShell => {
+                self.settings.editing = None;
+                self.settings.editing_original = None;
+                self.settings.error = None;
+                self.focus = Focus::Settings;
+                self.set_terminal_shell(value);
+            }
             None => self.settings_commit_font(setting, value),
         }
     }
@@ -819,23 +853,38 @@ impl App {
         self.settings.editing_original = None;
     }
 
-    /// 放大或缩小编辑区的字号（`⌘+` `⌘−`），`⌘0` 还原（`up` 为 `None`）。
+    /// 放大或缩小字号（`⌘+` `⌘−`），`⌘0` 还原（`up` 为 `None`）。
     ///
-    /// 改的就是设置中的「编辑器字号」，并写回配置；界面字号不变。
+    /// 焦点在终端时调整终端字号，还原为与编辑区相同；否则调整编辑区字号。改动写回配置，界面
+    /// 字号不变。
     pub(super) fn zoom(&mut self, up: Option<bool>) {
-        let current = self.config.editor_size.unwrap_or(CODE_FONT);
-        self.config.editor_size = up.map(|up| step(current, up, Config::EDITOR_SIZE_RANGE));
-
-        let code = self.config.editor_size.unwrap_or(CODE_FONT);
-        if code == current && up.is_some() {
-            self.flash(t!("settings-zoom-limit", size = code.to_string()));
+        let terminal = self.focus.in_terminal();
+        let pick = |fonts: ViewFonts| if terminal { fonts.terminal } else { fonts.code };
+        let current = pick(ViewFonts::of(&self.config));
+        let next = up.map(|up| step(current, up, Config::EDITOR_SIZE_RANGE));
+        if next == Some(current) {
+            let size = current.to_string();
+            self.flash(if terminal {
+                t!("settings-zoom-terminal-limit", size = size)
+            } else {
+                t!("settings-zoom-limit", size = size)
+            });
             return;
         }
+        if terminal {
+            self.config.terminal_size = next;
+        } else {
+            self.config.editor_size = next;
+        }
 
-        let ui = self.config.ui_size.unwrap_or(UI_FONT);
-        self.apply_font_sizes(code, ui);
+        let size = pick(ViewFonts::of(&self.config)).to_string();
+        self.apply_font_sizes();
         self.save_config();
-        self.flash(t!("settings-zoom", size = code.to_string()));
+        self.flash(if terminal {
+            t!("settings-zoom-terminal", size = size)
+        } else {
+            t!("settings-zoom", size = size)
+        });
     }
 
     /// 返回数值设置当前的显示值，以及是否已到范围的下限、上限（到限的一侧按钮变淡）。
@@ -848,6 +897,10 @@ impl App {
             Setting::UiSize => (
                 self.config.ui_size.unwrap_or(UI_FONT),
                 Config::UI_SIZE_RANGE,
+            ),
+            Setting::TerminalSize => (
+                ViewFonts::of(&self.config).terminal,
+                Config::EDITOR_SIZE_RANGE,
             ),
             Setting::TabWidth => (
                 self.config.tab_width.unwrap_or(self.editor.tab_width) as f32,
@@ -875,6 +928,12 @@ impl App {
                 let current = self.config.ui_size.unwrap_or(UI_FONT);
                 self.config.ui_size = Some(step(current, up, Config::UI_SIZE_RANGE));
                 self.apply_fonts().ok();
+            }
+            // 只改字号，无需重新加载字体。
+            Setting::TerminalSize => {
+                let current = ViewFonts::of(&self.config).terminal;
+                self.config.terminal_size = Some(step(current, up, Config::EDITOR_SIZE_RANGE));
+                self.apply_font_sizes();
             }
             Setting::TabWidth => {
                 let current = self.config.tab_width.unwrap_or(self.editor.tab_width);
@@ -958,6 +1017,28 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置新建终端时运行的命令（`terminal.shell`）；`None` 表示系统默认。已打开的终端不受影响。
+    pub(in crate::app) fn set_terminal_shell(&mut self, command: Option<String>) {
+        self.settings.selected = Setting::TerminalShell;
+        self.config.terminal_shell = command;
+        self.save_config();
+        self.request_redraw();
+    }
+
+    /// 设置终端面板的位置：`right` 为编辑区右侧，否则为下方。
+    pub(in crate::app) fn set_terminal_position(&mut self, right: bool) {
+        if right != self.terminal_right() {
+            self.toggle_terminal_position();
+        }
+    }
+
+    /// 设置终端中用作 Meta 键的 ⌥。
+    pub(in crate::app) fn set_option_as_meta(&mut self, choice: winc_config::OptionAsMeta) {
+        self.config.option_as_meta = Some(choice);
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 把配置中修改过的项写回配置文件，再改用文件中的配置，使程序运行期间手动修改的项生效。
     ///
     /// 写入失败时提示原因，不影响继续使用，下次写回时再写入这些项。原文件无法解析或含有注释时，
@@ -998,7 +1079,8 @@ impl App {
         let old = std::mem::replace(&mut self.config, config);
         let new = &self.config;
         let fonts = (old.editor_font != new.editor_font || old.ui_font != new.ui_font)
-            || (old.editor_size != new.editor_size || old.ui_size != new.ui_size);
+            || (old.editor_size != new.editor_size || old.ui_size != new.ui_size)
+            || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size);
         let theme = (old.theme != new.theme || old.dark_theme != new.dark_theme)
             || old.light_theme != new.light_theme;
         let tab_width = (old.tab_width != new.tab_width)
@@ -1060,6 +1142,10 @@ impl App {
         }
         if stop_terminal {
             self.stop_terminal();
+            // 「终端」页不再列出：设置停在该页时改到「模块」页。
+            if self.settings.open && self.settings.selected.page() == SettingsPage::Terminal {
+                self.settings_show_page(SettingsPage::Modules);
+            }
         }
         self.reload_run_configs();
         if title_bar {

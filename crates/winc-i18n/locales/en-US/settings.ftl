@@ -9,6 +9,7 @@ settings-title = Settings
 settings-page-appearance = Appearance
 settings-page-editor = Editor
 settings-page-format = Formatting
+settings-page-terminal = Terminal
 settings-page-modules = Modules
 settings-page-keys = Shortcuts
 settings-page-about = About
@@ -50,6 +51,15 @@ settings-fix-on-save = Fix Problems on Save
 settings-skip-on-save = Excluded Languages
 settings-add-language = Add Language…
 settings-terminal-module = Terminal
+settings-terminal-shell = Default Shell
+settings-terminal-position = Position
+settings-terminal-font = Font
+settings-terminal-size = Font Size
+settings-terminal-copy-on-select = Copy on Select
+settings-terminal-confirm-close = Confirm Before Closing
+settings-terminal-prompt = winc Prompt
+settings-terminal-shell-integration = Shell Integration
+settings-terminal-option-as-meta = Meta Key
 settings-key-search = Search Shortcuts
 
 ## Setting descriptions.
@@ -92,6 +102,14 @@ settings-skip-on-save-desc = Don’t fix or format files in these languages on s
 settings-git-module-desc = Show file status and the current branch in Git repositories
 settings-terminal-module-desc-key = Terminal panel below the editor ({ $key }); starts a helper process when opened
 settings-terminal-module-desc = Terminal panel below the editor; starts a helper process when opened
+settings-terminal-copy-on-select-desc = Copy selected text to the clipboard automatically
+settings-terminal-confirm-close-desc = Ask before closing a tab that’s still running a program
+settings-terminal-prompt-desc = Replace the default prompt with the folder, Git branch and exit status
+settings-terminal-shell-integration-desc = { $platform ->
+    [windows] Split WSL zsh, bash and fish output into command blocks to fold and jump between
+   *[other] Split zsh, bash and fish output into command blocks to fold and jump between
+}
+settings-terminal-option-as-meta-desc = Send an Esc prefix instead of typing special characters
 
 ## Setting values and hints.
 
@@ -102,6 +120,16 @@ settings-skip-on-save-none = None
 settings-list-separator = { ", " }
 settings-font-default = System Default
 settings-font-others = Other Fonts
+settings-terminal-shell-default = System Default
+settings-terminal-shell-custom = Custom Command…
+settings-terminal-shell-placeholder = Enter a command; quote paths that contain spaces
+settings-terminal-position-bottom = Bottom
+settings-terminal-position-right = Right
+settings-terminal-font-default = Match Editor
+settings-terminal-option-as-meta-left = Left ⌥
+settings-terminal-option-as-meta-right = Right ⌥
+settings-terminal-option-as-meta-both = Both ⌥
+settings-terminal-option-as-meta-none = None
 settings-command-placeholder = Enter a command; { "{file}" } stands for the file path
 settings-command-edit-hint = Press { common-key-enter } to save, Esc to cancel
 settings-font-not-installed = Font “{ $name }” is not installed
@@ -137,6 +165,8 @@ settings-keys-no-match = No matching commands
 
 settings-zoom-limit = Editor font size is already { $size } and can’t be adjusted further
 settings-zoom = Editor font size { $size }
+settings-zoom-terminal-limit = Terminal font size is already { $size } and can’t be adjusted further
+settings-zoom-terminal = Terminal font size { $size }
 settings-config-backed-up = The configuration file couldn’t be parsed; it was saved as { $path } and the new settings were written
 settings-config-comments-backed-up = Comments in the configuration file can’t be kept when writing settings; the original was saved as { $path }
 settings-config-write-failed = Couldn’t write the configuration file: { $error }

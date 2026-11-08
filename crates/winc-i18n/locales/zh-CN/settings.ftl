@@ -9,6 +9,7 @@ settings-title = 设置
 settings-page-appearance = 外观
 settings-page-editor = 编辑器
 settings-page-format = 格式化
+settings-page-terminal = 终端
 settings-page-modules = 模块
 settings-page-keys = 快捷键
 settings-page-about = 关于
@@ -50,6 +51,15 @@ settings-fix-on-save = 保存时修复问题
 settings-skip-on-save = 排除的语言
 settings-add-language = 添加语言…
 settings-terminal-module = 终端
+settings-terminal-shell = 默认 Shell
+settings-terminal-position = 位置
+settings-terminal-font = 字体
+settings-terminal-size = 字号
+settings-terminal-copy-on-select = 选中时复制
+settings-terminal-confirm-close = 关闭前确认
+settings-terminal-prompt = winc 提示符
+settings-terminal-shell-integration = Shell 集成
+settings-terminal-option-as-meta = Meta 键
 settings-key-search = 搜索快捷键
 
 ## 设置项的说明。
@@ -92,6 +102,14 @@ settings-skip-on-save-desc = 保存以下语言的文件时不执行修复和格
 settings-git-module-desc = 在 Git 仓库中显示文件状态和当前分支
 settings-terminal-module-desc-key = 编辑区下方的终端面板（{ $key }），打开时启动一个辅助进程
 settings-terminal-module-desc = 编辑区下方的终端面板，打开时启动一个辅助进程
+settings-terminal-copy-on-select-desc = 选中文字后自动复制到剪贴板
+settings-terminal-confirm-close-desc = 关闭仍有程序运行的标签页前先确认
+settings-terminal-prompt-desc = 替换默认提示符，显示目录、Git 分支和退出状态
+settings-terminal-shell-integration-desc = { $platform ->
+    [windows] 将 WSL 中 zsh、bash、fish 的输出按命令分块，可折叠和跳转
+   *[other] 将 zsh、bash、fish 的输出按命令分块，可折叠和跳转
+}
+settings-terminal-option-as-meta-desc = 所选的 ⌥ 发送 Esc 前缀，而非输入特殊字符
 
 ## 设置项的值和提示。
 
@@ -102,6 +120,16 @@ settings-skip-on-save-none = 无
 settings-list-separator = 、
 settings-font-default = 系统默认
 settings-font-others = 其他字体
+settings-terminal-shell-default = 系统默认
+settings-terminal-shell-custom = 自定义命令…
+settings-terminal-shell-placeholder = 输入命令，含空格的路径加双引号
+settings-terminal-position-bottom = 底部
+settings-terminal-position-right = 右侧
+settings-terminal-font-default = 跟随编辑器
+settings-terminal-option-as-meta-left = 左侧 ⌥
+settings-terminal-option-as-meta-right = 右侧 ⌥
+settings-terminal-option-as-meta-both = 两侧 ⌥
+settings-terminal-option-as-meta-none = 无
 settings-command-placeholder = 输入命令，{ "{file}" } 表示文件路径
 settings-command-edit-hint = 按 { common-key-enter } 保存，按 Esc 取消
 settings-font-not-installed = 未安装字体「{ $name }」
@@ -137,6 +165,8 @@ settings-keys-no-match = 没有匹配的命令
 
 settings-zoom-limit = 编辑区字号已为 { $size }，无法继续调整
 settings-zoom = 编辑区字号 { $size }
+settings-zoom-terminal-limit = 终端字号已为 { $size }，无法继续调整
+settings-zoom-terminal = 终端字号 { $size }
 settings-config-backed-up = 原配置文件无法解析，已另存为 { $path } 后写入新设置
 settings-config-comments-backed-up = 写入设置时无法保留配置文件里的注释，原文件已另存为 { $path }
 settings-config-write-failed = 无法写入配置文件：{ $error }

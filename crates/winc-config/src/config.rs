@@ -94,6 +94,12 @@ pub struct Config {
     pub external_terminal: Option<String>,
     /// 是否启用终端模块（编辑区下方的终端面板），默认为否。
     pub terminal_enabled: Option<bool>,
+    /// 终端的等宽字体，写法同 [`Config::editor_font`]；未设置时与编辑区相同。
+    pub terminal_font: Option<String>,
+    /// 终端的字号（点）；未设置时与编辑区相同。
+    ///
+    /// 可用范围同 [`Config::EDITOR_SIZE_RANGE`]。
+    pub terminal_size: Option<f32>,
     /// 终端回滚缓冲的行数。
     ///
     /// 可用范围见 [`Config::SCROLLBACK_RANGE`]，默认 10000 行。
@@ -163,6 +169,14 @@ pub enum OptionAsMeta {
 }
 
 impl OptionAsMeta {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [OptionAsMeta; 4] = [
+        OptionAsMeta::Left,
+        OptionAsMeta::Right,
+        OptionAsMeta::Both,
+        OptionAsMeta::None,
+    ];
+
     /// 返回该变体在配置文件里的写法。
     pub fn name(self) -> &'static str {
         match self {

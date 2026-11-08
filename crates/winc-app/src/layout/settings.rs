@@ -16,6 +16,8 @@ pub enum SettingsPage {
     Editor,
     /// 格式化：保存时的格式化和修复，以及各语言的工具命令。
     Format,
+    /// 终端：默认 shell、面板位置、字体、字号和终端行为。
+    Terminal,
     /// 模块：可选模块的开关。
     Modules,
     /// 快捷键：只列出键位，不含设置项，整页由 [`KeysLayout`] 单独布局。
@@ -26,14 +28,23 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// 全部分类，顺序与分类栏从上到下的顺序一致。
-    pub const ALL: [SettingsPage; 6] = [
+    pub const ALL: [SettingsPage; 7] = [
         SettingsPage::Appearance,
         SettingsPage::Editor,
         SettingsPage::Format,
+        SettingsPage::Terminal,
         SettingsPage::Modules,
         SettingsPage::Keys,
         SettingsPage::About,
     ];
+
+    /// 返回分类栏列出的分类，顺序同 [`Self::ALL`]；终端模块关闭时（`terminal` 为 `false`）
+    /// 不列出「终端」。
+    pub fn listed(terminal: bool) -> impl Iterator<Item = SettingsPage> {
+        Self::ALL
+            .into_iter()
+            .filter(move |&page| terminal || page != SettingsPage::Terminal)
+    }
 
     /// 返回分类的标题。
     pub fn title(self) -> &'static str {
@@ -41,6 +52,7 @@ impl SettingsPage {
             SettingsPage::Appearance => t!("settings-page-appearance"),
             SettingsPage::Editor => t!("settings-page-editor"),
             SettingsPage::Format => t!("settings-page-format"),
+            SettingsPage::Terminal => t!("settings-page-terminal"),
             SettingsPage::Modules => t!("settings-page-modules"),
             SettingsPage::Keys => t!("settings-page-keys"),
             SettingsPage::About => t!("settings-page-about"),
@@ -102,6 +114,23 @@ impl SettingsPage {
                     Setting::RemoteImages,
                 ]),
             ],
+            SettingsPage::Terminal => {
+                let mut behavior = vec![
+                    Setting::TerminalCopyOnSelect,
+                    Setting::TerminalConfirmClose,
+                    Setting::TerminalPrompt,
+                    Setting::TerminalShellIntegration,
+                ];
+                // 只有 macOS 能区分左右 ⌥，其他平台不列出该项。
+                if cfg!(target_os = "macos") {
+                    behavior.push(Setting::TerminalOptionAsMeta);
+                }
+                vec![
+                    plain(vec![Setting::TerminalShell, Setting::TerminalPosition]),
+                    plain(vec![Setting::TerminalFont, Setting::TerminalSize]),
+                    plain(behavior),
+                ]
+            }
             SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
             SettingsPage::Format => {
                 let mut sections = vec![
@@ -239,6 +268,24 @@ pub enum Setting {
     AddLanguage,
     /// 修复工具一组下面的「添加语言…」。
     AddFixLanguage,
+    /// 新建终端时运行的 shell（`terminal.shell`）。
+    TerminalShell,
+    /// 终端面板的位置：编辑区下方或右侧。
+    TerminalPosition,
+    /// 终端字体。
+    TerminalFont,
+    /// 终端字号。
+    TerminalSize,
+    /// 终端中选中文字时自动复制。
+    TerminalCopyOnSelect,
+    /// 关闭仍有程序运行的终端标签前确认。
+    TerminalConfirmClose,
+    /// 用户未设置提示符时使用 winc 的提示符。
+    TerminalPrompt,
+    /// 注入 shell 集成，按命令分块。
+    TerminalShellIntegration,
+    /// 终端中用作 Meta 键的 ⌥（只在 macOS 上列出）。
+    TerminalOptionAsMeta,
     /// Git 模块的开关。
     GitModule,
     /// 终端模块的开关。
@@ -250,12 +297,12 @@ pub enum Setting {
 }
 
 impl Setting {
-    /// 返回全部设置项，顺序为从第一页到最后一页、每页从上到下。
+    /// 返回列出的各页（见 [`SettingsPage::listed`]）的全部设置项，顺序为从第一页到最后一页、
+    /// 每页从上到下。
     ///
     /// 键盘上下移动按此顺序进行，越过一页的首尾时切换到相邻页。
-    pub fn all(languages: &ToolLanguages) -> Vec<Setting> {
-        SettingsPage::ALL
-            .into_iter()
+    pub fn all(languages: &ToolLanguages, terminal: bool) -> Vec<Setting> {
+        SettingsPage::listed(terminal)
             .flat_map(|page| match page {
                 // 「快捷键」页没有设置项，移动到该页即选中该页的搜索框。
                 SettingsPage::Keys => vec![Setting::KeySearch],
@@ -303,6 +350,15 @@ impl Setting {
             | Setting::FixCommand(_)
             | Setting::AddLanguage
             | Setting::AddFixLanguage => SettingsPage::Format,
+            Setting::TerminalShell
+            | Setting::TerminalPosition
+            | Setting::TerminalFont
+            | Setting::TerminalSize
+            | Setting::TerminalCopyOnSelect
+            | Setting::TerminalConfirmClose
+            | Setting::TerminalPrompt
+            | Setting::TerminalShellIntegration
+            | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
             Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
             Setting::KeySearch => SettingsPage::Keys,
         }
@@ -345,6 +401,15 @@ impl Setting {
                 winc_syntax::find(id).map_or(id, |l| l.name)
             }
             Setting::AddLanguage | Setting::AddFixLanguage => t!("settings-add-language"),
+            Setting::TerminalShell => t!("settings-terminal-shell"),
+            Setting::TerminalPosition => t!("settings-terminal-position"),
+            Setting::TerminalFont => t!("settings-terminal-font"),
+            Setting::TerminalSize => t!("settings-terminal-size"),
+            Setting::TerminalCopyOnSelect => t!("settings-terminal-copy-on-select"),
+            Setting::TerminalConfirmClose => t!("settings-terminal-confirm-close"),
+            Setting::TerminalPrompt => t!("settings-terminal-prompt"),
+            Setting::TerminalShellIntegration => t!("settings-terminal-shell-integration"),
+            Setting::TerminalOptionAsMeta => t!("settings-terminal-option-as-meta"),
             Setting::GitModule => "Git",
             Setting::TerminalModule => t!("settings-terminal-module"),
             Setting::KeySearch => t!("settings-key-search"),
@@ -386,6 +451,13 @@ impl Setting {
             Setting::FixOnSave => Some(t!("settings-fix-on-save-desc")),
             Setting::SkipOnSave => Some(t!("settings-skip-on-save-desc")),
             Setting::GitModule => Some(t!("settings-git-module-desc")),
+            Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
+            Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
+            Setting::TerminalPrompt => Some(t!("settings-terminal-prompt-desc")),
+            Setting::TerminalShellIntegration => {
+                Some(t!("settings-terminal-shell-integration-desc"))
+            }
+            Setting::TerminalOptionAsMeta => Some(t!("settings-terminal-option-as-meta-desc")),
             _ => None,
         };
         text.map(Cow::Borrowed)
@@ -394,8 +466,10 @@ impl Setting {
     /// 返回设置项右侧的控件种类。
     pub fn control(self) -> SettingControl {
         match self {
-            Setting::EditorFont | Setting::UiFont => SettingControl::Font,
-            Setting::EditorSize | Setting::UiSize | Setting::TabWidth => SettingControl::Stepper,
+            Setting::EditorFont | Setting::UiFont | Setting::TerminalFont => SettingControl::Font,
+            Setting::EditorSize | Setting::UiSize | Setting::TerminalSize | Setting::TabWidth => {
+                SettingControl::Stepper
+            }
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar
@@ -416,11 +490,19 @@ impl Setting {
             | Setting::FormatOnSave
             | Setting::FixOnSave
             | Setting::GitModule
-            | Setting::TerminalModule => SettingControl::Switch,
-            Setting::FormatCommand(_) | Setting::FixCommand(_) => SettingControl::Command,
-            Setting::SkipOnSave | Setting::Language | Setting::RenderWhitespace => {
-                SettingControl::Choice
+            | Setting::TerminalModule
+            | Setting::TerminalCopyOnSelect
+            | Setting::TerminalConfirmClose
+            | Setting::TerminalPrompt
+            | Setting::TerminalShellIntegration => SettingControl::Switch,
+            Setting::FormatCommand(_) | Setting::FixCommand(_) | Setting::TerminalShell => {
+                SettingControl::Command
             }
+            Setting::SkipOnSave
+            | Setting::Language
+            | Setting::RenderWhitespace
+            | Setting::TerminalPosition
+            | Setting::TerminalOptionAsMeta => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Value,
@@ -442,11 +524,12 @@ pub enum SettingControl {
     ThemeList,
     /// 开关。
     Switch,
-    /// 格式化工具：点击后弹出菜单的值；选择「自定义命令…」时换成比字体名输入框更宽的输入框。
+    /// 格式化工具、默认 shell：点击后弹出菜单的值；选择「自定义命令…」时换成比字体名输入框
+    /// 更宽的输入框。
     Command,
     /// 组下方的文字按钮（「添加语言…」）。
     Action,
-    /// 点击后弹出菜单的值，显示当前选择（「语言」「排除的语言」）。
+    /// 点击后弹出菜单的值，显示当前选择（如「语言」「排除的语言」）。
     Choice,
     /// 「快捷键」页的搜索框；不按设置行排列，整页单独布局（[`KeysLayout`]）。
     Search,
@@ -466,6 +549,17 @@ pub fn whitespace_label(choice: winc_config::RenderWhitespace) -> &'static str {
         Selection => t!("settings-render-whitespace-selection"),
         Trailing => t!("settings-render-whitespace-trailing"),
         All => t!("settings-render-whitespace-all"),
+    }
+}
+
+/// 返回「Meta 键」设置中选项 `choice` 的名字。
+pub fn option_as_meta_label(choice: winc_config::OptionAsMeta) -> &'static str {
+    use winc_config::OptionAsMeta::{Both, Left, None, Right};
+    match choice {
+        Left => t!("settings-terminal-option-as-meta-left"),
+        Right => t!("settings-terminal-option-as-meta-right"),
+        Both => t!("settings-terminal-option-as-meta-both"),
+        None => t!("settings-terminal-option-as-meta-none"),
     }
 }
 
@@ -597,12 +691,15 @@ pub struct SettingRow {
 impl SettingsLayout {
     /// 计算设置浮层的几何。
     ///
-    /// `window` 是窗口矩形，`page` 是当前页，`languages` 是格式化页列出的语言，`editing` 是
-    /// 正在输入的设置项（输入格式化命令时换成更宽的输入框），`scroll` 是正文的滚动量（像素）。
+    /// `window` 是窗口矩形，`page` 是当前页，`languages` 是格式化页列出的语言，`terminal` 是
+    /// 分类栏中「终端」一项的显示比例（0 到 1，开关终端模块时渐变，见 [`SettingsPage::listed`]），
+    /// `editing` 是正在输入的设置项（输入格式化命令时换成更宽的输入框），`scroll` 是正文的
+    /// 滚动量（像素）。
     pub fn compute(
         window: Rect,
         page: SettingsPage,
         languages: &ToolLanguages,
+        terminal: f32,
         editing: Option<Setting>,
         scroll: f32,
     ) -> Self {
@@ -616,15 +713,21 @@ impl SettingsLayout {
         );
 
         let nav = Rect::new(card.x, card.y, SETTINGS_NAV_W.min(card.w), card.h);
-        // 分类栏的第一项与右侧标题行垂直居中对齐。
-        let first = card.y + (SETTINGS_HEADER - SETTINGS_NAV_ROW) / 2.0;
+        // 分类栏的第一项与右侧标题行垂直居中对齐。「终端」一项的高度按显示比例收放，下方各项
+        // 随之滑动。
+        let mut y = card.y + (SETTINGS_HEADER - SETTINGS_NAV_ROW) / 2.0;
         let pages = SettingsPage::ALL
             .into_iter()
-            .enumerate()
-            .map(|(i, page)| {
-                let y = first + i as f32 * (SETTINGS_NAV_ROW + 2.0);
-                let row = Rect::new(nav.x + 8.0, y, (nav.w - 16.0).max(0.0), SETTINGS_NAV_ROW);
-                (page, row)
+            .filter_map(|page| {
+                let share = if page == SettingsPage::Terminal {
+                    terminal
+                } else {
+                    1.0
+                };
+                let h = SETTINGS_NAV_ROW * share;
+                let row = Rect::new(nav.x + 8.0, y, (nav.w - 16.0).max(0.0), h);
+                y += (SETTINGS_NAV_ROW + 2.0) * share;
+                (share > 0.0).then_some((page, row))
             })
             .collect();
 
@@ -886,7 +989,7 @@ fn row_height(setting: Setting, width: f32) -> f32 {
             let tile = theme_tile_size((width - SETTINGS_INSET * 2.0).max(0.0));
             rows * tile.1 + (rows - 1.0) * THEME_GRID_GAP + THEME_GRID_PAD * 2.0
         }
-        SettingControl::Command => SETTINGS_ROW_TALL,
+        SettingControl::Command if setting != Setting::TerminalShell => SETTINGS_ROW_TALL,
         _ if setting.description().is_some() => SETTINGS_ROW_TALL,
         _ => SETTINGS_ROW,
     }

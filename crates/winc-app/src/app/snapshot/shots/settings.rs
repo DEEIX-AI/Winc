@@ -150,6 +150,51 @@ fn snapshot_settings_format() {
 
 #[test]
 #[ignore = "截图，手动运行"]
+fn snapshot_settings_terminal() {
+    use crate::app::terminal::shells::ShellChoice;
+
+    let dir = search_folder("settings-terminal-shot");
+    for (tag, dark) in [("light", false), ("dark", true)] {
+        let mut app = app_with(&dir.join("short.rs"), dark);
+        app.config.terminal_enabled = Some(true);
+        app.open_settings();
+        // 检测到的 shell 换成固定的几个，截图不随机器变化。
+        let shell = |name: &str, command: &str| ShellChoice {
+            name: name.to_owned(),
+            command: command.to_owned(),
+        };
+        app.terminal.shells = vec![
+            shell("zsh", "/bin/zsh"),
+            shell("bash", "/opt/homebrew/bin/bash"),
+            shell(
+                "Git Bash",
+                r#""C:\Program Files\Git\bin\bash.exe" --login -i"#,
+            ),
+        ];
+        app.config.terminal_size = Some(13.0);
+        app.settings_show_page(SettingsPage::Terminal);
+        app.on_mouse_move(4.0, 4.0);
+        shoot(&mut app, &format!("settings-terminal-{tag}"));
+
+        // 「默认 Shell」的菜单：系统默认和检测到的 shell，副标题是启动命令。
+        app.settings_open_menu(Setting::TerminalShell);
+        shoot(&mut app, &format!("settings-terminal-shell-{tag}"));
+        app.context_menu = None;
+
+        // 自定义命令：没有设置时输入框为空，以淡色显示填写提示。
+        app.settings_start_editing(Setting::TerminalShell);
+        shoot(&mut app, &format!("settings-terminal-custom-{tag}"));
+        app.settings_cancel_field();
+
+        // 滚动到底：开关一组和 Meta 键。
+        app.settings_scroll_by(-1000.0);
+        shoot(&mut app, &format!("settings-terminal-bottom-{tag}"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
 fn snapshot_format_error() {
     let dir = search_folder("format-error-shot");
     std::fs::write(dir.join("Makefile"), "all:\n\techo hi\n").unwrap();
@@ -246,6 +291,7 @@ fn snapshot_english() {
     app.config.editor_font = Some("Menlo".to_owned());
     shoot(&mut app, "english-editor");
 
+    app.config.terminal_enabled = Some(true);
     app.open_settings();
     shoot(&mut app, "english-settings");
     app.settings_open_menu(Setting::Language);
@@ -254,6 +300,7 @@ fn snapshot_english() {
     for page in [
         SettingsPage::Editor,
         SettingsPage::Format,
+        SettingsPage::Terminal,
         SettingsPage::Keys,
     ] {
         app.settings_show_page(page);

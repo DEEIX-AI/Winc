@@ -692,6 +692,10 @@ pub struct App {
     pub mono_metrics: Metrics,
     /// 等宽字体单个字符格的宽度（逻辑像素）。
     pub cell: f32,
+    /// 终端字体的行高、基线等尺寸（逻辑像素）。
+    pub terminal_metrics: Metrics,
+    /// 终端里一个字符格的宽度（逻辑像素）。
+    pub terminal_cell: f32,
 
     // 焦点、鼠标和键盘
     /// 键盘焦点所在的区域。

@@ -582,30 +582,44 @@ pub struct ViewFonts {
     pub code: f32,
     /// 编辑区行高；行号与坐标的换算以该值为准。
     pub line_height: f32,
+    /// 终端的字号。
+    pub terminal: f32,
+    /// 终端的行高，算法与编辑区行高相同。
+    pub terminal_line_height: f32,
 }
 
 impl ViewFonts {
-    /// 按配置中的编辑区字号 `code` 和界面字号 `ui` 算出整套度量。
+    /// 按编辑区字号 `code`、界面字号 `ui` 和终端字号 `terminal` 算出整套度量。
     ///
     /// 行高取整到整像素：否则基线会落在半像素位置，相邻两行字形的浓淡不一致。
     ///
     /// 次要文字和徽章与界面字号保持固定的差值（与默认值相同），下限分别为 8 像素和 7 像素。
     /// 不按比例缩放：界面字号为 14 时按比例算出 12.92，字形落不到整像素上，笔画发虚，
     /// 看起来和其他文字粗细不一。
-    pub fn new(code: f32, ui: f32) -> ViewFonts {
+    pub fn new(code: f32, ui: f32, terminal: f32) -> ViewFonts {
+        let line_height = |size: f32| (size * LINE_HEIGHT_RATIO).round().max(8.0);
         ViewFonts {
             ui,
             ui_small: (ui - (UI_FONT - UI_FONT_SMALL)).max(8.0),
             initials: (ui - (UI_FONT - INITIALS_FONT)).max(7.0),
             code,
-            line_height: (code * LINE_HEIGHT_RATIO).round().max(8.0),
+            line_height: line_height(code),
+            terminal,
+            terminal_line_height: line_height(terminal),
         }
+    }
+
+    /// 按 `config` 中的字号算出整套度量：未设置的用默认字号，终端未设置时与编辑区相同。
+    pub fn of(config: &winc_config::Config) -> ViewFonts {
+        let code = config.editor_size.unwrap_or(CODE_FONT);
+        let ui = config.ui_size.unwrap_or(UI_FONT);
+        ViewFonts::new(code, ui, config.terminal_size.unwrap_or(code))
     }
 }
 
 impl Default for ViewFonts {
     fn default() -> Self {
-        ViewFonts::new(CODE_FONT, UI_FONT)
+        ViewFonts::new(CODE_FONT, UI_FONT, CODE_FONT)
     }
 }
 

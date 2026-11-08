@@ -112,13 +112,14 @@ impl ApplicationHandler<UserEvent> for App {
         };
         self.palette = self.theme_palette(dark);
 
-        let (mono, ui) = self.font_specs();
+        let [mono, ui, terminal] = self.font_specs();
 
         // 配置中的字体找不到或画不出来时仍使用默认字体启动，并提示用户；否则手动修改配置时写错
         // 字体名，用户只会发现设置没有生效。仅在配置了字体时才解析字体。
         let missing: Vec<String> = [
             ("editor.font", &mono, &self.config.editor_font),
             ("ui.font", &ui, &self.config.ui_font),
+            ("terminal.font", &terminal, &self.config.terminal_font),
         ]
         .into_iter()
         .filter(|(_, spec, _)| spec.as_ref().is_some_and(|s| s.check().is_err()))
@@ -136,6 +137,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.palette.frame_bg,
                 mono.as_ref(),
                 ui.as_ref(),
+                terminal.as_ref(),
             ),
         };
         let renderer = match renderer {

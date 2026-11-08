@@ -302,7 +302,8 @@ fn gamma_for(background: Color) -> [u8; 256] {
 impl Renderer {
     /// 创建渲染器，呈现到 `window`。
     ///
-    /// `mono` 和 `ui` 是用户配置的字体，为 `None` 时使用平台默认字体。
+    /// `mono` 和 `ui` 是用户配置的字体，为 `None` 时使用平台默认字体；`terminal` 是终端字体，为
+    /// `None` 时终端使用 `mono`。
     ///
     /// # Errors
     ///
@@ -313,8 +314,9 @@ impl Renderer {
         background: Color,
         mono: Option<&FontSpec>,
         ui: Option<&FontSpec>,
+        terminal: Option<&FontSpec>,
     ) -> Result<Renderer, String> {
-        let fonts = Fonts::load(mono, ui)?;
+        let fonts = Fonts::load(mono, ui, terminal)?;
         Self::with_glyphs(window, background, SharedGlyphs(new_glyphs(fonts)))
     }
 
@@ -345,6 +347,8 @@ impl Renderer {
 
     /// 创建离屏渲染器：绘制到内存而非窗口，逻辑尺寸 `width`×`height`，按 `scale` 倍缩放。
     ///
+    /// 终端使用 `mono`；需要单独的终端字体时随后调用 [`Self::set_fonts`]。
+    ///
     /// # Errors
     ///
     /// 与 [`Renderer::new`] 相同：字体加载失败时返回错误描述。
@@ -364,7 +368,7 @@ impl Renderer {
                 width: w,
                 height: h,
             }),
-            glyphs: new_glyphs(Fonts::load(mono, ui)?),
+            glyphs: new_glyphs(Fonts::load(mono, ui, None)?),
             strokes: StrokeCache::new(),
             gamma: gamma_for(background),
             scale,
@@ -409,8 +413,9 @@ impl Renderer {
         &mut self,
         mono: Option<&FontSpec>,
         ui: Option<&FontSpec>,
+        terminal: Option<&FontSpec>,
     ) -> Result<(), String> {
-        let fonts = Fonts::load(mono, ui)?;
+        let fonts = Fonts::load(mono, ui, terminal)?;
         let mut glyphs = self.glyphs.borrow_mut();
         glyphs.fonts = fonts;
         glyphs.clear();

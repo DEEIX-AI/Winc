@@ -128,40 +128,63 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
 
 /// 绘制分类栏：每项一个图标加名称，行样式与文件树的行相同：当前页铺选中底色，悬停的项铺淡底色。
 fn draw_nav(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
-    let p = app.palette;
     for &(page, row) in &layout.pages {
-        let current = page == layout.page;
-        let hovered = app.settings.hover == Some(SettingsPart::Page(page));
-        // 当前分类使用与顶栏视图切换相同的选中样式：凸起底色（深色配色亮一档）加一圈细边；
-        // 悬停只铺浅色。两者仅靠底色深浅区分时难以辨认当前页，因此选中项额外加细边。
-        if current {
-            let (raised, edge) = super::workspace::panel::segment_colors(p, p.sidebar_bg);
-            frame.rect_clipped(row, edge, RADIUS_ROW, layout.nav);
-            frame.rect_clipped(row.inset(0.5, 0.5), raised, RADIUS_ROW - 0.5, layout.nav);
-        } else if hovered {
-            frame.rect_clipped(row, p.hover, RADIUS_ROW, layout.nav);
-        }
-
-        let icon = (row.x + 16.0, row.y + row.h / 2.0);
-        match page {
-            SettingsPage::Appearance => icons::appearance(frame, icon, p.text_muted, layout.nav),
-            SettingsPage::Editor => icons::code(frame, icon, p.text_muted, layout.nav),
-            SettingsPage::Format => icons::format(frame, icon, p.text_muted, layout.nav),
-            SettingsPage::Modules => icons::modules(frame, icon, p.text_muted, layout.nav),
-            SettingsPage::Keys => icons::keyboard(frame, icon, p.text_muted, layout.nav),
-            SettingsPage::About => icons::about(frame, icon, p.text_muted, layout.nav),
-        }
-        let color = if current { p.text } else { p.text_muted };
-        ui_text(
-            frame,
-            app,
-            row.x + 32.0,
-            row,
-            page.title(),
-            color,
-            layout.nav,
-        );
+        // 「终端」一项随终端模块淡入淡出（`App::track_modules`），高度在布局中按显示比例收放；
+        // 图标和文字仍按整行的高度居中，不随高度挤压。
+        let opacity = if page == SettingsPage::Terminal {
+            app.module_fx.terminal.opacity(app.terminal_enabled())
+        } else {
+            1.0
+        };
+        let full = Rect::new(row.x, row.y, row.w, SETTINGS_NAV_ROW);
+        frame.with_opacity(opacity, |frame| {
+            draw_nav_row(app, frame, layout, page, row, full);
+        });
     }
+}
+
+/// 绘制分类栏中的一项：`row` 是该项当前占的区域（底色），`full` 是整行高度的区域（图标、文字）。
+fn draw_nav_row(
+    app: &App,
+    frame: &mut Frame<'_>,
+    layout: &SettingsLayout,
+    page: SettingsPage,
+    row: Rect,
+    full: Rect,
+) {
+    let p = app.palette;
+    let current = page == layout.page;
+    let hovered = app.settings.hover == Some(SettingsPart::Page(page));
+    // 当前分类使用与顶栏视图切换相同的选中样式：凸起底色（深色配色亮一档）加一圈细边；
+    // 悬停只铺浅色。两者仅靠底色深浅区分时难以辨认当前页，因此选中项额外加细边。
+    if current {
+        let (raised, edge) = super::workspace::panel::segment_colors(p, p.sidebar_bg);
+        frame.rect_clipped(row, edge, RADIUS_ROW, layout.nav);
+        frame.rect_clipped(row.inset(0.5, 0.5), raised, RADIUS_ROW - 0.5, layout.nav);
+    } else if hovered {
+        frame.rect_clipped(row, p.hover, RADIUS_ROW, layout.nav);
+    }
+
+    let icon = (full.x + 16.0, full.y + full.h / 2.0);
+    match page {
+        SettingsPage::Appearance => icons::appearance(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Editor => icons::code(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Format => icons::format(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Terminal => icons::console(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Modules => icons::modules(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Keys => icons::keyboard(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::About => icons::about(frame, icon, p.text_muted, layout.nav),
+    }
+    let color = if current { p.text } else { p.text_muted };
+    ui_text(
+        frame,
+        app,
+        full.x + 32.0,
+        full,
+        page.title(),
+        color,
+        layout.nav,
+    );
 }
 
 /// 绘制标题「设置 › 外观」和右上角的关闭按钮；标题各段之间用箭头隔开，与状态栏中的路径样式相同。
@@ -344,6 +367,10 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
         SettingControl::Command => {
             let (text, dim) = match app.settings.tool_row(row.setting) {
                 Some(r) => (r.tool.clone(), r.unset),
+                None if row.setting == Setting::TerminalShell => match app.configured_shell() {
+                    Some(shell) => (shell.name, false),
+                    None => (t!("settings-terminal-shell-default").to_owned(), false),
+                },
                 None => (t!("format-tool-auto").to_owned(), false),
             };
             let hovered = app.settings.hover == Some(SettingsPart::Field(row.setting));
@@ -357,6 +384,19 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             } else if row.setting == Setting::RenderWhitespace {
                 let choice = app.config.render_whitespace.unwrap_or_default();
                 (crate::layout::whitespace_label(choice).to_owned(), false)
+            } else if row.setting == Setting::TerminalPosition {
+                let text = if app.terminal_right() {
+                    t!("settings-terminal-position-right")
+                } else {
+                    t!("settings-terminal-position-bottom")
+                };
+                (text.to_owned(), false)
+            } else if row.setting == Setting::TerminalOptionAsMeta {
+                let choice = (app.config.option_as_meta).unwrap_or(winc_config::OptionAsMeta::Left);
+                (
+                    crate::layout::option_as_meta_label(choice).to_owned(),
+                    false,
+                )
             } else {
                 match app.skipped_on_save() {
                     Some(names) => (names, false),
@@ -540,9 +580,14 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     let hovered = hovered || on_menu;
     let (configured, placeholder) = match row.setting {
         Setting::UiFont => (app.config.ui_font.clone(), t!("settings-font-default")),
+        Setting::TerminalFont => (
+            app.config.terminal_font.clone(),
+            t!("settings-terminal-font-default"),
+        ),
         Setting::FormatCommand(_) | Setting::FixCommand(_) => {
             (None, t!("settings-command-placeholder"))
         }
+        Setting::TerminalShell => (None, t!("settings-terminal-shell-placeholder")),
         _ => (app.config.editor_font.clone(), t!("settings-font-default")),
     };
     // 字体输入框的文字不进入右端的下拉按钮。
