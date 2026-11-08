@@ -98,7 +98,7 @@ settings-updates-checking = Checking for updates…
 settings-updates-latest = Winc is up to date
 settings-updates-found = A new version is available: { $version }
 settings-updates-failed = Couldn’t check for updates. Try again later.
-settings-updates-downloading = Downloading { $version }…
+settings-updates-downloading = Downloading { $version }: { $percent }%
 settings-updates-ready = { $platform ->
     [windows] { $version } is downloaded. It installs when you restart or quit Winc.
    *[other] { $version } is installed. Restart Winc to use it.

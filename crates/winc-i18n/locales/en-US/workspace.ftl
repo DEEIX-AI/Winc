@@ -272,9 +272,9 @@ workspace-tip-log-target-not-loaded = The target commit hasn’t loaded yet
 ## Status bar
 
 workspace-status-spaces = Spaces: { $size }
-workspace-status-update = Update Available: { $version }
-workspace-status-update-downloading = Downloading Update…
-workspace-status-update-ready = Restart to Update
+workspace-status-update = Update
+workspace-status-update-restart = Restart
+workspace-status-update-retry = Retry
 workspace-status-not-shown = Not shown: { $features }
 workspace-status-position-selected = { $position } ({ $count } selected)
 workspace-status-selections = { $count ->

@@ -547,8 +547,9 @@ fn draw_product(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Re
     ui_text(frame, app, x, area, &text, p.text_muted, clip);
 }
 
-/// 「关于」页「更新」一行下方的状态文字和颜色。
-fn update_status(app: &App) -> (String, Color) {
+/// 「关于」页「更新」一行下方的状态文字和颜色；也是状态栏更新按钮的悬停提示（见
+/// `status::update_tooltip`）。
+pub(in crate::view) fn update_status(app: &App) -> (String, Color) {
     use crate::winc::UpdateState;
     let p = app.palette;
     match &*app.shared.update_state.borrow() {
@@ -561,8 +562,12 @@ fn update_status(app: &App) -> (String, Color) {
             p.accent,
         ),
         UpdateState::Failed => (t!("settings-updates-failed").to_owned(), p.text_muted),
-        UpdateState::Downloading(version) => (
-            t!("settings-updates-downloading", version = version.as_str()),
+        UpdateState::Downloading(version, percent) => (
+            t!(
+                "settings-updates-downloading",
+                version = version.as_str(),
+                percent = *percent
+            ),
             p.text_muted,
         ),
         UpdateState::Ready(version) => (

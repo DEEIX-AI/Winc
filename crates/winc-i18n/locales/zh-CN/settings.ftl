@@ -98,7 +98,7 @@ settings-updates-checking = 正在检查更新…
 settings-updates-latest = Winc 已是最新版本
 settings-updates-found = 有可用的新版本：{ $version }
 settings-updates-failed = 无法检查更新，请稍后重试
-settings-updates-downloading = 正在下载 { $version }…
+settings-updates-downloading = 正在下载 { $version }：{ $percent }%
 settings-updates-ready = { $platform ->
     [windows] { $version } 已下载，重新启动或退出 Winc 时安装
    *[other] { $version } 已安装，重新启动 Winc 后生效
