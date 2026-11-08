@@ -340,6 +340,8 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     if !mac {
         t.chord(OpenFolder, Global, chord_k, c(ctrl, 'o'));
     }
+    // macOS 上 ⌃R，其他系统上 Ctrl+R。单按 ⌃ 或 Ctrl 的组合在终端里交给 shell（反向搜索历史）。
+    t.one(OpenRecent, Global, c(ctrl, 'r'));
     t.one(Save, Global, c(cmd, 's'));
     t.one(SaveAs, Global, c(cmd | shift, 's'));
     if os == Os::Windows {

@@ -129,6 +129,8 @@ fn default_key_labels_per_system() {
     assert_eq!(label(Os::Windows, Action::CloseTab), ["Ctrl+F4", "Ctrl+W"]);
     assert!(label(Os::Mac, Action::OpenFolder).is_empty());
     assert_eq!(label(Os::Linux, Action::OpenFolder), ["Ctrl+K Ctrl+O"]);
+    assert_eq!(label(Os::Mac, Action::OpenRecent), ["⌃R"]);
+    assert_eq!(label(Os::Windows, Action::OpenRecent), ["Ctrl+R"]);
     assert_eq!(label(Os::Mac, Action::NextTab), ["⌥⌘→", "⇧⌘]"]);
     assert!(label(Os::Windows, Action::Quit).is_empty());
     assert_eq!(label(Os::Mac, Action::JoinLines), ["⌃J"]);
@@ -184,6 +186,14 @@ fn default_key_labels_per_system() {
         runs(Os::Linux, Mods::CTRL, KeyCode::Char('j'), Context::Terminal),
         None
     );
+
+    // ⌃R（其他系统上 Ctrl+R）打开最近的目录；终端里交给 shell，用于反向搜索历史。
+    for os in ALL_OS {
+        let ctrl_r = |context| runs(os, Mods::CTRL, KeyCode::Char('r'), context);
+        assert_eq!(ctrl_r(Context::Editor), Some(Action::OpenRecent));
+        assert_eq!(ctrl_r(Context::Other), Some(Action::OpenRecent));
+        assert_eq!(ctrl_r(Context::Terminal), None);
+    }
 
     // 同一个键在不同的地方。
     assert_eq!(
