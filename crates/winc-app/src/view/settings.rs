@@ -224,7 +224,7 @@ fn draw_nav_row(
 
 /// 绘制标题「设置 › 外观」和右上角的关闭按钮；标题各段之间用箭头隔开，与状态栏中的路径样式相同。
 ///
-/// 内容滚动之后，标题下方出现一条分隔线，其不透明度随滚动量渐变（滚动 16 逻辑像素时达到最大）。
+/// 标题下方不画分隔线：内容滚到标题下面时直接被裁去。
 fn draw_header(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
     let p = app.palette;
     let header = layout.header;
@@ -244,12 +244,6 @@ fn draw_header(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
     let hovered = app.settings.hover == Some(SettingsPart::Close);
     draw_button(frame, p, close, layout.card, hovered, false);
     icons::close(frame, center(close), 7.0, p.text_muted, close);
-
-    if app.settings.scroll > 0.0 {
-        let alpha = (app.settings.scroll / 16.0).clamp(0.0, 1.0);
-        let line = Rect::new(header.x, header.bottom() - 1.0, header.w, 1.0);
-        frame.rect(line, p.border.alpha(p.border.a * alpha));
-    }
 }
 
 /// 绘制标题下方的各组设置：组上方是小标题，每组一块圆角底色，行与行之间一条细线。

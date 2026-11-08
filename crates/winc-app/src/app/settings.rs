@@ -244,7 +244,7 @@ impl App {
         self.settings.logo = None;
         self.field_preedit.clear();
 
-        self.settings.recording = false;
+        self.set_recording(false);
         if matches!(
             self.focus,
             Focus::Settings | Focus::Setting | Focus::KeySearch | Focus::SettingsSearch
@@ -388,7 +388,7 @@ impl App {
     /// 把焦点移到分类栏顶部的搜索框，全选其中的文字。
     pub(super) fn focus_settings_search(&mut self) {
         self.settings_leave_field();
-        self.settings.recording = false;
+        self.set_recording(false);
         self.settings.search.select_all();
         self.focus = Focus::SettingsSearch;
         self.reset_blink();
@@ -439,7 +439,7 @@ impl App {
             self.settings.scroll = 0.0;
             self.settings.error = self.broken_font(page);
         }
-        self.settings.recording = false;
+        self.set_recording(false);
         self.focus = if page == SettingsPage::Keys {
             Focus::KeySearch
         } else {
@@ -484,9 +484,25 @@ impl App {
         self.request_redraw();
     }
 
+    /// 开始（`on` 为 `true`）或停止录制按键。
+    ///
+    /// macOS 上菜单栏中带快捷键的菜单项（「设置…」的 ⌘,、「退出」的 ⌘Q 等）先于窗口收到按键；
+    /// 录制期间暂停这些快捷键，按键照常送到窗口、写进搜索框。
+    pub(in crate::app) fn set_recording(&mut self, on: bool) {
+        if self.settings.recording == on {
+            return;
+        }
+        self.settings.recording = on;
+        // 没有窗口（测试中）时没有菜单栏，也不在主线程上。
+        #[cfg(target_os = "macos")]
+        if self.window.is_some() {
+            crate::macos::suspend_menu_shortcuts(on);
+        }
+    }
+
     /// 开始或停止录制按键；开始时清空搜索框。
     pub(super) fn toggle_recording(&mut self) {
-        self.settings.recording = !self.settings.recording;
+        self.set_recording(!self.settings.recording);
         if self.settings.recording {
             self.settings.keys_query.set_text("");
             self.settings.keys_recorded = false;
@@ -524,7 +540,7 @@ impl App {
             self.settings.error = self.broken_font(all[next].page());
         }
         self.settings.selected = all[next];
-        self.settings.recording = false;
+        self.set_recording(false);
         self.focus = if all[next] == Setting::KeySearch {
             Focus::KeySearch
         } else {

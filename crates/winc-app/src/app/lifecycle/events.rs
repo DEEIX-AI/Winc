@@ -279,6 +279,10 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
                 self.update_foreground(focused);
+                // 离开窗口时停止录制按键，菜单项的快捷键随之恢复，不影响别的窗口和应用。
+                if !focused {
+                    self.set_recording(false);
+                }
 
                 if focused {
                     self.check_disk();

@@ -819,10 +819,10 @@ pub const DIALOG_BUTTON_W: f32 = 72.0;
 /// 「位置」右端选目录按钮（一个目录图标）的宽度。
 pub const DIALOG_CHANGE_W: f32 = 28.0;
 
-/// 「快捷键」页顶部搜索框的高度（逻辑像素）。
-pub const KEYS_SEARCH_H: f32 = 32.0;
-/// 搜索框右端「录制按键」按钮的边长（逻辑像素）。
-pub const KEYS_RECORD: f32 = 24.0;
+/// 「快捷键」页顶部搜索框的高度（逻辑像素），与分类栏顶部的搜索框相同。
+pub const KEYS_SEARCH_H: f32 = SETTINGS_CONTROL_H;
+/// 搜索框右端「录制按键」按钮的边长（逻辑像素）：上下各离搜索框边缘 3。
+pub const KEYS_RECORD: f32 = KEYS_SEARCH_H - 6.0;
 /// 「快捷键」页列表一行的高度（逻辑像素）。
 pub const KEYS_ROW: f32 = 34.0;
 
