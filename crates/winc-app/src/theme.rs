@@ -609,11 +609,14 @@ impl ViewFonts {
         }
     }
 
-    /// 按 `config` 中的字号算出整套度量：未设置的用默认字号，终端未设置时与编辑区相同。
+    /// 按 `config` 中的字号算出整套度量，未设置的用默认字号。
+    ///
+    /// 终端字号与编辑区字号互不影响：终端未设置时用编辑区的默认字号 [`CODE_FONT`]，不随编辑区
+    /// 字号变化。
     pub fn of(config: &winc_config::Config) -> ViewFonts {
         let code = config.editor_size.unwrap_or(CODE_FONT);
         let ui = config.ui_size.unwrap_or(UI_FONT);
-        ViewFonts::new(code, ui, config.terminal_size.unwrap_or(code))
+        ViewFonts::new(code, ui, config.terminal_size.unwrap_or(CODE_FONT))
     }
 }
 

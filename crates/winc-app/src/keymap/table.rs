@@ -404,15 +404,24 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     t.one(RunConfiguration, Global, key(none, F(5)));
     t.one(StopConfiguration, Global, key(shift, F(5)));
     t.one(ClearTerminal, Terminal, c(term, 'k'));
-    t.one(ZoomIn, Global, c(cmd, '='));
-    t.one(ZoomIn, Global, c(cmd | shift, '='));
-    t.one(ZoomIn, Global, key(cmd, Numpad('+')));
-    t.one(ZoomOut, Global, c(cmd, '-'));
+    t.one(IncreaseFontSize, Global, c(cmd, '='));
+    t.one(IncreaseFontSize, Global, c(cmd | shift, '='));
+    t.one(IncreaseFontSize, Global, key(cmd, Numpad('+')));
+    t.one(DecreaseFontSize, Global, c(cmd, '-'));
     if !linux {
-        t.one(ZoomOut, Global, c(cmd | shift, '-'));
+        t.one(DecreaseFontSize, Global, c(cmd | shift, '-'));
     }
-    t.one(ZoomOut, Global, key(cmd, Numpad('-')));
-    t.one(ResetZoom, Global, key(cmd, Numpad('0')));
+    t.one(DecreaseFontSize, Global, key(cmd, Numpad('-')));
+    t.one(ResetFontSize, Global, key(cmd, Numpad('0')));
+    // 界面缩放：整个窗口放大、缩小，与调字号的键分开；焦点在终端时同样生效。
+    let zoom = match os {
+        Os::Mac => ctrl | alt,
+        Os::Windows => alt | shift,
+        Os::Linux => ctrl | alt | shift,
+    };
+    t.one(ZoomIn, Everywhere, c(zoom, '='));
+    t.one(ZoomOut, Everywhere, c(zoom, '-'));
+    t.one(ResetZoom, Everywhere, c(zoom, '0'));
 
     t.0
 }

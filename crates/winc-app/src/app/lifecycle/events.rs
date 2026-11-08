@@ -170,6 +170,7 @@ impl ApplicationHandler<UserEvent> for App {
                 },
             );
         }
+        self.sync_zoom();
         self.place_traffic_lights();
         // 在窗口显示后询问：提示框依附于窗口。
         #[cfg(target_os = "macos")]

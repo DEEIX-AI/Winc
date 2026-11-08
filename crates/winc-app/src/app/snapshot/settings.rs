@@ -63,30 +63,88 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
 }
 
 #[test]
-fn zoom_changes_the_editor_font_size_and_resets() {
+fn zoom_scales_the_whole_window_in_steps() {
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+
+    let dir = search_folder("ui-zoom");
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+    let window = app.layout.window;
+    let scale = |app: &App| app.renderer.as_ref().unwrap().scale_factor();
+    let base = scale(&app);
+
+    // 放大一档：渲染倍数变大，窗口的逻辑尺寸按比例变小；字号不变。
+    app.step_zoom(Some(true));
+    assert_eq!(app.config.ui_zoom, Some(110));
+    assert_eq!(app.status_message.as_deref(), Some("界面缩放 110%"));
+    assert!((scale(&app) - base * 1.1).abs() < 1e-4);
+    assert!((app.layout.window.w - window.w / 1.1).abs() < 0.01);
+    assert_eq!(app.fonts.code, CODE_FONT);
+
+    // 配置中写了档位以外的值：移到该方向上最近的档位。
+    app.config.ui_zoom = Some(117);
+    app.step_zoom(Some(true));
+    assert_eq!(app.config.ui_zoom, Some(125));
+    app.config.ui_zoom = Some(117);
+    app.step_zoom(Some(false));
+    assert_eq!(app.config.ui_zoom, Some(110));
+
+    // 已到上限时不变，并在状态栏提示。
+    app.set_zoom(200);
+    app.step_zoom(Some(true));
+    assert_eq!(app.config.ui_zoom, Some(200));
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("无法继续调整"))
+    );
+
+    // 还原：配置中不再记录，窗口回到原来的逻辑尺寸。
+    app.step_zoom(None);
+    assert_eq!(app.config.ui_zoom, None);
+    assert_eq!(scale(&app), base);
+    assert_eq!(app.layout.window, window);
+
+    // 设置中的菜单列出各档位，当前的打勾；选中后写入配置。
+    app.open_settings();
+    app.settings_open_menu(Setting::Zoom);
+    assert_eq!(
+        app.context_menu.as_ref().map(|m| &m.target),
+        Some(&MenuTarget::Zoom)
+    );
+    assert!(app.menu_checked(MenuCommand::Zoom(3)));
+    assert_eq!(app.menu_label(MenuCommand::Zoom(6)).title, "150%");
+    app.run_menu_command(MenuCommand::Zoom(6));
+    assert_eq!(app.config.ui_zoom, Some(150));
+    assert!((scale(&app) - base * 1.5).abs() < 1e-4);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn font_size_keys_change_the_editor_font_size_and_reset() {
     let dir = search_folder("zoom");
     let mut app = app_with(&dir, false);
     app.open_path(&dir.join("src/main.rs"));
     let ui = app.fonts.ui;
 
-    app.zoom(Some(true));
+    app.step_font_size(Some(true));
     assert_eq!(app.config.editor_size, Some(CODE_FONT + 1.0));
     assert_eq!(app.fonts.code, CODE_FONT + 1.0);
     // 界面字号保持不变。
     assert_eq!(app.fonts.ui, ui);
 
-    app.zoom(Some(false));
-    app.zoom(Some(false));
+    app.step_font_size(Some(false));
+    app.step_font_size(Some(false));
     assert_eq!(app.fonts.code, CODE_FONT - 1.0);
 
     // ⌘0 还原：配置中不再记录字号。
-    app.zoom(None);
+    app.step_font_size(None);
     assert_eq!(app.config.editor_size, None);
     assert_eq!(app.fonts.code, CODE_FONT);
 
     // 已达上限时再放大：字号不变，并在状态栏提示。
     app.config.editor_size = Some(*Config::EDITOR_SIZE_RANGE.end());
-    app.zoom(Some(true));
+    app.step_font_size(Some(true));
     assert_eq!(
         app.config.editor_size,
         Some(*Config::EDITOR_SIZE_RANGE.end())
@@ -208,11 +266,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，然后是状态栏和
-    // 记住窗口两个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：
-    // → 换到下一个，外观回到深色；到头后不再变化。
+    // 浅色主题（语言下面是界面缩放、界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，然后是
+    // 状态栏和记住窗口两个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色
+    // 主题：→ 换到下一个，外观回到深色；到头后不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..5 + title_bar {
+    for _ in 0..6 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);

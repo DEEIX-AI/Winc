@@ -23,6 +23,7 @@ settings-light-theme = Light Theme
 settings-dark-theme = Dark Theme
 settings-ui-font = Interface Font
 settings-ui-size = Interface Font Size
+settings-ui-zoom = Zoom
 settings-editor-font = Font
 settings-editor-size = Font Size
 settings-tab-width = Tab Width
@@ -163,10 +164,12 @@ settings-keys-no-match = No matching commands
 
 ## Font size and the configuration file.
 
-settings-zoom-limit = Editor font size is already { $size } and can’t be adjusted further
-settings-zoom = Editor font size { $size }
-settings-zoom-terminal-limit = Terminal font size is already { $size } and can’t be adjusted further
-settings-zoom-terminal = Terminal font size { $size }
+settings-font-size-limit = Editor font size is already { $size } and can’t be adjusted further
+settings-font-size = Editor font size { $size }
+settings-terminal-font-size-limit = Terminal font size is already { $size } and can’t be adjusted further
+settings-terminal-font-size = Terminal font size { $size }
+settings-zoom-limit = Zoom is already { $zoom }% and can’t be adjusted further
+settings-zoom = Zoom { $zoom }%
 settings-config-backed-up = The configuration file couldn’t be parsed; it was saved as { $path } and the new settings were written
 settings-config-comments-backed-up = Comments in the configuration file can’t be kept when writing settings; the original was saved as { $path }
 settings-config-write-failed = Couldn’t write the configuration file: { $error }

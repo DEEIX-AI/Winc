@@ -23,6 +23,7 @@ settings-light-theme = 浅色主题
 settings-dark-theme = 深色主题
 settings-ui-font = 界面字体
 settings-ui-size = 界面字号
+settings-ui-zoom = 界面缩放
 settings-editor-font = 字体
 settings-editor-size = 字号
 settings-tab-width = 制表符宽度
@@ -163,10 +164,12 @@ settings-keys-no-match = 没有匹配的命令
 
 ## 字号与配置文件。
 
-settings-zoom-limit = 编辑区字号已为 { $size }，无法继续调整
-settings-zoom = 编辑区字号 { $size }
-settings-zoom-terminal-limit = 终端字号已为 { $size }，无法继续调整
-settings-zoom-terminal = 终端字号 { $size }
+settings-font-size-limit = 编辑区字号已为 { $size }，无法继续调整
+settings-font-size = 编辑区字号 { $size }
+settings-terminal-font-size-limit = 终端字号已为 { $size }，无法继续调整
+settings-terminal-font-size = 终端字号 { $size }
+settings-zoom-limit = 界面缩放已为 { $zoom }%，无法继续调整
+settings-zoom = 界面缩放 { $zoom }%
 settings-config-backed-up = 原配置文件无法解析，已另存为 { $path } 后写入新设置
 settings-config-comments-backed-up = 写入设置时无法保留配置文件里的注释，原文件已另存为 { $path }
 settings-config-write-failed = 无法写入配置文件：{ $error }

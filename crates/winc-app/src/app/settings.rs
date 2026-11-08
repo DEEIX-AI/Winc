@@ -160,6 +160,11 @@ fn font_error(value: &Option<String>) -> Option<String> {
     })
 }
 
+/// 界面缩放的档位（百分比）：设置菜单中列出，快捷键依次经过。
+///
+/// 100% 附近每档 10%，便于微调；更大的倍数每档 25%，较少几次即可放大到上限。
+pub(crate) const ZOOM_STEPS: [u16; 9] = [70, 80, 90, 100, 110, 125, 150, 175, 200];
+
 /// 把 `value` 加 1（`up` 为 `true`）或减 1，结果限制在 `range` 之内。
 fn step(value: f32, up: bool, range: RangeInclusive<f32>) -> f32 {
     let next = if up { value + 1.0 } else { value - 1.0 };
@@ -855,9 +860,9 @@ impl App {
 
     /// 放大或缩小字号（`⌘+` `⌘−`），`⌘0` 还原（`up` 为 `None`）。
     ///
-    /// 焦点在终端时调整终端字号，还原为与编辑区相同；否则调整编辑区字号。改动写回配置，界面
-    /// 字号不变。
-    pub(super) fn zoom(&mut self, up: Option<bool>) {
+    /// 焦点在终端时调整终端字号，否则调整编辑区字号，两者互不影响；还原即回到默认字号。改动
+    /// 写回配置，界面字号不变。
+    pub(super) fn step_font_size(&mut self, up: Option<bool>) {
         let terminal = self.focus.in_terminal();
         let pick = |fonts: ViewFonts| if terminal { fonts.terminal } else { fonts.code };
         let current = pick(ViewFonts::of(&self.config));
@@ -865,9 +870,9 @@ impl App {
         if next == Some(current) {
             let size = current.to_string();
             self.flash(if terminal {
-                t!("settings-zoom-terminal-limit", size = size)
+                t!("settings-terminal-font-size-limit", size = size)
             } else {
-                t!("settings-zoom-limit", size = size)
+                t!("settings-font-size-limit", size = size)
             });
             return;
         }
@@ -881,10 +886,36 @@ impl App {
         self.apply_font_sizes();
         self.save_config();
         self.flash(if terminal {
-            t!("settings-zoom-terminal", size = size)
+            t!("settings-terminal-font-size", size = size)
         } else {
-            t!("settings-zoom", size = size)
+            t!("settings-font-size", size = size)
         });
+    }
+
+    /// 按档位（[`ZOOM_STEPS`]）放大或缩小界面（`up` 为 `true` 时放大），`up` 为 `None` 时还原为
+    /// 100%。
+    ///
+    /// 配置文件中写了档位以外的值时，移到该方向上最近的档位。改动写回配置。
+    pub(super) fn step_zoom(&mut self, up: Option<bool>) {
+        let current = self.config.ui_zoom.unwrap_or(100);
+        let next = match up {
+            Some(true) => ZOOM_STEPS.into_iter().find(|&zoom| zoom > current),
+            Some(false) => ZOOM_STEPS.into_iter().rev().find(|&zoom| zoom < current),
+            None => Some(100),
+        };
+        let Some(next) = next else {
+            self.flash(t!("settings-zoom-limit", zoom = current.to_string()));
+            return;
+        };
+        self.set_zoom(next);
+        self.flash(t!("settings-zoom", zoom = next.to_string()));
+    }
+
+    /// 把界面缩放设为 `zoom`（百分比）并写回配置；100% 时从配置中去掉该项。
+    pub(in crate::app) fn set_zoom(&mut self, zoom: u16) {
+        self.config.ui_zoom = (zoom != 100).then_some(zoom);
+        self.apply_zoom();
+        self.save_config();
     }
 
     /// 返回数值设置当前的显示值，以及是否已到范围的下限、上限（到限的一侧按钮变淡）。
@@ -1078,6 +1109,7 @@ impl App {
     pub(crate) fn adopt_config(&mut self, config: Config) {
         let old = std::mem::replace(&mut self.config, config);
         let new = &self.config;
+        let zoom = old.ui_zoom != new.ui_zoom;
         let fonts = (old.editor_font != new.editor_font || old.ui_font != new.ui_font)
             || (old.editor_size != new.editor_size || old.ui_size != new.ui_size)
             || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size);
@@ -1109,6 +1141,9 @@ impl App {
         if fonts || glyph_language {
             // 别的窗口已经用上了这些字体，这里也用得上；万一用不上，留着原来的字体。
             let _ = self.apply_fonts();
+        }
+        if zoom {
+            self.apply_zoom();
         }
         if let Some(width) = tab_width {
             self.editor.tab_width = width;

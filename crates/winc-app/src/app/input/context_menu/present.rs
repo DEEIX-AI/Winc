@@ -327,6 +327,7 @@ impl App {
             MenuTarget::Locale => locale_menu(),
             MenuTarget::Whitespace => whitespace_menu(),
             MenuTarget::DefaultShell => default_shell_menu(self.terminal.shells.len()),
+            MenuTarget::Zoom => zoom_menu(),
             MenuTarget::TerminalPosition => terminal_position_menu(),
             MenuTarget::OptionAsMeta => option_as_meta_menu(),
             &MenuTarget::Font(setting) => font_menu(setting),
@@ -640,6 +641,7 @@ impl App {
                 | MenuTarget::TabList
                 | MenuTarget::Locale
                 | MenuTarget::Whitespace
+                | MenuTarget::Zoom
                 | MenuTarget::TerminalPosition
                 | MenuTarget::OptionAsMeta
                 | MenuTarget::Font(_)
@@ -648,6 +650,7 @@ impl App {
         let control = match target {
             MenuTarget::Locale => Some(Setting::Language),
             MenuTarget::Whitespace => Some(Setting::RenderWhitespace),
+            MenuTarget::Zoom => Some(Setting::Zoom),
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
             MenuTarget::OptionAsMeta => Some(Setting::TerminalOptionAsMeta),
             MenuTarget::Font(setting) => Some(setting),
@@ -703,12 +706,14 @@ impl App {
                 .iter()
                 .map(|p| p.as_ref().map(Prepared::item))
                 .collect();
-            let at = (f64::from(at.0), f64::from(at.1));
+            // 界面的逻辑像素乘以界面缩放倍数得到 `AppKit` 的点。
+            let zoom = f64::from(self.zoom());
+            let at = (f64::from(at.0) * zoom, f64::from(at.1) * zoom);
             let place = crate::macos::MenuPlace {
                 at,
                 at_checked,
                 right_aligned,
-                min_width: f64::from(min_width),
+                min_width: f64::from(min_width) * zoom,
             };
             crate::macos::popup_menu(&window, &items, place);
         }
@@ -809,6 +814,13 @@ impl App {
                     tooltip: None,
                 }
             }
+            MenuCommand::Zoom(i) => MenuLabel {
+                title: (crate::app::settings::ZOOM_STEPS.get(i))
+                    .map(|zoom| format!("{zoom}%"))
+                    .unwrap_or_default(),
+                subtitle: None,
+                tooltip: None,
+            },
             MenuCommand::DefaultShell(Some(i)) => {
                 let shell = self.terminal.shells.get(i);
                 MenuLabel {
@@ -1179,6 +1191,9 @@ impl App {
                 (self.terminal.shells.iter()).all(|shell| shell.command != configured.command)
             }),
             MenuCommand::TerminalPosition(right) => self.terminal_right() == right,
+            MenuCommand::Zoom(i) => {
+                crate::app::settings::ZOOM_STEPS.get(i) == Some(&self.config.ui_zoom.unwrap_or(100))
+            }
             MenuCommand::OptionAsMeta(i) => {
                 let current =
                     (self.config.option_as_meta).unwrap_or(winc_config::OptionAsMeta::Left);

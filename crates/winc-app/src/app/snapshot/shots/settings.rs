@@ -330,3 +330,22 @@ fn snapshot_about_page() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 截图：界面缩放为 125%、150%、200% 时的窗口和设置（`zoom-<百分比>`、`zoom-<百分比>-settings`）。
+///
+/// 窗口的物理尺寸不变，界面、编辑区和终端一同放大。
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_zoom() {
+    let dir = search_folder("zoom-shot");
+    for zoom in [125, 150, 200] {
+        let mut app = app_with(&dir.join("short.rs"), false);
+        app.config.terminal_enabled = Some(true);
+        app.set_zoom(zoom);
+        app.on_mouse_move(4.0, 4.0);
+        shoot(&mut app, &format!("zoom-{zoom}"));
+        app.open_settings();
+        shoot(&mut app, &format!("zoom-{zoom}-settings"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

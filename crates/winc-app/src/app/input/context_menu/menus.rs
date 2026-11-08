@@ -519,6 +519,13 @@ pub fn whitespace_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回「界面缩放」菜单的菜单项：各个档位，当前的选择打勾。
+pub fn zoom_menu() -> Vec<MenuEntry> {
+    (0..crate::app::settings::ZOOM_STEPS.len())
+        .map(|i| MenuEntry::Item(MenuCommand::Zoom(i), true))
+        .collect()
+}
+
 /// 返回终端「位置」菜单的菜单项：底部、右侧，当前的选择打勾。
 pub fn terminal_position_menu() -> Vec<MenuEntry> {
     [false, true]

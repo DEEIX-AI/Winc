@@ -159,6 +159,9 @@ pub enum MenuCommand {
     DefaultShell(Option<usize>),
     /// 设置中「默认 Shell」菜单的「自定义命令…」，进入输入框。
     DefaultShellCustom,
+    /// 设置中「界面缩放」菜单的一项，参数为 [`ZOOM_STEPS`](crate::app::settings::ZOOM_STEPS)
+    /// 中的序号（从 0 起）。
+    Zoom(usize),
     /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
     TerminalPosition(bool),
     /// 设置中「Meta 键」菜单的一项，参数为
@@ -372,6 +375,7 @@ impl MenuCommand {
             | MenuCommand::RunSelect(_)
             | MenuCommand::NewTerminalShell(_)
             | MenuCommand::DefaultShell(Some(_))
+            | MenuCommand::Zoom(_)
             | MenuCommand::TerminalDock
             | MenuCommand::OpenRecentInNewWindow(_) => "",
             MenuCommand::DefaultShell(None) => t!("settings-terminal-shell-default"),
@@ -604,6 +608,8 @@ pub enum MenuTarget {
     Locale,
     /// 设置的编辑器页中的「空白符」。
     Whitespace,
+    /// 设置的外观页中的「界面缩放」。
+    Zoom,
     /// 设置的终端页中的「默认 Shell」。
     DefaultShell,
     /// 设置的终端页中的「位置」。

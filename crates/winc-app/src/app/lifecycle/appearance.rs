@@ -1,8 +1,38 @@
-//! 外观：字体、字号和主题。
+//! 外观：界面缩放、字体、字号和主题。
 
 use super::*;
 
 impl App {
+    /// 返回界面缩放倍数（配置中的 `ui.zoom` 除以 100，未设置时为 1）。
+    pub(crate) fn zoom(&self) -> f32 {
+        f32::from(self.config.ui_zoom.unwrap_or(100)) / 100.0
+    }
+
+    /// 把界面缩放倍数交给渲染器和红绿灯；新窗口建好时与缩放改变时调用。
+    pub(in crate::app) fn sync_zoom(&mut self) {
+        let zoom = self.zoom();
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_zoom(zoom);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(lights) = &self.traffic_lights {
+            lights.set_zoom(f64::from(zoom));
+        }
+        self.last_ime_area = None;
+    }
+
+    /// 按配置应用界面缩放：整个窗口按新的倍数绘制，窗口的物理尺寸不变。
+    ///
+    /// 布局按新的逻辑尺寸重新计算，红绿灯随顶栏的高度重新摆放；编辑区首行不变，滚动位置只限制
+    /// 回有效范围。
+    pub(in crate::app) fn apply_zoom(&mut self) {
+        self.sync_zoom();
+        self.place_traffic_lights();
+        self.relayout();
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
     /// 按当前字号重新测量字体度量；字号或字体变化后调用。
     pub(in crate::app) fn measure_fonts(&mut self) {
         let Some(renderer) = &self.renderer else {

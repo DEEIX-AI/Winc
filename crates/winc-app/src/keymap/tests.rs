@@ -67,6 +67,23 @@ fn every_action_is_listed_once_in_order() {
 }
 
 #[test]
+fn zoom_keys_are_separate_from_font_size_and_work_in_the_terminal() {
+    let (ctrl, shift, alt) = (Mods::CTRL, Mods::SHIFT, Mods::ALT);
+    for (os, mods) in [
+        (Os::Mac, ctrl | alt),
+        (Os::Windows, alt | shift),
+        (Os::Linux, ctrl | alt | shift),
+    ] {
+        for context in [Context::Editor, Context::Terminal] {
+            let run = |key| runs(os, mods, KeyCode::Char(key), context);
+            assert_eq!(run('='), Some(Action::ZoomIn), "{os:?}");
+            assert_eq!(run('-'), Some(Action::ZoomOut), "{os:?}");
+            assert_eq!(run('0'), Some(Action::ResetZoom), "{os:?}");
+        }
+    }
+}
+
+#[test]
 fn default_key_labels_per_system() {
     let (cmd, ctrl, shift, alt) = (Mods::META, Mods::CTRL, Mods::SHIFT, Mods::ALT);
     let label = |os: Os, action: Action| {
@@ -221,7 +238,7 @@ fn default_key_labels_per_system() {
     // ⌘- 缩小字号，⌃- 后退；Linux 上 Ctrl+- 缩小字号，Ctrl+⇧- 前进。
     assert_eq!(
         runs(Os::Mac, cmd, KeyCode::Char('-'), Context::Editor),
-        Some(Action::ZoomOut)
+        Some(Action::DecreaseFontSize)
     );
     assert_eq!(
         runs(Os::Mac, ctrl, KeyCode::Char('-'), Context::Editor),

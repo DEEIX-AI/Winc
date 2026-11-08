@@ -162,8 +162,8 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
     let mut app = app_with(&dir.join("short.rs"), false);
     show_terminal(&mut app, "");
     let code = app.fonts.code;
-    // 没有单独设置时与编辑区相同。
-    assert_eq!(app.fonts.terminal, code);
+    // 没有单独设置时用默认字号，与编辑区的默认字号相同。
+    assert_eq!((app.fonts.terminal, code), (CODE_FONT, CODE_FONT));
     assert_eq!(app.terminal_cell, app.cell);
     let cols = app.terminal_size().cols;
 
@@ -175,9 +175,9 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
     assert!(app.terminal_size().cols < cols);
     assert_eq!(app.fonts.code, code);
 
-    // 焦点在终端时缩放改终端字号；⌘0 还原为与编辑区相同。
+    // 焦点在终端时改终端字号；⌘0 还原为默认字号。
     app.focus = Focus::Terminal;
-    app.zoom(Some(true));
+    app.step_font_size(Some(true));
     assert_eq!(app.config.terminal_size, Some(code + 7.0));
     assert_eq!(app.config.editor_size, None);
     assert!(
@@ -185,15 +185,15 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
             .as_deref()
             .is_some_and(|m| m.contains("终端字号"))
     );
-    app.zoom(None);
+    app.step_font_size(None);
     assert_eq!(app.config.terminal_size, None);
     assert_eq!(app.fonts.terminal, code);
 
-    // 焦点在编辑区时改编辑区字号，没有单独设置的终端跟着变。
+    // 焦点在编辑区时只改编辑区字号，终端字号不变。
     app.focus = Focus::Editor;
-    app.zoom(Some(true));
+    app.step_font_size(Some(true));
     assert_eq!(app.config.editor_size, Some(code + 1.0));
-    assert_eq!(app.fonts.terminal, code + 1.0);
+    assert_eq!(app.fonts.terminal, code);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

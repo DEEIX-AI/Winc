@@ -70,6 +70,7 @@ impl SettingsPage {
                     plain(vec![
                         Setting::Theme,
                         Setting::Language,
+                        Setting::Zoom,
                         Setting::UiFont,
                         Setting::UiSize,
                     ]),
@@ -252,6 +253,8 @@ pub enum Setting {
     UiFont,
     /// 界面字号。
     UiSize,
+    /// 界面缩放（`ui.zoom`）：整个窗口按同一比例放大或缩小。
+    Zoom,
     /// 用系统的标题栏和边框，而不是由应用在顶栏中绘制窗口按钮（macOS 以外的平台）。
     SystemTitleBar,
     /// 保存时格式化。
@@ -324,6 +327,7 @@ impl Setting {
             | Setting::DarkTheme
             | Setting::UiFont
             | Setting::UiSize
+            | Setting::Zoom
             | Setting::SystemTitleBar
             | Setting::StatusBar
             | Setting::RestoreWindow => SettingsPage::Appearance,
@@ -373,6 +377,7 @@ impl Setting {
             Setting::DarkTheme => t!("settings-dark-theme"),
             Setting::UiFont => t!("settings-ui-font"),
             Setting::UiSize => t!("settings-ui-size"),
+            Setting::Zoom => t!("settings-ui-zoom"),
             Setting::SystemTitleBar => t!("settings-system-title-bar"),
             Setting::EditorFont => t!("settings-editor-font"),
             Setting::EditorSize => t!("settings-editor-size"),
@@ -500,6 +505,7 @@ impl Setting {
             }
             Setting::SkipOnSave
             | Setting::Language
+            | Setting::Zoom
             | Setting::RenderWhitespace
             | Setting::TerminalPosition
             | Setting::TerminalOptionAsMeta => SettingControl::Choice,

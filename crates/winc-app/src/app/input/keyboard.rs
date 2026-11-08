@@ -908,14 +908,17 @@ impl App {
     }
 
     /// 把输入法候选窗的位置（`ime_cursor`，逻辑像素）同步给窗口；位置没有变化时不重复设置。
+    ///
+    /// 窗口按系统的逻辑坐标接收位置，界面的逻辑像素乘以界面缩放倍数后传入。
     pub(in crate::app) fn update_ime_area(&mut self) {
         if let (Some(area), Some(window)) = (self.ime_cursor, &self.window)
             && self.last_ime_area != Some(area)
         {
             self.last_ime_area = Some(area);
+            let zoom = f64::from(self.zoom());
             window.set_ime_cursor_area(
-                LogicalPosition::new(area.x as f64, area.y as f64),
-                LogicalSize::new(area.w as f64, area.h as f64),
+                LogicalPosition::new(f64::from(area.x) * zoom, f64::from(area.y) * zoom),
+                LogicalSize::new(f64::from(area.w) * zoom, f64::from(area.h) * zoom),
             );
         }
     }

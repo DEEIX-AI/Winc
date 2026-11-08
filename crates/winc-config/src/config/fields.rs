@@ -172,6 +172,15 @@ const UI: &[Field] = &[
         write: |config| config.ui_size.map(number),
     },
     Field {
+        key: "zoom",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-zoom");
+            config.ui_zoom = read_number(value, name, Config::ZOOM_RANGE, label, problems)
+                .map(|zoom| zoom.round() as u16);
+        },
+        write: |config| config.ui_zoom.map(|zoom| number(f32::from(zoom))),
+    },
+    Field {
         // `titleBarStyle` 在配置中是字符串，读入后只保留是否用系统的标题栏。
         key: "titleBarStyle",
         read: |config, value, name, problems| match value.as_str() {

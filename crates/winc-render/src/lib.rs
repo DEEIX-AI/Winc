@@ -253,8 +253,11 @@ pub struct Renderer {
     strokes: StrokeCache,
     /// 覆盖率映射表：深色背景上的浅色文字略微加粗，避免显得单薄；随背景色调整。
     gamma: [u8; 256],
-    /// 屏幕缩放系数，逻辑像素到物理像素的倍数；[`Self::resize`] 时更新。
+    /// 逻辑像素到物理像素的倍数：系统的缩放系数乘以 [`Self::zoom`]；[`Self::resize`] 和
+    /// [`Self::set_zoom`] 时更新。
     scale: f32,
+    /// 界面缩放倍数，1 为不缩放（见 [`Self::set_zoom`]）。
+    zoom: f32,
     /// 当前背景色，打包成 `0xAARRGGBB`。
     background: u32,
     /// 下一帧画的内容一定会不透明地整个盖住的一块（逻辑像素），铺背景色时跳过，见
@@ -340,6 +343,7 @@ impl Renderer {
             strokes: StrokeCache::new(),
             gamma: gamma_for(background),
             scale,
+            zoom: 1.0,
             background: background.argb(),
             cover: None,
         })
@@ -372,6 +376,7 @@ impl Renderer {
             strokes: StrokeCache::new(),
             gamma: gamma_for(background),
             scale,
+            zoom: 1.0,
             background: background.argb(),
             cover: None,
         })
@@ -422,12 +427,21 @@ impl Renderer {
         glyphs.advances.clear();
         Ok(())
     }
-    /// 返回屏幕缩放系数：逻辑像素乘以该值得到物理像素。
+    /// 返回逻辑像素到物理像素的倍数：系统的缩放系数乘以界面缩放倍数。
     pub fn scale_factor(&self) -> f32 {
         self.scale
     }
 
-    /// 窗口尺寸或缩放系数变化时调用。
+    /// 设置界面缩放倍数 `zoom`（1 为不缩放）。
+    ///
+    /// 窗口的物理尺寸不变，逻辑尺寸随之变小或变大，界面、编辑区和终端同时按该倍数放大或
+    /// 缩小；字形按新的物理像素字号光栅化，缩放后仍然清晰。
+    pub fn set_zoom(&mut self, zoom: f32) {
+        self.scale = self.scale / self.zoom * zoom;
+        self.zoom = zoom;
+    }
+
+    /// 窗口尺寸或系统的缩放系数变化时调用。
     ///
     /// 缩放变化时不清空字形缓存和描边缓存：两者的键都按物理像素计算（字号、描边坐标），
     /// 不同缩放的结果互不冲突；字形缓存由各窗口共用，按旧缩放光栅化的条目不再使用后按代淘汰。
@@ -439,7 +453,8 @@ impl Renderer {
         let size = window.inner_size();
         let scale = window.scale_factor();
 
-        self.scale = scale as f32;
+        self.scale = scale as f32 * self.zoom;
+        // 呈现缓冲的像素密度是屏幕的，与界面缩放无关。
         presenter.resize(size.width, size.height, scale);
     }
 

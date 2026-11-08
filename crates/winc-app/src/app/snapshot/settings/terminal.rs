@@ -97,7 +97,7 @@ fn the_default_shell_is_chosen_from_the_detected_shells_or_typed() {
 fn the_terminal_font_size_and_switches_write_the_config() {
     let (mut app, dir) = terminal_settings("settings-terminal-font");
 
-    // 字号：未设置时显示编辑区的字号；调整后只改终端，编辑区不变。
+    // 字号：未设置时显示默认字号；调整后只改终端，编辑区不变。
     let code = app.fonts.code;
     assert_eq!(app.setting_value(Setting::TerminalSize).0, code.to_string());
     app.settings_adjust(Setting::TerminalSize, true);

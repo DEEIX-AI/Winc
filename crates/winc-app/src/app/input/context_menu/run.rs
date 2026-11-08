@@ -153,6 +153,13 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::Zoom => {
+                if let MenuCommand::Zoom(i) = command
+                    && let Some(&zoom) = crate::app::settings::ZOOM_STEPS.get(i)
+                {
+                    self.set_zoom(zoom);
+                }
+            }
             MenuTarget::TerminalPosition => {
                 if let MenuCommand::TerminalPosition(right) = command {
                     self.set_terminal_position(right);
