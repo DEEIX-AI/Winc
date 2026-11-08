@@ -2569,3 +2569,127 @@ fn the_live_preview_hides_its_caret_until_clicked_and_ignores_the_margins() {
     assert!(app.live_caret_shown());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 只看预览时左侧有标题指示条，每个标题一条；鼠标停在指示条上时标题列表在原处展开，点击一项
+/// 滚到该标题。分栏时预览变窄，左侧留白放不下指示条，不画。
+#[test]
+fn the_preview_shows_a_heading_indicator() {
+    use crate::app::preview::markdown::TocTarget;
+
+    let (mut app, dir) = readme("md-toc", false, PreviewMode::Preview);
+    assert_eq!(app.markdown.toc_tops.len(), 2);
+    let find = |app: &App, target| {
+        app.markdown
+            .toc
+            .iter()
+            .find(|(_, t)| *t == target)
+            .map(|h| h.0)
+    };
+    let bars = find(&app, TocTarget::Bars).unwrap();
+    assert!(find(&app, TocTarget::Heading(0)).is_none());
+
+    app.on_mouse_move(bars.x + 20.0, bars.y + 10.0);
+    paint(&mut app);
+    assert!(matches!(app.hover, Hover::MarkdownToc(_)));
+    // 展开时第一行的横线落在指示条第一条的位置上（还没有滚到任何标题），横线不跳动。指示条的
+    // 范围比第一条高出 8，第一条粗 2。
+    let first = find(&app, TocTarget::Heading(0)).unwrap();
+    assert_eq!(first.y + first.h / 2.0, bars.y + 8.0 + 1.0);
+    // 列表盖住指示条展开；鼠标停在列表里两行之间的空白处时列表不收起。
+    let row = find(&app, TocTarget::Heading(1)).unwrap();
+    let card = app.markdown.toc.iter().rev().nth(1).unwrap().0;
+    assert!(card.contains(bars.x + 20.0, bars.y + 10.0));
+    app.on_mouse_move(card.x + 1.0, row.y);
+    paint(&mut app);
+    assert!(find(&app, TocTarget::Heading(1)).is_some());
+
+    click(&mut app, (row.x + 20.0, row.y + row.h / 2.0));
+    let max = (app.markdown.height - app.markdown.area.h).max(0.0);
+    assert_eq!(app.markdown.scroll(), app.markdown.toc_tops[1].min(max));
+    paint(&mut app);
+    assert_eq!(app.markdown.toc_current, Some(1));
+
+    // 指示条贴在正文左边，随正文居中的位置移动。
+    let left = app.markdown.layout.as_ref().unwrap().left;
+    // 列表展开着时卡片也记作 `Bars`，指示条本身总是最后一项。
+    let bars = app.markdown.toc.last().unwrap().0;
+    assert!(
+        bars.right() <= left && bars.right() >= left - 24.0,
+        "{bars:?} {left}"
+    );
+
+    // 点开头的标题后再滚到底：文末的标题滚不到顶上，当前所在的一节取屏幕里最后一个标题。
+    app.press_toc(TocTarget::Heading(0));
+    paint(&mut app);
+    assert_eq!(app.markdown.toc_current, Some(0));
+    app.scroll_markdown_to(max);
+    paint(&mut app);
+    assert_eq!(app.markdown.toc_current, Some(1));
+
+    app.set_preview_mode(PreviewMode::Split);
+    settle(&mut app);
+    assert!(app.markdown.toc.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：本仓库的 README 只看预览，滚到第三个标题，鼠标停在标题指示条上；点最后一个标题后
+/// 正文里的底色。深浅两套配色。
+#[test]
+#[ignore]
+fn shoot_preview_heading_indicator() {
+    use crate::app::preview::markdown::TocTarget;
+
+    for dark in [false, true] {
+        let dir = sample_folder(if dark { "md-toc-dark" } else { "md-toc-light" });
+        let path = dir.join("README.md");
+        std::fs::write(&path, include_str!("../../../../../README.md")).unwrap();
+        let mut app = app_with(&path, dark);
+        paint(&mut app);
+        app.set_preview_mode(PreviewMode::Preview);
+        settle(&mut app);
+        let top = app.markdown.toc_tops[2];
+        app.scroll_markdown_to(top);
+        paint(&mut app);
+        shoot(&mut app, if dark { "md-toc-dark" } else { "md-toc-light" });
+        let bars = app
+            .markdown
+            .toc
+            .iter()
+            .find(|(_, t)| *t == TocTarget::Bars)
+            .unwrap()
+            .0;
+        app.on_mouse_move(bars.x + 20.0, bars.y + 10.0);
+        paint(&mut app);
+        let open = if dark {
+            "md-toc-open-dark"
+        } else {
+            "md-toc-open-light"
+        };
+        shoot(&mut app, open);
+        // 展开到一半：横线正从指示条滑向各行，卡片和文字淡入到一半。
+        let at = crate::app::animation::TOC_FADE;
+        app.markdown.toc_fade = Some(crate::app::animation::Clock::frozen(at / 2, at));
+        let half = if dark {
+            "md-toc-opening-dark"
+        } else {
+            "md-toc-opening-light"
+        };
+        shoot(&mut app, half);
+        app.markdown.toc_fade = None;
+        // 点最后一个标题：滚到底，它成为当前所在的一节，正文里的底色淡出到三成。
+        let last = app.markdown.toc_tops.len() - 1;
+        app.press_toc(TocTarget::Heading(last));
+        let at = crate::app::animation::TOC_FLASH;
+        let clock = crate::app::animation::Clock::frozen(at * 3 / 10, at);
+        app.markdown.toc_flash = Some((last, clock));
+        app.on_mouse_move(900.0, 400.0);
+        paint(&mut app);
+        let picked = if dark {
+            "md-toc-picked-dark"
+        } else {
+            "md-toc-picked-light"
+        };
+        shoot(&mut app, picked);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

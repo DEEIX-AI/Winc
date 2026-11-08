@@ -76,6 +76,8 @@ pub struct Symbol {
     ///
     /// 按缩进（Markdown 为标题级别）判定；行内写明上级的写法（Go 方法的接收者类型）不计入。
     pub depth: usize,
+    /// Markdown 标题的级别（行首 `#` 的个数，1 到 6）；其他符号为 0。
+    pub heading: u8,
 }
 
 /// 标识符的正则：字母、数字、下划线、`$`，不以数字开头。
@@ -239,6 +241,11 @@ pub fn symbols(text: &Rope, language: &Language) -> Vec<Symbol> {
             col,
             container,
             depth,
+            heading: if kind == SymbolKind::Heading {
+                level as u8
+            } else {
+                0
+            },
         });
     }
     found

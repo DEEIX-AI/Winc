@@ -3,11 +3,14 @@
 //! 大纲是文件树下面一块可以展开、收起的区域：标题行始终在底部，展开时向上拉开符号列表，文件树
 //! 随之变矮，节奏与文件树展开一个目录相同（`TREE_ANIMATION`）；拖动标题行的上沿可以调整高度。
 //!
-//! 符号由 [`winc_editor::symbols`] 逐行识别，不接入语言服务器。切换文档时立即重新提取；同一文档
-//! 的内容变化后，等 [`OUTLINE_DELAY`] 内不再变化时提取，连续输入时不逐键重算。光标所在的符号
-//! 高亮，移到另一个符号时滚动到可见；点击一行跳转到该符号。
+//! 符号由 [`winc_editor::symbols`] 逐行识别，不接入语言服务器。提取在后台线程进行，结果到达前
+//! 列表保持原样，到达后整体换上，界面线程不因长文件停顿。切换文档时立即开始提取；同一文档的
+//! 内容变化后，等 [`OUTLINE_DELAY`] 内不再变化时提取，连续输入时不逐键重算；尚未读取完的文档
+//! （`Document::is_pending`）等读完再提取。光标所在的符号高亮，移到另一个符号时滚动到可见；
+//! 点击一行跳转到该符号。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use winc_editor::DocumentId;
@@ -103,20 +106,26 @@ pub struct OutlineState {
     pub motion: Option<(f32, Clock)>,
     /// 一个符号的下级正在展开或收起；没有时为 `None`。
     pub fold: Option<OutlineFold>,
-    /// 当前列出的符号来自哪个文档及其版本号（`revision`）；尚未提取时为 `None`。
+    /// 最近一次开始提取的文档及其版本号（`revision`）；尚未提取时为 `None`。
     source: Option<(DocumentId, u64)>,
+    /// 当前列出的符号属于哪个文档；换成另一个文档的符号时重置滚动和选中。
+    shown: Option<DocumentId>,
+    /// 后台正在提取的结果：（文档，版本号，符号）；没有进行中的提取时为 `None`。
+    pending: Option<Receiver<(DocumentId, u64, Vec<Symbol>)>>,
     /// 最近一次看到的文档及其版本号，用于判断内容是否仍在变化。
     seen: Option<(DocumentId, u64)>,
     /// 内容变化后应当重新提取的时刻；没有等待中的提取时为 `None`。
     due: Option<Instant>,
     /// 当前文档的符号，按在文件中出现的顺序排列。
     pub items: Vec<Symbol>,
+    /// 各符号的路径（见 [`symbol_paths`]），随 `items` 一起更新，绘制时不再逐帧拼接。
+    paths: Vec<String>,
     /// 没有符号时的原因；有符号时为 `None`。
     pub empty: Option<OutlineEmpty>,
-    /// 已收起的符号：（文档，符号路径），路径见 [`symbol_paths`]。
+    /// 各文档中已收起的符号的路径（见 [`symbol_paths`]）。
     ///
     /// 按名字而不按行号记，编辑使符号移动位置后仍保持收起。
-    collapsed: HashSet<(DocumentId, String)>,
+    collapsed: HashMap<DocumentId, HashSet<String>>,
     /// 列表的滚动量（逻辑像素）。
     pub scroll: f32,
     /// 键盘选中的符号（[`OutlineState::items`] 的下标）；为 `None` 时选中光标所在的符号。
@@ -136,11 +145,14 @@ impl Default for OutlineState {
             motion: None,
             fold: None,
             source: None,
+            shown: None,
+            pending: None,
             seen: None,
             due: None,
             items: Vec::new(),
+            paths: Vec::new(),
             empty: Some(OutlineEmpty::NoFile),
-            collapsed: HashSet::new(),
+            collapsed: HashMap::new(),
             scroll: 0.0,
             selected: None,
             revealed: None,
@@ -268,6 +280,10 @@ impl App {
         if !self.outline_shown() {
             return None;
         }
+        // 尚未读取完的文档内容为空，读完后版本号不变：等读完再提取，否则读完后不再更新。
+        if self.editor.active().is_some_and(|doc| doc.is_pending()) {
+            return None;
+        }
         let current = self.editor.active().map(|doc| (doc.id, doc.revision));
         let o = &mut self.outline;
         if current == o.source {
@@ -288,38 +304,81 @@ impl App {
         None
     }
 
-    /// 重新提取当前文档的符号。
+    /// 重新提取当前文档的符号：文本在后台线程提取（没有事件循环的测试里直接提取），不是文本、
+    /// 文件过大时直接换上说明。
     fn refresh_outline(&mut self) {
-        // Markdown 的预览也是可以编辑的文本，同样列出标题。
-        let shows_text = self.editor.active().is_some_and(|d| d.edits_text());
-        let o = &mut self.outline;
         let Some(doc) = self.editor.active() else {
+            let o = &mut self.outline;
             o.source = None;
             o.seen = None;
             o.due = None;
-            o.items.clear();
-            o.empty = Some(OutlineEmpty::NoFile);
-            o.scroll = 0.0;
-            o.selected = None;
-            o.revealed = None;
+            o.pending = None;
+            self.apply_outline(None, Vec::new(), Some(OutlineEmpty::NoFile));
             return;
         };
-        let switched = o.source.map(|s| s.0) != Some(doc.id);
-        let (items, empty) = match doc.text().rope() {
-            _ if !shows_text => (Vec::new(), Some(OutlineEmpty::NotText)),
-            _ if doc.is_large() => (Vec::new(), Some(OutlineEmpty::TooLarge)),
-            None => (Vec::new(), Some(OutlineEmpty::TooLarge)),
-            Some(rope) => {
-                let items = symbols::symbols(rope, doc.highlighter.language());
-                let empty = items.is_empty().then_some(OutlineEmpty::NoSymbols);
-                (items, empty)
-            }
-        };
-        o.source = Some((doc.id, doc.revision));
+        let (id, revision) = (doc.id, doc.revision);
+        let o = &mut self.outline;
+        o.source = Some((id, revision));
         o.seen = o.source;
         o.due = None;
+        o.pending = None;
+        // Markdown 的预览也是可以编辑的文本，同样列出标题。
+        let empty = if !doc.edits_text() {
+            Some(OutlineEmpty::NotText)
+        } else if doc.is_large() {
+            Some(OutlineEmpty::TooLarge)
+        } else {
+            None
+        };
+        let rope = doc.text().rope().filter(|_| empty.is_none());
+        let Some(rope) = rope.cloned() else {
+            self.apply_outline(Some(id), Vec::new(), empty.or(Some(OutlineEmpty::TooLarge)));
+            return;
+        };
+        let language = doc.highlighter.language();
+        let Some(proxy) = self.proxy.clone() else {
+            let items = symbols::symbols(&rope, language);
+            self.apply_outline(Some(id), items, None);
+            return;
+        };
+        // `Rope` 的克隆只复制根节点的引用，代价与文件长度无关。
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let items = symbols::symbols(&rope, language);
+            let _ = sender.send((id, revision, items));
+            let _ = proxy.send_event(UserEvent::Outline);
+        });
+        self.outline.pending = Some(receiver);
+    }
+
+    /// 收下后台提取好的符号；不是最近一次开始的提取（期间又切换了文档或修改了内容）时丢弃。
+    pub(in crate::app) fn poll_outline(&mut self) {
+        let Some(receiver) = self.outline.pending.take() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok((id, revision, items)) if self.outline.source == Some((id, revision)) => {
+                self.apply_outline(Some(id), items, None);
+            }
+            Ok(_) | Err(TryRecvError::Disconnected) => {}
+            Err(TryRecvError::Empty) => self.outline.pending = Some(receiver),
+        }
+    }
+
+    /// 换上文档 `id` 的符号 `items`；`empty` 为没有符号时的原因，为 `None` 时按 `items` 是否为空
+    /// 判断。换成另一个文档的符号时，滚动、选中和正在进行的展开收起一并重置。
+    fn apply_outline(
+        &mut self,
+        id: Option<DocumentId>,
+        items: Vec<Symbol>,
+        empty: Option<OutlineEmpty>,
+    ) {
+        let o = &mut self.outline;
+        let switched = o.shown != id;
+        o.empty = empty.or_else(|| items.is_empty().then_some(OutlineEmpty::NoSymbols));
+        o.paths = symbol_paths(&items);
         o.items = items;
-        o.empty = empty;
+        o.shown = id;
         if switched {
             o.fold = None;
             o.scroll = 0.0;
@@ -327,8 +386,18 @@ impl App {
             o.revealed = None;
         } else {
             o.selected = o.selected.filter(|&i| i < o.items.len());
+            o.fold = o.fold.filter(|f| f.symbol < o.items.len());
         }
         self.request_redraw();
+    }
+
+    /// 第 `i` 个符号的路径是否记为已收起。
+    fn path_collapsed(&self, i: usize) -> bool {
+        let o = &self.outline;
+        let (Some(doc), Some(path)) = (o.shown, o.paths.get(i)) else {
+            return false;
+        };
+        o.collapsed.get(&doc).is_some_and(|set| set.contains(path))
     }
 
     /// 当前列出的各行：未被收起的上级挡住的符号（[`OutlineState::items`] 的下标），按顺序排列。
@@ -373,10 +442,6 @@ impl App {
     /// 列出的各行，`opening` 指定的符号按展开着处理（它的下级正在收起时仍要绘制）。
     fn outline_rows_opening(&self, opening: Option<usize>) -> Vec<usize> {
         let o = &self.outline;
-        let Some((doc, _)) = o.source else {
-            return Vec::new();
-        };
-        let paths = symbol_paths(&o.items);
         let mut rows = Vec::with_capacity(o.items.len());
         // 正在隐藏的下级：收起的符号的层级，比它深的符号不列出。
         let mut hidden_below: Option<usize> = None;
@@ -386,10 +451,7 @@ impl App {
             }
             hidden_below = None;
             rows.push(i);
-            if Some(i) != opening
-                && has_children(&o.items, i)
-                && o.collapsed.contains(&(doc, paths[i].clone()))
-            {
+            if Some(i) != opening && has_children(&o.items, i) && self.path_collapsed(i) {
                 hidden_below = Some(symbol.depth);
             }
         }
@@ -398,13 +460,7 @@ impl App {
 
     /// 第 `i` 个符号是否已收起。
     pub(crate) fn outline_collapsed(&self, i: usize) -> bool {
-        let o = &self.outline;
-        let Some((doc, _)) = o.source else {
-            return false;
-        };
-        symbol_paths(&o.items)
-            .get(i)
-            .is_some_and(|path| o.collapsed.contains(&(doc, path.clone())))
+        self.path_collapsed(i)
     }
 
     /// 光标所在的符号：起始行不晚于光标所在行的最后一个符号；它被收起的上级挡住时为该上级。
@@ -467,14 +523,13 @@ impl App {
     /// 收起或展开第 `i` 个符号。
     pub(in crate::app) fn toggle_outline(&mut self, i: usize) {
         let o = &mut self.outline;
-        let (Some((doc, _)), Some(path)) = (o.source, symbol_paths(&o.items).get(i).cloned())
-        else {
+        let (Some(doc), Some(path)) = (o.shown, o.paths.get(i)) else {
             return;
         };
-        let key = (doc, path);
-        let expanding = o.collapsed.remove(&key);
+        let set = o.collapsed.entry(doc).or_default();
+        let expanding = set.remove(path);
         if !expanding {
-            o.collapsed.insert(key);
+            set.insert(path.clone());
         }
         let clock = self.clock(TREE_ANIMATION);
         self.outline.fold = clock.map(|clock| OutlineFold {
@@ -495,19 +550,18 @@ impl App {
     pub(in crate::app) fn fold_all_outline(&mut self) {
         let collapse = self.outline_any_expanded();
         let o = &mut self.outline;
-        let Some((doc, _)) = o.source else {
+        let Some(doc) = o.shown else {
             return;
         };
-        let paths = symbol_paths(&o.items);
-        for (i, path) in paths.into_iter().enumerate() {
+        let set = o.collapsed.entry(doc).or_default();
+        for (i, path) in o.paths.iter().enumerate() {
             if !has_children(&o.items, i) {
                 continue;
             }
-            let key = (doc, path);
             if collapse {
-                o.collapsed.insert(key);
+                set.insert(path.clone());
             } else {
-                o.collapsed.remove(&key);
+                set.remove(path);
             }
         }
         o.selected = None;

@@ -6,6 +6,7 @@
 //! 线条图标和符号名；下级展开、收起的动画也与文件树相同。光标所在（或键盘选中）的符号铺选中的
 //! 底色。可点击的位置在绘制时记入 `OutlineState::hits`。
 
+use std::borrow::Cow;
 use std::f32::consts::FRAC_PI_2;
 
 use winc_editor::symbols::SymbolKind;
@@ -37,7 +38,7 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
     app.reveal_outline_current();
     let p = app.palette;
     let clip = app.layout.sidebar.intersect(section);
-    // 文件树滚到底时最后几行压在这一块下面：先铺侧栏底色，再画分隔线。
+    // 文件树滚到底时最后几行延伸到大纲下方：先铺侧栏底色遮住它们，再画分隔线。
     frame.rect_clipped(section, p.sidebar_bg, 0.0, clip);
     frame.rect_clipped(
         Rect::new(section.x, section.y, section.w, 1.0),
@@ -193,7 +194,14 @@ fn draw_rows(
 
         let label_x = row.x + LABEL + symbol.depth as f32 * TREE_INDENT;
         let room = (row.right() - 12.0 - label_x).max(0.0);
-        let name = ellipsize(frame, &symbol.name, app.fonts.ui, room);
+        // Markdown 标题照原文写出 `#`，一眼看出级别。
+        let marks = "#".repeat(usize::from(symbol.heading));
+        let label = if marks.is_empty() {
+            Cow::Borrowed(symbol.name.as_str())
+        } else {
+            Cow::Owned(format!("{marks} {}", symbol.name))
+        };
+        let name = ellipsize(frame, &label, app.fonts.ui, room);
         ui_text(frame, app, label_x, row, &name, p.text, clip);
         hits.push((band, OutlineTarget::Row(i)));
     }
@@ -211,7 +219,7 @@ fn symbol_look(p: &Palette, kind: SymbolKind) -> (SymbolGlyph, Color) {
         SymbolKind::Type => (SymbolGlyph::Card, p.syntax_builtin),
         SymbolKind::Module => (SymbolGlyph::Braces, p.syntax_keyword),
         SymbolKind::Variable => (SymbolGlyph::Field, p.syntax_property),
-        SymbolKind::Heading => (SymbolGlyph::Hash, p.text_muted),
+        SymbolKind::Heading => (SymbolGlyph::Text, p.text_muted),
         SymbolKind::Section => (SymbolGlyph::Brackets, p.text_muted),
     }
 }

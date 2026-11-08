@@ -157,8 +157,8 @@ fn the_outline_lists_symbols_as_a_tree_and_follows_the_caret() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 点击一行跳转到该符号并选中名字，焦点交给编辑区；点击箭头只收起、展开；第二行的按钮全部
-/// 折叠或全部展开。
+/// 点击一行跳转到该符号并选中名字，焦点交给编辑区；点击箭头只收起、展开；标题行右端的按钮
+/// 全部折叠或全部展开。
 #[test]
 fn clicking_the_outline_jumps_and_folds() {
     let (mut app, dir) = outline_app("outline-click", false);
@@ -200,7 +200,31 @@ fn clicking_the_outline_jumps_and_folds() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 收起、展开一个符号与文件树的目录相同：下级的行逐渐收回（露出）而不是一下子消失，下面的行
+/// 后台读取的文件：读完之前不提取（此时内容为空），读完后列出符号。读完后文档的版本号不变，
+/// 不能据此判定内容没有变化。
+#[test]
+fn a_file_read_in_the_background_lists_its_symbols_once_read() {
+    let (mut app, dir) = outline_app("outline-loading", false);
+    let notes = dir.join("notes.md");
+    std::fs::write(&notes, "# Title\n\n## Usage\n").unwrap();
+    let index = app.editor.open_tab(&notes);
+    let job = app.editor.begin_load(index).unwrap();
+    let id = job.id();
+    let ticket = app.loads.tickets.issue(id);
+    paint(&mut app);
+    assert!(app.editor.active().unwrap().is_pending());
+    assert_ne!(app.outline.empty, Some(OutlineEmpty::NoSymbols));
+
+    app.loads.results.0.send((id, ticket, job.run())).unwrap();
+    app.poll_loads();
+    paint(&mut app);
+    assert!(!app.editor.active().unwrap().is_pending());
+    let names: Vec<&str> = app.outline.items.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Title", "Usage"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 收起、展开一个符号与文件树的目录相同：下级的行逐渐收回（露出），不会立即消失，下面的行
 /// 随之移动，箭头同时转向。
 #[test]
 fn folding_a_symbol_animates_like_a_folder() {
@@ -308,7 +332,7 @@ fn the_outline_explains_why_it_is_empty() {
         .collect();
     assert_eq!(tree, [("Title", 0), ("Usage", 1), ("Build", 1)]);
 
-    // 切到 Markdown 的预览，再切到别的文件、切回来：在预览状态下重新提取，标题照样列出。
+    // 切到 Markdown 的预览，再切到别的文件、切回来：在预览状态下重新提取，标题同样列出。
     app.run_action(Action::TogglePreview);
     assert!(app.editor.active().unwrap().edits_text());
     assert!(!app.editor.active().unwrap().shows_text());

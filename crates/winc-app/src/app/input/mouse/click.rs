@@ -189,6 +189,7 @@ impl App {
             Target::Preview(mode) => self.choose_preview_mode(mode),
             Target::Browser => self.open_in_browser(),
             Target::MarkdownLink(link) => self.open_markdown_link(link),
+            Target::MarkdownToc(target) => self.press_toc(target),
             Target::MarkdownText => self.click_markdown(x, y),
             Target::Tab(index, true) => {
                 self.close_pressed = self.editor.documents.get(index).map(|d| d.id);

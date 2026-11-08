@@ -397,6 +397,7 @@ impl App {
             | UserEvent::BackedUp
             | UserEvent::Replaced) => self.finished(done),
             UserEvent::Rediffed => self.poll_rediffs(),
+            UserEvent::Outline => self.poll_outline(),
             UserEvent::GitRollback(paths) => self.git_rollback(paths),
             UserEvent::GitAbort => {
                 self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitAbort);

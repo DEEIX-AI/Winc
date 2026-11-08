@@ -35,7 +35,7 @@ pub(crate) enum ScrollArea {
     Panel,
     /// 提交视图的改动列表。
     Commit,
-    /// 侧栏大纲的列表。
+    /// 文件视图底部大纲的符号列表。
     Outline,
     /// 设置页的内容，包括快捷键列表。
     Settings,

@@ -13,8 +13,8 @@ pub enum SymbolGlyph {
     Braces,
     /// 常量、变量：一个圆，中间一点。
     Field,
-    /// Markdown 标题：一个井号。
-    Hash,
+    /// Markdown 标题：一段文字，三行横线，最后一行短。
+    Text,
     /// 配置文件的小节：一对方括号。
     Brackets,
 }
@@ -76,13 +76,12 @@ pub fn symbol(
             // 零长度的线段描边后呈圆点，直径等于笔宽。
             frame.stroke(&[Stroke::Line(cx, cy, cx, cy)], DOT, color, clip);
         }
-        SymbolGlyph::Hash => {
-            // 井号的两竖略向右倾，与 Markdown 文件的图标相同。
+        SymbolGlyph::Text => {
+            // 标题文字前已写出 `#`，图标不再重复井号，只表示这是一段文字。
             let marks = [
-                line(-0.75, -3.25, -1.5, 3.25),
-                line(1.75, -3.25, 1.0, 3.25),
-                line(-3.0, -1.25, 3.25, -1.25),
-                line(-3.25, 1.25, 3.0, 1.25),
+                line(-3.25, -2.5, 3.25, -2.5),
+                line(-3.25, 0.0, 3.25, 0.0),
+                line(-3.25, 2.5, 1.0, 2.5),
             ];
             frame.stroke(&marks, STROKE, color, clip);
         }

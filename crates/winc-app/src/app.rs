@@ -217,6 +217,8 @@ pub enum UserEvent {
     GitContent,
     /// 后台重新比较好了一个差异标签。
     Rediffed,
+    /// 后台提取好了大纲的符号。
+    Outline,
     /// 后台的提交、回滚做完了，或者取到了上一次提交的信息。
     GitCommit,
     /// 确认框上确认了回滚这些文件。
@@ -332,7 +334,7 @@ pub enum Focus {
     CommitMessage,
     /// 侧栏提交视图的改动列表。
     CommitList,
-    /// 侧栏的大纲。
+    /// 文件视图底部大纲的符号列表。
     Outline,
     /// 日志标签标题栏的筛选输入框。
     LogFilter,
@@ -379,7 +381,7 @@ impl Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hover {
     None,
-    /// 侧栏大纲里的一处（行、箭头、第二行的按钮）。
+    /// 文件视图底部大纲里的一处（符号行、行首箭头、标题行及其右端的按钮）。
     Outline(OutlineTarget),
     /// 编辑区右侧的缩略图。
     Minimap,
@@ -404,6 +406,8 @@ pub enum Hover {
     Browser,
     /// Markdown 预览里的链接（`MarkdownPreview::links` 的序号）。
     MarkdownLink(usize),
+    /// Markdown 预览左侧的标题指示条或展开的标题列表。
+    MarkdownToc(crate::app::preview::markdown::TocTarget),
     Search(SearchButton),
     TreeRow(usize),
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
@@ -929,7 +933,7 @@ pub struct App {
 
     /// 侧栏搜索面板的状态。
     pub global: GlobalSearch,
-    /// 侧栏大纲的状态。
+    /// 文件视图底部大纲的状态。
     pub outline: OutlineState,
 
     // 快速打开
@@ -1233,6 +1237,11 @@ impl App {
             return;
         }
 
+        // 鼠标移到预览的标题指示条上：标题列表展开，淡入。
+        let toc = |h: Hover| matches!(h, Hover::MarkdownToc(_));
+        if toc(hover) && !toc(self.hover) {
+            self.markdown.toc_fade = self.clock(animation::TOC_FADE);
+        }
         self.hover = hover;
         self.tooltip_since = hover.has_tooltip().then(Instant::now);
         self.tooltip_shown = false;

@@ -1330,8 +1330,8 @@ fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
     assert_eq!(app.tree_overflow, None);
     assert_eq!(app.scrollbar_shown(ScrollArea::Tree), 1.0);
 
-    // 滚动时滚动条在显示：展开的一行盖住滑块，下一行不盖。滚过前面几个短名字的文件，使滑块
-    // 旁边是名字放不下的行。
+    // 滚动时滚动条处于显示状态：写全名的一行覆盖在滑块之上，下一行不覆盖。先滚过开头几个名字
+    // 较短的文件，使滑块旁边是名字放不下的行。
     app.on_mouse_move(tree.x + 60.0, tree.y + 30.0);
     app.on_wheel(MouseScrollDelta::LineDelta(0.0, -3.0));
     paint(&mut app);

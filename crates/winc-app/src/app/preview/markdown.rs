@@ -80,6 +80,15 @@ pub(crate) struct LiveLeaf {
 /// 一张图最多保留的已绘制尺寸数（种），超出时移除最早画好的。
 const SIZES: usize = 4;
 
+/// 预览左侧的标题指示条上可以指向的位置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TocTarget {
+    /// 指示条本身：鼠标停在上面时展开标题列表。
+    Bars,
+    /// 标题列表里的一项，值为 [`MarkdownPreview::toc_tops`] 的序号：点击后滚到这个标题。
+    Heading(usize),
+}
+
 /// 当前标签的 Markdown 预览。
 pub(crate) struct MarkdownPreview {
     /// 预览的是哪个文档；当前标签换了时从头开始。
@@ -112,6 +121,22 @@ pub(crate) struct MarkdownPreview {
     pub pending_anchor: Option<(DocumentId, String)>,
     /// 上一帧画出来的链接：区域和地址，点击时按它找。
     pub links: Vec<(winc_render::Rect, String)>,
+    /// 上一帧画出来的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
+    pub toc: Vec<(winc_render::Rect, TocTarget)>,
+    /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
+    /// 序号对应；点击标题时滚到这里。
+    pub toc_tops: Vec<f32>,
+    /// 标题列表展开时淡入的时钟；不在淡入中时为 `None`。
+    pub toc_fade: Option<crate::app::animation::Clock>,
+    /// 在标题列表里点过的标题（`toc_tops` 的序号）和点完后的滚动位置。
+    ///
+    /// 靠近文末的标题滚不到预览顶上，按滚动位置算不出它是当前所在的一节；点过以后、再次滚动
+    /// 之前，指示条把它当作当前所在的一节。
+    pub toc_picked: Option<(usize, f32)>,
+    /// 上一帧标题指示条标出的当前所在一节（`toc_tops` 的序号）；没有时为 `None`。
+    pub toc_current: Option<usize>,
+    /// 点过的标题在正文里铺的底色：标题的序号与淡出的时钟。
+    pub toc_flash: Option<(usize, crate::app::animation::Clock)>,
     /// 上一帧画出来的代码块（屏幕坐标）：鼠标移进移出时重画，好显示、收起复制按钮。
     pub codes: Vec<winc_render::Rect>,
     /// 上一帧画出复制按钮的代码块的内容；按钮在 `links` 里只记 `COPY`，点了才取这里的文字。
@@ -222,6 +247,12 @@ impl Default for MarkdownPreview {
             toggled_now: None,
             pending_anchor: None,
             links: Vec::new(),
+            toc: Vec::new(),
+            toc_tops: Vec::new(),
+            toc_fade: None,
+            toc_picked: None,
+            toc_current: None,
+            toc_flash: None,
             codes: Vec::new(),
             copy: None,
             code_hover: None,
@@ -1876,6 +1907,23 @@ impl App {
     pub(crate) fn scroll_markdown(&mut self, dy: f32) {
         let y = self.markdown.scroll() - dy;
         self.scroll_markdown_to(y);
+    }
+
+    /// 点了标题指示条里的第 `i` 个标题：预览滚到它。
+    ///
+    /// 滚完后把它记为当前所在的一节（见 `MarkdownPreview::toc_picked`），并在正文里给它铺一层
+    /// 底色，慢慢淡出，标出跳到了哪里。
+    pub(in crate::app) fn press_toc(&mut self, target: TocTarget) {
+        let TocTarget::Heading(i) = target else {
+            return;
+        };
+        let Some(&top) = self.markdown.toc_tops.get(i) else {
+            return;
+        };
+        self.scroll_markdown_to(top);
+        self.markdown.toc_picked = Some((i, self.markdown.scroll()));
+        let clock = self.clock(crate::app::animation::TOC_FLASH);
+        self.markdown.toc_flash = clock.map(|clock| (i, clock));
     }
 
     /// 预览滚到 `y`；分栏时左边的文字跟着滚到对应的地方。
