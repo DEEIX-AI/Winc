@@ -721,7 +721,7 @@ impl DiffView {
         self.old.text.len_chars() == 0 || self.new.text.len_chars() == 0
     }
 
-    /// 两侧内容是否完全相同。
+    /// 两侧是否没有改动：逐行比较不计换行符的写法，只差换行符时同样为 `true`。
     pub fn is_identical(&self) -> bool {
         self.hunks.is_empty()
     }

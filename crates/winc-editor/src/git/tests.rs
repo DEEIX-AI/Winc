@@ -575,6 +575,25 @@ fn runs_the_real_git() {
     sh(&["commit", "-q", "-m", "crlf"]);
     let head = git.head_content(&root, &crlf, &cancel).unwrap().unwrap();
     assert_eq!(head, std::fs::read(&crlf).unwrap());
+    // 工作区文件为 LF（由其他程序写入，不经检出）：`git` 判定文件未修改；`HEAD` 版本按检出方向
+    // 转换为 CRLF，两侧只差换行符写法，逐行比较没有改动。追加一行后，改动只有这一行。
+    let lf = root.join("lf.md");
+    std::fs::write(&lf, "a\nb\nc\n").unwrap();
+    sh(&["add", "lf.md"]);
+    sh(&["commit", "-q", "-m", "lf"]);
+    let clean = git.status(&root, &cancel).unwrap();
+    assert!(
+        !clean.entries.iter().any(|e| e.path == lf),
+        "{:?}",
+        clean.entries
+    );
+    let head = git.head_content(&root, &lf, &cancel).unwrap().unwrap();
+    assert_eq!(head, b"a\r\nb\r\nc\r\n");
+    let head = String::from_utf8(head).unwrap();
+    assert!(winc_core::diff::line_hunks(&head, "a\nb\nc\n").is_empty());
+    let hunks = winc_core::diff::line_hunks(&head, "a\nb\nc\nd\n");
+    assert_eq!(hunks.len(), 1);
+    assert_eq!((hunks[0].old.clone(), hunks[0].new.clone()), (3..3, 3..4));
 
     // 分支：新建、切换、列出。
     git.operate(&root, &["switch", "-c", "feature"]).unwrap();

@@ -93,6 +93,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     app.sync_merge_panes();
     draw_editor(app, frame);
     editor::draw_split(app, frame);
+    preview::markdown::draw_diagram_view(app, frame);
     git::merge::draw_side_panes(app, frame);
     terminal::draw_terminal(app, frame);
     draw_window_controls(app, frame);
