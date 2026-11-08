@@ -1475,6 +1475,44 @@ impl App {
         self.request_redraw();
     }
 
+    /// 返回 `paths` 中可以暂存（`stage` 为真：工作区里有更改）或取消暂存（暂存区里有更改）的
+    /// 文件。
+    ///
+    /// 有冲突的文件不算：暂存会把它标记为已解决，冲突由解决冲突的流程处理。
+    pub(in crate::app) fn stageable(&self, paths: &[PathBuf], stage: bool) -> Vec<PathBuf> {
+        let Some(status) = self.git.status.as_ref() else {
+            return Vec::new();
+        };
+        (status.entries.iter())
+            .filter(|e| paths.contains(&e.path) && !e.conflicted())
+            .filter(|e| {
+                if stage {
+                    e.unstaged.is_some()
+                } else {
+                    e.staged.is_some()
+                }
+            })
+            .map(|e| e.path.clone())
+            .collect()
+    }
+
+    /// 把 `paths` 中可以暂存的文件一次暂存（`stage` 为真），或者把可以取消暂存的一次取消暂存。
+    fn stage_files(&mut self, paths: &[PathBuf], stage: bool) {
+        let paths = self.stageable(paths, stage);
+        if paths.is_empty() {
+            return;
+        }
+        if stage {
+            self.git_operate(t!("git-op-stage").into(), move |git, root| {
+                git.stage(root, &paths).map(|()| String::new())
+            });
+        } else {
+            self.git_operate(t!("git-op-unstage").into(), move |git, root| {
+                git.unstage(root, &paths).map(|()| String::new())
+            });
+        }
+    }
+
     /// 提交视图里一个文件的右键菜单选了 `command`。
     pub(in crate::app) fn run_commit_file_command(
         &mut self,
@@ -1493,6 +1531,8 @@ impl App {
                     self.focus = Focus::Editor;
                 }
                 MenuCommand::GitRollbackFile => self.confirm_rollback(paths),
+                MenuCommand::GitStageFile => self.stage_files(&paths, true),
+                MenuCommand::GitUnstageFile => self.stage_files(&paths, false),
                 MenuCommand::CommitCheck(on) => {
                     let Some(status) = self.git.status.as_ref() else {
                         return;
@@ -1522,11 +1562,8 @@ impl App {
                 }
             }
             MenuCommand::GitRollbackFile => self.confirm_rollback(vec![path]),
-            MenuCommand::GitUnstageFile => {
-                self.git_operate(t!("git-op-unstage").into(), move |git, root| {
-                    git.unstage(root, &[path]).map(|()| String::new())
-                });
-            }
+            MenuCommand::GitStageFile => self.stage_files(&[path], true),
+            MenuCommand::GitUnstageFile => self.stage_files(&[path], false),
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }

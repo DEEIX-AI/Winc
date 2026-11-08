@@ -277,8 +277,14 @@ pub fn form_base_menu(branches: &[winc_editor::git::Branch]) -> Vec<MenuEntry> {
 /// 在文件管理器中显示，复制路径。
 ///
 /// `exists` 表示文件还在磁盘上，删掉的文件不能打开、不能在文件管理器中显示；`in_workspace`
-/// 表示它在打开的目录里；`staged` 表示它有已暂存的内容，此时才有「取消暂存」。
-pub fn commit_file_menu(exists: bool, in_workspace: bool, staged: bool) -> Vec<MenuEntry> {
+/// 表示它在打开的目录里；`unstaged`、`staged` 表示它在工作区里、暂存区里有更改，分别才有
+/// 「暂存」「取消暂存」。
+pub fn commit_file_menu(
+    exists: bool,
+    in_workspace: bool,
+    unstaged: bool,
+    staged: bool,
+) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
@@ -287,6 +293,9 @@ pub fn commit_file_menu(exists: bool, in_workspace: bool, staged: bool) -> Vec<M
         Item(GitOpenFile, exists),
         Separator,
     ];
+    if unstaged {
+        entries.push(Item(GitStageFile, true));
+    }
     if staged {
         entries.push(Item(GitUnstageFile, true));
     }
@@ -303,22 +312,37 @@ pub fn commit_file_menu(exists: bool, in_workspace: bool, staged: bool) -> Vec<M
 }
 
 /// 返回提交视图里选中了多个文件、右键点在其中一个上时的菜单项：打开（`any_exists`：有还在
-/// 磁盘上的）、勾选、取消勾选、回滚、复制路径、复制相对路径，都作用于选中的各个文件。
-pub fn commit_selection_menu(any_exists: bool) -> Vec<MenuEntry> {
+/// 磁盘上的）、勾选、取消勾选、暂存（`any_unstaged`：有在工作区里有更改的）、取消暂存
+/// （`any_staged`：有在暂存区里有更改的）、回滚、复制路径、复制相对路径，都作用于选中的各个
+/// 文件。
+pub fn commit_selection_menu(
+    any_exists: bool,
+    any_unstaged: bool,
+    any_staged: bool,
+) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
-    vec![
+    let mut menu = vec![
         Item(GitOpenFile, any_exists),
         Separator,
         Item(CommitCheck(true), true),
         Item(CommitCheck(false), true),
         Separator,
+    ];
+    if any_unstaged {
+        menu.push(Item(GitStageFile, true));
+    }
+    if any_staged {
+        menu.push(Item(GitUnstageFile, true));
+    }
+    menu.extend([
         Item(GitRollbackFile, true),
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, true),
-    ]
+    ]);
+    menu
 }
 
 /// 返回全局搜索结果里一行的菜单项：打开；文件行是复制路径、复制相对路径、在文件树中显示，

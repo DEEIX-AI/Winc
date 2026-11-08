@@ -77,6 +77,7 @@ git-op-rebase-onto = 变基到「{ $name }」
 git-op-delete-branch = 删除分支「{ $name }」
 git-op-new-branch = 新建分支「{ $name }」
 git-op-new-tag = 新建标签「{ $name }」
+git-op-stage = 暂存
 git-op-unstage = 取消暂存
 git-op-pull-rebase = 拉取并变基
 git-op-rename-branch = 重命名分支「{ $name }」

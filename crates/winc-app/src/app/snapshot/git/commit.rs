@@ -233,6 +233,7 @@ fn right_clicking_a_changed_file_offers_diff_open_and_rollback() {
         [
             MenuCommand::GitShowDiff,
             MenuCommand::GitOpenFile,
+            MenuCommand::GitStageFile,
             MenuCommand::GitRollbackFile,
             MenuCommand::RevealInTree,
             MenuCommand::Reveal,
@@ -2474,6 +2475,113 @@ fn unstaging_a_new_file_keeps_it_on_disk() {
     app.git_refresh();
     assert!(!staged(&app));
     assert!(file.exists());
+}
+
+/// 暂存区和工作区里都有更改的文件：菜单里同时有「暂存」「取消暂存」，勾选框是「部分」（只提交
+/// 已暂存的内容）；暂存以后工作区的更改也进了暂存区，整个文件勾上。只在暂存区里有更改的文件
+/// 没有「暂存」。
+#[test]
+fn staging_a_partly_staged_file_commits_all_of_it() {
+    use crate::app::input::context_menu::{MenuEntry, commit_file_menu};
+
+    let dir = search_folder("git-stage");
+    if !make_repo(&dir) {
+        return;
+    }
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() { staged() }\n").unwrap();
+    git_in(&dir, &["add", "src/main.rs"]);
+    std::fs::write(&file, "fn main() { staged(); later() }\n").unwrap();
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let file = app.git.root.clone().unwrap().join("src/main.rs");
+    let entry = |app: &App| {
+        let status = app.git.status.as_ref().unwrap();
+        status
+            .entries
+            .iter()
+            .find(|e| e.path == file)
+            .unwrap()
+            .clone()
+    };
+    let has = |entries: &[MenuEntry], command| {
+        entries
+            .iter()
+            .any(|e| matches!(e, MenuEntry::Item(c, true) if *c == command))
+    };
+
+    let before = entry(&app);
+    assert!(before.partly_staged());
+    assert_eq!(app.commit.file_state(&before), Some(false));
+    let menu = commit_file_menu(true, true, true, true);
+    assert!(has(&menu, MenuCommand::GitStageFile) && has(&menu, MenuCommand::GitUnstageFile));
+
+    app.run_commit_file_command(MenuCommand::GitStageFile, file.clone());
+    app.git_refresh();
+    let after = entry(&app);
+    assert!(after.unstaged.is_none() && after.staged.is_some());
+    assert_eq!(app.commit.file_state(&after), Some(true));
+    let menu = commit_file_menu(true, true, false, true);
+    assert!(!has(&menu, MenuCommand::GitStageFile));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 选中多个文件时菜单里也有「暂存」「取消暂存」，一次作用于选中的各个文件：工作区里有更改的
+/// 都暂存，没有可暂存内容的文件不受影响。
+#[test]
+fn several_selected_files_are_staged_at_once() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+
+    let dir = search_folder("git-stage-many");
+    if !make_repo(&dir) {
+        return;
+    }
+    // `make_repo` 修改了 `src/main.rs`、新建了未跟踪的 `src/new.rs`；再改一个已跟踪的文件。
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"changed\"\n").unwrap();
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let key = |app: &mut App, key: NamedKey| app.commit_list_key(&Key::Named(key));
+    key(&mut app, NamedKey::Home);
+    app.modifiers = ModifiersState::SHIFT;
+    key(&mut app, NamedKey::End);
+    app.modifiers = ModifiersState::empty();
+    assert!(app.commit_multi_selected());
+    let selection = app.commit_selection();
+    assert!(selection.len() >= 3, "{selection:?}");
+
+    let first = selection[0].clone();
+    app.run_commit_file_command(MenuCommand::GitStageFile, first);
+    app.git_refresh();
+    let status = app.git.status.as_ref().unwrap();
+    for entry in status
+        .entries
+        .iter()
+        .filter(|e| selection.contains(&e.path))
+    {
+        assert!(entry.unstaged.is_none(), "{entry:?}");
+        assert!(entry.staged.is_some(), "{entry:?}");
+    }
+
+    // 再一次取消暂存：都回到工作区，新文件恢复为未跟踪。
+    app.run_commit_file_command(MenuCommand::GitUnstageFile, selection[0].clone());
+    app.git_refresh();
+    let status = app.git.status.as_ref().unwrap();
+    for entry in status
+        .entries
+        .iter()
+        .filter(|e| selection.contains(&e.path))
+    {
+        assert!(entry.staged.is_none(), "{entry:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// 只提交部分行的改动：截图用于检查行勾选框、整段勾选框的「部分」状态和不提交行的底色。

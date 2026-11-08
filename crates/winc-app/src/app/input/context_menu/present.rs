@@ -518,15 +518,18 @@ impl App {
                 document_language_menu(doc.path.is_some())
             }
             MenuTarget::CommitFile(_) if self.commit_multi_selected() => {
-                let any_exists = self.commit_selection().iter().any(|p| p.exists());
-                commit_selection_menu(any_exists)
+                let selection = self.commit_selection();
+                let any_exists = selection.iter().any(|p| p.exists());
+                let unstaged = !self.stageable(&selection, true).is_empty();
+                let staged = !self.stageable(&selection, false).is_empty();
+                commit_selection_menu(any_exists, unstaged, staged)
             }
             MenuTarget::CommitFile(path) => {
-                let staged = (self.git.status.as_ref()).is_some_and(|status| {
-                    (status.entries.iter())
-                        .any(|e| e.path == *path && e.staged.is_some() && !e.conflicted())
-                });
-                commit_file_menu(path.exists(), self.relative_path(path).is_some(), staged)
+                let paths = std::slice::from_ref(path);
+                let unstaged = !self.stageable(paths, true).is_empty();
+                let staged = !self.stageable(paths, false).is_empty();
+                let in_workspace = self.relative_path(path).is_some();
+                commit_file_menu(path.exists(), in_workspace, unstaged, staged)
             }
             MenuTarget::SearchResult(_, m) => {
                 search_result_menu(m.is_none(), self.global.replace_open)

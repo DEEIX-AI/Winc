@@ -80,6 +80,7 @@ git-op-rebase-onto = rebasing onto “{ $name }”
 git-op-delete-branch = deleting branch “{ $name }”
 git-op-new-branch = creating branch “{ $name }”
 git-op-new-tag = creating tag “{ $name }”
+git-op-stage = staging
 git-op-unstage = unstaging
 git-op-pull-rebase = pulling with rebase
 git-op-rename-branch = renaming branch “{ $name }”
