@@ -66,6 +66,7 @@ pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
 };
+pub(crate) use workspace::recent::folder_label;
 pub use workspace::session::StartAction;
 pub use workspace::tab_drag::{TabDrag, TabSlide};
 pub use workspace::tool_fold::ToolFold;
@@ -966,6 +967,8 @@ pub struct App {
     pub picker_branch_rows: Option<Vec<git::branch::picker::BranchRow>>,
     /// 面板列出位置（位置选择器）时的各行。
     pub picker_location_rows: Option<Vec<git::location_picker::LocationRow>>,
+    /// 面板是否列出最近打开的目录（`⌃R`）；为真时 `picker_hits` 是最近列表中的下标。
+    pub picker_folders: bool,
     /// 分支选择器、位置选择器从哪儿展开。
     pub picker_anchor: GitAnchor,
     /// 选择面板这一帧画出来的按钮：点击、悬停都按它们认。

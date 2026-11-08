@@ -67,7 +67,10 @@ impl App {
         match action {
             ShowCommands => self.toggle_palette(),
             QuickOpen => {
-                if self.picker_open && !self.picker_lists_commands() && !self.picker_lists_symbols()
+                if self.picker_open
+                    && !self.picker_lists_commands()
+                    && !self.picker_lists_symbols()
+                    && !self.picker_folders
                 {
                     self.close_picker();
                 } else {
@@ -98,6 +101,7 @@ impl App {
             NewWindow => self.new_window(None),
             OpenFile => self.pick(Pick::Open),
             OpenFolder => self.pick(Pick::OpenFolder),
+            OpenRecent => self.open_recent_folders(),
             Save => self.save_active(),
             SaveAs => {
                 if let Some(id) = self.editor.active().map(|d| d.id) {

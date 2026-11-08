@@ -25,6 +25,7 @@ pub enum Action {
     NewWindow,
     OpenFile,
     OpenFolder,
+    OpenRecent,
     Save,
     SaveAs,
     CloseTab,
@@ -258,6 +259,7 @@ impl Action {
             NewWindow => t!("cmd-new-window"),
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
+            OpenRecent => t!("cmd-open-recent"),
             Save => t!("cmd-save"),
             SaveAs => t!("cmd-save-as"),
             CloseTab => t!("cmd-close-tab"),
@@ -460,6 +462,7 @@ impl Action {
             NewWindow => "New Window",
             OpenFile => "Open",
             OpenFolder => "Open Folder",
+            OpenRecent => "Open Recent Folder",
             Save => "Save",
             SaveAs => "Save As",
             CloseTab => "Close Editor",
@@ -658,7 +661,7 @@ impl Action {
             | CloseAllTabs | ReopenClosed | NextTab | PreviousTab | CloseFolder | CloseWindow
             | CopyPath | CopyRelativePath | RevealInFinder | CopyActivePath | CopyKeyPath
             | RevealActiveFile | OpenInTerminal | Quit => Group::File,
-            NewWindow | CopyReference | CopyAbsoluteReference => Group::File,
+            NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo
             | Redo
             | Cut
@@ -982,6 +985,7 @@ pub const ACTIONS: &[Action] = {
         NewWindow,
         OpenFile,
         OpenFolder,
+        OpenRecent,
         Save,
         SaveAs,
         CloseTab,
