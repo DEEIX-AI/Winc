@@ -2910,3 +2910,143 @@ fn shoot_preview_heading_indicator() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 把 `files`（包中路径、内容）原样存放（不压缩）写成 zip，按 ZIP 文件格式（APPNOTE.TXT）
+/// 逐字段写出；读取时不核对 CRC，校验字段固定写 0。
+fn stored_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in files {
+        let offset = out.len() as u32;
+        let sizes = [
+            (data.len() as u32).to_le_bytes(),
+            (data.len() as u32).to_le_bytes(),
+        ];
+        out.extend(0x0403_4b50u32.to_le_bytes());
+        out.extend([20, 0, 0, 0, 0, 0]);
+        out.extend([0; 8]);
+        out.extend(sizes.concat());
+        out.extend((name.len() as u16).to_le_bytes());
+        out.extend([0, 0]);
+        out.extend(name.as_bytes());
+        out.extend(*data);
+        central.extend(0x0201_4b50u32.to_le_bytes());
+        central.extend([20, 0, 20, 0, 0, 0, 0, 0]);
+        central.extend([0; 8]);
+        central.extend(sizes.concat());
+        central.extend((name.len() as u16).to_le_bytes());
+        central.extend([0; 12]);
+        central.extend(offset.to_le_bytes());
+        central.extend(name.as_bytes());
+    }
+    let start = out.len() as u32;
+    out.extend(&central);
+    out.extend(0x0605_4b50u32.to_le_bytes());
+    out.extend([0; 4]);
+    out.extend((files.len() as u16).to_le_bytes());
+    out.extend((files.len() as u16).to_le_bytes());
+    out.extend((central.len() as u32).to_le_bytes());
+    out.extend(start.to_le_bytes());
+    out.extend([0, 0]);
+    out
+}
+
+/// 一份 docx：两个标题、一段正文和包中的一张图（[`LOGO`]）。
+fn sample_docx() -> Vec<u8> {
+    let rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let root = format!(
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+         <Relationship Id=\"rId1\" Type=\"{rel}/officeDocument\" Target=\"word/document.xml\"/>\
+         </Relationships>"
+    );
+    let rels = format!(
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+         <Relationship Id=\"rI\" Type=\"{rel}/image\" Target=\"media/logo.svg\"/>\
+         </Relationships>"
+    );
+    let heading = |level: u8, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:outlineLvl w:val=\"{level}\"/></w:pPr>\
+             <w:r><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let document = format!(
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:r=\"{rel}\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\">\
+         <w:body>{}{}<w:p><w:r><w:t>正文，</w:t></w:r><w:r><w:rPr><w:b/></w:rPr>\
+         <w:t>加粗</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:inline>\
+         <wp:extent cx=\"914400\" cy=\"914400\"/><wp:docPr id=\"1\" name=\"标志\"/>\
+         <a:graphic><a:graphicData><a:blip r:embed=\"rI\"/></a:graphicData></a:graphic>\
+         </wp:inline></w:drawing></w:r></w:p></w:body></w:document>",
+        heading(0, "季度报告"),
+        heading(1, "概况"),
+    );
+    stored_zip(&[
+        ("_rels/.rels", root.as_bytes()),
+        ("word/document.xml", document.as_bytes()),
+        ("word/_rels/document.xml.rels", rels.as_bytes()),
+        ("word/media/logo.svg", LOGO.as_bytes()),
+    ])
+}
+
+/// docx 打开后显示阅读视图：只读、铺满编辑区，标题出现在标题指示条中，包中的图片从内存读取；
+/// 右键菜单没有「在源代码中显示」。文件损坏时显示原因和重试、用默认应用打开的按钮。
+#[test]
+fn docx_files_open_as_a_reading_view() {
+    let dir = sample_folder("md-docx");
+    let path = dir.join("季度报告.docx");
+    std::fs::write(&path, sample_docx()).unwrap();
+    let mut app = app_with(&path, false);
+    settle(&mut app);
+    let doc = app.editor.active().unwrap();
+    assert_eq!(doc.unsupported, Some(winc_editor::Unsupported::Docx));
+    assert!(doc.readonly);
+    assert_eq!(app.markdown.area, app.layout.editor);
+    assert!(app.markdown.failed.is_none());
+    assert_eq!(app.markdown.toc_tops.len(), 2);
+    // 图片按文档所在目录解析出路径，但不读磁盘：磁盘上没有这个文件。
+    let opened = doc.path.clone().unwrap();
+    let logo = opened.parent().unwrap().join("word/media/logo.svg");
+    assert!(!logo.exists());
+    assert!(matches!(
+        app.markdown.images.get(&logo),
+        Some(crate::app::preview::markdown::ImageSlot::Ready { pixels, .. }) if !pixels.is_empty()
+    ));
+    let laid = app.markdown.layout.as_ref().unwrap();
+    assert!(laid.chars() > 0);
+
+    let area = app.markdown.area;
+    right_click(&mut app, (area.x + area.w / 2.0, area.y + 60.0));
+    assert!(
+        !menu_commands(&app)
+            .iter()
+            .any(|(c, _)| *c == MenuCommand::RevealSource)
+    );
+
+    let broken = dir.join("损坏.docx");
+    std::fs::write(&broken, b"not a docx").unwrap();
+    app.open_path(&broken);
+    settle(&mut app);
+    assert_eq!(
+        app.markdown.failed.as_deref(),
+        Some(winc_i18n::t!("preview-docx-invalid"))
+    );
+    assert_eq!(app.placeholder_hits.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_docx() {
+    for dark in [false, true] {
+        let dir = sample_folder("md-docx-shot");
+        let path = dir.join("季度报告.docx");
+        std::fs::write(&path, sample_docx()).unwrap();
+        let mut app = app_with(&path, dark);
+        settle(&mut app);
+        let theme = if dark { "dark" } else { "light" };
+        shoot(&mut app, &format!("md-docx-{theme}"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -426,15 +426,27 @@ impl App {
                 ]);
                 menu
             }
-            MenuTarget::Markdown => vec![
-                MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
-                MenuEntry::Item(MenuCommand::SelectAll, true),
-                MenuEntry::Separator,
-                MenuEntry::Item(
-                    MenuCommand::RevealSource,
-                    self.markdown.menu_source.is_some(),
-                ),
-            ],
+            MenuTarget::Markdown => {
+                let mut menu = vec![
+                    MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
+                    MenuEntry::Item(MenuCommand::SelectAll, true),
+                ];
+                // docx 的阅读视图由转换得到，没有可以显示的源代码。
+                let has_source = self
+                    .editor
+                    .active()
+                    .is_some_and(|d| d.unsupported.is_none());
+                if has_source {
+                    menu.extend([
+                        MenuEntry::Separator,
+                        MenuEntry::Item(
+                            MenuCommand::RevealSource,
+                            self.markdown.menu_source.is_some(),
+                        ),
+                    ]);
+                }
+                menu
+            }
             MenuTarget::TerminalTab(_) => vec![
                 MenuEntry::Item(MenuCommand::RenameTerminal, true),
                 MenuEntry::Separator,

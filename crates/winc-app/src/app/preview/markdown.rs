@@ -24,10 +24,15 @@ use crate::system;
 mod viewer;
 pub(crate) use viewer::{DiagramTool, DiagramView, MAX_ZOOM, MIN_ZOOM};
 
+/// docx 包中的图片：Markdown 中引用的地址和图片文件的内容。
+type Media = Vec<(String, Arc<[u8]>)>;
+
 /// 后台任务的结果。
 enum Done {
     /// 文档、所依据的文档版本、解析结果。
     Parsed(DocumentId, u64, Markdown),
+    /// docx 文档、所依据的文档版本、转换并解析的结果（含包中的图片）或失败的原因。
+    Converted(DocumentId, u64, Result<(Markdown, Media), String>),
     /// 图片（解析好的本地路径）、读取结果。
     Loaded(PathBuf, Result<Arc<Picture>, String>),
     /// 图片、按显示大小（物理像素）画好的像素。
@@ -110,6 +115,11 @@ pub(crate) struct MarkdownPreview {
     pub memo: crate::view::preview::markdown::Memo,
     /// 用到的图片，键是解析好的本地路径。
     pub images: HashMap<PathBuf, ImageSlot>,
+    /// docx 包中的图片：键与 `images` 相同（按文档所在目录解析好的路径），值是图片文件的
+    /// 内容；读取这些图片时用这里的内容，不读磁盘。
+    embedded: HashMap<PathBuf, Arc<[u8]>>,
+    /// docx 读取或转换失败的原因；没有失败时为 `None`。
+    pub failed: Option<String>,
     /// 图片全部作废（联网的设置变了）：排版整份重来。
     ///
     /// 每作废一次加 1。
@@ -250,6 +260,8 @@ impl Default for MarkdownPreview {
             layout: None,
             memo: Default::default(),
             images: HashMap::new(),
+            embedded: HashMap::new(),
+            failed: None,
             images_version: 0,
             loaded: Vec::new(),
             toggled: HashSet::new(),
@@ -327,6 +339,8 @@ impl MarkdownPreview {
         self.find_doc = None;
         self.motion = None;
         self.forget_images();
+        self.embedded.clear();
+        self.failed = None;
         self.loaded.clear();
     }
 }
@@ -370,6 +384,10 @@ fn in_fence<'a>(lines: impl Iterator<Item = ropey::RopeSlice<'a>>) -> bool {
 /// 当前标签是否显示 Markdown 预览，在哪里：分栏的右半边或整个编辑区。
 pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
     let doc = app.editor.active()?;
+    // docx 没有源代码可切换，总是以整个编辑区显示阅读视图。
+    if doc.unsupported == Some(winc_editor::Unsupported::Docx) {
+        return Some(app.layout.editor);
+    }
     if doc.preview_kind() != Some(PreviewKind::Markdown) {
         return None;
     }
@@ -402,6 +420,23 @@ impl App {
         if md.checked == Some(revision) || md.pending.is_some() {
             return;
         }
+        if doc.unsupported == Some(winc_editor::Unsupported::Docx) {
+            let Some(path) = doc.path.clone() else {
+                return;
+            };
+            md.pending = Some(revision);
+            let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
+            winc_editor::background::spawn(move || {
+                let result = winc_preview::docx::load(&path)
+                    .map(|c| (markdown::parse(&c.markdown), c.media));
+                if sender.send(Done::Converted(id, revision, result)).is_ok()
+                    && let Some(proxy) = proxy
+                {
+                    let _ = proxy.send_event(UserEvent::ImageReady);
+                }
+            });
+            return;
+        }
         // 克隆 rope 只是多一个引用；拼成整段文字（16 MB 的文件要几毫秒）放到后台做。
         let Some(rope) = doc.text().rope().cloned() else {
             return;
@@ -432,6 +467,32 @@ impl App {
                     md.pending = None;
                     md.checked = Some(revision);
                     md.parsed = Some(Arc::new(parsed));
+                }
+                Done::Converted(id, revision, result) => {
+                    if md.doc != Some(id) || md.pending != Some(revision) {
+                        continue;
+                    }
+                    md.pending = None;
+                    md.checked = Some(revision);
+                    md.forget_images();
+                    md.embedded.clear();
+                    match result {
+                        Ok((parsed, media)) => {
+                            let doc = self.editor.active().and_then(|d| d.path.as_deref());
+                            md.embedded = media
+                                .into_iter()
+                                .filter_map(|(url, bytes)| {
+                                    Some((image_path(doc, &url, false)?, bytes))
+                                })
+                                .collect();
+                            md.failed = None;
+                            md.parsed = Some(Arc::new(parsed));
+                        }
+                        Err(reason) => {
+                            md.failed = Some(reason);
+                            md.parsed = None;
+                        }
+                    }
                 }
                 Done::Loaded(path, result) => {
                     // 读取期间图片已作废（切换了文档或联网设置变化），丢弃结果。
@@ -483,13 +544,18 @@ impl App {
             path.to_path_buf(),
         );
         let remote = is_remote(url).then(|| url.to_owned());
+        let embedded = self.markdown.embedded.get(&path).cloned();
         let load = move || {
-            let result = match &remote {
-                Some(url) => download(url, &path).and_then(|()| load_downloaded(&path)),
-                None if image::is_svg(&path) => std::fs::read_to_string(&path)
+            let result = match (&remote, embedded) {
+                (_, Some(bytes)) if image::is_svg(&path) => std::str::from_utf8(&bytes)
+                    .map_err(|e| e.to_string())
+                    .and_then(|text| svg::load(text, None, Some(system_glyphs()))),
+                (_, Some(bytes)) => image::load_bytes(&bytes),
+                (Some(url), None) => download(url, &path).and_then(|()| load_downloaded(&path)),
+                (None, None) if image::is_svg(&path) => std::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
                     .and_then(|text| svg::load(&text, path.parent(), Some(system_glyphs()))),
-                None => image::load(&path),
+                (None, None) => image::load(&path),
             };
             if sender
                 .send(Done::Loaded(path, result.map(Arc::new)))
@@ -1742,7 +1808,8 @@ impl App {
     /// （刚打的字还没解析，位置可能已经错开）。
     fn current_source_at(&self, x: f32, y: f32) -> Option<usize> {
         let doc = self.editor.active()?;
-        if self.markdown.checked != Some(doc.revision) {
+        // docx 的预览由转换得到，位置不对应文档中的文字。
+        if doc.unsupported.is_some() || self.markdown.checked != Some(doc.revision) {
             return None;
         }
         crate::view::preview::markdown::source_at(self, x, y)
