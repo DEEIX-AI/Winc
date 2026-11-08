@@ -61,7 +61,9 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
     let layout = app.layout;
     app.tree_overflow = tree_overflow(app, frame);
+    let before = app.commit.overflow.map(|o| o.row);
     app.commit.overflow = git::commit::commit_overflow(app, frame);
+    app.track_commit_actions(before);
 
     // 鼠标停在名称展开的行上并滚动文件树后，该位置对应的行可能不再展开名称；此时鼠标的位置
     // 已不在文件树范围内，需要清除悬停状态。

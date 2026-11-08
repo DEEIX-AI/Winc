@@ -1207,7 +1207,10 @@ fn draw_row(
             let parts = dir_parts(app, frame, name, room);
             let width = parts_width(app, frame, &parts, true);
             let key = CommitName::Dir(*group, dir.clone());
-            let view = app.commit.names.sync(&key, cause, &parts, width);
+            let view = app
+                .commit
+                .names
+                .sync(&key, cause, &parts, shown_width(width, room));
             let retracting =
                 !wanted && view.progress < 1.0 && text_x + view.width > text_clip.right();
             let color = if retracting {
@@ -1308,8 +1311,14 @@ fn draw_row(
             let parts = file_parts(app, frame, (&name, dir.as_deref()), room);
             let width = parts_width(app, frame, &parts, false);
             let key = CommitName::File(entry.path.clone());
-            let view = app.commit.names.sync(&key, cause, &parts, width);
-            let lag = if wanted { width - view.width } else { 0.0 };
+            let view = app
+                .commit
+                .names
+                .sync(&key, cause, &parts, shown_width(width, room));
+            let lag = match actions {
+                Some((open, _)) if wanted => actions_lag(app, i, band, open, width - view.width),
+                _ => 0.0,
+            };
             let actions = actions.map(|(open, revert)| {
                 let back = |r: Rect| Rect::new(r.x - lag, r.y, r.w, r.h);
                 (back(open), back(revert))
@@ -1361,11 +1370,13 @@ fn draw_row(
                 ui_text_small(frame, app, letter_x, band, &letter, ink, list);
             }
             let color = file_color(change, p);
+            // 名字画到按钮之前：按钮滑向名字后面的途中，名字随按钮让开而露出。
             let name_end = if wanted || retracting {
                 text_x + view.width
             } else {
                 text_end
             };
+            let name_end = actions.map_or(name_end, |(open, _)| name_end.min(open.x - 4.0));
             let name_clip =
                 Rect::new(list.x, y, (name_end - list.x).max(0.0), COMMIT_ROW).intersect(list);
             draw_name(
@@ -1840,6 +1851,29 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
     })
 }
 
+/// 返回第 `row` 行写全名时两个按钮离终点（「打开文件」在 `open`）还差的距离（逻辑像素）。
+///
+/// 按钮跟着名字滑出（名字还差 `name_lag` 没有露出），同时从原位（[`file_actions`]）滑向终点
+/// （[`App::track_commit_actions`]），取两者中落后得多的：名字本来就写得下、只是要给按钮让位
+/// 时，名字不动，按钮照样滑过去。
+fn actions_lag(app: &App, row: usize, band: Rect, open: Rect, name_lag: f32) -> f32 {
+    let slide = app.commit.actions_slide.filter(|&(r, _)| r == row);
+    let rest = slide.map_or(0.0, |(_, clock)| {
+        let (home, _) = file_actions(band);
+        (open.x - home.x).max(0.0) * (1.0 - clock.progress())
+    });
+    name_lag.max(rest)
+}
+
+/// 返回名字露出的宽度：内容宽 `width`，截短时还有 `room` 那么宽的地方（写全名时为 `None`）。
+///
+/// 截短后仍然放不下的名字（不能再缩短的文件名、目录名）在 `room` 处淡出，露出的宽度是
+/// `room`。名字的过渡按露出的宽度进行：写全名时从截断处滑出，按钮跟着移动；内容不变时
+/// 同样有过渡。
+fn shown_width(width: f32, room: Option<f32>) -> f32 {
+    room.map_or(width, |room| width.min(room))
+}
+
 /// 返回 `band` 一行中名字（平铺时连同其后的目录）完整绘制时末尾的 x 坐标（逻辑像素）。
 fn name_end(app: &App, frame: &mut Frame<'_>, text: &RowText, band: Rect) -> f32 {
     let name_w = if text.folder {
@@ -1884,7 +1918,10 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     // 按钮跟着名字移动（见 `draw_row`），露出的部分到按钮为止；目录行露到名字后面 8。
     let parts = full_parts(&text);
     let width = parts_width(app, frame, &parts, text.folder);
-    let lag = width - view.width;
+    let lag = match actions {
+        Some((open, _)) => actions_lag(app, row, band, open, width - view.width),
+        None => width - view.width,
+    };
     let actions = actions.map(|(open, revert)| {
         let back = |r: Rect| Rect::new(r.x - lag, r.y, r.w, r.h);
         (back(open), back(revert))

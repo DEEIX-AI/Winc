@@ -4,7 +4,7 @@ use winc_editor::git::Synced;
 use winc_i18n::t;
 
 use super::*;
-use crate::app::git::branch::Then;
+use crate::app::git::branch::{Then, keep_changes};
 use crate::app::lifecycle::notice::NoticeAction;
 
 /// 分支行右端同步控件的状态。
@@ -80,8 +80,10 @@ impl App {
     /// 在后台同步（[`winc_editor::git::Git::sync`]）；需要强制推送而 `force` 为假时转为询问。
     pub(in crate::app) fn run_git_sync(&mut self, force: bool) {
         self.git_operate_then(t!("git-op-sync").into(), move |git, root| {
-            git.sync(root, force).map(|synced| match synced {
-                Synced::Done(summary) => (summary, Then::Nothing),
+            let (synced, then) =
+                keep_changes(git, root, t!("git-op-sync"), |git| git.sync(root, force))?;
+            Ok(match synced {
+                Synced::Done(summary) => (summary, then),
                 Synced::NeedsForce(count) => (String::new(), Then::ConfirmForcePush(count)),
             })
         });

@@ -295,6 +295,21 @@ fn failures_pick_the_line_that_explains() {
         failure(b"\nfatal: not a git repository\n"),
         "not a git repository"
     );
+    // 以冒号结尾的说明后面是 `git` 列出的文件，接在冒号后面，多于三个时其余写成省略号；其后
+    // 不缩进的提示不算。翻译后的说明以全角冒号结尾，同样处理。
+    let untracked = b"error: The following untracked working tree files would be overwritten \
+                      by merge:\n\tnew.txt\n\tsrc/lib.rs\nPlease move or remove them before you merge.\n\
+                      Aborting\n";
+    assert_eq!(
+        failure(untracked),
+        "The following untracked working tree files would be overwritten by merge: new.txt, \
+         src/lib.rs"
+    );
+    let many = "error: 工作区中下列未跟踪的文件将会因为合并操作而被覆盖：\n\ta\n\tb\n\tc\n\td\n";
+    assert_eq!(
+        failure(many.as_bytes()),
+        "工作区中下列未跟踪的文件将会因为合并操作而被覆盖：a, b, c, …"
+    );
     assert_eq!(
         summary(b"Updating a..b\nFast-forward\n file | 1 +\n"),
         "file | 1 +"

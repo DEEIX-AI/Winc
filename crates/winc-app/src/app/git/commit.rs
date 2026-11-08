@@ -598,6 +598,9 @@ pub(crate) struct CommitState {
     /// 鼠标停着的那一行名字放不下时，这一行写全名（每帧绘制前算，见
     /// `view::commit::commit_overflow`）。
     pub(crate) overflow: Option<CommitOverflow>,
+    /// 文件行写全名时「打开文件」「回滚」两个按钮从原位滑到全名后面的过渡：那一行（`overflow`
+    /// 的 `row`）和时钟。名字本来就写得下、只是要给按钮让位时，名字不动，靠它看出按钮在移动。
+    pub(crate) actions_slide: Option<(usize, crate::app::Clock)>,
     /// 各行名字随鼠标展开、收回的过渡，和文件树的名字一样。
     pub(crate) names: crate::app::TreeLabels<CommitName>,
     /// 选中的文件；多选时是当前行（键盘从这里移动，预览的是它）。
@@ -686,6 +689,7 @@ impl Default for CommitState {
             scroll: 0.0,
             motion: None,
             overflow: None,
+            actions_slide: None,
             names: Default::default(),
             shift: None,
             selected: None,
@@ -833,9 +837,14 @@ impl App {
             (None, Some(card)) => card.y - SIDEBAR_LIST_GAP * card_share,
             (None, None) => panel.bottom(),
         };
-        // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `STASH_GAP`。
+        // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `STASH_GAP`。一组的下沿直接贴着
+        // 卡片：`SIDEBAR_LIST_GAP` 是改动列表和卡片之间的间隔，再加上会比一组上方的空隙大得多。
         let h = self.stash_section_height();
-        let stashes = (h > 0.0).then(|| Rect::new(panel.x, above - h, panel.w, h));
+        let stash_bottom = match (undo, card) {
+            (None, Some(card)) => card.y,
+            _ => above,
+        };
+        let stashes = (h > 0.0).then(|| Rect::new(panel.x, stash_bottom - h, panel.w, h));
         let list_end = stashes.map_or(above, |rect| rect.y);
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
@@ -1120,6 +1129,21 @@ impl App {
     pub(in crate::app) fn over_commit_overflow_row(&self, y: f32) -> bool {
         self.commit_shown()
             && (self.commit.overflow).is_some_and(|o| (o.y..o.y + COMMIT_ROW).contains(&y))
+    }
+
+    /// 每帧算出 `overflow` 之后调用：换了写全名的文件行时，按钮从原位开始滑到全名后面；
+    /// `before` 是上一帧写全名的那一行。
+    pub(crate) fn track_commit_actions(&mut self, before: Option<usize>) {
+        let now = (self.commit.overflow)
+            .filter(|o| o.actions.is_some())
+            .map(|o| o.row);
+        if now == before {
+            return;
+        }
+        let animate = self.animate_commit_names();
+        self.commit.actions_slide = now
+            .filter(|_| animate)
+            .map(|row| (row, self.commit.names.clock()));
     }
 
     /// 窗口坐标 (`x`, `y`) 是否在改动行伸出侧栏的那一段名字上。

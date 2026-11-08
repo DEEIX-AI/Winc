@@ -1385,6 +1385,83 @@ fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 名字在侧栏里写得下、只是要给「打开文件」「回滚」两个按钮让位时：名字不变，按钮从原位滑到
+/// 名字后面，伸出侧栏的那一段跟着按钮变宽；名字放不下、截断处淡出的行，悬停时同样从截断处
+/// 滑出全名。
+#[test]
+fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
+    let Some(dir) = deep_changes_repo("git-commit-button-slide") else {
+        return;
+    };
+    // 名字长短不一的文件放在根目录：没有可以折叠的目录，截短时只能在末尾淡出。
+    let names: Vec<String> = (20..60).map(|n| format!("{}.rs", "x".repeat(n))).collect();
+    for name in &names {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    git_in(&dir, &["add", "-A"]);
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.commit.names.animate_without_window = true;
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    let status = app.git.status.clone().unwrap();
+    let list = app.commit_parts().list;
+    let away = (app.layout.editor.x + 200.0, app.layout.editor.y + 200.0);
+
+    // 依次悬停各行，记下按钮开始时的位置、终点，以及名字露出的宽度是否在变。
+    let mut slight = None;
+    let mut clipped = None;
+    for name in &names {
+        let rows = app.commit_rows();
+        let Some(i) = rows.iter().position(|r| {
+            matches!(r, CommitRow::File { index, .. } if status.entries[*index].path.ends_with(name))
+        }) else {
+            continue;
+        };
+        app.on_mouse_move(away.0, away.1);
+        app.commit.scroll = ((i as f32 - 3.0) * COMMIT_ROW).clamp(0.0, app.commit_max_scroll());
+        paint(&mut app);
+        app.commit.names.finish();
+        paint(&mut app);
+        let path = (status.entries.iter())
+            .find(|e| e.path.ends_with(name))
+            .unwrap();
+        let key = CommitName::File(path.path.clone());
+        let rest = app.commit.names.peek(&key).unwrap().width;
+        let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+        app.on_mouse_move(list.x + 120.0, y);
+        paint(&mut app);
+        let Some(overflow) = app.commit.overflow else {
+            continue;
+        };
+        let (end, _) = overflow.actions.unwrap();
+        let start = (app.commit_hits.iter())
+            .find(|(_, t)| matches!(t, CommitTarget::OpenFile(_)))
+            .unwrap()
+            .0;
+        let moving = app.commit.names.moving();
+        app.commit.names.finish();
+        let full = app.commit.names.peek(&key).unwrap().width;
+        if rest == full && slight.is_none() {
+            slight = Some((start.x, end.x, moving));
+        }
+        if rest < full && clipped.is_none() {
+            clipped = Some(moving);
+        }
+    }
+
+    // 只要让位：名字不动，按钮从原位出发，离终点还远。
+    let (start, end, moving) = slight.expect("a name that fits before the status letter");
+    assert!(!moving);
+    assert!(start < end - 1.0, "{start} {end}");
+    // 截断处淡出的名字：悬停时宽度从截断处开始变化。
+    assert_eq!(clipped, Some(true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_commit_overflow() {

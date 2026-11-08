@@ -19,7 +19,7 @@ mod sync;
 pub use output::output_text;
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
 pub use remote::{Remote, TagTarget, repository_dir_name};
-pub use sync::Synced;
+pub use sync::{Carried, Synced};
 mod trust;
 mod worktree;
 
