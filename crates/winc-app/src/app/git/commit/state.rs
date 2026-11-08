@@ -64,7 +64,7 @@ impl CommitState {
 
     /// 文件的勾选框：`Some(true)` 整个提交，`Some(false)` 只提交一部分改动，`None` 不提交。
     ///
-    /// 提交的是工作区里的内容，与暂存区无关：在终端里暂存过的文件和别的文件一样。
+    /// 提交的是工作区里的内容，与暂存区无关：在终端里暂存过的文件与其他文件的处理相同。
     pub fn file_state(&self, entry: &Entry) -> Option<bool> {
         if !self.checked(entry) {
             None

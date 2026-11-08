@@ -39,7 +39,7 @@ const SYNC_TEXT_LEFT: f32 = 8.0;
 /// 「修改上次提交」的勾选框中心离那一段左边的距离（逻辑像素）：边长 12 的勾选框左边留 1，和
 /// 悬停底色的边缘分开。
 const AMEND_CHECK: f32 = 7.0;
-/// 「修改上次提交」的文字离那一段左边的距离（逻辑像素）：勾选框右边再隔 8，和设置里勾选项的
+/// 「修改上次提交」的文字离该区域左边的距离（逻辑像素）：勾选框右边再隔 8，与设置里勾选项中
 /// 勾选框与文字的间隔相同。
 const AMEND_TEXT: f32 = 21.0;
 /// 「修改上次提交」文字右边留到悬停底色边缘的距离（逻辑像素），与左边勾选框外的空隙相当。
@@ -539,7 +539,7 @@ fn draw_undo(
 /// 标题的箭头同一列。各条储藏和标题的文字对齐：行前面没有勾选框和图标，再缩进一层只会留下
 /// 一块空白。
 const STASH_TITLE: f32 = ARROW + 10.0;
-/// 正在看的储藏下面各个文件的图标离行左边的距离（逻辑像素）：比储藏名再缩进一级。
+/// 正在查看的储藏下面各个文件的图标离行左边的距离（逻辑像素）：比储藏名再缩进一级。
 const STASH_FILE: f32 = STASH_TITLE + 12.0;
 /// 储藏那一行悬停时「应用」文字两侧的留白（逻辑像素），和「上一次提交」那一栏的「撤销」相同。
 const STASH_APPLY_PAD: f32 = 6.0;
@@ -691,8 +691,8 @@ fn draw_stashes(
     }
 }
 
-/// 绘制正在看的储藏下面的一个文件：比储藏名再缩进一级，文件图标、文件名、淡色的所在目录，右端
-/// 是状态字母；正在看的那个文件铺选中的底色。
+/// 绘制正在查看的储藏下面的一个文件：比储藏名再缩进一级，依次是文件图标、文件名、淡色的所在
+/// 目录，右端是状态字母；正在查看的文件铺选中的底色。
 fn draw_stash_file(
     app: &App,
     frame: &mut Frame<'_>,
@@ -1442,7 +1442,7 @@ fn draw_row(
                 ui_text_small(frame, app, letter_x, band, &letter, ink, list);
             }
             let color = file_color(change, p);
-            // 名字画到按钮之前：按钮滑向名字后面的途中，名字随按钮让开而露出。
+            // 名字先于按钮绘制：按钮滑向名字后面的过程中，名字随按钮移开而逐渐显示。
             let name_end = if wanted || retracting {
                 text_x + view.width
             } else {
@@ -1658,7 +1658,7 @@ fn draw_card(
     app.commit.message = field;
     let clip = panel.intersect(card);
 
-    // 「修改上次提交」：勾选框连同文字，整段都能点，悬停时铺底色。随提交按钮变宽隐去、变窄
+    // 「修改上次提交」：勾选框连同文字整段可点击，悬停时铺底色。随提交按钮变宽而隐去、变窄而
     // 出现时按进度淡出、淡入，过渡中不响应鼠标。
     if let Some(amend) = parts.amend {
         let (shown, fading) = match app.commit.amend_motion {
@@ -1942,9 +1942,9 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
 
 /// 返回第 `row` 行写全名时两个按钮离终点（「打开文件」在 `open`）还差的距离（逻辑像素）。
 ///
-/// 按钮跟着名字滑出（名字还差 `name_lag` 没有露出），同时从原位（[`file_actions`]）滑向终点
-/// （[`App::track_commit_actions`]），取两者中落后得多的：名字本来就写得下、只是要给按钮让位
-/// 时，名字不动，按钮照样滑过去。
+/// 按钮随名字滑出（名字还有 `name_lag` 未显示），同时从原位（[`file_actions`]）滑向终点
+/// （[`App::track_commit_actions`]），取两者中较大的距离：名字无需加长、只为按钮让出位置时，
+/// 名字不动，按钮仍然滑向终点。
 fn actions_lag(app: &App, row: usize, band: Rect, open: Rect, name_lag: f32) -> f32 {
     let slide = app.commit.actions_slide.filter(|&(r, _)| r == row);
     let rest = slide.map_or(0.0, |(_, clock)| {
@@ -1954,10 +1954,10 @@ fn actions_lag(app: &App, row: usize, band: Rect, open: Rect, name_lag: f32) -> 
     name_lag.max(rest)
 }
 
-/// 返回名字露出的宽度：内容宽 `width`，截短时还有 `room` 那么宽的地方（写全名时为 `None`）。
+/// 返回名字显示出的宽度：内容宽 `width`，截短时可用宽度为 `room`（写全名时为 `None`）。
 ///
-/// 截短后仍然放不下的名字（不能再缩短的文件名、目录名）在 `room` 处淡出，露出的宽度是
-/// `room`。名字的过渡按露出的宽度进行：写全名时从截断处滑出，按钮跟着移动；内容不变时
+/// 截短后仍然放不下的名字（不能再缩短的文件名、目录名）在 `room` 处淡出，显示出的宽度为
+/// `room`。名字的过渡按显示出的宽度进行：写全名时从截断处滑出，按钮随之移动；内容不变时
 /// 同样有过渡。
 fn shown_width(width: f32, room: Option<f32>) -> f32 {
     room.map_or(width, |room| width.min(room))

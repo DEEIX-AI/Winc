@@ -118,7 +118,7 @@ fn uncommitted_changes_are_carried_through_a_pull() {
     let Some(git) = real_git() else {
         return;
     };
-    // 没有未提交的更改：拉取后什么也不用恢复，也不留下储藏。
+    // 没有未提交的更改：拉取后无需恢复，也不留下储藏。
     let (work, remote) = three_lines("pull-carry-clean");
     push_from_peer(
         "pull-carry-clean-peer",
@@ -181,7 +181,7 @@ fn rebase_pulls_and_syncs_carry_uncommitted_changes() {
     let Some(git) = real_git() else {
         return;
     };
-    // 拉取并变基：本地有自己的提交、上游有别人的提交，工作区还有改动（git 本来拒绝变基）。
+    // 拉取并变基：本地与上游各有新提交，工作区还有改动（不加 `--autostash` 时 `git` 拒绝变基）。
     let (work, remote) = three_lines("pull-carry-rebase");
     push_from_peer("pull-carry-rebase-peer", &remote, "b.txt", "theirs\n");
     std::fs::write(work.join("c.txt"), "ours\n").unwrap();

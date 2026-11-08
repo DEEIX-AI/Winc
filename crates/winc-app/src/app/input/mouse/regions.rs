@@ -21,7 +21,7 @@ impl App {
 
         // 提交视图：输入框之外按绘制时记下的位置找。
         if self.commit_shown() && y >= self.panel_rect().y {
-            // 分隔条由分隔条自己认（`Target::Splitter`），名字写全的那一行除外：它盖住分隔条。
+            // 分隔条由 `Target::Splitter` 处理，写全名的那一行除外：该行覆盖在分隔条之上。
             if self.on_splitter_outside_commit_overflow(x, y) {
                 return None;
             }
@@ -238,8 +238,8 @@ impl App {
         true
     }
 
-    /// (`x`, `y`) 是否在分隔条上、又不在提交视图里名字写全的那一行上：那一行盖住分隔条，和文件树
-    /// 一样（见 [`App::target_at`]）。
+    /// (`x`, `y`) 是否在分隔条上、且不在提交视图里写全名的那一行上：该行覆盖在分隔条之上，与文件
+    /// 树的处理相同（见 [`App::target_at`]）。
     fn on_splitter_outside_commit_overflow(&self, x: f32, y: f32) -> bool {
         self.panel_visible
             && self.layout.splitter.contains(x, y)

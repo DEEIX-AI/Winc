@@ -694,7 +694,7 @@ fn the_status_menu_pulls_diverged_branches_and_needs_a_branch_to_push() {
     let _ = std::fs::remove_dir_all(&remote);
 }
 
-/// 工作区有未提交的更改时照样拉取：更改先储藏、拉取后恢复；恢复时冲突则提示冲突已在工作区中
+/// 工作区有未提交的更改时仍然拉取：更改先储藏、拉取后恢复；恢复时冲突则提示冲突已在工作区中
 /// 标记、原更改仍在储藏中。
 #[test]
 fn pulling_keeps_uncommitted_changes_and_reports_a_conflicting_restore() {

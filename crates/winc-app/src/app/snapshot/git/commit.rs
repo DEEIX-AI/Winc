@@ -573,7 +573,7 @@ fn shoot_commit_stashes() {
         .unwrap();
     app.on_mouse_move(row.x + 20.0, row.y + row.h / 2.0);
     shoot(&mut app, "commit-stashes");
-    // 点开第一条：它的文件列在下面，正在看的那个选中。
+    // 打开第一条储藏：它的文件列在下面，正在查看的文件处于选中状态。
     std::fs::write(root.join("notes.txt"), "draft\n").unwrap();
     git_in(&root, &["stash", "push", "-q", "-u", "-m", "带一个新文件"]);
     app.git_refresh();
@@ -1392,9 +1392,9 @@ fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 名字在侧栏里写得下、只是要给「打开文件」「回滚」两个按钮让位时：名字不变，按钮从原位滑到
-/// 名字后面，伸出侧栏的那一段跟着按钮变宽；名字放不下、截断处淡出的行，悬停时同样从截断处
-/// 滑出全名。
+/// 名字在侧栏里放得下、只需为「打开文件」「回滚」两个按钮让出位置时：名字不变，按钮从原位滑到
+/// 名字后面，伸出侧栏的部分随按钮变宽；名字放不下、在截断处淡出的行，悬停时同样从截断处滑出
+/// 全名。
 #[test]
 fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
     let Some(dir) = deep_changes_repo("git-commit-button-slide") else {
@@ -1460,7 +1460,7 @@ fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
         }
     }
 
-    // 只要让位：名字不动，按钮从原位出发，离终点还远。
+    // 只需让出位置：名字不动，按钮从原位出发，距终点仍有一段距离。
     let (start, end, moving) = slight.expect("a name that fits before the status letter");
     assert!(!moving);
     assert!(start < end - 1.0, "{start} {end}");
@@ -1730,8 +1730,8 @@ fn the_last_local_commit_can_be_undone() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 在终端里只暂存了一部分的文件和别的文件一样：勾选框是整个勾上，提交的是工作区里的内容，与
-/// 暂存区无关。
+/// 在终端里只暂存了一部分的文件与其他文件的处理相同：勾选框为全选，提交的是工作区里的内容，
+/// 与暂存区无关。
 #[test]
 fn files_staged_in_the_terminal_commit_what_is_in_the_working_tree() {
     let Some((mut app, root)) = git_app("git-commit-partly-staged", false) else {
@@ -2683,7 +2683,7 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     assert!(app.editor.active().unwrap().name().contains("notes.txt"));
     assert_eq!(app.next_stash_file(true), None);
 
-    // 储藏那一行下面列出它的两个文件，点第一个在预览标签里换回它。
+    // 储藏那一行下面列出它的两个文件，点击第一个时预览标签切回该文件。
     use crate::app::StashLine;
     let lines = [StashLine::Stash(0), StashLine::File(0), StashLine::File(1)];
     assert_eq!(app.stash_lines(), lines);
@@ -2698,13 +2698,13 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 0);
     assert!(app.editor.active().unwrap().name().contains("main.rs"));
 
-    // 再点一下这条储藏：文件收起，预览标签还在；再点又展开。
+    // 再次点击这条储藏：文件收起，预览标签保留；再次点击时重新展开。
     app.press_commit(CommitTarget::Stash(0));
     assert_eq!(app.stash_lines(), [StashLine::Stash(0)]);
     assert!(app.editor.active().unwrap().name().contains("main.rs"));
     app.press_commit(CommitTarget::Stash(0));
     assert_eq!(app.stash_lines(), lines);
-    // 关掉预览标签：文件不再列出。
+    // 关闭预览标签：文件不再列出。
     app.run_action(Action::CloseTab);
     paint(&mut app);
     assert_eq!(app.stash_lines(), [StashLine::Stash(0)]);
@@ -2880,8 +2880,8 @@ fn holding_option_turns_commit_into_commit_and_push() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 提交按钮变宽（例如按住 ⌥）到放不下「修改上次提交」时：按钮宽度从原来的宽度过渡到占满整行，
-/// 「修改上次提交」途中还画着、淡出，不响应鼠标，按钮的菜单里已经有这一项；过渡结束后不再排出。
+/// 提交按钮变宽（例如按住 ⌥）到放不下「修改上次提交」时：按钮宽度从原宽度过渡到占满整行；
+/// 「修改上次提交」在过渡中仍绘制并淡出，不响应鼠标，按钮的菜单里已有该项；过渡结束后不再排出。
 #[test]
 fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
     use crate::app::animation::{Clock, TREE_ANIMATION};
@@ -3067,9 +3067,9 @@ fn the_full_name_row_covers_the_scrollbar_like_the_file_tree() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 显示全名的改动行也盖住侧栏和编辑区之间的分隔条，和文件树一样：鼠标从名字移到分隔条上再移
-/// 到伸出去的那一段，一直悬停在这一行上，全名不缩回；在这里按下选中这一行，不拖动分隔条。别的行
-/// 照常可以拖动分隔条。
+/// 显示全名的改动行覆盖在侧栏与编辑区之间的分隔条之上，与文件树的处理相同：鼠标从名字经分隔条
+/// 移到伸出侧栏的部分时，始终悬停在这一行上，全名不收回；在此处按下选中这一行，不拖动分隔条。
+/// 其他行仍可拖动分隔条。
 #[test]
 fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
     let Some((dir, long)) = long_name_repo("git-commit-overflow-splitter") else {
@@ -3117,7 +3117,7 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
     );
     assert_eq!(app.layout.splitter, splitter);
 
-    // 别的行：分隔条照常响应。
+    // 其他行：分隔条正常响应。
     let other = y + 3.0 * COMMIT_ROW;
     app.on_mouse_move(splitter.x + splitter.w / 2.0, other);
     paint(&mut app);

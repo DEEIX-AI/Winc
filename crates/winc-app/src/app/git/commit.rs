@@ -607,7 +607,7 @@ pub(crate) struct CommitState {
     /// `view::commit::commit_overflow`）。
     pub(crate) overflow: Option<CommitOverflow>,
     /// 文件行写全名时「打开文件」「回滚」两个按钮从原位滑到全名后面的过渡：那一行（`overflow`
-    /// 的 `row`）和时钟。名字本来就写得下、只是要给按钮让位时，名字不动，靠它看出按钮在移动。
+    /// 的 `row`）和时钟。名字无需加长、只为按钮让出位置时，名字不动，过渡表现为按钮的移动。
     pub(crate) actions_slide: Option<(usize, crate::app::Clock)>,
     /// 各行名字随鼠标展开、收回的过渡，和文件树的名字一样。
     pub(crate) names: crate::app::TreeLabels<CommitName>,
@@ -636,7 +636,7 @@ pub(crate) struct CommitState {
     pub(crate) stash_motion: Option<(f32, crate::app::animation::Clock)>,
     /// 正在储藏的预览标签里看的一条储藏。
     pub(crate) stash_view: Option<StashView>,
-    /// 正在看的储藏下面的文件是否收起了：再点一下那条储藏时收起、展开。
+    /// 正在查看的储藏下面的文件是否已收起：再次点击该储藏时在收起与展开之间切换。
     pub(crate) stash_files_folded: bool,
     /// 上一帧储藏一组的终点高度（逻辑像素），见 [`App::track_stash_height`]。
     pub(crate) stash_settled: f32,
@@ -853,8 +853,8 @@ impl App {
             (None, Some(card)) => card.y - SIDEBAR_LIST_GAP * card_share,
             (None, None) => panel.bottom(),
         };
-        // 储藏一组在改动列表下面，标题和各条储藏都是一行，上下各留 `STASH_GAP`。一组的下沿直接贴着
-        // 卡片：`SIDEBAR_LIST_GAP` 是改动列表和卡片之间的间隔，再加上会比一组上方的空隙大得多。
+        // 储藏一组在改动列表下面，标题和各条储藏各占一行，上下各留 `STASH_GAP`。一组的下沿紧贴
+        // 卡片：`SIDEBAR_LIST_GAP` 是改动列表和卡片之间的间隔，再加上它时下方空隙远大于上方。
         let h = self.stash_section_height();
         let stash_bottom = match (undo, card) {
             (None, Some(card)) => card.y,
@@ -1122,7 +1122,7 @@ impl App {
         }
         let first = self.commit.labels == CommitLabels::default();
         let before = self.commit_parts();
-        // 「修改上次提交」原本的去向：过渡中按过渡的终点，否则看排没排出来。
+        // 「修改上次提交」原本是否显示：过渡中取过渡的终点，否则取当前布局中是否排出。
         let motion = self.commit.amend_motion.take();
         let was = motion.map_or(before.amend.is_some(), |(shown, _)| shown);
         self.commit.labels = labels;
@@ -1477,7 +1477,7 @@ impl App {
             MenuCommand::CommitPush,
             idle && (!clean || self.commit.amend),
         )];
-        // 正在淡出的「修改上次提交」已经算收进了菜单。
+        // 正在淡出的「修改上次提交」视为已移入菜单。
         let leaving = matches!(self.commit.amend_motion, Some((false, _)));
         if self.commit_amendable() && (self.commit_parts().amend.is_none() || leaving) {
             entries.push(MenuEntry::Separator);
