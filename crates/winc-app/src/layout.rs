@@ -20,12 +20,14 @@ mod settings;
 #[cfg(test)]
 mod tests;
 mod workspace;
+mod wrap;
 
 pub use dialog::*;
 pub use overlays::*;
 pub use settings::*;
 pub use workspace::panel::*;
 pub use workspace::sidebar::*;
+pub use wrap::wrap_text;
 
 /// 窗口各主要区域的矩形，由 [`Layout::compute`] 生成。
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,8 +41,10 @@ pub struct Layout {
     pub sidebar: Rect,
     /// 侧栏第二行：左边项目和分支，右端当前视图的工具。
     pub sidebar_header: Rect,
-    /// 侧栏中的文件树区域，位于项目名所在行之下。
+    /// 侧栏中的文件树区域，位于项目名所在行之下；文件视图里不含底部的大纲。
     pub tree: Rect,
+    /// 文件视图底部的大纲：标题行连同展开时的符号列表；不在文件视图时为空。
+    pub outline: Rect,
     /// 侧栏和编辑区之间可拖动的分隔条。
     pub splitter: Rect,
     /// 侧栏开关按钮：固定在红绿灯右侧，侧栏展开、收起时都不动。
@@ -153,7 +157,7 @@ impl Layout {
             BUTTON,
             BUTTON,
         );
-        let tabs_x = (main_x + 8.0).max(sidebar_button.right() + TAB_GAP);
+        let tabs_x = (main_x + TAB_INSET).max(sidebar_button.right() + TAB_GAP);
         // 标签栏一直延伸到顶栏右端：查找由快捷键打开，设置的入口在菜单栏和命令面板里。
         let tabs = Rect::new(
             tabs_x,
@@ -198,6 +202,7 @@ impl Layout {
             sidebar,
             sidebar_header,
             tree,
+            outline: Rect::default(),
             splitter,
             sidebar_button,
             top_bar,
@@ -442,10 +447,14 @@ pub enum Scrollbar {
     Panel,
     /// 提交视图改动列表的竖直滚动条。
     Commit,
+    /// 文件视图底部大纲符号列表的竖直滚动条。
+    Outline,
     /// 终端面板的竖直滚动条（回滚缓冲）。
     Terminal,
     /// Markdown 预览的竖直滚动条。
     Markdown,
+    /// 设置页（含快捷键列表）的竖直滚动条。
+    Settings,
 }
 
 /// 返回缩略图最上面显示的行：`total` 行放不下 `shown` 行时，随滚动位置 `scroll`（最大为 `max`）

@@ -31,10 +31,7 @@ impl App {
             }
             files
         };
-        let fonts = ViewFonts::new(
-            config.editor_size.unwrap_or(CODE_FONT),
-            config.ui_size.unwrap_or(UI_FONT),
-        );
+        let fonts = ViewFonts::of(&config);
         // 实际度量值（逻辑像素）要在创建窗口、加载字体之后才能得到，此前使用占位值。
         let placeholder = Metrics {
             ascent: 12.0,
@@ -50,6 +47,7 @@ impl App {
         Self {
             editor,
             terminal: terminal::TerminalPanel::default(),
+            run: terminal::run::RunConfigs::default(),
             saved_config: config.clone(),
             config,
             config_path: None,
@@ -64,6 +62,8 @@ impl App {
             ui_metrics: placeholder,
             mono_metrics: placeholder,
             cell: placeholder.cell,
+            terminal_metrics: placeholder,
+            terminal_cell: placeholder.cell,
             focus: Focus::Editor,
             hover: Hover::None,
             modifiers: ModifiersState::empty(),
@@ -99,6 +99,7 @@ impl App {
             table_layout: Default::default(),
             split: preview::images::SplitPreview::default(),
             markdown: preview::markdown::MarkdownPreview::default(),
+            pdf: preview::pdf::PdfPreview::default(),
             key_path_cache: None,
             key_path_scan: None,
             folded_hits: Vec::new(),
@@ -142,6 +143,8 @@ impl App {
             fold_motion: None,
             scroll_glide: None,
             wheel_glide: None,
+            wheel_at: None,
+            preview_tab: None,
             tree_drag: None,
             file_hover: None,
             name_input: None,
@@ -166,12 +169,14 @@ impl App {
             pending_jump: None,
             goto_input: None,
             global: GlobalSearch::default(),
+            outline: OutlineState::default(),
             picker: FileIndex::default(),
             picker_open: false,
             picker_doc: None,
             picker_input: TextField::default(),
             picker_hits: Vec::new(),
             picker_selected: 0,
+            picker_default: None,
             picker_recent: 0,
             picker_goto: None,
             picker_stale: false,
@@ -190,8 +195,8 @@ impl App {
             picker_places: None,
             picker_branch_rows: None,
             picker_location_rows: None,
+            picker_folders: false,
             picker_anchor: GitAnchor::Branch,
-            picker_create: None,
             picker_part_hits: Vec::new(),
             location_toggled: Default::default(),
             branch_folders: Default::default(),
@@ -239,18 +244,23 @@ impl App {
             window: None,
             renderer: None,
             proxy,
+            #[cfg(target_os = "macos")]
+            traffic_lights: None,
             key: None,
             shared: Default::default(),
             config_rev: 0,
             cascade: None,
             window_frame: None,
             glyphs_from: None,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            activation: None,
             occluded: false,
             next_frame: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             display_link: None,
             frame_interval: Duration::from_micros(16_667),
             bench,
+            frame_log: crate::frame_log::FrameLog::from_env(),
             presented: 0,
             dirty: true,
         }

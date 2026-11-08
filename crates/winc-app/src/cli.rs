@@ -32,6 +32,8 @@ pub struct Args {
     pub stdin: bool,
     /// 是否只显示用法（`-h`、`--help`）。
     pub help: bool,
+    /// 是否只显示版本号（`-v`、`--version`）。
+    pub version: bool,
     /// `-n`、`--new-instance`：不交给正在运行的 winc，由当前进程新建实例；也不接收之后启动的
     /// winc 交来的目录和文件。
     pub new_instance: bool,
@@ -48,7 +50,7 @@ impl Args {
 
 /// 解析命令行参数（不含程序名）。
 ///
-/// `-h`、`--help` 立即返回，不检查其后的参数。
+/// `-h`、`--help`、`-v`、`--version` 立即返回，不检查其后的参数。
 ///
 /// # Errors
 ///
@@ -57,7 +59,9 @@ impl Args {
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
     let mut parsed = Args::default();
     let mut options = true;
-    for arg in args {
+    let mut distro = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         if options {
             match arg.to_str() {
                 Some("--") => {
@@ -72,12 +76,25 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                     parsed.new_instance = true;
                     continue;
                 }
+                // WSL 中的启动脚本传入发行版名称，不列入用法说明。
+                Some("--wsl") => {
+                    let Some(name) = args.next() else {
+                        let message = t!("cmd-cli-wsl-needs-name");
+                        return Err(format!("{message}\n\n{}", usage()));
+                    };
+                    distro = Some(name.to_string_lossy().into_owned());
+                    continue;
+                }
                 Some("-") => {
                     parsed.stdin = true;
                     continue;
                 }
                 Some("-h" | "--help") => {
                     parsed.help = true;
+                    return Ok(parsed);
+                }
+                Some("-v" | "--version") => {
+                    parsed.version = true;
                     return Ok(parsed);
                 }
                 Some(flag) if flag.starts_with('-') => {
@@ -88,6 +105,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             }
         }
         parsed.targets.push(target(arg));
+    }
+    if let Some(distro) = &distro {
+        for target in &mut parsed.targets {
+            let path = std::mem::take(&mut target.path);
+            target.path = winc_editor::wsl::from_distro(distro, path);
+        }
     }
     if parsed.wait && parsed.targets.is_empty() && !parsed.stdin {
         return Err(format!("{}\n\n{}", t!("cmd-cli-wait-needs-file"), usage()));

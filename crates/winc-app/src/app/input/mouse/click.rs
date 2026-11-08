@@ -40,7 +40,10 @@ impl App {
         if matches!(button, MouseButton::Middle | MouseButton::Right)
             && !self.settings.open
             && self.form_dialog.is_none()
-            && crate::app::terminal::grid_rect(l.terminal, self.fonts.line_height).contains(x, y)
+            && self.terminal_view().contains(x, y)
+            && !self
+                .terminal_find_bar()
+                .is_some_and(|bar| bar.contains(x, y))
             && self
                 .terminal
                 .tab()
@@ -89,6 +92,15 @@ impl App {
             && button == MouseButton::Left
             && self.modifiers.control_key();
         if button == MouseButton::Right || control_click {
+            // 全屏查看的图上不提供右键菜单，被遮住的预览也不响应。
+            if self
+                .markdown
+                .diagram
+                .as_ref()
+                .is_some_and(|v| v.area.contains(x, y))
+            {
+                return;
+            }
             self.context_click(x, y);
             return;
         }
@@ -123,6 +135,11 @@ impl App {
             return;
         }
 
+        // 全屏查看的图位于编辑区上层，落在其范围内的点击只由查看器处理。
+        if self.diagram_view_mouse_down(x, y) {
+            return;
+        }
+
         // 点在预览以外：预览的选区和焦点不要了（`click_markdown` 再拿回来）。拖预览的滚动条不算。
         let target = self.target_at(x, y);
         let keeps_preview = matches!(
@@ -147,7 +164,10 @@ impl App {
                 self.click_picker(x, y);
             }
             _ if self.picker_open => self.close_picker(),
-            Target::Scrollbar(bar @ (Scrollbar::Panel | Scrollbar::Commit), grab) => {
+            Target::Scrollbar(
+                bar @ (Scrollbar::Panel | Scrollbar::Commit | Scrollbar::Outline),
+                grab,
+            ) => {
                 self.grab_scrollbar(bar, grab);
             }
             Target::Panel(_) => {
@@ -183,11 +203,19 @@ impl App {
             Target::Preview(mode) => self.choose_preview_mode(mode),
             Target::Browser => self.open_in_browser(),
             Target::MarkdownLink(link) => self.open_markdown_link(link),
+            Target::MarkdownToc(target) => self.press_toc(target),
             Target::MarkdownText => self.click_markdown(x, y),
             Target::Tab(index, true) => {
                 self.close_pressed = self.editor.documents.get(index).map(|d| d.id);
             }
-            Target::Tab(index, false) => self.press_tab(index, x),
+            Target::Tab(index, false) => {
+                // 双击预览标签使其成为普通标签。
+                let double = self.click_count(x, y) == 2;
+                self.press_tab(index, x);
+                if double {
+                    self.keep_tab(index);
+                }
+            }
             Target::RulerChange(hunk) => self.go_to_change(hunk),
             Target::Scrollbar(bar, grab) => self.grab_scrollbar(bar, grab),
             Target::Minimap => self.press_minimap(y),
@@ -249,8 +277,7 @@ impl App {
             }
             Target::Editor => self.click_editor(x, y),
             Target::Terminal => {
-                let grid = crate::app::terminal::grid_rect(l.terminal, self.fonts.line_height);
-                if grid.contains(x, y) {
+                if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
                 } else {
                     self.focus = Focus::Terminal;
@@ -264,6 +291,18 @@ impl App {
                 self.click_field(x, y);
                 self.request_redraw();
             }
+            Target::TerminalHeader(_) if self.field_at(x, y) == Some(Focus::TerminalFind) => {
+                self.focus = Focus::TerminalFind;
+                self.click_field(x, y);
+                self.request_redraw();
+            }
+            Target::TerminalHeader(crate::app::terminal::HeaderHit::Find(part)) => {
+                self.press_terminal_find(part);
+            }
+            // 运行配置的按钮不移动焦点，不打断正在进行的编辑。
+            Target::TerminalHeader(crate::app::terminal::HeaderHit::Run(button)) => {
+                self.press_run_button(button);
+            }
             Target::TerminalHeader(hit) => {
                 use crate::app::terminal::HeaderHit;
                 self.focus = Focus::Terminal;
@@ -276,9 +315,11 @@ impl App {
                     HeaderHit::Tab(i) => self.press_terminal_tab(i, x),
                     HeaderHit::Close(i) => self.close_terminal_tab(i),
                     HeaderHit::New => self.new_terminal_tab(),
+                    HeaderHit::ShellMenu => self.open_terminal_shell_menu(),
                     HeaderHit::Restart => self.request_terminal_restart(),
                     HeaderHit::Position => self.toggle_terminal_position(),
                     HeaderHit::Hide => self.click_terminal_button(),
+                    HeaderHit::Run(_) | HeaderHit::Find(_) => {}
                 }
             }
             // 双击分隔线恢复为左右各占一半，单击按住开始拖动。
@@ -292,6 +333,10 @@ impl App {
                     start_x: x,
                     start_left: self.layout.editor.w,
                 };
+            }
+            Target::OutlineDivider => {
+                let size = self.outline_list().h;
+                self.drag = Drag::OutlineDivider { start: y, size };
             }
             Target::TerminalDivider => {
                 // 拖动分隔条时取消最大化，从当前大小开始拖。
@@ -311,7 +356,7 @@ impl App {
 
     /// 按下滚动条 `bar`，抓住滑块 `grab` 处开始拖；点在轨道上时滑块立即跳到鼠标处，
     /// 无需等待鼠标移动。
-    fn grab_scrollbar(&mut self, bar: Scrollbar, grab: f32) {
+    pub(super) fn grab_scrollbar(&mut self, bar: Scrollbar, grab: f32) {
         self.scroll_glide = None;
         self.drag = Drag::Scrollbar { bar, grab };
         let (x, y) = self.mouse;

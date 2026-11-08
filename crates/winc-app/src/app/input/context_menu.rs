@@ -63,6 +63,10 @@ pub enum MenuButton {
     TreeMore,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。
     TabList,
+    /// 终端面板标签栏上的运行配置名。
+    RunConfigs,
+    /// 终端面板标签栏上「+」右边选 shell 的按钮。
+    TerminalShells,
     /// 状态栏路径中的第几段（从 0 起）。
     Crumb(usize),
     /// 状态栏右侧的缩进、行尾等项。
@@ -101,11 +105,19 @@ pub enum MenuCommand {
     RevealInTree,
     /// 标签列表：切换到指定标签，参数为 `documents` 的下标。
     ShowTab(usize),
+    /// 选中第几个运行配置。
+    RunSelect(usize),
+    /// 用第几个 shell 新建终端。
+    NewTerminalShell(usize),
+    /// 打开运行配置文件。
+    RunEdit,
     /// 项目名菜单：最近列表中的目录，参数为列表下标（从 0 起）。
     OpenRecent(usize),
     /// 项目名菜单（按住 `⌥`）：在新窗口中打开最近列表中的目录。
     OpenRecentInNewWindow(usize),
     OpenFolder,
+    /// 项目菜单：打开 WSL 发行版中的目录。
+    OpenWslFolder(usize),
     CloseFolder,
     /// 提交视图「⋯」：新建工作树（输入新分支的名字）。
     NewWorktree,
@@ -142,7 +154,20 @@ pub enum MenuCommand {
     /// 设置中「空白符」菜单的一项，参数为
     /// [`RenderWhitespace::ALL`](winc_config::RenderWhitespace::ALL) 中的序号（从 0 起）。
     Whitespace(usize),
-    /// 设置中字体菜单的「系统默认」。
+    /// 设置中「默认 Shell」菜单的一项：`None` 为系统默认，`Some(i)` 为检测到的第 `i` 个 shell
+    /// （从 0 起）。
+    DefaultShell(Option<usize>),
+    /// 设置中「默认 Shell」菜单的「自定义命令…」，进入输入框。
+    DefaultShellCustom,
+    /// 设置中「界面缩放」菜单的一项，参数为 [`ZOOM_STEPS`](crate::app::settings::ZOOM_STEPS)
+    /// 中的序号（从 0 起）。
+    Zoom(usize),
+    /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
+    TerminalPosition(bool),
+    /// 设置中「Meta 键」菜单的一项，参数为
+    /// [`OptionAsMeta::ALL`](winc_config::OptionAsMeta::ALL) 中的序号（从 0 起）。
+    OptionAsMeta(usize),
+    /// 设置中字体菜单的「系统默认」（终端字体为「跟随编辑器」）。
     FontDefault,
     /// 设置中字体菜单的一项，参数为 [`winc_render::installed_fonts`] 中的序号（从 0 起）。
     Font(usize),
@@ -182,10 +207,14 @@ pub enum MenuCommand {
     GitFetch,
     /// Git：拉取。
     GitPull,
+    /// 拉取并把本地提交变基到上游（`pull --rebase`）。
+    GitPullRebase,
+    /// 添加远程仓库。
+    GitAddRemote,
+    /// 对第几个远程仓库做的事。
+    GitRemote(crate::app::git::branch::RemoteOp, usize),
     /// Git：推送当前分支。
     GitPush,
-    /// Git：新建分支（从当前分支）。
-    GitNewBranch,
     /// Git：继续停下来的合并、变基……（合并是打开提交视图去完成）。
     GitContinue,
     /// 菜单项「Git：中止停下来的合并、变基……」。
@@ -208,12 +237,6 @@ pub enum MenuCommand {
     FileHistory,
     /// 日志的分支筛选：0 是全部分支，`i + 1` 是分支列表里第 `i` 个分支。
     LogBranch(usize),
-    /// 状态栏的分支菜单：切换到弹出菜单时分支列表里的第几个分支。
-    StatusBranch(usize),
-    /// 状态栏的分支菜单：和上游同步。
-    StatusSync,
-    /// 状态栏的分支菜单：新建分支。
-    StatusNewBranch,
     /// 状态栏的位置菜单：切换到第几个位置。
     StatusPlace(usize),
     /// 新建工作树的起点：0 是当前分支，`i + 1` 是分支列表里第 `i` 个分支。
@@ -238,6 +261,12 @@ pub enum MenuCommand {
     LogResetHard,
     /// 日志里的提交：在这里打一个标签（输入名字）。
     LogNewTag,
+    /// 从这个提交开始交互式变基。
+    LogInteractiveRebase,
+    /// 交互式变基列表一行的处理方式。
+    RebaseAction(winc_editor::git::RebaseAction),
+    /// 对提交上第几个标签做的事。
+    LogTag(crate::app::git::branch::TagOp, usize),
     /// 日志里的提交：复制完整的提交号。
     LogCopyOid,
     /// 日志里的提交：复制前 7 位提交号。
@@ -250,21 +279,22 @@ pub enum MenuCommand {
     GitStash,
     /// 提交视图「⋯」：对第几条储藏做的事。
     GitStashOp(crate::app::git::branch::StashOp, usize),
-    /// 提交视图的「⋯」：重新读取仓库状态。
-    CommitRefresh,
+    /// 提交视图的「⋯」：在按目录排成树和平铺之间切换（排成树时打勾）。
+    CommitTree,
     /// 提交视图的「⋯」：展开所有组和目录。
     CommitExpandAll,
     /// 提交视图的「⋯」：收起所有组。
     CommitCollapseAll,
-    /// 提交视图的「⋯」：回滚勾上的文件（先确认）。
-    CommitRollback,
+    /// 提交视图的「⋯」：在只读标签中打开 Git 操作的输出。
+    GitShowOutput,
     /// 撤销上一次提交（先确认）。
     CommitUndo,
     /// 复制上一次提交的提交号。
     CommitCopyOid,
     /// 「提交 ⌄」：提交以后继续推送。
     CommitPush,
-    /// 「提交 ⌄」：开关「修改上一次提交」（开着时打勾）。
+    /// 「提交 ⌄」（卡片太窄、底行放不下勾选框时）和「上一次提交」的「⋯」：开关「修改上一次
+    /// 提交」（开着时打勾）。
     CommitAmend,
     /// 文件树工具栏的「⋯」：刷新目录。
     TreeRefresh,
@@ -281,6 +311,8 @@ pub enum MenuCommand {
     TerminalClear,
     /// 终端：最大化面板（最大化时打勾）。
     TerminalMaximize,
+    /// 把终端面板停靠到另一边。
+    TerminalDock,
     NewTerminal,
     /// 终端标签：改名字。
     RenameTerminal,
@@ -335,21 +367,34 @@ impl MenuCommand {
             MenuCommand::CloseSaved => t!("menu-close-saved-tabs"),
             MenuCommand::CloseAll => t!("cmd-close-all-tabs"),
             MenuCommand::RevealInTree => t!("menu-reveal-in-tree"),
+            MenuCommand::RunEdit => t!("cmd-edit-run-configurations"),
             MenuCommand::OpenRecent(_)
             | MenuCommand::ShowTab(_)
+            | MenuCommand::RunSelect(_)
+            | MenuCommand::NewTerminalShell(_)
+            | MenuCommand::DefaultShell(Some(_))
+            | MenuCommand::Zoom(_)
+            | MenuCommand::TerminalDock
             | MenuCommand::OpenRecentInNewWindow(_) => "",
+            MenuCommand::DefaultShell(None) => t!("settings-terminal-shell-default"),
+            MenuCommand::DefaultShellCustom => t!("settings-terminal-shell-custom"),
+            MenuCommand::TerminalPosition(false) => t!("settings-terminal-position-bottom"),
+            MenuCommand::TerminalPosition(true) => t!("settings-terminal-position-right"),
+            MenuCommand::OptionAsMeta(i) => winc_config::OptionAsMeta::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::option_as_meta_label(choice)),
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
             MenuCommand::LocationNewWindow => t!("git-location-new-window"),
             MenuCommand::LocationRemove => t!("git-location-remove"),
-            MenuCommand::StatusNewBranch => t!("menu-git-new-branch"),
-            MenuCommand::StatusSync => t!("menu-git-sync"),
             // 文字来自当时的分支和位置（`App::menu_label`）。
-            MenuCommand::StatusBranch(_) | MenuCommand::StatusPlace(_) => "",
+            MenuCommand::StatusPlace(_) => "",
             MenuCommand::LocationPrune => t!("git-location-prune"),
             MenuCommand::GitFetch => t!("menu-git-fetch"),
             MenuCommand::GitPull => t!("menu-git-pull"),
             MenuCommand::GitPush => t!("menu-git-push"),
-            MenuCommand::GitNewBranch => t!("git-branch-new-from"),
+            MenuCommand::GitPullRebase => t!("menu-git-pull-rebase"),
+            MenuCommand::GitAddRemote => t!("git-remote-add"),
+            MenuCommand::GitRemote(op, _) => op.label(),
             MenuCommand::GitContinue => t!("menu-git-continue"),
             MenuCommand::GitShowDiff => t!("menu-git-show-diff"),
             MenuCommand::GitOpenFile => t!("menu-git-open-file"),
@@ -365,15 +410,18 @@ impl MenuCommand {
             MenuCommand::LogResetMixed => t!("menu-log-reset-mixed"),
             MenuCommand::LogResetHard => t!("menu-log-reset-hard"),
             MenuCommand::LogNewTag => t!("menu-log-new-tag"),
+            MenuCommand::LogTag(op, _) => op.label(),
+            MenuCommand::LogInteractiveRebase => t!("menu-log-interactive-rebase"),
+            MenuCommand::RebaseAction(action) => crate::app::git::rebase::action_label(action),
             MenuCommand::LogCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
             MenuCommand::ToggleBlame => t!("menu-git-blame"),
             MenuCommand::GitStash => t!("menu-git-stash"),
-            MenuCommand::CommitRefresh => t!("menu-commit-refresh"),
+            MenuCommand::CommitTree => t!("menu-commit-tree"),
             MenuCommand::CommitExpandAll => t!("menu-commit-expand-all"),
             MenuCommand::CommitCollapseAll => t!("menu-commit-collapse-all"),
-            MenuCommand::CommitRollback => t!("menu-commit-roll-back"),
+            MenuCommand::GitShowOutput => t!("menu-git-show-output"),
             MenuCommand::CommitUndo => t!("menu-commit-undo"),
             MenuCommand::CommitCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::CommitPush => t!("menu-commit-and-push"),
@@ -431,6 +479,9 @@ impl MenuCommand {
                 .get(i)
                 .map_or("", |family| family.name.as_str()),
             MenuCommand::OpenFolder => t!("cmd-open-folder"),
+            MenuCommand::OpenWslFolder(i) => crate::system::wsl_distributions()
+                .get(i)
+                .map_or("", String::as_str),
             MenuCommand::CloseFolder => t!("cmd-close-folder"),
             MenuCommand::Cut => t!("cmd-cut"),
             MenuCommand::Copy => t!("cmd-copy"),
@@ -490,6 +541,7 @@ impl MenuCommand {
             MenuCommand::TerminalFind => Action::FindInTerminal,
             MenuCommand::TerminalClear => Action::ClearTerminal,
             MenuCommand::TerminalMaximize => Action::MaximizeTerminal,
+            MenuCommand::TerminalDock => Action::ToggleTerminalPosition,
             MenuCommand::NewTerminal => Action::NewTerminal,
             MenuCommand::RenameTerminal => Action::RenameTerminal,
             MenuCommand::CloseTerminal => Action::CloseTerminal,
@@ -553,6 +605,14 @@ pub enum MenuTarget {
     Locale,
     /// 设置的编辑器页中的「空白符」。
     Whitespace,
+    /// 设置的外观页中的「界面缩放」。
+    Zoom,
+    /// 设置的终端页中的「默认 Shell」。
+    DefaultShell,
+    /// 设置的终端页中的「位置」。
+    TerminalPosition,
+    /// 设置的终端页中的「Meta 键」。
+    OptionAsMeta,
     /// 设置中字体一行的下拉按钮。
     Font(Setting),
     /// 设置的格式化页中一种语言的格式化（修复）工具。
@@ -579,14 +639,22 @@ pub enum MenuTarget {
     TreeTools,
     /// 标签栏最右端「⌄」弹出的标签列表。
     TabList,
+    /// 终端面板标签栏上的运行配置列表。
+    RunConfigs,
+    /// 终端面板标签栏上可选的 shell。
+    TerminalShells,
     /// 提交视图改动列表里的一个文件。
     CommitFile(PathBuf),
     /// 日志标题栏的「分支」下拉。
     LogBranch,
     /// 新建工作树对话框的「基于」。
     FormBase,
-    /// 状态栏的分支菜单。
-    StatusBranches,
+    /// 交互式变基列表第几行的处理方式。
+    RebaseAction(usize),
+    /// 提交视图里第几条储藏的菜单：应用、应用并删除、删除。
+    StashRow(usize),
+    /// 提交视图里储藏太多时「还有 N 条」弹出的菜单：每条储藏一个子菜单。
+    StashList,
     /// 状态栏的位置菜单：弹出时的各个位置，菜单项按下标对应。
     StatusPlaces(Vec<Place>),
     /// 日志标题栏的「作者」下拉。

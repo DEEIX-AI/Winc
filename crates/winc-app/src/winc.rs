@@ -113,9 +113,10 @@ pub enum UpdateState {
     Found(String),
     /// 上次检查失败（各通道都连不上、appcast 签名不对……）。
     Failed,
-    /// 正在下载找到的新版本（版本号）；macOS 上这一段交给 Sparkle，由它显示进度。
+    /// 正在下载找到的新版本（版本号，已下载的百分比 0 到 100）；macOS 上这一段交给 Sparkle，由它
+    /// 显示进度。
     #[cfg_attr(target_os = "macos", allow(dead_code))]
-    Downloading(String),
+    Downloading(String, u8),
     /// 新版本（版本号）已经装好（Windows 上为已下载，退出时安装），重新启动后生效。
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     Ready(String),
@@ -273,8 +274,8 @@ impl Winc {
         let Some(lock) = AppLock::acquire() else {
             return;
         };
-        let listener = Listener::bind_app(move |targets, answer| {
-            let event = UserEvent::Launched(targets, answer);
+        let listener = Listener::bind_app(move |launch, answer| {
+            let event = UserEvent::Launched(launch, answer);
             let _ = proxy.send_event(Envelope {
                 to: Recipient::Active,
                 event,
@@ -548,7 +549,7 @@ impl Winc {
             }
             for request in requests {
                 match request {
-                    Request::NewWindow(folder) => self.new_window(event_loop, folder),
+                    Request::NewWindow(folder) => self.new_window(event_loop, folder, None),
                     Request::Focus(key) => {
                         if let Some(app) = self.by_key(key) {
                             app.raise();
@@ -568,7 +569,7 @@ impl Winc {
     fn launched(
         &mut self,
         event_loop: &ActiveEventLoop,
-        targets: Vec<Target>,
+        launch: crate::instance::Launch,
         answer: std::sync::mpsc::Sender<bool>,
     ) {
         // 答复发不出去：新进程等不及，已经自己打开了。
@@ -576,7 +577,7 @@ impl Winc {
             let _ = answer.send(false);
             return;
         }
-        self.open_targets(event_loop, &targets);
+        self.open_targets(event_loop, &launch.targets, launch.token);
     }
 
     /// 系统交来了要打开的 `paths`（拖到程序坞的图标上、文件管理器里的「打开方式」），和之后启动的
@@ -592,15 +593,22 @@ impl Winc {
             line: None,
             col: None,
         });
-        self.open_targets(event_loop, &targets.collect::<Vec<_>>());
+        self.open_targets(event_loop, &targets.collect::<Vec<_>>(), None);
     }
 
     /// 把 `targets` 开在合适的窗口里（窗口见 [`Self::window_for`]），并把它切到前台。
-    fn open_targets(&mut self, event_loop: &ActiveEventLoop, targets: &[Target]) {
+    ///
+    /// `token` 是新启动的 winc 交来的激活令牌（见 [`App::set_activation`]）。
+    fn open_targets(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        targets: &[Target],
+        mut token: Option<String>,
+    ) {
         let key = match self.window_for(targets) {
             Ok(key) => key,
             Err(folder) => {
-                self.new_window(event_loop, folder);
+                self.new_window(event_loop, folder, token.take());
                 let Some(key) = self.active_key() else {
                     return;
                 };
@@ -609,6 +617,7 @@ impl Winc {
         };
         self.active = Some(key);
         if let Some(app) = self.by_key(key) {
+            app.set_activation(token);
             app.open_files(targets);
         }
     }
@@ -660,13 +669,20 @@ impl Winc {
     /// 新建一个窗口；带 `folder` 时在里面打开它。
     ///
     /// 目录已经开在某个窗口里时切到那个窗口；关着的窗口（macOS 上关掉了最后一个窗口）先拿来用。
-    fn new_window(&mut self, event_loop: &ActiveEventLoop, folder: Option<PathBuf>) {
+    /// `token` 同 [`Self::open_targets`]。
+    fn new_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        folder: Option<PathBuf>,
+        token: Option<String>,
+    ) {
         let folder = folder.map(|f| winc_config::files::canonicalize(&f).unwrap_or(f));
         if let Some(key) = folder
             .as_ref()
             .and_then(|f| self.shared.window_with(f, None))
         {
             if let Some(app) = self.by_key(key) {
+                app.set_activation(token);
                 app.raise();
             }
             return;
@@ -688,6 +704,7 @@ impl Winc {
                 if let Some(folder) = &folder {
                     app.open_folder_now(folder);
                 }
+                app.set_activation(token);
                 app.raise();
             }
             self.active = Some(key);
@@ -726,6 +743,7 @@ impl Winc {
         if let Some(folder) = &folder {
             app.open_folder_now(folder);
         }
+        app.set_activation(token);
         app.resumed(event_loop);
         self.refresh_shared();
     }
@@ -769,7 +787,7 @@ impl ApplicationHandler<Envelope> for Winc {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, envelope: Envelope) {
         match envelope.event {
-            UserEvent::Launched(targets, answer) => self.launched(event_loop, targets, answer),
+            UserEvent::Launched(launch, answer) => self.launched(event_loop, launch, answer),
             UserEvent::Opened(paths) => self.opened(event_loop, &paths),
             UserEvent::UpdateFound(version) => {
                 *self.shared.update.borrow_mut() = version;

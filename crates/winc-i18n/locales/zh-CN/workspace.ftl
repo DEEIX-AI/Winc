@@ -24,6 +24,14 @@ workspace-tree-tool-collapse-all = 折叠所有目录
 workspace-tree-tool-locate = 定位当前文件
 workspace-sidebar-files = 文件
 workspace-sidebar-search = 搜索
+workspace-outline-title = 大纲
+workspace-outline-tool-expand-all = 全部展开
+workspace-outline-tool-collapse-all = 全部折叠
+workspace-outline-off = 大纲已在设置中关闭
+workspace-outline-no-file = 打开文件后在此显示其大纲
+workspace-outline-unsupported = 当前标签没有大纲
+workspace-outline-too-large = 文件过大，不显示大纲
+workspace-outline-no-symbols = 文件中没有可列出的符号
 workspace-sidebar-commit = 提交
 workspace-sidebar-no-folder = 未打开目录
 workspace-tree-open-hint-key = { $key } 打开文件或目录
@@ -133,10 +141,13 @@ workspace-goto-placeholder = 行:列
 workspace-goto-total = 共 { $count } 行
 workspace-stash-title = 储藏更改
 workspace-stash-placeholder = 说明（可选）
-workspace-stash-hint = 含未跟踪的文件 · ↩ 储藏
+workspace-stash-hint = 含未跟踪的文件 · { common-key-enter } 储藏
+workspace-rename-branch-title = 重命名分支
+workspace-rename-branch-placeholder = 分支名称
+workspace-rename-branch-hint = 当前为 { $name } · { common-key-enter } 重命名
 workspace-tag-title = 新建标签
 workspace-tag-placeholder = 标签名称
-workspace-tag-hint = 基于 { $commit } · ↩ 创建
+workspace-tag-hint = 基于 { $commit } · { common-key-enter } 创建
 
 ## 快速打开
 
@@ -157,23 +168,29 @@ workspace-picker-recently-used = 最近使用
 workspace-picker-symbols-too-large = 文件过大，无法列出符号
 workspace-picker-no-symbols = 此文件中未找到符号
 workspace-picker-no-matching-symbols = 没有匹配的符号
+workspace-picker-folders-placeholder = 按目录名或路径查找…
+workspace-picker-folders-new-window = { $platform ->
+    [macos] ⌥↩
+   *[other] Alt+Enter
+} 在新窗口中打开
+workspace-picker-no-recent-folders = 没有最近打开的目录
+workspace-picker-no-matching-folders = 没有匹配的目录
 workspace-conflict-modified = 「{ $name }」已被其他程序修改
 
 ## 悬停提示
 
 workspace-tip-continue-rebase = 继续变基
 workspace-tip-finish-operation = 完成{ $operation }
-workspace-tip-amend = 修改上一次提交
+workspace-tip-amend = 修改上次提交
 workspace-tip-commit-to = 提交到 { $branch }
+workspace-tip-commit-push-to = 提交并推送 { $branch }
 workspace-tip-commit = 提交
 workspace-tip-open-file = 打开文件
 workspace-tip-revert-change = 回滚更改
-workspace-tip-commit-staged-only = 仅提交已暂存的部分，其余更改保留在工作区中
 workspace-tip-commit-menu = 更多提交方式
 workspace-tip-git-log = Git 日志
+workspace-tip-git-refresh = 刷新
 workspace-tip-more-actions = 更多操作
-workspace-tip-show-as-tree = 以树形显示
-workspace-tip-show-as-list = 以列表显示
 workspace-tip-previous-conflict = 上一处冲突
 workspace-tip-next-conflict = 下一处冲突
 workspace-tip-worktree-of = 「{ $name }」的工作树 · { $path }
@@ -187,6 +204,7 @@ workspace-tip-open-diff = 在差异视图中打开
 workspace-tip-close-esc = 关闭（Esc）
 workspace-tip-revert-to-left = 回滚更改（恢复为左侧内容）
 workspace-tip-include-change = 提交时包含此更改
+workspace-tip-include-line = 提交时包含此行
 workspace-tip-expand-unchanged = 展开所有未更改的内容
 workspace-tip-collapse-unchanged = 折叠未更改的内容
 workspace-tip-close-tab = 关闭
@@ -198,9 +216,9 @@ workspace-tip-log-target-not-loaded = 目标提交尚未加载
 ## 状态栏
 
 workspace-status-spaces = 空格: { $size }
-workspace-status-update = 有可用更新：{ $version }
-workspace-status-update-downloading = 正在下载更新…
-workspace-status-update-ready = 重新启动以完成更新
+workspace-status-update = 更新
+workspace-status-update-restart = 重新启动
+workspace-status-update-retry = 重试
 workspace-status-not-shown = 未显示：{ $features }
 workspace-status-position-selected = { $position }（{ $count } 个字符）
 workspace-status-selections = { $count } 个选区
@@ -241,6 +259,7 @@ workspace-reveal-failed = 无法{ $action }：{ $error }
 workspace-terminal-app-fallback = 终端
 workspace-open-app-failed = 无法打开「{ $app }」：{ $error }
 workspace-deleted-on-disk-key = 「{ $name }」已从磁盘上删除，未自动保存；按 { $key } 重新创建
+workspace-watch-limit = 「{ $name }」中的目录过多，无法实时监视，切换回窗口时更新；可提高发行版的 fs.inotify.max_user_watches
 workspace-deleted-on-disk = 「{ $name }」已从磁盘上删除，未自动保存；重新创建
 workspace-save-as-dirty-elsewhere = 无法另存为「{ $name }」：该文件在另一个标签页中有未保存的修改
 workspace-save-conflict = 无法保存「{ $name }」：文件已被其他程序修改，请先选择要保留的版本
@@ -271,11 +290,12 @@ workspace-notice-show-output = 查看输出
 workspace-notice-install = 安装方法
 workspace-notice-open-settings = 打开设置
 workspace-format-output-title = 格式化输出
-workspace-font-missing = 无法使用配置中的字体 { $fonts }，已改用默认字体（按 ⌘, 打开设置）
+workspace-font-missing-key = 无法使用配置中的字体 { $fonts }，已改用默认字体（按 { $key } 打开设置）
+workspace-font-missing = 无法使用配置中的字体 { $fonts }，已改用默认字体
 workspace-font-missing-item = { $key }「{ $name }」
 workspace-font-unusable = 无法使用此字体，请选择其他字体
 workspace-stdin-title = 标准输入
 workspace-stdin-read-failed = 读取标准输入时出错：{ $error }
 workspace-stdin-truncated = 只读取了标准输入的前 { $size } MB
-workspace-backup-locked = 此目录已在另一个 winc 窗口中打开，本窗口未保存的修改将不会自动备份
+workspace-backup-locked = 此目录已在另一个 Winc 窗口中打开，本窗口未保存的修改将不会自动备份
 workspace-backup-failed = 无法备份未保存的修改：{ $error }

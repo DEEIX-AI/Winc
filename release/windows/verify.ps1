@@ -7,6 +7,11 @@ $bundle = "$root/target/$Target/release/bundle"
 $work = Join-Path $env:RUNNER_TEMP 'winc-installer-verification'
 New-Item -ItemType Directory -Force $work | Out-Null
 $update = "$root/crates/winc-app/src/updates/installer/update.ps1"
+# The NSIS installer changes the user's Path and the MSI changes the machine's.
+function Get-CommandPath([string]$Kind) {
+    $scope = if ($Kind -eq 'nsis') { 'User' } else { 'Machine' }
+    @([Environment]::GetEnvironmentVariable('Path', $scope) -split ';' | ForEach-Object { $_.TrimEnd('\') })
+}
 # File associations and the file manager take the icon from the executable itself.
 $shell = Add-Type -Name Shell -Namespace WincVerify -PassThru -MemberDefinition '[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconEx(string file, int index, IntPtr large, IntPtr small, uint count);'
 if ($shell::ExtractIconEx("$root/target/$Target/release/winc.exe", -1, [IntPtr]::Zero, [IntPtr]::Zero, 0) -lt 1) { throw 'winc.exe has no embedded icon' }
@@ -16,6 +21,19 @@ foreach ($kind in @('nsis', 'msi')) {
     # msiexec cannot open a package path written with forward slashes (error 1619).
     $setup = (Resolve-Path "$bundle/$kind/Winc-$version-windows-x64$suffix").Path
     $classes = if ($kind -eq 'nsis') { 'HKCU:\Software\Classes' } else { 'HKLM:\Software\Classes' }
+    # An earlier NSIS version listed winc in each type's OpenWithProgids; installing must remove it.
+    # `New-Item -Force` also creates missing parent keys, but it would recreate an existing key and
+    # drop other programs' entries, so it runs only when the key is missing.
+    # The Start menu and Windows' app lists show the name Winc. The NSIS shortcut goes in the user's
+    # Start menu, the MSI one in a Winc folder of the machine's; an existing lowercase shortcut must
+    # not keep its name.
+    $menu = if ($kind -eq 'nsis') { [Environment]::GetFolderPath('Programs') } else { Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Winc' }
+    if ($kind -eq 'nsis') {
+        Set-Content -LiteralPath (Join-Path $menu 'winc.lnk') -Value ''
+        $listing = "$classes\.json\OpenWithProgids"
+        if (-not (Test-Path -LiteralPath $listing)) { New-Item -Force -Path $listing | Out-Null }
+        New-ItemProperty -Force -LiteralPath $listing -Name 'winc.JSON' -Value '' | Out-Null
+    }
     try {
         if ($kind -eq 'nsis') {
             $process = Start-Process -FilePath $setup -ArgumentList "/S /D=$directory" -Wait -PassThru
@@ -23,13 +41,29 @@ foreach ($kind in @('nsis', 'msi')) {
             $process = Start-Process msiexec.exe -ArgumentList "/i `"$setup`" /qn /norestart INSTALLFOLDER=`"$directory`"" -Wait -PassThru
         }
         if ($process.ExitCode -notin @(0, 1641, 3010)) { throw "$kind installation failed: $($process.ExitCode)" }
-        foreach ($file in @('winc.exe', 'winc-pty.exe', 'winc-installation')) {
+        foreach ($file in @('winc.exe', 'winc-pty.exe', 'conpty.dll', 'OpenConsole.exe', 'winc-installation', 'winc-watch', 'bin/winc', 'bin/winc.cmd')) {
             if (-not (Test-Path "$directory/$file")) { throw "${kind}: missing $file" }
         }
+        if ((Get-Content "$directory/bin/winc" -Raw) -match "`r") { throw "${kind}: bin/winc has CRLF line endings" }
+        if ((Get-CommandPath $kind) -notcontains "$directory\bin") { throw "${kind}: bin is not on the Path" }
         if ((Get-Content "$directory/winc-installation" -Raw).Trim() -ne $kind) { throw 'incorrect installation marker' }
         $command = (Get-ItemProperty -LiteralPath "$classes\winc.JSON\shell\open\command").'(default)'
         if ($command -ne "`"$directory\winc.exe`" `"%1`"") { throw "${kind}: wrong open command: $command" }
-        if ($null -eq (Get-ItemProperty -LiteralPath "$classes\.json\OpenWithProgids").'winc.JSON') { throw "${kind}: json is not registered" }
+        if ($null -eq (Get-ItemProperty -LiteralPath "$classes\Applications\winc.exe\SupportedTypes").'.json') { throw "${kind}: json is not a supported type" }
+        if ((Get-ItemProperty -LiteralPath "$classes\Applications\winc.exe").FriendlyAppName -cne 'Winc') { throw "${kind}: the application is not named Winc" }
+        $link = Get-ChildItem -LiteralPath $menu -Filter 'winc.lnk'
+        if (@($link).Count -ne 1 -or $link.Name -cne 'Winc.lnk') { throw "${kind}: the Start menu shortcut is not named Winc" }
+        if ($kind -eq 'msi' -and (Get-Item -LiteralPath $menu).Name -cne 'Winc') { throw 'msi: the Start menu folder is not named Winc' }
+        if ($kind -eq 'nsis' -and (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\winc').DisplayName -cne 'Winc') { throw 'nsis: the installed app is not listed as Winc' }
+        # A handler listed under a type makes Windows ask which program to use, and for types it runs
+        # on double-click (BAT, CMD) the question replaces running the script.
+        foreach ($type in @('json', 'txt', 'bat', 'cmd')) {
+            $listed = Get-ItemProperty -LiteralPath "$classes\.$type\OpenWithProgids" -ErrorAction SilentlyContinue
+            if ($null -ne $listed -and $null -ne $listed."winc.$type") { throw "${kind}: winc is listed under .$type" }
+        }
+        foreach ($type in @('bat', 'cmd')) {
+            if (Test-Path -LiteralPath "$classes\winc.$type") { throw "${kind}: $type must not be registered" }
+        }
         # A short-lived parent exercises the updater's wait before reinstalling.
         $parent = Start-Process powershell.exe -ArgumentList '-NoProfile -Command "Start-Sleep -Seconds 2"' -PassThru -WindowStyle Hidden
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $update -ParentId $parent.Id -Setup $setup -Executable "$directory/winc.exe" -Installer $kind -Relaunch 0
@@ -46,7 +80,13 @@ foreach ($kind in @('nsis', 'msi')) {
             $uninstall = Start-Process msiexec.exe -ArgumentList "/x `"$setup`" /qn /norestart" -Wait -PassThru
         }
     }
+    foreach ($file in @('conpty.dll', 'OpenConsole.exe')) {
+        if (Test-Path "$directory/$file") { throw "${kind}: uninstall left $file behind" }
+    }
+    if ((Get-CommandPath $kind) -contains "$directory\bin") { throw "${kind}: uninstall left bin on the Path" }
     if (Test-Path -LiteralPath "$classes\winc.JSON") { throw "${kind}: uninstall left the file type behind" }
+    if (Test-Path -LiteralPath "$classes\Applications\winc.exe") { throw "${kind}: uninstall left the application behind" }
+    if (Test-Path -LiteralPath (Join-Path $menu 'Winc.lnk')) { throw "${kind}: uninstall left the Start menu shortcut behind" }
 }
 Expand-Archive "$bundle/portable/Winc-$version-windows-x64-portable.zip" "$work/portable" -Force
-if ((Test-Path "$work/portable/winc-installation") -or -not (Test-Path "$work/portable/winc-pty.exe")) { throw 'invalid portable layout' }
+if ((Test-Path "$work/portable/winc-installation") -or -not (Test-Path "$work/portable/winc-pty.exe") -or -not (Test-Path "$work/portable/conpty.dll") -or -not (Test-Path "$work/portable/OpenConsole.exe") -or -not (Test-Path "$work/portable/bin/winc") -or -not (Test-Path "$work/portable/winc-watch") -or -not (Test-Path "$work/portable/data/README.txt")) { throw 'invalid portable layout' }

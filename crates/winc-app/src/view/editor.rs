@@ -63,8 +63,9 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
     app.log.hits.clear();
     app.sticky.clear();
     app.folded_hits.clear();
-    // Markdown 预览绘制时再填充；不显示时若仍保留，滚轮和点击会落到它上面。
+    // Markdown、PDF 预览绘制时再填充；不显示时若仍保留，滚轮和点击会落到它上面。
     app.markdown.area = Rect::default();
+    app.pdf.area = Rect::default();
     app.markdown.links.clear();
 
     let Some(index) = app.editor.active else {
@@ -101,6 +102,44 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
             return;
         }
         None => {}
+    }
+    // docx：显示转换成 Markdown 后排版的阅读视图；读取或转换失败时说明原因。
+    if app.editor.documents[index].unsupported == Some(Unsupported::Docx) {
+        match app.markdown.failed.clone() {
+            Some(reason) => {
+                use PlaceholderAction::*;
+                let message = t!("editor-preview-failed", reason = reason);
+                let actions = [
+                    (Retry, t!("editor-retry")),
+                    (OpenWithDefaultApp, t!("editor-open-with-default-app")),
+                ];
+                draw_placeholder(app, frame, message, &actions);
+            }
+            None => {
+                let area = app.layout.editor;
+                super::preview::markdown::draw(app, frame, area);
+            }
+        }
+        return;
+    }
+    // PDF：逐页显示；打开失败时说明原因。
+    if app.editor.documents[index].unsupported == Some(Unsupported::Pdf) {
+        match app.pdf.pages.clone() {
+            Some(Err(reason)) => {
+                use PlaceholderAction::*;
+                let message = t!("editor-preview-failed", reason = reason);
+                let actions = [
+                    (Retry, t!("editor-retry")),
+                    (OpenWithDefaultApp, t!("editor-open-with-default-app")),
+                ];
+                draw_placeholder(app, frame, message, &actions);
+            }
+            _ => {
+                let area = app.layout.editor;
+                super::preview::pdf::draw(app, frame, area);
+            }
+        }
+        return;
     }
     let doc = &app.editor.documents[index];
     if let Some(view) = doc.table.as_deref().filter(|_| !doc.shows_text()) {
@@ -166,7 +205,11 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
                 (OpenWithDefaultApp, t!("editor-open-with-default-app")),
                 (Reveal, system::reveal_label()),
             ],
-            Unsupported::Unreadable(_) | Unsupported::Image | Unsupported::Workbook => &[
+            Unsupported::Unreadable(_)
+            | Unsupported::Image
+            | Unsupported::Workbook
+            | Unsupported::Docx
+            | Unsupported::Pdf => &[
                 (Retry, t!("editor-retry")),
                 (Reveal, system::reveal_label()),
             ],

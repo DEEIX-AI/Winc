@@ -148,6 +148,8 @@ impl App {
             MenuTarget::Tree(row.map(|i| segment.unwrap_or_else(|| ws.rows()[i].path.clone())))
         } else if let Some((path, m)) = self.search_context_target(x, y) {
             MenuTarget::SearchResult(path, m)
+        } else if let Some(i) = self.stash_context_target(x, y) {
+            MenuTarget::StashRow(i)
         } else if let Some(path) = self.commit_context_target(x, y) {
             MenuTarget::CommitFile(path)
         } else if let Some((i, path)) = self.log_file_context_target(x, y) {
@@ -184,6 +186,19 @@ impl App {
         self.global.select_row(index);
         self.focus = Focus::Results;
         self.global.selected.clone()
+    }
+
+    /// 右键点在提交视图里的一条储藏上：返回它是第几条储藏。
+    fn stash_context_target(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.commit_shown() || self.commit.hits_generation != self.git.generation {
+            return None;
+        }
+        match hit(&self.commit_hits, x, y)? {
+            CommitTarget::Stash(i) | CommitTarget::StashApply(i) | CommitTarget::StashMenu(i) => {
+                Some(i)
+            }
+            _ => None,
+        }
     }
 
     /// 右键点在提交视图改动列表里的一个文件上：选中它（不打开预览），返回它的路径。
@@ -311,6 +326,10 @@ impl App {
             MenuTarget::SkipOnSave => skip_menu(&self.settings.languages.format),
             MenuTarget::Locale => locale_menu(),
             MenuTarget::Whitespace => whitespace_menu(),
+            MenuTarget::DefaultShell => default_shell_menu(self.terminal.shells.len()),
+            MenuTarget::Zoom => zoom_menu(),
+            MenuTarget::TerminalPosition => terminal_position_menu(),
+            MenuTarget::OptionAsMeta => option_as_meta_menu(),
             &MenuTarget::Font(setting) => font_menu(setting),
             &MenuTarget::Tool(task, id) => {
                 let row = self.settings.tool_row(tool_setting(task, id));
@@ -326,6 +345,7 @@ impl App {
                     self.state.recent.len(),
                     current,
                     root.is_some(),
+                    crate::system::wsl_distributions().len(),
                 ));
                 menu
             }
@@ -406,15 +426,27 @@ impl App {
                 ]);
                 menu
             }
-            MenuTarget::Markdown => vec![
-                MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
-                MenuEntry::Item(MenuCommand::SelectAll, true),
-                MenuEntry::Separator,
-                MenuEntry::Item(
-                    MenuCommand::RevealSource,
-                    self.markdown.menu_source.is_some(),
-                ),
-            ],
+            MenuTarget::Markdown => {
+                let mut menu = vec![
+                    MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
+                    MenuEntry::Item(MenuCommand::SelectAll, true),
+                ];
+                // docx 的阅读视图由转换得到，没有可以显示的源代码。
+                let has_source = self
+                    .editor
+                    .active()
+                    .is_some_and(|d| d.unsupported.is_none());
+                if has_source {
+                    menu.extend([
+                        MenuEntry::Separator,
+                        MenuEntry::Item(
+                            MenuCommand::RevealSource,
+                            self.markdown.menu_source.is_some(),
+                        ),
+                    ]);
+                }
+                menu
+            }
             MenuTarget::TerminalTab(_) => vec![
                 MenuEntry::Item(MenuCommand::RenameTerminal, true),
                 MenuEntry::Separator,
@@ -508,43 +540,50 @@ impl App {
                 search_result_menu(m.is_none(), self.global.replace_open)
             }
             MenuTarget::CommitMore => self.commit_more_menu(),
+            MenuTarget::StashRow(i) => {
+                crate::app::git::branch::stash_ops(*i, self.branch.running.is_some())
+            }
+            MenuTarget::StashList => {
+                let busy = self.branch.running.is_some();
+                crate::app::git::branch::stash_menu(&self.git.stashes, busy)
+            }
             MenuTarget::CommitButton => self.commit_button_menu(),
             MenuTarget::LastCommit => self.last_commit_menu(),
             MenuTarget::TreeTools => self.tree_tools_menu(),
             MenuTarget::TabList => (0..self.editor.documents.len())
                 .map(|i| MenuEntry::Item(MenuCommand::ShowTab(i), true))
                 .collect(),
+            MenuTarget::RunConfigs => (0..self.run.list.len())
+                .map(|i| MenuEntry::Item(MenuCommand::RunSelect(i), true))
+                .chain([
+                    MenuEntry::Separator,
+                    MenuEntry::Item(MenuCommand::RunEdit, true),
+                ])
+                .collect(),
+            MenuTarget::TerminalShells => (0..self.terminal_shell_list().len())
+                .map(|i| MenuEntry::Item(MenuCommand::NewTerminalShell(i), true))
+                .collect(),
             MenuTarget::LogBranch => log_branch_menu(&self.git.branches),
-            MenuTarget::StatusBranches => {
-                let idle = self.branch.running.is_none();
-                let differs = matches!(
-                    self.git_sync_state(),
-                    SyncState::Push(_) | SyncState::Pull(_) | SyncState::Both { .. }
-                );
-                let on_branch = (self.git.status.as_ref())
-                    .is_some_and(|s| matches!(s.head, Some(winc_editor::git::Head::Branch(_))));
-                let usable = [
-                    idle && differs,
-                    idle && !self.git.remotes.is_empty(),
-                    idle && self.has_upstream(),
-                    // 不在分支上时没有东西可以推送。
-                    idle && on_branch && !self.git.remotes.is_empty(),
-                ];
-                status_branch_menu(&self.git.branches, &self.git.stale_branches(), usable)
-            }
             MenuTarget::StatusPlaces(_) => self.location_menu(),
+            MenuTarget::RebaseAction(_) => (crate::app::git::rebase::REBASE_ACTIONS.iter())
+                .map(|&action| MenuEntry::Item(MenuCommand::RebaseAction(action), true))
+                .collect(),
             MenuTarget::FormBase => form_base_menu(&self.git.branches),
             MenuTarget::LogFile(_, path) => {
                 log_file_menu(path.exists(), self.relative_path(path).is_some())
             }
-            MenuTarget::LogCommit(_) => {
+            MenuTarget::LogCommit(oid) => {
+                let commit = self.log_commit(oid);
+                let tags: Vec<&str> = (commit.iter().flat_map(|c| &c.refs))
+                    .filter_map(crate::app::git::log::menus::tag_name)
+                    .collect();
                 let busy = self.branch.running.is_some()
                     || self
                         .git
                         .status
                         .as_ref()
                         .is_some_and(|s| s.operation.is_some());
-                log_commit_menu(!busy, &self.current_branch_label())
+                log_commit_menu(!busy, &self.current_branch_label(), &tags)
             }
             MenuTarget::LogAuthor => {
                 let mut menu = vec![
@@ -610,12 +649,18 @@ impl App {
                 | MenuTarget::TabList
                 | MenuTarget::Locale
                 | MenuTarget::Whitespace
+                | MenuTarget::Zoom
+                | MenuTarget::TerminalPosition
+                | MenuTarget::OptionAsMeta
                 | MenuTarget::Font(_)
         );
-        // 设置中语言、字体的菜单不窄于弹出它的控件。
+        // 设置中语言、字体等选项的菜单不窄于弹出它的控件。
         let control = match target {
             MenuTarget::Locale => Some(Setting::Language),
             MenuTarget::Whitespace => Some(Setting::RenderWhitespace),
+            MenuTarget::Zoom => Some(Setting::Zoom),
+            MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
+            MenuTarget::OptionAsMeta => Some(Setting::TerminalOptionAsMeta),
             MenuTarget::Font(setting) => Some(setting),
             _ => None,
         };
@@ -628,9 +673,10 @@ impl App {
             MenuTarget::BranchOps(_) | MenuTarget::CommitMore => {
                 (self.git.branches.clone(), self.git.stashes.clone())
             }
-            MenuTarget::LogBranch | MenuTarget::FormBase | MenuTarget::StatusBranches => {
-                (self.git.branches.clone(), Vec::new())
+            MenuTarget::StashRow(_) | MenuTarget::StashList => {
+                (Vec::new(), self.git.stashes.clone())
             }
+            MenuTarget::LogBranch | MenuTarget::FormBase => (self.git.branches.clone(), Vec::new()),
             _ => Default::default(),
         };
         self.context_menu = Some(ContextMenu {
@@ -668,12 +714,14 @@ impl App {
                 .iter()
                 .map(|p| p.as_ref().map(Prepared::item))
                 .collect();
-            let at = (f64::from(at.0), f64::from(at.1));
+            // 界面的逻辑像素乘以界面缩放倍数得到 `AppKit` 的点。
+            let zoom = f64::from(self.zoom());
+            let at = (f64::from(at.0) * zoom, f64::from(at.1) * zoom);
             let place = crate::macos::MenuPlace {
                 at,
                 at_checked,
                 right_aligned,
-                min_width: f64::from(min_width),
+                min_width: f64::from(min_width) * zoom,
             };
             crate::macos::popup_menu(&window, &items, place);
         }
@@ -731,10 +779,79 @@ impl App {
     }
 
     /// 返回命令 `command` 的菜单项文字。
-    pub(in crate::app) fn menu_label(&self, command: MenuCommand) -> MenuLabel {
+    pub(crate) fn menu_label(&self, command: MenuCommand) -> MenuLabel {
         match command {
             MenuCommand::OpenRecent(i) => self.recent_label(i),
             MenuCommand::ShowTab(i) => self.tab_list_label(i),
+            MenuCommand::RunSelect(i) => {
+                let config = self.run.list.get(i);
+                // 名字就是命令时不重复显示。
+                let subtitle = config.and_then(|c| {
+                    if self.config_running(c) {
+                        Some(t!(
+                            "terminal-run-menu-running",
+                            command = c.command.as_str()
+                        ))
+                    } else {
+                        (c.command != c.name).then(|| c.command.clone())
+                    }
+                });
+                MenuLabel {
+                    title: config.map(|c| c.name.clone()).unwrap_or_default(),
+                    subtitle,
+                    tooltip: None,
+                }
+            }
+            MenuCommand::TerminalDock => {
+                let title = if self.terminal_right() {
+                    t!("terminal-dock-bottom")
+                } else {
+                    t!("terminal-dock-right")
+                };
+                MenuLabel {
+                    title: title.to_owned(),
+                    subtitle: None,
+                    tooltip: None,
+                }
+            }
+            MenuCommand::NewTerminalShell(i) => {
+                let shell = self.terminal_shell_list().into_iter().nth(i);
+                MenuLabel {
+                    title: shell.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
+                    subtitle: shell.map(|s| s.command),
+                    tooltip: None,
+                }
+            }
+            MenuCommand::Zoom(i) => MenuLabel {
+                title: (crate::app::settings::ZOOM_STEPS.get(i))
+                    .map(|zoom| format!("{zoom}%"))
+                    .unwrap_or_default(),
+                subtitle: None,
+                tooltip: None,
+            },
+            MenuCommand::DefaultShell(Some(i)) => {
+                let shell = self.terminal.shells.get(i);
+                MenuLabel {
+                    title: shell.map(|s| s.name.clone()).unwrap_or_default(),
+                    subtitle: shell.map(|s| s.command.clone()),
+                    tooltip: None,
+                }
+            }
+            MenuCommand::FontDefault
+                if matches!(
+                    &self.context_menu,
+                    Some(ContextMenu {
+                        target: MenuTarget::Font(Setting::TerminalFont),
+                        ..
+                    })
+                ) =>
+            {
+                MenuLabel {
+                    title: t!("settings-terminal-font-default").to_owned(),
+                    subtitle: None,
+                    tooltip: None,
+                }
+            }
             MenuCommand::OpenRecentInNewWindow(i) => {
                 let label = self.recent_label(i);
                 MenuLabel {
@@ -758,18 +875,6 @@ impl App {
                     ..MenuLabel::plain(command.label())
                 }
             }
-            MenuCommand::StatusBranch(i) => {
-                let branch = self.git.branches.get(i);
-                let local = branch.filter(|b| !b.remote).map(|b| b.name.as_str());
-                let holder = local
-                    .and_then(|name| self.git.worktree_holding(name))
-                    .and_then(|i| self.git.worktrees.get(i))
-                    .map(crate::app::git::worktree::worktree_name);
-                MenuLabel {
-                    subtitle: holder,
-                    ..MenuLabel::plain(branch.map_or("", |b| b.name.as_str()))
-                }
-            }
             MenuCommand::StatusPlace(i) => self.location_menu_label(i),
             MenuCommand::LogBranch(i @ 1..) => {
                 MenuLabel::plain(self.git.branches.get(i - 1).map_or("", |b| b.name.as_str()))
@@ -786,9 +891,9 @@ impl App {
             }
             MenuCommand::GitBranch(..)
             | MenuCommand::GitFetch
-            | MenuCommand::StatusSync
             | MenuCommand::GitPush
             | MenuCommand::GitPull
+            | MenuCommand::GitPullRebase
             | MenuCommand::GitContinue
             | MenuCommand::GitAbort => self.git_label(command),
             _ => MenuLabel::plain(command.label()),
@@ -887,7 +992,6 @@ impl App {
                 Some(t!("menu-git-checkout-stale-worktree").to_owned())
             }
             (MenuCommand::GitFetch, _) => Some(t!("menu-git-fetch-desc").to_owned()),
-            (MenuCommand::StatusSync, _) => Some(t!("menu-git-sync-desc").to_owned()),
             (MenuCommand::GitContinue, _) => Some(t!("menu-git-continue-desc").to_owned()),
             (MenuCommand::GitAbort, _) => Some(t!("menu-git-abort-desc").to_owned()),
             (MenuCommand::GitPush, Some(up)) if ahead > 0 => {
@@ -899,7 +1003,9 @@ impl App {
                 Some(t!("menu-git-pull-behind", count = behind, upstream = up))
             }
             (MenuCommand::GitPull, Some(up)) => Some(t!("menu-git-pull-from", upstream = up)),
-            (MenuCommand::GitPull, None) => Some(t!("menu-git-pull-no-upstream").to_owned()),
+            (MenuCommand::GitPull | MenuCommand::GitPullRebase, None) => {
+                Some(t!("menu-git-pull-no-upstream").to_owned())
+            }
             _ => None,
         };
         MenuLabel {
@@ -981,11 +1087,18 @@ impl App {
         if let MenuCommand::ShowTab(i) = command {
             return self.editor.active == Some(i);
         }
+        if let MenuCommand::RunSelect(i) = command {
+            let current = self.run.current();
+            return current.is_some_and(|c| self.run.list.get(i) == Some(c));
+        }
         if command == MenuCommand::ToggleBlame {
             return self.editor.active().is_some_and(|d| self.blame.is_on(d.id));
         }
         if command == MenuCommand::CommitAmend {
             return self.commit.amend;
+        }
+        if command == MenuCommand::CommitTree {
+            return !self.commit.flat();
         }
         if command == MenuCommand::TerminalMaximize {
             return self.terminal.maximized;
@@ -998,9 +1111,6 @@ impl App {
             .map(|v| &v.query);
         if let MenuCommand::FormBase(i) = command {
             return self.form_base_chosen(i);
-        }
-        if let MenuCommand::StatusBranch(i) = command {
-            return self.git.branches.get(i).is_some_and(|b| b.current);
         }
         if let MenuCommand::StatusPlace(i) = command {
             return self.location_places().get(i).is_some_and(|p| p.current);
@@ -1080,6 +1190,23 @@ impl App {
                 winc_config::RenderWhitespace::ALL.get(i)
                     == Some(&self.config.render_whitespace.unwrap_or_default())
             }
+            MenuCommand::DefaultShell(i) => {
+                let configured = self.configured_shell().map(|shell| shell.command);
+                let listed = i.and_then(|i| self.terminal.shells.get(i));
+                configured == listed.map(|shell| shell.command.clone())
+            }
+            MenuCommand::DefaultShellCustom => self.configured_shell().is_some_and(|configured| {
+                (self.terminal.shells.iter()).all(|shell| shell.command != configured.command)
+            }),
+            MenuCommand::TerminalPosition(right) => self.terminal_right() == right,
+            MenuCommand::Zoom(i) => {
+                crate::app::settings::ZOOM_STEPS.get(i) == Some(&self.config.ui_zoom.unwrap_or(100))
+            }
+            MenuCommand::OptionAsMeta(i) => {
+                let current =
+                    (self.config.option_as_meta).unwrap_or(winc_config::OptionAsMeta::Left);
+                winc_config::OptionAsMeta::ALL.get(i) == Some(&current)
+            }
             MenuCommand::FontDefault | MenuCommand::Font(_) => {
                 let Some(ContextMenu {
                     target: MenuTarget::Font(setting),
@@ -1090,6 +1217,7 @@ impl App {
                 };
                 let current = match setting {
                     Setting::UiFont => &self.config.ui_font,
+                    Setting::TerminalFont => &self.config.terminal_font,
                     _ => &self.config.editor_font,
                 };
                 match command {

@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 use winc_editor::EntryKind;
 use winc_i18n::t;
-use winc_render::{Color, FontKind, Frame, Rect};
+use winc_render::{Color, Faux, FontKind, Frame, Rect};
 
 use crate::app::animation::{Card, dialog_curve, reveal};
 use crate::app::{App, DropZone, Hover, MenuButton, ScrollArea, ThumbLook};
@@ -61,7 +61,9 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
     let layout = app.layout;
     app.tree_overflow = tree_overflow(app, frame);
+    let before = app.commit.overflow.map(|o| o.row);
     app.commit.overflow = git::commit::commit_overflow(app, frame);
+    app.track_commit_actions(before);
 
     // 鼠标停在名称展开的行上并滚动文件树后，该位置对应的行可能不再展开名称；此时鼠标的位置
     // 已不在文件树范围内，需要清除悬停状态。
@@ -88,8 +90,11 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     draw_top_bar(app, frame);
     draw_sidebar_button(app, frame);
+    app.sync_merge_panes();
     draw_editor(app, frame);
     editor::draw_split(app, frame);
+    preview::markdown::draw_diagram_view(app, frame);
+    git::merge::draw_side_panes(app, frame);
     terminal::draw_terminal(app, frame);
     draw_window_controls(app, frame);
     draw_status(app, frame);
@@ -97,6 +102,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_file_drop(app, frame);
     draw_tree_overflow_closing(app, frame);
     draw_tree_overflow(app, frame);
+    git::commit::draw_commit_overflow_closing(app, frame);
     git::commit::draw_commit_overflow(app, frame);
     git::changes::draw_change_popup(app, frame);
 
@@ -541,6 +547,10 @@ fn marked_label(
 /// 有焦点时改为编辑区底色并加一圈强调色外环，出错时外环为错误色。侧栏的搜索框、提交信息框和
 /// 日志标签的筛选框共用这段绘制。输入框不加边框：多个浅色边框叠在接近白色的侧栏上会互相干扰，
 /// 只保留一层底色时层次更清楚。
+///
+/// 外环宽度为整数个物理像素（缩放倍数四舍五入，至少为 1）：输入框四边先对齐到物理像素，再向外
+/// 扩出外环。缩放倍数不是整数（系统缩放 125%、界面缩放 110% 等）时，若按逻辑像素外扩 1，四边
+/// 各自取整后宽度在 0 到 2 个物理像素之间，宽度不一致。
 fn field_box(
     app: &App,
     frame: &mut Frame<'_>,
@@ -559,8 +569,13 @@ fn field_box(
     };
     match ring {
         Some(color) => {
-            frame.rounded(rect.inset(-1.0, -1.0), color, RADIUS_ROW + 1.0);
-            frame.rounded(rect, p.editor_bg, RADIUS_ROW);
+            let scale = frame.scale();
+            let snap = |v: f32| (v * scale).round() / scale;
+            let (x, y) = (snap(rect.x), snap(rect.y));
+            let inner = Rect::new(x, y, snap(rect.right()) - x, snap(rect.bottom()) - y);
+            let ring = scale.round().max(1.0) / scale;
+            frame.rounded(inner.inset(-ring, -ring), color, RADIUS_ROW + ring);
+            frame.rounded(inner, p.editor_bg, RADIUS_ROW);
         }
         None => frame.rounded(rect, workspace::panel::over(base, p.hover), RADIUS_ROW),
     }
@@ -579,14 +594,14 @@ fn sidebar_span(app: &App) -> Rect {
 /// 至少留 16 逻辑像素。
 ///
 /// 居中参照 `span` 而非各自的列表：各视图的列表起始高度不同，按列表居中会使切换视图时说明
-/// 文字上下跳动。
+/// 文字上下跳动。返回最后一行的下沿，说明下面还要放按钮时从这里往下排。
 fn draw_empty_state(
     app: &App,
     frame: &mut Frame<'_>,
     (area, span): (Rect, Rect),
     title: &str,
     detail: Option<&str>,
-) {
+) -> f32 {
     // 每行高 22 逻辑像素：正文一行 20，两行之间留 2。
     const ROW: f32 = 22.0;
     let p = app.palette;
@@ -614,6 +629,7 @@ fn draw_empty_state(
         let x = area.x + ((area.w - w) / 2.0).max(16.0);
         label(frame, app, *size, (x, row), text, *color, area);
     }
+    top + block
 }
 
 /// 在 `rect` 内垂直居中绘制一段字号为 `size`、没有小写字母的界面文本，返回文本末尾的 x 坐标。
@@ -646,6 +662,25 @@ fn ui_text(
     clip: Rect,
 ) -> f32 {
     label(frame, app, app.fonts.ui, (x, row), text, color, clip)
+}
+
+/// 与 [`ui_text`] 相同，文字倾斜；用于预览标签的名称。
+fn ui_text_italic(
+    frame: &mut Frame<'_>,
+    app: &App,
+    x: f32,
+    row: Rect,
+    text: &str,
+    color: Color,
+    clip: Rect,
+) -> f32 {
+    let size = app.fonts.ui;
+    let baseline = ui_baseline(app, row, size);
+    let italic = Faux {
+        italic: true,
+        ..Faux::default()
+    };
+    frame.text_faux(FontKind::Ui, italic, size, x, baseline, text, color, clip)
 }
 
 /// 在 `row` 内按小字号垂直居中绘制一段界面文本，返回文本末尾的 x 坐标。
@@ -727,6 +762,7 @@ fn draw_action_button(
         (true, false, _) => (p.hover, p.text_dim),
         (true, true, false) => (p.accent_fill, p.text_on_accent),
         (true, true, true) => (p.accent_fill.alpha(0.85), p.text_on_accent),
+        (false, false, _) => (p.hover, p.text_dim),
         (false, _, false) => (p.hover, ink),
         (false, _, true) => (p.selected_inactive, ink),
     };

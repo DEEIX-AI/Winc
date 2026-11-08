@@ -59,9 +59,24 @@ Measured on macOS; results vary with hardware and system load.
 | Linux | x86_64, X11 or Wayland | AppImage, deb |
 | Windows | Windows 10 1809 or later, x86_64 | NSIS, MSI, portable ZIP |
 
+The portable ZIP keeps settings and state in the `data` folder beside `winc.exe`; delete that
+folder to keep them in the user profile instead.
+
 winc is developed and tested mainly on macOS. Download it from
 [winc.si](https://winc.si/#download); all versions are on
 [GitHub Releases](https://github.com/DEEIX-AI/Winc/releases).
+
+## Command Line
+
+```bash
+winc .                  # open the current folder
+winc file.rs:12:5       # open a file at a line and column
+winc --wait file        # wait until the tab closes, for example as the Git editor
+```
+
+The Windows installers and the Linux deb package add `winc` to `PATH`. On macOS and with the Linux AppImage, run **Shell Command: Install winc Command** from the command palette.
+
+On macOS the app is started by the system, so it does not inherit the environment variables of your shell. Use `winc --new-instance` to keep them.
 
 ## Building from Source
 

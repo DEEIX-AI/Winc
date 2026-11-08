@@ -340,6 +340,8 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     if !mac {
         t.chord(OpenFolder, Global, chord_k, c(ctrl, 'o'));
     }
+    // macOS 上 ⌃R，其他系统上 Ctrl+R。单按 ⌃ 或 Ctrl 的组合在终端里交给 shell（反向搜索历史）。
+    t.one(OpenRecent, Global, c(ctrl, 'r'));
     t.one(Save, Global, c(cmd, 's'));
     t.one(SaveAs, Global, c(cmd | shift, 's'));
     if os == Os::Windows {
@@ -394,6 +396,8 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     t.one(FocusSidebar, Global, c(cmd, '0'));
     t.one(ShowFiles, Global, c(cmd | shift, 'e'));
     t.one(ShowCommit, Global, c(ctrl | shift, 'g'));
+    // 大纲与 Git 日志（`⌘9`）同为按数字键打开的工具视图。
+    t.one(ShowOutline, Global, c(cmd, '7'));
     // 打开 Git 工具窗口（日志）的键。
     t.one(GitShowLog, Global, c(cmd, '9'));
     // ⌃` 开关终端；在终端里按也要先给它，所以是 `Everywhere`。
@@ -401,16 +405,27 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     // ⌘J 也开关底部面板。是全局的：macOS 上带 ⌘，在终端里也生效；其他系统上是
     // Ctrl+J，焦点在终端时交给 shell（Ctrl+J 是换行）。
     t.one(ToggleTerminal, Global, c(cmd, 'j'));
+    t.one(RunConfiguration, Global, key(none, F(5)));
+    t.one(StopConfiguration, Global, key(shift, F(5)));
     t.one(ClearTerminal, Terminal, c(term, 'k'));
-    t.one(ZoomIn, Global, c(cmd, '='));
-    t.one(ZoomIn, Global, c(cmd | shift, '='));
-    t.one(ZoomIn, Global, key(cmd, Numpad('+')));
-    t.one(ZoomOut, Global, c(cmd, '-'));
+    t.one(IncreaseFontSize, Global, c(cmd, '='));
+    t.one(IncreaseFontSize, Global, c(cmd | shift, '='));
+    t.one(IncreaseFontSize, Global, key(cmd, Numpad('+')));
+    t.one(DecreaseFontSize, Global, c(cmd, '-'));
     if !linux {
-        t.one(ZoomOut, Global, c(cmd | shift, '-'));
+        t.one(DecreaseFontSize, Global, c(cmd | shift, '-'));
     }
-    t.one(ZoomOut, Global, key(cmd, Numpad('-')));
-    t.one(ResetZoom, Global, key(cmd, Numpad('0')));
+    t.one(DecreaseFontSize, Global, key(cmd, Numpad('-')));
+    t.one(ResetFontSize, Global, key(cmd, Numpad('0')));
+    // 界面缩放：整个窗口放大、缩小，与调字号的键分开；焦点在终端时同样生效。
+    let zoom = match os {
+        Os::Mac => ctrl | alt,
+        Os::Windows => alt | shift,
+        Os::Linux => ctrl | alt | shift,
+    };
+    t.one(ZoomIn, Everywhere, c(zoom, '='));
+    t.one(ZoomOut, Everywhere, c(zoom, '-'));
+    t.one(ResetZoom, Everywhere, c(zoom, '0'));
 
     t.0
 }

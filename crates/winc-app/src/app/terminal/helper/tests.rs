@@ -30,7 +30,16 @@ impl App {
         let body = format!("#!/bin/sh\nexec cat > '{}'\n", log.display());
         std::fs::write(&script, body).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        self.terminal.client = Client::start(&script, || {}).ok();
+        // 别的测试线程 fork 时会短暂继承这个脚本的写入端，此时执行得到 `ExecutableFileBusy`。
+        let mut client = Client::start(&script, || {});
+        for _ in 0..100 {
+            if !matches!(&client, Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            client = Client::start(&script, || {});
+        }
+        self.terminal.client = Some(client.expect("启动记录消息的脚本"));
         self.terminal.ready = true;
         let t = &mut self.terminal;
         t.next_id = t.tabs.iter().map(|tab| tab.id).fold(t.next_id, u16::max);
@@ -77,4 +86,87 @@ impl App {
             .copied()
             .collect()
     }
+}
+
+/// 以字符串表示的 [`launch`] 结果：（程序，参数，目录）。
+fn launched(
+    shell: Option<&str>,
+    cwd: &str,
+    windows: bool,
+) -> (Option<String>, Vec<String>, String) {
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    let launch = launch(shell, cwd.as_bytes().to_vec(), windows);
+    (
+        launch.program.as_deref().map(text),
+        launch.args.iter().map(|arg| text(arg)).collect(),
+        text(&launch.cwd),
+    )
+}
+
+#[test]
+fn a_folder_in_wsl_opens_its_distribution() {
+    let (program, args, cwd) = launched(None, r"\\wsl.localhost\Ubuntu\home\me", true);
+    assert_eq!(program.as_deref(), Some("wsl.exe"));
+    assert_eq!(args, ["-d", "Ubuntu", "--cd", "/home/me"]);
+    // 并非所有 shell 都接受 UNC 路径作为工作目录，因此目录由 `wsl.exe` 的参数指定。
+    assert_eq!(cwd, "");
+}
+
+#[test]
+fn other_folders_use_the_default_shell() {
+    let (program, args, cwd) = launched(None, r"C:\work", true);
+    assert_eq!((program, args.len()), (None, 0));
+    assert_eq!(cwd, r"C:\work");
+    // 其他平台不识别 WSL 路径。
+    let (program, _, _) = launched(None, r"\\wsl.localhost\Ubuntu\home", false);
+    assert_eq!(program, None);
+}
+
+#[test]
+fn a_directory_reported_by_a_wsl_shell_is_not_a_windows_working_directory() {
+    let (program, _, cwd) = launched(None, "/home/me", true);
+    assert_eq!((program, cwd.as_str()), (None, ""));
+    let (_, _, cwd) = launched(Some("wsl.exe -d Debian"), "/home/me", true);
+    assert_eq!(cwd, "");
+    // 其他平台上是普通目录。
+    let (_, _, cwd) = launched(None, "/home/me", false);
+    assert_eq!(cwd, "/home/me");
+}
+
+#[test]
+fn working_directories_stay_as_reported_outside_a_distribution() {
+    let path = b"/home/me".to_vec();
+    assert_eq!(local_cwd(None, path.clone()), path);
+    assert_eq!(local_cwd(Some(Path::new("/work")), path.clone()), path);
+}
+
+#[cfg(windows)]
+#[test]
+fn working_directories_in_a_distribution_become_windows_paths() {
+    let root = Path::new(r"\\wsl.localhost\Ubuntu\work");
+    assert_eq!(
+        local_cwd(Some(root), b"/home/me".to_vec()),
+        br"\\wsl.localhost\Ubuntu\home\me".to_vec()
+    );
+}
+
+#[test]
+fn the_shell_setting_takes_priority() {
+    let (program, args, cwd) = launched(Some("wsl.exe -d Debian"), r"C:\work", true);
+    assert_eq!(program.as_deref(), Some("wsl.exe"));
+    assert_eq!(args, ["-d", "Debian"]);
+    assert_eq!(cwd, r"C:\work");
+    let (program, _, _) = launched(Some("/bin/zsh"), r"\\wsl.localhost\Ubuntu", true);
+    assert_eq!(program.as_deref(), Some("/bin/zsh"));
+    // 仅含空白的值视为未设置。
+    let (program, _, _) = launched(Some("   "), "/work", false);
+    assert_eq!(program, None);
+    // 双引号括起的路径不拆开。
+    let shell = r#""C:\Program Files\Git\bin\bash.exe" --login -i"#;
+    let (program, args, _) = launched(Some(shell), r"C:\work", true);
+    assert_eq!(
+        program.as_deref(),
+        Some(r"C:\Program Files\Git\bin\bash.exe")
+    );
+    assert_eq!(args, ["--login", "-i"]);
 }

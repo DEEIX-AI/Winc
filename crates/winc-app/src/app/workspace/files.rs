@@ -15,6 +15,8 @@ pub enum Pick {
     Open,
     /// 只能选择目录。
     OpenFolder,
+    /// 选择目录，初始位置是参数指定的 WSL 发行版的根目录。
+    WslFolder(#[cfg_attr(not(windows), allow(dead_code))] String),
     /// 把文档另存为，参数为要保存的文档。
     SaveAs(DocumentId),
     /// 新建工作树对话框「位置」右端的目录按钮：选工作树放在哪个目录下面。
@@ -139,14 +141,67 @@ impl App {
     ///
     /// 文件总会打开一个标签，无法打开的在编辑区中说明原因；只打开该文件，还没有打开目录时
     /// 不把它所在的目录当作项目打开（那可能是「下载」或主目录）。目录见 [`Self::open_folder`]。
+    /// 文件在预览标签中时，该标签成为普通标签。
     pub(in crate::app) fn open_path(&mut self, path: &Path) {
+        self.open_file(path, false);
+    }
+
+    /// 在预览标签中打开文件 `path`。
+    ///
+    /// 文件已打开时切换到其标签；否则替换现有的预览标签，没有预览标签时新建一个。
+    pub(in crate::app) fn preview_path(&mut self, path: &Path) {
+        self.open_file(path, true);
+    }
+
+    /// 设置中是否启用了预览标签（`tree.previewOnClick`）。
+    pub(in crate::app) fn preview_on_click(&self) -> bool {
+        self.config.preview_on_click == Some(true)
+    }
+
+    /// 返回预览标签的序号；未启用预览标签、预览标签已关闭或已修改时为 `None`。
+    ///
+    /// 修改过（有可撤销或重做的修改）的预览标签成为普通标签，撤销修改后仍是普通标签。
+    pub(crate) fn preview_index(&self) -> Option<usize> {
+        let id = self.preview_tab.filter(|_| self.preview_on_click())?;
+        let index = self.editor.index_of(id)?;
+        let doc = &self.editor.documents[index];
+        (!doc.history.has_changes()).then_some(index)
+    }
+
+    /// 第 `index` 个标签是预览标签时，使其成为普通标签。
+    pub(in crate::app) fn keep_tab(&mut self, index: usize) {
+        if self.preview_index() == Some(index) {
+            self.preview_tab = None;
+            self.request_redraw();
+        }
+    }
+
+    /// 打开文件或目录 `path`；`preview` 为真时在预览标签中打开文件（见 [`Self::preview_path`]）。
+    fn open_file(&mut self, path: &Path, preview: bool) {
         if path.is_dir() {
             self.open_folder(path);
             return;
         }
 
+        let replace = self.preview_index();
+        if replace.is_none() {
+            self.preview_tab = None;
+        }
         self.auto_save_active();
-        self.editor.open_tab(path);
+        let count = self.editor.documents.len();
+        let index = self.editor.open_tab(path);
+        let id = self.editor.documents[index].id;
+        if !preview {
+            // 以其他方式打开预览标签中的文件时，该标签成为普通标签。
+            if self.preview_tab == Some(id) {
+                self.preview_tab = None;
+            }
+        } else if self.editor.documents.len() > count {
+            if let Some(old) = replace {
+                self.replace_preview_tab(old, index);
+            }
+            self.preview_tab = Some(id);
+        }
         self.load_active_in_background();
 
         self.focus = Focus::Editor;
@@ -157,6 +212,21 @@ impl App {
         self.ensure_caret_visible();
         self.reset_blink();
         self.request_redraw();
+    }
+
+    /// 用新打开的第 `new` 个标签替换预览标签（第 `old` 个）：新标签移到原位置，原标签关闭，
+    /// 不播放动画，不记入最近关闭的标签。
+    fn replace_preview_tab(&mut self, old: usize, new: usize) {
+        let id = self.editor.documents[new].id;
+        let replaced = self.editor.documents[old].id;
+        self.editor.move_document(new, old);
+        // 标签栏将新标签视为原标签，不播放打开动画。
+        if let Some(known) = &mut self.tabs.known
+            && let Some(slot) = known.iter_mut().find(|k| **k == replaced)
+        {
+            *slot = id;
+        }
+        self.discard_tab(replaced);
     }
 
     /// 在 `from`（文件或目录）移到 `to` 之后，同步更新各处的记录。
@@ -596,6 +666,7 @@ impl App {
                     self.flash(t!("workspace-saved", name = name));
                 }
                 self.blame_saved(id);
+                self.run_file_saved(id);
                 if saved_as {
                     if let Some((other, _)) = other {
                         self.remove_tabs(&[other]);
@@ -637,7 +708,9 @@ impl App {
                     .or_else(|| self.editor.root().map(Path::to_path_buf));
                 (name, dir)
             }
-            Pick::Open | Pick::OpenFolder | Pick::WorktreeFolder => (String::new(), None),
+            Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
+                (String::new(), None)
+            }
         };
 
         #[cfg(target_os = "macos")]
@@ -649,7 +722,9 @@ impl App {
             };
             let panel = match &kind {
                 Pick::Open => Panel::Open { files: true },
-                Pick::OpenFolder | Pick::WorktreeFolder => Panel::Open { files: false },
+                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
+                    Panel::Open { files: false }
+                }
                 Pick::SaveAs(_) => Panel::Save {
                     name: &name,
                     dir: dir.as_deref(),
@@ -672,7 +747,7 @@ impl App {
             // 门户的面板只能选文件或者只能选目录：「打开…」选文件，目录从「打开目录…」选。
             let (choose, title) = match &kind {
                 Pick::Open => (Choose::Open { directory: false }, t!("cmd-open-file")),
-                Pick::OpenFolder | Pick::WorktreeFolder => {
+                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
                     (Choose::Open { directory: true }, t!("cmd-open-folder"))
                 }
                 Pick::SaveAs(_) => (
@@ -700,6 +775,7 @@ impl App {
             let title = match &kind {
                 Pick::Open => t!("cmd-open-file"),
                 Pick::OpenFolder | Pick::WorktreeFolder => t!("cmd-open-folder"),
+                Pick::WslFolder(_) => t!("cmd-open-wsl-folder"),
                 Pick::SaveAs(_) => t!("cmd-save-as"),
             };
             // 对话框的标题不带省略号；挂在窗口上，打开期间窗口不响应。
@@ -712,9 +788,15 @@ impl App {
             }
             // 对话框有自己的消息循环，在后台线程上等待关闭，事件循环正常运行。
             std::thread::spawn(move || {
+                // 检查发行版的根目录可能要等发行版启动，不在界面线程上进行。
+                if let Pick::WslFolder(distro) = &kind {
+                    dialog = dialog.set_directory(winc_editor::wsl::distro_root(distro));
+                }
                 let path = match &kind {
                     Pick::Open => dialog.pick_file(),
-                    Pick::OpenFolder | Pick::WorktreeFolder => dialog.pick_folder(),
+                    Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
+                        dialog.pick_folder()
+                    }
                     Pick::SaveAs(_) => dialog.set_file_name(&name).save_file(),
                 };
                 let _ = proxy.send_event(UserEvent::Picked(kind, path));
@@ -744,13 +826,13 @@ impl App {
         // 取消或保存失败时放弃整个关闭。
         let continuation = match kind {
             Pick::SaveAs(_) => self.save_continuation.take(),
-            Pick::Open | Pick::OpenFolder | Pick::WorktreeFolder => None,
+            Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => None,
         };
 
         let Some(path) = path else { return };
 
         match kind {
-            Pick::Open | Pick::OpenFolder => self.open_path(&path),
+            Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) => self.open_path(&path),
             Pick::WorktreeFolder => self.worktree_folder_picked(path),
             Pick::SaveAs(id) => {
                 if self.save_document(id, Some(path))
@@ -775,15 +857,22 @@ impl App {
         // 启动监视。工作树、子模块的 `.git` 是文件，真正的目录在其他位置。仓库根位于已监视的目录
         // 中、`.git` 是目录时，它的变化已由监视报告，不必每次窗口重新获得焦点都启动 git。
         self.git_discover();
-        let watched = self.watcher.as_ref().zip(self.git.root.as_deref());
+        self.restart_exited_watcher();
+        let live = self
+            .watcher
+            .as_ref()
+            .is_some_and(winc_editor::Watcher::reliable);
+        let watched = (self.watcher.as_ref().filter(|_| live)).zip(self.git.root.as_deref());
         if !watched
             .is_some_and(|(w, root)| root.starts_with(w.root()) && root.join(".git").is_dir())
         {
             self.git_refresh();
         }
 
-        if self.watcher.is_none() {
-            if let Some(ws) = &mut self.editor.workspace {
+        if !live {
+            // 发行版无法访问时目录都读不到，保留现有的文件树。
+            let reachable = self.editor.root().is_none_or(winc_editor::wsl::reachable);
+            if let Some(ws) = (self.editor.workspace.as_mut()).filter(|_| reachable) {
                 ws.refresh();
             }
             self.picker_stale = true;

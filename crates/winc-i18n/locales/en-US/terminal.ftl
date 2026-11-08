@@ -9,14 +9,13 @@ terminal-module-disabled = The terminal module isn’t enabled
 
 ## Terminal helper
 
-terminal-helper-missing = Terminal helper winc-pty not found (in a development build, run cargo build -p winc-pty first)
+terminal-helper-missing = Couldn’t find the terminal helper; reinstall Winc
 terminal-helper-start-failed = Couldn’t start the terminal helper: { $error }
 terminal-helper-exited = The terminal helper exited
-terminal-helper-version-mismatch = The terminal helper’s version doesn’t match winc; reinstall winc
+terminal-helper-version-mismatch = The terminal helper’s version doesn’t match Winc; reinstall Winc
 terminal-process-exited = Process exited (code { $code })
 terminal-disconnected = Terminal connection lost
-terminal-restart = ↩ Restart
-terminal-close-hint = { $key } Close
+terminal-restart = Restart
 terminal-restart-confirm = Restart this terminal?
 terminal-restart-confirm-detail = The connection to this terminal was lost. Restarting ends any programs still running in it.
 terminal-restart-confirm-action = Restart
@@ -30,7 +29,7 @@ terminal-command-finished = { $name } finished ({ $duration })
 terminal-command-copied = Command copied
 terminal-no-failed-commands = No failed commands
 terminal-no-error-location = No file locations found in the last failed command’s output
-terminal-error-position = Error { $index }/{ $total }: ↩ Open
+terminal-error-position = Error { $index }/{ $total }: { common-key-enter } Open
 terminal-folded-lines-unit = { $count ->
         [one] line
        *[other] lines
@@ -52,7 +51,7 @@ terminal-quit-confirm-many = { $count ->
         [one] Quit and end { $count } running program?
        *[other] Quit and end { $count } running programs?
     }
-terminal-quit-confirm-detail = Programs are still running in the terminal. Quitting winc will end them.
+terminal-quit-confirm-detail = Programs are still running in the terminal. Quitting Winc will end them.
 terminal-close-window-confirm-one = Close the window and end “{ $name }”?
 terminal-close-window-confirm-many = { $count ->
         [one] Close the window and end { $count } running program?
@@ -79,3 +78,23 @@ terminal-paste-confirm = { $count ->
        *[other] Paste { $count } lines into the terminal?
     }
 terminal-paste-confirm-detail = The program in the terminal hasn’t enabled bracketed paste, so each line will run as a separate command right away.
+
+## 运行配置。
+
+terminal-shell-select = Select Shell
+terminal-run-select = Select Run Configuration
+terminal-run-again = Run Again
+terminal-run-confirm = Run “{ $name }”?
+terminal-run-confirm-detail = This command comes from the project’s .winc/run.json and runs with your user permissions. Run it only if you trust this project.
+terminal-run-confirm-detected = Winc generated this command from the project’s files, and it runs code from the project. Run it only if you trust this project.
+terminal-run-confirm-command = Command: { $command }
+terminal-run-confirm-cwd = Working directory: { $cwd }
+terminal-run-confirm-env = Environment variable: { $variable }
+terminal-run-confirm-action = Run
+terminal-run-config-problem = Run configurations (.winc/run.json): { $problem }
+terminal-run-create-failed = Couldn’t create run configurations: { $error }
+terminal-run-add = Add Run Configuration
+terminal-run-stopped = Stopped
+terminal-run-finished = Completed
+terminal-run-failed = “{ $name }” failed (exit code { $code })
+terminal-run-menu-running = Running · { $command }

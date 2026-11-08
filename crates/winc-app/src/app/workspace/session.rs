@@ -136,7 +136,7 @@ impl App {
         self.focus = match self.sidebar_view {
             SidebarView::Files => Focus::Tree,
             SidebarView::Search => Focus::GlobalQuery,
-            SidebarView::Commit => Focus::CommitMessage,
+            SidebarView::Commit => self.commit_view_focus(),
         };
 
         let Some(root) = self.editor.root().map(Path::to_path_buf) else {
@@ -149,6 +149,15 @@ impl App {
             self.backup.root.as_deref(),
         );
         self.adopt_restored(restored);
+        if session
+            .as_ref()
+            .is_some_and(|session| session.sidebar_hidden)
+        {
+            self.set_sidebar(false);
+            if self.focus_in_sidebar() {
+                self.focus = Focus::Editor;
+            }
+        }
         // 当前标签在后台读取：上次的当前标签可能是很大的文件或在很慢的磁盘上。
         self.load_active_in_background();
         if self.editor.active.is_some() {
@@ -156,6 +165,7 @@ impl App {
             self.note_recent_file();
         }
         self.switch_terminal(session.as_ref().and_then(|s| s.terminal.as_ref()));
+        self.switch_run_configs(session.as_ref().and_then(|s| s.run.clone()));
 
         self.relayout();
         self.ensure_caret_visible();
@@ -199,7 +209,7 @@ impl App {
         self.watch_folder();
         self.set_sidebar(false);
         self.focus = Focus::Editor;
-        self.set_window_title("winc");
+        self.set_window_title(crate::layout::PRODUCT_NAME);
         self.relayout();
         self.request_redraw();
     }
@@ -291,7 +301,8 @@ impl App {
 
     /// 记录当前目录的现场。
     ///
-    /// 内容包括：有路径且仍在磁盘上的标签、有备份的未保存内容、书签，以及当前标签。
+    /// 内容包括：有路径且仍在磁盘上的标签、有备份的未保存内容、书签、大纲里收起的符号，以及
+    /// 当前标签。
     pub(in crate::app) fn remember_session(&mut self) {
         let Some(folder) = self.editor.root().map(Path::to_path_buf) else {
             return;
@@ -310,19 +321,25 @@ impl App {
         }
 
         let terminal = self.terminal_session();
+        let run = self.run.selected.clone();
+        let sidebar_hidden = !self.panel_visible;
         let bookmarks = self
             .editor
             .all_bookmarks()
             .into_iter()
             .map(|(path, marks)| (path, marks.lines().to_vec()))
             .collect();
+        let outline = self.outline_session(&folder);
         self.update_state(|state| {
             state.set_session(Session {
                 folder,
                 tabs,
                 active,
                 bookmarks,
+                outline,
                 terminal,
+                run,
+                sidebar_hidden,
             });
         });
     }

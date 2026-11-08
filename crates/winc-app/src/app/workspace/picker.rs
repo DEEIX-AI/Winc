@@ -126,6 +126,7 @@ impl App {
         self.picker_places = None;
         self.picker_branch_rows = None;
         self.picker_location_rows = None;
+        self.picker_folders = false;
         self.picker_open = true;
         self.picker_doc = self.editor.active().map(|d| d.id);
         self.picker_input.set_text("");
@@ -147,7 +148,7 @@ impl App {
         self.picker_open = false;
         self.picker_branch_rows = None;
         self.picker_location_rows = None;
-        self.picker_create = None;
+        self.picker_folders = false;
         self.picker_part_hits.clear();
         self.picker_fold = None;
         self.places_in = None;
@@ -308,6 +309,12 @@ impl App {
             self.location_picker_refresh();
             return;
         }
+        if self.picker_folders {
+            self.picker_goto = None;
+            self.drop_symbols();
+            self.folder_picker_refresh();
+            return;
+        }
         if self.picker_lists_symbols() {
             self.picker_goto = None;
             self.symbols_refresh();
@@ -413,7 +420,8 @@ impl App {
         let files = !self.picker_lists_commands()
             && !self.picker_lists_symbols()
             && !self.picker_lists_branches()
-            && !self.picker_lists_locations();
+            && !self.picker_lists_locations()
+            && !self.picker_folders;
         if self.picker_open && files && self.picker_places.is_none() {
             let scroll = self.picker_scroll;
             self.picker_refresh();
@@ -450,6 +458,7 @@ impl App {
         }
 
         let last = self.picker_hits.len() - 1;
+        self.picker_default = None;
         self.picker_selected = if self.picker_lists_branches() {
             self.branch_picker_step(down)
         } else if down {
@@ -479,7 +488,7 @@ impl App {
     /// 确认选中项。
     ///
     /// 文件列表中打开选中的文件（已有标签则切换过去，否则新开一个）；命令面板中执行选中的命令；
-    /// 符号列表和位置列表中跳转到选中的位置。
+    /// 符号列表和位置列表中跳转到选中的位置；最近目录列表中打开选中的目录。
     pub(in crate::app) fn picker_accept(&mut self) {
         if self.picker_places.is_some() {
             self.places_accept();
@@ -491,6 +500,10 @@ impl App {
         }
         if self.picker_lists_locations() {
             self.location_picker_accept();
+            return;
+        }
+        if self.picker_folders {
+            self.folder_picker_accept();
             return;
         }
         if self.picker_lists_commands() {

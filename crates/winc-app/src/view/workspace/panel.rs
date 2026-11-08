@@ -6,7 +6,7 @@ use winc_i18n::t;
 use winc_render::{Frame, Rect};
 
 use super::*;
-use crate::app::{Focus, ResultRow, SyncState};
+use crate::app::{Focus, OutlineTarget, ResultRow, SyncState};
 use crate::layout::{
     PANEL_CHEVRON, PANEL_LEFT, PANEL_TEXT, PanelButton, PanelParts, PanelTool, RowAction,
     SearchButton, SidebarView, row_actions,
@@ -801,6 +801,24 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
     use crate::keymap::Action;
     use crate::layout::with_key;
     match app.hover {
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::ShellMenu) => {
+            let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+            Some((rect, t!("terminal-shell-select").to_owned()))
+        }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Find(part)) => {
+            use crate::app::terminal::FindPart;
+            let label = match part {
+                FindPart::Bar => return None,
+                FindPart::Previous => t!("cmd-find-previous"),
+                FindPart::Next => t!("cmd-find-next"),
+                FindPart::Close => t!("workspace-find-close"),
+                FindPart::Case => t!("workspace-find-match-case"),
+                FindPart::Word => t!("workspace-find-whole-word"),
+                FindPart::Regex => t!("workspace-find-use-regex"),
+            };
+            let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+            Some((rect, label.to_owned()))
+        }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Position) => {
             let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
             let label = if app.terminal_right() {
@@ -817,6 +835,25 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 with_key(t!("terminal-hide-panel"), Some(Action::ToggleTerminal)),
             ))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Run(button)) => {
+            use crate::app::terminal::run::RunButton;
+            let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+            let label = match button {
+                RunButton::Menu => t!("terminal-run-select").to_owned(),
+                RunButton::Start if app.run.list.is_empty() => t!("terminal-run-add").to_owned(),
+                RunButton::Start if app.run_config_running() => {
+                    with_key(t!("terminal-run-again"), Some(Action::RunConfiguration))
+                }
+                RunButton::Start => {
+                    with_key(t!("cmd-run-configuration"), Some(Action::RunConfiguration))
+                }
+                RunButton::Stop => with_key(
+                    t!("cmd-stop-configuration"),
+                    Some(Action::StopConfiguration),
+                ),
+            };
+            Some((rect, label))
+        }
         Hover::Status(item @ crate::app::StatusItem::Terminal) => {
             let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
             let label = if app.terminal.open {
@@ -826,11 +863,31 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, with_key(label, Some(Action::ToggleTerminal))))
         }
+        Hover::Status(item @ crate::app::StatusItem::Update) => {
+            let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
+            Some((rect, crate::view::status::update_tooltip(app)?))
+        }
         Hover::Status(item @ crate::app::StatusItem::Settings) => {
             let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
             Some((rect, with_key(t!("cmd-settings"), Some(Action::Settings))))
         }
-        // 提交按钮：无法提交时显示原因，可以提交时显示提交目标和快捷键。
+        // 分支选择器的拉取、推送、获取：写明会做什么（和谁差几个提交、推到哪儿）；不能用时写原因。
+        Hover::PickerPart(
+            part @ (crate::app::PickerPart::Pull
+            | crate::app::PickerPart::Push
+            | crate::app::PickerPart::Fetch),
+        ) => {
+            let rect = app.picker_part_hits.iter().find(|(_, p)| *p == part)?.0;
+            let command = app.picker_action_command(part);
+            let label = app.menu_label(command);
+            let tip = if app.git.remotes.is_empty() {
+                t!("git-push-no-remote").to_owned()
+            } else {
+                label.subtitle.unwrap_or(label.title)
+            };
+            Some((rect, tip))
+        }
+        // 提交按钮：无法提交时显示原因，可以提交时显示提交目标和快捷键；按住 ⌥ 时是提交并推送。
         Hover::Commit(CommitTarget::Commit) => {
             use winc_editor::git::{Head, Operation};
             let parts = app.commit_parts();
@@ -845,36 +902,35 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 (Some(Operation::Rebase), _) => t!("workspace-tip-continue-rebase").to_owned(),
                 (Some(op), _) => t!("workspace-tip-finish-operation", operation = op.label()),
                 (None, _) if app.commit.amend => t!("workspace-tip-amend").to_owned(),
+                (None, Some(Head::Branch(b))) if app.commit_pushes() => {
+                    t!("workspace-tip-commit-push-to", branch = b.as_str())
+                }
                 (None, Some(Head::Branch(b))) => t!("workspace-tip-commit-to", branch = b.as_str()),
                 (None, _) => t!("workspace-tip-commit").to_owned(),
             };
-            let key = if cfg!(target_os = "macos") {
-                "⌘↩"
-            } else {
-                "Ctrl+Enter"
+            let key = match (cfg!(target_os = "macos"), app.commit_pushes()) {
+                (true, true) => "⌥⌘↩",
+                (true, false) => "⌘↩",
+                (false, true) => "Ctrl+Alt+Enter",
+                (false, false) => "Ctrl+Enter",
             };
             Some((
                 parts.commit,
                 format!("{name}{}{key}", crate::layout::TIP_KEY),
             ))
         }
-        Hover::Commit(target @ (CommitTarget::OpenFile(_) | CommitTarget::RevertFile(_))) => {
+        Hover::Commit(
+            target @ (CommitTarget::OpenFile(_)
+            | CommitTarget::RevertFile(_)
+            | CommitTarget::GroupRevert(_)),
+        ) => {
             let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
                 CommitTarget::OpenFile(_) => t!("workspace-tip-open-file"),
+                CommitTarget::GroupRevert(_) => t!("menu-commit-roll-back"),
                 _ => t!("workspace-tip-revert-change"),
             };
             Some((rect, label.to_owned()))
-        }
-        // 只暂存了一部分的文件：勾选框是「−」，说明只提交已暂存的内容。其他文件的勾选框没有提示。
-        Hover::Commit(target @ CommitTarget::Check(i)) => {
-            let entry = app.git.status.as_ref()?.entries.get(i)?;
-            let staged_only = entry.partly_staged() && !app.commit.skips_hunks(entry);
-            if !staged_only || !app.commit.checked(entry) {
-                return None;
-            }
-            let rect = app.commit_hits.iter().find(|(_, t)| *t == target)?.0;
-            Some((rect, t!("workspace-tip-commit-staged-only").to_owned()))
         }
         // 同步控件上没有文字，要做的事写在这里。
         Hover::Commit(target @ CommitTarget::Sync) => {
@@ -902,6 +958,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 (None, SyncState::NoRemote | SyncState::Hidden) => t!("git-tip-fetch").to_owned(),
             };
             Some((rect, label))
+        }
+        Hover::Outline(target @ OutlineTarget::FoldAll) => {
+            let rect = app.outline.hits.iter().find(|(_, t)| *t == target)?.0;
+            let label = if app.outline_any_expanded() {
+                t!("workspace-outline-tool-collapse-all")
+            } else {
+                t!("workspace-outline-tool-expand-all")
+            };
+            Some((rect, label.to_owned()))
         }
         // 选择器开着时每一行都写着，不再提示。
         Hover::Commit(target @ CommitTarget::Location) if !app.picker_lists_locations() => {
@@ -934,14 +999,8 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                     with_key(t!("workspace-tip-git-log"), Some(Action::GitShowLog)),
                 ));
             }
-            if target == CommitTarget::Layout {
-                // 说的是点下去会变成什么。
-                let tip = if app.commit.flat() {
-                    t!("workspace-tip-show-as-tree")
-                } else {
-                    t!("workspace-tip-show-as-list")
-                };
-                return Some((rect, tip.to_owned()));
+            if target == CommitTarget::Refresh {
+                return Some((rect, t!("workspace-tip-git-refresh").to_owned()));
             }
             Some((rect, t!("workspace-tip-more-actions").to_owned()))
         }
@@ -1021,6 +1080,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                     Some(Action::GitRevertChange),
                 ),
                 DiffTarget::Include(_) => t!("workspace-tip-include-change").to_owned(),
+                DiffTarget::IncludeLine(..) => t!("workspace-tip-include-line").to_owned(),
                 _ if app.editor.active()?.diff.as_deref()?.collapses() => {
                     t!("workspace-tip-expand-unchanged").to_owned()
                 }

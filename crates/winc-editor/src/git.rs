@@ -10,10 +10,16 @@ pub mod merge;
 
 mod commit;
 mod ignored;
+mod output;
 mod parse;
+mod rebase;
+mod remote;
 mod sync;
 
-pub use sync::Synced;
+pub use output::output_text;
+pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
+pub use remote::{Remote, TagTarget, repository_dir_name};
+pub use sync::{Carried, Synced};
 mod trust;
 mod worktree;
 
@@ -161,8 +167,25 @@ pub struct Stash {
     pub name: String,
     /// 储藏对应的提交号（完整的对象号），不随其他储藏的增删改变。
     pub oid: String,
+    /// 储藏提交的各个父提交：第一个是储藏时的 `HEAD`，第二个是暂存区，连同未跟踪的文件一起储藏时
+    /// 第三个是那些文件。
+    pub parents: Vec<String>,
+    /// 储藏的时间（Unix 秒）。
+    pub time: i64,
+    /// 储藏时的本地时间，「2026-11-07 14:32」。
+    pub local: String,
     /// `git` 记下的说明：「On main: 说明」或「WIP on main: 提交号 说明」。
     pub message: String,
+}
+
+impl Stash {
+    /// 储藏时所在的分支：说明开头「On 分支:」「WIP on 分支:」里的分支；分离 `HEAD` 时 `git` 写
+    /// 「(no branch)」，原样返回。说明不是这两种写法时为 `None`。
+    pub fn branch(&self) -> Option<&str> {
+        let rest =
+            (self.message.strip_prefix("WIP on ")).or_else(|| self.message.strip_prefix("On "))?;
+        rest.split_once(": ").map(|(branch, _)| branch)
+    }
 }
 
 /// 逐行追溯（`git blame`）的结果：每一行最后一次由哪次提交改动。
@@ -298,17 +321,6 @@ impl Entry {
         self.unstaged == Some(Change::Untracked)
     }
 
-    /// 是否只暂存了一部分：已暂存的内容和工作区的文件不同。
-    ///
-    /// 即 `git status` 的 `MM` 一类，暂存区和工作区相对各自的上一级都有变化。未跟踪、冲突、
-    /// 暂存了删除的文件不算。
-    pub fn partly_staged(&self) -> bool {
-        !self.conflicted()
-            && !self.untracked()
-            && self.unstaged.is_some()
-            && self.staged.is_some_and(|c| c != Change::Deleted)
-    }
-
     /// 是否为合并时有冲突的文件。
     pub fn conflicted(&self) -> bool {
         self.staged == Some(Change::Conflicted) || self.unstaged == Some(Change::Conflicted)
@@ -427,7 +439,7 @@ fn git_dir(root: &Path) -> Option<PathBuf> {
     }
     let text = std::fs::read_to_string(&dot).ok()?;
     let target = text.trim().strip_prefix("gitdir:")?.trim();
-    Some(root.join(target))
+    Some(crate::wsl::resolve(root, target))
 }
 
 /// 仓库共用的 `git` 目录：工作树（`git worktree`）的 `.git` 文件指向它自己的目录，hooks、
@@ -515,6 +527,20 @@ pub struct Git {
     shell: Shell,
     /// 各仓库的配置检查结果和信任状态，[`Git`] 的各个副本共用。
     trust: Arc<Mutex<Trust>>,
+    /// 处理输入请求的 askpass 程序，见 [`Git::with_askpass`]。
+    askpass: Option<Askpass>,
+}
+
+/// 传递 [`Askpass::endpoint`] 的环境变量名。
+pub const ASKPASS_ENDPOINT: &str = "WINC_GIT_ASKPASS";
+
+/// `git`、`ssh` 需要用户输入时运行的 askpass 程序。
+#[derive(Debug, Clone)]
+pub struct Askpass {
+    /// 程序路径：程序以提示文字为参数启动，把答复写到标准输出。
+    pub program: PathBuf,
+    /// 程序连接的本地端点，由环境变量 [`ASKPASS_ENDPOINT`] 传递。
+    pub endpoint: OsString,
 }
 
 impl Git {
@@ -526,7 +552,11 @@ impl Git {
     ///
     /// 找不到，或者 macOS 上找到的是没装开发者工具时的占位程序，返回 [`Unavailable`]。
     pub fn find(shell: &Shell) -> Result<Git, Unavailable> {
-        let program = shell.find("git").ok_or(Unavailable::NotInstalled)?;
+        // 仅在 WSL 中安装了 `git` 时仍然可用：发行版中的仓库使用发行版内的 `git`（`Git::at`）。
+        let program = shell
+            .find("git")
+            .or_else(|| crate::wsl::available().then(|| PathBuf::from("git.exe")))
+            .ok_or(Unavailable::NotInstalled)?;
         if cfg!(target_os = "macos")
             && program == Path::new("/usr/bin/git")
             && !developer_tools_installed()
@@ -537,6 +567,7 @@ impl Git {
             program,
             shell: shell.clone(),
             trust: Arc::default(),
+            askpass: None,
         })
     }
 
@@ -646,7 +677,10 @@ impl Git {
         command.args(["rev-parse", "--git-common-dir"]);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
         // 在主工作树里是相对路径，相对于运行的目录。
-        Ok(root.join(String::from_utf8_lossy(&stdout).trim()))
+        Ok(crate::wsl::resolve(
+            root,
+            String::from_utf8_lossy(&stdout).trim(),
+        ))
     }
 
     /// 返回最近切换到过的分支名，最近的在前，不重复（来自 `HEAD` 的引用日志）。
@@ -677,26 +711,77 @@ impl Git {
     ///
     /// 失败时返回 `git` 给出的原因：优先取 `error::`、`fatal::`、`! [rejected]` 这样的行。
     pub fn operate(&self, root: &Path, args: &[&str]) -> Result<String, String> {
-        self.require_trust(root)?;
+        if let Err(refused) = self.require_trust(root) {
+            output::record(root, args, None, refused.as_bytes());
+            return Err(refused);
+        }
+        self.run_operation(root, args, OPERATION_TIMEOUT)
+    }
+
+    /// 在目录 `root` 里运行 `git args`，记录输出，返回 `git` 的结论；调用方负责信任检查。
+    fn run_operation(
+        &self,
+        root: &Path,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<String, String> {
+        self.run_prepared(root, args, timeout, |_| {})
+    }
+
+    /// 和 [`Git::run_operation`] 相同，运行前由 `prepare` 调整命令，例如设置环境变量。
+    fn run_prepared(
+        &self,
+        root: &Path,
+        args: &[&str],
+        timeout: Duration,
+        prepare: impl FnOnce(&mut Command),
+    ) -> Result<String, String> {
         let mut command = self.command(root);
+        self.ask_through(root, &mut command);
+        prepare(&mut command);
         command.args(args).stderr(Stdio::piped());
-        match process::run(
-            &mut command,
-            Vec::new(),
-            OPERATION_TIMEOUT,
-            &Cancel::default(),
-        ) {
+        match process::run(&mut command, Vec::new(), timeout, &Cancel::default()) {
             Ok(output) => {
                 let mut text = output.stderr;
                 text.extend_from_slice(&output.stdout);
+                output::record(root, args, output.status.code(), &text);
                 if output.status.success() {
                     Ok(summary(&text))
                 } else {
                     Err(failure(&text))
                 }
             }
-            Err(e) => Err(describe(&e)),
+            Err(e) => {
+                let reason = describe(&e);
+                output::record(root, args, None, reason.as_bytes());
+                Err(reason)
+            }
         }
+    }
+
+    /// 返回使用 `askpass` 处理输入请求的副本；`None` 表示需要输入时直接失败。
+    #[must_use]
+    pub fn with_askpass(mut self, askpass: Option<Askpass>) -> Self {
+        self.askpass = askpass;
+        self
+    }
+
+    /// 为 `command` 设置 [`Git::with_askpass`] 指定的 askpass 程序。
+    ///
+    /// WSL 发行版内的 `git` 无法运行 Windows 程序，不作设置。`git` 优先使用凭据助手，没有结果时才
+    /// 运行该程序。`SSH_ASKPASS_REQUIRE` 使 `ssh` 不依赖 `DISPLAY` 和控制终端。
+    fn ask_through(&self, root: &Path, command: &mut Command) {
+        let Some(askpass) = &self.askpass else {
+            return;
+        };
+        if crate::wsl::locate_here(root).is_some() {
+            return;
+        }
+        command
+            .env("GIT_ASKPASS", &askpass.program)
+            .env("SSH_ASKPASS", &askpass.program)
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env(ASKPASS_ENDPOINT, &askpass.endpoint);
     }
 
     /// 删除本地分支 `name`。
@@ -879,15 +964,32 @@ impl Git {
     /// `git` 运行失败时返回原因。
     pub fn stashes(&self, root: &Path, cancel: &Cancel) -> Result<Vec<Stash>, String> {
         let mut command = self.command(root);
-        command.args(["stash", "list", "--format=%gd%x1f%H%x1f%gs"]);
+        // 时间用 `%ci`（提交者的本地时间）的前 16 个字符：`--date` 会把 `%gd` 换成按日期的写法
+        // （`stash@{2026-…}`），不能用来格式化 `%cd`。
+        command.args([
+            "stash",
+            "list",
+            "--format=%gd%x1f%H%x1f%P%x1f%ct%x1f%ci%x1f%gs",
+        ]);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
         Ok(String::from_utf8_lossy(&stdout)
             .lines()
             .filter_map(|line| {
-                let mut fields = line.splitn(3, '\u{1f}');
+                let mut fields = line.splitn(6, '\u{1f}');
+                let (name, oid) = (fields.next()?, fields.next()?);
+                let parents = fields
+                    .next()?
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
+                let time = fields.next()?.parse().unwrap_or(0);
+                let local = fields.next()?.chars().take(16).collect();
                 Some(Stash {
-                    name: fields.next()?.to_owned(),
-                    oid: fields.next()?.to_owned(),
+                    name: name.to_owned(),
+                    oid: oid.to_owned(),
+                    parents,
+                    time,
+                    local,
                     message: fields.next()?.to_owned(),
                 })
             })
@@ -1035,14 +1137,12 @@ impl Git {
     }
 
     fn command(&self, root: &Path) -> Command {
-        let mut command = self.shell.command(&self.program);
+        let mut command = self.at(root);
         command
-            .arg("-C")
-            .arg(root)
             // 不获取可选的锁（例如刷新索引）：后台运行的 `git` 不能和用户在同一仓库里运行的
             // `git` 抢同一把锁。
             .env("GIT_OPTIONAL_LOCKS", "0")
-            // 需要输入密码时直接失败，不阻塞等待输入。
+            // 禁用终端提示：没有 askpass 程序（见 `Git::ask_through`）时直接失败，不阻塞进程。
             .env("GIT_TERMINAL_PROMPT", "0")
             // 不打开编辑器：`rebase --continue` 等操作会打开它修改提交信息，这里沿用原来的信息。
             .env("GIT_EDITOR", ":")
@@ -1061,6 +1161,49 @@ impl Git {
             }
         }
         command
+    }
+
+    /// 返回在仓库 `root` 中运行 `git` 的命令，调用方继续追加 `git` 的参数。
+    ///
+    /// 发行版中的仓库使用发行版内的 `git`：跨文件系统读取仓库的速度较低，文件属主不同时 `git` 还会
+    /// 按 `safe.directory` 拒绝访问。
+    pub(super) fn at(&self, root: &Path) -> Command {
+        let Some(place) = crate::wsl::locate_here(root) else {
+            let mut command = self.shell.command(&self.program);
+            command.arg("-C").arg(root);
+            return command;
+        };
+        let mut command = self.shell.command(Path::new("wsl.exe"));
+        crate::wsl::enter(&mut command, &place.distro);
+        command
+            .args(["--exec", "git", "-C", &place.path])
+            .env("WSLENV", crate::wsl::GIT_ENV);
+        command
+    }
+
+    /// 返回文件在 `git` 中的模式：可执行文件为 `100755`，其余为 `100644`。
+    ///
+    /// Windows 无法读取发行版中文件的可执行位，因此在发行版内查询。查询失败时返回错误：按不可执行
+    /// 处理会使提交移除文件的可执行位。
+    fn file_mode(&self, path: &Path, cancel: &Cancel) -> Result<&'static str, String> {
+        if let Some(place) = crate::wsl::locate_here(path) {
+            let mut command = self.shell.command(Path::new("wsl.exe"));
+            crate::wsl::enter(&mut command, &place.distro);
+            command
+                .args(["--exec", "test", "-x", &place.path])
+                .stderr(Stdio::piped());
+            let output = process::run(&mut command, Vec::new(), SHOW_TIMEOUT, cancel)
+                .map_err(|e| describe(&e))?;
+            return mode_from_test(output.status.code()).ok_or_else(|| failure(&output.stderr));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
+                return Ok("100755");
+            }
+        }
+        Ok("100644")
     }
 
     fn run(
@@ -1161,23 +1304,19 @@ fn joined_arg(parts: &[&OsStr]) -> OsString {
     })
 }
 
-/// 返回文件在 `git` 里的模式：能执行的是 `100755`，否则 `100644`。
-fn file_mode(path: &Path) -> &'static str {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
-            return "100755";
-        }
+/// 把 `test -x` 的退出码转换为文件在 `git` 中的模式；其他退出码表示查询失败，返回 `None`。
+fn mode_from_test(code: Option<i32>) -> Option<&'static str> {
+    match code {
+        Some(0) => Some("100755"),
+        Some(1) => Some("100644"),
+        _ => None,
     }
-    let _ = path;
-    "100644"
 }
 
 /// 把绝对路径换成相对于 `root` 的路径，交给 `git` 的路径参数（`--` 之后）。
 ///
 /// 每个都加上 `::(literal)`，按字面匹配：`app/[slug]/page.tsx` 里的 `[`、`*`、`?` 不当通配符，
-/// 回滚、提交、取消暂存时不会连带改动名字碰巧匹配上的其他文件。不用 `GIT_LITERAL_PATHSPECS`：
+/// 回滚、提交时不会连带改动名字碰巧匹配上的其他文件。不用 `GIT_LITERAL_PATHSPECS`：
 /// `git stash push -u` 自己也要用路径匹配，开启它以后不再收录未跟踪的文件。
 fn relative_all<'a>(
     root: &'a Path,

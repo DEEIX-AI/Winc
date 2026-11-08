@@ -6,6 +6,7 @@ use winc_core::transform::Case;
 use winc_editor::{Command, EntryKind, FoldCommand};
 
 use super::*;
+use crate::field::TextField;
 use crate::keymap::{Action, Context};
 use crate::layout::{PanelButton, SearchButton, SettingsPage, SidebarView};
 
@@ -31,11 +32,22 @@ impl App {
             }
         };
         let panel = self.key_context() == Context::Panel;
-        // 焦点在终端的输入框里：编辑用的快捷键交给输入框。
+        // 焦点在终端的输入框里：编辑用的快捷键作用于输入框。
         if matches!(self.focus, Focus::TerminalFind | Focus::TerminalRename)
             && matches!(action, Copy | Cut | Paste | SelectAll | Undo | Redo)
         {
-            return false;
+            match action {
+                Copy => self.copy_field(false),
+                Cut => self.copy_field(true),
+                Paste => self.paste(),
+                SelectAll => self.edit_field(|field| {
+                    field.select_all();
+                    false
+                }),
+                Undo => self.edit_field(TextField::undo),
+                _ => self.edit_field(TextField::redo),
+            }
+            return true;
         }
         // 焦点在终端里：复制、全选作用于终端的选区（粘贴见 `paste`）。
         if self.focus == Focus::Terminal {
@@ -55,7 +67,10 @@ impl App {
         match action {
             ShowCommands => self.toggle_palette(),
             QuickOpen => {
-                if self.picker_open && !self.picker_lists_commands() && !self.picker_lists_symbols()
+                if self.picker_open
+                    && !self.picker_lists_commands()
+                    && !self.picker_lists_symbols()
+                    && !self.picker_folders
                 {
                     self.close_picker();
                 } else {
@@ -86,6 +101,7 @@ impl App {
             NewWindow => self.new_window(None),
             OpenFile => self.pick(Pick::Open),
             OpenFolder => self.pick(Pick::OpenFolder),
+            OpenRecent => self.open_recent_folders(),
             Save => self.save_active(),
             SaveAs => {
                 if let Some(id) = self.editor.active().map(|d| d.id) {
@@ -302,9 +318,12 @@ impl App {
             ToggleSidebar => self.toggle_sidebar(),
             FocusSidebar => self.focus_sidebar(),
             ShowFiles => self.show_files(),
-            ZoomIn => self.zoom(Some(true)),
-            ZoomOut => self.zoom(Some(false)),
-            ResetZoom => self.zoom(None),
+            IncreaseFontSize => self.step_font_size(Some(true)),
+            DecreaseFontSize => self.step_font_size(Some(false)),
+            ResetFontSize => self.step_font_size(None),
+            ZoomIn => self.step_zoom(Some(true)),
+            ZoomOut => self.step_zoom(Some(false)),
+            ResetZoom => self.step_zoom(None),
             ThemeAuto => self.set_theme_choice(ThemeChoice::Auto),
             ThemeLight => self.set_theme_choice(ThemeChoice::Light),
             ThemeDark => self.set_theme_choice(ThemeChoice::Dark),
@@ -345,9 +364,33 @@ impl App {
             }
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),
+            GitShowOutput => self.show_git_output(),
+            GitClone => self.open_clone_dialog(),
+            GitInit => self.git_init(),
             GitSwitchRepository => self.switch_location(),
             GitSwitchWorktree => self.switch_location(),
             GitNewWorktree => self.open_worktree_dialog(),
+            // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
+            GitSwitchBranch | GitNewBranch | GitStash | GitSync | GitFetch | GitPull
+            | GitPullRebase | GitPush
+                if self.git.root.is_none() =>
+            {
+                self.flash(winc_i18n::t!("git-not-a-repository"));
+            }
+            GitSwitchBranch => self.switch_branch_from_command(),
+            GitNewBranch => self.open_branch_dialog(None, None),
+            GitStash => self.open_stash_prompt(),
+            GitSync => self.git_sync(),
+            GitFetch | GitPull | GitPullRebase | GitPush => {
+                use crate::app::input::context_menu::MenuCommand;
+                let command = match action {
+                    GitFetch => MenuCommand::GitFetch,
+                    GitPull => MenuCommand::GitPull,
+                    GitPullRebase => MenuCommand::GitPullRebase,
+                    _ => MenuCommand::GitPush,
+                };
+                self.run_branch_command(command);
+            }
             GitFileHistory => self.git_current_file_history(),
             GitBlame => self.toggle_blame(),
             GitRevertChange if self.editor.active().is_some_and(|d| d.diff.is_some()) => {
@@ -355,15 +398,24 @@ impl App {
             }
             GitRevertChange => self.revert_change_at_caret(),
             ShowCommit => self.show_commit(),
+            ShowOutline => self.show_outline(),
             ToggleTerminal => self.toggle_terminal(),
+            RunConfiguration => self.run_current_config(),
+            StopConfiguration => self.stop_current_config(),
+            EditRunConfigurations => self.edit_run_configs(),
             ClearTerminal => self.clear_terminal(),
             NewTerminal => self.new_terminal_tab(),
             CloseTerminal => self.close_terminal_tab(self.terminal.active),
             NextTerminal => self.cycle_terminal_tab(true),
             PreviousTerminal => self.cycle_terminal_tab(false),
+            // 焦点在查找框里时关闭；否则打开，或者回到开着的查找框。
+            FindInTerminal if self.focus == Focus::TerminalFind => self.close_terminal_find(),
             FindInTerminal if self.terminal.tab().is_some() => self.open_terminal_find(),
             FindInTerminal => return false,
             MaximizeTerminal => self.toggle_terminal_maximized(),
+            ToggleTerminalPosition => self.toggle_terminal_position(),
+            InstallShellCommand => self.install_shell_command(),
+            UninstallShellCommand => self.uninstall_shell_command(),
             RenameTerminal => self.open_terminal_rename(self.terminal.active),
             PreviousCommand => self.jump_terminal_command(false),
             NextCommand => self.jump_terminal_command(true),
@@ -378,7 +430,23 @@ impl App {
     }
 
     /// 命令当前是否可用：属于某个模块的命令只在模块开着时可用。
-    pub(super) fn action_available(&self, action: Action) -> bool {
+    pub(in crate::app) fn action_available(&self, action: Action) -> bool {
+        match action {
+            Action::RunConfiguration if self.editor.root().is_none() => return false,
+            // 只有打开的目录还不是仓库时才能初始化。
+            Action::GitInit if self.editor.root().is_none() || self.git.root.is_some() => {
+                return false;
+            }
+            Action::StopConfiguration if !self.run_config_running() => return false,
+            Action::EditRunConfigurations if self.editor.root().is_none() => return false,
+            // Windows 安装包、deb 包已经把 `winc` 放进 `PATH`，没有要安装的。
+            Action::InstallShellCommand | Action::UninstallShellCommand
+                if crate::shell_command::placement().is_none() =>
+            {
+                return false;
+            }
+            _ => {}
+        }
         match action.module() {
             Some(crate::keymap::Module::Git) => self.git_enabled(),
             Some(crate::keymap::Module::Terminal) => self.terminal_enabled(),
@@ -421,7 +489,7 @@ impl App {
         self.focus = match self.sidebar_view {
             SidebarView::Files => Focus::Tree,
             SidebarView::Search => Focus::GlobalQuery,
-            SidebarView::Commit => Focus::CommitMessage,
+            SidebarView::Commit => self.commit_view_focus(),
         };
     }
 }

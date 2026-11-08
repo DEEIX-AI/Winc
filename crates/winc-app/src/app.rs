@@ -25,9 +25,7 @@ use animation::{
     EXIT_FADE, FOLD_ANIMATION, PICKER_ANIMATION, POPUP_IN, POPUP_OUT, SIDEBAR_ANIMATION, TAB_SLIDE,
     TREE_ANIMATION,
 };
-pub(crate) use diff::{
-    DIFF_GUTTER_PAD, DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts,
-};
+pub(crate) use diff::{DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts};
 pub use editor::conflict::{ConflictAction, OverwriteChoice};
 pub use editor::editing::BraceKey;
 pub use editor::editing::ScrollGlide;
@@ -37,11 +35,12 @@ pub use editor::format::{FormatState, ToolAnswer};
 pub use editor::hint::NameHint;
 pub(crate) use editor::scrollbar::{ScrollArea, Scrollbars, ThumbLook};
 pub use editor::sticky::{StickyCache, StickyRow};
-pub(crate) use git::branch::picker::{BranchCreate, GitAnchor, PickerPart};
+pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
-    COMMIT_ROW, CommitOverflow, CommitParts, CommitRow, CommitRows, CommitTarget, MESSAGE_LINE,
-    MESSAGE_PAD, SyncState,
+    COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
+    CommitRows, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, STASH_GAP, StashLine, StashView,
+    SyncState,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -63,11 +62,14 @@ pub use status::status_bar::{StatusItem, indent_label};
 pub use workspace::file_drop::DropZone;
 pub use workspace::files::{Pick, PlaceholderAction, TabBar, TabHit};
 pub use workspace::global::{GlobalSearch, ResultRow};
+pub(crate) use workspace::outline::{OUTLINE_GAP, has_children as outline_has_children};
+pub use workspace::outline::{OutlineEmpty, OutlineState, OutlineTarget};
 use workspace::picker::PickerMotion;
 pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
 };
+pub(crate) use workspace::recent::folder_label;
 pub use workspace::session::StartAction;
 pub use workspace::tab_drag::{TabDrag, TabSlide};
 pub use workspace::tool_fold::ToolFold;
@@ -127,6 +129,17 @@ pub enum UserEvent {
     /// 菜单栏的「设置…」（或 ⌘,）被触发；设置已打开时关闭设置。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     OpenSettings,
+    /// macOS 上全屏过渡中红绿灯的位置变了（见 `crate::macos::TrafficLights`）：重新计算布局并
+    /// 重画。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    TrafficLightsMoved,
+    /// 询问是否将应用移到「应用程序」文件夹（见 `crate::macos::install`）；在窗口显示后处理，
+    /// 提示框依附于窗口。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    OfferMoveToApplications,
+    /// 「移到「应用程序」文件夹」提示框中的选择：是否移动，以及是否勾选「不再询问」。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    MoveToApplications(bool, bool),
     /// 选择面板打不开：哪一次选择，以及原因（没有门户时为 `None`）；只有经桌面门户选择的平台
     /// 有这种情况。
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -159,6 +172,8 @@ pub enum UserEvent {
     Formatted,
     /// 提示框中回答了是否允许运行项目自带的格式化工具。
     ToolChoice(ToolAnswer),
+    /// 确认框上同意了运行这个配置。
+    RunApproved(Box<winc_config::RunConfig>),
     /// 提示框中回答了是否信任 Git 仓库（第一个参数）指纹为第二个参数的配置。
     GitTrust(PathBuf, u64, bool),
     /// 已取得用户 shell 的环境，格式化工具在其 `PATH` 中查找。
@@ -169,11 +184,11 @@ pub enum UserEvent {
     FilesChanged,
     /// 后台读到一段标准输入（`winc -`）。
     StdinRead,
-    /// 新启动的 `winc` 把要打开的目录和文件交给了整个应用（见 [`crate::instance`]）；由应用层
-    /// 决定切到哪个窗口或新建窗口，收不收经通道答复。
+    /// 新启动的 `winc` 把要打开的目录和文件，以及它的激活令牌交给了整个应用（见
+    /// [`crate::instance`]）；由应用层决定切到哪个窗口或新建窗口，收不收经通道答复。
     ///
     /// 不会交到窗口里。
-    Launched(Vec<crate::cli::Target>, std::sync::mpsc::Sender<bool>),
+    Launched(crate::instance::Launch, std::sync::mpsc::Sender<bool>),
     /// 系统交来要打开的文件和目录（拖到程序坞的图标上、文件管理器里的「打开方式」）；与
     /// [`UserEvent::Launched`] 一样由应用层决定开在哪个窗口里。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -202,6 +217,8 @@ pub enum UserEvent {
     GitContent,
     /// 后台重新比较好了一个差异标签。
     Rediffed,
+    /// 后台提取好了大纲的符号。
+    Outline,
     /// 后台的提交、回滚做完了，或者取到了上一次提交的信息。
     GitCommit,
     /// 确认框上确认了回滚这些文件。
@@ -220,6 +237,10 @@ pub enum UserEvent {
     GitBase,
     /// 后台的分支操作（获取、拉取、推送、签出……）做完了。
     GitOperated,
+    /// 后台的 Git 操作发来了输入请求。
+    GitQuestion,
+    /// 后台读取好了三栏合并的两侧。
+    GitMergeSides,
     /// 后台取到了日志的一批提交、一个提交的详情或一个文件的差异。
     GitLog,
     /// 终端的辅助进程发来了消息。
@@ -228,6 +249,11 @@ pub enum UserEvent {
     TerminalClose(u16),
     /// 确认框上确认了重新启动这个终端标签（伪终端断开了，里面的程序可能还在运行）。
     TerminalRestart(u16),
+    /// 需要授权的 `winc` 命令安装或卸载结束了。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    ShellCommandDone(crate::shell_command::Done),
+    /// 本机的 shell 检测完了。
+    TerminalShells(Vec<terminal::shells::ShellChoice>),
     /// 退出或关闭窗口前的确认结果（终端中有程序在运行）：用户确认时为真，取消时为假。
     TerminalQuit(bool),
     /// 确认框上确认了把文字粘贴到指定的终端标签（多行、程序没有开启括号粘贴）。
@@ -263,6 +289,8 @@ pub enum PromptKind {
     Stash,
     /// 新标签的名字；`at` 是打在哪个提交上（完整的提交号）。
     NewTag { at: String },
+    /// 分支的新名字；`old` 是现在的名字。
+    RenameBranch { old: String },
 }
 
 /// 键盘焦点所在的区域。
@@ -300,10 +328,14 @@ pub enum Focus {
     Settings,
     /// 设置中「快捷键」页的搜索框。
     KeySearch,
+    /// 设置浮层分类栏顶部的搜索框。
+    SettingsSearch,
     /// 侧栏提交视图的提交信息输入框。
     CommitMessage,
     /// 侧栏提交视图的改动列表。
     CommitList,
+    /// 文件视图底部大纲的符号列表。
+    Outline,
     /// 日志标签标题栏的筛选输入框。
     LogFilter,
     /// 功能对话框（新建工作树）里的输入框。
@@ -320,6 +352,7 @@ impl Focus {
                 | Focus::Results
                 | Focus::Settings
                 | Focus::CommitList
+                | Focus::Outline
                 | Focus::Terminal
         )
     }
@@ -348,6 +381,8 @@ impl Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hover {
     None,
+    /// 文件视图底部大纲里的一处（符号行、行首箭头、标题行及其右端的按钮）。
+    Outline(OutlineTarget),
     /// 编辑区右侧的缩略图。
     Minimap,
     /// 应用绘制的标题栏上的窗口按钮。
@@ -371,6 +406,8 @@ pub enum Hover {
     Browser,
     /// Markdown 预览里的链接（`MarkdownPreview::links` 的序号）。
     MarkdownLink(usize),
+    /// Markdown 预览左侧的标题指示条或展开的标题列表。
+    MarkdownToc(crate::app::preview::markdown::TocTarget),
     Search(SearchButton),
     TreeRow(usize),
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
@@ -378,6 +415,8 @@ pub enum Hover {
     Splitter,
     /// 编辑区和终端面板之间的间距（拖动改面板的大小）。
     TerminalDivider,
+    /// 文件视图里大纲标题行的上沿（上下拖动改大纲的高度）。
+    OutlineDivider,
     /// 分栏预览中间的分隔线（左右拖动改两半的宽度）。
     SplitDivider,
     /// 终端面板标签栏上的标签、关闭按钮、「+」和位置按钮。
@@ -437,7 +476,13 @@ impl Hover {
         matches!(
             self,
             Hover::TreeTool(_)
-                | Hover::TerminalHeader(terminal::HeaderHit::Position | terminal::HeaderHit::Hide)
+                | Hover::TerminalHeader(
+                    terminal::HeaderHit::Position
+                        | terminal::HeaderHit::ShellMenu
+                        | terminal::HeaderHit::Find(_)
+                        | terminal::HeaderHit::Hide
+                        | terminal::HeaderHit::Run(_),
+                )
                 | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
@@ -446,6 +491,7 @@ impl Hover {
                 | Hover::Preview(_)
                 | Hover::Browser
                 | Hover::ViewTab(_)
+                | Hover::Outline(OutlineTarget::FoldAll)
                 | Hover::Search(_)
                 | Hover::Panel(
                     PanelButton::Tool(_)
@@ -468,16 +514,18 @@ impl Hover {
                         | git::log::LogTarget::Line(..)
                 )
                 | Hover::Blame(_)
+                | Hover::PickerPart(PickerPart::Pull | PickerPart::Push | PickerPart::Fetch)
                 | Hover::Commit(
                     CommitTarget::Log
                         | CommitTarget::Sync
                         | CommitTarget::Location
-                        | CommitTarget::Layout
+                        | CommitTarget::Refresh
                         | CommitTarget::More
                         | CommitTarget::Commit
                         | CommitTarget::CommitMenu
                         | CommitTarget::OpenFile(_)
                         | CommitTarget::RevertFile(_)
+                        | CommitTarget::GroupRevert(_)
                         | CommitTarget::Check(_)
                 )
                 | Hover::Diff(
@@ -489,6 +537,7 @@ impl Hover {
                         | DiffTarget::Collapse
                         | DiffTarget::Revert(_)
                         | DiffTarget::Include(_)
+                        | DiffTarget::IncludeLine(..)
                 )
                 | Hover::Merge(git::merge::MergeTarget::Previous | git::merge::MergeTarget::Next)
         )
@@ -537,6 +586,11 @@ enum Drag {
     /// 面板在下面时是纵坐标
     /// 和高度，在右边时是横坐标和宽度。
     TerminalDivider {
+        start: f32,
+        size: f32,
+    },
+    /// 拖大纲标题行的上沿：按下时的纵坐标、符号列表当时的高度（逻辑像素）。
+    OutlineDivider {
         start: f32,
         size: f32,
     },
@@ -626,6 +680,8 @@ pub struct App {
     pub editor: Editor,
     /// 终端面板（终端模块）。
     pub(crate) terminal: terminal::TerminalPanel,
+    /// 当前目录的运行配置。
+    pub(crate) run: terminal::run::RunConfigs,
     /// 当前生效的配置。
     pub config: Config,
     /// 配置文件当前的内容，即上次读入或写出时的配置。
@@ -659,6 +715,10 @@ pub struct App {
     pub mono_metrics: Metrics,
     /// 等宽字体单个字符格的宽度（逻辑像素）。
     pub cell: f32,
+    /// 终端字体的行高、基线等尺寸（逻辑像素）。
+    pub terminal_metrics: Metrics,
+    /// 终端里一个字符格的宽度（逻辑像素）。
+    pub terminal_cell: f32,
 
     // 焦点、鼠标和键盘
     /// 键盘焦点所在的区域。
@@ -730,6 +790,8 @@ pub struct App {
     pub(crate) split: preview::images::SplitPreview,
     /// Markdown 预览（分栏右边或只看预览）。
     pub(crate) markdown: preview::markdown::MarkdownPreview,
+    /// 当前标签的 PDF 预览。
+    pub(crate) pdf: preview::pdf::PdfPreview,
     /// 状态栏上键路径的缓存，键为（文档、版本号、光标位置）。
     key_path_cache: Option<((DocumentId, u64, usize), Option<String>)>,
     /// 当前文档 JSON 键路径的扫描记录，换了文档就重来。
@@ -822,6 +884,10 @@ pub struct App {
     pub(crate) scroll_glide: Option<ScrollGlide>,
     /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
     pub(crate) wheel_glide: Option<input::mouse::WheelGlide>,
+    /// 上一次鼠标滚轮整格滚动的时刻，用于按两格的间隔确定过渡时长。
+    wheel_at: Option<Instant>,
+    /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
+    preview_tab: Option<winc_editor::DocumentId>,
     /// 文件树中正在改名字的项和输入框；没有时为 `None`。
     pub name_input: Option<NameInput>,
     /// 在文件树中按住的项；拖动该项可移动到其他目录。
@@ -869,6 +935,8 @@ pub struct App {
 
     /// 侧栏搜索面板的状态。
     pub global: GlobalSearch,
+    /// 文件视图底部大纲的状态。
+    pub outline: OutlineState,
 
     // 快速打开
     /// 工作区中各文件的路径与匹配用的索引。
@@ -883,6 +951,11 @@ pub struct App {
     pub picker_hits: Vec<usize>,
     /// 当前选中的结果在 `picker_hits` 中的序号（从 0 起）。
     pub picker_selected: usize,
+    /// 分支选择器打开时自动选中的行（`picker_selected` 的值）；移动选中项或输入查询后为 `None`。
+    ///
+    /// 自动选中的行以浅色底显示：它不一定是当前分支（单列最近使用时选中上一个用过的分支，回车即
+    /// 切回），强调色底会被误认为当前分支。当前分支由行首的对勾标出。
+    pub picker_default: Option<usize>,
     /// 结果开头属于「最近打开」的条数（未输入查询时列在最前面）。
     pub picker_recent: usize,
     /// 查询末尾的 `:行` 或 `:行:列`，打开文件后跳转到该位置。
@@ -923,10 +996,10 @@ pub struct App {
     pub picker_branch_rows: Option<Vec<git::branch::picker::BranchRow>>,
     /// 面板列出位置（位置选择器）时的各行。
     pub picker_location_rows: Option<Vec<git::location_picker::LocationRow>>,
+    /// 面板是否列出最近打开的目录（`⌃R`）；为真时 `picker_hits` 是最近列表中的下标。
+    pub picker_folders: bool,
     /// 分支选择器、位置选择器从哪儿展开。
     pub picker_anchor: GitAnchor,
-    /// 正在分支选择器里新建分支。
-    pub picker_create: Option<BranchCreate>,
     /// 选择面板这一帧画出来的按钮：点击、悬停都按它们认。
     pub picker_part_hits: Vec<(Rect, PickerPart)>,
     /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。
@@ -1032,28 +1105,41 @@ pub struct App {
     /// 后台线程和系统回调通过该代理把事件送回事件循环（带着本窗口的编号，见 [`crate::winc`]）；
     /// 测试中没有事件循环，为 `None`。
     proxy: Option<crate::winc::WindowProxy>,
+    /// 窗口的红绿灯（见 [`crate::macos::TrafficLights`]），窗口创建后才有，随窗口一同释放。
+    #[cfg(target_os = "macos")]
+    traffic_lights: Option<crate::macos::TrafficLights>,
     /// 本窗口在进程里的编号；测试中单独建的 `App` 没有。
     pub(crate) key: Option<crate::winc::WindowKey>,
     /// 各窗口共用的状态：别的窗口开着什么、剪切的文件，以及请应用层做的事。
     pub(crate) shared: std::rc::Rc<crate::winc::Shared>,
     /// 配置的版本：本窗口每写一次配置文件加一，应用层据此把新配置发给其他窗口。
     pub(crate) config_rev: u64,
-    /// 新窗口的位置：相对打开它的窗口往右下错开一段，建窗口时用一次。
-    pub(crate) cascade: Option<winit::dpi::Position>,
-    /// 窗口没有最大化、全屏时的大小和位置，关闭时记下来。
+    /// 新窗口的位置（外框左上角，物理像素）和打开它的窗口的缩放比例：比打开它的窗口往右下错开
+    /// 一段。建窗口时按当前的显示器校验后使用一次，见 `App::cascade_from`。
+    pub(crate) cascade: Option<((f64, f64), f64)>,
+    /// 窗口正常显示（没有最大化、全屏、最小化）时的大小和位置：关闭时记下来；最小化期间不更新，
+    /// 从最小化的窗口打开新窗口时按它错开（见 `App::cascade_from`）。
     pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口和打开它的窗口共用的字体和字形缓存（建渲染器时用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
+    /// 待使用的激活令牌（见 [`App::set_activation`]）。
+    #[cfg(all(unix, not(target_os = "macos")))]
+    activation: Option<winit::window::ActivationToken>,
     /// 窗口完全看不见（被挡住、最小化、在别的桌面上）：不画，屏幕上那块画面标成可清除。
     occluded: bool,
     /// 动画下一帧的绘制时刻（没有显示链接时按计时器安排）。
     next_frame: Option<Instant>,
-    /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起）。
+    /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起、Windows）。
     #[cfg(target_os = "macos")]
     display_link: Option<crate::macos::DisplayLink>,
+    /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起、Windows）。
+    #[cfg(windows)]
+    display_link: Option<crate::windows::DisplayLink>,
     /// 相邻两帧的间隔；动画开始时按窗口所在显示器的刷新率计算。
     frame_interval: Duration,
     bench: Bench,
+    /// 帧日志（`WINC_FRAME_LOG`）。
+    frame_log: crate::frame_log::FrameLog,
     /// 已呈现的帧数，供测量钩子使用。
     presented: usize,
     dirty: bool,
@@ -1109,6 +1195,7 @@ impl App {
             UserEvent::GitCommit => self.poll_commit(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
+            UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
             UserEvent::GitBlame => self.poll_blame(),
             UserEvent::Reread => self.poll_rereads(),
@@ -1159,6 +1246,11 @@ impl App {
             return;
         }
 
+        // 鼠标移到预览的标题指示条上：标题列表展开，淡入。
+        let toc = |h: Hover| matches!(h, Hover::MarkdownToc(_));
+        if toc(hover) && !toc(self.hover) {
+            self.markdown.toc_fade = self.clock(animation::TOC_FADE);
+        }
         self.hover = hover;
         self.tooltip_since = hover.has_tooltip().then(Instant::now);
         self.tooltip_shown = false;

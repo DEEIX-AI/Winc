@@ -23,11 +23,28 @@ impl App {
             return;
         }
         if self.settings.open {
-            let part = self.settings_part_at(x, y);
+            // 拖动滚动条时下方的设置项不高亮；滑块在拖动和悬停时加深颜色。
+            let dragging = match self.drag {
+                Drag::Scrollbar {
+                    bar: Scrollbar::Settings,
+                    grab,
+                } => {
+                    self.drag_settings_scrollbar(y, grab);
+                    true
+                }
+                _ => false,
+            };
+            let part = (!dragging).then(|| self.settings_part_at(x, y)).flatten();
             if part != self.settings.hover {
                 self.settings.hover = part;
                 self.request_redraw();
             }
+            let on_bar = dragging || part.is_none() && self.settings_scrollbar_at(x, y).is_some();
+            self.set_hover(if on_bar {
+                Hover::Scrollbar(Scrollbar::Settings)
+            } else {
+                Hover::None
+            });
 
             self.update_cursor_icon();
 
@@ -41,6 +58,11 @@ impl App {
             return;
         }
 
+        // 鼠标位于全屏查看的图上或正在拖动图时，被遮住的部件不响应悬停。
+        if self.diagram_view_mouse_move(x, y) {
+            return;
+        }
+
         self.track_tree_segment();
         if self.tree_drag.is_some() {
             self.drag_tree_item(x, y);
@@ -51,15 +73,6 @@ impl App {
         self.drag_terminal_tab(x);
 
         self.set_hover(self.hover_at(x, y));
-        // 分支、位置选择器里选中项跟着鼠标走：只有一个高亮，行尾的「⋯」也在鼠标所在行。
-        if let crate::app::Hover::PickerRow(row) = self.hover
-            && self.picker_is_git()
-            && row != self.picker_selected
-            && self.picker_row_selectable(row)
-        {
-            self.picker_selected = row;
-            self.request_redraw();
-        }
         let code = self.markdown.codes.iter().position(|r| r.contains(x, y));
         if code != self.markdown.code_hover {
             self.markdown.code_hover = code;
@@ -110,6 +123,7 @@ impl App {
                     self.set_sidebar(true);
                 }
             }
+            Drag::OutlineDivider { start, size } => self.drag_outline_divider(start, size, y),
             Drag::TerminalDivider { start, size } => {
                 // 往上（在右边时往左）拖面板变大；限制在排版允许的范围里再记下，
                 // 记的就是画出来的大小。
@@ -209,6 +223,17 @@ impl App {
                 self.request_redraw();
             }
             Drag::Scrollbar {
+                bar: Scrollbar::Outline,
+                grab,
+            } => {
+                let list = self.outline_list();
+                let max = self.outline_max_scroll();
+                if let Some(thumb) = scrollbar_thumb(list, 0.0, max + list.h) {
+                    self.outline.scroll = scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
+                }
+                self.request_redraw();
+            }
+            Drag::Scrollbar {
                 bar: Scrollbar::Terminal,
                 grab,
             } => self.drag_terminal_scrollbar(y, grab),
@@ -253,6 +278,11 @@ impl App {
                 }
                 self.request_redraw();
             }
+            // 设置浮层打开时在上面处理，不会走到这里。
+            Drag::Scrollbar {
+                bar: Scrollbar::Settings,
+                ..
+            } => {}
             Drag::Minimap { from, scroll } => self.drag_minimap(y, from, scroll),
             Drag::LogText => self.drag_log_text(x, y),
             Drag::MarkdownText => self.drag_markdown(x, y),
@@ -360,6 +390,14 @@ impl App {
 
     /// 是否需要逐帧自动滚动：正在拖选或列选择，鼠标位于编辑区边缘之外，且该方向仍可滚动。
     pub(in crate::app) fn drag_autoscrolling(&self) -> bool {
+        if self.drag == Drag::TerminalSelect {
+            let view = self.terminal_view();
+            let y = self.mouse.1;
+            let Some((position, limit)) = self.terminal.tab().map(|t| t.scroll_position()) else {
+                return false;
+            };
+            return (y < view.y && position < limit) || (y >= view.bottom() && position > 0.0);
+        }
         let selecting = matches!(
             self.drag,
             Drag::Select { .. }
@@ -414,4 +452,17 @@ impl App {
 /// 能逐行看清内容，拖远后可以快速到达文档两端。
 fn drag_scroll_speed(lines: f32) -> f32 {
     (6.0 + 6.0 * lines).min(120.0)
+}
+
+impl App {
+    /// 返回拖选超出边缘 `lines` 行时这一帧滚动的行数；距上次滚动的间隔最多按 100 ms 计算。
+    pub(in crate::app) fn drag_scroll_lines(&mut self, lines: f32) -> f32 {
+        let now = Instant::now();
+        let elapsed = self
+            .drag_scrolled_at
+            .map_or(self.frame_interval, |at| now - at)
+            .min(std::time::Duration::from_millis(100));
+        self.drag_scrolled_at = Some(now);
+        drag_scroll_speed(lines) * elapsed.as_secs_f32()
+    }
 }

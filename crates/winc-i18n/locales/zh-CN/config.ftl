@@ -8,6 +8,15 @@ config-project-read-failed = 无法读取（{ $error }），已忽略
 config-project-invalid-json = 不是有效的 JSON 对象，已忽略
 config-project-unsupported-key = 项目设置仅支持 format，已忽略 { $key }
 
+## 运行配置（.winc/run.json）。
+
+config-run-read-failed = 无法读取（{ $error }），已忽略
+config-run-invalid-json = 文件格式无效，应为包含 configurations 数组的 JSON 对象，已忽略
+config-run-unsupported-key = 不支持字段 { $key }，已忽略
+config-run-invalid-entry = 第 { $index } 项无效，已忽略：name 和 command 必须是非空字符串，args 必须是字符串数组，env 必须是值为字符串的对象
+config-run-duplicate-name = 配置名「{ $name }」重复，已忽略后面的一项
+config-run-template-note = 每项需要 name 和 command；args、cwd、env 为可选项。
+
 ## 各项设置的值不符合要求时。
 
 config-theme-invalid = { $name } 的值只能是 auto、dark 或 light，已忽略
@@ -29,6 +38,7 @@ config-not-bool = { $name } 应为 true 或 false，已忽略
 config-not-number = { $name } 应为数字，已忽略
 config-out-of-range = { $setting } 超出{ $label }范围（{ $range }），已忽略
 config-label-font-size = 字号
+config-label-zoom = 界面缩放
 config-label-tab-width = 制表符长度
 config-label-repository-scan-depth = 仓库扫描深度
 config-label-lines = 行数

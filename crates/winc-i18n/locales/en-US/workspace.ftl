@@ -24,6 +24,14 @@ workspace-tree-tool-collapse-all = Collapse all folders
 workspace-tree-tool-locate = Reveal active file
 workspace-sidebar-files = Files
 workspace-sidebar-search = Search
+workspace-outline-title = Outline
+workspace-outline-tool-expand-all = Expand All
+workspace-outline-tool-collapse-all = Collapse All
+workspace-outline-off = The outline is turned off in Settings
+workspace-outline-no-file = Open a file to see its outline
+workspace-outline-unsupported = The current tab has no outline
+workspace-outline-too-large = The file is too large to show an outline
+workspace-outline-no-symbols = No symbols found in this file
 workspace-sidebar-commit = Commit
 workspace-sidebar-no-folder = No Folder Open
 workspace-tree-open-hint-key = { $key } to open a file or folder
@@ -181,10 +189,13 @@ workspace-goto-total = { $count ->
     }
 workspace-stash-title = Stash Changes
 workspace-stash-placeholder = Message (optional)
-workspace-stash-hint = Includes untracked files · ↩ Stash
+workspace-stash-hint = Includes untracked files · { common-key-enter } Stash
+workspace-rename-branch-title = Rename Branch
+workspace-rename-branch-placeholder = Branch name
+workspace-rename-branch-hint = Currently { $name } · { common-key-enter } Rename
 workspace-tag-title = New Tag
 workspace-tag-placeholder = Tag name
-workspace-tag-hint = From { $commit } · ↩ Create
+workspace-tag-hint = From { $commit } · { common-key-enter } Create
 
 ## Quick open
 
@@ -217,6 +228,13 @@ workspace-picker-recently-used = Recently used
 workspace-picker-symbols-too-large = File too large to list symbols
 workspace-picker-no-symbols = No symbols found in this file
 workspace-picker-no-matching-symbols = No matching symbols
+workspace-picker-folders-placeholder = Search folders by name or path…
+workspace-picker-folders-new-window = { $platform ->
+    [macos] ⌥↩
+   *[other] Alt+Enter
+} Open in New Window
+workspace-picker-no-recent-folders = No recently opened folders
+workspace-picker-no-matching-folders = No matching folders
 workspace-conflict-modified = “{ $name }” was changed by another app
 
 ## Tooltips
@@ -225,15 +243,14 @@ workspace-tip-continue-rebase = Continue rebase
 workspace-tip-finish-operation = Complete { $operation }
 workspace-tip-amend = Amend last commit
 workspace-tip-commit-to = Commit to { $branch }
+workspace-tip-commit-push-to = Commit and push { $branch }
 workspace-tip-commit = Commit
 workspace-tip-open-file = Open file
 workspace-tip-revert-change = Revert change
-workspace-tip-commit-staged-only = Commits only the staged part; the rest stays in the working tree
 workspace-tip-commit-menu = More commit options
 workspace-tip-git-log = Git log
+workspace-tip-git-refresh = Refresh
 workspace-tip-more-actions = More actions
-workspace-tip-show-as-tree = Show as Tree
-workspace-tip-show-as-list = Show as List
 workspace-tip-previous-conflict = Previous conflict
 workspace-tip-next-conflict = Next conflict
 workspace-tip-worktree-of = Worktree of “{ $name }” · { $path }
@@ -247,20 +264,24 @@ workspace-tip-open-diff = Open in diff view
 workspace-tip-close-esc = Close (Esc)
 workspace-tip-revert-to-left = Revert change (restore left side)
 workspace-tip-include-change = Include this change in the commit
+workspace-tip-include-line = Include this line in the commit
 workspace-tip-expand-unchanged = Expand all unchanged regions
 workspace-tip-collapse-unchanged = Collapse unchanged regions
 workspace-tip-close-tab = Close
 workspace-tip-all-tabs = Show all tabs
-workspace-tip-commit-changes = Commit · Changes: { $count }
+workspace-tip-commit-changes = { $count ->
+    [one] Commit · 1 change
+   *[other] Commit · { $count } changes
+}
 workspace-tip-log-go-to = Go to { $commit } { $subject }
 workspace-tip-log-target-not-loaded = The target commit hasn’t loaded yet
 
 ## Status bar
 
 workspace-status-spaces = Spaces: { $size }
-workspace-status-update = Update Available: { $version }
-workspace-status-update-downloading = Downloading Update…
-workspace-status-update-ready = Restart to Update
+workspace-status-update = Update
+workspace-status-update-restart = Restart
+workspace-status-update-retry = Retry
 workspace-status-not-shown = Not shown: { $features }
 workspace-status-position-selected = { $position } ({ $count } selected)
 workspace-status-selections = { $count ->
@@ -310,6 +331,7 @@ workspace-reveal-failed = { $action } failed: { $error }
 workspace-terminal-app-fallback = Terminal
 workspace-open-app-failed = Couldn’t open “{ $app }”: { $error }
 workspace-deleted-on-disk-key = “{ $name }” was deleted from disk and wasn’t auto-saved; press { $key } to recreate it
+workspace-watch-limit = “{ $name }” has too many folders to watch live and updates when you return to the window; raise fs.inotify.max_user_watches in the distribution
 workspace-deleted-on-disk = “{ $name }” was deleted from disk and wasn’t auto-saved; save it to recreate it
 workspace-save-as-dirty-elsewhere = Couldn’t save as “{ $name }”: that file has unsaved changes in another tab
 workspace-save-conflict = Couldn’t save “{ $name }”: the file was changed by another app; choose which version to keep first
@@ -346,11 +368,12 @@ workspace-notice-show-output = Show Output
 workspace-notice-install = How to Install
 workspace-notice-open-settings = Open Settings
 workspace-format-output-title = Formatter Output
-workspace-font-missing = Couldn’t use the configured fonts { $fonts }; using the default font instead (press ⌘, to open Settings)
+workspace-font-missing-key = Couldn’t use the configured fonts { $fonts }; using the default font instead (press { $key } to open Settings)
+workspace-font-missing = Couldn’t use the configured fonts { $fonts }; using the default font instead
 workspace-font-missing-item = { $key } “{ $name }”
 workspace-font-unusable = This font can’t be used; choose another font
 workspace-stdin-title = Standard Input
 workspace-stdin-read-failed = Error reading standard input: { $error }
 workspace-stdin-truncated = Only the first { $size } MB of standard input was read
-workspace-backup-locked = This folder is open in another winc window; unsaved changes in this window won’t be backed up automatically
+workspace-backup-locked = This folder is open in another Winc window; unsaved changes in this window won’t be backed up automatically
 workspace-backup-failed = Couldn’t back up unsaved changes: { $error }

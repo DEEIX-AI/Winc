@@ -16,6 +16,12 @@ mod finder;
 /// 系统按这个标识区分应用（权限、默认打开方式、Launch Services）。
 const BUNDLE_ID: &str = "com.deeix.winc";
 
+/// 应用的显示名：菜单栏、访达、程序坞、「打开方式」和更新窗口里写的名字，也是 dmg 的卷名。
+///
+/// 应用包（`winc.app`）、可执行文件和命令行命令仍是小写的 `winc`；访达按 `CFBundleDisplayName`
+/// 显示应用的名字，不显示包名。
+const APP_NAME: &str = "Winc";
+
 /// 构建 release，组成临时签名（ad-hoc）的 `target/release/bundle/winc.app`，返回应用的路径和
 /// 版本号。
 ///
@@ -131,8 +137,6 @@ pub fn app_arch(app: &Path) -> Result<String, String> {
     })
 }
 
-/// dmg 的卷名，也是打开后窗口的标题。
-const VOLUME_NAME: &str = "winc";
 /// dmg 窗口内容区的宽和高（点）。
 ///
 /// 取自调参：640 点宽的内容区里并排放两个图标及其名字，400 点高容纳图标、名字和箭头。
@@ -205,7 +209,7 @@ pub fn dmg(signed: Option<&Path>, output: Option<&Path>) -> Result<(), String> {
     // 留出余量放背景图、卷图标和文件系统自身的开销，空着的部分压缩后几乎不占空间。
     let megabytes = dir_size(&app).map_err(io)? / 1_048_576 + 16;
     run(Command::new("hdiutil")
-        .args(["create", "-quiet", "-fs", "HFS+", "-volname", VOLUME_NAME])
+        .args(["create", "-quiet", "-fs", "HFS+", "-volname", APP_NAME])
         .args(["-size", &format!("{megabytes}m")])
         .arg(&writable))?;
     // 挂到自己的目录上，不进 `/Volumes`：不和已经打开的 winc 镜像重名，也不出现在系统的卷列表中。
@@ -302,18 +306,23 @@ fn fill_volume(volume: &Path, app: &Path, background: &Path, icon: &Path) -> Res
     // 卷图标用应用图标：挂载后在桌面和侧边栏中显示。
     let volume_icon = volume.join(".VolumeIcon.icns");
     std::fs::copy(icon, &volume_icon).map_err(io)?;
+    // 卷根目录的 `.metadata_never_index` 使聚焦（Spotlight）不为挂载后的卷建立索引，卷中的
+    // winc.app 不会经由索引登记为应用，「打开方式」等列表中不出现安装包内的副本。
+    let never_index = volume.join(".metadata_never_index");
+    std::fs::write(&never_index, b"").map_err(io)?;
     // 不给 winc.app 设「隐藏扩展名」：该标志存在包根目录的文件信息里，装到「应用程序」以后
     // `codesign --verify --strict` 会把这个标志当成多余的附加数据而判定签名无效。
     set_finder_flags(volume, HAS_CUSTOM_ICON)?;
-    // 打开「显示隐藏文件」后仍不显示 `.background` 和 `.VolumeIcon.icns`：两个条目都置上
-    // `hidden` 标志。
+    // 打开「显示隐藏文件」后仍不显示 `.background`、`.VolumeIcon.icns` 和
+    // `.metadata_never_index`：这几个条目都置上 `hidden` 标志。
     run(Command::new("chflags")
         .arg("hidden")
         .arg(&hidden)
-        .arg(&volume_icon))?;
+        .arg(&volume_icon)
+        .arg(&never_index))?;
 
-    let mount_point = format!("/Volumes/{VOLUME_NAME}");
-    let alias = finder::alias(volume, VOLUME_NAME, &mount_point, &picture).map_err(io)?;
+    let mount_point = format!("/Volumes/{APP_NAME}");
+    let alias = finder::alias(volume, APP_NAME, &mount_point, &picture).map_err(io)?;
     let (x, y) = WINDOW_AT;
     let (w, h) = (WINDOW.0, WINDOW.1 + TITLE_BAR);
     // 窗口只留内容区：没有工具栏、边栏、路径栏、状态栏、标签栏。
@@ -493,6 +502,18 @@ fn dmg_background(work: &Path, output: &Path) -> Result<(), String> {
 /// 应用图标的源文件，相对 workspace 根目录。
 const ICON_SOURCE: &str = "crates/winc-app/assets/icon.svg";
 
+/// `ICON_SOURCE` 中图标底板的宽度（像素），以 1024 × 1024 的画布计，即底板 `<rect>` 的 `width`。
+///
+/// 底板接近铺满画布，Windows、Linux 的图标按原样使用；macOS 的图标缩小到 [`MACOS_ICON_TILE`]。
+pub(crate) const ICON_TILE: f32 = 920.0;
+
+/// macOS 应用图标中底板的边长（像素），以 1024 × 1024 的画布计。
+///
+/// 依据 Apple Design Resources 中的 macOS 应用图标模板：底板 824 × 824，四周各留 100，留白用于
+/// 系统绘制的阴影。macOS 15 及更早的版本按原样显示图标，底板超出该尺寸时，程序坞中的显示尺寸
+/// 大于按模板制作的图标。
+pub(crate) const MACOS_ICON_TILE: f32 = 824.0;
+
 /// `.icns` 的文件名（不含扩展名），也是 `Info.plist` 中 `CFBundleIconFile` 的值。
 const ICON_NAME: &str = "winc";
 
@@ -535,7 +556,7 @@ fn app_icon(work: &Path, output: &Path) -> Result<(), String> {
             1 => format!("icon_{size}x{size}.png"),
             _ => format!("icon_{size}x{size}@{scale}x.png"),
         };
-        let pixels = picture.render(size * scale, size * scale);
+        let pixels = macos_icon(&picture, size * scale);
         write_png(&iconset.join(name), &pixels)?;
     }
 
@@ -544,6 +565,31 @@ fn app_icon(work: &Path, output: &Path) -> Result<(), String> {
         .arg(output)
         .arg(&iconset))?;
     std::fs::remove_dir_all(&iconset).map_err(io)
+}
+
+/// 将应用图标渲染为边长 `size`（像素）的 macOS 图标。
+///
+/// 整个图标按 [`MACOS_ICON_TILE`] 与 [`ICON_TILE`] 之比缩小后居中放在透明画布上，底板因此位于
+/// 模板规定的位置。
+pub(crate) fn macos_icon(
+    picture: &winc_preview::image::Picture,
+    size: u32,
+) -> winc_preview::image::Pixels {
+    let inner = ((size as f32) * MACOS_ICON_TILE / ICON_TILE).round() as u32;
+    let art = picture.render(inner, inner);
+    let offset = (size - inner) / 2;
+    let row = 4 * size as usize;
+    let mut rgba = vec![0; row * size as usize];
+    for y in 0..inner as usize {
+        let from = &art.rgba[y * 4 * inner as usize..(y + 1) * 4 * inner as usize];
+        let at = (y + offset as usize) * row + 4 * offset as usize;
+        rgba[at..at + from.len()].copy_from_slice(from);
+    }
+    winc_preview::image::Pixels {
+        width: size,
+        height: size,
+        rgba,
+    }
 }
 
 /// 把 RGBA 像素（未预乘）写成 PNG。
@@ -561,7 +607,7 @@ fn write_png(path: &Path, pixels: &winc_preview::image::Pixels) -> Result<(), St
 /// 生成 `Info.plist`；`arch` 是应用的架构（`arm64` 或 `x86_64`），决定请求哪一份 appcast。
 ///
 /// `CFBundleDocumentTypes` 声明能打开任意文件（`public.data`）和文件夹（`public.folder`）：
-/// 有了这一项，文件和文件夹才能拖到程序坞的图标上，「打开方式」里也才列出 winc。等级是
+/// 有了这一项，文件和文件夹才能拖到程序坞的图标上，「打开方式」里也才列出 Winc。等级是
 /// `Alternate`，不占用其他应用的默认打开方式。
 fn info_plist(version: &str, updates: &sparkle::UpdateConfig, arch: &str) -> String {
     let updates = updates.plist_entries(arch);
@@ -600,7 +646,7 @@ fn info_plist(version: &str, updates: &sparkle::UpdateConfig, arch: &str) -> Str
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>winc</string>
+	<string>{APP_NAME}</string>
 	<key>CFBundleExecutable</key>
 	<string>winc</string>
 	<key>CFBundleIconFile</key>
@@ -610,7 +656,7 @@ fn info_plist(version: &str, updates: &sparkle::UpdateConfig, arch: &str) -> Str
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>winc</string>
+	<string>{APP_NAME}</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

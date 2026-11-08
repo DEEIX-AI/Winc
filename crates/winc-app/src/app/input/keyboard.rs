@@ -82,6 +82,11 @@ impl App {
             return;
         }
 
+        // 全屏查看图时，关闭、缩放等按键先交给查看器处理。
+        if self.diagram_view_key(&event.logical_key, &base, cmd) {
+            return;
+        }
+
         // 快捷键都定义在键位表中，先查表；不是快捷键的按键（打字、方向键、回车）再交给
         // 焦点所在的部件。
         let stroke = self.stroke_of(
@@ -106,7 +111,11 @@ impl App {
             Focus::Prompt => self.on_key_prompt(event, &base, cmd),
             Focus::Picker => self.on_key_picker(event, &base, cmd),
             // 设置浮层打开时已在上方处理，不会执行到这里。
-            Focus::Setting | Focus::Settings | Focus::KeySearch | Focus::Dialog => {}
+            Focus::Setting
+            | Focus::Settings
+            | Focus::KeySearch
+            | Focus::SettingsSearch
+            | Focus::Dialog => {}
             Focus::Tree => self.on_key_tree(&event.logical_key),
             Focus::GlobalQuery
             | Focus::GlobalReplace
@@ -115,8 +124,11 @@ impl App {
             Focus::Results => self.on_key_results(event),
             Focus::CommitMessage => self.on_key_commit_message(event, &base, cmd),
             Focus::CommitList => self.on_key_commit_list(event),
+            Focus::Outline => self.outline_key(&event.logical_key),
             Focus::LogFilter => self.on_key_log_filter(event, &base, cmd),
             Focus::Terminal => self.on_key_terminal(event),
+            // 这两个输入框使用终端的键位表，Windows、Linux 的 Ctrl+V 不在表中，在此处理。
+            Focus::TerminalFind | Focus::TerminalRename if cmd && base == "v" => self.paste(),
             Focus::TerminalFind => self.on_key_terminal_find(event, &base, cmd),
             Focus::TerminalRename => self.on_key_terminal_rename(event, &base, cmd),
         }
@@ -238,7 +250,10 @@ impl App {
             }
             return;
         }
-        if self.markdown_key(&event.logical_key, cmd) || self.table_key(&event.logical_key, cmd) {
+        if self.markdown_key(&event.logical_key, cmd)
+            || self.table_key(&event.logical_key, cmd)
+            || self.pdf_key(&event.logical_key)
+        {
             return;
         }
         // 改动卡片开着时 `Esc` 先关卡片。
@@ -468,6 +483,10 @@ impl App {
             self.on_key_search_keys(event, base, cmd);
             return;
         }
+        if self.focus == Focus::SettingsSearch {
+            self.on_key_settings_search(event, base, cmd);
+            return;
+        }
 
         if cmd && matches!(base, "," | "w") {
             self.close_settings();
@@ -495,7 +514,33 @@ impl App {
             Key::Named(NamedKey::ArrowLeft) => self.settings_step(false),
             Key::Named(NamedKey::ArrowRight) => self.settings_step(true),
             Key::Named(NamedKey::Enter | NamedKey::Space) => self.settings_activate(),
+            _ if cmd && base == "f" => self.focus_settings_search(),
+            // 直接打字即开始搜索：焦点移到搜索框，这个字写进去。
+            Key::Character(_) if !cmd && !self.modifiers.control_key() => {
+                self.focus = Focus::SettingsSearch;
+                self.on_key_field(event, base, cmd);
+            }
             _ => {}
+        }
+    }
+
+    /// 处理设置分类栏顶部搜索框中的按键：`↓`、`↩`、`Tab` 进入搜索结果，`Esc` 先清空搜索框，
+    /// 搜索框为空时关闭设置，其余交给输入框。
+    fn on_key_settings_search(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
+        match &event.logical_key {
+            Key::Named(NamedKey::ArrowDown | NamedKey::Enter | NamedKey::Tab) => {
+                self.settings_enter_results();
+            }
+            Key::Named(NamedKey::Escape) if self.settings.search.text().is_empty() => {
+                self.close_settings();
+            }
+            Key::Named(NamedKey::Escape) => self.edit_field(|f| {
+                f.set_text("");
+                true
+            }),
+            _ if cmd && matches!(base, "," | "w") => self.close_settings(),
+            _ if cmd && base == "v" => self.paste(),
+            _ => self.on_key_field(event, base, cmd),
         }
     }
 
@@ -511,14 +556,29 @@ impl App {
 
     /// 处理对话框自身响应的按键（见 [`App::on_key_dialog`]）；按键须交给名称输入框时返回 `false`。
     pub(in crate::app) fn dialog_key(&mut self, key: &Key, base: &str, cmd: bool) -> bool {
-        let on_name = self
-            .form_dialog
-            .as_ref()
-            .is_none_or(|d| d.focus == crate::layout::DialogPart::Branch);
+        let on_name = self.form_dialog.as_ref().is_none_or(|d| {
+            matches!(
+                d.focus,
+                crate::layout::DialogPart::Branch | crate::layout::DialogPart::Second
+            )
+        });
+        // 交互式变基的信息框是多行的：回车换行，⌘回车开始变基。
+        let multiline = on_name
+            && (self.form_dialog.as_ref())
+                .is_some_and(|d| matches!(d.kind, crate::app::git::form::FormKind::Rebase(_)));
+        if !cmd
+            && !matches!(key, Key::Named(NamedKey::Escape | NamedKey::Tab))
+            && self.rebase_list_key(key, base)
+        {
+            return true;
+        }
         match key {
             Key::Named(NamedKey::Escape) => self.close_form_dialog(),
             Key::Named(NamedKey::Tab) => self.form_focus_move(self.modifiers.shift_key()),
             _ if cmd && base == "w" => self.close_form_dialog(),
+            Key::Named(NamedKey::Enter) if multiline && !cmd => {
+                self.edit_field(|field| field.insert("\n"));
+            }
             Key::Named(NamedKey::Enter) if on_name => self.submit_form_dialog(),
             Key::Named(NamedKey::Enter | NamedKey::Space) if !on_name => self.form_activate(),
             _ if !on_name => {}
@@ -599,10 +659,6 @@ impl App {
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
-                if self.picker_create.is_some() {
-                    self.cancel_branch_create();
-                    return;
-                }
                 self.close_picker();
                 return;
             }
@@ -895,14 +951,17 @@ impl App {
     }
 
     /// 把输入法候选窗的位置（`ime_cursor`，逻辑像素）同步给窗口；位置没有变化时不重复设置。
+    ///
+    /// 窗口按系统的逻辑坐标接收位置，界面的逻辑像素乘以界面缩放倍数后传入。
     pub(in crate::app) fn update_ime_area(&mut self) {
         if let (Some(area), Some(window)) = (self.ime_cursor, &self.window)
             && self.last_ime_area != Some(area)
         {
             self.last_ime_area = Some(area);
+            let zoom = f64::from(self.zoom());
             window.set_ime_cursor_area(
-                LogicalPosition::new(area.x as f64, area.y as f64),
-                LogicalSize::new(area.w as f64, area.h as f64),
+                LogicalPosition::new(f64::from(area.x) * zoom, f64::from(area.y) * zoom),
+                LogicalSize::new(f64::from(area.w) * zoom, f64::from(area.h) * zoom),
             );
         }
     }

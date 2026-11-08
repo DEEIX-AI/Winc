@@ -236,6 +236,10 @@ pub(crate) fn readable(fg: Color, bg: Color, min: f32) -> Color {
     } else {
         far
     };
+    // 反向调整时直接取纯黑或纯白：原有颜色已无法保留，取刚好达标的中间值时文字呈灰色。
+    if toward == far {
+        return far;
+    }
     // 翻到另一头时要先越过底色，对比度先变小再变大：只算越过以后的。
     let past = |c: Color| (luminance(c) > luminance(bg)) == (toward == WHITE);
     // 二分找最小的调和比例：越过底色以后，对比度随比例单调变大。
@@ -318,8 +322,8 @@ struct Tokens {
     warning: Color,
     /// Git 状态：修改、新增、删除、冲突。
     ///
-    /// 文件名、行号栏标记、差异的底色都从这里来，同一种
-    /// 改动在哪里都是同一个颜色。
+    /// 文件名、行号栏标记、差异的底色都从这里来，同一种改动在哪里都是同一个颜色；差异里的删除
+    /// 例外，见 [`DELETED_DARK`]。
     git: [Color; 4],
     /// 当前标签是否带强调色；为 `false` 时是凸起的一块灰。
     tinted_tab: bool,
@@ -350,11 +354,16 @@ const fn mix(fg: Color, bg: Color, t: f32) -> Color {
 ///
 /// 四档比例依次用于行、行内改动的字、边线和行号栏标记；深色主题叠得浓一些，否则在深色底上
 /// 看不出来。比例取自调参，按两种配色下改动可见程度相当校准。
+/// 深色主题下差异里删除的颜色：比编辑区底色亮、不带色相的灰。
+const DELETED_DARK: Color = palettes::hex(0x9DA1A8);
+/// 浅色主题下差异里删除的颜色：比编辑区底色暗、不带色相的灰。
+const DELETED_LIGHT: Color = palettes::hex(0x70737D);
+
 const fn shade(mark: Color, card: Color, dark: bool) -> DiffShade {
     let t = if dark {
-        [0.14, 0.27, 0.36, 0.75]
+        [0.21, 0.36, 0.46, 0.75]
     } else {
-        [0.10, 0.22, 0.32, 0.62]
+        [0.16, 0.30, 0.42, 0.62]
     };
     DiffShade {
         line: mix(mark, card, t[0]),
@@ -450,7 +459,12 @@ impl Palette {
             git_conflict: t.git[3],
             diff_modified: shade(t.git[0], t.card, dark),
             diff_added: shade(t.git[1], t.card, dark),
-            diff_deleted: shade(t.git[2], t.card, dark),
+            // 删除用中性灰，不随主题的 Git 状态色变红：红色留给合并冲突。
+            diff_deleted: shade(
+                if dark { DELETED_DARK } else { DELETED_LIGHT },
+                t.card,
+                dark,
+            ),
             syntax_text: t.syntax[0],
             syntax_keyword: t.syntax[1],
             syntax_builtin: t.syntax[2],
@@ -568,30 +582,47 @@ pub struct ViewFonts {
     pub code: f32,
     /// 编辑区行高；行号与坐标的换算以该值为准。
     pub line_height: f32,
+    /// 终端的字号。
+    pub terminal: f32,
+    /// 终端的行高，算法与编辑区行高相同。
+    pub terminal_line_height: f32,
 }
 
 impl ViewFonts {
-    /// 按配置中的编辑区字号 `code` 和界面字号 `ui` 算出整套度量。
+    /// 按编辑区字号 `code`、界面字号 `ui` 和终端字号 `terminal` 算出整套度量。
     ///
     /// 行高取整到整像素：否则基线会落在半像素位置，相邻两行字形的浓淡不一致。
     ///
     /// 次要文字和徽章与界面字号保持固定的差值（与默认值相同），下限分别为 8 像素和 7 像素。
     /// 不按比例缩放：界面字号为 14 时按比例算出 12.92，字形落不到整像素上，笔画发虚，
     /// 看起来和其他文字粗细不一。
-    pub fn new(code: f32, ui: f32) -> ViewFonts {
+    pub fn new(code: f32, ui: f32, terminal: f32) -> ViewFonts {
+        let line_height = |size: f32| (size * LINE_HEIGHT_RATIO).round().max(8.0);
         ViewFonts {
             ui,
             ui_small: (ui - (UI_FONT - UI_FONT_SMALL)).max(8.0),
             initials: (ui - (UI_FONT - INITIALS_FONT)).max(7.0),
             code,
-            line_height: (code * LINE_HEIGHT_RATIO).round().max(8.0),
+            line_height: line_height(code),
+            terminal,
+            terminal_line_height: line_height(terminal),
         }
+    }
+
+    /// 按 `config` 中的字号算出整套度量，未设置的用默认字号。
+    ///
+    /// 终端字号与编辑区字号互不影响：终端未设置时用编辑区的默认字号 [`CODE_FONT`]，不随编辑区
+    /// 字号变化。
+    pub fn of(config: &winc_config::Config) -> ViewFonts {
+        let code = config.editor_size.unwrap_or(CODE_FONT);
+        let ui = config.ui_size.unwrap_or(UI_FONT);
+        ViewFonts::new(code, ui, config.terminal_size.unwrap_or(CODE_FONT))
     }
 }
 
 impl Default for ViewFonts {
     fn default() -> Self {
-        ViewFonts::new(CODE_FONT, UI_FONT)
+        ViewFonts::new(CODE_FONT, UI_FONT, CODE_FONT)
     }
 }
 
@@ -636,6 +667,8 @@ pub const TREE_INDENT: f32 = 16.0;
 pub const TAB_HEIGHT: f32 = 26.0;
 /// 标签之间的间距。
 pub const TAB_GAP: f32 = 4.0;
+/// 第一个文件标签离标签栏左边的距离（逻辑像素），与标签上下的留白相同。
+pub const TAB_INSET: f32 = (TOP_BAR - TAB_HEIGHT) / 2.0;
 /// 标签的最大宽度。
 ///
 /// 标签宽度贴合文件名，文件名更长时截短；所有标签放不下时横向滚动。
@@ -688,6 +721,10 @@ pub const SCROLLBAR_END: f32 = 6.0;
 pub const SCROLLBAR_THUMB: f32 = 6.0;
 /// 滑块离卡片边缘的距离（逻辑像素）：紧贴着卡片的右边（水平滚动条是下边），只留一线。
 pub const SCROLLBAR_INSET: f32 = 1.0;
+/// 加载图标每秒旋转的圈数（圈）。
+///
+/// 1.25 圈每秒即 0.8 秒一圈：同步、提交、刷新的图标都按它转，转速一致。
+pub const SPIN_SPEED: f32 = 1.25;
 /// 鼠标悬停在按钮上多久后显示提示（毫秒）。
 ///
 /// 与 macOS 的悬停提示一致：指针停留约 0.5 s 后出现，扫过按钮时不弹出。
@@ -720,6 +757,20 @@ pub const SETTINGS_BOTTOM: f32 = 24.0;
 pub const SETTINGS_ROW: f32 = 40.0;
 /// 名称下方还有一行说明文字时的行高。
 pub const SETTINGS_ROW_TALL: f32 = 54.0;
+/// 文字、图标类控件（菜单的值、字体名、数值步进、版本号）的底色在可见内容右侧留出的边距。
+///
+/// 可见内容的右缘与组内分隔线的右端对齐，开关、分段控件、按钮这类有底色的控件右缘也对齐到
+/// 该处；悬停底色因此比可见内容向右多出这段边距。
+pub const SETTINGS_GLYPH_PAD: f32 = 8.0;
+/// 「关于」页顶部产品信息一行的高度：上方留白 20、图标、间隔 10、名称一行 28、间隔 2、版本号
+/// 一行 24，下方留白 16。
+pub const SETTINGS_PRODUCT_H: f32 = 164.0;
+/// 「关于」页顶部产品图标的边长（逻辑像素）。
+pub const SETTINGS_LOGO: f32 = 64.0;
+/// 说明文字折成多行时，每多一行增加的行高：说明文字的行距。
+pub const SETTINGS_DESC_LINE: f32 = 18.0;
+/// 说明文字最多折成的行数；更窄时最后一行在末尾截短。
+pub const SETTINGS_DESC_LINES: usize = 3;
 
 /// 组上方标题行的高度（含与组之间的间距）。
 pub const SETTINGS_TITLE: f32 = 26.0;
@@ -768,10 +819,10 @@ pub const DIALOG_BUTTON_W: f32 = 72.0;
 /// 「位置」右端选目录按钮（一个目录图标）的宽度。
 pub const DIALOG_CHANGE_W: f32 = 28.0;
 
-/// 「快捷键」页顶部搜索框的高度（逻辑像素）。
-pub const KEYS_SEARCH_H: f32 = 32.0;
-/// 搜索框右端「录制按键」按钮的边长（逻辑像素）。
-pub const KEYS_RECORD: f32 = 24.0;
+/// 「快捷键」页顶部搜索框的高度（逻辑像素），与分类栏顶部的搜索框相同。
+pub const KEYS_SEARCH_H: f32 = SETTINGS_CONTROL_H;
+/// 搜索框右端「录制按键」按钮的边长（逻辑像素）：上下各离搜索框边缘 3。
+pub const KEYS_RECORD: f32 = KEYS_SEARCH_H - 6.0;
 /// 「快捷键」页列表一行的高度（逻辑像素）。
 pub const KEYS_ROW: f32 = 34.0;
 

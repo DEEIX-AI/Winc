@@ -73,7 +73,7 @@ preview-table-delete = Delete Table
 ## Table preview
 preview-table-invalid = Not a valid xlsx file
 preview-table-unsupported = Encrypted and zip64 xlsx files aren’t supported
-preview-table-damaged = The file is damaged ({ $part })
+preview-office-damaged = The file is damaged ({ $part })
 preview-table-too-large = The file is too large
 preview-table-no-sheets = The workbook has no sheets to show
 preview-table-empty = This sheet is empty
@@ -84,3 +84,23 @@ preview-table-sheet = Sheet { $number }
 preview-browser-open = Open in Browser
 preview-browser-unsaved = Opened in the browser. It shows the last saved version; you have unsaved changes.
 preview-browser-failed = Couldn’t open the browser: { $error }
+
+## Word document preview
+
+preview-docx-invalid = Not a valid docx file
+preview-docx-unsupported = Encrypted and zip64 docx files aren’t supported
+preview-docx-too-large = The file is too large
+preview-docx-comment = Comment ({ $author }):
+preview-docx-chart = Chart
+preview-docx-chart-titled = Chart: { $title }
+preview-docx-chart-series = { $count } series: { $names }
+preview-docx-chart-category = Category
+preview-docx-image-unsupported = The image “{ $name }” is in { $format } format and can’t be previewed
+
+## PDF preview
+
+preview-pdf-unsupported = PDF preview isn’t supported on this system
+preview-pdf-invalid = Not a valid PDF file
+preview-pdf-encrypted = Encrypted PDFs can’t be previewed
+preview-pdf-empty = The PDF has no pages
+preview-pdf-render-failed = The page couldn’t be rendered

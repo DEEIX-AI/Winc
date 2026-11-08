@@ -160,6 +160,10 @@ enum OpenedContent {
     Image(Option<SystemTime>),
     /// xlsx 工作簿：只有修改时间，读取另外做。
     Workbook(Option<SystemTime>),
+    /// docx 文字文档：只有修改时间，读取和转换另外做。
+    Docx(Option<SystemTime>),
+    /// PDF：只有修改时间，读取和渲染另外做。
+    Pdf(Option<SystemTime>),
     /// 文本，或者打不开的原因。
     Text(Result<Loaded, OpenError>),
 }
@@ -283,9 +287,10 @@ impl Document {
         let Some(path) = &self.path else {
             return false;
         };
-        fs::metadata(path).map_or(true, |metadata| {
-            !metadata.permissions().readonly() && !self.disk_differs(&metadata)
-        })
+        fs::metadata(path).map_or_else(
+            |_| crate::wsl::reachable(path),
+            |metadata| !metadata.permissions().readonly() && !self.disk_differs(&metadata),
+        )
     }
 
     /// 文件在最近一次读写时还在，现在磁盘上没有了（被其他程序删除、移动、重命名，或切换分支）。
@@ -299,6 +304,7 @@ impl Document {
         };
         self.disk_mtime.is_some()
             && fs::metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+            && crate::wsl::reachable(path)
     }
 
     /// 磁盘文件是否与最近一次读写时不同：修改时间或大小变了。
@@ -465,8 +471,8 @@ impl Document {
     /// [`DiskSync::Reread`]，调用方在后台 [`Reread::read`]，读好后交给
     /// [`Document::apply_reread`]。
     ///
-    /// 其余情况（没变、冲突、图片、xlsx 工作簿）只看文件的元数据，就地处理完。元数据在调用的线程
-    /// 上读；界面线程上在后台读好元数据，再调用 [`Document::check_disk_with`]。
+    /// 其余情况（没变、冲突、图片、xlsx 工作簿、docx、PDF）只看文件的元数据，就地处理完。元数据在
+    /// 调用的线程上读；界面线程上在后台读好元数据，再调用 [`Document::check_disk_with`]。
     pub fn check_disk(&mut self) -> DiskSync {
         let metadata = self.path.as_ref().and_then(|p| fs::metadata(p).ok());
         self.check_disk_with(metadata.as_ref())
@@ -479,11 +485,12 @@ impl Document {
             return DiskSync::Done(DiskChange::Unchanged);
         };
 
-        // 图片、工作簿被其他程序修改：重新读取。递增 `revision` 使正在进行的那次读取结果被
-        // 丢弃（见 `set_picture`、`set_table`），工作簿随后按新版本重新读（`table_to_load`）。
+        // 图片、工作簿、docx、PDF 被其他程序修改：重新读取。递增 `revision` 使正在进行的那次
+        // 读取结果被丢弃（见 `set_picture`、`set_table`），工作簿随后按新版本重新读
+        // （`table_to_load`），docx、PDF 由界面按新版本重新转换、渲染。
         if matches!(
             self.unsupported,
-            Some(Unsupported::Image | Unsupported::Workbook)
+            Some(Unsupported::Image | Unsupported::Workbook | Unsupported::Docx | Unsupported::Pdf)
         ) {
             let mtime = metadata.and_then(|m| m.modified().ok());
             if mtime.is_none() || mtime == self.disk_mtime {
@@ -699,8 +706,8 @@ impl Document {
     }
 
     /// 读文件 `path`，供 [`Document::from_opened`] 建文档（耗时和文件大小成正比，在后台线程上
-    /// 调用）：图片只读修改时间（解码另由界面交给后台），其余按文本读；同时读适用的
-    /// `.editorconfig`。
+    /// 调用）：图片、xlsx 工作簿、docx 和 PDF 只读修改时间（解码、读取另由界面交给后台），其余按
+    /// 文本读；同时读适用的 `.editorconfig`。
     pub fn read_any(path: &Path) -> Opened {
         Self::read(path, false)
     }
@@ -713,6 +720,10 @@ impl Document {
             OpenedContent::Image(mtime())
         } else if !as_text && winc_preview::table::is_workbook(path) {
             OpenedContent::Workbook(mtime())
+        } else if !as_text && winc_preview::docx::is_docx(path) {
+            OpenedContent::Docx(mtime())
+        } else if !as_text && winc_preview::pdf::supported() && winc_preview::pdf::is_pdf(path) {
+            OpenedContent::Pdf(mtime())
         } else {
             OpenedContent::Text(load(path, as_text))
         };
@@ -738,6 +749,16 @@ impl Document {
                 document.readonly = true;
                 document.unsupported = Some(Unsupported::Workbook);
                 document.table = Some(TableView::loading(document.revision));
+                document.disk_mtime = mtime;
+            }
+            OpenedContent::Docx(mtime) => {
+                document.readonly = true;
+                document.unsupported = Some(Unsupported::Docx);
+                document.disk_mtime = mtime;
+            }
+            OpenedContent::Pdf(mtime) => {
+                document.readonly = true;
+                document.unsupported = Some(Unsupported::Pdf);
                 document.disk_mtime = mtime;
             }
             OpenedContent::Text(Ok(loaded)) => document.set_content(loaded),
@@ -945,6 +966,11 @@ pub(super) fn write_atomic(
             t!("editor-file-read-only"),
         ));
     }
+    // 通过 Windows 改名替换发行版中的文件会丢失 Linux 权限和属主。
+    let in_distro = existing.is_some() && crate::wsl::locate_here(path).is_some();
+    if in_memory && in_distro {
+        return write_in_place(path, bom, write);
+    }
     if existing.as_ref().is_some_and(rename_changes_identity) {
         if in_memory {
             return write_in_place(path, bom, write);
@@ -992,6 +1018,10 @@ pub(super) fn write_atomic(
             copy_extended_attributes(path, &file);
         }
 
+        // 大文件的片段引用原文件，无法原地写入，由发行版复制权限。
+        if in_distro {
+            crate::wsl::keep_identity(path, &tmp)?;
+        }
         winc_config::files::replace_file(&tmp, path)?;
         sync_dir(dir);
         Ok(())

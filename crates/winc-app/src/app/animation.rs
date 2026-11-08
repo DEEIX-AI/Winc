@@ -38,6 +38,13 @@ pub(super) const EXIT_FADE: Duration = Duration::from_millis(70);
 const REVEAL_FROM: f32 = 0.7;
 /// 日志详情换成另一个提交时内容淡入的时长（经验值）：比视图切换还短，只用于遮盖内容的突然替换。
 pub(super) const DETAILS_FADE: Duration = Duration::from_millis(120);
+/// Markdown 预览的标题列表展开的时长：卡片淡入、横线从指示条滑到各行，与文件树展开一个目录
+/// 相同。
+pub(super) const TOC_FADE: Duration = TREE_ANIMATION;
+/// 在 Markdown 预览的标题列表里点了一个标题后，正文里该标题的底色淡出的时长。
+///
+/// 取 1.2 秒（调参所得）：滚动结束后仍能看清标出的是哪一个标题，又不会久留。
+pub(super) const TOC_FLASH: Duration = Duration::from_millis(1200);
 /// 切换侧栏视图时，视图切换中选中段滑到新位置的时长（经验值），取 [`TAB_SLIDE`]。
 pub(super) const VIEW_SLIDE: Duration = TAB_SLIDE;
 /// 设置中开关切换时圆钮滑动、底色渐变的时长（经验值），取 [`TAB_SLIDE`]。
@@ -291,8 +298,20 @@ impl App {
         settle(&mut self.sidebar_motion, |m| m.clock);
         settle(&mut self.tree_motion, |m| m.clock);
         self.tree_labels.settle();
+        self.commit.names.settle();
+        settle(&mut self.commit.shift, |s| s.clock);
+        settle(&mut self.commit.actions_slide, |s| s.1);
         settle(&mut self.commit.motion, |m| m.clock);
         settle(&mut self.commit.message_motion, |m| m.1);
+        settle(&mut self.commit.button_motion, |m| m.1);
+        settle(&mut self.commit.amend_motion, |m| m.1);
+        settle(&mut self.commit.stash_motion, |m| m.1);
+        settle(&mut self.outline.motion, |m| m.1);
+        settle(&mut self.outline.fold, |f| f.clock);
+        settle(&mut self.markdown.toc_fade, |c| *c);
+        settle(&mut self.markdown.toc_flash, |f| f.1);
+        settle(&mut self.commit.card.motion, |m| m.1);
+        settle(&mut self.commit.undo.motion, |m| m.1);
         settle(&mut self.global.field_motion, |m| m.2);
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.fold_motion, |m| m.clock);
@@ -343,7 +362,7 @@ impl App {
     /// 在本帧开始时刻 `started` 之后经过一个 `frame_interval` 唤醒。
     pub(super) fn schedule_frame(&mut self, started: Instant) {
         let animating = self.animating();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(link) = &mut self.display_link {
             link.set_running(animating);
             self.next_frame = None;
@@ -358,7 +377,7 @@ impl App {
     /// 存在显示链接时由它在下一次刷新时请求重画；显示链接没有回调时（窗口被遮住）由计时器在
     /// 两个 `frame_interval` 后兜底，画成以后 [`Self::schedule_frame`] 会取消它。
     pub(super) fn retry_frame(&mut self, started: Instant) {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(link) = &mut self.display_link {
             link.set_running(true);
             self.next_frame = Some(started + self.frame_interval * 2);
@@ -372,8 +391,20 @@ impl App {
         self.sidebar_motion.is_some()
             || self.tree_motion.is_some()
             || self.tree_labels.moving()
+            || self.commit.names.moving()
+            || self.commit.actions_slide.is_some()
+            || self.commit.shift.is_some()
             || self.commit.motion.is_some()
             || self.commit.message_motion.is_some()
+            || self.commit.button_motion.is_some()
+            || self.commit.amend_motion.is_some()
+            || self.commit.stash_motion.is_some()
+            || self.outline.motion.is_some()
+            || self.outline.fold.is_some()
+            || self.markdown.toc_fade.is_some()
+            || self.markdown.toc_flash.is_some()
+            || self.commit.card.motion.is_some()
+            || self.commit.undo.motion.is_some()
             || self.global.field_motion.is_some()
             || self.global.motion.is_some()
             || self.drag_autoscrolling()
@@ -410,7 +441,9 @@ impl App {
             || self.scrollbars_animating()
             || self.markdown.motion.is_some()
             || self.status_motion.moving()
-            || ((self.branch.running.is_some() || self.branch.finished.is_some())
+            || ((self.branch.running.is_some()
+                || self.branch.finished.is_some()
+                || self.commit_refreshing())
                 && self.commit_shown())
     }
 }

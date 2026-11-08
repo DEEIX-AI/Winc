@@ -130,6 +130,7 @@ const EDITOR: &[Field] = &[
     bool_field!("stickyScroll", sticky_scroll),
     bool_field!("wordWrap", word_wrap),
     bool_field!("minimap", minimap),
+    bool_field!("outline", outline),
     Field {
         key: "renderWhitespace",
         read: |config, value, name, problems| {
@@ -172,6 +173,15 @@ const UI: &[Field] = &[
         write: |config| config.ui_size.map(number),
     },
     Field {
+        key: "zoom",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-zoom");
+            config.ui_zoom = read_number(value, name, Config::ZOOM_RANGE, label, problems)
+                .map(|zoom| zoom.round() as u16);
+        },
+        write: |config| config.ui_zoom.map(|zoom| number(f32::from(zoom))),
+    },
+    Field {
         // `titleBarStyle` 在配置中是字符串，读入后只保留是否用系统的标题栏。
         key: "titleBarStyle",
         read: |config, value, name, problems| match value.as_str() {
@@ -192,6 +202,7 @@ const UI: &[Field] = &[
 const TREE: &[Field] = &[
     bool_field!("confirmDragAndDrop", confirm_drag_and_drop),
     bool_field!("compactFolders", compact_folders),
+    bool_field!("previewOnClick", preview_on_click),
 ];
 
 /// `markdown` 一节。
@@ -215,6 +226,17 @@ const TERMINAL: &[Field] = &[
         write: |config| config.external_terminal.clone().map(Json::String),
     },
     bool_field!("enabled", terminal_enabled),
+    string_field!("font", terminal_font),
+    Field {
+        key: "size",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-font-size");
+            config.terminal_size =
+                read_number(value, name, Config::EDITOR_SIZE_RANGE, label, problems)
+        },
+        write: |config| config.terminal_size.map(number),
+    },
+    string_field!("shell", terminal_shell),
     bool_field!("shellIntegration", terminal_shell_integration),
     bool_field!("confirmClose", terminal_confirm_close),
     bool_field!("prompt", terminal_prompt),

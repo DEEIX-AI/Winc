@@ -69,7 +69,7 @@ const TAB_FOLDER_SHARE: f32 = 0.4;
 const TAB_FOLDER_MIN: f32 = 24.0;
 
 /// 标签栏两端内容被裁掉时，渐隐区域的宽度（逻辑像素）。
-const TAB_FADE: f32 = 24.0;
+pub(in crate::view) const TAB_FADE: f32 = 24.0;
 
 /// 相邻标签之间竖线的高度（逻辑像素），为标签高度的一半，在标签内垂直居中。
 const TAB_DIVIDER: f32 = 14.0;
@@ -521,7 +521,12 @@ fn draw_tab(
     } else {
         p.text_muted
     };
-    let cx = ui_text(frame, app, cx, tab, &label.name, color, view);
+    // 预览标签（见 `App::preview_index`）的名称倾斜，与普通标签区分。
+    let cx = if app.preview_index() == Some(index) {
+        ui_text_italic(frame, app, cx, tab, &label.name, color, view)
+    } else {
+        ui_text(frame, app, cx, tab, &label.name, color, view)
+    };
 
     if let Some(folder) = &label.folder {
         ui_text_small(frame, app, cx + 6.0, tab, folder, p.text_dim, view);

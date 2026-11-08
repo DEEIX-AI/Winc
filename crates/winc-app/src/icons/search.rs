@@ -46,6 +46,46 @@ pub fn line_checkbox(
     }
 }
 
+/// 绘制只包含部分内容的勾选框：样式与 [`line_checkbox`] 勾上时相同，框内是一条横线。
+///
+/// `hover` 是悬停时的底色。
+pub fn line_checkbox_mixed(
+    frame: &mut Frame<'_>,
+    center: (f32, f32),
+    size: f32,
+    hover: Option<Color>,
+    accent: Color,
+    clip: Rect,
+) {
+    line_button_hover(frame, center, hover, clip);
+    let rect = checkbox_rect(center, size);
+    frame.stroke(&checkbox_outline(rect), 1.2, accent, clip);
+    let (inset, y) = (size * 0.25, rect.y + rect.h / 2.0);
+    let mark = [Stroke::Line(rect.x + inset, y, rect.right() - inset, y)];
+    frame.stroke(&mark, MARK_STROKE, accent, clip);
+}
+
+/// 绘制三栏合并右栏的「«」按钮：把右栏这一段采用到中间，样式与 [`line_replace`] 相同，方向相反。
+///
+/// `hover` 是悬停时的底色。
+pub fn line_replace_back(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    hover: Option<Color>,
+    color: Color,
+    clip: Rect,
+) {
+    line_button_hover(frame, (cx, cy), hover, clip);
+    let (w, h) = (2.2, 4.0);
+    for x in [cx - 2.4, cx + 2.4] {
+        let chevron = [
+            Stroke::Line(x + w, cy - h, x - w, cy),
+            Stroke::Line(x - w, cy, x + w, cy + h),
+        ];
+        frame.stroke(&chevron, MARK_STROKE, color, clip);
+    }
+}
+
 /// 绘制差异视图里的「»」按钮（用左侧替换这一段）：两道朝右的箭头，强调色，笔宽和勾选框的勾
 /// 一样，大小和勾选框的框相当。
 ///
@@ -68,7 +108,7 @@ pub fn line_replace(
     frame.stroke(lines.as_flattened(), MARK_STROKE, color, clip);
 }
 
-/// 勾选框（[`checkbox`]、[`soft_checkbox`]、[`line_checkbox`]）的方框：边长 `size`，以
+/// 勾选框（[`checkbox`]、[`line_checkbox`]）的方框：边长 `size`，以
 /// `center` 为中心，左上角取整到整像素。
 fn checkbox_rect((cx, cy): (f32, f32), size: f32) -> Rect {
     Rect::new(
@@ -119,30 +159,6 @@ pub fn checkbox(
             frame.stroke(mark.as_slice(), MARK_STROKE, on_accent, clip);
         }
     }
-}
-
-/// 绘制轻一档的勾选框，12×12：勾上时（`partial` 时同样）铺一层很淡的强调色、一圈半透明的
-/// 强调色细边，勾和横线也用强调色；没勾时只有一圈 `border` 边框。
-///
-/// 用在一长列都可能勾着的地方（提交视图的改动列表）：整列实心的强调色方块太重，压过文件名。
-pub fn soft_checkbox(
-    frame: &mut Frame<'_>,
-    center: (f32, f32),
-    state: Option<bool>,
-    accent: Color,
-    border: Color,
-    clip: Rect,
-) {
-    let rect = checkbox_rect(center, 12.0);
-    let outline = checkbox_outline(rect);
-    let Some(full) = state else {
-        frame.stroke(&outline, 1.0, border, clip);
-        return;
-    };
-    frame.rect_clipped(rect, accent.alpha(accent.a * 0.16), 3.0, clip);
-    frame.stroke(&outline, 1.0, accent.alpha(accent.a * 0.6), clip);
-    let mark = checkbox_mark(rect, full);
-    frame.stroke(mark.as_slice(), MARK_STROKE, accent, clip);
 }
 
 /// 绘制快速打开面板中的放大镜图标：线条版本，不带实心底色。

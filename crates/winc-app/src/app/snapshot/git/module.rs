@@ -518,14 +518,14 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
     let parts = app.commit_parts();
     assert_eq!(
         parts.tools.map(|(_, t)| t),
-        [CommitTarget::Log, CommitTarget::Layout, CommitTarget::More]
+        [CommitTarget::Log, CommitTarget::Refresh, CommitTarget::More]
     );
     assert!(parts.tools[0].0.x >= project.right());
 
-    // 一个仓库、一个工作树：只有分支行，它在提交信息上方。
+    // 一个仓库、一个工作树：只有分支行，它在改动列表上方。
     assert!(parts.location.is_none());
     assert!(parts.branch.y >= parts.header.bottom());
-    assert!(parts.branch.bottom() <= parts.message.y);
+    assert!(parts.branch.bottom() <= parts.list.y);
     let hit = |app: &App, target| {
         app.commit_hits
             .iter()
@@ -661,7 +661,7 @@ fn freeze_modules(app: &mut App, on: bool, at: std::time::Duration) {
     // 消失时宽度在内容淡出结束后才开始收起，`at` 从收起开始计时。
     let at = if on { at } else { at + EXIT_FADE };
     let fx = &mut app.module_fx;
-    for p in [&mut fx.commit_tab, &mut fx.terminal_icon, &mut fx.branch] {
+    for p in [&mut fx.commit_tab, &mut fx.terminal, &mut fx.branch] {
         p.track(!on, None);
         p.track(on, Some(Clock::frozen(at, MODULE_FADE)));
     }

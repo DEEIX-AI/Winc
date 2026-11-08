@@ -35,26 +35,13 @@ impl App {
             MenuTarget::SearchResult(path, m) => self.run_search_result_command(command, path, m),
             // 分支、储藏的下标按弹出菜单时的列表解释：菜单打开期间状态刷新后，
             // 最新列表中相同下标的项可能是另一个分支。
+            MenuTarget::RebaseAction(row) => self.run_rebase_action_command(row, command),
             MenuTarget::FormBase => {
                 if let MenuCommand::FormBase(i) = command {
                     let base = i.checked_sub(1).and_then(|i| menu.branches.get(i));
                     self.choose_form_base(base.map(|b| b.name.clone()));
                 }
             }
-            MenuTarget::StatusBranches => match command {
-                MenuCommand::StatusBranch(i) => {
-                    if let Some(chosen) = menu.branches.get(i) {
-                        self.pick_branch_named(chosen);
-                    }
-                }
-                MenuCommand::StatusSync => self.git_sync(),
-                MenuCommand::GitFetch | MenuCommand::GitPull | MenuCommand::GitPush => {
-                    self.run_branch_command(command);
-                }
-                MenuCommand::StatusNewBranch => self.open_branch_dialog(None, None),
-                MenuCommand::NewWorktree => self.open_worktree_dialog(),
-                _ => {}
-            },
             MenuTarget::StatusPlaces(places) => match command {
                 MenuCommand::StatusPlace(i) => {
                     if let Some(place) = places.get(i) {
@@ -118,6 +105,11 @@ impl App {
                 MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
                 MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
                 MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
+                MenuCommand::OpenWslFolder(i) => {
+                    if let Some(distro) = crate::system::wsl_distributions().get(i) {
+                        self.pick(Pick::WslFolder(distro.clone()));
+                    }
+                }
                 MenuCommand::CloseFolder => self.close_folder(),
                 _ => {}
             },
@@ -147,6 +139,37 @@ impl App {
                     && let Some(&choice) = winc_config::RenderWhitespace::ALL.get(i)
                 {
                     self.set_render_whitespace(choice);
+                }
+            }
+            MenuTarget::DefaultShell => match command {
+                MenuCommand::DefaultShell(None) => self.set_terminal_shell(None),
+                MenuCommand::DefaultShell(Some(i)) => {
+                    if let Some(shell) = self.terminal.shells.get(i) {
+                        self.set_terminal_shell(Some(shell.command.clone()));
+                    }
+                }
+                MenuCommand::DefaultShellCustom => {
+                    self.settings_start_editing(Setting::TerminalShell)
+                }
+                _ => {}
+            },
+            MenuTarget::Zoom => {
+                if let MenuCommand::Zoom(i) = command
+                    && let Some(&zoom) = crate::app::settings::ZOOM_STEPS.get(i)
+                {
+                    self.set_zoom(zoom);
+                }
+            }
+            MenuTarget::TerminalPosition => {
+                if let MenuCommand::TerminalPosition(right) = command {
+                    self.set_terminal_position(right);
+                }
+            }
+            MenuTarget::OptionAsMeta => {
+                if let MenuCommand::OptionAsMeta(i) = command
+                    && let Some(&choice) = winc_config::OptionAsMeta::ALL.get(i)
+                {
+                    self.set_option_as_meta(choice);
                 }
             }
             MenuTarget::Font(setting) => match command {
@@ -186,19 +209,30 @@ impl App {
                 }
                 _ => {}
             },
-            MenuTarget::CommitMore => match command {
-                MenuCommand::GitStashOp(op, i) => {
-                    if let Some(stash) = menu.stashes.get(i).cloned() {
-                        self.run_stash_op(op, stash);
-                    }
+            MenuTarget::CommitMore => self.run_commit_more_command(command),
+            // 按弹出菜单时记下的那份储藏找：菜单开着的时候储藏的编号可能已经变了。
+            MenuTarget::StashRow(_) | MenuTarget::StashList => {
+                if let MenuCommand::GitStashOp(op, i) = command
+                    && let Some(stash) = menu.stashes.get(i).cloned()
+                {
+                    self.run_stash_op(op, stash);
                 }
-                _ => self.run_commit_more_command(command),
-            },
+            }
             MenuTarget::CommitButton => self.run_commit_button_command(command),
             MenuTarget::LastCommit => self.run_last_commit_command(command),
             MenuTarget::TabList => {
                 if let MenuCommand::ShowTab(i) = command {
                     self.activate_tab(i);
+                }
+            }
+            MenuTarget::RunConfigs => match command {
+                MenuCommand::RunSelect(i) => self.select_run_config(i),
+                MenuCommand::RunEdit => self.edit_run_configs(),
+                _ => {}
+            },
+            MenuTarget::TerminalShells => {
+                if let MenuCommand::NewTerminalShell(i) = command {
+                    self.new_terminal_with_shell(i);
                 }
             }
             MenuTarget::TreeTools => {
@@ -286,6 +320,7 @@ impl App {
             MenuCommand::TerminalFind => self.open_terminal_find(),
             MenuCommand::TerminalClear => self.clear_terminal(),
             MenuCommand::TerminalMaximize => self.toggle_terminal_maximized(),
+            MenuCommand::TerminalDock => self.toggle_terminal_position(),
             MenuCommand::NewTerminal => self.new_terminal_tab(),
             MenuCommand::CloseTerminal => self.close_terminal_tab(self.terminal.active),
             _ => {}

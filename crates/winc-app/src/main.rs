@@ -10,10 +10,12 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod askpass;
 mod bench;
 mod cli;
 mod crash;
 mod field;
+mod frame_log;
 mod icons;
 mod instance;
 mod keymap;
@@ -24,6 +26,7 @@ mod layout;
 mod macos;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod portal;
+mod shell_command;
 mod system;
 mod theme;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -31,6 +34,8 @@ mod trash;
 #[cfg(not(target_os = "macos"))]
 mod updates;
 mod view;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod wayland;
 mod winc;
 #[cfg(windows)]
 mod windows;
@@ -53,6 +58,11 @@ use bench::Bench;
 use winc::{Envelope, Winc};
 
 fn main() {
+    // 作为 `git`、`ssh` 的 askpass 程序启动时不创建窗口。
+    if let Some(code) = askpass::helper() {
+        std::process::exit(code);
+    }
+    shell_command::enter_real_path();
     crash::install();
     #[cfg(windows)]
     windows::attach_console();
@@ -61,6 +71,10 @@ fn main() {
     let args = match cli::parse(std::env::args_os().skip(1)) {
         Ok(args) if args.help => {
             println!("{}", cli::usage());
+            return;
+        }
+        Ok(args) if args.version => {
+            println!("winc {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         Ok(args) => args,
@@ -72,6 +86,11 @@ fn main() {
 
     let bench = Bench::from_env();
     bench.on_start();
+
+    // 便携版首次运行时导入用户目录中的配置和状态，须在读取配置之前；测量时不读写状态，不导入。
+    if !bench.silent() {
+        winc_config::files::import_into_portable();
+    }
 
     // 配置必须在加载字体之前读出，第一帧即使用用户指定的字体和字号。读入配置时的问题按系统语言
     // 描述（语言已在处理参数之前设定），界面语言随后按配置设定。
@@ -106,8 +125,18 @@ fn main() {
     // 已经有 winc 在运行：交给它打开并切到前台，本进程不再启动。
     // 临时打开（`--wait`、`-`）要等标签关闭或读标准输入，总是自己打开；测量时、指定了
     // `--new-instance` 时也不交出去。
+    // 读不了的目标现在就报告：之后可能交给其他进程，错误不再回到这个终端。
+    let mut args = args;
+    let failed = shell_command::report_unreadable(&mut args);
+    if failed && args.targets.is_empty() {
+        std::process::exit(1);
+    }
     if !args.one_off() && !args.new_instance && !bench.silent() && hand_over(&args) {
-        return;
+        std::process::exit(i32::from(failed));
+    }
+    // 从终端启动时窗口进程转到后台，命令立即返回。
+    if !bench.silent() && shell_command::detach(&args) {
+        std::process::exit(i32::from(failed));
     }
 
     for problem in open_targets(&mut editor, &args) {
@@ -284,7 +313,7 @@ fn hand_over(args: &cli::Args) -> bool {
             ..t.clone()
         })
         .collect();
-    instance::forward_to_app(&targets)
+    instance::forward_to_app(&targets, instance::launch_token().as_deref())
 }
 
 /// 设置界面语言，并让汉字按界面语言的字形显示，返回字形所用的语言是否发生变化。

@@ -25,6 +25,7 @@ pub enum Action {
     NewWindow,
     OpenFile,
     OpenFolder,
+    OpenRecent,
     Save,
     SaveAs,
     CloseTab,
@@ -140,6 +141,10 @@ pub enum Action {
     ToggleSidebar,
     FocusSidebar,
     ShowFiles,
+    ShowOutline,
+    IncreaseFontSize,
+    DecreaseFontSize,
+    ResetFontSize,
     ZoomIn,
     ZoomOut,
     ResetZoom,
@@ -167,15 +172,43 @@ pub enum Action {
     ToggleDiffLayout,
     GitShowChanges,
     GitShowLog,
+    /// 在只读标签中打开 Git 操作的输出。
+    GitShowOutput,
+    /// 克隆仓库。
+    GitClone,
+    /// 在当前目录中初始化仓库。
+    GitInit,
     /// 打开提交视图并展开位置选择器。
     GitSwitchRepository,
     GitSwitchWorktree,
     GitNewWorktree,
+    /// 展开分支选择器（提交视图里从分支行，否则从状态栏）。
+    GitSwitchBranch,
+    /// 打开新建分支的对话框（从当前分支）。
+    GitNewBranch,
+    /// 获取远程仓库的更新。
+    GitFetch,
+    /// 拉取当前分支的上游。
+    GitPull,
+    /// 拉取当前分支的上游并变基。
+    GitPullRebase,
+    /// 推送当前分支（没有上游时推上去并设为上游）。
+    GitPush,
+    /// 和上游同步：先拉取再推送。
+    GitSync,
+    /// 储藏工作区里的更改（输入说明）。
+    GitStash,
     GitFileHistory,
     GitBlame,
     ShowCommit,
     GitRevertChange,
     ToggleTerminal,
+    /// 运行当前选中的配置；运行中时重新运行。
+    RunConfiguration,
+    /// 停止当前选中的配置。
+    StopConfiguration,
+    /// 打开运行配置文件。
+    EditRunConfigurations,
     ClearTerminal,
     NewTerminal,
     CloseTerminal,
@@ -183,6 +216,9 @@ pub enum Action {
     PreviousTerminal,
     FindInTerminal,
     MaximizeTerminal,
+    ToggleTerminalPosition,
+    InstallShellCommand,
+    UninstallShellCommand,
     RenameTerminal,
     PreviousCommand,
     NextCommand,
@@ -224,6 +260,7 @@ impl Action {
             NewWindow => t!("cmd-new-window"),
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
+            OpenRecent => t!("cmd-open-recent"),
             Save => t!("cmd-save"),
             SaveAs => t!("cmd-save-as"),
             CloseTab => t!("cmd-close-tab"),
@@ -341,6 +378,10 @@ impl Action {
             ToggleSidebar => t!("cmd-toggle-sidebar"),
             FocusSidebar => t!("cmd-focus-sidebar"),
             ShowFiles => t!("cmd-show-files"),
+            ShowOutline => t!("cmd-show-outline"),
+            IncreaseFontSize => t!("cmd-increase-font-size"),
+            DecreaseFontSize => t!("cmd-decrease-font-size"),
+            ResetFontSize => t!("cmd-reset-font-size"),
             ZoomIn => t!("cmd-zoom-in"),
             ZoomOut => t!("cmd-zoom-out"),
             ResetZoom => t!("cmd-reset-zoom"),
@@ -360,14 +401,28 @@ impl Action {
             ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
             GitShowLog => t!("cmd-git-show-log"),
+            GitShowOutput => t!("cmd-git-show-output"),
+            GitClone => t!("cmd-git-clone"),
+            GitInit => t!("cmd-git-init"),
             GitSwitchRepository => t!("cmd-git-switch-repository"),
             GitSwitchWorktree => t!("cmd-git-switch-worktree"),
             GitNewWorktree => t!("cmd-git-new-worktree"),
+            GitSwitchBranch => t!("cmd-git-switch-branch"),
+            GitNewBranch => t!("cmd-git-new-branch"),
+            GitFetch => t!("cmd-git-fetch"),
+            GitPull => t!("cmd-git-pull"),
+            GitPullRebase => t!("cmd-git-pull-rebase"),
+            GitPush => t!("cmd-git-push"),
+            GitSync => t!("cmd-git-sync"),
+            GitStash => t!("cmd-git-stash"),
             GitFileHistory => t!("cmd-git-file-history"),
             GitBlame => t!("cmd-git-blame"),
             ShowCommit => t!("cmd-show-commit"),
             GitRevertChange => t!("cmd-git-revert-change"),
             ToggleTerminal => t!("cmd-toggle-terminal"),
+            RunConfiguration => t!("cmd-run-configuration"),
+            StopConfiguration => t!("cmd-stop-configuration"),
+            EditRunConfigurations => t!("cmd-edit-run-configurations"),
             ClearTerminal => t!("cmd-clear-terminal"),
             NewTerminal => t!("cmd-new-terminal"),
             CloseTerminal => t!("cmd-close-terminal"),
@@ -375,6 +430,9 @@ impl Action {
             PreviousTerminal => t!("cmd-previous-terminal"),
             FindInTerminal => t!("cmd-find-in-terminal"),
             MaximizeTerminal => t!("cmd-maximize-terminal"),
+            ToggleTerminalPosition => t!("cmd-toggle-terminal-position"),
+            InstallShellCommand => t!("cmd-install-shell-command"),
+            UninstallShellCommand => t!("cmd-uninstall-shell-command"),
             RenameTerminal => t!("cmd-rename-terminal"),
             PreviousCommand => t!("cmd-previous-command"),
             NextCommand => t!("cmd-next-command"),
@@ -406,6 +464,7 @@ impl Action {
             NewWindow => "New Window",
             OpenFile => "Open",
             OpenFolder => "Open Folder",
+            OpenRecent => "Open Recent Folder",
             Save => "Save",
             SaveAs => "Save As",
             CloseTab => "Close Editor",
@@ -517,6 +576,10 @@ impl Action {
             ToggleSidebar => "Toggle Sidebar",
             FocusSidebar => "Focus Sidebar",
             ShowFiles => "Show Explorer",
+            ShowOutline => "Show Outline",
+            IncreaseFontSize => "Increase Font Size",
+            DecreaseFontSize => "Decrease Font Size",
+            ResetFontSize => "Reset Font Size",
             ZoomIn => "Zoom In",
             ZoomOut => "Zoom Out",
             ResetZoom => "Reset Zoom",
@@ -536,14 +599,28 @@ impl Action {
             ToggleDiffLayout => "Toggle Inline Diff",
             GitShowChanges => "Git: Open Changes",
             GitShowLog => "Git: Show Log",
+            GitShowOutput => "Git: Show Output",
+            GitClone => "Git: Clone Repository…",
+            GitInit => "Git: Initialize Repository",
             GitSwitchRepository => "Git: Switch Repository",
             GitSwitchWorktree => "Git: Switch Worktree…",
             GitNewWorktree => "Git: New Worktree…",
+            GitSwitchBranch => "Git: Switch Branch…",
+            GitNewBranch => "Git: New Branch…",
+            GitFetch => "Git: Fetch",
+            GitPull => "Git: Pull",
+            GitPullRebase => "Git: Pull with Rebase",
+            GitPush => "Git: Push",
+            GitSync => "Git: Sync",
+            GitStash => "Git: Stash Changes…",
             GitFileHistory => "Git: Show File History",
             GitBlame => "Git: Toggle Blame",
             ShowCommit => "Git: Commit",
             GitRevertChange => "Git: Revert Change",
             ToggleTerminal => "Toggle Terminal",
+            RunConfiguration => "Run Configuration",
+            StopConfiguration => "Stop Configuration",
+            EditRunConfigurations => "Edit Run Configurations",
             ClearTerminal => "Terminal: Clear",
             NewTerminal => "New Terminal",
             CloseTerminal => "Terminal: Close Tab",
@@ -551,6 +628,9 @@ impl Action {
             PreviousTerminal => "Terminal: Previous Tab",
             FindInTerminal => "Terminal: Find",
             MaximizeTerminal => "Terminal: Maximize Panel",
+            ToggleTerminalPosition => "Terminal: Toggle Panel Position",
+            InstallShellCommand => "Shell Command: Install winc Command",
+            UninstallShellCommand => "Shell Command: Uninstall winc Command",
             RenameTerminal => "Terminal: Rename",
             PreviousCommand => "Terminal: Previous Command",
             NextCommand => "Terminal: Next Command",
@@ -567,13 +647,24 @@ impl Action {
     pub fn group(self) -> Group {
         use Action::*;
         match self {
-            ShowCommands | QuickOpen | GoToSymbol | GoToLine | GoToDefinition | FindReferences
-            | GoBack | GoForward | Settings | KeyboardShortcuts | RecordKeys => Group::General,
+            ShowCommands
+            | QuickOpen
+            | GoToSymbol
+            | GoToLine
+            | GoToDefinition
+            | FindReferences
+            | GoBack
+            | GoForward
+            | Settings
+            | KeyboardShortcuts
+            | RecordKeys
+            | InstallShellCommand
+            | UninstallShellCommand => Group::General,
             NewFile | OpenFile | OpenFolder | Save | SaveAs | CloseTab | CloseOtherTabs
             | CloseAllTabs | ReopenClosed | NextTab | PreviousTab | CloseFolder | CloseWindow
             | CopyPath | CopyRelativePath | RevealInFinder | CopyActivePath | CopyKeyPath
             | RevealActiveFile | OpenInTerminal | Quit => Group::File,
-            NewWindow | CopyReference | CopyAbsoluteReference => Group::File,
+            NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo
             | Redo
             | Cut
@@ -647,16 +738,71 @@ impl Action {
                 Group::Find
             }
             RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
-            ToggleSidebar | FocusSidebar | ShowFiles | ZoomIn | ZoomOut | ResetZoom | ThemeAuto
-            | ThemeLight | ThemeDark | ToggleStickyScroll | ToggleWordWrap | ToggleMinimap
-            | ToggleLineNumbers | ToggleStatusBar | ToggleWhitespace | TogglePreview
-            | NextDifference | PreviousDifference | NextDiffFile | PreviousDiffFile
-            | ToggleDiffLayout | GitShowChanges | GitShowLog | GitSwitchRepository
-            | GitSwitchWorktree | GitNewWorktree | GitFileHistory | GitBlame | ShowCommit
-            | GitRevertChange | ToggleTerminal | ClearTerminal | NewTerminal | CloseTerminal
-            | NextTerminal | PreviousTerminal | FindInTerminal | MaximizeTerminal
-            | RenameTerminal | PreviousCommand | NextCommand | FoldOutput | UnfoldOutput
-            | NextError | PreviousError | SendToTerminal => Group::View,
+            ToggleSidebar
+            | FocusSidebar
+            | ShowFiles
+            | ShowOutline
+            | IncreaseFontSize
+            | DecreaseFontSize
+            | ResetFontSize
+            | ZoomIn
+            | ZoomOut
+            | ResetZoom
+            | ThemeAuto
+            | ThemeLight
+            | ThemeDark
+            | ToggleStickyScroll
+            | ToggleWordWrap
+            | ToggleMinimap
+            | ToggleLineNumbers
+            | ToggleStatusBar
+            | ToggleWhitespace
+            | TogglePreview
+            | NextDifference
+            | PreviousDifference
+            | NextDiffFile
+            | PreviousDiffFile
+            | ToggleDiffLayout
+            | GitShowChanges
+            | GitShowLog
+            | GitShowOutput
+            | GitClone
+            | GitInit
+            | GitSwitchRepository
+            | GitSwitchWorktree
+            | GitNewWorktree
+            | GitSwitchBranch
+            | GitNewBranch
+            | GitFetch
+            | GitPull
+            | GitPullRebase
+            | GitPush
+            | GitSync
+            | GitStash
+            | GitFileHistory
+            | GitBlame
+            | ShowCommit
+            | GitRevertChange
+            | ToggleTerminal
+            | RunConfiguration
+            | StopConfiguration
+            | EditRunConfigurations
+            | ClearTerminal
+            | NewTerminal
+            | CloseTerminal
+            | NextTerminal
+            | PreviousTerminal
+            | FindInTerminal
+            | MaximizeTerminal
+            | ToggleTerminalPosition
+            | RenameTerminal
+            | PreviousCommand
+            | NextCommand
+            | FoldOutput
+            | UnfoldOutput
+            | NextError
+            | PreviousError
+            | SendToTerminal => Group::View,
         }
     }
 
@@ -722,14 +868,28 @@ impl Action {
         match self {
             Action::GitShowChanges
             | Action::GitShowLog
+            | Action::GitShowOutput
+            | Action::GitClone
+            | Action::GitInit
             | Action::GitSwitchRepository
             | Action::GitSwitchWorktree
             | Action::GitNewWorktree
+            | Action::GitSwitchBranch
+            | Action::GitNewBranch
+            | Action::GitFetch
+            | Action::GitPull
+            | Action::GitPullRebase
+            | Action::GitPush
+            | Action::GitSync
+            | Action::GitStash
             | Action::GitFileHistory
             | Action::GitBlame
             | Action::ShowCommit
             | Action::GitRevertChange => Some(Module::Git),
             Action::ToggleTerminal
+            | Action::RunConfiguration
+            | Action::StopConfiguration
+            | Action::EditRunConfigurations
             | Action::ClearTerminal
             | Action::NewTerminal
             | Action::CloseTerminal
@@ -737,6 +897,7 @@ impl Action {
             | Action::PreviousTerminal
             | Action::FindInTerminal
             | Action::MaximizeTerminal
+            | Action::ToggleTerminalPosition
             | Action::RenameTerminal
             | Action::PreviousCommand
             | Action::NextCommand
@@ -828,6 +989,7 @@ pub const ACTIONS: &[Action] = {
         NewWindow,
         OpenFile,
         OpenFolder,
+        OpenRecent,
         Save,
         SaveAs,
         CloseTab,
@@ -920,6 +1082,10 @@ pub const ACTIONS: &[Action] = {
         ToggleSidebar,
         FocusSidebar,
         ShowFiles,
+        ShowOutline,
+        IncreaseFontSize,
+        DecreaseFontSize,
+        ResetFontSize,
         ZoomIn,
         ZoomOut,
         ResetZoom,
@@ -936,17 +1102,34 @@ pub const ACTIONS: &[Action] = {
         ShowCommit,
         GitShowChanges,
         GitShowLog,
+        GitShowOutput,
+        GitClone,
+        GitInit,
         GitSwitchRepository,
         GitSwitchWorktree,
         GitNewWorktree,
+        GitSwitchBranch,
+        GitNewBranch,
+        GitFetch,
+        GitPull,
+        GitPullRebase,
+        GitPush,
+        GitSync,
+        GitStash,
         GitFileHistory,
         GitBlame,
         GitRevertChange,
         ToggleTerminal,
+        RunConfiguration,
+        StopConfiguration,
+        EditRunConfigurations,
         NewTerminal,
         ClearTerminal,
         FindInTerminal,
         MaximizeTerminal,
+        ToggleTerminalPosition,
+        InstallShellCommand,
+        UninstallShellCommand,
         RenameTerminal,
         CloseTerminal,
         NextTerminal,

@@ -10,10 +10,12 @@
 mod files;
 mod search;
 mod settings;
+mod symbols;
 
 pub use files::*;
 pub use search::*;
 pub use settings::*;
+pub use symbols::*;
 
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
 
@@ -112,6 +114,37 @@ pub fn chevron_turned(
     frame.stroke(&lines, CHEVRON_STROKE, color, clip);
 }
 
+/// 绘制收起图标：朝向 `direction` 的箭头，箭头尖端外侧一条边线，表示面板收入的方向。
+///
+/// 单独的箭头是下拉菜单的图标，边线用于区分两者。
+pub fn collapse(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    direction: Direction,
+    color: Color,
+    clip: Rect,
+) {
+    let (dx, dy) = match direction {
+        Direction::Up => (0.0, -1.0),
+        Direction::Down => (0.0, 1.0),
+        Direction::Right => (1.0, 0.0),
+        Direction::Left => (-1.0, 0.0),
+    };
+    chevron(
+        frame,
+        (cx - 2.0 * dx, cy - 2.0 * dy),
+        8.0,
+        direction,
+        color,
+        clip,
+    );
+    let (ex, ey) = (cx + 3.0 * dx, cy + 3.0 * dy);
+    // 边线和箭头同宽，垂直于箭头的朝向。
+    let (hx, hy) = (4.0 * dy.abs(), 4.0 * dx.abs());
+    let edge = [Stroke::Line(ex - hx, ey - hy, ex + hx, ey + hy)];
+    frame.stroke(&edge, CHEVRON_STROKE, color, clip);
+}
+
 /// 绘制弹出菜单按钮右端上下排列的一对小箭头，整体宽 6、高 8 逻辑像素。
 pub fn up_down(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     let (w, h, gap) = (3.0, 2.5, 1.5);
@@ -120,6 +153,17 @@ pub fn up_down(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: 
         Stroke::Line(cx, cy - gap - h, cx + w, cy - gap),
         Stroke::Line(cx - w, cy + gap, cx, cy + gap + h),
         Stroke::Line(cx, cy + gap + h, cx + w, cy + gap),
+    ];
+    frame.stroke(&lines, CHEVRON_STROKE, color, clip);
+}
+
+/// 绘制外链箭头，9×9：指向右上方的箭头，表示在浏览器中打开。
+pub fn external(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let r = 3.5;
+    let lines = [
+        Stroke::Line(cx - r, cy + r, cx + r, cy - r),
+        Stroke::Line(cx - 1.0, cy - r, cx + r, cy - r),
+        Stroke::Line(cx + r, cy - r, cx + r, cy + 1.0),
     ];
     frame.stroke(&lines, CHEVRON_STROKE, color, clip);
 }
@@ -332,6 +376,23 @@ pub fn refresh(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Re
     refresh_turned(frame, center, 0.0, color, clip);
 }
 
+/// 回车图标的宽度（逻辑像素）。
+pub const RETURN_KEY_WIDTH: f32 = 10.0;
+
+/// 绘制回车键（↩）图标，约 10×9：从右上方向下，再折向左，末端为箭头。
+pub fn return_key(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let half = RETURN_KEY_WIDTH / 2.0;
+    let (right, left, top, bottom) = (cx + half, cx - half, cy - 4.5, cy + 2.0);
+    let arm = 2.5;
+    let shapes = [
+        Stroke::Line(right, top, right, bottom),
+        Stroke::Line(right, bottom, left, bottom),
+        Stroke::Line(left, bottom, left + arm, bottom - arm),
+        Stroke::Line(left, bottom, left + arm, bottom + arm),
+    ];
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
 /// 绘制「发布」图标，约 10×11，和「刷新」图标等高：向上的箭头，下面是托盘。
 pub fn upload(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     let (top, bottom) = (cy - RING, cy + RING);
@@ -343,6 +404,44 @@ pub fn upload(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: R
         Stroke::Line(cx - 5.0, bottom, cx + 5.0, bottom),
     ];
     frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
+/// 绘制「下载」图标，约 10×11，和「发布」图标上下对称：向下的箭头，下面是托盘。
+pub fn download(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (top, bottom) = (cy - RING, cy + RING);
+    let tip = cy + 2.5;
+    let arm = 3.0;
+    let shapes = [
+        Stroke::Line(cx, top, cx, tip),
+        Stroke::Line(cx, tip, cx - arm, tip - arm),
+        Stroke::Line(cx, tip, cx + arm, tip - arm),
+        Stroke::Line(cx - 5.0, bottom, cx + 5.0, bottom),
+    ];
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
+/// 绘制进度环，直径 11，和「刷新」图标的圆一样大：淡色 `track` 的整圆上，从 12 点钟起顺时针
+/// 画出 `fraction`（0 到 1）那么长的一段 `color`。
+pub fn progress_ring(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    fraction: f32,
+    color: Color,
+    track: Color,
+    clip: Rect,
+) {
+    frame.stroke(
+        &[Stroke::Arc(cx, cy, RING, -PI, PI)],
+        RING_STROKE,
+        track,
+        clip,
+    );
+    let fraction = fraction.clamp(0.0, 1.0);
+    if fraction > 0.0 {
+        let start = -FRAC_PI_2;
+        let arc = Stroke::Arc(cx, cy, RING, start, start + fraction * 2.0 * PI);
+        frame.stroke(&[arc], RING_STROKE, color, clip);
+    }
 }
 
 /// 绘制按 `turn`（圈数，可为任意实数）顺时针旋转后的「刷新」图标，表示操作正在进行。
@@ -376,6 +475,53 @@ pub fn refresh_turned(
         Stroke::Line(tx, ty, ux, uy),
         Stroke::Line(tx, ty, lx, ly),
     ];
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
+/// 绘制「同步」图标，约 13×13：同一个圆上相对的两段圆弧，各自顺时针画到直角箭头为止。
+///
+/// 用于与远程交换提交的操作；只重读本地状态的操作用 [`refresh`]。
+pub fn sync(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Rect) {
+    sync_turned(frame, center, 0.0, color, clip);
+}
+
+/// 绘制按 `turn`（圈数，可为任意实数）顺时针旋转后的「同步」图标，表示同步正在进行。
+pub fn sync_turned(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    turn: f32,
+    color: Color,
+    clip: Rect,
+) {
+    let r = RING;
+    // 两段圆弧之间的空隙（弧度）。取 0.5：箭头落在空隙里，不碰到另一段圆弧。
+    let gap = 0.5;
+    // 箭头臂长（逻辑像素），与「刷新」图标相同。
+    let arm = 3.0;
+    let base = turn.rem_euclid(1.0) * 2.0 * PI;
+    // 从 `start` 起顺时针画半圈减去两个空隙的圆弧，末端加箭头。
+    let half = |start: f32| {
+        // 起点映射到 -π 至 π 之间，理由同 `refresh_turned`。
+        let mut from = start + base;
+        while from >= PI {
+            from -= 2.0 * PI;
+        }
+        let to = from + PI - 2.0 * gap;
+        // 箭头两臂与切线各成 45°，分在圆弧内外两侧。
+        let (sin, cos) = to.sin_cos();
+        let (tx, ty) = (cx + r * cos, cy + r * sin);
+        let k = FRAC_1_SQRT_2 * arm;
+        let (bx, by) = (sin, -cos);
+        [
+            Stroke::Arc(cx, cy, r, from, to),
+            Stroke::Line(tx, ty, tx + (bx - cos) * k, ty + (by - sin) * k),
+            Stroke::Line(tx, ty, tx + (bx + cos) * k, ty + (by + sin) * k),
+        ]
+    };
+    // 上半段从 9 点钟附近开始，下半段从 3 点钟附近开始。
+    let [a, b, c] = half(-PI + gap);
+    let [d, e, f] = half(gap);
+    let shapes = [a, b, c, d, e, f];
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
 
@@ -551,36 +697,6 @@ pub fn history(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: 
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
 
-/// 绘制「以列表显示」图标，约 12×9：三道左端对齐的横线，各带一个圆点，表示平铺排列的一列。
-///
-/// 视觉重量与标题行的 `history`、`collapse_all` 等按钮一致。
-pub fn list(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
-    let rows = [-4.0, 0.0, 4.0];
-    let lines = rows.map(|dy| Stroke::Line(cx - 2.0, cy + dy, cx + 6.0, cy + dy));
-    // 零长度的线段描边后呈圆点，直径等于笔宽。
-    let dots = rows.map(|dy| Stroke::Line(cx - 5.5, cy + dy, cx - 5.5, cy + dy));
-    frame.stroke(&lines, RING_STROKE, color, clip);
-    frame.stroke(&dots, 2.0, color, clip);
-}
-
-/// 绘制「以树形显示」图标，约 12×9：最上方一道横线表示目录，下方两道缩进的短横线表示其中的
-/// 文件，左侧一道竖线自上而下连接，并在两道短横线处折向右。
-///
-/// 视觉重量与标题行的 `history`、`collapse_all` 等按钮一致。
-pub fn tree(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
-    let (left, right, spine) = (cx - 6.0, cx + 6.0, cx - 4.0);
-    let (top, mid, bottom) = (cy - 4.0, cy, cy + 4.0);
-    let shapes = [
-        Stroke::Line(left, top, right, top),
-        Stroke::Line(spine, top, spine, bottom),
-        Stroke::Line(spine, mid, cx - 1.5, mid),
-        Stroke::Line(spine, bottom, cx - 1.5, bottom),
-        Stroke::Line(cx + 0.5, mid, right, mid),
-        Stroke::Line(cx + 0.5, bottom, right, bottom),
-    ];
-    frame.stroke(&shapes, RING_STROKE, color, clip);
-}
-
 /// 绘制「并排比较」图标，约 12×11：一个圆角框，中央一道竖线分成左右两栏，两栏内各一道短横。
 pub fn compare(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     let (l, r, t, b) = (cx - 6.0, cx + 6.0, cy - 5.5, cy + 5.5);
@@ -739,6 +855,21 @@ pub fn bookmark(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip:
         0.0,
         clip,
     );
+}
+
+/// 绘制「全屏」图标，约 12×12 逻辑像素：从中心分别指向右上角和左下角的两个箭头。
+pub fn expand(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (near, far, head) = (1.5, 5.0, 3.0);
+    let arrow = |s: f32| {
+        let (tx, ty) = (cx + s * far, cy - s * far);
+        [
+            Stroke::Line(cx + s * near, cy - s * near, tx, ty),
+            Stroke::Line(tx - s * head, ty, tx, ty),
+            Stroke::Line(tx, ty, tx, ty + s * head),
+        ]
+    };
+    frame.stroke(&arrow(1.0), STROKE, color, clip);
+    frame.stroke(&arrow(-1.0), STROKE, color, clip);
 }
 
 /// 绘制「复制」图标，约 12×12：两张错开叠放的圆角方块，前面一张完整，后面一张只露出左上角。

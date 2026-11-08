@@ -35,6 +35,8 @@ pub(crate) enum ScrollArea {
     Panel,
     /// 提交视图的改动列表。
     Commit,
+    /// 文件视图底部大纲的符号列表。
+    Outline,
     /// 设置页的内容，包括快捷键列表。
     Settings,
     /// 终端面板的回滚缓冲。
@@ -45,13 +47,14 @@ pub(crate) enum ScrollArea {
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 9] = [
+    const ALL: [ScrollArea; 10] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::Tree,
         ScrollArea::TreeHorizontal,
         ScrollArea::Panel,
         ScrollArea::Commit,
+        ScrollArea::Outline,
         ScrollArea::Settings,
         ScrollArea::Terminal,
         ScrollArea::Markdown,
@@ -66,7 +69,8 @@ impl ScrollArea {
             ScrollArea::TreeHorizontal => Some(Scrollbar::TreeHorizontal),
             ScrollArea::Panel => Some(Scrollbar::Panel),
             ScrollArea::Commit => Some(Scrollbar::Commit),
-            ScrollArea::Settings => None,
+            ScrollArea::Outline => Some(Scrollbar::Outline),
+            ScrollArea::Settings => Some(Scrollbar::Settings),
             ScrollArea::Terminal => Some(Scrollbar::Terminal),
             ScrollArea::Markdown => Some(Scrollbar::Markdown),
         }
@@ -238,6 +242,9 @@ impl App {
             }
             // 鼠标在展开了完整名称的一行上：不唤出文件树的滚动条。
             if area == ScrollArea::Tree && self.over_tree_overflow_row(y) {
+                return false;
+            }
+            if area == ScrollArea::Commit && self.over_commit_overflow_row(y) {
                 return false;
             }
             self.scrollbars.reveals[area as usize]

@@ -48,6 +48,9 @@ pub struct State {
     pub preview_mode: Option<String>,
     /// 上次关闭的窗口的大小和位置；没有记录时为 `None`。
     pub window: Option<WindowFrame>,
+    /// 从磁盘映像等位置运行时不询问是否移到「应用程序」文件夹：用户曾选择不移动并勾选「不再
+    /// 询问」。仅在 macOS 上使用。
+    pub stay_outside_applications: bool,
     /// 最近列表里每个目录的徽章颜色（值在 `0..BADGE_COLORS` 之内），互不相同。
     ///
     /// 目录第一次进入最近列表时，选一个其他目录未使用的颜色，之后保持不变，使项目名旁和最近
@@ -95,8 +98,16 @@ pub struct Session {
     pub active: Option<usize>,
     /// 各文件的书签（行号从 0 起），包括当前未打开的文件。
     pub bookmarks: Vec<(PathBuf, Vec<usize>)>,
+    /// 各文件的大纲中收起的符号，包括当前未打开的文件；没有收起符号的文件不记录。
+    ///
+    /// 每个符号记为从最外层上级到自身的名字，以 `\u{1f}`（单元分隔符）连接。
+    pub outline: Vec<(PathBuf, Vec<String>)>,
     /// 终端面板；终端里没有标签时为 `None`。
     pub terminal: Option<TerminalSession>,
+    /// 选中的运行配置的名字。
+    pub run: Option<String>,
+    /// 侧栏是否收起；没有记录过的目录为 `false`，打开时显示文件树。
+    pub sidebar_hidden: bool,
 }
 
 /// 现场里的终端面板：各标签的工作目录（按标签栏中的顺序）、正在看的标签、面板开着没有、大小。
@@ -108,6 +119,9 @@ pub struct TerminalSession {
     pub tabs: Vec<PathBuf>,
     /// 各标签上用户起的名字，和 `tabs` 一一对应；空的是没起，比 `tabs` 短时后面的都没起。
     pub names: Vec<String>,
+    /// 各标签从菜单选的 shell 的启动命令，和 `tabs` 一一对应；空的是默认 shell，比 `tabs` 短时
+    /// 后面的都是默认 shell。
+    pub shells: Vec<String>,
     /// 正在看的标签在 `tabs` 中的下标（从 0 起）。
     pub active: usize,
     /// 面板是否展开。
@@ -214,6 +228,28 @@ impl State {
                         .collect()
                 })
                 .unwrap_or_default();
+            let outline = s
+                .get("outline")
+                .and_then(Json::as_object)
+                .map(|files| {
+                    files
+                        .iter()
+                        .filter(|(path, _)| !path.is_empty())
+                        .map(|(path, symbols)| {
+                            let symbols = symbols
+                                .as_array()
+                                .unwrap_or_default()
+                                .iter()
+                                .filter_map(Json::as_str)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned)
+                                .collect();
+                            (PathBuf::from(path), symbols)
+                        })
+                        .filter(|(_, symbols): &(PathBuf, Vec<String>)| !symbols.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
             let terminal = s.get("terminal").and_then(Json::as_object).and_then(|t| {
                 let number = |key| {
                     t.get(key)
@@ -227,6 +263,10 @@ impl State {
                     .filter_map(Json::as_str)
                     .map(PathBuf::from)
                     .collect();
+                let shells = t.get("shells").and_then(Json::as_array).map(|shells| {
+                    let shells = shells.iter().map(|s| s.as_str().unwrap_or_default());
+                    shells.map(str::to_owned).collect()
+                });
                 let names = t.get("names").and_then(Json::as_array).map(|names| {
                     let names = names.iter().map(|n| n.as_str().unwrap_or_default());
                     names.map(str::to_owned).collect()
@@ -235,6 +275,7 @@ impl State {
                     active: number("active").map_or(0, |n| (n as usize).min(tabs.len() - 1)),
                     tabs,
                     names: names.unwrap_or_default(),
+                    shells: shells.unwrap_or_default(),
                     open: t.get("open").and_then(Json::as_bool).unwrap_or(false),
                     height: number("height").unwrap_or(0.0) as f32,
                     width: number("width").unwrap_or(0.0) as f32,
@@ -245,7 +286,10 @@ impl State {
                 tabs,
                 active,
                 bookmarks,
+                outline,
                 terminal,
+                run: s.get("run").and_then(Json::as_str).map(str::to_owned),
+                sidebar_hidden: (s.get("sidebarHidden").and_then(Json::as_bool)).unwrap_or(false),
             })
         };
 
@@ -324,6 +368,10 @@ impl State {
             .get("commitTree")
             .and_then(Json::as_bool)
             .unwrap_or(false);
+        state.stay_outside_applications = root
+            .get("stayOutsideApplications")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
         state.panel_width = root
             .get("panelWidth")
             .and_then(Json::as_number)
@@ -376,7 +424,7 @@ impl State {
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
     /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos` 为空，
-    /// `commitTree` 为假时省略对应的键。
+    /// `commitTree`、`stayOutsideApplications` 为假时省略对应的键。
     pub fn to_json(&self) -> String {
         let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
         let mut fields = vec![(
@@ -396,6 +444,9 @@ impl State {
 
         if self.commit_tree {
             fields.push(("commitTree", Json::Bool(true)));
+        }
+        if self.stay_outside_applications {
+            fields.push(("stayOutsideApplications", Json::Bool(true)));
         }
         if let Some(width) = self.panel_width {
             fields.push(("panelWidth", Json::Number(f64::from(width))));
@@ -442,6 +493,13 @@ impl State {
                 });
                 items.push(("bookmarks", Json::Object(files.collect())));
             }
+            if !session.outline.is_empty() {
+                let files = session.outline.iter().map(|(file, symbols)| {
+                    let symbols = symbols.iter().cloned().map(Json::String).collect();
+                    (file.to_string_lossy().into_owned(), Json::Array(symbols))
+                });
+                items.push(("outline", Json::Object(files.collect())));
+            }
             if let Some(t) = &session.terminal {
                 let number = |n: f32| Json::Number(f64::from(n));
                 let mut fields = vec![
@@ -456,7 +514,19 @@ impl State {
                     let names = t.names.iter().map(|n| Json::String(n.clone()));
                     fields.push(("names", Json::Array(names.collect())));
                 }
+                // 都是默认 shell 时不写。
+                if t.shells.iter().any(|s| !s.is_empty()) {
+                    let shells = t.shells.iter().map(|s| Json::String(s.clone()));
+                    fields.push(("shells", Json::Array(shells.collect())));
+                }
                 items.push(("terminal", Json::object(fields)));
+            }
+            if let Some(run) = &session.run {
+                items.push(("run", Json::String(run.clone())));
+            }
+            // 展开是默认状态，不写。
+            if session.sidebar_hidden {
+                items.push(("sidebarHidden", Json::Bool(true)));
             }
             Json::object(items)
         });
@@ -652,11 +722,19 @@ fn preferred_color(folder: &Path) -> usize {
 /// - macOS：`~/Library/Application Support/winc/state.json`
 /// - Linux：`$XDG_STATE_HOME/winc/state.json`，未设置时为 `~/.local/state/winc/state.json`
 /// - Windows：`%LOCALAPPDATA%\winc\state.json`（不随账户漫游：内容都是本机路径）
+///
+/// 便携版放在便携数据目录中（见 [`crate::files::portable_dir`]）。
 pub fn state_path() -> Option<PathBuf> {
+    let dir = crate::files::portable_dir().or_else(user_state_dir)?;
+    Some(dir.join("state.json"))
+}
+
+/// 返回用户目录中存放状态文件的目录，不考虑便携版；无法确定用户目录时返回 `None`。
+pub(crate) fn user_state_dir() -> Option<PathBuf> {
     let home = || std::env::var_os("HOME").map(PathBuf::from);
 
-    let dir = if cfg!(target_os = "macos") {
-        crate::files::config_dir()
+    if cfg!(target_os = "macos") {
+        crate::files::user_config_dir()
     } else if cfg!(target_os = "windows") {
         std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
@@ -667,9 +745,7 @@ pub fn state_path() -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| home().map(|home| home.join(".local").join("state")))
             .map(|dir| dir.join("winc"))
-    }?;
-
-    Some(dir.join("state.json"))
+    }
 }
 
 /// 从 `state.json` 的 `window` 一节读出窗口的大小和位置；缺项或者数值不合理时为 `None`。
