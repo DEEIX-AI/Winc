@@ -3,6 +3,153 @@
 use super::*;
 
 impl App {
+    /// 把顶栏当前的命中测试区域同步给窗口过程。
+    ///
+    /// 窗口过程只读取同步后的副本，不借用 [`App`]；系统拖动窗口的模态循环期间重入窗口过程时，
+    /// 不会与应用状态的借用冲突。
+    #[cfg(windows)]
+    pub(crate) fn sync_window_input(&self) {
+        if let Some(input) = &self.touch.window_input {
+            input.update(self.window_hit_test());
+        }
+    }
+
+    /// 返回提供给系统命中测试的顶栏区域划分。
+    ///
+    /// 系统在落指时即按命中测试的结果决定是否接管窗口拖动，因此该划分必须在落指前同步；
+    /// 顶栏中的控件按客户区处理，接收常规输入事件。浮层或设置页打开、已有接触点时返回
+    /// 空划分，整个窗口按客户区处理。
+    #[cfg(windows)]
+    pub(in crate::app) fn window_hit_test(&self) -> crate::windows::WindowHitTest {
+        if self.touch_intercepted() || self.settings.open || self.touch.active() {
+            return Default::default();
+        }
+        crate::windows::WindowHitTest {
+            caption_height: TOP_BAR_END,
+            resize_border: if self.window_controls {
+                crate::app::lifecycle::title_bar::RESIZE_EDGE
+            } else {
+                0.0
+            },
+            client: self.caption_controls(),
+        }
+    }
+
+    /// 返回顶栏范围内按客户区处理的控件矩形（逻辑像素）。
+    ///
+    /// 顶栏中其余部分由系统按标题栏处理。结果必须覆盖 `target_at` 在顶栏内返回的全部
+    /// 控件目标（顶栏空白与窗口边缘除外），由测试 `caption_controls_cover_top_bar_targets`
+    /// 检查。
+    #[cfg(any(windows, test))]
+    pub(in crate::app) fn caption_controls(&self) -> Vec<winc_render::Rect> {
+        let l = &self.layout;
+        let mut client = vec![
+            l.sidebar_button,
+            self.tabs.new_tab,
+            l.terminal_divider,
+            l.split_divider,
+            l.search,
+            self.project_hit,
+            self.outline_divider(),
+        ];
+        client.extend(self.window_control_rects().map(|(r, _)| r));
+        client.extend(self.tabs.list);
+        client.extend(
+            self.tabs
+                .hits
+                .iter()
+                .map(|h| h.tab.intersect(self.tabs.view)),
+        );
+        client.extend(self.sidebar_tabs().iter().map(|(r, _)| *r));
+        client.extend(self.tree_tools.iter().map(|(r, _)| *r));
+        client.extend(self.terminal.hits.iter().map(|(r, _)| *r));
+        client.extend(self.merge.hits.iter().map(|(r, _)| *r));
+        client.extend(self.crumb_hits.iter().map(|(r, _)| *r));
+        client.extend(self.status_hits.iter().map(|(r, _)| *r));
+        client.extend(
+            [
+                self.changes.card,
+                self.notice_card,
+                self.notice_button,
+                self.merge.card,
+                self.conflict_card.as_ref().map(|(r, _)| *r),
+                self.tree_more,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+        if self.panel_visible {
+            client.push(l.splitter);
+        }
+        if self.editor.active().is_some_and(|d| d.can_preview()) {
+            client.push(l.preview);
+        }
+        if self.browser_page().is_some() {
+            client.push(l.browser);
+        }
+        client.retain(|r| r.w > 0.0 && r.h > 0.0 && r.y < TOP_BAR_END && r.bottom() > 0.0);
+        client
+    }
+
+    /// 是否有对话框、弹出菜单等浮层打开；此时触摸由浮层接收，不开始窗口操作或控件拖动。
+    fn touch_intercepted(&self) -> bool {
+        self.alert.is_some()
+            || self.popup().is_some()
+            || self.form_dialog.is_some()
+            || self.picker_open
+            || self.name_input.is_some()
+    }
+
+    /// 返回在 (`x`, `y`) 落指时立即开始的窗口操作：顶栏空白处移动窗口，窗口边缘调整大小。
+    ///
+    /// 窗口操作不参与内容滚动与长按菜单的识别。浮层或设置页打开时返回 `None`。
+    pub(in crate::app) fn touch_window_at(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<crate::app::input::touch::WindowTouch> {
+        use crate::app::input::touch::WindowTouch;
+        if self.touch_intercepted() || self.settings.open {
+            return None;
+        }
+        match self.target_at(x, y) {
+            Target::TitleBar => Some(WindowTouch::Move),
+            Target::ResizeEdge(direction) => Some(WindowTouch::Resize(direction)),
+            _ => None,
+        }
+    }
+
+    /// 是否在 (`x`, `y`) 落指后立即开始拖动，适用于滚动条、缩略图和分隔条。
+    ///
+    /// 列表、按钮和文字需要先区分点按与滑动，不在落指时开始拖动。
+    pub(in crate::app) fn touch_drag_at(&self, x: f32, y: f32) -> bool {
+        if self.touch_intercepted() {
+            return false;
+        }
+        if self.settings.open {
+            return self.settings_part_at(x, y).is_none()
+                && self.settings_scrollbar_at(x, y).is_some();
+        }
+        if self
+            .markdown
+            .diagram
+            .as_ref()
+            .is_some_and(|v| v.area.contains(x, y))
+        {
+            return false;
+        }
+        matches!(
+            self.target_at(x, y),
+            Target::Scrollbar(..)
+                | Target::Minimap
+                | Target::Splitter
+                | Target::TerminalDivider
+                | Target::OutlineDivider
+                | Target::SplitDivider
+                | Target::Log(crate::app::git::log::LogTarget::Divider)
+        )
+    }
+
     /// 返回窗口坐标 (`x`, `y`)（逻辑像素）处的悬停目标。
     pub(in crate::app) fn hover_at(&self, x: f32, y: f32) -> Hover {
         let l = &self.layout;

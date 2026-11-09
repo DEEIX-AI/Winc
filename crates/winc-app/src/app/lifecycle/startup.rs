@@ -70,6 +70,7 @@ impl App {
             modifiers: ModifiersState::empty(),
             option_side: (false, false),
             mouse: (0.0, 0.0),
+            touch: Default::default(),
             drag: Drag::None,
             last_click: None,
             title_click: None,

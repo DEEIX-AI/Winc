@@ -540,6 +540,9 @@ impl App {
             (self.frame_log).record(elapsed, refresh, (size.width, size.height));
         }
         self.refresh_hover();
+        // 命中测试区域随本帧的布局更新；两帧之间的落指与抬手由 `on_touch` 另行同步。
+        #[cfg(windows)]
+        self.sync_window_input();
 
         // 高亮状态尚未推算完、大文件尚未搜完时，马上绘制下一帧，不按刷新率等：每帧本身有预算
         // （高亮 `HIGHLIGHT_BUDGET` 行、查找一个 8 ms 的时间片），已经不比刷新间隔短，按刷新率
