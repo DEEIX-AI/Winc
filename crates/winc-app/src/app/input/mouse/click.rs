@@ -386,13 +386,21 @@ impl App {
 
     /// 处理顶栏空白处的点击：拖动窗口；双击时按系统设置缩放或最小化窗口。
     fn click_title_bar(&mut self, x: f32, y: f32) {
+        if self.title_bar_pressed(x, y) {
+            self.title_bar_double_click();
+        } else if let Some(window) = &self.window {
+            let _ = window.drag_window();
+        }
+    }
+
+    /// 记录顶栏按下的位置和时刻，返回是否为双击；鼠标和触摸共用连击规则。
+    pub(in crate::app) fn title_bar_pressed(&mut self, x: f32, y: f32) -> bool {
         let double = self.title_click.take().is_some_and(|c| {
             c.at.elapsed() < DOUBLE_CLICK && (c.x - x).abs() < 4.0 && (c.y - y).abs() < 4.0
         });
 
         if double {
-            self.title_bar_double_click();
-            return;
+            return true;
         }
 
         self.title_click = Some(Click {
@@ -402,9 +410,7 @@ impl App {
             count: 1,
         });
 
-        if let Some(window) = &self.window {
-            let _ = window.drag_window();
-        }
+        false
     }
 
     /// 记录这次点击并返回连击次数：1 为单击，2 为双击，3 为三击，再点击则重新从 1 开始。

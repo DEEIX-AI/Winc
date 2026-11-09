@@ -3,6 +3,61 @@
 use super::*;
 
 impl App {
+    /// 当前浮层是否先于标题栏、滚动条等部件处理触摸。
+    fn touch_intercepted(&self) -> bool {
+        self.alert.is_some()
+            || self.popup().is_some()
+            || self.form_dialog.is_some()
+            || self.picker_open
+            || self.name_input.is_some()
+    }
+
+    /// 在落指时开始的窗口操作；它们不参与内容滚动或长按菜单。
+    pub(in crate::app) fn touch_window_at(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<crate::app::input::touch::WindowTouch> {
+        use crate::app::input::touch::WindowTouch;
+        if self.touch_intercepted() || self.settings.open {
+            return None;
+        }
+        match self.target_at(x, y) {
+            Target::TitleBar => Some(WindowTouch::Move),
+            Target::ResizeEdge(direction) => Some(WindowTouch::Resize(direction)),
+            _ => None,
+        }
+    }
+
+    /// 触摸按下时即可拖动的控件；列表、按钮和文字要先区分点按与滑动。
+    pub(in crate::app) fn touch_drag_at(&self, x: f32, y: f32) -> bool {
+        if self.touch_intercepted() {
+            return false;
+        }
+        if self.settings.open {
+            return self.settings_part_at(x, y).is_none()
+                && self.settings_scrollbar_at(x, y).is_some();
+        }
+        if self
+            .markdown
+            .diagram
+            .as_ref()
+            .is_some_and(|v| v.area.contains(x, y))
+        {
+            return false;
+        }
+        matches!(
+            self.target_at(x, y),
+            Target::Scrollbar(..)
+                | Target::Minimap
+                | Target::Splitter
+                | Target::TerminalDivider
+                | Target::OutlineDivider
+                | Target::SplitDivider
+                | Target::Log(crate::app::git::log::LogTarget::Divider)
+        )
+    }
+
     /// 返回窗口坐标 (`x`, `y`)（逻辑像素）处的悬停目标。
     pub(in crate::app) fn hover_at(&self, x: f32, y: f32) -> Hover {
         let l = &self.layout;

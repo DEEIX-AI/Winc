@@ -730,6 +730,8 @@ pub struct App {
     option_side: (bool, bool),
     /// 鼠标位置（逻辑像素）。
     mouse: (f32, f32),
+    /// 触摸接触点和正在识别的手势。
+    touch: input::touch::TouchState,
     drag: Drag,
     last_click: Option<Click>,
     /// 上一次在顶栏空白处的按下，用于识别双击。

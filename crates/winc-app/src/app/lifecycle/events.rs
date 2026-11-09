@@ -266,8 +266,17 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => self.request_close_window(),
             WindowEvent::RedrawRequested => self.redraw(),
-            WindowEvent::Moved(_) => self.note_window_frame(),
+            WindowEvent::Moved(_) => {
+                // 实际移动过窗口的按下不再参与下一次标题栏双击。
+                self.title_click = None;
+                self.note_window_frame();
+            }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                if matches!(event, WindowEvent::ScaleFactorChanged { .. })
+                    || !self.touch.dragging_window()
+                {
+                    self.cancel_touch();
+                }
                 self.note_window_frame();
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize();
@@ -295,6 +304,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update_foreground(focused);
                 // 离开窗口时停止录制按键，菜单项的快捷键随之恢复，不影响别的窗口和应用。
                 if !focused {
+                    self.cancel_touch();
                     self.set_recording(false);
                 }
 
@@ -318,6 +328,9 @@ impl ApplicationHandler<UserEvent> for App {
             // 完全看不见时不绘制，屏幕上那块画面也标成可清除（开着几个窗口时只有看得见的占着）；
             // 又看得见时马上重绘一帧。测量时窗口透明，系统当它看不见，仍然绘制。
             WindowEvent::Occluded(occluded) => {
+                if occluded {
+                    self.cancel_touch();
+                }
                 self.update_foreground(!occluded && self.window_focused);
                 self.set_occluded(occluded);
             }
@@ -352,6 +365,13 @@ impl ApplicationHandler<UserEvent> for App {
                 self.on_key(&event);
             }
             WindowEvent::Ime(ime) => self.on_ime(ime),
+            WindowEvent::Touch(touch) => self.on_touch(touch),
+            // 触摸期间位置由接触点决定，兼容鼠标事件不能再次触发点击或改变拖动目标。
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+                if self.touch.active() => {}
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_inside = true;
                 let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
@@ -553,6 +573,7 @@ impl App {
             self.notice_until,
             committed,
             self.hint_tick(now),
+            self.touch_tick(now),
         ]
         .into_iter()
         .flatten()
