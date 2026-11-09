@@ -4,12 +4,12 @@ members = ["crates/*", "xtask"]
 default-members = ["crates/winc-app"]
 
 [workspace.package]
-version = "0.1.586"
+version = "0.1.587"
 edition = "2024"
 rust-version = "1.89"
 publish = false
 license = "Apache-2.0"
-repository = "https://github.com/DEEIX-AI/Winc"·
+repository = "https://github.com/DEEIX-AI/Winc"
 homepage = "https://winc.si"
 
 [workspace.dependencies]

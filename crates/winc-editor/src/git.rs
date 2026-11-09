@@ -847,7 +847,8 @@ impl Git {
 
     /// 推送当前分支。
     ///
-    /// 没有上游时推到第一个远程上同名的分支，并设为上游（`push -u`）。
+    /// 没有上游时推到远程上同名的分支，并设为上游（`push -u`）：远程优先取分支和仓库配置的推送
+    /// 目标，其次是 `origin`，都没有时取第一个。
     ///
     /// # Errors
     ///
@@ -862,10 +863,7 @@ impl Git {
         // 跳过这样的远程，推送时另外加 `--end-of-options`。
         let usable: Vec<&String> = remotes.iter().filter(|r| !r.starts_with('-')).collect();
         let preferred = self.preferred_remote(root);
-        let chosen = preferred
-            .iter()
-            .find_map(|name| usable.iter().find(|remote| ***remote == *name).copied());
-        let Some(remote) = chosen.or(usable.first().copied()) else {
+        let Some(remote) = publish_remote(&usable, &preferred) else {
             return Err(winc_i18n::t!("git-push-no-remote").to_owned());
         };
         self.operate(
@@ -1471,6 +1469,25 @@ fn developer_tools_installed() -> bool {
         process::run(&mut command, Vec::new(), PROBE_TIMEOUT, &Cancel::default()),
         Ok(output) if output.status.success()
     )
+}
+
+/// 选出发布分支（第一次推送）的远程：先按 `preferred`（当前分支和仓库配置的推送目标，优先的在前），
+/// 其次是 `origin`，都没有时取 `remotes` 中的第一个；没有远程时返回 `None`。
+///
+/// 与 `git push` 一致：没有配置推送目标时推到 `origin`。远程按名字排列，审阅他人的拉取请求时
+/// 添加的远程可能排在 `origin` 之前，不能直接取第一个。
+fn publish_remote<'a>(remotes: &[&'a String], preferred: &[String]) -> Option<&'a String> {
+    let named = |name: &str| {
+        remotes
+            .iter()
+            .find(|remote| remote.as_str() == name)
+            .copied()
+    };
+    preferred
+        .iter()
+        .find_map(|name| named(name))
+        .or_else(|| named("origin"))
+        .or_else(|| remotes.first().copied())
 }
 
 #[cfg(test)]
