@@ -13,7 +13,7 @@ mod time;
 mod tree;
 
 pub(crate) use time::*;
-pub(crate) use tree::{LogDiffRow, LogDiffTree};
+pub(crate) use tree::LogDiffTree;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -290,10 +290,17 @@ pub(crate) struct LogState {
     pub hits: Vec<(Rect, LogTarget)>,
     /// 打开文件差异的标签：一个接一个地看几个文件，只占一个标签。
     preview: Option<DocumentId>,
-    /// 当前预览对应的提交及文件树，独立于日志中后来选中的提交。
+    /// 当前预览对应的提交及文件列表，独立于日志中后来选中的提交。
     tree: Option<LogDiffTree>,
+    /// 文件列表的浏览状态（见 [`App::with_log_list`]）。
+    list: crate::app::git::commit::CommitState,
+    /// 文件列表对应的仓库状态：该提交改动的文件，下标与 `tree` 中的文件相同。
+    status: Option<winc_editor::git::Status>,
     /// 只接收最后一次打开文件的后台结果。
     diff_request: u64,
+    /// 提交视图与文件列表之间的过渡（见 [`App::track_log_tree`]）：上一帧是否显示文件列表、
+    /// 侧栏上一帧是否显示提交视图，以及过渡的时钟。
+    header: (bool, bool, Option<crate::app::Clock>),
     /// 键盘在详情的文件列表里时，选着第几个文件（`→` 进去、`←` / `Esc` 出来）；在提交列表里
     /// 时为 `None`。
     pub file: Option<usize>,
@@ -369,6 +376,7 @@ impl LogState {
         if self.preview == Some(id) {
             self.preview = None;
             self.tree = None;
+            self.status = None;
             self.diff_request += 1;
         }
     }
@@ -383,7 +391,10 @@ impl Default for LogState {
             hits: Vec::new(),
             preview: None,
             tree: None,
+            list: crate::app::git::commit::CommitState::browsing(&Default::default()),
+            status: None,
             diff_request: 0,
+            header: (false, false, None),
             file: None,
             open_first: None,
             clipped: None,
@@ -895,7 +906,7 @@ impl App {
             .as_ref()
             .filter(|_| self.steps_log_files(id))?;
         let files = &tree.source.files;
-        let (next, at) = tree.neighbor(forward)?;
+        let (next, at) = self.log_diff_neighbor(forward)?;
         let name = winc_editor::display_name(&files.get(next)?.path).into_owned();
         Some((next, at, name, files.len()))
     }

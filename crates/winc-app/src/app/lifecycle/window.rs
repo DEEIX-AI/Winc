@@ -275,9 +275,6 @@ impl App {
             let tree = self.layout.tree;
             self.layout.tree = Rect::new(tree.x, tree.y, 0.0, 0.0);
         }
-        if let Some(tree) = self.log_diff_tree() {
-            self.scroll_log_diff(tree.scroll);
-        }
         self.sync_wrap();
         self.sync_terminal();
     }

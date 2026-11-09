@@ -19,11 +19,15 @@ impl App {
             return Some(Hover::ProjectName);
         }
 
+        // 历史提交的文件列表借用提交视图的列表，按绘制时记下的位置找。
         if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
-            return (!(self.panel_visible && self.layout.splitter.contains(x, y))).then(|| {
-                self.log_diff_row_at(x, y)
-                    .map_or(Hover::None, Hover::LogDiffRow)
-            });
+            if self.log_diff_layout_button().contains(x, y) {
+                return Some(Hover::LogDiffLayout);
+            }
+            if self.on_splitter_outside_commit_overflow(x, y) {
+                return None;
+            }
+            return Some(hit(&self.commit_hits, x, y).map_or(Hover::None, Hover::Commit));
         }
 
         // 文件视图底部的大纲：按绘制时记下的位置找；分隔条由 `Target::Splitter` 处理。
@@ -285,12 +289,17 @@ impl App {
         }
 
         if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
-            if self.panel_visible && self.layout.splitter.contains(x, y) {
+            if self.log_diff_layout_button().contains(x, y) {
+                self.toggle_log_diff_layout();
+                return true;
+            }
+            if self.on_splitter_outside_commit_overflow(x, y) {
                 return false;
             }
-            if let Some(row) = self.log_diff_row_at(x, y) {
-                self.click_log_diff_row(row);
+            if let Some(target) = hit(&self.commit_hits, x, y) {
+                self.with_log_list(|app| app.press_commit(target));
             }
+            self.request_redraw();
             return true;
         }
 

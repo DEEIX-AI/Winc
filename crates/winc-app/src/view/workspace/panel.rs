@@ -982,6 +982,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             })
         }
         Hover::Commit(CommitTarget::Location) => None,
+        // 历史差异文件列表的显示方式按钮：写明点击后切换成哪一种。
+        Hover::LogDiffLayout => {
+            let label = if app.log_list().flat() {
+                t!("workspace-tip-show-as-tree")
+            } else {
+                t!("workspace-tip-show-as-list")
+            };
+            Some((app.log_diff_layout_button(), label.to_owned()))
+        }
         Hover::Commit(CommitTarget::CommitMenu) => Some((
             app.commit_parts().commit_menu,
             t!("workspace-tip-commit-menu").to_owned(),

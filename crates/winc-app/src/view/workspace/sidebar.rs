@@ -45,19 +45,7 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     if app.sidebar_view == SidebarView::Commit {
-        if app.log_diff_tree().is_some() {
-            draw_log_diff_tree(app, frame);
-            return;
-        }
-        let tools = app.commit_parts().tools[0].0.x - 4.0;
-        // 上下文栏自己会在右边留出 4 的间距。
-        let right = git::commit::location_span(app, frame).map_or(tools, |(left, _)| left);
-        let bar = ContextBar::new(app, frame);
-        draw_context_bar(app, frame, &bar, right);
-        if let Some(caret) = git::commit::draw_commit(app, frame) {
-            app.ime_cursor = Some(caret);
-        }
-
+        draw_commit_view(app, frame);
         return;
     }
 
@@ -66,82 +54,90 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     outline::draw_outline(app, frame);
 }
 
-/// 历史差异的侧栏显示这次比较涉及的路径，点击文件在同一个差异标签中切换。
-fn draw_log_diff_tree(app: &mut App, frame: &mut Frame<'_>) {
-    use crate::app::git::log::LogDiffRow;
+/// 绘制提交视图：工作区改动，或从日志打开的差异的文件列表（见 `App::with_log_list`）。
+///
+/// 两者切换时列表直接替换，只有标题行右端过渡（[`App::log_tree_share`]）：前一半时间里离开
+/// 一方的按钮（或提交号）淡出，后一半时间里目标一方的淡入，两者位置重叠，不同时显示；左侧
+/// 项目栏的右端随之伸缩。
+fn draw_commit_view(app: &mut App, frame: &mut Frame<'_>) {
+    let share = app.log_tree_share();
+    let version = (2.0 * share - 1.0).clamp(0.0, 1.0);
+    let tools = (1.0 - 2.0 * share).clamp(0.0, 1.0);
+    // 项目栏的右端：提交视图在工具按钮（或位置按钮）之前，文件列表在提交号之前；上下文栏
+    // 自己会在右边留出 4 的间距。
+    let commit_right = app.with_log_tree_shown(false, |app| {
+        let tools = app.commit_parts().tools[0].0.x - 4.0;
+        git::commit::location_span(app, frame).map_or(tools, |(left, _)| left)
+    });
+    let right = match log_version_left(app, frame) {
+        Some(left) => commit_right + (left - 4.0 - commit_right) * share,
+        None => commit_right,
+    };
+    let bar = ContextBar::new(app, frame);
+    draw_context_bar(app, frame, &bar, right);
 
-    let Some(tree) = app.log_diff_tree() else {
-        return;
+    if app.log_diff_tree().is_some() {
+        if tools > 0.0 {
+            app.with_log_tree_shown(false, |app| {
+                git::commit::draw_commit_tools(app, frame, tools);
+            });
+        }
+        app.with_log_list(|app| git::commit::draw_commit_browse(app, frame));
+        frame.with_opacity(version, |frame| draw_log_diff_version(app, frame, version));
+    } else {
+        if version > 0.0 {
+            app.with_log_tree_shown(true, |app| {
+                frame.with_opacity(version, |frame| draw_log_diff_version(app, frame, version));
+            });
+        }
+        if let Some(caret) = git::commit::draw_commit(app, frame, tools) {
+            app.ime_cursor = Some(caret);
+        }
+    }
+}
+
+/// 返回文件列表标题行中版本（提交号）的左边；没有文件列表时返回 `None`。与
+/// [`draw_log_diff_version`] 使用同一套排法。
+fn log_version_left(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
+    let version = app.log_tree_version()?;
+    let header = app.layout.sidebar_header;
+    let right = app.log_diff_layout_button().x - 4.0;
+    let version = truncate_end(
+        frame,
+        version,
+        app.fonts.ui_small,
+        (header.w / 2.0).max(0.0),
+    );
+    Some(right - frame.measure(FontKind::Ui, app.fonts.ui_small, &version))
+}
+
+/// 在侧栏标题行右端、提交视图工具按钮的位置绘制切换树形与列表的按钮和文件列表的版本
+/// （提交号），返回版本的左边。
+///
+/// 按钮显示切换后的显示方式。`reveal` 是文件列表的露出比例：切换过程中版本从右侧滑入。
+fn draw_log_diff_version(app: &mut App, frame: &mut Frame<'_>, reveal: f32) -> f32 {
+    let Some(version) = app.log_tree_version().map(str::to_owned) else {
+        return app.layout.sidebar_header.right();
     };
     let p = app.palette;
     let header = app.layout.sidebar_header;
-    let title = t!("git-log-diff-files", version = tree.version());
-    let title = truncate_end(frame, &title, app.fonts.ui, (header.w - 24.0).max(0.0));
-    ui_text(frame, app, header.x + 12.0, header, &title, p.text, header);
-
-    let list = app.log_diff_list();
-    let content = tree.rows.len() as f32 * TREE_ROW;
-    let scroll = tree.scroll;
-    let first = (scroll / TREE_ROW) as usize;
-    for (i, (depth, entry)) in tree.rows.iter().enumerate().skip(first) {
-        let row = Rect::new(
-            list.x + 6.0,
-            list.y + i as f32 * TREE_ROW - scroll,
-            (list.w - 12.0).max(0.0),
-            TREE_ROW,
-        );
-        if row.y >= list.bottom() {
-            break;
-        }
-        let chosen = matches!(entry, LogDiffRow::File(file) if *file == tree.selected());
-        if let Some(color) = row_color(
-            p,
-            chosen,
-            app.focus == Focus::Editor,
-            app.hover == Hover::LogDiffRow(i),
-        ) {
-            frame.rect_clipped(row, color, RADIUS_ROW, list);
-        }
-        let x = row.x + 8.0 + *depth as f32 * 14.0;
-        let cy = center(row).1;
-        let (name, end, right) = match entry {
-            LogDiffRow::Dir(path) => {
-                let open = !tree.collapsed.contains(path);
-                let direction = if open {
-                    Direction::Down
-                } else {
-                    Direction::Right
-                };
-                icons::chevron(frame, (x + 4.0, cy), 6.0, direction, p.text_dim, list);
-                icons::folder(frame, (x + 14.0, cy - 7.5), open, p.text_muted, list);
-                (
-                    winc_editor::segment_name(path),
-                    x + 36.0,
-                    row.right() - SCROLLBAR_HIT,
-                )
-            }
-            LogDiffRow::File(index) => {
-                let file = &tree.files()[*index];
-                let name = winc_editor::display_name(&file.path);
-                let end = draw_file_icon(frame, p, (x + 14.0, cy), &name, list);
-                let right = row.right() - SCROLLBAR_HIT - 16.0;
-                ui_text_small(
-                    frame,
-                    app,
-                    right + 4.0,
-                    row,
-                    &file.change.letter().to_string(),
-                    git_color(p, file.change),
-                    list,
-                );
-                (name, end + 6.0, right)
-            }
-        };
-        let name = ellipsize(frame, &name, app.fonts.ui, (right - end).max(0.0));
-        ui_text(frame, app, end, row, &name, p.text, list);
+    let button = app.log_diff_layout_button();
+    let hovered = app.hover == Hover::LogDiffLayout;
+    draw_button(frame, p, button, header, hovered, false);
+    let color = if hovered { p.text } else { p.text_muted };
+    if app.log_list().flat() {
+        icons::tree_view(frame, center(button), color, header);
+    } else {
+        icons::list_view(frame, center(button), color, header);
     }
-    let owner = app.editor.active().map_or(0, |doc| doc.id.0);
-    draw_scrollbar(app, frame, ScrollArea::Commit, owner, list, scroll, content);
+    let right = button.x - 4.0;
+    let room = (header.w / 2.0).max(0.0);
+    let version = truncate_end(frame, &version, app.fonts.ui_small, room);
+    let width = frame.measure(FontKind::Ui, app.fonts.ui_small, &version);
+    let left = right - width;
+    let x = left + (1.0 - reveal) * 8.0;
+    ui_text_small(frame, app, x, header, &version, p.text_dim, header);
+    left
 }
 
 /// 绘制文件视图的第二行：左边是上下文栏（项目、当前分支），右端是文件树工具栏。
