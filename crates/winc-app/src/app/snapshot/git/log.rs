@@ -184,6 +184,198 @@ fn stepping_past_the_last_change_opens_the_commits_next_file() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 返回历史差异文件列表当前的各行（借用提交视图的列表排出）。
+fn log_rows(app: &mut App) -> std::rc::Rc<crate::app::git::commit::CommitRows> {
+    app.with_log_list(|app| app.commit_rows()).unwrap()
+}
+
+/// 点击历史差异文件列表的第 `row` 行（列表没有滚动）。
+fn click_log_row(app: &mut App, row: usize) {
+    let list = app.commit_parts().list;
+    let y = list.y + (row as f32 + 0.5) * crate::app::git::commit::COMMIT_ROW;
+    click(app, (list.x + 40.0, y));
+}
+
+/// 历史差异的侧栏借用提交视图的改动列表，只列出该提交改动的文件：目录可以收起、展开，
+/// 日志改选其他提交后仍对应原提交，点击文件在同一个差异标签中打开。
+#[test]
+fn commit_diff_sidebar_lists_only_that_commits_changed_files() {
+    use crate::app::git::commit::CommitRow;
+    use crate::app::git::log::LogTarget;
+
+    let Some((mut app, root)) = git_app("git-log-file-tree", false) else {
+        return;
+    };
+    std::fs::create_dir_all(root.join("src/nested")).unwrap();
+    std::fs::write(root.join("src/nested/one.txt"), "first\n").unwrap();
+    std::fs::write(root.join("src/two.txt"), "second\n").unwrap();
+    git_in(&root, &["add", "src/nested/one.txt", "src/two.txt"]);
+    git_in(&root, &["commit", "-q", "-m", "Add nested files"]);
+    std::fs::write(root.join("untracked.txt"), "working tree only\n").unwrap();
+    app.git_refresh();
+    show_all_log(&mut app);
+    let log_index = app.editor.active.unwrap();
+    app.set_sidebar(false);
+    // 显示方式与提交视图共用，默认平铺；该测试检查树形。
+    app.commit.set_flat(false);
+    app.press_log(LogTarget::File(0));
+    paint(&mut app);
+
+    let diff_index = app.editor.active.unwrap();
+    let doc = app.editor.active().unwrap().id;
+    let tabs = app.editor.documents.len();
+    assert!(app.sidebar_open() && app.log_diff_tree().is_some());
+    assert!(!app.commit_shown());
+    // 组标题、`src`、`src/nested`、`one.txt`、`two.txt`：工作区里未跟踪的文件不在其中。
+    let rows = log_rows(&mut app);
+    assert_eq!(rows.len(), 5);
+    assert!(matches!(&rows[1], CommitRow::Dir { label, .. } if label == "src"));
+    assert!(matches!(&rows[2], CommitRow::Dir { label, .. } if label == "nested"));
+    click_log_row(&mut app, 2);
+    assert_eq!(log_rows(&mut app).len(), 4);
+    click_log_row(&mut app, 2);
+    assert_eq!(log_rows(&mut app).len(), 5);
+
+    // 日志标签改选另一个提交后，原差异的侧栏仍然可以打开原提交的其他文件。
+    app.activate_tab(log_index);
+    app.select_log_row(1);
+    assert!(app.log_diff_tree().is_none());
+    app.activate_tab(diff_index);
+    paint(&mut app);
+    click_log_row(&mut app, 4);
+    let active = app.editor.active().unwrap();
+    assert_eq!(active.id, doc);
+    assert_eq!(app.editor.documents.len(), tabs);
+    assert!(active.title.as_deref().unwrap().starts_with("two.txt · "));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 历史差异的文件列表：逐个切换文件按列表的显示顺序进行；收起的目录在打开其中的文件时
+/// 展开；侧栏只在新建差异标签时打开，之后保留用户的选择；提交视图可以在文件列表与工作区
+/// 改动之间切换；关闭差异标签后文件列表随之作废。
+#[test]
+fn commit_diff_tree_follows_its_order_and_the_users_sidebar() {
+    use crate::app::git::log::LogTarget;
+    use crate::layout::SidebarView;
+
+    let Some((mut app, root)) = git_app("git-log-file-tree-order", false) else {
+        return;
+    };
+    // Git 列出的顺序是 `a.txt`、`src/b.txt`；树形中目录在前，顺序是 `src/b.txt`、`a.txt`。
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("a.txt"), "a\n").unwrap();
+    std::fs::write(root.join("src/b.txt"), "b\n").unwrap();
+    git_in(&root, &["add", "a.txt", "src/b.txt"]);
+    git_in(&root, &["commit", "-q", "-m", "Two files"]);
+    app.git_refresh();
+    show_all_log(&mut app);
+    let log_index = app.editor.active.unwrap();
+    app.commit.set_flat(false);
+    app.press_log(LogTarget::File(0));
+    paint(&mut app);
+    let title = |app: &App| app.editor.active().unwrap().title.clone().unwrap();
+    assert!(title(&app).starts_with("a.txt · "));
+    assert!(
+        app.next_log_file(true).is_none(),
+        "a.txt 是列表中最后一个文件"
+    );
+    let (_, at, name, total) = app.next_log_file(false).unwrap();
+    assert_eq!((at, name.as_str(), total), (0, "b.txt", 2));
+
+    // 收起 `src` 后切换到其中的文件：目录随之展开。行依次是组标题、`src`、`b.txt`、`a.txt`。
+    assert_eq!(log_rows(&mut app).len(), 4);
+    click_log_row(&mut app, 1);
+    assert_eq!(log_rows(&mut app).len(), 3);
+    assert!(app.step_log_file(false));
+    assert!(title(&app).starts_with("b.txt · "));
+    assert_eq!(log_rows(&mut app).len(), 4);
+
+    // 提交视图在文件列表与工作区改动之间切换。
+    app.show_commit();
+    assert!(app.log_diff_tree().is_none() && app.commit_shown());
+    app.show_commit();
+    assert!(app.log_diff_tree().is_some() && !app.commit_shown());
+
+    // 差异标签已存在时，从日志再打开文件不改动用户选择的侧栏视图。
+    let diff_index = app.editor.active.unwrap();
+    app.set_sidebar_view(SidebarView::Files);
+    app.activate_tab(log_index);
+    app.press_log(LogTarget::File(1));
+    paint(&mut app);
+    assert_eq!(app.sidebar_view, SidebarView::Files);
+
+    // 关闭差异标签后文件列表作废。
+    app.activate_tab(diff_index);
+    app.set_sidebar_view(SidebarView::Commit);
+    assert!(app.log_diff_tree().is_some());
+    app.close_tab(diff_index);
+    assert!(app.next_log_file(true).is_none() && app.next_log_file(false).is_none());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 历史差异侧栏标题行的按钮在树形与列表之间切换文件列表，与提交视图的更改列表共用同一个
+/// 设置；树形中只有一个子目录的各级按设置「紧凑文件夹」合成一行（「src/nested」）。
+#[test]
+fn commit_diff_tree_switches_between_tree_and_list() {
+    use crate::app::git::commit::CommitRow;
+    use crate::app::git::log::LogTarget;
+
+    let Some((mut app, root)) = git_app("git-log-file-tree-layout", false) else {
+        return;
+    };
+    std::fs::create_dir_all(root.join("src/nested")).unwrap();
+    std::fs::write(root.join("a.txt"), "a\n").unwrap();
+    std::fs::write(root.join("src/nested/b.txt"), "b\n").unwrap();
+    git_in(&root, &["add", "a.txt", "src/nested/b.txt"]);
+    git_in(&root, &["commit", "-q", "-m", "Two files"]);
+    app.git_refresh();
+    show_all_log(&mut app);
+    app.commit.set_flat(false);
+    app.press_log(LogTarget::File(0));
+    paint(&mut app);
+    let press = |app: &mut App| {
+        let button = app.log_diff_layout_button();
+        click(app, (button.x + 4.0, button.y + 4.0));
+    };
+    // 树形：组标题、`src/nested`、`b.txt`、`a.txt`。
+    let rows = log_rows(&mut app);
+    assert_eq!(rows.len(), 4);
+    assert!(matches!(&rows[1], CommitRow::Dir { label, .. } if label == "src/nested"));
+
+    // 关闭设置「紧凑文件夹」后逐级显示：组标题、`src`、`nested`、`b.txt`、`a.txt`。
+    app.config.compact_folders = Some(false);
+    app.apply_compact_folders();
+    let rows = log_rows(&mut app);
+    assert_eq!(rows.len(), 5);
+    assert!(matches!(&rows[1], CommitRow::Dir { label, .. } if label == "src"));
+    app.config.compact_folders = Some(true);
+    app.apply_compact_folders();
+
+    press(&mut app);
+    assert!(app.commit.flat());
+    assert_eq!(log_rows(&mut app).len(), 3);
+
+    // 悬停按钮时提示点击后切换成哪一种显示方式。
+    let button = app.log_diff_layout_button();
+    app.on_mouse_move(button.x + 4.0, button.y + 4.0);
+    paint(&mut app);
+    assert!(app.hover.has_tooltip(), "停留满提示延迟后显示提示");
+    let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
+    assert_eq!(
+        tip.as_deref(),
+        Some(winc_i18n::t!("workspace-tip-show-as-tree"))
+    );
+
+    // 在提交视图中切换显示方式，文件列表随之重排。
+    app.toggle_commit_layout();
+    assert!(!app.commit.flat());
+    assert_eq!(log_rows(&mut app).len(), 4);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn uncommitted_changes_sit_above_head_in_the_log() {
     use crate::app::git::log::{LOG_LIST_PAD, LogTarget};

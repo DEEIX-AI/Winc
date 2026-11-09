@@ -253,7 +253,7 @@ fn editing_the_right_side_rediffs_and_maps_lines() {
         v.rows[RIGHT][v.row_of_new(2)],
         SideRow::Fold { .. }
     ));
-    v.reveal_new(2);
+    v.reveal_line(RIGHT, 2);
     assert_eq!(v.line_at(RIGHT, v.row_of_new(2)), Some(2));
 
     // 改回去：两侧相同。

@@ -61,9 +61,16 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
     let layout = app.layout;
     app.tree_overflow = tree_overflow(app, frame);
+    app.track_log_tree();
     let before = app.commit.overflow.map(|o| o.row);
     app.commit.overflow = git::commit::commit_overflow(app, frame);
     app.track_commit_actions(before);
+    // 历史提交的文件列表借用提交视图的列表，同样计算写全名的那一行。
+    app.with_log_list(|app| {
+        let before = app.commit.overflow.map(|o| o.row);
+        app.commit.overflow = git::commit::commit_overflow(app, frame);
+        app.track_commit_actions(before);
+    });
 
     // 鼠标停在名称展开的行上并滚动文件树后，该位置对应的行可能不再展开名称；此时鼠标的位置
     // 已不在文件树范围内，需要清除悬停状态。
@@ -104,6 +111,10 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_tree_overflow(app, frame);
     git::commit::draw_commit_overflow_closing(app, frame);
     git::commit::draw_commit_overflow(app, frame);
+    app.with_log_list(|app| {
+        git::commit::draw_commit_overflow_closing(app, frame);
+        git::commit::draw_commit_overflow(app, frame);
+    });
     git::changes::draw_change_popup(app, frame);
 
     if layout.search.h > 0.0 {

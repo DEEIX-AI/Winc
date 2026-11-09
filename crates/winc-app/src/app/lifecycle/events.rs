@@ -166,6 +166,10 @@ impl ApplicationHandler<UserEvent> for App {
         self.renderer = Some(renderer);
         self.measure_fonts();
         self.window = Some(window.clone());
+        #[cfg(windows)]
+        {
+            self.touch.window_input = crate::windows::WindowInput::new(&window);
+        }
         self.note_window_frame();
         window.set_ime_allowed(true);
         #[cfg(target_os = "macos")]
@@ -226,6 +230,8 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 先在尚未显示的窗口上绘制第一帧，再显示窗口，避免出现一帧白屏。
         self.redraw();
+        #[cfg(windows)]
+        self.sync_window_input();
 
         #[cfg(target_os = "macos")]
         if self.bench.silent() {
@@ -266,8 +272,15 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => self.request_close_window(),
             WindowEvent::RedrawRequested => self.redraw(),
-            WindowEvent::Moved(_) => self.note_window_frame(),
+            WindowEvent::Moved(_) => {
+                // 窗口移动后，此前的按下不再参与顶栏双击的判定。触摸拖动窗口时系统接管输入，
+                // 抬手事件可能不再送达，因此在此结束触摸。
+                self.title_click = None;
+                self.cancel_touch();
+                self.note_window_frame();
+            }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.cancel_touch();
                 self.note_window_frame();
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize();
@@ -295,6 +308,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update_foreground(focused);
                 // 离开窗口时停止录制按键，菜单项的快捷键随之恢复，不影响别的窗口和应用。
                 if !focused {
+                    self.cancel_touch();
                     self.set_recording(false);
                 }
 
@@ -318,6 +332,9 @@ impl ApplicationHandler<UserEvent> for App {
             // 完全看不见时不绘制，屏幕上那块画面也标成可清除（开着几个窗口时只有看得见的占着）；
             // 又看得见时马上重绘一帧。测量时窗口透明，系统当它看不见，仍然绘制。
             WindowEvent::Occluded(occluded) => {
+                if occluded {
+                    self.cancel_touch();
+                }
                 self.update_foreground(!occluded && self.window_focused);
                 self.set_occluded(occluded);
             }
@@ -352,6 +369,13 @@ impl ApplicationHandler<UserEvent> for App {
                 self.on_key(&event);
             }
             WindowEvent::Ime(ime) => self.on_ime(ime),
+            WindowEvent::Touch(touch) => self.on_touch(touch),
+            // 有接触点时指针位置由接触点决定；由触摸提升的鼠标事件不得再次触发点击或改变拖动目标。
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+                if self.touch_blocks_mouse() => {}
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_inside = true;
                 let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
@@ -553,6 +577,7 @@ impl App {
             self.notice_until,
             committed,
             self.hint_tick(now),
+            self.touch_tick(now),
         ]
         .into_iter()
         .flatten()

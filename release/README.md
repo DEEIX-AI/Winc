@@ -15,10 +15,12 @@ of releasing it again. To retry a failed build, rerun the Release workflow on th
 | --- | --- |
 | `.github/workflows/release-tag.yml` | Tags each merge into `main` and starts the Release workflow |
 | `.github/workflows/release.yml` | Entry point: prepare, the four platform builds, and the draft |
+| `.github/workflows/release-arch-repo.yml` | Stages the signed Arch repository after a stable release is published |
 | `.github/workflows/release-{prepare,macos,linux,windows}.yml` | Reusable jobs called by `release.yml` |
 | `.github/actions/build-setup/` | Shared toolchain and cache setup; pins the release Rust version |
 | `release/macos/` | `package.sh` (app, dmg, appcast), `verify.sh`, and Apple signing setup |
 | `release/linux/` | `package.sh` (AppImage and deb), pinned packaging tools, desktop entry and AppRun |
+| `release/linux/arch/` | Arch package recipe, repository staging and installer template |
 | `release/windows/` | `package.ps1` (NSIS, MSI, portable zip), `sign.ps1`, `verify.ps1`, installer templates |
 | `release/common/` | Shared by all platforms: version, build config, update signing, asset staging, publication |
 
@@ -82,6 +84,8 @@ version (see below). Neither needs a repository Variable.
 All packages include the terminal helper. macOS containers use the same final app and retain the
 macOS 11 minimum. Linux packages are built on Ubuntu 24.04; the deb declares glibc 2.39 or newer.
 Debian prerelease versions use `~` so the final release sorts after its betas.
+Stable `X.Y.Z` releases also include `winc-<version>-1-x86_64.pkg.tar.zst` built from the same Linux
+binaries. The Arch package uses pacman for updates.
 
 Each release also has four signed appcasts for the in-app updater: `appcast-macos-arm64.xml`,
 `appcast-macos-x86_64.xml`, `appcast-linux.xml`, and `appcast-windows.xml`. They list the dmg, the
@@ -110,12 +114,44 @@ enclosure, verifies its signature, waits for the app to exit, installs silently,
 when requested. MSI updates request elevation when required. Portable Windows and deb installations
 continue to use manual or package-manager updates.
 
+### Arch repository (winc.si)
+
+The **Release · Sign Arch repository** workflow stages `deeix-ai-winc` after a stable GitHub
+Release is published. In the repository's **Settings → Secrets and variables → Actions**, add the
+following repository secrets.
+
+| Name | Value |
+| --- | --- |
+| `WINC_ARCH_SIGNING_PRIVATE_KEY` | Passphrase-protected OpenPGP signing key exported with `gpg --armor --export-secret-keys <fingerprint>` |
+| `WINC_ARCH_SIGNING_PASSPHRASE` | Passphrase for the Arch signing key |
+| `WINC_ARCH_SIGNING_FINGERPRINT` | Full 40-digit uppercase fingerprint without spaces |
+
+Download `winc-arch-repo-<tag>` from the workflow's Artifacts and deploy its contents under
+`https://winc.si/releases/arch/`. Deploy releases in version order. Upload the
+versioned package and its signature before publishing the indexes and matching signatures together.
+Use the generated installer and publish the full fingerprint on the download page after verifying
+the first deployment.
+
+For local signing, set the same fingerprint and run `bash release/linux/arch/prepare-repo.sh --tag
+v1.2.3 --out target/winc-arch-v1.2.3` on an Arch machine with the signing key and an authenticated `gh`.
+
+On Arch x86_64, download and run the installer to configure the signed repository and install Winc.
+
+```bash
+curl --proto '=https' --tlsv1.2 -fL -o install-arch.sh \
+  https://winc.si/releases/arch/install-arch.sh
+sudo bash ./install-arch.sh
+```
+
+Once the repository is configured, install with `sudo pacman -Syu winc` and update with
+`sudo pacman -Syu`.
+
 ## Verification and publication
 
-Before uploading, native jobs verify their packages: macOS checks both container contents,
-architectures, minimum system versions, signatures and notarization where configured; Linux checks
-the AppImage for bundled Wayland libraries and inspects the deb; Windows checks signatures and
-exercises NSIS/MSI installation and the update launcher using paths containing spaces.
+Before uploading, macOS checks both container contents, architectures, minimum system versions,
+signatures and notarization where configured. Linux checks the AppImage for bundled Wayland
+libraries, inspects the deb, and installs the stable Arch package in a clean container. Windows checks
+signatures and exercises NSIS/MSI installation and the update launcher using paths containing spaces.
 
 The single publication job requires all four verified target artifacts. It refuses missing,
 duplicate or unexpected assets, multiple drafts for the tag, and replacing an already published
