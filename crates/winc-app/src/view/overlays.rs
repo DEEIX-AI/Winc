@@ -45,7 +45,7 @@ fn draw_search_bar(
     let search = &app.search;
     let hovered = |button| app.hover == Hover::Search(button);
     let expanded = parts.replace_field.w > 0.0;
-    let can_replace = app.readonly_diff().is_none();
+    let can_replace = app.can_replace();
     draw_card(frame, p, bar, RADIUS_BAR, p.popup_bg);
 
     draw_button(

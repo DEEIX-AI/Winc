@@ -108,13 +108,14 @@ pub struct Search {
     gave_up: Option<usize>,
 }
 
-/// 搜索结果所属的文档及其版本。
+/// 搜索结果所属的文档、版本，以及差异快照的一侧。
 ///
 /// 查询和选项另记在 `Search::compiled` 中，比较时不必复制查询。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Key {
     doc: DocumentId,
     revision: u64,
+    /// 在差异标签的哪一侧快照中搜索（`LEFT` 或 `RIGHT`）；搜索文档自身的文本时为 `None`。
     snapshot_side: Option<usize>,
 }
 
@@ -142,7 +143,8 @@ impl Search {
         self.key.as_ref().map(|k| k.doc)
     }
 
-    /// 返回差异标签 `doc` 上已搜索的快照侧。
+    /// 返回当前结果所属的差异快照一侧；结果不属于 `doc` 的当前版本，或不是快照的结果时
+    /// 返回 `None`。
     pub fn snapshot_side(&self, doc: &Document) -> Option<usize> {
         self.key
             .filter(|k| k.doc == doc.id && k.revision == doc.revision)?
@@ -198,7 +200,7 @@ impl Search {
         }
     }
 
-    /// 是否由 `doc` 的当前内容搜索得到：文档标识与 `revision` 都相同。
+    /// 是否由 `doc` 的当前内容搜索得到：文档标识与 `revision` 都相同，且不是差异快照的结果。
     ///
     /// 文档内容修改后、下一次 `update` 之前为 `false`。
     pub fn is_for(&self, doc: &Document) -> bool {
@@ -309,7 +311,9 @@ impl Search {
         self.scan(doc.text(), !doc.text().is_large());
     }
 
-    /// 推进不可变差异快照的搜索。快照由差异标签标识和侧区分。
+    /// 在差异标签 `doc` 第 `side` 侧的快照文本 `text` 中推进查找，单次调用最多耗时 `SLICE`。
+    ///
+    /// 快照不可修改，结果按（标签，版本，侧）区分，任一项变化时从头搜索。
     pub fn update_snapshot(&mut self, doc: &Document, side: usize, text: &ropey::Rope) {
         self.ensure_matcher();
         let key = Key {
@@ -324,6 +328,8 @@ impl Search {
         self.scan(text, true);
     }
 
+    /// 从上次的断点起在 `text` 中继续搜索一个时间片；`multiline` 表示能否取得整篇文本，
+    /// 不能时不支持跨行查找。
     fn scan(&mut self, text: &impl Lines, multiline: bool) {
         let (Some(from), Some(matcher)) = (self.resume.take(), &self.matcher) else {
             return;

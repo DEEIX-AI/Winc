@@ -328,7 +328,7 @@ struct EditState {
     read: Option<(usize, Span)>,
     /// 只读一侧的光标：（哪一侧，（行，列））。
     read_caret: Option<(usize, (usize, usize))>,
-    /// 查找条开着时，显示匹配的一侧。
+    /// 查找条打开时标出匹配的一侧（`LEFT` 或 `RIGHT`）；不标出时为 `None`。
     searched: Option<usize>,
 }
 
@@ -751,7 +751,7 @@ fn draw_body(
             }
         }
 
-        // 单栏里没改的内容共用一行；查左侧时从左侧行号换算字符偏移。
+        // 单栏布局中未改动的行只按右侧绘制一次；查找左侧时按左侧行号换算字符偏移。
         let search_start = match edit.searched {
             Some(searched) if searched == side => Some(text_side.text.line_to_char(line)),
             Some(LEFT) => old_line.map(|line| view.old.text.line_to_char(line)),

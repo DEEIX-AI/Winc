@@ -1279,10 +1279,13 @@ impl App {
         // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处。
         let searching = self.search_open || self.pending_jump.is_some();
         if searching && let Some((id, _)) = self.update_diff_find() {
-            if let Some((pending, pos, backwards)) = self.pending_jump
-                && pending == id
-            {
-                self.jump_to_match(pos, backwards);
+            // 记录的跳转只对当时的文档有效，切换标签后作废。
+            match self.pending_jump {
+                Some((pending, pos, backwards)) if pending == id => {
+                    self.jump_to_match(pos, backwards);
+                }
+                Some(_) => self.pending_jump = None,
+                None => {}
             }
             self.apply_line_filter();
             return;

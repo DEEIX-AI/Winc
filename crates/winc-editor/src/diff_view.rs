@@ -669,7 +669,7 @@ impl DiffView {
         self.layout();
     }
 
-    /// 展开指定侧第 `line` 行所在的折叠；该行没有折起来时不做改动。
+    /// 展开第 `side` 侧第 `line` 行所在的折叠段；该行未被折叠时不做处理。
     pub fn reveal_line(&mut self, side: usize, line: usize) {
         let row = self.row_of(side, line);
         if let Some(SideRow::Fold { gap, .. }) = self.rows[side].get(row) {
