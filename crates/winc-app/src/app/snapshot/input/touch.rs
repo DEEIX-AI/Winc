@@ -144,7 +144,7 @@ fn touch_scrolls_by_logical_pixels_without_moving_the_selection() {
     touch(&mut app, 1, TouchPhase::Moved, x, y - 100.0);
     touch(&mut app, 1, TouchPhase::Ended, x, y - 100.0);
     let doc = app.editor.active().unwrap();
-    assert!((doc.scroll_line * app.fonts.line_height - 100.0).abs() < 0.01);
+    assert!((doc.scroll_line * f64::from(app.fonts.line_height) - 100.0).abs() < 0.01);
     assert_eq!(doc.selection, selection);
     assert_eq!(app.drag, Drag::None);
     assert!(app.wheel_glide.is_none());
@@ -159,9 +159,13 @@ fn touch_scroll_stays_in_the_panel_where_it_started() {
     let mut app = app_with(&dir, false);
     paint(&mut app);
     let tree = app.layout.tree;
-    let x = tree.x + tree.w / 2.0;
+    // 在文件树右侧（滚动条以左）落指，竖直滑动 100 逻辑像素的同时越过边界进入编辑区；竖直位移
+    // 大于横向位移，按竖直方向滚动。
+    let x = tree.right() - 40.0;
     let y = tree.y + tree.h / 2.0;
-    let editor_x = app.layout.editor.x + 100.0;
+    assert!(!app.touch_drag_at(x, y));
+    let editor_x = app.layout.editor.x + 10.0;
+    assert!(editor_x - x < 100.0);
     touch(&mut app, 1, TouchPhase::Started, x, y);
     touch(&mut app, 1, TouchPhase::Moved, editor_x, y - 100.0);
     touch(&mut app, 1, TouchPhase::Ended, x, y - 100.0);

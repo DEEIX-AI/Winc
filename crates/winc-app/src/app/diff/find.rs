@@ -67,9 +67,9 @@ impl App {
             _ => text.line(line).len_chars(),
         };
         let x_end = (cells(end_col) as f32 * self.cell).max(x + self.cell);
-        let visible = parts.body.h / self.fonts.line_height;
+        let visible = f64::from(parts.body.h / self.fonts.line_height);
         let covered = if self.layout.search.x < pane.right() && self.layout.search.h > 0.0 {
-            (self.layout.search.bottom() - parts.body.y) / self.fonts.line_height
+            f64::from((self.layout.search.bottom() - parts.body.y) / self.fonts.line_height)
         } else {
             0.0
         };
@@ -81,7 +81,7 @@ impl App {
         });
         view.reveal_line(side, line);
         view.reveal_line(side, last_line);
-        let row = view.row_of_col(side, line, col) as f32;
+        let row = view.row_of_col(side, line, col) as f64;
         let (row, top) = if view.is_unified() {
             (view.pos_of(side, row), doc.scroll_line)
         } else {
