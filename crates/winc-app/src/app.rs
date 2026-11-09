@@ -410,6 +410,8 @@ pub enum Hover {
     MarkdownToc(crate::app::preview::markdown::TocTarget),
     Search(SearchButton),
     TreeRow(usize),
+    /// 文件在历史差异侧栏中的可见行。
+    LogDiffRow(usize),
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
     Tab(usize, bool),
     Splitter,

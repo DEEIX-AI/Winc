@@ -206,6 +206,7 @@ git-op-remove-worktree = removing worktree “{ $name }”
 git-log-no-selection = Select a Commit
 git-log-no-selection-detail = Select a commit on the left to see its message and changed files
 git-log-details-commit = Commit
+git-log-diff-files = Changed files · { $version }
 git-log-details-parents = { $count ->
     [one] Parent
    *[other] Parents

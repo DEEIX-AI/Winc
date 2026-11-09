@@ -215,10 +215,21 @@ impl App {
                 bar: Scrollbar::Commit,
                 grab,
             } => {
-                let list = self.commit_parts().list;
-                let max = self.commit_max_scroll();
-                if let Some(thumb) = scrollbar_thumb(list, 0.0, max + list.h) {
-                    self.commit.scroll = scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
+                if let Some(tree) = self.log_diff_tree() {
+                    let list = self.log_diff_list();
+                    let content = tree.rows.len() as f32 * TREE_ROW;
+                    if let Some(thumb) = scrollbar_thumb(list, 0.0, content) {
+                        let scroll =
+                            scroll_for_thumb(list.y, list.h, thumb.h, y, grab, content - list.h);
+                        self.scroll_log_diff(scroll);
+                    }
+                } else if self.commit_shown() {
+                    let list = self.commit_parts().list;
+                    let max = self.commit_max_scroll();
+                    if let Some(thumb) = scrollbar_thumb(list, 0.0, max + list.h) {
+                        self.commit.scroll =
+                            scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
+                    }
                 }
                 self.request_redraw();
             }

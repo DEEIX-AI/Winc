@@ -787,7 +787,9 @@ impl App {
 
     /// 提交视图是否正在显示。
     pub(crate) fn commit_shown(&self) -> bool {
-        self.sidebar_view == crate::layout::SidebarView::Commit && self.layout.sidebar.right() > 0.0
+        self.sidebar_view == crate::layout::SidebarView::Commit
+            && self.layout.sidebar.right() > 0.0
+            && self.log_diff_tree().is_none()
     }
 
     /// 计算提交视图的布局。
@@ -1019,7 +1021,9 @@ impl App {
 
     /// 打开提交视图时焦点落在哪：显示提交卡片时在提交信息里，否则在改动列表上。
     pub(crate) fn commit_view_focus(&self) -> Focus {
-        if self.commit_compose_shown() {
+        if self.log_diff_tree().is_some() {
+            Focus::Editor
+        } else if self.commit_compose_shown() {
             Focus::CommitMessage
         } else {
             Focus::CommitList
@@ -1231,7 +1235,11 @@ impl App {
             self.set_sidebar(true);
         }
         self.set_sidebar_view(crate::layout::SidebarView::Commit);
-        self.git_refresh();
+        if self.log_diff_tree().is_some() {
+            self.reveal_log_diff_file();
+        } else {
+            self.git_refresh();
+        }
         self.focus = self.commit_view_focus();
         self.request_redraw();
     }

@@ -333,6 +333,11 @@ impl App {
             self.tabs.scroll = (self.tabs.scroll - delta).clamp(0.0, max);
             // 标签滚动后，鼠标下方的标签已改变。
             self.set_hover(self.hover_at(x, y));
+        } else if let Some(tree) = self.log_diff_tree()
+            && self.log_diff_list().contains(x, y)
+        {
+            self.scroll_log_diff(tree.scroll - dy);
+            self.set_hover(self.hover_at(x, y));
         } else if self.commit_shown() && self.commit_parts().message.contains(x, y) {
             // 提交信息框里的文字超出最大行数时在框内滚动；上限在绘制时按文字的行数收紧。
             let view = &mut self.commit.message.view;

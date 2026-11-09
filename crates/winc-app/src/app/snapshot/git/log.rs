@@ -161,6 +161,68 @@ fn stepping_past_the_last_change_opens_the_commits_next_file() {
 }
 
 #[test]
+fn commit_diff_sidebar_lists_only_that_commits_changed_files() {
+    use crate::app::git::log::{LogDiffRow, LogTarget};
+
+    let Some((mut app, root)) = git_app("git-log-file-tree", false) else {
+        return;
+    };
+    std::fs::create_dir_all(root.join("src/nested")).unwrap();
+    std::fs::write(root.join("src/nested/one.txt"), "first\n").unwrap();
+    std::fs::write(root.join("src/two.txt"), "second\n").unwrap();
+    git_in(&root, &["add", "src/nested/one.txt", "src/two.txt"]);
+    git_in(&root, &["commit", "-q", "-m", "Add nested files"]);
+    std::fs::write(root.join("untracked.txt"), "working tree only\n").unwrap();
+    app.git_refresh();
+    show_all_log(&mut app);
+    let log_index = app.editor.active.unwrap();
+    app.set_sidebar(false);
+    app.press_log(LogTarget::File(0));
+    paint(&mut app);
+
+    let diff_index = app.editor.active.unwrap();
+    let doc = app.editor.active().unwrap().id;
+    let tabs = app.editor.documents.len();
+    let tree = app.log_diff_tree().unwrap();
+    assert!(app.sidebar_open());
+    assert!(!app.commit_shown());
+    assert_eq!(tree.files().len(), 2);
+    assert_eq!(tree.rows.len(), 4);
+    assert!(matches!(&tree.rows[0], (0, LogDiffRow::Dir(path)) if path == Path::new("src")));
+    assert!(matches!(&tree.rows[1], (1, LogDiffRow::Dir(path)) if path == Path::new("src/nested")));
+    let click_row = |app: &mut App, row: usize| {
+        let list = app.log_diff_list();
+        click(
+            app,
+            (
+                list.x + 20.0,
+                list.y + (row as f32 + 0.5) * crate::theme::TREE_ROW,
+            ),
+        );
+    };
+    click_row(&mut app, 1);
+    assert_eq!(app.log_diff_tree().unwrap().rows.len(), 3);
+    click_row(&mut app, 1);
+    assert_eq!(app.log_diff_tree().unwrap().rows.len(), 4);
+
+    // 日志标签改选另一个提交后，原差异的侧栏仍然可以打开原提交的其他文件。
+    app.activate_tab(log_index);
+    app.select_log_row(1);
+    assert!(app.log_diff_tree().is_none());
+    app.activate_tab(diff_index);
+    paint(&mut app);
+    click_row(&mut app, 3);
+    let active = app.editor.active().unwrap();
+    assert_eq!(active.id, doc);
+    assert_eq!(app.editor.documents.len(), tabs);
+    assert!(active.title.as_deref().unwrap().starts_with("two.txt · "));
+    let tree = app.log_diff_tree().unwrap();
+    assert!(tree.files()[tree.selected()].path.ends_with("src/two.txt"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn uncommitted_changes_sit_above_head_in_the_log() {
     use crate::app::git::log::{LOG_LIST_PAD, LogTarget};
 

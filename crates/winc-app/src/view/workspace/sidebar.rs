@@ -45,6 +45,10 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     if app.sidebar_view == SidebarView::Commit {
+        if app.log_diff_tree().is_some() {
+            draw_log_diff_tree(app, frame);
+            return;
+        }
         let tools = app.commit_parts().tools[0].0.x - 4.0;
         // 上下文栏自己会在右边留出 4 的间距。
         let right = git::commit::location_span(app, frame).map_or(tools, |(left, _)| left);
@@ -60,6 +64,84 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     draw_project_header(app, frame);
     draw_tree(app, frame);
     outline::draw_outline(app, frame);
+}
+
+/// 历史差异的侧栏显示这次比较涉及的路径，点击文件在同一个差异标签中切换。
+fn draw_log_diff_tree(app: &mut App, frame: &mut Frame<'_>) {
+    use crate::app::git::log::LogDiffRow;
+
+    let Some(tree) = app.log_diff_tree() else {
+        return;
+    };
+    let p = app.palette;
+    let header = app.layout.sidebar_header;
+    let title = t!("git-log-diff-files", version = tree.version());
+    let title = truncate_end(frame, &title, app.fonts.ui, (header.w - 24.0).max(0.0));
+    ui_text(frame, app, header.x + 12.0, header, &title, p.text, header);
+
+    let list = app.log_diff_list();
+    let content = tree.rows.len() as f32 * TREE_ROW;
+    let scroll = tree.scroll;
+    let first = (scroll / TREE_ROW) as usize;
+    for (i, (depth, entry)) in tree.rows.iter().enumerate().skip(first) {
+        let row = Rect::new(
+            list.x + 6.0,
+            list.y + i as f32 * TREE_ROW - scroll,
+            (list.w - 12.0).max(0.0),
+            TREE_ROW,
+        );
+        if row.y >= list.bottom() {
+            break;
+        }
+        let chosen = matches!(entry, LogDiffRow::File(file) if *file == tree.selected());
+        if let Some(color) = row_color(
+            p,
+            chosen,
+            app.focus == Focus::Editor,
+            app.hover == Hover::LogDiffRow(i),
+        ) {
+            frame.rect_clipped(row, color, RADIUS_ROW, list);
+        }
+        let x = row.x + 8.0 + *depth as f32 * 14.0;
+        let cy = center(row).1;
+        let (name, end, right) = match entry {
+            LogDiffRow::Dir(path) => {
+                let open = !tree.collapsed.contains(path);
+                let direction = if open {
+                    Direction::Down
+                } else {
+                    Direction::Right
+                };
+                icons::chevron(frame, (x + 4.0, cy), 6.0, direction, p.text_dim, list);
+                icons::folder(frame, (x + 14.0, cy - 7.5), open, p.text_muted, list);
+                (
+                    winc_editor::segment_name(path),
+                    x + 36.0,
+                    row.right() - SCROLLBAR_HIT,
+                )
+            }
+            LogDiffRow::File(index) => {
+                let file = &tree.files()[*index];
+                let name = winc_editor::display_name(&file.path);
+                let end = draw_file_icon(frame, p, (x + 14.0, cy), &name, list);
+                let right = row.right() - SCROLLBAR_HIT - 16.0;
+                ui_text_small(
+                    frame,
+                    app,
+                    right + 4.0,
+                    row,
+                    &file.change.letter().to_string(),
+                    git_color(p, file.change),
+                    list,
+                );
+                (name, end + 6.0, right)
+            }
+        };
+        let name = ellipsize(frame, &name, app.fonts.ui, (right - end).max(0.0));
+        ui_text(frame, app, end, row, &name, p.text, list);
+    }
+    let owner = app.editor.active().map_or(0, |doc| doc.id.0);
+    draw_scrollbar(app, frame, ScrollArea::Commit, owner, list, scroll, content);
 }
 
 /// 绘制文件视图的第二行：左边是上下文栏（项目、当前分支），右端是文件树工具栏。

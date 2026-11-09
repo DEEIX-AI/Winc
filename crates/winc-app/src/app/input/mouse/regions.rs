@@ -19,6 +19,13 @@ impl App {
             return Some(Hover::ProjectName);
         }
 
+        if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
+            return (!(self.panel_visible && self.layout.splitter.contains(x, y))).then(|| {
+                self.log_diff_row_at(x, y)
+                    .map_or(Hover::None, Hover::LogDiffRow)
+            });
+        }
+
         // 文件视图底部的大纲：按绘制时记下的位置找；分隔条由 `Target::Splitter` 处理。
         if self.layout.outline.contains(x, y) {
             if self.panel_visible && self.layout.splitter.contains(x, y) {
@@ -274,6 +281,16 @@ impl App {
         }
         if self.project_hit.contains(x, y) {
             self.open_project_menu();
+            return true;
+        }
+
+        if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
+            if self.panel_visible && self.layout.splitter.contains(x, y) {
+                return false;
+            }
+            if let Some(row) = self.log_diff_row_at(x, y) {
+                self.click_log_diff_row(row);
+            }
             return true;
         }
 
