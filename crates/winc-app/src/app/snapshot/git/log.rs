@@ -122,6 +122,9 @@ fn log_lists_commits_with_their_graph_and_opens_a_files_diff() {
     assert!(app.run_action(Action::GitShowLog));
     assert_eq!(app.editor.documents.len(), tabs);
     assert!(app.log_active());
+
+    // 差异标签不在前台时，提示仍按差异记录的文件路径显示完整名称（含提交号）和所在目录；
+    // 鼠标移出标签后提示消失。
     paint(&mut app);
     let hit = app
         .tabs

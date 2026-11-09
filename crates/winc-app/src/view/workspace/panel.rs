@@ -1088,7 +1088,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label))
         }
-        // 标签提示显示完整标题和所在目录，便于确认被截短的文件名和历史差异的版本；
+        // 标签提示显示完整名称和所在目录，便于确认被截短的文件名和历史差异的版本；
         // 关闭按钮显示快捷键。按住或拖动标签时不显示提示。
         Hover::Tab(index, close) => {
             if app.tabs.drag.is_some() {
@@ -1103,17 +1103,16 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             }
             let doc = app.editor.documents.get(index)?;
             let title = doc.name();
-            let path = doc.path.as_deref().or_else(|| {
-                let diff = doc.diff.as_deref()?;
-                diff.snapshot_path
+            let path = (doc.path.as_deref()).or_else(|| {
+                doc.diff
                     .as_deref()
-                    .or(diff.repo_path.as_deref())
-                    .or(diff.new.path.as_deref())
-                    .or(diff.old.path.as_deref())
+                    .and_then(winc_editor::diff_view::DiffView::file_path)
             });
             let label = match path.and_then(std::path::Path::parent) {
                 Some(dir) => format!("{title}\n{}", winc_editor::display_path(dir, None)),
-                None => title.into_owned(),
+                // 没有对应文件的标签（未命名文件、日志等）只在名称被截短时提示完整名称。
+                None if hit.elided => title.into_owned(),
+                None => return None,
             };
             Some((hit.tab, label))
         }

@@ -274,7 +274,9 @@ pub struct DiffView {
     ///
     /// 按块提交时用它找到提交视图里的文件。
     pub repo_path: Option<PathBuf>,
-    /// Git 历史快照对应的文件路径，用于显示，不参与工作区编辑或暂存。
+    /// 历史版本差异对应的文件路径，仅用于显示（见 [`DiffView::file_path`]）。
+    ///
+    /// 历史版本不能按块提交，因此不写入 [`DiffView::repo_path`]。
     pub snapshot_path: Option<PathBuf>,
 }
 
@@ -722,6 +724,17 @@ impl DiffView {
     /// 这时整个文件是一处改动。
     pub fn one_side_empty(&self) -> bool {
         self.old.text.len_chars() == 0 || self.new.text.len_chars() == 0
+    }
+
+    /// 返回差异所比较的文件路径，供标签的图标和提示使用；没有对应文件时（如合并冲突两侧的
+    /// 文本）返回 `None`。
+    ///
+    /// 依次取历史版本的路径、仓库文件的路径、右侧和左侧的文件路径。
+    pub fn file_path(&self) -> Option<&std::path::Path> {
+        (self.snapshot_path.as_deref())
+            .or(self.repo_path.as_deref())
+            .or(self.new.path.as_deref())
+            .or(self.old.path.as_deref())
     }
 
     /// 两侧是否没有改动：逐行比较不计换行符的写法，只差换行符时同样为 `true`。

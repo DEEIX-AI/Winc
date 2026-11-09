@@ -405,31 +405,25 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
 
     let p = app.palette;
     // 提示分「名称   快捷键」两栏，快捷键以淡色显示在右侧，两栏间距至少 16 逻辑像素。含 `\n` 时
-    // 第一行为正文，其余各行为淡色说明（如标签的文件名和所在目录）。
+    // 第一段为正文，其余各段为淡色说明（如标签的文件名和所在目录）。
     let (name, key) = match label.split_once(crate::layout::TIP_KEY) {
         Some((name, key)) => (name, Some(key)),
         None => (label, None),
     };
     let size = app.fonts.ui_small;
-    let lines: Vec<&str> = if matches!(app.hover, Hover::Tab(_, false)) {
-        let width = (app.layout.window.w - 28.0).max(1.0);
-        name.split('\n')
-            .flat_map(|line| {
-                crate::layout::wrap_text(line, width, |part| {
-                    frame.measure(FontKind::Ui, size, part)
-                })
-            })
-            .collect()
-    } else {
-        name.split('\n').collect()
-    };
+    let key_w = key.map_or(0.0, |k| 16.0 + frame.measure(FontKind::Ui, size, k));
+    // 提示宽度不超过 `TOOLTIP_MAX_WIDTH`，也不超出窗口（左右各留 4 逻辑像素边距）；
+    // 文字区再减去左右各 10 逻辑像素的内边距。
+    let max_width = TOOLTIP_MAX_WIDTH.min(app.layout.window.w - 8.0);
+    let room = max_width - 20.0;
+    let lines = tip_lines(name, room, key_w, |piece| {
+        frame.measure(FontKind::Ui, size, piece)
+    });
     let name_w = lines
         .iter()
-        .map(|line| frame.measure(FontKind::Ui, size, line))
+        .map(|(line, _)| frame.measure(FontKind::Ui, size, line))
         .fold(0.0, f32::max);
-    let key_w = key.map_or(0.0, |k| 16.0 + frame.measure(FontKind::Ui, size, k));
-    // 很长的提示（日志里整句的说明）不超出窗口。
-    let width = (name_w + key_w + 20.0).min(app.layout.window.w - 8.0);
+    let width = (name_w + key_w + 20.0).min(max_width);
     // 单行高 26 逻辑像素，每多一行增加 18。
     const LINE: f32 = 18.0;
     let height = 8.0 + LINE * lines.len() as f32;
@@ -457,9 +451,9 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
         )
     };
     draw_card(frame, p, rect, RADIUS_ROW, p.popup_bg);
-    for (i, line) in lines.iter().enumerate() {
+    for (i, &(line, body)) in lines.iter().enumerate() {
         let row = Rect::new(rect.x, rect.y + 4.0 + LINE * i as f32, rect.w, LINE);
-        let color = if i == 0 { p.text } else { p.text_dim };
+        let color = if body { p.text } else { p.text_dim };
         ui_text_small(frame, app, rect.x + 10.0, row, line, color, rect);
     }
     if let Some(key) = key {
@@ -475,6 +469,25 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
             rect,
         );
     }
+}
+
+/// 把提示正文 `name` 按宽度 `room`（逻辑像素）折行，返回各行及其是否属于正文段。
+///
+/// `name` 以 `\n` 分段，第一段为正文，其余为说明；正文折出的各行都属于正文段。快捷键只占
+/// 第一行，因此第一段的宽度再减去 `key_w`。`measure` 返回一段文字的宽度（逻辑像素）。
+fn tip_lines(
+    name: &str,
+    room: f32,
+    key_w: f32,
+    mut measure: impl FnMut(&str) -> f32,
+) -> Vec<(&str, bool)> {
+    let mut lines = Vec::new();
+    for (i, part) in name.split('\n').enumerate() {
+        let width = (room - if i == 0 { key_w } else { 0.0 }).max(1.0);
+        let wrapped = crate::layout::wrap_text(part, width, &mut measure);
+        lines.extend(wrapped.into_iter().map(|line| (line, i == 0)));
+    }
+    lines
 }
 
 /// 返回文本在 `rect` 内垂直居中时的基线 y 坐标（逻辑像素，取整）。
