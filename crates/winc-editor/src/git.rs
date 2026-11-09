@@ -847,8 +847,7 @@ impl Git {
 
     /// 推送当前分支。
     ///
-    /// 没有上游时推到远程上同名的分支，并设为上游（`push -u`）：远程优先取分支和仓库配置的推送
-    /// 目标，其次是 `origin`，都没有时取第一个。
+    /// 没有上游时发布到 [`Git::publish_target`] 选出的远程（见 [`Git::publish`]）。
     ///
     /// # Errors
     ///
@@ -858,18 +857,41 @@ impl Git {
         if has_upstream {
             return self.operate(root, &["push"]);
         }
-        let remotes = self.remotes(root, &Cancel::default())?;
+        let remote = self.publish_target(root)?;
+        self.publish(root, &remote)
+    }
+
+    /// 发布当前分支：推到远程 `remote` 上同名的分支，并设为上游（`push -u`）。
+    ///
+    /// # Errors
+    ///
+    /// `remote` 以 `-` 开头、`git` 报错（被拒绝、需要认证）时返回原因。
+    pub fn publish(&self, root: &Path, remote: &str) -> Result<String, String> {
+        self.require_trust(root)?;
         // 远程名来自仓库的配置，`git` 允许以 `-` 开头的远程名（`--receive-pack=…` 会运行命令）：
-        // 跳过这样的远程，推送时另外加 `--end-of-options`。
-        let usable: Vec<&String> = remotes.iter().filter(|r| !r.starts_with('-')).collect();
-        let preferred = self.preferred_remote(root);
-        let Some(remote) = publish_remote(&usable, &preferred) else {
+        // 拒绝这样的远程，推送时另外加 `--end-of-options`。
+        if remote.starts_with('-') {
             return Err(winc_i18n::t!("git-push-no-remote").to_owned());
-        };
+        }
         self.operate(
             root,
             &["push", "--set-upstream", "--end-of-options", remote, "HEAD"],
         )
+    }
+
+    /// 返回发布当前分支（第一次推送）时使用的远程：优先取分支和仓库配置的推送目标，其次是
+    /// `origin`，都没有时取第一个；跳过以 `-` 开头的远程名。
+    ///
+    /// # Errors
+    ///
+    /// 没有可用的远程或 `git` 运行失败时返回原因。
+    pub fn publish_target(&self, root: &Path) -> Result<String, String> {
+        let remotes = self.remotes(root, &Cancel::default())?;
+        let usable: Vec<&String> = remotes.iter().filter(|r| !r.starts_with('-')).collect();
+        let preferred = self.preferred_remote(root);
+        publish_remote(&usable, &preferred)
+            .cloned()
+            .ok_or_else(|| winc_i18n::t!("git-push-no-remote").to_owned())
     }
 
     /// 当前分支配置的推送目标，优先的在前，顺序和 `git push` 选择远程时相同；上游已不存在的分支

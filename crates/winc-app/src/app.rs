@@ -233,6 +233,8 @@ pub enum UserEvent {
     GitSwitchBranch(winc_editor::git::Branch, bool),
     /// 确认框中确认强制推送当前分支。
     GitForcePush,
+    /// 提示框中确认发布、推送或同步当前分支；为 `true` 时勾选了「不再询问」。
+    GitPushConfirmed(crate::app::git::commit::PushIntent, bool),
     /// 提示框中确认提交已勾选的文件并推送。
     GitCommitAndPush,
     /// 提示框中确认撤销上一次提交。
