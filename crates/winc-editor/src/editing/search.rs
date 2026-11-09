@@ -115,6 +115,7 @@ pub struct Search {
 struct Key {
     doc: DocumentId,
     revision: u64,
+    snapshot_side: Option<usize>,
 }
 
 /// 查找选项，各字段含义同 [`Search`] 的同名字段。
@@ -139,6 +140,13 @@ impl Search {
     /// 返回结果所属的文档标识；还没搜过时为 `None`。
     pub fn document(&self) -> Option<DocumentId> {
         self.key.as_ref().map(|k| k.doc)
+    }
+
+    /// 返回差异标签 `doc` 上已搜索的快照侧。
+    pub fn snapshot_side(&self, doc: &Document) -> Option<usize> {
+        self.key
+            .filter(|k| k.doc == doc.id && k.revision == doc.revision)?
+            .snapshot_side
     }
 
     /// 返回全部匹配的位置范围（`char` 偏移），按起点排序、互不重叠。
@@ -194,9 +202,9 @@ impl Search {
     ///
     /// 文档内容修改后、下一次 `update` 之前为 `false`。
     pub fn is_for(&self, doc: &Document) -> bool {
-        self.key
-            .as_ref()
-            .is_some_and(|k| k.doc == doc.id && k.revision == doc.revision)
+        self.key.as_ref().is_some_and(|k| {
+            k.doc == doc.id && k.revision == doc.revision && k.snapshot_side.is_none()
+        })
     }
 
     /// 返回查询的错误说明（正则语法错误，或大文件上的跨行查找）；没有错误时返回 `None`。
@@ -284,10 +292,13 @@ impl Search {
         let key = Key {
             doc: doc.id,
             revision: doc.revision,
+            snapshot_side: None,
         };
         if self.key != Some(key) {
             let kept = match self.key {
-                Some(old) if old.doc == doc.id && self.resume_kept() => {
+                Some(old)
+                    if old.doc == doc.id && old.snapshot_side.is_none() && self.resume_kept() =>
+                {
                     doc.unchanged_lines_since(old.revision)
                 }
                 _ => 0,
@@ -295,7 +306,25 @@ impl Search {
             self.key = Some(key);
             self.restart_from(kept, doc);
         }
+        self.scan(doc.text(), !doc.text().is_large());
+    }
 
+    /// 推进不可变差异快照的搜索。快照由差异标签标识和侧区分。
+    pub fn update_snapshot(&mut self, doc: &Document, side: usize, text: &ropey::Rope) {
+        self.ensure_matcher();
+        let key = Key {
+            doc: doc.id,
+            revision: doc.revision,
+            snapshot_side: Some(side),
+        };
+        if self.key != Some(key) {
+            self.key = Some(key);
+            self.restart();
+        }
+        self.scan(text, true);
+    }
+
+    fn scan(&mut self, text: &impl Lines, multiline: bool) {
         let (Some(from), Some(matcher)) = (self.resume.take(), &self.matcher) else {
             return;
         };
@@ -303,11 +332,11 @@ impl Search {
 
         // 跨行查找需要整篇文本，一次搜完。大文件按需从磁盘读取，无法取得整篇文本，因此不支持。
         if matcher.is_multiline() {
-            if doc.text().rope().is_none() {
+            if !multiline {
                 self.error = Some(t!("editor-find-large-multiline").to_owned());
                 return;
             }
-            let (joined, starts) = joined(doc.text());
+            let (joined, starts) = joined(text);
             matcher.scan_joined(&joined, &starts, |m| {
                 matches.push(m.range);
                 for line in m.line..=m.last {
@@ -330,27 +359,25 @@ impl Search {
         let started = Instant::now();
         let (mut count, mut bytes, mut full, mut paused_at) = (0, 0, false, 0);
 
-        let stopped = doc
-            .text()
-            .visit_lines(from.line, usize::MAX, |index, start, line| {
-                count += 1;
+        let stopped = text.visit_lines(from.line, usize::MAX, |index, start, line| {
+            count += 1;
 
-                if count % CLOCK_INTERVAL == 0 || bytes >= CLOCK_BYTES {
-                    bytes = 0;
-                    if started.elapsed() >= SLICE {
-                        paused_at = start;
-                        return ControlFlow::Break(());
-                    }
+            if count % CLOCK_INTERVAL == 0 || bytes >= CLOCK_BYTES {
+                bytes = 0;
+                if started.elapsed() >= SLICE {
+                    paused_at = start;
+                    return ControlFlow::Break(());
                 }
-                bytes += line.len();
+            }
+            bytes += line.len();
 
-                let flow = matcher.scan(index, start, line, matches, lines, MAX_MATCHES);
-                if matcher.take_gave_up() {
-                    gave_up.get_or_insert(index);
-                }
-                full = flow.is_break();
-                flow
-            });
+            let flow = matcher.scan(index, start, line, matches, lines, MAX_MATCHES);
+            if matcher.take_gave_up() {
+                gave_up.get_or_insert(index);
+            }
+            full = flow.is_break();
+            flow
+        });
 
         self.resume = match stopped {
             Some(line) if !full => Some(Resume {

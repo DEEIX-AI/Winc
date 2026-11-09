@@ -739,6 +739,96 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
 }
 
 #[test]
+fn find_in_a_commit_diff_searches_the_selected_snapshot() {
+    use crate::keymap::{KeyCode, Mods, Os, Stroke};
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT};
+
+    let dir = sample_folder("diff-commit-find");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let language = winc_syntax::detect("main.rs");
+    let side = |text: &str| DiffSide::new("abc1234", text, None, language);
+    let common = format!(
+        "{}命中一\n{}",
+        "context\n".repeat(70),
+        "context\n".repeat(70)
+    );
+    let old = format!("左侧\n{common}old\n");
+    let new = format!("右侧\n{common}命中二\n");
+    let view = DiffView::new(side(&old), side(&new));
+    app.editor.show_diff_in(None, "main.rs", view);
+    paint(&mut app);
+
+    let find = Stroke {
+        key: KeyCode::Char('f'),
+        mods: if Os::CURRENT == Os::Mac {
+            Mods::META
+        } else {
+            Mods::CTRL
+        },
+    };
+    let set_query = |app: &mut App, query: &str| {
+        app.find_input.set_text(query);
+        app.search.query = query.to_owned();
+        app.search_changed();
+    };
+    let selection = |app: &App| {
+        let doc = app.editor.active().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        assert!(!view.editing);
+        view.read_selection.unwrap()
+    };
+    assert!(app.on_shortcut(find));
+    assert!(app.search_open);
+    assert_eq!(app.focus, crate::app::Focus::Search);
+    set_query(&mut app, "命中");
+    assert_eq!(app.search.matches().len(), 2);
+    let first = selection(&app);
+    assert_eq!(first.side, RIGHT);
+    let doc = app.editor.active().unwrap();
+    let view = doc.diff.as_deref().unwrap();
+    let row = view.row_of_new(71);
+    assert_eq!(view.line_at(RIGHT, row), Some(71));
+    assert!(doc.scroll_line > 0.0);
+    app.advance_search();
+    paint(&mut app);
+    assert_eq!(app.search.current_match(), Some(first.range));
+
+    app.find_next(false);
+    assert!(selection(&app).range.0 > first.range.0);
+    app.find_next(true);
+    assert_eq!(selection(&app), first);
+    app.press_search_button(crate::layout::SearchButton::Expand);
+    assert!(!app.replace_open);
+    app.close_search();
+
+    let doc = app.editor.active_mut().unwrap();
+    doc.scroll_line = 0.0;
+    let view = doc.diff.as_deref().unwrap();
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let point = (
+        parts.panes[LEFT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell,
+        parts.body.y + 4.0,
+    );
+    click(&mut app, point);
+    assert!(app.on_shortcut(find));
+    assert_eq!(app.search.query, "左侧");
+    assert_eq!(selection(&app).side, LEFT);
+    set_query(&mut app, "命中");
+    assert_eq!(app.search.matches().len(), 1);
+
+    // 在原标签里换到另一份差异：同一侧的旧结果也必须作废。
+    let id = app.editor.active().unwrap().id;
+    let deleted = DiffView::new(side("命中\n命中\n命中\n"), side("").with_missing(true));
+    app.editor.show_diff_in(Some(id), "deleted.rs", deleted);
+    app.advance_search();
+    assert_eq!(app.search.matches().len(), 3);
+    app.find_next(false);
+    assert_eq!(selection(&app).side, LEFT);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     let dir = search_folder("git-diff-step");
     std::fs::write(dir.join("src/zeta.rs"), "a\nb\nc\n").unwrap();

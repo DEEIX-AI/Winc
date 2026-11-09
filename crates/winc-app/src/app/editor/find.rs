@@ -19,13 +19,17 @@ impl App {
     /// `replace` 为 `true` 时同时展开替换；此时如果已有查找内容，焦点直接放到替换输入框。
     /// 没有可显示文本的文档时不打开。
     pub(in crate::app) fn open_search(&mut self, replace: bool) {
-        // 差异标签查右侧的文件。
-        if self.diff_active() {
+        // 可编辑的差异沿用右侧的工作区文件。
+        let snapshot = self.readonly_diff().is_some();
+        if self.diff_active() && !snapshot {
             self.in_diff_search(|app| app.open_search(replace));
             return;
         }
+        if snapshot && replace {
+            return;
+        }
         let preview = self.markdown_focused();
-        if !self.editor.active().is_some_and(|d| d.edits_text()) && !preview {
+        if !snapshot && !preview && !self.editor.active().is_some_and(|d| d.edits_text()) {
             return;
         }
         self.finish_name_input();
@@ -63,6 +67,21 @@ impl App {
             let text = self.markdown_selected_text()?;
             return (text.chars().count() < 200 && !text.contains('\n')).then_some(text);
         }
+        if let Some(view) = self.readonly_diff() {
+            let selected = view.read_selection?;
+            let (a, b) = selected.range;
+            let text = &view.side(selected.side).text;
+            let (from, to) = if a == b {
+                winc_core::movement::word_at(text, a)
+            } else {
+                (a.min(b), a.max(b))
+            };
+            if from == to || to - from >= 200 {
+                return None;
+            }
+            let seed = text.slice(from..to).to_string();
+            return (!seed.contains(['\n', '\r'])).then_some(seed);
+        }
         let doc = self.editor.active()?;
         let selection = doc.selection;
         let (from, to) = if selection.is_empty() {
@@ -89,7 +108,7 @@ impl App {
     ///
     /// 还没有查找内容时，先用光标所在的词（`search_seed`）作为查找内容。
     pub(in crate::app) fn find_again(&mut self, backwards: bool) {
-        if self.diff_active() {
+        if self.diff_active() && self.readonly_diff().is_none() {
             self.in_diff_search(|app| app.find_again(backwards));
             return;
         }
@@ -228,6 +247,9 @@ impl App {
     pub(in crate::app) fn press_search_button(&mut self, button: SearchButton) {
         match button {
             SearchButton::Expand => {
+                if self.readonly_diff().is_some() {
+                    return;
+                }
                 self.replace_open = !self.replace_open;
 
                 if !self.replace_open && self.focus == Focus::Replace {
@@ -317,6 +339,11 @@ impl App {
 
     /// 处理查找内容的变化：重新搜索，并选中光标处或其后的第一个结果。
     pub(in crate::app) fn search_changed(&mut self) {
+        if let Some((_, selection)) = self.update_diff_find() {
+            self.jump_to_match(selection.from(), false);
+            self.request_redraw();
+            return;
+        }
         if self.diff_active() {
             self.in_diff_search(App::search_changed);
             return;
@@ -347,8 +374,13 @@ impl App {
         self.pending_jump = None;
 
         let preview = self.markdown_focused();
+        let side = self
+            .editor
+            .active()
+            .and_then(|doc| self.search.snapshot_side(doc));
         match self.search.next_from(pos, backwards) {
             Some((start, end)) if preview => self.select_in_markdown(start, end),
+            Some((start, end)) if let Some(side) = side => self.reveal_diff_match(side, start, end),
             Some((start, end)) => self.reveal_match(start, end),
             None if !self.search.is_complete() => {
                 self.pending_jump = self.search.document().map(|id| (id, pos, backwards));
@@ -401,19 +433,27 @@ impl App {
 
     /// 查找下一个匹配（`backwards` 为 `true` 时查找上一个）；查找内容为空时不处理。
     pub(in crate::app) fn find_next(&mut self, backwards: bool) {
-        if self.diff_active() {
+        if self.diff_active() && self.readonly_diff().is_none() {
             self.in_diff_search(|app| app.find_next(backwards));
             return;
         }
         self.find_input.remember();
 
-        let Some(doc) = self.editor.active() else {
-            return;
-        };
-
         if self.search.query.is_empty() {
             return;
         }
+        if let Some((_, selection)) = self.update_diff_find() {
+            let pos = if backwards {
+                selection.from()
+            } else {
+                selection.to()
+            };
+            self.jump_to_match(pos, backwards);
+            return;
+        }
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
 
         if self.markdown_focused() {
             if self.markdown_find_doc().is_some()

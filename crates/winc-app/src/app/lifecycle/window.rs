@@ -209,6 +209,12 @@ impl App {
         if self.goto_input.is_some() && self.focus != Focus::Prompt {
             self.goto_input = None;
         }
+        if self.replace_open && self.readonly_diff().is_some() {
+            self.replace_open = false;
+            if self.focus == Focus::Replace {
+                self.focus = Focus::Search;
+            }
+        }
         let Some(renderer) = &self.renderer else {
             return;
         };

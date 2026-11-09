@@ -8,6 +8,7 @@
 //! 文档。在右侧点击放置光标后，按键与编辑命令转给该文档执行；文件未打开时先在后台打开一个
 //! 标签，执行完重新比较。左侧（`HEAD`）只读。
 
+mod find;
 mod pointer;
 
 use std::path::Path;
@@ -689,7 +690,7 @@ impl App {
         let Some(view) = doc.diff.as_deref_mut() else {
             return;
         };
-        view.reveal_new(line);
+        view.reveal_line(RIGHT, line);
         // 按滚动位置比：左侧更长的改动里右侧停着不动，按右侧的行数比会差出一截。
         let at = view.pos_of(RIGHT, view.row_of_col(RIGHT, line, caret_col) as f32);
         if at < doc.scroll_line {

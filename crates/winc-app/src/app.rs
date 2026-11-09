@@ -1278,6 +1278,15 @@ impl App {
     fn advance_search(&mut self) {
         // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处。
         let searching = self.search_open || self.pending_jump.is_some();
+        if searching && let Some((id, _)) = self.update_diff_find() {
+            if let Some((pending, pos, backwards)) = self.pending_jump
+                && pending == id
+            {
+                self.jump_to_match(pos, backwards);
+            }
+            self.apply_line_filter();
+            return;
+        }
         // 查找对着预览时查预览的文字。
         let preview = searching && self.markdown_focused() && self.markdown_find_doc().is_some();
         let doc = if preview {

@@ -328,8 +328,8 @@ struct EditState {
     read: Option<(usize, Span)>,
     /// 只读一侧的光标：（哪一侧，（行，列））。
     read_caret: Option<(usize, (usize, usize))>,
-    /// 查找条开着、查的是右侧的文档时为它的标识：右侧要标出匹配。
-    searched: Option<winc_editor::DocumentId>,
+    /// 查找条开着时，显示匹配的一侧。
+    searched: Option<usize>,
 }
 
 /// 读出右侧对应文档的光标和选区；多光标只取右侧文档第 `lines` 行（左闭右开）里看得见的。
@@ -341,8 +341,16 @@ fn edit_state(app: &App, view: &DiffView, lines: Range<usize>) -> EditState {
         let line = text.char_to_line(pos);
         (line, pos - text.line_to_char(line))
     };
+    let snapshot = app
+        .editor
+        .active()
+        .filter(|_| app.layout.search.h > 0.0)
+        .and_then(|doc| app.search.snapshot_side(doc));
     let read = view.read_selection.and_then(|selection| {
         let (side, (a, b)) = (selection.side, selection.range);
+        if snapshot == Some(side) && app.search.current_match() == Some((a, b)) {
+            return None;
+        }
         (a != b).then(|| (side, (at(side, a.min(b)), at(side, a.max(b)))))
     });
     let read_caret = view.read_caret().map(|(side, pos)| (side, at(side, pos)));
@@ -355,6 +363,7 @@ fn edit_state(app: &App, view: &DiffView, lines: Range<usize>) -> EditState {
         return EditState {
             read,
             read_caret,
+            searched: snapshot,
             ..EditState::default()
         };
     };
@@ -389,7 +398,7 @@ fn edit_state(app: &App, view: &DiffView, lines: Range<usize>) -> EditState {
         read,
         read_caret,
         searched: (app.layout.search.h > 0.0 && app.search.document() == Some(source.id))
-            .then_some(source.id),
+            .then_some(RIGHT),
     }
 }
 
@@ -742,9 +751,13 @@ fn draw_body(
             }
         }
 
-        // 右侧：查找条开着时标出右侧文档里的匹配。
-        if side == RIGHT && edit.searched.is_some() {
-            let start = text_side.text.line_to_char(line);
+        // 单栏里没改的内容共用一行；查左侧时从左侧行号换算字符偏移。
+        let search_start = match edit.searched {
+            Some(searched) if searched == side => Some(text_side.text.line_to_char(line)),
+            Some(LEFT) => old_line.map(|line| view.old.text.line_to_char(line)),
+            _ => None,
+        };
+        if let Some(start) = search_start {
             let end = start + chars.len();
             let current = app.search.current_match();
             for &(from, to) in app.search.matches_in(start, end.max(start + 1)) {
