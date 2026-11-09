@@ -166,6 +166,10 @@ impl ApplicationHandler<UserEvent> for App {
         self.renderer = Some(renderer);
         self.measure_fonts();
         self.window = Some(window.clone());
+        #[cfg(windows)]
+        {
+            self.touch.window_input = crate::windows::WindowInput::new(&window);
+        }
         self.note_window_frame();
         window.set_ime_allowed(true);
         #[cfg(target_os = "macos")]
@@ -226,6 +230,8 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 先在尚未显示的窗口上绘制第一帧，再显示窗口，避免出现一帧白屏。
         self.redraw();
+        #[cfg(windows)]
+        self.sync_window_input();
 
         #[cfg(target_os = "macos")]
         if self.bench.silent() {
@@ -272,11 +278,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.note_window_frame();
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                if matches!(event, WindowEvent::ScaleFactorChanged { .. })
-                    || !self.touch.dragging_window()
-                {
-                    self.cancel_touch();
-                }
+                self.cancel_touch();
                 self.note_window_frame();
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize();

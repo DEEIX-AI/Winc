@@ -3,6 +3,77 @@
 use super::*;
 
 impl App {
+    /// 把当前可交互区域同步到系统命中测试；回调不借用应用，原生拖窗循环可以安全重入。
+    #[cfg(windows)]
+    pub(crate) fn sync_window_input(&self) {
+        if let Some(input) = &self.touch.window_input {
+            input.update(self.window_hit_test());
+        }
+    }
+
+    /// Windows 在落指前就需要知道非客户区范围；顶栏里的控件仍接收正常客户区事件。
+    #[cfg(windows)]
+    pub(in crate::app) fn window_hit_test(&self) -> crate::windows::WindowHitTest {
+        if self.touch_intercepted() || self.settings.open || self.touch.active() {
+            return Default::default();
+        }
+        let l = &self.layout;
+        let mut client = vec![
+            l.sidebar_button,
+            self.tabs.new_tab,
+            l.terminal_divider,
+            l.split_divider,
+            l.search,
+            self.project_hit,
+            self.outline_divider(),
+        ];
+        client.extend(self.window_control_rects().map(|(r, _)| r));
+        client.extend(self.tabs.list);
+        client.extend(
+            self.tabs
+                .hits
+                .iter()
+                .map(|h| h.tab.intersect(self.tabs.view)),
+        );
+        client.extend(self.sidebar_tabs().iter().map(|(r, _)| *r));
+        client.extend(self.tree_tools.iter().map(|(r, _)| *r));
+        client.extend(self.terminal.hits.iter().map(|(r, _)| *r));
+        client.extend(self.merge.hits.iter().map(|(r, _)| *r));
+        client.extend(self.crumb_hits.iter().map(|(r, _)| *r));
+        client.extend(self.status_hits.iter().map(|(r, _)| *r));
+        client.extend(
+            [
+                self.changes.card,
+                self.notice_card,
+                self.notice_button,
+                self.merge.card,
+                self.conflict_card.as_ref().map(|(r, _)| *r),
+                self.tree_more,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+        if self.panel_visible {
+            client.push(l.splitter);
+        }
+        if self.editor.active().is_some_and(|d| d.can_preview()) {
+            client.push(l.preview);
+        }
+        if self.browser_page().is_some() {
+            client.push(l.browser);
+        }
+        client.retain(|r| r.w > 0.0 && r.h > 0.0 && r.y < TOP_BAR_END && r.bottom() > 0.0);
+        crate::windows::WindowHitTest {
+            caption_height: TOP_BAR_END,
+            resize_border: if self.window_controls {
+                crate::app::lifecycle::title_bar::RESIZE_EDGE
+            } else {
+                0.0
+            },
+            client,
+        }
+    }
+
     /// 当前浮层是否先于标题栏、滚动条等部件处理触摸。
     fn touch_intercepted(&self) -> bool {
         self.alert.is_some()

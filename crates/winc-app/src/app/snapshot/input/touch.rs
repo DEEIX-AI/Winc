@@ -253,3 +253,51 @@ fn touch_window_edges_are_distinct_from_buttons_and_overlays() {
     assert_eq!(app.touch_window_at(app.layout.window.w / 2.0, 20.0), None);
     assert_eq!(app.touch_window_at(1.0, 1.0), None);
 }
+
+#[cfg(windows)]
+#[test]
+fn native_touch_caption_matches_application_targets() {
+    use crate::app::input::touch::WindowTouch;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{HTCAPTION, HTCLIENT};
+    let verify = |app: &App| {
+        let native = app.window_hit_test();
+        let size = app.layout.window;
+        for y in (0..TOP_BAR_END as usize).step_by(2) {
+            for x in (0..size.w as usize).step_by(2) {
+                let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                let hit = native.hit(x, y, size.w, size.h, false);
+                let target = app.touch_window_at(x, y);
+                assert_eq!(
+                    hit == HTCAPTION,
+                    target == Some(WindowTouch::Move),
+                    "caption at {x}, {y}"
+                );
+                assert_eq!(hit == HTCLIENT, target.is_none(), "client at {x}, {y}");
+            }
+        }
+    };
+    let mut app = document();
+    app.window_controls = true;
+    app.relayout();
+    paint(&mut app);
+    verify(&app);
+    app.panel_visible = true;
+    app.relayout();
+    paint(&mut app);
+    verify(&app);
+    app.new_file();
+    app.new_file();
+    paint(&mut app);
+    verify(&app);
+    app.config.terminal_enabled = Some(true);
+    app.terminal.open = true;
+    app.terminal
+        .tabs
+        .push(crate::app::terminal::TermTab::new(1, app.terminal_size()));
+    app.config.terminal_right = Some(true);
+    app.relayout();
+    paint(&mut app);
+    verify(&app);
+    app.open_settings();
+    verify(&app);
+}

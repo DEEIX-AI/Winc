@@ -1,99 +1,107 @@
-//! 需要交互桌面的系统测试：向临时测试窗口注入触摸，验证窗口位置实际变化。
+//! 需要交互桌面和系统吸附开启：只向临时窗口注入触摸，验证 Windows 的拖窗与吸附流程。
 
-#![allow(unsafe_code)] // Windows 触摸注入，仅作用于本测试创建的窗口。
+#![allow(unsafe_code)] // 测试窗口的 Win32 查询和触摸注入。
 
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{POINT, RECT};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
 use windows_sys::Win32::UI::Input::Pointer::{
     InitializeTouchInjection, InjectTouchInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT,
     POINTER_FLAG_INRANGE, POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_TOUCH_INFO,
     TOUCH_FEEDBACK_NONE,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    PT_TOUCH, TOUCH_MASK_CONTACTAREA, TOUCH_MASK_ORIENTATION, TOUCH_MASK_PRESSURE, WindowFromPoint,
+    GetWindowRect, PT_TOUCH, SPI_GETWINARRANGING, SystemParametersInfoW, TOUCH_MASK_CONTACTAREA,
+    TOUCH_MASK_ORIENTATION, TOUCH_MASK_PRESSURE, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
+    WindowFromPoint,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{TouchPhase, WindowEvent};
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::platform::windows::EventLoopBuilderExtWindows;
-use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use winit::window::{Window, WindowId, WindowLevel};
+use winit::platform::windows::{EventLoopBuilderExtWindows, WindowAttributesExtWindows};
+use winit::window::{WindowId, WindowLevel};
 
 use super::*;
 
+#[derive(Default)]
+struct Observed {
+    entered: AtomicUsize,
+    exited: AtomicUsize,
+    touches: AtomicUsize,
+    mouse_presses: AtomicUsize,
+}
+
 #[test]
-#[ignore = "injects touch into a temporary visible window; requires an interactive Windows desktop"]
-fn native_touch_moves_the_window_without_a_mouse_button() {
+#[ignore = "injects touch into a temporary visible window; requires an interactive Windows desktop with Snap enabled"]
+fn native_touch_uses_system_move_resize_and_snap() {
     struct TestApp {
         window: Option<Window>,
-        origin: Option<PhysicalPosition<i32>>,
         deadline: Instant,
         proxy: EventLoopProxy<()>,
         injection: Arc<Mutex<Option<io::Result<()>>>>,
-        moved: bool,
-        drag: Option<TouchWindowDrag>,
+        observed: Arc<Observed>,
     }
     impl ApplicationHandler<()> for TestApp {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             let window = event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Winc touch drag test")
+                        .with_title("Winc native touch test")
                         .with_decorations(false)
+                        .with_undecorated_shadow(true)
                         .with_active(false)
                         .with_window_level(WindowLevel::AlwaysOnTop)
                         .with_position(PhysicalPosition::new(200, 200))
-                        .with_inner_size(PhysicalSize::new(400, 240)),
+                        .with_inner_size(PhysicalSize::new(600, 400))
+                        .with_min_inner_size(PhysicalSize::new(200, 150)),
                 )
                 .unwrap();
-            let origin = window.outer_position().unwrap();
-            let client = window.inner_position().unwrap();
+            WindowInput::new(&window).unwrap().update(WindowHitTest {
+                caption_height: 48.0,
+                resize_border: 4.0,
+                client: vec![Rect::new(10.0, 8.0, 50.0, 32.0)],
+            });
             let RawWindowHandle::Win32(handle) = window.window_handle().unwrap().as_raw() else {
                 unreachable!()
             };
             let hwnd = handle.hwnd.get();
-            self.origin = Some(origin);
+            let data = Arc::into_raw(self.observed.clone());
+            // SAFETY: 安装在本线程的测试窗口上；销毁时释放观察者引用。
+            let installed =
+                unsafe { SetWindowSubclass(hwnd as _, Some(observe), 2, data as usize) };
+            assert_ne!(installed, 0);
+            let scale = window.scale_factor();
             self.window = Some(window);
             let proxy = self.proxy.clone();
             let result = self.injection.clone();
+            let observed = self.observed.clone();
             std::thread::spawn(move || {
-                let injected = inject_drag(hwnd, client.x + 100, client.y + 24);
-                *result.lock().unwrap() = Some(injected);
+                *result.lock().unwrap() = Some(exercise(hwnd, scale, &observed));
                 let _ = proxy.send_event(());
             });
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.deadline));
         }
 
         fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-            if let WindowEvent::Touch(touch) = event {
-                let window = self.window.as_ref().unwrap();
-                match touch.phase {
-                    TouchPhase::Started => {
-                        self.drag = TouchWindowDrag::start(
-                            window,
-                            &touch,
-                            None,
-                            PhysicalSize::new(100, 100),
-                        )
-                    }
-                    TouchPhase::Moved => {
-                        if let Some(drag) = &mut self.drag {
-                            drag.update(window, &touch);
-                        }
-                    }
-                    _ => self.drag = None,
+            if matches!(event, WindowEvent::Touch(_)) {
+                self.observed.touches.fetch_add(1, Ordering::Relaxed);
+            } else if matches!(
+                event,
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
                 }
+            ) {
+                self.observed.mouse_presses.fetch_add(1, Ordering::Relaxed);
             }
         }
 
         fn user_event(&mut self, event_loop: &ActiveEventLoop, _: ()) {
-            let at = self.window.as_ref().unwrap().outer_position().unwrap();
-            let origin = self.origin.unwrap();
-            self.moved = at.x - origin.x >= 80 && at.y - origin.y >= 30;
             event_loop.exit();
         }
 
@@ -109,12 +117,10 @@ fn native_touch_moves_the_window_without_a_mouse_button() {
         .unwrap();
     let mut app = TestApp {
         window: None,
-        origin: None,
-        deadline: Instant::now() + Duration::from_secs(5),
+        deadline: Instant::now() + Duration::from_secs(20),
         proxy: event_loop.create_proxy(),
         injection: Arc::default(),
-        moved: false,
-        drag: None,
+        observed: Arc::default(),
     };
     event_loop.run_app(&mut app).unwrap();
     app.injection
@@ -123,30 +129,259 @@ fn native_touch_moves_the_window_without_a_mouse_button() {
         .take()
         .expect("injection completed")
         .unwrap();
-    assert!(
-        app.moved,
-        "native touch must move the window, without pressing a mouse button"
-    );
 }
 
-fn inject_drag(hwnd: isize, x: i32, y: i32) -> io::Result<()> {
-    std::thread::sleep(Duration::from_millis(150));
-    // SAFETY: WindowFromPoint 只查询该点；先确认触摸不会命中其他应用。
-    if unsafe { WindowFromPoint(POINT { x, y }) } as isize != hwnd {
+unsafe extern "system" fn observe(
+    hwnd: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+    id: usize,
+    data: usize,
+) -> LRESULT {
+    if msg == WM_NCDESTROY {
+        // SAFETY: 先移除子类，然后释放测试窗口持有的唯一引用。
+        unsafe {
+            RemoveWindowSubclass(hwnd, Some(observe), id);
+            drop(Arc::from_raw(data as *const Observed));
+        }
+    } else {
+        // SAFETY: data 在窗口销毁前始终由子类持有。
+        let observed = unsafe { &*(data as *const Observed) };
+        if msg == WM_ENTERSIZEMOVE {
+            observed.entered.fetch_add(1, Ordering::Relaxed);
+        } else if msg == WM_EXITSIZEMOVE {
+            observed.exited.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    // SAFETY: 观察者不改动任何窗口消息。
+    unsafe { DefSubclassProc(hwnd, msg, wp, lp) }
+}
+
+fn check(condition: bool, message: &str) -> io::Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(io::Error::other(message))
+    }
+}
+
+fn frame(hwnd: HWND) -> RECT {
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: 查询测试窗口，输出指向有效的矩形。
+    unsafe {
+        GetWindowRect(hwnd, &mut rect);
+    }
+    rect
+}
+
+fn maximized(hwnd: HWND) -> bool {
+    // SAFETY: 只读取本测试窗口的最大化状态。
+    unsafe { IsZoomed(hwnd) != 0 }
+}
+
+fn exercise(raw: isize, scale: f64, observed: &Observed) -> io::Result<()> {
+    let hwnd = raw as HWND;
+    std::thread::sleep(Duration::from_millis(200));
+    let mut snap: i32 = 0;
+    // SAFETY: 只读取系统配置，不修改用户设置。
+    unsafe {
+        SystemParametersInfoW(SPI_GETWINARRANGING, 0, (&mut snap as *mut i32).cast(), 0);
+    }
+    check(snap != 0, "this test requires Windows Snap to be enabled")?;
+    // SAFETY: 查询临时窗口所在的显示器，输出结构已初始化长度。
+    let mut monitor: MONITORINFO = unsafe { std::mem::zeroed() };
+    monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    // SAFETY: hwnd 属于测试窗口，输出指向已设置长度的 MONITORINFO。
+    unsafe {
+        GetMonitorInfoW(
+            MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+            &mut monitor,
+        );
+    }
+    // SAFETY: 初始化进程内的单点触摸注入，无指针参数。
+    if unsafe { InitializeTouchInjection(1, TOUCH_FEEDBACK_NONE) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let title = |r: &RECT| POINT {
+        x: r.left + (150.0 * scale) as i32,
+        y: r.top + (24.0 * scale) as i32,
+    };
+    let before = frame(hwnd);
+    let button = POINT {
+        x: before.left + (30.0 * scale) as i32,
+        y: before.top + (24.0 * scale) as i32,
+    };
+    inject_drag(raw, button, button)?;
+    check(
+        observed.touches.load(Ordering::Relaxed) >= 2,
+        "caption controls must receive client touch events",
+    )?;
+    check(
+        observed.entered.load(Ordering::Relaxed) == 0,
+        "a caption control must not start a window drag",
+    )?;
+    let touches = observed.touches.load(Ordering::Relaxed);
+
+    let start = title(&before);
+    inject_drag(
+        raw,
+        start,
+        POINT {
+            x: start.x + 100,
+            y: start.y + 60,
+        },
+    )?;
+    let moved = frame(hwnd);
+    check(
+        (moved.left - before.left - 100).abs() <= 3 && (moved.top - before.top - 60).abs() <= 3,
+        "native touch must move the window without a mouse button",
+    )?;
+
+    let edge = POINT {
+        x: moved.right - 2,
+        y: moved.bottom - 2,
+    };
+    inject_drag(
+        raw,
+        edge,
+        POINT {
+            x: edge.x + 80,
+            y: edge.y + 60,
+        },
+    )?;
+    let resized = frame(hwnd);
+    check(
+        resized.right - moved.right >= 70 && resized.bottom - moved.bottom >= 50,
+        "native touch must resize the window",
+    )?;
+
+    let work = monitor.rcWork;
+    let screen = monitor.rcMonitor;
+    let tap = title(&resized);
+    inject_contact(raw, tap, tap, 60)?;
+    inject_contact(raw, tap, tap, 600)?;
+    check(
+        maximized(hwnd),
+        "double-tapping the title bar must maximize",
+    )?;
+    let tap = POINT {
+        x: (work.left + work.right) / 2,
+        y: work.top + (40.0 * scale) as i32,
+    };
+    inject_contact(raw, tap, tap, 60)?;
+    inject_contact(raw, tap, tap, 600)?;
+    check(
+        !maximized(hwnd),
+        "double-tapping the maximized title bar must restore",
+    )?;
+    inject_drag(
+        raw,
+        title(&resized),
+        POINT {
+            x: (work.left + work.right) / 2,
+            y: screen.top,
+        },
+    )?;
+    // SAFETY: 检查系统最大化状态。
+    check(
+        maximized(hwnd),
+        "dragging to the top must use Windows maximize snapping",
+    )?;
+
+    // 等系统最大化动画结束，再从客户区内的标题栏拖出。
+    std::thread::sleep(Duration::from_millis(750));
+    inject_drag(
+        raw,
+        POINT {
+            x: (work.left + work.right) / 2,
+            y: work.top + (40.0 * scale) as i32,
+        },
+        POINT {
+            x: work.left + 350,
+            y: work.top + 220,
+        },
+    )?;
+    let restored = frame(hwnd);
+    check(
+        !maximized(hwnd),
+        "dragging a maximized title bar must restore the window",
+    )?;
+    check(
+        (restored.right - restored.left - (resized.right - resized.left)).abs() <= 16,
+        "Windows must restore the pre-snap width",
+    )?;
+
+    inject_drag(
+        raw,
+        title(&restored),
+        POINT {
+            x: screen.left,
+            y: (work.top + work.bottom) / 2,
+        },
+    )?;
+    let snapped = frame(hwnd);
+    let expected = (work.right - work.left) / 2;
+    check(
+        (snapped.left - work.left).abs() <= 16
+            && (snapped.right - snapped.left - expected).abs() <= 20,
+        "dragging to the side must use Windows half-screen snapping",
+    )?;
+    check(
+        observed.entered.load(Ordering::Relaxed) >= 5,
+        "gestures must enter the system move/size loop",
+    )?;
+    check(
+        observed.entered.load(Ordering::Relaxed) == observed.exited.load(Ordering::Relaxed),
+        "every gesture must exit the system move/size loop",
+    )?;
+    check(
+        observed.touches.load(Ordering::Relaxed) == touches,
+        "native window gestures must not leak into client gestures",
+    )?;
+    // 启用原生双击后，客户区第二次按下仍须到达 winit，不能丢失应用的双击选词。
+    for message in [
+        WM_LBUTTONDOWN,
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP,
+        WM_LBUTTONDBLCLK,
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP,
+    ] {
+        // SAFETY: 只向测试窗口的客户区发送按下/抬起，未注入全局鼠标输入。
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(
+                hwnd,
+                message,
+                0,
+                (100 << 16) | 100,
+            );
+        }
+    }
+    check(
+        observed.mouse_presses.load(Ordering::Relaxed) == 2,
+        "client double clicks must deliver both presses",
+    )?;
+    Ok(())
+}
+
+fn inject_drag(hwnd: isize, start: POINT, end: POINT) -> io::Result<()> {
+    inject_contact(hwnd, start, end, 500)
+}
+
+fn inject_contact(hwnd: isize, start: POINT, end: POINT, settle_ms: u64) -> io::Result<()> {
+    // SAFETY: 先确认落指只会命中本测试窗口。
+    if unsafe { WindowFromPoint(start) } as isize != hwnd {
         return Err(io::Error::other("test window is covered"));
     }
-    // SAFETY: 初始化当前进程的单点触摸注入，无指针参数。
-    if unsafe { InitializeTouchInjection(1, TOUCH_FEEDBACK_NONE) } == 0 {
-        return Err(io::Error::other(format!(
-            "InitializeTouchInjection: {}",
-            io::Error::last_os_error()
-        )));
-    }
-    // SAFETY: POINTER_TOUCH_INFO 是 Win32 的纯数据结构，全零为未设置的可选字段。
+    // SAFETY: 纯 Win32 数据结构，零值表示未设置的可选字段。
     let mut contact: POINTER_TOUCH_INFO = unsafe { std::mem::zeroed() };
     contact.pointerInfo.pointerType = PT_TOUCH;
     contact.pointerInfo.pointerId = 0;
-    contact.pointerInfo.ptPixelLocation = POINT { x, y };
+    contact.pointerInfo.ptPixelLocation = start;
     contact.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION | TOUCH_MASK_PRESSURE;
     contact.orientation = 90;
     contact.pressure = 320;
@@ -159,7 +394,7 @@ fn inject_drag(hwnd: isize, x: i32, y: i32) -> io::Result<()> {
             right: p.x + 2,
             bottom: p.y + 2,
         };
-        // SAFETY: 指向一个完整有效的接触点结构，数组长度为 1；调用返回后不再引用它。
+        // SAFETY: 数组包含一个完整有效的接触点。
         if unsafe { InjectTouchInput(1, contact) } == 0 {
             Err(io::Error::other(format!(
                 "InjectTouchInput ({flags:#x}, {}, {}): {}",
@@ -173,17 +408,22 @@ fn inject_drag(hwnd: isize, x: i32, y: i32) -> io::Result<()> {
     };
     let active = POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
     send(&mut contact, active | POINTER_FLAG_DOWN)?;
-    let moved = (1..=5).try_for_each(|step| {
-        std::thread::sleep(Duration::from_millis(30));
+    let steps = if start.x == end.x && start.y == end.y {
+        1
+    } else {
+        20
+    };
+    let moved = (1..=steps).try_for_each(|step| {
+        std::thread::sleep(Duration::from_millis(20));
         contact.pointerInfo.ptPixelLocation = POINT {
-            x: x + step * 20,
-            y: y + step * 10,
+            x: start.x + (end.x - start.x) * step / steps,
+            y: start.y + (end.y - start.y) * step / steps,
         };
         send(&mut contact, active | POINTER_FLAG_UPDATE)
     });
-    std::thread::sleep(Duration::from_millis(30));
-    // 即使中间注入失败也抬手，避免留下接触中的指针。
+    std::thread::sleep(Duration::from_millis(if steps == 1 { 40 } else { 250 }));
+    // 即使移动失败也抬手，避免留下接触中的指针。
     let released = send(&mut contact, POINTER_FLAG_UP);
-    std::thread::sleep(Duration::from_millis(100));
+    std::thread::sleep(Duration::from_millis(settle_ms));
     moved.and(released)
 }

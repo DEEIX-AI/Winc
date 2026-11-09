@@ -56,6 +56,7 @@ swiping to scroll, and dragging scrollbars and panel dividers. Hold for 500 ms t
 menu. Swipes stay in the region where they started and stop on release. Additional fingers cancel
 the current gesture; lift all fingers before starting another. On Windows, drag the title bar to
 move the window, double-tap it to maximize or restore, and drag the window edges to resize.
+Window dragging and edge snapping use the same native Windows behavior as mouse input.
 
 ## Platforms
 

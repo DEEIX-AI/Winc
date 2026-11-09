@@ -51,7 +51,7 @@ pub(in crate::app) struct TouchState {
     contacts: Vec<(DeviceId, u64)>,
     gesture: Option<Gesture>,
     #[cfg(windows)]
-    window_drag: Option<crate::windows::TouchWindowDrag>,
+    pub(in crate::app) window_input: Option<crate::windows::WindowInput>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -69,18 +69,6 @@ impl TouchState {
     /// 是否有手指仍接触屏幕，包括因多指操作而取消的手势。
     pub(in crate::app) fn active(&self) -> bool {
         !self.contacts.is_empty()
-    }
-
-    /// 窗口拖动产生的尺寸事件不能取消手势；屏幕 DPI 变化仍会取消。
-    pub(in crate::app) fn dragging_window(&self) -> bool {
-        #[cfg(windows)]
-        {
-            self.window_drag.is_some()
-        }
-        #[cfg(not(windows))]
-        {
-            false
-        }
     }
 
     fn update(
@@ -154,10 +142,6 @@ impl TouchState {
     }
 
     fn cancel_gesture(&mut self) -> Option<Action> {
-        #[cfg(windows)]
-        {
-            self.window_drag = None;
-        }
         self.gesture
             .take()
             .and_then(|g| (g.mode == Mode::Drag).then_some(Action::CancelDrag))
@@ -201,16 +185,9 @@ impl App {
                     self.touch.update(&touch, point, Instant::now(), false);
                     self.touch.gesture.as_mut().unwrap().mode = Mode::Held;
                 }
-                self.start_touch_window(&touch, point, operation);
+                self.start_touch_window(point, operation);
                 return;
             }
-        }
-        #[cfg(windows)]
-        if matches!(touch.phase, TouchPhase::Moved | TouchPhase::Ended)
-            && self.touch.contacts.as_slice() == [(touch.device_id, touch.id)]
-            && let (Some(drag), Some(window)) = (&mut self.touch.window_drag, &self.window)
-        {
-            drag.update(window, &touch);
         }
         if touch.phase == TouchPhase::Cancelled
             || (touch.phase == TouchPhase::Started && self.touch.active())
@@ -230,7 +207,7 @@ impl App {
         }
     }
 
-    fn start_touch_window(&mut self, touch: &Touch, (x, y): Point, operation: WindowTouch) {
+    fn start_touch_window(&mut self, (x, y): Point, operation: WindowTouch) {
         if operation == WindowTouch::Move && self.title_bar_pressed(x, y) {
             self.title_bar_double_click();
             return;
@@ -238,28 +215,10 @@ impl App {
         let Some(window) = &self.window else {
             return;
         };
-        #[cfg(windows)]
-        {
-            let direction = match operation {
-                WindowTouch::Move => None,
-                WindowTouch::Resize(direction) => Some(direction),
-            };
-            let minimum = winit::dpi::LogicalSize::new(
-                crate::app::lifecycle::placement::MIN_WIDTH,
-                crate::app::lifecycle::placement::MIN_HEIGHT,
-            )
-            .to_physical(window.scale_factor());
-            self.touch.window_drag =
-                crate::windows::TouchWindowDrag::start(window, touch, direction, minimum);
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = touch;
-            let _ = match operation {
-                WindowTouch::Move => window.drag_window(),
-                WindowTouch::Resize(direction) => window.drag_resize_window(direction),
-            };
-        }
+        let _ = match operation {
+            WindowTouch::Move => window.drag_window(),
+            WindowTouch::Resize(direction) => window.drag_resize_window(direction),
+        };
     }
 
     /// 静止长按也需要唤醒事件循环，不依赖新的移动事件。

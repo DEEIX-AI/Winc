@@ -4,7 +4,7 @@ mod display_link;
 mod touch;
 
 pub use display_link::DisplayLink;
-pub use touch::TouchWindowDrag;
+pub use touch::{WindowHitTest, WindowInput};
 
 use std::io;
 use std::os::windows::ffi::OsStrExt;

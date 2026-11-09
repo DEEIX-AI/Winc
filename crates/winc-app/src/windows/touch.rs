@@ -1,180 +1,172 @@
-//! 自绘标题栏和窗口边缘的触摸拖动。
-//!
-//! winit 的系统拖动接口依赖鼠标按键，不能接管客户端触摸。这里读取接触点的屏幕坐标，按落指
-//! 时的窗口位置和大小计算变化；窗口移动后客户端坐标会改变，不能用它累计位移。
+//! 自绘标题栏的原生命中测试，让鼠标和触摸都由 Windows 移动、缩放及吸附窗口。
 
-use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::Touch;
-use winit::window::{ResizeDirection, Window};
+#![allow(unsafe_code)] // 同一窗口线程上的子类回调；共享数据由 Arc 和 Mutex 管理。
+
+use std::sync::{Arc, Mutex};
+
+use winc_render::Rect;
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CS_DBLCLKS, DefWindowProcW, GCL_STYLE, GetClassLongW, GetClientRect, HTBOTTOM, HTBOTTOMLEFT,
+    HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed,
+    SetClassLongW, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
+    WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
+    WM_XBUTTONDBLCLK, WM_XBUTTONDOWN,
+};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use winit::window::Window;
 
 #[cfg(test)]
 mod native_tests;
 
-/// 用一根手指移动窗口或拖动其边缘；位置和尺寸均为物理像素。
-pub struct TouchWindowDrag {
-    pointer: u64,
-    start: PhysicalPosition<i32>,
-    position: PhysicalPosition<i32>,
-    size: PhysicalSize<u32>,
-    frame: PhysicalSize<u32>,
-    minimum: PhysicalSize<u32>,
-    direction: Option<ResizeDirection>,
-    maximized: bool,
-    moved: bool,
+/// 顶栏中的控件保持客户区输入，空白处和窗口细边交给系统。矩形使用逻辑像素。
+#[derive(Default)]
+pub struct WindowHitTest {
+    pub caption_height: f32,
+    pub resize_border: f32,
+    pub client: Vec<Rect>,
 }
 
-impl TouchWindowDrag {
-    /// 在落指时记下窗口几何；`direction` 为 `None` 时移动，否则调整对应边缘。
-    ///
-    /// `minimum` 是客户区的最小尺寸。拖动最大化窗口的标题栏时先还原，保持手指位于标题栏
-    /// 相同的横向比例处。无法读取窗口位置时返回 `None`。
-    pub fn start(
-        window: &Window,
-        touch: &Touch,
-        direction: Option<ResizeDirection>,
-        minimum: PhysicalSize<u32>,
-    ) -> Option<Self> {
-        let start = screen_point(window, touch)?;
-        let size = window.outer_size();
-        let inner = window.inner_size();
-        Some(Self {
-            pointer: touch.id,
-            start,
-            position: window.outer_position().ok()?,
-            size,
-            frame: PhysicalSize::new(
-                size.width.saturating_sub(inner.width),
-                size.height.saturating_sub(inner.height),
-            ),
-            minimum,
-            direction,
-            maximized: window.is_maximized(),
-            moved: false,
-        })
-    }
-
-    /// 按接触点当前的屏幕位置更新窗口；其他手指和无法读取的位置不产生移动。
-    pub fn update(&mut self, window: &Window, touch: &Touch) {
-        if touch.id != self.pointer {
-            return;
+impl WindowHitTest {
+    pub fn hit(&self, x: f32, y: f32, width: f32, height: f32, maximized: bool) -> u32 {
+        if !Rect::new(0.0, 0.0, width, height).contains(x, y) {
+            return HTCLIENT;
         }
-        let Some(point) = screen_point(window, touch) else {
-            return;
-        };
-        if !self.moved {
-            let distance =
-                f64::from(point.x - self.start.x).hypot(f64::from(point.y - self.start.y));
-            if distance <= 8.0 * window.scale_factor() {
-                return;
+        let edge = self.resize_border;
+        if edge > 0.0 && !maximized {
+            let (left, right) = (x < edge, x >= width - edge);
+            let (top, bottom) = (y < edge, y >= height - edge);
+            let hit = match (top, bottom, left, right) {
+                (true, _, true, _) => HTTOPLEFT,
+                (true, _, _, true) => HTTOPRIGHT,
+                (_, true, true, _) => HTBOTTOMLEFT,
+                (_, true, _, true) => HTBOTTOMRIGHT,
+                (true, ..) => HTTOP,
+                (_, true, ..) => HTBOTTOM,
+                (_, _, true, _) => HTLEFT,
+                (_, _, _, true) => HTRIGHT,
+                _ => HTCLIENT,
+            };
+            if hit != HTCLIENT {
+                return hit;
             }
-            // 真正拖动后才还原；单击或双击最大化窗口的标题栏不会先意外还原。
-            if self.maximized && self.direction.is_none() {
-                let fraction =
-                    f64::from(self.start.x - self.position.x) / f64::from(self.size.width.max(1));
-                let top = self.start.y - self.position.y;
-                window.set_maximized(false);
-                self.size = window.outer_size();
-                let inner = window.inner_size();
-                self.frame = PhysicalSize::new(
-                    self.size.width.saturating_sub(inner.width),
-                    self.size.height.saturating_sub(inner.height),
-                );
-                self.position = PhysicalPosition::new(
-                    point.x
-                        - (fraction.clamp(0.0, 1.0) * f64::from(self.size.width)).round() as i32,
-                    point.y - top,
-                );
-                self.start = point;
-            }
-            self.moved = true;
         }
-        let (position, size) = self.geometry(point);
-        if self.direction.is_some() {
-            let _ = window.request_inner_size(size);
-        }
-        window.set_outer_position(position);
-    }
-
-    fn geometry(&self, point: PhysicalPosition<i32>) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
-        let dx = point.x - self.start.x;
-        let dy = point.y - self.start.y;
-        let mut position = self.position;
-        let mut size = self.size;
-        use ResizeDirection::*;
-        if let Some(direction) = self.direction {
-            let west = matches!(direction, West | NorthWest | SouthWest);
-            let north = matches!(direction, North | NorthWest | NorthEast);
-            if west || matches!(direction, East | NorthEast | SouthEast) {
-                let width = self.size.width as i32 + if west { -dx } else { dx };
-                size.width = width.max((self.minimum.width + self.frame.width) as i32) as u32;
-                if west {
-                    position.x += self.size.width as i32 - size.width as i32;
-                }
-            }
-            if north || matches!(direction, South | SouthWest | SouthEast) {
-                let height = self.size.height as i32 + if north { -dy } else { dy };
-                size.height = height.max((self.minimum.height + self.frame.height) as i32) as u32;
-                if north {
-                    position.y += self.size.height as i32 - size.height as i32;
-                }
-            }
+        if y < self.caption_height && !self.client.iter().any(|r| r.contains(x, y)) {
+            HTCAPTION
         } else {
-            position.x += dx;
-            position.y += dy;
+            HTCLIENT
         }
-        (
-            position,
-            PhysicalSize::new(
-                size.width - self.frame.width,
-                size.height - self.frame.height,
-            ),
-        )
     }
 }
 
-/// 优先从当前指针读取屏幕坐标，避免窗口移动后，队列中旧事件的客户端坐标造成来回跳动。
-#[allow(unsafe_code)] // GetPointerInfo
-fn screen_point(window: &Window, touch: &Touch) -> Option<PhysicalPosition<i32>> {
-    use windows_sys::Win32::UI::Input::Pointer::{GetPointerInfo, POINTER_INFO};
-    let mut info = std::mem::MaybeUninit::<POINTER_INFO>::uninit();
-    if let Ok(id) = u32::try_from(touch.id)
-        // SAFETY: info 指向足够大的可写结构；仅在成功填充后读取，接触点编号来自 winit。
-        && unsafe { GetPointerInfo(id, info.as_mut_ptr()) } != 0
-    {
-        // SAFETY: GetPointerInfo 已成功初始化整个结构。
-        let point = unsafe { info.assume_init() }.ptPixelLocation;
-        return Some(PhysicalPosition::new(point.x, point.y));
-    }
-    let origin = window.inner_position().ok()?;
-    Some(PhysicalPosition::new(
-        origin.x + touch.location.x.round() as i32,
-        origin.y + touch.location.y.round() as i32,
-    ))
-}
+/// 应用更新命中区域；窗口持有独立引用，销毁回调负责释放，不借用应用状态。
+pub struct WindowInput(Arc<Mutex<WindowHitTest>>);
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn touch_window_resize_keeps_opposite_edges_fixed_at_the_minimum() {
-        let drag = TouchWindowDrag {
-            pointer: 1,
-            start: PhysicalPosition::new(-100, -100),
-            position: PhysicalPosition::new(-500, -200),
-            size: PhysicalSize::new(800, 600),
-            frame: PhysicalSize::new(0, 0),
-            minimum: PhysicalSize::new(400, 300),
-            direction: Some(ResizeDirection::NorthWest),
-            maximized: false,
-            moved: false,
+impl WindowInput {
+    /// 在创建窗口的事件循环线程上安装；在窗口首次显示前调用。
+    pub fn new(window: &Window) -> Option<Self> {
+        let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else {
+            return None;
         };
-        assert_eq!(
-            drag.geometry(PhysicalPosition::new(1000, 1000)),
-            (
-                PhysicalPosition::new(-100, 100),
-                PhysicalSize::new(400, 300)
-            )
-        );
+        let state = Arc::new(Mutex::new(WindowHitTest::default()));
+        let data = Arc::into_raw(state.clone());
+        // SAFETY: 当前线程创建并持有 window；回调只访问独立的共享数据，直到 WM_NCDESTROY。
+        if unsafe { SetWindowSubclass(handle.hwnd.get() as _, Some(window_proc), 1, data as usize) }
+            == 0
+        {
+            // SAFETY: 安装失败，没有回调持有这个引用。
+            drop(unsafe { Arc::from_raw(data) });
+            return None;
+        }
+        // SAFETY: winit 的窗口类默认不产生双击消息。启用后让 Windows 处理非客户区双击；
+        // 本应用的每个窗口都安装此回调，客户区双击在回调中还原为 winit 所需的第二次按下。
+        unsafe {
+            let hwnd = handle.hwnd.get() as _;
+            SetClassLongW(
+                hwnd,
+                GCL_STYLE,
+                (GetClassLongW(hwnd, GCL_STYLE) | CS_DBLCLKS) as i32,
+            );
+        }
+        Some(Self(state))
     }
+
+    pub fn update(&self, hit: WindowHitTest) {
+        if let Ok(mut state) = self.0.lock() {
+            *state = hit;
+        }
+    }
+}
+
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    data: usize,
+) -> LRESULT {
+    if message == WM_NCLBUTTONDOWN && wparam == HTCAPTION as usize {
+        // SAFETY: winit 在此消息中补发一个坐标为 (0, 0) 的鼠标移动；触摸提升的输入会把它
+        // 当成真实移动，点按也可能触发吸附。直接交给系统，保留原始输入序列。
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    }
+    if message == WM_NCDESTROY {
+        // SAFETY: data 是安装时交给该窗口的一个 Arc 引用；先移除回调，再释放且仅释放一次。
+        unsafe {
+            RemoveWindowSubclass(hwnd, Some(window_proc), id);
+            drop(Arc::from_raw(data as *const Mutex<WindowHitTest>));
+        }
+    } else if message == WM_NCHITTEST {
+        // SAFETY: 保留原生标题栏、边框等已有命中结果，只有客户区需要补充。
+        let original = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+        if original != HTCLIENT as isize {
+            return original;
+        }
+        // LPARAM 的两个坐标是有符号 16 位值，副屏可以位于主屏左边或上方。
+        let mut point = POINT {
+            x: lparam as i16 as i32,
+            y: (lparam >> 16) as i16 as i32,
+        };
+        let mut bounds = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: hwnd 来自当前回调；两个输出都指向有效的栈变量。
+        if unsafe { ScreenToClient(hwnd, &mut point) == 0 || GetClientRect(hwnd, &mut bounds) == 0 }
+        {
+            return original;
+        }
+        // SAFETY: 查询当前窗口，以实际 DPI 和尺寸处理系统拖动中的跨屏、最大化和缩放。
+        let scale = unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0;
+        // SAFETY: hwnd 是当前正在处理命中测试的窗口。
+        let maximized = unsafe { IsZoomed(hwnd) } != 0;
+        // SAFETY: 窗口持有此 Arc 引用；锁不会跨越任何可能重入回调的 Win32 调用。
+        let state = unsafe { &*(data as *const Mutex<WindowHitTest>) };
+        if let Ok(hit) = state.lock() {
+            return hit.hit(
+                point.x as f32 / scale,
+                point.y as f32 / scale,
+                bounds.right as f32 / scale,
+                bounds.bottom as f32 / scale,
+                maximized,
+            ) as isize;
+        }
+        return original;
+    }
+    let message = match message {
+        WM_LBUTTONDBLCLK => WM_LBUTTONDOWN,
+        WM_MBUTTONDBLCLK => WM_MBUTTONDOWN,
+        WM_RBUTTONDBLCLK => WM_RBUTTONDOWN,
+        WM_XBUTTONDBLCLK => WM_XBUTTONDOWN,
+        message => message,
+    };
+    // SAFETY: 其余消息原样沿子类链传递；WM_NCPOINTERDOWN 由系统提升为非客户区鼠标输入，
+    // 继而进入系统拖窗循环，吸附预览、布局、还原尺寸和取消行为均由 Windows 决定。
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
