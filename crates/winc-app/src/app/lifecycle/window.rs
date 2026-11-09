@@ -209,6 +209,13 @@ impl App {
         if self.goto_input.is_some() && self.focus != Focus::Prompt {
             self.goto_input = None;
         }
+        // 切换到不能替换的标签时收起替换。
+        if self.replace_open && !self.can_replace() {
+            self.replace_open = false;
+            if self.focus == Focus::Replace {
+                self.focus = Focus::Search;
+            }
+        }
         let Some(renderer) = &self.renderer else {
             return;
         };
