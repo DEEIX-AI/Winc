@@ -739,6 +739,188 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
 }
 
 #[test]
+fn find_in_a_commit_diff_searches_the_selected_snapshot() {
+    use crate::keymap::{KeyCode, Mods, Os, Stroke};
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT};
+
+    let dir = sample_folder("diff-commit-find");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let language = winc_syntax::detect("main.rs");
+    let side = |text: &str| DiffSide::new("abc1234", text, None, language);
+    let common = format!(
+        "{}命中一\n{}",
+        "context\n".repeat(70),
+        "context\n".repeat(70)
+    );
+    let old = format!("左侧\n{common}old\n");
+    let new = format!("右侧\n{common}命中二\n");
+    let view = DiffView::new(side(&old), side(&new));
+    app.editor.show_diff_in(None, "main.rs", view);
+    paint(&mut app);
+
+    let find = Stroke {
+        key: KeyCode::Char('f'),
+        mods: if Os::CURRENT == Os::Mac {
+            Mods::META
+        } else {
+            Mods::CTRL
+        },
+    };
+    let set_query = |app: &mut App, query: &str| {
+        app.find_input.set_text(query);
+        app.search.query = query.to_owned();
+        app.search_changed();
+    };
+    let selection = |app: &App| {
+        let doc = app.editor.active().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        assert!(!view.editing);
+        view.read_selection.unwrap()
+    };
+    assert!(app.on_shortcut(find));
+    assert!(app.search_open);
+    assert_eq!(app.focus, crate::app::Focus::Search);
+    set_query(&mut app, "命中");
+    assert_eq!(app.search.matches().len(), 2);
+    let first = selection(&app);
+    assert_eq!(first.side, RIGHT);
+    let doc = app.editor.active().unwrap();
+    let view = doc.diff.as_deref().unwrap();
+    let row = view.row_of_new(71);
+    assert_eq!(view.line_at(RIGHT, row), Some(71));
+    assert!(doc.scroll_line > 0.0);
+    app.advance_search();
+    paint(&mut app);
+    assert_eq!(app.search.current_match(), Some(first.range));
+
+    app.find_next(false);
+    assert!(selection(&app).range.0 > first.range.0);
+    app.find_next(true);
+    assert_eq!(selection(&app), first);
+    app.press_search_button(crate::layout::SearchButton::Expand);
+    assert!(!app.replace_open);
+    app.close_search();
+
+    let doc = app.editor.active_mut().unwrap();
+    doc.scroll_line = 0.0;
+    let view = doc.diff.as_deref().unwrap();
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let point = (
+        parts.panes[LEFT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell,
+        parts.body.y + 4.0,
+    );
+    click(&mut app, point);
+    assert!(app.on_shortcut(find));
+    assert_eq!(app.search.query, "左侧");
+    assert_eq!(selection(&app).side, LEFT);
+    set_query(&mut app, "命中");
+    assert_eq!(app.search.matches().len(), 1);
+
+    // 同一标签换成另一份差异后，同一侧的旧结果作废。
+    let id = app.editor.active().unwrap().id;
+    let deleted = DiffView::new(side("命中\n命中\n命中\n"), side("").with_missing(true));
+    app.editor.show_diff_in(Some(id), "deleted.rs", deleted);
+    app.advance_search();
+    assert_eq!(app.search.matches().len(), 3);
+    app.find_next(false);
+    assert_eq!(selection(&app).side, LEFT);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 只读差异快照中的查找规则：替换快捷键只打开查找；预填规则与编辑器相同；长匹配横向
+/// 滚动到末端可见；单栏布局下未改动的行同样标出左侧的匹配；其他文档等待中的跳转作废。
+#[test]
+fn find_in_a_commit_diff_follows_the_editor_rules() {
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT, ReadSelection};
+
+    let dir = sample_folder("diff-commit-find-rules");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let other = app.editor.active().unwrap().id;
+    let language = winc_syntax::detect("main.rs");
+    let side = |text: &str| DiffSide::new("abc1234", text, None, language);
+    let wide = format!(
+        "{} long_identifier_at_the_far_right_end_of_the_line\n",
+        "x".repeat(400)
+    );
+    let old = format!("a -> b\nleft only\n{wide}");
+    let new = format!("a -> b\nright only\n{wide}");
+    app.editor
+        .show_diff_in(None, "main.rs", DiffView::new(side(&old), side(&new)));
+    paint(&mut app);
+    let set_read = |app: &mut App, side: usize, range: (usize, usize)| {
+        let view = app
+            .editor
+            .active_mut()
+            .unwrap()
+            .diff
+            .as_deref_mut()
+            .unwrap();
+        view.read_selection = Some(ReadSelection { side, range });
+    };
+
+    // 替换快捷键只打开查找；光标在符号 `->` 上时不预填。
+    set_read(&mut app, LEFT, (3, 3));
+    app.search.query.clear();
+    app.open_search(true);
+    assert!(app.search_open && !app.replace_open);
+    assert_eq!(app.search.query, "");
+
+    // 长匹配横向滚动到能显示其末端，且不越过起点。
+    app.find_input
+        .set_text("long_identifier_at_the_far_right_end_of_the_line");
+    app.search.query = "long_identifier_at_the_far_right_end_of_the_line".into();
+    app.search_changed();
+    paint(&mut app);
+    let doc = app.editor.active().unwrap();
+    let view = doc.diff.as_deref().unwrap();
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let width = parts.panes[LEFT].text.w - 2.0 * crate::app::diff::DIFF_TEXT_PAD;
+    let (x, x_end) = (401.0 * app.cell, 449.0 * app.cell);
+    assert!(
+        doc.scroll_x <= x && x_end <= doc.scroll_x + width,
+        "{}",
+        doc.scroll_x
+    );
+
+    // 查找快照时，其他文档等待中的跳转作废。
+    app.pending_jump = Some((other, 0, false));
+    app.advance_search();
+    assert_eq!(app.pending_jump, None);
+
+    // 单栏布局：未改动的行按右侧绘制，查找左侧时同样标出匹配。
+    app.close_search();
+    let doc = app.editor.active_mut().unwrap();
+    doc.scroll_x = 0.0;
+    doc.scroll_line = 0.0;
+    doc.diff.as_deref_mut().unwrap().set_unified(true);
+    set_read(&mut app, LEFT, (0, 0));
+    paint(&mut app);
+    let row = |app: &App| {
+        let renderer = app.renderer.as_ref().unwrap();
+        let (scale, image) = (renderer.scale_factor(), renderer.image().unwrap());
+        let doc = app.editor.active().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        // 单栏的第 0 行是未改动的 `a -> b`。
+        let y = ((parts.body.y + app.fonts.line_height * 0.5) * scale) as usize;
+        let w = image.width as usize;
+        image.pixels[y * w..(y + 1) * w].to_vec()
+    };
+    let plain = row(&app);
+    app.open_search(false);
+    app.find_input.set_text("->");
+    app.search.query = "->".into();
+    app.search_changed();
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.read_selection.map(|s| s.side), Some(LEFT));
+    assert_ne!(row(&app), plain, "左侧的匹配在单栏的未改动行上标出");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     let dir = search_folder("git-diff-step");
     std::fs::write(dir.join("src/zeta.rs"), "a\nb\nc\n").unwrap();

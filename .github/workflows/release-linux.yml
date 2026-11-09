@@ -41,6 +41,8 @@ jobs:
         run: |
           cargo build --release --locked --target "$TARGET" -p winc-app -p winc-pty
           cargo xtask icons "target/$TARGET/release/bundle/icons"
+      - name: Bundle and verify Arch package
+        run: bash release/linux/arch/package.sh "$TARGET"
       - name: Prepare native packaging tools
         run: node release/linux/download-tools.mjs
       - name: Bundle deb and AppImage

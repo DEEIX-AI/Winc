@@ -1,8 +1,10 @@
 //! Windows 上交由系统的操作，读取的系统设置，以及按屏幕刷新绘制动画的显示链接。
 
 mod display_link;
+mod touch;
 
 pub use display_link::DisplayLink;
+pub use touch::{WindowHitTest, WindowInput};
 
 use std::io;
 use std::os::windows::ffi::OsStrExt;

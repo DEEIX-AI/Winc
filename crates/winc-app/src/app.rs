@@ -413,6 +413,8 @@ pub enum Hover {
     MarkdownToc(crate::app::preview::markdown::TocTarget),
     Search(SearchButton),
     TreeRow(usize),
+    /// 历史差异侧栏标题行中切换树形与列表的按钮。
+    LogDiffLayout,
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
     Tab(usize, bool),
     Splitter,
@@ -489,6 +491,7 @@ impl Hover {
                 | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
+                | Hover::LogDiffLayout
                 | Hover::Tab(..)
                 | Hover::TabList
                 | Hover::Preview(_)
@@ -732,6 +735,8 @@ pub struct App {
     option_side: (bool, bool),
     /// 鼠标位置（逻辑像素）。
     mouse: (f32, f32),
+    /// 当前的触摸接触点与正在识别的触摸手势。
+    touch: input::touch::TouchState,
     drag: Drag,
     last_click: Option<Click>,
     /// 上一次在顶栏空白处的按下，用于识别双击。
@@ -1298,6 +1303,18 @@ impl App {
     fn advance_search(&mut self) {
         // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处。
         let searching = self.search_open || self.pending_jump.is_some();
+        if searching && let Some((id, _)) = self.update_diff_find() {
+            // 记录的跳转只对当时的文档有效，切换标签后作废。
+            match self.pending_jump {
+                Some((pending, pos, backwards)) if pending == id => {
+                    self.jump_to_match(pos, backwards);
+                }
+                Some(_) => self.pending_jump = None,
+                None => {}
+            }
+            self.apply_line_filter();
+            return;
+        }
         // 焦点在预览上时查找预览的文字。
         let preview = searching && self.markdown_focused() && self.markdown_find_doc().is_some();
         let doc = if preview {

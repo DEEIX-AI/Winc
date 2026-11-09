@@ -339,6 +339,14 @@ impl App {
             self.tabs.scroll = (self.tabs.scroll - delta).clamp(0.0, max);
             // 标签滚动后，鼠标下方的标签已改变。
             self.set_hover(self.hover_at(x, y));
+        } else if self.log_diff_tree().is_some()
+            && (self.commit_parts().list.contains(x, y) || self.in_commit_overflow(x, y))
+        {
+            self.with_log_list(|app| {
+                let max = app.commit_max_scroll();
+                app.commit.scroll = (app.commit.scroll - dy).clamp(0.0, max);
+            });
+            self.set_hover(self.hover_at(x, y));
         } else if self.commit_shown() && self.commit_parts().message.contains(x, y) {
             // 提交信息框里的文字超出最大行数时在框内滚动；上限在绘制时按文字的行数收紧。
             let view = &mut self.commit.message.view;
