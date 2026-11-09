@@ -1184,7 +1184,7 @@ pub(in crate::app) fn commit_diff(
         (Some(oid), false) => t!("git-diff-side-commit-missing", commit = short(oid)),
         (None, _) => t!("git-diff-side-before-root").to_owned(),
     };
-    Ok(DiffView::new(
+    let mut view = DiffView::new(
         DiffSide::new(
             side_title(old_rev, old.is_some()),
             old.as_deref().unwrap_or(""),
@@ -1199,7 +1199,9 @@ pub(in crate::app) fn commit_diff(
             language,
         )
         .with_missing(new.is_none()),
-    ))
+    );
+    view.snapshot_path = Some(file.path.clone());
+    Ok(view)
 }
 
 /// 提交号的前 7 位。
