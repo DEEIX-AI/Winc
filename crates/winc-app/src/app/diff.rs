@@ -994,7 +994,7 @@ impl App {
         if let Some((_, name, _)) = self.next_stash_file(forward) {
             return Some(name);
         }
-        if let Some((_, name, _)) = self.next_log_file(forward) {
+        if let Some((_, _, name, _)) = self.next_log_file(forward) {
             return Some(name);
         }
         let (path, _, _) = self.next_changed_file(forward)?;

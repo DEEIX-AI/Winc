@@ -251,20 +251,29 @@ enum Loaded {
     },
     /// 一个文件在一次提交里的差异，打开成标签。
     Diff {
+        /// 发起读取时的请求序号，与 `LogState::diff_request` 不同时结果已过时。
         request: u64,
+        /// 文件所属的提交或比较。
         source: Arc<LogDiffSource>,
+        /// 文件在 `source.files` 中的下标。
         file: usize,
         title: String,
         view: Result<Box<DiffView>, String>,
     },
 }
 
+/// 从日志打开的差异所属的提交或比较。
 #[derive(PartialEq, Eq)]
 struct LogDiffSource {
+    /// 所在仓库的根目录。
     root: PathBuf,
+    /// 旧的一侧的提交；根提交没有父提交，为 `None`。
     old: Option<String>,
+    /// 新的一侧的提交。
     new: String,
+    /// 标题中显示的版本：提交号，或「旧…新」两个提交号。
     version: String,
+    /// 改动的文件。
     files: Vec<CommitFile>,
 }
 
@@ -872,8 +881,13 @@ impl App {
                 .is_some_and(|tree| self.git.root.as_ref() == Some(&tree.source.root))
     }
 
-    /// 同一提交中的下一个或上一个文件：（序号、文件名、文件总数）。
-    pub(in crate::app) fn next_log_file(&self, forward: bool) -> Option<(usize, String, usize)> {
+    /// 返回按文件树的显示顺序，同一提交中的下一个（`forward`）或上一个文件：（下标，在显示
+    /// 顺序中的位置（从 0 起），文件名，文件总数）；当前标签不是从日志打开的差异，或者没有
+    /// 更多文件时返回 `None`。
+    pub(in crate::app) fn next_log_file(
+        &self,
+        forward: bool,
+    ) -> Option<(usize, usize, String, usize)> {
         let id = self.editor.active()?.id;
         let tree = self
             .log
@@ -881,22 +895,18 @@ impl App {
             .as_ref()
             .filter(|_| self.steps_log_files(id))?;
         let files = &tree.source.files;
-        let next = if forward {
-            tree.selected + 1
-        } else {
-            tree.selected.checked_sub(1)?
-        };
+        let (next, at) = tree.neighbor(forward)?;
         let name = winc_editor::display_name(&files.get(next)?.path).into_owned();
-        Some((next, name, files.len()))
+        Some((next, at, name, files.len()))
     }
 
     /// 在同一个差异标签里打开同一提交的上一个或下一个文件。
     pub(in crate::app) fn step_log_file(&mut self, forward: bool) -> bool {
-        let Some((next, name, total)) = self.next_log_file(forward) else {
+        let Some((next, at, name, total)) = self.next_log_file(forward) else {
             return false;
         };
         self.open_log_diff_file(next);
-        let (index, name) = (next + 1, name.as_str());
+        let (index, name) = (at + 1, name.as_str());
         self.flash(if forward {
             t!("git-next-file", name = name, index = index, total = total)
         } else {
@@ -1003,13 +1013,14 @@ impl App {
                     ..
                 } => match view {
                     Ok(view) => {
-                        let open_sidebar =
-                            self.editor.active().map(|doc| doc.id) != self.log.preview;
+                        // 只在新建差异标签时打开侧栏的文件树，之后保留用户对侧栏的选择。
+                        let new_tab = (self.log.preview)
+                            .and_then(|id| self.editor.document(id))
+                            .is_none();
                         let index = self.editor.show_diff_in(self.log.preview, &title, *view);
                         self.log.preview = Some(self.editor.documents[index].id);
                         self.select_log_diff(source, file);
-                        self.focus = Focus::Editor;
-                        if open_sidebar {
+                        if new_tab {
                             self.set_sidebar_view(crate::layout::SidebarView::Commit);
                             self.set_sidebar(true);
                         }

@@ -189,7 +189,7 @@ git-op-remove-worktree = 移除工作树「{ $name }」
 git-log-no-selection = 选择一个提交
 git-log-no-selection-detail = 在左侧选择提交以查看提交说明和更改的文件
 git-log-details-commit = 提交
-git-log-diff-files = 改动文件 · { $version }
+git-log-diff-files = 更改的文件 · { $version }
 git-log-details-parents = { $count ->
    *[other] 父提交
 }

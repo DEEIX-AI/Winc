@@ -222,6 +222,70 @@ fn commit_diff_sidebar_lists_only_that_commits_changed_files() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 历史差异的文件树：逐个切换文件按树的显示顺序进行；收起的目录在打开其中的文件时展开；
+/// 侧栏只在新建差异标签时打开，之后保留用户的选择；提交视图可以在文件树与工作区改动之间
+/// 切换；关闭差异标签后文件树随之作废。
+#[test]
+fn commit_diff_tree_follows_its_order_and_the_users_sidebar() {
+    use crate::app::git::log::{LogDiffRow, LogTarget};
+    use crate::layout::SidebarView;
+
+    let Some((mut app, root)) = git_app("git-log-file-tree-order", false) else {
+        return;
+    };
+    // Git 列出的顺序是 `a.txt`、`src/b.txt`；树中目录在前，顺序是 `src/b.txt`、`a.txt`。
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("a.txt"), "a\n").unwrap();
+    std::fs::write(root.join("src/b.txt"), "b\n").unwrap();
+    git_in(&root, &["add", "a.txt", "src/b.txt"]);
+    git_in(&root, &["commit", "-q", "-m", "Two files"]);
+    app.git_refresh();
+    show_all_log(&mut app);
+    let log_index = app.editor.active.unwrap();
+    app.press_log(LogTarget::File(0));
+    paint(&mut app);
+    let title = |app: &App| app.editor.active().unwrap().title.clone().unwrap();
+    assert!(title(&app).starts_with("a.txt · "));
+    assert!(
+        app.next_log_file(true).is_none(),
+        "a.txt 是树中最后一个文件"
+    );
+    let (_, at, name, total) = app.next_log_file(false).unwrap();
+    assert_eq!((at, name.as_str(), total), (0, "b.txt", 2));
+
+    // 收起 `src` 后切换到其中的文件：目录随之展开。
+    let tree = app.log_diff_tree().unwrap();
+    assert!(matches!(&tree.rows[0], (0, LogDiffRow::Dir(path)) if path == Path::new("src")));
+    app.click_log_diff_row(0);
+    assert_eq!(app.log_diff_tree().unwrap().rows.len(), 2);
+    assert!(app.step_log_file(false));
+    assert!(title(&app).starts_with("b.txt · "));
+    assert_eq!(app.log_diff_tree().unwrap().rows.len(), 3);
+
+    // 提交视图在文件树与工作区改动之间切换。
+    app.show_commit();
+    assert!(app.log_diff_tree().is_none() && app.commit_shown());
+    app.show_commit();
+    assert!(app.log_diff_tree().is_some() && !app.commit_shown());
+
+    // 差异标签已存在时，从日志再打开文件不改动用户选择的侧栏视图。
+    let diff_index = app.editor.active.unwrap();
+    app.set_sidebar_view(SidebarView::Files);
+    app.activate_tab(log_index);
+    app.press_log(LogTarget::File(1));
+    paint(&mut app);
+    assert_eq!(app.sidebar_view, SidebarView::Files);
+
+    // 关闭差异标签后文件树作废，同一编号不再对应文件树。
+    app.activate_tab(diff_index);
+    app.set_sidebar_view(SidebarView::Commit);
+    assert!(app.log_diff_tree().is_some());
+    app.close_tab(diff_index);
+    assert!(app.next_log_file(true).is_none() && app.next_log_file(false).is_none());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn uncommitted_changes_sit_above_head_in_the_log() {
     use crate::app::git::log::{LOG_LIST_PAD, LogTarget};

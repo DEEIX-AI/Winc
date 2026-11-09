@@ -1226,11 +1226,16 @@ impl App {
     }
 
     /// 打开提交视图（⌃⇧G），焦点放进提交信息。
+    ///
+    /// 当前标签是从日志打开的差异时，提交视图已经可见则在该差异的文件树与工作区改动之间
+    /// 切换，否则显示文件树（见 [`App::toggle_log_diff_tree`]）。
     pub(in crate::app) fn show_commit(&mut self) {
         if self.git.root.is_none() {
             self.flash(t!("git-not-a-repository"));
             return;
         }
+        // 从日志打开的差异标签中，提交视图在文件树与工作区改动之间切换。
+        self.toggle_log_diff_tree();
         if !self.panel_visible {
             self.set_sidebar(true);
         }
