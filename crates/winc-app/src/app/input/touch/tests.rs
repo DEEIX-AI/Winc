@@ -1,4 +1,4 @@
-//! 不依赖窗口和真实时钟的手势识别测试。
+//! `touch` 的测试：点按、长按、滚动、多指取消与直接拖动的手势识别，不依赖窗口和真实时钟。
 
 use super::*;
 
@@ -38,6 +38,7 @@ fn scrolling_keeps_the_origin_and_includes_the_threshold_distance() {
     let mut state = TouchState::default();
     let now = Instant::now();
     state.update(&event(1, TouchPhase::Started), (100.0, 100.0), now, false);
+    // 4 像素未越过 `SLOP`；越过时的增量从落指位置算起，包含此前未滚动的距离。
     state.update(&event(1, TouchPhase::Moved), (100.0, 96.0), now, false);
     assert_eq!(
         state.update(&event(1, TouchPhase::Moved), (100.0, 80.0), now, false),

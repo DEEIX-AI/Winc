@@ -540,10 +540,6 @@ impl Winc {
     fn after_event(&mut self, event_loop: &ActiveEventLoop) {
         loop {
             let (requests, exit) = self.settle();
-            #[cfg(windows)]
-            for slot in &self.windows {
-                slot.app.sync_window_input();
-            }
             if exit {
                 event_loop.exit();
                 return;

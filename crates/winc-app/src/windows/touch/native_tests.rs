@@ -1,6 +1,8 @@
-//! 需要交互桌面和系统吸附开启：只向临时窗口注入触摸，验证 Windows 的拖窗与吸附流程。
+//! `touch` 的原生测试：向临时窗口注入触摸，验证顶栏触摸经由系统完成移动、缩放与吸附。
+//!
+//! 运行时需要交互式桌面，并开启系统的窗口吸附；触摸只注入到测试窗口内。
 
-#![allow(unsafe_code)] // 测试窗口的 Win32 查询和触摸注入。
+#![allow(unsafe_code)] // 测试窗口的 Win32 查询、子类回调与触摸注入。
 
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,11 +30,16 @@ use winit::window::{WindowId, WindowLevel};
 
 use super::*;
 
+/// 测试窗口上观察到的事件计数。
 #[derive(Default)]
 struct Observed {
+    /// 收到 `WM_ENTERSIZEMOVE` 的次数。
     entered: AtomicUsize,
+    /// 收到 `WM_EXITSIZEMOVE` 的次数。
     exited: AtomicUsize,
+    /// winit 交付的 `WindowEvent::Touch` 数量。
     touches: AtomicUsize,
+    /// winit 交付的鼠标按下数量。
     mouse_presses: AtomicUsize,
 }
 
@@ -71,7 +78,8 @@ fn native_touch_uses_system_move_resize_and_snap() {
             };
             let hwnd = handle.hwnd.get();
             let data = Arc::into_raw(self.observed.clone());
-            // SAFETY: 安装在本线程的测试窗口上；销毁时释放观察者引用。
+            // SAFETY: `hwnd` 是本线程创建且仍存活的测试窗口；`data` 转交给 `observe`，
+            // 在 `WM_NCDESTROY` 中释放。
             let installed =
                 unsafe { SetWindowSubclass(hwnd as _, Some(observe), 2, data as usize) };
             assert_ne!(installed, 0);
@@ -140,13 +148,14 @@ unsafe extern "system" fn observe(
     data: usize,
 ) -> LRESULT {
     if msg == WM_NCDESTROY {
-        // SAFETY: 先移除子类，然后释放测试窗口持有的唯一引用。
+        // SAFETY: `data` 是安装时转交的唯一 `Arc` 引用。先移除子类回调，此后不再访问 `data`；
+        // `WM_NCDESTROY` 只到达一次，因此引用只释放一次。
         unsafe {
             RemoveWindowSubclass(hwnd, Some(observe), id);
             drop(Arc::from_raw(data as *const Observed));
         }
     } else {
-        // SAFETY: data 在窗口销毁前始终由子类持有。
+        // SAFETY: `WM_NCDESTROY` 之前子类回调始终持有 `data` 对应的 `Arc` 引用，指针有效。
         let observed = unsafe { &*(data as *const Observed) };
         if msg == WM_ENTERSIZEMOVE {
             observed.entered.fetch_add(1, Ordering::Relaxed);
@@ -154,7 +163,7 @@ unsafe extern "system" fn observe(
             observed.exited.fetch_add(1, Ordering::Relaxed);
         }
     }
-    // SAFETY: 观察者不改动任何窗口消息。
+    // SAFETY: 参数原样来自系统传给当前回调的消息；`observe` 只计数，不改动消息。
     unsafe { DefSubclassProc(hwnd, msg, wp, lp) }
 }
 
@@ -173,7 +182,7 @@ fn frame(hwnd: HWND) -> RECT {
         right: 0,
         bottom: 0,
     };
-    // SAFETY: 查询测试窗口，输出指向有效的矩形。
+    // SAFETY: `hwnd` 是存活的测试窗口；输出参数指向可写的栈变量。
     unsafe {
         GetWindowRect(hwnd, &mut rect);
     }
@@ -181,7 +190,7 @@ fn frame(hwnd: HWND) -> RECT {
 }
 
 fn maximized(hwnd: HWND) -> bool {
-    // SAFETY: 只读取本测试窗口的最大化状态。
+    // SAFETY: `IsZoomed` 只读取测试窗口的最大化状态，没有指针参数。
     unsafe { IsZoomed(hwnd) != 0 }
 }
 
@@ -189,22 +198,22 @@ fn exercise(raw: isize, scale: f64, observed: &Observed) -> io::Result<()> {
     let hwnd = raw as HWND;
     std::thread::sleep(Duration::from_millis(200));
     let mut snap: i32 = 0;
-    // SAFETY: 只读取系统配置，不修改用户设置。
+    // SAFETY: `SPI_GETWINARRANGING` 只读取系统设置，输出指向可写的 `i32`。
     unsafe {
         SystemParametersInfoW(SPI_GETWINARRANGING, 0, (&mut snap as *mut i32).cast(), 0);
     }
     check(snap != 0, "this test requires Windows Snap to be enabled")?;
-    // SAFETY: 查询临时窗口所在的显示器，输出结构已初始化长度。
+    // SAFETY: `MONITORINFO` 是纯数据结构，全零是合法值；`cbSize` 在下一行设置。
     let mut monitor: MONITORINFO = unsafe { std::mem::zeroed() };
     monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    // SAFETY: hwnd 属于测试窗口，输出指向已设置长度的 MONITORINFO。
+    // SAFETY: `hwnd` 是存活的测试窗口；输出指向已设置 `cbSize` 的 `MONITORINFO`。
     unsafe {
         GetMonitorInfoW(
             MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
             &mut monitor,
         );
     }
-    // SAFETY: 初始化进程内的单点触摸注入，无指针参数。
+    // SAFETY: 为当前进程初始化单个接触点的触摸注入，没有指针参数。
     if unsafe { InitializeTouchInjection(1, TOUCH_FEEDBACK_NONE) } == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -288,13 +297,12 @@ fn exercise(raw: isize, scale: f64, observed: &Observed) -> io::Result<()> {
             y: screen.top,
         },
     )?;
-    // SAFETY: 检查系统最大化状态。
     check(
         maximized(hwnd),
         "dragging to the top must use Windows maximize snapping",
     )?;
 
-    // 等系统最大化动画结束，再从客户区内的标题栏拖出。
+    // 等待系统的最大化动画结束后，再从最大化窗口的顶栏拖出。
     std::thread::sleep(Duration::from_millis(750));
     inject_drag(
         raw,
@@ -344,14 +352,15 @@ fn exercise(raw: isize, scale: f64, observed: &Observed) -> io::Result<()> {
         observed.touches.load(Ordering::Relaxed) == touches,
         "native window gestures must not leak into client gestures",
     )?;
-    // 启用原生双击后，客户区第二次按下仍须到达 winit，不能丢失应用的双击选词。
+    // 窗口类启用 `CS_DBLCLKS` 后，客户区的第二次按下仍须送达 winit；应用的双击选词依赖该事件。
     for message in [
         WM_LBUTTONDOWN,
         windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP,
         WM_LBUTTONDBLCLK,
         windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP,
     ] {
-        // SAFETY: 只向测试窗口的客户区发送按下/抬起，未注入全局鼠标输入。
+        // SAFETY: `SendMessageW` 同步发送到存活的测试窗口，`lparam` 为客户区坐标 (100, 100)，
+        // 不含指针；不注入全局鼠标输入。
         unsafe {
             windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(
                 hwnd,
@@ -373,11 +382,12 @@ fn inject_drag(hwnd: isize, start: POINT, end: POINT) -> io::Result<()> {
 }
 
 fn inject_contact(hwnd: isize, start: POINT, end: POINT, settle_ms: u64) -> io::Result<()> {
-    // SAFETY: 先确认落指只会命中本测试窗口。
+    // 确认落指位置命中测试窗口，避免触摸注入到其他窗口。
+    // SAFETY: `WindowFromPoint` 按值接收坐标，没有指针参数。
     if unsafe { WindowFromPoint(start) } as isize != hwnd {
         return Err(io::Error::other("test window is covered"));
     }
-    // SAFETY: 纯 Win32 数据结构，零值表示未设置的可选字段。
+    // SAFETY: `POINTER_TOUCH_INFO` 是纯数据结构，全零是合法值，表示可选字段均未设置。
     let mut contact: POINTER_TOUCH_INFO = unsafe { std::mem::zeroed() };
     contact.pointerInfo.pointerType = PT_TOUCH;
     contact.pointerInfo.pointerId = 0;
@@ -394,7 +404,7 @@ fn inject_contact(hwnd: isize, start: POINT, end: POINT, settle_ms: u64) -> io::
             right: p.x + 2,
             bottom: p.y + 2,
         };
-        // SAFETY: 数组包含一个完整有效的接触点。
+        // SAFETY: `contact` 指向一个字段完整的 `POINTER_TOUCH_INFO`，与数量参数 1 一致。
         if unsafe { InjectTouchInput(1, contact) } == 0 {
             Err(io::Error::other(format!(
                 "InjectTouchInput ({flags:#x}, {}, {}): {}",
@@ -422,7 +432,7 @@ fn inject_contact(hwnd: isize, start: POINT, end: POINT, settle_ms: u64) -> io::
         send(&mut contact, active | POINTER_FLAG_UPDATE)
     });
     std::thread::sleep(Duration::from_millis(if steps == 1 { 40 } else { 250 }));
-    // 即使移动失败也抬手，避免留下接触中的指针。
+    // 移动失败时仍然抬手，避免系统中留下处于接触状态的指针。
     let released = send(&mut contact, POINTER_FLAG_UP);
     std::thread::sleep(Duration::from_millis(settle_ms));
     moved.and(released)

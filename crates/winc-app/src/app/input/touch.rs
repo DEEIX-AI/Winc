@@ -1,7 +1,7 @@
-//! 触摸屏：点按、长按菜单、单指滚动，以及窗口、滚动条和分隔条的拖动。
+//! 触摸输入：识别点按、长按与单指滚动，以及顶栏、窗口边缘、滚动条和分隔条的拖动。
 //!
-//! 点按直到抬手才发出，滑动列表不会先打开文件或执行按钮。多指接触取消当前手势，等所有手指
-//! 离开后再识别下一次操作；取消和失焦也不会补发点击。
+//! 点按在抬手时才发出，滑动列表时不会先打开文件或触发按钮。出现第二个接触点时取消当前手势，
+//! 全部接触点结束后才识别下一次操作；手势取消或窗口失焦时同样不补发点击。
 
 use std::time::{Duration, Instant};
 
@@ -16,40 +16,66 @@ mod tests;
 
 type Point = (f32, f32);
 
-/// 标题栏或窗口边缘的触摸操作。
+/// 在顶栏或窗口边缘落指时交由系统执行的窗口操作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum WindowTouch {
-    /// 拖动标题栏移动窗口。
+    /// 拖动顶栏移动窗口。
     Move,
     /// 拖动边缘或角落改变窗口大小。
     Resize(ResizeDirection),
 }
 
-/// 手指移动超过此距离（逻辑像素）后开始滚动，容许点按和长按时的轻微抖动。
+/// 点按与滚动的分界距离（逻辑像素）。
+///
+/// 接触点偏离落指位置超过该距离后开始滚动；距离以内的移动视为点按和长按时的手指抖动。
 const SLOP: f32 = 8.0;
-/// 静止按住多久后打开菜单。
+/// 长按的判定时长：落指后在 [`SLOP`] 范围内保持达到该时长即打开右键菜单。
 const LONG_PRESS: Duration = Duration::from_millis(500);
+/// 两次点按判定为双击时允许的落指位置偏差（逻辑像素）。
+///
+/// 两次落指的位置偏差通常大于鼠标连击的偏差，因此取点按与滚动分界距离 [`SLOP`] 的两倍。
+pub(in crate::app) const TAP_SLOP: f32 = 2.0 * SLOP;
+/// 接触点的失效时长：超过该时长未收到新的触摸事件时，未结束的接触点视为已失效。
+///
+/// 由触摸提升的鼠标事件紧随对应的触摸事件到达，间隔远小于该时长；系统接管窗口拖动时
+/// 可能不再送达抬手事件，失效的接触点不再拦截鼠标事件（见 [`App::touch_blocks_mouse`]）。
+const STALE: Duration = Duration::from_secs(1);
 
+/// 单指手势的识别阶段。
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
+    /// 尚未越过 [`SLOP`]：抬手时按持续时长判定为点按或长按。
     Pending,
+    /// 已越过 [`SLOP`]：移动转换为滚动。
     Scroll,
+    /// 落指于滚动条或分隔条：移动和抬手直接转换为左键拖动。
     Drag,
+    /// 已打开长按菜单或已交由系统执行窗口操作：后续事件不再产生操作。
     Held,
 }
 
+/// 单指手势；坐标均为窗口内的逻辑像素。
 struct Gesture {
+    /// 落指位置。
     origin: Point,
+    /// 上一个事件的位置，用于计算滚动增量。
     last: Point,
+    /// 落指时刻，用于判定长按。
     since: Instant,
     mode: Mode,
 }
 
-/// 每个窗口各自保存的触摸手势；接触点按设备和编号共同识别。
+/// 单个窗口的触摸状态：未结束的接触点与正在识别的手势。
 #[derive(Default)]
 pub(in crate::app) struct TouchState {
+    /// 未结束的接触点，由设备与编号共同标识。
     contacts: Vec<(DeviceId, u64)>,
     gesture: Option<Gesture>,
+    /// 最近一次收到触摸事件的时刻。
+    pub(in crate::app) last_event: Option<Instant>,
+    /// 是否正在把一次点按作为鼠标点击发出；为真时连击判定按 [`TAP_SLOP`] 放宽位置偏差。
+    pub(in crate::app) tapping: bool,
+    /// 向系统命中测试提供可交互区域的句柄；窗口创建前或安装失败时为 `None`。
     #[cfg(windows)]
     pub(in crate::app) window_input: Option<crate::windows::WindowInput>,
 }
@@ -66,7 +92,7 @@ enum Action {
 }
 
 impl TouchState {
-    /// 是否有手指仍接触屏幕，包括因多指操作而取消的手势。
+    /// 是否仍有未结束的接触点，包括手势已因多指操作取消的接触点。
     pub(in crate::app) fn active(&self) -> bool {
         !self.contacts.is_empty()
     }
@@ -79,6 +105,7 @@ impl TouchState {
         direct: bool,
     ) -> Option<Action> {
         let key = (touch.device_id, touch.id);
+        self.last_event = Some(now);
         if touch.phase == TouchPhase::Started {
             if self.contacts.contains(&key) {
                 return None;
@@ -165,7 +192,7 @@ impl TouchState {
 }
 
 impl App {
-    /// 按渲染器的缩放换算触摸坐标，再把手势交给现有的点击和滚动处理。
+    /// 处理一个触摸事件：坐标换算为逻辑像素后识别手势，转换为鼠标点击、滚动或拖动。
     pub(in crate::app) fn on_touch(&mut self, touch: Touch) {
         let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
         let point = (
@@ -180,12 +207,14 @@ impl App {
             self.cursor_inside = true;
             self.on_mouse_move(point.0, point.1);
             if let Some(operation) = self.touch_window_at(point.0, point.1) {
-                #[cfg(windows)]
-                {
-                    self.touch.update(&touch, point, Instant::now(), false);
-                    self.touch.gesture.as_mut().unwrap().mode = Mode::Held;
+                // 登记接触点并置为 `Held`：此后的移动和抬手只结束本次接触，不产生点击或滚动。
+                self.touch.update(&touch, point, Instant::now(), false);
+                if let Some(gesture) = self.touch.gesture.as_mut() {
+                    gesture.mode = Mode::Held;
                 }
                 self.start_touch_window(point, operation);
+                #[cfg(windows)]
+                self.sync_window_input();
                 return;
             }
         }
@@ -205,6 +234,26 @@ impl App {
             self.cursor_inside = false;
             self.set_hover(Hover::None);
         }
+        // 命中测试的结果取决于是否有接触点（见 `App::window_hit_test`），落指和抬手后需要同步。
+        #[cfg(windows)]
+        self.sync_window_input();
+    }
+
+    /// 是否忽略当前的鼠标事件。
+    ///
+    /// 仍有接触点时，由触摸提升的鼠标事件不得再次触发点击。接触点超过 [`STALE`] 未收到新的
+    /// 触摸事件时视为已失效（例如系统接管窗口拖动后未送达抬手事件），清除后按常规处理鼠标事件，
+    /// 避免鼠标输入持续无响应。
+    pub(in crate::app) fn touch_blocks_mouse(&mut self) -> bool {
+        if !self.touch.active() {
+            return false;
+        }
+        let stale = (self.touch.last_event).is_none_or(|at| at.elapsed() >= STALE);
+        if stale {
+            self.cancel_touch();
+            return false;
+        }
+        true
     }
 
     fn start_touch_window(&mut self, (x, y): Point, operation: WindowTouch) {
@@ -221,7 +270,9 @@ impl App {
         };
     }
 
-    /// 静止长按也需要唤醒事件循环，不依赖新的移动事件。
+    /// 到达长按时限时打开右键菜单，并返回下一次需要唤醒事件循环的时刻。
+    ///
+    /// 静止的长按不产生移动事件，因此由事件循环的定时唤醒触发。
     pub(in crate::app) fn touch_tick(&mut self, now: Instant) -> Option<Instant> {
         if let Some(action) = self.touch.hold(now) {
             self.apply_touch(action);
@@ -229,7 +280,9 @@ impl App {
         self.touch.deadline()
     }
 
-    /// 窗口失焦或坐标系变化时中断触摸，之后迟到的移动和抬手事件不产生操作。
+    /// 中断当前触摸：结束进行中的拖动并清除全部接触点。
+    ///
+    /// 用于窗口失焦、移动、缩放或被遮挡时；此后迟到的移动和抬手事件不产生操作。
     pub(in crate::app) fn cancel_touch(&mut self) {
         let active = self.touch.active();
         if let Some(action) = self.touch.cancel_gesture() {
@@ -240,6 +293,8 @@ impl App {
             self.last_click = None;
             self.cursor_inside = false;
             self.set_hover(Hover::None);
+            #[cfg(windows)]
+            self.sync_window_input();
         }
     }
 
@@ -247,8 +302,10 @@ impl App {
         match action {
             Action::Tap((x, y)) => {
                 self.on_mouse_move(x, y);
+                self.touch.tapping = true;
                 self.on_mouse_down(MouseButton::Left);
                 self.on_mouse_up(MouseButton::Left);
+                self.touch.tapping = false;
             }
             Action::Context((x, y)) => {
                 self.last_click = None;
@@ -258,7 +315,7 @@ impl App {
             }
             Action::Scroll { origin, delta } => {
                 self.last_click = None;
-                // 始终滚动落指的区域，手指越过侧栏、终端等边界也不会切换滚动对象。
+                // 始终滚动落指处的区域：手指越过侧栏、终端等区域的边界时不切换滚动对象。
                 let mouse = self.mouse;
                 self.mouse = origin;
                 let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
@@ -278,7 +335,8 @@ impl App {
                 self.on_mouse_move(x, y);
                 self.on_mouse_up(MouseButton::Left);
             }
-            // 只有滚动条和分隔条会立即按下；收尾保存尺寸并结束拖动，不执行按钮或文件放置。
+            // 只有滚动条和分隔条在落指时立即按下；此处的左键抬起保存尺寸并结束拖动，
+            // 不触发按钮，也不放置文件。
             Action::CancelDrag => self.on_mouse_up(MouseButton::Left),
         }
     }

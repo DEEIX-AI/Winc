@@ -1,4 +1,6 @@
-//! 触摸与真实界面命中、滚动及菜单的集成测试；离屏渲染使用两倍 DPI。
+//! 触摸输入的集成测试：在实际布局上验证命中测试、滚动、连击和长按菜单。
+//!
+//! 离屏渲染的缩放比例为 `SCALE`（两倍），触摸坐标按物理像素传入。
 
 use super::*;
 use winit::event::{DeviceId, Touch, TouchPhase};
@@ -41,6 +43,94 @@ fn touch_taps_position_the_caret_at_high_dpi_and_double_taps_select() {
         winc_core::Selection::new(0, 5)
     );
     assert_eq!(app.drag, Drag::None);
+}
+
+#[test]
+fn double_tap_tolerates_finger_offset_but_mouse_keeps_tight_tolerance() {
+    let mut app = document();
+    let x = app.layout.text.x + TEXT_PAD + app.cell * 2.0;
+    let y = app.layout.text.y + app.fonts.line_height / 2.0;
+    touch(&mut app, 1, TouchPhase::Started, x, y);
+    touch(&mut app, 1, TouchPhase::Ended, x, y);
+    // 第二次落指在两个方向上的偏移均超过鼠标的连击容差、小于 `TAP_SLOP`，且仍在同一个词内。
+    let second = x + app.cell.min(10.0);
+    touch(&mut app, 2, TouchPhase::Started, second, y + 6.0);
+    touch(&mut app, 2, TouchPhase::Ended, second, y + 6.0);
+    assert_eq!(
+        app.editor.active().unwrap().selection,
+        winc_core::Selection::new(0, 5)
+    );
+    // 鼠标点击仍按 4 逻辑像素的容差判断连击。
+    app.last_click = None;
+    assert_eq!(app.click_count(x, y), 1);
+    assert_eq!(app.click_count(x + 6.0, y), 1);
+}
+
+#[test]
+fn stale_touch_contact_stops_blocking_the_mouse() {
+    let mut app = document();
+    let text = app.layout.text;
+    let (x, y) = (text.x + text.w / 2.0, text.y + text.h / 2.0);
+    touch(&mut app, 1, TouchPhase::Started, x, y);
+    assert!(
+        app.touch_blocks_mouse(),
+        "接触点未结束时应忽略由触摸提升的鼠标事件"
+    );
+    // 模拟抬手事件丢失：超过 `STALE` 没有新的触摸事件时接触点失效，鼠标恢复响应；
+    // 随后到达的抬手事件不再定位光标。
+    app.touch.last_event = Some(Instant::now() - Duration::from_secs(2));
+    assert!(!app.touch_blocks_mouse());
+    assert!(!app.touch.active());
+    touch(&mut app, 1, TouchPhase::Ended, x, y);
+    assert_eq!(
+        app.editor.active().unwrap().selection,
+        winc_core::Selection::point(0)
+    );
+}
+
+#[test]
+fn caption_controls_cover_top_bar_targets() {
+    use crate::app::input::touch::WindowTouch;
+    let verify = |app: &App| {
+        let controls = app.caption_controls();
+        let size = app.layout.window;
+        for y in (0..TOP_BAR_END as usize).step_by(2) {
+            for x in (0..size.w as usize).step_by(2) {
+                let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                // 系统命中测试先判断窗口边缘、后判断控件（`WindowHitTest::hit`），边缘处无须检查。
+                let window = app.touch_window_at(x, y);
+                if matches!(window, Some(WindowTouch::Resize(_))) {
+                    continue;
+                }
+                let caption = window == Some(WindowTouch::Move);
+                let control = controls.iter().any(|r| r.contains(x, y));
+                assert!(caption || control, "顶栏控件未列入客户区：({x}, {y})");
+                assert!(!(caption && control), "顶栏空白处被列入客户区：({x}, {y})");
+            }
+        }
+    };
+    let mut app = document();
+    app.window_controls = true;
+    app.relayout();
+    paint(&mut app);
+    verify(&app);
+    app.panel_visible = true;
+    app.relayout();
+    paint(&mut app);
+    verify(&app);
+    app.new_file();
+    app.new_file();
+    paint(&mut app);
+    verify(&app);
+    app.config.terminal_enabled = Some(true);
+    app.terminal.open = true;
+    app.terminal
+        .tabs
+        .push(crate::app::terminal::TermTab::new(1, app.terminal_size()));
+    app.config.terminal_right = Some(true);
+    app.relayout();
+    paint(&mut app);
+    verify(&app);
 }
 
 #[test]
@@ -211,9 +301,12 @@ fn touch_title_bar_starts_on_contact_without_scrolling_or_long_press() {
     touch(&mut app, 1, TouchPhase::Started, x, y);
     assert!(
         app.title_click.is_some(),
-        "落指时就处理标题栏，而不是等抬手"
+        "顶栏按下应在落指时记录，而非等到抬手"
     );
-    assert_eq!(app.touch.active(), cfg!(windows));
+    assert!(
+        app.touch.active(),
+        "抬手前应保留接触点，以忽略由触摸提升的鼠标事件"
+    );
     assert_eq!(
         app.touch_tick(Instant::now() + Duration::from_secs(1)),
         None
@@ -221,10 +314,10 @@ fn touch_title_bar_starts_on_contact_without_scrolling_or_long_press() {
     touch(&mut app, 1, TouchPhase::Moved, x, y - 100.0);
     touch(&mut app, 1, TouchPhase::Ended, x, y);
     assert!(!app.touch.active());
-    assert!(app.title_click.is_some(), "抬手不再补发第二次点击");
+    assert!(app.title_click.is_some(), "抬手不应再记录一次顶栏按下");
     assert_eq!(app.editor.active().unwrap().scroll_line, 0.0);
     assert_eq!(app.drag, Drag::None);
-    // 下次按下才是双击，消费前一次的记录。
+    // 第二次落指构成双击，并清除前一次按下的记录。
     touch(&mut app, 2, TouchPhase::Started, x, y);
     assert!(app.title_click.is_none());
 }
@@ -242,7 +335,7 @@ fn touch_window_edges_are_distinct_from_buttons_and_overlays() {
         Some(WindowTouch::Resize(ResizeDirection::NorthWest))
     );
     touch(&mut app, 1, TouchPhase::Started, 1.0, 1.0);
-    assert_eq!(app.touch.active(), cfg!(windows));
+    assert!(app.touch.active());
     touch(&mut app, 1, TouchPhase::Cancelled, 1.0, 1.0);
     let (close, _) = app.window_control_rects()[2];
     assert_eq!(
@@ -270,9 +363,13 @@ fn native_touch_caption_matches_application_targets() {
                 assert_eq!(
                     hit == HTCAPTION,
                     target == Some(WindowTouch::Move),
-                    "caption at {x}, {y}"
+                    "标题栏判定不一致：({x}, {y})"
                 );
-                assert_eq!(hit == HTCLIENT, target.is_none(), "client at {x}, {y}");
+                assert_eq!(
+                    hit == HTCLIENT,
+                    target.is_none(),
+                    "客户区判定不一致：({x}, {y})"
+                );
             }
         }
     };

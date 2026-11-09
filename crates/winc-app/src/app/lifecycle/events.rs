@@ -273,8 +273,10 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CloseRequested => self.request_close_window(),
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::Moved(_) => {
-                // 实际移动过窗口的按下不再参与下一次标题栏双击。
+                // 窗口移动后，此前的按下不再参与顶栏双击的判定。触摸拖动窗口时系统接管输入，
+                // 抬手事件可能不再送达，因此在此结束触摸。
                 self.title_click = None;
+                self.cancel_touch();
                 self.note_window_frame();
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
@@ -368,12 +370,12 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::Ime(ime) => self.on_ime(ime),
             WindowEvent::Touch(touch) => self.on_touch(touch),
-            // 触摸期间位置由接触点决定，兼容鼠标事件不能再次触发点击或改变拖动目标。
+            // 有接触点时指针位置由接触点决定；由触摸提升的鼠标事件不得再次触发点击或改变拖动目标。
             WindowEvent::CursorMoved { .. }
             | WindowEvent::CursorLeft { .. }
             | WindowEvent::MouseInput { .. }
             | WindowEvent::MouseWheel { .. }
-                if self.touch.active() => {}
+                if self.touch_blocks_mouse() => {}
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_inside = true;
                 let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
