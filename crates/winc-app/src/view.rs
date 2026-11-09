@@ -410,8 +410,19 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
         Some((name, key)) => (name, Some(key)),
         None => (label, None),
     };
-    let lines: Vec<&str> = name.split('\n').collect();
     let size = app.fonts.ui_small;
+    let lines: Vec<&str> = if matches!(app.hover, Hover::Tab(_, false)) {
+        let width = (app.layout.window.w - 28.0).max(1.0);
+        name.split('\n')
+            .flat_map(|line| {
+                crate::layout::wrap_text(line, width, |part| {
+                    frame.measure(FontKind::Ui, size, part)
+                })
+            })
+            .collect()
+    } else {
+        name.split('\n').collect()
+    };
     let name_w = lines
         .iter()
         .map(|line| frame.measure(FontKind::Ui, size, line))

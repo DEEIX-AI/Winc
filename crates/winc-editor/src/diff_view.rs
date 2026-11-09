@@ -274,6 +274,8 @@ pub struct DiffView {
     ///
     /// 按块提交时用它找到提交视图里的文件。
     pub repo_path: Option<PathBuf>,
+    /// Git 历史快照对应的文件路径，用于显示，不参与工作区编辑或暂存。
+    pub snapshot_path: Option<PathBuf>,
 }
 
 impl DiffView {
@@ -307,6 +309,7 @@ impl DiffView {
             read_selection: None,
             keys,
             repo_path: None,
+            snapshot_path: None,
         };
         view.layout();
         view

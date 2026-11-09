@@ -114,12 +114,33 @@ fn log_lists_commits_with_their_graph_and_opens_a_files_diff() {
     let doc = app.editor.active().unwrap();
     assert!(doc.title.as_deref().unwrap().starts_with("main.rs · "));
     assert!(doc.diff.is_some());
+    let diff_index = app.editor.active.unwrap();
+    let title = doc.name().into_owned();
 
     // ⌘9 回到日志标签，不新开。
     let tabs = app.editor.documents.len();
     assert!(app.run_action(Action::GitShowLog));
     assert_eq!(app.editor.documents.len(), tabs);
     assert!(app.log_active());
+    paint(&mut app);
+    let hit = app
+        .tabs
+        .hits
+        .iter()
+        .find(|hit| hit.index == diff_index)
+        .unwrap()
+        .tab;
+    app.on_mouse_move(hit.x + 20.0, hit.y + hit.h / 2.0);
+    let folder = winc_editor::display_path(&root.join("src"), None);
+    assert_eq!(
+        crate::view::tests::tooltip(&app),
+        Some((hit, format!("{title}\n{folder}")))
+    );
+    app.on_mouse_move(
+        app.layout.editor.x + 20.0,
+        app.layout.editor.bottom() - 10.0,
+    );
+    assert_eq!(crate::view::tests::tooltip(&app), None);
     let _ = std::fs::remove_dir_all(&root);
 }
 
