@@ -129,6 +129,46 @@ fn opened_urls_reach_the_handler_as_paths() {
 }
 
 #[test]
+fn open_service_is_added_once_and_reads_only_file_urls() {
+    // 测试中没有 `winit` 的委托：用公开的 `NSObject` 子类代替。
+    let class = AnyClass::get(c"NSNumberFormatter").unwrap();
+    let selector = sel!(openInWinc:userData:error:);
+    assert!(class.instance_method(selector).is_none());
+    assert!(add_open_service(class, open_service));
+    assert!(!add_open_service(class, open_service));
+
+    // 服务剪贴板中有一个文件、一个带空格的目录和一个网址；只读出前两个的路径。
+    let file = super::super::files::file_url(Path::new("/tmp/a.txt"), false).unwrap();
+    let dir = super::super::files::file_url(Path::new("/tmp/b c"), true).unwrap();
+    // SAFETY: `pasteboardWithUniqueName` 返回自动释放的独立剪贴板，不影响系统剪贴板，用完后
+    // `releaseGlobally` 释放。网址和数组由 `URLWithString:`、`arrayWithObjects:count:` 返回
+    // 自动释放的对象，在本块内有效；`objects` 的指针和长度描述三个有效的对象。
+    let paths = unsafe {
+        let pasteboard: *mut AnyObject = msg_send![class!(NSPasteboard), pasteboardWithUniqueName];
+        let pasteboard = pasteboard.as_ref().unwrap();
+        let web = super::super::files::ns_string("https://example.com").unwrap();
+        let web: *mut AnyObject = msg_send![class!(NSURL), URLWithString: &*web];
+        let objects: [*mut AnyObject; 3] = [
+            Retained::as_ptr(&file).cast_mut(),
+            Retained::as_ptr(&dir).cast_mut(),
+            web,
+        ];
+        let urls: *mut AnyObject =
+            msg_send![class!(NSArray), arrayWithObjects: objects.as_ptr(), count: 3usize];
+        let _: isize = msg_send![pasteboard, clearContents];
+        let written: Bool = msg_send![pasteboard, writeObjects: urls];
+        assert!(written.as_bool());
+        let paths = service_paths(pasteboard);
+        let () = msg_send![pasteboard, releaseGlobally];
+        paths
+    };
+    assert_eq!(
+        paths,
+        [PathBuf::from("/tmp/a.txt"), PathBuf::from("/tmp/b c")]
+    );
+}
+
+#[test]
 fn menu_items_take_the_display_name() {
     // `winit` 按进程名写的项换成显示名。
     assert_eq!(
