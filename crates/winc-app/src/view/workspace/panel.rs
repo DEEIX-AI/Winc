@@ -986,6 +986,14 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             app.commit_parts().commit_menu,
             t!("workspace-tip-commit-menu").to_owned(),
         )),
+        Hover::Commit(CommitTarget::Ai) => Some((
+            app.commit_parts().ai?,
+            t!("workspace-tip-commit-ai").to_owned(),
+        )),
+        Hover::Commit(CommitTarget::Amend) => Some((
+            app.commit_parts().amend?,
+            t!("workspace-tip-commit-amend").to_owned(),
+        )),
         Hover::Commit(target) => {
             let rect = app
                 .commit_parts()

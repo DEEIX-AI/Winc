@@ -470,6 +470,37 @@ impl App {
         }
     }
 
+    /// 提示词输入框保留换行和上下移动，用修饰键加回车保存。
+    pub(in crate::app) fn settings_prompt_key(
+        &mut self,
+        key: &Key,
+        cmd: bool,
+        shift: bool,
+    ) -> bool {
+        if self.focus != Focus::Setting
+            || !matches!(
+                self.settings.editing.as_ref(),
+                Some((crate::layout::Setting::AiCommitPrompt, _))
+            )
+        {
+            return false;
+        }
+        match key {
+            Key::Named(NamedKey::Enter) if cmd => self.settings_commit_field(),
+            Key::Named(NamedKey::Enter) => self.edit_field(|f| f.insert("\n")),
+            Key::Named(NamedKey::Escape) => self.settings_cancel_field(),
+            Key::Named(NamedKey::Tab) => self.settings_move(!shift),
+            Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) if !cmd => {
+                self.edit_field(|f| {
+                    f.move_vertical(*key == Key::Named(NamedKey::ArrowDown), shift);
+                    false
+                });
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// 处理设置浮层打开时的全部按键。
     ///
     /// - 在字体输入框里：`↩` 提交（名字不对时停留在输入框），`Esc` 放弃这次改动（不关闭浮层），
@@ -494,6 +525,9 @@ impl App {
         }
 
         if self.focus == Focus::Setting {
+            if self.settings_prompt_key(&event.logical_key, cmd, shift) {
+                return;
+            }
             match &event.logical_key {
                 Key::Named(NamedKey::Enter) => self.settings_commit_field(),
                 Key::Named(NamedKey::Escape) => self.settings_cancel_field(),

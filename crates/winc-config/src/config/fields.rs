@@ -54,6 +54,7 @@ pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("terminal", TERMINAL),
     ("git", GIT),
     ("format", FORMAT),
+    ("ai", AI),
 ];
 
 /// 顶层的单值设置，写在各节之后。
@@ -390,6 +391,15 @@ pub(super) const FORMAT: &[Field] = &[
         },
         write: |config| commands_json(&config.fix_commands),
     },
+];
+
+/// `ai` 一节。
+pub(super) const AI: &[Field] = &[
+    string_field!("provider", ai_provider),
+    string_field!("endpoint", ai_endpoint),
+    string_field!("key", ai_key),
+    string_field!("model", ai_model),
+    string_field!("commit_prompt", ai_commit_prompt),
 ];
 
 /// 在 `fields` 中找键名为 `key` 的一项。

@@ -3194,3 +3194,102 @@ fn identical_changes_are_checked_one_by_one() {
     assert!(head.contains("let value_40 = 40;\nlet same = 1;"), "{head}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn commit_toolbar_amend_and_ai() {
+    let Some((mut app, root)) = git_app("git-commit-toolbar", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.commit_scope(), Some(1));
+    let parts = app.commit_parts();
+    assert!(parts.card.is_some());
+    let amend = parts.amend.expect("amend shown at default width");
+    let ai = parts.ai.expect("ai shown when files are checked");
+    assert!(amend.right() <= ai.x);
+    assert!(ai.right() <= parts.commit.x);
+
+    // 侧栏缩到最窄时，Amend 收进下拉菜单，AI 按钮仍然保留在提交按钮左侧。
+    let default_width = app.panel_width;
+    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    let narrow_parts = app.commit_parts();
+    assert!(narrow_parts.amend.is_none());
+    let narrow_ai = narrow_parts.ai.expect("ai shown even at min panel width");
+    assert!(narrow_ai.right() <= narrow_parts.commit.x);
+    app.panel_width = default_width;
+    paint(&mut app);
+
+    // 点 Amend 切换修改上一次提交
+    assert!(!app.commit.amend);
+    app.press_commit(CommitTarget::Amend);
+    assert!(app.commit.amend);
+    app.press_commit(CommitTarget::Amend);
+    assert!(!app.commit.amend);
+
+    // 未配置 AI 模型时点 AI 按钮提示未配置
+    app.press_commit(CommitTarget::Ai);
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some(winc_i18n::t!("git-commit-ai-not-configured"))
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn ai_results_preserve_edits_selection_focus_and_new_requests() {
+    let Some((mut app, root)) = git_app("git-ai-stale", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    app.commit.message.set_text("original");
+    let finish = app.pending_ai_message();
+    app.commit.message.set_text("manual edit");
+    finish(&mut app, "feat: generated");
+    assert_eq!(app.commit.message.text(), "manual edit");
+    assert!(!app.commit.ai_busy);
+
+    let finish = app.pending_ai_message();
+    app.press_commit(CommitTarget::Check(0));
+    finish(&mut app, "feat: wrong selection");
+    assert_eq!(app.commit.message.text(), "manual edit");
+
+    // 同一个提交号的不同分支也有不同票据号，不能接收旧分支的生成结果。
+    let finish = app.pending_ai_message();
+    let head = app.git.status.as_ref().unwrap().oid.clone();
+    app.git.status.as_mut().unwrap().head =
+        Some(winc_editor::git::Head::Branch("feat/OTHER-42".into()));
+    finish(&mut app, "feat: old branch ticket");
+    assert_eq!(app.git.status.as_ref().unwrap().oid, head);
+    assert_eq!(app.commit.message.text(), "manual edit");
+
+    let old_finish = app.pending_ai_message();
+    app.reset_ai_context();
+    let new_finish = app.pending_ai_message();
+    old_finish(&mut app, "feat: old repository state");
+    assert!(app.commit.ai_busy);
+    app.focus = Focus::Settings;
+    new_finish(&mut app, "feat: current request");
+    assert_eq!(app.commit.message.text(), "feat: current request");
+    assert_eq!(app.focus, Focus::Settings);
+    assert!(!app.commit.ai_busy);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn ai_diff_includes_only_checked_hunks() {
+    let Some((mut app, root)) = git_app("git-ai-partial", true) else {
+        return;
+    };
+    let file = root.join("src/main.rs");
+    app.git_preview_changes(&file);
+    paint(&mut app);
+    app.press_diff(DiffTarget::Include(1));
+    let prompt = app.ai_diff_for_checked();
+    assert!(prompt.contains("value_5"));
+    assert!(!prompt.contains("-let value_50 = 50;"));
+    let _ = std::fs::remove_dir_all(&root);
+}

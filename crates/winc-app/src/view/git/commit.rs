@@ -1697,6 +1697,21 @@ fn draw_card(
         }
     }
 
+    // AI 总结按钮
+    if let Some(ai) = parts.ai {
+        let ai_hovered = app.hover == Hover::Commit(CommitTarget::Ai);
+        let ai_busy = app.commit.ai_busy;
+        draw_button(frame, p, ai, clip, ai_hovered, ai_busy);
+        let ai_center = center(ai);
+        if ai_busy {
+            icons::spinner(frame, ai_center, spin_turn(), p.accent, clip);
+        } else {
+            let ai_color = if ai_hovered { p.text } else { p.text_muted };
+            icons::ai(frame, ai_center, ai_color, clip);
+        }
+        hits.push((ai, CommitTarget::Ai));
+    }
+
     // 「提交 ⌄」：强调色的拆分按钮，左边「✓ 提交」，右边一道细竖线隔开下拉箭头。
     // 无法提交（见 `CommitState::blocker`：未勾选文件、未填写说明、仍有冲突标记）时按钮整体
     // 变淡且悬停不变色，表示按下不会生效；变基暂停时无需勾选即可继续。正在提交时保持强调色，

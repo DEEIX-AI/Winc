@@ -206,6 +206,7 @@ fn draw_nav_row(
         SettingsPage::Editor => icons::code(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Format => icons::format(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Terminal => icons::console(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Ai => icons::ai(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Modules => icons::modules(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Keys => icons::keyboard(frame, icon, p.text_muted, layout.nav),
         SettingsPage::About => icons::about(frame, icon, p.text_muted, layout.nav),
@@ -335,6 +336,10 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
         return None;
     }
 
+    if row.setting.control() == SettingControl::TextArea {
+        return draw_prompt(app, frame, row, clip);
+    }
+
     let x = row.row.x + SETTINGS_INSET;
     let room = crate::layout::description_room(row.row, row.control);
     let editing = matches!(&app.settings.editing, Some((s, _)) if *s == row.setting);
@@ -412,6 +417,7 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
 
     match row.setting.control() {
         SettingControl::Font => draw_field(app, frame, row, clip),
+        SettingControl::TextArea => unreachable!("多行输入框已单独绘制"),
         SettingControl::Command if editing => draw_field(app, frame, row, clip),
         SettingControl::Command => {
             let (text, dim) = match app.settings.tool_row(row.setting) {
@@ -427,7 +433,9 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             None
         }
         SettingControl::Choice => {
-            let (text, dim) = if row.setting == Setting::Language {
+            let (text, dim) = if row.setting == Setting::AiProvider {
+                (t!("settings-ai-provider-openai").to_owned(), false)
+            } else if row.setting == Setting::Language {
                 let choice = app.config.language.unwrap_or_default();
                 (crate::layout::locale_label(choice).to_owned(), false)
             } else if row.setting == Setting::RenderWhitespace {
@@ -469,14 +477,61 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             None
         }
         SettingControl::Button => {
-            // 不支持应用内更新时说明行已写明原因，不显示按钮；正在检查、下载时按钮变淡。
-            if app.updates_supported() {
-                let enabled = app.can_check_updates();
-                let label = t!("settings-check-now");
-                let role = ButtonRole::Normal;
-                draw_action_button(app, frame, row.control, label, role, enabled, hovered);
+            if row.setting == Setting::AiTestConnection {
+                let testing = app.settings.ai_testing;
+                let hovered = !testing && hovered;
+                draw_button(frame, p, row.control, clip, hovered, false);
+                let label = if testing {
+                    t!("settings-ai-test-testing")
+                } else {
+                    t!("settings-ai-test-connection")
+                };
+                let w = frame.measure(FontKind::Ui, app.fonts.ui, label);
+                let x = (row.control.x + (row.control.w - w) / 2.0).round();
+                let color = if testing { p.text_dim } else { p.text };
+                ui_text(frame, app, x, row.control, label, color, clip);
+
+                if let Some(result) = &app.settings.ai_test_result {
+                    let (status_text, status_color) = match result {
+                        Ok(result) => {
+                            let message = match result {
+                                crate::app::ai::ConnectionTest::Completion => {
+                                    t!("settings-ai-test-success")
+                                }
+                                crate::app::ai::ConnectionTest::Models => {
+                                    t!("settings-ai-test-no-model")
+                                }
+                            };
+                            (format!("✓ {message}"), p.git_added)
+                        }
+                        Err(err) => (format!("✗ {err}"), p.error),
+                    };
+                    let label_w = frame.measure(FontKind::Ui, app.fonts.ui, row.setting.label());
+                    let room = (row.control.x - row.row.x - label_w - 40.0).max(0.0);
+                    let status_text = ellipsize(frame, &status_text, app.fonts.ui_small, room);
+                    let status_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &status_text);
+                    let status_x = row.control.x - 12.0 - status_w;
+                    ui_text_small(
+                        frame,
+                        app,
+                        status_x,
+                        row.row,
+                        &status_text,
+                        status_color,
+                        clip,
+                    );
+                }
+                None
+            } else {
+                // 不支持应用内更新时说明行已写明原因，不显示按钮；正在检查、下载时按钮变淡。
+                if app.updates_supported() {
+                    let enabled = app.can_check_updates();
+                    let label = t!("settings-check-now");
+                    let role = ButtonRole::Normal;
+                    draw_action_button(app, frame, row.control, label, role, enabled, hovered);
+                }
+                None
             }
-            None
         }
         SettingControl::Stepper => {
             draw_stepper(app, frame, row, clip);
@@ -666,6 +721,84 @@ fn draw_popup(
     ui_text(frame, app, room.right() - w, room, &text, color, room);
 }
 
+/// 绘制提示词的说明、多行编辑框和保存提示。
+fn draw_prompt(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) -> Option<Rect> {
+    let p = app.palette;
+    let rect = row.control;
+    let x = rect.x;
+    let title = Rect::new(x, row.row.y + 4.0, rect.w, 28.0);
+    ui_text(frame, app, x, title, row.setting.label(), p.text, clip);
+    let description = row.setting.description().unwrap_or_default();
+    let lines = crate::layout::wrap_text(&description, rect.w, &mut |text: &str| {
+        frame.measure(FontKind::Ui, app.fonts.ui_small, text)
+    });
+    for (i, line) in lines.iter().enumerate() {
+        let band = Rect::new(
+            x,
+            row.row.y + 34.0 + i as f32 * SETTINGS_DESC_LINE,
+            rect.w,
+            SETTINGS_DESC_LINE,
+        );
+        ui_text_small(frame, app, x, band, line, p.text_muted, clip);
+    }
+    let editing = matches!(&app.settings.editing, Some((s, _)) if *s == row.setting);
+    if editing {
+        frame.rect_clipped(rect.inset(-1.5, -1.5), p.accent, RADIUS_ROW + 1.5, clip);
+    }
+    frame.rect_clipped(rect, p.editor_bg, RADIUS_ROW, clip);
+    let area = rect.inset(10.0, 8.0);
+    // 只显示完整的文字行，避免底部露出下一行的一半。
+    let area = Rect::new(
+        area.x,
+        area.y,
+        area.w,
+        (area.h / AREA_LINE).floor() * AREA_LINE,
+    );
+    let focused = editing && app.focus == Focus::Setting;
+    let mut field = if editing {
+        app.settings.editing.take().expect("刚刚判断过在编辑").1
+    } else {
+        let mut field = TextField::multiline();
+        let text = app
+            .config
+            .ai_commit_prompt
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| crate::app::ai::default_commit_prompt(winc_i18n::locale()));
+        field.set_text(text);
+        field.set_caret(0, false);
+        field
+    };
+    let wrap = wrap_area_field(app, frame, area.w, &mut field, focused);
+    let caret = frame.within(clip, |frame| {
+        draw_area_field(app, frame, area, &mut field, wrap, "", focused)
+    });
+    if editing {
+        app.settings.editing = Some((row.setting, field));
+    }
+    let hint = t!(
+        "settings-ai-commit-prompt-hint",
+        key = if cfg!(target_os = "macos") {
+            "⌘"
+        } else {
+            "Ctrl+"
+        }
+    );
+    let lines = crate::layout::wrap_text(&hint, rect.w, &mut |text: &str| {
+        frame.measure(FontKind::Ui, app.fonts.ui_small, text)
+    });
+    for (i, line) in lines.iter().take(2).enumerate() {
+        let band = Rect::new(
+            x,
+            rect.bottom() + 8.0 + i as f32 * SETTINGS_DESC_LINE,
+            rect.w,
+            SETTINGS_DESC_LINE,
+        );
+        ui_text_small(frame, app, x, band, line, p.text_muted, clip);
+    }
+    caret
+}
+
 /// 绘制字体名和正在输入的格式化命令：平时是右对齐的一段文本（未设置时显示「系统默认」），
 /// 悬停时铺输入框底色，点击后变成输入框，外圈为强调色（字体名无效时为错误色）。
 ///
@@ -675,7 +808,10 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     let rect = row.control;
     let editing = matches!(&app.settings.editing, Some((s, _)) if *s == row.setting);
     let hovered = app.settings.hover == Some(SettingsPart::Field(row.setting));
-    let font = row.setting.control() == SettingControl::Font;
+    let font = matches!(
+        row.setting,
+        Setting::UiFont | Setting::TerminalFont | Setting::EditorFont
+    );
     let on_menu = font && app.settings.hover == Some(SettingsPart::FontMenu(row.setting));
     let hovered = hovered || on_menu;
     let (configured, placeholder) = match row.setting {
@@ -688,6 +824,22 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
             (None, t!("settings-command-placeholder"))
         }
         Setting::TerminalShell => (None, t!("settings-terminal-shell-placeholder")),
+        Setting::AiEndpoint => (
+            app.config.ai_endpoint.clone(),
+            t!("settings-ai-endpoint-placeholder"),
+        ),
+        Setting::AiKey => {
+            let key = if editing {
+                app.config.ai_key.clone()
+            } else {
+                app.config.ai_key.as_ref().map(|k| mask_key(k))
+            };
+            (key, t!("settings-ai-key-placeholder"))
+        }
+        Setting::AiModel => (
+            app.config.ai_model.clone(),
+            t!("settings-ai-model-placeholder"),
+        ),
         _ => (app.config.editor_font.clone(), t!("settings-font-default")),
     };
     // 字体输入框的文字不进入右端的下拉按钮。
@@ -1048,4 +1200,15 @@ fn outline(frame: &mut Frame<'_>, color: Color, rect: Rect, radius: f32, clip: R
     let inner = rect.inset(0.5, 0.5);
     let shapes = icons::rounded_outline(inner.x, inner.y, inner.w, inner.h, radius - 0.5);
     frame.stroke(&shapes, 1.0, color, clip);
+}
+/// 脱敏显示 API 密钥。
+fn mask_key(k: &str) -> String {
+    if k.is_empty() {
+        String::new()
+    } else if k.chars().count() <= 8 {
+        "••••••••".to_owned()
+    } else {
+        let start = k.char_indices().rev().nth(3).map_or(0, |(i, _)| i);
+        format!("••••••••{}", &k[start..])
+    }
 }

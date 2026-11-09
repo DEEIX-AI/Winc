@@ -444,6 +444,18 @@ pub fn progress_ring(
     }
 }
 
+/// 绘制加载中的旋转图标，约 12×12：四分之三圆周的圆弧，起点的弧度按 `turn`（圈数，可为任意
+/// 实数）顺时针旋转。
+///
+/// 半径比 `refresh` 小 0.5 逻辑像素，高度与界面文字的汉字相等，以便与同一行文字对齐。
+pub fn spinner(frame: &mut Frame<'_>, (cx, cy): (f32, f32), turn: f32, color: Color, clip: Rect) {
+    // 起点映射到 -π 至 π 之间：渲染圆弧时按起止角的 `atan2` 结果加或减一圈来确定角度范围，
+    // 起点落在该区间才能保证终点不超过 3π；终点超过 3π 时圆弧末段不绘制。
+    let start = turn.rem_euclid(1.0) * 2.0 * PI - PI;
+    let shapes = [Stroke::Arc(cx, cy, RING - 0.5, start, start + 1.5 * PI)];
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
 /// 绘制按 `turn`（圈数，可为任意实数）顺时针旋转后的「刷新」图标，表示操作正在进行。
 pub fn refresh_turned(
     frame: &mut Frame<'_>,

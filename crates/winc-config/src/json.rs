@@ -73,7 +73,7 @@ impl Json {
     }
 
     /// 把键值对转成对象；键重复时后出现的值覆盖先出现的。
-    pub(crate) fn object<K: Into<String>>(items: impl IntoIterator<Item = (K, Json)>) -> Json {
+    pub fn object<K: Into<String>>(items: impl IntoIterator<Item = (K, Json)>) -> Json {
         Json::Object(items.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
 
@@ -88,7 +88,7 @@ impl Json {
     /// 返回多行缩进的 JSON 文本，缩进到 `indent` 层（每层 2 个空格）。
     ///
     /// 空数组和空对象写成 `[]`、`{}`。
-    pub(crate) fn write(&self, indent: usize) -> String {
+    pub fn write(&self, indent: usize) -> String {
         let mut out = String::new();
         self.write_into(&mut out, indent);
         out

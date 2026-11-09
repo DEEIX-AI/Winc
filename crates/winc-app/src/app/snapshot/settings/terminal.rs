@@ -184,9 +184,9 @@ fn the_terminal_page_is_listed_only_when_the_module_is_on() {
     app.adopt_config(config);
     assert!(!listed(&app));
     assert_eq!(app.settings_layout().page, SettingsPage::Modules);
-    // 键盘移动同样跳过该页：模块页第一项的上一项在格式化页。
+    // 键盘移动同样跳过该页：模块页第一项的上一项在 AI 页。
     app.settings_move(false);
-    assert_eq!(app.settings.selected.page(), SettingsPage::Format);
+    assert_eq!(app.settings.selected.page(), SettingsPage::Ai);
 
     // 在模块页重新开启后立即列出。
     app.settings_toggle(Setting::TerminalModule);

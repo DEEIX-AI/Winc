@@ -410,7 +410,8 @@ impl App {
             | UserEvent::Saved
             | UserEvent::Loaded
             | UserEvent::BackedUp
-            | UserEvent::Replaced) => self.finished(done),
+            | UserEvent::Replaced
+            | UserEvent::AiTestDone) => self.finished(done),
             UserEvent::Rediffed => self.poll_rediffs(),
             UserEvent::Outline => self.poll_outline(),
             UserEvent::GitRollback(paths) => self.git_rollback(paths),

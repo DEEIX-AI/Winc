@@ -182,3 +182,34 @@ settings-zoom = 界面缩放 { $zoom }%
 settings-config-backed-up = 原配置文件无法解析，已另存为 { $path } 后写入新设置
 settings-config-comments-backed-up = 写入设置时无法保留配置文件里的注释，原文件已另存为 { $path }
 settings-config-write-failed = 无法写入配置文件：{ $error }
+
+## AI 设置。
+
+settings-page-ai = AI
+settings-section-ai-providers = 第三方 AI 提供商
+settings-section-ai-models = 模型分配
+settings-ai-provider = 提供商
+settings-ai-provider-desc = 使用个人 API 密钥或本地模型提供方
+settings-ai-provider-openai = 兼容 OpenAI 协议
+settings-ai-endpoint = URL
+settings-ai-endpoint-desc = 第三方 API 基础地址，例如 https://api.openai.com/v1
+settings-ai-key = API Key
+settings-ai-key-desc = 用于发送请求的个人 API 密钥
+settings-ai-test-connection = 测试连接
+settings-ai-test-testing = 正在测试连接…
+settings-ai-test-success = 连接成功
+settings-ai-test-no-model = 已获取模型列表，请指定模型以测试对话功能
+settings-ai-model = 核心功能
+settings-ai-model-desc = 用于提交信息生成。
+settings-ai-endpoint-placeholder = https://api.openai.com/v1
+settings-ai-key-placeholder = API Key
+settings-ai-model-placeholder = deepseek-chat
+
+settings-ai-invalid-url = 请输入有效的 HTTP 或 HTTPS API 地址
+settings-ai-invalid-key = API 密钥包含无效的控制字符
+settings-ai-invalid-response = AI 服务返回了无效响应
+
+settings-section-ai-commit = 提交说明
+settings-ai-commit-prompt = 生成提示词
+settings-ai-commit-prompt-desc = 每次点击 AI 生成提交说明时使用此提示词，可自由定制。示例：从 $GIT_BRANCH_NAME 提取票据号；尽量简短；使用德语；遵循 Conventional Commits；多项改动使用无序列表。
+settings-ai-commit-prompt-hint = Enter 换行 · { $key }Enter 保存 · Esc 取消。清空后恢复当前界面语言的默认规则。

@@ -36,6 +36,55 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
+    /// 读取有硬上限的输出前缀；超限时由 Drop 终止剩余输出，避免巨型补丁占满内存。
+    pub(crate) fn read_prefix(
+        &mut self,
+        limit: usize,
+        timeout: Duration,
+    ) -> Result<(Vec<u8>, bool), StreamError> {
+        let pid = self.child.id();
+        let (done, wait) = mpsc::channel::<()>();
+        let watchdog = thread::spawn(move || {
+            let expired = matches!(
+                wait.recv_timeout(timeout),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+            if expired {
+                kill_group(pid);
+            }
+            expired
+        });
+        let mut out = Vec::new();
+        let result = self
+            .stdout
+            .by_ref()
+            .take(limit.saturating_add(1) as u64)
+            .read_to_end(&mut out);
+        drop(done);
+        if watchdog.join().unwrap_or(false) {
+            return Err(StreamError::Run(RunError::Timeout));
+        }
+        result.map_err(|e| StreamError::Run(RunError::Spawn(e)))?;
+        if out.len() > limit {
+            out.truncate(limit);
+            return Ok((out, true));
+        }
+        self.eof = true;
+        let status = self
+            .child
+            .wait()
+            .map_err(|e| StreamError::Run(RunError::Spawn(e)))?;
+        if !status.success() {
+            let stderr = self
+                .stderr
+                .take()
+                .and_then(|t| t.join().ok())
+                .unwrap_or_default();
+            return Err(StreamError::Exited(stderr));
+        }
+        Ok((out, false))
+    }
+
     /// 启动 `command`：标准输入接空设备，标准输出、标准错误接管道；进程自成一个进程组
     /// （与 [`super::run`] 相同）。
     ///

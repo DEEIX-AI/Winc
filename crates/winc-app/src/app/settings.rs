@@ -66,6 +66,13 @@ pub struct SettingsState {
     pub recording: bool,
     /// 搜索框中的内容是否为录制的按键（按键搜索，而不是按名称搜索）。
     pub keys_recorded: bool,
+    /// 是否正在测试 AI 连通性。
+    pub ai_testing: bool,
+    /// AI 连通性测试的结果。
+    pub ai_test_result: Option<Result<super::ai::ConnectionTest, String>>,
+    /// AI 测试完成的通道。
+    pub(crate) ai_test_channel:
+        Option<std::sync::mpsc::Receiver<Result<super::ai::ConnectionTest, String>>>,
     /// 浮层正在出现（`true`）或消失（`false`）的动画：出现时遮罩淡入，卡片整张淡入、从 95%
     /// 放大到原大；消失时整张淡出、略微缩小。
     ///
@@ -639,6 +646,7 @@ impl App {
             SettingControl::Switch => self.settings_set_switch(setting, forward),
             SettingControl::Font if forward => self.settings_open_menu(setting),
             SettingControl::Font
+            | SettingControl::TextArea
             | SettingControl::Command
             | SettingControl::Action
             | SettingControl::Choice
@@ -691,7 +699,7 @@ impl App {
         let setting = self.settings.selected;
 
         match setting.control() {
-            SettingControl::Font => self.settings_start_editing(setting),
+            SettingControl::Font | SettingControl::TextArea => self.settings_start_editing(setting),
             SettingControl::Switch => self.settings_toggle(setting),
             SettingControl::Command
             | SettingControl::Action
@@ -843,11 +851,35 @@ impl App {
         let current = match tool_setting(setting) {
             Some((task, id)) => task_commands(&self.config, task).get(id).cloned(),
             None if setting == Setting::TerminalShell => self.config.terminal_shell.clone(),
-            None => self.font_setting(setting).clone(),
+            None => match setting {
+                Setting::AiEndpoint => self.config.ai_endpoint.clone(),
+                Setting::AiKey => self.config.ai_key.clone(),
+                Setting::AiModel => self.config.ai_model.clone(),
+                Setting::AiCommitPrompt => self.config.ai_commit_prompt.clone(),
+                _ => self.font_setting(setting).clone(),
+            },
         };
-        let mut field = TextField::default();
-        field.set_text(current.as_deref().unwrap_or(""));
-        field.select_all();
+        let mut field = if setting.control() == SettingControl::TextArea {
+            TextField::multiline()
+        } else {
+            TextField::default()
+        };
+        let fallback = if setting == Setting::AiCommitPrompt {
+            super::ai::default_commit_prompt(winc_i18n::locale())
+        } else {
+            ""
+        };
+        field.set_text(
+            current
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(fallback),
+        );
+        if setting.control() == SettingControl::TextArea {
+            field.set_caret(0, false);
+        } else {
+            field.select_all();
+        }
 
         self.settings.selected = setting;
         self.settings.editing = Some((setting, field));
@@ -911,6 +943,12 @@ impl App {
         if setting.control() != SettingControl::Font {
             return;
         }
+        if matches!(
+            setting,
+            Setting::AiEndpoint | Setting::AiKey | Setting::AiModel
+        ) {
+            return;
+        }
         let text = field.text().trim().to_owned();
         *self.font_setting(setting) = (!text.is_empty()).then_some(text);
         self.settings.error = None;
@@ -925,7 +963,12 @@ impl App {
         };
 
         let original = self.settings.editing_original.take();
-        if setting.control() == SettingControl::Font {
+        if setting.control() == SettingControl::Font
+            && !matches!(
+                setting,
+                Setting::AiEndpoint | Setting::AiKey | Setting::AiModel
+            )
+        {
             *self.font_setting(setting) = original;
         }
         self.settings.error = None;
@@ -943,18 +986,55 @@ impl App {
             return;
         };
         let (setting, text) = (*setting, field.text().trim().to_owned());
-        let value = (!text.is_empty()).then_some(text);
+        // 未改动内置提示词时仍保持自动模式，切换界面语言后能跟随默认语言。
+        let unchanged_default = setting == Setting::AiCommitPrompt
+            && self
+                .settings
+                .editing_original
+                .as_deref()
+                .is_none_or(|s| s.trim().is_empty())
+            && text == super::ai::default_commit_prompt(winc_i18n::locale());
+        let value = (!text.is_empty() && !unchanged_default).then_some(text);
 
-        match tool_setting(setting) {
-            Some((task, id)) => self.settings_commit_command(task, id, value),
-            None if setting == Setting::TerminalShell => {
+        match setting {
+            Setting::AiEndpoint | Setting::AiKey | Setting::AiModel | Setting::AiCommitPrompt => {
+                let configured = match setting {
+                    Setting::AiEndpoint => &mut self.config.ai_endpoint,
+                    Setting::AiKey => &mut self.config.ai_key,
+                    Setting::AiCommitPrompt => &mut self.config.ai_commit_prompt,
+                    _ => &mut self.config.ai_model,
+                };
+                if setting != Setting::AiCommitPrompt && *configured != value {
+                    self.settings.ai_test_result = None;
+                    self.settings.ai_test_channel = None;
+                    self.settings.ai_testing = false;
+                }
+                *configured = value;
+                if setting != Setting::AiCommitPrompt {
+                    self.config
+                        .ai_provider
+                        .get_or_insert_with(|| "openai-compatible".to_owned());
+                }
                 self.settings.editing = None;
                 self.settings.editing_original = None;
                 self.settings.error = None;
-                self.focus = Focus::Settings;
-                self.set_terminal_shell(value);
+                if self.focus == Focus::Setting {
+                    self.focus = Focus::Settings;
+                }
+                self.save_config();
+                self.request_redraw();
             }
-            None => self.settings_commit_font(setting, value),
+            _ => match tool_setting(setting) {
+                Some((task, id)) => self.settings_commit_command(task, id, value),
+                None if setting == Setting::TerminalShell => {
+                    self.settings.editing = None;
+                    self.settings.editing_original = None;
+                    self.settings.error = None;
+                    self.focus = Focus::Settings;
+                    self.set_terminal_shell(value);
+                }
+                None => self.settings_commit_font(setting, value),
+            },
         }
     }
 
@@ -1272,6 +1352,14 @@ impl App {
     pub(crate) fn adopt_config(&mut self, config: Config) {
         let old = std::mem::replace(&mut self.config, config);
         let new = &self.config;
+        if old.ai_endpoint != new.ai_endpoint
+            || old.ai_key != new.ai_key
+            || old.ai_model != new.ai_model
+        {
+            self.settings.ai_testing = false;
+            self.settings.ai_test_channel = None;
+            self.settings.ai_test_result = None;
+        }
         let zoom = old.ui_zoom != new.ui_zoom;
         let fonts = (old.editor_font != new.editor_font || old.ui_font != new.ui_font)
             || (old.editor_size != new.editor_size || old.ui_size != new.ui_size)
@@ -1351,6 +1439,45 @@ impl App {
         }
         self.relayout();
         self.request_redraw();
+    }
+
+    /// 测试 AI 模型的连接配置。
+    pub(in crate::app) fn settings_test_ai_connection(&mut self) {
+        self.settings_leave_field();
+        if self.settings.ai_testing {
+            return;
+        }
+        let endpoint = self
+            .config
+            .ai_endpoint
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let key = self.config.ai_key.clone();
+        let model = self.config.ai_model.clone();
+
+        self.settings.ai_testing = true;
+        self.settings.ai_test_result = None;
+        self.request_redraw();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.settings.ai_test_channel = Some(receiver);
+
+        self.spawn_blocking_then(UserEvent::AiTestDone, move || {
+            let res = crate::app::ai::test_connection(&endpoint, key.as_deref(), model.as_deref());
+            let _ = sender.send(res);
+        });
+    }
+
+    /// 收下 AI 连通性测试的结果。
+    pub(in crate::app) fn poll_ai_test(&mut self) {
+        if let Some(receiver) = &self.settings.ai_test_channel
+            && let Ok(result) = receiver.try_recv()
+        {
+            self.settings.ai_testing = false;
+            self.settings.ai_test_result = Some(result);
+            self.settings.ai_test_channel = None;
+            self.request_redraw();
+        }
     }
 }
 

@@ -106,6 +106,7 @@ impl App {
         let part = self.settings_part_at(x, y);
 
         if !layout.card.contains(x, y) {
+            self.settings_leave_field();
             self.close_settings();
             return;
         }

@@ -160,6 +160,16 @@ pub struct Config {
     ///
     /// 没写的语言自动选择工具。
     pub fix_commands: BTreeMap<String, String>,
+    /// AI 模型服务提供商（例如 "openai-compatible"）。
+    pub ai_provider: Option<String>,
+    /// AI 服务的 API 端点基础 URL（例如 <https://api.openai.com/v1>）。
+    pub ai_endpoint: Option<String>,
+    /// AI 服务的 API 密钥。
+    pub ai_key: Option<String>,
+    /// 核心功能使用的 AI 模型名称（例如 "deepseek-v4-flash-ga-260"、"gpt-4o"）。
+    pub ai_model: Option<String>,
+    /// 自定义提交说明提示词；为空时按界面语言使用默认规则。支持 `$GIT_BRANCH_NAME`。
+    pub ai_commit_prompt: Option<String>,
 }
 
 /// 终端里哪一边的 ⌥ 当 Meta 用；另一边仍然输入 `å`、`∑` 这类字符。
