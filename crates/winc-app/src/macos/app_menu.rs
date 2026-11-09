@@ -371,6 +371,109 @@ pub fn add_settings_menu(open: impl Fn() + Send + Sync + 'static) {
 /// 菜单项「设置…」的动作名，添加在 `winit` 的应用委托上。
 const SETTINGS_ACTION: &CStr = c"wincOpenSettings:";
 
+/// 菜单栏「安装 winc 命令…」被选中时调用的回调；只在主线程上设置和调用。
+type InstallCommandHandler = Box<dyn Fn() + Send + Sync>;
+
+static INSTALL_COMMAND_HANDLER: OnceLock<InstallCommandHandler> = OnceLock::new();
+
+/// 菜单项「安装 winc 命令…」的动作名，添加在 `winit` 的应用委托上。
+const INSTALL_COMMAND_ACTION: &CStr = c"wincInstallCommand:";
+
+/// 在应用菜单的「设置…」下面添加一项「安装 winc 命令…」，选中时调用 `install`。
+///
+/// 只在用户选择时安装，与命令面板中的同名命令相同；启动时不自动安装。必须在
+/// [`add_settings_menu`] 之后调用：找不到「设置…」时不添加。只有第一次调用生效。
+pub fn add_install_command_menu(install: impl Fn() + Send + Sync + 'static) {
+    if INSTALL_COMMAND_HANDLER.set(Box::new(install)).is_err() {
+        return;
+    }
+
+    /// 实现 `- (void)wincInstallCommand:(id)sender`：菜单项「安装 winc 命令…」的动作。
+    extern "C-unwind" fn install_command(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        _sender: *mut AnyObject,
+    ) {
+        if let Some(install) = INSTALL_COMMAND_HANDLER.get() {
+            install();
+        }
+    }
+
+    let Some(delegate) = AnyClass::get(DELEGATE) else {
+        return;
+    };
+    add_method(delegate, INSTALL_COMMAND_ACTION, install_command);
+
+    // SAFETY: 用到的 `NSApplication`、`NSMenu` 是公开 API，只在主线程调用。指针先判空再使用；
+    // 取出的 `app`、`main_menu`、`app_item`、`app_menu` 和委托由 AppKit 持有，调用内有效，满足
+    // `insert_install_item` 的要求。
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let Some(app) = app.as_ref() else {
+            return;
+        };
+        let target: *mut AnyObject = msg_send![app, delegate];
+        let Some(target) = target.as_ref() else {
+            return;
+        };
+        let main_menu: *mut AnyObject = msg_send![app, mainMenu];
+        let Some(main_menu) = main_menu.as_ref() else {
+            return;
+        };
+        let app_item: *mut AnyObject = msg_send![main_menu, itemAtIndex: 0isize];
+        let Some(app_item) = app_item.as_ref() else {
+            return;
+        };
+        let app_menu: *mut AnyObject = msg_send![app_item, submenu];
+        if let Some(app_menu) = app_menu.as_ref() {
+            insert_install_item(app_menu, target);
+        }
+    }
+}
+
+/// 在应用菜单 `app_menu` 中，动作对象为 `target` 的「设置…」下面插入「安装 winc 命令…」，返回
+/// 是否插入；找不到「设置…」时不插入。
+///
+/// # Safety
+///
+/// 只能在主线程调用；`app_menu` 必须是有效的 `NSMenu`，`target` 必须在菜单存在期间有效。
+unsafe fn insert_install_item(app_menu: &AnyObject, target: &AnyObject) -> bool {
+    let (Some(title), Some(key)) = (
+        ns_string(winc_i18n::t!("menu-install-command")),
+        ns_string(""),
+    ) else {
+        return false;
+    };
+    // SAFETY: 由调用方保证在主线程调用、`app_menu` 和 `target` 有效。`NSMenu`、`NSMenuItem` 是
+    // 公开 API；标题和空的快捷键字符串由 `ns_string` 创建并持有到块末尾。菜单项 `alloc` 后 +1，
+    // 加入菜单后由菜单持有，`release` 抵消。插入下标为「设置…」的下标加 1，不超过项数。
+    unsafe {
+        // 「设置…」的下标；不存在时为 -1。
+        let settings: isize = msg_send![
+            app_menu,
+            indexOfItemWithTarget: target,
+            andAction: Sel::register(SETTINGS_ACTION)
+        ];
+        if settings < 0 {
+            return false;
+        }
+        let item: *mut AnyObject = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut AnyObject = msg_send![
+            item,
+            initWithTitle: &*title,
+            action: Sel::register(INSTALL_COMMAND_ACTION),
+            keyEquivalent: &*key
+        ];
+        let Some(item) = item.as_ref() else {
+            return false;
+        };
+        let () = msg_send![item, setTarget: target];
+        let () = msg_send![app_menu, insertItem: item, atIndex: settings + 1];
+        let () = msg_send![item, release];
+        true
+    }
+}
+
 /// 把应用菜单 `app_menu` 中以进程名结尾的项（`winit` 建菜单时按进程名写的「About winc」
 /// 「Hide winc」「Quit winc」）改用应用的显示名，与菜单栏上的应用名一致。
 ///

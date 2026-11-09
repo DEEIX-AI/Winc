@@ -509,6 +509,7 @@ impl App {
                 self.show_window();
                 self.open_settings();
             }
+            UserEvent::InstallShellCommand => self.install_shell_command(),
             // 编号为所弹出菜单中的序号，按记录的菜单查找对应的命令。
             UserEvent::MenuCommand(tag) => {
                 let command = self.context_menu.as_ref().and_then(|menu| {

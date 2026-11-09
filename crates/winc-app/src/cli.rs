@@ -37,6 +37,9 @@ pub struct Args {
     /// `-n`、`--new-instance`：不交给正在运行的 winc，由当前进程新建实例；也不接收之后启动的
     /// winc 交来的目录和文件。
     pub new_instance: bool,
+    /// 由命令行启动脚本（`bin/winc`、`bin/winc.cmd`）启动：窗口进程需要转到后台，命令才能立即返回
+    /// （见 [`crate::shell_command::detach`]）。
+    pub launcher: bool,
 }
 
 impl Args {
@@ -74,6 +77,11 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 }
                 Some("-n" | "--new-instance") => {
                     parsed.new_instance = true;
+                    continue;
+                }
+                // 启动脚本传入的标记，不列入用法说明。
+                Some(LAUNCHER_FLAG) => {
+                    parsed.launcher = true;
                     continue;
                 }
                 // WSL 中的启动脚本传入发行版名称，不列入用法说明。
@@ -116,6 +124,25 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         return Err(format!("{}\n\n{}", t!("cmd-cli-wait-needs-file"), usage()));
     }
     Ok(parsed)
+}
+
+/// 命令行启动脚本传给程序的标记，见 [`Args::launcher`]。
+pub const LAUNCHER_FLAG: &str = "--launcher";
+
+/// 返回去掉启动脚本标记后的参数（`--` 之后的同名参数是文件名，保留）。
+///
+/// 窗口进程转到后台时使用：新进程收到这些参数，不会再次转移。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn without_launcher_flag(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut options = true;
+    args.into_iter()
+        .filter(|arg| {
+            if arg == "--" {
+                options = false;
+            }
+            !(options && arg == LAUNCHER_FLAG)
+        })
+        .collect()
 }
 
 /// 返回命令行用法说明。

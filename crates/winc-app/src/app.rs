@@ -129,6 +129,9 @@ pub enum UserEvent {
     /// 菜单栏的「设置…」（或 ⌘,）被触发；设置已打开时关闭设置。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     OpenSettings,
+    /// 菜单栏的「安装 winc 命令…」被触发。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    InstallShellCommand,
     /// macOS 上全屏过渡中红绿灯的位置发生变化（见 `crate::macos::TrafficLights`），
     /// 需要重新计算布局并重绘。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
