@@ -13,8 +13,9 @@ impl App {
         config: Config,
     ) -> Self {
         // 启动时打开的目录在界面创建之前读入，这里补上文件树的显示方式。
+        let compact = config.compact_folders != Some(false);
         if let Some(ws) = &mut editor.workspace {
-            ws.set_compact(config.compact_folders != Some(false));
+            ws.set_compact(compact);
         }
         // 启动时恢复的标签同样计入最近打开的文件，当前标签排在最前。
         let recent_files = {
@@ -204,7 +205,11 @@ impl App {
             settings: SettingsState::default(),
             format: FormatState::new(formatter()),
             git: git::GitState::default(),
-            commit: git::commit::CommitState::default(),
+            commit: {
+                let mut commit = git::commit::CommitState::default();
+                commit.set_compact(compact);
+                commit
+            },
             commit_hits: Vec::new(),
             changes: git::changes::LineChanges::default(),
             log: git::log::LogState::default(),

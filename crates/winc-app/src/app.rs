@@ -410,6 +410,8 @@ pub enum Hover {
     MarkdownToc(crate::app::preview::markdown::TocTarget),
     Search(SearchButton),
     TreeRow(usize),
+    /// 历史差异侧栏标题行中切换树形与列表的按钮。
+    LogDiffLayout,
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
     Tab(usize, bool),
     Splitter,
@@ -486,6 +488,7 @@ impl Hover {
                 | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
+                | Hover::LogDiffLayout
                 | Hover::Tab(..)
                 | Hover::TabList
                 | Hover::Preview(_)

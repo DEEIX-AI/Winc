@@ -337,8 +337,15 @@ impl App {
                 return Some((Scrollbar::Outline, grab(y, thumb.y, thumb.h)));
             }
         }
-        // 提交视图的改动列表。
-        if self.commit_shown() {
+        // Git 侧栏里正在显示的改动列表，或历史提交的文件列表。
+        if self.log_diff_tree().is_some() {
+            let list = self.commit_parts().list;
+            if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
+                let content = self.log_list_max_scroll() + list.h;
+                let thumb = scrollbar_thumb(list, self.log_list().scroll, content)?;
+                return Some((Scrollbar::Commit, grab(y, thumb.y, thumb.h)));
+            }
+        } else if self.commit_shown() {
             let list = self.commit_parts().list;
             if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
                 let content = self.commit_max_scroll() + list.h;

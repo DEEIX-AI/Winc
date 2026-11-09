@@ -10,11 +10,14 @@ mod filter;
 mod keys;
 pub(crate) mod menus;
 mod time;
+mod tree;
 
 pub(crate) use time::*;
+pub(crate) use tree::LogDiffTree;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -248,11 +251,30 @@ enum Loaded {
     },
     /// 一个文件在一次提交里的差异，打开成标签。
     Diff {
-        /// 在哪个仓库里比较的：之后换了目录就不要了。
-        root: PathBuf,
+        /// 发起读取时的请求序号，与 `LogState::diff_request` 不同时结果已过时。
+        request: u64,
+        /// 文件所属的提交或比较。
+        source: Arc<LogDiffSource>,
+        /// 文件在 `source.files` 中的下标。
+        file: usize,
         title: String,
         view: Result<Box<DiffView>, String>,
     },
+}
+
+/// 从日志打开的差异所属的提交或比较。
+#[derive(PartialEq, Eq)]
+struct LogDiffSource {
+    /// 所在仓库的根目录。
+    root: PathBuf,
+    /// 旧的一侧的提交；根提交没有父提交，为 `None`。
+    old: Option<String>,
+    /// 新的一侧的提交。
+    new: String,
+    /// 标题中显示的版本：提交号，或「旧…新」两个提交号。
+    version: String,
+    /// 改动的文件。
+    files: Vec<CommitFile>,
 }
 
 /// 日志标签的状态（标签里的数据在 `Document::log` 里，这里是和后台之间的通道、点击区域）。
@@ -268,10 +290,17 @@ pub(crate) struct LogState {
     pub hits: Vec<(Rect, LogTarget)>,
     /// 打开文件差异的标签：一个接一个地看几个文件，只占一个标签。
     preview: Option<DocumentId>,
-    /// 当前差异标签对应的日志标签及文件下标。
-    ///
-    /// 在差异中越过最后一处改动时，据此打开同一提交中的下一个文件。
-    preview_source: Option<(DocumentId, usize)>,
+    /// 当前预览对应的提交及文件列表，独立于日志中后来选中的提交。
+    tree: Option<LogDiffTree>,
+    /// 文件列表的浏览状态（见 [`App::with_log_list`]）。
+    list: crate::app::git::commit::CommitState,
+    /// 文件列表对应的仓库状态：该提交改动的文件，下标与 `tree` 中的文件相同。
+    status: Option<winc_editor::git::Status>,
+    /// 只接收最后一次打开文件的后台结果。
+    diff_request: u64,
+    /// 提交视图与文件列表之间的过渡（见 [`App::track_log_tree`]）：上一帧是否显示文件列表、
+    /// 侧栏上一帧是否显示提交视图，以及过渡的时钟。
+    header: (bool, bool, Option<crate::app::Clock>),
     /// 键盘在详情的文件列表里时，选着第几个文件（`→` 进去、`←` / `Esc` 出来）；在提交列表里
     /// 时为 `None`。
     pub file: Option<usize>,
@@ -344,6 +373,12 @@ impl LogState {
     /// 后台正在读取的流交回来时文档已经不在，随结果一起丢弃。
     pub(super) fn forget(&mut self, id: DocumentId) {
         self.streams.remove(&id);
+        if self.preview == Some(id) {
+            self.preview = None;
+            self.tree = None;
+            self.status = None;
+            self.diff_request += 1;
+        }
     }
 }
 
@@ -355,7 +390,11 @@ impl Default for LogState {
             authors: Vec::new(),
             hits: Vec::new(),
             preview: None,
-            preview_source: None,
+            tree: None,
+            list: crate::app::git::commit::CommitState::browsing(&Default::default()),
+            status: None,
+            diff_request: 0,
+            header: (false, false, None),
             file: None,
             open_first: None,
             clipped: None,
@@ -778,71 +817,107 @@ impl App {
             return;
         };
         // 比较两个版本时：左边是旧的一边，右边是新的一边；否则左边是第一个父提交（根提交没有）。
-        let Some((old, new, file, title)) = self.editor.document(log).and_then(|d| {
+        let Some((old, new, version, files)) = self.editor.document(log).and_then(|d| {
             let view = d.log.as_deref()?;
             if let Some(compare) = &view.compare {
-                let file = compare.files.as_ref()?.get(i)?.clone();
-                let name = winc_editor::display_name(&file.path).into_owned();
-                let title = format!("{name} · {}…{}", short(&compare.from), short(&compare.to));
-                return Some((Some(compare.from.clone()), compare.to.clone(), file, title));
+                let version = format!("{}…{}", short(&compare.from), short(&compare.to));
+                return Some((
+                    Some(compare.from.clone()),
+                    compare.to.clone(),
+                    version,
+                    compare.files.as_ref()?,
+                ));
             }
             let commit = view.commits.get(view.selected?)?;
-            let file = view.details.as_ref()?.files.as_ref()?.get(i)?.clone();
-            let name = winc_editor::display_name(&file.path).into_owned();
-            let title = format!("{name} · {}", short(&commit.oid));
             Some((
                 commit.parents.first().cloned(),
                 commit.oid.clone(),
-                file,
-                title,
+                short(&commit.oid).to_owned(),
+                view.details.as_ref()?.files.as_ref()?,
             ))
         }) else {
             return;
         };
-        self.log.preview_source = Some((log, i));
+        self.diff_land = None;
+        self.load_log_diff(
+            Arc::new(LogDiffSource {
+                root,
+                old,
+                new,
+                version,
+                files: files.clone(),
+            }),
+            i,
+        );
+    }
+
+    fn load_log_diff(&mut self, source: Arc<LogDiffSource>, i: usize) {
+        let Some(file) = source.files.get(i) else {
+            return;
+        };
+        let name = winc_editor::display_name(&file.path);
+        let title = format!("{name} · {}", source.version);
+        self.log.diff_request += 1;
+        let request = self.log.diff_request;
         let sender = self.log.results.0.clone();
         self.spawn_git(UserEvent::GitLog, move |tool| {
             let view = match tool {
-                Ok(git) => commit_diff(&git, &root, old.as_deref(), &new, &file).map(Box::new),
+                Ok(git) => commit_diff(
+                    &git,
+                    &source.root,
+                    source.old.as_deref(),
+                    &source.new,
+                    &source.files[i],
+                )
+                .map(Box::new),
                 Err(e) => Err(unusable(&e)),
             };
-            let _ = sender.send(Loaded::Diff { root, title, view });
+            let _ = sender.send(Loaded::Diff {
+                request,
+                source,
+                file: i,
+                title,
+                view,
+            });
         });
     }
 
-    /// 标签 `id` 是否是从日志打开的差异。
+    /// 标签 `id` 是否是当前仓库从日志打开的差异。
     pub(in crate::app) fn steps_log_files(&self, id: DocumentId) -> bool {
-        self.log.preview == Some(id) && self.log.preview_source.is_some()
+        self.log.preview == Some(id)
+            && self
+                .log
+                .tree
+                .as_ref()
+                .is_some_and(|tree| self.git.root.as_ref() == Some(&tree.source.root))
     }
 
-    /// 从日志打开的差异标签里，同一提交中的下一个（`forward`）或上一个文件：（日志标签，从 0 起的
-    /// 序号，文件名，文件总数）；当前标签不是这种差异，或者没有更多文件时为 `None`。
+    /// 返回按文件树的显示顺序，同一提交中的下一个（`forward`）或上一个文件：（下标，在显示
+    /// 顺序中的位置（从 0 起），文件名，文件总数）；当前标签不是从日志打开的差异，或者没有
+    /// 更多文件时返回 `None`。
     pub(in crate::app) fn next_log_file(
         &self,
         forward: bool,
-    ) -> Option<(DocumentId, usize, String, usize)> {
-        let active = self.editor.active().map(|d| d.id);
-        let (log, i) = self
+    ) -> Option<(usize, usize, String, usize)> {
+        let id = self.editor.active()?.id;
+        let tree = self
             .log
-            .preview_source
-            .filter(|_| active == self.log.preview)?;
-        let view = self.editor.document(log)?.log.as_deref()?;
-        let files = match &view.compare {
-            Some(compare) => compare.files.as_ref()?,
-            None => view.details.as_ref()?.files.as_ref()?,
-        };
-        let next = if forward { i + 1 } else { i.checked_sub(1)? };
+            .tree
+            .as_ref()
+            .filter(|_| self.steps_log_files(id))?;
+        let files = &tree.source.files;
+        let (next, at) = self.log_diff_neighbor(forward)?;
         let name = winc_editor::display_name(&files.get(next)?.path).into_owned();
-        Some((log, next, name, files.len()))
+        Some((next, at, name, files.len()))
     }
 
-    /// 在从日志打开的差异标签中打开同一提交中的下一个（`forward`）或上一个文件，返回是否已打开。
+    /// 在同一个差异标签里打开同一提交的上一个或下一个文件。
     pub(in crate::app) fn step_log_file(&mut self, forward: bool) -> bool {
-        let Some((log, next, name, total)) = self.next_log_file(forward) else {
+        let Some((next, at, name, total)) = self.next_log_file(forward) else {
             return false;
         };
-        self.open_log_file_of(log, next);
-        let (index, name) = (next + 1, name.as_str());
+        self.open_log_diff_file(next);
+        let (index, name) = (at + 1, name.as_str());
         self.flash(if forward {
             t!("git-next-file", name = name, index = index, total = total)
         } else {
@@ -938,13 +1013,30 @@ impl App {
                         }
                     }
                 }
+                Loaded::Diff { request, .. } if request != self.log.diff_request => {}
                 // 等结果的时候换了目录：是旧仓库的，不在这里开标签。
-                Loaded::Diff { root, .. } if self.git.root.as_deref() != Some(root.as_path()) => {}
-                Loaded::Diff { title, view, .. } => match view {
+                Loaded::Diff { source, .. } if self.git.root.as_ref() != Some(&source.root) => {}
+                Loaded::Diff {
+                    source,
+                    file,
+                    title,
+                    view,
+                    ..
+                } => match view {
                     Ok(view) => {
+                        // 只在新建差异标签时打开侧栏的文件树，之后保留用户对侧栏的选择。
+                        let new_tab = (self.log.preview)
+                            .and_then(|id| self.editor.document(id))
+                            .is_none();
                         let index = self.editor.show_diff_in(self.log.preview, &title, *view);
                         self.log.preview = Some(self.editor.documents[index].id);
+                        self.select_log_diff(source, file);
+                        if new_tab {
+                            self.set_sidebar_view(crate::layout::SidebarView::Commit);
+                            self.set_sidebar(true);
+                        }
                         self.relayout();
+                        self.reveal_log_diff_file();
                         self.clamp_scroll();
                         self.land_diff_file();
                     }
