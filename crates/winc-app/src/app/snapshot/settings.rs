@@ -712,7 +712,7 @@ fn scrolled_rows_stay_under_the_header() {
     }
     // 不可见的「安装方法…」链接不会被点击命中。
     let hidden = app
-        .settings
+        .hits
         .install_links
         .iter()
         .find(|(s, _)| *s == Setting::FormatCommand("python"));

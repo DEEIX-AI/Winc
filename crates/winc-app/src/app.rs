@@ -791,8 +791,8 @@ pub struct App {
     pub diff: diff::DiffState,
     /// 状态栏的界面状态。
     pub status: status::StatusState,
-    /// 粘滞滚动的状态。
-    pub sticky: editor::sticky::Sticky,
+    /// 粘滞滚动的计算缓存：钉住的行未变化时不重新计算。
+    sticky_cache: Option<editor::sticky::StickyCache>,
     /// 已完成、待采用的大文件断行结果（见 [`App::poll_wraps`]）。
     wraps: Arc<Mutex<Vec<(DocumentId, winc_editor::WrapResult)>>>,
     /// 长行的着色结果，跨帧复用（见 [`crate::view::LineTokens`]）。

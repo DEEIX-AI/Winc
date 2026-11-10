@@ -119,14 +119,14 @@ impl App {
         // `scroll_line` 带小数时，顶部第一行的上半部分已滚到固定区域之下。
         let partial = scroll.fract() > 0.0;
 
-        let fresh = self.sticky.cache.as_ref().is_some_and(|c| {
+        let fresh = self.sticky_cache.as_ref().is_some_and(|c| {
             c.settled
                 && (c.id, c.revision, &c.rows, c.partial, c.max, c.tab_width)
                     == (doc.id, doc.revision, &rows, partial, max, tab_width)
         });
         if !fresh {
             let (scopes, settled) = doc.sticky_scopes(&rows, partial, max, tab_width);
-            self.sticky.cache = Some(StickyCache {
+            self.sticky_cache = Some(StickyCache {
                 id: doc.id,
                 revision: doc.revision,
                 rows,
@@ -137,7 +137,7 @@ impl App {
                 scopes,
             });
         }
-        let Some(cache) = &self.sticky.cache else {
+        let Some(cache) = &self.sticky_cache else {
             return Vec::new();
         };
 
@@ -212,10 +212,4 @@ impl App {
         self.reset_blink();
         self.request_redraw();
     }
-}
-
-/// 粘滞滚动的状态：当前钉住的各行及其计算缓存。
-#[derive(Default)]
-pub struct Sticky {
-    pub(in crate::app) cache: Option<StickyCache>,
 }

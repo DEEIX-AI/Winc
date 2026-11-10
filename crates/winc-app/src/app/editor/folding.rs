@@ -116,7 +116,7 @@ impl App {
             return;
         }
         doc.scroll_line = doc.row_of(top) as f64 + fraction;
-        self.sticky.cache = None;
+        self.sticky_cache = None;
         self.clamp_scroll();
         if caret_shown {
             self.ensure_caret_visible();

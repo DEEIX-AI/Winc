@@ -206,7 +206,7 @@ impl App {
             Ok(true) => {
                 let damaged = doc.encoding == Encoding::Lossy;
                 if self.editor.active().is_some_and(|d| d.id == id) {
-                    self.sticky.cache = None;
+                    self.sticky_cache = None;
                     self.relayout();
                     self.clamp_scroll();
                     self.ensure_caret_visible();

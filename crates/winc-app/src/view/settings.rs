@@ -252,7 +252,6 @@ fn draw_header(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
 fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> Option<Rect> {
     let p = app.palette;
     let body = layout.body;
-    app.settings.install_links.clear();
 
     // 没有匹配的设置项：在正文顶部说明，与组内名称左对齐。
     if layout.searching && layout.rows.is_empty() {
@@ -629,7 +628,7 @@ fn draw_tool_detail(app: &mut App, frame: &mut Frame<'_>, setting: Setting, line
             let underline = Rect::new(x, (line.bottom() - 4.0).round(), end - x, 1.0);
             frame.rect_clipped(underline, p.accent, 0.0, line);
         }
-        app.settings.install_links.push((setting, hit));
+        app.hits.install_links.push((setting, hit));
     }
 }
 

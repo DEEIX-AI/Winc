@@ -102,7 +102,7 @@ impl App {
         let wrapping = doc.is_wrapping();
         if doc.wrap_width() != before {
             place.restore(doc, wrapping);
-            self.sticky.cache = None;
+            self.sticky_cache = None;
             self.fold_motion = None;
             self.clamp_scroll();
         }
@@ -140,7 +140,7 @@ impl App {
         }
         if changed {
             self.scroll_glide = None;
-            self.sticky.cache = None;
+            self.sticky_cache = None;
             self.fold_motion = None;
             self.clamp_scroll();
             self.request_redraw();

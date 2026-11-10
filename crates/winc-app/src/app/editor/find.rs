@@ -206,7 +206,7 @@ impl App {
             doc.filter_lines(None, 0);
         }
         self.find.filter_key = None;
-        self.sticky.cache = None;
+        self.sticky_cache = None;
         if let Some(line) = top {
             self.scroll_to_line(line, 1.0 / 3.0, true);
         }
@@ -261,7 +261,7 @@ impl App {
             filtered = doc.folds().is_filtered();
         }
         self.find.filter_key = Some((key, filtered));
-        self.sticky.cache = None;
+        self.sticky_cache = None;
         self.clamp_scroll();
         self.ensure_caret_visible();
     }

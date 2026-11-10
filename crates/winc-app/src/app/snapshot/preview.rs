@@ -2948,10 +2948,10 @@ fn the_preview_shows_a_heading_indicator() {
     use crate::app::preview::markdown::TocTarget;
 
     let (mut app, dir) = readme("md-toc", false, PreviewMode::Preview);
-    assert_eq!(app.markdown.toc_tops.len(), 2);
+    assert_eq!(app.hits.markdown_toc_tops.len(), 2);
     let find = |app: &App, target| {
-        app.markdown
-            .toc
+        app.hits
+            .markdown_toc
             .iter()
             .find(|(_, t)| *t == target)
             .map(|h| h.0)
@@ -2968,7 +2968,7 @@ fn the_preview_shows_a_heading_indicator() {
     assert_eq!(first.y + first.h / 2.0, bars.y + 8.0 + 1.0);
     // 列表覆盖指示条展开；鼠标停在列表里两行之间的空白处时列表不收起。
     let row = find(&app, TocTarget::Heading(1)).unwrap();
-    let card = app.markdown.toc.iter().rev().nth(1).unwrap().0;
+    let card = app.hits.markdown_toc.iter().rev().nth(1).unwrap().0;
     assert!(card.contains(bars.x + 20.0, bars.y + 10.0));
     app.on_mouse_move(card.x + 1.0, row.y);
     paint(&mut app);
@@ -2976,14 +2976,17 @@ fn the_preview_shows_a_heading_indicator() {
 
     click(&mut app, (row.x + 20.0, row.y + row.h / 2.0));
     let max = (app.markdown.height - app.markdown.area.h).max(0.0);
-    assert_eq!(app.markdown.scroll(), app.markdown.toc_tops[1].min(max));
+    assert_eq!(
+        app.markdown.scroll(),
+        app.hits.markdown_toc_tops[1].min(max)
+    );
     paint(&mut app);
     assert_eq!(app.markdown.toc_current, Some(1));
 
     // 指示条贴在正文左边，随正文居中的位置移动。
     let left = app.markdown.layout.as_ref().unwrap().left;
     // 列表展开着时卡片也记作 `Bars`，指示条本身总是最后一项。
-    let bars = app.markdown.toc.last().unwrap().0;
+    let bars = app.hits.markdown_toc.last().unwrap().0;
     assert!(
         bars.right() <= left && bars.right() >= left - 24.0,
         "{bars:?} {left}"
@@ -2999,7 +3002,7 @@ fn the_preview_shows_a_heading_indicator() {
 
     app.set_preview_mode(PreviewMode::Split);
     settle(&mut app);
-    assert!(app.markdown.toc.is_empty());
+    assert!(app.hits.markdown_toc.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3018,13 +3021,13 @@ fn shoot_preview_heading_indicator() {
         paint(&mut app);
         app.set_preview_mode(PreviewMode::Preview);
         settle(&mut app);
-        let top = app.markdown.toc_tops[2];
+        let top = app.hits.markdown_toc_tops[2];
         app.scroll_markdown_to(top);
         paint(&mut app);
         shoot(&mut app, if dark { "md-toc-dark" } else { "md-toc-light" });
         let bars = app
-            .markdown
-            .toc
+            .hits
+            .markdown_toc
             .iter()
             .find(|(_, t)| *t == TocTarget::Bars)
             .unwrap()
@@ -3048,7 +3051,7 @@ fn shoot_preview_heading_indicator() {
         shoot(&mut app, half);
         app.markdown.toc_fade = None;
         // 点击最后一个标题：滚动到底，它成为当前所在的一节，正文里的底色淡出到三成。
-        let last = app.markdown.toc_tops.len() - 1;
+        let last = app.hits.markdown_toc_tops.len() - 1;
         app.press_toc(TocTarget::Heading(last));
         let at = crate::app::animation::TOC_FLASH;
         let clock = crate::app::animation::Clock::frozen(at * 3 / 10, at);
@@ -3158,7 +3161,7 @@ fn docx_files_open_as_a_reading_view() {
     assert!(doc.readonly);
     assert_eq!(app.markdown.area, app.layout.editor);
     assert!(app.markdown.failed.is_none());
-    assert_eq!(app.markdown.toc_tops.len(), 2);
+    assert_eq!(app.hits.markdown_toc_tops.len(), 2);
     // 图片按文档所在目录解析出路径，但不读磁盘：磁盘上没有这个文件。
     let opened = doc.path.clone().unwrap();
     let logo = opened.parent().unwrap().join("word/media/logo.svg");
@@ -3427,7 +3430,7 @@ fn wide_tables_keep_their_columns_and_scroll_sideways() {
     assert_eq!(offset_at(&app, probe.0, probe.1), after);
 
     // 滚动条与其他区域一致：鼠标移到表格底边时可以按住滑块拖动，拖到最右后滚动到尽头。
-    let bar = app.markdown.table_bar.expect("表格有滚动条");
+    let bar = app.hits.markdown_table_bar.expect("表格有滚动条");
     let edge = (bar.track.x + 4.0, bar.track.bottom() - 4.0);
     app.on_mouse_move(edge.0, edge.1);
     paint(&mut app);

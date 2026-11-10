@@ -31,8 +31,6 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let p = app.palette;
     frame.rect(area, p.editor_bg);
     app.markdown.area = area;
-    app.markdown.copy = None;
-    app.markdown.expand = None;
     // 可编辑的预览在排版之前取得当前文字的解析结果，本帧即按最新的结构显示。
     app.parse_markdown_inline();
     // 第一次解析还没回来：先留空。
@@ -387,7 +385,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                         let button = copy_button(r);
                         code_button(frame, p, button, area, icons::copy);
                         app.hits.markdown_links.push((button, COPY.to_owned()));
-                        md.copy = Some(text.clone());
+                        app.hits.markdown_copy = Some(text.clone());
                         // 图的复制按钮左侧另有全屏查看按钮。
                         if *diagram {
                             let expand = Rect {
@@ -396,7 +394,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                             };
                             code_button(frame, p, expand, area, icons::expand);
                             app.hits.markdown_links.push((expand, EXPAND.to_owned()));
-                            md.expand = Some(text.clone());
+                            app.hits.markdown_expand = Some(text.clone());
                         }
                     }
                 }
@@ -536,7 +534,7 @@ fn draw_table_scrollbar(
     chosen: Option<(TableBar, f32, bool)>,
     area: Rect,
 ) {
-    app.markdown.table_bar = chosen.map(|(bar, ..)| bar);
+    app.hits.markdown_table_bar = chosen.map(|(bar, ..)| bar);
     let Some((bar, off, hovered)) = chosen else {
         return;
     };
@@ -598,10 +596,8 @@ fn toc_dash(p: &Palette, i: usize, current: Option<usize>) -> (Color, f32) {
 /// 横线，后面是标题文字，越深的标题缩进越多；点击一项滚到该标题。
 ///
 /// 左侧留白不小于 [`TOC_ROOM`] 时才画（分栏时预览较窄，通常不画）；标题少于两个时不画。可点击的
-/// 位置写入 `app.markdown.toc`。
+/// 位置写入 `app.hits.markdown_toc`。
 fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
-    app.markdown.toc.clear();
-    app.markdown.toc_tops.clear();
     app.markdown.toc_current = None;
     let (Some(parsed), Some(laid)) = (app.markdown.parsed.clone(), app.markdown.layout.as_ref())
     else {
@@ -773,8 +769,8 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
         hits.push((card, TocTarget::Bars));
     }
     hits.push((bars, TocTarget::Bars));
-    app.markdown.toc = hits;
-    app.markdown.toc_tops = headings.iter().map(|h| h.2).collect();
+    app.hits.markdown_toc = hits;
+    app.hits.markdown_toc_tops = headings.iter().map(|h| h.2).collect();
     app.markdown.toc_current = current;
 }
 

@@ -2023,3 +2023,6 @@ fn details_id(block: &Block) -> u64 {
 }
 
 pub(crate) use winc_preview::markdown::slug;
+
+#[cfg(test)]
+mod tests;

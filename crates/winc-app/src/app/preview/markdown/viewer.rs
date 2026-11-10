@@ -86,7 +86,7 @@ impl App {
     /// 全屏查看上一帧绘制了全屏按钮的图（`MarkdownPreview::expand`）。
     pub(crate) fn open_diagram_view(&mut self) {
         let (Some(source), Some(doc)) = (
-            self.markdown.expand.clone(),
+            self.hits.markdown_expand.clone(),
             self.editor.active().map(|d| d.id),
         ) else {
             return;

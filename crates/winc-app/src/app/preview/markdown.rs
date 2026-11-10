@@ -106,6 +106,8 @@ pub(crate) struct TableBar {
 }
 
 pub(crate) struct MarkdownPreview {
+    /// 上一帧的绘制区域（分栏的右半边或整个编辑区）；不显示时为空矩形。
+    pub area: winc_render::Rect,
     /// 预览的文档；当前标签改变时重新开始。
     pub doc: Option<DocumentId>,
     /// 最近一次解析的结果。
@@ -143,18 +145,9 @@ pub(crate) struct MarkdownPreview {
     pub toggled_now: Option<String>,
     /// 点击 `其他.md#标题` 打开的文档与目标标题：该文档排版完成后滚动到该标题。
     pub pending_anchor: Option<(DocumentId, String)>,
-    /// 上一帧绘制了滚动条的可横向滚动的表格；没有时为 `None`。
-    ///
-    /// 同一时刻只显示一个表格的滚动条：鼠标所在的表格，或最近一次横向滚动的表格。
-    pub table_bar: Option<TableBar>,
     /// 最近一次横向滚动的表格：（顶层块序号，块中表格的序号），见 `view::markdown` 的
     /// `Laid::hscroll`。
     pub last_table: Option<(usize, usize)>,
-    /// 上一帧绘制的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
-    pub toc: Vec<(winc_render::Rect, TocTarget)>,
-    /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
-    /// 序号对应；点击标题时滚动到该处。
-    pub toc_tops: Vec<f32>,
     /// 标题列表展开时淡入的时钟；不在淡入中时为 `None`。
     pub toc_fade: Option<crate::app::animation::Clock>,
     /// 在标题列表中点击过的标题（`toc_tops` 的序号）和点击后的滚动位置。
@@ -169,21 +162,10 @@ pub(crate) struct MarkdownPreview {
     /// 跳转到的脚注或脚注引用在正文中的底色：范围（上边缘和高度，相对内容顶部，逻辑像素）与
     /// 淡出的时钟。
     pub anchor_flash: Option<((f32, f32), crate::app::animation::Clock)>,
-    /// 上一帧绘制了复制按钮的代码块的内容；按钮在 `links` 中只记录 `COPY`，点击时才取这里的
-    /// 文字。
-    ///
-    /// 与排版结果共用同一段文字：鼠标停在代码块上时每帧都要绘制按钮，无需每帧复制整块。
-    pub copy: Option<std::sync::Arc<str>>,
-    /// 上一帧绘制了全屏按钮的图的源码。
-    ///
-    /// `links` 中的按钮只记录 `EXPAND`，点击时从这里取源码，绘制时不必复制源码。
-    pub expand: Option<std::sync::Arc<str>>,
     /// 全屏查看中的图；未打开全屏查看时为 `None`。
     pub diagram: Option<DiagramView>,
     /// 鼠标所在代码块在 `codes` 中的序号。
     pub code_hover: Option<usize>,
-    /// 上一帧的绘制区域（分栏的右半边或整个编辑区）；不显示时为空矩形。
-    pub area: winc_render::Rect,
     /// 上一帧排版的总高度（逻辑像素），滚动时据此限制范围。
     pub height: f32,
     /// 选中的文字：起点和终点（整份文字里的字符偏移，见 `laid::Laid::text`）。
@@ -288,7 +270,6 @@ impl Default for MarkdownPreview {
             cost: None,
             scrolls: HashMap::new(),
             layout: None,
-            table_bar: None,
             last_table: None,
             memo: Default::default(),
             images: HashMap::new(),
@@ -299,15 +280,11 @@ impl Default for MarkdownPreview {
             toggled: HashSet::new(),
             toggled_now: None,
             pending_anchor: None,
-            toc: Vec::new(),
-            toc_tops: Vec::new(),
             toc_fade: None,
             toc_picked: None,
             toc_current: None,
             toc_flash: None,
             anchor_flash: None,
-            copy: None,
-            expand: None,
             diagram: None,
             code_hover: None,
             area: winc_render::Rect::default(),
@@ -741,7 +718,7 @@ impl App {
             return;
         }
         if url == crate::app::preview::markdown::laid::COPY {
-            let Some(code) = self.markdown.copy.clone() else {
+            let Some(code) = self.hits.markdown_copy.clone() else {
                 return;
             };
             self.set_clipboard(code.to_string(), false);
@@ -2838,7 +2815,7 @@ impl App {
 
     /// 拖动表格的水平滚动条：按鼠标横坐标 `x` 和按下时在滑块上的位置 `grab` 设置滚动位置。
     pub(in crate::app) fn drag_markdown_table_scrollbar(&mut self, x: f32, grab: f32) {
-        let Some(bar) = self.markdown.table_bar else {
+        let Some(bar) = self.hits.markdown_table_bar else {
             return;
         };
         let scroll = self.markdown_table_scroll(bar.key);
@@ -2867,7 +2844,7 @@ impl App {
         let TocTarget::Heading(i) = target else {
             return;
         };
-        let Some(&top) = self.markdown.toc_tops.get(i) else {
+        let Some(&top) = self.hits.markdown_toc_tops.get(i) else {
             return;
         };
         self.scroll_markdown_to(top);

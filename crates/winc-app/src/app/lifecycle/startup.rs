@@ -86,7 +86,7 @@ impl App {
             tabs: TabBar::default(),
             diff: Default::default(),
             status: Default::default(),
-            sticky: Default::default(),
+            sticky_cache: None,
             wraps: Arc::default(),
             line_tokens: Default::default(),
             minimap_rows: Default::default(),

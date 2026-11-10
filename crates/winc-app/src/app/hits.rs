@@ -63,6 +63,28 @@ pub struct Hits {
     pub(crate) markdown_codes: Vec<winc_render::Rect>,
     /// 编辑区顶部钉住的各行，绘制时记录，点击和悬停时使用。
     pub(crate) sticky: Vec<StickyRow>,
+    /// 上一帧绘制了复制按钮的代码块的内容；按钮在 `links` 中只记录 `COPY`，点击时才取这里的
+    /// 文字。
+    ///
+    /// 与排版结果共用同一段文字：鼠标停在代码块上时每帧都要绘制按钮，无需每帧复制整块。
+    pub(crate) markdown_copy: Option<std::sync::Arc<str>>,
+    /// 上一帧绘制了全屏按钮的图的源码。
+    ///
+    /// `links` 中的按钮只记录 `EXPAND`，点击时从这里取源码，绘制时不必复制源码。
+    pub(crate) markdown_expand: Option<std::sync::Arc<str>>,
+    /// 上一帧绘制了滚动条的可横向滚动的表格；没有时为 `None`。
+    ///
+    /// 同一时刻只显示一个表格的滚动条：鼠标所在的表格，或最近一次横向滚动的表格。
+    pub(crate) markdown_table_bar: Option<crate::app::preview::markdown::TableBar>,
+    /// 上一帧绘制的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
+    pub(crate) markdown_toc: Vec<(winc_render::Rect, crate::app::preview::markdown::TocTarget)>,
+    /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
+    /// 序号对应；点击标题时滚动到该处。
+    pub(crate) markdown_toc_tops: Vec<f32>,
+    /// 当前帧绘制出的「安装方法…」链接的位置，以及链接所属的设置项。
+    ///
+    /// 文字宽度要到绘制时才知道，悬停和点击使用这里记录的位置。
+    pub(crate) install_links: Vec<(crate::layout::Setting, Rect)>,
 }
 
 impl Hits {
@@ -97,6 +119,12 @@ impl Hits {
             markdown_links,
             markdown_codes,
             sticky,
+            markdown_copy,
+            markdown_expand,
+            markdown_table_bar,
+            markdown_toc,
+            markdown_toc_tops,
+            install_links,
         } = self;
         start.clear();
         placeholder.clear();
@@ -124,5 +152,11 @@ impl Hits {
         markdown_links.clear();
         markdown_codes.clear();
         sticky.clear();
+        *markdown_copy = None;
+        *markdown_expand = None;
+        *markdown_table_bar = None;
+        markdown_toc.clear();
+        markdown_toc_tops.clear();
+        install_links.clear();
     }
 }

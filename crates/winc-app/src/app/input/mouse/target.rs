@@ -428,7 +428,7 @@ impl App {
         }
         // 标题指示条和展开的标题列表覆盖在预览文字之上，先于文字判断。
         if self.markdown.area.contains(x, y)
-            && let Some(target) = hit(&self.markdown.toc, x, y)
+            && let Some(target) = hit(&self.hits.markdown_toc, x, y)
         {
             return Target::MarkdownToc(target);
         }
@@ -535,7 +535,7 @@ impl App {
         let preview = self.markdown.area;
         if preview.contains(x, y) {
             // 比正文宽的表格的水平滚动条：位于表格显示区域的底边。
-            if let Some(bar) = self.markdown.table_bar
+            if let Some(bar) = self.hits.markdown_table_bar
                 && bar.track.contains(x, y)
                 && y >= bar.track.bottom() - SCROLLBAR_HIT
                 && let Some(thumb) =

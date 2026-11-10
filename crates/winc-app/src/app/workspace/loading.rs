@@ -102,7 +102,7 @@ impl App {
 
     /// 当前标签刚读取完成：重新布局、提示只读的原因、保证光标可见并请求重绘。
     fn loaded_active(&mut self) {
-        self.sticky.cache = None;
+        self.sticky_cache = None;
         self.relayout();
         self.announce_readonly();
         self.ensure_caret_visible();

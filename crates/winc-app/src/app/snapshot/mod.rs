@@ -288,7 +288,7 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
         SettingsPart::Record => app.keys_layout().record,
         // 链接的位置在绘制时才确定，调用前需要先绘制一帧。
         SettingsPart::Install(id) => {
-            let links = &app.settings.install_links;
+            let links = &app.hits.install_links;
             links.iter().find(|(l, _)| *l == id).unwrap().1
         }
     };
