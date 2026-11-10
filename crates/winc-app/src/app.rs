@@ -57,6 +57,7 @@ pub use lifecycle::closing::{CloseRequest, SaveChoice, SavePrompt};
 pub use lifecycle::notice::{NoticeAction, NoticeGhost};
 pub use lifecycle::title_bar::WindowControl;
 pub(crate) use lifecycle::title_bar::resize_cursor;
+pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
 pub use settings::{DialogCache, SettingsState};
 pub use status::motion::{StatusEntry, StatusKey, StatusMotion};

@@ -480,3 +480,38 @@ fn the_title_bar_setting_applies_at_once() {
     assert!(app.window.controls && app.layout.controls.w > 0.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 各窗口共用同一张背景图层：第二个窗口直接采用已有的，不再生成。
+#[test]
+fn windows_share_one_background_layer() {
+    let (mut winc, a, b, dir) = two_windows("windows-wallpaper");
+    let image = dir.join("bg.png");
+    let red = winc_render::Image {
+        pixels: vec![0xffff_0000; 64 * 48],
+        width: 64,
+        height: 48,
+    };
+    write_png(&image, &red).unwrap();
+    for key in [a, b] {
+        winc.app(key).config.ui_background_image = Some(image.to_string_lossy().into_owned());
+    }
+    paint(winc.app(a));
+    winc.app(a).wait_for_wallpaper();
+    paint(winc.app(a));
+    let layer = |app: &App| app.renderer.as_ref().unwrap().wallpaper().cloned();
+    let first = layer(winc.app(a)).expect("第一个窗口的图层");
+
+    paint(winc.app(b));
+    assert!(!winc.app(b).wallpaper.is_busy());
+    let second = layer(winc.app(b)).expect("第二个窗口的图层");
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+    drop(second);
+
+    // 两个窗口都取消后，图层释放。
+    for key in [a, b] {
+        winc.app(key).config.ui_background_image = None;
+        paint(winc.app(key));
+    }
+    assert_eq!(std::sync::Arc::strong_count(&first), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -467,7 +467,7 @@ fn the_wallpaper_shows_under_surface_colors_only() {
     ];
     let draw = |declare: bool| {
         let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5), &[bg, card]);
+        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5).map(Arc::new), &[bg, card]);
         assert_eq!(renderer.wallpaper_size(), Some((2, 2)));
         let rects = [(Rect::new(0.0, 0.0, 4.0, 8.0), card)];
         if declare {
@@ -502,14 +502,38 @@ fn the_wallpaper_shows_under_surface_colors_only() {
     // 不透明度为 1 时只剩图片，为 0 时只剩底色；两端各通道都不溢出。
     for (opacity, expected) in [(1.0, 0xff0000), (0.0, 0x202020)] {
         let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, opacity), &[bg]);
+        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, opacity).map(Arc::new), &[bg]);
         renderer.draw(|_| {});
         assert_eq!(renderer.image().unwrap().pixels[0] & 0xff_ffff, expected);
     }
 
+    // 图片与画布的宽高比不同时等比缩放、居中裁剪：4 × 2 的图片铺到 8 × 8 的画布上，只显示中间
+    // 两列，左右两列被裁掉。
+    let wide = [
+        [9, 9, 9, 255],
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [9, 9, 9, 255], //
+        [9, 9, 9, 255],
+        [0, 0, 255, 255],
+        [255, 255, 255, 255],
+        [9, 9, 9, 255],
+    ]
+    .concat();
+    let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
+    renderer.set_wallpaper(Wallpaper::new(4, 2, &wide, 1.0).map(Arc::new), &[bg]);
+    renderer.draw(|_| {});
+    let covered = renderer.image().unwrap().pixels.clone();
+    let at = |x: usize, y: usize| covered[y * 8 + x] & 0xff_ffff;
+    assert_eq!(
+        (at(0, 0), at(3, 3), at(4, 0), at(7, 3)),
+        (0xff0000, 0xff0000, 0x00ff00, 0x00ff00)
+    );
+    assert_eq!((at(0, 4), at(7, 7)), (0x0000ff, 0xffffff));
+
     // 取消以后恢复为纯色。
     let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-    renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5), &[bg]);
+    renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5).map(Arc::new), &[bg]);
     renderer.set_wallpaper(None, &[bg]);
     renderer.draw(|_| {});
     assert!(

@@ -1263,20 +1263,24 @@ fn shoot_font_weights() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 背景图片：配置后在后台生成与窗口等大（逻辑像素）的图层，底色之下透出图片；不透明度、配色
-/// 改变后随之更新，取消后恢复纯色；无法加载的图片提示一次，不反复重试。
+/// 背景图片：配置后在后台生成铺满窗口（按逻辑像素）的图层，底色之下透出图片；不透明度、配色
+/// 改变后随之更新，取消后恢复纯色；无法加载的图片提示一次，不反复重试。生成好的图层写入磁盘
+/// 缓存，之后直接读取，不再解码原图。
 #[test]
 fn the_background_image_shows_under_the_base_colors() {
     let dir = sample_folder("settings-background");
-    // 一张纯红的图片。
+    // 一张纯红的图片，比窗口大。
     let image = dir.join("红.png");
     let red = winc_render::Image {
-        pixels: vec![0xffff_0000; 64 * 48],
-        width: 64,
-        height: 48,
+        pixels: vec![0xffff_0000; 2000 * 1500],
+        width: 2000,
+        height: 1500,
     };
     write_png(&image, &red).unwrap();
     let mut app = app_with(&dir.join("short.rs"), false);
+    // 状态文件所在的目录即缓存所在的目录。
+    app.state_path = Some(dir.join("state.json"));
+    let cache = dir.join("wallpaper.cache");
     assert_eq!(Setting::BackgroundImage.page(), SettingsPage::Appearance);
     assert_eq!(app.setting_value(Setting::BackgroundOpacity).0, "15");
 
@@ -1303,9 +1307,28 @@ fn the_background_image_shows_under_the_base_colors() {
 
     app.set_background_image(Some(image.clone()));
     assert_eq!(sample(&mut app), mixed(plain, 0.15));
-    // 图层按逻辑像素存储，不是物理像素。
+    // 图层保持图片的宽高比，缩小到刚好铺满窗口（按逻辑像素，不是物理像素）。
     let size = app.renderer.as_ref().unwrap().wallpaper_size();
-    assert_eq!(size, Some((SIZE.0 as u32, SIZE.1 as u32)));
+    assert_eq!((SIZE.0, SIZE.1), (1280.0, 820.0));
+    assert_eq!(size, Some((1280, 960)));
+
+    // 图层已写入缓存。把缓存中的像素改成绿色后调整不透明度：读的是缓存，不再解码原图。
+    let mut bytes = std::fs::read(&cache).unwrap();
+    let pixels = bytes.len() - 1280 * 960 * 4;
+    for px in bytes[pixels..].as_chunks_mut::<4>().0 {
+        *px = [0, 255, 0, 255];
+    }
+    std::fs::write(&cache, &bytes).unwrap();
+    app.settings_adjust(Setting::BackgroundOpacity, true);
+    let green = sample(&mut app);
+    assert!(green.1 > green.0 && green.1 > green.2, "{green:?}");
+    // 换回原来的像素，后面的检查不受影响。
+    for px in bytes[pixels..].as_chunks_mut::<4>().0 {
+        *px = [255, 0, 0, 255];
+    }
+    std::fs::write(&cache, &bytes).unwrap();
+    app.settings_adjust(Setting::BackgroundOpacity, false);
+    assert_eq!(sample(&mut app), mixed(plain, 0.15));
 
     // 调高不透明度：重新生成。
     app.settings_adjust(Setting::BackgroundOpacity, true);
@@ -1380,5 +1403,47 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     assert!(!listed(&app));
     assert_eq!(app.settings_layout().page, SettingsPage::Modules);
 
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 截取带背景图的界面：图片取环境变量 `WINC_BACKGROUND`，每套主题各截主界面、文件面板和设置。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_background_image() {
+    let Some(image) = std::env::var_os("WINC_BACKGROUND") else {
+        return;
+    };
+    let dir = sample_folder("shoot-background");
+    let themes = [
+        (false, None, "light"),
+        (true, None, "dark"),
+        (false, Some("veil-snow"), "snow"),
+        (true, Some("veil-night"), "night"),
+    ];
+    for (dark, id, name) in themes {
+        for opacity in [30.0, 60.0, 100.0] {
+            let mut app = app_with(&dir.join("src/main.rs"), dark);
+            app.config.ui_background_image = Some(image.to_string_lossy().into_owned());
+            app.config.ui_background_opacity = Some(opacity);
+            if dark {
+                app.config.dark_theme = id.map(str::to_owned);
+            } else {
+                app.config.light_theme = id.map(str::to_owned);
+            }
+            let theme = if dark { Theme::Dark } else { Theme::Light };
+            app.set_theme(theme);
+            paint(&mut app);
+            app.wait_for_wallpaper();
+            shoot(&mut app, &format!("background-{name}-{opacity}"));
+            if opacity > 30.0 {
+                continue;
+            }
+            app.open_picker();
+            shoot(&mut app, &format!("background-{name}-picker"));
+            app.close_picker();
+            app.open_settings();
+            shoot(&mut app, &format!("background-{name}-settings"));
+        }
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }

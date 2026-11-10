@@ -27,7 +27,7 @@ pub use text::font_path::{FontError, FontSpec};
 pub use text::outline::{OutlineFonts, OutlineGlyph, OutlineMetrics};
 
 use cache::{FastMap, Generations, StrokeCache};
-use draw::canvas::{Canvas, IRect, Wall};
+use draw::canvas::{Canvas, IRect, Tinted, Wall};
 use present::Presenter;
 use text::font::Fonts;
 use text::glyphs::*;
@@ -272,8 +272,8 @@ pub struct Renderer {
     base: Vec<(IRect, u32)>,
     /// `Canvas::fill_layered` 复用的行缓冲。
     row: Vec<u32>,
-    /// 窗口背景图，见 [`Self::set_wallpaper`]。
-    wallpaper: Option<Wallpaper>,
+    /// 窗口背景图，见 [`Self::set_wallpaper`]；多个窗口可以共用同一张。
+    wallpaper: Option<Arc<Wallpaper>>,
     /// 透出背景图的底色（`0xAARRGGBB`）及其加在图层像素上的值。
     surfaces: Vec<(u32, u32)>,
     /// 画布各列、各行对应的背景图的列、行；画布大小或背景图改变时重算。
@@ -282,8 +282,10 @@ pub struct Renderer {
     wall_rects: Vec<(IRect, u32)>,
 }
 
-/// 窗口背景图：缩放到显示大小、按不透明度预乘后的像素。
+/// 窗口背景图：按不透明度预乘后的像素，保持图片自身的宽高比。
 ///
+/// 绘制时等比缩放并居中裁剪，铺满画布（取最近的像素）；窗口大小改变时只需重算映射，不必
+/// 重新生成。
 /// 界面各处的底色之下透出这张图，最终的颜色为「图片 × 不透明度 + 底色 × (1 − 不透明度)」。
 /// 前一项在创建时算好，绘制时每个像素只做一次加法。可以在后台线程创建。
 pub struct Wallpaper {
@@ -320,6 +322,24 @@ impl Wallpaper {
             height: h,
             opacity,
         })
+    }
+
+    /// 算出 `columns` × `rows` 的画布各列、各行对应的图层列、行，写入 `map`：图片等比缩放并
+    /// 居中裁剪，恰好铺满画布。
+    fn cover(&self, columns: usize, rows: usize, map: &mut (Vec<u32>, Vec<u32>)) {
+        let (w, h) = (self.width as f64, self.height as f64);
+        // 画布上每个像素对应图层上多少个像素。
+        let step = (w / columns.max(1) as f64).min(h / rows.max(1) as f64);
+        let axis = |n: usize, size: f64, to: &mut Vec<u32>| {
+            let first = (size - n as f64 * step) / 2.0;
+            to.clear();
+            to.extend((0..n).map(|i| {
+                let at = (first + (i as f64 + 0.5) * step).floor();
+                at.clamp(0.0, size - 1.0) as u32
+            }));
+        };
+        axis(columns, w, &mut map.0);
+        axis(rows, h, &mut map.1);
     }
 
     /// 返回宽度和高度（像素）。
@@ -500,8 +520,8 @@ impl Renderer {
     /// 设置或取消窗口背景图；`surfaces` 是透出背景图的底色，其余颜色照常绘制。
     ///
     /// 以这些颜色填充的不透明矩形（包括窗口背景和 [`Self::base_next_frame`] 声明的底色）改为
-    /// 写入「背景图 + 底色」。背景图与画布大小不同时取最近的像素缩放。
-    pub fn set_wallpaper(&mut self, wallpaper: Option<Wallpaper>, surfaces: &[Color]) {
+    /// 写入「背景图 + 底色」。
+    pub fn set_wallpaper(&mut self, wallpaper: Option<Arc<Wallpaper>>, surfaces: &[Color]) {
         self.surfaces.clear();
         if let Some(wallpaper) = &wallpaper {
             let tinted = surfaces.iter().map(|&c| (c.argb(), wallpaper.tint(c)));
@@ -520,9 +540,14 @@ impl Renderer {
         }
     }
 
+    /// 返回当前的背景图；没有时为 `None`。
+    pub fn wallpaper(&self) -> Option<&Arc<Wallpaper>> {
+        self.wallpaper.as_ref()
+    }
+
     /// 返回当前背景图的大小（像素）；没有背景图时为 `None`。
     pub fn wallpaper_size(&self) -> Option<(u32, u32)> {
-        self.wallpaper.as_ref().map(Wallpaper::size)
+        self.wallpaper.as_ref().map(|wallpaper| wallpaper.size())
     }
 
     /// 更换字体和字重；用户在设置界面修改后调用，失败时保留原字体。
@@ -687,19 +712,13 @@ impl Renderer {
             Covered::new(area, 0.0)
         });
         let (based, row) = (&self.base, &mut self.row);
-        let (wallpaper, surfaces) = (self.wallpaper.as_ref(), &self.surfaces);
+        let (wallpaper, surfaces) = (self.wallpaper.as_deref(), &self.surfaces);
         let (wall_map, wall_rects) = (&mut self.wall_map, &mut self.wall_rects);
         let paint = |mut canvas: Canvas<'_>| {
             let wall = wallpaper.map(|wallpaper| {
                 let (columns, rows) = (canvas.width, canvas.height);
                 if wall_map.0.len() != columns || wall_map.1.len() != rows {
-                    let map = |n: usize, source: usize| {
-                        (0..n).map(move |i| (i * source / n.max(1)) as u32)
-                    };
-                    wall_map.0.clear();
-                    wall_map.0.extend(map(columns, wallpaper.width));
-                    wall_map.1.clear();
-                    wall_map.1.extend(map(rows, wallpaper.height));
+                    wallpaper.cover(columns, rows, wall_map);
                 }
                 Wall {
                     px: &wallpaper.px,
@@ -720,8 +739,14 @@ impl Renderer {
             let layered = wall
                 .zip(tint(background))
                 .filter(|_| wall_rects.len() == based.len());
-            if let Some((wall, background)) = layered {
-                canvas.wall_layered(wall, background, wall_rects, row);
+            if let Some((wall, k)) = layered {
+                // 整个窗口随后会被不透明的内容盖住时（见 `cover_next_frame`），跳过这些像素。
+                if based.is_empty() && cover.is_some() {
+                    let all = IRect::new(0, 0, canvas.width as i32, canvas.height as i32);
+                    canvas.rect(all, k, all, cover, Some(Tinted { wall, k }));
+                } else {
+                    canvas.wall_layered(wall, k, wall_rects, row);
+                }
             } else if based.is_empty() {
                 canvas.fill_except(background, cover);
             } else {

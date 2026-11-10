@@ -149,6 +149,8 @@ pub struct Shared {
     pub update: RefCell<Option<String>>,
     /// 应用内更新的状态。
     pub update_state: RefCell<UpdateState>,
+    /// 最近生成的窗口背景图层：各窗口共用同一张，没有窗口使用时释放。
+    pub wallpaper: RefCell<std::rc::Weak<crate::app::WallpaperLayer>>,
 }
 
 impl Shared {
