@@ -164,6 +164,7 @@ const EDITOR: &[Field] = &[
 /// `ui` 一节。
 const UI: &[Field] = &[
     string_field!("font", ui_font),
+    bool_field!("animations", ui_animations),
     Field {
         key: "size",
         read: |config, value, name, problems| {

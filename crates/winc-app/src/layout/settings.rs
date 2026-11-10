@@ -74,7 +74,11 @@ impl SettingsPage {
                         Setting::UiFont,
                         Setting::UiSize,
                     ]),
-                    plain(vec![Setting::StatusBar, Setting::RestoreWindow]),
+                    plain(vec![
+                        Setting::StatusBar,
+                        Setting::RestoreWindow,
+                        Setting::Animations,
+                    ]),
                     Section {
                         title: Some(t!("settings-light-theme")),
                         items: vec![Setting::LightTheme],
@@ -249,6 +253,8 @@ pub enum Setting {
     StatusBar,
     /// 记住窗口大小和位置。
     RestoreWindow,
+    /// 播放界面的过渡动画。
+    Animations,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
     /// 预览标签：在文件树中单击文件时在预览标签中打开。
@@ -366,7 +372,8 @@ impl Setting {
             | Setting::Zoom
             | Setting::SystemTitleBar
             | Setting::StatusBar
-            | Setting::RestoreWindow => SettingsPage::Appearance,
+            | Setting::RestoreWindow
+            | Setting::Animations => SettingsPage::Appearance,
             Setting::EditorFont
             | Setting::EditorSize
             | Setting::TabWidth
@@ -438,6 +445,7 @@ impl Setting {
             Setting::RenderWhitespace => t!("settings-render-whitespace"),
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::RestoreWindow => t!("settings-restore-window"),
+            Setting::Animations => t!("settings-animations"),
             Setting::Outline => t!("settings-outline"),
             Setting::CompactFolders => t!("settings-compact-folders"),
             Setting::PreviewOnClick => t!("settings-preview-on-click"),
@@ -500,6 +508,7 @@ impl Setting {
             Setting::RenderWhitespace => Some(t!("settings-render-whitespace-desc")),
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
+            Setting::Animations => Some(t!("settings-animations-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
@@ -544,6 +553,7 @@ impl Setting {
             | Setting::DiffInline
             | Setting::StatusBar
             | Setting::RestoreWindow
+            | Setting::Animations
             | Setting::RemoteImages
             | Setting::CheckUpdates
             | Setting::FormatOnSave

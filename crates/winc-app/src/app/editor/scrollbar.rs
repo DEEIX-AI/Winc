@@ -88,7 +88,7 @@ impl ScrollArea {
     }
 }
 
-/// 从 `from` 过渡到 `to` 的一段动画；没有时钟（不需要过渡，或系统开启了减弱动态效果）时直接
+/// 从 `from` 过渡到 `to` 的一段动画；没有时钟（不需要过渡，或动态效果关闭）时直接
 /// 取终点。
 #[derive(Debug, Clone, Copy, Default)]
 struct Tween {

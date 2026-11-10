@@ -57,7 +57,7 @@ impl Presence {
 
     /// 与上一帧比较显示状态，变化时从当前的显示比例开始向另一端过渡。
     ///
-    /// `clock` 为 `None`（没有窗口、开启「减弱动态效果」、启动后第一帧）时直接到终态。
+    /// `clock` 为 `None`（没有窗口、动态效果关闭、启动后第一帧）时直接到终态。
     pub(in crate::app) fn track(&mut self, present: bool, clock: Option<Clock>) {
         if self.motion.is_some_and(|(_, c)| c.done()) {
             self.motion = None;

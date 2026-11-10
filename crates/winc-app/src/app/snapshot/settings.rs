@@ -301,10 +301,10 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.config.language, None);
 
     // 浅色主题（语言下面是界面缩放、界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，然后是
-    // 状态栏和记住窗口两个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色
-    // 主题：→ 换到下一个，外观回到深色；到头后不再变化。
+    // 状态栏、记住窗口、动态效果三个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之
+    // 切换。深色主题：→ 换到下一个，外观回到深色；到头后不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..6 + title_bar {
+    for _ in 0..7 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -1175,6 +1175,28 @@ fn turning_off_window_restore_forgets_the_saved_frame() {
     app.settings_toggle(Setting::RestoreWindow);
     assert_eq!(app.config.restore_window, Some(false));
     assert_eq!(app.state.window, None);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_animations_switch_overrides_the_system_setting() {
+    let dir = sample_folder("settings-animations");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    // 没有设置时跟随系统；测试中系统视为未开启「减弱动态效果」。
+    assert_eq!(app.config.ui_animations, None);
+    assert!(app.animations_on() && app.switch_on(Setting::Animations));
+    assert_eq!(Setting::Animations.page(), SettingsPage::Appearance);
+
+    app.settings_toggle(Setting::Animations);
+    assert_eq!(app.config.ui_animations, Some(false));
+    assert!(!app.animations_on() && !app.switch_on(Setting::Animations));
+    // 关闭后不再创建动画时钟，各处直接显示终态。
+    assert!(app.clock(std::time::Duration::from_millis(100)).is_none());
+
+    app.settings_toggle(Setting::Animations);
+    assert_eq!(app.config.ui_animations, Some(true));
+    assert!(app.animations_on());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
