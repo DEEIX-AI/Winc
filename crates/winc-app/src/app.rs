@@ -681,6 +681,14 @@ const GLOBAL_POLL: Duration = Duration::from_millis(100);
 /// 「只显示匹配的行」的缓存键，各项依次为：文档、版本号、匹配的行数、已搜索到的位置、是否有查询。
 type FilterKey = (DocumentId, u64, usize, usize, bool);
 
+pub(crate) const WORD_HIGHLIGHT_COUNT: usize = 6;
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct WordHighlight {
+    pub chars: Vec<char>,
+    pub whole_word: bool,
+}
+
 /// 应用状态：编辑器、界面状态、绘制时记录的几何，以及窗口和事件循环的句柄。
 ///
 /// 各功能的事件处理方法分布在 `app/` 的子模块中，均只读写本结构的字段。
@@ -948,6 +956,8 @@ pub struct App {
     /// 查找条中的替换输入；内容变化后同步到 `search.replacement`。
     pub replace_input: TextField,
     search_open: bool,
+    /// 阅读时固定的词或短选区及其颜色编号，按标记时间从早到晚排列。
+    pub(crate) word_highlights: Vec<(usize, WordHighlight)>,
     /// 查找条上是否开启了「只显示匹配的行」。
     pub(crate) filter_lines: bool,
     /// 上次筛选使用的缓存键，以及筛选后是否隐藏了行。

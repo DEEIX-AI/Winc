@@ -119,6 +119,8 @@ pub enum Action {
     Replace,
     FindNext,
     FindPrevious,
+    HighlightWord,
+    ClearWordHighlights,
     ReplaceOne,
     ReplaceAll,
     SelectAllMatches,
@@ -358,6 +360,8 @@ impl Action {
             Replace => t!("cmd-replace"),
             FindNext => t!("cmd-find-next"),
             FindPrevious => t!("cmd-find-previous"),
+            HighlightWord => t!("cmd-highlight-word"),
+            ClearWordHighlights => t!("cmd-clear-word-highlights"),
             ReplaceOne => t!("cmd-replace-one"),
             ReplaceAll => t!("cmd-replace-all"),
             SelectAllMatches => t!("cmd-select-all-matches"),
@@ -556,6 +560,8 @@ impl Action {
             Replace => "Replace",
             FindNext => "Find Next",
             FindPrevious => "Find Previous",
+            HighlightWord => "Toggle Word Highlight",
+            ClearWordHighlights => "Clear Word Highlights",
             ReplaceOne => "Replace",
             ReplaceAll => "Replace All",
             SelectAllMatches => "Select All Matches",
@@ -732,11 +738,10 @@ impl Action {
             | Format
             | FormatSelection
             | Fix => Group::Edit,
-            Find | Replace | FindNext | FindPrevious | ReplaceOne | ReplaceAll
-            | SelectAllMatches | ToggleCase | ToggleWord | ToggleRegex | FilterLines
-            | FindInFiles | ReplaceInFiles | ReplaceAllInFiles | NextResult | PreviousResult => {
-                Group::Find
-            }
+            Find | Replace | FindNext | FindPrevious | HighlightWord | ClearWordHighlights
+            | ReplaceOne | ReplaceAll | SelectAllMatches | ToggleCase | ToggleWord
+            | ToggleRegex | FilterLines | FindInFiles | ReplaceInFiles | ReplaceAllInFiles
+            | NextResult | PreviousResult => Group::Find,
             RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
             ToggleSidebar
             | FocusSidebar
@@ -973,6 +978,8 @@ pub const ACTIONS: &[Action] = {
         Replace,
         FindNext,
         FindPrevious,
+        HighlightWord,
+        ClearWordHighlights,
         ReplaceOne,
         ReplaceAll,
         SelectAllMatches,
