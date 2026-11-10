@@ -34,6 +34,7 @@ fn changes_pull_in_the_crates_that_depend_on_them() {
         ["winc-app", "winc-core", "winc-editor", "xtask"]
     );
     assert!(affected(&["docs/GIT.md"]).is_empty());
-    // 根目录的 `Cargo.lock` 变了时全部 5 个包都要测。
+    // 根目录的 `Cargo.lock`、`VERSION` 变了时全部 5 个包都要测。
     assert_eq!(affected(&["Cargo.lock"]).len(), 5);
+    assert_eq!(affected(&["VERSION"]).len(), 5);
 }

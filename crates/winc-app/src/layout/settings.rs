@@ -755,7 +755,7 @@ pub fn version_label() -> String {
         "aarch64" => "arm64",
         other => other,
     };
-    format!("{} ({arch})", env!("CARGO_PKG_VERSION"))
+    format!("{} ({arch})", winc_version::VERSION)
 }
 
 /// 设置浮层中可以单独悬停和点击的部件。

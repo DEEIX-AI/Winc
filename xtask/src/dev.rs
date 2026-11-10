@@ -97,10 +97,16 @@ fn changed_files(root: &Path, base: Option<&str>) -> Result<Vec<PathBuf>, String
 
 /// 返回要测的包：改动的文件所在的包，以及直接、间接依赖这些包的包。
 ///
-/// 根目录的 `Cargo.toml`、`Cargo.lock`、`.cargo/`、`rust-toolchain.toml` 变了时全部要测；
+/// 根目录的 `Cargo.toml`、`Cargo.lock`、`VERSION`、`.cargo/`、`rust-toolchain.toml` 变了时全部要测；
 /// 不属于任何包的文档文件不算。
 fn affected(members: &[Member], changed: &[PathBuf]) -> Vec<String> {
-    let global = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo"];
+    let global = [
+        "Cargo.toml",
+        "Cargo.lock",
+        "VERSION",
+        "rust-toolchain.toml",
+        ".cargo",
+    ];
     if changed
         .iter()
         .any(|f| global.iter().any(|g| f.starts_with(g)))

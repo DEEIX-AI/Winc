@@ -74,7 +74,7 @@ fn main() {
             return;
         }
         Ok(args) if args.version => {
-            println!("winc {}", env!("CARGO_PKG_VERSION"));
+            println!("winc {}", winc_version::VERSION);
             return;
         }
         Ok(args) => args,

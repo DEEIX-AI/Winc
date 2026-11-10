@@ -4,7 +4,6 @@ members = ["crates/*", "xtask"]
 default-members = ["crates/winc-app"]
 
 [workspace.package]
-version = "0.1.601"
 edition = "2024"
 rust-version = "1.89"
 publish = false
@@ -21,6 +20,7 @@ winc-editor = { path = "crates/winc-editor" }
 winc-preview = { path = "crates/winc-preview" }
 winc-pty = { path = "crates/winc-pty" }
 winc-i18n = { path = "crates/winc-i18n" }
+winc-version = { path = "crates/winc-version" }
 
 # 只把 LF、CR、CRLF 当换行。默认的 `unicode_lines` 还认 VT、FF、U+0085、U+2028、U+2029，
 # 行号会和编译器、git、grep 报的对不上（C 和 Python 源码里常见分页符 FF）。

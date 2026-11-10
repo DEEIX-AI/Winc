@@ -121,6 +121,7 @@ The workspace is split into crates by responsibility:
 | `winc-pty` | Terminal emulation and the pseudo-terminal helper process |
 | `winc-config` | Configuration and state files |
 | `winc-i18n` | Interface strings (Fluent bundles) |
+| `winc-version` | The product version, read from the `VERSION` file |
 | `winc-app` | The application: windows, events, and views |
 | `xtask` | Development automation: tests, benchmarks, and packaging |
 
