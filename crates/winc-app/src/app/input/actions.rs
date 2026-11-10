@@ -269,7 +269,12 @@ impl App {
             FindNext => self.find_again(false),
             FindPrevious => self.find_again(true),
             HighlightWord => return self.toggle_word_highlight(),
-            ClearWordHighlights => self.word_highlights.clear(),
+            // 没有高亮时不处理，`⇧Esc` 按 `Esc` 关闭查找条、收起选区。
+            ClearWordHighlights if self.word_highlights.is_empty() => return false,
+            ClearWordHighlights => {
+                self.word_highlights.clear();
+                self.request_redraw();
+            }
             ReplaceOne if self.search_open => self.replace_current(),
             ReplaceAll if self.search_open => self.replace_all(),
             ReplaceOne | ReplaceAll => return false,

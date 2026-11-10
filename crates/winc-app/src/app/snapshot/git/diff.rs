@@ -750,9 +750,14 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
     let mut app = app_with(&file, false);
     let source_path = app.editor.active().unwrap().path.clone();
     app.focus = Focus::Editor;
+    let command = if cfg!(target_os = "macos") {
+        Mods::META
+    } else {
+        Mods::CTRL
+    };
     let toggle = Stroke {
-        key: KeyCode::Char('8'),
-        mods: Mods::SHIFT,
+        key: KeyCode::F(7),
+        mods: command | Mods::SHIFT,
     };
     let clear = Stroke {
         key: KeyCode::Escape,
@@ -769,8 +774,17 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
         [2, 7, 12, 22]
             .map(|col| pixel(app, text.x + TEXT_PAD + col as f32 * app.cell, text.y + 3.0))
     };
-    app.select(5, 5);
-    assert!(!app.on_shortcut(toggle), "词尾保留星号输入");
+    // `*` 不是快捷键，在词前、词中和选区上都照常输入。
+    let star = Stroke {
+        key: KeyCode::Char('8'),
+        mods: Mods::SHIFT,
+    };
+    for (a, b) in [(0, 0), (2, 2), (0, 5)] {
+        app.select(a, b);
+        assert!(!app.on_shortcut(star), "{a}..{b}");
+    }
+    // 没有高亮时 `⇧Esc` 不作为快捷键处理。
+    assert!(!app.on_shortcut(clear));
     app.select(1, 1);
     paint(&mut app);
     let automatic = editor_colors(&app);

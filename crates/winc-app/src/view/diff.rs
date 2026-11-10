@@ -804,8 +804,19 @@ fn draw_body(
             }
         }
 
-        // 选区底色不遮住刚用快捷键标记的文字。
-        for (from, to, color) in marked_occurrences(app, &chars, range.clone()) {
+        // 固定高亮画在选区底色上方，选中的文字仍能看到颜色。不折行时 `range` 是整行，只取
+        // 窗口中可见的列：超长的行不必逐帧整行查找。
+        let shown = if app.word_highlights.is_empty() {
+            0..0
+        } else {
+            let prefix = prefix.get_or_init(|| text::prefix_cells(&chars, tab_width));
+            let cell_at = |x: f32| ((x - origin_x) / app.cell - lead).max(0.0) as usize;
+            let (left, right) = (cell_at(pane.text.x), cell_at(pane.text.right()) + 1);
+            let first = prefix.partition_point(|&c| c <= left).saturating_sub(1);
+            let last = prefix.partition_point(|&c| c <= right);
+            first.max(range.start)..last.min(range.end).max(first.max(range.start))
+        };
+        for (from, to, color) in marked_occurrences(app, &chars, shown) {
             let x0 = origin_x + at(from) * app.cell;
             let x1 = origin_x + at(to) * app.cell;
             let rect = Rect::new(x0, y + 1.0, (x1 - x0).max(2.0), lh - 2.0);

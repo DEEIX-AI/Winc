@@ -57,8 +57,30 @@ fn word_highlights_reuse_the_oldest_color_when_full() {
         ])
     );
     assert!(app.run_action(Action::ClearWordHighlights));
+    assert!(!app.run_action(Action::ClearWordHighlights));
     toggle(&mut app, 9);
     assert_eq!(marks(&app), expected(&[(0, "w9")]));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 光标在词尾时同样固定该词；选中词的一部分时按字面匹配，词中的出现也标注。
+#[test]
+fn word_highlights_take_the_word_at_its_end_and_match_selections_literally() {
+    let dir = sample_folder("word-highlight-seed");
+    let file = dir.join("short.rs");
+    std::fs::write(&file, "userId id\n").unwrap();
+    let mut app = app_with(&file, false);
+    app.select(9, 9);
+    assert!(app.run_action(Action::HighlightWord));
+    let (_, mark) = &app.word_highlights[0];
+    assert_eq!(mark.chars, ['i', 'd']);
+    assert!(mark.whole_word);
+    assert!(app.run_action(Action::ClearWordHighlights));
+    app.select(4, 6);
+    assert!(app.run_action(Action::HighlightWord));
+    let (_, mark) = &app.word_highlights[0];
+    assert_eq!(mark.chars, ['I', 'd']);
+    assert!(!mark.whole_word);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
