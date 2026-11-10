@@ -3179,6 +3179,40 @@ fn pdf_files_render_only_the_pages_in_view() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归（#105）：某一页渲染失败时在页面中央显示原因，不再空白；失败的页不在每一帧重新请求。
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn a_page_that_fails_to_render_shows_why_instead_of_staying_blank() {
+    let dir = sample_folder("pdf-failure");
+    let path = dir.join("sample.pdf");
+    std::fs::write(&path, sample_pdf(2)).unwrap();
+    let mut app = open_pdf(&path, false);
+    let width = app.pdf.rendered[&0].width;
+    let height = app.pdf.rendered[&0].height;
+
+    // 第一页渲染失败：记下原因，不再请求。
+    app.pdf.rendered.remove(&0);
+    app.fail_pdf_page(0, width, "无法渲染这一页（错误代码 0x80004005）");
+    assert!(app.pdf.failed.contains_key(&(0, width)));
+    paint(&mut app);
+    assert!(!app.pdf.is_busy(), "失败的页被重新请求");
+    assert!(!app.pdf.rendered.contains_key(&0));
+
+    // 页面可见部分不再全是白色：在中央画出了失败的原因（页面比视口高时画在可见部分的中央）。
+    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let scale = app.renderer.as_ref().unwrap().scale_factor();
+    let area = app.pdf.area;
+    let top = ((area.y + 32.0) * scale) as usize + 2;
+    let bottom = ((area.bottom() * scale) as usize).min(top + height as usize) - 2;
+    let left = ((area.x + area.w / 2.0) * scale) as usize - width as usize / 2 + 2;
+    let row = image.width as usize;
+    let white = image.pixels[top * row + left];
+    let drawn = (top..bottom)
+        .any(|y| (left..left + width as usize - 4).any(|x| image.pixels[y * row + x] != white));
+    assert!(drawn, "失败的页仍然是空白");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[cfg(any(target_os = "macos", windows))]
 #[test]
 #[ignore = "截图，手动运行"]
