@@ -50,6 +50,7 @@ fn sample() -> State {
                     PathBuf::from("/a/项目/README.md"),
                     vec!["安装".into(), "用法\u{1f}配置".into()],
                 )],
+                folds: vec![(PathBuf::from("/a/项目/README.md"), vec![(0, 12), (3, 7)])],
                 terminal: Some(TerminalSession {
                     tabs: vec![PathBuf::from("/a/项目"), PathBuf::from("/a/项目/src")],
                     names: vec![String::new(), "服务".into()],
@@ -68,6 +69,7 @@ fn sample() -> State {
                 active: None,
                 bookmarks: Vec::new(),
                 outline: Vec::new(),
+                folds: Vec::new(),
                 terminal: None,
                 run: None,
                 sidebar_hidden: false,
@@ -227,6 +229,7 @@ fn sessions_are_kept_per_folder() {
         active: None,
         bookmarks: Vec::new(),
         outline: Vec::new(),
+        folds: Vec::new(),
         terminal: None,
         run: None,
         sidebar_hidden: false,

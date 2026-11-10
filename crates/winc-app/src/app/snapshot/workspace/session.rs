@@ -795,6 +795,35 @@ fn with_hot_exit_off_quitting_asks_and_then_drops_the_backups() {
 }
 
 #[test]
+fn folded_blocks_are_restored_with_the_session() {
+    let dir = search_folder("session-folds");
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("src/main.rs"));
+    let tab_width = app.editor.active_tab_width();
+    let doc = app.editor.active_mut().unwrap();
+    let start = doc
+        .fold_ranges(tab_width)
+        .first()
+        .expect("有可折叠的块")
+        .start;
+    assert!(doc.toggle_fold_at(start, tab_width));
+    let folded = doc.folded();
+
+    app.save_session();
+    let session = app.state.last_session().cloned().unwrap();
+    assert_eq!(session.folds.len(), 1);
+    assert_eq!(session.folds[0].1, folded);
+
+    // 下次启动：当前标签读入后恢复折叠。
+    let mut editor = Editor::default();
+    assert!(crate::open_session_folder(&mut editor, &session));
+    crate::app::restore_at_launch(&mut editor, Some(&session), None);
+    assert_eq!(editor.active().unwrap().folded(), folded);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn waiting_quits_once_the_files_are_closed_and_leaves_no_trace() {
     let dir = search_folder("wait");
     let message = dir.join("COMMIT_EDITMSG");
