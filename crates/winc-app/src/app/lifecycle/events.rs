@@ -398,7 +398,7 @@ impl ApplicationHandler<UserEvent> for App {
                 button,
                 ..
             } => self.on_mouse_up(button),
-            WindowEvent::MouseWheel { delta, .. } => self.on_wheel(delta),
+            WindowEvent::MouseWheel { delta, phase, .. } => self.on_wheel_event(delta, phase),
             WindowEvent::PinchGesture { delta, .. } => self.diagram_view_pinch(delta as f32),
             WindowEvent::HoveredFile(_) => self.hover_file(),
             WindowEvent::HoveredFileCancelled => self.end_file_hover(),

@@ -1029,7 +1029,11 @@ impl App {
     /// 焦点在终端时调整终端字号，否则调整编辑区字号，两者互不影响；还原即回到默认字号。改动
     /// 写回配置，界面字号不变。
     pub(super) fn step_font_size(&mut self, up: Option<bool>) {
-        let terminal = self.focus.in_terminal();
+        self.step_font_size_in(self.focus.in_terminal(), up);
+    }
+
+    /// 同 [`Self::step_font_size`]，由 `terminal` 指定调整终端还是编辑区的字号。
+    pub(super) fn step_font_size_in(&mut self, terminal: bool, up: Option<bool>) {
         let pick = |fonts: ViewFonts| if terminal { fonts.terminal } else { fonts.code };
         let current = pick(ViewFonts::of(&self.config));
         let next = up.map(|up| step(current, up, Config::EDITOR_SIZE_RANGE));
