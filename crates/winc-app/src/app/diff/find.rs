@@ -48,11 +48,16 @@ impl App {
     /// 未改动段内时先展开该段。
     pub(in crate::app) fn reveal_diff_match(&mut self, side: usize, start: usize, end: usize) {
         let tab_width = self.editor.tab_width;
-        let sticky = self
-            .editor
-            .active()
-            .and_then(|doc| doc.diff.as_deref())
-            .map_or(0.0, |view| self.diff_sticky_rows(view, side));
+        let Some(index) = self.editor.active else {
+            return;
+        };
+        let Some(line) = (self.editor.documents[index].diff.as_deref())
+            .map(|view| view.side(side).text.char_to_line(start))
+        else {
+            return;
+        };
+        // 匹配所在行的外层块固定在顶部时，匹配需要位于这些固定行之下。
+        let sticky = self.diff_sticky_depth(index, side, line);
         let Some(doc) = self.editor.active_mut() else {
             return;
         };

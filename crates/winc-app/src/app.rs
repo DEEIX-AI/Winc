@@ -34,8 +34,8 @@ pub(crate) use editor::folding::fold_column;
 pub use editor::format::{FormatState, ToolAnswer};
 pub use editor::hint::NameHint;
 pub(crate) use editor::scrollbar::{ScrollArea, Scrollbars, ThumbLook};
-pub(crate) use editor::sticky::sticky_limit;
 pub use editor::sticky::{StickyCache, StickyRow};
+pub(crate) use editor::sticky::{place_sticky_rows, sticky_limit};
 pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
