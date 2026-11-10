@@ -44,6 +44,10 @@ cmd-copy = 复制
 cmd-paste = 粘贴
 cmd-select-all = 全选
 cmd-toggle-comment = 切换行注释
+cmd-markdown-bold = Markdown：切换粗体
+cmd-markdown-italic = Markdown：切换斜体
+cmd-markdown-code = Markdown：切换行内代码
+cmd-markdown-strikethrough = Markdown：切换删除线
 cmd-delete-line = 删除行
 cmd-delete-all-left = 删除到行首
 cmd-indent-lines = 增加缩进
@@ -234,6 +238,7 @@ cmd-cli-event-loop-failed = 无法创建事件循环：{ $error }
 ## 「快捷键」页：命令的生效范围和分组
 
 cmd-when-editor = 编辑区
+cmd-when-markdown = Markdown 预览
 cmd-when-editor-or-find = 编辑区、查找栏
 cmd-when-replace-input = 替换框
 cmd-when-panel = 搜索视图
