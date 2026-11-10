@@ -20,6 +20,7 @@ winc-editor = { path = "crates/winc-editor" }
 winc-preview = { path = "crates/winc-preview" }
 winc-pty = { path = "crates/winc-pty" }
 winc-i18n = { path = "crates/winc-i18n" }
+winc-lsp = { path = "crates/winc-lsp" }
 winc-version = { path = "crates/winc-version" }
 winc-app = { path = "crates/winc-app" }
 winc-typeset = { path = "crates/winc-typeset" }

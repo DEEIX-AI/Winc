@@ -1,0 +1,38 @@
+[package]
+name = "winc-lsp"
+description = "LSP 客户端：管理语言服务器，处理协议通信与文档同步。"
+version = "0.1.601"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+winc-core.workspace = true
+ropey.workspace = true
+
+# LSP protocol types
+lsp-types = "0.97"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Concurrency primitives
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Stable IDs for language servers
+slotmap = "1.0"
+
+[lints]
+workspace = true
