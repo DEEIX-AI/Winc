@@ -98,8 +98,8 @@ fn recent_folders_can_be_removed_and_opened_in_a_new_window() {
     paint(app);
     let forget = crate::app::PickerPart::ForgetFolder(0);
     let close = app
-        .picker
-        .part_hits
+        .hits
+        .picker_parts
         .iter()
         .find(|(_, p)| *p == forget)
         .unwrap()

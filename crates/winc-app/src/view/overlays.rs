@@ -300,8 +300,6 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         super::git::picker::draw(app, frame);
         return;
     }
-    // 行内按钮每帧重新登记：换成没有按钮的列表时，不留下上一种列表的按钮。
-    app.picker.part_hits.clear();
     let rect = app.layout.picker;
     if rect.w <= 0.0 || rect.h <= 0.0 {
         return;
@@ -391,7 +389,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
     );
 
     if app.picker.folders {
-        app.picker.part_hits = draw_folder_rows(app, frame, &parts);
+        app.hits.picker_parts = draw_folder_rows(app, frame, &parts);
         return;
     }
     if app.picker_lists_commands() {
@@ -840,8 +838,8 @@ fn draw_notice(
     let message = ellipsize(frame, message, app.fonts.ui, room);
     let width = frame.measure(FontKind::Ui, app.fonts.ui, &message) + pad + button_w;
     // 冲突卡片、合并冲突卡片打开时排在其下方。
-    let disk = app.conflict_card.as_ref().map(|(card, _)| *card);
-    let top = match app.merge.card.or(disk) {
+    let disk = app.hits.conflict_card.as_ref().map(|(card, _)| *card);
+    let top = match app.hits.merge_card.or(disk) {
         Some(card) => card.bottom(),
         None => corner_top(app),
     } + NOTICE_MARGIN;

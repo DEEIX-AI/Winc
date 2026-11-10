@@ -193,8 +193,6 @@ pub(crate) struct TerminalPanel {
     requests: Vec<(u32, u16, Request)>,
     /// 上一次告诉终端里的程序的焦点状态（焦点上报，模式 1004）。
     focus_sent: bool,
-    /// 标签栏上各个按钮的位置，绘制时记下。
-    pub hits: Vec<(Rect, HeaderHit)>,
     /// 查找条。
     pub find: Option<TermFind>,
     /// 正在改名字的标签（编号）和标签上的输入框。

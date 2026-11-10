@@ -49,31 +49,31 @@ impl App {
             l.terminal_divider,
             l.split_divider,
             l.search,
-            self.project_hit,
+            self.hits.project,
             self.outline_divider(),
         ];
         client.extend(self.window_control_rects().map(|(r, _)| r));
         client.extend(self.tabs.list);
         client.extend(
-            self.tabs
-                .hits
+            self.hits
+                .tabs
                 .iter()
                 .map(|h| h.tab.intersect(self.tabs.view)),
         );
         client.extend(self.sidebar_tabs().iter().map(|(r, _)| *r));
-        client.extend(self.tree.tools.iter().map(|(r, _)| *r));
-        client.extend(self.terminal.hits.iter().map(|(r, _)| *r));
-        client.extend(self.merge.hits.iter().map(|(r, _)| *r));
-        client.extend(self.status.crumb_hits.iter().map(|(r, _)| *r));
-        client.extend(self.status.hits.iter().map(|(r, _)| *r));
+        client.extend(self.hits.tree_tools.iter().map(|(r, _)| *r));
+        client.extend(self.hits.terminal.iter().map(|(r, _)| *r));
+        client.extend(self.hits.merge.iter().map(|(r, _)| *r));
+        client.extend(self.hits.crumbs.iter().map(|(r, _)| *r));
+        client.extend(self.hits.status.iter().map(|(r, _)| *r));
         client.extend(
             [
-                self.changes.card,
-                self.notice.card,
-                self.notice.button,
-                self.merge.card,
-                self.conflict_card.as_ref().map(|(r, _)| *r),
-                self.tree.more,
+                self.hits.changes_card,
+                self.hits.notice_card,
+                self.hits.notice_button,
+                self.hits.merge_card,
+                self.hits.conflict_card.as_ref().map(|(r, _)| *r),
+                self.hits.tree_more,
             ]
             .into_iter()
             .flatten(),
@@ -177,7 +177,7 @@ impl App {
             Target::Conflict(action) => Hover::ConflictButton(action),
             Target::Picker
                 if let Some(&(_, part)) =
-                    (self.picker.part_hits.iter()).find(|(rect, _)| rect.contains(x, y)) =>
+                    (self.hits.picker_parts.iter()).find(|(rect, _)| rect.contains(x, y)) =>
             {
                 Hover::PickerPart(part)
             }
@@ -249,25 +249,29 @@ impl App {
             return Target::WindowControl(control);
         }
         // 浮于编辑区之上的卡片和提示条：只响应其中的按钮，卡片的其余区域遮挡下方的部件。
-        if let Some(card) = self.changes.card
+        if let Some(card) = self.hits.changes_card
             && card.contains(x, y)
         {
-            return hit(&self.changes.hits, x, y).map_or(Target::Blocked, Target::Change);
+            return hit(&self.hits.changes, x, y).map_or(Target::Blocked, Target::Change);
         }
-        if self.notice.button.is_some_and(|b| b.contains(x, y)) {
+        if self.hits.notice_button.is_some_and(|b| b.contains(x, y)) {
             return Target::NoticeButton;
         }
-        if self.notice.card.is_some_and(|card| card.contains(x, y)) {
+        if self
+            .hits
+            .notice_card
+            .is_some_and(|card| card.contains(x, y))
+        {
             return Target::Blocked;
         }
         // 合并冲突的按钮既位于卡片上，也位于冲突标记行上。
-        if let Some(target) = hit(&self.merge.hits, x, y) {
+        if let Some(target) = hit(&self.hits.merge, x, y) {
             return Target::Merge(target);
         }
-        if self.merge.card.is_some_and(|card| card.contains(x, y)) {
+        if self.hits.merge_card.is_some_and(|card| card.contains(x, y)) {
             return Target::Blocked;
         }
-        if let Some((card, buttons)) = &self.conflict_card
+        if let Some((card, buttons)) = &self.hits.conflict_card
             && card.contains(x, y)
         {
             return buttons
@@ -279,7 +283,7 @@ impl App {
         if self.picker.open && l.picker.contains(x, y) {
             return Target::Picker;
         }
-        if self.tree.more.is_some_and(|more| more.contains(x, y)) {
+        if self.hits.tree_more.is_some_and(|more| more.contains(x, y)) {
             return Target::TreeMore;
         }
         // 搜索结果、改动列表的滚动条位于行的右端，先于行判断。显示全名的那一改动行覆盖在滚动条
@@ -313,10 +317,10 @@ impl App {
         if self.sidebar.visible && !over_row && !over_commit_row && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
-        if let Some(tool) = hit(&self.tree.tools, x, y) {
+        if let Some(tool) = hit(&self.hits.tree_tools, x, y) {
             return Target::TreeTool(tool);
         }
-        if self.project_hit.contains(x, y) {
+        if self.hits.project.contains(x, y) {
             return Target::ProjectName;
         }
         if l.sidebar_button.contains(x, y) {
@@ -360,10 +364,10 @@ impl App {
         if l.minimap.contains(x, y) {
             return Target::Minimap;
         }
-        if let Some(index) = hit(&self.status.crumb_hits, x, y) {
+        if let Some(index) = hit(&self.hits.crumbs, x, y) {
             return Target::Crumb(index);
         }
-        if let Some(item) = hit(&self.status.hits, x, y) {
+        if let Some(item) = hit(&self.hits.status, x, y) {
             return Target::Status(item);
         }
         // 终端面板位于右侧时，其标签栏和分隔间距位于顶栏所在的行，需要先于「按下拖动窗口」判断。
@@ -373,7 +377,7 @@ impl App {
         if l.split_divider.contains(x, y) {
             return Target::SplitDivider;
         }
-        if let Some(hit) = hit(&self.terminal.hits, x, y) {
+        if let Some(hit) = hit(&self.hits.terminal, x, y) {
             return Target::TerminalHeader(hit);
         }
         if y < TOP_BAR_END {
@@ -388,16 +392,16 @@ impl App {
         if l.tree.contains(x, y) || self.in_tree_overflow(x, y) {
             return Target::Tree(self.tree_row_at(y));
         }
-        if let Some(action) = hit(&self.placeholder_hits, x, y) {
+        if let Some(action) = hit(&self.hits.placeholder, x, y) {
             return Target::Placeholder(action);
         }
-        if let Some(target) = hit(&self.diff.hits, x, y) {
+        if let Some(target) = hit(&self.hits.diff, x, y) {
             return Target::Diff(target);
         }
-        if let Some(target) = hit(&self.log.hits, x, y) {
+        if let Some(target) = hit(&self.hits.log, x, y) {
             return Target::Log(target);
         }
-        if let Some(action) = hit(&self.start_hits, x, y) {
+        if let Some(action) = hit(&self.hits.start, x, y) {
             return Target::Start(action);
         }
         if let Some(row) = self.sticky_at(x, y) {
@@ -611,9 +615,12 @@ impl App {
     ///
     /// 卡片浮于文字之上，点击、右键和指针样式都不应作用于下方的文字。
     pub(in crate::app) fn over_corner_card(&self, x: f32, y: f32) -> bool {
-        self.notice.card.is_some_and(|card| card.contains(x, y))
-            || self.merge.card.is_some_and(|card| card.contains(x, y))
+        self.hits
+            .notice_card
+            .is_some_and(|card| card.contains(x, y))
+            || self.hits.merge_card.is_some_and(|card| card.contains(x, y))
             || self
+                .hits
                 .conflict_card
                 .as_ref()
                 .is_some_and(|(card, _)| card.contains(x, y))
@@ -684,7 +691,7 @@ impl App {
             || matches!(self.drag, Drag::LogText | Drag::MarkdownText)
             || (self.markdown.area.contains(x, y) && self.markdown_link_at(x, y).is_none())
             || (self.log_active()
-                && crate::layout::hit(&self.log.hits, x, y).is_none()
+                && crate::layout::hit(&self.hits.log, x, y).is_none()
                 && self.log_text_at(x, y, false).is_some());
 
         let icon = if let Hover::ResizeEdge(direction) = self.hover {

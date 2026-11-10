@@ -56,8 +56,8 @@ fn commit_only_the_checked_hunks() {
     paint(&mut app);
     // 两处改动各有一个勾选框；勾掉第二处（删掉 `value_50`），文件变成「部分」。
     assert!(
-        app.diff
-            .hits
+        app.hits
+            .diff
             .iter()
             .any(|(_, t)| *t == DiffTarget::Include(1))
     );
@@ -217,7 +217,8 @@ fn right_clicking_a_changed_file_offers_diff_open_and_rollback() {
         .position(|e| e.path == main)
         .unwrap();
     let row = app
-        .commit_hits
+        .hits
+        .commit
         .iter()
         .find(|(_, t)| *t == CommitTarget::File(index))
         .unwrap()
@@ -308,7 +309,7 @@ fn commit_view_commits_only_the_checked_files() {
 
     // 点 `src/new.rs` 的勾选框；点 `src/main.rs` 那一行打开差异。
     let target =
-        |app: &App, t: CommitTarget| app.commit_hits.iter().find(|(_, h)| *h == t).unwrap().0;
+        |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
     let check = target(&app, CommitTarget::Check(1));
     click(&mut app, (check.x + 4.0, check.y + 4.0));
     assert!(!app.commit.checked(&status.entries[1]));
@@ -402,7 +403,7 @@ fn hovering_a_change_offers_open_and_revert() {
     let entries = |app: &App| app.git.status.as_ref().unwrap().entries.clone();
     let index = entries(&app).iter().position(|e| e.path == main).unwrap();
     let find =
-        |app: &App, t: CommitTarget| app.commit_hits.iter().find(|(_, h)| *h == t).map(|h| h.0);
+        |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).map(|h| h.0);
     // 未悬停时不显示按钮；悬停该行时右端显示「打开文件」「回滚」，两者均有悬停提示。
     assert!(find(&app, CommitTarget::OpenFile(index)).is_none());
     let row = find(&app, CommitTarget::File(index)).unwrap();
@@ -442,7 +443,7 @@ fn shoot_commit_row_actions() {
     let entries = app.git.status.as_ref().unwrap().entries.clone();
     let index = entries.iter().position(|e| e.path == main).unwrap();
     let find =
-        |app: &App, t: CommitTarget| app.commit_hits.iter().find(|(_, h)| *h == t).unwrap().0;
+        |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
     let row = find(&app, CommitTarget::File(index));
     app.on_mouse_move(row.x + 120.0, row.y + row.h / 2.0);
     paint(&mut app);
@@ -569,7 +570,7 @@ fn shoot_commit_stashes() {
     app.run_action(Action::ShowCommit);
     app.press_commit(CommitTarget::Stashes);
     paint(&mut app);
-    let (row, _) = *(app.commit_hits.iter())
+    let (row, _) = *(app.hits.commit.iter())
         .find(|(_, t)| *t == CommitTarget::Stash(0))
         .unwrap();
     app.on_mouse_move(row.x + 20.0, row.y + row.h / 2.0);
@@ -749,12 +750,12 @@ fn the_commit_more_menu_greys_out_what_does_not_apply() {
     assert!(enabled(&app, MenuCommand::CommitCollapseAll));
     // 没勾文件时悬停组标题，右端仍是文件数，没有「回滚」。
     let reverts = |app: &mut App| {
-        let (band, _) = *(app.commit_hits.iter())
+        let (band, _) = *(app.hits.commit.iter())
             .find(|(_, t)| *t == CommitTarget::Group(CommitGroup::Changes))
             .unwrap();
         app.on_mouse_move(band.x + band.w / 2.0, band.y + band.h / 2.0);
         paint(app);
-        (app.commit_hits.iter()).any(|(_, t)| matches!(t, CommitTarget::GroupRevert(_)))
+        (app.hits.commit.iter()).any(|(_, t)| matches!(t, CommitTarget::GroupRevert(_)))
     };
     assert!(!reverts(&mut app));
 
@@ -1044,7 +1045,7 @@ fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
         paint(&mut app);
         for s in app.commit_sticky(&rows) {
             let slot = list.y + s.level as f32 * COMMIT_ROW;
-            for (rect, target) in &app.commit_hits {
+            for (rect, target) in &app.hits.commit {
                 if *target == CommitTarget::Sticky(s.row, s.level) {
                     assert!(rect.y >= slot - 0.01, "{step}: {rect:?} above {slot}");
                 }
@@ -1083,7 +1084,7 @@ fn showing_as_tree_switches_the_changes_between_a_tree_and_a_flat_list() {
     assert!(tools[1].0.x > tools[0].0.x && tools[1].0.x < tools[2].0.x);
     // 平铺时文件不缩进：勾选框和组标题的勾选框在同一列。
     let check_x = |app: &App, want: fn(&CommitTarget) -> bool| {
-        let (rect, _) = app.commit_hits.iter().find(|(_, t)| want(t)).unwrap();
+        let (rect, _) = app.hits.commit.iter().find(|(_, t)| want(t)).unwrap();
         rect.x + rect.w / 2.0
     };
     let group = check_x(&app, |t| matches!(t, CommitTarget::GroupCheck(_)));
@@ -1196,12 +1197,14 @@ fn folding_a_changes_folder_slides_its_rows_like_the_file_tree() {
     assert!(hidden > 0.0 && hidden < 12.0 * COMMIT_ROW);
     paint(&mut app);
     assert!(
-        app.commit_hits
+        app.hits
+            .commit
             .iter()
             .any(|(_, t)| *t == CommitTarget::Dir(a))
     );
     assert!(
-        !app.commit_hits
+        !app.hits
+            .commit
             .iter()
             .any(|(_, t)| matches!(t, CommitTarget::Dir(r) if *r > a))
     );
@@ -1282,7 +1285,8 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
     let (open, revert) = overflow.actions.expect("buttons after the name");
     assert!(open.x > list.right() && revert.right() <= spill.right());
     let open_hit = app
-        .commit_hits
+        .hits
+        .commit
         .iter()
         .find(|(_, t)| *t == CommitTarget::OpenFile(index))
         .map(|(r, _)| *r);
@@ -1446,7 +1450,7 @@ fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
             continue;
         };
         let (end, _) = overflow.actions.unwrap();
-        let start = (app.commit_hits.iter())
+        let start = (app.hits.commit.iter())
             .find(|(_, t)| matches!(t, CommitTarget::OpenFile(_)))
             .unwrap()
             .0;
@@ -1679,7 +1683,7 @@ fn the_last_local_commit_can_be_undone() {
         (button, CommitTarget::LastCommit),
     ] {
         assert!(
-            (app.commit_hits.iter()).any(|(r, t)| *t == target && *r == rect),
+            (app.hits.commit.iter()).any(|(r, t)| *t == target && *r == rect),
             "{target:?}"
         );
     }
@@ -1791,7 +1795,7 @@ fn the_sync_control_stays_one_button() {
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     let sync = |app: &App| {
-        (app.commit_hits.iter())
+        (app.hits.commit.iter())
             .find(|(_, t)| *t == CommitTarget::Sync)
             .unwrap()
             .0
@@ -1854,7 +1858,7 @@ fn the_sync_control_explains_what_it_will_do() {
             behind: 2
         }
     ));
-    let rect = (app.commit_hits.iter())
+    let rect = (app.hits.commit.iter())
         .find(|(_, t)| *t == CommitTarget::Sync)
         .unwrap()
         .0;
@@ -1875,7 +1879,8 @@ fn the_sync_control_follows_the_remotes() {
         return;
     };
     let sync = |app: &App| {
-        app.commit_hits
+        app.hits
+            .commit
             .iter()
             .any(|(_, t)| *t == CommitTarget::Sync)
     };
@@ -2043,7 +2048,7 @@ fn the_sync_control_fetches_when_in_sync() {
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     assert_eq!(app.git_sync_state(), SyncState::InSync);
-    let rect = (app.commit_hits.iter())
+    let rect = (app.hits.commit.iter())
         .find(|(_, t)| *t == CommitTarget::Sync)
         .unwrap()
         .0;
@@ -2085,7 +2090,7 @@ fn a_clean_branch_ahead_of_its_upstream_turns_the_commit_button_into_sync() {
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     assert_eq!(app.git_sync_state(), SyncState::Push(1));
-    let button = (app.commit_hits.iter())
+    let button = (app.hits.commit.iter())
         .find(|(_, t)| *t == CommitTarget::Sync)
         .unwrap()
         .0;
@@ -2360,8 +2365,8 @@ fn commit_only_the_checked_lines() {
     app.press_diff(DiffTarget::IncludeLine(RIGHT, line));
     paint(&mut app);
     assert!(
-        app.diff
-            .hits
+        app.hits
+            .diff
             .iter()
             .any(|(_, t)| *t == DiffTarget::IncludeLine(RIGHT, line))
     );
@@ -2520,7 +2525,7 @@ fn a_shorter_list_is_visible_after_scrolling_far_down() {
     assert!(app.commit.scroll <= app.commit_max_scroll());
     assert_eq!(app.commit.scroll, 0.0);
     assert!(
-        (app.commit_hits.iter()).any(|(_, target)| matches!(target, CommitTarget::File(_))),
+        (app.hits.commit.iter()).any(|(_, target)| matches!(target, CommitTarget::File(_))),
         "列表应当画出剩下的改动"
     );
 }
@@ -2597,7 +2602,7 @@ fn a_clean_tree_hides_the_commit_card_and_offers_the_next_step() {
     let parts = app.commit_parts();
     assert!(parts.card.is_none());
     assert_eq!(app.focus, Focus::CommitList);
-    let next = (app.commit_hits.iter()).find(|(_, t)| *t == CommitTarget::NextStep);
+    let next = (app.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::NextStep);
     let (rect, _) = *next.unwrap();
     assert!(parts.list.contains(rect.x, rect.y));
     app.commit_list_key(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Tab));
@@ -2665,10 +2670,10 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
         COMMIT_ROW + 2.0 * crate::app::git::commit::STASH_GAP
     );
     assert!(parts.list.bottom() <= section.y);
-    assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
+    assert!(!(app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
     app.press_commit(CommitTarget::Stashes);
     paint(&mut app);
-    assert!((app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
+    assert!((app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
 
     // 点一下：两个文件，已跟踪的在前；预览标签里是第一个，标题写着储藏的名字。
     app.press_commit(CommitTarget::Stash(0));
@@ -2699,7 +2704,7 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
         section.h,
         4.0 * COMMIT_ROW + 2.0 * crate::app::git::commit::STASH_GAP
     );
-    assert!((app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::StashFile(1)));
+    assert!((app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::StashFile(1)));
     app.press_commit(CommitTarget::StashFile(0));
     assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 0);
     assert!(app.editor.active().unwrap().name().contains("main.rs"));
@@ -2752,7 +2757,7 @@ fn the_stash_group_opens_like_a_drawer() {
     assert!(0.0 < app.stash_chevron() && app.stash_chevron() < 1.0);
     assert!(app.animating());
     paint(&mut app);
-    let has = |app: &App, target| (app.commit_hits.iter()).any(|(_, t)| *t == target);
+    let has = |app: &App, target| (app.hits.commit.iter()).any(|(_, t)| *t == target);
     assert!(has(&app, CommitTarget::Stashes));
     assert!(!has(&app, CommitTarget::Stash(0)));
 
@@ -2801,7 +2806,7 @@ fn the_last_commit_bar_folds_away_once_it_is_pushed() {
     assert_eq!(parts.list.bottom(), half.y);
     assert_eq!(app.commit_undo_shown().unwrap().subject, "加上改动");
     paint(&mut app);
-    assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Undo));
+    assert!(!(app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Undo));
 
     app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
     app.settle_animations();
@@ -2844,7 +2849,7 @@ fn the_commit_card_slides_away_once_nothing_is_left_to_commit() {
     assert!(rest.list.bottom() < parts.list.bottom());
     assert!(parts.list.bottom() < gone.list.bottom());
     paint(&mut app);
-    assert!(!(app.commit_hits.iter()).any(|(_, t)| *t == CommitTarget::Commit));
+    assert!(!(app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Commit));
 
     app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
     app.settle_animations();
@@ -2920,7 +2925,8 @@ fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
     assert_eq!(parts.commit_menu.right(), settled.commit_menu.right());
     assert!(parts.amend.is_some());
     assert!(
-        !app.commit_hits
+        !app.hits
+            .commit
             .iter()
             .any(|(_, t)| *t == CommitTarget::Amend)
     );
@@ -2992,7 +2998,7 @@ fn committed_rows_fade_out_instead_of_vanishing() {
     let rows = app.commit_rows();
     assert!(!rows.is_empty());
     let has_rows = |app: &App| {
-        (app.commit_hits.iter())
+        (app.hits.commit.iter())
             .any(|(_, t)| matches!(t, CommitTarget::File(_) | CommitTarget::Group(_)))
     };
     assert!(has_rows(&app));

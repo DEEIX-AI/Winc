@@ -227,7 +227,7 @@ fn failures_explain_themselves_and_leave_the_text_alone() {
 
     // 点击提示条上的「查看输出」：在只读标签中打开完整输出，提示条收起。
     paint(&mut app);
-    let button = app.notice.button.expect("提示条上有按钮");
+    let button = app.hits.notice_button.expect("提示条上有按钮");
     app.on_mouse_move(button.x + 4.0, button.y + 4.0);
     assert_eq!(app.hover, Hover::NoticeButton);
     app.on_mouse_down(MouseButton::Left);
@@ -764,8 +764,8 @@ fn untitled_files_format_after_choosing_a_language_in_the_status_bar() {
     app.notice.text = None;
     paint(&mut app);
     let (rect, _) = *app
-        .status
         .hits
+        .status
         .iter()
         .find(|(_, i)| *i == StatusItem::Language)
         .unwrap();

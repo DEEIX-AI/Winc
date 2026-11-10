@@ -143,8 +143,6 @@ pub(crate) struct MarkdownPreview {
     pub toggled_now: Option<String>,
     /// 点击 `其他.md#标题` 打开的文档与目标标题：该文档排版完成后滚动到该标题。
     pub pending_anchor: Option<(DocumentId, String)>,
-    /// 上一帧绘制的链接（区域和地址），点击时据此查找。
-    pub links: Vec<(winc_render::Rect, String)>,
     /// 上一帧绘制了滚动条的可横向滚动的表格；没有时为 `None`。
     ///
     /// 同一时刻只显示一个表格的滚动条：鼠标所在的表格，或最近一次横向滚动的表格。
@@ -171,8 +169,6 @@ pub(crate) struct MarkdownPreview {
     /// 跳转到的脚注或脚注引用在正文中的底色：范围（上边缘和高度，相对内容顶部，逻辑像素）与
     /// 淡出的时钟。
     pub anchor_flash: Option<((f32, f32), crate::app::animation::Clock)>,
-    /// 上一帧绘制的代码块（屏幕坐标）：鼠标移入、移出时重绘，以显示或隐藏复制按钮。
-    pub codes: Vec<winc_render::Rect>,
     /// 上一帧绘制了复制按钮的代码块的内容；按钮在 `links` 中只记录 `COPY`，点击时才取这里的
     /// 文字。
     ///
@@ -303,7 +299,6 @@ impl Default for MarkdownPreview {
             toggled: HashSet::new(),
             toggled_now: None,
             pending_anchor: None,
-            links: Vec::new(),
             toc: Vec::new(),
             toc_tops: Vec::new(),
             toc_fade: None,
@@ -311,7 +306,6 @@ impl Default for MarkdownPreview {
             toc_current: None,
             toc_flash: None,
             anchor_flash: None,
-            codes: Vec::new(),
             copy: None,
             expand: None,
             diagram: None,
@@ -720,8 +714,8 @@ impl App {
         if !self.markdown.area.contains(x, y) {
             return None;
         }
-        self.markdown
-            .links
+        self.hits
+            .markdown_links
             .iter()
             .position(|(rect, _)| rect.contains(x, y))
     }
@@ -730,7 +724,7 @@ impl App {
     /// 勾选框），而非正文中的链接。
     pub(crate) fn markdown_link_is_control(&self, index: usize) -> bool {
         use crate::app::preview::markdown::laid::{COPY, DETAILS, EXPAND, TABLE, TASK};
-        self.markdown.links.get(index).is_some_and(|(_, url)| {
+        self.hits.markdown_links.get(index).is_some_and(|(_, url)| {
             [COPY, DETAILS, EXPAND, TABLE, TASK]
                 .iter()
                 .any(|prefix| url.starts_with(prefix))
@@ -739,7 +733,7 @@ impl App {
 
     /// 处理预览中链接的点击：网址交给浏览器，`#标题` 滚动到该标题，本地文件在编辑器中打开。
     pub(crate) fn open_markdown_link(&mut self, index: usize) {
-        let Some((_, url)) = self.markdown.links.get(index).cloned() else {
+        let Some((_, url)) = self.hits.markdown_links.get(index).cloned() else {
             return;
         };
         if url == crate::app::preview::markdown::laid::EXPAND {

@@ -151,7 +151,7 @@ impl App {
         self.picker.branch_rows = None;
         self.picker.location_rows = None;
         self.picker.folders = false;
-        self.picker.part_hits.clear();
+        self.hits.picker_parts.clear();
         self.picker.fold = None;
         self.picker.places_in = None;
         if let Some(places) = self.picker.places.take()
@@ -658,8 +658,6 @@ pub struct Picker {
     pub(crate) folders: bool,
     /// 分支选择器、位置选择器的展开位置。
     pub(crate) anchor: GitAnchor,
-    /// 选择面板本帧绘制的按钮区域，点击和悬停据此判定目标。
-    pub(crate) part_hits: Vec<(Rect, PickerPart)>,
     /// ⌘P 面板上次排版时的高度，以及当时的窗口大小。
     pub(crate) height: Option<(f32, (f32, f32))>,
     pub(in crate::app) motion: Option<PickerMotion>,
@@ -699,7 +697,6 @@ impl Default for Picker {
             location_rows: None,
             folders: false,
             anchor: GitAnchor::Branch,
-            part_hits: Vec::new(),
             height: None,
             motion: None,
             fold: None,

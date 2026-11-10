@@ -1333,8 +1333,6 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
 /// 差异视图的界面状态：命中区域以及切换、定位时的过渡。
 #[derive(Default)]
 pub struct DiffState {
-    /// 差异标签中的可点击区域（标题栏按钮、折叠的行），绘制时更新。
-    pub(crate) hits: Vec<(Rect, DiffTarget)>,
     /// 差异中用「»」替换一段改动后正在淡出的颜色。
     pub(crate) fade: Option<crate::app::diff::DiffFade>,
     /// 跳转到一处改动时该段改动的短暂高亮；没有时为 `None`。

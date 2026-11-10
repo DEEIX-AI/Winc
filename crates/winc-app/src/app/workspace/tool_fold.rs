@@ -62,10 +62,14 @@ impl App {
             return;
         }
 
-        let kept = self.tree.tools.len();
+        let kept = self.hits.tree_tools.len();
         let mut target = [0.0; TOOLS + 1];
         target[..kept].fill(1.0);
-        target[TOOLS] = if self.tree.more.is_some() { 1.0 } else { 0.0 };
+        target[TOOLS] = if self.hits.tree_more.is_some() {
+            1.0
+        } else {
+            0.0
+        };
 
         let fold = &mut self.tool_fold;
         #[cfg(test)]

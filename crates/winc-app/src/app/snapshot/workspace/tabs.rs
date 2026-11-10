@@ -15,12 +15,12 @@ fn names(app: &App) -> Vec<String> {
 
 /// 返回第 `index` 个标签（从 0 起）内的一点：距标签左边缘 20 逻辑像素，垂直居中。
 fn tab_point(app: &App, index: usize) -> (f32, f32) {
-    let rect = app.tabs.hits.iter().find(|h| h.index == index).unwrap().tab;
+    let rect = app.hits.tabs.iter().find(|h| h.index == index).unwrap().tab;
     (rect.x + 20.0, rect.y + rect.h / 2.0)
 }
 
 fn tab_rect(app: &App, index: usize) -> Rect {
-    app.tabs.hits.iter().find(|h| h.index == index).unwrap().tab
+    app.hits.tabs.iter().find(|h| h.index == index).unwrap().tab
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn tabs_fit_their_names() {
     paint(&mut app);
 
     // 宽度贴合文件名：短名字的标签窄，长名字的标签到最大宽度为止；关闭按钮都在标签右端。
-    let widths = |app: &App| -> Vec<f32> { app.tabs.hits.iter().map(|h| h.tab.w).collect() };
+    let widths = |app: &App| -> Vec<f32> { app.hits.tabs.iter().map(|h| h.tab.w).collect() };
     let fitted = widths(&app);
     assert!(fitted[0] < fitted[1], "{fitted:?}");
     assert_eq!(fitted[1], TAB_WIDTH_MAX);
@@ -46,12 +46,12 @@ fn tabs_fit_their_names() {
             .iter()
             .all(|w| (TAB_WIDTH_MIN..=TAB_WIDTH_MAX).contains(w))
     );
-    for hit in &app.tabs.hits {
+    for hit in &app.hits.tabs {
         assert_eq!(hit.close.right(), hit.tab.right() - 6.0);
     }
 
     // 用鼠标关掉第一个：移过来的长名字标签暂用被关闭标签的宽度，关闭按钮正好在鼠标下面。
-    let close = app.tabs.hits.iter().find(|h| h.index == 0).unwrap().close;
+    let close = app.hits.tabs.iter().find(|h| h.index == 0).unwrap().close;
     let (x, y) = (close.x + close.w / 2.0, close.y + close.h / 2.0);
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
@@ -366,7 +366,8 @@ fn svg_opens_as_source_and_toggles_to_a_preview() {
         Some(winc_editor::PictureState::Failed(r)) if r.contains("XML")
     ));
     assert!(
-        app.placeholder_hits
+        app.hits
+            .placeholder
             .iter()
             .any(|(_, a)| *a == crate::app::PlaceholderAction::ShowSource)
     );
@@ -881,7 +882,7 @@ fn hovering_a_tab_shows_its_path_and_the_close_shortcut() {
     let folder = winc_editor::display_path(path.parent().unwrap(), None);
     assert_eq!(text, format!("main.rs\n{folder}"));
 
-    let close = app.tabs.hits.iter().find(|h| h.index == 1).unwrap().close;
+    let close = app.hits.tabs.iter().find(|h| h.index == 1).unwrap().close;
     app.on_mouse_move(close.x + close.w / 2.0, close.y + close.h / 2.0);
     let (rect, text) = crate::view::tests::tooltip(&app).unwrap();
     assert_eq!(rect, close);

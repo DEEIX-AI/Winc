@@ -293,7 +293,7 @@ fn tab_context_menu_closes_others_right_and_saved() {
             .collect()
     };
     let tab = |app: &App, i: usize| {
-        let rect = app.tabs.hits.iter().find(|h| h.index == i).unwrap().tab;
+        let rect = app.hits.tabs.iter().find(|h| h.index == i).unwrap().tab;
         (rect.x + 20.0, rect.y + rect.h / 2.0)
     };
 

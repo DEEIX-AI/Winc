@@ -87,7 +87,7 @@ fn markdown_files_get_the_three_way_switch() {
     // 右边是预览：绘制在分栏的右半边，已完成排版并记录链接。
     assert_eq!(app.markdown.area, app.layout.split);
     assert!(app.markdown.height > app.markdown.area.h);
-    assert!(app.markdown.links.len() >= 2);
+    assert!(app.hits.markdown_links.len() >= 2);
     // 图片已读取，并按显示大小绘制。
     assert!(matches!(
         app.markdown.images.values().next(),
@@ -1014,8 +1014,8 @@ fn clicking_a_task_box_toggles_it() {
     let (mut app, dir) = live_doc("md-task", "开头\n\n- [ ] 甲\n- [x] 乙\n");
     let task = crate::app::preview::markdown::laid::TASK;
     let boxes = |app: &App| -> Vec<winc_render::Rect> {
-        app.markdown
-            .links
+        app.hits
+            .markdown_links
             .iter()
             .filter(|(_, url)| url.starts_with(task))
             .map(|(r, _)| *r)
@@ -1187,8 +1187,8 @@ fn the_table_toolbar_adds_aligns_and_deletes() {
     let click = |app: &mut App, op: &str| {
         let url = format!("{}{op}", crate::app::preview::markdown::laid::TABLE);
         let (rect, _) = app
-            .markdown
-            .links
+            .hits
+            .markdown_links
             .iter()
             .find(|(_, u)| *u == url)
             .cloned()
@@ -1337,12 +1337,12 @@ fn math_and_diagrams_show_the_result_below_the_source() {
 fn clicking_an_anchor_link_scrolls_to_the_heading() {
     let (mut app, dir) = readme("md-anchor", false, PreviewMode::Preview);
     let index = app
-        .markdown
-        .links
+        .hits
+        .markdown_links
         .iter()
         .position(|(_, url)| url == "#安装")
         .expect("有转到「安装」的链接");
-    let (rect, _) = app.markdown.links[index].clone();
+    let (rect, _) = app.hits.markdown_links[index].clone();
     // 可编辑的预览中单击链接只放光标。
     super::click(&mut app, (rect.x + 2.0, rect.y + 2.0));
     assert_eq!(app.markdown.scroll(), 0.0);
@@ -1383,8 +1383,8 @@ fn details_open_and_close_on_click() {
     let height = app.markdown.height;
     let toggle = |app: &mut App| {
         let (rect, _) = app
-            .markdown
-            .links
+            .hits
+            .markdown_links
             .iter()
             .find(|(_, url)| url.starts_with(crate::app::preview::markdown::laid::DETAILS))
             .cloned()
@@ -1407,17 +1407,17 @@ fn code_blocks_offer_a_copy_button_on_hover() {
     let (mut app, dir) = readme("md-copy-code", false, PreviewMode::Preview);
     let copy = crate::app::preview::markdown::laid::COPY;
     assert!(
-        !app.markdown
-            .links
+        !app.hits
+            .markdown_links
             .iter()
             .any(|(_, url)| url.starts_with(copy))
     );
-    let code = *app.markdown.codes.first().expect("画出了代码块");
+    let code = *app.hits.markdown_codes.first().expect("画出了代码块");
     app.on_mouse_move(code.x + 20.0, code.y + 20.0);
     paint(&mut app);
     let (rect, _) = app
-        .markdown
-        .links
+        .hits
+        .markdown_links
         .iter()
         .find(|(_, url)| url.starts_with(copy))
         .cloned()
@@ -1446,7 +1446,7 @@ fn links_to_headings_in_other_files_open_there() {
     paint(&mut app);
     app.set_preview_mode(PreviewMode::Preview);
     settle(&mut app);
-    let (rect, _) = app.markdown.links[0].clone();
+    let (rect, _) = app.hits.markdown_links[0].clone();
     command_click(&mut app, (rect.x + 2.0, rect.y + 2.0));
     settle(&mut app);
     let doc = app.editor.active().unwrap();
@@ -1840,12 +1840,12 @@ fn mermaid_blocks_draw_diagrams_and_fall_back_to_code() {
         paint(&mut app);
         app.set_preview_mode(PreviewMode::Preview);
         settle(&mut app);
-        let [block] = app.markdown.codes[..] else {
+        let [block] = app.hits.markdown_codes[..] else {
             panic!("只有一个代码块或图：{source}");
         };
         app.on_mouse_move(block.x + block.w / 2.0, block.y + block.h / 2.0);
         paint(&mut app);
-        let has_expand = app.markdown.links.iter().any(|(_, url)| url == expand);
+        let has_expand = app.hits.markdown_links.iter().any(|(_, url)| url == expand);
         assert_eq!(has_expand, diagram, "{source}");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -2230,14 +2230,14 @@ fn more_diagram_kinds_draw_as_diagrams() {
         let (mut app, dir) = live_doc("md-mermaid-more", source);
         app.set_preview_mode(PreviewMode::Preview);
         settle(&mut app);
-        let [block] = app.markdown.codes[..] else {
+        let [block] = app.hits.markdown_codes[..] else {
             panic!("只有一张图：{source}");
         };
         app.on_mouse_move(block.x + block.w / 2.0, block.y + block.h / 2.0);
         paint(&mut app);
         let expand = crate::app::preview::markdown::laid::EXPAND;
         assert!(
-            app.markdown.links.iter().any(|(_, url)| url == expand),
+            app.hits.markdown_links.iter().any(|(_, url)| url == expand),
             "{source}"
         );
         let over = crate::view::preview::markdown::tests::overflow(&app);
@@ -2309,13 +2309,13 @@ fn diagram_view_app(name: &str, k: usize, dark: bool) -> (App, PathBuf) {
     paint(&mut app);
     app.set_preview_mode(PreviewMode::Preview);
     settle(&mut app);
-    let diagram = *app.markdown.codes.first().expect("画出了图");
+    let diagram = *app.hits.markdown_codes.first().expect("画出了图");
     app.on_mouse_move(diagram.x + diagram.w / 2.0, diagram.y + 20.0);
     paint(&mut app);
     let expand = crate::app::preview::markdown::laid::EXPAND;
     let (button, _) = app
-        .markdown
-        .links
+        .hits
+        .markdown_links
         .iter()
         .find(|(_, url)| url == expand)
         .cloned()
@@ -2416,7 +2416,7 @@ fn shoot_diagram_view() {
         shoot(&mut app, &format!("md-diagram-view-{theme}"));
         // 关闭全屏查看后鼠标仍在图上，截取图右上角的全屏、复制按钮。
         app.close_diagram_view();
-        let diagram = *app.markdown.codes.first().unwrap();
+        let diagram = *app.hits.markdown_codes.first().unwrap();
         app.on_mouse_move(diagram.right() - 40.0, diagram.y + 20.0);
         shoot(&mut app, &format!("md-diagram-buttons-{theme}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2434,7 +2434,7 @@ fn shoot_github_extras() {
         paint(&mut app);
         app.set_preview_mode(PreviewMode::Preview);
         settle(&mut app);
-        let code = *app.markdown.codes.first().unwrap();
+        let code = *app.hits.markdown_codes.first().unwrap();
         app.on_mouse_move(code.x + 20.0, code.y + 10.0);
         shoot(
             &mut app,
@@ -3186,7 +3186,7 @@ fn docx_files_open_as_a_reading_view() {
         app.markdown.failed.as_deref(),
         Some(winc_i18n::t!("preview-docx-invalid"))
     );
-    assert_eq!(app.placeholder_hits.len(), 2);
+    assert_eq!(app.hits.placeholder.len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3329,7 +3329,7 @@ fn pdf_files_render_only_the_pages_in_view() {
             .map(String::as_str),
         Some(winc_i18n::t!("preview-pdf-invalid"))
     );
-    assert_eq!(app.placeholder_hits.len(), 2);
+    assert_eq!(app.hits.placeholder.len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -317,8 +317,8 @@ fn narrow_sidebar_folds_tools_before_the_name() {
     let mut app = app_with(&dir.join("a.txt"), false);
     app.sidebar.width = 400.0;
     paint(&mut app);
-    assert_eq!(app.tree.tools.len(), 5);
-    let full = app.project_hit.w;
+    assert_eq!(app.hits.tree_tools.len(), 5);
+    let full = app.hits.project.w;
 
     // 从宽到窄一点点收：工具栏还留着按钮时项目名完整显示，按钮一个个收进「⋯」；
     // 只剩「⋯」以后项目名才变短，最后停在最小宽度。
@@ -327,15 +327,15 @@ fn narrow_sidebar_folds_tools_before_the_name() {
     while width >= MIN_PANEL_WIDTH {
         app.sidebar.width = width;
         paint(&mut app);
-        if app.tree.tools.is_empty() {
-            assert!(app.tree.more.is_some());
-            shortened |= app.project_hit.w < full;
+        if app.hits.tree_tools.is_empty() {
+            assert!(app.hits.tree_more.is_some());
+            shortened |= app.hits.project.w < full;
         } else {
-            assert_eq!(app.project_hit.w, full, "宽 {width} 时项目名被截短了");
+            assert_eq!(app.hits.project.w, full, "宽 {width} 时项目名被截短了");
         }
-        assert!(app.project_hit.w >= TREE_NAME_MIN);
-        if let Some(more) = app.tree.more {
-            assert!(more.x >= app.project_hit.right());
+        assert!(app.hits.project.w >= TREE_NAME_MIN);
+        if let Some(more) = app.hits.tree_more {
+            assert!(more.x >= app.hits.project.right());
         }
         width -= 2.0;
     }
@@ -351,18 +351,18 @@ fn narrow_sidebar_folds_tools_into_more() {
 
     // 侧栏足够宽时，五个工具按钮都显示，没有「⋯」。
     paint(&mut app);
-    assert_eq!(app.tree.tools.len(), 5);
-    assert!(app.tree.more.is_none());
+    assert_eq!(app.hits.tree_tools.len(), 5);
+    assert!(app.hits.tree_more.is_none());
 
     // 缩到最窄：项目名仍然保留且可点击（只检查悬停，不实际点击，因为点击会弹出选择目录的
     // 系统对话框）。
     app.sidebar.width = MIN_PANEL_WIDTH;
     paint(&mut app);
-    let more = app.tree.more.unwrap();
-    assert!(app.tree.tools.len() < 5);
-    let hit = app.project_hit;
+    let more = app.hits.tree_more.unwrap();
+    assert!(app.hits.tree_tools.len() < 5);
+    let hit = app.hits.project;
     assert!(hit.w >= TREE_NAME_MIN);
-    assert!(app.tree.tools.iter().all(|(r, _)| r.x >= hit.right()));
+    assert!(app.hits.tree_tools.iter().all(|(r, _)| r.x >= hit.right()));
     app.on_mouse_move(hit.x + hit.w / 2.0, hit.y + hit.h / 2.0);
     assert_eq!(app.hover, Hover::ProjectName);
 
@@ -374,7 +374,7 @@ fn narrow_sidebar_folds_tools_into_more() {
     app.on_mouse_down(MouseButton::Left);
     let menu = app.context_menu.clone().unwrap();
     assert_eq!(menu.target, MenuTarget::TreeTools);
-    let kept = app.tree.tools.len();
+    let kept = app.hits.tree_tools.len();
     assert_eq!(menu.entries.len(), TreeTool::ALL.len() - kept);
     assert_eq!(
         menu.entries.last(),
@@ -398,8 +398,8 @@ fn tree_tools_create_a_file_and_collapse_folders() {
     paint(&mut app);
 
     let button = |app: &App, tool: TreeTool| {
-        app.tree
-            .tools
+        app.hits
+            .tree_tools
             .iter()
             .find(|(_, t)| *t == tool)
             .map(|(r, _)| *r)
@@ -806,8 +806,8 @@ fn compact_app(name: &str) -> (App, PathBuf, usize) {
 
 /// 返回第 `row` 行里合并显示的目录 `path` 的中点横坐标。
 fn segment_x(app: &App, row: usize, path: &Path) -> f32 {
-    app.tree
-        .segments
+    app.hits
+        .tree_segments
         .iter()
         .find(|(index, .., p)| *index == row && p == path)
         .map(|(_, left, right, _)| (left + right) / 2.0)
@@ -872,7 +872,7 @@ fn the_compact_folders_setting_applies_at_once() {
     app.settings_toggle(Setting::CompactFolders);
     assert_eq!(label(&app), "src");
     paint(&mut app);
-    assert!(app.tree.segments.is_empty());
+    assert!(app.hits.tree_segments.is_empty());
 
     app.settings_toggle(Setting::CompactFolders);
     assert_eq!(label(&app), "src/main/java");
@@ -1536,7 +1536,7 @@ fn single_clicks_preview_files_in_one_tab() {
     app.remove_tabs(&[a]);
     click_tree_file(&mut app, &dir, "a.txt", 1);
     let index = app.preview_index().unwrap();
-    let hit = app.tabs.hits.iter().find(|h| h.index == index).unwrap().tab;
+    let hit = app.hits.tabs.iter().find(|h| h.index == index).unwrap().tab;
     let (x, y) = (hit.x + hit.w / 2.0, hit.y + hit.h / 2.0);
     app.last_click = None;
     for _ in 0..2 {

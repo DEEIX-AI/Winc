@@ -73,7 +73,11 @@ impl App {
         self.drag_terminal_tab(x);
 
         self.set_hover(self.hover_at(x, y));
-        let code = self.markdown.codes.iter().position(|r| r.contains(x, y));
+        let code = self
+            .hits
+            .markdown_codes
+            .iter()
+            .position(|r| r.contains(x, y));
         if code != self.markdown.code_hover {
             self.markdown.code_hover = code;
             self.request_redraw();

@@ -49,7 +49,6 @@ pub(super) fn draw_terminal(app: &mut App, frame: &mut Frame<'_>) {
 /// 绘制标签栏和内容区，查找条之外的部分。
 fn draw_panel(app: &mut App, frame: &mut Frame<'_>) {
     let card = app.layout.terminal;
-    app.terminal.hits.clear();
     if card.h <= 0.0 || card.w <= 0.0 {
         return;
     }
@@ -623,7 +622,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     if let Some(run) = run {
         draw_run_buttons(app, frame, run, header, &mut hits);
     }
-    app.terminal.hits = hits;
+    app.hits.terminal = hits;
 }
 
 /// 配置名按钮最宽多少（逻辑像素），约容纳 8 个汉字；更长的名字截短。
@@ -858,7 +857,7 @@ fn draw_end_notice(app: &mut App, frame: &mut Frame<'_>, row: Rect, clip: Rect) 
     icons::return_key(frame, icon, p.text, clip);
     let text = button.x + 6.0 + RESTART_ICON;
     ui_text(frame, app, text, row, label, p.text, clip);
-    app.terminal.hits.push((button, HeaderHit::Restart));
+    app.hits.terminal.push((button, HeaderHit::Restart));
 }
 
 /// 在滚动条轨道上标出匹配的位置，当前匹配用强调色。匹配超过上限时等间隔取样。
@@ -1010,7 +1009,7 @@ fn draw_find(app: &mut App, frame: &mut Frame<'_>) {
             (bar, HeaderHit::Find(FindPart::Bar)),
         ]);
     let hits: Vec<_> = hits.collect();
-    app.terminal.hits.splice(0..0, hits);
+    app.hits.terminal.splice(0..0, hits);
 }
 
 #[cfg(test)]

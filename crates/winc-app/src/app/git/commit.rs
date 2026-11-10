@@ -1381,7 +1381,7 @@ impl App {
             }
             CommitTarget::StashMenu(i) => {
                 let Some(&(rect, _)) =
-                    (self.commit_hits.iter()).find(|(_, t)| *t == CommitTarget::StashMenu(i))
+                    (self.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::StashMenu(i))
                 else {
                     return;
                 };
@@ -1389,7 +1389,7 @@ impl App {
             }
             CommitTarget::StashMore => {
                 let Some(&(rect, _)) =
-                    (self.commit_hits.iter()).find(|(_, t)| *t == CommitTarget::StashMore)
+                    (self.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::StashMore)
                 else {
                     return;
                 };

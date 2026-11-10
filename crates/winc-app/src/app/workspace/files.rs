@@ -54,8 +54,6 @@ pub struct TabHit {
 /// 标签栏的滚动位置，以及绘制时记录的几何信息，供点击和滚轮使用。
 #[derive(Debug, Default)]
 pub struct TabBar {
-    /// 各标签的位置，按绘制顺序排列。
-    pub hits: Vec<TabHit>,
     /// 标签的可见范围；放不下全部标签时，右侧为新建按钮和「⌄」留出位置。
     pub view: Rect,
     /// 新建按钮的矩形。
@@ -135,7 +133,7 @@ impl App {
         }
 
         // 被拖动的标签最后绘制、压在其他标签之上，因此从后向前查找，先判断被拖动的标签。
-        let hit = self.tabs.hits.iter().rev().find(|h| h.tab.contains(x, y))?;
+        let hit = self.hits.tabs.iter().rev().find(|h| h.tab.contains(x, y))?;
         Some((hit.index, hit.close.inset(-2.0, -2.0).contains(x, y)))
     }
 

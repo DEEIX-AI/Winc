@@ -256,7 +256,7 @@ fn conflicts_wait_for_the_user_to_pick_a_side() {
 
     // 当前标签显示冲突卡片；另一个标签只在提示条中列出。
     paint(&mut app);
-    let (card, buttons) = app.conflict_card.clone().unwrap();
+    let (card, buttons) = app.hits.conflict_card.clone().unwrap();
     assert_eq!(buttons.len(), 3);
     assert!(buttons.iter().all(|(b, _)| card.contains(b.x, b.y)));
     assert!(card.right() <= app.layout.editor.right());
@@ -280,7 +280,7 @@ fn conflicts_wait_for_the_user_to_pick_a_side() {
 
     // 比较：打开并排的差异标签，左边是磁盘版本，右边是自己的修改。
     let button = |app: &App, action: ConflictAction| {
-        let (_, buttons) = app.conflict_card.clone().unwrap();
+        let (_, buttons) = app.hits.conflict_card.clone().unwrap();
         buttons.iter().find(|(_, a)| *a == action).unwrap().0
     };
     let compare = button(&app, ConflictAction::Compare);
@@ -306,7 +306,7 @@ fn conflicts_wait_for_the_user_to_pick_a_side() {
     assert_eq!(doc.text_range(0, usize::MAX).unwrap(), "theirs\n");
     assert!(!doc.is_dirty() && !doc.in_conflict());
     paint(&mut app);
-    assert!(app.conflict_card.is_none());
+    assert!(app.hits.conflict_card.is_none());
     app.run(Command::Undo);
     assert!(app.editor.active().unwrap().is_dirty());
 

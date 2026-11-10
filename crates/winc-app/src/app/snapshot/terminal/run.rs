@@ -52,7 +52,7 @@ fn spawned(sent: &[ToHelper]) -> usize {
 fn run_button(app: &mut App, button: RunButton) -> Option<(f32, f32)> {
     paint(app);
     let hit = HeaderHit::Run(button);
-    let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
+    let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
     Some((rect.x + rect.w / 2.0, rect.y + rect.h / 2.0))
 }
 
@@ -419,7 +419,7 @@ fn exits_are_reported_only_when_unseen() {
 fn the_stop_button_appears_only_while_running() {
     let (mut app, dir, _log) = app_with_configs("run-stop-button");
     let hit = |app: &App, want: HeaderHit| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         hits.iter().find(|(_, h)| *h == want).map(|(rect, _)| *rect)
     };
     let start = HeaderHit::Run(RunButton::Start);
@@ -446,7 +446,7 @@ fn the_stop_button_fades_and_the_run_button_slides() {
     use std::time::Duration;
     let (mut app, dir, _log) = app_with_configs("run-stop-motion");
     let hit = |app: &App, want: HeaderHit| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         hits.iter().find(|(_, h)| *h == want).map(|(rect, _)| *rect)
     };
     let start = HeaderHit::Run(RunButton::Start);

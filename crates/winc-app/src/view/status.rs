@@ -324,8 +324,6 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     frame.rect(bar, p.frame_bg);
     // 隐藏时只剩窗口底边的边距，没有可以点击的项。
     if !app.status_bar_shown() {
-        app.status.hits.clear();
-        app.status.crumb_hits.clear();
         return;
     }
     // 绘制各组时同时读取 `app`，因此过渡状态先移出，绘制结束后恢复。
@@ -669,8 +667,8 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     app.status.motion = motion;
-    app.status.crumb_hits = hits;
-    app.status.hits = status_hits;
+    app.hits.crumbs = hits;
+    app.hits.status = status_hits;
 }
 
 /// 状态栏上的分支：分支名（分离头指针时是提交号），领先、落后时加上 ↑、↓ 和提交数。

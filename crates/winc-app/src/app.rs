@@ -9,6 +9,7 @@ pub(crate) mod diff;
 pub(crate) mod editor;
 mod fields;
 pub(crate) mod git;
+pub(crate) mod hits;
 mod input;
 mod lifecycle;
 pub(crate) mod preview;
@@ -699,6 +700,8 @@ pub(crate) struct WordHighlight {
 ///
 /// 各功能的事件处理方法分布在 `app/` 的子模块中，均只读写本结构的字段。
 pub struct App {
+    /// 本帧绘制时记录的可点击范围与位置。
+    pub hits: hits::Hits,
     // 编辑器、配置和历史
     /// 打开的文档、工作区、光标和选区。
     pub editor: Editor,
@@ -784,14 +787,8 @@ pub struct App {
     pub layout: Layout,
     /// 标签栏的标签和滚动状态。
     pub tabs: TabBar,
-    /// 无法打开的文件的占位页上，各按钮的位置。
-    pub placeholder_hits: Vec<(Rect, PlaceholderAction)>,
     /// 差异视图的界面状态。
     pub diff: diff::DiffState,
-    /// 开始页上可点击的区域，绘制时记录。
-    ///
-    /// 同一位置有两个区域时（最近列表的一行及其 ✕），✕ 排在前面。
-    pub start_hits: Vec<(Rect, StartAction)>,
     /// 状态栏的界面状态。
     pub status: status::StatusState,
     /// 粘滞滚动的状态。
@@ -823,10 +820,6 @@ pub struct App {
     pub(crate) pdf: preview::pdf::PdfPreview,
     /// 状态栏键路径的缓存与扫描记录。
     pub key_path: status::breadcrumb::KeyPath,
-    /// 已折叠行末尾 `⋯` 的可点击区域和行号，绘制时记录，点击后展开。
-    pub folded_hits: Vec<(Rect, usize)>,
-    /// 侧栏标题行项目名的可点击区域，绘制时填入。
-    pub project_hit: Rect,
     /// 文件树的界面状态。
     pub tree: workspace::tree::TreeState,
     /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
@@ -949,8 +942,6 @@ pub struct App {
     pub git: git::GitState,
     /// Git 的提交视图：勾选、提交信息。
     pub commit: git::commit::CommitState,
-    /// 提交视图中的可点击区域，绘制时更新。
-    pub commit_hits: Vec<(Rect, CommitTarget)>,
     /// 行号栏的 Git 改动标记和已展开的改动卡片。
     pub changes: git::changes::LineChanges,
     /// Git 日志标签的后台通道和点击区域。
@@ -987,8 +978,6 @@ pub struct App {
     pub notice: lifecycle::notice::Notice,
     /// 鼠标是否在窗口内：移进来时置位，离开窗口时清除。
     cursor_inside: bool,
-    /// 冲突卡片及其按钮的位置，绘制时记录；当前文档没有冲突时为 `None`。
-    pub conflict_card: Option<(Rect, Vec<(Rect, ConflictAction)>)>,
     /// 悬停提示的计时状态。
     pub tooltip: animation::Tooltip,
 

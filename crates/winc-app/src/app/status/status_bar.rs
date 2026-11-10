@@ -69,7 +69,7 @@ impl App {
             self.click_update();
             return;
         }
-        let Some(&(rect, _)) = self.status.hits.iter().find(|&&(_, i)| i == item) else {
+        let Some(&(rect, _)) = self.hits.status.iter().find(|&&(_, i)| i == item) else {
             return;
         };
         let target = match (item, self.editor.active().map(|d| d.id)) {

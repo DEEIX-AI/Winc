@@ -281,8 +281,8 @@ impl App {
 
     /// 返回第 `index` 行里横坐标 `x` 处合并显示的目录；不在其中时返回 `None`。
     pub(in crate::app) fn tree_segment_at(&self, index: usize, x: f32) -> Option<PathBuf> {
-        self.tree
-            .segments
+        self.hits
+            .tree_segments
             .iter()
             .find(|(row, left, right, _)| *row == index && (*left..*right).contains(&x))
             .map(|(.., path)| path.clone())
@@ -290,7 +290,7 @@ impl App {
 
     /// 按鼠标现在的位置更新悬停的合并目录；同一行内换到另一级时悬停目标不变，要在这里请求重画。
     pub(in crate::app) fn track_tree_segment(&mut self) {
-        if self.tree.segments.is_empty() && self.tree.hover_segment.is_none() {
+        if self.hits.tree_segments.is_empty() && self.tree.hover_segment.is_none() {
             return;
         }
         let (x, y) = self.mouse;
@@ -792,7 +792,7 @@ impl App {
 
     /// 在工具栏的「⋯」下方弹出系统菜单，列出收起的工具。
     pub(in crate::app) fn open_tree_tools_menu(&mut self) {
-        let Some(more) = self.tree.more else {
+        let Some(more) = self.hits.tree_more else {
             return;
         };
         self.open_button_menu(
@@ -867,10 +867,6 @@ impl App {
 
 /// 文件树的界面状态：滚动位置、工具栏与行的命中区域、展开收起与拖动的过程。
 pub struct TreeState {
-    /// 文件树工具栏各按钮的位置，绘制时填入，点击时使用。
-    pub(crate) tools: Vec<(Rect, TreeTool)>,
-    /// 工具栏收起后「⋯」按钮的位置；所有按钮都放得下时为 `None`。
-    pub(crate) more: Option<Rect>,
     /// 鼠标所在文件树行的名字显示不全时，叠加在编辑区上方绘制的区域，以及该行的序号。
     pub(crate) overflow: Option<(Rect, usize)>,
     /// 文件树的纵向滚动量（逻辑像素）。
@@ -879,10 +875,6 @@ pub struct TreeState {
     pub(crate) scroll_x: f32,
     /// 文件树中最宽一行的内容宽度，横向滚动范围和滑块据此计算；绘制时测量。
     pub(crate) content_w: f32,
-    /// 合并显示的目录在屏幕上的横向范围，绘制时测量。
-    ///
-    /// 各项依次为所在行的下标、左右边界（逻辑像素）和目录路径。
-    pub(crate) segments: Vec<(usize, f32, f32, PathBuf)>,
     /// 鼠标所在的合并显示目录；鼠标不在合并显示的目录上时为 `None`。
     pub(crate) hover_segment: Option<PathBuf>,
     /// 文件树各行名字的过渡状态。
@@ -901,13 +893,10 @@ pub struct TreeState {
 impl Default for TreeState {
     fn default() -> Self {
         Self {
-            tools: Vec::new(),
-            more: None,
             overflow: None,
             scroll: 0.0,
             scroll_x: 0.0,
             content_w: 0.0,
-            segments: Vec::new(),
             hover_segment: None,
             labels: Default::default(),
             typed: None,

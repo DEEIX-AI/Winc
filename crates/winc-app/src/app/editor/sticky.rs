@@ -166,7 +166,7 @@ impl App {
 
     /// 返回窗口坐标 (`x`, `y`)（逻辑像素）处固定的行；该处不是固定行时返回 `None`。
     ///
-    /// 固定行的位置取自上一次绘制时记录的 `self.sticky.rows`。
+    /// 固定行的位置取自上一次绘制时记录的 `self.hits.sticky`。
     pub(in crate::app) fn sticky_at(&self, x: f32, y: f32) -> Option<StickyRow> {
         let text = self.layout.text;
         let editor = self.layout.editor;
@@ -178,8 +178,8 @@ impl App {
         }
         let line_height = self.fonts.line_height;
         // 上移的内层与外层重叠时外层绘制在上面，因此从外层到内层查找，先匹配的即为最上层。
-        self.sticky
-            .rows
+        self.hits
+            .sticky
             .iter()
             .find(|row| {
                 let top = text.y + row.y;
@@ -217,7 +217,5 @@ impl App {
 /// 粘滞滚动的状态：当前钉住的各行及其计算缓存。
 #[derive(Default)]
 pub struct Sticky {
-    /// 编辑区顶部钉住的各行，绘制时记录，点击和悬停时使用。
-    pub(crate) rows: Vec<StickyRow>,
     pub(in crate::app) cache: Option<StickyCache>,
 }

@@ -26,13 +26,11 @@ use crate::app::preview::markdown::laid::*;
 /// 在 `area`（窗口坐标，逻辑像素）里画当前文档的 Markdown 预览，分栏时是右半边，只看预览时
 /// 是整个编辑区。
 ///
-/// 排版结果、可点击范围和光标位置写回 `app.markdown`；需要读取的图片记进请求，下一帧再画。
+/// 排版结果和光标位置写回 `app.markdown`，可点击范围记入 `app.hits`；需要读取的图片记进请求，下一帧再画。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let p = app.palette;
     frame.rect(area, p.editor_bg);
     app.markdown.area = area;
-    app.markdown.links.clear();
-    app.markdown.codes.clear();
     app.markdown.copy = None;
     app.markdown.expand = None;
     // 可编辑的预览在排版之前取得当前文字的解析结果，本帧即按最新的结构显示。
@@ -335,7 +333,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 Item::Link { rect, url } => {
                     let r = at(rect).intersect(area);
                     if r.w > 0.0 && r.h > 0.0 {
-                        md.links.push((r, url.to_string()));
+                        app.hits.markdown_links.push((r, url.to_string()));
                     }
                 }
                 Item::Check {
@@ -350,7 +348,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     if hit.w > 0.0 && hit.h > 0.0 {
                         let start = laid.ranges.get(i).map_or(0, |r| r.start);
                         let at = start.saturating_add(*source as usize);
-                        md.links.push((hit, format!("{TASK}{at}")));
+                        app.hits.markdown_links.push((hit, format!("{TASK}{at}")));
                     }
                 }
                 Item::Path {
@@ -384,11 +382,11 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     diagram,
                 } => {
                     let r = at(rect);
-                    md.codes.push(r);
+                    app.hits.markdown_codes.push(r);
                     if r.contains(mouse.0, mouse.1) && area.contains(mouse.0, mouse.1) {
                         let button = copy_button(r);
                         code_button(frame, p, button, area, icons::copy);
-                        md.links.push((button, COPY.to_owned()));
+                        app.hits.markdown_links.push((button, COPY.to_owned()));
                         md.copy = Some(text.clone());
                         // 图的复制按钮左侧另有全屏查看按钮。
                         if *diagram {
@@ -397,7 +395,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                                 ..button
                             };
                             code_button(frame, p, expand, area, icons::expand);
-                            md.links.push((expand, EXPAND.to_owned()));
+                            app.hits.markdown_links.push((expand, EXPAND.to_owned()));
                             md.expand = Some(text.clone());
                         }
                     }
@@ -436,7 +434,15 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         );
     }
     if let Some((table, align)) = toolbar {
-        table_toolbar(frame, p, table, align, area, mouse, &mut md.links);
+        table_toolbar(
+            frame,
+            p,
+            table,
+            align,
+            area,
+            mouse,
+            &mut app.hits.markdown_links,
+        );
     }
     if let Some((_, y, h)) = caret {
         // 竖条在内容左边的留白正中，宽 2 逻辑像素。

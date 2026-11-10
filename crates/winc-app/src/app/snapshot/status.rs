@@ -15,7 +15,7 @@ fn the_settings_button_stays_at_the_right_end_of_the_status_bar() {
     app.settings_toggle(Setting::TerminalModule);
     paint(&mut app);
     fn pill(app: &App, wanted: StatusItem) -> Option<Rect> {
-        let hit = app.status.hits.iter().find(|(_, item)| *item == wanted);
+        let hit = app.hits.status.iter().find(|(_, item)| *item == wanted);
         hit.map(|(rect, _)| *rect)
     }
 
@@ -61,10 +61,10 @@ fn every_crumb_opens_the_folder_it_names() {
     assert_eq!(names[1..], ["src", "main.rs"]);
     assert_eq!(crumbs[0].path.as_deref(), Some(root.as_path()));
     assert_eq!(crumbs[2].path.as_deref(), Some(main.as_path()));
-    assert_eq!(app.status.crumb_hits.len(), 3);
+    assert_eq!(app.hits.crumbs.len(), 3);
 
     // 鼠标位于某一段内时悬停该段；位于两段之间的箭头上时没有悬停项。
-    let (src, _) = app.status.crumb_hits[1];
+    let (src, _) = app.hits.crumbs[1];
     let y = src.y + src.h / 2.0;
     app.on_mouse_move(src.x + 4.0, y);
     assert_eq!(app.hover, Hover::Crumb(1));
@@ -139,7 +139,7 @@ fn every_crumb_opens_the_folder_it_names() {
     paint(&mut app);
     assert_eq!(app.crumbs().len(), 1);
     assert!(app.crumbs()[0].path.is_none());
-    assert!(app.status.crumb_hits.is_empty());
+    assert!(app.hits.crumbs.is_empty());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -253,8 +253,8 @@ fn a_found_update_shows_in_the_status_bar_and_the_setting_turns_checks_off() {
     let mut app = app_with(&dir.join("short.rs"), false);
     paint(&mut app);
     let has_update = |app: &App| {
-        app.status
-            .hits
+        app.hits
+            .status
             .iter()
             .any(|(_, i)| *i == StatusItem::Update)
     };
@@ -285,7 +285,7 @@ fn the_update_button_shows_each_step_of_the_update() {
     *app.shared.update.borrow_mut() = Some("0.1.560".into());
     let button = |app: &mut App| {
         paint(app);
-        let rect = (app.status.hits.iter())
+        let rect = (app.hits.status.iter())
             .find(|(_, i)| *i == StatusItem::Update)
             .unwrap()
             .0;
@@ -338,7 +338,7 @@ fn shoot_update_button() {
         if !dark {
             set(&mut app, UpdateState::Found("0.1.560".into()));
             paint(&mut app);
-            let rect = (app.status.hits.iter())
+            let rect = (app.hits.status.iter())
                 .find(|(_, i)| *i == StatusItem::Update)
                 .unwrap()
                 .0;
@@ -380,7 +380,7 @@ fn the_folder_menu_is_drawn_in_the_window_without_a_system_menu() {
     paint(&mut app);
 
     // 点 `main.rs` 一段：列出 `src` 的内容，目录在前、文件在后，`main.rs` 打勾。
-    let (crumb, _) = app.status.crumb_hits[2];
+    let (crumb, _) = app.hits.crumbs[2];
     click(&mut app, (crumb.x + 4.0, crumb.y + crumb.h / 2.0));
     paint(&mut app);
     let level = app.popup().expect("窗口内的目录菜单").levels[0].clone();
@@ -420,7 +420,7 @@ fn the_folder_menu_is_drawn_in_the_window_without_a_system_menu() {
     );
 
     // 键盘：↓ 移到下一项，→ 展开目录，↩ 打开文件。
-    let (crumb, _) = app.status.crumb_hits[0];
+    let (crumb, _) = app.hits.crumbs[0];
     click(&mut app, (crumb.x + 4.0, crumb.y + crumb.h / 2.0));
     paint(&mut app);
     let press = |app: &mut App, key: NamedKey| {

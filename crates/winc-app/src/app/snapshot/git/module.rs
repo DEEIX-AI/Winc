@@ -372,7 +372,7 @@ fn shoot_context_bar() {
         let mut app = app_with(&dir, dark);
         app.settings_toggle(Setting::GitModule);
         paint(&mut app);
-        let project = app.project_hit;
+        let project = app.hits.project;
         app.on_mouse_move(project.x + 4.0, project.y + 4.0);
         shoot(&mut app, name);
         // 悬停提示：「名字 … 快捷键」两栏，快捷键是右边的淡色字。
@@ -534,19 +534,19 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
     // 顶栏是侧栏开关和视图切换图标，第二行左边是项目名，三个视图里位置不变。
     app.sidebar.width = 400.0;
     paint(&mut app);
-    let project = app.project_hit;
+    let project = app.hits.project;
     assert!(project.y >= app.layout.sidebar_header.y);
     let tabs = app.sidebar_tabs();
     assert!(tabs[0].0.x > app.layout.sidebar_button.right());
     assert!(tabs[0].0.bottom() <= app.layout.sidebar_header.y);
     app.run_action(Action::FindInFiles);
     paint(&mut app);
-    assert_eq!(app.project_hit, project);
+    assert_eq!(app.hits.project, project);
 
     app.run_action(Action::ShowCommit);
     app.sidebar.width = 400.0;
     paint(&mut app);
-    assert_eq!(app.project_hit, project);
+    assert_eq!(app.hits.project, project);
     app.on_mouse_move(project.x + 4.0, project.y + 4.0);
     assert_eq!(app.hover, Hover::ProjectName);
     let parts = app.commit_parts();
@@ -561,7 +561,8 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
     assert!(parts.branch.y >= parts.header.bottom());
     assert!(parts.branch.bottom() <= parts.list.y);
     let hit = |app: &App, target| {
-        app.commit_hits
+        app.hits
+            .commit
             .iter()
             .find(|(_, t)| *t == target)
             .map(|h| h.0)
@@ -715,7 +716,7 @@ fn switching_modules_off_fades_their_chrome_out() {
     paint(&mut app);
     assert!(app.module_fx.branch_label.is_some());
     let full = app.sidebar_tabs()[2].0;
-    let hit = |app: &App, item| app.status.hits.iter().any(|h| h.1 == item);
+    let hit = |app: &App, item| app.hits.status.iter().any(|h| h.1 == item);
     assert!(hit(&app, StatusItem::Branch) && hit(&app, StatusItem::Terminal));
 
     app.settings_toggle(Setting::GitModule);

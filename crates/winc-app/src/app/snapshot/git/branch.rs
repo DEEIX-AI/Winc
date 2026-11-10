@@ -256,7 +256,7 @@ fn picker_labels(app: &App) -> Vec<String> {
 
 /// 点提交视图里的 `target`（按这一帧画出来的位置）。
 fn click_commit(app: &mut App, target: CommitTarget) {
-    let rect = (app.commit_hits.iter())
+    let rect = (app.hits.commit.iter())
         .find(|(_, t)| *t == target)
         .unwrap()
         .0;
@@ -429,7 +429,7 @@ fn the_branch_picker_folds_folders_and_opens_branch_actions() {
     let _ = main_row;
     paint(&mut app);
     let more = PickerPart::More(app.picker.selected);
-    assert!(app.picker.part_hits.iter().any(|(_, p)| *p == more));
+    assert!(app.hits.picker_parts.iter().any(|(_, p)| *p == more));
     app.press_picker_part(more);
     assert!(app.picker_lists_branches());
     let branches = &app.git.branches;
@@ -773,7 +773,7 @@ fn the_status_bar_opens_the_branch_picker_with_the_sync_actions() {
     app.open_status_menu(StatusItem::Branch);
     paint(&mut app);
     assert!(app.picker.open && app.picker_has_actions());
-    let (item, _) = *(app.status.hits.iter())
+    let (item, _) = *(app.hits.status.iter())
         .find(|(_, i)| *i == StatusItem::Branch)
         .unwrap();
     let card = app.layout.picker;
@@ -1063,7 +1063,7 @@ fn hovering_a_picker_row_leaves_the_selection_alone() {
         })
         .unwrap();
     let more = |app: &App, row| {
-        (app.picker.part_hits.iter()).any(|(_, p)| *p == crate::app::PickerPart::More(row))
+        (app.hits.picker_parts.iter()).any(|(_, p)| *p == crate::app::PickerPart::More(row))
     };
     assert!(more(&app, current));
     assert!(!more(&app, other));

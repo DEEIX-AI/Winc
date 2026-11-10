@@ -645,7 +645,7 @@ fn sticky_scroll_pins_the_enclosing_blocks() {
     app.open_path(&sticky_file(&dir));
     paint(&mut app);
     // 首行位于顶部：没有需要固定的行。
-    assert!(app.sticky.rows.is_empty());
+    assert!(app.hits.sticky.is_empty());
 
     // `class` 所在行向上滚出一部分（0.25 到 0.75 行）：立即固定在顶部，而不是等整行滚出后再跳回；
     // `def` 行同时固定在第二个位置。
@@ -653,30 +653,30 @@ fn sticky_scroll_pins_the_enclosing_blocks() {
     for scroll in [2.25, 2.5, 2.75] {
         app.editor.active_mut().unwrap().scroll_line = scroll;
         paint(&mut app);
-        let pinned: Vec<_> = app.sticky.rows.iter().map(|r| (r.line, r.y)).collect();
+        let pinned: Vec<_> = app.hits.sticky.iter().map(|r| (r.line, r.y)).collect();
         assert_eq!(pinned, [(2, 0.0), (3, lh)], "滚到 {scroll}");
     }
     // 整行对齐时 `class` 自己就位于顶部，无需固定。
     app.editor.active_mut().unwrap().scroll_line = 2.0;
     paint(&mut app);
-    assert!(app.sticky.rows.is_empty());
+    assert!(app.hits.sticky.is_empty());
 
     // 滚动到方法中间：固定 `class` 和 `def` 两行，各占一个行高。
     app.editor.active_mut().unwrap().scroll_line = 20.0;
     paint(&mut app);
-    let pinned: Vec<_> = app.sticky.rows.iter().map(|r| (r.line, r.depth)).collect();
+    let pinned: Vec<_> = app.hits.sticky.iter().map(|r| (r.line, r.depth)).collect();
     assert_eq!(pinned, [(2, 0), (3, 1)]);
-    assert_eq!(app.sticky.rows[1].y, app.fonts.line_height);
+    assert_eq!(app.hits.sticky[1].y, app.fonts.line_height);
 
     // 方法的最后一行滚到固定的 `def` 行下方时，`def` 上移半个行高，`class` 不动；
     // 滚过整个方法后只剩 `class`。
     app.editor.active_mut().unwrap().scroll_line = 62.5;
     paint(&mut app);
-    assert_eq!(app.sticky.rows[0].y, 0.0);
-    assert_eq!(app.sticky.rows[1].y, app.fonts.line_height / 2.0);
+    assert_eq!(app.hits.sticky[0].y, 0.0);
+    assert_eq!(app.hits.sticky[1].y, app.fonts.line_height / 2.0);
     app.editor.active_mut().unwrap().scroll_line = 64.0;
     paint(&mut app);
-    let pinned: Vec<_> = app.sticky.rows.iter().map(|r| r.line).collect();
+    let pinned: Vec<_> = app.hits.sticky.iter().map(|r| r.line).collect();
     assert_eq!(pinned, [2]);
 
     // 悬停在固定的 `def` 上；点击后光标跳到该行，并滚动到该行恰好位于 `class` 下方。
@@ -703,7 +703,7 @@ fn sticky_scroll_pins_the_enclosing_blocks() {
     app.run_action(crate::keymap::Action::ToggleStickyScroll);
     assert_eq!(app.config.sticky_scroll, Some(false));
     paint(&mut app);
-    assert!(app.sticky.rows.is_empty());
+    assert!(app.hits.sticky.is_empty());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -722,7 +722,7 @@ fn sticky_scroll_ignores_lines_inside_strings() {
     app.editor.active_mut().unwrap().scroll_line = 20.0;
     paint(&mut app);
     // 字符串内顶格的 SQL 不是代码块的开头：固定的是 `def`。
-    let pinned: Vec<_> = app.sticky.rows.iter().map(|r| r.line).collect();
+    let pinned: Vec<_> = app.hits.sticky.iter().map(|r| r.line).collect();
     assert_eq!(pinned, [0]);
     std::fs::remove_dir_all(&dir).unwrap();
 }

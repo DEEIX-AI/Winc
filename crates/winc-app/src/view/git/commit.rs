@@ -118,7 +118,7 @@ pub(in crate::view) fn draw_commit(
     draw_stashes(app, frame, &parts, &mut hits);
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
-    app.commit_hits = hits;
+    app.hits.commit = hits;
     app.commit.hits_generation = app.git.generation;
     caret
 }
@@ -154,7 +154,7 @@ pub(in crate::view) fn draw_commit_browse(app: &mut App, frame: &mut Frame<'_>) 
         scroll,
         content,
     );
-    app.commit_hits = hits;
+    app.hits.commit = hits;
     app.commit.hits_generation = app.git.generation;
 }
 

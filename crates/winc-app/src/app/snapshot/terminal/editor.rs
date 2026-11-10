@@ -140,8 +140,8 @@ fn exited_shells_and_a_crashed_helper_restart() {
     app.terminal.tabs[0].cwd = b"/usr".to_vec();
     paint(&mut app);
     let button = app
-        .terminal
         .hits
+        .terminal
         .iter()
         .find(|(_, hit)| *hit == HeaderHit::Restart)
         .map(|(rect, _)| *rect)
@@ -187,7 +187,7 @@ fn a_lost_pseudo_console_stops_input_and_offers_a_restart() {
     assert!(!sent.iter().any(|m| matches!(m, ToHelper::Input { .. })));
 
     paint(&mut app);
-    let restart = |app: &App| (app.terminal.hits.iter()).any(|(_, hit)| *hit == HeaderHit::Restart);
+    let restart = |app: &App| (app.hits.terminal.iter()).any(|(_, hit)| *hit == HeaderHit::Restart);
     assert!(restart(&app));
 
     // shell 随后退出了：说明换成退出码，仍然可以重新启动。
@@ -331,8 +331,8 @@ fn snapshot_terminal_prompt() {
 ///
 /// 最近一帧没有画出该按钮时 panic，调用前须先 [`paint`]。
 fn header_hit(app: &App, hit: HeaderHit) -> winc_render::Rect {
-    app.terminal
-        .hits
+    app.hits
+        .terminal
         .iter()
         .find(|(_, h)| *h == hit)
         .map(|(rect, _)| *rect)
@@ -600,8 +600,8 @@ fn the_status_bar_button_slides_the_panel_out_and_back() {
     let button = |app: &mut App| {
         paint(app);
         let (pill, _) = *app
-            .status
             .hits
+            .status
             .iter()
             .find(|(_, item)| *item == StatusItem::Terminal)
             .unwrap();

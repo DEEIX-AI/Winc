@@ -392,7 +392,7 @@ impl App {
             RunButton::Menu => {
                 self.reload_run_configs();
                 let hit = HeaderHit::Run(RunButton::Menu);
-                let menu = self.terminal.hits.iter().find(|(_, h)| *h == hit);
+                let menu = self.hits.terminal.iter().find(|(_, h)| *h == hit);
                 let Some(&(menu, _)) = menu else {
                     return;
                 };

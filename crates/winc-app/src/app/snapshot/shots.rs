@@ -220,7 +220,7 @@ fn snapshot_occurrences() {
         shoot(&mut app, &format!("occurrences-{tag}"));
 
         // 鼠标停在状态栏路径的 `src` 上：该段铺上按钮底色，不覆盖两侧的箭头。
-        let (src, _) = app.status.crumb_hits[1];
+        let (src, _) = app.hits.crumbs[1];
         app.on_mouse_move(src.x + 4.0, src.y + src.h / 2.0);
         shoot(&mut app, &format!("status-crumb-hover-{tag}"));
     }
@@ -278,7 +278,8 @@ fn snapshot_start_page() {
         ];
         paint(&mut app);
         let row = app
-            .start_hits
+            .hits
+            .start
             .iter()
             .find(|(_, a)| *a == StartAction::Recent(1))
             .unwrap()
@@ -431,8 +432,8 @@ fn snapshot_status_bar() {
 
         // 鼠标停在状态栏的缩进上：铺一层按钮底色。
         let (rect, _) = *app
-            .status
             .hits
+            .status
             .iter()
             .find(|(_, item)| *item == StatusItem::Indent)
             .unwrap();
@@ -482,7 +483,7 @@ fn snapshot_editor_folding() {
         let gutter = app.layout.gutter;
         app.on_mouse_move(gutter.x + 6.0, app.layout.text.y + 30.0);
         shoot(&mut app, &format!("editor-folding-gutter-{tag}"));
-        let (chip, _) = app.folded_hits[0];
+        let (chip, _) = app.hits.folded[0];
         app.on_mouse_move(chip.x + 4.0, chip.y + 4.0);
         shoot(&mut app, &format!("editor-folding-dots-{tag}"));
     }
@@ -539,7 +540,7 @@ fn snapshot_disk_conflict() {
             .unwrap();
         app.sync_documents(|_| true);
         paint(&mut app);
-        let (_, buttons) = app.conflict_card.clone().unwrap();
+        let (_, buttons) = app.hits.conflict_card.clone().unwrap();
         let take = buttons[1].0;
         app.on_mouse_move(take.x + 6.0, take.y + 6.0);
         shoot(&mut app, &format!("conflict-{theme}"));

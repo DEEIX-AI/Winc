@@ -57,17 +57,9 @@ const BRACE_SCAN_LIMIT: usize = 20_000;
 /// 当前标签是图片、SVG、Markdown 的预览或无法显示的文件时，改为绘制相应的预览或说明；
 /// 没有标签时绘制开始页或欢迎页。
 pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
-    app.placeholder_hits.clear();
-    app.diff.hits.clear();
-    app.start_hits.clear();
-    // 日志标签绘制时重新填充；切换到其他标签后若仍保留，日志中提交行的命中区域会拦截代码区的点击。
-    app.log.hits.clear();
-    app.sticky.rows.clear();
-    app.folded_hits.clear();
     // Markdown、PDF 预览绘制时重新填充；预览不显示时若仍保留，滚轮和点击事件会被预览接收。
     app.markdown.area = Rect::default();
     app.pdf.area = Rect::default();
-    app.markdown.links.clear();
 
     let Some(index) = app.editor.active else {
         // 没有标签：释放缩放后的预览缓存，避免继续占用内存。

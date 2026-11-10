@@ -115,8 +115,8 @@ impl App {
     /// 收起提示条，返回它的文字和按钮操作；清除提示的各处都经过这里，避免漏掉某个字段。
     pub(super) fn clear_notice(&mut self) -> (Option<String>, Option<NoticeAction>) {
         self.notice.until = None;
-        self.notice.button = None;
-        self.notice.card = None;
+        self.hits.notice_button = None;
+        self.hits.notice_card = None;
         self.notice.entering = None;
         (self.notice.text.take(), self.notice.action.take())
     }
@@ -154,10 +154,6 @@ pub struct Notice {
     pub(in crate::app) until: Option<Instant>,
     /// 提示条上的按钮。
     pub(crate) action: Option<NoticeAction>,
-    /// 提示条上按钮的位置，绘制时记录。
-    pub(crate) button: Option<Rect>,
-    /// 提示条的位置，绘制时记录；提示条浮在编辑区上方，点击、悬停和右键都不穿透到下方的文字。
-    pub(crate) card: Option<Rect>,
     /// 提示条出现的动画；结束后为 `None`。
     pub(crate) entering: Option<crate::app::animation::Clock>,
     /// 到期后正在淡出的提示条：消息、按钮文字和消失的动画。

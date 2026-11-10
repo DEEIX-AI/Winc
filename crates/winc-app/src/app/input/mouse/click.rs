@@ -115,8 +115,8 @@ impl App {
 
         // 改动卡片：点按钮执行；点卡片里的其他位置什么都不做；点卡片外面关掉卡片，
         // 该事件仍然向下传递。
-        if let Some(card) = self.changes.card {
-            if let Some(target) = hit(&self.changes.hits, x, y) {
+        if let Some(card) = self.hits.changes_card {
+            if let Some(target) = hit(&self.hits.changes, x, y) {
                 self.press_change(target);
                 return;
             }

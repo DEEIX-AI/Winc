@@ -65,8 +65,8 @@ fn snapshot_tree_tools() {
 
         // 鼠标停在「刷新」上，提示已显示。`TreeState::tools` 在绘制时填充，因此先绘制一帧。
         let refresh = app
-            .tree
-            .tools
+            .hits
+            .tree_tools
             .iter()
             .find(|(_, tool)| *tool == TreeTool::Refresh)
             .map(|(r, _)| *r)
@@ -169,7 +169,7 @@ fn snapshot_tab_drag() {
         // 按住 `main.rs` 向右拖到 `config.rs` 和 `Cargo.toml` 之间：`config.rs` 已让位到左侧，
         // `main.rs` 跟随鼠标，部分压在 `Cargo.toml` 上。让位的标签直接画在最终位置
         // （清空 `slides` 以跳过滑动动画）。
-        let tab = app.tabs.hits.iter().find(|h| h.index == 0).unwrap().tab;
+        let tab = app.hits.tabs.iter().find(|h| h.index == 0).unwrap().tab;
         let (x, y) = (tab.x + 20.0, tab.y + tab.h / 2.0);
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Left);

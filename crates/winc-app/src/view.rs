@@ -72,6 +72,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     if settings::draw_cached(app, frame) || settings::draw_scrolling(app, frame) {
         return;
     }
+    app.hits.clear();
     frame.base(&base(app));
     let layout = app.layout;
     app.tree.overflow = tree_overflow(app, frame);
@@ -96,16 +97,13 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         app.set_hover(Hover::None);
     }
 
-    app.tree.tools.clear();
-    app.tree.more = None;
-    app.project_hit = Rect::default();
     app.begin_scrollbars();
 
     if layout.sidebar.right() > 0.0 {
         draw_sidebar(app, frame);
     }
     // 本帧没有绘制工具栏（侧栏收起或处于搜索视图）时，收起动画直接结束，不需要额外一帧。
-    if app.tree.tools.is_empty() && app.tree.more.is_none() {
+    if app.hits.tree_tools.is_empty() && app.hits.tree_more.is_none() {
         app.tool_fold.settle();
     }
 
@@ -158,17 +156,17 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     editor::hint::draw_name_hint(app, frame);
 
-    app.conflict_card = draw_conflict(app, frame);
+    app.hits.conflict_card = draw_conflict(app, frame);
     // 合并冲突的卡片排在磁盘冲突卡片下面。
-    let top = match &app.conflict_card {
+    let top = match &app.hits.conflict_card {
         Some((card, _)) => card.bottom(),
         None if app.layout.search.h > 0.0 => app.layout.search.bottom(),
         None => app.layout.editor.y,
     } + 8.0;
-    let mut hits = std::mem::take(&mut app.merge.hits);
-    app.merge.card = git::merge::draw_merge_card(app, frame, top, &mut hits);
-    app.merge.hits = hits;
-    (app.notice.card, app.notice.button) = match app.notice.text.as_deref() {
+    let mut hits = std::mem::take(&mut app.hits.merge);
+    app.hits.merge_card = git::merge::draw_merge_card(app, frame, top, &mut hits);
+    app.hits.merge = hits;
+    (app.hits.notice_card, app.hits.notice_button) = match app.notice.text.as_deref() {
         Some(message) => {
             let (card, button) = draw_live_notice(app, frame, message);
             (Some(card), button)
@@ -322,11 +320,11 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                 SearchParts::new(app.layout.search).rect(button),
                 button.label(),
             ),
-            Hover::TreeTool(tool) => match app.tree.tools.iter().find(|(_, t)| *t == tool) {
+            Hover::TreeTool(tool) => match app.hits.tree_tools.iter().find(|(_, t)| *t == tool) {
                 Some(&(button, _)) => (button, tool.label().to_owned()),
                 None => return,
             },
-            Hover::TreeMore => match app.tree.more {
+            Hover::TreeMore => match app.hits.tree_more {
                 Some(button) => (button, t!("workspace-tip-more-actions").to_owned()),
                 None => return,
             },
@@ -354,8 +352,8 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
             // 日志列表中的作者头像：提示作者名和邮箱。
             Hover::Log(crate::app::git::log::LogTarget::Avatar(i)) => {
                 let hit = app
-                    .log
                     .hits
+                    .log
                     .iter()
                     .find(|(_, t)| *t == crate::app::git::log::LogTarget::Avatar(i));
                 let commit = app
@@ -371,7 +369,7 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
             // 提交图中线段的目标：点击后跳转到的提交。
             Hover::Log(crate::app::git::log::LogTarget::Line(row, line)) => {
                 let target = crate::app::git::log::LogTarget::Line(row, line);
-                if !app.log.hits.iter().any(|(_, t)| *t == target) {
+                if !app.hits.log.iter().any(|(_, t)| *t == target) {
                     return;
                 }
                 // 线段的命中框很小，提示放在鼠标下方，不按命中框居中。
@@ -398,8 +396,8 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                 if app.log.long_files.contains(&i) =>
             {
                 let hit = app
-                    .log
                     .hits
+                    .log
                     .iter()
                     .find(|(_, t)| *t == crate::app::git::log::LogTarget::File(i));
                 match (hit, app.log_file_tip(i)) {
@@ -410,8 +408,8 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
             // 日志列表中延伸到右端仍放不下的提交说明：提示整句。
             Hover::Log(crate::app::git::log::LogTarget::Row(i)) if app.log.clipped == Some(i) => {
                 let hit = app
-                    .log
                     .hits
+                    .log
                     .iter()
                     .find(|(_, t)| *t == crate::app::git::log::LogTarget::Row(i));
                 let commit = app

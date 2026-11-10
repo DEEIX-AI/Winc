@@ -147,7 +147,7 @@ fn draw_project_header(app: &mut App, frame: &mut Frame<'_>) {
     // 侧栏变窄时先收工具栏、后截名字：为完整的项目名留出宽度（分支不占宽度：放不下时不再绘制，
     // 状态栏里始终显示），工具栏放不下时从右向左把按钮收进「⋯」菜单；只剩「⋯」时才截短名字，
     // 项目名截到最小宽度（`TREE_NAME_MIN`）为止，它是切换目录的入口，必须始终可点击。
-    (app.tree.tools, app.tree.more) = if bar.opened {
+    (app.hits.tree_tools, app.hits.tree_more) = if bar.opened {
         let only_more = header.right() - 8.0 - BUTTON_SMALL - 4.0;
         let name_right = (bar.left + bar.project_full() + 8.0)
             .min(only_more)
@@ -158,11 +158,11 @@ fn draw_project_header(app: &mut App, frame: &mut Frame<'_>) {
     };
     app.step_tool_fold();
     let right = app
-        .tree
-        .tools
+        .hits
+        .tree_tools
         .first()
         .map(|(button, _)| button.x)
-        .or(app.tree.more.map(|more| more.x))
+        .or(app.hits.tree_more.map(|more| more.x))
         .map_or(header.right() - 8.0, |x| x - 4.0);
 
     draw_context_bar(app, frame, &bar, right);
@@ -268,7 +268,7 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
     let x = ui_text(frame, app, name_x, header, &name, color, clip);
     let arrow = (x + 9.0, icon_center_y(app, header, app.fonts.ui));
     icons::chevron(frame, arrow, 6.5, Direction::Down, p.text_muted, clip);
-    app.project_hit = hit.intersect(clip);
+    app.hits.project = hit.intersect(clip);
 }
 
 /// 绘制项目名前面的徽章：圆角方块内是项目名的前两个字母或数字（大写），没有时用「W」。
@@ -316,13 +316,13 @@ fn draw_badge(app: &App, frame: &mut Frame<'_>, rect: Rect, project: &str, heade
 fn draw_tree_tools(app: &App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let header = app.layout.sidebar_header;
-    let left = app.project_hit.right() + BUTTON_GAP;
+    let left = app.hits.project.right() + BUTTON_GAP;
     let clip = Rect::new(left, header.y, (header.right() - left).max(0.0), header.h);
     let (shown, more_shown) = app.tool_fold.eased();
     let (tools, more) = folding_tools(header, &shown, more_shown);
 
     for (button, tool, shown) in tools {
-        let kept = app.tree.tools.iter().any(|&(_, t)| t == tool);
+        let kept = app.hits.tree_tools.iter().any(|&(_, t)| t == tool);
         let hovered = kept && app.hover == Hover::TreeTool(tool);
         let color = if hovered { p.text } else { p.text_muted };
         // 透明度比位置变化得快：滑到「⋯」上时已经接近透明，几个图标叠在一起也不会混成一片。
@@ -335,7 +335,7 @@ fn draw_tree_tools(app: &App, frame: &mut Frame<'_>) {
     if let Some(more) = more {
         // 菜单打开时按钮显示为按下状态。
         let open = app.menu_button == Some(MenuButton::TreeMore);
-        let hovered = app.tree.more.is_some() && app.hover == Hover::TreeMore;
+        let hovered = app.hits.tree_more.is_some() && app.hover == Hover::TreeMore;
         let color = if hovered || open {
             p.text
         } else {
@@ -524,7 +524,7 @@ fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     draw_sticky(app, frame, rows, &mut segments);
-    app.tree.segments = segments;
+    app.hits.tree_segments = segments;
     app.tree.labels.end_frame();
 
     draw_scrollbar(app, frame, ScrollArea::Tree, 0, tree, scroll, content);

@@ -168,7 +168,7 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     draw_header(app, frame, &view, &parts, pos, &mut hits);
     draw_overview(app, frame, &view, &parts, index);
 
-    app.diff.hits = hits;
+    app.hits.diff = hits;
     app.editor.documents[index].diff = Some(view);
 }
 

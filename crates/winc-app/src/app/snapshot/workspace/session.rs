@@ -13,7 +13,7 @@ fn no_history_starts_on_the_start_page() {
     // 最近列表。只有 macOS 的选择器能同时选文件和目录，其他平台上打开文件和打开目录是两项。
     assert!(app.layout.sidebar.right() <= 0.0);
     assert_eq!(app.layout.editor.x, ISLAND_MARGIN);
-    let actions: Vec<StartAction> = app.start_hits.iter().map(|(_, a)| *a).collect();
+    let actions: Vec<StartAction> = app.hits.start.iter().map(|(_, a)| *a).collect();
     let mut expected = vec![
         StartAction::Settings,
         StartAction::NewFile,
@@ -25,7 +25,7 @@ fn no_history_starts_on_the_start_page() {
     assert_eq!(actions, expected);
 
     // 点「应用设置」打开设置。
-    let (row, _) = app.start_hits[0];
+    let (row, _) = app.hits.start[0];
     app.on_mouse_move(row.x + 10.0, row.y + 10.0);
     assert_eq!(app.hover, Hover::Start(StartAction::Settings));
     app.on_mouse_down(MouseButton::Left);
@@ -35,14 +35,14 @@ fn no_history_starts_on_the_start_page() {
     paint(&mut app);
 
     // 点「新建文件」开一个未命名标签，开始页换成编辑区。
-    let (row, _) = app.start_hits[1];
+    let (row, _) = app.hits.start[1];
     app.on_mouse_move(row.x + 10.0, row.y + 10.0);
     assert_eq!(app.hover, Hover::Start(StartAction::NewFile));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert_eq!(app.editor.documents.len(), 1);
     paint(&mut app);
-    assert!(app.start_hits.is_empty());
+    assert!(app.hits.start.is_empty());
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn a_file_dropped_on_the_start_page_opens_without_its_folder() {
     assert_eq!(app.editor.documents.len(), 1);
     assert_eq!(app.focus, Focus::Editor);
     paint(&mut app);
-    assert!(app.start_hits.is_empty());
+    assert!(app.hits.start.is_empty());
     assert!(app.layout.sidebar.right() <= 0.0);
 
     // 拖进目录才打开目录，刚才的文件留在标签里。
@@ -90,7 +90,7 @@ fn recent_folders_open_and_can_be_forgotten() {
     ];
     paint(&mut app);
 
-    let rect = |app: &App, action| app.start_hits.iter().find(|(_, a)| *a == action).unwrap().0;
+    let rect = |app: &App, action| app.hits.start.iter().find(|(_, a)| *a == action).unwrap().0;
 
     // 悬停在一行上时，右端的 ✕ 才可用；点击 ✕ 只从列表中移除该项，不打开目录。
     let close = rect(&app, StartAction::Forget(0));
@@ -360,7 +360,7 @@ fn switching_folders_keeps_each_folders_tabs() {
     assert!(app.editor.workspace.is_none() && app.editor.documents.is_empty());
     assert!(!app.sidebar_open());
     paint(&mut app);
-    assert!(!app.start_hits.is_empty());
+    assert!(!app.hits.start.is_empty());
 
     let _ = std::fs::remove_dir_all(&a);
     let _ = std::fs::remove_dir_all(&b);

@@ -339,7 +339,7 @@ impl App {
         let Some(dir) = crumb_folder(&path, &current) else {
             return;
         };
-        let Some(&(rect, _)) = self.status.crumb_hits.iter().find(|&&(_, i)| i == index) else {
+        let Some(&(rect, _)) = self.hits.crumbs.iter().find(|&&(_, i)| i == index) else {
             return;
         };
 

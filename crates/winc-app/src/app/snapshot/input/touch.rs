@@ -255,7 +255,7 @@ fn touch_closes_a_tab_only_on_tap_not_swipe_or_cancel() {
     let mut app = blank_app(false);
     app.new_file();
     paint(&mut app);
-    let close = app.tabs.hits[0].close;
+    let close = app.hits.tabs[0].close;
     let x = close.x + close.w / 2.0;
     let y = close.y + close.h / 2.0;
     touch(&mut app, 1, TouchPhase::Started, x, y);

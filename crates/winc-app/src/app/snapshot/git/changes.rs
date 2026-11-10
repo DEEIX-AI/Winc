@@ -73,12 +73,12 @@ fn gutter_marks_show_changes_and_revert_them() {
     paint(&mut app);
     // 卡片贴在第 6 行下面，上边落在行与行的分界上，高度是行高的整数倍。
     let lh = app.fonts.line_height;
-    let card = app.changes.card.unwrap();
+    let card = app.hits.changes_card.unwrap();
     assert_eq!(card.y - 1.0, l.text.y + 6.0 * lh);
     assert_eq!(((card.h + 2.0) / lh).fract(), 0.0);
     let revert = app
-        .changes
         .hits
+        .changes
         .iter()
         .find(|(_, t)| *t == ChangeTarget::Revert)
         .unwrap()
@@ -179,8 +179,8 @@ fn shoot_gutter_marks() {
         shoot(&mut app, &format!("gutter-modified-{theme}"));
         // 鼠标停在「回滚」上，提示已显示。
         let revert = app
-            .changes
             .hits
+            .changes
             .iter()
             .find(|(_, t)| *t == ChangeTarget::Revert)
             .unwrap()
@@ -208,7 +208,7 @@ fn shoot_gutter_marks() {
         let y = l.text.y + 12.5 * lh;
         click(&mut app, (crate::app::mark_x(l.gutter) + 1.0, y));
         paint(&mut app);
-        let card = app.changes.card.expect("卡片打开了");
+        let card = app.hits.changes_card.expect("卡片打开了");
         assert_eq!(card.y - 1.0, l.text.y + 13.0 * lh);
         shoot(&mut app, &format!("gutter-long-{theme}"));
 

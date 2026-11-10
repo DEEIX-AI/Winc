@@ -20,7 +20,7 @@ impl App {
             return None;
         }
         let (LogTarget::Row(row) | LogTarget::Avatar(row)) =
-            crate::layout::hit(&self.log.hits, x, y)?
+            crate::layout::hit(&self.hits.log, x, y)?
         else {
             return None;
         };

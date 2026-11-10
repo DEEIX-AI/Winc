@@ -193,7 +193,7 @@ impl App {
         if !self.commit_shown() || self.commit.hits_generation != self.git.generation {
             return None;
         }
-        match hit(&self.commit_hits, x, y)? {
+        match hit(&self.hits.commit, x, y)? {
             CommitTarget::Stash(i) | CommitTarget::StashApply(i) | CommitTarget::StashMenu(i) => {
                 Some(i)
             }
@@ -213,7 +213,7 @@ impl App {
         {
             return None;
         }
-        let path = match hit(&self.commit_hits, x, y)? {
+        let path = match hit(&self.hits.commit, x, y)? {
             CommitTarget::File(i) | CommitTarget::Check(i) => {
                 self.git.status.as_ref()?.entries.get(i)?.path.clone()
             }
@@ -287,7 +287,7 @@ impl App {
 
     /// 右键点在终端的标签上：它成为正在看的标签，返回它的编号。
     fn terminal_tab_context_target(&mut self, x: f32, y: f32) -> Option<u16> {
-        let index = match crate::layout::hit(&self.terminal.hits, x, y)? {
+        let index = match crate::layout::hit(&self.hits.terminal, x, y)? {
             crate::app::terminal::HeaderHit::Tab(i) | crate::app::terminal::HeaderHit::Close(i) => {
                 i
             }
@@ -1329,7 +1329,7 @@ impl App {
 
     /// 文件树工具栏「⋯」的菜单：列出收起的各个工具，按工具栏中的顺序排列。
     pub(super) fn tree_tools_menu(&self) -> Vec<MenuEntry> {
-        crate::layout::folded_tools(self.tree.tools.len())
+        crate::layout::folded_tools(self.hits.tree_tools.len())
             .iter()
             .map(|&tool| {
                 let command = match tool {
@@ -1348,7 +1348,7 @@ impl App {
     pub(in crate::app) fn open_project_menu(&mut self) {
         self.git_discover();
         self.git_scan_repositories();
-        let hit = self.project_hit;
+        let hit = self.hits.project;
         self.open_button_menu(MenuButton::Project, MenuTarget::Project, menu_below(hit));
     }
 

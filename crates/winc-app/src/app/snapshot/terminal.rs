@@ -322,8 +322,8 @@ fn tabs_switch_close_and_take_the_panel_with_the_last_one() {
     paint(&mut app);
     let hit = |app: &App, want: terminal::HeaderHit| {
         let rect = app
-            .terminal
             .hits
+            .terminal
             .iter()
             .find(|(_, h)| *h == want)
             .unwrap()
@@ -673,7 +673,7 @@ fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
     paint(&mut app);
     let card = app.layout.terminal;
     let hit = |app: &App, wanted: terminal::HeaderHit| {
-        (app.terminal.hits.iter())
+        (app.hits.terminal.iter())
             .find(|(_, hit)| *hit == wanted)
             .map(|(rect, _)| *rect)
             .unwrap()
@@ -1094,7 +1094,7 @@ fn the_find_bar_takes_clicks_and_closes() {
     paint(&mut app);
 
     let center_of = |app: &App, part| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         let rect = (hits.iter().find(|(_, hit)| *hit == HeaderHit::Find(part)))
             .unwrap()
             .0;
@@ -1231,7 +1231,7 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     show_terminal(&mut app, "$ ");
     let log = app.attach_recording_helper(&dir);
     let has_menu = |app: &App| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         hits.iter()
             .any(|(_, h)| *h == terminal::HeaderHit::ShellMenu)
     };
@@ -1250,12 +1250,12 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     assert!(has_menu(&app));
 
     // 菜单列出两个，第二个的副标题是启动命令。
-    let menu = (app.terminal.hits.iter())
+    let menu = (app.hits.terminal.iter())
         .find(|(_, h)| *h == terminal::HeaderHit::ShellMenu)
         .unwrap()
         .0;
     // 尺寸和间距与标签栏上其他按钮相同。
-    let new = (app.terminal.hits.iter())
+    let new = (app.hits.terminal.iter())
         .find(|(_, h)| *h == terminal::HeaderHit::New)
         .unwrap()
         .0;
@@ -1342,7 +1342,7 @@ fn the_new_button_stays_put_once_the_tabs_narrow() {
     // 动画冻结在起点：新标签宽度为零，其他标签已经收窄。
     app.terminal.strip.frozen = Some(std::time::Duration::ZERO);
     let new = |app: &App| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         let hit = hits.iter().find(|(_, h)| *h == terminal::HeaderHit::New);
         hit.unwrap().0.x
     };
@@ -1383,7 +1383,7 @@ fn find_options_change_what_matches() {
 
     let press_part = |app: &mut App, part| {
         paint(app);
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         let rect = hits
             .iter()
             .find(|(_, h)| *h == HeaderHit::Find(part))
@@ -1425,7 +1425,7 @@ fn find_options_hide_on_a_narrow_panel() {
     app.terminal.width = 280.0;
     assert!(press(&mut app, &["term"], Char('f')));
     paint(&mut app);
-    let hits = &app.terminal.hits;
+    let hits = &app.hits.terminal;
     assert!(
         hits.iter()
             .all(|(_, h)| *h != HeaderHit::Find(FindPart::Case))
@@ -1692,7 +1692,7 @@ fn the_find_bar_leaves_the_tab_bar_alone() {
     // 标签栏从左边到「+」右边的像素。
     let tabs = |app: &mut App| {
         paint(app);
-        let new = (app.terminal.hits.iter())
+        let new = (app.hits.terminal.iter())
             .find(|(_, hit)| *hit == terminal::HeaderHit::New)
             .unwrap()
             .0;

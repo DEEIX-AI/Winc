@@ -375,7 +375,7 @@ fn status_bar_changes_indentation_and_line_endings() {
     app.open_path(&dir.join("src/main.rs"));
     paint(&mut app);
     let status_point = |app: &App, item: StatusItem| {
-        let (rect, _) = app.status.hits.iter().find(|(_, i)| *i == item).unwrap();
+        let (rect, _) = app.hits.status.iter().find(|(_, i)| *i == item).unwrap();
         (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0)
     };
     fn doc(app: &App) -> &winc_editor::Document {
@@ -453,7 +453,7 @@ fn status_bar_changes_indentation_and_line_endings() {
     // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮。
     app.editor.show_output("格式化输出", "x\n");
     paint(&mut app);
-    let items: Vec<StatusItem> = app.status.hits.iter().map(|&(_, item)| item).collect();
+    let items: Vec<StatusItem> = app.hits.status.iter().map(|&(_, item)| item).collect();
     assert_eq!(items, [StatusItem::Settings]);
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -612,8 +612,8 @@ fn other_encodings_can_be_reopened_and_saved_from_the_status_bar() {
     paint(&mut app);
     assert_eq!(app.editor.active().unwrap().encoding.label(), "GB18030");
     assert!(
-        app.status
-            .hits
+        app.hits
+            .status
             .iter()
             .any(|&(_, i)| i == StatusItem::Encoding)
     );

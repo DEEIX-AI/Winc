@@ -242,7 +242,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
     let scroll = (tabs.scroll * frame.scale()).round() / frame.scale();
     let dragged = app.dragged_tab();
     // 每帧重新生成命中区域，并复用上一帧的 `hits` 内存。
-    let mut hits = std::mem::take(&mut app.tabs.hits);
+    let mut hits = std::mem::take(&mut app.hits.tabs);
     hits.clear();
     let mut x = view.x - scroll;
     let mut lifted = None;
@@ -368,7 +368,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
             area,
         );
     }
-    app.tabs.hits = hits;
+    app.hits.tabs = hits;
     draw_preview_button(app, frame);
     draw_browser_button(app, frame);
 }

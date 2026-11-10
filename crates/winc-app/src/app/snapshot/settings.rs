@@ -1122,7 +1122,7 @@ fn line_numbers_and_the_status_bar_can_be_hidden() {
         app.layout.text.w,
         app.layout.editor.bottom(),
     );
-    assert!(!app.status.hits.is_empty());
+    assert!(!app.hits.status.is_empty());
 
     // 行号：行号栏变窄，文字区域变宽，折叠箭头和书签的空白还在。
     assert!(app.switch_on(Setting::LineNumbers));
@@ -1141,8 +1141,8 @@ fn line_numbers_and_the_status_bar_can_be_hidden() {
     assert_eq!(app.layout.status.h, crate::theme::ISLAND_MARGIN);
     assert!(app.layout.editor.bottom() > editor_bottom);
     paint(&mut app);
-    assert!(app.status.hits.is_empty());
-    assert!(app.status.crumb_hits.is_empty());
+    assert!(app.hits.status.is_empty());
+    assert!(app.hits.crumbs.is_empty());
 
     // 短提示本来显示在状态栏上，隐藏后改到右上角。
     app.flash("copied");
@@ -1155,7 +1155,7 @@ fn line_numbers_and_the_status_bar_can_be_hidden() {
     assert_eq!(app.layout.gutter.w, gutter);
     assert_eq!(app.layout.editor.bottom(), editor_bottom);
     paint(&mut app);
-    assert!(!app.status.hits.is_empty());
+    assert!(!app.hits.status.is_empty());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

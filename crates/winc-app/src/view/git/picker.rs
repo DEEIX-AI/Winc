@@ -61,7 +61,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         draw_branch_rows(app, frame, &parts, &mut hits);
     }
     draw_footer(app, frame, &parts, &mut hits);
-    app.picker.part_hits = hits;
+    app.hits.picker_parts = hits;
 }
 
 /// 绘制内嵌的搜索框：左边是放大镜。

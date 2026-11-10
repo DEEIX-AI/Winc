@@ -12,10 +12,6 @@ pub struct StatusState {
     /// 状态栏上的临时消息。
     pub(crate) message: Option<String>,
     pub(in crate::app) until: Option<Instant>,
-    /// 状态栏右侧各可点击项的区域。
-    pub(crate) hits: Vec<(Rect, StatusItem)>,
-    /// 状态栏路径中各段的可点击区域，以及段序号。
-    pub(crate) crumb_hits: Vec<(Rect, usize)>,
     /// 状态栏右侧各项的过渡状态。
     pub(crate) motion: StatusMotion,
 }
