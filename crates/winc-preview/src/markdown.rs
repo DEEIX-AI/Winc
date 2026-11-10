@@ -289,8 +289,9 @@ pub enum Block {
     /// 单独成行的公式（`$$…$$`、```` ```math ````）：LaTeX 原文（见 [`math`]）和公式在原文中的
     /// 起点（字节偏移，解析完成后相对所在的顶层块）。
     Math(String, usize),
-    /// 分隔线。
-    Rule,
+    /// 分隔线和它在原文中的起点（字节偏移，解析完成后相对所在的顶层块）；HTML 的 `<hr>`、
+    /// 脚注之前生成的分隔线没有对应的原文，为 `None`。
+    Rule(Option<usize>),
     /// 一条脚注：编号（按正文里第一次引用的先后）和内容。
     Footnote(String, Vec<Block>),
     /// HTML 的 `<details>`：点标题（`<summary>`，没写时是「Details」）展开、收起的一块。
@@ -738,11 +739,32 @@ impl Builder<'_> {
         }
     }
 
+    /// 只有记号的列表项（`- `、`1. `、`- [ ] `）中放一个空段落，位于记号所在行的末尾。
+    ///
+    /// 可编辑的预览中光标需要落在某个叶子块里：回车续出的新项在输入文字之前是空项，没有这个
+    /// 空段落时光标只能归到下一项，该项改为显示原文，新项和下一项的原文混在一起。
+    fn empty_item(&mut self) {
+        let Some(Container::Item(_, blocks)) = self.stack.last() else {
+            return;
+        };
+        if !blocks.is_empty() || self.in_html {
+            return;
+        }
+        let item = &self.source[self.start..self.end.max(self.start)];
+        let line = item.find('\n').unwrap_or(item.len());
+        let at = self.start + item[..line].trim_end_matches('\r').len();
+        let mut inline = Inline::default();
+        inline.map.push(0, at, 0);
+        self.leaf = Some(at..at);
+        self.push_block(Block::Paragraph(inline));
+        self.leaf = None;
+    }
+
     fn push_block(&mut self, block: Block) {
         let table = matches!(block, Block::Table(..));
         let leaf = match block {
             Block::Paragraph(_) | Block::Heading(..) => self.leaf.clone().map(|r| (r, true)),
-            Block::Code { .. } | Block::Math(..) | Block::Rule | Block::Table(..) => {
+            Block::Code { .. } | Block::Math(..) | Block::Rule(_) | Block::Table(..) => {
                 Some((self.start..self.end, false))
             }
             _ => None,
@@ -853,7 +875,7 @@ impl Builder<'_> {
             Event::HardBreak => self.text("\n", 0),
             Event::Rule => {
                 self.finish_inline();
-                self.push_block(Block::Rule);
+                self.push_block(Block::Rule(Some(self.start)));
             }
             Event::TaskListMarker(checked) => {
                 if let Some(Container::Item(task, _)) = self.stack.last_mut() {
@@ -1006,6 +1028,7 @@ impl Builder<'_> {
             }
             TagEnd::Item => {
                 self.finish_inline();
+                self.empty_item();
                 if let Some(Container::Item(task, blocks)) = self.stack.pop()
                     && let Some(Container::List(_, items)) = self.stack.last_mut()
                 {
@@ -1075,7 +1098,7 @@ impl Builder<'_> {
         }
         let main = self.root.len();
         if !self.footnotes.is_empty() {
-            self.root.push(Block::Rule);
+            self.root.push(Block::Rule(None));
             self.ranges.push(source.len()..source.len());
             let mut footnotes = std::mem::take(&mut self.footnotes);
             // 按正文里第一次引用的先后排；没有被引用的放在最后。
@@ -1197,7 +1220,7 @@ fn shrink(blocks: &mut Vec<Block>) {
                 }
             }
             Block::Math(tex, _) => tex.shrink_to_fit(),
-            Block::Rule => {}
+            Block::Rule(_) => {}
             Block::Details {
                 summary, blocks, ..
             } => {
@@ -1323,8 +1346,10 @@ fn rebase(block: &mut Block, start: usize) {
             inline(summary);
             blocks(b);
         }
-        Block::Math(_, source) => *source = source.saturating_sub(start),
-        Block::Rule => {}
+        Block::Math(_, source) | Block::Rule(Some(source)) => {
+            *source = source.saturating_sub(start);
+        }
+        Block::Rule(None) => {}
     }
 }
 

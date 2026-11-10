@@ -2670,7 +2670,7 @@ fn heap_breakdown(md: &winc_preview::markdown::Markdown) {
                     }
                 }
                 Block::Math(t, _) => s.code += t.capacity(),
-                Block::Rule => {}
+                Block::Rule(_) => {}
                 Block::Details {
                     summary, blocks: b, ..
                 } => {
@@ -3560,3 +3560,306 @@ fn clicking_inline_math_puts_the_caret_in_its_source() {
     assert!((tex..=end).contains(&caret), "{}", with_caret(&app));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 回车续出的空项：光标停在新项的记号之后，不归到下一项；下一项照常按排版显示。
+#[test]
+fn enter_in_a_list_puts_the_caret_in_the_new_empty_item() {
+    use winit::keyboard::{Key, NamedKey};
+    let (mut app, dir) = live_doc("md-empty-item", "1. 一\n2. 二\n3. 三\n\n后文\n");
+    put_caret(&mut app, "二", true);
+    let before = caret_screen_y(&app);
+    assert!(app.markdown_key(&Key::Named(NamedKey::Enter), false));
+    settle(&mut app);
+    assert_eq!(with_caret(&app), "1. 一\n2. 二\n3. |\n3. 三\n\n后文\n");
+    assert!(caret_screen_y(&app) > before + 10.0);
+    let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+    assert!(shown.contains("\n三\n") && !shown.contains("3."), "{shown}");
+    // 在空项上输入的文字排在这一项里。
+    app.run(winc_editor::Command::Insert("新".into()));
+    settle(&mut app);
+    let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+    assert!(shown.contains("二\n新\n三"), "{shown}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 输入多字节的字之后、重新解析之前，光标所在项之后的项照常显示：页面高度不变，下方内容不
+/// 上下跳动。
+#[test]
+fn typing_wide_characters_keeps_the_following_blocks_in_place() {
+    let text = "前文\n\n1. 第一\n2. 第二\n3. 第三\n\n1. 第四\n\n后文\n";
+    let (mut app, dir) = live_doc("md-typing-wide", text);
+    put_caret(&mut app, "第二", true);
+    let height = app.markdown.height;
+    for c in ["a", "项", "，", "b"] {
+        app.run(winc_editor::Command::Insert(c.into()));
+        paint(&mut app);
+        let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+        assert!(
+            shown.contains("第三") && shown.contains("第四"),
+            "{c}：{shown}"
+        );
+        assert!((app.markdown.height - height).abs() < 0.5, "{c}");
+        settle(&mut app);
+        assert!((app.markdown.height - height).abs() < 0.5, "{c}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 光标移到分隔线上：显示原文，高度不变，下方内容不移动；列表里的分隔线只显示这一行的原文，
+/// 列表的其余项仍按排版显示。
+#[test]
+fn rules_show_their_source_in_place() {
+    let text = "前文\n\n---\n\n1. 一\n2. ---\n\n后文\n";
+    let (mut app, dir) = live_doc("md-rule-live", text);
+    put_caret(&mut app, "前文", true);
+    let height = app.markdown.height;
+    put_caret(&mut app, "\n---", false);
+    let doc = app.editor.active_mut().unwrap();
+    doc.selection = winc_core::Selection::point(doc.selection.head + 1);
+    settle(&mut app);
+    assert!((app.markdown.height - height).abs() < 0.5);
+    let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+    assert!(shown.contains("---") && shown.contains("一"), "{shown}");
+    put_caret(&mut app, "2. ---", true);
+    assert!((app.markdown.height - height).abs() < 0.5);
+    let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+    assert!(shown.contains("一") && !shown.contains("1."), "{shown}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 删除键：空项上先移除记号，再删除留下的缩进并回到上一行末尾。
+#[test]
+fn backspace_on_an_empty_item_removes_it_in_two_steps() {
+    use winit::keyboard::{Key, NamedKey};
+    let back = Key::Named(NamedKey::Backspace);
+    let (mut app, dir) = live_doc("md-back-item", "- 甲\n  - 乙\n  - \n\n后文\n");
+    put_caret(&mut app, "  - \n", true);
+    let doc = app.editor.active_mut().unwrap();
+    doc.selection = winc_core::Selection::point(doc.selection.head - 1);
+    settle(&mut app);
+    assert!(app.markdown_key(&back, false));
+    settle(&mut app);
+    assert_eq!(with_caret(&app), "- 甲\n  - 乙\n    |\n\n后文\n");
+    assert!(app.markdown_key(&back, false));
+    settle(&mut app);
+    assert_eq!(with_caret(&app), "- 甲\n  - 乙|\n\n后文\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 点击分隔线：光标移到它的原文处，分隔线显示原文；列表里的分隔线同样可以点击。
+#[test]
+fn clicking_a_rule_puts_the_caret_on_it() {
+    for (text, expect) in [
+        ("前文\n\n---\n\n后文\n", "前文\n\n|---\n\n后文\n"),
+        (
+            "前文\n\n1. 一\n2. ***\n\n后文\n",
+            "前文\n\n1. 一\n2. |***\n\n后文\n",
+        ),
+    ] {
+        let (mut app, dir) = live_doc("md-rule-click", text);
+        put_caret(&mut app, "前文", true);
+        let area = app.markdown.area;
+        let middle = |app: &App, s: &str| {
+            let laid = app.markdown.layout.as_ref().unwrap();
+            let at = doc_text(app).find(s).unwrap();
+            let (_, y, h) = laid.caret_point(at).unwrap();
+            area.y + y - app.markdown.scroll() + h / 2.0
+        };
+        // 分隔线在上一行文字与「后文」之间，取两者正中。
+        let above = if text.contains("一") {
+            "一"
+        } else {
+            "前文"
+        };
+        let y = (middle(&app, above) + middle(&app, "后文")) / 2.0;
+        super::click(&mut app, (area.x + area.w / 2.0, y));
+        settle(&mut app);
+        assert_eq!(with_caret(&app), expect);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// PROBE-BEGIN
+fn probe_state(app: &App) -> (Option<(f32, f32, f32)>, f32, f32, bool, String) {
+    let laid = app.markdown.layout.as_ref().unwrap();
+    let caret = app
+        .live_caret_source()
+        .and_then(|s| laid.caret_point(s))
+        .map(|(x, y, h)| (x, app.markdown.area.y + y - app.markdown.scroll(), h));
+    let moving = app.markdown.motion.as_ref().is_some_and(|m| m.moving());
+    (
+        caret,
+        app.markdown.height,
+        app.markdown.scroll(),
+        moving,
+        crate::view::preview::markdown::full_text(app).unwrap_or_default(),
+    )
+}
+
+fn probe_key(app: &mut App, key: winit::keyboard::NamedKey, shift: bool, cmd: bool) {
+    use winc_editor::Command;
+    use winit::keyboard::{Key, NamedKey};
+    let mut m = winit::keyboard::ModifiersState::empty();
+    if shift {
+        m |= winit::keyboard::ModifiersState::SHIFT;
+    }
+    if cmd {
+        m |= command_modifiers();
+    }
+    app.modifiers = m;
+    let handled = app.markdown_key(&Key::Named(key), cmd);
+    app.modifiers = winit::keyboard::ModifiersState::empty();
+    if handled {
+        return;
+    }
+    let extend = shift;
+    let c = match key {
+        NamedKey::ArrowLeft if cmd => Command::LineStart { extend },
+        NamedKey::ArrowRight if cmd => Command::LineEnd { extend },
+        NamedKey::ArrowLeft => Command::MoveLeft { word: false, extend },
+        NamedKey::ArrowRight => Command::MoveRight { word: false, extend },
+        NamedKey::ArrowUp => Command::MoveUp { extend },
+        NamedKey::ArrowDown => Command::MoveDown { extend },
+        NamedKey::Home => Command::LineStart { extend },
+        NamedKey::End => Command::LineEnd { extend },
+        NamedKey::Enter => Command::Newline,
+        NamedKey::Tab if shift => Command::Outdent,
+        NamedKey::Tab => Command::Indent,
+        NamedKey::Backspace => Command::Backspace { word: false },
+        NamedKey::Delete => Command::Delete { word: false },
+        _ => return,
+    };
+    app.run(c);
+}
+
+fn probe_step(app: &mut App, n: &mut usize, name: &str, act: impl FnOnce(&mut App)) {
+    let s0 = probe_state(app);
+    act(app);
+    paint(app);
+    let s1 = probe_state(app);
+    let shots = std::env::var_os("PROBE_SHOTS").is_some();
+    if shots {
+        shoot(app, &format!("probe-{:02}-{name}-a", *n));
+    }
+    settle(app);
+    let s2 = probe_state(app);
+    if shots {
+        shoot(app, &format!("probe-{:02}-{name}-b", *n));
+    }
+    let c = |s: &(Option<(f32, f32, f32)>, f32, f32, bool, String)| {
+        s.0.map_or("none".to_string(), |(x, y, h)| format!("({x:.0},{y:.0},{h:.0})"))
+    };
+    eprintln!(
+        "[{:02} {name}] caret {} -> {} -> {} | height {:.0} -> {:.0} -> {:.0} | scroll {:.0}->{:.0}->{:.0} | moving {}/{} | text-changed-after-parse {}\n    src: {:?}",
+        *n,
+        c(&s0),
+        c(&s1),
+        c(&s2),
+        s0.1,
+        s1.1,
+        s2.1,
+        s0.2,
+        s1.2,
+        s2.2,
+        s1.3,
+        s2.3,
+        s1.4 != s2.4,
+        {
+            let mut t = doc_text(app);
+            let at = app.live_caret_source().unwrap();
+            t.insert(at, '‸');
+            let a = t[..at].char_indices().rev().nth(14).map_or(0, |(i, _)| i);
+            let b = t[at..].char_indices().nth(15).map_or(t.len(), |(i, _)| at + i);
+            t[a..b].to_string()
+        }
+    );
+    if s1.4 != s2.4 {
+        let (a, b) = (&s1.4, &s2.4);
+        let p = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+        let ea: String = a.chars().skip(p.saturating_sub(5)).take(40).collect();
+        let eb: String = b.chars().skip(p.saturating_sub(5)).take(40).collect();
+        eprintln!("    pre-parse:  {ea:?}\n    post-parse: {eb:?}");
+    }
+    *n += 1;
+}
+
+#[test]
+#[ignore = "probe"]
+fn probe_live_session() {
+    use winc_editor::Command;
+    use winit::keyboard::NamedKey as K;
+    let text = "# 标题一\n\n这是第一段文字，包含 **粗体**、*斜体*、`代码` 和 [链接](https://example.com)。这一段比较长，需要折成好几行才能放得下，用来观察折行之后上下移动光标、行首行尾跳转的表现是否符合预期，再多写一些字凑够三行以上的长度才行，继续写继续写继续写继续写继续写继续写继续写继续写继续写继续写继续写继续写。\n\n第二段。\n\n- 列表一\n- 列表二\n  - 子项\n\n> 引用的文字\n\n```rust\nfn main() {}\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n最后一段。\n";
+    let (mut app, dir) = live_doc("md-probe", text);
+    let n = &mut 0;
+    let ins = |s: &'static str| move |app: &mut App| app.run(Command::Insert(s.into()));
+    let key = |k: K| move |app: &mut App| probe_key(app, k, false, false);
+    let skey = |k: K| move |app: &mut App| probe_key(app, k, true, false);
+    let ckey = |k: K| move |app: &mut App| probe_key(app, k, false, true);
+    probe_step(&mut app, n, "caret-end-p2", |app| put_caret(app, "第二段。", true));
+    probe_step(&mut app, n, "enter", key(K::Enter));
+    probe_step(&mut app, n, "type-x", ins("新"));
+    probe_step(&mut app, n, "type-y", ins("段"));
+    probe_step(&mut app, n, "enter2", key(K::Enter));
+    probe_step(&mut app, n, "hash", ins("#"));
+    probe_step(&mut app, n, "hash-space", ins(" "));
+    probe_step(&mut app, n, "heading-char", ins("题"));
+    probe_step(&mut app, n, "enter3", key(K::Enter));
+    probe_step(&mut app, n, "dash", ins("-"));
+    probe_step(&mut app, n, "dash-space", ins(" "));
+    probe_step(&mut app, n, "item-char", ins("项"));
+    probe_step(&mut app, n, "enter4", key(K::Enter));
+    probe_step(&mut app, n, "item2", ins("二"));
+    probe_step(&mut app, n, "enter5", key(K::Enter));
+    probe_step(&mut app, n, "enter6-exit", key(K::Enter));
+    probe_step(&mut app, n, "star1", ins("*"));
+    probe_step(&mut app, n, "star2", ins("*"));
+    probe_step(&mut app, n, "bold-char", ins("粗"));
+    probe_step(&mut app, n, "right1", key(K::ArrowRight));
+    probe_step(&mut app, n, "right2", key(K::ArrowRight));
+    probe_step(&mut app, n, "after-bold", ins("后"));
+    probe_step(&mut app, n, "enter7", key(K::Enter));
+    probe_step(&mut app, n, "gt", ins(">"));
+    probe_step(&mut app, n, "gt-space", ins(" "));
+    probe_step(&mut app, n, "quote-char", ins("引"));
+    probe_step(&mut app, n, "enter8", key(K::Enter));
+    probe_step(&mut app, n, "enter9", key(K::Enter));
+    probe_step(&mut app, n, "bt1", ins("`"));
+    probe_step(&mut app, n, "bt2", ins("`"));
+    probe_step(&mut app, n, "bt3", ins("`"));
+    probe_step(&mut app, n, "fence-enter", key(K::Enter));
+    probe_step(&mut app, n, "code-char", ins("x"));
+    // movement
+    probe_step(&mut app, n, "caret-long", |app| put_caret(app, "需要折成", false));
+    probe_step(&mut app, n, "home", key(K::Home));
+    probe_step(&mut app, n, "end", key(K::End));
+    probe_step(&mut app, n, "cmd-left", ckey(K::ArrowLeft));
+    probe_step(&mut app, n, "down1", key(K::ArrowDown));
+    probe_step(&mut app, n, "down2", key(K::ArrowDown));
+    probe_step(&mut app, n, "down3", key(K::ArrowDown));
+    probe_step(&mut app, n, "down4", key(K::ArrowDown));
+    probe_step(&mut app, n, "down5", key(K::ArrowDown));
+    probe_step(&mut app, n, "down6", key(K::ArrowDown));
+    probe_step(&mut app, n, "down7", key(K::ArrowDown));
+    probe_step(&mut app, n, "down8", key(K::ArrowDown));
+    probe_step(&mut app, n, "up1", key(K::ArrowUp));
+    probe_step(&mut app, n, "up2", key(K::ArrowUp));
+    probe_step(&mut app, n, "sdown1", skey(K::ArrowDown));
+    probe_step(&mut app, n, "sdown2", skey(K::ArrowDown));
+    probe_step(&mut app, n, "sdown3", skey(K::ArrowDown));
+    probe_step(&mut app, n, "type-over-sel", ins("替"));
+    probe_step(&mut app, n, "backspace", key(K::Backspace));
+    probe_step(&mut app, n, "caret-p-start", |app| put_caret(app, "这是第一段", false));
+    probe_step(&mut app, n, "bksp-para-start", key(K::Backspace));
+    probe_step(&mut app, n, "undo", |app| app.run(Command::Undo));
+    probe_step(&mut app, n, "caret-item-start", |app| put_caret(app, "列表二", false));
+    probe_step(&mut app, n, "left-from-item", key(K::ArrowLeft));
+    probe_step(&mut app, n, "caret-code", |app| put_caret(app, "fn main", false));
+    probe_step(&mut app, n, "up-from-code", key(K::ArrowUp));
+    probe_step(&mut app, n, "down-into-code", key(K::ArrowDown));
+    probe_step(&mut app, n, "down-out-code", key(K::ArrowDown));
+    probe_step(&mut app, n, "down-out-code2", key(K::ArrowDown));
+    probe_step(&mut app, n, "down-out-code3", key(K::ArrowDown));
+    probe_step(&mut app, n, "select-all", |app| app.run(Command::SelectAll));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+// PROBE-END

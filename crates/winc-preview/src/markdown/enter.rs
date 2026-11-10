@@ -67,6 +67,11 @@ impl Marker<'_> {
         format!("{bullet}{}{task}", self.gap)
     }
 
+    /// 有序列表项的序号；无序列表项为 `None`。
+    fn number(&self) -> Option<u64> {
+        self.bullet[..self.bullet.len() - 1].parse().ok()
+    }
+
     /// 记号（连同空格、任务框）占的宽度（字节）：同一项的续行缩进到这里。
     fn width(&self) -> usize {
         self.bullet.len() + self.gap.len() + if self.task { 4 } else { 0 }
@@ -281,34 +286,59 @@ pub fn backspace(before: &str) -> Option<Edit> {
 /// `above` 是从上一行起向上的各行。返回的范围是缩进（字节偏移），替换文字是新的缩进；不是
 /// 列表项时返回 `None`，按普通缩进处理。无法调整（第一项没有上一项、已在最外层）时替换为原文。
 /// 只移动该行，子项和续行不随之移动。
+///
+/// 有序列表项的范围另含序号，序号按移动后所在的一层重新编排：成为子项时接在同一层的上一项
+/// 之后，没有上一项时从 1 开始；退出一层时接在上一层的那一项之后。
 pub fn shift<'a>(
     line: &str,
     above: impl Iterator<Item = &'a str>,
     outdent: bool,
 ) -> Option<(std::ops::Range<usize>, String)> {
     let p = parse(line);
-    p.marker.as_ref()?;
-    let range = p.quote.len()..p.quote.len() + p.indent.len();
-    let mut items = above
+    let marker = p.marker.as_ref()?;
+    let items: Vec<Prefix<'_>> = above
         .take(LOOKBACK)
         .map(parse)
-        .filter(|q| q.marker.is_some() && depth(q.quote) == depth(p.quote));
-    let indent = if outdent {
-        // 上一层：向上找到的第一个缩进更少的项。
-        items
-            .find(|q| q.indent.len() < p.indent.len())
-            .map_or(String::new(), |q| q.indent.to_owned())
+        .filter(|q| q.marker.is_some() && depth(q.quote) == depth(p.quote))
+        .collect();
+    let (indent, number) = if outdent {
+        // 上一层：向上找到的第一个缩进更少的项，移动后接在它之后。
+        match items.iter().find(|q| q.indent.len() < p.indent.len()) {
+            Some(q) => (
+                q.indent.to_owned(),
+                q.marker.as_ref().and_then(Marker::number).map(|n| n + 1),
+            ),
+            None => (String::new(), None),
+        }
     } else {
         // 子项的缩进与上一项的内容对齐：`1. ` 之下缩进 3 个空格，`- ` 之下缩进 2 个空格。
-        match items.find(|q| q.indent.len() <= p.indent.len()) {
+        match items.iter().find(|q| q.indent.len() <= p.indent.len()) {
             Some(q) if q.indent.len() == p.indent.len() => {
                 let m = q.marker.as_ref()?;
-                format!("{}{}", q.indent, " ".repeat(m.bullet.len() + m.gap.len()))
+                let indent = format!("{}{}", q.indent, " ".repeat(m.bullet.len() + m.gap.len()));
+                // 新的一层里已有的上一项：在上一层的那一项之下、缩进相同的项。
+                let sibling = items
+                    .iter()
+                    .take_while(|r| r.indent.len() >= indent.len())
+                    .find(|r| r.indent.len() == indent.len());
+                let number = sibling
+                    .and_then(|r| r.marker.as_ref())
+                    .and_then(Marker::number)
+                    .map_or(1, |n| n + 1);
+                (indent, Some(number))
             }
-            _ => p.indent.to_owned(),
+            _ => (p.indent.to_owned(), None),
         }
     };
-    Some((range, indent))
+    let start = p.quote.len();
+    let end = start + p.indent.len();
+    match (marker.number(), number) {
+        (Some(_), Some(n)) => {
+            let digits = marker.bullet.len() - 1;
+            Some((start..end + digits, format!("{indent}{n}")))
+        }
+        _ => Some((start..end, indent)),
+    }
 }
 
 /// 返回 ⇧ 回车要插入的文字：段内换行。

@@ -135,9 +135,14 @@ fn enter_after_a_fence_closes_it() {
 #[test]
 fn tab_nests_list_items() {
     assert_eq!(tab("- 一\n- 二", false).as_deref(), Some("- 一\n  - 二"));
+    // 有序列表项成为第一个子项时从 1 开始编号，之后的子项接着上一项编号。
     assert_eq!(
         tab("1. 一\n2. 二", false).as_deref(),
-        Some("1. 一\n   2. 二")
+        Some("1. 一\n   1. 二")
+    );
+    assert_eq!(
+        tab("1. 一\n   1. 甲\n2. 乙", false).as_deref(),
+        Some("1. 一\n   1. 甲\n   2. 乙")
     );
     assert_eq!(
         tab("- 一\n  - 甲\n  - 乙", false).as_deref(),
@@ -156,6 +161,11 @@ fn tab_nests_list_items() {
         Some("- 一\n  - 甲\n  - 子")
     );
     assert_eq!(tab("1. 一\n   - 甲", true).as_deref(), Some("1. 一\n- 甲"));
+    // 有序列表项退出一层后接在上一层的那一项之后编号。
+    assert_eq!(
+        tab("1. 一\n2. 二\n   1. 甲\n   2. 乙", true).as_deref(),
+        Some("1. 一\n2. 二\n   1. 甲\n3. 乙")
+    );
     assert_eq!(tab("- 一", true).as_deref(), Some("- 一"));
     // 不是列表项时按普通缩进处理。
     assert_eq!(tab("- 一\n段落", false), None);

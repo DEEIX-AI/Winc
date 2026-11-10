@@ -68,6 +68,8 @@ pub(crate) struct LiveLeaf {
     /// 叶子块当前的范围（字节偏移）；光标位于其后的空行上时延伸到光标所在行，位于其前的
     /// 块标记上时从光标所在行起算。
     pub leaf: std::ops::Range<usize>,
+    /// 叶子块在解析结果中的终点（字节偏移）：输入之后、重新解析之前与 `leaf` 的终点不同。
+    pub parsed_end: usize,
     /// 文档版本号：输入文字后该块需要重排。
     pub revision: u64,
     /// 是否为正文（段落、标题），见 `LeafRange::prose`。
@@ -955,6 +957,7 @@ impl App {
             block,
             range,
             leaf,
+            parsed_end: found.end,
             revision: doc.revision,
             prose,
             table,
@@ -1504,7 +1507,7 @@ impl App {
         if text[range.clone()] == indent {
             return true;
         }
-        // 缩进只含空格和 Tab，字节数等于字符数。
+        // 替换的范围只含空格、Tab 和有序列表的序号，字节数等于字符数。
         let start = rope.line_to_char(line);
         let (a, b) = (start + range.start, start + range.end);
         let moved = |c: usize| {
@@ -1529,8 +1532,9 @@ impl App {
 
     /// 处理正文中的删除键：移除光标前的一层块标记（列表记号、任务框、引用的 `>`、标题的 `#`）。
     ///
-    /// 规则见 `winc_preview::markdown::enter::backspace`。有选区、有多个光标、位于代码块等块中、
-    /// 或光标前还有文字时返回 `false`，按普通删除处理。
+    /// 规则见 `winc_preview::markdown::enter::backspace`；光标前只有缩进时连同上一行的换行一起
+    /// 删除。有选区、有多个光标、位于代码块等块中、或光标前还有文字时返回 `false`，按普通删除
+    /// 处理。
     fn live_backspace(&mut self) -> bool {
         if self.live_leaf().is_some_and(|l| !l.prose) {
             return false;
@@ -1545,10 +1549,27 @@ impl App {
             return false;
         }
         let caret = rope.char_to_byte(doc.selection.head.min(rope.len_chars()));
-        let start = rope.line_to_byte(rope.byte_to_line(caret));
+        let line = rope.byte_to_line(caret);
+        let start = rope.line_to_byte(line);
         let before = rope.byte_slice(start..caret).to_string();
         let Some(edit) = winc_preview::markdown::enter::backspace(&before) else {
-            return false;
+            // 光标前只有缩进（移除列表记号后留下的空格）：预览中看不到这些空格，逐个删除时
+            // 光标看起来不动；一次删除缩进和上一行的换行，光标回到上一行末尾。
+            if line == 0 || before.is_empty() || !before.trim().is_empty() {
+                return false;
+            }
+            let mut from = rope.line_to_char(line) - 1;
+            if from > 0 && rope.char(from - 1) == '\r' {
+                from -= 1;
+            }
+            let to = rope.byte_to_char(caret);
+            if let Some(doc) = self.editor.active_mut() {
+                doc.selection = winc_core::Selection::new(from, to);
+            }
+            self.run(winc_editor::Command::Insert(String::new()));
+            self.markdown.goal = None;
+            self.start_live_editing();
+            return true;
         };
         let (a, b) = (
             rope.byte_to_char(caret - edit.before),

@@ -1035,7 +1035,10 @@ fn lay_out(
         let caret = snap(live.at).saturating_sub(start);
         let preedit = ((live.prose || live.table) && !app.preedit.is_empty())
             .then(|| Arc::from(&*app.preedit));
-        Some((live.block, text, leaf, caret, live.prose, preedit))
+        let parsed_end = live.parsed_end.saturating_sub(start);
+        Some((
+            live.block, text, leaf, parsed_end, caret, live.prose, preedit,
+        ))
     });
     let p = app.palette;
     app.markdown.memo.prepare(layout::memo_key(|h| {
@@ -1078,9 +1081,9 @@ fn lay_out(
         let raw = raw.as_ref().filter(|r| r.0 == i);
         // 显示原文的块换一个键存：光标离开后同样内容的块要重新按排版显示。
         let hash = match raw {
-            Some((_, text, leaf, caret, prose, preedit)) => layout::memo_key(|h| {
+            Some((_, text, leaf, parsed_end, caret, prose, preedit)) => layout::memo_key(|h| {
                 use std::hash::Hash;
-                (hash, &**text, leaf, caret, prose, preedit).hash(h);
+                (hash, &**text, leaf, parsed_end, caret, prose, preedit).hash(h);
             }),
             None => hash,
         };
@@ -1089,10 +1092,11 @@ fn lay_out(
             cx.text.clear();
             cx.chars = 0;
             cx.memo.take_touched();
-            cx.raw = raw.map(|(_, text, leaf, caret, prose, preedit)| {
+            cx.raw = raw.map(|(_, text, leaf, parsed_end, caret, prose, preedit)| {
                 Raw::new(
                     Arc::clone(text),
                     leaf.clone(),
+                    *parsed_end,
                     *caret,
                     *prose,
                     preedit.clone(),
@@ -1105,6 +1109,7 @@ fn lay_out(
             // 顶层块显示原文。
             if let Some(raw) = cx.raw.as_mut().filter(|r| !r.done) {
                 raw.leaf = 0..raw.block.len();
+                raw.parsed_end = raw.block.len();
                 raw.kind = raw.guess();
                 out = Out::default();
                 cx.text.clear();

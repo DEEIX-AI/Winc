@@ -25,7 +25,7 @@ fn blocks_come_out_in_order() {
     assert!(matches!(&doc.blocks[0], Block::Heading(1, h) if h.text == "标题"));
     // 中文之间的软换行不加空格。
     assert_eq!(paragraph(&doc.blocks[1]).text, "第一段第二行");
-    assert_eq!(doc.blocks[2], Block::Rule);
+    assert_eq!(doc.blocks[2], Block::Rule(Some(0)));
     assert!(matches!(
         &doc.blocks[3],
         Block::Code { lang, text, .. } if lang == "rust" && text == "fn main() {}"
@@ -168,7 +168,7 @@ fn footnotes_are_numbered_and_moved_to_the_end() {
     assert_eq!(inline.text, "甲[1] 乙[2]");
     let n = doc.blocks.len();
     assert_eq!(paragraph(&doc.blocks[1]).text, "尾");
-    assert_eq!(doc.blocks[n - 3], Block::Rule);
+    assert_eq!(doc.blocks[n - 3], Block::Rule(None));
     assert!(
         matches!(&doc.blocks[n - 2], Block::Footnote(l, b) if l == "1" && paragraph(&b[0]).text == "B ↩")
     );
@@ -356,7 +356,7 @@ fn html_tables_lists_and_pre_become_blocks() {
     assert_eq!(paragraph(&items[1].blocks[0]).text, "二");
     assert!(matches!(&items[1].blocks[1], Block::List(Some(3), inner) if inner.len() == 1));
     assert!(matches!(&doc.blocks[2], Block::Quote(None, b) if paragraph(&b[0]).text == "引用"));
-    assert_eq!(doc.blocks[3], Block::Rule);
+    assert_eq!(doc.blocks[3], Block::Rule(None));
     assert!(matches!(
         &doc.blocks[4],
         Block::Code { lang, text, .. } if lang == "rust" && text == "fn a() {\n    1 < 2\n}"
@@ -567,4 +567,25 @@ fn toc_marker_becomes_a_nested_list_of_heading_links() {
     assert_eq!(paragraph(&none.blocks[0]).text, "[TOC]");
     let wiki = parse("# 标题\n\n[[toc]]\n");
     assert!(matches!(&wiki.blocks[1], Block::List(None, _)));
+}
+
+/// 只有记号的列表项里有一个空段落，位于记号之后，是一个叶子块：可编辑的预览中光标停在这里。
+#[test]
+fn empty_list_items_hold_an_empty_paragraph() {
+    let source = "1. 一\n2. \n3. 三\n";
+    let doc = parse(source);
+    let Block::List(Some(1), items) = &doc.blocks[0] else {
+        panic!("{:?}", doc.blocks[0]);
+    };
+    let empty = paragraph(&items[1].blocks[0]);
+    assert!(empty.text.is_empty());
+    let at = source.find("2. ").unwrap() + 3;
+    assert_eq!(empty.source_of(0), Some(at));
+    assert!(doc.leaves.iter().any(|l| l.range == (at..at) && l.prose));
+    // 分隔线记下在原文中的起点。
+    let doc = parse("段落\n\n1. 甲\n2. ---\n");
+    let Block::List(Some(1), items) = &doc.blocks[1] else {
+        panic!("{:?}", doc.blocks[1]);
+    };
+    assert_eq!(items[1].blocks[0], Block::Rule(Some("1. 甲\n2. ".len())));
 }
