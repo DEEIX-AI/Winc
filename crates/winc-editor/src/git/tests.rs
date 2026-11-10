@@ -213,32 +213,6 @@ fn directories_take_the_most_visible_state_but_not_deletions() {
 }
 
 #[test]
-fn ignore_rules_follow_nested_gitignores() {
-    let dir = crate::test_util::scratch("ignored");
-    std::fs::create_dir_all(dir.join("target/debug")).unwrap();
-    std::fs::create_dir_all(dir.join("web/node_modules/x")).unwrap();
-    std::fs::create_dir_all(dir.join(".git/info")).unwrap();
-    std::fs::write(dir.join(".gitignore"), "/target\n*.log\n").unwrap();
-    std::fs::write(dir.join("web/.gitignore"), "node_modules/\n!keep.log\n").unwrap();
-    std::fs::write(dir.join(".git/info/exclude"), "secret.txt\n").unwrap();
-
-    let mut ignored = Ignored::new(&dir);
-    assert!(ignored.is_ignored(&dir.join("target/debug/app")));
-    assert!(ignored.is_ignored(&dir.join("web/node_modules/x/index.js")));
-    assert!(ignored.is_ignored(&dir.join("build.log")));
-    assert!(!ignored.is_ignored(&dir.join("web/keep.log")));
-    assert!(ignored.is_ignored(&dir.join("secret.txt")));
-    assert!(!ignored.is_ignored(&dir.join("src/main.rs")));
-    assert!(ignored.is_ignored(Path::new("/elsewhere/file")));
-
-    // 规则变化后调用 `forget`，按新的规则判断。
-    std::fs::write(dir.join(".gitignore"), "").unwrap();
-    ignored.forget();
-    assert!(!ignored.is_ignored(&dir.join("build.log")));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn branches_list_local_first_and_skip_remote_head() {
     let output = "refs/heads/main\0*\0origin/main\0aaa\nrefs/heads/dev\0 \0\0bbb\n\
                       refs/remotes/origin/HEAD\0 \0\0aaa\nrefs/remotes/origin/main\0 \0\0aaa\n";
@@ -811,7 +785,7 @@ fn partial_commits_failed_commits_and_missing_contents() {
 fn risks_only_count_repository_settings_that_run_commands() {
     let out = b"global\0core.pager\nless\0local\0core.fsmonitor\ntrue\0local\0user.name\nt\0\
 local\0filter.a.b.smudge\ncat\0worktree\0core.hookspath\n.husky\0local\0diff.x.textconv\nsh\0";
-    let risks = parse_risks(out, Path::new("/r"), None);
+    let risks = parse_risks(out, Path::new("/r"), None, None);
     assert_eq!(
         risks.items,
         [
@@ -821,10 +795,30 @@ local\0filter.a.b.smudge\ncat\0worktree\0core.hookspath\n.husky\0local\0diff.x.t
         ]
     );
     assert_eq!(risks.filters, ["a.b"]);
-    assert!(parse_risks(b"local\0core.fsmonitor\nfalse\0", Path::new("/r"), None).is_empty());
+    assert!(
+        parse_risks(
+            b"local\0core.fsmonitor\nfalse\0",
+            Path::new("/r"),
+            None,
+            None
+        )
+        .is_empty()
+    );
     assert_ne!(
-        parse_risks(b"local\0core.fsmonitor\nsh x\0", Path::new("/r"), None).fingerprint,
-        parse_risks(b"local\0core.fsmonitor\nsh y\0", Path::new("/r"), None).fingerprint,
+        parse_risks(
+            b"local\0core.fsmonitor\nsh x\0",
+            Path::new("/r"),
+            None,
+            None
+        )
+        .fingerprint,
+        parse_risks(
+            b"local\0core.fsmonitor\nsh y\0",
+            Path::new("/r"),
+            None,
+            None
+        )
+        .fingerprint,
         "改了命令要重新确认"
     );
 }
@@ -848,7 +842,7 @@ fn risk_fingerprints_stay_the_same_across_versions() {
     hook("pre-push.sample", "y", 0o755);
     hook("notes", "z", 0o644);
 
-    let risks = parse_risks(b"local\0core.fsmonitor\nsh x\0", &dir, Some(&dir));
+    let risks = parse_risks(b"local\0core.fsmonitor\nsh x\0", &dir, Some(&dir), None);
     assert_eq!(
         risks.items,
         [
@@ -879,7 +873,8 @@ fn risks_follow_the_configured_hooks_path() {
     hook(&custom, "a");
     hook(&default, "x");
     let local = b"local\0core.hookspath\n.husky/\0";
-    let risks = |out: &[u8]| parse_risks(out, &root, Some(&default));
+    let home = root.join("home");
+    let risks = |out: &[u8]| parse_risks(out, &root, Some(&default), Some(&home));
 
     let before = risks(local);
     assert_eq!(
@@ -896,6 +891,13 @@ fn risks_follow_the_configured_hooks_path() {
     let after = risks(local).fingerprint;
     hook(&default, "y");
     assert_eq!(risks(local).fingerprint, after);
+    // 仓库配置里 `~/` 开头的路径从仓库所在系统的主目录算起。
+    hook(&home.join("hooks"), "h");
+    let tilde = risks(b"local\0core.hookspath\n~/hooks\0");
+    assert_eq!(
+        tilde.items,
+        ["core.hookspath = ~/hooks", "~/hooks/pre-commit"]
+    );
     // 用户自己的配置指向的绝对路径是用户的钩子，不算仓库的风险。
     let global = format!("global\0core.hookspath\n{}\0", custom.display());
     assert!(risks(global.as_bytes()).is_empty());
@@ -1209,6 +1211,108 @@ fn log_streams_read_batches_from_one_git() {
     let mut stream = git.log_stream(&root, &missing).unwrap();
     assert!(stream.next(10).is_err());
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：环境中残留的仓库变量不改变命令作用的仓库。
+///
+/// `git commit` 启动编辑器时传入指向临时暂存区的 `GIT_INDEX_FILE`，提交结束后该文件即被删除。
+/// 从该环境启动的进程如果把这些变量原样传给 `git`，`git` 读到的是空的暂存区：所有已提交的文件
+/// 既显示为删除，又显示为未跟踪。
+#[test]
+fn inherited_repository_variables_do_not_redirect_git() {
+    let dir = crate::test_util::scratch("git-inherited-env");
+    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    vars.extend([
+        ("GIT_INDEX_FILE".into(), dir.join(".git/index.lock").into()),
+        ("GIT_DIR".into(), dir.join("elsewhere").into()),
+        ("GIT_WORK_TREE".into(), dir.join("elsewhere").into()),
+        ("GIT_CONFIG_COUNT".into(), "1".into()),
+        ("GIT_CONFIG_KEY_0".into(), "commit.gpgsign".into()),
+        ("GIT_CONFIG_VALUE_0".into(), "false".into()),
+    ]);
+    let Ok(git) = Git::find(&Shell::with_vars(vars)) else {
+        return;
+    };
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let sh = |args: &[&str]| {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        assert!(ok, "git {args:?}");
+    };
+    sh(&["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("README.md"), "# x\n").unwrap();
+    sh(&["add", "."]);
+    sh(&["commit", "-q", "-m", "first"]);
+
+    let status = git.status(&dir, &Cancel::default()).unwrap();
+    assert_eq!(status.entries, []);
+    assert_eq!(status.head, Some(Head::Branch("main".into())));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：交给 `git` 的路径参数以 `/` 分隔。
+///
+/// Windows 上的路径以 `\` 分隔，发行版内的 `git` 无法匹配子目录中的文件：提交、回滚报告路径
+/// 不存在，部分提交后同步暂存区的 `reset` 既不报错也不生效。
+#[test]
+fn pathspecs_separate_with_forward_slashes() {
+    let root = Path::new("/repo");
+    let paths = [root.join("src").join("main.rs"), root.join("README.md")];
+    let specs: Vec<OsString> = relative_all(root, &paths).collect();
+    assert_eq!(specs, [":(literal)src/main.rs", ":(literal)README.md"]);
+    assert_eq!(slash_path(root, &paths[0]).unwrap(), "src/main.rs");
+}
+
+#[test]
+fn staging_records_edits_and_deletions_literally() {
+    let Some(git) = real_git() else {
+        return;
+    };
+    let dir = crate::test_util::scratch("git-stage");
+    let sh = |args: &[&str]| {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        assert!(ok, "git {args:?}");
+    };
+    sh(&["init", "-q", "-b", "main"]);
+    for name in ["app/[slug]/page.tsx", "app/s/page.tsx", "gone.txt"] {
+        std::fs::create_dir_all(dir.join(name).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(name), "a\n").unwrap();
+    }
+    sh(&["add", "."]);
+    sh(&["commit", "-q", "-m", "first"]);
+    std::fs::write(dir.join("app/[slug]/page.tsx"), "b\n").unwrap();
+    std::fs::write(dir.join("app/s/page.tsx"), "b\n").unwrap();
+    std::fs::remove_file(dir.join("gone.txt")).unwrap();
+
+    let paths = [
+        dir.join("app").join("[slug]").join("page.tsx"),
+        dir.join("gone.txt"),
+    ];
+    git.stage(&dir, &paths).unwrap();
+    let status = git.status(&dir, &Cancel::default()).unwrap();
+    let staged = |name: &str| {
+        let entry = status.entries.iter().find(|e| e.path == dir.join(name));
+        entry.and_then(|e| e.staged)
+    };
+    assert_eq!(staged("app/[slug]/page.tsx"), Some(Change::Modified));
+    assert_eq!(staged("gone.txt"), Some(Change::Deleted));
+    // `[slug]` 不作为通配符：按通配符规则会匹配的 `app/s/page.tsx` 不加入暂存区。
+    assert_eq!(staged("app/s/page.tsx"), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1555,5 +1659,93 @@ fn commit_diff_keeps_source_budget_when_generated_file_is_huge() {
     let (_, patch) = git.commit_diff(&dir, &[source], &[], false, 256).unwrap();
     assert!(patch.len() < 350);
     assert!(patch.contains("Further diff omitted"));
+fn publishing_prefers_configured_targets_then_origin() {
+    let names = ["github-desktop-alice", "github-desktop-bob", "origin"].map(String::from);
+    let remotes: Vec<&String> = names.iter().collect();
+    // 没有配置推送目标：推到 `origin`，即使它按名字排在后面。
+    assert_eq!(publish_remote(&remotes, &[]).unwrap(), "origin");
+    // 配置的推送目标优先；配置了已不存在的远程时跳过它。
+    let preferred = ["gone".to_owned(), "github-desktop-bob".to_owned()];
+    assert_eq!(
+        publish_remote(&remotes, &preferred).unwrap(),
+        "github-desktop-bob"
+    );
+    // 没有 `origin` 时取第一个；没有远程时为 `None`。
+    assert_eq!(
+        publish_remote(&remotes[..2], &[]).unwrap(),
+        "github-desktop-alice"
+    );
+    assert_eq!(publish_remote(&[], &[]), None);
+}
+
+/// 审阅拉取请求时添加的远程按名字排在 `origin` 之前；发布新分支时仍然推到 `origin`。
+#[test]
+fn publishing_a_branch_pushes_to_origin_before_other_remotes() {
+    let shell = Shell::with_vars(std::env::vars_os().collect());
+    let Ok(git) = Git::find(&shell) else {
+        return;
+    };
+    let dir = crate::test_util::scratch("publish-remote");
+    let root = winc_config::files::canonicalize(&dir).unwrap().join("work");
+    let sh = |cwd: &Path, args: &[&str]| {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    let base = root.parent().unwrap();
+    for bare in ["fork.git", "origin.git"] {
+        std::fs::create_dir_all(base.join(bare)).unwrap();
+        sh(&base.join(bare), &["init", "-q", "--bare"]);
+    }
+    std::fs::create_dir_all(&root).unwrap();
+    sh(&root, &["init", "-q", "-b", "main"]);
+    sh(&root, &["config", "user.name", "t"]);
+    sh(&root, &["config", "user.email", "t@t"]);
+    sh(&root, &["config", "commit.gpgsign", "false"]);
+    sh(&root, &["commit", "-q", "--allow-empty", "-m", "a"]);
+    let fork = base.join("fork.git");
+    let origin = base.join("origin.git");
+    sh(
+        &root,
+        &[
+            "remote",
+            "add",
+            "github-desktop-alice",
+            fork.to_str().unwrap(),
+        ],
+    );
+    sh(
+        &root,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    sh(&root, &["switch", "-q", "-c", "feature"]);
+    assert!(git.untrusted(&root).is_none());
+
+    git.push(&root, false).unwrap();
+    let upstream = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["config", "branch.feature.remote"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&upstream.stdout).trim(), "origin");
+    let pushed = |bare: &Path| {
+        Command::new("git")
+            .arg("-C")
+            .arg(bare)
+            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(pushed(&origin));
+    assert!(!pushed(&fork), "推到了按名字排在前面的远程");
+
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -51,6 +51,13 @@ Measured on macOS; results vary with hardware and system load.
 | Interface | Light and dark themes, and a complete interface in English and Simplified Chinese |
 | Updates | Signed in-app updates on all three platforms |
 
+Touchscreens support tapping buttons and placing the caret, double-tapping to select a word,
+swiping to scroll, and dragging scrollbars and panel dividers. Hold for 500 ms to open the context
+menu. Swipes stay in the region where they started and stop on release. Additional fingers cancel
+the current gesture; lift all fingers before starting another. On Windows, drag the title bar to
+move the window, double-tap it to maximize or restore, and drag the window edges to resize.
+Window dragging and edge snapping use the same native Windows behavior as mouse input.
+
 ## Platforms
 
 | Platform | Requirements | Package |
@@ -74,7 +81,7 @@ winc file.rs:12:5       # open a file at a line and column
 winc --wait file        # wait until the tab closes, for example as the Git editor
 ```
 
-The Windows installers and the Linux deb package add `winc` to `PATH`. On macOS and with the Linux AppImage, run **Shell Command: Install winc Command** from the command palette.
+The Windows installers and the Linux deb and Arch packages add `winc` to `PATH`; the Windows portable ZIP leaves `PATH` unchanged. On macOS, choose **Winc → Install winc Command…** from the menu bar or run **Shell Command: Install winc Command** from the command palette; with the Linux AppImage, use the command palette.
 
 On macOS the app is started by the system, so it does not inherit the environment variables of your shell. Use `winc --new-instance` to keep them.
 
