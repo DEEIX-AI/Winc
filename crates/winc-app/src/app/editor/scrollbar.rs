@@ -45,11 +45,13 @@ pub(crate) enum ScrollArea {
     Markdown,
     /// Markdown 预览中比正文宽的表格的水平滚动条。
     MarkdownTable,
+    /// PDF 预览。
+    Pdf,
 }
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 11] = [
+    const ALL: [ScrollArea; 12] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::Tree,
@@ -61,6 +63,7 @@ impl ScrollArea {
         ScrollArea::Terminal,
         ScrollArea::Markdown,
         ScrollArea::MarkdownTable,
+        ScrollArea::Pdf,
     ];
 
     /// 该区域可以拖动的滚动条；不能拖动时为 `None`。
@@ -77,6 +80,7 @@ impl ScrollArea {
             ScrollArea::Terminal => Some(Scrollbar::Terminal),
             ScrollArea::Markdown => Some(Scrollbar::Markdown),
             ScrollArea::MarkdownTable => Some(Scrollbar::MarkdownTable),
+            ScrollArea::Pdf => Some(Scrollbar::Pdf),
         }
     }
 

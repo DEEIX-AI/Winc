@@ -457,6 +457,8 @@ pub enum Scrollbar {
     Markdown,
     /// Markdown 预览中比正文宽的表格的水平滚动条。
     MarkdownTable,
+    /// PDF 预览的竖直滚动条。
+    Pdf,
     /// 设置页（含快捷键列表）的竖直滚动条。
     Settings,
 }

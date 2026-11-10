@@ -93,6 +93,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     }
     app.request_pdf_pages(&wanted);
     draw_page_number(app, frame, area, current, pages.len());
+    let owner = app.editor.active().map_or(0, |doc| doc.id.0);
+    let bar = crate::view::ScrollArea::Pdf;
+    crate::view::draw_scrollbar(app, frame, bar, owner, area, scroll, height);
 }
 
 /// 页面背景固定为白色，失败原因用固定的中灰色，在浅色和深色主题下都清晰可读。

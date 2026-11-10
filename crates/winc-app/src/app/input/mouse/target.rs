@@ -551,6 +551,15 @@ impl App {
             return Some((Scrollbar::Markdown, grab(y, thumb.y, thumb.h)));
         }
 
+        let pdf = self.pdf.area;
+        if pdf.contains(x, y) {
+            if x < pdf.right() - SCROLLBAR_HIT {
+                return None;
+            }
+            let thumb = scrollbar_thumb(pdf, self.pdf.scroll, self.pdf.height)?;
+            return Some((Scrollbar::Pdf, grab(y, thumb.y, thumb.h)));
+        }
+
         let editor = self.scroll_track();
         let doc = self.editor.active()?;
         if editor.contains(x, y) && x >= editor.right() - SCROLLBAR_HIT {

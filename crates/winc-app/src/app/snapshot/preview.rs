@@ -3336,6 +3336,42 @@ fn pdf_files_render_only_the_pages_in_view() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// PDF 预览有可以拖动的滚动条：滚动后显示，按住滑块拖到底即滚到结尾，途中不选中任何内容。
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn the_pdf_preview_scrolls_by_its_scrollbar() {
+    use crate::layout::{Scrollbar, scrollbar_thumb};
+
+    let dir = sample_folder("pdf-scrollbar");
+    let path = dir.join("长文档.pdf");
+    std::fs::write(&path, sample_pdf(30)).unwrap();
+    let mut app = open_pdf(&path, false);
+    let area = app.pdf.area;
+    assert!(app.pdf.max_scroll() > area.h);
+
+    // 滚动后滚动条显示。
+    app.on_mouse_move(area.x + area.w / 2.0, area.y + area.h / 2.0);
+    assert_eq!(app.scrollbar_shown(ScrollArea::Pdf), 0.0);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        0.0, -200.0,
+    )));
+    paint(&mut app);
+    assert_eq!(app.scrollbar_shown(ScrollArea::Pdf), 1.0);
+
+    // 按住滑块拖到底：滚到结尾；拖回顶部：回到开头。
+    let thumb = scrollbar_thumb(area, app.pdf.scroll, app.pdf.height).unwrap();
+    app.on_mouse_move(area.right() - 3.0, thumb.y + thumb.h / 2.0);
+    assert!(matches!(app.hover, Hover::Scrollbar(Scrollbar::Pdf)));
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(area.right() - 3.0, area.bottom() + 50.0);
+    assert_eq!(app.pdf.scroll, app.pdf.max_scroll());
+    app.on_mouse_move(area.right() - 3.0, area.y - 50.0);
+    assert_eq!(app.pdf.scroll, 0.0);
+    app.on_mouse_up(MouseButton::Left);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 回归（#105）：某一页渲染失败时在页面中央显示原因，不再空白；失败的页不在每一帧重新请求。
 #[cfg(any(target_os = "macos", windows))]
 #[test]
