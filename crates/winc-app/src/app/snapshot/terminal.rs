@@ -3,6 +3,7 @@
 
 mod blocks;
 mod editor;
+mod input;
 mod run;
 
 use super::editor::navigation::press;

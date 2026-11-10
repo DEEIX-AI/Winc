@@ -753,7 +753,8 @@ pub struct App {
     /// 鼠标悬停的目标。
     pub hover: Hover,
     pub(crate) modifiers: ModifiersState,
-    /// 左、右 ⌥ 键是否按下（用于判断终端中哪一侧作为 Meta，见 `terminal.optionAsMeta`）。
+    /// 左、右 ⌥ 键是否按下，用于按 `terminal.optionAsMeta` 判断视为 Meta 的一侧；
+    /// winit 只在 macOS 上报告左右 ⌥ 的状态。
     option_side: (bool, bool),
     /// 鼠标位置（逻辑像素）。
     mouse: (f32, f32),
