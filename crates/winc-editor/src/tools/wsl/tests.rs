@@ -310,9 +310,28 @@ fn copying_inside_the_distribution_keeps_modes_and_links() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 普通命令不转发索引；部分提交显式设置索引时，使用发行版内的路径并转发该变量。
 #[test]
-fn the_temporary_index_reaches_git_in_the_distribution() {
-    assert!(GIT_ENV.split(':').any(|name| name == "GIT_INDEX_FILE"));
+fn the_temporary_index_is_forwarded_only_for_partial_commits() {
+    assert!(!GIT_ENV.split(':').any(|name| name == "GIT_INDEX_FILE"));
+    let index = locate(Path::new(r"\\wsl.localhost\Ubuntu\tmp\my index")).unwrap();
+    let mut command = Command::new("wsl.exe");
+    git_index(&mut command, &index);
+    let env = |name: &str| {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == name)
+            .and_then(|(_, value)| value)
+            .unwrap()
+    };
+    assert_eq!(env("GIT_INDEX_FILE"), "/tmp/my index");
+    let list = env("WSLENV").to_str().unwrap();
+    assert!(list.split(':').any(|name| name == "GIT_INDEX_FILE"));
+    assert!(
+        GIT_ENV
+            .split(':')
+            .all(|name| list.split(':').any(|n| n == name))
+    );
 }
 
 /// askpass 程序的路径换算为发行版内的路径，端点在两个方向上都传递，`ssh` 的提示类型传回 Windows。

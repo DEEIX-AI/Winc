@@ -132,10 +132,13 @@ impl Git {
                 .map_or(0, |d| d.as_nanos())
         ));
         // 发行版内的 `git` 只接受发行版内的路径。
-        let index_arg = crate::wsl::locate_here(&index)
-            .map_or_else(|| index.clone().into_os_string(), |place| place.path.into());
+        let place = crate::wsl::locate_here(&index);
         let with_index = |command: &mut Command| {
-            command.env("GIT_INDEX_FILE", &index_arg);
+            if let Some(place) = &place {
+                crate::wsl::git_index(command, place);
+            } else {
+                command.env("GIT_INDEX_FILE", &index);
+            }
         };
         let result = (|| {
             // 从 `HEAD` 开始；还没有提交过时是空的暂存区。其他失败（超时、对象损坏、写不了临时

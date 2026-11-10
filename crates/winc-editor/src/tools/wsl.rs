@@ -15,7 +15,8 @@ use crate::shell::process::{self, Cancel};
 const HOSTS: [&str; 2] = ["wsl.localhost", "wsl$"];
 
 /// 通过 `WSLENV` 传给发行版内 `git` 的环境变量：`wsl.exe` 默认不向发行版传递环境变量。
-pub(crate) const GIT_ENV: &str = "GIT_OPTIONAL_LOCKS:GIT_TERMINAL_PROMPT:GIT_EDITOR:GIT_SEQUENCE_EDITOR:GIT_INDEX_FILE:NO_COLOR:LC_ALL:\
+/// 临时索引仅在部分提交时传递，避免未设置的 `GIT_INDEX_FILE` 在发行版内成为空字符串。
+pub(crate) const GIT_ENV: &str = "GIT_OPTIONAL_LOCKS:GIT_TERMINAL_PROMPT:GIT_EDITOR:GIT_SEQUENCE_EDITOR:NO_COLOR:LC_ALL:\
 LANGUAGE";
 
 /// 发行版内的 `git` 经互操作运行 Windows 上的 askpass 程序时，在 [`GIT_ENV`] 之外传递的环境变量。
@@ -203,6 +204,13 @@ pub fn git_arg(root: &Path, path: &Path) -> String {
         Some(place) => place.path,
         None => path.to_string_lossy().into_owned(),
     }
+}
+
+/// 设置发行版内的临时 Git 暂存区，并通过 `WSLENV` 传递。
+pub(crate) fn git_index(command: &mut Command, index: &Location) {
+    command
+        .env("GIT_INDEX_FILE", &index.path)
+        .env("WSLENV", format!("{GIT_ENV}:GIT_INDEX_FILE"));
 }
 
 /// 返回存放 `git` 临时文件的目录。
