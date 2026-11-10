@@ -521,6 +521,13 @@ pub fn zoom_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回「背景显示方式」菜单的菜单项，当前的选择打勾。
+pub fn background_fit_menu() -> Vec<MenuEntry> {
+    (0..winc_config::BackgroundFit::ALL.len())
+        .map(|i| MenuEntry::Item(MenuCommand::BackgroundFit(i), true))
+        .collect()
+}
+
 /// 返回「背景图片」菜单的菜单项：选择图片、无，没有背景图片时「无」打勾。
 pub fn background_menu() -> Vec<MenuEntry> {
     vec![

@@ -168,6 +168,9 @@ pub enum MenuCommand {
     BackgroundChoose,
     /// 背景图片菜单：不使用背景图片。
     BackgroundNone,
+    /// 设置中「背景显示方式」菜单的一项，参数为
+    /// [`BackgroundFit::ALL`](winc_config::BackgroundFit::ALL) 中的序号（从 0 起）。
+    BackgroundFit(usize),
     /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
     TerminalPosition(bool),
     /// 设置中「Meta 键」菜单的一项，参数为
@@ -487,6 +490,9 @@ impl MenuCommand {
             MenuCommand::NewWindow => t!("cmd-new-window"),
             MenuCommand::BackgroundChoose => t!("settings-background-choose"),
             MenuCommand::BackgroundNone => t!("settings-background-none"),
+            MenuCommand::BackgroundFit(i) => winc_config::BackgroundFit::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::background_fit_label(choice)),
             MenuCommand::OpenFolder => t!("cmd-open-folder"),
             MenuCommand::OpenWslFolder(i) => crate::system::wsl_distributions()
                 .get(i)
@@ -619,6 +625,8 @@ pub enum MenuTarget {
     Zoom,
     /// 设置的外观页中的「背景图片」。
     BackgroundImage,
+    /// 设置的外观页中的「背景显示方式」。
+    BackgroundFit,
     /// 设置的终端页中的「默认 Shell」。
     DefaultShell,
     /// 设置的终端页中的「位置」。

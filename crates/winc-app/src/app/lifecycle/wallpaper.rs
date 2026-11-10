@@ -1,9 +1,9 @@
 //! 窗口背景图：按配置在后台生成图层，交给渲染器。
 //!
-//! 图层保持图片自身的宽高比，由渲染器按窗口等比缩放、居中裁剪，窗口大小改变时不必重新生成；
-//! 只有图层相对窗口过小或过大（见 [`GROW_AT`]、[`SHRINK_AT`]）时才重新生成。生成好的图层存在
-//! 磁盘上（见 `cache`），下次启动、调整不透明度时直接读取，不再解码原图。同一张图层在各窗口
-//! 之间共用。没有配置背景图时不占内存，绘制也与原来相同。
+//! 图层由渲染器按显示方式映射到窗口，窗口大小改变时不必重新生成；只有图层相对窗口过小或
+//! 过大（见 [`GROW_AT`]、[`SHRINK_AT`]）时才重新生成。生成好的图层存在磁盘上（见 `cache`），
+//! 下次启动、调整不透明度时直接读取，不再解码原图。同一张图层在各窗口之间共用。没有配置
+//! 背景图时不占内存，绘制也与原来相同。
 
 mod cache;
 
@@ -11,13 +11,19 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, mpsc};
 
-use winc_config::Config;
-use winc_render::{Color, Renderer, Wallpaper};
+use winc_config::{BackgroundFit, Config};
+use winc_render::{Color, Renderer, Wallpaper, WallpaperFit};
 
 use crate::app::{App, UserEvent};
 
 /// 图层长边的像素数上限：图片在底色之下只透出一部分，更高的分辨率看不出差别。
 const MAX_SIDE: f32 = 1920.0;
+
+/// 不透明度（百分比）超过该值时图片的细节清晰可见，图层改按物理像素生成。
+const SHARP_AT: u8 = 50;
+
+/// 按物理像素生成的图层长边的像素数上限。
+const SHARP_SIDE: f32 = 2560.0;
 
 /// 图片文件的大小上限（字节，64 MB）：更大的文件不读取。
 const MAX_FILE: u64 = 64 << 20;
@@ -28,12 +34,16 @@ const GROW_AT: f32 = 1.25;
 /// 窗口所需的图层比现有的小到该倍数以下时重新生成，释放多占的内存。
 const SHRINK_AT: f32 = 0.6;
 
-/// 一张背景图层由什么生成：图片的路径和不透明度（百分比）。
+/// 一张背景图层由什么生成：图片的路径、不透明度（百分比）和显示方式。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Source {
     path: PathBuf,
     opacity: u8,
+    fit: BackgroundFit,
 }
+
+/// 窗口的宽、高（逻辑像素）和缩放系数。
+type Window = ((f32, f32), f32);
 
 /// 生成好的背景图层。
 pub(crate) struct Layer {
@@ -93,23 +103,58 @@ impl WallpaperState {
     }
 }
 
-/// 返回宽 `window.0`、高 `window.1`（逻辑像素）的窗口所需的图层大小：`full` 大小的图片等比
-/// 缩小到刚好铺满窗口，长边不超过 [`MAX_SIDE`]；不放大，图片较小时即图片自身的大小。
-fn target(full: (u32, u32), window: (f32, f32)) -> (u32, u32) {
+/// 返回 `source` 在窗口 `window` 中所需的图层大小；`full` 是原图解码后的大小。
+///
+/// 图片按显示方式缩小到在窗口中显示的大小，不放大；平铺时保持原来的大小。不透明度不超过
+/// [`SHARP_AT`] 时按逻辑像素计，长边不超过 [`MAX_SIDE`]；超过时按物理像素计，长边不超过
+/// [`SHARP_SIDE`]。
+fn target(source: &Source, full: (u32, u32), (window, scale): Window) -> (u32, u32) {
     let (w, h) = (full.0.max(1) as f32, full.1.max(1) as f32);
-    let cover = (window.0 / w).max(window.1 / h);
-    let scale = cover.min(MAX_SIDE / w.max(h)).min(1.0);
-    (
-        ((w * scale).round() as u32).max(1),
-        ((h * scale).round() as u32).max(1),
-    )
+    let sharp = source.opacity > SHARP_AT && source.fit != BackgroundFit::Tile;
+    let (density, limit) = if sharp {
+        (scale.max(1.0), SHARP_SIDE)
+    } else {
+        (1.0, MAX_SIDE)
+    };
+    let (fx, fy) = (window.0 * density / w, window.1 * density / h);
+    let (sx, sy) = match source.fit {
+        BackgroundFit::Fill => (fx.max(fy), fx.max(fy)),
+        BackgroundFit::Fit => (fx.min(fy), fx.min(fy)),
+        BackgroundFit::Stretch => (fx, fy),
+        BackgroundFit::Tile => (1.0, 1.0),
+    };
+    let cap = (limit / w.max(h)).min(1.0);
+    let side = |size: f32, by: f32| ((size * by.min(cap)).round() as u32).max(1);
+    (side(w, sx), side(h, sy))
 }
 
-/// `layer` 大小的图层对 `window` 是否已不合适：所需的大小与它相差过多（见 [`GROW_AT`]、
-/// [`SHRINK_AT`]）。`full` 是原图解码后的大小。
-fn stale(layer: (u32, u32), full: (u32, u32), window: (f32, f32)) -> bool {
-    let ratio = target(full, window).0 as f32 / layer.0.max(1) as f32;
-    !(SHRINK_AT..=GROW_AT).contains(&ratio)
+/// `layer` 大小的图层是否已不合用：与所需的大小 `wanted` 相差过多（见 [`GROW_AT`]、
+/// [`SHRINK_AT`]）。
+fn stale(layer: (u32, u32), wanted: (u32, u32)) -> bool {
+    let off = |layer: u32, wanted: u32| {
+        !(SHRINK_AT..=GROW_AT).contains(&(wanted as f32 / layer.max(1) as f32))
+    };
+    off(layer.0, wanted.0) || off(layer.1, wanted.1)
+}
+
+/// `layer` 大小的图层能否用于窗口 `window`：平铺时图层的像素与逻辑像素一一对应，须与所需的
+/// 大小相同；其余方式由渲染器缩放，允许相差一些。
+fn usable(source: &Source, layer: (u32, u32), full: (u32, u32), window: Window) -> bool {
+    let wanted = target(source, full, window);
+    if source.fit == BackgroundFit::Tile {
+        return layer == wanted;
+    }
+    !stale(layer, wanted)
+}
+
+/// 返回渲染器中对应的显示方式。
+fn fit_of(fit: BackgroundFit) -> WallpaperFit {
+    match fit {
+        BackgroundFit::Fill => WallpaperFit::Fill,
+        BackgroundFit::Fit => WallpaperFit::Fit,
+        BackgroundFit::Stretch => WallpaperFit::Stretch,
+        BackgroundFit::Tile => WallpaperFit::Tile,
+    }
 }
 
 impl App {
@@ -122,6 +167,7 @@ impl App {
         (opacity >= 0.5).then(|| Source {
             path: PathBuf::from(path.trim()),
             opacity: opacity.round() as u8,
+            fit: self.config.ui_background_fit.unwrap_or_default(),
         })
     }
 
@@ -135,19 +181,18 @@ impl App {
         )
     }
 
-    /// 为宽高为 `window`（逻辑像素）的窗口准备背景图层：现有的或其他窗口的图层合用时直接
-    /// 采用，否则在后台生成。
+    /// 为窗口 `window` 准备背景图层：现有的或其他窗口的图层合用时直接采用，否则在后台生成。
     ///
     /// 窗口创建之前即可调用（按预计的窗口大小），使图层在第一帧之前就绪。
-    pub(in crate::app) fn request_wallpaper(&mut self, window: (f32, f32)) {
+    pub(in crate::app) fn request_wallpaper(&mut self, window: Window) {
         let Some(wanted) = self.wallpaper_source() else {
             return;
         };
-        if window.0 < 1.0 || window.1 < 1.0 {
+        if window.0.0 < 1.0 || window.0.1 < 1.0 {
             return;
         }
         let fits = |layer: &Layer| {
-            layer.source == wanted && !stale(layer.wallpaper.size(), layer.full, window)
+            layer.source == wanted && usable(&wanted, layer.wallpaper.size(), layer.full, window)
         };
         if self.wallpaper.shown.as_deref().is_some_and(fits) {
             return;
@@ -190,7 +235,7 @@ impl App {
             self.wallpaper.failed = None;
         } else {
             let window = self.layout.window;
-            self.request_wallpaper((window.w, window.h));
+            self.request_wallpaper(((window.w, window.h), renderer.scale_factor()));
         }
         // 渲染器的图层与状态不一致（刚生成好、从其他窗口采用，或已取消）时更换。
         let state = &mut self.wallpaper;
@@ -251,6 +296,13 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置背景图片的显示方式，并写回配置。
+    pub(in crate::app) fn set_background_fit(&mut self, fit: BackgroundFit) {
+        self.config.ui_background_fit = Some(fit);
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 测试中等后台生成完背景图。
     #[cfg(test)]
     pub(crate) fn wait_for_wallpaper(&mut self) {
@@ -263,10 +315,10 @@ impl App {
     }
 }
 
-/// 生成 `source` 的图层，供宽高为 `window`（逻辑像素）的窗口使用；在后台线程上调用。
+/// 生成 `source` 的图层，供窗口 `window` 使用；在后台线程上调用。
 ///
 /// 缓存 `cache` 中有同一张图片、大小合用的图层时直接读取，否则解码原图并写入缓存。
-fn make(source: &Source, window: (f32, f32), cache: Option<&Path>) -> Made {
+fn make(source: &Source, window: Window, cache: Option<&Path>) -> Made {
     let metadata = std::fs::metadata(&source.path).map_err(|e| e.to_string())?;
     if metadata.len() > MAX_FILE {
         return Err(winc_i18n::t!("preview-image-too-large").to_owned());
@@ -274,23 +326,23 @@ fn make(source: &Source, window: (f32, f32), cache: Option<&Path>) -> Made {
     let opacity = f32::from(source.opacity) / 100.0;
     let empty = || winc_i18n::t!("preview-image-empty").to_owned();
     let stamp = cache::Stamp::of(&source.path, &metadata);
+    let fit = fit_of(source.fit);
     let cached = cache.and_then(|file| cache::read(file, &stamp));
-    if let Some(layer) = cached.filter(|layer| !stale(layer.size, layer.full, window)) {
-        let (w, h) = layer.size;
-        let wallpaper = Wallpaper::new(w, h, &layer.rgba, opacity).ok_or_else(empty)?;
+    if let Some(layer) = cached.filter(|layer| usable(source, layer.size, layer.full, window)) {
+        let wallpaper = Wallpaper::new(layer.size, &layer.rgba, opacity, fit).ok_or_else(empty)?;
         return Ok((wallpaper, layer.full));
     }
     let bytes = std::fs::read(&source.path).map_err(|e| e.to_string())?;
     let image = winc_preview::image::decode_bytes(&bytes)?;
     drop(bytes);
     let full = (image.width, image.height);
-    let size = target(full, window);
+    let size = target(source, full, window);
     let rgba = if size == full {
         image.rgba
     } else {
         winc_preview::image::resize(&image, size.0, size.1).rgba
     };
-    let wallpaper = Wallpaper::new(size.0, size.1, &rgba, opacity).ok_or_else(empty)?;
+    let wallpaper = Wallpaper::new(size, &rgba, opacity, fit).ok_or_else(empty)?;
     if let Some(file) = cache {
         cache::write(file, &stamp, &cache::Cached { size, full, rgba });
     }

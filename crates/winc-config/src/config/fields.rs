@@ -207,6 +207,30 @@ const UI: &[Field] = &[
         write: |config| config.ui_background_opacity.map(number),
     },
     Field {
+        key: "backgroundFit",
+        read: |config, value, name, problems| {
+            config.ui_background_fit = match value.as_str() {
+                Some("fill") => Some(BackgroundFit::Fill),
+                Some("fit") => Some(BackgroundFit::Fit),
+                Some("stretch") => Some(BackgroundFit::Stretch),
+                Some("tile") => Some(BackgroundFit::Tile),
+                _ => {
+                    problems.push(t!("config-background-fit-invalid", name = name));
+                    None
+                }
+            };
+        },
+        write: |config| {
+            let value = match config.ui_background_fit? {
+                BackgroundFit::Fill => "fill",
+                BackgroundFit::Fit => "fit",
+                BackgroundFit::Stretch => "stretch",
+                BackgroundFit::Tile => "tile",
+            };
+            Some(Json::String(value.into()))
+        },
+    },
+    Field {
         // `titleBarStyle` 在配置中是字符串，读入后只保留是否用系统的标题栏。
         key: "titleBarStyle",
         read: |config, value, name, problems| match value.as_str() {

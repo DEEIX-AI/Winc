@@ -21,6 +21,7 @@ config-run-template-note = Each entry requires name and command; args, cwd, and 
 
 config-theme-invalid = { $name } must be auto, dark, or light; ignored
 config-render-whitespace-invalid = { $name } must be none, selection, trailing, or all; ignored
+config-background-fit-invalid = { $name } must be fill, fit, stretch, or tile; ignored
 config-language-invalid = { $name } must be auto, zh-CN, or en-US; ignored
 config-not-integer = { $name } should be an integer (currently { $value }); ignored
 config-not-string = { $name } should be a string; ignored

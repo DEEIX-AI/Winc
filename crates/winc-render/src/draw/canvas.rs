@@ -60,6 +60,8 @@ pub(crate) struct Wall<'a> {
     pub width: usize,
     pub xmap: &'a [u32],
     pub ymap: &'a [u32],
+    /// 画布上显示图片的范围；之外只有底色。
+    pub span: IRect,
 }
 
 /// 透出背景图的一种底色：图层的像素加上 `k`（底色按 1 减去图片的不透明度预乘）即最终的颜色。
@@ -69,12 +71,18 @@ pub(crate) struct Wall<'a> {
 pub(crate) struct Tinted<'a> {
     pub wall: Wall<'a>,
     pub k: u32,
+    /// 底色本身（不透明的 `0xAARRGGBB`），用在图片的范围之外。
+    pub plain: u32,
 }
 
 impl Tinted<'_> {
     /// 返回画布上 `(x, y)` 处的颜色。
     fn at(&self, x: i32, y: i32) -> u32 {
         let wall = &self.wall;
+        let span = wall.span;
+        if x < span.x0 || x >= span.x1 || y < span.y0 || y >= span.y1 {
+            return self.plain;
+        }
         let row = wall.ymap[y as usize] as usize * wall.width;
         wall.px[row + wall.xmap[x as usize] as usize] + self.k
     }
@@ -82,8 +90,18 @@ impl Tinted<'_> {
     /// 把画布第 `y` 行自 `x0` 起的颜色写入 `row`。
     fn write(&self, y: i32, x0: i32, row: &mut [u32]) {
         let wall = &self.wall;
+        let span = wall.span;
+        if y < span.y0 || y >= span.y1 {
+            return row.fill(self.plain);
+        }
+        let x1 = x0 + row.len() as i32;
+        let (a, b) = (span.x0.clamp(x0, x1), span.x1.clamp(x0, x1));
+        let (left, rest) = row.split_at_mut((a - x0) as usize);
+        let (inside, right) = rest.split_at_mut((b - a) as usize);
+        left.fill(self.plain);
+        right.fill(self.plain);
         let line = &wall.px[wall.ymap[y as usize] as usize * wall.width..][..wall.width];
-        for (p, &x) in row.iter_mut().zip(&wall.xmap[x0 as usize..]) {
+        for (p, &x) in inside.iter_mut().zip(&wall.xmap[a as usize..]) {
             *p = line[x as usize] + self.k;
         }
     }
@@ -735,7 +753,7 @@ impl Canvas<'_> {
     }
 
     /// 与 [`Self::fill_layered`] 相同，但各处透出背景图：`background` 和 `rects` 中的颜色都是
-    /// 加在图层像素上的值（见 [`Tinted::k`]）。
+    /// 加在图层像素上的值（见 [`Tinted::k`]）。只写图片的范围（[`Wall::span`]）以内的像素。
     ///
     /// 图层的分辨率低于画布时，相邻的若干行取自图层的同一行：只计算第一行，其余的逐行复制。
     pub fn wall_layered(
@@ -752,8 +770,11 @@ impl Canvas<'_> {
         let (width, stride) = (self.width, self.stride);
         row.clear();
         row.resize(width, 0);
+        let span = wall.span;
+        let (left, right) = (span.x0.clamp(0, w) as usize, span.x1.clamp(0, w) as usize);
+        let h = span.y1.clamp(0, h);
 
-        let mut y = 0;
+        let mut y = span.y0.clamp(0, h);
         while y < h {
             let end = (rects.iter())
                 .flat_map(|(r, _)| [r.y0, r.y1])
@@ -770,12 +791,13 @@ impl Canvas<'_> {
                 let at = line as usize * stride;
                 let source = wall.ymap[line as usize];
                 if line > y && wall.ymap[line as usize - 1] == source {
-                    self.px.copy_within(at - stride..at - stride + width, at);
+                    (self.px).copy_within(at - stride + left..at - stride + right, at + left);
                     continue;
                 }
                 let from = &wall.px[source as usize * wall.width..][..wall.width];
-                let to = &mut self.px[at..at + width];
-                for ((p, &x), &k) in to.iter_mut().zip(wall.xmap).zip(&*row) {
+                let to = &mut self.px[at + left..at + right];
+                let (xmap, row) = (&wall.xmap[left..right], &row[left..right]);
+                for ((p, &x), &k) in to.iter_mut().zip(xmap).zip(row) {
                     *p = from[x as usize] + k;
                 }
             }

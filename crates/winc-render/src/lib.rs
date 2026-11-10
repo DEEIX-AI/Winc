@@ -277,14 +277,30 @@ pub struct Renderer {
     /// 透出背景图的底色（`0xAARRGGBB`）及其加在图层像素上的值。
     surfaces: Vec<(u32, u32)>,
     /// 画布各列、各行对应的背景图的列、行；画布大小或背景图改变时重算。
-    wall_map: (Vec<u32>, Vec<u32>),
+    wall_map: Map,
+    /// `wall_map` 对应的图片范围和缩放系数。
+    wall_span: (IRect, f32),
     /// 底色矩形换算成加在图层像素上的值，逐帧复用。
     wall_rects: Vec<(IRect, u32)>,
 }
 
-/// 窗口背景图：按不透明度预乘后的像素，保持图片自身的宽高比。
+/// 背景图在窗口中的显示方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WallpaperFit {
+    /// 等比缩放并居中裁剪，铺满窗口。
+    #[default]
+    Fill,
+    /// 等比缩放到整张可见并居中，两侧或上下只有底色。
+    Fit,
+    /// 拉伸到窗口的大小，不保持宽高比。
+    Stretch,
+    /// 按图层的大小从左上角起平铺，图层的一个像素对应一个逻辑像素。
+    Tile,
+}
+
+/// 窗口背景图：按不透明度预乘后的像素。
 ///
-/// 绘制时等比缩放并居中裁剪，铺满画布（取最近的像素）；窗口大小改变时只需重算映射，不必
+/// 绘制时按 [`WallpaperFit`] 映射到画布（取最近的像素）；窗口大小改变时只需重算映射，不必
 /// 重新生成。
 /// 界面各处的底色之下透出这张图，最终的颜色为「图片 × 不透明度 + 底色 × (1 − 不透明度)」。
 /// 前一项在创建时算好，绘制时每个像素只做一次加法。可以在后台线程创建。
@@ -293,6 +309,7 @@ pub struct Wallpaper {
     width: usize,
     height: usize,
     opacity: f32,
+    fit: WallpaperFit,
 }
 
 impl Wallpaper {
@@ -300,7 +317,12 @@ impl Wallpaper {
     /// 不透明度；透明的像素按黑色处理。
     ///
     /// 尺寸为 0，或 `rgba` 不足 `width * height * 4` 字节时返回 `None`。
-    pub fn new(width: u32, height: u32, rgba: &[u8], opacity: f32) -> Option<Wallpaper> {
+    pub fn new(
+        (width, height): (u32, u32),
+        rgba: &[u8],
+        opacity: f32,
+        fit: WallpaperFit,
+    ) -> Option<Wallpaper> {
         let (w, h) = (width as usize, height as usize);
         if w == 0 || h == 0 || rgba.len() < w * h * 4 {
             return None;
@@ -321,25 +343,48 @@ impl Wallpaper {
             width: w,
             height: h,
             opacity,
+            fit,
         })
     }
 
-    /// 算出 `columns` × `rows` 的画布各列、各行对应的图层列、行，写入 `map`：图片等比缩放并
-    /// 居中裁剪，恰好铺满画布。
-    fn cover(&self, columns: usize, rows: usize, map: &mut (Vec<u32>, Vec<u32>)) {
+    /// 按显示方式算出 `columns` × `rows` 的画布各列、各行对应的图层列、行，写入 `map`；返回
+    /// 画布上显示图片的范围。`scale` 是屏幕缩放系数。
+    fn map(&self, (columns, rows): (usize, usize), scale: f32, map: &mut Map) -> IRect {
         let (w, h) = (self.width as f64, self.height as f64);
+        let (fx, fy) = (w / columns.max(1) as f64, h / rows.max(1) as f64);
         // 画布上每个像素对应图层上多少个像素。
-        let step = (w / columns.max(1) as f64).min(h / rows.max(1) as f64);
-        let axis = |n: usize, size: f64, to: &mut Vec<u32>| {
-            let first = (size - n as f64 * step) / 2.0;
+        let (sx, sy) = match self.fit {
+            WallpaperFit::Fill => (fx.min(fy), fx.min(fy)),
+            WallpaperFit::Fit => (fx.max(fy), fx.max(fy)),
+            WallpaperFit::Stretch => (fx, fy),
+            WallpaperFit::Tile => {
+                let step = 1.0 / f64::from(scale.max(0.1));
+                (step, step)
+            }
+        };
+        let tile = self.fit == WallpaperFit::Tile;
+        let axis = |n: usize, size: f64, step: f64, to: &mut Vec<u32>| {
+            // 平铺从边缘起，其余方式居中；`first` 为负时图片在这个方向上铺不满画布。
+            let first = if tile {
+                0.0
+            } else {
+                (size - n as f64 * step) / 2.0
+            };
             to.clear();
             to.extend((0..n).map(|i| {
                 let at = (first + (i as f64 + 0.5) * step).floor();
+                let at = if tile { at.rem_euclid(size) } else { at };
                 at.clamp(0.0, size - 1.0) as u32
             }));
+            if tile {
+                return (0, n as i32);
+            }
+            let edge = |at: f64| ((at - first) / step - 0.5).ceil().clamp(0.0, n as f64) as i32;
+            (edge(0.0), edge(size))
         };
-        axis(columns, w, &mut map.0);
-        axis(rows, h, &mut map.1);
+        let (x0, x1) = axis(columns, w, sx, &mut map.0);
+        let (y0, y1) = axis(rows, h, sy, &mut map.1);
+        IRect { x0, y0, x1, y1 }
     }
 
     /// 返回宽度和高度（像素）。
@@ -353,6 +398,9 @@ impl Wallpaper {
         0xff00_0000 | (part(color.r) << 16) | (part(color.g) << 8) | part(color.b)
     }
 }
+
+/// 画布各列、各行对应的背景图层列、行。
+type Map = (Vec<u32>, Vec<u32>);
 
 /// 可供多个渲染器共用的字体和字形缓存：同一进程中的多个窗口使用相同的字体，已光栅化的字形无需
 /// 每个窗口各存一份（键中包含物理像素字号，不同缩放的屏幕上的窗口也能共用）。
@@ -448,6 +496,7 @@ impl Renderer {
             wallpaper: None,
             surfaces: Vec::new(),
             wall_map: (Vec::new(), Vec::new()),
+            wall_span: (IRect::new(0, 0, 0, 0), 0.0),
             wall_rects: Vec::new(),
         })
     }
@@ -488,6 +537,7 @@ impl Renderer {
             wallpaper: None,
             surfaces: Vec::new(),
             wall_map: (Vec::new(), Vec::new()),
+            wall_span: (IRect::new(0, 0, 0, 0), 0.0),
             wall_rects: Vec::new(),
         })
     }
@@ -714,17 +764,20 @@ impl Renderer {
         let (based, row) = (&self.base, &mut self.row);
         let (wallpaper, surfaces) = (self.wallpaper.as_deref(), &self.surfaces);
         let (wall_map, wall_rects) = (&mut self.wall_map, &mut self.wall_rects);
+        let wall_span = &mut self.wall_span;
         let paint = |mut canvas: Canvas<'_>| {
+            let all = IRect::new(0, 0, canvas.width as i32, canvas.height as i32);
             let wall = wallpaper.map(|wallpaper| {
-                let (columns, rows) = (canvas.width, canvas.height);
-                if wall_map.0.len() != columns || wall_map.1.len() != rows {
-                    wallpaper.cover(columns, rows, wall_map);
+                let size = (canvas.width, canvas.height);
+                if (wall_map.0.len(), wall_map.1.len()) != size || wall_span.1 != scale {
+                    *wall_span = (wallpaper.map(size, scale, wall_map), scale);
                 }
                 Wall {
                     px: &wallpaper.px,
                     width: wallpaper.width,
                     xmap: &wall_map.0,
                     ymap: &wall_map.1,
+                    span: wall_span.0,
                 }
             });
             // 背景色和底色都透出背景图时，与没有背景图时一样只写一遍。
@@ -741,10 +794,14 @@ impl Renderer {
                 .filter(|_| wall_rects.len() == based.len());
             if let Some((wall, k)) = layered {
                 // 整个窗口随后会被不透明的内容盖住时（见 `cover_next_frame`），跳过这些像素。
+                let plain = background | 0xff00_0000;
                 if based.is_empty() && cover.is_some() {
-                    let all = IRect::new(0, 0, canvas.width as i32, canvas.height as i32);
-                    canvas.rect(all, k, all, cover, Some(Tinted { wall, k }));
+                    canvas.rect(all, k, all, cover, Some(Tinted { wall, k, plain }));
                 } else {
+                    // 图片铺不满画布：先按没有背景图时填充，再写图片所在的部分。
+                    if wall.span != all {
+                        canvas.fill_layered(background, based, row);
+                    }
                     canvas.wall_layered(wall, k, wall_rects, row);
                 }
             } else if based.is_empty() {

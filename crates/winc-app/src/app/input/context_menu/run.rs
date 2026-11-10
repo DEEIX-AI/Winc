@@ -154,6 +154,13 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::BackgroundFit => {
+                if let MenuCommand::BackgroundFit(i) = command
+                    && let Some(&fit) = winc_config::BackgroundFit::ALL.get(i)
+                {
+                    self.set_background_fit(fit);
+                }
+            }
             MenuTarget::BackgroundImage => match command {
                 MenuCommand::BackgroundChoose => self.pick(Pick::BackgroundImage),
                 MenuCommand::BackgroundNone => self.set_background_image(None),

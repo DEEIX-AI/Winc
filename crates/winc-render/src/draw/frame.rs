@@ -46,7 +46,13 @@ impl<'a> Frame<'a> {
     fn tint(&self, argb: u32) -> Option<Tinted<'a>> {
         let wall = self.wall?;
         let &(_, k) = self.surfaces.iter().find(|(surface, _)| *surface == argb)?;
-        Some(Tinted { wall, k })
+        let plain = argb;
+        Some(Tinted { wall, k, plain })
+    }
+
+    /// 此后绘制的底色不再透出背景图：用于浮在内容之上的面板和菜单。
+    pub fn end_wallpaper(&mut self) {
+        self.wall = None;
     }
 }
 

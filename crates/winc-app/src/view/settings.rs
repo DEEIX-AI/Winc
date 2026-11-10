@@ -67,6 +67,8 @@ pub(crate) fn draw_scrolling(app: &mut App, frame: &mut Frame<'_>) -> bool {
     // `tint` 全透明时 `restore_tinted` 原样恢复快照。
     frame.restore_tinted(&base, app.palette.scrim.alpha(0.0));
     app.settings.scroll_base = Some(base);
+    // 与完整绘制时相同，卡片不透出背景图。
+    frame.end_wallpaper();
     let layout = layout(app, frame);
     super::draw_card_frame(frame, app.palette, layout.card, RADIUS_CARD);
     draw_dialog(app, frame, &layout);
@@ -435,6 +437,12 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
                 (crate::layout::whitespace_label(choice).to_owned(), false)
             } else if row.setting == Setting::Zoom {
                 (format!("{}%", app.config.ui_zoom.unwrap_or(100)), false)
+            } else if row.setting == Setting::BackgroundFit {
+                let choice = app.config.ui_background_fit.unwrap_or_default();
+                (
+                    crate::layout::background_fit_label(choice).to_owned(),
+                    false,
+                )
             } else if row.setting == Setting::BackgroundImage {
                 let name = (app.config.ui_background_image.as_deref())
                     .map(|path| winc_editor::display_name(std::path::Path::new(path)).into_owned());

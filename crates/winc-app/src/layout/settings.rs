@@ -92,7 +92,11 @@ impl SettingsPage {
                         Setting::RestoreWindow,
                         Setting::Animations,
                     ]),
-                    plain(vec![Setting::BackgroundImage, Setting::BackgroundOpacity]),
+                    plain(vec![
+                        Setting::BackgroundImage,
+                        Setting::BackgroundFit,
+                        Setting::BackgroundOpacity,
+                    ]),
                     Section {
                         title: Some(t!("settings-light-theme")),
                         items: vec![Setting::LightTheme],
@@ -269,6 +273,8 @@ pub enum Setting {
     Animations,
     /// 窗口的背景图片（`ui.backgroundImage`）。
     BackgroundImage,
+    /// 背景图片的显示方式（`ui.backgroundFit`）。
+    BackgroundFit,
     /// 背景图片的不透明度（`ui.backgroundOpacity`）。
     BackgroundOpacity,
     /// 文件树把连续的单子目录合并显示为一行。
@@ -394,6 +400,7 @@ impl Setting {
             | Setting::RestoreWindow
             | Setting::Animations
             | Setting::BackgroundImage
+            | Setting::BackgroundFit
             | Setting::BackgroundOpacity => SettingsPage::Appearance,
             Setting::EditorFont
             | Setting::EditorSize
@@ -468,6 +475,7 @@ impl Setting {
             Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::Animations => t!("settings-animations"),
             Setting::BackgroundImage => t!("settings-background-image"),
+            Setting::BackgroundFit => t!("settings-background-fit"),
             Setting::BackgroundOpacity => t!("settings-background-opacity"),
             Setting::Outline => t!("settings-outline"),
             Setting::CompactFolders => t!("settings-compact-folders"),
@@ -599,6 +607,7 @@ impl Setting {
             Setting::SkipOnSave
             | Setting::Language
             | Setting::BackgroundImage
+            | Setting::BackgroundFit
             | Setting::Zoom
             | Setting::RenderWhitespace
             | Setting::TerminalPosition
@@ -647,6 +656,17 @@ pub enum SettingControl {
 
 /// 返回「语言」中选项 `choice` 的名称。
 ///
+/// 返回「背景显示方式」中选项 `choice` 的名字。
+pub fn background_fit_label(choice: winc_config::BackgroundFit) -> &'static str {
+    use winc_config::BackgroundFit::{Fill, Fit, Stretch, Tile};
+    match choice {
+        Fill => t!("settings-background-fit-fill"),
+        Fit => t!("settings-background-fit-fit"),
+        Stretch => t!("settings-background-fit-stretch"),
+        Tile => t!("settings-background-fit-tile"),
+    }
+}
+
 /// 返回「空白符」设置中选项 `choice` 的名字。
 pub fn whitespace_label(choice: winc_config::RenderWhitespace) -> &'static str {
     use winc_config::RenderWhitespace::{All, None, Selection, Trailing};

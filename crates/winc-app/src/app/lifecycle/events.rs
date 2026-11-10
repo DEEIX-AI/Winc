@@ -19,10 +19,12 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         // 背景图层在创建窗口的同时生成，第一帧绘制时通常已经就绪。窗口大小按上次的估计，
-        // 图层的大小允许与实际所需的有出入。
+        // 缩放系数按主屏幕的估计，图层的大小允许与实际所需的有出入。
         let expected =
             (self.state.window).map_or((DEFAULT_WIDTH, DEFAULT_HEIGHT), |w| (w.width, w.height));
-        self.request_wallpaper((expected.0 as f32, expected.1 as f32));
+        let screen = event_loop.primary_monitor();
+        let scale = screen.map_or(1.0, |screen| screen.scale_factor() as f32);
+        self.request_wallpaper(((expected.0 as f32, expected.1 as f32), scale));
 
         let title = self
             .editor

@@ -21,6 +21,7 @@ config-run-template-note = 每项需要 name 和 command；args、cwd、env 为�
 
 config-theme-invalid = { $name } 的值只能是 auto、dark 或 light，已忽略
 config-render-whitespace-invalid = { $name } 的值只能是 none、selection、trailing 或 all，已忽略
+config-background-fit-invalid = { $name } 的值只能是 fill、fit、stretch 或 tile，已忽略
 config-language-invalid = { $name } 的值只能是 auto、zh-CN 或 en-US，已忽略
 config-not-integer = { $name } 应为整数（当前为 { $value }），已忽略
 config-not-string = { $name } 应为字符串，已忽略

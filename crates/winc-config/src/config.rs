@@ -41,6 +41,8 @@ pub struct Config {
     /// 背景图片在底色之上的不透明度（百分比），默认为 15；范围见
     /// [`Config::BACKGROUND_OPACITY_RANGE`]。
     pub ui_background_opacity: Option<f32>,
+    /// 背景图片的显示方式，默认为填充。
+    pub ui_background_fit: Option<BackgroundFit>,
     /// 是否用系统的标题栏（配置中的 `"titleBarStyle": "native"`）。
     ///
     /// 写成 `"custom"` 或没写时，窗口按钮在 winc 的顶栏中绘制。只影响 macOS 以外的平台。
@@ -232,6 +234,30 @@ impl RenderWhitespace {
         RenderWhitespace::Selection,
         RenderWhitespace::Trailing,
         RenderWhitespace::All,
+    ];
+}
+
+/// 背景图在窗口中的显示方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackgroundFit {
+    /// 等比缩放并裁剪，铺满窗口。
+    #[default]
+    Fill,
+    /// 等比缩放到整张可见。
+    Fit,
+    /// 拉伸到窗口的大小。
+    Stretch,
+    /// 按原始大小平铺。
+    Tile,
+}
+
+impl BackgroundFit {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [BackgroundFit; 4] = [
+        BackgroundFit::Fill,
+        BackgroundFit::Fit,
+        BackgroundFit::Stretch,
+        BackgroundFit::Tile,
     ];
 }
 

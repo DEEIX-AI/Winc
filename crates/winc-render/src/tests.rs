@@ -467,7 +467,10 @@ fn the_wallpaper_shows_under_surface_colors_only() {
     ];
     let draw = |declare: bool| {
         let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5).map(Arc::new), &[bg, card]);
+        renderer.set_wallpaper(
+            Wallpaper::new((2, 2), &rgba, 0.5, WallpaperFit::Fill).map(Arc::new),
+            &[bg, card],
+        );
         assert_eq!(renderer.wallpaper_size(), Some((2, 2)));
         let rects = [(Rect::new(0.0, 0.0, 4.0, 8.0), card)];
         if declare {
@@ -502,7 +505,10 @@ fn the_wallpaper_shows_under_surface_colors_only() {
     // 不透明度为 1 时只剩图片，为 0 时只剩底色；两端各通道都不溢出。
     for (opacity, expected) in [(1.0, 0xff0000), (0.0, 0x202020)] {
         let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, opacity).map(Arc::new), &[bg]);
+        renderer.set_wallpaper(
+            Wallpaper::new((2, 2), &rgba, opacity, WallpaperFit::Fill).map(Arc::new),
+            &[bg],
+        );
         renderer.draw(|_| {});
         assert_eq!(renderer.image().unwrap().pixels[0] & 0xff_ffff, expected);
     }
@@ -521,7 +527,10 @@ fn the_wallpaper_shows_under_surface_colors_only() {
     ]
     .concat();
     let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-    renderer.set_wallpaper(Wallpaper::new(4, 2, &wide, 1.0).map(Arc::new), &[bg]);
+    renderer.set_wallpaper(
+        Wallpaper::new((4, 2), &wide, 1.0, WallpaperFit::Fill).map(Arc::new),
+        &[bg],
+    );
     renderer.draw(|_| {});
     let covered = renderer.image().unwrap().pixels.clone();
     let at = |x: usize, y: usize| covered[y * 8 + x] & 0xff_ffff;
@@ -533,7 +542,10 @@ fn the_wallpaper_shows_under_surface_colors_only() {
 
     // 取消以后恢复为纯色。
     let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
-    renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5).map(Arc::new), &[bg]);
+    renderer.set_wallpaper(
+        Wallpaper::new((2, 2), &rgba, 0.5, WallpaperFit::Fill).map(Arc::new),
+        &[bg],
+    );
     renderer.set_wallpaper(None, &[bg]);
     renderer.draw(|_| {});
     assert!(
@@ -544,5 +556,65 @@ fn the_wallpaper_shows_under_surface_colors_only() {
             .iter()
             .all(|p| p & 0xff_ffff == 0x202020)
     );
-    assert!(Wallpaper::new(2, 2, &rgba[..8], 0.5).is_none());
+    assert!(Wallpaper::new((2, 2), &rgba[..8], 0.5, WallpaperFit::Fill).is_none());
+}
+
+/// 各显示方式下图片在画布上的位置；图片铺不满时其余部分只有底色，浮层不透出背景图。
+#[test]
+fn the_wallpaper_is_placed_by_its_fit() {
+    let (bg, card) = (Color::hex(0x202020), Color::hex(0x404040));
+    // 2 × 1 的图片：左红右蓝，完全不透明。
+    let rgba = [255, 0, 0, 255, 0, 0, 255, 255];
+    let draw = |fit, scale: f32, paint: &dyn Fn(&mut Frame<'_>)| {
+        let side = 8.0 / scale;
+        let mut renderer = Renderer::offscreen(side, side, scale, bg, None, None).unwrap();
+        let wallpaper = Wallpaper::new((2, 1), &rgba, 1.0, fit).map(Arc::new);
+        renderer.set_wallpaper(wallpaper, &[bg, card]);
+        renderer.draw(|frame| paint(frame));
+        let image = renderer.image().unwrap();
+        assert_eq!((image.width, image.height), (8, 8));
+        image
+            .pixels
+            .iter()
+            .map(|p| p & 0xff_ffff)
+            .collect::<Vec<_>>()
+    };
+    let (red, blue) = (0xff0000, 0x0000ff);
+
+    // 适应：图片缩放为 8 × 4，上下各两行只有底色，包括之后以底色填充的部分。
+    let left = Rect::new(0.0, 0.0, 4.0, 8.0);
+    let image = draw(WallpaperFit::Fit, 1.0, &|frame| {
+        frame.base(&[(left, card)]);
+        frame.rect(Rect::new(6.0, 0.0, 2.0, 4.0), bg);
+    });
+    let at = |x: usize, y: usize| image[y * 8 + x];
+    assert_eq!(
+        (at(0, 1), at(5, 1), at(7, 1)),
+        (0x404040, 0x202020, 0x202020)
+    );
+    assert_eq!(
+        (at(0, 2), at(3, 5), at(4, 2), at(7, 3)),
+        (red, red, blue, blue)
+    );
+    assert_eq!((at(0, 6), at(7, 7)), (0x404040, 0x202020));
+
+    // 拉伸：铺满画布，不保持宽高比。
+    let image = draw(WallpaperFit::Stretch, 1.0, &|_| {});
+    assert_eq!(
+        (image[0], image[3], image[4], image[63]),
+        (red, red, blue, blue)
+    );
+
+    // 平铺：图层的一个像素对应一个逻辑像素，缩放系数为 2 时占 2 × 2 个物理像素。
+    let image = draw(WallpaperFit::Tile, 2.0, &|_| {});
+    assert_eq!(image[..8], [red, red, blue, blue, red, red, blue, blue]);
+    assert_eq!(image[56..], image[..8]);
+
+    // 浮层的底色与界面的底色相同时也不透出背景图。
+    let image = draw(WallpaperFit::Fill, 1.0, &|frame| {
+        frame.rect(Rect::new(0.0, 0.0, 2.0, 2.0), bg);
+        frame.end_wallpaper();
+        frame.rect(Rect::new(2.0, 0.0, 2.0, 2.0), bg);
+    });
+    assert_eq!((image[0], image[2], image[4]), (red, 0x202020, blue));
 }

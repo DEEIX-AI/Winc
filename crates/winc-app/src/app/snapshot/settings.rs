@@ -302,11 +302,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.config.language, None);
 
     // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，macOS 以外的平台还有「使用系统标题栏」，
-    // 然后是状态栏、记住窗口、动态效果三个开关和背景图片、不透明度两项，再下面是两组主题）：
-    // 外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；到头后
-    // 不再变化。
+    // 然后是状态栏、记住窗口、动态效果三个开关和背景的图片、显示方式、不透明度，再下面是两组
+    // 主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；
+    // 到头后不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..10 + title_bar {
+    for _ in 0..11 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -1284,21 +1284,30 @@ fn the_background_image_shows_under_the_base_colors() {
     assert_eq!(Setting::BackgroundImage.page(), SettingsPage::Appearance);
     assert_eq!(app.setting_value(Setting::BackgroundOpacity).0, "15");
 
-    // 编辑区右下角空白处的一个像素（只有底色）。
-    let sample = |app: &mut App| {
+    let pixel = |app: &mut App, (x, y): (f32, f32)| {
         paint(app);
         app.wait_for_wallpaper();
         paint(app);
         let image = app.renderer.as_ref().unwrap().image().unwrap();
-        let (x, y) = (
-            app.layout.editor.right() - 40.0,
-            app.layout.editor.bottom() - 40.0,
-        );
         let at = (y * SCALE) as usize * image.width as usize + (x * SCALE) as usize;
         let px = image.pixels[at];
         ((px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff)
     };
+    // 编辑区右下角空白处的一个像素（只有底色）。
+    let sample = |app: &mut App| {
+        let editor = app.layout.editor;
+        pixel(app, (editor.right() - 40.0, editor.bottom() - 40.0))
+    };
+    // 设置卡片左下角的一个像素（只有卡片的底色）。
+    let card = |app: &mut App| {
+        app.open_settings();
+        let card = app.settings_layout().card;
+        let px = pixel(app, (card.x + 10.0, card.bottom() - 10.0));
+        app.close_settings();
+        px
+    };
     let plain = sample(&mut app);
+    let plain_card = card(&mut app);
     let mixed = |base: (u32, u32, u32), opacity: f32| {
         let part = |c: u32| (c as f32 * (1.0 - opacity)).round() as u32;
         let red = (255 * (opacity * 256.0) as u32) >> 8;
@@ -1311,6 +1320,8 @@ fn the_background_image_shows_under_the_base_colors() {
     let size = app.renderer.as_ref().unwrap().wallpaper_size();
     assert_eq!((SIZE.0, SIZE.1), (1280.0, 820.0));
     assert_eq!(size, Some((1280, 960)));
+    // 浮在内容之上的设置卡片不透出背景图。
+    assert_eq!(card(&mut app), plain_card);
 
     // 图层已写入缓存。把缓存中的像素改成绿色后调整不透明度：读的是缓存，不再解码原图。
     let mut bytes = std::fs::read(&cache).unwrap();
@@ -1347,7 +1358,28 @@ fn the_background_image_shows_under_the_base_colors() {
     app.settings_adjust(Setting::BackgroundOpacity, true);
     assert_eq!(app.config.ui_background_opacity, Some(100.0));
     assert_eq!(sample(&mut app), (255, 0, 0));
+    // 不透明度超过一半：图层按物理像素生成，这里即图片原来的大小。
+    let size = |app: &App| app.renderer.as_ref().unwrap().wallpaper_size();
+    assert_eq!(size(&app), Some((2000, 1500)));
     app.config.ui_background_opacity = Some(20.0);
+    assert_eq!(sample(&mut app), mixed(plain, 0.2));
+
+    // 显示方式。适应：图片按高度缩小并居中，取样处在图片之外，只有底色。
+    use winc_config::BackgroundFit;
+    assert_eq!(Setting::BackgroundFit.page(), SettingsPage::Appearance);
+    app.set_background_fit(BackgroundFit::Fit);
+    assert_eq!(sample(&mut app), plain);
+    assert_eq!(size(&app), Some((1093, 820)));
+    let middle = (SIZE.0 / 2.0, app.layout.editor.bottom() - 40.0);
+    assert_eq!(pixel(&mut app, middle), mixed(plain, 0.2));
+    // 拉伸：铺满窗口。
+    app.set_background_fit(BackgroundFit::Stretch);
+    assert_eq!(sample(&mut app), mixed(plain, 0.2));
+    // 平铺：图层保持图片的大小（不超过上限）。
+    app.set_background_fit(BackgroundFit::Tile);
+    assert_eq!(sample(&mut app), mixed(plain, 0.2));
+    assert_eq!(size(&app), Some((1920, 1440)));
+    app.set_background_fit(BackgroundFit::Fill);
     assert_eq!(sample(&mut app), mixed(plain, 0.2));
 
     // 换成深色配色：底色随之更换，图片不必重新生成。
@@ -1406,7 +1438,8 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 截取带背景图的界面：图片取环境变量 `WINC_BACKGROUND`，每套主题各截主界面、文件面板和设置。
+/// 截取带背景图的界面：图片取环境变量 `WINC_BACKGROUND`，每套主题各截主界面、文件面板、设置
+/// 和各显示方式。
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_background_image() {
@@ -1443,7 +1476,73 @@ fn shoot_background_image() {
             app.close_picker();
             app.open_settings();
             shoot(&mut app, &format!("background-{name}-settings"));
+            app.close_settings();
+            for (i, fit) in winc_config::BackgroundFit::ALL.into_iter().enumerate() {
+                app.set_background_fit(fit);
+                paint(&mut app);
+                app.wait_for_wallpaper();
+                shoot(&mut app, &format!("background-{name}-fit-{i}"));
+            }
         }
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 有背景图时滚动设置页：使用快照的帧与完整绘制的帧相同，卡片不随之透出或不透出背景图。
+#[test]
+fn scrolling_settings_over_a_background_image_looks_the_same() {
+    let dir = sample_folder("settings-scroll-background");
+    // 一张渐变的图片：位置有偏差时像素不同。
+    let image = dir.join("图.png");
+    let (w, h) = (640, 400);
+    let pixels = (0..w * h).map(|i| 0xff00_0000 | ((i % w * 255 / w) << 16) | (i / w * 255 / h));
+    let gradient = winc_render::Image {
+        pixels: pixels.collect(),
+        width: w,
+        height: h,
+    };
+    write_png(&image, &gradient).unwrap();
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.ui_background_image = Some(image.to_string_lossy().into_owned());
+    app.config.ui_background_opacity = Some(60.0);
+    paint(&mut app);
+    app.wait_for_wallpaper();
+    app.open_settings();
+    app.settings.motion = None;
+    let shot = |app: &mut App| {
+        paint(app);
+        app.renderer
+            .as_ref()
+            .unwrap()
+            .image()
+            .unwrap()
+            .pixels
+            .clone()
+    };
+    shot(&mut app);
+
+    app.settings_scroll_by(-10.0);
+    shot(&mut app);
+    app.settings_scroll_by(-30.0);
+    let reused = shot(&mut app);
+    let (window, scale) = (app.layout.window, SCALE);
+    assert!(app.settings_reuses_base(window, scale));
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    assert_eq!(app.settings_scroll_tick(later), None);
+    assert!(!app.settings_reuses_base(window, scale));
+    let full = shot(&mut app);
+    let differ = (reused.iter().zip(&full)).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
+
+    // 卡片左下角只有卡片的底色，不透出背景图。
+    let card = app.settings_layout().card;
+    let at =
+        |x: f32, y: f32| (y * SCALE) as usize * (SIZE.0 * SCALE) as usize + (x * SCALE) as usize;
+    let corner = full[at(card.x + 10.0, card.bottom() - 10.0)];
+    let part = |v: f32| (v * 255.0 + 0.5) as u32;
+    let c = app.palette.frame_bg;
+    let plain = (part(c.r) << 16) | (part(c.g) << 8) | part(c.b);
+    assert_eq!(corner & 0xff_ffff, plain);
+
     std::fs::remove_dir_all(&dir).unwrap();
 }

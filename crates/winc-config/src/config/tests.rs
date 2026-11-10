@@ -212,6 +212,7 @@ fn round_trips_through_json() {
         ui_font_weight: Some(500),
         ui_background_image: Some("/图片/壁纸.jpg".to_string()),
         ui_background_opacity: Some(20.0),
+        ui_background_fit: Some(BackgroundFit::Tile),
         tab_width: Some(8),
         auto_save: Some(true),
         hot_exit: Some(false),
