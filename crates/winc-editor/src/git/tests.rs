@@ -1258,6 +1258,43 @@ fn inherited_repository_variables_do_not_redirect_git() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：`WSLENV` 中未设置的变量进入发行版后取空字符串，普通查询仍使用仓库自己的暂存区。
+#[test]
+fn unset_wsl_variables_do_not_select_an_empty_index() {
+    let Some(git) = real_git() else {
+        return;
+    };
+    let dir = crate::test_util::scratch("git-wsl-index");
+    let cancel = Cancel::default();
+    let sh = |args: &[&str]| {
+        let mut command = git.command(&dir);
+        command.args(args);
+        git.run(&mut command, STATUS_TIMEOUT, &cancel).unwrap()
+    };
+    sh(&["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.rs"), "one\n").unwrap();
+    sh(&["add", "."]);
+    sh(&["commit", "-q", "-m", "first"]);
+
+    let mut command = git.command(&dir);
+    for name in crate::wsl::GIT_ENV.split(':') {
+        let unset = command
+            .get_envs()
+            .find(|(key, _)| *key == name)
+            .map_or_else(
+                || std::env::var_os(name).is_none(),
+                |(_, value)| value.is_none(),
+            );
+        if unset {
+            command.env(name, "");
+        }
+    }
+    command.args(["status", "--porcelain=v2", "-z"]);
+    let stdout = git.run(&mut command, STATUS_TIMEOUT, &cancel).unwrap();
+    assert!(parse_status(&stdout, &dir).unwrap().entries.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 回归：交给 `git` 的路径参数以 `/` 分隔。
 ///
 /// Windows 上的路径以 `\` 分隔，发行版内的 `git` 无法匹配子目录中的文件：提交、回滚报告路径
