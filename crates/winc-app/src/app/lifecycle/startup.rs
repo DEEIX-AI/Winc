@@ -187,6 +187,7 @@ impl App {
             shared: Default::default(),
             config_rev: 0,
             cascade: None,
+            open_fullscreen: false,
             glyphs_from: None,
             #[cfg(all(unix, not(target_os = "macos")))]
             activation: None,

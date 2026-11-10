@@ -671,6 +671,7 @@ impl Winc {
     /// 新建一个窗口；带 `folder` 时在里面打开它。
     ///
     /// 目录已经开在某个窗口里时切到那个窗口；关着的窗口（macOS 上关掉了最后一个窗口）先拿来用。
+    /// 当前窗口处于全屏时，新窗口同样进入全屏。
     /// `token` 同 [`Self::open_targets`]。
     fn new_window(
         &mut self,
@@ -695,6 +696,10 @@ impl Winc {
             }
             return;
         };
+        // 当前窗口处于全屏时，新窗口同样进入全屏。
+        let fullscreen = (self.windows.iter())
+            .find(|slot| Some(slot.key) == self.active_key())
+            .is_some_and(|slot| slot.app.is_fullscreen());
         // 关着的窗口在开始页上，拿来用，不再建一个。
         let hidden = self
             .windows
@@ -708,6 +713,9 @@ impl Winc {
                 }
                 app.set_activation(token);
                 app.raise();
+                if fullscreen {
+                    app.enter_fullscreen();
+                }
             }
             self.active = Some(key);
             self.refresh_shared();
@@ -736,6 +744,7 @@ impl Winc {
         app.state_path = template.state_path;
         app.backup.root = template.backup_root;
         app.cascade = cascade;
+        app.open_fullscreen = fullscreen;
         app.glyphs_from = glyphs;
         self.add(key, app);
         self.active = Some(key);

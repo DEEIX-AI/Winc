@@ -1000,6 +1000,8 @@ pub struct App {
     ///
     /// 创建窗口时按当前显示器校验后使用一次，见 `App::cascade_from`。
     pub(crate) cascade: Option<((f64, f64), f64)>,
+    /// 窗口创建并显示后是否进入全屏（来源窗口处于全屏时），使用一次。
+    pub(crate) open_fullscreen: bool,
     /// 新窗口与来源窗口共用的字体和字形缓存（创建渲染器时使用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 待使用的激活令牌（见 [`App::set_activation`]）。

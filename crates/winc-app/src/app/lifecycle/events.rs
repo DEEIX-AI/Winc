@@ -242,6 +242,9 @@ impl ApplicationHandler<UserEvent> for App {
         }
         #[cfg(not(target_os = "macos"))]
         window.set_visible(true);
+        if std::mem::take(&mut self.open_fullscreen) {
+            self.enter_fullscreen();
+        }
 
         // 显示链接绑定窗口所在的屏幕，因此在窗口显示之后才创建。
         #[cfg(target_os = "macos")]
