@@ -147,7 +147,8 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     }
     t.one(FindNext, EditorOrFind, key(none, F(3)));
     t.one(FindPrevious, EditorOrFind, key(shift, F(3)));
-    t.one(HighlightWord, Editor, c(shift, '8'));
+    // 固定高亮使用带修饰键的组合：不带 ⌘ 的可输入字符键会占用正文中的输入（如 `*`、`(`）。
+    t.one(HighlightWord, Editor, key(cmd | shift, F(7)));
     t.one(ClearWordHighlights, Editor, key(shift, Escape));
 
     t.one(GoToDefinition, Editor, key(none, F(12)));

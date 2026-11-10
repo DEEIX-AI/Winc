@@ -624,15 +624,14 @@ impl App {
     }
 }
 
+/// 返回固定高亮的内容：选中的文字，没有选区时取光标所在的词；规则同 [`App::search_seed`]。
+///
+/// 选中的文字按字面匹配，可以是词的一部分；光标所在的词只匹配完整的词。
 fn highlight_seed(text: &impl Lines, selection: Selection) -> Option<WordHighlight> {
     let range = seed_range(text, selection);
-    // 光标已越过词尾时让 Shift+8 正常输入乘号。
-    if (selection.is_empty() && selection.head == range.1) || range.1 - range.0 >= 200 {
-        return None;
-    }
     let seed = usable_seed(range, selection, |from, to| Some(text.substring(from, to)))?;
     let chars: Vec<char> = seed.chars().collect();
-    let whole_word = chars.iter().copied().all(crate::view::is_word_char);
+    let whole_word = selection.is_empty();
     (!chars.iter().all(|c| c.is_whitespace())).then_some(WordHighlight { chars, whole_word })
 }
 

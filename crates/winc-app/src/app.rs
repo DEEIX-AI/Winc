@@ -681,11 +681,17 @@ const GLOBAL_POLL: Duration = Duration::from_millis(100);
 /// 「只显示匹配的行」的缓存键，各项依次为：文档、版本号、匹配的行数、已搜索到的位置、是否有查询。
 type FilterKey = (DocumentId, u64, usize, usize, bool);
 
+/// 同时固定的高亮的最大数量（个），等于高亮调色板的颜色数。
+///
+/// 超出时移除最早的一个并沿用其颜色，同一屏中的颜色互不相同。
 pub(crate) const WORD_HIGHLIGHT_COUNT: usize = 6;
 
+/// 固定高亮的一个查找内容：编辑区与差异两栏中，各处字面相同的文字铺上同一种颜色。
 #[derive(PartialEq, Eq)]
 pub(crate) struct WordHighlight {
+    /// 要标注的文字。
     pub chars: Vec<char>,
+    /// 是否只标注完整的词：由光标所在的词生成时为真，由选中的文字生成时为假。
     pub whole_word: bool,
 }
 

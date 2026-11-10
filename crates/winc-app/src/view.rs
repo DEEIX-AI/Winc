@@ -1148,6 +1148,9 @@ fn draw_keycap(app: &App, frame: &mut Frame<'_>, row: Rect, key: &str, clip: Rec
     );
 }
 
+/// 固定高亮的调色板：琥珀、蓝、紫、青、粉、绿，按色相错开。
+///
+/// 不透明度 0.38 取自调参：深浅两套主题下文字仍清晰可读，叠在选区底色上时仍能区分颜色。
 const WORD_HIGHLIGHT_COLORS: [Color; WORD_HIGHLIGHT_COUNT] = [
     Color::hex(0xF3B325).alpha(0.38),
     Color::hex(0x418FF6).alpha(0.38),
@@ -1157,6 +1160,7 @@ const WORD_HIGHLIGHT_COLORS: [Color; WORD_HIGHLIGHT_COUNT] = [
     Color::hex(0x83B83D).alpha(0.38),
 ];
 
+/// 是否为组成词的字符：字母、数字或下划线。
 pub(crate) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
@@ -1190,7 +1194,9 @@ fn line_occurrences<'a>(
     })
 }
 
-/// 只扫描可见列及其两侧足以匹配完整词的范围，供普通编辑器和差异两栏共用。
+/// 返回一行 `chars` 中固定高亮的各处（列范围与颜色），只取与可见列 `shown` 相交的部分。
+///
+/// 只扫描可见列及其两侧各一个查找内容长度的范围，供普通编辑器和差异两栏共用。
 fn marked_occurrences<'a>(
     app: &'a App,
     chars: &'a [char],
