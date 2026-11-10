@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// 预览滚动测量中每帧滚动的距离（逻辑像素）。
+///
+/// 取默认字号下约三行的高度：文本的滚动测量每帧滚动三行。
+const BENCH_PREVIEW_STEP: f32 = 60.0;
+
 impl App {
     /// 处理双击顶栏空白处。
     ///
@@ -561,6 +566,15 @@ impl App {
             Next::Continue => {}
             // 应用层看到以后结束事件循环（测量时只有一个窗口）。
             Next::Exit => self.quit_requested = true,
+            // 当前显示 Markdown 预览时滚动预览，到达末尾后回到开头。
+            Next::Scroll if self.markdown.area.h > 0.0 => {
+                let before = self.markdown.scroll();
+                self.scroll_markdown(-BENCH_PREVIEW_STEP);
+                if self.markdown.scroll() == before {
+                    self.scroll_markdown_to(0.0);
+                }
+                self.request_redraw();
+            }
             Next::Scroll => {
                 let max = self.max_scroll_line();
 
@@ -574,6 +588,11 @@ impl App {
 
                 self.request_redraw();
             }
+            Next::Preview => {
+                self.set_preview_mode(winc_editor::PreviewMode::Preview);
+                self.request_redraw();
+            }
+            Next::Terminal => self.toggle_terminal(),
             Next::Search(query) => {
                 self.open_global_search(false);
                 self.global.query.set_text(&query);
@@ -593,6 +612,10 @@ impl App {
                 }
                 self.request_redraw();
             }
+        }
+        let ready = self.terminal_ready();
+        if let Some(command) = self.bench.terminal_command(ready) {
+            self.terminal_input(format!("{command}\n").into_bytes());
         }
         let searching = self.search_open || self.pending_jump.is_some();
         let done = !self.highlight_pending && (!searching || self.search.is_complete());

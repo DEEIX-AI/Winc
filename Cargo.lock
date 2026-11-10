@@ -3119,6 +3119,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "winc"
+version = "0.0.0"
+dependencies = [
+ "winc-app",
+]
+
+[[package]]
 name = "winc-app"
 version = "0.0.0"
 dependencies = [

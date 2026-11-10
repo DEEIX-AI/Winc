@@ -468,7 +468,7 @@ fn measure_git_costs() {
     assert!(cloned.success());
     let repo = winc_config::files::canonicalize(&repo).unwrap();
     // 有改动、有编译产物：改几个文件，在 target/ 下放几千个文件。
-    std::fs::write(repo.join("crates/winc-app/src/main.rs"), "// changed\n").unwrap();
+    std::fs::write(repo.join("crates/winc-app/src/lib.rs"), "// changed\n").unwrap();
     std::fs::create_dir_all(repo.join("target/debug/deps")).unwrap();
     for i in 0..4000 {
         std::fs::write(repo.join(format!("target/debug/deps/x{i}.o")), "x").unwrap();

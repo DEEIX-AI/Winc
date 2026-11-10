@@ -1,16 +1,12 @@
 [package]
 name = "winc-app"
-description = "winc 桌面程序：窗口、布局、圆润风格界面、输入处理。"
+description = "winc 桌面程序的实现：窗口、布局、圆润风格界面、输入处理。"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-
-[[bin]]
-name = "winc"
-path = "src/main.rs"
 
 [dependencies]
 winc-config.workspace = true

@@ -520,6 +520,12 @@ impl App {
         }
     }
 
+    /// 是否已连接辅助进程且当前标签已创建，此时可以向终端写入。
+    pub(crate) fn terminal_ready(&self) -> bool {
+        let t = &self.terminal;
+        t.client.is_some() && t.tabs.get(t.active).is_some()
+    }
+
     /// 终端中是否有程序在运行、关闭前需要确认；设置中关闭了确认（`terminal.confirmClose`）时为假。
     pub(crate) fn terminal_busy(&self) -> bool {
         self.config.terminal_confirm_close != Some(false)
