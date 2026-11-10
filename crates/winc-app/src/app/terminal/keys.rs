@@ -225,7 +225,7 @@ impl App {
     /// - macOS：⌥ 参与输入字符（如 ⌥e 输入重音符），视为 Meta 的一侧由
     ///   `terminal.optionAsMeta` 指定。
     /// - 其他平台：Alt 不参与输入字符，一律视为 Meta；winit 在这些平台上不报告左右 Alt 的状态。
-    ///   AltGr 不计入 Alt，按其输入的字符发送。
+    ///   `AltGr` 不计入 Alt，按其输入的字符发送。
     pub(super) fn terminal_mods(&self) -> Mods {
         let m = self.modifiers;
         let meta = m.alt_key()
