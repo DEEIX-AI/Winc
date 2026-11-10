@@ -201,13 +201,13 @@ impl App {
         // 面板打开以后换了标签（⌘W、切换标签、后退前进、新建文件）：面板里的符号、书签、用法
         // 都属于原来的文档，回车会在新标签里跳到错误的位置，所以关掉。`close_picker` 会再次
         // 调用本函数，那时面板已经关了。
-        if self.picker_open && self.editor.active().map(|d| d.id) != self.picker_doc {
+        if self.picker.open && self.editor.active().map(|d| d.id) != self.picker.doc {
             self.close_picker();
             return;
         }
         // 浮层和焦点不分家：快捷键、点击把焦点挪到了其他位置（⌘F、⇧⌘F、⌃G、⌃Tab、点编辑区……）
         // 时面板、输入条跟着关掉。否则 Esc 和回车都到不了面板，面板会一直留在屏幕上。
-        if self.picker_open && self.focus != Focus::Picker {
+        if self.picker.open && self.focus != Focus::Picker {
             self.close_picker();
             return;
         }
@@ -242,11 +242,11 @@ impl App {
         };
         // ⌘P 面板高度随结果数变化：至少一行（显示「正在整理文件…」「没有匹配」），最多
         // `PICKER_MAX_ROWS` 行，且不能延伸到状态栏。
-        let picker_rows = if self.picker_open {
+        let picker_rows = if self.picker.open {
             let room =
                 (h - status_height - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
             let most = ((room / PICKER_ROW).floor() as usize).clamp(1, PICKER_MAX_ROWS);
-            self.picker_hits.len().clamp(1, most)
+            self.picker.hits.len().clamp(1, most)
         } else {
             0
         };

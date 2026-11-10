@@ -557,12 +557,12 @@ fn bookmarks_jump_list_and_survive_closing_and_restarting() {
 
     // 列出书签：卡片中有两行，回车跳转到选中的书签。
     app.run_action(Action::ListBookmarks);
-    assert!(app.picker_open);
-    assert_eq!(app.picker_hits.len(), 2);
+    assert!(app.picker.open);
+    assert_eq!(app.picker.hits.len(), 2);
     paint(&mut app);
-    app.picker_selected = 0;
+    app.picker.selected = 0;
     app.places_accept();
-    assert!(!app.picker_open);
+    assert!(!app.picker.open);
     assert_eq!(line_of(&app), 1);
 
     // 关闭标签后重新打开：书签仍在。

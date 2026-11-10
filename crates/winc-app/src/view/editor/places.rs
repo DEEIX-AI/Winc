@@ -47,15 +47,15 @@ impl<'a> PlacesView<'a> {
     /// 打开中的浮窗。
     fn live(app: &'a App) -> Option<PlacesView<'a>> {
         Some(PlacesView {
-            places: app.picker_places.as_ref()?,
-            hits: &app.picker_hits,
-            selected: app.picker_selected,
+            places: app.picker.places.as_ref()?,
+            hits: &app.picker.hits,
+            selected: app.picker.selected,
             hovered: match app.hover {
                 Hover::PickerRow(i) => Some(i),
                 _ => None,
             },
-            scroll: app.picker_scroll,
-            filter: app.picker_input.text(),
+            scroll: app.picker.scroll,
+            filter: app.picker.input.text(),
             caret: app.focus == Focus::Picker && app.caret_visible,
         })
     }

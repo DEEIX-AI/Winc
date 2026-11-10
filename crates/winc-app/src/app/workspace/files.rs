@@ -877,7 +877,7 @@ impl App {
             if let Some(ws) = (self.editor.workspace.as_mut()).filter(|_| reachable) {
                 ws.refresh();
             }
-            self.picker_stale = true;
+            self.picker.stale = true;
         }
 
         self.relayout();

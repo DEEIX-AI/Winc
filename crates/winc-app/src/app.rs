@@ -18,7 +18,7 @@ mod snapshot;
 mod status;
 pub(crate) mod terminal;
 pub(crate) mod tickets;
-mod workspace;
+pub(crate) mod workspace;
 
 pub use animation::Clock;
 use animation::{
@@ -65,7 +65,6 @@ pub use workspace::files::{Pick, PlaceholderAction, TabBar, TabHit};
 pub use workspace::global::{GlobalSearch, ResultRow};
 pub(crate) use workspace::outline::{OUTLINE_GAP, has_children as outline_has_children};
 pub use workspace::outline::{OutlineEmpty, OutlineState, OutlineTarget};
-use workspace::picker::PickerMotion;
 pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
@@ -817,12 +816,12 @@ pub struct App {
     /// 滚动条上标出的光标所在词的缓存。
     pub(crate) ruler_cache: Option<crate::view::RulerCache>,
     /// 图片预览缩放后的图片缓存。
-    pub(crate) picture_cache: Option<crate::view::PictureCache>,
+    pub(crate) picture_cache: Option<preview::images::PictureCache>,
     /// 后台的图片解码和 SVG 绘制任务。
     pub(crate) images: preview::images::ImageJobs,
     pub(crate) tables: preview::tables::TableJobs,
     /// 表格预览上次绘制的几何：工作表标签、最大滚动距离和列宽缓存。
-    pub(crate) table_layout: crate::view::preview::table::TableLayout,
+    pub(crate) table_layout: crate::app::preview::tables::TableLayout,
     /// 分栏预览右侧的图片。
     pub(crate) split: preview::images::SplitPreview,
     /// Markdown 预览（分栏右侧或仅预览模式）。
@@ -857,11 +856,6 @@ pub struct App {
     /// 侧栏是否应显示；动画进行中取动画的终点。
     panel_visible: bool,
     sidebar_motion: Option<SidebarMotion>,
-    /// ⌘P 面板上次排版时的高度，以及当时的窗口大小。
-    picker_height: Option<(f32, (f32, f32))>,
-    picker_motion: Option<PickerMotion>,
-    /// 分支、位置选择器中目录或分组展开、收起的动画。
-    pub(crate) picker_fold: Option<git::branch::picker::PickerFold>,
     /// 位置浮窗（定义、用法、书签）位于名字上方时浮窗底边的纵坐标。
     ///
     /// 高度变化时底边保持不动、顶边移动；浮窗位于下方或未打开时为 `None`。
@@ -874,8 +868,6 @@ pub struct App {
     pub(crate) places_in: Option<Clock>,
     /// 位置浮窗关闭后的淡出状态；不在淡出时为 `None`。
     pub(crate) places_out: Option<PlacesGhost>,
-    /// `⌘P` 面板出现、消失的动画。
-    pub(crate) picker_card: animation::CardFx,
     /// 编辑区顶部输入条出现、消失的动画。
     pub(crate) bar_card: animation::CardFx,
     /// 新建工作树对话框；未打开时为 `None`。
@@ -981,31 +973,8 @@ pub struct App {
     pub outline: OutlineState,
 
     // 快速打开
-    /// 工作区中各文件的路径与匹配用的索引。
-    pub picker: FileIndex,
-    /// 快速打开面板是否打开。
-    pub picker_open: bool,
-    /// 面板打开时的当前文档；当前文档变化后关闭面板（见 `relayout`）。
-    picker_doc: Option<DocumentId>,
-    /// 快速打开面板中的查询输入。
-    pub picker_input: TextField,
-    /// 当前查询命中的文件索引下标。
-    pub picker_hits: Vec<usize>,
-    /// 当前选中的结果在 `picker_hits` 中的序号（从 0 起）。
-    pub picker_selected: usize,
-    /// 分支选择器打开时自动选中的行（`picker_selected` 的值）；移动选中项或输入查询后为 `None`。
-    ///
-    /// 自动选中的行不一定是当前分支：只列出最近使用的分支时，默认选中上一个用过的分支，
-    /// 回车即切回。该行因此以浅色底显示，避免强调色底被误认为当前分支；当前分支由行首的对勾标出。
-    pub picker_default: Option<usize>,
-    /// 结果开头属于「最近打开」的条数（未输入查询时列在最前面）。
-    pub picker_recent: usize,
-    /// 查询末尾的 `:行` 或 `:行:列`，打开文件后跳转到该位置。
-    pub picker_goto: Option<String>,
-    /// 是否需要在下次打开 ⌘P 时于后台重新扫描文件表。
-    ///
-    /// 目录监视不可用时，窗口重新获得焦点后目录内容可能已有增删。
-    picker_stale: bool,
+    /// 快速打开面板与位置浮窗的状态。
+    pub picker: workspace::picker::Picker,
     /// 已打开目录的文件监视器；目录内的文件被外部修改时发出通知。
     watcher: Option<winc_editor::Watcher>,
     /// 已收到目录变化通知后，统一处理变化的时刻。
@@ -1018,32 +987,16 @@ pub struct App {
     saves: workspace::background_save::BackgroundSaves,
     /// 正在后台读取的、刚打开的文件。
     loads: workspace::loading::Loads,
-    /// 结果列表的滚动位置（像素）。
-    pub picker_scroll: f32,
     /// 最近切换到的文件，最近的在前。
     ///
     /// 快速打开（`⌘P`）未输入查询时先列出这些文件（当前文件除外），回车即可切回上一个文件。
     pub recent_files: Vec<PathBuf>,
     /// 命令面板中最近使用的命令，最近的在前；未输入查询时先列出这些命令。
     pub recent_commands: Vec<crate::keymap::Action>,
-    /// 在快速打开中输入 `@` 时列出的当前文件的符号。
-    pub picker_symbols: Option<editor::symbols::SymbolList>,
     /// 两段组合键（如 `⌘K ⌘S`）的第一段，正在等待第二段。
     pub(crate) pending_chord: Option<crate::keymap::Stroke>,
     /// 「后退」「前进」使用的位置历史。
     pub(crate) navigation: editor::navigation::Navigation,
-    /// 转到定义找到多个位置时，卡片中列出的位置。
-    pub picker_places: Option<editor::definition::Places>,
-    /// 面板列出分支（分支选择器）时的各行。
-    pub picker_branch_rows: Option<Vec<git::branch::picker::BranchRow>>,
-    /// 面板列出位置（位置选择器）时的各行。
-    pub picker_location_rows: Option<Vec<git::location_picker::LocationRow>>,
-    /// 面板是否列出最近打开的目录（`⌃R`）；为真时 `picker_hits` 是最近列表中的下标。
-    pub picker_folders: bool,
-    /// 分支选择器、位置选择器的展开位置。
-    pub picker_anchor: GitAnchor,
-    /// 选择面板本帧绘制的按钮区域，点击和悬停据此判定目标。
-    pub picker_part_hits: Vec<(Rect, PickerPart)>,
     /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。
     pub location_toggled: std::collections::HashSet<PathBuf>,
     /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。

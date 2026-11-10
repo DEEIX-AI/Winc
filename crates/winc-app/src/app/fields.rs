@@ -24,7 +24,7 @@ impl App {
             Focus::GlobalReplace => Some(&mut self.global.replace),
             Focus::GlobalInclude => Some(&mut self.global.include),
             Focus::GlobalExclude => Some(&mut self.global.exclude),
-            Focus::Picker => Some(&mut self.picker_input),
+            Focus::Picker => Some(&mut self.picker.input),
             Focus::Setting => self.settings.editing.as_mut().map(|(_, field)| field),
             Focus::KeySearch => Some(&mut self.settings.keys_query),
             Focus::SettingsSearch => Some(&mut self.settings.search),

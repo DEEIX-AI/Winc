@@ -28,7 +28,6 @@ use crate::layout::{
     settings_track,
 };
 use crate::theme::*;
-use crate::view;
 
 /// 鼠标滚轮滚动一格的距离（逻辑像素）；macOS 上不使用。
 ///
@@ -301,7 +300,7 @@ impl App {
         }
 
         // 查找条覆盖在内容上：滚轮不滚动下方的终端，输入框内的文字过长时横向滚动。
-        if !self.picker_open
+        if !self.picker.open
             && self
                 .terminal_find_bar()
                 .is_some_and(|bar| bar.contains(x, y))
@@ -315,20 +314,21 @@ impl App {
             return;
         }
 
-        if self.picker_open && l.picker.contains(x, y) {
+        if self.picker.open && l.picker.contains(x, y) {
             // 滚轮只滚动列表，选中项不变。
-            let rows = self.picker_hits.len();
-            let max = (rows as f32 * PICKER_ROW - view::picker_span(self)).max(0.0);
-            if self.picker_places.is_some() {
+            let rows = self.picker.hits.len();
+            let max = (rows as f32 * PICKER_ROW - crate::app::workspace::picker::picker_span(self))
+                .max(0.0);
+            if self.picker.places.is_some() {
                 // 位置浮窗按整行滚动，始终只显示完整的行：滚动量累计满一行才滚动一行，
                 // 触控板的小幅滑动不会使行只显示一部分。
                 self.places_wheel += dy;
                 let steps = (self.places_wheel / PICKER_ROW).trunc();
                 self.places_wheel -= steps * PICKER_ROW;
                 let max = (max / PICKER_ROW).ceil() * PICKER_ROW;
-                self.picker_scroll = (self.picker_scroll - steps * PICKER_ROW).clamp(0.0, max);
+                self.picker.scroll = (self.picker.scroll - steps * PICKER_ROW).clamp(0.0, max);
             } else {
-                self.picker_scroll = (self.picker_scroll - dy).clamp(0.0, max);
+                self.picker.scroll = (self.picker.scroll - dy).clamp(0.0, max);
             }
             // 列表滚动后，鼠标下方的行已改变。
             self.set_hover(self.hover_at(x, y));
@@ -402,8 +402,8 @@ impl App {
             // 横向滚动（按住 `Shift` 时的竖直滚轮）落在比正文宽的表格上时滚动该表格，其余按
             // 竖直方向滚动预览。
             let across = if shift_wheel { dy } else { dx };
-            let table =
-                across != 0.0 && crate::view::preview::markdown::scroll_table(self, x, y, across);
+            let table = across != 0.0
+                && crate::app::preview::markdown::laid::scroll_table(self, x, y, across);
             if !table {
                 self.scroll_markdown(dy);
             }

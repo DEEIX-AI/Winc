@@ -301,13 +301,13 @@ fn snapshot_picker() {
         app.open_path(&dir.join("Cargo.toml"));
         app.open_path(&dir.join("src/main.rs"));
         app.open_picker();
-        app.picker_input.set_text("cfg");
+        app.picker.input.set_text("cfg");
         app.picker_refresh();
         app.on_mouse_move(400.0, 500.0);
         shoot(&mut app, &format!("picker-{tag}"));
 
         // 查询为空时，最近打开的文件在前，其后是按路径排序的文件列表。
-        app.picker_input.set_text("");
+        app.picker.input.set_text("");
         app.picker_refresh();
         shoot(&mut app, &format!("picker-empty-{tag}"));
     }
@@ -325,7 +325,7 @@ fn snapshot_palette_and_definitions() {
 
         // ⇧⌘P：列出命令，右侧显示快捷键。
         app.open_palette();
-        app.picker_input.set_text(">格式");
+        app.picker.input.set_text(">格式");
         app.picker_refresh();
         shoot(&mut app, &format!("palette-{tag}"));
         app.close_picker();

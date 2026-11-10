@@ -64,7 +64,7 @@ fn worktrees_show_in_the_location_picker_and_the_branch_menu() {
     assert!(app.git_has_locations());
     app.run_action(Action::ShowCommit);
     app.open_location_picker();
-    let rows = app.picker_location_rows.clone().unwrap();
+    let rows = app.picker.location_rows.clone().unwrap();
     let places: Vec<_> = rows
         .iter()
         .filter_map(|row| match row {
@@ -350,14 +350,14 @@ fn a_missing_worktree_is_cleaned_up_from_its_menu() {
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     app.open_location_picker();
-    let rows = app.picker_location_rows.clone().unwrap();
-    app.picker_selected = rows
+    let rows = app.picker.location_rows.clone().unwrap();
+    app.picker.selected = rows
         .iter()
         .position(|row| matches!(row, LocationRow::Place(place) if place.missing))
         .unwrap();
     paint(&mut app);
-    let more = PickerPart::More(app.picker_selected);
-    assert!(app.picker_part_hits.iter().any(|(_, part)| *part == more));
+    let more = PickerPart::More(app.picker.selected);
+    assert!(app.picker.part_hits.iter().any(|(_, part)| *part == more));
 
     app.location_picker_accept();
     assert_eq!(menu_commands(&app), [(MenuCommand::LocationPrune, true)]);
@@ -438,7 +438,7 @@ fn a_single_repository_lists_its_worktrees_flat() {
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     app.open_location_picker();
-    let rows = app.picker_location_rows.clone().unwrap();
+    let rows = app.picker.location_rows.clone().unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| match row {
         LocationRow::Place(place) => place.depth == 0,
@@ -477,8 +477,8 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     // 文件视图里也能从状态栏打开：面板的底边在分支名上面，右边和它对齐。
     app.open_status_menu(StatusItem::Branch);
     assert!(app.popup().is_none());
-    assert!(app.picker_open && app.picker_lists_branches());
-    assert_eq!(app.picker_anchor, GitAnchor::Status);
+    assert!(app.picker.open && app.picker_lists_branches());
+    assert_eq!(app.picker.anchor, GitAnchor::Status);
     paint(&mut app);
     let (item, _) = *(app.status_hits.iter())
         .find(|(_, i)| *i == StatusItem::Branch)
@@ -490,21 +490,21 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     for part in [PickerPart::Pull, PickerPart::Push, PickerPart::Fetch] {
         assert!(!app.picker_action_enabled(part), "{part:?}");
         assert!(
-            (app.picker_part_hits.iter()).any(|(_, p)| *p == part),
+            (app.picker.part_hits.iter()).any(|(_, p)| *p == part),
             "{part:?}"
         );
     }
     let index = |app: &App, name: &str| {
-        let rows = app.picker_branch_rows.as_deref().unwrap();
+        let rows = app.picker.branch_rows.as_deref().unwrap();
         rows.iter().position(|row| {
             matches!(row, crate::app::git::branch::picker::BranchRow::Branch { index, .. }
                 if app.git.branches[*index].name == name)
         })
     };
     // 「feature」目录收着：搜一下，选中切过去。
-    app.picker_input.set_text("feature/a");
+    app.picker.input.set_text("feature/a");
     app.picker_refresh();
-    app.picker_selected = index(&app, "feature/a").unwrap();
+    app.picker.selected = index(&app, "feature/a").unwrap();
     app.branch_picker_accept();
     assert_eq!(
         app.git.status.as_ref().unwrap().head,
@@ -537,7 +537,7 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     assert_eq!(current.upstream.as_deref(), Some("origin/feature/a"));
     app.press_picker_part(PickerPart::Push);
     press_alert(&mut app, 0);
-    assert!(!app.picker_open);
+    assert!(!app.picker.open);
     assert_eq!(app.git_sync_state(), crate::app::SyncState::InSync);
     let _ = std::fs::remove_dir_all(&remote);
 

@@ -15,13 +15,13 @@ fn finished_animations_are_settled_before_the_last_frame() {
         from: 0.0,
         clock: at(100, SIDEBAR_ANIMATION),
     });
-    app.picker_motion = Some(PickerMotion {
+    app.picker.motion = Some(PickerMotion {
         from: 100.0,
         to: 50.0,
         clock: at(159, PICKER_ANIMATION),
     });
     app.settle_animations();
-    assert!(app.sidebar_motion.is_some() && app.picker_motion.is_some());
+    assert!(app.sidebar_motion.is_some() && app.picker.motion.is_some());
     assert!(app.animating());
 
     // 动画已结束：在绘制前清除状态，使最后一帧画在终点位置，而不是停在接近终点的中间帧。
@@ -29,7 +29,7 @@ fn finished_animations_are_settled_before_the_last_frame() {
         from: 0.0,
         clock: at(200, SIDEBAR_ANIMATION),
     });
-    app.picker_motion = Some(PickerMotion {
+    app.picker.motion = Some(PickerMotion {
         from: 100.0,
         to: 50.0,
         clock: at(160, PICKER_ANIMATION),
@@ -42,7 +42,7 @@ fn finished_animations_are_settled_before_the_last_frame() {
         clock: at(160, TREE_ANIMATION),
     });
     app.settle_animations();
-    assert!(app.sidebar_motion.is_none() && app.picker_motion.is_none());
+    assert!(app.sidebar_motion.is_none() && app.picker.motion.is_none());
     assert!(app.tree_motion.is_none());
     assert!(!app.animating());
 
@@ -93,10 +93,10 @@ fn places_popup_slides_in_and_fades_out() {
 
     // 关闭后按关闭时刻的状态淡出：淡出一半时仍然可见，结束后清除。
     let ghost = PlacesGhost {
-        places: app.picker_places.clone().unwrap(),
-        hits: app.picker_hits.clone(),
-        selected: app.picker_selected,
-        scroll: app.picker_scroll,
+        places: app.picker.places.clone().unwrap(),
+        hits: app.picker.hits.clone(),
+        selected: app.picker.selected,
+        scroll: app.picker.scroll,
         filter: String::new(),
         rect: app.layout.picker,
         clock: at(10, POPUP_OUT),

@@ -214,7 +214,7 @@ impl App {
     /// 点在面板内交给面板处理；点在面板外则关闭面板，不会同时点到下方的内容。
     /// 面板没有打开时返回 `false`。
     pub(super) fn click_picker(&mut self, x: f32, y: f32) -> bool {
-        if !self.picker_open {
+        if !self.picker.open {
             return false;
         }
 
@@ -225,18 +225,18 @@ impl App {
             return true;
         }
 
-        if let Some(&(_, part)) = self.picker_part_hits.iter().find(|(r, _)| r.contains(x, y)) {
+        if let Some(&(_, part)) = self.picker.part_hits.iter().find(|(r, _)| r.contains(x, y)) {
             self.focus = Focus::Picker;
             self.press_picker_part(part);
             return true;
         }
 
-        let parts = view::picker_parts(self, rect);
+        let parts = crate::app::workspace::picker::picker_parts(self, rect);
 
         if parts.bar.contains(x, y) {
             self.focus = Focus::Picker;
             // 位置浮窗的标题行没有输入框：筛选文字直接打字输入。
-            if self.picker_places.is_none() {
+            if self.picker.places.is_none() {
                 self.click_field(x, y);
             }
             return true;
@@ -244,12 +244,12 @@ impl App {
 
         self.focus = Focus::Picker;
 
-        if let Some(index) = parts.row_at(y, self.picker_scroll)
-            && index < self.picker_hits.len()
+        if let Some(index) = parts.row_at(y, self.picker.scroll)
+            && index < self.picker.hits.len()
         {
             // 分组标题点了没有反应。
             if self.picker_row_selectable(index) {
-                self.picker_selected = index;
+                self.picker.selected = index;
                 self.picker_accept();
             }
         }

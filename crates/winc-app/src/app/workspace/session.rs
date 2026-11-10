@@ -232,10 +232,10 @@ impl App {
         self.commit.scroll = 0.0;
         self.commit.clear_selection();
         self.commit.forget_dirs();
-        self.picker.cancel();
-        self.picker = FileIndex::default();
+        self.picker.index.cancel();
+        self.picker.index = FileIndex::default();
         self.definitions = None;
-        if self.picker_open {
+        if self.picker.open {
             self.close_picker();
         }
         self.tree_motion = None;

@@ -272,7 +272,7 @@ impl App {
     /// 返回 `card` 的动画状态。
     pub(crate) fn card_fx(&mut self, card: Card) -> &mut CardFx {
         match card {
-            Card::Picker => &mut self.picker_card,
+            Card::Picker => &mut self.picker.card,
             Card::Bar => &mut self.bar_card,
             Card::Dialog => &mut self.dialog_card,
             Card::Alert => &mut self.alert_card,
@@ -327,8 +327,8 @@ impl App {
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.fold_motion, |m| m.clock);
         settle(&mut self.scroll_glide, |g| g.clock);
-        settle(&mut self.picker_motion, |m| m.clock);
-        settle(&mut self.picker_fold, |f| f.clock);
+        settle(&mut self.picker.motion, |m| m.clock);
+        settle(&mut self.picker.fold, |f| f.clock);
         if self.places_in.is_some_and(|c| c.done()) {
             self.places_in = None;
         }
@@ -346,7 +346,7 @@ impl App {
         }
         settle(&mut self.view_slide, |s| s.1);
         settle(&mut self.settings.motion, |m| m.1);
-        self.picker_card.settle();
+        self.picker.card.settle();
         self.bar_card.settle();
         self.dialog_card.settle();
         self.alert_card.settle();
@@ -425,8 +425,8 @@ impl App {
             || self.fold_motion.is_some()
             || self.scroll_glide.is_some()
             || self.wheel_glide.is_some()
-            || self.picker_motion.is_some()
-            || self.picker_fold.is_some()
+            || self.picker.motion.is_some()
+            || self.picker.fold.is_some()
             || self.places_in.is_some()
             || self.places_out.is_some()
             || self.notice_in.is_some()
@@ -435,7 +435,7 @@ impl App {
             || self.diff_pulse.is_some()
             || self.view_slide.is_some()
             || self.settings.motion.is_some()
-            || self.picker_card.motion.is_some()
+            || self.picker.card.motion.is_some()
             || self.bar_card.motion.is_some()
             || self.dialog_card.motion.is_some()
             || self.alert_card.motion.is_some()

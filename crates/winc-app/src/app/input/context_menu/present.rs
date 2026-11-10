@@ -112,7 +112,7 @@ impl App {
     /// 文件树中点中的那一行先被选中，点在空白处表示根目录。其他位置没有菜单。设置浮层或
     /// 快速打开面板打开时不处理。
     pub(in crate::app) fn context_click(&mut self, x: f32, y: f32) {
-        if self.settings.open || self.form_dialog.is_some() || self.picker_open {
+        if self.settings.open || self.form_dialog.is_some() || self.picker.open {
             return;
         }
 
@@ -1284,7 +1284,9 @@ impl App {
                         clip,
                     );
                 } else {
-                    let (glyph, color) = self.palette.file_icon(&crate::view::tab_icon_name(doc));
+                    let (glyph, color) = self
+                        .palette
+                        .file_icon(&crate::app::workspace::tab_names::tab_icon_name(doc));
                     // 文件图标 12 × 15。
                     icons::file(frame, (x + 2.0, y + 0.5), glyph, color, clip);
                 }
@@ -1317,7 +1319,7 @@ impl App {
         };
         MenuLabel {
             title: doc.name().into_owned(),
-            subtitle: crate::view::tab_folder(docs, i),
+            subtitle: crate::app::workspace::tab_names::tab_folder(docs, i),
             tooltip: doc
                 .path
                 .as_deref()

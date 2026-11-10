@@ -39,7 +39,7 @@ fn outside_changes_reach_the_tree_the_index_and_open_files() {
     app.open_path(&dir.join("a.txt"));
     app.open_picker();
     app.close_picker();
-    let indexed = app.picker.len();
+    let indexed = app.picker.index.len();
 
     // 其他程序新建了一个文件；修改了已打开且没有未保存修改的 `short.rs`（直接重新读取）；
     // 修改了已打开且有未保存修改的 `a.txt`（提示冲突，不覆盖）。
@@ -72,19 +72,19 @@ fn outside_changes_reach_the_tree_the_index_and_open_files() {
 
     // ⌘P 的文件表在后台更新：测试中没有事件循环，需要等待更新完成后手动取回。
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !app.picker.is_ready() || app.picker.len() == indexed {
+    while !app.picker.index.is_ready() || app.picker.index.len() == indexed {
         assert!(std::time::Instant::now() < deadline, "⌘P 的文件表没改好");
         std::thread::sleep(Duration::from_millis(5));
         app.picker_indexed();
     }
-    assert_eq!(app.picker.len(), indexed + 1);
-    assert!(app.picker.position_of(&dir.join("new.rs")).is_some());
+    assert_eq!(app.picker.index.len(), indexed + 1);
+    assert!(app.picker.index.position_of(&dir.join("new.rs")).is_some());
 
     // 删除文件后：文件树和文件表中都不再有该文件。
     std::fs::remove_file(dir.join("new.rs")).unwrap();
     app.apply_changes(changes(&dir, &["new.rs"]));
     assert!(!tree_names(&app).contains(&"new.rs".to_owned()));
-    while !app.picker.is_ready() || app.picker.len() != indexed {
+    while !app.picker.index.is_ready() || app.picker.index.len() != indexed {
         assert!(std::time::Instant::now() < deadline, "⌘P 的文件表没改好");
         std::thread::sleep(Duration::from_millis(5));
         app.picker_indexed();
@@ -163,7 +163,7 @@ fn files_made_here_reach_quick_open_without_walking_again() {
     let mut app = app_with(&dir, false);
     app.open_picker();
     app.close_picker();
-    let before = app.picker.len();
+    let before = app.picker.index.len();
 
     // 在文件树中一次创建两级的目录和文件：`docs` → `guide` → `intro.md`。
     app.start_new_entry(false);
@@ -175,6 +175,7 @@ fn files_made_here_reach_quick_open_without_walking_again() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while app
         .picker
+        .index
         .position_of(&dir.join("docs/guide/intro.md"))
         .is_none()
     {
@@ -182,7 +183,7 @@ fn files_made_here_reach_quick_open_without_walking_again() {
         std::thread::sleep(Duration::from_millis(5));
         app.picker_indexed();
     }
-    assert_eq!(app.picker.len(), before + 1);
+    assert_eq!(app.picker.index.len(), before + 1);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

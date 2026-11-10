@@ -11,6 +11,7 @@ use winit::event::{MouseButton, MouseScrollDelta};
 use super::input::context_menu::MenuTarget;
 use super::*;
 use crate::app::StartAction;
+use crate::app::workspace::picker::PickerMotion;
 use crate::layout::{
     PanelButton, PickerParts, RowAction, Scrollbar, SearchParts, Setting, SettingsPage,
     SettingsPart, SidebarView, StepperParts, THEME_CHOICES, TREE_NAME_MIN, hscrollbar_thumb,

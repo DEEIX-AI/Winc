@@ -348,7 +348,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.update_terminal_link();
                 }
                 // 按住 `⌥` 时分支选择器中的「拉取」变为「拉取并变基」，提交按钮变为「提交并推送」。
-                if (self.picker_open && self.picker_has_actions()) || self.commit_shown() {
+                if (self.picker.open && self.picker_has_actions()) || self.commit_shown() {
                     self.request_redraw();
                 }
                 // 拖动文件树项时按下、松开 `⌥` 在移动与复制之间切换，放置目标和拖动卡片随之更新。

@@ -96,7 +96,7 @@ impl App {
         self.alert.is_some()
             || self.popup().is_some()
             || self.form_dialog.is_some()
-            || self.picker_open
+            || self.picker.open
             || self.name_input.is_some()
     }
 
@@ -177,13 +177,13 @@ impl App {
             Target::Conflict(action) => Hover::ConflictButton(action),
             Target::Picker
                 if let Some(&(_, part)) =
-                    (self.picker_part_hits.iter()).find(|(rect, _)| rect.contains(x, y)) =>
+                    (self.picker.part_hits.iter()).find(|(rect, _)| rect.contains(x, y)) =>
             {
                 Hover::PickerPart(part)
             }
-            Target::Picker => view::picker_parts(self, l.picker)
-                .row_at(y, self.picker_scroll)
-                .filter(|&i| i < self.picker_hits.len())
+            Target::Picker => crate::app::workspace::picker::picker_parts(self, l.picker)
+                .row_at(y, self.picker.scroll)
+                .filter(|&i| i < self.picker.hits.len())
                 .map_or(Hover::None, Hover::PickerRow),
             Target::TreeMore => Hover::TreeMore,
             Target::Scrollbar(bar, _) => Hover::Scrollbar(bar),
@@ -276,7 +276,7 @@ impl App {
                 .map_or(Target::Blocked, |&(_, action)| Target::Conflict(action));
         }
         // 快速打开面板位于编辑区和侧栏之上。
-        if self.picker_open && l.picker.contains(x, y) {
+        if self.picker.open && l.picker.contains(x, y) {
             return Target::Picker;
         }
         if self.tree_more.is_some_and(|more| more.contains(x, y)) {
@@ -673,7 +673,7 @@ impl App {
             )
             && self.layout.text.contains(x, y)
             && !self.layout.search.contains(x, y)
-            && !(self.picker_open && self.layout.picker.contains(x, y))
+            && !(self.picker.open && self.layout.picker.contains(x, y))
             && !self.over_corner_card(x, y)
             && x < self.layout.editor.right() - SCROLLBAR_HIT
             || self.over_diff_text(x, y) && x < self.layout.editor.right() - SCROLLBAR_HIT;

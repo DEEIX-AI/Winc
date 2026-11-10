@@ -877,7 +877,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             | crate::app::PickerPart::Push
             | crate::app::PickerPart::Fetch),
         ) => {
-            let rect = app.picker_part_hits.iter().find(|(_, p)| *p == part)?.0;
+            let rect = app.picker.part_hits.iter().find(|(_, p)| *p == part)?.0;
             let command = app.picker_action_command(part);
             let label = app.menu_label(command);
             let tip = if app.git.remotes.is_empty() {

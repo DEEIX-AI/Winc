@@ -17,7 +17,7 @@ use area::draw_text_area;
 pub(super) use caret::*;
 pub(super) use glyphs::*;
 pub(crate) use minimap::MinimapRows;
-pub(crate) use picture::*;
+pub(in crate::view) use picture::*;
 use placeholder::*;
 pub(crate) use ruler::*;
 use sticky::*;

@@ -363,7 +363,7 @@ fn bookmark_commands_are_available_in_the_editor_menu() {
 
     app.context_menu = Some(menu(true));
     app.run_menu_command(crate::app::MenuCommand::ListBookmarks);
-    assert!(app.picker_open && app.picker_places.is_some());
+    assert!(app.picker.open && app.picker.places.is_some());
     app.close_picker();
 
     app.context_menu = Some(menu(true));

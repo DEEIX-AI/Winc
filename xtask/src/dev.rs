@@ -21,6 +21,67 @@ struct Member {
     deps: Vec<String>,
 }
 
+/// 各 crate 允许依赖的 workspace 内的包；未列出的 crate 不允许依赖任何内部包。
+///
+/// 依赖只能指向更底层的 crate：`winc-core`、`winc-render` 不依赖任何内部包，`winc-editor` 不依赖
+/// 窗口与渲染，只有 `winc-app` 同时依赖编辑器与渲染层。新增内部依赖时必须在此登记。
+const LAYERS: &[(&str, &[&str])] = &[
+    ("winc", &["winc-app"]),
+    (
+        "winc-app",
+        &[
+            "winc-config",
+            "winc-core",
+            "winc-editor",
+            "winc-i18n",
+            "winc-preview",
+            "winc-pty",
+            "winc-render",
+            "winc-syntax",
+            "winc-typeset",
+            "winc-version",
+        ],
+    ),
+    (
+        "winc-editor",
+        &[
+            "winc-config",
+            "winc-core",
+            "winc-i18n",
+            "winc-preview",
+            "winc-syntax",
+        ],
+    ),
+    (
+        "winc-typeset",
+        &["winc-i18n", "winc-preview", "winc-render", "winc-syntax"],
+    ),
+    ("winc-config", &["winc-i18n", "winc-syntax"]),
+    ("winc-preview", &["winc-i18n"]),
+    ("winc-syntax", &["winc-core"]),
+    ("winc-pty", &["winc-version"]),
+    // 仅测试依赖。
+    ("winc-watch", &["winc-config"]),
+    ("xtask", &["winc-config", "winc-preview", "winc-version"]),
+];
+
+/// 返回不在 [`LAYERS`] 允许范围内的依赖，每项写成「包 → 依赖」；全部合规时为空。
+fn layer_violations(members: &[Member]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for member in members {
+        let allowed = LAYERS
+            .iter()
+            .find(|(name, _)| *name == member.name)
+            .map_or(&[][..], |(_, deps)| deps);
+        for dep in &member.deps {
+            if !allowed.contains(&dep.as_str()) {
+                violations.push(format!("{} → {dep}", member.name));
+            }
+        }
+    }
+    violations
+}
+
 /// 读出 workspace 的成员：`crates/` 下的每个目录和 `xtask`。
 ///
 /// 依赖取每行第一个以 `winc-` 开头、且不同于包自身的标识符；写成 `名字.workspace = true` 或
@@ -172,6 +233,13 @@ pub fn test(args: &[String]) -> Result<bool, String> {
     }
 
     let members = members(&root)?;
+    let violations = layer_violations(&members);
+    if !violations.is_empty() {
+        return Err(format!(
+            "依赖不符合分层规则（见 `LAYERS`）：{}",
+            violations.join("、")
+        ));
+    }
     let packages = if all {
         members.iter().map(|m| m.name.clone()).collect()
     } else {

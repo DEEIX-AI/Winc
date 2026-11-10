@@ -67,10 +67,10 @@ impl App {
         match action {
             ShowCommands => self.toggle_palette(),
             QuickOpen => {
-                if self.picker_open
+                if self.picker.open
                     && !self.picker_lists_commands()
                     && !self.picker_lists_symbols()
-                    && !self.picker_folders
+                    && !self.picker.folders
                 {
                     self.close_picker();
                 } else {
@@ -78,7 +78,7 @@ impl App {
                 }
             }
             // 和 `⌘P` 一样，已经在列符号时再按一次关掉。
-            GoToSymbol if self.picker_open && self.picker_lists_symbols() => self.close_picker(),
+            GoToSymbol if self.picker.open && self.picker_lists_symbols() => self.close_picker(),
             GoToSymbol => self.open_symbols(),
             GoToLine => self.open_goto(),
             GoToDefinition => self.go_to_definition(),

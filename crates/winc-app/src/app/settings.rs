@@ -187,7 +187,7 @@ impl App {
         }
 
         // 先关闭其他浮层和菜单：设置浮层位于最上层，不与它们同时显示。
-        if self.picker_open {
+        if self.picker.open {
             self.close_picker();
         }
         self.close_form_dialog();

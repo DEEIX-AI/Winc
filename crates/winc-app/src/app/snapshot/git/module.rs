@@ -826,19 +826,19 @@ fn the_location_picker_searches_and_switches() {
         LocationRow::Place(place) => place.clone(),
         other => panic!("{other:?}"),
     };
-    let rows = |app: &App| app.picker_location_rows.clone().unwrap();
+    let rows = |app: &App| app.picker.location_rows.clone().unwrap();
     assert_eq!(rows(&app).len(), 3);
-    assert!(place(&rows(&app)[app.picker_selected]).current);
+    assert!(place(&rows(&app)[app.picker.selected]).current);
     paint(&mut app);
     assert_eq!(app.layout.picker.x, row.x);
     assert!(app.layout.picker.y >= row.bottom());
 
     // 搜索只留下匹配的位置；回车切换并关闭。
-    app.picker_input.set_text("deep");
+    app.picker.input.set_text("deep");
     app.picker_refresh();
     assert_eq!(rows(&app).len(), 1);
     app.picker_accept();
-    assert!(!app.picker_open);
+    assert!(!app.picker.open);
     assert_eq!(app.git.root.as_ref(), app.git.repositories.get(2));
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -868,7 +868,7 @@ fn a_repository_with_worktrees_is_a_group_and_expanding_it_does_not_switch() {
     app.git_refresh();
     app.run_action(Action::ShowCommit);
     app.open_location_picker();
-    let rows = |app: &App| app.picker_location_rows.clone().unwrap();
+    let rows = |app: &App| app.picker.location_rows.clone().unwrap();
     // 当前仓库默认展开，工作树排在它下面。
     let labels = |app: &App| -> Vec<String> {
         rows(app)
@@ -890,7 +890,7 @@ fn a_repository_with_worktrees_is_a_group_and_expanding_it_does_not_switch() {
 
     // 点仓库只是展开收起，当前仓库不变。
     let root = app.git.root.clone();
-    app.picker_selected = 0;
+    app.picker.selected = 0;
     app.picker_accept();
     assert!(app.picker_lists_locations());
     assert_eq!(app.git.root, root);

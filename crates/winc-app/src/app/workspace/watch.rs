@@ -192,7 +192,7 @@ impl App {
             self.results_touched(&changes.paths);
         }
         self.git_paths_changed(&changes.paths, changes.rescan, changes.git);
-        self.picker.apply(changes);
+        self.picker.index.apply(changes);
 
         self.relayout();
         self.clamp_scroll();

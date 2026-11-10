@@ -14,6 +14,8 @@ use winc_i18n::t;
 use winc_render::{Color, Faux, FontKind, Frame, Rect};
 
 use crate::app::animation::{Card, dialog_curve, reveal};
+use crate::app::workspace::picker::picker_parts;
+use crate::app::workspace::tab_names::{tab_folder, tab_icon_name};
 use crate::app::{App, DropZone, Hover, MenuButton, ScrollArea, ThumbLook, WORD_HIGHLIGHT_COUNT};
 use crate::field::{FieldView, TextField};
 use crate::icons;
@@ -35,15 +37,12 @@ mod status;
 mod terminal;
 mod workspace;
 
-pub(crate) use workspace::top_bar::{tab_folder, tab_icon_name};
-
 use editor::draw_editor;
-pub(crate) use editor::{LineTokens, MinimapRows, PictureCache, RulerCache};
+pub(crate) use editor::{LineTokens, MinimapRows, RulerCache};
 use fields::*;
 use overlays::{
     draw_conflict, draw_goto, draw_live_notice, draw_notice_ghost, draw_picker, draw_search,
 };
-pub(crate) use overlays::{picker_parts, picker_span};
 use status::draw_status;
 use workspace::sidebar::{
     draw_sidebar, draw_sidebar_button, draw_tree_overflow, draw_tree_overflow_closing,
@@ -138,7 +137,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     // 位置浮窗显示在名称旁边，有独立的动画（滑出、淡出）。
     let bar_open = app.goto_input.is_some();
-    let picker_open = app.picker_open && app.picker_places.is_none();
+    let picker_open = app.picker.open && app.picker.places.is_none();
     app.track_card(Card::Bar, bar_open);
     app.track_card(Card::Picker, picker_open);
     // 先绘制正在淡出的卡片：在 ⌘P 面板中按 ⌃G 时，跳转条绘制在淡出的面板之上。
@@ -151,7 +150,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     if picker_open {
         let rect = app.layout.picker;
         draw_moving_card(app, frame, Card::Picker, rect, draw_picker);
-    } else if app.picker_open {
+    } else if app.picker.open {
         draw_picker(app, frame);
     } else if let Some(ghost) = &app.places_out {
         editor::places::draw_ghost(app, frame, ghost);
