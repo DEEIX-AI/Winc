@@ -164,6 +164,8 @@ pub enum DiffTarget {
     Collapse,
     /// 折叠的一段，参数为未改动段的序号。
     Fold(usize),
+    /// 跳到固定在顶部的块头：（侧，行号，固定层级）。
+    Sticky(usize, usize, usize),
     /// 用左侧替换右侧的一段改动（参数为改动序号），即把该处恢复为 `HEAD` 中的内容。
     Revert(usize),
     /// 切换提交时是否包含一段改动（参数为改动序号）。
@@ -293,11 +295,55 @@ impl App {
                 }
                 self.clamp_scroll();
             }
+            DiffTarget::Sticky(side, line, depth) => self.jump_to_diff_scope(side, line, depth),
             DiffTarget::Revert(hunk) => self.revert_diff_hunk(hunk),
             DiffTarget::Include(hunk) => self.toggle_diff_hunk(hunk),
             DiffTarget::IncludeLine(side, line) => self.toggle_diff_line(side, line),
         }
         self.request_redraw();
+    }
+
+    /// 将块头滚到它的外层固定行之下。
+    fn jump_to_diff_scope(&mut self, side: usize, line: usize, depth: usize) {
+        let max = self.max_scroll_line();
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        let Some(view) = doc.diff.as_deref() else {
+            return;
+        };
+        let parts = diff_parts(self.layout.editor, view, self.cell);
+        let visible = f64::from(parts.body.h / self.fonts.line_height);
+        let row = view.row_of(side, line) as f64;
+        let top = if view.is_unified() {
+            view.pos_of(side, row) - depth as f64
+        } else {
+            view.pos_of_top(side, (row - depth as f64).max(0.0), visible)
+        };
+        let before = doc.scroll_line;
+        doc.scroll_line = top.clamp(0.0, max);
+        self.focus = Focus::Editor;
+        self.glide_scroll(before);
+    }
+
+    /// 返回固定行当前遮住的高度（显示行），供查找和光标定位避开。
+    fn diff_sticky_rows(&self, view: &DiffView, side: usize) -> f64 {
+        if view.collapses() || self.config.sticky_scroll == Some(false) {
+            return 0.0;
+        }
+        let top = self.layout.editor.y + DIFF_HEADER;
+        self.diff_hits
+            .iter()
+            .filter_map(|(rect, target)| match target {
+                DiffTarget::Sticky(s, ..) if *s == side || view.is_unified() => {
+                    Some(rect.bottom() - top)
+                }
+                _ => None,
+            })
+            .reduce(f32::max)
+            .map_or(0.0, |height| {
+                f64::from((height.max(0.0) / self.fonts.line_height).ceil())
+            })
     }
 
     /// 返回差异标签在提交视图中对应的条目；不在提交视图中（没有改动、模块关闭）时为 `None`。
@@ -681,11 +727,16 @@ impl App {
                 (col, doc.col_to_cell(line, col, tab_width))
             })
             .unwrap_or((0, 0));
-        let width = {
+        let (width, sticky, pane_height) = {
             let Some(view) = self.editor.documents[index].diff.as_deref() else {
                 return;
             };
-            diff_parts(self.layout.editor, view, cell).panes[1].text.w - DIFF_TEXT_PAD
+            let parts = diff_parts(self.layout.editor, view, cell);
+            (
+                parts.panes[RIGHT].text.w - DIFF_TEXT_PAD,
+                self.diff_sticky_rows(view, RIGHT),
+                f64::from(parts.body.h / self.fonts.line_height),
+            )
         };
         let doc = &mut self.editor.documents[index];
         let Some(view) = doc.diff.as_deref_mut() else {
@@ -693,8 +744,21 @@ impl App {
         };
         view.reveal_line(RIGHT, line);
         // 按滚动位置比较：左侧较长的改动中右侧不前进，按右侧的行数比较会产生偏差。
-        let at = view.pos_of(RIGHT, view.row_of_col(RIGHT, line, caret_col) as f64);
-        if at < doc.scroll_line {
+        let row = view.row_of_col(RIGHT, line, caret_col) as f64;
+        let at = view.pos_of(RIGHT, row);
+        let covered = sticky > 0.0
+            && if view.is_unified() {
+                at < doc.scroll_line + sticky
+            } else {
+                row < view.side_scroll(RIGHT, doc.scroll_line, pane_height) + sticky
+            };
+        if covered {
+            doc.scroll_line = if view.is_unified() {
+                (at - sticky).max(0.0)
+            } else {
+                view.pos_of_top(RIGHT, (row - sticky).max(0.0), pane_height)
+            };
+        } else if at < doc.scroll_line {
             doc.scroll_line = at;
         } else if at >= doc.scroll_line + visible as f64 {
             doc.scroll_line = at - visible as f64 + 1.0;

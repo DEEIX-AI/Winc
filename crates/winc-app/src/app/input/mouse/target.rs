@@ -713,6 +713,7 @@ impl App {
             self.hover,
             Hover::Log(crate::app::git::log::LogTarget::Line(..))
                 | Hover::TerminalBlock(_)
+                | Hover::Diff(crate::app::DiffTarget::Sticky(..))
                 | Hover::MarkdownLink(_)
                 | Hover::MarkdownToc(crate::app::preview::markdown::TocTarget::Heading(_))
         ) || self.terminal.link.is_some()

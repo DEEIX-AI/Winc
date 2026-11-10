@@ -3,6 +3,100 @@
 use super::*;
 
 #[test]
+fn expanded_diff_pins_the_enclosing_scopes_for_each_version() {
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT};
+
+    let dir = sample_folder("diff-sticky");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let language = winc_syntax::detect("Example.java");
+    let old = format!(
+        "class Example {{\n    void before() {{\n{}    }}\n}}\n",
+        "        beforeStep();\n".repeat(55),
+    );
+    let new = format!(
+        "class Example {{\n    // new method\n    void after() {{\n{}    }}\n}}\n",
+        "        afterStep();\n".repeat(55),
+    );
+    let view = DiffView::new(
+        DiffSide::new("old", &old, None, language),
+        DiffSide::new("new", &new, None, language),
+    );
+    app.editor.show_diff("Example.java", view);
+    let sticky = |app: &App| {
+        app.diff_hits
+            .iter()
+            .filter_map(|&(rect, target)| match target {
+                DiffTarget::Sticky(side, line, _) => Some((side, line, rect)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let lines = |app: &App| {
+        sticky(app)
+            .iter()
+            .map(|&(side, line, _)| (side, line))
+            .collect::<Vec<_>>()
+    };
+
+    app.editor.active_mut().unwrap().scroll_line = 16.0;
+    paint(&mut app);
+    assert!(sticky(&app).is_empty(), "折叠模式不占用正文空间");
+    app.press_diff(DiffTarget::Collapse);
+    paint(&mut app);
+    assert_eq!(lines(&app), [(LEFT, 0), (LEFT, 1), (RIGHT, 0), (RIGHT, 2)]);
+
+    // 查找命中恰好位于被固定行覆盖的位置时，滚动使它露出来。
+    let doc = app.editor.active().unwrap();
+    let before = doc.scroll_line;
+    let view = doc.diff.as_deref().unwrap();
+    let parts = diff_parts(app.layout.editor, view, app.cell);
+    let visible = f64::from(parts.body.h / app.fonts.line_height);
+    let top = view.side_scroll(RIGHT, before, visible).floor() as usize;
+    let line = view.line_at(RIGHT, top).unwrap();
+    let start = view.new.text.line_to_char(line) + 8;
+    app.reveal_diff_match(RIGHT, start, start + 9);
+    assert!(app.editor.active().unwrap().scroll_line < before);
+    app.editor.active_mut().unwrap().scroll_line = before;
+    paint(&mut app);
+
+    let right_method = sticky(&app)[3].2;
+    click(
+        &mut app,
+        (
+            right_method.x + right_method.w / 2.0,
+            right_method.y + right_method.h / 2.0,
+        ),
+    );
+    assert!(app.editor.active().unwrap().scroll_line < 3.0);
+
+    // 从一个折成多段的正文行中间开始滚动，仍显示同一个函数头。
+    let doc = app.editor.active_mut().unwrap();
+    let view = doc.diff.as_deref_mut().unwrap();
+    view.set_wrap(Some((14, 4)));
+    let row = view.row_of(RIGHT, 12);
+    assert!(view.row_of(RIGHT, 13) > row + 1);
+    doc.scroll_line = view.pos_of_top(RIGHT, row as f64 + 1.25, visible);
+    paint(&mut app);
+    assert_eq!(lines(&app), [(LEFT, 0), (LEFT, 1), (RIGHT, 0), (RIGHT, 2)]);
+
+    // 单栏以顶行的版本为准，删除区和新增区显示不同的函数头。
+    for (side, signature) in [(LEFT, 1), (RIGHT, 2)] {
+        let doc = app.editor.active_mut().unwrap();
+        let view = doc.diff.as_deref_mut().unwrap();
+        view.set_wrap(None);
+        view.set_unified(true);
+        doc.scroll_line = view.pos_of(side, view.row_of(side, 12) as f64);
+        paint(&mut app);
+        assert_eq!(lines(&app), [(side, 0), (side, signature)]);
+    }
+
+    app.config.sticky_scroll = Some(false);
+    paint(&mut app);
+    assert!(sticky(&app).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn show_changes_opens_a_side_by_side_diff_and_walks_it() {
     let dir = search_folder("git-diff");
     if !long_repo(&dir) {

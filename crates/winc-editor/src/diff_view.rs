@@ -12,9 +12,10 @@ use winc_core::Lines;
 use winc_core::diff::{self, LineHunk};
 use winc_core::text::{self, MAX_LINE_CHARS};
 use winc_core::wrap::Breaks;
-use winc_syntax::{Highlighter, Language};
+use winc_syntax::{Highlighter, Language, LineState};
 
 use crate::editing::folding::line_breaks;
+use crate::editing::scopes::{self, Ancestry, Scope};
 
 /// 改动前后各自保留的未改动行数（行）。
 ///
@@ -48,6 +49,8 @@ pub struct DiffSide {
     pub missing: bool,
     /// 语法着色的增量状态，绘制时推进。
     pub highlighter: Highlighter,
+    /// 粘滞滚动最近查过的外层块，Tab 宽度改变后重新计算。
+    sticky_memo: (usize, Vec<Ancestry>),
 }
 
 impl DiffSide {
@@ -64,6 +67,7 @@ impl DiffSide {
             path,
             missing: false,
             highlighter: Highlighter::new(language),
+            sticky_memo: (0, Vec::new()),
         }
     }
 
@@ -71,6 +75,47 @@ impl DiffSide {
     pub fn with_missing(mut self, missing: bool) -> DiffSide {
         self.missing = missing;
         self
+    }
+
+    /// 返回顶部各行的外层块，以及语法着色是否已经推进到足以区分字符串和代码。
+    pub fn sticky_scopes(
+        &mut self,
+        rows: &[usize],
+        partial: bool,
+        max: usize,
+        tab_width: usize,
+        highlight_budget: usize,
+    ) -> (Vec<Scope>, bool) {
+        let Some(&last) = rows.last() else {
+            return (Vec::new(), true);
+        };
+        let settled = self
+            .highlighter
+            .state_at(&self.text, last + scopes::SCAN_DOWN, highlight_budget)
+            .is_some();
+        let (previous_width, memo) = &mut self.sticky_memo;
+        if *previous_width != tab_width {
+            memo.clear();
+            *previous_width = tab_width;
+        }
+        let found = scopes::sticky(
+            &self.text,
+            self.highlighter.language(),
+            rows,
+            partial,
+            max,
+            tab_width,
+            &mut |line| {
+                self.highlighter
+                    .known_state(line)
+                    .is_some_and(|s| s != LineState::Normal)
+            },
+            memo,
+        );
+        if !settled {
+            memo.clear();
+        }
+        (found, settled)
     }
 }
 
@@ -331,6 +376,7 @@ impl DiffView {
     pub fn apply(&mut self, text: Rope, compared: Compared) {
         let first = first_difference(&self.new.text, &text);
         self.new.highlighter.invalidate_from(first);
+        self.new.sticky_memo.1.retain(|a| a.survives_edit_at(first));
         // 固定显示的行随上方增删的行移动：改动始于其上方时整体移动，始于其中间时只移动下边界。
         // 按一处连续的修改估算（输入、粘贴、撤销均属此类），足以使这些行保持在原来的内容上。
         if let Some(pinned) = &mut self.pinned {

@@ -6,6 +6,8 @@
 //! 一层。并排时「»」和改动勾选框位于带子上，「»」用左侧的一段替换右侧；行勾选框位于行号栏靠近
 //! 文字的一侧。折叠的一段同样用带子连接。
 
+mod sticky;
+
 use std::fmt::Write as _;
 use std::ops::Range;
 
@@ -161,6 +163,11 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let mut hits = Vec::new();
 
     draw_body(app, frame, &mut view, &parts, scroll, pos, &edit, &mut hits);
+    let mut sticky_hits = sticky::draw(app, frame, &mut view, &parts, scroll, pos);
+    if !sticky_hits.is_empty() {
+        sticky_hits.append(&mut hits);
+        hits = sticky_hits;
+    }
     draw_header(app, frame, &view, &parts, pos, &mut hits);
     draw_overview(app, frame, &view, &parts, index);
 

@@ -14,6 +14,11 @@ use super::*;
 /// 不超过可见行数的 40%。
 const STICKY_MAX: usize = 5;
 
+/// 固定行最多占可见行数的 40%。
+pub(crate) fn sticky_limit(visible: usize) -> usize {
+    (visible * 2 / 5).min(STICKY_MAX)
+}
+
 /// 已计算的块的缓存。
 ///
 /// 文档、版本号和顶部显示的行都不变时无需重新计算。语法高亮尚未推算到所需位置时（例如刚跳到
@@ -53,7 +58,7 @@ impl App {
     ///
     /// 编辑区较矮时固定的行数相应减少。
     fn sticky_max(&self) -> usize {
-        (self.visible_lines() * 2 / 5).min(STICKY_MAX)
+        sticky_limit(self.visible_lines())
     }
 
     /// 返回当前固定在编辑区顶部的行，从外层到内层。
