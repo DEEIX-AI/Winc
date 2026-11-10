@@ -84,7 +84,7 @@ fn native_touch_uses_system_move_resize_and_snap() {
                 unsafe { SetWindowSubclass(hwnd as _, Some(observe), 2, data as usize) };
             assert_ne!(installed, 0);
             let scale = window.scale_factor();
-            self.window.handle = Some(window);
+            self.window = Some(window);
             let proxy = self.proxy.clone();
             let result = self.injection.clone();
             let observed = self.observed.clone();
