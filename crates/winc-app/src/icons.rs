@@ -21,6 +21,8 @@ use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
 
 use winc_render::{Color, Frame, Rect, Stroke};
 
+pub(crate) use winc_render::rounded_outline;
+
 /// 线条图标的笔宽（逻辑像素）。
 ///
 /// 顶栏、目录、新建文件、工具栏图标与文件内的记号共用该笔宽，并排放在同一行时笔画粗细一致。
@@ -301,24 +303,6 @@ const RING_STROKE: f32 = STROKE;
 /// 刷新与历史图标在同一个圆上绘制，路径与箭头按该半径计算。
 const RING: f32 = 5.5;
 
-/// 返回圆角矩形描边的八段笔画：四条边加四段圆角弧线。
-///
-/// 矩形左上角为 `(x, y)`，宽 `w`、高 `h`，圆角半径 `r`，单位均为逻辑像素；`r` 不超过
-/// `w / 2` 与 `h / 2` 中的较小值。
-pub(crate) fn rounded_outline(x: f32, y: f32, w: f32, h: f32, r: f32) -> [Stroke; 8] {
-    let (right, bottom) = (x + w, y + h);
-    [
-        Stroke::Line(x + r, y, right - r, y),
-        Stroke::Arc(right - r, y + r, r, -FRAC_PI_2, 0.0),
-        Stroke::Line(right, y + r, right, bottom - r),
-        Stroke::Arc(right - r, bottom - r, r, 0.0, FRAC_PI_2),
-        Stroke::Line(right - r, bottom, x + r, bottom),
-        Stroke::Arc(x + r, bottom - r, r, FRAC_PI_2, PI),
-        Stroke::Line(x, bottom - r, x, y + r),
-        Stroke::Arc(x + r, y + r, r, -PI, -FRAC_PI_2),
-    ]
-}
-
 /// 返回以 `(cx, cy)` 为中心、单臂长 `h`（逻辑像素）的加号笔画，用于图标的内部记号。
 fn small_plus(cx: f32, cy: f32, h: f32) -> [Stroke; 2] {
     [
@@ -547,6 +531,31 @@ pub fn locate(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: R
         Stroke::Line(cx, cy + r, cx, cy + inner),
         Stroke::Line(cx - r, cy, cx - inner, cy),
         Stroke::Line(cx + r, cy, cx + inner, cy),
+    ];
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
+/// 绘制「以列表显示」图标，约 12×10：左侧三个圆点，右侧三道等长的横线，表示平铺的各行。
+pub fn list_view(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let rows = [cy - 4.0, cy, cy + 4.0];
+    // 零长度的线段描边后呈圆点。
+    let dots = rows.map(|y| Stroke::Line(cx - 5.0, y, cx - 5.0, y));
+    let lines = rows.map(|y| Stroke::Line(cx - 2.0, y, cx + 6.0, y));
+    frame.stroke(&dots, 2.0, color, clip);
+    frame.stroke(&lines, RING_STROKE, color, clip);
+}
+
+/// 绘制「以树形显示」图标，约 12×10：顶格一道横线，其下两道缩进的横线，左侧的竖线和短横线
+/// 把它们连到上一行，表示目录与其中的文件。
+pub fn tree_view(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (trunk, child) = (cx - 4.0, cx - 1.0);
+    let shapes = [
+        Stroke::Line(cx - 6.0, cy - 4.0, cx + 6.0, cy - 4.0),
+        Stroke::Line(trunk, cy - 4.0, trunk, cy + 4.0),
+        Stroke::Line(trunk, cy, child, cy),
+        Stroke::Line(trunk, cy + 4.0, child, cy + 4.0),
+        Stroke::Line(child + 1.5, cy, cx + 6.0, cy),
+        Stroke::Line(child + 1.5, cy + 4.0, cx + 6.0, cy + 4.0),
     ];
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }

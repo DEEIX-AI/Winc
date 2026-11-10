@@ -50,6 +50,12 @@ winc 以 Rust 与自研渲染引擎构建：0.1 秒启动，十万行代码仅�
 | 界面 | 浅色和深色主题，完整的英文和简体中文界面 |
 | 更新 | 三个平台都有签名的应用内更新 |
 
+触摸屏支持点按按钮和定位光标、双击选词、单指滑动滚动，以及拖动滚动条和面板分隔条。
+Windows 上还可拖动标题栏移动窗口、双击标题栏最大化或还原，以及拖动窗口边缘改变大小。
+窗口拖动和边缘吸附与鼠标操作共用 Windows 原生行为。
+长按 500 毫秒打开当前位置的右键菜单。滑动始终作用于落指的区域，抬手后停止；多指接触会取消
+当前手势，所有手指离开后可继续操作。
+
 ## 平台
 
 | 平台 | 要求 | 安装包 |
@@ -71,7 +77,7 @@ winc file.rs:12:5       # 打开文件并跳到指定的行和列
 winc --wait file        # 等标签关闭后再退出，例如作为 Git 的编辑器
 ```
 
-Windows 安装包和 Linux deb 包会把 `winc` 加入 `PATH`。macOS 和 Linux AppImage 请在命令面板中运行「Shell 命令：安装 winc 命令」。
+Windows 安装包、Linux deb 包和 Arch 包会把 `winc` 加入 `PATH`；Windows 便携版不修改 `PATH`。macOS 请在菜单栏选择「Winc → 安装 winc 命令…」，或在命令面板中运行「Shell 命令：安装 winc 命令」；Linux AppImage 请使用命令面板。
 
 在 macOS 上应用由系统启动，不继承 shell 的环境变量；需要保留时使用 `winc --new-instance`。
 
@@ -107,10 +113,13 @@ cargo xtask bench                   # 测启动、内存、滚动，对照性能
 | `winc-editor` | 文档、文件树、查找、Git、格式化等编辑器逻辑 |
 | `winc-render` | 渲染层：字形、光栅化、呈现 |
 | `winc-preview` | 图片、SVG、Markdown、表格预览 |
+| `winc-typeset` | Markdown 预览的排版 |
 | `winc-pty` | 终端仿真和伪终端的辅助进程 |
 | `winc-config` | 配置和状态文件 |
 | `winc-i18n` | 界面文案（Fluent 语言包） |
+| `winc-version` | 产品版本号，取自 `VERSION` 文件 |
 | `winc-app` | 应用本体：窗口、事件、各个界面 |
+| `winc` | 可执行文件的入口，只调用 `winc-app` |
 | `xtask` | 开发自动化：测试、基准、打包 |
 
 ## 参与贡献

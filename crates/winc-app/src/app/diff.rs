@@ -1,13 +1,14 @@
 //! 并排差异标签的几何、命中区与交互。
 //!
 //! 负责标题栏按钮、折叠的未改动段、上一处与下一处改动之间的跳转，以及把左侧的一段内容
-//! 替换到右侧。绘制由 `view` 子模块完成；可点击区域在绘制时记进 `diff_hits`，悬停与点击都查
-//! 这张表。
+//! 替换到右侧。绘制由 `view` 子模块完成；可点击区域在绘制时记录到 `DiffState::hits`，
+//! 悬停与点击均据此判定目标。
 //!
-//! 右侧对应工作区文件时可直接编辑：右侧即编辑器里该文件的文档，光标、选区与撤销记录都属于该
+//! 右侧对应工作区文件时可直接编辑：右侧即编辑器中该文件的文档，光标、选区与撤销记录都属于该
 //! 文档。在右侧点击放置光标后，按键与编辑命令转给该文档执行；文件未打开时先在后台打开一个
-//! 标签，执行完重新比较。左侧（`HEAD`）只读。
+//! 标签，执行后重新比较。左侧（`HEAD`）只读。
 
+mod find;
 mod pointer;
 
 use std::path::Path;
@@ -26,34 +27,34 @@ use winit::keyboard::{Key, NamedKey};
 
 use super::git::changes::replace_lines;
 use super::lifecycle::notice::FLASH_DURATION;
-use super::{App, Focus, UserEvent};
+use super::{App, Focus, UserEvent, sticky_limit};
 use crate::keymap::Action;
 
-/// 差异标签顶上标题栏的高度（逻辑像素）：两侧的标题，右端是统计和按钮。
+/// 差异标签顶部标题栏的高度（逻辑像素）；标题栏包含两侧的标题，右端为统计和按钮。
 pub(crate) const DIFF_HEADER: f32 = 36.0;
-/// 左侧行号左边放「»」的一列的宽度（逻辑像素）。
+/// 左侧行号左边放置「»」的列宽（逻辑像素）。
 const DIFF_ARROWS: f32 = 22.0;
-/// 右侧行号右边放勾选框的一列的宽度（逻辑像素）：按块提交时勾选每处改动。
+/// 右侧行号右边放置勾选框的列宽（逻辑像素），用于按块提交时勾选每处改动。
 const DIFF_CHECKS: f32 = 22.0;
-/// 并排时行号栏里放行勾选框的宽度（逻辑像素）：容纳边长 11 的勾选框和两侧各 3 的留白。
+/// 并排时行号栏中行勾选框的宽度（逻辑像素）：容纳边长 11 的勾选框和两侧各 3 的留白。
 const DIFF_LINE_CHECK: f32 = 18.0;
-/// 两侧行号之间连接改动的带子的宽度（逻辑像素）。
+/// 两侧行号之间连接改动的连接带宽度（逻辑像素）。
 const DIFF_RIBBON: f32 = 48.0;
-/// 带子上的按钮中心到带子边缘的距离（逻辑像素）：两个 20 宽的悬停底色之间留 4 的间隙。
+/// 连接带上的按钮中心到连接带边缘的距离（逻辑像素）：两个宽 20 的悬停底色之间留出 4 的间隙。
 const DIFF_RIBBON_BUTTON_INSET: f32 = 12.0;
 /// 行号左右各留的空白（逻辑像素）。
 pub(crate) const DIFF_GUTTER_PAD: f32 = 10.0;
-/// 单栏时加减号那一列的宽度，按字符宽度的倍数算：一个字符加一点间距。
+/// 单栏时加减号列的宽度（字符宽度的倍数）：一个字符宽度加少量间距。
 const DIFF_SIGN_CELLS: f32 = 1.5;
 /// 文字和文字区边缘之间的空白（逻辑像素）。
 pub(crate) const DIFF_TEXT_PAD: f32 = 10.0;
 
 /// 「»」替换一段改动后，该段改动的颜色在原处淡出的时长（毫秒）。
 ///
-/// 该值取自调参：长到能分辨哪几行被替换，又不至于让下一步操作等待。
+/// 取自调参：该时长足以分辨被替换的行，又不会使下一步操作等待。
 const REPLACE_FADE: std::time::Duration = std::time::Duration::from_millis(420);
 
-/// 一段改动的种类，决定它的颜色。
+/// 一段改动的种类，决定改动的颜色。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HunkKind {
     /// 只在右侧有行。
@@ -65,7 +66,7 @@ pub(crate) enum HunkKind {
 }
 
 impl HunkKind {
-    /// `hunk` 的种类。
+    /// 返回 `hunk` 的种类。
     pub(crate) fn of(hunk: &winc_core::diff::LineHunk) -> HunkKind {
         match (hunk.old.is_empty(), hunk.new.is_empty()) {
             (true, _) => HunkKind::Added,
@@ -77,34 +78,34 @@ impl HunkKind {
 
 /// 正在淡出的替换颜色。
 ///
-/// 记录两侧替换后对应的行号区间，以及改动原来的种类。
+/// 记录两侧替换后对应的行号区间，以及改动原先的种类。
 #[derive(Debug, Clone)]
 pub(crate) struct DiffFade {
-    /// 哪个差异标签。
+    /// 所属的差异标签。
     pub doc: DocumentId,
     /// 左侧的行。
     pub left: std::ops::Range<usize>,
     /// 右侧替换后的行，行数与 `left` 相同。
     pub right: std::ops::Range<usize>,
-    /// 原来那段改动的种类。
+    /// 被替换的改动原先的种类。
     pub kind: HunkKind,
     /// 淡出的进度。
     pub clock: super::animation::Clock,
 }
 
-/// 右侧不超过该行数时当场重新比较，超过时放到后台（行）。
+/// 同步重新比较的右侧行数上限（行）；超过时在后台比较。
 ///
-/// 该值取自调参：在 debug 构建中实测 2000 行约 4 ms；文档更大时若每个按键都同步比较，连续
-/// 输入会明显滞后。
+/// 取自调参：debug 构建中实测 2000 行的比较约 4 ms；文档更大时若每次按键都同步比较，
+/// 连续输入会明显滞后。
 const REDIFF_IN_PLACE: usize = 3000;
 
 /// 后台重新比较的一次结果。
 pub(crate) struct Rediffed {
-    /// 哪个差异标签。
+    /// 所属的差异标签。
     id: DocumentId,
-    /// 比较时的左侧；换进去之前确认左侧没变。
+    /// 比较时的左侧；采用结果前据此确认左侧未变。
     old: ropey::Rope,
-    /// 比较时的右侧，即工作区文件那时的内容。
+    /// 比较时的右侧，即工作区文件当时的内容。
     new: ropey::Rope,
     /// 比较时右侧文档的版本号（`revision`），用于丢弃过时的结果。
     revision: u64,
@@ -131,22 +132,22 @@ impl Default for RediffState {
     }
 }
 
-/// 差异走到头时等待再按一次的状态：第一次只提示，确认以后才切换文件。
+/// 差异导航到达首尾时等待再次按键的状态：第一次按键只提示，再次按键后才切换文件。
 ///
-/// 再按一次时这些值都没变、提示还在显示才切换，否则重新提示。
+/// 再次按键时各字段均未变化且提示仍在显示才切换，否则重新提示。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DiffCross {
     /// 差异标签。
     doc: DocumentId,
-    /// 方向：`true` 是下一个文件。
+    /// 方向：`true` 表示下一个文件。
     forward: bool,
     /// 提示时的当前段。
     hunk: Option<usize>,
     /// 提示时的滚动位置。
-    scroll: f32,
+    scroll: f64,
 }
 
-/// 差异标签里可以点的地方。
+/// 差异标签中的可点击目标。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffTarget {
     /// 上一处改动。
@@ -159,19 +160,21 @@ pub enum DiffTarget {
     NextFile,
     /// 切换单栏显示和并排显示。
     Layout,
-    /// 折起或展开所有没改的长段。
+    /// 折叠或展开所有未改动的长段。
     Collapse,
-    /// 折起来的一段，参数是第几段没改的内容。
+    /// 折叠的一段，参数为未改动段的序号。
     Fold(usize),
-    /// 用左侧替换右侧的第几段改动，即把这一处改回 `HEAD` 的样子。
+    /// 固定在顶部的块头：（侧，行号）。点击后光标放到该行，该行滚到其外层的固定行之下。
+    Sticky(usize, usize),
+    /// 用左侧替换右侧的一段改动（参数为改动序号），即把该处恢复为 `HEAD` 中的内容。
     Revert(usize),
-    /// 提交时是否包含第几段改动。
+    /// 切换提交时是否包含一段改动（参数为改动序号）。
     Include(usize),
-    /// 提交时是否包含一行：（侧，行号，从 0 起）。
+    /// 切换提交时是否包含一行：（侧，行号，从 0 起）。
     IncludeLine(usize, usize),
 }
 
-/// 差异里点击、拖选的单位：单击按字，双击按词，三击（或点在行号上）按行。
+/// 差异中点击、拖选的单位：单击按字，双击按词，三击（或点击行号）按行。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SelectUnit {
     Char,
@@ -180,7 +183,7 @@ pub(crate) enum SelectUnit {
 }
 
 impl SelectUnit {
-    /// 连击 `count` 次对应的单位。
+    /// 返回连击 `count` 次对应的单位。
     fn of(count: u8) -> SelectUnit {
         match count {
             2 => SelectUnit::Word,
@@ -189,7 +192,7 @@ impl SelectUnit {
         }
     }
 
-    /// `pos` 处按这个单位选中的范围（起点，终点）。
+    /// 返回 `pos` 处按该单位选中的范围（起点，终点）。
     fn around(self, text: &impl Lines, pos: usize) -> (usize, usize) {
         match self {
             SelectUnit::Char => (pos, pos),
@@ -201,8 +204,10 @@ impl SelectUnit {
         }
     }
 
-    /// 从按下时选中的 `origin` 拖到 `pos`，返回（锚点，光标）：往前拖时锚点在 `origin` 的末尾，
-    /// 按下时选中的词、行始终整个保留，鼠标在它内部抖动时也不会缩回。
+    /// 返回从按下时选中的 `origin` 拖到 `pos` 后的（锚点，光标）。
+    ///
+    /// 向前拖动时锚点位于 `origin` 的末尾。按下时选中的词、行始终完整保留，
+    /// 鼠标在该范围内小幅移动时选区也不会缩小。
     fn extend(self, text: &impl Lines, origin: (usize, usize), pos: usize) -> (usize, usize) {
         let (from, to) = self.around(text, pos);
         if from < origin.0 {
@@ -213,7 +218,7 @@ impl SelectUnit {
     }
 }
 
-/// 右侧显示行上的一个点：对应右侧文档在哪个标签、第几行、第几个显示列。
+/// 右侧显示行上的一点，对应右侧文档的标签下标、行号与显示列。
 struct DiffSpot {
     /// 右侧文档在 `documents` 中的下标。
     source: usize,
@@ -221,21 +226,20 @@ struct DiffSpot {
     line: usize,
     /// 显示列（从 0 起），制表符按当前 Tab 宽度展开。
     cell: usize,
-    /// 点在最后一行下面。
+    /// 是否位于最后一行下方。
     past_end: bool,
 }
 
 /// 差异的一侧在屏幕上的位置。
 ///
-/// 左侧是文字在左、行号在右，右侧是行号在左、文字在右，两侧的
-/// 行号都挨着中间的带子。
+/// 左侧为文字在左、行号在右，右侧为行号在左、文字在右，两侧的行号都紧邻中间的连接带。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DiffPane {
-    /// 整个这一侧（文字加行号，左侧还含「»」那一列）。
+    /// 该侧的整体区域（文字与行号，左侧还包括「»」列）。
     pub rect: Rect,
     /// 行号栏。
     pub gutter: Rect,
-    /// 行号右端的横坐标（逻辑像素）；行号靠这里右对齐。
+    /// 行号右端的横坐标（逻辑像素），行号据此右对齐。
     pub number_end: f32,
     /// 文字区。
     pub text: Rect,
@@ -244,18 +248,18 @@ pub(crate) struct DiffPane {
 /// 差异标签的几何。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DiffParts {
-    /// 顶上的标题栏：两侧的标题各自对齐文字区，右端是第几处、增删行数、上一处、下一处、折叠
-    /// 开关。
+    /// 顶部的标题栏：两侧的标题各自与文字区对齐，右端依次为当前改动序号、增删行数、
+    /// 上一处、下一处和折叠开关。
     pub header: Rect,
-    /// 标题栏下面显示行的区域。
+    /// 标题栏下方显示行的区域。
     pub body: Rect,
-    /// 左侧（改之前）和右侧（改之后）。
+    /// 左侧（修改前）和右侧（修改后）。
     pub panes: [DiffPane; 2],
-    /// 两侧行号之间连接改动的带子。
+    /// 两侧行号之间连接改动的连接带。
     pub ribbon: Rect,
-    /// 单栏时右侧行号右边放改动勾选框的一列；并排时宽度为 0，勾选框在带子上。
+    /// 单栏时右侧行号右边放置改动勾选框的列；并排时宽度为 0，勾选框位于连接带上。
     pub checks: Rect,
-    /// 两侧放行勾选框的一列：并排时在行号栏靠文字一侧，单栏时都是加减号一列。
+    /// 两侧放置行勾选框的列：并排时位于行号栏靠文字的一侧，单栏时均为加减号列。
     pub line_checks: [Rect; 2],
     /// 「»」按钮的中心横坐标（逻辑像素）。
     pub revert_x: f32,
@@ -264,7 +268,7 @@ pub(crate) struct DiffParts {
 }
 
 impl App {
-    /// 点了差异标签里的 `target`。
+    /// 处理差异标签中 `target` 的点击。
     pub(super) fn press_diff(&mut self, target: DiffTarget) {
         match target {
             DiffTarget::Previous => self.jump_difference(false),
@@ -277,11 +281,11 @@ impl App {
                     return;
                 };
                 if let Some(view) = doc.diff.as_deref_mut() {
-                    // 右侧顶上那一行在切换以后还停在顶上。
+                    // 切换后右侧顶部的行保持在顶部。
                     let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
                     let on = !view.collapses();
                     let row = view.set_collapse(on, row);
-                    doc.scroll_line = view.pos_of(RIGHT, row as f32);
+                    doc.scroll_line = view.pos_of(RIGHT, row as f64);
                 }
                 self.clamp_scroll();
             }
@@ -291,6 +295,7 @@ impl App {
                 }
                 self.clamp_scroll();
             }
+            DiffTarget::Sticky(side, line) => self.click_diff_sticky(side, line),
             DiffTarget::Revert(hunk) => self.revert_diff_hunk(hunk),
             DiffTarget::Include(hunk) => self.toggle_diff_hunk(hunk),
             DiffTarget::IncludeLine(side, line) => self.toggle_diff_line(side, line),
@@ -298,7 +303,100 @@ impl App {
         self.request_redraw();
     }
 
-    /// 差异标签对应提交视图里的哪个文件；不在提交视图里（没有改动、模块关着）时为 `None`。
+    /// 处理固定行上的点击：光标放到该行上点击处的列，并滚动使该行位于固定行之下（行为同
+    /// 编辑区的固定行）。
+    ///
+    /// 右侧是工作区文件时光标放在右侧文档中，否则在该侧选中这一位置（只读）。
+    fn click_diff_sticky(&mut self, side: usize, line: usize) {
+        let max = self.max_scroll_line();
+        let x = self.mouse.0;
+        let Some(index) = self.editor.active else {
+            return;
+        };
+        let depth = self.diff_sticky_depth(index, side, line);
+        let Some(view) = self.editor.documents[index].diff.as_deref() else {
+            return;
+        };
+        let row = view.row_of(side, line);
+        let cell = self.diff_cell_at(view, side, row, x);
+        let source = view
+            .new
+            .path
+            .clone()
+            .filter(|_| side == RIGHT)
+            .and_then(|path| self.diff_source(&path, true));
+        if let Some(source) = source {
+            let tab_width = self.editor.active_tab_width();
+            let doc = &mut self.editor.documents[source];
+            let col = doc.cell_to_col(line, cell, tab_width);
+            let pos = doc.text().line_col_to_pos(line, col);
+            doc.collapse_selections();
+            doc.selection = Selection::point(pos);
+            doc.goal_cell = None;
+        }
+        let read = source
+            .is_none()
+            .then(|| self.diff_read_pos(side, line, cell))
+            .flatten();
+        let doc = &mut self.editor.documents[index];
+        let Some(view) = doc.diff.as_deref_mut() else {
+            return;
+        };
+        view.editing = source.is_some();
+        view.read_selection = read.map(|pos| ReadSelection {
+            side,
+            range: (pos, pos),
+        });
+        let parts = diff_parts(self.layout.editor, view, self.cell);
+        let visible = f64::from(parts.body.h / self.fonts.line_height);
+        let row = row as f64;
+        let top = if view.is_unified() {
+            view.pos_of(side, row) - depth
+        } else {
+            view.pos_of_top(side, (row - depth).max(0.0), visible)
+        };
+        let before = doc.scroll_line;
+        doc.scroll_line = top.clamp(0.0, max.max(0.0));
+        self.focus = Focus::Editor;
+        self.glide_scroll(before);
+        self.reset_blink();
+    }
+
+    /// 返回第 `side` 侧第 `line` 行显示在固定行下方时，顶部固定区域的高度（显示行）。
+    ///
+    /// 光标或查找到的匹配移到该行时，滚动需要再让出这些行；折叠了未改动内容或关闭了粘滞
+    /// 滚动时为 0。高度按目标行计算，不依赖当前画面。并排时固定区域横贯两侧，高度取较深的
+    /// 一侧：另一侧取与该行显示在同一高度的行。
+    fn diff_sticky_depth(&mut self, index: usize, side: usize, line: usize) -> f64 {
+        if self.config.sticky_scroll == Some(false) {
+            return 0.0;
+        }
+        let tab_width = self.editor.tab_width;
+        let lh = self.fonts.line_height;
+        let editor = self.layout.editor;
+        let cell = self.cell;
+        let Some(view) = self.editor.documents[index].diff.as_deref_mut() else {
+            return 0.0;
+        };
+        if view.collapses() {
+            return 0.0;
+        }
+        let body = diff_parts(editor, view, cell).body.h / lh;
+        let max = sticky_limit(body as usize);
+        let own = view.side_mut(side).scope_depth(line, tab_width).min(max);
+        if view.is_unified() {
+            return own as f64;
+        }
+        let other = if side == LEFT { RIGHT } else { LEFT };
+        let visible = f64::from(body);
+        let row = view.row_of(side, line) as f64 - own as f64;
+        let top = view.side_scroll(other, view.pos_of_top(side, row.max(0.0), visible), visible);
+        let beside = view.line_at(other, (top + own as f64).floor() as usize);
+        let deeper = beside.map_or(0, |l| view.side_mut(other).scope_depth(l, tab_width));
+        own.max(deeper.min(max)) as f64
+    }
+
+    /// 返回差异标签在提交视图中对应的条目；不在提交视图中（没有改动、模块关闭）时为 `None`。
     pub(crate) fn diff_entry(&self, view: &DiffView) -> Option<&winc_editor::git::Entry> {
         let path = view.repo_path.as_deref()?;
         self.git
@@ -309,7 +407,7 @@ impl App {
             .find(|e| e.path == path && !e.is_dir)
     }
 
-    /// 勾上或勾掉第 `hunk` 处改动：提交时只提交勾上的改动。
+    /// 切换第 `hunk` 处改动的勾选状态；提交时只提交已勾选的改动。
     fn toggle_diff_hunk(&mut self, hunk: usize) {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return;
@@ -327,7 +425,7 @@ impl App {
         self.request_redraw();
     }
 
-    /// 勾上或勾掉 `side` 侧第 `line` 行：提交时只提交勾上的行。
+    /// 切换 `side` 侧第 `line` 行的勾选状态；提交时只提交已勾选的行。
     fn toggle_diff_line(&mut self, side: usize, line: usize) {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return;
@@ -359,7 +457,7 @@ impl App {
         self.request_redraw();
     }
 
-    /// 取右侧对应的文档下标；未打开且 `open` 为 `true` 时就地打开，但不切换当前标签。
+    /// 返回右侧对应的文档下标；未打开且 `open` 为 `true` 时就地打开，但不切换当前标签。
     fn diff_source(&mut self, path: &Path, open: bool) -> Option<usize> {
         let found = self
             .editor
@@ -367,7 +465,7 @@ impl App {
             .iter()
             .position(|d| d.path.as_deref() == Some(path));
         if let Some(index) = found {
-            // 右侧要跟着文档编辑，尚未读取的先读进来。
+            // 右侧随文档编辑，尚未读取的文档需要先读取。
             self.editor.load(index);
             return Some(index);
         }
@@ -375,7 +473,7 @@ impl App {
             return None;
         }
         let active = self.editor.active;
-        // 右侧要跟着文档编辑，要马上有内容：就地读。
+        // 右侧随文档编辑，需要立即有内容，因此就地读取。
         let index = self.editor.open(path);
         self.editor.active = active;
         self.editor.documents[index]
@@ -383,16 +481,16 @@ impl App {
             .then_some(index)
     }
 
-    /// 让差异标签 `index` 的右侧跟上编辑器里的文档。
+    /// 使差异标签 `index` 的右侧与编辑器中的文档同步。
     ///
-    /// 文档发生变化（在差异里编辑、在文件的标签里编辑、撤销）时重新比较。
+    /// 文档发生变化（在差异中编辑、在文件的标签中编辑、撤销）时重新比较。
     pub(crate) fn sync_diff_source(&mut self, index: usize) {
         self.sync_diff(index, false);
     }
 
-    /// 同步差异标签 `index` 的右侧，`now` 为 `true` 时不管文件多大都当场比较。
+    /// 同步差异标签 `index` 的右侧，`now` 为 `true` 时无论文件大小都同步比较。
     ///
-    /// 「»」替换完成后需要立即定位，因此要求结果当场可用。
+    /// 「»」替换完成后需要立即定位，因此要求结果立即可用。
     fn sync_diff(&mut self, index: usize, now: bool) {
         let Some(path) = self
             .editor
@@ -418,8 +516,8 @@ impl App {
         if view.source == Some(revision) {
             return;
         }
-        // 不超过 `REDIFF_IN_PLACE` 行的文档当场比较；更大的文档放到后台，同一标签同一时刻只
-        // 比较一次，完成后若文档又变了再比较一次，连续输入不排队。
+        // 不超过 `REDIFF_IN_PLACE` 行的文档同步比较；更大的文档在后台比较，同一标签同一时刻
+        // 只比较一次，完成后若文档再次变化则重新比较，连续输入时任务不排队。
         let Some(proxy) = self
             .proxy
             .clone()
@@ -449,9 +547,9 @@ impl App {
         });
     }
 
-    /// 收下后台重新比较的结果，换进差异标签。
+    /// 接收后台重新比较的结果并应用到差异标签。
     ///
-    /// 文档在比较期间又变了时，下一帧再比较一次。
+    /// 文档在比较期间再次变化时，下一帧重新比较。
     pub(super) fn poll_rediffs(&mut self) {
         while let Ok(done) = self.rediff.results.1.try_recv() {
             self.rediff.running.remove(&done.id);
@@ -462,7 +560,7 @@ impl App {
             else {
                 continue;
             };
-            // 比较期间左侧换了（`HEAD` 变了、标签换了内容），或者已经换上了更新的结果：作废。
+            // 比较期间左侧已变化（`HEAD` 变化、标签内容被替换），或已应用更新的结果时，丢弃该结果。
             if view.source.is_some_and(|s| s >= done.revision) || view.old.text != done.old {
                 continue;
             }
@@ -476,7 +574,7 @@ impl App {
 
     /// 用左侧内容替换右侧第 `hunk` 段改动。
     ///
-    /// 文件已打开时修改编辑器里的文档，⌘Z 可撤销，保存仍然可用；未打开时直接写回磁盘，
+    /// 文件已打开时修改编辑器中的文档，⌘Z 可撤销，保存仍然可用；未打开时直接写回磁盘，
     /// 不为这一处修改额外打开标签。
     pub(super) fn revert_diff_hunk(&mut self, hunk: usize) {
         let Some(index) = self.editor.active else {
@@ -490,8 +588,8 @@ impl App {
             return;
         };
         let inserted = view.old_lines(hunk);
-        // 这段改动第一行离视图顶上多远：换完以后让同一行停在同一个地方。
-        let offset = view.hunk_rows[RIGHT][hunk].start as f32
+        // 记录该段改动首行与视图顶部的距离，替换后使该行停留在原位置。
+        let offset = view.hunk_rows[RIGHT][hunk].start as f64
             - view.row_at(RIGHT, self.editor.documents[index].scroll_line);
         let doc_id = self.editor.documents[index].id;
         let fade = DiffFade {
@@ -534,27 +632,27 @@ impl App {
                 }
             }
         }
-        // 换完以后这几行没有改动了，会被折进「n 行未改动」：只让这几行连同上下几行露着，其余
-        // 仍然折起；视图不动，换上去的几行还在原处。
+        // 替换后这些行不再有改动，会被折入「n 行未改动」：只保持这些行及其上下相邻的行展开，
+        // 其余仍然折叠；视图位置不变，替换后的行仍在原处。
         if let Some(doc) = self.editor.documents.get_mut(index)
             && let Some(view) = doc.diff.as_deref_mut()
         {
             view.pin_new(fade.right.clone());
-            let row = view.row_of_new(fade.right.start) as f32 - offset;
+            let row = view.row_of_new(fade.right.start) as f64 - offset;
             doc.scroll_line = view.pos_of(RIGHT, row.max(0.0));
         }
         self.clamp_scroll();
-        // 换掉的那段不是立即失去颜色，而是在原处淡出。系统设置了减少动态效果时不做。
-        self.diff_fade = self
+        // 被替换的改动不立即失去颜色，而是在原处淡出；动态效果关闭时不显示淡出。
+        self.diff.fade = self
             .clock(REPLACE_FADE)
             .map(|clock| DiffFade { clock, ..fade });
         self.flash(t!("git-change-reverted"));
         self.request_redraw();
     }
 
-    /// 在差异标签里执行「回滚光标处的改动」。
+    /// 在差异标签中执行「回滚光标处的改动」。
     ///
-    /// 光标在右侧时回滚光标所在的那一处，否则回滚视口内可见的那一处。
+    /// 光标在右侧时回滚光标所在的改动，否则回滚视口第四行所在的改动。
     pub(super) fn revert_diff_hunk_here(&mut self) {
         let Some(index) = self.editor.active else {
             return;
@@ -575,7 +673,7 @@ impl App {
         }
     }
 
-    /// 光标在右侧、落在一处改动上时，那处改动是第几段。
+    /// 返回右侧光标所在改动的序号；光标不在右侧或不在改动上时为 `None`。
     pub(super) fn diff_caret_hunk(&self) -> Option<usize> {
         let index = self.editor.active?;
         let line = self.diff_caret_line(index)?;
@@ -585,7 +683,7 @@ impl App {
             .position(|h| h.new.contains(&line) || (h.new.is_empty() && h.new.start == line))
     }
 
-    /// 光标在差异右侧时由右侧文档执行 `f`（按键、编辑命令），执行完重新比较并滚动到光标处。
+    /// 光标在差异右侧时由右侧文档执行 `f`（按键、编辑命令），执行后重新比较并滚动到光标处。
     ///
     /// 光标不在右侧时返回 `None`，不做任何改动。
     fn in_diff_source<R>(&mut self, f: impl FnOnce(&mut App) -> R) -> Option<R> {
@@ -597,7 +695,7 @@ impl App {
         let id = self.editor.documents[index].id;
         let path = view.new.path.clone()?;
         let source = self.diff_source(&path, true)?;
-        // 编辑以后光标不一定还在跳到的那一段，不再标记。
+        // 编辑后光标不一定仍在跳转到的那一段，因此清除当前段标记。
         if let Some(view) = self.editor.documents[index].diff.as_deref_mut() {
             view.focus = None;
         }
@@ -615,11 +713,10 @@ impl App {
         Some(result)
     }
 
-    /// 让右侧光标可见：所在行被折叠时先展开，再滚动到视口内。
-    /// 让当前的差异标签按设置和文字区宽度自动换行，视图停在原来的内容上；当前标签不是差异时返回
-    /// `false`。
+    /// 使当前差异标签按设置和文字区宽度自动换行，视图停留在原先的内容上。
     ///
-    /// 整篇断行的耗时与行数成正比：宽度逐帧变化时沿用已有的宽度，变化结束后再断行一次。
+    /// 当前标签不是差异时返回 `false`。整篇断行的耗时与行数成正比：宽度逐帧变化时沿用已有的宽度，
+    /// 变化结束后再断行一次。
     pub(in crate::app) fn sync_diff_wrap(&mut self) -> bool {
         let wrap = self.config.word_wrap == Some(true);
         let tab_width = self.editor.active_tab_width();
@@ -639,8 +736,8 @@ impl App {
         let text_w = parts.panes[LEFT].text.w.min(parts.panes[RIGHT].text.w);
         let cols = ((text_w - 2.0 * DIFF_TEXT_PAD) / cell).floor().max(1.0) as usize;
 
-        // 按屏幕上右侧最上面的显示行定位：两侧在视图中线对齐，它不一定是滚动位置换算出的行。
-        let visible = parts.body.h / line_height;
+        // 按屏幕上右侧最上方的显示行定位：两侧在视图中线对齐，该行不一定是由滚动位置换算出的行。
+        let visible = f64::from(parts.body.h / line_height);
         let row = view.side_scroll(RIGHT, doc.scroll_line.max(0.0), visible);
         let (top, part) = match view.rows[RIGHT].get(row.floor() as usize) {
             Some(SideRow::Line { line, part, .. }) => (*line, *part),
@@ -650,7 +747,7 @@ impl App {
         if view.set_wrap(wrap.then_some((cols, tab_width))) {
             let part = part.min(view.breaks(RIGHT, top).rows().saturating_sub(1));
             let first = view.row_of_new(top) + part;
-            doc.scroll_line = view.pos_of_top(RIGHT, first as f32 + row.fract(), visible);
+            doc.scroll_line = view.pos_of_top(RIGHT, first as f64 + row.fract(), visible);
             if view.is_wrapping() {
                 doc.scroll_x = 0.0;
             }
@@ -660,6 +757,7 @@ impl App {
         true
     }
 
+    /// 使右侧光标可见：所在行被折叠时先展开，之后滚动到视口内。
     fn diff_caret_visible(&mut self, index: usize) {
         let Some(line) = self.diff_caret_line(index) else {
             return;
@@ -679,23 +777,42 @@ impl App {
                 (col, doc.col_to_cell(line, col, tab_width))
             })
             .unwrap_or((0, 0));
-        let width = {
+        let sticky = self.diff_sticky_depth(index, RIGHT, line);
+        let (width, pane_height) = {
             let Some(view) = self.editor.documents[index].diff.as_deref() else {
                 return;
             };
-            diff_parts(self.layout.editor, view, cell).panes[1].text.w - DIFF_TEXT_PAD
+            let parts = diff_parts(self.layout.editor, view, cell);
+            (
+                parts.panes[RIGHT].text.w - DIFF_TEXT_PAD,
+                f64::from(parts.body.h / self.fonts.line_height),
+            )
         };
         let doc = &mut self.editor.documents[index];
         let Some(view) = doc.diff.as_deref_mut() else {
             return;
         };
-        view.reveal_new(line);
-        // 按滚动位置比：左侧更长的改动里右侧停着不动，按右侧的行数比会差出一截。
-        let at = view.pos_of(RIGHT, view.row_of_col(RIGHT, line, caret_col) as f32);
-        if at < doc.scroll_line {
+        view.reveal_line(RIGHT, line);
+        // 按滚动位置比较：左侧较长的改动中右侧不前进，按右侧的行数比较会产生偏差。光标所在行
+        // 的外层块固定在顶部时，光标需要位于这些固定行之下。
+        let row = view.row_of_col(RIGHT, line, caret_col) as f64;
+        let at = view.pos_of(RIGHT, row);
+        let covered = sticky > 0.0
+            && if view.is_unified() {
+                at < doc.scroll_line + sticky
+            } else {
+                row < view.side_scroll(RIGHT, doc.scroll_line, pane_height) + sticky
+            };
+        if covered {
+            doc.scroll_line = if view.is_unified() {
+                (at - sticky).max(0.0)
+            } else {
+                view.pos_of_top(RIGHT, (row - sticky).max(0.0), pane_height)
+            };
+        } else if at < doc.scroll_line {
             doc.scroll_line = at;
-        } else if at >= doc.scroll_line + visible as f32 {
-            doc.scroll_line = at - visible as f32 + 1.0;
+        } else if at >= doc.scroll_line + visible as f64 {
+            doc.scroll_line = at - visible as f64 + 1.0;
         }
         let x = if view.is_wrapping() {
             doc.scroll_x
@@ -710,11 +827,11 @@ impl App {
         self.clamp_scroll();
     }
 
-    /// 在差异标签里执行查找 `f`，查找范围是右侧的工作区文件。
+    /// 在差异标签中执行查找 `f`，查找范围是右侧的工作区文件。
     ///
     /// 查找转给右侧文档执行，光标放到右侧，跳到的匹配即右侧的选区，差异随之滚动。
     ///
-    /// 右侧不能编辑时返回 `None` 且不做任何改动：文件已删除，或比较的不是 Git 差异。
+    /// 右侧不可编辑时（文件已删除，或比较的不是 Git 差异）返回 `None` 且不做任何改动。
     pub(super) fn in_diff_search<R>(&mut self, f: impl FnOnce(&mut App) -> R) -> Option<R> {
         let view = self.editor.active_mut()?.diff.as_deref_mut()?;
         view.new.path.as_ref()?;
@@ -723,14 +840,12 @@ impl App {
         self.in_diff_source(f)
     }
 
-    /// 当前标签是差异。
+    /// 当前标签是否为差异。
     pub(super) fn diff_active(&self) -> bool {
         self.editor.active().is_some_and(|d| d.diff.is_some())
     }
 
-    /// 光标在差异右侧时的按键交给右侧的文档。
-    ///
-    /// 返回是否处理了。
+    /// 光标在差异右侧时把按键交给右侧的文档，返回是否已处理。
     pub(super) fn diff_edit_key(&mut self, event: &KeyEvent, cmd: bool) -> bool {
         if event.logical_key == Key::Named(NamedKey::Escape) {
             let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut()) else {
@@ -754,9 +869,7 @@ impl App {
             .is_some()
     }
 
-    /// 输入法提交的文字在光标在差异右侧时交给右侧的文档。
-    ///
-    /// 返回是否处理了。
+    /// 光标在差异右侧时把输入法提交的文字交给右侧的文档，返回是否已处理。
     pub(super) fn diff_edit_text(&mut self, text: &str) -> bool {
         self.edit_at_read_caret();
         let text = text.to_owned();
@@ -769,7 +882,7 @@ impl App {
     /// 参与转发的命令由 [`Action::edits_in_diff`] 判定；返回 `None` 表示该命令不由右侧处理。
     pub(super) fn diff_edit_action(&mut self, action: Action) -> Option<bool> {
         use Action::*;
-        // 只读的一侧有选区时：复制选中的，全选选中这一侧的全部内容。
+        // 只读一侧有选区时：复制选中的内容，全选则选中该侧的全部内容。
         if let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut())
             && let Some(selection) = view.read_selection
         {
@@ -799,21 +912,21 @@ impl App {
         self.in_diff_source(|app| app.run_action(action))
     }
 
-    /// 处理差异标签里的滚动按键。
+    /// 处理差异标签中的滚动按键。
     ///
     /// `↑` `↓` 滚动一行，翻页键滚动一屏，`⌘↑` `⌘↓`（其他系统为 `Ctrl+Home` `Ctrl+End`）
     /// 与 `Home` `End` 跳到开头和结尾，`←` `→` 横向滚动。其他按键不处理。
     pub(super) fn diff_key(&mut self, key: &Key, cmd: bool) {
-        let page = self.visible_lines().saturating_sub(1).max(1) as f32;
+        let page = self.visible_lines().saturating_sub(1).max(1) as f64;
         let cell = self.cell;
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
         match key {
             Key::Named(NamedKey::ArrowUp) if cmd => doc.scroll_line = 0.0,
-            Key::Named(NamedKey::ArrowDown) if cmd => doc.scroll_line = f32::MAX,
+            Key::Named(NamedKey::ArrowDown) if cmd => doc.scroll_line = f64::MAX,
             Key::Named(NamedKey::Home) => doc.scroll_line = 0.0,
-            Key::Named(NamedKey::End) => doc.scroll_line = f32::MAX,
+            Key::Named(NamedKey::End) => doc.scroll_line = f64::MAX,
             Key::Named(NamedKey::ArrowUp) => doc.scroll_line -= 1.0,
             Key::Named(NamedKey::ArrowDown) => doc.scroll_line += 1.0,
             Key::Named(NamedKey::PageUp) => doc.scroll_line -= page,
@@ -827,8 +940,10 @@ impl App {
         self.request_redraw();
     }
 
-    /// 跳到第 `hunk` 段改动：滚动到距视口顶部三行的位置，距离较远时平滑滚动；光标移到这一段的
-    /// 开头，这一段显示当前标记和一次短暂的高亮。
+    /// 跳转到第 `hunk` 段改动。
+    ///
+    /// 滚动到使该段距视口顶部三行的位置，距离较远时平滑滚动；光标移到该段开头，
+    /// 该段显示当前标记和一次短暂的高亮。
     fn go_to_hunk(&mut self, hunk: usize) {
         let Some(doc) = self.editor.active_mut() else {
             return;
@@ -841,8 +956,8 @@ impl App {
         self.clamp_scroll();
         self.glide_scroll(before);
         self.place_diff_caret(hunk);
-        self.diff_cross = None;
-        self.diff_pulse = self.clock(crate::app::animation::DIFF_PULSE);
+        self.diff.cross = None;
+        self.diff.pulse = self.clock(crate::app::animation::DIFF_PULSE);
         if let Some(doc) = self.editor.active_mut() {
             let scroll = doc.scroll_line;
             if let Some(view) = doc.diff.as_deref_mut() {
@@ -853,10 +968,10 @@ impl App {
         self.request_redraw();
     }
 
-    /// 把光标放到第 `hunk` 段改动的开头：右侧的文件已经打开时放在它的文档里，否则放在只读光标上。
+    /// 把光标放到第 `hunk` 段改动的开头：右侧文件已打开时放在该文档中，否则使用只读光标。
     ///
-    /// 不为此打开文件：打开文件会新增一个标签，连续查看时标签会越来越多；点击右侧时再打开。右侧
-    /// 没有内容时（文件已删除）放在左侧。
+    /// 不为此打开文件：打开文件会新增标签，连续查看时标签数会不断增加；点击右侧时再打开。
+    /// 右侧没有内容时（文件已删除）只读光标放在左侧。
     fn place_diff_caret(&mut self, hunk: usize) {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return;
@@ -893,10 +1008,10 @@ impl App {
         }
     }
 
-    /// 在只读光标的位置开始编辑：打开右侧的文件，把光标放到文档的同一位置。
+    /// 在只读光标处开始编辑：打开右侧文件，并把光标放到文档中的相同位置。
     ///
-    /// 输入文字、编辑按键和编辑命令之前调用：[`App::place_diff_caret`] 没有打开文件，用户开始编辑
-    /// 时才打开。光标不在可以编辑的右侧，或者文件打不开时不做任何事。
+    /// 在输入文字、编辑按键和编辑命令之前调用：[`App::place_diff_caret`] 不打开文件，
+    /// 用户开始编辑时才打开。光标不在可编辑的右侧或文件无法打开时不做任何操作。
     fn edit_at_read_caret(&mut self) {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return;
@@ -923,13 +1038,13 @@ impl App {
         }
     }
 
-    /// 让所有打开着的差异和之后打开的差异按设置（`diffInline`）显示。
+    /// 使所有已打开和之后打开的差异按设置（`diffInline`）显示。
     ///
-    /// 各标签顶上的那一行还在顶上；跳到过的改动仍然是当前段。
+    /// 各标签顶部的行保持在顶部；已跳转到的改动仍为当前段。
     pub(in crate::app) fn apply_diff_layout(&mut self) {
         let on = self.config.diff_inline == Some(true);
         self.editor.diff_unified = on;
-        let visible = self.layout.editor.h / self.fonts.line_height;
+        let visible = f64::from(self.layout.editor.h / self.fonts.line_height);
         for doc in &mut self.editor.documents {
             let Some(view) = doc.diff.as_deref_mut() else {
                 continue;
@@ -947,7 +1062,7 @@ impl App {
         self.request_redraw();
     }
 
-    /// 切换到下一个（`forward`）或上一个文件，从第一处改动开始看；没有更多文件时给出提示。
+    /// 切换到下一个（`forward`）或上一个文件，从第一处改动开始显示；没有更多文件时给出提示。
     pub(in crate::app) fn step_diff_file(&mut self, forward: bool) {
         if !self.enter_diff_file(forward, false) {
             self.flash(if forward {
@@ -960,23 +1075,22 @@ impl App {
 
     /// 打开同一批文件中的下一个（`forward`）或上一个文件，返回是否已打开。
     ///
-    /// 差异由储藏打开时是同一条储藏的文件，由日志打开时是同一提交的文件，否则是提交视图列出的
-    /// 文件，都在当前标签里切换。`last` 表示
-    /// 打开后停在最后一处改动，否则停在第一处。
+    /// 差异由储藏打开时为同一条储藏中的文件，由日志打开时为同一提交中的文件，否则为提交视图
+    /// 列出的文件，均在当前标签中切换。`last` 为 `true` 时打开后停在最后一处改动，否则停在第一处。
     fn enter_diff_file(&mut self, forward: bool, last: bool) -> bool {
-        self.diff_land = Some(last);
+        self.diff.land = Some(last);
         let entered = self.step_stash_file(forward)
             || self.step_log_file(forward)
             || self.step_changed_file(forward);
         if !entered {
-            self.diff_land = None;
+            self.diff.land = None;
         }
         entered
     }
 
-    /// 文件切换的差异已经换上：按 [`App::enter_diff_file`] 的要求跳到第一处或最后一处改动。
+    /// 切换文件后的差异载入后，按 [`App::enter_diff_file`] 的要求跳转到第一处或最后一处改动。
     pub(in crate::app) fn land_diff_file(&mut self) {
-        let Some(last) = self.diff_land.take() else {
+        let Some(last) = self.diff.land.take() else {
             return;
         };
         let hunks = self
@@ -989,7 +1103,7 @@ impl App {
         }
     }
 
-    /// 下一个（`forward`）或上一个文件的文件名；没有更多文件时为 `None`。
+    /// 返回下一个（`forward`）或上一个文件的文件名；没有更多文件时为 `None`。
     fn next_diff_file_name(&self, forward: bool) -> Option<String> {
         if let Some((_, name, _)) = self.next_stash_file(forward) {
             return Some(name);
@@ -1001,10 +1115,10 @@ impl App {
         Some(winc_editor::display_name(&path).into_owned())
     }
 
-    /// 走到头时的第一次按键提示「再按一次」，提示还在显示时的第二次才切换文件，往回切换时停在最后
-    /// 一处改动；没有更多文件时说明没有更多改动。
+    /// 处理导航到达首尾时的按键：第一次提示「再按一次」，提示仍在显示时第二次按键才切换文件。
     ///
-    /// 差异可能正在编辑，不在一次按键里换掉用户正在看的文件。
+    /// 切换到上一个文件时停在其最后一处改动；没有更多文件时提示 `none`。差异可能正在编辑，
+    /// 因此不在一次按键中替换用户正在查看的文件。
     fn cross_diff_file(&mut self, forward: bool, none: &str) {
         let Some(doc) = self.editor.active() else {
             return;
@@ -1018,7 +1132,7 @@ impl App {
             hunk: view.focus.map(|(hunk, _)| hunk),
             scroll: doc.scroll_line,
         };
-        let armed = self.diff_cross.take();
+        let armed = self.diff.cross.take();
         if armed.is_some_and(|(at, armed)| armed == cross && at.elapsed() < FLASH_DURATION)
             && self.enter_diff_file(forward, !forward)
         {
@@ -1028,7 +1142,7 @@ impl App {
             self.flash(none);
             return;
         };
-        self.diff_cross = Some((Instant::now(), cross));
+        self.diff.cross = Some((Instant::now(), cross));
         let name = name.as_str();
         self.flash(if forward {
             t!("git-press-again-next-file", name = name)
@@ -1037,7 +1151,7 @@ impl App {
         });
     }
 
-    /// 当前差异标签能不能切换文件：由日志、提交视图或储藏打开，或者是工作区文件的 Git 差异。
+    /// 当前差异标签是否可以切换文件：由日志、提交视图或储藏打开，或为工作区文件的 Git 差异。
     pub(crate) fn diff_steps_files(&self) -> bool {
         let Some(id) = self.editor.active().map(|d| d.id) else {
             return false;
@@ -1056,7 +1170,7 @@ impl App {
         let Some(view) = doc.diff.as_deref() else {
             return;
         };
-        // 判断光标当前所在段：刚跳转、尚未滚动时取跳转到的那一段（末尾几段无法滚到视口顶部，
+        // 判断当前所在段：刚跳转、尚未滚动时取跳转到的那一段（末尾几段无法滚到视口顶部，
         // 不能按滚动位置判断），否则按视口第四行判断。
         let here = doc.scroll_line.max(0.0).floor() + 3.0;
         let target = match (view.focus, view.current_hunk(doc.scroll_line)) {
@@ -1071,7 +1185,7 @@ impl App {
             _ => {
                 let mut hunks = 0..view.hunks.len();
                 if forward && view.focus.is_none() {
-                    // 还没有当前段：离文件开头很近的改动也在视口里，从视口顶部开始找，不跳过它。
+                    // 尚无当前段时从视口顶部开始查找，不跳过靠近文件开头、已在视口内的改动。
                     let top = doc.scroll_line.max(0.0).floor();
                     hunks.find(|&i| view.hunk_pos(i) >= top)
                 } else if forward {
@@ -1101,7 +1215,7 @@ impl App {
     }
 }
 
-/// 按键 `key` 是否修改文字；方向键、翻页键只移动，不为它们打开文件。
+/// 按键 `key` 是否修改文字；方向键、翻页键只移动光标，不为此打开文件。
 pub(crate) fn edits_text(key: &Key) -> bool {
     matches!(
         key,
@@ -1109,7 +1223,7 @@ pub(crate) fn edits_text(key: &Key) -> bool {
     )
 }
 
-/// 右侧（工作区）的标题。
+/// 返回右侧（工作区）的标题。
 pub(crate) fn worktree_title(dirty: bool) -> &'static str {
     if dirty {
         t!("git-diff-side-worktree-unsaved")
@@ -1118,9 +1232,9 @@ pub(crate) fn worktree_title(dirty: bool) -> &'static str {
     }
 }
 
-/// 在编辑区 `editor` 里计算差异 `view` 的几何布局。
+/// 在编辑区 `editor` 中计算差异 `view` 的几何布局。
 ///
-/// 中间从左到右依次是「»」、左侧行号栏、带子、右侧行号栏、勾选框，两侧文字区平分剩余宽度；
+/// 中间从左到右依次是「»」、左侧行号栏、连接带、右侧行号栏、勾选框，两侧文字区平分剩余宽度；
 /// 行号栏按两侧最大行号的位数定宽。
 pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts {
     let header = Rect::new(editor.x, editor.y, editor.w, DIFF_HEADER);
@@ -1135,7 +1249,7 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
     let gutter_w = (digits * cell + 2.0 * DIFF_GUTTER_PAD).round();
     let column = |x: f32, w: f32| Rect::new(x, body.y, w, body.h);
     if view.is_unified() {
-        // 单栏：「»」、改之前的行号、改之后的行号、勾选框、加减号（行勾选框与之同列）和文字。
+        // 单栏：「»」、修改前的行号、修改后的行号、勾选框、加减号（行勾选框与之同列）和文字。
         let arrows = column(editor.x, DIFF_ARROWS);
         let left_gutter = column(arrows.right(), gutter_w);
         let right_gutter = column(left_gutter.right(), gutter_w);
@@ -1168,7 +1282,7 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
             include_x: checks.x + checks.w / 2.0,
         };
     }
-    // 能按行勾选的差异：行号栏靠文字一侧留出行勾选框的位置，比行号两边的留白多出的部分加宽。
+    // 可按行勾选的差异：行号栏靠文字一侧留出行勾选框的位置，勾选框宽于行号留白的部分计入栏宽。
     let line_w = if view.repo_path.is_some() {
         DIFF_LINE_CHECK
     } else {
@@ -1210,8 +1324,22 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
             column(left_gutter.x, line_w),
             column(right_gutter.right() - line_w, line_w),
         ],
-        // 改动级的两个按钮都在中间的带子上。
+        // 改动级的两个按钮都位于中间的连接带上。
         revert_x: ribbon.x + DIFF_RIBBON_BUTTON_INSET,
         include_x: ribbon.right() - DIFF_RIBBON_BUTTON_INSET,
     }
+}
+
+/// 差异视图的界面状态：命中区域以及切换、定位时的过渡。
+#[derive(Default)]
+pub struct DiffState {
+    /// 差异中用「»」替换一段改动后正在淡出的颜色。
+    pub(crate) fade: Option<crate::app::diff::DiffFade>,
+    /// 跳转到一处改动时该段改动的短暂高亮；没有时为 `None`。
+    pub(crate) pulse: Option<crate::app::animation::Clock>,
+    /// 差异切换文件后新文件的停留位置：`true` 为最后一处改动，`false` 为第一处；
+    /// 不在切换文件时为 `None`。
+    pub(crate) land: Option<bool>,
+    /// 差异导航到达首尾时等待再次按键的状态与提示时刻；不在等待时为 `None`。
+    pub(crate) cross: Option<(Instant, crate::app::diff::DiffCross)>,
 }

@@ -12,7 +12,7 @@ use target::*;
 
 use std::time::{Duration, Instant};
 
-use winit::event::{MouseButton, MouseScrollDelta};
+use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 use winit::window::CursorIcon;
 
 use winc_core::{Lines, Selection, movement};
@@ -28,7 +28,6 @@ use crate::layout::{
     settings_track,
 };
 use crate::theme::*;
-use crate::view;
 
 /// 鼠标滚轮滚动一格的距离（逻辑像素）；macOS 上不使用。
 ///
@@ -39,6 +38,11 @@ const WHEEL_NOTCH: f32 = 120.0;
 /// Windows 上滚轮一格默认滚动的行数（行），依据 `SPI_GETWHEELSCROLLLINES` 的默认值。
 #[cfg(windows)]
 const WHEEL_LINES: f32 = 3.0;
+
+/// 触控板调整字号时，每调整一档所需的滚动距离（逻辑像素，经验值）。
+pub(in crate::app) const ZOOM_WHEEL_PIXELS: f32 = 48.0;
+/// 两次触控板滚动事件的间隔超过该值时视为新的手势（毫秒，经验值）。
+const WHEEL_GESTURE_GAP: Duration = Duration::from_millis(150);
 
 /// 鼠标滚轮过渡的最短时长（毫秒）。
 ///
@@ -116,7 +120,7 @@ impl App {
             self.remember_panel_width();
         }
         self.drag = Drag::None;
-        // 拖动分隔条期间不重新断行（`sync_wrap`）；松开后重画，重画前的布局按最终宽度断行。
+        // 拖动分隔条期间不重新断行（`sync_wrap`）；松开后重绘，重绘前的布局按最终宽度断行。
         if was_divider {
             self.request_redraw();
         }
@@ -124,6 +128,84 @@ impl App {
             self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
         }
         self.update_cursor_icon();
+    }
+
+    /// 处理窗口的滚轮事件：按住主修饰键时调整字号（见 [`Self::wheel_zoom`]），否则滚动。
+    pub(in crate::app) fn on_wheel_event(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
+        if !self.wheel_zoom(delta, phase) {
+            self.on_wheel(delta);
+        }
+    }
+
+    /// 只按住主修饰键滚动时，调整鼠标所在的编辑区或终端的字号，或缩放 PDF，返回事件是否已处理。
+    ///
+    /// 触控板的一次手势是否调整字号在手势开始时确定：滚动途中按下修饰键仍是滚动，调整途中
+    /// 松开修饰键后余下的滚动量丢弃。每个事件至多调整一档。
+    fn wheel_zoom(&mut self, delta: MouseScrollDelta, phase: TouchPhase) -> bool {
+        let keys = self.modifiers;
+        let held = self.command_held()
+            && keys.control_key() != keys.super_key()
+            && !keys.shift_key()
+            && !keys.alt_key();
+        let zoomed = match self.target_at(self.mouse.0, self.mouse.1) {
+            Target::Editor if self.on_pdf_body() => Some(Zoomed::Pdf),
+            Target::Editor | Target::Gutter => Some(Zoomed::Editor),
+            Target::Terminal | Target::TerminalBlock(_) => Some(Zoomed::Terminal),
+            _ => None,
+        };
+        let amount = match delta {
+            MouseScrollDelta::LineDelta(_, y) => {
+                if !held || zoomed.is_none() {
+                    self.wheel.zoom = 0.0;
+                    return false;
+                }
+                // macOS 按滚动速度给出不足一格的量，每个事件按一格计。
+                if cfg!(target_os = "macos") {
+                    y.signum()
+                } else {
+                    y
+                }
+            }
+            MouseScrollDelta::PixelDelta(delta) => {
+                let now = Instant::now();
+                let last = self.wheel.pixel_at.replace(now);
+                let fresh = phase == TouchPhase::Started
+                    || last.is_none_or(|at| now.duration_since(at) > WHEEL_GESTURE_GAP);
+                if fresh {
+                    self.wheel.zooming = held && zoomed.is_some();
+                    self.wheel.zoom = 0.0;
+                }
+                if !self.wheel.zooming {
+                    return false;
+                }
+                if !held {
+                    return true;
+                }
+                let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
+                delta.y as f32 / scale / ZOOM_WHEEL_PIXELS
+            }
+        };
+        let Some(zoomed) = zoomed else {
+            return true;
+        };
+        self.wheel.zoom += amount;
+        if self.wheel.zoom.abs() >= 1.0 {
+            let up = self.wheel.zoom > 0.0;
+            self.wheel.zoom = 0.0;
+            self.dismiss_hint();
+            if zoomed == Zoomed::Pdf {
+                self.zoom_pdf(Some(up), Some(self.mouse));
+                return true;
+            }
+            // 调整字号会把光标滚入视野；这里保持编辑区顶部的行不变。
+            let top = self.editor.active().map(|doc| doc.scroll_line);
+            self.step_font_size_in(zoomed == Zoomed::Terminal, Some(up));
+            if let (Some(top), Some(doc)) = (top, self.editor.active_mut()) {
+                doc.scroll_line = top;
+                self.clamp_scroll();
+            }
+        }
+        true
     }
 
     /// 处理滚轮事件 `delta`：滚动鼠标所在区域对应的内容。
@@ -147,6 +229,12 @@ impl App {
             return;
         }
         let line = matches!(delta, MouseScrollDelta::LineDelta(..));
+        // 触控板竖直滚动时常伴有少量横向位移；只按位移较大的方向滚动，
+        // 避免长行在竖直滚动时左右抖动。
+        let (dx, dy) = match dy.abs() >= dx.abs() {
+            true => (0.0, dy),
+            false => (dx, 0.0),
+        };
         let glide = self
             .wheel_glides(delta)
             .then(|| self.next_wheel_glide())
@@ -211,7 +299,7 @@ impl App {
     /// 其他系统上按计时器绘制，帧与屏幕刷新不同步，过渡只增加绘制量而不会更平滑。
     fn next_wheel_glide(&mut self) -> Option<Duration> {
         let now = Instant::now();
-        let interval = self.wheel_at.replace(now).map(|at| now.duration_since(at));
+        let interval = self.wheel.at.replace(now).map(|at| now.duration_since(at));
         #[cfg(target_os = "macos")]
         let follows_refresh = self.display_link.is_some();
         #[cfg(not(target_os = "macos"))]
@@ -221,11 +309,11 @@ impl App {
 
     /// 追加滚动距离 `delta`（逻辑像素）：未完成的距离计入新的总距离，按 `clock` 重新计时。
     pub(in crate::app) fn start_wheel_glide(&mut self, delta: (f32, f32), clock: Clock) {
-        let rest = self.wheel_glide.take().map_or((0.0, 0.0), |g| {
+        let rest = self.wheel.glide.take().map_or((0.0, 0.0), |g| {
             let left = 1.0 - g.done;
             (g.total.0 * left, g.total.1 * left)
         });
-        self.wheel_glide = Some(WheelGlide {
+        self.wheel.glide = Some(WheelGlide {
             total: (rest.0 + delta.0, rest.1 + delta.1),
             done: 0.0,
             clock,
@@ -235,7 +323,7 @@ impl App {
 
     /// 应用本帧对应的滚动距离，绘制前调用；时钟结束时清除过渡状态。
     pub(in crate::app) fn advance_wheel_glide(&mut self) {
-        let Some(glide) = &mut self.wheel_glide else {
+        let Some(glide) = &mut self.wheel.glide else {
             return;
         };
         let progress = glide.clock.progress();
@@ -243,16 +331,16 @@ impl App {
         glide.done = progress;
         let (dx, dy) = (glide.total.0 * step, glide.total.1 * step);
         if glide.clock.done() {
-            self.wheel_glide = None;
+            self.wheel.glide = None;
         }
         self.wheel_by(dx, dy, true);
     }
 
     /// 把滚轮事件引起的绘制推迟到下一次屏幕刷新，每次刷新最多绘制一帧。
     ///
-    /// winit 在 macOS 上收到重画请求后立即绘制，不等待屏幕刷新。滚轮事件与刷新不同步时，部分刷新
-    /// 周期绘制两帧，部分周期没有新帧，滚动出现抖动。没有显示链接（macOS 14 以下）或窗口不可见时
-    /// 不推迟。
+    /// winit 在 macOS 上收到重绘请求后立即绘制，不等待屏幕刷新。滚轮事件与刷新不同步时，部分刷新
+    /// 周期绘制两帧，部分周期没有新帧，滚动出现抖动。
+    /// 没有显示链接（macOS 14 以下）或窗口不可见时不推迟。
     fn pace_wheel_frame(&mut self) {
         #[cfg(target_os = "macos")]
         if self.display_link.is_some() && !self.unseen() {
@@ -263,19 +351,19 @@ impl App {
 
     /// 滚动鼠标所在区域的内容；`dx`、`dy` 的单位是逻辑像素，`line` 表示滚动量来自鼠标滚轮。
     fn wheel_by(&mut self, dx: f32, dy: f32, line: bool) {
-        // 按住 `Shift` 时竖直滚动改为横向滚动，只用于鼠标滚轮。触控板本身能横向滚动，手指离开后
-        // 还会持续发出惯性滚动事件；这时按 `⇧Tab` 等组合键，惯性滚动会被当成横向滚动，
-        // 编辑区突然右移几列。
+        // 按住 `Shift` 时竖直滚动改为横向滚动，只用于鼠标滚轮。触控板本身支持横向滚动，手指离开
+        // 后仍持续发出惯性滚动事件；此时按 `⇧Tab` 等组合键，惯性滚动会被视为横向滚动，
+        // 使编辑区意外右移数列。
         let shift_wheel = self.modifiers.shift_key() && dx == 0.0 && line;
 
         let (x, y) = self.mouse;
         let l = self.layout;
 
-        // 窗口内的提示框打开时什么也不滚；菜单打开时只滚动菜单。
+        // 窗口内的提示框打开时不滚动任何内容；菜单打开时只滚动菜单。
         if self.alert.is_some() || self.popup_wheel(dy) {
             return;
         }
-        // 对话框不滚动（交互式变基的列表除外）；下方的编辑区和文件树也不动。
+        // 对话框不滚动（交互式变基的列表除外），下方的编辑区和文件树同样不滚动。
         if self.form_dialog.is_some() {
             self.rebase_wheel(dy);
             return;
@@ -286,7 +374,7 @@ impl App {
         } else {
             x
         };
-        // 设置浮层打开时滚轮只滚动浮层的分组区，下方的编辑区和文件树不动。
+        // 设置浮层打开时滚轮只滚动浮层的分组区，下方的编辑区和文件树不滚动。
         if self.settings.open {
             if self.settings_layout().body.contains(x, y) {
                 self.settings_scroll_by(dy);
@@ -295,7 +383,7 @@ impl App {
         }
 
         // 查找条覆盖在内容上：滚轮不滚动下方的终端，输入框内的文字过长时横向滚动。
-        if !self.picker_open
+        if !self.picker.open
             && self
                 .terminal_find_bar()
                 .is_some_and(|bar| bar.contains(x, y))
@@ -309,20 +397,21 @@ impl App {
             return;
         }
 
-        if self.picker_open && l.picker.contains(x, y) {
+        if self.picker.open && l.picker.contains(x, y) {
             // 滚轮只滚动列表，选中项不变。
-            let rows = self.picker_hits.len();
-            let max = (rows as f32 * PICKER_ROW - view::picker_span(self)).max(0.0);
-            if self.picker_places.is_some() {
-                // 位置浮窗按整行滚动，任何时候都只露出完整的行：滚动量攒够一行才滚一行，
-                // 触控板的小幅滑动也不会让行停在半截上。
-                self.places_wheel += dy;
-                let steps = (self.places_wheel / PICKER_ROW).trunc();
-                self.places_wheel -= steps * PICKER_ROW;
+            let rows = self.picker.hits.len();
+            let max = (rows as f32 * PICKER_ROW - crate::app::workspace::picker::picker_span(self))
+                .max(0.0);
+            if self.picker.places.is_some() {
+                // 位置浮窗按整行滚动，始终只显示完整的行：滚动量累计满一行才滚动一行，
+                // 触控板的小幅滑动不会使行只显示一部分。
+                self.picker.places_wheel += dy;
+                let steps = (self.picker.places_wheel / PICKER_ROW).trunc();
+                self.picker.places_wheel -= steps * PICKER_ROW;
                 let max = (max / PICKER_ROW).ceil() * PICKER_ROW;
-                self.picker_scroll = (self.picker_scroll - steps * PICKER_ROW).clamp(0.0, max);
+                self.picker.scroll = (self.picker.scroll - steps * PICKER_ROW).clamp(0.0, max);
             } else {
-                self.picker_scroll = (self.picker_scroll - dy).clamp(0.0, max);
+                self.picker.scroll = (self.picker.scroll - dy).clamp(0.0, max);
             }
             // 列表滚动后，鼠标下方的行已改变。
             self.set_hover(self.hover_at(x, y));
@@ -332,6 +421,14 @@ impl App {
             let max = self.tabs.max_scroll();
             self.tabs.scroll = (self.tabs.scroll - delta).clamp(0.0, max);
             // 标签滚动后，鼠标下方的标签已改变。
+            self.set_hover(self.hover_at(x, y));
+        } else if self.log_diff_tree().is_some()
+            && (self.commit_parts().list.contains(x, y) || self.in_commit_overflow(x, y))
+        {
+            self.with_log_list(|app| {
+                let max = app.commit_max_scroll();
+                app.commit.scroll = (app.commit.scroll - dy).clamp(0.0, max);
+            });
             self.set_hover(self.hover_at(x, y));
         } else if self.commit_shown() && self.commit_parts().message.contains(x, y) {
             // 提交信息框里的文字超出最大行数时在框内滚动；上限在绘制时按文字的行数收紧。
@@ -355,7 +452,7 @@ impl App {
             let rows = self.editor.workspace.as_ref().map_or(0, |w| w.rows().len());
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
             let max = tree_max_scroll(l.tree, rows).max(0.0);
-            self.tree_scroll = (self.tree_scroll - dy).clamp(0.0, max);
+            self.tree.scroll = (self.tree.scroll - dy).clamp(0.0, max);
             // 触控板的斜向滚动只取主方向，竖直滚动时不会同时产生左右位移。
             if dx != 0.0 {
                 let max_x = self.tree_max_scroll_x();
@@ -364,7 +461,7 @@ impl App {
                 } else {
                     0.0
                 };
-                self.tree_scroll_x = (self.tree_scroll_x + delta).clamp(0.0, max_x);
+                self.tree.scroll_x = (self.tree.scroll_x + delta).clamp(0.0, max_x);
             }
 
             // 文件树滚动后，鼠标下方的行已改变。
@@ -385,9 +482,19 @@ impl App {
         } else if l.terminal.contains(x, y) {
             self.terminal_wheel(dy);
         } else if self.markdown.area.contains(x, y) {
-            self.scroll_markdown(dy);
+            // 横向滚动（按住 `Shift` 时的竖直滚轮）落在比正文宽的表格上时滚动该表格，其余按
+            // 竖直方向滚动预览。
+            let across = if shift_wheel { dy } else { dx };
+            let table = across != 0.0
+                && crate::app::preview::markdown::laid::scroll_table(self, x, y, across);
+            if !table {
+                self.scroll_markdown(dy);
+            }
+        } else if self.pdf.strip.contains(x, y) {
+            self.scroll_pdf_strip(dy);
         } else if self.pdf.area.contains(x, y) {
-            self.scroll_pdf(dy);
+            let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
+            self.scroll_pdf_by(dx, dy);
         } else if self.table_at(x, y) {
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
             self.scroll_table(dx, dy, (x, y));
@@ -396,7 +503,7 @@ impl App {
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
 
             if let Some(doc) = self.editor.active_mut() {
-                doc.scroll_line -= dy / self.fonts.line_height;
+                doc.scroll_line -= f64::from(dy / self.fonts.line_height);
                 doc.scroll_x -= dx;
             }
 
@@ -405,4 +512,27 @@ impl App {
 
         self.request_redraw();
     }
+}
+
+/// 按住主修饰键滚动时调整的对象。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Zoomed {
+    Editor,
+    Terminal,
+    Pdf,
+}
+
+/// 鼠标滚轮滚动的过渡状态。
+#[derive(Default)]
+pub struct Wheel {
+    /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
+    pub(crate) glide: Option<crate::app::input::mouse::WheelGlide>,
+    /// 上一次鼠标滚轮整格滚动的时刻，用于按两格的间隔确定过渡时长。
+    pub(in crate::app) at: Option<Instant>,
+    /// 调整字号时累计的滚动量（档），满一档调整一次。
+    pub(in crate::app) zoom: f32,
+    /// 当前的触控板手势是否用于调整字号。
+    pub(in crate::app) zooming: bool,
+    /// 上一次触控板滚动事件的时刻，用于区分两次手势。
+    pub(in crate::app) pixel_at: Option<Instant>,
 }

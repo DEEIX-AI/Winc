@@ -1,12 +1,13 @@
 //! 按下鼠标：先按焦点和浮层分，再落到各区域；连击的判断。
 
+use super::super::touch;
 use super::*;
 
 impl App {
     /// 处理鼠标按键 `button` 在当前鼠标位置按下。
     pub(in crate::app) fn on_mouse_down(&mut self, button: MouseButton) {
         // 选择面板的动画期间高度还在变，而点击按最终的布局：先取消动画，使显示直接到位。
-        if self.picker_fold.take().is_some() {
+        if self.picker.fold.take().is_some() {
             self.relayout();
         }
         let (x, y) = self.mouse;
@@ -58,7 +59,7 @@ impl App {
         if button == MouseButton::Middle
             && !self.settings.open
             && self.form_dialog.is_none()
-            && !self.picker_open
+            && !self.picker.open
             && l.text.contains(x, y)
             && self.active_shows_text()
             && self.editor.active().is_some_and(|d| d.diff.is_none())
@@ -70,7 +71,7 @@ impl App {
         if button == MouseButton::Middle
             && !self.settings.open
             && self.form_dialog.is_none()
-            && !self.picker_open
+            && !self.picker.open
             && self.over_diff_editable(x, y)
         {
             self.start_diff_columns(x, y);
@@ -114,8 +115,8 @@ impl App {
 
         // 改动卡片：点按钮执行；点卡片里的其他位置什么都不做；点卡片外面关掉卡片，
         // 该事件仍然向下传递。
-        if let Some(card) = self.changes.card {
-            if let Some(target) = hit(&self.changes.hits, x, y) {
+        if let Some(card) = self.hits.changes_card {
+            if let Some(target) = hit(&self.hits.changes, x, y) {
                 self.press_change(target);
                 return;
             }
@@ -144,7 +145,8 @@ impl App {
         let target = self.target_at(x, y);
         let keeps_preview = matches!(
             target,
-            Target::MarkdownText | Target::Scrollbar(Scrollbar::Markdown, _)
+            Target::MarkdownText
+                | Target::Scrollbar(Scrollbar::Markdown | Scrollbar::MarkdownTable, _)
         );
         if !keeps_preview && self.markdown.focused {
             self.markdown.focused = false;
@@ -163,7 +165,7 @@ impl App {
             Target::Picker => {
                 self.click_picker(x, y);
             }
-            _ if self.picker_open => self.close_picker(),
+            _ if self.picker.open => self.close_picker(),
             Target::Scrollbar(
                 bar @ (Scrollbar::Panel | Scrollbar::Commit | Scrollbar::Outline),
                 grab,
@@ -181,7 +183,7 @@ impl App {
             Target::Search => self.click_search(x, y),
             // 双击分隔条恢复默认宽度。
             Target::Splitter if self.click_count(x, y) == 2 => {
-                self.panel_width = DEFAULT_PANEL_WIDTH;
+                self.sidebar.width = DEFAULT_PANEL_WIDTH;
                 self.remember_panel_width();
                 self.relayout();
                 self.request_redraw();
@@ -191,7 +193,7 @@ impl App {
                 let most = (self.layout.window.w - 320.0).max(crate::theme::MIN_PANEL_WIDTH);
                 self.drag = Drag::Splitter {
                     start_x: x,
-                    start_width: self.panel_width.min(most),
+                    start_width: self.sidebar.width.min(most),
                 };
             }
             Target::TreeTool(tool) => self.run_tree_tool(tool),
@@ -205,6 +207,8 @@ impl App {
             Target::MarkdownLink(link) => self.open_markdown_link(link),
             Target::MarkdownToc(target) => self.press_toc(target),
             Target::MarkdownText => self.click_markdown(x, y),
+            Target::PdfThumb(to) => self.scroll_pdf_to(to),
+            Target::PdfTool(tool) => self.press_pdf_tool(tool),
             Target::Tab(index, true) => {
                 self.close_pressed = self.editor.documents.get(index).map(|d| d.id);
             }
@@ -386,13 +390,36 @@ impl App {
 
     /// 处理顶栏空白处的点击：拖动窗口；双击时按系统设置缩放或最小化窗口。
     fn click_title_bar(&mut self, x: f32, y: f32) {
+        if self.title_bar_pressed(x, y) {
+            self.title_bar_double_click();
+        } else if let Some(window) = &self.window.handle {
+            let _ = window.drag_window();
+        }
+    }
+
+    /// 返回连击判断允许的位置偏差（逻辑像素）。
+    ///
+    /// 当前点击由触摸点按产生时取 [`touch::TAP_SLOP`]，容纳两次落指之间的位置偏差；
+    /// 鼠标点击取 4 逻辑像素，容纳按下与松开之间指针的轻微移动。
+    fn repeat_slop(&self) -> f32 {
+        if self.touch.tapping {
+            touch::TAP_SLOP
+        } else {
+            4.0
+        }
+    }
+
+    /// 记录顶栏空白处按下的位置和时刻，返回本次按下是否构成双击。
+    ///
+    /// 构成双击时清除记录，下一次按下重新计数。鼠标点击与触摸点按共用该判断。
+    pub(in crate::app) fn title_bar_pressed(&mut self, x: f32, y: f32) -> bool {
+        let slop = self.repeat_slop();
         let double = self.title_click.take().is_some_and(|c| {
-            c.at.elapsed() < DOUBLE_CLICK && (c.x - x).abs() < 4.0 && (c.y - y).abs() < 4.0
+            c.at.elapsed() < DOUBLE_CLICK && (c.x - x).abs() < slop && (c.y - y).abs() < slop
         });
 
         if double {
-            self.title_bar_double_click();
-            return;
+            return true;
         }
 
         self.title_click = Some(Click {
@@ -402,21 +429,20 @@ impl App {
             count: 1,
         });
 
-        if let Some(window) = &self.window {
-            let _ = window.drag_window();
-        }
+        false
     }
 
     /// 记录这次点击并返回连击次数：1 为单击，2 为双击，3 为三击，再点击则重新从 1 开始。
     ///
-    /// 相邻两次点击的间隔小于 `DOUBLE_CLICK`、位置相差小于 4 逻辑像素时算连击；位置容差为
-    /// 经验值，可容纳按下与松开之间鼠标的轻微移动。
+    /// 相邻两次点击的间隔小于 `DOUBLE_CLICK`，且横纵坐标之差均小于 [`App::repeat_slop`]
+    /// 返回的容差时，计为连击。
     pub(in crate::app) fn click_count(&mut self, x: f32, y: f32) -> u8 {
+        let slop = self.repeat_slop();
         let count = match self.last_click {
             Some(c)
                 if c.at.elapsed() < DOUBLE_CLICK
-                    && (c.x - x).abs() < 4.0
-                    && (c.y - y).abs() < 4.0 =>
+                    && (c.x - x).abs() < slop
+                    && (c.y - y).abs() < slop =>
             {
                 c.count % 3 + 1
             }

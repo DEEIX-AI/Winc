@@ -34,10 +34,23 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::ZOOM_RANGE`]。
     pub ui_zoom: Option<u16>,
+    /// 全部文字的字重，默认为 400（各字体自身的字重）；范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    pub ui_font_weight: Option<u16>,
+    /// 窗口背景图片的路径；没写时没有背景图。
+    pub ui_background_image: Option<String>,
+    /// 背景图片在底色之上的不透明度（百分比），默认为 15；范围见
+    /// [`Config::BACKGROUND_OPACITY_RANGE`]。
+    pub ui_background_opacity: Option<f32>,
+    /// 背景图片的显示方式，默认为填充。
+    pub ui_background_fit: Option<BackgroundFit>,
     /// 是否用系统的标题栏（配置中的 `"titleBarStyle": "native"`）。
     ///
     /// 写成 `"custom"` 或没写时，窗口按钮在 winc 的顶栏中绘制。只影响 macOS 以外的平台。
     pub ui_native_title_bar: Option<bool>,
+    /// 是否播放界面的过渡动画（面板、弹出层、列表的变化）。
+    ///
+    /// 没写时跟随系统的「减弱动态效果」设置；系统没有该设置或未读取时为是。
+    pub ui_animations: Option<bool>,
     /// 制表符的显示宽度（空格数）；文件用制表符缩进时，也是每级缩进的宽度。
     ///
     /// 空格缩进的宽度不取此值，按文件内容判断，判断不出时用语言的默认缩进。
@@ -93,7 +106,8 @@ pub struct Config {
     ///
     /// 提示框上勾选「不再询问」后写成 `false`。
     pub confirm_drag_and_drop: Option<bool>,
-    /// 文件树是否把连续的单子目录合并显示为一行；未设置时合并。
+    /// 文件树、Git 改动列表和历史提交的文件列表是否把连续的单子目录合并显示为一行；未设置时
+    /// 合并。
     pub compact_folders: Option<bool>,
     /// 在文件树中单击文件时是否在预览标签中打开；未设置时为否。
     pub preview_on_click: Option<bool>,
@@ -111,7 +125,7 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::SCROLLBACK_RANGE`]，默认 10000 行。
     pub terminal_scrollback: Option<u32>,
-    /// 终端里哪一边的 ⌥ 当 Meta 用（发 `ESC` 前缀），默认左边。
+    /// 终端中视为 Meta（按键前加 `ESC`）的 ⌥ 键，默认为左侧；只在 macOS 上生效。
     pub option_as_meta: Option<OptionAsMeta>,
     /// 终端的对比度保护：字与底色的对比度低于设定值时把字调亮或调暗，0 表示关闭。
     ///
@@ -136,13 +150,17 @@ pub struct Config {
     pub terminal_right: Option<bool>,
     /// 是否启用 Git 模块（文件状态、分支、变更视图），默认为否。
     pub git_enabled: Option<bool>,
+    /// 发布、推送或同步分支前是否先确认目标远程仓库，默认为是。
+    ///
+    /// 提示框上勾选「不再询问」后写成 `false`，可在设置中重新打开。
+    pub git_confirm_push: Option<bool>,
     /// 在打开的目录下查找仓库的层数，默认见 [`Config::REPOSITORY_SCAN_DEPTH`]，可用范围见
     /// [`Config::REPOSITORY_SCAN_DEPTH_RANGE`]。
     pub repository_scan_depth: Option<usize>,
-    /// 新建的工作树放在哪个目录下（按仓库分开，`<目录>/<仓库名>/<分支名>`）；可以用 `~/`，相对
-    /// 路径相对于主工作树。
+    /// 新建工作树的存放目录，按仓库分开：`<目录>/<仓库名>/<分支名>`。
     ///
-    /// 没写时放在仓库旁边的 `<仓库名>.worktrees` 里。
+    /// 开头的 `~/` 指仓库所在系统（本机或 WSL 发行版）中用户的主目录，相对路径相对于主工作树。
+    /// 未设置，或者该目录与仓库不在同一系统中时，存放在仓库旁边的 `<仓库名>.worktrees` 中。
     pub git_worktree_root: Option<String>,
     /// 新建工作树时复制过去的被忽略的文件（gitignore 写法的 glob，如 `.env*`），默认不复制。
     pub git_worktree_copy: Vec<String>,
@@ -219,6 +237,30 @@ impl RenderWhitespace {
     ];
 }
 
+/// 背景图在窗口中的显示方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackgroundFit {
+    /// 等比缩放并裁剪，铺满窗口。
+    #[default]
+    Fill,
+    /// 等比缩放到整张可见。
+    Fit,
+    /// 拉伸到窗口的大小。
+    Stretch,
+    /// 按原始大小平铺。
+    Tile,
+}
+
+impl BackgroundFit {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [BackgroundFit; 4] = [
+        BackgroundFit::Fill,
+        BackgroundFit::Fit,
+        BackgroundFit::Stretch,
+        BackgroundFit::Tile,
+    ];
+}
+
 /// 配色方案的选择。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeChoice {
@@ -244,6 +286,16 @@ impl Config {
     /// 下限时 13 点的界面文字约为 9 点，仍可辨认；上限时 4K 屏幕在系统缩放为 100% 的情况下，
     /// 界面与 1080p 屏幕上的原始大小相同。超出范围的值在读入时忽略并报告，小数取整。
     pub const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 70.0..=200.0;
+    /// 字重的合法范围；超出的值在读入时忽略并报告，小数取整。
+    pub const FONT_WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 100.0..=900.0;
+    /// 默认的字重。
+    pub const FONT_WEIGHT: u16 = 400;
+    /// 背景图片不透明度的合法范围（百分比）：0 时不显示图片，100 时图片完全盖住底色。
+    ///
+    /// 超出范围的值在读入时忽略并报告。
+    pub const BACKGROUND_OPACITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=100.0;
+    /// 背景图片不透明度的默认值（百分比）。
+    pub const BACKGROUND_OPACITY: f32 = 15.0;
     /// 制表符长度的合法范围（空格数）。
     ///
     /// 超出范围的值在读入时忽略并报告；上下限为经验值。

@@ -10,7 +10,7 @@ pub(crate) fn tooltip(app: &App) -> Option<(Rect, String)> {
 }
 
 pub(crate) use super::settings::draw_cached as settings_draw_cached;
-pub(crate) use super::workspace::top_bar::distinct_folder;
+pub(crate) use crate::app::workspace::tab_names::distinct_folder;
 
 #[test]
 fn fit_keeps_as_many_characters_as_the_width_allows() {
@@ -150,4 +150,19 @@ fn run_buttons_give_way_to_the_tabs() {
         let room = run_menu_width(name, 1000.0).unwrap() - super::terminal::RUN_NAME_CHROME;
         assert!(room >= name, "{name}");
     }
+}
+
+#[test]
+fn tooltip_lines_wrap_to_the_room_and_keep_continuations_in_the_body() {
+    // 每个字符宽 10 逻辑像素。
+    let measure = |s: &str| s.chars().count() as f32 * 10.0;
+    assert_eq!(
+        super::tip_lines("abcdef ghij\nsrc", 60.0, 0.0, measure),
+        vec![("abcdef", true), ("ghij", true), ("src", false)]
+    );
+    // 快捷键只占第一行：第一段的宽度减去快捷键一栏，其余各段仍按整行宽度折行。
+    assert_eq!(
+        super::tip_lines("abc def\nabc def", 70.0, 20.0, measure),
+        vec![("abc", true), ("def", true), ("abc def", false)]
+    );
 }

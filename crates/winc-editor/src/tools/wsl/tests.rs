@@ -41,9 +41,15 @@ fn other_paths_are_not_in_a_distribution() {
     }
 }
 
+/// 换算回的路径沿用原来的前缀、主机名和发行版名称的写法，与根目录下的路径可以直接比较。
 #[test]
 fn paths_convert_back_with_the_same_host() {
-    for root in [r"\\wsl.localhost\Debian\work", r"\\wsl$\Debian\work"] {
+    for root in [
+        r"\\wsl.localhost\Debian\work",
+        r"\\wsl$\Debian\work",
+        r"\\WSL.LOCALHOST\debian\work",
+        r"\\?\UNC\wsl$\Debian\work",
+    ] {
         let location = locate(Path::new(root)).unwrap();
         let back = location.windows_path(&location.path);
         assert_eq!(back, PathBuf::from(root));
@@ -71,6 +77,8 @@ fn only_windows_uses_the_conversion() {
     let linux = PathBuf::from("/home/me/a.rs");
     assert_eq!(from_terminal(root, linux.clone()), linux);
     assert!(reachable(root));
+    assert!(same_system(root, Path::new("/home/me")));
+    assert_eq!(home_dir(root), std::env::var_os("HOME").map(PathBuf::from));
 }
 
 #[test]
@@ -262,9 +270,98 @@ fn the_identity_script_copies_the_mode_and_refuses_hard_links() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 复制脚本保留可执行位和符号链接，按需建出上层目录，逐项报告完成的路径；失败时停在该项。
+#[cfg(unix)]
+#[test]
+fn copying_inside_the_distribution_keeps_modes_and_links() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::test_util::scratch("wsl-copy");
+    let (from, to) = (dir.join("from"), dir.join("to"));
+    std::fs::create_dir_all(from.join("node_modules/.bin")).unwrap();
+    std::fs::create_dir_all(&to).unwrap();
+    let tool = from.join("node_modules/.bin/tool");
+    std::fs::write(&tool, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(".bin/tool", from.join("node_modules/link")).unwrap();
+    std::fs::create_dir_all(from.join("config")).unwrap();
+    std::fs::write(from.join("config/.env"), "A=1").unwrap();
+    let run = |entries: &[&str]| {
+        Command::new("sh")
+            .args(["-c", COPY_ENTRIES, "sh"])
+            .args([&from, &to])
+            .args(entries)
+            .output()
+            .unwrap()
+    };
+
+    let output = run(&["node_modules", "config/.env"]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"node_modules\0config/.env\0");
+    let copied = to.join("node_modules/.bin/tool");
+    let mode = std::fs::metadata(&copied).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+    let link = std::fs::read_link(to.join("node_modules/link")).unwrap();
+    assert_eq!(link, Path::new(".bin/tool"));
+    assert_eq!(std::fs::read(to.join("config/.env")).unwrap(), b"A=1");
+
+    let output = run(&["config/.env", "missing", "config"]);
+    assert!(!output.status.success());
+    assert_eq!(output.stdout, b"config/.env\0");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_temporary_index_reaches_git_in_the_distribution() {
     assert!(GIT_ENV.split(':').any(|name| name == "GIT_INDEX_FILE"));
+}
+
+/// 回归：`WSLENV` 只保留命令上设置了的变量，列出而未设置的变量（如普通命令的 `GIT_INDEX_FILE`）
+/// 不传入发行版，否则在发行版内取空字符串；只从发行版传回的项保留，已有的顺序不变。
+#[test]
+fn only_variables_set_on_the_command_are_forwarded() {
+    let forwarded = |command: &mut Command| {
+        drop_unset(command);
+        let list = command
+            .get_envs()
+            .find(|(name, _)| *name == "WSLENV")
+            .and_then(|(_, value)| value)
+            .unwrap();
+        list.to_string_lossy().into_owned()
+    };
+    let mut command = Command::new("wsl.exe");
+    command
+        .env_clear()
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "/a")
+        .env("WSLENV", format!("{GIT_ENV}:{ASKPASS_ENV}"));
+    command.env_remove("LC_ALL");
+    assert_eq!(
+        forwarded(&mut command),
+        "GIT_TERMINAL_PROMPT:GIT_ASKPASS/pu:SSH_ASKPASS_PROMPT/w"
+    );
+
+    // 部分提交设置了临时暂存区：照常传递。
+    command.env("GIT_INDEX_FILE", "/tmp/my index");
+    command.env("WSLENV", GIT_ENV);
+    assert_eq!(
+        forwarded(&mut command),
+        "GIT_TERMINAL_PROMPT:GIT_INDEX_FILE"
+    );
+
+    // 没有 `WSLENV` 的命令不受影响。
+    let mut command = Command::new("git");
+    drop_unset(&mut command);
+    assert!(command.get_envs().all(|(name, _)| name != "WSLENV"));
+}
+
+/// askpass 程序的路径换算为发行版内的路径，端点在两个方向上都传递，`ssh` 的提示类型传回 Windows。
+#[test]
+fn askpass_variables_cross_into_the_distribution_and_back() {
+    let names: Vec<_> = ASKPASS_ENV.split(':').collect();
+    for name in ["GIT_ASKPASS/pu", "SSH_ASKPASS/pu", "SSH_ASKPASS_PROMPT/w"] {
+        assert!(names.contains(&name), "{name}");
+    }
+    assert!(names.contains(&crate::git::ASKPASS_ENDPOINT));
 }
 
 #[cfg(windows)]
@@ -291,6 +388,14 @@ fn windows_converts_paths_inside_a_distribution() {
         from_terminal(local, PathBuf::from("/a")),
         PathBuf::from("/a")
     );
+    assert!(same_system(root, other));
+    assert!(same_system(root, Path::new(r"\\WSL$\ubuntu\srv")));
+    assert!(!same_system(
+        root,
+        Path::new(r"\\wsl.localhost\Debian\repo")
+    ));
+    assert!(!same_system(root, local));
+    assert!(same_system(local, Path::new(r"D:\work")));
     let temp = temp_dir(root);
     assert_eq!(temp, PathBuf::from(r"\\wsl.localhost\Ubuntu\tmp"));
     assert_eq!(

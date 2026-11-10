@@ -6,9 +6,9 @@ $ErrorActionPreference = 'Stop'
 if ($Target -ne 'x86_64-pc-windows-msvc') { throw "unsupported Windows target: $Target" }
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 $version = (& node "$PSScriptRoot/../common/version.mjs").Trim()
-if ($LASTEXITCODE -ne 0) { throw 'cannot read the Cargo.toml version' }
+if ($LASTEXITCODE -ne 0) { throw 'cannot read the VERSION file' }
 $config = Get-Content "$env:RUNNER_TEMP/build-config.json" -Raw | ConvertFrom-Json
-if ($config.version -ne $version) { throw 'build configuration does not match the Cargo.toml version' }
+if ($config.version -ne $version) { throw 'build configuration does not match the VERSION file' }
 $release = "$root/target/$Target/release"
 $bundle = "$release/bundle"
 $stage = "$bundle/stage"
@@ -46,7 +46,7 @@ $wix = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
 if (-not (Test-Path $makensis) -or -not (Test-Path "$wix/candle.exe")) { throw 'NSIS 3.11 and WiX 3.14.1 are required' }
 $numericVersion = (($config.msiVersion.Split('.') + @('0', '0', '0', '0'))[0..3] -join '.')
 $nsis = "$bundle/nsis/$stem-setup.exe"
-$nsisArgs = @('/V2', "/DVERSION=$version", "/DVIVERSION=$numericVersion", "/DSOURCE=$stage", "/DOUT_FILE=$nsis")
+$nsisArgs = @('/V2', '/INPUTCHARSET', 'UTF8', "/DVERSION=$version", "/DVIVERSION=$numericVersion", "/DSOURCE=$stage", "/DOUT_FILE=$nsis")
 if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) { $nsisArgs += "/DSIGN_SCRIPT=$PSScriptRoot/sign.ps1" }
 & $makensis @nsisArgs "$root/release/windows/installer.nsi"
 if ($LASTEXITCODE -ne 0) { throw "makensis failed with $LASTEXITCODE" }

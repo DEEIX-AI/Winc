@@ -41,7 +41,7 @@ function formatChecksums(entries) {
 
 // Every platform's files must be present, and nothing else.
 function releaseFiles({ version, tag, directory }) {
-  if (tag !== `v${version}`) throw new Error(`Tag ${tag} does not match the Cargo.toml version ${version}`);
+  if (tag !== `v${version}`) throw new Error(`Tag ${tag} does not match the VERSION file ${version}`);
   const files = releasePlatforms.flatMap((platform) => releaseAssets(platform, version).map((spec) => spec.name));
   for (const name of files) requireFile(join(directory, name));
   const allowed = new Set([...files, CHECKSUMS_FILE]);
@@ -67,6 +67,7 @@ function existingDraft(releases, tag) {
 
 function releaseNotes(version) {
   const stem = `Winc-${version}`;
+  const arch = releaseAssets("linux-x64", version).find((asset) => asset.directory === "arch");
   return `### ⏬ Download
 
 | Platform | Download |
@@ -74,7 +75,7 @@ function releaseNotes(version) {
 | macOS · Apple silicon | \`${stem}-macos-arm64.dmg\` |
 | macOS · Intel | \`${stem}-macos-x64.dmg\` |
 | Linux · x86_64 | \`${stem}-linux-x64.AppImage\` or \`.deb\` |
-| Windows · x86_64 | \`${stem}-windows-x64-setup.exe\` |
+${arch ? `| Arch Linux · x86_64 | \`${arch.name}\` |\n` : ""}| Windows · x86_64 | \`${stem}-windows-x64-setup.exe\` |
 | Windows · x86_64 · MSI | \`${stem}-windows-x64.msi\` |
 | Windows · x86_64 · Portable | \`${stem}-windows-x64-portable.zip\` |
 

@@ -1,8 +1,10 @@
 //! Windows 上交由系统的操作，读取的系统设置，以及按屏幕刷新绘制动画的显示链接。
 
 mod display_link;
+mod touch;
 
 pub use display_link::DisplayLink;
+pub use touch::{WindowHitTest, WindowInput};
 
 use std::io;
 use std::os::windows::ffi::OsStrExt;
@@ -80,6 +82,22 @@ pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
         )));
     }
     Ok(())
+}
+
+/// 离开当前接上的控制台；没有接上控制台时没有效果。
+#[allow(unsafe_code)] // FreeConsole
+pub fn detach_console() {
+    use windows_sys::Win32::System::Console::FreeConsole;
+    // SAFETY: 没有参数；未接上控制台时调用失败，没有其他影响。
+    unsafe { FreeConsole() };
+}
+
+/// 允许进程 `pid` 把自己的窗口切到前台；本进程没有这项权限时没有效果。
+#[allow(unsafe_code)] // AllowSetForegroundWindow
+pub fn allow_foreground(pid: u32) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
+    // SAFETY: 只传入进程编号；调用失败时没有其他影响。
+    unsafe { AllowSetForegroundWindow(pid) };
 }
 
 /// 从命令行启动时接上该命令行的控制台，之后的 `println!`、`eprintln!` 输出到该控制台；从图形
