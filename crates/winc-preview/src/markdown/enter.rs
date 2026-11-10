@@ -232,6 +232,109 @@ pub fn enter<'a>(
     }
 }
 
+/// 返回有序列表中新增一项之后，其后同一层各项需要修改的序号。
+///
+/// `item` 是新增的一项所在的行，`below` 是其后的各行。返回的每一项依次为：行在 `below` 中的
+/// 序号、序号在该行中的范围（字节偏移）、新的序号。子项、续行和空行不改；遇到序号已经正确的
+/// 项、缩进更少的行或不是有序列表项的同层行时停止。`item` 不是有序列表项时返回空表。
+pub fn renumber<S: AsRef<str>>(
+    item: &str,
+    below: impl Iterator<Item = S>,
+) -> Vec<(usize, std::ops::Range<usize>, u64)> {
+    let p = parse(item);
+    let Some(mut next) = p.marker.as_ref().and_then(Marker::number) else {
+        return Vec::new();
+    };
+    let mut changes = Vec::new();
+    for (i, line) in below.enumerate() {
+        let line = line.as_ref();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let q = parse(line);
+        if depth(q.quote) != depth(p.quote) {
+            break;
+        }
+        let indent = match &q.marker {
+            Some(_) => q.indent.len(),
+            None => q.rest.len() - q.rest.trim_start().len(),
+        };
+        if indent > p.indent.len() {
+            continue;
+        }
+        let Some((m, number)) = q.marker.as_ref().and_then(|m| Some((m, m.number()?))) else {
+            break;
+        };
+        next += 1;
+        if indent < p.indent.len() || number == next {
+            break;
+        }
+        let start = q.quote.len() + q.indent.len();
+        changes.push((i, start..start + m.bullet.len() - 1, next));
+    }
+    changes
+}
+
+/// 返回 `line` 开头的引用标记（`>`）和缩进的长度（字节）。
+///
+/// 段落的续行中这一部分不显示；可编辑的预览移动光标时跳过。
+pub fn indent(line: &str) -> usize {
+    let (quote, indent) = margins(line);
+    quote + indent
+}
+
+/// 返回 `line` 开头引用标记（`>`）的长度和其后缩进的长度（字节）。
+pub fn margins(line: &str) -> (usize, usize) {
+    let p = parse(line);
+    let indent = match p.marker {
+        Some(_) => p.indent.len(),
+        None => p.rest.len() - p.rest.trim_start_matches([' ', '\t']).len(),
+    };
+    (p.quote.len(), indent)
+}
+
+/// 返回在行首的任务框简写之后输入空格时要做的修改；不是简写时返回 `None`，按普通输入处理。
+///
+/// `before`、`after` 是光标所在行在光标前后的文字。简写是行首（引用标记、缩进、列表记号
+/// 之后）的 `[]`、`[ ]`、`[x]`，方括号可以是全角的 `【】`，也可以紧跟在 `-`、`*`、`+` 之后
+/// （`-[]`）；只输入了左括号、右括号由括号配对补在光标之后时同样有效。修改后该行成为任务项
+/// `- [ ] `，已有列表记号时沿用该记号。
+pub fn task(before: &str, after: &str) -> Option<Edit> {
+    let p = parse(before);
+    let (bullet, body) = match &p.marker {
+        Some(m) if m.task => return None,
+        Some(_) => (None, p.rest),
+        None => {
+            let body = p.rest.trim_start_matches([' ', '\t']);
+            match body.chars().next() {
+                Some(c @ ('-' | '*' | '+')) if body.len() > 1 => (Some((c, 1)), &body[1..]),
+                _ => (Some(('-', 0)), body),
+            }
+        }
+    };
+    let closer = after.chars().next().filter(|c| matches!(c, ']' | '】'));
+    let (checked, close) = match (body, closer) {
+        ("[]" | "[ ]" | "【】" | "【 】", _) => (false, 0),
+        ("[x]" | "[X]", _) => (true, 0),
+        ("[" | "【", Some(c)) => (false, c.len_utf8()),
+        ("[x" | "[X", Some(c)) => (true, c.len_utf8()),
+        _ => return None,
+    };
+    // 其后紧跟 `(`、`[`、`:` 时是链接或链接定义，不是任务框。
+    if after[close..].starts_with(['(', '[', ':']) {
+        return None;
+    }
+    let mark = if checked { "[x] " } else { "[ ] " };
+    Some(Edit {
+        before: body.len() + bullet.map_or(0, |(_, glued)| glued),
+        after: close,
+        text: match bullet {
+            Some((c, _)) => format!("{c} {mark}"),
+            None => mark.to_owned(),
+        },
+    })
+}
+
 /// 返回在光标紧跟块标记（光标前只有标记）时按删除键要做的修改；否则返回 `None`，按普通删除
 /// 处理。
 ///

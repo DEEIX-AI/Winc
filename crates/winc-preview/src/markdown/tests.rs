@@ -589,3 +589,39 @@ fn empty_list_items_hold_an_empty_paragraph() {
     };
     assert_eq!(items[1].blocks[0], Block::Rule(Some("1. 甲\n2. ".len())));
 }
+
+#[test]
+fn block_markers_need_a_space_to_take_effect() {
+    // 只有记号、后面没有空格：按文字显示，不成为列表项、标题、引用。
+    for text in ["-", "1.", "#", "##", ">"] {
+        let doc = parse(text);
+        let block = match &doc.blocks[0] {
+            Block::List(_, items) => {
+                assert!(items[0].bare, "{text}");
+                &items[0].blocks[0]
+            }
+            block => block,
+        };
+        assert_eq!(paragraph(block).text, text);
+        assert_eq!(doc.leaves[0].range, 0..text.len(), "{text}");
+    }
+    // 输入空格之后生效。
+    assert!(matches!(&parse("- ").blocks[0], Block::List(None, items) if !items[0].bare));
+    assert!(matches!(&parse("# ").blocks[0], Block::Heading(1, _)));
+    assert!(matches!(&parse("> ").blocks[0], Block::Quote(..)));
+    // 有内容的项不受影响。
+    assert!(matches!(&parse("- 甲\n- 乙").blocks[0], Block::List(None, items) if !items[1].bare));
+}
+
+#[test]
+fn a_task_box_without_text_is_already_a_task_item() {
+    for (text, checked) in [("- [ ]", false), ("- [ ] ", false), ("1. [x]", true)] {
+        let doc = parse(text);
+        let Block::List(_, items) = &doc.blocks[0] else {
+            panic!("{text}");
+        };
+        assert_eq!(items[0].task, Some(checked), "{text}");
+        assert_eq!(items[0].task_source, text.find('[').unwrap(), "{text}");
+        assert!(paragraph(&items[0].blocks[0]).text.is_empty(), "{text}");
+    }
+}

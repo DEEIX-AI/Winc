@@ -1080,10 +1080,17 @@ impl Cx<'_, '_> {
             if i > 0 {
                 top += base * LIST_GAP;
             }
-            let flow = self.blocks(&item.blocks, content_x, top, room, inner, out);
+            // 记号之后没有空格的空项：记号按文字排在列表的左边缘，不画圆点和序号。
+            let (item_x, item_room) = if item.bare {
+                (x, width)
+            } else {
+                (content_x, room)
+            };
+            let flow = self.blocks(&item.blocks, item_x, top, item_room, inner, out);
             first_baseline = first_baseline.or(flow.first_baseline);
             let baseline = flow.first_baseline;
             match (item.task, start) {
+                _ if item.bare => {}
                 (Some(checked), _) => {
                     let size = (base * 0.85).round();
                     let line_mid = baseline.map_or(top + base * 0.75, |b| b - base * 0.35);
@@ -1167,9 +1174,11 @@ impl Cx<'_, '_> {
         }
     }
 
-    /// 为光标所在段落之后的空行（原文起点，相对顶层块）各排一行，返回排出的总高度。
+    /// 为光标所在的空行排一行，返回排出的总高度；`blanks` 是段落之后直到光标所在行的各空行
+    /// （原文起点，相对顶层块）。
     ///
-    /// 每行的高度等于正文的行高；在段落末尾按回车后，光标位于这些行上。
+    /// 光标所在的行高度等于正文的行高，之前的空行合计占一个段落间距：该行的位置与在此输入
+    /// 文字后新段落的位置相同，输入第一个字时内容不移动。
     fn blank_lines(&mut self, blanks: &[usize], x: f32, y: f32, width: f32, out: &mut Out) -> f32 {
         let size = self.base;
         let m = self.frame.metrics(FontKind::Ui, size);
@@ -1182,14 +1191,14 @@ impl Cx<'_, '_> {
         };
         let language = winc_syntax::find("markdown");
         let mut state = winc_syntax::LineState::default();
-        let mut top = y;
-        for &source in blanks {
-            let source = u32::try_from(source).unwrap_or(0);
-            let piece = self.code_piece("", source, "markdown", language, &mut state, row);
-            self.paste(&piece, x, top, source, &mut out.items);
-            top += piece.height;
-        }
-        top - y
+        let Some((&source, before)) = blanks.split_last() else {
+            return 0.0;
+        };
+        let gap = if before.is_empty() { 0.0 } else { size };
+        let source = u32::try_from(source).unwrap_or(0);
+        let piece = self.code_piece("", source, "markdown", language, &mut state, row);
+        self.paste(&piece, x, y + gap, source, &mut out.items);
+        gap + piece.height
     }
 
     /// 返回光标所在的表格（`rows` 是解析出的各行）里光标所在的单元格。

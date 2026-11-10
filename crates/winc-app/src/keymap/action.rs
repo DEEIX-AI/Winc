@@ -54,6 +54,14 @@ pub enum Action {
     Paste,
     SelectAll,
     ToggleComment,
+    /// 可编辑的 Markdown 预览中切换粗体（`**`）。
+    MarkdownBold,
+    /// 可编辑的 Markdown 预览中切换斜体（`*`）。
+    MarkdownItalic,
+    /// 可编辑的 Markdown 预览中切换行内代码（`` ` ``）。
+    MarkdownCode,
+    /// 可编辑的 Markdown 预览中切换删除线（`~~`）。
+    MarkdownStrikethrough,
     DeleteLine,
     DeleteAllLeft,
     IndentLines,
@@ -294,6 +302,10 @@ impl Action {
             Paste => t!("cmd-paste"),
             SelectAll => t!("cmd-select-all"),
             ToggleComment => t!("cmd-toggle-comment"),
+            MarkdownBold => t!("cmd-markdown-bold"),
+            MarkdownItalic => t!("cmd-markdown-italic"),
+            MarkdownCode => t!("cmd-markdown-code"),
+            MarkdownStrikethrough => t!("cmd-markdown-strikethrough"),
             DeleteLine => t!("cmd-delete-line"),
             DeleteAllLeft => t!("cmd-delete-all-left"),
             IndentLines => t!("cmd-indent-lines"),
@@ -492,6 +504,10 @@ impl Action {
             Paste => "Paste",
             SelectAll => "Select All",
             ToggleComment => "Toggle Line Comment",
+            MarkdownBold => "Markdown: Toggle Bold",
+            MarkdownItalic => "Markdown: Toggle Italic",
+            MarkdownCode => "Markdown: Toggle Inline Code",
+            MarkdownStrikethrough => "Markdown: Toggle Strikethrough",
             DeleteLine => "Delete Line",
             DeleteAllLeft => "Delete All Left",
             IndentLines => "Indent Line",
@@ -672,6 +688,10 @@ impl Action {
             | Paste
             | SelectAll
             | ToggleComment
+            | MarkdownBold
+            | MarkdownItalic
+            | MarkdownCode
+            | MarkdownStrikethrough
             | DeleteLine
             | DeleteAllLeft
             | IndentLines
@@ -850,7 +870,11 @@ impl Action {
             | ConvertIndentationToTabs
             | DetectIndentation
             | ChangeEndOfLine
-            | ChangeLanguageMode => false,
+            | ChangeLanguageMode
+            | MarkdownBold
+            | MarkdownItalic
+            | MarkdownCode
+            | MarkdownStrikethrough => false,
             _ => self.group() == Group::Edit,
         }
     }
@@ -1017,6 +1041,10 @@ pub const ACTIONS: &[Action] = {
         Paste,
         SelectAll,
         ToggleComment,
+        MarkdownBold,
+        MarkdownItalic,
+        MarkdownCode,
+        MarkdownStrikethrough,
         DeleteLine,
         DeleteAllLeft,
         IndentLines,

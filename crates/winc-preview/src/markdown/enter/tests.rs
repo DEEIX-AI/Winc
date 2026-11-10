@@ -179,3 +179,55 @@ fn line_breaks_stay_in_the_block() {
     assert_eq!(line_break("> - [ ] 一"), "\n>       ");
     assert_eq!(line_break("> 引用"), "\n> ");
 }
+
+#[test]
+fn items_after_a_new_one_are_renumbered() {
+    let below = ["2. 乙", "   - 子项", "", "3. 丙", "", "后文", "4. 丁"];
+    assert_eq!(
+        renumber("2. ", below.iter()),
+        vec![(0, 0..1, 3), (3, 0..1, 4)]
+    );
+    // 序号已经正确、不是有序列表项时不改。
+    assert!(renumber("2. ", ["3. 丙"].iter()).is_empty());
+    assert!(renumber("- ", ["- 乙"].iter()).is_empty());
+    // 引用中的列表、位数变化的序号。
+    assert_eq!(renumber("> 10. ", ["> 10. 乙"].iter()), vec![(0, 2..4, 11)]);
+    // 上一层的项不属于这个列表。
+    assert!(renumber("   2. ", ["2. 外层"].iter()).is_empty());
+}
+
+#[test]
+fn task_shorthands_become_task_items_on_space() {
+    let run = |before: &str, after: &str| {
+        task(before, after).map(|e| {
+            format!(
+                "{}{}|{}",
+                &before[..before.len() - e.before],
+                e.text,
+                &after[e.after..]
+            )
+        })
+    };
+    assert_eq!(run("[]", "").as_deref(), Some("- [ ] |"));
+    assert_eq!(run("-[]", "").as_deref(), Some("- [ ] |"));
+    assert_eq!(run("- []", "").as_deref(), Some("- [ ] |"));
+    assert_eq!(run("1. []", " 文字").as_deref(), Some("1. [ ] | 文字"));
+    // 完整的 `- [ ]` 之后输入空格即为任务项，不需要替换。
+    assert_eq!(run("- [ ]", ""), None);
+    assert_eq!(run("> 【】", "").as_deref(), Some("> - [ ] |"));
+    // 括号配对把右括号补在光标之后：连同右括号一起替换。
+    assert_eq!(run("- [", "]").as_deref(), Some("- [ ] |"));
+    assert_eq!(run("  *[", "]后").as_deref(), Some("  * [ ] |后"));
+    // 已经是任务项、不在行首、后面是链接时不处理。
+    assert_eq!(run("- [ ] ", ""), None);
+    assert_eq!(run("文字 []", ""), None);
+    assert_eq!(run("[x]", "(网址)"), None);
+}
+
+#[test]
+fn margins_split_quote_marks_from_indentation() {
+    assert_eq!(margins("> - 项"), (2, 0));
+    assert_eq!(margins(">   续行"), (2, 2));
+    assert_eq!(margins("    - 子项"), (0, 4));
+    assert_eq!(indent("  续行"), 2);
+}

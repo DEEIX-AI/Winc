@@ -57,6 +57,8 @@ pub(crate) struct Laid {
     live: Option<LiveKey>,
     /// 上一次找的光标位置和结果（见 [`point_of`]）：滚动时光标不动，不必每帧在大块里再找。
     caret: std::cell::Cell<Option<(usize, Option<Point>)>>,
+    /// 应画在上一显示行末尾的光标位置（原文字节偏移），见 [`Laid::set_upstream`]。
+    upstream: std::cell::Cell<Option<usize>>,
     /// 内容总高度。
     height: f32,
     /// 上一次画的时候内容的左边缘（窗口坐标，逻辑像素），鼠标定位用。
@@ -101,6 +103,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     app.markdown.codes.clear();
     app.markdown.copy = None;
     app.markdown.expand = None;
+    // 可编辑的预览在排版之前取得当前文字的解析结果，本帧即按最新的结构显示。
+    app.parse_markdown_inline();
     // 第一次解析还没回来：先留空。
     let Some(parsed) = app.markdown.parsed.clone() else {
         return;
@@ -143,10 +147,11 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             }
             app.markdown.find_doc = None;
             still = old_caret(app, old.as_ref(), source, live_key.as_ref());
+            let slide = std::mem::take(&mut app.markdown.slide);
             before = old
                 .as_ref()
                 .filter(|l| l.key == key && app.markdown_live())
-                .map(|l| Before::of(app, l));
+                .map(|l| (Before::of(app, l), slide));
             // 有图片刚读好时，用到它的块大小变了，需要重排；折叠块开合时，它所在的块需要
             // 重排；其余块沿用上次的结果。
             let reuse = old.filter(|l| l.key == key).map(|l| {
@@ -173,7 +178,12 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     };
     laid.left = left;
     laid.pad = pad;
+    laid.set_upstream(app.live_upstream());
     app.markdown.height = laid.height + pad * 2.0;
+    // 可编辑的预览与编辑区相同：内容高于一屏时，最后一行下方可以滚出一段空白。
+    if app.markdown_live() && app.markdown.height > area.h {
+        app.markdown.height += area.h * crate::layout::OVERSCROLL;
+    }
     keep_caret_still(app, still, &laid);
     app.markdown.layout = Some(laid);
     app.follow_live_caret();
@@ -190,9 +200,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let max = (app.markdown.height - area.h).max(0.0);
     let scroll = app.markdown.scroll().min(max);
     let origin_y = area.y + pad - scroll;
-    if let Some(before) = before {
+    if let Some((before, slide)) = before {
         let muted = Colors::new(p).muted;
-        let (from, fading) = before.motion(&laid, scroll, muted);
+        let (from, fading) = before.motion(&laid, scroll, muted, slide);
         app.start_markdown_motion(from, fading);
     }
     let motion = app.markdown.motion.take();
@@ -868,11 +878,15 @@ impl Before {
     /// 块数不变时按序号对应；块数变化（删除了一块、解析出新的块）时，按开头和末尾哈希相同的块
     /// 对应，中间新增的块随前一块移动。仅移动光标时，外观变化的块中新增的标记（次要色 `muted`
     /// 的文字中比原来多出的段）淡入。
+    ///
+    /// 文字已修改时各块直接到位、偏移全为 0，输入的结果在同一帧显示在最终位置；`slide` 为真
+    /// （表格工具增删行列）时仍然滑动。
     fn motion(
         &self,
         laid: &Laid,
         scroll: f32,
         muted: Color,
+        slide: bool,
     ) -> (Vec<f32>, crate::app::preview::markdown::Fading) {
         let (old, new) = (&self.blocks, &laid.blocks);
         let matched: Vec<Option<usize>> = if old.len() == new.len() {
@@ -905,6 +919,9 @@ impl Before {
             from.push(last);
         }
         let moved = laid.live.as_ref().map(|k| k.2) == self.revision && self.revision.is_some();
+        if !moved && !slide {
+            from.fill(0.0);
+        }
         let mut fading = Vec::new();
         for (i, j) in matched.iter().enumerate() {
             let Some(j) = *j else { continue };
@@ -1176,6 +1193,7 @@ fn lay_out(
         },
         live: live.map(|l| live_key(l, &app.preedit)),
         caret: std::cell::Cell::new(None),
+        upstream: std::cell::Cell::new(None),
         height: y,
         left: 0.0,
         pad: 0.0,
@@ -1373,6 +1391,21 @@ impl Laid {
         let point = point_of(self, source);
         self.caret.set(Some((source, point)));
         point
+    }
+
+    /// 指定应画在上一显示行末尾的光标位置（原文字节偏移，没有时为 `None`）。
+    ///
+    /// 折行处的原文位置同时是上一行的末尾和下一行的开头，[`point_of`] 默认取下一行的开头；
+    /// 按 End 移到行尾后光标应留在本行。
+    pub(crate) fn set_upstream(&self, source: Option<usize>) {
+        if self.upstream.replace(source) != source {
+            self.caret.set(None);
+        }
+    }
+
+    /// 正文一栏的宽度（逻辑像素）。
+    pub(crate) fn width(&self) -> f32 {
+        self.key.width
     }
 
     /// 内容总高度（含四周留白）。
@@ -1575,7 +1608,21 @@ pub(crate) fn point_of(laid: &Laid, source: usize) -> Option<Point> {
         .ranges
         .iter()
         .rposition(|r| r.start <= source && source <= r.end)?;
+    let upstream = laid.upstream.get() == Some(source);
     let source = source - laid.ranges[block].start;
+    // 光标应画在上一显示行的末尾：取原文位置在它之前的最后一段，该段正好在此结束时用其末尾。
+    if upstream
+        && let Some((top, x, baseline, size, span, text)) = laid
+            .spans(block..block + 1)
+            .filter(|(.., span, _, _)| span.source.is_some_and(|s| (s as usize) < source))
+            .max_by_key(|(.., span, _, _)| span.source)
+            .map(|(top, _, x, baseline, size, span, _, text)| (top, x, baseline, size, span, text))
+        && span.char_at_source(text, source) == Some(span.advances.len())
+    {
+        let x = x + span.advances.iter().sum::<f32>();
+        let (y, h) = line_box(top + baseline, size);
+        return Some((x, laid.pad + y, h));
+    }
     // 先按每段第一个字找（每段只看一次），再在找到的那段里逐字找：长列表、长代码块是一个
     // 顶层块，每帧都要找，不逐字看整块。
     let (top, x, baseline, size, span, text) = laid
