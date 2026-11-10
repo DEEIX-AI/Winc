@@ -48,7 +48,55 @@ pub(super) struct LaidBlock {
     pub(super) memo: Box<[u64]>,
     /// 输入法组字是否排在这一块中，见 [`Cx::preedit`]。
     pub(super) preedit: bool,
+    /// 比正文宽、可以横向滚动的表格，按项的先后排列。
+    pub(super) scrolls: Vec<Scroller>,
 }
+
+/// 比正文宽的表格：表格的各项按自然宽度排版，绘制时横向平移、裁剪到正文一栏内。
+#[derive(Debug, Clone)]
+pub(super) struct Scroller {
+    /// 属于该表格的项（[`LaidBlock::items`] 的序号）。
+    pub(super) items: std::ops::Range<u32>,
+    /// 显示表格的区域（块里的坐标）：正文一栏宽，高度含表格下方的滚动条。
+    pub(super) rect: Rect,
+    /// 表格的总宽度（逻辑像素）。
+    pub(super) content: f32,
+}
+
+impl Scroller {
+    /// 最大横向滚动距离（逻辑像素）。
+    pub(super) fn max(&self) -> f32 {
+        (self.content - self.rect.w).max(0.0)
+    }
+}
+
+/// 表格外框的圆角半径（逻辑像素），与代码块的圆角相近。
+const TABLE_RADIUS: f32 = 6.0;
+
+/// 返回沿 `rect` 内侧描一圈、圆角半径为 `radius` 的外框的线段和圆弧：线宽 1 时恰好落在 `rect` 的
+/// 最外一圈像素上。
+fn rounded_frame(rect: Rect, radius: f32) -> Vec<Stroke> {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let (l, t) = (rect.x + 0.5, rect.y + 0.5);
+    let (r, b) = (rect.right() - 0.5, rect.bottom() - 0.5);
+    let k = radius.min((r - l) / 2.0).min((b - t) / 2.0).max(0.0);
+    vec![
+        Stroke::Line(l + k, t, r - k, t),
+        Stroke::Line(r, t + k, r, b - k),
+        Stroke::Line(r - k, b, l + k, b),
+        Stroke::Line(l, b - k, l, t + k),
+        Stroke::Arc(l + k, t + k, k, -PI, -FRAC_PI_2),
+        Stroke::Arc(r - k, t + k, k, -FRAC_PI_2, 0.0),
+        Stroke::Arc(r - k, b - k, k, 0.0, FRAC_PI_2),
+        Stroke::Arc(l + k, b - k, k, FRAC_PI_2, PI),
+    ]
+}
+
+/// 表格文字与正文字号之比：表格比正文小一级。
+const TABLE_TEXT: f32 = 0.875;
+
+/// 可横向滚动的表格下方为滚动条留出的高度（逻辑像素）。
+pub(super) const SCROLL_BAR_ROOM: f32 = 10.0;
 
 /// 高项与矮项的分界（逻辑像素，经验值）：高度超过该值的项算「高的」，每次绘制都检查一遍；
 /// 矮的项按上边缘二分查找。
@@ -84,7 +132,14 @@ impl LaidBlock {
             short,
             memo,
             preedit: false,
+            scrolls: Vec::new(),
         }
+    }
+
+    /// 第 `item` 项所在的可横向滚动的表格的序号（[`LaidBlock::scrolls`]）；不在其中时为 `None`。
+    pub(super) fn scroller_of(&self, item: usize) -> Option<usize> {
+        let item = u32::try_from(item).ok()?;
+        self.scrolls.iter().position(|s| s.items.contains(&item))
     }
 
     /// 块里有没有用到 `paths` 里的图片（排版时还在读的也算）。
@@ -131,8 +186,10 @@ impl Item {
         match self {
             Item::Text { baseline, size, .. } => (baseline - size * 1.2, baseline + size * 0.5),
             Item::Fill { rect, .. }
+            | Item::Corners { rect, .. }
             | Item::Image { rect, .. }
             | Item::Link { rect, .. }
+            | Item::Spot { rect, .. }
             | Item::Check { rect, .. }
             | Item::Code { rect, .. }
             | Item::Table { rect, .. }
@@ -149,8 +206,10 @@ impl Item {
                 (*x, x + w)
             }
             Item::Fill { rect, .. }
+            | Item::Corners { rect, .. }
             | Item::Image { rect, .. }
             | Item::Link { rect, .. }
+            | Item::Spot { rect, .. }
             | Item::Check { rect, .. }
             | Item::Code { rect, .. }
             | Item::Table { rect, .. }
@@ -263,6 +322,12 @@ pub(super) enum Item {
         color: Color,
         radius: f32,
     },
+    /// 四个角半径各不相同的底色，`radii` 依次是左上、右上、右下、左下（逻辑像素）。
+    Corners {
+        rect: Rect,
+        color: Color,
+        radii: [f32; 4],
+    },
     Image {
         rect: Rect,
         path: PathBuf,
@@ -273,6 +338,10 @@ pub(super) enum Item {
     },
     /// 链接能点的范围，不画。
     Link { rect: Rect, url: Arc<str> },
+    /// 点击时光标移到原文 `at` 处的范围，不画：单独成行的公式中没有可定位的文字。
+    ///
+    /// `at` 同 [`Item::Image`] 的 `at`：块文字中的字符序号和原文中的位置（相对顶层块）。
+    Spot { rect: Rect, at: (usize, u32) },
     /// 任务列表的勾选框：`source` 是 `[ ]` 在原文中的位置（相对顶层块的开头），点击时切换。
     Check {
         rect: Rect,
@@ -371,8 +440,12 @@ pub(super) struct Colors {
     code_inline: Color,
     /// 代码块的底色，编辑时显示原文的代码框同样使用。
     code_block: Color,
-    /// 表格隔行的底色。
-    stripe: Color,
+    /// 表格表头的底色。
+    table_head: Color,
+    /// 表格外框的颜色：比分隔线（`border`）淡，表格不显得沉重。
+    table_frame: Color,
+    /// 表格行之间横线的颜色：比外框更淡。
+    table_line: Color,
 }
 
 impl Colors {
@@ -386,7 +459,9 @@ impl Colors {
             border: p.text.alpha(if dark { 0.2 } else { 0.16 }),
             code_inline: p.text.alpha(if dark { 0.12 } else { 0.08 }),
             code_block: p.text.alpha(if dark { 0.05 } else { 0.04 }),
-            stripe: p.text.alpha(if dark { 0.03 } else { 0.025 }),
+            table_head: p.text.alpha(if dark { 0.06 } else { 0.04 }),
+            table_frame: p.text.alpha(if dark { 0.14 } else { 0.11 }),
+            table_line: p.text.alpha(if dark { 0.09 } else { 0.07 }),
         }
     }
 
@@ -775,10 +850,18 @@ impl Cx<'_, '_> {
                 }
             }
             Block::List(start, items) => self.list(*start, items, x, y, width, env, out),
-            Block::Table(aligns, rows, head) => {
-                self.table(aligns, rows, *head, x, y, width, env, &mut out.items)
-            }
-            Block::Math(tex) => {
+            Block::Table(aligns, rows, head) => self.table(
+                aligns,
+                rows,
+                *head,
+                x,
+                y,
+                width,
+                env,
+                &mut out.items,
+                &mut out.scrolls,
+            ),
+            Block::Math(tex, source) => {
                 let mut b = self.math(tex, base, true, env.color);
                 // 比一行宽的缩小（最多缩到一半），还宽就让它超出去。
                 if b.w > width {
@@ -789,12 +872,18 @@ impl Cx<'_, '_> {
                 let (dx, baseline) = (x + ((width - b.w) / 2.0).max(0.0), y + pad + b.asc);
                 out.items
                     .extend(b.items.iter().map(|item| item.moved(dx, baseline, 0)));
+                // 点击公式时光标移到公式的原文处，进入编辑。
+                let height = pad * 2.0 + b.asc + b.desc;
+                out.items.push(Item::Spot {
+                    rect: Rect::new(x, y, width, height),
+                    at: (self.chars, u32::try_from(*source).unwrap_or(0)),
+                });
                 // 复制、查找时是公式的原文。
                 self.text.push_str(tex);
                 self.chars += tex.chars().count();
                 self.end_paragraph();
                 Flow {
-                    height: pad * 2.0 + b.asc + b.desc,
+                    height,
                     first_baseline: Some(baseline),
                 }
             }
@@ -1107,7 +1196,7 @@ impl Cx<'_, '_> {
         };
         let html = self.raw.as_ref().is_some_and(|r| r.kind == RawKind::Html);
         let preview = match block {
-            Block::Math(_) => self.preview(block, x, below, width, env, out),
+            Block::Math(..) => self.preview(block, x, below, width, env, out),
             Block::Code { lang, text, .. } if lang == "mermaid" => {
                 self.diagram(text, x, below, width, env, &mut out.items)
             }
@@ -1506,9 +1595,12 @@ impl Cx<'_, '_> {
         width: f32,
         env: Env,
         out: &mut Vec<Item>,
+        scrolls: &mut Vec<Scroller>,
     ) -> Flow {
-        let base = self.base;
-        let (pad_x, pad_y) = ((base * 0.8125).round(), (base * 0.375).round());
+        // 表格的字号比正文小一级（正文 16 时为 14），表格内信息密度更高；内边距和行高随之缩放。
+        let base = (self.base * TABLE_TEXT).round();
+        let first_item = out.len();
+        let (pad_x, pad_y) = ((base * 0.8125).round(), (base * 0.5).round());
         let cols = rows
             .iter()
             .map(Vec::len)
@@ -1582,11 +1674,18 @@ impl Cx<'_, '_> {
                 max[c] = max[c].max(hi + pad_x * 2.0);
             }
         }
+        // 放得下时各列取不换行的宽度。放不下时各列仍取不换行的宽度，但每列最宽为正文一栏宽，
+        // 更长的内容在列内换行；表格超出正文的部分横向滚动查看，不把各列压窄到逐字换行。
+        // 按该规则排出的表格仍比正文窄（长内容的列换了行）时，按比例放宽各列，铺满正文。
         let (sum_min, sum_max): (f32, f32) = (min.iter().sum(), max.iter().sum());
+        // 向上取整：向下取整会少零点几像素，最后一个字放不下而换行。
+        let capped: Vec<f32> = (min.iter().zip(&max))
+            .map(|(lo, hi)| hi.min(width.max(*lo)).ceil())
+            .collect();
         let widths: Vec<f32> = if sum_max <= width {
             max.clone()
-        } else if sum_min >= width {
-            min.clone()
+        } else if capped.iter().sum::<f32>() > width || sum_min >= width {
+            capped
         } else {
             let t = (width - sum_min) / (sum_max - sum_min);
             min.iter()
@@ -1595,7 +1694,6 @@ impl Cx<'_, '_> {
                 .collect()
         };
         let total: f32 = widths.iter().sum::<f32>() + 1.0;
-        let border = self.colors.border;
         let mut top = y;
         let mut first_baseline = None;
         let mut lines = vec![top];
@@ -1642,43 +1740,33 @@ impl Cx<'_, '_> {
                 cell_x += w;
             }
             let row_h = row_h.max(base * 1.5) + pad_y * 2.0;
-            // 隔行铺底色：正文（表头不计）的第 2、4……行。
-            let body = if head { r } else { r + 1 };
-            if body > 0 && body % 2 == 0 {
+            // 表头铺底色（上方两角与外框同为圆角），与正文各行区分；正文各行之间只有横线。
+            if head && r == 0 {
                 out.insert(
                     start,
-                    Item::Fill {
+                    Item::Corners {
                         rect: Rect::new(x, top, total, row_h),
-                        color: self.colors.stripe,
-                        radius: 0.0,
+                        color: self.colors.table_head,
+                        radii: [TABLE_RADIUS, TABLE_RADIUS, 0.0, 0.0],
                     },
                 );
             }
             top += row_h;
             lines.push(top);
         }
-        // 边框：每行之间一道横线，每列之间一道竖线。
-        for &line_y in &lines {
+        // 边框：圆角的外框，行之间一道横线；列之间不画竖线，按单元格的内边距区分各列。
+        for &line_y in &lines[1..lines.len() - 1] {
             out.push(Item::Fill {
-                rect: Rect::new(x, line_y, total, 1.0),
-                color: border,
+                rect: Rect::new(x + 1.0, line_y, total - 2.0, 1.0),
+                color: self.colors.table_line,
                 radius: 0.0,
             });
         }
-        let mut col_x = x;
-        out.push(Item::Fill {
-            rect: Rect::new(col_x, y, 1.0, top - y),
-            color: border,
-            radius: 0.0,
-        });
-        for w in &widths {
-            col_x += w;
-            out.push(Item::Fill {
-                rect: Rect::new(col_x, y, 1.0, top - y),
-                color: border,
-                radius: 0.0,
-            });
-        }
+        out.push(Item::path(
+            rounded_frame(Rect::new(x, y, total, top - y + 1.0), TABLE_RADIUS),
+            1.0,
+            self.colors.table_frame,
+        ));
         out.push(Item::Table {
             rect: Rect::new(x, y, total, top - y + 1.0),
             align: live
@@ -1687,8 +1775,19 @@ impl Cx<'_, '_> {
             cols: widths.into(),
             rows: lines.windows(2).map(|w| w[1] - w[0]).collect(),
         });
+        let mut height = top - y + 1.0;
+        // 比正文宽：记下表格的各项，绘制时横向平移；下方留出滚动条的位置。
+        if total > width + 0.5 {
+            height += SCROLL_BAR_ROOM;
+            scrolls.push(Scroller {
+                items: u32::try_from(first_item).unwrap_or(u32::MAX)
+                    ..u32::try_from(out.len()).unwrap_or(u32::MAX),
+                rect: Rect::new(x, y, width, height),
+                content: total,
+            });
+        }
         Flow {
-            height: top - y + 1.0,
+            height,
             first_baseline,
         }
     }
@@ -1701,6 +1800,8 @@ pub(super) struct Out {
     pub(super) items: Vec<Item>,
     /// 标题锚点和所在高度（逻辑像素，相对块的左上角）。
     pub(super) anchors: Vec<(String, f32)>,
+    /// 比正文宽、可以横向滚动的表格。
+    pub(super) scrolls: Vec<Scroller>,
 }
 
 /// 块上下的外边距（逻辑像素）。

@@ -420,6 +420,13 @@ impl Cx<'_, '_> {
                         flush_text(out, &mut text, at, st);
                         let x = *pen;
                         out.extend(b.items.iter().map(|item| item.moved(x, baseline, 0)));
+                        // 公式中没有可定位的字：点击公式时光标移到公式的原文处。
+                        if let Some(source) = atom.source {
+                            out.push(Item::Spot {
+                                rect: Rect::new(x, baseline - b.asc, atom.width, b.asc + b.desc),
+                                at: (self.chars, source),
+                            });
+                        }
                         self.text.push_str(tex);
                         self.chars += tex.chars().count();
                     }

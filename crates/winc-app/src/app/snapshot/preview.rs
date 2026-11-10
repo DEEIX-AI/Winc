@@ -2520,7 +2520,7 @@ fn heap_breakdown(md: &winc_preview::markdown::Markdown) {
                         }
                     }
                 }
-                Block::Math(t) => s.code += t.capacity(),
+                Block::Math(t, _) => s.code += t.capacity(),
                 Block::Rule => {}
                 Block::Details {
                     summary, blocks: b, ..
@@ -3226,4 +3226,158 @@ fn shoot_pdf() {
         shoot(&mut app, &format!("pdf-{theme}"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// 回归：列很多的表格不把各列压窄到逐字换行，而是按自然宽度排版、超出正文的部分横向滚动；横向
+/// 滚动后点击仍落在对应的字上；编辑表格时光标移到看不见的列，表格横向滚动使光标可见。
+#[test]
+fn wide_tables_keep_their_columns_and_scroll_sideways() {
+    use winit::dpi::PhysicalPosition;
+    use winit::event::MouseScrollDelta;
+
+    let head = "| 编号 | 品名 | 类别 | 颜色 | 尺寸 | 重量 | 口感 | 货号 | 条码 | 上架日期 | 批次 \
+                | 规格 | 状态 | 单价 | 库存 | 好评率 | 等级 | 备注 |";
+    let rule = format!("|{}", "---|".repeat(18));
+    let row = "| 1 | 苹果 | 水果 | 红色 | 中号 | 200 克 | 脆甜 | SKU-FRUIT-APPLE-0001 \
+               | 6901234567890 | 2024-03-15 | B001 | 每箱十二个 | 在售 | 6.5 | 120 | 98% | 一级 \
+               | 需冷藏保存运输 |";
+    let (mut app, dir) = live_doc(
+        "md-wide-table",
+        &format!("前文\n\n{head}\n{rule}\n{row}\n\n后文\n"),
+    );
+    let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+    let at = |c: &str| shown[..shown.find(c).unwrap()].chars().count();
+    let offset_at = crate::view::preview::markdown::offset_at;
+
+    // 表头「编号」排在同一行，没有被压成逐字换行。
+    let (first, second) = (point_of(&app, at("编")), point_of(&app, at("号")));
+    assert!((first.1 - second.1).abs() < 1.0, "{first:?} {second:?}");
+
+    // 在表格上横向滚动：表格左移，同一位置下的字随之改变，点击仍对应移过来的字。
+    let probe = (first.0, point_of(&app, at("苹")).1);
+    let before = offset_at(&app, probe.0, probe.1);
+    app.on_mouse_move(probe.0, probe.1);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        -400.0, 0.0,
+    )));
+    paint(&mut app);
+    let after = offset_at(&app, probe.0, probe.1);
+    assert_ne!(before, after);
+    // 表格外（「前文」一行）的横向滚动不移动表格。
+    let outside = point_of(&app, at("前"));
+    app.on_mouse_move(outside.0, outside.1);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        -400.0, 0.0,
+    )));
+    paint(&mut app);
+    assert_eq!(offset_at(&app, probe.0, probe.1), after);
+
+    // 滚动条与其他区域一致：鼠标移到表格底边时可以按住滑块拖动，拖到最右后滚动到尽头。
+    let bar = app.markdown.table_bar.expect("表格有滚动条");
+    let edge = (bar.track.x + 4.0, bar.track.bottom() - 4.0);
+    app.on_mouse_move(edge.0, edge.1);
+    paint(&mut app);
+    assert_eq!(
+        app.hover,
+        Hover::Scrollbar(crate::layout::Scrollbar::MarkdownTable)
+    );
+    let thumb_x =
+        crate::layout::hscrollbar_thumb(bar.track, app.markdown_table_scroll(bar.key), bar.content)
+            .unwrap()
+            .x;
+    app.on_mouse_move(thumb_x + 2.0, edge.1);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(bar.track.right() + 200.0, edge.1);
+    app.on_mouse_up(MouseButton::Left);
+    paint(&mut app);
+    assert_eq!(
+        app.markdown_table_scroll(bar.key),
+        bar.content - bar.track.w
+    );
+
+    // 滚回最左，光标移到最后一列：表格横向滚动，最后一列的字出现在预览区域内。
+    app.on_mouse_move(probe.0, probe.1);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        4000.0, 0.0,
+    )));
+    paint(&mut app);
+    assert_eq!(offset_at(&app, probe.0, probe.1), before);
+    let cell = point_of(&app, at("苹"));
+    app.on_mouse_move(cell.0, cell.1);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    put_caret(&mut app, "需冷藏", false);
+    let last = point_of(&app, at("需冷藏"));
+    assert!(app.markdown.area.contains(last.0, last.1), "{last:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：单独成行的公式中没有可定位的文字，点击后光标仍应进入公式的原文，公式随之显示原文、
+/// 可以编辑（`$$…$$` 和语言为 math 的围栏代码块都是如此）。
+#[test]
+fn clicking_a_block_formula_puts_the_caret_in_its_source() {
+    for (name, formula) in [
+        ("md-math-dollars", "$$\nx^2 + y^2 = z^2\n$$"),
+        ("md-math-fence", "```math\nx^2 + y^2 = z^2\n```"),
+    ] {
+        let text = format!("前文\n\n{formula}\n\n后文\n");
+        let (mut app, dir) = live_doc(name, &text);
+        let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+        let at = |c: &str| shown[..shown.find(c).unwrap()].chars().count();
+        let (above, below) = (point_of(&app, at("前文")), point_of(&app, at("后文")));
+        // 公式在两段之间居中显示：从上往下找第一处落在公式上的点（正文的字不会落到公式的原文处）。
+        let area = app.markdown.area;
+        let start = text.find(formula).unwrap();
+        let x = area.x + area.w / 2.0;
+        let middle = (above.1 as usize..below.1 as usize)
+            .map(|y| (x, y as f32))
+            .find(|&(x, y)| crate::view::preview::markdown::source_at(&app, x, y) == Some(start))
+            .expect("点得到公式");
+        app.on_mouse_move(middle.0, middle.1);
+        app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_up(MouseButton::Left);
+        settle(&mut app);
+        let caret = app.live_caret_source().unwrap();
+        assert!(
+            (start..start + formula.len()).contains(&caret),
+            "{name}: {}",
+            with_caret(&app)
+        );
+        // 光标在公式里：公式显示原文，可以直接编辑。
+        let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+        assert!(shown.contains("x^2 + y^2 = z^2"), "{name}: {shown}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 跳到脚注和跳回引用处时，目标位于预览上部三分之一处（滚动不到时尽量靠近），上方保留一段
+/// 上下文；跳到标题时标题仍在顶部。测试中没有动画时钟，标示目标的底色不在此检查。
+#[test]
+fn footnote_jumps_keep_context_above_and_mark_the_target() {
+    let mut text = String::from("# 标题\n\n");
+    for i in 1..=40 {
+        if i == 20 {
+            text.push_str("这一段引用了一个脚注[^a]。\n\n");
+        } else {
+            text.push_str(&format!("第 {i} 段正文。\n\n"));
+        }
+    }
+    text.push_str("[^a]: 脚注的内容。\n");
+    let (mut app, dir) = live_doc("md-footnote-jump", &text);
+    let max = app.markdown.height - app.markdown.area.h;
+    let third = app.markdown.area.h / 3.0;
+
+    app.jump_to_anchor("fn-1");
+    let note = crate::view::preview::markdown::anchor_top(&app, "fn-1").unwrap();
+    assert_eq!(app.markdown.scroll(), (note - third).clamp(0.0, max));
+
+    app.jump_to_anchor("fnref-1");
+    let back = crate::view::preview::markdown::anchor_top(&app, "fnref-1").unwrap();
+    assert_eq!(app.markdown.scroll(), (back - third).clamp(0.0, max));
+
+    // 标题照旧滚动到顶部。
+    app.jump_to_anchor("标题");
+    assert_eq!(app.markdown.scroll(), 0.0);
+    let _ = std::fs::remove_dir_all(&dir);
 }

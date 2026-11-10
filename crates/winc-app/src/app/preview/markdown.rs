@@ -98,6 +98,17 @@ pub enum TocTarget {
 }
 
 /// 当前标签的 Markdown 预览。
+/// 可横向滚动的表格的滚动条，见 [`MarkdownPreview::table_bar`]。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TableBar {
+    /// 表格：（顶层块序号，块中表格的序号）。
+    pub key: (usize, usize),
+    /// 滚动条的轨道（窗口坐标）：表格的显示区域，滑块位于其底部。
+    pub track: winc_render::Rect,
+    /// 表格的总宽度（逻辑像素）。
+    pub content: f32,
+}
+
 pub(crate) struct MarkdownPreview {
     /// 预览的文档；当前标签改变时重新开始。
     pub doc: Option<DocumentId>,
@@ -134,6 +145,13 @@ pub(crate) struct MarkdownPreview {
     pub pending_anchor: Option<(DocumentId, String)>,
     /// 上一帧绘制的链接（区域和地址），点击时据此查找。
     pub links: Vec<(winc_render::Rect, String)>,
+    /// 上一帧绘制了滚动条的可横向滚动的表格；没有时为 `None`。
+    ///
+    /// 同一时刻只显示一个表格的滚动条：鼠标所在的表格，或最近一次横向滚动的表格。
+    pub table_bar: Option<TableBar>,
+    /// 最近一次横向滚动的表格：（顶层块序号，块中表格的序号），见 `view::markdown` 的
+    /// `Laid::hscroll`。
+    pub last_table: Option<(usize, usize)>,
     /// 上一帧绘制的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
     pub toc: Vec<(winc_render::Rect, TocTarget)>,
     /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
@@ -150,6 +168,9 @@ pub(crate) struct MarkdownPreview {
     pub toc_current: Option<usize>,
     /// 点击过的标题在正文中的底色：标题的序号与淡出的时钟。
     pub toc_flash: Option<(usize, crate::app::animation::Clock)>,
+    /// 跳转到的脚注或脚注引用在正文中的底色：范围（上边缘和高度，相对内容顶部，逻辑像素）与
+    /// 淡出的时钟。
+    pub anchor_flash: Option<((f32, f32), crate::app::animation::Clock)>,
     /// 上一帧绘制的代码块（屏幕坐标）：鼠标移入、移出时重绘，以显示或隐藏复制按钮。
     pub codes: Vec<winc_render::Rect>,
     /// 上一帧绘制了复制按钮的代码块的内容；按钮在 `links` 中只记录 `COPY`，点击时才取这里的
@@ -261,6 +282,8 @@ impl Default for MarkdownPreview {
             pending: None,
             scrolls: HashMap::new(),
             layout: None,
+            table_bar: None,
+            last_table: None,
             memo: Default::default(),
             images: HashMap::new(),
             embedded: HashMap::new(),
@@ -277,6 +300,7 @@ impl Default for MarkdownPreview {
             toc_picked: None,
             toc_current: None,
             toc_flash: None,
+            anchor_flash: None,
             codes: Vec::new(),
             copy: None,
             expand: None,
@@ -669,10 +693,7 @@ impl App {
             return;
         }
         if let Some(anchor) = url.strip_prefix('#') {
-            match crate::view::preview::markdown::anchor_top(self, anchor) {
-                Some(y) => self.scroll_markdown_to(y),
-                None => self.flash(t!("preview-markdown-heading-not-found")),
-            }
+            self.jump_to_anchor(anchor);
             return;
         }
         let local = self
@@ -1990,6 +2011,29 @@ impl App {
     }
 
     /// 在预览上滚动 `dy`（逻辑像素，向上为正，方向约定同滚轮事件）。
+    /// 可横向滚动的表格 `key`（见 [`TableBar::key`]）当前的横向滚动位置（逻辑像素）。
+    pub(crate) fn markdown_table_scroll(&self, key: (usize, usize)) -> f32 {
+        (self.markdown.layout.as_ref()).map_or(0.0, |laid| laid.hscroll_of(key.0, key.1))
+    }
+
+    /// 拖动表格的水平滚动条：按鼠标横坐标 `x` 和按下时在滑块上的位置 `grab` 设置滚动位置。
+    pub(in crate::app) fn drag_markdown_table_scrollbar(&mut self, x: f32, grab: f32) {
+        let Some(bar) = self.markdown.table_bar else {
+            return;
+        };
+        let scroll = self.markdown_table_scroll(bar.key);
+        let Some(thumb) = crate::layout::hscrollbar_thumb(bar.track, scroll, bar.content) else {
+            return;
+        };
+        let max = bar.content - bar.track.w;
+        let to = crate::layout::scroll_for_thumb(bar.track.x, bar.track.w, thumb.w, x, grab, max);
+        if let Some(laid) = self.markdown.layout.as_mut() {
+            laid.hscroll.insert(bar.key, to.clamp(0.0, max));
+        }
+        self.markdown.last_table = Some(bar.key);
+        self.request_redraw();
+    }
+
     pub(crate) fn scroll_markdown(&mut self, dy: f32) {
         let y = self.markdown.scroll() - dy;
         self.scroll_markdown_to(y);
@@ -2010,6 +2054,26 @@ impl App {
         self.markdown.toc_picked = Some((i, self.markdown.scroll()));
         let clock = self.clock(crate::app::animation::TOC_FLASH);
         self.markdown.toc_flash = clock.map(|clock| (i, clock));
+    }
+
+    /// 跳转到预览中的锚点 `anchor`（标题、脚注、脚注引用）；找不到时提示。
+    ///
+    /// 标题滚动到预览顶部。脚注和脚注引用滚动到预览上部三分之一处，上方保留一段上下文，并像
+    /// 点击标题列表一样铺一层逐渐淡出的底色，标示跳转的目标：脚注集中在文末，滚动到底之后
+    /// 仅凭位置看不出是哪一条。
+    pub(in crate::app) fn jump_to_anchor(&mut self, anchor: &str) {
+        let Some((top, height)) = crate::view::preview::markdown::anchor_box(self, anchor) else {
+            self.flash(t!("preview-markdown-heading-not-found"));
+            return;
+        };
+        let lower = anchor.to_lowercase();
+        if !(lower.starts_with("fn-") || lower.starts_with("fnref-")) {
+            self.scroll_markdown_to(top);
+            return;
+        }
+        self.scroll_markdown_to(top - self.markdown.area.h / 3.0);
+        let clock = self.clock(crate::app::animation::TOC_FLASH);
+        self.markdown.anchor_flash = clock.map(|clock| ((top, height), clock));
     }
 
     /// 将预览滚动到 `y`；分栏时左侧的文字随之滚动到对应位置。

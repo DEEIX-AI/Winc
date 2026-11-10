@@ -286,8 +286,9 @@ pub enum Block {
     /// 表格：各列的对齐方式、各行单元格、第一行是不是表头（Markdown 的表格总是，HTML 写的
     /// 看第一行是不是 `<th>`）。
     Table(Vec<Align>, Vec<Vec<Inline>>, bool),
-    /// 单独成行的公式（`$$…$$`、```` ```math ````）：LaTeX 原文，见 [`math`]。
-    Math(String),
+    /// 单独成行的公式（`$$…$$`、```` ```math ````）：LaTeX 原文（见 [`math`]）和公式在原文中的
+    /// 起点（字节偏移，解析完成后相对所在的顶层块）。
+    Math(String, usize),
     /// 分隔线。
     Rule,
     /// 一条脚注：编号（按正文里第一次引用的先后）和内容。
@@ -741,7 +742,7 @@ impl Builder<'_> {
         let table = matches!(block, Block::Table(..));
         let leaf = match block {
             Block::Paragraph(_) | Block::Heading(..) => self.leaf.clone().map(|r| (r, true)),
-            Block::Code { .. } | Block::Math(_) | Block::Rule | Block::Table(..) => {
+            Block::Code { .. } | Block::Math(..) | Block::Rule | Block::Table(..) => {
                 Some((self.start..self.end, false))
             }
             _ => None,
@@ -824,7 +825,7 @@ impl Builder<'_> {
             Event::DisplayMath(text) if self.in_cell() => self.text(&text, Style::MATH),
             Event::DisplayMath(text) => {
                 self.finish_inline();
-                self.push_block(Block::Math(text.trim().to_owned()));
+                self.push_block(Block::Math(text.trim().to_owned(), self.start));
             }
             Event::Html(html) | Event::InlineHtml(html) => match &mut self.html {
                 Some(block) => block.push_str(&html),
@@ -973,7 +974,7 @@ impl Builder<'_> {
                     let block = match table {
                         Some(table) => table,
                         // 语言为 math 的围栏代码块是单独成行的公式。
-                        None if lang.eq_ignore_ascii_case("math") => Block::Math(text),
+                        None if lang.eq_ignore_ascii_case("math") => Block::Math(text, self.start),
                         None => Block::Code {
                             lang,
                             text,
@@ -1194,7 +1195,7 @@ fn shrink(blocks: &mut Vec<Block>) {
                     row.iter_mut().for_each(shrink_inline);
                 }
             }
-            Block::Math(tex) => tex.shrink_to_fit(),
+            Block::Math(tex, _) => tex.shrink_to_fit(),
             Block::Rule => {}
             Block::Details {
                 summary, blocks, ..
@@ -1240,7 +1241,8 @@ fn rebase(block: &mut Block, start: usize) {
             inline(summary);
             blocks(b);
         }
-        Block::Math(_) | Block::Rule => {}
+        Block::Math(_, source) => *source = source.saturating_sub(start),
+        Block::Rule => {}
     }
 }
 
