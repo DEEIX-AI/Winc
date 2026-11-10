@@ -26,7 +26,7 @@ fn expanded_diff_pins_the_enclosing_scopes_for_each_version() {
         app.diff_hits
             .iter()
             .filter_map(|&(rect, target)| match target {
-                DiffTarget::Sticky(side, line, _) => Some((side, line, rect)),
+                DiffTarget::Sticky(side, line) => Some((side, line, rect)),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -93,6 +93,174 @@ fn expanded_diff_pins_the_enclosing_scopes_for_each_version() {
     app.config.sticky_scroll = Some(false);
     paint(&mut app);
     assert!(sticky(&app).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 打开 `Example.java` 的工作区差异（右侧可编辑），展开未改动的内容，返回应用与临时目录。
+///
+/// 两侧都是一个类里的一个长方法：类在第 0 行，右侧的方法在第 2 行。
+fn sticky_worktree_diff(name: &str) -> (App, std::path::PathBuf) {
+    use winc_editor::diff_view::{DiffSide, DiffView};
+
+    let dir = sample_folder(name);
+    let file = dir.join("Example.java");
+    let old = format!(
+        "class Example {{\n    void before() {{\n{}    }}\n}}\n",
+        "        beforeStep();\n".repeat(55),
+    );
+    let new = format!(
+        "class Example {{\n    // new method\n    void after() {{\n{}    }}\n}}\n",
+        "        afterStep();\n".repeat(55),
+    );
+    std::fs::write(&file, &new).unwrap();
+    let mut app = app_with(&file, false);
+    let path = app.editor.active().unwrap().path.clone();
+    let language = winc_syntax::detect("Example.java");
+    let mut view = DiffView::new(
+        DiffSide::new("old", &old, None, language),
+        DiffSide::new("worktree", &new, path, language),
+    );
+    view.editing = true;
+    app.editor
+        .show_diff_in(None, "Example.java (worktree)", view);
+    app.focus = Focus::Editor;
+    app.press_diff(DiffTarget::Collapse);
+    paint(&mut app);
+    (app, dir)
+}
+
+/// 返回右侧第 `line` 行位于右侧顶部之下的显示行数（在顶部时为 0）。
+fn right_row_below_top(app: &App, line: usize) -> f64 {
+    let doc = app.editor.active().unwrap();
+    let view = doc.diff.as_deref().unwrap();
+    let parts = diff_parts(app.layout.editor, view, app.cell);
+    let visible = f64::from(parts.body.h / app.fonts.line_height);
+    view.row_of(RIGHT, line) as f64 - view.side_scroll(RIGHT, doc.scroll_line, visible)
+}
+
+/// 返回右侧工作区文件对应的文档。
+fn worktree_source(app: &mut App) -> &mut winc_editor::Document {
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let path = view.new.path.clone().unwrap();
+    (app.editor.documents.iter_mut())
+        .find(|d| d.diff.is_none() && d.path.as_deref() == Some(path.as_path()))
+        .unwrap()
+}
+
+/// 把差异滚动到右侧第 `line` 行位于顶部。
+fn scroll_right_line_to_top(app: &mut App, line: usize) {
+    let parts = {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        diff_parts(app.layout.editor, view, app.cell)
+    };
+    let visible = f64::from(parts.body.h / app.fonts.line_height);
+    let doc = app.editor.active_mut().unwrap();
+    let view = doc.diff.as_deref().unwrap();
+    doc.scroll_line = view.pos_of_top(RIGHT, view.row_of(RIGHT, line) as f64, visible);
+    paint(app);
+}
+
+/// 单击右侧固定的方法头：光标放到右侧文件的该行，右侧进入编辑，该行滚到类的固定行之下。
+#[test]
+fn clicking_a_pinned_diff_header_puts_the_caret_on_it() {
+    let (mut app, dir) = sticky_worktree_diff("diff-sticky-click");
+    scroll_right_line_to_top(&mut app, 30);
+    let header = app
+        .diff_hits
+        .iter()
+        .find_map(|&(rect, target)| match target {
+            DiffTarget::Sticky(RIGHT, 2) => Some(rect),
+            _ => None,
+        })
+        .expect("右侧固定了方法头");
+    click(
+        &mut app,
+        (header.x + header.w / 2.0, header.y + header.h / 2.0),
+    );
+    paint(&mut app);
+    let source = worktree_source(&mut app);
+    assert_eq!(source.text().pos_to_line_col(source.selection.head).0, 2);
+    assert!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .editing
+    );
+    assert!((right_row_below_top(&app, 2) - 1.0).abs() < 0.01);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 光标或查找到的匹配移到被固定行遮住的位置时，滚动到固定行之下：层数按目标行计算，
+/// 不取上一帧画面中的固定行数。
+#[test]
+fn diff_carets_and_matches_stay_below_the_pinned_headers() {
+    let (mut app, dir) = sticky_worktree_diff("diff-sticky-follow");
+    // 顶部是文件开头，没有固定行；目标行在方法里，外层有类和方法两层。
+    scroll_right_line_to_top(&mut app, 0);
+    let source = worktree_source(&mut app);
+    let at = source.text().line_col_to_pos(20, 8);
+    source.selection = Selection::point(at);
+    scroll_right_line_to_top(&mut app, 21);
+    assert!(app.diff_edit_text("x"));
+    paint(&mut app);
+    assert!(
+        right_row_below_top(&app, 20) > 2.0 - 1e-3,
+        "光标在两层固定行之下"
+    );
+
+    scroll_right_line_to_top(&mut app, 41);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let start = view.new.text.line_to_char(40) + 8;
+    app.reveal_diff_match(RIGHT, start, start + 9);
+    paint(&mut app);
+    assert!(
+        right_row_below_top(&app, 40) > 2.0 - 1e-3,
+        "匹配在两层固定行之下"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 回归：单栏中顶部是删除的行、其下是新增的行时，固定行按屏幕上实际显示的行判断，不会把
+/// 下方仍可见的函数头也固定在顶部（同一行显示两次）。
+#[test]
+fn unified_diffs_do_not_pin_headers_that_are_still_visible() {
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT};
+
+    let dir = sample_folder("diff-sticky-unified");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let body = "            work();\n".repeat(40);
+    let old = format!(
+        "impl App {{\n    fn a() {{\n        one();\n    }}\n\n    /// old\n    \
+         fn b() {{\n        if ready {{\n{body}        }}\n    }}\n}}\n"
+    );
+    let new = format!(
+        "impl App {{\n    fn a() {{\n        one();\n    }}\n\n    /// new\n    /// more\n    \
+         fn b() {{\n        if ready {{\n{body}        }}\n    }}\n}}\n"
+    );
+    let language = winc_syntax::detect("short.rs");
+    let view = DiffView::new(
+        DiffSide::new("old", &old, None, language),
+        DiffSide::new("new", &new, None, language),
+    );
+    app.editor.show_diff("short.rs", view);
+    app.press_diff(DiffTarget::Collapse);
+    paint(&mut app);
+    let doc = app.editor.active_mut().unwrap();
+    let view = doc.diff.as_deref_mut().unwrap();
+    view.set_unified(true);
+    // 顶部停在删除的 `/// old` 一行的中间，其下依次是两行新增和未改动的 `fn b`。
+    doc.scroll_line = view.pos_of(LEFT, view.row_of(LEFT, 5) as f64) + 0.25;
+    paint(&mut app);
+    let pinned: Vec<_> = (app.diff_hits.iter())
+        .filter_map(|&(_, target)| match target {
+            DiffTarget::Sticky(side, line) => Some((side, line)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pinned, [(LEFT, 0)]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
