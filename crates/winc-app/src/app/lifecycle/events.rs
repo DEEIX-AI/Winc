@@ -152,6 +152,7 @@ impl ApplicationHandler<UserEvent> for App {
                 mono.as_ref(),
                 ui.as_ref(),
                 terminal.as_ref(),
+                self.font_weight(),
             ),
         };
         let renderer = match renderer {

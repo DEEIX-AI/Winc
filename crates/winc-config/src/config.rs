@@ -34,6 +34,8 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::ZOOM_RANGE`]。
     pub ui_zoom: Option<u16>,
+    /// 全部文字的字重，默认为 400（各字体自身的字重）；范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    pub ui_font_weight: Option<u16>,
     /// 是否用系统的标题栏（配置中的 `"titleBarStyle": "native"`）。
     ///
     /// 写成 `"custom"` 或没写时，窗口按钮在 winc 的顶栏中绘制。只影响 macOS 以外的平台。
@@ -253,6 +255,10 @@ impl Config {
     /// 下限时 13 点的界面文字约为 9 点，仍可辨认；上限时 4K 屏幕在系统缩放为 100% 的情况下，
     /// 界面与 1080p 屏幕上的原始大小相同。超出范围的值在读入时忽略并报告，小数取整。
     pub const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 70.0..=200.0;
+    /// 字重的合法范围；超出的值在读入时忽略并报告，小数取整。
+    pub const FONT_WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 100.0..=900.0;
+    /// 默认的字重。
+    pub const FONT_WEIGHT: u16 = 400;
     /// 制表符长度的合法范围（空格数）。
     ///
     /// 超出范围的值在读入时忽略并报告；上下限为经验值。

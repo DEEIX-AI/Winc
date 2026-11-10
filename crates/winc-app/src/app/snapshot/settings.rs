@@ -300,11 +300,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面缩放、界面字体、字号，macOS 以外的平台还有「使用系统标题栏」，然后是
-    // 状态栏、记住窗口、动态效果三个开关，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之
-    // 切换。深色主题：→ 换到下一个，外观回到深色；到头后不再变化。
+    // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，macOS 以外的平台还有「使用系统标题栏」，
+    // 然后是状态栏、记住窗口、动态效果三个开关，再下面是两组主题）：外观为深色时选一个浅色主题，
+    // 外观随之切换。深色主题：→ 换到下一个，外观回到深色；到头后不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..7 + title_bar {
+    for _ in 0..8 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -1198,5 +1198,60 @@ fn the_animations_switch_overrides_the_system_setting() {
     assert_eq!(app.config.ui_animations, Some(true));
     assert!(app.animations_on());
 
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_font_weight_steps_by_hundreds_within_its_range() {
+    let dir = sample_folder("settings-font-weight");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    assert_eq!(Setting::FontWeight.page(), SettingsPage::Appearance);
+    assert_eq!(app.setting_value(Setting::FontWeight).0, "400");
+
+    app.settings_adjust(Setting::FontWeight, true);
+    assert_eq!(app.config.ui_font_weight, Some(500));
+    // 回到 400 时从配置中去掉该项。
+    app.settings_adjust(Setting::FontWeight, false);
+    assert_eq!(app.config.ui_font_weight, None);
+
+    // 不在档位上的值移到该方向上最近的一档。
+    app.config.ui_font_weight = Some(450);
+    app.settings_adjust(Setting::FontWeight, true);
+    assert_eq!(app.config.ui_font_weight, Some(500));
+    app.config.ui_font_weight = Some(450);
+    app.settings_adjust(Setting::FontWeight, false);
+    assert_eq!(app.config.ui_font_weight, None);
+
+    // 到上下限后不再变化。
+    app.config.ui_font_weight = Some(900);
+    app.settings_adjust(Setting::FontWeight, true);
+    assert_eq!(app.config.ui_font_weight, Some(900));
+    assert_eq!(
+        app.setting_value(Setting::FontWeight),
+        ("900".to_owned(), false, true)
+    );
+    app.config.ui_font_weight = Some(100);
+    app.settings_adjust(Setting::FontWeight, false);
+    assert_eq!(app.config.ui_font_weight, Some(100));
+    assert_eq!(
+        app.setting_value(Setting::FontWeight),
+        ("100".to_owned(), true, false)
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 各档字重的截图：`cargo test -p winc-app shoot_font_weights -- --ignored`。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_font_weights() {
+    let dir = sample_folder("settings-font-weights");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.run(Command::Insert("// 字重 weight 0123 fn main() {}\n".into()));
+    for weight in [300, 400, 500, 600, 700] {
+        app.config.ui_font_weight = Some(weight);
+        app.apply_fonts().unwrap();
+        shoot(&mut app, &format!("font-weight-{weight}"));
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }

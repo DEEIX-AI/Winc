@@ -209,6 +209,7 @@ fn round_trips_through_json() {
         ui_zoom: Some(150),
         ui_native_title_bar: Some(true),
         ui_animations: Some(false),
+        ui_font_weight: Some(500),
         tab_width: Some(8),
         auto_save: Some(true),
         hot_exit: Some(false),

@@ -378,3 +378,51 @@ fn declared_base_rects_are_painted_for_one_frame_only() {
     renderer.draw(|_| {});
     assert_eq!(colors(&renderer), (0x101010, 0x101010));
 }
+
+/// 字重对有字重轴的字体、没有字重轴的字体和轮廓由系统提供的字体都生效，字宽不变。
+#[cfg(target_os = "macos")]
+#[test]
+fn font_weight_changes_the_ink_of_every_kind_of_font() {
+    let sf = FontSpec::Path("/System/Library/Fonts/SFNSMono.ttf".into());
+    let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
+    let ink = |spec: &FontSpec, weight: u16, c: char| {
+        let mut renderer =
+            Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, None).unwrap();
+        renderer.set_fonts(Some(spec), None, None, weight).unwrap();
+        let mut advance = 0.0;
+        renderer.draw(|frame| {
+            let all = frame.bounds();
+            let text = c.to_string();
+            advance = frame.text(
+                FontKind::Mono,
+                30.0,
+                5.0,
+                32.0,
+                &text,
+                Color::hex(0xffffff),
+                all,
+            );
+        });
+        let image = renderer.image().unwrap();
+        let sum: u32 = image.pixels.iter().map(|p| p & 0xff).sum();
+        (sum, advance)
+    };
+    for (spec, c, has_axis) in [(&sf, 'H', true), (&monaco, 'H', false), (&sf, '中', false)] {
+        let (regular, width) = ink(spec, FONT_WEIGHT_NORMAL, c);
+        let (bold, bold_width) = ink(spec, 700, c);
+        let (light, light_width) = ink(spec, 300, c);
+        assert!(
+            bold as f32 > regular as f32 * 1.15,
+            "{c}：{regular} → {bold}"
+        );
+        assert_eq!((bold_width, light_width), (width, width), "{c}");
+        if has_axis {
+            assert!(
+                (light as f32) < regular as f32 * 0.95,
+                "{c}：{regular} → {light}"
+            );
+        } else {
+            assert_eq!(light, regular, "{c}");
+        }
+    }
+}

@@ -183,6 +183,20 @@ const UI: &[Field] = &[
         write: |config| config.ui_zoom.map(|zoom| number(f32::from(zoom))),
     },
     Field {
+        key: "fontWeight",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-font-weight");
+            let range = Config::FONT_WEIGHT_RANGE;
+            config.ui_font_weight =
+                read_number(value, name, range, label, problems).map(|w| w.round() as u16);
+        },
+        write: |config| {
+            config
+                .ui_font_weight
+                .map(|weight| number(f32::from(weight)))
+        },
+    },
+    Field {
         // `titleBarStyle` 在配置中是字符串，读入后只保留是否用系统的标题栏。
         key: "titleBarStyle",
         read: |config, value, name, problems| match value.as_str() {

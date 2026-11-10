@@ -26,6 +26,7 @@ settings-light-theme = Light Theme
 settings-dark-theme = Dark Theme
 settings-ui-font = Interface Font
 settings-ui-size = Interface Font Size
+settings-font-weight = Global Font Weight
 settings-ui-zoom = Zoom
 settings-editor-font = Font
 settings-editor-size = Font Size

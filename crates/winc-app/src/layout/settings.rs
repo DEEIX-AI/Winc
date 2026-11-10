@@ -73,6 +73,7 @@ impl SettingsPage {
                         Setting::Zoom,
                         Setting::UiFont,
                         Setting::UiSize,
+                        Setting::FontWeight,
                     ]),
                     plain(vec![
                         Setting::StatusBar,
@@ -279,6 +280,8 @@ pub enum Setting {
     UiFont,
     /// 界面字号。
     UiSize,
+    /// 全部文字的字重。
+    FontWeight,
     /// 界面缩放（`ui.zoom`）：整个窗口按同一比例放大或缩小。
     Zoom,
     /// 用系统的标题栏和边框，而不是由应用在顶栏中绘制窗口按钮（macOS 以外的平台）。
@@ -369,6 +372,7 @@ impl Setting {
             | Setting::DarkTheme
             | Setting::UiFont
             | Setting::UiSize
+            | Setting::FontWeight
             | Setting::Zoom
             | Setting::SystemTitleBar
             | Setting::StatusBar
@@ -429,6 +433,7 @@ impl Setting {
             Setting::DarkTheme => t!("settings-dark-theme"),
             Setting::UiFont => t!("settings-ui-font"),
             Setting::UiSize => t!("settings-ui-size"),
+            Setting::FontWeight => t!("settings-font-weight"),
             Setting::Zoom => t!("settings-ui-zoom"),
             Setting::SystemTitleBar => t!("settings-system-title-bar"),
             Setting::EditorFont => t!("settings-editor-font"),
@@ -534,9 +539,11 @@ impl Setting {
     pub fn control(self) -> SettingControl {
         match self {
             Setting::EditorFont | Setting::UiFont | Setting::TerminalFont => SettingControl::Font,
-            Setting::EditorSize | Setting::UiSize | Setting::TerminalSize | Setting::TabWidth => {
-                SettingControl::Stepper
-            }
+            Setting::EditorSize
+            | Setting::UiSize
+            | Setting::FontWeight
+            | Setting::TerminalSize
+            | Setting::TabWidth => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar

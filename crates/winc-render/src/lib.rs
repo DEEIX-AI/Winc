@@ -225,6 +225,9 @@ const LINEAR_COVERAGE: [u8; 256] = {
 /// 常见等宽字体的斜体约倾斜 9° 至 12°。
 const OBLIQUE_DEGREES: f32 = 10.0;
 
+/// 默认的字重：各字体使用自身的字重。字重可以取 100 至 900。
+pub const FONT_WEIGHT_NORMAL: u16 = 400;
+
 /// 模拟粗体时笔画加宽的量与字号之比。
 ///
 /// 取 `FreeType` 粗体模拟所用的比例（1/24）。笔画两侧各加宽一半，前进宽度也加上同样的量，
@@ -318,7 +321,7 @@ impl Renderer {
     /// 创建渲染器，呈现到 `window`。
     ///
     /// `mono` 和 `ui` 是用户配置的字体，为 `None` 时使用平台默认字体；`terminal` 是终端字体，为
-    /// `None` 时终端使用 `mono`。
+    /// `None` 时终端使用 `mono`。`weight` 是全部文字的字重。
     ///
     /// # Errors
     ///
@@ -330,8 +333,9 @@ impl Renderer {
         mono: Option<&FontSpec>,
         ui: Option<&FontSpec>,
         terminal: Option<&FontSpec>,
+        weight: u16,
     ) -> Result<Renderer, String> {
-        let fonts = Fonts::load(mono, ui, terminal)?;
+        let fonts = Fonts::load(mono, ui, terminal, weight)?;
         Self::with_glyphs(window, background, SharedGlyphs(new_glyphs(fonts)))
     }
 
@@ -387,7 +391,7 @@ impl Renderer {
                 width: w,
                 height: h,
             }),
-            glyphs: new_glyphs(Fonts::load(mono, ui, None)?),
+            glyphs: new_glyphs(Fonts::load(mono, ui, None, FONT_WEIGHT_NORMAL)?),
             strokes: StrokeCache::new(),
             gamma: gamma_for(background),
             dark: is_dark(background),
@@ -425,7 +429,7 @@ impl Renderer {
         self.dark = is_dark(background);
     }
 
-    /// 更换字体；用户在设置界面修改字体名或字体文件后调用，失败时保留原字体。
+    /// 更换字体和字重；用户在设置界面修改后调用，失败时保留原字体。
     ///
     /// 重新加载字体会重新测量度量，因此整个字形缓存清空：缓存中的字形都带有旧字体的槽位和字形
     /// id，不清空会绘制出错误的字符。共用该缓存的其他窗口同时更换字体，随后收到相同的配置。
@@ -438,8 +442,9 @@ impl Renderer {
         mono: Option<&FontSpec>,
         ui: Option<&FontSpec>,
         terminal: Option<&FontSpec>,
+        weight: u16,
     ) -> Result<(), String> {
-        let fonts = Fonts::load(mono, ui, terminal)?;
+        let fonts = Fonts::load(mono, ui, terminal, weight)?;
         let mut glyphs = self.glyphs.borrow_mut();
         glyphs.fonts = fonts;
         glyphs.clear();

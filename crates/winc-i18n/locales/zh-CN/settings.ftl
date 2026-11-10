@@ -26,6 +26,7 @@ settings-light-theme = 浅色主题
 settings-dark-theme = 深色主题
 settings-ui-font = 界面字体
 settings-ui-size = 界面字号
+settings-font-weight = 全局字重
 settings-ui-zoom = 界面缩放
 settings-editor-font = 字体
 settings-editor-size = 字号
