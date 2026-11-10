@@ -137,7 +137,7 @@ impl App {
         }
     }
 
-    /// 只按住主修饰键滚动时，调整鼠标所在的编辑区或终端的字号，返回事件是否已处理。
+    /// 只按住主修饰键滚动时，调整鼠标所在的编辑区或终端的字号，或缩放 PDF，返回事件是否已处理。
     ///
     /// 触控板的一次手势是否调整字号在手势开始时确定：滚动途中按下修饰键仍是滚动，调整途中
     /// 松开修饰键后余下的滚动量丢弃。每个事件至多调整一档。
@@ -147,14 +147,15 @@ impl App {
             && keys.control_key() != keys.super_key()
             && !keys.shift_key()
             && !keys.alt_key();
-        let terminal = match self.target_at(self.mouse.0, self.mouse.1) {
-            Target::Editor | Target::Gutter => Some(false),
-            Target::Terminal | Target::TerminalBlock(_) => Some(true),
+        let zoomed = match self.target_at(self.mouse.0, self.mouse.1) {
+            Target::Editor if self.on_pdf_body() => Some(Zoomed::Pdf),
+            Target::Editor | Target::Gutter => Some(Zoomed::Editor),
+            Target::Terminal | Target::TerminalBlock(_) => Some(Zoomed::Terminal),
             _ => None,
         };
         let amount = match delta {
             MouseScrollDelta::LineDelta(_, y) => {
-                if !held || terminal.is_none() {
+                if !held || zoomed.is_none() {
                     self.wheel.zoom = 0.0;
                     return false;
                 }
@@ -171,7 +172,7 @@ impl App {
                 let fresh = phase == TouchPhase::Started
                     || last.is_none_or(|at| now.duration_since(at) > WHEEL_GESTURE_GAP);
                 if fresh {
-                    self.wheel.zooming = held && terminal.is_some();
+                    self.wheel.zooming = held && zoomed.is_some();
                     self.wheel.zoom = 0.0;
                 }
                 if !self.wheel.zooming {
@@ -184,7 +185,7 @@ impl App {
                 delta.y as f32 / scale / ZOOM_WHEEL_PIXELS
             }
         };
-        let Some(terminal) = terminal else {
+        let Some(zoomed) = zoomed else {
             return true;
         };
         self.wheel.zoom += amount;
@@ -192,9 +193,13 @@ impl App {
             let up = self.wheel.zoom > 0.0;
             self.wheel.zoom = 0.0;
             self.dismiss_hint();
+            if zoomed == Zoomed::Pdf {
+                self.zoom_pdf(Some(up), Some(self.mouse));
+                return true;
+            }
             // 调整字号会把光标滚入视野；这里保持编辑区顶部的行不变。
             let top = self.editor.active().map(|doc| doc.scroll_line);
-            self.step_font_size_in(terminal, Some(up));
+            self.step_font_size_in(zoomed == Zoomed::Terminal, Some(up));
             if let (Some(top), Some(doc)) = (top, self.editor.active_mut()) {
                 doc.scroll_line = top;
                 self.clamp_scroll();
@@ -485,8 +490,11 @@ impl App {
             if !table {
                 self.scroll_markdown(dy);
             }
+        } else if self.pdf.strip.contains(x, y) {
+            self.scroll_pdf_strip(dy);
         } else if self.pdf.area.contains(x, y) {
-            self.scroll_pdf(dy);
+            let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
+            self.scroll_pdf_by(dx, dy);
         } else if self.table_at(x, y) {
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
             self.scroll_table(dx, dy, (x, y));
@@ -504,6 +512,14 @@ impl App {
 
         self.request_redraw();
     }
+}
+
+/// 按住主修饰键滚动时调整的对象。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Zoomed {
+    Editor,
+    Terminal,
+    Pdf,
 }
 
 /// 鼠标滚轮滚动的过渡状态。

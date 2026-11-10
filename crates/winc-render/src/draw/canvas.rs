@@ -1011,6 +1011,42 @@ impl Canvas<'_> {
         }
     }
 
+    /// 把 `size`（宽，高）的非预乘 RGBA 位图 `data` 缩放到 `area` 混合到画布上，取最近的像素。
+    ///
+    /// # Panics
+    ///
+    /// `data` 的长度小于 `size` 宽高之积的 4 倍时 panic。
+    pub fn rgba_scaled(
+        &mut self,
+        area: IRect,
+        (width, height): (usize, usize),
+        data: &[u8],
+        opacity: u32,
+        clip: IRect,
+    ) {
+        let Some(v) = self.visible(area, clip) else {
+            return;
+        };
+        if width == 0 || height == 0 {
+            return;
+        }
+        let (w, h) = (area.width(), (area.y1 - area.y0) as usize);
+        // 横向按 16 位定点数步进，避免逐像素做除法。
+        let step = (width << 16) / w;
+        let first = (v.x0 - area.x0) as usize * step;
+        for y in v.y0..v.y1 {
+            let row = ((y - area.y0) as usize * height / h).min(height - 1);
+            let line = &data[row * width * 4..(row + 1) * width * 4];
+            let mut at = first;
+            for p in self.row(y, v) {
+                let x = (at >> 16).min(width - 1) * 4;
+                let [r, g, b, a] = [line[x], line[x + 1], line[x + 2], line[x + 3]].map(u32::from);
+                *p = blend(*p, (a << 24) | (r << 16) | (g << 8) | b, opacity);
+                at += step;
+            }
+        }
+    }
+
     /// 填充凸多边形 `points`（物理像素，顺序不限方向）。
     ///
     /// 边缘按覆盖率抗锯齿：每行取四条扫描线，分别计算多边形在各扫描线上的左右端点，按横向

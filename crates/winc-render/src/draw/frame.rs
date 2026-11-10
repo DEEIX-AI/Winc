@@ -147,6 +147,21 @@ impl Frame<'_> {
         self.canvas.rgba(area, rgba, opacity, clip);
     }
 
+    /// 把一张非预乘的 RGBA 图像缩放到 `rect`（逻辑像素）绘制，取最近的像素，不做插值。
+    ///
+    /// 用于暂时显示尺寸不符的图像（例如缩放过渡期间）。超出 `clip` 的部分不绘制；`rgba` 不足
+    /// `width * height * 4` 字节时不绘制。
+    pub fn pixels_scaled(&mut self, rect: Rect, width: u32, height: u32, rgba: &[u8], clip: Rect) {
+        let opacity = (self.opacity * 255.0).round() as u32;
+        let size = (width as usize, height as usize);
+        if opacity == 0 || rgba.len() < size.0 * size.1 * 4 {
+            return;
+        }
+        let area = rect.to_pixels(self.scale);
+        let clip = clip.intersect(self.limit).to_pixels_outer(self.scale);
+        self.canvas.rgba_scaled(area, size, rgba, opacity, clip);
+    }
+
     /// 在 `rect` 中绘制棋盘格（透明图片的底色），超出 `clip` 的部分不绘制。
     ///
     /// 方格边长 `cell`（逻辑像素），左上角的方格为 `first`，与其相邻的为 `second`。两种颜色都

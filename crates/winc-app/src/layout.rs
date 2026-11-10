@@ -459,6 +459,8 @@ pub enum Scrollbar {
     MarkdownTable,
     /// PDF 预览的竖直滚动条。
     Pdf,
+    /// PDF 预览缩略图栏的竖直滚动条。
+    PdfStrip,
     /// 设置页（含快捷键列表）的竖直滚动条。
     Settings,
 }

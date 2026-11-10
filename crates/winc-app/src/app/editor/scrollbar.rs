@@ -47,11 +47,13 @@ pub(crate) enum ScrollArea {
     MarkdownTable,
     /// PDF 预览。
     Pdf,
+    /// PDF 预览的缩略图栏。
+    PdfStrip,
 }
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 12] = [
+    const ALL: [ScrollArea; 13] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::Tree,
@@ -64,6 +66,7 @@ impl ScrollArea {
         ScrollArea::Markdown,
         ScrollArea::MarkdownTable,
         ScrollArea::Pdf,
+        ScrollArea::PdfStrip,
     ];
 
     /// 该区域可以拖动的滚动条；不能拖动时为 `None`。
@@ -81,6 +84,7 @@ impl ScrollArea {
             ScrollArea::Markdown => Some(Scrollbar::Markdown),
             ScrollArea::MarkdownTable => Some(Scrollbar::MarkdownTable),
             ScrollArea::Pdf => Some(Scrollbar::Pdf),
+            ScrollArea::PdfStrip => Some(Scrollbar::PdfStrip),
         }
     }
 

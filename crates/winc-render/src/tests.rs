@@ -426,3 +426,27 @@ fn font_weight_changes_the_ink_of_every_kind_of_font() {
         }
     }
 }
+
+/// 缩放绘制位图：每个目标像素取最近的源像素，超出裁剪范围的部分不绘制。
+#[test]
+fn scaled_pixels_take_the_nearest_source_pixel() {
+    // 2 × 2 的位图：红、绿、蓝、白，放大到 8 × 8。
+    let rgba = [
+        255, 0, 0, 255, 0, 255, 0, 255, //
+        0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    let mut renderer =
+        Renderer::offscreen(12.0, 12.0, 1.0, Color::hex(0x000000), None, None).unwrap();
+    renderer.draw(|frame| {
+        let clip = Rect::new(0.0, 0.0, 12.0, 9.0);
+        frame.pixels_scaled(Rect::new(2.0, 2.0, 8.0, 8.0), 2, 2, &rgba, clip);
+    });
+    let image = renderer.image().unwrap();
+    let at = |x: usize, y: usize| image.pixels[y * image.width as usize + x] & 0xff_ffff;
+    assert_eq!((at(2, 2), at(5, 5)), (0xff0000, 0xff0000));
+    assert_eq!((at(6, 2), at(9, 5)), (0x00ff00, 0x00ff00));
+    assert_eq!((at(2, 6), at(5, 8)), (0x0000ff, 0x0000ff));
+    assert_eq!(at(9, 8), 0xffffff);
+    // 位图之外和裁剪范围之外保持底色。
+    assert_eq!((at(1, 2), at(10, 2), at(5, 9)), (0, 0, 0));
+}

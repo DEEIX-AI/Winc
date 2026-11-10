@@ -417,6 +417,8 @@ pub enum Hover {
     MarkdownLink(usize),
     /// Markdown 预览左侧的标题指示条或展开的标题列表。
     MarkdownToc(crate::app::preview::markdown::TocTarget),
+    /// PDF 预览右下角工具栏上的按钮。
+    PdfTool(crate::app::preview::pdf::PdfTool),
     Search(SearchButton),
     TreeRow(usize),
     /// 历史差异侧栏标题行中切换树形与列表的按钮。
