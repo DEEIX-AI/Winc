@@ -450,7 +450,7 @@ impl App {
 
     /// 打开日志标签并选中提交 `oid`（由逐行追溯的点击触发）。
     ///
-    /// 该提交尚未读取时（被筛选掉或位于后续批次），清除筛选并从头读取，读取后选中该提交。
+    /// 该提交尚未读取时，按提交号筛选以直接定位它。
     pub(super) fn git_show_log_at(&mut self, oid: &str) {
         if self.git.root.is_none() {
             return;
@@ -458,15 +458,20 @@ impl App {
         let (index, new) = self.editor.show_log(log_title());
         let id = self.editor.documents[index].id;
         self.focus = Focus::Editor;
+        self.clear_log_compare();
         let row = self.editor.documents[index]
             .log
             .as_deref()
+            .filter(|view| !view.stale)
             .and_then(|v| v.commits.iter().position(|c| c.oid == oid));
         match row {
             Some(row) if !new => self.select_log_row(row),
             _ => {
                 if let Some(view) = self.editor.documents[index].log.as_deref_mut() {
-                    view.query = LogQuery::default();
+                    view.query = LogQuery {
+                        text: oid.to_owned(),
+                        ..LogQuery::default()
+                    };
                     view.selected = None;
                     view.reset();
                     view.details = Some(Details {
@@ -474,7 +479,7 @@ impl App {
                         ..Details::default()
                     });
                 }
-                self.log.filter.set_text("");
+                self.log.filter.set_text(oid);
                 self.editor.documents[index].scroll_line = 0.0;
                 self.load_log(id);
             }
