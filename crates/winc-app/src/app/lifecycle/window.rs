@@ -465,15 +465,14 @@ impl App {
         l.terminal_divider = Rect::new(l.editor.x, l.editor.bottom(), l.editor.w, gap);
     }
 
-    /// 编辑区每帧都先用不透明的 `editor_bg` 整个铺一遍（`view::editor::draw_editor`），告诉渲染器
-    /// 那一块不必先铺窗口背景色。
-    pub(in crate::app) fn cover_frame(&self, renderer: &mut winc_render::Renderer) {
+    /// 向渲染器声明下一帧的底色矩形（`view::base`），使其随窗口背景色一趟绘制。
+    pub(in crate::app) fn declare_base(&self, renderer: &mut winc_render::Renderer) {
         let (window, scale) = (self.layout.window, renderer.scale_factor());
         if self.settings_reuses_base(window, scale) {
             // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。
             renderer.cover_next_frame(window);
-        } else if self.palette.editor_bg.a >= 1.0 {
-            renderer.cover_next_frame(self.layout.editor);
+        } else {
+            renderer.base_next_frame(&view::base(self));
         }
     }
 
@@ -516,7 +515,7 @@ impl App {
             return;
         };
         let started = Instant::now();
-        self.cover_frame(&mut renderer);
+        self.declare_base(&mut renderer);
         // Wayland 上随本帧向合成器请求帧回调：之后的重画在合成器发出帧回调后进行，动画跟随
         // 合成器的刷新，而不是计时器。本帧在 `renderer.draw` 中绘制并提交，因此在调用它之前请求。
         #[cfg(all(unix, not(target_os = "macos")))]

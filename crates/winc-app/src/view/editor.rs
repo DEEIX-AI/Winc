@@ -57,9 +57,6 @@ const BRACE_SCAN_LIMIT: usize = 20_000;
 /// 当前标签是图片、SVG、Markdown 的预览或无法显示的文件时，改为绘制相应的预览或说明；
 /// 没有标签时绘制开始页或欢迎页。
 pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
-    let layout = app.layout;
-    let p = app.palette;
-    frame.rect(layout.editor, p.editor_bg);
     app.placeholder_hits.clear();
     app.diff_hits.clear();
     app.start_hits.clear();

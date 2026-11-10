@@ -51,15 +51,29 @@ use workspace::sidebar::{
 };
 use workspace::top_bar::{draw_top_bar, draw_window_controls};
 
+/// 返回本帧的底色矩形：侧栏、顶栏、编辑区的底色，由 [`draw`] 最先绘制。
+///
+/// `App::declare_base` 事先向渲染器声明，使其随窗口背景色一趟绘制（见 [`Frame::base`]）。
+/// 侧栏收起时其矩形位于窗口之外。
+pub(crate) fn base(app: &App) -> [(Rect, Color); 3] {
+    let (l, p) = (&app.layout, app.palette);
+    [
+        (l.sidebar, p.sidebar_bg),
+        (l.top_bar, p.editor_bg),
+        (l.editor, p.editor_bg),
+    ]
+}
+
 /// 绘制一帧界面，并重置、重新收集本帧的命中区域（文件树工具栏、项目名等）。
 ///
-/// 绘制顺序为：先绘制侧栏、顶栏、编辑区、状态栏，再绘制查找条、跳转条、快速打开卡片、
-/// 提示条等浮层；设置浮层打开时覆盖整个窗口并直接返回，其余情况最后绘制悬停提示。
+/// 绘制顺序为：先绘制底色（[`base`]）和侧栏、顶栏、编辑区、状态栏，再绘制查找条、跳转条、
+/// 快速打开卡片、提示条等浮层；设置浮层打开时覆盖整个窗口并直接返回，其余情况最后绘制悬停提示。
 pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     // 设置浮层出现、消失的动画期间，下方的窗口和卡片内容不变，用动画开始时保存的快照绘制。
     if settings::draw_cached(app, frame) || settings::draw_scrolling(app, frame) {
         return;
     }
+    frame.base(&base(app));
     let layout = app.layout;
     app.tree_overflow = tree_overflow(app, frame);
     app.track_log_tree();

@@ -9,7 +9,6 @@ use crate::app::TabHit;
 ///
 /// 标签为胶囊形状，一直排到顶栏右端；右端不放按钮。
 pub(in crate::view) fn draw_top_bar(app: &mut App, frame: &mut Frame<'_>) {
-    frame.rect(app.layout.top_bar, app.palette.editor_bg);
     draw_tabs(app, frame);
 }
 

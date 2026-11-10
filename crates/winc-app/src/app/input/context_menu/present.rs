@@ -1371,7 +1371,7 @@ impl App {
     pub(in crate::app) fn paint_now(&mut self) {
         self.relayout();
         if let Some(mut renderer) = self.renderer.take() {
-            self.cover_frame(&mut renderer);
+            self.declare_base(&mut renderer);
             renderer.draw(|frame| view::draw(self, frame));
             self.renderer = Some(renderer);
         }

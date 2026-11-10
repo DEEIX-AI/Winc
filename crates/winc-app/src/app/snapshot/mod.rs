@@ -132,12 +132,14 @@ fn hover_tree_row(app: &mut App, index: usize, x: f32) {
 /// 绘制一帧。
 ///
 /// 第一次绘制会记录各可点击区域的位置，据此重新计算鼠标悬停状态；因此再绘制一次，
-/// 使第二帧带有悬停效果。
+/// 使第二帧带有悬停效果。与 `App::redraw` 相同，绘制前先声明底色矩形。
 pub(super) fn paint(app: &mut App) {
     app.relayout();
     let mut renderer = app.renderer.take().unwrap();
+    app.declare_base(&mut renderer);
     renderer.draw(|frame| view::draw(app, frame));
     app.hover = app.hover_at(app.mouse.0, app.mouse.1);
+    app.declare_base(&mut renderer);
     renderer.draw(|frame| view::draw(app, frame));
     app.renderer = Some(renderer);
 }

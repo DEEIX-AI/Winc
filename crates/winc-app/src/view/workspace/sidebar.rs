@@ -30,7 +30,6 @@ use crate::theme::SCROLLBAR_HIT;
 /// - 下面是当前视图：文件树（底部是可以展开的大纲，见 [`outline::draw_outline`]）、全局搜索
 ///   面板或提交视图。
 pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
-    frame.rect(app.layout.sidebar, app.palette.sidebar_bg);
     panel::draw_view_tabs(app, frame);
 
     if app.sidebar_view == SidebarView::Search {
