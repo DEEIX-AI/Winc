@@ -1827,18 +1827,4 @@ fn details_id(block: &Block) -> u64 {
     memo::key(|h| block.hash(h))
 }
 
-/// 给标题生成锚点的规则：转成小写，空格换成 `-`，去掉其他标点（保留 `-`、`_`）。
-pub(crate) fn slug(text: &str) -> String {
-    text.chars()
-        .filter_map(|c| {
-            if c == ' ' {
-                Some('-')
-            } else if c.is_alphanumeric() || c == '-' || c == '_' {
-                Some(c)
-            } else {
-                None
-            }
-        })
-        .flat_map(char::to_lowercase)
-        .collect()
-}
+pub(crate) use winc_preview::markdown::slug;

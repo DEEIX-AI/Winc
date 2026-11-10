@@ -1827,7 +1827,7 @@ fn mermaid_blocks_draw_diagrams_and_fall_back_to_code() {
     let dir = sample_folder("md-mermaid-fallback");
     let path = dir.join("M.md");
     let drawn = "```mermaid\ngraph TD\n  A --> B\n```\n";
-    let unknown = "```mermaid\ngantt\n  title 计划\n```\n";
+    let unknown = "```mermaid\njourney\n  title 步骤\n```\n";
     let expand = crate::view::preview::markdown::EXPAND;
     for (source, diagram) in [(drawn, true), (unknown, false)] {
         std::fs::write(&path, source).unwrap();
@@ -2110,6 +2110,155 @@ flowchart TD
   Infra --> Storage
 ```
 ";
+
+/// 类图、实体关系图、思维导图、Git 提交图、甘特图的样本，每项为一个文档。
+const MORE_DIAGRAMS: [&str; 5] = [
+    r#"```mermaid
+classDiagram
+  direction LR
+  class Shape {
+    <<interface>>
+    +area() double
+    +perimeter() double
+  }
+  class Circle {
+    -double radius
+    +area() double
+  }
+  class Square {
+    -double side
+    +area() double
+  }
+  class Canvas {
+    +List~Shape~ shapes
+    +draw()
+  }
+  class Palette
+  Shape <|.. Circle
+  Shape <|.. Square
+  Canvas "1" *-- "many" Shape : 包含
+  Canvas o-- Palette
+  Canvas ..> Logger : 使用
+```
+"#,
+    r#"```mermaid
+erDiagram
+  SHELF ||--o{ BOOK : holds
+  BOOK ||--|{ PAGE : contains
+  BOOK }o..o| SERIES : "belongs to"
+  SHELF {
+    int id PK
+    string label
+  }
+  BOOK {
+    string isbn PK "编号"
+    int shelf_id FK
+    string title
+    int pages
+  }
+  PAGE {
+    int number PK
+    string isbn FK
+  }
+```
+"#,
+    r#"```mermaid
+mindmap
+  root((学习计划))
+    基础
+      数据结构
+      算法
+        排序
+        查找
+    工具
+      [编辑器]
+      (版本控制)
+    实践
+      小项目
+      代码评审
+    阅读
+      {{技术书籍}}
+      文档
+```
+"#,
+    r#"```mermaid
+gitGraph
+  commit id: "init"
+  commit id: "readme"
+  branch develop
+  checkout develop
+  commit id: "parser"
+  branch feature
+  checkout feature
+  commit id: "layout"
+  commit id: "draw" type: HIGHLIGHT
+  checkout develop
+  merge feature
+  checkout main
+  commit id: "hotfix" type: REVERSE
+  merge develop tag: "v1.0"
+  cherry-pick id: "parser"
+```
+"#,
+    r#"```mermaid
+gantt
+  title 版本计划
+  dateFormat YYYY-MM-DD
+  section 设计
+  需求整理 :done, a1, 2024-03-01, 4d
+  界面草图 :done, a2, after a1, 3d
+  section 开发
+  解析器 :active, b1, 2024-03-08, 6d
+  布局 :crit, b2, after b1, 5d
+  绘制 :b3, after b2, 4d
+  section 发布
+  测试 :c1, after b3, 3d
+  发布 :milestone, after c1, 0d
+```
+"#,
+];
+
+/// 类图、实体关系图、思维导图、Git 提交图、甘特图都画成图，不按代码块显示。
+#[test]
+fn more_diagram_kinds_draw_as_diagrams() {
+    for source in MORE_DIAGRAMS {
+        let (mut app, dir) = live_doc("md-mermaid-more", source);
+        app.set_preview_mode(PreviewMode::Preview);
+        settle(&mut app);
+        let [block] = app.markdown.codes[..] else {
+            panic!("只有一张图：{source}");
+        };
+        app.on_mouse_move(block.x + block.w / 2.0, block.y + block.h / 2.0);
+        paint(&mut app);
+        let expand = crate::view::preview::markdown::EXPAND;
+        assert!(
+            app.markdown.links.iter().any(|(_, url)| url == expand),
+            "{source}"
+        );
+        let over = crate::view::preview::markdown::tests::overflow(&app);
+        assert!(over <= 0.5, "超出 {over}：{source}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_more_mermaid_diagrams() {
+    for dark in [false, true] {
+        for (k, source) in MORE_DIAGRAMS.iter().enumerate() {
+            let dir = sample_folder("md-mermaid-more");
+            let path = dir.join("MERMAID.md");
+            std::fs::write(&path, source).unwrap();
+            let mut app = app_with(&path, dark);
+            paint(&mut app);
+            app.set_preview_mode(PreviewMode::Preview);
+            settle(&mut app);
+            let theme = if dark { "dark" } else { "light" };
+            shoot(&mut app, &format!("md-mermaid-more-{k}-{theme}"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
 
 #[test]
 fn wide_diagrams_shrink_to_fit_the_page() {
@@ -3379,5 +3528,35 @@ fn footnote_jumps_keep_context_above_and_mark_the_target() {
     // 标题照旧滚动到顶部。
     app.jump_to_anchor("标题");
     assert_eq!(app.markdown.scroll(), 0.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：行内公式（如希腊字母、运算符）中没有可定位的字，点击公式时光标仍应进入公式的原文。
+#[test]
+fn clicking_inline_math_puts_the_caret_in_its_source() {
+    let text = "前文\n\n$\\alpha\\beta\\gamma \\nabla\\partial\\infty$\n\n后文\n";
+    let (mut app, dir) = live_doc("md-inline-math", text);
+    let shown = crate::view::preview::markdown::full_text(&app).unwrap();
+    let at = |c: &str| shown[..shown.find(c).unwrap()].chars().count();
+    let (above, below) = (point_of(&app, at("前文")), point_of(&app, at("后文")));
+    let tex = text.find("\\alpha").unwrap();
+    let area = app.markdown.area;
+    // 从左到右、从上到下找第一处落在公式原文上的点（正文的字不会落到公式的原文处）。
+    let spot = (above.1 as usize..below.1 as usize)
+        .flat_map(|y| {
+            (area.x as usize..area.right() as usize)
+                .step_by(4)
+                .map(move |x| (x, y))
+        })
+        .map(|(x, y)| (x as f32, y as f32))
+        .find(|&(x, y)| crate::view::preview::markdown::source_at(&app, x, y) == Some(tex))
+        .expect("点得到公式");
+    app.on_mouse_move(spot.0, spot.1);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    let caret = app.live_caret_source().unwrap();
+    let end = text.find("$\n\n后文").unwrap();
+    assert!((tex..=end).contains(&caret), "{}", with_caret(&app));
     let _ = std::fs::remove_dir_all(&dir);
 }

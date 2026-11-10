@@ -540,3 +540,31 @@ fn deep_containers_are_flattened() {
     }
     assert_eq!(paragraph(&blocks[0]).text, "deep");
 }
+
+#[test]
+fn toc_marker_becomes_a_nested_list_of_heading_links() {
+    let md = parse("# 概述\n\n[TOC]\n\n## 安装 winc\n\n### 下载\n\n## 使用\n\n正文\n");
+    let Block::List(None, items) = &md.blocks[1] else {
+        panic!("[TOC] 没有换成目录：{:?}", md.blocks[1]);
+    };
+    // 「概述」一项，其下是「安装 winc」（含「下载」）和「使用」。
+    assert_eq!(items.len(), 1);
+    let link = |item: &Item| paragraph(&item.blocks[0]).links.clone();
+    assert_eq!(link(&items[0]), ["#概述"]);
+    let Block::List(None, children) = &items[0].blocks[1] else {
+        panic!("没有子项");
+    };
+    assert_eq!(children.len(), 2);
+    assert_eq!(link(&children[0]), ["#安装-winc"]);
+    assert_eq!(link(&children[1]), ["#使用"]);
+    let Block::List(None, grand) = &children[0].blocks[1] else {
+        panic!("没有第三级");
+    };
+    assert_eq!(link(&grand[0]), ["#下载"]);
+
+    // 没有标题时保留原文，不分大小写的 `[[toc]]` 同样识别。
+    let none = parse("[TOC]\n\n正文\n");
+    assert_eq!(paragraph(&none.blocks[0]).text, "[TOC]");
+    let wiki = parse("# 标题\n\n[[toc]]\n");
+    assert!(matches!(&wiki.blocks[1], Block::List(None, _)));
+}
