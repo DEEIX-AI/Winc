@@ -804,6 +804,14 @@ fn draw_body(
             }
         }
 
+        // 选区底色不遮住刚用快捷键标记的文字。
+        for (from, to, color) in marked_occurrences(app, &chars, range.clone()) {
+            let x0 = origin_x + at(from) * app.cell;
+            let x1 = origin_x + at(to) * app.cell;
+            let rect = Rect::new(x0, y + 1.0, (x1 - x0).max(2.0), lh - 2.0);
+            frame.rect_clipped(rect, color, 3.0, pane.text);
+        }
+
         // 整行从行首绘制（制表符的宽度取决于其在行内的位置），只显示本段的范围。
         let clip = if breaks.starts.is_empty() {
             pane.text

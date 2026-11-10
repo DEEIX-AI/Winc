@@ -5,6 +5,64 @@ use super::*;
 use crate::keymap::Action;
 
 #[test]
+fn word_highlights_reuse_the_oldest_color_when_full() {
+    let dir = sample_folder("word-highlight-rotation");
+    let file = dir.join("short.rs");
+    std::fs::write(&file, "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9\n").unwrap();
+    let mut app = app_with(&file, false);
+    let toggle = |app: &mut App, word: usize| {
+        app.select(word * 3, word * 3);
+        assert!(app.run_action(Action::HighlightWord));
+    };
+    let marks = |app: &App| {
+        app.word_highlights
+            .iter()
+            .map(|(color, mark)| (*color, mark.chars.iter().collect::<String>()))
+            .collect::<Vec<_>>()
+    };
+    let expected = |pairs: &[(usize, &str)]| {
+        pairs
+            .iter()
+            .map(|&(color, word)| (color, word.to_owned()))
+            .collect::<Vec<_>>()
+    };
+
+    for word in 0..8 {
+        toggle(&mut app, word);
+    }
+    assert_eq!(
+        marks(&app),
+        expected(&[
+            (2, "w2"),
+            (3, "w3"),
+            (4, "w4"),
+            (5, "w5"),
+            (0, "w6"),
+            (1, "w7")
+        ])
+    );
+
+    toggle(&mut app, 4);
+    toggle(&mut app, 8);
+    toggle(&mut app, 9);
+    assert_eq!(
+        marks(&app),
+        expected(&[
+            (3, "w3"),
+            (5, "w5"),
+            (0, "w6"),
+            (1, "w7"),
+            (4, "w8"),
+            (2, "w9")
+        ])
+    );
+    assert!(app.run_action(Action::ClearWordHighlights));
+    toggle(&mut app, 9);
+    assert_eq!(marks(&app), expected(&[(0, "w9")]));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn copying_without_a_selection_copies_and_pastes_whole_lines() {
     let dir = search_folder("clipboard");
     let mut app = app_with(&dir, false);

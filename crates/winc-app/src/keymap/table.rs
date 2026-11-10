@@ -147,6 +147,8 @@ pub fn bindings(os: Os) -> Vec<Binding> {
     }
     t.one(FindNext, EditorOrFind, key(none, F(3)));
     t.one(FindPrevious, EditorOrFind, key(shift, F(3)));
+    t.one(HighlightWord, Editor, c(shift, '8'));
+    t.one(ClearWordHighlights, Editor, key(shift, Escape));
 
     t.one(GoToDefinition, Editor, key(none, F(12)));
     t.one(FindReferences, Editor, key(shift, F(12)));

@@ -268,6 +268,8 @@ impl App {
             Replace => self.open_search(true),
             FindNext => self.find_again(false),
             FindPrevious => self.find_again(true),
+            HighlightWord => return self.toggle_word_highlight(),
+            ClearWordHighlights => self.word_highlights.clear(),
             ReplaceOne if self.search_open => self.replace_current(),
             ReplaceAll if self.search_open => self.replace_all(),
             ReplaceOne | ReplaceAll => return false,

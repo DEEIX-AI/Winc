@@ -739,6 +739,112 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
 }
 
 #[test]
+fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
+    use crate::keymap::{KeyCode, Mods, Stroke};
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT, ReadSelection};
+
+    let dir = sample_folder("word-highlights");
+    let file = dir.join("short.rs");
+    let text = "alpha beta alphabet alpha\n";
+    std::fs::write(&file, text).unwrap();
+    let mut app = app_with(&file, false);
+    let source_path = app.editor.active().unwrap().path.clone();
+    app.focus = Focus::Editor;
+    let toggle = Stroke {
+        key: KeyCode::Char('8'),
+        mods: Mods::SHIFT,
+    };
+    let clear = Stroke {
+        key: KeyCode::Escape,
+        mods: Mods::SHIFT,
+    };
+    let pixel = |app: &App, x: f32, y: f32| {
+        let renderer = app.renderer.as_ref().unwrap();
+        let image = renderer.image().unwrap();
+        let scale = renderer.scale_factor();
+        image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
+    };
+    let editor_colors = |app: &App| {
+        let text = app.layout.text;
+        [2, 7, 12, 22]
+            .map(|col| pixel(app, text.x + TEXT_PAD + col as f32 * app.cell, text.y + 3.0))
+    };
+    app.select(5, 5);
+    assert!(!app.on_shortcut(toggle), "词尾保留星号输入");
+    app.select(1, 1);
+    paint(&mut app);
+    let automatic = editor_colors(&app);
+    assert!(app.on_shortcut(toggle));
+    paint(&mut app);
+    let pinned = editor_colors(&app);
+    assert_ne!(pinned[0], automatic[0], "光标停在词上时立即显示固定颜色");
+    assert_ne!(pinned[3], automatic[3], "其他出现位置也立即更新颜色");
+    app.select(6, 10);
+    assert!(app.on_shortcut(toggle));
+    assert!(!app.search_open);
+    assert_eq!(
+        app.editor.active().unwrap().selection,
+        Selection::new(6, 10)
+    );
+    app.select(0, 0);
+    paint(&mut app);
+    let colors = editor_colors(&app);
+    assert_ne!(colors[0], colors[1]);
+    assert_ne!(colors[0], colors[2]);
+
+    let language = winc_syntax::detect("short.rs");
+    let old = DiffSide::new("old", text, None, language);
+    let new = DiffSide::new("new", text, None, language);
+    app.editor
+        .show_diff_in(None, "short.rs", DiffView::new(old, new));
+    let view = app
+        .editor
+        .active_mut()
+        .unwrap()
+        .diff
+        .as_deref_mut()
+        .unwrap();
+    view.read_selection = Some(ReadSelection {
+        side: LEFT,
+        range: (6, 10),
+    });
+    // 同一个词可以在另一侧取消并重新标注，保持同一颜色槽位。
+    assert!(app.on_shortcut(toggle));
+    assert_eq!(app.word_highlights.len(), 1);
+    assert!(app.on_shortcut(toggle));
+    let diff_colors = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        let parts = diff_parts(app.layout.editor, view, app.cell);
+        parts.panes.map(|pane| {
+            [1, 7, 12].map(|col| {
+                let x = pane.text.x + DIFF_TEXT_PAD + col as f32 * app.cell;
+                pixel(app, x, parts.body.y + 3.0)
+            })
+        })
+    };
+    paint(&mut app);
+    let marked = diff_colors(&app);
+    assert!(app.on_shortcut(clear));
+    paint(&mut app);
+    let plain = diff_colors(&app);
+    for (marked, plain) in marked.into_iter().zip(plain) {
+        assert_ne!(marked[0], plain[0]);
+        assert_ne!(marked[1], plain[1], "差异选区内仍能看到固定颜色");
+        assert_ne!(marked[0], marked[1]);
+        assert_eq!(marked[2], plain[2], "整词匹配不标注 alphabet");
+    }
+
+    let old = DiffSide::new("old", text, None, language);
+    let new = DiffSide::new("worktree", text, source_path, language);
+    let mut view = DiffView::new(old, new);
+    view.editing = true;
+    app.editor.show_diff_in(None, "short.rs (worktree)", view);
+    assert!(app.on_shortcut(toggle), "工作区差异使用右侧文件的光标");
+    assert_eq!(app.word_highlights.len(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn find_in_a_commit_diff_searches_the_selected_snapshot() {
     use crate::keymap::{KeyCode, Mods, Os, Stroke};
     use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT};
