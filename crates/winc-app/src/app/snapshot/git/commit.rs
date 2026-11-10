@@ -56,7 +56,8 @@ fn commit_only_the_checked_hunks() {
     paint(&mut app);
     // 两处改动各有一个勾选框；勾掉第二处（删掉 `value_50`），文件变成「部分」。
     assert!(
-        app.diff_hits
+        app.diff
+            .hits
             .iter()
             .any(|(_, t)| *t == DiffTarget::Include(1))
     );
@@ -2359,7 +2360,8 @@ fn commit_only_the_checked_lines() {
     app.press_diff(DiffTarget::IncludeLine(RIGHT, line));
     paint(&mut app);
     assert!(
-        app.diff_hits
+        app.diff
+            .hits
             .iter()
             .any(|(_, t)| *t == DiffTarget::IncludeLine(RIGHT, line))
     );

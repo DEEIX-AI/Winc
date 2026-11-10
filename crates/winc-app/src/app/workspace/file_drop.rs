@@ -86,6 +86,7 @@ impl App {
         #[cfg(target_os = "macos")]
         if let Some((x, y)) = self
             .window
+            .handle
             .as_ref()
             .and_then(|w| crate::macos::mouse_location(w))
         {
@@ -127,7 +128,7 @@ impl App {
             return;
         }
         ws.reveal(path);
-        self.tree_motion = None;
+        self.tree.motion = None;
         self.focus = Focus::Tree;
         if let Some(index) = ws.selected {
             self.scroll_tree_to(index, false);

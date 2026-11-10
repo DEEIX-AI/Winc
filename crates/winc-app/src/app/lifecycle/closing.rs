@@ -231,7 +231,7 @@ impl App {
         };
 
         // 没有窗口（测试中）时不弹出，由测试直接回答（`answer_save_prompt`）。
-        if self.window.is_none() {
+        if self.window.handle.is_none() {
             return;
         }
         let buttons = vec![

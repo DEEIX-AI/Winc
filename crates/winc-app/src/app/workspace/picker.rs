@@ -153,11 +153,11 @@ impl App {
         self.picker.folders = false;
         self.picker.part_hits.clear();
         self.picker.fold = None;
-        self.places_in = None;
+        self.picker.places_in = None;
         if let Some(places) = self.picker.places.take()
             && let Some(clock) = self.clock(POPUP_OUT)
         {
-            self.places_out = Some(PlacesGhost {
+            self.picker.places_out = Some(PlacesGhost {
                 places,
                 hits: self.picker.hits.clone(),
                 selected: self.picker.selected,
@@ -221,7 +221,7 @@ impl App {
     ///
     /// 左右不超出编辑区，名字不在屏幕上时贴着编辑区顶部居中。
     pub(in crate::app) fn place_places(&mut self) {
-        self.places_bottom = None;
+        self.picker.places_bottom = None;
         let Some(places) = self.picker.places.as_ref().filter(|_| self.picker.open) else {
             return;
         };
@@ -247,7 +247,7 @@ impl App {
         let right = editor.right() - SCROLLBAR_HIT - 8.0;
         let x = (x - 12.0).min(right - w).max(editor.x + 8.0).round();
         let y = if up {
-            self.places_bottom = Some(top - PLACES_GAP);
+            self.picker.places_bottom = Some(top - PLACES_GAP);
             top - PLACES_GAP - h
         } else {
             top + line_h + PLACES_GAP
@@ -262,7 +262,7 @@ impl App {
 
     /// 位置浮窗是否在名字上方。
     pub(crate) fn places_above(&self) -> bool {
-        self.places_bottom.is_some()
+        self.picker.places_bottom.is_some()
     }
 
     /// 返回当前文档中位置 `pos` 在窗口中的横坐标，以及它所在显示行的顶边纵坐标（逻辑像素）。
@@ -667,6 +667,16 @@ pub struct Picker {
     pub(crate) fold: Option<crate::app::git::branch::picker::PickerFold>,
     /// `⌘P` 面板出现、消失的动画。
     pub(crate) card: crate::app::animation::CardFx,
+    /// 位置浮窗（定义、用法、书签）位于名字上方时浮窗底边的纵坐标。
+    ///
+    /// 高度变化时底边保持不动、顶边移动；浮窗位于下方或未打开时为 `None`。
+    pub(in crate::app) places_bottom: Option<f32>,
+    /// 位置浮窗中尚未累计满一行的滚轮滚动量（逻辑像素）；浮窗按整行滚动。
+    pub(in crate::app) places_wheel: f32,
+    /// 位置浮窗出现的动画（滑出并淡入）；动画结束后为 `None`。
+    pub(crate) places_in: Option<crate::app::animation::Clock>,
+    /// 位置浮窗关闭后的淡出状态；不在淡出时为 `None`。
+    pub(crate) places_out: Option<PlacesGhost>,
 }
 
 impl Default for Picker {
@@ -694,6 +704,10 @@ impl Default for Picker {
             motion: None,
             fold: None,
             card: Default::default(),
+            places_bottom: None,
+            places_wheel: 0.0,
+            places_in: None,
+            places_out: None,
         }
     }
 }

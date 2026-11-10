@@ -184,7 +184,7 @@ impl App {
                 return self.run_log_confirmed(op);
             }
         };
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             self.show_confirm(&message, &detail, action, move |ok| {
                 ok.then(|| UserEvent::GitLogConfirmed(op.clone()))
             });

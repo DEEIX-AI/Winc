@@ -707,7 +707,7 @@ impl App {
     /// 「替换」为默认按钮（`↩`），「取消」对应 `Esc`。
     fn confirm_replace_all(&mut self) {
         let total = self.global.engine.total();
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             use crate::app::AlertButton;
             let files = self.global.engine.results.len();
             let replacement = self.global.replace.text();

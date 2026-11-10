@@ -61,7 +61,7 @@ fn draw_fade(
     parts: &DiffParts,
     row_y: &dyn Fn(usize, usize) -> f32,
 ) {
-    let Some(fade) = &app.diff_fade else {
+    let Some(fade) = &app.diff.fade else {
         return;
     };
     if app.editor.active().map(|d| d.id) != Some(fade.doc) {
@@ -111,7 +111,7 @@ fn draw_hunk_focus(app: &App, frame: &mut Frame<'_>, pane: Rect, (y0, y1): (f32,
     const PULSE_ALPHA: f32 = 0.28;
     let accent = app.palette.accent;
     if y1 > y0 {
-        if let Some(pulse) = app.diff_pulse {
+        if let Some(pulse) = app.diff.pulse {
             let band = Rect::new(pane.x, y0, pane.w, y1 - y0);
             frame.rect_clipped(
                 band,
@@ -168,7 +168,7 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     draw_header(app, frame, &view, &parts, pos, &mut hits);
     draw_overview(app, frame, &view, &parts, index);
 
-    app.diff_hits = hits;
+    app.diff.hits = hits;
     app.editor.documents[index].diff = Some(view);
 }
 

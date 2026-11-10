@@ -495,7 +495,7 @@ impl App {
         self.settings.recording = on;
         // 没有窗口（测试中）时没有菜单栏，也不在主线程上。
         #[cfg(target_os = "macos")]
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             crate::macos::suspend_menu_shortcuts(on);
         }
     }

@@ -172,10 +172,10 @@ fn selections_dim_without_focus_and_hide_the_current_line() {
     assert!(!app.editor_focused());
     shoot(&mut app, "selection-unfocused");
     app.focus = Focus::Editor;
-    app.window_focused = false;
+    app.window.focused = false;
     assert!(!app.editor_focused());
     // 窗口不在前台也按无焦点绘制；无焦点时用淡一层的 `selection_inactive`，当前行不高亮。
-    app.window_focused = true;
+    app.window.focused = true;
     let p = app.palette;
     assert_ne!(p.selection_inactive, p.selection);
     let _ = std::fs::remove_dir_all(&dir);

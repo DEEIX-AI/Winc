@@ -27,7 +27,7 @@ fn two_windows(
 fn closing_one_of_two_windows_drops_it_and_the_last_one_stays_hidden() {
     let (mut winc, a, b, dir) = two_windows("windows-close");
     winc.app(b).request_close_window();
-    assert!(winc.app(b).window_hidden);
+    assert!(winc.app(b).window.hidden);
     winc.settle_for_test();
     assert_eq!(winc.keys(), [a], "还有别的窗口时关掉的窗口去掉");
 
@@ -37,7 +37,7 @@ fn closing_one_of_two_windows_drops_it_and_the_last_one_stays_hidden() {
     let (_, exit) = winc.settle_for_test();
     assert_eq!(winc.keys(), [a]);
     if cfg!(target_os = "macos") {
-        assert!(winc.app(a).window_hidden && !exit);
+        assert!(winc.app(a).window.hidden && !exit);
     } else {
         assert!(winc.app(a).quit_requested);
     }
@@ -55,7 +55,7 @@ fn closing_a_window_without_a_folder_asks_about_unsaved_files() {
     winc.app(b).new_file();
     winc.app(b).run(Command::Insert("笔记".into()));
     winc.app(b).request_close_window();
-    assert!(winc.app(b).save_prompt.is_some() && !winc.app(b).window_hidden);
+    assert!(winc.app(b).save_prompt.is_some() && !winc.app(b).window.hidden);
     winc.app(b).answer_save_prompt(SaveChoice::Cancel);
     winc.settle_for_test();
     assert_eq!(winc.keys(), [a, b], "取消了就留着");
@@ -63,7 +63,7 @@ fn closing_a_window_without_a_folder_asks_about_unsaved_files() {
     // 开着目录的窗口仍然不询问：内容写入备份，以后打开该目录时恢复。
     winc.app(a).run(Command::Insert("// 还没存\n".into()));
     winc.app(a).request_close_window();
-    assert!(winc.app(a).save_prompt.is_none() && winc.app(a).window_hidden);
+    assert!(winc.app(a).save_prompt.is_none() && winc.app(a).window.hidden);
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -416,7 +416,7 @@ fn a_drawn_title_bar_has_window_buttons_and_resize_edges() {
     let app = winc.app(a);
     paint(app);
     assert_eq!(app.layout.controls, Rect::default(), "默认用系统的标题栏");
-    app.window_controls = true;
+    app.window.controls = true;
     app.relayout();
     paint(app);
     let controls = app.layout.controls;
@@ -467,13 +467,13 @@ fn the_title_bar_setting_applies_at_once() {
     let app = winc.app(a);
     app.sync_title_bar();
     app.relayout();
-    assert!(app.window_controls && app.layout.controls.w > 0.0);
+    assert!(app.window.controls && app.layout.controls.w > 0.0);
     assert!(!app.switch_on(Setting::SystemTitleBar));
     app.settings_toggle(Setting::SystemTitleBar);
     assert_eq!(app.config.ui_native_title_bar, Some(true));
-    assert!(!app.window_controls);
+    assert!(!app.window.controls);
     assert_eq!(app.layout.controls, Rect::default());
     app.settings_toggle(Setting::SystemTitleBar);
-    assert!(app.window_controls && app.layout.controls.w > 0.0);
+    assert!(app.window.controls && app.layout.controls.w > 0.0);
     let _ = std::fs::remove_dir_all(&dir);
 }

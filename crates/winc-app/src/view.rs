@@ -74,7 +74,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
     frame.base(&base(app));
     let layout = app.layout;
-    app.tree_overflow = tree_overflow(app, frame);
+    app.tree.overflow = tree_overflow(app, frame);
     app.track_log_tree();
     let before = app.commit.overflow.map(|o| o.row);
     app.commit.overflow = git::commit::commit_overflow(app, frame);
@@ -89,15 +89,15 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     // 鼠标停在名称展开的行上并滚动文件树后，该位置对应的行可能不再展开名称；鼠标位于文件树
     // 范围之外时需要清除悬停状态。
     let (x, y) = app.mouse();
-    if app.tree_overflow.is_none()
+    if app.tree.overflow.is_none()
         && matches!(app.hover, Hover::TreeRow(_))
         && !layout.tree.contains(x, y)
     {
         app.set_hover(Hover::None);
     }
 
-    app.tree_tools.clear();
-    app.tree_more = None;
+    app.tree.tools.clear();
+    app.tree.more = None;
     app.project_hit = Rect::default();
     app.begin_scrollbars();
 
@@ -105,7 +105,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         draw_sidebar(app, frame);
     }
     // 本帧没有绘制工具栏（侧栏收起或处于搜索视图）时，收起动画直接结束，不需要额外一帧。
-    if app.tree_tools.is_empty() && app.tree_more.is_none() {
+    if app.tree.tools.is_empty() && app.tree.more.is_none() {
         app.tool_fold.settle();
     }
 
@@ -152,7 +152,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         draw_moving_card(app, frame, Card::Picker, rect, draw_picker);
     } else if app.picker.open {
         draw_picker(app, frame);
-    } else if let Some(ghost) = &app.places_out {
+    } else if let Some(ghost) = &app.picker.places_out {
         editor::places::draw_ghost(app, frame, ghost);
     }
 
@@ -168,14 +168,14 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     let mut hits = std::mem::take(&mut app.merge.hits);
     app.merge.card = git::merge::draw_merge_card(app, frame, top, &mut hits);
     app.merge.hits = hits;
-    (app.notice_card, app.notice_button) = match app.notice.as_deref() {
+    (app.notice.card, app.notice.button) = match app.notice.text.as_deref() {
         Some(message) => {
             let (card, button) = draw_live_notice(app, frame, message);
             (Some(card), button)
         }
         None => (None, None),
     };
-    if let Some(ghost) = &app.notice_out {
+    if let Some(ghost) = &app.notice.leaving {
         draw_notice_ghost(app, frame, ghost);
     }
 
@@ -321,11 +321,11 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                 SearchParts::new(app.layout.search).rect(button),
                 button.label(),
             ),
-            Hover::TreeTool(tool) => match app.tree_tools.iter().find(|(_, t)| *t == tool) {
+            Hover::TreeTool(tool) => match app.tree.tools.iter().find(|(_, t)| *t == tool) {
                 Some(&(button, _)) => (button, tool.label().to_owned()),
                 None => return,
             },
-            Hover::TreeMore => match app.tree_more {
+            Hover::TreeMore => match app.tree.more {
                 Some(button) => (button, t!("workspace-tip-more-actions").to_owned()),
                 None => return,
             },

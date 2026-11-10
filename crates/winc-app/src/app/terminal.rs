@@ -583,7 +583,7 @@ impl App {
                 t!("cmd-close-window"),
             ),
         };
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             // macOS 上关闭最后一个窗口时窗口只是隐藏，终端继续运行：先显示窗口，确认框才可见。
             self.show_window();
             let shown = self.show_confirm(&message, detail, button, move |ok| {
@@ -753,7 +753,7 @@ impl App {
             .busy()
             .filter(|_| self.config.terminal_confirm_close != Some(false));
         if let Some(busy) = busy
-            && self.window.is_some()
+            && self.window.handle.is_some()
         {
             let id = tab.id;
             let message = t!("terminal-close-confirm", name = busy);
@@ -905,7 +905,7 @@ impl App {
 
     /// 画完一帧以后：给正在看的标签额度，焦点变了时告诉终端里的程序。
     pub(super) fn after_terminal_frame(&mut self) {
-        let focused = self.focus == Focus::Terminal && self.window_focused;
+        let focused = self.focus == Focus::Terminal && self.window.focused;
         let t = &mut self.terminal;
         if !t.open {
             // 收起面板时焦点去了编辑区：程序也要知道（1004），否则一直以为自己有焦点。

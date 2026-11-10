@@ -392,16 +392,16 @@ fn exits_are_reported_only_when_unseen() {
 
     app.terminal_message(FromHelper::Exited { tab: id, code: 1 });
     assert_eq!(app.terminal.tabs[0].unseen, None);
-    assert!(app.notice.is_none());
+    assert!(app.notice.text.is_none());
 
     run_current(&mut app);
     app.terminal.open = false;
     let id = app.terminal.tabs[0].id;
     app.terminal_message(FromHelper::Exited { tab: id, code: 2 });
     assert_eq!(app.terminal.tabs[0].unseen, Some(true));
-    assert!(app.notice.as_deref().unwrap().contains("api"));
+    assert!(app.notice.text.as_deref().unwrap().contains("api"));
 
-    app.notice = None;
+    app.notice.text = None;
     app.terminal.open = true;
     app.terminal.tabs[0].unseen = None;
     run_current(&mut app);
@@ -410,7 +410,7 @@ fn exits_are_reported_only_when_unseen() {
     app.stop_current_config();
     app.terminal_message(FromHelper::Exited { tab: id, code: 137 });
     assert_eq!(app.terminal.tabs[0].unseen, None);
-    assert!(app.notice.is_none());
+    assert!(app.notice.text.is_none());
     clean(&dir);
 }
 

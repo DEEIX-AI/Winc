@@ -435,15 +435,15 @@ fn close_tab_key_closes_the_window_once_no_tab_is_left_without_quitting() {
     // 有标签时 ⌘W 关闭标签，窗口不关。
     assert!(press(&mut app, &["cmd"], Char('w')));
     assert!(app.editor.documents.is_empty());
-    assert!(!app.window_hidden && !app.quit_requested);
+    assert!(!app.window.hidden && !app.quit_requested);
 
     // 命令面板里的「关闭标签页」在没有标签时什么也不做。
     app.run_action(crate::keymap::Action::CloseTab);
-    assert!(!app.window_hidden && !app.quit_requested);
+    assert!(!app.window.hidden && !app.quit_requested);
 
     // 没有标签时再按 ⌘W：macOS 上关闭窗口，应用不退出（留在程序坞中）；其他系统上什么也不做。
     press(&mut app, &["cmd"], Char('w'));
-    assert_eq!(app.window_hidden, cfg!(target_os = "macos"));
+    assert_eq!(app.window.hidden, cfg!(target_os = "macos"));
     assert!(!app.quit_requested);
 
     let _ = std::fs::remove_dir_all(&dir);

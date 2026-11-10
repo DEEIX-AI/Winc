@@ -104,10 +104,11 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     app.run_branch_command(MenuCommand::GitPush);
     assert!(
         app.notice
+            .text
             .as_deref()
             .is_some_and(|n| n.contains("未配置远程仓库")),
         "{:?}",
-        app.notice
+        app.notice.text
     );
 
     // 加一个远程：第一次推送设好上游，之后获取、拉取都能用，远程分支出现在列表里。
@@ -539,14 +540,19 @@ fn carrying_changes_works_when_git_refuses_the_switch() {
     git_in(&root, &["switch", "-q", "main"]);
     std::fs::write(&file, lines.replacen("1\n", "mine\n", 1)).unwrap();
     app.git_refresh();
-    app.notice = None;
+    app.notice.text = None;
     app.switch_branch(other, false);
     app.git_refresh();
     let current = app.git.branches.iter().find(|b| b.current).unwrap();
     assert_eq!(current.name, "other");
     assert!(std::fs::read_to_string(&file).unwrap().contains("<<<<<<<"));
     assert_eq!(app.git.stashes.len(), 1);
-    assert!(app.notice.as_deref().is_some_and(|n| n.contains("other")));
+    assert!(
+        app.notice
+            .text
+            .as_deref()
+            .is_some_and(|n| n.contains("other"))
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -578,8 +584,8 @@ fn an_untracked_file_in_the_way_is_stashed_and_reported() {
     assert_eq!(app.git.stashes.len(), 1, "无法恢复的内容保留在储藏里");
     // 工作区没有冲突标记，提示不能说有。
     let conflict = winc_i18n::t!("git-switch-carry-conflict", branch = "other");
-    assert_ne!(app.notice.as_deref(), Some(conflict.as_str()));
-    assert!(app.notice.is_some());
+    assert_ne!(app.notice.text.as_deref(), Some(conflict.as_str()));
+    assert!(app.notice.text.is_some());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -609,9 +615,9 @@ fn a_failed_stash_reports_why_the_switch_failed() {
         .find(|b| b.name == "other")
         .unwrap()
         .clone();
-    app.notice = None;
+    app.notice.text = None;
     app.carry_then_checkout(other);
-    let notice = app.notice.as_deref().unwrap();
+    let notice = app.notice.text.as_deref().unwrap();
     assert!(!notice.to_lowercase().contains("stash"), "{notice}");
     assert!(app.git.stashes.is_empty());
     let _ = std::fs::remove_dir_all(&root);
@@ -635,7 +641,7 @@ fn a_refused_switch_with_nothing_to_stash_keeps_old_stashes() {
     app.carry_then_checkout(missing);
     app.git_refresh();
     assert_eq!(app.git.stashes.len(), 1);
-    assert!(app.notice.is_some());
+    assert!(app.notice.text.is_some());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -738,10 +744,11 @@ fn pulling_keeps_uncommitted_changes_and_reports_a_conflicting_restore() {
     assert_eq!(app.git.status.as_ref().unwrap().behind, 0);
     assert!(
         app.notice
+            .text
             .as_deref()
             .is_some_and(|n| n.contains("拉取完成") && n.contains("保留在储藏中")),
         "{:?}",
-        app.notice
+        app.notice.text
     );
     assert!(std::fs::read_to_string(&file).unwrap().contains("mine"));
     assert_eq!(app.git.stashes.len(), 1);

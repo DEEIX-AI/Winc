@@ -110,7 +110,7 @@ fn caption_controls_cover_top_bar_targets() {
         }
     };
     let mut app = document();
-    app.window_controls = true;
+    app.window.controls = true;
     app.relayout();
     paint(&mut app);
     verify(&app);
@@ -169,9 +169,9 @@ fn touch_scroll_stays_in_the_panel_where_it_started() {
     touch(&mut app, 1, TouchPhase::Started, x, y);
     touch(&mut app, 1, TouchPhase::Moved, editor_x, y - 100.0);
     touch(&mut app, 1, TouchPhase::Ended, x, y - 100.0);
-    assert_eq!(app.tree_scroll, 100.0);
+    assert_eq!(app.tree.scroll, 100.0);
     assert!(app.editor.documents.is_empty());
-    assert!(app.tree_drag.is_none());
+    assert!(app.tree.drag.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -293,7 +293,7 @@ fn additional_fingers_end_a_scrollbar_drag_without_starting_a_new_action() {
 #[test]
 fn touch_title_bar_starts_on_contact_without_scrolling_or_long_press() {
     let mut app = document();
-    app.window_controls = true;
+    app.window.controls = true;
     app.relayout();
     paint(&mut app);
     let x = app.layout.window.w / 2.0;
@@ -331,7 +331,7 @@ fn touch_window_edges_are_distinct_from_buttons_and_overlays() {
     use crate::app::input::touch::WindowTouch;
     use winit::window::ResizeDirection;
     let mut app = document();
-    app.window_controls = true;
+    app.window.controls = true;
     app.relayout();
     paint(&mut app);
     assert_eq!(
@@ -378,7 +378,7 @@ fn native_touch_caption_matches_application_targets() {
         }
     };
     let mut app = document();
-    app.window_controls = true;
+    app.window.controls = true;
     app.relayout();
     paint(&mut app);
     verify(&app);

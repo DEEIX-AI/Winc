@@ -827,7 +827,7 @@ impl App {
             && typed.chars().all(|c| !c.is_control())
         {
             let now = Instant::now();
-            let mut word = match self.tree_typed.take() {
+            let mut word = match self.tree.typed.take() {
                 Some((word, at)) if now.duration_since(at) < TYPE_RESET => word,
                 _ => String::new(),
             };
@@ -849,7 +849,7 @@ impl App {
                             .iter()
                             .any(|path| matches(&segment_name(path)))
                 });
-            self.tree_typed = Some((word, now));
+            self.tree.typed = Some((word, now));
             let Some(hit) = hit else {
                 return;
             };
@@ -970,7 +970,7 @@ impl App {
     ///
     /// 窗口按系统的逻辑坐标接收位置，界面的逻辑像素乘以界面缩放倍数后传入。
     pub(in crate::app) fn update_ime_area(&mut self) {
-        if let (Some(area), Some(window)) = (self.ime_cursor, &self.window)
+        if let (Some(area), Some(window)) = (self.ime_cursor, &self.window.handle)
             && self.last_ime_area != Some(area)
         {
             self.last_ime_area = Some(area);

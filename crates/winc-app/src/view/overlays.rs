@@ -727,8 +727,8 @@ pub(super) fn draw_live_notice(
     frame: &mut Frame<'_>,
     message: &str,
 ) -> (Rect, Option<Rect>) {
-    let label = app.notice_action.as_ref().map(NoticeAction::label);
-    let (opacity, away) = app.notice_in.map_or((1.0, 0.0), |clock| {
+    let label = app.notice.action.as_ref().map(NoticeAction::label);
+    let (opacity, away) = app.notice.entering.map_or((1.0, 0.0), |clock| {
         let t = clock.linear();
         (1.0 - (1.0 - t).powi(2), (1.0 - t).powi(3))
     });

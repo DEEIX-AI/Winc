@@ -760,12 +760,11 @@ pub struct App {
     last_click: Option<Click>,
     /// 上一次在顶栏空白处的按下，用于识别双击。
     title_click: Option<Click>,
-    /// 是否由应用绘制标题栏和窗口按钮（见 `lifecycle::title_bar`）。
-    pub(crate) window_controls: bool,
+    /// 系统窗口及其状态。
+    pub window: lifecycle::window::WindowState,
     /// 鼠标按下时所在的标签关闭按钮（或中键按下的标签）；松开时仍在同一个标签上才关闭。
     close_pressed: Option<DocumentId>,
     cursor_icon: CursorIcon,
-    window_focused: bool,
     /// 拖选时最近一次因鼠标超出编辑区上下边缘而滚动的时刻，用于按经过的时间计算滚动量
     /// （见 `scroll_while_dragging`）；鼠标不在边缘之外时为 `None`。
     drag_scrolled_at: Option<Instant>,
@@ -790,8 +789,8 @@ pub struct App {
     pub tabs: TabBar,
     /// 无法打开的文件的占位页上，各按钮的位置。
     pub placeholder_hits: Vec<(Rect, PlaceholderAction)>,
-    /// 差异标签中的可点击区域（标题栏按钮、折叠的行），绘制时更新。
-    pub diff_hits: Vec<(Rect, DiffTarget)>,
+    /// 差异视图的界面状态。
+    pub diff: diff::DiffState,
     /// 开始页上可点击的区域，绘制时记录。
     ///
     /// 同一位置有两个区域时（最近列表的一行及其 ✕），✕ 排在前面。
@@ -836,14 +835,10 @@ pub struct App {
     pub folded_hits: Vec<(Rect, usize)>,
     /// 侧栏标题行项目名的可点击区域，绘制时填入。
     pub project_hit: Rect,
-    /// 文件树工具栏各按钮的位置，绘制时填入，点击时使用。
-    pub tree_tools: Vec<(Rect, TreeTool)>,
-    /// 工具栏收起后「⋯」按钮的位置；所有按钮都放得下时为 `None`。
-    pub tree_more: Option<Rect>,
+    /// 文件树的界面状态。
+    pub tree: workspace::tree::TreeState,
     /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
     pub(crate) tool_fold: ToolFold,
-    /// 鼠标所在文件树行的名字显示不全时，叠加在编辑区上方绘制的区域，以及该行的序号。
-    pub tree_overflow: Option<(Rect, usize)>,
     /// 各区域滚动条的显示状态：平时隐藏，滚动后或鼠标移到滚动条上时显示。
     pub(crate) scrollbars: Scrollbars,
 
@@ -856,18 +851,8 @@ pub struct App {
     /// 侧栏是否应显示；动画进行中取动画的终点。
     panel_visible: bool,
     sidebar_motion: Option<SidebarMotion>,
-    /// 位置浮窗（定义、用法、书签）位于名字上方时浮窗底边的纵坐标。
-    ///
-    /// 高度变化时底边保持不动、顶边移动；浮窗位于下方或未打开时为 `None`。
-    places_bottom: Option<f32>,
     /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
     pub(crate) name_hint: Option<NameHint>,
-    /// 位置浮窗中尚未累计满一行的滚轮滚动量（逻辑像素）；浮窗按整行滚动。
-    places_wheel: f32,
-    /// 位置浮窗出现的动画（滑出并淡入）；动画结束后为 `None`。
-    pub(crate) places_in: Option<Clock>,
-    /// 位置浮窗关闭后的淡出状态；不在淡出时为 `None`。
-    pub(crate) places_out: Option<PlacesGhost>,
     /// 编辑区顶部输入条出现、消失的动画。
     pub(crate) bar_card: animation::CardFx,
     /// 新建工作树对话框；未打开时为 `None`。
@@ -889,27 +874,8 @@ pub struct App {
     pub(crate) module_fx: animation::ModuleFx,
     /// 状态栏右侧各项的过渡状态。
     pub(crate) status_motion: StatusMotion,
-    /// 文件树的纵向滚动量（逻辑像素）。
-    pub tree_scroll: f32,
-    /// 文件树的横向滚动量；缩进、图标和名字整体向左移动。
-    pub tree_scroll_x: f32,
-    /// 文件树中最宽一行的内容宽度，横向滚动范围和滑块据此计算；绘制时测量。
-    pub tree_content_w: f32,
-    /// 合并显示的目录在屏幕上的横向范围，绘制时测量。
-    ///
-    /// 各项依次为所在行的下标、左右边界（逻辑像素）和目录路径。
-    pub tree_segments: Vec<(usize, f32, f32, PathBuf)>,
-    /// 鼠标所在的合并显示目录；鼠标不在合并显示的目录上时为 `None`。
-    pub tree_hover_segment: Option<PathBuf>,
-    /// 文件树各行名字的过渡状态。
-    pub tree_labels: TreeLabels,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
-    /// 文件树中连续键入的字符与最后一次键入的时刻，用于跳到名称以这些字符开头的行
-    /// （`App::on_key_tree`）。
-    pub(crate) tree_typed: Option<(String, std::time::Instant)>,
-    /// 目录展开、收起的动画。
-    pub tree_motion: Option<TreeMotion>,
     /// 代码折叠、展开的动画。
     pub fold_motion: Option<FoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
@@ -922,8 +888,6 @@ pub struct App {
     preview_tab: Option<winc_editor::DocumentId>,
     /// 文件树中正在重命名的项及其输入框；没有时为 `None`。
     pub name_input: Option<NameInput>,
-    /// 在文件树中按住的项；拖动该项可移动到其他目录。
-    pub tree_drag: Option<TreeDrag>,
     /// 从文件管理器等来源拖动文件经过窗口时的放置位置；未在拖动时为 `None`。
     file_hover: Option<DropZone>,
 
@@ -981,8 +945,6 @@ pub struct App {
     changes_due: Option<Instant>,
     /// 正在后台重读的、被其他程序修改的文件。
     rereads: workspace::watch::Rereads,
-    /// 正在后台重读的、文件树中被其他程序修改的目录。
-    tree_scans: workspace::watch::TreeScans,
     /// 正在后台保存的大文件。
     saves: workspace::background_save::BackgroundSaves,
     /// 正在后台读取的、刚打开的文件。
@@ -1027,15 +989,6 @@ pub struct App {
     pub branch: git::branch::BranchState,
     /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
     pub merge: git::merge::MergeState,
-    /// 差异中用「»」替换一段改动后正在淡出的颜色。
-    pub diff_fade: Option<diff::DiffFade>,
-    /// 跳转到一处改动时该段改动的短暂高亮；没有时为 `None`。
-    pub(crate) diff_pulse: Option<Clock>,
-    /// 差异切换文件后新文件的停留位置：`true` 为最后一处改动，`false` 为第一处；
-    /// 不在切换文件时为 `None`。
-    pub(crate) diff_land: Option<bool>,
-    /// 差异导航到达首尾时等待再次按键的状态与提示时刻；不在等待时为 `None`。
-    pub(crate) diff_cross: Option<(Instant, diff::DiffCross)>,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: diff::RediffState,
     /// 跳转条的当前用途。
@@ -1054,10 +1007,6 @@ pub struct App {
     pub save_continuation: Option<SavePrompt>,
     /// 退出前的处理均已完成；当前一轮事件处理结束后退出。
     pub quit_requested: bool,
-    /// 窗口是否已关闭（隐藏）而应用仍在运行。
-    ///
-    /// macOS 上关闭窗口不退出应用，点击程序坞中的图标时重新显示窗口。
-    pub window_hidden: bool,
     /// 最近关闭的标签（路径和光标位置），⇧⌘T 按关闭的相反顺序重新打开。
     pub closed: Vec<(PathBuf, usize)>,
     /// 退出前是否需要询问用户（各窗口共用同一个值，见 [`crate::winc::Shared::ask_on_quit`]）。
@@ -1073,30 +1022,18 @@ pub struct App {
     /// 文件已从磁盘删除、自动保存因此未写入且已提示过用户的文档；失去焦点时不再重复提示。
     deleted_told: HashSet<DocumentId>,
     status_until: Option<Instant>,
-    /// 编辑区右上角需要用户注意的提示。
-    pub notice: Option<String>,
-    notice_until: Option<Instant>,
-    /// 提示条上的按钮。
-    pub notice_action: Option<NoticeAction>,
-    /// 提示条上按钮的位置，绘制时记录。
-    pub notice_button: Option<Rect>,
-    /// 提示条的位置，绘制时记录；提示条浮在编辑区上方，点击、悬停和右键都不穿透到下方的文字。
-    pub notice_card: Option<Rect>,
+    /// 右上角提示条的状态。
+    pub notice: lifecycle::notice::Notice,
     /// 鼠标是否在窗口内：移进来时置位，离开窗口时清除。
     cursor_inside: bool,
     /// 冲突卡片及其按钮的位置，绘制时记录；当前文档没有冲突时为 `None`。
     pub conflict_card: Option<(Rect, Vec<(Rect, ConflictAction)>)>,
-    /// 提示条出现的动画；结束后为 `None`。
-    pub(crate) notice_in: Option<Clock>,
-    /// 到期后正在淡出的提示条：消息、按钮文字和消失的动画。
-    pub(crate) notice_out: Option<NoticeGhost>,
     /// 鼠标开始悬停在工具栏按钮上的时刻；悬停足够久后才显示提示。
     pub tooltip_since: Option<Instant>,
     /// 提示是否已绘制出来；已绘制时无需再为提示唤醒事件循环。
     pub tooltip_shown: bool,
 
     // 窗口和事件循环
-    window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     /// 后台线程和系统回调通过该代理把事件送回事件循环（附带本窗口的编号，见 [`crate::winc`]）；
     /// 测试中没有事件循环，为 `None`。
@@ -1114,10 +1051,6 @@ pub struct App {
     ///
     /// 创建窗口时按当前显示器校验后使用一次，见 `App::cascade_from`。
     pub(crate) cascade: Option<((f64, f64), f64)>,
-    /// 窗口正常显示（未最大化、全屏或最小化）时的大小和位置，关闭时记录。
-    ///
-    /// 最小化期间不更新；从最小化的窗口打开新窗口时按该位置错开（见 `App::cascade_from`）。
-    pub(crate) window_frame: Option<winc_config::WindowFrame>,
     /// 新窗口与来源窗口共用的字体和字形缓存（创建渲染器时使用一次）。
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 待使用的激活令牌（见 [`App::set_activation`]）。
@@ -1210,7 +1143,7 @@ impl App {
 
     /// 返回本窗口的系统窗口编号；窗口尚未创建时为 `None`。
     pub(crate) fn window_id(&self) -> Option<winit::window::WindowId> {
-        self.window.as_ref().map(|w| w.id())
+        self.window.handle.as_ref().map(|w| w.id())
     }
 
     /// 返回鼠标位置（逻辑像素）。

@@ -859,7 +859,7 @@ impl App {
         }) else {
             return;
         };
-        self.diff_land = None;
+        self.diff.land = None;
         self.load_log_diff(
             Arc::new(LogDiffSource {
                 root,
@@ -1063,7 +1063,7 @@ impl App {
                         self.land_diff_file();
                     }
                     Err(e) => {
-                        self.diff_land = None;
+                        self.diff.land = None;
                         self.flash(e);
                     }
                 },

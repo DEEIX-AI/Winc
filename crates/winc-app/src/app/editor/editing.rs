@@ -382,7 +382,7 @@ impl App {
     ///
     /// 返回 `false` 时选区按 `Palette::selection_inactive` 绘制。
     pub(crate) fn editor_focused(&self) -> bool {
-        self.focus == Focus::Editor && self.window_focused
+        self.focus == Focus::Editor && self.window.focused
     }
 
     /// 滚动编辑区，使光标保持在可见范围内。

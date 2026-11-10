@@ -14,7 +14,7 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             return;
         }
 
@@ -61,7 +61,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 由应用绘制标题栏时不使用系统的边框和标题栏（见 `App::sync_title_bar`）。
         self.sync_title_bar();
-        attributes = attributes.with_decorations(!self.window_controls);
+        attributes = attributes.with_decorations(!self.window.controls);
         // Windows 上去除系统边框的窗口默认没有阴影，与其他窗口重叠时无法区分边界。
         #[cfg(windows)]
         {
@@ -111,7 +111,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         // 窗口初始即为最大化时无法测量还原后的大小，先使用记录的大小。
-        self.window_frame = saved;
+        self.window.frame = saved;
 
         // 测量时窗口透明且鼠标点击穿透，必须在显示之前设置，保证没有任何一帧可见。
         #[cfg(target_os = "macos")]
@@ -165,7 +165,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         self.renderer = Some(renderer);
         self.measure_fonts();
-        self.window = Some(window.clone());
+        self.window.handle = Some(window.clone());
         #[cfg(windows)]
         {
             self.touch.window_input = crate::windows::WindowInput::new(&window);
@@ -303,7 +303,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::Focused(focused) => {
-                self.window_focused = focused;
+                self.window.focused = focused;
                 self.update_foreground(focused);
                 // 离开窗口时停止录制按键，菜单项的快捷键随之恢复，不影响别的窗口和应用。
                 if !focused {
@@ -334,7 +334,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if occluded {
                     self.cancel_touch();
                 }
-                self.update_foreground(!occluded && self.window_focused);
+                self.update_foreground(!occluded && self.window.focused);
                 self.set_occluded(occluded);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -503,7 +503,7 @@ impl App {
             }
             // `⌘,` 由菜单项接管，不进入按键处理；设置已打开时再次触发则在此处关闭设置。窗口已
             // 关闭时先重新显示窗口。
-            UserEvent::OpenSettings if self.settings.open && !self.window_hidden => {
+            UserEvent::OpenSettings if self.settings.open && !self.window.hidden => {
                 self.close_settings()
             }
             UserEvent::OpenSettings => {
@@ -548,11 +548,11 @@ impl App {
             self.request_redraw();
         }
 
-        if self.notice_until.is_some_and(|t| now >= t) {
+        if self.notice.until.is_some_and(|t| now >= t) {
             // 到期后原地淡出；淡出期间按钮不可点击。
             let (message, action) = self.clear_notice();
             let label = action.map(|a| a.label());
-            self.notice_out = match (message, self.clock(POPUP_OUT)) {
+            self.notice.leaving = match (message, self.clock(POPUP_OUT)) {
                 (Some(message), Some(clock)) => Some(NoticeGhost {
                     message,
                     label,
@@ -576,7 +576,7 @@ impl App {
         let committed = self.commit.committed.as_ref().map(|(_, t)| *t);
         let mut wake = [
             self.status_until,
-            self.notice_until,
+            self.notice.until,
             committed,
             self.hint_tick(now),
             self.touch_tick(now),
@@ -646,7 +646,7 @@ impl App {
 
         let blinking = now.duration_since(self.blink_epoch) < BLINK_STOP;
 
-        if !self.window_focused {
+        if !self.window.focused {
             // 窗口没有焦点时不显示光标（终端的光标改为绘制空心框），
             // 也不停留在失焦前所处的闪烁相位。
             if self.caret_visible {
@@ -718,7 +718,7 @@ impl App {
 
         if self.dirty
             && !self.unseen()
-            && let Some(window) = &self.window
+            && let Some(window) = &self.window.handle
         {
             window.request_redraw();
         }

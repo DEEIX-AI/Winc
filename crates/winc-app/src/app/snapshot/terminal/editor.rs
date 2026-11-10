@@ -508,7 +508,7 @@ fn snapshot_terminal_tabs() {
 fn a_right_terminal_leaves_room_for_the_window_buttons() {
     let dir = sample_folder("terminal-right-controls");
     let mut app = app_with(&dir.join("short.rs"), false);
-    app.window_controls = true;
+    app.window.controls = true;
     show_terminal(&mut app, "$ ");
     app.config.terminal_right = Some(true);
     app.relayout();
@@ -913,7 +913,7 @@ fn bells_and_notifications_reach_the_user() {
     show_terminal(&mut app, "$ ");
     add_tab(&mut app, "zsh", "$ ");
     app.terminal.active = 0;
-    app.window_focused = true;
+    app.window.focused = true;
     let (first, second) = (app.terminal.tabs[0].id, app.terminal.tabs[1].id);
     let event = |app: &mut App, tab: u16, event: Event| {
         app.terminal_message(FromHelper::Event { tab, event });
@@ -934,11 +934,11 @@ fn bells_and_notifications_reach_the_user() {
             body: "完成".into(),
         },
     );
-    assert_eq!(app.notice.as_deref(), Some("构建：完成"));
+    assert_eq!(app.notice.text.as_deref(), Some("构建：完成"));
 
     // 窗口不在前台：回到窗口时再提示。
-    app.notice = None;
-    app.window_focused = false;
+    app.notice.text = None;
+    app.window.focused = false;
     event(
         &mut app,
         first,
@@ -947,9 +947,9 @@ fn bells_and_notifications_reach_the_user() {
             body: "测试通过".into(),
         },
     );
-    assert_eq!(app.notice, None);
+    assert_eq!(app.notice.text, None);
     app.terminal_window_focused();
-    assert_eq!(app.notice.as_deref(), Some("测试通过"));
+    assert_eq!(app.notice.text.as_deref(), Some("测试通过"));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1094,7 +1094,7 @@ fn the_program_hears_when_the_terminal_loses_focus() {
     // 程序要了焦点上报（1004）。
     show_terminal(&mut app, "\x1b[?1004h$ ");
     let log = app.attach_recording_helper(&dir);
-    app.window_focused = true;
+    app.window.focused = true;
     app.after_terminal_frame();
     assert_eq!(app.input_sent_to(&log, 1), b"\x1b[I");
 

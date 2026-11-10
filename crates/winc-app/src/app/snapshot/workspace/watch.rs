@@ -68,7 +68,7 @@ fn outside_changes_reach_the_tree_the_index_and_open_files() {
     assert!(!a.can_save_quietly());
     // 冲突的是当前文档：由冲突卡片提示，不另弹提示条。
     assert_eq!(app.active_conflict().as_deref(), Some("a.txt"));
-    assert!(app.notice.is_none(), "{:?}", app.notice);
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
 
     // ⌘P 的文件表在后台更新：测试中没有事件循环，需要等待更新完成后手动取回。
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -260,7 +260,7 @@ fn conflicts_wait_for_the_user_to_pick_a_side() {
     assert_eq!(buttons.len(), 3);
     assert!(buttons.iter().all(|(b, _)| card.contains(b.x, b.y)));
     assert!(card.right() <= app.layout.editor.right());
-    let notice = app.notice.clone().unwrap_or_default();
+    let notice = app.notice.text.clone().unwrap_or_default();
     assert!(
         notice.contains("short.rs") && !notice.contains("a.txt"),
         "{notice}"
@@ -411,7 +411,7 @@ fn background_tree_scans_keep_only_the_latest_per_folder() {
         let tickets: Vec<u64> = scan
             .dirs()
             .iter()
-            .map(|d| app.tree_scans.tickets.issue(d.clone()))
+            .map(|d| app.tree.scans.tickets.issue(d.clone()))
             .collect();
         (tickets, scan.run())
     };
@@ -421,7 +421,7 @@ fn background_tree_scans_keep_only_the_latest_per_folder() {
     let old = scan(&mut app);
     std::fs::write(dir.join("second.rs"), "").unwrap();
     let new = scan(&mut app);
-    let sender = app.tree_scans.results.0.clone();
+    let sender = app.tree.scans.results.0.clone();
     sender.send(new).unwrap();
     sender.send(old).unwrap();
     app.poll_tree_scans();

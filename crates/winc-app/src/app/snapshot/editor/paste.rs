@@ -167,6 +167,7 @@ fn the_tree_copies_files_and_pastes_text_and_images_as_new_files() {
     app.paste();
     assert!(
         app.notice
+            .text
             .as_deref()
             .is_some_and(|m| m.contains("自身内部"))
     );

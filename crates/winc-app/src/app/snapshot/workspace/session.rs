@@ -110,6 +110,7 @@ fn recent_folders_open_and_can_be_forgotten() {
     assert_eq!(app.state.recent.len(), 1);
     assert!(
         app.notice
+            .text
             .as_deref()
             .is_some_and(|n| n.contains("已从最近列表中移除"))
     );
@@ -590,7 +591,7 @@ fn closing_the_window_closes_the_folder_but_keeps_its_tabs_and_changes() {
 
     // macOS：不退出应用。窗口隐藏，目录和标签关闭，回到开始页；目录的现场和备份都留着，
     // 之后退出时没有打开的目录，下次启动是开始页。
-    assert!(!app.quit_requested && app.window_hidden);
+    assert!(!app.quit_requested && app.window.hidden);
     assert!(app.editor.workspace.is_none() && app.editor.documents.is_empty());
     assert!(app.state.last.is_none());
     let session = app
@@ -701,6 +702,7 @@ fn a_second_winc_on_the_same_folder_leaves_the_first_ones_backups_alone() {
     assert!(
         second
             .notice
+            .text
             .as_deref()
             .is_some_and(|n| n.contains("另一个 Winc"))
     );
@@ -771,7 +773,7 @@ fn with_hot_exit_off_quitting_asks_and_then_drops_the_backups() {
     app.request_close_window();
     assert!(app.save_prompt.is_some());
     app.answer_save_prompt(SaveChoice::Cancel);
-    assert!(!app.window_hidden && !app.quit_requested);
+    assert!(!app.window.hidden && !app.quit_requested);
     assert!(app.editor.workspace.is_some() && !app.editor.documents.is_empty());
 
     // 不保存：退出并删除备份，下次启动不恢复。

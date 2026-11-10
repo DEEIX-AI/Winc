@@ -322,9 +322,9 @@ impl App {
             if self.picker.places.is_some() {
                 // 位置浮窗按整行滚动，始终只显示完整的行：滚动量累计满一行才滚动一行，
                 // 触控板的小幅滑动不会使行只显示一部分。
-                self.places_wheel += dy;
-                let steps = (self.places_wheel / PICKER_ROW).trunc();
-                self.places_wheel -= steps * PICKER_ROW;
+                self.picker.places_wheel += dy;
+                let steps = (self.picker.places_wheel / PICKER_ROW).trunc();
+                self.picker.places_wheel -= steps * PICKER_ROW;
                 let max = (max / PICKER_ROW).ceil() * PICKER_ROW;
                 self.picker.scroll = (self.picker.scroll - steps * PICKER_ROW).clamp(0.0, max);
             } else {
@@ -369,7 +369,7 @@ impl App {
             let rows = self.editor.workspace.as_ref().map_or(0, |w| w.rows().len());
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
             let max = tree_max_scroll(l.tree, rows).max(0.0);
-            self.tree_scroll = (self.tree_scroll - dy).clamp(0.0, max);
+            self.tree.scroll = (self.tree.scroll - dy).clamp(0.0, max);
             // 触控板的斜向滚动只取主方向，竖直滚动时不会同时产生左右位移。
             if dx != 0.0 {
                 let max_x = self.tree_max_scroll_x();
@@ -378,7 +378,7 @@ impl App {
                 } else {
                     0.0
                 };
-                self.tree_scroll_x = (self.tree_scroll_x + delta).clamp(0.0, max_x);
+                self.tree.scroll_x = (self.tree.scroll_x + delta).clamp(0.0, max_x);
             }
 
             // 文件树滚动后，鼠标下方的行已改变。

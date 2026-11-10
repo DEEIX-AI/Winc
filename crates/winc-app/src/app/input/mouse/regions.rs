@@ -465,7 +465,7 @@ impl App {
         let mut drag = TreeDrag::new(ws, index, (x, y));
         drag.sticky = sticky;
         drag.keep = count == 2;
-        self.tree_drag = Some(drag);
+        self.tree.drag = Some(drag);
     }
 
     /// 处理对编辑区窗口坐标 (`x`, `y`)（逻辑像素）处的点击：放置光标，双击选词，三击或点击行号栏

@@ -261,7 +261,7 @@ impl App {
             self.title_bar_double_click();
             return;
         }
-        let Some(window) = &self.window else {
+        let Some(window) = &self.window.handle else {
             return;
         };
         let _ = match operation {

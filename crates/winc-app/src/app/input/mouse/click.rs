@@ -390,7 +390,7 @@ impl App {
     fn click_title_bar(&mut self, x: f32, y: f32) {
         if self.title_bar_pressed(x, y) {
             self.title_bar_double_click();
-        } else if let Some(window) = &self.window {
+        } else if let Some(window) = &self.window.handle {
             let _ = window.drag_window();
         }
     }

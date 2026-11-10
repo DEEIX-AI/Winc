@@ -533,7 +533,12 @@ impl App {
             return;
         }
         #[cfg(target_os = "macos")]
-        if self.window.as_deref().is_some_and(crate::macos::has_sheet) {
+        if self
+            .window
+            .handle
+            .as_deref()
+            .is_some_and(crate::macos::has_sheet)
+        {
             return;
         }
         for &id in ids {
@@ -719,7 +724,7 @@ impl App {
         {
             use crate::macos::{Panel, show_panel};
 
-            let Some(window) = self.window.clone() else {
+            let Some(window) = self.window.handle.clone() else {
                 return;
             };
             let panel = match &kind {
@@ -782,7 +787,7 @@ impl App {
             };
             // 对话框的标题不带省略号；挂在窗口上，打开期间窗口不响应。
             let mut dialog = rfd::FileDialog::new().set_title(title.trim_end_matches('…'));
-            if let Some(window) = &self.window {
+            if let Some(window) = &self.window.handle {
                 dialog = dialog.set_parent(&**window);
             }
             if let Some(dir) = &dir {

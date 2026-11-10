@@ -118,6 +118,7 @@ fn recent_folders_can_be_removed_and_opened_in_a_new_window() {
     assert_eq!(app.state.recent, [canonical(&charlie)]);
     assert!(
         app.notice
+            .text
             .as_deref()
             .is_some_and(|n| n.contains("已从最近列表中移除"))
     );

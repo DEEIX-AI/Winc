@@ -43,7 +43,7 @@ impl App {
     /// 按钮从右向左为「此窗口」（↩）、「新窗口」、「取消」（Esc），上方是「不再询问」勾选框。
     /// 没有窗口（测试中）时直接在此窗口打开。
     fn ask_open_folder(&mut self, target: PathBuf) {
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             use crate::app::AlertButton;
             use winc_i18n::t;
 
@@ -222,7 +222,7 @@ impl App {
         // 输入框和浮层中保存的行号、路径属于旧目录，在新目录中无效。
         self.name_input = None;
         self.goto_input = None;
-        self.tree_drag = None;
+        self.tree.drag = None;
         self.global.engine.clear();
         self.global.collapsed.clear();
         self.global.selected = None;
@@ -238,9 +238,9 @@ impl App {
         if self.picker.open {
             self.close_picker();
         }
-        self.tree_motion = None;
-        self.tree_scroll = 0.0;
-        self.tree_scroll_x = 0.0;
+        self.tree.motion = None;
+        self.tree.scroll = 0.0;
+        self.tree.scroll_x = 0.0;
         self.closed.clear();
         self.navigation.clear();
     }

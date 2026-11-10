@@ -26,7 +26,7 @@ impl App {
         }
         crate::windows::WindowHitTest {
             caption_height: TOP_BAR_END,
-            resize_border: if self.window_controls {
+            resize_border: if self.window.controls {
                 crate::app::lifecycle::title_bar::RESIZE_EDGE
             } else {
                 0.0
@@ -61,7 +61,7 @@ impl App {
                 .map(|h| h.tab.intersect(self.tabs.view)),
         );
         client.extend(self.sidebar_tabs().iter().map(|(r, _)| *r));
-        client.extend(self.tree_tools.iter().map(|(r, _)| *r));
+        client.extend(self.tree.tools.iter().map(|(r, _)| *r));
         client.extend(self.terminal.hits.iter().map(|(r, _)| *r));
         client.extend(self.merge.hits.iter().map(|(r, _)| *r));
         client.extend(self.crumb_hits.iter().map(|(r, _)| *r));
@@ -69,11 +69,11 @@ impl App {
         client.extend(
             [
                 self.changes.card,
-                self.notice_card,
-                self.notice_button,
+                self.notice.card,
+                self.notice.button,
                 self.merge.card,
                 self.conflict_card.as_ref().map(|(r, _)| *r),
-                self.tree_more,
+                self.tree.more,
             ]
             .into_iter()
             .flatten(),
@@ -254,10 +254,10 @@ impl App {
         {
             return hit(&self.changes.hits, x, y).map_or(Target::Blocked, Target::Change);
         }
-        if self.notice_button.is_some_and(|b| b.contains(x, y)) {
+        if self.notice.button.is_some_and(|b| b.contains(x, y)) {
             return Target::NoticeButton;
         }
-        if self.notice_card.is_some_and(|card| card.contains(x, y)) {
+        if self.notice.card.is_some_and(|card| card.contains(x, y)) {
             return Target::Blocked;
         }
         // 合并冲突的按钮既位于卡片上，也位于冲突标记行上。
@@ -279,7 +279,7 @@ impl App {
         if self.picker.open && l.picker.contains(x, y) {
             return Target::Picker;
         }
-        if self.tree_more.is_some_and(|more| more.contains(x, y)) {
+        if self.tree.more.is_some_and(|more| more.contains(x, y)) {
             return Target::TreeMore;
         }
         // 搜索结果、改动列表的滚动条位于行的右端，先于行判断。显示全名的那一改动行覆盖在滚动条
@@ -313,7 +313,7 @@ impl App {
         if self.panel_visible && !over_row && !over_commit_row && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
-        if let Some(tool) = hit(&self.tree_tools, x, y) {
+        if let Some(tool) = hit(&self.tree.tools, x, y) {
             return Target::TreeTool(tool);
         }
         if self.project_hit.contains(x, y) {
@@ -391,7 +391,7 @@ impl App {
         if let Some(action) = hit(&self.placeholder_hits, x, y) {
             return Target::Placeholder(action);
         }
-        if let Some(target) = hit(&self.diff_hits, x, y) {
+        if let Some(target) = hit(&self.diff.hits, x, y) {
             return Target::Diff(target);
         }
         if let Some(target) = hit(&self.log.hits, x, y) {
@@ -507,12 +507,12 @@ impl App {
             let content = (rows as f32 + 1.0) * TREE_ROW;
 
             if x >= tree.right() - SCROLLBAR_HIT
-                && let Some(thumb) = scrollbar_thumb(tree, self.tree_scroll, content)
+                && let Some(thumb) = scrollbar_thumb(tree, self.tree.scroll, content)
             {
                 return Some((Scrollbar::Tree, grab(y, thumb.y, thumb.h)));
             }
             if y >= tree.bottom() - SCROLLBAR_HIT
-                && let Some(thumb) = hscrollbar_thumb(tree, self.tree_scroll_x, self.tree_content_w)
+                && let Some(thumb) = hscrollbar_thumb(tree, self.tree.scroll_x, self.tree.content_w)
             {
                 return Some((Scrollbar::TreeHorizontal, grab(x, thumb.x, thumb.w)));
             }
@@ -576,14 +576,16 @@ impl App {
     ///
     /// 只有已展开的行优先。沿边缘上下移动到其他行时，该行尚未展开，滚动条正常响应。
     pub(in crate::app) fn over_tree_overflow_row(&self, y: f32) -> bool {
-        self.tree_overflow
+        self.tree
+            .overflow
             .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y))
     }
 
     /// 窗口坐标 (`x`, `y`)（逻辑像素）是否位于文件树中显示不全的文件名
     /// 向右展开、覆盖到编辑区上方的区域内。
     pub(in crate::app) fn in_tree_overflow(&self, x: f32, y: f32) -> bool {
-        self.tree_overflow
+        self.tree
+            .overflow
             .is_some_and(|(rect, _)| rect.contains(x, y))
     }
 
@@ -609,7 +611,7 @@ impl App {
     ///
     /// 卡片浮于文字之上，点击、右键和指针样式都不应作用于下方的文字。
     pub(in crate::app) fn over_corner_card(&self, x: f32, y: f32) -> bool {
-        self.notice_card.is_some_and(|card| card.contains(x, y))
+        self.notice.card.is_some_and(|card| card.contains(x, y))
             || self.merge.card.is_some_and(|card| card.contains(x, y))
             || self
                 .conflict_card
@@ -742,7 +744,7 @@ impl App {
         if icon != self.cursor_icon {
             self.cursor_icon = icon;
 
-            if let Some(window) = &self.window {
+            if let Some(window) = &self.window.handle {
                 window.set_cursor(icon);
             }
         }

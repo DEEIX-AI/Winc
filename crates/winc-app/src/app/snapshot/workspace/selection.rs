@@ -371,7 +371,7 @@ fn typing_jumps_to_names_and_home_end_page_keys_move() {
     };
     // 把上次键入的时刻提前到 `TYPE_RESET` 之前，使下一个字符开始新一轮查找。
     let pause = |app: &mut App| {
-        if let Some((_, at)) = &mut app.tree_typed {
+        if let Some((_, at)) = &mut app.tree.typed {
             *at = Instant::now() - Duration::from_secs(1);
         }
     };

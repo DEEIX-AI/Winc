@@ -13,7 +13,7 @@ fn snapshot_sticky_folders() {
         let (_, core) = crate::app::snapshot::workspace::tree::expand_nested(&mut app);
 
         // 滚动到 `core` 内部，鼠标停在固定在顶部的 `core` 上。
-        app.tree_scroll = (core + 5) as f32 * TREE_ROW + 9.0;
+        app.tree.scroll = (core + 5) as f32 * TREE_ROW + 9.0;
         paint(&mut app);
         let tree = app.layout.tree;
         app.on_mouse_move(tree.x + 80.0, tree.y + TREE_ROW + 5.0);
@@ -21,7 +21,7 @@ fn snapshot_sticky_folders() {
 
         // `core` 的最后一行即将滚出，`core` 被向上推出一半。
         app.on_mouse_move(900.0, 500.0);
-        app.tree_scroll = (core + 29) as f32 * TREE_ROW + 13.0;
+        app.tree.scroll = (core + 29) as f32 * TREE_ROW + 13.0;
         shoot(&mut app, &format!("tree-sticky-pushed-{theme}"));
     }
 
@@ -63,9 +63,10 @@ fn snapshot_tree_tools() {
         app.on_mouse_move(900.0, 500.0);
         shoot(&mut app, &format!("tree-tools-{theme}"));
 
-        // 鼠标停在「刷新」上，提示已显示。`tree_tools` 在绘制时填充，因此先绘制一帧。
+        // 鼠标停在「刷新」上，提示已显示。`TreeState::tools` 在绘制时填充，因此先绘制一帧。
         let refresh = app
-            .tree_tools
+            .tree
+            .tools
             .iter()
             .find(|(_, tool)| *tool == TreeTool::Refresh)
             .map(|(r, _)| *r)
@@ -90,19 +91,19 @@ fn snapshot_tree_tools() {
         shoot(&mut app, &format!("tree-tools-narrow-{theme}"));
 
         // 最窄时：放不下的按钮收进「⋯」（点了弹系统菜单，截不到图）。
-        app.tree_scroll_x = 0.0;
+        app.tree.scroll_x = 0.0;
         app.panel_width = MIN_PANEL_WIDTH;
         paint(&mut app);
         shoot(&mut app, &format!("tree-more-{theme}"));
         app.panel_width = 200.0;
 
         // 横向滚动到底：缩进、图标、名称一起左移，底色不动，底部显示横向滑块。
-        app.tree_scroll_x = app.tree_max_scroll_x();
+        app.tree.scroll_x = app.tree_max_scroll_x();
         shoot(&mut app, &format!("tree-hscroll-{theme}"));
 
         // 鼠标停在横向滚动条所在区域：滑块颜色加深，宽度不变。
         let tree = app.layout.tree;
-        let thumb = hscrollbar_thumb(tree, app.tree_scroll_x, app.tree_content_w).unwrap();
+        let thumb = hscrollbar_thumb(tree, app.tree.scroll_x, app.tree.content_w).unwrap();
         app.on_mouse_move(thumb.x + thumb.w / 2.0, thumb.y + 3.0);
         shoot(&mut app, &format!("tree-hscroll-hover-{theme}"));
     }

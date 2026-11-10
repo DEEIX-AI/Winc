@@ -343,7 +343,7 @@ impl App {
             return;
         };
 
-        if !cfg!(target_os = "macos") || self.window.is_none() {
+        if !cfg!(target_os = "macos") || self.window.handle.is_none() {
             // 打勾那一行的文字对准被点击的段：文字前面是打勾和图标两列。
             let at = (rect.x - POPUP_TEXT_X, rect.y + rect.h / 2.0);
             let mut popup = PopupMenu::new(folder_rows(dir, &current), at, (true, false));
@@ -367,7 +367,7 @@ impl App {
         self.paint_now();
 
         #[cfg(target_os = "macos")]
-        if let Some(window) = self.window.clone() {
+        if let Some(window) = self.window.handle.clone() {
             let icons = self.folder_icons();
             FOLDER_ICONS.set(icons);
             let at = (f64::from(rect.x - MENU_TITLE_INSET), f64::from(rect.y));

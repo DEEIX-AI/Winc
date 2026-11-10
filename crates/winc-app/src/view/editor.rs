@@ -58,7 +58,7 @@ const BRACE_SCAN_LIMIT: usize = 20_000;
 /// 没有标签时绘制开始页或欢迎页。
 pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
     app.placeholder_hits.clear();
-    app.diff_hits.clear();
+    app.diff.hits.clear();
     app.start_hits.clear();
     // 日志标签绘制时重新填充；切换到其他标签后若仍保留，日志中提交行的命中区域会拦截代码区的点击。
     app.log.hits.clear();

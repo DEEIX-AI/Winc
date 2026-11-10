@@ -47,7 +47,7 @@ impl App {
         let (id, modes) = tab;
         if input::paste_needs_confirm(&text, modes) {
             let message = t!("terminal-paste-confirm", count = text.lines().count());
-            if self.window.is_some() {
+            if self.window.handle.is_some() {
                 // 没有弹出时不粘贴，并说明原因。
                 let detail = t!("terminal-paste-confirm-detail");
                 self.show_confirm(&message, detail, t!("cmd-paste"), move |ok| {

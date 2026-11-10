@@ -692,7 +692,7 @@ impl App {
 
         // 没有系统菜单（macOS 以外的平台，以及没有窗口的测试中）：在窗口里画出来，由应用自己
         // 处理悬停、点击和按键，打开期间菜单按钮保持按下的样子。
-        if !cfg!(target_os = "macos") || self.window.is_none() {
+        if !cfg!(target_os = "macos") || self.window.handle.is_none() {
             let rows = self.popup_rows(&entries, context, &mut 0);
             if let Some(menu) = &mut self.context_menu {
                 let mut popup = PopupMenu::new(rows, at, (at_checked, right_aligned));
@@ -711,7 +711,7 @@ impl App {
         self.paint_now();
 
         #[cfg(target_os = "macos")]
-        if let Some(window) = self.window.clone() {
+        if let Some(window) = self.window.handle.clone() {
             let items: Vec<_> = prepared
                 .iter()
                 .map(|p| p.as_ref().map(Prepared::item))
@@ -1329,7 +1329,7 @@ impl App {
 
     /// 文件树工具栏「⋯」的菜单：列出收起的各个工具，按工具栏中的顺序排列。
     pub(super) fn tree_tools_menu(&self) -> Vec<MenuEntry> {
-        crate::layout::folded_tools(self.tree_tools.len())
+        crate::layout::folded_tools(self.tree.tools.len())
             .iter()
             .map(|&tool| {
                 let command = match tool {

@@ -273,7 +273,7 @@ impl App {
         let key = trust_key(root, &config);
         let trusted = self.state.trusted_repo(&key) == Some(config.fingerprint());
         // 没有窗口（测试）时无法询问，也不会有用户的操作触发运行。
-        if trusted || self.window.is_none() {
+        if trusted || self.window.handle.is_none() {
             self.start_run(config);
             return;
         }

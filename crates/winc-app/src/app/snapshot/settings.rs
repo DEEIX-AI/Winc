@@ -1145,7 +1145,7 @@ fn line_numbers_and_the_status_bar_can_be_hidden() {
     // 短提示本来显示在状态栏上，隐藏后改到右上角。
     app.flash("copied");
     assert_eq!(app.status_message, None);
-    assert_eq!(app.notice.as_deref(), Some("copied"));
+    assert_eq!(app.notice.text.as_deref(), Some("copied"));
 
     // 命令面板能把它们打开回来。
     assert!(app.run_action(crate::keymap::Action::ToggleStatusBar));

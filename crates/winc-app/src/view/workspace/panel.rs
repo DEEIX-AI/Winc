@@ -1063,7 +1063,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, label))
         }
         Hover::Diff(target) => {
-            let rect = app.diff_hits.iter().find(|(_, t)| *t == target)?.0;
+            let rect = app.diff.hits.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
                 DiffTarget::Previous => with_key(
                     t!("workspace-tip-previous-change"),

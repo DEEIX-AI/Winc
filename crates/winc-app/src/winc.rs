@@ -426,10 +426,10 @@ impl Winc {
     ///
     /// 关掉之前目录的现场、未保存内容的备份都已记下。
     fn drop_closed(&mut self) {
-        if self.windows.iter().all(|slot| slot.app.window_hidden) {
+        if self.windows.iter().all(|slot| slot.app.window.hidden) {
             return;
         }
-        self.windows.retain(|slot| !slot.app.window_hidden);
+        self.windows.retain(|slot| !slot.app.window.hidden);
     }
 
     /// 推进退出流程：有窗口请求退出（⌘Q，`quit_requested`）时逐个请求其他窗口退出，
@@ -697,7 +697,7 @@ impl Winc {
         let hidden = self
             .windows
             .iter()
-            .find(|s| s.app.window_hidden)
+            .find(|s| s.app.window.hidden)
             .map(|s| s.key);
         if let Some(key) = hidden {
             if let Some(app) = self.by_key(key) {

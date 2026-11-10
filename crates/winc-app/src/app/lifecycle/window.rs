@@ -12,7 +12,7 @@ impl App {
     ///
     /// macOS 上执行系统偏好中的标题栏双击动作（缩放或最小化），其他平台切换最大化。
     pub(in crate::app) fn title_bar_double_click(&self) {
-        let Some(window) = &self.window else {
+        let Some(window) = &self.window.handle else {
             return;
         };
 
@@ -41,7 +41,7 @@ impl App {
     /// `AppKit` 修改标题时会重排标题栏并把那三个控制按钮恢复到默认位置，因此随后重新摆放
     /// 一次。
     pub(in crate::app) fn set_window_title(&self, title: &str) {
-        if let Some(window) = &self.window {
+        if let Some(window) = &self.window.handle {
             window.set_title(title);
         }
         self.place_traffic_lights();
@@ -50,10 +50,10 @@ impl App {
     /// 隐藏窗口（macOS 上关闭窗口时）：应用留在程序坞中，点击图标时由 [`App::show_window`]
     /// 重新显示。
     pub(super) fn hide_window(&mut self) {
-        if let Some(window) = &self.window {
+        if let Some(window) = &self.window.handle {
             window.set_visible(false);
         }
-        self.window_hidden = true;
+        self.window.hidden = true;
     }
 
     /// 打开 `targets` 里的文件（目录跳过：已经是本窗口的目录），`文件:行:列` 跳到该位置，再把
@@ -97,7 +97,7 @@ impl App {
     /// 切换；其他情况请系统切换。
     pub(crate) fn raise(&mut self) {
         self.show_window();
-        if let Some(window) = &self.window {
+        if let Some(window) = &self.window.handle {
             window.set_minimized(false);
             #[cfg(all(unix, not(target_os = "macos")))]
             let activated = (self.activation.take())
@@ -130,16 +130,16 @@ impl App {
     /// 返回从本窗口打开的新窗口的位置（外框左上角，物理像素）和本窗口的缩放比例：比本窗口往
     /// 右下错开，形成层叠。
     ///
-    /// 本窗口最小化时按最小化之前正常显示的位置（`window_frame`）错开：最小化期间系统报告的位置
+    /// 本窗口最小化时按最小化之前正常显示的位置（`WindowState::frame`）错开：最小化期间系统报告的位置
     /// 不在屏幕上，Windows 上为 (-32000, -32000)。本窗口隐藏，或最小化且没有记下正常显示的位置时
     /// 返回 `None`，新窗口改用上次关闭窗口时记下的位置。
     pub(crate) fn cascade_from(&self) -> Option<((f64, f64), f64)> {
-        let window = self.window.as_ref()?;
-        if self.window_hidden {
+        let window = self.window.handle.as_ref()?;
+        if self.window.hidden {
             return None;
         }
         let (at, scale) = if window.is_minimized() == Some(true) {
-            let frame = self.window_frame?;
+            let frame = self.window.frame?;
             (frame.position?, frame.scale)
         } else {
             let at = window.outer_position().ok()?;
@@ -152,8 +152,8 @@ impl App {
     /// 否则结束。
     pub(super) fn give_up_window(&mut self, event_loop: &ActiveEventLoop) {
         if self.shared.others() {
-            self.window = None;
-            self.window_hidden = true;
+            self.window.handle = None;
+            self.window.hidden = true;
         } else {
             event_loop.exit();
         }
@@ -163,16 +163,16 @@ impl App {
     ///
     /// 先在隐藏的窗口上画好一帧（开始页）再显示，不会先显示关闭前的画面。
     pub(in crate::app) fn show_window(&mut self) {
-        if !self.window_hidden {
+        if !self.window.hidden {
             return;
         }
-        self.window_hidden = false;
+        self.window.hidden = false;
         // 关着时系统当它看不见；显示之前先画好一帧，不等 `Occluded(false)`。
         self.set_occluded(false);
         self.relayout();
         self.request_redraw();
         self.redraw();
-        if let Some(window) = &self.window {
+        if let Some(window) = &self.window.handle {
             window.set_visible(true);
             window.focus_window();
         }
@@ -185,7 +185,7 @@ impl App {
     /// 摆放。
     pub(super) fn place_traffic_lights(&self) {
         #[cfg(target_os = "macos")]
-        if let (Some(window), Some(lights)) = (&self.window, &self.traffic_lights)
+        if let (Some(window), Some(lights)) = (&self.window.handle, &self.traffic_lights)
             && let Some(end) = lights.place()
             && crate::layout::set_traffic_lights_end(end as f32)
         {
@@ -264,7 +264,7 @@ impl App {
         self.place_places();
         self.place_git_picker();
         self.animate_picker((w, h));
-        if let Some(bottom) = self.places_bottom {
+        if let Some(bottom) = self.picker.places_bottom {
             self.layout.picker.y = bottom - self.layout.picker.h;
         }
 
@@ -524,7 +524,7 @@ impl App {
         // Wayland 上随本帧向合成器请求帧回调：之后的重画在合成器发出帧回调后进行，动画跟随
         // 合成器的刷新，而不是计时器。本帧在 `renderer.draw` 中绘制并提交，因此在调用它之前请求。
         #[cfg(all(unix, not(target_os = "macos")))]
-        if let Some(window) = &self.window {
+        if let Some(window) = &self.window.handle {
             window.pre_present_notify();
         }
         let glide = self.begin_glide_frame();
@@ -537,7 +537,7 @@ impl App {
             return;
         }
         if self.frame_log.enabled()
-            && let Some(window) = &self.window
+            && let Some(window) = &self.window.handle
         {
             let size = window.inner_size();
             let refresh = frame_interval(window);
@@ -655,4 +655,32 @@ pub(in crate::app) fn frame_interval(window: &Window) -> Duration {
         .filter(|&mhz| mhz >= 30_000)
         .unwrap_or(60_000);
     Duration::from_micros(1_000_000_000 / u64::from(millihertz))
+}
+
+/// 系统窗口及其状态：窗口句柄、是否有焦点、是否隐藏、是否由应用绘制窗口按钮、保存的位置。
+pub struct WindowState {
+    pub(in crate::app) handle: Option<Arc<Window>>,
+    /// 是否由应用绘制标题栏和窗口按钮（见 `lifecycle::title_bar`）。
+    pub(crate) controls: bool,
+    pub(in crate::app) focused: bool,
+    /// 窗口是否已关闭（隐藏）而应用仍在运行。
+    ///
+    /// macOS 上关闭窗口不退出应用，点击程序坞中的图标时重新显示窗口。
+    pub(crate) hidden: bool,
+    /// 窗口正常显示（未最大化、全屏或最小化）时的大小和位置，关闭时记录。
+    ///
+    /// 最小化期间不更新；从最小化的窗口打开新窗口时按该位置错开（见 `App::cascade_from`）。
+    pub(crate) frame: Option<winc_config::WindowFrame>,
+}
+
+impl Default for WindowState {
+    fn default() -> Self {
+        Self {
+            handle: None,
+            controls: false,
+            focused: true,
+            hidden: false,
+            frame: None,
+        }
+    }
 }

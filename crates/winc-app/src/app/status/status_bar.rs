@@ -153,7 +153,7 @@ impl App {
             self.reopen_with_encoding(id, encoding);
             return;
         }
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             let message = t!("workspace-reopen-confirm");
             let detail = t!("workspace-reopen-confirm-detail");
             let button = t!("workspace-reopen-discard");

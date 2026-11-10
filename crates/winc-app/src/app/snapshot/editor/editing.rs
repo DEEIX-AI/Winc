@@ -294,10 +294,10 @@ fn auto_save_writes_on_switching_tabs_and_leaving_the_window() {
     app.auto_save(&ids);
     assert!(!b.exists());
     assert!(app.editor.active().unwrap().is_dirty());
-    let notice = app.notice.take().unwrap();
+    let notice = app.notice.text.take().unwrap();
     assert!(notice.contains("已从磁盘上删除"), "{notice}");
     app.auto_save(&ids);
-    assert!(app.notice.is_none());
+    assert!(app.notice.text.is_none());
     assert!(app.run_action(crate::keymap::Action::Save));
     assert!(b.exists());
 

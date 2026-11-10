@@ -283,7 +283,7 @@ impl App {
     ///
     /// 没有窗口，或系统开启了「减弱动态效果」时返回 `None`，调用方应直接跳到动画终点。
     pub(super) fn clock(&mut self, duration: Duration) -> Option<Clock> {
-        let window = self.window.as_ref()?;
+        let window = self.window.handle.as_ref()?;
 
         #[cfg(target_os = "macos")]
         if crate::macos::reduce_motion() {
@@ -305,9 +305,9 @@ impl App {
         }
 
         settle(&mut self.sidebar_motion, |m| m.clock);
-        settle(&mut self.tree_motion, |m| m.clock);
+        settle(&mut self.tree.motion, |m| m.clock);
         self.settle_log_tree();
-        self.tree_labels.settle();
+        self.tree.labels.settle();
         self.commit.names.settle();
         settle(&mut self.commit.shift, |s| s.clock);
         settle(&mut self.commit.actions_slide, |s| s.1);
@@ -329,20 +329,20 @@ impl App {
         settle(&mut self.scroll_glide, |g| g.clock);
         settle(&mut self.picker.motion, |m| m.clock);
         settle(&mut self.picker.fold, |f| f.clock);
-        if self.places_in.is_some_and(|c| c.done()) {
-            self.places_in = None;
+        if self.picker.places_in.is_some_and(|c| c.done()) {
+            self.picker.places_in = None;
         }
         if self.branch.finished.is_some_and(|c| c.done()) {
             self.branch.finished = None;
         }
-        settle(&mut self.places_out, |g| g.clock);
-        if self.notice_in.is_some_and(|c| c.done()) {
-            self.notice_in = None;
+        settle(&mut self.picker.places_out, |g| g.clock);
+        if self.notice.entering.is_some_and(|c| c.done()) {
+            self.notice.entering = None;
         }
-        settle(&mut self.notice_out, |g| g.clock);
-        settle(&mut self.diff_fade, |f| f.clock);
-        if self.diff_pulse.is_some_and(|c| c.done()) {
-            self.diff_pulse = None;
+        settle(&mut self.notice.leaving, |g| g.clock);
+        settle(&mut self.diff.fade, |f| f.clock);
+        if self.diff.pulse.is_some_and(|c| c.done()) {
+            self.diff.pulse = None;
         }
         settle(&mut self.view_slide, |s| s.1);
         settle(&mut self.settings.motion, |m| m.1);
@@ -400,9 +400,9 @@ impl App {
     /// 是否有动画正在进行，包括滚动条的淡入、淡出和变色。
     pub(super) fn animating(&self) -> bool {
         self.sidebar_motion.is_some()
-            || self.tree_motion.is_some()
+            || self.tree.motion.is_some()
             || self.log_tree_animating()
-            || self.tree_labels.moving()
+            || self.tree.labels.moving()
             || self.commit.names.moving()
             || self.commit.actions_slide.is_some()
             || self.commit.shift.is_some()
@@ -427,12 +427,12 @@ impl App {
             || self.wheel_glide.is_some()
             || self.picker.motion.is_some()
             || self.picker.fold.is_some()
-            || self.places_in.is_some()
-            || self.places_out.is_some()
-            || self.notice_in.is_some()
-            || self.notice_out.is_some()
-            || self.diff_fade.is_some()
-            || self.diff_pulse.is_some()
+            || self.picker.places_in.is_some()
+            || self.picker.places_out.is_some()
+            || self.notice.entering.is_some()
+            || self.notice.leaving.is_some()
+            || self.diff.fade.is_some()
+            || self.diff.pulse.is_some()
             || self.view_slide.is_some()
             || self.settings.motion.is_some()
             || self.picker.card.motion.is_some()

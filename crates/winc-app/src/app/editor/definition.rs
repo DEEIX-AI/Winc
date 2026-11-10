@@ -526,10 +526,10 @@ impl App {
         );
         let origin = self.relative_name();
         self.finish_name_input();
-        self.places_out = None;
+        self.picker.places_out = None;
         self.name_hint = None;
-        self.places_wheel = 0.0;
-        self.places_in = self.clock(POPUP_IN);
+        self.picker.places_wheel = 0.0;
+        self.picker.places_in = self.clock(POPUP_IN);
         self.picker.branch_rows = None;
         self.picker.location_rows = None;
         self.picker.folders = false;
