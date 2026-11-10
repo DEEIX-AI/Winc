@@ -196,6 +196,16 @@ const UI: &[Field] = &[
                 .map(|weight| number(f32::from(weight)))
         },
     },
+    string_field!("backgroundImage", ui_background_image),
+    Field {
+        key: "backgroundOpacity",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-background-opacity");
+            let range = Config::BACKGROUND_OPACITY_RANGE;
+            config.ui_background_opacity = read_number(value, name, range, label, problems);
+        },
+        write: |config| config.ui_background_opacity.map(number),
+    },
     Field {
         // `titleBarStyle` 在配置中是字符串，读入后只保留是否用系统的标题栏。
         key: "titleBarStyle",

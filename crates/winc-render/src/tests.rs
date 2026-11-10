@@ -450,3 +450,67 @@ fn scaled_pixels_take_the_nearest_source_pixel() {
     // 位图之外和裁剪范围之外保持底色。
     assert_eq!((at(1, 2), at(10, 2), at(5, 9)), (0, 0, 0));
 }
+
+/// 背景图在窗口背景、声明的底色和之后以这些颜色填充的矩形之下透出，颜色为「图片 × 不透明度 +
+/// 底色 × (1 − 不透明度)」；其余颜色照常绘制。底色声明与否画面相同。
+#[test]
+fn the_wallpaper_shows_under_surface_colors_only() {
+    let (bg, card, other) = (
+        Color::hex(0x202020),
+        Color::hex(0x404040),
+        Color::hex(0x808080),
+    );
+    // 2 × 2 的图片铺满 8 × 8 的画布：红、绿、蓝、白各占四分之一。
+    let rgba = [
+        255, 0, 0, 255, 0, 255, 0, 255, //
+        0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    let draw = |declare: bool| {
+        let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
+        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5), &[bg, card]);
+        assert_eq!(renderer.wallpaper_size(), Some((2, 2)));
+        let rects = [(Rect::new(0.0, 0.0, 4.0, 8.0), card)];
+        if declare {
+            renderer.base_next_frame(&rects);
+        }
+        renderer.draw(|frame| {
+            frame.base(&rects);
+            frame.rect(Rect::new(6.0, 0.0, 2.0, 2.0), other);
+            // 再次以背景色填充：仍然透出背景图。
+            frame.rect(Rect::new(4.0, 6.0, 2.0, 2.0), bg);
+            // 圆角外侧修整为背景色：同样透出背景图。
+            frame.round_corners(Rect::new(0.0, 0.0, 4.0, 8.0), 2.0, bg);
+        });
+        renderer.image().unwrap().pixels.clone()
+    };
+    let image = draw(true);
+    assert_eq!(image, draw(false));
+    let at = |x: usize, y: usize| image[y * 8 + x] & 0xff_ffff;
+    // 底色矩形内：红色和蓝色的图片加上卡片色各一半。
+    assert_eq!((at(2, 2), at(2, 6)), (0x9f2020, 0x20209f));
+    // 窗口背景：绿色和白色的图片加上背景色各一半；重复填充的一块与周围相同。
+    assert_eq!(
+        (at(5, 2), at(7, 7), at(5, 7)),
+        (0x108f10, 0x8f8f8f, 0x8f8f8f)
+    );
+    // 不是底色的颜色照常绘制。
+    assert_eq!(at(6, 0), 0x808080);
+    // 圆角外侧的像素向背景色之下的图片过渡（弧线上的像素按覆盖比例混合）。
+    let corner = at(0, 0);
+    assert!((0x8f1010..0x9f2020).contains(&corner), "{corner:06x}");
+
+    // 取消以后恢复为纯色。
+    let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
+    renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5), &[bg]);
+    renderer.set_wallpaper(None, &[bg]);
+    renderer.draw(|_| {});
+    assert!(
+        renderer
+            .image()
+            .unwrap()
+            .pixels
+            .iter()
+            .all(|p| p & 0xff_ffff == 0x202020)
+    );
+    assert!(Wallpaper::new(2, 2, &rgba[..8], 0.5).is_none());
+}

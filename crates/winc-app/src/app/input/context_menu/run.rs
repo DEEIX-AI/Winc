@@ -154,6 +154,11 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::BackgroundImage => match command {
+                MenuCommand::BackgroundChoose => self.pick(Pick::BackgroundImage),
+                MenuCommand::BackgroundNone => self.set_background_image(None),
+                _ => {}
+            },
             MenuTarget::Zoom => {
                 if let MenuCommand::Zoom(i) = command
                     && let Some(&zoom) = crate::app::settings::ZOOM_STEPS.get(i)

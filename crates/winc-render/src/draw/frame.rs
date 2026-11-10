@@ -3,6 +3,7 @@
 //! [`Frame`] 持有本帧的画布与各个缓存，把逻辑像素坐标换算成物理像素后交给 [`Canvas`] 绘制。
 
 use super::*;
+use crate::draw::canvas::{Tinted, Wall};
 
 /// 一帧的绘制上下文：画布、字形缓存、覆盖率表和裁剪区域。
 ///
@@ -34,6 +35,19 @@ pub struct Frame<'a> {
     pub(crate) background: u32,
     /// 已随背景色绘制的底色矩形（物理像素），见 [`Frame::base`]。
     pub(crate) based: &'a [(IRect, u32)],
+    /// 窗口背景图的图层；没有背景图时为 `None`。
+    pub(crate) wall: Option<Wall<'a>>,
+    /// 透出背景图的底色（`0xAARRGGBB`）及其加在图层像素上的值，见 `Renderer::set_wallpaper`。
+    pub(crate) surfaces: &'a [(u32, u32)],
+}
+
+impl<'a> Frame<'a> {
+    /// 颜色 `argb` 是透出背景图的底色时，返回用它填充时写入的内容。
+    fn tint(&self, argb: u32) -> Option<Tinted<'a>> {
+        let wall = self.wall?;
+        let &(_, k) = self.surfaces.iter().find(|(surface, _)| *surface == argb)?;
+        Some(Tinted { wall, k })
+    }
 }
 
 impl Frame<'_> {
@@ -201,7 +215,10 @@ impl Frame<'_> {
             return;
         }
         if !self.based.is_empty() {
-            self.canvas.fill(self.background);
+            let all = IRect::new(0, 0, self.canvas.width as i32, self.canvas.height as i32);
+            let background = self.background | 0xff00_0000;
+            let tint = self.tint(background);
+            self.canvas.rect(all, background, all, None, tint);
         }
         for &(rect, color) in rects {
             self.rect(rect, color);
@@ -233,12 +250,13 @@ impl Frame<'_> {
         let area = rect.to_pixels(self.scale);
         let clip = clip.intersect(self.limit).to_pixels_outer(self.scale);
 
+        let tint = self.tint(color.argb());
         if radii.iter().any(|&r| r > 0.0) {
             let radii = radii.map(|r| r * self.scale);
             self.canvas
-                .rounded_rect(area, radii, color.argb(), clip, None);
+                .rounded_rect(area, radii, color.argb(), clip, None, tint);
         } else {
-            self.canvas.rect(area, color.argb(), clip, None);
+            self.canvas.rect(area, color.argb(), clip, None, tint);
         }
     }
 
@@ -258,8 +276,9 @@ impl Frame<'_> {
         let area = rect.to_pixels(self.scale);
         let clip = self.limit.to_pixels_outer(self.scale);
         let radii = [radius * self.scale; 4];
+        let tint = self.tint(color.argb());
         self.canvas
-            .rounded_rect(area, radii, color.argb(), clip, Some(covered));
+            .rounded_rect(area, radii, color.argb(), clip, Some(covered), tint);
     }
 
     /// 把矩形 `rect` 四角半径为 `radius`（逻辑像素）的圆弧外侧填充为 `color`，使其显示为圆角矩形。
@@ -272,8 +291,9 @@ impl Frame<'_> {
         }
         let area = rect.to_pixels(self.scale);
         let clip = self.limit.to_pixels_outer(self.scale);
+        let tint = self.tint(color.argb());
         self.canvas
-            .round_corners(area, radius * self.scale, color.argb(), clip);
+            .round_corners(area, radius * self.scale, color.argb(), clip, tint);
     }
 
     /// 用宽 `width`（逻辑像素）的笔绘制一组线段、圆周和圆弧，用于绘制图标。

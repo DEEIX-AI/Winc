@@ -521,6 +521,14 @@ pub fn zoom_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回「背景图片」菜单的菜单项：选择图片、无，没有背景图片时「无」打勾。
+pub fn background_menu() -> Vec<MenuEntry> {
+    vec![
+        MenuEntry::Item(MenuCommand::BackgroundChoose, true),
+        MenuEntry::Item(MenuCommand::BackgroundNone, true),
+    ]
+}
+
 /// 返回终端「位置」菜单的菜单项：底部、右侧，当前的选择打勾。
 pub fn terminal_position_menu() -> Vec<MenuEntry> {
     [false, true]

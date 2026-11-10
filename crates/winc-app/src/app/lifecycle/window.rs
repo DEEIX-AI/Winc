@@ -484,7 +484,10 @@ impl App {
     }
 
     /// 向渲染器声明下一帧的底色矩形（`view::base`），使其随窗口背景色一趟绘制。
-    pub(in crate::app) fn declare_base(&self, renderer: &mut winc_render::Renderer) {
+    ///
+    /// 同时让渲染器的背景图与配置一致（见 `App::sync_wallpaper`）。
+    pub(in crate::app) fn declare_base(&mut self, renderer: &mut winc_render::Renderer) {
+        self.sync_wallpaper(renderer);
         let (window, scale) = (self.layout.window, renderer.scale_factor());
         if self.settings_reuses_base(window, scale) {
             // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。

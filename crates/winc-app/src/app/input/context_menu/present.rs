@@ -330,6 +330,7 @@ impl App {
             MenuTarget::Whitespace => whitespace_menu(),
             MenuTarget::DefaultShell => default_shell_menu(self.terminal.shells.len()),
             MenuTarget::Zoom => zoom_menu(),
+            MenuTarget::BackgroundImage => background_menu(),
             MenuTarget::TerminalPosition => terminal_position_menu(),
             MenuTarget::OptionAsMeta => option_as_meta_menu(),
             &MenuTarget::Font(setting) => font_menu(setting),
@@ -652,6 +653,7 @@ impl App {
                 | MenuTarget::Locale
                 | MenuTarget::Whitespace
                 | MenuTarget::Zoom
+                | MenuTarget::BackgroundImage
                 | MenuTarget::TerminalPosition
                 | MenuTarget::OptionAsMeta
                 | MenuTarget::Font(_)
@@ -661,6 +663,7 @@ impl App {
             MenuTarget::Locale => Some(Setting::Language),
             MenuTarget::Whitespace => Some(Setting::RenderWhitespace),
             MenuTarget::Zoom => Some(Setting::Zoom),
+            MenuTarget::BackgroundImage => Some(Setting::BackgroundImage),
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
             MenuTarget::OptionAsMeta => Some(Setting::TerminalOptionAsMeta),
             MenuTarget::Font(setting) => Some(setting),
@@ -1204,6 +1207,7 @@ impl App {
             MenuCommand::Zoom(i) => {
                 crate::app::settings::ZOOM_STEPS.get(i) == Some(&self.config.ui_zoom.unwrap_or(100))
             }
+            MenuCommand::BackgroundNone => self.config.ui_background_image.is_none(),
             MenuCommand::OptionAsMeta(i) => {
                 let current =
                     (self.config.option_as_meta).unwrap_or(winc_config::OptionAsMeta::Left);

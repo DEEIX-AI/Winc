@@ -301,10 +301,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.config.language, None);
 
     // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，macOS 以外的平台还有「使用系统标题栏」，
-    // 然后是状态栏、记住窗口、动态效果三个开关，再下面是两组主题）：外观为深色时选一个浅色主题，
-    // 外观随之切换。深色主题：→ 换到下一个，外观回到深色；到头后不再变化。
+    // 然后是状态栏、记住窗口、动态效果三个开关和背景图片、不透明度两项，再下面是两组主题）：
+    // 外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；到头后
+    // 不再变化。
     let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..8 + title_bar {
+    for _ in 0..10 + title_bar {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -1253,5 +1254,79 @@ fn shoot_font_weights() {
         app.apply_fonts().unwrap();
         shoot(&mut app, &format!("font-weight-{weight}"));
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 背景图片：配置后在后台生成与窗口等大（逻辑像素）的图层，底色之下透出图片；不透明度、配色
+/// 改变后随之更新，取消后恢复纯色；无法加载的图片提示一次，不反复重试。
+#[test]
+fn the_background_image_shows_under_the_base_colors() {
+    let dir = sample_folder("settings-background");
+    // 一张纯红的图片。
+    let image = dir.join("红.png");
+    let red = winc_render::Image {
+        pixels: vec![0xffff_0000; 64 * 48],
+        width: 64,
+        height: 48,
+    };
+    write_png(&image, &red).unwrap();
+    let mut app = app_with(&dir.join("short.rs"), false);
+    assert_eq!(Setting::BackgroundImage.page(), SettingsPage::Appearance);
+    assert_eq!(app.setting_value(Setting::BackgroundOpacity).0, "15");
+
+    // 编辑区右下角空白处的一个像素（只有底色）。
+    let sample = |app: &mut App| {
+        paint(app);
+        app.wait_for_wallpaper();
+        paint(app);
+        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let (x, y) = (
+            app.layout.editor.right() - 40.0,
+            app.layout.editor.bottom() - 40.0,
+        );
+        let at = (y * SCALE) as usize * image.width as usize + (x * SCALE) as usize;
+        let px = image.pixels[at];
+        ((px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff)
+    };
+    let plain = sample(&mut app);
+    let mixed = |base: (u32, u32, u32), opacity: f32| {
+        let part = |c: u32| (c as f32 * (1.0 - opacity)).round() as u32;
+        let red = (255 * (opacity * 256.0) as u32) >> 8;
+        (part(base.0) + red, part(base.1), part(base.2))
+    };
+
+    app.set_background_image(Some(image.clone()));
+    assert_eq!(sample(&mut app), mixed(plain, 0.15));
+    // 图层按逻辑像素存储，不是物理像素。
+    let size = app.renderer.as_ref().unwrap().wallpaper_size();
+    assert_eq!(size, Some((SIZE.0 as u32, SIZE.1 as u32)));
+
+    // 调高不透明度：重新生成。
+    app.settings_adjust(Setting::BackgroundOpacity, true);
+    assert_eq!(app.config.ui_background_opacity, Some(20.0));
+    assert_eq!(sample(&mut app), mixed(plain, 0.2));
+
+    // 换成深色配色：底色随之更换，图片不必重新生成。
+    app.set_theme(winit::window::Theme::Dark);
+    let dark = {
+        let c = app.palette.editor_bg;
+        let part = |v: f32| (v * 255.0 + 0.5) as u32;
+        (part(c.r), part(c.g), part(c.b))
+    };
+    paint(&mut app);
+    assert!(!app.wallpaper.is_busy());
+    assert_eq!(sample(&mut app), mixed(dark, 0.2));
+
+    // 取消：恢复纯色，图层释放。
+    app.set_background_image(None);
+    assert_eq!(sample(&mut app), dark);
+    assert_eq!(app.renderer.as_ref().unwrap().wallpaper_size(), None);
+
+    // 无法加载的图片：保持纯色，之后不再重试。
+    app.set_background_image(Some(dir.join("不存在.png")));
+    assert_eq!(sample(&mut app), dark);
+    paint(&mut app);
+    assert!(!app.wallpaper.is_busy());
+
     std::fs::remove_dir_all(&dir).unwrap();
 }

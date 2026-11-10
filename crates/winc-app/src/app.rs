@@ -821,6 +821,8 @@ pub struct App {
     pub(crate) markdown: preview::markdown::MarkdownPreview,
     /// 当前标签的 PDF 预览。
     pub(crate) pdf: preview::pdf::PdfPreview,
+    /// 窗口背景图的状态。
+    pub(crate) wallpaper: lifecycle::wallpaper::WallpaperState,
     /// 状态栏键路径的缓存与扫描记录。
     pub key_path: status::breadcrumb::KeyPath,
     /// 文件树的界面状态。

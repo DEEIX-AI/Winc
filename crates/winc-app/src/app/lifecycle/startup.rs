@@ -100,6 +100,7 @@ impl App {
             split: preview::images::SplitPreview::default(),
             markdown: preview::markdown::MarkdownPreview::default(),
             pdf: preview::pdf::PdfPreview::default(),
+            wallpaper: Default::default(),
             key_path: Default::default(),
             tree: Default::default(),
             tool_fold: ToolFold::default(),

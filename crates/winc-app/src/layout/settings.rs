@@ -80,6 +80,7 @@ impl SettingsPage {
                         Setting::RestoreWindow,
                         Setting::Animations,
                     ]),
+                    plain(vec![Setting::BackgroundImage, Setting::BackgroundOpacity]),
                     Section {
                         title: Some(t!("settings-light-theme")),
                         items: vec![Setting::LightTheme],
@@ -256,6 +257,10 @@ pub enum Setting {
     RestoreWindow,
     /// 播放界面的过渡动画。
     Animations,
+    /// 窗口的背景图片（`ui.backgroundImage`）。
+    BackgroundImage,
+    /// 背景图片的不透明度（`ui.backgroundOpacity`）。
+    BackgroundOpacity,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
     /// 预览标签：在文件树中单击文件时在预览标签中打开。
@@ -377,7 +382,9 @@ impl Setting {
             | Setting::SystemTitleBar
             | Setting::StatusBar
             | Setting::RestoreWindow
-            | Setting::Animations => SettingsPage::Appearance,
+            | Setting::Animations
+            | Setting::BackgroundImage
+            | Setting::BackgroundOpacity => SettingsPage::Appearance,
             Setting::EditorFont
             | Setting::EditorSize
             | Setting::TabWidth
@@ -451,6 +458,8 @@ impl Setting {
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::Animations => t!("settings-animations"),
+            Setting::BackgroundImage => t!("settings-background-image"),
+            Setting::BackgroundOpacity => t!("settings-background-opacity"),
             Setting::Outline => t!("settings-outline"),
             Setting::CompactFolders => t!("settings-compact-folders"),
             Setting::PreviewOnClick => t!("settings-preview-on-click"),
@@ -514,6 +523,7 @@ impl Setting {
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::Animations => Some(t!("settings-animations-desc")),
+            Setting::BackgroundImage => Some(t!("settings-background-image-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
@@ -542,6 +552,7 @@ impl Setting {
             Setting::EditorSize
             | Setting::UiSize
             | Setting::FontWeight
+            | Setting::BackgroundOpacity
             | Setting::TerminalSize
             | Setting::TabWidth => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
@@ -577,6 +588,7 @@ impl Setting {
             }
             Setting::SkipOnSave
             | Setting::Language
+            | Setting::BackgroundImage
             | Setting::Zoom
             | Setting::RenderWhitespace
             | Setting::TerminalPosition

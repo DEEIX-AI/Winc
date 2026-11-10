@@ -53,6 +53,42 @@ impl IRect {
     }
 }
 
+/// 背景图层：窗口背景图按不透明度预乘后的像素，以及画布各列、各行对应的图层列、行。
+#[derive(Clone, Copy)]
+pub(crate) struct Wall<'a> {
+    pub px: &'a [u32],
+    pub width: usize,
+    pub xmap: &'a [u32],
+    pub ymap: &'a [u32],
+}
+
+/// 透出背景图的一种底色：图层的像素加上 `k`（底色按 1 减去图片的不透明度预乘）即最终的颜色。
+///
+/// 两者各通道之和不超过 255（见 `Wallpaper::new`），打包在一个整数中相加不会进位。
+#[derive(Clone, Copy)]
+pub(crate) struct Tinted<'a> {
+    pub wall: Wall<'a>,
+    pub k: u32,
+}
+
+impl Tinted<'_> {
+    /// 返回画布上 `(x, y)` 处的颜色。
+    fn at(&self, x: i32, y: i32) -> u32 {
+        let wall = &self.wall;
+        let row = wall.ymap[y as usize] as usize * wall.width;
+        wall.px[row + wall.xmap[x as usize] as usize] + self.k
+    }
+
+    /// 把画布第 `y` 行自 `x0` 起的颜色写入 `row`。
+    fn write(&self, y: i32, x0: i32, row: &mut [u32]) {
+        let wall = &self.wall;
+        let line = &wall.px[wall.ymap[y as usize] as usize * wall.width..][..wall.width];
+        for (p, &x) in row.iter_mut().zip(&wall.xmap[x0 as usize..]) {
+            *p = line[x as usize] + self.k;
+        }
+    }
+}
+
 /// 一块可变像素缓冲。
 pub(crate) struct Canvas<'a> {
     /// 像素数据，按行优先排列，每个像素为 `0xAARRGGBB`。
@@ -698,10 +734,66 @@ impl Canvas<'_> {
         }
     }
 
+    /// 与 [`Self::fill_layered`] 相同，但各处透出背景图：`background` 和 `rects` 中的颜色都是
+    /// 加在图层像素上的值（见 [`Tinted::k`]）。
+    ///
+    /// 图层的分辨率低于画布时，相邻的若干行取自图层的同一行：只计算第一行，其余的逐行复制。
+    pub fn wall_layered(
+        &mut self,
+        wall: Wall<'_>,
+        background: u32,
+        rects: &[(IRect, u32)],
+        row: &mut Vec<u32>,
+    ) {
+        if self.stride == 0 {
+            return;
+        }
+        let (w, h) = (self.width as i32, self.height as i32);
+        let (width, stride) = (self.width, self.stride);
+        row.clear();
+        row.resize(width, 0);
+
+        let mut y = 0;
+        while y < h {
+            let end = (rects.iter())
+                .flat_map(|(r, _)| [r.y0, r.y1])
+                .filter(|&edge| edge > y)
+                .fold(h, i32::min);
+            row.fill(background);
+            for &(r, k) in rects {
+                let (a, b) = (r.x0.clamp(0, w) as usize, r.x1.clamp(0, w) as usize);
+                if r.y0 <= y && y < r.y1 && a < b {
+                    row[a..b].fill(k);
+                }
+            }
+            for line in y..end {
+                let at = line as usize * stride;
+                let source = wall.ymap[line as usize];
+                if line > y && wall.ymap[line as usize - 1] == source {
+                    self.px.copy_within(at - stride..at - stride + width, at);
+                    continue;
+                }
+                let from = &wall.px[source as usize * wall.width..][..wall.width];
+                let to = &mut self.px[at..at + width];
+                for ((p, &x), &k) in to.iter_mut().zip(wall.xmap).zip(&*row) {
+                    *p = from[x as usize] + k;
+                }
+            }
+            y = end;
+        }
+    }
+
     /// 绘制实心矩形，跳过 `covered` 中的像素。
     ///
-    /// `color` 不透明时直接覆盖，否则与底色混合。
-    pub fn rect(&mut self, area: IRect, color: u32, clip: IRect, covered: Option<Covered>) {
+    /// `color` 不透明时直接覆盖，否则与底色混合；`tint` 不为 `None` 时写入的是透出背景图的颜色。
+    pub fn rect(
+        &mut self,
+        area: IRect,
+        color: u32,
+        clip: IRect,
+        covered: Option<Covered>,
+        tint: Option<Tinted<'_>>,
+    ) {
         let Some(v) = self.visible(area, clip) else {
             return;
         };
@@ -711,7 +803,9 @@ impl Canvas<'_> {
             for (a, b) in uncovered(v, covered, y) {
                 let row = self.span(y, a, b);
 
-                if opaque {
+                if let Some(tint) = tint {
+                    tint.write(y, a, row);
+                } else if opaque {
                     row.fill(color);
                 } else {
                     wide::mix_span(row, color, color >> 24);
@@ -759,12 +853,13 @@ impl Canvas<'_> {
         color: u32,
         clip: IRect,
         covered: Option<Covered>,
+        tint: Option<Tinted<'_>>,
     ) {
         let limit = ((area.x1 - area.x0).min(area.y1 - area.y0) as f32 / 2.0).max(0.0);
         let radii = radii.map(|r| r.clamp(0.0, limit));
 
         if radii.iter().all(|&r| r <= 0.5) {
-            self.rect(area, color, clip, covered);
+            self.rect(area, color, clip, covered, tint);
             return;
         }
 
@@ -796,7 +891,9 @@ impl Canvas<'_> {
                 let (left, rest) = row.split_at_mut((mid0 - a) as usize);
                 let (mid, right) = rest.split_at_mut((mid1 - mid0) as usize);
 
-                if opaque {
+                if let Some(tint) = tint {
+                    tint.write(y, mid0, mid);
+                } else if opaque {
                     mid.fill(color);
                 } else {
                     wide::mix_span(mid, color, color >> 24);
@@ -810,6 +907,7 @@ impl Canvas<'_> {
                         let cov = ((0.5 - d).clamp(0.0, 1.0) * 255.0) as u32;
 
                         if cov > 0 {
+                            let color = tint.map_or(color, |t| t.at(start + i as i32, y));
                             *p = blend(*p, color, cov);
                         }
                     }
@@ -822,7 +920,14 @@ impl Canvas<'_> {
     ///
     /// 半径超过短边的一半时按一半计。区域内的内容先按直角矩形绘制，再由本方法修整为圆角，
     /// 内容无需各自按圆角裁剪。
-    pub fn round_corners(&mut self, area: IRect, radius: f32, color: u32, clip: IRect) {
+    pub fn round_corners(
+        &mut self,
+        area: IRect,
+        radius: f32,
+        color: u32,
+        clip: IRect,
+        tint: Option<Tinted<'_>>,
+    ) {
         let limit = ((area.x1 - area.x0).min(area.y1 - area.y0) as f32 / 2.0).max(0.0);
         let r = radius.clamp(0.0, limit);
         if r <= 0.5 {
@@ -851,6 +956,7 @@ impl Canvas<'_> {
                     let cov = ((0.5 + d).clamp(0.0, 1.0) * 255.0) as u32;
 
                     if cov > 0 {
+                        let color = tint.map_or(color, |t| t.at(v.x0 + i as i32, y));
                         *p = blend(*p, color, cov);
                     }
                 }

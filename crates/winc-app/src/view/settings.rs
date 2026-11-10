@@ -434,6 +434,14 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
                 (crate::layout::whitespace_label(choice).to_owned(), false)
             } else if row.setting == Setting::Zoom {
                 (format!("{}%", app.config.ui_zoom.unwrap_or(100)), false)
+            } else if row.setting == Setting::BackgroundImage {
+                let name = (app.config.ui_background_image.as_deref())
+                    .map(|path| winc_editor::display_name(std::path::Path::new(path)).into_owned());
+                let none = name.is_none();
+                (
+                    name.unwrap_or_else(|| t!("settings-background-none").to_owned()),
+                    none,
+                )
             } else if row.setting == Setting::TerminalPosition {
                 let text = if app.terminal_right() {
                     t!("settings-terminal-position-right")

@@ -167,6 +167,9 @@ fn font_error(value: &Option<String>) -> Option<String> {
 /// 100% 附近每档 10%，便于微调；更大的倍数每档 25%，较少几次即可放大到上限。
 pub(crate) const ZOOM_STEPS: [u16; 9] = [70, 80, 90, 100, 110, 125, 150, 175, 200];
 
+/// 设置页中背景图片不透明度每次调整的量（百分比）。
+const OPACITY_STEP: f32 = 5.0;
+
 /// 设置页中字重每次调整的量。
 const FONT_WEIGHT_STEP: u16 = 100;
 
@@ -1104,6 +1107,10 @@ impl App {
                 Config::UI_SIZE_RANGE,
             ),
             Setting::FontWeight => (f32::from(self.font_weight()), Config::FONT_WEIGHT_RANGE),
+            Setting::BackgroundOpacity => (
+                (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY),
+                Config::BACKGROUND_OPACITY_RANGE,
+            ),
             Setting::TerminalSize => (
                 ViewFonts::of(&self.config).terminal,
                 Config::EDITOR_SIZE_RANGE,
@@ -1146,6 +1153,13 @@ impl App {
                 let next = next.clamp(*range.start() as u16, *range.end() as u16);
                 self.config.ui_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
                 self.apply_fonts().ok();
+            }
+            Setting::BackgroundOpacity => {
+                let range = Config::BACKGROUND_OPACITY_RANGE;
+                let current =
+                    (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY);
+                let next = current + if up { OPACITY_STEP } else { -OPACITY_STEP };
+                self.config.ui_background_opacity = Some(next.clamp(*range.start(), *range.end()));
             }
             // 只改字号，无需重新加载字体。
             Setting::TerminalSize => {

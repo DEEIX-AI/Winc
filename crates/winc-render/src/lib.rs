@@ -27,7 +27,7 @@ pub use text::font_path::{FontError, FontSpec};
 pub use text::outline::{OutlineFonts, OutlineGlyph, OutlineMetrics};
 
 use cache::{FastMap, Generations, StrokeCache};
-use draw::canvas::{Canvas, IRect};
+use draw::canvas::{Canvas, IRect, Wall};
 use present::Presenter;
 use text::font::Fonts;
 use text::glyphs::*;
@@ -272,6 +272,66 @@ pub struct Renderer {
     base: Vec<(IRect, u32)>,
     /// `Canvas::fill_layered` 复用的行缓冲。
     row: Vec<u32>,
+    /// 窗口背景图，见 [`Self::set_wallpaper`]。
+    wallpaper: Option<Wallpaper>,
+    /// 透出背景图的底色（`0xAARRGGBB`）及其加在图层像素上的值。
+    surfaces: Vec<(u32, u32)>,
+    /// 画布各列、各行对应的背景图的列、行；画布大小或背景图改变时重算。
+    wall_map: (Vec<u32>, Vec<u32>),
+    /// 底色矩形换算成加在图层像素上的值，逐帧复用。
+    wall_rects: Vec<(IRect, u32)>,
+}
+
+/// 窗口背景图：缩放到显示大小、按不透明度预乘后的像素。
+///
+/// 界面各处的底色之下透出这张图，最终的颜色为「图片 × 不透明度 + 底色 × (1 − 不透明度)」。
+/// 前一项在创建时算好，绘制时每个像素只做一次加法。可以在后台线程创建。
+pub struct Wallpaper {
+    px: Vec<u32>,
+    width: usize,
+    height: usize,
+    opacity: f32,
+}
+
+impl Wallpaper {
+    /// 由 `width` × `height` 的非预乘 RGBA 图像创建，`opacity`（0–1）是图片在底色之上的
+    /// 不透明度；透明的像素按黑色处理。
+    ///
+    /// 尺寸为 0，或 `rgba` 不足 `width * height * 4` 字节时返回 `None`。
+    pub fn new(width: u32, height: u32, rgba: &[u8], opacity: f32) -> Option<Wallpaper> {
+        let (w, h) = (width as usize, height as usize);
+        if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+            return None;
+        }
+        let opacity = opacity.clamp(0.0, 1.0);
+        // 向下取整：与底色一项（四舍五入，见 `Self::tint`）相加后各通道不超过 255。
+        let weight = (opacity * 256.0) as u32;
+        let pixels = rgba.as_chunks::<4>().0.iter().take(w * h);
+        let px = pixels
+            .map(|&[r, g, b, a]| {
+                let weight = weight * u32::from(a) / 255;
+                let part = |c: u8| (u32::from(c) * weight) >> 8;
+                (part(r) << 16) | (part(g) << 8) | part(b)
+            })
+            .collect();
+        Some(Wallpaper {
+            px,
+            width: w,
+            height: h,
+            opacity,
+        })
+    }
+
+    /// 返回宽度和高度（像素）。
+    pub fn size(&self) -> (u32, u32) {
+        (self.width as u32, self.height as u32)
+    }
+
+    /// 返回底色 `color` 加在图层像素上的值：各通道乘以 1 减去不透明度，alpha 为不透明。
+    fn tint(&self, color: Color) -> u32 {
+        let part = |c: f32| (c.clamp(0.0, 1.0) * (1.0 - self.opacity) * 255.0).round() as u32;
+        0xff00_0000 | (part(color.r) << 16) | (part(color.g) << 8) | part(color.b)
+    }
 }
 
 /// 可供多个渲染器共用的字体和字形缓存：同一进程中的多个窗口使用相同的字体，已光栅化的字形无需
@@ -365,6 +425,10 @@ impl Renderer {
             cover: None,
             base: Vec::new(),
             row: Vec::new(),
+            wallpaper: None,
+            surfaces: Vec::new(),
+            wall_map: (Vec::new(), Vec::new()),
+            wall_rects: Vec::new(),
         })
     }
 
@@ -401,6 +465,10 @@ impl Renderer {
             cover: None,
             base: Vec::new(),
             row: Vec::new(),
+            wallpaper: None,
+            surfaces: Vec::new(),
+            wall_map: (Vec::new(), Vec::new()),
+            wall_rects: Vec::new(),
         })
     }
 
@@ -427,6 +495,34 @@ impl Renderer {
         self.background = background.argb();
         self.gamma = gamma_for(background);
         self.dark = is_dark(background);
+    }
+
+    /// 设置或取消窗口背景图；`surfaces` 是透出背景图的底色，其余颜色照常绘制。
+    ///
+    /// 以这些颜色填充的不透明矩形（包括窗口背景和 [`Self::base_next_frame`] 声明的底色）改为
+    /// 写入「背景图 + 底色」。背景图与画布大小不同时取最近的像素缩放。
+    pub fn set_wallpaper(&mut self, wallpaper: Option<Wallpaper>, surfaces: &[Color]) {
+        self.surfaces.clear();
+        if let Some(wallpaper) = &wallpaper {
+            let tinted = surfaces.iter().map(|&c| (c.argb(), wallpaper.tint(c)));
+            self.surfaces.extend(tinted);
+        }
+        self.wallpaper = wallpaper;
+        self.wall_map.0.clear();
+    }
+
+    /// 更换透出背景图的底色（配色改变时调用）；没有背景图时不做任何事。
+    pub fn set_wallpaper_surfaces(&mut self, surfaces: &[Color]) {
+        self.surfaces.clear();
+        if let Some(wallpaper) = &self.wallpaper {
+            let tinted = surfaces.iter().map(|&c| (c.argb(), wallpaper.tint(c)));
+            self.surfaces.extend(tinted);
+        }
+    }
+
+    /// 返回当前背景图的大小（像素）；没有背景图时为 `None`。
+    pub fn wallpaper_size(&self) -> Option<(u32, u32)> {
+        self.wallpaper.as_ref().map(Wallpaper::size)
     }
 
     /// 更换字体和字重；用户在设置界面修改后调用，失败时保留原字体。
@@ -591,8 +687,42 @@ impl Renderer {
             Covered::new(area, 0.0)
         });
         let (based, row) = (&self.base, &mut self.row);
+        let (wallpaper, surfaces) = (self.wallpaper.as_ref(), &self.surfaces);
+        let (wall_map, wall_rects) = (&mut self.wall_map, &mut self.wall_rects);
         let paint = |mut canvas: Canvas<'_>| {
-            if based.is_empty() {
+            let wall = wallpaper.map(|wallpaper| {
+                let (columns, rows) = (canvas.width, canvas.height);
+                if wall_map.0.len() != columns || wall_map.1.len() != rows {
+                    let map = |n: usize, source: usize| {
+                        (0..n).map(move |i| (i * source / n.max(1)) as u32)
+                    };
+                    wall_map.0.clear();
+                    wall_map.0.extend(map(columns, wallpaper.width));
+                    wall_map.1.clear();
+                    wall_map.1.extend(map(rows, wallpaper.height));
+                }
+                Wall {
+                    px: &wallpaper.px,
+                    width: wallpaper.width,
+                    xmap: &wall_map.0,
+                    ymap: &wall_map.1,
+                }
+            });
+            // 背景色和底色都透出背景图时，与没有背景图时一样只写一遍。
+            let tint = |argb: u32| {
+                let found = surfaces
+                    .iter()
+                    .find(|(surface, _)| *surface == argb | 0xff00_0000);
+                found.map(|&(_, k)| k)
+            };
+            wall_rects.clear();
+            wall_rects.extend(based.iter().filter_map(|&(r, c)| Some((r, tint(c)?))));
+            let layered = wall
+                .zip(tint(background))
+                .filter(|_| wall_rects.len() == based.len());
+            if let Some((wall, background)) = layered {
+                canvas.wall_layered(wall, background, wall_rects, row);
+            } else if based.is_empty() {
                 canvas.fill_except(background, cover);
             } else {
                 canvas.fill_layered(background, based, row);
@@ -609,6 +739,8 @@ impl Renderer {
                 opacity: 1.0,
                 background,
                 based,
+                wall,
+                surfaces,
             });
         };
 
@@ -668,6 +800,8 @@ impl Renderer {
                 opacity: 1.0,
                 background,
                 based: &[],
+                wall: None,
+                surfaces: &[],
             });
             px
         };
