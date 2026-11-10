@@ -1258,7 +1258,8 @@ fn inherited_repository_variables_do_not_redirect_git() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 回归：`WSLENV` 中未设置的变量进入发行版后取空字符串，普通查询仍使用仓库自己的暂存区。
+/// 回归：`WSLENV` 列出而未设置的变量进入发行版后取空字符串；启动前去掉这些变量，普通查询
+/// 仍使用仓库自己的暂存区。
 #[test]
 fn unset_wsl_variables_do_not_select_an_empty_index() {
     let Some(git) = real_git() else {
@@ -1276,19 +1277,29 @@ fn unset_wsl_variables_do_not_select_an_empty_index() {
     sh(&["add", "."]);
     sh(&["commit", "-q", "-m", "first"]);
 
+    // 模拟 `wsl.exe`：启动前去掉未设置的变量，`WSLENV` 中剩下的变量若未设置，在发行版内
+    // 取空字符串。
     let mut command = git.command(&dir);
-    for name in crate::wsl::GIT_ENV.split(':') {
-        let unset = command
+    command.env("WSLENV", crate::wsl::GIT_ENV);
+    crate::wsl::drop_unset(&mut command);
+    let list = (command.get_envs())
+        .find(|(key, _)| *key == "WSLENV")
+        .and_then(|(_, value)| value)
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    assert!(
+        !list.split(':').any(|name| name == "GIT_INDEX_FILE"),
+        "{list}"
+    );
+    for name in list.split(':').filter(|name| !name.is_empty()) {
+        let set = command
             .get_envs()
-            .find(|(key, _)| *key == name)
-            .map_or_else(
-                || std::env::var_os(name).is_none(),
-                |(_, value)| value.is_none(),
-            );
-        if unset {
+            .any(|(key, value)| key == name && value.is_some());
+        if !set {
             command.env(name, "");
         }
     }
+    command.env_remove("WSLENV");
     command.args(["status", "--porcelain=v2", "-z"]);
     let stdout = git.run(&mut command, STATUS_TIMEOUT, &cancel).unwrap();
     assert!(parse_status(&stdout, &dir).unwrap().entries.is_empty());
