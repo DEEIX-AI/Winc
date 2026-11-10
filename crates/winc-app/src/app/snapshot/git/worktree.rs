@@ -470,7 +470,7 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     app.git_refresh();
     app.open_path(&root.join("src/main.rs"));
     paint(&mut app);
-    let hit = |app: &App, item| app.status_hits.iter().any(|(_, i)| *i == item);
+    let hit = |app: &App, item| app.status.hits.iter().any(|(_, i)| *i == item);
     assert!(hit(&app, StatusItem::Branch));
     assert!(!hit(&app, StatusItem::Worktree));
 
@@ -480,7 +480,7 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     assert!(app.picker.open && app.picker_lists_branches());
     assert_eq!(app.picker.anchor, GitAnchor::Status);
     paint(&mut app);
-    let (item, _) = *(app.status_hits.iter())
+    let (item, _) = *(app.status.hits.iter())
         .find(|(_, i)| *i == StatusItem::Branch)
         .unwrap();
     let card = app.layout.picker;
@@ -593,7 +593,7 @@ fn the_location_shares_the_row_with_the_project() {
         assert!((gap - 4.0).abs() < 1.0, "{name}: {gap}");
     }
 
-    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    app.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);
     let location = (app.commit_hits.iter())
         .find(|(_, t)| *t == CommitTarget::Location)
@@ -629,7 +629,7 @@ fn the_location_row_tells_when_other_worktrees_have_changes() {
             .0;
         app.on_mouse_move(900.0, 500.0);
         app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
-        assert!(app.tooltip_since.is_some());
+        assert!(app.tooltip.since.is_some());
         crate::view::tests::tooltip(app).map(|(_, text)| text)
     };
     assert_eq!(tip(&mut app), None);

@@ -210,17 +210,17 @@ fn a_running_branch_operation_slides_into_the_status_bar() {
     let Some((mut app, root)) = git_app("git-status-running", false) else {
         return;
     };
-    app.status_motion.animate_without_window = true;
+    app.status.motion.animate_without_window = true;
     paint(&mut app);
     // 打开时各项出现的过渡直接走完。
     let slide = crate::app::status::motion::STATUS_SLIDE;
-    app.status_motion.freeze(slide);
-    app.status_motion.settle();
+    app.status.motion.freeze(slide);
+    app.status.motion.settle();
     paint(&mut app);
-    assert!(!app.status_motion.moving());
+    assert!(!app.status.motion.moving());
     app.branch.running = Some(winc_i18n::t!("git-op-sync").to_owned());
     paint(&mut app);
-    assert!(app.status_motion.moving());
+    assert!(app.status.motion.moving());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -773,7 +773,7 @@ fn the_status_bar_opens_the_branch_picker_with_the_sync_actions() {
     app.open_status_menu(StatusItem::Branch);
     paint(&mut app);
     assert!(app.picker.open && app.picker_has_actions());
-    let (item, _) = *(app.status_hits.iter())
+    let (item, _) = *(app.status.hits.iter())
         .find(|(_, i)| *i == StatusItem::Branch)
         .unwrap();
     let card = app.layout.picker;

@@ -217,7 +217,7 @@ fn draw_panel(app: &mut App, frame: &mut Frame<'_>) {
     let start = preedit_x(x, &app.preedit, cell, view.right());
     if focused {
         // 候选窗对齐组字文字的左边；组字文字超出左边界时对齐可见范围。
-        app.ime_cursor = Some(Rect::new(start.max(view.x), y, cell, lh));
+        app.ime.cursor = Some(Rect::new(start.max(view.x), y, cell, lh));
     }
     if focused && !app.preedit.is_empty() {
         let baseline = baseline_in(at, ascent, descent);
@@ -553,7 +553,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     }
     app.terminal.rename = rename;
     if caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
     // 放不下时被裁掉的一端渐隐，强度随离两端的距离变化，与编辑区标签栏相同。
     let edge = workspace::top_bar::TAB_FADE;
@@ -996,7 +996,7 @@ fn draw_find(app: &mut App, frame: &mut Frame<'_>) {
         focused,
     );
     if focused && caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
     app.terminal.find = Some(find);
     // 排在命中列表最前：查找条覆盖下方内容，优先响应点击。

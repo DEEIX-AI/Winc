@@ -181,7 +181,8 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
     assert_eq!(app.config.terminal_size, Some(code + 7.0));
     assert_eq!(app.config.editor_size, None);
     assert!(
-        app.status_message
+        app.status
+            .message
             .as_deref()
             .is_some_and(|m| m.contains("终端字号"))
     );
@@ -252,17 +253,17 @@ fn only_command_shortcuts_reach_past_the_terminal() {
         // ⌃ 组合交给 shell：⌃⇧G（显示提交）在终端里不是快捷键。
         assert!(!press(&mut app, &["ctrl", "shift"], Char('g')));
         // 其余带 ⌘ 的全局快捷键仍然生效：⌘B 收起侧栏。
-        let shown = app.panel_visible;
+        let shown = app.sidebar.visible;
         assert!(press(&mut app, &["cmd"], Char('b')));
-        assert_ne!(app.panel_visible, shown);
+        assert_ne!(app.sidebar.visible, shown);
         assert_eq!(app.focus, Focus::Terminal, "收起侧栏不动终端的焦点");
     } else {
         // 单按 Ctrl 的组合交给 shell：Ctrl+B（收起侧栏）在终端里不是快捷键。
         assert!(!press(&mut app, &["ctrl"], Char('b')));
         // 带 Ctrl+Shift 的全局快捷键仍然生效：Ctrl+Shift+E 显示文件树（焦点随之到文件树）。
-        app.sidebar_view = SidebarView::Search;
+        app.sidebar.view = SidebarView::Search;
         assert!(press(&mut app, &["ctrl", "shift"], Char('e')));
-        assert_eq!(app.sidebar_view, SidebarView::Files);
+        assert_eq!(app.sidebar.view, SidebarView::Files);
         app.focus = Focus::Terminal;
     }
     // ⌘K（其他系统 Ctrl+Shift+K）在终端里是清屏，不是组合键的第一段。

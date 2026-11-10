@@ -32,7 +32,7 @@ impl App {
 
         // 文件视图底部的大纲：按绘制时记下的位置找；分隔条由 `Target::Splitter` 处理。
         if self.layout.outline.contains(x, y) {
-            if self.panel_visible && self.layout.splitter.contains(x, y) {
+            if self.sidebar.visible && self.layout.splitter.contains(x, y) {
                 return None;
             }
             return Some(hit(&self.outline.hits, x, y).map_or(Hover::None, Hover::Outline));
@@ -49,7 +49,7 @@ impl App {
 
         // 面板只负责顶栏以下、分隔条以左的区域；侧栏开关和分隔条由后面的判断处理。
         let panel = self.panel_rect();
-        let on_splitter = self.panel_visible && self.layout.splitter.contains(x, y);
+        let on_splitter = self.sidebar.visible && self.layout.splitter.contains(x, y);
 
         if !self.panel_shown() || !panel.contains(x, y) || on_splitter {
             return None;
@@ -260,7 +260,7 @@ impl App {
     /// (`x`, `y`) 是否在分隔条上、且不在提交视图里写全名的那一行上：该行覆盖在分隔条之上，与文件
     /// 树的处理相同（见 [`App::target_at`]）。
     fn on_splitter_outside_commit_overflow(&self, x: f32, y: f32) -> bool {
-        self.panel_visible
+        self.sidebar.visible
             && self.layout.splitter.contains(x, y)
             && !self.over_commit_overflow_row(y)
     }
@@ -304,7 +304,7 @@ impl App {
         }
 
         if self.layout.outline.contains(x, y) {
-            if self.panel_visible && self.layout.splitter.contains(x, y) {
+            if self.sidebar.visible && self.layout.splitter.contains(x, y) {
                 return false;
             }
             if let Some(target) = hit(&self.outline.hits, x, y) {
@@ -335,7 +335,7 @@ impl App {
         }
 
         // 分隔条在侧栏右边缘，由后面的分支处理。
-        if self.panel_visible && self.layout.splitter.contains(x, y) {
+        if self.sidebar.visible && self.layout.splitter.contains(x, y) {
             return false;
         }
 
@@ -358,11 +358,11 @@ impl App {
     /// 返回鼠标所在输入框对应的焦点；只考虑正在显示的输入框。
     pub(super) fn field_at(&self, x: f32, y: f32) -> Option<Focus> {
         let visible = [
-            (Focus::Search, self.search_open, &self.find_input),
+            (Focus::Search, self.find.open, &self.find.input),
             (
                 Focus::Replace,
-                self.search_open && self.replace_open,
-                &self.replace_input,
+                self.find.open && self.find.replace_open,
+                &self.find.replace_input,
             ),
         ];
         let prompt = self.goto_input.as_ref().map(|f| (Focus::Prompt, true, f));

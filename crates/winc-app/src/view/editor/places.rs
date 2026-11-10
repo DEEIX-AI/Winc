@@ -56,7 +56,7 @@ impl<'a> PlacesView<'a> {
             },
             scroll: app.picker.scroll,
             filter: app.picker.input.text(),
-            caret: app.focus == Focus::Picker && app.caret_visible,
+            caret: app.focus == Focus::Picker && app.blink.visible,
         })
     }
 

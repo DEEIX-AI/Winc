@@ -276,7 +276,7 @@ fn commit_view_commits_only_the_checked_files() {
     }
     assert_eq!(app.sidebar_views().last(), Some(&SidebarView::Commit));
     assert!(app.run_action(Action::ShowCommit));
-    assert_eq!(app.sidebar_view, SidebarView::Commit);
+    assert_eq!(app.sidebar.view, SidebarView::Commit);
     assert_eq!(app.focus, Focus::CommitMessage);
     paint(&mut app);
 
@@ -448,7 +448,7 @@ fn shoot_commit_row_actions() {
     paint(&mut app);
     let revert = find(&app, CommitTarget::RevertFile(index));
     app.on_mouse_move(revert.x + 4.0, revert.y + 4.0);
-    app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+    app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
     shoot(&mut app, "commit-row-actions");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -488,7 +488,7 @@ fn shoot_commit_view() {
         // 鼠标停在标题行的「Git 日志」按钮上，提示已显示。
         let log = app.commit_parts().tools[0].0;
         app.on_mouse_move(log.x + 4.0, log.y + 4.0);
-        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(&mut app, if dark { "commit-dark" } else { "commit-light" });
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -517,7 +517,7 @@ fn shoot_commit_widths() {
                 "feature/login-lockout-after-three-tries",
             ],
         );
-        app.panel_width = width;
+        app.sidebar.width = width;
         app.git_refresh();
         app.run_action(Action::ShowCommit);
         app.edit_field(|f| f.insert("修复日志刷新没有反馈"));
@@ -665,7 +665,7 @@ fn switching_the_module_off_takes_focus_out_of_the_commit_view() {
     app.run_action(Action::ShowCommit);
     assert_eq!(app.focus, Focus::CommitMessage);
     app.settings_toggle(Setting::GitModule);
-    assert_eq!(app.sidebar_view, SidebarView::Files);
+    assert_eq!(app.sidebar.view, SidebarView::Files);
     assert_eq!(app.focus, Focus::Editor);
     // 键入的字符不会进入已隐藏的提交信息。
     app.edit_field(|f| f.insert("x"));
@@ -834,13 +834,13 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
     assert!(app.commit_parts().amend.is_some());
     assert!(!menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    let width = app.panel_width;
-    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    let width = app.sidebar.width;
+    app.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);
     assert!(app.commit_parts().amend.is_none());
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    app.panel_width = width;
+    app.sidebar.width = width;
     paint(&mut app);
 
     // 回归：主按钮显示没有要提交的更改时，菜单不能再提供「提交并推送」；修改上一次提交仍然可用。
@@ -1522,16 +1522,16 @@ fn switching_folders_keeps_the_commit_view_while_there_is_a_repository() {
     }
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.sidebar_view, SidebarView::Commit);
+    assert_eq!(app.sidebar.view, SidebarView::Commit);
 
     // 换到另一个仓库：还在提交视图，焦点在提交信息里。
     app.switch_folder(&second);
-    assert_eq!(app.sidebar_view, SidebarView::Commit);
+    assert_eq!(app.sidebar.view, SidebarView::Commit);
     assert_eq!(app.focus, Focus::CommitMessage);
 
     // 换到不是仓库的目录：没有提交视图了，回到文件树。
     app.switch_folder(&plain);
-    assert_eq!(app.sidebar_view, SidebarView::Files);
+    assert_eq!(app.sidebar.view, SidebarView::Files);
     assert_eq!(app.focus, Focus::Tree);
     for dir in [first, second, plain] {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1859,7 +1859,7 @@ fn the_sync_control_explains_what_it_will_do() {
         .unwrap()
         .0;
     app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
-    assert!(app.tooltip_since.is_some());
+    assert!(app.tooltip.since.is_some());
     let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
     assert_eq!(
         tip.as_deref(),
@@ -2119,7 +2119,7 @@ fn shoot_commit_narrow_dirs() {
     std::fs::write(view.join("commit.rs"), "b\n").unwrap();
     app.git_refresh();
     app.commit.set_flat(false);
-    app.panel_width = 200.0;
+    app.sidebar.width = 200.0;
     app.relayout();
     app.run_action(Action::ShowCommit);
     shoot(&mut app, "commit-narrow-dirs");
@@ -2270,10 +2270,10 @@ fn the_sidebar_keeps_one_width_across_views() {
         return;
     };
     paint(&mut app);
-    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH);
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH);
 
     // 提交视图里按住分隔条拖动：列表、提交信息框旁边都能拖。
     let drag = |app: &mut App, y: f32, by: f32| {
@@ -2288,14 +2288,14 @@ fn the_sidebar_keeps_one_width_across_views() {
     let message = app.commit_parts().message;
     drag(&mut app, message.y + 4.0, 40.0);
     let dragged = DEFAULT_PANEL_WIDTH + 40.0;
-    assert_eq!(app.panel_width, dragged);
+    assert_eq!(app.sidebar.width, dragged);
     assert_eq!(app.state.panel_width, Some(dragged));
 
     // 切到文件树、搜索还是这个宽度。
     app.show_files();
-    assert_eq!(app.panel_width, dragged);
+    assert_eq!(app.sidebar.width, dragged);
     app.set_sidebar_view(SidebarView::Search);
-    assert_eq!(app.panel_width, dragged);
+    assert_eq!(app.sidebar.width, dragged);
 
     // 文件树里拖动，切回提交视图也是拖过的宽度。
     app.show_files();
@@ -2304,19 +2304,19 @@ fn the_sidebar_keeps_one_width_across_views() {
     let dragged = dragged - 20.0;
     assert_eq!(app.state.panel_width, Some(dragged));
     app.run_action(Action::ShowCommit);
-    assert_eq!(app.panel_width, dragged);
+    assert_eq!(app.sidebar.width, dragged);
 
     // 记下的宽度比这个窗口放得下的大：从看到的宽度开始拖，一动就有反应。
-    app.panel_width = 5000.0;
+    app.sidebar.width = 5000.0;
     paint(&mut app);
     let shown = app.layout.window.w - 320.0;
     drag(&mut app, 400.0, -20.0);
-    assert_eq!(app.panel_width, shown - 20.0);
+    assert_eq!(app.sidebar.width, shown - 20.0);
 
     // 新窗口、下次启动从状态恢复，太窄的值抬到最小宽度。
     app.state.panel_width = Some(10.0);
     app.restore_panel_width();
-    assert_eq!(app.panel_width, crate::theme::MIN_PANEL_WIDTH);
+    assert_eq!(app.sidebar.width, crate::theme::MIN_PANEL_WIDTH);
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2903,7 +2903,7 @@ fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
     let from = before.commit.w + before.commit_menu.w;
     assert!(before.amend.is_some());
 
-    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    app.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);
     let settled = app.commit_parts();
     let to = settled.commit.w + settled.commit_menu.w;
@@ -2959,8 +2959,8 @@ fn shoot_commit_button_motion() {
             (false, true) => break (alt, plain),
             _ => {}
         }
-        assert!(app.panel_width > crate::theme::MIN_PANEL_WIDTH);
-        app.panel_width -= 2.0;
+        assert!(app.sidebar.width > crate::theme::MIN_PANEL_WIDTH);
+        app.sidebar.width -= 2.0;
     };
     app.modifiers = from_keys;
     shoot(&mut app, "commit-button-before");

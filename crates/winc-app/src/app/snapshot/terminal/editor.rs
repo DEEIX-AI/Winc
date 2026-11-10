@@ -600,7 +600,8 @@ fn the_status_bar_button_slides_the_panel_out_and_back() {
     let button = |app: &mut App| {
         paint(app);
         let (pill, _) = *app
-            .status_hits
+            .status
+            .hits
             .iter()
             .find(|(_, item)| *item == StatusItem::Terminal)
             .unwrap();

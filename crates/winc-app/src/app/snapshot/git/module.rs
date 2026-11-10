@@ -94,7 +94,7 @@ fn a_folder_of_repositories_can_switch_between_them() {
 
     // 正在看提交视图时不跟随，新仓库只加入列表。
     app.git_switch_repository(0);
-    app.sidebar_view = SidebarView::Commit;
+    app.sidebar.view = SidebarView::Commit;
     let shallow = dir.join("group/other");
     std::fs::create_dir_all(shallow.join("src")).unwrap();
     std::fs::write(shallow.join("src/main.rs"), "fn main() {}\n").unwrap();
@@ -105,7 +105,7 @@ fn a_folder_of_repositories_can_switch_between_them() {
     app.git_follow_active();
     assert_eq!(app.git.root.as_ref(), Some(&a));
     assert!(app.git.repositories.contains(&shallow));
-    app.sidebar_view = SidebarView::Files;
+    app.sidebar.view = SidebarView::Files;
     app.git_switch_repository(2);
 
     // 每个位置都能看到分支和改动数：另一个仓库改一个文件，后台读到以后显示。
@@ -378,7 +378,7 @@ fn shoot_context_bar() {
         // 悬停提示：「名字 … 快捷键」两栏，快捷键是右边的淡色字。
         let commit = app.sidebar_tabs()[2].0;
         app.on_mouse_move(commit.x + 4.0, commit.y + 4.0);
-        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(&mut app, &format!("{name}-tip"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -401,7 +401,7 @@ fn shoot_search_header() {
         git_in(&dir, &["checkout", "-q", "-b", "grok_build_1.0.40"]);
         let mut app = app_with(&dir, dark);
         app.settings_toggle(Setting::GitModule);
-        app.panel_width = 270.0;
+        app.sidebar.width = 270.0;
         app.run_action(Action::FindInFiles);
         shoot(&mut app, name);
         let _ = std::fs::remove_dir_all(&dir);
@@ -532,7 +532,7 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
         return;
     };
     // 顶栏是侧栏开关和视图切换图标，第二行左边是项目名，三个视图里位置不变。
-    app.panel_width = 400.0;
+    app.sidebar.width = 400.0;
     paint(&mut app);
     let project = app.project_hit;
     assert!(project.y >= app.layout.sidebar_header.y);
@@ -544,7 +544,7 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
     assert_eq!(app.project_hit, project);
 
     app.run_action(Action::ShowCommit);
-    app.panel_width = 400.0;
+    app.sidebar.width = 400.0;
     paint(&mut app);
     assert_eq!(app.project_hit, project);
     app.on_mouse_move(project.x + 4.0, project.y + 4.0);
@@ -590,7 +590,7 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
         ],
     );
     app.git_refresh();
-    app.panel_width = crate::theme::MIN_PANEL_WIDTH;
+    app.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);
     let branch = hit(&app, CommitTarget::Branch).unwrap();
     let sync = hit(&app, CommitTarget::Sync).unwrap();
@@ -609,21 +609,21 @@ fn switching_views_slides_the_raised_segment() {
     };
     // 没有窗口（测试中）时不做动画，直接到终点。
     app.set_sidebar_view(SidebarView::Search);
-    assert!(app.view_slide.is_none());
+    assert!(app.sidebar.view_slide.is_none());
     // 半路：动画进行中、下一帧继续绘制；到时间以后清掉。
-    app.view_slide = Some((
+    app.sidebar.view_slide = Some((
         SidebarView::Files,
         Clock::frozen(VIEW_SLIDE / 2, VIEW_SLIDE),
     ));
     assert!(app.animating());
     app.settle_animations();
-    assert!(app.view_slide.is_some());
-    app.view_slide = Some((
+    assert!(app.sidebar.view_slide.is_some());
+    app.sidebar.view_slide = Some((
         SidebarView::Files,
         Clock::frozen(VIEW_SLIDE + Duration::from_millis(1), VIEW_SLIDE),
     ));
     app.settle_animations();
-    assert!(app.view_slide.is_none());
+    assert!(app.sidebar.view_slide.is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -639,7 +639,7 @@ fn shoot_view_slide() {
             return;
         };
         app.set_sidebar_view(SidebarView::Commit);
-        app.view_slide = Some((
+        app.sidebar.view_slide = Some((
             SidebarView::Files,
             Clock::frozen(VIEW_SLIDE / 3, VIEW_SLIDE),
         ));
@@ -672,15 +672,15 @@ fn switching_folders_leaves_the_old_repos_work_behind() {
     assert_eq!(app.branch.running.as_deref(), Some("推送"));
     let name = winc_editor::display_name(&root).into_owned();
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some(format!("已在「{name}」中拉取").as_str())
     );
     // 旧仓库的差异晚到了：不开标签，也不提示。
-    app.status_message = None;
+    app.status.message = None;
     let tabs = app.editor.documents.len();
     app.diff_failed_in(&root, &root.join("src/main.rs"));
     assert_eq!(app.editor.documents.len(), tabs);
-    assert!(app.status_message.is_none());
+    assert!(app.status.message.is_none());
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&other);
@@ -715,7 +715,7 @@ fn switching_modules_off_fades_their_chrome_out() {
     paint(&mut app);
     assert!(app.module_fx.branch_label.is_some());
     let full = app.sidebar_tabs()[2].0;
-    let hit = |app: &App, item| app.status_hits.iter().any(|h| h.1 == item);
+    let hit = |app: &App, item| app.status.hits.iter().any(|h| h.1 == item);
     assert!(hit(&app, StatusItem::Branch) && hit(&app, StatusItem::Terminal));
 
     app.settings_toggle(Setting::GitModule);

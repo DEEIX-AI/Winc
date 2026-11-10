@@ -126,8 +126,8 @@ impl App {
             .and_then(|(index, _)| self.editor.documents.get(index));
         let target = if let Some(doc) = tab {
             MenuTarget::Tab(doc.id)
-        } else if self.panel_visible
-            && self.sidebar_view == SidebarView::Files
+        } else if self.sidebar.visible
+            && self.sidebar.view == SidebarView::Files
             && (self.layout.tree.contains(x, y) || self.in_tree_overflow(x, y))
             && self.editor.workspace.is_some()
         {
@@ -206,8 +206,8 @@ impl App {
     /// 点击目录或组标题时选中其下的各个文件，返回第一个文件的路径。
     fn commit_context_target(&mut self, x: f32, y: f32) -> Option<PathBuf> {
         // 历史提交的文件列表只能查看：其中的文件不在工作区的状态里，不提供修改工作区的菜单。
-        if !self.panel_visible
-            || self.sidebar_view != SidebarView::Commit
+        if !self.sidebar.visible
+            || self.sidebar.view != SidebarView::Commit
             || self.commit.hits_generation != self.git.generation
             || self.log_diff_tree().is_some()
         {

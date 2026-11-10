@@ -218,7 +218,7 @@ fn logs_written_by_others_are_followed_at_the_end() {
     append(200, 300, 1);
     app.apply_changes(changes(&root, &["app.log"]));
     assert_eq!(caret_line(&app), 300);
-    assert!(app.status_message.is_none());
+    assert!(app.status.message.is_none());
     let doc = app.editor.active().unwrap();
     assert!(!doc.is_dirty());
     assert!(doc.scroll_line + app.visible_lines() as f64 > 300.0);

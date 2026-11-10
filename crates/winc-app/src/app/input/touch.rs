@@ -202,7 +202,7 @@ impl App {
         if touch.phase == TouchPhase::Started && !self.touch.active() {
             self.drop_drags();
             self.scroll_glide = None;
-            self.wheel_glide = None;
+            self.wheel.glide = None;
             self.dismiss_hint();
             self.cursor_inside = true;
             self.on_mouse_move(point.0, point.1);

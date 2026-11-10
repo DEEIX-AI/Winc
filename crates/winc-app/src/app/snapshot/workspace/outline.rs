@@ -64,7 +64,7 @@ fn the_outline_opens_below_the_file_tree_and_resizes() {
 
     app.run_action(Action::ShowOutline);
     paint(&mut app);
-    assert_eq!(app.sidebar_view, SidebarView::Files);
+    assert_eq!(app.sidebar.view, SidebarView::Files);
     assert_eq!(app.focus, Focus::Outline);
     assert_eq!(app.outline_list().h, 10.0 * TREE_ROW);
     assert_eq!(

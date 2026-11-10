@@ -208,7 +208,7 @@ impl ApplicationHandler<UserEvent> for App {
             self.format.formatter.prepare(|| {});
         }
 
-        if self.editor.active.is_none() && self.editor.workspace.is_some() && self.panel_visible {
+        if self.editor.active.is_none() && self.editor.workspace.is_some() && self.sidebar.visible {
             self.focus = Focus::Tree;
         }
 
@@ -457,7 +457,7 @@ impl App {
             }
             UserEvent::TerminalPaste(id, text) => self.confirmed_terminal_paste(id, text),
             UserEvent::TerminalQuit(ok) => {
-                if let Some(request) = self.quit_confirming.take()
+                if let Some(request) = self.closing.confirming.take()
                     && ok
                 {
                     self.request_close(request);
@@ -537,14 +537,14 @@ impl App {
     /// 在事件循环空闲之前处理到期的提示、光标闪烁、动画和后台轮询。
     ///
     /// 返回本窗口下一次唤醒的时刻；无需唤醒时返回 `None`。应用层取各窗口中最早的时刻（见
-    /// [`crate::winc`]）。窗口何时退出由应用层决定，本窗口只设置 `quit_requested`。
+    /// [`crate::winc`]）。窗口何时退出由应用层决定，本窗口只设置 `Closing::quit_requested`。
     pub(crate) fn tick(&mut self) -> Option<Instant> {
         let now = Instant::now();
         self.track_navigation();
 
-        if self.status_until.is_some_and(|t| now >= t) {
-            self.status_message = None;
-            self.status_until = None;
+        if self.status.until.is_some_and(|t| now >= t) {
+            self.status.message = None;
+            self.status.until = None;
             self.request_redraw();
         }
 
@@ -575,7 +575,7 @@ impl App {
 
         let committed = self.commit.committed.as_ref().map(|(_, t)| *t);
         let mut wake = [
-            self.status_until,
+            self.status.until,
             self.notice.until,
             committed,
             self.hint_tick(now),
@@ -599,13 +599,13 @@ impl App {
         }
         earliest(&mut wake, self.terminal_settle_tick(now));
 
-        let tooltip_at = self.tooltip_since.map(|since| since + TOOLTIP_DELAY);
+        let tooltip_at = self.tooltip.since.map(|since| since + TOOLTIP_DELAY);
 
-        if self.hover.has_tooltip() && !self.tooltip_shown {
+        if self.hover.has_tooltip() && !self.tooltip.shown {
             let show = tooltip_at.is_none_or(|at| now >= at);
 
             if show {
-                self.tooltip_shown = true;
+                self.tooltip.shown = true;
                 self.request_redraw();
             } else {
                 earliest(&mut wake, tooltip_at);
@@ -644,30 +644,30 @@ impl App {
                             .is_some_and(|v| v.editing || v.read_caret().is_some())
                 }));
 
-        let blinking = now.duration_since(self.blink_epoch) < BLINK_STOP;
+        let blinking = now.duration_since(self.blink.epoch) < BLINK_STOP;
 
         if !self.window.focused {
             // 窗口没有焦点时不显示光标（终端的光标改为绘制空心框），
             // 也不停留在失焦前所处的闪烁相位。
-            if self.caret_visible {
-                self.caret_visible = false;
+            if self.blink.visible {
+                self.blink.visible = false;
                 self.request_redraw();
             }
         } else if !self.unseen() && typing && blinking && self.preedit.is_empty() {
-            let phase = now.duration_since(self.blink_epoch).as_millis() / BLINK.as_millis();
+            let phase = now.duration_since(self.blink.epoch).as_millis() / BLINK.as_millis();
             let visible = phase.is_multiple_of(2);
 
-            if visible != self.caret_visible {
-                self.caret_visible = visible;
+            if visible != self.blink.visible {
+                self.blink.visible = visible;
                 self.request_redraw();
             }
 
             earliest(
                 &mut wake,
-                Some(self.blink_epoch + BLINK * (phase as u32 + 1)),
+                Some(self.blink.epoch + BLINK * (phase as u32 + 1)),
             );
-        } else if !self.caret_visible {
-            self.caret_visible = true;
+        } else if !self.blink.visible {
+            self.blink.visible = true;
             self.request_redraw();
         }
 

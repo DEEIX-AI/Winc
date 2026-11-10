@@ -323,7 +323,7 @@ fn show_changes_opens_a_side_by_side_diff_and_walks_it() {
     let title = |app: &App| app.editor.active().unwrap().title.clone().unwrap();
     app.press_diff(DiffTarget::Next);
     assert!(title(&app).starts_with("main.rs"), "{}", title(&app));
-    let hint = app.status_message.clone().unwrap();
+    let hint = app.status.message.clone().unwrap();
     assert!(hint.starts_with("已是最后一处更改"), "{hint}");
     app.press_diff(DiffTarget::Next);
     assert!(!title(&app).starts_with("main.rs"), "{}", title(&app));
@@ -502,9 +502,9 @@ fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
     // ⌘F 查找右侧的文件：跳转到的匹配是右侧文档的选区，差异随之滚动到该处；查找条位于
     // 差异的标题栏下方。
     assert!(app.run_action(Action::Find));
-    assert!(app.search_open);
+    assert!(app.find.open);
     assert!(app.layout.search.y >= app.layout.editor.y + crate::app::diff::DIFF_HEADER);
-    app.find_input.set_text("value_55 ");
+    app.find.input.set_text("value_55 ");
     app.search.query = "value_55 ".into();
     app.search_changed();
     assert!(app.editor.active().unwrap().diff.is_some());
@@ -594,7 +594,7 @@ fn shoot_diff_search() {
     app.run_action(Action::GitShowChanges);
     paint(&mut app);
     app.run_action(Action::Find);
-    app.find_input.set_text("value_4");
+    app.find.input.set_text("value_4");
     app.search.query = "value_4".into();
     app.search_changed();
     shoot(&mut app, "diff-search");
@@ -640,7 +640,7 @@ fn shoot_git_diff() {
             .unwrap()
             .0;
         app.on_mouse_move(revert.x + 4.0, revert.y + 4.0);
-        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(
             &mut app,
             if dark {
@@ -658,7 +658,7 @@ fn shoot_git_diff() {
             .unwrap()
             .0;
         app.on_mouse_move(check.x + 4.0, check.y + 4.0);
-        app.tooltip_since = None;
+        app.tooltip.since = None;
         shoot(
             &mut app,
             if dark {
@@ -1065,7 +1065,7 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
     assert_ne!(pinned[3], automatic[3], "其他出现位置也立即更新颜色");
     app.select(6, 10);
     assert!(app.on_shortcut(toggle));
-    assert!(!app.search_open);
+    assert!(!app.find.open);
     assert_eq!(
         app.editor.active().unwrap().selection,
         Selection::new(6, 10)
@@ -1157,7 +1157,7 @@ fn find_in_a_commit_diff_searches_the_selected_snapshot() {
         },
     };
     let set_query = |app: &mut App, query: &str| {
-        app.find_input.set_text(query);
+        app.find.input.set_text(query);
         app.search.query = query.to_owned();
         app.search_changed();
     };
@@ -1168,7 +1168,7 @@ fn find_in_a_commit_diff_searches_the_selected_snapshot() {
         view.read_selection.unwrap()
     };
     assert!(app.on_shortcut(find));
-    assert!(app.search_open);
+    assert!(app.find.open);
     assert_eq!(app.focus, crate::app::Focus::Search);
     set_query(&mut app, "命中");
     assert_eq!(app.search.matches().len(), 2);
@@ -1188,7 +1188,7 @@ fn find_in_a_commit_diff_searches_the_selected_snapshot() {
     app.find_next(true);
     assert_eq!(selection(&app), first);
     app.press_search_button(crate::layout::SearchButton::Expand);
-    assert!(!app.replace_open);
+    assert!(!app.find.replace_open);
     app.close_search();
 
     let doc = app.editor.active_mut().unwrap();
@@ -1253,11 +1253,12 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     set_read(&mut app, LEFT, (3, 3));
     app.search.query.clear();
     app.open_search(true);
-    assert!(app.search_open && !app.replace_open);
+    assert!(app.find.open && !app.find.replace_open);
     assert_eq!(app.search.query, "");
 
     // 长匹配横向滚动到能显示其末端，且不越过起点。
-    app.find_input
+    app.find
+        .input
         .set_text("long_identifier_at_the_far_right_end_of_the_line");
     app.search.query = "long_identifier_at_the_far_right_end_of_the_line".into();
     app.search_changed();
@@ -1274,9 +1275,9 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     );
 
     // 查找快照时，其他文档等待中的跳转作废。
-    app.pending_jump = Some((other, 0, false));
+    app.find.pending_jump = Some((other, 0, false));
     app.advance_search();
-    assert_eq!(app.pending_jump, None);
+    assert_eq!(app.find.pending_jump, None);
 
     // 单栏布局：未改动的行按右侧绘制，查找左侧时同样标出匹配。
     app.close_search();
@@ -1299,7 +1300,7 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     };
     let plain = row(&app);
     app.open_search(false);
-    app.find_input.set_text("->");
+    app.find.input.set_text("->");
     app.search.query = "->".into();
     app.search_changed();
     paint(&mut app);
@@ -1363,7 +1364,7 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     assert!(app.run_action(Action::NextDifference));
     assert!(title(&app).starts_with("main.rs"));
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已是最后一处更改。再次执行可切换到下一个文件：zeta.rs")
     );
     // 滚动后需要重新确认：此次按视口的位置查找改动，不切换文件；遍历各处改动后才再次提示。
@@ -1396,7 +1397,7 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     // 没有更多文件时不提示再按一次。
     assert!(app.run_action(Action::NextDifference));
     assert!(app.run_action(Action::NextDifference));
-    assert_eq!(app.status_message.as_deref(), Some("没有下一处更改"));
+    assert_eq!(app.status.message.as_deref(), Some("没有下一处更改"));
     // 该文件有两处改动：先回到第一处，再提示，第三次回到上一个文件。
     assert!(app.run_action(Action::PreviousDifference));
     assert_eq!(focus(&app), Some(0));
@@ -1408,7 +1409,7 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
 
     // `F8` 切换文件时总是从第一处开始；到达末端时提示，位置不变。
     assert!(app.run_action(Action::PreviousDiffFile));
-    assert_eq!(app.status_message.as_deref(), Some("没有上一个文件"));
+    assert_eq!(app.status.message.as_deref(), Some("没有上一个文件"));
     assert!(app.run_action(Action::NextDiffFile));
     assert!(title(&app).starts_with("zeta.rs"));
     assert!(app.run_action(Action::PreviousDiffFile));
@@ -1455,21 +1456,21 @@ fn moving_to_a_change_clears_the_message_about_having_none() {
 
     // 刚打开时向回没有改动；向下跳转到第一处后，该提示不再成立。
     assert!(app.run_action(Action::PreviousDifference));
-    assert_eq!(app.status_message.as_deref(), Some("没有上一处更改"));
+    assert_eq!(app.status.message.as_deref(), Some("没有上一处更改"));
     assert!(app.run_action(Action::NextDifference));
     assert_eq!(focus(&app), Some(0));
-    assert_eq!(app.status_message, None);
+    assert_eq!(app.status.message, None);
 
     // 到达末端时提示方向对应的消息；反方向跳转后提示清除，不留下相反的消息。
     assert!(app.run_action(Action::NextDifference));
     assert_eq!(focus(&app), Some(1));
     assert!(app.run_action(Action::NextDifference));
-    assert_eq!(app.status_message.as_deref(), Some("没有下一处更改"));
+    assert_eq!(app.status.message.as_deref(), Some("没有下一处更改"));
     assert!(app.run_action(Action::PreviousDifference));
     assert_eq!(focus(&app), Some(0));
-    assert_eq!(app.status_message, None);
+    assert_eq!(app.status.message, None);
     assert!(app.run_action(Action::PreviousDifference));
-    assert_eq!(app.status_message.as_deref(), Some("没有上一处更改"));
+    assert_eq!(app.status.message.as_deref(), Some("没有上一处更改"));
 
     // 隐藏状态栏时消息在提示条上，同样清除。
     app.settings_toggle(Setting::StatusBar);
@@ -1828,11 +1829,12 @@ fn diffs_follow_the_file_and_skip_binaries_and_stale_previews() {
     std::fs::write(root.join("blob.bin"), [0u8, 1, 2, 0, 3]).unwrap();
     app.git_preview_changes(&root.join("blob.bin"));
     assert!(
-        app.status_message
+        app.status
+            .message
             .as_deref()
             .is_some_and(|m| m.contains("二进制")),
         "{:?}",
-        app.status_message
+        app.status.message
     );
     let _ = std::fs::remove_dir_all(&root);
 }

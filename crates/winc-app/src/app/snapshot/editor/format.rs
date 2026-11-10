@@ -79,7 +79,7 @@ fn formatting_replaces_the_text_as_one_undo_step() {
     let after = text(&app);
     assert_eq!(after, "fn main() {\n    run();\n    stop();\n}\n");
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已使用 reindent 格式化，更改了 2 行")
     );
     // 选区仍然落在原来的词上。
@@ -96,7 +96,7 @@ fn formatting_replaces_the_text_as_one_undo_step() {
     app.save_active();
     app.format_active();
     app.wait_formatting();
-    assert_eq!(app.status_message.as_deref(), Some("格式正确，无需更改"));
+    assert_eq!(app.status.message.as_deref(), Some("格式正确，无需更改"));
     assert!(!app.editor.active().unwrap().is_dirty());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -125,7 +125,7 @@ fn a_selection_can_be_formatted_on_its_own() {
         text(&app)
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已使用 clang-format 格式化所选内容，更改了 1 行")
     );
 
@@ -172,7 +172,7 @@ fn edits_made_while_formatting_win() {
     app.wait_formatting();
     assert_eq!(text(&app), typed);
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("文件在格式化期间被修改，未应用结果")
     );
 
@@ -244,7 +244,7 @@ fn failures_explain_themselves_and_leave_the_text_alone() {
     app.run(Command::Insert("x".into()));
     assert_eq!(text(&app), shown);
     app.save_active();
-    assert_eq!(app.status_message.as_deref(), Some("此标签页为只读"));
+    assert_eq!(app.status.message.as_deref(), Some("此标签页为只读"));
     app.open_path(&dir.join("src/main.rs"));
 
     // 看不出用哪种工具、候选工具都没安装：提示可安装哪些工具，「安装方法」打开安装说明。
@@ -288,7 +288,7 @@ fn failures_explain_themselves_and_leave_the_text_alone() {
     app.wait_formatting();
     assert_eq!(text(&app), "LET A = 1\n");
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已使用 biome 格式化，更改了 1 行")
     );
     app.run(Command::Undo);
@@ -531,11 +531,11 @@ fn saving_formats_first_and_always_saves() {
     assert!(
         on_disk().contains("\n    run();"),
         "{:?}",
-        app.status_message
+        app.status.message
     );
     assert!(!app.editor.active().unwrap().is_dirty());
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已保存 main.rs，使用 reindent 格式化了 2 行")
     );
 
@@ -550,7 +550,7 @@ fn saving_formats_first_and_always_saves() {
     app.wait_formatting();
     assert!(on_disk().starts_with("// a\n// b\n// c\n"));
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已保存 main.rs，未格式化：bad input")
     );
     assert!(app.notice.text.is_none());
@@ -561,12 +561,12 @@ fn saving_formats_first_and_always_saves() {
     app.run(Command::Insert("// d\n".into()));
     app.save_active();
     assert_eq!(app.formatting_count(), 0);
-    assert_eq!(app.status_message.as_deref(), Some("已保存 main.rs"));
+    assert_eq!(app.status.message.as_deref(), Some("已保存 main.rs"));
     app.open_path(&dir.join("app.js"));
     app.run(Command::Insert("x".into()));
     app.save_active();
     app.wait_formatting();
-    assert_eq!(app.status_message.as_deref(), Some("已保存 app.js"));
+    assert_eq!(app.status.message.as_deref(), Some("已保存 app.js"));
     assert!(app.notice.text.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -588,12 +588,12 @@ fn saving_from_the_close_prompt_formats_too() {
     app.run(Command::Insert("// y\n".into()));
     let ids: Vec<_> = app.editor.documents.iter().map(|d| d.id).collect();
     app.close_tabs(ids);
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
     app.answer_save_prompt(SaveChoice::Save);
     assert_eq!(app.formatting_count(), 1);
     // 正在为关闭而格式化时再次请求关闭，不会再次弹出确认。
     app.request_quit();
-    assert!(app.save_prompt.is_none() && !app.quit_requested);
+    assert!(app.closing.prompt.is_none() && !app.closing.quit_requested);
 
     app.wait_formatting();
     assert_eq!(app.formatting_count(), 1, "第一个存好了，接着格式化第二个");
@@ -617,7 +617,7 @@ fn saving_from_the_close_prompt_formats_too() {
     app.request_quit();
     app.answer_save_prompt(SaveChoice::Save);
     app.wait_formatting();
-    assert!(app.quit_requested);
+    assert!(app.closing.quit_requested);
     assert!(on_disk("main.rs").starts_with("// z\n// x\n"));
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -684,12 +684,12 @@ fn fixing_is_separate_and_runs_before_formatting_on_save() {
     app.wait_formatting();
     assert_eq!(text(&app), "x=1\n", "只修复，不格式化");
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已使用 unused 修复，更改了 1 行")
     );
     app.fix_active();
     app.wait_formatting();
-    assert_eq!(app.status_message.as_deref(), Some("没有需要修复的问题"));
+    assert_eq!(app.status.message.as_deref(), Some("没有需要修复的问题"));
     app.run(Command::Undo);
     assert_eq!(text(&app), "import os\nx=1\n");
 
@@ -705,7 +705,7 @@ fn fixing_is_separate_and_runs_before_formatting_on_save() {
     assert_eq!(on_disk(), "y=2\nx = 1\n");
     assert!(!app.editor.active().unwrap().is_dirty());
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已保存 a.py，使用 unused 修复了 1 行，使用 spaces 格式化了 1 行")
     );
     app.run(Command::Undo);
@@ -724,7 +724,7 @@ fn fixing_is_separate_and_runs_before_formatting_on_save() {
     app.wait_formatting();
     assert_eq!(on_disk(), "y=2\nimport os\nx=1\n");
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已保存 a.py，未修复：bad config")
     );
     assert!(app.notice.text.is_none());
@@ -734,7 +734,7 @@ fn fixing_is_separate_and_runs_before_formatting_on_save() {
     app.run(Command::Insert("z=3\n".into()));
     app.save_active();
     assert_eq!(app.formatting_count(), 0);
-    assert_eq!(app.status_message.as_deref(), Some("已保存 a.py"));
+    assert_eq!(app.status.message.as_deref(), Some("已保存 a.py"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -764,7 +764,8 @@ fn untitled_files_format_after_choosing_a_language_in_the_status_bar() {
     app.notice.text = None;
     paint(&mut app);
     let (rect, _) = *app
-        .status_hits
+        .status
+        .hits
         .iter()
         .find(|(_, i)| *i == StatusItem::Language)
         .unwrap();

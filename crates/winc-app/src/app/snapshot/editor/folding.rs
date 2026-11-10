@@ -141,7 +141,7 @@ fn sticky_scroll_follows_folded_rows() {
     app.editor.active_mut().unwrap().toggle_fold_at(3, 4);
     app.editor.active_mut().unwrap().scroll_line = 3.0;
     paint(&mut app);
-    let pinned: Vec<_> = app.sticky.iter().map(|r| r.line).collect();
+    let pinned: Vec<_> = app.sticky.rows.iter().map(|r| r.line).collect();
     assert_eq!(pinned, [2]);
     std::fs::remove_dir_all(&dir).unwrap();
 }

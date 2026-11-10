@@ -64,8 +64,8 @@ impl App {
         client.extend(self.tree.tools.iter().map(|(r, _)| *r));
         client.extend(self.terminal.hits.iter().map(|(r, _)| *r));
         client.extend(self.merge.hits.iter().map(|(r, _)| *r));
-        client.extend(self.crumb_hits.iter().map(|(r, _)| *r));
-        client.extend(self.status_hits.iter().map(|(r, _)| *r));
+        client.extend(self.status.crumb_hits.iter().map(|(r, _)| *r));
+        client.extend(self.status.hits.iter().map(|(r, _)| *r));
         client.extend(
             [
                 self.changes.card,
@@ -78,7 +78,7 @@ impl App {
             .into_iter()
             .flatten(),
         );
-        if self.panel_visible {
+        if self.sidebar.visible {
             client.push(l.splitter);
         }
         if self.editor.active().is_some_and(|d| d.can_preview()) {
@@ -310,7 +310,7 @@ impl App {
         // 名称显示不全而展开的行（文件树、改动列表）覆盖在分隔条上，该行优先；
         // 其余各行仍可拖动分隔条。
         let over_row = self.over_tree_overflow_row(y);
-        if self.panel_visible && !over_row && !over_commit_row && l.splitter.contains(x, y) {
+        if self.sidebar.visible && !over_row && !over_commit_row && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
         if let Some(tool) = hit(&self.tree.tools, x, y) {
@@ -360,10 +360,10 @@ impl App {
         if l.minimap.contains(x, y) {
             return Target::Minimap;
         }
-        if let Some(index) = hit(&self.crumb_hits, x, y) {
+        if let Some(index) = hit(&self.status.crumb_hits, x, y) {
             return Target::Crumb(index);
         }
-        if let Some(item) = hit(&self.status_hits, x, y) {
+        if let Some(item) = hit(&self.status.hits, x, y) {
             return Target::Status(item);
         }
         // 终端面板位于右侧时，其标签栏和分隔间距位于顶栏所在的行，需要先于「按下拖动窗口」判断。
@@ -502,7 +502,7 @@ impl App {
         }
 
         let tree = self.layout.tree;
-        if self.panel_visible && tree.contains(x, y) {
+        if self.sidebar.visible && tree.contains(x, y) {
             let rows = self.editor.workspace.as_ref().map_or(0, |w| w.rows().len());
             let content = (rows as f32 + 1.0) * TREE_ROW;
 

@@ -639,7 +639,7 @@ impl App {
             self.git.repositories.push(root.clone());
             self.git_read_summaries();
         }
-        let stay = self.sidebar_view == SidebarView::Commit
+        let stay = self.sidebar.view == SidebarView::Commit
             || self.commit.busy
             || self.branch.running.is_some()
             || !self.commit.message.text().is_empty();
@@ -701,7 +701,7 @@ impl App {
         // 不再位于仓库中时提交视图不可用，切换回文件树；焦点位于提交视图时同样移出，
         // 否则键入的文字会进入不可见的输入框。
         if self.git.root.is_none() {
-            if self.sidebar_view == SidebarView::Commit {
+            if self.sidebar.view == SidebarView::Commit {
                 self.set_sidebar_view(SidebarView::Files);
             }
             if matches!(self.focus, Focus::CommitMessage | Focus::CommitList) {

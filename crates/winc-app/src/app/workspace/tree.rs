@@ -72,7 +72,7 @@ enum TreeSlot {
     Empty,
 }
 
-/// 侧栏的显示动画：从露出比例 `from` 开始，朝 `panel_visible` 对应的一端过渡。
+/// 侧栏的显示动画：从露出比例 `from` 开始，朝 `Sidebar::visible` 对应的一端过渡。
 #[derive(Debug, Clone, Copy)]
 pub(in crate::app) struct SidebarMotion {
     /// 起始的露出比例：0 为隐藏，1 为完全展开。
@@ -122,8 +122,8 @@ impl TreeMotion {
 impl App {
     /// 返回侧栏露出的比例：0 为隐藏，1 为完全展开，动画中介于两者之间。
     pub(in crate::app) fn sidebar_shown(&self) -> f32 {
-        let target = if self.panel_visible { 1.0 } else { 0.0 };
-        let Some(motion) = self.sidebar_motion else {
+        let target = if self.sidebar.visible { 1.0 } else { 0.0 };
+        let Some(motion) = self.sidebar.motion else {
             return target;
         };
         motion.clock.between(motion.from, target)
@@ -132,32 +132,32 @@ impl App {
     /// 用状态文件里记下的侧栏宽度（启动、新开窗口时）。
     pub(crate) fn restore_panel_width(&mut self) {
         if let Some(width) = self.state.panel_width {
-            self.panel_width = width.max(crate::theme::MIN_PANEL_WIDTH);
+            self.sidebar.width = width.max(crate::theme::MIN_PANEL_WIDTH);
         }
     }
 
     /// 把侧栏宽度记进状态文件：以后打开的窗口、下次启动都用这个宽度。
     pub(in crate::app) fn remember_panel_width(&mut self) {
-        let width = self.panel_width.round();
+        let width = self.sidebar.width.round();
         self.update_state(|state| state.panel_width = Some(width));
     }
 
     /// 侧栏是否处于显示状态（动画的目标状态）。
     pub(crate) fn sidebar_open(&self) -> bool {
-        self.panel_visible
+        self.sidebar.visible
     }
 
     /// 带动画地显示或隐藏侧栏。
     ///
     /// 动画中途反向时从当前位置继续。
     pub(in crate::app) fn set_sidebar(&mut self, visible: bool) {
-        if visible == self.panel_visible {
+        if visible == self.sidebar.visible {
             return;
         }
 
         let from = self.sidebar_shown();
-        self.panel_visible = visible;
-        self.sidebar_motion = self
+        self.sidebar.visible = visible;
+        self.sidebar.motion = self
             .clock(SIDEBAR_ANIMATION)
             .map(|clock| SidebarMotion { from, clock });
         self.relayout();
@@ -173,8 +173,8 @@ impl App {
             .root()
             .and_then(|root| self.state.session_for(root));
         if session.is_some_and(|session| session.sidebar_hidden) {
-            self.panel_visible = false;
-            self.sidebar_motion = None;
+            self.sidebar.visible = false;
+            self.sidebar.motion = None;
         }
     }
 
@@ -308,8 +308,8 @@ impl App {
     ///
     /// 显示时焦点交给文件树或搜索输入框，隐藏时还给编辑区；焦点在终端里时保持不变。
     pub(in crate::app) fn toggle_sidebar(&mut self) {
-        self.set_sidebar(!self.panel_visible);
-        self.focus = match (self.panel_visible, self.sidebar_view) {
+        self.set_sidebar(!self.sidebar.visible);
+        self.focus = match (self.sidebar.visible, self.sidebar.view) {
             (true, SidebarView::Files) => Focus::Tree,
             (true, SidebarView::Search) => Focus::GlobalQuery,
             (true, SidebarView::Commit) => self.commit_view_focus(),
@@ -323,7 +323,7 @@ impl App {
     ///
     /// 动画中和拖动时不展开，返回 `None`。
     pub(crate) fn overflow_candidate(&self) -> Option<usize> {
-        let idle = self.sidebar_motion.is_none() && matches!(self.drag, Drag::None);
+        let idle = self.sidebar.motion.is_none() && matches!(self.drag, Drag::None);
         // 拖动文件时没有悬停目标，放不下的名称同样要显示，才看得到、放得进那几级目录。
         let pointing = matches!(self.hover, Hover::TreeRow(_) | Hover::Splitter)
             || self.tree_dragging().is_some_and(|drag| drag.active);
@@ -595,7 +595,7 @@ impl App {
         let depth = ws.selected.map(|index| ws.rows()[index].depth);
 
         // 侧栏显示搜索时文件树不在屏幕上，只展开、选中，切回文件树时再滚动到该处。
-        if self.sidebar_view == SidebarView::Search {
+        if self.sidebar.view == SidebarView::Search {
             return;
         }
 

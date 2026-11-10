@@ -69,7 +69,7 @@ impl App {
             self.click_update();
             return;
         }
-        let Some(&(rect, _)) = self.status_hits.iter().find(|&&(_, i)| i == item) else {
+        let Some(&(rect, _)) = self.status.hits.iter().find(|&&(_, i)| i == item) else {
             return;
         };
         let target = match (item, self.editor.active().map(|d| d.id)) {
@@ -206,7 +206,7 @@ impl App {
             Ok(true) => {
                 let damaged = doc.encoding == Encoding::Lossy;
                 if self.editor.active().is_some_and(|d| d.id == id) {
-                    self.sticky_cache = None;
+                    self.sticky.cache = None;
                     self.relayout();
                     self.clamp_scroll();
                     self.ensure_caret_visible();

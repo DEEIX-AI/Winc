@@ -88,7 +88,7 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     let caret = draw_bar_field(app, frame, area, &mut input, placeholder, focused);
     app.picker.input = input;
     if caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
 }
 

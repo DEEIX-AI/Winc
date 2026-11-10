@@ -71,12 +71,12 @@ impl App {
     /// 窗口是否完全看不见（见 `occluded`）；看得见时，或者测量时（窗口透明，系统当它看不见）
     /// 为假。
     pub(in crate::app) fn unseen(&self) -> bool {
-        self.occluded && !self.bench.silent()
+        self.window.occluded && !self.bench.silent()
     }
 
     /// 窗口变得完全看不见或又看得见（`WindowEvent::Occluded`）。
     pub(super) fn set_occluded(&mut self, occluded: bool) {
-        self.occluded = occluded;
+        self.window.occluded = occluded;
         let unseen = self.unseen();
         if let Some(renderer) = &mut self.renderer {
             renderer.set_occluded(unseen);
@@ -215,8 +215,8 @@ impl App {
             self.goto_input = None;
         }
         // 切换到不能替换的标签时收起替换。
-        if self.replace_open && !self.can_replace() {
-            self.replace_open = false;
+        if self.find.replace_open && !self.can_replace() {
+            self.find.replace_open = false;
             if self.focus == Focus::Replace {
                 self.focus = Focus::Search;
             }
@@ -233,8 +233,8 @@ impl App {
             ISLAND_MARGIN
         };
         let rows = match (
-            self.search_open && self.editor.active.is_some(),
-            self.replace_open,
+            self.find.open && self.editor.active.is_some(),
+            self.find.replace_open,
         ) {
             (false, _) => 0,
             (true, false) => 1,
@@ -250,7 +250,7 @@ impl App {
         } else {
             0
         };
-        let (panel, shown) = (self.panel_width, self.sidebar_shown());
+        let (panel, shown) = (self.sidebar.width, self.sidebar_shown());
         self.layout = Layout::compute(
             w,
             h,
@@ -283,7 +283,7 @@ impl App {
 
         self.place_outline();
         // 搜索和历史差异各有自己的列表，不能命中工作区文件树原来的区域。
-        if self.sidebar_view == SidebarView::Search || self.log_diff_tree().is_some() {
+        if self.sidebar.view == SidebarView::Search || self.log_diff_tree().is_some() {
             let tree = self.layout.tree;
             self.layout.tree = Rect::new(tree.x, tree.y, 0.0, 0.0);
         }
@@ -512,7 +512,7 @@ impl App {
         self.advance_images();
 
         self.highlight_pending = false;
-        self.ime_cursor = None;
+        self.ime.cursor = None;
         // 此前的重画请求由这一帧满足；绘制之后（例如 `refresh_hover`）再提出的请求留到下一帧。
         self.dirty = false;
 
@@ -551,7 +551,7 @@ impl App {
         // 高亮状态尚未推算完、大文件尚未搜完时，马上绘制下一帧，不按刷新率等：每帧本身有预算
         // （高亮 `HIGHLIGHT_BUDGET` 行、查找一个 8 ms 的时间片），已经不比刷新间隔短，按刷新率
         // 等反而常常错过一次刷新。
-        let searching = self.search_open || self.pending_jump.is_some();
+        let searching = self.find.open || self.find.pending_jump.is_some();
         self.dirty |= self.highlight_pending || (searching && !self.search.is_complete());
         // 终端查找同样按时间片进行：这一帧之后再找一个时间片，没找完就马上绘制下一帧。
         self.dirty |= self.terminal_find_tick();
@@ -565,7 +565,7 @@ impl App {
         match self.bench.on_present(self.presented, elapsed) {
             Next::Continue => {}
             // 应用层看到以后结束事件循环（测量时只有一个窗口）。
-            Next::Exit => self.quit_requested = true,
+            Next::Exit => self.closing.quit_requested = true,
             // 当前显示 Markdown 预览时滚动预览，到达末尾后回到开头。
             Next::Scroll if self.markdown.area.h > 0.0 => {
                 let before = self.markdown.scroll();
@@ -601,7 +601,7 @@ impl App {
             Next::QuickOpen => self.open_picker(),
             Next::Find(query) => {
                 self.open_search(false);
-                self.find_input.set_text(&query);
+                self.find.input.set_text(&query);
                 self.search.query = query;
                 self.search_changed();
             }
@@ -617,14 +617,14 @@ impl App {
         if let Some(command) = self.bench.terminal_command(ready) {
             self.terminal_input(format!("{command}\n").into_bytes());
         }
-        let searching = self.search_open || self.pending_jump.is_some();
+        let searching = self.find.open || self.find.pending_jump.is_some();
         let done = !self.highlight_pending && (!searching || self.search.is_complete());
         if self.bench.on_progress(done) {
-            self.quit_requested = true;
+            self.closing.quit_requested = true;
         }
         let scroll = self.editor.active().map_or(0.0, |doc| doc.scroll_line);
         if self.bench.on_wheel_frame(scroll) {
-            self.quit_requested = true;
+            self.closing.quit_requested = true;
         }
     }
 
@@ -671,6 +671,8 @@ pub struct WindowState {
     ///
     /// 最小化期间不更新；从最小化的窗口打开新窗口时按该位置错开（见 `App::cascade_from`）。
     pub(crate) frame: Option<winc_config::WindowFrame>,
+    /// 窗口是否完全不可见（被遮挡、最小化或位于其他桌面）；不可见时不绘制，窗口画面标记为可清除。
+    pub(in crate::app) occluded: bool,
 }
 
 impl Default for WindowState {
@@ -681,6 +683,7 @@ impl Default for WindowState {
             focused: true,
             hidden: false,
             frame: None,
+            occluded: false,
         }
     }
 }

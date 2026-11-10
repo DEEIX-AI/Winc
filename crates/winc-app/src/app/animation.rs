@@ -304,7 +304,7 @@ impl App {
             }
         }
 
-        settle(&mut self.sidebar_motion, |m| m.clock);
+        settle(&mut self.sidebar.motion, |m| m.clock);
         settle(&mut self.tree.motion, |m| m.clock);
         self.settle_log_tree();
         self.tree.labels.settle();
@@ -344,7 +344,7 @@ impl App {
         if self.diff.pulse.is_some_and(|c| c.done()) {
             self.diff.pulse = None;
         }
-        settle(&mut self.view_slide, |s| s.1);
+        settle(&mut self.sidebar.view_slide, |s| s.1);
         settle(&mut self.settings.motion, |m| m.1);
         self.picker.card.settle();
         self.bar_card.settle();
@@ -364,7 +364,7 @@ impl App {
         settle(&mut self.terminal.motion, |m| m.clock);
         settle(&mut self.terminal.grow, |g| g.1);
         settle(&mut self.markdown.motion, |m| m.clock);
-        self.status_motion.settle();
+        self.status.motion.settle();
     }
 
     /// 一帧绘制完成后，如果仍有动画在进行，则安排下一帧。
@@ -399,7 +399,7 @@ impl App {
 
     /// 是否有动画正在进行，包括滚动条的淡入、淡出和变色。
     pub(super) fn animating(&self) -> bool {
-        self.sidebar_motion.is_some()
+        self.sidebar.motion.is_some()
             || self.tree.motion.is_some()
             || self.log_tree_animating()
             || self.tree.labels.moving()
@@ -424,7 +424,7 @@ impl App {
             || self.global.rows_moving()
             || self.fold_motion.is_some()
             || self.scroll_glide.is_some()
-            || self.wheel_glide.is_some()
+            || self.wheel.glide.is_some()
             || self.picker.motion.is_some()
             || self.picker.fold.is_some()
             || self.picker.places_in.is_some()
@@ -433,7 +433,7 @@ impl App {
             || self.notice.leaving.is_some()
             || self.diff.fade.is_some()
             || self.diff.pulse.is_some()
-            || self.view_slide.is_some()
+            || self.sidebar.view_slide.is_some()
             || self.settings.motion.is_some()
             || self.picker.card.motion.is_some()
             || self.bar_card.motion.is_some()
@@ -453,7 +453,7 @@ impl App {
             || self.tool_fold.moving()
             || self.scrollbars_animating()
             || self.markdown.motion.is_some()
-            || self.status_motion.moving()
+            || self.status.motion.moving()
             || ((self.branch.running.is_some()
                 || self.branch.finished.is_some()
                 || self.commit_refreshing())
@@ -463,6 +463,32 @@ impl App {
 
 mod presence;
 pub use presence::*;
+
+/// 工具栏按钮悬停提示的计时状态。
+#[derive(Default)]
+pub struct Tooltip {
+    /// 鼠标开始悬停在工具栏按钮上的时刻；悬停足够久后才显示提示。
+    pub(crate) since: Option<Instant>,
+    /// 提示是否已绘制出来；已绘制时无需再为提示唤醒事件循环。
+    pub(crate) shown: bool,
+}
+
+/// 光标闪烁的状态：当前是否显示，以及闪烁周期的起点。
+pub struct Blink {
+    /// 是否绘制光标：处于闪烁周期的显示阶段时为真；窗口没有焦点时为假。
+    pub(crate) visible: bool,
+    /// 光标闪烁周期的起点；按键、点击等操作会重置该起点，使光标立即显示。
+    pub(in crate::app) epoch: Instant,
+}
+
+impl Default for Blink {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            epoch: Instant::now(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;

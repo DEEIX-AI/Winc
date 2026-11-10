@@ -183,7 +183,7 @@ impl App {
             Target::Search => self.click_search(x, y),
             // 双击分隔条恢复默认宽度。
             Target::Splitter if self.click_count(x, y) == 2 => {
-                self.panel_width = DEFAULT_PANEL_WIDTH;
+                self.sidebar.width = DEFAULT_PANEL_WIDTH;
                 self.remember_panel_width();
                 self.relayout();
                 self.request_redraw();
@@ -193,7 +193,7 @@ impl App {
                 let most = (self.layout.window.w - 320.0).max(crate::theme::MIN_PANEL_WIDTH);
                 self.drag = Drag::Splitter {
                     start_x: x,
-                    start_width: self.panel_width.min(most),
+                    start_width: self.sidebar.width.min(most),
                 };
             }
             Target::TreeTool(tool) => self.run_tree_tool(tool),

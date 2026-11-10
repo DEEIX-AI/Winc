@@ -133,7 +133,7 @@ impl App {
 
         self.apply_compact_folders();
         self.folder_opened();
-        self.focus = match self.sidebar_view {
+        self.focus = match self.sidebar.view {
             SidebarView::Files => Focus::Tree,
             SidebarView::Search => Focus::GlobalQuery,
             SidebarView::Commit => self.commit_view_focus(),
@@ -183,7 +183,7 @@ impl App {
         self.reset_folder_views();
         self.watch_folder();
         self.set_sidebar(true);
-        if self.sidebar_view == SidebarView::Search && !self.global.query.text().is_empty() {
+        if self.sidebar.view == SidebarView::Search && !self.global.query.text().is_empty() {
             self.run_global_search();
         }
         self.update_window_title();
@@ -322,7 +322,7 @@ impl App {
 
         let terminal = self.terminal_session();
         let run = self.run.selected.clone();
-        let sidebar_hidden = !self.panel_visible;
+        let sidebar_hidden = !self.sidebar.visible;
         let bookmarks = self
             .editor
             .all_bookmarks()

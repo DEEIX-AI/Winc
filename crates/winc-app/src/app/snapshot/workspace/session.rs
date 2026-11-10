@@ -242,7 +242,7 @@ fn switching_folders_keeps_each_folders_tabs() {
     // 有未保存的修改时先询问；取消则仍停留在 B。
     app.run(Command::Insert("x".into()));
     app.open_path(&root_a);
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
     app.answer_save_prompt(SaveChoice::Cancel);
     assert_eq!(app.editor.workspace.as_ref().unwrap().root, root_b);
 
@@ -404,7 +404,7 @@ fn quitting_rewrites_only_backups_whose_content_or_caret_changed() {
         }
         app.request_quit();
         assert!(
-            app.quit_requested && app.save_prompt.is_none(),
+            app.closing.quit_requested && app.closing.prompt.is_none(),
             "已备份，不询问"
         );
         let same = std::fs::metadata(&file).unwrap().ino() == before;
@@ -459,7 +459,7 @@ fn quitting_keeps_unsaved_changes_for_next_time() {
 
     // 退出：不询问是否保存，直接退出（未保存的内容由备份保留）。
     app.request_quit();
-    assert!(app.save_prompt.is_none() && app.quit_requested);
+    assert!(app.closing.prompt.is_none() && app.closing.quit_requested);
     app.save_session();
     let session = app.state.last_session().cloned().unwrap();
     assert_eq!(
@@ -541,7 +541,7 @@ fn edits_made_after_agreeing_to_quit_are_backed_up_too() {
     app.backup.root = Some(root.clone());
     app.run(Command::Insert("先改的\n".into()));
     app.request_quit();
-    assert!(app.quit_requested);
+    assert!(app.closing.quit_requested);
     // 同意退出后、其他窗口仍在询问期间，本窗口又修改了一处。
     app.run(Command::Insert("后改的\n".into()));
     app.prepare_exit();
@@ -580,10 +580,10 @@ fn closing_the_window_closes_the_folder_but_keeps_its_tabs_and_changes() {
 
     // 关闭窗口：与退出一样不询问，未保存的内容备份。
     app.request_close_window();
-    assert!(app.save_prompt.is_none());
+    assert!(app.closing.prompt.is_none());
     if !cfg!(target_os = "macos") {
         // 其他平台上关闭窗口就是退出。
-        assert!(app.quit_requested);
+        assert!(app.closing.quit_requested);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&root);
         return;
@@ -591,7 +591,7 @@ fn closing_the_window_closes_the_folder_but_keeps_its_tabs_and_changes() {
 
     // macOS：不退出应用。窗口隐藏，目录和标签关闭，回到开始页；目录的现场和备份都留着，
     // 之后退出时没有打开的目录，下次启动是开始页。
-    assert!(!app.quit_requested && app.window.hidden);
+    assert!(!app.closing.quit_requested && app.window.hidden);
     assert!(app.editor.workspace.is_none() && app.editor.documents.is_empty());
     assert!(app.state.last.is_none());
     let session = app
@@ -627,7 +627,7 @@ fn closing_the_window_closes_the_folder_but_keeps_its_tabs_and_changes() {
 
     // 这时用 ⌘Q 退出：下次启动打开该目录。
     app.request_quit();
-    assert!(app.quit_requested);
+    assert!(app.closing.quit_requested);
     app.save_session();
     assert_eq!(app.state.last.as_deref(), Some(folder.as_path()));
 
@@ -746,7 +746,7 @@ fn without_a_place_for_backups_quitting_still_asks() {
     app.run(Command::Insert("x".into()));
     assert!(app.backup.root.is_none());
     app.request_quit();
-    assert!(app.save_prompt.is_some() && !app.quit_requested);
+    assert!(app.closing.prompt.is_some() && !app.closing.quit_requested);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -766,20 +766,20 @@ fn with_hot_exit_off_quitting_asks_and_then_drops_the_backups() {
 
     // 退出时仍然询问；取消则不做任何改动。
     app.request_quit();
-    assert!(app.save_prompt.is_some() && !app.quit_requested);
+    assert!(app.closing.prompt.is_some() && !app.closing.quit_requested);
     app.answer_save_prompt(SaveChoice::Cancel);
     assert_eq!(backups.read_all().len(), 1);
     // 关闭窗口时同样询问；取消则窗口、目录和标签都不动。
     app.request_close_window();
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
     app.answer_save_prompt(SaveChoice::Cancel);
-    assert!(!app.window.hidden && !app.quit_requested);
+    assert!(!app.window.hidden && !app.closing.quit_requested);
     assert!(app.editor.workspace.is_some() && !app.editor.documents.is_empty());
 
     // 不保存：退出并删除备份，下次启动不恢复。
     app.request_quit();
     app.answer_save_prompt(SaveChoice::Discard);
-    assert!(app.quit_requested);
+    assert!(app.closing.quit_requested);
     assert!(backups.read_all().is_empty());
     app.save_session();
     let session = app.state.last_session().cloned().unwrap();
@@ -849,12 +849,12 @@ fn waiting_asks_about_other_unsaved_files_before_quitting() {
     // 关闭等待的标签：先询问另一个文档是否保存，不直接退出而丢弃其内容。
     winc.app(key).close_tabs(vec![message]);
     let (_, exit) = winc.settle_for_test();
-    assert!(!exit && winc.app(key).save_prompt.is_some());
+    assert!(!exit && winc.app(key).closing.prompt.is_some());
 
     // 取消后窗口保持打开；之后按正常流程退出，选择不保存同样可以退出。
     winc.app(key).answer_save_prompt(SaveChoice::Cancel);
     let (_, exit) = winc.settle_for_test();
-    assert!(!exit && winc.app(key).save_prompt.is_none());
+    assert!(!exit && winc.app(key).closing.prompt.is_none());
     assert_eq!(winc.app(key).editor.documents.len(), 1);
     winc.app(key).request_quit();
     winc.app(key).answer_save_prompt(SaveChoice::Discard);
@@ -885,9 +885,9 @@ fn the_sidebar_state_is_remembered_per_folder() {
     let first = sample_folder("sidebar-first");
     let second = sample_folder("sidebar-second");
     let mut app = app_with(&first.join("short.rs"), false);
-    assert!(app.panel_visible);
+    assert!(app.sidebar.visible);
     app.toggle_sidebar();
-    assert!(!app.panel_visible);
+    assert!(!app.sidebar.visible);
     app.remember_session();
     let state = app.state.clone();
 
@@ -895,21 +895,21 @@ fn the_sidebar_state_is_remembered_per_folder() {
     let mut app = blank_app(false);
     app.state = state.clone();
     app.open_folder_now(&first);
-    assert!(!app.panel_visible);
+    assert!(!app.sidebar.visible);
     assert!(!app.focus_in_sidebar());
 
     // 启动时目录在窗口创建之前打开：窗口建好时恢复，没有动画。
     let mut app = app_with(&first.join("short.rs"), false);
     app.state = state.clone();
     app.restore_sidebar_for_window();
-    assert!(!app.panel_visible);
-    assert!(app.sidebar_motion.is_none());
+    assert!(!app.sidebar.visible);
+    assert!(app.sidebar.motion.is_none());
 
     // 没有记录过的目录显示文件树，上一个目录收起不影响它。
     let mut app = blank_app(false);
     app.state = state.clone();
     app.open_folder_now(&second);
-    assert!(app.panel_visible);
+    assert!(app.sidebar.visible);
 
     // 重新展开后记下的也是展开；关闭目录时侧栏收起是回到开始页，不算用户收起。
     let mut app = blank_app(false);
@@ -918,7 +918,7 @@ fn the_sidebar_state_is_remembered_per_folder() {
     app.toggle_sidebar();
     let root = app.editor.root().unwrap().to_path_buf();
     app.close_folder();
-    assert!(!app.panel_visible);
+    assert!(!app.sidebar.visible);
     let session = app.state.session_for(&root).unwrap();
     assert!(!session.sidebar_hidden);
 

@@ -177,7 +177,7 @@ fn stepping_past_the_last_change_opens_the_commits_next_file() {
     app.run_action(Action::NextDifference);
     app.run_action(Action::NextDifference);
     assert!(title(&app).starts_with("b.txt · "));
-    assert_eq!(app.status_message.as_deref(), Some("没有下一处更改"));
+    assert_eq!(app.status.message.as_deref(), Some("没有下一处更改"));
     app.run_action(Action::PreviousDifference);
     app.run_action(Action::PreviousDifference);
     assert!(title(&app).starts_with("a.txt · "));
@@ -303,7 +303,7 @@ fn commit_diff_tree_follows_its_order_and_the_users_sidebar() {
     app.activate_tab(log_index);
     app.press_log(LogTarget::File(1));
     paint(&mut app);
-    assert_eq!(app.sidebar_view, SidebarView::Files);
+    assert_eq!(app.sidebar.view, SidebarView::Files);
 
     // 关闭差异标签后文件列表作废。
     app.activate_tab(diff_index);
@@ -593,9 +593,9 @@ fn shoot_log_graph() {
         history_repo(&root, 40);
         let long = long_subject_row(&mut app, &root);
         hover_log_row(&mut app, long);
-        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(&mut app, &format!("log-graph-{theme}"));
-        app.tooltip_since = None;
+        app.tooltip.since = None;
 
         // 指针位于合并提交分出的那段线上：这条线高亮并显示手形指针，提示点击后跳转到的提交。
         let (merge, line) = {
@@ -616,9 +616,9 @@ fn shoot_log_graph() {
             .unwrap();
         app.on_mouse_move(rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
         paint(&mut app);
-        app.tooltip_since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(&mut app, &format!("log-line-{theme}"));
-        app.tooltip_since = None;
+        app.tooltip.since = None;
         app.set_hover(Hover::Log(LogTarget::Divider));
         app.log.details_w = Some(460.0);
         shoot(&mut app, &format!("log-divider-{theme}"));

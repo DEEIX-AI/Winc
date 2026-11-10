@@ -905,7 +905,7 @@ fn draw_body(
             }
             if edit.caret.0 == line && breaks.row_of(edit.caret.1) == part {
                 let x = origin_x + at(edit.caret.1) * app.cell;
-                app.ime_cursor = Some(draw_caret(app, frame, x, y, baseline, pane.text));
+                app.ime.cursor = Some(draw_caret(app, frame, x, y, baseline, pane.text));
             }
         }
         // 只读一侧不接受输入，输入法候选窗不跟随该侧的光标。
@@ -944,7 +944,7 @@ fn draw_body(
             let band = Rect::new(pane.text.x, y, pane.text.w, lh);
             let x = pane.text.x + DIFF_TEXT_PAD - scroll.x;
             let baseline = baseline_in(band, ascent, descent);
-            app.ime_cursor = Some(draw_caret(app, frame, x, y, baseline, pane.text));
+            app.ime.cursor = Some(draw_caret(app, frame, x, y, baseline, pane.text));
         }
     }
 

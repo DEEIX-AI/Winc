@@ -115,7 +115,8 @@ fn other_documents_get_paths_and_refuse_images() {
     app.paste();
     assert_eq!(text(&app), before);
     assert!(
-        app.status_message
+        app.status
+            .message
             .as_deref()
             .is_some_and(|m| m.contains("Markdown"))
     );

@@ -62,7 +62,7 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
     app.start_hits.clear();
     // 日志标签绘制时重新填充；切换到其他标签后若仍保留，日志中提交行的命中区域会拦截代码区的点击。
     app.log.hits.clear();
-    app.sticky.clear();
+    app.sticky.rows.clear();
     app.folded_hits.clear();
     // Markdown、PDF 预览绘制时重新填充；预览不显示时若仍保留，滚轮和点击事件会被预览接收。
     app.markdown.area = Rect::default();

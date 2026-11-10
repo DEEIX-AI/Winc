@@ -34,7 +34,7 @@ pub(crate) use editor::folding::fold_column;
 pub use editor::format::{FormatState, ToolAnswer};
 pub use editor::hint::NameHint;
 pub(crate) use editor::scrollbar::{ScrollArea, Scrollbars, ThumbLook};
-pub use editor::sticky::{StickyCache, StickyRow};
+pub use editor::sticky::StickyRow;
 pub(crate) use editor::sticky::{place_sticky_rows, sticky_limit};
 pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
@@ -770,17 +770,14 @@ pub struct App {
     drag_scrolled_at: Option<Instant>,
 
     // 光标和输入法
-    /// 是否绘制光标：处于闪烁周期的显示阶段时为真；窗口没有焦点时为假。
-    pub caret_visible: bool,
-    /// 光标闪烁周期的起点；按键、点击等操作会重置该起点，使光标立即显示。
-    blink_epoch: Instant,
+    /// 光标闪烁的状态。
+    pub blink: animation::Blink,
     /// 编辑区中输入法正在组字的文字。
     pub preedit: String,
     /// 输入框中输入法正在组字的文字。
     pub field_preedit: String,
-    /// 输入法候选框应出现的位置。
-    pub ime_cursor: Option<Rect>,
-    last_ime_area: Option<Rect>,
+    /// 输入法候选框的定位状态。
+    pub ime: input::keyboard::ImeState,
 
     // 布局，以及绘制时记录、点击时使用的几何
     /// 上一帧的布局：各区域的位置与大小，点击时据此确定点击目标。
@@ -795,13 +792,10 @@ pub struct App {
     ///
     /// 同一位置有两个区域时（最近列表的一行及其 ✕），✕ 排在前面。
     pub start_hits: Vec<(Rect, StartAction)>,
-    /// 状态栏路径中各段的可点击区域，以及段序号。
-    pub crumb_hits: Vec<(Rect, usize)>,
-    /// 状态栏右侧各可点击项的区域。
-    pub status_hits: Vec<(Rect, StatusItem)>,
-    /// 编辑区顶部钉住的各行，绘制时记录，点击和悬停时使用。
-    pub sticky: Vec<StickyRow>,
-    sticky_cache: Option<StickyCache>,
+    /// 状态栏的界面状态。
+    pub status: status::StatusState,
+    /// 粘滞滚动的状态。
+    pub sticky: editor::sticky::Sticky,
     /// 已完成、待采用的大文件断行结果（见 [`App::poll_wraps`]）。
     wraps: Arc<Mutex<Vec<(DocumentId, winc_editor::WrapResult)>>>,
     /// 长行的着色结果，跨帧复用（见 [`crate::view::LineTokens`]）。
@@ -827,10 +821,8 @@ pub struct App {
     pub(crate) markdown: preview::markdown::MarkdownPreview,
     /// 当前标签的 PDF 预览。
     pub(crate) pdf: preview::pdf::PdfPreview,
-    /// 状态栏上键路径的缓存，键为（文档、版本号、光标位置）。
-    key_path_cache: Option<((DocumentId, u64, usize), Option<String>)>,
-    /// 当前文档 JSON 键路径的扫描记录；切换文档后重新扫描。
-    key_path_scan: Option<(DocumentId, winc_editor::keypath::KeyPathScan)>,
+    /// 状态栏键路径的缓存与扫描记录。
+    pub key_path: status::breadcrumb::KeyPath,
     /// 已折叠行末尾 `⋯` 的可点击区域和行号，绘制时记录，点击后展开。
     pub folded_hits: Vec<(Rect, usize)>,
     /// 侧栏标题行项目名的可点击区域，绘制时填入。
@@ -843,14 +835,12 @@ pub struct App {
     pub(crate) scrollbars: Scrollbars,
 
     // 侧栏和文件树
-    panel_width: f32,
+    /// 侧栏的界面状态。
+    pub sidebar: workspace::Sidebar,
     /// 分栏预览时源代码一侧占编辑区宽度的比例，取值 0 到 1；`None` 表示各占一半。
     ///
     /// 拖动中间的分隔线时改变，所有分栏预览的标签共用该值。
     pub(crate) split_share: Option<f32>,
-    /// 侧栏是否应显示；动画进行中取动画的终点。
-    panel_visible: bool,
-    sidebar_motion: Option<SidebarMotion>,
     /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
     pub(crate) name_hint: Option<NameHint>,
     /// 编辑区顶部输入条出现、消失的动画。
@@ -865,25 +855,17 @@ pub struct App {
     pub(crate) dialog_card: animation::CardFx,
     /// 窗口内绘制的提示框出现、消失的动画。
     pub(crate) alert_card: animation::CardFx,
-    /// 侧栏当前显示文件树还是全局搜索。
-    pub sidebar_view: SidebarView,
-    /// 切换侧栏视图时，视图切换器中选中的一段从上一个视图滑入：记录上一个视图和动画时钟。
-    pub view_slide: Option<(SidebarView, animation::Clock)>,
     /// 开关 Git、终端模块时，视图切换器中的「提交」一段、状态栏的终端开关和分支名
     /// 出现、消失的动画。
     pub(crate) module_fx: animation::ModuleFx,
-    /// 状态栏右侧各项的过渡状态。
-    pub(crate) status_motion: StatusMotion,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
     /// 代码折叠、展开的动画。
     pub fold_motion: Option<FoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
     pub(crate) scroll_glide: Option<ScrollGlide>,
-    /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
-    pub(crate) wheel_glide: Option<input::mouse::WheelGlide>,
-    /// 上一次鼠标滚轮整格滚动的时刻，用于按两格的间隔确定过渡时长。
-    wheel_at: Option<Instant>,
+    /// 鼠标滚轮滚动的过渡状态。
+    pub wheel: input::mouse::Wheel,
     /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
     preview_tab: Option<winc_editor::DocumentId>,
     /// 文件树中正在重命名的项及其输入框；没有时为 `None`。
@@ -914,20 +896,10 @@ pub struct App {
     // 查找条和跳转条
     /// 当前查找的内容、各文档里已找到的匹配和替换状态。
     pub search: Search,
-    /// 查找条中的查找输入；内容变化后同步到 `search.query`。
-    pub find_input: TextField,
-    /// 查找条中的替换输入；内容变化后同步到 `search.replacement`。
-    pub replace_input: TextField,
-    search_open: bool,
+    /// 查找条的界面状态。
+    pub find: editor::find::FindBar,
     /// 阅读时固定的词或短选区及其颜色编号，按标记时间从早到晚排列。
     pub(crate) word_highlights: Vec<(usize, WordHighlight)>,
-    /// 查找条上是否开启了「只显示匹配的行」。
-    pub(crate) filter_lines: bool,
-    /// 上次筛选使用的缓存键，以及筛选后是否隐藏了行。
-    filter_key: Option<(FilterKey, bool)>,
-    replace_open: bool,
-    /// 大文件尚未搜索完时等待执行的跳转：（文档，起点位置，是否反向查找），找到下一处匹配后执行。
-    pending_jump: Option<(DocumentId, usize, bool)>,
     /// 跳转条（⌃G）的输入；`None` 表示跳转条未打开。
     pub goto_input: Option<TextField>,
 
@@ -1001,37 +973,24 @@ pub struct App {
     pub menu_button: Option<MenuButton>,
     /// 删除文件使用的函数：正常运行时移到废纸篓，测试中替换为直接删除，避免写入用户的废纸篓。
     pub trash: fn(&Path) -> std::io::Result<()>,
-    /// 正在询问「要保存修改吗」。
-    pub save_prompt: Option<SavePrompt>,
-    /// 已选择「保存」、正在等待另存为面板：保存完成后继续处理余下的步骤。
-    pub save_continuation: Option<SavePrompt>,
-    /// 退出前的处理均已完成；当前一轮事件处理结束后退出。
-    pub quit_requested: bool,
+    /// 关闭与退出流程的状态。
+    pub closing: lifecycle::closing::Closing,
     /// 最近关闭的标签（路径和光标位置），⇧⌘T 按关闭的相反顺序重新打开。
     pub closed: Vec<(PathBuf, usize)>,
     /// 退出前是否需要询问用户（各窗口共用同一个值，见 [`crate::winc::Shared::ask_on_quit`]）。
     pub(crate) ask_on_quit: Arc<AtomicBool>,
-    /// 正在确认是否结束终端中运行的程序时，确认后要执行的关闭（退出或关闭窗口）。
-    ///
-    /// 为 `Some` 期间，退出流程尚未得出结果（见 [`crate::winc`]）。
-    pub(crate) quit_confirming: Option<CloseRequest>,
 
     // 状态栏消息和悬停提示
-    /// 状态栏上的临时消息。
-    pub status_message: Option<String>,
     /// 文件已从磁盘删除、自动保存因此未写入且已提示过用户的文档；失去焦点时不再重复提示。
     deleted_told: HashSet<DocumentId>,
-    status_until: Option<Instant>,
     /// 右上角提示条的状态。
     pub notice: lifecycle::notice::Notice,
     /// 鼠标是否在窗口内：移进来时置位，离开窗口时清除。
     cursor_inside: bool,
     /// 冲突卡片及其按钮的位置，绘制时记录；当前文档没有冲突时为 `None`。
     pub conflict_card: Option<(Rect, Vec<(Rect, ConflictAction)>)>,
-    /// 鼠标开始悬停在工具栏按钮上的时刻；悬停足够久后才显示提示。
-    pub tooltip_since: Option<Instant>,
-    /// 提示是否已绘制出来；已绘制时无需再为提示唤醒事件循环。
-    pub tooltip_shown: bool,
+    /// 悬停提示的计时状态。
+    pub tooltip: animation::Tooltip,
 
     // 窗口和事件循环
     renderer: Option<Renderer>,
@@ -1056,8 +1015,6 @@ pub struct App {
     /// 待使用的激活令牌（见 [`App::set_activation`]）。
     #[cfg(all(unix, not(target_os = "macos")))]
     activation: Option<winit::window::ActivationToken>,
-    /// 窗口是否完全不可见（被遮挡、最小化或位于其他桌面）；不可见时不绘制，窗口画面标记为可清除。
-    occluded: bool,
     /// 动画下一帧的绘制时刻（没有显示链接时按计时器安排）。
     next_frame: Option<Instant>,
     /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起、Windows）。
@@ -1185,8 +1142,8 @@ impl App {
             self.markdown.toc_fade = self.clock(animation::TOC_FADE);
         }
         self.hover = hover;
-        self.tooltip_since = hover.has_tooltip().then(Instant::now);
-        self.tooltip_shown = false;
+        self.tooltip.since = hover.has_tooltip().then(Instant::now);
+        self.tooltip.shown = false;
         self.request_redraw();
     }
 
@@ -1202,22 +1159,22 @@ impl App {
     }
 
     fn reset_blink(&mut self) {
-        self.blink_epoch = Instant::now();
-        self.caret_visible = true;
+        self.blink.epoch = Instant::now();
+        self.blink.visible = true;
     }
 
     /// 在每帧绘制之前推进搜索：继续搜索一个时间片；等待中的跳转已有结果时执行跳转，并按
     /// 搜索结果过滤行。
     fn advance_search(&mut self) {
         // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处。
-        let searching = self.search_open || self.pending_jump.is_some();
+        let searching = self.find.open || self.find.pending_jump.is_some();
         if searching && let Some((id, _)) = self.update_diff_find() {
             // 记录的跳转只对当时的文档有效，切换标签后作废。
-            match self.pending_jump {
+            match self.find.pending_jump {
                 Some((pending, pos, backwards)) if pending == id => {
                     self.jump_to_match(pos, backwards);
                 }
-                Some(_) => self.pending_jump = None,
+                Some(_) => self.find.pending_jump = None,
                 None => {}
             }
             self.apply_line_filter();
@@ -1235,16 +1192,16 @@ impl App {
                 self.search.update(doc);
 
                 // 记录的跳转只对当时的文档有效，切换标签后作废。
-                match self.pending_jump {
+                match self.find.pending_jump {
                     Some((id, pos, backwards)) if id == doc.id => {
                         self.jump_to_match(pos, backwards);
                     }
-                    Some(_) => self.pending_jump = None,
+                    Some(_) => self.find.pending_jump = None,
                     None => {}
                 }
             }
             // 标签全部关闭时，等待中的跳转作废；否则会一直按「尚未搜完」处理，每帧都继续绘制。
-            None => self.pending_jump = None,
+            None => self.find.pending_jump = None,
             Some(_) => {}
         }
         self.apply_line_filter();

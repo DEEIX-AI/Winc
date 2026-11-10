@@ -743,7 +743,7 @@ impl App {
     /// 切换开关 `setting` 的状态。
     pub(super) fn settings_toggle(&mut self, setting: Setting) {
         if setting == Setting::StickyScroll {
-            self.sticky_cache = None;
+            self.sticky.cache = None;
         }
         self.settings_set_switch(setting, !self.switch_on(setting));
     }
@@ -1320,7 +1320,7 @@ impl App {
             self.terminal_theme_changed();
         }
         if sticky {
-            self.sticky_cache = None;
+            self.sticky.cache = None;
         }
         if wrap {
             self.word_wrap_changed();

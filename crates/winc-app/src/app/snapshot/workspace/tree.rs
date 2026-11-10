@@ -7,7 +7,7 @@ use super::*;
 fn long_tree_names_unfold_under_the_mouse() {
     let dir = sample_folder("unfold");
     let mut app = app_with(&dir.join("a.txt"), false);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let long = row_of(&app, "img_WNoi");
     let short = row_of(&app, "short");
 
@@ -56,7 +56,7 @@ fn long_tree_names_unfold_under_the_mouse() {
 fn tree_scrolls_sideways_and_drags() {
     let dir = sample_folder("hscroll");
     let mut app = app_with(&dir.join("a.txt"), true);
-    app.panel_width = 200.0;
+    app.sidebar.width = 200.0;
     app.relayout();
     paint(&mut app);
 
@@ -116,7 +116,7 @@ fn the_scrollbar_strip_belongs_to_the_scrollbar_not_the_row_under_it() {
         std::fs::write(dir.join(format!("zz_{i:02}.txt")), "x").unwrap();
     }
     let mut app = app_with(&dir.join("a.txt"), false);
-    app.panel_width = MIN_PANEL_WIDTH;
+    app.sidebar.width = MIN_PANEL_WIDTH;
     app.relayout();
     paint(&mut app);
     let tree = app.layout.tree;
@@ -315,17 +315,17 @@ fn new_entry_row_follows_the_selection_and_reports_errors() {
 fn narrow_sidebar_folds_tools_before_the_name() {
     let dir = sample_folder("a-rather-long-project-name");
     let mut app = app_with(&dir.join("a.txt"), false);
-    app.panel_width = 400.0;
+    app.sidebar.width = 400.0;
     paint(&mut app);
     assert_eq!(app.tree.tools.len(), 5);
     let full = app.project_hit.w;
 
     // 从宽到窄一点点收：工具栏还留着按钮时项目名完整显示，按钮一个个收进「⋯」；
     // 只剩「⋯」以后项目名才变短，最后停在最小宽度。
-    let mut width = app.panel_width;
+    let mut width = app.sidebar.width;
     let mut shortened = false;
     while width >= MIN_PANEL_WIDTH {
-        app.panel_width = width;
+        app.sidebar.width = width;
         paint(&mut app);
         if app.tree.tools.is_empty() {
             assert!(app.tree.more.is_some());
@@ -356,7 +356,7 @@ fn narrow_sidebar_folds_tools_into_more() {
 
     // 缩到最窄：项目名仍然保留且可点击（只检查悬停，不实际点击，因为点击会弹出选择目录的
     // 系统对话框）。
-    app.panel_width = MIN_PANEL_WIDTH;
+    app.sidebar.width = MIN_PANEL_WIDTH;
     paint(&mut app);
     let more = app.tree.more.unwrap();
     assert!(app.tree.tools.len() < 5);
@@ -478,7 +478,7 @@ fn clicks_during_a_folder_animation_land_on_the_row_you_see() {
 fn the_unfolded_name_lines_up_with_its_row_below_the_new_entry_row() {
     let dir = sample_folder("unfold-below-input");
     let mut app = app_with(&dir.join("a.txt"), false);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     app.editor.workspace.as_mut().unwrap().selected = None;
     app.start_new_entry(false);
     paint(&mut app);
@@ -731,7 +731,7 @@ fn open_in_terminal_goes_to_the_folder_of_what_is_selected() {
 fn the_splitter_resets_on_double_click_and_snaps_the_sidebar_closed() {
     let dir = sample_folder("splitter");
     let mut app = app_with(&dir, false);
-    app.panel_width = 420.0;
+    app.sidebar.width = 420.0;
     paint(&mut app);
     let y = 300.0;
     let grab = |app: &App| app.layout.splitter.x + 1.0;
@@ -740,7 +740,7 @@ fn the_splitter_resets_on_double_click_and_snaps_the_sidebar_closed() {
     let x = grab(&app);
     click(&mut app, (x, y));
     click(&mut app, (x, y));
-    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH);
     paint(&mut app);
 
     // 向左拖动时宽度停在最小宽度；继续拖过最小宽度的一半后收起侧栏，焦点离开文件树，
@@ -751,16 +751,16 @@ fn the_splitter_resets_on_double_click_and_snaps_the_sidebar_closed() {
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x - (DEFAULT_PANEL_WIDTH - 200.0), y);
     assert!(app.sidebar_open());
-    assert_eq!(app.panel_width, MIN_PANEL_WIDTH);
+    assert_eq!(app.sidebar.width, MIN_PANEL_WIDTH);
     app.on_mouse_move(x - (DEFAULT_PANEL_WIDTH - MIN_PANEL_WIDTH / 2.0) - 1.0, y);
     assert!(!app.sidebar_open());
     assert_eq!(app.focus, Focus::Editor);
-    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH);
+    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH);
 
     // 不松开鼠标向右拖回时，侧栏重新打开，宽度随鼠标位置变化。
     app.on_mouse_move(x - 20.0, y);
     assert!(app.sidebar_open());
-    assert_eq!(app.panel_width, DEFAULT_PANEL_WIDTH - 20.0);
+    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH - 20.0);
     app.on_mouse_up(MouseButton::Left);
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -889,7 +889,7 @@ fn clicking_a_merged_folder_past_the_sidebar_selects_it() {
     std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
     std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
     let mut app = app_with(&root, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let root = app.editor.root().unwrap().to_path_buf();
     let row = row_of(&app, "alpha");
     let ws = app.editor.workspace.as_mut().unwrap();
@@ -960,7 +960,7 @@ fn dragging_past_the_sidebar_reaches_merged_folders_that_do_not_fit() {
     std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
     std::fs::write(root.join("note.txt"), "").unwrap();
     let mut app = app_with(&root, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let root = app.editor.root().unwrap().to_path_buf();
     let row = row_of(&app, "alpha");
     app.editor.workspace.as_mut().unwrap().toggle(row);
@@ -1005,7 +1005,7 @@ fn a_row_that_does_not_fit_covers_the_sidebar_splitter() {
     std::fs::create_dir_all(root.join(&deep).join("x")).unwrap();
     std::fs::create_dir_all(root.join("zzz")).unwrap();
     let mut app = app_with(&root, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let row = row_of(&app, "alpha");
     app.editor.workspace.as_mut().unwrap().toggle(row);
     paint(&mut app);
@@ -1039,7 +1039,7 @@ fn a_row_keeps_its_full_name_while_it_expands() {
     std::fs::create_dir_all(root.join(&deep).join("y")).unwrap();
     std::fs::create_dir_all(root.join("zzz")).unwrap();
     let mut app = app_with(&root, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let row = row_of(&app, "alpha");
     app.editor.workspace.as_mut().unwrap().toggle(row);
     paint(&mut app);
@@ -1234,7 +1234,7 @@ fn a_long_name_slides_out_on_hover_and_back_when_the_pointer_leaves() {
     std::fs::write(dir.join(long), "").unwrap();
     let mut app = app_with(&dir, true);
     app.tree.labels.animate_without_window = true;
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let dir = app.editor.root().unwrap().to_path_buf();
     paint(&mut app);
     let row = row_of(&app, "a_very_long");
@@ -1280,7 +1280,7 @@ fn a_row_that_does_not_fit_covers_the_tree_scrollbar() {
         std::fs::write(dir.join(format!("z{i:02}.txt")), "").unwrap();
     }
     let mut app = app_with(&dir, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     paint(&mut app);
     let row = row_of(&app, "a_very_long");
     let top = app.tree_row_top(row) + TREE_ROW / 2.0;
@@ -1309,7 +1309,7 @@ fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
         std::fs::write(dir.join(name), "").unwrap();
     }
     let mut app = app_with(&dir, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     paint(&mut app);
     let tree = app.layout.tree;
     let gutter = tree.right() - 4.0;
@@ -1367,7 +1367,7 @@ fn a_retracting_name_shares_one_background_across_the_sidebar_edge() {
     std::fs::write(dir.join(long), "").unwrap();
     let mut app = app_with(&dir, true);
     app.tree.labels.animate_without_window = true;
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     paint(&mut app);
     let row = row_of(&app, "a_very_long");
     let top = app.tree_row_top(row);
@@ -1410,7 +1410,7 @@ fn resizing_the_sidebar_and_scrolling_sideways_do_not_animate_labels() {
     let long = "a_very_long_file_name_that_does_not_fit_in_the_sidebar_at_all.txt";
     std::fs::write(root.join(long), "").unwrap();
     let mut app = app_with(&root, true);
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     let row = row_of(&app, "alpha");
     app.editor.workspace.as_mut().unwrap().toggle(row);
     paint(&mut app);
@@ -1419,7 +1419,7 @@ fn resizing_the_sidebar_and_scrolling_sideways_do_not_animate_labels() {
     assert!(!app.tree.labels.moving());
 
     for width in [250.0, 300.0, 210.0] {
-        app.panel_width = width;
+        app.sidebar.width = width;
         paint(&mut app);
         assert!(!app.tree.labels.moving(), "{width}");
     }
@@ -1435,7 +1435,7 @@ fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
     std::fs::write(dir.join(long), "").unwrap();
     let mut app = app_with(&dir, true);
     app.tree.labels.animate_without_window = true;
-    app.panel_width = 230.0;
+    app.sidebar.width = 230.0;
     paint(&mut app);
     let row = row_of(&app, "a_very_long");
     let top = app.tree_row_top(row);
@@ -1452,7 +1452,7 @@ fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
     assert!(app.tree.labels.moving());
 
     // 切到搜索视图：编辑区上方恢复背景色，不留下收回中的名字。
-    app.sidebar_view = SidebarView::Search;
+    app.sidebar.view = SidebarView::Search;
     paint(&mut app);
     let image = app.renderer.as_ref().unwrap().image().unwrap();
     let pixel = |x: f32, y: f32| {

@@ -343,7 +343,7 @@ impl App {
     fn report_disk(&mut self, report: DiskReport) {
         if !report.reloaded.is_empty() || report.marked || report.changed || report.follow {
             self.request_redraw();
-            self.sticky_cache = None;
+            self.sticky.cache = None;
         }
         if report.follow {
             self.relayout();

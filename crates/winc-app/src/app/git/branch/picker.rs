@@ -537,7 +537,7 @@ impl App {
         if self.picker.anchor == GitAnchor::Status {
             // 从状态栏往上展开：底边贴着分支名的上沿，右边和它对齐，放不下时往左挪。
             let Some(&(item, _)) =
-                (self.status_hits.iter()).find(|(_, i)| *i == crate::app::StatusItem::Branch)
+                (self.status.hits.iter()).find(|(_, i)| *i == crate::app::StatusItem::Branch)
             else {
                 return;
             };
@@ -662,7 +662,7 @@ impl App {
             return self.open_branch_picker(GitAnchor::Branch);
         }
         let on_status =
-            (self.status_hits.iter()).any(|(_, i)| *i == crate::app::StatusItem::Branch);
+            (self.status.hits.iter()).any(|(_, i)| *i == crate::app::StatusItem::Branch);
         if on_status {
             return self.open_branch_picker(GitAnchor::Status);
         }

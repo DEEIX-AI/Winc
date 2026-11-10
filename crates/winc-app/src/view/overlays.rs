@@ -17,14 +17,14 @@ use crate::layout::{PickerParts, SearchButton, goto_bar};
 /// 绘制查找条（⌘F、⌥⌘F）：浮在编辑区右上角，内含查找输入框，展开后含替换输入框。
 pub(super) fn draw_search(app: &mut App, frame: &mut Frame<'_>) {
     // 绘制时需要更新输入框中记录的几何信息：先将输入框从 `app` 中取出，绘制后放回。
-    let mut find = std::mem::take(&mut app.find_input);
-    let mut replace = std::mem::take(&mut app.replace_input);
+    let mut find = std::mem::take(&mut app.find.input);
+    let mut replace = std::mem::take(&mut app.find.replace_input);
     let caret = draw_search_bar(app, frame, &mut find, &mut replace);
-    app.find_input = find;
-    app.replace_input = replace;
+    app.find.input = find;
+    app.find.replace_input = replace;
 
     if caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
 }
 
@@ -150,7 +150,7 @@ fn draw_search_bar(
     }
     // 「只显示匹配的行」开关：开启时与三个选项开关一样铺强调色底色。差异标签里用不了（两侧
     // 按改动对齐），预览上也用不了（没有「行」），置灰。
-    let on = app.filter_lines;
+    let on = app.find.filter_lines;
     let filter_usable = app.editor.active().is_none_or(|d| d.diff.is_none())
         && !app.markdown_focused()
         && !app.markdown_live();
@@ -269,7 +269,7 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
     app.goto_input = Some(field);
 
     if caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
 }
 
@@ -309,7 +309,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
     if app.picker.places.is_some() {
         if let Some(caret) = super::editor::places::draw_live(app, frame, rect) {
-            app.ime_cursor = Some(caret);
+            app.ime.cursor = Some(caret);
         }
         return;
     }
@@ -375,7 +375,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
     };
 
     if caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
 
     if rect.h <= BAR_HEIGHT {

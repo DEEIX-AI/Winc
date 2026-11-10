@@ -36,7 +36,7 @@ fn snapshot_long_names() {
     for dark in [false, true] {
         let theme = if dark { "dark" } else { "light" };
         let mut app = app_with(&dir.join("img_CubLwUlc3Adg-NoCRm7Qz2Kp.txt"), dark);
-        app.panel_width = 230.0;
+        app.sidebar.width = 230.0;
         app.relayout();
 
         // 选中的行放不下完整名称，鼠标不在文件树内。
@@ -220,7 +220,7 @@ fn snapshot_occurrences() {
         shoot(&mut app, &format!("occurrences-{tag}"));
 
         // 鼠标停在状态栏路径的 `src` 上：该段铺上按钮底色，不覆盖两侧的箭头。
-        let (src, _) = app.crumb_hits[1];
+        let (src, _) = app.status.crumb_hits[1];
         app.on_mouse_move(src.x + 4.0, src.y + src.h / 2.0);
         shoot(&mut app, &format!("status-crumb-hover-{tag}"));
     }
@@ -264,10 +264,10 @@ fn snapshot_start_page() {
 
         // 没有打开目录时手动展开侧栏：不绘制项目徽章，避免看起来像已打开了一个名为 `winc` 的项目。
         app.toggle_sidebar();
-        app.sidebar_motion = None;
+        app.sidebar.motion = None;
         shoot(&mut app, &format!("start-sidebar-{tag}"));
         app.toggle_sidebar();
-        app.sidebar_motion = None;
+        app.sidebar.motion = None;
 
         // 有四个最近目录，鼠标停在第二个上。
         app.state.recent = vec![
@@ -389,31 +389,31 @@ fn snapshot_global_search() {
         // 顶部：当前视图是搜索，鼠标停在「文件」上。
         let (files_tab, _) = app.sidebar_tabs()[0];
         app.on_mouse_move(files_tab.x + 4.0, files_tab.y + 4.0);
-        app.tooltip_since = None;
+        app.tooltip.since = None;
         shoot(&mut app, &format!("global-top-{tag}"));
 
         // 鼠标停在展开替换的箭头上：底色与输入框等高，二者之间留有间隔。
         let expand = app.panel_parts().expand;
         app.on_mouse_move(expand.x + 4.0, expand.y + 4.0);
-        app.tooltip_since = Some(Instant::now() - TOOLTIP_DELAY);
+        app.tooltip.since = Some(Instant::now() - TOOLTIP_DELAY);
         shoot(&mut app, &format!("global-expand-{tag}"));
 
         // 鼠标停在「全部替换」图标上，提示已显示。
         let all = app.panel_parts().replace_all;
         app.on_mouse_move(all.x + 4.0, all.y + 4.0);
-        app.tooltip_since = Some(Instant::now() - TOOLTIP_DELAY);
+        app.tooltip.since = Some(Instant::now() - TOOLTIP_DELAY);
         shoot(&mut app, &format!("global-tip-{tag}"));
 
         // 文件内查找条展开替换：「替换」「全部替换」是图标按钮，鼠标停在「替换」上。
         app.open_path(&dir.join("src/config.rs"));
         app.open_search(true);
         app.search.query = "Config".into();
-        app.find_input.set_text("Config");
-        app.replace_input.set_text("Settings");
+        app.find.input.set_text("Config");
+        app.find.replace_input.set_text("Settings");
         paint(&mut app);
         let one = SearchParts::new(app.layout.search).replace_one;
         app.on_mouse_move(one.x + 4.0, one.y + 4.0);
-        app.tooltip_since = Some(Instant::now() - TOOLTIP_DELAY);
+        app.tooltip.since = Some(Instant::now() - TOOLTIP_DELAY);
         shoot(&mut app, &format!("find-replace-{tag}"));
     }
 
@@ -431,7 +431,8 @@ fn snapshot_status_bar() {
 
         // 鼠标停在状态栏的缩进上：铺一层按钮底色。
         let (rect, _) = *app
-            .status_hits
+            .status
+            .hits
             .iter()
             .find(|(_, item)| *item == StatusItem::Indent)
             .unwrap();

@@ -119,14 +119,14 @@ impl App {
         // `scroll_line` 带小数时，顶部第一行的上半部分已滚到固定区域之下。
         let partial = scroll.fract() > 0.0;
 
-        let fresh = self.sticky_cache.as_ref().is_some_and(|c| {
+        let fresh = self.sticky.cache.as_ref().is_some_and(|c| {
             c.settled
                 && (c.id, c.revision, &c.rows, c.partial, c.max, c.tab_width)
                     == (doc.id, doc.revision, &rows, partial, max, tab_width)
         });
         if !fresh {
             let (scopes, settled) = doc.sticky_scopes(&rows, partial, max, tab_width);
-            self.sticky_cache = Some(StickyCache {
+            self.sticky.cache = Some(StickyCache {
                 id: doc.id,
                 revision: doc.revision,
                 rows,
@@ -137,7 +137,7 @@ impl App {
                 scopes,
             });
         }
-        let Some(cache) = &self.sticky_cache else {
+        let Some(cache) = &self.sticky.cache else {
             return Vec::new();
         };
 
@@ -166,7 +166,7 @@ impl App {
 
     /// 返回窗口坐标 (`x`, `y`)（逻辑像素）处固定的行；该处不是固定行时返回 `None`。
     ///
-    /// 固定行的位置取自上一次绘制时记录的 `self.sticky`。
+    /// 固定行的位置取自上一次绘制时记录的 `self.sticky.rows`。
     pub(in crate::app) fn sticky_at(&self, x: f32, y: f32) -> Option<StickyRow> {
         let text = self.layout.text;
         let editor = self.layout.editor;
@@ -179,6 +179,7 @@ impl App {
         let line_height = self.fonts.line_height;
         // 上移的内层与外层重叠时外层绘制在上面，因此从外层到内层查找，先匹配的即为最上层。
         self.sticky
+            .rows
             .iter()
             .find(|row| {
                 let top = text.y + row.y;
@@ -211,4 +212,12 @@ impl App {
         self.reset_blink();
         self.request_redraw();
     }
+}
+
+/// 粘滞滚动的状态：当前钉住的各行及其计算缓存。
+#[derive(Default)]
+pub struct Sticky {
+    /// 编辑区顶部钉住的各行，绘制时记录，点击和悬停时使用。
+    pub(crate) rows: Vec<StickyRow>,
+    pub(in crate::app) cache: Option<StickyCache>,
 }

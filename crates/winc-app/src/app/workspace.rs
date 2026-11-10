@@ -24,3 +24,27 @@ pub(super) mod tree;
 pub(super) mod tree_drag;
 pub(super) mod tree_label;
 pub(super) mod watch;
+
+/// 侧栏的界面状态：宽度、是否显示、当前视图，以及显示隐藏和切换视图的过渡。
+pub struct Sidebar {
+    pub(in crate::app) width: f32,
+    /// 侧栏是否应显示；动画进行中取动画的终点。
+    pub(in crate::app) visible: bool,
+    pub(in crate::app) motion: Option<SidebarMotion>,
+    /// 侧栏当前显示文件树还是全局搜索。
+    pub(crate) view: SidebarView,
+    /// 切换侧栏视图时，视图切换器中选中的一段从上一个视图滑入：记录上一个视图和动画时钟。
+    pub(crate) view_slide: Option<(SidebarView, crate::app::animation::Clock)>,
+}
+
+impl Default for Sidebar {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_PANEL_WIDTH,
+            visible: false,
+            motion: None,
+            view: SidebarView::Files,
+            view_slide: None,
+        }
+    }
+}

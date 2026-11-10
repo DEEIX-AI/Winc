@@ -11,7 +11,7 @@ fn finished_animations_are_settled_before_the_last_frame() {
     let at = |ms, duration| Clock::frozen(Duration::from_millis(ms), duration);
 
     // 动画尚未结束：保留状态，并继续安排下一帧。
-    app.sidebar_motion = Some(SidebarMotion {
+    app.sidebar.motion = Some(SidebarMotion {
         from: 0.0,
         clock: at(100, SIDEBAR_ANIMATION),
     });
@@ -21,11 +21,11 @@ fn finished_animations_are_settled_before_the_last_frame() {
         clock: at(159, PICKER_ANIMATION),
     });
     app.settle_animations();
-    assert!(app.sidebar_motion.is_some() && app.picker.motion.is_some());
+    assert!(app.sidebar.motion.is_some() && app.picker.motion.is_some());
     assert!(app.animating());
 
     // 动画已结束：在绘制前清除状态，使最后一帧画在终点位置，而不是停在接近终点的中间帧。
-    app.sidebar_motion = Some(SidebarMotion {
+    app.sidebar.motion = Some(SidebarMotion {
         from: 0.0,
         clock: at(200, SIDEBAR_ANIMATION),
     });
@@ -42,7 +42,7 @@ fn finished_animations_are_settled_before_the_last_frame() {
         clock: at(160, TREE_ANIMATION),
     });
     app.settle_animations();
-    assert!(app.sidebar_motion.is_none() && app.picker.motion.is_none());
+    assert!(app.sidebar.motion.is_none() && app.picker.motion.is_none());
     assert!(app.tree.motion.is_none());
     assert!(!app.animating());
 
@@ -133,9 +133,9 @@ fn a_covered_window_does_not_wake_up_to_blink_the_caret() {
     assert!(wake <= Instant::now() + BLINK);
 
     // 有焦点但被别的窗口整个挡住：不画，也不为闪烁醒来；光标停在亮着的状态。
-    app.occluded = true;
+    app.window.occluded = true;
     assert_eq!(app.tick(), None);
-    assert!(app.caret_visible);
+    assert!(app.blink.visible);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -148,18 +148,18 @@ fn an_unfocused_window_hides_the_caret_and_shows_it_again_on_focus() {
     app.window.focused = true;
     app.reset_blink();
     app.tick();
-    assert!(app.caret_visible);
+    assert!(app.blink.visible);
 
     // 失去焦点：不显示光标，也不为闪烁醒来。
     app.window.focused = false;
     assert_eq!(app.tick(), None);
-    assert!(!app.caret_visible);
+    assert!(!app.blink.visible);
 
     // 回到前台：从亮着的一半重新开始闪烁。
     app.window.focused = true;
     app.reset_blink();
     app.tick();
-    assert!(app.caret_visible);
+    assert!(app.blink.visible);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

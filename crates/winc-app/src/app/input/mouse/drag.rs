@@ -105,8 +105,8 @@ impl App {
                 // 收起时宽度恢复为拖动前的值，之后用 `⌘B` 打开时仍为拖动前的宽度。
                 let width = start_width + x - start_x;
                 if width < MIN_PANEL_WIDTH / 2.0 {
-                    if self.panel_visible {
-                        self.panel_width = start_width;
+                    if self.sidebar.visible {
+                        self.sidebar.width = start_width;
                         self.set_sidebar(false);
                         if self.focus_in_sidebar() {
                             self.focus = Focus::Editor;
@@ -115,8 +115,8 @@ impl App {
                     return;
                 }
                 let max = (self.layout.window.w - 320.0).max(MIN_PANEL_WIDTH);
-                self.panel_width = width.clamp(MIN_PANEL_WIDTH, max);
-                if self.panel_visible {
+                self.sidebar.width = width.clamp(MIN_PANEL_WIDTH, max);
+                if self.sidebar.visible {
                     self.relayout();
                     self.request_redraw();
                 } else {

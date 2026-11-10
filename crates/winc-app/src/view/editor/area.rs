@@ -246,7 +246,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     }
 
     if scratch.ime_cursor.is_some() {
-        app.ime_cursor = scratch.ime_cursor;
+        app.ime.cursor = scratch.ime_cursor;
     }
 }
 

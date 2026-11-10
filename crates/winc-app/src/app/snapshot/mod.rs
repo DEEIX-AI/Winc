@@ -413,7 +413,7 @@ fn a_commit_finishing_after_a_folder_switch_does_not_push_the_new_repo() {
     assert!(app.branch.running.is_none());
     assert!(app.commit.busy, "这边正在提交的不受影响");
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("已在「other-repo」中提交 abc1234")
     );
     std::fs::remove_dir_all(&dir).unwrap();

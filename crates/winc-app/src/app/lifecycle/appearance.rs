@@ -18,7 +18,7 @@ impl App {
         if let Some(lights) = &self.traffic_lights {
             lights.set_zoom(f64::from(zoom));
         }
-        self.last_ime_area = None;
+        self.ime.last_area = None;
     }
 
     /// 按配置应用界面缩放：整个窗口按新的倍数绘制，窗口的物理尺寸不变。

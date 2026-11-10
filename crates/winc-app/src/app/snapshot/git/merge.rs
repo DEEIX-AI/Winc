@@ -566,15 +566,15 @@ fn jumping_reports_when_the_view_cannot_move() {
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
     assert_eq!(app.editor.active().unwrap().scroll_line, 0.0);
-    app.status_message = None;
+    app.status.message = None;
     app.press_merge(MergeTarget::Previous);
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some(t!("git-merge-no-previous"))
     );
-    app.status_message = None;
+    app.status.message = None;
     app.press_merge(MergeTarget::Next);
-    assert_eq!(app.status_message.as_deref(), Some(t!("git-merge-no-next")));
+    assert_eq!(app.status.message.as_deref(), Some(t!("git-merge-no-next")));
     assert_eq!(app.editor.active().unwrap().scroll_line, 0.0);
 }
 
@@ -611,13 +611,13 @@ fn jumping_stops_at_the_conflict_and_then_reports() {
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
     let start = app.conflicts(app.editor.active.unwrap())[0].start;
-    app.status_message = None;
+    app.status.message = None;
     app.press_merge(MergeTarget::Next);
     assert_eq!(row_on_screen(&app, start), 3.0);
-    assert_eq!(app.status_message, None);
+    assert_eq!(app.status.message, None);
     app.press_merge(MergeTarget::Next);
     assert_eq!(row_on_screen(&app, start), 3.0);
-    assert_eq!(app.status_message.as_deref(), Some(t!("git-merge-no-next")));
+    assert_eq!(app.status.message.as_deref(), Some(t!("git-merge-no-next")));
 }
 
 /// 后台任务不保证按提交的顺序完成：旧版本的结果不能覆盖新版本的。

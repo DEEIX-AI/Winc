@@ -474,13 +474,13 @@ fn refreshing_the_log_updates_the_repository_state_and_reports_it() {
     assert_eq!(uncommitted(&app), 0);
     assert!(!has_branch(&app));
 
-    app.status_message = None;
+    app.status.message = None;
     app.press_log(LogTarget::Refresh);
     paint(&mut app);
     assert!(uncommitted(&app) > 0);
     assert!(has_branch(&app));
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some(winc_i18n::t!("git-log-refreshed"))
     );
     assert_eq!(app.log.refreshing, None);

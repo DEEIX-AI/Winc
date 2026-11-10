@@ -130,7 +130,7 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
     };
     let caret = caret.or(search_caret);
     if caret.is_some() {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
 }
 

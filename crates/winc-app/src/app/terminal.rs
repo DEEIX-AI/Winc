@@ -538,7 +538,7 @@ impl App {
     /// 已弹出确认框或正在确认时返回真。用户确认后，由 [`UserEvent::TerminalQuit`] 继续处理
     /// 关闭请求 `request`；用户取消时不执行任何操作。
     pub(super) fn confirm_terminal_quit(&mut self, request: CloseRequest) -> bool {
-        if self.quit_confirming.is_some() {
+        if self.closing.confirming.is_some() {
             return true;
         }
         if self.config.terminal_confirm_close == Some(false) {
@@ -592,7 +592,7 @@ impl App {
             // 没有弹出时不记「正在确认」：否则退出、关窗口一直等一个不会来的回答。这次关闭
             // 不进行，与取消相同。
             if shown {
-                self.quit_confirming = Some(request);
+                self.closing.confirming = Some(request);
             }
             return true;
         }

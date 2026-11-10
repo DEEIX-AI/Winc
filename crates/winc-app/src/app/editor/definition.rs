@@ -608,7 +608,7 @@ impl App {
         self.global.query.remember();
         self.global.query.set_text(&name);
         self.set_sidebar_view(SidebarView::Search);
-        if !self.panel_visible {
+        if !self.sidebar.visible {
             self.set_sidebar(true);
         }
         self.global_changed(true);

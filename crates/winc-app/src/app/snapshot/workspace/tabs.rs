@@ -251,7 +251,7 @@ fn images_open_as_previews_decoded_in_the_background() {
     // 图片没有文本，不能编辑，也不能查找。
     assert!(doc.readonly);
     app.run_action(crate::keymap::Action::Find);
-    assert!(!app.search_open);
+    assert!(!app.find.open);
     // 小图按原大小绘制：8 个逻辑像素，在缩放倍数 `SCALE` 为 2 时是 16 个物理像素。
     let cache = app.picture_cache.as_ref().unwrap();
     assert_eq!(
@@ -377,7 +377,7 @@ fn svg_opens_as_source_and_toggles_to_a_preview() {
     assert_eq!(app.layout.preview.w, 0.0, "不能预览的文件没有这个按钮");
     app.run_action(Action::TogglePreview);
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some("仅支持预览 SVG、Markdown、CSV 和 TSV 文件")
     );
 
@@ -435,16 +435,16 @@ fn close_tab_key_closes_the_window_once_no_tab_is_left_without_quitting() {
     // 有标签时 ⌘W 关闭标签，窗口不关。
     assert!(press(&mut app, &["cmd"], Char('w')));
     assert!(app.editor.documents.is_empty());
-    assert!(!app.window.hidden && !app.quit_requested);
+    assert!(!app.window.hidden && !app.closing.quit_requested);
 
     // 命令面板里的「关闭标签页」在没有标签时什么也不做。
     app.run_action(crate::keymap::Action::CloseTab);
-    assert!(!app.window.hidden && !app.quit_requested);
+    assert!(!app.window.hidden && !app.closing.quit_requested);
 
     // 没有标签时再按 ⌘W：macOS 上关闭窗口，应用不退出（留在程序坞中）；其他系统上什么也不做。
     press(&mut app, &["cmd"], Char('w'));
     assert_eq!(app.window.hidden, cfg!(target_os = "macos"));
-    assert!(!app.quit_requested);
+    assert!(!app.closing.quit_requested);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1019,13 +1019,13 @@ fn web_pages_get_an_open_in_browser_button() {
     shoot(&mut app, "browser-button");
 
     // 没有未保存的修改：直接打开，不提示；有修改时提示浏览器中是上次保存的内容。
-    app.status_message = None;
+    app.status.message = None;
     click(&mut app, at);
-    assert_eq!(app.status_message, None);
+    assert_eq!(app.status.message, None);
     app.run(winc_editor::Command::Insert("<p>new</p>".into()));
     click(&mut app, at);
     assert_eq!(
-        app.status_message.as_deref(),
+        app.status.message.as_deref(),
         Some(winc_i18n::t!("preview-browser-unsaved"))
     );
 

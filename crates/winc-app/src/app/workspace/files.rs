@@ -832,7 +832,7 @@ impl App {
         // 关闭流程中的「保存」在等待这次另存为：保存成功后继续处理剩下的文档；
         // 取消或保存失败时放弃整个关闭。
         let continuation = match kind {
-            Pick::SaveAs(_) => self.save_continuation.take(),
+            Pick::SaveAs(_) => self.closing.continuation.take(),
             Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => None,
         };
 

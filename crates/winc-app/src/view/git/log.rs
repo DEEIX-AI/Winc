@@ -197,7 +197,7 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, parts: &LogParts) -> Rect {
     let caret = draw_bar_field(app, frame, area, &mut field, &placeholder, focused);
     app.log.filter = field;
     if focused {
-        app.ime_cursor = caret;
+        app.ime.cursor = caret;
     }
     search
 }

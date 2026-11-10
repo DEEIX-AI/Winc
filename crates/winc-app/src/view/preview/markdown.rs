@@ -463,7 +463,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     md.motion = motion;
     if let Some(((x, y, h), font)) = live_point {
         let (x, y) = (left + x, area.y - scroll + y);
-        app.ime_cursor = Some(draw_live_caret(app, frame, (x, y, h), font, area));
+        app.ime.cursor = Some(draw_live_caret(app, frame, (x, y, h), font, area));
     }
     for (path, size) in wanted {
         app.request_markdown_pixels(&path, size);
@@ -799,7 +799,7 @@ fn draw_live_caret(
         if !app.preedit.is_empty() {
             return Rect::new(x, y, 2.0, h);
         }
-        if app.caret_visible {
+        if app.blink.visible {
             let bar = Rect::new(x.round() - 1.0, y + 1.0, 2.0, h - 2.0);
             frame.rect_clipped(bar, p.caret, 1.0, clip);
         }

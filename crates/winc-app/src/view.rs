@@ -309,7 +309,8 @@ fn draw_tree_drag(app: &App, frame: &mut Frame<'_>) {
 fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
     // 停留时间不足时直接返回，不拼接提示文字，也不查找命中框。
     let rested = app
-        .tooltip_since
+        .tooltip
+        .since
         .is_some_and(|since| since.elapsed() >= TOOLTIP_DELAY);
     if !rested {
         return;

@@ -114,7 +114,7 @@ fn caption_controls_cover_top_bar_targets() {
     app.relayout();
     paint(&mut app);
     verify(&app);
-    app.panel_visible = true;
+    app.sidebar.visible = true;
     app.relayout();
     paint(&mut app);
     verify(&app);
@@ -147,7 +147,7 @@ fn touch_scrolls_by_logical_pixels_without_moving_the_selection() {
     assert!((doc.scroll_line * f64::from(app.fonts.line_height) - 100.0).abs() < 0.01);
     assert_eq!(doc.selection, selection);
     assert_eq!(app.drag, Drag::None);
-    assert!(app.wheel_glide.is_none());
+    assert!(app.wheel.glide.is_none());
 }
 
 #[test]
@@ -382,7 +382,7 @@ fn native_touch_caption_matches_application_targets() {
     app.relayout();
     paint(&mut app);
     verify(&app);
-    app.panel_visible = true;
+    app.sidebar.visible = true;
     app.relayout();
     paint(&mut app);
     verify(&app);

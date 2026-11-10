@@ -32,18 +32,18 @@ use crate::theme::SCROLLBAR_HIT;
 pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     panel::draw_view_tabs(app, frame);
 
-    if app.sidebar_view == SidebarView::Search {
+    if app.sidebar.view == SidebarView::Search {
         let right = app.panel_parts().tools[0].0.x - 4.0;
         let bar = ContextBar::new(app, frame);
         draw_context_bar(app, frame, &bar, right);
         if let Some(caret) = panel::draw_panel(app, frame) {
-            app.ime_cursor = Some(caret);
+            app.ime.cursor = Some(caret);
         }
 
         return;
     }
 
-    if app.sidebar_view == SidebarView::Commit {
+    if app.sidebar.view == SidebarView::Commit {
         draw_commit_view(app, frame);
         return;
     }
@@ -90,7 +90,7 @@ fn draw_commit_view(app: &mut App, frame: &mut Frame<'_>) {
             });
         }
         if let Some(caret) = git::commit::draw_commit(app, frame, tools) {
-            app.ime_cursor = Some(caret);
+            app.ime.cursor = Some(caret);
         }
     }
 }
@@ -534,7 +534,7 @@ fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
     app.tree.content_w = widest + 20.0;
     app.clamp_tree_scroll_x();
     app.name_input = name_input;
-    app.ime_cursor = ime;
+    app.ime.cursor = ime;
 
     let thumb = hscrollbar_thumb(tree, app.tree.scroll_x, app.tree.content_w);
     let look = app.scrollbar_look(
@@ -977,7 +977,7 @@ pub(in crate::view) fn draw_tree_overflow(app: &App, frame: &mut Frame<'_>) {
 /// 绘制鼠标移开后正在收回的名字：不响应点击，收回到侧栏边缘时消失。
 pub(in crate::view) fn draw_tree_overflow_closing(app: &App, frame: &mut Frame<'_>) {
     // 文件树不在显示时不画：动画途中隐藏了侧栏或切换到其他视图。
-    if !app.sidebar_open() || app.sidebar_view != SidebarView::Files {
+    if !app.sidebar_open() || app.sidebar.view != SidebarView::Files {
         return;
     }
     let Some(ws) = &app.editor.workspace else {

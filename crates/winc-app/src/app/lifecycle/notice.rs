@@ -60,8 +60,8 @@ impl App {
             self.notify(message);
             return;
         }
-        self.status_message = Some(message.into());
-        self.status_until = Some(Instant::now() + FLASH_DURATION);
+        self.status.message = Some(message.into());
+        self.status.until = Some(Instant::now() + FLASH_DURATION);
         self.request_redraw();
     }
 
@@ -69,8 +69,8 @@ impl App {
     ///
     /// 隐藏状态栏时消息显示在提示条上，清除提示条。
     pub(crate) fn clear_flash(&mut self) {
-        self.status_message = None;
-        self.status_until = None;
+        self.status.message = None;
+        self.status.until = None;
         if !self.status_bar_shown() {
             self.clear_notice();
         }

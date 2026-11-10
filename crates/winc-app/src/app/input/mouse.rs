@@ -216,7 +216,7 @@ impl App {
     /// 其他系统上按计时器绘制，帧与屏幕刷新不同步，过渡只增加绘制量而不会更平滑。
     fn next_wheel_glide(&mut self) -> Option<Duration> {
         let now = Instant::now();
-        let interval = self.wheel_at.replace(now).map(|at| now.duration_since(at));
+        let interval = self.wheel.at.replace(now).map(|at| now.duration_since(at));
         #[cfg(target_os = "macos")]
         let follows_refresh = self.display_link.is_some();
         #[cfg(not(target_os = "macos"))]
@@ -226,11 +226,11 @@ impl App {
 
     /// 追加滚动距离 `delta`（逻辑像素）：未完成的距离计入新的总距离，按 `clock` 重新计时。
     pub(in crate::app) fn start_wheel_glide(&mut self, delta: (f32, f32), clock: Clock) {
-        let rest = self.wheel_glide.take().map_or((0.0, 0.0), |g| {
+        let rest = self.wheel.glide.take().map_or((0.0, 0.0), |g| {
             let left = 1.0 - g.done;
             (g.total.0 * left, g.total.1 * left)
         });
-        self.wheel_glide = Some(WheelGlide {
+        self.wheel.glide = Some(WheelGlide {
             total: (rest.0 + delta.0, rest.1 + delta.1),
             done: 0.0,
             clock,
@@ -240,7 +240,7 @@ impl App {
 
     /// 应用本帧对应的滚动距离，绘制前调用；时钟结束时清除过渡状态。
     pub(in crate::app) fn advance_wheel_glide(&mut self) {
-        let Some(glide) = &mut self.wheel_glide else {
+        let Some(glide) = &mut self.wheel.glide else {
             return;
         };
         let progress = glide.clock.progress();
@@ -248,7 +248,7 @@ impl App {
         glide.done = progress;
         let (dx, dy) = (glide.total.0 * step, glide.total.1 * step);
         if glide.clock.done() {
-            self.wheel_glide = None;
+            self.wheel.glide = None;
         }
         self.wheel_by(dx, dy, true);
     }
@@ -426,4 +426,13 @@ impl App {
 
         self.request_redraw();
     }
+}
+
+/// 鼠标滚轮滚动的过渡状态。
+#[derive(Default)]
+pub struct Wheel {
+    /// 鼠标滚轮滚动的过渡状态；没有进行中的过渡时为 `None`。
+    pub(crate) glide: Option<crate::app::input::mouse::WheelGlide>,
+    /// 上一次鼠标滚轮整格滚动的时刻，用于按两格的间隔确定过渡时长。
+    pub(in crate::app) at: Option<Instant>,
 }

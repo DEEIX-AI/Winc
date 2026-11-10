@@ -58,7 +58,7 @@ impl App {
 
     /// 文本区宽度是否正在逐帧变化：侧栏或终端面板的动画进行中，或正在拖动两者的分隔条。
     pub(in crate::app) fn text_width_changing(&self) -> bool {
-        self.sidebar_motion.is_some()
+        self.sidebar.motion.is_some()
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
             || matches!(
@@ -102,7 +102,7 @@ impl App {
         let wrapping = doc.is_wrapping();
         if doc.wrap_width() != before {
             place.restore(doc, wrapping);
-            self.sticky_cache = None;
+            self.sticky.cache = None;
             self.fold_motion = None;
             self.clamp_scroll();
         }
@@ -140,7 +140,7 @@ impl App {
         }
         if changed {
             self.scroll_glide = None;
-            self.sticky_cache = None;
+            self.sticky.cache = None;
             self.fold_motion = None;
             self.clamp_scroll();
             self.request_redraw();

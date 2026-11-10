@@ -43,10 +43,11 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
     let track_bg = over(p.sidebar_bg, p.hover);
     let (raised, edge) = segment_colors(p, track_bg);
 
-    // 凸起的那一段：切换视图时从上一个视图的位置滑过来（`App::view_slide`），先绘制，图标压在上面。
+    // 凸起的那一段：切换视图时从上一个视图的位置滑过来（`Sidebar::view_slide`），先绘制，图标压在上面。
     let at = |view: SidebarView| tabs.iter().find(|t| t.1 == view).map(|t| t.0);
-    if let Some(to) = at(app.sidebar_view) {
+    if let Some(to) = at(app.sidebar.view) {
         let slot = match app
+            .sidebar
             .view_slide
             .and_then(|(from, clock)| Some((at(from)?, clock)))
         {
@@ -58,7 +59,7 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
     }
 
     for &(rect, view) in &tabs {
-        let on = app.sidebar_view == view;
+        let on = app.sidebar.view == view;
         let hovered = app.hover == Hover::ViewTab(view);
         // 图标外圈（改动小圆点的隔圈）用这一段的底色。
         let base = if on {
@@ -855,7 +856,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, label))
         }
         Hover::Status(item @ crate::app::StatusItem::Terminal) => {
-            let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
+            let rect = app.status.hits.iter().find(|(_, i)| *i == item)?.0;
             let label = if app.terminal.open {
                 t!("terminal-hide-panel")
             } else {
@@ -864,11 +865,11 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, with_key(label, Some(Action::ToggleTerminal))))
         }
         Hover::Status(item @ crate::app::StatusItem::Update) => {
-            let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
+            let rect = app.status.hits.iter().find(|(_, i)| *i == item)?.0;
             Some((rect, crate::view::status::update_tooltip(app)?))
         }
         Hover::Status(item @ crate::app::StatusItem::Settings) => {
-            let rect = app.status_hits.iter().find(|(_, i)| *i == item)?.0;
+            let rect = app.status.hits.iter().find(|(_, i)| *i == item)?.0;
             Some((rect, with_key(t!("cmd-settings"), Some(Action::Settings))))
         }
         // 分支选择器的拉取、推送、获取：写明会做什么（和谁差几个提交、推到哪儿）；不能用时写原因。
