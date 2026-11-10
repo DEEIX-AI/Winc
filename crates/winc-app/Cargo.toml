@@ -15,6 +15,7 @@ winc-syntax.workspace = true
 winc-render.workspace = true
 winc-editor.workspace = true
 winc-preview.workspace = true
+winc-typeset.workspace = true
 winc-pty.workspace = true
 winc-i18n.workspace = true
 winc-version.workspace = true

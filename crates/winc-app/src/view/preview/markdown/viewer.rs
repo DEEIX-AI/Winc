@@ -9,11 +9,11 @@ use std::collections::{HashMap, HashSet};
 use winc_render::{Color, FontKind, Frame, Rect, Stroke};
 
 use super::BASE_RATIO;
-use super::layout::{self, Colors, Cx, Env, Item, Memo};
 use crate::app::App;
 use crate::app::preview::markdown::{DiagramTool, DiagramView, MAX_ZOOM, MIN_ZOOM};
 use crate::icons;
 use crate::theme::{Palette, RADIUS_POPUP};
+use winc_typeset::{Colors, Cx, Env, Item, Memo};
 
 /// 工具栏按钮的边长（逻辑像素），与预览中代码块的复制按钮相同。
 const BUTTON: f32 = 28.0;
@@ -171,16 +171,18 @@ fn lay_diagram(
     let images = HashMap::new();
     let toggled = HashSet::new();
     let mut memo = Memo::default();
+    let token = |kind| p.token(kind);
     let mut cx = Cx {
         frame,
         base,
-        palette: p,
-        colors: Colors::new(p),
+        token: &token,
+        surface: p.editor_bg,
+        accent: p.accent,
+        colors: Colors::new(p.text, p.text_muted, p.accent, p.dark),
         dark: p.dark,
         images: &images,
-        doc: None,
+        image_path: &|_| None,
         wanted: Vec::new(),
-        remote: false,
         memo: &mut memo,
         toggled: &toggled,
         text: String::new(),
@@ -245,7 +247,7 @@ fn draw_items(frame: &mut Frame<'_>, items: &[Item], (left, top): (f32, f32), cl
             } => {
                 let moved: Vec<Stroke> = strokes
                     .iter()
-                    .map(|&s| layout::shift(s, left, top))
+                    .map(|&s| winc_typeset::shift(s, left, top))
                     .collect();
                 frame.stroke(&moved, *width, *color, clip);
             }

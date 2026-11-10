@@ -40,21 +40,7 @@ enum Done {
     Drawn(PathBuf, Arc<Pixels>),
 }
 
-/// 一张图片的状态。
-pub(crate) enum ImageSlot {
-    /// 正在后台读取。
-    Loading,
-    /// 已读取；`pixels` 是按显示大小绘制的像素，最近绘制的在前，最多保留 [`SIZES`] 种
-    /// （同一张图可能以多种大小出现，例如并排的截图和表格中的缩略图）；`drawing` 是正在
-    /// 后台绘制的大小。
-    Ready {
-        picture: Arc<Picture>,
-        pixels: Vec<Arc<Pixels>>,
-        drawing: Vec<(u32, u32)>,
-    },
-    /// 无法读取（文件不存在或格式不支持）：显示替代文字。
-    Failed,
-}
+pub(crate) use winc_typeset::ImageSlot;
 
 /// 可编辑的预览中光标所在的叶子块（见 [`Markdown::leaves`]），该块显示原文。
 ///

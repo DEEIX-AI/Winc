@@ -3150,6 +3150,7 @@ dependencies = [
  "winc-pty",
  "winc-render",
  "winc-syntax",
+ "winc-typeset",
  "winc-version",
  "windows-sys 0.59.0",
  "winit",
@@ -3257,6 +3258,16 @@ version = "0.0.0"
 dependencies = [
  "ropey",
  "winc-core",
+]
+
+[[package]]
+name = "winc-typeset"
+version = "0.0.0"
+dependencies = [
+ "winc-i18n",
+ "winc-preview",
+ "winc-render",
+ "winc-syntax",
 ]
 
 [[package]]

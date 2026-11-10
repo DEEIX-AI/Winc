@@ -17,13 +17,12 @@ use crate::app::{App, ScrollArea};
 use crate::icons;
 use crate::theme::Palette;
 
-mod layout;
 mod viewer;
 
-use layout::{Colors, Cx, Env, Item, LaidBlock, Out, Raw, Span, margins};
-pub(crate) use layout::{DETAILS, Memo};
 pub(crate) use viewer::DiagramLaid;
 pub(in crate::view) use viewer::draw_diagram_view;
+use winc_typeset::{Colors, Cx, Env, Item, LaidBlock, Out, Raw, Span, margins};
+pub(crate) use winc_typeset::{DETAILS, Memo};
 
 /// 正文字号与编辑器字号之比：编辑器字号 13 逻辑像素时，正文为 16 逻辑像素。
 const BASE_RATIO: f32 = 16.0 / 13.0;
@@ -201,7 +200,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let scroll = app.markdown.scroll().min(max);
     let origin_y = area.y + pad - scroll;
     if let Some((before, slide)) = before {
-        let muted = Colors::new(p).muted;
+        let muted = p.text_muted;
         let (from, fading) = before.motion(&laid, scroll, muted, slide);
         app.start_markdown_motion(from, fading);
     }
@@ -429,7 +428,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 } => {
                     let moved: Vec<Stroke> = strokes
                         .iter()
-                        .map(|&s| layout::shift(s, left, top))
+                        .map(|&s| winc_typeset::shift(s, left, top))
                         .collect();
                     frame.stroke(&moved, *width, *color, area);
                 }
@@ -561,7 +560,7 @@ const TABLE_FADE: f32 = 24.0;
 fn draw_table_fades(
     frame: &mut Frame<'_>,
     p: &Palette,
-    scroller: &layout::Scroller,
+    scroller: &winc_typeset::Scroller,
     strip: Rect,
     off: f32,
     area: Rect,
@@ -570,7 +569,12 @@ fn draw_table_fades(
     if max <= 0.0 {
         return;
     }
-    let table = Rect::new(strip.x, strip.y, strip.w, strip.h - layout::SCROLL_BAR_ROOM);
+    let table = Rect::new(
+        strip.x,
+        strip.y,
+        strip.w,
+        strip.h - winc_typeset::SCROLL_BAR_ROOM,
+    );
     let left = (off / TABLE_FADE).min(1.0);
     let right = ((max - off) / TABLE_FADE).min(1.0);
     frame.within(table.intersect(area), |frame| {
@@ -1058,7 +1062,7 @@ fn lay_out(
         ))
     });
     let p = app.palette;
-    app.markdown.memo.prepare(layout::memo_key(|h| {
+    app.markdown.memo.prepare(winc_typeset::memo_key(|h| {
         use std::hash::Hash;
         for v in [key.width, key.base] {
             v.to_bits().hash(h);
@@ -1068,16 +1072,22 @@ fn lay_out(
         }
         key.images.hash(h);
     }));
+    let doc = app.editor.active().and_then(|d| d.path.clone());
+    let remote = app.config.markdown_remote_images != Some(false);
+    let image_path =
+        |url: &str| crate::app::preview::markdown::image_path(doc.as_deref(), url, remote);
+    let token = |kind| p.token(kind);
     let mut cx = Cx {
         frame,
         base: key.base,
-        palette: p,
-        colors: Colors::new(p),
+        token: &token,
+        surface: p.editor_bg,
+        accent: p.accent,
+        colors: Colors::new(p.text, p.text_muted, p.accent, p.dark),
         dark: p.dark,
         images: &app.markdown.images,
-        doc: app.editor.active().and_then(|d| d.path.clone()),
+        image_path: &image_path,
         wanted: Vec::new(),
-        remote: app.config.markdown_remote_images != Some(false),
         memo: &mut app.markdown.memo,
         toggled: &app.markdown.toggled,
         text: String::new(),
@@ -1098,10 +1108,12 @@ fn lay_out(
         let raw = raw.as_ref().filter(|r| r.0 == i);
         // 显示原文的块换一个键存：光标离开后同样内容的块要重新按排版显示。
         let hash = match raw {
-            Some((_, text, leaf, parsed_end, caret, prose, preedit)) => layout::memo_key(|h| {
-                use std::hash::Hash;
-                (hash, &**text, leaf, parsed_end, caret, prose, preedit).hash(h);
-            }),
+            Some((_, text, leaf, parsed_end, caret, prose, preedit)) => {
+                winc_typeset::memo_key(|h| {
+                    use std::hash::Hash;
+                    (hash, &**text, leaf, parsed_end, caret, prose, preedit).hash(h);
+                })
+            }
             None => hash,
         };
         let laid = reuse.get(&hash).cloned().unwrap_or_else(|| {

@@ -19,7 +19,7 @@ use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::{Angle, Format, Transform, Vector};
 use winit::window::Window;
 
-pub use draw::canvas::{Covered, Stroke};
+pub use draw::canvas::{Covered, Stroke, rounded_outline};
 pub use draw::frame::Frame;
 pub use text::font::{FontKind, set_cjk_language};
 pub use text::font_list::{FontFamily, installed_fonts};

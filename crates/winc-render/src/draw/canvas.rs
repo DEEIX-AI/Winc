@@ -3,7 +3,7 @@
 //! 像素为 `0xAARRGGBB`，绘制到画布后 alpha 恒为 `0xff`。[`Canvas`] 负责矩形、圆角矩形、阴影、
 //! 描边、蒙版和位图的混合绘制，坐标和尺寸都是物理像素；[`Stroke`] 的形状坐标是逻辑像素。
 
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::Range;
 
 mod wide;
@@ -189,6 +189,24 @@ impl Stroke {
             y1: (bottom * scale + half + 1.0).ceil() as i32,
         }
     }
+}
+
+/// 返回圆角矩形描边的八段笔画：四条边加四段圆角弧线。
+///
+/// 矩形左上角为 `(x, y)`，宽 `w`、高 `h`，圆角半径 `r`，单位均为逻辑像素；`r` 不超过
+/// `w / 2` 与 `h / 2` 中的较小值。
+pub fn rounded_outline(x: f32, y: f32, w: f32, h: f32, r: f32) -> [Stroke; 8] {
+    let (right, bottom) = (x + w, y + h);
+    [
+        Stroke::Line(x + r, y, right - r, y),
+        Stroke::Arc(right - r, y + r, r, -FRAC_PI_2, 0.0),
+        Stroke::Line(right, y + r, right, bottom - r),
+        Stroke::Arc(right - r, bottom - r, r, 0.0, FRAC_PI_2),
+        Stroke::Line(right - r, bottom, x + r, bottom),
+        Stroke::Arc(x + r, bottom - r, r, FRAC_PI_2, PI),
+        Stroke::Line(x, bottom - r, x, y + r),
+        Stroke::Arc(x + r, y + r, r, -PI, -FRAC_PI_2),
+    ]
 }
 
 /// 返回用笔宽 `width`（逻辑像素）描边 `shapes` 时可能有覆盖率的像素范围（物理像素，按 `scale`
