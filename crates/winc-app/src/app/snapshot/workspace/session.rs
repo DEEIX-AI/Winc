@@ -874,8 +874,8 @@ fn files_given_with_a_line_open_there() {
     let doc = editor.active().unwrap();
     let (line, col) = doc.text().pos_to_line_col(doc.selection.head);
     assert_eq!((line, col), (2, 4));
-    // 命令行只给出文件时：以其所在目录作为项目。
-    assert!(editor.workspace.is_some());
+    // 命令行只给出文件时：不打开其所在的目录。
+    assert!(editor.workspace.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

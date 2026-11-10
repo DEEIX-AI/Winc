@@ -627,11 +627,10 @@ impl Winc {
     }
 
     /// 选出打开 `targets` 的窗口：有目录的切到开着它的窗口；只有文件的，交给开着它所在目录的
-    /// 窗口；没有目标时是当前窗口。
+    /// 窗口，没有时交给当前窗口，不打开文件所在的目录；没有目标时是当前窗口。
     ///
-    /// 都没有时，有停在开始页上的空窗口（没开目录、没有标签）就用它，在里面打开目录（只有文件
-    /// 时是第一个文件所在的目录，和从命令行打开文件一样）；否则返回 `Err(目录)`，由调用方新建
-    /// 窗口打开它。
+    /// 都没有时，有停在开始页上的空窗口就用它，在里面打开目录；否则返回 `Err(目录)`，由调用方
+    /// 新建窗口。
     fn window_for(&mut self, targets: &[Target]) -> Result<WindowKey, Option<PathBuf>> {
         let folder = targets
             .iter()
@@ -643,13 +642,12 @@ impl Winc {
             .map(|t| t.path.clone());
         let key = match (&folder, &file) {
             (Some(folder), _) => self.shared.window_with(folder, None),
-            (None, Some(file)) => self.shared.window_containing(file),
+            (None, Some(file)) => (self.shared.window_containing(file)).or(self.active_key()),
             (None, None) => self.active_key(),
         };
         if let Some(key) = key {
             return Ok(key);
         }
-        let folder = folder.or_else(|| file?.parent().map(Path::to_path_buf));
         let Some(key) = self.blank_window() else {
             return Err(folder);
         };
