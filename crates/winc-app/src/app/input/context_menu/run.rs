@@ -104,6 +104,7 @@ impl App {
             MenuTarget::Project => match command {
                 MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
                 MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
+                MenuCommand::NewWindow => self.new_window(None),
                 MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
                 MenuCommand::OpenWslFolder(i) => {
                     if let Some(distro) = crate::system::wsl_distributions().get(i) {

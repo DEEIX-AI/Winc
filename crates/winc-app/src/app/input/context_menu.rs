@@ -115,6 +115,8 @@ pub enum MenuCommand {
     OpenRecent(usize),
     /// 项目名菜单（按住 `⌥`）：在新窗口中打开最近列表中的目录。
     OpenRecentInNewWindow(usize),
+    /// 项目菜单：新建窗口。
+    NewWindow,
     OpenFolder,
     /// 项目菜单：打开 WSL 发行版中的目录。
     OpenWslFolder(usize),
@@ -478,6 +480,7 @@ impl MenuCommand {
             MenuCommand::Font(i) => winc_render::installed_fonts()
                 .get(i)
                 .map_or("", |family| family.name.as_str()),
+            MenuCommand::NewWindow => t!("cmd-new-window"),
             MenuCommand::OpenFolder => t!("cmd-open-folder"),
             MenuCommand::OpenWslFolder(i) => crate::system::wsl_distributions()
                 .get(i)
@@ -532,6 +535,7 @@ impl MenuCommand {
             MenuCommand::Close => Action::CloseTab,
             MenuCommand::CloseOthers => Action::CloseOtherTabs,
             MenuCommand::CloseAll => Action::CloseAllTabs,
+            MenuCommand::NewWindow => Action::NewWindow,
             MenuCommand::OpenFolder => Action::OpenFolder,
             MenuCommand::CloseFolder => Action::CloseFolder,
             MenuCommand::Cut => Action::Cut,
