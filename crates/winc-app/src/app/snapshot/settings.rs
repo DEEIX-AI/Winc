@@ -246,13 +246,16 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     // 内容。
     // 格式化页列出的语言随机器上装了哪些工具而变，步数按全部设置项计算。
     let mut seen = vec![app.settings.selected];
-    for _ in 0..Setting::all(&app.settings.languages, true).len() + 2 {
+    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() + 2 {
         app.settings_move(true);
         if seen.last() != Some(&app.settings.selected) {
             seen.push(app.settings.selected);
         }
     }
-    assert_eq!(seen, Setting::all(&app.settings.languages, true));
+    assert_eq!(
+        seen,
+        Setting::all(&app.settings.languages, app.settings_modules())
+    );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
     // 往回走过关于页的七行（版本、更新两行、四个链接），回到快捷键页的搜索框。
@@ -262,13 +265,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, Setting::KeySearch);
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
-    // 向回走一步，回到模块页最后的「推送前确认」，焦点回到浮层；再两步依次是终端、Git 开关；再
-    // 走一步，回到终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
-    app.settings_move(false);
-    assert_eq!(app.settings.selected, Setting::GitConfirmPush);
-    assert_eq!(app.focus, Focus::Settings);
+    // 向回走一步，回到模块页最后的终端开关，焦点回到浮层；再一步是 Git 开关；再走一步，回到
+    // 终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::TerminalModule);
+    assert_eq!(app.focus, Focus::Settings);
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
@@ -280,7 +281,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, last);
 
     // 主题：← → 在三个选项之间切换，到头后不再变化。步数按全部设置项计算，原因同上。
-    for _ in 0..Setting::all(&app.settings.languages, true).len() {
+    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::Theme);
@@ -493,17 +494,18 @@ fn settings_pages_are_listed_on_the_left() {
     app.open_settings();
     paint(&mut app);
 
-    // 终端模块关闭时不列出「终端」页。
+    // 模块关闭时不列出它的那一页。
     let pages: Vec<SettingsPage> = (app.settings_layout().pages.iter())
         .map(|&(page, _)| page)
         .collect();
     let expected: Vec<SettingsPage> = (SettingsPage::ALL.into_iter())
-        .filter(|&page| page != SettingsPage::Terminal)
+        .filter(|&page| !matches!(page, SettingsPage::Terminal | SettingsPage::Git))
         .collect();
     assert_eq!(pages, expected);
 
     // 分类栏列出每一页，每页只放属于该页的设置项；所有页合起来恰好是全部设置，不遗漏也不重复。
     app.config.terminal_enabled = Some(true);
+    app.config.git_enabled = Some(true);
     let layout = app.settings_layout();
     assert_eq!(layout.pages.len(), SettingsPage::ALL.len());
     for &(_, row) in &layout.pages {
@@ -516,6 +518,7 @@ fn settings_pages_are_listed_on_the_left() {
             query: "",
             languages: &app.settings.languages,
             terminal: 1.0,
+            git: 1.0,
             editing: None,
             scroll: 0.0,
         };
@@ -536,7 +539,10 @@ fn settings_pages_are_listed_on_the_left() {
             listed.push(Setting::KeySearch);
         }
     }
-    assert_eq!(listed, Setting::all(&app.settings.languages, true));
+    assert_eq!(
+        listed,
+        Setting::all(&app.settings.languages, app.settings_modules())
+    );
 
     // 悬停在分类栏的一项上时记录该项；点击后换页，选中该页的第一项，滚动位置回到顶部。
     let (x, y) = settings_point(&app, SettingsPart::Page(SettingsPage::Editor));
@@ -1306,6 +1312,21 @@ fn the_background_image_shows_under_the_base_colors() {
     assert_eq!(app.config.ui_background_opacity, Some(20.0));
     assert_eq!(sample(&mut app), mixed(plain, 0.2));
 
+    // 范围是 0 到 100：调到 0 时按没有背景图处理，图层释放；调回来后重新生成。
+    app.config.ui_background_opacity = Some(5.0);
+    app.settings_adjust(Setting::BackgroundOpacity, false);
+    app.settings_adjust(Setting::BackgroundOpacity, false);
+    assert_eq!(app.config.ui_background_opacity, Some(0.0));
+    assert_eq!(sample(&mut app), plain);
+    assert_eq!(app.renderer.as_ref().unwrap().wallpaper_size(), None);
+    app.config.ui_background_opacity = Some(95.0);
+    app.settings_adjust(Setting::BackgroundOpacity, true);
+    app.settings_adjust(Setting::BackgroundOpacity, true);
+    assert_eq!(app.config.ui_background_opacity, Some(100.0));
+    assert_eq!(sample(&mut app), (255, 0, 0));
+    app.config.ui_background_opacity = Some(20.0);
+    assert_eq!(sample(&mut app), mixed(plain, 0.2));
+
     // 换成深色配色：底色随之更换，图片不必重新生成。
     app.set_theme(winit::window::Theme::Dark);
     let dark = {
@@ -1327,6 +1348,37 @@ fn the_background_image_shows_under_the_base_colors() {
     assert_eq!(sample(&mut app), dark);
     paint(&mut app);
     assert!(!app.wallpaper.is_busy());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 「Git」页只在 Git 模块开启时列出，放着 Git 的选项；停在该页时关闭模块，改到模块页。
+#[test]
+fn the_git_page_is_listed_only_when_the_module_is_on() {
+    let dir = sample_folder("settings-git-page");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.open_settings();
+    let listed = |app: &App| {
+        (app.settings_layout().pages.iter()).any(|&(page, _)| page == SettingsPage::Git)
+    };
+    assert!(!listed(&app));
+    assert_eq!(Setting::GitConfirmPush.page(), SettingsPage::Git);
+
+    // 在模块页开启后立即列出，「推送前确认」在该页。
+    app.settings_toggle(Setting::GitModule);
+    assert!(listed(&app));
+    app.settings_show_page(SettingsPage::Git);
+    let rows: Vec<Setting> = (app.settings_layout().rows.iter())
+        .map(|row| row.setting)
+        .collect();
+    assert_eq!(rows, [Setting::GitConfirmPush]);
+
+    // 配置文件中关闭 Git 模块：不再列出该页，停在该页时改到模块页。
+    let mut config = app.config.clone();
+    config.git_enabled = Some(false);
+    app.adopt_config(config);
+    assert!(!listed(&app));
+    assert_eq!(app.settings_layout().page, SettingsPage::Modules);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

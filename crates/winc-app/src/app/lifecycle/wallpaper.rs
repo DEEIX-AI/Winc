@@ -70,7 +70,8 @@ impl App {
         let path = PathBuf::from(path.trim());
         let opacity = (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY);
         let window = self.layout.window;
-        if window.w < 1.0 || window.h < 1.0 {
+        // 不透明度为 0 时图片不可见，按没有背景图处理，不加载也不占内存。
+        if window.w < 1.0 || window.h < 1.0 || opacity < 0.5 {
             return None;
         }
         // 超过上限的窗口等比缩小。

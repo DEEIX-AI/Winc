@@ -366,6 +366,7 @@ impl App {
             query: self.settings.search.text(),
             languages: &self.settings.languages,
             terminal: self.module_fx.terminal.share(self.terminal_enabled()),
+            git: self.module_fx.git.share(self.git_enabled()),
             editing: self.settings.editing.as_ref().map(|(s, _)| *s),
             scroll: self.settings.scroll,
         };
@@ -377,13 +378,21 @@ impl App {
         !self.settings.search.text().trim().is_empty()
     }
 
+    /// 各可选模块是否开启，决定设置中列出哪些页。
+    pub(crate) fn settings_modules(&self) -> crate::layout::Modules {
+        crate::layout::Modules {
+            git: self.git_enabled(),
+            terminal: self.terminal_enabled(),
+        }
+    }
+
     /// 返回键盘上下移动经过的设置项：搜索时为搜索结果，否则为各页的全部设置项。
     fn settings_items(&self) -> Vec<Setting> {
-        let (languages, terminal) = (&self.settings.languages, self.terminal_enabled());
+        let (languages, modules) = (&self.settings.languages, self.settings_modules());
         if self.settings_searching() {
-            Setting::found(self.settings.search.text(), languages, terminal)
+            Setting::found(self.settings.search.text(), languages, modules)
         } else {
-            Setting::all(languages, terminal)
+            Setting::all(languages, modules)
         }
     }
 
@@ -426,8 +435,8 @@ impl App {
     /// 正在编辑时先离开输入框（见 [`App::settings_leave_field`]）。进入快捷键页时，光标直接
     /// 位于搜索框中。
     pub(super) fn settings_show_page(&mut self, page: SettingsPage) {
-        // 未列出的页（模块关闭后正在淡出的「终端」一项）不切换过去。
-        if !SettingsPage::listed(self.terminal_enabled()).any(|listed| listed == page) {
+        // 未列出的页（模块关闭后正在淡出的那一项）不切换过去。
+        if !SettingsPage::listed(self.settings_modules()).any(|listed| listed == page) {
             return;
         }
         self.settings_leave_field();
@@ -1378,10 +1387,11 @@ impl App {
         }
         if stop_terminal {
             self.stop_terminal();
-            // 「终端」页不再列出：设置停在该页时改到「模块」页。
-            if self.settings.open && self.settings.selected.page() == SettingsPage::Terminal {
-                self.settings_show_page(SettingsPage::Modules);
-            }
+        }
+        // 模块关闭后它的那一页不再列出：设置停在该页时改到「模块」页。
+        let page = self.settings.selected.page();
+        if self.settings.open && !SettingsPage::listed(self.settings_modules()).any(|p| p == page) {
+            self.settings_show_page(SettingsPage::Modules);
         }
         self.reload_run_configs();
         if title_bar {

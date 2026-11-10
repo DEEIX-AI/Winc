@@ -264,10 +264,10 @@ impl Config {
     pub const FONT_WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 100.0..=900.0;
     /// 默认的字重。
     pub const FONT_WEIGHT: u16 = 400;
-    /// 背景图片不透明度的合法范围（百分比）：上限以内文字仍然清晰。
+    /// 背景图片不透明度的合法范围（百分比）：0 时不显示图片，100 时图片完全盖住底色。
     ///
     /// 超出范围的值在读入时忽略并报告。
-    pub const BACKGROUND_OPACITY_RANGE: std::ops::RangeInclusive<f32> = 5.0..=50.0;
+    pub const BACKGROUND_OPACITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=100.0;
     /// 背景图片不透明度的默认值（百分比）。
     pub const BACKGROUND_OPACITY: f32 = 15.0;
     /// 制表符长度的合法范围（空格数）。

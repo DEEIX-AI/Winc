@@ -499,6 +499,14 @@ fn the_wallpaper_shows_under_surface_colors_only() {
     let corner = at(0, 0);
     assert!((0x8f1010..0x9f2020).contains(&corner), "{corner:06x}");
 
+    // 不透明度为 1 时只剩图片，为 0 时只剩底色；两端各通道都不溢出。
+    for (opacity, expected) in [(1.0, 0xff0000), (0.0, 0x202020)] {
+        let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
+        renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, opacity), &[bg]);
+        renderer.draw(|_| {});
+        assert_eq!(renderer.image().unwrap().pixels[0] & 0xff_ffff, expected);
+    }
+
     // 取消以后恢复为纯色。
     let mut renderer = Renderer::offscreen(8.0, 8.0, 1.0, bg, None, None).unwrap();
     renderer.set_wallpaper(Wallpaper::new(2, 2, &rgba, 0.5), &[bg]);

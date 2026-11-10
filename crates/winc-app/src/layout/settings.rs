@@ -16,6 +16,8 @@ pub enum SettingsPage {
     Editor,
     /// 格式化：保存时的格式化和修复，以及各语言的工具命令。
     Format,
+    /// Git：Git 模块的选项；模块关闭时不列出。
+    Git,
     /// 终端：默认 shell、面板位置、字体、字号和终端行为。
     Terminal,
     /// 模块：可选模块的开关。
@@ -26,24 +28,33 @@ pub enum SettingsPage {
     About,
 }
 
+/// 各可选模块是否开启：决定分类栏列出哪些页。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Modules {
+    pub git: bool,
+    pub terminal: bool,
+}
+
 impl SettingsPage {
     /// 全部分类，顺序与分类栏从上到下的顺序一致。
-    pub const ALL: [SettingsPage; 7] = [
+    pub const ALL: [SettingsPage; 8] = [
         SettingsPage::Appearance,
         SettingsPage::Editor,
         SettingsPage::Format,
+        SettingsPage::Git,
         SettingsPage::Terminal,
         SettingsPage::Modules,
         SettingsPage::Keys,
         SettingsPage::About,
     ];
 
-    /// 返回分类栏列出的分类，顺序同 [`Self::ALL`]；终端模块关闭时（`terminal` 为 `false`）
-    /// 不列出「终端」。
-    pub fn listed(terminal: bool) -> impl Iterator<Item = SettingsPage> {
-        Self::ALL
-            .into_iter()
-            .filter(move |&page| terminal || page != SettingsPage::Terminal)
+    /// 返回分类栏列出的分类，顺序同 [`Self::ALL`]；模块关闭时不列出它的那一页。
+    pub fn listed(modules: Modules) -> impl Iterator<Item = SettingsPage> {
+        Self::ALL.into_iter().filter(move |&page| match page {
+            SettingsPage::Git => modules.git,
+            SettingsPage::Terminal => modules.terminal,
+            _ => true,
+        })
     }
 
     /// 返回分类的标题。
@@ -52,6 +63,7 @@ impl SettingsPage {
             SettingsPage::Appearance => t!("settings-page-appearance"),
             SettingsPage::Editor => t!("settings-page-editor"),
             SettingsPage::Format => t!("settings-page-format"),
+            SettingsPage::Git => t!("settings-page-git"),
             SettingsPage::Terminal => t!("settings-page-terminal"),
             SettingsPage::Modules => t!("settings-page-modules"),
             SettingsPage::Keys => t!("settings-page-keys"),
@@ -139,10 +151,8 @@ impl SettingsPage {
                     plain(behavior),
                 ]
             }
-            SettingsPage::Modules => vec![
-                plain(vec![Setting::GitModule, Setting::TerminalModule]),
-                plain(vec![Setting::GitConfirmPush]),
-            ],
+            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush])],
+            SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
             SettingsPage::Format => {
                 let mut sections = vec![
                     plain(vec![
@@ -344,8 +354,8 @@ impl Setting {
 
     /// 返回搜索 `query` 时列出的设置项，顺序与搜索结果中从上到下的顺序相同（见
     /// [`search_sections`]）；键盘上下移动按此顺序进行。
-    pub fn found(query: &str, languages: &ToolLanguages, terminal: bool) -> Vec<Setting> {
-        (search_sections(query, languages, terminal).into_iter())
+    pub fn found(query: &str, languages: &ToolLanguages, modules: Modules) -> Vec<Setting> {
+        (search_sections(query, languages, modules).into_iter())
             .flat_map(|section| section.items)
             .collect()
     }
@@ -354,8 +364,8 @@ impl Setting {
     /// 每页从上到下。
     ///
     /// 键盘上下移动按此顺序进行，越过一页的首尾时切换到相邻页。
-    pub fn all(languages: &ToolLanguages, terminal: bool) -> Vec<Setting> {
-        SettingsPage::listed(terminal)
+    pub fn all(languages: &ToolLanguages, modules: Modules) -> Vec<Setting> {
+        SettingsPage::listed(modules)
             .flat_map(|page| match page {
                 // 「快捷键」页没有设置项，移动到该页即选中该页的搜索框。
                 SettingsPage::Keys => vec![Setting::KeySearch],
@@ -424,9 +434,8 @@ impl Setting {
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
-            Setting::GitModule | Setting::GitConfirmPush | Setting::TerminalModule => {
-                SettingsPage::Modules
-            }
+            Setting::GitConfirmPush => SettingsPage::Git,
+            Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
             Setting::KeySearch => SettingsPage::Keys,
         }
     }
@@ -524,6 +533,7 @@ impl Setting {
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::Animations => Some(t!("settings-animations-desc")),
             Setting::BackgroundImage => Some(t!("settings-background-image-desc")),
+            Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
@@ -836,6 +846,8 @@ pub struct SettingsView<'a> {
     /// 分类栏中「终端」一项的显示比例（0 到 1，开关终端模块时渐变，见
     /// [`SettingsPage::listed`]）。
     pub terminal: f32,
+    /// 分类栏中「Git」一项的显示比例，同 [`Self::terminal`]。
+    pub git: f32,
     /// 正在输入的设置项：输入格式化命令时换成更宽的输入框。
     pub editing: Option<Setting>,
     /// 正文的滚动量（像素）。
@@ -846,11 +858,11 @@ pub struct SettingsView<'a> {
 /// （[`Setting::matches`]），按页和页内的顺序排列。
 ///
 /// 有标题的组（主题、格式化工具）保留原标题，其余各组合并为一组，以页名为标题；「快捷键」页和
-/// 组下方的文字按钮不参与搜索。`terminal` 为终端模块是否开启（见 [`SettingsPage::listed`]）。
-pub fn search_sections(query: &str, languages: &ToolLanguages, terminal: bool) -> Vec<Section> {
+/// 组下方的文字按钮不参与搜索。`modules` 为各模块是否开启（见 [`SettingsPage::listed`]）。
+pub fn search_sections(query: &str, languages: &ToolLanguages, modules: Modules) -> Vec<Section> {
     let query = query.trim().to_lowercase();
     let mut found = Vec::new();
-    for page in SettingsPage::listed(terminal).filter(|&page| page != SettingsPage::Keys) {
+    for page in SettingsPage::listed(modules).filter(|&page| page != SettingsPage::Keys) {
         let mut plain = Vec::new();
         let mut titled = Vec::new();
         for section in page.sections(languages) {
@@ -944,6 +956,7 @@ impl SettingsLayout {
             query,
             languages,
             terminal,
+            git,
             editing,
             scroll,
         } = view;
@@ -970,10 +983,10 @@ impl SettingsLayout {
         let pages = SettingsPage::ALL
             .into_iter()
             .filter_map(|page| {
-                let share = if page == SettingsPage::Terminal {
-                    terminal
-                } else {
-                    1.0
+                let share = match page {
+                    SettingsPage::Terminal => terminal,
+                    SettingsPage::Git => git,
+                    _ => 1.0,
                 };
                 let h = SETTINGS_NAV_ROW * share;
                 let row = Rect::new(nav.x + 8.0, y, (nav.w - 16.0).max(0.0), h);
@@ -1008,7 +1021,11 @@ impl SettingsLayout {
         let mut rows = Vec::new();
 
         let sections = if searching {
-            search_sections(query, languages, terminal > 0.0)
+            let modules = Modules {
+                git: git > 0.0,
+                terminal: terminal > 0.0,
+            };
+            search_sections(query, languages, modules)
         } else {
             page.sections(languages)
         };
