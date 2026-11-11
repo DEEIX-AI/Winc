@@ -1,62 +1,120 @@
-//! 图片预览缓存的尺寸边界与测试辅助。
+//! 图片预览绘制的测试：图片位于预览区域内的部分，以及测试辅助。
 
 use super::*;
 
 #[test]
-fn raster_cache_shrinks_but_never_exceeds_retained_pixels() {
-    let source = Source::Raster(winc_preview::image::Pixels {
-        width: 2560,
-        height: 1280,
-        rgba: Vec::new(),
-    });
-    assert_eq!(cache_size(&source, (640, 320)), (640, 320));
-    assert_eq!(cache_size(&source, (2560, 1280)), (2560, 1280));
-    assert_eq!(cache_size(&source, (131_072, 65_536)), (2560, 1280));
-    // 极细图片的目标尺寸可能因物理像素取整而只有一边超过原图。
-    assert_eq!(cache_size(&source, (2561, 1279)), (2560, 1279));
-}
-
-#[test]
-fn vector_cache_bounds_the_longest_edge_and_preserves_aspect() {
-    let picture = winc_preview::svg::load(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"/>"#,
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(cache_size(&picture.source, (512, 512)), (512, 512));
-    assert_eq!(cache_size(&picture.source, (32_768, 16_384)), (4096, 2048));
-    assert_eq!(cache_size(&picture.source, (16_384, 32_768)), (2048, 4096));
-    assert_eq!(cache_size(&picture.source, (131_072, 1)), (4096, 1));
-}
-
-#[test]
-fn checker_bounds_keep_phase_and_limit_work_to_visible_cells() {
-    let rect = Rect::new(-1002.0, -998.0, 200_000.0, 200_000.0);
-    let clip = Rect::new(10.0, 20.0, 80.0, 70.0);
-    let bounds = checker_bounds(rect, clip, 8.0);
-    assert_eq!(bounds, Rect::new(6.0, 10.0, 84.0, 80.0));
-    assert_eq!((bounds.x - rect.x) % 16.0, 0.0);
-    assert_eq!((bounds.y - rect.y) % 16.0, 0.0);
-    assert!(bounds.w < clip.w + 16.0 && bounds.h < clip.h + 16.0);
-    assert_eq!(bounds.intersect(clip), rect.intersect(clip));
-
-    let small = Rect::new(12.0, 24.0, 11.0, 13.0);
-    assert_eq!(checker_bounds(small, clip, 8.0), small);
+fn only_the_part_inside_the_preview_area_is_seen() {
+    // 预览区域为物理像素 (200, 100) 到 (1000, 700)；图片 4000 × 3000，左上角在 (-500, 50)。
+    let place = Placed {
+        origin: (-500, 50),
+        size: (4000, 3000),
+        scale: 2.0,
+        clip: Rect::new(100.0, 50.0, 400.0, 300.0),
+    };
+    assert_eq!(place.seen(), Some([700, 50, 1500, 650]));
     assert_eq!(
-        checker_bounds(Rect::new(-40.0, -40.0, 10.0, 10.0), clip, 8.0),
-        Rect::default()
+        place.rect((700, 50), (800, 600)),
+        Rect::new(100.0, 50.0, 400.0, 300.0)
+    );
+    // 图片完全在预览区域内时整张可见；完全在区域外时没有可见的部分。
+    let inside = Placed {
+        origin: (300, 200),
+        size: (100, 80),
+        ..place
+    };
+    assert_eq!(inside.seen(), Some([0, 0, 100, 80]));
+    let outside = Placed {
+        origin: (1000, 200),
+        ..inside
+    };
+    assert_eq!(outside.seen(), None);
+}
+
+#[test]
+fn sizes_shrink_in_proportion_to_the_longest_edge_limit() {
+    assert_eq!(bounded((1824, 1216), 8192), (1824, 1216));
+    assert_eq!(bounded((8192, 100), 8192), (8192, 100));
+    // 超过上限时按比例缩小，长边等于上限，短边至少为 1。
+    assert_eq!(bounded((16_384, 8192), 8192), (8192, 4096));
+    assert_eq!(bounded((3000, 12_288), 8192), (2000, 8192));
+    assert_eq!(bounded((131_072, 1), 8192), (8192, 1));
+    assert_eq!(bounded((7296, 4864), 1024), (1024, 682));
+}
+
+#[test]
+fn a_raster_made_for_another_size_lands_on_the_same_part_of_the_image() {
+    let place = Placed {
+        origin: (100, 40),
+        size: (4000, 3000),
+        scale: 2.0,
+        clip: Rect::new(0.0, 0.0, 1000.0, 1000.0),
+    };
+    let raster = |size, origin, (width, height)| Raster {
+        pixels: Pixels {
+            width,
+            height,
+            rgba: Vec::new(),
+        },
+        size,
+        origin,
+    };
+    // 大小相同：逐像素对应。
+    let exact = raster((4000, 3000), (500, 300), (800, 600));
+    assert_eq!(place.part(&exact), Rect::new(300.0, 170.0, 400.0, 300.0));
+    // 按一半的大小光栅化的同一部分落在相同的位置。
+    let half = raster((2000, 1500), (250, 150), (400, 300));
+    assert_eq!(place.part(&half), place.part(&exact));
+}
+
+#[test]
+fn the_base_is_drawn_only_outside_the_sharp_raster() {
+    let area = Rect::new(0.0, 0.0, 100.0, 80.0);
+    assert_eq!(outside(area, None), [area]);
+    assert_eq!(
+        outside(area, Some(Rect::new(200.0, 0.0, 10.0, 10.0))),
+        [area]
+    );
+    // 清晰的位图盖住整个区域时不绘制。
+    assert!(outside(area, Some(Rect::new(-10.0, -10.0, 200.0, 200.0))).is_empty());
+    // 位图在区域中间：上、下各一条，左、右各一条，互不重叠。
+    let strips = outside(area, Some(Rect::new(20.0, 10.0, 50.0, 40.0)));
+    assert_eq!(
+        strips,
+        [
+            Rect::new(0.0, 0.0, 100.0, 10.0),
+            Rect::new(0.0, 50.0, 100.0, 30.0),
+            Rect::new(0.0, 10.0, 20.0, 40.0),
+            Rect::new(70.0, 10.0, 30.0, 40.0),
+        ]
+    );
+    // 位图贴着区域的左上角：只剩下方和右侧。
+    let strips = outside(area, Some(Rect::new(-5.0, -5.0, 65.0, 45.0)));
+    assert_eq!(
+        strips,
+        [
+            Rect::new(0.0, 40.0, 100.0, 40.0),
+            Rect::new(60.0, 0.0, 40.0, 40.0),
+        ]
     );
 }
 
 impl PictureCache {
-    /// 返回缩放后的宽度（物理像素）。
-    pub(crate) fn width(&self) -> u32 {
-        self.pixels.width
+    /// 返回按显示大小光栅化的部分。
+    ///
+    /// # Panics
+    ///
+    /// 尚未光栅化时 panic。
+    pub(crate) fn sharp(&self) -> &Raster {
+        self.sharp.as_ref().expect("已光栅化")
     }
 
-    /// 返回缩放后的高度（物理像素）。
+    /// 返回缓存的位图的宽度（物理像素）。
+    pub(crate) fn width(&self) -> u32 {
+        self.sharp().pixels.width
+    }
+
+    /// 返回缓存的位图的高度（物理像素）。
     pub(crate) fn height(&self) -> u32 {
-        self.pixels.height
+        self.sharp().pixels.height
     }
 }

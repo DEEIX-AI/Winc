@@ -6,9 +6,6 @@ impl App {
     /// 处理鼠标移动到窗口坐标 (`x`, `y`)（逻辑像素）：更新悬停、指针样式和进行中的拖动。
     pub(in crate::app) fn on_mouse_move(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
-        if !self.picture_input_allowed() {
-            self.cancel_picture_drag();
-        }
         self.update_scrollbar_hover(x, y);
 
         // 鼠标离开顶栏时解除关闭标签期间锁定的宽度，标签重新排布。
@@ -91,21 +88,7 @@ impl App {
         self.update_cursor_icon();
 
         match self.drag {
-            Drag::Picture { doc, start, pan } => {
-                if self.picture_view.doc == Some(doc)
-                    && self.editor.active().is_some_and(|d| d.id == doc)
-                    && self.picture_at(
-                        self.picture_view.area.x + self.picture_view.area.w / 2.0,
-                        self.picture_view.area.y + self.picture_view.area.h / 2.0,
-                    )
-                {
-                    self.picture_view.pan = (pan.0 + x - start.0, pan.1 + y - start.1);
-                    self.request_redraw();
-                } else {
-                    self.drag = Drag::None;
-                    self.update_cursor_icon();
-                }
-            }
+            Drag::Picture { at } => self.drag_picture(x, y, at),
             Drag::TerminalSelect | Drag::TerminalMouse(_) => self.terminal_mouse_drag(x, y),
             Drag::None if self.layout.terminal.contains(x, y) => self.terminal_mouse_hover(x, y),
             Drag::Select { by_word, origin } => self.drag_select(x, y, by_word, origin),

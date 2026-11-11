@@ -61,13 +61,6 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
     app.markdown.area = Rect::default();
     app.pdf.area = Rect::default();
     app.pdf.strip = Rect::default();
-    app.picture_view.area = Rect::default();
-    if app.editor.active().is_none_or(|doc| {
-        app.picture_view.doc != Some(doc.id)
-            || (doc.picture.is_none() && doc.preview_mode() != winc_editor::PreviewMode::Split)
-    }) {
-        app.reset_picture_view();
-    }
 
     let Some(index) = app.editor.active else {
         // 没有标签：释放缩放后的预览缓存，避免继续占用内存。

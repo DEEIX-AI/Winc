@@ -79,22 +79,6 @@ pub struct WheelGlide {
 }
 
 impl App {
-    /// 浮层接管输入期间，图片不接受新的交互或继续旧拖动。
-    fn picture_input_allowed(&self) -> bool {
-        self.alert.is_none()
-            && self.popup().is_none()
-            && self.form_dialog.is_none()
-            && !self.settings.open
-            && !self.picker.open
-            && self.name_input.is_none()
-    }
-
-    /// 图片交互只作用于未被浮层或其他控件遮挡的预览区域。
-    fn picture_input_at(&self) -> bool {
-        self.picture_input_allowed()
-            && matches!(self.target_at(self.mouse.0, self.mouse.1), Target::Picture)
-    }
-
     /// 处理鼠标按键 `button` 松开：结束拖动，并在需要时关闭标签。
     ///
     /// 左键按在关闭按钮上、或中键按在标签上之后，松开时鼠标仍在同一个标签上才关闭该标签。
@@ -153,14 +137,12 @@ impl App {
         }
     }
 
-    /// 只按住主修饰键滚动时，调整鼠标所在的编辑区或终端的字号，或缩放 PDF，返回事件是否已处理。
+    /// 只按住主修饰键滚动时，调整鼠标所在的编辑区或终端的字号，或缩放 PDF、图片，
+    /// 返回事件是否已处理。
     ///
     /// 触控板的一次手势是否调整字号在手势开始时确定：滚动途中按下修饰键仍是滚动，调整途中
     /// 松开修饰键后余下的滚动量丢弃。每个事件至多调整一档。
     fn wheel_zoom(&mut self, delta: MouseScrollDelta, phase: TouchPhase) -> bool {
-        if self.picture_input_at() {
-            return false;
-        }
         let keys = self.modifiers;
         let held = self.command_held()
             && keys.control_key() != keys.super_key()
@@ -168,6 +150,7 @@ impl App {
             && !keys.alt_key();
         let zoomed = match self.target_at(self.mouse.0, self.mouse.1) {
             Target::Editor if self.on_pdf_body() => Some(Zoomed::Pdf),
+            Target::Picture => Some(Zoomed::Picture),
             Target::Editor | Target::Gutter => Some(Zoomed::Editor),
             Target::Terminal | Target::TerminalBlock(_) => Some(Zoomed::Terminal),
             _ => None,
@@ -212,8 +195,13 @@ impl App {
             let up = self.wheel.zoom > 0.0;
             self.wheel.zoom = 0.0;
             self.dismiss_hint();
-            if zoomed == Zoomed::Pdf {
-                self.zoom_pdf(Some(up), Some(self.mouse));
+            // PDF 和图片缩放时鼠标处的内容保持在原位。
+            match zoomed {
+                Zoomed::Pdf => drop(self.zoom_pdf(Some(up), Some(self.mouse))),
+                Zoomed::Picture => drop(self.zoom_picture(Some(up), Some(self.mouse))),
+                Zoomed::Editor | Zoomed::Terminal => {}
+            }
+            if matches!(zoomed, Zoomed::Pdf | Zoomed::Picture) {
                 return true;
             }
             // 调整字号会把光标滚入视野；这里保持编辑区顶部的行不变。
@@ -232,31 +220,6 @@ impl App {
     /// 鼠标滚轮的整格滚动分多帧完成（[`WheelGlide`]）；触控板的滚动量立即生效。
     pub(in crate::app) fn on_wheel(&mut self, delta: MouseScrollDelta) {
         self.dismiss_hint();
-        if self.picture_input_at() {
-            let steps = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y,
-                MouseScrollDelta::PixelDelta(p) => {
-                    let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
-                    p.y as f32 / scale / ZOOM_WHEEL_PIXELS
-                }
-            };
-            self.picture_view.zoom_at(steps, self.mouse);
-            self.scroll_glide = None;
-            self.wheel.glide = None;
-            self.wheel.zoom = 0.0;
-            self.wheel.zooming = false;
-            // 缩放发生于拖动期间时，后续拖动以新的偏移为起点。
-            if let Drag::Picture { doc, .. } = self.drag {
-                self.drag = Drag::Picture {
-                    doc,
-                    start: self.mouse,
-                    pan: self.picture_view.pan,
-                };
-            }
-            self.request_redraw();
-            self.pace_wheel_frame();
-            return;
-        }
         // 滚轮和触控板的滚动由用户直接控制：平滑滚动立即停在目标位置，从该位置继续滚动。
         self.scroll_glide = None;
         let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
@@ -539,6 +502,9 @@ impl App {
         } else if self.pdf.area.contains(x, y) {
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
             self.scroll_pdf_by(dx, dy);
+        } else if self.picture_at(x, y) {
+            let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
+            self.scroll_picture_by(dx, dy);
         } else if self.table_at(x, y) {
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
             self.scroll_table(dx, dy, (x, y));
@@ -564,6 +530,7 @@ enum Zoomed {
     Editor,
     Terminal,
     Pdf,
+    Picture,
 }
 
 /// 鼠标滚轮滚动的过渡状态。

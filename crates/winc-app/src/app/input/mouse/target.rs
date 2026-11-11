@@ -773,7 +773,8 @@ impl App {
             CursorIcon::Pointer
         } else if matches!(self.drag, Drag::Picture { .. }) {
             CursorIcon::Grabbing
-        } else if self.picture_input_at() {
+        } else if self.picture_pannable() && matches!(self.target_at(x, y), Target::Picture) {
+            // 图片超出预览区域时可以按住拖动。
             CursorIcon::Grab
         } else if in_text || in_field {
             CursorIcon::Text
