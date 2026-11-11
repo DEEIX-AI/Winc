@@ -510,7 +510,13 @@ impl Vim {
                 bytes: 0,
                 ..session
             });
+            let started = std::time::Instant::now();
             for _ in 0..repeats {
+                // 重复的耗时超过回放的时间上限时中止，已经输入的部分保留。
+                if started.elapsed() > self.limits.1 {
+                    self.error(host, Message::Interrupted);
+                    break;
+                }
                 // 重复时新行都开在刚输入的一行的下方。
                 if self.insert.as_ref().is_some_and(|s| s.open.is_some()) {
                     let line = text::line_of(host.text(), host.selection().head);

@@ -183,6 +183,14 @@ impl Parser {
             self.mode = mode;
         }
         let table = Table::get();
+        // 普通与可视模式下有未完成的命令时，`Ctrl-C` 与 `<Esc>` 相同。
+        let pending = !self.is_idle() || self.pairing.is_some();
+        let key = match key {
+            key if pending && mode != Mode::Insert && key == Key::ctrl('c') => {
+                Key::named(Named::Esc)
+            }
+            key => key,
+        };
 
         if let Some(index) = self.arg.take() {
             return self.argument(table, index, key);

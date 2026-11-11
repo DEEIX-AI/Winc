@@ -5,6 +5,7 @@
 
 mod command;
 mod host;
+mod side;
 mod workspace;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -67,6 +68,14 @@ pub(crate) struct VimState {
     yanked: Option<(DocumentId, Selection, std::time::Instant)>,
     /// 上一个活动的文档。
     previous: Option<DocumentId>,
+    /// 已从状态文件取得大写标记的文档。
+    marked: Option<DocumentId>,
+    /// 差异中只读光标所在一侧的副本。
+    side: Option<Box<side::Side>>,
+    /// 同一个差异中上一次离开的副本。
+    parked: Option<Box<side::Side>>,
+    /// 最近一次按键中 Vim 层在只读一侧滚动的行数。
+    side_scrolled: f64,
     /// 列表中已输入的前缀键：`g` 或 `Ctrl-W`。
     list_prefix: Option<char>,
 }
@@ -87,21 +96,15 @@ pub(crate) enum CaretShape {
 /// 取自调参：不小于位置历史保留的条数。
 const MAX_JUMP_STEPS: usize = 64;
 
-/// Windows、Linux 上默认留给应用的 `Ctrl` 组合：复制、粘贴、剪切、全选、保存、撤销、查找、
-/// 新建、快速打开。
-const APP_KEYS: &str = "cvxaszfnp";
+/// Windows、Linux 上默认留给应用的 `Ctrl` 组合：保存、撤销、新建、快速打开。
+const APP_KEYS: &str = "sznp";
 
 /// 按键 `key` 在模式 `mode` 下是否交给 Vim 层。
 ///
 /// 带 `Command` 的组合属于应用。`Ctrl` 与字符的组合先查 `overrides`（按键名与是否交给 Vim 层），
-/// 其次按默认规则：macOS 上全部交给 Vim 层；其他系统上 [`APP_KEYS`] 属于应用，`Ctrl+W` 只在
-/// 插入模式交给 Vim 层。交给 Vim 层的按键在该模式下没有定义时仍然回到应用。
-pub(crate) fn claims(
-    key: winc_vim::Key,
-    mode: Mode,
-    mac: bool,
-    overrides: &[(String, bool)],
-) -> bool {
+/// 其次按默认规则：macOS 上全部交给 Vim 层；其他系统上 [`APP_KEYS`] 属于应用，其余交给 Vim
+/// 层。交给 Vim 层的按键在当前模式下没有定义时仍然回到应用。
+pub(crate) fn claims(key: winc_vim::Key, mac: bool, overrides: &[(String, bool)]) -> bool {
     use winc_vim::{Code, Mods};
     let mods = key.mods();
     if mods.contains(Mods::CMD) {
@@ -120,10 +123,12 @@ pub(crate) fn claims(
     if mac {
         return true;
     }
-    match c {
-        'w' => mode == Mode::Insert,
-        c => !APP_KEYS.contains(c),
-    }
+    !APP_KEYS.contains(c)
+}
+
+/// 按键 `key` 是否为「复制选区到系统剪贴板」：macOS 之外的系统上，可视模式下的 `Ctrl+C`。
+pub(crate) fn copies(key: winc_vim::Key, mode: Mode, mac: bool) -> bool {
+    !mac && mode == Mode::Visual && key == winc_vim::Key::ctrl('c')
 }
 
 /// 返回美式布局上按住 `Shift` 时字符 `c` 所在的键产生的字符。
@@ -191,6 +196,10 @@ pub(crate) fn convert(
                     _ => None,
                 };
                 let c = base.or_else(|| crate::keymap::us_char(physical))?;
+                // `Ctrl` 与 `6` 的组合等同于 `Ctrl-^`，不论是否按住 `Shift`。
+                if ctrl && c == '6' {
+                    return Some(winc_vim::Key::ctrl('^'));
+                }
                 return Some(winc_vim::Key::new(Code::Char(c), mods.without(Mods::ALT)));
             }
             // 其余的按键以产生的字符识别，`Shift` 与 `Alt` 已体现在字符中；`Alt` 产生的非 ASCII
@@ -216,7 +225,9 @@ impl App {
         let enabled = self.config.vim_enabled == Some(true);
         if enabled && self.vim.is_none() {
             self.vim = Some(Box::default());
+            self.vim_restore_history();
         } else if !enabled && self.vim.is_some() {
+            self.vim_persist();
             // `:set` 的改动随 Vim 模式的关闭还原。
             self.vim_swap_options();
             if let Some(mut state) = self.vim.take() {
@@ -259,9 +270,11 @@ impl App {
         }
     }
 
-    /// 当前焦点与文档是否适用 Vim 模式：焦点在编辑区，文档以文本显示。
+    /// 当前焦点与文档是否适用 Vim 模式：焦点在编辑区，文档以文本显示，或者光标在差异中只读
+    /// 的一侧。
     fn vim_applies(&self) -> bool {
-        self.focus == Focus::Editor && self.vim_document().is_some_and(Document::shows_text)
+        self.focus == Focus::Editor
+            && (self.vim_document().is_some_and(Document::shows_text) || self.vim_side().is_some())
     }
 
     /// 「快捷键」页的一行中是否有被 Vim 层占用的键：`Ctrl` 加一个字符，归 Vim 层处理，且命令
@@ -281,16 +294,20 @@ impl App {
             };
             let key = winc_vim::Key::ctrl(c.to_ascii_lowercase());
             let notation = winc_vim::notation::write(&[key]);
-            claims(key, Mode::Normal, mac, &self.config.vim_handle_keys)
-                && winc_vim::command::ENTRIES
-                    .iter()
-                    .any(|entry| entry.keys.starts_with(&notation))
+            // 普通或可视模式下有定义的键才会被占用。
+            let defined = |entry: &winc_vim::Entry| {
+                let modes = entry.modes;
+                (modes.contains(Mode::Normal) || modes.contains(Mode::Visual))
+                    && entry.keys.starts_with(&notation)
+            };
+            claims(key, mac, &self.config.vim_handle_keys)
+                && winc_vim::command::ENTRIES.iter().any(defined)
         })
     }
 
     /// 返回 Vim 层操作的文档在标签中的序号：当前文档；当前标签是差异且光标在可编辑的一侧时，
     /// 是该侧对应的文档。
-    fn vim_target(&self) -> Option<usize> {
+    pub(in crate::app) fn vim_target(&self) -> Option<usize> {
         let index = self.editor.active?;
         let view = match self.editor.documents.get(index)?.diff.as_deref() {
             None => return Some(index),
@@ -317,8 +334,16 @@ impl App {
     pub(crate) fn vim_caret(&self) -> Option<(usize, CaretShape)> {
         let state = self.vim.as_ref()?;
         let doc = self.editor.active().filter(|doc| doc.shows_text())?;
+        if state.doc != Some(doc.id) || state.side.is_some() {
+            return None;
+        }
+        self.vim_caret_in(state, doc)
+    }
+
+    /// 返回 Vim 层在文档 `doc` 上的光标位置与形状；插入模式（替换模式除外）返回 `None`。
+    fn vim_caret_in(&self, state: &VimState, doc: &Document) -> Option<(usize, CaretShape)> {
         let replace = state.vim.is_replace();
-        if state.doc != Some(doc.id) || (state.vim.mode() == Mode::Insert && !replace) {
+        if state.vim.mode() == Mode::Insert && !replace {
             return None;
         }
         let end = doc.text().end_pos();
@@ -381,6 +406,7 @@ impl App {
     fn vim_view(&self) -> View {
         let tab_width = self.editor.active_tab_width();
         let rows = self.visible_lines();
+        // 只读一侧的副本由 [`App::vim_with`] 按其滚动位置另行计算。
         let visible = match self.vim_document() {
             Some(doc) => visible_lines(doc, rows),
             None => 0..1,
@@ -417,7 +443,11 @@ impl App {
             whole_line: &mut self.line_clipboard,
         };
         let documents = &mut self.editor.documents;
-        match documents.iter_mut().find(|doc| Some(doc.id) == state.doc) {
+        let doc = match &mut state.side {
+            Some(held) => Some(&mut held.doc),
+            None => documents.iter_mut().find(|doc| Some(doc.id) == state.doc),
+        };
+        match doc {
             Some(doc) => {
                 let mut host = DocHost {
                     doc,
@@ -445,8 +475,16 @@ impl App {
         state: &mut VimState,
         f: impl FnOnce(&mut Vim, &mut Shared, &mut DocHost<'_>) -> R,
     ) -> Option<(R, Vec<Message>, Vec<Deferred>)> {
-        let view = self.vim_view();
-        let index = self.vim_target()?;
+        let mut view = self.vim_view();
+        let top = match &mut state.side {
+            Some(held) => {
+                let top = self.vim_side_top(held);
+                view.visible = visible_lines(&held.doc, view.rows);
+                top
+            }
+            None => 0.0,
+        };
+        let index = self.vim_target();
         let clip = Clip {
             #[cfg(not(test))]
             system: &mut self.clipboard,
@@ -454,7 +492,10 @@ impl App {
             copied: &mut self.copied,
             whole_line: &mut self.line_clipboard,
         };
-        let doc = self.editor.documents.get_mut(index)?;
+        let doc = match &mut state.side {
+            Some(held) => &mut held.doc,
+            None => self.editor.documents.get_mut(index?)?,
+        };
         let mut host = DocHost {
             doc,
             view,
@@ -465,7 +506,20 @@ impl App {
         };
         let result = f(&mut state.vim, &mut shared(), &mut host);
         state.seen = Some((host.doc.selection, host.doc.revision));
-        Some((result, host.messages, host.deferred))
+        let (messages, deferred) = (host.messages, host.deferred);
+        if let Some(held) = &state.side {
+            state.side_scrolled = self.vim_side_push(held, top);
+        }
+        Some((result, messages, deferred))
+    }
+
+    /// 返回 Vim 层操作的文档的选区与版本号：只读一侧的副本，或 [`App::vim_document`]。
+    fn vim_seen(&self, state: &VimState) -> Option<(Selection, u64)> {
+        let doc = match &state.side {
+            Some(held) => Some(&held.doc),
+            None => self.vim_document(),
+        };
+        doc.map(|doc| (doc.selection, doc.revision))
     }
 
     /// 使 Vim 层的状态与当前文档一致：切换文档时回到普通模式；选区或文本被 Vim 层之外的操作
@@ -476,14 +530,25 @@ impl App {
             return;
         };
         let active = (self.vim_document().or(self.editor.active())).map(|doc| doc.id);
-        if state.doc != active {
+        let same_side = match &state.side {
+            Some(held) => self.vim_side_holds(held),
+            None => self.vim_side().is_none(),
+        };
+        if state.doc != active || !same_side {
             let left = state.doc;
             if let Some(left) = left {
                 self.vim_store_marks(left);
             }
             self.vim_leave(&mut state);
-            state.previous = left.or(state.previous);
+            self.vim_side_switch(&mut state);
+            if left != active {
+                state.previous = left.or(state.previous);
+            }
             state.doc = active;
+        }
+        self.vim_side_pull(&mut state);
+        if state.marked != active && self.vim_attach_marks() {
+            state.marked = active;
         }
         // 查找模式的输入条：输入的文本变化时即时跳转；输入条被其他操作关闭时放弃输入。
         let prompting = self.vim_prompt_open() && self.focus == Focus::Prompt;
@@ -496,14 +561,17 @@ impl App {
                     let result = self.vim_with(&mut state, |vim, shared, host| {
                         vim.prompt_preview(shared, host, &typed);
                     });
+                    let in_side = state.side.is_some();
                     for action in result.map(|(_, _, deferred)| deferred).unwrap_or_default() {
-                        if let Deferred::Highlight(query) = action {
+                        if let Deferred::Highlight(query) = action
+                            && !in_side
+                        {
                             self.vim_set_highlight(&query);
                             state.highlight = true;
                         }
                     }
                     state.previewed = text;
-                    self.ensure_caret_visible();
+                    self.vim_show_caret(in_side);
                 }
             } else {
                 // 输入条被其他操作关闭：放弃输入，光标留在当前的位置。
@@ -516,8 +584,7 @@ impl App {
             return;
         }
         if self.vim_applies() {
-            let now = self.vim_document().map(|doc| (doc.selection, doc.revision));
-            if state.seen != now {
+            if state.seen != self.vim_seen(&state) {
                 self.vim_with(&mut state, |vim, _, host| {
                     if vim.mode() == Mode::Insert {
                         vim.insert_moved(host);
@@ -535,16 +602,16 @@ impl App {
 
     /// 处理窗口的按键 `event`，返回是否已由 Vim 层处理。
     pub(in crate::app) fn vim_key_event(&mut self, event: &KeyEvent) -> bool {
+        let in_diff = self.vim.is_some() && self.focus == Focus::Editor && self.diff_active();
+        // 差异中还没有光标时，交给 Vim 层的按键先在窗口顶部的一行放上只读光标。
+        if in_diff && self.vim_places_caret(event) {
+            self.place_read_caret();
+        }
         // 差异中光标在可编辑的一侧时，不带修饰键的字符先让该侧对应的文档接手。
         let plain = !(self.modifiers.control_key()
             || self.modifiers.super_key()
             || self.modifiers.alt_key());
-        if self.vim.is_some()
-            && plain
-            && matches!(event.logical_key, Key::Character(_))
-            && self.focus == Focus::Editor
-            && self.diff_active()
-        {
+        if in_diff && plain && matches!(event.logical_key, Key::Character(_)) {
             self.edit_at_read_caret();
         }
         self.vim_sync();
@@ -567,8 +634,13 @@ impl App {
             return false;
         };
         let mac = cfg!(target_os = "macos");
-        if !claims(key, mode, mac, &self.config.vim_handle_keys) {
+        if !claims(key, mac, &self.config.vim_handle_keys) {
             return false;
+        }
+        // 可视模式下的 `Ctrl+C` 复制选区到系统剪贴板并回到普通模式。
+        if copies(key, mode, mac) {
+            self.vim_copy_selection();
+            return true;
         }
         let handled = self.vim_press(key);
         // 普通模式下没有可取消的内容时，`Esc` 同时取消查找匹配的高亮。
@@ -640,9 +712,33 @@ impl App {
         self.vim_with(&mut state, |vim, _, host| vim.prompt_cancel(host));
         state.previewed = None;
         state.highlight &= !searching;
+        let in_side = state.side.is_some();
         self.vim = Some(state);
-        self.ensure_caret_visible();
+        self.vim_show_caret(in_side);
         self.request_redraw();
+    }
+
+    /// 滚动到光标：差异中只读的一侧由差异视图滚动，其余由编辑区滚动。
+    fn vim_show_caret(&mut self, in_side: bool) {
+        if in_side {
+            self.diff_read_caret_visible(0.0);
+        } else {
+            self.ensure_caret_visible();
+        }
+    }
+
+    /// 按键 `event` 是否使没有光标的差异放上只读光标：交给 Vim 层的按键，`Esc` 除外。
+    fn vim_places_caret(&self, event: &KeyEvent) -> bool {
+        let key = convert(
+            &event.logical_key,
+            &event.key_without_modifiers(),
+            event.physical_key,
+            self.modifiers,
+            true,
+        );
+        let mac = cfg!(target_os = "macos");
+        event.logical_key != Key::Named(NamedKey::Escape)
+            && key.is_some_and(|key| claims(key, mac, &self.config.vim_handle_keys))
     }
 
     /// 替换模式下键入文字的命令 `command` 由 Vim 层执行时返回真：文字覆盖光标处的字符。
@@ -666,6 +762,14 @@ impl App {
         true
     }
 
+    /// 取消未完成的按键，把可视模式的选区复制到系统剪贴板，回到普通模式。
+    pub(in crate::app) fn vim_copy_selection(&mut self) {
+        if let Some(state) = &mut self.vim {
+            state.vim.cancel_pending();
+        }
+        self.vim_feed("\"+y");
+    }
+
     /// 依次把按键记法 `keys` 中的按键交给 Vim 层；应用的复制、剪切、粘贴、撤销、重做经此执行。
     pub(in crate::app) fn vim_feed(&mut self, keys: &str) {
         for key in winc_vim::notation::parse(keys) {
@@ -679,9 +783,13 @@ impl App {
         let mut revealed = false;
         // 差异中的滚动、折叠与格式化由差异视图自己管理。
         let in_diff = self.diff_active();
+        let in_side = (self.vim.as_ref()).is_some_and(|state| state.side.is_some());
         for action in deferred {
             match action {
                 Deferred::Format(..) | Deferred::Reveal(..) | Deferred::Fold(_) if in_diff => {}
+                // 只读一侧不高亮匹配与复制的范围，大写标记只在该侧的副本中有效。
+                Deferred::Highlight(_) | Deferred::Yanked(..) | Deferred::GlobalMark(..)
+                    if in_side => {}
                 Deferred::Format(first, last) => self.vim_format(first, last),
                 Deferred::Jump(back, count) => {
                     for _ in 0..count.min(MAX_JUMP_STEPS) {
@@ -709,6 +817,13 @@ impl App {
         if let Some(message) = messages.last() {
             let text = self.vim_message(message);
             self.flash(text);
+        }
+        if in_side {
+            let state = self.vim.as_mut();
+            let lines = state.map_or(0.0, |state| std::mem::take(&mut state.side_scrolled));
+            self.diff_read_caret_visible(lines);
+            self.reset_blink();
+            return;
         }
         if in_diff {
             self.diff_source_changed();
@@ -739,8 +854,11 @@ impl App {
         match message {
             Message::Unsupported => t!("editor-vim-unsupported").to_owned(),
             Message::TooLarge => t!("editor-vim-too-large").to_owned(),
+            Message::ReadOnly if self.vim.as_ref().is_some_and(|state| state.side.is_some()) => {
+                t!("editor-vim-diff-read-only").to_owned()
+            }
             Message::ReadOnly => {
-                let reason = self.editor.active().and_then(Document::readonly_reason);
+                let reason = self.vim_document().and_then(Document::readonly_reason);
                 reason.unwrap_or(t!("workspace-status-readonly")).to_owned()
             }
             Message::EmptyRegister(name) => {
@@ -893,8 +1011,8 @@ impl App {
         }
     }
 
-    /// Vim 模式下应用的复制、剪切、粘贴、撤销、重做改由 Vim 层执行时返回对应的按键；插入模式
-    /// 与不适用时返回 `None`，由应用按原样执行。
+    /// Vim 模式下应用的复制、剪切、粘贴、撤销、重做改由 Vim 层执行时返回对应的按键，并取消
+    /// 未完成的按键；插入模式与不适用时返回 `None`，由应用按原样执行。
     pub(in crate::app) fn vim_equivalent(
         &mut self,
         action: crate::keymap::Action,
@@ -905,7 +1023,7 @@ impl App {
             Mode::Insert => return None,
             mode => mode == Mode::Visual,
         };
-        Some(match action {
+        let keys = match action {
             Action::Copy if visual => "\"+y",
             Action::Copy => "\"+yy",
             Action::Cut if visual => "\"+d",
@@ -914,7 +1032,12 @@ impl App {
             Action::Undo => "u",
             Action::Redo => "<C-r>",
             _ => return None,
-        })
+        };
+        // 等待动作或参数的按键不与应用的命令拼在一起。
+        if let Some(state) = &mut self.vim {
+            state.vim.cancel_pending();
+        }
+        Some(keys)
     }
 }
 

@@ -553,7 +553,6 @@ impl Screen<'_> {
     /// 实心块与横线随光标闪烁，空心块不闪烁。
     fn draw_vim_caret(&self, frame: &mut Frame<'_>, row: &Row<'_>, pos: usize, shape: CaretShape) {
         let (app, lh, clip) = (self.app, self.lh, self.text_rect);
-        let p = app.palette;
         let (part, x) = self.place(row, pos);
         let y = row.y + part as f32 * lh;
         let c = row.chars.get(pos - row.line_start).copied();
@@ -564,42 +563,8 @@ impl Screen<'_> {
             },
             None => self.cell,
         };
-        let block = Rect::new(x.round(), y, width.round().max(1.0), lh);
-        match shape {
-            CaretShape::Hollow => {
-                for edge in [
-                    Rect::new(block.x, block.y, block.w, 1.0),
-                    Rect::new(block.x, block.bottom() - 1.0, block.w, 1.0),
-                    Rect::new(block.x, block.y, 1.0, block.h),
-                    Rect::new(block.right() - 1.0, block.y, 1.0, block.h),
-                ] {
-                    frame.rect_clipped(edge, p.caret, 0.0, clip);
-                }
-            }
-            CaretShape::Underline if app.blink.visible => {
-                let line = Rect::new(block.x, block.bottom() - 2.0, block.w, 2.0);
-                frame.rect_clipped(line, p.caret, 0.0, clip);
-            }
-            CaretShape::Block if app.blink.visible => {
-                frame.rect_clipped(block, p.caret, 1.0, clip);
-                if let Some(c) = c.filter(|c| !c.is_whitespace()) {
-                    let cells = (width / self.cell).round().max(1.0) as usize;
-                    let baseline = row.baseline + part as f32 * lh;
-                    frame.cell_char(
-                        FontKind::Mono,
-                        app.fonts.code,
-                        x,
-                        baseline,
-                        self.cell,
-                        cells,
-                        c,
-                        p.editor_bg,
-                        clip,
-                    );
-                }
-            }
-            CaretShape::Underline | CaretShape::Block => {}
-        }
+        let baseline = row.baseline + part as f32 * lh;
+        draw_modal_caret(app, frame, (x, y, width), c, baseline, shape, clip);
     }
 }
 

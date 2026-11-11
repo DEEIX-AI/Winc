@@ -13,7 +13,7 @@ use winc_vim::{AppCommand, HostOption, Listing, Mapped, Mapping, Mode, Prompt, V
 use winit::keyboard::{Key, NamedKey};
 
 use super::shared;
-use crate::app::{App, Focus, PromptKind};
+use crate::app::{App, CloseRequest, Focus, PromptKind, SavePrompt};
 use crate::field::TextField;
 use crate::keymap::Action;
 
@@ -36,10 +36,23 @@ const YANK_HIGHLIGHT: u32 = 150;
 pub(super) struct Line {
     /// 翻阅历史时输入的前缀，以及当前条目在历史中的下标。
     recall: Option<(String, usize)>,
-    /// 补全：被补全部分的起点、候选与当前候选的下标。
-    completion: Option<(usize, Vec<String>, usize)>,
+    /// 进行中的补全。
+    completion: Option<Completion>,
     /// 是否已按下 `Ctrl-R`，等待寄存器名。
     register: bool,
+}
+
+/// 输入条中进行中的补全。
+#[derive(Debug)]
+struct Completion {
+    /// 被补全部分在输入条文字中的起点（字节偏移）。
+    start: usize,
+    /// 候选。
+    candidates: Vec<String>,
+    /// 当前候选的下标。
+    index: usize,
+    /// 填入当前候选之后输入条的文字。
+    shown: String,
 }
 
 /// `:set` 改动过的选项在配置文件中的值：保存配置时写入这些值，改动只在本次运行中生效。
@@ -216,19 +229,22 @@ impl App {
     }
 
     /// 补全命令名、选项名或路径；连续按下时轮换候选，`back` 为真时取上一个。
+    ///
+    /// 输入条的文字不是上一次补全的结果时重新开始补全。
     fn vim_complete(&mut self, line: &mut Line, back: bool) {
         let text = (self.goto_input.as_ref()).map_or(String::new(), |f| f.text().to_owned());
-        let (start, candidates, index) = match line.completion.take() {
-            Some((start, candidates, index)) => {
-                let count = candidates.len();
+        let resumed = line.completion.take().filter(|last| last.shown == text);
+        let (start, candidates, index) = match resumed {
+            Some(last) => {
+                let count = last.candidates.len();
                 let step = if back { count - 1 } else { 1 };
-                (start, candidates, (index + step) % count)
+                (last.start, last.candidates, (last.index + step) % count)
             }
             None => {
                 let Some(found) = complete(&text) else {
                     return;
                 };
-                let partial = &text[found.start..];
+                let partial = text.get(found.start..).unwrap_or("");
                 let candidates = match found.kind {
                     Completing::Path => self.vim_paths(partial),
                     Completing::Buffer => {
@@ -249,9 +265,17 @@ impl App {
                 (found.start, candidates, 0)
             }
         };
-        let completed = format!("{}{}", &text[..start.min(text.len())], candidates[index]);
-        self.vim_line_set(&completed);
-        line.completion = Some((start, candidates, index));
+        let Some(kept) = text.get(..start) else {
+            return;
+        };
+        let shown = format!("{kept}{}", candidates[index]);
+        self.vim_line_set(&shown);
+        line.completion = Some(Completion {
+            start,
+            candidates,
+            index,
+            shown,
+        });
     }
 
     /// 返回命令行中的路径 `path` 所指的位置：相对路径从已打开的目录算起，没有时从当前文档
@@ -273,8 +297,8 @@ impl App {
         folder.map_or_else(|| path.to_path_buf(), |folder| folder.join(path))
     }
 
-    /// 返回以 `partial` 开头的路径，按名字排序；目录以 `/` 结尾。
-    fn vim_paths(&self, partial: &str) -> Vec<String> {
+    /// 返回以 `partial` 开头的路径，按名字排序，取前 [`MAX_PATHS`] 个；目录以 `/` 结尾。
+    pub(in crate::app) fn vim_paths(&self, partial: &str) -> Vec<String> {
         let (folder, prefix) = match partial.rfind('/') {
             Some(at) => (&partial[..=at], &partial[at + 1..]),
             None => ("", partial),
@@ -295,9 +319,9 @@ impl App {
                 let slash = if entry.path().is_dir() { "/" } else { "" };
                 Some(format!("{folder}{name}{slash}"))
             })
-            .take(MAX_PATHS)
             .collect();
         found.sort();
+        found.truncate(MAX_PATHS);
         found
     }
 
@@ -305,20 +329,21 @@ impl App {
     pub(super) fn vim_run_app(&mut self, command: AppCommand) {
         let active = self.editor.active().map(|doc| doc.id);
         match command {
-            AppCommand::Write { path: None } => self.save_active(),
-            AppCommand::Write { path: Some(path) } => {
-                if let Some(id) = active {
-                    let to = self.vim_path(&path);
-                    self.save_document(id, Some(to));
-                }
-            }
+            AppCommand::Write { path: None, .. } => self.vim_save(),
+            AppCommand::Write {
+                path: Some(path),
+                force,
+            } => self.vim_write_to(&path, force),
             AppCommand::WriteAll => self.vim_save_all(),
             AppCommand::Quit { write, force } => {
-                let dirty = self.editor.active().is_some_and(|doc| doc.is_dirty());
-                if write && dirty {
-                    self.save_active();
+                // 差异中先保存可编辑一侧对应的文档，再关闭差异的标签。
+                let target = self.vim_document().map(|doc| doc.id);
+                if write && target.is_some() && target != active {
+                    self.vim_save();
                 }
+                let dirty = self.editor.active().is_some_and(|doc| doc.is_dirty());
                 match (force, active, self.editor.active) {
+                    (_, Some(id), _) if write && dirty => self.vim_save_then_close(id),
                     (true, Some(id), _) => {
                         self.discard_tab(id);
                         self.relayout();
@@ -381,6 +406,67 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// 保存 Vim 层操作的文档：差异中是可编辑一侧对应的文档，其余情况是当前文档。
+    fn vim_save(&mut self) {
+        let active = self.editor.active().map(|doc| doc.id);
+        match self.vim_document().map(|doc| doc.id) {
+            Some(id) if Some(id) != active => {
+                if !self.confirm_overwrite(id) {
+                    self.save_by_id(id);
+                }
+            }
+            _ => self.save_active(),
+        }
+    }
+
+    /// 把 Vim 层操作的文档写到命令行中的路径 `path`，文档对应的路径不变；没有路径的文档以
+    /// 该路径保存。目标上已有文件时只在 `force` 为真时覆盖。
+    fn vim_write_to(&mut self, path: &str, force: bool) {
+        let to = winc_editor::canonical_path(&self.vim_path(path));
+        let Some(doc) = self.vim_document() else {
+            return;
+        };
+        let id = doc.id;
+        if doc.path.as_ref() == Some(&to) {
+            return self.vim_save();
+        }
+        if to.exists() && !force {
+            return self.flash(t!("editor-vim-file-exists"));
+        }
+        if doc.path.is_none() {
+            self.save_document(id, Some(to));
+            return;
+        }
+        let name = winc_editor::display_name(&to).into_owned();
+        match doc.write_copy(&to) {
+            Ok(()) => {
+                if let Some(workspace) = &mut self.editor.workspace {
+                    workspace.refresh_paths(std::slice::from_ref(&to));
+                }
+                self.picker_touched(vec![to]);
+                self.flash(t!("editor-vim-written", name = name));
+            }
+            Err(error) => self.notify(t!(
+                "workspace-save-failed",
+                name = name,
+                error = error.to_string()
+            )),
+        }
+    }
+
+    /// 保存文档 `id` 之后关闭其标签；保存没有完成（失败、冲突、取消选择路径）时不关闭。
+    fn vim_save_then_close(&mut self, id: DocumentId) {
+        if self.closing_pending() {
+            return;
+        }
+        self.wait_for_saves();
+        let request = CloseRequest::Tabs(vec![id]);
+        self.save_then_close(SavePrompt {
+            request,
+            dirty: vec![id],
+        });
     }
 
     /// 切换到第 `index` 个文档；不存在时提示。

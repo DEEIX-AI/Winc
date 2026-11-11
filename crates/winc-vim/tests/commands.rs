@@ -286,11 +286,25 @@ fn file_and_tab_commands_go_to_the_host() {
     let mut s = Session::new("see src/main.rs here");
     let quit = |write, force| AppCommand::Quit { write, force };
     for (line, command) in [
-        ("w", AppCommand::Write { path: None }),
+        (
+            "w",
+            AppCommand::Write {
+                path: None,
+                force: false,
+            },
+        ),
         (
             "w out.txt",
             AppCommand::Write {
                 path: Some("out.txt".into()),
+                force: false,
+            },
+        ),
+        (
+            "w! out.txt",
+            AppCommand::Write {
+                path: Some("out.txt".into()),
+                force: true,
             },
         ),
         ("wa", AppCommand::WriteAll),

@@ -275,6 +275,7 @@ pub static ENTRIES: &[Entry] = &[
     action("o", Modes::V, Action::SwapAnchor),
     action("O", Modes::V, Action::SwapColumn),
     action("<Esc>", Modes::V.with(Modes::I), Action::Escape),
+    action("<C-c>", Modes::NV, Action::Interrupt),
     action("<C-v>", Modes::NV, Action::VisualBlock),
     action("<C-q>", Modes::NV, Action::VisualBlock),
     action("I", Modes::V, Action::InsertSelection),

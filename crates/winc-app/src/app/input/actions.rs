@@ -21,6 +21,9 @@ impl App {
         if !self.action_available(action) {
             return false;
         }
+        if action == Copy && self.vim_side_copy() {
+            return true;
+        }
         if let Some(done) = self.diff_edit_action(action) {
             return done;
         }

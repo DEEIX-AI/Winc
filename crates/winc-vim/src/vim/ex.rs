@@ -583,7 +583,7 @@ impl Vim {
         let step = isize::try_from(amount.unwrap_or(1)).unwrap_or(isize::MAX);
         let quit = |write| AppCommand::Quit { write, force };
         let command = match line.cmd {
-            Cmd::Write => AppCommand::Write { path },
+            Cmd::Write => AppCommand::Write { path, force },
             Cmd::WriteAll => AppCommand::WriteAll,
             Cmd::Quit | Cmd::BufferDelete | Cmd::TabClose => quit(false),
             Cmd::WriteQuit => quit(true),

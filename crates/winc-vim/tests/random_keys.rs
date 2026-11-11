@@ -488,7 +488,11 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
         }
         let started = Instant::now();
         common::press(&mut vim, &mut shared, &mut host, key);
-        slowest = slowest.max(started.elapsed());
+        let elapsed = started.elapsed();
+        if elapsed > Duration::from_secs(3) {
+            println!("慢：{context}，耗时 {elapsed:?}");
+        }
+        slowest = slowest.max(elapsed);
         check_state(&vim, &host, &context);
 
         let after_mode = vim.mode();
@@ -498,7 +502,8 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
         if resumed {
             insert_start = None;
         } else if before_mode != Mode::Insert && after_mode == Mode::Insert {
-            insert_start = Some(before_text.clone());
+            // 进入插入的回放中有撤销、重做时，撤销一次回到的不是回放之前的文本，不核对。
+            insert_start = (host.undone == undone).then(|| before_text.clone());
         }
         // 一条命令（或一次插入连同引起插入的命令）撤销后文本逐字节还原，重做后回到执行之后。
         let confirming = vim.confirming().is_some();

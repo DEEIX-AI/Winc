@@ -627,6 +627,13 @@ impl Document {
         document
     }
 
+    /// 创建只读、不对应文件的文档，与 `text` 共用同一份文本（克隆只增加引用计数）。
+    pub fn snapshot(id: DocumentId, text: Rope) -> Self {
+        let mut document = Document::from_content(id, Content::Rope(text));
+        document.readonly = true;
+        document
+    }
+
     /// 创建并排差异的标签，标签上显示 `title`。
     ///
     /// 文本是右侧的内容，与差异视图共用同一份 `rope`（克隆只增加引用计数，不复制文本）。文档

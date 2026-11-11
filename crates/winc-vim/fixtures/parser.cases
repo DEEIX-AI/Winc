@@ -138,3 +138,31 @@ keys Ux
 case unsupported-operator-reads-its-target
 text "abcdefghijklmnopqrstuvwxyz0123456789"
 keys gqqgq$x
+
+case ctrl-c-alone-does-nothing
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys <C-c>x
+
+case ctrl-c-cancels-the-count
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys 3<C-c>x
+
+case ctrl-c-cancels-the-register
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys "a<C-c>x
+
+case ctrl-c-cancels-the-operator
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys d<C-c>x
+
+case ctrl-c-cancels-the-awaited-character
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys f<C-c>x
+
+case ctrl-c-leaves-visual-mode
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys vll<C-c>x
+
+case ctrl-c-leaves-visual-mode-with-a-count
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+keys vll3<C-c>x

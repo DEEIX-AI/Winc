@@ -2,7 +2,7 @@
 
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
-use super::{claims, convert};
+use super::{claims, convert, copies};
 use winc_vim::{Code, Key as VimKey, Mode, Mods, Named};
 
 /// 没有修饰键、产生字符 `text` 的按键。
@@ -61,6 +61,14 @@ fn control_combinations_use_the_unmodified_character() {
     let key = typed("R", KeyCode::KeyR, both, true).unwrap();
     assert_eq!(key.mods(), Mods::CTRL.with(Mods::SHIFT));
     assert_ne!(key, VimKey::ctrl('r'));
+    // `Ctrl` 与 `6` 的组合等同 `Ctrl-^`，按住 `Shift` 时也是。
+    let six = |text: &str, modifiers: ModifiersState| {
+        let (logical, plain) = (Key::Character(text.into()), Key::Character("6".into()));
+        let physical = PhysicalKey::Code(KeyCode::Digit6);
+        convert(&logical, &plain, physical, modifiers, true)
+    };
+    assert_eq!(six("6", ctrl), Some(VimKey::ctrl('^')));
+    assert_eq!(six("^", both), Some(VimKey::ctrl('^')));
     // 带 `Command` 的组合带有相应的修饰键，之后归应用处理。
     let cmd = typed("s", KeyCode::KeyS, ModifiersState::SUPER, true).unwrap();
     assert!(cmd.mods().contains(Mods::CMD));
@@ -144,32 +152,32 @@ fn named_keys_keep_their_modifiers() {
 fn ownership_follows_the_platform_rules_and_the_overrides() {
     let none: &[(String, bool)] = &[];
     // 没有 `Ctrl` 的按键都交给 Vim 层，带 `Command` 的都归应用。
-    assert!(claims(VimKey::char('d'), Mode::Normal, false, none));
-    assert!(claims(VimKey::named(Named::Esc), Mode::Normal, false, none));
+    assert!(claims(VimKey::char('d'), false, none));
+    assert!(claims(VimKey::named(Named::Esc), false, none));
     let cmd = VimKey::new(Code::Char('s'), Mods::CMD);
-    assert!(!claims(cmd, Mode::Normal, true, none));
+    assert!(!claims(cmd, true, none));
 
     // macOS 上 `Ctrl` 组合全部交给 Vim 层。
     for c in "cvxaszfnpwrdu".chars() {
-        assert!(claims(VimKey::ctrl(c), Mode::Normal, true, none), "{c}");
+        assert!(claims(VimKey::ctrl(c), true, none), "{c}");
     }
-    // 其他系统上通用的快捷键归应用，其余交给 Vim 层。
-    for c in "cvxaszfnp".chars() {
-        assert!(!claims(VimKey::ctrl(c), Mode::Normal, false, none), "{c}");
-        assert!(!claims(VimKey::ctrl(c), Mode::Insert, false, none), "{c}");
+    // 其他系统上保存、撤销、新建、快速打开归应用，其余交给 Vim 层。
+    for c in "sznp".chars() {
+        assert!(!claims(VimKey::ctrl(c), false, none), "{c}");
     }
-    for c in "rdueoy".chars() {
-        assert!(claims(VimKey::ctrl(c), Mode::Normal, false, none), "{c}");
+    for c in "cvxafwrdueoy".chars() {
+        assert!(claims(VimKey::ctrl(c), false, none), "{c}");
     }
-    // `Ctrl+W` 只在插入模式交给 Vim 层。
-    assert!(claims(VimKey::ctrl('w'), Mode::Insert, false, none));
-    assert!(!claims(VimKey::ctrl('w'), Mode::Normal, false, none));
-    assert!(!claims(VimKey::ctrl('w'), Mode::Visual, false, none));
+    // 可视模式下的 `Ctrl+C` 是复制，macOS 上与其余模式下按 Vim 的含义。
+    assert!(copies(VimKey::ctrl('c'), Mode::Visual, false));
+    assert!(!copies(VimKey::ctrl('c'), Mode::Normal, false));
+    assert!(!copies(VimKey::ctrl('c'), Mode::Visual, true));
+    assert!(!copies(VimKey::ctrl('v'), Mode::Visual, false));
 
     // 配置中的改写优先于默认的规则。
     let overrides = [("ctrl+f".to_owned(), true), ("ctrl+d".to_owned(), false)];
-    assert!(claims(VimKey::ctrl('f'), Mode::Normal, false, &overrides));
-    assert!(!claims(VimKey::ctrl('d'), Mode::Normal, false, &overrides));
-    assert!(!claims(VimKey::ctrl('d'), Mode::Normal, true, &overrides));
-    assert!(claims(VimKey::ctrl('r'), Mode::Normal, false, &overrides));
+    assert!(claims(VimKey::ctrl('f'), false, &overrides));
+    assert!(!claims(VimKey::ctrl('d'), false, &overrides));
+    assert!(!claims(VimKey::ctrl('d'), true, &overrides));
+    assert!(claims(VimKey::ctrl('r'), false, &overrides));
 }

@@ -410,7 +410,7 @@ pub enum Action {
     Scroll(Scrolling),
     /// 折叠命令。
     Fold(Folding),
-    /// 插入模式的 `Ctrl-C`：离开插入模式。
+    /// `Ctrl-C`：离开插入模式或可视模式；普通模式下没有效果。
     Interrupt,
     /// 插入模式的 `Ctrl-H`：删除光标之前的一个字符。
     InsertBackspace,

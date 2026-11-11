@@ -747,6 +747,7 @@ impl App {
             self.back_up_for_quit();
         }
         self.remember_window();
+        self.vim_persist();
         self.save_session();
     }
 

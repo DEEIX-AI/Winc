@@ -87,12 +87,13 @@ impl App {
             return;
         }
 
-        // Vim 模式开启时，编辑区的按键先交给 Vim 层；Vim 层不处理的按键继续按原有的顺序处理。
+        // Vim 模式开启时，编辑区的按键先交给 Vim 层，列表中的移动按键换成方向键；Vim 层不处理
+        // 的按键继续按原有的顺序处理。
         // 两步组合键的第二步仍由键位表处理；Vim 没有带 `Alt` 的命令，应用绑定的 `Alt` 组合归应用。
         if self.vim.is_some()
             && self.pending_chord.is_none()
             && !self.alt_shortcut(event, &base)
-            && self.vim_key_event(event)
+            && (self.vim_key_event(event) || self.vim_list_key(&event.logical_key, &base))
         {
             return;
         }
@@ -112,11 +113,6 @@ impl App {
             if self.focus != Focus::TerminalRename {
                 self.finish_terminal_rename(true);
             }
-            return;
-        }
-
-        // Vim 模式下列表中的移动按键。
-        if self.vim_list_key(&event.logical_key, &base) {
             return;
         }
 

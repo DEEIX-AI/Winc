@@ -11,6 +11,7 @@ use winc_vim::command::ENTRIES;
 use winc_vim::{Focusing, Kind, Mode, Support};
 use winit::keyboard::{Key, NamedKey};
 
+use super::shared;
 use crate::app::{App, Focus};
 use crate::keymap::Action;
 
@@ -29,6 +30,9 @@ impl App {
     /// `j` `k` `w` 移动焦点。其余的按键不处理。
     pub(in crate::app) fn vim_list_key(&mut self, key: &Key, base: &str) -> bool {
         let (focus, modifiers) = (self.focus, self.modifiers);
+        let mac = cfg!(target_os = "macos");
+        let ctrl_w = winc_vim::Key::ctrl('w');
+        let takes_ctrl_w = super::claims(ctrl_w, mac, &self.config.vim_handle_keys);
         let Some(state) = &mut self.vim else {
             return false;
         };
@@ -55,7 +59,8 @@ impl App {
                 }
                 return true;
             }
-            (_, true, _) if base == "w" => {
+            // `Ctrl-W` 的归属与编辑区相同。
+            (_, true, _) if base == "w" && takes_ctrl_w => {
                 state.list_prefix = Some('w');
                 return true;
             }
@@ -166,8 +171,63 @@ impl App {
         });
     }
 
-    /// 文档 `id` 中的大写标记随编辑移动过时，把新的位置写入状态文件；离开该文档时调用。
-    pub(super) fn vim_store_marks(&mut self, id: DocumentId) {
+    /// 把状态文件中属于 Vim 层操作的文档的大写标记设到该文档上，之后随编辑移动；文档尚未
+    /// 读入时返回假。
+    pub(super) fn vim_attach_marks(&mut self) -> bool {
+        let Some(index) = self.vim_target().or(self.editor.active) else {
+            return true;
+        };
+        let doc = &mut self.editor.documents[index];
+        if doc.is_pending() {
+            return false;
+        }
+        let Some(path) = doc.path.clone() else {
+            return true;
+        };
+        for (name, at, line, col) in &self.state.vim_marks {
+            if *at == path && doc.modal_mark(*name).is_none() {
+                let pos = doc.text().line_col_to_pos(*line, *col);
+                doc.set_modal_mark(*name, pos);
+            }
+        }
+        true
+    }
+
+    /// 各窗口共用的历史为空时，读入状态文件中的命令行历史与查找历史。
+    pub(super) fn vim_restore_history(&mut self) {
+        let mut shared = shared();
+        if shared.search_history().is_empty() && shared.command_history().is_empty() {
+            let (searches, commands) = (&self.state.vim_searches, &self.state.vim_commands);
+            shared.restore_history(searches.clone(), commands.clone());
+        }
+    }
+
+    /// 把各文档中大写标记移动后的位置、命令行历史与查找历史写入状态文件；内容没有变化时
+    /// 不写。窗口关闭、退出与关闭 Vim 模式之前调用，Vim 模式关闭时不做任何事。
+    pub(in crate::app) fn vim_persist(&mut self) {
+        if self.vim.is_none() {
+            return;
+        }
+        let ids: Vec<DocumentId> = self.editor.documents.iter().map(|doc| doc.id).collect();
+        for id in ids {
+            self.vim_store_marks(id);
+        }
+        let (searches, commands) = {
+            let shared = shared();
+            let (searches, commands) = (shared.search_history(), shared.command_history());
+            (searches.to_vec(), commands.to_vec())
+        };
+        if self.state.vim_searches != searches || self.state.vim_commands != commands {
+            self.update_state(|state| {
+                state.vim_searches = searches;
+                state.vim_commands = commands;
+            });
+        }
+    }
+
+    /// 文档 `id` 中的大写标记随编辑移动过时，把新的位置写入状态文件；离开或关闭该文档时
+    /// 调用。
+    pub(in crate::app) fn vim_store_marks(&mut self, id: DocumentId) {
         let Some(doc) = self.editor.documents.iter().find(|doc| doc.id == id) else {
             return;
         };

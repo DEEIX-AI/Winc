@@ -311,3 +311,66 @@ keys gqqgq$x
 > cursor 0 0
 > reg " v "a"
 > reg - v "a"
+
+case ctrl-c-alone-does-nothing
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys <C-c>x
+> text "bcdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 0
+> reg " v "a"
+> reg - v "a"
+
+case ctrl-c-cancels-the-count
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys 3<C-c>x
+> text "bcdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 0
+> reg " v "a"
+> reg - v "a"
+
+case ctrl-c-cancels-the-register
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys "a<C-c>x
+> text "bcdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 0
+> reg " v "a"
+> reg - v "a"
+
+case ctrl-c-cancels-the-operator
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys d<C-c>x
+> text "bcdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 0
+> reg " v "a"
+> reg - v "a"
+
+case ctrl-c-cancels-the-awaited-character
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys f<C-c>x
+> text "bcdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 0
+> reg " v "a"
+> reg - v "a"
+
+case ctrl-c-leaves-visual-mode
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys vll<C-c>x
+> text "abdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 2
+> reg " v "c"
+> reg - v "c"
+
+case ctrl-c-leaves-visual-mode-with-a-count
+text "abcdefghijklmnopqrstuvwxyz0123456789"
+cursor 0 0
+keys vll3<C-c>x
+> text "abdefghijklmnopqrstuvwxyz0123456789"
+> cursor 0 2
+> reg " v "c"
+> reg - v "c"

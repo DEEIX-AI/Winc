@@ -12,6 +12,10 @@ use crate::app::vim::CaretShape;
 use crate::app::{Focus, PromptKind};
 use crate::keymap::Action;
 
+mod commands;
+mod diff;
+mod state;
+
 /// 创建打开了内容为 `text` 的文件、并已开启 Vim 模式的界面；返回界面与样本目录。
 fn vim_app(name: &str, text: &str) -> (App, PathBuf) {
     let dir = sample_folder(name);

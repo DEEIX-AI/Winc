@@ -142,10 +142,12 @@ pub enum Listing {
 /// 交给宿主执行的命令：文件、标签与窗口。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppCommand {
-    /// 保存当前文档；`path` 给出时另存到该路径。
+    /// 保存当前文档；`path` 给出时把内容写到该路径，文档对应的路径不变。
     Write {
         /// 目标路径。
         path: Option<String>,
+        /// 目标路径上已有文件时是否覆盖。
+        force: bool,
     },
     /// 保存全部文档。
     WriteAll,

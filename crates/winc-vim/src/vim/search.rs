@@ -14,10 +14,10 @@ use crate::parser::{Body, Command, Movement, Target};
 use crate::pattern;
 use crate::text::{self, Scan, Step};
 
-/// 查找历史保留的条数（条）。
+/// 查找历史与命令行的历史各自保留的条数（条）。
 ///
 /// 取自调参：与输入框的历史同一量级。
-const MAX_HISTORY: usize = 50;
+const MAX_HISTORY: usize = 100;
 
 /// 一次查找中依次检查的匹配数上限（处）；超过时按找不到处理。
 ///
@@ -238,6 +238,17 @@ fn shifted<T: Lines>(text: &T, pos: usize, amount: isize) -> usize {
 }
 
 impl Shared {
+    /// 把查找历史与命令行的历史换成 `searches` 与 `commands`（从旧到新），超过保留的条数时
+    /// 留下最新的。
+    pub fn restore_history(&mut self, searches: Vec<String>, commands: Vec<String>) {
+        let latest = |mut entries: Vec<String>| {
+            entries.retain(|entry| !entry.is_empty());
+            entries.split_off(entries.len().saturating_sub(MAX_HISTORY))
+        };
+        self.history = latest(searches);
+        self.commands = latest(commands);
+    }
+
     /// 返回查找历史，从旧到新排列。
     pub fn search_history(&self) -> &[String] {
         &self.history
