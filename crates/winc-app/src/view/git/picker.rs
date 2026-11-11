@@ -60,7 +60,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     } else {
         draw_branch_rows(app, frame, &parts, &mut hits);
     }
-    draw_footer(app, frame, &parts, &mut hits);
+    if parts.footer.h > 0.0 {
+        draw_footer(app, frame, &parts, &mut hits);
+    }
     app.hits.picker_parts = hits;
 }
 
@@ -79,6 +81,8 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     icons::magnifier(frame, icon, p.text_dim, field);
     let placeholder = if app.picker_lists_locations() {
         t!("git-location-picker-placeholder")
+    } else if app.picker_filters_log() {
+        t!("git-log-branch-picker-placeholder")
     } else {
         t!("git-branch-picker-placeholder")
     };
@@ -491,6 +495,9 @@ fn draw_branch_rows(
         let line = Line::begin(app, frame, parts, i);
         match &rows[i] {
             BranchRow::Heading(_) => {}
+            BranchRow::All => {
+                draw_log_branch_row(app, frame, &line, t!("menu-log-all-branches"), None);
+            }
             // 和提交视图的组标题一样：小一号的次要色字，右端一个写数量的小圆角徽标。
             BranchRow::Remotes { count, open } => {
                 line.draw_fold(app, frame, (i, 0, *open));
@@ -513,6 +520,10 @@ fn draw_branch_rows(
                 depth,
                 label,
             } => {
+                if app.picker_filters_log() {
+                    draw_log_branch_row(app, frame, &line, label, Some(label));
+                    continue;
+                }
                 let row = BranchLine {
                     index: *index,
                     depth: *depth,
@@ -530,6 +541,21 @@ fn draw_branch_rows(
             }
         }
     }
+}
+
+/// 日志筛选的行：对勾表示已应用的筛选，名字用整行宽度显示。
+fn draw_log_branch_row(
+    app: &App,
+    frame: &mut Frame<'_>,
+    line: &Line,
+    label: &str,
+    branch: Option<&str>,
+) {
+    let (check, text) = line.columns(0);
+    if app.log_branch_filter() == branch {
+        icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
+    }
+    line.draw_name(app, frame, (text, line.right()), label, line.text);
 }
 
 /// 在纵坐标 `y` 画一条分隔线，两端对着 `GUTTER`。
@@ -550,6 +576,7 @@ fn draw_heading(
     let title = match section {
         BranchSection::Recent => t!("git-branch-picker-recent"),
         BranchSection::Local => t!("menu-git-local-branches"),
+        BranchSection::Remote => t!("menu-git-remote-branches"),
         BranchSection::Other => t!("git-branch-picker-other"),
     };
     let band = if i > 0 {

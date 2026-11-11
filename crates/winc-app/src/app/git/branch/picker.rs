@@ -36,6 +36,8 @@ pub enum GitAnchor {
     Location,
     /// 状态栏的分支名上方：侧栏收起、看着文件视图时也能切换分支和同步。
     Status,
+    /// Git 日志的分支筛选按钮下方。
+    Log,
 }
 
 /// 选择面板里除了各行以外可以点的地方。
@@ -66,7 +68,7 @@ const GIT_PICKER_ROWS: usize = 16;
 const GIT_PICKER_GAP: f32 = 4.0;
 /// 选择面板底栏的高度（逻辑像素）：上面留 4，`BUTTON_SMALL` 高的按钮，下面留 6，和顶部的搜索行
 /// 对称。
-pub const GIT_PICKER_FOOT: f32 = 34.0;
+const GIT_PICKER_FOOT: f32 = 34.0;
 /// 分支选择器中拉取、推送、获取一行的高度（逻辑像素）：上下各留 4，中间是 `BUTTON_SMALL` 高的
 /// 按钮。加上搜索行下方的 4，按钮与搜索框相距 8，不贴近搜索框获得焦点时的外框。
 pub const GIT_PICKER_ACTIONS: f32 = 32.0;
@@ -83,6 +85,8 @@ pub enum BranchSection {
     Recent,
     /// 本地分支。
     Local,
+    /// 远程分支。
+    Remote,
     /// 最近使用以外的本地分支。
     Other,
 }
@@ -90,6 +94,8 @@ pub enum BranchSection {
 /// 分支选择器的一行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchRow {
+    /// 清除日志的分支筛选。
+    All,
     /// 分组标题，不能选中。
     Heading(BranchSection),
     /// 可以展开的「远程分支」一组。
@@ -138,6 +144,7 @@ impl BranchRow {
     /// 分支的下标按各自所在的列表解释：`self` 是 `old` 的，`other` 是 `new` 的。
     fn same(&self, other: &BranchRow, old: &[Branch], new: &[Branch]) -> bool {
         match (self, other) {
+            (BranchRow::All, BranchRow::All) => true,
             (BranchRow::Remotes { .. }, BranchRow::Remotes { .. }) => true,
             (
                 BranchRow::Folder { remote, path, .. },
@@ -154,6 +161,35 @@ impl BranchRow {
             _ => false,
         }
     }
+}
+
+/// 日志筛选列出完整的分支名，保留本地和远程两组。
+fn log_branch_rows(branches: &[Branch], query: &str) -> Vec<BranchRow> {
+    let query = query.trim().to_lowercase();
+    let mut rows = Vec::new();
+    if query.is_empty() {
+        rows.push(BranchRow::All);
+    }
+    for (remote, section) in [(false, BranchSection::Local), (true, BranchSection::Remote)] {
+        let mut group = branches
+            .iter()
+            .enumerate()
+            .filter(|(_, branch)| {
+                branch.remote == remote
+                    && (query.is_empty() || branch.name.to_lowercase().contains(&query))
+            })
+            .map(|(index, branch)| BranchRow::Branch {
+                index,
+                depth: 0,
+                label: branch.name.clone(),
+            })
+            .peekable();
+        if group.peek().is_some() {
+            rows.push(BranchRow::Heading(section));
+            rows.extend(group);
+        }
+    }
+    rows
 }
 
 /// 排列分支选择器时用到的内容。
@@ -518,7 +554,7 @@ impl App {
         }
         let window = self.layout.window;
         let most = (window.w - 16.0).max(0.0);
-        let chrome = MENU_PICKER_BAR + MENU_PICKER_PAD + GIT_PICKER_FOOT;
+        let chrome = MENU_PICKER_BAR + MENU_PICKER_PAD + self.git_picker_footer();
         let wanted = self.picker.hits.len().clamp(1, GIT_PICKER_ROWS);
         let chrome = chrome
             + if self.picker_has_actions() {
@@ -549,15 +585,22 @@ impl App {
             self.layout.picker = Rect::new(x, bottom - h, w, h);
             return;
         }
-        let parts = self.commit_parts();
-        let row = match self.picker.anchor {
-            GitAnchor::Location => parts.location.unwrap_or(parts.branch),
-            GitAnchor::Branch | GitAnchor::Status => parts.branch,
+        let (row, bottom) = if self.picker_filters_log() {
+            let log = self.log_parts();
+            let mut row = log.search();
+            row.x = row.right() + crate::app::git::log::LOG_FILTER_GAP;
+            (row, log.list.bottom() - 8.0)
+        } else {
+            let parts = self.commit_parts();
+            let row = match self.picker.anchor {
+                GitAnchor::Location => parts.location.unwrap_or(parts.branch),
+                _ => parts.branch,
+            };
+            let sidebar = self.layout.sidebar;
+            (row, sidebar.bottom() - (row.x - sidebar.x))
         };
         let y = row.bottom() + GIT_PICKER_GAP;
-        // 底边离侧栏的距离和左右两边一样。
-        let sidebar = self.layout.sidebar;
-        let room = sidebar.bottom() - (row.x - sidebar.x) - y;
+        let room = bottom - y;
         let w = row
             .w
             .clamp(GIT_PICKER_WIDTH.0, GIT_PICKER_WIDTH.1)
@@ -569,6 +612,9 @@ impl App {
 
     /// 点了选择面板里的 `part`。
     pub(in crate::app) fn press_picker_part(&mut self, part: PickerPart) {
+        if self.picker_filters_log() {
+            return;
+        }
         match part {
             PickerPart::More(row) => self.press_picker_more(row),
             PickerPart::Pull | PickerPart::Push | PickerPart::Fetch => {
@@ -625,9 +671,23 @@ impl App {
         self.picker.branch_rows.is_some()
     }
 
+    /// 从日志标题栏展开时，分支选择器只修改日志筛选条件。
+    pub(crate) fn picker_filters_log(&self) -> bool {
+        self.picker_lists_branches() && self.picker.anchor == GitAnchor::Log
+    }
+
+    /// 选择器底栏的高度；日志筛选没有新建入口。
+    pub(crate) fn git_picker_footer(&self) -> f32 {
+        if self.picker_filters_log() {
+            0.0
+        } else {
+            GIT_PICKER_FOOT
+        }
+    }
+
     /// 搜索框下面有没有拉取、推送、获取一行：列出分支时有。
     pub(crate) fn picker_has_actions(&self) -> bool {
-        self.picker_lists_branches()
+        self.picker_lists_branches() && !self.picker_filters_log()
     }
 
     /// 拉取、推送、获取（`part`）对应的 Git 操作：按住 ⌥ 时拉取是拉取并变基。
@@ -695,6 +755,18 @@ impl App {
         let plain = self.picker.input.text().is_empty()
             && rows.first() != Some(&BranchRow::Heading(BranchSection::Recent));
         let current = (plain.then(|| {
+            if self.picker_filters_log() {
+                let filter = self.log_branch_filter();
+                return rows.iter().position(|row| match row {
+                    BranchRow::All => filter.is_none(),
+                    BranchRow::Branch { index, .. } => self
+                        .git
+                        .branches
+                        .get(*index)
+                        .is_some_and(|b| filter == Some(b.name.as_str())),
+                    _ => false,
+                });
+            }
             rows.iter().position(|row| {
                 matches!(row, BranchRow::Branch { index, .. }
                     if self.git.branches.get(*index).is_some_and(|b| b.current))
@@ -755,6 +827,9 @@ impl App {
     }
 
     fn current_branch_rows(&self) -> Vec<BranchRow> {
+        if self.picker_filters_log() {
+            return log_branch_rows(&self.git.branches, self.picker.input.text());
+        }
         branch_rows(&BranchList {
             branches: &self.git.branches,
             recent: &self.git.recent_branches,
@@ -786,12 +861,27 @@ impl App {
         let row = (self.picker.branch_rows.as_ref())
             .and_then(|rows| rows.get(self.picker.selected))
             .cloned();
+        if self.picker_filters_log() {
+            let branch = match row {
+                Some(BranchRow::All) => None,
+                Some(BranchRow::Branch { index, .. }) => {
+                    let Some(branch) = self.git.branches.get(index) else {
+                        return;
+                    };
+                    Some(branch.name.clone())
+                }
+                _ => return,
+            };
+            self.close_picker();
+            self.change_log_query(|q| q.branch = branch);
+            return;
+        }
         match row {
             Some(BranchRow::Remotes { .. }) => self.toggle_branch_folder(true, String::new()),
             Some(BranchRow::Folder { remote, path, .. }) => self.toggle_branch_folder(remote, path),
             Some(BranchRow::Branch { index, .. }) => self.pick_branch(index),
             Some(BranchRow::Create(name)) => self.create_branch_from_picker(name, None),
-            Some(BranchRow::Heading(_)) | None => {}
+            Some(BranchRow::All | BranchRow::Heading(_)) | None => {}
         }
     }
 
@@ -860,7 +950,10 @@ impl App {
     /// 处理没有查询时的左右键：右键展开目录、打开分支的操作菜单，左键收起目录、回到上一级目录。
     /// 返回是否已处理；有查询时左右键移动输入框的光标。
     pub(in crate::app) fn branch_picker_side(&mut self, right: bool) -> bool {
-        if !self.picker_lists_branches() || !self.picker.input.text().is_empty() {
+        if !self.picker_lists_branches()
+            || self.picker_filters_log()
+            || !self.picker.input.text().is_empty()
+        {
             return false;
         }
         let Some(row) = (self.picker.branch_rows.as_ref())

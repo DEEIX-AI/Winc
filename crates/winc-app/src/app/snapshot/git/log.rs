@@ -628,6 +628,7 @@ fn shoot_log_graph() {
 
 #[test]
 fn log_filters_by_text_branch_and_author_and_shows_a_files_history() {
+    use crate::app::git::branch::picker::BranchRow;
     use crate::app::git::log::LogTarget;
     use crate::app::input::context_menu::{MenuCommand, MenuTarget};
 
@@ -635,6 +636,14 @@ fn log_filters_by_text_branch_and_author_and_shows_a_files_history() {
         return;
     };
     history_repo(&root, 10);
+    git_in(
+        &root,
+        &[
+            "update-ref",
+            "refs/remotes/origin/feature/login",
+            "feature/login",
+        ],
+    );
     app.git_refresh();
     show_all_log(&mut app);
     paint(&mut app);
@@ -665,16 +674,59 @@ fn log_filters_by_text_branch_and_author_and_shows_a_files_history() {
     });
     assert_eq!(subjects(&app).len(), 9);
 
-    // 按分支筛选（经分支菜单）：feature/login 上的五个提交，仍然绘制提交图。
+    // 按分支名搜索本地和远程分支。选择后只修改日志，工作树留在 main。
     paint(&mut app);
-    app.open_context_menu(MenuTarget::LogBranch, (0.0, 0.0));
-    let feature = app
-        .git
-        .branches
+    let (button, _) = *app
+        .hits
+        .log
         .iter()
-        .position(|b| b.name == "feature/login")
+        .find(|(_, target)| *target == LogTarget::Branch)
         .unwrap();
-    app.run_menu_command(MenuCommand::LogBranch(feature + 1));
+    click(&mut app, (button.x + 5.0, button.y + button.h / 2.0));
+    assert_eq!(app.focus, Focus::Picker);
+    app.edit_field(|f| f.insert("no-such-branch"));
+    assert!(app.picker.hits.is_empty());
+    app.picker_accept();
+    assert!(app.picker.open);
+    assert_eq!(app.log_branch_filter(), None);
+    app.edit_field(|f| {
+        f.set_text("LOGIN");
+        true
+    });
+    let branches: Vec<_> = app
+        .picker
+        .branch_rows
+        .as_ref()
+        .unwrap()
+        .iter()
+        .filter_map(|row| match row {
+            BranchRow::Branch { label, .. } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(branches, ["feature/login", "origin/feature/login"]);
+    paint(&mut app);
+    assert!(app.hits.picker_parts.is_empty());
+    app.picker_move(true);
+    app.picker_accept();
+    assert!(!app.picker.open);
+    assert_eq!(app.log_branch_filter(), Some("origin/feature/login"));
+    assert!(
+        app.git
+            .branches
+            .iter()
+            .any(|b| b.current && b.name == "main")
+    );
+
+    // 点击搜索结果也能选回本地分支；分支筛选后仍然绘制提交图。
+    paint(&mut app);
+    app.press_log(LogTarget::Branch);
+    app.edit_field(|f| f.insert("feature/login"));
+    paint(&mut app);
+    let parts = crate::app::workspace::picker::picker_parts(&app, app.layout.picker);
+    let row = parts.row(app.picker.selected, app.picker.scroll);
+    click(&mut app, (row.x + 40.0, row.y + row.h / 2.0));
+    assert_eq!(app.log_branch_filter(), Some("feature/login"));
     assert_eq!(subjects(&app).len(), 5);
     assert!(
         !app.editor
