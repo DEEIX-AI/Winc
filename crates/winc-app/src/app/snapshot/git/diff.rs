@@ -2157,3 +2157,49 @@ fn shoot_diff_whitespace() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 回归：差异标签自身没有路径，文件树按它对应的工作区文件定位。切回文件视图、切换到该标签、
+/// 点击「定位当前文件」都展开并选中该文件。
+#[test]
+fn a_diff_tab_is_located_in_the_file_tree_by_its_worktree_file() {
+    let dir = search_folder("git-diff-locate");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.run(winc_editor::Command::Insert("// 新的一行\n".into()));
+    assert!(app.run_action(Action::GitShowChanges));
+    let diff = app.editor.active.unwrap();
+    assert!(app.editor.documents[diff].path.is_none());
+    assert!(app.editor.documents[diff].diff.is_some());
+
+    // 每一步之前收起全部目录并清除选中，文件所在的目录需要重新展开。
+    let forget = |app: &mut App| {
+        let ws = app.editor.workspace.as_mut().unwrap();
+        ws.collapse_all();
+        ws.selected = None;
+    };
+    let located = |app: &App| {
+        let ws = app.editor.workspace.as_ref().unwrap();
+        ws.selected.map(|index| ws.rows()[index].name.to_string())
+    };
+
+    forget(&mut app);
+    app.set_sidebar_view(SidebarView::Search);
+    app.set_sidebar_view(SidebarView::Files);
+    assert_eq!(located(&app).as_deref(), Some("main.rs"));
+
+    forget(&mut app);
+    app.activate_tab(0);
+    app.activate_tab(diff);
+    assert_eq!(located(&app).as_deref(), Some("main.rs"));
+
+    forget(&mut app);
+    app.run_tree_tool(crate::app::TreeTool::Locate);
+    assert_eq!(located(&app).as_deref(), Some("main.rs"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

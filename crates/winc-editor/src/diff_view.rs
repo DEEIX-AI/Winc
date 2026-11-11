@@ -803,6 +803,13 @@ impl DiffView {
             .or(self.old.path.as_deref())
     }
 
+    /// 返回差异所对应的磁盘文件：右侧的文件，右侧的内容不来自磁盘时取左侧的文件。
+    ///
+    /// 两侧的内容都不来自磁盘时（历史版本之间的差异、已删除的文件）返回 `None`。
+    pub fn disk_path(&self) -> Option<&std::path::Path> {
+        self.new.path.as_deref().or(self.old.path.as_deref())
+    }
+
     /// 两侧是否没有改动；逐行比较时不区分换行符的写法，只有换行符不同时同样为 `true`。
     pub fn is_identical(&self) -> bool {
         self.hunks.is_empty()
