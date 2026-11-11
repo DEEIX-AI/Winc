@@ -24,14 +24,20 @@ impl App {
         if self.touch_intercepted() || self.settings.open || self.touch.active() {
             return Default::default();
         }
+        // 窗口过程只除以系统 DPI；布局区域需先乘应用缩放，与其输入坐标保持一致。
+        let zoom = self.zoom();
         crate::windows::WindowHitTest {
-            caption_height: TOP_BAR_END,
+            caption_height: TOP_BAR_END * zoom,
             resize_border: if self.window.controls {
-                crate::app::lifecycle::title_bar::RESIZE_EDGE
+                crate::app::lifecycle::title_bar::RESIZE_EDGE * zoom
             } else {
                 0.0
             },
-            client: self.caption_controls(),
+            client: self
+                .caption_controls()
+                .into_iter()
+                .map(|r| winc_render::Rect::new(r.x * zoom, r.y * zoom, r.w * zoom, r.h * zoom))
+                .collect(),
         }
     }
 
