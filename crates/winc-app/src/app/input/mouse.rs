@@ -512,12 +512,26 @@ impl App {
             // 按住 `Shift` 时，竖直滚轮用于横向滚动。
             let (dx, dy) = if shift_wheel { (dy, 0.0) } else { (dx, dy) };
 
+            let mut wanted = 0.0;
             if let Some(doc) = self.editor.active_mut() {
                 doc.scroll_line -= f64::from(dy / self.fonts.line_height);
-                doc.scroll_x -= dx;
+                // 展开的超长行可达数千万像素宽，`f32` 在该处的间隔大于一次滚动的距离：没有体现
+                // 在滚动位置上的部分留到下一次，不丢弃。
+                let x = f64::from(doc.scroll_x) - f64::from(dx) + self.wheel.carry_x;
+                doc.scroll_x = x as f32;
+                self.wheel.carry_x = x - f64::from(doc.scroll_x);
+                wanted = doc.scroll_x;
             }
 
             self.clamp_scroll();
+            // 到达两端后不再累计。
+            if self
+                .editor
+                .active()
+                .is_some_and(|doc| doc.scroll_x != wanted)
+            {
+                self.wheel.carry_x = 0.0;
+            }
         }
 
         self.request_redraw();
@@ -546,4 +560,6 @@ pub struct Wheel {
     pub(in crate::app) zooming: bool,
     /// 上一次触控板滚动事件的时刻，用于区分两次手势。
     pub(in crate::app) pixel_at: Option<Instant>,
+    /// 编辑区横向滚动中尚未体现在滚动位置上的距离（逻辑像素）。
+    pub(in crate::app) carry_x: f64,
 }

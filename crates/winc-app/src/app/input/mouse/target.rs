@@ -215,6 +215,7 @@ impl App {
             Target::Start(action) => Hover::Start(action),
             Target::Sticky(row) => Hover::Sticky(row.depth),
             Target::Folded(line) => Hover::Folded(line),
+            Target::LongLine(line) => Hover::LongLine(line),
             Target::Blame(line) => Hover::Blame(line),
             Target::ChangeMark(hunk) => Hover::ChangeMark(hunk),
             Target::Gutter => Hover::Gutter,
@@ -410,6 +411,9 @@ impl App {
         }
         if let Some(line) = self.folded_at(x, y) {
             return Target::Folded(line);
+        }
+        if let Some(line) = hit(&self.hits.long_lines, x, y) {
+            return Target::LongLine(line);
         }
         if let Some(line) = self.blame_at(x, y) {
             return Target::Blame(line);
@@ -711,7 +715,7 @@ impl App {
             && self.active_shows_text()
             && !matches!(
                 self.hover,
-                Hover::TreeRow(_) | Hover::Sticky(_) | Hover::Folded(_)
+                Hover::TreeRow(_) | Hover::Sticky(_) | Hover::Folded(_) | Hover::LongLine(_)
             )
             && self.layout.text.contains(x, y)
             && !self.layout.search.contains(x, y)
@@ -860,6 +864,8 @@ pub(super) enum Target {
     Sticky(crate::app::editor::sticky::StickyRow),
     /// 折叠处，参数为行号（从 0 起）。
     Folded(usize),
+    /// 超长行截断说明中的「显示整行」，参数为行号（从 0 起）。
+    LongLine(usize),
     /// 逐行追溯的标注，参数为行号（从 0 起）。
     Blame(usize),
     /// 行号栏上标出的改动，参数为改动块的序号。
