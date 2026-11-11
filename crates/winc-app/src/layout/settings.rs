@@ -121,6 +121,7 @@ impl SettingsPage {
                 plain(vec![
                     Setting::LineNumbers,
                     Setting::WordWrap,
+                    Setting::WholeLines,
                     Setting::Minimap,
                     Setting::StickyScroll,
                     Setting::RenderWhitespace,
@@ -255,6 +256,8 @@ pub enum Setting {
     StickyScroll,
     /// 自动换行。
     WordWrap,
+    /// 超长行显示全部内容（`wholeLines`）。
+    WholeLines,
     /// 编辑区右侧的缩略图。
     Minimap,
     /// 文件视图底部的大纲。
@@ -412,6 +415,7 @@ impl Setting {
             | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::WordWrap
+            | Setting::WholeLines
             | Setting::Minimap
             | Setting::Outline
             | Setting::LineNumbers
@@ -467,6 +471,7 @@ impl Setting {
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::WordWrap => t!("settings-word-wrap"),
+            Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
             Setting::LineNumbers => t!("settings-line-numbers"),
             Setting::DiffInline => t!("settings-diff-inline"),
@@ -530,6 +535,7 @@ impl Setting {
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
+            Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
             Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
@@ -583,6 +589,7 @@ impl Setting {
             | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::WordWrap
+            | Setting::WholeLines
             | Setting::Minimap
             | Setting::Outline
             | Setting::LineNumbers

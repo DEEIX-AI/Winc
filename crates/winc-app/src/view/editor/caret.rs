@@ -32,17 +32,32 @@ pub(super) fn cut_by(content: &str, cap: usize) -> bool {
 /// 大文件不换行时只需读取到右边缘：每个字符至少占 1 个显示列、最多 4 字节，另留 2 列余量。
 /// 一屏数十条超长行各按 [`MAX_LINE_BYTES`] 读取并解码，实测约占一帧的两成。其余情况
 /// （行在内存中，或换行、按列对齐需要更多字符）返回 `MAX_LINE_BYTES`。
+///
+/// 不换行时横向滚动到各行开头的 [`MAX_LINE_CHARS`] 个字符都在左边缘之外（`left` 是左边缘，
+/// 每个字符最多占 `tab_width` 或 2 个显示列）之后，屏幕上只有展开的超长行按列读取的部分：
+/// 此时只读取 [`HEAD_PROBE`] 字节，用于判断该行是否还有更多内容。
 pub(super) fn line_read_cap(
     doc: &winc_editor::Document,
     aligned: bool,
     (origin_x, right, cell): (f32, f32, f32),
+    (left, tab_width): (f32, usize),
 ) -> usize {
-    if !doc.is_large() || doc.is_wrapping() || aligned {
+    if doc.is_wrapping() || aligned {
+        return MAX_LINE_BYTES;
+    }
+    let head = (MAX_LINE_CHARS * tab_width.max(2)) as f32 * cell;
+    if left - origin_x > head {
+        return HEAD_PROBE;
+    }
+    if !doc.is_large() {
         return MAX_LINE_BYTES;
     }
     let cols = ((right - origin_x) / cell).ceil().max(0.0) as usize;
     ((cols + 2) * 4).min(MAX_LINE_BYTES)
 }
+
+/// 各行的开头都已滚出屏幕时逐行读取的字节数（字节），见 [`line_read_cap`]。
+const HEAD_PROBE: usize = 64;
 
 /// 返回只保留 `len` 个字符之内的断点的 `breaks`。
 ///
@@ -229,12 +244,12 @@ pub(super) fn draw_selection(
     let text = doc.text();
     // 选区在文本区右边缘之外的部分不可见，各行只读取到右边缘（见 `line_read_cap`）。
     let span = (origin_x, app.layout.text.right(), app.cell);
-    let cap = line_read_cap(doc, columns.is_some(), span);
     let (cell, tab_width, clip) = (
         app.cell,
         doc.tab_width(app.editor.tab_width),
         app.layout.text,
     );
+    let cap = line_read_cap(doc, columns.is_some(), span, (clip.x, tab_width));
     let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
         return;
     };
@@ -275,13 +290,17 @@ pub(super) fn draw_selection(
                     let to = selection.to().min(line_end) - line_start;
                     c.layout(slice, tab_width, to, &mut cells, None);
                 }
+                // 显示整行的超长行：选区可以超出读到的开头部分，按列索引换算。
+                let whole = truncated && doc.shows_whole_line(line);
                 let x_of = |pos: usize| {
                     let col = pos - line_start;
                     let cells = match columns {
                         Some(_) => cells[col.min(cells.len() - 1)],
+                        None if whole => doc.col_to_cell(line, col, tab_width),
                         None => text::col_to_cell(slice, col, tab_width),
                     };
-                    origin_x + cells as f32 * cell
+                    // 展开的行可达数百万列，按 `f64` 相加。
+                    (f64::from(origin_x) + cells as f64 * f64::from(cell)) as f32
                 };
                 let x0 = x_of(selection.from().max(line_start));
                 let mut x1 = x_of(selection.to().min(line_end));

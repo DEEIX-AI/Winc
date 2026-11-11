@@ -462,6 +462,8 @@ pub enum Hover {
     Gutter,
     /// 已折叠行末尾的 `⋯`，参数是行号（从 0 起）。
     Folded(usize),
+    /// 超长行截断说明中的「显示整行」，参数是行号（从 0 起）。
+    LongLine(usize),
     /// 滚动条的可点击区域。
     Scrollbar(Scrollbar),
     /// 提示条上的按钮。

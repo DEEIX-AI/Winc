@@ -136,10 +136,10 @@ pub(super) fn draw_minimap(app: &mut App, frame: &mut Frame<'_>, index: usize) {
                     chars.clear();
                     chars.extend(content.slice().chars().take(MAX_LINE_CHARS + 1));
                     // 超过 `MAX_LINE_CHARS` 个字符或只读取了前若干列（见 `cap`）的行
-                    // 不改变下一行的状态；后者只需着色已读取的列。
+                    // 不改变下一行的状态，只需着色缩略图显示的列。
                     let cut = cap < MAX_LINE_BYTES && chars.len() > columns;
                     let long = cut || chars.len() > MAX_LINE_CHARS;
-                    chars.truncate(if cut { columns } else { MAX_LINE_CHARS });
+                    chars.truncate(if long { columns } else { MAX_LINE_CHARS });
                     let next =
                         app.highlight_cached(doc, line, language, &chars, state, &mut tokens);
                     let mut row = CachedRow {

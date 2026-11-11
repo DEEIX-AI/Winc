@@ -50,10 +50,11 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         .folds()
         .segments(first_row, rows, doc.text().line_count());
     // CSV 按列对齐时需要每一列的起始位置。
-    let columns = doc.columns(doc.tab_width(app.editor.tab_width));
+    let tab_width = doc.tab_width(app.editor.tab_width);
+    let columns = doc.columns(tab_width);
     let origin_x = layout.text.x + TEXT_PAD - doc.scroll_x;
     let span = (origin_x, layout.text.right(), app.cell);
-    let read_cap = line_read_cap(doc, columns.is_some(), span);
+    let read_cap = line_read_cap(doc, columns.is_some(), span, (layout.text.x, tab_width));
     let states: Vec<Option<LineState>> = segments
         .iter()
         .map(|range| {
@@ -233,6 +234,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     app.hits.merge = merge_hits;
 
     app.hits.folded = scratch.folded_hits;
+    app.hits.long_lines = scratch.long_hits;
     draw_sticky(app, frame, index);
     minimap::draw_minimap(app, frame, index);
     // 滚动条绘制在固定行的上层，使滚动条从上到下是完整的一条。
@@ -310,6 +312,9 @@ struct Screen<'a> {
     blame_hover: Option<u32>,
 }
 
+/// 行尾可点击的区域及其所在的行。
+type LineHits = Vec<(Rect, usize)>;
+
 /// 逐行绘制时复用的缓冲区，以及从各行收集的结果。
 struct Scratch {
     chars: Vec<char>,
@@ -321,7 +326,9 @@ struct Scratch {
     /// 上一个非空行的缩进（单元格）；空行按该缩进绘制缩进参考线。
     guide_indent: usize,
     /// 折叠行之后的小块及其所在的行，点击小块后展开。
-    folded_hits: Vec<(Rect, usize)>,
+    folded_hits: LineHits,
+    /// 截断说明中「显示整行」的位置及其所在的行。
+    long_hits: LineHits,
     /// 主光标的位置；输入法候选框跟随该位置。
     ime_cursor: Option<Rect>,
 }
@@ -336,6 +343,7 @@ impl Scratch {
             number: String::new(),
             guide_indent: 0,
             folded_hits: Vec::new(),
+            long_hits: Vec::new(),
             ime_cursor: None,
         }
     }
@@ -345,7 +353,8 @@ impl Scratch {
 ///
 /// 按整行断开的长行只取屏幕上可见的若干段（行内窗口，见 `Document::line_window`）：此时
 /// `line_start`、`chars`、`breaks`、`y` 等均以窗口开头为准，`origin`、`first_part` 给出窗口在
-/// 整行中的位置。其他行的窗口即整行。
+/// 整行中的位置。不换行时显示整行的超长行只取可见的列（`Document::long_line_span`），`base`
+/// 给出这些字符之前的显示列数。其他行的窗口即整行。
 struct Row<'r> {
     line: usize,
     /// 整行行首的字符偏移。
@@ -356,6 +365,12 @@ struct Row<'r> {
     /// `chars` 的第一段在整行中的段号（从 0 起），以及 `chars` 是否到行尾为止。
     first_part: usize,
     ends: bool,
+    /// 只有一段时第 0 个单元格的 x 坐标，以及 `chars` 的第一个字符所在的单元格。
+    ///
+    /// 只取可见列的超长行以 `chars` 之前最近的制表位为第 0 格：制表符的宽度不变，坐标也不必由
+    /// 数千万像素之外的行首算起（`f32` 在该量级上只能精确到几个像素）。其他行即行首和 0。
+    x0: f32,
+    base: usize,
     /// `chars` 第一段的顶边和基线。
     y: f32,
     baseline: f32,
@@ -376,8 +391,8 @@ struct Row<'r> {
     aligned: Option<(&'r [usize], &'r [usize], char)>,
     /// 本行是否已折叠。
     collapsed: bool,
-    /// 第 `i` 项是前 `i` 个字符占用的单元格数；首次使用时计算（见 `Screen::place`），
-    /// 一行中的标记无论多少只计算一次。
+    /// 第 `i` 项是 `chars` 的前 `i` 个字符末尾所在的单元格（含 `base`）；首次使用时计算
+    /// （见 `Screen::place`），一行中的标记无论多少只计算一次。
     prefix: std::cell::OnceCell<Vec<usize>>,
 }
 
