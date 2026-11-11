@@ -3275,6 +3275,10 @@ name = "winc-version"
 version = "0.0.0"
 
 [[package]]
+name = "winc-vim"
+version = "0.0.0"
+
+[[package]]
 name = "winc-watch"
 version = "0.0.0"
 dependencies = [
@@ -3707,6 +3711,7 @@ dependencies = [
  "winc-config",
  "winc-preview",
  "winc-version",
+ "winc-vim",
 ]
 
 [[package]]

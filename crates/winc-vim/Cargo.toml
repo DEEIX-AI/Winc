@@ -1,0 +1,12 @@
+[package]
+name = "winc-vim"
+description = "Vim 模式的无界面部分：按键记法、命令表、命令解析。无 IO、无线程。"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
