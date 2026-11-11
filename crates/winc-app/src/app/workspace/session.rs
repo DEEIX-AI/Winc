@@ -302,7 +302,7 @@ impl App {
     /// 记录当前目录的现场。
     ///
     /// 内容包括：有路径且仍在磁盘上的标签、有备份的未保存内容、书签、折叠的块、大纲里收起的
-    /// 符号，以及当前标签。
+    /// 符号、各 PDF 文件的阅读位置，以及当前标签。
     pub(in crate::app) fn remember_session(&mut self) {
         let Some(folder) = self.editor.root().map(Path::to_path_buf) else {
             return;
@@ -331,6 +331,7 @@ impl App {
             .collect();
         let outline = self.outline_session(&folder);
         let folds = self.editor.all_folds().into_iter().collect();
+        let pdf_places = self.pdf_session(&folder);
         self.update_state(|state| {
             state.set_session(Session {
                 folder,
@@ -339,6 +340,7 @@ impl App {
                 bookmarks,
                 outline,
                 folds,
+                pdf_places,
                 terminal,
                 run,
                 sidebar_hidden,
