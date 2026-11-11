@@ -83,12 +83,9 @@ pub(super) fn draw_minimap(app: &mut App, frame: &mut Frame<'_>, index: usize) {
 
     // 光标所在行的底色绘制在代码下方，标出光标的位置。
     let caret = doc.row_of(doc.text().line_of(doc.selection.head));
-    let caret = Rect::new(
-        area.x,
-        area.y + (caret as f32 - first as f32) * MINIMAP_ROW,
-        area.w,
-        STROKE,
-    );
+    // 行号先相减再转为 `f32`：超过 2²⁴ 的行号 `f32` 无法逐一表示。
+    let row_y = |row: usize| area.y + (row as f64 - first as f64) as f32 * MINIMAP_ROW;
+    let caret = Rect::new(area.x, row_y(caret), area.w, STROKE);
     frame.rect_clipped(caret, p.accent.alpha(p.accent.a * 0.5), 0.0, area);
 
     let columns = ((area.w - PAD) / CELL) as usize;
@@ -101,7 +98,6 @@ pub(super) fn draw_minimap(app: &mut App, frame: &mut Frame<'_>, index: usize) {
         MAX_LINE_BYTES
     };
     let (mut chars, mut tokens) = (Vec::new(), Vec::new());
-    let row_y = |row: usize| area.y + (row as f32 - first as f32) * MINIMAP_ROW;
     let stroke = |frame: &mut Frame<'_>, y: f32, cells: std::ops::Range<usize>, kind| {
         let color = p.token(kind);
         let rect = Rect::new(

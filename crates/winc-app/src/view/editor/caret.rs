@@ -3,9 +3,12 @@
 use super::*;
 
 /// 返回 `y` 处开始、共 `rows` 段的一行中与 `clip` 相交的段（左闭右开）；`lh` 是行高。
-pub(super) fn visible_parts(y: f32, rows: usize, clip: Rect, lh: f32) -> Range<usize> {
-    let first = ((clip.y - y) / lh).floor().max(0.0) as usize;
-    let end = ((clip.bottom() - y) / lh).ceil().max(0.0) as usize;
+///
+/// `y` 为 `f64`：长行的第一段可在屏幕之外数亿像素处，`f32` 分辨不出其中的各段。
+pub(super) fn visible_parts(y: f64, rows: usize, clip: Rect, lh: f32) -> Range<usize> {
+    let lh = f64::from(lh);
+    let first = ((f64::from(clip.y) - y) / lh).floor().max(0.0) as usize;
+    let end = ((f64::from(clip.bottom()) - y) / lh).ceil().max(0.0) as usize;
     first.min(rows)..end.min(rows)
 }
 
@@ -94,7 +97,7 @@ pub(super) fn draw_wrapped_selection(
     selection: Selection,
     segments: &[Range<usize>],
     origin_x: f32,
-    row_y: &dyn Fn(usize) -> f32,
+    row_y: &dyn Fn(usize) -> f64,
 ) {
     let doc = app.editor.active().expect("调用方保证有当前文档");
     let text = doc.text();
@@ -172,7 +175,7 @@ pub(super) fn draw_wrapped_selection(
                     }
                     (x0, x1.max(x0 + 1.0))
                 });
-                rows.push((y + whole_part as f32 * lh, span));
+                rows.push(((y + whole_part as f64 * f64::from(lh)) as f32, span));
             }
             ControlFlow::Continue(())
         });

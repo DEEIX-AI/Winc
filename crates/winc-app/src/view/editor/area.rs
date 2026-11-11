@@ -203,7 +203,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
 
         // 动画中变化的行：位置不变，只显示动画已展开的部分；起始行的箭头随进度旋转。
         let curtain = motion_ref.map(|m| {
-            let top = screen.top_of(m.rows.start);
+            let top = screen.top_of(m.rows.start) as f32;
             let h = m.rows.len() as f32 * lh - hidden;
             Rect::new(layout.editor.x, top, layout.editor.w, h.max(0.0))
         });
@@ -407,18 +407,33 @@ impl Screen<'_> {
     }
 
     /// 显示行 `row` 的顶边，不计动画中收起的高度。
-    fn top_of(&self, row: usize) -> f32 {
-        self.text_rect.y + (row as f32 - self.first_row as f32) * self.lh - self.offset
+    ///
+    /// 按 `f64` 计算：显示行号可超过 2²⁴，`f32` 无法逐一表示。
+    fn top_of(&self, row: usize) -> f64 {
+        let rows = row as f64 - self.first_row as f64;
+        f64::from(self.text_rect.y) + rows * f64::from(self.lh) - f64::from(self.offset)
     }
 
     /// 行 `line` 第一段的顶边。
-    fn row_y(&self, line: usize) -> f32 {
+    ///
+    /// 长行的第一段可在屏幕之外数亿像素处，加上段的偏移之后才能转为 `f32`（见 [`Self::part_y`]）。
+    fn line_y(&self, line: usize) -> f64 {
         let row = self.doc.row_of(line);
         let shift = match self.motion {
             Some(m) if row >= m.rows.end => self.hidden,
             _ => 0.0,
         };
-        self.top_of(row) - shift
+        self.top_of(row) - f64::from(shift)
+    }
+
+    /// [`Self::line_y`] 转为 `f32`，用于第一段在屏幕附近的行。
+    fn row_y(&self, line: usize) -> f32 {
+        self.line_y(line) as f32
+    }
+
+    /// 行 `line` 第 `part` 段的顶边。
+    fn part_y(&self, line: usize, part: usize) -> f32 {
+        (self.line_y(line) + part as f64 * f64::from(self.lh)) as f32
     }
 
     /// 行 `line` 是否属于动画中变化的行。
@@ -506,7 +521,7 @@ impl Screen<'_> {
             let line = h.new.start.min(text.line_count() - 1);
             if self.shown(line) {
                 let y = if h.new.start > line {
-                    self.row_y(line) + self.doc.rows_of(line) as f32 * self.lh
+                    self.part_y(line, self.doc.rows_of(line))
                 } else {
                     self.row_y(line)
                 };
@@ -569,18 +584,15 @@ impl Screen<'_> {
             return;
         }
         let editor = self.editor;
-        let row = Rect::new(
-            editor.x + 6.0,
-            self.row_y(line) + part as f32 * self.lh,
-            editor.w - 12.0,
-            self.lh,
-        );
+        let y = self.part_y(line, part);
+        let row = Rect::new(editor.x + 6.0, y, editor.w - 12.0, self.lh);
         frame.rect_clipped(row, self.app.palette.current_line, RADIUS_ROW, editor);
     }
 
     /// 绘制主选区和其余选区。
     fn draw_selections(&self, frame: &mut Frame<'_>) {
         let row_y = |line: usize| self.row_y(line);
+        let line_y = |line: usize| self.line_y(line);
         for &selection in std::iter::once(&self.selection).chain(self.extra) {
             if selection.is_empty() {
                 continue;
@@ -588,7 +600,7 @@ impl Screen<'_> {
             let (app, segments, columns, origin_x) =
                 (self.app, self.segments, self.columns, self.origin_x);
             if self.doc.is_wrapping() {
-                draw_wrapped_selection(app, frame, selection, segments, origin_x, &row_y);
+                draw_wrapped_selection(app, frame, selection, segments, origin_x, &line_y);
             } else {
                 draw_selection(app, frame, selection, segments, columns, origin_x, &row_y);
             }

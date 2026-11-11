@@ -987,3 +987,33 @@ fn wrapped_long_lines_cut_inside_a_character_draw_every_part() {
     paint(&mut app);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 回归：显示行号超过 2²⁴（`f32` 无法逐一表示）时，相邻的行仍各占一行，行号不重叠。
+#[test]
+fn lines_past_sixteen_million_rows_each_take_their_own_row() {
+    let dir = sample_folder("rows-past-f32");
+    let path = dir.join("lines.txt");
+    let lines = (1usize << 24) + 100_000;
+    std::fs::write(&path, "\n".repeat(lines)).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+    // 从一个奇数行开始显示：按 `f32` 换算时奇数行并入相邻的偶数行。
+    app.editor.active_mut().unwrap().scroll_line = ((1 << 24) + 50_001) as f64;
+    paint(&mut app);
+
+    let (gutter, text, lh) = (app.layout.gutter, app.layout.text, app.fonts.line_height);
+    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let width = image.width as usize;
+    let px = |v: f32| (v * SCALE) as usize;
+    // 行号栏中每一行都画有行号。
+    for row in 0..8 {
+        let top = text.y + row as f32 * lh;
+        let background = image.pixels[px(top + 1.0) * width + px(gutter.x + 1.0)];
+        let ink = (px(top + 1.0)..px(top + lh - 1.0))
+            .flat_map(|y| &image.pixels[y * width + px(gutter.x)..y * width + px(gutter.right())])
+            .filter(|&&p| p != background)
+            .count();
+        assert!(ink > 0, "第 {row} 行没有行号");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

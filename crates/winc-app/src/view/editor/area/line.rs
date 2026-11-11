@@ -34,12 +34,11 @@ impl Screen<'_> {
             ime_cursor,
         } = scratch;
         let (text_rect, lh) = (self.text_rect, self.lh);
-        let y = self.row_y(line);
-        let baseline = baseline_in(
-            Rect::new(text_rect.x, y, text_rect.w, lh),
-            self.app.mono_metrics.ascent,
-            self.app.mono_metrics.descent,
-        );
+        // 第一段的顶边和基线按 `f64` 计算（见 `Screen::line_y`），基线的算法同 `baseline_in`。
+        let y = self.line_y(line);
+        let metrics = self.app.mono_metrics;
+        let lead = (lh - (metrics.ascent + metrics.descent)) / 2.0 + metrics.ascent;
+        let baseline = (y + f64::from(lead)).round();
         // `head` 为行首最多 `MAX_LINE_CHARS` 个字符：着色只处理这一部分，多数行的内容全在其中。
         chars.clear();
         chars.extend(content.chars().take(MAX_LINE_CHARS + 1));
@@ -66,8 +65,9 @@ impl Screen<'_> {
         let (first_part, first_col, ends) =
             (window.as_deref()).map_or((0, 0, true), |w| (w.part, w.col, w.ends));
         let slice = RopeSlice::from(slice);
-        let top = y + first_part as f32 * lh;
-        let parts = visible_parts(top, breaks.rows(), text_rect, lh);
+        let down = first_part as f64 * f64::from(lh);
+        let top = (y + down) as f32;
+        let parts = visible_parts(f64::from(top), breaks.rows(), text_rect, lh);
 
         let start = line_start + first_col;
         let line_end = line_end(self.doc.text(), line, start, chars.len(), truncated);
@@ -83,7 +83,8 @@ impl Screen<'_> {
         // 只有一段的行仅上半部分滚出，最后一段只显示下半部分时同理，两种情况下行号都不得与
         // 下一行的行号重叠。
         let gutter_rows = rows.max(first_part + breaks.rows());
-        let gutter_shift = (text_rect.y - y).clamp(0.0, (gutter_rows - 1) as f32 * lh);
+        let gutter_room = (gutter_rows - 1) as f64 * f64::from(lh);
+        let gutter_shift = (f64::from(text_rect.y) - y).clamp(0.0, gutter_room);
         let row = Row {
             line,
             origin: line_start,
@@ -92,9 +93,9 @@ impl Screen<'_> {
             first_part,
             ends,
             y: top,
-            baseline: baseline + first_part as f32 * lh,
-            gutter_y: y + gutter_shift,
-            gutter_baseline: baseline + gutter_shift,
+            baseline: (baseline + down) as f32,
+            gutter_y: (y + gutter_shift) as f32,
+            gutter_baseline: (baseline + gutter_shift) as f32,
             slice,
             head: RopeSlice::from(content),
             chars,
