@@ -171,6 +171,10 @@ editor-vim-unsupported = This command isn’t supported in Vim mode yet
 editor-vim-too-large = Too much text involved; nothing was done
 editor-vim-register-empty = Register { $name } is empty
 editor-vim-register-read-only = Register { $name } can’t be written
+editor-vim-not-found = Pattern not found
+editor-vim-bad-pattern = Unsupported item at character { $column } of the pattern
+editor-vim-no-search = No previous search
+editor-vim-no-mark = Mark { $name } is not set
 
 ## Copy and paste.
 

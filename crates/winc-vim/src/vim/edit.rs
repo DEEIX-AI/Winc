@@ -4,7 +4,7 @@ use winc_core::{Change, Lines};
 
 use super::operate::content_of;
 use super::{MAX_OUTPUT, Shared, Vim, VisualKind};
-use crate::command::Action;
+use crate::command::{Action, Operator};
 use crate::host::{Host, Message};
 use crate::operator::{self, Region};
 use crate::parser::Command;
@@ -37,6 +37,45 @@ impl Vim {
         if let Some(visual) = self.visual {
             // 选区中换行符之外的每个字符各替换一次。
             let linewise = visual.kind == VisualKind::Line;
+            let to_end = self.want == crate::motion::Want::End;
+            if visual.kind == VisualKind::Block {
+                // 按块：块在各行上的字符各替换一次。
+                let block = super::block::block_of(host, visual, to_end, self.columns.take());
+                let rows = super::block::rows_of(host, block);
+                let Some(top) = rows.first().copied() else {
+                    return;
+                };
+                if with == '\r' {
+                    host.message(Message::Unsupported);
+                    return;
+                }
+                let changes: Vec<Change> = (rows.iter().rev())
+                    .filter(|row| row.from < row.to)
+                    .map(|row| {
+                        let old = host.text().substring(row.from, row.to);
+                        Change {
+                            start: row.from,
+                            inserted: replaced(&old, with),
+                            removed: old,
+                        }
+                    })
+                    .collect();
+                let extent = super::Extent {
+                    kind: VisualKind::Block,
+                    lines: block.last - block.first + 1,
+                    cells: if to_end {
+                        usize::MAX
+                    } else {
+                        block.right - block.left + 1
+                    },
+                };
+                self.end_visual(host);
+                if self.edit(host, changes, top.from, block.first) {
+                    self.remember(shared, command, Some(extent));
+                }
+                self.settle(host, top.from);
+                return;
+            }
             let range = operator::visual_region(host, visual.anchor, visual.cursor, linewise, true);
             let text = host.text();
             let (from, to) = match range.region {
@@ -49,9 +88,8 @@ impl Vim {
             }
             let old = text.substring(from, to);
             let new = replaced(&old, with);
-            let to_end = self.want == crate::motion::Want::End;
             let extent = super::operate::extent_of(host, visual, linewise, to_end);
-            self.end_visual();
+            self.end_visual(host);
             let change = Change {
                 start: from,
                 removed: old,
@@ -125,7 +163,7 @@ impl Vim {
             return;
         }
         let old = text.substring(cursor, end);
-        let new = operator::recased(&old, crate::command::Operator::ToggleCase);
+        let new = operator::recased(&old, Operator::ToggleCase);
         let line = text::line_of(text, cursor);
         let changes = if old == new {
             Vec::new()
@@ -183,6 +221,15 @@ impl Vim {
         }
         let Some(content) = Self::read_register(shared, host, command.register) else {
             host.message(Message::EmptyRegister(command.register.unwrap_or('"')));
+            // 可视模式下寄存器为空时，选区仍被删除。
+            if self.visual.is_some() {
+                let command = Command {
+                    register: None,
+                    ..command
+                };
+                let target = crate::parser::Target::Selection;
+                self.operate(shared, host, command, Operator::Delete, target, None);
+            }
             return;
         };
         // 每次重复至少占一个换行符，空的内容同样受次数的限制。
@@ -212,6 +259,13 @@ impl Vim {
         let cursor = self.caret(host);
         let line = text::line_of(text, cursor);
         match content.kind {
+            Kind::Blockwise(width) => {
+                let Some((first, after)) = self.paste_block(host, &content, width, count, before)
+                else {
+                    return;
+                };
+                self.settle(host, if stay_after { after } else { first });
+            }
             Kind::Charwise => {
                 let at = if before {
                     cursor
@@ -267,6 +321,13 @@ impl Vim {
                 if !self.edit(host, vec![change], cursor, first) {
                     return;
                 }
+                let (from, to) = {
+                    let text = host.text();
+                    let last = (first + added - 1).min(text::last_line(text));
+                    (text.line_start(first), text::last_char(text, last))
+                };
+                host.set_mark('[', from);
+                host.set_mark(']', to);
                 let text = host.text();
                 let pos = if stay_after {
                     // 光标放在粘贴内容之后一行的行首；粘贴内容在末尾时放在其最后一行。
@@ -319,7 +380,8 @@ impl Vim {
         visual: super::Visual,
         keep_registers: bool,
     ) {
-        let linewise = visual.kind == VisualKind::Line;
+        // 按块的选区按其覆盖的整行处理。
+        let linewise = visual.kind != VisualKind::Char;
         let range = operator::visual_region(host, visual.anchor, visual.cursor, linewise, false);
         let text = host.text();
         let (from, to) = match range.region {
@@ -336,7 +398,7 @@ impl Vim {
         let piece = content.text.replace('\n', &ending);
         // 选区与寄存器的类型不同时，寄存器的内容单独成行。
         let (inserted, cursor) = match (linewise, content.kind) {
-            (false, Kind::Charwise) => {
+            (false, Kind::Charwise | Kind::Blockwise(_)) => {
                 let inserted = piece.repeat(count);
                 let length = inserted.chars().count();
                 let cursor = if content.text.contains('\n') || length == 0 {
@@ -352,17 +414,17 @@ impl Vim {
             }
             (true, _) => (vec![piece; count].join(&ending), None),
         };
-        self.end_visual();
         let change = Change {
             start: from,
             removed: text.substring(from, to),
             inserted,
         };
+        self.end_visual(host);
         if !self.edit(host, vec![change], range.start, range.first) {
             return;
         }
         if !keep_registers {
-            let numbered = replaced.kind == Kind::Linewise;
+            let numbered = replaced.kind != Kind::Charwise;
             let source = Source::Delete { numbered };
             Self::write_register(shared, host, None, replaced, source);
         }

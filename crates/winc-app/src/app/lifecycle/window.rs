@@ -568,7 +568,7 @@ impl App {
         // 高亮状态尚未推算完、大文件尚未搜完时，马上绘制下一帧，不按刷新率等：每帧本身有预算
         // （高亮 `HIGHLIGHT_BUDGET` 行、查找一个 8 ms 的时间片），已经不比刷新间隔短，按刷新率
         // 等反而常常错过一次刷新。
-        let searching = self.find.open || self.find.pending_jump.is_some();
+        let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
         self.dirty |= self.highlight_pending || (searching && !self.search.is_complete());
         // 终端查找同样按时间片进行：这一帧之后再找一个时间片，没找完就马上绘制下一帧。
         self.dirty |= self.terminal_find_tick();

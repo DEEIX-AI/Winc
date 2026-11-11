@@ -12,7 +12,7 @@ use crate::text::{self, Scan, Step};
 
 /// 第 `line` 行是否为段落或节的边界：空行（`mark` 为 `None`）或以 `mark` 开头的行，以及换页符
 /// 开头的行；`both` 为真时第一列是 `}` 的行也算。
-fn boundary(text: &impl Lines, line: usize, mark: Option<char>, both: bool) -> bool {
+pub(crate) fn boundary(text: &impl Lines, line: usize, mark: Option<char>, both: bool) -> bool {
     let content = text.line_prefix(line, 4);
     let first = content.slice().get_char(0);
     match first {
@@ -126,11 +126,32 @@ fn closes(c: Option<char>) -> bool {
 /// `(`、`)`：上一个或下一个句子的开头。
 pub(super) fn sentence<H: Host>(env: &Env<'_, H>, forward: bool) -> Option<Moved> {
     let text = env.host.text();
-    let mut scan = Scan::new(text, env.from);
-    let step = |scan: &mut Scan<'_, H::Text>| {
+    let mut scan = Scan::new(text, find_sentence(text, env.from, forward, env.steps())?);
+    // 目标落在行尾时退到最后一个字符，并改为包含终点。
+    let mut span = Span::Exclusive;
+    if scan.col > 0 && scan.char().is_none() && !env.visual {
+        scan.dec();
+        span = Span::Inclusive;
+    }
+    Some(Moved {
+        numbered: true,
+        ..Moved::new(scan.pos(), span)
+    })
+}
+
+/// 返回从 `from` 向后（`forward` 为真）或向前第 `count` 个句子开头的位置，可以落在行尾。
+///
+/// 次数未用完就到达文本的开头或末尾时返回 `None`。
+pub(crate) fn find_sentence<T: Lines>(
+    text: &T,
+    from: usize,
+    forward: bool,
+    count: usize,
+) -> Option<usize> {
+    let mut scan = Scan::new(text, from);
+    let step = |scan: &mut Scan<'_, T>| {
         if forward { scan.incl() } else { scan.decl() }
     };
-    let count = env.steps();
     for remaining in (0..count).rev() {
         let mut skip_blanks = true;
         'found: {
@@ -230,14 +251,5 @@ pub(super) fn sentence<H: Host>(env: &Env<'_, H>, forward: bool) -> Option<Moved
         }
     }
 
-    // 目标落在行尾时退到最后一个字符，并改为包含终点。
-    let mut span = Span::Exclusive;
-    if scan.col > 0 && scan.char().is_none() && !env.visual {
-        scan.dec();
-        span = Span::Inclusive;
-    }
-    Some(Moved {
-        numbered: true,
-        ..Moved::new(scan.pos(), span)
-    })
+    Some(scan.pos())
 }

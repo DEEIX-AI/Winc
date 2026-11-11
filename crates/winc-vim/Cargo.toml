@@ -12,6 +12,8 @@ homepage.workspace = true
 winc-core.workspace = true
 
 [dev-dependencies]
+fancy-regex.workspace = true
+regex.workspace = true
 ropey.workspace = true
 
 [lints]

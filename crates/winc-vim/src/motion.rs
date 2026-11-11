@@ -3,8 +3,8 @@
 //! 求值只读文本，不移动光标。目标位置可以落在行尾（最后一个字符之后），由调用方按所在的
 //! 模式收拢。按词、按句、按段与括号配对的动作分别在子模块中。
 
-mod block;
-mod pair;
+pub(crate) mod block;
+pub(crate) mod pair;
 mod word;
 
 use winc_core::Lines;
@@ -413,6 +413,17 @@ pub(crate) fn evaluate<H: Host>(
             }
             pos.map(|pos| Moved::new(pos, Span::Exclusive))
         }
+        // 查找与标记由状态机求值。
+        Motion::SearchForward
+        | Motion::SearchBackward
+        | Motion::SearchNext
+        | Motion::SearchPrevious
+        | Motion::SearchWordForward
+        | Motion::SearchWordBackward
+        | Motion::SearchPartForward
+        | Motion::SearchPartBackward
+        | Motion::Mark
+        | Motion::MarkLine => None,
     }
 }
 

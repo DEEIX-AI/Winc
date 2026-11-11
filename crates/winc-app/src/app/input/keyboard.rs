@@ -494,6 +494,23 @@ impl App {
     /// 处理跳转条和文件树「输入名字」行中的按键。
     fn on_key_prompt(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
         let name_input = self.name_input.is_some();
+        // Vim 模式下查找模式的输入条：`Esc` 与在空的输入框中退格放弃输入，上下键翻阅历史。
+        let vim_search = matches!(self.prompt_kind, crate::app::PromptKind::VimSearch { .. });
+        if !name_input && vim_search {
+            let empty = (self.goto_input.as_ref()).is_none_or(|field| field.text().is_empty());
+            match &event.logical_key {
+                Key::Named(NamedKey::Escape) => {}
+                Key::Named(NamedKey::Backspace) if empty => {}
+                Key::Named(NamedKey::Enter) => return self.submit_prompt(),
+                Key::Named(NamedKey::ArrowUp) => return self.edit_field(|f| f.recall(true)),
+                Key::Named(NamedKey::ArrowDown) => return self.edit_field(|f| f.recall(false)),
+                _ => return self.on_key_field(event, base, cmd),
+            }
+            self.close_prompt();
+            self.focus = Focus::Editor;
+            self.vim_prompt_cancel();
+            return;
+        }
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {

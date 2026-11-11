@@ -4,16 +4,25 @@
 //! 查找）。按键经解析器得到命令，命令在 [`Host`] 提供的文本上求值，修改与选区交给宿主应用。
 //! 插入模式中的输入由宿主执行，经 [`Vim::typed`] 记录，供次数与点重复重放。
 
+mod block;
 mod edit;
 mod insert;
+mod marks;
+mod multi;
+mod number;
 mod operate;
+mod search;
+mod view;
+
+pub use search::Prompt;
 
 use winc_core::{Change, Lines, Selection, movement};
 
-use crate::command::{Action, Mode};
+use crate::command::{Action, Mode, Motion, Operator, TextObject};
 use crate::host::{Host, Input, Message};
 use crate::key::{Code, Key, Mods, Named};
-use crate::motion::{self, Env, Find, Want, WantUpdate};
+use crate::motion::{self, Env, Find, Moved, Want, WantUpdate};
+use crate::object::{self, At, Becomes};
 use crate::parser::{Body, Command, Movement, Outcome, Parser};
 use crate::register::{Clipboard, Content, Kind, Registers, Source};
 use crate::text;
@@ -30,6 +39,8 @@ pub enum VisualKind {
     Char,
     /// 按行。
     Line,
+    /// 按块。
+    Block,
 }
 
 /// 可视模式的选区：两端字符的位置。
@@ -50,8 +61,8 @@ struct Extent {
     kind: VisualKind,
     /// 覆盖的行数，不小于 1。
     lines: usize,
-    /// 只有一行时为覆盖的显示列数；多行时为末行上选区终点的显示列；`usize::MAX` 表示选区
-    /// 延伸到末行的行尾（含换行符）。
+    /// 只有一行时为覆盖的显示列数；多行时为末行上选区终点的显示列；按块时为块的宽度；
+    /// `usize::MAX` 表示选区延伸到末行的行尾（含换行符），按块时延伸到各行的行尾。
     cells: usize,
 }
 
@@ -73,10 +84,25 @@ pub struct Shared {
     pub registers: Registers,
     /// 系统剪贴板与无名寄存器的同步方式。
     pub clipboard: Clipboard,
+    /// 查找时是否忽略大小写。
+    pub ignore_case: bool,
+    /// 忽略大小写时，模式中有大写字母是否改为区分大小写。
+    pub smart_case: bool,
     /// 上一次行内查找。
     last_find: Option<Find>,
     /// 上一次修改。
     repeat: Option<Repeat>,
+    /// 上一次查找。
+    search: Option<search::Searched>,
+    /// 查找历史，从旧到新排列。
+    history: Vec<String>,
+    /// 多个光标逐个执行命令期间，各光标写入寄存器的内容暂存于此，结束时合成一份。
+    capture: Option<Vec<(Content, Source)>>,
+    /// 多个光标逐个粘贴期间，当前光标读到的寄存器内容。
+    piece: Option<Content>,
+    /// 最近一次由多个光标写入寄存器的各段文本；寄存器的内容仍是这些文本时，同样个数的光标
+    /// 粘贴时逐个对应。
+    pieces: Option<Vec<String>>,
 }
 
 /// 一个窗口的 Vim 状态。
@@ -96,12 +122,26 @@ pub struct Vim {
     insert_group: bool,
     /// 上一次可视模式的选区，供 `gv` 恢复。
     last_visual: Option<Visual>,
-    /// 上一次离开插入模式时的插入位置，供 `gi` 使用。
-    last_insert: Option<usize>,
     /// 最近一次交给宿主的选区；宿主的选区与之不同时说明选区被其他操作改动过。
     shown: Option<Selection>,
     /// 是否正在重放上一次修改；重放期间不更新记录。
     replaying: bool,
+    /// 等待宿主提供的输入。
+    prompt: Option<search::Pending>,
+    /// 命令执行期间保存的跳转之前的上下文。
+    context: Option<marks::Context>,
+    /// 修改列表中当前的位置；`None` 表示在列表的末尾之后。
+    change_index: Option<usize>,
+    /// 半屏滚动的行数；未用次数指定时为 `None`，取窗口高度的一半。
+    half: Option<usize>,
+    /// 插入模式中执行一条普通模式命令期间保存的状态。
+    oneshot: Option<insert::Oneshot>,
+    /// 重放按块的修改时块左右边界的显示列；由下一条作用于块的命令取用。
+    columns: Option<(usize, usize)>,
+    /// 重放可视模式下的修改时所依据的范围；由可视模式的 `I`、`A` 取用。
+    replayed: Option<Extent>,
+    /// 宿主中主选区之外的选区是否由状态机给出（按块的选区）；下一次设置选区时收回。
+    owned: bool,
 }
 
 impl Default for Vim {
@@ -114,9 +154,16 @@ impl Default for Vim {
             insert: None,
             insert_group: false,
             last_visual: None,
-            last_insert: None,
             shown: None,
             replaying: false,
+            prompt: None,
+            context: None,
+            change_index: None,
+            half: None,
+            oneshot: None,
+            columns: None,
+            replayed: None,
+            owned: false,
         }
     }
 }
@@ -137,6 +184,17 @@ impl Vim {
         self.parser.is_operator_pending()
     }
 
+    /// 是否正在插入模式中执行一条普通模式的命令：命令结束后回到插入模式，期间光标可以停在
+    /// 行尾之后。
+    pub fn is_suspended(&self) -> bool {
+        self.oneshot.is_some()
+    }
+
+    /// 是否处于替换模式：[`Vim::mode`] 为 [`Mode::Insert`]，键入的文字覆盖已有的字符。
+    pub fn is_replace(&self) -> bool {
+        self.insert.as_ref().is_some_and(insert::Session::replaces)
+    }
+
     /// 返回未完成命令已输入的按键，用于显示。
     pub fn pending(&self) -> &[Key] {
         self.parser.pending()
@@ -154,28 +212,31 @@ impl Vim {
     ///
     /// 普通与可视模式下，没有定义的可见字符同样算作已处理，不会成为输入的文字。
     pub fn key(&mut self, shared: &mut Shared, host: &mut impl Host, key: Key) -> bool {
+        // 等待输入期间按键由宿主的输入框处理；收到按键说明输入已被放弃。
+        self.prompt_cancel(host);
         self.sync(host);
         if self.mode == Mode::Insert {
-            return match self.parser.feed(Mode::Insert, key) {
-                Outcome::Command(_) => {
-                    self.leave_insert(shared, host);
-                    true
-                }
-                Outcome::Pending | Outcome::Cancelled | Outcome::Invalid => true,
-                Outcome::Unsupported => {
-                    host.message(Message::Unsupported);
-                    true
-                }
-                Outcome::Unbound => false,
-            };
+            return self.insert_key(shared, host, key);
         }
-        match self.parser.feed(self.mode, key) {
-            Outcome::Command(command) => self.run(shared, host, command),
-            Outcome::Unsupported => host.message(Message::Unsupported),
-            Outcome::Pending | Outcome::Cancelled | Outcome::Invalid => {}
-            Outcome::Unbound => return swallowed(key),
+        let handled = match self.parser.feed(self.mode, key) {
+            Outcome::Pending => return true,
+            Outcome::Command(command) => {
+                self.run(shared, host, command);
+                true
+            }
+            Outcome::Unsupported => {
+                host.message(Message::Unsupported);
+                true
+            }
+            Outcome::Cancelled | Outcome::Invalid => true,
+            Outcome::Unbound => swallowed(key),
+        };
+        // 插入模式中执行的一条命令已经结束：回到插入模式。
+        if self.oneshot.is_some() {
+            self.resume_insert(host);
+            return true;
         }
-        true
+        handled
     }
 
     /// 丢弃未完成的命令；焦点离开编辑区时调用。
@@ -191,6 +252,11 @@ impl Vim {
             self.insert_group = false;
         }
         self.insert = None;
+        self.oneshot = None;
+        self.prompt = None;
+        self.context = None;
+        self.change_index = None;
+        self.last_visual = None;
         self.mode = Mode::Normal;
         // 可视模式的选区收回为光标，否则下一次同步会重新进入可视模式。
         match self.visual.take() {
@@ -204,6 +270,14 @@ impl Vim {
         self.parser.reset();
         self.insert = None;
         self.insert_group = false;
+        self.oneshot = None;
+        self.prompt = None;
+        self.context = None;
+        self.change_index = None;
+        self.last_visual = None;
+        self.columns = None;
+        self.replayed = None;
+        self.owned = false;
         self.visual = None;
         self.mode = Mode::Normal;
         self.shown = None;
@@ -246,8 +320,15 @@ impl Vim {
 
     /// 执行一条命令；命令的全部修改属于一个撤销单元，进入插入模式时延续到离开为止。
     fn run(&mut self, shared: &mut Shared, host: &mut impl Host, command: Command) {
+        if self.ask(host, command) {
+            return;
+        }
         host.begin_group();
-        self.execute(shared, host, command);
+        match self.cursors(host, command) {
+            Some((all, primary)) => self.execute_each(shared, host, command, &all, primary),
+            None => self.execute(shared, host, command),
+        }
+        self.check_context(host);
         if self.mode == Mode::Insert {
             self.insert_group = true;
         } else {
@@ -265,9 +346,52 @@ impl Vim {
                 force,
             } => self.operate(shared, host, command, operator, target, force),
             Body::Action { action, arg } => self.act(shared, host, command, action, arg),
-            // 文本对象尚未实现，解析器不会给出这类命令。
-            Body::Object(_) => host.message(Message::Unsupported),
+            Body::Object(object) => self.select_object(shared, host, object, command.count),
         }
+    }
+
+    /// 求值动作 `movement`：查找与标记由状态机求值，其余只依赖文本与视图。
+    ///
+    /// 属于跳转的动作在求值成功时记下跳转之前的位置。
+    fn moved(
+        &mut self,
+        shared: &mut Shared,
+        host: &mut impl Host,
+        movement: Movement,
+        count: Option<u32>,
+        operator: Option<Operator>,
+    ) -> Option<Moved> {
+        let from = self.caret(host);
+        let moved = match movement.motion {
+            // 模式由宿主输入之后改为重复上一次查找；没有模式时不执行。
+            Motion::SearchForward | Motion::SearchBackward => None,
+            Motion::SearchNext | Motion::SearchPrevious => {
+                let reverse = movement.motion == Motion::SearchPrevious;
+                self.search_again(shared, host, from, count, reverse)
+            }
+            Motion::SearchWordForward
+            | Motion::SearchWordBackward
+            | Motion::SearchPartForward
+            | Motion::SearchPartBackward => {
+                self.search_word(shared, host, from, count, movement.motion)
+            }
+            Motion::Mark | Motion::MarkLine => self.mark_motion(host, movement),
+            _ => {
+                let env = Env {
+                    host: &*host,
+                    from,
+                    want: self.want,
+                    count,
+                    operator,
+                    visual: self.visual.is_some() && operator.is_none(),
+                };
+                motion::evaluate(&env, movement, &mut shared.last_find)
+            }
+        }?;
+        if movement.motion.is_jump() {
+            self.set_context(host, from);
+        }
+        Some(moved)
     }
 
     /// 执行不带操作符的动作：移动光标，可视模式下延伸选区。
@@ -278,17 +402,54 @@ impl Vim {
         movement: Movement,
         count: Option<u32>,
     ) {
-        let env = Env {
-            host: &*host,
-            from: self.caret(host),
-            want: self.want,
-            count,
-            operator: None,
-            visual: self.visual.is_some(),
-        };
-        if let Some(moved) = motion::evaluate(&env, movement, &mut shared.last_find) {
+        if let Some(moved) = self.moved(shared, host, movement, count, None) {
             self.goto(host, moved.pos, moved.want);
         }
+    }
+
+    /// 可视模式下把选区扩展到文本对象 `object`。
+    fn select_object(
+        &mut self,
+        shared: &mut Shared,
+        host: &mut impl Host,
+        object: TextObject,
+        count: Option<u32>,
+    ) {
+        let Some(visual) = self.visual else {
+            return;
+        };
+        let count = count.map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX));
+        let forward = match object.shape {
+            crate::command::Shape::NextMatch => Some(true),
+            crate::command::Shape::PreviousMatch => Some(false),
+            _ => None,
+        };
+        if let Some(forward) = forward {
+            self.select_match(shared, host, forward, count);
+            return;
+        }
+        let at = At {
+            cursor: visual.cursor,
+            anchor: Some(visual.anchor),
+            linewise: visual.kind == VisualKind::Line,
+            count: count.min(motion::MAX_STEPS),
+        };
+        let Some(selected) = object::select(host.text(), object, at) else {
+            return;
+        };
+        let kind = match selected.becomes {
+            Becomes::Same => visual.kind,
+            Becomes::CharUnlessBlock if visual.kind == VisualKind::Line => VisualKind::Char,
+            Becomes::CharUnlessBlock => visual.kind,
+            Becomes::Char => VisualKind::Char,
+            Becomes::Line => VisualKind::Line,
+        };
+        self.visual = Some(Visual {
+            kind,
+            anchor: selected.start,
+            cursor: selected.end,
+        });
+        self.goto(host, selected.end, WantUpdate::Recompute);
     }
 
     /// 把光标移到 `pos` 并按 `want` 更新期望列；可视模式下移动选区的光标一端。
@@ -300,6 +461,12 @@ impl Vim {
                 let pos = pos.clamp(text.line_start(line), text.line_end(line));
                 visual.cursor = movement::snap_to_grapheme(text, pos);
                 visual.cursor
+            }
+            // 插入模式中执行一条命令期间，光标可以停在行尾之后。
+            None if self.oneshot.is_some() => {
+                let line = text::line_of(text, pos);
+                let pos = pos.clamp(text.line_start(line), text.line_end(line));
+                movement::snap_to_grapheme(text, pos)
             }
             None => text::on_char(text, pos),
         };
@@ -323,6 +490,16 @@ impl Vim {
         let text = host.text();
         let selection = match self.visual {
             None => Selection::point(pos),
+            Some(visual) if visual.kind == VisualKind::Block => {
+                // 按块的选区每行一个，主选区在光标所在的行。
+                let to_end = self.want == Want::End;
+                let (selections, primary) = block::selections(host, visual, to_end);
+                let selection = selections.get(primary).copied();
+                host.set_selections(selections, primary);
+                self.owned = true;
+                self.shown = selection;
+                return;
+            }
             Some(visual) => {
                 let (low, high) = (
                     visual.anchor.min(visual.cursor),
@@ -330,7 +507,7 @@ impl Vim {
                 );
                 let (from, to) = match visual.kind {
                     VisualKind::Char => (low, text::after(text, high)),
-                    VisualKind::Line => {
+                    _ => {
                         let first = text::line_of(text, low);
                         let last = text::line_of(text, high);
                         (text.line_start(first), text.line_span(last).end)
@@ -343,7 +520,16 @@ impl Vim {
                 }
             }
         };
-        host.set_selection(selection);
+        self.place(host, selection);
+    }
+
+    /// 把主选区设为 `selection`；其余选区由状态机给出时一并收回。
+    fn place(&mut self, host: &mut impl Host, selection: Selection) {
+        if std::mem::take(&mut self.owned) {
+            host.set_selections(vec![selection], 0);
+        } else {
+            host.set_selection(selection);
+        }
         self.shown = Some(selection);
     }
 
@@ -375,8 +561,26 @@ impl Vim {
         } else {
             text::first_non_blank(text, line)
         };
+        // 修改按位置从后往前排列：最后一项是最靠前的一处，第一项是最靠后的一处。
+        let from = changes
+            .iter()
+            .map(|change| change.start)
+            .min()
+            .unwrap_or(at);
+        let grown: isize = (changes.iter().skip(1))
+            .map(|change| {
+                let inserted = isize::try_from(change.inserted.chars().count()).unwrap_or(0);
+                inserted - isize::try_from(change.removed.chars().count()).unwrap_or(0)
+            })
+            .sum();
+        let to = changes.first().map_or(from, |change| {
+            let end = change.start + change.inserted.chars().count().saturating_sub(1);
+            end.saturating_add_signed(grown)
+        });
         let applied = host.apply(changes, before, before);
-        if !applied {
+        if applied {
+            self.note_change(host, from, to.max(from));
+        } else {
             host.message(Message::TooLarge);
         }
         self.shown = None;
@@ -392,10 +596,21 @@ impl Vim {
         blocked
     }
 
-    /// 离开可视模式，记下选区供 `gv` 恢复；光标的位置由调用方设置。
-    fn end_visual(&mut self) {
+    /// 离开可视模式，记下选区供 `gv` 与 `<`、`>` 标记使用；光标的位置由调用方设置。
+    fn end_visual(&mut self, host: &mut impl Host) {
         if let Some(visual) = self.visual.take() {
             self.last_visual = Some(visual);
+            let text = host.text();
+            let (mut low, mut high) = (
+                visual.anchor.min(visual.cursor),
+                visual.anchor.max(visual.cursor),
+            );
+            if visual.kind == VisualKind::Line {
+                low = text.line_start(text::line_of(text, low));
+                high = text.line_end(text::line_of(text, high));
+            }
+            host.set_mark('<', low);
+            host.set_mark('>', high);
         }
         self.mode = Mode::Normal;
     }
@@ -409,6 +624,9 @@ impl Vim {
         let read_clipboard = |shared: &Shared, host: &mut dyn FnMut() -> Option<String>| {
             host().map(|text| shared.registers.read_clipboard(&text))
         };
+        if let Some(piece) = &shared.piece {
+            return Some(piece.clone());
+        }
         match name {
             Some('_') => None,
             Some('+' | '*') => read_clipboard(shared, &mut || host.clipboard()),
@@ -432,15 +650,19 @@ impl Vim {
         content: Content,
         source: Source,
     ) -> bool {
+        if let Some(name @ ('.' | ':' | '/' | '%')) = name {
+            host.message(Message::ReadOnlyRegister(name));
+            return false;
+        }
+        if let Some(capture) = &mut shared.capture {
+            capture.push((content, source));
+            return true;
+        }
         match name {
             Some('_') => {}
             Some('+' | '*') => {
                 let text = shared.registers.write_clipboard(&content);
                 host.set_clipboard(&text);
-            }
-            Some(name @ ('.' | ':' | '/' | '%')) => {
-                host.message(Message::ReadOnlyRegister(name));
-                return false;
             }
             name => {
                 let unnamed = name.is_none_or(|name| name == '"');
@@ -529,32 +751,91 @@ impl Vim {
                 self.settle(host, pos);
             }
             Action::Repeat => self.repeat(shared, host, command.count),
-            Action::Visual | Action::VisualLine => {
-                let kind = if action == Action::Visual {
-                    VisualKind::Char
-                } else {
-                    VisualKind::Line
+            Action::Visual | Action::VisualLine | Action::VisualBlock => {
+                let kind = match action {
+                    Action::Visual => VisualKind::Char,
+                    Action::VisualLine => VisualKind::Line,
+                    _ => VisualKind::Block,
                 };
                 self.toggle_visual(host, kind);
             }
             Action::Reselect => self.reselect(host),
-            Action::SwapAnchor => {
-                if let Some(visual) = &mut self.visual {
-                    std::mem::swap(&mut visual.anchor, &mut visual.cursor);
-                    let cursor = visual.cursor;
-                    self.goto(host, cursor, WantUpdate::Recompute);
-                }
-            }
-            Action::Escape => {
+            Action::SwapAnchor | Action::SwapColumn => self.swap_ends(host, action),
+            Action::Escape | Action::Interrupt => {
                 if let Some(visual) = self.visual {
-                    self.end_visual();
+                    self.end_visual(host);
                     self.settle(host, visual.cursor);
                 }
             }
+            Action::InsertSelection | Action::AppendSelection => {
+                self.insert_selection(host, command, action == Action::AppendSelection);
+            }
+            Action::Replace => self.start_replace(host, command),
+            Action::Increment | Action::Decrement => {
+                self.add(shared, host, command, action == Action::Decrement);
+            }
+            Action::SetMark => self.set_mark(host, arg),
+            Action::JumpBack | Action::JumpForward => {
+                self.jump(host, action == Action::JumpBack, command.count);
+            }
+            Action::ChangeOlder | Action::ChangeNewer => {
+                self.change_jump(host, action == Action::ChangeOlder, command.count);
+            }
+            Action::SelectNext | Action::SelectPrevious => {
+                let count = command
+                    .count
+                    .map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX));
+                self.select_match(shared, host, action == Action::SelectNext, count);
+            }
+            Action::Scroll(scrolling) => self.scroll(host, scrolling, command.count),
+            Action::Fold(folding) => self.fold(host, folding, command.count),
+            // 插入模式的命令不经此处执行。
+            Action::InsertBackspace
+            | Action::InsertDeleteWord
+            | Action::InsertDeleteLine
+            | Action::InsertIndent
+            | Action::InsertOutdent
+            | Action::InsertRegister
+            | Action::InsertNormal
+            | Action::InsertBelow
+            | Action::InsertAbove => {}
             Action::Later | Action::ExMode | Action::Keyword | Action::UndoLine => {
                 host.message(Message::Unsupported);
             }
         }
+    }
+
+    /// 可视模式的 `o`、`O`：交换选区的起点与光标；按块时 `O` 只交换两者所在的显示列。
+    fn swap_ends(&mut self, host: &mut impl Host, action: Action) {
+        let Some(visual) = self.visual else {
+            return;
+        };
+        let (anchor, cursor) = if visual.kind == VisualKind::Block && action == Action::SwapColumn {
+            // 起点移到块的左边界、光标移到右边界；光标因此没有移动时两者对调。
+            let text = host.text();
+            let tab_width = host.tab_width();
+            let block = block::block_of(host, visual, false, None);
+            let at = |pos: usize, cell: usize| {
+                text::pos_at_cell(text, text::line_of(text, pos), cell, tab_width)
+            };
+            let cursor = at(visual.cursor, block.right);
+            if cursor == visual.cursor {
+                (
+                    at(visual.anchor, block.right),
+                    at(visual.cursor, block.left),
+                )
+            } else {
+                (at(visual.anchor, block.left), cursor)
+            }
+        } else {
+            (visual.cursor, visual.anchor)
+        };
+        self.visual = Some(Visual {
+            anchor,
+            cursor,
+            ..visual
+        });
+        self.goto(host, cursor, WantUpdate::Recompute);
     }
 
     /// 进入、切换或离开可视模式。
@@ -562,7 +843,7 @@ impl Vim {
         let cursor = self.caret(host);
         match &mut self.visual {
             Some(visual) if visual.kind == kind => {
-                self.end_visual();
+                self.end_visual(host);
                 self.settle(host, cursor);
             }
             Some(visual) => {
@@ -624,12 +905,14 @@ impl Vim {
         if let Some(extent) = repeat.extent {
             self.select_extent(host, extent);
         }
+        self.replayed = repeat.extent;
         self.replaying = true;
         self.execute(shared, host, repeat.command);
+        self.columns = None;
+        self.replayed = None;
         if self.mode == Mode::Insert {
             for input in &repeat.inputs {
-                host.input(input);
-                self.typed(input.clone());
+                self.play(host, input);
             }
             self.leave_insert(shared, host);
         }
@@ -643,7 +926,19 @@ impl Vim {
         let line = text::line_of(text, cursor);
         let last = (line + extent.lines - 1).min(text::last_line(text));
         let tab_width = host.tab_width();
-        let end = if extent.cells == usize::MAX {
+        let end = if extent.kind == VisualKind::Block {
+            // 按块：从光标所在的显示列起同样宽度的块，不受末行长度的影响。
+            let (_, col) = text.pos_to_line_col(cursor);
+            let left = text::cell_of(text, line, col, tab_width);
+            if extent.cells == usize::MAX {
+                self.want = Want::End;
+                text.line_end(last)
+            } else {
+                let right = left + extent.cells - 1;
+                self.columns = Some((left, right));
+                text::pos_at_cell(text, last, right, tab_width).min(text::last_char(text, last))
+            }
+        } else if extent.cells == usize::MAX {
             text.line_end(last)
         } else if extent.lines == 1 {
             // 行尾算作一列：选区可以延伸到行尾，把换行符包括在内。

@@ -302,6 +302,8 @@ pub enum PromptKind {
     NewTag { at: String },
     /// 分支的新名称；`old` 为当前名称。
     RenameBranch { old: String },
+    /// Vim 模式下查找的模式；`forward` 为真时向后文查找。
+    VimSearch { forward: bool },
 }
 
 /// 键盘焦点所在的区域。
@@ -1174,8 +1176,9 @@ impl App {
     /// 在每帧绘制之前推进搜索：继续搜索一个时间片；等待中的跳转已有结果时执行跳转，并按
     /// 搜索结果过滤行。
     fn advance_search(&mut self) {
-        // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处。
-        let searching = self.find.open || self.find.pending_jump.is_some();
+        // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处；
+        // Vim 层的查找在查找条关闭时同样高亮匹配。
+        let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
         if searching && let Some((id, _)) = self.update_diff_find() {
             // 记录的跳转只对当时的文档有效，切换标签后作废。
             match self.find.pending_jump {

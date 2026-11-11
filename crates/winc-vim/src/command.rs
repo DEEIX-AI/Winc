@@ -186,6 +186,60 @@ pub enum Motion {
     UnmatchedParenForward,
     /// `]}`：向右找到未配对的 `}`。
     UnmatchedBraceForward,
+    /// `/`：向后文查找输入的模式。
+    SearchForward,
+    /// `?`：向前文查找输入的模式。
+    SearchBackward,
+    /// `n`：沿上一次查找的方向查找下一处。
+    SearchNext,
+    /// `N`：沿上一次查找的反方向查找下一处。
+    SearchPrevious,
+    /// `*`：向后文查找光标处的词，按整词匹配。
+    SearchWordForward,
+    /// `#`：向前文查找光标处的词，按整词匹配。
+    SearchWordBackward,
+    /// `g*`：向后文查找光标处的词，不要求整词。
+    SearchPartForward,
+    /// `g#`：向前文查找光标处的词，不要求整词。
+    SearchPartBackward,
+    /// `` ` ``{标记}：标记的位置。
+    Mark,
+    /// `'`{标记}：标记所在行的第一个非空白字符。
+    MarkLine,
+}
+
+impl Motion {
+    /// 是否属于跳转：执行之前把光标的位置记入跳转历史。
+    pub(crate) fn is_jump(self) -> bool {
+        matches!(
+            self,
+            Self::FirstLine
+                | Self::LastLine
+                | Self::LastLineEnd
+                | Self::Percent
+                | Self::WindowTop
+                | Self::WindowMiddle
+                | Self::WindowBottom
+                | Self::SentenceBackward
+                | Self::SentenceForward
+                | Self::ParagraphBackward
+                | Self::ParagraphForward
+                | Self::SectionBackward
+                | Self::SectionForward
+                | Self::SectionEndBackward
+                | Self::SectionEndForward
+                | Self::SearchForward
+                | Self::SearchBackward
+                | Self::SearchNext
+                | Self::SearchPrevious
+                | Self::SearchWordForward
+                | Self::SearchWordBackward
+                | Self::SearchPartForward
+                | Self::SearchPartBackward
+                | Self::Mark
+                | Self::MarkLine
+        )
+    }
 }
 
 /// 操作符：作用于一个动作、文本对象或选区所覆盖的文本。
@@ -252,6 +306,10 @@ pub enum Shape {
     SingleQuote,
     /// `` ` ``：反引号。
     Backtick,
+    /// `gn`：上一次查找的模式在光标处或之后的一处匹配。
+    NextMatch,
+    /// `gN`：上一次查找的模式在光标处或之前的一处匹配。
+    PreviousMatch,
 }
 
 /// 文本对象：以 `i` 或 `a` 开头，选中光标处的一段文本。
@@ -316,6 +374,58 @@ pub enum Action {
     SwapAnchor,
     /// `<Esc>`：离开可视模式或插入模式。
     Escape,
+    /// `Ctrl-V`、`Ctrl-Q`：进入或离开按块的可视模式。
+    VisualBlock,
+    /// 可视模式的 `I`：在选区的起点进入插入模式；按块时在各行的左边界插入。
+    InsertSelection,
+    /// 可视模式的 `A`：在选区的终点之后进入插入模式；按块时在各行的右边界之后插入。
+    AppendSelection,
+    /// 可视模式的 `O`：按块时把光标移到块的另一侧，其余与 `o` 相同。
+    SwapColumn,
+    /// `R`：进入替换模式。
+    Replace,
+    /// `Ctrl-A`：光标处或其后的数加上次数。
+    Increment,
+    /// `Ctrl-X`：光标处或其后的数减去次数。
+    Decrement,
+    /// `m{标记}`：把光标的位置记为标记。
+    SetMark,
+    /// `Ctrl-O`：回到跳转历史中的上一个位置。
+    JumpBack,
+    /// `Ctrl-I`、`<Tab>`：前进到跳转历史中的下一个位置。
+    JumpForward,
+    /// `g;`：到修改列表中更早的位置。
+    ChangeOlder,
+    /// `g,`：到修改列表中更新的位置。
+    ChangeNewer,
+    /// 普通模式的 `gn`：选中上一次查找的模式的下一处匹配。
+    SelectNext,
+    /// 普通模式的 `gN`：选中上一次查找的模式的上一处匹配。
+    SelectPrevious,
+    /// 滚动窗口。
+    Scroll(Scrolling),
+    /// 折叠命令。
+    Fold(Folding),
+    /// 插入模式的 `Ctrl-C`：离开插入模式。
+    Interrupt,
+    /// 插入模式的 `Ctrl-H`：删除光标之前的一个字符。
+    InsertBackspace,
+    /// 插入模式的 `Ctrl-W`：删除光标之前的一个词。
+    InsertDeleteWord,
+    /// 插入模式的 `Ctrl-U`：删除光标到行首之间的文本。
+    InsertDeleteLine,
+    /// 插入模式的 `Ctrl-T`：当前行增加一级缩进。
+    InsertIndent,
+    /// 插入模式的 `Ctrl-D`：当前行减少一级缩进。
+    InsertOutdent,
+    /// 插入模式的 `Ctrl-R {寄存器}`：插入寄存器的内容。
+    InsertRegister,
+    /// 插入模式的 `Ctrl-O`：执行一条普通模式的命令之后回到插入模式。
+    InsertNormal,
+    /// 插入模式的 `Ctrl-E`：插入下一行同一显示列上的字符。
+    InsertBelow,
+    /// 插入模式的 `Ctrl-Y`：插入上一行同一显示列上的字符。
+    InsertAbove,
     /// 之后的阶段实现的命令。
     Later,
     /// `Q`：进入 Ex 模式。
@@ -324,6 +434,74 @@ pub enum Action {
     Keyword,
     /// `U`：撤销最近对一行的全部修改。
     UndoLine,
+}
+
+/// 滚动命令。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Scrolling {
+    /// `Ctrl-E`：窗口向下滚动若干行。
+    LineDown,
+    /// `Ctrl-Y`：窗口向上滚动若干行。
+    LineUp,
+    /// `Ctrl-D`：窗口与光标向下移动半屏。
+    HalfDown,
+    /// `Ctrl-U`：窗口与光标向上移动半屏。
+    HalfUp,
+    /// `Ctrl-F`、`<PageDown>`、`<S-Down>`：向下翻页。
+    PageDown,
+    /// `Ctrl-B`、`<PageUp>`、`<S-Up>`：向上翻页。
+    PageUp,
+    /// `zt`：光标所在行移到窗口顶部。
+    Top,
+    /// `z<CR>`：光标所在行移到窗口顶部，光标移到第一个非空白字符。
+    TopStart,
+    /// `zz`：光标所在行移到窗口中间。
+    Center,
+    /// `z.`：光标所在行移到窗口中间，光标移到第一个非空白字符。
+    CenterStart,
+    /// `zb`：光标所在行移到窗口底部。
+    Bottom,
+    /// `z-`：光标所在行移到窗口底部，光标移到第一个非空白字符。
+    BottomStart,
+    /// `zh`：窗口向左滚动若干列。
+    Left,
+    /// `zl`：窗口向右滚动若干列。
+    Right,
+    /// `zH`：窗口向左滚动半屏。
+    HalfLeft,
+    /// `zL`：窗口向右滚动半屏。
+    HalfRight,
+    /// `zs`：横向滚动到光标位于窗口的左边界。
+    CaretStart,
+    /// `ze`：横向滚动到光标位于窗口的右边界。
+    CaretEnd,
+}
+
+/// 折叠命令。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Folding {
+    /// `zo`：展开光标处的折叠。
+    Open,
+    /// `zc`：收起光标处的折叠。
+    Close,
+    /// `za`：切换光标处的折叠。
+    Toggle,
+    /// `zO`：展开光标处的各层折叠。
+    OpenTree,
+    /// `zC`：收起光标处的各层折叠。
+    CloseTree,
+    /// `zA`：切换光标处的各层折叠。
+    ToggleTree,
+    /// `zR`：展开全部折叠。
+    OpenAll,
+    /// `zM`：收起全部折叠。
+    CloseAll,
+    /// `zv`：展开到光标所在的行可见。
+    Reveal,
+    /// `zj`：移到下一个可折叠区域的首行。
+    Next,
+    /// `zk`：移到上一个可折叠区域的末行。
+    Previous,
 }
 
 /// 操作符之后强制指定的动作类型。
@@ -353,8 +531,11 @@ pub enum Kind {
     Motion(Motion),
     /// 操作符；可视模式下直接作用于选区。
     Operator(Operator),
-    /// 可视模式下把选区扩展到整行之后执行的操作符（`X`、`D`、`Y`、`S`、`C`、`R`）。
+    /// 可视模式下把选区扩展到整行之后执行的操作符（`S`、`R`）。
     LineOperator(Operator),
+    /// 可视模式下作用于整行的操作符（`X`、`Y`、`D`、`C`）；按块时作用于块，第二项为真时块
+    /// 延伸到各行的行尾。
+    WideOperator(Operator, bool),
     /// 可视模式的 `<BS>`：删除选区；未指定寄存器时写入 `"-`。
     SmallDelete,
     /// 操作符加动作的同义写法（`x`、`D`、`Y` 等），解析后展开成操作符命令。

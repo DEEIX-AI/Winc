@@ -116,7 +116,8 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         let tab_width = doc.tab_width(app.editor.tab_width);
         let lh = app.fonts.line_height;
         // 查找对象是分栏右侧的预览时，匹配位置属于预览文字，不在左侧标注。
-        let show_matches = layout.search.h > 0.0 && !app.markdown_focused();
+        let show_matches =
+            (layout.search.h > 0.0 || app.vim_highlights()) && !app.markdown_focused();
 
         let selection = doc.selection;
         // Vim 的可视模式下光标画在选区的光标一端所含的字符上。

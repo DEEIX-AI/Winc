@@ -37,6 +37,11 @@ pub enum Target {
     Lines,
     /// 可视模式下的选区。
     Selection,
+    /// 可视模式下选区所在的整行；按块时为块本身，`to_end` 为真时块延伸到各行的行尾。
+    SelectedLines {
+        /// 按块时是否延伸到各行的行尾。
+        to_end: bool,
+    },
 }
 
 /// 命令的主体。
@@ -378,6 +383,11 @@ impl Parser {
                 operator,
                 target: Target::Selection,
                 force: Some(Force::Linewise),
+            },
+            Kind::WideOperator(operator, to_end) => Body::Operator {
+                operator,
+                target: Target::SelectedLines { to_end },
+                force: None,
             },
             Kind::Synonym(operator, shorthand) => {
                 let target = match shorthand {

@@ -23,6 +23,10 @@
 
 use std::fmt::Write as _;
 
+/// 录制结果中无法表示的寄存器内容（`vim` 内部的字节，不是 UTF-8）所记的文本；对照测试不比较
+/// 内容为该文本的寄存器。
+pub const OPAQUE: &str = "\u{fffd}";
+
 /// 文本中的位置：行号与列号，都从 0 起；列号按字符（`char`）计。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Position {

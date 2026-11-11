@@ -12,6 +12,8 @@ pub enum Kind {
     Charwise,
     /// 按行：内容是若干整行，粘贴到光标所在行的下方或上方。
     Linewise,
+    /// 按块：内容的各行是矩形区域在各行上的部分，值为块的宽度减一（显示列）。
+    Blockwise(usize),
 }
 
 /// 一个寄存器的内容。
@@ -186,10 +188,12 @@ impl Registers {
                 self.slots.insert(lower, content);
             }
             Some(existing) => {
-                // 追加按行的内容时，原有的内容也变为按行；向按行的内容追加时另起一行。
-                if existing.kind == Kind::Linewise || content.kind == Kind::Linewise {
-                    existing.text.push('\n');
+                // 追加按行的内容时，原有的内容也变为按行；向按行或按块的内容追加时另起一行。
+                if content.kind == Kind::Linewise {
                     existing.kind = Kind::Linewise;
+                }
+                if existing.kind != Kind::Charwise {
+                    existing.text.push('\n');
                 }
                 existing.text.push_str(&content.text);
             }
@@ -213,7 +217,7 @@ impl Registers {
 /// 返回 `content` 写入系统剪贴板时的文本：按行的内容以换行符结尾。
 fn clipboard_text(content: &Content) -> String {
     match content.kind {
-        Kind::Charwise => content.text.clone(),
+        Kind::Charwise | Kind::Blockwise(_) => content.text.clone(),
         Kind::Linewise => format!("{}\n", content.text),
     }
 }

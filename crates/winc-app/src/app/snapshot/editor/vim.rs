@@ -8,6 +8,7 @@ use winc_vim::{Code, Mode, Named, notation};
 use super::whitespace::changed;
 use super::*;
 use crate::app::vim::CaretShape;
+use crate::app::{Focus, PromptKind};
 use crate::keymap::Action;
 
 /// 创建打开了内容为 `text` 的文件、并已开启 Vim 模式的界面；返回界面与样本目录。
@@ -241,7 +242,7 @@ fn keys_without_a_meaning_never_become_text() {
     assert!(app.vim_press(winc_vim::Key::char('\\')));
     assert!(app.vim_press(notation::parse("<Tab>")[0]));
     assert!(!app.vim_press(notation::parse("<Esc>")[0]));
-    assert!(!app.vim_press(notation::parse("<PageDown>")[0]));
+    assert!(!app.vim_press(notation::parse("<F5>")[0]));
     assert_eq!(text(&app), "abc\n");
 
     // 尚未实现的命令只在状态栏提示。
@@ -347,5 +348,277 @@ fn switching_tabs_returns_to_normal_mode_and_ends_the_insert() {
     app.run(Command::Undo);
     assert_eq!(text(&app), "yfirst\n");
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 返回光标所在的行号。
+fn line(app: &App) -> usize {
+    let doc = app.editor.active().unwrap();
+    doc.text().line_of(doc.selection.head)
+}
+
+#[test]
+fn searching_uses_the_prompt_previews_the_match_and_keeps_a_history() {
+    let (mut app, dir) = vim_app("vim-search", "one two\nthree two\nfour\n");
+    keys(&mut app, "/");
+    assert_eq!(app.focus, Focus::Prompt);
+    assert_eq!(app.prompt_kind, PromptKind::VimSearch { forward: true });
+    assert_eq!(app.vim_mode(), None);
+
+    // 输入过程中光标即时移到第一处匹配，匹配被高亮；回车之后停在该处。
+    app.edit_field(|field| field.insert("two"));
+    paint(&mut app);
+    assert_eq!(head(&app), 4);
+    assert!(app.vim_highlights());
+    app.submit_prompt();
+    assert_eq!((app.focus, head(&app)), (Focus::Editor, 4));
+    keys(&mut app, "n");
+    assert_eq!(head(&app), 14);
+    keys(&mut app, "N");
+    assert_eq!(head(&app), 4);
+
+    // 再次打开时可以翻出上一次的模式；放弃输入时光标回到原处，高亮取消。
+    keys(&mut app, "?");
+    assert_eq!(app.prompt_kind, PromptKind::VimSearch { forward: false });
+    app.edit_field(|field| field.recall(true));
+    assert_eq!(app.goto_input.as_ref().unwrap().text(), "two");
+    paint(&mut app);
+    assert_eq!(head(&app), 14);
+    app.close_prompt();
+    app.focus = Focus::Editor;
+    app.vim_prompt_cancel();
+    assert_eq!(head(&app), 4);
+    assert!(!app.vim_highlights());
+
+    // 查找可以作为操作符的范围；找不到与无法转换的模式只提示。
+    keys(&mut app, "d/");
+    app.edit_field(|field| field.insert("four"));
+    app.submit_prompt();
+    assert_eq!(text(&app), "one \nfour\n");
+    for (pattern, message) in [
+        ("zzz", "找不到模式"),
+        ("a\\%Vb", "模式的第 2 个字符处有无法识别的写法"),
+    ] {
+        keys(&mut app, "/");
+        app.edit_field(|field| field.insert(pattern));
+        app.submit_prompt();
+        assert_eq!(app.status.message.as_deref(), Some(message), "{pattern}");
+    }
+    assert_eq!(text(&app), "one \nfour\n");
+
+    // 查找条打开之后以查找条的内容为准。
+    keys(&mut app, "0*");
+    assert!(app.vim_highlights());
+    app.open_search(false);
+    assert!(!app.vim_highlights());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn marks_follow_edits_and_jumps_use_the_position_history() {
+    let body: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+    let (mut app, dir) = vim_app("vim-marks", &format!("first\n\nsecond\n{body}"));
+    app.track_navigation();
+
+    // 标记随其上方插入的行移动。
+    keys(&mut app, "jjma");
+    let marked = head(&app);
+    keys(&mut app, "ggOnew<Esc>");
+    keys(&mut app, "`a");
+    assert_eq!(head(&app), marked + 4);
+    keys(&mut app, "`z");
+    assert_eq!(app.status.message.as_deref(), Some("标记 z 没有设置"));
+
+    // 跳转之前的位置记入位置历史：`Ctrl-O` 后退，`Tab` 前进；不远的跳转同样记入。每批事件
+    // 处理完之后记录一次位置。
+    let step = |app: &mut App, typed: &str| {
+        keys(app, typed);
+        app.track_navigation();
+    };
+    step(&mut app, "gg");
+    step(&mut app, "G");
+    let last = line(&app);
+    step(&mut app, "<C-o>");
+    assert_eq!(line(&app), 0);
+    step(&mut app, "<Tab>");
+    assert_eq!(line(&app), last);
+    step(&mut app, "gg");
+    step(&mut app, "}");
+    assert_eq!(line(&app), 2);
+    step(&mut app, "<C-o>");
+    assert_eq!(line(&app), 0);
+    // 没有移动光标的跳转命令不留下记录。
+    step(&mut app, "gg");
+    step(&mut app, "j");
+    step(&mut app, "<C-o>");
+    assert_eq!(line(&app), 43);
+
+    // 修改列表：回到最近修改的位置。
+    keys(&mut app, "Gx");
+    let changed = head(&app);
+    keys(&mut app, "ggg;");
+    assert_eq!(head(&app), changed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn scrolling_commands_move_the_window_and_keep_the_caret_inside() {
+    let body: String = (1..=200).map(|n| format!("line {n}\n")).collect();
+    let (mut app, dir) = vim_app("vim-scroll", &body);
+    let rows = app.visible_lines() as f64;
+    let scroll = |app: &App| app.editor.active().unwrap().scroll_line;
+
+    // 所在行移到窗口的顶部、中间、底部；顶部留出一行。
+    keys(&mut app, "100G");
+    keys(&mut app, "zt");
+    assert_eq!(scroll(&app), 98.0);
+    keys(&mut app, "zz");
+    assert_eq!(scroll(&app), 99.0 - (rows / 2.0).floor());
+    keys(&mut app, "zb");
+    assert_eq!(scroll(&app), 99.0 - rows + 2.0);
+    assert_eq!(line(&app), 99);
+
+    // 按行滚动：光标仍在窗口之内时不动，滚出窗口时跟随。
+    keys(&mut app, "zz");
+    let before = scroll(&app);
+    keys(&mut app, "<C-e>");
+    assert_eq!((scroll(&app), line(&app)), (before + 1.0, 99));
+    keys(&mut app, "zt");
+    keys(&mut app, "3<C-e>");
+    assert!(line(&app) > 99, "{}", line(&app));
+
+    // 半屏与整屏：光标随窗口移动。
+    keys(&mut app, "100Gzz");
+    let half = (app.visible_lines() / 2).max(1);
+    keys(&mut app, "<C-d>");
+    assert_eq!(line(&app), 99 + half);
+    keys(&mut app, "<C-u>");
+    assert_eq!(line(&app), 99);
+    let before = scroll(&app);
+    keys(&mut app, "<C-f>");
+    assert_eq!(scroll(&app), before + rows - 2.0);
+    keys(&mut app, "<PageUp>");
+    assert_eq!(scroll(&app), before);
+
+    // 光标与窗口上下边缘之间保留配置的行数。
+    app.config.vim_scroll_off = Some(5);
+    keys(&mut app, "150G");
+    for _ in 0..40 {
+        keys(&mut app, "k");
+    }
+    let row = app.editor.active().unwrap().row_at(head(&app)) as f64;
+    assert!(row - scroll(&app) >= 5.0, "{row} {}", scroll(&app));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fold_commands_use_the_blocks_of_the_document() {
+    let dir = sample_folder("vim-folds");
+    let path = dir.join("fold.rs");
+    std::fs::write(
+        &path,
+        "fn a() {\n    x;\n    if y {\n        z;\n    }\n}\nfn b() {\n    w;\n}\n",
+    )
+    .unwrap();
+    let mut app = app_with(&path, false);
+    app.config.vim_enabled = Some(true);
+    app.vim_apply_config();
+    paint(&mut app);
+    let folded = |app: &App| app.editor.active().unwrap().folded();
+
+    // 收起光标所在的块，光标移到块的首行；展开后恢复。
+    keys(&mut app, "jzc");
+    assert_eq!(folded(&app), [(0, 4)]);
+    assert_eq!(line(&app), 0);
+    keys(&mut app, "za");
+    assert!(folded(&app).is_empty());
+    keys(&mut app, "zM");
+    assert_eq!(folded(&app).len(), 3);
+    keys(&mut app, "zR");
+    assert!(folded(&app).is_empty());
+
+    // 在可折叠的块之间移动；收起的块在上下移动中算一行。
+    keys(&mut app, "ggzj");
+    assert_eq!(line(&app), 2);
+    keys(&mut app, "zj");
+    assert_eq!(line(&app), 6);
+    keys(&mut app, "zk");
+    assert_eq!(line(&app), 4);
+    keys(&mut app, "ggzcj");
+    assert_eq!(line(&app), 5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn replace_mode_overwrites_and_insert_mode_handles_control_keys() {
+    let (mut app, dir) = vim_app("vim-replace", "abcdef\nxyz\n");
+    keys(&mut app, "R");
+    assert_eq!(app.vim_mode(), Some(Mode::Insert));
+    assert_eq!(app.vim_status().as_deref(), Some("-- 替换 --"));
+    assert_eq!(app.vim_caret().map(|c| c.1), Some(CaretShape::Underline));
+    assert!(app.takes_text());
+    keys(&mut app, "XY");
+    assert_eq!(text(&app), "XYcdef\nxyz\n");
+    // 退格还原被覆盖的字符。
+    keys(&mut app, "<BS>");
+    assert_eq!(text(&app), "Xbcdef\nxyz\n");
+    keys(&mut app, "<Esc>j.");
+    assert_eq!(text(&app), "Xbcdef\nXyz\n");
+
+    // 插入模式的 `Ctrl` 键：删除前一个词、插入寄存器、执行一条普通模式的命令。
+    keys(&mut app, "ggyiwA<Space>one<Space>two<C-w><C-r>0<Esc>");
+    assert_eq!(text(&app), "Xbcdef one Xbcdef\nXyz\n");
+    keys(&mut app, "A!<C-o>");
+    assert_eq!(app.vim_status().as_deref(), Some("-- (插入) --"));
+    keys(&mut app, "0?<Esc>");
+    assert_eq!(text(&app), "?Xbcdef one Xbcdef!\nXyz\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn block_selections_and_multiple_cursors_edit_every_line() {
+    let (mut app, dir) = vim_app("vim-block", "abcd\nefgh\nijkl\n");
+    let cursors = |app: &App| app.editor.active().unwrap().selections().0;
+
+    // 按块的选区每行一个；插入对各行同时生效，离开后只留一个光标。
+    keys(&mut app, "l<C-v>jl");
+    assert_eq!(app.vim_status().as_deref(), Some("-- 可视 块 --"));
+    assert_eq!(cursors(&app), [Selection::new(1, 3), Selection::new(6, 8)]);
+    keys(&mut app, "IX<Esc>");
+    assert_eq!(text(&app), "aXbcd\neXfgh\nijkl\n");
+    assert_eq!(cursors(&app), [Selection::point(1)]);
+    keys(&mut app, "l<C-v>jld");
+    assert_eq!(text(&app), "aXd\neXh\nijkl\n");
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "aXbcd\neXfgh\nijkl\n");
+
+    // 多个光标：命令在每个光标上各执行一次，粘贴时逐个对应。
+    let doc = app.editor.active_mut().unwrap();
+    doc.set_selections(vec![Selection::point(0), Selection::point(6)], 0);
+    keys(&mut app, "x");
+    assert_eq!(text(&app), "Xbcd\nXfgh\nijkl\n");
+    assert_eq!(cursors(&app).len(), 2);
+    keys(&mut app, "$p");
+    assert_eq!(text(&app), "Xbcda\nXfghe\nijkl\n");
+    keys(&mut app, "iZ<Esc>");
+    assert_eq!(text(&app), "XbcdZa\nXfghZe\nijkl\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_clipboard_setting_decides_what_reaches_the_system_clipboard() {
+    use crate::layout::{Setting, SettingControl};
+    let (mut app, dir) = vim_app("vim-clipboard", "one\ntwo\n");
+    assert_eq!(Setting::VimClipboard.control(), SettingControl::Choice);
+    keys(&mut app, "yy");
+    assert_eq!(app.copied, None);
+    app.set_vim_clipboard(winc_config::VimClipboard::Yank);
+    keys(&mut app, "yy");
+    assert_eq!(app.copied.as_deref(), Some("one\n"));
+    keys(&mut app, "jdd");
+    assert_eq!(app.copied.as_deref(), Some("one\n"));
+    app.set_vim_clipboard(winc_config::VimClipboard::Always);
+    keys(&mut app, "x");
+    assert_eq!(app.copied.as_deref(), Some("o"));
     let _ = std::fs::remove_dir_all(&dir);
 }

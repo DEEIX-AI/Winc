@@ -3,9 +3,10 @@
 use winc_core::{Change, Lines};
 
 use super::{Extent, Shared, Vim, Visual, VisualKind};
-use crate::command::{Force, Motion, Operator};
+use crate::command::{Force, Motion, Operator, Shape};
 use crate::host::{Host, Message};
-use crate::motion::{self, Env, Moved, Span, WantUpdate};
+use crate::motion::{self, Moved, Span, Want, WantUpdate};
+use crate::object::{self, At};
 use crate::operator::{self, Range, Region};
 use crate::parser::{Command, Movement, Target};
 use crate::register::{Content, Kind, Source};
@@ -22,103 +23,28 @@ impl Vim {
         target: Target,
         force: Option<Force>,
     ) {
-        if force == Some(Force::Blockwise) {
-            host.message(Message::Unsupported);
-            return;
-        }
         let modifies = operator != Operator::Yank;
         if modifies && Self::blocked(host) {
             return;
         }
-        let cursor = self.caret(host);
-        // 只按行工作的操作符。
-        let whole_lines = matches!(
-            operator,
-            Operator::Indent
-                | Operator::Outdent
-                | Operator::Join
-                | Operator::JoinRaw
-                | Operator::Comment
-                | Operator::Reindent
-        );
-
-        let (range, extent) = match (target, self.visual) {
-            (Target::Selection, Some(visual)) => {
-                let linewise = visual.kind == VisualKind::Line || force == Some(Force::Linewise);
-                let range = operator::visual_region(
-                    host,
-                    visual.anchor,
-                    visual.cursor,
-                    linewise,
-                    whole_lines,
-                );
-                let to_end = self.want == crate::motion::Want::End;
-                (range, Some(extent_of(host, visual, linewise, to_end)))
-            }
-            (Target::Motion(movement), _) => {
-                let env = Env {
-                    host: &*host,
-                    from: cursor,
-                    want: self.want,
-                    count: command.count,
-                    operator: Some(operator),
-                    visual: false,
-                };
-                let Some(moved) = motion::evaluate(&env, movement, &mut shared.last_find) else {
-                    return;
-                };
-                if moved.failed {
-                    self.settle(host, moved.pos);
-                    return;
-                }
-                (
-                    operator::motion_region(host, cursor, moved, force, operator),
-                    None,
-                )
-            }
-            (Target::Lines, _) => {
-                // 叠写形式：从当前行起的「次数」行。
-                let env = Env {
-                    host: &*host,
-                    from: cursor,
-                    want: self.want,
-                    count: command
-                        .count
-                        .map(|n| n.saturating_sub(1))
-                        .filter(|n| *n > 0),
-                    operator: Some(operator),
-                    visual: false,
-                };
-                let down = Movement {
-                    motion: Motion::Down,
-                    arg: None,
-                };
-                let mut moved = if env.count.is_some() {
-                    match motion::evaluate(&env, down, &mut shared.last_find) {
-                        Some(moved) => moved,
-                        None => return,
-                    }
-                } else {
-                    Moved {
-                        want: WantUpdate::Keep,
-                        ..Moved::new(cursor, Span::Linewise)
-                    }
-                };
-                // 复制之外的操作符先把光标移到末行的第一个非空白字符。
-                if operator != Operator::Yank {
-                    let text = host.text();
-                    moved.pos = text::first_non_blank(text, text::line_of(text, moved.pos));
-                }
-                (
-                    operator::motion_region(host, cursor, moved, force, operator),
-                    None,
-                )
-            }
-            // 文本对象尚未实现；没有选区的 `Selection` 不会出现。
-            (Target::Object(_) | Target::Selection, _) => {
-                host.message(Message::Unsupported);
+        // 按块的可视模式：操作符作用于块；`S`、`R` 与只按行工作的操作符仍作用于整行。
+        if let Some(visual) = self.visual
+            && visual.kind == VisualKind::Block
+            && force != Some(Force::Linewise)
+        {
+            let to_end = match target {
+                Target::SelectedLines { to_end } => to_end || self.want == Want::End,
+                _ => self.want == Want::End,
+            };
+            if self.block_operate(shared, host, command, operator, visual, to_end) {
                 return;
             }
+        }
+
+        let Some((range, extent)) =
+            self.target_range(shared, host, command, operator, target, force)
+        else {
+            return;
         };
 
         let (from, to) = bounds(host, range.region);
@@ -136,11 +62,11 @@ impl Vim {
             1
         };
         if visual {
-            self.end_visual();
+            self.end_visual(host);
         }
 
         let done = match operator {
-            Operator::Yank => self.yank(shared, host, command, range, cursor),
+            Operator::Yank => self.yank(shared, host, command, range),
             Operator::Delete => self.delete(shared, host, command, range),
             Operator::Change => self.change(shared, host, command, range),
             Operator::Indent | Operator::Outdent => {
@@ -161,34 +87,7 @@ impl Vim {
                 }
             }
             Operator::ToggleCase | Operator::Lowercase | Operator::Uppercase | Operator::Rot13 => {
-                let text = host.text();
-                // 范围为空且起点在行首时仍有字符被变换：文本开头为第一个字符，其余为整行。
-                let to = match range.region {
-                    Region::Chars { from, to }
-                        if from == to && from == text.line_start(range.first) =>
-                    {
-                        if range.first == 0 {
-                            text::next_in_line(text, from).unwrap_or(from)
-                        } else {
-                            text.line_end(range.first)
-                        }
-                    }
-                    _ => to,
-                };
-                let old = text.substring(from, to);
-                let new = operator::recased(&old, operator);
-                let changes = if old == new {
-                    Vec::new()
-                } else {
-                    vec![Change {
-                        start: from,
-                        removed: old,
-                        inserted: new,
-                    }]
-                };
-                let done = self.edit(host, changes, range.start, range.first);
-                self.settle(host, range.start);
-                done
+                self.recase(host, operator, range)
             }
             Operator::Join | Operator::JoinRaw => {
                 let count = range.last - range.first + 1;
@@ -239,6 +138,175 @@ impl Vim {
         }
     }
 
+    /// 返回操作符作用的范围，以及可视模式下供点重复使用的范围；命令没有可作用的范围，或已
+    /// 就地执行完毕时返回 `None`。
+    fn target_range(
+        &mut self,
+        shared: &mut Shared,
+        host: &mut impl Host,
+        command: Command,
+        operator: Operator,
+        target: Target,
+        force: Option<Force>,
+    ) -> Option<(Range, Option<Extent>)> {
+        let cursor = self.caret(host);
+        let whole_lines = whole_lines(operator);
+        let times = command
+            .count
+            .map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX));
+        let found = match (target, self.visual) {
+            (Target::Selection | Target::SelectedLines { .. }, Some(visual)) => {
+                let linewise = visual.kind != VisualKind::Char
+                    || force == Some(Force::Linewise)
+                    || matches!(target, Target::SelectedLines { .. });
+                let range = operator::visual_region(
+                    host,
+                    visual.anchor,
+                    visual.cursor,
+                    linewise,
+                    whole_lines,
+                );
+                let to_end = self.want == Want::End;
+                (range, Some(extent_of(host, visual, linewise, to_end)))
+            }
+            (Target::Motion(movement), _) => {
+                let moved = self.moved(shared, host, movement, command.count, Some(operator))?;
+                if moved.failed {
+                    self.settle(host, moved.pos);
+                    return None;
+                }
+                if force == Some(Force::Blockwise) {
+                    // 强制按块：以光标与目标位置为两角的块。
+                    let visual = Visual {
+                        kind: VisualKind::Block,
+                        anchor: cursor,
+                        cursor: moved.pos,
+                    };
+                    self.visual = Some(visual);
+                    if !self.block_operate(shared, host, command, operator, visual, false) {
+                        self.visual = None;
+                        host.message(Message::Unsupported);
+                    }
+                    // 重复时重新求值动作，不沿用块的大小。
+                    if !self.replaying
+                        && let Some(repeat) = &mut shared.repeat
+                    {
+                        repeat.extent = None;
+                    }
+                    if let Some(session) = &mut self.insert {
+                        session.extent = None;
+                    }
+                    return None;
+                }
+                (
+                    operator::motion_region(host, cursor, moved, force, operator),
+                    None,
+                )
+            }
+            (Target::Lines, _) => {
+                // 叠写形式：从当前行起的「次数」行。
+                let down = Movement {
+                    motion: Motion::Down,
+                    arg: None,
+                };
+                let count = command
+                    .count
+                    .map(|n| n.saturating_sub(1))
+                    .filter(|n| *n > 0);
+                let mut moved = if count.is_some() {
+                    self.moved(shared, host, down, count, Some(operator))?
+                } else {
+                    Moved {
+                        want: WantUpdate::Keep,
+                        ..Moved::new(cursor, Span::Linewise)
+                    }
+                };
+                // 复制之外的操作符先把光标移到末行的第一个非空白字符。
+                if operator != Operator::Yank {
+                    let text = host.text();
+                    moved.pos = text::first_non_blank(text, text::line_of(text, moved.pos));
+                }
+                (
+                    operator::motion_region(host, cursor, moved, force, operator),
+                    None,
+                )
+            }
+            (Target::Object(object), _) => {
+                let found = match object.shape {
+                    Shape::NextMatch => self.match_target(shared, host, cursor, true, times),
+                    Shape::PreviousMatch => self.match_target(shared, host, cursor, false, times),
+                    _ => {
+                        let at = At {
+                            cursor,
+                            anchor: None,
+                            linewise: false,
+                            count: times.min(motion::MAX_STEPS),
+                        };
+                        object::select(host.text(), object, at).map(|selected| {
+                            let span = if selected.linewise {
+                                Span::Linewise
+                            } else if selected.inclusive {
+                                Span::Inclusive
+                            } else {
+                                Span::Exclusive
+                            };
+                            // 标签之内的文本止于行首时，范围不调整到上一行的行尾。
+                            let moved = Moved {
+                                keep_end: object.shape == Shape::Tag,
+                                failed: selected.failed,
+                                ..Moved::new(selected.end, span)
+                            };
+                            (selected.start, moved)
+                        })
+                    }
+                };
+                let (start, moved) = found?;
+                if moved.failed {
+                    self.settle(host, moved.pos);
+                    return None;
+                }
+                (
+                    operator::motion_region(host, start, moved, force, operator),
+                    None,
+                )
+            }
+            // 没有选区时不会出现作用于选区的命令。
+            (Target::Selection | Target::SelectedLines { .. }, None) => return None,
+        };
+        Some(found)
+    }
+
+    /// 变换 `range` 中字母的大小写，光标移到范围的起点。
+    fn recase(&mut self, host: &mut impl Host, operator: Operator, range: Range) -> bool {
+        let (from, to) = bounds(host, range.region);
+        let text = host.text();
+        // 范围为空且起点在行首时仍有字符被变换：文本开头为第一个字符，其余为整行。
+        let to = match range.region {
+            Region::Chars { from, to } if from == to && from == text.line_start(range.first) => {
+                if range.first == 0 {
+                    text::next_in_line(text, from).unwrap_or(from)
+                } else {
+                    text.line_end(range.first)
+                }
+            }
+            _ => to,
+        };
+        let old = text.substring(from, to);
+        let new = operator::recased(&old, operator);
+        let changes = if old == new {
+            Vec::new()
+        } else {
+            vec![Change {
+                start: from,
+                removed: old,
+                inserted: new,
+            }]
+        };
+        let done = self.edit(host, changes, range.start, range.first);
+        self.settle(host, range.start);
+        done
+    }
+
     /// 复制 `range` 中的文本，光标移到范围的起点。
     fn yank(
         &mut self,
@@ -246,15 +314,21 @@ impl Vim {
         host: &mut impl Host,
         command: Command,
         range: Range,
-        cursor: usize,
     ) -> bool {
         let content = content_of(host, range.region);
         if !Self::write_register(shared, host, command.register, content, Source::Yank) {
             return false;
         }
-        // 按行的范围向下延伸时光标不动，其余情况移到范围的起点。
+        let text = host.text();
+        let (from, to) = match range.region {
+            Region::Chars { from, to } => (from, to.saturating_sub(1).max(from)),
+            Region::Lines { first, last } => (text.line_start(first), text.line_end(last)),
+        };
+        host.set_mark('[', from);
+        host.set_mark(']', to);
+        // 光标移到范围的起点；按行的范围向下延伸时起点就是光标。
         let pos = match range.region {
-            Region::Lines { .. } => cursor.min(range.start),
+            Region::Lines { .. } => range.start,
             Region::Chars { from, .. } => from,
         };
         self.settle(host, pos);
@@ -387,6 +461,19 @@ pub(super) fn content_of<H: Host>(host: &H, region: Region) -> Content {
             text: operator::lines_text(text, first, last),
         },
     }
+}
+
+/// 操作符是否只按行工作。
+fn whole_lines(operator: Operator) -> bool {
+    matches!(
+        operator,
+        Operator::Indent
+            | Operator::Outdent
+            | Operator::Join
+            | Operator::JoinRaw
+            | Operator::Comment
+            | Operator::Reindent
+    )
 }
 
 /// 返回可视选区覆盖的范围，供点重复使用。

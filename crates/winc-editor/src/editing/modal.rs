@@ -4,11 +4,135 @@
 //! [`Document::apply`]，并提供按文本行之外的单位（已折叠的区域、显示行）查询位置的方法。
 
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use winc_core::edit::EditKind;
 use winc_core::{Change, Lines, Selection, Transaction};
 
+use crate::document::content::Content;
+use crate::editing::search::Pattern;
 use crate::{Command, Document, EDIT_LIMIT};
+
+/// 修改列表保留的位置个数（个）；超出时丢弃最早的一个。
+///
+/// 取自调参：足以回到最近一段编辑经过的各处。
+const MAX_CHANGES: usize = 100;
+
+/// 一次查找最多占用的时间；超出时按找不到处理。
+///
+/// 取自调参：查找在界面线程上执行，没有匹配时要扫过整篇文本，该上限使大文件上的一次按键
+/// 不会长时间停顿。
+const FIND_BUDGET: Duration = Duration::from_millis(150);
+
+/// 跨行的模式在一行上匹配时连同其后取用的行数（行）。
+///
+/// 取自调参：匹配可以延伸到之后的行，更长的匹配不识别。
+const FIND_LINES: usize = 32;
+
+/// 模态编辑层的标记与修改列表：位置随文本的修改移动。
+#[derive(Debug, Default)]
+pub(crate) struct Marks {
+    /// 各标记的名字与位置。
+    marks: Vec<(char, usize)>,
+    /// 修改列表中的位置，从旧到新。
+    changes: Vec<usize>,
+}
+
+impl Marks {
+    /// 是否没有任何标记与修改记录。
+    pub(crate) fn is_empty(&self) -> bool {
+        self.marks.is_empty() && self.changes.is_empty()
+    }
+
+    /// 文本 `text` 即将被修改：从 `start` 起的 `removed` 个字符换成 `inserted` 个字符。
+    ///
+    /// 所在的行被整行删除的标记一并删除，其余位置随修改移动。
+    pub(crate) fn edit(&mut self, text: &Content, start: usize, removed: usize, inserted: usize) {
+        let end = start + removed;
+        let moved = |pos: usize| {
+            if pos < start {
+                pos
+            } else if pos < end {
+                start
+            } else {
+                pos - removed + inserted
+            }
+        };
+        self.marks.retain(|(_, pos)| {
+            if *pos < start || *pos >= end {
+                return true;
+            }
+            let line = text.line_of(*pos);
+            let (from, to) = (text.line_start(line), text.line_end(line));
+            !(start <= from && to <= end && (start < from || to < end))
+        });
+        for (_, pos) in &mut self.marks {
+            *pos = moved(*pos);
+        }
+        for pos in &mut self.changes {
+            *pos = moved(*pos);
+        }
+    }
+}
+
+/// 模态编辑层的查找模式：已编译的正则，`^`、`$` 按行匹配。
+#[derive(Debug, Clone)]
+pub struct ModalPattern {
+    /// 已编译的正则。
+    pattern: Pattern,
+    /// 模式是否可以匹配换行：匹配时连同之后的若干行。
+    multiline: bool,
+}
+
+impl ModalPattern {
+    /// 编译正则 `regex`；`ignore_case` 为真时忽略大小写。
+    ///
+    /// # Errors
+    ///
+    /// 正则有误时返回错误说明。
+    pub fn new(regex: &str, ignore_case: bool) -> Result<Self, String> {
+        Ok(Self {
+            pattern: Pattern::new(regex, ignore_case, true)?,
+            multiline: regex.contains("\\n") || regex.contains("(?s"),
+        })
+    }
+
+    /// 返回第 `line` 行上的全部匹配（字符偏移），按起点排序。
+    ///
+    /// 从行首起依次查找：非空的匹配之后从其终点继续，空的匹配之后前进一个字符；跨行的模式
+    /// 可以延伸到之后的行，起点仍在该行之内。
+    fn in_line(&self, text: &Content, line: usize) -> Vec<(usize, usize)> {
+        let start = text.line_start(line);
+        let content = text.line_content(line);
+        let mut haystack = content.slice().to_string();
+        let len = haystack.len();
+        if self.multiline {
+            let last = (line + FIND_LINES).min(text.line_count().saturating_sub(1));
+            for next in line + 1..=last {
+                haystack.push('\n');
+                haystack.push_str(&text.line_content(next).slice().to_string());
+            }
+        }
+        let chars = |byte: usize| haystack[..byte.min(haystack.len())].chars().count();
+        let mut found = Vec::new();
+        let mut from = 0;
+        while let Ok(Some((s, e))) = self.pattern.find_at(&haystack, from) {
+            if s > len {
+                break;
+            }
+            found.push((start + chars(s), start + chars(e)));
+            if e > len || s == len {
+                break;
+            }
+            from = if e > s {
+                e
+            } else {
+                s + haystack[s..].chars().next().map_or(1, char::len_utf8)
+            };
+        }
+        found
+    }
+}
 
 impl Document {
     /// 开始一个撤销分组：到对应的 [`Document::end_undo_group`] 为止的修改合并成一个撤销单元。
@@ -87,6 +211,107 @@ impl Document {
         transaction.after = Selection::point(self.text.line_start(first));
         self.apply(transaction);
         true
+    }
+
+    /// 返回模态编辑层的标记 `name` 的位置；没有设置时返回 `None`。
+    pub fn modal_mark(&self, name: char) -> Option<usize> {
+        let end = self.text.end_pos();
+        (self.marks.marks.iter())
+            .find(|(mark, _)| *mark == name)
+            .map(|(_, pos)| (*pos).min(end))
+    }
+
+    /// 把模态编辑层的标记 `name` 设在位置 `pos`；标记随文本的修改移动。
+    pub fn set_modal_mark(&mut self, name: char, pos: usize) {
+        match self.marks.marks.iter_mut().find(|(mark, _)| *mark == name) {
+            Some(mark) => mark.1 = pos,
+            None => self.marks.marks.push((name, pos)),
+        }
+    }
+
+    /// 返回模态编辑层的修改列表，从旧到新。
+    pub fn modal_changes(&self) -> &[usize] {
+        &self.marks.changes
+    }
+
+    /// 把位置 `pos` 记入模态编辑层的修改列表；与上一处修改在同一行时只更新位置。
+    pub fn record_modal_change(&mut self, pos: usize) {
+        let line = self.text.line_of(pos.min(self.text.end_pos()));
+        let text = &self.text;
+        let changes = &mut self.marks.changes;
+        match changes.last_mut() {
+            Some(last) if text.line_of((*last).min(text.end_pos())) == line => *last = pos,
+            _ => {
+                changes.push(pos);
+                if changes.len() > MAX_CHANGES {
+                    changes.remove(0);
+                }
+            }
+        }
+    }
+
+    /// 返回 `pattern` 起点不小于 `from`（`forward` 为真）或小于 `from` 的最近一处匹配。
+    ///
+    /// 每行各自从行首起依次查找，匹配互不重叠。文本以换行符结尾时末尾的空行不参与查找。
+    /// 超过时间上限仍未找到时返回 `None`。
+    pub fn find_modal(
+        &self,
+        pattern: &ModalPattern,
+        from: usize,
+        forward: bool,
+    ) -> Option<(usize, usize)> {
+        let text = &self.text;
+        let count = text.line_count();
+        let lines = if count > 1 && text.line_start(count - 1) == text.end_pos() {
+            count - 1
+        } else {
+            count
+        };
+        let started = Instant::now();
+        let at = text.line_of(from.min(text.end_pos())).min(lines - 1);
+        let expired = |scanned: usize| scanned % 256 == 255 && started.elapsed() > FIND_BUDGET;
+        if forward {
+            for (scanned, line) in (at..lines).enumerate() {
+                let found = pattern.in_line(text, line);
+                if let Some(hit) = found.into_iter().find(|hit| hit.0 >= from) {
+                    return Some(hit);
+                }
+                if expired(scanned) {
+                    return None;
+                }
+            }
+            return None;
+        }
+        for (scanned, line) in (0..=at).rev().enumerate() {
+            let found = pattern.in_line(text, line);
+            if let Some(hit) = found.into_iter().rev().find(|hit| hit.0 < from) {
+                return Some(hit);
+            }
+            if expired(scanned) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// 返回第 `line` 行之后下一个可折叠的块的首行（`forward` 为真），或之前上一个可折叠的块
+    /// 的末行。
+    pub fn fold_edge(&mut self, line: usize, forward: bool, tab_width: usize) -> Option<usize> {
+        if !self.can_fold() {
+            return None;
+        }
+        let ranges = self.fold_ranges(tab_width);
+        if forward {
+            (ranges.iter())
+                .map(|range| range.start)
+                .filter(|start| *start > line)
+                .min()
+        } else {
+            (ranges.iter())
+                .map(|range| range.end)
+                .filter(|end| *end < line)
+                .max()
+        }
     }
 
     /// 是否存在已折叠的块。

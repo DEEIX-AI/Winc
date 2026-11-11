@@ -1258,6 +1258,14 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置 Vim 模式下无名寄存器与系统剪贴板的同步方式。
+    pub(in crate::app) fn set_vim_clipboard(&mut self, choice: winc_config::VimClipboard) {
+        self.config.vim_clipboard = Some(choice);
+        self.vim_apply_config();
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 设置何时显示空格和制表符。
     pub(in crate::app) fn set_render_whitespace(&mut self, choice: winc_config::RenderWhitespace) {
         self.config.render_whitespace = Some(choice);

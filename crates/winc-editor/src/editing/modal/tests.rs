@@ -130,3 +130,80 @@ fn display_rows_follow_the_wrapping() {
     assert_eq!(d.display_vertical(start + 12, -2), Some(1));
     assert_eq!(d.display_vertical(start + 12, 99), Some(d.text().end_pos()));
 }
+
+#[test]
+fn marks_move_with_edits_and_go_away_with_their_line() {
+    let mut d = doc("one\ntwo\nthree\n");
+    d.set_modal_mark('a', 5);
+    d.set_modal_mark('b', 9);
+    d.record_modal_change(5);
+    // 标记之前的插入使标记后移；同一行上的再次修改只更新修改列表的末项。
+    assert!(d.apply_changes(vec![insertion(0, "x\n")], 0, 0));
+    assert_eq!((d.modal_mark('a'), d.modal_mark('b')), (Some(7), Some(11)));
+    assert_eq!(d.modal_changes(), [7]);
+    d.record_modal_change(8);
+    assert_eq!(d.modal_changes(), [8]);
+    d.record_modal_change(0);
+    assert_eq!(d.modal_changes(), [8, 0]);
+
+    // 整行被删除时该行上的标记一并删除，其余标记前移；撤销不恢复被删除的标记。
+    let removal = Change {
+        start: 6,
+        removed: "two\n".to_owned(),
+        inserted: String::new(),
+    };
+    assert!(d.apply_changes(vec![removal], 6, 6));
+    assert_eq!((d.modal_mark('a'), d.modal_mark('b')), (None, Some(7)));
+    d.execute(Command::Undo, 10, 4);
+    assert_eq!((d.modal_mark('a'), d.modal_mark('b')), (None, Some(11)));
+
+    // 行内的删除把其中的标记移到删除处。
+    d.set_modal_mark('c', 3);
+    let removal = Change {
+        start: 2,
+        removed: "one".to_owned(),
+        inserted: String::new(),
+    };
+    assert!(d.apply_changes(vec![removal], 2, 2));
+    assert_eq!(d.modal_mark('c'), Some(2));
+    assert_eq!(d.modal_mark('z'), None);
+}
+
+#[test]
+fn patterns_match_line_by_line_from_either_direction() {
+    use crate::ModalPattern;
+    let d = doc("aaaa b\n\nab ab\n");
+    let find = |regex: &str, from: usize, forward: bool| {
+        let pattern = ModalPattern::new(regex, false).unwrap();
+        d.find_modal(&pattern, from, forward)
+    };
+    // 匹配互不重叠，每行从行首起依次确定。
+    assert_eq!(find("aa", 0, true), Some((0, 2)));
+    assert_eq!(find("aa", 1, true), Some((2, 4)));
+    assert_eq!(find("aa", 3, true), None);
+    assert_eq!(find("ab", 5, true), Some((8, 10)));
+    assert_eq!(find("ab", 13, false), Some((11, 13)));
+    assert_eq!(find("ab", 11, false), Some((8, 10)));
+    assert_eq!(find("ab", 8, false), None);
+    // 空的匹配：行首、行尾与空行；末尾的空行不参与查找。
+    assert_eq!(find("^", 1, true), Some((7, 7)));
+    assert_eq!(find("$", 0, true), Some((6, 6)));
+    assert_eq!(find("$", 14, true), None);
+    assert_eq!(find("a*", 5, true), Some((5, 5)));
+    // 跨行的模式：起点在该行之内，可以延伸到之后的行。
+    assert_eq!(find("b\\n\\n", 0, true), Some((5, 8)));
+    assert_eq!(find("\\n", 7, true), Some((7, 8)));
+    // 忽略大小写与无法编译的正则。
+    let pattern = ModalPattern::new("AB", true).unwrap();
+    assert_eq!(d.find_modal(&pattern, 0, true), Some((8, 10)));
+    assert!(ModalPattern::new("(", false).is_err());
+}
+
+#[test]
+fn fold_edges_come_from_the_blocks_of_the_document() {
+    let mut d = Document::from_text(DocumentId(1), "a\n  b\n  c\nd\n  e\nf\n");
+    assert_eq!(d.fold_edge(0, true, 4), Some(3));
+    assert_eq!(d.fold_edge(3, true, 4), None);
+    assert_eq!(d.fold_edge(5, false, 4), Some(4));
+    assert_eq!(d.fold_edge(0, false, 4), None);
+}

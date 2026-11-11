@@ -240,6 +240,9 @@ fn round_trips_through_json() {
         external_terminal: Some("test-terminal".to_string()),
         vim_enabled: Some(true),
         vim_clipboard: Some(VimClipboard::Always),
+        vim_ignore_case: Some(true),
+        vim_smart_case: Some(false),
+        vim_scroll_off: Some(3),
         vim_handle_keys: vec![("ctrl+f".to_owned(), true)],
         terminal_enabled: Some(true),
         terminal_font: Some("Menlo".to_owned()),
@@ -514,11 +517,17 @@ fn config_path_lands_in_the_platform_directory() {
 fn the_vim_section_reads_writes_and_reports_bad_values() {
     let (config, problems) = Config::parse(
         r#"{ "vim": { "enabled": true, "clipboard": "yank",
+             "ignoreCase": true, "smartCase": true, "scrollOff": 5,
              "handleKeys": { "Ctrl+F": "vim", "ctrl+d": "app" } } }"#,
     );
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(config.vim_enabled, Some(true));
     assert_eq!(config.vim_clipboard, Some(VimClipboard::Yank));
+    assert_eq!(
+        (config.vim_ignore_case, config.vim_smart_case),
+        (Some(true), Some(true))
+    );
+    assert_eq!(config.vim_scroll_off, Some(5));
     // 按键的名字统一为小写，按名字排序。
     assert_eq!(
         config.vim_handle_keys,
@@ -543,4 +552,10 @@ fn the_vim_section_reads_writes_and_reports_bad_values() {
     assert_eq!(config.vim_handle_keys, [("ctrl+f".to_owned(), true)]);
     let (config, problems) = Config::parse(r#"{ "vim": { "handleKeys": [] } }"#);
     assert_eq!((problems.len(), config.vim_handle_keys.len()), (1, 0));
+    // 保留的行数：非整数与超出范围的值各报告一次。
+    let (config, problems) = Config::parse(r#"{ "vim": { "scrollOff": 2.5 } }"#);
+    assert_eq!((problems.len(), config.vim_scroll_off), (1, None));
+    let (config, problems) = Config::parse(r#"{ "vim": { "scrollOff": 1000, "smartCase": 1 } }"#);
+    assert_eq!((problems.len(), config.vim_scroll_off), (2, None));
+    assert_eq!(config.vim_smart_case, None);
 }

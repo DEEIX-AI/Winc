@@ -35,7 +35,11 @@ fn prefix_kinds_stay_out_of_the_modes_that_do_not_take_them() {
             Kind::TextObject(_) => assert!(!entry.modes.contains(Mode::Normal)),
             Kind::Operator(_) => assert!(!entry.modes.contains(Mode::OperatorPending)),
             Kind::Action(_) => assert!(!entry.modes.contains(Mode::OperatorPending)),
-            Kind::Motion(_) | Kind::SmallDelete | Kind::LineOperator(_) | Kind::Synonym(..) => {}
+            Kind::Motion(_)
+            | Kind::SmallDelete
+            | Kind::LineOperator(_)
+            | Kind::WideOperator(..)
+            | Kind::Synonym(..) => {}
         }
     }
 }
@@ -91,7 +95,11 @@ fn the_same_keys_mean_different_things_in_different_modes() {
         kind(Mode::Normal, "<C-r>"),
         Some(Kind::Action(Action::Redo))
     );
-    assert_eq!(kind(Mode::Insert, "<C-r>"), None);
+    assert_eq!(
+        kind(Mode::Insert, "<C-r>"),
+        Some(Kind::Action(Action::InsertRegister))
+    );
+    assert_eq!(kind(Mode::Insert, "<C-a>"), None);
     assert_eq!(
         kind(Mode::Insert, "<Esc>"),
         Some(Kind::Action(Action::Escape))
@@ -155,7 +163,7 @@ fn lookups_walk_multi_key_sequences_and_reject_unknown_keys() {
         kind(Mode::Normal, "<Left>"),
         Some(Kind::Motion(Motion::Left))
     );
-    assert_eq!(walk(Mode::Normal, "<S-Up>"), Lookup::None);
+    assert_eq!(walk(Mode::Normal, "<S-Home>"), Lookup::None);
 
     // 越界的节点与下标不 panic。
     assert_eq!(
@@ -173,18 +181,15 @@ fn lookups_walk_multi_key_sequences_and_reject_unknown_keys() {
 
 #[test]
 fn only_implemented_commands_are_marked_supported() {
-    // 文本对象与之后的阶段实现的命令不标为支持；标为不支持的命令保持不支持。
+    // 之后的阶段实现的命令不标为支持；标为不支持的命令保持不支持。
     for entry in ENTRIES {
         match entry.kind {
-            Kind::TextObject(_) | Kind::Action(Action::Later) => {
+            Kind::Action(Action::Later) => {
                 assert_ne!(entry.support, Support::Supported, "{entry:?}");
             }
             Kind::Action(Action::ExMode | Action::Keyword | Action::UndoLine)
             | Kind::Operator(Operator::Format | Operator::Fold | Operator::Filter) => {
                 assert_eq!(entry.support, Support::Unsupported, "{entry:?}");
-            }
-            Kind::Force(Force::Blockwise) | Kind::Operator(Operator::Reindent) => {
-                assert_eq!(entry.support, Support::Planned, "{entry:?}");
             }
             _ => assert_eq!(entry.support, Support::Supported, "{entry:?}"),
         }

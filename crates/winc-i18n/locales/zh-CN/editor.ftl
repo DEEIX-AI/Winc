@@ -150,6 +150,10 @@ editor-vim-unsupported = Vim 模式尚不支持此命令
 editor-vim-too-large = 涉及的文本过多，未执行
 editor-vim-register-empty = 寄存器 { $name } 中没有内容
 editor-vim-register-read-only = 寄存器 { $name } 不可写入
+editor-vim-not-found = 找不到模式
+editor-vim-bad-pattern = 模式的第 { $column } 个字符处有无法识别的写法
+editor-vim-no-search = 还没有查找过
+editor-vim-no-mark = 标记 { $name } 没有设置
 
 ## 复制和粘贴。
 

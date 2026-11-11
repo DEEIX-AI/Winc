@@ -111,14 +111,16 @@ fn recorded_cases_are_well_formed() {
 
 #[test]
 fn every_supported_command_appears_in_a_recorded_case() {
-    // 标为支持的命令必须有录制用例；切换注释不是 `vim` 自带的命令，由手写的测试覆盖。
+    // 标为支持的命令必须有录制用例。切换注释不是 `vim` 自带的命令，格式化所选的行交给宿主的
+    // 格式化工具，两者由手写的测试覆盖。
     let recorded: Vec<String> = (load("rec").into_iter())
         .flat_map(|(_, file)| file.cases)
         .filter(|case| !case.tags.iter().any(|tag| tag == "later"))
         .map(|case| case.keys)
         .collect();
     let missing: Vec<&str> = (winc_vim::command::ENTRIES.iter())
-        .filter(|entry| entry.support == winc_vim::Support::Supported && entry.keys != "gc")
+        .filter(|entry| entry.support == winc_vim::Support::Supported)
+        .filter(|entry| !["gc", "="].contains(&entry.keys))
         .map(|entry| entry.keys)
         .filter(|keys| !recorded.iter().any(|case| case.contains(keys)))
         .collect();
@@ -134,6 +136,13 @@ fn run(case: &Case) -> State {
     let mut host = TestHost::new(&text);
     let start = host.rope.line_start(case.cursor.line) + case.cursor.col;
     host.selection = Selection::point(start);
+    // 录制时文本由脚本写入：跳转历史中已有文本的开头，修改列表与「上一处修改」标记中已有
+    // 第二行（只有一行时为第一行）的行首。
+    host.jumps = vec![0];
+    host.jump_index = 1;
+    let second = host.rope.line_start(usize::from(case.text.len() > 1));
+    host.changes = vec![second];
+    host.marks.insert('.', second);
     let mut vim = Vim::default();
     let mut shared = Shared::default();
     common::feed(&mut vim, &mut shared, &mut host, &case.keys);
@@ -159,6 +168,7 @@ fn run(case: &Case) -> State {
                 kind: match content.kind {
                     register::Kind::Charwise => RegisterKind::Charwise,
                     register::Kind::Linewise => RegisterKind::Linewise,
+                    register::Kind::Blockwise(width) => RegisterKind::Blockwise(width),
                 },
                 lines,
             })
@@ -208,7 +218,20 @@ fn recorded_cases_match_the_recording() {
             }
             checked += 1;
             let expected = case.expected.as_ref().or(case.result.as_ref()).unwrap();
-            let actual = run(case);
+            let mut actual = run(case);
+            // 录制结果中无法表示的寄存器内容不比较。
+            let mut expected = expected.clone();
+            let opaque = |register: &Register| register.lines == [fixture::OPAQUE];
+            if let Some(name) = expected
+                .registers
+                .iter()
+                .find(|r| opaque(r))
+                .map(|r| r.name)
+            {
+                expected.registers.retain(|register| register.name != name);
+                actual.registers.retain(|register| register.name != name);
+            }
+            let expected = &expected;
             if case.tags.iter().any(|tag| tag == "known") {
                 known += 1;
                 assert_ne!(

@@ -45,6 +45,7 @@ config-label-font-weight = font weight
 config-label-background-opacity = background opacity
 config-label-zoom = zoom
 config-label-tab-width = tab width
+config-label-vim-scroll-off = lines kept around the cursor
 config-label-repository-scan-depth = repository scan depth
 config-label-lines = line count
 config-label-contrast = contrast

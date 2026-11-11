@@ -35,11 +35,11 @@ pub(super) fn matching(text: &impl Lines, from: usize) -> Option<usize> {
         .skip(col)
         .find_map(|(i, c)| partner(*c).map(|p| (i, *c, p)))?;
     let escaped = backslashes_before(&chars, at) % 2 == 1;
-    search(text, line, at, start, target, backward, escaped)
+    search(text, line, at, start, target, backward, escaped, false)
 }
 
 /// `[(` 等：返回从 `from` 向后（`forward` 为假）或向前找到的未配对的 `open` 或 `close` 的位置。
-pub(super) fn unmatched(
+pub(crate) fn unmatched(
     text: &impl Lines,
     from: usize,
     open: char,
@@ -52,7 +52,20 @@ pub(super) fn unmatched(
     } else {
         (close, open)
     };
-    search(text, line, col, nested, target, !forward, false)
+    search(text, line, col, nested, target, !forward, false, false)
+}
+
+/// 返回从 `from` 向后（`forward` 为假）找到的未配对的 `open`，或向前找到的第一个不在嵌套中的
+/// `open`；引号之内的括号同样参与配对。
+pub(crate) fn enclosing(
+    text: &impl Lines,
+    from: usize,
+    open: char,
+    close: char,
+    forward: bool,
+) -> Option<usize> {
+    let (line, col) = text.pos_to_line_col(from);
+    search(text, line, col, close, open, !forward, false, true)
 }
 
 /// 返回第 `line` 行的全部字符。
@@ -72,7 +85,8 @@ fn backslashes_before(chars: &[char], at: usize) -> usize {
 /// 从第 `line` 行的第 `col` 个字符出发查找 `target`，遇到 `nested` 时嵌套加深一层。
 ///
 /// 起点上的字符不参与配对。`escaped` 是起点的括号之前是否有奇数个反斜杠，只有转义状态相同的
-/// 括号参与配对。
+/// 括号参与配对。`plain` 为真时不识别引号。
+#[allow(clippy::too_many_arguments)]
 fn search(
     text: &impl Lines,
     line: usize,
@@ -81,6 +95,7 @@ fn search(
     target: char,
     backward: bool,
     escaped: bool,
+    plain: bool,
 ) -> Option<usize> {
     let last = text::last_line(text);
     let mut line = line;
@@ -119,6 +134,9 @@ fn search(
             col += 1;
         }
 
+        if plain {
+            quotes = Some(false);
+        }
         if quotes.is_none() {
             // 统计该行中未转义的双引号：个数为偶数时才识别字符串；个数为奇数时，只有该行或
             // 上一行以反斜杠结尾（字符串跨行）才识别。
@@ -185,7 +203,7 @@ fn search(
             }
             Some(c) => {
                 // 单引号括起的单个字符（`'x'`、`'\x'`）整体跳过。
-                if c == '\'' {
+                if c == '\'' && !plain {
                     if backward {
                         if col > 1 && chars[col - 2] == '\'' {
                             col -= 2;

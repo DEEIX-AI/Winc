@@ -355,7 +355,22 @@ qa!
 ///
 /// 结果不是 UTF-8、不完整或格式不符时返回原因。
 fn parse_output(raw: &[u8]) -> Result<State, String> {
-    let text = std::str::from_utf8(raw).map_err(|e| format!("结果不是 UTF-8：{e}"))?;
+    // 最近插入的文本中的功能键是 `vim` 内部的字节，不是 UTF-8：该行记作 [`fixture::OPAQUE`]。
+    let mut text = String::with_capacity(raw.len());
+    for (index, line) in raw.split(|byte| *byte == b'\n').enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+        match std::str::from_utf8(line) {
+            Ok(line) => text.push_str(line),
+            Err(_) if line.starts_with(b"L ") => {
+                text.push_str("L ");
+                text.push_str(fixture::OPAQUE);
+            }
+            Err(e) => return Err(format!("结果不是 UTF-8：{e}")),
+        }
+    }
+    let text = text.as_str();
     // 文本行内可以有 CR，只按 LF 分行。
     let mut lines = text.split('\n');
     let malformed = |line: &str| format!("结果的格式不符：{line}");

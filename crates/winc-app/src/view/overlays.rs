@@ -12,7 +12,7 @@ use crate::app::{
     PickerPart, folder_label,
 };
 use crate::icons::Direction;
-use crate::layout::{PickerParts, SearchButton, goto_bar};
+use crate::layout::{PickerParts, SearchButton};
 
 /// 绘制查找条（⌘F、⌥⌘F）：浮在编辑区右上角，内含查找输入框，展开后含替换输入框。
 pub(super) fn draw_search(app: &mut App, frame: &mut Frame<'_>) {
@@ -222,7 +222,7 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
     let caret = {
         let app = &*app;
         let p = app.palette;
-        let bar = goto_bar(app.layout.editor);
+        let bar = app.prompt_bar();
         draw_card(frame, p, bar, RADIUS_BAR, p.popup_bg);
 
         // 跳转到行、储藏说明，或者输入新标签的名字。
@@ -253,6 +253,9 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
                     commit = crate::app::git::log::short(at)
                 ),
             ),
+            // 查找模式的输入条只显示查找的方向。
+            crate::app::PromptKind::VimSearch { forward: true } => ("/", "", String::new()),
+            crate::app::PromptKind::VimSearch { forward: false } => ("?", "", String::new()),
         };
         // 右侧的说明最多占一半宽度，保证输入框留有空间。
         let (size, max) = (app.fonts.ui_small, bar.w / 2.0);

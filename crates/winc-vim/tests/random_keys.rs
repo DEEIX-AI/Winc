@@ -95,12 +95,17 @@ fn random_key(rng: &mut Rng, common: &[Key]) -> Key {
     Key::new(code, mods)
 }
 
-/// 是否参数与命令相符：行内查找与替换字符带字符参数，其余命令不带。
+/// 是否参数与命令相符：行内查找、标记、替换字符与插入寄存器带字符参数，其余命令不带。
 fn argument_fits(command: &Command) -> bool {
     let find = |motion: Motion| {
         matches!(
             motion,
-            Motion::FindForward | Motion::FindBackward | Motion::TillForward | Motion::TillBackward
+            Motion::FindForward
+                | Motion::FindBackward
+                | Motion::TillForward
+                | Motion::TillBackward
+                | Motion::Mark
+                | Motion::MarkLine
         )
     };
     match command.body {
@@ -110,7 +115,10 @@ fn argument_fits(command: &Command) -> bool {
             ..
         } => find(movement.motion) == movement.arg.is_some(),
         Body::Action { action, arg } => {
-            let expects = action == Action::ReplaceChar;
+            let expects = matches!(
+                action,
+                Action::ReplaceChar | Action::SetMark | Action::InsertRegister
+            );
             expects == arg.is_some()
         }
         _ => true,
@@ -136,10 +144,14 @@ fn check_command(mode: Mode, command: &Command, context: &str) {
             assert_eq!((command.register, command.count), (None, None), "{context}");
         }
         (Mode::Visual, Body::Operator { target, force, .. }) => {
-            assert_eq!(target, Target::Selection, "{context}");
+            let selected = matches!(target, Target::Selection | Target::SelectedLines { .. });
+            assert!(selected, "{context}");
             assert!(matches!(force, None | Some(Force::Linewise)), "{context}");
         }
-        (_, Body::Operator { target, .. }) => assert_ne!(target, Target::Selection, "{context}"),
+        (_, Body::Operator { target, .. }) => {
+            let selected = matches!(target, Target::Selection | Target::SelectedLines { .. });
+            assert!(!selected, "{context}");
+        }
         (Mode::Normal | Mode::OperatorPending, Body::Object(_)) => {
             panic!("{context}：普通模式下不能单独使用文本对象")
         }
@@ -220,9 +232,9 @@ fn random_keys_never_break_the_parser() {
     let [pending, commands, unsupported, invalid, cancelled, unbound] = total;
     assert!(pending > 50_000, "{total:?}");
     assert!(commands > 50_000, "{total:?}");
-    assert!(unsupported > 10_000, "{total:?}");
+    assert!(unsupported > 5_000, "{total:?}");
     assert!(invalid > 10_000, "{total:?}");
-    assert!(cancelled > 1_000, "{total:?}");
+    assert!(cancelled > 500, "{total:?}");
     assert!(unbound > 10_000, "{total:?}");
 }
 
@@ -298,8 +310,12 @@ fn check_state(vim: &Vim, host: &TestHost, context: &str) {
                 // 普通模式：选区为空，光标在字符上（空行除外），不在末尾的空行上。
                 assert_eq!(selection, Selection::point(caret), "{context}");
                 let line = text.line_of(caret);
+                // 插入模式中执行一条普通模式的命令期间，光标可以停在行尾之后。
                 let on_char = caret < text.line_end(line) || text.line_len(line) == 0;
-                assert!(on_char, "{context}：光标 {caret} 在行尾之后");
+                assert!(
+                    on_char || vim.is_suspended(),
+                    "{context}：光标 {caret} 在行尾之后"
+                );
                 let phantom = line > 0 && line + 1 == text.line_count() && text.line_len(line) == 0;
                 assert!(!phantom, "{context}：光标在末尾的空行上");
             } else {
@@ -323,16 +339,25 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
     let undo_key = |key: Key| key == Key::char('u') || key == Key::ctrl('r');
 
     for step in 0..steps {
-        // 偶尔由宿主改动选区，模拟鼠标与应用的命令。
-        if rng.below(40) == 0 {
+        // 偶尔由宿主改动选区，模拟鼠标与应用的命令；其中一部分是多个光标。
+        if rng.below(40) == 0 && vim.prompt().is_none() {
             let end = host.rope.end_pos();
             let pos = |rng: &mut Rng| movement::snap_to_grapheme(&host.rope, rng.below(end + 1));
             let (anchor, head) = (pos(&mut rng), pos(&mut rng));
-            host.selection = if rng.below(2) == 0 {
+            let selection = if rng.below(2) == 0 {
                 Selection::point(head)
             } else {
                 Selection::new(anchor, head)
             };
+            if rng.below(3) == 0 {
+                let mut all: Vec<usize> = (0..2 + rng.below(3)).map(|_| pos(&mut rng)).collect();
+                all.sort_unstable();
+                all.dedup();
+                let all = all.into_iter().map(Selection::point).collect();
+                host.set_selections(all, 0);
+            } else {
+                host.set_selections(vec![selection], 0);
+            }
             if vim.mode() == Mode::Insert {
                 vim.insert_moved(&mut host);
                 insert_start = None;
@@ -353,17 +378,29 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
         );
         let before_text = host.text();
         let before_mode = vim.mode();
+        // 是否正在插入模式中执行一条普通模式的命令：命令结束后回到插入模式，另起一个撤销单元。
+        let suspended = vim.is_suspended();
+        // 设置 `WINC_VIM_TRACE` 为种子时打印该种子的每个按键，便于重现失败。
+        if std::env::var("WINC_VIM_TRACE").is_ok_and(|trace| trace == seed.to_string()) {
+            println!("{step} {before_mode:?} {key} {:?}", host.selection);
+        }
         let started = Instant::now();
         common::press(&mut vim, &mut shared, &mut host, key);
         slowest = slowest.max(started.elapsed());
         check_state(&vim, &host, &context);
 
         let after_mode = vim.mode();
-        if before_mode != Mode::Insert && after_mode == Mode::Insert {
+        // 插入模式的 `Ctrl-O`：之后的一条命令结束时回到插入模式，其修改不属于新的插入。
+        let resumed = suspended && after_mode == Mode::Insert;
+        // 回到插入模式的可能是原来的插入，也可能是命令自己进入的插入：这次插入不核对撤销。
+        if resumed {
+            insert_start = None;
+        } else if before_mode != Mode::Insert && after_mode == Mode::Insert {
             insert_start = Some(before_text.clone());
         }
         // 一条命令（或一次插入连同引起插入的命令）撤销后文本逐字节还原，重做后回到执行之后。
         let finished = match (before_mode, after_mode) {
+            _ if resumed || vim.prompt().is_some() => None,
             (Mode::Insert, Mode::Insert) => None,
             (Mode::Insert, _) => insert_start.take(),
             (_, Mode::Insert) => None,
@@ -373,12 +410,13 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
         if let Some(original) = finished {
             let after = host.text();
             if after != original && vim.pending().is_empty() {
-                let selection = host.selection;
+                let (selection, others) = (host.selection, host.others.clone());
                 assert!(host.undo(), "{context}：有可撤销的单元");
                 assert_eq!(host.text(), original, "{context}：撤销后还原");
                 assert!(host.redo(), "{context}：有可重做的单元");
                 assert_eq!(host.text(), after, "{context}：重做后恢复");
                 host.selection = selection;
+                host.others = others;
                 verified += 1;
             }
         }

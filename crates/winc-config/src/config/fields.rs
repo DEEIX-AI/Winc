@@ -287,6 +287,30 @@ const VIM: &[Field] = &[
             Some(Json::String(value.to_owned()))
         },
     },
+    bool_field!("ignoreCase", vim_ignore_case),
+    bool_field!("smartCase", vim_smart_case),
+    Field {
+        key: "scrollOff",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-vim-scroll-off");
+            let range = Config::VIM_SCROLL_OFF_RANGE;
+            config.vim_scroll_off = read_number(value, name, range, label, problems)
+                .filter(|v| {
+                    let whole = v.fract() == 0.0;
+                    if !whole {
+                        let value = v.to_string();
+                        problems.push(t!("config-not-integer", name = name, value = value));
+                    }
+                    whole
+                })
+                .map(|v| v as usize)
+        },
+        write: |config| {
+            config
+                .vim_scroll_off
+                .map(|lines| Json::Number(lines as f64))
+        },
+    },
     Field {
         // 对象的每一项是按键的名字与 `vim` 或 `app`；写法有误的项逐个报告并忽略。
         key: "handleKeys",

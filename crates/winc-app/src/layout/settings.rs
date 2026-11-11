@@ -126,7 +126,7 @@ impl SettingsPage {
                     Setting::StickyScroll,
                     Setting::RenderWhitespace,
                 ]),
-                plain(vec![Setting::VimMode]),
+                plain(vec![Setting::VimMode, Setting::VimClipboard]),
                 plain(vec![
                     Setting::AutoSave,
                     Setting::HotExit,
@@ -257,6 +257,8 @@ pub enum Setting {
     StickyScroll,
     /// Vim 模式。
     VimMode,
+    /// Vim 模式下无名寄存器与系统剪贴板的同步方式。
+    VimClipboard,
     /// 自动换行。
     WordWrap,
     /// 超长行显示全部内容（`wholeLines`）。
@@ -418,6 +420,7 @@ impl Setting {
             | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::VimMode
+            | Setting::VimClipboard
             | Setting::WordWrap
             | Setting::WholeLines
             | Setting::Minimap
@@ -475,6 +478,7 @@ impl Setting {
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::VimMode => t!("settings-vim-mode"),
+            Setting::VimClipboard => t!("settings-vim-clipboard"),
             Setting::WordWrap => t!("settings-word-wrap"),
             Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
@@ -540,6 +544,7 @@ impl Setting {
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::VimMode => Some(t!("settings-vim-mode-desc")),
+            Setting::VimClipboard => Some(t!("settings-vim-clipboard-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
             Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
@@ -624,6 +629,7 @@ impl Setting {
             | Setting::BackgroundFit
             | Setting::Zoom
             | Setting::RenderWhitespace
+            | Setting::VimClipboard
             | Setting::TerminalPosition
             | Setting::TerminalOptionAsMeta => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
@@ -678,6 +684,16 @@ pub fn background_fit_label(choice: winc_config::BackgroundFit) -> &'static str 
         Fit => t!("settings-background-fit-fit"),
         Stretch => t!("settings-background-fit-stretch"),
         Tile => t!("settings-background-fit-tile"),
+    }
+}
+
+/// 返回「Vim 剪贴板」设置中选项 `choice` 的名字。
+pub fn vim_clipboard_label(choice: winc_config::VimClipboard) -> &'static str {
+    use winc_config::VimClipboard::{Always, Register, Yank};
+    match choice {
+        Register => t!("settings-vim-clipboard-register"),
+        Yank => t!("settings-vim-clipboard-yank"),
+        Always => t!("settings-vim-clipboard-always"),
     }
 }
 

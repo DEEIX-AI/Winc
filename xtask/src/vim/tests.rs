@@ -117,6 +117,14 @@ fn incomplete_or_malformed_results_are_rejected() {
     assert!(parse_output(b"C 1 1\nT \xff\nE\n").is_err());
 }
 
+#[test]
+fn register_lines_that_are_not_utf8_are_recorded_as_opaque() {
+    // 最近插入的文本中的功能键是内部的字节：该行记作不参与比较的内容，其余各行不变。
+    let state = parse_output(b"C 1 1\nT ab\nR . v 1\nL a\x80kb\nR a v 1\nL x\nE\n").unwrap();
+    assert_eq!(state.registers[0].lines, [fixture::OPAQUE]);
+    assert_eq!(state.registers[1].lines, ["x"]);
+}
+
 /// 用本机的 `vim` 重新录制全部用例，核对与现有的录制文件一致。
 ///
 /// 需要 `/usr/bin/vim` 为 9.1：`cargo test -p xtask recordings -- --ignored`。

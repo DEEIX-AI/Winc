@@ -3,6 +3,11 @@
 //! 生成的结果是确定的：同一份代码每次生成相同的用例文件。用例的名字由所在的组与序号组成。
 
 use winc_vim::fixture::{Case, File, Position};
+use winc_vim::{Key, notation};
+
+mod navigation;
+
+use navigation::{marks, objects, searches, views};
 
 /// 一份初始文本及其上的若干光标位置（行号，字符列）。
 struct Buffer {
@@ -117,6 +122,63 @@ const TINY: [Buffer; 3] = [
     },
 ];
 
+/// 各种写法的数。
+const NUMBERS: Buffer = Buffer {
+    text: &[
+        "x 7 -3 007 0x0f 0XFF 0b101 y",
+        "9 -1 abc08 1-2 99 0 -0x1 08",
+        "no digits here",
+        "18446744073709551615 0xfF 0x 0b2 -",
+    ],
+    cursors: &[
+        (0, 0),
+        (0, 2),
+        (0, 4),
+        (0, 5),
+        (0, 8),
+        (0, 12),
+        (0, 14),
+        (0, 17),
+        (0, 23),
+        (0, 27),
+        (1, 0),
+        (1, 2),
+        (1, 6),
+        (1, 11),
+        (1, 12),
+        (1, 15),
+        (1, 18),
+        (1, 20),
+        (1, 25),
+        (2, 3),
+        (3, 0),
+        (3, 21),
+        (3, 26),
+        (3, 29),
+        (3, 33),
+    ],
+};
+
+/// 长短不一的行，用于按块的选区。
+const BLOCK: Buffer = Buffer {
+    text: &[
+        "abcdefgh",
+        "ij",
+        "klmnopqrst",
+        "",
+        "uvwxyz12",
+        "  indented line",
+        "last one here",
+    ],
+    cursors: &[(0, 0), (0, 2), (0, 6), (1, 1), (2, 4), (4, 3), (5, 2)],
+};
+
+/// 把文字 `text` 写成依次键入各字符的按键记法。
+fn typed(text: &str) -> String {
+    let keys: Vec<Key> = text.chars().map(Key::char).collect();
+    notation::write(&keys)
+}
+
 /// 不带参数的动作。
 const MOTIONS: &[&str] = &[
     "h", "l", "<BS>", "<Space>", "0", "^", "$", "g_", "g0", "g^", "g$", "gm", "|", "k", "j", "gk",
@@ -141,6 +203,10 @@ const KEY_MOTIONS: &[&str] = &[
     "g<End>",
     "g<Up>",
     "g<Down>",
+    "<C-h>",
+    "<C-j>",
+    "<C-n>",
+    "<C-p>",
 ];
 
 /// 行内查找的按键序列。
@@ -262,6 +328,13 @@ pub(super) fn generated(full: bool) -> Vec<Group> {
         inserts(full),
         visuals(full),
         undo(full),
+        objects(full),
+        searches(full),
+        marks(full),
+        views(full),
+        typing(full),
+        numbers(full),
+        blocks(full),
     ]
 }
 
@@ -830,4 +903,232 @@ fn undo(full: bool) -> Group {
         }
     }
     b.finish("undo", "撤销与重做之后的文本与光标。")
+}
+
+/// 替换模式与插入模式的 `Ctrl` 键。
+fn typing(full: bool) -> Group {
+    let mut b = Builder::new("y", full);
+    for buffer in [&WORDS, &CODE, &PROSE] {
+        for keys in [
+            "RXY<Esc>",
+            "3RXY<Esc>",
+            "RXY<BS><Esc>",
+            "RXY<BS><BS><BS>Z<Esc>",
+            "RX<CR>Y<Esc>",
+            "RXY<Esc>.",
+            "RXY<Esc>j.",
+            "RXY<Esc>3.",
+            "R<Esc>",
+            "Rabcdefghijklmnopqrstuvwxyz0123456789<Esc>",
+            "RXY<Esc>u",
+            "RXYZ<Esc>u<C-r>",
+            "R中<Esc>",
+            "RX<C-h>Y<Esc>",
+            "RXY<C-c>",
+            "2RX<CR><Esc>",
+            "iab<Space>cd<C-w>X<Esc>",
+            "Oab<Space>cd<C-u>X<Esc>",
+            "Oab<Space>cd<C-w><C-w>X<Esc>",
+            "iab<C-h>c<Esc>",
+            "ia<C-t>b<Esc>",
+            "ia<C-t><C-t>b<Esc>",
+            "ia<C-t><C-d>b<Esc>",
+            "ia<C-d>b<Esc>",
+            "ywA<C-r>\"<Esc>",
+            "ywA<C-r>0<C-r>0<Esc>",
+            "\"aylA<C-r>a<C-r>a<Esc>",
+            "A<C-r>z<Esc>",
+            "A<C-r><Esc>x<Esc>",
+            "ia<C-o>xb<Esc>",
+            "A<C-o>0x<Esc>",
+            "Aab<C-o>hX<Esc>",
+            "A<C-o>$X<Esc>",
+            "A<C-o>xX<Esc>",
+            "ia<C-o>dwb<Esc>",
+            "i<C-o>2lX<Esc>",
+            "ia<C-o>jb<Esc>",
+            "ia<C-o>$b<Esc>",
+            "ia<C-o>0b<Esc>",
+            "ia<C-o><Esc>b<Esc>",
+            "ia<C-o>xb<Esc>.",
+            "ia<C-o>xb<Esc>u",
+            "ia<C-o>xb<Esc>uu",
+            "RX<C-o>lY<Esc>",
+            "i<C-e><C-e><Esc>",
+            "i<C-y><C-y><Esc>",
+            "A<C-e><Esc>",
+            "A<C-y>x<Esc>",
+            "iab<C-c>",
+            "3iab<C-c>",
+            "ia<C-c>.",
+            "cwab<C-c>w.",
+        ] {
+            b.some(buffer, 2, keys);
+        }
+    }
+    b.finish("typing", "替换模式与插入模式的 Ctrl 键。")
+}
+
+/// `Ctrl-A` 与 `Ctrl-X`。
+fn numbers(full: bool) -> Group {
+    let mut b = Builder::new("n", full);
+    for keys in [
+        "<C-a>",
+        "<C-x>",
+        "5<C-a>",
+        "10<C-x>",
+        "<C-a>.",
+        "<C-a>3.",
+        "<C-a>u",
+        "100<C-a>",
+        "<C-x><C-x>",
+        "<C-a><C-a><C-x>",
+        "999999999<C-a>",
+    ] {
+        b.each(&NUMBERS, keys);
+    }
+    for buffer in [&WORDS, &CODE] {
+        for keys in ["<C-a>", "<C-x>", "3<C-a>"] {
+            b.some(buffer, 1, keys);
+        }
+    }
+    b.finish("numbers", "数的增减。")
+}
+
+/// 按块的可视模式，以及可视模式下的 `I` 与 `A`。
+fn blocks(full: bool) -> Group {
+    let mut b = Builder::new("b", full);
+    for keys in [
+        "<C-v>jld",
+        "<C-v>jly",
+        "<C-v>jjlld",
+        "<C-v>jjjly",
+        "<C-v>jj$d",
+        "<C-v>jj$y",
+        "<C-v>j$hd",
+        "<C-v>ld",
+        "<C-v>d",
+        "<C-v>y",
+        "<C-v>3ly",
+        "<C-v>kld",
+        "<C-v>jhd",
+        "<C-v>jlcX<Esc>",
+        "<C-v>jjcXY<Esc>",
+        "<C-v>jj$cX<Esc>",
+        "<C-v>jlsX<Esc>",
+        "<C-v>jjIX<Esc>",
+        "<C-v>jjlIXY<Esc>",
+        "<C-v>jjlAX<Esc>",
+        "<C-v>jjllAXY<Esc>",
+        "<C-v>jj$AX<Esc>",
+        "<C-v>jjI<Esc>",
+        "<C-v>jlrQ",
+        "<C-v>jj$rQ",
+        "<C-v>jl~",
+        "<C-v>jlU",
+        "<C-v>jlu",
+        "<C-v>jlg?",
+        "<C-v>jl>",
+        "<C-v>jl2>",
+        "<C-v>jjl<lt>",
+        "<C-v>jl>.",
+        "<C-v>jlJ",
+        "<C-v>jlgJ",
+        "<C-v>jlD",
+        "<C-v>jlX",
+        "<C-v>jlY",
+        "<C-v>jlCQ<Esc>",
+        "<C-v>jlSQ<Esc>",
+        "<C-v>jlRQ<Esc>",
+        "<C-v>jlod",
+        "<C-v>jlOd",
+        "<C-v>jlOhd",
+        "<C-v>jlokd",
+        "<C-v>jl<Esc>x",
+        "<C-v>jl<C-v>x",
+        "<C-v>jlyP",
+        "<C-v>jlyp",
+        "<C-v>jly$p",
+        "<C-v>jlyGp",
+        "<C-v>jlyG$p",
+        "<C-v>jly3p",
+        "<C-v>jlygP",
+        "<C-v>jlyjjp",
+        "<C-v>jldp",
+        "<C-v>jld.",
+        "<C-v>jldj.",
+        "<C-v>jlIX<Esc>j.",
+        "<C-v>jlAX<Esc>j.",
+        "<C-v>jlcX<Esc>j.",
+        "<C-v>jlrQj.",
+        "<C-v>jl~j.",
+        "<C-v>jldu",
+        "<C-v>jlIX<Esc>u",
+        "<C-v>jlcX<Esc>u",
+        "<C-v>jl<Esc>gvd",
+        "<C-v>jl<Esc>ggjgvy",
+        "<C-v>jlvd",
+        "<C-v>jlVd",
+        "vjl<C-v>d",
+        "Vj<C-v>d",
+        "<C-q>jld",
+        "<C-v>jl\"ay\"ap",
+        "<C-v>jl\"ad\"aP",
+        "<C-v>jly\"0p",
+        "<C-v>jleyp",
+        "<C-v>jwd",
+        "<C-v>j$A<Esc>x",
+        "<C-v>jliwd",
+        "<C-v>jl<Esc>gg`<lt>",
+        "<C-v>jl<Esc>`>",
+        "d<C-v>j",
+        "d<C-v>2j",
+        "d<C-v>l",
+        "d<C-v>w",
+        "y<C-v>jp",
+        "c<C-v>jX<Esc>",
+        "d<C-v>j.",
+        "vlIX<Esc>",
+        "vlAX<Esc>",
+        "vjIX<Esc>",
+        "vjAX<Esc>",
+        "VjIX<Esc>",
+        "VjAX<Esc>",
+        "v$AX<Esc>",
+        "vAX<Esc>",
+        "v$hAX<Esc>",
+        "vjhAX<Esc>",
+        "vlIX<Esc>j.",
+        "vlAX<Esc>j.",
+        "vhAX<Esc>",
+        "vkAX<Esc>",
+        "vkIX<Esc>",
+        "vkhIX<Esc>",
+        "vkk$IX<Esc>",
+        "vhIX<Esc>j.",
+        "vAX<Esc>j.",
+        "v$AX<Esc>j0.",
+        "vjAX<Esc>gg.",
+        "vjIX<Esc>gg.",
+        "VjAX<Esc>j.",
+    ] {
+        b.each(&BLOCK, keys);
+    }
+    for buffer in [&WORDS, &CODE] {
+        for keys in [
+            "<C-v>jld",
+            "<C-v>jly",
+            "<C-v>jj$y",
+            "<C-v>jlIX<Esc>",
+            "<C-v>jlAX<Esc>",
+            "<C-v>jlcX<Esc>",
+            "<C-v>jlyp",
+        ] {
+            b.some(buffer, 3, keys);
+        }
+    }
+    b.finish(
+        "blocks",
+        "按块的可视模式：操作符、插入、粘贴与点重复，以及可视模式下的 I 与 A。",
+    )
 }

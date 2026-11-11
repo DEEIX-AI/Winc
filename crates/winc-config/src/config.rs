@@ -119,6 +119,14 @@ pub struct Config {
     pub vim_enabled: Option<bool>,
     /// Vim 模式下无名寄存器与系统剪贴板的同步方式；未设置时只有 `"+`、`"*` 使用系统剪贴板。
     pub vim_clipboard: Option<VimClipboard>,
+    /// Vim 模式下查找是否忽略大小写，默认为否。
+    pub vim_ignore_case: Option<bool>,
+    /// Vim 模式下忽略大小写时，模式中有大写字母是否改为区分大小写，默认为否。
+    pub vim_smart_case: Option<bool>,
+    /// Vim 模式下光标与窗口上下边缘之间保留的行数，默认为 0。
+    ///
+    /// 可用范围见 [`Config::VIM_SCROLL_OFF_RANGE`]。
+    pub vim_scroll_off: Option<usize>,
     /// Vim 模式下按键归属的改写：按键的名字（小写，如 `ctrl+f`）与是否交给 Vim 层处理。
     ///
     /// 按名字排序；没有列出的按键按默认的规则决定归属。
@@ -235,6 +243,11 @@ pub enum VimClipboard {
     Always,
 }
 
+impl VimClipboard {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 3] = [Self::Register, Self::Yank, Self::Always];
+}
+
 /// 何时显示空格和制表符。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderWhitespace {
@@ -322,6 +335,10 @@ impl Config {
     ///
     /// 超出范围的值在读入时忽略并报告；上下限为经验值。
     pub const TAB_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.0..=16.0;
+    /// Vim 模式下光标与窗口上下边缘之间保留行数的可用范围（行）。
+    ///
+    /// 超出范围的值在读入时忽略并报告；上限取自调参，超过窗口高度一半的值效果相同。
+    pub const VIM_SCROLL_OFF_RANGE: std::ops::RangeInclusive<f32> = 0.0..=999.0;
     /// 查找仓库的默认层数：覆盖「目录 / 分组 / 项目」这样的常见结构；扫描在后台进行，有目录项总数
     /// 的上限，较深的层数不会拖慢界面。
     pub const REPOSITORY_SCAN_DEPTH: usize = 3;

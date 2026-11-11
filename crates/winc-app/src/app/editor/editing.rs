@@ -843,6 +843,10 @@ impl App {
             return;
         }
 
+        // Vim 的替换模式下键入的文字覆盖已有的字符，由 Vim 层执行。
+        if self.vim.is_some() && self.vim_overtype(&command) {
+            return;
+        }
         // Vim 的插入模式记录执行的输入，供次数与点重复重放。
         let input = self.vim_input(&command);
         let Some(doc) = self.editor.active_mut() else {
