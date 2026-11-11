@@ -58,6 +58,9 @@ the current gesture; lift all fingers before starting another. On Windows, drag 
 move the window, double-tap it to maximize or restore, and drag the window edges to resize.
 Window dragging and edge snapping use the same native Windows behavior as mouse input.
 
+Image and SVG previews support wheel zoom anchored at the pointer, left-button dragging to pan,
+and double-clicking to fit the view again. These controls also work in the SVG split preview.
+
 ## Platforms
 
 | Platform | Requirements | Package |

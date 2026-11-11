@@ -13,6 +13,9 @@ use winc_preview::svg;
 
 use crate::app::{App, UserEvent};
 
+mod viewport;
+pub(crate) use viewport::PictureView;
+
 /// 后台完成的加载任务：文档、任务依据的文档版本号（`revision`）、加载结果。
 type Done = (DocumentId, u64, Result<Picture, String>);
 /// 后台按指定大小绘制完成的 SVG：文档、源图片、绘制得到的像素。
@@ -306,7 +309,6 @@ impl App {
                 doc: id,
                 picture,
                 pixels,
-                exact: true,
             });
             self.request_redraw();
         }
@@ -360,6 +362,7 @@ impl App {
 
     /// 当前标签换成 `mode` 显示（标签栏右端的三段切换）。
     pub(in crate::app) fn set_preview_mode(&mut self, mode: PreviewMode) {
+        self.cancel_picture_drag();
         // 换了显示方式，键盘先回到文字（只看预览时本来就对着预览）。
         self.markdown.focused = false;
         let top = self.leave_markdown_mode(mode);
@@ -409,9 +412,9 @@ impl App {
     }
 }
 
-/// 缩放后、按物理像素一一对应绘制的图片缓存：记录属于哪个文档的哪张图，以及缩放到多大。
+/// 有尺寸上限的图片缓存：记录属于哪个文档的哪张图，以及光栅化的大小。
 ///
-/// 窗口大小改变时才重新缩放。
+/// 放大超出缓存分辨率时由绘制层裁剪缩放；平移不重新分配缓存。
 pub(crate) struct PictureCache {
     /// 图片所属的文档。
     pub(crate) doc: winc_editor::DocumentId,
@@ -419,8 +422,6 @@ pub(crate) struct PictureCache {
     pub(crate) picture: std::sync::Arc<winc_preview::image::Picture>,
     /// 缩放后的像素。
     pub(crate) pixels: winc_preview::image::Pixels,
-    /// 是否按当前大小绘制；为 `false` 时先沿用上一次的缩放结果（SVG 正在后台按新大小重绘）。
-    pub(crate) exact: bool,
 }
 
 #[cfg(test)]

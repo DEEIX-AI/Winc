@@ -592,6 +592,12 @@ enum Drag {
     MarkdownText,
     /// 在表格中拖选单元格（`App::drag_table`）。
     TableCells,
+    /// 拖动图片：文档、按下时的鼠标位置和图片偏移。
+    Picture {
+        doc: DocumentId,
+        start: (f32, f32),
+        pan: (f32, f32),
+    },
     /// 在终端中拖选文字。
     TerminalSelect,
     /// 终端中的程序启用了鼠标上报：按住参数所示的按键拖动，松开时上报。
@@ -811,6 +817,8 @@ pub struct App {
     pub(crate) ruler_cache: Option<crate::view::RulerCache>,
     /// 图片预览缩放后的图片缓存。
     pub(crate) picture_cache: Option<preview::images::PictureCache>,
+    /// 当前图片预览的缩放、平移和显示区域。
+    pub(crate) picture_view: preview::images::PictureView,
     /// 后台的图片解码和 SVG 绘制任务。
     pub(crate) images: preview::images::ImageJobs,
     pub(crate) tables: preview::tables::TableJobs,
