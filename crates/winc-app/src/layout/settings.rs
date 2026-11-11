@@ -145,7 +145,6 @@ impl SettingsPage {
                     Setting::Outline,
                     Setting::CompactFolders,
                     Setting::PreviewOnClick,
-                    Setting::DiffInline,
                     Setting::RemoteImages,
                 ]),
             ],
@@ -166,7 +165,7 @@ impl SettingsPage {
                     plain(behavior),
                 ]
             }
-            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush])],
+            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush, Setting::DiffInline])],
             SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
             SettingsPage::Format => {
                 let mut sections = vec![
@@ -441,7 +440,6 @@ impl Setting {
             | Setting::Minimap
             | Setting::Outline
             | Setting::LineNumbers
-            | Setting::DiffInline
             | Setting::RenderWhitespace
             | Setting::RemoteImages => SettingsPage::Editor,
             Setting::Version
@@ -467,7 +465,7 @@ impl Setting {
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
-            Setting::GitConfirmPush => SettingsPage::Git,
+            Setting::GitConfirmPush | Setting::DiffInline => SettingsPage::Git,
             Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
             Setting::KeySearch => SettingsPage::Keys,
         }
