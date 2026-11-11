@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use winc_config::{RenderWhitespace, VimMapMode};
-use winc_core::Lines;
+use winc_core::{Lines, Selection};
 use winc_editor::DocumentId;
 use winc_i18n::t;
 use winc_vim::ex::{Completing, complete};
@@ -28,6 +28,9 @@ const PREVIEW_CHARS: usize = 120;
 /// 映射等待后续按键的默认时间（毫秒）。
 const TIMEOUT_LEN: u32 = 1000;
 
+/// 复制之后高亮的默认时间（毫秒）。
+const YANK_HIGHLIGHT: u32 = 150;
+
 /// 输入条中进行中的历史翻阅与补全。
 #[derive(Debug, Default)]
 pub(super) struct Line {
@@ -37,6 +40,19 @@ pub(super) struct Line {
     completion: Option<(usize, Vec<String>, usize)>,
     /// 是否已按下 `Ctrl-R`，等待寄存器名。
     register: bool,
+}
+
+/// `:set` 改动过的选项在配置文件中的值：保存配置时写入这些值，改动只在本次运行中生效。
+#[derive(Debug, Default)]
+pub(super) struct Kept {
+    /// 是否显示行号。
+    line_numbers: Option<Option<bool>>,
+    /// 是否自动换行。
+    word_wrap: Option<Option<bool>>,
+    /// 何时显示空白字符。
+    whitespace: Option<Option<RenderWhitespace>>,
+    /// 相对行号在本次运行中的值；`None` 表示按配置。
+    relative: Option<bool>,
 }
 
 /// 列表中的一行选中之后的动作。
@@ -212,8 +228,19 @@ impl App {
                 let Some(found) = complete(&text) else {
                     return;
                 };
+                let partial = &text[found.start..];
                 let candidates = match found.kind {
-                    Completing::Path => self.vim_paths(&text[found.start..]),
+                    Completing::Path => self.vim_paths(partial),
+                    Completing::Buffer => {
+                        let names = self.editor.documents.iter().map(|doc| doc.name());
+                        let mut names: Vec<String> = names
+                            .filter(|name| name.starts_with(partial))
+                            .map(|name| name.into_owned())
+                            .collect();
+                        names.sort();
+                        names.dedup();
+                        names
+                    }
                     _ => found.candidates,
                 };
                 if candidates.is_empty() {
@@ -342,6 +369,10 @@ impl App {
                     state.highlight = false;
                 }
             }
+            AppCommand::Focus(focusing) => self.vim_focus(focusing),
+            AppCommand::Alternate => self.vim_alternate(),
+            AppCommand::GlobalMark { name, line } => self.vim_goto_global_mark(name, line),
+            AppCommand::Help => self.vim_show_help(),
             AppCommand::Run(name) => {
                 let action = named_action(&name);
                 if !action.is_some_and(|action| self.run_action(action)) {
@@ -399,28 +430,34 @@ impl App {
         }
     }
 
-    /// 设置由应用保存的选项；改动只写入内存中的配置。
+    /// 设置由应用保存的选项：改动只在本次运行中生效，配置文件中的值记在 [`Kept`] 里。
     pub(super) fn vim_set_option(&mut self, option: HostOption, value: usize) {
         let on = value != 0;
         let tab_width = self.editor.active_tab_width();
+        let config = &mut self.config;
+        let Some(kept) = self.vim.as_mut().map(|state| &mut state.kept) else {
+            return;
+        };
         match option {
             HostOption::Number => {
-                self.config.line_numbers = Some(on);
+                kept.line_numbers.get_or_insert(config.line_numbers);
+                config.line_numbers = Some(on);
                 self.relayout();
             }
             HostOption::Wrap => {
-                self.config.word_wrap = Some(on);
+                kept.word_wrap.get_or_insert(config.word_wrap);
+                config.word_wrap = Some(on);
                 self.word_wrap_changed();
             }
             HostOption::List => {
-                let choice = if on {
+                kept.whitespace.get_or_insert(config.render_whitespace);
+                config.render_whitespace = Some(if on {
                     RenderWhitespace::All
                 } else {
                     RenderWhitespace::Selection
-                };
-                self.config.render_whitespace = Some(choice);
+                });
             }
-            HostOption::RelativeNumber => {}
+            HostOption::RelativeNumber => kept.relative = Some(on),
             HostOption::TabStop | HostOption::ShiftWidth | HostOption::ExpandTab => {
                 if let Some(doc) = self.editor.active_mut() {
                     match option {
@@ -433,6 +470,63 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// 把 `:set` 改动过的选项与配置文件中的值对调：保存配置之前与之后各调用一次。
+    pub(in crate::app) fn vim_swap_options(&mut self) {
+        let config = &mut self.config;
+        let Some(kept) = self.vim.as_mut().map(|state| &mut state.kept) else {
+            return;
+        };
+        if let Some(saved) = &mut kept.line_numbers {
+            std::mem::swap(saved, &mut config.line_numbers);
+        }
+        if let Some(saved) = &mut kept.word_wrap {
+            std::mem::swap(saved, &mut config.word_wrap);
+        }
+        if let Some(saved) = &mut kept.whitespace {
+            std::mem::swap(saved, &mut config.render_whitespace);
+        }
+    }
+
+    /// 设置页改动了 `setting`：该项不再保留 `:set` 之前的值。
+    pub(in crate::app) fn vim_forget_option(&mut self, setting: crate::layout::Setting) {
+        use crate::layout::Setting;
+        let Some(kept) = self.vim.as_mut().map(|state| &mut state.kept) else {
+            return;
+        };
+        match setting {
+            Setting::LineNumbers => kept.line_numbers = None,
+            Setting::WordWrap => kept.word_wrap = None,
+            Setting::RenderWhitespace => kept.whitespace = None,
+            Setting::VimRelativeNumber => kept.relative = None,
+            _ => {}
+        }
+    }
+
+    /// Vim 模式下是否显示相对行号：`:set` 设置的值优先于配置。
+    pub(crate) fn vim_relative(&self) -> bool {
+        let Some(state) = &self.vim else {
+            return false;
+        };
+        let configured = self.config.vim_relative_number == Some(true);
+        state.kept.relative.unwrap_or(configured)
+    }
+
+    /// 记下刚被复制的范围，高亮配置的时长；时长为 0 时不高亮。
+    pub(super) fn vim_flash_yank(&mut self, from: usize, to: usize) {
+        let wait = self.config.vim_yank_highlight.unwrap_or(YANK_HIGHLIGHT);
+        let doc = self.editor.active().map(|doc| doc.id);
+        if let (Some(state), Some(doc), true) = (&mut self.vim, doc, wait > 0) {
+            let until = Instant::now() + Duration::from_millis(u64::from(wait));
+            state.yanked = Some((doc, Selection::new(from, to), until));
+        }
+    }
+
+    /// 返回文档 `doc` 中仍在高亮的刚被复制的范围。
+    pub(crate) fn vim_yanked(&self, doc: DocumentId) -> Option<Selection> {
+        let (owner, range, _) = self.vim.as_ref()?.yanked?;
+        (owner == doc).then_some(range)
     }
 
     /// 用列表浮层显示寄存器、标记或已打开的文档。
@@ -450,15 +544,20 @@ impl App {
                     return;
                 };
                 let text = doc.text();
-                (doc.modal_marks().into_iter())
-                    .map(|(name, pos)| {
-                        let line = text.line_of(pos);
-                        let content = text.line_content(line).slice().to_string();
-                        VimRow {
-                            label: format!("'{name}"),
-                            text: format!("{}  {}", line + 1, preview(content.trim_start())),
-                            target: VimTarget::Mark(name),
-                        }
+                let here = doc.modal_marks().into_iter().map(|(name, pos)| {
+                    let line = text.line_of(pos);
+                    let content = text.line_content(line).slice().to_string();
+                    (
+                        name,
+                        format!("{}  {}", line + 1, preview(content.trim_start())),
+                    )
+                });
+                // 其他文件中的大写标记显示路径与行号。
+                (here.chain(self.vim_other_marks()))
+                    .map(|(name, text)| VimRow {
+                        label: format!("'{name}"),
+                        text,
+                        target: VimTarget::Mark(name),
                     })
                     .collect()
             }
@@ -530,6 +629,27 @@ impl App {
         }
     }
 
+    /// 测量用：开启 Vim 模式并执行第 `step` 个按键，依次为下移、按词移动、查找、删除一行、
+    /// 重复上一次修改、文本对象与替换。
+    pub(in crate::app) fn vim_bench_key(&mut self, step: usize) {
+        const KEYS: [&str; 9] = ["j", "w", "/", "n", "dd", ".", "ciwx<Esc>", "yi(", ":"];
+        if self.vim.is_none() {
+            self.config.vim_enabled = Some(true);
+            self.vim_apply_config();
+        }
+        self.focus = Focus::Editor;
+        let keys = KEYS[step % KEYS.len()];
+        self.vim_feed(keys);
+        // 查找的是样本中常见的词：匹配就在近处。
+        let line = match keys {
+            ":" => "s/e/E/g",
+            "/" => "let",
+            _ => return,
+        };
+        self.edit_field(|field| field.insert(line));
+        self.submit_prompt();
+    }
+
     /// 返回配置中的映射；`<Leader>` 换成配置的按键。
     pub(super) fn vim_mappings(&self) -> Vec<Mapping> {
         let leader = self.config.vim_leader.as_deref().unwrap_or("\\");
@@ -573,9 +693,19 @@ impl App {
 
     /// 映射等待后续按键超时的时刻已到时通知状态机；返回下一次需要唤醒的时刻。
     pub(in crate::app) fn vim_tick(&mut self, now: Instant) -> Option<Instant> {
-        let deadline = self.vim.as_ref()?.map_deadline?;
+        // 复制的高亮到期。
+        let state = self.vim.as_mut()?;
+        let flash = state.yanked.map(|(_, _, until)| until);
+        if flash.is_some_and(|until| now >= until) {
+            state.yanked = None;
+            self.request_redraw();
+        }
+        let flash = flash.filter(|until| now < *until);
+        let Some(deadline) = self.vim.as_ref()?.map_deadline else {
+            return flash;
+        };
         if now < deadline {
-            return Some(deadline);
+            return Some(flash.map_or(deadline, |flash| flash.min(deadline)));
         }
         let mut state = self.vim.take()?;
         state.map_deadline = None;

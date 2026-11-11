@@ -741,3299 +741,3269 @@ keys vlsQ<Esc>
 case v0143
 use b1
 cursor 0 11
-keys vlSQ<Esc>
+keys vlCQ<Esc>
 
 case v0144
 use b1
 cursor 3 9
-keys vlSQ<Esc>
+keys vlCQ<Esc>
 
 case v0145
 use b1
-cursor 0 11
-keys vlCQ<Esc>
+cursor 0 7
+keys vlRQ<Esc>
 
 case v0146
 use b1
-cursor 3 9
-keys vlCQ<Esc>
+cursor 3 1
+keys vlRQ<Esc>
 
 case v0147
 use b1
 cursor 0 7
-keys vlRQ<Esc>
+keys vjJ
 
 case v0148
 use b1
 cursor 3 1
-keys vlRQ<Esc>
+keys vjJ
 
 case v0149
-use b1
-cursor 0 7
-keys vjJ
-
-case v0150
-use b1
-cursor 3 1
-keys vjJ
-
-case v0151
 use b1
 cursor 0 5
 keys vjgJ
 
-case v0152
+case v0150
 use b1
 cursor 2 0
 keys vjgJ
 
-case v0153
+case v0151
 use b1
 cursor 0 7
 keys VjJ
 
-case v0154
+case v0152
 use b1
 cursor 3 1
 keys VjJ
 
-case v0155
+case v0153
 use b1
 cursor 0 20
 keys V2jJ
 
-case v0156
+case v0154
 use b1
 cursor 4 0
 keys V2jJ
 
-case v0157
+case v0155
 use b1
 cursor 0 0
 keys vJ
 
-case v0158
+case v0156
 use b1
 cursor 1 15
 keys vJ
 
-case v0159
+case v0157
 use b1
 cursor 1 3
 keys VgJ
 
-case v0160
+case v0158
 use b1
 cursor 0 0
 keys v3lrQ
 
-case v0161
+case v0159
 use b1
 cursor 1 15
 keys v3lrQ
 
-case v0162
+case v0160
 use b1
 cursor 0 5
 keys VrQ
 
-case v0163
+case v0161
 use b1
 cursor 2 0
 keys VrQ
 
-case v0164
+case v0162
 use b1
 cursor 0 11
 keys vjrQ
 
-case v0165
+case v0163
 use b1
 cursor 3 9
 keys vjrQ
 
-case v0166
+case v0164
 use b1
 cursor 1 3
 keys vlu
 
-case v0167
+case v0165
 use b1
 cursor 1 3
 keys vlU
 
-case v0168
+case v0166
 use b1
 cursor 0 0
 keys vl~
 
-case v0169
+case v0167
 use b1
 cursor 1 15
 keys vl~
+
+case v0168
+use b1
+cursor 0 11
+keys Vu
+
+case v0169
+use b1
+cursor 3 9
+keys Vu
 
 case v0170
 use b1
 cursor 0 11
-keys Vu
+keys VU
 
 case v0171
 use b1
 cursor 3 9
-keys Vu
+keys VU
 
 case v0172
-use b1
-cursor 0 11
-keys VU
-
-case v0173
-use b1
-cursor 3 9
-keys VU
-
-case v0174
 use b1
 cursor 0 20
 keys V~
 
-case v0175
+case v0173
 use b1
 cursor 4 0
 keys V~
 
-case v0176
+case v0174
 use b1
 cursor 0 25
 keys vjU
 
-case v0177
+case v0175
 use b1
 cursor 4 13
 keys vjU
 
-case v0178
+case v0176
 use b1
 cursor 0 0
 keys vlg?
 
-case v0179
+case v0177
 use b1
 cursor 1 15
 keys vlg?
 
-case v0180
+case v0178
 use b1
 cursor 0 20
 keys vjD
+
+case v0179
+use b1
+cursor 4 0
+keys vjD
+
+case v0180
+use b1
+cursor 0 7
+keys vlX
 
 case v0181
 use b1
-cursor 4 0
-keys vjD
+cursor 3 1
+keys vlX
 
 case v0182
 use b1
-cursor 0 7
-keys vlX
+cursor 0 5
+keys vjY
 
 case v0183
 use b1
-cursor 3 1
-keys vlX
-
-case v0184
-use b1
-cursor 0 5
-keys vjY
-
-case v0185
-use b1
 cursor 2 0
 keys vjY
 
-case v0186
+case v0184
 use b1
 cursor 0 7
 keys vlx
 
-case v0187
+case v0185
 use b1
 cursor 3 1
 keys vlx
 
-case v0188
+case v0186
 use b1
 cursor 0 5
 keys vl<Del>
 
-case v0189
+case v0187
 use b1
 cursor 2 0
 keys vl<Del>
 
-case v0190
+case v0188
 use b1
 cursor 0 20
 keys v>
 
-case v0191
+case v0189
 use b1
 cursor 4 0
 keys v>
 
-case v0192
+case v0190
 use b1
 cursor 1 0
 keys Vj>
 
-case v0193
+case v0191
 use b1
 cursor 4 15
 keys Vj>
 
-case v0194
+case v0192
 use b1
 cursor 0 0
 keys Vj2>
+
+case v0193
+use b1
+cursor 1 15
+keys Vj2>
+
+case v0194
+use b1
+cursor 0 7
+keys Vj<lt>
 
 case v0195
 use b1
-cursor 1 15
-keys Vj2>
+cursor 3 1
+keys Vj<lt>
 
 case v0196
 use b1
-cursor 0 7
-keys Vj<lt>
+cursor 0 25
+keys vj3<lt>
 
 case v0197
 use b1
-cursor 3 1
-keys Vj<lt>
-
-case v0198
-use b1
-cursor 0 25
-keys vj3<lt>
-
-case v0199
-use b1
 cursor 4 13
 keys vj3<lt>
 
-case v0200
+case v0198
 use b1
 cursor 0 7
 keys V>.
 
-case v0201
+case v0199
 use b1
 cursor 3 1
 keys V>.
 
-case v0202
+case v0200
 use b1
 cursor 0 25
 keys vlod
 
-case v0203
+case v0201
 use b1
 cursor 4 13
 keys vlod
 
-case v0204
+case v0202
 use b1
 cursor 0 0
 keys vjoy
 
-case v0205
+case v0203
 use b1
 cursor 1 15
 keys vjoy
+
+case v0204
+use b1
+cursor 1 0
+keys vjokd
+
+case v0205
+use b1
+cursor 4 15
+keys vjokd
 
 case v0206
 use b1
 cursor 1 0
-keys vjokd
+keys vlO<Esc>x
 
 case v0207
 use b1
 cursor 4 15
-keys vjokd
+keys vlO<Esc>x
 
 case v0208
-use b1
-cursor 1 0
-keys vlO<Esc>x
-
-case v0209
-use b1
-cursor 4 15
-keys vlO<Esc>x
-
-case v0210
 use b1
 cursor 0 11
 keys vjOd
 
-case v0211
+case v0209
 use b1
 cursor 3 9
 keys vjOd
 
-case v0212
+case v0210
 use b1
 cursor 1 3
 keys vl<Esc>x
 
-case v0213
+case v0211
 use b1
 cursor 0 25
 keys vj<Esc>x
 
-case v0214
+case v0212
 use b1
 cursor 4 13
 keys vj<Esc>x
 
-case v0215
+case v0213
 use b1
 cursor 1 3
 keys v$<Esc>x
 
-case v0216
+case v0214
 use b1
 cursor 0 25
 keys Vj<Esc>x
 
-case v0217
+case v0215
 use b1
 cursor 4 13
 keys Vj<Esc>x
 
-case v0218
+case v0216
 use b1
 cursor 0 0
 keys vlvx
 
-case v0219
+case v0217
 use b1
 cursor 1 15
 keys vlvx
 
-case v0220
+case v0218
 use b1
 cursor 0 20
 keys vlVd
 
-case v0221
+case v0219
 use b1
 cursor 4 0
 keys vlVd
 
-case v0222
+case v0220
 use b1
 cursor 0 7
 keys VjvD
 
-case v0223
+case v0221
 use b1
 cursor 3 1
 keys VjvD
 
-case v0224
+case v0222
 use b1
 cursor 0 20
 keys Vlvd
 
-case v0225
+case v0223
 use b1
 cursor 4 0
 keys Vlvd
+
+case v0224
+use b1
+cursor 0 0
+keys vl<Esc>gvd
+
+case v0225
+use b1
+cursor 1 15
+keys vl<Esc>gvd
 
 case v0226
 use b1
 cursor 0 0
-keys vl<Esc>gvd
+keys Vj<Esc>jgvd
 
 case v0227
 use b1
 cursor 1 15
-keys vl<Esc>gvd
+keys Vj<Esc>jgvd
 
 case v0228
-use b1
-cursor 0 0
-keys Vj<Esc>jgvd
-
-case v0229
-use b1
-cursor 1 15
-keys Vj<Esc>jgvd
-
-case v0230
 use b1
 cursor 1 3
 keys vl<Esc>jgvy
 
-case v0231
+case v0229
 use b1
 cursor 1 0
 keys vj<Esc>ggvlgvd
 
-case v0232
+case v0230
 use b1
 cursor 4 15
 keys vj<Esc>ggvlgvd
 
-case v0233
+case v0231
 use b1
 cursor 0 7
 keys v"ay
 
-case v0234
+case v0232
 use b1
 cursor 3 1
 keys v"ay
 
-case v0235
+case v0233
 use b1
 cursor 0 5
 keys vl"ad
 
-case v0236
+case v0234
 use b1
 cursor 2 0
 keys vl"ad
 
-case v0237
+case v0235
 use b1
 cursor 0 20
 keys Vj"ay
 
-case v0238
+case v0236
 use b1
 cursor 4 0
 keys Vj"ay
 
-case v0239
+case v0237
 use b1
 cursor 1 3
 keys vl"_d
 
-case v0240
+case v0238
 use b1
 cursor 0 25
 keys vly"0P
 
-case v0241
+case v0239
 use b1
 cursor 4 13
 keys vly"0P
 
-case v0242
+case v0240
 use b1
 cursor 0 0
 keys ywjvlp
 
-case v0243
+case v0241
 use b1
 cursor 4 0
 keys ywjvlp
 
-case v0244
+case v0242
 use b1
 cursor 0 20
 keys ywjvlP
 
-case v0245
+case v0243
 use b1
 cursor 0 7
 keys yyjvlp
 
-case v0246
+case v0244
 use b1
 cursor 4 15
 keys yyjvlp
 
-case v0247
+case v0245
 use b1
 cursor 1 0
 keys yyjVp
 
-case v0248
+case v0246
 use b1
 cursor 0 20
 keys ywjVp
+
+case v0247
+use b1
+cursor 0 7
+keys ywjVjp
+
+case v0248
+use b1
+cursor 4 15
+keys ywjVjp
 
 case v0249
 use b1
 cursor 0 7
-keys ywjVjp
+keys yyvjp
 
 case v0250
 use b1
 cursor 4 15
-keys ywjVjp
+keys yyvjp
 
 case v0251
-use b1
-cursor 0 7
-keys yyvjp
-
-case v0252
-use b1
-cursor 4 15
-keys yyvjp
-
-case v0253
 use b1
 cursor 1 3
 keys ywvep
 
-case v0254
+case v0252
 use b1
 cursor 2 0
 keys ywve2p
 
-case v0255
+case v0253
 use b1
 cursor 0 7
 keys yyjv$p
 
-case v0256
+case v0254
 use b1
 cursor 4 15
 keys yyjv$p
 
-case v0257
+case v0255
 use b1
 cursor 0 0
 keys ywjv$p
 
-case v0258
+case v0256
 use b1
 cursor 4 0
 keys ywjv$p
 
-case v0259
+case v0257
 use b1
 cursor 0 25
 keys dwvlp
 
-case v0260
+case v0258
 use b1
 cursor 0 7
 keys ddVp
 
-case v0261
+case v0259
 use b1
 cursor 4 15
 keys ddVp
 
-case v0262
+case v0260
 use b1
 cursor 1 0
 keys ywvlpp
 
-case v0263
+case v0261
 use b1
 cursor 0 25
 keys yyVpu
 
-case v0264
+case v0262
 use b1
 cursor 0 0
 keys vld.
 
-case v0265
+case v0263
 use b1
 cursor 4 0
 keys vld.
 
-case v0266
+case v0264
 use b1
 cursor 3 1
 keys vlldj.
 
-case v0267
+case v0265
 use b1
 cursor 3 1
 keys vjd.
 
-case v0268
+case v0266
 use b1
 cursor 0 20
 keys Vd.
 
-case v0269
+case v0267
 use b1
 cursor 0 7
 keys Vjd.
 
-case v0270
+case v0268
 use b1
 cursor 4 15
 keys Vjd.
 
-case v0271
+case v0269
 use b1
 cursor 2 0
 keys vly.
 
-case v0272
+case v0270
 use b1
 cursor 0 11
 keys vlcQ<Esc>j.
 
-case v0273
+case v0271
 use b1
 cursor 1 3
 keys VjcQ<Esc>.
 
-case v0274
+case v0272
 use b1
 cursor 0 7
 keys vl~l.
 
-case v0275
+case v0273
 use b1
 cursor 4 15
 keys vl~l.
 
-case v0276
+case v0274
 use b1
 cursor 0 0
 keys Vj>.
 
-case v0277
+case v0275
 use b1
 cursor 4 0
 keys Vj>.
 
-case v0278
+case v0276
 use b1
 cursor 2 0
 keys vllrQj.
 
-case v0279
+case v0277
 use b1
 cursor 1 15
 keys vjJ.
 
-case v0280
+case v0278
 use b1
 cursor 1 15
 keys vlUw.
 
-case v0281
+case v0279
 use b2
 cursor 0 10
 keys vld
 
-case v0282
+case v0280
 use b2
 cursor 6 4
 keys vly
 
-case v0283
+case v0281
 use b2
 cursor 0 0
 keys Vld
+
+case v0282
+use b2
+cursor 2 7
+keys Vly
+
+case v0283
+use b2
+cursor 4 0
+keys vhd
 
 case v0284
 use b2
 cursor 2 7
-keys Vly
+keys vhy
 
 case v0285
 use b2
 cursor 4 0
-keys vhd
-
-case v0286
-use b2
-cursor 2 7
-keys vhy
-
-case v0287
-use b2
-cursor 4 0
 keys Vhd
 
-case v0288
+case v0286
 use b2
 cursor 1 4
 keys Vhy
 
-case v0289
+case v0287
 use b2
 cursor 0 0
 keys vjd
+
+case v0288
+use b2
+cursor 6 10
+keys vjd
+
+case v0289
+use b2
+cursor 3 0
+keys vjy
 
 case v0290
 use b2
 cursor 6 10
-keys vjd
-
-case v0291
-use b2
-cursor 3 0
-keys vjy
-
-case v0292
-use b2
-cursor 6 10
 keys Vjd
 
-case v0293
+case v0291
 use b2
 cursor 1 13
 keys Vjy
 
-case v0294
+case v0292
 use b2
 cursor 0 7
 keys vkd
+
+case v0293
+use b2
+cursor 8 2
+keys vkd
+
+case v0294
+use b2
+cursor 4 0
+keys vky
 
 case v0295
 use b2
 cursor 8 2
-keys vkd
-
-case v0296
-use b2
-cursor 4 0
-keys vky
-
-case v0297
-use b2
-cursor 8 2
 keys Vkd
 
-case v0298
+case v0296
 use b2
 cursor 1 21
 keys Vky
 
-case v0299
+case v0297
 use b2
 cursor 0 7
 keys vwd
 
-case v0300
+case v0298
 use b2
 cursor 8 2
 keys vwd
 
-case v0301
+case v0299
 use b2
 cursor 2 16
 keys vwy
 
-case v0302
+case v0300
 use b2
 cursor 6 4
 keys Vwd
 
-case v0303
+case v0301
 use b2
 cursor 1 8
 keys Vwy
+
+case v0302
+use b2
+cursor 1 8
+keys vbd
+
+case v0303
+use b2
+cursor 0 7
+keys vby
 
 case v0304
 use b2
 cursor 1 8
-keys vbd
+keys Vbd
 
 case v0305
 use b2
-cursor 0 7
-keys vby
+cursor 6 4
+keys Vby
 
 case v0306
 use b2
-cursor 1 8
-keys Vbd
+cursor 2 7
+keys ved
 
 case v0307
 use b2
-cursor 6 4
-keys Vby
+cursor 1 8
+keys vey
 
 case v0308
 use b2
 cursor 2 7
-keys ved
-
-case v0309
-use b2
-cursor 1 8
-keys vey
-
-case v0310
-use b2
-cursor 2 7
 keys Ved
 
-case v0311
+case v0309
 use b2
 cursor 0 0
 keys Vey
 
-case v0312
+case v0310
 use b2
 cursor 0 10
 keys v$d
 
-case v0313
+case v0311
 use b2
 cursor 3 0
 keys v$y
 
-case v0314
+case v0312
 use b2
 cursor 6 10
 keys V$d
 
-case v0315
+case v0313
 use b2
 cursor 1 13
 keys V$y
 
-case v0316
+case v0314
 use b2
 cursor 0 10
 keys v0d
 
-case v0317
+case v0315
 use b2
 cursor 2 7
 keys v0y
 
-case v0318
+case v0316
 use b2
 cursor 4 0
 keys V0d
 
-case v0319
+case v0317
 use b2
 cursor 1 4
 keys V0y
 
-case v0320
+case v0318
 use b2
 cursor 0 0
 keys v^d
 
-case v0321
+case v0319
 use b2
 cursor 6 10
 keys v^d
 
-case v0322
+case v0320
 use b2
 cursor 6 4
 keys v^y
 
-case v0323
+case v0321
 use b2
 cursor 0 0
 keys V^d
 
-case v0324
+case v0322
 use b2
 cursor 2 7
 keys V^y
 
-case v0325
+case v0323
 use b2
 cursor 0 7
 keys vGd
 
-case v0326
+case v0324
 use b2
 cursor 8 2
 keys vGd
 
-case v0327
+case v0325
 use b2
 cursor 0 10
 keys vGy
 
-case v0328
+case v0326
 use b2
 cursor 1 13
 keys VGd
 
-case v0329
+case v0327
 use b2
 cursor 6 10
 keys VGy
 
-case v0330
+case v0328
 use b2
 cursor 1 8
 keys vggd
 
-case v0331
+case v0329
 use b2
 cursor 6 4
 keys vggy
 
-case v0332
+case v0330
 use b2
 cursor 0 0
 keys Vggd
 
-case v0333
+case v0331
 use b2
 cursor 2 7
 keys Vggy
 
-case v0334
+case v0332
 use b2
 cursor 2 7
 keys v}d
 
-case v0335
+case v0333
 use b2
 cursor 0 0
 keys v}y
 
-case v0336
+case v0334
 use b2
 cursor 1 4
 keys V}d
 
-case v0337
+case v0335
 use b2
 cursor 4 0
 keys V}y
 
-case v0338
+case v0336
 use b2
 cursor 1 13
 keys v{d
 
-case v0339
+case v0337
 use b2
 cursor 6 10
 keys v{y
 
-case v0340
+case v0338
 use b2
 cursor 0 7
 keys V{d
 
-case v0341
+case v0339
 use b2
 cursor 2 16
 keys V{y
 
-case v0342
+case v0340
 use b2
 cursor 2 7
 keys v)d
 
-case v0343
+case v0341
 use b2
 cursor 0 0
 keys v)y
+
+case v0342
+use b2
+cursor 1 4
+keys V)d
+
+case v0343
+use b2
+cursor 4 0
+keys V)y
 
 case v0344
 use b2
 cursor 1 4
-keys V)d
+keys v%d
 
 case v0345
 use b2
 cursor 4 0
-keys V)y
-
-case v0346
-use b2
-cursor 1 4
-keys v%d
-
-case v0347
-use b2
-cursor 4 0
 keys v%y
 
-case v0348
+case v0346
 use b2
 cursor 8 2
 keys V%d
 
-case v0349
+case v0347
 use b2
 cursor 1 21
 keys V%y
 
-case v0350
+case v0348
 use b2
 cursor 0 10
 keys v2jd
 
-case v0351
+case v0349
 use b2
 cursor 1 4
 keys v2jy
 
-case v0352
+case v0350
 use b2
 cursor 1 21
 keys V2jd
 
-case v0353
+case v0351
 use b2
 cursor 8 2
 keys V2jy
 
-case v0354
+case v0352
 use b2
 cursor 1 13
 keys v3ld
 
-case v0355
+case v0353
 use b2
 cursor 1 21
 keys v3ly
+
+case v0354
+use b2
+cursor 3 0
+keys V3ld
+
+case v0355
+use b2
+cursor 0 10
+keys V3ly
 
 case v0356
 use b2
 cursor 3 0
-keys V3ld
-
-case v0357
-use b2
-cursor 0 10
-keys V3ly
-
-case v0358
-use b2
-cursor 3 0
 keys vfad
 
-case v0359
+case v0357
 use b2
 cursor 1 8
 keys vfay
 
-case v0360
+case v0358
 use b2
 cursor 2 7
 keys Vfad
 
-case v0361
+case v0359
 use b2
 cursor 0 0
 keys Vfay
 
-case v0362
+case v0360
 use b2
 cursor 2 16
 keys vg_d
 
-case v0363
+case v0361
 use b2
 cursor 1 4
 keys vg_y
 
-case v0364
+case v0362
 use b2
 cursor 1 21
 keys Vg_d
+
+case v0363
+use b2
+cursor 8 2
+keys Vg_y
+
+case v0364
+use b2
+cursor 1 8
+keys v<Space>d
 
 case v0365
 use b2
 cursor 8 2
-keys Vg_y
-
-case v0366
-use b2
-cursor 1 8
-keys v<Space>d
-
-case v0367
-use b2
-cursor 8 2
 keys v<Space>y
 
-case v0368
+case v0366
 use b2
 cursor 0 10
 keys V<Space>d
 
-case v0369
+case v0367
 use b2
 cursor 3 0
 keys V<Space>y
+
+case v0368
+use b2
+cursor 3 0
+keys v<BS>d
+
+case v0369
+use b2
+cursor 1 21
+keys v<BS>y
 
 case v0370
 use b2
 cursor 3 0
-keys v<BS>d
-
-case v0371
-use b2
-cursor 1 21
-keys v<BS>y
-
-case v0372
-use b2
-cursor 3 0
 keys V<BS>d
 
-case v0373
+case v0371
 use b2
 cursor 0 10
 keys V<BS>y
 
-case v0374
+case v0372
 use b2
 cursor 0 10
 keys vged
 
-case v0375
+case v0373
 use b2
 cursor 3 0
 keys vgey
 
-case v0376
+case v0374
 use b2
 cursor 6 10
 keys Vged
 
-case v0377
+case v0375
 use b2
 cursor 1 13
 keys Vgey
 
-case v0378
+case v0376
 use b2
 cursor 1 13
 keys vWd
 
-case v0379
+case v0377
 use b2
 cursor 1 8
 keys vWy
 
-case v0380
+case v0378
 use b2
 cursor 2 7
 keys VWd
 
-case v0381
+case v0379
 use b2
 cursor 0 0
 keys VWy
 
-case v0382
+case v0380
 use b2
 cursor 3 0
 keys v+d
 
-case v0383
+case v0381
 use b2
 cursor 0 10
 keys v+y
 
-case v0384
+case v0382
 use b2
 cursor 1 13
 keys V+d
 
-case v0385
+case v0383
 use b2
 cursor 6 10
 keys V+y
 
-case v0386
+case v0384
 use b2
 cursor 6 4
 keys v-d
 
-case v0387
+case v0385
 use b2
 cursor 1 8
 keys v-y
 
-case v0388
+case v0386
 use b2
 cursor 2 7
 keys V-d
 
-case v0389
+case v0387
 use b2
 cursor 0 0
 keys V-y
 
-case v0390
+case v0388
 use b2
 cursor 0 10
 keys vd
 
-case v0391
+case v0389
 use b2
 cursor 4 0
 keys vd
 
-case v0392
+case v0390
 use b2
 cursor 2 7
 keys vy
 
-case v0393
+case v0391
 use b2
 cursor 0 10
 keys Vd
 
-case v0394
+case v0392
 use b2
 cursor 4 0
 keys Vd
+
+case v0393
+use b2
+cursor 2 7
+keys Vy
+
+case v0394
+use b2
+cursor 1 21
+keys vld
 
 case v0395
 use b2
 cursor 2 7
-keys Vy
+keys vlly
 
 case v0396
 use b2
 cursor 1 21
-keys vld
-
-case v0397
-use b2
-cursor 2 7
-keys vlly
-
-case v0398
-use b2
-cursor 1 21
 keys v$d
 
-case v0399
+case v0397
 use b2
 cursor 1 4
 keys v$y
 
-case v0400
+case v0398
 use b2
 cursor 6 4
 keys v$y
 
-case v0401
+case v0399
 use b2
 cursor 1 21
 keys v$hd
 
-case v0402
+case v0400
 use b2
 cursor 0 0
 keys vj$d
 
-case v0403
+case v0401
 use b2
 cursor 2 16
 keys vj$d
+
+case v0402
+use b2
+cursor 1 4
+keys vllly
+
+case v0403
+use b2
+cursor 6 4
+keys vllly
 
 case v0404
 use b2
 cursor 1 4
-keys vllly
+keys vlcQ<Esc>
 
 case v0405
 use b2
 cursor 6 4
-keys vllly
+keys vlcQ<Esc>
 
 case v0406
-use b2
-cursor 1 4
-keys vlcQ<Esc>
-
-case v0407
-use b2
-cursor 6 4
-keys vlcQ<Esc>
-
-case v0408
 use b2
 cursor 0 7
 keys vjcQ<Esc>
 
-case v0409
+case v0407
 use b2
 cursor 3 0
 keys vjcQ<Esc>
 
-case v0410
+case v0408
 use b2
 cursor 2 7
 keys VcQ<Esc>
 
-case v0411
+case v0409
 use b2
 cursor 0 7
 keys VjcQ<Esc>
 
-case v0412
+case v0410
 use b2
 cursor 3 0
 keys VjcQ<Esc>
+
+case v0411
+use b2
+cursor 1 4
+keys vlsQ<Esc>
+
+case v0412
+use b2
+cursor 6 4
+keys vlsQ<Esc>
 
 case v0413
 use b2
 cursor 1 4
-keys vlsQ<Esc>
+keys vlCQ<Esc>
 
 case v0414
 use b2
 cursor 6 4
-keys vlsQ<Esc>
+keys vlCQ<Esc>
 
 case v0415
-use b2
-cursor 1 4
-keys vlSQ<Esc>
-
-case v0416
-use b2
-cursor 6 4
-keys vlSQ<Esc>
-
-case v0417
-use b2
-cursor 1 4
-keys vlCQ<Esc>
-
-case v0418
-use b2
-cursor 6 4
-keys vlCQ<Esc>
-
-case v0419
 use b2
 cursor 0 10
 keys vlRQ<Esc>
 
-case v0420
+case v0416
 use b2
 cursor 4 0
 keys vlRQ<Esc>
+
+case v0417
+use b2
+cursor 0 10
+keys vjJ
+
+case v0418
+use b2
+cursor 4 0
+keys vjJ
+
+case v0419
+use b2
+cursor 0 7
+keys vjgJ
+
+case v0420
+use b2
+cursor 3 0
+keys vjgJ
 
 case v0421
 use b2
 cursor 0 10
-keys vjJ
+keys VjJ
 
 case v0422
 use b2
 cursor 4 0
-keys vjJ
+keys VjJ
 
 case v0423
-use b2
-cursor 0 7
-keys vjgJ
-
-case v0424
-use b2
-cursor 3 0
-keys vjgJ
-
-case v0425
-use b2
-cursor 0 10
-keys VjJ
-
-case v0426
-use b2
-cursor 4 0
-keys VjJ
-
-case v0427
 use b2
 cursor 1 8
 keys V2jJ
 
-case v0428
+case v0424
 use b2
 cursor 6 10
 keys V2jJ
 
-case v0429
+case v0425
 use b2
 cursor 0 0
 keys vJ
 
-case v0430
+case v0426
 use b2
 cursor 2 16
 keys vJ
 
-case v0431
+case v0427
 use b2
 cursor 2 7
 keys VgJ
 
-case v0432
+case v0428
 use b2
 cursor 0 0
 keys v3lrQ
 
-case v0433
+case v0429
 use b2
 cursor 2 16
 keys v3lrQ
 
-case v0434
+case v0430
 use b2
 cursor 0 7
 keys VrQ
 
-case v0435
+case v0431
 use b2
 cursor 3 0
 keys VrQ
 
-case v0436
+case v0432
 use b2
 cursor 1 4
 keys vjrQ
 
-case v0437
+case v0433
 use b2
 cursor 6 4
 keys vjrQ
 
-case v0438
+case v0434
 use b2
 cursor 2 7
 keys vlu
 
-case v0439
+case v0435
 use b2
 cursor 2 7
 keys vlU
 
-case v0440
+case v0436
 use b2
 cursor 0 0
 keys vl~
 
-case v0441
+case v0437
 use b2
 cursor 2 16
 keys vl~
 
+case v0438
+use b2
+cursor 1 4
+keys Vu
+
+case v0439
+use b2
+cursor 6 4
+keys Vu
+
+case v0440
+use b2
+cursor 1 4
+keys VU
+
+case v0441
+use b2
+cursor 6 4
+keys VU
+
 case v0442
-use b2
-cursor 1 4
-keys Vu
-
-case v0443
-use b2
-cursor 6 4
-keys Vu
-
-case v0444
-use b2
-cursor 1 4
-keys VU
-
-case v0445
-use b2
-cursor 6 4
-keys VU
-
-case v0446
 use b2
 cursor 1 8
 keys V~
 
-case v0447
+case v0443
 use b2
 cursor 6 10
 keys V~
 
-case v0448
+case v0444
 use b2
 cursor 1 13
 keys vjU
 
-case v0449
+case v0445
 use b2
 cursor 8 2
 keys vjU
 
-case v0450
+case v0446
 use b2
 cursor 0 0
 keys vlg?
 
-case v0451
+case v0447
 use b2
 cursor 2 16
 keys vlg?
 
-case v0452
+case v0448
 use b2
 cursor 1 8
 keys vjD
 
-case v0453
+case v0449
 use b2
 cursor 6 10
 keys vjD
+
+case v0450
+use b2
+cursor 0 10
+keys vlX
+
+case v0451
+use b2
+cursor 4 0
+keys vlX
+
+case v0452
+use b2
+cursor 0 7
+keys vjY
+
+case v0453
+use b2
+cursor 3 0
+keys vjY
 
 case v0454
 use b2
 cursor 0 10
-keys vlX
+keys vlx
 
 case v0455
 use b2
 cursor 4 0
-keys vlX
+keys vlx
 
 case v0456
 use b2
 cursor 0 7
-keys vjY
+keys vl<Del>
 
 case v0457
 use b2
 cursor 3 0
-keys vjY
+keys vl<Del>
 
 case v0458
-use b2
-cursor 0 10
-keys vlx
-
-case v0459
-use b2
-cursor 4 0
-keys vlx
-
-case v0460
-use b2
-cursor 0 7
-keys vl<Del>
-
-case v0461
-use b2
-cursor 3 0
-keys vl<Del>
-
-case v0462
 use b2
 cursor 1 8
 keys v>
 
-case v0463
+case v0459
 use b2
 cursor 6 10
 keys v>
 
-case v0464
+case v0460
 use b2
 cursor 1 21
 keys Vj>
 
-case v0465
+case v0461
 use b2
 cursor 0 0
 keys Vj2>
 
-case v0466
+case v0462
 use b2
 cursor 2 16
 keys Vj2>
+
+case v0463
+use b2
+cursor 0 10
+keys Vj<lt>
+
+case v0464
+use b2
+cursor 4 0
+keys Vj<lt>
+
+case v0465
+use b2
+cursor 1 13
+keys vj3<lt>
+
+case v0466
+use b2
+cursor 8 2
+keys vj3<lt>
 
 case v0467
 use b2
 cursor 0 10
-keys Vj<lt>
+keys V>.
 
 case v0468
 use b2
 cursor 4 0
-keys Vj<lt>
+keys V>.
 
 case v0469
 use b2
 cursor 1 13
-keys vj3<lt>
+keys vlod
 
 case v0470
 use b2
 cursor 8 2
-keys vj3<lt>
+keys vlod
 
 case v0471
-use b2
-cursor 0 10
-keys V>.
-
-case v0472
-use b2
-cursor 4 0
-keys V>.
-
-case v0473
-use b2
-cursor 1 13
-keys vlod
-
-case v0474
-use b2
-cursor 8 2
-keys vlod
-
-case v0475
 use b2
 cursor 0 0
 keys vjoy
 
-case v0476
+case v0472
 use b2
 cursor 2 16
 keys vjoy
 
-case v0477
+case v0473
 use b2
 cursor 1 21
 keys vjokd
 
-case v0478
+case v0474
 use b2
 cursor 1 21
 keys vlO<Esc>x
 
-case v0479
+case v0475
 use b2
 cursor 1 4
 keys vjOd
 
-case v0480
+case v0476
 use b2
 cursor 6 4
 keys vjOd
 
-case v0481
+case v0477
 use b2
 cursor 2 7
 keys vl<Esc>x
 
-case v0482
+case v0478
 use b2
 cursor 1 13
 keys vj<Esc>x
 
-case v0483
+case v0479
 use b2
 cursor 8 2
 keys vj<Esc>x
 
-case v0484
+case v0480
 use b2
 cursor 2 7
 keys v$<Esc>x
 
-case v0485
+case v0481
 use b2
 cursor 1 13
 keys Vj<Esc>x
 
-case v0486
+case v0482
 use b2
 cursor 8 2
 keys Vj<Esc>x
 
-case v0487
+case v0483
 use b2
 cursor 0 0
 keys vlvx
 
-case v0488
+case v0484
 use b2
 cursor 2 16
 keys vlvx
+
+case v0485
+use b2
+cursor 1 8
+keys vlVd
+
+case v0486
+use b2
+cursor 6 10
+keys vlVd
+
+case v0487
+use b2
+cursor 0 10
+keys VjvD
+
+case v0488
+use b2
+cursor 4 0
+keys VjvD
 
 case v0489
 use b2
 cursor 1 8
-keys vlVd
+keys Vlvd
 
 case v0490
 use b2
 cursor 6 10
-keys vlVd
+keys Vlvd
 
 case v0491
 use b2
-cursor 0 10
-keys VjvD
+cursor 0 0
+keys vl<Esc>gvd
 
 case v0492
 use b2
-cursor 4 0
-keys VjvD
+cursor 2 16
+keys vl<Esc>gvd
 
 case v0493
 use b2
-cursor 1 8
-keys Vlvd
+cursor 0 0
+keys Vj<Esc>jgvd
 
 case v0494
 use b2
-cursor 6 10
-keys Vlvd
+cursor 2 16
+keys Vj<Esc>jgvd
 
 case v0495
-use b2
-cursor 0 0
-keys vl<Esc>gvd
-
-case v0496
-use b2
-cursor 2 16
-keys vl<Esc>gvd
-
-case v0497
-use b2
-cursor 0 0
-keys Vj<Esc>jgvd
-
-case v0498
-use b2
-cursor 2 16
-keys Vj<Esc>jgvd
-
-case v0499
 use b2
 cursor 2 7
 keys vl<Esc>jgvy
 
-case v0500
+case v0496
 use b2
 cursor 1 21
 keys vj<Esc>ggvlgvd
 
-case v0501
+case v0497
 use b2
 cursor 0 10
 keys v"ay
 
-case v0502
+case v0498
 use b2
 cursor 4 0
 keys v"ay
 
-case v0503
+case v0499
 use b2
 cursor 0 7
 keys vl"ad
 
-case v0504
+case v0500
 use b2
 cursor 3 0
 keys vl"ad
 
-case v0505
+case v0501
 use b2
 cursor 1 8
 keys Vj"ay
 
-case v0506
+case v0502
 use b2
 cursor 6 10
 keys Vj"ay
 
-case v0507
+case v0503
 use b2
 cursor 2 7
 keys vl"_d
 
-case v0508
+case v0504
 use b2
 cursor 1 13
 keys vly"0P
 
-case v0509
+case v0505
 use b2
 cursor 8 2
 keys vly"0P
 
-case v0510
+case v0506
 use b2
 cursor 0 0
 keys ywjvlp
 
-case v0511
+case v0507
 use b2
 cursor 6 10
 keys ywjvlp
 
-case v0512
+case v0508
 use b2
 cursor 1 8
 keys ywjvlP
+
+case v0509
+use b2
+cursor 0 10
+keys yyjvlp
+
+case v0510
+use b2
+cursor 1 21
+keys yyjVp
+
+case v0511
+use b2
+cursor 1 8
+keys ywjVp
+
+case v0512
+use b2
+cursor 0 10
+keys ywjVjp
 
 case v0513
 use b2
 cursor 0 10
-keys yyjvlp
+keys yyvjp
 
 case v0514
 use b2
-cursor 1 21
-keys yyjVp
+cursor 2 7
+keys ywvep
 
 case v0515
 use b2
-cursor 1 8
-keys ywjVp
+cursor 3 0
+keys ywve2p
 
 case v0516
 use b2
 cursor 0 10
-keys ywjVjp
+keys yyjv$p
 
 case v0517
 use b2
-cursor 0 10
-keys yyvjp
+cursor 0 0
+keys ywjv$p
 
 case v0518
 use b2
-cursor 2 7
-keys ywvep
+cursor 6 10
+keys ywjv$p
 
 case v0519
 use b2
-cursor 3 0
-keys ywve2p
+cursor 1 13
+keys dwvlp
 
 case v0520
 use b2
 cursor 0 10
-keys yyjv$p
-
-case v0521
-use b2
-cursor 0 0
-keys ywjv$p
-
-case v0522
-use b2
-cursor 6 10
-keys ywjv$p
-
-case v0523
-use b2
-cursor 1 13
-keys dwvlp
-
-case v0524
-use b2
-cursor 0 10
 keys ddVp
 
-case v0525
+case v0521
 use b2
 cursor 1 21
 keys ywvlpp
 
-case v0526
+case v0522
 use b2
 cursor 1 13
 keys yyVpu
 
-case v0527
+case v0523
 use b2
 cursor 0 0
 keys vld.
 
-case v0528
+case v0524
 use b2
 cursor 6 10
 keys vld.
 
-case v0529
+case v0525
 use b2
 cursor 4 0
 keys vlldj.
 
-case v0530
+case v0526
 use b2
 cursor 4 0
 keys vjd.
 
-case v0531
+case v0527
 use b2
 cursor 1 8
 keys Vd.
 
-case v0532
+case v0528
 use b2
 cursor 0 10
 keys Vjd.
 
-case v0533
+case v0529
 use b2
 cursor 3 0
 keys vly.
 
-case v0534
+case v0530
 use b2
 cursor 1 4
 keys vlcQ<Esc>j.
 
-case v0535
+case v0531
 use b2
 cursor 2 7
 keys VjcQ<Esc>.
 
-case v0536
+case v0532
 use b2
 cursor 0 10
 keys vl~l.
 
-case v0537
+case v0533
 use b2
 cursor 0 0
 keys Vj>.
 
-case v0538
+case v0534
 use b2
 cursor 6 10
 keys Vj>.
 
-case v0539
+case v0535
 use b2
 cursor 3 0
 keys vllrQj.
 
-case v0540
+case v0536
 use b2
 cursor 2 16
 keys vjJ.
 
-case v0541
+case v0537
 use b2
 cursor 2 16
 keys vlUw.
 
-case v0542
+case v0538
 use b3
 cursor 0 14
 keys vld
 
-case v0543
+case v0539
 use b3
 cursor 5 7
 keys vly
 
-case v0544
+case v0540
 use b3
 cursor 0 0
 keys Vld
 
-case v0545
+case v0541
 use b3
 cursor 4 4
 keys Vly
 
-case v0546
+case v0542
 use b3
 cursor 5 3
 keys vhd
 
-case v0547
+case v0543
 use b3
 cursor 4 4
 keys vhy
 
-case v0548
+case v0544
 use b3
 cursor 5 3
 keys Vhd
 
-case v0549
+case v0545
 use b3
 cursor 0 31
 keys Vhy
 
-case v0550
+case v0546
 use b3
 cursor 0 0
 keys vjd
 
-case v0551
+case v0547
 use b3
 cursor 6 1
 keys vjd
 
-case v0552
+case v0548
 use b3
 cursor 5 0
 keys vjy
 
-case v0553
+case v0549
 use b3
 cursor 6 1
 keys Vjd
 
-case v0554
+case v0550
 use b3
 cursor 1 21
 keys Vjy
 
-case v0555
+case v0551
 use b3
 cursor 0 9
 keys vkd
 
-case v0556
+case v0552
 use b3
 cursor 7 3
 keys vkd
 
-case v0557
+case v0553
 use b3
 cursor 5 3
 keys vky
 
-case v0558
+case v0554
 use b3
 cursor 7 3
 keys Vkd
 
-case v0559
+case v0555
 use b3
 cursor 2 0
 keys Vky
 
-case v0560
+case v0556
 use b3
 cursor 0 9
 keys vwd
 
-case v0561
+case v0557
 use b3
 cursor 7 3
 keys vwd
 
-case v0562
+case v0558
 use b3
 cursor 4 17
 keys vwy
 
-case v0563
+case v0559
 use b3
 cursor 5 7
 keys Vwd
 
-case v0564
+case v0560
 use b3
 cursor 1 8
 keys Vwy
 
-case v0565
+case v0561
 use b3
 cursor 1 8
 keys vbd
 
-case v0566
+case v0562
 use b3
 cursor 0 9
 keys vby
 
-case v0567
+case v0563
 use b3
 cursor 1 8
 keys Vbd
 
-case v0568
+case v0564
 use b3
 cursor 5 7
 keys Vby
 
-case v0569
+case v0565
 use b3
 cursor 4 4
 keys ved
 
-case v0570
+case v0566
 use b3
 cursor 1 8
 keys vey
 
-case v0571
+case v0567
 use b3
 cursor 4 4
 keys Ved
 
-case v0572
+case v0568
 use b3
 cursor 0 0
 keys Vey
 
-case v0573
+case v0569
 use b3
 cursor 0 14
 keys v$d
 
-case v0574
+case v0570
 use b3
 cursor 5 0
 keys v$y
 
-case v0575
+case v0571
 use b3
 cursor 6 1
 keys V$d
 
-case v0576
+case v0572
 use b3
 cursor 1 21
 keys V$y
 
-case v0577
+case v0573
 use b3
 cursor 0 14
 keys v0d
 
-case v0578
+case v0574
 use b3
 cursor 4 4
 keys v0y
 
-case v0579
+case v0575
 use b3
 cursor 5 3
 keys V0d
 
-case v0580
+case v0576
 use b3
 cursor 0 31
 keys V0y
 
-case v0581
+case v0577
 use b3
 cursor 0 0
 keys v^d
 
-case v0582
+case v0578
 use b3
 cursor 6 1
 keys v^d
 
-case v0583
+case v0579
 use b3
 cursor 5 7
 keys v^y
 
-case v0584
+case v0580
 use b3
 cursor 0 0
 keys V^d
 
-case v0585
+case v0581
 use b3
 cursor 4 4
 keys V^y
 
-case v0586
+case v0582
 use b3
 cursor 0 9
 keys vGd
 
-case v0587
+case v0583
 use b3
 cursor 7 3
 keys vGd
 
-case v0588
+case v0584
 use b3
 cursor 0 14
 keys vGy
 
-case v0589
+case v0585
 use b3
 cursor 1 21
 keys VGd
 
-case v0590
+case v0586
 use b3
 cursor 6 1
 keys VGy
 
-case v0591
+case v0587
 use b3
 cursor 1 8
 keys vggd
 
-case v0592
+case v0588
 use b3
 cursor 5 7
 keys vggy
 
-case v0593
+case v0589
 use b3
 cursor 0 0
 keys Vggd
 
-case v0594
+case v0590
 use b3
 cursor 4 4
 keys Vggy
 
-case v0595
+case v0591
 use b3
 cursor 4 4
 keys v}d
 
-case v0596
+case v0592
 use b3
 cursor 0 0
 keys v}y
 
-case v0597
+case v0593
 use b3
 cursor 0 31
 keys V}d
 
-case v0598
+case v0594
 use b3
 cursor 5 3
 keys V}y
 
-case v0599
+case v0595
 use b3
 cursor 1 21
 keys v{d
 
-case v0600
+case v0596
 use b3
 cursor 6 1
 keys v{y
 
-case v0601
+case v0597
 use b3
 cursor 0 9
 keys V{d
 
-case v0602
+case v0598
 use b3
 cursor 4 17
 keys V{y
 
-case v0603
+case v0599
 use b3
 cursor 4 4
 keys v)d
 
-case v0604
+case v0600
 use b3
 cursor 0 0
 keys v)y
 
-case v0605
+case v0601
 use b3
 cursor 0 31
 keys V)d
 
-case v0606
+case v0602
 use b3
 cursor 5 3
 keys V)y
 
-case v0607
+case v0603
 use b3
 cursor 0 31
 keys v%d
 
-case v0608
+case v0604
 use b3
 cursor 5 3
 keys v%y
 
-case v0609
+case v0605
 use b3
 cursor 7 3
 keys V%d
 
-case v0610
+case v0606
 use b3
 cursor 2 0
 keys V%y
 
-case v0611
+case v0607
 use b3
 cursor 0 14
 keys v2jd
 
-case v0612
+case v0608
 use b3
 cursor 0 31
 keys v2jy
 
-case v0613
+case v0609
 use b3
 cursor 2 0
 keys V2jd
 
-case v0614
+case v0610
 use b3
 cursor 7 3
 keys V2jy
 
-case v0615
+case v0611
 use b3
 cursor 1 21
 keys v3ld
 
-case v0616
+case v0612
 use b3
 cursor 2 0
 keys v3ly
 
-case v0617
+case v0613
 use b3
 cursor 5 0
 keys V3ld
 
-case v0618
+case v0614
 use b3
 cursor 0 14
 keys V3ly
 
-case v0619
+case v0615
 use b3
 cursor 5 0
 keys vfad
 
-case v0620
+case v0616
 use b3
 cursor 1 8
 keys vfay
 
-case v0621
+case v0617
 use b3
 cursor 4 4
 keys Vfad
 
-case v0622
+case v0618
 use b3
 cursor 0 0
 keys Vfay
 
-case v0623
+case v0619
 use b3
 cursor 4 17
 keys vg_d
 
-case v0624
+case v0620
 use b3
 cursor 0 31
 keys vg_y
 
-case v0625
+case v0621
 use b3
 cursor 2 0
 keys Vg_d
 
-case v0626
+case v0622
 use b3
 cursor 7 3
 keys Vg_y
 
-case v0627
+case v0623
 use b3
 cursor 1 8
 keys v<Space>d
 
-case v0628
+case v0624
 use b3
 cursor 7 3
 keys v<Space>y
 
-case v0629
+case v0625
 use b3
 cursor 0 14
 keys V<Space>d
 
-case v0630
+case v0626
 use b3
 cursor 5 0
 keys V<Space>y
 
-case v0631
+case v0627
 use b3
 cursor 5 0
 keys v<BS>d
 
-case v0632
+case v0628
 use b3
 cursor 2 0
 keys v<BS>y
 
-case v0633
+case v0629
 use b3
 cursor 5 0
 keys V<BS>d
 
-case v0634
+case v0630
 use b3
 cursor 0 14
 keys V<BS>y
 
-case v0635
+case v0631
 use b3
 cursor 0 14
 keys vged
 
-case v0636
+case v0632
 use b3
 cursor 5 0
 keys vgey
 
-case v0637
+case v0633
 use b3
 cursor 6 1
 keys Vged
 
-case v0638
+case v0634
 use b3
 cursor 1 21
 keys Vgey
 
-case v0639
+case v0635
 use b3
 cursor 1 21
 keys vWd
 
-case v0640
+case v0636
 use b3
 cursor 1 8
 keys vWy
 
-case v0641
+case v0637
 use b3
 cursor 4 4
 keys VWd
 
-case v0642
+case v0638
 use b3
 cursor 0 0
 keys VWy
 
-case v0643
+case v0639
 use b3
 cursor 5 0
 keys v+d
 
-case v0644
+case v0640
 use b3
 cursor 0 14
 keys v+y
 
-case v0645
+case v0641
 use b3
 cursor 1 21
 keys V+d
 
-case v0646
+case v0642
 use b3
 cursor 6 1
 keys V+y
 
-case v0647
+case v0643
 use b3
 cursor 5 7
 keys v-d
 
-case v0648
+case v0644
 use b3
 cursor 1 8
 keys v-y
 
-case v0649
+case v0645
 use b3
 cursor 4 4
 keys V-d
 
-case v0650
+case v0646
 use b3
 cursor 0 0
 keys V-y
 
-case v0651
+case v0647
 use b3
 cursor 0 14
 keys vd
 
-case v0652
+case v0648
 use b3
 cursor 5 3
 keys vd
 
-case v0653
+case v0649
 use b3
 cursor 4 4
 keys vy
 
-case v0654
+case v0650
 use b3
 cursor 0 14
 keys Vd
 
-case v0655
+case v0651
 use b3
 cursor 5 3
 keys Vd
 
-case v0656
+case v0652
 use b3
 cursor 4 4
 keys Vy
 
-case v0657
+case v0653
 use b3
 cursor 2 0
 keys vld
 
-case v0658
+case v0654
 use b3
 cursor 4 4
 keys vlly
 
-case v0659
+case v0655
 use b3
 cursor 2 0
 keys v$d
 
-case v0660
+case v0656
 use b3
 cursor 0 31
 keys v$y
 
-case v0661
+case v0657
 use b3
 cursor 5 7
 keys v$y
 
-case v0662
+case v0658
 use b3
 cursor 2 0
 keys v$hd
 
-case v0663
+case v0659
 use b3
 cursor 0 0
 keys vj$d
 
-case v0664
+case v0660
 use b3
 cursor 4 17
 keys vj$d
 
+case v0661
+use b3
+cursor 0 31
+keys vllly
+
+case v0662
+use b3
+cursor 5 7
+keys vllly
+
+case v0663
+use b3
+cursor 0 31
+keys vlcQ<Esc>
+
+case v0664
+use b3
+cursor 5 7
+keys vlcQ<Esc>
+
 case v0665
-use b3
-cursor 0 31
-keys vllly
-
-case v0666
-use b3
-cursor 5 7
-keys vllly
-
-case v0667
-use b3
-cursor 0 31
-keys vlcQ<Esc>
-
-case v0668
-use b3
-cursor 5 7
-keys vlcQ<Esc>
-
-case v0669
 use b3
 cursor 0 9
 keys vjcQ<Esc>
 
-case v0670
+case v0666
 use b3
 cursor 5 0
 keys vjcQ<Esc>
 
-case v0671
+case v0667
 use b3
 cursor 4 4
 keys VcQ<Esc>
 
-case v0672
+case v0668
 use b3
 cursor 0 9
 keys VjcQ<Esc>
 
-case v0673
+case v0669
 use b3
 cursor 5 0
 keys VjcQ<Esc>
 
-case v0674
+case v0670
 use b3
 cursor 0 31
 keys vlsQ<Esc>
+
+case v0671
+use b3
+cursor 5 7
+keys vlsQ<Esc>
+
+case v0672
+use b3
+cursor 0 31
+keys vlCQ<Esc>
+
+case v0673
+use b3
+cursor 5 7
+keys vlCQ<Esc>
+
+case v0674
+use b3
+cursor 0 14
+keys vlRQ<Esc>
 
 case v0675
 use b3
-cursor 5 7
-keys vlsQ<Esc>
+cursor 5 3
+keys vlRQ<Esc>
 
 case v0676
 use b3
-cursor 0 31
-keys vlSQ<Esc>
+cursor 0 14
+keys vjJ
 
 case v0677
 use b3
-cursor 5 7
-keys vlSQ<Esc>
+cursor 5 3
+keys vjJ
 
 case v0678
 use b3
-cursor 0 31
-keys vlCQ<Esc>
+cursor 0 9
+keys vjgJ
 
 case v0679
 use b3
-cursor 5 7
-keys vlCQ<Esc>
+cursor 5 0
+keys vjgJ
 
 case v0680
 use b3
 cursor 0 14
-keys vlRQ<Esc>
+keys VjJ
 
 case v0681
 use b3
 cursor 5 3
-keys vlRQ<Esc>
+keys VjJ
 
 case v0682
-use b3
-cursor 0 14
-keys vjJ
-
-case v0683
-use b3
-cursor 5 3
-keys vjJ
-
-case v0684
-use b3
-cursor 0 9
-keys vjgJ
-
-case v0685
-use b3
-cursor 5 0
-keys vjgJ
-
-case v0686
-use b3
-cursor 0 14
-keys VjJ
-
-case v0687
-use b3
-cursor 5 3
-keys VjJ
-
-case v0688
 use b3
 cursor 1 8
 keys V2jJ
 
-case v0689
+case v0683
 use b3
 cursor 6 1
 keys V2jJ
 
-case v0690
+case v0684
 use b3
 cursor 0 0
 keys vJ
 
-case v0691
+case v0685
 use b3
 cursor 4 17
 keys vJ
 
-case v0692
+case v0686
 use b3
 cursor 4 4
 keys VgJ
 
-case v0693
+case v0687
 use b3
 cursor 0 0
 keys v3lrQ
 
-case v0694
+case v0688
 use b3
 cursor 4 17
 keys v3lrQ
 
-case v0695
+case v0689
 use b3
 cursor 0 9
 keys VrQ
 
-case v0696
+case v0690
 use b3
 cursor 5 0
 keys VrQ
 
-case v0697
+case v0691
 use b3
 cursor 0 31
 keys vjrQ
 
-case v0698
+case v0692
 use b3
 cursor 5 7
 keys vjrQ
 
-case v0699
+case v0693
 use b3
 cursor 4 4
 keys vlu
 
-case v0700
+case v0694
 use b3
 cursor 4 4
 keys vlU
 
-case v0701
+case v0695
 use b3
 cursor 0 0
 keys vl~
 
-case v0702
+case v0696
 use b3
 cursor 4 17
 keys vl~
 
-case v0703
+case v0697
 use b3
 cursor 0 31
 keys Vu
+
+case v0698
+use b3
+cursor 5 7
+keys Vu
+
+case v0699
+use b3
+cursor 0 31
+keys VU
+
+case v0700
+use b3
+cursor 5 7
+keys VU
+
+case v0701
+use b3
+cursor 1 8
+keys V~
+
+case v0702
+use b3
+cursor 6 1
+keys V~
+
+case v0703
+use b3
+cursor 1 21
+keys vjU
 
 case v0704
 use b3
-cursor 5 7
-keys Vu
+cursor 7 3
+keys vjU
 
 case v0705
 use b3
-cursor 0 31
-keys VU
+cursor 0 0
+keys vlg?
 
 case v0706
 use b3
-cursor 5 7
-keys VU
+cursor 4 17
+keys vlg?
 
 case v0707
 use b3
 cursor 1 8
-keys V~
+keys vjD
 
 case v0708
 use b3
 cursor 6 1
-keys V~
+keys vjD
 
 case v0709
 use b3
-cursor 1 21
-keys vjU
+cursor 0 14
+keys vlX
 
 case v0710
 use b3
-cursor 7 3
-keys vjU
+cursor 5 3
+keys vlX
 
 case v0711
 use b3
-cursor 0 0
-keys vlg?
+cursor 0 9
+keys vjY
 
 case v0712
 use b3
-cursor 4 17
-keys vlg?
+cursor 5 0
+keys vjY
 
 case v0713
 use b3
-cursor 1 8
-keys vjD
+cursor 0 14
+keys vlx
 
 case v0714
 use b3
-cursor 6 1
-keys vjD
+cursor 5 3
+keys vlx
 
 case v0715
 use b3
-cursor 0 14
-keys vlX
+cursor 0 9
+keys vl<Del>
 
 case v0716
 use b3
-cursor 5 3
-keys vlX
+cursor 5 0
+keys vl<Del>
 
 case v0717
-use b3
-cursor 0 9
-keys vjY
-
-case v0718
-use b3
-cursor 5 0
-keys vjY
-
-case v0719
-use b3
-cursor 0 14
-keys vlx
-
-case v0720
-use b3
-cursor 5 3
-keys vlx
-
-case v0721
-use b3
-cursor 0 9
-keys vl<Del>
-
-case v0722
-use b3
-cursor 5 0
-keys vl<Del>
-
-case v0723
 use b3
 cursor 1 8
 keys v>
 
-case v0724
+case v0718
 use b3
 cursor 6 1
 keys v>
 
-case v0725
+case v0719
 use b3
 cursor 2 0
 keys Vj>
 
-case v0726
+case v0720
 use b3
 cursor 0 0
 keys Vj2>
+
+case v0721
+use b3
+cursor 4 17
+keys Vj2>
+
+case v0722
+use b3
+cursor 0 14
+keys Vj<lt>
+
+case v0723
+use b3
+cursor 5 3
+keys Vj<lt>
+
+case v0724
+use b3
+cursor 1 21
+keys vj3<lt>
+
+case v0725
+use b3
+cursor 7 3
+keys vj3<lt>
+
+case v0726
+use b3
+cursor 0 14
+keys V>.
 
 case v0727
 use b3
-cursor 4 17
-keys Vj2>
+cursor 5 3
+keys V>.
 
 case v0728
 use b3
-cursor 0 14
-keys Vj<lt>
+cursor 1 21
+keys vlod
 
 case v0729
 use b3
-cursor 5 3
-keys Vj<lt>
+cursor 7 3
+keys vlod
 
 case v0730
-use b3
-cursor 1 21
-keys vj3<lt>
-
-case v0731
-use b3
-cursor 7 3
-keys vj3<lt>
-
-case v0732
-use b3
-cursor 0 14
-keys V>.
-
-case v0733
-use b3
-cursor 5 3
-keys V>.
-
-case v0734
-use b3
-cursor 1 21
-keys vlod
-
-case v0735
-use b3
-cursor 7 3
-keys vlod
-
-case v0736
 use b3
 cursor 0 0
 keys vjoy
 
-case v0737
+case v0731
 use b3
 cursor 4 17
 keys vjoy
 
-case v0738
+case v0732
 use b3
 cursor 2 0
 keys vjokd
 
-case v0739
+case v0733
 use b3
 cursor 2 0
 keys vlO<Esc>x
 
-case v0740
+case v0734
 use b3
 cursor 0 31
 keys vjOd
 
-case v0741
+case v0735
 use b3
 cursor 5 7
 keys vjOd
 
-case v0742
+case v0736
 use b3
 cursor 4 4
 keys vl<Esc>x
 
-case v0743
+case v0737
 use b3
 cursor 1 21
 keys vj<Esc>x
 
-case v0744
+case v0738
 use b3
 cursor 7 3
 keys vj<Esc>x
 
-case v0745
+case v0739
 use b3
 cursor 4 4
 keys v$<Esc>x
 
-case v0746
+case v0740
 use b3
 cursor 1 21
 keys Vj<Esc>x
 
-case v0747
+case v0741
 use b3
 cursor 7 3
 keys Vj<Esc>x
 
-case v0748
+case v0742
 use b3
 cursor 0 0
 keys vlvx
 
-case v0749
+case v0743
 use b3
 cursor 4 17
 keys vlvx
 
-case v0750
+case v0744
 use b3
 cursor 1 8
 keys vlVd
 
-case v0751
+case v0745
 use b3
 cursor 6 1
 keys vlVd
 
-case v0752
+case v0746
 use b3
 cursor 0 14
 keys VjvD
 
-case v0753
+case v0747
 use b3
 cursor 5 3
 keys VjvD
 
-case v0754
+case v0748
 use b3
 cursor 1 8
 keys Vlvd
 
-case v0755
+case v0749
 use b3
 cursor 6 1
 keys Vlvd
 
-case v0756
+case v0750
 use b3
 cursor 0 0
 keys vl<Esc>gvd
 
-case v0757
+case v0751
 use b3
 cursor 4 17
 keys vl<Esc>gvd
 
-case v0758
+case v0752
 use b3
 cursor 0 0
 keys Vj<Esc>jgvd
 
-case v0759
+case v0753
 use b3
 cursor 4 17
 keys Vj<Esc>jgvd
 
-case v0760
+case v0754
 use b3
 cursor 4 4
 keys vl<Esc>jgvy
 
-case v0761
+case v0755
 use b3
 cursor 2 0
 keys vj<Esc>ggvlgvd
 
-case v0762
+case v0756
 use b3
 cursor 0 14
 keys v"ay
 
-case v0763
+case v0757
 use b3
 cursor 5 3
 keys v"ay
 
-case v0764
+case v0758
 use b3
 cursor 0 9
 keys vl"ad
 
-case v0765
+case v0759
 use b3
 cursor 5 0
 keys vl"ad
 
-case v0766
+case v0760
 use b3
 cursor 1 8
 keys Vj"ay
 
-case v0767
+case v0761
 use b3
 cursor 6 1
 keys Vj"ay
 
-case v0768
+case v0762
 use b3
 cursor 4 4
 keys vl"_d
 
-case v0769
+case v0763
 use b3
 cursor 1 21
 keys vly"0P
 
-case v0770
+case v0764
 use b3
 cursor 7 3
 keys vly"0P
 
-case v0771
+case v0765
 use b3
 cursor 0 0
 keys ywjvlp
 
-case v0772
+case v0766
 use b3
 cursor 6 1
 keys ywjvlp
 
-case v0773
+case v0767
 use b3
 cursor 1 8
 keys ywjvlP
 
-case v0774
+case v0768
 use b3
 cursor 0 14
 keys yyjvlp
 
-case v0775
+case v0769
 use b3
 cursor 2 0
 keys yyjVp
 
-case v0776
+case v0770
 use b3
 cursor 1 8
 keys ywjVp
 
-case v0777
+case v0771
 use b3
 cursor 0 14
 keys ywjVjp
 
-case v0778
+case v0772
 use b3
 cursor 0 14
 keys yyvjp
 
-case v0779
+case v0773
 use b3
 cursor 4 4
 keys ywvep
 
-case v0780
+case v0774
 use b3
 cursor 5 0
 keys ywve2p
 
-case v0781
+case v0775
 use b3
 cursor 0 14
 keys yyjv$p
 
-case v0782
+case v0776
 use b3
 cursor 0 0
 keys ywjv$p
 
-case v0783
+case v0777
 use b3
 cursor 6 1
 keys ywjv$p
 
-case v0784
+case v0778
 use b3
 cursor 1 21
 keys dwvlp
 
-case v0785
+case v0779
 use b3
 cursor 0 14
 keys ddVp
 
-case v0786
+case v0780
 use b3
 cursor 2 0
 keys ywvlpp
 
-case v0787
+case v0781
 use b3
 cursor 1 21
 keys yyVpu
 
-case v0788
+case v0782
 use b3
 cursor 0 0
 keys vld.
 
-case v0789
+case v0783
 use b3
 cursor 6 1
 keys vld.
 
-case v0790
+case v0784
 use b3
 cursor 5 3
 keys vlldj.
 
-case v0791
+case v0785
 use b3
 cursor 5 3
 keys vjd.
 
-case v0792
+case v0786
 use b3
 cursor 1 8
 keys Vd.
 
-case v0793
+case v0787
 use b3
 cursor 0 14
 keys Vjd.
 
-case v0794
+case v0788
 use b3
 cursor 5 0
 keys vly.
 
-case v0795
+case v0789
 use b3
 cursor 0 31
 keys vlcQ<Esc>j.
 
-case v0796
+case v0790
 use b3
 cursor 4 4
 keys VjcQ<Esc>.
 
-case v0797
+case v0791
 use b3
 cursor 0 14
 keys vl~l.
 
-case v0798
+case v0792
 use b3
 cursor 0 0
 keys Vj>.
 
-case v0799
+case v0793
 use b3
 cursor 6 1
 keys Vj>.
 
-case v0800
+case v0794
 use b3
 cursor 5 0
 keys vllrQj.
 
-case v0801
+case v0795
 use b3
 cursor 4 17
 keys vjJ.
 
-case v0802
+case v0796
 use b3
 cursor 4 17
 keys vlUw.

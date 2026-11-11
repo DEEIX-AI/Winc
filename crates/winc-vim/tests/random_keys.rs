@@ -122,6 +122,8 @@ fn argument_fits(command: &Command) -> bool {
                     | Action::InsertRegister
                     | Action::Record
                     | Action::Play
+                    | Action::DeleteSurround
+                    | Action::ChangeSurround(_)
             );
             expects == arg.is_some()
         }
@@ -389,6 +391,25 @@ const SCRIPTS: &[&str] = &[
     "ga",
     "gt",
     "ZZ",
+    "ysiw)",
+    "ysiw[",
+    "yss\"",
+    "ys$}",
+    "viwS'",
+    "VjS)",
+    "ds)",
+    "ds\"",
+    "cs)]",
+    "cs'\"",
+    "dst",
+    "dii",
+    "yai",
+    ">ii",
+    "vii",
+    "<C-w>w",
+    "<C-^>",
+    ":h<CR>",
+    "`Q",
 ];
 
 /// 以种子 `seed` 生成 `steps` 个按键驱动状态机，核对不变量与撤销；返回单个按键的最长耗时与

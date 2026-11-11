@@ -109,13 +109,17 @@ fn recorded_cases_are_well_formed() {
     }
 }
 
-/// 结果取决于宿主、无法录制的命令。
-const HOSTED: [&str; 8] = ["gc", "=", "gd", "gf", "gt", "gT", "ZZ", "ZQ"];
+/// 无法录制的命令：结果取决于宿主的，以及不加载配置的 `vim` 没有的插件行为（缩进对象；
+/// 成对符号的 `s`、`S` 在命令表中不是独立的命令）。
+const HOSTED: [&str; 11] = [
+    "gc", "=", "gd", "gf", "gt", "gT", "ZZ", "ZQ", "<C-^>", "ii", "ai",
+];
 
 #[test]
 fn every_supported_command_appears_in_a_recorded_case() {
     // 标为支持的命令必须有录制用例。切换注释不是 `vim` 自带的命令，格式化所选的行交给宿主的
-    // 格式化工具，转到定义、打开路径、切换标签、关闭文档由宿主执行，都由手写的测试覆盖。
+    // 格式化工具，转到定义、打开路径、切换标签、关闭文档、移动焦点由宿主执行，都由手写的测试
+    // 覆盖。
     let recorded: Vec<String> = (load("rec").into_iter())
         .flat_map(|(_, file)| file.cases)
         .filter(|case| !case.tags.iter().any(|tag| tag == "later"))
@@ -123,7 +127,7 @@ fn every_supported_command_appears_in_a_recorded_case() {
         .collect();
     let missing: Vec<&str> = (winc_vim::command::ENTRIES.iter())
         .filter(|entry| entry.support == winc_vim::Support::Supported)
-        .filter(|entry| !HOSTED.contains(&entry.keys))
+        .filter(|entry| !HOSTED.contains(&entry.keys) && !entry.keys.starts_with("<C-w>"))
         .map(|entry| entry.keys)
         .filter(|keys| !recorded.iter().any(|case| case.contains(keys)))
         .collect();

@@ -2,7 +2,8 @@
 
 use std::sync::OnceLock;
 
-use super::{Action, Arg, Entry, Folding, Force, Kind, Mode, Modes, Motion, Operator, Scrolling};
+use super::Scrolling;
+use super::{Action, Arg, Entry, Focusing, Folding, Force, Kind, Mode, Modes, Motion, Operator};
 use super::{Shape, Shorthand, Support, TextObject};
 use crate::key::{Key, notation};
 
@@ -190,7 +191,8 @@ pub static ENTRIES: &[Entry] = &[
     entry("X", Modes::V, Kind::WideOperator(Operator::Delete, false)),
     entry("D", Modes::V, Kind::WideOperator(Operator::Delete, true)),
     entry("Y", Modes::V, Kind::WideOperator(Operator::Yank, false)),
-    entry("S", Modes::V, Kind::LineOperator(Operator::Change)),
+    entry("S", Modes::V, Kind::Surround).with_char(),
+    entry("s", Modes::O, Kind::Surround),
     entry("C", Modes::V, Kind::WideOperator(Operator::Change, true)),
     entry("R", Modes::V, Kind::LineOperator(Operator::Change)),
     // 操作符加动作的同义写法。
@@ -203,6 +205,8 @@ pub static ENTRIES: &[Entry] = &[
     synonym("S", Operator::Change, Shorthand::Lines),
     synonym("Y", Operator::Yank, Shorthand::Lines),
     // 文本对象。
+    object("ii", Shape::Indent, false),
+    object("ai", Shape::Indent, true),
     object("iw", Shape::Word, false),
     object("aw", Shape::Word, true),
     object("iW", Shape::BigWord, false),
@@ -359,6 +363,17 @@ pub static ENTRIES: &[Entry] = &[
     action("ga", Modes::NV, Action::CharInfo),
     action("ZZ", Modes::N, Action::WriteQuit),
     action("ZQ", Modes::N, Action::QuitForce),
+    action("<C-^>", Modes::N, Action::Alternate),
+    action("<C-w>h", Modes::NV, Action::Focus(Focusing::Left)),
+    action("<C-w>l", Modes::NV, Action::Focus(Focusing::Right)),
+    action("<C-w>j", Modes::NV, Action::Focus(Focusing::Down)),
+    action("<C-w>k", Modes::NV, Action::Focus(Focusing::Up)),
+    action("<C-w>w", Modes::NV, Action::Focus(Focusing::Next)),
+    action("<C-w><C-h>", Modes::NV, Action::Focus(Focusing::Left)),
+    action("<C-w><C-l>", Modes::NV, Action::Focus(Focusing::Right)),
+    action("<C-w><C-j>", Modes::NV, Action::Focus(Focusing::Down)),
+    action("<C-w><C-k>", Modes::NV, Action::Focus(Focusing::Up)),
+    action("<C-w><C-w>", Modes::NV, Action::Focus(Focusing::Next)),
     // 不支持的命令。
     action("Q", Modes::NV, Action::ExMode).unsupported(),
     action("K", Modes::NV, Action::Keyword).unsupported(),

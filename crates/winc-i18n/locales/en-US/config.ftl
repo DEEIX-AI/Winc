@@ -49,6 +49,7 @@ config-label-zoom = zoom
 config-label-tab-width = tab width
 config-label-vim-scroll-off = lines kept around the cursor
 config-label-vim-timeout-len = milliseconds a mapping waits for more keys
+config-label-vim-yank-highlight = milliseconds a yank stays highlighted
 config-label-repository-scan-depth = repository scan depth
 config-label-lines = line count
 config-label-contrast = contrast

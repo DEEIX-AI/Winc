@@ -115,6 +115,11 @@ impl App {
             return;
         }
 
+        // Vim 模式下列表中的移动按键。
+        if self.vim_list_key(&event.logical_key, &base) {
+            return;
+        }
+
         match self.focus {
             Focus::Editor => self.on_key_editor(event, cmd),
             Focus::Search | Focus::Replace => self.on_key_search(event, &base, cmd),

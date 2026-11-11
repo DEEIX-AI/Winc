@@ -609,13 +609,7 @@ impl App {
             Next::Key { vim, step } => {
                 let started = Instant::now();
                 if vim {
-                    // 依次执行下移、按词移动、删除一行、重复上一次修改。
-                    if self.vim.is_none() {
-                        self.config.vim_enabled = Some(true);
-                        self.vim_apply_config();
-                    }
-                    self.focus = Focus::Editor;
-                    self.vim_feed(["j", "w", "dd", "."][step % 4]);
+                    self.vim_bench_key(step);
                 } else if step % 40 == 39 {
                     self.run(Command::Newline);
                 } else {

@@ -29,6 +29,8 @@ pub(super) struct View {
     pub(super) numbers: bool,
     /// 是否显示全部的空白字符。
     pub(super) whitespace: bool,
+    /// 是否显示相对行号。
+    pub(super) relative: bool,
 }
 
 /// Vim 层请求、在按键处理结束之后由应用执行的动作。
@@ -50,6 +52,10 @@ pub(super) enum Deferred {
     Set(HostOption, usize),
     /// 执行文件、标签与窗口的命令。
     App(AppCommand),
+    /// 位置区间内的文本刚被复制。
+    Yanked(usize, usize),
+    /// 大写标记设在了当前文档的某个位置。
+    GlobalMark(char, usize),
 }
 
 /// 系统剪贴板的访问；测试中以 `App::copied` 代替。
@@ -296,6 +302,10 @@ impl Host for DocHost<'_> {
 
     fn set_mark(&mut self, name: char, pos: usize) {
         self.doc.set_modal_mark(name, pos);
+        // 大写标记同时记录路径与位置。
+        if name.is_ascii_uppercase() {
+            self.deferred.push(Deferred::GlobalMark(name, pos));
+        }
     }
 
     fn changes(&self) -> Vec<usize> {
@@ -430,8 +440,7 @@ impl Host for DocHost<'_> {
     fn option(&self, option: HostOption) -> Option<usize> {
         Some(match option {
             HostOption::Number => usize::from(self.view.numbers),
-            // 相对行号尚未实现。
-            HostOption::RelativeNumber => return None,
+            HostOption::RelativeNumber => usize::from(self.view.relative),
             HostOption::Wrap => usize::from(self.doc.is_wrapping()),
             HostOption::List => usize::from(self.view.whitespace),
             HostOption::TabStop => self.view.tab_width.max(1),
@@ -442,7 +451,6 @@ impl Host for DocHost<'_> {
 
     fn set_option(&mut self, option: HostOption, value: usize) -> bool {
         let valid = match option {
-            HostOption::RelativeNumber => false,
             HostOption::TabStop | HostOption::ShiftWidth => (1..=16).contains(&value),
             _ => true,
         };
@@ -450,6 +458,10 @@ impl Host for DocHost<'_> {
             self.deferred.push(Deferred::Set(option, value));
         }
         valid
+    }
+
+    fn yanked(&mut self, from: usize, to: usize) {
+        self.deferred.push(Deferred::Yanked(from, to));
     }
 
     fn app(&mut self, command: AppCommand) -> bool {

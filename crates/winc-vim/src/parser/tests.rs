@@ -469,7 +469,7 @@ fn visual_mode_applies_operators_to_the_selection() {
             around: false
         })
     );
-    // `X`、`Y`、`D`、`C` 作用于整行，按块时作用于块；`S`、`R` 总是作用于整行。
+    // `X`、`Y`、`D`、`C` 作用于整行，按块时作用于块；`R` 总是作用于整行。
     assert_eq!(
         visual("D").body,
         operator(Operator::Delete, Target::SelectedLines { to_end: true })
@@ -479,12 +479,17 @@ fn visual_mode_applies_operators_to_the_selection() {
         operator(Operator::Yank, Target::SelectedLines { to_end: false })
     );
     assert_eq!(
-        visual("S").body,
+        visual("R").body,
         Body::Operator {
             operator: Operator::Change,
             target: Target::Selection,
             force: Some(Force::Linewise),
         }
+    );
+    // `S{符号}` 在选区的两端加上成对的符号；等待动作时 `ys`、`ds`、`cs` 各自读取符号。
+    assert_eq!(
+        visual("S)").body,
+        operator(Operator::Surround(')'), Target::Selection)
     );
     // `<BS>` 删除选区，未指定寄存器时写入 `"-`。
     let small = visual("<BS>");
@@ -499,14 +504,6 @@ fn visual_mode_applies_operators_to_the_selection() {
         ("C", Operator::Change, true),
     ] {
         let body = operator(expected, Target::SelectedLines { to_end });
-        assert_eq!(visual(keys).body, body, "{keys}");
-    }
-    for keys in ["S", "R"] {
-        let body = Body::Operator {
-            operator: Operator::Change,
-            target: Target::Selection,
-            force: Some(Force::Linewise),
-        };
         assert_eq!(visual(keys).body, body, "{keys}");
     }
     assert_eq!(visual("v").body, action(Action::Visual));

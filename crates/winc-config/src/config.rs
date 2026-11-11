@@ -131,6 +131,12 @@ pub struct Config {
     ///
     /// 按名字排序；没有列出的按键按默认的规则决定归属。
     pub vim_handle_keys: Vec<(String, bool)>,
+    /// Vim 模式下是否显示相对行号，默认为否。
+    pub vim_relative_number: Option<bool>,
+    /// Vim 模式下复制之后高亮被复制范围的毫秒数，默认为 150，0 表示不高亮。
+    ///
+    /// 可用范围见 [`Config::VIM_YANK_HIGHLIGHT_RANGE`]。
+    pub vim_yank_highlight: Option<u32>,
     /// Vim 模式下映射等待后续按键的毫秒数，默认为 1000。
     ///
     /// 可用范围见 [`Config::VIM_TIMEOUT_LEN_RANGE`]。
@@ -381,6 +387,10 @@ impl Config {
     ///
     /// 超出范围的值在读入时忽略并报告；上限取自调参，超过窗口高度一半的值效果相同。
     pub const VIM_SCROLL_OFF_RANGE: std::ops::RangeInclusive<f32> = 0.0..=999.0;
+    /// Vim 模式下复制之后高亮时间的可用范围（毫秒）。
+    ///
+    /// 超出范围的值在读入时忽略并报告；上限取自调参，更长的高亮妨碍阅读。
+    pub const VIM_YANK_HIGHLIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=5_000.0;
     /// Vim 模式下映射等待后续按键的时间的可用范围（毫秒）。
     ///
     /// 超出范围的值在读入时忽略并报告；上限取自调参，更长的等待与不超时无异。

@@ -121,6 +121,7 @@ impl Vim {
                 self.settle(host, pos);
                 done
             }
+            Operator::Surround(with) => self.wrap(host, range, with),
             Operator::Format | Operator::Fold | Operator::Filter => {
                 self.error(host, Message::Unsupported);
                 false
@@ -245,6 +246,7 @@ impl Vim {
                             anchor: None,
                             linewise: false,
                             count: times.min(motion::MAX_STEPS),
+                            tab_width: host.tab_width(),
                         };
                         object::select(host.text(), object, at).map(|selected| {
                             let span = if selected.linewise {
@@ -330,6 +332,7 @@ impl Vim {
         };
         host.set_mark('[', from);
         host.set_mark(']', to);
+        host.yanked(from, to + 1);
         // 光标移到范围的起点；按行的范围向下延伸时起点就是光标。
         let pos = match range.region {
             Region::Lines { .. } => range.start,

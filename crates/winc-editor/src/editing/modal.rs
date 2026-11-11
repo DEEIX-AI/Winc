@@ -261,6 +261,11 @@ impl Document {
             .map(|(_, pos)| (*pos).min(end))
     }
 
+    /// 删除模态编辑层的标记 `name`。
+    pub fn clear_modal_mark(&mut self, name: char) {
+        self.marks.marks.retain(|(mark, _)| *mark != name);
+    }
+
     /// 返回模态编辑层的全部标记：名字与位置，按名字排序。
     pub fn modal_marks(&self) -> Vec<(char, usize)> {
         let end = self.text.end_pos();

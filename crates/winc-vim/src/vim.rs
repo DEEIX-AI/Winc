@@ -19,11 +19,12 @@ mod options;
 mod search;
 mod sort;
 mod substitute;
+mod surround;
 mod view;
 
 pub use map::{Mapped, Mapping};
-pub use options::Options;
 pub(crate) use options::option_names;
+pub use options::{Options, option_list};
 pub use search::Prompt;
 
 use std::collections::VecDeque;
@@ -548,6 +549,17 @@ impl Vim {
         movement: Movement,
         count: Option<u32>,
     ) {
+        // 不在当前文档中的大写标记由宿主跳转到所在的文档。
+        if let (Motion::Mark | Motion::MarkLine, Some(name)) = (movement.motion, movement.arg)
+            && name.is_ascii_uppercase()
+            && host.mark(name).is_none()
+        {
+            let line = movement.motion == Motion::MarkLine;
+            if !host.app(AppCommand::GlobalMark { name, line }) {
+                self.error(host, Message::NoMark(name));
+            }
+            return;
+        }
         match self.moved(shared, host, movement, count, None) {
             Some(moved) => {
                 self.failed |= moved.failed;
@@ -583,6 +595,7 @@ impl Vim {
             anchor: Some(visual.anchor),
             linewise: visual.kind == VisualKind::Line,
             count: count.min(motion::MAX_STEPS),
+            tab_width: host.tab_width(),
         };
         let Some(selected) = object::select(host.text(), object, at) else {
             self.failed = true;
@@ -951,6 +964,9 @@ impl Vim {
             | Action::InsertNormal
             | Action::InsertBelow
             | Action::InsertAbove => {}
+            Action::DeleteSurround => self.unwrap(shared, host, command, arg, None),
+            Action::ChangeSurround(old) => self.unwrap(shared, host, command, Some(old), arg),
+            Action::Focus(_) | Action::Alternate => self.app_action(host, action, command.count),
             // 由 `ask` 处理。
             Action::CommandLine => {}
             Action::Record => self.start_recording(arg),
@@ -984,6 +1000,8 @@ impl Vim {
         let command = match action {
             Action::Definition => AppCommand::Definition,
             Action::OpenFile => AppCommand::OpenFile,
+            Action::Focus(focusing) => AppCommand::Focus(focusing),
+            Action::Alternate => AppCommand::Alternate,
             Action::TabNext => match number {
                 Some(number) => AppCommand::BufferNumber(number),
                 None => AppCommand::BufferStep(1),

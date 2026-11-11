@@ -683,6 +683,19 @@ impl App {
             .position(|h| h.new.contains(&line) || (h.new.is_empty() && h.new.start == line))
     }
 
+    /// 当前标签是差异、其右侧对应的文档被改动或光标移动之后调用：重新比较并滚动到光标处。
+    pub(in crate::app) fn diff_source_changed(&mut self) {
+        let Some(index) = self.editor.active else {
+            return;
+        };
+        if self.editor.documents[index].diff.is_none() {
+            return;
+        }
+        self.relayout();
+        self.sync_diff_source(index);
+        self.diff_caret_visible(index);
+    }
+
     /// 光标在差异右侧时由右侧文档执行 `f`（按键、编辑命令），执行后重新比较并滚动到光标处。
     ///
     /// 光标不在右侧时返回 `None`，不做任何改动。
@@ -1012,7 +1025,7 @@ impl App {
     ///
     /// 在输入文字、编辑按键和编辑命令之前调用：[`App::place_diff_caret`] 不打开文件，
     /// 用户开始编辑时才打开。光标不在可编辑的右侧或文件无法打开时不做任何操作。
-    fn edit_at_read_caret(&mut self) {
+    pub(in crate::app) fn edit_at_read_caret(&mut self) {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return;
         };

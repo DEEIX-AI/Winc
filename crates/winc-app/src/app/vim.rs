@@ -5,6 +5,7 @@
 
 mod command;
 mod host;
+mod workspace;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -60,6 +61,14 @@ pub(crate) struct VimState {
     line: command::Line,
     /// 映射等待后续按键超时的时刻。
     map_deadline: Option<std::time::Instant>,
+    /// `:set` 改动过的选项在配置文件中的值，以及相对行号在本次运行中的值。
+    kept: command::Kept,
+    /// 刚被复制的范围：所在的文档、范围与高亮结束的时刻。
+    yanked: Option<(DocumentId, Selection, std::time::Instant)>,
+    /// 上一个活动的文档。
+    previous: Option<DocumentId>,
+    /// 列表中已输入的前缀键：`g` 或 `Ctrl-W`。
+    list_prefix: Option<char>,
 }
 
 /// 光标的形状。
@@ -208,9 +217,12 @@ impl App {
         if enabled && self.vim.is_none() {
             self.vim = Some(Box::default());
         } else if !enabled && self.vim.is_some() {
+            // `:set` 的改动随 Vim 模式的关闭还原。
+            self.vim_swap_options();
             if let Some(mut state) = self.vim.take() {
                 self.vim_leave(&mut state);
             }
+            self.relayout();
             self.request_redraw();
         }
         if enabled {
@@ -249,7 +261,49 @@ impl App {
 
     /// 当前焦点与文档是否适用 Vim 模式：焦点在编辑区，文档以文本显示。
     fn vim_applies(&self) -> bool {
-        self.focus == Focus::Editor && self.editor.active().is_some_and(Document::shows_text)
+        self.focus == Focus::Editor && self.vim_document().is_some_and(Document::shows_text)
+    }
+
+    /// 「快捷键」页的一行中是否有被 Vim 层占用的键：`Ctrl` 加一个字符，归 Vim 层处理，且命令
+    /// 表中有以该键开头的命令。Vim 模式关闭时返回假。
+    pub(crate) fn vim_takes_keys(&self, labels: &[String]) -> bool {
+        if self.vim.is_none() {
+            return false;
+        }
+        let mac = cfg!(target_os = "macos");
+        labels.iter().any(|label| {
+            let rest = label
+                .strip_prefix('⌃')
+                .or_else(|| label.strip_prefix("Ctrl+"));
+            let mut chars = rest.unwrap_or("").chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                return false;
+            };
+            let key = winc_vim::Key::ctrl(c.to_ascii_lowercase());
+            let notation = winc_vim::notation::write(&[key]);
+            claims(key, Mode::Normal, mac, &self.config.vim_handle_keys)
+                && winc_vim::command::ENTRIES
+                    .iter()
+                    .any(|entry| entry.keys.starts_with(&notation))
+        })
+    }
+
+    /// 返回 Vim 层操作的文档在标签中的序号：当前文档；当前标签是差异且光标在可编辑的一侧时，
+    /// 是该侧对应的文档。
+    fn vim_target(&self) -> Option<usize> {
+        let index = self.editor.active?;
+        let view = match self.editor.documents.get(index)?.diff.as_deref() {
+            None => return Some(index),
+            Some(view) => view,
+        };
+        let path = view.new.path.as_ref().filter(|_| view.editing)?;
+        let mut documents = self.editor.documents.iter();
+        documents.position(|doc| doc.diff.is_none() && doc.path.as_ref() == Some(path))
+    }
+
+    /// 返回 Vim 层操作的文档，见 [`App::vim_target`]。
+    fn vim_document(&self) -> Option<&Document> {
+        self.editor.documents.get(self.vim_target()?)
     }
 
     /// 返回 Vim 层的模式；Vim 模式关闭或不适用于当前文档时返回 `None`。
@@ -327,7 +381,7 @@ impl App {
     fn vim_view(&self) -> View {
         let tab_width = self.editor.active_tab_width();
         let rows = self.visible_lines();
-        let visible = match self.editor.active() {
+        let visible = match self.vim_document() {
             Some(doc) => visible_lines(doc, rows),
             None => 0..1,
         };
@@ -342,6 +396,7 @@ impl App {
             scroll_off: self.vim_scroll_off(),
             numbers: self.config.line_numbers != Some(false),
             whitespace: self.config.render_whitespace == Some(winc_config::RenderWhitespace::All),
+            relative: self.vim_relative(),
         }
     }
 
@@ -391,6 +446,7 @@ impl App {
         f: impl FnOnce(&mut Vim, &mut Shared, &mut DocHost<'_>) -> R,
     ) -> Option<(R, Vec<Message>, Vec<Deferred>)> {
         let view = self.vim_view();
+        let index = self.vim_target()?;
         let clip = Clip {
             #[cfg(not(test))]
             system: &mut self.clipboard,
@@ -398,7 +454,7 @@ impl App {
             copied: &mut self.copied,
             whole_line: &mut self.line_clipboard,
         };
-        let doc = self.editor.active_mut()?;
+        let doc = self.editor.documents.get_mut(index)?;
         let mut host = DocHost {
             doc,
             view,
@@ -419,9 +475,14 @@ impl App {
         let Some(mut state) = self.vim.take() else {
             return;
         };
-        let active = self.editor.active().map(|doc| doc.id);
+        let active = (self.vim_document().or(self.editor.active())).map(|doc| doc.id);
         if state.doc != active {
+            let left = state.doc;
+            if let Some(left) = left {
+                self.vim_store_marks(left);
+            }
             self.vim_leave(&mut state);
+            state.previous = left.or(state.previous);
             state.doc = active;
         }
         // 查找模式的输入条：输入的文本变化时即时跳转；输入条被其他操作关闭时放弃输入。
@@ -455,10 +516,7 @@ impl App {
             return;
         }
         if self.vim_applies() {
-            let now = self
-                .editor
-                .active()
-                .map(|doc| (doc.selection, doc.revision));
+            let now = self.vim_document().map(|doc| (doc.selection, doc.revision));
             if state.seen != now {
                 self.vim_with(&mut state, |vim, _, host| {
                     if vim.mode() == Mode::Insert {
@@ -477,6 +535,18 @@ impl App {
 
     /// 处理窗口的按键 `event`，返回是否已由 Vim 层处理。
     pub(in crate::app) fn vim_key_event(&mut self, event: &KeyEvent) -> bool {
+        // 差异中光标在可编辑的一侧时，不带修饰键的字符先让该侧对应的文档接手。
+        let plain = !(self.modifiers.control_key()
+            || self.modifiers.super_key()
+            || self.modifiers.alt_key());
+        if self.vim.is_some()
+            && plain
+            && matches!(event.logical_key, Key::Character(_))
+            && self.focus == Focus::Editor
+            && self.diff_active()
+        {
+            self.edit_at_read_caret();
+        }
         self.vim_sync();
         let Some(mode) = self.vim_mode() else {
             return false;
@@ -522,10 +592,7 @@ impl App {
         let Some(mut state) = self.vim.take() else {
             return false;
         };
-        let lines = self
-            .editor
-            .active()
-            .map_or(0, |doc| doc.text().line_count());
+        let lines = self.vim_document().map_or(0, |doc| doc.text().line_count());
         let result = self.vim_with(&mut state, |vim, shared, host| vim.key(shared, host, key));
         let prompt = state.vim.prompt();
         self.vim = Some(state);
@@ -610,8 +677,11 @@ impl App {
     /// 滚动到光标。
     fn vim_after(&mut self, lines_before: usize, messages: Vec<Message>, deferred: Vec<Deferred>) {
         let mut revealed = false;
+        // 差异中的滚动、折叠与格式化由差异视图自己管理。
+        let in_diff = self.diff_active();
         for action in deferred {
             match action {
+                Deferred::Format(..) | Deferred::Reveal(..) | Deferred::Fold(_) if in_diff => {}
                 Deferred::Format(first, last) => self.vim_format(first, last),
                 Deferred::Jump(back, count) => {
                     for _ in 0..count.min(MAX_JUMP_STEPS) {
@@ -632,11 +702,19 @@ impl App {
                 }
                 Deferred::Set(option, value) => self.vim_set_option(option, value),
                 Deferred::App(command) => self.vim_run_app(command),
+                Deferred::Yanked(from, to) => self.vim_flash_yank(from, to),
+                Deferred::GlobalMark(name, pos) => self.vim_set_global_mark(name, pos),
             }
         }
         if let Some(message) = messages.last() {
             let text = self.vim_message(message);
             self.flash(text);
+        }
+        if in_diff {
+            self.diff_source_changed();
+            self.reset_blink();
+            self.request_redraw();
+            return;
         }
         if self
             .editor

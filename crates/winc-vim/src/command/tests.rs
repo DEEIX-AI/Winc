@@ -35,6 +35,8 @@ fn prefix_kinds_stay_out_of_the_modes_that_do_not_take_them() {
             Kind::TextObject(_) => assert!(!entry.modes.contains(Mode::Normal)),
             Kind::Operator(_) => assert!(!entry.modes.contains(Mode::OperatorPending)),
             Kind::Action(_) => assert!(!entry.modes.contains(Mode::OperatorPending)),
+            // 成对符号只在等待动作与可视模式下出现。
+            Kind::Surround => assert!(!entry.modes.contains(Mode::Normal)),
             Kind::Motion(_)
             | Kind::SmallDelete
             | Kind::LineOperator(_)

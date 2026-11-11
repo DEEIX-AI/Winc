@@ -189,6 +189,21 @@ editor-vim-more-lines = { $count } more lines
 editor-vim-fewer-lines = { $count } fewer lines
 editor-vim-no-buffer = No such document
 editor-vim-no-file = No file at that path under the cursor
+editor-vim-help-title = Vim Mode: Commands
+editor-vim-help-modes = Modes: N normal, V visual, O operator-pending, I insert
+editor-vim-help-keys = Keys
+editor-vim-help-mode = Modes
+editor-vim-help-kind = Kind
+editor-vim-help-status = Status
+editor-vim-help-motion = motion
+editor-vim-help-operator = operator
+editor-vim-help-object = text object
+editor-vim-help-command = command
+editor-vim-help-prefix = prefix
+editor-vim-help-supported = supported
+editor-vim-help-unsupported = unsupported
+editor-vim-help-ex = Command-line commands (the bracketed part is optional)
+editor-vim-help-options = Options for :set (abbreviation in parentheses)
 
 ## Copy and paste.
 

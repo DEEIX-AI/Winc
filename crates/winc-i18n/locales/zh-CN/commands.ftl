@@ -247,6 +247,7 @@ cmd-when-tree = 文件树
 cmd-when-keys-page = 快捷键搜索
 cmd-when-not-editor = 非编辑区
 cmd-when-terminal = 终端
+cmd-when-vim = Vim 模式下由 Vim 处理
 cmd-group-general = 常用
 cmd-group-file = 文件
 cmd-group-edit = 编辑

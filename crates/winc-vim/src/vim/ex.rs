@@ -611,6 +611,7 @@ impl Vim {
             Cmd::Registers => AppCommand::List(Listing::Registers),
             Cmd::Marks => AppCommand::List(Listing::Marks),
             Cmd::Buffers => AppCommand::List(Listing::Buffers),
+            Cmd::Help => AppCommand::Help,
             _ => return self.fail(host, Message::BadCommand),
         };
         if host.app(command) {

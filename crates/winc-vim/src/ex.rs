@@ -115,6 +115,8 @@ pub(crate) enum Cmd {
     TabOnly,
     /// `:tabnew`、`:tabe`。
     TabNew,
+    /// `:h`。
+    Help,
 }
 
 impl Cmd {
@@ -190,7 +192,13 @@ const NAMES: &[(&str, usize, Cmd)] = &[
     ("tabonly", 4, Cmd::TabOnly),
     ("tabnew", 6, Cmd::TabNew),
     ("tabedit", 4, Cmd::TabNew),
+    ("help", 1, Cmd::Help),
 ];
+
+/// 返回各命令的全名与最短缩写的长度，按表中的顺序；供帮助页列出。
+pub fn command_names() -> impl Iterator<Item = (&'static str, usize)> {
+    NAMES.iter().map(|(name, min, _)| (*name, *min))
+}
 
 /// 解析之后的一条命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -460,6 +468,8 @@ pub enum Completing {
     Option,
     /// 文件路径，由宿主列出。
     Path,
+    /// 已打开的文档的名字，由宿主列出。
+    Buffer,
 }
 
 /// 命令行中光标之前可以补全的部分。
@@ -514,8 +524,13 @@ pub fn complete(text: &str) -> Option<Completion> {
             candidates,
         });
     }
-    cmd.takes_path().then_some(Completion {
-        kind: Completing::Path,
+    let kind = match cmd {
+        Cmd::Buffer => Completing::Buffer,
+        cmd if cmd.takes_path() => Completing::Path,
+        _ => return None,
+    };
+    Some(Completion {
+        kind,
         start,
         candidates: Vec::new(),
     })

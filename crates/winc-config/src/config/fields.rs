@@ -346,6 +346,29 @@ const VIM: &[Field] = &[
             ))
         },
     },
+    bool_field!("relativeNumber", vim_relative_number),
+    Field {
+        key: "yankHighlight",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-vim-yank-highlight");
+            let range = Config::VIM_YANK_HIGHLIGHT_RANGE;
+            config.vim_yank_highlight = read_number(value, name, range, label, problems)
+                .filter(|v| {
+                    let whole = v.fract() == 0.0;
+                    if !whole {
+                        let value = v.to_string();
+                        problems.push(t!("config-not-integer", name = name, value = value));
+                    }
+                    whole
+                })
+                .map(|v| v as u32)
+        },
+        write: |config| {
+            config
+                .vim_yank_highlight
+                .map(|ms| Json::Number(f64::from(ms)))
+        },
+    },
     Field {
         key: "timeoutLen",
         read: |config, value, name, problems| {

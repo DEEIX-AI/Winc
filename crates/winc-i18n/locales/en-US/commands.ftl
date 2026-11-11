@@ -247,6 +247,7 @@ cmd-when-tree = File Tree
 cmd-when-keys-page = Shortcut Search
 cmd-when-not-editor = Outside Editor
 cmd-when-terminal = Terminal
+cmd-when-vim = handled by Vim in Vim mode
 cmd-group-general = General
 cmd-group-file = File
 cmd-group-edit = Edit

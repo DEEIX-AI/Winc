@@ -92,6 +92,11 @@ const OPTIONS: &[(&str, &str, Target, bool)] = &[
     ("clipboard", "cb", Target::Clipboard, false),
 ];
 
+/// 返回各选项的全名与缩写，供帮助页列出。
+pub fn option_list() -> impl Iterator<Item = (&'static str, &'static str)> {
+    OPTIONS.iter().map(|(name, short, _, _)| (*name, *short))
+}
+
 /// 返回各选项的全名，供补全使用。
 pub(crate) fn option_names() -> impl Iterator<Item = &'static str> {
     OPTIONS.iter().map(|(name, _, _, _)| *name)

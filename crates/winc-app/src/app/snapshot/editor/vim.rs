@@ -794,7 +794,7 @@ fn lists_options_and_highlighting_follow_the_command_line() {
     );
     ex(&mut app, "set ts? nu?");
     assert_eq!(app.status.message.as_deref(), Some("nonumber"));
-    ex(&mut app, "set rnu");
+    ex(&mut app, "set ts=99");
     assert_eq!(app.status.message.as_deref(), Some("命令的参数有误"));
 
     // 查找的高亮可以用 `:noh` 取消，也可以整体关闭。
@@ -858,5 +858,215 @@ fn mappings_come_from_the_configuration_and_time_out() {
     let wrap = app.config.word_wrap == Some(true);
     keys(&mut app, "gs");
     assert_eq!(app.config.word_wrap == Some(true), !wrap);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn relative_numbers_the_yank_flash_and_set_last_for_this_run() {
+    let (mut app, dir) = vim_app("vim-view", "one\ntwo\nthree\n");
+    let id = app.editor.active().unwrap().id;
+    // 相对行号：配置给出默认值，`:set` 的值优先。
+    assert!(!app.vim_relative());
+    ex(&mut app, "set rnu");
+    assert!(app.vim_relative());
+    paint(&mut app);
+    ex(&mut app, "set nornu");
+    app.config.vim_relative_number = Some(true);
+    assert!(!app.vim_relative());
+    app.settings_toggle(crate::layout::Setting::VimRelativeNumber);
+    assert_eq!(app.config.vim_relative_number, Some(false));
+
+    // `:set` 改动的行号开关只在本次运行中生效：保存配置时换回文件中的值。
+    ex(&mut app, "set nonu nowrap list");
+    assert_eq!(app.config.line_numbers, Some(false));
+    app.vim_swap_options();
+    assert_eq!(app.config.line_numbers, None);
+    app.vim_swap_options();
+    assert_eq!(app.config.line_numbers, Some(false));
+    // 在设置页改动之后以设置页的值为准；关闭 Vim 模式时其余各项还原。
+    app.settings_toggle(crate::layout::Setting::LineNumbers);
+    app.vim_swap_options();
+    assert_eq!(app.config.line_numbers, Some(true));
+    app.vim_swap_options();
+    let whitespace = app.config.render_whitespace;
+    assert_eq!(whitespace, Some(winc_config::RenderWhitespace::All));
+
+    // 复制之后被复制的范围高亮片刻；时长为 0 时不高亮。
+    keys(&mut app, "ggyy");
+    assert_eq!(app.vim_yanked(id), Some(Selection::new(0, 4)));
+    paint(&mut app);
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    app.vim_tick(later);
+    assert_eq!(app.vim_yanked(id), None);
+    app.config.vim_yank_highlight = Some(0);
+    keys(&mut app, "yy");
+    assert_eq!(app.vim_yanked(id), None);
+
+    app.config.vim_enabled = Some(false);
+    app.vim_apply_config();
+    assert_eq!(app.config.render_whitespace, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn uppercase_marks_reach_other_files_and_are_kept_in_the_state() {
+    let (mut app, dir) = vim_app("vim-global-marks", "one\n  two\nthree\n");
+    let other = dir.join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    let first = app.editor.active().unwrap().path.clone().unwrap();
+    keys(&mut app, "jwmAgg");
+    assert_eq!(app.state.vim_marks, [('A', first.clone(), 1, 2)]);
+
+    ex(&mut app, "e other.txt");
+    assert_eq!(text(&app), "other\n");
+    ex(&mut app, "marks");
+    let rows = &app.picker.vim_list.as_ref().unwrap().rows;
+    assert!(
+        rows.iter()
+            .any(|row| row.label == "'A" && row.text.ends_with("vim.txt:2"))
+    );
+    app.close_picker();
+    // `` ` `` 回到标记所在的文件与位置，`'` 落在该行的第一个非空白字符上。
+    keys(&mut app, "`A");
+    assert_eq!(
+        (text(&app).as_str(), head(&app)),
+        ("one\n  two\nthree\n", 6)
+    );
+    keys(&mut app, "gg'A");
+    assert_eq!(head(&app), 6);
+    // 标记随编辑移动，离开文档时把新的位置写入状态。
+    keys(&mut app, "ggOzero<Esc>");
+    keys(&mut app, "<C-^>");
+    paint(&mut app);
+    assert_eq!(text(&app), "other\n");
+    assert_eq!(app.state.vim_marks, [('A', first, 2, 2)]);
+    keys(&mut app, "<C-^>`Z");
+    assert_eq!(app.status.message.as_deref(), Some("标记 Z 没有设置"));
+    assert_eq!(line(&app), 0);
+
+    // `:b` 的参数按文档名补全。
+    keys(&mut app, ":");
+    app.edit_field(|field| field.insert("b ot"));
+    assert!(app.vim_prompt_key(&Key::Named(NamedKey::Tab), ""));
+    assert_eq!(app.goto_input.as_ref().unwrap().text(), "b other.txt");
+    app.submit_prompt();
+    assert_eq!(text(&app), "other\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lists_move_with_vim_keys_and_the_focus_follows_window_commands() {
+    let (mut app, dir) = vim_app("vim-lists-keys", "one\ntwo\n");
+    let key = |c: &str| Key::Character(c.into());
+    // 编辑区里的按键不经列表处理。
+    assert!(!app.vim_list_key(&key("j"), "j"));
+    keys(&mut app, "<C-w>h");
+    assert_ne!(app.focus, Focus::Editor);
+    app.focus = Focus::Tree;
+    for typed in ["j", "k", "G", "h", "l"] {
+        assert!(
+            app.vim_list_key(&key(typed), &typed.to_lowercase()),
+            "{typed}"
+        );
+    }
+    // `gg` 要按两次；其余的字符仍交给列表自己处理。
+    assert!(app.vim_list_key(&key("g"), "g") && app.vim_list_key(&key("g"), "g"));
+    assert!(!app.vim_list_key(&key("x"), "x"));
+    assert!(!app.vim_list_key(&Key::Named(NamedKey::ArrowDown), ""));
+    for focus in [Focus::Results, Focus::Outline, Focus::CommitList] {
+        app.focus = focus;
+        assert!(app.vim_list_key(&key("j"), "j"), "{focus:?}");
+    }
+    // `Ctrl-W` 之后的方向把焦点移回编辑区。
+    app.focus = Focus::Tree;
+    app.modifiers = ModifiersState::CONTROL;
+    assert!(app.vim_list_key(&key("w"), "w"));
+    app.modifiers = ModifiersState::empty();
+    assert!(app.vim_list_key(&key("l"), "l"));
+    assert_eq!(app.focus, Focus::Editor);
+
+    // 被 Vim 层占用的应用快捷键在「快捷键」页标注。
+    assert!(app.vim_takes_keys(&["⌃R".to_owned()]) || app.vim_takes_keys(&["Ctrl+R".to_owned()]));
+    assert!(!app.vim_takes_keys(&["⌘S".to_owned(), "F5".to_owned()]));
+
+    // 关闭 Vim 模式之后列表中的字符不再换成方向键。
+    app.config.vim_enabled = Some(false);
+    app.vim_apply_config();
+    app.focus = Focus::Tree;
+    assert!(!app.vim_list_key(&key("j"), "j"));
+    assert!(!app.vim_takes_keys(&["⌃R".to_owned()]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn help_lists_the_command_table() {
+    let (mut app, dir) = vim_app("vim-help", "one\n");
+    ex(&mut app, "h");
+    let doc = app.editor.active().unwrap();
+    assert_eq!(doc.name(), "Vim 模式：命令一览");
+    let page = text(&app);
+    for expected in [
+        "ys ds cs",
+        ":s[ubstitute]",
+        "relativenumber  (rnu)",
+        "<C-w>h",
+        "不支持",
+    ] {
+        assert!(page.contains(expected), "{expected}");
+    }
+    // 帮助页只读，移动与复制可用。
+    keys(&mut app, "ggjyyx");
+    assert_eq!(text(&app), page);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_editable_side_of_a_diff_takes_vim_keys() {
+    use winc_editor::diff_view::{DiffSide, DiffView};
+
+    let (mut app, dir) = vim_app("vim-diff", "one\ntwo\nthree\n");
+    let path = app.editor.active().unwrap().path.clone();
+    let source = app.editor.active().unwrap().id;
+    let language = winc_syntax::detect("vim.txt");
+    let mut view = DiffView::new(
+        DiffSide::new("old", "one\nthree\n", None, language),
+        DiffSide::new("worktree", "one\ntwo\nthree\n", path, language),
+    );
+    view.editing = true;
+    app.editor.show_diff_in(None, "vim.txt (worktree)", view);
+    app.focus = Focus::Editor;
+    paint(&mut app);
+    let source_text = |app: &App| {
+        let doc = app
+            .editor
+            .documents
+            .iter()
+            .find(|doc| doc.id == source)
+            .unwrap();
+        doc.text_range(0, doc.text().end_pos()).unwrap()
+    };
+    // 光标在可编辑的一侧：按键作用于该侧对应的文档，差异随之更新。
+    assert_eq!(app.vim_mode(), Some(Mode::Normal));
+    keys(&mut app, "ggjdd");
+    assert_eq!(source_text(&app), "one\nthree\n");
+    assert!(app.editor.active().unwrap().diff.is_some());
+    keys(&mut app, "u");
+    assert_eq!(source_text(&app), "one\ntwo\nthree\n");
+    keys(&mut app, "cwTWO");
+    assert_eq!(app.vim_mode(), Some(Mode::Insert));
+    paint(&mut app);
+    assert_eq!(app.vim_mode(), Some(Mode::Insert));
+    keys(&mut app, "<Esc>");
+    assert_eq!(app.vim_mode(), Some(Mode::Normal));
+    // 离开可编辑的一侧之后不再处理。
+    let view = app
+        .editor
+        .active_mut()
+        .unwrap()
+        .diff
+        .as_deref_mut()
+        .unwrap();
+    view.editing = false;
+    assert_eq!(app.vim_mode(), None);
     let _ = std::fs::remove_dir_all(&dir);
 }

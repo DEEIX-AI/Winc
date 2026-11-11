@@ -107,6 +107,21 @@ struct PendingOperator {
     entry: u16,
 }
 
+/// 成对符号的命令已输入到哪一步。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pairing {
+    /// `ys` 之后：等待动作或文本对象。
+    Add,
+    /// 范围已确定：等待要加上的符号。
+    Wrap(Target),
+    /// `ds` 之后：等待要删除的符号。
+    Delete,
+    /// `cs` 之后：等待原来的符号。
+    From,
+    /// `cs{符号}` 之后：等待新的符号。
+    To(char),
+}
+
 /// 命令解析器：逐个接收按键，保存尚未完成的命令。
 #[derive(Debug)]
 pub struct Parser {
@@ -130,6 +145,8 @@ pub struct Parser {
     arg: Option<u16>,
     /// 已输入的操作符是否不受支持。
     unsupported: bool,
+    /// 成对符号的命令已输入到哪一步，以及该命令的记录在命令表中的下标。
+    pairing: Option<(Pairing, u16)>,
 }
 
 impl Default for Parser {
@@ -145,6 +162,7 @@ impl Default for Parser {
             node: ROOT,
             arg: None,
             unsupported: false,
+            pairing: None,
         }
     }
 }
@@ -254,6 +272,7 @@ impl Parser {
         self.node = ROOT;
         self.arg = None;
         self.unsupported = false;
+        self.pairing = None;
     }
 
     /// 是否没有未完成的命令。
@@ -364,6 +383,7 @@ impl Parser {
                 self.fold_count();
                 return Outcome::Pending;
             }
+            Kind::Operator(_) if self.pairing.is_some() => return self.invalid(),
             Kind::Operator(operator) => match self.operator {
                 Some(pending) if pending.operator == operator => {
                     self.operate(operator, Target::Lines)
@@ -403,18 +423,70 @@ impl Parser {
             }
             Kind::Motion(motion) => {
                 let movement = Movement { motion, arg };
-                match self.operator {
-                    Some(pending) => self.operate(pending.operator, Target::Motion(movement)),
-                    None => Body::Motion(movement),
+                match (self.operator, self.pairing) {
+                    (Some(_), Some((Pairing::Add, at))) => {
+                        return self.await_pair(at, Pairing::Wrap(Target::Motion(movement)));
+                    }
+                    (Some(pending), _) => self.operate(pending.operator, Target::Motion(movement)),
+                    (None, _) => Body::Motion(movement),
                 }
             }
-            Kind::TextObject(object) => match self.operator {
-                Some(pending) => self.operate(pending.operator, Target::Object(object)),
-                None => Body::Object(object),
+            Kind::TextObject(object) => match (self.operator, self.pairing) {
+                (Some(_), Some((Pairing::Add, at))) => {
+                    return self.await_pair(at, Pairing::Wrap(Target::Object(object)));
+                }
+                (Some(pending), _) => self.operate(pending.operator, Target::Object(object)),
+                (None, _) => Body::Object(object),
             },
+            Kind::Surround => {
+                let stage = self.pairing.map(|(stage, _)| stage);
+                let operator = self.operator.map(|pending| pending.operator);
+                match (arg, stage, operator) {
+                    // 可视模式的 `S{符号}`。
+                    (Some(with), None, None) => {
+                        self.operate(Operator::Surround(with), Target::Selection)
+                    }
+                    (None, None, Some(Operator::Yank)) => {
+                        self.pairing = Some((Pairing::Add, index));
+                        return Outcome::Pending;
+                    }
+                    // `yss`：当前行。
+                    (None, Some(Pairing::Add), _) => {
+                        return self.await_pair(index, Pairing::Wrap(Target::Lines));
+                    }
+                    (None, None, Some(Operator::Delete)) => {
+                        return self.await_pair(index, Pairing::Delete);
+                    }
+                    (None, None, Some(Operator::Change)) => {
+                        return self.await_pair(index, Pairing::From);
+                    }
+                    (Some(with), Some(Pairing::Wrap(target)), _) => {
+                        self.operate(Operator::Surround(with), target)
+                    }
+                    (Some(old), Some(Pairing::Delete), _) => Body::Action {
+                        action: Action::DeleteSurround,
+                        arg: Some(old),
+                    },
+                    (Some(old), Some(Pairing::From), _) => {
+                        return self.await_pair(index, Pairing::To(old));
+                    }
+                    (Some(new), Some(Pairing::To(old)), _) => Body::Action {
+                        action: Action::ChangeSurround(old),
+                        arg: Some(new),
+                    },
+                    _ => return self.invalid(),
+                }
+            }
             Kind::Action(action) => Body::Action { action, arg },
         };
         self.finish(entry.support, body)
+    }
+
+    /// 成对符号的命令进入 `stage` 这一步，等待一个符号；`index` 是该命令的记录的下标。
+    fn await_pair(&mut self, index: u16, stage: Pairing) -> Outcome {
+        self.pairing = Some((stage, index));
+        self.arg = Some(index);
+        Outcome::Pending
     }
 
     /// 返回以已输入的强制类型对 `target` 执行 `operator` 的命令主体。

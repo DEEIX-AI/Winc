@@ -7,6 +7,8 @@ use std::ops::Range;
 
 use winc_core::{Change, Lines, Selection};
 
+use crate::command::Focusing;
+
 /// 插入模式中的一次输入，由宿主执行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -191,6 +193,19 @@ pub enum AppCommand {
     NoHighlight,
     /// 执行宿主的命令；值为命令名。
     Run(String),
+    /// 把焦点移到侧栏、编辑区或终端。
+    Focus(Focusing),
+    /// 切换到上一个活动的文档。
+    Alternate,
+    /// 跳转到不在当前文档中的大写标记；`line` 为真时落在所在行的第一个非空白字符上。
+    GlobalMark {
+        /// 标记名。
+        name: char,
+        /// 是否按行。
+        line: bool,
+    },
+    /// 显示由命令表生成的帮助页。
+    Help,
 }
 
 /// 滚动之后一行在窗口中的位置。
@@ -523,6 +538,11 @@ pub trait Host {
     fn set_option(&mut self, option: HostOption, value: usize) -> bool {
         let _ = (option, value);
         false
+    }
+
+    /// 位置区间 `from..to` 的文本刚被复制，宿主可以短暂地高亮。
+    fn yanked(&mut self, from: usize, to: usize) {
+        let _ = (from, to);
     }
 
     /// 执行宿主的命令 `command`；返回是否已执行。

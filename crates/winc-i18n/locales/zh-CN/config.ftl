@@ -49,6 +49,7 @@ config-label-zoom = 界面缩放
 config-label-tab-width = 制表符长度
 config-label-vim-scroll-off = 光标与窗口边缘之间保留的行数
 config-label-vim-timeout-len = 映射等待后续按键的毫秒数
+config-label-vim-yank-highlight = 复制后高亮的毫秒数
 config-label-repository-scan-depth = 仓库扫描深度
 config-label-lines = 行数
 config-label-contrast = 对比度

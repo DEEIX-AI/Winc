@@ -168,6 +168,21 @@ editor-vim-more-lines = 多了 { $count } 行
 editor-vim-fewer-lines = 少了 { $count } 行
 editor-vim-no-buffer = 没有这个文档
 editor-vim-no-file = 光标处不是已有文件的路径
+editor-vim-help-title = Vim 模式：命令一览
+editor-vim-help-modes = 模式：N 普通，V 可视，O 等待动作，I 插入
+editor-vim-help-keys = 按键
+editor-vim-help-mode = 模式
+editor-vim-help-kind = 种类
+editor-vim-help-status = 状态
+editor-vim-help-motion = 动作
+editor-vim-help-operator = 操作符
+editor-vim-help-object = 文本对象
+editor-vim-help-command = 命令
+editor-vim-help-prefix = 前缀
+editor-vim-help-supported = 支持
+editor-vim-help-unsupported = 不支持
+editor-vim-help-ex = 命令行的命令（方括号中的部分可以省略）
+editor-vim-help-options = :set 的选项（括号中是缩写）
 
 ## 复制和粘贴。
 

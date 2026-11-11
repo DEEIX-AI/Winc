@@ -186,6 +186,8 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             extra: &extra,
             caret_line,
             caret_col,
+            relative: app.vim_relative(),
+            yanked: app.vim_yanked(id),
             vim_caret: vim_caret.map(|(_, shape)| shape),
             extra_carets: &extra_carets,
             hunks,
@@ -304,6 +306,10 @@ struct Screen<'a> {
     extra: &'a [Selection],
     caret_line: usize,
     caret_col: usize,
+    /// 行号栏是否显示相对行号。
+    relative: bool,
+    /// Vim 模式下刚被复制、仍在高亮的范围。
+    yanked: Option<Selection>,
     /// Vim 模式下光标的形状；使用竖线光标时为 `None`。
     vim_caret: Option<crate::app::vim::CaretShape>,
     extra_carets: &'a [(usize, usize)],
@@ -615,7 +621,8 @@ impl Screen<'_> {
     fn draw_selections(&self, frame: &mut Frame<'_>) {
         let row_y = |line: usize| self.row_y(line);
         let line_y = |line: usize| self.line_y(line);
-        for &selection in std::iter::once(&self.selection).chain(self.extra) {
+        let selections = std::iter::once(&self.selection).chain(self.extra);
+        for &selection in selections.chain(&self.yanked) {
             if selection.is_empty() {
                 continue;
             }

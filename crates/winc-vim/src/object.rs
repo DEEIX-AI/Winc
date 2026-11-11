@@ -51,6 +51,8 @@ pub(crate) struct At {
     pub linewise: bool,
     /// 次数，不小于 1。
     pub count: usize,
+    /// 制表符的宽度（显示列），供比较缩进。
+    pub tab_width: usize,
 }
 
 /// 求值文本对象 `object`；光标处没有该对象时返回 `None`。
@@ -69,9 +71,44 @@ pub(crate) fn select<T: Lines>(text: &T, object: TextObject, at: At) -> Option<S
         Shape::DoubleQuote => quote(text, at, around, '"'),
         Shape::SingleQuote => quote(text, at, around, '\''),
         Shape::Backtick => quote(text, at, around, '`'),
+        Shape::Indent => indent(text, at, around),
         // 查找的匹配由状态机求值。
         Shape::NextMatch | Shape::PreviousMatch => None,
     }
+}
+
+/// `ii`、`ai`：缩进不小于光标所在行的连续各行，中间的空行算在内，两端的空行不算；`around`
+/// 为真时连同其上缩进更小的一行。光标在空行上时取最近的非空行的缩进。
+fn indent<T: Lines>(text: &T, at: At, around: bool) -> Option<Selected> {
+    let last = text::last_line(text);
+    let blank = |line: usize| text::indent_chars(text, line) == text.line_len(line);
+    let cells =
+        |line: usize| text::cell_of(text, line, text::indent_chars(text, line), at.tab_width);
+    let here = text::line_of(text, at.cursor);
+    let base_line = (here..=last)
+        .chain((0..here).rev())
+        .find(|line| !blank(*line))?;
+    let base = cells(base_line);
+    let inside = |line: &usize| blank(*line) || cells(*line) >= base;
+    let mut first = (0..=base_line).rev().take_while(inside).last()?;
+    let mut end = (base_line..=last).take_while(inside).last()?;
+    while first < base_line && blank(first) {
+        first += 1;
+    }
+    while end > base_line && blank(end) {
+        end -= 1;
+    }
+    if around && let Some(above) = (0..first).rev().find(|line| !blank(*line)) {
+        first = above;
+    }
+    Some(Selected {
+        start: text.line_start(first),
+        end: text.line_start(end),
+        inclusive: true,
+        linewise: true,
+        becomes: Becomes::Line,
+        failed: false,
+    })
 }
 
 /// 返回 `pos` 处的字符；位于行尾时返回 `None`。

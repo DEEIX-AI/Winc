@@ -79,6 +79,7 @@ fn sample() -> State {
         others: vec![PathBuf::from("/b")],
         commit_tree: true,
         pdf_thumbnails_hidden: true,
+        vim_marks: vec![('A', PathBuf::from("/a/项目/x.rs"), 12, 3)],
         stay_outside_applications: true,
         panel_width: Some(360.0),
         preview_mode: Some("split".into()),

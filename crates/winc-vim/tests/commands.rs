@@ -6,8 +6,9 @@ mod common;
 use std::time::Duration;
 
 use winc_core::Lines;
+use winc_vim::Mode;
 use winc_vim::ex::{Completing, complete};
-use winc_vim::{AppCommand, Host, HostOption, Key, Listing, Mapped, Mapping, Message, Mode};
+use winc_vim::{AppCommand, Focusing, Host, HostOption, Key, Listing, Mapped, Mapping, Message};
 use winc_vim::{Prompt, Shared, Vim, notation};
 
 use common::{TestHost, feed};
@@ -347,6 +348,7 @@ fn file_and_tab_commands_go_to_the_host() {
         ("reg", AppCommand::List(Listing::Registers)),
         ("marks", AppCommand::List(Listing::Marks)),
         ("ls", AppCommand::List(Listing::Buffers)),
+        ("h", AppCommand::Help),
     ] {
         s.ex(line);
         assert_eq!(s.host.apps.pop(), Some(command), "{line}");
@@ -359,6 +361,27 @@ fn file_and_tab_commands_go_to_the_host() {
         ("2gT", AppCommand::BufferStep(-2)),
         ("ZZ", quit(true, false)),
         ("ZQ", quit(false, true)),
+        ("<C-^>", AppCommand::Alternate),
+        ("<C-w>h", AppCommand::Focus(Focusing::Left)),
+        ("<C-w><C-l>", AppCommand::Focus(Focusing::Right)),
+        ("<C-w>j", AppCommand::Focus(Focusing::Down)),
+        ("<C-w>k", AppCommand::Focus(Focusing::Up)),
+        ("<C-w>w", AppCommand::Focus(Focusing::Next)),
+        // 不在当前文档中的大写标记交给宿主。
+        (
+            "`Q",
+            AppCommand::GlobalMark {
+                name: 'Q',
+                line: false,
+            },
+        ),
+        (
+            "'Q",
+            AppCommand::GlobalMark {
+                name: 'Q',
+                line: true,
+            },
+        ),
     ] {
         s.keys(keys);
         assert_eq!(s.host.apps.pop(), Some(command), "{keys}");
@@ -511,6 +534,10 @@ fn the_command_line_completes_names_options_and_paths() {
     assert_eq!(
         complete("w ").map(|c| (c.kind, c.start)),
         Some((Completing::Path, 2))
+    );
+    assert_eq!(
+        complete("b ma").map(|c| (c.kind, c.start)),
+        Some((Completing::Buffer, 2))
     );
     assert_eq!(complete("zzz"), None);
 }

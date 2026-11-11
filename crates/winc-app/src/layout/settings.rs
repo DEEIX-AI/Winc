@@ -130,7 +130,12 @@ impl SettingsPage {
                     Setting::StickyScroll,
                     Setting::RenderWhitespace,
                 ]),
-                plain(vec![Setting::VimMode, Setting::VimClipboard]),
+                plain(vec![
+                    Setting::VimMode,
+                    Setting::VimClipboard,
+                    Setting::VimRelativeNumber,
+                    Setting::VimYankHighlight,
+                ]),
                 plain(vec![
                     Setting::AutoSave,
                     Setting::HotExit,
@@ -263,6 +268,10 @@ pub enum Setting {
     VimMode,
     /// Vim 模式下无名寄存器与系统剪贴板的同步方式。
     VimClipboard,
+    /// Vim 模式下的相对行号。
+    VimRelativeNumber,
+    /// Vim 模式下复制之后高亮被复制的范围。
+    VimYankHighlight,
     /// 自动换行。
     WordWrap,
     /// 超长行显示全部内容（`wholeLines`）。
@@ -425,6 +434,8 @@ impl Setting {
             | Setting::StickyScroll
             | Setting::VimMode
             | Setting::VimClipboard
+            | Setting::VimRelativeNumber
+            | Setting::VimYankHighlight
             | Setting::WordWrap
             | Setting::WholeLines
             | Setting::Minimap
@@ -483,6 +494,8 @@ impl Setting {
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::VimMode => t!("settings-vim-mode"),
             Setting::VimClipboard => t!("settings-vim-clipboard"),
+            Setting::VimRelativeNumber => t!("settings-vim-relative-number"),
+            Setting::VimYankHighlight => t!("settings-vim-yank-highlight"),
             Setting::WordWrap => t!("settings-word-wrap"),
             Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
@@ -549,6 +562,8 @@ impl Setting {
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::VimMode => Some(t!("settings-vim-mode-desc")),
             Setting::VimClipboard => Some(t!("settings-vim-clipboard-desc")),
+            Setting::VimRelativeNumber => Some(t!("settings-vim-relative-number-desc")),
+            Setting::VimYankHighlight => Some(t!("settings-vim-yank-highlight-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
             Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
@@ -604,6 +619,8 @@ impl Setting {
             | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::VimMode
+            | Setting::VimRelativeNumber
+            | Setting::VimYankHighlight
             | Setting::WordWrap
             | Setting::WholeLines
             | Setting::Minimap

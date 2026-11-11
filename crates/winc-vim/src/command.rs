@@ -277,6 +277,8 @@ pub enum Operator {
     Fold,
     /// `!`：用外部程序过滤文本。
     Filter,
+    /// `ys`、可视模式的 `S`：在范围的两端加上成对的符号；值为输入的符号。
+    Surround(char),
 }
 
 /// 文本对象的形状。
@@ -310,6 +312,8 @@ pub enum Shape {
     NextMatch,
     /// `gN`：上一次查找的模式在光标处或之前的一处匹配。
     PreviousMatch,
+    /// `i`：缩进不小于光标所在行的连续各行；`ai` 连同其上缩进更小的一行。
+    Indent,
 }
 
 /// 文本对象：以 `i` 或 `a` 开头，选中光标处的一段文本。
@@ -450,6 +454,14 @@ pub enum Action {
     WriteQuit,
     /// `ZQ`：不保存，关闭当前文档。
     QuitForce,
+    /// `ds{符号}`：删除光标两侧成对的符号。
+    DeleteSurround,
+    /// `cs{符号}{符号}`：把光标两侧成对的符号换成另一对；值为原来的符号。
+    ChangeSurround(char),
+    /// `Ctrl-W` 加方向：把焦点移到侧栏、编辑区或终端。
+    Focus(Focusing),
+    /// `Ctrl-^`：切换到上一个活动的文档。
+    Alternate,
     /// 之后的阶段实现的命令。
     Later,
     /// `Q`：进入 Ex 模式。
@@ -458,6 +470,21 @@ pub enum Action {
     Keyword,
     /// `U`：撤销最近对一行的全部修改。
     UndoLine,
+}
+
+/// 焦点移动的方向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Focusing {
+    /// 左侧：侧栏。
+    Left,
+    /// 右侧：编辑区。
+    Right,
+    /// 下方：终端。
+    Down,
+    /// 上方：编辑区。
+    Up,
+    /// 下一个区域，依次轮换。
+    Next,
 }
 
 /// 滚动命令。
@@ -566,6 +593,8 @@ pub enum Kind {
     Synonym(Operator, Shorthand),
     /// 文本对象。
     TextObject(TextObject),
+    /// 成对符号：`y`、`d`、`c` 之后的 `s`，以及可视模式的 `S`。
+    Surround,
     /// 不带范围的命令。
     Action(Action),
     /// 寄存器前缀 `"`：其后的字符是寄存器名，之后继续输入命令。

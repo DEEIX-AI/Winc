@@ -244,6 +244,8 @@ fn round_trips_through_json() {
         vim_smart_case: Some(false),
         vim_scroll_off: Some(3),
         vim_handle_keys: vec![("ctrl+f".to_owned(), true)],
+        vim_relative_number: Some(true),
+        vim_yank_highlight: Some(0),
         vim_timeout_len: Some(500),
         vim_leader: Some("<Space>".to_owned()),
         vim_keys: vec![VimMapping {
@@ -570,7 +572,8 @@ fn the_vim_section_reads_writes_and_reports_bad_values() {
 #[test]
 fn vim_mappings_are_read_in_order_and_bad_items_are_reported() {
     let (config, problems) = Config::parse(
-        r#"{ "vim": { "timeoutLen": 300, "leader": ",",
+        r#"{ "vim": { "timeoutLen": 300, "leader": ",", "relativeNumber": true,
+             "yankHighlight": 200,
              "keys": [ { "mode": "insert", "keys": "jk", "to": "<Esc>" },
                        { "mode": "normal", "keys": "<Leader>w", "to": "Save" },
                        { "mode": "operator", "keys": "L", "to": "$" } ] } }"#,
@@ -586,6 +589,10 @@ fn vim_mappings_are_read_in_order_and_bad_items_are_reported() {
         [VimMapMode::Insert, VimMapMode::Normal, VimMapMode::Operator]
     );
     assert_eq!(config.vim_keys[1].to, "Save");
+    assert_eq!(
+        (config.vim_relative_number, config.vim_yank_highlight),
+        (Some(true), Some(200))
+    );
     let (again, problems) = Config::parse(&config.to_json());
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(again, config);
