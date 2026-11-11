@@ -258,6 +258,11 @@ impl Line {
         icons::chevron_turned(frame, at, 6.0, turned * FRAC_PI_2, self.dim, self.clip);
     }
 
+    /// 在横坐标 `x`（[`Line::columns`] 的第一列）绘制对勾，标出当前项。
+    fn draw_check(&self, frame: &mut Frame<'_>, x: f32) {
+        icons::check(frame, (x, self.cy), 9.0, self.text, self.clip);
+    }
+
     /// 从 `x` 起绘制名字，到 `right` 为止，放不下时截短。查询命中的字用强调色标出；选中行的底色
     /// 就是强调色，截短了的名字下标对不上，都不标。
     fn draw_name(
@@ -429,7 +434,7 @@ fn draw_place_row(
 ) {
     let (check, text) = line.columns(place.depth);
     if place.current {
-        icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
+        line.draw_check(frame, check);
     }
     let mut right = line.right();
     let more = (place.worktree.is_some() || !place.missing)
@@ -483,7 +488,7 @@ fn draw_branch_rows(
         .map_or(0, |d| d.as_secs() as i64);
     for i in drawn_rows(app, parts, rows.len()) {
         if let BranchRow::Heading(section) = &rows[i] {
-            draw_heading(app, frame, parts, i, *section);
+            draw_heading(app, frame, parts, i, section);
             continue;
         }
         // 展开的远程分支一组和其他分组一样，上沿有分隔线；选中时底色盖住它。收起时只有这一行，
@@ -553,7 +558,7 @@ fn draw_log_branch_row(
 ) {
     let (check, text) = line.columns(0);
     if app.log_branch_filter() == branch {
-        icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
+        line.draw_check(frame, check);
     }
     line.draw_name(app, frame, (text, line.right()), label, line.text);
 }
@@ -570,13 +575,14 @@ fn draw_heading(
     frame: &mut Frame<'_>,
     parts: &PickerParts,
     i: usize,
-    section: BranchSection,
+    section: &BranchSection,
 ) {
     let (row, clip) = placed_row(app, parts, i);
     let title = match section {
         BranchSection::Recent => t!("git-branch-picker-recent"),
         BranchSection::Local => t!("menu-git-local-branches"),
-        BranchSection::Remote => t!("menu-git-remote-branches"),
+        BranchSection::Remote(None) => t!("menu-git-remote-branches"),
+        BranchSection::Remote(Some(remote)) => remote.as_str(),
         BranchSection::Other => t!("git-branch-picker-other"),
     };
     let band = if i > 0 {
@@ -614,7 +620,7 @@ fn draw_branch_row(
     let branch = app.git.branches.get(row.index);
     let current = branch.is_some_and(|b| b.current);
     if current {
-        icons::check(frame, (check, line.cy), 9.0, line.text, line.clip);
+        line.draw_check(frame, check);
     }
     let mut right = line.right();
     let more = line.draw_more(app, frame, i, hits);
