@@ -1041,8 +1041,8 @@ impl App {
     /// 焦点在终端时调整终端字号，否则调整编辑区字号，两者互不影响；还原即回到默认字号。改动
     /// 写回配置，界面字号不变。
     pub(super) fn step_font_size(&mut self, up: Option<bool>) {
-        // 当前标签是 PDF 时缩放 PDF。
-        if !self.focus.in_terminal() && self.zoom_pdf(up, None) {
+        // 当前标签是 PDF 或图片时缩放预览。
+        if !self.focus.in_terminal() && (self.zoom_pdf(up, None) || self.zoom_picture(up, None)) {
             return;
         }
         self.step_font_size_in(self.focus.in_terminal(), up);

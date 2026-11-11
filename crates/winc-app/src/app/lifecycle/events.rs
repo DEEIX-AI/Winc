@@ -413,6 +413,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::PinchGesture { delta, .. } => {
                 self.diagram_view_pinch(delta as f32);
                 self.pdf_pinch(delta as f32);
+                self.picture_pinch(delta as f32);
             }
             WindowEvent::HoveredFile(_) => self.hover_file(),
             WindowEvent::HoveredFileCancelled => self.end_file_hover(),

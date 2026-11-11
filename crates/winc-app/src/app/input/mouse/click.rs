@@ -280,6 +280,7 @@ impl App {
                 }
             }
             Target::Editor => self.click_editor(x, y),
+            Target::Picture => self.click_picture(x, y),
             Target::Terminal => {
                 if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
