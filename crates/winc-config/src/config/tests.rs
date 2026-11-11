@@ -238,6 +238,9 @@ fn round_trips_through_json() {
         compact_folders: Some(false),
         preview_on_click: Some(true),
         external_terminal: Some("test-terminal".to_string()),
+        vim_enabled: Some(true),
+        vim_clipboard: Some(VimClipboard::Always),
+        vim_handle_keys: vec![("ctrl+f".to_owned(), true)],
         terminal_enabled: Some(true),
         terminal_font: Some("Menlo".to_owned()),
         terminal_size: Some(12.0),
@@ -505,4 +508,39 @@ fn config_path_lands_in_the_platform_directory() {
     if cfg!(target_os = "macos") {
         assert!(path.to_string_lossy().contains("Application Support"));
     }
+}
+
+#[test]
+fn the_vim_section_reads_writes_and_reports_bad_values() {
+    let (config, problems) = Config::parse(
+        r#"{ "vim": { "enabled": true, "clipboard": "yank",
+             "handleKeys": { "Ctrl+F": "vim", "ctrl+d": "app" } } }"#,
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(config.vim_enabled, Some(true));
+    assert_eq!(config.vim_clipboard, Some(VimClipboard::Yank));
+    // 按键的名字统一为小写，按名字排序。
+    assert_eq!(
+        config.vim_handle_keys,
+        [("ctrl+d".to_owned(), false), ("ctrl+f".to_owned(), true)]
+    );
+    let (again, problems) = Config::parse(&config.to_json());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(again, config);
+
+    // 默认关闭；写法有误的项逐个报告并忽略。
+    assert_eq!(Config::default().vim_enabled, None);
+    let (config, problems) = Config::parse(
+        r#"{ "vim": { "enabled": "yes", "clipboard": "all",
+             "handleKeys": { "ctrl+f": "vim", "ctrl+d": 1 } } }"#,
+    );
+    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert!(
+        problems[2].starts_with("vim.handleKeys.ctrl+d"),
+        "{problems:?}"
+    );
+    assert_eq!((config.vim_enabled, config.vim_clipboard), (None, None));
+    assert_eq!(config.vim_handle_keys, [("ctrl+f".to_owned(), true)]);
+    let (config, problems) = Config::parse(r#"{ "vim": { "handleKeys": [] } }"#);
+    assert_eq!((problems.len(), config.vim_handle_keys.len()), (1, 0));
 }

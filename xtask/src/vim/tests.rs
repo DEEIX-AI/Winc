@@ -50,6 +50,8 @@ fn the_script_sets_up_the_case_and_reports_the_state() {
         "d\\<Esc>",
     );
     assert!(script.contains("call setline(1, readfile('/tmp/it''s/in.txt', 'b'))\n"));
+    // 读入文本的修改不记入撤销历史，用例中的撤销不会撤回初始文本。
+    assert!(script.contains("set undolevels=-1\ncall setline"));
     assert!(script.contains("call cursor(2, 5)\n"));
     assert!(script.contains("call feedkeys(\"d\\<Esc>\", 'tx')\n"));
     assert!(

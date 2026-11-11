@@ -214,6 +214,11 @@ impl History {
         Some(result)
     }
 
+    /// 返回下一次重做的撤销单元执行之前的主选区；重做栈为空时返回 `None`。
+    pub fn redo_origin(&self) -> Option<Selection> {
+        self.redo.last().map(|transaction| transaction.before)
+    }
+
     /// 重做最近撤销的事务；返回值含义同 [`Self::undo`]，重做栈为空时返回 `None`。
     pub fn redo(&mut self, text: &mut impl EditBuffer) -> Option<Restored> {
         let transaction = self.redo.pop()?;

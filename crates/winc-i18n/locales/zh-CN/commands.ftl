@@ -145,6 +145,7 @@ cmd-theme-auto = 主题：跟随系统
 cmd-theme-light = 主题：浅色
 cmd-theme-dark = 主题：深色
 cmd-toggle-sticky-scroll = 切换粘滞滚动
+cmd-toggle-vim-mode = 切换 Vim 模式
 cmd-toggle-word-wrap = 切换自动换行
 cmd-toggle-minimap = 切换缩略图
 cmd-toggle-line-numbers = 显示或隐藏行号

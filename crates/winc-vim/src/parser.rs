@@ -5,7 +5,7 @@
 //! 命令表，解析器只保存尚未完成的命令。
 
 use crate::command::{Action, Arg, Entry, Force, Kind, Lookup, Mode, Motion, Operator};
-use crate::command::{ROOT, RegisterName, Support, Table, TextObject, register_name};
+use crate::command::{ROOT, RegisterName, Shorthand, Support, Table, TextObject, register_name};
 use crate::key::{Code, Key, Named};
 
 /// 次数的上限；超过时取该值。取值依据：录制基准 `vim` 9.1 对次数的限制。
@@ -52,7 +52,8 @@ pub enum Body {
         operator: Operator,
         /// 作用的范围。
         target: Target,
-        /// 操作符之后强制指定的动作类型；未指定或在可视模式下为 `None`。
+        /// 操作符之后强制指定的动作类型，未指定时为 `None`；可视模式下 `Linewise` 表示先把
+        /// 选区扩展到整行。
         force: Option<Force>,
     },
     /// 不带范围的命令。
@@ -82,7 +83,7 @@ pub enum Outcome {
     Pending,
     /// 得到一条完整的命令。
     Command(Command),
-    /// 输入的是不支持的命令；按键序列已完整读取，解析器回到空闲状态。
+    /// 输入的命令不支持或尚未实现；按键序列已完整读取，解析器回到空闲状态。
     Unsupported,
     /// 按键不能接在已输入的部分之后；已输入的部分与该按键一并丢弃。
     Invalid,
@@ -185,10 +186,8 @@ impl Parser {
             && *last == key
         {
             self.note(key);
-            return self.finish(
-                Support::Planned,
-                self.operate(pending.operator, Target::Lines),
-            );
+            let body = self.operate(pending.operator, Target::Lines);
+            return self.finish(Support::Supported, body);
         }
 
         let lookup = match self.operator {
@@ -351,6 +350,7 @@ impl Parser {
             }
             Kind::Force(force) => {
                 self.force = Some(force);
+                self.unsupported |= entry.support != Support::Supported;
                 self.fold_count();
                 return Outcome::Pending;
             }
@@ -365,11 +365,27 @@ impl Parser {
                         operator,
                         entry: index,
                     });
-                    self.unsupported = entry.support == Support::Unsupported;
+                    self.unsupported = entry.support != Support::Supported;
                     self.fold_count();
                     return Outcome::Pending;
                 }
             },
+            Kind::SmallDelete => {
+                self.register = self.register.or(Some('-'));
+                self.operate(Operator::Delete, Target::Selection)
+            }
+            Kind::LineOperator(operator) => Body::Operator {
+                operator,
+                target: Target::Selection,
+                force: Some(Force::Linewise),
+            },
+            Kind::Synonym(operator, shorthand) => {
+                let target = match shorthand {
+                    Shorthand::Motion(motion) => Target::Motion(Movement { motion, arg: None }),
+                    Shorthand::Lines => Target::Lines,
+                };
+                self.operate(operator, target)
+            }
             Kind::Motion(motion) => {
                 let movement = Movement { motion, arg };
                 match self.operator {
@@ -395,9 +411,10 @@ impl Parser {
         }
     }
 
-    /// 结束当前命令并回到空闲状态；`support` 是最后匹配的记录的支持状态。
+    /// 结束当前命令并回到空闲状态；`support` 是最后匹配的记录的支持状态，不是
+    /// [`Support::Supported`] 时返回 [`Outcome::Unsupported`]。
     fn finish(&mut self, support: Support, body: Body) -> Outcome {
-        let unsupported = self.unsupported || support == Support::Unsupported;
+        let unsupported = self.unsupported || support != Support::Supported;
         let command = Command {
             register: self.register,
             count: product(self.total, self.count),

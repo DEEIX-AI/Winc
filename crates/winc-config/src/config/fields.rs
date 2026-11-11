@@ -52,6 +52,7 @@ pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("markdown", MARKDOWN),
     ("update", UPDATE),
     ("terminal", TERMINAL),
+    ("vim", VIM),
     ("git", GIT),
     ("format", FORMAT),
 ];
@@ -260,6 +261,68 @@ const MARKDOWN: &[Field] = &[bool_field!("remoteImages", markdown_remote_images)
 
 /// `update` 一节。
 const UPDATE: &[Field] = &[bool_field!("autoCheck", update_auto_check)];
+
+/// `vim` 一节。
+const VIM: &[Field] = &[
+    bool_field!("enabled", vim_enabled),
+    Field {
+        key: "clipboard",
+        read: |config, value, name, problems| {
+            config.vim_clipboard = match value.as_str() {
+                Some("register") => Some(VimClipboard::Register),
+                Some("yank") => Some(VimClipboard::Yank),
+                Some("always") => Some(VimClipboard::Always),
+                _ => {
+                    problems.push(t!("config-vim-clipboard-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| {
+            let value = match config.vim_clipboard? {
+                VimClipboard::Register => "register",
+                VimClipboard::Yank => "yank",
+                VimClipboard::Always => "always",
+            };
+            Some(Json::String(value.to_owned()))
+        },
+    },
+    Field {
+        // 对象的每一项是按键的名字与 `vim` 或 `app`；写法有误的项逐个报告并忽略。
+        key: "handleKeys",
+        read: |config, value, name, problems| {
+            let Some(keys) = value.as_object() else {
+                problems.push(t!("config-vim-handle-keys-invalid", name = name));
+                return;
+            };
+            config.vim_handle_keys.clear();
+            for (key, owner) in keys {
+                let key = key.trim().to_lowercase();
+                let vim = match owner.as_str() {
+                    Some("vim") => true,
+                    Some("app") => false,
+                    _ => {
+                        let name = format!("{name}.{key}");
+                        problems.push(t!("config-vim-handle-keys-invalid", name = name));
+                        continue;
+                    }
+                };
+                config.vim_handle_keys.push((key, vim));
+            }
+            config.vim_handle_keys.sort();
+        },
+        write: |config| {
+            if config.vim_handle_keys.is_empty() {
+                return None;
+            }
+            let owner = |vim: &bool| Json::String(if *vim { "vim" } else { "app" }.to_owned());
+            let keys = config.vim_handle_keys.iter();
+            Some(Json::object(
+                keys.map(|(key, vim)| (key.clone(), owner(vim))),
+            ))
+        },
+    },
+];
 
 /// `terminal` 一节。
 const TERMINAL: &[Field] = &[

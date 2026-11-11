@@ -726,6 +726,7 @@ impl App {
             Setting::HotExit => self.config.hot_exit != Some(false),
             Setting::RestoreFolder => self.config.restore_folder != Some(false),
             Setting::StickyScroll => self.config.sticky_scroll != Some(false),
+            Setting::VimMode => self.config.vim_enabled == Some(true),
             Setting::WordWrap => self.config.word_wrap == Some(true),
             Setting::WholeLines => self.config.whole_lines == Some(true),
             Setting::Minimap => self.config.minimap == Some(true),
@@ -772,6 +773,10 @@ impl App {
             Setting::HotExit => self.config.hot_exit = Some(on),
             Setting::RestoreFolder => self.config.restore_folder = Some(on),
             Setting::StickyScroll => self.config.sticky_scroll = Some(on),
+            Setting::VimMode => {
+                self.config.vim_enabled = Some(on);
+                self.vim_apply_config();
+            }
             Setting::WordWrap => self.config.word_wrap = Some(on),
             Setting::WholeLines => self.config.whole_lines = Some(on),
             Setting::Minimap => self.config.minimap = Some(on),
@@ -1399,6 +1404,7 @@ impl App {
         if title_bar {
             self.sync_title_bar();
         }
+        self.vim_apply_config();
         self.relayout();
         self.request_redraw();
     }

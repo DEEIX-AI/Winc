@@ -145,6 +145,7 @@ cmd-theme-auto = Theme: Match System
 cmd-theme-light = Theme: Light
 cmd-theme-dark = Theme: Dark
 cmd-toggle-sticky-scroll = Toggle Sticky Scroll
+cmd-toggle-vim-mode = Toggle Vim Mode
 cmd-toggle-word-wrap = Toggle Word Wrap
 cmd-toggle-minimap = Toggle Minimap
 cmd-toggle-line-numbers = Show or Hide Line Numbers

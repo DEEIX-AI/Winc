@@ -53,6 +53,8 @@ impl Modes {
     pub const NV: Self = Self::N.with(Self::V);
     /// 可视模式与等待动作。
     pub const VO: Self = Self::V.with(Self::O);
+    /// 普通模式与等待动作。
+    pub const NO: Self = Self::N.with(Self::O);
     /// 普通、可视模式与等待动作。
     pub const NVO: Self = Self::NV.with(Self::O);
 
@@ -76,32 +78,34 @@ impl Modes {
 /// 动作：把光标移到另一个位置的命令，可以作为操作符的范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Motion {
-    /// `h`：向左一个字符。
+    /// `h`、`<Left>`：向左一个字符，不越过行首。
     Left,
-    /// `l`：向右一个字符。
+    /// `l`、`<Right>`：向右一个字符，不越过行尾。
     Right,
-    /// `k`：向上一行。
-    Up,
-    /// `j`：向下一行。
-    Down,
-    /// `w`：下一个词的开头。
-    WordForward,
-    /// `b`：上一个词的开头。
-    WordBackward,
-    /// `e`：词尾。
-    WordEnd,
-    /// `ge`：上一个词的词尾。
-    WordEndBackward,
-    /// `0`：行首。
+    /// `<BS>`：向左一个字符，在行首时到上一行行尾。
+    Backspace,
+    /// `<Space>`：向右一个字符，在行尾时到下一行行首。
+    Space,
+    /// `0`、`<Home>`：行首。
     LineStart,
     /// `^`：行内第一个非空白字符。
     FirstNonBlank,
-    /// `$`：行尾。
+    /// `$`、`<End>`：行尾；带次数时为向下若干行的行尾。
     LineEnd,
-    /// `gg`：第一行，带次数时为指定的行。
-    FirstLine,
-    /// `G`：最后一行，带次数时为指定的行。
-    LastLine,
+    /// `g_`：行内最后一个非空白字符。
+    LastNonBlank,
+    /// `g0`：显示行的开头。
+    DisplayStart,
+    /// `g^`：显示行内第一个非空白字符。
+    DisplayFirstNonBlank,
+    /// `g$`：显示行的末尾。
+    DisplayEnd,
+    /// `g<End>`：显示行内最后一个非空白字符。
+    DisplayLastNonBlank,
+    /// `gm`：显示行的中间。
+    DisplayMiddle,
+    /// `|`：次数指定的显示列。
+    Column,
     /// `f{字符}`：行内向右查找字符。
     FindForward,
     /// `F{字符}`：行内向左查找字符。
@@ -114,6 +118,74 @@ pub enum Motion {
     RepeatFind,
     /// `,`：反方向重复上一次行内查找。
     RepeatFindReverse,
+    /// `k`、`<Up>`：向上一行。
+    Up,
+    /// `j`、`<Down>`：向下一行。
+    Down,
+    /// `gk`：向上一个显示行。
+    DisplayUp,
+    /// `gj`：向下一个显示行。
+    DisplayDown,
+    /// `-`：向上若干行的第一个非空白字符。
+    LineUp,
+    /// `+`、`<CR>`：向下若干行的第一个非空白字符。
+    LineDown,
+    /// `_`：向下「次数减一」行的第一个非空白字符。
+    LineHere,
+    /// `gg`、`<C-Home>`：第一行，带次数时为指定的行。
+    FirstLine,
+    /// `G`：最后一行，带次数时为指定的行。
+    LastLine,
+    /// `<C-End>`：最后一行的行尾，带次数时为指定行的行尾。
+    LastLineEnd,
+    /// `%`：配对的括号；带次数时为文件中该百分比处的行。
+    Percent,
+    /// `H`：窗口中的第一行。
+    WindowTop,
+    /// `M`：窗口中间的一行。
+    WindowMiddle,
+    /// `L`：窗口中的最后一行。
+    WindowBottom,
+    /// `w`、`<S-Right>`：下一个词的开头。
+    WordForward,
+    /// `W`、`<C-Right>`：下一个以空白分隔的词的开头。
+    BigWordForward,
+    /// `b`、`<S-Left>`：上一个词的开头。
+    WordBackward,
+    /// `B`、`<C-Left>`：上一个以空白分隔的词的开头。
+    BigWordBackward,
+    /// `e`：词尾。
+    WordEnd,
+    /// `E`：以空白分隔的词的词尾。
+    BigWordEnd,
+    /// `ge`：上一个词的词尾。
+    WordEndBackward,
+    /// `gE`：上一个以空白分隔的词的词尾。
+    BigWordEndBackward,
+    /// `(`：上一个句子的开头。
+    SentenceBackward,
+    /// `)`：下一个句子的开头。
+    SentenceForward,
+    /// `{`：上一个段落的开头。
+    ParagraphBackward,
+    /// `}`：下一个段落的开头。
+    ParagraphForward,
+    /// `[[`：向上找到第一列是 `{` 的行。
+    SectionBackward,
+    /// `]]`：向下找到第一列是 `{` 的行。
+    SectionForward,
+    /// `[]`：向上找到第一列是 `}` 的行。
+    SectionEndBackward,
+    /// `][`：向下找到第一列是 `}` 的行。
+    SectionEndForward,
+    /// `[(`：向左找到未配对的 `(`。
+    UnmatchedParenBackward,
+    /// `[{`：向左找到未配对的 `{`。
+    UnmatchedBraceBackward,
+    /// `])`：向右找到未配对的 `)`。
+    UnmatchedParenForward,
+    /// `]}`：向右找到未配对的 `}`。
+    UnmatchedBraceForward,
 }
 
 /// 操作符：作用于一个动作、文本对象或选区所覆盖的文本。
@@ -135,8 +207,22 @@ pub enum Operator {
     Lowercase,
     /// `gU`：转为大写。
     Uppercase,
-    /// `gq`：重排文本。
+    /// `g?`：ROT13 编码。
+    Rot13,
+    /// 可视模式的 `J`：合并所选的行，行间留一个空格。
+    Join,
+    /// 可视模式的 `gJ`：合并所选的行，不调整空白。
+    JoinRaw,
+    /// `gc`：切换行注释。
+    Comment,
+    /// `=`：格式化所覆盖的行。
+    Reindent,
+    /// `gq`、`gw`：重排文本。
     Format,
+    /// `zf`：创建折叠。
+    Fold,
+    /// `!`：用外部程序过滤文本。
+    Filter,
 }
 
 /// 文本对象的形状。
@@ -144,10 +230,28 @@ pub enum Operator {
 pub enum Shape {
     /// `w`：词。
     Word,
+    /// `W`：以空白分隔的词。
+    BigWord,
+    /// `s`：句子。
+    Sentence,
+    /// `p`：段落。
+    Paragraph,
     /// `(`、`)`、`b`：圆括号。
     Paren,
+    /// `[`、`]`：方括号。
+    Bracket,
+    /// `{`、`}`、`B`：花括号。
+    Brace,
+    /// `<`、`>`：尖括号。
+    Angle,
+    /// `t`：标签。
+    Tag,
     /// `"`：双引号。
     DoubleQuote,
+    /// `'`：单引号。
+    SingleQuote,
+    /// `` ` ``：反引号。
+    Backtick,
 }
 
 /// 文本对象：以 `i` 或 `a` 开头，选中光标处的一段文本。
@@ -162,44 +266,58 @@ pub struct TextObject {
 /// 不带范围的命令。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
-    /// `x`：删除光标处的字符。
-    DeleteChar,
-    /// `X`：删除光标之前的字符。
-    DeleteCharBefore,
-    /// `D`：删除到行尾。
-    DeleteToLineEnd,
-    /// `C`：删除到行尾并进入插入模式。
-    ChangeToLineEnd,
-    /// `Y`：复制整行。
-    YankLine,
-    /// `p`：粘贴到光标之后。
+    /// `i`：在光标之前进入插入模式。
+    Insert,
+    /// `a`：在光标之后进入插入模式。
+    Append,
+    /// `I`：在行内第一个非空白字符之前进入插入模式。
+    InsertFirstNonBlank,
+    /// `gI`：在行首进入插入模式。
+    InsertLineStart,
+    /// `A`：在行尾进入插入模式。
+    AppendLineEnd,
+    /// `gi`：在上一次离开插入模式的位置进入插入模式。
+    InsertAtLast,
+    /// `o`：在下方新开一行并进入插入模式。
+    OpenBelow,
+    /// `O`：在上方新开一行并进入插入模式。
+    OpenAbove,
+    /// `r{字符}`：把光标处的字符替换为给定的字符；可视模式下替换选区中的每个字符。
+    ReplaceChar,
+    /// `~`：切换光标处字符的大小写并右移。
+    ToggleCaseChar,
+    /// `p`：粘贴到光标之后；可视模式下替换选区。
     PasteAfter,
     /// `P`：粘贴到光标之前。
     PasteBefore,
-    /// `r{字符}`：把光标处的字符替换为给定的字符。
-    ReplaceChar,
+    /// `gp`：粘贴到光标之后，光标停在粘贴内容之后。
+    PasteAfterMove,
+    /// `gP`：粘贴到光标之前，光标停在粘贴内容之后。
+    PasteBeforeMove,
+    /// `]p`：粘贴到光标之后，按行的内容调整到当前行的缩进。
+    PasteIndented,
+    /// `J`：合并行，行间留一个空格。
+    JoinLines,
+    /// `gJ`：合并行，不调整空白。
+    JoinLinesRaw,
     /// `u`：撤销。
     Undo,
     /// `Ctrl-R`：重做。
     Redo,
     /// `.`：重复上一次修改。
     Repeat,
-    /// `i`：在光标之前进入插入模式。
-    Insert,
-    /// `a`：在光标之后进入插入模式。
-    Append,
     /// `v`：进入或离开按字符的可视模式。
     Visual,
     /// `V`：进入或离开按行的可视模式。
     VisualLine,
-    /// `Ctrl-V`、`Ctrl-Q`：进入或离开按块的可视模式。
-    VisualBlock,
-    /// `m{字符}`：设置标记。
-    SetMark,
+    /// `gv`：恢复上一次的可视选区。
+    Reselect,
+    /// 可视模式的 `o`、`O`：交换选区的起点与光标。
+    SwapAnchor,
     /// `<Esc>`：离开可视模式或插入模式。
     Escape,
-    /// 插入模式的 `Ctrl-R {寄存器}`：插入寄存器的内容。
-    InsertRegister,
+    /// 之后的阶段实现的命令。
+    Later,
     /// `Q`：进入 Ex 模式。
     ExMode,
     /// `K`：查询光标处的关键字。
@@ -219,13 +337,28 @@ pub enum Force {
     Blockwise,
 }
 
+/// 同义写法展开后操作符的范围。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Shorthand {
+    /// 一个不带参数的动作，例如 `x` 等同 `dl`。
+    Motion(Motion),
+    /// 叠写形式，例如 `S` 等同 `cc`。
+    Lines,
+}
+
 /// 记录的种类，决定解析器在按键序列匹配之后的处理。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
     /// 动作。
     Motion(Motion),
-    /// 操作符。
+    /// 操作符；可视模式下直接作用于选区。
     Operator(Operator),
+    /// 可视模式下把选区扩展到整行之后执行的操作符（`X`、`D`、`Y`、`S`、`C`、`R`）。
+    LineOperator(Operator),
+    /// 可视模式的 `<BS>`：删除选区；未指定寄存器时写入 `"-`。
+    SmallDelete,
+    /// 操作符加动作的同义写法（`x`、`D`、`Y` 等），解析后展开成操作符命令。
+    Synonym(Operator, Shorthand),
     /// 文本对象。
     TextObject(TextObject),
     /// 不带范围的命令。
@@ -250,7 +383,7 @@ pub enum Arg {
 pub enum Support {
     /// 已实现，且有录制用例核对。
     Supported,
-    /// 在兼容目标之内，尚未实现或尚未核对。
+    /// 在兼容目标之内，尚未实现；输入后提示不支持。
     Planned,
     /// 不支持：输入后提示不支持，不执行任何操作。
     Unsupported,

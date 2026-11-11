@@ -515,6 +515,7 @@ impl App {
             self.dirty = false;
             return;
         }
+        self.vim_sync();
         self.settle_animations();
         self.advance_wheel_glide();
         self.continue_drag_scroll();
@@ -602,6 +603,24 @@ impl App {
                     };
                 }
 
+                self.request_redraw();
+            }
+            Next::Key { vim, step } => {
+                let started = Instant::now();
+                if vim {
+                    // 依次执行下移、按词移动、删除一行、重复上一次修改。
+                    if self.vim.is_none() {
+                        self.config.vim_enabled = Some(true);
+                        self.vim_apply_config();
+                    }
+                    self.focus = Focus::Editor;
+                    self.vim_feed(["j", "w", "dd", "."][step % 4]);
+                } else if step % 40 == 39 {
+                    self.run(Command::Newline);
+                } else {
+                    self.run(Command::Insert("x".into()));
+                }
+                self.bench.key_handled(started.elapsed());
                 self.request_redraw();
             }
             Next::Preview => {

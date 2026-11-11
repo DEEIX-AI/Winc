@@ -19,7 +19,8 @@
 //!     [--all] [--base 提交] [-- 测试名过滤等 cargo test 参数]
 //! cargo xtask tidy             删除 target/debug/deps 中没有程序引用的 .rcgu.o
 //! cargo xtask vim-fixtures     用本机的 vim 9.1 执行 Vim 模式的对照用例，写入录制文件
-//!     [--check] [--vim 路径]    --check 只比较不写入；默认使用 /usr/bin/vim
+//!     [--check] [--full]        --check 只比较不写入；--full 把全部组合录制到 target 下
+//!     [--vim 路径]              默认使用 /usr/bin/vim
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -74,7 +75,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "用法：cargo xtask samples | bench [次数] | app [--target 目标] [--no-build] | icons 目录 | sparkle | linux-appcast 目录 地址 AppImage… | windows-appcast 目录 地址 安装包… | dmg [--app 路径] [--output 路径] | test [--all] [--base 提交] [-- 参数] | tidy | vim-fixtures [--check] [--vim 路径]"
+                "用法：cargo xtask samples | bench [次数] | app [--target 目标] [--no-build] | icons 目录 | sparkle | linux-appcast 目录 地址 AppImage… | windows-appcast 目录 地址 安装包… | dmg [--app 路径] [--output 路径] | test [--all] [--base 提交] [-- 参数] | tidy | vim-fixtures [--check] [--full] [--vim 路径]"
             );
             return ExitCode::from(2);
         }

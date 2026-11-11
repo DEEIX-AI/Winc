@@ -40,6 +40,7 @@ const LAYERS: &[(&str, &[&str])] = &[
             "winc-syntax",
             "winc-typeset",
             "winc-version",
+            "winc-vim",
         ],
     ),
     (

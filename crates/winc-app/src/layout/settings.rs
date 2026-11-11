@@ -126,6 +126,7 @@ impl SettingsPage {
                     Setting::StickyScroll,
                     Setting::RenderWhitespace,
                 ]),
+                plain(vec![Setting::VimMode]),
                 plain(vec![
                     Setting::AutoSave,
                     Setting::HotExit,
@@ -254,6 +255,8 @@ pub enum Setting {
     RestoreFolder,
     /// 粘滞滚动：滚动时在编辑区顶部钉住当前所在的函数、类和标题。
     StickyScroll,
+    /// Vim 模式。
+    VimMode,
     /// 自动换行。
     WordWrap,
     /// 超长行显示全部内容（`wholeLines`）。
@@ -414,6 +417,7 @@ impl Setting {
             | Setting::CompactFolders
             | Setting::PreviewOnClick
             | Setting::StickyScroll
+            | Setting::VimMode
             | Setting::WordWrap
             | Setting::WholeLines
             | Setting::Minimap
@@ -470,6 +474,7 @@ impl Setting {
             Setting::HotExit => t!("settings-hot-exit"),
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
+            Setting::VimMode => t!("settings-vim-mode"),
             Setting::WordWrap => t!("settings-word-wrap"),
             Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
@@ -534,6 +539,7 @@ impl Setting {
             Setting::HotExit => Some(t!("settings-hot-exit-desc")),
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
+            Setting::VimMode => Some(t!("settings-vim-mode-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
             Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
@@ -588,6 +594,7 @@ impl Setting {
             | Setting::CompactFolders
             | Setting::PreviewOnClick
             | Setting::StickyScroll
+            | Setting::VimMode
             | Setting::WordWrap
             | Setting::WholeLines
             | Setting::Minimap

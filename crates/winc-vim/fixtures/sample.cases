@@ -1,5 +1,4 @@
 # 录制格式的样例：多行文本、制表符、宽字符、组合字符，以及按字符、按行、按块三种寄存器。
-# 求值实现之前只核对文件的格式。
 
 case delete-word
 text "one two three"
@@ -25,11 +24,13 @@ case blockwise-yank
 text "abcd"
 text "efgh"
 cursor 0 1
+tag later
 keys <C-v>jly
 
 case named-register-inner-word
 text "foo(bar, baz)"
 cursor 0 5
+tag later
 keys "qyiw
 
 case change-word-and-insert

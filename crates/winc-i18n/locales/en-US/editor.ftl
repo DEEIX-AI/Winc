@@ -167,6 +167,10 @@ editor-readonly-binary = Binary file; opened as read-only
 editor-readonly-long-lines = The file has lines longer than 16 MB; opened as read-only
 editor-readonly-not-utf8 = The file isn’t UTF-8 encoded; opened as read-only
 editor-selection-too-large-to-edit = The selection is larger than 16 MB and can’t be edited
+editor-vim-unsupported = This command isn’t supported in Vim mode yet
+editor-vim-too-large = Too much text involved; nothing was done
+editor-vim-register-empty = Register { $name } is empty
+editor-vim-register-read-only = Register { $name } can’t be written
 
 ## Copy and paste.
 

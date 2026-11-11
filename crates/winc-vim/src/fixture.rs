@@ -15,6 +15,11 @@
 //! > reg " v "bc"
 //! > reg a v "bc"
 //! ```
+//!
+//! 用例可以带 `tag 标记` 行（写在 `keys` 之前）。行为有意与 `vim` 不同的用例在 `keys` 之后以
+//! `= ` 开头的行手写期望的结果，语法与 `> ` 开头的录制结果相同。多个用例共用的初始文本可以
+//! 先以 `buffer 名字` 加若干 `text` 行定义，用例中以 `use 名字` 引用；结果的文本与初始文本
+//! 相同时写作 `> unchanged`。
 
 use std::fmt::Write as _;
 
@@ -69,8 +74,12 @@ pub struct Case {
     pub text: Vec<String>,
     /// 初始的光标位置。
     pub cursor: Position,
+    /// 标记，按文件中的顺序排列；`later` 表示所用的命令尚未实现，对照测试跳过该用例。
+    pub tags: Vec<String>,
     /// 在普通模式下依次输入的按键（按键记法）。
     pub keys: String,
+    /// 手写的期望结果：行为有意与 `vim` 不同时给出，对照测试以该结果为准。
+    pub expected: Option<State>,
     /// 录制的结果；用例文件中为 `None`。
     pub result: Option<State>,
 }
@@ -91,9 +100,11 @@ pub struct File {
 /// 语法错误、用例重名或用例缺少按键时返回说明，以「第 N 行」开头（行号从 1 起）。
 pub fn parse(source: &str) -> Result<File, String> {
     let mut file = File::default();
+    let mut buffers = Buffers::default();
     for (number, line) in source.split('\n').enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
-        parse_line(&mut file, line).map_err(|e| format!("第 {} 行：{e}", number + 1))?;
+        parse_line(&mut file, &mut buffers, line)
+            .map_err(|e| format!("第 {} 行：{e}", number + 1))?;
     }
     if let Some(case) = file.cases.iter().find(|c| c.keys.is_empty()) {
         return Err(format!("用例 {} 缺少 keys", case.name));
@@ -106,13 +117,44 @@ pub fn parse(source: &str) -> Result<File, String> {
     Ok(file)
 }
 
+/// 解析过程中已定义的共用文本，以及正在定义的一个。
+#[derive(Default)]
+struct Buffers {
+    /// 名字与各行。
+    defined: Vec<(String, Vec<String>)>,
+    /// 最近的 `buffer` 行之后是否还没有出现 `case` 行：此时 `text` 行属于该共用文本。
+    open: bool,
+}
+
 /// 解析一行并记入 `file`。
-fn parse_line(file: &mut File, line: &str) -> Result<(), String> {
+fn parse_line(file: &mut File, buffers: &mut Buffers, line: &str) -> Result<(), String> {
     if line.trim().is_empty() || line.starts_with('#') {
         return Ok(());
     }
     let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
     match word {
+        "buffer" => {
+            let name = rest.trim();
+            if name.is_empty() || buffers.defined.iter().any(|(n, _)| n == name) {
+                return Err(format!("共用文本的名字为空或重复：{name}"));
+            }
+            buffers.defined.push((name.to_owned(), Vec::new()));
+            buffers.open = true;
+        }
+        "text" if buffers.open => {
+            if let Some((_, lines)) = buffers.defined.last_mut() {
+                lines.push(parse_string(rest)?.0);
+            }
+        }
+        "use" => {
+            let case = file.cases.last_mut().ok_or("缺少 case 行")?;
+            let found = buffers.defined.iter().find(|(name, _)| name == rest);
+            let (_, lines) = found.ok_or_else(|| format!("没有名为 {rest} 的共用文本"))?;
+            if !case.text.is_empty() || !case.keys.is_empty() {
+                return Err("use 写在 keys 之前，且不与 text 同时使用".into());
+            }
+            case.text.clone_from(lines);
+        }
         "vim" if file.cases.is_empty() => file.vim = Some(rest.trim().to_owned()),
         "case" => {
             let name = rest.trim();
@@ -122,12 +164,13 @@ fn parse_line(file: &mut File, line: &str) -> Result<(), String> {
             if file.cases.iter().any(|c| c.name == name) {
                 return Err(format!("用例 {name} 重名"));
             }
+            buffers.open = false;
             file.cases.push(Case {
                 name: name.to_owned(),
                 ..Case::default()
             });
         }
-        "text" | "cursor" | "keys" | ">" => {
+        "text" | "cursor" | "keys" | "tag" | ">" | "=" => {
             let case = file.cases.last_mut().ok_or("缺少 case 行")?;
             parse_field(case, word, rest)?;
         }
@@ -147,10 +190,28 @@ fn parse_field(case: &mut Case, word: &str, rest: &str) -> Result<(), String> {
             }
             rest.clone_into(&mut case.keys);
         }
-        (">", result) if !case.keys.is_empty() => {
+        ("tag", None) if case.keys.is_empty() => {
+            if rest.is_empty() || rest.contains(char::is_whitespace) {
+                return Err("标记不能为空，也不能含空白字符".into());
+            }
+            case.tags.push(rest.to_owned());
+        }
+        (">" | "=", result) if !case.keys.is_empty() => {
+            let result = if word == "=" {
+                &mut case.expected
+            } else {
+                result
+            };
             let state = result.get_or_insert_with(State::default);
             let (word, rest) = rest.split_once(' ').unwrap_or((rest, ""));
             match word {
+                "unchanged" => {
+                    if case.text.is_empty() {
+                        state.text.push(String::new());
+                    } else {
+                        state.text.clone_from(&case.text);
+                    }
+                }
                 "text" => state.text.push(parse_string(rest)?.0),
                 "cursor" => state.cursor = parse_position(rest)?,
                 "reg" => state.registers.push(parse_register(rest)?),
@@ -247,30 +308,66 @@ fn write_file(out: &mut String, file: &File) -> std::fmt::Result {
     if let Some(vim) = &file.vim {
         writeln!(out, "vim {vim}")?;
     }
+    // 两个以上的用例使用的多行文本只写一次，按首次出现的顺序编号。
+    let mut shared: Vec<&Vec<String>> = Vec::new();
+    for (index, case) in file.cases.iter().enumerate() {
+        let repeated = file.cases[index + 1..].iter().any(|c| c.text == case.text);
+        if case.text.len() > 1 && repeated && !shared.contains(&&case.text) {
+            shared.push(&case.text);
+        }
+    }
+    for (index, text) in shared.iter().enumerate() {
+        writeln!(out, "\nbuffer b{}", index + 1)?;
+        for line in *text {
+            writeln!(out, "text {}", quoted(line))?;
+        }
+    }
     for case in &file.cases {
         writeln!(out, "\ncase {}", case.name)?;
-        write_state(out, "", &case.text, case.cursor, &[])?;
+        match shared.iter().position(|text| **text == case.text) {
+            Some(index) => writeln!(out, "use b{}", index + 1)?,
+            None => write_text(out, "", &case.text)?,
+        }
+        writeln!(out, "cursor {} {}", case.cursor.line, case.cursor.col)?;
+        for tag in &case.tags {
+            writeln!(out, "tag {tag}")?;
+        }
         writeln!(out, "keys {}", case.keys)?;
-        if let Some(state) = &case.result {
-            write_state(out, "> ", &state.text, state.cursor, &state.registers)?;
+        for (prefix, state) in [("= ", &case.expected), ("> ", &case.result)] {
+            if let Some(state) = state {
+                write_state(out, prefix, state, &case.text)?;
+            }
         }
     }
     Ok(())
 }
 
-/// 以 `prefix` 为每行的前缀写出文本、光标与寄存器。
-fn write_state(
-    out: &mut String,
-    prefix: &str,
-    text: &[String],
-    cursor: Position,
-    registers: &[Register],
-) -> std::fmt::Result {
+/// 以 `prefix` 为每行的前缀写出各行文本。
+fn write_text(out: &mut String, prefix: &str, text: &[String]) -> std::fmt::Result {
     for line in text {
         writeln!(out, "{prefix}text {}", quoted(line))?;
     }
-    writeln!(out, "{prefix}cursor {} {}", cursor.line, cursor.col)?;
-    for register in registers {
+    Ok(())
+}
+
+/// 以 `prefix` 为每行的前缀写出状态；文本与初始文本 `initial` 相同时写作 `unchanged`。
+fn write_state(
+    out: &mut String,
+    prefix: &str,
+    state: &State,
+    initial: &[String],
+) -> std::fmt::Result {
+    if state.text == initial {
+        writeln!(out, "{prefix}unchanged")?;
+    } else {
+        write_text(out, prefix, &state.text)?;
+    }
+    writeln!(
+        out,
+        "{prefix}cursor {} {}",
+        state.cursor.line, state.cursor.col
+    )?;
+    for register in &state.registers {
         write!(out, "{prefix}reg {} ", register.name)?;
         match register.kind {
             RegisterKind::Charwise => out.push('v'),

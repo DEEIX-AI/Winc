@@ -1,12 +1,19 @@
-//! 随机按键测试：固定种子的随机按键序列直接驱动解析器，核对不 panic 与各项不变量。
+//! 随机按键测试：固定种子的随机按键序列直接驱动解析器与状态机，核对不 panic 与各项不变量。
 //!
 //! 序列由种子决定，失败时的信息含种子与步数，可以原样重现。按键大多取自命令表用到的按键，
 //! 使序列经常构成完整的命令；其余是任意的字符、功能键与修饰键组合。
 
+mod common;
+
+use std::time::{Duration, Instant};
+
+use winc_core::{Lines, Selection, movement};
 use winc_vim::command::ENTRIES;
 use winc_vim::parser::MAX_COUNT;
-use winc_vim::{Action, Body, Code, Command, Key, Mode, Mods, Motion, Named, Outcome, Parser};
-use winc_vim::{Target, notation};
+use winc_vim::{Action, Body, Code, Command, Force, Key, Mode, Mods, Motion, Named, Outcome};
+use winc_vim::{Host, Parser, Shared, Target, Vim, notation};
+
+use common::TestHost;
 
 /// 伪随机数生成器（SplitMix64）：同一个种子给出同一个序列，不依赖平台。
 struct Rng(u64);
@@ -88,7 +95,7 @@ fn random_key(rng: &mut Rng, common: &[Key]) -> Key {
     Key::new(code, mods)
 }
 
-/// 是否参数与命令相符：行内查找、替换字符、设置标记、插入寄存器带字符参数，其余命令不带。
+/// 是否参数与命令相符：行内查找与替换字符带字符参数，其余命令不带。
 fn argument_fits(command: &Command) -> bool {
     let find = |motion: Motion| {
         matches!(
@@ -103,10 +110,7 @@ fn argument_fits(command: &Command) -> bool {
             ..
         } => find(movement.motion) == movement.arg.is_some(),
         Body::Action { action, arg } => {
-            let expects = matches!(
-                action,
-                Action::ReplaceChar | Action::SetMark | Action::InsertRegister
-            );
+            let expects = action == Action::ReplaceChar;
             expects == arg.is_some()
         }
         _ => true,
@@ -132,7 +136,8 @@ fn check_command(mode: Mode, command: &Command, context: &str) {
             assert_eq!((command.register, command.count), (None, None), "{context}");
         }
         (Mode::Visual, Body::Operator { target, force, .. }) => {
-            assert_eq!((target, force), (Target::Selection, None), "{context}");
+            assert_eq!(target, Target::Selection, "{context}");
+            assert!(matches!(force, None | Some(Force::Linewise)), "{context}");
         }
         (_, Body::Operator { target, .. }) => assert_ne!(target, Target::Selection, "{context}"),
         (Mode::Normal | Mode::OperatorPending, Body::Object(_)) => {
@@ -215,7 +220,7 @@ fn random_keys_never_break_the_parser() {
     let [pending, commands, unsupported, invalid, cancelled, unbound] = total;
     assert!(pending > 50_000, "{total:?}");
     assert!(commands > 50_000, "{total:?}");
-    assert!(unsupported > 1_000, "{total:?}");
+    assert!(unsupported > 10_000, "{total:?}");
     assert!(invalid > 10_000, "{total:?}");
     assert!(cancelled > 1_000, "{total:?}");
     assert!(unbound > 10_000, "{total:?}");
@@ -244,4 +249,164 @@ fn random_text_parses_as_notation_and_writes_back_stably() {
             "第 {round} 轮"
         );
     }
+}
+
+/// 随机测试所用的文本：词与标点、缩进与制表符、空行、宽字符、组合字符与由多个码位组成的
+/// 表情、括号与引号、没有内容的文本、不以换行符结尾的文本。
+const TEXTS: &[&str] = &[
+    "foo bar.baz  qux_1 (x) end\n   lead, tail;  \n\n中文 text，全角。next\na-b #$% e\u{301}x\n",
+    "fn main() {\n\tcall(a, [b, c], \"s)\");\n    if (x) { y('(') }\n}\n\n{\n  inner } {\n}\ntail\n",
+    "First one.  Second one! Third?  \nStill (third.) Fourth.\n\n\nNew para. End\n   \nlast",
+    "👨\u{200d}👩\u{200d}👧 family 👍\u{1f3fd} flag 🇨🇳 e\u{301}\u{302}\n\u{301}lead\n",
+    "",
+    "\n",
+    "x",
+];
+
+/// 核对状态机在一次按键之后的不变量。环境变量 `WINC_VIM_SEEDS` 可以把种子数调大，用于开发时
+/// 更长时间的随机测试。
+fn check_state(vim: &Vim, host: &TestHost, context: &str) {
+    let text = &host.rope;
+    let end = text.end_pos();
+    let boundary = |pos: usize| pos <= end && movement::snap_to_grapheme(text, pos) == pos;
+    let selection = host.selection;
+    let caret = vim.caret(host);
+    assert!(
+        caret <= end && selection.anchor <= end && selection.head <= end,
+        "{context}"
+    );
+    // 插入模式中的删除由宿主执行，光标可以落在被拆开的字素之间；离开时重新对齐。
+    if vim.mode() != Mode::Insert {
+        assert!(boundary(caret), "{context}：光标 {caret} 不在字素边界上");
+        assert!(
+            boundary(selection.anchor),
+            "{context}：选区起点 {}",
+            selection.anchor
+        );
+        assert!(
+            boundary(selection.head),
+            "{context}：选区终点 {}",
+            selection.head
+        );
+    }
+
+    match vim.mode() {
+        Mode::Insert => assert_eq!(host.groups, 1, "{context}：插入期间有一个撤销分组"),
+        mode => {
+            assert_eq!(host.groups, 0, "{context}：撤销分组已结束");
+            if mode == Mode::Normal {
+                // 普通模式：选区为空，光标在字符上（空行除外），不在末尾的空行上。
+                assert_eq!(selection, Selection::point(caret), "{context}");
+                let line = text.line_of(caret);
+                let on_char = caret < text.line_end(line) || text.line_len(line) == 0;
+                assert!(on_char, "{context}：光标 {caret} 在行尾之后");
+                let phantom = line > 0 && line + 1 == text.line_count() && text.line_len(line) == 0;
+                assert!(!phantom, "{context}：光标在末尾的空行上");
+            } else {
+                assert!(vim.visual_kind().is_some(), "{context}");
+            }
+        }
+    }
+}
+
+/// 以种子 `seed` 生成 `steps` 个按键驱动状态机，核对不变量与撤销；返回单个按键的最长耗时与
+/// 核对过撤销、重做的命令数。
+fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
+    let mut rng = Rng(seed ^ 0xA5A5_5A5A);
+    let mut host = TestHost::new(rng.pick(TEXTS));
+    let mut vim = Vim::default();
+    let mut shared = Shared::default();
+    // 进入插入模式之前的文本：离开时撤销一次应回到这里。
+    let mut insert_start: Option<String> = None;
+    let mut slowest = Duration::ZERO;
+    let mut verified = 0;
+    let undo_key = |key: Key| key == Key::char('u') || key == Key::ctrl('r');
+
+    for step in 0..steps {
+        // 偶尔由宿主改动选区，模拟鼠标与应用的命令。
+        if rng.below(40) == 0 {
+            let end = host.rope.end_pos();
+            let pos = |rng: &mut Rng| movement::snap_to_grapheme(&host.rope, rng.below(end + 1));
+            let (anchor, head) = (pos(&mut rng), pos(&mut rng));
+            host.selection = if rng.below(2) == 0 {
+                Selection::point(head)
+            } else {
+                Selection::new(anchor, head)
+            };
+            if vim.mode() == Mode::Insert {
+                vim.insert_moved(&mut host);
+                insert_start = None;
+            } else {
+                vim.sync(&mut host);
+            }
+            check_state(
+                &vim,
+                &host,
+                &format!("种子 {seed} 第 {step} 步，选区被改动之后"),
+            );
+        }
+
+        let key = random_key(&mut rng, common);
+        let context = format!(
+            "种子 {seed} 第 {step} 步，{:?} 模式，按键 {key}",
+            vim.mode()
+        );
+        let before_text = host.text();
+        let before_mode = vim.mode();
+        let started = Instant::now();
+        common::press(&mut vim, &mut shared, &mut host, key);
+        slowest = slowest.max(started.elapsed());
+        check_state(&vim, &host, &context);
+
+        let after_mode = vim.mode();
+        if before_mode != Mode::Insert && after_mode == Mode::Insert {
+            insert_start = Some(before_text.clone());
+        }
+        // 一条命令（或一次插入连同引起插入的命令）撤销后文本逐字节还原，重做后回到执行之后。
+        let finished = match (before_mode, after_mode) {
+            (Mode::Insert, Mode::Insert) => None,
+            (Mode::Insert, _) => insert_start.take(),
+            (_, Mode::Insert) => None,
+            _ if undo_key(key) => None,
+            _ => Some(before_text),
+        };
+        if let Some(original) = finished {
+            let after = host.text();
+            if after != original && vim.pending().is_empty() {
+                let selection = host.selection;
+                assert!(host.undo(), "{context}：有可撤销的单元");
+                assert_eq!(host.text(), original, "{context}：撤销后还原");
+                assert!(host.redo(), "{context}：有可重做的单元");
+                assert_eq!(host.text(), after, "{context}：重做后恢复");
+                host.selection = selection;
+                verified += 1;
+            }
+        }
+    }
+    (slowest, verified)
+}
+
+#[test]
+fn random_keys_keep_the_state_machine_consistent() {
+    let common = common_keys();
+    let seeds = std::env::var("WINC_VIM_SEEDS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(150);
+    let (mut slowest, mut verified) = (Duration::ZERO, 0);
+    for seed in 0..seeds {
+        let (time, count) = drive(seed, 1_500, &common);
+        slowest = slowest.max(time);
+        verified += count;
+    }
+    // 次数与生成的文本都有上限：任何一个按键都在有限的时间内处理完。
+    assert!(
+        slowest < Duration::from_secs(2),
+        "最慢的按键耗时 {slowest:?}"
+    );
+    assert!(
+        verified > 10 * usize::try_from(seeds).unwrap(),
+        "只核对了 {verified} 次撤销"
+    );
+    println!("核对撤销与重做 {verified} 次，最慢的按键耗时 {slowest:?}");
 }

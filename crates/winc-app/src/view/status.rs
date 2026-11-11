@@ -651,6 +651,11 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         x += 24.0;
     }
 
+    // Vim 模式的状态（模式、未完成的按键）排在消息之前。
+    if let Some(vim) = app.vim_status() {
+        x = ui_text_small(frame, app, x, bar, &vim, p.text, left) + 16.0;
+    }
+
     // 消息放不下时从中间截短；可用宽度不超过 60 逻辑像素时不显示。
     let room = left.right() - x;
 

@@ -119,7 +119,10 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         let show_matches = layout.search.h > 0.0 && !app.markdown_focused();
 
         let selection = doc.selection;
-        let (caret_line, caret_col) = text.pos_to_line_col(selection.head);
+        // Vim 的可视模式下光标画在选区的光标一端所含的字符上。
+        let vim_caret = app.vim_caret();
+        let caret = vim_caret.map_or(selection.head, |(pos, _)| pos);
+        let (caret_line, caret_col) = text.pos_to_line_col(caret);
         // 多光标：主选区以外、位于可见范围内的选区和光标（行，列）。光标可能有上万个，
         // 只取可见的部分。
         let shown_range = {
@@ -182,6 +185,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             extra: &extra,
             caret_line,
             caret_col,
+            vim_caret: vim_caret.map(|(_, shape)| shape),
             extra_carets: &extra_carets,
             hunks,
             open: app
@@ -299,6 +303,8 @@ struct Screen<'a> {
     extra: &'a [Selection],
     caret_line: usize,
     caret_col: usize,
+    /// Vim 模式下光标的形状；使用竖线光标时为 `None`。
+    vim_caret: Option<crate::app::vim::CaretShape>,
     extra_carets: &'a [(usize, usize)],
     /// 与 `HEAD` 比较得到的改动，以及改动卡片打开的一处。
     hunks: &'a [LineHunk],

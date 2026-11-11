@@ -5,6 +5,8 @@
 //! `.rec` 文件。无界面执行结束时 `vim` 自动离开插入模式，录制结果不含最终的模式；按键出错后
 //! 余下的按键仍然执行。
 
+mod cases;
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -33,26 +35,56 @@ const REGISTERS: &str = "\"0123456789-abcdefghijklmnopqrstuvwxyz.:/";
 const HEADER: &str =
     "# 由 `cargo xtask vim-fixtures` 录制，不手工修改；用例写在同名的 .cases 文件中。\n";
 
-/// `cargo xtask vim-fixtures [--check] [--vim 路径]`：录制全部用例文件。
+/// `cargo xtask vim-fixtures [--check] [--full] [--vim 路径]`：生成并录制全部用例文件。
 ///
 /// 带 `--check` 时不写文件，只比较录制结果与现有的 `.rec` 文件，不一致时返回 `Ok(false)`。
+/// 带 `--full` 时生成全部组合并录制到 `target/vim-fixtures-full`，用于开发时的完整核对：
+/// `WINC_VIM_FIXTURES=target/vim-fixtures-full cargo test -p winc-vim --test fixtures`。
 ///
 /// # Errors
 ///
 /// 参数无法识别、没有用例文件、`vim` 无法运行或版本不是 9.1、用例有误、文件无法读写时返回原因。
 pub fn fixtures(args: &[String]) -> Result<bool, String> {
     let mut check = false;
+    let mut full = false;
     let mut program = DEFAULT_VIM;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--check" => check = true,
+            "--full" => full = true,
             "--vim" => program = args.next().ok_or("--vim 后面要跟路径")?,
             other => return Err(format!("vim-fixtures 不认识参数 {other}")),
         }
     }
 
-    let dir = root().join("crates/winc-vim/fixtures");
+    // 全部组合不放进仓库：写到 `target` 下，核对时以环境变量 `WINC_VIM_FIXTURES` 指向该目录。
+    let dir = if full {
+        root().join("target/vim-fixtures-full")
+    } else {
+        root().join("crates/winc-vim/fixtures")
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建 {}：{e}", dir.display()))?;
+    // 生成的用例先写成用例文件，再与手写的用例文件一并录制。
+    for group in cases::generated(full) {
+        let path = dir.join(format!("{}.cases", group.name));
+        let text = format!(
+            "# 由 `cargo xtask vim-fixtures` 生成，不手工修改。{}\n{}",
+            group.about,
+            fixture::write(&group.file)
+        );
+        if !check && std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+            continue;
+        }
+        if check {
+            if !std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+                println!("{}.cases 与生成的用例不一致", group.name);
+                return Ok(false);
+            }
+        } else {
+            std::fs::write(&path, text).map_err(|e| format!("无法写入 {}：{e}", path.display()))?;
+        }
+    }
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&dir)
         .map_err(|e| format!("无法读取 {}：{e}", dir.display()))?
         .flatten()
@@ -64,8 +96,7 @@ pub fn fixtures(args: &[String]) -> Result<bool, String> {
         return Err(format!("{} 中没有 .cases 文件", dir.display()));
     }
 
-    let vim = Vim::new(program)?;
-    let version = vim.version()?;
+    let version = Vim::new(program, 0)?.version()?;
     if !version.starts_with(BASELINE) {
         return Err(format!("录制基准是 vim 9.1，{program} 的版本是 {version}"));
     }
@@ -75,9 +106,9 @@ pub fn fixtures(args: &[String]) -> Result<bool, String> {
         let name = source.file_name().unwrap_or_default().to_string_lossy();
         let text = std::fs::read_to_string(source).map_err(|e| format!("无法读取 {name}：{e}"))?;
         let mut file = fixture::parse(&text).map_err(|e| format!("{name}：{e}"))?;
-        for case in &mut file.cases {
-            let state = vim.record(case);
-            case.result = Some(state.map_err(|e| format!("{name} 的用例 {}：{e}", case.name))?);
+        let states = record_all(program, &file.cases).map_err(|e| format!("{name} 的{e}"))?;
+        for (case, state) in file.cases.iter_mut().zip(states) {
+            case.result = Some(state);
         }
         file.vim = Some(version.clone());
         let recorded = format!("{HEADER}{}", fixture::write(&file));
@@ -98,11 +129,47 @@ pub fn fixtures(args: &[String]) -> Result<bool, String> {
     Ok(current)
 }
 
+/// 录制 `cases` 中的每个用例，返回各用例的结果；用例分给若干线程，各自启动 `vim` 进程。
+///
+/// # Errors
+///
+/// 任何一个用例录制失败时返回「用例 名字：原因」。
+fn record_all(program: &str, cases: &[Case]) -> Result<Vec<State>, String> {
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let chunk = cases.len().div_ceil(threads).max(1);
+    let results: Vec<Result<Vec<State>, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (cases.chunks(chunk).enumerate())
+            .map(|(index, chunk)| {
+                scope.spawn(move || {
+                    let vim = Vim::new(program, index + 1)?;
+                    (chunk.iter())
+                        .map(|case| {
+                            (vim.record(case)).map_err(|e| format!("用例 {}：{e}", case.name))
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+        (handles.into_iter())
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("录制线程异常结束".into()))
+            })
+            .collect()
+    });
+    let mut states = Vec::with_capacity(cases.len());
+    for result in results {
+        states.extend(result?);
+    }
+    Ok(states)
+}
+
 /// 一个可以执行脚本的 `vim`，以及存放脚本与结果的临时目录；销毁时删除该目录。
 struct Vim {
     /// `vim` 的路径或命令名。
     program: String,
-    /// 临时目录，每个 xtask 进程一个。
+    /// 临时目录，每个录制线程一个。
     dir: PathBuf,
 }
 
@@ -113,9 +180,10 @@ impl Drop for Vim {
 }
 
 impl Vim {
-    /// 创建临时目录。
-    fn new(program: &str) -> Result<Self, String> {
-        let dir = std::env::temp_dir().join(format!("winc-vim-fixtures-{}", std::process::id()));
+    /// 创建临时目录；`index` 区分同一进程中的各个录制线程。
+    fn new(program: &str, index: usize) -> Result<Self, String> {
+        let dir =
+            std::env::temp_dir().join(format!("winc-vim-fixtures-{}-{index}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建 {}：{e}", dir.display()))?;
         Ok(Self {
             program: program.to_owned(),
@@ -248,7 +316,9 @@ fn script(input: &Path, output: &Path, cursor: (usize, usize), keys: &str) -> St
         r#"set encoding=utf-8
 scriptencoding utf-8
 set nomore
+set undolevels=-1
 call setline(1, readfile({input}, 'b'))
+set undolevels=1000
 call cursor({line}, {col})
 call feedkeys("{keys}", 'tx')
 let s:out = ['C ' . line('.') . ' ' . col('.')]

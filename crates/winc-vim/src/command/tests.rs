@@ -35,7 +35,7 @@ fn prefix_kinds_stay_out_of_the_modes_that_do_not_take_them() {
             Kind::TextObject(_) => assert!(!entry.modes.contains(Mode::Normal)),
             Kind::Operator(_) => assert!(!entry.modes.contains(Mode::OperatorPending)),
             Kind::Action(_) => assert!(!entry.modes.contains(Mode::OperatorPending)),
-            Kind::Motion(_) => {}
+            Kind::Motion(_) | Kind::SmallDelete | Kind::LineOperator(_) | Kind::Synonym(..) => {}
         }
     }
 }
@@ -67,7 +67,10 @@ fn kind(mode: Mode, keys: &str) -> Option<Kind> {
 fn the_same_keys_mean_different_things_in_different_modes() {
     assert_eq!(
         kind(Mode::Normal, "x"),
-        Some(Kind::Action(Action::DeleteChar))
+        Some(Kind::Synonym(
+            Operator::Delete,
+            Shorthand::Motion(Motion::Right)
+        ))
     );
     assert_eq!(
         kind(Mode::Visual, "x"),
@@ -88,10 +91,16 @@ fn the_same_keys_mean_different_things_in_different_modes() {
         kind(Mode::Normal, "<C-r>"),
         Some(Kind::Action(Action::Redo))
     );
+    assert_eq!(kind(Mode::Insert, "<C-r>"), None);
     assert_eq!(
-        kind(Mode::Insert, "<C-r>"),
-        Some(Kind::Action(Action::InsertRegister))
+        kind(Mode::Insert, "<Esc>"),
+        Some(Kind::Action(Action::Escape))
     );
+    assert_eq!(
+        kind(Mode::Normal, "<BS>"),
+        Some(Kind::Motion(Motion::Backspace))
+    );
+    assert_eq!(kind(Mode::Visual, "<BS>"), Some(Kind::SmallDelete));
 
     // `i` 在普通模式下是命令，在可视模式和等待动作时是文本对象的前缀。
     assert_eq!(kind(Mode::Normal, "i"), Some(Kind::Action(Action::Insert)));
@@ -111,7 +120,9 @@ fn the_same_keys_mean_different_things_in_different_modes() {
 #[test]
 fn operators_are_found_while_one_is_pending() {
     // 普通模式的操作符在等待动作时也能查到，用于识别叠写形式；可视模式专用的写法不在其中。
-    for keys in ["d", "c", "y", ">", "<lt>", "g~", "gu", "gU", "gq"] {
+    for keys in [
+        "d", "c", "y", ">", "<lt>", "g~", "gu", "gU", "g?", "gc", "=", "gq",
+    ] {
         assert!(
             matches!(kind(Mode::Normal, keys), Some(Kind::Operator(_))),
             "{keys}"
@@ -139,12 +150,12 @@ fn lookups_walk_multi_key_sequences_and_reject_unknown_keys() {
         Some(Kind::Motion(Motion::WordEndBackward))
     );
     assert_eq!(walk(Mode::Normal, "gZ"), Lookup::None);
-    assert_eq!(walk(Mode::Normal, "Z"), Lookup::None);
+    assert_eq!(walk(Mode::Normal, "\\"), Lookup::None);
     assert_eq!(
         kind(Mode::Normal, "<Left>"),
         Some(Kind::Motion(Motion::Left))
     );
-    assert_eq!(walk(Mode::Normal, "<S-Left>"), Lookup::None);
+    assert_eq!(walk(Mode::Normal, "<S-Up>"), Lookup::None);
 
     // 越界的节点与下标不 panic。
     assert_eq!(
@@ -158,6 +169,26 @@ fn lookups_walk_multi_key_sequences_and_reject_unknown_keys() {
         table.keys(index),
         notation::parse(ENTRIES[usize::from(index)].keys)
     );
+}
+
+#[test]
+fn only_implemented_commands_are_marked_supported() {
+    // 文本对象与之后的阶段实现的命令不标为支持；标为不支持的命令保持不支持。
+    for entry in ENTRIES {
+        match entry.kind {
+            Kind::TextObject(_) | Kind::Action(Action::Later) => {
+                assert_ne!(entry.support, Support::Supported, "{entry:?}");
+            }
+            Kind::Action(Action::ExMode | Action::Keyword | Action::UndoLine)
+            | Kind::Operator(Operator::Format | Operator::Fold | Operator::Filter) => {
+                assert_eq!(entry.support, Support::Unsupported, "{entry:?}");
+            }
+            Kind::Force(Force::Blockwise) | Kind::Operator(Operator::Reindent) => {
+                assert_eq!(entry.support, Support::Planned, "{entry:?}");
+            }
+            _ => assert_eq!(entry.support, Support::Supported, "{entry:?}"),
+        }
+    }
 }
 
 #[test]

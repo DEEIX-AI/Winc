@@ -45,9 +45,9 @@ case blockwise-yank
 text "abcd"
 text "efgh"
 cursor 0 1
+tag later
 keys <C-v>jly
-> text "abcd"
-> text "efgh"
+> unchanged
 > cursor 0 1
 > reg " b2 "bc" "fg"
 > reg 0 b2 "bc" "fg"
@@ -55,8 +55,9 @@ keys <C-v>jly
 case named-register-inner-word
 text "foo(bar, baz)"
 cursor 0 5
+tag later
 keys "qyiw
-> text "foo(bar, baz)"
+> unchanged
 > cursor 0 4
 > reg " v "bar"
 > reg q v "bar"
@@ -100,5 +101,5 @@ case delete-in-empty-buffer
 text ""
 cursor 0 0
 keys x
-> text ""
+> unchanged
 > cursor 0 0

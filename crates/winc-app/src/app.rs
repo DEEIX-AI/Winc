@@ -19,6 +19,7 @@ mod snapshot;
 mod status;
 pub(crate) mod terminal;
 pub(crate) mod tickets;
+pub(crate) mod vim;
 pub(crate) mod workspace;
 
 pub use animation::Clock;
@@ -899,6 +900,8 @@ pub struct App {
     pub copied_image: Option<Vec<u8>>,
     /// 最近一次整行复制的内容；粘贴相同内容时按整行插入到当前行上方。
     line_clipboard: Option<String>,
+    /// Vim 模式的状态；Vim 模式关闭时为 `None`。
+    pub(crate) vim: Option<Box<vim::VimState>>,
 
     // 查找条和跳转条
     /// 当前查找的内容、各文档里已找到的匹配和替换状态。

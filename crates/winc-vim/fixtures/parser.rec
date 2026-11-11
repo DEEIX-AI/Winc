@@ -59,7 +59,7 @@ case del-after-one-digit-leaves-nothing-pending
 text "abcdefghijklmnopqrstuvwxyz0123456789"
 cursor 0 0
 keys 2<Del>
-> text "abcdefghijklmnopqrstuvwxyz0123456789"
+> unchanged
 > cursor 0 0
 
 case register
@@ -291,7 +291,7 @@ case del-keeps-the-operator-pending
 text "abcdefghijklmnopqrstuvwxyz0123456789"
 cursor 0 0
 keys d2<Del>x
-> text "abcdefghijklmnopqrstuvwxyz0123456789"
+> unchanged
 > cursor 0 0
 
 case unsupported-command

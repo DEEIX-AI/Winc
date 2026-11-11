@@ -702,3 +702,18 @@ fn the_byte_limit_trims_whole_units_while_grouping() {
     assert!(history.undo(&mut rope).is_none());
     assert_eq!(history.undo_bytes, 0);
 }
+
+#[test]
+fn the_selection_before_the_next_redo_is_available() {
+    let mut rope = Rope::from_str("abc");
+    let mut history = History::default();
+    assert_eq!(history.redo_origin(), None);
+    let t = replace_selection(&rope, Selection::new(1, 2), "xy", EditKind::Other);
+    t.apply(&mut rope);
+    history.push(t);
+    assert_eq!(history.redo_origin(), None);
+    history.undo(&mut rope).unwrap();
+    assert_eq!(history.redo_origin(), Some(Selection::new(1, 2)));
+    history.redo(&mut rope).unwrap();
+    assert_eq!(history.redo_origin(), None);
+}

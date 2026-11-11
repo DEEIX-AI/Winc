@@ -87,6 +87,16 @@ impl App {
             return;
         }
 
+        // Vim 模式开启时，编辑区的按键先交给 Vim 层；Vim 层不处理的按键继续按原有的顺序处理。
+        // 两步组合键的第二步仍由键位表处理；Vim 没有带 `Alt` 的命令，应用绑定的 `Alt` 组合归应用。
+        if self.vim.is_some()
+            && self.pending_chord.is_none()
+            && !self.alt_shortcut(event, &base)
+            && self.vim_key_event(event)
+        {
+            return;
+        }
+
         // 快捷键都定义在键位表中，先查表；不是快捷键的按键（打字、方向键、回车）再交给
         // 焦点所在的部件。
         let stroke = self.stroke_of(
@@ -173,6 +183,21 @@ impl App {
             return None;
         }
         Stroke::from_event(key, base, physical, location, self.modifiers)
+    }
+
+    /// 按键 `event` 是否为应用在当前上下文中绑定的 `Alt` 组合；`Ctrl`+`Alt`（AltGr）不算。
+    fn alt_shortcut(&self, event: &KeyEvent, base: &str) -> bool {
+        let stroke =
+            || self.stroke_of(&event.logical_key, base, event.physical_key, event.location);
+        self.modifiers.alt_key()
+            && !self.modifiers.control_key()
+            && stroke().is_some_and(|stroke| self.binds(stroke))
+    }
+
+    /// 应用是否在当前的上下文中绑定了按键 `stroke`，含两步组合键的第一步。
+    pub(in crate::app) fn binds(&self, stroke: Stroke) -> bool {
+        let lookup = keymap::lookup(keymap::current(), stroke, None, self.key_context());
+        !matches!(lookup, Lookup::None)
     }
 
     /// 是否已作为快捷键处理按键 `stroke`。
@@ -986,10 +1011,19 @@ impl App {
     }
 
     /// 焦点所在的位置是否可以输入文字：输入框、未结束的终端，或者可以编辑文字的文档（含光标
-    /// 位于差异中）。光标闪烁和输入法都只在这些位置生效。
+    /// 位于差异中）。输入法只在这些位置生效。
+    ///
+    /// Vim 模式下只有插入模式可以输入文字：其余模式停用输入法，按键以字符送达。
     pub(in crate::app) fn takes_text(&self) -> bool {
         match self.focus {
             Focus::Terminal => self.terminal.tab().is_some_and(|t| t.ended.is_none()),
+            Focus::Editor
+                if self
+                    .vim_mode()
+                    .is_some_and(|mode| mode != winc_vim::Mode::Insert) =>
+            {
+                false
+            }
             Focus::Editor => self.editor.active().is_some_and(|doc| {
                 let diff = doc.diff.as_deref();
                 doc.edits_text() || diff.is_some_and(|v| v.editing || v.read_caret().is_some())

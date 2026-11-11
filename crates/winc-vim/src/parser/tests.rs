@@ -1,7 +1,6 @@
 //! 解析器的测试：寄存器、次数、操作符、动作、文本对象的组合，等待后续按键、取消与无效序列。
 
 use super::*;
-use crate::command::Shape;
 use crate::key::notation;
 
 /// 在 `mode` 下把 `keys`（按键记法）依次交给一个新的解析器，返回每个按键的结果。
@@ -52,22 +51,42 @@ fn action(action: Action) -> Body {
     Body::Action { action, arg: None }
 }
 
-const INNER_WORD: TextObject = TextObject {
-    shape: Shape::Word,
-    around: false,
-};
-
 #[test]
 fn single_keys_are_motions_and_actions() {
     let w = normal("w");
     assert_eq!(w.body, Body::Motion(motion(Motion::WordForward)));
     assert_eq!((w.register, w.count), (None, None));
-    assert_eq!(normal("x").body, action(Action::DeleteChar));
-    assert_eq!(normal("<Del>").body, action(Action::DeleteChar));
+    assert_eq!(normal("p").body, action(Action::PasteAfter));
     assert_eq!(normal("<C-r>").body, action(Action::Redo));
-    assert_eq!(normal("<BS>").body, Body::Motion(motion(Motion::Left)));
-    assert_eq!(normal("<Space>").body, Body::Motion(motion(Motion::Right)));
+    assert_eq!(normal("<BS>").body, Body::Motion(motion(Motion::Backspace)));
+    assert_eq!(normal("<Space>").body, Body::Motion(motion(Motion::Space)));
     assert_eq!(normal("gg").body, Body::Motion(motion(Motion::FirstLine)));
+}
+
+#[test]
+fn synonyms_expand_to_operator_commands() {
+    let right = Target::Motion(motion(Motion::Right));
+    let line_end = Target::Motion(motion(Motion::LineEnd));
+    for (keys, expected) in [
+        ("x", operator(Operator::Delete, right)),
+        ("<Del>", operator(Operator::Delete, right)),
+        (
+            "X",
+            operator(Operator::Delete, Target::Motion(motion(Motion::Left))),
+        ),
+        ("D", operator(Operator::Delete, line_end)),
+        ("C", operator(Operator::Change, line_end)),
+        ("s", operator(Operator::Change, right)),
+        ("S", operator(Operator::Change, Target::Lines)),
+        ("Y", operator(Operator::Yank, Target::Lines)),
+    ] {
+        assert_eq!(normal(keys).body, expected, "{keys}");
+    }
+    let x = normal("\"a3x");
+    assert_eq!((x.register, x.count), (Some('a'), Some(3)));
+    // 等待动作时这些按键不是动作。
+    assert_eq!(last("dx"), Outcome::Invalid);
+    assert_eq!(last("dD"), Outcome::Invalid);
 }
 
 #[test]
@@ -79,7 +98,10 @@ fn counts_accumulate_digits_and_zero_is_a_motion_without_one() {
     assert_eq!(zero.body, Body::Motion(motion(Motion::LineStart)));
     assert_eq!(zero.count, None);
     // `g` 之后的数字属于按键序列，不是次数。
-    assert_eq!(last("g0"), Outcome::Invalid);
+    assert_eq!(
+        normal("g0").body,
+        Body::Motion(motion(Motion::DisplayStart))
+    );
     assert_eq!(last("2g3"), Outcome::Invalid);
 }
 
@@ -157,19 +179,9 @@ fn operators_take_motions_and_text_objects() {
             Target::Motion(motion(Motion::WordForward))
         )
     );
-    assert_eq!(
-        normal("ciw").body,
-        operator(Operator::Change, Target::Object(INNER_WORD))
-    );
-    let paren = TextObject {
-        shape: Shape::Paren,
-        around: true,
-    };
-    for keys in ["ya(", "ya)", "yab"] {
-        assert_eq!(
-            normal(keys).body,
-            operator(Operator::Yank, Target::Object(paren))
-        );
+    // 文本对象尚未实现：按键序列读完之后报告不支持。
+    for keys in ["ciw", "ya(", "ya)", "yab", "di\"", "d2aw"] {
+        assert_eq!(last(keys), Outcome::Unsupported, "{keys}");
     }
     assert_eq!(
         normal("<lt>j").body,
@@ -280,7 +292,8 @@ fn a_forced_motion_type_keeps_counts_and_the_last_one_wins() {
     assert_eq!(forced("dj"), None);
     assert_eq!(forced("dvj"), Some(Force::Charwise));
     assert_eq!(forced("dVl"), Some(Force::Linewise));
-    assert_eq!(forced("d<C-v>j"), Some(Force::Blockwise));
+    // 按块的强制类型尚未实现。
+    assert_eq!(last("d<C-v>j"), Outcome::Unsupported);
     assert_eq!(forced("dvVj"), Some(Force::Linewise));
     assert_eq!(forced("dvd"), Some(Force::Charwise));
     for keys in ["d2v3j", "2dv3j", "6dvj", "dv6j", "d6vj"] {
@@ -356,13 +369,13 @@ fn escape_cancels_whatever_is_pending() {
 
 #[test]
 fn unbound_keys_are_reported_only_when_idle() {
-    assert_eq!(last("Z"), Outcome::Unbound);
+    assert_eq!(last("\\"), Outcome::Unbound);
     assert_eq!(last("中"), Outcome::Unbound);
     assert_eq!(last("<C-S-p>"), Outcome::Unbound);
-    assert_eq!(last("<S-Left>"), Outcome::Unbound);
+    assert_eq!(last("<S-Up>"), Outcome::Unbound);
     assert_eq!(last("<F5>"), Outcome::Unbound);
-    assert_eq!(last("3Z"), Outcome::Invalid);
-    assert_eq!(last("\"aZ"), Outcome::Invalid);
+    assert_eq!(last("3\\"), Outcome::Invalid);
+    assert_eq!(last("\"a\\"), Outcome::Invalid);
     assert_eq!(last("dZ"), Outcome::Invalid);
     assert_eq!(last("d<F5>"), Outcome::Invalid);
     // 带修饰键的数字不是次数。
@@ -432,8 +445,31 @@ fn visual_mode_applies_operators_to_the_selection() {
     assert_eq!((y.register, y.count), (Some('a'), Some(3)));
 
     assert_eq!(visual("3j").body, Body::Motion(motion(Motion::Down)));
-    assert_eq!(visual("iw").body, Body::Object(INNER_WORD));
-    assert_eq!(visual("2aw").count, Some(2));
+    assert_eq!(
+        *feed(Mode::Visual, "iw").last().unwrap(),
+        Outcome::Unsupported
+    );
+    // `<BS>` 删除选区，未指定寄存器时写入 `"-`。
+    let small = visual("<BS>");
+    assert_eq!(small.body, operator(Operator::Delete, Target::Selection));
+    assert_eq!(small.register, Some('-'));
+    assert_eq!(visual("\"a<BS>").register, Some('a'));
+    // 大写的写法先把选区扩展到整行。
+    for (keys, expected) in [
+        ("X", Operator::Delete),
+        ("D", Operator::Delete),
+        ("Y", Operator::Yank),
+        ("S", Operator::Change),
+        ("C", Operator::Change),
+        ("R", Operator::Change),
+    ] {
+        let body = Body::Operator {
+            operator: expected,
+            target: Target::Selection,
+            force: Some(Force::Linewise),
+        };
+        assert_eq!(visual(keys).body, body, "{keys}");
+    }
     assert_eq!(visual("v").body, action(Action::Visual));
     assert_eq!(
         visual("rx").body,
@@ -469,22 +505,8 @@ fn escape_in_visual_mode_leaves_it_unless_a_key_sequence_is_open() {
 #[test]
 fn insert_mode_has_no_counts_or_registers() {
     assert_eq!(command(Mode::Insert, "<Esc>").body, action(Action::Escape));
-    assert_eq!(
-        command(Mode::Insert, "<C-r>a").body,
-        Body::Action {
-            action: Action::InsertRegister,
-            arg: Some('a'),
-        }
-    );
-    assert_eq!(
-        feed(Mode::Insert, "<C-r><Esc><Esc>"),
-        [
-            Outcome::Pending,
-            Outcome::Cancelled,
-            Outcome::Command(command(Mode::Insert, "<Esc>")),
-        ]
-    );
-    for keys in ["3", "0", "\"", "d", "x", "中", "<Del>", "<Left>"] {
+    assert_eq!(feed(Mode::Insert, "<Esc><Esc>").len(), 2);
+    for keys in ["3", "0", "\"", "d", "x", "中", "<Del>", "<Left>", "<C-r>"] {
         assert_eq!(feed(Mode::Insert, keys), [Outcome::Unbound], "{keys}");
     }
 }

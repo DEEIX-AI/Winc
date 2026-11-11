@@ -2,18 +2,18 @@
 
 use std::sync::OnceLock;
 
-use super::TextObject;
-use super::{Action, Arg, Entry, Force, Kind, Mode, Modes, Motion, Operator, Shape, Support};
+use super::{Action, Arg, Entry, Force, Kind, Mode, Modes, Motion, Operator, Shape, Shorthand};
+use super::{Support, TextObject};
 use crate::key::{Key, notation};
 
-/// 创建一条没有参数、状态为 [`Support::Planned`] 的记录。
+/// 创建一条没有参数、状态为 [`Support::Supported`] 的记录。
 const fn entry(keys: &'static str, modes: Modes, kind: Kind) -> Entry {
     Entry {
         keys,
         modes,
         kind,
         arg: Arg::None,
-        support: Support::Planned,
+        support: Support::Supported,
     }
 }
 
@@ -27,13 +27,19 @@ const fn operator(keys: &'static str, operator: Operator) -> Entry {
     entry(keys, Modes::NV, Kind::Operator(operator))
 }
 
-/// 创建在可视模式与等待动作时生效的文本对象。
+/// 创建普通模式下操作符加动作的同义写法。
+const fn synonym(keys: &'static str, operator: Operator, target: Shorthand) -> Entry {
+    entry(keys, Modes::N, Kind::Synonym(operator, target))
+}
+
+/// 创建在可视模式与等待动作时生效的文本对象；文本对象尚未实现。
 const fn object(keys: &'static str, shape: Shape, around: bool) -> Entry {
     entry(
         keys,
         Modes::VO,
         Kind::TextObject(TextObject { shape, around }),
     )
+    .planned()
 }
 
 /// 创建不带范围的命令。
@@ -41,10 +47,21 @@ const fn action(keys: &'static str, modes: Modes, action: Action) -> Entry {
     entry(keys, modes, Kind::Action(action))
 }
 
+/// 创建普通与可视模式下之后的阶段实现的命令。
+const fn later(keys: &'static str) -> Entry {
+    action(keys, Modes::NV, Action::Later).planned()
+}
+
 impl Entry {
     /// 返回带一个字符参数的记录。
     const fn with_char(mut self) -> Self {
         self.arg = Arg::Char;
+        self
+    }
+
+    /// 返回状态为 [`Support::Planned`] 的记录。
+    const fn planned(mut self) -> Self {
+        self.support = Support::Planned;
         self
     }
 
@@ -63,35 +80,79 @@ pub static ENTRIES: &[Entry] = &[
     entry("\"", Modes::NV, Kind::Register).with_char(),
     entry("v", Modes::O, Kind::Force(Force::Charwise)),
     entry("V", Modes::O, Kind::Force(Force::Linewise)),
-    entry("<C-v>", Modes::O, Kind::Force(Force::Blockwise)),
-    // 动作。
+    entry("<C-v>", Modes::O, Kind::Force(Force::Blockwise)).planned(),
+    // 左右移动。
     motion("h", Motion::Left),
     motion("<Left>", Motion::Left),
-    motion("<BS>", Motion::Left),
     motion("l", Motion::Right),
     motion("<Right>", Motion::Right),
-    motion("<Space>", Motion::Right),
-    motion("k", Motion::Up),
-    motion("<Up>", Motion::Up),
-    motion("j", Motion::Down),
-    motion("<Down>", Motion::Down),
-    motion("w", Motion::WordForward),
-    motion("b", Motion::WordBackward),
-    motion("e", Motion::WordEnd),
-    motion("ge", Motion::WordEndBackward),
+    entry("<BS>", Modes::NO, Kind::Motion(Motion::Backspace)),
+    motion("<Space>", Motion::Space),
     motion("0", Motion::LineStart),
     motion("<Home>", Motion::LineStart),
     motion("^", Motion::FirstNonBlank),
     motion("$", Motion::LineEnd),
     motion("<End>", Motion::LineEnd),
-    motion("gg", Motion::FirstLine),
-    motion("G", Motion::LastLine),
+    motion("g_", Motion::LastNonBlank),
+    motion("g0", Motion::DisplayStart),
+    motion("g<Home>", Motion::DisplayStart),
+    motion("g^", Motion::DisplayFirstNonBlank),
+    motion("g$", Motion::DisplayEnd),
+    motion("g<End>", Motion::DisplayLastNonBlank),
+    motion("gm", Motion::DisplayMiddle),
+    motion("|", Motion::Column),
     motion("f", Motion::FindForward).with_char(),
     motion("F", Motion::FindBackward).with_char(),
     motion("t", Motion::TillForward).with_char(),
     motion("T", Motion::TillBackward).with_char(),
     motion(";", Motion::RepeatFind),
     motion(",", Motion::RepeatFindReverse),
+    // 上下移动。
+    motion("k", Motion::Up),
+    motion("<Up>", Motion::Up),
+    motion("j", Motion::Down),
+    motion("<Down>", Motion::Down),
+    motion("gk", Motion::DisplayUp),
+    motion("g<Up>", Motion::DisplayUp),
+    motion("gj", Motion::DisplayDown),
+    motion("g<Down>", Motion::DisplayDown),
+    motion("-", Motion::LineUp),
+    motion("+", Motion::LineDown),
+    motion("<CR>", Motion::LineDown),
+    motion("_", Motion::LineHere),
+    motion("gg", Motion::FirstLine),
+    motion("<C-Home>", Motion::FirstLine),
+    motion("G", Motion::LastLine),
+    motion("<C-End>", Motion::LastLineEnd),
+    motion("%", Motion::Percent),
+    motion("H", Motion::WindowTop),
+    motion("M", Motion::WindowMiddle),
+    motion("L", Motion::WindowBottom),
+    // 按词与文本移动。
+    motion("w", Motion::WordForward),
+    motion("<S-Right>", Motion::WordForward),
+    motion("W", Motion::BigWordForward),
+    motion("<C-Right>", Motion::BigWordForward),
+    motion("b", Motion::WordBackward),
+    motion("<S-Left>", Motion::WordBackward),
+    motion("B", Motion::BigWordBackward),
+    motion("<C-Left>", Motion::BigWordBackward),
+    motion("e", Motion::WordEnd),
+    motion("E", Motion::BigWordEnd),
+    motion("ge", Motion::WordEndBackward),
+    motion("gE", Motion::BigWordEndBackward),
+    motion("(", Motion::SentenceBackward),
+    motion(")", Motion::SentenceForward),
+    motion("{", Motion::ParagraphBackward),
+    motion("}", Motion::ParagraphForward),
+    motion("[[", Motion::SectionBackward),
+    motion("]]", Motion::SectionForward),
+    motion("[]", Motion::SectionEndBackward),
+    motion("][", Motion::SectionEndForward),
+    motion("[(", Motion::UnmatchedParenBackward),
+    motion("[{", Motion::UnmatchedBraceBackward),
+    motion("])", Motion::UnmatchedParenForward),
+    motion("]}", Motion::UnmatchedBraceForward),
     // 操作符。
     operator("d", Operator::Delete),
     operator("c", Operator::Change),
@@ -101,49 +162,165 @@ pub static ENTRIES: &[Entry] = &[
     operator("g~", Operator::ToggleCase),
     operator("gu", Operator::Lowercase),
     operator("gU", Operator::Uppercase),
+    operator("g?", Operator::Rot13),
+    operator("gc", Operator::Comment),
+    operator("=", Operator::Reindent).planned(),
     operator("gq", Operator::Format).unsupported(),
-    // 可视模式下直接作用于选区的操作符。
+    operator("gw", Operator::Format).unsupported(),
+    operator("zf", Operator::Fold).unsupported(),
+    operator("!", Operator::Filter).unsupported(),
+    // 可视模式下直接作用于选区的写法。
+    entry("<BS>", Modes::V, Kind::SmallDelete),
     entry("x", Modes::V, Kind::Operator(Operator::Delete)),
     entry("<Del>", Modes::V, Kind::Operator(Operator::Delete)),
+    entry("s", Modes::V, Kind::Operator(Operator::Change)),
     entry("u", Modes::V, Kind::Operator(Operator::Lowercase)),
     entry("U", Modes::V, Kind::Operator(Operator::Uppercase)),
     entry("~", Modes::V, Kind::Operator(Operator::ToggleCase)),
+    entry("J", Modes::V, Kind::Operator(Operator::Join)),
+    entry("gJ", Modes::V, Kind::Operator(Operator::JoinRaw)),
+    entry("X", Modes::V, Kind::LineOperator(Operator::Delete)),
+    entry("D", Modes::V, Kind::LineOperator(Operator::Delete)),
+    entry("Y", Modes::V, Kind::LineOperator(Operator::Yank)),
+    entry("S", Modes::V, Kind::LineOperator(Operator::Change)),
+    entry("C", Modes::V, Kind::LineOperator(Operator::Change)),
+    entry("R", Modes::V, Kind::LineOperator(Operator::Change)),
+    // 操作符加动作的同义写法。
+    synonym("x", Operator::Delete, Shorthand::Motion(Motion::Right)),
+    synonym("<Del>", Operator::Delete, Shorthand::Motion(Motion::Right)),
+    synonym("X", Operator::Delete, Shorthand::Motion(Motion::Left)),
+    synonym("D", Operator::Delete, Shorthand::Motion(Motion::LineEnd)),
+    synonym("C", Operator::Change, Shorthand::Motion(Motion::LineEnd)),
+    synonym("s", Operator::Change, Shorthand::Motion(Motion::Right)),
+    synonym("S", Operator::Change, Shorthand::Lines),
+    synonym("Y", Operator::Yank, Shorthand::Lines),
     // 文本对象。
     object("iw", Shape::Word, false),
     object("aw", Shape::Word, true),
+    object("iW", Shape::BigWord, false),
+    object("aW", Shape::BigWord, true),
+    object("is", Shape::Sentence, false),
+    object("as", Shape::Sentence, true),
+    object("ip", Shape::Paragraph, false),
+    object("ap", Shape::Paragraph, true),
     object("i(", Shape::Paren, false),
     object("i)", Shape::Paren, false),
     object("ib", Shape::Paren, false),
     object("a(", Shape::Paren, true),
     object("a)", Shape::Paren, true),
     object("ab", Shape::Paren, true),
+    object("i[", Shape::Bracket, false),
+    object("i]", Shape::Bracket, false),
+    object("a[", Shape::Bracket, true),
+    object("a]", Shape::Bracket, true),
+    object("i{", Shape::Brace, false),
+    object("i}", Shape::Brace, false),
+    object("iB", Shape::Brace, false),
+    object("a{", Shape::Brace, true),
+    object("a}", Shape::Brace, true),
+    object("aB", Shape::Brace, true),
+    object("i<lt>", Shape::Angle, false),
+    object("i>", Shape::Angle, false),
+    object("a<lt>", Shape::Angle, true),
+    object("a>", Shape::Angle, true),
+    object("it", Shape::Tag, false),
+    object("at", Shape::Tag, true),
     object("i\"", Shape::DoubleQuote, false),
     object("a\"", Shape::DoubleQuote, true),
-    // 不带范围的命令。
-    action("x", Modes::N, Action::DeleteChar),
-    action("<Del>", Modes::N, Action::DeleteChar),
-    action("X", Modes::N, Action::DeleteCharBefore),
-    action("D", Modes::N, Action::DeleteToLineEnd),
-    action("C", Modes::N, Action::ChangeToLineEnd),
-    action("Y", Modes::N, Action::YankLine),
+    object("i'", Shape::SingleQuote, false),
+    object("a'", Shape::SingleQuote, true),
+    object("i`", Shape::Backtick, false),
+    object("a`", Shape::Backtick, true),
+    // 进入插入模式。
+    action("i", Modes::N, Action::Insert),
+    action("<Insert>", Modes::N, Action::Insert),
+    action("a", Modes::N, Action::Append),
+    action("I", Modes::N, Action::InsertFirstNonBlank),
+    action("gI", Modes::N, Action::InsertLineStart),
+    action("A", Modes::N, Action::AppendLineEnd),
+    action("gi", Modes::N, Action::InsertAtLast),
+    action("o", Modes::N, Action::OpenBelow),
+    action("O", Modes::N, Action::OpenAbove),
+    // 编辑。
+    action("r", Modes::NV, Action::ReplaceChar).with_char(),
+    action("~", Modes::N, Action::ToggleCaseChar),
     action("p", Modes::NV, Action::PasteAfter),
     action("P", Modes::NV, Action::PasteBefore),
-    action("r", Modes::NV, Action::ReplaceChar).with_char(),
+    action("gp", Modes::N, Action::PasteAfterMove),
+    action("gP", Modes::N, Action::PasteBeforeMove),
+    action("]p", Modes::N, Action::PasteIndented),
+    action("J", Modes::N, Action::JoinLines),
+    action("gJ", Modes::N, Action::JoinLinesRaw),
     action("u", Modes::N, Action::Undo),
     action("<C-r>", Modes::N, Action::Redo),
     action(".", Modes::N, Action::Repeat),
-    action("i", Modes::N, Action::Insert),
-    action("a", Modes::N, Action::Append),
+    // 可视模式。
     action("v", Modes::NV, Action::Visual),
     action("V", Modes::NV, Action::VisualLine),
-    action("<C-v>", Modes::NV, Action::VisualBlock),
-    action("<C-q>", Modes::NV, Action::VisualBlock),
-    action("m", Modes::NV, Action::SetMark).with_char(),
+    action("gv", Modes::NV, Action::Reselect),
+    action("o", Modes::V, Action::SwapAnchor),
+    action("O", Modes::V, Action::SwapAnchor),
     action("<Esc>", Modes::V.with(Modes::I), Action::Escape),
-    action("<C-r>", Modes::I, Action::InsertRegister).with_char(),
+    // 之后的阶段实现的命令。
+    later("<C-v>"),
+    later("<C-q>"),
+    later("/"),
+    later("?"),
+    later("n"),
+    later("N"),
+    later("*"),
+    later("#"),
+    later("g*"),
+    later("g#"),
+    later("gn"),
+    later("gN"),
+    later("m").with_char(),
+    later("'").with_char(),
+    later("`").with_char(),
+    later(":"),
+    later("q").with_char(),
+    later("@").with_char(),
+    later("&"),
+    later("g&"),
+    later("g;"),
+    later("g,"),
+    later("<Tab>"),
+    later("gd"),
+    later("gf"),
+    later("gt"),
+    later("gT"),
+    later("ga"),
+    later("ZZ"),
+    later("ZQ"),
+    later("zz"),
+    later("zt"),
+    later("zb"),
+    later("z."),
+    later("z-"),
+    later("z<CR>"),
+    later("zh"),
+    later("zl"),
+    later("zH"),
+    later("zL"),
+    later("zs"),
+    later("ze"),
+    later("zo"),
+    later("zc"),
+    later("za"),
+    later("zO"),
+    later("zC"),
+    later("zA"),
+    later("zR"),
+    later("zM"),
+    later("zv"),
+    later("zj"),
+    later("zk"),
+    action("R", Modes::N, Action::Later).planned(),
+    // 不支持的命令。
     action("Q", Modes::NV, Action::ExMode).unsupported(),
     action("K", Modes::NV, Action::Keyword).unsupported(),
     action("U", Modes::N, Action::UndoLine).unsupported(),
+    action("zd", Modes::NV, Action::Later).unsupported(),
 ];
 
 /// 前缀树的根节点。

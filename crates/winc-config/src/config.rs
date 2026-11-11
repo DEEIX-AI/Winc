@@ -115,6 +115,14 @@ pub struct Config {
     pub preview_on_click: Option<bool>,
     /// 「在外部终端中打开」使用的终端程序；未设置时使用系统默认的终端程序。
     pub external_terminal: Option<String>,
+    /// 是否开启 Vim 模式，默认为否。
+    pub vim_enabled: Option<bool>,
+    /// Vim 模式下无名寄存器与系统剪贴板的同步方式；未设置时只有 `"+`、`"*` 使用系统剪贴板。
+    pub vim_clipboard: Option<VimClipboard>,
+    /// Vim 模式下按键归属的改写：按键的名字（小写，如 `ctrl+f`）与是否交给 Vim 层处理。
+    ///
+    /// 按名字排序；没有列出的按键按默认的规则决定归属。
+    pub vim_handle_keys: Vec<(String, bool)>,
     /// 是否启用终端模块（编辑区下方的终端面板），默认为否。
     pub terminal_enabled: Option<bool>,
     /// 终端的等宽字体，写法同 [`Config::editor_font`]；未设置时与编辑区相同。
@@ -213,6 +221,18 @@ impl OptionAsMeta {
             OptionAsMeta::None => "none",
         }
     }
+}
+
+/// Vim 模式下无名寄存器与系统剪贴板的同步方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VimClipboard {
+    /// 只有 `"+`、`"*` 使用系统剪贴板。
+    #[default]
+    Register,
+    /// 复制时同时写入系统剪贴板。
+    Yank,
+    /// 无名寄存器与系统剪贴板同步。
+    Always,
 }
 
 /// 何时显示空格和制表符。

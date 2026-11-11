@@ -146,6 +146,10 @@ editor-readonly-binary = 二进制文件，已以只读方式打开
 editor-readonly-long-lines = 文件中有超过 16 MB 的行，已以只读方式打开
 editor-readonly-not-utf8 = 文件不是 UTF-8 编码，已以只读方式打开
 editor-selection-too-large-to-edit = 选区超过 16 MB，不可编辑
+editor-vim-unsupported = Vim 模式尚不支持此命令
+editor-vim-too-large = 涉及的文本过多，未执行
+editor-vim-register-empty = 寄存器 { $name } 中没有内容
+editor-vim-register-read-only = 寄存器 { $name } 不可写入
 
 ## 复制和粘贴。
 
