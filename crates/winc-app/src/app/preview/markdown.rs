@@ -19,7 +19,7 @@ use winc_preview::svg;
 use super::images::system_glyphs;
 use winit::keyboard::{Key, NamedKey};
 
-use crate::app::{App, UserEvent};
+use crate::app::{App, Focus, UserEvent};
 use crate::system;
 
 pub(crate) mod laid;
@@ -1813,7 +1813,8 @@ impl App {
     /// 规则见 `winc_preview::markdown::enter::task`。不是简写、有选区、有多个光标、输入法
     /// 正在组字、或光标位于代码块等块中时返回 `false`，按普通输入处理。
     fn live_space(&mut self) -> bool {
-        if !self.preedit.is_empty() || self.live_leaf().is_some_and(|l| !l.prose) {
+        let composing = !self.preedit_at(Focus::Editor).is_empty();
+        if composing || self.live_leaf().is_some_and(|l| !l.prose) {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -1852,7 +1853,8 @@ impl App {
     /// 未闭合的围栏会使其后的全部内容成为代码，补全之前整篇的外观都会改变。不构成开围栏、
     /// 下方已有闭围栏、有选区、或光标位于代码块等块中时返回 `false`，按普通输入处理。
     fn live_fence_char(&mut self, mark: &str) -> bool {
-        if !self.preedit.is_empty() || self.live_leaf().is_some_and(|l| !l.prose) {
+        let composing = !self.preedit_at(Focus::Editor).is_empty();
+        if composing || self.live_leaf().is_some_and(|l| !l.prose) {
             return false;
         }
         let Some(doc) = self.editor.active() else {

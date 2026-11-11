@@ -354,7 +354,8 @@ pub(in crate::view) fn draw_caret(
     clip: Rect,
 ) -> Rect {
     let p = app.palette;
-    let (cell, tab_width, preedit) = (app.cell, app.editor.active_tab_width(), &app.preedit);
+    let (cell, tab_width) = (app.cell, app.editor.active_tab_width());
+    let preedit = app.preedit_at(Focus::Editor);
 
     if preedit.is_empty() {
         caret_bar(app, frame, x, y, clip);

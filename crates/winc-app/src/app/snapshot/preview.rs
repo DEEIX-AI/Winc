@@ -395,6 +395,17 @@ fn the_caret_paragraph_keeps_its_look() {
     paint(&mut app);
     let shown = full_text(&app).unwrap();
     assert!(shown.contains("粗中文** 和"), "{shown}");
+    // 焦点移到终端后组字文字属于终端：预览不再显示，也不绘制光标、不占用候选窗的位置。
+    app.focus = Focus::Terminal;
+    app.ime.cursor = None;
+    paint(&mut app);
+    let shown = full_text(&app).unwrap();
+    assert!(!shown.contains("中文"), "{shown}");
+    assert!(app.ime.cursor.is_none());
+    app.focus = Focus::Editor;
+    paint(&mut app);
+    assert!(full_text(&app).unwrap().contains("粗中文** 和"));
+    assert!(app.ime.cursor.is_some());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
