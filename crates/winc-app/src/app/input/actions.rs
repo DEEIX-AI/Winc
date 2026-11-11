@@ -78,6 +78,8 @@ impl App {
                     && !self.picker_lists_commands()
                     && !self.picker_lists_symbols()
                     && !self.picker.folders
+                    && self.picker.vim_list.is_none()
+                    && self.picker.vim_list.is_none()
                 {
                     self.close_picker();
                 } else {

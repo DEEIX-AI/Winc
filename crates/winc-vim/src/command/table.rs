@@ -61,21 +61,10 @@ const fn action(keys: &'static str, modes: Modes, action: Action) -> Entry {
     entry(keys, modes, Kind::Action(action))
 }
 
-/// 创建普通与可视模式下之后的阶段实现的命令。
-const fn later(keys: &'static str) -> Entry {
-    action(keys, Modes::NV, Action::Later).planned()
-}
-
 impl Entry {
     /// 返回带一个字符参数的记录。
     const fn with_char(mut self) -> Self {
         self.arg = Arg::Char;
-        self
-    }
-
-    /// 返回状态为 [`Support::Planned`] 的记录。
-    const fn planned(mut self) -> Self {
-        self.support = Support::Planned;
         self
     }
 
@@ -357,19 +346,19 @@ pub static ENTRIES: &[Entry] = &[
     typing("<C-o>", Action::InsertNormal),
     typing("<C-e>", Action::InsertBelow),
     typing("<C-y>", Action::InsertAbove),
-    // 之后的阶段实现的命令。
-    later(":"),
-    later("q").with_char(),
-    later("@").with_char(),
-    later("&"),
-    later("g&"),
-    later("gd"),
-    later("gf"),
-    later("gt"),
-    later("gT"),
-    later("ga"),
-    later("ZZ"),
-    later("ZQ"),
+    // 命令行、宏与交给宿主的命令。
+    action(":", Modes::NV, Action::CommandLine),
+    action("q", Modes::NV, Action::Record).with_char(),
+    action("@", Modes::NV, Action::Play).with_char(),
+    action("&", Modes::N, Action::RepeatSubstitute),
+    action("g&", Modes::N, Action::RepeatSubstituteAll),
+    action("gd", Modes::N, Action::Definition),
+    action("gf", Modes::NV, Action::OpenFile),
+    action("gt", Modes::NV, Action::TabNext),
+    action("gT", Modes::NV, Action::TabPrevious),
+    action("ga", Modes::NV, Action::CharInfo),
+    action("ZZ", Modes::N, Action::WriteQuit),
+    action("ZQ", Modes::N, Action::QuitForce),
     // 不支持的命令。
     action("Q", Modes::NV, Action::ExMode).unsupported(),
     action("K", Modes::NV, Action::Keyword).unsupported(),

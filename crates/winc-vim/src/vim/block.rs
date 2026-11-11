@@ -177,7 +177,7 @@ impl Vim {
         if !by_block {
             return false;
         }
-        if operator != Operator::Yank && Self::blocked(host) {
+        if operator != Operator::Yank && self.blocked(host) {
             return true;
         }
         let block = block_of(host, visual, to_end, self.columns.take());
@@ -344,7 +344,7 @@ impl Vim {
         command: Command,
         append: bool,
     ) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let Some(visual) = self.visual else {

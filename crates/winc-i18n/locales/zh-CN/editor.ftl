@@ -154,6 +154,20 @@ editor-vim-not-found = 找不到模式
 editor-vim-bad-pattern = 模式的第 { $column } 个字符处有无法识别的写法
 editor-vim-no-search = 还没有查找过
 editor-vim-no-mark = 标记 { $name } 没有设置
+editor-vim-bad-command = 没有这条命令
+editor-vim-bad-argument = 命令的参数有误
+editor-vim-bad-range = 范围有误
+editor-vim-no-substitute = 还没有替换过
+editor-vim-no-command = 还没有执行过命令行
+editor-vim-interrupted = 执行的步数或时间超过上限，已中止
+editor-vim-unknown-option = 没有选项 { $name }
+editor-vim-substituted = 替换了 { $count } 处
+editor-vim-substituted-lines = 在 { $lines } 行中替换了 { $count } 处
+editor-vim-matched = { $lines } 行中有 { $count } 处匹配
+editor-vim-more-lines = 多了 { $count } 行
+editor-vim-fewer-lines = 少了 { $count } 行
+editor-vim-no-buffer = 没有这个文档
+editor-vim-no-file = 光标处不是已有文件的路径
 
 ## 复制和粘贴。
 

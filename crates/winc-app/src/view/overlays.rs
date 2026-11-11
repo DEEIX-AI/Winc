@@ -253,9 +253,10 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
                     commit = crate::app::git::log::short(at)
                 ),
             ),
-            // 查找模式的输入条只显示查找的方向。
-            crate::app::PromptKind::VimSearch { forward: true } => ("/", "", String::new()),
-            crate::app::PromptKind::VimSearch { forward: false } => ("?", "", String::new()),
+            // Vim 模式的命令行与查找画在状态栏所在的一行，不经此处。
+            crate::app::PromptKind::VimSearch { .. } | crate::app::PromptKind::VimCommand => {
+                ("", "", String::new())
+            }
         };
         // 右侧的说明最多占一半宽度，保证输入框留有空间。
         let (size, max) = (app.fonts.ui_small, bar.w / 2.0);
@@ -332,6 +333,8 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
         let total = if app_mut.picker.folders {
             t!("workspace-picker-folders-new-window").to_owned()
+        } else if app_mut.picker.vim_list.is_some() {
+            String::new()
         } else if app_mut.picker_lists_commands() {
             t!(
                 "workspace-picker-commands",
@@ -363,6 +366,12 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
     let placeholder = if app.picker.folders {
         t!("workspace-picker-folders-placeholder")
+    } else if let Some(list) = &app.picker.vim_list {
+        match list.kind {
+            winc_vim::Listing::Registers => t!("workspace-picker-vim-registers"),
+            winc_vim::Listing::Marks => t!("workspace-picker-vim-marks"),
+            winc_vim::Listing::Buffers => t!("workspace-picker-vim-buffers"),
+        }
     } else {
         t!("workspace-picker-placeholder")
     };
@@ -393,6 +402,10 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
     if app.picker.folders {
         app.hits.picker_parts = draw_folder_rows(app, frame, &parts);
+        return;
+    }
+    if app.picker.vim_list.is_some() {
+        draw_vim_rows(app, frame, &parts);
         return;
     }
     if app.picker_lists_commands() {
@@ -513,6 +526,52 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
                 let size = app.fonts.ui_small;
                 marked_label(frame, app, size, at, &shown, &in_dir, p.text_dim, clip);
             }
+        }
+    }
+}
+
+/// 绘制 Vim 模式的寄存器、标记或文档的列表：名字，其后是淡色的内容预览。
+fn draw_vim_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
+    let p = app.palette;
+    let list = parts.list;
+    let Some(rows) = app.picker.vim_list.as_ref().map(|shown| &shown.rows) else {
+        return;
+    };
+    if app.picker.hits.is_empty() {
+        let row = Rect::new(list.x, list.y, list.w, list.h.min(PICKER_ROW));
+        let message = t!("workspace-picker-vim-empty");
+        ui_text(
+            frame,
+            app,
+            list.x + PICKER_TEXT_X,
+            row,
+            message,
+            p.text_dim,
+            list,
+        );
+        return;
+    }
+    let scroll = app.picker.scroll;
+    for i in parts.visible(scroll, app.picker.hits.len()) {
+        let Some(item) = rows.get(app.picker.hits[i]) else {
+            continue;
+        };
+        let row = parts.row(i, scroll);
+        let clip = row.intersect(list);
+        draw_pick_row(app, frame, row, i, clip);
+        let x = ui_text(
+            frame,
+            app,
+            row.x + PICKER_TEXT_X,
+            row,
+            &item.label,
+            p.text,
+            clip,
+        );
+        let room = (row.right() - 14.0 - x - 12.0).max(0.0);
+        if room > 20.0 {
+            let text = ellipsize(frame, &item.text, app.fonts.ui_small, room);
+            ui_text_small(frame, app, x + 12.0, row, &text, p.text_dim, clip);
         }
     }
 }

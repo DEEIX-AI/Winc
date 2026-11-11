@@ -240,7 +240,8 @@ impl App {
         let (w, h) = renderer.logical_size();
 
         // 隐藏状态栏时留下和窗口其他三边一样的边距，卡片不贴着窗口底边。
-        let status_height = if self.status_bar_shown() {
+        // Vim 模式的命令行占状态栏所在的一行：状态栏隐藏时临时显示。
+        let status_height = if self.status_bar_shown() || self.vim_prompt_open() {
             STATUS_HEIGHT
         } else {
             ISLAND_MARGIN

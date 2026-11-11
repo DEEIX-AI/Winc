@@ -346,6 +346,86 @@ const VIM: &[Field] = &[
             ))
         },
     },
+    Field {
+        key: "timeoutLen",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-vim-timeout-len");
+            let range = Config::VIM_TIMEOUT_LEN_RANGE;
+            config.vim_timeout_len = read_number(value, name, range, label, problems)
+                .filter(|v| {
+                    let whole = v.fract() == 0.0;
+                    if !whole {
+                        let value = v.to_string();
+                        problems.push(t!("config-not-integer", name = name, value = value));
+                    }
+                    whole
+                })
+                .map(|v| v as u32)
+        },
+        write: |config| config.vim_timeout_len.map(|ms| Json::Number(f64::from(ms))),
+    },
+    Field {
+        key: "leader",
+        read: |config, value, name, problems| {
+            config.vim_leader = match value.as_str() {
+                Some(key) if !key.is_empty() => Some(key.to_owned()),
+                _ => {
+                    problems.push(t!("config-vim-leader-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| config.vim_leader.clone().map(Json::String),
+    },
+    Field {
+        // 数组的每一项是一条映射；写法有误的项逐个报告并忽略。
+        key: "keys",
+        read: |config, value, name, problems| {
+            config.vim_keys.clear();
+            let Some(items) = value.as_array() else {
+                problems.push(t!("config-vim-keys-invalid", name = name));
+                return;
+            };
+            for (index, item) in items.iter().enumerate() {
+                let text = |key: &str| {
+                    let value = item.as_object()?.iter().find(|(name, _)| *name == key)?.1;
+                    value.as_str().filter(|text| !text.is_empty())
+                };
+                let mode = text("mode").and_then(|mode| {
+                    let mut names = VimMapMode::NAMES.iter();
+                    names.find(|(_, name)| *name == mode).map(|(mode, _)| *mode)
+                });
+                match (mode, text("keys"), text("to")) {
+                    (Some(mode), Some(keys), Some(to)) => config.vim_keys.push(VimMapping {
+                        mode,
+                        keys: keys.to_owned(),
+                        to: to.to_owned(),
+                    }),
+                    _ => {
+                        let name = format!("{name}[{index}]");
+                        problems.push(t!("config-vim-keys-invalid", name = name));
+                    }
+                }
+            }
+        },
+        write: |config| {
+            if config.vim_keys.is_empty() {
+                return None;
+            }
+            let item = |mapping: &VimMapping| {
+                let mut names = VimMapMode::NAMES.iter();
+                let mode = names
+                    .find(|(mode, _)| *mode == mapping.mode)
+                    .map_or("normal", |(_, name)| *name);
+                Json::object([
+                    ("mode".to_owned(), Json::String(mode.to_owned())),
+                    ("keys".to_owned(), Json::String(mapping.keys.clone())),
+                    ("to".to_owned(), Json::String(mapping.to.clone())),
+                ])
+            };
+            Some(Json::Array(config.vim_keys.iter().map(item).collect()))
+        },
+    },
 ];
 
 /// `terminal` 一节。

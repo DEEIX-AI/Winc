@@ -183,88 +183,13 @@ impl<H: Host> Env<'_, H> {
     }
 }
 
-/// 求值动作 `movement`；动作无法执行时返回 `None`。
-///
-/// `last_find` 是上一次行内查找，`f`、`F`、`t`、`T` 执行时更新。
-pub(crate) fn evaluate<H: Host>(
-    env: &Env<'_, H>,
-    movement: Movement,
-    last_find: &mut Option<Find>,
-) -> Option<Moved> {
+/// 求值上下移动、按行号与按窗口定位的动作。
+fn vertical<H: Host>(env: &Env<'_, H>, movement: Movement) -> Option<Moved> {
     let text = env.host.text();
     let from = env.from;
     let line = text::line_of(text, from);
-    let start = text.line_start(line);
 
     match movement.motion {
-        Motion::Left => {
-            let mut pos = from;
-            for _ in 0..env.steps() {
-                match text::prev_in_line(text, pos) {
-                    Some(prev) => pos = prev,
-                    None => break,
-                }
-            }
-            // 无法移动时，等待中的操作符仍然执行，范围为空。
-            (pos != from || env.operator.is_some()).then(|| Moved::new(pos, Span::Exclusive))
-        }
-        Motion::Backspace => backspace(env),
-        Motion::Right => right(env, false),
-        Motion::Space => right(env, true),
-        Motion::LineStart => Some(Moved::new(start, Span::Exclusive)),
-        Motion::FirstNonBlank => Some(Moved::new(
-            text::first_non_blank(text, line),
-            Span::Exclusive,
-        )),
-        Motion::LineEnd => {
-            let target = env.line_by(line, env.times() - 1, true)?;
-            Some(Moved {
-                want: WantUpdate::Set(Want::End),
-                ..Moved::new(env.line_limit(target), Span::Inclusive)
-            })
-        }
-        Motion::LastNonBlank => {
-            let target = env.line_by(line, env.times() - 1, true)?;
-            let mut pos = text::last_char(text, target);
-            let first = text.line_start(target);
-            while pos > first && text.char_at(pos).is_some_and(text::is_blank) {
-                pos = text::prev_in_line(text, pos).unwrap_or(first);
-            }
-            Some(Moved::new(pos, Span::Inclusive))
-        }
-        Motion::Column => {
-            let cell = env.times() - 1;
-            Some(Moved {
-                want: WantUpdate::Set(Want::Cell(cell)),
-                ..Moved::new(env.at_want(line, Want::Cell(cell)), Span::Exclusive)
-            })
-        }
-        Motion::DisplayStart
-        | Motion::DisplayFirstNonBlank
-        | Motion::DisplayEnd
-        | Motion::DisplayLastNonBlank
-        | Motion::DisplayMiddle => display(env, movement.motion),
-        Motion::FindForward | Motion::FindBackward | Motion::TillForward | Motion::TillBackward => {
-            let target = movement.arg?;
-            let find = Find {
-                motion: movement.motion,
-                target,
-            };
-            *last_find = Some(find);
-            find_char(env, find, false)
-        }
-        Motion::RepeatFind | Motion::RepeatFindReverse => {
-            let mut find = (*last_find)?;
-            if movement.motion == Motion::RepeatFindReverse {
-                find.motion = match find.motion {
-                    Motion::FindForward => Motion::FindBackward,
-                    Motion::FindBackward => Motion::FindForward,
-                    Motion::TillForward => Motion::TillBackward,
-                    _ => Motion::TillForward,
-                };
-            }
-            find_char(env, find, true)
-        }
         Motion::Up | Motion::Down => {
             let target = env.line_by(line, env.times(), movement.motion == Motion::Down)?;
             Some(Moved {
@@ -372,6 +297,106 @@ pub(crate) fn evaluate<H: Host>(
                 Span::Linewise,
             ))
         }
+        _ => None,
+    }
+}
+
+/// 求值动作 `movement`；动作无法执行时返回 `None`。
+///
+/// `last_find` 是上一次行内查找，`f`、`F`、`t`、`T` 执行时更新。
+pub(crate) fn evaluate<H: Host>(
+    env: &Env<'_, H>,
+    movement: Movement,
+    last_find: &mut Option<Find>,
+) -> Option<Moved> {
+    let text = env.host.text();
+    let from = env.from;
+    let line = text::line_of(text, from);
+    let start = text.line_start(line);
+
+    match movement.motion {
+        Motion::Left => {
+            let mut pos = from;
+            for _ in 0..env.steps() {
+                match text::prev_in_line(text, pos) {
+                    Some(prev) => pos = prev,
+                    None => break,
+                }
+            }
+            // 无法移动时，等待中的操作符仍然执行，范围为空。
+            (pos != from || env.operator.is_some()).then(|| Moved::new(pos, Span::Exclusive))
+        }
+        Motion::Backspace => backspace(env),
+        Motion::Right => right(env, false),
+        Motion::Space => right(env, true),
+        Motion::LineStart => Some(Moved::new(start, Span::Exclusive)),
+        Motion::FirstNonBlank => Some(Moved::new(
+            text::first_non_blank(text, line),
+            Span::Exclusive,
+        )),
+        Motion::LineEnd => {
+            let target = env.line_by(line, env.times() - 1, true)?;
+            Some(Moved {
+                want: WantUpdate::Set(Want::End),
+                ..Moved::new(env.line_limit(target), Span::Inclusive)
+            })
+        }
+        Motion::LastNonBlank => {
+            let target = env.line_by(line, env.times() - 1, true)?;
+            let mut pos = text::last_char(text, target);
+            let first = text.line_start(target);
+            while pos > first && text.char_at(pos).is_some_and(text::is_blank) {
+                pos = text::prev_in_line(text, pos).unwrap_or(first);
+            }
+            Some(Moved::new(pos, Span::Inclusive))
+        }
+        Motion::Column => {
+            let cell = env.times() - 1;
+            Some(Moved {
+                want: WantUpdate::Set(Want::Cell(cell)),
+                ..Moved::new(env.at_want(line, Want::Cell(cell)), Span::Exclusive)
+            })
+        }
+        Motion::DisplayStart
+        | Motion::DisplayFirstNonBlank
+        | Motion::DisplayEnd
+        | Motion::DisplayLastNonBlank
+        | Motion::DisplayMiddle => display(env, movement.motion),
+        Motion::FindForward | Motion::FindBackward | Motion::TillForward | Motion::TillBackward => {
+            let target = movement.arg?;
+            let find = Find {
+                motion: movement.motion,
+                target,
+            };
+            *last_find = Some(find);
+            find_char(env, find, false)
+        }
+        Motion::RepeatFind | Motion::RepeatFindReverse => {
+            let mut find = (*last_find)?;
+            if movement.motion == Motion::RepeatFindReverse {
+                find.motion = match find.motion {
+                    Motion::FindForward => Motion::FindBackward,
+                    Motion::FindBackward => Motion::FindForward,
+                    Motion::TillForward => Motion::TillBackward,
+                    _ => Motion::TillForward,
+                };
+            }
+            find_char(env, find, true)
+        }
+        Motion::Up
+        | Motion::Down
+        | Motion::DisplayUp
+        | Motion::DisplayDown
+        | Motion::LineUp
+        | Motion::LineDown
+        | Motion::LineHere
+        | Motion::FirstLine
+        | Motion::LastLine
+        | Motion::LastLineEnd
+        | Motion::Percent
+        | Motion::WindowTop
+        | Motion::WindowMiddle
+        | Motion::WindowBottom => vertical(env, movement),
         Motion::WordForward | Motion::BigWordForward => {
             word::forward(env, movement.motion == Motion::BigWordForward)
         }

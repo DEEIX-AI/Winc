@@ -4,6 +4,7 @@
 use winc_core::Selection;
 use winc_editor::Command;
 use winc_vim::{Code, Mode, Named, notation};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::whitespace::changed;
 use super::*;
@@ -245,8 +246,8 @@ fn keys_without_a_meaning_never_become_text() {
     assert!(!app.vim_press(notation::parse("<F5>")[0]));
     assert_eq!(text(&app), "abc\n");
 
-    // 尚未实现的命令只在状态栏提示。
-    keys(&mut app, ":");
+    // 不支持的命令只在状态栏提示。
+    keys(&mut app, "Q");
     assert_eq!(
         app.status.message.as_deref(),
         Some("Vim 模式尚不支持此命令")
@@ -380,7 +381,7 @@ fn searching_uses_the_prompt_previews_the_match_and_keeps_a_history() {
     // 再次打开时可以翻出上一次的模式；放弃输入时光标回到原处，高亮取消。
     keys(&mut app, "?");
     assert_eq!(app.prompt_kind, PromptKind::VimSearch { forward: false });
-    app.edit_field(|field| field.recall(true));
+    assert!(app.vim_prompt_key(&Key::Named(NamedKey::ArrowUp), ""));
     assert_eq!(app.goto_input.as_ref().unwrap().text(), "two");
     paint(&mut app);
     assert_eq!(head(&app), 14);
@@ -620,5 +621,242 @@ fn the_clipboard_setting_decides_what_reaches_the_system_clipboard() {
     app.set_vim_clipboard(winc_config::VimClipboard::Always);
     keys(&mut app, "x");
     assert_eq!(app.copied.as_deref(), Some("o"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 在命令行的输入条中输入 `line` 并回车。
+fn ex(app: &mut App, line: &str) {
+    keys(app, ":");
+    app.edit_field(|field| field.insert(line));
+    app.submit_prompt();
+}
+
+#[test]
+fn the_command_line_sits_in_the_status_row_with_history_and_completion() {
+    let (mut app, dir) = vim_app("vim-command", "one two\nthree\nfour\nfive\n");
+    keys(&mut app, ":");
+    assert_eq!(
+        (app.focus, app.prompt_kind.clone()),
+        (Focus::Prompt, PromptKind::VimCommand)
+    );
+    // 输入条占状态栏所在的一行；状态栏隐藏时临时显示。
+    assert_eq!(app.prompt_bar(), app.layout.status);
+    let shown = app.layout.status.h;
+    app.close_prompt();
+    app.focus = Focus::Editor;
+    app.vim_prompt_cancel();
+    app.config.status_bar = Some(false);
+    app.relayout();
+    assert!(app.layout.status.h < shown);
+    keys(&mut app, ":");
+    assert_eq!(app.layout.status.h, shown);
+    paint(&mut app);
+    app.edit_field(|field| field.insert("2d"));
+    app.submit_prompt();
+    assert_eq!(
+        (app.focus, text(&app).as_str()),
+        (Focus::Editor, "one two\nfour\nfive\n")
+    );
+    assert!(app.layout.status.h < shown);
+    app.config.status_bar = None;
+    app.relayout();
+
+    // 带次数与可视模式下预填范围。
+    keys(&mut app, "gg2:");
+    assert_eq!(app.goto_input.as_ref().unwrap().text(), ".,.+1");
+    app.edit_field(|field| field.insert(">"));
+    app.submit_prompt();
+    assert_eq!(text(&app), "    one two\n    four\nfive\n");
+
+    // 上下键按已输入的前缀翻阅历史。
+    ex(&mut app, "set ic");
+    keys(&mut app, ":");
+    let up = Key::Named(NamedKey::ArrowUp);
+    let down = Key::Named(NamedKey::ArrowDown);
+    let line = |app: &App| app.goto_input.as_ref().unwrap().text().to_owned();
+    assert!(app.vim_prompt_key(&up, ""));
+    assert_eq!(line(&app), "set ic");
+    assert!(app.vim_prompt_key(&up, ""));
+    assert_eq!(line(&app), ".,.+1>");
+    assert!(app.vim_prompt_key(&down, "") && app.vim_prompt_key(&down, ""));
+    assert_eq!(line(&app), "");
+    app.edit_field(|field| field.insert("2"));
+    assert!(!app.vim_prompt_key(&Key::Character("2".into()), "2"));
+    assert!(app.vim_prompt_key(&up, ""));
+    assert_eq!(line(&app), "2d");
+    assert!(app.vim_prompt_key(&up, ""));
+    assert_eq!(line(&app), "2d");
+
+    // `Tab` 补全命令名与选项名，连续按下时轮换。
+    let tab = Key::Named(NamedKey::Tab);
+    app.goto_input.as_mut().unwrap().set_text("");
+    assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
+    app.edit_field(|field| field.insert("tabn"));
+    assert!(app.vim_prompt_key(&tab, ""));
+    assert_eq!(line(&app), "tabnew");
+    assert!(app.vim_prompt_key(&tab, ""));
+    assert_eq!(line(&app), "tabnext");
+    app.goto_input.as_mut().unwrap().set_text("");
+    assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
+    app.edit_field(|field| field.insert("set sm"));
+    assert!(app.vim_prompt_key(&tab, ""));
+    assert_eq!(line(&app), "set smartcase");
+
+    // `Ctrl-R` 之后是寄存器名，`Ctrl-R Ctrl-W` 是光标处的词。
+    app.goto_input.as_mut().unwrap().set_text("");
+    assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
+    app.modifiers = ModifiersState::CONTROL;
+    assert!(app.vim_prompt_key(&Key::Character("r".into()), "r"));
+    assert!(app.vim_prompt_key(&Key::Character("w".into()), "w"));
+    app.modifiers = ModifiersState::empty();
+    assert_eq!(line(&app), "four");
+    app.close_prompt();
+    app.focus = Focus::Editor;
+    app.vim_prompt_cancel();
+    assert_eq!(app.vim_mode(), Some(Mode::Normal));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn file_and_tab_commands_run_in_the_application() {
+    let (mut app, dir) = vim_app("vim-files", "one\ntwo\n");
+    let other = dir.join("other.txt");
+    std::fs::write(&other, "other\n").unwrap();
+    keys(&mut app, "x");
+    ex(&mut app, "w");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("vim.txt")).unwrap(),
+        "ne\ntwo\n"
+    );
+
+    ex(&mut app, "e other.txt");
+    assert_eq!(app.editor.documents.len(), 2);
+    assert_eq!(text(&app), "other\n");
+    ex(&mut app, "bn");
+    assert_eq!(text(&app), "ne\ntwo\n");
+    keys(&mut app, "gt");
+    assert_eq!(text(&app), "other\n");
+    ex(&mut app, "b 1");
+    assert_eq!(text(&app), "ne\ntwo\n");
+    ex(&mut app, "b 9");
+    assert_eq!(app.status.message.as_deref(), Some("没有这个文档"));
+
+    // `gf` 打开光标处的路径；`:q!` 丢弃未保存的修改，`ZZ` 保存并关闭。
+    keys(&mut app, "ccsee other.txt<Esc>$gf");
+    assert_eq!(text(&app), "other\n");
+    keys(&mut app, "gT");
+    ex(&mut app, "q!");
+    assert_eq!(
+        (app.editor.documents.len(), text(&app).as_str()),
+        (1, "other\n")
+    );
+    keys(&mut app, "x");
+    keys(&mut app, "ZZ");
+    assert_eq!(std::fs::read_to_string(&other).unwrap(), "ther\n");
+    assert_eq!(app.editor.documents.len(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lists_options_and_highlighting_follow_the_command_line() {
+    let (mut app, dir) = vim_app("vim-lists", "one two\nthree two\n");
+    keys(&mut app, "yiwjma");
+    ex(&mut app, "reg");
+    assert!(app.picker.open && app.picker.vim_list.is_some());
+    paint(&mut app);
+    // 输入的文字筛选各行；回车粘贴选中的寄存器。
+    app.picker.input.set_text("\"0");
+    app.picker_refresh();
+    assert_eq!(app.picker.hits.len(), 1);
+    app.picker_accept();
+    assert!(!app.picker.open && app.picker.vim_list.is_none());
+    assert_eq!(text(&app), "one two\ntonehree two\n");
+    keys(&mut app, "ugg");
+    ex(&mut app, "marks");
+    app.picker.input.set_text("'a");
+    app.picker_refresh();
+    app.picker_accept();
+    assert_eq!(line(&app), 1);
+    ex(&mut app, "ls");
+    assert_eq!(
+        app.picker.vim_list.as_ref().map(|list| list.rows.len()),
+        Some(1)
+    );
+    app.close_picker();
+
+    // 选项：行号、制表符宽度与缩进由应用保存，其余由 Vim 层保存。
+    ex(&mut app, "set nonu ts=3 et sw=2");
+    assert_eq!(app.config.line_numbers, Some(false));
+    let doc = app.editor.active().unwrap();
+    assert_eq!(
+        (doc.tab_width(4), doc.indent()),
+        (3, winc_core::Indent::Spaces(2))
+    );
+    ex(&mut app, "set ts? nu?");
+    assert_eq!(app.status.message.as_deref(), Some("nonumber"));
+    ex(&mut app, "set rnu");
+    assert_eq!(app.status.message.as_deref(), Some("命令的参数有误"));
+
+    // 查找的高亮可以用 `:noh` 取消，也可以整体关闭。
+    keys(&mut app, "gg*");
+    assert!(app.vim_highlights());
+    ex(&mut app, "noh");
+    assert!(!app.vim_highlights());
+    keys(&mut app, "n");
+    assert!(app.vim_highlights());
+    ex(&mut app, "set nohls");
+    assert!(!app.vim_highlights());
+    ex(&mut app, "set hls");
+
+    // 逐处确认与记录宏显示在状态栏上。
+    ex(&mut app, "%s/two/2/gc");
+    assert_eq!(app.vim_status().as_deref(), Some("替换为 2？（y/n/a/q/l）"));
+    keys(&mut app, "yq");
+    assert_eq!(text(&app), "one 2\nthree two\n");
+    keys(&mut app, "qa");
+    assert_eq!(app.vim_status().as_deref(), Some("记录 @a"));
+    keys(&mut app, "q");
+    assert_eq!(app.vim_status(), None);
+    ex(&mut app, "zzz");
+    assert_eq!(app.status.message.as_deref(), Some("没有这条命令"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mappings_come_from_the_configuration_and_time_out() {
+    use winc_config::{VimMapMode, VimMapping};
+    let (mut app, dir) = vim_app("vim-maps", "one two\nthree\n");
+    let mapping = |mode, keys: &str, to: &str| VimMapping {
+        mode,
+        keys: keys.to_owned(),
+        to: to.to_owned(),
+    };
+    app.config.vim_keys = vec![
+        mapping(VimMapMode::Insert, "jk", "<Esc>"),
+        mapping(VimMapMode::Normal, "<Leader>d", "dd"),
+        mapping(VimMapMode::Normal, "<Leader>", "j"),
+        mapping(VimMapMode::Normal, "gs", "Toggle Word Wrap"),
+    ];
+    app.config.vim_leader = Some(",".to_owned());
+    app.config.vim_timeout_len = Some(0);
+    app.vim_apply_config();
+
+    keys(&mut app, "ijk");
+    assert_eq!(
+        (app.vim_mode(), text(&app).as_str()),
+        (Some(Mode::Normal), "one two\nthree\n")
+    );
+    // 等待后续按键超时之后执行较短的一条映射。
+    keys(&mut app, ",");
+    assert_eq!(line(&app), 0);
+    let wake = app.tick();
+    assert!(wake.is_none() || line(&app) == 1);
+    assert_eq!(line(&app), 1);
+    keys(&mut app, ",d");
+    assert_eq!(text(&app), "one two\n");
+    // 右侧可以是命令的英文名。
+    let wrap = app.config.word_wrap == Some(true);
+    keys(&mut app, "gs");
+    assert_eq!(app.config.word_wrap == Some(true), !wrap);
     let _ = std::fs::remove_dir_all(&dir);
 }

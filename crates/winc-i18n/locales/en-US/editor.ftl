@@ -175,6 +175,20 @@ editor-vim-not-found = Pattern not found
 editor-vim-bad-pattern = Unsupported item at character { $column } of the pattern
 editor-vim-no-search = No previous search
 editor-vim-no-mark = Mark { $name } is not set
+editor-vim-bad-command = Not an editor command
+editor-vim-bad-argument = Invalid argument
+editor-vim-bad-range = Invalid range
+editor-vim-no-substitute = No previous substitute
+editor-vim-no-command = No previous command line
+editor-vim-interrupted = Stopped: too many steps or too much time
+editor-vim-unknown-option = Unknown option { $name }
+editor-vim-substituted = { $count } substitutions
+editor-vim-substituted-lines = { $count } substitutions on { $lines } lines
+editor-vim-matched = { $count } matches on { $lines } lines
+editor-vim-more-lines = { $count } more lines
+editor-vim-fewer-lines = { $count } fewer lines
+editor-vim-no-buffer = No such document
+editor-vim-no-file = No file at that path under the cursor
 
 ## Copy and paste.
 

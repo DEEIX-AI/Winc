@@ -116,7 +116,7 @@ fn keys_without_a_meaning_are_swallowed_or_passed_on() {
 #[test]
 fn unsupported_commands_only_show_a_message() {
     let mut s = Session::new("one (two) three");
-    for keys in ["Q", "K", "U", ":", "qa", "@a", "&", "gd", "gqq", "ZZ"] {
+    for keys in ["Q", "K", "U", "gqq", "zd"] {
         s.host.messages.clear();
         s.keys(keys);
         assert_eq!(s.host.messages, [Message::Unsupported], "{keys}");

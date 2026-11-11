@@ -9,8 +9,8 @@ use std::ops::Range;
 use ropey::Rope;
 use winc_core::edit::{self, EditKind};
 use winc_core::{Change, History, Lines, Selection, Transaction, movement};
-use winc_vim::{Code, Fold, Host, Indentation, Input, Key, Message, Mode, Named, Query, Scroll};
-use winc_vim::{Shared, Vim, notation};
+use winc_vim::{AppCommand, Code, Fold, Host, HostOption, Indentation, Input, Key, Message, Mode};
+use winc_vim::{Named, Query, Scroll, Shared, Vim, notation};
 
 /// 窗口的高度（行），与无界面录制时相同。
 const HEIGHT: usize = 23;
@@ -57,8 +57,14 @@ pub struct TestHost {
     pub top: Option<usize>,
     /// 可折叠的区域：首行与末行。
     pub foldable: Vec<(usize, usize)>,
-    /// 查找模式的输入框中已输入的文本。
-    pub line: String,
+    /// 撤销与重做的次数。
+    pub undone: usize,
+    /// 被跟踪的位置，从小到大，随修改移动。
+    pub tracked: Vec<usize>,
+    /// 收到的交给宿主执行的命令。
+    pub apps: Vec<AppCommand>,
+    /// 由宿主保存的选项的值。
+    pub options: Vec<(HostOption, usize)>,
     /// 收到的格式化请求：首行与末行。
     pub formatted: Vec<(usize, usize)>,
     /// 光标与窗口上下边缘之间保留的行数。
@@ -92,7 +98,10 @@ impl TestHost {
             jump_index: 0,
             top: None,
             foldable: Vec::new(),
-            line: String::new(),
+            undone: 0,
+            tracked: Vec::new(),
+            apps: Vec::new(),
+            options: Vec::new(),
             formatted: Vec::new(),
             margin: 0,
         }
@@ -108,10 +117,13 @@ impl TestHost {
                 let (from, to) = (change.start, change.start + change.removed.chars().count());
                 let line = rope.line_of(pos);
                 let (start, end) = (rope.line_start(line), rope.line_end(line));
-                from <= start && end <= to && (from < start || end < to)
+                // 位于删除范围终点的位置仍然有效。
+                let inside = from <= pos && pos < to;
+                inside && from <= start && end <= to && (from < start || end < to)
             })
         };
         self.marks.retain(|_, pos| !removed_line(*pos));
+        self.tracked.retain(|pos| !removed_line(*pos));
         transaction.apply(&mut self.rope);
         let moved =
             |pos: usize| edit::shift_selection(Selection::point(pos), &transaction.changes).head;
@@ -119,6 +131,9 @@ impl TestHost {
             *pos = moved(*pos);
         }
         for pos in &mut self.changes {
+            *pos = moved(*pos);
+        }
+        for pos in &mut self.tracked {
             *pos = moved(*pos);
         }
         for other in &mut self.others {
@@ -359,6 +374,7 @@ impl Host for TestHost {
     }
 
     fn undo(&mut self) -> bool {
+        self.undone += 1;
         self.others.clear();
         match self.history.undo(&mut self.rope) {
             Some(restored) => {
@@ -370,6 +386,7 @@ impl Host for TestHost {
     }
 
     fn redo(&mut self) -> bool {
+        self.undone += 1;
         self.others.clear();
         match self.history.redo(&mut self.rope) {
             Some(restored) => {
@@ -598,6 +615,73 @@ impl Host for TestHost {
         self.messages.push(message);
     }
 
+    fn find_groups(&mut self, query: &Query, from: usize) -> Option<Vec<Option<(usize, usize)>>> {
+        let text = self.rope.to_string();
+        let from = from.min(self.rope.len_chars());
+        let line_end = self
+            .rope
+            .char_to_byte(self.rope.line_end(self.rope.line_of(from)));
+        let start = self.rope.char_to_byte(from);
+        let plain = regex::RegexBuilder::new(&query.regex)
+            .case_insensitive(query.ignore_case)
+            .multi_line(true)
+            .build();
+        let groups: Vec<Option<(usize, usize)>> = match plain {
+            Ok(regex) => {
+                let captures = regex.captures_at(&text, start)?;
+                (captures.iter())
+                    .map(|group| group.map(|m| (m.start(), m.end())))
+                    .collect()
+            }
+            Err(_) => {
+                let regex = fancy_regex::RegexBuilder::new(&query.regex)
+                    .case_insensitive(query.ignore_case)
+                    .multi_line(true)
+                    .build()
+                    .ok()?;
+                let captures = regex.captures_from_pos(&text, start).ok()??;
+                (captures.iter())
+                    .map(|group| group.map(|m| (m.start(), m.end())))
+                    .collect()
+            }
+        };
+        let whole = groups.first().copied().flatten()?;
+        if whole.0 > line_end {
+            return None;
+        }
+        let chars = |byte: usize| self.rope.byte_to_char(byte);
+        Some(
+            groups
+                .into_iter()
+                .map(|group| group.map(|(a, b)| (chars(a), chars(b))))
+                .collect(),
+        )
+    }
+
+    fn track(&mut self, positions: Vec<usize>) {
+        self.tracked = positions;
+    }
+
+    fn next_tracked(&mut self) -> Option<usize> {
+        (!self.tracked.is_empty()).then(|| self.tracked.remove(0))
+    }
+
+    fn option(&self, option: HostOption) -> Option<usize> {
+        let stored = self.options.iter().find(|(name, _)| *name == option);
+        Some(stored.map_or(0, |(_, value)| *value))
+    }
+
+    fn set_option(&mut self, option: HostOption, value: usize) -> bool {
+        self.options.retain(|(name, _)| *name != option);
+        self.options.push((option, value));
+        true
+    }
+
+    fn app(&mut self, command: AppCommand) -> bool {
+        self.apps.push(command);
+        true
+    }
+
     fn toggle_comment(&mut self, first: usize, last: usize) -> bool {
         self.commented.push((first, last));
         true
@@ -654,37 +738,10 @@ impl Host for TestHost {
 
 /// 把按键交给 Vim 层；插入模式下未被处理的按键按键入的文字执行并记录。
 ///
-/// 状态机等待输入查找的模式时，按键进入 [`TestHost::line`]：回车提交，`Esc` 放弃。
+/// 状态机等待输入命令行或查找的模式时，按键交给状态机自带的行内输入。
 pub fn press(vim: &mut Vim, shared: &mut Shared, host: &mut TestHost, key: Key) {
     if vim.prompt().is_some() {
-        match key.code() {
-            Code::Named(Named::Enter) => {
-                let line = std::mem::take(&mut host.line);
-                vim.prompt_submit(shared, host, &line);
-            }
-            Code::Named(Named::Esc) => {
-                host.line.clear();
-                vim.prompt_cancel(host);
-            }
-            Code::Named(Named::Backspace) => {
-                if host.line.pop().is_none() {
-                    vim.prompt_cancel(host);
-                } else {
-                    let line = host.line.clone();
-                    vim.prompt_preview(shared, host, &line);
-                }
-            }
-            Code::Char(c) if key.as_char().is_some() => {
-                host.line.push(c);
-                let line = host.line.clone();
-                vim.prompt_preview(shared, host, &line);
-            }
-            Code::Char('c') => {
-                host.line.clear();
-                vim.prompt_cancel(host);
-            }
-            _ => {}
-        }
+        vim.prompt_key(shared, host, key);
         return;
     }
     if vim.key(shared, host, key) || vim.mode() != Mode::Insert {

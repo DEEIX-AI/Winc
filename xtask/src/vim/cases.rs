@@ -5,8 +5,10 @@
 use winc_vim::fixture::{Case, File, Position};
 use winc_vim::{Key, notation};
 
+mod commands;
 mod navigation;
 
+use commands::{commands, macros};
 use navigation::{marks, objects, searches, views};
 
 /// 一份初始文本及其上的若干光标位置（行号，字符列）。
@@ -219,8 +221,11 @@ const FINDS: &[&str] = &[
 /// 对照测试核对结果确实不同。
 ///
 /// 这些命令没有改动文本，`vim` 仍为它们记录一个撤销步骤：`x` 在空行上、`3J` 在最后一行上。
-/// 之后的撤销因此少撤回一步，或只把光标移回原处。
+/// 之后的撤销因此少撤回一步，或只把光标移回原处。最后两个是替换：`vim` 的 `\w\+` 在这里不匹配
+/// 带组合字符的字母。
 const KNOWN: &[(&str, &str, (usize, usize))] = &[
+    (r":s/\w\+/\u&/g<CR>", "foo bar.baz  qux_1 (x) end", (4, 0)),
+    (r":s/\w\+/\u&/g<CR>", "foo bar.baz  qux_1 (x) end", (4, 15)),
     ("xxu", "fn main() {", (3, 0)),
     ("xxx2u", "fn main() {", (3, 0)),
     ("3Ju", "foo bar.baz  qux_1 (x) end", (4, 13)),
@@ -335,6 +340,8 @@ pub(super) fn generated(full: bool) -> Vec<Group> {
         typing(full),
         numbers(full),
         blocks(full),
+        commands(full),
+        macros(full),
     ]
 }
 

@@ -100,7 +100,7 @@ fn plain(action: Action) -> Command {
 impl Vim {
     /// 执行进入插入模式的命令 `action`。
     pub(super) fn start_insert(&mut self, host: &mut impl Host, command: Command, action: Action) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let text = host.text();
@@ -140,7 +140,7 @@ impl Vim {
 
     /// `R`：进入替换模式。
     pub(super) fn start_replace(&mut self, host: &mut impl Host, command: Command) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let cursor = self.caret(host);
@@ -233,7 +233,7 @@ impl Vim {
             }
             Outcome::Pending | Outcome::Cancelled | Outcome::Invalid => true,
             Outcome::Unsupported => {
-                host.message(Message::Unsupported);
+                self.error(host, Message::Unsupported);
                 true
             }
             Outcome::Unbound => false,
@@ -257,7 +257,7 @@ impl Vim {
             Action::InsertOutdent => self.play(host, &Input::Outdent),
             Action::InsertRegister => {
                 let Some(content) = Self::read_register(shared, host, arg) else {
-                    host.message(Message::EmptyRegister(arg.unwrap_or('"')));
+                    self.error(host, Message::EmptyRegister(arg.unwrap_or('"')));
                     return;
                 };
                 let mut text = content.text.replace('\n', host.line_ending());
@@ -349,7 +349,7 @@ impl Vim {
                 inserted: c.to_string(),
             };
             if !host.apply(vec![change], pos, pos + 1) {
-                host.message(Message::TooLarge);
+                self.error(host, Message::TooLarge);
                 return;
             }
             host.set_selection(Selection::point(pos + 1));

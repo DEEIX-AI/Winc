@@ -6,20 +6,32 @@
 
 mod block;
 mod edit;
+mod ex;
+mod global;
 mod insert;
+mod macros;
+mod map;
 mod marks;
 mod multi;
 mod number;
 mod operate;
+mod options;
 mod search;
+mod sort;
+mod substitute;
 mod view;
 
+pub use map::{Mapped, Mapping};
+pub use options::Options;
+pub(crate) use options::option_names;
 pub use search::Prompt;
+
+use std::collections::VecDeque;
 
 use winc_core::{Change, Lines, Selection, movement};
 
 use crate::command::{Action, Mode, Motion, Operator, TextObject};
-use crate::host::{Host, Input, Message};
+use crate::host::{AppCommand, Host, Input, Message};
 use crate::key::{Code, Key, Mods, Named};
 use crate::motion::{self, Env, Find, Moved, Want, WantUpdate};
 use crate::object::{self, At, Becomes};
@@ -31,6 +43,10 @@ use crate::text;
 ///
 /// 取自调参：16 MiB 远大于正常使用时生成的文本，且不会使撤销栈一次占满上限。
 pub(crate) const MAX_OUTPUT: usize = 16 << 20;
+
+/// 命令已经失败并提示过。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Failed;
 
 /// 可视模式的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +119,20 @@ pub struct Shared {
     /// 最近一次由多个光标写入寄存器的各段文本；寄存器的内容仍是这些文本时，同样个数的光标
     /// 粘贴时逐个对应。
     pieces: Option<Vec<String>>,
+    /// `:set` 可以修改的选项。
+    pub options: Options,
+    /// 命令行的历史，从旧到新排列。
+    commands: Vec<String>,
+    /// 上一次执行的命令行。
+    last_command: Option<String>,
+    /// 上一次替换。
+    substitute: Option<substitute::Substitution>,
+    /// 上一次回放的寄存器名。
+    last_macro: Option<char>,
+    /// 用户的映射。
+    mappings: Vec<Mapping>,
+    /// 最近一次按键中是否有命令失败；回放按键时据此中止。
+    failed: bool,
 }
 
 /// 一个窗口的 Vim 状态。
@@ -142,6 +172,32 @@ pub struct Vim {
     replayed: Option<Extent>,
     /// 宿主中主选区之外的选区是否由状态机给出（按块的选区）；下一次设置选区时收回。
     owned: bool,
+    /// 是否正在等待宿主输入命令行。
+    cmdline: bool,
+    /// 等待输入期间由状态机自行处理按键时已输入的一行；等待命令行时开头是预填的范围。
+    line: String,
+    /// 行内输入的下一个按键是否按字面加入。
+    line_literal: bool,
+    /// 进行中的宏记录。
+    recording: Option<macros::Recording>,
+    /// 等待回放的按键，以及各按键是否经过用户的映射。
+    typeahead: VecDeque<(Key, bool)>,
+    /// 回放的预算；最外层的一次按键结束时清除。
+    budget: Option<macros::Budget>,
+    /// 回放的上限：按键数与时间。
+    limits: (usize, std::time::Duration),
+    /// 回放是否已因超过预算而中止。
+    aborted: bool,
+    /// 最近一次按键中是否有命令失败。
+    failed: bool,
+    /// 进行中的逐处确认。
+    confirm: Option<substitute::Confirm>,
+    /// 是否正在逐行执行 `:g` 的命令。
+    in_global: bool,
+    /// 命令行中正在执行的是否为以 `|` 分隔的最后一条命令。
+    ex_last: bool,
+    /// 等待映射的后续按键期间保存的按键，以及各按键是否已显示在文本里。
+    mapped: Vec<(Key, bool)>,
 }
 
 impl Default for Vim {
@@ -164,6 +220,19 @@ impl Default for Vim {
             columns: None,
             replayed: None,
             owned: false,
+            cmdline: false,
+            line: String::new(),
+            line_literal: false,
+            recording: None,
+            typeahead: VecDeque::new(),
+            budget: None,
+            limits: (macros::MAX_STEPS, macros::MAX_TIME),
+            aborted: false,
+            failed: false,
+            confirm: None,
+            in_global: false,
+            ex_last: true,
+            mapped: Vec::new(),
         }
     }
 }
@@ -210,11 +279,54 @@ impl Vim {
 
     /// 处理按键 `key`，返回是否已由 Vim 层处理；返回假时按键交给宿主的其他部分。
     ///
-    /// 普通与可视模式下，没有定义的可见字符同样算作已处理，不会成为输入的文字。
+    /// 普通与可视模式下，没有定义的可见字符同样算作已处理，不会成为输入的文字。按键先经过
+    /// 用户的映射；命令引发的回放在返回之前执行完毕。
     pub fn key(&mut self, shared: &mut Shared, host: &mut impl Host, key: Key) -> bool {
+        self.begin_key(shared);
+        self.record(key);
+        let handled = self.key_mapped(shared, host, key);
+        self.finish_key(shared, host);
+        handled
+    }
+
+    /// 最外层的一次按键开始时清除失败与中止的状态。
+    fn begin_key(&mut self, shared: &mut Shared) {
+        self.failed = false;
+        self.aborted = false;
+        shared.failed = false;
+    }
+
+    /// 最外层的一次按键结束时回放队列中的按键，并清除预算。
+    ///
+    /// 一次回放的全部修改属于一个撤销单元。
+    fn finish_key(&mut self, shared: &mut Shared, host: &mut impl Host) {
+        if !self.typeahead.is_empty() {
+            host.begin_group();
+            self.drain(shared, host, 0);
+            host.end_group();
+        }
+        self.budget = None;
+    }
+
+    /// 提示出错的 `message`，并记下命令已失败。
+    fn error(&mut self, host: &mut impl Host, message: Message) {
+        self.failed = true;
+        host.message(message);
+    }
+
+    /// 处理不经过映射的按键 `key`，返回是否已由 Vim 层处理。
+    fn key_raw(&mut self, shared: &mut Shared, host: &mut impl Host, key: Key) -> bool {
+        if self.confirm.is_some() {
+            self.confirm_key(host, key);
+            self.resume_if_done(host);
+            return true;
+        }
         // 等待输入期间按键由宿主的输入框处理；收到按键说明输入已被放弃。
         self.prompt_cancel(host);
         self.sync(host);
+        if self.recording.is_some() && self.stop_recording(shared, key) {
+            return true;
+        }
         if self.mode == Mode::Insert {
             return self.insert_key(shared, host, key);
         }
@@ -225,23 +337,39 @@ impl Vim {
                 true
             }
             Outcome::Unsupported => {
-                host.message(Message::Unsupported);
+                self.error(host, Message::Unsupported);
                 true
             }
-            Outcome::Cancelled | Outcome::Invalid => true,
-            Outcome::Unbound => swallowed(key),
+            Outcome::Cancelled => true,
+            Outcome::Invalid => {
+                self.failed = true;
+                true
+            }
+            Outcome::Unbound => {
+                self.failed = true;
+                swallowed(key)
+            }
         };
-        // 插入模式中执行的一条命令已经结束：回到插入模式。
-        if self.oneshot.is_some() {
-            self.resume_insert(host);
+        if self.resume_if_done(host) {
             return true;
         }
         handled
     }
 
+    /// 插入模式中执行的一条命令已经结束时回到插入模式并返回真；命令仍在等待输入或逐处确认时
+    /// 不结束。
+    fn resume_if_done(&mut self, host: &mut impl Host) -> bool {
+        let done = self.oneshot.is_some() && self.prompt().is_none() && self.confirm.is_none();
+        if done {
+            self.resume_insert(host);
+        }
+        done
+    }
+
     /// 丢弃未完成的命令；焦点离开编辑区时调用。
     pub fn cancel_pending(&mut self) {
         self.parser.reset();
+        self.mapped.clear();
     }
 
     /// 回到普通模式并结束未完成的撤销分组；切换文档之前对原文档调用。
@@ -251,9 +379,17 @@ impl Vim {
             host.end_group();
             self.insert_group = false;
         }
+        if self.confirm.take().is_some() {
+            host.end_group();
+        }
         self.insert = None;
         self.oneshot = None;
         self.prompt = None;
+        self.cmdline = false;
+        self.line.clear();
+        self.typeahead.clear();
+        self.mapped.clear();
+        self.in_global = false;
         self.context = None;
         self.change_index = None;
         self.last_visual = None;
@@ -272,6 +408,12 @@ impl Vim {
         self.insert_group = false;
         self.oneshot = None;
         self.prompt = None;
+        self.cmdline = false;
+        self.line.clear();
+        self.typeahead.clear();
+        self.mapped.clear();
+        self.confirm = None;
+        self.in_global = false;
         self.context = None;
         self.change_index = None;
         self.last_visual = None;
@@ -292,6 +434,10 @@ impl Vim {
         let selection = host.selection();
         if self.mode == Mode::Insert || self.shown == Some(selection) {
             return;
+        }
+        // 选区被其他操作改动：逐处确认到此结束。
+        if self.confirm.take().is_some() {
+            host.end_group();
         }
         let text = host.text();
         let end = text.end_pos();
@@ -402,8 +548,12 @@ impl Vim {
         movement: Movement,
         count: Option<u32>,
     ) {
-        if let Some(moved) = self.moved(shared, host, movement, count, None) {
-            self.goto(host, moved.pos, moved.want);
+        match self.moved(shared, host, movement, count, None) {
+            Some(moved) => {
+                self.failed |= moved.failed;
+                self.goto(host, moved.pos, moved.want);
+            }
+            None => self.failed = true,
         }
     }
 
@@ -435,6 +585,7 @@ impl Vim {
             count: count.min(motion::MAX_STEPS),
         };
         let Some(selected) = object::select(host.text(), object, at) else {
+            self.failed = true;
             return;
         };
         let kind = match selected.becomes {
@@ -581,17 +732,17 @@ impl Vim {
         if applied {
             self.note_change(host, from, to.max(from));
         } else {
-            host.message(Message::TooLarge);
+            self.error(host, Message::TooLarge);
         }
         self.shown = None;
         applied
     }
 
     /// 文档只读时提示并返回真。
-    fn blocked(host: &mut impl Host) -> bool {
+    fn blocked(&mut self, host: &mut impl Host) -> bool {
         let blocked = host.read_only();
         if blocked {
-            host.message(Message::ReadOnly);
+            self.error(host, Message::ReadOnly);
         }
         blocked
     }
@@ -651,6 +802,7 @@ impl Vim {
         source: Source,
     ) -> bool {
         if let Some(name @ ('.' | ':' | '/' | '%')) = name {
+            shared.failed = true;
             host.message(Message::ReadOnlyRegister(name));
             return false;
         }
@@ -799,9 +951,59 @@ impl Vim {
             | Action::InsertNormal
             | Action::InsertBelow
             | Action::InsertAbove => {}
-            Action::Later | Action::ExMode | Action::Keyword | Action::UndoLine => {
-                host.message(Message::Unsupported);
+            // 由 `ask` 处理。
+            Action::CommandLine => {}
+            Action::Record => self.start_recording(arg),
+            Action::Play => self.play_register(shared, host, command.count, arg),
+            Action::RepeatSubstitute | Action::RepeatSubstituteAll => {
+                self.repeat_substitute(shared, host, action == Action::RepeatSubstituteAll);
             }
+            Action::Definition
+            | Action::OpenFile
+            | Action::TabNext
+            | Action::TabPrevious
+            | Action::WriteQuit
+            | Action::QuitForce => self.app_action(host, action, command.count),
+            Action::CharInfo => {
+                let c = host.text().char_at(self.caret(host)).filter(|c| *c != '\n');
+                match c {
+                    Some(c) => host.message(Message::Char(c)),
+                    None => self.failed = true,
+                }
+            }
+            Action::Later | Action::ExMode | Action::Keyword | Action::UndoLine => {
+                self.error(host, Message::Unsupported);
+            }
+        }
+    }
+
+    /// 交给宿主执行的按键命令：转到定义、打开路径、切换标签、保存并关闭。
+    fn app_action(&mut self, host: &mut impl Host, action: Action, count: Option<u32>) {
+        let number = count.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+        let step = isize::try_from(number.unwrap_or(1)).unwrap_or(isize::MAX);
+        let command = match action {
+            Action::Definition => AppCommand::Definition,
+            Action::OpenFile => AppCommand::OpenFile,
+            Action::TabNext => match number {
+                Some(number) => AppCommand::BufferNumber(number),
+                None => AppCommand::BufferStep(1),
+            },
+            Action::TabPrevious => AppCommand::BufferStep(-step),
+            Action::WriteQuit => AppCommand::Quit {
+                write: true,
+                force: false,
+            },
+            _ => AppCommand::Quit {
+                write: false,
+                force: true,
+            },
+        };
+        if let Some(visual) = self.visual {
+            self.end_visual(host);
+            self.settle(host, visual.cursor);
+        }
+        if !host.app(command) {
+            self.error(host, Message::Unsupported);
         }
     }
 

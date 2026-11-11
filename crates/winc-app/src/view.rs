@@ -136,7 +136,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     // 位置浮窗显示在名称旁边，有独立的动画（滑出、淡出）。
-    let bar_open = app.goto_input.is_some();
+    let bar_open = app.goto_input.is_some() && !app.prompt_kind.is_vim();
     let picker_open = app.picker.open && app.picker.places.is_none();
     app.track_card(Card::Bar, bar_open);
     app.track_card(Card::Picker, picker_open);

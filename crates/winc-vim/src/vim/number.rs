@@ -207,7 +207,7 @@ impl Vim {
         command: Command,
         subtract: bool,
     ) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let text = host.text();

@@ -3,6 +3,7 @@
 //! 模态编辑层自己计算修改的范围与修改之后的光标，不经 [`Command`]；这里把修改组成事务交给
 //! [`Document::apply`]，并提供按文本行之外的单位（已折叠的区域、显示行）查询位置的方法。
 
+use std::collections::VecDeque;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
@@ -36,12 +37,14 @@ pub(crate) struct Marks {
     marks: Vec<(char, usize)>,
     /// 修改列表中的位置，从旧到新。
     changes: Vec<usize>,
+    /// 逐行执行命令期间被跟踪的位置，从小到大。
+    tracked: VecDeque<usize>,
 }
 
 impl Marks {
     /// 是否没有任何标记与修改记录。
     pub(crate) fn is_empty(&self) -> bool {
-        self.marks.is_empty() && self.changes.is_empty()
+        self.marks.is_empty() && self.changes.is_empty() && self.tracked.is_empty()
     }
 
     /// 文本 `text` 即将被修改：从 `start` 起的 `removed` 个字符换成 `inserted` 个字符。
@@ -58,18 +61,24 @@ impl Marks {
                 pos - removed + inserted
             }
         };
-        self.marks.retain(|(_, pos)| {
-            if *pos < start || *pos >= end {
-                return true;
+        // 位置所在的行是否被整行删除。
+        let deleted = |pos: usize| {
+            if pos < start || pos >= end {
+                return false;
             }
-            let line = text.line_of(*pos);
+            let line = text.line_of(pos);
             let (from, to) = (text.line_start(line), text.line_end(line));
-            !(start <= from && to <= end && (start < from || to < end))
-        });
+            start <= from && to <= end && (start < from || to < end)
+        };
+        self.marks.retain(|(_, pos)| !deleted(*pos));
+        self.tracked.retain(|pos| !deleted(*pos));
         for (_, pos) in &mut self.marks {
             *pos = moved(*pos);
         }
         for pos in &mut self.changes {
+            *pos = moved(*pos);
+        }
+        for pos in &mut self.tracked {
             *pos = moved(*pos);
         }
     }
@@ -131,6 +140,37 @@ impl ModalPattern {
             };
         }
         found
+    }
+
+    /// 返回第 `line` 行上起点不小于字符偏移 `from` 的第一处匹配及其各分组的位置区间。
+    fn groups_at(&self, text: &Content, from: usize) -> Option<Vec<Option<(usize, usize)>>> {
+        let line = text.line_of(from);
+        let start = text.line_start(line);
+        let content = text.line_content(line);
+        let mut haystack = content.slice().to_string();
+        let len = haystack.len();
+        if self.multiline {
+            let last = (line + FIND_LINES).min(text.line_count().saturating_sub(1));
+            for next in line + 1..=last {
+                haystack.push('\n');
+                haystack.push_str(&text.line_content(next).slice().to_string());
+            }
+        }
+        let offset = (haystack.char_indices())
+            .nth(from - start)
+            .map_or(len, |(byte, _)| byte);
+        let groups = self.pattern.captures_at(&haystack, offset).ok()??;
+        let (whole, _) = groups.first().copied().flatten()?;
+        if whole > len {
+            return None;
+        }
+        let chars = |byte: usize| start + haystack[..byte.min(haystack.len())].chars().count();
+        Some(
+            groups
+                .into_iter()
+                .map(|group| group.map(|(a, b)| (chars(a), chars(b))))
+                .collect(),
+        )
     }
 }
 
@@ -221,6 +261,16 @@ impl Document {
             .map(|(_, pos)| (*pos).min(end))
     }
 
+    /// 返回模态编辑层的全部标记：名字与位置，按名字排序。
+    pub fn modal_marks(&self) -> Vec<(char, usize)> {
+        let end = self.text.end_pos();
+        let mut marks: Vec<(char, usize)> = (self.marks.marks.iter())
+            .map(|(name, pos)| (*name, (*pos).min(end)))
+            .collect();
+        marks.sort_unstable();
+        marks
+    }
+
     /// 把模态编辑层的标记 `name` 设在位置 `pos`；标记随文本的修改移动。
     pub fn set_modal_mark(&mut self, name: char, pos: usize) {
         match self.marks.marks.iter_mut().find(|(mark, _)| *mark == name) {
@@ -292,6 +342,28 @@ impl Document {
             }
         }
         None
+    }
+
+    /// 返回 `pattern` 在 `from` 所在的行上起点不小于 `from` 的第一处匹配及其各分组的位置区间。
+    ///
+    /// 第 0 项是整个匹配，没有参与匹配的分组为 `None`；跨行的模式可以延伸到之后的行。
+    pub fn match_modal(
+        &self,
+        pattern: &ModalPattern,
+        from: usize,
+    ) -> Option<Vec<Option<(usize, usize)>>> {
+        pattern.groups_at(&self.text, from.min(self.text.end_pos()))
+    }
+
+    /// 开始跟踪 `positions`（从小到大），替换已在跟踪的位置：之后的修改使这些位置随文本移动，
+    /// 所在的行被整行删除时作废。
+    pub fn track_modal(&mut self, positions: Vec<usize>) {
+        self.marks.tracked = positions.into();
+    }
+
+    /// 取出被跟踪的位置中最靠前的一个；没有时返回 `None`。
+    pub fn next_tracked_modal(&mut self) -> Option<usize> {
+        self.marks.tracked.pop_front()
     }
 
     /// 返回第 `line` 行之后下一个可折叠的块的首行（`forward` 为真），或之前上一个可折叠的块

@@ -37,7 +37,7 @@ pub enum Input {
 }
 
 /// 需要显示给用户的提示。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// 输入的命令不支持或尚未实现。
     Unsupported,
@@ -57,6 +57,140 @@ pub enum Message {
     NoSearch,
     /// 标记没有设置；值为标记名。
     NoMark(char),
+    /// 命令行中的命令不存在。
+    BadCommand,
+    /// 命令行中命令的参数有误。
+    BadArgument,
+    /// 命令行中的范围有误，或命令不接受范围。
+    BadRange,
+    /// 还没有执行过替换，无法重复。
+    NoSubstitute,
+    /// 还没有执行过命令行，无法重复。
+    NoCommand,
+    /// 回放的按键或逐行执行的命令超过了步数或时间的上限，已中止。
+    Interrupted,
+    /// 选项不存在；值为选项名。
+    UnknownOption(String),
+    /// 替换完成：替换的处数与涉及的行数。
+    Substituted {
+        /// 处数。
+        count: usize,
+        /// 行数。
+        lines: usize,
+    },
+    /// 只统计匹配的处数与涉及的行数。
+    Matched {
+        /// 处数。
+        count: usize,
+        /// 行数。
+        lines: usize,
+    },
+    /// 命令行的命令使行数增加（正数）或减少了若干行。
+    LineDelta(isize),
+    /// 选项的当前值，写成 `:set` 接受的形式。
+    Option(String),
+    /// 光标处的字符，供显示其编码。
+    Char(char),
+}
+
+impl Message {
+    /// 是否为出错的提示：回放按键时遇到即中止。
+    pub fn is_error(&self) -> bool {
+        !matches!(
+            self,
+            Self::Substituted { .. }
+                | Self::Matched { .. }
+                | Self::LineDelta(_)
+                | Self::Option(_)
+                | Self::Char(_)
+        )
+    }
+}
+
+/// 由宿主保存的选项，供 `:set` 读写。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostOption {
+    /// 是否显示行号。
+    Number,
+    /// 是否显示相对行号。
+    RelativeNumber,
+    /// 是否自动换行。
+    Wrap,
+    /// 是否显示空白字符。
+    List,
+    /// 制表符的宽度。
+    TabStop,
+    /// 一级缩进的宽度。
+    ShiftWidth,
+    /// 缩进是否使用空格。
+    ExpandTab,
+}
+
+/// 用列表显示的内容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listing {
+    /// 各寄存器的内容。
+    Registers,
+    /// 各标记的位置。
+    Marks,
+    /// 已打开的文档。
+    Buffers,
+}
+
+/// 交给宿主执行的命令：文件、标签与窗口。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppCommand {
+    /// 保存当前文档；`path` 给出时另存到该路径。
+    Write {
+        /// 目标路径。
+        path: Option<String>,
+    },
+    /// 保存全部文档。
+    WriteAll,
+    /// 关闭当前文档；`write` 为真时先保存，`force` 为真时丢弃未保存的修改。
+    Quit {
+        /// 是否先保存。
+        write: bool,
+        /// 是否丢弃未保存的修改。
+        force: bool,
+    },
+    /// 关闭窗口；`write`、`force` 的含义同 [`AppCommand::Quit`]。
+    QuitAll {
+        /// 是否先保存。
+        write: bool,
+        /// 是否丢弃未保存的修改。
+        force: bool,
+    },
+    /// 打开路径 `path`；没有路径时重新读取当前文档，`force` 为真时丢弃未保存的修改。
+    Edit {
+        /// 路径。
+        path: Option<String>,
+        /// 是否丢弃未保存的修改。
+        force: bool,
+    },
+    /// 切换到之后（正数）或之前的第若干个文档，到头时从另一端继续。
+    BufferStep(isize),
+    /// 切换到第 `0` 个文档（从 1 起）。
+    BufferNumber(usize),
+    /// 切换到名字中含有该文字的文档。
+    BufferName(String),
+    /// 关闭其他文档。
+    Only,
+    /// 新建文档；`path` 给出时打开该路径。
+    New {
+        /// 路径。
+        path: Option<String>,
+    },
+    /// 用列表显示内容。
+    List(Listing),
+    /// 转到光标处名字的定义。
+    Definition,
+    /// 打开光标处的路径。
+    OpenFile,
+    /// 取消查找匹配的高亮。
+    NoHighlight,
+    /// 执行宿主的命令；值为命令名。
+    Run(String),
 }
 
 /// 滚动之后一行在窗口中的位置。
@@ -358,5 +492,42 @@ pub trait Host {
     /// 向用户显示提示 `message`。
     fn message(&mut self, message: Message) {
         let _ = message;
+    }
+
+    /// 返回 `query` 在 `from` 所在的行上起点不小于 `from` 的第一处匹配及其各分组的位置区间。
+    ///
+    /// 第 0 项是整个匹配；没有参与匹配的分组为 `None`。跨行的模式可以延伸到之后的行。
+    fn find_groups(&mut self, query: &Query, from: usize) -> Option<Vec<Option<(usize, usize)>>> {
+        let _ = (query, from);
+        None
+    }
+
+    /// 开始跟踪 `positions`（从小到大）：之后的修改使这些位置随文本移动，所在的行被删除时
+    /// 作废。再次调用时替换已在跟踪的位置。
+    fn track(&mut self, positions: Vec<usize>) {
+        let _ = positions;
+    }
+
+    /// 取出被跟踪的位置中最靠前的一个仍然有效的位置；没有时返回 `None`。
+    fn next_tracked(&mut self) -> Option<usize> {
+        None
+    }
+
+    /// 返回选项 `option` 的值，开关类的选项以 0、1 表示；宿主没有该选项时返回 `None`。
+    fn option(&self, option: HostOption) -> Option<usize> {
+        let _ = option;
+        None
+    }
+
+    /// 设置选项 `option`；返回是否已设置。
+    fn set_option(&mut self, option: HostOption, value: usize) -> bool {
+        let _ = (option, value);
+        false
+    }
+
+    /// 执行宿主的命令 `command`；返回是否已执行。
+    fn app(&mut self, command: AppCommand) -> bool {
+        let _ = command;
+        false
     }
 }

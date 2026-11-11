@@ -30,7 +30,7 @@ impl Vim {
         let Some(with) = arg else {
             return;
         };
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let cursor = self.caret(host);
@@ -46,7 +46,7 @@ impl Vim {
                     return;
                 };
                 if with == '\r' {
-                    host.message(Message::Unsupported);
+                    self.error(host, Message::Unsupported);
                     return;
                 }
                 let changes: Vec<Change> = (rows.iter().rev())
@@ -83,7 +83,7 @@ impl Vim {
                 Region::Lines { first, last } => (text.line_start(first), text.line_end(last)),
             };
             if with == '\r' || !host.fits(from, to) {
-                host.message(Message::Unsupported);
+                self.error(host, Message::Unsupported);
                 return;
             }
             let old = text.substring(from, to);
@@ -147,7 +147,7 @@ impl Vim {
         host: &mut impl Host,
         command: Command,
     ) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let text = host.text();
@@ -188,7 +188,7 @@ impl Vim {
         command: Command,
         spaces: bool,
     ) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let text = host.text();
@@ -216,11 +216,14 @@ impl Vim {
         command: Command,
         action: Action,
     ) {
-        if Self::blocked(host) {
+        if self.blocked(host) {
             return;
         }
         let Some(content) = Self::read_register(shared, host, command.register) else {
-            host.message(Message::EmptyRegister(command.register.unwrap_or('"')));
+            self.error(
+                host,
+                Message::EmptyRegister(command.register.unwrap_or('"')),
+            );
             // 可视模式下寄存器为空时，选区仍被删除。
             if self.visual.is_some() {
                 let command = Command {
@@ -235,7 +238,7 @@ impl Vim {
         // 每次重复至少占一个换行符，空的内容同样受次数的限制。
         let count = times(command);
         if (content.text.len() + 1).saturating_mul(count) > MAX_OUTPUT {
-            host.message(Message::TooLarge);
+            self.error(host, Message::TooLarge);
             return;
         }
         let ending = host.line_ending().to_owned();
@@ -389,7 +392,7 @@ impl Vim {
             Region::Lines { first, last } => (text.line_start(first), text.line_end(last)),
         };
         if !host.fits(from, to) {
-            host.message(Message::TooLarge);
+            self.error(host, Message::TooLarge);
             return;
         }
         let replaced = content_of(host, range.region);

@@ -76,7 +76,7 @@ impl Vim {
             name => host.mark(name),
         };
         let Some(pos) = found else {
-            host.message(Message::NoMark(name));
+            self.error(host, Message::NoMark(name));
             return None;
         };
         let text = host.text();

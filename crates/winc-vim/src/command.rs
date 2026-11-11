@@ -426,6 +426,30 @@ pub enum Action {
     InsertBelow,
     /// 插入模式的 `Ctrl-Y`：插入上一行同一显示列上的字符。
     InsertAbove,
+    /// `:`：输入命令行。
+    CommandLine,
+    /// `q{寄存器}`：开始记录宏。
+    Record,
+    /// `@{寄存器}`：回放寄存器中的按键。
+    Play,
+    /// `&`：在当前行上重复上一次替换。
+    RepeatSubstitute,
+    /// `g&`：在全部的行上重复上一次替换，沿用标志。
+    RepeatSubstituteAll,
+    /// `gd`：转到光标处名字的定义。
+    Definition,
+    /// `gf`：打开光标处的路径。
+    OpenFile,
+    /// `gt`：切换到下一个标签，带次数时切换到该序号的标签。
+    TabNext,
+    /// `gT`：切换到上一个标签。
+    TabPrevious,
+    /// `ga`：显示光标处字符的编码。
+    CharInfo,
+    /// `ZZ`：保存并关闭当前文档。
+    WriteQuit,
+    /// `ZQ`：不保存，关闭当前文档。
+    QuitForce,
     /// 之后的阶段实现的命令。
     Later,
     /// `Q`：进入 Ex 模式。

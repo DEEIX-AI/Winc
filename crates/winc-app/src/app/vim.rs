@@ -3,21 +3,24 @@
 //! Vim 模式关闭时 [`App::vim`] 为 `None`，按键路径上只多这一次判断，不创建任何状态。寄存器、
 //! 上一次修改等各窗口共用的状态保存在进程内的 [`shared`] 中，首次使用时创建。
 
-use std::ops::Range;
+mod command;
+mod host;
+
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use winc_config::VimClipboard;
-use winc_core::{Change, Indent, Lines, Selection};
-use winc_editor::{Command, Content, Document, DocumentId, FoldCommand, ModalPattern};
+use winc_core::{Lines, Selection};
+use winc_editor::{Command, Document, DocumentId, ModalPattern};
 use winc_i18n::t;
-use winc_vim::{Clipboard, Fold, Host, Indentation, Input, Message, Mode, Place, Prompt, Query};
-use winc_vim::{Scroll, Shared, Vim, VisualKind};
+use winc_vim::{Clipboard, Input, Message, Mode, Place, Prompt, Query, Shared, Vim, VisualKind};
+
+pub(crate) use command::VimList;
+use host::{Clip, Deferred, DocHost, View, visible_lines};
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, ModifiersState, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::app::{App, Focus, PromptKind};
-use crate::field::TextField;
 use winc_render::Rect;
 
 /// 返回各窗口共用的 Vim 状态，首次调用时创建。
@@ -53,6 +56,10 @@ pub(crate) struct VimState {
     highlight: bool,
     /// 查找输入框中最近一次用于即时跳转的文本。
     previewed: Option<String>,
+    /// 命令行输入条中进行中的历史翻阅与补全。
+    line: command::Line,
+    /// 映射等待后续按键超时的时刻。
+    map_deadline: Option<std::time::Instant>,
 }
 
 /// 光标的形状。
@@ -64,403 +71,6 @@ pub(crate) enum CaretShape {
     Underline,
     /// 空心块：编辑区没有键盘焦点。
     Hollow,
-}
-
-/// 宿主所需的视图参数，在借用文档之前算好。
-struct View {
-    /// 制表符的宽度（显示列）。
-    tab_width: usize,
-    /// 翻页时移动的行数。
-    page: usize,
-    /// 窗口中完整显示的文本行。
-    visible: Range<usize>,
-    /// 文字区一行可以容纳的显示列数。
-    text_width: usize,
-    /// 文本区可以容纳的显示行数。
-    rows: usize,
-    /// 纵向滚动位置的上限（显示行）。
-    max_scroll: f64,
-    /// 一个显示列的宽度（逻辑像素）。
-    cell: f32,
-    /// 光标与窗口上下边缘之间保留的行数。
-    scroll_off: usize,
-}
-
-/// Vim 层请求、在按键处理结束之后由应用执行的动作。
-#[derive(Debug, Clone, PartialEq)]
-enum Deferred {
-    /// 格式化第 `first` 至 `last` 行。
-    Format(usize, usize),
-    /// 在位置历史中后退（真）或前进若干步。
-    Jump(bool, usize),
-    /// 下一次记录位置时无论远近都算作跳转。
-    MarkJump,
-    /// 滚动到某一行位于窗口的指定位置。
-    Reveal(usize, Place),
-    /// 执行折叠命令。
-    Fold(FoldCommand),
-    /// 把查找的模式设为当前高亮的查找内容。
-    Highlight(Query),
-}
-
-/// 系统剪贴板的访问；测试中以 `App::copied` 代替。
-struct Clip<'a> {
-    #[cfg(not(test))]
-    system: &'a mut Option<arboard::Clipboard>,
-    #[cfg(test)]
-    copied: &'a mut Option<String>,
-    /// 最近一次整行复制的文本：应用的粘贴据此把整行插到当前行的上方。
-    whole_line: &'a mut Option<String>,
-}
-
-impl Clip<'_> {
-    fn get(&mut self) -> Option<String> {
-        #[cfg(test)]
-        {
-            self.copied.clone()
-        }
-        #[cfg(not(test))]
-        {
-            if self.system.is_none() {
-                *self.system = arboard::Clipboard::new().ok();
-            }
-            self.system.as_mut()?.get_text().ok()
-        }
-    }
-
-    fn set(&mut self, text: &str) {
-        *self.whole_line = text.ends_with('\n').then(|| text.to_owned());
-        #[cfg(test)]
-        {
-            *self.copied = Some(text.to_owned());
-        }
-        #[cfg(not(test))]
-        {
-            if self.system.is_none() {
-                *self.system = arboard::Clipboard::new().ok();
-            }
-            if let Some(clipboard) = self.system.as_mut() {
-                let _ = clipboard.set_text(text.to_owned());
-            }
-        }
-    }
-}
-
-/// 以一个文档为宿主：Vim 层在其上读取文本、应用修改。
-struct DocHost<'a> {
-    doc: &'a mut Document,
-    view: View,
-    clip: Clip<'a>,
-    /// 本次按键产生的提示，处理结束后显示。
-    messages: Vec<Message>,
-    /// 最近一次查找的模式及其编译结果。
-    pattern: &'a mut Option<(Query, ModalPattern)>,
-    /// 处理结束后由应用执行的动作。
-    deferred: Vec<Deferred>,
-}
-
-/// 返回文档 `doc` 在可以容纳 `rows` 个显示行的窗口中，光标可以停留的文本行。
-///
-/// 窗口的第一行与最后一行留作边距，与滚动到光标时保留的边距一致；窗口在文本开头时第一行
-/// 不留。
-fn visible_lines(doc: &Document, rows: usize) -> Range<usize> {
-    let first = doc.scroll_line.max(0.0).ceil() as usize;
-    let (above, below) = if rows > 3 {
-        (usize::from(first > 0), 1)
-    } else {
-        (0, 0)
-    };
-    let top = doc.line_of_row(first + above);
-    let bottom = doc.line_of_row(first + rows.saturating_sub(1 + below));
-    top..bottom.max(top) + 1
-}
-
-impl DocHost<'_> {
-    /// 按文档当前的滚动位置重新计算窗口中显示的行。
-    fn refresh_visible(&mut self) {
-        self.view.visible = visible_lines(self.doc, self.view.rows);
-    }
-}
-
-impl Host for DocHost<'_> {
-    type Text = Content;
-
-    fn text(&self) -> &Content {
-        self.doc.text()
-    }
-
-    fn selection(&self) -> Selection {
-        self.doc.selection
-    }
-
-    fn set_selection(&mut self, selection: Selection) {
-        if self.doc.has_cursors() {
-            self.doc.set_primary(selection);
-        } else {
-            self.doc.selection = selection;
-        }
-        self.doc.goal_cell = None;
-    }
-
-    fn selections(&self) -> Vec<Selection> {
-        if self.doc.has_cursors() {
-            self.doc.selections().0
-        } else {
-            vec![self.doc.selection]
-        }
-    }
-
-    fn set_selections(&mut self, selections: Vec<Selection>, primary: usize) {
-        match selections.as_slice() {
-            [only] => {
-                self.doc.collapse_selections();
-                self.doc.selection = *only;
-            }
-            _ => self.doc.set_selections(selections, primary),
-        }
-        self.doc.goal_cell = None;
-    }
-
-    fn apply(&mut self, changes: Vec<Change>, before: usize, after: usize) -> bool {
-        self.doc.apply_changes(changes, before, after)
-    }
-
-    fn input(&mut self, input: &Input) {
-        let command = match input {
-            Input::Text(text) => Command::Insert(text.clone()),
-            Input::Paste(text) => Command::Paste(text.clone()),
-            Input::Newline => Command::Newline,
-            Input::Backspace { word } => Command::Backspace { word: *word },
-            Input::Delete { word } => Command::Delete { word: *word },
-            Input::DeleteToLineStart => Command::DeleteToLineStart,
-            Input::Indent => Command::Indent,
-            Input::Outdent => Command::Outdent,
-            Input::IndentLine => Command::IndentLines,
-        };
-        self.doc
-            .execute(command, self.view.page, self.view.tab_width);
-    }
-
-    fn open_line(&mut self, at: usize) {
-        self.doc.open_line_at(at, self.view.tab_width);
-    }
-
-    fn undo(&mut self) -> bool {
-        let revision = self.doc.revision;
-        (self.doc).execute(Command::Undo, self.view.page, self.view.tab_width);
-        self.doc.revision != revision
-    }
-
-    fn redo(&mut self) -> bool {
-        let revision = self.doc.revision;
-        (self.doc).execute(Command::Redo, self.view.page, self.view.tab_width);
-        self.doc.revision != revision
-    }
-
-    fn redo_origin(&self) -> Option<usize> {
-        self.doc.redo_origin()
-    }
-
-    fn begin_group(&mut self) {
-        self.doc.begin_undo_group();
-    }
-
-    fn end_group(&mut self) {
-        self.doc.end_undo_group();
-    }
-
-    fn read_only(&self) -> bool {
-        self.doc.readonly
-    }
-
-    fn fits(&self, from: usize, to: usize) -> bool {
-        self.doc.fits_edit(from, to)
-    }
-
-    fn tab_width(&self) -> usize {
-        self.view.tab_width.max(1)
-    }
-
-    fn indentation(&self) -> Indentation {
-        match self.doc.indent() {
-            Indent::Tabs => Indentation {
-                width: self.view.tab_width.max(1),
-                tabs: true,
-            },
-            Indent::Spaces(width) => Indentation {
-                width: width.max(1),
-                tabs: false,
-            },
-        }
-    }
-
-    fn keeps_indent(&self) -> bool {
-        true
-    }
-
-    fn line_ending(&self) -> &str {
-        self.doc.line_ending.as_str()
-    }
-
-    fn visible_lines(&self) -> Range<usize> {
-        self.view.visible.clone()
-    }
-
-    fn window_height(&self) -> usize {
-        self.view.rows.max(1)
-    }
-
-    fn text_width(&self) -> usize {
-        self.view.text_width
-    }
-
-    fn display_row(&self, pos: usize) -> Range<usize> {
-        self.doc.display_row_span(pos)
-    }
-
-    fn display_vertical(&self, pos: usize, delta: isize, _cell: usize) -> Option<usize> {
-        self.doc.display_vertical(pos, delta)
-    }
-
-    fn find(&mut self, query: &Query, from: usize, forward: bool) -> Option<(usize, usize)> {
-        if self
-            .pattern
-            .as_ref()
-            .is_none_or(|(compiled, _)| compiled != query)
-        {
-            let pattern = ModalPattern::new(&query.regex, query.ignore_case).ok()?;
-            *self.pattern = Some((query.clone(), pattern));
-        }
-        let highlight = Deferred::Highlight(query.clone());
-        if !self.deferred.contains(&highlight) {
-            self.deferred.push(highlight);
-        }
-        let (_, pattern) = self.pattern.as_ref()?;
-        self.doc.find_modal(pattern, from, forward)
-    }
-
-    fn mark(&self, name: char) -> Option<usize> {
-        self.doc.modal_mark(name)
-    }
-
-    fn set_mark(&mut self, name: char, pos: usize) {
-        self.doc.set_modal_mark(name, pos);
-    }
-
-    fn changes(&self) -> Vec<usize> {
-        self.doc.modal_changes().to_vec()
-    }
-
-    fn record_change(&mut self, pos: usize) {
-        self.doc.record_modal_change(pos);
-    }
-
-    fn record_jump(&mut self, _pos: usize) {
-        if !self.deferred.contains(&Deferred::MarkJump) {
-            self.deferred.push(Deferred::MarkJump);
-        }
-    }
-
-    fn jump(&mut self, back: bool, count: usize) -> bool {
-        // 目标可以在另一个文档中：按键处理结束之后由应用执行。
-        self.deferred.push(Deferred::Jump(back, count));
-        false
-    }
-
-    fn scroll(&mut self, scroll: Scroll) -> bool {
-        match scroll {
-            Scroll::Lines(lines) => {
-                let before = self.doc.scroll_line;
-                let target = (before + lines as f64).clamp(0.0, self.view.max_scroll.max(0.0));
-                self.doc.scroll_line = target;
-                self.refresh_visible();
-                target != before
-            }
-            Scroll::Reveal { line, place } => {
-                self.deferred.push(Deferred::Reveal(line, place));
-                true
-            }
-            Scroll::Columns(columns) => {
-                if self.doc.is_wrapping() {
-                    return false;
-                }
-                let before = self.doc.scroll_x;
-                self.doc.scroll_x = (before + columns as f32 * self.view.cell).max(0.0);
-                self.doc.scroll_x != before
-            }
-        }
-    }
-
-    fn visible_cells(&self) -> Option<Range<usize>> {
-        if self.doc.is_wrapping() {
-            return None;
-        }
-        let first = (self.doc.scroll_x / self.view.cell.max(1.0)).ceil() as usize;
-        Some(first..first + self.view.text_width)
-    }
-
-    fn scroll_margin(&self) -> usize {
-        self.view.scroll_off
-    }
-
-    fn fold_at(&mut self, line: usize, fold: Fold) -> bool {
-        let collapsed = self.doc.collapsed_fold_at(line).is_some();
-        let command = match fold {
-            Fold::Open => FoldCommand::Unfold,
-            Fold::Close => FoldCommand::Fold,
-            Fold::Toggle => FoldCommand::Toggle,
-            Fold::OpenTree => FoldCommand::UnfoldRecursively,
-            Fold::CloseTree => FoldCommand::FoldRecursively,
-            Fold::ToggleTree if collapsed => FoldCommand::UnfoldRecursively,
-            Fold::ToggleTree => FoldCommand::FoldRecursively,
-            Fold::OpenAll => FoldCommand::UnfoldAll,
-            Fold::CloseAll => FoldCommand::FoldAll,
-            Fold::Reveal => {
-                let pos = self.doc.selection.head;
-                return self.doc.reveal(pos);
-            }
-        };
-        // 折叠的变化连同滚动位置的保持与动画由应用执行。
-        self.deferred.push(Deferred::Fold(command));
-        false
-    }
-
-    fn fold_edge(&mut self, line: usize, forward: bool) -> Option<usize> {
-        self.doc.fold_edge(line, forward, self.view.tab_width)
-    }
-
-    fn format_lines(&mut self, first: usize, last: usize) -> bool {
-        self.deferred.push(Deferred::Format(first, last));
-        true
-    }
-
-    fn has_folds(&self) -> bool {
-        self.doc.has_collapsed_folds()
-    }
-
-    fn fold(&self, line: usize) -> Option<(usize, usize)> {
-        self.doc.collapsed_fold_at(line)
-    }
-
-    fn clipboard(&mut self) -> Option<String> {
-        self.clip.get()
-    }
-
-    fn set_clipboard(&mut self, text: &str) {
-        self.clip.set(text);
-    }
-
-    fn toggle_comment(&mut self, first: usize, last: usize) -> bool {
-        (self.doc).toggle_comment_lines(first, last, self.view.tab_width)
-    }
-
-    fn file_name(&self) -> Option<String> {
-        self.doc.path.as_ref().map(|_| self.doc.name().into_owned())
-    }
-
-    fn message(&mut self, message: Message) {
-        self.messages.push(message);
-    }
 }
 
 /// 一次按键在位置历史中最多移动的步数（步）；次数更大时按该值执行。
@@ -612,6 +222,7 @@ impl App {
             };
             shared.ignore_case = self.config.vim_ignore_case == Some(true);
             shared.smart_case = self.config.vim_smart_case == Some(true);
+            shared.set_mappings(self.vim_mappings());
         }
     }
 
@@ -621,21 +232,18 @@ impl App {
             return false;
         };
         state.highlight
+            && shared().options.hlsearch
             && !self.find.open
             && self.search.regex
             && (state.pattern.as_ref()).is_some_and(|(query, _)| query.regex == self.search.query)
     }
 
-    /// 返回输入条的位置：查找模式的输入条位于编辑区底部，其余位于顶部居中。
+    /// 返回输入条的位置：Vim 模式的命令行与查找占状态栏所在的一行，其余位于编辑区顶部居中。
     pub(crate) fn prompt_bar(&self) -> Rect {
-        let editor = self.layout.editor;
-        match self.prompt_kind {
-            PromptKind::VimSearch { .. } => {
-                let bar = crate::layout::goto_bar(editor);
-                let y = (editor.bottom() - bar.h - 8.0).max(editor.y);
-                Rect::new(editor.x + 8.0, y, bar.w, bar.h)
-            }
-            _ => crate::layout::goto_bar(editor),
+        if self.prompt_kind.is_vim() {
+            self.layout.status
+        } else {
+            crate::layout::goto_bar(self.layout.editor)
         }
     }
 
@@ -698,7 +306,14 @@ impl App {
         } else {
             mode.to_owned()
         };
-        let pending = winc_vim::notation::write(state.vim.pending());
+        let mut pending = winc_vim::notation::write(state.vim.pending());
+        // 逐处确认时显示替换之后的文本与可用的回答；记录宏时显示寄存器名。
+        if let Some(replacement) = state.vim.confirming() {
+            pending = t!("workspace-status-vim-confirm", text = replacement);
+        } else if let Some(name) = state.vim.recording() {
+            let recording = t!("workspace-status-vim-recording", name = name.to_string());
+            pending = format!("{recording}  {pending}").trim_end().to_owned();
+        }
         let text = match (mode.is_empty(), pending.is_empty()) {
             (true, true) => return None,
             (false, true) => format!("-- {mode} --"),
@@ -724,8 +339,16 @@ impl App {
             rows,
             max_scroll: self.max_scroll_line(),
             cell: self.cell,
-            scroll_off: self.config.vim_scroll_off.unwrap_or(0),
+            scroll_off: self.vim_scroll_off(),
+            numbers: self.config.line_numbers != Some(false),
+            whitespace: self.config.render_whitespace == Some(winc_config::RenderWhitespace::All),
         }
+    }
+
+    /// 返回光标与窗口上下边缘之间保留的行数：`:set` 设置的值优先于配置。
+    fn vim_scroll_off(&self) -> usize {
+        let configured = self.config.vim_scroll_off.unwrap_or(0);
+        shared().options.scrolloff.unwrap_or(configured)
     }
 
     /// 在文档 `doc` 上回到普通模式并结束未完成的撤销分组；文档已不存在时只丢弃状态。
@@ -757,6 +380,7 @@ impl App {
         state.seen = None;
         state.highlight = false;
         state.previewed = None;
+        state.map_deadline = None;
     }
 
     /// 在当前文档上以 `f` 操作 Vim 层，返回 `f` 的结果、期间产生的提示与留待应用执行的动作；
@@ -801,13 +425,12 @@ impl App {
             state.doc = active;
         }
         // 查找模式的输入条：输入的文本变化时即时跳转；输入条被其他操作关闭时放弃输入。
-        let prompting = self.goto_input.is_some()
-            && matches!(self.prompt_kind, PromptKind::VimSearch { .. })
-            && self.focus == Focus::Prompt;
+        let prompting = self.vim_prompt_open() && self.focus == Focus::Prompt;
         if state.vim.prompt().is_some() {
             if prompting {
                 let text = (self.goto_input.as_ref()).map(|field| field.text().to_owned());
-                if state.previewed != text {
+                let searching = self.prompt_kind != PromptKind::VimCommand;
+                if searching && state.previewed != text {
                     let typed = text.clone().unwrap_or_default();
                     let result = self.vim_with(&mut state, |vim, shared, host| {
                         vim.prompt_preview(shared, host, &typed);
@@ -912,28 +535,14 @@ impl App {
         if claimed {
             self.vim_after(lines, messages, deferred);
         }
-        if let Some(Prompt::Search { forward }) = prompt {
-            self.vim_open_prompt(forward);
+        if let Some(prompt) = prompt {
+            self.vim_open_prompt(prompt);
         }
+        self.vim_await_mapping();
         claimed
     }
 
-    /// 打开查找模式的输入条；历史取自各窗口共用的查找历史。
-    fn vim_open_prompt(&mut self, forward: bool) {
-        let mut field = TextField::default();
-        for entry in shared().search_history() {
-            field.set_text(entry);
-            field.remember();
-        }
-        field.set_text("");
-        if let Some(state) = &mut self.vim {
-            state.previewed = Some(String::new());
-            state.highlight = true;
-        }
-        self.open_prompt(PromptKind::VimSearch { forward }, field);
-    }
-
-    /// 查找模式的输入条按下回车：以 `text` 为模式执行等待中的命令。
+    /// 输入条按下回车：以 `text` 为命令行或查找的模式，执行等待中的命令。
     pub(in crate::app) fn vim_prompt_submit(&mut self, text: &str) {
         let Some(mut state) = self.vim.take() else {
             return;
@@ -943,20 +552,27 @@ impl App {
             vim.prompt_submit(shared, host, text);
         });
         state.previewed = None;
+        // 命令行中执行的宏可以再次等待输入。
+        let prompt = state.vim.prompt();
         self.vim = Some(state);
         if let Some(((), messages, deferred)) = result {
             self.vim_after(lines, messages, deferred);
         }
+        if let Some(prompt) = prompt {
+            self.vim_open_prompt(prompt);
+        }
+        self.vim_await_mapping();
     }
 
-    /// 放弃查找模式的输入：光标回到输入之前的位置。
+    /// 放弃输入：查找时光标回到输入之前的位置。
     pub(in crate::app) fn vim_prompt_cancel(&mut self) {
         let Some(mut state) = self.vim.take() else {
             return;
         };
+        let searching = matches!(state.vim.prompt(), Some(Prompt::Search { .. }));
         self.vim_with(&mut state, |vim, _, host| vim.prompt_cancel(host));
         state.previewed = None;
-        state.highlight = false;
+        state.highlight &= !searching;
         self.vim = Some(state);
         self.ensure_caret_visible();
         self.request_redraw();
@@ -1014,29 +630,12 @@ impl App {
                         state.highlight = true;
                     }
                 }
+                Deferred::Set(option, value) => self.vim_set_option(option, value),
+                Deferred::App(command) => self.vim_run_app(command),
             }
         }
         if let Some(message) = messages.last() {
-            let text = match message {
-                Message::Unsupported => t!("editor-vim-unsupported").to_owned(),
-                Message::TooLarge => t!("editor-vim-too-large").to_owned(),
-                Message::ReadOnly => {
-                    let reason = self.editor.active().and_then(Document::readonly_reason);
-                    reason.unwrap_or(t!("workspace-status-readonly")).to_owned()
-                }
-                Message::EmptyRegister(name) => {
-                    t!("editor-vim-register-empty", name = name.to_string())
-                }
-                Message::ReadOnlyRegister(name) => {
-                    t!("editor-vim-register-read-only", name = name.to_string())
-                }
-                Message::NotFound => t!("editor-vim-not-found").to_owned(),
-                Message::BadPattern(at) => {
-                    t!("editor-vim-bad-pattern", column = (at + 1).to_string())
-                }
-                Message::NoSearch => t!("editor-vim-no-search").to_owned(),
-                Message::NoMark(name) => t!("editor-vim-no-mark", name = name.to_string()),
-            };
+            let text = self.vim_message(message);
             self.flash(text);
         }
         if self
@@ -1054,6 +653,68 @@ impl App {
         }
         self.reset_blink();
         self.request_redraw();
+    }
+
+    /// 返回提示 `message` 的文案。
+    fn vim_message(&self, message: &Message) -> String {
+        let count = |count: &usize| count.to_string();
+        match message {
+            Message::Unsupported => t!("editor-vim-unsupported").to_owned(),
+            Message::TooLarge => t!("editor-vim-too-large").to_owned(),
+            Message::ReadOnly => {
+                let reason = self.editor.active().and_then(Document::readonly_reason);
+                reason.unwrap_or(t!("workspace-status-readonly")).to_owned()
+            }
+            Message::EmptyRegister(name) => {
+                t!("editor-vim-register-empty", name = name.to_string())
+            }
+            Message::ReadOnlyRegister(name) => {
+                t!("editor-vim-register-read-only", name = name.to_string())
+            }
+            Message::NotFound => t!("editor-vim-not-found").to_owned(),
+            Message::BadPattern(at) => {
+                t!("editor-vim-bad-pattern", column = (at + 1).to_string())
+            }
+            Message::NoSearch => t!("editor-vim-no-search").to_owned(),
+            Message::NoMark(name) => t!("editor-vim-no-mark", name = name.to_string()),
+            Message::BadCommand => t!("editor-vim-bad-command").to_owned(),
+            Message::BadArgument => t!("editor-vim-bad-argument").to_owned(),
+            Message::BadRange => t!("editor-vim-bad-range").to_owned(),
+            Message::NoSubstitute => t!("editor-vim-no-substitute").to_owned(),
+            Message::NoCommand => t!("editor-vim-no-command").to_owned(),
+            Message::Interrupted => t!("editor-vim-interrupted").to_owned(),
+            Message::UnknownOption(name) => t!("editor-vim-unknown-option", name = name.as_str()),
+            Message::Substituted { count: done, lines } if *lines > 0 => t!(
+                "editor-vim-substituted-lines",
+                count = count(done),
+                lines = count(lines)
+            ),
+            Message::Substituted { count: done, .. } => {
+                t!("editor-vim-substituted", count = count(done))
+            }
+            Message::Matched {
+                count: found,
+                lines,
+            } => t!(
+                "editor-vim-matched",
+                count = count(found),
+                lines = count(lines)
+            ),
+            Message::LineDelta(delta) if *delta > 0 => {
+                t!("editor-vim-more-lines", count = delta.to_string())
+            }
+            Message::LineDelta(delta) => {
+                t!(
+                    "editor-vim-fewer-lines",
+                    count = delta.unsigned_abs().to_string()
+                )
+            }
+            Message::Option(shown) => shown.clone(),
+            Message::Char(c) => {
+                let code = u32::from(*c);
+                format!("<{c}> {code}, Hex {code:x}, Oct {code:o}")
+            }
+        }
     }
 
     /// 把 `query` 设为查找条的查找内容：查找条与 Vim 层的查找是同一份查找状态。
@@ -1102,7 +763,7 @@ impl App {
 
     /// 按配置在光标与窗口上下边缘之间保留若干行。
     fn vim_keep_margin(&mut self) {
-        let margin = self.config.vim_scroll_off.unwrap_or(0);
+        let margin = self.vim_scroll_off();
         if margin == 0 {
             return;
         }

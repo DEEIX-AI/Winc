@@ -244,6 +244,13 @@ fn round_trips_through_json() {
         vim_smart_case: Some(false),
         vim_scroll_off: Some(3),
         vim_handle_keys: vec![("ctrl+f".to_owned(), true)],
+        vim_timeout_len: Some(500),
+        vim_leader: Some("<Space>".to_owned()),
+        vim_keys: vec![VimMapping {
+            mode: VimMapMode::Insert,
+            keys: "jk".to_owned(),
+            to: "<Esc>".to_owned(),
+        }],
         terminal_enabled: Some(true),
         terminal_font: Some("Menlo".to_owned()),
         terminal_size: Some(12.0),
@@ -558,4 +565,42 @@ fn the_vim_section_reads_writes_and_reports_bad_values() {
     let (config, problems) = Config::parse(r#"{ "vim": { "scrollOff": 1000, "smartCase": 1 } }"#);
     assert_eq!((problems.len(), config.vim_scroll_off), (2, None));
     assert_eq!(config.vim_smart_case, None);
+}
+
+#[test]
+fn vim_mappings_are_read_in_order_and_bad_items_are_reported() {
+    let (config, problems) = Config::parse(
+        r#"{ "vim": { "timeoutLen": 300, "leader": ",",
+             "keys": [ { "mode": "insert", "keys": "jk", "to": "<Esc>" },
+                       { "mode": "normal", "keys": "<Leader>w", "to": "Save" },
+                       { "mode": "operator", "keys": "L", "to": "$" } ] } }"#,
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        (config.vim_timeout_len, config.vim_leader.as_deref()),
+        (Some(300), Some(","))
+    );
+    let modes: Vec<VimMapMode> = config.vim_keys.iter().map(|mapping| mapping.mode).collect();
+    assert_eq!(
+        modes,
+        [VimMapMode::Insert, VimMapMode::Normal, VimMapMode::Operator]
+    );
+    assert_eq!(config.vim_keys[1].to, "Save");
+    let (again, problems) = Config::parse(&config.to_json());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(again, config);
+
+    // 缺少字段或模式写错的项逐个报告，其余的项保留。
+    let (config, problems) = Config::parse(
+        r#"{ "vim": { "timeoutLen": 1.5, "leader": "",
+             "keys": [ { "mode": "select", "keys": "a", "to": "b" },
+                       { "mode": "visual", "keys": "Q", "to": "d" },
+                       { "mode": "normal", "keys": "x" } ] } }"#,
+    );
+    assert_eq!(problems.len(), 4, "{problems:?}");
+    assert!(problems[0].starts_with("vim.keys[0]"), "{problems:?}");
+    assert_eq!((config.vim_timeout_len, config.vim_leader), (None, None));
+    assert_eq!(config.vim_keys.len(), 1);
+    let (config, problems) = Config::parse(r#"{ "vim": { "keys": {} } }"#);
+    assert_eq!((problems.len(), config.vim_keys.len()), (1, 0));
 }

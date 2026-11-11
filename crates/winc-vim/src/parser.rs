@@ -233,6 +233,11 @@ impl Parser {
         &self.keys
     }
 
+    /// 下一个按键是否为一条命令、动作或文本对象的第一个键：不在多键序列与字符参数之中。
+    pub(crate) fn at_start(&self) -> bool {
+        self.node == ROOT && self.arg.is_none()
+    }
+
     /// 是否已输入操作符、正在等待动作或文本对象。
     pub fn is_operator_pending(&self) -> bool {
         self.operator.is_some()

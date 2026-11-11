@@ -56,6 +56,8 @@ pub enum Prompt {
         /// 是否向后文查找。
         forward: bool,
     },
+    /// 命令行；预填的文本见 [`Vim::prompt_prefill`]。
+    Command,
 }
 
 /// 等待输入期间保存的状态。
@@ -183,13 +185,15 @@ fn find<H: Host>(
     None
 }
 
-/// 返回位置在 `at` 之后（`forward` 为真）或之前最近的一处匹配；到达文本的一端时从另一端继续。
+/// 返回位置在 `at` 之后（`forward` 为真）或之前最近的一处匹配；`wrap` 为真时到达文本的一端
+/// 之后从另一端继续。
 fn step<H: Host>(
     host: &mut H,
     query: &Query,
     at: usize,
     forward: bool,
     by_end: bool,
+    wrap: bool,
 ) -> Option<(usize, usize)> {
     let end = host.text().end_pos();
     if forward {
@@ -208,7 +212,7 @@ fn step<H: Host>(
             }
             from = found.0 + 1;
         }
-        return find(host, query, 0, true);
+        return wrap.then(|| find(host, query, 0, true)).flatten();
     }
     if let Some(found) = find(host, query, at, false) {
         if !by_end || key(host, found, true) < at {
@@ -218,7 +222,7 @@ fn step<H: Host>(
             return Some(previous);
         }
     }
-    find(host, query, end + 1, false)
+    wrap.then(|| find(host, query, end + 1, false)).flatten()
 }
 
 /// 返回从 `pos` 向后（`amount` 为正）或向前移动若干字符之后的位置，越过行尾。
@@ -248,6 +252,36 @@ impl Shared {
         self.history.push(text.to_owned());
         if self.history.len() > MAX_HISTORY {
             self.history.remove(0);
+        }
+    }
+
+    /// 返回上一次查找的模式。
+    pub(super) fn search_pattern(&self) -> Option<&str> {
+        self.search
+            .as_ref()
+            .map(|searched| searched.pattern.as_str())
+    }
+
+    /// 把上一次查找的模式换成 `pattern`，方向不变，偏移清除。
+    pub(super) fn set_search_pattern(&mut self, pattern: String) {
+        let forward = self.search.as_ref().is_none_or(|searched| searched.forward);
+        self.set_search(pattern, forward, Offset::default(), false);
+    }
+
+    /// 返回命令行的历史，从旧到新排列。
+    pub fn command_history(&self) -> &[String] {
+        &self.commands
+    }
+
+    /// 把 `text` 记入命令行的历史；已有相同的一条时移到最后。
+    fn remember_command(&mut self, text: &str) {
+        if text.trim().is_empty() {
+            return;
+        }
+        self.commands.retain(|entry| entry != text);
+        self.commands.push(text.to_owned());
+        if self.commands.len() > MAX_HISTORY {
+            self.commands.remove(0);
         }
     }
 
@@ -282,16 +316,59 @@ impl Shared {
 impl Vim {
     /// 返回状态机正在等待的输入；不在等待时返回 `None`。
     pub fn prompt(&self) -> Option<Prompt> {
+        if self.cmdline {
+            return Some(Prompt::Command);
+        }
         self.prompt.map(|pending| Prompt::Search {
             forward: pending.forward,
         })
     }
 
-    /// 命令 `command` 需要先输入模式时进入等待输入的状态并返回真。
-    pub(super) fn ask(&mut self, host: &impl Host, command: Command) -> bool {
+    /// 返回光标处的词，供命令行的输入框插入；光标所在的行上没有词时返回 `None`。
+    pub fn word_at_cursor(&self, host: &impl Host) -> Option<String> {
+        let text = host.text();
+        let (start, end) = word_at(text, self.caret(host))?;
+        Some(text.substring(start, end))
+    }
+
+    /// 返回寄存器 `name` 的文本，供命令行的输入框插入；寄存器为空时返回 `None`。
+    pub fn register_text(shared: &mut Shared, host: &mut impl Host, name: char) -> Option<String> {
+        Self::read_register(shared, host, Some(name)).map(|content| content.text)
+    }
+
+    /// 返回等待命令行时预填的文本：可视模式下是选区的范围，带次数时是从当前行起的若干行。
+    pub fn prompt_prefill(&self) -> &str {
+        if self.cmdline { &self.line } else { "" }
+    }
+
+    /// 命令 `command` 需要先输入命令行或查找的模式时，进入等待输入的状态并返回真。
+    pub(super) fn ask(&mut self, host: &mut impl Host, command: Command) -> bool {
+        let is_command_line = matches!(
+            command.body,
+            Body::Action {
+                action: crate::command::Action::CommandLine,
+                ..
+            }
+        );
+        if is_command_line {
+            self.line = match (self.visual, command.count) {
+                (Some(_), _) => "'<,'>".to_owned(),
+                (None, Some(1)) => ".".to_owned(),
+                (None, Some(count)) => format!(".,.+{}", count - 1),
+                (None, None) => String::new(),
+            };
+            // 输入命令行时已离开可视模式。
+            if let Some(visual) = self.visual {
+                self.end_visual(host);
+                self.settle(host, visual.cursor);
+            }
+            self.cmdline = true;
+            return true;
+        }
         let Some(forward) = prompted(command) else {
             return false;
         };
+        self.line.clear();
         self.prompt = Some(Pending {
             command,
             forward,
@@ -312,12 +389,18 @@ impl Vim {
         let Some(pending) = self.prompt else {
             return;
         };
+        if !shared.options.incsearch {
+            return;
+        }
         let separator = if pending.forward { '/' } else { '?' };
         let (pattern, _) = split(text, separator);
         let found = (!pattern.is_empty())
             .then(|| pattern::translate(&pattern, shared.ignore_case, shared.smart_case).ok())
             .flatten()
-            .and_then(|query| step(host, &query, pending.origin, pending.forward, false));
+            .and_then(|query| {
+                let wrap = shared.options.wrapscan;
+                step(host, &query, pending.origin, pending.forward, false, wrap)
+            });
         match found {
             Some((start, _)) => {
                 let text = host.text();
@@ -336,6 +419,11 @@ impl Vim {
 
     /// 放弃输入：光标回到输入开始时的位置，命令不执行。
     pub fn prompt_cancel(&mut self, host: &mut impl Host) {
+        if self.prompt.is_some() || self.cmdline {
+            self.record_line(None);
+        }
+        self.cmdline = false;
+        self.line.clear();
         if let Some(pending) = self.prompt.take() {
             self.restore(host, pending);
         }
@@ -344,12 +432,41 @@ impl Vim {
     /// 放弃输入，光标留在当前的位置；输入框被其他操作关闭时调用。
     pub fn prompt_abandon(&mut self) {
         self.prompt = None;
+        self.cmdline = false;
+        self.line.clear();
     }
 
-    /// 输入完成：以 `text` 为模式执行等待中的命令。
+    /// 输入完成：以 `text` 为命令行或查找的模式，执行等待中的命令。
     ///
-    /// `text` 中未转义的 `/`（向前文查找时为 `?`）之后是偏移；模式为空时沿用上一次的模式。
+    /// 查找时 `text` 中未转义的 `/`（向前文查找时为 `?`）之后是偏移；模式为空时沿用上一次的
+    /// 模式。
     pub fn prompt_submit(&mut self, shared: &mut Shared, host: &mut impl Host, text: &str) {
+        self.begin_key(shared);
+        self.record_line(Some(text));
+        self.submit(shared, host, text);
+        self.finish_key(shared, host);
+    }
+
+    /// 执行命令行 `text`，并记为上一次执行的命令行；以 `|` 分隔的命令没有执行到最后一条时
+    /// 不记。
+    pub(super) fn command_line(&mut self, shared: &mut Shared, host: &mut impl Host, text: &str) {
+        self.ex_last = true;
+        self.ex_line(shared, host, text);
+        if !text.trim().is_empty() && self.ex_last {
+            shared.last_command = Some(text.to_owned());
+            shared.registers.set_special(':', text.to_owned());
+        }
+    }
+
+    /// [`Vim::prompt_submit`] 的实现，不记录按键。
+    pub(super) fn submit(&mut self, shared: &mut Shared, host: &mut impl Host, text: &str) {
+        self.line.clear();
+        if std::mem::take(&mut self.cmdline) {
+            shared.remember_command(text);
+            self.command_line(shared, host, text);
+            self.resume_if_done(host);
+            return;
+        }
         let Some(pending) = self.prompt.take() else {
             return;
         };
@@ -368,7 +485,7 @@ impl Vim {
                     }),
                 ),
                 None => {
-                    host.message(Message::NoSearch);
+                    self.error(host, Message::NoSearch);
                     return;
                 }
             }
@@ -395,6 +512,45 @@ impl Vim {
             _ => Body::Motion(again),
         };
         self.run(shared, host, command);
+        self.resume_if_done(host);
+    }
+
+    /// 返回从第 `line` 行之后（`forward` 为真）或之前第一个匹配 `pattern` 的行，供命令行的
+    /// 范围使用；模式为空时沿用上一次查找的模式。找不到或模式有误时提示并返回 `None`。
+    pub(super) fn search_line(
+        &mut self,
+        shared: &mut Shared,
+        host: &mut impl Host,
+        pattern: &str,
+        line: usize,
+        forward: bool,
+    ) -> Option<usize> {
+        if !pattern.is_empty() {
+            shared.set_search_pattern(pattern.to_owned());
+        }
+        let Some((query, _)) = shared.query(host) else {
+            self.failed = true;
+            return None;
+        };
+        let text = host.text();
+        let last = text::last_line(text);
+        let wrap = shared.options.wrapscan;
+        let found = if forward {
+            let next = (line < last).then(|| text.line_start(line + 1));
+            next.and_then(|from| find(host, &query, from, true))
+                .or_else(|| wrap.then(|| find(host, &query, 0, true)).flatten())
+        } else {
+            let end = text.end_pos();
+            find(host, &query, text.line_start(line), false)
+                .or_else(|| wrap.then(|| find(host, &query, end + 1, false)).flatten())
+        };
+        match found {
+            Some((start, _)) => Some(text::line_of(host.text(), start).min(last)),
+            None => {
+                self.error(host, Message::NotFound);
+                None
+            }
+        }
     }
 
     /// `n`、`N`：重复上一次查找；`reverse` 为真时方向相反。
@@ -417,7 +573,14 @@ impl Vim {
         let times = count.map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX));
         let mut found = None;
         for _ in 0..times.min(MAX_MATCHES) {
-            match step(host, &query, at, forward, offset.end) {
+            match step(
+                host,
+                &query,
+                at,
+                forward,
+                offset.end,
+                shared.options.wrapscan,
+            ) {
                 Some(next) => {
                     at = key(host, next, offset.end);
                     found = Some(next);
@@ -426,7 +589,7 @@ impl Vim {
             }
         }
         let Some((start, end)) = found else {
-            host.message(Message::NotFound);
+            self.error(host, Message::NotFound);
             return None;
         };
         let text = host.text();
@@ -530,11 +693,11 @@ impl Vim {
         }
         for _ in 1..count.min(MAX_MATCHES) {
             let at = found?.0;
-            found = step(host, &query, at, forward, false);
+            found = step(host, &query, at, forward, false, shared.options.wrapscan);
         }
         let found = found.filter(|(start, end)| end > start);
         if found.is_none() {
-            host.message(Message::NotFound);
+            self.error(host, Message::NotFound);
         }
         found
     }

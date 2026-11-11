@@ -117,7 +117,11 @@ fn argument_fits(command: &Command) -> bool {
         Body::Action { action, arg } => {
             let expects = matches!(
                 action,
-                Action::ReplaceChar | Action::SetMark | Action::InsertRegister
+                Action::ReplaceChar
+                    | Action::SetMark
+                    | Action::InsertRegister
+                    | Action::Record
+                    | Action::Play
             );
             expects == arg.is_some()
         }
@@ -232,7 +236,7 @@ fn random_keys_never_break_the_parser() {
     let [pending, commands, unsupported, invalid, cancelled, unbound] = total;
     assert!(pending > 50_000, "{total:?}");
     assert!(commands > 50_000, "{total:?}");
-    assert!(unsupported > 5_000, "{total:?}");
+    assert!(unsupported > 2_000, "{total:?}");
     assert!(invalid > 10_000, "{total:?}");
     assert!(cancelled > 500, "{total:?}");
     assert!(unbound > 10_000, "{total:?}");
@@ -302,8 +306,11 @@ fn check_state(vim: &Vim, host: &TestHost, context: &str) {
         );
     }
 
+    // 逐处确认期间撤销分组未结束，当前询问的匹配显示为选区。
+    let confirming = vim.confirming().is_some();
     match vim.mode() {
         Mode::Insert => assert_eq!(host.groups, 1, "{context}：插入期间有一个撤销分组"),
+        _ if confirming => assert_eq!(host.groups, 1, "{context}：确认期间有一个撤销分组"),
         mode => {
             assert_eq!(host.groups, 0, "{context}：撤销分组已结束");
             if mode == Mode::Normal {
@@ -325,6 +332,65 @@ fn check_state(vim: &Vim, host: &TestHost, context: &str) {
     }
 }
 
+/// 随机按键之间穿插的按键序列：命令行、替换、逐行执行、排序，以及宏的记录与回放。
+const SCRIPTS: &[&str] = &[
+    ":s/a/X/g<CR>",
+    ":%s/e/E/<CR>",
+    r":%s/\w\+/\u&/g<CR>",
+    r":%s/\n//<CR>",
+    r":%s/<Space>/\r/g<CR>",
+    ":%s/a/b/gc<CR>",
+    ":%s/e/x/gc<CR>yna",
+    ":s/./&&/gc<CR>yyq",
+    ":g/a/d<CR>",
+    ":v/a/d<CR>",
+    ":g/^/m0<CR>",
+    ":g/e/s/e/E/g<CR>",
+    ":g/./normal<Space>Ax<CR>",
+    ":g/a/t.<CR>",
+    ":%normal<Space>Ax<CR>",
+    ":%normal<Space>dd<CR>",
+    ":2,3normal<Space>ihello<CR>",
+    ":normal<Space>dw<CR>",
+    ":sort<CR>",
+    ":sort!<Space>u<CR>",
+    ":sort<Space>n<CR>",
+    ":2,3d<CR>",
+    ":2,4m0<CR>",
+    ":m$<CR>",
+    ":t.<CR>",
+    ":%j<CR>",
+    ":%><CR>",
+    ":1,2y<Space>a<CR>",
+    ":pu<CR>",
+    ":0pu<Space>a<CR>",
+    ":/a/d<CR>",
+    ":$<CR>",
+    ":set<Space>ic<Space>gdefault<CR>",
+    ":set<Space>noic<Space>nogdefault<Space>nowrapscan<CR>",
+    ":u<CR>",
+    ":wq<CR>",
+    ":zzz<CR>",
+    "qaxjq",
+    "qaA!<Esc>jq",
+    "qbdwq",
+    "qaIab<Esc>jq",
+    "qaqqaxj@aq",
+    "@a",
+    "3@a",
+    "@@",
+    "@b",
+    "100@a",
+    "@:",
+    "5@:",
+    "&",
+    "g&",
+    "\"ayy@a",
+    "ga",
+    "gt",
+    "ZZ",
+];
+
 /// 以种子 `seed` 生成 `steps` 个按键驱动状态机，核对不变量与撤销；返回单个按键的最长耗时与
 /// 核对过撤销、重做的命令数。
 fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
@@ -334,6 +400,10 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
     let mut shared = Shared::default();
     // 进入插入模式之前的文本：离开时撤销一次应回到这里。
     let mut insert_start: Option<String> = None;
+    // 开始逐处确认之前的文本：确认结束时撤销一次应回到这里。
+    let mut confirm_start: Option<String> = None;
+    // 穿插的按键序列中尚未输入的按键。
+    let mut script: std::collections::VecDeque<Key> = std::collections::VecDeque::new();
     let mut slowest = Duration::ZERO;
     let mut verified = 0;
     let undo_key = |key: Key| key == Key::char('u') || key == Key::ctrl('r');
@@ -364,6 +434,7 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
             } else {
                 vim.sync(&mut host);
             }
+            confirm_start = None;
             check_state(
                 &vim,
                 &host,
@@ -371,7 +442,15 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
             );
         }
 
-        let key = random_key(&mut rng, common);
+        // 普通模式下空闲时，偶尔输入一段命令行或宏。
+        let idle = vim.mode() == Mode::Normal && vim.pending().is_empty() && vim.prompt().is_none();
+        if script.is_empty() && idle && vim.confirming().is_none() && rng.below(25) == 0 {
+            script.extend(notation::parse(rng.pick(SCRIPTS)));
+        }
+        let key = match script.pop_front() {
+            Some(key) => key,
+            None => random_key(&mut rng, common),
+        };
         let context = format!(
             "种子 {seed} 第 {step} 步，{:?} 模式，按键 {key}",
             vim.mode()
@@ -380,6 +459,8 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
         let before_mode = vim.mode();
         // 是否正在插入模式中执行一条普通模式的命令：命令结束后回到插入模式，另起一个撤销单元。
         let suspended = vim.is_suspended();
+        let was_confirming = vim.confirming().is_some();
+        let undone = host.undone;
         // 设置 `WINC_VIM_TRACE` 为种子时打印该种子的每个按键，便于重现失败。
         if std::env::var("WINC_VIM_TRACE").is_ok_and(|trace| trace == seed.to_string()) {
             println!("{step} {before_mode:?} {key} {:?}", host.selection);
@@ -399,8 +480,18 @@ fn drive(seed: u64, steps: usize, common: &[Key]) -> (Duration, usize) {
             insert_start = Some(before_text.clone());
         }
         // 一条命令（或一次插入连同引起插入的命令）撤销后文本逐字节还原，重做后回到执行之后。
+        let confirming = vim.confirming().is_some();
+        if confirming && !was_confirming {
+            confirm_start = Some(before_text.clone());
+        }
         let finished = match (before_mode, after_mode) {
-            _ if resumed || vim.prompt().is_some() => None,
+            _ if resumed || vim.prompt().is_some() || confirming => None,
+            // 按键引发的回放或命令行中有撤销、重做时不核对。
+            _ if host.undone != undone => {
+                confirm_start = None;
+                None
+            }
+            _ if was_confirming => confirm_start.take(),
             (Mode::Insert, Mode::Insert) => None,
             (Mode::Insert, _) => insert_start.take(),
             (_, Mode::Insert) => None,
@@ -438,8 +529,9 @@ fn random_keys_keep_the_state_machine_consistent() {
         verified += count;
     }
     // 次数与生成的文本都有上限：任何一个按键都在有限的时间内处理完。
+    // 回放的时间上限是两秒，达到上限的按键略多于此。
     assert!(
-        slowest < Duration::from_secs(2),
+        slowest < Duration::from_secs(4),
         "最慢的按键耗时 {slowest:?}"
     );
     assert!(

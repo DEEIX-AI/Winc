@@ -24,7 +24,7 @@ impl Vim {
         force: Option<Force>,
     ) {
         let modifies = operator != Operator::Yank;
-        if modifies && Self::blocked(host) {
+        if modifies && self.blocked(host) {
             return;
         }
         // 按块的可视模式：操作符作用于块；`S`、`R` 与只按行工作的操作符仍作用于整行。
@@ -41,15 +41,18 @@ impl Vim {
             }
         }
 
+        // 取不到范围即命令失败；就地执行完毕的命令自行清除。
+        let failed = std::mem::replace(&mut self.failed, true);
         let Some((range, extent)) =
             self.target_range(shared, host, command, operator, target, force)
         else {
             return;
         };
+        self.failed = failed;
 
         let (from, to) = bounds(host, range.region);
         if !host.fits(from, to) {
-            host.message(Message::TooLarge);
+            self.error(host, Message::TooLarge);
             return;
         }
         let visual = self.visual.is_some();
@@ -74,7 +77,7 @@ impl Vim {
                 let lines = range.last - range.first + 1;
                 let by = host.indentation().width.max(1).saturating_mul(amount);
                 if operator == Operator::Indent && lines.saturating_mul(by) > super::MAX_OUTPUT {
-                    host.message(Message::TooLarge);
+                    self.error(host, Message::TooLarge);
                     false
                 } else {
                     let left = operator == Operator::Outdent;
@@ -110,7 +113,7 @@ impl Vim {
             Operator::Reindent => {
                 let done = host.format_lines(range.first, range.last);
                 if !done {
-                    host.message(Message::Unsupported);
+                    self.error(host, Message::Unsupported);
                 }
                 self.shown = None;
                 let text = host.text();
@@ -119,7 +122,7 @@ impl Vim {
                 done
             }
             Operator::Format | Operator::Fold | Operator::Filter => {
-                host.message(Message::Unsupported);
+                self.error(host, Message::Unsupported);
                 false
             }
         };
@@ -183,9 +186,10 @@ impl Vim {
                         cursor: moved.pos,
                     };
                     self.visual = Some(visual);
+                    self.failed = false;
                     if !self.block_operate(shared, host, command, operator, visual, false) {
                         self.visual = None;
-                        host.message(Message::Unsupported);
+                        self.error(host, Message::Unsupported);
                     }
                     // 重复时重新求值动作，不沿用块的大小。
                     if !self.replaying
@@ -308,7 +312,7 @@ impl Vim {
     }
 
     /// 复制 `range` 中的文本，光标移到范围的起点。
-    fn yank(
+    pub(super) fn yank(
         &mut self,
         shared: &mut Shared,
         host: &mut impl Host,
@@ -336,7 +340,7 @@ impl Vim {
     }
 
     /// 删除 `range` 中的文本并写入寄存器。
-    fn delete(
+    pub(super) fn delete(
         &mut self,
         shared: &mut Shared,
         host: &mut impl Host,

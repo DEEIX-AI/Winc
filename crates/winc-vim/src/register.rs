@@ -101,6 +101,17 @@ impl Registers {
         self.slots.insert(name, Content { kind, text });
     }
 
+    /// 把宏 `content` 存入寄存器 `name`，无名寄存器与编号寄存器不变；大写字母表示追加。
+    pub(crate) fn set_macro(&mut self, name: char, content: Content) {
+        let slot = name.to_ascii_lowercase();
+        match self.slots.get_mut(&slot) {
+            Some(existing) if name.is_ascii_uppercase() => existing.text.push_str(&content.text),
+            _ => {
+                self.slots.insert(slot, content);
+            }
+        }
+    }
+
     /// 把 `content` 解释成从系统剪贴板读到的文本：与最近一次写入剪贴板的文本相同时沿用
     /// 当时的类型，否则以换行符结尾的是按行，其余按字符。
     pub(crate) fn read_clipboard(&self, text: &str) -> Content {

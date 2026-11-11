@@ -304,6 +304,15 @@ pub enum PromptKind {
     RenameBranch { old: String },
     /// Vim 模式下查找的模式；`forward` 为真时向后文查找。
     VimSearch { forward: bool },
+    /// Vim 模式的命令行。
+    VimCommand,
+}
+
+impl PromptKind {
+    /// 是否为 Vim 模式的命令行或查找：输入条显示在状态栏所在的一行。
+    pub fn is_vim(&self) -> bool {
+        matches!(self, Self::VimSearch { .. } | Self::VimCommand)
+    }
 }
 
 /// 键盘焦点所在的区域。
