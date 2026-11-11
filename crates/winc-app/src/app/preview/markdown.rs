@@ -64,6 +64,8 @@ pub(crate) struct LiveLeaf {
     pub prose: bool,
     /// 是否为表格；表格按单元格编辑。
     pub table: bool,
+    /// 光标是否位于段落、标题之后的空行上。
+    pub blank: bool,
     /// 查找该块所用的位置（字节偏移）。
     ///
     /// 通常是光标位置；按住鼠标期间是按下之前的光标位置。表格中该位置所在的单元格显示原文，
@@ -992,6 +994,10 @@ impl App {
         // 块之间的空行视为正文：回车另起一段。
         let prose = gap || kind.is_some_and(|l| l.prose);
         let table = !gap && kind.is_some_and(|l| l.table);
+        let before = rope.byte_slice(line_start..caret.max(line_start));
+        let blank = line_start > found.start
+            && kind.is_some_and(|l| l.prose)
+            && before.chars().all(char::is_whitespace);
         let block = block_of(found.start)?;
         let range = parsed.ranges[block].start..shift(parsed.ranges[block].end).max(leaf.end);
         // 输入之后、重新解析之前，范围来自上一版文档：起点可能已超出文档，也可能不在字符边界上；
@@ -1011,6 +1017,7 @@ impl App {
             revision: doc.revision,
             prose,
             table,
+            blank,
             at: caret,
             edge,
         })
@@ -2523,8 +2530,8 @@ impl App {
         id.is_some() && self.markdown.editing == id
     }
 
-    /// 在可编辑的预览中开始编辑（点击、移动光标）：光标所在的块显示原文。
-    fn start_live_editing(&mut self) {
+    /// 在可编辑的预览中开始编辑（点击、移动光标、组字）：光标所在的块显示原文。
+    pub(in crate::app) fn start_live_editing(&mut self) {
         self.markdown.editing = self.editor.active().map(|d| d.id);
     }
 

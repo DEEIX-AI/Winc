@@ -51,6 +51,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let source = Arc::as_ptr(&parsed) as usize;
     let live = app.live_editing().then(|| app.live_leaf()).flatten();
     let live_key = (live.as_ref()).map(|l| live_key(l, app.preedit_at(Focus::Editor)));
+    let blank = live.as_ref().is_some_and(|l| l.blank);
     let loaded = std::mem::take(&mut app.markdown.loaded);
     let toggled = app.markdown.toggled_now.take();
     // 重排之前光标在旧排版里的高度：重排后据此保持光标在屏幕上不动（见 [`keep_caret_still`]）。
@@ -461,7 +462,13 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         let point = (x, y + shift, h);
         // 正文中的组字文字已排入所在的行，不再在其上重复绘制。
         let inline = laid.blocks.iter().any(|(_, b)| b.preedit);
-        (point, (!inline).then(|| font_at(&laid, source)))
+        // 段落之后的空行上组字使用正文的字体，不沿用上方标题的字体。
+        let body = (winc_render::FontKind::Ui, Default::default(), key.base);
+        let font = match blank {
+            true => Some(body),
+            false => font_at(&laid, source),
+        };
+        (point, (!inline).then_some(font))
     });
     md.layout = Some(laid);
     md.motion = motion;

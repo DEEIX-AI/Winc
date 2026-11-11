@@ -942,6 +942,10 @@ impl App {
                     self.field_preedit = text;
                     self.preedit.clear();
                 } else {
+                    // 尚未在预览上点击就开始组字时，预览同样显示光标和组字文字。
+                    if !text.is_empty() && self.focus == Focus::Editor && self.markdown_live() {
+                        self.start_live_editing();
+                    }
                     self.preedit = text;
                     self.field_preedit.clear();
                 }
