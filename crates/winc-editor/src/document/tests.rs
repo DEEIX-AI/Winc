@@ -6,6 +6,8 @@ use super::disk::write_atomic;
 use super::*;
 use crate::test_util::scratch;
 
+use std::time::SystemTime;
+
 #[cfg(unix)]
 #[test]
 fn atomic_writes_use_a_fresh_private_temporary_file() {
@@ -511,6 +513,7 @@ fn changes_within_the_same_timestamp_are_still_noticed() {
     fs::write(&path, "one\n").unwrap();
     let mut doc = Document::open(DocumentId(1), path.clone()).unwrap();
     let known = doc.disk_mtime().unwrap();
+    let known = std::time::UNIX_EPOCH + std::time::Duration::new(known.secs as u64, known.nanos);
 
     // 时间只精确到秒的文件系统：其他程序在同一秒内改写，修改时间没有变化而大小改变了。
     let rewrite = |text: &str| {

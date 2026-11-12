@@ -27,7 +27,7 @@ type ReadBack = (DocumentId, u64, DiskBack);
 /// 后台对一个文档完成的一步磁盘检查。
 pub(crate) enum DiskBack {
     /// 读到的文件元数据（文件不存在或无法访问时为 `None`），交给 `Document::check_disk_with`。
-    Checked(Option<std::fs::Metadata>),
+    Checked(Option<winc_backend::fs::Metadata>),
     /// 读到的文件内容（末尾追加的部分或整个文件），交给 `Document::apply_reread`。
     Read(DiskRead),
     /// 按用户选择的编码读到的文件内容，交给 `Document::finish_reopen_with_encoding`。
@@ -223,9 +223,11 @@ impl App {
         }
         let sender = self.rereads.results.0.clone();
         self.spawn_then(UserEvent::Reread, move || {
-            for (id, ticket, path) in checks {
-                let metadata = std::fs::metadata(&path).ok();
-                let _ = sender.send((id, ticket, DiskBack::Checked(metadata)));
+            // 各文档的文件信息一次取回：远端路径由一次请求完成。
+            let paths: Vec<&Path> = checks.iter().map(|(_, _, path)| path.as_path()).collect();
+            let found = winc_backend::fs::metadata_many(&paths);
+            for ((id, ticket, _), metadata) in checks.iter().zip(found) {
+                let _ = sender.send((*id, *ticket, DiskBack::Checked(metadata.ok())));
             }
         });
     }

@@ -3,7 +3,7 @@
 
 use super::*;
 
-use winc_backend::fs::{SaveError, SaveOptions};
+use winc_backend::fs::{Metadata, SaveError, SaveOptions, Stamp};
 use winc_i18n::t;
 
 mod append;
@@ -157,13 +157,13 @@ pub struct Opened {
 /// 打开时读到了什么。
 enum OpenedContent {
     /// 图片：只有修改时间，解码另外做。
-    Image(Option<SystemTime>),
+    Image(Option<Stamp>),
     /// xlsx 工作簿：只有修改时间，读取另外做。
-    Workbook(Option<SystemTime>),
+    Workbook(Option<Stamp>),
     /// docx 文字文档：只有修改时间，读取和转换另外做。
-    Docx(Option<SystemTime>),
+    Docx(Option<Stamp>),
     /// PDF：只有修改时间，读取和渲染另外做。
-    Pdf(Option<SystemTime>),
+    Pdf(Option<Stamp>),
     /// 文本，或者打不开的原因。
     Text(Result<Loaded, OpenError>),
 }
@@ -208,11 +208,9 @@ impl Document {
 
         // 符号链接写入其指向的文件，不替换链接本身。
         let target = winc_config::files::canonicalize(path).unwrap_or_else(|_| path.clone());
-        self.write_content(&target)?;
+        let written = self.write_content(&target)?;
         self.history.mark_saved();
-        let metadata = fs::metadata(&target).ok();
-        self.disk_mtime = metadata.as_ref().and_then(|m| m.modified().ok());
-        self.disk_len = metadata.map_or(0, |m| m.len());
+        (self.disk_mtime, self.disk_len) = (written.modified, written.len);
         self.conflict = false;
         Ok(())
     }
@@ -225,14 +223,14 @@ impl Document {
     /// `std::io::Error`。
     pub fn write_copy(&self, path: &Path) -> io::Result<()> {
         let target = winc_config::files::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        self.write_content(&target)
+        self.write_content(&target).map(drop)
     }
 
-    /// 把文档的内容按当前的编码写到 `target`，先写临时文件再改名替换。
-    fn write_content(&self, target: &Path) -> io::Result<()> {
+    /// 把文档的内容按当前的编码写到 `target`，先写临时文件再改名替换，返回写入后的文件信息。
+    fn write_content(&self, target: &Path) -> io::Result<Metadata> {
         let bom = self.encoding == Encoding::Utf8Bom;
 
-        match &self.text {
+        let written = match &self.text {
             // 非 UTF-8 编码（GBK、UTF-16 等）按原编码写回；遇到该编码无法表示的字符时不写入，
             // 并在错误信息中指出该字符。
             Content::Rope(rope) if !matches!(self.encoding, Encoding::Utf8 | Encoding::Utf8Bom) => {
@@ -245,7 +243,7 @@ impl Document {
                     );
                     io::Error::other(message)
                 })?;
-                write_atomic(target, false, true, |out| out.write_all(&bytes))?;
+                write_atomic(target, false, true, |out| out.write_all(&bytes))?
             }
             Content::Rope(rope) => write_atomic(target, bom, true, |out| {
                 rope.chunks()
@@ -259,13 +257,13 @@ impl Document {
                 }
 
                 // 片段引用原文件的字节范围，原地写入会在读取这些片段之前截断原文件。
-                write_atomic(target, bom, false, |out| large.write_to(out))?;
+                write_atomic(target, bom, false, |out| large.write_to(out))?
                 // 继续引用被替换掉的原文件（打开着的句柄仍指向原来的内容），与新文件内容相同：
                 // 重新打开要按文件大小重建行索引，同步保存在界面线程上执行（另存为、关闭前保存），
                 // 不在这里做。原文件占的磁盘空间在文档关闭或重新载入时释放。
             }
-        }
-        Ok(())
+        };
+        Ok(written)
     }
 
     /// 另存为：换成新路径（语言按新文件名重新识别）并保存。
@@ -303,9 +301,9 @@ impl Document {
         let Some(path) = &self.path else {
             return false;
         };
-        fs::metadata(path).map_or_else(
+        winc_backend::fs::metadata(path).map_or_else(
             |_| crate::wsl::reachable(path),
-            |metadata| !metadata.permissions().readonly() && !self.disk_differs(&metadata),
+            |metadata| !metadata.readonly && !self.disk_differs(&metadata),
         )
     }
 
@@ -319,7 +317,7 @@ impl Document {
             return false;
         };
         self.disk_mtime.is_some()
-            && fs::metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+            && winc_backend::fs::metadata(path).is_err_and(|e| winc_backend::fs::is_absent(&e))
             && crate::wsl::reachable(path)
     }
 
@@ -328,8 +326,8 @@ impl Document {
     /// 仅比较修改时间不足：有的文件系统时间只精确到 1～2 秒（FAT、exFAT、HFS+、一些网络文件
     /// 系统），保存后同一秒内别的程序再写一次，修改时间可能不变，大小通常会变。最近一次读写时
     /// 文件还不存在（`disk_mtime` 为 `None`）而现在有了，也算不同。
-    fn disk_differs(&self, metadata: &fs::Metadata) -> bool {
-        metadata.modified().ok() != self.disk_mtime || metadata.len() != self.disk_len
+    fn disk_differs(&self, metadata: &Metadata) -> bool {
+        metadata.modified != self.disk_mtime || metadata.len != self.disk_len
     }
 
     /// 磁盘文件是否已被其他程序修改，而文档也有未保存的修改，用户还没有决定保留哪一边。
@@ -350,12 +348,11 @@ impl Document {
         let Some(path) = &self.path else {
             return false;
         };
-        let Ok(metadata) = fs::metadata(path) else {
+        let Ok(metadata) = winc_backend::fs::metadata(path) else {
             return false;
         };
         if self.disk_differs(&metadata) {
-            self.disk_mtime = metadata.modified().ok();
-            self.disk_len = metadata.len();
+            (self.disk_mtime, self.disk_len) = (metadata.modified, metadata.len);
             self.conflict = true;
         }
         self.conflict
@@ -373,7 +370,7 @@ impl Document {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, t!("editor-file-no-path")))?;
         let too_large = || io::Error::other(t!("editor-large-cannot-compare")).into();
         // 大文件读入时要先把整个文件扫一遍建索引，无法逐行比较，因此先按大小排除。
-        if fs::metadata(path)?.len() > LARGE_FILE {
+        if winc_backend::fs::metadata(path)?.len > LARGE_FILE {
             return Err(too_large());
         }
         match load_with(path, false, self.encoding)?.text {
@@ -461,10 +458,9 @@ impl Document {
     /// 解决冲突：保留未保存的修改，下次保存时覆盖磁盘上的内容（之后自动保存也仍然进行）。
     pub fn keep_mine(&mut self) {
         if let Some(path) = &self.path
-            && let Ok(metadata) = fs::metadata(path)
+            && let Ok(metadata) = winc_backend::fs::metadata(path)
         {
-            self.disk_mtime = metadata.modified().ok();
-            self.disk_len = metadata.len();
+            (self.disk_mtime, self.disk_len) = (metadata.modified, metadata.len);
         }
         self.conflict = false;
     }
@@ -490,13 +486,13 @@ impl Document {
     /// 其余情况（没变、冲突、图片、xlsx 工作簿、docx、PDF）只看文件的元数据，就地处理完。元数据在
     /// 调用的线程上读；界面线程上在后台读好元数据，再调用 [`Document::check_disk_with`]。
     pub fn check_disk(&mut self) -> DiskSync {
-        let metadata = self.path.as_ref().and_then(|p| fs::metadata(p).ok());
+        let metadata = (self.path.as_ref()).and_then(|p| winc_backend::fs::metadata(p).ok());
         self.check_disk_with(metadata.as_ref())
     }
 
     /// 和 [`Document::check_disk`] 一样，但用调用方读好的文件元数据 `metadata`（文件不存在或
     /// 无法访问时为 `None`），自身不访问磁盘。
-    pub fn check_disk_with(&mut self, metadata: Option<&fs::Metadata>) -> DiskSync {
+    pub fn check_disk_with(&mut self, metadata: Option<&Metadata>) -> DiskSync {
         let Some(path) = self.path.clone() else {
             return DiskSync::Done(DiskChange::Unchanged);
         };
@@ -508,7 +504,7 @@ impl Document {
             self.unsupported,
             Some(Unsupported::Image | Unsupported::Workbook | Unsupported::Docx | Unsupported::Pdf)
         ) {
-            let mtime = metadata.and_then(|m| m.modified().ok());
+            let mtime = metadata.and_then(|m| m.modified);
             if mtime.is_none() || mtime == self.disk_mtime {
                 return DiskSync::Done(DiskChange::Unchanged);
             }
@@ -535,8 +531,7 @@ impl Document {
 
         if self.is_dirty() {
             // 记录新的修改时间和大小，使同一次外部修改只提示一次。
-            self.disk_mtime = metadata.modified().ok();
-            self.disk_len = metadata.len();
+            (self.disk_mtime, self.disk_len) = (metadata.modified, metadata.len);
             self.conflict = true;
             return DiskSync::Done(DiskChange::Conflict);
         }
@@ -731,7 +726,11 @@ impl Document {
     /// 与 [`Document::read_any`] 相同；`as_text` 为 `true` 时图片和二进制文件也按文本读入
     /// （「以文本方式打开」）。
     pub(crate) fn read(path: &Path, as_text: bool) -> Opened {
-        let mtime = || fs::metadata(path).and_then(|m| m.modified()).ok();
+        let mtime = || {
+            winc_backend::fs::metadata(path)
+                .ok()
+                .and_then(|m| m.modified)
+        };
         let content = if !as_text && winc_preview::image::is_image(path) {
             OpenedContent::Image(mtime())
         } else if !as_text && winc_preview::table::is_workbook(path) {
@@ -820,7 +819,7 @@ impl Document {
 /// 修改时间早于实际内容，之后的磁盘同步仍能发现这次修改。
 fn load_as(path: &Path, encoding: Encoding) -> Result<Loaded, OpenError> {
     let file = fs::File::open(path)?;
-    let mtime = file.metadata()?.modified().ok();
+    let mtime = file.metadata()?.modified().ok().map(Stamp::from);
     // 文档打开时不超过 `LARGE_FILE`，之后文件可能变大：超过时按大文件的规则只支持 UTF-8，
     // 不把整个文件读进内存再解码。读的过程中还在变大的，读到上限为止再判断。
     let mut bytes = Vec::new();
@@ -855,7 +854,7 @@ fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded
     let mut file = fs::File::open(path)?;
     let metadata = file.metadata()?;
     let size = metadata.len();
-    let mtime = metadata.modified().ok();
+    let mtime = metadata.modified().ok().map(Stamp::from);
 
     if size > OPEN_LIMIT {
         return Err(OpenError::TooLarge(size));
@@ -948,7 +947,7 @@ fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded
     })
 }
 
-/// 把 `write` 写出的内容原子地保存到 `path`，见 [`winc_backend::fs::save`]。
+/// 把 `write` 写出的内容原子地保存到 `path`，返回写入后的文件信息，见 [`winc_backend::fs::save`]。
 ///
 /// `bom` 为 `true` 时先写入 UTF-8 BOM；`in_memory` 为 `true` 时写出的内容全部在内存中，改名替换
 /// 不可行或会改变文件属性的情况改为原地写入。WSL 发行版中的文件经 Windows 改名替换会丢失 Linux
@@ -962,7 +961,7 @@ pub(super) fn write_atomic(
     bom: bool,
     in_memory: bool,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
-) -> io::Result<()> {
+) -> io::Result<Metadata> {
     let in_distro = crate::wsl::locate_here(path).is_some();
     let keep_identity = |target: &Path, temp: &Path| crate::wsl::keep_identity(target, temp);
     let options = SaveOptions {
@@ -972,7 +971,7 @@ pub(super) fn write_atomic(
         before_replace: in_distro.then_some(&keep_identity),
     };
     match winc_backend::fs::save(path, &options, write) {
-        Ok(_) => Ok(()),
+        Ok(written) => Ok(written),
         Err(SaveError::ReadOnly) => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             t!("editor-file-read-only"),

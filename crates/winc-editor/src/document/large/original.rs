@@ -23,7 +23,7 @@ pub(super) struct Original {
     /// 建索引时文件的大小（字节），与 `mtime` 一起用于发现外部修改。
     pub(super) size: u64,
     /// 建索引时文件的修改时间。
-    pub(super) mtime: Option<SystemTime>,
+    pub(super) mtime: Option<Stamp>,
     /// 扫描到的内容字节数（不含 BOM）。
     pub(super) len: u64,
     /// 扫描到的内容字符数。
@@ -107,7 +107,7 @@ impl Original {
             bom,
             base,
             size: metadata.len(),
-            mtime: metadata.modified().ok(),
+            mtime: metadata.modified().ok().map(Stamp::from),
             len: metadata.len().saturating_sub(base),
             chars: 0,
             newlines: 0,

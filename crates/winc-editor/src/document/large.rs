@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::SystemTime;
+use winc_backend::fs::Stamp;
 
 use winc_core::text::{EditBuffer, Line, Lines};
 use winc_i18n::t;
@@ -187,7 +187,9 @@ impl LargeText {
             return true;
         };
         let size = metadata.len();
-        if size == self.original.size && metadata.modified().ok() == self.original.mtime {
+        if size == self.original.size
+            && metadata.modified().ok().map(Stamp::from) == self.original.mtime
+        {
             return false;
         }
         size <= self.original.size || !self.original.tail_intact()
@@ -283,7 +285,7 @@ impl LargeText {
         }
         // 记录的大小只到已接入的位置：尚未写完的字符留到下一次接入。
         original.size = original.base + segment.end;
-        original.mtime = metadata.modified().ok();
+        original.mtime = metadata.modified().ok().map(Stamp::from);
 
         self.pieces = vec![Piece {
             source: Source::Original,

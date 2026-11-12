@@ -149,8 +149,10 @@ pub fn save(
                 before_replace(path, &tmp)?;
             }
         }
-        // 改名不改变文件信息，替换之前从仍然打开的临时文件读取。
-        let written = Metadata::from(&file.metadata()?);
+        // 关闭之后再取文件信息：部分系统在关闭句柄时才更新修改时间。临时文件的名字是随机的，
+        // 其他程序不会在此期间修改它；改名不改变文件信息。
+        drop(file);
+        let written = Metadata::from(&std::fs::metadata(&tmp)?);
         replace_file(&tmp, path)?;
         sync_dir(dir);
         Ok(written)
@@ -190,8 +192,9 @@ fn write_in_place(
         .write(true)
         .truncate(true)
         .open(path)?;
-    let file = write_content(file, bom, write)?;
-    Ok(Metadata::from(&file.metadata()?))
+    // 关闭之后再取文件信息，原因见 [`save`] 中的说明。
+    drop(write_content(file, bom, write)?);
+    Ok(Metadata::from(&std::fs::metadata(path)?))
 }
 
 /// 改名替换是否会改变已有文件 `metadata` 的身份：有多个硬链接（改名只替换一个名字，其他名字

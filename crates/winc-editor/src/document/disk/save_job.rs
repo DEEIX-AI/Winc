@@ -37,7 +37,7 @@ pub struct Saved {
 struct Written {
     /// 重新打开的刚写好的文件；打不开时为 `None`，继续引用原来的原文件。
     fresh: Option<LargeText>,
-    mtime: Option<SystemTime>,
+    mtime: Option<Stamp>,
     len: u64,
 }
 
@@ -47,14 +47,10 @@ impl SaveJob {
     pub fn run(self) -> Saved {
         // 片段引用原文件的字节范围，不用原地写入（会先截断原文件）。
         let result = write_atomic(&self.target, self.bom, false, |out| self.text.write_to(out))
-            .map(|()| {
-                let fresh = fs::File::open(&self.target).and_then(LargeText::open).ok();
-                let metadata = fs::metadata(&self.target).ok();
-                Written {
-                    fresh,
-                    mtime: metadata.as_ref().and_then(|m| m.modified().ok()),
-                    len: metadata.map_or(0, |m| m.len()),
-                }
+            .map(|written| Written {
+                fresh: fs::File::open(&self.target).and_then(LargeText::open).ok(),
+                mtime: written.modified,
+                len: written.len,
             });
         Saved {
             path: self.path,

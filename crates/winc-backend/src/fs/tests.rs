@@ -37,6 +37,22 @@ fn local_files_report_the_same_information_as_the_standard_library() {
         io::ErrorKind::NotFound
     );
     assert!(!exists(&missing) && !is_file(&missing) && !is_dir(&missing));
+
+    // 路径上没有该项、路径中间的一段是文件：都表示不存在；其他错误不表示不存在。
+    assert!(is_absent(&metadata(&missing).unwrap_err()));
+    assert!(is_absent(&metadata(file.join("below")).unwrap_err()));
+    assert!(!is_absent(&io::Error::from(
+        io::ErrorKind::PermissionDenied
+    )));
+    assert!(!is_absent(&io::Error::from(io::ErrorKind::Unsupported)));
+
+    // 批量取信息：结果与路径的顺序一一对应，各项互不影响。
+    let found = metadata_many(&[file.clone(), missing, dir.clone()]);
+    assert_eq!(found.len(), 3);
+    assert!(found[0].as_ref().is_ok_and(Metadata::is_file));
+    assert!(found[1].as_ref().is_err_and(is_absent));
+    assert!(found[2].as_ref().is_ok_and(Metadata::is_dir));
+    assert!(metadata_many::<PathBuf>(&[]).is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

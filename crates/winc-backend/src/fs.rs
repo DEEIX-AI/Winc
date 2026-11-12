@@ -171,6 +171,23 @@ pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     std::fs::symlink_metadata(path).map(|m| Metadata::from(&m))
 }
 
+/// 对若干路径逐个取文件信息（跟随符号链接），结果与 `paths` 的顺序一一对应。
+///
+/// 远端路径由一次请求完成，不逐个往返。
+pub fn metadata_many<P: AsRef<Path>>(paths: &[P]) -> Vec<io::Result<Metadata>> {
+    paths.iter().map(metadata).collect()
+}
+
+/// 是否表示文件不存在：路径上没有该项，或路径中间的一段不是目录。
+///
+/// 其他错误（权限不足、连接中断）不说明文件是否存在，不能据此认为文件已被删除。
+pub fn is_absent(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
+}
+
 /// 是否存在并且是普通文件（跟随符号链接）；无法确定时为否。
 pub fn is_file(path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();

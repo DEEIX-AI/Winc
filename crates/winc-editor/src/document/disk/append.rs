@@ -31,13 +31,13 @@ pub(super) enum Appended {
     Rope {
         rope: Rope,
         len: u64,
-        mtime: Option<SystemTime>,
+        mtime: Option<Stamp>,
     },
     /// 行索引已经扩展好的大文件，换掉原来那份。
     Large {
         text: Box<LargeText>,
         len: u64,
-        mtime: Option<SystemTime>,
+        mtime: Option<Stamp>,
     },
 }
 
@@ -57,11 +57,11 @@ impl Append {
                 if text.grow().is_none() || text.has_overlong_lines() {
                     return None;
                 }
-                let metadata = fs::metadata(path).ok();
+                let metadata = winc_backend::fs::metadata(path).ok();
                 Some(Appended::Large {
                     text,
-                    len: metadata.as_ref().map_or(0, |m| m.len()),
-                    mtime: metadata.and_then(|m| m.modified().ok()),
+                    len: metadata.map_or(0, |m| m.len),
+                    mtime: metadata.and_then(|m| m.modified),
                 })
             }
         }
@@ -146,7 +146,7 @@ fn read_rope(path: &Path, mut rope: Rope, disk_len: u64, bom: u64) -> Option<App
     Some(Appended::Rope {
         rope,
         len: old + complete as u64,
-        mtime: metadata.modified().ok(),
+        mtime: metadata.modified().ok().map(Stamp::from),
     })
 }
 
