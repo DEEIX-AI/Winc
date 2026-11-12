@@ -217,3 +217,34 @@ settings-zoom = Zoom { $zoom }%
 settings-config-backed-up = The configuration file couldn’t be parsed; it was saved as { $path } and the new settings were written
 settings-config-comments-backed-up = Comments in the configuration file can’t be kept when writing settings; the original was saved as { $path }
 settings-config-write-failed = Couldn’t write the configuration file: { $error }
+
+## AI settings.
+
+settings-page-ai = AI
+settings-section-ai-providers = Third-party AI providers
+settings-section-ai-models = Model Assignment
+settings-ai-provider = Provider
+settings-ai-provider-desc = Use a personal API key or a local models provider.
+settings-ai-provider-openai = OpenAI-compatible
+settings-ai-endpoint = URL
+settings-ai-endpoint-desc = Third-party API base URL, e.g. https://api.openai.com/v1
+settings-ai-key = API Key
+settings-ai-key-desc = Personal API key used for requests
+settings-ai-test-connection = Test Connection
+settings-ai-test-testing = Testing connection…
+settings-ai-test-success = Connection successful
+settings-ai-test-no-model = Model list available; specify a model to test completions
+settings-ai-model = Core features
+settings-ai-model-desc = Used for commit message generation.
+settings-ai-endpoint-placeholder = https://api.openai.com/v1
+settings-ai-key-placeholder = API Key
+settings-ai-model-placeholder = gpt-4o
+
+settings-ai-invalid-url = Enter a valid HTTP or HTTPS API URL
+settings-ai-invalid-key = The API key contains invalid control characters
+settings-ai-invalid-response = The AI service returned an invalid response
+
+settings-section-ai-commit = Commit messages
+settings-ai-commit-prompt = Generation prompt
+settings-ai-commit-prompt-desc = AI Assistant uses this prompt each time you click Generate Commit Message. Customize it to suit your needs. Examples: extract the ticket number from $GIT_BRANCH_NAME; keep the message short; answer in German; use Conventional Commits; use bullet points for multiple changes.
+settings-ai-commit-prompt-hint = Enter: new line · { $key }Enter: save · Esc: cancel. Clear to restore default rules for the interface language.

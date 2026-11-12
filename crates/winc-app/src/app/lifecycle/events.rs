@@ -446,6 +446,7 @@ impl App {
             | UserEvent::Loaded
             | UserEvent::BackedUp
             | UserEvent::Replaced
+            | UserEvent::AiTestDone) => self.finished(done),
             | UserEvent::Wrapped) => self.finished(done),
             UserEvent::Rediffed => self.poll_rediffs(),
             UserEvent::Outline => self.poll_outline(),

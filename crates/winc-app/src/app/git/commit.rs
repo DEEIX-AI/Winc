@@ -57,8 +57,8 @@ const CARD_INSET: f32 = 4.0;
 const BUTTON_PAD: f32 = 10.0;
 /// 底行里勾选框的文字和提交按钮之间至少留出的距离（逻辑像素）；放不下时勾选框收进按钮的菜单。
 ///
-/// 取 12：比按钮之间的间隔（`BUTTON_GAP`，2）宽得多，两样东西不会看成一组按钮。
-const FOOTER_GAP: f32 = 12.0;
+/// 取 6：比按钮之间的间隔（`BUTTON_GAP`，2）宽，给新增 AI 按钮留出空间。
+const FOOTER_GAP: f32 = 6.0;
 /// 提交信息框最少显示的行数（行）。
 ///
 /// 取 2：只有一行时底行的按钮比信息本身还高，看起来像一个按钮而不是写信息的地方。
@@ -430,6 +430,8 @@ pub enum CommitTarget {
     CommitMenu,
     /// 提交卡片底行左边的「修改上次提交」勾选框和文字。
     Amend,
+    /// 提交卡片底行的「AI 总结」按钮。
+    Ai,
     /// 没有更改时空状态下面的按钮：推送、拉取或发布，见 [`App::git_sync`]。
     NextStep,
     /// 「上一次提交」那一栏的「撤销」。
@@ -466,6 +468,8 @@ pub(crate) struct CommitParts {
     pub message_settled: Rect,
     /// 卡片底行左边的「修改上次提交」勾选框和文字；卡片太窄时收进按钮的菜单，为 `None`。
     pub amend: Option<Rect>,
+    /// 卡片底行的 AI 总结按钮；卡片不显示或卡片太窄时为 `None`。
+    pub ai: Option<Rect>,
     /// 拆分按钮左边的「提交」。
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
@@ -485,6 +489,17 @@ pub(crate) struct CommitParts {
     pub list: Rect,
 }
 
+/// 请求时的提交上下文，防止异步结果覆盖后来输入或另一次提交。
+struct AiRequest {
+    generation: u64,
+    message: String,
+    checks: u64,
+    amend: bool,
+    head: Option<String>,
+    branch: Option<Head>,
+    entries: Vec<Entry>,
+}
+
 /// 后台交回来的结果。
 enum Outcome {
     /// 提交完成：新提交的提交号，或者失败的原因。
@@ -499,6 +514,8 @@ enum Outcome {
     Undone(Result<(), String>, LastCommit, PathBuf),
     /// 回滚完成：回滚的文件数，或者失败的原因；在哪个仓库里回滚的。
     RolledBack(Result<usize, String>, PathBuf),
+    /// AI 生成提交信息完成：生成的提交信息或失败原因，在哪个仓库里生成的。
+    AiMessage(Result<String, String>, PathBuf, AiRequest),
     /// 取回了一条储藏（提交号、名字）改动的文件。
     StashFiles(String, String, stash::StashFiles),
     /// 准备好了储藏里一个文件的差异（标签的标题），或者失败的原因。
@@ -625,6 +642,10 @@ pub(crate) struct CommitState {
     pub(super) preview: Option<DocumentId>,
     /// 是否正在提交或回滚。
     pub busy: bool,
+    /// 是否正在通过 AI 生成提交信息。
+    pub ai_busy: bool,
+    /// AI 请求代数；切换仓库后仍单调递增，旧结果不能写回。
+    ai_generation: u64,
     /// 最近一次成功提交的短提交号及其提示的截止时刻。
     ///
     /// 截止前按钮显示「✓ 已提交 abc1234」。
@@ -736,6 +757,8 @@ impl Default for CommitState {
             anchor: None,
             preview: None,
             busy: false,
+            ai_busy: false,
+            ai_generation: 0,
             committed: None,
             refreshed: None,
             labels: CommitLabels::default(),
@@ -889,7 +912,7 @@ impl App {
 
         let share = self.commit_card_share();
         let card_share = share;
-        let (card, message, message_settled, amend, commit, commit_menu) = if share > 0.0 {
+        let (card, message, message_settled, amend, ai, commit, commit_menu) = if share > 0.0 {
             self.commit_card_parts(panel, inner_x, inner_w, share)
         } else {
             Default::default()
@@ -936,6 +959,7 @@ impl App {
             message,
             message_settled,
             amend,
+            ai,
             commit,
             commit_menu,
             undo,
@@ -959,7 +983,15 @@ impl App {
         inner_x: f32,
         inner_w: f32,
         share: f32,
-    ) -> (Option<Rect>, Rect, Rect, Option<Rect>, Rect, Rect) {
+    ) -> (
+        Option<Rect>,
+        Rect,
+        Rect,
+        Option<Rect>,
+        Option<Rect>,
+        Rect,
+        Rect,
+    ) {
         let settled_h = self.commit_message_target(panel.h);
         let message_h = self
             .commit
@@ -984,13 +1016,16 @@ impl App {
         let labels = self.commit.labels;
         let fitted = labels.button + 2.0 * BUTTON_PAD + BUTTON_MENU_W;
         let amendable = self.commit_amendable();
+        let ai_w = TOOL;
+        let ai_gap = 4.0;
         let beside = if amendable {
-            labels.amend + FOOTER_GAP
+            labels.amend + ai_gap + ai_w + FOOTER_GAP
         } else {
-            0.0
+            ai_w + ai_gap
         };
         let compact = beside + fitted <= footer.w;
-        let settled_w = if compact { fitted } else { footer.w };
+        let max_button_w = (footer.w - ai_w - ai_gap).max(0.0);
+        let settled_w = if compact { fitted } else { max_button_w };
         let button_w = self
             .commit
             .button_motion
@@ -1003,11 +1038,18 @@ impl App {
         let leaving = matches!(self.commit.amend_motion, Some((false, _)));
         let amend = (amendable && (compact || leaving))
             .then(|| Rect::new(footer.x, footer.y, labels.amend, FOOTER_H));
+        let ai_x = if amendable && compact {
+            footer.x + labels.amend + ai_gap
+        } else {
+            footer.x
+        };
+        let ai = (ai_x + ai_w <= footer.right()).then(|| Rect::new(ai_x, footer.y, ai_w, FOOTER_H));
         (
             Some(card),
             message,
             message_settled,
             amend,
+            ai,
             commit,
             commit_menu,
         )
@@ -1482,6 +1524,7 @@ impl App {
             CommitTarget::Commit if self.commit_pushes() => self.confirm_commit_and_push(),
             CommitTarget::Commit => self.git_commit(),
             CommitTarget::Amend => self.toggle_amend(),
+            CommitTarget::Ai => self.generate_ai_commit_message(),
             CommitTarget::NextStep => self.git_sync(),
             CommitTarget::Abort => self.confirm_abort(),
             CommitTarget::Undo => {

@@ -545,3 +545,11 @@ git-merge-side-result = 结果
 git-rebase-hint = ↑↓ 选择 · { $alt }↑↓ 移动 · P R E S F D 设置操作
 git-merge-conflict-title = 冲突 { $index } / { $count }
 git-merge-edit-conflict = 手动编辑
+git-commit-ai-generating = 正在生成提交信息…
+git-commit-ai-not-configured = 请先在设置中配置 AI 模型
+git-commit-ai-failed = 生成提交信息失败：{ $error }
+
+git-commit-ai-discarded = 提交内容或说明已更改，需要时请重新生成
+git-commit-ai-empty = AI 服务返回了空的提交说明
+git-commit-ai-truncated = AI 响应达到了输出限制，请尝试支持更大输出预算的模型
+git-commit-ai-no-head = 没有可以修改的上一次提交

@@ -4,6 +4,7 @@
 //! `view/` 读取这些状态绘制一帧。事件从 `winit` 的事件循环进入，经 `keyboard`、`mouse` 转成
 //! [`Action`](crate::keymap::Action)，或直接修改状态。
 
+pub(crate) mod ai;
 pub(crate) mod animation;
 pub(crate) mod diff;
 pub(crate) mod editor;
@@ -285,6 +286,8 @@ pub enum UserEvent {
     BackedUp,
     /// 跨文件替换已在后台写回全部未打开的文件。
     Replaced,
+    /// AI 模型连接测试已完成。
+    AiTestDone,
     /// 大文件的后台断行已完成。
     Wrapped,
     /// 确认框上确认了全部替换；参数为弹出确认框时结果列表中的匹配总数。
@@ -550,6 +553,8 @@ impl Hover {
                         | CommitTarget::Location
                         | CommitTarget::Refresh
                         | CommitTarget::More
+                        | CommitTarget::Ai
+                        | CommitTarget::Amend
                         | CommitTarget::Commit
                         | CommitTarget::CommitMenu
                         | CommitTarget::OpenFile(_)
@@ -1114,6 +1119,7 @@ impl App {
             UserEvent::Loaded => self.poll_loads(),
             UserEvent::BackedUp => self.collect_backups(false),
             UserEvent::Replaced => self.poll_replace_all(),
+            UserEvent::AiTestDone => self.poll_ai_test(),
             UserEvent::Wrapped => self.poll_wraps(),
             other => debug_assert!(false, "{other:?} 不是后台任务做完的事件"),
         }

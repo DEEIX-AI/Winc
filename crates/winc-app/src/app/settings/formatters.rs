@@ -299,6 +299,7 @@ impl App {
             Setting::FixCommand(id) => (MenuTarget::Tool(Task::Fix, id), row.control),
             Setting::TerminalShell => (MenuTarget::DefaultShell, row.control),
             Setting::Updates => return self.settings_check_updates(),
+            Setting::AiTestConnection => return self.settings_test_ai_connection(),
             _ => return,
         };
         self.settings.selected = setting;

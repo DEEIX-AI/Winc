@@ -321,6 +321,8 @@ impl App {
         }
         let amend = self.commit.amend;
         let sender = self.commit.results.0.clone();
+        self.commit.ai_generation += 1;
+        self.commit.ai_busy = false;
         self.commit.busy = true;
         self.run_git_job(move |git, root| {
             let result = git.and_then(|git| {
@@ -451,6 +453,8 @@ impl App {
             return;
         }
         let sender = self.commit.results.0.clone();
+        self.commit.ai_generation += 1;
+        self.commit.ai_busy = false;
         self.commit.busy = true;
         self.run_git_job(move |git, root| {
             let result = git
@@ -573,6 +577,47 @@ impl App {
                     // 重新读打开着的文档，顺带刷新仓库状态。
                     self.check_disk();
                 }
+                Outcome::AiMessage(result, root, request) => {
+                    if self.git.root.as_deref() != Some(root.as_path())
+                        || self.commit.ai_generation != request.generation
+                    {
+                        continue;
+                    }
+                    self.commit.ai_busy = false;
+                    let entries: Vec<Entry> = self
+                        .git
+                        .status
+                        .as_ref()
+                        .map(|s| self.commit.checked_entries(s).cloned().collect())
+                        .unwrap_or_default();
+                    if self.commit.busy
+                        || self.commit.message.text() != request.message
+                        || self.commit.checks != request.checks
+                        || self.commit.amend != request.amend
+                        || self.commit.head != request.head
+                        || self.git.status.as_ref().and_then(|s| s.head.as_ref())
+                            != request.branch.as_ref()
+                        || entries != request.entries
+                    {
+                        self.flash(t!("git-commit-ai-discarded"));
+                        continue;
+                    }
+                    match result {
+                        Ok(message) => {
+                            self.commit.message.remember();
+                            self.commit.message.set_text(&message);
+                            let end = message.len();
+                            self.commit.message.set_caret(end, false);
+                            self.commit.prefilled = true;
+                            if matches!(self.focus, Focus::CommitMessage | Focus::CommitList) {
+                                self.focus = Focus::CommitMessage;
+                            }
+                        }
+                        Err(err) => {
+                            self.flash(t!("git-commit-ai-failed", error = err.as_str()));
+                        }
+                    }
+                }
             }
         }
         self.request_redraw();
@@ -582,6 +627,7 @@ impl App {
     /// 旧仓库的）；列表的显示方式（平铺、收起的分组）保留，旧仓库尚未交回的结果仍然收下。
     pub(in crate::app::git) fn reset_commit_view(&mut self) {
         let old = std::mem::take(&mut self.commit);
+        self.commit.ai_generation = old.ai_generation + 1;
         self.commit.results = old.results;
         self.commit.flat = old.flat;
         self.commit.collapsed = old.collapsed;
@@ -599,6 +645,98 @@ impl App {
         };
         self.spawn_git(UserEvent::GitCommit, move |tool| {
             work(tool.as_ref().map_err(unusable), &root);
+        });
+    }
+
+    /// 触发 AI 总结当前勾选的改动并填入提交信息框。
+    pub(in crate::app) fn generate_ai_commit_message(&mut self) {
+        if self.commit.ai_busy || self.commit.busy || self.git.root.is_none() {
+            return;
+        }
+        let endpoint = self
+            .config
+            .ai_endpoint
+            .as_deref()
+            .unwrap_or("https://api.openai.com/v1")
+            .trim()
+            .to_owned();
+        let key = self.config.ai_key.clone();
+        let model = self
+            .config
+            .ai_model
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        if endpoint.is_empty() || model.is_empty() {
+            self.flash(t!("git-commit-ai-not-configured"));
+            return;
+        }
+        let Some(status) = self.git.status.as_ref() else {
+            return;
+        };
+        let branch = status.head.clone();
+        let custom_prompt = self.config.ai_commit_prompt.clone();
+        let checked: Vec<Entry> = self.commit.checked_entries(status).cloned().collect();
+        if checked.is_empty() && !self.commit.amend {
+            self.flash(t!("git-commit-nothing-checked"));
+            return;
+        }
+        let paths: Vec<PathBuf> = checked
+            .iter()
+            .flat_map(|e| std::iter::once(e.path.clone()).chain(e.from.clone()))
+            .collect();
+        if !self.save_dirty_documents(&paths) {
+            return;
+        }
+        let parts: Vec<(PathBuf, Vec<Skip>)> = checked
+            .iter()
+            .filter_map(|e| {
+                self.commit
+                    .skipped
+                    .get(&e.path)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| (e.path.clone(), s.clone()))
+            })
+            .collect();
+        let amend = self.commit.amend;
+        let locale = winc_i18n::locale();
+        let sender = self.commit.results.0.clone();
+        self.commit.ai_generation += 1;
+        let request = AiRequest {
+            generation: self.commit.ai_generation,
+            message: self.commit.message.text().to_owned(),
+            checks: self.commit.checks,
+            amend,
+            head: self.commit.head.clone(),
+            branch,
+            entries: checked,
+        };
+        self.commit.ai_busy = true;
+        self.flash(t!("git-commit-ai-generating"));
+        self.request_redraw();
+        self.run_git_job(move |git, root| {
+            let res = git.and_then(|git| {
+                let partial = parts
+                    .iter()
+                    .map(|(path, skipped)| partial_content(git, root, path, skipped))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let prompt =
+                    crate::app::ai::prepare_commit_diff(git, root, &paths, &partial, amend)?;
+                crate::app::ai::generate_commit_message(
+                    &endpoint,
+                    key.as_deref(),
+                    &model,
+                    &prompt,
+                    locale,
+                    custom_prompt.as_deref(),
+                    match &request.branch {
+                        Some(Head::Branch(name)) => Some(name.as_str()),
+                        _ => None,
+                    },
+                )
+            });
+            let _ = sender.send(Outcome::AiMessage(res, root.to_path_buf(), request));
         });
     }
 }

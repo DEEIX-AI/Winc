@@ -279,6 +279,13 @@ fn round_trips_through_json() {
         )]),
         fix_on_save: Some(true),
         fix_commands: BTreeMap::from([("python".to_string(), "ruff check --fix -".to_string())]),
+        ai_provider: Some("openai-compatible".to_string()),
+        ai_endpoint: Some("https://api.openai.com/v1".to_string()),
+        ai_key: Some("sk-test-key".to_string()),
+        ai_model: Some("gpt-4o".to_string()),
+        ai_commit_prompt: Some(
+            "Answer in German\nExtract ticket from $GIT_BRANCH_NAME".to_string(),
+        ),
     };
 
     let (parsed, problems) = Config::parse(&config.to_json());

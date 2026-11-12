@@ -473,7 +473,8 @@ impl App {
             || self.status.motion.moving()
             || ((self.branch.running.is_some()
                 || self.branch.finished.is_some()
-                || self.commit_refreshing())
+                || self.commit_refreshing()
+                || self.commit.ai_busy)
                 && self.commit_shown())
     }
 }

@@ -273,6 +273,17 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
+    for ai_setting in [
+        Setting::AiCommitPrompt,
+        Setting::AiModel,
+        Setting::AiTestConnection,
+        Setting::AiKey,
+        Setting::AiEndpoint,
+        Setting::AiProvider,
+    ] {
+        assert_eq!(app.settings.selected, ai_setting);
+        app.settings_move(false);
+    }
     let last = if cfg!(target_os = "macos") {
         Setting::TerminalOptionAsMeta
     } else {
@@ -1187,6 +1198,89 @@ fn turning_off_window_restore_forgets_the_saved_frame() {
 }
 
 #[test]
+fn ai_settings_can_be_typed_committed_and_saved() {
+    let dir = search_folder("settings-ai");
+    let mut app = app_with(&dir, false);
+    let config_path = dir.join("ai-config.json");
+    app.config_path = Some(config_path.clone());
+    app.open_settings();
+
+    // 1. 编辑并回车提交 Endpoint
+    app.settings_start_editing(Setting::AiEndpoint);
+    assert_eq!(app.focus, Focus::Setting);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("https://api.test.com/v1")
+    });
+    app.settings_commit_field();
+    assert!(app.settings.editing.is_none());
+    assert_eq!(
+        app.config.ai_endpoint.as_deref(),
+        Some("https://api.test.com/v1")
+    );
+
+    // 2. 编辑并通过切换/离开提交 API Key
+    app.settings_start_editing(Setting::AiKey);
+    assert_eq!(app.focus, Focus::Setting);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("sk-my-secret-key")
+    });
+    app.settings_leave_field();
+    assert!(app.settings.editing.is_none());
+    assert_eq!(app.config.ai_key.as_deref(), Some("sk-my-secret-key"));
+    assert_eq!(
+        app.config.ai_endpoint.as_deref(),
+        Some("https://api.test.com/v1")
+    );
+
+    // 3. 编辑 Model 并在离开时提交
+    app.settings_start_editing(Setting::AiModel);
+    assert_eq!(app.focus, Focus::Setting);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("deepseek-v3")
+    });
+    app.settings_leave_field();
+    assert_eq!(app.config.ai_model.as_deref(), Some("deepseek-v3"));
+
+    // 4. 关闭并重新从配置加载，验证配置已真正写盘持久化
+    app.close_settings();
+    let (loaded, _) = Config::load_from(&config_path);
+    assert_eq!(loaded.ai_endpoint, app.config.ai_endpoint);
+    assert_eq!(loaded.ai_key, app.config.ai_key);
+    assert_eq!(loaded.ai_model, app.config.ai_model);
+
+    // 临时输入不会修改配置，取消编辑后也不会在其他设置保存时被误写入。
+    app.open_settings();
+    app.settings_start_editing(Setting::AiModel);
+    app.edit_field(|field| {
+        field.select_all();
+        field.insert("cancelled-model")
+    });
+    assert_eq!(app.config.ai_model.as_deref(), Some("deepseek-v3"));
+    app.settings_cancel_field();
+    app.save_config();
+    let (loaded, _) = Config::load_from(&config_path);
+    assert_eq!(loaded.ai_model.as_deref(), Some("deepseek-v3"));
+    assert_eq!(
+        app.config.ai_endpoint.as_deref(),
+        Some("https://api.test.com/v1")
+    );
+    assert_eq!(app.config.ai_key.as_deref(), Some("sk-my-secret-key"));
+    assert_eq!(app.config.ai_model.as_deref(), Some("deepseek-v3"));
+
+    // 输入过程中其他窗口更新了配置，取消本窗口编辑不能恢复成旧值。
+    app.settings_start_editing(Setting::AiModel);
+    let mut updated = app.config.clone();
+    updated.ai_model = Some("external-model".to_owned());
+    app.adopt_config(updated);
+    app.settings_cancel_field();
+    assert_eq!(app.config.ai_model.as_deref(), Some("external-model"));
+
+    // 非 ASCII 密钥的脱敏也必须按字符边界处理。
+    app.config.ai_key = Some("密钥测试".repeat(3));
+    paint(&mut app);
 fn the_animations_switch_overrides_the_system_setting() {
     let dir = sample_folder("settings-animations");
     let mut app = app_with(&dir.join("short.rs"), false);
@@ -1209,6 +1303,123 @@ fn the_animations_switch_overrides_the_system_setting() {
 }
 
 #[test]
+fn ai_commit_prompt_supports_multiline_save_cancel_and_default_reset() {
+    use winit::keyboard::{Key, NamedKey};
+    let dir = search_folder("settings-ai-prompt");
+    let mut app = app_with(&dir, false);
+    let path = dir.join("prompt-config.json");
+    app.config_path = Some(path.clone());
+    app.open_settings();
+    app.settings.motion = None;
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    assert_eq!(
+        app.settings.editing.as_ref().unwrap().1.text(),
+        crate::app::ai::default_commit_prompt(winc_i18n::locale())
+    );
+    app.settings_commit_field();
+    assert!(app.config.ai_commit_prompt.is_none());
+
+    app.settings.ai_test_result = Some(Ok(crate::app::ai::ConnectionTest::Completion));
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("Extract the ticket from $GIT_BRANCH_NAME")
+    });
+    assert!(app.settings_prompt_key(&Key::Named(NamedKey::Enter), false, false));
+    app.edit_field(|f| f.insert("Answer in German\nUse bullet points"));
+    let prompt = "Extract the ticket from $GIT_BRANCH_NAME\nAnswer in German\nUse bullet points";
+    assert_eq!(app.settings.editing.as_ref().unwrap().1.text(), prompt);
+    assert!(app.config.ai_commit_prompt.is_none());
+    paint(&mut app);
+    assert!(app.settings_prompt_key(&Key::Named(NamedKey::ArrowUp), false, false));
+    let field = &app.settings.editing.as_ref().unwrap().1;
+    assert!(field.caret() < prompt.len());
+    assert!(app.settings_prompt_key(&Key::Named(NamedKey::Enter), true, false));
+    assert_eq!(app.config.ai_commit_prompt.as_deref(), Some(prompt));
+    assert!(app.settings.ai_test_result.as_ref().unwrap().is_ok());
+    assert_eq!(
+        Config::load_from(&path).0.ai_commit_prompt.as_deref(),
+        Some(prompt)
+    );
+
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("cancelled")
+    });
+    assert!(app.settings_prompt_key(&Key::Named(NamedKey::Escape), false, false));
+    app.save_config();
+    assert_eq!(
+        Config::load_from(&path).0.ai_commit_prompt.as_deref(),
+        Some(prompt)
+    );
+
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert(" \n ")
+    });
+    app.settings_leave_field();
+    assert!(app.config.ai_commit_prompt.is_none());
+    assert!(Config::load_from(&path).0.ai_commit_prompt.is_none());
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    assert_eq!(
+        app.settings.editing.as_ref().unwrap().1.text(),
+        crate::app::ai::default_commit_prompt(winc_i18n::locale())
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn ai_commit_prompt_scrolls_inside_the_field_and_keeps_settings_scroll() {
+    let dir = search_folder("settings-ai-prompt-scroll");
+    let mut app = app_with(&dir, false);
+    app.open_settings();
+    app.settings.motion = None;
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert(&"A line of custom instructions\n".repeat(30))
+    });
+    app.settings.scroll = app.settings_layout().max_scroll();
+    paint(&mut app);
+    let scroll = app.settings.scroll;
+    let area = app.settings.editing.as_ref().unwrap().1.view.area;
+    let before = app.settings.editing.as_ref().unwrap().1.view.scroll;
+    app.on_mouse_move(area.x + 15.0, area.y + 15.0);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        0.0, 60.0,
+    )));
+    paint(&mut app);
+    assert_eq!(app.settings.scroll, scroll);
+    assert!(app.settings.editing.as_ref().unwrap().1.view.scroll < before);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 人工检查默认规则、长提示词、中英文说明和编辑框裁剪。
+#[test]
+#[ignore]
+fn shoot_settings_ai_commit_prompt() {
+    let dir = search_folder("settings-ai-prompt-shot");
+    let mut app = app_with(&dir, false);
+    app.open_settings();
+    app.settings.motion = None;
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    app.settings.scroll = app.settings_layout().max_scroll();
+    shoot(&mut app, "settings-ai-prompt-default");
+    app.edit_field(|f| {
+        f.select_all();
+        f.insert("Extract the ticket number from $GIT_BRANCH_NAME\nKeep the message as short as possible\nAnswer in German\nUse the Conventional Commit format\nUse bullet points for multiple changes")
+    });
+    shoot(&mut app, "settings-ai-prompt-custom");
+    let locale = winc_i18n::locale();
+    winc_i18n::set_locale(winc_i18n::Locale::EnUs);
+    app.settings_cancel_field();
+    app.settings_start_editing(Setting::AiCommitPrompt);
+    app.settings.scroll = app.settings_layout().max_scroll();
+    shoot(&mut app, "settings-ai-prompt-en");
+    winc_i18n::set_locale(locale);
+    std::fs::remove_dir_all(dir).unwrap();
 fn the_font_weight_steps_by_hundreds_within_its_range() {
     let dir = sample_folder("settings-font-weight");
     let mut app = app_with(&dir.join("short.rs"), false);

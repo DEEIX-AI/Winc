@@ -443,7 +443,7 @@ git-commit-button-files = { $count ->
     [one] Commit 1 File
    *[other] Commit { $count } Files
 }
-git-commit-amend = Amend Last Commit
+git-commit-amend = Amend
 git-commit-undo = Undo
 git-commit-next-push = Push
 git-commit-next-pull = Pull
@@ -697,3 +697,11 @@ git-merge-side-result = Result
 git-rebase-hint = ↑↓ select · { $alt }↑↓ move · P R E S F D set action
 git-merge-conflict-title = Conflict { $index } of { $count }
 git-merge-edit-conflict = Edit Manually
+git-commit-ai-generating = Generating commit message…
+git-commit-ai-not-configured = Please configure AI model in Settings first
+git-commit-ai-failed = Failed to generate commit message: { $error }
+
+git-commit-ai-discarded = Commit contents or message changed; generate again if needed
+git-commit-ai-empty = The AI service returned an empty commit message
+git-commit-ai-truncated = The AI response reached its token limit; try a model with a larger output budget
+git-commit-ai-no-head = No commit is available to amend

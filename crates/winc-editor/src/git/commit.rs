@@ -123,6 +123,39 @@ impl Git {
         partial: &[Partial],
         amend: bool,
     ) -> Result<String, String> {
+        self.with_commit_index(root, paths, partial, |index_arg, _head| {
+            let with_index = |command: &mut Command| {
+                command.env("GIT_INDEX_FILE", index_arg);
+            };
+            let cancel = Cancel::default();
+            let mut command = self.command(root);
+            with_index(&mut command);
+            command.args(["commit", "--file=-", "--cleanup=whitespace"]);
+            if amend {
+                command.arg("--amend");
+            }
+            self.run_commit(root, &mut command, message)?;
+
+            // 实际的暂存区里，`paths` 换成刚提交的内容。
+            if !paths.is_empty() {
+                let mut command = self.command(root);
+                command
+                    .args(["reset", "--quiet", "--"])
+                    .args(relative_all(root, paths));
+                self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
+            }
+            self.short_head(root)
+        })
+    }
+
+    /// 在独立索引中拼出要提交的树；真实索引和工作区不变。
+    fn with_commit_index<T>(
+        &self,
+        root: &Path,
+        paths: &[PathBuf],
+        partial: &[Partial],
+        work: impl FnOnce(&OsStr, Option<&str>) -> Result<T, String>,
+    ) -> Result<T, String> {
         let cancel = Cancel::default();
         let index = crate::wsl::temp_dir(root).join(format!(
             "winc-index-{}-{}",
@@ -138,18 +171,23 @@ impl Git {
             command.env("GIT_INDEX_FILE", &index_arg);
         };
         let result = (|| {
-            // 从 `HEAD` 开始；还没有提交过时是空的暂存区。其他失败（超时、对象损坏、写不了临时
-            // 文件）不能当作空的暂存区：否则提交出的树只含 `paths` 中的文件，其余文件都成了删除。
+            // 明确区分 unborn HEAD 与其他失败，并固定本次快照的基线，不能把读取失败当作空树。
+            let mut command = self.command(root);
+            command
+                .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+                .stderr(Stdio::piped());
+            let head = match process::run(&mut command, Vec::new(), SHOW_TIMEOUT, &cancel) {
+                Ok(output) if output.status.success() => {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                }
+                Ok(output) if output.status.code() == Some(1) => None,
+                Ok(output) => return Err(failure(&output.stderr)),
+                Err(e) => return Err(describe(&e)),
+            };
             let mut command = self.command(root);
             with_index(&mut command);
-            command.args(["read-tree", "HEAD"]);
-            if let Err(e) = self.run(&mut command, STATUS_TIMEOUT, &cancel) {
-                let mut command = self.command(root);
-                command.args(["rev-parse", "--verify", "--quiet", "HEAD"]);
-                if self.run(&mut command, SHOW_TIMEOUT, &cancel).is_ok() {
-                    return Err(e);
-                }
-            }
+            command.args(["read-tree", head.as_deref().unwrap_or("--empty")]);
+            self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
 
             let whole: Vec<PathBuf> = paths
                 .iter()
@@ -192,26 +230,95 @@ impl Git {
                 self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
             }
 
-            let mut command = self.command(root);
-            with_index(&mut command);
-            command.args(["commit", "--file=-", "--cleanup=whitespace"]);
-            if amend {
-                command.arg("--amend");
-            }
-            self.run_commit(root, &mut command, message)?;
-
-            // 实际的暂存区里，`paths` 换成刚提交的内容。
-            if !paths.is_empty() {
-                let mut command = self.command(root);
-                command
-                    .args(["reset", "--quiet", "--"])
-                    .args(relative_all(root, paths));
-                self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
-            }
-            self.short_head(root)
+            work(&index_arg, head.as_deref())
         })();
         let _ = std::fs::remove_file(&index);
         result
+    }
+
+    /// 读取将要提交的统计和补丁，包含部分勾选、新文件和 amend 后的完整改动。
+    ///
+    /// 使用临时索引，不改变真实索引；补丁最多读取 `patch_limit` 字节。
+    ///
+    /// # Errors
+    ///
+    /// 仓库不受信任、文件无法读取或 git 失败时返回原因。
+    pub fn commit_diff(
+        &self,
+        root: &Path,
+        paths: &[PathBuf],
+        partial: &[Partial],
+        amend: bool,
+        patch_limit: usize,
+    ) -> Result<(String, String), String> {
+        self.require_trust(root)?;
+        self.with_commit_index(root, paths, partial, |index_arg, head| {
+            let cancel = Cancel::default();
+            let base = if amend {
+                let head = head.ok_or_else(|| winc_i18n::t!("git-commit-ai-no-head").to_owned())?;
+                let mut command = self.command(root);
+                command.args(["cat-file", "-p", head]);
+                let commit = self.run(&mut command, SHOW_TIMEOUT, &cancel)?;
+                // 直接读 commit 头，浅克隆中缺失的父对象必须报错，不能误当根提交。
+                String::from_utf8_lossy(&commit)
+                    .lines()
+                    .take_while(|line| !line.is_empty())
+                    .find_map(|line| line.strip_prefix("parent ").map(str::to_owned))
+            } else {
+                head.map(str::to_owned)
+            };
+            // 根提交没有父提交：与空树比较，也适用于还没有 HEAD 的仓库。
+            let base = match base {
+                Some(base) => base,
+                None => {
+                    let mut command = self.command(root);
+                    command.args(["hash-object", "-w", "-t", "tree", "--stdin"]);
+                    String::from_utf8_lossy(&self.run(&mut command, SHOW_TIMEOUT, &cancel)?)
+                        .trim()
+                        .to_owned()
+                }
+            };
+            let diff = || {
+                let mut command = self.command(root);
+                command.env("GIT_INDEX_FILE", index_arg).args([
+                    "diff",
+                    "--cached",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                ]);
+                command
+            };
+            let mut command = diff();
+            command.args(["--stat=160,120", &base]);
+            let stat = self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
+            let mut command = diff();
+            command.args(["-p", "--unified=3", &base, "--", "."]);
+            // 这些文件仍出现在概览里，避免生成产物挤占源码的补丁预算。
+            for pattern in [
+                "Cargo.lock",
+                "package-lock.json",
+                "pnpm-lock.yaml",
+                "yarn.lock",
+                "*.min.js",
+                "*.min.css",
+            ] {
+                command.arg(format!(":(glob,exclude)**/{pattern}"));
+            }
+            let mut stream = process::Stream::spawn(&mut command).map_err(|e| describe(&e))?;
+            let (patch, truncated) =
+                stream
+                    .read_prefix(patch_limit, STATUS_TIMEOUT)
+                    .map_err(|e| match e {
+                        process::StreamError::Run(e) => describe(&e),
+                        process::StreamError::Exited(stderr) => failure(&stderr),
+                    })?;
+            let mut patch = String::from_utf8_lossy(&patch).into_owned();
+            if truncated {
+                patch.push_str("\n[Further diff omitted; see file summary]\n");
+            }
+            Ok((String::from_utf8_lossy(&stat).into_owned(), patch))
+        })
     }
 
     /// 运行 `git commit`，提交信息由标准输入传入。

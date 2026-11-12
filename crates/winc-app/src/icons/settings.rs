@@ -212,3 +212,33 @@ pub fn stop(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rec
     ];
     frame.stroke(&lines, RING_STROKE, color, clip);
 }
+/// 绘制「AI」图标，13×13：双星闪烁（主四角星与右上伴星），现代 AI 助手通用的 Magic Sparkles 造型，
+/// 笔画完整对称、圆角收口，用于设置分类栏与提交工具栏。
+pub fn ai(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    // 主星（四角星）：中心 (cx - 1.2, cy + 1.2)，外半径 4.3，内腰 1.1
+    let (mx, my) = (cx - 1.2, cy + 1.2);
+    // 伴星（右上小型四角星）：中心 (cx + 3.8, cy - 3.8)，外半径 2.3，内腰 0.6
+    let (sx, sy) = (cx + 3.8, cy - 3.8);
+
+    let strokes = [
+        // 主星（8 段连贯线段闭合形成四角星）
+        Stroke::Line(mx, my - 4.3, mx + 1.1, my - 1.1),
+        Stroke::Line(mx + 1.1, my - 1.1, mx + 4.3, my),
+        Stroke::Line(mx + 4.3, my, mx + 1.1, my + 1.1),
+        Stroke::Line(mx + 1.1, my + 1.1, mx, my + 4.3),
+        Stroke::Line(mx, my + 4.3, mx - 1.1, my + 1.1),
+        Stroke::Line(mx - 1.1, my + 1.1, mx - 4.3, my),
+        Stroke::Line(mx - 4.3, my, mx - 1.1, my - 1.1),
+        Stroke::Line(mx - 1.1, my - 1.1, mx, my - 4.3),
+        // 伴星（8 段连贯线段闭合形成伴星）
+        Stroke::Line(sx, sy - 2.3, sx + 0.6, sy - 0.6),
+        Stroke::Line(sx + 0.6, sy - 0.6, sx + 2.3, sy),
+        Stroke::Line(sx + 2.3, sy, sx + 0.6, sy + 0.6),
+        Stroke::Line(sx + 0.6, sy + 0.6, sx, sy + 2.3),
+        Stroke::Line(sx, sy + 2.3, sx - 0.6, sy + 0.6),
+        Stroke::Line(sx - 0.6, sy + 0.6, sx - 2.3, sy),
+        Stroke::Line(sx - 2.3, sy, sx - 0.6, sy - 0.6),
+        Stroke::Line(sx - 0.6, sy - 0.6, sx, sy - 2.3),
+    ];
+    frame.stroke(&strokes, RING_STROKE, color, clip);
+}

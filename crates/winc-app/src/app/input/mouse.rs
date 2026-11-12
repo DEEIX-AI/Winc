@@ -383,7 +383,19 @@ impl App {
         };
         // 设置浮层打开时滚轮只滚动浮层的分组区，下方的编辑区和文件树不滚动。
         if self.settings.open {
-            if self.settings_layout().body.contains(x, y) {
+            let layout = self.settings_layout();
+            if layout.body.contains(x, y) {
+                if let Some((setting, field)) = self.settings.editing.as_mut()
+                    && setting.control() == SettingControl::TextArea
+                    && layout
+                        .rows
+                        .iter()
+                        .any(|row| row.setting == *setting && row.control.contains(x, y))
+                {
+                    field.wheel_scroll(-dy);
+                    self.request_redraw();
+                    return;
+                }
                 self.settings_scroll_by(dy);
             }
             return;

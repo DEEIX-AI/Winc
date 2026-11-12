@@ -24,6 +24,8 @@ pub enum SettingsPage {
     Git,
     /// 终端：默认 shell、面板位置、字体、字号和终端行为。
     Terminal,
+    /// AI：第三方大模型提供商配置与模型分配。
+    Ai,
     /// 模块：可选模块的开关。
     Modules,
     /// 快捷键：只列出键位，不含设置项，整页由 [`KeysLayout`] 单独布局。
@@ -47,6 +49,7 @@ impl SettingsPage {
         SettingsPage::Format,
         SettingsPage::Git,
         SettingsPage::Terminal,
+        SettingsPage::Ai,
         SettingsPage::Modules,
         SettingsPage::Keys,
         SettingsPage::About,
@@ -69,6 +72,7 @@ impl SettingsPage {
             SettingsPage::Format => t!("settings-page-format"),
             SettingsPage::Git => t!("settings-page-git"),
             SettingsPage::Terminal => t!("settings-page-terminal"),
+            SettingsPage::Ai => t!("settings-page-ai"),
             SettingsPage::Modules => t!("settings-page-modules"),
             SettingsPage::Keys => t!("settings-page-keys"),
             SettingsPage::About => t!("settings-page-about"),
@@ -165,6 +169,25 @@ impl SettingsPage {
                     plain(behavior),
                 ]
             }
+            SettingsPage::Ai => vec![
+                Section {
+                    title: Some(t!("settings-section-ai-providers")),
+                    items: vec![
+                        Setting::AiProvider,
+                        Setting::AiEndpoint,
+                        Setting::AiKey,
+                        Setting::AiTestConnection,
+                    ],
+                },
+                Section {
+                    title: Some(t!("settings-section-ai-models")),
+                    items: vec![Setting::AiModel],
+                },
+                Section {
+                    title: Some(t!("settings-section-ai-commit")),
+                    items: vec![Setting::AiCommitPrompt],
+                },
+            ],
             SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush, Setting::DiffInline])],
             SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
             SettingsPage::Format => {
@@ -365,6 +388,18 @@ pub enum Setting {
     GitConfirmPush,
     /// 终端模块的开关。
     TerminalModule,
+    /// AI 服务提供商。
+    AiProvider,
+    /// AI 服务的 API URL。
+    AiEndpoint,
+    /// AI 服务的 API Key。
+    AiKey,
+    /// 测试 AI 服务的连接。
+    AiTestConnection,
+    /// 核心功能使用的 AI 模型。
+    AiModel,
+    /// 生成提交说明时使用的提示词。
+    AiCommitPrompt,
     /// 「快捷键」页顶部的搜索框。
     ///
     /// 该页没有设置项，选中这一项即表示停留在该页。
@@ -465,6 +500,13 @@ impl Setting {
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
+            Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
+            Setting::AiProvider
+            | Setting::AiEndpoint
+            | Setting::AiKey
+            | Setting::AiTestConnection
+            | Setting::AiModel
+            | Setting::AiCommitPrompt => SettingsPage::Ai,
             Setting::GitConfirmPush | Setting::DiffInline => SettingsPage::Git,
             Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
             Setting::KeySearch => SettingsPage::Keys,
@@ -536,6 +578,12 @@ impl Setting {
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
             Setting::TerminalModule => t!("settings-terminal-module"),
+            Setting::AiProvider => t!("settings-ai-provider"),
+            Setting::AiEndpoint => t!("settings-ai-endpoint"),
+            Setting::AiKey => t!("settings-ai-key"),
+            Setting::AiTestConnection => t!("settings-ai-test-connection"),
+            Setting::AiModel => t!("settings-ai-model"),
+            Setting::AiCommitPrompt => t!("settings-ai-commit-prompt"),
             Setting::KeySearch => t!("settings-key-search"),
         }
     }
@@ -592,6 +640,11 @@ impl Setting {
                 Some(t!("settings-terminal-shell-integration-desc"))
             }
             Setting::TerminalOptionAsMeta => Some(t!("settings-terminal-option-as-meta-desc")),
+            Setting::AiProvider => Some(t!("settings-ai-provider-desc")),
+            Setting::AiEndpoint => Some(t!("settings-ai-endpoint-desc")),
+            Setting::AiKey => Some(t!("settings-ai-key-desc")),
+            Setting::AiModel => Some(t!("settings-ai-model-desc")),
+            Setting::AiCommitPrompt => Some(t!("settings-ai-commit-prompt-desc")),
             _ => None,
         };
         text.map(Cow::Borrowed)
@@ -600,6 +653,8 @@ impl Setting {
     /// 返回设置项右侧的控件种类。
     pub fn control(self) -> SettingControl {
         match self {
+            Setting::AiEndpoint | Setting::AiKey | Setting::AiModel => SettingControl::Font,
+            Setting::AiCommitPrompt => SettingControl::TextArea,
             Setting::EditorFont | Setting::UiFont | Setting::TerminalFont => SettingControl::Font,
             Setting::EditorSize
             | Setting::UiSize
@@ -650,14 +705,15 @@ impl Setting {
             | Setting::RenderWhitespace
             | Setting::VimClipboard
             | Setting::TerminalPosition
-            | Setting::TerminalOptionAsMeta => SettingControl::Choice,
+            | Setting::TerminalOptionAsMeta
+            | Setting::AiProvider => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Product,
             Setting::Website | Setting::Repository | Setting::Community | Setting::License => {
                 SettingControl::Link
             }
-            Setting::Updates => SettingControl::Button,
+            Setting::Updates | Setting::AiTestConnection => SettingControl::Button,
         }
     }
 }
@@ -667,6 +723,8 @@ impl Setting {
 pub enum SettingControl {
     /// 字体名输入框。
     Font,
+    /// 名称和说明下面可换行的文本输入框。
+    TextArea,
     /// 加减数值。
     Stepper,
     /// 外观（跟随系统、浅色、深色）的缩略图，在名称右边。
@@ -1103,10 +1161,15 @@ impl SettingsLayout {
         let row = self.rows.iter().find(|r| r.control.contains(x, y))?;
 
         match row.setting.control() {
-            SettingControl::Font if font_menu_button(row.control).contains(x, y) => {
+            SettingControl::Font
+                if matches!(
+                    row.setting,
+                    Setting::UiFont | Setting::TerminalFont | Setting::EditorFont
+                ) && font_menu_button(row.control).contains(x, y) =>
+            {
                 Some(SettingsPart::FontMenu(row.setting))
             }
-            SettingControl::Font | SettingControl::Command => {
+            SettingControl::Font | SettingControl::Command | SettingControl::TextArea => {
                 Some(SettingsPart::Field(row.setting))
             }
             SettingControl::Switch => Some(SettingsPart::Switch(row.setting)),
@@ -1235,6 +1298,11 @@ impl KeysLayout {
     }
 }
 
+/// 多行设置输入框的高度。
+const SETTINGS_TEXT_AREA_H: f32 = 144.0;
+/// 多行设置输入框下面留出两行提示和间距。
+const SETTINGS_TEXT_AREA_FOOTER_H: f32 = 56.0;
+
 /// 返回宽 `width` 的组里一行的高度。
 ///
 /// 格式化命令行在名称下方显示所用的命令，因此总是两行高；有说明的行按说明折成的行数加高
@@ -1248,6 +1316,18 @@ fn row_height(
     measure: &mut dyn FnMut(&str) -> f32,
 ) -> f32 {
     match setting.control() {
+        SettingControl::TextArea => {
+            let description = setting.description().unwrap_or_default();
+            let lines = crate::layout::wrap_text(
+                &description,
+                (row.w - SETTINGS_INSET * 2.0).max(0.0),
+                measure,
+            )
+            .len();
+            40.0 + lines as f32 * SETTINGS_DESC_LINE
+                + SETTINGS_TEXT_AREA_H
+                + SETTINGS_TEXT_AREA_FOOTER_H
+        }
         SettingControl::ThemeList => {
             let n = crate::theme::themes(setting == Setting::DarkTheme).len();
             let rows = n.div_ceil(THEME_COLUMNS) as f32;
@@ -1313,6 +1393,22 @@ fn control_rect(setting: Setting, row: Rect, editing: bool) -> Rect {
     let (w, h) = match setting.control() {
         // 整行都可点击。
         SettingControl::Action | SettingControl::Search => return row,
+        SettingControl::TextArea => {
+            return Rect::new(
+                row.x + SETTINGS_INSET,
+                row.bottom() - SETTINGS_TEXT_AREA_FOOTER_H - SETTINGS_TEXT_AREA_H,
+                (row.w - SETTINGS_INSET * 2.0).max(0.0),
+                SETTINGS_TEXT_AREA_H,
+            );
+        }
+        SettingControl::Font
+            if matches!(
+                setting,
+                Setting::AiEndpoint | Setting::AiKey | Setting::AiModel
+            ) =>
+        {
+            (SETTINGS_COMMAND_W, SETTINGS_CONTROL_H)
+        }
         // 与「外观」页同一组的模式分段控件同宽。
         SettingControl::Font => (segmented_width(), SETTINGS_CONTROL_H),
         SettingControl::Choice if setting == Setting::Language => {

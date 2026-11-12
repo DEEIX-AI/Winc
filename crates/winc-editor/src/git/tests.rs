@@ -1592,6 +1592,121 @@ fn a_stash_knows_the_branch_it_was_made_on() {
 }
 
 #[test]
+fn commit_diff_matches_selected_tree_without_changing_index() {
+    let Some(git) = real_git() else {
+        return;
+    };
+    let dir = crate::test_util::scratch("ai-diff");
+    let run = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    run(&["init", "-q", "-b", "main"]);
+    let a = dir.join("a.rs");
+    let b = dir.join("b.rs");
+    std::fs::write(&a, "initial selected\n").unwrap();
+    std::fs::write(&b, "initial excluded\n").unwrap();
+    run(&["add", "a.rs", "b.rs"]);
+    let index_before = std::fs::read(dir.join(".git/index")).unwrap();
+    let (stat, patch) = git
+        .commit_diff(&dir, std::slice::from_ref(&a), &[], false, 10000)
+        .unwrap();
+    assert!(stat.contains("a.rs"));
+    assert!(patch.contains("+initial selected"));
+    assert!(!patch.contains("initial excluded"));
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index_before);
+    run(&["commit", "-q", "-m", "initial"]);
+    // 根提交 amend，无新增改动也应能总结整个根提交。
+    let (_, patch) = git.commit_diff(&dir, &[], &[], true, 10000).unwrap();
+    assert!(patch.contains("+initial selected"));
+    assert!(patch.contains("+initial excluded"));
+    std::fs::write(&a, "chosen hunk\nexcluded hunk\n").unwrap();
+    std::fs::write(&b, "excluded staged content\n").unwrap();
+    run(&["add", "b.rs"]);
+    let index_before = std::fs::read(dir.join(".git/index")).unwrap();
+    let parts = [Partial {
+        path: a.clone(),
+        content: b"chosen hunk\n".to_vec(),
+    }];
+    let (_, patch) = git
+        .commit_diff(&dir, std::slice::from_ref(&a), &parts, false, 10000)
+        .unwrap();
+    assert!(patch.contains("+chosen hunk"));
+    assert!(!patch.contains("excluded hunk"));
+    assert!(!patch.contains("excluded staged"));
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index_before);
+    assert_eq!(
+        std::fs::read_to_string(&a).unwrap(),
+        "chosen hunk\nexcluded hunk\n"
+    );
+    // 同时包含已选文件的删除与重命名，不漏掉原路径。
+    let renamed = dir.join("renamed.rs");
+    std::fs::rename(&a, &renamed).unwrap();
+    let (stat, patch) = git
+        .commit_diff(&dir, &[a, renamed], &[], false, 10000)
+        .unwrap();
+    assert!(stat.contains("renamed.rs"));
+    assert!(patch.contains("initial selected"));
+    assert!(patch.contains("chosen hunk"));
+    // 已有父提交时 amend 要包含上一提交的改动和本次选中改动。
+    run(&["commit", "-q", "-m", "second"]);
+    let (_, patch) = git.commit_diff(&dir, &[], &[], true, 10000).unwrap();
+    assert!(patch.contains("+excluded staged content"));
+    // 浅克隆的 HEAD 在 rev-list 中看似无父提交，但摘要仍要用真实父树作为基线。
+    std::fs::write(dir.join(".git/shallow"), run(&["rev-parse", "HEAD"])).unwrap();
+    let (_, patch) = git.commit_diff(&dir, &[], &[], true, 10000).unwrap();
+    assert!(patch.contains("+excluded staged content"));
+    assert!(!patch.contains("+initial selected"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn commit_diff_keeps_source_budget_when_generated_file_is_huge() {
+    let Some(git) = real_git() else {
+        return;
+    };
+    let dir = crate::test_util::scratch("ai-diff-large");
+    assert!(
+        Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["init", "-q"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let lock = dir.join("Cargo.lock");
+    let source = dir.join("main.rs");
+    std::fs::write(&lock, "generated\n".repeat(100000)).unwrap();
+    std::fs::write(&source, "source change\n").unwrap();
+    let (stat, patch) = git
+        .commit_diff(&dir, &[lock, source.clone()], &[], false, 10000)
+        .unwrap();
+    assert!(stat.contains("Cargo.lock"));
+    assert!(patch.contains("+source change"));
+    assert!(!patch.contains("generated"));
+    std::fs::write(&source, "长代码行".repeat(100000)).unwrap();
+    let (_, patch) = git.commit_diff(&dir, &[source], &[], false, 256).unwrap();
+    assert!(patch.len() < 350);
+    assert!(patch.contains("Further diff omitted"));
 fn publishing_prefers_configured_targets_then_origin() {
     let names = ["github-desktop-alice", "github-desktop-bob", "origin"].map(String::from);
     let remotes: Vec<&String> = names.iter().collect();
