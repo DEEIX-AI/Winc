@@ -340,7 +340,7 @@ const fn concat_keywords<const N: usize>(
 /// 查找用法时只看与当前文件相关的语言，其他语言（文档、数据文件）中同名的文字不算用法。
 const RELATED: &[&[&str]] = &[
     &["c", "cpp", "objective-c", "objective-cpp"],
-    &["javascript", "typescript", "html", "vue", "svelte"],
+    &["javascript", "typescript", "arkts", "html", "vue", "svelte"],
     &["css", "scss", "sass", "less", "html", "vue", "svelte"],
     &["java", "kotlin", "scala", "groovy"],
     &["shell", "dockerfile", "makefile"],
@@ -518,6 +518,7 @@ static ALL: &[&Language] = &[
     &PYTHON,
     &RUST,
     &TYPESCRIPT,
+    &ARKTS,
     &JAVASCRIPT,
     &GO,
     &C,
