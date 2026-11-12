@@ -414,18 +414,12 @@ impl App {
         }
     }
 
-    /// 顶栏空白处横坐标 `x`（逻辑像素）的双击是否执行标题栏的双击动作。
+    /// 是否在双击顶栏空白处横坐标 `x`（逻辑像素）的位置时执行标题栏的双击动作。
     ///
-    /// macOS 上顶栏空白处的双击动作由系统偏好决定，不作限制。
+    /// macOS 上该动作由系统偏好决定，任何位置都执行；其他系统上见
+    /// [`Self::title_bar_double_click_zooms`]。
     pub(in crate::app) fn title_bar_zooms_at(&self, x: f32) -> bool {
-        #[cfg(target_os = "macos")]
-        let zooms = {
-            let _ = x;
-            true
-        };
-        #[cfg(not(target_os = "macos"))]
-        let zooms = self.title_bar_double_click_zooms(x);
-        zooms
+        cfg!(target_os = "macos") || self.title_bar_double_click_zooms(x)
     }
 
     /// 记录顶栏空白处按下的位置和时刻，返回本次按下是否构成双击。

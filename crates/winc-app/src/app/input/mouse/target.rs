@@ -43,16 +43,15 @@ impl App {
         }
     }
 
-    /// 点 (`x`, `y`)（逻辑像素）是否位于顶栏的空白处：在顶栏范围内，且不属于任何控件。
+    /// 是否位于顶栏的空白处：点 (`x`, `y`)（逻辑像素）在顶栏范围内，且不属于任何控件。
     pub(in crate::app) fn over_title_bar(&self, x: f32, y: f32) -> bool {
         matches!(self.target_at(x, y), Target::TitleBar)
     }
 
-    /// 双击顶栏空白处横坐标 `x`（逻辑像素）的位置是否切换窗口的最大化。
+    /// 是否在双击顶栏空白处横坐标 `x`（逻辑像素）的位置时切换窗口的最大化。
     ///
     /// 位于某个控件所在的列时不切换，见 [`in_control_column`](crate::layout::in_control_column)；
     /// 相邻控件的间距不超过 `TAB_GAP`，按该宽度把间隙并入两侧的列。
-    #[cfg(any(not(target_os = "macos"), test))]
     pub(in crate::app) fn title_bar_double_click_zooms(&self, x: f32) -> bool {
         !crate::layout::in_control_column(&self.caption_controls(), TAB_GAP, x)
     }
@@ -63,7 +62,6 @@ impl App {
     /// 顶栏中其余部分由系统按标题栏处理。结果必须覆盖 `target_at` 在顶栏内返回的全部
     /// 控件目标（顶栏空白与窗口边缘除外），由测试 `caption_controls_cover_top_bar_targets`
     /// 检查。
-    #[cfg(any(not(target_os = "macos"), test))]
     pub(in crate::app) fn caption_controls(&self) -> Vec<winc_render::Rect> {
         let l = &self.layout;
         let mut client = vec![
@@ -75,7 +73,7 @@ impl App {
             self.hits.project,
             self.outline_divider(),
         ];
-        // 不由应用绘制标题栏时没有窗口按钮，`window_control_rects` 的结果没有意义。
+        // 不由应用绘制标题栏时没有窗口按钮，`window_control_rects` 返回的矩形不对应任何控件。
         if self.window.controls {
             client.extend(self.window_control_rects().map(|(r, _)| r));
         }

@@ -83,7 +83,7 @@ impl WindowHitTest {
 }
 
 impl WindowHitTest {
-    /// 双击顶栏空白处横坐标 `x`（系统逻辑像素）的位置是否由系统切换最大化。
+    /// 是否由系统在双击顶栏空白处横坐标 `x`（系统逻辑像素）的位置时切换最大化。
     ///
     /// 位于某个控件所在的列时不切换，见 [`in_control_column`](crate::layout::in_control_column)。
     pub fn double_click_zooms(&self, x: f32) -> bool {
@@ -220,15 +220,15 @@ unsafe extern "system" fn window_proc(
     data: usize,
 ) -> LRESULT {
     let caption = wparam == HTCAPTION as usize;
-    // 顶栏空白处的双击位于控件所在的列时还原为按下：仍可拖动窗口，不切换最大化。
-    let message = if message == WM_NCLBUTTONDBLCLK && caption && {
-        // SAFETY: `WM_NCDESTROY` 之前窗口始终持有该 `Arc` 引用，指针有效；持锁期间不调用
-        // 可能重入回调的 Win32 函数。
-        let state = unsafe { &*(data as *const Mutex<WindowHitTest>) };
-        client_point(hwnd, lparam)
-            .zip(state.lock().ok())
-            .is_some_and(|([x, ..], hit)| !hit.double_click_zooms(x))
-    } {
+    // SAFETY: `WM_NCDESTROY` 之前窗口始终持有该 `Arc` 引用，指针有效。
+    let state = unsafe { &*(data as *const Mutex<WindowHitTest>) };
+    // 顶栏空白处的双击位于控件所在的列时还原为按下：仍可拖动窗口，不切换最大化。持锁期间不调用
+    // 可能重入回调的 Win32 函数。
+    let zooms = |x: f32| state.lock().is_ok_and(|hit| hit.double_click_zooms(x));
+    let beside_control = message == WM_NCLBUTTONDBLCLK
+        && caption
+        && client_point(hwnd, lparam).is_some_and(|[x, ..]| !zooms(x));
+    let message = if beside_control {
         WM_NCLBUTTONDOWN
     } else {
         message
@@ -237,10 +237,14 @@ unsafe extern "system" fn window_proc(
         show_window_menu(hwnd, lparam);
         return 0;
     }
-    if message == WM_NCLBUTTONDOWN && caption && promoted_from_touch() {
-        // winit 处理此消息时补发一个坐标为 (0, 0) 的鼠标移动，用于消除鼠标拖动开始时的停顿；
-        // 由触摸提升的鼠标事件会把该移动当作真实位移，点按也可能触发吸附。因此这类消息直接
-        // 交给系统默认处理，保留原始输入序列；鼠标消息仍沿子类链处理。
+    // SAFETY: `hwnd` 是当前回调所属的有效窗口，`IsZoomed` 没有指针参数。
+    let maximized = || unsafe { IsZoomed(hwnd) } != 0;
+    if message == WM_NCLBUTTONDOWN && caption && (promoted_from_touch() || maximized()) {
+        // winit 处理此消息时补发一个客户区坐标为 (0, 0) 的鼠标移动，用于消除拖动开始时的停顿。
+        // 以下两种情况中系统把该移动当作真实位移，因此直接交给系统默认处理，保留原始输入序列；
+        // 其余鼠标消息仍沿子类链处理。
+        // - 由触摸提升的鼠标事件：点按也可能触发吸附。
+        // - 窗口已最大化：客户区原点与按下点的距离超过系统的拖动阈值，单击即还原窗口。
         // SAFETY: 参数原样来自系统传给当前回调的消息，`hwnd` 是当前回调所属的有效窗口。
         return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
     }
@@ -261,13 +265,9 @@ unsafe extern "system" fn window_proc(
         let Some([x, y, width, height]) = client_point(hwnd, lparam) else {
             return original;
         };
-        // SAFETY: `hwnd` 是当前回调所属的有效窗口，`IsZoomed` 没有指针参数。
-        let maximized = unsafe { IsZoomed(hwnd) } != 0;
-        // SAFETY: `WM_NCDESTROY` 之前窗口始终持有该 `Arc` 引用，指针有效；持锁期间不调用
-        // 可能重入回调的 Win32 函数。
-        let state = unsafe { &*(data as *const Mutex<WindowHitTest>) };
+        // 持锁期间不调用可能重入回调的 Win32 函数。
         if let Ok(hit) = state.lock() {
-            return hit.hit(x, y, width, height, maximized) as isize;
+            return hit.hit(x, y, width, height, maximized()) as isize;
         }
         return original;
     }
