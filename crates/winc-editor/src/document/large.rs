@@ -224,7 +224,10 @@ impl LargeText {
         // 末尾尚未写完的多字节字符暂不接入，留到下一次。
         let mut tail = [0u8; 4];
         let tail_len = (size - o.base - o.len).min(4) as usize;
-        let n = read_full(&o.file, size - tail_len as u64, &mut tail[..tail_len]).ok()?;
+        let n = o
+            .file
+            .read_full(size - tail_len as u64, &mut tail[..tail_len])
+            .ok()?;
         let new_len = size - o.base - (n - complete_prefix(&tail[..n])) as u64;
         if new_len <= o.len {
             return None;
@@ -247,12 +250,10 @@ impl LargeText {
         // 接入新内容后内容末尾已经变化，重新记录末尾的 4 KiB。
         let check = new_len.min(4 << 10) as usize;
         let mut tail = vec![0; check];
-        if read_full(
-            &original.file,
-            original.base + new_len - check as u64,
-            &mut tail,
-        )
-        .is_ok()
+        if original
+            .file
+            .read_full(original.base + new_len - check as u64, &mut tail)
+            .is_ok()
         {
             original.tail = tail;
         }

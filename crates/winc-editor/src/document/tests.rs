@@ -6,6 +6,7 @@ use super::disk::write_atomic;
 use super::*;
 use crate::test_util::scratch;
 
+use std::fs;
 use std::time::SystemTime;
 
 #[cfg(unix)]

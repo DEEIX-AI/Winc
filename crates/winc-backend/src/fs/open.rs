@@ -66,6 +66,24 @@ impl Handle {
         return std::os::windows::fs::FileExt::seek_read(&self.0, buf, offset);
     }
 
+    /// 从字节偏移 `offset` 处读满 `buf` 或读到文件末尾，返回读到的字节数。
+    ///
+    /// # Errors
+    ///
+    /// 与 [`Self::read_at`] 相同；被信号中断时重试。
+    pub fn read_full(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            match self.read_at(offset + filled as u64, &mut buf[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(filled)
+    }
+
     /// 复制句柄，两个句柄指向同一个打开的文件。
     ///
     /// # Errors

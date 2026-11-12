@@ -90,9 +90,11 @@ fn read_rope(path: &Path, mut rope: Rope, disk_len: u64, bom: u64) -> Option<App
     /// 末尾，正文中途被改动同样长度的内容时可能判断不出来。1 MiB 是两者之间的折中。
     const FULL_CHECK: usize = 1 << 20;
 
-    let mut file = fs::File::open(path).ok()?;
-    let metadata = file.metadata().ok()?;
-    let (old, new) = (disk_len, metadata.len());
+    // 文件信息与随后各段的读取来自同一次打开。
+    let opened = winc_backend::fs::open(path, 0).ok()?;
+    let metadata = opened.metadata;
+    let file = opened.into_handle();
+    let (old, new) = (disk_len, metadata.len);
     if new <= old || new - old > MAX_APPEND || new > LARGE_FILE {
         return None;
     }
@@ -120,17 +122,15 @@ fn read_rope(path: &Path, mut rope: Rope, disk_len: u64, bom: u64) -> Option<App
             expected.extend_from_slice(chunk.as_bytes());
         }
         let mut actual = vec![0; to - from];
-        if file.seek(io::SeekFrom::Start(bom + from as u64)).is_err()
-            || file.read_exact(&mut actual).is_err()
-            || actual != expected
-        {
+        let read = file.read_full(bom + from as u64, &mut actual).ok();
+        if read != Some(actual.len()) || actual != expected {
             return None;
         }
     }
-    file.seek(io::SeekFrom::Start(old)).ok()?;
 
-    let mut added = Vec::with_capacity((new - old) as usize);
-    (&mut file).take(new - old).read_to_end(&mut added).ok()?;
+    let mut added = vec![0; (new - old) as usize];
+    let read = file.read_full(old, &mut added).ok()?;
+    added.truncate(read);
     // 其他程序可能正在写入，最后一个字符只写入了部分字节：只追加前面完整的部分，其余留到下次。
     let complete = match std::str::from_utf8(&added) {
         Ok(_) => added.len(),
@@ -146,7 +146,7 @@ fn read_rope(path: &Path, mut rope: Rope, disk_len: u64, bom: u64) -> Option<App
     Some(Appended::Rope {
         rope,
         len: old + complete as u64,
-        mtime: metadata.modified().ok().map(Stamp::from),
+        mtime: metadata.modified,
     })
 }
 

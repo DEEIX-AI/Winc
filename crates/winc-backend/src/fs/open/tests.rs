@@ -54,6 +54,13 @@ fn handles_read_at_offsets_and_keep_the_file_they_opened() {
     assert_eq!(copy.read_at(6, &mut buf).unwrap(), 2);
     assert_eq!(&buf[..2], b"gh");
     assert_eq!(handle.read_at(8, &mut buf).unwrap(), 0);
+    // 读满缓冲区，或在文件末尾提前结束。
+    let mut wide = [0u8; 6];
+    assert_eq!(handle.read_full(1, &mut wide).unwrap(), 6);
+    assert_eq!(&wide, b"bcdefg");
+    assert_eq!(handle.read_full(5, &mut wide).unwrap(), 3);
+    assert_eq!(&wide[..3], b"fgh");
+    assert_eq!(handle.read_full(20, &mut wide).unwrap(), 0);
     assert_eq!(handle.metadata().unwrap().len, 8);
 
     // 文件被改名替换：句柄仍指向打开时的内容，路径上已是新文件。

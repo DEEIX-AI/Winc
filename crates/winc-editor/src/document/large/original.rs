@@ -91,7 +91,8 @@ impl Original {
     pub(super) fn tail_intact(&self) -> bool {
         let check = self.len.min(4 << 10);
         let mut now = vec![0; check as usize];
-        read_full(&self.file, self.base + self.len - check, &mut now)
+        self.file
+            .read_full(self.base + self.len - check, &mut now)
             .is_ok_and(|n| n == now.len() && now == self.tail)
     }
 
@@ -99,7 +100,7 @@ impl Original {
     pub(super) fn open(file: Handle, workers: u64) -> io::Result<Self> {
         let metadata = file.metadata()?;
         let mut head = [0u8; 3];
-        let bom = read_full(&file, 0, &mut head)? == 3 && head == UTF8_BOM;
+        let bom = file.read_full(0, &mut head)? == 3 && head == UTF8_BOM;
         let base = if bom { 3 } else { 0 };
 
         let mut original = Original {
@@ -160,7 +161,11 @@ impl Original {
         // 记录内容末尾的最多 4 KiB，供 `grow` 与文件当前的末尾比较。
         let check = self.len.min(4 << 10) as usize;
         let mut tail = vec![0; check];
-        if read_full(&self.file, self.base + self.len - check as u64, &mut tail).is_ok() {
+        if self
+            .file
+            .read_full(self.base + self.len - check as u64, &mut tail)
+            .is_ok()
+        {
             self.tail = tail;
         }
         self.newlines = line;
@@ -173,7 +178,9 @@ impl Original {
     /// 读取出错时按已到达末尾处理，返回 0。
     pub(super) fn read(&self, offset: u64, buf: &mut [u8]) -> usize {
         let available = self.len.saturating_sub(offset).min(buf.len() as u64) as usize;
-        read_full(&self.file, self.base + offset, &mut buf[..available]).unwrap_or(0)
+        self.file
+            .read_full(self.base + offset, &mut buf[..available])
+            .unwrap_or(0)
     }
 
     /// 从 `offset` 读取一块，末尾被截断的多字节字符不计入返回的切片；到达末尾时返回空切片。
@@ -280,11 +287,7 @@ fn segment_bounds(file: &Handle, base: u64, len: u64, count: u64) -> io::Result<
         let mut at = (len * k / count).max(last);
 
         while at < len {
-            let n = read_full(
-                file,
-                base + at,
-                &mut buf[..(len - at).min(PROBE as u64) as usize],
-            )?;
+            let n = file.read_full(base + at, &mut buf[..(len - at).min(PROBE as u64) as usize])?;
 
             if n == 0 {
                 at = len;
@@ -337,7 +340,7 @@ pub(super) fn scan_segment(file: &Handle, base: u64, from: u64, to: u64) -> io::
 
     while segment.end < to {
         let want = ((to - segment.end) as usize).min(CHUNK);
-        let n = read_full(file, base + segment.end, &mut buf[..want])?;
+        let n = file.read_full(base + segment.end, &mut buf[..want])?;
 
         if n == 0 {
             break;
@@ -403,20 +406,4 @@ pub(super) fn scan_segment(file: &Handle, base: u64, from: u64, to: u64) -> io::
 
     segment.longest_line = segment.longest_line.max(segment.end - line_start);
     Ok(segment)
-}
-
-/// 从文件的 `offset`（字节偏移）处读满 `buf` 或读到文件末尾，返回读到的字节数。
-pub(super) fn read_full(file: &Handle, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
-    let mut filled = 0;
-
-    while filled < buf.len() {
-        match file.read_at(offset + filled as u64, &mut buf[filled..]) {
-            Ok(0) => break,
-            Ok(n) => filled += n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-
-    Ok(filled)
 }

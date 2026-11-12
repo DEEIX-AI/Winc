@@ -5,8 +5,7 @@
 //! 换行风格、BOM）和检查外部修改。
 
 use std::borrow::Cow;
-use std::fs;
-use std::io::{self, BufReader, Read, Seek, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
