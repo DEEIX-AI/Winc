@@ -436,15 +436,15 @@ impl Operation {
 
     /// 从仓库目录 `git_dir` 里的标记文件看出正在进行的操作。
     fn detect(git_dir: &Path) -> Option<Operation> {
-        if winc_backend::fs::is_dir(&git_dir.join("rebase-merge"))
-            || winc_backend::fs::is_dir(&git_dir.join("rebase-apply"))
+        if winc_backend::fs::is_dir(git_dir.join("rebase-merge"))
+            || winc_backend::fs::is_dir(git_dir.join("rebase-apply"))
         {
             Some(Operation::Rebase)
-        } else if winc_backend::fs::is_file(&git_dir.join("MERGE_HEAD")) {
+        } else if winc_backend::fs::is_file(git_dir.join("MERGE_HEAD")) {
             Some(Operation::Merge)
-        } else if winc_backend::fs::is_file(&git_dir.join("CHERRY_PICK_HEAD")) {
+        } else if winc_backend::fs::is_file(git_dir.join("CHERRY_PICK_HEAD")) {
             Some(Operation::CherryPick)
-        } else if winc_backend::fs::is_file(&git_dir.join("REVERT_HEAD")) {
+        } else if winc_backend::fs::is_file(git_dir.join("REVERT_HEAD")) {
             Some(Operation::Revert)
         } else {
             None
@@ -467,7 +467,7 @@ fn git_dir(root: &Path) -> Option<PathBuf> {
 /// 各工作树的记录（`worktrees/`）在那里的 `commondir` 所指的目录里。
 fn git_common_dir(root: &Path) -> Option<PathBuf> {
     let dir = git_dir(root)?;
-    match winc_backend::fs::read_to_string(&dir.join("commondir")) {
+    match winc_backend::fs::read_to_string(dir.join("commondir")) {
         Ok(common) => Some(dir.join(common.trim())),
         Err(_) => Some(dir),
     }
@@ -646,7 +646,7 @@ impl Git {
 
     /// 合并的提交信息草稿（`.git/MERGE_MSG`，去掉 `#` 开头的说明行）；不在合并中时为 `None`。
     pub fn merge_message(&self, root: &Path) -> Option<String> {
-        let text = winc_backend::fs::read_to_string(&git_dir(root)?.join("MERGE_MSG")).ok()?;
+        let text = winc_backend::fs::read_to_string(git_dir(root)?.join("MERGE_MSG")).ok()?;
         let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
         Some(kept.join("\n").trim().to_owned())
     }
@@ -1422,7 +1422,7 @@ const SCAN_ENTRIES: usize = 4096;
 /// 只查文件系统，不运行 `git`。
 pub fn find_root(dir: &Path) -> Option<PathBuf> {
     dir.ancestors()
-        .find(|d| winc_backend::fs::exists(&d.join(".git")))
+        .find(|d| winc_backend::fs::exists(d.join(".git")))
         .map(Path::to_path_buf)
 }
 
@@ -1437,7 +1437,7 @@ pub fn find_repositories(dir: &Path) -> Vec<PathBuf> {
         .flatten()
         .take(SCAN_ENTRIES)
         .map(|entry| entry.path())
-        .filter(|path| winc_backend::fs::exists(&path.join(".git")))
+        .filter(|path| winc_backend::fs::exists(path.join(".git")))
         .collect();
     children.sort_by_cached_key(|path| {
         path.file_name()
@@ -1473,7 +1473,7 @@ pub fn scan_repositories(dir: &Path, depth: usize, cancel: &Cancel) -> Vec<PathB
                     continue;
                 }
                 let path = entry.path();
-                if winc_backend::fs::exists(&path.join(".git")) {
+                if winc_backend::fs::exists(path.join(".git")) {
                     found.push(path);
                 } else {
                     next.push(path);

@@ -180,7 +180,7 @@ impl App {
 
     /// 打开文件或目录 `path`；`preview` 为真时在预览标签中打开文件（见 [`Self::preview_path`]）。
     fn open_file(&mut self, path: &Path, preview: bool) {
-        if path.is_dir() {
+        if winc_backend::fs::is_dir(path) {
             self.open_folder(path);
             return;
         }
@@ -334,7 +334,7 @@ impl App {
     /// 终端程序由配置项 `terminal.external` 指定。基准测量和测试中不启动终端，只记录目录。
     pub(in crate::app) fn open_in_terminal(&mut self, path: Option<&Path>) {
         let dir = match path {
-            Some(path) if path.is_dir() => path.to_path_buf(),
+            Some(path) if winc_backend::fs::is_dir(path) => path.to_path_buf(),
             Some(path) => path.parent().unwrap_or(path).to_path_buf(),
             None => match self.editor.root() {
                 Some(root) => root.to_path_buf(),
@@ -879,9 +879,9 @@ impl App {
             .as_ref()
             .is_some_and(winc_editor::Watcher::reliable);
         let watched = (self.watcher.as_ref().filter(|_| live)).zip(self.git.root.as_deref());
-        if !watched
-            .is_some_and(|(w, root)| root.starts_with(w.root()) && root.join(".git").is_dir())
-        {
+        if !watched.is_some_and(|(w, root)| {
+            root.starts_with(w.root()) && winc_backend::fs::is_dir(root.join(".git"))
+        }) {
             self.git_refresh();
         }
 

@@ -393,10 +393,10 @@ impl<'a> ProjectFiles<'a> {
     fn shows(&mut self, sign: Sign) -> Option<String> {
         let dir = self.dir;
         match sign {
-            Sign::File(name) => winc_backend::fs::is_file(&dir.join(name)).then(|| name.to_owned()),
+            Sign::File(name) => winc_backend::fs::is_file(dir.join(name)).then(|| name.to_owned()),
             Sign::Package(name) => {
                 let package = self.package.get_or_insert_with(|| {
-                    let text = winc_backend::fs::read_to_string(&dir.join("package.json")).ok()?;
+                    let text = winc_backend::fs::read_to_string(dir.join("package.json")).ok()?;
                     Json::parse(&text)
                 });
                 let package = package.as_ref()?;
@@ -408,7 +408,7 @@ impl<'a> ProjectFiles<'a> {
                 let text = self
                     .pyproject
                     .get_or_insert_with(|| {
-                        winc_backend::fs::read_to_string(&dir.join("pyproject.toml")).ok()
+                        winc_backend::fs::read_to_string(dir.join("pyproject.toml")).ok()
                     })
                     .as_deref()?;
                 let header = format!("[{section}]");

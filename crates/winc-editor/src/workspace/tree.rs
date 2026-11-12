@@ -193,7 +193,7 @@ pub(crate) fn walker_with_ignored(dir: &Path) -> WalkBuilder {
 /// `dir` 或它的某一级上级目录是否是版本库的根目录。
 fn in_repository(dir: &Path) -> bool {
     dir.ancestors().any(|dir| {
-        winc_backend::fs::exists(&dir.join(".git")) || winc_backend::fs::exists(&dir.join(".jj"))
+        winc_backend::fs::exists(dir.join(".git")) || winc_backend::fs::exists(dir.join(".jj"))
     })
 }
 

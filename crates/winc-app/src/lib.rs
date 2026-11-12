@@ -260,7 +260,7 @@ pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Vec<String>
     let mut problems = Vec::new();
     let mut first_file = None;
     for target in &args.targets {
-        if target.path.is_dir() {
+        if winc_backend::fs::is_dir(&target.path) {
             if args.one_off() {
                 let path = target.path.display().to_string();
                 problems.push(winc_i18n::t!("cmd-cli-wait-folder", path = path));
@@ -340,5 +340,5 @@ fn set_encoding_region() {
 /// 目录已不存在时不做任何事，开始页的最近列表仍保留该条目。标签由 `app::restore_tabs`
 /// 按现场恢复。
 pub(crate) fn open_session_folder(editor: &mut Editor, session: &Session) -> bool {
-    session.folder.is_dir() && editor.open_folder(&session.folder).is_ok()
+    winc_backend::fs::is_dir(&session.folder) && editor.open_folder(&session.folder).is_ok()
 }

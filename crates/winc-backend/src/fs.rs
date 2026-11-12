@@ -151,7 +151,8 @@ impl From<&std::fs::Metadata> for Metadata {
 /// # Errors
 ///
 /// 与 `std::fs::metadata` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
-pub fn metadata(path: &Path) -> io::Result<Metadata> {
+pub fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    let path = path.as_ref();
     ensure_local(path)?;
     std::fs::metadata(path).map(|m| Metadata::from(&m))
 }
@@ -161,28 +162,33 @@ pub fn metadata(path: &Path) -> io::Result<Metadata> {
 /// # Errors
 ///
 /// 与 `std::fs::symlink_metadata` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
-pub fn symlink_metadata(path: &Path) -> io::Result<Metadata> {
+pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    let path = path.as_ref();
     ensure_local(path)?;
     std::fs::symlink_metadata(path).map(|m| Metadata::from(&m))
 }
 
 /// 是否存在并且是普通文件（跟随符号链接）；无法确定时为否。
-pub fn is_file(path: &Path) -> bool {
+pub fn is_file(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
     metadata(path).is_ok_and(|m| m.is_file())
 }
 
 /// 是否存在并且是目录（跟随符号链接）；无法确定时为否。
-pub fn is_dir(path: &Path) -> bool {
+pub fn is_dir(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
     metadata(path).is_ok_and(|m| m.is_dir())
 }
 
 /// 是否为符号链接（不跟随链接，指向不存在目标的链接同样为是）；无法确定时为否。
-pub fn is_symlink(path: &Path) -> bool {
+pub fn is_symlink(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
     symlink_metadata(path).is_ok_and(|m| m.is_symlink())
 }
 
 /// 是否存在（跟随符号链接，指向不存在目标的符号链接不算存在）；无法确定时为否。
-pub fn exists(path: &Path) -> bool {
+pub fn exists(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
     metadata(path).is_ok()
 }
 
@@ -191,7 +197,8 @@ pub fn exists(path: &Path) -> bool {
 /// # Errors
 ///
 /// 与 `std::fs::read` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
-pub fn read(path: &Path) -> io::Result<Vec<u8>> {
+pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
+    let path = path.as_ref();
     ensure_local(path)?;
     std::fs::read(path)
 }
@@ -201,7 +208,8 @@ pub fn read(path: &Path) -> io::Result<Vec<u8>> {
 /// # Errors
 ///
 /// 与 `std::fs::read_to_string` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
-pub fn read_to_string(path: &Path) -> io::Result<String> {
+pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
+    let path = path.as_ref();
     ensure_local(path)?;
     std::fs::read_to_string(path)
 }
@@ -211,7 +219,8 @@ pub fn read_to_string(path: &Path) -> io::Result<String> {
 /// # Errors
 ///
 /// 与 `std::fs::read_link` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
-pub fn read_link(path: &Path) -> io::Result<PathBuf> {
+pub fn read_link(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let path = path.as_ref();
     ensure_local(path)?;
     std::fs::read_link(path)
 }

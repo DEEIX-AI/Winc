@@ -633,7 +633,7 @@ impl App {
                     .and_then(|text| svg::load(text, None, Some(system_glyphs()))),
                 (_, Some(bytes)) => image::load_bytes(&bytes),
                 (Some(url), None) => download(url, &path).and_then(|()| load_downloaded(&path)),
-                (None, None) if image::is_svg(&path) => std::fs::read_to_string(&path)
+                (None, None) if image::is_svg(&path) => winc_backend::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
                     .and_then(|text| svg::load(&text, path.parent(), Some(system_glyphs()))),
                 (None, None) => image::load(&path),
@@ -756,7 +756,7 @@ impl App {
             .and_then(|d| d.path.as_deref())
             .and_then(|path| local_target(path, &url));
         match local {
-            Some(path) if path.is_file() => self.open_markdown_file(&path, &url),
+            Some(path) if winc_backend::fs::is_file(&path) => self.open_markdown_file(&path, &url),
             Some(_) => self.flash(t!("preview-markdown-link-file-not-found")),
             None => {
                 if let Err(e) = system::open_url(&url) {

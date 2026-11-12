@@ -348,7 +348,7 @@ fn prepare(
     oid: Option<&str>,
 ) -> Result<DiffView, String> {
     let name = winc_editor::display_name(path).into_owned();
-    if path.is_dir() {
+    if winc_backend::fs::is_dir(path) {
         return Err(t!("git-diff-submodule", name = name));
     }
     let too_large = |len: usize| len as u64 > LARGE_FILE;
@@ -374,7 +374,7 @@ fn prepare(
         ),
         None => {
             let language = winc_syntax::detect(&name);
-            match std::fs::read(path) {
+            match winc_backend::fs::read(path) {
                 Ok(bytes) if too_large(bytes.len()) => {
                     return Err(t!("git-diff-too-large", name = name));
                 }
@@ -524,11 +524,10 @@ impl App {
             return;
         };
         let mut found = git::find_repositories(dir);
-        let kept = self
-            .git
-            .repositories
-            .iter()
-            .filter(|repo| !found.contains(repo) && repo.join(".git").exists());
+        let kept =
+            self.git.repositories.iter().filter(|repo| {
+                !found.contains(repo) && winc_backend::fs::exists(repo.join(".git"))
+            });
         let kept: Vec<PathBuf> = kept.cloned().collect();
         found.extend(kept);
         self.git.repositories = found;

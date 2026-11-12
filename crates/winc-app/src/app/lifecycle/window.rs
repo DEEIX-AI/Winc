@@ -85,7 +85,10 @@ impl App {
     /// 打开 `targets` 里的文件（目录跳过：已经是本窗口的目录），`文件:行:列` 跳到该位置，再把
     /// 窗口切到前台。
     pub(crate) fn open_files(&mut self, targets: &[crate::cli::Target]) {
-        for target in targets.iter().filter(|t| !t.path.is_dir()) {
+        for target in targets
+            .iter()
+            .filter(|t| !winc_backend::fs::is_dir(&t.path))
+        {
             self.open_path(&target.path);
             if let Some(line) = target.line {
                 self.jump_to(line, target.col.unwrap_or(0), 0);

@@ -196,7 +196,7 @@ impl App {
         let root = self.editor.root().filter(|_| self.terminal_enabled());
         let (mut list, problems) = root.map(load_run_configs).unwrap_or_default();
         // 配置文件优先；没有文件时列出识别到的命令。文件存在但为空时尊重用户的选择。
-        let detected = root.is_some_and(|root| !run_configs_path(root).exists());
+        let detected = root.is_some_and(|root| !winc_backend::fs::exists(run_configs_path(root)));
         if let Some(root) = root.filter(|_| detected) {
             list = detected_run_configs(root);
         }

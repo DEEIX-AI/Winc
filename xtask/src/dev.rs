@@ -31,6 +31,7 @@ const LAYERS: &[(&str, &[&str])] = &[
     (
         "winc-app",
         &[
+            "winc-backend",
             "winc-config",
             "winc-core",
             "winc-editor",

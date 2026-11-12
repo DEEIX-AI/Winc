@@ -206,7 +206,7 @@ impl Git {
         let _ = std::fs::remove_file(&local);
         result?;
         let state = path_of("rebase-merge")?;
-        Ok(winc_backend::fs::exists(&crate::wsl::resolve(root, &state)))
+        Ok(winc_backend::fs::exists(crate::wsl::resolve(root, &state)))
     }
 }
 

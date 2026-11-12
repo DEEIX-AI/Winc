@@ -563,7 +563,7 @@ impl App {
             }
             Key::Named(NamedKey::Enter) => {
                 if let Some(path) = target
-                    && path.is_file()
+                    && winc_backend::fs::is_file(&path)
                 {
                     self.open_path(&path);
                     self.focus = Focus::Editor;

@@ -397,7 +397,7 @@ impl App {
         let Some(folder) = self.state.recent.get(index).cloned() else {
             return;
         };
-        if folder.is_dir() {
+        if winc_backend::fs::is_dir(&folder) {
             self.new_window(Some(folder));
         } else {
             self.forget_missing_recent(&folder);
@@ -416,7 +416,7 @@ impl App {
                     return;
                 };
 
-                if folder.is_dir() {
+                if winc_backend::fs::is_dir(&folder) {
                     self.open_path(&folder);
                 } else {
                     self.forget_missing_recent(&folder);

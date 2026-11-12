@@ -15,7 +15,7 @@ use super::*;
 /// 返回 `path` 的文本内容用于比较；文件过大、是二进制文件或读取失败时返回提示文字。
 fn read_for_compare(path: &Path) -> Result<String, String> {
     let name = display_name(path);
-    let bytes = std::fs::read(path).map_err(|e| {
+    let bytes = winc_backend::fs::read(path).map_err(|e| {
         t!(
             "workspace-compare-read-failed",
             name = &*name,

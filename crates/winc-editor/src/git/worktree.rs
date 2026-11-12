@@ -113,7 +113,7 @@ impl Git {
     ///
     /// `git` 运行失败时返回原因。
     pub fn worktrees(&self, root: &Path, cancel: &Cancel) -> Result<Vec<Worktree>, String> {
-        if !git_common_dir(root).is_some_and(|d| winc_backend::fs::is_dir(&d.join("worktrees"))) {
+        if !git_common_dir(root).is_some_and(|d| winc_backend::fs::is_dir(d.join("worktrees"))) {
             return Ok(Vec::new());
         }
         let mut command = self.command(root);

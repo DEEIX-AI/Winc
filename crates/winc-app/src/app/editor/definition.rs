@@ -665,7 +665,7 @@ fn filter_file(
 ) {
     let text = match dirty.get(&file.path) {
         Some(rope) => rope.clone(),
-        None => match std::fs::read(&file.path).map(String::from_utf8) {
+        None => match winc_backend::fs::read(&file.path).map(String::from_utf8) {
             Ok(Ok(text)) => Rope::from_str(&text),
             _ => return,
         },

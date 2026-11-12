@@ -144,7 +144,7 @@ impl FileConfig {
 pub fn lookup(path: &Path) -> FileConfig {
     let mut files = Vec::new();
     for dir in path.ancestors().skip(1) {
-        let Ok(text) = winc_backend::fs::read_to_string(&dir.join(".editorconfig")) else {
+        let Ok(text) = winc_backend::fs::read_to_string(dir.join(".editorconfig")) else {
             continue;
         };
         let parsed = parse(&text);

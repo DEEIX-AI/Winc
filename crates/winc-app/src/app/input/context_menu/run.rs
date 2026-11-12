@@ -564,7 +564,7 @@ impl App {
     ///
     /// 把「包含」填成 `./相对路径`，并展开过滤条件。
     pub(in crate::app) fn find_in_folder(&mut self, path: &Path) {
-        let dir = if path.is_dir() {
+        let dir = if winc_backend::fs::is_dir(path) {
             path
         } else {
             path.parent().unwrap_or(path)
@@ -685,7 +685,7 @@ impl App {
             let message = match paths.as_slice() {
                 [path] => {
                     let name = winc_editor::display_name(path);
-                    if path.is_dir() {
+                    if winc_backend::fs::is_dir(path) {
                         t!("common-trash-confirm-folder", name = name)
                     } else {
                         t!("common-trash-confirm-item", name = name)

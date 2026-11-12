@@ -62,7 +62,7 @@ impl App {
             None
         } else if name.is_none() || url.starts_with('-') {
             Some(t!("git-clone-invalid-url"))
-        } else if parent.as_ref().is_none_or(|p| !p.is_dir()) {
+        } else if parent.as_ref().is_none_or(|p| !winc_backend::fs::is_dir(p)) {
             Some(t!("git-clone-no-parent"))
         } else if dir.as_deref().is_some_and(occupied) {
             Some(t!("git-clone-occupied"))
