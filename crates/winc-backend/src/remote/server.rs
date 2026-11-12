@@ -236,6 +236,12 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
             crate::fs::remove_file(path)?;
             Ok(Vec::new())
         }
+        kind::REMOVE_ALL => {
+            let path = path(&mut input)?;
+            input.finish()?;
+            crate::fs::remove_all(path)?;
+            Ok(Vec::new())
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "unknown request",

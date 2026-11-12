@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{Connection, quote, ssh};
+use super::{Connection, Ssh, quote, ssh};
 use crate::Target;
 
 /// 引导脚本，交给远端的 `sh -c` 运行。参数依次是上传目录，以及每个服务进程的系统、摘要和字节数。
@@ -123,8 +123,8 @@ impl Deploy {
     /// # Errors
     ///
     /// 同 [`Deploy::command`]。
-    pub fn ssh_command(&self, target: &Target, batch: bool) -> io::Result<Command> {
-        let mut command = ssh(target, batch);
+    pub fn ssh_command(&self, target: &Target, options: Ssh) -> io::Result<Command> {
+        let mut command = ssh(target, options);
         command.args(self.command()?.iter().map(|word| quote(word)));
         Ok(command)
     }
@@ -339,7 +339,7 @@ mod tests {
         );
 
         let target = Target::new("alice@devbox").unwrap();
-        let command = deploy("~/it's here", "0af3").ssh_command(&target, false);
+        let command = deploy("~/it's here", "0af3").ssh_command(&target, Ssh::default());
         let command = command.unwrap();
         let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
         assert_eq!(

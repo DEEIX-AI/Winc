@@ -138,3 +138,18 @@ pub fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
         Some(at) => remote::connection(&at.target)?.remove_file(&at.path),
     }
 }
+
+/// 删除 `path`：文件和符号链接删除其本身，目录连同其中的全部内容一起删除。不可恢复。
+///
+/// # Errors
+///
+/// `path` 不存在，或其中有无法删除的项时返回对应的 `std::io::Error`；后一种情况下已删除的
+/// 部分不恢复。
+pub fn remove_all(path: impl AsRef<Path>) -> io::Result<()> {
+    let path = path.as_ref();
+    match locate(path) {
+        None if std::fs::symlink_metadata(path)?.is_dir() => std::fs::remove_dir_all(path),
+        None => std::fs::remove_file(path),
+        Some(at) => remote::connection(&at.target)?.remove_all(&at.path),
+    }
+}

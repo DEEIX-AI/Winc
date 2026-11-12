@@ -182,6 +182,14 @@ impl Workspace {
             }
             self.rebuild();
         }
+        // 此前要选中的路径：所在的目录读好后选中；待读的目录都已读完仍没有它时放弃。
+        if let Some(path) = self.missing.reveal.take() {
+            match self.row_of(&path) {
+                Some(index) => self.select_segment(index, Some(&path)),
+                None if self.missing.wanted.is_empty() && self.missing.requested.is_empty() => {}
+                None => self.missing.reveal = Some(path),
+            }
+        }
         changed
     }
 }

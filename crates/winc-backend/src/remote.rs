@@ -54,6 +54,8 @@ struct Link {
     /// 写请求的一端；连接中断后为 `None`。
     output: Mutex<Option<BufWriter<Box<dyn Write + Send>>>>,
     waiting: Mutex<Waiting>,
+    /// 连接意外中断时调用一次的函数（见 [`Connection::on_close`]）。
+    on_close: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 /// 等待应答的请求。
@@ -121,7 +123,24 @@ impl Link {
                 let _ = sender.send(frame);
             }
         }
+        // 写的一端仍开着：不是本程序断开的（见 `Connection::shutdown`），而是对端或 `ssh` 结束了。
+        let unexpected = (self.output.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some();
         self.close();
+        let hook = (self.on_close.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(hook) = hook.filter(|_| unexpected) {
+            hook();
+        }
+    }
+
+    /// 连接是否已中断。
+    fn closed(&self) -> bool {
+        (self.waiting.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .closed
     }
 
     /// 关闭写请求的一端，并让所有等待中的请求立即以连接中断结束；此后的请求立即失败。
@@ -187,6 +206,7 @@ impl Connection {
         let link = Arc::new(Link {
             output: Mutex::new(Some(BufWriter::new(Box::new(output)))),
             waiting: Mutex::default(),
+            on_close: Mutex::default(),
         });
         let reader = {
             let link = Arc::clone(&link);
@@ -208,6 +228,12 @@ impl Connection {
         }
         reply.finish()?;
         Ok(connection)
+    }
+
+    /// 设置连接意外中断（对端退出、`ssh` 因网络中断结束）时调用的函数，在读取应答的线程上
+    /// 调用一次；本程序主动断开时不调用。已有的函数被替换。
+    pub fn on_close(&self, hook: impl FnOnce() + Send + 'static) {
+        *(self.link.on_close.lock()).unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
     }
 
     /// 发出一个请求并等待应答，返回应答的载荷。
@@ -354,6 +380,11 @@ impl Connection {
     /// 删除远端文件 `path`。
     pub(crate) fn remove_file(&self, path: &[u8]) -> io::Result<()> {
         self.command(kind::REMOVE_FILE, Writer::default().bytes(path).finish())
+    }
+
+    /// 删除远端的 `path`：目录连同其中的全部内容。
+    pub(crate) fn remove_all(&self, path: &[u8]) -> io::Result<()> {
+        self.command(kind::REMOVE_ALL, Writer::default().bytes(path).finish())
     }
 
     /// 把 `write` 写出的内容保存到远端文件 `path`，返回写入后的文件信息。
@@ -679,12 +710,12 @@ pub fn disconnect_all() {
     }
 }
 
-/// 是否已登记到 `target` 的连接；连接可能已经中断，此时请求会失败。
+/// 是否有到 `target` 的可用连接：已登记，且没有中断。
 pub fn is_connected(target: &Target) -> bool {
     let connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
-    connections
-        .as_ref()
-        .is_some_and(|all| all.contains_key(target))
+    (connections.as_ref())
+        .and_then(|all| all.get(target))
+        .is_some_and(|connection| !connection.link.closed())
 }
 
 /// 返回到 `target` 的连接。
@@ -728,29 +759,71 @@ pub fn allow_blocking<R>(work: impl FnOnce() -> R) -> R {
     result
 }
 
+/// `ssh` 的可选行为。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Ssh {
+    /// 不向用户提问（`BatchMode=yes`）：需要输入口令或确认主机密钥时直接失败。
+    pub batch: bool,
+    /// 让 `ssh` 定期探测对端（`ServerAliveInterval=60`），网络中断后自行结束，连接上等待中的
+    /// 请求随之失败。命令行上的选项优先于用户的配置，只应在用户没有设置时使用，见 [`keeps_alive`]。
+    pub keep_alive: bool,
+}
+
+/// 用户没有设置时使用的探测间隔：`ssh` 每 60 秒探测一次，连续 3 次（OpenSSH 的默认次数）
+/// 没有应答后结束连接。
+const KEEP_ALIVE: &str = "ServerAliveInterval=60";
+
+/// 是否用户的 `ssh` 配置已为 `target` 设置了探测间隔（`ServerAliveInterval` 不为 0）。
+///
+/// 运行 `ssh -G` 读取对该主机生效的配置，不建立连接。无法运行或读不到该项时返回真：不能确定
+/// 用户没有设置时，不替用户添加。
+pub fn keeps_alive(target: &Target) -> bool {
+    let mut command = Command::new("ssh");
+    hide_console(&mut command);
+    command.arg("-G").arg(target.as_str()).stdin(Stdio::null());
+    let Ok(output) = command.output() else {
+        return true;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let interval = text.lines().find_map(|line| {
+        let (key, value) = line.split_once(' ')?;
+        key.eq_ignore_ascii_case("serveraliveinterval")
+            .then_some(value.trim())
+    });
+    interval != Some("0")
+}
+
+/// Windows 上图形程序启动命令行程序时默认弹出控制台窗口：`CREATE_NO_WINDOW`（`0x0800_0000`）
+/// 使其不创建窗口。其他系统上没有效果。
+fn hide_console(command: &mut Command) {
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(command, 0x0800_0000);
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 /// 返回经 `ssh` 连接 `target` 并在远端运行程序 `server` 的命令。
 ///
 /// 目标和 `ssh` 的其余设置取自用户的 `~/.ssh/config`。`-T` 不分配终端，`RemoteCommand=none`
 /// 使配置中为该主机设置的登录命令不替换这里的程序；`server` 作为一个整体交给远端的 shell，
-/// 其中的字符不被解释。`batch` 为真时 `ssh` 不向用户提问（`BatchMode=yes`），需要输入口令或
-/// 确认主机密钥时直接失败。
-pub fn ssh_command(target: &Target, server: &str, batch: bool) -> Command {
-    let mut command = ssh(target, batch);
+/// 其中的字符不被解释。
+pub fn ssh_command(target: &Target, server: &str, options: Ssh) -> Command {
+    let mut command = ssh(target, options);
     command.arg(quote(server));
     command
 }
 
 /// 返回连接 `target` 的 `ssh` 命令，其后追加的参数是在远端运行的命令；参数的含义见
-/// [`ssh_command`]。
-fn ssh(target: &Target, batch: bool) -> Command {
+/// [`ssh_command`]。选项都写在主机之前：主机之后的参数属于远端的命令。
+fn ssh(target: &Target, options: Ssh) -> Command {
     let mut command = Command::new("ssh");
-    // Windows 上图形程序启动命令行程序时默认弹出控制台窗口：`CREATE_NO_WINDOW`（0x0800_0000）
-    // 使其不创建窗口。
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    hide_console(&mut command);
     command.args(["-T", "-o", "RemoteCommand=none"]);
-    if batch {
+    if options.batch {
         command.args(["-o", "BatchMode=yes"]);
+    }
+    if options.keep_alive {
+        command.args(["-o", KEEP_ALIVE]);
     }
     command.arg(target.as_str()).arg("--");
     command

@@ -251,6 +251,10 @@ pub enum UserEvent {
     GitQuestion,
     /// 后台到远端主机的连接已建立或已失败。
     RemoteConnected,
+    /// 到远端主机的连接意外中断。
+    RemoteClosed(winc_backend::Target),
+    /// 后台的文件操作（新建、改名、移动、删除）已完成。
+    FileWorked,
     /// 连接远端主机的 `ssh` 发来了输入请求。
     RemoteQuestion,
     /// 后台已读取三栏合并的两侧。
@@ -989,6 +993,8 @@ pub struct App {
     pub branch: git::branch::BranchState,
     /// 远程模块：正在进行的连接。
     pub remote: remote::RemoteState,
+    /// 正在后台执行的文件操作。
+    pub(in crate::app) file_work: workspace::file_work::FileWork,
     /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
     pub merge: git::merge::MergeState,
     /// 大文件的差异在后台重新比较。
@@ -1118,6 +1124,7 @@ impl App {
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
             UserEvent::RemoteConnected => self.poll_remote(),
+            UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
             UserEvent::GitBlame => self.poll_blame(),

@@ -37,6 +37,13 @@ common-trash-moved-items = { $count ->
         [one] Moved { $count } item to the { common-trash }
        *[other] Moved { $count } items to the { common-trash }
     }
+common-delete-confirm-folder = Permanently delete the folder “{ $name }” and its contents?
+common-delete-confirm-item = Permanently delete “{ $name }”?
+common-delete-confirm-items = Permanently delete these { $count } items?
+common-delete-confirm-detail = Files on a remote host don’t go to the { common-trash }. This can’t be undone.
+common-delete-button = Delete Permanently
+common-deleted-item = Deleted: { $name }
+common-deleted-items = Deleted { $count } items
 common-trash-delete-failed = Couldn’t delete “{ $name }”: { $error }
 common-trash-invalid-path = Invalid path
 common-trash-no-file-manager = NSFileManager is unavailable

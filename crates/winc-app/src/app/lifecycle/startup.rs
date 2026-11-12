@@ -172,6 +172,7 @@ impl App {
             blame: git::blame::BlameState::default(),
             branch: git::branch::BranchState::default(),
             remote: Default::default(),
+            file_work: Default::default(),
             merge: git::merge::MergeState::default(),
             rediff: diff::RediffState::default(),
             prompt_kind: PromptKind::GoTo,

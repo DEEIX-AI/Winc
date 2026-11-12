@@ -18,6 +18,7 @@ use winc_editor::git::ASKPASS_ENDPOINT;
 use winc_i18n::t;
 
 use crate::app::git::question::Asker;
+use crate::app::lifecycle::notice::NoticeAction;
 use crate::app::{App, PromptKind, TextField, UserEvent};
 use crate::askpass::{Listener, Question};
 
@@ -49,6 +50,8 @@ pub(crate) struct RemoteState {
     questions: (Sender<Question>, Receiver<Question>),
     /// 用户是否关闭了本次连接的询问对话框：随后的失败按取消提示。
     pub(in crate::app) declined: bool,
+    /// 是否已提示过当前目录所在主机的连接中断：重新连接之前不重复提示。
+    lost: bool,
 }
 
 impl Default for RemoteState {
@@ -58,6 +61,7 @@ impl Default for RemoteState {
             outcome: Arc::default(),
             questions: channel(),
             declined: false,
+            lost: false,
         }
     }
 }
@@ -113,8 +117,16 @@ fn programs() -> Vec<Program> {
     programs
 }
 
-/// 建立到 `target` 的连接并登记；`ssh` 的输入请求交给 `listener`，没有时不允许它提问。
-fn connect(target: &Target, listener: Option<&Listener>) -> Result<(), String> {
+/// 连接意外中断时的通知。
+type Closed = Arc<dyn Fn() + Send + Sync>;
+
+/// 建立到 `target` 的连接并登记；`ssh` 的输入请求交给 `listener`，没有时不允许它提问。连接
+/// 意外中断时调用 `closed`。
+fn connect(
+    target: &Target,
+    listener: Option<&Listener>,
+    closed: Option<&Closed>,
+) -> Result<(), String> {
     let deploy = Deploy {
         dir: String::new(),
         programs: programs(),
@@ -123,8 +135,13 @@ fn connect(target: &Target, listener: Option<&Listener>) -> Result<(), String> {
         return Err(t!("workspace-remote-no-server").to_owned());
     }
     let askpass = listener.and_then(Listener::askpass);
+    let options = remote::Ssh {
+        batch: askpass.is_none(),
+        // 用户没有为该主机设置探测间隔时才添加，不覆盖用户的设置。
+        keep_alive: !remote::keeps_alive(target),
+    };
     let mut command: Command = deploy
-        .ssh_command(target, askpass.is_none())
+        .ssh_command(target, options)
         .map_err(|e| e.to_string())?;
     if let Some(askpass) = askpass {
         // `SSH_ASKPASS_REQUIRE` 使 `ssh` 不依赖 `DISPLAY` 和控制终端。
@@ -139,6 +156,9 @@ fn connect(target: &Target, listener: Option<&Listener>) -> Result<(), String> {
         }
         other => other.to_string(),
     })?;
+    if let Some(closed) = closed.cloned() {
+        connection.on_close(move || closed());
+    }
     remote::register(target.clone(), connection);
     Ok(())
 }
@@ -161,16 +181,21 @@ fn resolve(target: &Target, folder: &str) -> std::io::Result<Result<PathBuf, Str
 }
 
 /// 连接 `target`（已有连接时沿用）并取得 `folder` 的虚拟路径。
-fn open(target: &Target, folder: &str, listener: Option<&Listener>) -> Outcome {
+fn open(
+    target: &Target,
+    folder: &str,
+    listener: Option<&Listener>,
+    closed: Option<&Closed>,
+) -> Outcome {
     let existing = remote::is_connected(target);
     if !existing {
-        connect(target, listener)?;
+        connect(target, listener, closed)?;
     }
     match resolve(target, folder) {
         Ok(outcome) => outcome,
         // 沿用的连接已经中断：重新连接一次。
         Err(_) if existing => {
-            connect(target, listener)?;
+            connect(target, listener, closed)?;
             resolve(target, folder).map_err(|e| e.to_string())?
         }
         Err(error) => Err(error.to_string()),
@@ -227,13 +252,20 @@ impl App {
         let questions = self.remote.questions.0.clone();
         self.spawn_blocking_then(UserEvent::RemoteConnected, move || {
             // 端点只在连接期间存在，`listener` 在任务结束时被丢弃。
+            let closed = wake.clone().map(|proxy| {
+                let target = target.clone();
+                let notify = move || {
+                    let _ = proxy.send_event(UserEvent::RemoteClosed(target.clone()));
+                };
+                Arc::new(notify) as Closed
+            });
             let listener = wake.and_then(|proxy| {
                 Listener::bind(move |question| {
                     let _ = questions.send(question);
                     let _ = proxy.send_event(UserEvent::RemoteQuestion);
                 })
             });
-            let outcome = open(&target, &folder, listener.as_ref());
+            let outcome = open(&target, &folder, listener.as_ref(), closed.as_ref());
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
         });
     }
@@ -253,7 +285,13 @@ impl App {
         match outcome {
             Ok(folder) if self.remote_enabled() => {
                 self.clear_flash();
-                self.open_folder(&folder);
+                self.remote.lost = false;
+                if self.editor.root() == Some(folder.as_path()) {
+                    // 重新连接到已打开的目录：按窗口重新获得焦点处理，重读文件树和文档。
+                    self.check_disk();
+                } else {
+                    self.open_folder(&folder);
+                }
             }
             // 连接期间模块被关闭：连接已随之断开。
             Ok(_) => {}
@@ -274,6 +312,35 @@ impl App {
             if self.remote.connecting.is_some() {
                 self.open_question(Asker::Remote, question);
             }
+        }
+    }
+
+    /// 到 `target` 的连接意外中断：打开的目录在该主机上时提示，并提供重新连接的按钮。
+    pub(in crate::app) fn remote_closed(&mut self, target: &Target) {
+        let root = self.editor.root().map(Path::to_path_buf);
+        let Some(root) = root.filter(|root| {
+            winc_backend::locate(root).is_some_and(|location| location.target == *target)
+        }) else {
+            return;
+        };
+        if self.remote.lost || self.remote.connecting.is_some() || !self.remote_enabled() {
+            return;
+        }
+        self.remote.lost = true;
+        self.notify_with(
+            t!("workspace-remote-lost", host = target.as_str()),
+            NoticeAction::Reconnect(root),
+        );
+    }
+
+    /// 窗口重新获得焦点时调用：打开的目录所在主机的连接已不可用时提示（见
+    /// [`App::remote_closed`]）。连接是进程内各窗口共用的，中断的通知只送到发起连接的窗口。
+    pub(in crate::app) fn check_remote(&mut self) {
+        let target = (self.editor.root())
+            .and_then(winc_backend::locate)
+            .map(|location| location.target);
+        if let Some(target) = target.filter(|target| !remote::is_connected(target)) {
+            self.remote_closed(&target);
         }
     }
 
@@ -339,11 +406,11 @@ mod tests {
     #[ignore = "需要一台可以免输入登录的主机"]
     fn over_ssh() {
         let target = Target::new(&std::env::var("WINC_TEST_SSH_TARGET").unwrap()).unwrap();
-        let home = open(&target, "~", None).unwrap();
+        let home = open(&target, "~", None, None).unwrap();
         assert!(winc_backend::fs::is_dir(&home), "{}", home.display());
-        let sub = open(&target, ".ssh", None).unwrap();
+        let sub = open(&target, ".ssh", None, None).unwrap();
         assert_eq!(sub, home.join(".ssh"));
-        let missing = open(&target, "/winc/no/such/folder", None).unwrap_err();
+        let missing = open(&target, "/winc/no/such/folder", None, None).unwrap_err();
         assert!(missing.contains("/winc/no/such/folder"), "{missing}");
         remote::disconnect(&target);
     }

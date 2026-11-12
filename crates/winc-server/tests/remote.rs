@@ -20,6 +20,12 @@ use std::time::{Duration, Instant};
 use winc_backend::remote::{self, Connection};
 use winc_backend::{Target, fs, virtual_path};
 
+/// 测试中的 `ssh` 不向用户提问。
+const BATCH: remote::Ssh = remote::Ssh {
+    batch: true,
+    keep_alive: false,
+};
+
 /// 启动服务进程并登记为到 `name` 的连接，返回连接目标。
 fn connect(name: &str) -> Target {
     let target = Target::new(name).unwrap();
@@ -216,6 +222,20 @@ fn files_are_created_changed_and_removed_through_a_connection() {
     fs::remove_file(&moved).unwrap();
     assert!(!dir.join("a/c/moved.txt").exists());
     assert!(fs::is_absent(&fs::remove_file(&moved).unwrap_err()));
+
+    // 删除目录连同其中的内容；符号链接只删除链接本身，不进入它指向的目录。
+    std::fs::create_dir_all(dir.join("kept/inner")).unwrap();
+    std::fs::write(dir.join("kept/inner/file"), "x").unwrap();
+    std::fs::create_dir_all(dir.join("gone/deep")).unwrap();
+    std::fs::write(dir.join("gone/deep/file"), "x").unwrap();
+    std::os::unix::fs::symlink(dir.join("kept"), dir.join("gone/link")).unwrap();
+    fs::remove_all(far.join("gone/link")).unwrap();
+    assert!(dir.join("kept/inner/file").is_file() && dir.join("gone/deep").is_dir());
+    fs::remove_all(far.join("gone")).unwrap();
+    assert!(!dir.join("gone").exists() && dir.join("kept/inner/file").is_file());
+    assert!(fs::is_absent(
+        &fs::remove_all(far.join("gone")).unwrap_err()
+    ));
 
     remote::disconnect(&target);
     std::fs::remove_dir_all(&dir).unwrap();
@@ -570,6 +590,33 @@ fn a_connection_that_cannot_start_the_server_reports_why() {
     );
 }
 
+#[test]
+fn a_connection_that_ends_unexpectedly_is_reported_once() {
+    let target = Target::new("ended").unwrap();
+    let server = Command::new(env!("CARGO_BIN_EXE_winc-server"));
+    let connection = Connection::spawn(server).unwrap();
+    let (sender, ended) = std::sync::mpsc::channel();
+    connection.on_close(move || sender.send(()).unwrap());
+    remote::register(target.clone(), connection);
+    assert!(remote::is_connected(&target));
+
+    // 对端被强制结束（命令的父进程就是服务进程）：通知一次，此后该目标不再算已连接，请求立即失败。
+    let killed = run(&virtual_path(&target, b"/"), &sh("kill -9 $PPID")).unwrap_err();
+    assert_eq!(killed.kind(), io::ErrorKind::BrokenPipe);
+    ended.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(!remote::is_connected(&target));
+    let error = fs::metadata(virtual_path(&target, b"/")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+
+    // 本程序主动断开不算意外中断：不通知。丢弃连接时等到读取应答的线程结束。
+    let server = Command::new(env!("CARGO_BIN_EXE_winc-server"));
+    let connection = Connection::spawn(server).unwrap();
+    let (sender, ended) = std::sync::mpsc::channel::<()>();
+    connection.on_close(move || sender.send(()).unwrap());
+    drop(connection);
+    assert!(ended.try_recv().is_err());
+}
+
 /// 经真实的 `ssh` 连接：需要环境变量 `WINC_TEST_SSH_TARGET`（免输入即可登录的主机）和
 /// `WINC_TEST_SSH_SERVER`（该主机上服务进程的路径）。
 #[test]
@@ -578,7 +625,7 @@ fn over_ssh() {
     let host = std::env::var("WINC_TEST_SSH_TARGET").unwrap();
     let server = std::env::var("WINC_TEST_SSH_SERVER").unwrap();
     let target = Target::new(&host).unwrap();
-    let command = remote::ssh_command(&target, &server, true);
+    let command = remote::ssh_command(&target, &server, BATCH);
     remote::register(target.clone(), Connection::spawn(command).unwrap());
 
     let root = virtual_path(&target, b"/");
@@ -616,7 +663,7 @@ fn over_ssh() {
     // 部署：经登录 shell 运行引导命令，上传并启动服务进程；再次连接时直接启动。
     let deploy = deployment("~/.winc-server/it's deployed", "0af3");
     for _ in 0..2 {
-        let command = deploy.ssh_command(&target, true).unwrap();
+        let command = deploy.ssh_command(&target, BATCH).unwrap();
         remote::register(
             target.clone(),
             Connection::deploy(command, &deploy).unwrap(),
@@ -627,7 +674,7 @@ fn over_ssh() {
     }
     // 无法登录的主机：原因是 `ssh` 的错误输出。
     let nowhere = Target::new("winc-no-such-host.invalid").unwrap();
-    let command = deploy.ssh_command(&nowhere, true).unwrap();
+    let command = deploy.ssh_command(&nowhere, BATCH).unwrap();
     let error = Connection::deploy(command, &deploy).unwrap_err();
     assert!(
         matches!(&error, remote::ConnectError::Failed(why) if !why.is_empty()),

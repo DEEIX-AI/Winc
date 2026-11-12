@@ -26,7 +26,7 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
     let command = ssh_command(
         &target,
         "/home/alice/.winc-server/it's here/winc-server",
-        false,
+        Ssh::default(),
     );
     let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
     assert_eq!(command.get_program(), "ssh");
@@ -42,7 +42,11 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
         ]
     );
     // 不向用户提问的选项写在主机之前：主机之后的参数属于远端的命令。
-    let command = ssh_command(&target, "server", true);
+    let options = Ssh {
+        batch: true,
+        keep_alive: true,
+    };
+    let command = ssh_command(&target, "server", options);
     let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
     assert_eq!(
         args,
@@ -52,6 +56,8 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
             "RemoteCommand=none",
             "-o",
             "BatchMode=yes",
+            "-o",
+            "ServerAliveInterval=60",
             "alice@devbox",
             "--",
             "'server'"

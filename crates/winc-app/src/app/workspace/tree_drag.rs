@@ -422,18 +422,33 @@ impl App {
     pub(in crate::app) fn move_entries(&mut self, paths: &[PathBuf], dir: &Path) {
         // 先等待后台保存完成，否则保存会在原位置重新写出文件。
         self.wait_for_saves();
+        let Some(root) = self.editor.root().map(Path::to_path_buf) else {
+            return;
+        };
+        let (paths, into) = (paths.to_vec(), dir.to_path_buf());
+        let relocate = move || {
+            let results: Vec<std::io::Result<PathBuf>> = (paths.iter())
+                .map(|from| winc_editor::move_at(&root, from, &into))
+                .collect();
+            (paths, results)
+        };
+        self.file_work(dir, relocate, |app, (paths, results)| {
+            app.entries_moved(&paths, results);
+        });
+    }
+
+    /// 移动完成：更新文件树和已打开文档的路径，选中移过去的各项；`results` 是 `paths` 中各项
+    /// 的结果。
+    fn entries_moved(&mut self, paths: &[PathBuf], results: Vec<std::io::Result<PathBuf>>) {
         let mut moved = Vec::new();
-        for from in paths {
-            let Some(result) = self
-                .editor
-                .workspace
-                .as_mut()
-                .map(|ws| ws.move_into(from, dir))
-            else {
-                return;
-            };
+        for (from, result) in paths.iter().zip(results) {
             match result {
                 Ok(target) => {
+                    if target != *from
+                        && let Some(ws) = &mut self.editor.workspace
+                    {
+                        ws.relocated(from, &target);
+                    }
                     self.paths_moved(from, &target);
                     // 从别的窗口剪切来的：原窗口打开的文件、文件树也要跟着改。
                     let elsewhere = self

@@ -103,6 +103,55 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert_eq!(row_of(&app, "new.rs"), src + 2);
     assert_eq!(row_of(&app, "main.rs"), src + 1);
 
+    // 文件树中的操作在后台执行，完成后文件树随之更新。新建：
+    let new_input = |dir: &Path, name: &str| crate::app::workspace::tree::NameInput {
+        dir: dir.to_path_buf(),
+        kind: winc_editor::EntryKind::File,
+        index: 0,
+        depth: 0,
+        field: {
+            let mut field = crate::app::TextField::default();
+            field.set_text(name);
+            field
+        },
+        error: None,
+        rename: None,
+        contents: None,
+    };
+    app.name_input = Some(new_input(&root.join("src"), "made.rs"));
+    app.submit_name_input();
+    assert!(dir.join("src/made.rs").is_file());
+    assert!(app.name_input.is_none());
+    let made = row_of(&app, "made.rs");
+    assert_eq!(app.editor.workspace.as_ref().unwrap().selected, Some(made));
+    // 同名的再建一次：原因显示在输入行上。
+    app.name_input = Some(new_input(&root.join("src"), "made.rs"));
+    app.submit_name_input();
+    assert!(
+        app.name_input
+            .as_ref()
+            .is_some_and(|entry| entry.error.is_some())
+    );
+    app.close_name_input();
+
+    // 改名：已打开的文档换成新路径。
+    let mut rename = new_input(&root.join("src"), "renamed.rs");
+    rename.rename = Some((root.join("src/made.rs"), false));
+    app.submit_rename(rename);
+    assert!(dir.join("src/renamed.rs").is_file() && !dir.join("src/made.rs").exists());
+    row_of(&app, "renamed.rs");
+    assert!((app.editor.documents.iter()).any(|d| d.path == Some(root.join("src/renamed.rs"))));
+
+    // 移动到根目录，再删除：远端没有废纸篓，直接删除。
+    app.move_entries(&[root.join("src/renamed.rs")], &root);
+    assert!(dir.join("renamed.rs").is_file() && !dir.join("src/renamed.rs").exists());
+    row_of(&app, "renamed.rs");
+    std::fs::create_dir_all(dir.join("old/deep")).unwrap();
+    std::fs::write(dir.join("old/deep/x"), "").unwrap();
+    app.delete_entries(&[root.join("renamed.rs"), root.join("old")]);
+    assert!(!dir.join("renamed.rs").exists() && !dir.join("old").exists());
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+
     // 目录不存在：说明原因，已打开的目录不变。
     app.remote_connect("app-remote-open:/winc/no/such/folder");
     let notice = app.notice.text.take().unwrap();
@@ -115,6 +164,28 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
     assert_eq!(app.editor.root(), Some(root.as_path()));
     assert!(!app.reopen_remote(&dir));
+
+    // 连接中断（这里由本程序断开来模拟）：窗口重新获得焦点时提示一次，按钮重新连接。
+    remote::disconnect(&target);
+    app.check_disk();
+    let notice = app.notice.text.clone().unwrap();
+    assert!(notice.contains("连接已断开"), "{notice}");
+    assert_eq!(
+        app.notice.action,
+        Some(crate::app::NoticeAction::Reconnect(root.clone()))
+    );
+    // 目录仍然打开，文件树保持原样。
+    assert_eq!(app.editor.root(), Some(root.as_path()));
+    row_of(&app, "src");
+    app.notice.text = None;
+    app.check_disk();
+    assert!(app.notice.text.is_none());
+    let target = loopback("app-remote-open");
+    app.run_notice_action();
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+    std::fs::write(dir.join("after.txt"), "").unwrap();
+    app.check_disk();
+    row_of(&app, "after.txt");
 
     // 关闭模块：连接断开。此后最近列表中的该目录不会被当作已删除的目录移除，而是提示原因。
     app.config.remote_enabled = Some(false);

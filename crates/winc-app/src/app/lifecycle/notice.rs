@@ -17,6 +17,8 @@ pub enum NoticeAction {
     FormatSettings,
     /// 「查看输出」：在只读标签中打开 Git 操作的输出。
     GitOutput,
+    /// 「重新连接」：重新连接远端主机并回到其上的目录。
+    Reconnect(PathBuf),
 }
 
 /// 到期后正在淡出的提示条。
@@ -38,6 +40,7 @@ impl NoticeAction {
             }
             NoticeAction::Install { .. } => t!("workspace-notice-install"),
             NoticeAction::FormatSettings => t!("workspace-notice-open-settings"),
+            NoticeAction::Reconnect(_) => t!("workspace-notice-reconnect"),
         }
     }
 }
@@ -141,6 +144,9 @@ impl App {
                 self.settings_show_page(SettingsPage::Format);
             }
             NoticeAction::GitOutput => self.show_git_output(),
+            NoticeAction::Reconnect(folder) => {
+                self.reopen_remote(&folder);
+            }
         }
         self.request_redraw();
     }

@@ -146,6 +146,8 @@ struct Missing {
     requested: HashSet<PathBuf>,
     /// 展开时未能读取的目录：读好后继续展开它下面连续的单子目录（见 `expand_chain`）。
     chains: HashSet<PathBuf>,
+    /// 要选中、但所在目录尚未读好的路径（见 [`Workspace::reveal`]）。
+    reveal: Option<PathBuf>,
 }
 
 impl Missing {
@@ -398,7 +400,13 @@ impl Workspace {
         self.rebuild();
         match self.row_of(path) {
             Some(index) => self.select_segment(index, Some(path)),
-            None => self.select(None),
+            None => {
+                self.select(None);
+                // 它所在的目录还在等待后台读取：读好后再选中。
+                if !self.missing.wanted.is_empty() || !self.missing.requested.is_empty() {
+                    self.missing.reveal = Some(path.to_path_buf());
+                }
+            }
         }
     }
 
@@ -636,41 +644,15 @@ impl Workspace {
         kind: EntryKind,
         contents: &[u8],
     ) -> io::Result<PathBuf> {
-        let name = name.trim().trim_matches('/');
-        let invalid = name.is_empty()
-            || name
-                .split('/')
-                .any(|part| part.is_empty() || part == "." || part == "..");
-
-        if invalid || !dir.starts_with(&self.root) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                t!("workspace-tree-invalid-name"),
-            ));
-        }
-
-        let path = dir.join(name);
-
-        if winc_backend::fs::exists(&path) {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                t!("workspace-tree-name-taken"),
-            ));
-        }
-
-        match kind {
-            EntryKind::Dir => winc_backend::fs::create_dir_all(&path)?,
-            EntryKind::File => {
-                if let Some(parent) = path.parent() {
-                    winc_backend::fs::create_dir_all(parent)?;
-                }
-                winc_backend::fs::create_new(&path, contents)?;
-            }
-        }
-
-        self.refresh();
-        self.reveal(&path);
+        let path = create_at(&self.root, dir, name, kind, contents)?;
+        self.created(&path);
         Ok(path)
+    }
+
+    /// 在磁盘上新建了 `path` 之后更新文件树：重新读取，展开到它所在的位置并选中它。
+    pub fn created(&mut self, path: &Path) {
+        self.refresh();
+        self.reveal(path);
     }
 
     /// 把 `path` 改名为同一目录下的 `name`，返回新路径。
@@ -682,43 +664,10 @@ impl Workspace {
     ///
     /// 名称无效时返回 `InvalidInput`，目标已被其他项占用时返回 `AlreadyExists`。
     pub fn rename(&mut self, path: &Path, name: &str) -> io::Result<PathBuf> {
-        let name = name.trim();
-        let invalid = name.is_empty() || name == "." || name == ".." || name.contains('/');
-
-        if invalid {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                t!("workspace-tree-invalid-name"),
-            ));
+        let target = rename_at(&self.root, path, name)?;
+        if target != path {
+            self.relocated(path, &target);
         }
-        if path == self.root || !path.starts_with(&self.root) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                t!("workspace-tree-cannot-rename"),
-            ));
-        }
-
-        let parent = path.parent().unwrap_or(&self.root);
-        let target = parent.join(name);
-
-        if target == path {
-            return Ok(target);
-        }
-
-        let case_only = occupied(&target) && same_entry(path, &target);
-        if occupied(&target) && !case_only {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                t!("workspace-tree-name-taken"),
-            ));
-        }
-
-        if case_only {
-            rename_case(path, &target)?;
-        } else {
-            winc_backend::fs::rename(path, &target)?;
-        }
-        self.relocated(path, &target);
         Ok(target)
     }
 
@@ -731,29 +680,10 @@ impl Workspace {
     /// 移动工作区根目录、`dir` 不在工作区内、移入自身内部时返回 `InvalidInput`，目标已存在时返回
     /// `AlreadyExists`。
     pub fn move_into(&mut self, path: &Path, dir: &Path) -> io::Result<PathBuf> {
-        let invalid = |reason| Err(io::Error::new(io::ErrorKind::InvalidInput, reason));
-        if path == self.root || !dir.starts_with(&self.root) {
-            return invalid(t!("workspace-tree-cannot-move"));
+        let target = move_at(&self.root, path, dir)?;
+        if target != path {
+            self.relocated(path, &target);
         }
-        if dir.starts_with(path) {
-            return invalid(t!("workspace-tree-move-into-itself"));
-        }
-        let Some(name) = path.file_name() else {
-            return invalid(t!("workspace-tree-cannot-move"));
-        };
-
-        let target = dir.join(name);
-        if target == path {
-            return Ok(target);
-        }
-        if occupied(&target) {
-            let dir_name = dir.file_name().unwrap_or(dir.as_os_str()).to_string_lossy();
-            let message = t!("workspace-tree-name-taken-in", folder = dir_name);
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, message));
-        }
-
-        winc_backend::fs::rename(path, &target)?;
-        self.relocated(path, &target);
         Ok(target)
     }
 
@@ -765,14 +695,13 @@ impl Workspace {
     /// 同 [`copy_entry`]。
     pub fn copy_into(&mut self, source: &Path, dir: &Path) -> io::Result<PathBuf> {
         let target = copy_entry(&self.root, source, dir)?;
-        self.refresh();
-        self.reveal(&target);
+        self.created(&target);
         Ok(target)
     }
 
     /// 在 `from` 已于磁盘上移动到 `to` 之后更新文件树：展开状态随之迁移，重新读取树，
     /// 展开到新位置并选中它。
-    fn relocated(&mut self, from: &Path, to: &Path) {
+    pub fn relocated(&mut self, from: &Path, to: &Path) {
         let moved: Vec<PathBuf> = self
             .expanded
             .iter()
@@ -912,6 +841,137 @@ fn flatten(
             rows[row].end = rows.len();
         }
     }
+}
+
+/// 在工作区 `root` 里的目录 `dir` 中新建文件（内容为 `contents`）或目录 `name`，返回其路径；规则见
+/// [`Workspace::create`]。
+///
+/// 只访问磁盘、不改文件树，可以在后台线程上调用；完成后把路径交给 [`Workspace::created`]。
+///
+/// # Errors
+///
+/// 同 [`Workspace::create`]。
+pub fn create_at(
+    root: &Path,
+    dir: &Path,
+    name: &str,
+    kind: EntryKind,
+    contents: &[u8],
+) -> io::Result<PathBuf> {
+    let name = name.trim().trim_matches('/');
+    let invalid = name.is_empty()
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..");
+
+    if invalid || !dir.starts_with(root) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            t!("workspace-tree-invalid-name"),
+        ));
+    }
+
+    let path = dir.join(name);
+
+    if winc_backend::fs::exists(&path) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            t!("workspace-tree-name-taken"),
+        ));
+    }
+
+    match kind {
+        EntryKind::Dir => winc_backend::fs::create_dir_all(&path)?,
+        EntryKind::File => {
+            if let Some(parent) = path.parent() {
+                winc_backend::fs::create_dir_all(parent)?;
+            }
+            winc_backend::fs::create_new(&path, contents)?;
+        }
+    }
+    Ok(path)
+}
+
+/// 把工作区 `root` 中的 `path` 改名为同一目录下的 `name`，返回新路径；规则见
+/// [`Workspace::rename`]。名字没有变化时不访问磁盘，返回原路径。
+///
+/// 只访问磁盘、不改文件树，可以在后台线程上调用；完成后把两个路径交给
+/// [`Workspace::relocated`]。
+///
+/// # Errors
+///
+/// 同 [`Workspace::rename`]。
+pub fn rename_at(root: &Path, path: &Path, name: &str) -> io::Result<PathBuf> {
+    let name = name.trim();
+    let invalid = name.is_empty() || name == "." || name == ".." || name.contains('/');
+
+    if invalid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            t!("workspace-tree-invalid-name"),
+        ));
+    }
+    if path == root || !path.starts_with(root) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            t!("workspace-tree-cannot-rename"),
+        ));
+    }
+
+    let target = path.parent().unwrap_or(root).join(name);
+    if target == path {
+        return Ok(target);
+    }
+
+    let case_only = occupied(&target) && same_entry(path, &target);
+    if occupied(&target) && !case_only {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            t!("workspace-tree-name-taken"),
+        ));
+    }
+
+    if case_only {
+        rename_case(path, &target)?;
+    } else {
+        winc_backend::fs::rename(path, &target)?;
+    }
+    Ok(target)
+}
+
+/// 把 `path` 移动到工作区 `root` 里的目录 `dir` 中，名字不变，返回新路径；规则见
+/// [`Workspace::move_into`]。已在该目录中时不访问磁盘，返回原路径。
+///
+/// 只访问磁盘、不改文件树，可以在后台线程上调用；完成后把两个路径交给
+/// [`Workspace::relocated`]。
+///
+/// # Errors
+///
+/// 同 [`Workspace::move_into`]。
+pub fn move_at(root: &Path, path: &Path, dir: &Path) -> io::Result<PathBuf> {
+    let invalid = |reason| Err(io::Error::new(io::ErrorKind::InvalidInput, reason));
+    if path == root || !dir.starts_with(root) {
+        return invalid(t!("workspace-tree-cannot-move"));
+    }
+    if dir.starts_with(path) {
+        return invalid(t!("workspace-tree-move-into-itself"));
+    }
+    let Some(name) = path.file_name() else {
+        return invalid(t!("workspace-tree-cannot-move"));
+    };
+
+    let target = dir.join(name);
+    if target == path {
+        return Ok(target);
+    }
+    if occupied(&target) {
+        let dir_name = dir.file_name().unwrap_or(dir.as_os_str()).to_string_lossy();
+        let message = t!("workspace-tree-name-taken-in", folder = dir_name);
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, message));
+    }
+
+    winc_backend::fs::rename(path, &target)?;
+    Ok(target)
 }
 
 /// 只改大小写的改名：先改成同一目录下的临时名字，再改成 `target`。

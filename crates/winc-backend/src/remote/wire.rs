@@ -68,6 +68,8 @@ pub(crate) mod kind {
     /// 结束一次保存：载荷是是否写入（`u8`，为 0 时丢弃已收到的内容）。应答是结果（`u8`，见
     /// [`SAVED`] 等）；为 [`SAVED`] 时其后是写入后的文件信息。
     pub(crate) const SAVE_END: u8 = 18;
+    /// 删除文件，或目录连同其中的全部内容：载荷是路径，应答为空。
+    pub(crate) const REMOVE_ALL: u8 = 19;
     /// [`SAVE_END`] 的结果：已保存。
     pub(crate) const SAVED: u8 = 0;
     /// [`SAVE_END`] 的结果：目标文件只读。
