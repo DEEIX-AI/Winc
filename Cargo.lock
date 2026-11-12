@@ -3195,6 +3195,7 @@ dependencies = [
  "png",
  "regex",
  "ropey",
+ "winc-backend",
  "winc-config",
  "winc-core",
  "winc-i18n",

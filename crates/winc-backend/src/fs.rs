@@ -176,6 +176,11 @@ pub fn is_dir(path: &Path) -> bool {
     metadata(path).is_ok_and(|m| m.is_dir())
 }
 
+/// 是否为符号链接（不跟随链接，指向不存在目标的链接同样为是）；无法确定时为否。
+pub fn is_symlink(path: &Path) -> bool {
+    symlink_metadata(path).is_ok_and(|m| m.is_symlink())
+}
+
 /// 是否存在（跟随符号链接，指向不存在目标的符号链接不算存在）；无法确定时为否。
 pub fn exists(path: &Path) -> bool {
     metadata(path).is_ok()

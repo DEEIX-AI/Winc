@@ -94,7 +94,7 @@ pub fn unique_dir(parent: &Path, branch: &str) -> PathBuf {
     let name = branch.replace('/', "-");
     let mut dir = parent.join(&name);
     let mut n = 2;
-    while dir.symlink_metadata().is_ok() {
+    while winc_backend::fs::symlink_metadata(&dir).is_ok() {
         dir = parent.join(format!("{name}-{n}"));
         n += 1;
     }
@@ -113,7 +113,7 @@ impl Git {
     ///
     /// `git` 运行失败时返回原因。
     pub fn worktrees(&self, root: &Path, cancel: &Cancel) -> Result<Vec<Worktree>, String> {
-        if !git_common_dir(root).is_some_and(|d| d.join("worktrees").is_dir()) {
+        if !git_common_dir(root).is_some_and(|d| winc_backend::fs::is_dir(&d.join("worktrees"))) {
             return Ok(Vec::new());
         }
         let mut command = self.command(root);
@@ -192,7 +192,7 @@ impl Git {
             // 新工作树放在仓库里面（`git.worktreeRoot` 写了相对路径）时，被忽略的那个目录里就有
             // 新工作树自身，复制它会无休止地嵌套下去。
             if !globs.matched(&source, is_dir).is_whitelist()
-                || target.symlink_metadata().is_ok()
+                || winc_backend::fs::symlink_metadata(&target).is_ok()
                 || to.starts_with(&source)
             {
                 continue;

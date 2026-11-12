@@ -4,7 +4,6 @@
 //! 起逐级向上查找 `.editorconfig`，遇到 `root = true` 为止：离文件越近的优先级越高，同一个文件
 //! 内写在后面的小节优先。
 
-use std::fs;
 use std::ops::Range;
 use std::path::{Component, Path};
 
@@ -145,7 +144,7 @@ impl FileConfig {
 pub fn lookup(path: &Path) -> FileConfig {
     let mut files = Vec::new();
     for dir in path.ancestors().skip(1) {
-        let Ok(text) = fs::read_to_string(dir.join(".editorconfig")) else {
+        let Ok(text) = winc_backend::fs::read_to_string(&dir.join(".editorconfig")) else {
             continue;
         };
         let parsed = parse(&text);

@@ -727,7 +727,7 @@ impl Formatter {
         // 仍存在的目录。
         let cwd = dir
             .ancestors()
-            .find(|d| d.is_dir())
+            .find(|d| winc_backend::fs::is_dir(d))
             .unwrap_or(Path::new("/"));
 
         let mut command = match place.zip(crate::wsl::locate_here(cwd)) {

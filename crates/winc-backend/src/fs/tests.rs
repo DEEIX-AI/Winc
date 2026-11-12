@@ -61,10 +61,11 @@ fn symbolic_links_and_unix_attributes_are_reported() {
     // 跟随链接时得到目标的信息，不跟随时得到链接本身。
     assert!(metadata(&link).unwrap().is_file());
     assert!(symlink_metadata(&link).unwrap().is_symlink());
+    assert!(is_symlink(&link) && !is_symlink(&file));
     assert_eq!(read_link(&link).unwrap(), file);
     // 指向不存在目标的链接：本身存在，跟随后不存在。
     std::fs::remove_file(&file).unwrap();
-    assert!(symlink_metadata(&link).is_ok() && !exists(&link));
+    assert!(is_symlink(&link) && !exists(&link));
 
     let readonly = dir.join("readonly");
     std::fs::write(&readonly, "").unwrap();
@@ -111,5 +112,5 @@ fn virtual_paths_are_refused_without_touching_the_local_file_system() {
     refused(read(&file).map(drop));
     refused(read_to_string(&file).map(drop));
     refused(read_link(&file).map(drop));
-    assert!(!exists(&file) && !is_file(&file) && !is_dir(&file));
+    assert!(!exists(&file) && !is_file(&file) && !is_dir(&file) && !is_symlink(&file));
 }

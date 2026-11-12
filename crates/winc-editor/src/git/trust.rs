@@ -112,7 +112,7 @@ pub(super) fn parse_risks(
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();
-            let metadata = std::fs::metadata(&path).ok()?;
+            let metadata = winc_backend::fs::metadata(&path).ok()?;
             (!name.ends_with(".sample") && metadata.is_file() && executable(&metadata))
                 .then_some((name, path))
         })
@@ -121,7 +121,7 @@ pub(super) fn parse_risks(
     for (name, path) in hooks {
         fingerprint.write(name.as_bytes());
         fingerprint.push(0);
-        fingerprint.write(&std::fs::read(&path).unwrap_or_default());
+        fingerprint.write(&winc_backend::fs::read(&path).unwrap_or_default());
         fingerprint.push(0);
         let label = label.as_deref().unwrap_or("hooks");
         risks.items.push(format!("{label}/{name}"));
@@ -169,9 +169,8 @@ fn hooks_dir(
 }
 
 #[cfg(unix)]
-fn executable(metadata: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    metadata.permissions().mode() & 0o111 != 0
+fn executable(metadata: &winc_backend::fs::Metadata) -> bool {
+    metadata.unix.is_some_and(|unix| unix.mode & 0o111 != 0)
 }
 
 /// Windows 上的 `git` 不检查可执行位，钩子目录中的文件都会运行。
@@ -179,7 +178,7 @@ fn executable(metadata: &std::fs::Metadata) -> bool {
 /// WSL 发行版中的仓库由发行版内的 `git` 运行钩子，不可执行的文件不会运行。Windows 无法读取
 /// 这类文件的可执行位，因此同样计入：结果最多多出一次信任确认，不会遗漏实际运行的钩子。
 #[cfg(not(unix))]
-fn executable(_: &std::fs::Metadata) -> bool {
+fn executable(_: &winc_backend::fs::Metadata) -> bool {
     true
 }
 

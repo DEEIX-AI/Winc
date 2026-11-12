@@ -108,7 +108,7 @@ pub fn file_has_conflicts(path: &Path) -> bool {
     let text = match Rope::from_reader(std::io::BufReader::new(&file)) {
         Ok(text) => text,
         Err(_) => {
-            let Ok(bytes) = std::fs::read(path) else {
+            let Ok(bytes) = winc_backend::fs::read(path) else {
                 return false;
             };
             Rope::from_str(&String::from_utf8_lossy(&bytes))

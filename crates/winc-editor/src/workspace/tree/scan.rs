@@ -41,7 +41,11 @@ impl DirScan {
                     (dir, fresh)
                 })
                 .collect(),
-            gone: self.expanded.into_iter().filter(|p| !p.is_dir()).collect(),
+            gone: self
+                .expanded
+                .into_iter()
+                .filter(|p| !winc_backend::fs::is_dir(p))
+                .collect(),
             root: self.root,
         }
     }

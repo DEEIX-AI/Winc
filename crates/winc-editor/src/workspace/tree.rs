@@ -192,8 +192,9 @@ pub(crate) fn walker_with_ignored(dir: &Path) -> WalkBuilder {
 
 /// `dir` 或它的某一级上级目录是否是版本库的根目录。
 fn in_repository(dir: &Path) -> bool {
-    dir.ancestors()
-        .any(|dir| dir.join(".git").exists() || dir.join(".jj").exists())
+    dir.ancestors().any(|dir| {
+        winc_backend::fs::exists(&dir.join(".git")) || winc_backend::fs::exists(&dir.join(".jj"))
+    })
 }
 
 /// 判断类型为 `kind` 的目录项 `path` 是否作为文件收录：普通文件，或指向普通文件的符号链接。
@@ -201,7 +202,7 @@ fn in_repository(dir: &Path) -> bool {
 /// 只有符号链接才多做一次 stat。指向目录的符号链接不收录、不进入，避免链接成环时无限遍历，
 /// 以及同一棵目录被重复收录。
 pub(crate) fn is_listed_file(kind: fs::FileType, path: &Path) -> bool {
-    kind.is_file() || kind.is_symlink() && fs::metadata(path).is_ok_and(|meta| meta.is_file())
+    kind.is_file() || kind.is_symlink() && winc_backend::fs::is_file(path)
 }
 
 impl Workspace {
@@ -624,7 +625,7 @@ impl Workspace {
 
         let path = dir.join(name);
 
-        if path.exists() {
+        if winc_backend::fs::exists(&path) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 t!("workspace-tree-name-taken"),
@@ -819,7 +820,9 @@ fn cached_children(cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>, dir: &Path) -> 
 /// 指向目录的符号链接不合并，避免链接成环时无限展开。
 fn sole_folder(children: &[DirEntry]) -> Option<&DirEntry> {
     match children {
-        [only] if only.kind == EntryKind::Dir && !only.path.is_symlink() => Some(only),
+        [only] if only.kind == EntryKind::Dir && !winc_backend::fs::is_symlink(&only.path) => {
+            Some(only)
+        }
         _ => None,
     }
 }
@@ -900,7 +903,7 @@ fn rename_case(path: &Path, target: &Path) -> io::Result<()> {
 ///
 /// 失效的符号链接也算：`fs::rename` 会覆盖它。
 fn occupied(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
+    winc_backend::fs::symlink_metadata(path).is_ok()
 }
 
 /// 把工作区 `root` 外（或内）的文件或目录 `source` 复制进 `root` 里的目录 `dir`，返回副本的路径。
@@ -979,12 +982,11 @@ fn copy_recursive(from: &Path, to: &Path) -> io::Result<()> {
 /// 区分大小写的文件系统上它们是两个文件，把其中一个改成另一个的名字会覆盖对方。
 #[cfg(unix)]
 fn same_entry(a: &Path, b: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
-        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
-        _ => false,
-    }
+    let identity = |path: &Path| {
+        let unix = winc_backend::fs::symlink_metadata(path).ok()?.unix?;
+        Some((unix.dev, unix.ino))
+    };
+    identity(a).is_some_and(|a| Some(a) == identity(b))
 }
 
 /// 是否两个路径指向同一项：非 Unix 平台（即 Windows）按文件系统不区分大小写处理，
@@ -1015,7 +1017,7 @@ pub fn list_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
             let file_type = entry.file_type().ok()?;
             // 只有符号链接需要再调用一次 `stat`，判断它指向的是否为目录。
             let is_dir = if file_type.is_symlink() {
-                path.is_dir()
+                winc_backend::fs::is_dir(&path)
             } else {
                 file_type.is_dir()
             };
