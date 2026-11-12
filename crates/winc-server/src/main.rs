@@ -9,9 +9,9 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     #[cfg(unix)]
     {
-        let (input, output) = (std::io::stdin().lock(), std::io::stdout().lock());
-        let input = std::io::BufReader::new(input);
-        let output = std::io::BufWriter::new(output);
+        // 输出由多个线程共用，不能持有标准输出的锁；每一帧写完都会刷新。
+        let input = std::io::BufReader::new(std::io::stdin().lock());
+        let output = std::io::BufWriter::new(std::io::stdout());
         match winc_backend::remote::serve(input, output) {
             Ok(()) => ExitCode::SUCCESS,
             // 不合协议的请求或输入输出错误：没有可以应答的对象，直接结束。

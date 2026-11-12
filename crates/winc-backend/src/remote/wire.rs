@@ -1,7 +1,8 @@
 //! 协议的帧和编解码：客户端与服务进程在标准输入输出上交换的字节。
 //!
 //! 一帧是 `[u32 长度][u8 类型][u32 请求号][载荷]`，整数为小端，长度不含自身的 4 个字节。
-//! 应答沿用请求的请求号；类型是 [`kind::OK`] 或 [`kind::ERROR`]。载荷由定长整数和带 `u32` 长度
+//! 应答沿用请求的请求号，以 [`kind::OK`] 或 [`kind::ERROR`] 结束，之前可以有若干
+//! [`kind::CHUNK`]；不同请求的帧可以交错。载荷由定长整数和带 `u32` 长度
 //! 前缀的字节串顺序排列而成，没有自描述的结构，双方按类型约定的顺序读写。
 
 #[cfg(test)]
@@ -37,8 +38,20 @@ pub(crate) mod kind {
     pub(crate) const READ_DIR: u8 = 4;
     /// 读取文件的一段：载荷是路径、`u64` 偏移和 `u32` 字节数，应答是数据和是否已到末尾（`u8`）。
     pub(crate) const READ: u8 = 5;
+    /// 运行命令：载荷是程序、工作目录（空表示不指定）、`u32` 参数个数和各参数、`u32` 环境变量
+    /// 个数和各变量的名字与值、标准输入的内容。运行期间以若干 [`CHUNK`] 送回输出，结束时应答
+    /// 是否有退出码（`u8`）和退出码（`u32`，被信号结束时没有）。
+    pub(crate) const EXEC: u8 = 6;
+    /// 取消请求号相同的 [`EXEC`]：没有载荷，没有应答；被取消的命令以错误结束。
+    pub(crate) const CANCEL: u8 = 7;
     /// 请求成功，载荷是结果。
     pub(crate) const OK: u8 = 0x80;
+    /// 请求尚未结束，载荷是命令输出的一段：来源（`u8`，见 [`STDOUT`]、[`STDERR`]）和数据。
+    pub(crate) const CHUNK: u8 = 0x81;
+    /// [`CHUNK`] 的来源：标准输出。
+    pub(crate) const STDOUT: u8 = 1;
+    /// [`CHUNK`] 的来源：标准错误。
+    pub(crate) const STDERR: u8 = 2;
     /// 请求失败，载荷是错误的种类（`u8`）和说明。
     pub(crate) const ERROR: u8 = 0xFF;
 }
@@ -273,7 +286,7 @@ pub(crate) fn read_kind(byte: u8) -> io::Result<Kind> {
 }
 
 /// 在协议中传递的错误种类，下标即编码；不在表中的种类按第 0 项传递。
-const ERROR_KINDS: [io::ErrorKind; 12] = [
+const ERROR_KINDS: [io::ErrorKind; 13] = [
     io::ErrorKind::Other,
     io::ErrorKind::NotFound,
     io::ErrorKind::PermissionDenied,
@@ -286,6 +299,7 @@ const ERROR_KINDS: [io::ErrorKind; 12] = [
     io::ErrorKind::DirectoryNotEmpty,
     io::ErrorKind::ReadOnlyFilesystem,
     io::ErrorKind::StorageFull,
+    io::ErrorKind::Interrupted,
 ];
 
 /// 把错误编码为 [`kind::ERROR`] 的载荷：种类和说明。

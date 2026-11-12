@@ -3,8 +3,9 @@
 //! 每个连接目标至多一个连接，登记在进程级的表中，[`fs`](crate::fs) 中的函数遇到虚拟路径时按
 //! 目标取用。连接是一个子进程（通常是 `ssh`）的标准输入输出，对端是服务进程（Unix 上的 `serve`）。
 //!
-//! 请求是同步的：发出后等待应答，同一连接上的请求逐个进行。会等待网络的调用不能发生在界面
-//! 线程上，见 [`forbid_blocking`]。
+//! 请求是同步的：发出后等待应答。同一连接上可以同时有多个请求，各自等待自己的应答。会等待
+//! 网络的调用不能发生在界面线程上，见 [`forbid_blocking`]。除文件操作外，还可以在远端运行
+//! 命令，见 [`exec`]。
 
 #[cfg(unix)]
 mod server;
@@ -16,27 +17,122 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, BufReader, BufWriter, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::path::Path;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 pub use server::serve;
-use wire::{Reader, Writer, kind};
+use wire::{Frame, Reader, Writer, kind};
 
 use crate::Target;
 use crate::fs::{Kind, Metadata};
 
 /// 到服务进程的一个连接。
 ///
-/// 丢弃时关闭子进程的标准输入并结束子进程；服务进程在输入结束时自行退出。
-pub struct Connection(Mutex<Link>);
+/// 多个线程可以同时发出请求，各自等待自己的应答：一个运行很久的命令不妨碍其他线程读取文件。
+/// 丢弃时关闭子进程的标准输入并结束子进程；服务进程在输入结束时结束它启动的命令并退出。
+pub struct Connection {
+    link: Arc<Link>,
+    child: Mutex<Child>,
+    reader: Option<thread::JoinHandle<()>>,
+}
 
-/// 连接的两个方向和请求号的计数。
+/// 连接中由发出请求的线程和读取应答的线程共用的部分。
 struct Link {
-    child: Child,
-    input: BufReader<ChildStdout>,
-    output: Option<BufWriter<ChildStdin>>,
+    /// 写请求的一端；连接中断后为 `None`。
+    output: Mutex<Option<BufWriter<ChildStdin>>>,
+    waiting: Mutex<Waiting>,
+}
+
+/// 等待应答的请求。
+#[derive(Default)]
+struct Waiting {
+    /// 下一个请求号。
     next: u32,
+    /// 请求号对应的接收端：应答的各帧按到达的顺序送入。
+    replies: HashMap<u32, mpsc::Sender<Frame>>,
+    /// 连接是否已中断：此后的请求立即失败。
+    closed: bool,
+}
+
+impl Link {
+    /// 登记一个新请求并写出，返回请求号和接收其应答的一端。
+    fn send(&self, kind: u8, payload: &[u8]) -> io::Result<(u32, mpsc::Receiver<Frame>)> {
+        let (sender, receiver) = mpsc::channel();
+        let id = {
+            let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+            if waiting.closed {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            let id = waiting.next;
+            waiting.next = waiting.next.wrapping_add(1);
+            waiting.replies.insert(id, sender);
+            id
+        };
+        if let Err(error) = self.write(kind, id, payload) {
+            self.forget(id);
+            return Err(error);
+        }
+        Ok((id, receiver))
+    }
+
+    /// 写出一帧；连接已中断时返回 [`io::ErrorKind::BrokenPipe`]。
+    fn write(&self, kind: u8, id: u32, payload: &[u8]) -> io::Result<()> {
+        let mut output = self.output.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(output) = output.as_mut() else {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        wire::write_frame(output, kind, id, payload)?;
+        output.flush()
+    }
+
+    /// 不再等待请求 `id` 的应答。
+    fn forget(&self, id: u32) {
+        let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        waiting.replies.remove(&id);
+    }
+
+    /// 读取应答并分发给各请求，直到连接中断；此时所有等待中的请求都以连接中断结束。
+    fn receive(&self, mut input: impl io::Read) {
+        // 读到不合协议的帧、输入结束、读取出错：都无法继续使用该连接。
+        while let Ok(Some(frame)) = wire::read_frame(&mut input) {
+            let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+            // 输出的一段之后还有后续的帧，保留接收端；其余类型是最后一帧。
+            let sender = if frame.kind == kind::CHUNK {
+                waiting.replies.get(&frame.id).cloned()
+            } else {
+                waiting.replies.remove(&frame.id)
+            };
+            drop(waiting);
+            // 没有对应的请求：该请求已被放弃，丢弃其应答。
+            if let Some(sender) = sender {
+                let _ = sender.send(frame);
+            }
+        }
+        self.close();
+    }
+
+    /// 关闭写请求的一端，并让所有等待中的请求立即以连接中断结束；此后的请求立即失败。
+    fn close(&self) {
+        *self.output.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        waiting.closed = true;
+        // 丢弃发送端，等待中的线程从接收端得到「已断开」。
+        waiting.replies.clear();
+    }
+}
+
+/// 把最后一帧换成结果：成功时是载荷，失败时是对端报告的错误。
+fn finish(frame: Frame) -> io::Result<Vec<u8>> {
+    match frame.kind {
+        kind::OK => Ok(frame.payload),
+        kind::ERROR => Err(wire::decode_error(&frame.payload)),
+        _ => Err(wire::invalid("unknown reply")),
+    }
 }
 
 impl Connection {
@@ -57,12 +153,19 @@ impl Connection {
         let (Some(input), Some(output)) = (input, output) else {
             return Err(io::Error::other("connection has no standard streams"));
         };
-        let connection = Self(Mutex::new(Link {
-            child,
-            input: BufReader::new(input),
-            output: Some(BufWriter::new(output)),
-            next: 0,
-        }));
+        let link = Arc::new(Link {
+            output: Mutex::new(Some(BufWriter::new(output))),
+            waiting: Mutex::default(),
+        });
+        let reader = {
+            let link = Arc::clone(&link);
+            thread::spawn(move || link.receive(BufReader::new(input)))
+        };
+        let connection = Self {
+            link,
+            child: Mutex::new(child),
+            reader: Some(reader),
+        };
         let hello = Writer::default().u32(wire::VERSION).finish();
         let reply = connection.request(kind::HELLO, &hello)?;
         let mut reply = Reader::new(&reply);
@@ -80,39 +183,13 @@ impl Connection {
     ///
     /// # Errors
     ///
-    /// 对端应答的错误原样返回；连接中断、应答不合协议时返回对应的 `io::Error`，此后该连接上的
+    /// 对端应答的错误原样返回；连接中断时返回 [`io::ErrorKind::BrokenPipe`]，此后该连接上的
     /// 请求都会失败。
     fn request(&self, kind: u8, payload: &[u8]) -> io::Result<Vec<u8>> {
-        let mut link = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let id = link.next;
-        link.next = link.next.wrapping_add(1);
-        let Some(output) = link.output.as_mut() else {
-            return Err(io::ErrorKind::BrokenPipe.into());
-        };
-        let sent = wire::write_frame(output, kind, id, payload).and_then(|()| output.flush());
-        let frame = match sent.and_then(|()| wire::read_frame(&mut link.input)) {
-            Ok(Some(frame)) if frame.id == id => frame,
-            Ok(Some(_)) => {
-                // 请求号不符说明双方已不同步，无法继续使用该连接。
-                link.output = None;
-                return Err(wire::invalid("reply does not match the request"));
-            }
-            Ok(None) => {
-                link.output = None;
-                return Err(io::ErrorKind::BrokenPipe.into());
-            }
-            Err(error) => {
-                link.output = None;
-                return Err(error);
-            }
-        };
-        match frame.kind {
-            kind::OK => Ok(frame.payload),
-            kind::ERROR => Err(wire::decode_error(&frame.payload)),
-            _ => {
-                link.output = None;
-                Err(wire::invalid("unknown reply"))
-            }
+        let (_, replies) = self.link.send(kind, payload)?;
+        match replies.recv() {
+            Ok(frame) => finish(frame),
+            Err(_) => Err(io::ErrorKind::BrokenPipe.into()),
         }
     }
 
@@ -173,38 +250,214 @@ impl Connection {
             }
         }
     }
+
+    /// 在远端运行 `exec` 描述的命令并等待它结束，返回退出码和全部输出。
+    ///
+    /// 等待期间每隔 [`CANCEL_POLL`] 检查 `cancel`：被设置时通知对端强制结束命令（连同它启动的
+    /// 子进程），命令结束后返回 [`io::ErrorKind::Interrupted`]。
+    fn exec(&self, exec: &Exec, cancel: &AtomicBool) -> io::Result<Output> {
+        let (id, replies) = self.link.send(kind::EXEC, &exec.encode())?;
+        let mut output = Output::default();
+        let mut asked = false;
+        loop {
+            let frame = match replies.recv_timeout(CANCEL_POLL) {
+                Ok(frame) => frame,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(io::ErrorKind::BrokenPipe.into());
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if !asked && cancel.load(Ordering::Relaxed) {
+                        asked = true;
+                        self.link.write(kind::CANCEL, id, &[])?;
+                    }
+                    continue;
+                }
+            };
+            if frame.kind != kind::CHUNK {
+                let reply = finish(frame)?;
+                let mut reply = Reader::new(&reply);
+                let has_code = reply.u8()? != 0;
+                let code = reply.u32()?.cast_signed();
+                reply.finish()?;
+                output.code = has_code.then_some(code);
+                return Ok(output);
+            }
+            let mut chunk = Reader::new(&frame.payload);
+            let stream = chunk.u8()?;
+            let data = chunk.bytes()?;
+            chunk.finish()?;
+            match stream {
+                kind::STDOUT => output.stdout.extend_from_slice(data),
+                kind::STDERR => output.stderr.extend_from_slice(data),
+                _ => return Err(wire::invalid("unknown output stream")),
+            }
+        }
+    }
+}
+
+/// 关闭输入之后等待对端自行退出的最长时间（秒），超过后强制结束子进程。
+///
+/// 对端在输入结束时先结束它启动的命令再退出，自身最多等待 2 秒；这里多留 1 秒，正常情况下
+/// 不会抢在它之前结束子进程，否则远端的命令无人结束。
+const SHUTDOWN: Duration = Duration::from_secs(3);
+
+impl Connection {
+    /// 断开：关闭输入，等待对端结束它启动的命令并退出，最长 [`SHUTDOWN`]，之后强制结束子进程。
+    ///
+    /// 仍在等待应答的请求立即以 [`io::ErrorKind::BrokenPipe`] 结束，不等对端退出。
+    fn shutdown(&self) {
+        self.link.close();
+        let mut child = self.child.lock().unwrap_or_else(PoisonError::into_inner);
+        let deadline = Instant::now() + SHUTDOWN;
+        while Instant::now() < deadline {
+            // 已退出，或无法查询：不再等待。
+            if !matches!(child.try_wait(), Ok(None)) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        let _ = child.kill();
+    }
+
+    /// 在后台线程上断开，调用方不等待。
+    fn shutdown_in_background(self: Arc<Self>) {
+        thread::spawn(move || self.shutdown());
+    }
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        let link = self.0.get_mut().unwrap_or_else(PoisonError::into_inner);
-        // 先关闭输入，对端据此退出；再结束并回收子进程，不留下僵尸进程。
-        link.output = None;
-        let _ = link.child.kill();
-        let _ = link.child.wait();
+        self.shutdown();
+        // 回收子进程，不留下僵尸进程。
+        let child = self.child.get_mut().unwrap_or_else(PoisonError::into_inner);
+        let _ = child.wait();
+        // 子进程结束后其输出关闭，读取应答的线程随之退出。
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
+}
+
+/// 等待命令结束时检查是否被取消的间隔（毫秒）。取消由用户的操作或超时触发，50 ms 以内的
+/// 延迟不可察觉；间隔内没有新的输出时线程才被唤醒一次。
+const CANCEL_POLL: Duration = Duration::from_millis(50);
+
+/// 要在远端运行的命令。
+///
+/// 各部分是远端主机上的原始字节。命令继承服务进程的环境变量，[`Exec::env`] 设置的在其上覆盖。
+#[derive(Debug, Clone, Default)]
+pub struct Exec {
+    program: Vec<u8>,
+    cwd: Vec<u8>,
+    args: Vec<Vec<u8>>,
+    envs: Vec<(Vec<u8>, Vec<u8>)>,
+    stdin: Vec<u8>,
+}
+
+impl Exec {
+    /// 创建运行程序 `program` 的命令；`program` 不含 `/` 时在远端的 `PATH` 中查找。
+    pub fn new(program: impl AsRef<[u8]>) -> Self {
+        Self {
+            program: program.as_ref().to_vec(),
+            ..Self::default()
+        }
+    }
+
+    /// 追加一个参数。
+    #[must_use]
+    pub fn arg(mut self, arg: impl AsRef<[u8]>) -> Self {
+        self.args.push(arg.as_ref().to_vec());
+        self
+    }
+
+    /// 设置一个环境变量。
+    #[must_use]
+    pub fn env(mut self, name: impl AsRef<[u8]>, value: impl AsRef<[u8]>) -> Self {
+        self.envs
+            .push((name.as_ref().to_vec(), value.as_ref().to_vec()));
+        self
+    }
+
+    /// 设置写入命令标准输入的内容；命令、参数和输入合计不能超过一帧（约 1 MiB）。
+    #[must_use]
+    pub fn stdin(mut self, stdin: impl Into<Vec<u8>>) -> Self {
+        self.stdin = stdin.into();
+        self
+    }
+
+    /// 编码为 [`kind::EXEC`] 的载荷。
+    fn encode(&self) -> Vec<u8> {
+        let mut out = Writer::default()
+            .bytes(&self.program)
+            .bytes(&self.cwd)
+            .u32(self.args.len() as u32);
+        for arg in &self.args {
+            out = out.bytes(arg);
+        }
+        out = out.u32(self.envs.len() as u32);
+        for (name, value) in &self.envs {
+            out = out.bytes(name).bytes(value);
+        }
+        out.bytes(&self.stdin).finish()
+    }
+}
+
+/// 命令运行的结果。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Output {
+    /// 退出码；命令被信号结束时为 `None`。
+    pub code: Option<i32>,
+    /// 标准输出的全部内容。
+    pub stdout: Vec<u8>,
+    /// 标准错误的全部内容。
+    pub stderr: Vec<u8>,
+}
+
+/// 在目录 `dir` 所在的主机上以 `dir` 为工作目录运行 `exec`，等待它结束。
+///
+/// `cancel` 被设置时强制结束命令。调用方用它实现取消和超时。
+///
+/// # Errors
+///
+/// `dir` 不是虚拟路径时返回 [`io::ErrorKind::InvalidInput`]：本机的命令由调用方直接启动。
+/// 没有连接、当前线程不允许等待、连接中断时返回连接的错误（见 [`fs`](crate::fs) 的说明）；
+/// 远端无法启动命令时返回对端报告的错误；被取消时返回 [`io::ErrorKind::Interrupted`]。
+/// 命令以非零的退出码结束不是错误，见 [`Output::code`]。
+pub fn exec(dir: &Path, exec: &Exec, cancel: &AtomicBool) -> io::Result<Output> {
+    let Some(at) = crate::locate(dir) else {
+        return Err(io::ErrorKind::InvalidInput.into());
+    };
+    let mut exec = exec.clone();
+    exec.cwd = at.path;
+    connection(&at.target)?.exec(&exec, cancel)
 }
 
 /// 进程中已建立的连接，按连接目标登记。
 static CONNECTIONS: Mutex<Option<HashMap<Target, Arc<Connection>>>> = Mutex::new(None);
 
-/// 登记到 `target` 的连接，此后该目标的虚拟路径经它访问；已有的连接被替换并关闭。
+/// 登记到 `target` 的连接，此后该目标的虚拟路径经它访问；已有的连接被替换并断开。
 pub fn register(target: Target, connection: Connection) {
     let mut connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
     let replaced = connections
         .get_or_insert_with(HashMap::new)
         .insert(target, Arc::new(connection));
     drop(connections);
-    // 关闭连接要等待子进程结束，不在持有表的锁时进行。
-    drop(replaced);
+    if let Some(replaced) = replaced {
+        replaced.shutdown_in_background();
+    }
 }
 
-/// 断开到 `target` 的连接；没有连接时没有效果。正在进行的请求完成后连接才关闭。
+/// 断开到 `target` 的连接；没有连接时没有效果。
+///
+/// 不等待断开完成。正在进行的请求随后以 [`io::ErrorKind::BrokenPipe`] 结束，远端仍在运行的
+/// 命令被强制结束。
 pub fn disconnect(target: &Target) {
     let mut connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
     let removed = connections.as_mut().and_then(|all| all.remove(target));
     drop(connections);
-    drop(removed);
+    if let Some(removed) = removed {
+        removed.shutdown_in_background();
+    }
 }
 
 /// 返回到 `target` 的连接。

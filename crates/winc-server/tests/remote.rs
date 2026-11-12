@@ -13,6 +13,9 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use winc_backend::remote::{self, Connection};
 use winc_backend::{Target, fs, virtual_path};
@@ -176,6 +179,149 @@ fn connections_are_per_target_and_refuse_threads_that_must_not_wait() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 在 `dir` 所在的主机上运行命令，不取消。
+fn run(dir: &Path, exec: &remote::Exec) -> io::Result<remote::Output> {
+    remote::exec(dir, exec, &AtomicBool::new(false))
+}
+
+fn sh(script: &str) -> remote::Exec {
+    remote::Exec::new("sh").arg("-c").arg(script)
+}
+
+#[test]
+fn commands_run_on_the_remote_host_and_report_their_output() {
+    let target = connect("exec");
+    let dir = scratch("exec");
+    let far = through(&target, &dir);
+
+    // 两路输出各自收集，退出码原样返回；非零的退出码不是错误。
+    let output = run(&far, &sh("printf out; printf err >&2; exit 3")).unwrap();
+    assert_eq!(
+        (output.code, output.stdout, output.stderr),
+        (Some(3), b"out".to_vec(), b"err".to_vec())
+    );
+    // 工作目录、环境变量和标准输入。
+    let output = run(&far, &remote::Exec::new("pwd")).unwrap();
+    assert_eq!(output.stdout, [dir.as_os_str().as_bytes(), b"\n"].concat());
+    let exec = sh("printf '%s|' \"$WINC_TEST_VALUE\"; cat")
+        .env("WINC_TEST_VALUE", "值 with spaces")
+        .stdin("from stdin");
+    let output = run(&far, &exec).unwrap();
+    assert_eq!(output.stdout, "值 with spaces|from stdin".as_bytes());
+    // 参数原样传递，不经过 shell 解释。
+    let exec = remote::Exec::new("printf").arg("%s").arg("$HOME; `id` *");
+    assert_eq!(run(&far, &exec).unwrap().stdout, b"$HOME; `id` *");
+    // 超过一帧的输出分段取回：3 MB，内容逐行不同。
+    let output = run(&far, &sh("seq 1 400000")).unwrap();
+    assert_eq!(output.code, Some(0));
+    assert!(output.stdout.len() > 2_500_000);
+    assert!(output.stdout.starts_with(b"1\n2\n") && output.stdout.ends_with(b"\n400000\n"));
+    // 被信号结束的命令没有退出码。
+    assert_eq!(run(&far, &sh("kill -9 $$")).unwrap().code, None);
+
+    // 无法启动：对端报告的错误种类原样返回；工作目录不存在同理。
+    let error = run(&far, &remote::Exec::new("winc-no-such-program")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert!(run(&far.join("missing"), &remote::Exec::new("pwd")).is_err());
+    // 本机路径不经过这里。
+    let error = run(&dir, &remote::Exec::new("pwd")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+
+    remote::disconnect(&target);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_running_command_can_be_cancelled_and_does_not_block_other_requests() {
+    let target = connect("cancel");
+    let dir = scratch("cancel");
+    std::fs::write(dir.join("file"), "x").unwrap();
+    let far = through(&target, &dir);
+
+    // 命令还启动了一个后台的子进程：取消时两者一起结束，否则子进程占着输出，等待不会结束。
+    let cancel = Arc::new(AtomicBool::new(false));
+    let started = Instant::now();
+    let running = {
+        let (far, cancel) = (far.clone(), Arc::clone(&cancel));
+        std::thread::spawn(move || remote::exec(&far, &sh("sleep 30 & sleep 30"), &cancel))
+    };
+    // 命令运行期间，同一连接上的文件操作照常应答。
+    std::thread::sleep(Duration::from_millis(100));
+    let asked = Instant::now();
+    assert_eq!(fs::read(far.join("file")).unwrap(), b"x");
+    assert!(asked.elapsed() < Duration::from_secs(2));
+
+    cancel.store(true, Ordering::Relaxed);
+    let error = running.join().unwrap().unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // 取消之后连接仍然可用。
+    assert_eq!(run(&far, &sh("printf ok")).unwrap().stdout, b"ok");
+
+    // 连接断开时，等待中的命令以连接中断结束，远端的命令不会留下。时长取一个不会与其他
+    // 进程相同的值，用来在进程表中辨认。
+    let waiting = {
+        let far = far.clone();
+        std::thread::spawn(move || run(&far, &sh("sleep 30471")))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let left = || {
+        let found = Command::new("pgrep").args(["-f", "sleep 30471"]).output();
+        found.is_ok_and(|output| output.status.success())
+    };
+    let listed = left();
+    remote::disconnect(&target);
+    let error = waiting.join().unwrap().unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    // 没有 `pgrep` 的系统上无法查看进程表，只检查上面的结果。
+    if listed {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while left() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!left(), "连接断开后远端的命令仍在运行");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 远端仓库的状态：`git` 在远端运行，输出传回本机。本机没有安装 `git` 时跳过。
+#[test]
+fn git_runs_in_a_remote_repository() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+    let target = connect("git");
+    let dir = scratch("git");
+    let far = through(&target, &dir);
+    let git = |args: &[&str]| {
+        let mut exec = remote::Exec::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null");
+        for arg in args {
+            exec = exec.arg(arg);
+        }
+        run(&far, &exec).unwrap()
+    };
+    assert_eq!(git(&["init", "-q", "-b", "main"]).code, Some(0));
+    std::fs::write(dir.join("new file.txt"), "x").unwrap();
+    let status = git(&["status", "--porcelain=v1", "-z", "--branch"]);
+    assert_eq!(
+        status.code,
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert_eq!(
+        status.stdout,
+        b"## No commits yet on main\0?? new file.txt\0"
+    );
+    // 仓库的标记经文件操作同样可见。
+    assert!(fs::is_dir(far.join(".git")));
+
+    remote::disconnect(&target);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 经真实的 `ssh` 连接：需要环境变量 `WINC_TEST_SSH_TARGET`（免输入即可登录的主机）和
 /// `WINC_TEST_SSH_SERVER`（该主机上服务进程的路径）。
 #[test]
@@ -199,5 +345,11 @@ fn over_ssh() {
     assert!(passwd.contains("root:"), "{passwd}");
     let absent = fs::metadata(root.join("no/such/file")).unwrap_err();
     assert!(fs::is_absent(&absent));
+    // 命令在远端运行：工作目录是远端的路径。
+    let output = run(&root.join("etc"), &sh("pwd; printf done >&2")).unwrap();
+    assert_eq!(
+        (output.code, output.stdout, output.stderr),
+        (Some(0), b"/etc\n".to_vec(), b"done".to_vec())
+    );
     remote::disconnect(&target);
 }
