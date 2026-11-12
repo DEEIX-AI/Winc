@@ -371,6 +371,20 @@ impl App {
         if let Err(e) = result {
             eprintln!("winc: 无法记下最近打开的目录：{e}");
         }
+        self.sync_system_recents();
+    }
+
+    /// 把最近打开的目录交给系统：macOS 的最近文档列表（程序坞菜单）、Windows 的任务栏跳转
+    /// 列表。没有状态文件（测试、测量）时不做任何事，其他平台没有对应的入口。
+    pub(in crate::app) fn sync_system_recents(&self) {
+        #[cfg(target_os = "macos")]
+        if self.state_path.is_some() {
+            crate::macos::sync_recent_documents(&self.state.recent);
+        }
+        #[cfg(windows)]
+        if let Some(path) = &self.state_path {
+            crate::windows::sync_jump_list(&self.state.recent, path);
+        }
     }
 
     /// 新建窗口（`⇧⌘N`）；带 `folder` 时在新窗口中打开它（已经开在某个窗口里就切到该窗口）。
