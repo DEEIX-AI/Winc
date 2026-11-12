@@ -434,6 +434,17 @@ impl Ruler {
     }
 }
 
+/// 横坐标 `x` 是否位于 `controls` 中某个控件所在的列：控件的横向范围向两侧各扩 `gap`。
+///
+/// 顶栏空白处的双击只在控件所在的列之外切换窗口的最大化。控件正上方、正下方以及相邻控件之间的
+/// 空白紧邻控件，落在这些位置的连续点击多为偏离控件的点击，不应改变窗口状态。
+#[cfg(any(not(target_os = "macos"), test))]
+pub fn in_control_column(controls: &[Rect], gap: f32, x: f32) -> bool {
+    controls
+        .iter()
+        .any(|r| x >= r.x - gap && x < r.right() + gap)
+}
+
 /// 可以拖动的滚动条。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scrollbar {
