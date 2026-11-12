@@ -2,9 +2,8 @@
 //!
 //! 虚拟路径经到该主机的连接访问（见 [`remote`]），此时还可能返回连接的错误：
 //! 没有连接时为 [`io::ErrorKind::NotConnected`]，当前线程不允许等待时为
-//! [`io::ErrorKind::WouldBlock`]，连接中断时为 [`io::ErrorKind::BrokenPipe`]。目前只有读取类的
-//! 操作（取文件信息、读取内容、列目录）支持虚拟路径，其余操作对虚拟路径返回
-//! [`io::ErrorKind::Unsupported`]。文件信息用本 crate 的 [`Metadata`] 表示：
+//! [`io::ErrorKind::WouldBlock`]，连接中断时为 [`io::ErrorKind::BrokenPipe`]。文件信息用本 crate
+//! 的 [`Metadata`] 表示：
 //! `std::fs::Metadata` 无法由远端的数据构造。
 
 mod change;
@@ -25,7 +24,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{ensure_local, locate, remote};
+use crate::{locate, remote};
 
 /// 文件的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,9 +282,19 @@ pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
 ///
 /// # Errors
 ///
-/// 与 `std::fs::read_link` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
+/// 与 `std::fs::read_link` 相同。`path` 是虚拟路径时，结果是远端的目标原样的写法，不是虚拟路径。
 pub fn read_link(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     let path = path.as_ref();
-    ensure_local(path)?;
-    std::fs::read_link(path)
+    match locate(path) {
+        None => std::fs::read_link(path),
+        Some(at) => {
+            let target = remote::connection(&at.target)?.read_link(&at.path)?;
+            #[cfg(unix)]
+            let target: std::ffi::OsString = std::os::unix::ffi::OsStringExt::from_vec(target);
+            // Windows 的字符串无法表示不是有效 UTF-8 的目标，换成替换字符。
+            #[cfg(not(unix))]
+            let target = String::from_utf8_lossy(&target).into_owned();
+            Ok(PathBuf::from(target))
+        }
+    }
 }

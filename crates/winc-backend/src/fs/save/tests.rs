@@ -154,11 +154,11 @@ fn the_in_place_preference_and_the_callback_apply_to_existing_files_only() {
 }
 
 #[test]
-fn virtual_paths_are_refused() {
-    let file = virtual_path(&Target::new("devbox").unwrap(), b"/tmp/note.txt");
+fn virtual_paths_need_a_connection() {
+    let file = virtual_path(&Target::new("unconnected-save").unwrap(), b"/tmp/note.txt");
     let error = save(&file, &in_memory(), |out| out.write_all(b"x")).unwrap_err();
     let SaveError::Io(error) = error else {
         panic!("{error}");
     };
-    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(error.kind(), io::ErrorKind::NotConnected);
 }

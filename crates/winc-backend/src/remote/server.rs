@@ -47,6 +47,7 @@ type Running = Arc<Mutex<HashMap<u32, Arc<AtomicBool>>>>;
 pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::Result<()> {
     let output: Output = Arc::new(Mutex::new(Box::new(output)));
     let running = Running::default();
+    let mut uploads: HashMap<u32, Upload> = HashMap::new();
     let result = loop {
         let frame = match wire::read_frame(&mut input) {
             Ok(Some(frame)) => frame,
@@ -64,6 +65,23 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
             kind::EXEC => {
                 start(frame, &output, &running);
                 Ok(())
+            }
+            // 保存的内容分多帧到达，先按请求号存起来，收到结束的一帧才写入并应答。
+            kind::SAVE_BEGIN => {
+                if let Ok(upload) = Upload::begin(&frame.payload) {
+                    uploads.insert(frame.id, upload);
+                }
+                Ok(())
+            }
+            kind::SAVE_DATA => {
+                if let Some(upload) = uploads.get_mut(&frame.id) {
+                    upload.push(&frame.payload);
+                }
+                Ok(())
+            }
+            kind::SAVE_END => {
+                let upload = uploads.remove(&frame.id);
+                reply(&output, frame.id, finish_upload(upload, &frame.payload))
             }
             _ => reply(&output, frame.id, handle(&frame)),
         };
@@ -172,11 +190,132 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
                 .u8(u8::from(end))
                 .finish())
         }
+        kind::READ_LINK => {
+            let path = path(&mut input)?;
+            input.finish()?;
+            let target = crate::fs::read_link(path)?;
+            Ok(Writer::default()
+                .bytes(target.as_os_str().as_bytes())
+                .finish())
+        }
+        kind::CREATE_DIR => {
+            let path = path(&mut input)?;
+            let all = input.u8()? != 0;
+            input.finish()?;
+            if all {
+                crate::fs::create_dir_all(path)?;
+            } else {
+                crate::fs::create_dir(path)?;
+            }
+            Ok(Vec::new())
+        }
+        kind::CREATE_NEW | kind::WRITE => {
+            let path = path(&mut input)?;
+            let contents = input.bytes()?;
+            input.finish()?;
+            if frame.kind == kind::CREATE_NEW {
+                crate::fs::create_new(path, contents)?;
+            } else {
+                crate::fs::write(path, contents)?;
+            }
+            Ok(Vec::new())
+        }
+        kind::RENAME | kind::COPY | kind::COPY_SYMLINK => {
+            let (from, to) = (path(&mut input)?, path(&mut input)?);
+            input.finish()?;
+            match frame.kind {
+                kind::RENAME => crate::fs::rename(from, to)?,
+                kind::COPY_SYMLINK => crate::fs::copy_symlink(from, to)?,
+                _ => return Ok(Writer::default().u64(crate::fs::copy(from, to)?).finish()),
+            }
+            Ok(Vec::new())
+        }
+        kind::REMOVE_FILE => {
+            let path = path(&mut input)?;
+            input.finish()?;
+            crate::fs::remove_file(path)?;
+            Ok(Vec::new())
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "unknown request",
         )),
     }
+}
+
+/// 一次保存中已收到的内容上限（字节，64 MiB），超过时该次保存失败。
+///
+/// 内容收齐之前留在内存中。全部在内存中的文档不超过 `LARGE_FILE`（16 MiB），按其他编码写出时
+/// 可能更大（UTF-16 至多为 UTF-8 的两倍）；取其四倍，对方无法让本进程无限占用内存。
+const UPLOAD_MAX: usize = 64 << 20;
+
+/// 正在接收的一次保存。
+struct Upload {
+    path: Vec<u8>,
+    bom: bool,
+    in_memory: bool,
+    content: Vec<u8>,
+    /// 是否已超过 [`UPLOAD_MAX`]：之后的内容不再保留，结束时报错。
+    overflowed: bool,
+}
+
+impl Upload {
+    /// 解析 [`kind::SAVE_BEGIN`] 的载荷。
+    fn begin(payload: &[u8]) -> io::Result<Self> {
+        let mut input = Reader::new(payload);
+        let path = input.bytes()?.to_vec();
+        let (bom, in_memory) = (input.u8()? != 0, input.u8()? != 0);
+        input.finish()?;
+        Ok(Self {
+            path,
+            bom,
+            in_memory,
+            content: Vec::new(),
+            overflowed: false,
+        })
+    }
+
+    fn push(&mut self, data: &[u8]) {
+        if self.content.len() + data.len() > UPLOAD_MAX {
+            self.overflowed = true;
+            self.content = Vec::new();
+        }
+        if !self.overflowed {
+            self.content.extend_from_slice(data);
+        }
+    }
+}
+
+/// 结束一次保存：`payload` 是 [`kind::SAVE_END`] 的载荷；`upload` 为 `None` 说明没有收到合法的
+/// 开始一帧。
+fn finish_upload(upload: Option<Upload>, payload: &[u8]) -> io::Result<Vec<u8>> {
+    let mut input = Reader::new(payload);
+    let commit = input.u8()? != 0;
+    input.finish()?;
+    let upload = upload.ok_or_else(|| wire::invalid("save was not started"))?;
+    if !commit {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "save abandoned"));
+    }
+    if upload.overflowed {
+        return Err(io::Error::other("content too large"));
+    }
+    let options = crate::fs::SaveOptions {
+        bom: upload.bom,
+        in_memory: upload.in_memory,
+        ..Default::default()
+    };
+    let path = absolute(&upload.path)?;
+    let saved = crate::fs::save(path, &options, |out| out.write_all(&upload.content));
+    let result = match saved {
+        Ok(metadata) => {
+            return Ok(wire::write_metadata(Writer::default().u8(kind::SAVED), &metadata).finish());
+        }
+        Err(crate::fs::SaveError::ReadOnly) => kind::SAVE_READ_ONLY,
+        Err(crate::fs::SaveError::IdentityWouldChange) => kind::SAVE_IDENTITY,
+        Err(crate::fs::SaveError::TemporaryFile) => kind::SAVE_TEMPORARY,
+        Err(crate::fs::SaveError::Io(error)) => return Err(error),
+    };
+    Ok(Writer::default().u8(result).finish())
 }
 
 /// 读出请求中的路径，见 [`absolute`]。

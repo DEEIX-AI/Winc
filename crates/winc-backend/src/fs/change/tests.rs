@@ -64,25 +64,36 @@ fn links_are_copied_as_links_to_the_same_target() {
 }
 
 #[test]
-fn virtual_paths_are_refused_on_either_side() {
+fn virtual_paths_need_a_connection_and_both_paths_on_one_host() {
     let dir = scratch("virtual");
     let local = dir.join("local.txt");
     std::fs::write(&local, "x").unwrap();
-    let remote = virtual_path(&Target::new("devbox").unwrap(), b"/tmp/remote.txt");
-    let refused = |result: io::Result<()>| {
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    let remote = virtual_path(
+        &Target::new("unconnected-change").unwrap(),
+        b"/tmp/remote.txt",
+    );
+    let other = virtual_path(&Target::new("another-host").unwrap(), b"/tmp/remote.txt");
+    let fails = |kind: io::ErrorKind, result: io::Result<()>| {
+        assert_eq!(result.unwrap_err().kind(), kind);
     };
-    refused(create_dir(&remote));
-    refused(create_dir_all(&remote));
-    refused(create_new(&remote, b"x"));
-    refused(write(&remote, "x"));
-    refused(remove_file(&remote));
-    refused(rename(&local, &remote));
-    refused(rename(&remote, &local));
-    refused(copy(&local, &remote).map(drop));
-    refused(copy(&remote, &local).map(drop));
-    refused(copy_symlink(&local, &remote));
-    refused(copy_symlink(&remote, &local));
+    let unconnected = io::ErrorKind::NotConnected;
+    fails(unconnected, create_dir(&remote));
+    fails(unconnected, create_dir_all(&remote));
+    fails(unconnected, create_new(&remote, b"x"));
+    fails(unconnected, write(&remote, "x"));
+    fails(unconnected, remove_file(&remote));
+    fails(unconnected, rename(&remote, &remote));
+    fails(unconnected, copy(&remote, &remote).map(drop));
+    fails(unconnected, copy_symlink(&remote, &remote));
+    // 一个在本机、一个在远端，或分属两台主机：不支持，本机的文件不受影响。
+    let unsupported = io::ErrorKind::Unsupported;
+    fails(unsupported, rename(&local, &remote));
+    fails(unsupported, rename(&remote, &local));
+    fails(unsupported, rename(&remote, &other));
+    fails(unsupported, copy(&local, &remote).map(drop));
+    fails(unsupported, copy(&remote, &local).map(drop));
+    fails(unsupported, copy_symlink(&local, &remote));
+    fails(unsupported, copy_symlink(&remote, &other));
     assert_eq!(std::fs::read(&local).unwrap(), b"x");
     std::fs::remove_dir_all(&dir).unwrap();
 }

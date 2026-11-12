@@ -28,7 +28,7 @@ pub use server::serve;
 use wire::{Frame, Reader, Writer, kind};
 
 use crate::Target;
-use crate::fs::{Kind, Metadata};
+use crate::fs::{Kind, Metadata, SaveError};
 
 /// 到服务进程的一个连接。
 ///
@@ -39,6 +39,12 @@ pub struct Connection {
     /// 承载连接的子进程；连接建立在其他字节流上时（见 [`Connection::over`]）没有。
     child: Mutex<Option<Child>>,
     reader: Option<thread::JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection").finish_non_exhaustive()
+    }
 }
 
 /// 连接中由发出请求的线程和读取应答的线程共用的部分。
@@ -249,28 +255,148 @@ impl Connection {
         Ok(entries)
     }
 
+    /// 读取远端文件 `path` 从 `offset` 起至多 `len` 字节（不超过 [`wire::MAX_READ`]），返回数据和
+    /// 是否已到文件末尾。
+    pub(crate) fn read_range(
+        &self,
+        path: &[u8],
+        offset: u64,
+        len: u32,
+    ) -> io::Result<(Vec<u8>, bool)> {
+        let request = Writer::default()
+            .bytes(path)
+            .u64(offset)
+            .u32(len.min(wire::MAX_READ))
+            .finish();
+        let reply = self.request(kind::READ, &request)?;
+        let mut reply = Reader::new(&reply);
+        let data = reply.bytes()?.to_vec();
+        let end = reply.u8()? != 0;
+        reply.finish()?;
+        Ok((data, end))
+    }
+
     /// 读取远端文件 `path` 的全部内容，按 [`wire::MAX_READ`] 分块请求。
     pub(crate) fn read(&self, path: &[u8]) -> io::Result<Vec<u8>> {
         let mut content = Vec::new();
         loop {
-            let request = Writer::default()
-                .bytes(path)
-                .u64(content.len() as u64)
-                .u32(wire::MAX_READ)
-                .finish();
-            let reply = self.request(kind::READ, &request)?;
-            let mut reply = Reader::new(&reply);
-            let data = reply.bytes()?;
-            let end = reply.u8()? != 0;
-            reply.finish()?;
+            let (data, end) = self.read_range(path, content.len() as u64, wire::MAX_READ)?;
             // 未到末尾却没有数据：对端不守约定，继续请求不会结束。
             if data.is_empty() && !end {
                 return Err(wire::invalid("empty read before the end"));
             }
-            content.extend_from_slice(data);
+            content.extend_from_slice(&data);
             if end {
                 return Ok(content);
             }
+        }
+    }
+
+    /// 读取远端符号链接 `path` 的目标，返回其原始字节。
+    pub(crate) fn read_link(&self, path: &[u8]) -> io::Result<Vec<u8>> {
+        let reply = self.request(kind::READ_LINK, &Writer::default().bytes(path).finish())?;
+        let mut reply = Reader::new(&reply);
+        let target = reply.bytes()?.to_vec();
+        reply.finish()?;
+        Ok(target)
+    }
+
+    /// 发出一个应答为空的请求。
+    fn command(&self, kind: u8, payload: Vec<u8>) -> io::Result<()> {
+        let reply = self.request(kind, &payload)?;
+        Reader::new(&reply).finish()
+    }
+
+    /// 创建远端目录 `path`；`all` 为真时连同各级上级目录。
+    pub(crate) fn create_dir(&self, path: &[u8], all: bool) -> io::Result<()> {
+        let payload = Writer::default().bytes(path).flag(all).finish();
+        self.command(kind::CREATE_DIR, payload)
+    }
+
+    /// 新建远端文件 `path` 并写入 `contents`，已有条目时不覆盖。
+    pub(crate) fn create_new(&self, path: &[u8], contents: &[u8]) -> io::Result<()> {
+        let payload = Writer::default().bytes(path).bytes(contents).finish();
+        self.command(kind::CREATE_NEW, payload)
+    }
+
+    /// 把 `contents` 覆盖写入远端文件 `path`。
+    pub(crate) fn write(&self, path: &[u8], contents: &[u8]) -> io::Result<()> {
+        let payload = Writer::default().bytes(path).bytes(contents).finish();
+        self.command(kind::WRITE, payload)
+    }
+
+    /// 把远端的 `from` 改名为 `to`。
+    pub(crate) fn rename(&self, from: &[u8], to: &[u8]) -> io::Result<()> {
+        self.command(
+            kind::RENAME,
+            Writer::default().bytes(from).bytes(to).finish(),
+        )
+    }
+
+    /// 把远端文件 `from` 复制到 `to`，返回复制的字节数。
+    pub(crate) fn copy(&self, from: &[u8], to: &[u8]) -> io::Result<u64> {
+        let payload = Writer::default().bytes(from).bytes(to).finish();
+        let reply = self.request(kind::COPY, &payload)?;
+        let mut reply = Reader::new(&reply);
+        let copied = reply.u64()?;
+        reply.finish()?;
+        Ok(copied)
+    }
+
+    /// 把远端的符号链接 `from` 复制为指向同一目标的链接 `to`。
+    pub(crate) fn copy_symlink(&self, from: &[u8], to: &[u8]) -> io::Result<()> {
+        let payload = Writer::default().bytes(from).bytes(to).finish();
+        self.command(kind::COPY_SYMLINK, payload)
+    }
+
+    /// 删除远端文件 `path`。
+    pub(crate) fn remove_file(&self, path: &[u8]) -> io::Result<()> {
+        self.command(kind::REMOVE_FILE, Writer::default().bytes(path).finish())
+    }
+
+    /// 把 `write` 写出的内容保存到远端文件 `path`，返回写入后的文件信息。
+    ///
+    /// 内容边写边分段发出，对端收齐后按 [`fs::save`](crate::fs::save) 的流程写入。`write` 失败时
+    /// 通知对端丢弃已收到的内容，目标文件不变。
+    pub(crate) fn save(
+        &self,
+        path: &[u8],
+        bom: bool,
+        in_memory: bool,
+        write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+    ) -> Result<Metadata, SaveError> {
+        let begin = Writer::default()
+            .bytes(path)
+            .flag(bom)
+            .flag(in_memory)
+            .finish();
+        let (id, replies) = self.link.send(kind::SAVE_BEGIN, &begin)?;
+        let mut upload = Upload {
+            link: &self.link,
+            id,
+            pending: Vec::new(),
+        };
+        let written = write(&mut upload).and_then(|()| upload.flush());
+        let end = Writer::default().flag(written.is_ok()).finish();
+        self.link.write(kind::SAVE_END, id, &end)?;
+        let reply = match replies.recv() {
+            Ok(frame) => finish(frame),
+            Err(_) => Err(io::ErrorKind::BrokenPipe.into()),
+        };
+        // 本机一侧的错误（例如内容无法按所选的编码写出）优先于对端对「放弃」的应答。
+        written?;
+        let reply = reply?;
+        let mut reply = Reader::new(&reply);
+        match reply.u8()? {
+            kind::SAVED => {
+                let metadata = wire::read_metadata(&mut reply)?;
+                reply.finish()?;
+                Ok(metadata)
+            }
+            kind::SAVE_READ_ONLY => Err(SaveError::ReadOnly),
+            kind::SAVE_IDENTITY => Err(SaveError::IdentityWouldChange),
+            kind::SAVE_TEMPORARY => Err(SaveError::TemporaryFile),
+            _ => Err(wire::invalid("unknown save result").into()),
         }
     }
 
@@ -363,6 +489,59 @@ impl Drop for Connection {
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+    }
+}
+
+/// 保存时一段内容的大小（字节，256 KiB）。
+///
+/// 每段是一帧，发送期间占用连接的写入一端；取值使其他请求在两段之间最多等待一段的发送时间，
+/// 同时不让 16 MiB 的文档拆成过多的帧（64 帧）。
+const UPLOAD_CHUNK: usize = 256 << 10;
+
+/// 保存的内容的写入端：攒够 [`UPLOAD_CHUNK`] 就作为一帧发出。
+struct Upload<'a> {
+    link: &'a Link,
+    id: u32,
+    pending: Vec<u8>,
+}
+
+impl Write for Upload<'_> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.pending.extend_from_slice(data);
+        while self.pending.len() >= UPLOAD_CHUNK {
+            let rest = self.pending.split_off(UPLOAD_CHUNK);
+            self.link.write(kind::SAVE_DATA, self.id, &self.pending)?;
+            self.pending = rest;
+        }
+        Ok(data.len())
+    }
+
+    /// 发出尚未攒够一段的内容。
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.pending.is_empty() {
+            self.link.write(kind::SAVE_DATA, self.id, &self.pending)?;
+            self.pending.clear();
+        }
+        Ok(())
+    }
+}
+
+/// 同一个连接上的两个远端路径：连接、第一个路径、第二个路径。
+pub(crate) type Pair = (Arc<Connection>, Vec<u8>, Vec<u8>);
+
+/// 把两个路径解析到同一个连接上：都是本机路径时返回 `None`，由调用方在本机执行。
+///
+/// # Errors
+///
+/// 一个在本机、一个在远端，或分属两个连接时返回 [`io::ErrorKind::Unsupported`]：跨主机的改名和
+/// 复制尚不支持。其余同 [`connection`]。
+pub(crate) fn pair(from: &Path, to: &Path) -> io::Result<Option<Pair>> {
+    match (crate::locate(from), crate::locate(to)) {
+        (None, None) => Ok(None),
+        (Some(from), Some(to)) if from.target == to.target => {
+            Ok(Some((connection(&from.target)?, from.path, to.path)))
+        }
+        _ => Err(io::ErrorKind::Unsupported.into()),
     }
 }
 

@@ -179,6 +179,143 @@ fn connections_are_per_target_and_refuse_threads_that_must_not_wait() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn files_are_created_changed_and_removed_through_a_connection() {
+    let target = connect("change");
+    let dir = scratch("change");
+    let far = through(&target, &dir);
+
+    fs::create_dir_all(far.join("a/b")).unwrap();
+    assert!(fs::create_dir(far.join("x/y")).is_err(), "上级目录不存在");
+    fs::create_dir(far.join("a/c")).unwrap();
+    assert!(dir.join("a/b").is_dir() && dir.join("a/c").is_dir());
+
+    let file = far.join("a/b/note.txt");
+    fs::create_new(&file, b"one").unwrap();
+    let error = fs::create_new(&file, b"two").unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(dir.join("a/b/note.txt")).unwrap(), b"one");
+    fs::write(&file, "three").unwrap();
+
+    let moved = far.join("a/c/moved.txt");
+    fs::rename(&file, &moved).unwrap();
+    assert!(!fs::exists(&file) && fs::is_file(&moved));
+    assert_eq!(fs::copy(&moved, &file).unwrap(), 5);
+    assert_eq!(std::fs::read(dir.join("a/b/note.txt")).unwrap(), b"three");
+
+    std::os::unix::fs::symlink("note.txt", dir.join("a/b/link")).unwrap();
+    assert_eq!(
+        fs::read_link(far.join("a/b/link")).unwrap(),
+        Path::new("note.txt")
+    );
+    fs::copy_symlink(far.join("a/b/link"), far.join("a/b/copy")).unwrap();
+    assert_eq!(
+        std::fs::read_link(dir.join("a/b/copy")).unwrap(),
+        Path::new("note.txt")
+    );
+    fs::remove_file(&moved).unwrap();
+    assert!(!dir.join("a/c/moved.txt").exists());
+    assert!(fs::is_absent(&fs::remove_file(&moved).unwrap_err()));
+
+    remote::disconnect(&target);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn documents_are_opened_and_saved_through_a_connection() {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+
+    let target = connect("save");
+    let dir = scratch("save");
+    let far = through(&target, &dir);
+    let options = fs::SaveOptions {
+        in_memory: true,
+        ..Default::default()
+    };
+
+    // 新文件，所在的目录一并创建；返回的是写入后的文件信息。
+    let file = far.join("sub/note.txt");
+    let written = fs::save(&file, &options, |out| out.write_all(b"one")).unwrap();
+    assert_eq!(std::fs::read(dir.join("sub/note.txt")).unwrap(), b"one");
+    assert_eq!(written, fs::metadata(dir.join("sub/note.txt")).unwrap());
+
+    // 已有文件的权限保留；内容分多段上传（3 MB），目录中不留临时文件。
+    let local = dir.join("sub/note.txt");
+    std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o750)).unwrap();
+    let large: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    let bom = fs::SaveOptions {
+        bom: true,
+        ..options
+    };
+    let written = fs::save(&file, &bom, |out| {
+        large
+            .chunks(70_000)
+            .try_for_each(|chunk| out.write_all(chunk))
+    })
+    .unwrap();
+    let on_disk = std::fs::read(&local).unwrap();
+    assert_eq!(on_disk[..3], [0xEF, 0xBB, 0xBF]);
+    assert!(on_disk[3..] == large[..]);
+    assert_eq!(written.unix.unwrap().mode & 0o777, 0o750);
+    assert_eq!(std::fs::read_dir(dir.join("sub")).unwrap().count(), 1);
+
+    // 打开：文件信息、开头的一段、可重复的顺序读取，以及按偏移读取的句柄。
+    let mut opened = fs::open(&file, 5).unwrap();
+    assert_eq!(opened.metadata, fs::metadata(&local).unwrap());
+    assert_eq!(opened.head, on_disk[..5]);
+    for _ in 0..2 {
+        let mut all = Vec::new();
+        opened.reader().unwrap().read_to_end(&mut all).unwrap();
+        assert!(all == on_disk);
+    }
+    let handle = opened.into_handle();
+    let mut buf = [0u8; 7];
+    assert_eq!(handle.read_full(1_500_000, &mut buf).unwrap(), 7);
+    assert_eq!(buf, on_disk[1_500_000..1_500_007]);
+    assert_eq!(
+        handle
+            .read_full(on_disk.len() as u64 - 3, &mut buf)
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        handle.try_clone().unwrap().metadata().unwrap().len,
+        on_disk.len() as u64
+    );
+    assert!(
+        fs::open(far.join("sub"), 4).is_err(),
+        "目录不能当作文件打开"
+    );
+
+    // 本机一侧写内容失败：放弃保存，文件不变，错误原样返回。
+    let error = fs::save(&file, &options, |out| {
+        out.write_all(b"partial")?;
+        Err(io::Error::other("cannot encode"))
+    })
+    .unwrap_err();
+    assert!(matches!(&error, fs::SaveError::Io(e) if e.to_string() == "cannot encode"));
+    assert!(std::fs::read(&local).unwrap() == on_disk);
+
+    // 只读的文件、有多个硬链接而内容无法原地写入：对端的判断按类型传回。
+    std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let error = fs::save(&file, &options, |out| out.write_all(b"x")).unwrap_err();
+    assert!(matches!(error, fs::SaveError::ReadOnly), "{error}");
+    std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::hard_link(&local, dir.join("sub/other")).unwrap();
+    let pieces = fs::SaveOptions::default();
+    let error = fs::save(&file, &pieces, |out| out.write_all(b"x")).unwrap_err();
+    assert!(
+        matches!(error, fs::SaveError::IdentityWouldChange),
+        "{error}"
+    );
+    fs::save(&file, &options, |out| out.write_all(b"both")).unwrap();
+    assert_eq!(std::fs::read(dir.join("sub/other")).unwrap(), b"both");
+
+    remote::disconnect(&target);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 在 `dir` 所在的主机上运行命令，不取消。
 fn run(dir: &Path, exec: &remote::Exec) -> io::Result<remote::Output> {
     remote::exec(dir, exec, &|| false)
@@ -354,5 +491,18 @@ fn over_ssh() {
         (output.code, output.stdout, output.stderr),
         (Some(0), b"/etc\n".to_vec(), b"done".to_vec())
     );
+    // 写入经真实的连接往返：多段上传的内容保存后读回一致，再删除。
+    let dir = root.join("tmp/winc over ssh");
+    let file = dir.join("large.bin");
+    let large: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    let options = fs::SaveOptions {
+        in_memory: true,
+        ..Default::default()
+    };
+    let written = fs::save(&file, &options, |out| out.write_all(&large)).unwrap();
+    assert_eq!(written.len, large.len() as u64);
+    assert!(fs::read(&file).unwrap() == large);
+    fs::remove_file(&file).unwrap();
+    assert!(!fs::exists(&file));
     remote::disconnect(&target);
 }

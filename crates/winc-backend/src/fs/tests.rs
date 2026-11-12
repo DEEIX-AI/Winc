@@ -127,11 +127,7 @@ fn virtual_paths_need_a_connection_and_never_touch_the_local_file_system() {
     unconnected(symlink_metadata(&file).map(drop));
     unconnected(read(&file).map(drop));
     unconnected(read_to_string(&file).map(drop));
-    // 尚不支持远端的操作明确拒绝。
-    assert_eq!(
-        read_link(&file).unwrap_err().kind(),
-        io::ErrorKind::Unsupported
-    );
+    unconnected(read_link(&file).map(drop));
     // 取不到信息时各项判断为否：无法确定不等于存在。
     assert!(!exists(&file) && !is_file(&file) && !is_dir(&file) && !is_symlink(&file));
     for result in metadata_many(&[&file]) {

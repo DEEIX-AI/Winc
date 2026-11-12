@@ -12,8 +12,8 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use super::Metadata;
-use crate::ensure_local;
 use crate::local::{create_temporary, replace_file, sync_dir, sync_file};
+use crate::{locate, remote};
 
 /// UTF-8 的字节序标记。
 const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
@@ -85,15 +85,19 @@ impl From<io::Error> for SaveError {
 ///
 /// # Errors
 ///
-/// 见 [`SaveError`]；`path` 是虚拟路径时返回 [`SaveError::Io`]，其种类为
-/// [`io::ErrorKind::Unsupported`]。
+/// 见 [`SaveError`]；`path` 是虚拟路径时还有以 [`SaveError::Io`] 返回的连接的错误。
 pub fn save(
     path: impl AsRef<Path>,
     options: &SaveOptions<'_>,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> Result<Metadata, SaveError> {
     let path = path.as_ref();
-    ensure_local(path)?;
+    // 远端：内容传给服务进程，由它在文件所在的机器上执行下面的同一套流程。两个只用于 WSL
+    // 的选项不传递。
+    if let Some(at) = locate(path) {
+        let connection = remote::connection(&at.target)?;
+        return connection.save(&at.path, options.bom, options.in_memory, write);
+    }
     let dir = path.parent().unwrap_or(Path::new("."));
     let name = path
         .file_name()

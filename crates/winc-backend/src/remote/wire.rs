@@ -44,6 +44,38 @@ pub(crate) mod kind {
     pub(crate) const EXEC: u8 = 6;
     /// 取消请求号相同的 [`EXEC`]：没有载荷，没有应答；被取消的命令以错误结束。
     pub(crate) const CANCEL: u8 = 7;
+    /// 读取符号链接的目标：载荷是路径，应答是目标的原始字节。
+    pub(crate) const READ_LINK: u8 = 8;
+    /// 创建目录：载荷是路径和是否连同各级上级目录一起创建（`u8`），应答为空。
+    pub(crate) const CREATE_DIR: u8 = 9;
+    /// 新建文件并写入内容，已有条目时不覆盖：载荷是路径和内容，应答为空。
+    pub(crate) const CREATE_NEW: u8 = 10;
+    /// 覆盖写入文件：载荷是路径和内容，应答为空。
+    pub(crate) const WRITE: u8 = 11;
+    /// 改名：载荷是原路径和新路径，应答为空。
+    pub(crate) const RENAME: u8 = 12;
+    /// 复制文件：载荷是源路径和目标路径，应答是复制的字节数（`u64`）。
+    pub(crate) const COPY: u8 = 13;
+    /// 把符号链接复制为指向同一目标的链接：载荷是源路径和目标路径，应答为空。
+    pub(crate) const COPY_SYMLINK: u8 = 14;
+    /// 删除文件：载荷是路径，应答为空。
+    pub(crate) const REMOVE_FILE: u8 = 15;
+    /// 开始一次保存：载荷是路径、是否写入字节序标记（`u8`）、内容是否全部在内存中（`u8`）。
+    /// 没有应答，其后是同一请求号的若干 [`SAVE_DATA`] 和一个 [`SAVE_END`]。
+    pub(crate) const SAVE_BEGIN: u8 = 16;
+    /// 保存的一段内容：载荷是数据。没有应答。
+    pub(crate) const SAVE_DATA: u8 = 17;
+    /// 结束一次保存：载荷是是否写入（`u8`，为 0 时丢弃已收到的内容）。应答是结果（`u8`，见
+    /// [`SAVED`] 等）；为 [`SAVED`] 时其后是写入后的文件信息。
+    pub(crate) const SAVE_END: u8 = 18;
+    /// [`SAVE_END`] 的结果：已保存。
+    pub(crate) const SAVED: u8 = 0;
+    /// [`SAVE_END`] 的结果：目标文件只读。
+    pub(crate) const SAVE_READ_ONLY: u8 = 1;
+    /// [`SAVE_END`] 的结果：改名替换会改变文件的身份，而内容无法原地写入。
+    pub(crate) const SAVE_IDENTITY: u8 = 2;
+    /// [`SAVE_END`] 的结果：无法创建临时文件。
+    pub(crate) const SAVE_TEMPORARY: u8 = 3;
     /// 请求成功，载荷是结果。
     pub(crate) const OK: u8 = 0x80;
     /// 请求尚未结束，载荷是命令输出的一段：来源（`u8`，见 [`STDOUT`]、[`STDERR`]）和数据。
@@ -135,6 +167,12 @@ impl Writer {
     #[cfg(any(unix, test))]
     pub(crate) fn u8(mut self, value: u8) -> Self {
         self.0.push(value);
+        self
+    }
+
+    /// 写出一个只取 0 或 1 的字节。
+    pub(crate) fn flag(mut self, value: bool) -> Self {
+        self.0.push(u8::from(value));
         self
     }
 

@@ -76,10 +76,10 @@ fn handles_read_at_offsets_and_keep_the_file_they_opened() {
 }
 
 #[test]
-fn virtual_paths_are_refused() {
-    let file = virtual_path(&Target::new("devbox").unwrap(), b"/etc/hosts");
+fn virtual_paths_need_a_connection() {
+    let file = virtual_path(&Target::new("unconnected-open").unwrap(), b"/etc/hosts");
     assert_eq!(
         open(&file, 16).err().unwrap().kind(),
-        io::ErrorKind::Unsupported
+        io::ErrorKind::NotConnected
     );
 }
