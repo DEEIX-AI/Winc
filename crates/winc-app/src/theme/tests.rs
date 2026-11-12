@@ -56,6 +56,8 @@ fn file_kinds_follow_whole_names_then_extensions() {
     assert_eq!(glyph("app.ts"), Letters("TS"));
     assert_eq!(glyph("App.tsx"), Letters("TS"));
     assert_ne!(file_kind("app.ts").1, file_kind("App.tsx").1);
+    assert_eq!(glyph("Index.ets"), Letters("ETS"));
+    assert_eq!(file_kind("Index.ets").1, file_kind("app.ts").1);
     assert_eq!(glyph("index.mjs"), Letters("JS"));
     assert_eq!(glyph("main.py"), Letters("PY"));
     assert_eq!(glyph("main.go"), Letters("GO"));
@@ -67,6 +69,7 @@ fn file_kinds_follow_whole_names_then_extensions() {
     // `file_kind` 给出的每种记号都在 `FileGlyph::ALL` 里：目录菜单按它事先画图标。
     let samples = [
         "a.ts",
+        "a.ets",
         "a.js",
         "a.py",
         "a.go",
