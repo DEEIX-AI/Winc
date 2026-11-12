@@ -818,12 +818,14 @@ impl Document {
 /// 和大小取自同一个已打开的文件、在读取内容之前获取：读取期间文件被其他程序修改时，记录的
 /// 修改时间早于实际内容，之后的磁盘同步仍能发现这次修改。
 fn load_as(path: &Path, encoding: Encoding) -> Result<Loaded, OpenError> {
-    let file = fs::File::open(path)?;
-    let mtime = file.metadata()?.modified().ok().map(Stamp::from);
+    let mut opened = winc_backend::fs::open(path, 0)?;
+    let mtime = opened.metadata.modified;
     // 文档打开时不超过 `LARGE_FILE`，之后文件可能变大：超过时按大文件的规则只支持 UTF-8，
     // 不把整个文件读进内存再解码。读的过程中还在变大的，读到上限为止再判断。
     let mut bytes = Vec::new();
-    file.take(LARGE_FILE + 1).read_to_end(&mut bytes)?;
+    (opened.reader()?)
+        .take(LARGE_FILE + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > LARGE_FILE {
         return Err(OpenError::Io(io::Error::other(t!(
             "editor-large-utf8-only"
@@ -851,19 +853,14 @@ pub(super) fn load(path: &Path, allow_binary: bool) -> Result<Loaded, OpenError>
 ///
 /// 按文档当前的编码重新读取时传入它，避免自动猜测的编码一旦错误，每次重读都得到乱码。
 fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded, OpenError> {
-    let mut file = fs::File::open(path)?;
-    let metadata = file.metadata()?;
-    let size = metadata.len();
-    let mtime = metadata.modified().ok().map(Stamp::from);
+    let mut opened = winc_backend::fs::open(path, BINARY_SNIFF)?;
+    let size = opened.metadata.len;
+    let mtime = opened.metadata.modified;
 
     if size > OPEN_LIMIT {
         return Err(OpenError::TooLarge(size));
     }
-
-    let mut head = Vec::with_capacity(BINARY_SNIFF);
-    (&mut file)
-        .take(BINARY_SNIFF as u64)
-        .read_to_end(&mut head)?;
+    let head = std::mem::take(&mut opened.head);
 
     // 大文件只支持按需读取 UTF-8；带 UTF-16 BOM 的大文件无法读取，按二进制文件处理。
     let binary = looks_binary(&head) || (size > LARGE_FILE && utf16_bom(&head));
@@ -873,7 +870,7 @@ fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded
     }
 
     if size > LARGE_FILE {
-        let large = LargeText::open(file)?;
+        let large = LargeText::open(opened.into_handle())?;
         let encoding = match (large.is_utf8(), large.has_bom()) {
             _ if binary => Encoding::Binary,
             (false, _) => Encoding::Lossy,
@@ -894,11 +891,10 @@ fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded
         });
     }
 
-    file.rewind()?;
-
     // 合法的 UTF-8 边读边建 rope，内存中不会同时存在整个文件的另一份副本；BOM 的处理与
     // `decode` 相同。只有非 UTF-8（GBK、UTF-16 等）才把整个文件读入内存，交给 `decode` 识别编码。
-    let (rope, encoding) = match Rope::from_reader(BufReader::with_capacity(64 << 10, &file)) {
+    let read = Rope::from_reader(BufReader::with_capacity(64 << 10, opened.reader()?));
+    let (rope, encoding) = match read {
         Ok(mut rope) => {
             let bom = head.starts_with(&UTF8_BOM);
             if bom {
@@ -912,9 +908,8 @@ fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded
             (rope, encoding)
         }
         Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-            file.rewind()?;
             let mut bytes = Vec::with_capacity(size as usize);
-            file.read_to_end(&mut bytes)?;
+            opened.reader()?.read_to_end(&mut bytes)?;
             // 二进制文件以文本方式打开：不检测编码，非法字节显示为 U+FFFD。
             if binary {
                 (

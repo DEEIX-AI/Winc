@@ -15,7 +15,7 @@ pub(super) struct Checkpoint {
 
 /// 磁盘上的原文件及其行索引。
 pub(super) struct Original {
-    pub(super) file: File,
+    pub(super) file: Handle,
     /// 文件开头是否有 UTF-8 BOM。
     pub(super) bom: bool,
     /// 内容在文件中的起点（字节偏移）：有 BOM 时跳过它。
@@ -96,7 +96,7 @@ impl Original {
     }
 
     /// 打开 `file` 并按 `workers` 个线程分段扫描并建立索引（实际线程数见 [`LargeText::open`]）。
-    pub(super) fn open(file: File, workers: u64) -> io::Result<Self> {
+    pub(super) fn open(file: Handle, workers: u64) -> io::Result<Self> {
         let metadata = file.metadata()?;
         let mut head = [0u8; 3];
         let bom = read_full(&file, 0, &mut head)? == 3 && head == UTF8_BOM;
@@ -106,9 +106,9 @@ impl Original {
             file,
             bom,
             base,
-            size: metadata.len(),
-            mtime: metadata.modified().ok().map(Stamp::from),
-            len: metadata.len().saturating_sub(base),
+            size: metadata.len,
+            mtime: metadata.modified,
+            len: metadata.len.saturating_sub(base),
             chars: 0,
             newlines: 0,
             checkpoints: Vec::new(),
@@ -271,7 +271,7 @@ impl Original {
 /// 返回各段的分界字节偏移（含起点 0 和终点 `len`）。
 ///
 /// 分界点从等分点后移到下一个换行之后，使每段都从行首开始；无法后移的分界点被舍弃。
-fn segment_bounds(file: &File, base: u64, len: u64, count: u64) -> io::Result<Vec<u64>> {
+fn segment_bounds(file: &Handle, base: u64, len: u64, count: u64) -> io::Result<Vec<u64>> {
     let mut bounds = vec![0];
     let mut buf = [0u8; PROBE];
 
@@ -311,7 +311,7 @@ fn segment_bounds(file: &File, base: u64, len: u64, count: u64) -> io::Result<Ve
 /// 扫描内容中 `from..to`（字节偏移）这一段：设置检查点、统计换行和字符、找出最长的行、校验 UTF-8。
 ///
 /// `from` 必须是行首。
-pub(super) fn scan_segment(file: &File, base: u64, from: u64, to: u64) -> io::Result<Segment> {
+pub(super) fn scan_segment(file: &Handle, base: u64, from: u64, to: u64) -> io::Result<Segment> {
     // 按平均每行 64 字节预估检查点个数，一次分配到位，避免反复扩容留下的内存碎片；估计值的
     // 偏差只影响扩容次数，不影响结果。
     let mut checkpoints = Vec::with_capacity(((to - from) / (CHECKPOINT_LINES * 64)) as usize + 1);
@@ -406,11 +406,11 @@ pub(super) fn scan_segment(file: &File, base: u64, from: u64, to: u64) -> io::Re
 }
 
 /// 从文件的 `offset`（字节偏移）处读满 `buf` 或读到文件末尾，返回读到的字节数。
-pub(super) fn read_full(file: &File, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+pub(super) fn read_full(file: &Handle, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
     let mut filled = 0;
 
     while filled < buf.len() {
-        match read_at(file, &mut buf[filled..], offset + filled as u64) {
+        match file.read_at(offset + filled as u64, &mut buf[filled..]) {
             Ok(0) => break,
             Ok(n) => filled += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -419,16 +419,4 @@ pub(super) fn read_full(file: &File, offset: u64, buf: &mut [u8]) -> io::Result<
     }
 
     Ok(filled)
-}
-
-/// 从 `offset` 读取 `buf`，不改变文件当前的读取位置（Unix 用 `pread`）。
-#[cfg(unix)]
-fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    std::os::unix::fs::FileExt::read_at(file, buf, offset)
-}
-
-/// 从 `offset` 读取 `buf`，不改变文件当前的读取位置（Windows 用 `seek_read`）。
-#[cfg(windows)]
-fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    std::os::windows::fs::FileExt::seek_read(file, buf, offset)
 }

@@ -48,7 +48,9 @@ impl SaveJob {
         // 片段引用原文件的字节范围，不用原地写入（会先截断原文件）。
         let result = write_atomic(&self.target, self.bom, false, |out| self.text.write_to(out))
             .map(|written| Written {
-                fresh: fs::File::open(&self.target).and_then(LargeText::open).ok(),
+                fresh: winc_backend::fs::open(&self.target, 0)
+                    .and_then(|opened| LargeText::open(opened.into_handle()))
+                    .ok(),
                 mtime: written.modified,
                 len: written.len,
             });

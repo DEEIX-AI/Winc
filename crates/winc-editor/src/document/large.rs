@@ -11,11 +11,10 @@ mod utf8;
 use original::*;
 pub(crate) use utf8::*;
 
-use std::fs::File;
 use std::io::{self, Write};
 use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, PoisonError};
-use winc_backend::fs::Stamp;
+use winc_backend::fs::{Handle, Stamp};
 
 use winc_core::text::{EditBuffer, Line, Lines};
 use winc_i18n::t;
@@ -118,12 +117,12 @@ impl LargeText {
     /// # Errors
     ///
     /// 读取文件失败时返回对应的 `std::io::Error`。
-    pub fn open(file: File) -> io::Result<Self> {
-        Self::open_with(file, LINE_CAP)
+    pub fn open(file: impl Into<Handle>) -> io::Result<Self> {
+        Self::open_with(file.into(), LINE_CAP)
     }
 
-    fn open_with(file: File, line_cap: usize) -> io::Result<Self> {
-        let size = file.metadata()?.len();
+    fn open_with(file: Handle, line_cap: usize) -> io::Result<Self> {
+        let size = file.metadata()?.len;
         let cores = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .min(MAX_WORKERS);
@@ -186,10 +185,8 @@ impl LargeText {
         let Ok(metadata) = self.original.file.metadata() else {
             return true;
         };
-        let size = metadata.len();
-        if size == self.original.size
-            && metadata.modified().ok().map(Stamp::from) == self.original.mtime
-        {
+        let size = metadata.len;
+        if size == self.original.size && metadata.modified == self.original.mtime {
             return false;
         }
         size <= self.original.size || !self.original.tail_intact()
@@ -213,7 +210,7 @@ impl LargeText {
             return None;
         }
         let metadata = self.original.file.metadata().ok()?;
-        let size = metadata.len();
+        let size = metadata.len;
         if size <= self.original.size {
             return None;
         }
@@ -285,7 +282,7 @@ impl LargeText {
         }
         // 记录的大小只到已接入的位置：尚未写完的字符留到下一次接入。
         original.size = original.base + segment.end;
-        original.mtime = metadata.modified().ok().map(Stamp::from);
+        original.mtime = metadata.modified;
 
         self.pieces = vec![Piece {
             source: Source::Original,
