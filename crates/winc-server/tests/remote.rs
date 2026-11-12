@@ -181,7 +181,7 @@ fn connections_are_per_target_and_refuse_threads_that_must_not_wait() {
 
 /// 在 `dir` 所在的主机上运行命令，不取消。
 fn run(dir: &Path, exec: &remote::Exec) -> io::Result<remote::Output> {
-    remote::exec(dir, exec, &AtomicBool::new(false))
+    remote::exec(dir, exec, &|| false)
 }
 
 fn sh(script: &str) -> remote::Exec {
@@ -243,7 +243,10 @@ fn a_running_command_can_be_cancelled_and_does_not_block_other_requests() {
     let started = Instant::now();
     let running = {
         let (far, cancel) = (far.clone(), Arc::clone(&cancel));
-        std::thread::spawn(move || remote::exec(&far, &sh("sleep 30 & sleep 30"), &cancel))
+        std::thread::spawn(move || {
+            let cancelled = || cancel.load(Ordering::Relaxed);
+            remote::exec(&far, &sh("sleep 30 & sleep 30"), &cancelled)
+        })
     };
     // 命令运行期间，同一连接上的文件操作照常应答。
     std::thread::sleep(Duration::from_millis(100));

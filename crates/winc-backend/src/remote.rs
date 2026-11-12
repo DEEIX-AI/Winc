@@ -18,8 +18,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -37,14 +36,15 @@ use crate::fs::{Kind, Metadata};
 /// 丢弃时关闭子进程的标准输入并结束子进程；服务进程在输入结束时结束它启动的命令并退出。
 pub struct Connection {
     link: Arc<Link>,
-    child: Mutex<Child>,
+    /// 承载连接的子进程；连接建立在其他字节流上时（见 [`Connection::over`]）没有。
+    child: Mutex<Option<Child>>,
     reader: Option<thread::JoinHandle<()>>,
 }
 
 /// 连接中由发出请求的线程和读取应答的线程共用的部分。
 struct Link {
     /// 写请求的一端；连接中断后为 `None`。
-    output: Mutex<Option<BufWriter<ChildStdin>>>,
+    output: Mutex<Option<BufWriter<Box<dyn Write + Send>>>>,
     waiting: Mutex<Waiting>,
 }
 
@@ -153,8 +153,31 @@ impl Connection {
         let (Some(input), Some(output)) = (input, output) else {
             return Err(io::Error::other("connection has no standard streams"));
         };
+        Self::establish(input, output, Some(child))
+    }
+
+    /// 在一对字节流上建立连接，并与对端交换协议版本：对端从 `output` 的另一端读取请求，把应答
+    /// 写到 `input` 的另一端。
+    ///
+    /// 用于对端不是子进程的情形，例如测试中在同一进程内运行的服务端。
+    ///
+    /// # Errors
+    ///
+    /// 对端不是服务进程，或协议版本不一致时返回对应的 `io::Error`。
+    pub fn over(
+        input: impl io::Read + Send + 'static,
+        output: impl Write + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::establish(input, output, None)
+    }
+
+    fn establish(
+        input: impl io::Read + Send + 'static,
+        output: impl Write + Send + 'static,
+        child: Option<Child>,
+    ) -> io::Result<Self> {
         let link = Arc::new(Link {
-            output: Mutex::new(Some(BufWriter::new(output))),
+            output: Mutex::new(Some(BufWriter::new(Box::new(output)))),
             waiting: Mutex::default(),
         });
         let reader = {
@@ -253,9 +276,9 @@ impl Connection {
 
     /// 在远端运行 `exec` 描述的命令并等待它结束，返回退出码和全部输出。
     ///
-    /// 等待期间每隔 [`CANCEL_POLL`] 检查 `cancel`：被设置时通知对端强制结束命令（连同它启动的
+    /// 等待期间每隔 [`CANCEL_POLL`] 调用 `cancel`：返回真时通知对端强制结束命令（连同它启动的
     /// 子进程），命令结束后返回 [`io::ErrorKind::Interrupted`]。
-    fn exec(&self, exec: &Exec, cancel: &AtomicBool) -> io::Result<Output> {
+    fn exec(&self, exec: &Exec, cancel: &dyn Fn() -> bool) -> io::Result<Output> {
         let (id, replies) = self.link.send(kind::EXEC, &exec.encode())?;
         let mut output = Output::default();
         let mut asked = false;
@@ -266,7 +289,7 @@ impl Connection {
                     return Err(io::ErrorKind::BrokenPipe.into());
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if !asked && cancel.load(Ordering::Relaxed) {
+                    if !asked && cancel() {
                         asked = true;
                         self.link.write(kind::CANCEL, id, &[])?;
                     }
@@ -308,6 +331,9 @@ impl Connection {
     fn shutdown(&self) {
         self.link.close();
         let mut child = self.child.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(child) = child.as_mut() else {
+            return;
+        };
         let deadline = Instant::now() + SHUTDOWN;
         while Instant::now() < deadline {
             // 已退出，或无法查询：不再等待。
@@ -330,7 +356,9 @@ impl Drop for Connection {
         self.shutdown();
         // 回收子进程，不留下僵尸进程。
         let child = self.child.get_mut().unwrap_or_else(PoisonError::into_inner);
-        let _ = child.wait();
+        if let Some(child) = child {
+            let _ = child.wait();
+        }
         // 子进程结束后其输出关闭，读取应答的线程随之退出。
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
@@ -415,7 +443,7 @@ pub struct Output {
 
 /// 在目录 `dir` 所在的主机上以 `dir` 为工作目录运行 `exec`，等待它结束。
 ///
-/// `cancel` 被设置时强制结束命令。调用方用它实现取消和超时。
+/// 等待期间反复调用 `cancel`，返回真时强制结束命令；调用方用它实现取消和超时。
 ///
 /// # Errors
 ///
@@ -423,7 +451,7 @@ pub struct Output {
 /// 没有连接、当前线程不允许等待、连接中断时返回连接的错误（见 [`fs`](crate::fs) 的说明）；
 /// 远端无法启动命令时返回对端报告的错误；被取消时返回 [`io::ErrorKind::Interrupted`]。
 /// 命令以非零的退出码结束不是错误，见 [`Output::code`]。
-pub fn exec(dir: &Path, exec: &Exec, cancel: &AtomicBool) -> io::Result<Output> {
+pub fn exec(dir: &Path, exec: &Exec, cancel: &dyn Fn() -> bool) -> io::Result<Output> {
     let Some(at) = crate::locate(dir) else {
         return Err(io::ErrorKind::InvalidInput.into());
     };
@@ -458,6 +486,14 @@ pub fn disconnect(target: &Target) {
     if let Some(removed) = removed {
         removed.shutdown_in_background();
     }
+}
+
+/// 是否已登记到 `target` 的连接；连接可能已经中断，此时请求会失败。
+pub fn is_connected(target: &Target) -> bool {
+    let connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
+    connections
+        .as_ref()
+        .is_some_and(|all| all.contains_key(target))
 }
 
 /// 返回到 `target` 的连接。

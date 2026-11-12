@@ -2,6 +2,7 @@
 //! 一起终止。
 
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -129,6 +130,7 @@ fn spawn(command: &mut Command) -> std::io::Result<Child> {
 /// 运行 `command`，最多等待 `timeout`，返回退出状态和捕获的输出。
 ///
 /// 标准输入不继承 winc 自己的；程序自成一个进程组，超时、取消、输出过多时终止整个进程组。
+/// `command` 的工作目录在远端主机上时，命令在该主机上运行（见 [`run_remote`]）。
 ///
 /// # Errors
 ///
@@ -140,6 +142,11 @@ pub(crate) fn run(
     timeout: Duration,
     cancel: &Cancel,
 ) -> Result<Output, RunError> {
+    if let Some(dir) = command.get_current_dir()
+        && winc_backend::is_remote(dir)
+    {
+        return run_remote(command, dir, input, timeout, cancel);
+    }
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(command, 0);
     // Windows 上图形程序启动命令行工具时，默认会弹出控制台窗口；`CREATE_NO_WINDOW`（0x0800_0000）
@@ -256,6 +263,66 @@ pub(crate) fn run(
         stdout,
         stderr,
     })
+}
+
+/// 在目录 `dir` 所在的远端主机上运行 `command`，以 `dir` 为工作目录。
+///
+/// 传给远端的是 `command` 的程序、参数和显式设置的环境变量；本机的环境不传递，命令继承远端
+/// 服务进程的环境。超时和取消由远端强制结束命令（连同它启动的子进程）。输出收齐之后才检查
+/// 是否超过 [`MAX_OUTPUT`]。
+fn run_remote(
+    command: &Command,
+    dir: &Path,
+    input: Vec<u8>,
+    timeout: Duration,
+    cancel: &Cancel,
+) -> Result<Output, RunError> {
+    use winc_backend::remote;
+
+    let mut exec = remote::Exec::new(command.get_program().as_encoded_bytes()).stdin(input);
+    for arg in command.get_args() {
+        exec = exec.arg(arg.as_encoded_bytes());
+    }
+    // 值为 `None` 的是要从环境中移除的变量：本机的环境本来就不传递，无需处理。
+    for (name, value) in command.get_envs() {
+        if let Some(value) = value {
+            exec = exec.env(name.as_encoded_bytes(), value.as_encoded_bytes());
+        }
+    }
+    if cancel.is_cancelled() {
+        return Err(RunError::Cancelled);
+    }
+    let deadline = Instant::now() + timeout;
+    let stop = || cancel.is_cancelled() || Instant::now() >= deadline;
+    let output = match remote::exec(dir, &exec, &stop) {
+        Ok(output) => output,
+        Err(_) if cancel.is_cancelled() => return Err(RunError::Cancelled),
+        Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(RunError::Timeout),
+        Err(e) => return Err(RunError::Spawn(e)),
+    };
+    if output.stdout.len() > MAX_OUTPUT || output.stderr.len() > MAX_OUTPUT {
+        return Err(RunError::TooLarge);
+    }
+    Ok(Output {
+        status: exit_status(output.code),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+/// 把远端命令的退出码换成本机的退出状态；被信号结束（没有退出码）时是一个表示失败的状态。
+fn exit_status(code: Option<i32>) -> ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        // 等待状态的低 7 位是结束进程的信号，为 0 时第 8 到 15 位是退出码。
+        ExitStatus::from_raw(code.map_or(libc::SIGKILL, |code| (code & 0xFF) << 8))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        ExitStatus::from_raw(code.map_or(1, i32::cast_unsigned))
+    }
 }
 
 /// 读取管道直到关闭，最多读 [`MAX_OUTPUT`] 字节，返回已读到的内容。

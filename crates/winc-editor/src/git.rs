@@ -460,7 +460,7 @@ fn git_dir(root: &Path) -> Option<PathBuf> {
     }
     let text = winc_backend::fs::read_to_string(&dot).ok()?;
     let target = text.trim().strip_prefix("gitdir:")?.trim();
-    Some(crate::wsl::resolve(root, target))
+    Some(crate::host::resolve(root, target))
 }
 
 /// 仓库共用的 `git` 目录：工作树（`git worktree`）的 `.git` 文件指向它自己的目录，hooks、
@@ -698,7 +698,7 @@ impl Git {
         command.args(["rev-parse", "--git-common-dir"]);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
         // 在主工作树里是相对路径，相对于运行的目录。
-        Ok(crate::wsl::resolve(
+        Ok(crate::host::resolve(
             root,
             String::from_utf8_lossy(&stdout).trim(),
         ))
@@ -809,6 +809,10 @@ impl Git {
         let Some(askpass) = &self.askpass else {
             return;
         };
+        // askpass 程序在本机，远端的 `git` 无法运行它：远端仓库需要输入时直接失败。
+        if winc_backend::is_remote(root) {
+            return;
+        }
         command
             .env("GIT_ASKPASS", &askpass.program)
             .env("SSH_ASKPASS", &askpass.program)
@@ -1227,6 +1231,14 @@ impl Git {
     /// 环境中的 [`REPOSITORY_ENV`] 不传给 `git`：仓库由 `root` 决定，调用方需要时（例如临时暂存区）
     /// 在返回的命令上另行设置。
     pub(super) fn at(&self, root: &Path) -> Command {
+        // 远端主机上的仓库：以仓库为工作目录运行远端的 `git`，按名字在远端的 `PATH` 中查找
+        // （本机 `git` 的路径和本机 shell 的环境在远端没有意义）。命令经 `process::run` 在该
+        // 目录所在的主机上运行。
+        if winc_backend::is_remote(root) {
+            let mut command = Command::new("git");
+            command.current_dir(root);
+            return command;
+        }
         let mut command = match crate::wsl::locate_here(root) {
             None => {
                 let mut command = self.shell.command(&self.program);
@@ -1351,6 +1363,17 @@ impl LogStream {
 /// 各段按原样的字节拼接，不经有损转换：Unix 上文件名可以不是 UTF-8，替换成 U+FFFD 以后指向的
 /// 是另一个（通常不存在的）文件。
 fn slash_path(root: &Path, path: &Path) -> Result<OsString, String> {
+    // 远端主机上的仓库：按远端的原始字节计算，虚拟路径中为本机所做的换算不能传给远端的 `git`。
+    if let (Some(root), Some(path)) = (winc_backend::locate(root), winc_backend::locate(path)) {
+        let relative = path
+            .relative_to(&root)
+            .ok_or_else(|| winc_i18n::t!("git-file-outside-repository"))?;
+        #[cfg(unix)]
+        return Ok(std::os::unix::ffi::OsStringExt::from_vec(relative.to_vec()));
+        // Windows 的字符串无法表示不是有效 UTF-8 的文件名，这样的文件在远端的 `git` 中找不到。
+        #[cfg(not(unix))]
+        return Ok(String::from_utf8_lossy(relative).into_owned().into());
+    }
     let relative = path
         .strip_prefix(root)
         .map_err(|_| winc_i18n::t!("git-file-outside-repository"))?;
