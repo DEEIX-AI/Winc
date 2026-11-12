@@ -107,10 +107,16 @@ fn the_pdf_place_is_restored_with_the_session() {
     );
     assert!(same(place(&next, &path), left), "{left:?}");
 
-    // 现场中记录的页已不存在（文件被替换为较短的文档）时从开头显示。
-    std::fs::write(&path, sample_pdf(2)).unwrap();
+    // 现场中记录的页已不存在（文件被替换为较短的文档）时从开头显示。文件仍被前两个实例打开，
+    // 部分系统不允许此时覆盖它，因此改写现场中记录的页码。
+    let root = app.editor.root().unwrap().to_path_buf();
+    let mut session = app.state.session_for(&root).unwrap().clone();
+    for (_, (page, _)) in &mut session.pdf_places {
+        *page = 999;
+    }
     let mut short = blank_app(false);
     short.state = app.state.clone();
+    short.state.set_session(session);
     short.open_path(&dir);
     short.open_path(&path);
     settle(&mut short);
