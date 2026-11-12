@@ -18,10 +18,23 @@ pub struct DirScan {
 #[derive(Debug)]
 pub struct DirListing {
     root: PathBuf,
-    /// 各目录读到的内容；读不出来（目录已不存在）时为 `None`。
-    dirs: Vec<(PathBuf, Option<Vec<DirEntry>>)>,
+    /// 各目录读取的结果，顺序同 [`DirScan::dirs`]。
+    dirs: Vec<(PathBuf, Read)>,
     /// 已展开、但已经不是目录的路径。
     gone: Vec<PathBuf>,
+}
+
+/// 读取一个目录的结果。
+#[derive(Debug)]
+enum Read {
+    /// 读到的内容。
+    Listed(Vec<DirEntry>),
+    /// 目录已不存在。
+    Absent,
+    /// 当前线程不能等待读取（界面线程上的远端目录）：内容未知，留待后台重读。
+    Blocked,
+    /// 因其他原因读不出来（没有权限、连接中断）：内容未知，已有的缓存保留。
+    Failed,
 }
 
 impl DirScan {
@@ -30,22 +43,30 @@ impl DirScan {
         &self.dirs
     }
 
-    /// 读各目录，并检查已展开的目录还是不是目录（在后台线程上调用）。
+    /// 读各目录，并检查已展开的目录还是不是目录。
+    ///
+    /// 通常在后台线程上调用。在不能等待读取的线程上调用时，读不了的目录不当作已不存在，
+    /// 由 [`Workspace::apply_scan`] 记下，留待后台重读。
     pub fn run(self) -> DirListing {
+        let read = |dir: &Path| match list_dir(dir) {
+            Ok(fresh) => Read::Listed(fresh),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Read::Blocked,
+            Err(error) if winc_backend::fs::is_absent(&error) => Read::Absent,
+            Err(_) => Read::Failed,
+        };
+        // 无法确定的（连接中断、不能等待）不算：只有确实不是目录或已不存在的才收起。
+        let gone = |path: &PathBuf| match winc_backend::fs::metadata(path) {
+            Ok(metadata) => !metadata.kind.is_dir(),
+            Err(error) => winc_backend::fs::is_absent(&error),
+        };
         DirListing {
-            dirs: self
-                .dirs
-                .into_iter()
+            dirs: (self.dirs.into_iter())
                 .map(|dir| {
-                    let fresh = list_dir(&dir).ok();
-                    (dir, fresh)
+                    let outcome = read(&dir);
+                    (dir, outcome)
                 })
                 .collect(),
-            gone: self
-                .expanded
-                .into_iter()
-                .filter(|p| !winc_backend::fs::is_dir(p))
-                .collect(),
+            gone: self.expanded.into_iter().filter(gone).collect(),
             root: self.root,
         }
     }
@@ -87,6 +108,24 @@ impl Workspace {
         }
     }
 
+    /// 返回当前线程未能读取、需要交给后台读取的目录；没有时返回 `None`。
+    ///
+    /// 包括需要显示但尚未读取的目录（见 `cached_children`），以及重读时未能读取的目录（见
+    /// [`DirScan::run`]）。同一个目录在读好之前只返回一次。读好的内容同样交给
+    /// [`Workspace::apply_scan`]，换入后新露出的目录可能仍未读取，调用方应再次调用本函数。
+    pub fn take_missing(&mut self) -> Option<DirScan> {
+        if self.missing.wanted.is_empty() {
+            return None;
+        }
+        let dirs = std::mem::take(&mut self.missing.wanted);
+        self.missing.requested.extend(dirs.iter().cloned());
+        Some(DirScan {
+            root: self.root.clone(),
+            dirs,
+            expanded: self.expanded.iter().cloned().collect(),
+        })
+    }
+
     /// 换上后台读好的目录内容 `listing`；返回文件树是否发生了变化。
     ///
     /// 目录内容确实变化时才重新拍平，这时同时收起已经不是目录的展开项。选中项保持不变。读的是
@@ -96,24 +135,44 @@ impl Workspace {
             return false;
         }
         let mut changed = false;
-        for (dir, fresh) in listing.dirs {
-            let Some(cached) = self.children.get(&dir) else {
+        for (dir, read) in listing.dirs {
+            if matches!(read, Read::Blocked) {
+                self.missing.want(dir);
                 continue;
-            };
-            let Some(fresh) = fresh else {
+            }
+            let awaited = self.missing.requested.remove(&dir);
+            match (self.children.get(&dir), read) {
+                // 此前未能读取的目录：读不出来的按空目录写入缓存，不再重复请求。
+                (None, read) if awaited => {
+                    let fresh = match read {
+                        Read::Listed(fresh) => fresh,
+                        Read::Absent | Read::Blocked | Read::Failed => Vec::new(),
+                    };
+                    self.children.insert(dir.clone(), fresh.into());
+                    // 展开时没能读到它：现在补上对其下连续单子目录的展开。
+                    if self.missing.chains.remove(&dir) && self.expanded.contains(&dir) {
+                        self.expand_chain(dir);
+                    }
+                    changed = true;
+                }
+                // 没有缓存的目录不需要显示；读不出来的保留已有的内容。
+                (None, _) | (Some(_), Read::Failed | Read::Blocked) => {}
                 // 目录已不存在：其上级目录重读时不再包含它，同时丢弃它的缓存。
-                self.children.remove(&dir);
-                changed = true;
-                continue;
-            };
-            let same = cached.len() == fresh.len()
-                && cached
-                    .iter()
-                    .zip(&fresh)
-                    .all(|(a, b)| a.path == b.path && a.kind == b.kind);
-            if !same {
-                self.children.insert(dir, fresh.into());
-                changed = true;
+                (Some(_), Read::Absent) => {
+                    self.children.remove(&dir);
+                    changed = true;
+                }
+                (Some(cached), Read::Listed(fresh)) => {
+                    let same = cached.len() == fresh.len()
+                        && cached
+                            .iter()
+                            .zip(&fresh)
+                            .all(|(a, b)| a.path == b.path && a.kind == b.kind);
+                    if !same {
+                        self.children.insert(dir, fresh.into());
+                        changed = true;
+                    }
+                }
             }
         }
 

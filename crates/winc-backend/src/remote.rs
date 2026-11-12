@@ -718,6 +718,16 @@ pub fn forbid_blocking() {
     BLOCKING_FORBIDDEN.set(true);
 }
 
+/// 在 `work` 期间允许当前线程等待远端的应答，结束后恢复原来的限制。
+///
+/// 用于没有后台线程的环境（测试）中就地执行本应在后台进行的任务。
+pub fn allow_blocking<R>(work: impl FnOnce() -> R) -> R {
+    let forbidden = BLOCKING_FORBIDDEN.replace(false);
+    let result = work();
+    BLOCKING_FORBIDDEN.set(forbidden);
+    result
+}
+
 /// 返回经 `ssh` 连接 `target` 并在远端运行程序 `server` 的命令。
 ///
 /// 目标和 `ssh` 的其余设置取自用户的 `~/.ssh/config`。`-T` 不分配终端，`RemoteCommand=none`

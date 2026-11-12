@@ -231,24 +231,7 @@ impl Document {
         let bom = self.encoding == Encoding::Utf8Bom;
 
         let written = match &self.text {
-            // 非 UTF-8 编码（GBK、UTF-16 等）按原编码写回；遇到该编码无法表示的字符时不写入，
-            // 并在错误信息中指出该字符。
-            Content::Rope(rope) if !matches!(self.encoding, Encoding::Utf8 | Encoding::Utf8Bom) => {
-                let bytes = charset::encode(&rope.to_string(), self.encoding).map_err(|c| {
-                    let (char, encoding) = (c.to_string(), self.encoding.label());
-                    let message = t!(
-                        "editor-encoding-unencodable",
-                        char = char,
-                        encoding = encoding
-                    );
-                    io::Error::other(message)
-                })?;
-                write_atomic(target, false, true, |out| out.write_all(&bytes))?
-            }
-            Content::Rope(rope) => write_atomic(target, bom, true, |out| {
-                rope.chunks()
-                    .try_for_each(|chunk| out.write_all(chunk.as_bytes()))
-            })?,
+            Content::Rope(rope) => write_rope(target, rope, self.encoding)?,
             Content::Large(large) => {
                 // 改动表中的片段引用原文件的字节范围；原文件被其他程序原地修改后，按这些范围
                 // 写出的内容是错误的。
@@ -975,4 +958,27 @@ pub(super) fn write_atomic(
         Err(SaveError::TemporaryFile) => Err(io::Error::other(t!("editor-temp-file-failed"))),
         Err(SaveError::Io(error)) => Err(error),
     }
+}
+
+/// 把 `rope` 按编码 `encoding` 写到 `target`，先写临时文件再改名替换，返回写入后的文件信息。
+///
+/// 非 UTF-8 编码（GBK、UTF-16 等）按原编码写回；遇到该编码无法表示的字符时不写入，并在错误
+/// 信息中指出该字符。
+fn write_rope(target: &Path, rope: &Rope, encoding: Encoding) -> io::Result<Metadata> {
+    if matches!(encoding, Encoding::Utf8 | Encoding::Utf8Bom) {
+        return write_atomic(target, encoding == Encoding::Utf8Bom, true, |out| {
+            rope.chunks()
+                .try_for_each(|chunk| out.write_all(chunk.as_bytes()))
+        });
+    }
+    let bytes = charset::encode(&rope.to_string(), encoding).map_err(|c| {
+        let (char, encoding) = (c.to_string(), encoding.label());
+        let message = t!(
+            "editor-encoding-unencodable",
+            char = char,
+            encoding = encoding
+        );
+        io::Error::other(message)
+    })?;
+    write_atomic(target, false, true, |out| out.write_all(&bytes))
 }

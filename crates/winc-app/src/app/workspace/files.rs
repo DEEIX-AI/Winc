@@ -643,11 +643,18 @@ impl App {
             return false;
         };
         doc.tidy_for_save(to.as_deref(), quiet);
-        if background && to.is_none() {
+        // 远端主机上的文档总是由后台线程写出：界面线程不发出远端的请求。必须等写完的保存在此
+        // 等待后台完成。
+        let remote = doc.path.as_deref().is_some_and(winc_backend::is_remote);
+        if (background || remote) && to.is_none() {
             match doc.begin_save() {
                 Ok(Some(job)) => {
                     self.save_in_background(id, job, quiet);
-                    return true;
+                    if background {
+                        return true;
+                    }
+                    self.wait_for_save(id);
+                    return (self.editor.document(id)).is_some_and(|doc| !doc.is_dirty());
                 }
                 Ok(None) => {}
                 Err(e) => {

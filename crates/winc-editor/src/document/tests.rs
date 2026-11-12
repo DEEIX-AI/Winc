@@ -1148,10 +1148,42 @@ fn a_document_on_a_remote_host_opens_saves_and_notices_changes() {
     assert_eq!(doc.sync_with_disk().unwrap(), DiskChange::Reloaded);
     assert_eq!(doc.text.rope().unwrap().to_string(), "print('agent')\n");
 
+    // 后台保存：远端的文档总能发起，写出前确认远端的文件没有被其他程序修改。
+    doc.apply(winc_core::edit::replace_selection(
+        doc.text.rope().unwrap(),
+        Selection::point(0),
+        "# bg\n",
+        winc_core::EditKind::Other,
+    ));
+    let job = doc.begin_save().unwrap().unwrap();
+    doc.finish_save(job.run()).unwrap();
+    assert!(!doc.is_dirty() && !doc.in_conflict());
+    assert_eq!(
+        fs::read_to_string(&local).unwrap(),
+        "# bg\nprint('agent')\n"
+    );
+    doc.apply(winc_core::edit::replace_selection(
+        doc.text.rope().unwrap(),
+        Selection::point(0),
+        "# mine\n",
+        winc_core::EditKind::Other,
+    ));
+    fs::write(&local, "theirs, and longer than before\n").unwrap();
+    let job = doc.begin_save().unwrap().unwrap();
+    assert!(doc.finish_save(job.run()).is_err());
+    assert!(doc.is_dirty() && doc.in_conflict());
+    assert_eq!(
+        fs::read_to_string(&local).unwrap(),
+        "theirs, and longer than before\n"
+    );
+
     // 连接断开：文件不算被删除，保存报错，文档的内容保留。
     winc_backend::remote::disconnect(&target);
     assert!(!doc.deleted_on_disk());
     assert!(doc.save().is_err());
-    assert_eq!(doc.text.rope().unwrap().to_string(), "print('agent')\n");
+    assert_eq!(
+        doc.text.rope().unwrap().to_string(),
+        "# mine\n# bg\nprint('agent')\n"
+    );
     fs::remove_dir_all(&dir).unwrap();
 }

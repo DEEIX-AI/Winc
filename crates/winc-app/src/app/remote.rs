@@ -196,15 +196,14 @@ impl App {
         }
     }
 
-    /// 最近列表中的目录 `folder` 在尚未连接的主机上时，连接后打开并返回真；本机的目录和已连接
-    /// 主机上的目录返回假，由调用方按通常的方式打开。
+    /// 最近列表中的目录 `folder` 在远端主机上时，在后台连接（已有连接时沿用）并打开，返回真；
+    /// 本机的目录返回假，由调用方按通常的方式打开。
+    ///
+    /// 远端的目录是否存在要向远端查询，不能在界面线程上判断。
     pub(in crate::app) fn reopen_remote(&mut self, folder: &Path) -> bool {
         let Some(location) = winc_backend::locate(folder) else {
             return false;
         };
-        if remote::is_connected(&location.target) {
-            return false;
-        }
         if self.remote_enabled() {
             let path = String::from_utf8_lossy(&location.path).into_owned();
             self.remote_open(location.target, path);

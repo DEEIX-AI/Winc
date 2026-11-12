@@ -27,7 +27,15 @@ fn loopback(name: &str) -> winc_backend::Target {
 fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     let dir = sample_folder("remote-open").canonicalize().unwrap();
     std::os::unix::fs::symlink(&dir, dir.with_extension("link")).unwrap();
+    let repository = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&dir)
+        .status()
+        .is_ok_and(|status| status.success());
     let mut app = blank_app(false);
+    app.config.git_enabled = Some(true);
+    // 测试线程相当于界面线程：不允许等待远端的应答，后台任务就地执行时除外。
+    remote::forbid_blocking();
 
     // 模块默认关闭：命令不可用，按下也不打开输入条。
     assert!(!app.action_available(Action::RemoteConnect));
@@ -56,6 +64,12 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert!(names.iter().any(|name| name == "src"), "{names:?}");
     assert!(names.iter().any(|name| name == "a.txt"), "{names:?}");
 
+    // 仓库由后台查找，状态经连接上的 `git` 读取：尚未提交的文件都是未跟踪的。
+    if repository {
+        assert_eq!(app.git.root.as_deref(), Some(root.as_path()));
+        assert!(app.git.status.is_some(), "没有读到仓库的状态");
+    }
+
     // 其中的文件经连接读取。
     app.open_path(&root.join("src/main.rs"));
     let doc = app.editor.active().unwrap();
@@ -65,15 +79,41 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     );
     assert!(doc.text().rope().unwrap().to_string().contains("println!"));
 
+    // 展开子目录：内容由后台读取后换入。
+    let src = row_of(&app, "src");
+    app.set_dir_expanded(src, Some(true));
+    assert_eq!(row_of(&app, "main.rs"), src + 1);
+
+    // 编辑后保存：内容经连接写到远端。
+    let doc = app.editor.active_mut().unwrap();
+    doc.apply(winc_core::edit::replace_selection(
+        doc.text().rope().unwrap(),
+        winc_core::Selection::point(0),
+        "// remote\n",
+        winc_core::EditKind::Other,
+    ));
+    assert!(app.run_action(Action::Save));
+    let saved = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
+    assert!(saved.starts_with("// remote\n"), "{saved}");
+    assert!(!app.editor.active().unwrap().is_dirty());
+
+    // 其他程序在远端新建了文件，窗口重新获得焦点：文件树重读后出现，已展开的目录保持展开。
+    std::fs::write(dir.join("src/new.rs"), "").unwrap();
+    app.check_disk();
+    assert_eq!(row_of(&app, "new.rs"), src + 2);
+    assert_eq!(row_of(&app, "main.rs"), src + 1);
+
     // 目录不存在：说明原因，已打开的目录不变。
     app.remote_connect("app-remote-open:/winc/no/such/folder");
     let notice = app.notice.text.take().unwrap();
     assert!(notice.starts_with("无法连接 app-remote-open："), "{notice}");
     assert_eq!(app.editor.root(), Some(root.as_path()));
 
-    // 最近列表中已连接主机上的目录按通常的方式打开。
+    // 最近列表中远端的目录经同一流程打开，不在界面线程上判断它是否存在；本机的目录不经此处。
     assert!(app.state.recent.contains(&root));
-    assert!(!app.reopen_remote(&root));
+    assert!(app.reopen_remote(&root));
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+    assert_eq!(app.editor.root(), Some(root.as_path()));
     assert!(!app.reopen_remote(&dir));
 
     // 关闭模块：连接断开。此后最近列表中的该目录不会被当作已删除的目录移除，而是提示原因。

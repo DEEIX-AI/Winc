@@ -68,6 +68,8 @@ pub fn run() {
     }
     shell_command::enter_real_path();
     crash::install();
+    // 本线程是界面线程：不等待远端主机的应答，访问远端文件的操作都在后台线程上进行。
+    winc_backend::remote::forbid_blocking();
     #[cfg(windows)]
     windows::attach_console();
     // `--help` 和无法识别的选项不需要窗口，先处理参数；用法与错误信息按系统语言输出。

@@ -251,8 +251,24 @@ impl App {
         if changed {
             self.tree.motion = None;
             self.clamp_tree_scroll();
+            // 换入的目录中可能又露出尚未读取的目录，随重绘的请求一并读取。
             self.request_redraw();
         }
+    }
+
+    /// 在后台读取文件树中需要显示但尚未读取的目录（界面线程不等待远端的目录），读好后由
+    /// [`App::poll_tree_scans`] 换入。
+    pub(in crate::app) fn fetch_tree(&mut self) {
+        let Some(scan) = (self.editor.workspace.as_mut()).and_then(|ws| ws.take_missing()) else {
+            return;
+        };
+        let tickets = (scan.dirs().iter())
+            .map(|dir| self.tree.scans.tickets.issue(dir.clone()))
+            .collect();
+        let sender = self.tree.scans.results.0.clone();
+        self.spawn_then(UserEvent::TreeScanned, move || {
+            let _ = sender.send((tickets, scan.run()));
+        });
     }
 
     /// 收取后台检查、重读的结果（见 [`Rereads`]）。

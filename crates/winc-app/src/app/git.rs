@@ -476,7 +476,14 @@ impl App {
         self.git.scan_running = Some(cancel.clone());
         let slot = Arc::clone(&self.git.scanned);
         self.spawn_blocking_then(UserEvent::GitStatus, move || {
-            let found = git::scan_repositories(&dir, depth, &cancel);
+            // 本机的目录已在界面线程上查过它所在的仓库和第一层子目录（`git_discover`）；远端的
+            // 目录在这里一并查找。
+            let mut found = if winc_backend::is_remote(&dir) {
+                git::find_repositories(&dir)
+            } else {
+                Vec::new()
+            };
+            found.extend(git::scan_repositories(&dir, depth, &cancel));
             if !cancel.is_cancelled() {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((dir, found));
             }
@@ -523,6 +530,11 @@ impl App {
             self.git.repositories.clear();
             return;
         };
+        // 远端的目录不在界面线程上查找：仓库由后台的查找加入（`git_scan_repositories`），
+        // 已有的列表保留。
+        if winc_backend::is_remote(dir) {
+            return;
+        }
         let mut found = git::find_repositories(dir);
         let kept =
             self.git.repositories.iter().filter(|repo| {

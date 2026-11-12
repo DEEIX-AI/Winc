@@ -102,6 +102,8 @@ pub struct DirEntry {
     pub name: String,
     /// 这一项的类别：目录或文件。
     pub kind: EntryKind,
+    /// 是否为符号链接；类别按它指向的对象给出。
+    pub symlink: bool,
 }
 
 /// 一个打开的工作区：目录树、展开状态和目录缓存。
@@ -131,8 +133,28 @@ pub struct Workspace {
     expanded: HashSet<PathBuf>,
     /// 读过的目录内容，已排序。
     children: HashMap<PathBuf, Rc<[DirEntry]>>,
+    /// 需要显示、但当前线程不能等待读取的目录（见 [`Workspace::take_missing`]）。
+    missing: Missing,
     /// 按展开状态拍平后的可见行。
     rows: Vec<Entry>,
+}
+
+/// 尚未读取的目录：拍平时遇到的记入 `wanted`，交给后台读取后移入 `requested`，读好后移除。
+#[derive(Default)]
+struct Missing {
+    wanted: Vec<PathBuf>,
+    requested: HashSet<PathBuf>,
+    /// 展开时未能读取的目录：读好后继续展开它下面连续的单子目录（见 `expand_chain`）。
+    chains: HashSet<PathBuf>,
+}
+
+impl Missing {
+    /// 记下要交给后台读取的目录 `dir`；已记下或已交出的不重复。
+    fn want(&mut self, dir: PathBuf) {
+        if !self.requested.contains(&dir) && !self.wanted.contains(&dir) {
+            self.wanted.push(dir);
+        }
+    }
 }
 
 /// 递归展开最多展开的目录数（个，经验值）：再多的行也无法浏览，读取也会明显卡住界面。
@@ -228,6 +250,7 @@ impl Workspace {
             compact: true,
             expanded: HashSet::from([root]),
             children: HashMap::new(),
+            missing: Missing::default(),
             rows: Vec::new(),
         };
         workspace.rebuild();
@@ -346,7 +369,10 @@ impl Workspace {
     /// 展开目录 `path`；合并显示时，连同它下面连续的单子目录一起展开，一次就能看到最下一级的内容。
     fn expand_chain(&mut self, mut path: PathBuf) {
         while self.compact {
-            let children = cached_children(&mut self.children, &path);
+            let children = cached_children(&mut self.children, &mut self.missing, &path);
+            if !self.children.contains_key(&path) {
+                self.missing.chains.insert(path.clone());
+            }
             let Some(only) = sole_folder(&children) else {
                 break;
             };
@@ -773,6 +799,7 @@ impl Workspace {
         let mut rows = Vec::with_capacity(self.rows.len());
         flatten(
             &mut self.children,
+            &mut self.missing,
             &self.expanded,
             self.compact,
             &self.root,
@@ -799,11 +826,25 @@ impl Workspace {
 }
 
 /// 返回目录 `dir` 的内容；未缓存时先读取并写入 `cache`，无法读取的目录按空目录处理。
-fn cached_children(cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>, dir: &Path) -> Rc<[DirEntry]> {
+///
+/// 当前线程不能等待读取时（界面线程上的远端目录）不写入缓存，把目录记入 `missing`，这次按空
+/// 目录处理，读好后由 [`Workspace::apply_scan`] 换入。
+fn cached_children(
+    cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>,
+    missing: &mut Missing,
+    dir: &Path,
+) -> Rc<[DirEntry]> {
     if let Some(children) = cache.get(dir) {
         return Rc::clone(children);
     }
-    let children: Rc<[DirEntry]> = list_dir(dir).unwrap_or_default().into();
+    let children: Rc<[DirEntry]> = match list_dir(dir) {
+        Ok(children) => children.into(),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            missing.want(dir.to_path_buf());
+            return Rc::from([]);
+        }
+        Err(_) => Rc::from([]),
+    };
     cache.insert(dir.to_path_buf(), Rc::clone(&children));
     children
 }
@@ -813,9 +854,7 @@ fn cached_children(cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>, dir: &Path) -> 
 /// 指向目录的符号链接不合并，避免链接成环时无限展开。
 fn sole_folder(children: &[DirEntry]) -> Option<&DirEntry> {
     match children {
-        [only] if only.kind == EntryKind::Dir && !winc_backend::fs::is_symlink(&only.path) => {
-            Some(only)
-        }
+        [only] if only.kind == EntryKind::Dir && !only.symlink => Some(only),
         _ => None,
     }
 }
@@ -826,6 +865,7 @@ fn sole_folder(children: &[DirEntry]) -> Option<&DirEntry> {
 /// 因此不会访问磁盘去判断能否合并。
 fn flatten(
     cache: &mut HashMap<PathBuf, Rc<[DirEntry]>>,
+    missing: &mut Missing,
     expanded: &HashSet<PathBuf>,
     compact: bool,
     dir: &Path,
@@ -833,7 +873,7 @@ fn flatten(
     rows: &mut Vec<Entry>,
 ) {
     let depth = parent.map_or(0, |p| rows[p].depth + 1);
-    let children = cached_children(cache, dir);
+    let children = cached_children(cache, missing, dir);
 
     for index in 0..children.len() {
         let (mut siblings, mut at) = (Rc::clone(&children), index);
@@ -842,7 +882,7 @@ fn flatten(
             && siblings[at].kind == EntryKind::Dir
             && expanded.contains(&siblings[at].path)
         {
-            let inner = cached_children(cache, &siblings[at].path);
+            let inner = cached_children(cache, missing, &siblings[at].path);
             if sole_folder(&inner).is_none() {
                 break;
             }
@@ -868,7 +908,7 @@ fn flatten(
         });
 
         if open {
-            flatten(cache, expanded, compact, &tail, Some(row), rows);
+            flatten(cache, missing, expanded, compact, &tail, Some(row), rows);
             rows[row].end = rows.len();
         }
     }
@@ -1000,7 +1040,8 @@ pub fn list_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
 
             let path = entry.path();
             // 只有符号链接需要再调用一次 `stat`，判断它指向的是否为目录。
-            let is_dir = if entry.kind.is_symlink() {
+            let symlink = entry.kind.is_symlink();
+            let is_dir = if symlink {
                 winc_backend::fs::is_dir(&path)
             } else {
                 entry.kind.is_dir()
@@ -1010,7 +1051,12 @@ pub fn list_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
             } else {
                 EntryKind::File
             };
-            Some(DirEntry { path, name, kind })
+            Some(DirEntry {
+                path,
+                name,
+                kind,
+                symlink,
+            })
         })
         .collect();
 

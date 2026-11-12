@@ -1065,8 +1065,11 @@ pub struct App {
 
 impl App {
     /// 请求在下一帧重绘本窗口。
+    ///
+    /// 文件树的可见行变化后都会请求重绘：其中尚未读取的目录在此交给后台（[`App::fetch_tree`]）。
     pub(crate) fn request_redraw(&mut self) {
         self.dirty = true;
+        self.fetch_tree();
     }
 
     /// 在后台线程上执行 `job`，完成后发送事件 `done` 唤醒界面线程处理结果（[`App::finished`]）。
@@ -1079,7 +1082,7 @@ impl App {
                 let _ = proxy.send_event(done);
             }),
             None => {
-                job();
+                winc_backend::remote::allow_blocking(job);
                 self.finished(done);
             }
         }
@@ -1098,7 +1101,7 @@ impl App {
                 let _ = proxy.send_event(done);
             }),
             None => {
-                job();
+                winc_backend::remote::allow_blocking(job);
                 self.finished(done);
             }
         }
