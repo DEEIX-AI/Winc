@@ -121,6 +121,7 @@ impl App {
             module_fx: Default::default(),
             text_content_w: 0.0,
             fold_motion: None,
+            diff_fold: None,
             scroll_glide: None,
             wheel: Default::default(),
             preview_tab: None,

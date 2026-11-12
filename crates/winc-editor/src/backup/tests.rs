@@ -134,6 +134,9 @@ fn waiting_for_the_lock_is_only_for_descriptors_inherited_by_child_processes() {
     assert!(backups.lock_within(wait).is_none());
     assert!(started.elapsed() < soon);
 
+    // 只有 Unix 上子进程会继承建议锁；其他平台到此为止。
+    #[cfg(not(unix))]
+    drop(first);
     #[cfg(unix)]
     {
         // 本进程放开锁以后，复制出的描述符仍然占用，与子进程继承的描述符相同：等到它关闭。

@@ -2203,3 +2203,131 @@ fn a_diff_tab_is_located_in_the_file_tree_by_its_worktree_file() {
     assert_eq!(located(&app).as_deref(), Some("main.rs"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// 差异标签中折叠命令作用于未改动的长段：全部展开、全部折叠，展开的段可以用行号栏中的收起标记
+/// 单独折叠回去。
+#[test]
+fn fold_commands_and_the_gutter_mark_refold_unchanged_runs_in_a_diff() {
+    let dir = search_folder("git-diff-refold");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.run(winc_editor::Command::Insert("// 新的一行\n".into()));
+    assert!(app.run_action(Action::GitShowChanges));
+    let folds = |app: &App| {
+        let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+        let folded = view.rows[RIGHT]
+            .iter()
+            .filter(|r| matches!(r, SideRow::Fold { .. }));
+        (folded.count(), view.open_folds.len())
+    };
+    let (folded, open) = folds(&app);
+    assert!(folded > 0 && open == 0);
+
+    // 全部展开：没有折叠行，每一段都带收起标记。
+    assert!(app.run_action(Action::UnfoldAll));
+    assert_eq!(folds(&app), (0, folded));
+
+    // 点击一个收起标记：只有该段折叠回去。
+    paint(&mut app);
+    let mark = app.hits.diff.iter().find_map(|(rect, target)| {
+        matches!(target, DiffTarget::Refold(_)).then_some((*rect, *target))
+    });
+    let (rect, target) = mark.expect("展开的段有收起标记");
+    assert!(rect.w > 0.0 && rect.h > 0.0);
+    app.press_diff(target);
+    assert_eq!(folds(&app), (1, folded - 1));
+
+    // 全部折叠：回到打开时的状态。
+    assert!(app.run_action(Action::FoldAll));
+    assert_eq!(folds(&app), (folded, 0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 未改动内容展开、折叠的过渡：过渡期间差异保持展开的排版，折叠在过渡结束时写入；其间修改折叠
+/// 状态或点击时先结束过渡。
+#[test]
+fn folding_an_unchanged_run_in_a_diff_is_applied_when_its_transition_ends() {
+    use crate::app::animation::{Clock, FOLD_ANIMATION};
+
+    let dir = search_folder("git-diff-fold-motion");
+    if !long_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    app.run(winc_editor::Command::Insert("// 新的一行\n".into()));
+    assert!(app.run_action(Action::GitShowChanges));
+    let open = |app: &App, gap| {
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .is_open(gap)
+    };
+    // 取编辑区顶部之下的第一段折叠。
+    let gap = {
+        let doc = app.editor.active().unwrap();
+        let view = doc.diff.as_deref().unwrap();
+        let top = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
+        let below = view.rows[RIGHT].iter().skip(top + 1);
+        let folds = below.filter_map(|row| match row {
+            SideRow::Fold { gap, .. } => Some(*gap),
+            SideRow::Line { .. } => None,
+        });
+        folds.into_iter().next().expect("顶部之下有折叠的段")
+    };
+    let (half, done) = (
+        Clock::stopped(FOLD_ANIMATION, FOLD_ANIMATION / 2),
+        Clock::stopped(FOLD_ANIMATION, FOLD_ANIMATION),
+    );
+
+    // 测试中没有窗口的时钟：展开立即生效，不留下过渡。
+    app.press_diff(DiffTarget::Fold(gap));
+    assert!(open(&app, gap) && app.diff_fold.is_none());
+
+    // 展开的过渡：差异已是展开状态，过渡期间可以正常绘制，结束后仍然展开。
+    assert!(app.begin_diff_fold(gap, true, half));
+    paint(&mut app);
+    assert!(app.diff_fold.is_some());
+    assert!(app.begin_diff_fold(gap, true, done));
+    app.settle_animations();
+    assert!(app.diff_fold.is_none() && open(&app, gap));
+
+    // 折叠的过渡：进行中仍为展开状态，时钟走完后才折叠。
+    assert!(app.begin_diff_fold(gap, false, half));
+    paint(&mut app);
+    app.settle_animations();
+    assert!(app.diff_fold.is_some() && open(&app, gap));
+    assert!(app.begin_diff_fold(gap, false, done));
+    app.settle_animations();
+    assert!(app.diff_fold.is_none() && !open(&app, gap));
+    // 已折叠的段不能开始过渡。
+    assert!(!app.begin_diff_fold(gap, false, half));
+
+    // 过渡期间执行其他折叠命令：先写入进行中的折叠，再执行该命令。
+    app.press_diff(DiffTarget::Fold(gap));
+    assert!(app.begin_diff_fold(gap, false, half));
+    assert!(app.run_action(Action::UnfoldAll));
+    assert!(app.diff_fold.is_none() && open(&app, gap));
+
+    // 过渡期间点击：先结束过渡。
+    assert!(app.begin_diff_fold(gap, false, half));
+    let (x, y) = (
+        app.layout.editor.right() - 40.0,
+        app.layout.editor.bottom() - 10.0,
+    );
+    app.click_diff(x, y);
+    assert!(app.diff_fold.is_none() && !open(&app, gap));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
