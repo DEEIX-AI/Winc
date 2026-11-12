@@ -436,19 +436,25 @@ impl Operation {
 
     /// 从仓库目录 `git_dir` 里的标记文件看出正在进行的操作。
     fn detect(git_dir: &Path) -> Option<Operation> {
-        if winc_backend::fs::is_dir(git_dir.join("rebase-merge"))
-            || winc_backend::fs::is_dir(git_dir.join("rebase-apply"))
-        {
-            Some(Operation::Rebase)
-        } else if winc_backend::fs::is_file(git_dir.join("MERGE_HEAD")) {
-            Some(Operation::Merge)
-        } else if winc_backend::fs::is_file(git_dir.join("CHERRY_PICK_HEAD")) {
-            Some(Operation::CherryPick)
-        } else if winc_backend::fs::is_file(git_dir.join("REVERT_HEAD")) {
-            Some(Operation::Revert)
-        } else {
-            None
-        }
+        // 各标记的文件信息一次取回：远端的仓库只需一次往返。先列出的优先。
+        let markers = [
+            ("rebase-merge", true, Operation::Rebase),
+            ("rebase-apply", true, Operation::Rebase),
+            ("MERGE_HEAD", false, Operation::Merge),
+            ("CHERRY_PICK_HEAD", false, Operation::CherryPick),
+            ("REVERT_HEAD", false, Operation::Revert),
+        ];
+        let paths = markers.map(|(name, _, _)| git_dir.join(name));
+        let found = winc_backend::fs::metadata_many(&paths);
+        (markers.into_iter().zip(found)).find_map(|((_, dir, operation), metadata)| {
+            let metadata = metadata.ok()?;
+            let present = if dir {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            };
+            present.then_some(operation)
+        })
     }
 }
 
@@ -1446,10 +1452,16 @@ const SCAN_ENTRIES: usize = 4096;
 pub fn find_root(dir: &Path) -> Option<PathBuf> {
     // 远端的目录只在那台主机的根目录以内向上查找：再往上就是本机的文件系统。
     let remote = winc_backend::is_remote(dir);
-    dir.ancestors()
+    let ancestors: Vec<&Path> = dir
+        .ancestors()
         .take_while(|d| !remote || winc_backend::is_remote(d))
-        .find(|d| winc_backend::fs::exists(d.join(".git")))
-        .map(Path::to_path_buf)
+        .collect();
+    // 各级的 `.git` 一次查完：远端的目录只需一次往返。
+    let markers: Vec<PathBuf> = ancestors.iter().map(|d| d.join(".git")).collect();
+    let found = winc_backend::fs::metadata_many(&markers);
+    (ancestors.into_iter().zip(found))
+        .find(|(_, metadata)| metadata.is_ok())
+        .map(|(dir, _)| dir.to_path_buf())
 }
 
 /// 返回打开目录 `dir` 时可用的仓库：`dir` 所在的仓库（如果有，排在最前面），之后是第一层子目录里的
@@ -1457,13 +1469,20 @@ pub fn find_root(dir: &Path) -> Option<PathBuf> {
 ///
 /// 只查文件系统，不运行 `git`。目录项很多时只看前一部分（`SCAN_ENTRIES`）。
 pub fn find_repositories(dir: &Path) -> Vec<PathBuf> {
-    let mut children: Vec<PathBuf> = winc_backend::fs::read_dir(dir)
+    // 只有目录（和可能指向目录的符号链接）才可能是仓库；各项的 `.git` 一次查完。
+    let candidates: Vec<PathBuf> = winc_backend::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .take(SCAN_ENTRIES)
+        .filter(|entry| entry.kind.is_dir() || entry.kind.is_symlink())
         .map(|entry| entry.path())
-        .filter(|path| winc_backend::fs::exists(path.join(".git")))
+        .collect();
+    let markers: Vec<PathBuf> = candidates.iter().map(|path| path.join(".git")).collect();
+    let found = winc_backend::fs::metadata_many(&markers);
+    let mut children: Vec<PathBuf> = (candidates.into_iter().zip(found))
+        .filter(|(_, metadata)| metadata.is_ok())
+        .map(|(path, _)| path)
         .collect();
     children.sort_by_cached_key(|path| {
         path.file_name()
@@ -1490,15 +1509,20 @@ pub fn scan_repositories(dir: &Path, depth: usize, cancel: &Cancel) -> Vec<PathB
             let Ok(entries) = winc_backend::fs::read_dir(parent) else {
                 continue;
             };
+            let mut candidates = Vec::new();
             for entry in entries.flatten().take(budget) {
                 budget -= 1;
                 let name = entry.name.to_string_lossy();
                 let skipped = name.starts_with('.') || SCAN_SKIPPED.contains(&name.as_ref());
-                if skipped || !entry.kind.is_dir() {
-                    continue;
+                if !skipped && entry.kind.is_dir() {
+                    candidates.push(entry.path());
                 }
-                let path = entry.path();
-                if winc_backend::fs::exists(path.join(".git")) {
+            }
+            // 这一个目录下各项的 `.git` 一次查完。
+            let markers: Vec<PathBuf> = candidates.iter().map(|path| path.join(".git")).collect();
+            let repositories = winc_backend::fs::metadata_many(&markers);
+            for (path, repository) in candidates.into_iter().zip(repositories) {
+                if repository.is_ok() {
                     found.push(path);
                 } else {
                     next.push(path);

@@ -20,7 +20,7 @@ use std::ffi::OsString;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 pub use deploy::{Abort, ConnectError, Deploy, Program};
 #[cfg(unix)]
 pub use server::serve;
+pub(crate) use wire::MAX_READ;
 use wire::{Frame, Reader, Writer, kind};
 
 use crate::Target;
@@ -57,6 +58,8 @@ struct Link {
     child: Mutex<Option<Child>>,
     /// 本程序是否已开始断开（见 [`Connection::shutdown`]）：此后连接的结束不算意外中断。
     shutting: AtomicBool,
+    /// 已发出的请求数（见 [`requests`]）。
+    sent: AtomicU64,
     /// 连接意外中断时调用一次的函数（见 [`Connection::on_close`]）。
     on_close: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
@@ -86,6 +89,7 @@ impl Link {
             waiting.replies.insert(id, sender);
             id
         };
+        self.sent.fetch_add(1, Ordering::Relaxed);
         // 放不进一帧的载荷：前面的部分先作为若干 `PART` 发出，对端接在一起。各段之间可以
         // 穿插其他请求的帧。
         let mut rest = payload;
@@ -187,6 +191,9 @@ impl Link {
     }
 }
 
+/// 读到的一段数据，以及是否已到文件末尾。
+pub(crate) type Chunk = (Vec<u8>, bool);
+
 /// 把最后一帧换成结果：成功时是载荷，失败时是对端报告的错误。
 fn finish(frame: Frame) -> io::Result<Vec<u8>> {
     match frame.kind {
@@ -242,6 +249,7 @@ impl Connection {
             waiting: Mutex::default(),
             child: Mutex::new(child),
             shutting: AtomicBool::new(false),
+            sent: AtomicU64::new(0),
             on_close: Mutex::default(),
         });
         let reader = {
@@ -283,6 +291,82 @@ impl Connection {
             Ok(frame) => finish(frame),
             Err(_) => Err(io::ErrorKind::BrokenPipe.into()),
         }
+    }
+
+    /// 在一次往返中发出若干个请求（类型和载荷），按顺序返回各自的应答或错误。
+    ///
+    /// 只用于在对端直接应答的请求（见 [`kind::BATCH`]）。各应答合计不能超过一帧：调用方保证
+    /// 这一点，超出的部分以错误返回。
+    fn batch(&self, requests: &[(u8, Vec<u8>)]) -> io::Result<Vec<io::Result<Vec<u8>>>> {
+        let count = u32::try_from(requests.len()).map_err(|_| wire::invalid("too many"))?;
+        let mut payload = Writer::default().u32(count);
+        for (kind, body) in requests {
+            payload = payload.u8(*kind).bytes(body);
+        }
+        let reply = self.request(kind::BATCH, &payload.finish())?;
+        let mut reply = Reader::new(&reply);
+        let mut results = Vec::with_capacity(requests.len());
+        for _ in requests {
+            let ok = reply.u8()? != 0;
+            let body = reply.bytes()?;
+            results.push(if ok {
+                Ok(body.to_vec())
+            } else {
+                Err(wire::decode_error(body))
+            });
+        }
+        reply.finish()?;
+        Ok(results)
+    }
+
+    /// 取若干远端路径的文件信息（跟随符号链接），一次往返，结果与 `paths` 的顺序对应。
+    pub(crate) fn metadata_many(&self, paths: &[&[u8]]) -> io::Result<Vec<io::Result<Metadata>>> {
+        let requests: Vec<(u8, Vec<u8>)> = (paths.iter())
+            .map(|path| (kind::METADATA, Writer::default().bytes(path).finish()))
+            .collect();
+        let decode = |reply: Vec<u8>| {
+            let mut reply = Reader::new(&reply);
+            let metadata = wire::read_metadata(&mut reply)?;
+            reply.finish()?;
+            Ok(metadata)
+        };
+        let replies = self.batch(&requests)?;
+        Ok((replies.into_iter())
+            .map(|reply| reply.and_then(decode))
+            .collect())
+    }
+
+    /// 取远端文件 `path` 的文件信息，并读出其开头至多 `len` 字节，一次往返；返回文件信息、
+    /// 数据和是否已到文件末尾。`path` 是目录等不能读取的对象时数据是相应的错误。
+    pub(crate) fn open(&self, path: &[u8], len: u32) -> io::Result<(Metadata, io::Result<Chunk>)> {
+        let read = Writer::default().bytes(path).u64(0).u32(len).finish();
+        let requests = [
+            (kind::METADATA, Writer::default().bytes(path).finish()),
+            (kind::READ, read),
+        ];
+        let mut replies = self.batch(&requests)?.into_iter();
+        let (Some(metadata), Some(data)) = (replies.next(), replies.next()) else {
+            return Err(wire::invalid("short batch reply"));
+        };
+        let mut reply_metadata = metadata?;
+        let metadata = {
+            let mut reply = Reader::new(&reply_metadata);
+            let metadata = wire::read_metadata(&mut reply)?;
+            reply.finish()?;
+            reply_metadata.clear();
+            metadata
+        };
+        let data = data.and_then(|reply| {
+            let mut reply = Reader::new(&reply);
+            let data = reply.bytes()?.to_vec();
+            let end = reply.u8()? != 0;
+            reply.finish()?;
+            if data.len() > len as usize {
+                return Err(wire::invalid("read returned more than requested"));
+            }
+            Ok((data, end))
+        });
+        Ok((metadata, data))
     }
 
     /// 取远端路径 `path` 的文件信息；`follow` 为真时跟随符号链接。
@@ -665,6 +749,11 @@ impl Exec {
         }
     }
 
+    /// 创建再次运行服务进程自身的命令，功能由随后的参数决定（例如 `watch <目录>`）。
+    pub fn this_server() -> Self {
+        Self::new(wire::SELF)
+    }
+
     /// 追加一个参数。
     #[must_use]
     pub fn arg(mut self, arg: impl AsRef<[u8]>) -> Self {
@@ -779,10 +868,26 @@ impl Running {
         &self.stderr
     }
 
+    /// 返回可以在其他线程上结束这条命令的句柄：读取的线程正等待输出时，由它来结束。
+    pub fn stopper(&self) -> Stopper {
+        Stopper {
+            connection: Arc::clone(&self.connection),
+            id: self.id,
+        }
+    }
+
     /// 收下一帧：输出累积起来，最后一帧记下退出码。
     fn accept(&mut self, frame: Frame) -> io::Result<()> {
         if frame.kind != kind::CHUNK {
-            let reply = finish(frame)?;
+            let reply = match finish(frame) {
+                Ok(reply) => reply,
+                // 命令被结束（见 `Stopper`）：没有退出码，输出到此为止，不是读取的错误。
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                    self.code = Some(None);
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             let mut reply = Reader::new(&reply);
             let has_code = reply.u8()? != 0;
             let code = reply.u32()?.cast_signed();
@@ -804,6 +909,20 @@ impl Running {
             _ => return Err(wire::invalid("unknown output stream")),
         }
         Ok(())
+    }
+}
+
+/// 结束一条由 [`spawn`] 启动的命令，见 [`Running::stopper`]。
+pub struct Stopper {
+    connection: Arc<Connection>,
+    id: u32,
+}
+
+impl Stopper {
+    /// 通知对端强制结束命令（连同它启动的子进程）；命令已经结束或连接已断开时没有效果。
+    /// 读取的一方随后读到输出结束。
+    pub fn stop(&self) {
+        let _ = self.connection.link.write(kind::CANCEL, self.id, &[]);
     }
 }
 
@@ -923,6 +1042,16 @@ pub fn is_connected(target: &Target) -> bool {
     (connections.as_ref())
         .and_then(|all| all.get(target))
         .is_some_and(|connection| !connection.link.closed())
+}
+
+/// 返回到 `target` 的连接至今发出的请求数；没有连接时为 0。
+///
+/// 每个请求要等一次网络往返，往返次数决定了延迟较高的连接上各项操作的快慢；用于测量和测试。
+pub fn requests(target: &Target) -> u64 {
+    let connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
+    (connections.as_ref())
+        .and_then(|all| all.get(target))
+        .map_or(0, |connection| connection.link.sent.load(Ordering::Relaxed))
 }
 
 /// 返回有可用连接的各个目标，按名字排序。

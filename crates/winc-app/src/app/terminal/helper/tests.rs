@@ -104,6 +104,36 @@ fn launched(
 }
 
 #[test]
+fn a_folder_on_a_remote_host_opens_ssh_into_it() {
+    let target = winc_backend::Target::new("me@devbox:22022").unwrap();
+    let dir = winc_backend::virtual_path(&target, b"/srv/it's here");
+    // 设置中的 shell 是本机的命令，对远端的目录不适用。
+    for shell in [None, Some("zsh -l")] {
+        let (program, args, cwd) = launched(shell, dir.to_str().unwrap(), false);
+        assert_eq!(program.as_deref(), Some("ssh"));
+        assert_eq!(
+            args,
+            [
+                "-t",
+                "-o",
+                "RemoteCommand=none",
+                "-p",
+                "22022",
+                "me@devbox",
+                "--",
+                r"cd '/srv/it'\''s here' && exec $SHELL -l",
+            ]
+        );
+        assert_eq!(cwd, "");
+    }
+    // 没有指定端口时不加 `-p`，由用户的配置决定。
+    let plain = winc_backend::Target::new("devbox").unwrap();
+    let root = winc_backend::virtual_path(&plain, b"/");
+    let (_, args, _) = launched(None, root.to_str().unwrap(), false);
+    assert_eq!(args[3..], ["devbox", "--", "cd '/' && exec $SHELL -l"]);
+}
+
+#[test]
 fn a_folder_in_wsl_opens_its_distribution() {
     let (program, args, cwd) = launched(None, r"\\wsl.localhost\Ubuntu\home\me", true);
     assert_eq!(program.as_deref(), Some("wsl.exe"));

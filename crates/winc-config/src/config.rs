@@ -556,7 +556,11 @@ impl Config {
     /// 读取项目配置（`root` 下的 `.winc/config.json`），只认 `format` 一节，其他内容报告后忽略。
     ///
     /// 文件不存在时返回 `None`；无法读取或无法理解的部分与用户配置相同，退回默认值并报告。
+    /// 远端主机上的目录没有项目配置：这里只读本机的文件，项目配置管的格式化也只在本机运行。
     pub fn load_project(root: &Path) -> Option<(Config, Vec<String>)> {
+        if winc_backend::is_remote(root) {
+            return None;
+        }
         let text = match std::fs::read_to_string(project_config_path(root)) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,

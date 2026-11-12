@@ -775,23 +775,49 @@ impl App {
         let sender = self.git.sender.clone();
         // 上次未找到 `git` 时本次在后台重新查找（用户可能刚安装）。
         self.spawn_git(UserEvent::GitStatus, move |tool| {
-            let status = match &tool {
-                Ok(git) => git.status(&root, &cancel),
-                Err(e) => Err(e.to_string()),
-            };
-            let refs = match (&tool, &status) {
-                (Ok(git), Ok(_)) if refs => Some(Refs {
-                    branches: git.branches(&root, &cancel).unwrap_or_default(),
-                    remotes: git.remotes(&root, &cancel).unwrap_or_default(),
-                    remote_list: git.remote_list(&root, &cancel).unwrap_or_default(),
-                    publish_remote: git.publish_target(&root).ok(),
-                    common_dir: git.common_dir(&root, &cancel).ok(),
-                    stashes: git.stashes(&root, &cancel).unwrap_or_default(),
-                    recent_branches: git.recent_branches(&root, &cancel).unwrap_or_default(),
-                    worktrees: git.worktrees(&root, &cancel).ok(),
-                    home: winc_editor::wsl::home_dir(&root),
+            let (status, refs) = match &tool {
+                Err(e) => (Err(e.to_string()), None),
+                Ok(git) if !refs => (git.status(&root, &cancel), None),
+                // 各项互不依赖，同时读取：每一项是一条或几条 `git` 命令，远端的仓库上每条命令
+                // 要等一次网络往返，依次执行时总耗时是它们的和。
+                Ok(git) => std::thread::scope(|scope| {
+                    let (root, cancel) = (&root, &cancel);
+                    // 先读状态：其中对仓库配置的检查结果会被记住，随后同时进行的各项直接使用，
+                    // 不各自再检查一遍。
+                    let status = git.status(root, cancel);
+                    if status.is_err() {
+                        return (status, None);
+                    }
+                    let branches = scope.spawn(|| git.branches(root, cancel));
+                    let remotes = scope.spawn(|| git.remotes(root, cancel));
+                    let remote_list = scope.spawn(|| git.remote_list(root, cancel));
+                    let publish_remote = scope.spawn(|| git.publish_target(root));
+                    let common_dir = scope.spawn(|| git.common_dir(root, cancel));
+                    let stashes = scope.spawn(|| git.stashes(root, cancel));
+                    let recent_branches = scope.spawn(|| git.recent_branches(root, cancel));
+                    let worktrees = scope.spawn(|| git.worktrees(root, cancel));
+                    // 线程中的函数不会 panic；万一发生，该项按读取失败处理。
+                    let refs = Refs {
+                        branches: branches
+                            .join()
+                            .ok()
+                            .and_then(Result::ok)
+                            .unwrap_or_default(),
+                        remotes: remotes.join().ok().and_then(Result::ok).unwrap_or_default(),
+                        remote_list: (remote_list.join().ok())
+                            .and_then(Result::ok)
+                            .unwrap_or_default(),
+                        publish_remote: publish_remote.join().ok().and_then(Result::ok),
+                        common_dir: common_dir.join().ok().and_then(Result::ok),
+                        stashes: stashes.join().ok().and_then(Result::ok).unwrap_or_default(),
+                        recent_branches: (recent_branches.join().ok())
+                            .and_then(Result::ok)
+                            .unwrap_or_default(),
+                        worktrees: worktrees.join().ok().and_then(Result::ok),
+                        home: winc_editor::wsl::home_dir(root),
+                    };
+                    (status, Some(refs))
                 }),
-                _ => None,
             };
             let _ = sender.send(Outcome { root, status, refs });
         });

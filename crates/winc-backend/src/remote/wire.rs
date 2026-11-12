@@ -14,7 +14,7 @@ use crate::fs::{Kind, Metadata, Stamp, Unix};
 
 /// 协议的版本号。连接建立时双方交换，不一致时不继续：服务进程随安装包发布，版本总是相同，
 /// 不一致说明远端的程序不是这一版安装包上传的。
-pub(crate) const VERSION: u32 = 2;
+pub(crate) const VERSION: u32 = 3;
 /// 一次读取请求最多返回的字节数（字节，1 MiB）。
 ///
 /// 取值由两方面约束：单帧在发送完之前占用连接，过大时其他请求等待的时间变长；过小时读取一个
@@ -73,6 +73,12 @@ pub(crate) mod kind {
     /// 一个请求的载荷放不进一帧时在前面发出的部分：载荷是其中一段。没有应答；同一请求号随后
     /// 的请求以各段依次相接、再接上它自己的载荷作为完整的载荷。
     pub(crate) const PART: u8 = 20;
+    /// 一次往返中的若干个请求：载荷是个数（`u32`），其后每个是类型（`u8`）和它的载荷（字节
+    /// 串）。只能包含在读取请求的线程上直接应答的类型（文件信息、读取等），不含运行命令和
+    /// 保存。应答按相同的顺序给出每个请求的结果：是否成功（`u8`）和载荷（成功时是它的应答，
+    /// 失败时是错误）。各应答合计超过 [`MAX_READ`](super::MAX_READ) 之后的请求不再执行，按
+    /// 失败应答。
+    pub(crate) const BATCH: u8 = 21;
     /// [`SAVE_END`] 的结果：已保存。
     pub(crate) const SAVED: u8 = 0;
     /// [`SAVE_END`] 的结果：目标文件只读。
@@ -109,6 +115,12 @@ pub(crate) struct Frame {
 ///
 /// # Errors
 ///
+/// [`kind::EXEC`] 中代表服务进程自身的程序名：对端换成它自己的可执行文件的路径。
+///
+/// 服务进程的位置只有它自己知道（上传目录、版本摘要）；以参数再次运行自身的功能（监视目录）
+/// 用这个名字启动。
+pub(crate) const SELF: &[u8] = b"winc:self";
+
 /// 载荷超过 [`MAX_FRAME`] 时返回 [`io::ErrorKind::InvalidInput`]，不写出任何字节；其余与写入相同。
 pub(crate) fn write_frame(
     out: &mut impl Write,
@@ -169,8 +181,6 @@ pub(crate) fn invalid(message: &'static str) -> io::Error {
 pub(crate) struct Writer(Vec<u8>);
 
 impl Writer {
-    // 只有服务进程一侧写出单字节的字段。
-    #[cfg(any(unix, test))]
     pub(crate) fn u8(mut self, value: u8) -> Self {
         self.0.push(value);
         self

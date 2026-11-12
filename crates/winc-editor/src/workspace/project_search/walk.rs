@@ -24,6 +24,7 @@ impl ProjectSearch {
         };
         let walk = Walk {
             root: self.root.clone(),
+            literal: self.query.as_ref().and_then(literal),
             matcher: matcher.clone(),
             source,
             dirty,
@@ -38,6 +39,24 @@ impl ProjectSearch {
     }
 }
 
+/// 返回 `query` 的每处匹配都含有的一段文字，以及比较时是否区分大小写；无法确定时返回 `None`。
+///
+/// 按字面查找时就是查找的文本，正则查找时只有调用方给出了这样一段文字才有。文字跨行、或不
+/// 区分大小写而含有 ASCII 以外的字符时不用：远端的 `grep` 按行比较，大小写的规则也随它的
+/// 语言环境变化，可能漏掉文件。
+fn literal(query: &Query) -> Option<(String, bool)> {
+    let text = if !query.required.is_empty() {
+        &query.required
+    } else if !query.regex {
+        &query.text
+    } else {
+        return None;
+    };
+    let single_line = !text.contains(['\n', '\r', '\0']);
+    let comparable = query.case_sensitive || text.is_ascii();
+    (single_line && comparable).then(|| (text.clone(), query.case_sensitive))
+}
+
 /// 后台搜索哪些文件。
 pub(super) enum Source {
     /// 遍历根目录下的全部文件，按「包含」「排除」规则过滤（整体搜索）；第二项为是否也搜索
@@ -50,6 +69,9 @@ pub(super) enum Source {
 /// 一次搜索的后台部分。
 pub(super) struct Walk {
     root: PathBuf,
+    /// 每处匹配都含有的一段文字及是否区分大小写（见 [`literal`]）；远端的目录用它先筛出
+    /// 候选的文件。
+    literal: Option<(String, bool)>,
     matcher: Matcher,
     source: Source,
     dirty: Arc<HashMap<PathBuf, Rope>>,
@@ -86,6 +108,28 @@ impl Walk {
         };
 
         let paths: Box<dyn Iterator<Item = PathBuf> + '_> = match &self.source {
+            // 远端的目录：由远端的一条命令给出要搜索的文件。能确定每处匹配都含有某段文字时
+            // 只取含有它的文件，匹配仍由下面的工作线程按相同的规则完成，结果与本机一致。
+            Source::Tree(overrides, ignored) if winc_backend::is_remote(&self.root) => {
+                let containing = self.literal.as_ref().map(|(text, case_sensitive)| {
+                    crate::workspace::remote_files::Containing {
+                        text,
+                        case_sensitive: *case_sensitive,
+                    }
+                });
+                let stop = || self.cancel.load(Relaxed);
+                let found = crate::workspace::remote_files::list(
+                    &self.root,
+                    *ignored,
+                    containing.as_ref(),
+                    &stop,
+                );
+                Box::new(
+                    (found.into_iter())
+                        .map(|relative| winc_backend::join(&self.root, &relative))
+                        .filter(|path| !overrides.matched(path, false).is_ignore()),
+                )
+            }
             Source::Tree(overrides, ignored) => Box::new(
                 if *ignored {
                     walker_with_ignored(&self.root)

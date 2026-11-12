@@ -314,7 +314,13 @@ impl FileIndex {
         let base = Arc::clone(&self.files);
         let wake = self.wake.clone();
 
-        background::spawn(move || {
+        // 远端的目录要等待网络，不占线程池中的线程。
+        let spawn = if winc_backend::is_remote(&root) {
+            background::spawn_blocking
+        } else {
+            background::spawn
+        };
+        spawn(Box::new(move || {
             let files = match job {
                 Job::Walk => Some(collect(&root, MAX_FILES, &worker_cancel)),
                 Job::Patch(paths) => patch(&root, &base, &paths, &worker_cancel),
@@ -326,7 +332,7 @@ impl FileIndex {
             {
                 wake();
             }
-        });
+        }));
 
         self.cancel = Some(cancel);
         self.receiver = Some(receiver);

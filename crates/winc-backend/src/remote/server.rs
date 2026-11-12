@@ -120,6 +120,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
                 Err(Failure::Request(error)) => reply(&output, frame.id, Err(error)),
                 Err(Failure::Output(error)) => Err(error),
             },
+            kind::BATCH => reply(&output, frame.id, batch(&frame.payload)),
             _ => reply(&output, frame.id, handle(&frame)),
         };
         if let Err(error) = sent {
@@ -385,6 +386,44 @@ fn absolute(bytes: &[u8]) -> io::Result<&Path> {
     Ok(Path::new(OsStr::from_bytes(bytes)))
 }
 
+/// 依次执行 [`kind::BATCH`] 中的各个请求，把各自的结果编码进一个应答。
+fn batch(payload: &[u8]) -> io::Result<Vec<u8>> {
+    let mut input = Reader::new(payload);
+    let mut out = Writer::default();
+    let mut size = 0;
+    for _ in 0..input.u32()? {
+        let (kind, payload) = (input.u8()?, input.bytes()?.to_vec());
+        let result = match kind {
+            // 这些类型不在读取请求的线程上直接应答，或有多帧的应答。
+            kind::EXEC
+            | kind::CANCEL
+            | kind::READ_DIR
+            | kind::BATCH
+            | kind::PART
+            | kind::SAVE_BEGIN
+            | kind::SAVE_DATA
+            | kind::SAVE_END => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "request cannot be batched",
+            )),
+            _ if size > wire::MAX_READ as usize => Err(io::Error::other("batch too large")),
+            _ => handle(&Frame {
+                kind,
+                id: 0,
+                payload,
+            }),
+        };
+        let (ok, body) = match result {
+            Ok(body) => (true, body),
+            Err(error) => (false, wire::encode_error(&error)),
+        };
+        size += body.len();
+        out = out.u8(u8::from(ok)).bytes(&body);
+    }
+    input.finish()?;
+    Ok(out.finish())
+}
+
 /// 列目录失败的两种情况：请求本身失败（应答错误后继续），或应答写不出去（连接已断开）。
 enum Failure {
     Request(io::Error),
@@ -439,7 +478,11 @@ fn exec(frame: &Frame, cancelled: &AtomicBool, output: &Output) -> io::Result<Ve
     };
     let program = input.bytes()?;
     text(program)?;
-    let mut command = Command::new(OsStr::from_bytes(program));
+    let mut command = if program == wire::SELF {
+        Command::new(std::env::current_exe()?)
+    } else {
+        Command::new(OsStr::from_bytes(program))
+    };
     let cwd = input.bytes()?;
     if !cwd.is_empty() {
         command.current_dir(absolute(cwd)?);

@@ -697,10 +697,15 @@ pub(super) struct Launch {
 
 /// 返回在目录 `cwd` 新建终端时的启动方式。
 ///
+/// `cwd` 在远端主机上时运行 `ssh` 登录那台主机并进入该目录，见 [`remote_launch`]。
+///
 /// 设置了 `shell` 时运行该命令（分词见 [`super::shells::command_words`]）。在 Windows（`windows`）
 /// 上且 `cwd` 位于 WSL 发行版中时，进入对应的发行版和目录：目录由 `wsl.exe` 的参数指定，进程本身
 /// 从家目录启动。其余情况运行默认 shell。
 pub(super) fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch {
+    if let Some(at) = winc_backend::locate(&bytes_path(&cwd)) {
+        return remote_launch(&at);
+    }
     // Windows 上 `/` 开头的目录来自 WSL 中的 shell，不是 Windows 程序可用的工作目录。
     let cwd = if windows && cwd.first() == Some(&b'/') {
         Vec::new()
@@ -735,6 +740,32 @@ pub(super) fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch
     Launch {
         program: Some(b"wsl.exe".to_vec()),
         args: args.iter().map(|arg| arg.as_bytes().to_vec()).collect(),
+        login: false,
+        cwd: Vec::new(),
+    }
+}
+
+/// 返回在远端主机上的目录 `at` 新建终端时的启动方式：在本机的终端里运行 `ssh`，登录后进入该
+/// 目录并换成那台主机上用户的登录 shell。
+///
+/// 终端里的 `ssh` 是另一条连接，与编辑器的连接各自登录：需要口令时在终端里输入。`-t` 分配
+/// 终端；`RemoteCommand=none` 使配置中为该主机设置的登录命令不与这里的命令冲突。远端的命令
+/// 先经用户的登录 shell 解释，写法只用各种 shell 共有的部分；目录包在单引号内。设置中的
+/// `shell` 是本机的命令，对远端的目录不适用。
+fn remote_launch(at: &winc_backend::Location) -> Launch {
+    let dir = String::from_utf8_lossy(&at.path).replace('\'', r"'\''");
+    let mut args: Vec<String> = ["-t", "-o", "RemoteCommand=none"].map(str::to_owned).into();
+    if let Some(port) = at.target.port() {
+        args.extend(["-p".to_owned(), port.to_string()]);
+    }
+    args.extend([
+        at.target.host().to_owned(),
+        "--".to_owned(),
+        format!("cd '{dir}' && exec $SHELL -l"),
+    ]);
+    Launch {
+        program: Some(b"ssh".to_vec()),
+        args: args.into_iter().map(String::into_bytes).collect(),
         login: false,
         cwd: Vec::new(),
     }

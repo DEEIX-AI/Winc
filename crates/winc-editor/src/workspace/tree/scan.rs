@@ -54,11 +54,16 @@ impl DirScan {
             Err(error) if winc_backend::fs::is_absent(&error) => Read::Absent,
             Err(_) => Read::Failed,
         };
-        // 无法确定的（连接中断、不能等待）不算：只有确实不是目录或已不存在的才收起。
-        let gone = |path: &PathBuf| match winc_backend::fs::metadata(path) {
-            Ok(metadata) => !metadata.kind.is_dir(),
-            Err(error) => winc_backend::fs::is_absent(&error),
-        };
+        // 无法确定的（连接中断、不能等待）不算：只有确实不是目录或已不存在的才收起。各个展开的
+        // 目录的文件信息一次取回，远端的目录只需一次往返。
+        let found = winc_backend::fs::metadata_many(&self.expanded);
+        let gone = (self.expanded.into_iter().zip(found))
+            .filter(|(_, metadata)| match metadata {
+                Ok(metadata) => !metadata.kind.is_dir(),
+                Err(error) => winc_backend::fs::is_absent(error),
+            })
+            .map(|(path, _)| path)
+            .collect();
         DirListing {
             dirs: (self.dirs.into_iter())
                 .map(|dir| {
@@ -66,7 +71,7 @@ impl DirScan {
                     (dir, outcome)
                 })
                 .collect(),
-            gone: self.expanded.into_iter().filter(gone).collect(),
+            gone,
             root: self.root,
         }
     }

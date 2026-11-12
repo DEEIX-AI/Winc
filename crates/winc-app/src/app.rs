@@ -256,6 +256,8 @@ pub enum UserEvent {
     RemoteConnected,
     /// 远程选择面板在后台读好了一个目录。
     RemoteListed,
+    /// 后台对远端目录的监视已经启动。
+    RemoteWatching,
     /// 到远端主机的连接意外中断。
     RemoteClosed(winc_backend::Target),
     /// 后台的文件操作（新建、改名、移动、删除）已完成。
@@ -1175,6 +1177,7 @@ impl App {
             UserEvent::GitOperated => self.poll_branch_ops(),
             UserEvent::RemoteConnected => self.poll_remote(),
             UserEvent::RemoteListed => self.poll_remote_listings(),
+            UserEvent::RemoteWatching => self.poll_remote_watcher(),
             UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),

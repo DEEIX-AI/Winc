@@ -1,12 +1,28 @@
 //! 运行在远端主机上的服务进程。
 //!
 //! 由本机的 winc 经 `ssh` 启动，从标准输入读取请求，把应答写到标准输出（见
-//! `winc_backend::remote::serve`）。不接受参数，不监听端口，不写任何文件；标准输入结束
-//! （连接断开）时退出。目前只支持 Unix 主机。
+//! `winc_backend::remote::serve`）。不监听端口，不写任何文件；标准输入结束（连接断开）时
+//! 退出。目前只支持 Unix 主机。
+//!
+//! 以 `watch <目录>` 为参数时改为监视该目录，把变化写到标准输出（见 `winc_watch`）：由服务
+//! 进程在需要监视时再次运行自身，连接断开或不再需要时结束它。
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().is_some_and(|arg| arg == "watch") {
+        let Some(root) = args.next().map(std::path::PathBuf::from) else {
+            return ExitCode::FAILURE;
+        };
+        return match winc_watch::run(&root, false) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("winc-server: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     #[cfg(unix)]
     {
         // 输出由多个线程共用，不能持有标准输出的锁；每一帧写完都会刷新。

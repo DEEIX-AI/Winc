@@ -209,11 +209,52 @@ pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     }
 }
 
+/// 一个路径在调用方列表中的位置，以及它在远端的路径。
+type Indexed = (usize, Vec<u8>);
+
 /// 对若干路径逐个取文件信息（跟随符号链接），结果与 `paths` 的顺序一一对应。
 ///
 /// 远端路径由一次请求完成，不逐个往返。
 pub fn metadata_many<P: AsRef<Path>>(paths: &[P]) -> Vec<io::Result<Metadata>> {
-    paths.iter().map(metadata).collect()
+    let mut results: Vec<Option<io::Result<Metadata>>> = Vec::new();
+    // 远端的路径按主机分组，每个主机一次往返；本机的路径逐个取。
+    let mut groups: Vec<(crate::Target, Vec<Indexed>)> = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        let path = path.as_ref();
+        match locate(path) {
+            None => {
+                let found = std::fs::metadata(path).map(|m| Metadata::from(&m));
+                results.push(Some(found));
+            }
+            Some(at) => {
+                results.push(None);
+                match groups.iter_mut().find(|(target, _)| *target == at.target) {
+                    Some((_, group)) => group.push((index, at.path)),
+                    None => groups.push((at.target, vec![(index, at.path)])),
+                }
+            }
+        }
+    }
+    for (target, group) in groups {
+        let remote: Vec<&[u8]> = group.iter().map(|(_, path)| path.as_slice()).collect();
+        let found = remote::connection(&target).and_then(|c| c.metadata_many(&remote));
+        match found {
+            Ok(found) => {
+                for ((index, _), metadata) in group.iter().zip(found) {
+                    results[*index] = Some(metadata);
+                }
+            }
+            // 整组失败（没有连接、连接中断）：每个路径都是同一种错误。
+            Err(error) => {
+                for (index, _) in &group {
+                    results[*index] = Some(Err(io::Error::new(error.kind(), error.to_string())));
+                }
+            }
+        }
+    }
+    (results.into_iter())
+        .map(|result| result.unwrap_or_else(|| Err(io::ErrorKind::NotConnected.into())))
+        .collect()
 }
 
 /// 是否表示文件不存在：路径上没有该项，或路径中间的一段不是目录。

@@ -20,7 +20,15 @@ pub struct Opened {
     /// 文件开头的若干字节，长度不超过 [`open`] 的 `sniff`；文件更短时是全部内容。
     pub head: Vec<u8>,
     source: Source,
+    /// 远端文件已随打开一并取回的开头部分，以及它是否已是全部内容；本机的文件没有。
+    ///
+    /// 顺序读取时先用这一部分：不超过它的文件，打开和读取合计只有一次往返。
+    prefix: (Vec<u8>, bool),
 }
+
+/// 打开远端文件时一并取回的字节数：一次读取的上限减去 4 KiB，为同一个应答中的文件信息和
+/// 各字段的长度留出位置。
+const PREFIX: u32 = remote::MAX_READ - (4 << 10);
 
 /// 文件内容的来源。
 #[derive(Debug)]
@@ -47,8 +55,11 @@ impl Opened {
             Source::Remote(target, path) => Ok(Box::new(Sequential {
                 target,
                 path,
+                prefix: &self.prefix.0,
                 offset: 0,
-                ended: false,
+                // 文件是空的、或开头的部分已是全部内容时，读完它就结束。
+                ended: self.prefix.1 && self.prefix.0.is_empty(),
+                complete: self.prefix.1,
             })),
         }
     }
@@ -63,6 +74,9 @@ impl Opened {
 struct Sequential<'a> {
     target: &'a Target,
     path: &'a [u8],
+    /// 打开时已取回的开头部分，以及它是否已是全部内容。
+    prefix: &'a [u8],
+    complete: bool,
     offset: u64,
     ended: bool,
 }
@@ -71,6 +85,15 @@ impl Read for Sequential<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.ended || buf.is_empty() {
             return Ok(0);
+        }
+        // 已取回的开头部分直接给出，不发请求。
+        let taken = usize::try_from(self.offset).unwrap_or(usize::MAX);
+        if let Some(rest) = self.prefix.get(taken..).filter(|rest| !rest.is_empty()) {
+            let count = rest.len().min(buf.len());
+            buf[..count].copy_from_slice(&rest[..count]);
+            self.offset += count as u64;
+            self.ended = self.complete && count == rest.len();
+            return Ok(count);
         }
         let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
         let connection = remote::connection(self.target)?;
@@ -172,18 +195,19 @@ impl From<std::fs::File> for Handle {
 pub fn open(path: impl AsRef<Path>, sniff: usize) -> io::Result<Opened> {
     let path = path.as_ref();
     if let Some(at) = locate(path) {
+        // 文件信息和开头的一段在一次往返中取回；多数文件不超过这一段，随后的读取不再发请求。
         let connection = remote::connection(&at.target)?;
-        let metadata = connection.metadata(&at.path, true)?;
+        let (metadata, data) = connection.open(&at.path, PREFIX)?;
         // 与本机一致：目录不能当作文件打开读取。
         if metadata.is_dir() {
             return Err(io::ErrorKind::IsADirectory.into());
         }
-        let wanted = u32::try_from(sniff).unwrap_or(u32::MAX);
-        let (head, _) = connection.read_range(&at.path, 0, wanted)?;
+        let (prefix, complete) = data?;
         return Ok(Opened {
             metadata,
-            head,
+            head: prefix[..prefix.len().min(sniff)].to_vec(),
             source: Source::Remote(at.target, at.path),
+            prefix: (prefix, complete),
         });
     }
     let mut file = std::fs::File::open(path)?;
@@ -194,5 +218,6 @@ pub fn open(path: impl AsRef<Path>, sniff: usize) -> io::Result<Opened> {
         metadata,
         head,
         source: Source::Local(file),
+        prefix: (Vec::new(), false),
     })
 }

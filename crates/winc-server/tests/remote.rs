@@ -659,6 +659,110 @@ fn a_connection_that_ends_unexpectedly_is_reported_once() {
 }
 
 #[test]
+fn the_server_watches_a_folder_and_reports_changes() {
+    use std::io::{BufRead, BufReader};
+
+    let target = connect("watch");
+    let dir = scratch("watch");
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let far = through(&target, &dir);
+
+    // 服务进程以 `watch <目录>` 再次运行自身；先报告开始监视，再逐条报告发生变化的路径。
+    let watch = remote::Exec::this_server()
+        .arg("watch")
+        .arg(dir.as_os_str().as_bytes());
+    let running = remote::spawn(&far, &watch).unwrap();
+    let stopper = running.stopper();
+    let mut messages = BufReader::new(running).split(0).map(Result::unwrap);
+    assert_eq!(messages.next().unwrap(), b"S");
+    std::fs::write(dir.join("sub/new.txt"), "x").unwrap();
+    let changed = dir.join("sub/new.txt");
+    let reported = messages
+        .by_ref()
+        .any(|message| message.strip_prefix(b"P") == Some(changed.as_os_str().as_bytes()));
+    assert!(reported);
+
+    // 不再需要时结束它：输出随之结束，远端不留下监视的进程。
+    stopper.stop();
+    assert!(messages.all(|_| true));
+    let gone = Instant::now() + Duration::from_secs(10);
+    let left = || {
+        let found = Command::new("pgrep")
+            .args(["-f", "winc-server watch"])
+            .output();
+        found.is_ok_and(|found| !found.stdout.is_empty())
+    };
+    while left() && Instant::now() < gone {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!left());
+    remote::disconnect(&target);
+}
+
+#[test]
+fn common_operations_take_one_round_trip() {
+    use std::io::Read;
+
+    let target = connect("trips");
+    let dir = scratch("trips");
+    let far = through(&target, &dir);
+    std::fs::write(dir.join("small.txt"), "hello").unwrap();
+    std::fs::write(dir.join("empty"), "").unwrap();
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let trips = |work: &mut dyn FnMut()| {
+        let before = remote::requests(&target);
+        work();
+        remote::requests(&target) - before
+    };
+
+    // 打开并读完一个小文件：文件信息、开头和全部内容在一次往返中取回，再读一遍也不发请求。
+    let mut content = Vec::new();
+    let opened = trips(&mut || {
+        let mut file = fs::open(far.join("small.txt"), 3).unwrap();
+        assert_eq!((file.head.as_slice(), file.metadata.len), (&b"hel"[..], 5));
+        for _ in 0..2 {
+            content.clear();
+            file.reader().unwrap().read_to_end(&mut content).unwrap();
+        }
+    });
+    assert_eq!((opened, content.as_slice()), (1, &b"hello"[..]));
+    let empty = trips(&mut || {
+        let mut file = fs::open(far.join("empty"), 8).unwrap();
+        let mut content = Vec::new();
+        file.reader().unwrap().read_to_end(&mut content).unwrap();
+        assert!(file.head.is_empty() && content.is_empty());
+    });
+    assert_eq!(empty, 1);
+    // 目录不能打开；不存在的文件保持原来的错误。
+    let failure = |name: &str| fs::open(far.join(name), 0).err().unwrap();
+    assert_eq!(failure("sub").kind(), io::ErrorKind::IsADirectory);
+    assert!(fs::is_absent(&failure("none")));
+
+    // 若干路径的文件信息一次取回，顺序与路径对应，各自的错误互不影响；本机的路径夹在其中。
+    let paths = [
+        far.join("small.txt"),
+        far.join("none"),
+        dir.join("small.txt"),
+        far.join("sub"),
+    ];
+    let mut found = Vec::new();
+    let batched = trips(&mut || found = fs::metadata_many(&paths));
+    assert_eq!(batched, 1);
+    assert!(found[0].as_ref().is_ok_and(|m| m.is_file() && m.len == 5));
+    assert!(found[1].as_ref().is_err_and(fs::is_absent));
+    assert!(found[2].as_ref().is_ok_and(|m| m.len == 5));
+    assert!(found[3].as_ref().is_ok_and(fs::Metadata::is_dir));
+    // 没有连接的主机：每个路径都是同一种错误。
+    let nowhere = virtual_path(&Target::new("trips-nowhere").unwrap(), b"/x");
+    let lost = fs::metadata_many(&[nowhere]);
+    assert_eq!(
+        lost[0].as_ref().unwrap_err().kind(),
+        io::ErrorKind::NotConnected
+    );
+    remote::disconnect(&target);
+}
+
+#[test]
 fn requests_and_replies_larger_than_one_frame_are_split() {
     use std::os::unix::fs::PermissionsExt;
 

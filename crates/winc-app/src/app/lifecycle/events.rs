@@ -441,6 +441,7 @@ impl App {
             | UserEvent::GitOperated
             | UserEvent::RemoteConnected
             | UserEvent::RemoteListed
+            | UserEvent::RemoteWatching
             | UserEvent::FileWorked
             | UserEvent::GitMergeSides
             | UserEvent::GitLog

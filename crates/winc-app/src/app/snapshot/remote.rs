@@ -415,3 +415,110 @@ fn shoot_remote_picker() {
     app.close_picker();
     remote::disconnect(&target);
 }
+
+/// 写入的内容延迟 `delay` 之后才到达 `inner`，各次写入互不等待：模拟网络的延迟。
+struct Delayed(std::sync::mpsc::Sender<(std::time::Instant, Vec<u8>)>);
+
+impl Delayed {
+    fn new(mut inner: impl std::io::Write + Send + 'static, delay: std::time::Duration) -> Self {
+        let (sender, queue) = std::sync::mpsc::channel::<(std::time::Instant, Vec<u8>)>();
+        std::thread::spawn(move || {
+            for (sent, data) in queue {
+                let due = sent + delay;
+                std::thread::sleep(due.saturating_duration_since(std::time::Instant::now()));
+                if inner.write_all(&data).and_then(|()| inner.flush()).is_err() {
+                    return;
+                }
+            }
+        });
+        Self(sender)
+    }
+}
+
+impl std::io::Write for Delayed {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let sent = self.0.send((std::time::Instant::now(), data.to_vec()));
+        sent.map(|()| data.len())
+            .map_err(|_| std::io::ErrorKind::BrokenPipe.into())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 往返延迟为 `delay` 的进程内连接，其余同 [`loopback`]。
+fn slow_loopback(name: &str, delay: std::time::Duration) -> winc_backend::Target {
+    let (requests, to_server) = std::io::pipe().unwrap();
+    let (replies, from_server) = std::io::pipe().unwrap();
+    std::thread::spawn(move || {
+        let _ = remote::serve(requests, from_server);
+    });
+    let target = winc_backend::Target::new(name).unwrap();
+    let delayed = Delayed::new(to_server, delay);
+    let connection = remote::Connection::over(replies, delayed).unwrap();
+    remote::register(target.clone(), connection);
+    target
+}
+
+/// 测量：各项常用操作各发出多少个请求，以及在 250 毫秒的往返延迟下各用多久。
+#[test]
+#[ignore = "测量，手动运行"]
+fn measure_remote_round_trips() {
+    let dir = sample_folder("remote-trips").canonicalize().unwrap();
+    std::fs::create_dir_all(dir.join("src/deep/er")).unwrap();
+    std::fs::write(dir.join("src/deep/er/x.rs"), "fn x() {}\n").unwrap();
+    let git = |args: &[&str]| {
+        let run = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output();
+        run.is_ok_and(|output| output.status.success())
+    };
+    let _ = git(&["init", "-q"])
+        && git(&["add", "."])
+        && git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+    let target = slow_loopback("trips", std::time::Duration::from_millis(250));
+    let root = winc_backend::virtual_path(&target, dir.as_os_str().as_bytes());
+    let mut app = blank_app(false);
+    app.config.remote_enabled = Some(true);
+    app.config.git_enabled = Some(true);
+    remote::forbid_blocking();
+    let mut last = remote::requests(&target);
+    let mut clock = std::time::Instant::now();
+    let mut step = |what: &str| {
+        let now = remote::requests(&target);
+        let spent = clock.elapsed().as_secs_f32();
+        eprintln!("TRIPS {:>3} 个请求 {spent:>5.2} 秒  {what}", now - last);
+        (last, clock) = (now, std::time::Instant::now());
+    };
+    app.open_folder(&root);
+    step("打开目录（含仓库查找与状态）");
+    let src = row_of(&app, "src");
+    app.set_dir_expanded(src, Some(true));
+    step("展开一个目录");
+    app.open_path(&root.join("src/main.rs"));
+    step("打开一个文件（两层目录）");
+    app.open_path(&root.join("src/deep/er/x.rs"));
+    step("打开一个文件（四层目录）");
+    let doc = app.editor.active_mut().unwrap();
+    doc.apply(winc_core::edit::replace_selection(
+        doc.text().rope().unwrap(),
+        winc_core::Selection::point(0),
+        "// x\n",
+        winc_core::EditKind::Other,
+    ));
+    assert!(app.run_action(Action::Save));
+    step("保存");
+    app.check_disk();
+    step("窗口重新获得焦点");
+    remote::disconnect(&target);
+}

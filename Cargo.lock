@@ -3269,6 +3269,7 @@ name = "winc-server"
 version = "0.0.0"
 dependencies = [
  "winc-backend",
+ "winc-watch",
 ]
 
 [[package]]

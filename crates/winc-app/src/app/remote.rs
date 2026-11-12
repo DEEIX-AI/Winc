@@ -76,6 +76,8 @@ pub(crate) struct RemoteState {
     stepping: bool,
     /// 选择面板在后台读好的目录。
     pub(in crate::app) listed: picker::Listings,
+    /// 后台启动好的对远端目录的监视，由 `App::poll_remote_watcher` 取走。
+    pub(in crate::app) watching: Arc<Mutex<Option<winc_editor::Watcher>>>,
 }
 
 impl Default for RemoteState {
@@ -91,6 +93,7 @@ impl Default for RemoteState {
             form: None,
             stepping: false,
             listed: picker::Listings::default(),
+            watching: Arc::default(),
         }
     }
 }
