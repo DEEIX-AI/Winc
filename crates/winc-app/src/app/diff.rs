@@ -29,8 +29,10 @@ use winit::keyboard::{Key, NamedKey};
 use super::animation::{Clock, FOLD_ANIMATION};
 use super::git::changes::replace_lines;
 use super::lifecycle::notice::FLASH_DURATION;
-use super::{App, Focus, UserEvent, sticky_limit};
+use super::{App, Focus, ScrollArea, UserEvent, sticky_limit};
 use crate::keymap::Action;
+use crate::layout::{Scrollbar, hscrollbar_thumb};
+use crate::theme::SCROLLBAR_HIT;
 
 /// 差异标签顶部标题栏的高度（逻辑像素）；标题栏包含两侧的标题，右端为统计和按钮。
 pub(crate) const DIFF_HEADER: f32 = 36.0;
@@ -1414,6 +1416,72 @@ pub(crate) fn worktree_title(dirty: bool) -> &'static str {
         t!("git-diff-side-worktree-unsaved")
     } else {
         t!("git-diff-side-worktree")
+    }
+}
+
+/// 差异两侧的水平滚动条，依次为左侧和右侧。
+pub(crate) const DIFF_HSCROLL: [(ScrollArea, Scrollbar); 2] = [
+    (
+        ScrollArea::DiffLeftHorizontal,
+        Scrollbar::DiffLeftHorizontal,
+    ),
+    (
+        ScrollArea::DiffRightHorizontal,
+        Scrollbar::DiffRightHorizontal,
+    ),
+];
+
+/// 差异的横向滚动范围，以及两侧水平滚动条的轨道。
+///
+/// 两侧共用一个横向滚动位置，两条滚动条的滑块同步移动，拖动任意一条效果相同。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DiffHScroll {
+    /// 最大横向滚动量（逻辑像素）；自动换行或内容不超出文字区时为 0。
+    pub max: f32,
+    /// 左侧和右侧的轨道：各侧的文字区，右侧让出竖直滚动条。单栏时两侧显示在同一个文字区，
+    /// 只有右侧的一条，左侧为 `None`。
+    pub tracks: [Option<Rect>; 2],
+}
+
+impl DiffHScroll {
+    /// 计算差异 `view` 在布局 `parts` 中的横向滚动范围和轨道；`cell` 是字符宽度（逻辑像素）。
+    pub(crate) fn of(parts: &DiffParts, view: &DiffView, cell: f32, tab_width: usize) -> Self {
+        let [left, right] = [parts.panes[LEFT].text, parts.panes[RIGHT].text];
+        let max = if view.is_wrapping() {
+            0.0
+        } else {
+            // 按两侧最长的一行、右侧文字区的宽度限制，末尾留出 8 个字符的空白。
+            let widest = view.widest(tab_width) as f32 * cell;
+            (widest - right.w + DIFF_TEXT_PAD + cell * 8.0).max(0.0)
+        };
+        let right = Rect::new(
+            right.x,
+            right.y,
+            (right.w - SCROLLBAR_HIT).max(0.0),
+            right.h,
+        );
+        Self {
+            max,
+            tracks: [(!view.is_unified()).then_some(left), Some(right)],
+        }
+    }
+
+    /// 返回第 `side` 侧的轨道和横向滚动到 `scroll` 时的滑块；该侧没有滚动条或内容不超出时
+    /// 返回 `None`。
+    pub(crate) fn thumb(&self, side: usize, scroll: f32) -> Option<(Rect, Rect)> {
+        let track = self.tracks[side]?;
+        let thumb = hscrollbar_thumb(track, scroll, track.w + self.max)?;
+        Some((track, thumb))
+    }
+}
+
+impl App {
+    /// 返回当前差异标签的横向滚动范围和轨道；当前标签不是差异时返回 `None`。
+    pub(crate) fn diff_hscroll(&self) -> Option<DiffHScroll> {
+        let view = self.editor.active()?.diff.as_deref()?;
+        let parts = diff_parts(self.layout.editor, view, self.cell);
+        let tab_width = self.editor.active_tab_width();
+        Some(DiffHScroll::of(&parts, view, self.cell, tab_width))
     }
 }
 

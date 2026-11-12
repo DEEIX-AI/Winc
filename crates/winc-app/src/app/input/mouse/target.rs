@@ -1,6 +1,7 @@
 //! 鼠标位置的目标判断：点击与悬停共用的目标判断、悬停高亮和指针样式。
 
 use super::*;
+use crate::app::diff::DIFF_HSCROLL;
 
 impl App {
     /// 把顶栏当前的命中测试区域同步给窗口过程。
@@ -601,6 +602,17 @@ impl App {
             let scroll = (doc.scroll_line * f64::from(self.fonts.line_height)) as f32;
             let thumb = scrollbar_thumb(editor, scroll, self.content_height())?;
             return Some((Scrollbar::Editor, grab(y, thumb.y, thumb.h)));
+        }
+
+        if let Some(bars) = self.diff_hscroll() {
+            return DIFF_HSCROLL
+                .iter()
+                .enumerate()
+                .find_map(|(side, &(_, bar))| {
+                    let (track, thumb) = bars.thumb(side, doc.scroll_x)?;
+                    (track.contains(x, y) && y >= track.bottom() - SCROLLBAR_HIT)
+                        .then(|| (bar, grab(x, thumb.x, thumb.w)))
+                });
         }
 
         let track = self.text_hscroll_track();

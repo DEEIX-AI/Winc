@@ -24,7 +24,7 @@ use super::editor::{
     trailing_whitespace, whitespace_shown,
 };
 use super::*;
-use crate::app::diff::DiffPane;
+use crate::app::diff::{DIFF_HSCROLL, DiffHScroll, DiffPane};
 use crate::app::vim::CaretShape;
 use crate::app::{DIFF_TEXT_PAD, DiffParts, DiffTarget, Focus, HunkKind, diff_parts};
 use crate::icons::Direction;
@@ -1264,6 +1264,18 @@ fn draw_overview(
         scroll,
         content,
     );
+
+    // 两侧各一条水平滚动条，共用一个滚动位置。
+    let scroll_x = app.editor.documents[index].scroll_x;
+    let tab_width = app.editor.active_tab_width();
+    let bars = DiffHScroll::of(parts, view, app.cell, tab_width);
+    for (side, (area, _)) in DIFF_HSCROLL.into_iter().enumerate() {
+        let bar = bars.thumb(side, scroll_x);
+        let look = app.scrollbar_look(area, owner, scroll_x, bar.map(|(track, _)| track));
+        if let Some((_, thumb)) = bar {
+            draw_thumb(frame, p, thumb, look);
+        }
+    }
 }
 
 /// 把该侧第 `line` 行去掉换行符的内容读入 `chars`，最多 [`MAX_LINE_CHARS`] 个字符。

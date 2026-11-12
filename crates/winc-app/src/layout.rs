@@ -441,6 +441,10 @@ pub enum Scrollbar {
     Editor,
     /// 编辑区的水平滚动条。
     EditorHorizontal,
+    /// 差异标签左侧的水平滚动条。
+    DiffLeftHorizontal,
+    /// 差异标签右侧的水平滚动条；单栏时只有这一条。
+    DiffRightHorizontal,
     /// 文件树的竖直滚动条。
     Tree,
     /// 文件树的水平滚动条。

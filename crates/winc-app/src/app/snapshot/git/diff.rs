@@ -2331,3 +2331,71 @@ fn folding_an_unchanged_run_in_a_diff_is_applied_when_its_transition_ends() {
     assert!(app.diff_fold.is_none() && !open(&app, gap));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn each_side_of_a_diff_has_a_horizontal_scrollbar_and_the_two_move_together() {
+    use winc_editor::diff_view::{DiffSide, DiffView, LEFT, RIGHT};
+
+    let dir = sample_folder("diff-hscroll");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    // 每行宽 300 列，远超一侧文字区的宽度。
+    let old: String = (0..20)
+        .map(|i| format!("line {i} {}\n", "x".repeat(300)))
+        .collect();
+    let new = old.replacen("line 3 ", "line three ", 1);
+    let language = winc_syntax::detect("long.txt");
+    let view = DiffView::new(
+        DiffSide::new("old", &old, None, language),
+        DiffSide::new("new", &new, None, language),
+    );
+    app.editor.show_diff("long.txt", view);
+    paint(&mut app);
+    let bars = app.diff_hscroll().unwrap();
+    let [Some(left), Some(right)] = bars.tracks else {
+        panic!("并排时两侧各有一条轨道");
+    };
+    assert!(bars.max > 0.0 && left.right() < right.x);
+    let scroll_x = |app: &App| app.editor.active().unwrap().scroll_x;
+    let drag_to = |app: &mut App, x: f32, y: f32| {
+        app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_move(x, y);
+        app.on_mouse_up(MouseButton::Left);
+        paint(app);
+    };
+
+    // 按住左侧的滑块拖到右端：滚动到最右边，两侧的滑块都显示，且都位于各自轨道的右端。
+    let y = left.bottom() - 4.0;
+    app.on_mouse_move(left.x + 8.0, y);
+    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::DiffLeftHorizontal));
+    drag_to(&mut app, left.right(), y);
+    assert!((scroll_x(&app) - bars.max).abs() < 1.0);
+    assert_eq!(app.scrollbar_shown(ScrollArea::DiffLeftHorizontal), 1.0);
+    assert_eq!(app.scrollbar_shown(ScrollArea::DiffRightHorizontal), 1.0);
+    let end = |side: usize, track: Rect| {
+        let (_, thumb) = bars.thumb(side, bars.max).unwrap();
+        track.right() - thumb.right()
+    };
+    assert_eq!(end(LEFT, left), end(RIGHT, right));
+
+    // 右侧的滑块拖回左端：两侧一起回到行首。
+    let y = right.bottom() - 4.0;
+    app.on_mouse_move(right.right() - 8.0, y);
+    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::DiffRightHorizontal));
+    drag_to(&mut app, right.x, y);
+    assert_eq!(scroll_x(&app), 0.0);
+
+    // 单栏时两侧显示在同一个文字区，只有一条；自动换行时没有横向滚动，也没有滑块。
+    fn diff(app: &mut App) -> &mut DiffView {
+        let doc = app.editor.active_mut().unwrap();
+        doc.diff.as_deref_mut().unwrap()
+    }
+    diff(&mut app).set_unified(true);
+    let bars = app.diff_hscroll().unwrap();
+    assert!(bars.tracks[LEFT].is_none() && bars.thumb(RIGHT, 0.0).is_some());
+    diff(&mut app).set_unified(false);
+    assert!(diff(&mut app).set_wrap(Some((40, 40))));
+    let bars = app.diff_hscroll().unwrap();
+    assert_eq!(bars.max, 0.0);
+    assert!(bars.thumb(LEFT, 0.0).is_none() && bars.thumb(RIGHT, 0.0).is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
