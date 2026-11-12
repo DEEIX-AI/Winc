@@ -646,6 +646,10 @@ impl App {
 
 /// 辅助进程的路径：环境变量 `WINC_PTY` 指定的，否则是和主程序放在一起的 `winc-pty`（Windows 上
 /// 是 `winc-pty.exe`；安装包中是 `Contents/MacOS/winc-pty`，开发时是 `target/debug/winc-pty`）。
+#[allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：辅助进程与主程序在同一目录"
+)]
 fn helper_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("WINC_PTY") {
         return Some(path.into());

@@ -3,6 +3,11 @@
 //!
 //! 各函数通过子进程或平台接口完成：子进程由后台线程回收，调用线程不等待其结束。
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：读取本机的系统设置和已安装的程序"
+)]
+
 use std::io;
 use std::path::Path;
 use std::process::Command;

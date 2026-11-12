@@ -435,6 +435,7 @@ fn download(url: &str, path: &Path, length: u64, progress: &dyn Fn(u8)) -> Resul
 /// 等下载命令 `child` 结束，期间按 `path` 的大小报告进度（见 [`download`]），返回命令的输出。
 ///
 /// 两个命令都只在出错时写标准错误，内容很少，结束前不读也不会写满管道。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：更新包下载到本机")]
 fn watch(
     mut child: Child,
     path: &Path,

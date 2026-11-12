@@ -5,6 +5,9 @@
 //!
 //! 模块分工见各模块的 `//!`：`document`、`editing`、`workspace`、`navigation`、`git`、`tools`。
 
+// 测试直接在本机的临时目录中准备和检查文件。
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod background;
 pub mod backup;
 pub mod diff_view;

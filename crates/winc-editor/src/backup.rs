@@ -5,6 +5,11 @@
 //! 行尾），其后是文档的全部内容（UTF-8）。同一目录被两个 winc 实例打开时，只有先启动的实例读取、
 //! 写入、删除该目录的备份，即同一时刻只允许一个实例处理同一目录（[`Backups::lock`]）。
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：备份保存在本机的数据目录中"
+)]
+
 use std::fs;
 use std::io::{self, BufRead, Read, Seek, Write};
 use std::path::{Path, PathBuf};

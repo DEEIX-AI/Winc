@@ -5,6 +5,9 @@
 //! `macos` 放直接调用 `AppKit` 的能力。Windows 上是图形界面程序：从命令行启动时接上该命令行的
 //! 控制台，`--help` 和错误信息输出到该控制台（`windows::attach_console`）。
 
+// 测试直接在本机的临时目录中准备和检查文件。
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 mod app;
 mod askpass;
 mod bench;
