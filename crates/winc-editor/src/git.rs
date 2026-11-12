@@ -745,7 +745,36 @@ impl Git {
     ///
     /// 同 [`Git::operate`]。
     pub fn stage(&self, root: &Path, paths: &[PathBuf]) -> Result<String, String> {
+        if paths.is_empty() {
+            return Ok(String::new());
+        }
         let mut args: Vec<OsString> = ["add", "--all", "--"].map(OsString::from).into();
+        args.extend(relative_all(root, paths));
+        self.operate(root, &args)
+    }
+
+    /// 将 `paths` 从暂存区恢复到 `HEAD`，保留工作区内容；首次提交前只从索引移除。
+    ///
+    /// 路径按字面匹配，空列表不执行操作。
+    ///
+    /// # Errors
+    ///
+    /// 仓库未受信任、无法读取 `HEAD` 或 Git 操作失败时返回原因。
+    pub fn unstage(&self, root: &Path, paths: &[PathBuf]) -> Result<String, String> {
+        if paths.is_empty() {
+            return Ok(String::new());
+        }
+        self.require_trust(root)?;
+        let status = self.status(root, &Cancel::default())?;
+        let mut args: Vec<OsString> = if status.oid.is_some() {
+            ["reset", "--quiet", "HEAD", "--"]
+                .map(OsString::from)
+                .into()
+        } else {
+            ["rm", "--cached", "--force", "--quiet", "--"]
+                .map(OsString::from)
+                .into()
+        };
         args.extend(relative_all(root, paths));
         self.operate(root, &args)
     }

@@ -2,7 +2,8 @@
 //!
 //! 视图自上而下是标题行、分支行、说明条（合并、变基暂停时才有）、改动列表、储藏（有储藏时）、
 //! 上一次提交（未推送时可撤销），最下面是提交卡片（提交信息 2 至 8 行，「修改上次提交」和「提交
-//! ⌄」）；列表分「冲突」「更改」「未跟踪的文件」三组。提交只含勾选的文件（`git commit --only`），
+//! ⌄」）；列表分「冲突」「暂存的更改」「更改」「未跟踪的文件」。有暂存内容时提交索引，
+//! 否则提交勾选的工作区文件（`git commit --only`），
 //! 冲突未解决时拒绝提交；选中文件时在预览标签里打开差异。绘制在 `view/git/commit.rs`，点击区域见
 //! `commit_hits`。
 
@@ -133,14 +134,16 @@ pub(crate) enum CommitName {
     /// 一个目录：同一个目录可以同时出现在几组里，连同组区分。
     Dir(CommitGroup, PathBuf),
     /// 一个文件（`Status::entries` 里的路径）。
-    File(PathBuf),
+    File(CommitGroup, PathBuf),
 }
 
 /// 改动列表里的一组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommitGroup {
-    /// 已跟踪文件的改动和已暂存的新文件，默认勾上。
+    /// 已跟踪文件在工作区中的改动，默认勾上。
     Changes,
+    /// 索引相对于 `HEAD` 的改动。
+    Staged,
     /// 合并、拣选、变基时有冲突的文件。
     ///
     /// 冲突须先于其他改动处理，因此单独成组并排在最上方，不与普通改动混排。
@@ -153,11 +156,12 @@ impl CommitGroup {
     /// 各组在列表中自上而下的顺序。
     pub const ALL: [CommitGroup; CommitGroup::COUNT] = [
         CommitGroup::Conflicts,
+        CommitGroup::Staged,
         CommitGroup::Changes,
         CommitGroup::Untracked,
     ];
     /// 组的个数。
-    pub const COUNT: usize = 3;
+    pub const COUNT: usize = 4;
 }
 
 impl CommitGroup {
@@ -165,6 +169,7 @@ impl CommitGroup {
     pub fn title(self) -> &'static str {
         match self {
             CommitGroup::Changes => t!("git-commit-group-changes"),
+            CommitGroup::Staged => t!("git-commit-group-staged"),
             CommitGroup::Conflicts => t!("git-commit-group-conflicts"),
             CommitGroup::Untracked => t!("git-commit-group-untracked"),
         }
@@ -178,7 +183,10 @@ impl CommitGroup {
     pub fn holds(self, entry: &Entry) -> bool {
         match self {
             CommitGroup::Conflicts => entry.conflicted(),
-            CommitGroup::Changes => !entry.conflicted() && !entry.untracked(),
+            CommitGroup::Changes => {
+                !entry.conflicted() && !entry.untracked() && entry.unstaged.is_some()
+            }
+            CommitGroup::Staged => !entry.conflicted() && entry.staged.is_some(),
             CommitGroup::Untracked => !entry.conflicted() && entry.untracked(),
         }
     }
@@ -200,8 +208,12 @@ pub enum CommitRow {
         label: String,
         depth: usize,
     },
-    /// 一个文件：它在 `Status::entries` 里的下标、缩进的层数。
-    File { index: usize, depth: usize },
+    /// 一个文件：它在 `Status::entries` 里的下标、缩进的层数和所在组。
+    File {
+        index: usize,
+        depth: usize,
+        group: CommitGroup,
+    },
 }
 
 impl CommitRow {
@@ -285,13 +297,14 @@ impl CommitRows {
     }
 
     /// 排下一层已经排好序的文件 `files`（下标、相对路径）：每个一行，深 `depth` 层。
-    fn push_files(&mut self, files: &[(usize, &Path)], depth: usize) {
+    fn push_files(&mut self, files: &[(usize, &Path)], depth: usize, group: CommitGroup) {
         self.members.extend(files.iter().map(|&(index, _)| index));
-        self.rows.extend(
-            files
-                .iter()
-                .map(|&(index, _)| CommitRow::File { index, depth }),
-        );
+        self.rows
+            .extend(files.iter().map(|&(index, _)| CommitRow::File {
+                index,
+                depth,
+                group,
+            }));
     }
 }
 
@@ -413,8 +426,16 @@ pub enum CommitTarget {
     Check(usize),
     /// 文件那一行：选中并预览差异；双击打开文件。
     File(usize),
+    /// 暂存区文件行，预览 `HEAD` 与索引的差异。
+    StagedFile(usize),
+    /// 将文件的磁盘内容加入暂存区。
+    StageFile(usize),
+    /// 取消文件的暂存，保留工作区内容。
+    UnstageFile(usize),
     /// 悬停文件行时右端的「打开文件」按钮，参数同 [`CommitTarget::File`]。
     OpenFile(usize),
+    /// 暂存区文件行的打开文件按钮。
+    OpenStagedFile(usize),
     /// 悬停文件行时右端的「回滚」按钮，参数同 [`CommitTarget::File`]。
     RevertFile(usize),
     /// Git 上下文的位置行：展开位置选择器。
@@ -617,6 +638,8 @@ pub(crate) struct CommitState {
     pub(crate) names: crate::app::TreeLabels<CommitName>,
     /// 选中的文件；多选时是当前行（键盘从这里移动，预览的是它）。
     pub selected: Option<PathBuf>,
+    /// 选中文件所在的组；同一路径可以同时出现在暂存区和工作区。
+    pub selected_group: CommitGroup,
     /// 多选时选中的各个文件；为空时只有 `selected` 算选中。
     marked: HashSet<PathBuf>,
     /// 按 ⇧ 扩展选区的起点。
@@ -732,6 +755,7 @@ impl Default for CommitState {
             names: Default::default(),
             shift: None,
             selected: None,
+            selected_group: CommitGroup::Changes,
             marked: HashSet::new(),
             anchor: None,
             preview: None,
@@ -1117,7 +1141,11 @@ impl App {
         if self.commit.amend || status.operation.is_some() {
             return None;
         }
-        let count = self.commit.checked_entries(status).count();
+        let count = if self.commit.uses_index(status) {
+            status.entries.iter().filter(|e| e.staged.is_some()).count()
+        } else {
+            self.commit.checked_entries(status).count()
+        };
         (count > 0).then_some(count)
     }
 
@@ -1316,7 +1344,11 @@ impl App {
             target,
             CommitTarget::Check(_)
                 | CommitTarget::File(_)
+                | CommitTarget::StagedFile(_)
+                | CommitTarget::StageFile(_)
+                | CommitTarget::UnstageFile(_)
                 | CommitTarget::OpenFile(_)
+                | CommitTarget::OpenStagedFile(_)
                 | CommitTarget::RevertFile(_)
                 | CommitTarget::Dir(_)
                 | CommitTarget::DirCheck(_)
@@ -1423,9 +1455,21 @@ impl App {
                 }
             }
             CommitTarget::Check(i) => self.toggle_commit_check(i),
-            CommitTarget::File(i) => {
+            CommitTarget::StageFile(i) => self.change_file_staging(i, true),
+            CommitTarget::UnstageFile(i) => self.change_file_staging(i, false),
+            CommitTarget::File(i) | CommitTarget::StagedFile(i) => {
                 let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) else {
                     return;
+                };
+                let staged = matches!(target, CommitTarget::StagedFile(_));
+                self.commit.selected_group = if staged {
+                    CommitGroup::Staged
+                } else if self.commit_entry(i).is_some_and(Entry::untracked) {
+                    CommitGroup::Untracked
+                } else if self.commit_entry(i).is_some_and(Entry::conflicted) {
+                    CommitGroup::Conflicts
+                } else {
+                    CommitGroup::Changes
                 };
                 self.focus = Focus::CommitList;
                 // ⌘ 单击加选或取消，⇧ 单击选到这一行：只改选区，不换预览。
@@ -1444,6 +1488,8 @@ impl App {
                 if self.click_count(x, y) >= 2 && path.is_file() {
                     self.open_path(&path);
                     self.focus = Focus::Editor;
+                } else if staged {
+                    self.select_staged_file(path);
                 } else {
                     self.select_commit_file(path);
                 }
@@ -1459,7 +1505,7 @@ impl App {
                 self.press_commit(target);
                 return;
             }
-            CommitTarget::OpenFile(i) => {
+            CommitTarget::OpenFile(i) | CommitTarget::OpenStagedFile(i) => {
                 let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) else {
                     return;
                 };

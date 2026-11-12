@@ -1106,12 +1106,12 @@ enum Slot {
 }
 
 /// 改动列表里一行是谁，刷新前后用它对上同一行：组、目录（连同所在的组）、文件。文件换了组
-/// （暂存以后）还算同一行，从原来的位置移过去。
+/// 时按组区分，部分暂存的文件可以同时出现两行。
 #[derive(PartialEq, Eq, Hash)]
 enum RowId<'a> {
     Group(CommitGroup),
     Dir(CommitGroup, &'a Path),
-    File(&'a Path),
+    File(CommitGroup, &'a Path),
 }
 
 /// 状态 `status` 下第 `row` 行的 [`RowId`]。
@@ -1119,7 +1119,8 @@ fn row_id<'a>(status: &'a Status, row: &'a CommitRow) -> RowId<'a> {
     match row {
         CommitRow::Group(group) => RowId::Group(*group),
         CommitRow::Dir { group, dir, .. } => RowId::Dir(*group, dir),
-        CommitRow::File { index, .. } => RowId::File(
+        CommitRow::File { index, group, .. } => RowId::File(
+            *group,
             status
                 .entries
                 .get(*index)
@@ -1209,8 +1210,9 @@ fn draw_row(
     let focused = app.focus == Focus::CommitList;
     // 浏览历史提交的文件时没有勾选框，也没有回滚、打开文件等按钮。
     let browse = app.commit.browse;
+    let checks = !browse && !app.commit.uses_index(status);
     let checkbox = |frame: &mut Frame<'_>, x: f32, cy: f32, state: Option<bool>| {
-        if browse {
+        if !checks {
             return;
         }
         let border = p.text_dim.alpha(0.55);
@@ -1219,7 +1221,7 @@ fn draw_row(
     };
     // 勾选框的命中区域；浏览时没有勾选框，不记录。
     let check_hit = |hits: &mut Vec<(Rect, CommitTarget)>, rect: Rect, target: CommitTarget| {
-        if !browse {
+        if checks {
             hits.push((rect.intersect(list), target));
         }
     };
@@ -1297,8 +1299,11 @@ fn draw_row(
             );
             // 悬停时右端的文件数换成「回滚」，回滚这一组里勾上的文件，位置和文件行悬停时的按钮
             // 相同。冲突组没有：回滚冲突的文件会丢掉解决到一半的内容。
-            let revert = (hovered && !browse && group != CommitGroup::Conflicts && state.is_some())
-                .then(|| file_actions(band).1);
+            let revert = (hovered
+                && !browse
+                && !matches!(group, CommitGroup::Conflicts | CommitGroup::Staged)
+                && state.is_some())
+            .then(|| file_actions(band).1);
             match revert {
                 Some(rect) => {
                     let target = CommitTarget::GroupRevert(group);
@@ -1399,24 +1404,45 @@ fn draw_row(
             check_hit(hits, check, CommitTarget::DirCheck(i));
             hits.push((band.intersect(list), CommitTarget::Dir(i)));
         }
-        CommitRow::File { index, depth } => {
+        CommitRow::File {
+            index,
+            depth,
+            group,
+        } => {
             let index = *index;
             let entry = &status.entries[index];
-            let is_selected = app.commit_is_selected(&entry.path);
-            let hovered = matches!(
-                app.hover,
-                Hover::Commit(
-                    CommitTarget::File(i)
-                        | CommitTarget::Check(i)
-                        | CommitTarget::OpenFile(i)
-                        | CommitTarget::RevertFile(i)
-                ) if i == index
-            );
-            // 悬停时右端的状态字母替换为「打开文件」「回滚」两个按钮；文件名放不下而显示全名时，
-            // 按钮跟在全名之后（见 `commit_overflow`）。
+            let staged = *group == CommitGroup::Staged;
+            let target = if staged {
+                CommitTarget::StagedFile(index)
+            } else {
+                CommitTarget::File(index)
+            };
+            let stage_target = if staged {
+                CommitTarget::UnstageFile(index)
+            } else {
+                CommitTarget::StageFile(index)
+            };
+            let open_target = if staged {
+                CommitTarget::OpenStagedFile(index)
+            } else {
+                CommitTarget::OpenFile(index)
+            };
+            let is_selected =
+                app.commit_is_selected(&entry.path) && app.commit.selected_group == *group;
+            let hovered = app.hover == Hover::Commit(target)
+                || app.hover == Hover::Commit(stage_target)
+                || app.hover == Hover::Commit(open_target)
+                || matches!(
+                    app.hover,
+                    Hover::Commit(
+                        CommitTarget::Check(i)
+                            | CommitTarget::RevertFile(i)
+                    ) if i == index
+                );
+            // 悬停或选中时显示文件操作；文件名放不下而显示全名时，按钮跟在全名之后。
             let actions = match full {
                 Some(overflow) => overflow.actions,
-                None => (hovered && !browse).then(|| file_actions(band)),
+                None => ((hovered || is_selected) && !browse).then(|| change_actions(band, staged)),
             };
             // 文件没有箭头：勾选框和同一层目录的勾选框对齐；平铺时没有层级，和组标题的勾选框
             // 对齐。
@@ -1435,7 +1461,13 @@ fn draw_row(
                 .map(|p| p.to_string_lossy());
             // 名字用正文色（删除的文件用次要色），状态是右端一个上色的字母（M、U、D 等）；
             // 整行名字上色后颜色过多，不易分辨。
-            let change = entry.shown();
+            let change = if browse {
+                entry.shown()
+            } else if staged {
+                entry.staged.unwrap_or_else(|| entry.shown())
+            } else {
+                entry.unstaged.unwrap_or_else(|| entry.shown())
+            };
             let letter = change.letter().to_string();
             let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
             let letter_x = band.right() - END_CENTER - letter_w / 2.0;
@@ -1444,7 +1476,7 @@ fn draw_row(
             let room = (!wanted).then(|| (text_end - text_x).max(0.0));
             let parts = file_parts(app, frame, (&name, dir.as_deref()), room);
             let width = parts_width(app, frame, &parts, false);
-            let key = CommitName::File(entry.path.clone());
+            let key = CommitName::File(*group, entry.path.clone());
             let view = app
                 .commit
                 .names
@@ -1479,13 +1511,17 @@ fn draw_row(
                 draw_file_icon(frame, p, (icon_x + inset, cy), &name, list);
             }
             if let Some(actions) = actions {
-                draw_file_actions(app, frame, actions, index, list);
+                draw_file_actions(app, frame, actions, (index, *group), list);
                 // 伸出侧栏的按钮同样可以点击，命中区域不裁到列表内。
                 let (open, revert) = actions;
                 for (rect, target) in [
-                    (open, CommitTarget::OpenFile(index)),
+                    (open, open_target),
                     (revert, CommitTarget::RevertFile(index)),
+                    (staging_action(revert), stage_target),
                 ] {
+                    if staged && target == CommitTarget::RevertFile(index) {
+                        continue;
+                    }
                     let rect = if full.is_some() {
                         rect
                     } else {
@@ -1535,12 +1571,12 @@ fn draw_row(
                 // 显示全名的这一行覆盖列表右边的滚动条（见 `draw_commit_overflow`）：行底色右边到
                 // 侧栏边缘的区域同样属于这一行，鼠标移入时全名保持显示。
                 let edge = Rect::new(band.right(), y, list.right() - band.right(), COMMIT_ROW);
-                hits.push((edge, CommitTarget::File(index)));
-                hits.push((spill, CommitTarget::File(index)));
+                hits.push((edge, target));
+                hits.push((spill, target));
             }
             let check = Rect::new(file_check - 8.0, y + 4.0, 16.0, 16.0);
             check_hit(hits, check, CommitTarget::Check(index));
-            hits.push((band.intersect(list), CommitTarget::File(index)));
+            hits.push((band.intersect(list), target));
         }
     }
 }
@@ -1612,26 +1648,71 @@ fn file_actions(band: Rect) -> (Rect, Rect) {
     (open, revert)
 }
 
+/// 文件操作为右端的暂存按钮留一列；暂存行没有回滚按钮，打开文件占用该位置。
+fn change_actions(band: Rect, staged: bool) -> (Rect, Rect) {
+    let (open, revert) = file_actions(Rect::new(band.x, band.y, band.w - ACTION - 2.0, band.h));
+    (if staged { revert } else { open }, revert)
+}
+
+fn staging_action(revert: Rect) -> Rect {
+    Rect::new(revert.right() + 2.0, revert.y, ACTION, ACTION)
+}
+
+fn draw_stage_action(
+    app: &App,
+    frame: &mut Frame<'_>,
+    rect: Rect,
+    target: CommitTarget,
+    clip: Rect,
+) {
+    let p = app.palette;
+    let busy = app.commit.busy || app.branch.running.is_some();
+    let on = !busy && app.hover == Hover::Commit(target);
+    draw_button(frame, p, rect, clip, on, false);
+    let color = if busy {
+        p.text_dim.alpha(0.5)
+    } else if on {
+        p.text
+    } else {
+        p.text_muted
+    };
+    if matches!(target, CommitTarget::UnstageFile(_)) {
+        icons::minus(frame, center(rect), 10.0, color, clip);
+    } else {
+        icons::plus(frame, center(rect), 10.0, color, clip);
+    }
+}
+
 /// 绘制第 `index` 个文件的「打开文件」「回滚」两个按钮（位置为 `open`、`revert`），只绘制在
 /// `clip` 之内；悬停的按钮铺底色，图标用正文色。
 fn draw_file_actions(
     app: &App,
     frame: &mut Frame<'_>,
     (open, revert): (Rect, Rect),
-    index: usize,
+    (index, group): (usize, CommitGroup),
     clip: Rect,
 ) {
     let p = app.palette;
     for (rect, target) in [
-        (open, CommitTarget::OpenFile(index)),
+        (
+            open,
+            if group == CommitGroup::Staged {
+                CommitTarget::OpenStagedFile(index)
+            } else {
+                CommitTarget::OpenFile(index)
+            },
+        ),
         (revert, CommitTarget::RevertFile(index)),
     ] {
+        if group == CommitGroup::Staged && target == CommitTarget::RevertFile(index) {
+            continue;
+        }
         let on = app.hover == Hover::Commit(target);
         draw_button(frame, p, rect, clip, on, false);
         let color = if on { p.text } else { p.text_muted };
         let (cx, cy) = center(rect);
         match target {
-            CommitTarget::OpenFile(_) => {
+            CommitTarget::OpenFile(_) | CommitTarget::OpenStagedFile(_) => {
                 let (w, h) = (10.0, 12.0);
                 let at = ((cx - w / 2.0).round(), (cy - h / 2.0).round());
                 icons::document(frame, at, (w, h), color, clip);
@@ -1639,6 +1720,12 @@ fn draw_file_actions(
             _ => icons::rollback(frame, (cx, cy), color, clip),
         }
     }
+    let target = if group == CommitGroup::Staged {
+        CommitTarget::UnstageFile(index)
+    } else {
+        CommitTarget::StageFile(index)
+    };
+    draw_stage_action(app, frame, staging_action(revert), target, clip);
 }
 
 /// 改动列表里一行的各列（逻辑像素）：箭头的中心离底色左边 `ARROW`，每深一层往右缩进
@@ -1841,7 +1928,18 @@ fn commit_button_text(app: &App) -> (String, f32) {
         (false, None, false) => t!("git-commit-button").to_owned(),
     };
     let scope = app.commit_scope().filter(|_| !busy && done.is_none());
-    let text = scope.map_or(text, |count| t!("git-commit-button-files", count = count));
+    let text = scope.map_or(text, |count| {
+        if app
+            .git
+            .status
+            .as_ref()
+            .is_some_and(|s| app.commit.uses_index(s))
+        {
+            t!("git-commit-button-staged", count = count)
+        } else {
+            t!("git-commit-button-files", count = count)
+        }
+    });
     let icon_w = if busy || clean { 0.0 } else { 16.0 };
     (text, icon_w)
 }
@@ -1886,7 +1984,17 @@ struct RowText {
 /// 按目录排成树时比所在目录深一层，平铺时不缩进。
 /// 返回箭头到勾选框中心的距离（逻辑像素）：浏览历史提交的文件时没有勾选框，为 0。
 fn check_gap(app: &App) -> f32 {
-    if app.commit.browse { 0.0 } else { CHECK }
+    if app.commit.browse
+        || app
+            .git
+            .status
+            .as_ref()
+            .is_some_and(|s| app.commit.uses_index(s))
+    {
+        0.0
+    } else {
+        CHECK
+    }
 }
 
 fn file_column(app: &App, depth: usize) -> usize {
@@ -1910,7 +2018,7 @@ fn row_text(app: &App, status: &Status, root: &Path, row: &CommitRow) -> Option<
             color: p.text,
             shade: Some(p.hover),
         }),
-        CommitRow::File { index, depth } => {
+        CommitRow::File { index, depth, .. } => {
             let entry = status.entries.get(*index)?;
             let name = entry
                 .path
@@ -1962,7 +2070,14 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
             | CommitTarget::RevertFile(f),
         ) => rows
             .iter()
-            .position(|r| matches!(r, CommitRow::File { index, .. } if *index == f))?,
+            .position(|r| matches!(r, CommitRow::File { index, group, .. } if *index == f && *group != CommitGroup::Staged))?,
+        // 选中行的加减按钮保持显示：直接移到按钮上时保持原位，不能因展开名字而移走按钮。
+        // 从已展开的名字移到按钮时则保持已有的展开区域。
+        Hover::Commit(CommitTarget::StageFile(_) | CommitTarget::UnstageFile(_)) => {
+            return app.commit.overflow;
+        }
+        Hover::Commit(CommitTarget::StagedFile(f) | CommitTarget::OpenStagedFile(f)) => rows.iter()
+            .position(|r| matches!(r, CommitRow::File { index, group: CommitGroup::Staged, .. } if *index == f))?,
         _ => return None,
     };
     if app.commit.motion.as_ref().is_some_and(|m| row > m.parent) {
@@ -1988,14 +2103,21 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
     } else {
         // 文件行的按钮在名字之后：名字与按钮在原位放得下时不展开。按钮超出窗口时向左移回，
         // 名字在按钮之前截断。
-        let (open, revert) = file_actions(band);
+        let staged = matches!(
+            rows[row],
+            CommitRow::File {
+                group: CommitGroup::Staged,
+                ..
+            }
+        );
+        let (open, revert) = change_actions(band, staged);
         if end <= open.x - 4.0 {
             return None;
         }
-        let shift = (end + 4.0 - open.x).min(window - revert.right());
+        let shift = (end + 4.0 - open.x).min(window - staging_action(revert).right());
         let moved = |r: Rect| Rect::new(r.x + shift, r.y, r.w, r.h);
         let (open, revert) = (moved(open), moved(revert));
-        (revert.right() + 4.0, Some((open, revert)))
+        (staging_action(revert).right() + 4.0, Some((open, revert)))
     };
     let spill = (right > list.right()).then(|| {
         Rect::new(
@@ -2021,7 +2143,14 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
 fn actions_lag(app: &App, row: usize, band: Rect, open: Rect, name_lag: f32) -> f32 {
     let slide = app.commit.actions_slide.filter(|&(r, _)| r == row);
     let rest = slide.map_or(0.0, |(_, clock)| {
-        let (home, _) = file_actions(band);
+        let staged = matches!(
+            app.commit_rows()[row],
+            CommitRow::File {
+                group: CommitGroup::Staged,
+                ..
+            }
+        );
+        let (home, _) = change_actions(band, staged);
         (open.x - home.x).max(0.0) * (1.0 - clock.progress())
     });
     name_lag.max(rest)
@@ -2089,7 +2218,7 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
         (back(open), back(revert))
     });
     let right = match actions {
-        Some((_, revert)) => revert.right() + 4.0,
+        Some((_, revert)) => staging_action(revert).right() + 4.0,
         None => x + view.width + 8.0,
     }
     .min(spill.right());
@@ -2115,8 +2244,8 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     };
     let style = (x, band, text.folder, text.color);
     draw_name(app, frame, style, (&parts, &view), text_clip);
-    if let (Some(actions), CommitRow::File { index, .. }) = (actions, &rows[row]) {
-        draw_file_actions(app, frame, actions, *index, clip);
+    if let (Some(actions), CommitRow::File { index, group, .. }) = (actions, &rows[row]) {
+        draw_file_actions(app, frame, actions, (*index, *group), clip);
     }
 }
 
@@ -2190,7 +2319,8 @@ pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame
 fn name_key(status: &Status, row: &CommitRow) -> CommitName {
     match row {
         CommitRow::Dir { group, dir, .. } => CommitName::Dir(*group, dir.clone()),
-        CommitRow::File { index, .. } => CommitName::File(
+        CommitRow::File { index, group, .. } => CommitName::File(
+            *group,
             status
                 .entries
                 .get(*index)

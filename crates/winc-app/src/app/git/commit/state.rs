@@ -6,6 +6,13 @@ use winc_editor::diff_view::LEFT;
 use super::*;
 
 impl CommitState {
+    /// 普通提交存在暂存内容时直接提交索引；合并、变基沿用原有的勾选流程。
+    pub fn uses_index(&self, status: &Status) -> bool {
+        !self.browse
+            && status.operation.is_none()
+            && status.entries.iter().any(|e| e.staged.is_some())
+    }
+
     /// 返回当前按下「提交」不会提交的原因；可以提交（或正在提交）时为 `None`。
     ///
     /// 检查项与 [`App::git_commit`] 相同。提交按钮据此置灰，悬停提示显示原因。
@@ -17,12 +24,16 @@ impl CommitState {
         }
         let rebasing = status.operation == Some(Operation::Rebase);
         let mut checked = self.checked_entries(status).peekable();
-        if checked.peek().is_none() && !self.amend && !rebasing {
+        if checked.peek().is_none() && !self.uses_index(status) && !self.amend && !rebasing {
             return Some(t!("git-commit-nothing-checked").to_owned());
         }
-        let unresolved = checked
-            .filter(|e| status.unresolved.contains(&e.path))
-            .count();
+        let unresolved = if self.uses_index(status) {
+            status.unresolved.len()
+        } else {
+            checked
+                .filter(|e| status.unresolved.contains(&e.path))
+                .count()
+        };
         if unresolved > 0 {
             return Some(t!("git-commit-blocker-conflicts", count = unresolved));
         }
@@ -64,7 +75,7 @@ impl CommitState {
 
     /// 文件的勾选框：`Some(true)` 整个提交，`Some(false)` 只提交一部分改动，`None` 不提交。
     ///
-    /// 提交的是工作区里的内容，与暂存区无关：在终端里暂存过的文件与其他文件的处理相同。
+    /// 只用于勾选提交工作区的流程；普通提交有暂存内容时直接提交索引，不显示这些勾选框。
     pub fn file_state(&self, entry: &Entry) -> Option<bool> {
         if !self.checked(entry) {
             None
@@ -345,7 +356,13 @@ impl CommitState {
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| group.holds(e))
+                .filter(|(_, e)| {
+                    if self.browse {
+                        group == CommitGroup::Changes
+                    } else {
+                        group.holds(e)
+                    }
+                })
                 .map(|(i, e)| (i, e.path.strip_prefix(root).unwrap_or(&e.path)))
                 .collect();
             if files.is_empty() {
@@ -359,7 +376,7 @@ impl CommitState {
                 // 平铺：按路径排，每个文件一行。
                 let mut files = files;
                 files.sort_by(|a, b| natural_path_cmp(a.1, b.1));
-                out.push_files(&files, 0);
+                out.push_files(&files, 0, group);
             } else {
                 self.push_level(group, Path::new(""), files, 0, &mut out);
             }
@@ -417,7 +434,7 @@ impl CommitState {
             out.dirs[group.index()].insert(full, start..out.members.len());
         }
         files.sort_by(|a, b| natural_path_cmp(a.1, b.1));
-        out.push_files(&files, depth);
+        out.push_files(&files, depth, group);
     }
 
     /// 勾上或勾掉文件 `entry`：`on` 为 `false` 时勾掉；之前按块勾掉的一处改动随之作废。

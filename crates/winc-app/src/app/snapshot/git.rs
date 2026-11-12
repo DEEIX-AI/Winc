@@ -27,6 +27,7 @@ mod module;
 mod question;
 mod rebase;
 mod repository;
+mod staging;
 mod worktree;
 
 /// 机器上没有可用的 git 时跳过该测试并返回 `true`。

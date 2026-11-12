@@ -5,6 +5,8 @@
 
 use super::*;
 
+mod staging;
+
 fn root() -> PathBuf {
     PathBuf::from("/repo")
 }

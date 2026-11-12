@@ -560,6 +560,14 @@ impl App {
 
     /// 返回差异标签在提交视图中对应的条目；不在提交视图中（没有改动、模块关闭）时为 `None`。
     pub(crate) fn diff_entry(&self, view: &DiffView) -> Option<&winc_editor::git::Entry> {
+        if self
+            .git
+            .status
+            .as_ref()
+            .is_some_and(|s| self.commit.uses_index(s))
+        {
+            return None;
+        }
         let path = view.repo_path.as_deref()?;
         self.git
             .status

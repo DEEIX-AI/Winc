@@ -922,12 +922,19 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         }
         Hover::Commit(
             target @ (CommitTarget::OpenFile(_)
+            | CommitTarget::OpenStagedFile(_)
             | CommitTarget::RevertFile(_)
+            | CommitTarget::StageFile(_)
+            | CommitTarget::UnstageFile(_)
             | CommitTarget::GroupRevert(_)),
         ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
-                CommitTarget::OpenFile(_) => t!("workspace-tip-open-file"),
+                CommitTarget::OpenFile(_) | CommitTarget::OpenStagedFile(_) => {
+                    t!("workspace-tip-open-file")
+                }
+                CommitTarget::StageFile(_) => t!("git-stage-file"),
+                CommitTarget::UnstageFile(_) => t!("git-unstage-file"),
                 CommitTarget::GroupRevert(_) => t!("menu-commit-roll-back"),
                 _ => t!("workspace-tip-revert-change"),
             };

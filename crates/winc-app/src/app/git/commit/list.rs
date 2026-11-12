@@ -50,6 +50,30 @@ impl App {
     ///
     /// 浏览历史提交的文件时（`commit.browse`），在该提交的差异标签中打开这个文件。
     pub(in crate::app::git) fn select_commit_file(&mut self, path: PathBuf) {
+        if !self.commit.browse
+            && self.git.status.as_ref().is_some_and(|s| {
+                s.entries
+                    .iter()
+                    .any(|e| e.path == path && e.staged.is_some() && e.unstaged.is_none())
+            })
+        {
+            self.select_staged_file(path);
+            return;
+        }
+        self.commit.selected_group = self
+            .git
+            .status
+            .as_ref()
+            .and_then(|s| s.entries.iter().find(|e| e.path == path))
+            .map_or(CommitGroup::Changes, |e| {
+                if e.conflicted() {
+                    CommitGroup::Conflicts
+                } else if e.untracked() {
+                    CommitGroup::Untracked
+                } else {
+                    CommitGroup::Changes
+                }
+            });
         self.commit.marked.clear();
         self.commit.anchor = Some(path.clone());
         self.commit.selected = Some(path.clone());
@@ -63,6 +87,17 @@ impl App {
             return;
         }
         self.git_preview_changes(&path);
+    }
+
+    /// 在暂存区选择文件，预览索引中的版本。
+    pub(in crate::app::git) fn select_staged_file(&mut self, path: PathBuf) {
+        self.commit.selected_group = CommitGroup::Staged;
+        self.commit.marked.clear();
+        self.commit.anchor = Some(path.clone());
+        self.commit.selected = Some(path.clone());
+        self.reveal_commit_selection();
+        self.git.preview_seq += 1;
+        self.fetch_staged_changes(&path, super::super::Target::Preview(self.git.preview_seq));
     }
 
     /// 浏览历史提交的文件时点击了第 `i` 个文件：选中它，并在差异标签中打开。
@@ -80,10 +115,13 @@ impl App {
         let Some(status) = self.git.status.as_ref() else {
             return Vec::new();
         };
+        let mut seen = HashSet::new();
         self.commit_rows()
             .iter()
             .filter_map(|r| match r {
-                CommitRow::File { index, .. } => Some(status.entries[*index].path.clone()),
+                CommitRow::File { index, .. } if seen.insert(*index) => {
+                    Some(status.entries[*index].path.clone())
+                }
                 _ => None,
             })
             .collect()
@@ -219,7 +257,9 @@ impl App {
             return;
         };
         let row = self.commit_rows().iter().position(|r| match r {
-            CommitRow::File { index, .. } => status.entries[*index].path == path,
+            CommitRow::File { index, group, .. } => {
+                status.entries[*index].path == path && *group == self.commit.selected_group
+            }
             _ => false,
         });
         if let Some(row) = row {
@@ -261,6 +301,9 @@ impl App {
         self.commit.anchor = file_at(from).or(Some(current.clone()));
         self.commit.marked = marked;
         self.commit.selected = Some(current);
+        if let Some(CommitRow::File { group, .. } | CommitRow::Dir { group, .. }) = rows.get(to) {
+            self.commit.selected_group = *group;
+        }
         self.reveal_commit_selection();
     }
 
@@ -272,8 +315,9 @@ impl App {
         let rows = self.commit_rows();
         let selected = self.commit.selected.as_deref();
         let Some(i) = rows.iter().position(|r| match r {
-            CommitRow::File { index, .. } => {
+            CommitRow::File { index, group, .. } => {
                 Some(status.entries[*index].path.as_path()) == selected
+                    && *group == self.commit.selected_group
             }
             _ => false,
         }) else {
@@ -390,10 +434,12 @@ impl App {
         let entry = &status.entries[index];
         // 目录排在其子目录之前，因此最后一个包含该文件的行即最内层。
         rows.iter().rposition(|row| match row {
-            CommitRow::File { index: i, .. } => *i == index,
-            CommitRow::Group(group) => group.holds(entry),
+            CommitRow::File {
+                index: i, group, ..
+            } => *i == index && *group == self.commit.selected_group,
+            CommitRow::Group(group) => *group == self.commit.selected_group,
             CommitRow::Dir { group, dir, .. } => {
-                group.holds(entry) && entry.path.starts_with(root.join(dir))
+                *group == self.commit.selected_group && entry.path.starts_with(root.join(dir))
             }
         })
     }
@@ -473,11 +519,23 @@ impl App {
         let selected = self.commit.selected.as_deref();
         let at = files
             .iter()
-            .position(|&(_, i)| Some(status.entries[i].path.as_path()) == selected);
+            .position(|&(row, i)| Some(status.entries[i].path.as_path()) == selected
+                && matches!(rows[row], CommitRow::File { group, .. } if group == self.commit.selected_group));
         // 选中文件所在的行；文件被收起而不可见时为收起它的目录（或组）所在的行。
         let anchor = self.commit_anchor(&rows);
         // 要用到的那个文件的路径先取出来，下面改 `self` 时不再借着状态。
-        let path = |i: usize| files.get(i).map(|&(_, f)| status.entries[f].path.clone());
+        let path = |i: usize| {
+            files.get(i).map(|&(row, f)| {
+                let staged = matches!(
+                    rows[row],
+                    CommitRow::File {
+                        group: CommitGroup::Staged,
+                        ..
+                    }
+                );
+                (status.entries[f].path.clone(), staged)
+            })
+        };
         // 翻页距离为可见整行数减一，保留一行上下文；落在该行或其后第一个文件上，
         // 跳过组、目录行，到达两端时停在第一个、最后一个文件。
         let page = ((self.commit_parts().list.h / COMMIT_ROW).floor() as usize)
@@ -525,9 +583,16 @@ impl App {
                 | NamedKey::PageUp
                 | NamedKey::PageDown,
             ) => {
-                if let Some(next) = target {
+                if let Some((next, staged)) = target {
                     if self.modifiers.shift_key() && !self.commit.browse {
+                        self.commit.selected_group = if staged {
+                            CommitGroup::Staged
+                        } else {
+                            CommitGroup::Changes
+                        };
                         self.select_commit_range(next);
+                    } else if staged && !self.commit.browse {
+                        self.select_staged_file(next);
                     } else {
                         self.select_commit_file(next);
                     }
@@ -550,7 +615,9 @@ impl App {
                 }
             }
             Key::Named(NamedKey::Space) => {
-                if let Some(i) = at {
+                if let Some(i) = at
+                    && !self.commit.uses_index(status)
+                {
                     self.toggle_commit_check(files[i].1);
                 }
             }
@@ -562,7 +629,7 @@ impl App {
                 }
             }
             Key::Named(NamedKey::Enter) => {
-                if let Some(path) = target
+                if let Some((path, _)) = target
                     && path.is_file()
                 {
                     self.open_path(&path);
