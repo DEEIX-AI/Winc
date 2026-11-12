@@ -3,7 +3,7 @@
 
 use super::*;
 
-use winc_config::files::{create_temporary, sync_dir, sync_file};
+use winc_backend::fs::{SaveError, SaveOptions};
 use winc_i18n::t;
 
 mod append;
@@ -948,10 +948,11 @@ fn load_with(path: &Path, allow_binary: bool, prefer: Encoding) -> Result<Loaded
     })
 }
 
-/// 先写同目录下的临时文件，成功后再改名替换目标文件；失败时删除临时文件。
+/// 把 `write` 写出的内容原子地保存到 `path`，见 [`winc_backend::fs::save`]。
 ///
-/// `bom` 为 `true` 时先写入 UTF-8 BOM，`write` 负责写出其后的内容；`in_memory` 为 `true` 时
-/// 写出的内容全部在内存中，改名替换会改变文件属性的情况改为原地写入（[`write_in_place`]）。
+/// `bom` 为 `true` 时先写入 UTF-8 BOM；`in_memory` 为 `true` 时写出的内容全部在内存中，改名替换
+/// 不可行或会改变文件属性的情况改为原地写入。WSL 发行版中的文件经 Windows 改名替换会丢失 Linux
+/// 权限和属主：内存中的内容原地写入，大文件由发行版把权限复制到临时文件。
 ///
 /// # Errors
 ///
@@ -960,156 +961,24 @@ pub(super) fn write_atomic(
     path: &Path,
     bom: bool,
     in_memory: bool,
-    write: impl FnOnce(&mut io::BufWriter<fs::File>) -> io::Result<()>,
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let name = path
-        .file_name()
-        .map_or(Cow::Borrowed("file"), |n| n.to_string_lossy());
-
-    // 文件所在的目录可能已被删除（例如在文件树中删除了整个目录，而该文件的标签仍保留）：
-    // 重新创建后再保存。
-    fs::create_dir_all(dir)?;
-
-    let existing = fs::metadata(path).ok();
-    // `rename` 只检查目录的写权限，不检查目标文件的权限；目标文件只读时必须在此拒绝，
-    // 否则该文件会被替换。
-    if existing
-        .as_ref()
-        .is_some_and(|m| m.permissions().readonly())
-    {
-        return Err(io::Error::new(
+    let in_distro = crate::wsl::locate_here(path).is_some();
+    let keep_identity = |target: &Path, temp: &Path| crate::wsl::keep_identity(target, temp);
+    let options = SaveOptions {
+        bom,
+        in_memory,
+        prefer_in_place: in_distro,
+        before_replace: in_distro.then_some(&keep_identity),
+    };
+    match winc_backend::fs::save(path, &options, write) {
+        Ok(_) => Ok(()),
+        Err(SaveError::ReadOnly) => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             t!("editor-file-read-only"),
-        ));
-    }
-    // 通过 Windows 改名替换发行版中的文件会丢失 Linux 权限和属主。
-    let in_distro = existing.is_some() && crate::wsl::locate_here(path).is_some();
-    if in_memory && in_distro {
-        return write_in_place(path, bom, write);
-    }
-    if existing.as_ref().is_some_and(rename_changes_identity) {
-        if in_memory {
-            return write_in_place(path, bom, write);
-        }
-        return Err(io::Error::other(t!("editor-large-identity")));
-    }
-    // 临时文件名带随机后缀且只新建、不跟随符号链接（`create_new`）：目录其他用户也能写时，
-    // 对方预先放一个同名的符号链接就能让保存写进链接指向的文件。
-    let (tmp, file) = match create_temporary(dir, &name, existing.is_some()) {
-        Ok(created) => created,
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            return Err(io::Error::other(t!("editor-temp-file-failed")));
-        }
-        Err(e)
-            if in_memory && existing.is_some() && e.kind() == io::ErrorKind::PermissionDenied =>
-        {
-            // 目录不可写而文件可写：无法创建临时文件，改为原地写入。
-            return write_in_place(path, bom, write);
-        }
-        Err(e) => return Err(e),
-    };
-
-    let result = (|| {
-        let mut out = io::BufWriter::with_capacity(1 << 20, file);
-
-        if bom {
-            out.write_all(&UTF8_BOM)?;
-        }
-
-        write(&mut out)?;
-        let file = out.into_inner().map_err(io::IntoInnerError::into_error)?;
-        sync_file(&file)?;
-
-        if let Some(metadata) = &existing {
-            // 临时文件新建时只给自己读写，写完再换成原文件的权限，写的过程中其他用户读不到内容。
-            file.set_permissions(metadata.permissions())?;
-            // 新文件的属组是当前用户的默认组（macOS 上是目录的属组），改回原文件的属组；当前用户
-            // 不在该组里时系统拒绝，沿用新文件的属组。
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                let _ = std::os::unix::fs::fchown(&file, None, Some(metadata.gid()));
-            }
-            #[cfg(target_vendor = "apple")]
-            copy_extended_attributes(path, &file);
-        }
-
-        // 大文件的片段引用原文件，无法原地写入，由发行版复制权限。
-        if in_distro {
-            crate::wsl::keep_identity(path, &tmp)?;
-        }
-        winc_config::files::replace_file(&tmp, path)?;
-        sync_dir(dir);
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-
-    result
-}
-
-/// 改名替换是否会改变已有文件 `metadata` 的身份：有多个硬链接（改名只替换一个名字，其他名字
-/// 仍指向旧内容），或属主不是当前用户（改名后属主变为当前用户）。
-#[cfg(unix)]
-// 本函数只有对 `libc::geteuid` 的一次调用需要 `unsafe`，因此只在此处放开 `unsafe_code`。
-#[allow(unsafe_code)]
-fn rename_changes_identity(metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    // SAFETY: `geteuid` 没有参数，不访问内存，总是成功。
-    let user = unsafe { libc::geteuid() };
-    metadata.nlink() > 1 || metadata.uid() != user
-}
-
-/// 改名替换是否会改变已有文件 `metadata` 的身份；非 Unix 平台不检查。
-#[cfg(not(unix))]
-fn rename_changes_identity(_metadata: &fs::Metadata) -> bool {
-    false
-}
-
-/// 原地写入 `path`：截断后写入新内容，再同步到磁盘。
-///
-/// 不经过临时文件：写入中途失败（磁盘已满、进程中止）时文件只剩部分内容，因此只在改名替换不可行
-/// 或会改变文件属性时使用，见 [`write_atomic`]。
-fn write_in_place(
-    path: &Path,
-    bom: bool,
-    write: impl FnOnce(&mut io::BufWriter<fs::File>) -> io::Result<()>,
-) -> io::Result<()> {
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(path)?;
-    let mut out = io::BufWriter::with_capacity(1 << 20, file);
-    if bom {
-        out.write_all(&UTF8_BOM)?;
-    }
-    write(&mut out)?;
-    let file = out.into_inner().map_err(io::IntoInnerError::into_error)?;
-    sync_file(&file)
-}
-
-/// 把 `source` 的扩展属性（包括彩色标签）和 ACL 复制到 `target`。
-///
-/// 尽力而为：读不到原文件或文件系统不支持时不复制，保存本身不受影响。
-#[cfg(target_vendor = "apple")]
-// 本函数只有对 `libc::fcopyfile` 的一次调用需要 `unsafe`，因此只在此处放开 `unsafe_code`。
-#[allow(unsafe_code)]
-fn copy_extended_attributes(source: &Path, target: &fs::File) {
-    use std::os::fd::AsRawFd;
-    let Ok(source) = fs::File::open(source) else {
-        return;
-    };
-    // SAFETY: 两个参数都是调用期间被借用、保持打开的有效文件描述符；状态参数传空指针，
-    // `fcopyfile` 允许这样做且不会写入；失败时只返回 -1。
-    unsafe {
-        libc::fcopyfile(
-            source.as_raw_fd(),
-            target.as_raw_fd(),
-            std::ptr::null_mut(),
-            libc::COPYFILE_ACL | libc::COPYFILE_XATTR,
-        );
+        )),
+        Err(SaveError::IdentityWouldChange) => Err(io::Error::other(t!("editor-large-identity"))),
+        Err(SaveError::TemporaryFile) => Err(io::Error::other(t!("editor-temp-file-failed"))),
+        Err(SaveError::Io(error)) => Err(error),
     }
 }

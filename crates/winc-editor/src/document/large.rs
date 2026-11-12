@@ -336,7 +336,7 @@ impl LargeText {
     /// 写出过程中被其他程序截短）时返回 [`io::ErrorKind::UnexpectedEof`]：写出的内容不完整，
     /// 调用方不能用它替换原文件。写完时原文件已被其他程序修改（`LargeText::original_changed`）
     /// 同样返回错误：写出的内容可能混有修改前后的字节，替换原文件还会丢失该程序的修改。
-    pub fn write_to(&self, out: &mut impl Write) -> io::Result<()> {
+    pub fn write_to(&self, out: &mut (impl Write + ?Sized)) -> io::Result<()> {
         let mut result = Ok(());
         let mut written = 0u64;
 

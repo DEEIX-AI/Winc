@@ -9,6 +9,7 @@
 #[cfg(any(windows, test))]
 mod escape;
 pub mod fs;
+pub mod local;
 mod path;
 mod target;
 

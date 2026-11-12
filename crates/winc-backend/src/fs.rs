@@ -3,8 +3,11 @@
 //! 目前只有本机的实现；虚拟路径一律返回 [`io::ErrorKind::Unsupported`]，不会交给本机的
 //! 文件系统。文件信息用本 crate 的 [`Metadata`] 表示：`std::fs::Metadata` 无法由远端的数据构造。
 
+mod save;
 #[cfg(test)]
 mod tests;
+
+pub use save::{BeforeReplace, SaveError, SaveOptions, save};
 
 use std::io;
 use std::path::{Path, PathBuf};

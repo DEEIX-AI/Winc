@@ -60,7 +60,7 @@ const LAYERS: &[(&str, &[&str])] = &[
         "winc-typeset",
         &["winc-i18n", "winc-preview", "winc-render", "winc-syntax"],
     ),
-    ("winc-config", &["winc-i18n", "winc-syntax"]),
+    ("winc-config", &["winc-backend", "winc-i18n", "winc-syntax"]),
     ("winc-preview", &["winc-backend", "winc-i18n"]),
     ("winc-syntax", &["winc-core"]),
     ("winc-vim", &["winc-core"]),

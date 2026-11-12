@@ -3163,12 +3163,15 @@ dependencies = [
 [[package]]
 name = "winc-backend"
 version = "0.0.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "winc-config"
 version = "0.0.0"
 dependencies = [
- "libc",
+ "winc-backend",
  "winc-i18n",
  "winc-syntax",
 ]
