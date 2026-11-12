@@ -398,9 +398,15 @@ impl Workspace {
         };
         let mut current = self.root.clone();
 
+        // 远端的目录由后台读取：各级上级目录的路径已经知道，一起要，不必等上一级读好才发现
+        // 下一级。
+        let remote = winc_backend::is_remote(&self.root);
         for component in relative.parent().into_iter().flat_map(Path::components) {
             current.push(component);
             self.expanded.insert(current.clone());
+            if remote && !self.children.contains_key(&current) {
+                self.missing.want(current.clone());
+            }
         }
 
         self.rebuild();

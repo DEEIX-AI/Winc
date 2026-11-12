@@ -871,6 +871,9 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 .and_then(winc_backend::locate)
                 .map(|location| location.target);
             let label = match host {
+                Some(host) if !winc_backend::remote::is_connected(&host) => {
+                    t!("workspace-remote-status-lost", host = host.as_str())
+                }
                 Some(host) => t!("workspace-remote-status-connected", host = host.as_str()),
                 None => t!("workspace-start-remote").to_owned(),
             };

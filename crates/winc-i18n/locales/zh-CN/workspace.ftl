@@ -144,8 +144,7 @@ workspace-stash-placeholder = 说明（可选）
 workspace-stash-hint = 含未跟踪的文件 · { common-key-enter } 储藏
 workspace-picker-remote-hosts-placeholder = 选择主机，或输入 用户@主机、主机:目录
 workspace-picker-remote-folders-placeholder = 输入目录名筛选，/ 进入；也可以输入路径
-workspace-picker-remote-connected = 已连接 · 选择目录
-workspace-picker-remote-browse-host = 连接并选择目录
+workspace-picker-remote-connected = 已连接
 workspace-picker-remote-connect = 连接到 { $host }
 workspace-picker-remote-open-here = 打开此目录
 workspace-picker-remote-hint-open = { common-key-enter } 打开
@@ -153,18 +152,29 @@ workspace-picker-remote-hint-enter = { $platform ->
     [macos] ⇥ 进入 · ⌘↩ 打开
    *[other] Tab 进入 · Ctrl+Enter 打开
 }
+workspace-picker-remote-hint-edit = { $platform ->
+    [macos] ↩ 连接 · ⇥ 修改
+   *[other] Enter 连接 · Tab 修改
+}
+workspace-picker-remote-config = 编辑 SSH 配置文件…
+workspace-remote-config-failed = 无法创建 SSH 配置文件：{ $error }
 workspace-picker-remote-loading = 正在读取…
 workspace-picker-remote-failed = 无法读取：{ $error }
 workspace-picker-remote-no-folders = 没有匹配的目录
 workspace-picker-remote-no-hosts = 还没有主机：输入 用户@主机 连接，或在 ~/.ssh/config 中配置
 workspace-picker-remote-invalid-host = 没有匹配的主机，输入的内容也不是有效的主机名
 workspace-remote-dialog-title = 连接到 SSH 主机
-workspace-remote-dialog-message = 使用系统的 ssh 登录：密钥、跳板机等设置取自 ~/.ssh/config。连接后选择要打开的目录。
 workspace-remote-dialog-host = 主机
 workspace-remote-dialog-host-placeholder = 用户@主机
 workspace-remote-dialog-port = 端口
+workspace-remote-dialog-key = 密钥
+workspace-remote-dialog-key-placeholder = 可选，留空时使用 ssh 配置、agent 或密码
+workspace-remote-dialog-key-choose = 选择密钥文件
+workspace-remote-dialog-missing-key = 找不到密钥文件
 workspace-remote-dialog-connect = 连接
 workspace-remote-dialog-connecting = 正在连接…
+workspace-remote-dialog-installing = 正在安装服务程序…
+workspace-remote-dialog-starting = 正在启动服务程序…
 workspace-remote-dialog-invalid-host = 主机名无效
 workspace-remote-dialog-invalid-port = 端口无效
 workspace-picker-remote-new = 新主机…
@@ -174,13 +184,17 @@ workspace-remote-other = 其他主机…
 workspace-remote-disconnect = 断开 SSH 连接
 workspace-start-remote = 连接到 SSH 主机
 workspace-remote-status-connected = SSH：{ $host }
+workspace-remote-status-lost = SSH：{ $host }（已断开）
 workspace-remote-connecting = 正在连接 { $host }…
+workspace-remote-installing = 正在向 { $host } 安装服务程序…
+workspace-remote-starting = 正在启动 { $host } 上的服务程序…
 workspace-remote-canceled = 已取消连接
 workspace-remote-failed = 无法连接 { $host }：{ $error }
 workspace-remote-no-server = 安装中缺少在远端运行的服务程序
 workspace-remote-unsupported-system = 不支持该主机的系统（{ $system }）
 workspace-remote-disabled = 无法打开：远程模块未启用
 workspace-remote-lost = 与 { $host } 的连接已断开
+workspace-remote-reconnecting = 与 { $host } 的连接已断开，正在重新连接…
 workspace-notice-reconnect = 重新连接
 workspace-notice-cancel = 取消
 workspace-rename-branch-title = 重命名分支

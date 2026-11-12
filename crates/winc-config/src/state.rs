@@ -68,6 +68,10 @@ pub struct State {
     ///
     /// 仓库的配置变了（指纹不同）要重新确认。
     trusted_repos: Vec<(PathBuf, u64)>,
+    /// 用户为远端主机指定的密钥文件：（连接目标的文字，密钥文件的路径），按目标排序。
+    ///
+    /// 只记路径，不读取也不保存密钥的内容；路径原样交给 `ssh`。
+    remote_keys: Vec<(String, String)>,
     /// Vim 模式的大写标记：名字、文件路径、行号与列号（都从 0 起），按名字排序。
     pub vim_marks: Vec<(char, PathBuf, usize, usize)>,
     /// Vim 模式命令行的历史，从旧到新，最多 `MAX_VIM_HISTORY` 条。
@@ -402,6 +406,17 @@ impl State {
             .take(MAX_TOOL_CHOICES)
             .collect();
 
+        let remote_keys = root
+            .get("remoteKeys")
+            .and_then(Json::as_object)
+            .map(|items| {
+                (items.iter())
+                    .filter_map(|(target, key)| Some((target.clone(), key.as_str()?.to_owned())))
+                    .filter(|(_, key)| !key.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let vim_marks = vim_marks(root);
         let vim_commands = vim_history(root, "vimCommands");
         let vim_searches = vim_history(root, "vimSearches");
@@ -411,6 +426,7 @@ impl State {
             badges,
             tool_choices,
             trusted_repos,
+            remote_keys,
             vim_marks,
             vim_commands,
             vim_searches,
@@ -648,6 +664,11 @@ impl State {
         });
         fields.push(("sessions", Json::Array(sessions.collect())));
 
+        if !self.remote_keys.is_empty() {
+            let keys = (self.remote_keys.iter())
+                .map(|(target, key)| (target.clone(), Json::String(key.clone())));
+            fields.push(("remoteKeys", Json::object(keys)));
+        }
         if !self.tool_choices.is_empty() {
             let choices = self.tool_choices.iter().map(|(folder, run)| {
                 Json::object(vec![("folder", path(folder)), ("run", Json::Bool(*run))])
@@ -731,6 +752,22 @@ impl State {
             self.last = None;
         }
         self.assign_badges();
+    }
+
+    /// 返回用户为连接目标 `target` 指定的密钥文件；没有指定时返回 `None`。
+    pub fn remote_key(&self, target: &str) -> Option<&str> {
+        (self.remote_keys.iter())
+            .find(|(known, _)| known == target)
+            .map(|(_, key)| key.as_str())
+    }
+
+    /// 记下连接目标 `target` 使用的密钥文件 `key`；`key` 为空时去掉这条记录。
+    pub fn set_remote_key(&mut self, target: &str, key: &str) {
+        self.remote_keys.retain(|(known, _)| known != target);
+        if !key.is_empty() {
+            self.remote_keys.push((target.to_owned(), key.to_owned()));
+            self.remote_keys.sort();
+        }
     }
 
     /// 返回 `folder` 中项目自带格式化工具的上次选择：运行该目录中的程序（`true`），

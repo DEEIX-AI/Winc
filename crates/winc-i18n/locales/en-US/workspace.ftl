@@ -192,8 +192,7 @@ workspace-stash-placeholder = Message (optional)
 workspace-stash-hint = Includes untracked files · { common-key-enter } Stash
 workspace-picker-remote-hosts-placeholder = Select a host, or type user@host or host:folder
 workspace-picker-remote-folders-placeholder = Type to filter folders, / to enter; paths work too
-workspace-picker-remote-connected = Connected · choose a folder
-workspace-picker-remote-browse-host = Connect and choose a folder
+workspace-picker-remote-connected = Connected
 workspace-picker-remote-connect = Connect to { $host }
 workspace-picker-remote-open-here = Open This Folder
 workspace-picker-remote-hint-open = { common-key-enter } Open
@@ -201,18 +200,29 @@ workspace-picker-remote-hint-enter = { $platform ->
     [macos] ⇥ Enter Folder · ⌘↩ Open
    *[other] Tab Enter Folder · Ctrl+Enter Open
 }
+workspace-picker-remote-hint-edit = { $platform ->
+    [macos] ↩ Connect · ⇥ Edit
+   *[other] Enter Connect · Tab Edit
+}
+workspace-picker-remote-config = Edit SSH Config File…
+workspace-remote-config-failed = Couldn’t create the SSH config file: { $error }
 workspace-picker-remote-loading = Loading…
 workspace-picker-remote-failed = Couldn’t read: { $error }
 workspace-picker-remote-no-folders = No matching folders
 workspace-picker-remote-no-hosts = No hosts yet: type user@host to connect, or add hosts to ~/.ssh/config
 workspace-picker-remote-invalid-host = No matching hosts, and the text is not a valid host name
 workspace-remote-dialog-title = Connect to SSH Host
-workspace-remote-dialog-message = Signs in with the system ssh: keys, jump hosts and other settings come from ~/.ssh/config. Choose a folder after connecting.
 workspace-remote-dialog-host = Host
 workspace-remote-dialog-host-placeholder = user@host
 workspace-remote-dialog-port = Port
+workspace-remote-dialog-key = Key File
+workspace-remote-dialog-key-placeholder = Optional; otherwise ssh config, agent or password
+workspace-remote-dialog-key-choose = Choose Key File
+workspace-remote-dialog-missing-key = Key file not found
 workspace-remote-dialog-connect = Connect
 workspace-remote-dialog-connecting = Connecting…
+workspace-remote-dialog-installing = Installing Server…
+workspace-remote-dialog-starting = Starting Server…
 workspace-remote-dialog-invalid-host = Invalid host name
 workspace-remote-dialog-invalid-port = Invalid port
 workspace-picker-remote-new = New Host…
@@ -222,13 +232,17 @@ workspace-remote-other = Other Host…
 workspace-remote-disconnect = Disconnect from SSH Host
 workspace-start-remote = Connect to SSH Host
 workspace-remote-status-connected = SSH: { $host }
+workspace-remote-status-lost = SSH: { $host } (disconnected)
 workspace-remote-connecting = Connecting to { $host }…
+workspace-remote-installing = Installing the server program on { $host }…
+workspace-remote-starting = Starting the server program on { $host }…
 workspace-remote-canceled = Connection canceled
 workspace-remote-failed = Couldn’t connect to { $host }: { $error }
 workspace-remote-no-server = the installation has no server program to run on the host
 workspace-remote-unsupported-system = the host’s system ({ $system }) is not supported
 workspace-remote-disabled = Couldn’t open: the Remote module is turned off
 workspace-remote-lost = The connection to { $host } was lost
+workspace-remote-reconnecting = The connection to { $host } was lost. Reconnecting…
 workspace-notice-reconnect = Reconnect
 workspace-notice-cancel = Cancel
 workspace-rename-branch-title = Rename Branch

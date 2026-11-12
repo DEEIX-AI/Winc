@@ -50,6 +50,8 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
     let options = Ssh {
         batch: true,
         keep_alive: true,
+        connect_timeout: true,
+        share: false,
     };
     let command = ssh_command(&target, "server", options);
     let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
@@ -63,11 +65,67 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
             "BatchMode=yes",
             "-o",
             "ServerAliveInterval=60",
+            "-o",
+            "ConnectTimeout=15",
             "alice@devbox",
             "--",
             "'server'"
         ]
     );
+}
+
+#[test]
+fn a_registered_key_file_is_passed_to_ssh_as_one_argument() {
+    let target = Target::new("alice@keyed-host:2200").unwrap();
+    let args = || -> Vec<String> {
+        let command = ssh_command(&target, "server", Ssh::default());
+        (command.get_args())
+            .map(|arg| arg.to_str().unwrap().to_owned())
+            .collect()
+    };
+    set_identity(&target, Some("~/.ssh/my key"));
+    assert_eq!(identity(&target).as_deref(), Some("~/.ssh/my key"));
+    assert_eq!(
+        args()[3..],
+        [
+            "-i",
+            "~/.ssh/my key",
+            "-p",
+            "2200",
+            "alice@keyed-host",
+            "--",
+            "'server'"
+        ]
+    );
+    // 空的路径去掉登记。
+    set_identity(&target, Some(""));
+    assert_eq!(identity(&target), None);
+    assert_eq!(
+        args()[3..],
+        ["-p", "2200", "alice@keyed-host", "--", "'server'"]
+    );
+}
+
+#[test]
+fn only_settings_the_user_left_unset_are_filled_in() {
+    let unset = "user alice\nserveraliveinterval 0\nconnecttimeout none\n";
+    let filled = Ssh {
+        batch: false,
+        keep_alive: true,
+        connect_timeout: true,
+        share: false,
+    };
+    assert_eq!(Ssh::missing(unset), filled);
+    // 连接复用：用户没有设置 `ControlMaster`、`ControlPath` 时才补。
+    let plain = format!("{unset}controlmaster false\ncontrolpersist no\n");
+    assert!(Ssh::missing(&plain).share);
+    let own = format!("{plain}controlpath /home/alice/.ssh/cm-%C\n");
+    assert!(!Ssh::missing(&own).share);
+    assert!(!Ssh::missing("controlmaster auto\n").share);
+    let set = "ServerAliveInterval 30\nConnectTimeout 5\n";
+    assert_eq!(Ssh::missing(set), Ssh::default());
+    // 读不到的项不补：不能确定用户没有设置。
+    assert_eq!(Ssh::missing(""), Ssh::default());
 }
 
 #[cfg(unix)]

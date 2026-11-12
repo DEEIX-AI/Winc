@@ -24,6 +24,8 @@ use winc_backend::{Target, fs, virtual_path};
 const BATCH: remote::Ssh = remote::Ssh {
     batch: true,
     keep_alive: false,
+    connect_timeout: false,
+    share: false,
 };
 
 /// 启动服务进程并登记为到 `name` 的连接，返回连接目标。
@@ -943,6 +945,53 @@ fn over_ssh() {
         assert!(passwd.contains("root:"), "{passwd}");
         remote::disconnect(&target);
     }
+    // 连接复用：以可复用的方式连接后，另一条 `ssh` 经它开会话，不再登录；断开后控制套接字
+    // 不留下，那条 `ssh` 的选项此后只是让它单独登录。
+    let sharing = remote::Ssh {
+        share: true,
+        ..BATCH
+    };
+    let command = deploy.ssh_command(&target, sharing).unwrap();
+    remote::register(
+        target.clone(),
+        Connection::deploy(command, &deploy, &remote::Abort::default()).unwrap(),
+    );
+    let options = remote::shared(&target).unwrap();
+    let second = |extra: &[&str]| {
+        let mut command = Command::new("ssh");
+        command.args(&options).args(["-o", "BatchMode=yes"]);
+        if let Some(port) = target.port() {
+            command.arg("-p").arg(port.to_string());
+        }
+        let output = command.args(extra).output().unwrap();
+        (output.status.success(), output.stdout)
+    };
+    assert!(second(&["-O", "check", target.host()]).0);
+    assert_eq!(
+        second(&[target.host(), "--", "echo shared"]),
+        (true, b"shared\n".to_vec())
+    );
+    let sockets = || -> Vec<_> {
+        let dir = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".ssh");
+        let names = std::fs::read_dir(dir).unwrap().flatten();
+        names
+            .map(|entry| entry.file_name())
+            .filter(|name| name.to_string_lossy().starts_with("winc-"))
+            .collect()
+    };
+    assert_eq!(sockets().len(), 1);
+    remote::disconnect(&target);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !sockets().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(sockets().is_empty(), "{:?}", sockets());
+    assert!(!second(&["-O", "check", target.host()]).0);
+    assert_eq!(
+        second(&[target.host(), "--", "echo alone"]),
+        (true, b"alone\n".to_vec())
+    );
+
     // 无法登录的主机：原因是 `ssh` 的错误输出。
     let nowhere = Target::new("winc-no-such-host.invalid").unwrap();
     let command = deploy.ssh_command(&nowhere, BATCH).unwrap();

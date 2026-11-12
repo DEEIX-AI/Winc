@@ -232,8 +232,12 @@ impl Git {
             "--show-scope",
             "-z",
         ]);
-        let stdout = self.run(&mut command, SHOW_TIMEOUT, &Cancel::default())?;
-        let hooks = git_common_dir(root).map(|d| d.join("hooks"));
+        // 配置和 hooks 目录的位置互不依赖：远端的仓库上同时读取。
+        let common = || git_common_dir(root);
+        let run = || self.run(&mut command, SHOW_TIMEOUT, &Cancel::default());
+        let (common, stdout) = crate::background::both(winc_backend::is_remote(root), common, run);
+        let stdout = stdout?;
+        let hooks = common.map(|d| d.join("hooks"));
         let home = crate::wsl::home_dir(root);
         let risks = Arc::new(parse_risks(
             &stdout,

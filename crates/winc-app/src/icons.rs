@@ -428,6 +428,13 @@ pub fn progress_ring(
     }
 }
 
+/// 返回加载图标当前旋转到的圈数，按进程启动以来的时间计算，各处的加载图标转速一致。
+pub fn spin_turn() -> f32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    start.elapsed().as_secs_f32() * crate::theme::SPIN_SPEED
+}
+
 /// 绘制按 `turn`（圈数，可为任意实数）顺时针旋转后的「刷新」图标，表示操作正在进行。
 pub fn refresh_turned(
     frame: &mut Frame<'_>,

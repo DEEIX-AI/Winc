@@ -3,7 +3,9 @@
 //! 两个阶段都显示在快速打开的卡片里（`Picker::remote`）：
 //!
 //! - **主机**：最近打开过的远端目录、已连接的主机、`ssh` 配置中的主机；输入可以筛选，也可以
-//!   直接写 `用户@主机` 或 `主机:目录`。选中最近的目录直接打开，选中主机则连接后进入下一阶段。
+//!   直接写 `用户@主机` 或 `主机:目录`。选中最近的目录直接打开，选中主机则连接后进入下一阶段；
+//!   `⇥` 在连接对话框中修改选中主机的地址和端口。最近的目录、只来自最近目录的主机可以用行尾
+//!   的「✕」移除；配置中的主机在最后一行「编辑 SSH 配置文件」打开的文件里修改。
 //! - **目录**：列出当前目录的子目录，第一行是「打开此目录」。输入用来筛选；输入 `/` 进入
 //!   匹配的目录，也可以写绝对路径、`~/…` 或 `../`。`⇥` 进入选中的目录，输入为空时 `⌫` 回到
 //!   上级，`↩` 执行选中的一行，按住 `⌘`（其他系统是 `Ctrl`）的 `↩` 直接打开选中的目录。
@@ -19,6 +21,7 @@ use winc_i18n::t;
 use winit::keyboard::{Key, NamedKey};
 
 use super::{After, parse_destination};
+use crate::app::animation::Card;
 use crate::app::{App, Focus, UserEvent};
 
 /// 面板的内容。
@@ -57,6 +60,8 @@ pub(crate) struct Row {
     /// 其后淡色的说明。
     pub(crate) detail: String,
     pub(crate) icon: RowIcon,
+    /// 行尾是否有「✕」：从最近的记录中移除这一行。
+    pub(crate) removable: bool,
     action: RowAction,
 }
 
@@ -66,6 +71,7 @@ impl Row {
         match self.action {
             RowAction::OpenHere => Some(t!("workspace-picker-remote-hint-open")),
             RowAction::Enter(_) => Some(t!("workspace-picker-remote-hint-enter")),
+            RowAction::Host(_) => Some(t!("workspace-picker-remote-hint-edit")),
             _ => None,
         }
     }
@@ -87,6 +93,8 @@ pub(crate) enum RowIcon {
     Folder,
     /// 打开着的目录：「打开此目录」一行。
     Open,
+    /// 「编辑 SSH 配置文件」一行。
+    Config,
 }
 
 /// 选中一行后执行的操作。
@@ -96,6 +104,8 @@ enum RowAction {
     Recent(PathBuf),
     /// 打开连接对话框，填写新主机。
     NewHost,
+    /// 在编辑器中打开用户的 `ssh` 配置文件。
+    Config,
     /// 连接主机，再浏览其上的目录。
     Host(Target),
     /// 连接主机并直接打开输入中给出的目录。
@@ -207,6 +217,10 @@ impl App {
         self.picker.location_rows = None;
         self.picker.folders = false;
         self.picker.vim_list = None;
+        // 面板开着换阶段（从目录回到主机）：按换页过渡。
+        if self.picker.open && self.picker.remote.is_some() {
+            self.turn_card(Card::Picker);
+        }
         // 已读过的目录留着：从目录阶段回到主机阶段再进来时不必重读。
         let listings = (self.picker.remote.take()).map_or_else(HashMap::new, |list| list.listings);
         self.picker.remote = Some(RemoteList {
@@ -269,6 +283,7 @@ impl App {
                 title: t!("workspace-picker-remote-new").to_owned(),
                 detail: String::new(),
                 icon: RowIcon::Host,
+                removable: false,
                 action: RowAction::NewHost,
             });
         }
@@ -283,6 +298,7 @@ impl App {
                     title: winc_editor::display_name(folder).into_owned(),
                     detail: full,
                     icon: RowIcon::Folder,
+                    removable: true,
                     action: RowAction::Recent(folder.clone()),
                 });
             }
@@ -291,13 +307,17 @@ impl App {
                 listed.push(host.to_owned());
             }
         }
+        // 只来自最近目录的主机可以移除；已连接的、配置里的不由这里的记录决定。
+        let mut kept: Vec<String> = Vec::new();
         // 已连接的主机排在最前（不必等待连接），其后是最近用过的，再后是只出现在配置里的。
         let connected = winc_backend::remote::connected();
         for (at, target) in connected.iter().enumerate() {
             listed.retain(|known| known != target.as_str());
             listed.insert(at, target.as_str().to_owned());
+            kept.push(target.as_str().to_owned());
         }
         for host in super::hosts() {
+            kept.push(host.to_owned());
             if !listed.iter().any(|known| known == host) {
                 listed.push(host.to_owned());
             }
@@ -306,15 +326,17 @@ impl App {
             let Some(target) = Target::new(host).filter(|_| fits(host)) else {
                 continue;
             };
+            // 只标出已连接的主机；选中一行后可用的按键写在行尾，不在每一行重复说明。
             let detail = if winc_backend::remote::is_connected(&target) {
                 t!("workspace-picker-remote-connected")
             } else {
-                t!("workspace-picker-remote-browse-host")
+                ""
             };
             rows.push(Row {
                 title: host.clone(),
                 detail: detail.to_owned(),
                 icon: RowIcon::Host,
+                removable: !kept.contains(host),
                 action: RowAction::Host(target),
             });
         }
@@ -330,6 +352,7 @@ impl App {
                 title: t!("workspace-picker-remote-connect", host = typed.trim()),
                 detail: String::new(),
                 icon: RowIcon::Host,
+                removable: false,
                 action: match folder {
                     "" => RowAction::Host(target),
                     folder => RowAction::Destination(target, folder.to_owned()),
@@ -340,6 +363,16 @@ impl App {
             } else {
                 rows.push(row);
             }
+        }
+        // 没有输入时最后一行通向配置文件：别名、密钥、跳板机都在那里设置。
+        if needle.is_empty() {
+            rows.push(Row {
+                title: t!("workspace-picker-remote-config").to_owned(),
+                detail: "~/.ssh/config".to_owned(),
+                icon: RowIcon::Config,
+                removable: false,
+                action: RowAction::Config,
+            });
         }
         rows
     }
@@ -353,6 +386,7 @@ impl App {
                 title: t!("workspace-picker-remote-open-here").to_owned(),
                 detail: shorten(dir, home),
                 icon: RowIcon::Open,
+                removable: false,
                 action: RowAction::OpenHere,
             });
             if dir != "/" {
@@ -360,6 +394,7 @@ impl App {
                     title: "..".to_owned(),
                     detail: shorten(&parent(dir), home),
                     icon: RowIcon::Folder,
+                    removable: false,
                     action: RowAction::Up,
                 });
             }
@@ -371,6 +406,7 @@ impl App {
                 title: name.to_owned(),
                 detail: String::new(),
                 icon: RowIcon::Folder,
+                removable: false,
                 action: RowAction::Enter(name.to_owned()),
             }));
         }
@@ -442,15 +478,12 @@ impl App {
                 self.close_picker();
                 self.open_connect_dialog("", "", false);
             }
-            // 连接在对话框中进行：进度、需要的输入和失败的原因都在那里，成功后回到面板选目录。
-            (RowAction::Host(target), _) => {
+            (RowAction::Config, _) => {
                 self.close_picker();
-                let port = target
-                    .port()
-                    .map(|port| port.to_string())
-                    .unwrap_or_default();
-                self.open_connect_dialog(target.host(), &port, true);
+                self.open_ssh_config();
             }
+            // 连接在对话框中进行：进度、需要的输入和失败的原因都在那里，成功后回到面板选目录。
+            (RowAction::Host(target), _) => self.connect_from_picker(&target, true),
             (RowAction::Destination(target, folder), _) => {
                 self.close_picker();
                 self.remote_open(target, folder, After::Open);
@@ -467,6 +500,54 @@ impl App {
             (RowAction::Up, Some((_, dir))) => self.remote_picker_go(parent(&dir)),
             (RowAction::OpenHere | RowAction::Enter(_) | RowAction::Up, None) => {}
         }
+    }
+
+    /// 关闭面板，在连接对话框中填上 `target`；`start` 为真时立即开始连接，否则留给用户修改。
+    fn connect_from_picker(&mut self, target: &Target, start: bool) {
+        self.close_picker();
+        let port = target
+            .port()
+            .map(|port| port.to_string())
+            .unwrap_or_default();
+        self.open_connect_dialog(target.host(), &port, start);
+    }
+
+    /// 点了第 `row` 行行尾的「✕」：从最近的记录中移除这个目录；移除主机时移除其上的所有
+    /// 目录。选中的位置保持不变。
+    pub(in crate::app) fn forget_remote_row(&mut self, row: usize) {
+        let list = self.picker.remote.as_ref();
+        let item = (self.picker.hits.get(row))
+            .and_then(|&i| list?.rows.get(i))
+            .filter(|item| item.removable);
+        let folders: Vec<PathBuf> = match item.map(|item| &item.action) {
+            Some(RowAction::Recent(folder)) => vec![folder.clone()],
+            Some(RowAction::Host(target)) => (self.state.recent.iter())
+                .filter(|folder| {
+                    winc_backend::locate(folder).is_some_and(|at| at.target == *target)
+                })
+                .cloned()
+                .collect(),
+            _ => return,
+        };
+        // 移除主机时连同为它指定的密钥文件。
+        let host = match item.map(|item| &item.action) {
+            Some(RowAction::Host(target)) => Some(target.clone()),
+            _ => None,
+        };
+        let selected = self.picker.selected;
+        self.update_state(|state| {
+            folders.iter().for_each(|folder| state.forget(folder));
+            if let Some(host) = &host {
+                state.set_remote_key(host.as_str(), "");
+            }
+        });
+        if let Some(host) = &host {
+            winc_backend::remote::set_identity(host, None);
+        }
+        self.picker_refresh();
+        self.picker.selected = selected.min(self.picker.hits.len().saturating_sub(1));
+        self.relayout();
+        self.request_redraw();
     }
 
     /// 目录阶段改为浏览 `dir`，清空输入。
@@ -490,15 +571,21 @@ impl App {
         browsing
     }
 
-    /// 处理目录阶段特有的按键，返回是否已处理：`⇥` 进入选中的目录，输入为空时 `⌫` 回到上级。
+    /// 处理面板特有的按键，返回是否已处理。主机阶段 `⇥` 在连接对话框中修改选中的主机；目录
+    /// 阶段 `⇥` 进入选中的目录，输入为空时 `⌫` 回到上级。
     pub(in crate::app) fn remote_picker_key(&mut self, key: &Key) -> bool {
         let Some(list) = self.picker.remote.as_ref() else {
             return false;
         };
-        let Stage::Browse { dir, .. } = &list.stage else {
-            return false;
-        };
         let row = (self.picker.hits.get(self.picker.selected)).and_then(|&i| list.rows.get(i));
+        let Stage::Browse { dir, .. } = &list.stage else {
+            let edited = match (key, row.map(|row| &row.action)) {
+                (Key::Named(NamedKey::Tab), Some(RowAction::Host(target))) => target.clone(),
+                _ => return false,
+            };
+            self.connect_from_picker(&edited, false);
+            return true;
+        };
         match key {
             Key::Named(NamedKey::Tab) => {
                 match row.map(|row| &row.action) {

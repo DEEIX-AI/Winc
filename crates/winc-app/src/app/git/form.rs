@@ -65,6 +65,8 @@ pub(crate) struct FormDialog {
     pub name: TextField,
     /// 询问对话框的第二个输入框：登录的密码（遮盖）、远程仓库的地址；其他表单不显示。
     pub second: TextField,
+    /// 连接对话框的第三个输入框：密钥文件；其他表单不显示。
+    pub third: TextField,
     /// 新分支从哪个分支开始；`None` 是当前分支（游离时是当前提交）。
     pub base: Option<String>,
     /// 用「位置」右端的目录按钮选的目录，工作树建在它下面；`None` 是默认位置（见
@@ -162,6 +164,7 @@ impl App {
             kind,
             name,
             second: TextField::masked(),
+            third: TextField::default(),
             base: None,
             folder: None,
             copy: true,
@@ -202,6 +205,7 @@ impl App {
         let window = self.layout.window;
         match self.form_dialog.as_ref().map(|d| &d.kind) {
             Some(FormKind::Clone) => DialogLayout::clone_form(window),
+            Some(FormKind::Connect) => DialogLayout::connect_form(window),
             Some(FormKind::Rebase(form)) => {
                 DialogLayout::rebase(window, form.rows.len(), form.pushed > 0)
             }
@@ -463,10 +467,13 @@ impl App {
         if layout.second.w > 0.0 {
             order.push(DialogPart::Second);
         }
+        if layout.third.w > 0.0 {
+            order.push(DialogPart::Third);
+        }
         if plan.base_enabled {
             order.push(DialogPart::Base);
         }
-        if layout.location.is_some() {
+        if layout.change().is_some() {
             order.push(DialogPart::Change);
         }
         order.extend(layout.options.iter().map(|&(part, _)| part));
@@ -593,7 +600,7 @@ impl App {
             return;
         }
         match self.dialog_part_at(x, y) {
-            Some(part @ (DialogPart::Branch | DialogPart::Second)) => {
+            Some(part @ (DialogPart::Branch | DialogPart::Second | DialogPart::Third)) => {
                 self.focus = Focus::Dialog;
                 if let Some(dialog) = &mut self.form_dialog {
                     dialog.focus = part;
@@ -608,15 +615,20 @@ impl App {
 
     /// 执行点击（或以键盘激活）对话框中 `part` 的操作。
     fn press_form_part(&mut self, part: DialogPart) {
+        let shown = self.form_dialog.as_ref().map(|dialog| &dialog.kind);
+        let connecting = matches!(shown, Some(FormKind::Connect));
         match part {
             DialogPart::Close | DialogPart::Cancel => self.close_form_dialog(),
             DialogPart::Confirm => self.submit_form_dialog(),
-            DialogPart::Branch | DialogPart::Second => self.submit_form_dialog(),
+            DialogPart::Branch | DialogPart::Second | DialogPart::Third => {
+                self.submit_form_dialog();
+            }
             DialogPart::Base => {
                 use crate::app::input::context_menu::{MenuTarget, menu_below};
                 let base = self.dialog_layout().base;
                 self.open_context_menu(MenuTarget::FormBase, menu_below(base));
             }
+            DialogPart::Change if connecting => self.pick(crate::app::Pick::KeyFile),
             DialogPart::Change => self.pick(crate::app::Pick::WorktreeFolder),
             DialogPart::RebaseList => self.submit_form_dialog(),
             part @ (DialogPart::RebaseRow(_)

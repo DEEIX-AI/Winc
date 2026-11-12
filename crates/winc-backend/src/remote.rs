@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub use deploy::{Abort, ConnectError, Deploy, Program};
+pub use deploy::{Abort, ConnectError, Deploy, Program, Stage};
 #[cfg(unix)]
 pub use server::serve;
 pub(crate) use wire::MAX_READ;
@@ -624,6 +624,28 @@ impl Connection {
 /// 不会抢在它之前结束子进程，否则远端的命令无人结束。
 const SHUTDOWN: Duration = Duration::from_secs(3);
 
+/// 请子进程结束之后等待它退出的最长时间（秒），超过后强制结束。`ssh` 收到信号后只需关闭
+/// 连接并删除控制套接字，不等待网络。
+const TERMINATE: Duration = Duration::from_secs(1);
+
+/// 请子进程自行结束（`SIGTERM`），返回是否已发出；没有这种信号的系统上返回假。
+// 本函数只有对 `libc::kill` 的一次调用需要 `unsafe`，因此只在此处放开 `unsafe_code`。
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn terminate(child: &Child) -> bool {
+    let Ok(id) = i32::try_from(child.id()) else {
+        return false;
+    };
+    // SAFETY: `child` 尚未被回收，其进程号不会被其他进程占用。`kill` 只发送信号，不访问内存，
+    // 失败时返回 -1。
+    unsafe { libc::kill(id, libc::SIGTERM) == 0 }
+}
+
+#[cfg(not(unix))]
+fn terminate(_: &Child) -> bool {
+    false
+}
+
 impl Connection {
     /// 断开：关闭输入，等待对端结束它启动的命令并退出，最长 [`SHUTDOWN`]，之后强制结束子进程。
     ///
@@ -635,13 +657,23 @@ impl Connection {
         let Some(child) = child.as_mut() else {
             return;
         };
-        let deadline = Instant::now() + SHUTDOWN;
-        while Instant::now() < deadline {
-            // 已退出，或无法查询：不再等待。
-            if !matches!(child.try_wait(), Ok(None)) {
-                return;
+        // 已退出，或无法查询：不再等待。
+        let exited = |child: &mut Child, wait: Duration| {
+            let deadline = Instant::now() + wait;
+            while Instant::now() < deadline {
+                if !matches!(child.try_wait(), Ok(None)) {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(5));
             }
-            thread::sleep(Duration::from_millis(5));
+            false
+        };
+        if exited(child, SHUTDOWN) {
+            return;
+        }
+        // 被复用的 `ssh` 在别的会话（终端）结束前不退出：先请它结束，让它删除控制套接字。
+        if terminate(child) && exited(child, TERMINATE) {
+            return;
         }
         let _ = child.kill();
     }
@@ -1096,6 +1128,13 @@ pub fn forbid_blocking() {
     BLOCKING_FORBIDDEN.set(true);
 }
 
+/// 是否允许当前线程等待远端的应答（见 [`forbid_blocking`]）。
+///
+/// 把远端的操作分到别的线程上再等它们完成，同样是等待：这样做之前先问这里。
+pub fn may_block() -> bool {
+    !BLOCKING_FORBIDDEN.get()
+}
+
 /// 在 `work` 期间允许当前线程等待远端的应答，结束后恢复原来的限制。
 ///
 /// 用于没有后台线程的环境（测试）中就地执行本应在后台进行的任务。
@@ -1106,42 +1145,139 @@ pub fn allow_blocking<R>(work: impl FnOnce() -> R) -> R {
     result
 }
 
+/// 各个目标登录时使用的密钥文件，由 [`set_identity`] 登记。
+static IDENTITIES: Mutex<Option<HashMap<Target, String>>> = Mutex::new(None);
+
+/// 登记连接 `target` 时使用的密钥文件 `key`（`ssh -i`）；`None` 或空的路径去掉登记，由用户的
+/// `ssh` 配置和 agent 决定。此后为该目标构造的 `ssh` 命令都带上它。
+///
+/// 路径原样交给 `ssh`，其中开头的 `~` 由 `ssh` 展开；这里不读取文件。
+pub fn set_identity(target: &Target, key: Option<&str>) {
+    let mut keys = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
+    let keys = keys.get_or_insert_default();
+    match key.filter(|key| !key.is_empty()) {
+        Some(key) => keys.insert(target.clone(), key.to_owned()),
+        None => keys.remove(target),
+    };
+}
+
+/// 返回为 `target` 登记的密钥文件（见 [`set_identity`]）。
+pub fn identity(target: &Target) -> Option<String> {
+    let keys = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
+    keys.as_ref()?.get(target).cloned()
+}
+
+/// 套接字地址中路径的最大长度（字节）：取所支持的系统中最小的一个（macOS 的 `sun_path` 为
+/// 104 字节，Linux 为 108）。
+const SOCKET_PATH_MAX: usize = 104;
+
+/// 控制套接字文件名的长度（字节）：前缀 `winc-`、`%C` 展开成的 40 个十六进制字符，以及
+/// `ssh` 创建套接字时临时加上的 17 个字符的后缀。
+const CONTROL_NAME: usize = 5 + 40 + 17;
+
+/// 已经以可复用的方式建立过连接的目标（见 [`Ssh::share`]）。
+static SHARED: Mutex<Vec<Target>> = Mutex::new(Vec::new());
+
+/// 返回供复用的连接使用的控制套接字（`ControlPath` 的值）：用户的 `~/.ssh` 目录中，按目标
+/// 区分（`%C` 是 `ssh` 对本机名、主机、端口和用户算出的摘要）。
+///
+/// `~/.ssh` 只有用户本人可以进入，套接字由 `ssh` 以只有本人可以访问的权限创建。不支持连接
+/// 复用的系统、目录不存在或路径放不进套接字地址时返回 `None`，这时不复用。
+fn control_path() -> Option<String> {
+    if !cfg!(unix) {
+        return None;
+    }
+    let dir = std::path::PathBuf::from(std::env::var_os("HOME")?).join(".ssh");
+    let text = dir.to_str()?;
+    let fits = text.len() + 1 + CONTROL_NAME < SOCKET_PATH_MAX;
+    // `%` 在 `ControlPath` 中引出替换，目录本身的 `%` 写成 `%%`。
+    (fits && dir.is_dir()).then(|| format!("{}/winc-%C", text.replace('%', "%%")))
+}
+
+/// 登录 `target` 的另一条 `ssh`（终端）复用已建立的连接所需的选项；该目标没有以可复用的
+/// 方式连接过时返回 `None`。
+///
+/// `ControlMaster=no` 使它只使用已有的连接，自己不成为被复用的一方；已有的连接不在了，或
+/// 服务器不允许再开会话时，`ssh` 自行改为单独登录。
+pub fn shared(target: &Target) -> Option<[String; 4]> {
+    let known = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
+    let path = control_path().filter(|_| known.contains(target))?;
+    Some([
+        "-o".to_owned(),
+        "ControlMaster=no".to_owned(),
+        "-o".to_owned(),
+        format!("ControlPath={path}"),
+    ])
+}
+
 /// `ssh` 的可选行为。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Ssh {
     /// 不向用户提问（`BatchMode=yes`）：需要输入口令或确认主机密钥时直接失败。
     pub batch: bool,
     /// 让 `ssh` 定期探测对端（`ServerAliveInterval=60`），网络中断后自行结束，连接上等待中的
-    /// 请求随之失败。命令行上的选项优先于用户的配置，只应在用户没有设置时使用，见 [`keeps_alive`]。
+    /// 请求随之失败。命令行上的选项优先于用户的配置，只应在用户没有设置时使用（见
+    /// [`Ssh::filling`]）。
     pub keep_alive: bool,
+    /// 限制建立网络连接的时间（`ConnectTimeout=15`）：主机没有应答时不必等到系统的时限。
+    /// 不限制登录，等待用户输入口令的时间不计入。同样只应在用户没有设置时使用。
+    pub connect_timeout: bool,
+    /// 让这条连接可以被复用（`ControlMaster=auto`）：此后登录同一目标的 `ssh`（终端）经它
+    /// 开会话，不再握手和认证。控制套接字在用户的 `~/.ssh` 目录中；连接结束时复用随之结束
+    /// （`ControlPersist=no`），不留下后台的 `ssh`。同样只应在用户没有设置时使用。
+    pub share: bool,
+}
+
+impl Ssh {
+    /// 返回为 `target` 补上用户没有设置的各项之后的行为，不向用户提问与否由调用方决定。
+    ///
+    /// 运行 `ssh -G` 读取对该主机生效的配置，不建立连接。无法运行时什么都不补：不能确定用户
+    /// 没有设置时，不替用户添加。
+    pub fn filling(target: &Target) -> Self {
+        let mut command = Command::new("ssh");
+        hide_console(&mut command);
+        if let Some(port) = target.port() {
+            command.arg("-p").arg(port.to_string());
+        }
+        command.arg("-G").arg(target.host()).stdin(Stdio::null());
+        match command.output() {
+            Ok(output) => Self::missing(&String::from_utf8_lossy(&output.stdout)),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// 按 `ssh -G` 输出的生效配置 `config`，返回其中没有设置、需要补上的各项。
+    ///
+    /// 没有设置的探测间隔输出为 `0`，没有设置的连接时限输出为 `none`；读不到这两项时不补。
+    /// 输出为空（无法读取配置）时什么都不补。
+    fn missing(config: &str) -> Self {
+        let value = |name: &str| {
+            config.lines().find_map(|line| {
+                let (key, value) = line.split_once(' ')?;
+                key.eq_ignore_ascii_case(name).then_some(value.trim())
+            })
+        };
+        if config.trim().is_empty() {
+            return Self::default();
+        }
+        Self {
+            batch: false,
+            keep_alive: value("serveraliveinterval") == Some("0"),
+            connect_timeout: matches!(value("connecttimeout"), Some("none" | "0" | "-1")),
+            // 没有设置时 `controlmaster` 输出为 `false`，`controlpath` 一行不出现。
+            share: value("controlmaster") == Some("false")
+                && matches!(value("controlpath"), None | Some("none")),
+        }
+    }
 }
 
 /// 用户没有设置时使用的探测间隔：`ssh` 每 60 秒探测一次，连续 3 次（OpenSSH 的默认次数）
 /// 没有应答后结束连接。
 const KEEP_ALIVE: &str = "ServerAliveInterval=60";
 
-/// 是否用户的 `ssh` 配置已为 `target` 设置了探测间隔（`ServerAliveInterval` 不为 0）。
-///
-/// 运行 `ssh -G` 读取对该主机生效的配置，不建立连接。无法运行或读不到该项时返回真：不能确定
-/// 用户没有设置时，不替用户添加。
-pub fn keeps_alive(target: &Target) -> bool {
-    let mut command = Command::new("ssh");
-    hide_console(&mut command);
-    if let Some(port) = target.port() {
-        command.arg("-p").arg(port.to_string());
-    }
-    command.arg("-G").arg(target.host()).stdin(Stdio::null());
-    let Ok(output) = command.output() else {
-        return true;
-    };
-    let text = String::from_utf8_lossy(&output.stdout);
-    let interval = text.lines().find_map(|line| {
-        let (key, value) = line.split_once(' ')?;
-        key.eq_ignore_ascii_case("serveraliveinterval")
-            .then_some(value.trim())
-    });
-    interval != Some("0")
-}
+/// 用户没有设置时使用的连接时限（15 秒）：超过后 `ssh` 报告超时并结束。系统的时限由 TCP
+/// 重传决定，通常在一分钟以上；15 秒足以覆盖高延迟的网络，又不让用户对着无应答的主机久等。
+const CONNECT_TIMEOUT: &str = "ConnectTimeout=15";
 
 /// Windows 上图形程序启动命令行程序时默认弹出控制台窗口：`CREATE_NO_WINDOW`（`0x0800_0000`）
 /// 使其不创建窗口。其他系统上没有效果。
@@ -1174,6 +1310,21 @@ fn ssh(target: &Target, options: Ssh) -> Command {
     }
     if options.keep_alive {
         command.args(["-o", KEEP_ALIVE]);
+    }
+    if options.connect_timeout {
+        command.args(["-o", CONNECT_TIMEOUT]);
+    }
+    if let Some(path) = control_path().filter(|_| options.share) {
+        command.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=no", "-o"]);
+        command.arg(format!("ControlPath={path}"));
+        let mut known = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
+        if !known.contains(target) {
+            known.push(target.clone());
+        }
+    }
+    // 密钥文件是 `-i` 的值，单独一个参数：以 `-` 开头也不会被当作选项。
+    if let Some(key) = identity(target) {
+        command.arg("-i").arg(key);
     }
     // 指定了端口时由 `-p` 给出；没有指定时不加，由用户的配置决定。
     if let Some(port) = target.port() {

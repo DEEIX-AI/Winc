@@ -240,6 +240,10 @@ pub fn run() {
         app.adopt_restored(restored);
         // 从命令行打开的目录同样记入「最近打开」。
         app.remember_workspace();
+        // 上次开着的是远端的目录：启动时没有连接，无法像本机目录那样直接打开，在后台重新连接。
+        if args.targets.is_empty() {
+            app.restore_remote_folder();
+        }
     }
 
     winc.add(key, app);

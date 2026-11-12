@@ -23,6 +23,8 @@ pub enum Pick {
     WorktreeFolder,
     /// 设置中选择窗口的背景图片。
     BackgroundImage,
+    /// 连接远端主机对话框中密钥文件右端的按钮：选密钥文件，从 `~/.ssh` 开始。
+    KeyFile,
 }
 
 /// 无法打开的文件在编辑区中给出的操作。
@@ -737,6 +739,7 @@ impl App {
                     .or_else(|| self.editor.root().map(Path::to_path_buf));
                 (name, dir)
             }
+            Pick::KeyFile => (String::new(), crate::app::remote::key_dir()),
             Pick::Open
             | Pick::OpenFolder
             | Pick::WslFolder(_)
@@ -752,10 +755,14 @@ impl App {
                 return;
             };
             let panel = match &kind {
-                Pick::Open | Pick::BackgroundImage => Panel::Open { files: true },
-                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
-                    Panel::Open { files: false }
-                }
+                Pick::Open | Pick::BackgroundImage | Pick::KeyFile => Panel::Open {
+                    files: true,
+                    dir: dir.as_deref(),
+                },
+                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => Panel::Open {
+                    files: false,
+                    dir: None,
+                },
                 Pick::SaveAs(_) => Panel::Save {
                     name: &name,
                     dir: dir.as_deref(),
@@ -778,10 +785,25 @@ impl App {
             // 门户的面板只能选文件或者只能选目录：「打开…」选文件，目录从「打开目录…」选。
             let (choose, title) = match &kind {
                 Pick::Open | Pick::BackgroundImage => {
-                    (Choose::Open { directory: false }, t!("cmd-open-file"))
+                    let choose = Choose::Open {
+                        directory: false,
+                        dir: None,
+                    };
+                    (choose, t!("cmd-open-file"))
+                }
+                Pick::KeyFile => {
+                    let choose = Choose::Open {
+                        directory: false,
+                        dir: dir.as_deref(),
+                    };
+                    (choose, t!("workspace-remote-dialog-key-choose"))
                 }
                 Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
-                    (Choose::Open { directory: true }, t!("cmd-open-folder"))
+                    let choose = Choose::Open {
+                        directory: true,
+                        dir: None,
+                    };
+                    (choose, t!("cmd-open-folder"))
                 }
                 Pick::SaveAs(_) => (
                     Choose::Save {
@@ -807,6 +829,7 @@ impl App {
             // 系统的对话框只能选文件或者只能选目录：「打开…」选文件，目录从「打开目录…」选。
             let title = match &kind {
                 Pick::Open | Pick::BackgroundImage => t!("cmd-open-file"),
+                Pick::KeyFile => t!("workspace-remote-dialog-key-choose"),
                 Pick::OpenFolder | Pick::WorktreeFolder => t!("cmd-open-folder"),
                 Pick::WslFolder(_) => t!("cmd-open-wsl-folder"),
                 Pick::SaveAs(_) => t!("cmd-save-as"),
@@ -826,7 +849,7 @@ impl App {
                     dialog = dialog.set_directory(winc_editor::wsl::distro_root(distro));
                 }
                 let path = match &kind {
-                    Pick::Open | Pick::BackgroundImage => dialog.pick_file(),
+                    Pick::Open | Pick::BackgroundImage | Pick::KeyFile => dialog.pick_file(),
                     Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
                         dialog.pick_folder()
                     }
@@ -863,7 +886,8 @@ impl App {
             | Pick::OpenFolder
             | Pick::WslFolder(_)
             | Pick::WorktreeFolder
-            | Pick::BackgroundImage => None,
+            | Pick::BackgroundImage
+            | Pick::KeyFile => None,
         };
 
         let Some(path) = path else { return };
@@ -872,6 +896,7 @@ impl App {
             Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) => self.open_path(&path),
             Pick::WorktreeFolder => self.worktree_folder_picked(path),
             Pick::BackgroundImage => self.set_background_image(Some(path)),
+            Pick::KeyFile => self.key_file_picked(&path),
             Pick::SaveAs(id) => {
                 if self.save_document(id, Some(path))
                     && let Some(prompt) = continuation
@@ -895,6 +920,7 @@ impl App {
         // 在终端里提交、切换分支时 `.git` 可能不在监视范围内：打开的是仓库中的子目录，或者没有
         // 启动监视。工作树、子模块的 `.git` 是文件，真正的目录在其他位置。仓库根位于已监视的目录
         // 中、`.git` 是目录时，它的变化已由监视报告，不必每次窗口重新获得焦点都启动 git。
+        // `.git` 的位置取自上一次读到的状态，不访问文件系统：远端的仓库不能在界面线程上查询。
         self.git_discover();
         self.restart_exited_watcher();
         let live = self
@@ -902,8 +928,9 @@ impl App {
             .as_ref()
             .is_some_and(winc_editor::Watcher::reliable);
         let watched = (self.watcher.as_ref().filter(|_| live)).zip(self.git.root.as_deref());
+        let git_dir = (self.git.status.as_ref()).and_then(|status| status.git_dir.as_deref());
         if !watched.is_some_and(|(w, root)| {
-            root.starts_with(w.root()) && winc_backend::fs::is_dir(root.join(".git"))
+            root.starts_with(w.root()) && git_dir == Some(root.join(".git").as_path())
         }) {
             self.git_refresh();
         }

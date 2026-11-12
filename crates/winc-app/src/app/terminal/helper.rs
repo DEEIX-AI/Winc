@@ -748,13 +748,22 @@ pub(super) fn launch(shell: Option<&str>, cwd: Vec<u8>, windows: bool) -> Launch
 /// 返回在远端主机上的目录 `at` 新建终端时的启动方式：在本机的终端里运行 `ssh`，登录后进入该
 /// 目录并换成那台主机上用户的登录 shell。
 ///
-/// 终端里的 `ssh` 是另一条连接，与编辑器的连接各自登录：需要口令时在终端里输入。`-t` 分配
+/// 编辑器的连接可以复用时（见 `winc_backend::remote::shared`），终端里的 `ssh` 经它开会话，
+/// 不再登录；否则是另一条连接，需要口令时在终端里输入，为该主机指定了密钥文件时也用它。`-t` 分配
 /// 终端；`RemoteCommand=none` 使配置中为该主机设置的登录命令不与这里的命令冲突。远端的命令
 /// 先经用户的登录 shell 解释，写法只用各种 shell 共有的部分；目录包在单引号内。设置中的
 /// `shell` 是本机的命令，对远端的目录不适用。
 fn remote_launch(at: &winc_backend::Location) -> Launch {
     let dir = String::from_utf8_lossy(&at.path).replace('\'', r"'\''");
     let mut args: Vec<String> = ["-t", "-o", "RemoteCommand=none"].map(str::to_owned).into();
+    // 编辑器的连接可以复用时经它开会话，不再握手和认证；用不上时 `ssh` 自行单独登录。
+    if let Some(options) = winc_backend::remote::shared(&at.target) {
+        args.extend(options);
+    }
+    // 与编辑器的连接用同一个密钥文件。
+    if let Some(key) = winc_backend::remote::identity(&at.target) {
+        args.extend(["-i".to_owned(), key]);
+    }
     if let Some(port) = at.target.port() {
         args.extend(["-p".to_owned(), port.to_string()]);
     }

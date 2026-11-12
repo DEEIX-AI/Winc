@@ -15,10 +15,11 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use winc_backend::Target;
-use winc_backend::remote::{self, ConnectError, Connection, Deploy, Exec, Program};
+use winc_backend::remote::{self, ConnectError, Connection, Deploy, Exec, Program, Stage};
 use winc_editor::git::ASKPASS_ENDPOINT;
 use winc_i18n::t;
 
+use crate::app::animation::Card;
 use crate::app::git::form::{FormDialog, FormKind, FormPlan};
 use crate::app::git::question::Asker;
 use crate::app::lifecycle::notice::NoticeAction;
@@ -48,6 +49,8 @@ pub(in crate::app) enum After {
     Open,
     /// 以取得的目录为起点，在面板中浏览并选择要打开的目录。
     Browse,
+    /// 连接中断后自动重新连接到已打开的目录：不向用户提问，失败时改为提示并提供按钮。
+    Restore,
 }
 
 /// 一次连接的结果：要打开的目录，或失败的原因（已是界面语言的文字）。
@@ -67,11 +70,15 @@ pub(crate) struct RemoteState {
     lost: bool,
     /// 中止正在进行的连接；没有连接在进行时为 `None`。
     abort: Option<remote::Abort>,
+    /// 正在进行的连接在登录之后到达的阶段，由后台写入；还在连接网络或登录时为 `None`。
+    stage: Arc<Mutex<Option<Stage>>>,
     /// 正在进行的连接成功之后做什么。
     after: After,
     /// 连接对话框中填写的主机和端口；不是经对话框连接时为 `None`。对话框暂时让位给询问、
     /// 或连接失败后重新显示时按它恢复。
     form: Option<(String, String)>,
+    /// 用户取消了自动的重新连接：此后不再自动重试，直到用户自己连接。
+    paused: bool,
     /// 接下来对连接对话框的关闭是程序进行的（进入下一步、让位给询问），不是用户取消。
     stepping: bool,
     /// 选择面板在后台读好的目录。
@@ -89,8 +96,10 @@ impl Default for RemoteState {
             declined: false,
             lost: false,
             abort: None,
+            stage: Arc::default(),
             after: After::Open,
             form: None,
+            paused: false,
             stepping: false,
             listed: picker::Listings::default(),
             watching: Arc::default(),
@@ -110,16 +119,82 @@ pub(crate) fn hosts() -> Vec<&'static str> {
     HOSTS.lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
-/// 重新读取用户的 `ssh` 配置（`~/.ssh/config`）中的主机，返回个数。
+/// 用户的 `ssh` 配置文件（`~/.ssh/config`）的路径；不知道主目录时为 `None`。
+fn ssh_config() -> Option<PathBuf> {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?;
+    Some(PathBuf::from(home).join(".ssh").join("config"))
+}
+
+/// 配置文件 `path` 不存在时建一个空的，连同它所在的目录。
+///
+/// 权限按 `ssh` 的要求：目录只有用户本人可以进入，文件只有用户本人可以读写。
+#[allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：用户主目录中的 ssh 配置"
+)]
+fn ensure_config(path: &Path) -> std::io::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    let (mut dir, mut file) = (std::fs::DirBuilder::new(), std::fs::OpenOptions::new());
+    dir.recursive(true);
+    file.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::DirBuilderExt::mode(&mut dir, 0o700);
+        std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o600);
+    }
+    if let Some(parent) = path.parent() {
+        dir.create(parent)?;
+    }
+    file.open(path).map(drop)
+}
+
+/// 选密钥文件时的起始目录：用户的 `~/.ssh`；不存在时为 `None`，由系统决定。
+#[allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：用户主目录中的 ssh 目录"
+)]
+pub(in crate::app) fn key_dir() -> Option<PathBuf> {
+    ssh_config()?
+        .parent()
+        .filter(|dir| dir.is_dir())
+        .map(Path::to_path_buf)
+}
+
+/// 把密钥文件的路径 `path` 写成输入框中的样子：主目录 `home` 以内的部分以 `~/` 开头，写法
+/// 同 `ssh`。
+fn key_text(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => format!("~/{}", rest.to_string_lossy()),
+        None => path.to_string_lossy().into_owned(),
+    }
+}
+
+/// 是否密钥文件 `key` 存在；开头的 `~/` 按用户的主目录展开，写法同 `ssh`。无法判断时返回真。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：用户的密钥文件")]
+fn key_exists(key: &str) -> bool {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+    let rest = key.strip_prefix("~/");
+    let rest = rest.or_else(|| key.strip_prefix("~\\").filter(|_| cfg!(windows)));
+    match (rest, home) {
+        (Some(rest), Some(home)) => PathBuf::from(home).join(rest).is_file(),
+        // 其他以 `~` 开头的写法（`~用户/…`）由 `ssh` 展开，这里无法判断，不拦。
+        _ if key.starts_with('~') => true,
+        _ => Path::new(key).is_file(),
+    }
+}
+
+/// 重新读取用户的 `ssh` 配置（`~/.ssh/config` 及其 `Include` 引入的文件）中的主机，返回个数。
 #[allow(
     clippy::disallowed_methods,
     reason = "只访问本机：用户主目录中的 ssh 配置"
 )]
 pub(crate) fn refresh_hosts() -> usize {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
-    let config = home.map(|home| PathBuf::from(home).join(".ssh/config"));
-    let text = config.and_then(|path| std::fs::read_to_string(path).ok());
-    let found = config_hosts(text.as_deref().unwrap_or_default());
+    let mut found = Vec::new();
+    if let Some(path) = ssh_config() {
+        hosts_in(&path, 0, &mut found);
+    }
     let mut names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
     let listed: Vec<&'static str> = (found.into_iter())
         .map(|host| match names.iter().find(|known| **known == host) {
@@ -136,32 +211,131 @@ pub(crate) fn refresh_hosts() -> usize {
     count
 }
 
-/// 返回 `ssh` 配置 `text` 中 `Host` 行列出的主机，按出现的顺序，不重复。
+/// `Include` 嵌套的最大层数（层），同 OpenSSH 读取配置时的上限。
+const INCLUDE_DEPTH: usize = 16;
+
+/// 返回 `ssh` 配置文件 `path` 及其 `Include` 引入的各个文件中 `Host` 行列出的主机，不重复。
 ///
-/// 只取可以直接连接的名字：带通配符（`*`、`?`）和取反（`!`）的是匹配规则，不是主机；不符合
-/// [`Target`] 要求的名字也略过。`Include` 引入的文件不读取。
-fn config_hosts(text: &str) -> Vec<String> {
-    let mut hosts: Vec<String> = Vec::new();
+/// `Include` 的路径相对于配置文件所在的目录（`~/.ssh`），开头的 `~/` 是用户的主目录，最后
+/// 一段可以带通配符；嵌套不超过 [`INCLUDE_DEPTH`] 层。读不到的文件略过。
+#[allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：用户主目录中的 ssh 配置"
+)]
+fn hosts_in(path: &Path, depth: usize, hosts: &mut Vec<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for host in config_hosts(&text) {
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    if depth == INCLUDE_DEPTH {
+        return;
+    }
+    let base = ssh_config().and_then(|config| config.parent().map(Path::to_path_buf));
+    let home = base.as_deref().and_then(Path::parent);
+    for included in arguments(&text, "include") {
+        let pattern = match (included.strip_prefix("~/"), home, &base) {
+            (Some(rest), Some(home), _) => home.join(rest),
+            (None, _, Some(base)) => base.join(&included),
+            _ => PathBuf::from(&included),
+        };
+        for file in matching_files(&pattern) {
+            hosts_in(&file, depth + 1, hosts);
+        }
+    }
+}
+
+/// 返回与 `pattern` 相符的文件，按名字排序：最后一段不带通配符时就是它本身，带 `*`、`?` 时
+/// 是所在目录中名字相符的各个文件。
+#[allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：用户主目录中的 ssh 配置"
+)]
+fn matching_files(pattern: &Path) -> Vec<PathBuf> {
+    let name = pattern.file_name().and_then(|name| name.to_str());
+    let (Some(name), Some(dir)) = (name, pattern.parent()) else {
+        return Vec::new();
+    };
+    if !name.contains(['*', '?']) {
+        return vec![pattern.to_path_buf()];
+    }
+    let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+    let mut files: Vec<PathBuf> = entries
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|found| wild(name, found))
+        })
+        .map(|entry| entry.path())
+        .collect();
+    files.sort();
+    files
+}
+
+/// 是否名字 `name` 与通配的写法 `pattern` 相符：`*` 是任意多个字符，`?` 是一个字符。
+fn wild(pattern: &str, name: &str) -> bool {
+    let (pattern, name): (Vec<char>, Vec<char>) =
+        (pattern.chars().collect(), name.chars().collect());
+    // `reach[i]`：写法的当前前缀能否与名字的前 `i` 个字符相符。
+    let mut reach = vec![false; name.len() + 1];
+    reach[0] = true;
+    for symbol in pattern {
+        let mut next = vec![false; name.len() + 1];
+        next[0] = reach[0] && symbol == '*';
+        for i in 1..=name.len() {
+            next[i] = match symbol {
+                '*' => reach[i] || next[i - 1],
+                '?' => reach[i - 1],
+                other => reach[i - 1] && other == name[i - 1],
+            };
+        }
+        reach = next;
+    }
+    reach[name.len()]
+}
+
+/// 返回 `ssh` 配置 `text` 中关键字为 `keyword`（小写）的各行的参数，按出现的顺序。
+fn arguments(text: &str, keyword: &str) -> Vec<String> {
+    let mut found = Vec::new();
     for line in text.lines() {
         // 关键字与参数之间是空白，或一个 `=`（两侧可有空白）。
         let line = line.trim();
         let split = line.find(|c: char| c.is_whitespace() || c == '=');
-        let (keyword, rest) = line.split_at(split.unwrap_or(line.len()));
-        if !keyword.eq_ignore_ascii_case("host") {
+        let (word, rest) = line.split_at(split.unwrap_or(line.len()));
+        if !word.eq_ignore_ascii_case(keyword) {
             continue;
         }
         let rest = rest.trim_start().strip_prefix('=').unwrap_or(rest);
         // 参数以空白分隔，含空白的参数写在双引号内。
         let mut quoted = false;
-        for name in rest.split(|c: char| {
+        let words = rest.split(|c: char| {
             quoted ^= c == '"';
             !quoted && c.is_whitespace()
-        }) {
-            let name = name.trim_matches('"');
-            let pattern = name.contains(['*', '?', '!']);
-            if !pattern && Target::new(name).is_some() && !hosts.iter().any(|h| h == name) {
-                hosts.push(name.to_owned());
-            }
+        });
+        found.extend(
+            words
+                .map(|word| word.trim_matches('"'))
+                .filter(|word| !word.is_empty())
+                .map(str::to_owned),
+        );
+    }
+    found
+}
+
+/// 返回 `ssh` 配置 `text` 中 `Host` 行列出的主机，按出现的顺序，不重复。
+///
+/// 只取可以直接连接的名字：带通配符（`*`、`?`）和取反（`!`）的是匹配规则，不是主机；不符合
+/// [`Target`] 要求的名字也略过。
+fn config_hosts(text: &str) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for name in arguments(text, "host") {
+        let pattern = name.contains(['*', '?', '!']);
+        if !pattern && Target::new(&name).is_some() && !hosts.contains(&name) {
+            hosts.push(name);
         }
     }
     hosts
@@ -276,6 +450,7 @@ fn connect(
     listener: Option<&Listener>,
     closed: Option<&Closed>,
     abort: &remote::Abort,
+    report: &dyn Fn(Stage),
 ) -> Result<(), String> {
     let deploy = Deploy {
         dir: String::new(),
@@ -285,10 +460,10 @@ fn connect(
         return Err(t!("workspace-remote-no-server").to_owned());
     }
     let askpass = listener.and_then(Listener::askpass);
+    // 探测间隔和连接时限只在用户没有为该主机设置时添加，不覆盖用户的设置。
     let options = remote::Ssh {
         batch: askpass.is_none(),
-        // 用户没有为该主机设置探测间隔时才添加，不覆盖用户的设置。
-        keep_alive: !remote::keeps_alive(target),
+        ..remote::Ssh::filling(target)
     };
     let mut command: Command = deploy
         .ssh_command(target, options)
@@ -300,12 +475,14 @@ fn connect(
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env(ASKPASS_ENDPOINT, &askpass.endpoint);
     }
-    let connection = Connection::deploy(command, &deploy, abort).map_err(|error| match error {
-        ConnectError::Unsupported(system) => {
-            t!("workspace-remote-unsupported-system", system = system)
-        }
-        other => other.to_string(),
-    })?;
+    let connection = Connection::deploy_reporting(command, &deploy, abort, report).map_err(
+        |error| match error {
+            ConnectError::Unsupported(system) => {
+                t!("workspace-remote-unsupported-system", system = system)
+            }
+            other => other.to_string(),
+        },
+    )?;
     if let Some(closed) = closed.cloned() {
         connection.on_close(move || closed());
     }
@@ -337,16 +514,17 @@ fn open(
     listener: Option<&Listener>,
     closed: Option<&Closed>,
     abort: &remote::Abort,
+    report: &dyn Fn(Stage),
 ) -> Outcome {
     let existing = remote::is_connected(target);
     if !existing {
-        connect(target, listener, closed, abort)?;
+        connect(target, listener, closed, abort, report)?;
     }
     match resolve(target, folder) {
         Ok(outcome) => outcome,
         // 沿用的连接已经中断：重新连接一次。
         Err(_) if existing => {
-            connect(target, listener, closed, abort)?;
+            connect(target, listener, closed, abort, report)?;
             resolve(target, folder).map_err(|e| e.to_string())?
         }
         Err(error) => Err(error.to_string()),
@@ -382,9 +560,15 @@ impl App {
         let mut name = TextField::default();
         name.insert(host);
         self.show_form_dialog(FormKind::Connect, name, DialogPart::Branch);
+        // 为这台主机指定过的密钥文件。
+        let key = (Target::with_port(host, port.parse().ok()))
+            .and_then(|target| self.state.remote_key(target.as_str()))
+            .unwrap_or_default()
+            .to_owned();
         if let Some(dialog) = &mut self.form_dialog {
             dialog.second = TextField::with_filter(|c| c.is_ascii_digit());
             dialog.second.insert(port);
+            dialog.third.insert(&key);
         }
         if start {
             self.submit_form_dialog();
@@ -394,19 +578,25 @@ impl App {
     /// 连接对话框按当前填写的内容能不能连接，以及主按钮上的字。
     pub(in crate::app) fn connect_plan(&self, dialog: &FormDialog) -> FormPlan {
         let (host, port) = (dialog.name.text().trim(), dialog.second.text().trim());
+        let key = dialog.third.text().trim();
         let problem = if !host.is_empty() && Target::with_port(host, None).is_none() {
             Some(t!("workspace-remote-dialog-invalid-host"))
         } else if !port.is_empty() && Target::with_port("host", port.parse().ok()).is_none() {
             Some(t!("workspace-remote-dialog-invalid-port"))
+        } else if !key.is_empty() && !key_exists(key) {
+            // `ssh` 对不存在的密钥文件只是跳过，随后的失败看不出原因：在这里先说明。
+            Some(t!("workspace-remote-dialog-missing-key"))
         } else {
             None
         };
         FormPlan {
             enabled: !host.is_empty() && problem.is_none(),
             problem: problem.map(str::to_owned),
-            confirm: match dialog.running {
-                Some(_) => t!("workspace-remote-dialog-connecting"),
-                None => t!("workspace-remote-dialog-connect"),
+            confirm: match (dialog.running, self.remote_stage()) {
+                (None, _) => t!("workspace-remote-dialog-connect"),
+                (Some(_), None) => t!("workspace-remote-dialog-connecting"),
+                (Some(_), Some(Stage::Uploading)) => t!("workspace-remote-dialog-installing"),
+                (Some(_), Some(Stage::Starting)) => t!("workspace-remote-dialog-starting"),
             },
             base: String::new(),
             base_enabled: false,
@@ -419,9 +609,10 @@ impl App {
         let Some(dialog) = &mut self.form_dialog else {
             return;
         };
-        let (host, port) = (
+        let (host, port, key) = (
             dialog.name.text().trim().to_owned(),
             dialog.second.text().trim().to_owned(),
+            dialog.third.text().trim().to_owned(),
         );
         let Some(target) = Target::with_port(&host, port.parse().ok().filter(|_| !port.is_empty()))
         else {
@@ -429,8 +620,41 @@ impl App {
         };
         dialog.running = Some(CONNECTING);
         dialog.error = None;
+        // 密钥文件按主机记下：此后经最近的目录、重新连接和终端登录这台主机时都用它。
+        if self.state.remote_key(target.as_str()).unwrap_or_default() != key {
+            self.update_state(|state| state.set_remote_key(target.as_str(), &key));
+        }
         self.remote.form = Some((host, port));
         self.remote_open(target, String::new(), After::Browse);
+        self.request_redraw();
+    }
+
+    /// 在编辑器中打开用户的 `ssh` 配置文件，没有时先建一个空的：主机的别名、密钥、跳板机等
+    /// 都在其中设置，对本程序和终端里的 `ssh` 同样生效。
+    pub(in crate::app) fn open_ssh_config(&mut self) {
+        let Some(path) = ssh_config() else {
+            return;
+        };
+        match ensure_config(&path) {
+            Ok(()) => self.open_path(&path),
+            Err(error) => self.notify(t!(
+                "workspace-remote-config-failed",
+                error = error.to_string()
+            )),
+        }
+    }
+
+    /// 在系统的面板中选好了密钥文件：填进连接对话框的密钥一行，焦点移到那里。
+    pub(in crate::app) fn key_file_picked(&mut self, path: &Path) {
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+        let text = key_text(path, home.as_deref().map(Path::new));
+        let dialog = (self.form_dialog.as_mut()).filter(|d| matches!(d.kind, FormKind::Connect));
+        if let Some(dialog) = dialog {
+            dialog.third.set_text("");
+            dialog.third.insert(&text);
+            dialog.focus = DialogPart::Third;
+            dialog.error = None;
+        }
         self.request_redraw();
     }
 
@@ -463,6 +687,7 @@ impl App {
         if let Some(dialog) = &mut self.form_dialog {
             dialog.running = Some(CONNECTING);
         }
+        self.turn_card(Card::Dialog);
     }
 
     /// 最近列表中的目录 `folder` 在远端主机上时，在后台连接（已有连接时沿用）并打开，返回真；
@@ -482,6 +707,15 @@ impl App {
         true
     }
 
+    /// 启动时调用：上次退出时开着的目录在远端主机上时，重新连接并打开它，标签按那个目录的
+    /// 现场恢复。连接在后台进行，窗口先显示开始页；需要口令时照常询问。
+    pub(crate) fn restore_remote_folder(&mut self) {
+        let wanted = self.editor.root().is_none() && self.remote_enabled();
+        if let Some(folder) = self.state.last.clone().filter(|_| wanted) {
+            self.reopen_remote(&folder);
+        }
+    }
+
     /// 在后台连接 `target`（已有连接时沿用）并取得其上目录 `folder` 的真实路径（空表示主目录），
     /// 完成后按 `after` 打开它或从它开始浏览；同时只进行一次连接。
     fn remote_open(&mut self, target: Target, folder: String, after: After) {
@@ -493,9 +727,20 @@ impl App {
         }
         // 经对话框连接时进度和取消都在对话框里，不另外提示。
         if self.remote.form.is_none() {
-            let message = t!("workspace-remote-connecting", host = target.as_str());
+            let host = target.as_str();
+            let message = match after {
+                After::Restore => t!("workspace-remote-reconnecting", host = host),
+                After::Open | After::Browse => t!("workspace-remote-connecting", host = host),
+            };
             self.notify_pinned(message, NoticeAction::CancelConnect);
         }
+        // 自动重新连接不打扰用户：需要口令或确认时直接失败，由用户点「重新连接」再来。
+        let quiet = after == After::Restore;
+        // 用户自己发起的连接解除「不再自动重试」。
+        self.remote.paused &= quiet;
+        remote::set_identity(&target, self.state.remote_key(target.as_str()));
+        let stage = Arc::clone(&self.remote.stage);
+        *stage.lock().unwrap_or_else(PoisonError::into_inner) = None;
         let abort = remote::Abort::default();
         self.remote.abort = Some(abort.clone());
         self.remote.connecting = Some(target.clone());
@@ -503,6 +748,7 @@ impl App {
         self.remote.declined = false;
         let slot = Arc::clone(&self.remote.outcome);
         let wake = self.proxy.clone();
+        let staged = wake.clone();
         let questions = self.remote.questions.0.clone();
         self.spawn_blocking_then(UserEvent::RemoteConnected, move || {
             // 端点只在连接期间存在，`listener` 在任务结束时被丢弃。
@@ -513,15 +759,44 @@ impl App {
                 };
                 Arc::new(notify) as Closed
             });
-            let listener = wake.and_then(|proxy| {
+            let listener = wake.filter(|_| !quiet).and_then(|proxy| {
                 Listener::bind(move |question| {
                     let _ = questions.send(question);
                     let _ = proxy.send_event(UserEvent::RemoteQuestion);
                 })
             });
-            let outcome = open(&target, &folder, listener.as_ref(), closed.as_ref(), &abort);
+            let report = |reached| {
+                *stage.lock().unwrap_or_else(PoisonError::into_inner) = Some(reached);
+                if let Some(proxy) = &staged {
+                    let _ = proxy.send_event(UserEvent::RemoteStage);
+                }
+            };
+            let (listener, closed) = (listener.as_ref(), closed.as_ref());
+            let outcome = open(&target, &folder, listener, closed, &abort, &report);
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
         });
+    }
+
+    /// 正在进行的连接在登录之后到达的阶段；没有连接在进行、还在连接网络或登录时为 `None`。
+    fn remote_stage(&self) -> Option<Stage> {
+        let stage = *(self.remote.stage.lock()).unwrap_or_else(PoisonError::into_inner);
+        stage.filter(|_| self.remote.connecting.is_some())
+    }
+
+    /// 连接到达了新的阶段：更新右上角的提示；连接对话框按钮上的字在绘制时读取。
+    pub(in crate::app) fn remote_stage_changed(&mut self) {
+        let (Some(stage), Some(target)) = (self.remote_stage(), &self.remote.connecting) else {
+            return;
+        };
+        if self.notice.action == Some(NoticeAction::CancelConnect) {
+            let host = target.as_str();
+            // 只换文字：提示条留在原处，不重新播放入场动画。
+            self.notice.text = Some(match stage {
+                Stage::Uploading => t!("workspace-remote-installing", host = host),
+                Stage::Starting => t!("workspace-remote-starting", host = host),
+            });
+        }
+        self.request_redraw();
     }
 
     /// 处理后台连接的结果：成功时打开目录，失败时说明原因；用户取消输入时只提示已取消。
@@ -573,7 +848,20 @@ impl App {
             // 连接期间模块被关闭：关闭时这条连接尚未登记，在这里断开。
             Ok(_) => remote::disconnect(&target),
             Err(_) if std::mem::take(&mut self.remote.declined) => {
+                self.remote.paused = self.remote.after == After::Restore;
                 self.flash(t!("workspace-remote-canceled"));
+            }
+            // 自动重新连接没有成功：说明连接已断开，留一个按钮；每次中断只提示一次，之后窗口
+            // 重新获得焦点时仍会再试。
+            Err(_) if self.remote.after == After::Restore => {
+                let root = self.editor.root().map(Path::to_path_buf);
+                if let Some(root) = root.filter(|_| !self.remote.lost) {
+                    self.remote.lost = true;
+                    self.notify_with(
+                        t!("workspace-remote-lost", host = target.as_str()),
+                        NoticeAction::Reconnect(root),
+                    );
+                }
             }
             Err(error) => {
                 // 重新连接失败后仍是断开的状态：下次获得焦点时再次提示。
@@ -596,7 +884,11 @@ impl App {
         }
     }
 
-    /// 到 `target` 的连接意外中断：打开的目录在该主机上时提示，并提供重新连接的按钮。
+    /// 到 `target` 的连接意外中断：打开的目录在该主机上时自动重新连接一次（不向用户提问）；
+    /// 不成功时提示，并提供重新连接的按钮。
+    ///
+    /// 没有定时的重试：连接中断时、之后窗口每次重新获得焦点时各试一次（见
+    /// [`App::check_remote`]），电脑从睡眠中醒来、网络恢复后回到窗口即可接上。
     pub(in crate::app) fn remote_closed(&mut self, target: &Target) {
         let root = self.editor.root().map(Path::to_path_buf);
         let Some(root) = root.filter(|root| {
@@ -604,17 +896,19 @@ impl App {
         }) else {
             return;
         };
-        if self.remote.lost || self.remote.connecting.is_some() || !self.remote_enabled() {
+        // 连接对话框开着时不抢它的位置：那里的连接结束后，下一次获得焦点再试。
+        let busy = self.remote.connecting.is_some() || self.remote.form.is_some();
+        if busy || self.remote.paused || !self.remote_enabled() {
             return;
         }
-        self.remote.lost = true;
-        self.notify_with(
-            t!("workspace-remote-lost", host = target.as_str()),
-            NoticeAction::Reconnect(root),
-        );
+        let Some(location) = winc_backend::locate(&root) else {
+            return;
+        };
+        let path = String::from_utf8_lossy(&location.path).into_owned();
+        self.remote_open(location.target, path, After::Restore);
     }
 
-    /// 窗口重新获得焦点时调用：打开的目录所在主机的连接已不可用时提示（见
+    /// 窗口重新获得焦点时调用：打开的目录所在主机的连接已不可用时重新连接（见
     /// [`App::remote_closed`]）。连接是进程内各窗口共用的，中断的通知只送到发起连接的窗口。
     pub(in crate::app) fn check_remote(&mut self) {
         let target = (self.editor.root())
@@ -658,6 +952,60 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosts_in_included_files_are_listed_once() {
+        let dir = std::env::temp_dir().join(format!("winc-ssh-include-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        let at = |name: &str| dir.join(name).display().to_string();
+        let main = format!(
+            "Host first\nInclude {} {}\nHost last\n",
+            at("d/*.conf"),
+            at("gone")
+        );
+        std::fs::write(dir.join("config"), main).unwrap();
+        std::fs::write(dir.join("d/b.conf"), "Host beta first\n").unwrap();
+        std::fs::write(dir.join("d/a.conf"), "Host alpha\n").unwrap();
+        std::fs::write(dir.join("d/skipped.txt"), "Host hidden\n").unwrap();
+        // 引入自己的文件不会一直读下去。
+        let again = format!("Host loop\nInclude {}\n", at("d/c.conf"));
+        std::fs::write(dir.join("d/c.conf"), again).unwrap();
+        let mut hosts = Vec::new();
+        hosts_in(&dir.join("config"), 0, &mut hosts);
+        assert_eq!(hosts, ["first", "last", "alpha", "beta", "loop"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_chosen_key_file_is_written_relative_to_the_home_folder() {
+        let home = Path::new("/home/me");
+        let shown = |path| key_text(Path::new(path), Some(home));
+        assert_eq!(shown("/home/me/.ssh/id_ed25519"), "~/.ssh/id_ed25519");
+        assert_eq!(shown("/keys/work"), "/keys/work");
+        // 只是名字的前缀相同，不在主目录之下。
+        assert_eq!(shown("/home/mercury/key"), "/home/mercury/key");
+        assert_eq!(key_text(Path::new("/keys/work"), None), "/keys/work");
+    }
+
+    #[test]
+    fn a_missing_ssh_config_is_created_empty_and_an_existing_one_is_kept() {
+        let home = std::env::temp_dir().join(format!("winc-ssh-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let path = home.join(".ssh").join("config");
+        ensure_config(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!((mode(path.parent().unwrap()), mode(&path)), (0o700, 0o600));
+        }
+        std::fs::write(&path, "Host devbox\n").unwrap();
+        ensure_config(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"Host devbox\n");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 
     #[test]
     fn destinations_split_into_a_host_and_a_folder() {
@@ -727,6 +1075,15 @@ Host -oProxyCommand=x a;b
         // 通配和取反的规则、重复的名字、不能作为 `ssh` 主机参数的名字都不列出。
         assert_eq!(config_hosts(config), ["devbox", "staging", "prod"]);
         assert!(config_hosts("").is_empty());
+        // `Include` 的参数和通配的文件名。
+        let config = "Include config.d/* \"~/My Hosts/extra\"\ninclude=one\nHost x\n";
+        assert_eq!(
+            arguments(config, "include"),
+            ["config.d/*", "~/My Hosts/extra", "one"]
+        );
+        assert!(wild("*.conf", "work.conf") && wild("*", "anything") && wild("a?c", "abc"));
+        assert!(!wild("*.conf", "work.conf.bak") && !wild("a?c", "ac") && !wild("", "x"));
+        assert!(wild("", "") && wild("**", ""));
     }
 
     #[test]
@@ -753,9 +1110,17 @@ Host -oProxyCommand=x a;b
     #[ignore = "需要一台可以免输入登录的主机"]
     fn over_ssh() {
         let target = Target::new(&std::env::var("WINC_TEST_SSH_TARGET").unwrap()).unwrap();
-        let home = open(&target, "~", None, None, &remote::Abort::default()).unwrap();
+        let home = open(&target, "~", None, None, &remote::Abort::default(), &|_| {}).unwrap();
         assert!(winc_backend::fs::is_dir(&home), "{}", home.display());
-        let sub = open(&target, ".ssh", None, None, &remote::Abort::default()).unwrap();
+        let sub = open(
+            &target,
+            ".ssh",
+            None,
+            None,
+            &remote::Abort::default(),
+            &|_| {},
+        )
+        .unwrap();
         assert_eq!(sub, home.join(".ssh"));
         let missing = open(
             &target,
@@ -763,6 +1128,7 @@ Host -oProxyCommand=x a;b
             None,
             None,
             &remote::Abort::default(),
+            &|_| {},
         )
         .unwrap_err();
         assert!(missing.contains("/winc/no/such/folder"), "{missing}");

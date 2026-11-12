@@ -620,7 +620,9 @@ impl App {
         let on_name = self.form_dialog.as_ref().is_none_or(|d| {
             matches!(
                 d.focus,
-                crate::layout::DialogPart::Branch | crate::layout::DialogPart::Second
+                crate::layout::DialogPart::Branch
+                    | crate::layout::DialogPart::Second
+                    | crate::layout::DialogPart::Third
             )
         });
         // 交互式变基的信息框是多行的：回车换行，⌘回车开始变基。

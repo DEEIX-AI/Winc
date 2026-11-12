@@ -104,6 +104,16 @@ fn launched(
 }
 
 #[test]
+fn the_terminal_signs_in_with_the_key_file_given_for_the_host() {
+    let target = winc_backend::Target::new("me@keyed-terminal").unwrap();
+    let dir = winc_backend::virtual_path(&target, b"/srv");
+    winc_backend::remote::set_identity(&target, Some("~/.ssh/id_work"));
+    let (_, args, _) = launched(None, dir.to_str().unwrap(), false);
+    assert_eq!(args[3..6], ["-i", "~/.ssh/id_work", "me@keyed-terminal"]);
+    winc_backend::remote::set_identity(&target, None);
+}
+
+#[test]
 fn a_folder_on_a_remote_host_opens_ssh_into_it() {
     let target = winc_backend::Target::new("me@devbox:22022").unwrap();
     let dir = winc_backend::virtual_path(&target, b"/srv/it's here");

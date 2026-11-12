@@ -714,21 +714,25 @@ impl Document {
                 .ok()
                 .and_then(|m| m.modified)
         };
-        let content = if !as_text && winc_preview::image::is_image(path) {
-            OpenedContent::Image(mtime())
-        } else if !as_text && winc_preview::table::is_workbook(path) {
-            OpenedContent::Workbook(mtime())
-        } else if !as_text && winc_preview::docx::is_docx(path) {
-            OpenedContent::Docx(mtime())
-        } else if !as_text && winc_preview::pdf::supported() && winc_preview::pdf::is_pdf(path) {
-            OpenedContent::Pdf(mtime())
-        } else {
-            OpenedContent::Text(load(path, as_text))
+        let content = || {
+            if !as_text && winc_preview::image::is_image(path) {
+                OpenedContent::Image(mtime())
+            } else if !as_text && winc_preview::table::is_workbook(path) {
+                OpenedContent::Workbook(mtime())
+            } else if !as_text && winc_preview::docx::is_docx(path) {
+                OpenedContent::Docx(mtime())
+            } else if !as_text && winc_preview::pdf::supported() && winc_preview::pdf::is_pdf(path)
+            {
+                OpenedContent::Pdf(mtime())
+            } else {
+                OpenedContent::Text(load(path, as_text))
+            }
         };
-        Opened {
-            config: editorconfig::lookup(path),
-            content,
-        }
+        // 远端的文件：内容和 `.editorconfig` 各要一次往返，互不依赖，同时进行。
+        let remote = winc_backend::is_remote(path);
+        let lookup = || editorconfig::lookup(path);
+        let (config, content) = crate::background::both(remote, lookup, content);
+        Opened { config, content }
     }
 
     /// 用后台读好的 `opened`（[`Document::read_any`]）建文档，自身不访问磁盘；结果和

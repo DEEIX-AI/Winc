@@ -399,6 +399,8 @@ pub struct Status {
     ///
     /// 提交这些文件会将冲突标记一并提交。读取状态时在后台同时读取这些文件。
     pub unresolved: Vec<PathBuf>,
+    /// 仓库的 `.git` 目录；工作树和子模块里是 `.git` 文件所指的目录。读不到时为 `None`。
+    pub git_dir: Option<PathBuf>,
 }
 
 /// 停下来等用户处理冲突的操作。
@@ -617,10 +619,19 @@ impl Git {
             "--ignored=matching",
             "--ignore-submodules=dirty",
         ]);
-        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
-        let mut status = parse_status(&stdout, root)
+        // 正在进行的操作从 `.git` 里的标记文件看出，与 `git status` 互不依赖：远端的仓库上
+        // 同时进行。
+        let marks = || {
+            let dir = git_dir(root);
+            let operation = dir.as_deref().and_then(Operation::detect);
+            (dir, operation)
+        };
+        let run = || self.run(&mut command, STATUS_TIMEOUT, cancel);
+        let remote = winc_backend::is_remote(root);
+        let ((dir, operation), stdout) = crate::background::both(remote, marks, run);
+        let mut status = parse_status(&stdout?, root)
             .ok_or_else(|| winc_i18n::t!("git-status-unreadable").to_owned())?;
-        status.operation = git_dir(root).and_then(|d| Operation::detect(&d));
+        (status.git_dir, status.operation) = (dir, operation);
         status.unresolved = status
             .entries
             .iter()

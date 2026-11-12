@@ -363,6 +363,75 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     let notice = app.notice.text.take().unwrap();
     assert!(notice.contains("缺少在远端运行的服务程序"), "{notice}");
     assert!(app.state.recent.contains(&root));
+
+    // 主机面板的最后一行通向 `ssh` 配置文件。`⇥` 在连接对话框中修改选中的主机，不开始连接；
+    // 取消回到面板。
+    app.open_remote_picker();
+    assert_eq!(titles(&app).last().unwrap(), "编辑 SSH 配置文件…");
+    let host = (titles(&app).iter())
+        .position(|title| title == "app-remote-open")
+        .unwrap();
+    app.picker.selected = host;
+    assert!(app.remote_picker_key(&Key::Named(NamedKey::Tab)));
+    let dialog = app.form_dialog.as_ref().unwrap();
+    assert_eq!(dialog.kind, FormKind::Connect);
+    assert_eq!(
+        (dialog.name.text(), dialog.running),
+        ("app-remote-open", None)
+    );
+    assert!(dialog.error.is_none() && !app.picker.open);
+    // 密钥文件：不存在时不能连接并说明；存在时按主机记下，`ssh` 的命令带上它，再打开对话框
+    // 时已经填好。（连接本身因为测试环境中没有服务程序而失败。）
+    let key = dir.join("id_test");
+    let fill = |app: &mut App, text: &str| {
+        let dialog = app.form_dialog.as_mut().unwrap();
+        dialog.third.set_text("");
+        dialog.third.insert(text);
+    };
+    fill(&mut app, "/winc/no/such/key");
+    let plan = app.form_plan(app.form_dialog.as_ref().unwrap());
+    assert!(!plan.enabled);
+    assert_eq!(plan.problem.as_deref(), Some("找不到密钥文件"));
+    // 密钥一行的右端是选文件的按钮；在系统面板中选好的文件填进这一行。
+    let layout = app.dialog_layout();
+    let choose = layout.choose.unwrap();
+    assert_eq!(
+        layout.part_at(choose.x + 1.0, choose.y + 1.0),
+        Some(crate::layout::DialogPart::Change)
+    );
+    assert!(layout.third.contains(choose.x, choose.y));
+    std::fs::write(&key, "").unwrap();
+    app.key_file_picked(&key);
+    let dialog = app.form_dialog.as_ref().unwrap();
+    assert_eq!(dialog.third.text(), key.to_str().unwrap());
+    assert_eq!(dialog.focus, crate::layout::DialogPart::Third);
+    assert!(app.form_plan(app.form_dialog.as_ref().unwrap()).enabled);
+    app.submit_form_dialog();
+    assert_eq!(app.state.remote_key("app-remote-open"), key.to_str());
+    assert_eq!(remote::identity(&target).as_deref(), key.to_str());
+    let dialog = app.form_dialog.as_ref().unwrap();
+    assert!(dialog.error.is_some());
+    assert_eq!(dialog.third.text(), key.to_str().unwrap());
+    app.close_form_dialog();
+    assert!(app.picker.open);
+    // 最近的目录和只来自最近目录的主机在行尾有「✕」，「新主机」和配置文件两行没有。移除主机
+    // 时连同其上的目录。
+    app.picker.selected = host;
+    paint(&mut app);
+    let forget = crate::app::PickerPart::ForgetRemote(host);
+    let closes: Vec<_> = app
+        .hits
+        .picker_parts
+        .iter()
+        .map(|(_, part)| *part)
+        .collect();
+    assert_eq!(closes, [forget]);
+    app.press_picker_part(forget);
+    assert!(!app.state.recent.contains(&root));
+    assert!(!titles(&app).iter().any(|title| title == "app-remote-open"));
+    assert_eq!(app.state.remote_key("app-remote-open"), None);
+    assert_eq!(remote::identity(&target), None);
+    app.close_picker();
 }
 
 /// 截图：开始页、主机面板、目录面板（浏览与筛选）和打开远端目录后的窗口。
@@ -410,9 +479,21 @@ fn shoot_remote_picker() {
     // 打开过的远端目录列在主机面板的最前面。
     app.open_remote_picker();
     shoot(&mut app, "remote-hosts-recent");
+    // 选中最近的目录（行尾有「✕」）和主机（提示可以修改）。
+    app.picker_move(true);
+    shoot(&mut app, "remote-hosts-forget");
+    app.picker_move(true);
+    shoot(&mut app, "remote-hosts-edit");
+    app.picker.selected = 0;
     typed(&mut app, "me@staging:~/app");
     shoot(&mut app, "remote-hosts-typed");
     app.close_picker();
+    // 不经对话框的连接：右上角的提示带转动的图标和「取消」。
+    app.notify_pinned(
+        "正在向 devbox 安装服务程序…",
+        crate::app::NoticeAction::CancelConnect,
+    );
+    shoot(&mut app, "remote-notice");
     remote::disconnect(&target);
 }
 

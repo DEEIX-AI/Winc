@@ -34,6 +34,11 @@ pub struct NoticeGhost {
 }
 
 impl NoticeAction {
+    /// 是否这条提示说明的事情正在进行：提示条上显示转动的图标，而不是提醒图标。
+    pub fn in_progress(&self) -> bool {
+        matches!(self, NoticeAction::CancelConnect)
+    }
+
     /// 按钮上显示的文字。
     pub fn label(&self) -> &'static str {
         match self {

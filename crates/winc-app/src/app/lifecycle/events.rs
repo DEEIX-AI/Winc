@@ -433,6 +433,7 @@ impl App {
             UserEvent::FilesChanged => self.files_changed(),
             UserEvent::GitQuestion => self.poll_git_questions(),
             UserEvent::RemoteQuestion => self.poll_remote_questions(),
+            UserEvent::RemoteStage => self.remote_stage_changed(),
             UserEvent::RemoteClosed(target) => self.remote_closed(&target),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent

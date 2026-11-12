@@ -234,10 +234,21 @@ impl Connection {
     /// # Errors
     ///
     /// 见 [`ConnectError`]。失败时子进程已经结束。
-    pub fn deploy(
+    pub fn deploy(command: Command, deploy: &Deploy, abort: &Abort) -> Result<Self, ConnectError> {
+        Self::deploy_reporting(command, deploy, abort, &|_| {})
+    }
+
+    /// 同 [`Connection::deploy`]，并在进入登录之后的各个阶段时调用 `report`（在调用本函数的
+    /// 线程上）。
+    ///
+    /// # Errors
+    ///
+    /// 见 [`ConnectError`]。失败时子进程已经结束。
+    pub fn deploy_reporting(
         mut command: Command,
         deploy: &Deploy,
         abort: &Abort,
+        report: &dyn Fn(Stage),
     ) -> Result<Self, ConnectError> {
         // 自成一个进程组：中止时连同它启动的进程一起结束（见 `abandon`）。
         #[cfg(unix)]
@@ -263,7 +274,7 @@ impl Connection {
         let errors = Messages::collect(errors);
         let mut input = BufReader::new(input);
 
-        let step = bootstrap(&mut input, &mut output, deploy);
+        let step = bootstrap(&mut input, &mut output, deploy, report);
         let Some(child) = abort.take() else {
             return Err(ConnectError::Aborted);
         };
@@ -295,6 +306,15 @@ impl Connection {
     }
 }
 
+/// 连接在登录之后经过的阶段；此前是建立网络连接和登录，由 `ssh` 进行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// 远端没有这一版本的服务进程，正在上传。
+    Uploading,
+    /// 服务进程即将启动，随后交换协议版本。
+    Starting,
+}
+
 /// 引导阶段的结果。
 enum Step {
     /// 服务进程即将启动。
@@ -310,6 +330,7 @@ fn bootstrap(
     input: &mut impl BufRead,
     output: &mut impl Write,
     deploy: &Deploy,
+    report: &dyn Fn(Stage),
 ) -> io::Result<Step> {
     let mut line = read_line(input)?;
     if let Some(system) = line.as_deref().and_then(|line| line.strip_prefix("need ")) {
@@ -317,6 +338,7 @@ fn bootstrap(
         let Some(program) = deploy.programs.iter().find(|p| p.system == system) else {
             return Ok(Step::Ended);
         };
+        report(Stage::Uploading);
         // 脚本中途失败时不再读取，写入随之失败；原因由接下来的一行或错误输出说明。
         let _ = output
             .write_all(&program.content)
@@ -324,7 +346,10 @@ fn bootstrap(
         line = read_line(input)?;
     }
     Ok(match line.as_deref() {
-        Some("ready") => Step::Ready,
+        Some("ready") => {
+            report(Stage::Starting);
+            Step::Ready
+        }
         Some(line) => match line.strip_prefix("unsupported ") {
             Some(system) => Step::Unsupported(system.to_owned()),
             None => Step::Ended,
@@ -492,7 +517,7 @@ mod tests {
         let deploy = deploy("", "0af3");
         let run = |script: &[u8]| {
             let mut sent = Vec::new();
-            let step = bootstrap(&mut &*script, &mut sent, &deploy).unwrap();
+            let step = bootstrap(&mut &*script, &mut sent, &deploy, &|_| {}).unwrap();
             (step, sent)
         };
         assert!(matches!(run(b"winc:ready\n"), (Step::Ready, sent) if sent.is_empty()));
@@ -510,5 +535,26 @@ mod tests {
         ));
         assert!(matches!(run(b"winc:need Plan9-mips\n"), (Step::Ended, sent) if sent.is_empty()));
         assert!(matches!(run(b"motd only\n"), (Step::Ended, _)));
+    }
+
+    #[test]
+    fn the_stages_after_login_are_reported_in_order() {
+        let deploy = deploy("", "0af3");
+        let stages = |script: &[u8]| {
+            let seen = std::cell::RefCell::new(Vec::new());
+            let report = |stage| seen.borrow_mut().push(stage);
+            bootstrap(&mut &*script, &mut Vec::new(), &deploy, &report).unwrap();
+            seen.into_inner()
+        };
+        assert_eq!(stages(b"winc:ready\n"), [Stage::Starting]);
+        assert_eq!(
+            stages(b"winc:need Linux-x86_64\nwinc:ready\n"),
+            [Stage::Uploading, Stage::Starting]
+        );
+        assert_eq!(
+            stages(b"winc:need Linux-x86_64\nwinc:failed\n"),
+            [Stage::Uploading]
+        );
+        assert!(stages(b"winc:unsupported SunOS-sun4v\n").is_empty());
     }
 }

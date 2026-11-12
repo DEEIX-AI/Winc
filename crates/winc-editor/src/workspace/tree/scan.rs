@@ -56,25 +56,67 @@ impl DirScan {
         };
         // 无法确定的（连接中断、不能等待）不算：只有确实不是目录或已不存在的才收起。各个展开的
         // 目录的文件信息一次取回，远端的目录只需一次往返。
-        let found = winc_backend::fs::metadata_many(&self.expanded);
-        let gone = (self.expanded.into_iter().zip(found))
-            .filter(|(_, metadata)| match metadata {
-                Ok(metadata) => !metadata.kind.is_dir(),
-                Err(error) => winc_backend::fs::is_absent(error),
-            })
-            .map(|(path, _)| path)
-            .collect();
-        DirListing {
-            dirs: (self.dirs.into_iter())
-                .map(|dir| {
-                    let outcome = read(&dir);
-                    (dir, outcome)
+        let expanded = self.expanded;
+        let gone = || {
+            let found = winc_backend::fs::metadata_many(&expanded);
+            (expanded.iter().zip(found))
+                .filter(|(_, metadata)| match metadata {
+                    Ok(metadata) => !metadata.kind.is_dir(),
+                    Err(error) => winc_backend::fs::is_absent(error),
                 })
-                .collect(),
+                .map(|(path, _)| path.clone())
+                .collect()
+        };
+        // 远端的各个目录互不依赖，每个要等一次往返：与上面的检查同时读取。
+        // 当前线程不能等待时照常逐个读，各自立即返回 `Blocked`。
+        let remote = winc_backend::is_remote(&self.root) && winc_backend::remote::may_block();
+        let dirs = &self.dirs;
+        let list = || match remote {
+            true => read_together(dirs, &read),
+            false => dirs.iter().map(|dir| read(dir)).collect(),
+        };
+        let (gone, read): (_, Vec<Read>) = crate::background::both(remote, gone, list);
+        DirListing {
+            dirs: self.dirs.into_iter().zip(read).collect(),
             gone,
             root: self.root,
         }
     }
+}
+
+/// 同时等待读取的远端目录数（个）：与读取仓库的分支、储藏等各项时同时发出的请求数相当。
+/// 请求在一条连接上传输，这里的线程只是各自等待应答。
+const TOGETHER: usize = 8;
+
+/// 读 `dirs` 中的各个目录，最多 [`TOGETHER`] 个同时进行，结果的顺序同 `dirs`。
+fn read_together(dirs: &[PathBuf], read: &(impl Fn(&Path) -> Read + Sync)) -> Vec<Read> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let take = || {
+        let mut done = Vec::new();
+        loop {
+            let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(dir) = dirs.get(index) else {
+                return done;
+            };
+            done.push((index, read(dir)));
+        }
+    };
+    let mut done: Vec<(usize, Read)> = std::thread::scope(|scope| {
+        let helpers: Vec<_> = (1..TOGETHER.min(dirs.len()))
+            .map(|_| scope.spawn(take))
+            .collect();
+        let mut done = take();
+        for helper in helpers {
+            done.extend(
+                helper
+                    .join()
+                    .unwrap_or_else(|e| std::panic::resume_unwind(e)),
+            );
+        }
+        done
+    });
+    done.sort_by_key(|(index, _)| *index);
+    done.into_iter().map(|(_, read)| read).collect()
 }
 
 impl DirListing {

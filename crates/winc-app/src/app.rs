@@ -264,6 +264,8 @@ pub enum UserEvent {
     FileWorked,
     /// 连接远端主机的 `ssh` 发来了输入请求。
     RemoteQuestion,
+    /// 后台到远端主机的连接到达了新的阶段。
+    RemoteStage,
     /// 后台已读取三栏合并的两侧。
     GitMergeSides,
     /// 后台已取得日志的一批提交、一个提交的详情或一个文件的差异。

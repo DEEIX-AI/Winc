@@ -413,7 +413,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         return;
     }
     if app.picker.remote.is_some() {
-        draw_remote_rows(app, frame, &parts);
+        app.hits.picker_parts = draw_remote_rows(app, frame, &parts);
         return;
     }
     if app.picker.vim_list.is_some() {
@@ -544,13 +544,20 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
 /// 绘制连接远端主机的选择面板：图标、名字，其后是淡色的说明；各行之后（没有行时在第一行的
 /// 位置）是正在读取、读取失败或没有匹配项的说明。
-fn draw_remote_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
+///
+/// 返回各行行尾「✕」的矩形。
+fn draw_remote_rows(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &PickerParts,
+) -> Vec<(Rect, PickerPart)> {
     use crate::app::remote::picker::RowIcon;
 
     let p = app.palette;
     let list = parts.list;
+    let mut hits = Vec::new();
     let Some(rows) = app.picker.remote.as_ref().map(|shown| &shown.rows) else {
-        return;
+        return hits;
     };
     let scroll = app.picker.scroll;
     let count = app.picker.hits.len();
@@ -560,14 +567,20 @@ fn draw_remote_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
         };
         let row = parts.row(i, scroll);
         let clip = row.intersect(list);
+        let forget = PickerPart::ForgetRemote(i);
+        let selected = i == app.picker.selected;
         draw_pick_row(app, frame, row, i, clip);
+        if !selected && app.hover == Hover::PickerPart(forget) {
+            frame.rect_clipped(row.inset(6.0, 1.0), p.hover, RADIUS_ROW, clip);
+        }
         let cy = icon_center_y(app, row, app.fonts.ui);
         // 各种图标的中心与文件图标的中心对齐。
-        let center = row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0;
+        let middle = row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0;
         match item.icon {
-            RowIcon::Host => icons::server(frame, (center, cy), p.text_muted, clip),
+            RowIcon::Host => icons::server(frame, (middle, cy), p.text_muted, clip),
+            RowIcon::Config => icons::gear(frame, (middle, cy), p.text_muted, clip),
             RowIcon::Folder | RowIcon::Open => {
-                let x = center - icons::FOLDER_WIDTH / 2.0;
+                let x = middle - icons::FOLDER_WIDTH / 2.0;
                 let open = item.icon == RowIcon::Open;
                 icons::folder(frame, (x, cy - 6.0), open, p.folder, clip);
             }
@@ -581,9 +594,27 @@ fn draw_remote_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
             p.text,
             clip,
         );
-        // 选中的一行在右端提示可用的按键，说明文字让出相应的位置。
+        // 可以移除的行在行尾有「✕」，只在选中或悬停时显示，位置同最近目录面板中的一样。
         let mut right = row.right() - 14.0;
-        if let Some(hint) = item.hint().filter(|_| i == app.picker.selected) {
+        if item.removable {
+            let close = Rect::new(
+                row.right() - 8.0 - BUTTON_SMALL,
+                row.y + 2.0,
+                BUTTON_SMALL,
+                row.h - 4.0,
+            );
+            let hovered = matches!(app.hover,
+                Hover::PickerRow(r) | Hover::PickerPart(PickerPart::ForgetRemote(r)) if r == i);
+            if selected || hovered {
+                let over = app.hover == Hover::PickerPart(forget);
+                draw_button(frame, p, close, clip, over, false);
+                icons::close(frame, center(close), 6.5, p.text_muted, clip);
+                hits.push((close, forget));
+            }
+            right = close.x - 8.0;
+        }
+        // 选中的一行在右端提示可用的按键，说明文字让出相应的位置。
+        if let Some(hint) = item.hint().filter(|_| selected) {
             right -= frame.measure(FontKind::Ui, app.fonts.ui_small, hint);
             ui_text_small(frame, app, right, row, hint, p.text_dim, clip);
             right -= 12.0;
@@ -609,6 +640,7 @@ fn draw_remote_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
             );
         }
     }
+    hits
 }
 
 /// 绘制 Vim 模式的寄存器、标记或文档的列表：名字，其后是淡色的内容预览。
@@ -869,12 +901,13 @@ pub(super) fn draw_live_notice(
     message: &str,
 ) -> (Rect, Option<Rect>) {
     let label = app.notice.action.as_ref().map(NoticeAction::label);
+    let busy = (app.notice.action.as_ref()).is_some_and(NoticeAction::in_progress);
     let (opacity, away) = app.notice.entering.map_or((1.0, 0.0), |clock| {
         let t = clock.linear();
         (1.0 - (1.0 - t).powi(2), (1.0 - t).powi(3))
     });
     frame.with_opacity(opacity, |frame| {
-        draw_notice(app, frame, message, label, -NOTICE_SLIDE * away)
+        draw_notice(app, frame, message, label, busy, -NOTICE_SLIDE * away)
     })
 }
 
@@ -952,14 +985,16 @@ pub(super) fn draw_conflict(
 /// 绘制到期后正在原地淡出的提示条。
 pub(super) fn draw_notice_ghost(app: &App, frame: &mut Frame<'_>, ghost: &NoticeGhost) {
     let t = ghost.clock.linear();
+    // 进行中的提示不会到期，淡出的总是带提醒图标的提示。
     frame.with_opacity(1.0 - t * t, |frame| {
-        draw_notice(app, frame, &ghost.message, ghost.label, 0.0)
+        draw_notice(app, frame, &ghost.message, ghost.label, false, 0.0)
     });
 }
 
 /// 绘制提示条：靠在编辑区右上角，上边和右边留同样的距离；查找条打开时排在查找条下方。
 ///
-/// `dy` 是动画中相对停靠位置的竖直偏移。
+/// `dy` 是动画中相对停靠位置的竖直偏移。`busy` 为真时左侧是转动的图标，表示事情正在进行；
+/// 否则是提醒图标。
 ///
 /// 消息放不下时从中间截短，使提示条不超出编辑区。带按钮的提示（如「查看输出」）把按钮放在右侧。
 /// 返回提示条和按钮的矩形，没有按钮时后者为 `None`。
@@ -968,6 +1003,7 @@ fn draw_notice(
     frame: &mut Frame<'_>,
     message: &str,
     label: Option<&str>,
+    busy: bool,
     dy: f32,
 ) -> (Rect, Option<Rect>) {
     let p = app.palette;
@@ -975,7 +1011,7 @@ fn draw_notice(
     let button_w = label.map_or(0.0, |label| {
         frame.measure(FontKind::Ui, app.fonts.ui, label) + 16.0 + 8.0
     });
-    // 左侧留给提醒图标：图标中心距左边 16，文字从 34 开始。
+    // 左侧留给图标：图标中心距左边 16，文字从 34 开始。
     let pad = 34.0 + 16.0;
     let room = (layout.editor.w - 2.0 * NOTICE_MARGIN - 20.0 - pad - button_w).max(0.0);
     let message = ellipsize(frame, message, app.fonts.ui, room);
@@ -992,7 +1028,11 @@ fn draw_notice(
     // 浮层统一用白底卡片，只用提醒图标的颜色表示需要注意，不整块铺底色。
     draw_card(frame, p, rect, RADIUS_BAR, p.popup_bg);
     let icon = (rect.x + 16.0, icon_center_y(app, rect, app.fonts.ui));
-    icons::warning(frame, icon, p.warning, rect);
+    if busy {
+        icons::refresh_turned(frame, icon, icons::spin_turn(), p.text_muted, rect);
+    } else {
+        icons::warning(frame, icon, p.warning, rect);
+    }
     ui_text(frame, app, rect.x + 34.0, rect, &message, p.text, rect);
 
     let Some(label) = label else {
