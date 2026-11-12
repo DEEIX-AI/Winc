@@ -420,8 +420,10 @@ impl App {
     ///
     /// 文档的内容和修改状态不变。某一项移动失败时提示原因，其余各项仍然移动。
     pub(in crate::app) fn move_entries(&mut self, paths: &[PathBuf], dir: &Path) {
-        // 先等待后台保存完成，否则保存会在原位置重新写出文件。
-        self.wait_for_saves();
+        // 先等待后台保存完成，否则保存会在原位置重新写出文件。远端的保存与移动按顺序执行。
+        if !winc_backend::is_remote(dir) {
+            self.wait_for_saves();
+        }
         let Some(root) = self.editor.root().map(Path::to_path_buf) else {
             return;
         };

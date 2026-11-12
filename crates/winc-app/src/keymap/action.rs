@@ -26,6 +26,7 @@ pub enum Action {
     OpenFile,
     OpenFolder,
     RemoteConnect,
+    RemoteDisconnect,
     OpenRecent,
     Save,
     SaveAs,
@@ -276,6 +277,7 @@ impl Action {
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
             RemoteConnect => t!("cmd-remote-connect"),
+            RemoteDisconnect => t!("cmd-remote-disconnect"),
             OpenRecent => t!("cmd-open-recent"),
             Save => t!("cmd-save"),
             SaveAs => t!("cmd-save-as"),
@@ -488,6 +490,7 @@ impl Action {
             OpenFile => "Open",
             OpenFolder => "Open Folder",
             RemoteConnect => "Remote: Connect to SSH Host…",
+            RemoteDisconnect => "Remote: Disconnect",
             OpenRecent => "Open Recent Folder",
             Save => "Save",
             SaveAs => "Save As",
@@ -691,8 +694,8 @@ impl Action {
             | RecordKeys
             | InstallShellCommand
             | UninstallShellCommand => Group::General,
-            NewFile | OpenFile | OpenFolder | RemoteConnect | Save | SaveAs | CloseTab
-            | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab | PreviousTab
+            NewFile | OpenFile | OpenFolder | RemoteConnect | RemoteDisconnect | Save | SaveAs
+            | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab | PreviousTab
             | CloseFolder | CloseWindow | CopyPath | CopyRelativePath | RevealInFinder
             | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal | Quit => {
                 Group::File
@@ -947,7 +950,7 @@ impl Action {
             | Action::NextError
             | Action::PreviousError
             | Action::SendToTerminal => Some(Module::Terminal),
-            Action::RemoteConnect => Some(Module::Remote),
+            Action::RemoteConnect | Action::RemoteDisconnect => Some(Module::Remote),
             _ => None,
         }
     }
@@ -1034,6 +1037,7 @@ pub const ACTIONS: &[Action] = {
         OpenFile,
         OpenFolder,
         RemoteConnect,
+        RemoteDisconnect,
         OpenRecent,
         Save,
         SaveAs,

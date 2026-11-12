@@ -596,7 +596,6 @@ impl App {
             PromptKind::Stash => self.git_stash(&input),
             PromptKind::NewTag { at } => self.git_new_tag(&input, at),
             PromptKind::RenameBranch { old } => self.git_rename_branch(old, &input),
-            PromptKind::Remote => self.remote_connect(&input),
             PromptKind::VimSearch { .. } | PromptKind::VimCommand => {
                 self.vim_prompt_submit(&input);
             }

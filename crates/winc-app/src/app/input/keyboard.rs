@@ -717,10 +717,17 @@ impl App {
     /// 其余按键交给输入框，因为面板的输入部分就是一个普通的单行输入框。
     fn on_key_picker(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
         let ctrl = cfg!(target_os = "macos") && self.modifiers.control_key();
+        // 浏览远端目录时 `⇥` 进入选中的目录，输入为空时 `⌫` 回到上级。
+        if self.remote_picker_key(&event.logical_key) {
+            return;
+        }
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
-                self.close_picker();
+                // 选择远端目录时先回到上一步（主机面板），再按一次才关闭。
+                if !self.remote_picker_back() {
+                    self.close_picker();
+                }
                 return;
             }
             Key::Named(NamedKey::Enter) => {

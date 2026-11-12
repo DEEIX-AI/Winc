@@ -3,11 +3,17 @@
 //! 本机的文件就地执行，结果立即处理。远端主机上的文件要等待网络，界面线程不发出远端的请求
 //! （见 [`winc_backend::remote::forbid_blocking`]）：访问磁盘的部分交给后台线程，完成后回到界面
 //! 线程处理结果、更新文件树。等待期间界面照常响应。
+//!
+//! 远端的操作与远端文档的保存在同一个线程上按提交的顺序执行（见 `App::spawn_ordered_then`）：
+//! 此前发起的保存先写完，才轮到改名、移动或删除。操作尚未完成时发起的后台保存推迟到它完成
+//! 之后：文档的路径要等操作的结果回到界面线程才更新，此时保存会写到旧路径上。
 
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc;
+
+use winc_editor::DocumentId;
 
 use crate::app::{App, UserEvent};
 
@@ -26,6 +32,8 @@ pub(in crate::app) struct FileWork {
     next: u64,
     /// 各操作完成后的处理，按编号取用。
     pending: HashMap<u64, Then>,
+    /// 操作完成之前被推迟的后台保存：文档，以及保存后是否不提示。
+    pub(in crate::app) deferred: Vec<(DocumentId, bool)>,
     results: (mpsc::Sender<Done>, mpsc::Receiver<Done>),
 }
 
@@ -34,6 +42,7 @@ impl Default for FileWork {
         Self {
             next: 0,
             pending: HashMap::new(),
+            deferred: Vec::new(),
             results: mpsc::channel(),
         }
     }
@@ -65,7 +74,7 @@ impl App {
         });
         self.file_work.pending.insert(id, then);
         let sender = self.file_work.results.0.clone();
-        self.spawn_then(UserEvent::FileWorked, move || {
+        self.spawn_ordered_then(UserEvent::FileWorked, move || {
             let outcome: Outcome = Box::new(work());
             let _ = sender.send((id, outcome));
         });
@@ -78,5 +87,15 @@ impl App {
                 then(self, outcome);
             }
         }
+        if self.file_work.pending.is_empty() {
+            for (id, quiet) in std::mem::take(&mut self.file_work.deferred) {
+                self.write_document_with(id, None, quiet, true);
+            }
+        }
+    }
+
+    /// 是否有尚未完成的远端文件操作。
+    pub(in crate::app) fn file_work_pending(&self) -> bool {
+        !self.file_work.pending.is_empty()
     }
 }

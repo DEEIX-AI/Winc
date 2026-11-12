@@ -534,6 +534,7 @@ impl App {
         self.picker.location_rows = None;
         self.picker.folders = false;
         self.picker.vim_list = None;
+        self.picker.remote = None;
         self.picker.places = Some(Places {
             kind,
             name,

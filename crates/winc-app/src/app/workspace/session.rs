@@ -13,6 +13,8 @@ pub enum StartAction {
     Open,
     /// 打开目录（`Ctrl+K Ctrl+O`）；只在选择器不能同时选文件和目录的平台上显示。
     OpenFolder,
+    /// 连接到 SSH 主机；只在远程模块开着时显示。
+    Remote,
     /// 打开最近列表中的目录，参数为列表下标（从 0 起）。
     Recent(usize),
     /// 从最近列表中移除一项（悬停时右端的 ✕），参数为列表下标（从 0 起）。
@@ -420,6 +422,7 @@ impl App {
             StartAction::NewFile => self.new_file(),
             StartAction::Open => self.pick(Pick::Open),
             StartAction::OpenFolder => self.pick(Pick::OpenFolder),
+            StartAction::Remote => self.open_remote_picker(),
             StartAction::Recent(index) => {
                 let Some(folder) = self.state.recent.get(index).cloned() else {
                     return;

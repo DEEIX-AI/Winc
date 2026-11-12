@@ -241,6 +241,12 @@ impl Workspace {
             || root.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
+        // 远端主机上的目录在名称后标出主机：标题栏和状态栏上一眼能看出不是本机的目录。
+        let name = match winc_backend::locate(&root) {
+            None => name,
+            Some(at) if at.path == b"/" => format!("/ [SSH: {}]", at.target.as_str()),
+            Some(at) => format!("{name} [SSH: {}]", at.target.as_str()),
+        };
 
         let mut workspace = Workspace {
             root: root.clone(),
@@ -871,7 +877,8 @@ pub fn create_at(
         ));
     }
 
-    let path = dir.join(name);
+    // 名字是用户输入的：经 `join` 换成路径，远端的名字按需转义。
+    let path = winc_backend::join(dir, name);
 
     if winc_backend::fs::exists(&path) {
         return Err(io::Error::new(
@@ -918,7 +925,7 @@ pub fn rename_at(root: &Path, path: &Path, name: &str) -> io::Result<PathBuf> {
         ));
     }
 
-    let target = path.parent().unwrap_or(root).join(name);
+    let target = winc_backend::join(path.parent().unwrap_or(root), name);
     if target == path {
         return Ok(target);
     }

@@ -1444,7 +1444,10 @@ const SCAN_ENTRIES: usize = 4096;
 ///
 /// 只查文件系统，不运行 `git`。
 pub fn find_root(dir: &Path) -> Option<PathBuf> {
+    // 远端的目录只在那台主机的根目录以内向上查找：再往上就是本机的文件系统。
+    let remote = winc_backend::is_remote(dir);
     dir.ancestors()
+        .take_while(|d| !remote || winc_backend::is_remote(d))
         .find(|d| winc_backend::fs::exists(d.join(".git")))
         .map(Path::to_path_buf)
 }

@@ -761,6 +761,7 @@ impl App {
         self.picker.location_rows = None;
         self.picker.folders = false;
         self.picker.vim_list = None;
+        self.picker.remote = None;
         self.picker.anchor = anchor;
         self.picker.open = true;
         self.picker.doc = self.editor.active().map(|d| d.id);

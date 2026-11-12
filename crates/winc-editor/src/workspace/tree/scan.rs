@@ -142,11 +142,11 @@ impl Workspace {
             }
             let awaited = self.missing.requested.remove(&dir);
             match (self.children.get(&dir), read) {
-                // 此前未能读取的目录：读不出来的按空目录写入缓存，不再重复请求。
-                (None, read) if awaited => {
+                // 此前未能读取的目录：读到的内容（已不存在的按空目录）写入缓存。
+                (None, read @ (Read::Listed(_) | Read::Absent)) if awaited => {
                     let fresh = match read {
                         Read::Listed(fresh) => fresh,
-                        Read::Absent | Read::Blocked | Read::Failed => Vec::new(),
+                        _ => Vec::new(),
                     };
                     self.children.insert(dir.clone(), fresh.into());
                     // 展开时没能读到它：现在补上对其下连续单子目录的展开。
@@ -154,6 +154,10 @@ impl Workspace {
                         self.expand_chain(dir);
                     }
                     changed = true;
+                }
+                // 读取失败（连接中断、没有权限）：不写入缓存，下次需要显示时再读。
+                (None, Read::Failed) if awaited => {
+                    self.missing.chains.remove(&dir);
                 }
                 // 没有缓存的目录不需要显示；读不出来的保留已有的内容。
                 (None, _) | (Some(_), Read::Failed | Read::Blocked) => {}

@@ -72,7 +72,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
             [t!("common-dialog-name"), t!("common-dialog-base"), ""],
             t!("common-dialog-branch-placeholder"),
         ),
-        FormKind::Question(_) | FormKind::Remote { .. } => {
+        FormKind::Question(_) | FormKind::Remote { .. } | FormKind::Connect => {
             return draw_question(app, frame, layout);
         }
         FormKind::Clone => return draw_clone(app, frame, layout),

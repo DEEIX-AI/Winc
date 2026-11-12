@@ -681,6 +681,13 @@ impl Formatter {
     ///
     /// 找不到程序、工具出错退出、超时、取消，或输出无法使用时返回 [`FormatError`]。
     pub fn run(&self, job: Job, cancel: &Cancel) -> Result<Formatted, FormatError> {
+        // 远端主机上的文件要用那台主机上的工具，这里的工具是在本机查找的，环境也是本机的：
+        // 不运行，也不把任何内容发到远端。保存时不提示。
+        if winc_backend::is_remote(&job.plan.file) {
+            return Err(FormatError::Unavailable(
+                t!("format-remote-unsupported").to_owned(),
+            ));
+        }
         let plan = &self.resolve(&job.plan)?;
         let tool = plan.tool().into_owned();
         let range_args = match &plan.range {

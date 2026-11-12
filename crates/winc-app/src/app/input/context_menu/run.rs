@@ -104,6 +104,13 @@ impl App {
                         self.pick(Pick::WslFolder(distro.clone()));
                     }
                 }
+                MenuCommand::RemoteConnect | MenuCommand::RemoteOther => self.open_remote_picker(),
+                MenuCommand::RemoteDisconnect => self.remote_disconnect(),
+                MenuCommand::RemoteHost(i) => {
+                    if let Some(host) = crate::app::remote::hosts().get(i) {
+                        self.browse_remote_host(host);
+                    }
+                }
                 MenuCommand::CloseFolder => self.close_folder(),
                 _ => {}
             },
@@ -634,8 +641,11 @@ impl App {
         };
         let input = entry.field.text().to_owned();
         // 先等待后台保存完成：保存的最后一步把临时文件改名为原路径，
-        // 在此之前改名会使旧路径上重新出现该文件。
-        self.wait_for_saves();
+        // 在此之前改名会使旧路径上重新出现该文件。远端的保存与改名在同一个线程上按顺序执行，
+        // 不需要在界面线程上等待。
+        if !winc_backend::is_remote(&path) {
+            self.wait_for_saves();
+        }
 
         let Some(root) = self.editor.root().map(Path::to_path_buf) else {
             return;
@@ -741,8 +751,10 @@ impl App {
     /// 其中文件对应的标签：没有修改的关闭，有修改的保留，内容仍在，保存时会重新创建文件。
     /// 某一项删除失败时提示原因，其余各项仍然删除。
     pub(in crate::app) fn delete_entries(&mut self, paths: &[PathBuf]) {
-        // 先等待后台保存完成，否则已删除的文件会被保存重新写出。
-        self.wait_for_saves();
+        // 先等待后台保存完成，否则已删除的文件会被保存重新写出。远端的保存与删除按顺序执行。
+        if !paths.iter().any(|path| winc_backend::is_remote(path)) {
+            self.wait_for_saves();
+        }
         let Some(first) = paths.first().cloned() else {
             return;
         };

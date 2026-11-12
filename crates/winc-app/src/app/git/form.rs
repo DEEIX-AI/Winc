@@ -38,6 +38,8 @@ pub(crate) enum FormKind {
     Remote { editing: Option<String> },
     /// 交互式变基。
     Rebase(Box<RebaseForm>),
+    /// 连接远端主机：主机、端口，见 [`crate::app::remote`]。
+    Connect,
 }
 
 impl FormKind {
@@ -46,6 +48,7 @@ impl FormKind {
         match self {
             FormKind::Question(prompt) => Some(QuestionView::of(prompt)),
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
+            FormKind::Connect => Some(QuestionView::connect()),
             FormKind::Worktree
             | FormKind::Branch { .. }
             | FormKind::Clone
@@ -136,7 +139,12 @@ impl App {
     }
 
     /// 关闭其他浮层，显示表单对话框：`name` 是它的输入框，`focus` 是一开始的键盘焦点。
-    pub(super) fn show_form_dialog(&mut self, kind: FormKind, name: TextField, focus: DialogPart) {
+    pub(in crate::app) fn show_form_dialog(
+        &mut self,
+        kind: FormKind,
+        name: TextField,
+        focus: DialogPart,
+    ) {
         if self.picker.open {
             self.close_picker();
         }
@@ -177,6 +185,9 @@ impl App {
         };
         if matches!(dialog.kind, FormKind::Question(_)) {
             self.decline_git_question();
+        }
+        if matches!(dialog.kind, FormKind::Connect) {
+            self.connect_dialog_closed();
         }
         self.field_preedit.clear();
         if self.focus == Focus::Dialog {
@@ -230,6 +241,7 @@ impl App {
             FormKind::Remote { editing } => {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
             }
+            FormKind::Connect => self.connect_plan(dialog),
             FormKind::Question(prompt) => FormPlan {
                 problem: None,
                 confirm: QuestionView::of(prompt).confirm,
@@ -366,6 +378,10 @@ impl App {
             self.answer_git_question();
             return;
         }
+        if matches!(dialog.kind, FormKind::Connect) {
+            self.submit_connect();
+            return;
+        }
         // 须在发起操作前记录编号：没有窗口时（测试中）后台操作会同步完成。
         let next = self.branch.started + 1;
         let kind = dialog.kind.clone();
@@ -384,7 +400,7 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
-            FormKind::Question(_) => {}
+            FormKind::Question(_) | FormKind::Connect => {}
             FormKind::Clone => self.submit_clone(),
             FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),

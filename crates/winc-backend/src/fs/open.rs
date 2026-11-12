@@ -5,11 +5,10 @@ mod tests;
 
 use std::io::{self, Read, Seek};
 use std::path::Path;
-use std::sync::Arc;
 
 use super::Metadata;
-use crate::locate;
-use crate::remote::{self, Connection};
+use crate::remote;
+use crate::{Target, locate};
 
 /// 打开的文件：文件信息、开头的一段，以及读取全部内容或换成 [`Handle`] 的入口。
 ///
@@ -28,8 +27,9 @@ pub struct Opened {
 enum Source {
     /// 本机上打开的文件。
     Local(std::fs::File),
-    /// 远端主机上的文件：连接和远端的路径。
-    Remote(Arc<Connection>, Vec<u8>),
+    /// 远端主机上的文件：连接目标和远端的路径。每次读取时按目标取用连接，重新连接之后
+    /// 仍然可用。
+    Remote(Target, Vec<u8>),
 }
 
 impl Opened {
@@ -44,8 +44,8 @@ impl Opened {
                 file.rewind()?;
                 Ok(Box::new(file))
             }
-            Source::Remote(connection, path) => Ok(Box::new(Sequential {
-                connection,
+            Source::Remote(target, path) => Ok(Box::new(Sequential {
+                target,
                 path,
                 offset: 0,
                 ended: false,
@@ -61,7 +61,7 @@ impl Opened {
 
 /// 从头顺序读取远端文件，每次请求一段。
 struct Sequential<'a> {
-    connection: &'a Connection,
+    target: &'a Target,
     path: &'a [u8],
     offset: u64,
     ended: bool,
@@ -73,7 +73,8 @@ impl Read for Sequential<'_> {
             return Ok(0);
         }
         let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
-        let (data, end) = self.connection.read_range(self.path, self.offset, len)?;
+        let connection = remote::connection(self.target)?;
+        let (data, end) = connection.read_range(self.path, self.offset, len)?;
         buf[..data.len()].copy_from_slice(&data);
         self.offset += data.len() as u64;
         self.ended = end;
@@ -98,7 +99,7 @@ impl Handle {
     pub fn metadata(&self) -> io::Result<Metadata> {
         match &self.0 {
             Source::Local(file) => file.metadata().map(|m| Metadata::from(&m)),
-            Source::Remote(connection, path) => connection.metadata(path, true),
+            Source::Remote(target, path) => remote::connection(target)?.metadata(path, true),
         }
     }
 
@@ -116,9 +117,9 @@ impl Handle {
                 #[cfg(windows)]
                 return std::os::windows::fs::FileExt::seek_read(file, buf, offset);
             }
-            Source::Remote(connection, path) => {
+            Source::Remote(target, path) => {
                 let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
-                let (data, _) = connection.read_range(path, offset, len)?;
+                let (data, _) = remote::connection(target)?.read_range(path, offset, len)?;
                 buf[..data.len()].copy_from_slice(&data);
                 Ok(data.len())
             }
@@ -151,9 +152,7 @@ impl Handle {
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(Self(match &self.0 {
             Source::Local(file) => Source::Local(file.try_clone()?),
-            Source::Remote(connection, path) => {
-                Source::Remote(Arc::clone(connection), path.clone())
-            }
+            Source::Remote(target, path) => Source::Remote(target.clone(), path.clone()),
         }))
     }
 }
@@ -184,7 +183,7 @@ pub fn open(path: impl AsRef<Path>, sniff: usize) -> io::Result<Opened> {
         return Ok(Opened {
             metadata,
             head,
-            source: Source::Remote(connection, at.path),
+            source: Source::Remote(at.target, at.path),
         });
     }
     let mut file = std::fs::File::open(path)?;

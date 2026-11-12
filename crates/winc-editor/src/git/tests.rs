@@ -1736,6 +1736,12 @@ fn a_repository_on_a_remote_host_is_read_through_its_connection() {
     );
     let branches = git.branches(&far, &cancel).unwrap();
     assert!(branches.iter().any(|b| b.name == "main"), "{branches:?}");
+    // 提交列表经连接随到随读；仓库根的向上查找不越过远端的根目录。
+    let mut log = git.log_stream(&far, &LogQuery::default()).unwrap();
+    let commits = log.next(10).unwrap();
+    assert_eq!(commits.len(), 1, "{commits:?}");
+    let outside = winc_backend::virtual_path(&target, b"/");
+    assert_eq!(find_root(&outside), None);
 
     // 已取消的操作不发往远端；连接断开后报错，不会转而在本机运行。
     let stopped = Cancel::default();

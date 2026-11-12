@@ -22,6 +22,7 @@ format-tool-not-installed-names = { $names } not installed
 format-tool-list-separator = { " or " }
 format-tool-reads-disk = This command reads the file on disk, without unsaved changes
 format-tool-not-found = “{ $tool }” not found
+format-remote-unsupported = Formatting files on a remote host is not supported yet
 format-install-link = How to Install…
 format-tool-custom-command = Custom Command…
 format-tool-remove = Remove

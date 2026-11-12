@@ -77,6 +77,23 @@ pub fn virtual_path(target: &Target, remote: &[u8]) -> PathBuf {
     path
 }
 
+/// 返回目录 `dir` 下的相对路径 `relative`（以 `/` 分段，例如用户输入的 `a/b.rs`）。
+///
+/// `dir` 是本机路径时与 `Path::join` 相同。`dir` 是虚拟路径时 `relative` 按远端的名字处理：
+/// 在需要转义的系统上，其中的字符转义后才成为虚拟路径的一段，直接 `join` 会得到指向别处或无法
+/// 解析的路径。
+pub fn join(dir: &Path, relative: &str) -> PathBuf {
+    match locate(dir) {
+        None => dir.join(relative),
+        Some(at) => {
+            let mut remote = at.path;
+            remote.push(b'/');
+            remote.extend_from_slice(relative.as_bytes());
+            virtual_path(&at.target, &remote)
+        }
+    }
+}
+
 /// 解析虚拟路径 `path`；`path` 是本机路径时返回 `None`。
 ///
 /// `..` 在远端的根目录处不再上移，结果不会落在该连接的虚拟根之外。
@@ -162,8 +179,9 @@ pub fn relative_lossy(path: &Path, root: &Path) -> Option<String> {
 fn root(target: &Target) -> PathBuf {
     #[cfg(unix)]
     let text = format!("/{}/{}/{PREFIX}{}", BASE[0], BASE[1], target.as_str());
+    // Windows 的设备名中不能有 `:`：端口之前的 `:` 写成 `+`（连接目标中没有这个字符）。
     #[cfg(windows)]
-    let text = format!(r"\\.\{PREFIX}{}\", target.as_str());
+    let text = format!(r"\\.\{PREFIX}{}\", target.as_str().replace(':', "+"));
     PathBuf::from(text)
 }
 
@@ -193,7 +211,7 @@ fn leading_target(components: &mut std::path::Components<'_>) -> Option<Target> 
     let std::path::Prefix::DeviceNS(device) = prefix.kind() else {
         return None;
     };
-    Target::new(device.to_str()?.strip_prefix(PREFIX)?)
+    Target::new(&device.to_str()?.strip_prefix(PREFIX)?.replace('+', ":"))
 }
 
 /// 把远端的文件名 `name` 换算为虚拟路径中的名字，与 [`virtual_path`] 对各段的换算相同。

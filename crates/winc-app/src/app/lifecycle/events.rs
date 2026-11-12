@@ -440,6 +440,7 @@ impl App {
             | UserEvent::GitBase
             | UserEvent::GitOperated
             | UserEvent::RemoteConnected
+            | UserEvent::RemoteListed
             | UserEvent::FileWorked
             | UserEvent::GitMergeSides
             | UserEvent::GitLog

@@ -667,6 +667,7 @@ impl App {
         self.picker.branch_rows = None;
         self.picker.location_rows = None;
         self.picker.folders = false;
+        self.picker.remote = None;
         self.picker.vim_list = Some(VimList {
             kind: listing,
             rows,

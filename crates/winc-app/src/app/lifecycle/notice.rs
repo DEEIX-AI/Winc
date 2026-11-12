@@ -19,6 +19,8 @@ pub enum NoticeAction {
     GitOutput,
     /// 「重新连接」：重新连接远端主机并回到其上的目录。
     Reconnect(PathBuf),
+    /// 「取消」：取消正在进行的到远端主机的连接。
+    CancelConnect,
 }
 
 /// 到期后正在淡出的提示条。
@@ -41,6 +43,7 @@ impl NoticeAction {
             NoticeAction::Install { .. } => t!("workspace-notice-install"),
             NoticeAction::FormatSettings => t!("workspace-notice-open-settings"),
             NoticeAction::Reconnect(_) => t!("workspace-notice-reconnect"),
+            NoticeAction::CancelConnect => t!("workspace-notice-cancel"),
         }
     }
 }
@@ -115,6 +118,23 @@ impl App {
         self.notice.action = Some(action);
     }
 
+    /// 显示带一个按钮的提示并一直保留：用于正在进行、不知道何时结束的事情，结束时由调用方
+    /// 用 [`App::dismiss_notice`] 收起。被别的提示替换后不再恢复。
+    pub(in crate::app) fn notify_pinned(
+        &mut self,
+        message: impl Into<String>,
+        action: NoticeAction,
+    ) {
+        self.notify_with(message, action);
+        self.notice.until = None;
+    }
+
+    /// 收起当前的提示。
+    pub(in crate::app) fn dismiss_notice(&mut self) {
+        self.clear_notice();
+        self.request_redraw();
+    }
+
     /// 收起提示条，返回它的文字和按钮操作；清除提示的各处都经过这里，避免漏掉某个字段。
     pub(super) fn clear_notice(&mut self) -> (Option<String>, Option<NoticeAction>) {
         self.notice.until = None;
@@ -147,6 +167,7 @@ impl App {
             NoticeAction::Reconnect(folder) => {
                 self.reopen_remote(&folder);
             }
+            NoticeAction::CancelConnect => self.cancel_remote(),
         }
         self.request_redraw();
     }

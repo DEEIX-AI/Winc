@@ -8,6 +8,7 @@ use std::os::unix::ffi::OsStrExt;
 use winc_backend::remote;
 
 use super::*;
+use crate::app::git::form::FormKind;
 use crate::keymap::Action;
 
 /// 在本进程内启动服务端并登记为到 `name` 的连接：该目标的虚拟路径指向本机的同名路径。
@@ -21,6 +22,19 @@ fn loopback(name: &str) -> winc_backend::Target {
     let connection = remote::Connection::over(replies, to_server).unwrap();
     remote::register(target.clone(), connection);
     target
+}
+
+/// 在面板的输入框中键入 `text`。
+fn typed(app: &mut App, text: &str) {
+    app.edit_field(|field| field.insert(text));
+}
+
+/// 连接远端主机的面板中各行的文字。
+fn titles(app: &App) -> Vec<String> {
+    let list = app.picker.remote.as_ref().unwrap();
+    (app.picker.hits.iter())
+        .map(|&row| list.rows[row].title.clone())
+        .collect()
 }
 
 #[test]
@@ -37,24 +51,151 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     // 测试线程相当于界面线程：不允许等待远端的应答，后台任务就地执行时除外。
     remote::forbid_blocking();
 
-    // 模块默认关闭：命令不可用，按下也不打开输入条。
+    // 模块默认关闭：状态栏上没有连接的按钮，命令不可用，按下也不打开面板。
+    paint(&mut app);
+    let listed = |app: &App| {
+        (app.hits.status.iter()).any(|(_, item)| *item == crate::app::StatusItem::Remote)
+    };
+    assert!(!listed(&app));
     assert!(!app.action_available(Action::RemoteConnect));
     assert!(!app.run_action(Action::RemoteConnect));
-    assert!(app.goto_input.is_none());
+    assert!(!app.picker.open);
     app.config.remote_enabled = Some(true);
     assert!(app.run_action(Action::RemoteConnect));
-    assert_eq!(app.prompt_kind, crate::app::PromptKind::Remote);
-    app.close_prompt();
+    assert!(app.picker.open && app.picker.remote.is_some());
+    app.close_picker();
 
-    // 不是有效主机的输入不会交给 `ssh`。
-    app.remote_connect("-oProxyCommand=touch /tmp/x:/");
-    let notice = app.notice.text.take().unwrap();
-    assert!(notice.contains("不是有效的主机"), "{notice}");
+    // 模块开着时，状态栏上终端开关的左边有连接的按钮，点了打开面板。
+    paint(&mut app);
+    let remote_button = crate::app::StatusItem::Remote;
+    assert!(
+        app.hits
+            .status
+            .iter()
+            .any(|(_, item)| *item == remote_button)
+    );
+    app.open_status_menu(remote_button);
+    assert!(app.picker.open && app.picker.remote.is_some());
+    app.close_picker();
 
-    // 经符号链接给出的目录按远端的真实路径打开，文件树的内容经连接列出。
+    // 开始页上也有连接的入口，打开的是同一个面板。
+    paint(&mut app);
+    assert!((app.hits.start.iter()).any(|(_, action)| *action == StartAction::Remote));
+    app.run_start_action(StartAction::Remote);
+    assert!(app.picker.open && app.picker.remote.is_some());
+    // 不能作为主机名的输入没有可选的行，回车什么也不做。（列出的主机取自用户的 `ssh` 配置，
+    // 这里不对它们作断言。）
+    typed(&mut app, "-oProxyCommand=touch /tmp/x:/");
+    assert!(titles(&app).is_empty() && app.remote_picker_message().is_some());
+    app.picker_accept();
+    assert!(app.picker.open && app.notice.text.is_none());
+    app.close_picker();
+    {
+        use crate::app::input::context_menu::{MenuCommand, MenuEntry, project_menu};
+        let commands = |hosts| -> Vec<MenuCommand> {
+            let flat = |entry: &MenuEntry| match entry {
+                MenuEntry::Item(command, _) => vec![*command],
+                MenuEntry::Submenu(_, items) => (items.iter())
+                    .filter_map(|item| match item {
+                        MenuEntry::Item(command, _) => Some(*command),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let menu = project_menu(0, None, false, 0, hosts, false);
+            menu.iter().flat_map(flat).collect()
+        };
+        let base = [MenuCommand::NewWindow, MenuCommand::OpenFolder];
+        assert_eq!(commands(None), [base[0], base[1], MenuCommand::CloseFolder]);
+        assert_eq!(
+            commands(Some(0)),
+            [
+                base[0],
+                base[1],
+                MenuCommand::RemoteConnect,
+                MenuCommand::CloseFolder
+            ]
+        );
+        assert_eq!(
+            commands(Some(2)),
+            [
+                base[0],
+                base[1],
+                MenuCommand::RemoteHost(0),
+                MenuCommand::RemoteHost(1),
+                MenuCommand::RemoteOther,
+                MenuCommand::CloseFolder
+            ]
+        );
+    }
+
+    // 已连接的主机列在面板中；选中后从主目录开始浏览。
     let target = loopback("app-remote-open");
     let link = dir.with_extension("link");
-    app.remote_connect(&format!("app-remote-open:{}", link.display()));
+    app.open_remote_picker();
+    assert_eq!(titles(&app)[..2], ["新主机…", "app-remote-open"]);
+    // 新主机：在对话框中填写主机和端口。填写的内容无效时不能连接，原因写在输入框里。
+    app.picker_accept();
+    let dialog = |app: &App| {
+        let dialog = app.form_dialog.as_ref().unwrap();
+        assert_eq!(dialog.kind, FormKind::Connect);
+        let plan = app.form_plan(dialog);
+        (plan.enabled, plan.problem, dialog.error.clone())
+    };
+    assert_eq!(dialog(&app), (false, None, None));
+    app.edit_field(|field| field.insert("bad host"));
+    assert_eq!(dialog(&app), (false, Some("主机名无效".to_owned()), None));
+    // 连接失败：对话框留着，原因写在里面，改了可以再连。（测试环境中没有可上传的服务程序。）
+    app.open_connect_dialog("winc-test.invalid", "22022", true);
+    let (enabled, problem, error) = dialog(&app);
+    assert!(enabled && problem.is_none());
+    assert!(error.is_some_and(|text| text.contains("缺少在远端运行的服务程序")));
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+    // 取消是上一步：回到主机面板。
+    app.close_form_dialog();
+    assert!(app.form_dialog.is_none() && app.picker.open);
+    assert!(app.remote_picker_host().is_none());
+
+    // 选中已连接的主机：经对话框连接，成功后进入选择目录的面板，从主目录开始。
+    app.picker_move(true);
+    app.picker_accept();
+    assert!(app.form_dialog.is_none());
+    assert_eq!(app.remote_picker_host(), Some("app-remote-open"));
+    // `Esc` 回到上一步（主机面板），再选一次回来。
+    assert!(app.remote_picker_back());
+    assert!(app.remote_picker_host().is_none() && !app.remote_picker_back());
+    app.picker_move(true);
+    app.picker_accept();
+    assert_eq!(app.remote_picker_host(), Some("app-remote-open"));
+    assert_eq!(titles(&app)[0], "打开此目录");
+    // 输入路径：到 `/` 为止的部分是要进入的目录，之后的用来筛选。
+    typed(&mut app, &format!("{}/", link.display()));
+    assert_eq!(app.picker.input.text(), "");
+    assert_eq!(titles(&app), ["打开此目录", "..", "src"]);
+    typed(&mut app, "sr");
+    assert_eq!(titles(&app), ["src"]);
+    typed(&mut app, "x");
+    assert!(titles(&app).is_empty());
+    assert!(
+        app.remote_picker_message()
+            .is_some_and(|text| text.contains("没有匹配"))
+    );
+    app.edit_field(|field| field.delete(crate::field::Unit::Char, false));
+    // `⇥` 进入选中的目录；输入为空时 `⌫` 回到上级。以 `.` 开头的目录输入 `.` 才列出。
+    use winit::keyboard::{Key, NamedKey};
+    assert!(app.remote_picker_key(&Key::Named(NamedKey::Tab)));
+    assert_eq!(titles(&app), ["打开此目录", ".."]);
+    assert!(app.remote_picker_key(&Key::Named(NamedKey::Backspace)));
+    assert_eq!(titles(&app), ["打开此目录", "..", "src"]);
+    if repository {
+        typed(&mut app, ".");
+        assert_eq!(titles(&app), [".git"]);
+        app.edit_field(|field| field.delete(crate::field::Unit::Char, false));
+    }
+    // 回车执行选中的一行：第一行是打开此目录。经符号链接走到的目录按远端的真实路径打开。
+    app.picker_accept();
+    assert!(!app.picker.open);
     let root = winc_backend::virtual_path(&target, dir.as_os_str().as_bytes());
     assert_eq!(app.editor.root(), Some(root.as_path()));
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
@@ -78,6 +219,11 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
         Some(root.join("src/main.rs").as_path())
     );
     assert!(doc.text().rope().unwrap().to_string().contains("println!"));
+
+    // 目录名之后标出主机；打开远端目录时才有「断开连接」。
+    let name = &app.editor.workspace.as_ref().unwrap().name;
+    assert_eq!(name, "remote-open [SSH: app-remote-open]");
+    assert!(app.action_available(Action::RemoteDisconnect));
 
     // 展开子目录：内容由后台读取后换入。
     let src = row_of(&app, "src");
@@ -153,7 +299,13 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
 
     // 目录不存在：说明原因，已打开的目录不变。
-    app.remote_connect("app-remote-open:/winc/no/such/folder");
+    app.open_remote_picker();
+    typed(&mut app, "app-remote-open:/winc/no/such/folder");
+    assert_eq!(
+        titles(&app)[0],
+        "连接到 app-remote-open:/winc/no/such/folder"
+    );
+    app.picker_accept();
     let notice = app.notice.text.take().unwrap();
     assert!(notice.starts_with("无法连接 app-remote-open："), "{notice}");
     assert_eq!(app.editor.root(), Some(root.as_path()));
@@ -187,6 +339,16 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     app.check_disk();
     row_of(&app, "after.txt");
 
+    // 断开连接：关闭目录并断开，不弹出连接中断的提示；之后经最近列表重新连接。
+    assert!(app.run_action(Action::RemoteDisconnect));
+    assert_eq!(app.editor.root(), None);
+    assert!(!remote::is_connected(&target));
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+    assert!(!app.action_available(Action::RemoteDisconnect));
+    let target = loopback("app-remote-open");
+    assert!(app.reopen_remote(&root));
+    assert_eq!(app.editor.root(), Some(root.as_path()));
+
     // 关闭模块：连接断开。此后最近列表中的该目录不会被当作已删除的目录移除，而是提示原因。
     app.config.remote_enabled = Some(false);
     app.stop_remote();
@@ -201,4 +363,55 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     let notice = app.notice.text.take().unwrap();
     assert!(notice.contains("缺少在远端运行的服务程序"), "{notice}");
     assert!(app.state.recent.contains(&root));
+}
+
+/// 截图：开始页、主机面板、目录面板（浏览与筛选）和打开远端目录后的窗口。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_remote_picker() {
+    let dir = sample_folder("remote-shots").canonicalize().unwrap();
+    for name in ["docs", "scripts", "tests", ".config"] {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+    }
+    // 状态栏：浅色主题下终端开关左边的连接按钮。
+    let mut light = blank_app(false);
+    light.config.remote_enabled = Some(true);
+    light.config.terminal_enabled = Some(true);
+    shoot(&mut light, "remote-status-light");
+
+    let mut app = blank_app(true);
+    app.config.remote_enabled = Some(true);
+    app.config.terminal_enabled = Some(true);
+    remote::forbid_blocking();
+    shoot(&mut app, "remote-start");
+
+    let target = loopback("devbox");
+    app.open_remote_picker();
+    shoot(&mut app, "remote-hosts");
+    // 新主机的对话框：空的、填写有误的、连接失败的。
+    app.picker_accept();
+    shoot(&mut app, "remote-dialog");
+    app.open_connect_dialog("root@152.53.50.196", "22022", true);
+    shoot(&mut app, "remote-dialog-failed");
+    app.close_form_dialog();
+    app.picker_move(true);
+    app.picker_accept();
+    typed(&mut app, &format!("{}/", dir.display()));
+    shoot(&mut app, "remote-browse");
+    typed(&mut app, "s");
+    shoot(&mut app, "remote-browse-filter");
+    typed(&mut app, "zzz");
+    shoot(&mut app, "remote-browse-none");
+    for _ in 0..4 {
+        app.edit_field(|field| field.delete(crate::field::Unit::Char, false));
+    }
+    app.picker_accept();
+    shoot(&mut app, "remote-workspace");
+    // 打开过的远端目录列在主机面板的最前面。
+    app.open_remote_picker();
+    shoot(&mut app, "remote-hosts-recent");
+    typed(&mut app, "me@staging:~/app");
+    shoot(&mut app, "remote-hosts-typed");
+    app.close_picker();
+    remote::disconnect(&target);
 }

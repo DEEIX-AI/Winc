@@ -56,6 +56,8 @@ const OTHER_LINES: usize = 3;
 ///
 /// 主要用于带其他已知名称的主机密钥说明：主机、指纹、各个已知名称和确认语各占一至两行。
 const OTHER_CONFIRM_LINES: usize = 8;
+/// 连接远端主机的说明保留的行数（行）：两种界面语言的说明在对话框宽度内都不超过 2 行。
+const CONNECT_LINES: usize = 2;
 /// 主机密钥说明保留的行数（行）：两种界面语言的说明在对话框宽度内都不超过 1 行。
 const HOST_KEY_LINES: usize = 1;
 
@@ -85,6 +87,25 @@ impl QuestionView {
                 inputs: vec![input(t!("git-remote-name"), "origin"), url],
                 confirm: t!("git-remote-add-button"),
             },
+        }
+    }
+
+    /// 返回连接远端主机的对话框内容：主机和端口。
+    pub(crate) fn connect() -> QuestionView {
+        let input = |label, placeholder| QuestionInput { label, placeholder };
+        QuestionView {
+            title: t!("workspace-remote-dialog-title").to_owned(),
+            message: Some(t!("workspace-remote-dialog-message").to_owned()),
+            message_lines: CONNECT_LINES,
+            values: Vec::new(),
+            inputs: vec![
+                input(
+                    t!("workspace-remote-dialog-host"),
+                    t!("workspace-remote-dialog-host-placeholder"),
+                ),
+                input(t!("workspace-remote-dialog-port"), "22"),
+            ],
+            confirm: t!("workspace-remote-dialog-connect"),
         }
     }
 
@@ -240,6 +261,10 @@ impl App {
             let _ = reply.send(password);
             return;
         }
+        // 连接远端主机的对话框让位给询问，答复之后再回来（见 `connect_dialog_closed`）。
+        if asker == Asker::Remote {
+            self.connect_dialog_steps_aside();
+        }
         self.close_form_dialog();
         let (name, focus) = match &prompt {
             Prompt::Username { .. } => (TextField::default(), DialogPart::Branch),
@@ -282,10 +307,15 @@ impl App {
             let password = dialog.second.text().replace(['\r', '\n'], "");
             self.branch.password = Some((server.clone(), password));
         }
-        if let Some((_, reply)) = self.branch.asking.take() {
+        let asker = self.branch.asking.take().map(|(asker, reply)| {
             let _ = reply.send(answer);
-        }
+            asker
+        });
         self.close_form_dialog();
+        // 答复的是连接远端主机时的询问：连接仍在进行，回到连接的对话框。
+        if asker == Some(Asker::Remote) {
+            self.restore_connect_dialog();
+        }
     }
 
     /// 关闭询问对话框时调用：尚未答复的请求按用户取消处理。

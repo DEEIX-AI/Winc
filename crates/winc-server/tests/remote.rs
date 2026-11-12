@@ -523,7 +523,8 @@ fn the_server_is_uploaded_once_and_started_from_the_upload_directory() {
 
     // 第一次连接：上传目录和程序都不存在，上传后启动，连接可用。
     let target = Target::new("deploy-first").unwrap();
-    let connection = Connection::deploy(bootstrap(&deploy), &deploy).unwrap();
+    let connection =
+        Connection::deploy(bootstrap(&deploy), &deploy, &remote::Abort::default()).unwrap();
     remote::register(target.clone(), connection);
     assert_eq!(
         fs::read(through(&target, &dir.join("note.txt"))).unwrap(),
@@ -536,18 +537,34 @@ fn the_server_is_uploaded_once_and_started_from_the_upload_directory() {
     assert_eq!(std::fs::read_dir(home.join("0af3")).unwrap().count(), 1);
     remote::disconnect(&target);
 
+    // 上传目录中的其他内容：旧版本的程序、带有其他文件的版本目录、名字不是摘要的目录和文件。
+    for old in ["aaaa", "bbbb", "notes"] {
+        std::fs::create_dir(home.join(old)).unwrap();
+        std::fs::write(home.join(old).join("winc-server"), "old").unwrap();
+    }
+    std::fs::write(home.join("bbbb/kept by someone"), "").unwrap();
+    std::fs::write(home.join("readme"), "").unwrap();
+
     // 第二次连接：程序已在，不再上传。这里给出的内容是空的，若被上传则无法启动。
     let mut reused = deploy.clone();
     reused.programs[0].content = Vec::new();
-    let connection = Connection::deploy(bootstrap(&reused), &reused).unwrap();
+    let connection =
+        Connection::deploy(bootstrap(&reused), &reused, &remote::Abort::default()).unwrap();
     assert!(std::fs::read(&installed).unwrap() == deploy.programs[0].content);
     drop(connection);
+    // 连接时只清理旧版本：名字是摘要、其中只有程序本身的目录。其余的都不动。
+    let mut left: Vec<_> = (std::fs::read_dir(&home).unwrap())
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["0af3", "bbbb", "notes", "readme"]);
+    assert!(home.join("bbbb/winc-server").is_file() && home.join("notes/winc-server").is_file());
 
     // 以 `~/` 开头的上传目录相对于主目录。
     let relative = deployment("~/servers", "0af3");
     let mut command = bootstrap(&relative);
     command.env("HOME", &dir);
-    drop(Connection::deploy(command, &relative).unwrap());
+    drop(Connection::deploy(command, &relative, &remote::Abort::default()).unwrap());
     assert!(dir.join("servers/0af3/winc-server").is_file());
 }
 
@@ -558,7 +575,8 @@ fn a_connection_that_cannot_start_the_server_reports_why() {
     // 远端的系统没有对应的程序：报告远端的系统名，不上传任何内容。
     let mut other = deployment(dir.join("other").to_str().unwrap(), "0af3");
     other.programs[0].system = "Plan9-mips".to_owned();
-    let error = Connection::deploy(bootstrap(&other), &other).unwrap_err();
+    let error =
+        Connection::deploy(bootstrap(&other), &other, &remote::Abort::default()).unwrap_err();
     assert!(
         matches!(&error, remote::ConnectError::Unsupported(found) if *found == system()),
         "{error}"
@@ -568,22 +586,45 @@ fn a_connection_that_cannot_start_the_server_reports_why() {
     // 上传目录无法创建：原因取自错误输出。
     std::fs::write(dir.join("file"), "").unwrap();
     let blocked = deployment(dir.join("file/under").to_str().unwrap(), "0af3");
-    let error = Connection::deploy(bootstrap(&blocked), &blocked).unwrap_err();
+    let error =
+        Connection::deploy(bootstrap(&blocked), &blocked, &remote::Abort::default()).unwrap_err();
     assert!(
         matches!(&error, remote::ConnectError::Failed(why) if why.contains("mkdir")),
         "{error}"
     );
 
-    // 上传的内容不是可以运行的程序：启动失败，而不是停在等待应答上。
+    // 上传的内容不是可以运行的程序：启动失败，而不是停在等待应答上；原因取自错误输出。
     let mut broken = deployment(dir.join("broken").to_str().unwrap(), "0af3");
     broken.programs[0].content = b"not a program".to_vec();
-    let error = Connection::deploy(bootstrap(&broken), &broken).unwrap_err();
-    assert!(matches!(error, remote::ConnectError::Io(_)), "{error}");
+    let error = Connection::deploy(bootstrap(&broken), &broken, &remote::Abort::default());
+    let error = error.unwrap_err();
+    assert!(
+        matches!(&error, remote::ConnectError::Failed(why) if why.contains("winc-server")),
+        "{error}"
+    );
+
+    // 连接卡在引导阶段（这里是一条不结束的命令）：中止后立即返回，子进程被结束。
+    let abort = remote::Abort::default();
+    let mut stuck = Command::new("sh");
+    stuck.args(["-c", "sleep 30472"]);
+    let stopper = abort.clone();
+    let waiter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        stopper.abort();
+    });
+    let started = Instant::now();
+    let error = Connection::deploy(stuck, &blocked, &abort).unwrap_err();
+    assert!(matches!(error, remote::ConnectError::Aborted), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    waiter.join().unwrap();
+    // 开始之前就已中止的连接不会启动引导。
+    let error = Connection::deploy(bootstrap(&blocked), &blocked, &abort).unwrap_err();
+    assert!(matches!(error, remote::ConnectError::Aborted), "{error}");
 
     // 子进程没有运行引导命令就结束了（例如登录失败）：给出它的错误输出。
     let mut refused = Command::new("sh");
     refused.args(["-c", "echo Permission denied >&2; exit 255"]);
-    let error = Connection::deploy(refused, &blocked).unwrap_err();
+    let error = Connection::deploy(refused, &blocked, &remote::Abort::default()).unwrap_err();
     assert!(
         matches!(&error, remote::ConnectError::Failed(why) if why == "Permission denied"),
         "{error}"
@@ -615,6 +656,132 @@ fn a_connection_that_ends_unexpectedly_is_reported_once() {
     connection.on_close(move || sender.send(()).unwrap());
     drop(connection);
     assert!(ended.try_recv().is_err());
+}
+
+#[test]
+fn requests_and_replies_larger_than_one_frame_are_split() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let target = connect("large");
+    let dir = scratch("large");
+    let far = through(&target, &dir);
+
+    // 内容超过一帧的写入和新建：请求分成几段发出。
+    let large: Vec<u8> = (0..2_500_000u32).map(|i| (i % 251) as u8).collect();
+    fs::write(far.join("written.bin"), &large).unwrap();
+    assert!(std::fs::read(dir.join("written.bin")).unwrap() == large);
+    fs::create_new(far.join("created.bin"), &large).unwrap();
+    assert!(std::fs::read(dir.join("created.bin")).unwrap() == large);
+    // 命令的输入同样可以超过一帧。
+    let output = run(&far, &sh("wc -c").stdin(large.clone())).unwrap();
+    let count = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(count.trim(), "2500000");
+
+    // 目录项的名字合计远超一帧（3 MB）：分批取回，一项不少。
+    let many = dir.join("many");
+    std::fs::create_dir(&many).unwrap();
+    let name = |i: usize| format!("{i:05}-{}", "n".repeat(190));
+    for i in 0..15_000 {
+        std::fs::write(many.join(name(i)), "").unwrap();
+    }
+    let mut names: Vec<_> = (fs::read_dir(far.join("many")).unwrap())
+        .map(|entry| entry.unwrap().name.into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 15_000);
+    assert!(names.iter().enumerate().all(|(i, found)| *found == name(i)));
+    // 读不了的目录仍然是错误，不是空目录。
+    std::fs::create_dir(dir.join("locked")).unwrap();
+    std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
+    // 以 root 运行时权限不起作用，只在读不了时检查。
+    if std::fs::read_dir(dir.join("locked")).is_err() {
+        let error = fs::read_dir(far.join("locked")).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+    std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    remote::disconnect(&target);
+}
+
+#[test]
+fn special_files_and_links_are_handled_like_on_this_machine() {
+    let target = connect("special");
+    let dir = scratch("special");
+    let far = through(&target, &dir);
+
+    // 命名管道：打开它读取会一直等待另一端，这里直接报错，连接照常可用。
+    let made = Command::new("mkfifo").arg(dir.join("pipe")).status();
+    if made.is_ok_and(|status| status.success()) {
+        let error = fs::read(far.join("pipe")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(fs::is_dir(&far));
+    }
+
+    // 经符号链接保存：写入链接指向的文件，链接本身保留。
+    std::fs::create_dir(dir.join("real")).unwrap();
+    std::fs::write(dir.join("real/config"), "old").unwrap();
+    std::os::unix::fs::symlink("real/config", dir.join("link")).unwrap();
+    let options = fs::SaveOptions {
+        in_memory: true,
+        ..Default::default()
+    };
+    fs::save(far.join("link"), &options, |out| out.write_all(b"new")).unwrap();
+    assert!(
+        std::fs::symlink_metadata(dir.join("link"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read(dir.join("real/config")).unwrap(), b"new");
+    remote::disconnect(&target);
+}
+
+#[test]
+fn a_command_that_leaves_a_child_holding_its_output_still_finishes() {
+    let target = connect("orphan");
+    let far = virtual_path(&target, b"/");
+
+    // 后台的子进程继承了输出的管道：命令退出后不再等它，连同它一起结束。
+    let started = Instant::now();
+    let output = run(&far, &sh("sleep 30473 & echo done")).unwrap();
+    assert_eq!((output.code, output.stdout), (Some(0), b"done\n".to_vec()));
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // 结束信号送达到进程消失之间有一小段时间。
+    let gone = |pattern: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let running = || {
+            let found = Command::new("pgrep").args(["-f", pattern]).output();
+            found.is_ok_and(|found| !found.stdout.is_empty())
+        };
+        while running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        !running()
+    };
+    assert!(gone("sleep 30473"));
+
+    // 输出超过上限：命令被结束，不把全部输出收进内存。
+    let endless = sh("yes").limit(1 << 20);
+    let error = run(&far, &endless).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+
+    // 随到随读：先读到前面的输出，命令结束后得到退出码和标准错误。
+    use std::io::Read;
+    let mut running =
+        remote::spawn(&far, &sh("echo one; echo oops >&2; echo two; exit 3")).unwrap();
+    let mut text = String::new();
+    running.read_to_string(&mut text).unwrap();
+    assert_eq!(text, "one\ntwo\n");
+    assert_eq!(
+        (running.code(), running.stderr()),
+        (Some(Some(3)), &b"oops\n"[..])
+    );
+    // 没有输出时在期限到达后返回；丢弃时结束仍在运行的命令。
+    let mut slow = remote::spawn(&far, &sh("sleep 30474")).unwrap();
+    slow.read_until(Some(Instant::now() + Duration::from_millis(100)));
+    let error = slow.read(&mut [0; 8]).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    drop(slow);
+    assert!(gone("sleep 30474"));
+    remote::disconnect(&target);
 }
 
 /// 经真实的 `ssh` 连接：需要环境变量 `WINC_TEST_SSH_TARGET`（免输入即可登录的主机）和
@@ -666,7 +833,7 @@ fn over_ssh() {
         let command = deploy.ssh_command(&target, BATCH).unwrap();
         remote::register(
             target.clone(),
-            Connection::deploy(command, &deploy).unwrap(),
+            Connection::deploy(command, &deploy, &remote::Abort::default()).unwrap(),
         );
         let passwd = fs::read_to_string(root.join("etc/passwd")).unwrap();
         assert!(passwd.contains("root:"), "{passwd}");
@@ -675,7 +842,7 @@ fn over_ssh() {
     // 无法登录的主机：原因是 `ssh` 的错误输出。
     let nowhere = Target::new("winc-no-such-host.invalid").unwrap();
     let command = deploy.ssh_command(&nowhere, BATCH).unwrap();
-    let error = Connection::deploy(command, &deploy).unwrap_err();
+    let error = Connection::deploy(command, &deploy, &remote::Abort::default()).unwrap_err();
     assert!(
         matches!(&error, remote::ConnectError::Failed(why) if !why.is_empty()),
         "{error}"

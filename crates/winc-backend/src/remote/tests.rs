@@ -41,6 +41,11 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
             r"'/home/alice/.winc-server/it'\''s here/winc-server'",
         ]
     );
+    // 端口由 `-p` 给出，主机参数中不含端口。
+    let with_port = Target::new("alice@devbox:22022").unwrap();
+    let command = ssh_command(&with_port, "server", Ssh::default());
+    let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+    assert_eq!(args[3..], ["-p", "22022", "alice@devbox", "--", "'server'"]);
     // 不向用户提问的选项写在主机之前：主机之后的参数属于远端的命令。
     let options = Ssh {
         batch: true,

@@ -844,6 +844,29 @@ pub fn terminal(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip:
     frame.stroke(shapes.as_slice(), STROKE, color, clip);
 }
 
+/// 绘制连接远端主机的图标：与终端图标同宽的上下两个圆角机箱，各有一道短线表示指示灯。
+///
+/// 用于状态栏，位于终端图标的左边，线宽和外框的尺寸与它一致。
+pub fn remote(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (x, y) = (
+        (cx - SIDEBAR_WIDTH / 2.0).round() + 0.75,
+        (cy - 7.0).round() + 1.0,
+    );
+    // 整体高 12，与终端图标相同：两个机箱各高 5，中间留 2。
+    let (w, h) = (SIDEBAR_WIDTH - 1.5, 5.0);
+    let lower = y + 7.0;
+    let lights = [
+        Stroke::Line(x + 3.5, y + 2.5, x + 6.0, y + 2.5),
+        Stroke::Line(x + 3.5, lower + 2.5, x + 6.0, lower + 2.5),
+    ];
+    let shapes: Strokes<18> = joined(&[
+        &rounded_outline(x, y, w, h, 2.0),
+        &rounded_outline(x, lower, w, h, 2.0),
+        &lights,
+    ]);
+    frame.stroke(shapes.as_slice(), STROKE, color, clip);
+}
+
 /// 绘制书签图标，7×11：实心竖条，下端中央有一个宽 2、高 3 逻辑像素的缺口。
 ///
 /// 绘制在行号栏左侧，标记设置了书签的行。

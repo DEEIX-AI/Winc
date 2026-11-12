@@ -30,6 +30,11 @@ const CHUNK: usize = 64 << 10;
 /// 连接断开后等待运行中的命令结束的最长时间（秒）。命令已被强制结束，正常情况下立即退出；
 /// 超过该时间仍未退出时不再等待，进程照常结束。
 const DRAIN: Duration = Duration::from_secs(2);
+/// 命令退出后等待其输出读完的时间（毫秒），与本机运行命令时相同。
+///
+/// 输出的管道可能仍被命令遗留在后台的子进程占用：超过这段时间仍未关闭就结束进程组，再等同样
+/// 长的时间，之后不再等待读取输出的线程。
+const GRACE: Duration = Duration::from_millis(200);
 
 /// 写应答的一端，由读取请求的线程和各个运行命令的线程共用。
 type Output = Arc<Mutex<Box<dyn Write + Send>>>;
@@ -48,12 +53,38 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
     let output: Output = Arc::new(Mutex::new(Box::new(output)));
     let running = Running::default();
     let mut uploads: HashMap<u32, Upload> = HashMap::new();
+    // 载荷超过一帧的请求：先到的各段按请求号存放；超过上限的内容丢弃，请求到达时应答错误。
+    let mut parts: HashMap<u32, Option<Vec<u8>>> = HashMap::new();
     let result = loop {
-        let frame = match wire::read_frame(&mut input) {
+        let mut frame = match wire::read_frame(&mut input) {
             Ok(Some(frame)) => frame,
             Ok(None) => break Ok(()),
             Err(error) => break Err(error),
         };
+        if frame.kind == kind::PART {
+            let body = parts.entry(frame.id).or_insert_with(|| Some(Vec::new()));
+            match body {
+                Some(sofar) if sofar.len() + frame.payload.len() <= UPLOAD_MAX => {
+                    sofar.extend_from_slice(&frame.payload);
+                }
+                _ => *body = None,
+            }
+            continue;
+        }
+        match parts.remove(&frame.id) {
+            None => {}
+            Some(Some(mut body)) => {
+                body.extend_from_slice(&frame.payload);
+                frame.payload = body;
+            }
+            Some(None) => {
+                let too_large = Err(io::Error::other("request too large"));
+                if let Err(error) = reply(&output, frame.id, too_large) {
+                    break Err(error);
+                }
+                continue;
+            }
+        }
         let sent = match frame.kind {
             kind::CANCEL => {
                 let running = running.lock().unwrap_or_else(PoisonError::into_inner);
@@ -83,6 +114,12 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
                 let upload = uploads.remove(&frame.id);
                 reply(&output, frame.id, finish_upload(upload, &frame.payload))
             }
+            // 目录项分批写出，目录再大也不受一帧的限制。
+            kind::READ_DIR => match list(&frame, &output) {
+                Ok(()) => reply(&output, frame.id, Ok(Vec::new())),
+                Err(Failure::Request(error)) => reply(&output, frame.id, Err(error)),
+                Err(Failure::Output(error)) => Err(error),
+            },
             _ => reply(&output, frame.id, handle(&frame)),
         };
         if let Err(error) = sent {
@@ -166,11 +203,6 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
             };
             Ok(wire::write_metadata(Writer::default(), &metadata).finish())
         }
-        kind::READ_DIR => {
-            let path = path(&mut input)?;
-            input.finish()?;
-            read_dir(path)
-        }
         kind::READ => {
             let path = path(&mut input)?;
             let (offset, len) = (input.u64()?, input.u32()?);
@@ -179,6 +211,13 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "read too large",
+                ));
+            }
+            // 只读取普通文件：打开命名管道会一直等到另一端出现，占住读取请求的线程。
+            if !std::fs::metadata(path)?.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "not a regular file",
                 ));
             }
             let mut data = vec![0; len as usize];
@@ -310,8 +349,14 @@ fn finish_upload(upload: Option<Upload>, payload: &[u8]) -> io::Result<Vec<u8>> 
         in_memory: upload.in_memory,
         ..Default::default()
     };
+    // 符号链接写入其指向的文件，不替换链接本身；文件尚不存在时按原路径新建。
     let path = absolute(&upload.path)?;
-    let saved = crate::fs::save(path, &options, |out| out.write_all(&upload.content));
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "服务进程只在 Unix 上运行，路径没有需要去掉的前缀"
+    )]
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let saved = crate::fs::save(&target, &options, |out| out.write_all(&upload.content));
     let result = match saved {
         Ok(metadata) => {
             return Ok(wire::write_metadata(Writer::default().u8(kind::SAVED), &metadata).finish());
@@ -340,24 +385,43 @@ fn absolute(bytes: &[u8]) -> io::Result<&Path> {
     Ok(Path::new(OsStr::from_bytes(bytes)))
 }
 
-/// 列出目录 `path`，编码为项数和各项的种类与名字。无法取得种类的项不列出。
-fn read_dir(path: &Path) -> io::Result<Vec<u8>> {
-    let mut count = 0u32;
-    let mut items = Writer::default();
-    for entry in crate::fs::read_dir(path)?.flatten() {
-        items = items
-            .u8(wire::kind_byte(entry.kind))
-            .bytes(entry.name.as_bytes());
+/// 列目录失败的两种情况：请求本身失败（应答错误后继续），或应答写不出去（连接已断开）。
+enum Failure {
+    Request(io::Error),
+    Output(io::Error),
+}
+
+/// 列出 `frame` 请求的目录，各项的种类与名字分批写成 [`kind::CHUNK`]，每批不超过 [`CHUNK`]
+/// 字节；最终的应答由调用方写出。无法取得种类的项不列出。
+fn list(frame: &Frame, output: &Output) -> Result<(), Failure> {
+    let entries = (|| {
+        let mut input = Reader::new(&frame.payload);
+        let path = path(&mut input)?;
+        input.finish()?;
+        crate::fs::read_dir(path)
+    })()
+    .map_err(Failure::Request)?;
+    let send = |count: u32, items: Writer| {
+        let mut payload = Writer::default().u32(count).finish();
+        payload.extend_from_slice(&items.finish());
+        let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+        wire::write_frame(&mut *output, kind::CHUNK, frame.id, &payload).map_err(Failure::Output)
+    };
+    let (mut count, mut size, mut items) = (0u32, 0usize, Writer::default());
+    for entry in entries.flatten() {
+        let name = entry.name.as_bytes();
+        items = items.u8(wire::kind_byte(entry.kind)).bytes(name);
         count += 1;
+        size += name.len() + 5;
+        if size >= CHUNK {
+            send(count, std::mem::take(&mut items))?;
+            (count, size) = (0, 0);
+        }
     }
-    let items = items.finish();
-    // 整个目录在一帧中返回；项数极多、超过一帧时报错，不截断。
-    if items.len() + 16 > wire::MAX_FRAME {
-        return Err(io::Error::other("directory too large"));
+    if count > 0 {
+        send(count, items)?;
     }
-    let mut payload = Writer::default().u32(count).finish();
-    payload.extend_from_slice(&items);
-    Ok(payload)
+    Ok(())
 }
 
 /// 运行 `frame` 请求的命令：输出分段写到 `output`，结束时返回退出码；`cancelled` 被设置时
@@ -424,8 +488,35 @@ fn exec(frame: &Frame, cancelled: &AtomicBool, output: &Output) -> io::Result<Ve
             .map(|pipe| pump(pipe, kind::STDERR, frame.id, output)),
     ];
     let status = wait(&mut child, cancelled);
+    // 命令已退出，输出的管道可能仍被它遗留在后台的子进程占用：等 `GRACE`，仍未关闭就结束
+    // 进程组，再等 `GRACE`。此后不再等待：脱离了进程组的子进程不能让这个请求一直不结束。
+    let group = i32::try_from(child.id()).ok();
+    let finished = |threads: &[Option<thread::JoinHandle<()>>]| {
+        threads
+            .iter()
+            .flatten()
+            .all(thread::JoinHandle::is_finished)
+    };
+    let mut killed = false;
+    let mut deadline = Instant::now() + GRACE;
+    while !finished(&pumps) {
+        if Instant::now() >= deadline || cancelled.load(Ordering::Relaxed) {
+            if killed {
+                break;
+            }
+            killed = true;
+            if let Some(group) = group {
+                kill_group(group);
+            }
+            deadline = Instant::now() + GRACE;
+        }
+        thread::sleep(POLL);
+    }
+    // 已结束的线程立即返回；仍在读取的线程和写入输入的线程不再等待，随管道关闭自行结束。
     for thread in pumps.into_iter().flatten().chain(writer) {
-        let _ = thread.join();
+        if thread.is_finished() {
+            let _ = thread.join();
+        }
     }
     match status? {
         None => Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
@@ -436,9 +527,16 @@ fn exec(frame: &Frame, cancelled: &AtomicBool, output: &Output) -> io::Result<Ve
     }
 }
 
-/// 等待 `child` 结束并返回退出状态；`cancelled` 被设置时强制结束其进程组并返回 `None`。
+/// 强制结束进程组 `group`（组长的进程号）。组内已没有进程时没有效果。
 // 本函数只有对 `libc::kill` 的一次调用需要 `unsafe`，因此只在此处放开 `unsafe_code`。
 #[allow(unsafe_code)]
+fn kill_group(group: i32) {
+    // SAFETY: 负的进程号表示进程组。`kill` 只发送信号，不访问内存，失败时返回 -1。组长已被
+    // 回收后，其进程号在组内仍有进程时不会被重新分配，信号不会发给无关的进程。
+    unsafe { libc::kill(-group, libc::SIGKILL) };
+}
+
+/// 等待 `child` 结束并返回退出状态；`cancelled` 被设置时强制结束其进程组并返回 `None`。
 fn wait(child: &mut Child, cancelled: &AtomicBool) -> io::Result<Option<std::process::ExitStatus>> {
     loop {
         if let Some(status) = child.try_wait()? {
@@ -446,9 +544,7 @@ fn wait(child: &mut Child, cancelled: &AtomicBool) -> io::Result<Option<std::pro
         }
         if cancelled.load(Ordering::Relaxed) {
             if let Ok(group) = i32::try_from(child.id()) {
-                // SAFETY: `child` 尚未被回收，其进程号不会被其他进程占用；它是自己进程组的组长，
-                // 负的进程号表示该进程组。`kill` 只发送信号，不访问内存，失败时返回 -1。
-                unsafe { libc::kill(-group, libc::SIGKILL) };
+                kill_group(group);
             }
             child.wait()?;
             return Ok(None);

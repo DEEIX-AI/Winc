@@ -646,6 +646,21 @@ impl App {
         // 远端主机上的文档总是由后台线程写出：界面线程不发出远端的请求。必须等写完的保存在此
         // 等待后台完成。
         let remote = doc.path.as_deref().is_some_and(winc_backend::is_remote);
+        // 远端的改名、移动或删除尚未完成：文档的路径可能即将改变，后台保存推迟到它完成之后。
+        if remote && background && to.is_none() && self.file_work_pending() {
+            if !self
+                .file_work
+                .deferred
+                .iter()
+                .any(|(known, _)| *known == id)
+            {
+                self.file_work.deferred.push((id, quiet));
+            }
+            return true;
+        }
+        let Some(doc) = self.editor.document_mut(id) else {
+            return false;
+        };
         if (background || remote) && to.is_none() {
             match doc.begin_save() {
                 Ok(Some(job)) => {

@@ -14,7 +14,7 @@ use crate::fs::{Kind, Metadata, Stamp, Unix};
 
 /// 协议的版本号。连接建立时双方交换，不一致时不继续：服务进程随安装包发布，版本总是相同，
 /// 不一致说明远端的程序不是这一版安装包上传的。
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 2;
 /// 一次读取请求最多返回的字节数（字节，1 MiB）。
 ///
 /// 取值由两方面约束：单帧在发送完之前占用连接，过大时其他请求等待的时间变长；过小时读取一个
@@ -70,6 +70,9 @@ pub(crate) mod kind {
     pub(crate) const SAVE_END: u8 = 18;
     /// 删除文件，或目录连同其中的全部内容：载荷是路径，应答为空。
     pub(crate) const REMOVE_ALL: u8 = 19;
+    /// 一个请求的载荷放不进一帧时在前面发出的部分：载荷是其中一段。没有应答；同一请求号随后
+    /// 的请求以各段依次相接、再接上它自己的载荷作为完整的载荷。
+    pub(crate) const PART: u8 = 20;
     /// [`SAVE_END`] 的结果：已保存。
     pub(crate) const SAVED: u8 = 0;
     /// [`SAVE_END`] 的结果：目标文件只读。
@@ -80,7 +83,8 @@ pub(crate) mod kind {
     pub(crate) const SAVE_TEMPORARY: u8 = 3;
     /// 请求成功，载荷是结果。
     pub(crate) const OK: u8 = 0x80;
-    /// 请求尚未结束，载荷是命令输出的一段：来源（`u8`，见 [`STDOUT`]、[`STDERR`]）和数据。
+    /// 请求尚未结束，载荷是结果的一段。运行命令时是输出的一段：来源（`u8`，见 [`STDOUT`]、
+    /// [`STDERR`]）和数据；列目录时是一批目录项：项数（`u32`）和各项的种类与名字。
     pub(crate) const CHUNK: u8 = 0x81;
     /// [`CHUNK`] 的来源：标准输出。
     pub(crate) const STDOUT: u8 = 1;

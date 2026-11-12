@@ -86,7 +86,7 @@ pub use workspace::tree_label::{LabelCause, LabelView, TreeLabels};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 // 只在 macOS 的系统回调（⌘Q 前是否询问）中读写。
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
@@ -115,6 +115,9 @@ use crate::layout::{
 };
 use crate::theme::*;
 use crate::view;
+
+/// 交给逐个执行的线程的一个任务（见 [`App::spawn_ordered_then`]）。
+type OrderedTask = Box<dyn FnOnce() + Send>;
 
 /// 后台线程和系统回调（面板、菜单、提示框）送回事件循环的事件。
 #[derive(Debug)]
@@ -251,6 +254,8 @@ pub enum UserEvent {
     GitQuestion,
     /// 后台到远端主机的连接已建立或已失败。
     RemoteConnected,
+    /// 远程选择面板在后台读好了一个目录。
+    RemoteListed,
     /// 到远端主机的连接意外中断。
     RemoteClosed(winc_backend::Target),
     /// 后台的文件操作（新建、改名、移动、删除）已完成。
@@ -311,8 +316,6 @@ pub enum PromptKind {
     NewTag { at: String },
     /// 分支的新名称；`old` 为当前名称。
     RenameBranch { old: String },
-    /// 要连接的远端主机和目录。
-    Remote,
     /// Vim 模式下查找的模式；`forward` 为真时向后文查找。
     VimSearch { forward: bool },
     /// Vim 模式的命令行。
@@ -522,7 +525,7 @@ impl Hover {
                         | terminal::HeaderHit::Hide
                         | terminal::HeaderHit::Run(_),
                 )
-                | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
+                | Hover::Status(StatusItem::Terminal | StatusItem::Remote | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
                 | Hover::LogDiffLayout
@@ -995,6 +998,9 @@ pub struct App {
     pub remote: remote::RemoteState,
     /// 正在后台执行的文件操作。
     pub(in crate::app) file_work: workspace::file_work::FileWork,
+    /// 逐个执行远端文件改动的线程的任务队列（见 [`App::spawn_ordered_then`]）；尚未创建时为
+    /// `None`。
+    ordered: Option<mpsc::Sender<OrderedTask>>,
     /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
     pub merge: git::merge::MergeState,
     /// 大文件的差异在后台重新比较。
@@ -1081,7 +1087,13 @@ impl App {
     /// 在后台线程上执行 `job`，完成后发送事件 `done` 唤醒界面线程处理结果（[`App::finished`]）。
     ///
     /// 测试中没有事件循环：在当前线程上执行 `job`，之后直接调用 [`App::finished`] 处理结果。
+    ///
+    /// 打开的目录在远端主机上时改用单独的线程（[`App::spawn_blocking_then`]）：这时的任务大多
+    /// 要等待网络，耗时没有上限，放进线程池会占住池中的线程，各窗口的本机任务只能排队。
     fn spawn_then(&mut self, done: UserEvent, job: impl FnOnce() + Send + 'static) {
+        if self.editor.root().is_some_and(winc_backend::is_remote) {
+            return self.spawn_blocking_then(done, job);
+        }
         match self.proxy.clone() {
             Some(proxy) => winc_editor::background::spawn(move || {
                 job();
@@ -1113,6 +1125,44 @@ impl App {
         }
     }
 
+    /// 在本窗口改动远端文件的线程上执行 `job`，完成后发送事件 `done`；其余行为同
+    /// [`App::spawn_then`]。
+    ///
+    /// 这个线程按提交的顺序逐个执行：保存与改名、移动、删除不会交错，先发起的保存一定在随后
+    /// 的改名之前写完。线程在第一次使用时创建，窗口关闭时结束。
+    fn spawn_ordered_then(&mut self, done: UserEvent, job: impl FnOnce() + Send + 'static) {
+        let Some(proxy) = self.proxy.clone() else {
+            winc_backend::remote::allow_blocking(job);
+            self.finished(done);
+            return;
+        };
+        let task: OrderedTask = Box::new(move || {
+            job();
+            let _ = proxy.send_event(done);
+        });
+        let task = match &self.ordered {
+            Some(queue) => match queue.send(task) {
+                Ok(()) => return,
+                // 线程已经结束：重新创建。
+                Err(mpsc::SendError(task)) => task,
+            },
+            None => task,
+        };
+        let (queue, tasks) = mpsc::channel::<OrderedTask>();
+        let worker = std::thread::Builder::new()
+            .name("winc-remote".into())
+            .spawn(move || tasks.into_iter().for_each(|task| task()));
+        // 线程无法创建时退回单独的线程：任务仍然执行，只是不再保证先后。
+        self.ordered = None;
+        if worker.is_err() {
+            winc_editor::background::spawn_blocking(task);
+        } else if let Err(mpsc::SendError(task)) = queue.send(task) {
+            winc_editor::background::spawn_blocking(task);
+        } else {
+            self.ordered = Some(queue);
+        }
+    }
+
     /// 处理后台任务完成事件 `done`（见 [`App::spawn_then`]）对应的结果。
     ///
     /// 事件循环与测试中就地运行的任务都经由此处，事件与结果处理函数的对应关系只在此处定义。
@@ -1124,6 +1174,7 @@ impl App {
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
             UserEvent::RemoteConnected => self.poll_remote(),
+            UserEvent::RemoteListed => self.poll_remote_listings(),
             UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),

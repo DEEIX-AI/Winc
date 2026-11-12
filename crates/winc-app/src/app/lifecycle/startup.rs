@@ -173,6 +173,7 @@ impl App {
             branch: git::branch::BranchState::default(),
             remote: Default::default(),
             file_work: Default::default(),
+            ordered: None,
             merge: git::merge::MergeState::default(),
             rediff: diff::RediffState::default(),
             prompt_kind: PromptKind::GoTo,

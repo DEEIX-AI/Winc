@@ -253,11 +253,6 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
                     commit = crate::app::git::log::short(at)
                 ),
             ),
-            crate::app::PromptKind::Remote => (
-                t!("workspace-remote-title"),
-                t!("workspace-remote-placeholder"),
-                t!("workspace-remote-hint").to_owned(),
-            ),
             // Vim 模式的命令行与查找画在状态栏所在的一行，不经此处。
             crate::app::PromptKind::VimSearch { .. } | crate::app::PromptKind::VimCommand => {
                 ("", "", String::new())
@@ -338,6 +333,9 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
         let total = if app_mut.picker.folders {
             t!("workspace-picker-folders-new-window").to_owned()
+        } else if app_mut.picker.remote.is_some() {
+            // 目录阶段在右端显示正在浏览的主机。
+            app_mut.remote_picker_host().unwrap_or_default().to_owned()
         } else if app_mut.picker.vim_list.is_some() {
             String::new()
         } else if app_mut.picker_lists_commands() {
@@ -371,6 +369,11 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
     let placeholder = if app.picker.folders {
         t!("workspace-picker-folders-placeholder")
+    } else if app.picker.remote.is_some() {
+        match app.remote_picker_host() {
+            Some(_) => t!("workspace-picker-remote-folders-placeholder"),
+            None => t!("workspace-picker-remote-hosts-placeholder"),
+        }
     } else if let Some(list) = &app.picker.vim_list {
         match list.kind {
             winc_vim::Listing::Registers => t!("workspace-picker-vim-registers"),
@@ -407,6 +410,10 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
 
     if app.picker.folders {
         app.hits.picker_parts = draw_folder_rows(app, frame, &parts);
+        return;
+    }
+    if app.picker.remote.is_some() {
+        draw_remote_rows(app, frame, &parts);
         return;
     }
     if app.picker.vim_list.is_some() {
@@ -531,6 +538,75 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
                 let size = app.fonts.ui_small;
                 marked_label(frame, app, size, at, &shown, &in_dir, p.text_dim, clip);
             }
+        }
+    }
+}
+
+/// 绘制连接远端主机的选择面板：图标、名字，其后是淡色的说明；各行之后（没有行时在第一行的
+/// 位置）是正在读取、读取失败或没有匹配项的说明。
+fn draw_remote_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
+    use crate::app::remote::picker::RowIcon;
+
+    let p = app.palette;
+    let list = parts.list;
+    let Some(rows) = app.picker.remote.as_ref().map(|shown| &shown.rows) else {
+        return;
+    };
+    let scroll = app.picker.scroll;
+    let count = app.picker.hits.len();
+    for i in parts.visible(scroll, count) {
+        let Some(item) = rows.get(app.picker.hits[i]) else {
+            continue;
+        };
+        let row = parts.row(i, scroll);
+        let clip = row.intersect(list);
+        draw_pick_row(app, frame, row, i, clip);
+        let cy = icon_center_y(app, row, app.fonts.ui);
+        // 各种图标的中心与文件图标的中心对齐。
+        let center = row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0;
+        match item.icon {
+            RowIcon::Host => icons::server(frame, (center, cy), p.text_muted, clip),
+            RowIcon::Folder | RowIcon::Open => {
+                let x = center - icons::FOLDER_WIDTH / 2.0;
+                let open = item.icon == RowIcon::Open;
+                icons::folder(frame, (x, cy - 6.0), open, p.folder, clip);
+            }
+        }
+        let x = ui_text(
+            frame,
+            app,
+            row.x + PICKER_TEXT_X,
+            row,
+            &item.title,
+            p.text,
+            clip,
+        );
+        // 选中的一行在右端提示可用的按键，说明文字让出相应的位置。
+        let mut right = row.right() - 14.0;
+        if let Some(hint) = item.hint().filter(|_| i == app.picker.selected) {
+            right -= frame.measure(FontKind::Ui, app.fonts.ui_small, hint);
+            ui_text_small(frame, app, right, row, hint, p.text_dim, clip);
+            right -= 12.0;
+        }
+        let room = (right - x - 12.0).max(0.0);
+        if room > 20.0 && !item.detail.is_empty() {
+            let text = ellipsize(frame, &item.detail, app.fonts.ui_small, room);
+            ui_text_small(frame, app, x + 12.0, row, &text, p.text_dim, clip);
+        }
+    }
+    if let Some(message) = app.remote_picker_message() {
+        let y = list.y + count as f32 * PICKER_ROW - scroll;
+        let row = Rect::new(list.x, y, list.w, PICKER_ROW);
+        if row.intersect(list).h > 0.0 {
+            ui_text(
+                frame,
+                app,
+                list.x + PICKER_TEXT_X,
+                row,
+                &message,
+                p.text_dim,
+                list,
+            );
         }
     }
 }

@@ -265,21 +265,12 @@ pub(crate) fn run(
     })
 }
 
-/// 在目录 `dir` 所在的远端主机上运行 `command`，以 `dir` 为工作目录。
+/// 把 `command` 的程序、参数和显式设置的环境变量换成在远端运行的命令，标准输入为 `input`。
 ///
-/// 传给远端的是 `command` 的程序、参数和显式设置的环境变量；本机的环境不传递，命令继承远端
-/// 服务进程的环境。超时和取消由远端强制结束命令（连同它启动的子进程）。输出收齐之后才检查
-/// 是否超过 [`MAX_OUTPUT`]。
-fn run_remote(
-    command: &Command,
-    dir: &Path,
-    input: Vec<u8>,
-    timeout: Duration,
-    cancel: &Cancel,
-) -> Result<Output, RunError> {
-    use winc_backend::remote;
-
-    let mut exec = remote::Exec::new(command.get_program().as_encoded_bytes()).stdin(input);
+/// 调用方不能把本机的环境整个设置到 `command` 上再交到这里：那样本机的变量会发到远端。
+fn remote_exec(command: &Command, input: Vec<u8>) -> winc_backend::remote::Exec {
+    let mut exec =
+        winc_backend::remote::Exec::new(command.get_program().as_encoded_bytes()).stdin(input);
     for arg in command.get_args() {
         exec = exec.arg(arg.as_encoded_bytes());
     }
@@ -289,6 +280,24 @@ fn run_remote(
             exec = exec.env(name.as_encoded_bytes(), value.as_encoded_bytes());
         }
     }
+    exec
+}
+
+/// 在目录 `dir` 所在的远端主机上运行 `command`，以 `dir` 为工作目录。
+///
+/// 传给远端的是 `command` 的程序、参数和显式设置的环境变量；本机的环境不传递，命令继承远端
+/// 服务进程的环境。超时和取消由远端强制结束命令（连同它启动的子进程）。输出超过
+/// [`MAX_OUTPUT`] 时结束命令，不继续接收。
+fn run_remote(
+    command: &Command,
+    dir: &Path,
+    input: Vec<u8>,
+    timeout: Duration,
+    cancel: &Cancel,
+) -> Result<Output, RunError> {
+    use winc_backend::remote;
+
+    let exec = remote_exec(command, input).limit(MAX_OUTPUT);
     if cancel.is_cancelled() {
         return Err(RunError::Cancelled);
     }
@@ -298,11 +307,9 @@ fn run_remote(
         Ok(output) => output,
         Err(_) if cancel.is_cancelled() => return Err(RunError::Cancelled),
         Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(RunError::Timeout),
+        Err(e) if e.kind() == io::ErrorKind::FileTooLarge => return Err(RunError::TooLarge),
         Err(e) => return Err(RunError::Spawn(e)),
     };
-    if output.stdout.len() > MAX_OUTPUT || output.stderr.len() > MAX_OUTPUT {
-        return Err(RunError::TooLarge);
-    }
     Ok(Output {
         status: exit_status(output.code),
         stdout: output.stdout,
