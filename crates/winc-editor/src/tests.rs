@@ -260,3 +260,42 @@ fn pending_tabs_read_the_file_only_when_loaded() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn remote_paths_are_shown_in_the_remote_spelling() {
+    let target = winc_backend::Target::new("alice@devbox").unwrap();
+    let root = winc_backend::virtual_path(&target, b"/home/alice/project");
+    let file = root.join("src").join("main.rs");
+
+    // 在已打开的目录之下：相对路径，以 `/` 分隔；不在其下：`目标:/路径`，不缩写主目录。
+    assert_eq!(display_path(&file, Some(&root)), "src/main.rs");
+    assert_eq!(
+        display_path(&file, None),
+        "alice@devbox:/home/alice/project/src/main.rs"
+    );
+    let elsewhere = winc_backend::virtual_path(&target, b"/etc/hosts");
+    assert_eq!(
+        display_path(&elsewhere, Some(&root)),
+        "alice@devbox:/etc/hosts"
+    );
+    // 本机已打开的目录与远端路径无关。
+    assert_eq!(
+        display_path(&file, Some(Path::new("/home/alice/project"))),
+        "alice@devbox:/home/alice/project/src/main.rs"
+    );
+
+    // 名字按远端的写法显示：虚拟路径中为表示 `\`、`%` 所做的换算不显示出来。
+    assert_eq!(display_name(&file), "main.rs");
+    let odd = winc_backend::virtual_path(&target, br"/tmp/a\b%.txt");
+    assert_eq!(display_name(&odd), r"a\b%.txt");
+    let top = winc_backend::virtual_path(&target, b"/");
+    assert_eq!(display_name(&top), "alice@devbox:/");
+
+    // 本机路径的显示不变。
+    assert_eq!(display_name(Path::new("dir/file.txt")), "file.txt");
+    let local = Path::new("project").join("src").join("lib.rs");
+    assert_eq!(
+        display_path(&local, Some(Path::new("project"))),
+        Path::new("src").join("lib.rs").to_string_lossy()
+    );
+}

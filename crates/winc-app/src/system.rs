@@ -30,6 +30,8 @@ pub fn reveal_label() -> &'static str {
 ///
 /// 无法启动系统的打开命令（`open`、`rundll32`、`xdg-open`）时返回 `io::Error`。
 pub fn open_with_default_app(path: &Path) -> io::Result<()> {
+    // 交给本机的程序，只接受本机路径：远端主机上的文件无法由本机的程序打开。
+    winc_backend::ensure_local(path)?;
     if cfg!(target_os = "macos") {
         spawn(Command::new("open").arg(path))
     } else if cfg!(windows) {
@@ -55,6 +57,8 @@ pub fn open_with_default_app(path: &Path) -> io::Result<()> {
 ///
 /// 无法启动系统的打开命令时返回 `io::Error`。
 pub fn open_in_browser(path: &Path) -> io::Result<()> {
+    // 交给本机的程序，只接受本机路径：远端主机上的文件无法由本机的程序打开。
+    winc_backend::ensure_local(path)?;
     #[cfg(target_os = "macos")]
     if let Some(browser) = crate::macos::default_browser() {
         return spawn(Command::new("open").arg("-a").arg(browser).arg(path));
@@ -196,6 +200,8 @@ fn read_wsl_distributions() -> Vec<String> {
 /// 系统拒绝移动、用户取消、`path` 无法转换时返回 `io::Error`；平台没有回收站时返回
 /// `io::ErrorKind::Unsupported`。
 pub fn move_to_trash(path: &Path) -> io::Result<()> {
+    // 回收站在本机，只接受本机路径。
+    winc_backend::ensure_local(path)?;
     #[cfg(target_os = "macos")]
     {
         crate::macos::move_to_trash(path)
@@ -230,6 +236,8 @@ pub fn move_to_trash(path: &Path) -> io::Result<()> {
 ///
 /// 无法启动系统的文件管理器命令时返回 `io::Error`；D-Bus 的调用在后台进行，不报告错误。
 pub fn reveal_in_file_manager(path: &Path) -> io::Result<()> {
+    // 交给本机的程序，只接受本机路径：远端主机上的文件无法由本机的程序打开。
+    winc_backend::ensure_local(path)?;
     if !path.exists() {
         let folder = path.parent().unwrap_or(path);
         return open_with_default_app(folder);
@@ -298,6 +306,8 @@ const TERMINALS: [&str; 6] = [
 ///
 /// 无法启动终端程序时返回 `io::Error`。
 pub fn open_terminal(dir: &Path, app: Option<&str>) -> io::Result<()> {
+    // 交给本机的程序，只接受本机路径：远端主机上的文件无法由本机的程序打开。
+    winc_backend::ensure_local(dir)?;
     if cfg!(target_os = "macos") {
         // `open -a` 按应用名或应用路径（例如 `/Applications/…`）查找应用，并把 `dir` 作为待打开的
         // 文档交给它；终端类应用据此在该目录下新建窗口。

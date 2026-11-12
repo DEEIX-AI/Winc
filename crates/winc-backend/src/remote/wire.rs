@@ -1,0 +1,328 @@
+//! 协议的帧和编解码：客户端与服务进程在标准输入输出上交换的字节。
+//!
+//! 一帧是 `[u32 长度][u8 类型][u32 请求号][载荷]`，整数为小端，长度不含自身的 4 个字节。
+//! 应答沿用请求的请求号；类型是 [`kind::OK`] 或 [`kind::ERROR`]。载荷由定长整数和带 `u32` 长度
+//! 前缀的字节串顺序排列而成，没有自描述的结构，双方按类型约定的顺序读写。
+
+#[cfg(test)]
+mod tests;
+
+use std::io::{self, Read, Write};
+
+use crate::fs::{Kind, Metadata, Stamp, Unix};
+
+/// 协议的版本号。连接建立时双方交换，不一致时不继续：服务进程随安装包发布，版本总是相同，
+/// 不一致说明远端的程序不是这一版安装包上传的。
+pub(crate) const VERSION: u32 = 1;
+/// 一次读取请求最多返回的字节数（字节，1 MiB）。
+///
+/// 取值由两方面约束：单帧在发送完之前占用连接，过大时其他请求等待的时间变长；过小时读取一个
+/// 文件的往返次数增多。1 MiB 时不超过 `LARGE_FILE`（16 MiB）的文件最多 16 次往返。
+pub(crate) const MAX_READ: u32 = 1 << 20;
+/// 一帧的最大长度（字节，不含长度字段）：一次读取的数据加上 1 KiB 的其余字段。超过时按协议
+/// 错误处理并断开，对方无法让本进程按一个任意大的长度分配内存。
+pub(crate) const MAX_FRAME: usize = MAX_READ as usize + 1024;
+/// 类型和请求号的长度（字节）。
+const HEADER: usize = 5;
+
+/// 帧的类型。
+pub(crate) mod kind {
+    /// 交换协议版本：载荷是 `u32` 版本号，应答相同。
+    pub(crate) const HELLO: u8 = 1;
+    /// 取文件信息，跟随符号链接：载荷是路径，应答是文件信息。
+    pub(crate) const METADATA: u8 = 2;
+    /// 取文件信息，不跟随符号链接：载荷是路径，应答是文件信息。
+    pub(crate) const SYMLINK_METADATA: u8 = 3;
+    /// 列目录：载荷是路径，应答是 `u32` 项数和各项的种类（`u8`）与名字。
+    pub(crate) const READ_DIR: u8 = 4;
+    /// 读取文件的一段：载荷是路径、`u64` 偏移和 `u32` 字节数，应答是数据和是否已到末尾（`u8`）。
+    pub(crate) const READ: u8 = 5;
+    /// 请求成功，载荷是结果。
+    pub(crate) const OK: u8 = 0x80;
+    /// 请求失败，载荷是错误的种类（`u8`）和说明。
+    pub(crate) const ERROR: u8 = 0xFF;
+}
+
+/// 收到的一帧。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Frame {
+    /// 类型，见 [`kind`]。
+    pub(crate) kind: u8,
+    /// 请求号。
+    pub(crate) id: u32,
+    /// 载荷。
+    pub(crate) payload: Vec<u8>,
+}
+
+/// 写出一帧。
+///
+/// # Errors
+///
+/// 载荷超过 [`MAX_FRAME`] 时返回 [`io::ErrorKind::InvalidInput`]，不写出任何字节；其余与写入相同。
+pub(crate) fn write_frame(
+    out: &mut impl Write,
+    kind: u8,
+    id: u32,
+    payload: &[u8],
+) -> io::Result<()> {
+    let len = HEADER + payload.len();
+    if len > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "frame too large",
+        ));
+    }
+    let mut header = [0u8; 4 + HEADER];
+    header[..4].copy_from_slice(&(len as u32).to_le_bytes());
+    header[4] = kind;
+    header[5..].copy_from_slice(&id.to_le_bytes());
+    out.write_all(&header)?;
+    out.write_all(payload)
+}
+
+/// 读入一帧；对方在两帧之间正常关闭时返回 `None`。
+///
+/// # Errors
+///
+/// 长度不在 [`HEADER`] 到 [`MAX_FRAME`] 之间时返回 [`io::ErrorKind::InvalidData`]；帧未读完对方
+/// 就关闭时返回 [`io::ErrorKind::UnexpectedEof`]。
+pub(crate) fn read_frame(input: &mut impl Read) -> io::Result<Option<Frame>> {
+    let mut len = [0u8; 4];
+    // 第一个字节之前结束是正常关闭，之后结束是帧不完整。
+    match input.read(&mut len[..1])? {
+        0 => return Ok(None),
+        _ => input.read_exact(&mut len[1..])?,
+    }
+    let len = u32::from_le_bytes(len) as usize;
+    if !(HEADER..=MAX_FRAME).contains(&len) {
+        return Err(invalid("frame length out of range"));
+    }
+    let mut header = [0u8; HEADER];
+    input.read_exact(&mut header)?;
+    let mut payload = vec![0; len - HEADER];
+    input.read_exact(&mut payload)?;
+    Ok(Some(Frame {
+        kind: header[0],
+        id: u32::from_le_bytes([header[1], header[2], header[3], header[4]]),
+        payload,
+    }))
+}
+
+/// 返回说明为 `message` 的协议错误。
+pub(crate) fn invalid(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+/// 按顺序写出载荷的各个字段。
+#[derive(Default)]
+pub(crate) struct Writer(Vec<u8>);
+
+impl Writer {
+    // 只有服务进程一侧写出单字节的字段。
+    #[cfg(any(unix, test))]
+    pub(crate) fn u8(mut self, value: u8) -> Self {
+        self.0.push(value);
+        self
+    }
+
+    pub(crate) fn u32(mut self, value: u32) -> Self {
+        self.0.extend_from_slice(&value.to_le_bytes());
+        self
+    }
+
+    pub(crate) fn u64(mut self, value: u64) -> Self {
+        self.0.extend_from_slice(&value.to_le_bytes());
+        self
+    }
+
+    /// 写出带长度前缀的字节串。字节串的长度受 [`MAX_FRAME`] 约束，远小于 `u32` 的范围。
+    pub(crate) fn bytes(mut self, value: &[u8]) -> Self {
+        self.0
+            .extend_from_slice(&(value.len() as u32).to_le_bytes());
+        self.0.extend_from_slice(value);
+        self
+    }
+
+    pub(crate) fn finish(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+/// 按顺序读出载荷的各个字段；字段不完整时返回 [`io::ErrorKind::InvalidData`]。
+pub(crate) struct Reader<'a>(&'a [u8]);
+
+impl<'a> Reader<'a> {
+    pub(crate) fn new(payload: &'a [u8]) -> Self {
+        Self(payload)
+    }
+
+    fn take(&mut self, len: usize) -> io::Result<&'a [u8]> {
+        if self.0.len() < len {
+            return Err(invalid("payload truncated"));
+        }
+        let (head, rest) = self.0.split_at(len);
+        self.0 = rest;
+        Ok(head)
+    }
+
+    pub(crate) fn u8(&mut self) -> io::Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    pub(crate) fn u32(&mut self) -> io::Result<u32> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    pub(crate) fn u64(&mut self) -> io::Result<u64> {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(self.take(8)?);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    pub(crate) fn bytes(&mut self) -> io::Result<&'a [u8]> {
+        let len = self.u32()? as usize;
+        self.take(len)
+    }
+
+    /// 确认载荷已读完：多出的字节说明双方对该类型的约定不一致。
+    pub(crate) fn finish(self) -> io::Result<()> {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid("payload has trailing bytes"))
+        }
+    }
+}
+
+/// 把文件信息写入 `out`。
+#[cfg(any(unix, test))]
+pub(crate) fn write_metadata(out: Writer, metadata: &Metadata) -> Writer {
+    let stamp = metadata.modified.unwrap_or(Stamp { secs: 0, nanos: 0 });
+    let unix = metadata.unix.unwrap_or(Unix {
+        mode: 0,
+        uid: 0,
+        nlink: 0,
+        dev: 0,
+        ino: 0,
+    });
+    out.u8(kind_byte(metadata.kind))
+        .u64(metadata.len)
+        .u8(u8::from(metadata.modified.is_some()))
+        .u64(stamp.secs.cast_unsigned())
+        .u32(stamp.nanos)
+        .u8(u8::from(metadata.readonly))
+        .u8(u8::from(metadata.unix.is_some()))
+        .u32(unix.mode)
+        .u32(unix.uid)
+        .u64(unix.nlink)
+        .u64(unix.dev)
+        .u64(unix.ino)
+}
+
+/// 从 `input` 读出文件信息。
+pub(crate) fn read_metadata(input: &mut Reader<'_>) -> io::Result<Metadata> {
+    let kind = read_kind(input.u8()?)?;
+    let len = input.u64()?;
+    let has_modified = input.u8()? != 0;
+    let stamp = Stamp {
+        secs: input.u64()?.cast_signed(),
+        nanos: input.u32()?,
+    };
+    let readonly = input.u8()? != 0;
+    let has_unix = input.u8()? != 0;
+    let unix = Unix {
+        mode: input.u32()?,
+        uid: input.u32()?,
+        nlink: input.u64()?,
+        dev: input.u64()?,
+        ino: input.u64()?,
+    };
+    if stamp.nanos >= 1_000_000_000 {
+        return Err(invalid("nanoseconds out of range"));
+    }
+    Ok(Metadata {
+        kind,
+        len,
+        modified: has_modified.then_some(stamp),
+        readonly,
+        unix: has_unix.then_some(unix),
+    })
+}
+
+/// 把种类写成一个字节。
+#[cfg(any(unix, test))]
+pub(crate) fn kind_byte(kind: Kind) -> u8 {
+    match kind {
+        Kind::File => 0,
+        Kind::Dir => 1,
+        Kind::Symlink => 2,
+        Kind::Other => 3,
+    }
+}
+
+/// 从一个字节读出种类。
+pub(crate) fn read_kind(byte: u8) -> io::Result<Kind> {
+    match byte {
+        0 => Ok(Kind::File),
+        1 => Ok(Kind::Dir),
+        2 => Ok(Kind::Symlink),
+        3 => Ok(Kind::Other),
+        _ => Err(invalid("unknown file kind")),
+    }
+}
+
+/// 在协议中传递的错误种类，下标即编码；不在表中的种类按第 0 项传递。
+const ERROR_KINDS: [io::ErrorKind; 12] = [
+    io::ErrorKind::Other,
+    io::ErrorKind::NotFound,
+    io::ErrorKind::PermissionDenied,
+    io::ErrorKind::AlreadyExists,
+    io::ErrorKind::NotADirectory,
+    io::ErrorKind::IsADirectory,
+    io::ErrorKind::InvalidInput,
+    io::ErrorKind::InvalidData,
+    io::ErrorKind::Unsupported,
+    io::ErrorKind::DirectoryNotEmpty,
+    io::ErrorKind::ReadOnlyFilesystem,
+    io::ErrorKind::StorageFull,
+];
+
+/// 把错误编码为 [`kind::ERROR`] 的载荷：种类和说明。
+#[cfg(any(unix, test))]
+pub(crate) fn encode_error(error: &io::Error) -> Vec<u8> {
+    let code = ERROR_KINDS
+        .iter()
+        .position(|kind| *kind == error.kind())
+        .unwrap_or(0);
+    let message = error.to_string();
+    // 说明只用于显示，过长时截断到 512 字节以内的字符边界。
+    let mut end = message.len().min(512);
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    Writer::default()
+        .u8(code as u8)
+        .bytes(&message.as_bytes()[..end])
+        .finish()
+}
+
+/// 把 [`kind::ERROR`] 的载荷还原为错误；载荷不合约定时返回协议错误。
+pub(crate) fn decode_error(payload: &[u8]) -> io::Error {
+    let mut input = Reader::new(payload);
+    let parsed = (|| {
+        let code = usize::from(input.u8()?);
+        let message = String::from_utf8_lossy(input.bytes()?).into_owned();
+        Ok::<_, io::Error>((code, message))
+    })();
+    match parsed {
+        Ok((code, message)) => {
+            let kind = ERROR_KINDS
+                .get(code)
+                .copied()
+                .unwrap_or(io::ErrorKind::Other);
+            io::Error::new(kind, message)
+        }
+        Err(error) => error,
+    }
+}

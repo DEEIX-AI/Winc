@@ -11,6 +11,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -33,6 +34,35 @@ pub struct Location {
     pub target: Target,
     /// 远端主机上的绝对路径（字节，以 `/` 开头，不含 `.`、`..` 和重复的 `/`；根目录是 `/`）。
     pub path: Vec<u8>,
+}
+
+impl Location {
+    /// 返回最后一段的名字；根目录没有名字，返回空。
+    pub fn name(&self) -> &[u8] {
+        let start = self
+            .path
+            .iter()
+            .rposition(|&b| b == b'/')
+            .map_or(0, |at| at + 1);
+        &self.path[start..]
+    }
+
+    /// 返回相对于目录 `root` 的路径（不以 `/` 开头，就是 `root` 本身时为空）；不在同一连接上
+    /// 或不在 `root` 之下时返回 `None`。
+    pub fn relative_to(&self, root: &Location) -> Option<&[u8]> {
+        if self.target != root.target {
+            return None;
+        }
+        let rest = self.path.strip_prefix(root.path.as_slice())?;
+        match rest {
+            [] => Some(rest),
+            [b'/', rest @ ..] => Some(rest),
+            // 根目录以 `/` 结尾，其下的路径去掉它之后直接就是相对路径。
+            _ if root.path == b"/" => Some(rest),
+            // 只是名字的前缀相同（`/a/bc` 与 `/a/b`），不在其下。
+            _ => None,
+        }
+    }
 }
 
 /// 返回连接 `target` 上的远端路径 `remote` 对应的虚拟路径。
@@ -99,6 +129,35 @@ pub fn display(path: &Path) -> Option<String> {
     Some(format!("{}:{remote}", location.target.as_str()))
 }
 
+/// 返回 `path` 在文件所在的机器上的写法：本机路径原样返回，虚拟路径返回远端的路径。
+///
+/// 用于把路径交给用户（复制路径）或在远端执行的程序。不构成有效 UTF-8 的字节换成替换字符，
+/// 结果不能再换算回原路径。
+pub fn native_lossy(path: &Path) -> Cow<'_, str> {
+    match locate(path) {
+        None => path.to_string_lossy(),
+        Some(location) => String::from_utf8_lossy(&location.path).into_owned().into(),
+    }
+}
+
+/// 返回 `path` 相对于目录 `root` 的写法；不在 `root` 之下、两者不在同一台机器上时返回 `None`，
+/// 就是 `root` 本身时为空字符串。
+///
+/// 远端路径一律以 `/` 分隔；本机路径使用本机的分隔符。
+pub fn relative_lossy(path: &Path, root: &Path) -> Option<String> {
+    match (locate(path), locate(root)) {
+        (None, None) => {
+            let relative = path.strip_prefix(root).ok()?;
+            Some(relative.to_string_lossy().into_owned())
+        }
+        (Some(path), Some(root)) => {
+            let relative = path.relative_to(&root)?;
+            Some(String::from_utf8_lossy(relative).into_owned())
+        }
+        _ => None,
+    }
+}
+
 /// 返回连接 `target` 的虚拟根。
 fn root(target: &Target) -> PathBuf {
     #[cfg(unix)]
@@ -135,6 +194,11 @@ fn leading_target(components: &mut std::path::Components<'_>) -> Option<Target> 
         return None;
     };
     Target::new(device.to_str()?.strip_prefix(PREFIX)?)
+}
+
+/// 把远端的文件名 `name` 换算为虚拟路径中的名字，与 [`virtual_path`] 对各段的换算相同。
+pub(crate) fn segment_name(name: &[u8]) -> std::ffi::OsString {
+    segment_text(name).into()
 }
 
 /// 把远端路径的一段换算为虚拟路径的一段。Unix 的路径分段可以是任意字节，原样使用。

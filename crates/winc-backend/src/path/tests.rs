@@ -150,3 +150,47 @@ fn the_virtual_root_is_a_device_namespace_prefix() {
     assert_eq!(locate(Path::new(r"\\.\COM1")), None);
     assert_eq!(locate(Path::new(r"\\.\PhysicalDrive0\x")), None);
 }
+
+#[test]
+fn native_and_relative_forms_use_the_remote_spelling() {
+    let root = virtual_path(&target(), b"/home/alice/project");
+    let file = root.join("src").join("main.rs");
+    assert_eq!(native_lossy(&file), "/home/alice/project/src/main.rs");
+    assert_eq!(relative_lossy(&file, &root).unwrap(), "src/main.rs");
+    assert_eq!(relative_lossy(&root, &root).unwrap(), "");
+    // 根目录之下、只是名字的前缀相同、不同连接、本机与远端之间。
+    let top = virtual_path(&target(), b"/");
+    assert_eq!(
+        relative_lossy(&file, &top).unwrap(),
+        "home/alice/project/src/main.rs"
+    );
+    let sibling = virtual_path(&target(), b"/home/alice/project-old/a");
+    assert_eq!(relative_lossy(&sibling, &root), None);
+    let elsewhere = virtual_path(
+        &Target::new("bob@devbox").unwrap(),
+        b"/home/alice/project/a",
+    );
+    assert_eq!(relative_lossy(&elsewhere, &root), None);
+    assert_eq!(
+        relative_lossy(Path::new("/home/alice/project/a"), &root),
+        None
+    );
+    assert_eq!(
+        relative_lossy(&file, Path::new("/home/alice/project")),
+        None
+    );
+
+    // 含 `\`、`%` 的名字在各平台的虚拟路径中写法不同，交给用户时都是远端的原样。
+    let odd = virtual_path(&target(), br"/tmp/a\b/100%.txt");
+    assert_eq!(native_lossy(&odd), r"/tmp/a\b/100%.txt");
+    assert_eq!(locate(&odd).unwrap().name(), b"100%.txt");
+    assert_eq!(locate(&top).unwrap().name(), b"");
+
+    // 本机路径原样返回。
+    let local = Path::new("relative").join("file.txt");
+    assert_eq!(native_lossy(&local), local.to_string_lossy());
+    assert_eq!(
+        relative_lossy(&local, Path::new("relative")).unwrap(),
+        "file.txt"
+    );
+}

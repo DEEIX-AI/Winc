@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::Kind;
-use crate::ensure_local;
+use crate::{locate, remote};
 
 /// 目录中的一项。
 #[derive(Debug, Clone)]
@@ -33,21 +33,36 @@ impl Entry {
 /// 读取某一项或取其种类失败时该项为错误，其余各项不受影响。
 pub struct ReadDir {
     dir: Arc<Path>,
-    entries: std::fs::ReadDir,
+    entries: Entries,
+}
+
+/// 目录项的来源。
+enum Entries {
+    /// 本机的目录，逐项读取。部分系统上该类型有数百字节，装箱后两个变体大小相近。
+    Local(Box<std::fs::ReadDir>),
+    /// 远端的目录，已随一次应答全部取回：名字（远端的原始字节）和种类。
+    Remote(std::vec::IntoIter<(Vec<u8>, Kind)>),
 }
 
 impl Iterator for ReadDir {
     type Item = io::Result<Entry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let entry = self.entries.next()?;
-        Some(entry.and_then(|entry| {
-            Ok(Entry {
-                name: entry.file_name(),
-                kind: entry.file_type()?.into(),
-                dir: Arc::clone(&self.dir),
-            })
-        }))
+        let dir = Arc::clone(&self.dir);
+        match &mut self.entries {
+            Entries::Local(entries) => Some(entries.next()?.and_then(|entry| {
+                Ok(Entry {
+                    name: entry.file_name(),
+                    kind: entry.file_type()?.into(),
+                    dir,
+                })
+            })),
+            Entries::Remote(entries) => {
+                let (name, kind) = entries.next()?;
+                let name = crate::path::segment_name(&name);
+                Some(Ok(Entry { name, kind, dir }))
+            }
+        }
     }
 }
 
@@ -55,12 +70,18 @@ impl Iterator for ReadDir {
 ///
 /// # Errors
 ///
-/// 与 `std::fs::read_dir` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
+/// 与 `std::fs::read_dir` 相同；`path` 是虚拟路径时还有连接的错误，见 [`fs`](crate::fs) 的说明。
 pub fn read_dir(path: impl AsRef<Path>) -> io::Result<ReadDir> {
     let path = path.as_ref();
-    ensure_local(path)?;
+    let entries = match locate(path) {
+        None => Entries::Local(Box::new(std::fs::read_dir(path)?)),
+        Some(at) => {
+            let entries = remote::connection(&at.target)?.read_dir(&at.path)?;
+            Entries::Remote(entries.into_iter())
+        }
+    };
     Ok(ReadDir {
-        entries: std::fs::read_dir(path)?,
         dir: Arc::from(path),
+        entries,
     })
 }

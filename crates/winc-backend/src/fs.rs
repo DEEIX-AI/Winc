@@ -1,7 +1,11 @@
 //! 文件操作：函数名和语义与 `std::fs` 中的同名函数相同，路径可以是本机路径或虚拟路径。
 //!
-//! 目前只有本机的实现；虚拟路径一律返回 [`io::ErrorKind::Unsupported`]，不会交给本机的
-//! 文件系统。文件信息用本 crate 的 [`Metadata`] 表示：`std::fs::Metadata` 无法由远端的数据构造。
+//! 虚拟路径经到该主机的连接访问（见 [`remote`]），此时还可能返回连接的错误：
+//! 没有连接时为 [`io::ErrorKind::NotConnected`]，当前线程不允许等待时为
+//! [`io::ErrorKind::WouldBlock`]，连接中断时为 [`io::ErrorKind::BrokenPipe`]。目前只有读取类的
+//! 操作（取文件信息、读取内容、列目录）支持虚拟路径，其余操作对虚拟路径返回
+//! [`io::ErrorKind::Unsupported`]。文件信息用本 crate 的 [`Metadata`] 表示：
+//! `std::fs::Metadata` 无法由远端的数据构造。
 
 mod change;
 mod dir;
@@ -21,7 +25,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::ensure_local;
+use crate::{ensure_local, locate, remote};
 
 /// 文件的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,22 +187,26 @@ impl From<&std::fs::Metadata> for Metadata {
 ///
 /// # Errors
 ///
-/// 与 `std::fs::metadata` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
+/// 与 `std::fs::metadata` 相同；`path` 是虚拟路径时还有连接的错误，见本模块的说明。
 pub fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     let path = path.as_ref();
-    ensure_local(path)?;
-    std::fs::metadata(path).map(|m| Metadata::from(&m))
+    match locate(path) {
+        None => std::fs::metadata(path).map(|m| Metadata::from(&m)),
+        Some(at) => remote::connection(&at.target)?.metadata(&at.path, true),
+    }
 }
 
 /// 返回 `path` 的文件信息，不跟随符号链接。
 ///
 /// # Errors
 ///
-/// 与 `std::fs::symlink_metadata` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
+/// 与 `std::fs::symlink_metadata` 相同；`path` 是虚拟路径时还有连接的错误，见本模块的说明。
 pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     let path = path.as_ref();
-    ensure_local(path)?;
-    std::fs::symlink_metadata(path).map(|m| Metadata::from(&m))
+    match locate(path) {
+        None => std::fs::symlink_metadata(path).map(|m| Metadata::from(&m)),
+        Some(at) => remote::connection(&at.target)?.metadata(&at.path, false),
+    }
 }
 
 /// 对若干路径逐个取文件信息（跟随符号链接），结果与 `paths` 的顺序一一对应。
@@ -246,22 +254,29 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
 ///
 /// # Errors
 ///
-/// 与 `std::fs::read` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
+/// 与 `std::fs::read` 相同；`path` 是虚拟路径时还有连接的错误，见本模块的说明。
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let path = path.as_ref();
-    ensure_local(path)?;
-    std::fs::read(path)
+    match locate(path) {
+        None => std::fs::read(path),
+        Some(at) => remote::connection(&at.target)?.read(&at.path),
+    }
 }
 
 /// 读取 `path` 的全部内容并按 UTF-8 解码。
 ///
 /// # Errors
 ///
-/// 与 `std::fs::read_to_string` 相同；`path` 是虚拟路径时返回 [`io::ErrorKind::Unsupported`]。
+/// 与 `std::fs::read_to_string` 相同；`path` 是虚拟路径时还有连接的错误，见本模块的说明。
 pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
     let path = path.as_ref();
-    ensure_local(path)?;
-    std::fs::read_to_string(path)
+    match locate(path) {
+        None => std::fs::read_to_string(path),
+        Some(at) => {
+            let bytes = remote::connection(&at.target)?.read(&at.path)?;
+            String::from_utf8(bytes).map_err(|_| io::ErrorKind::InvalidData.into())
+        }
+    }
 }
 
 /// 返回符号链接 `path` 指向的目标。

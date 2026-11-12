@@ -491,9 +491,8 @@ impl App {
 
     /// 返回 `path` 相对于已打开目录的路径；不在目录内或就是目录本身时返回 `None`。
     pub(in crate::app) fn relative_path(&self, path: &Path) -> Option<String> {
-        let root = self.editor.root()?;
-        let relative = path.strip_prefix(root).ok()?;
-        (!relative.as_os_str().is_empty()).then(|| relative.to_string_lossy().into_owned())
+        let relative = winc_backend::relative_lossy(path, self.editor.root()?)?;
+        (!relative.is_empty()).then_some(relative)
     }
 
     /// 把 `path` 复制到剪贴板；`relative` 为 `true` 时复制相对于已打开目录的路径。
@@ -511,7 +510,7 @@ impl App {
         } else {
             paths
                 .iter()
-                .map(|p| p.to_string_lossy().into_owned())
+                .map(|p| winc_backend::native_lossy(p).into_owned())
                 .collect()
         };
         if lines.is_empty() {

@@ -118,15 +118,23 @@ fn stamps_keep_the_nanoseconds_on_both_sides_of_the_epoch() {
 }
 
 #[test]
-fn virtual_paths_are_refused_without_touching_the_local_file_system() {
-    let file = virtual_path(&Target::new("devbox").unwrap(), b"/etc/hosts");
-    let refused = |result: io::Result<()>| {
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+fn virtual_paths_need_a_connection_and_never_touch_the_local_file_system() {
+    let file = virtual_path(&Target::new("unconnected-fs").unwrap(), b"/etc/hosts");
+    let unconnected = |result: io::Result<()>| {
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotConnected);
     };
-    refused(metadata(&file).map(drop));
-    refused(symlink_metadata(&file).map(drop));
-    refused(read(&file).map(drop));
-    refused(read_to_string(&file).map(drop));
-    refused(read_link(&file).map(drop));
+    unconnected(metadata(&file).map(drop));
+    unconnected(symlink_metadata(&file).map(drop));
+    unconnected(read(&file).map(drop));
+    unconnected(read_to_string(&file).map(drop));
+    // 尚不支持远端的操作明确拒绝。
+    assert_eq!(
+        read_link(&file).unwrap_err().kind(),
+        io::ErrorKind::Unsupported
+    );
+    // 取不到信息时各项判断为否：无法确定不等于存在。
     assert!(!exists(&file) && !is_file(&file) && !is_dir(&file) && !is_symlink(&file));
+    for result in metadata_many(&[&file]) {
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotConnected);
+    }
 }

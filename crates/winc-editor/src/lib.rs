@@ -599,6 +599,13 @@ fn replace_document(slot: &mut Document, mut fresh: Document) {
 
 /// 返回用于显示的名称：路径的最后一段；没有最后一段（如根目录）时返回整个路径。
 pub fn display_name(path: &Path) -> Cow<'_, str> {
+    // 远端路径：名字按远端的写法显示，根目录显示为 `目标:/`。
+    if let Some(remote) = winc_backend::locate(path) {
+        return match remote.name() {
+            [] => winc_backend::display(path).unwrap_or_default().into(),
+            name => String::from_utf8_lossy(name).into_owned().into(),
+        };
+    }
     path.file_name()
         .map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy())
 }
@@ -606,12 +613,13 @@ pub fn display_name(path: &Path) -> Cow<'_, str> {
 /// 返回用于显示的路径。
 ///
 /// 位于 `root` 之下时返回相对路径；位于用户主目录（环境变量 `HOME`）之下时返回 `~/…`；
-/// 其余情况返回完整路径。
+/// 其余情况返回完整路径。远端主机上的路径不在 `root` 之下时写成 `目标:/路径`。
 pub fn display_path(path: &Path, root: Option<&Path>) -> String {
-    if let Some(root) = root
-        && let Ok(relative) = path.strip_prefix(root)
-    {
-        return relative.display().to_string();
+    if let Some(relative) = root.and_then(|root| winc_backend::relative_lossy(path, root)) {
+        return relative;
+    }
+    if let Some(remote) = winc_backend::display(path) {
+        return remote;
     }
 
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)

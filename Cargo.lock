@@ -3265,6 +3265,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "winc-server"
+version = "0.0.0"
+dependencies = [
+ "winc-backend",
+]
+
+[[package]]
 name = "winc-syntax"
 version = "0.0.0"
 dependencies = [

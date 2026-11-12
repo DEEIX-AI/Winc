@@ -54,10 +54,10 @@ fn entries_carry_their_name_kind_and_path() {
 }
 
 #[test]
-fn virtual_paths_are_refused() {
-    let dir = virtual_path(&Target::new("devbox").unwrap(), b"/etc");
+fn virtual_paths_need_a_connection() {
+    let dir = virtual_path(&Target::new("unconnected-dir").unwrap(), b"/etc");
     assert_eq!(
         read_dir(&dir).err().unwrap().kind(),
-        io::ErrorKind::Unsupported
+        io::ErrorKind::NotConnected
     );
 }

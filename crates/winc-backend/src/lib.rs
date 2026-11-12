@@ -11,7 +11,10 @@ mod escape;
 pub mod fs;
 pub mod local;
 mod path;
+pub mod remote;
 mod target;
 
-pub use path::{Location, display, ensure_local, is_remote, locate, virtual_path};
+pub use path::{
+    Location, display, ensure_local, is_remote, locate, native_lossy, relative_lossy, virtual_path,
+};
 pub use target::Target;

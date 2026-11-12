@@ -65,6 +65,7 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("winc-syntax", &["winc-core"]),
     ("winc-vim", &["winc-core"]),
     ("winc-pty", &["winc-version"]),
+    ("winc-server", &["winc-backend"]),
     // 仅测试依赖。
     ("winc-watch", &["winc-config"]),
     (
