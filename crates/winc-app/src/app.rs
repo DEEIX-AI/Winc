@@ -553,7 +553,10 @@ impl Hover {
                         | CommitTarget::Commit
                         | CommitTarget::CommitMenu
                         | CommitTarget::OpenFile(_)
+                        | CommitTarget::OpenStagedFile(_)
                         | CommitTarget::RevertFile(_)
+                        | CommitTarget::StageFile(_)
+                        | CommitTarget::UnstageFile(_)
                         | CommitTarget::GroupRevert(_)
                         | CommitTarget::Check(_)
                 )

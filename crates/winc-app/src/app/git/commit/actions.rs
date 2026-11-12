@@ -48,6 +48,42 @@ pub(crate) enum PushIntent {
 pub(in crate::app) const COMMITTED_SHOWN: Duration = Duration::from_millis(1600);
 
 impl App {
+    /// 暂存或取消暂存单个文件；后台结果沿用仓库操作的刷新与错误提示。
+    pub(super) fn change_file_staging(&mut self, index: usize, stage: bool) {
+        if self.commit.busy || self.branch.running.is_some() || self.commit.browse {
+            return;
+        }
+        let Some(entry) = self.commit_entry(index).cloned() else {
+            return;
+        };
+        if (!stage && entry.staged.is_none()) || (stage && entry.unstaged.is_none()) {
+            return;
+        }
+        if stage && !self.save_dirty_documents(std::slice::from_ref(&entry.path)) {
+            return;
+        }
+        if stage && entry.conflicted() && winc_editor::git::merge::file_has_conflicts(&entry.path) {
+            self.flash(t!("git-commit-unresolved-conflicts", count = 1));
+            return;
+        }
+        let mut paths = vec![entry.path];
+        if !stage || entry.unstaged == Some(winc_editor::git::Change::Renamed) {
+            paths.extend(entry.from);
+        }
+        let label = if stage {
+            t!("git-stage-file")
+        } else {
+            t!("git-unstage-file")
+        };
+        self.git_operate(label.to_owned(), move |git, root| {
+            if stage {
+                git.stage(root, &paths)
+            } else {
+                git.unstage(root, &paths)
+            }
+        });
+    }
+
     /// 分支和上游的关系决定的同步控件状态。
     pub(crate) fn git_sync_state(&self) -> SyncState {
         let Some(status) = self.git.status.as_ref() else {
@@ -245,7 +281,7 @@ impl App {
     ///
     /// 没写提交信息、什么都没勾时在状态栏说明，不提交。
     pub(in crate::app) fn git_commit(&mut self) {
-        if self.commit.busy {
+        if self.commit.busy || self.branch.running.is_some() {
             return;
         }
         let message = self.commit.message.text().trim().to_owned();
@@ -257,6 +293,21 @@ impl App {
         if message.is_empty() && !rebasing {
             self.flash(t!("git-commit-message-required"));
             self.focus = Focus::CommitMessage;
+            return;
+        }
+        if self
+            .git
+            .status
+            .as_ref()
+            .is_some_and(|s| self.commit.uses_index(s))
+        {
+            let amend = self.commit.amend;
+            let sender = self.commit.results.0.clone();
+            self.commit.busy = true;
+            self.run_git_job(move |git, root| {
+                let result = git.and_then(|git| git.commit_staged(root, &message, amend));
+                let _ = sender.send(Outcome::Committed(result, message, root.to_path_buf()));
+            });
             return;
         }
         // 提交按磁盘上的内容：勾上的文件在编辑器里有没保存的修改就先保存（只提交一部分改动的
@@ -415,29 +466,30 @@ impl App {
         self.git_rollback(paths);
     }
 
-    /// 回滚 `paths`：已跟踪的恢复成 `HEAD` 里的内容，新加入版本管理的从暂存区移除并移到废纸篓，
-    /// 未跟踪的移到废纸篓。
+    /// 回滚 `paths` 的未暂存修改：已跟踪的恢复成索引内容，未跟踪的移到废纸篓。
+    /// 暂存新增或重命名的文件同样从当前索引路径恢复，不修改索引。
     ///
     /// 打开着的文档由目录监视仍然重新读取。
     pub(in crate::app) fn git_rollback(&mut self, paths: Vec<PathBuf>) {
+        if self.commit.busy || self.branch.running.is_some() {
+            return;
+        }
         let Some(status) = self.git.status.as_ref() else {
             return;
         };
         let mut restore = Vec::new();
-        let mut added = Vec::new();
         let mut trash = Vec::new();
         for entry in status.entries.iter().filter(|e| paths.contains(&e.path)) {
             if entry.untracked() {
                 trash.push(entry.path.clone());
-            } else if entry.staged == Some(winc_editor::git::Change::Added) {
-                added.push(entry.path.clone());
-                trash.push(entry.path.clone());
-            } else {
+            } else if entry.unstaged.is_some() {
                 restore.push(entry.path.clone());
-                restore.extend(entry.from.clone());
             }
         }
-        let count = paths.len();
+        let count = restore.len() + trash.len();
+        if count == 0 {
+            return;
+        }
         // 移到废纸篓在界面线程上做（和文件树的删除同一个入口），git 在后台。
         for path in &trash {
             if let Err(e) = (self.trash)(path) {
@@ -445,7 +497,7 @@ impl App {
                 self.notify(t!("git-rollback-file-failed", name = name, error = error));
             }
         }
-        if restore.is_empty() && added.is_empty() {
+        if restore.is_empty() {
             self.flash(t!("git-rollback-done", count = count));
             self.git_refresh();
             return;
@@ -454,7 +506,7 @@ impl App {
         self.commit.busy = true;
         self.run_git_job(move |git, root| {
             let result = git
-                .and_then(|git| git.rollback(root, &restore, &added))
+                .and_then(|git| git.restore_worktree(root, &restore))
                 .map(|()| count);
             let _ = sender.send(Outcome::RolledBack(result, root.to_path_buf()));
         });

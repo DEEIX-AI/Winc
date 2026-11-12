@@ -6,6 +6,39 @@
 use super::*;
 
 impl Git {
+    /// 将工作区恢复为索引中的内容，不修改索引，首次提交前也可使用。
+    ///
+    /// # Errors
+    ///
+    /// 仓库未受信任或 Git 无法恢复文件（例如未解决的冲突）时返回原因。
+    pub fn restore_worktree(&self, root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+        self.require_trust(root)?;
+        if !paths.is_empty() {
+            let mut command = self.command(root);
+            command
+                .args(["restore", "--worktree", "--"])
+                .args(relative_all(root, paths));
+            self.run(&mut command, STATUS_TIMEOUT, &Cancel::default())?;
+        }
+        Ok(())
+    }
+
+    /// 提交当前索引，不读取或暂存工作区的修改；`amend` 表示修改上一次提交。
+    ///
+    /// # Errors
+    ///
+    /// 仓库未受信任或 Git 拒绝提交（冲突、hooks、身份配置等）时返回原因。
+    pub fn commit_staged(&self, root: &Path, message: &str, amend: bool) -> Result<String, String> {
+        self.require_trust(root)?;
+        let mut command = self.command(root);
+        command.args(["commit", "--file=-", "--cleanup=whitespace"]);
+        if amend {
+            command.arg("--amend");
+        }
+        self.run_commit(root, &mut command, message)?;
+        self.short_head(root)
+    }
+
     /// 回滚已跟踪的 `paths`：暂存区和工作区都恢复成 `HEAD` 里的内容（`git restore`）。
     ///
     /// `added` 是 `HEAD` 里没有、新加入版本管理的文件，只从暂存区移除，工作区里的文件由调用方处理。

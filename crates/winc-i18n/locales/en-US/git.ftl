@@ -316,7 +316,7 @@ git-abort-confirm-button = Abort { $operation }
 git-rollback-nothing-checked = Select the files to roll back first
 git-rollback-confirm-one = Roll back changes to “{ $name }”?
 git-rollback-confirm-many = Roll back changes to { $count } files?
-git-rollback-confirm-detail = Tracked files are restored to the last commit, and untracked files are moved to the { common-trash }.
+git-rollback-confirm-detail = Tracked files are restored to the index version, preserving staged changes. Untracked files are moved to the { common-trash }.
 git-rollback-confirm-button = Roll Back
 git-rollback-file-failed = Couldn't roll back “{ $name }”: { $error }
 git-rollback-done = { $count ->
@@ -650,6 +650,14 @@ git-change-popup-more-lines = { $count ->
 ## Commit view file list
 
 git-commit-group-changes = Changes
+git-commit-group-staged = Staged Changes
+git-stage-file = Stage Changes
+git-unstage-file = Unstage Changes
+git-diff-side-index = Index
+git-diff-side-index-missing = Index (file not present)
+git-diff-index-unreadable = Couldn’t read the index version of “{ $name }”: { $error }
+git-diff-index-identical = “{ $name }” matches the index; no unstaged changes
+git-commit-button-staged = Commit Staged ({ $count })
 git-commit-group-conflicts = Conflicts
 git-commit-group-untracked = Untracked Files
 git-commit-open-deleted = The file was deleted and can't be opened

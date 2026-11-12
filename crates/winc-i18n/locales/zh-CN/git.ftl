@@ -257,7 +257,7 @@ git-abort-confirm-button = 中止{ $operation }
 git-rollback-nothing-checked = 请先勾选要回滚的文件
 git-rollback-confirm-one = 要回滚「{ $name }」的更改吗？
 git-rollback-confirm-many = 要回滚 { $count } 个文件的更改吗？
-git-rollback-confirm-detail = 已跟踪的文件将恢复为上次提交时的内容，未跟踪的文件将移到{ common-trash }。
+git-rollback-confirm-detail = 已跟踪的文件将恢复为暂存区中的内容，保留已暂存的更改。未跟踪的文件将移到{ common-trash }。
 git-rollback-confirm-button = 回滚
 git-rollback-file-failed = 无法回滚「{ $name }」：{ $error }
 git-rollback-done = 已回滚 { $count } 个文件
@@ -507,6 +507,14 @@ git-change-popup-more-lines = 另有 { $count } 行未显示
 ## 提交视图的文件列表
 
 git-commit-group-changes = 更改
+git-commit-group-staged = 暂存的更改
+git-stage-file = 暂存更改
+git-unstage-file = 取消暂存更改
+git-diff-side-index = 暂存区
+git-diff-side-index-missing = 暂存区（文件不存在）
+git-diff-index-unreadable = 无法读取「{ $name }」在暂存区中的版本：{ $error }
+git-diff-index-identical = 「{ $name }」与暂存区相同，没有未暂存的更改
+git-commit-button-staged = 提交暂存（{ $count }）
 git-commit-group-conflicts = 冲突
 git-commit-group-untracked = 未跟踪的文件
 git-commit-open-deleted = 文件已删除，无法打开

@@ -272,7 +272,7 @@ fn show_changes_opens_a_side_by_side_diff_and_walks_it() {
     if !long_repo(&dir) {
         return;
     }
-    git_in(&dir, &["add", "src/new.rs"]);
+    git_in(&dir, &["add", "-N", "src/new.rs"]);
     let mut app = app_with(&dir.join("src/main.rs"), false);
     // 模块关闭时该命令不可用。
     assert!(!app.run_action(Action::GitShowChanges));
@@ -1493,7 +1493,7 @@ fn diff_navigation_keys_work_with_focus_in_the_commit_list() {
     }
     std::fs::remove_file(dir.join("src/new.rs")).unwrap();
     std::fs::write(dir.join("src/zeta.rs"), "a\n").unwrap();
-    git_in(&dir, &["add", "src/zeta.rs"]);
+    git_in(&dir, &["add", "-N", "src/zeta.rs"]);
     let main = winc_editor::canonical_path(&dir.join("src/main.rs"));
     let mut app = app_with(&dir, false);
     app.settings_toggle(Setting::GitModule);
