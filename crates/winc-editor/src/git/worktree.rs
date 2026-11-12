@@ -214,7 +214,7 @@ impl Git {
             let (source, target) = (from.join(relative), to.join(relative));
             let copy = || {
                 if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    winc_backend::fs::create_dir_all(parent)?;
                 }
                 crate::editing::paste::copy_entry(&source, &target)
             };

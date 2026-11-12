@@ -105,12 +105,12 @@ pub(super) fn parse_risks(
     // 先只列出名字排好序，再逐个读内容喂进指纹：同一时刻只有一个 hook 的内容在内存里。
     let (dir, label) = hooks_dir(stdout, root, default, home).unzip();
     let mut hooks: Vec<(String, PathBuf)> = dir
-        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .and_then(|dir| winc_backend::fs::read_dir(dir).ok())
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = entry.name.to_string_lossy().into_owned();
             let path = entry.path();
             let metadata = winc_backend::fs::metadata(&path).ok()?;
             (!name.ends_with(".sample") && metadata.is_file() && executable(&metadata))

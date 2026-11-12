@@ -1431,7 +1431,7 @@ pub fn find_root(dir: &Path) -> Option<PathBuf> {
 ///
 /// 只查文件系统，不运行 `git`。目录项很多时只看前一部分（`SCAN_ENTRIES`）。
 pub fn find_repositories(dir: &Path) -> Vec<PathBuf> {
-    let mut children: Vec<PathBuf> = std::fs::read_dir(dir)
+    let mut children: Vec<PathBuf> = winc_backend::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
@@ -1461,15 +1461,14 @@ pub fn scan_repositories(dir: &Path, depth: usize, cancel: &Cancel) -> Vec<PathB
                 found.sort();
                 return found;
             }
-            let Ok(entries) = std::fs::read_dir(parent) else {
+            let Ok(entries) = winc_backend::fs::read_dir(parent) else {
                 continue;
             };
             for entry in entries.flatten().take(budget) {
                 budget -= 1;
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
+                let name = entry.name.to_string_lossy();
                 let skipped = name.starts_with('.') || SCAN_SKIPPED.contains(&name.as_ref());
-                if skipped || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                if skipped || !entry.kind.is_dir() {
                     continue;
                 }
                 let path = entry.path();

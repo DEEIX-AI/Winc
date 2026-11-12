@@ -20,7 +20,7 @@ fn home_dir() -> Option<PathBuf> {
 
 /// 目录 `dir` 是否已存在且不为空：`git clone` 只接受不存在或为空的目录。
 fn occupied(dir: &Path) -> bool {
-    std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
+    winc_backend::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
 }
 
 impl App {

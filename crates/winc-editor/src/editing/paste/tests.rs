@@ -1,5 +1,7 @@
 //! 粘贴文件与图片的测试：重名规则、复制目录与符号链接、Markdown 链接、扩展名猜测与 PNG 编码。
 
+use std::fs;
+
 use super::*;
 use crate::test_util::scratch;
 

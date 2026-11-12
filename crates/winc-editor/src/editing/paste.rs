@@ -1,7 +1,6 @@
 //! 粘贴文件和图片：复制到目录中时取不重名的名字，粘贴到 Markdown 中时写成图片或链接。
 
-use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
@@ -68,7 +67,7 @@ fn free_path(dir: &Path, name: &str, is_dir: bool, naming: Naming) -> PathBuf {
     let (stem, ext) = if is_dir { (name, "") } else { split_name(name) };
     (0u32..)
         .map(|n| dir.join(candidate(stem, ext, n, naming)))
-        .find(|path| fs::symlink_metadata(path).is_err())
+        .find(|path| winc_backend::fs::symlink_metadata(path).is_err())
         .expect("候选名字无穷多，总有一个未被占用")
 }
 
@@ -82,20 +81,8 @@ fn free_path(dir: &Path, name: &str, is_dir: bool, naming: Naming) -> PathBuf {
 pub fn save_image(dir: &Path, png: &[u8]) -> io::Result<PathBuf> {
     loop {
         let path = free_path(dir, IMAGE_NAME, false, Naming::Numbered);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                return match file.write_all(png) {
-                    Ok(()) => Ok(path),
-                    Err(e) => {
-                        let _ = fs::remove_file(&path);
-                        Err(e)
-                    }
-                };
-            }
+        match winc_backend::fs::create_new(&path, png) {
+            Ok(()) => return Ok(path),
             // 取名与创建之间文件名可能已被其他程序占用：此时换下一个名字。
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e),
@@ -221,7 +208,7 @@ pub fn copy_into(sources: &[PathBuf], dir: &Path) -> Result<Vec<PathBuf>, CopyEr
 
 /// 把 `source` 复制到目录 `dir` 中，重名时按 `naming` 取名，返回新路径。
 fn copy_one(source: &Path, dir: &Path, naming: Naming) -> io::Result<PathBuf> {
-    let meta = fs::symlink_metadata(source)?;
+    let meta = winc_backend::fs::symlink_metadata(source)?;
     let name = source
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, t!("editor-paste-cannot-copy")))?
@@ -266,17 +253,17 @@ fn inside(path: &Path, dir: &Path) -> bool {
 
 /// 把 `from` 复制为 `to`：目录逐项递归复制，符号链接复制链接本身。
 pub(crate) fn copy_entry(from: &Path, to: &Path) -> io::Result<()> {
-    let meta = fs::symlink_metadata(from)?;
-    if meta.file_type().is_symlink() {
+    let meta = winc_backend::fs::symlink_metadata(from)?;
+    if meta.is_symlink() {
         return copy_symlink(from, to);
     }
     if !meta.is_dir() {
-        return fs::copy(from, to).map(drop);
+        return winc_backend::fs::copy(from, to).map(drop);
     }
-    fs::create_dir(to)?;
-    for entry in fs::read_dir(from)? {
+    winc_backend::fs::create_dir(to)?;
+    for entry in winc_backend::fs::read_dir(from)? {
         let entry = entry?;
-        copy_entry(&entry.path(), &to.join(entry.file_name()))?;
+        copy_entry(&entry.path(), &to.join(&entry.name))?;
     }
     Ok(())
 }
@@ -284,13 +271,13 @@ pub(crate) fn copy_entry(from: &Path, to: &Path) -> io::Result<()> {
 /// 把符号链接 `from` 复制为指向同一目标的符号链接 `to`。
 #[cfg(unix)]
 fn copy_symlink(from: &Path, to: &Path) -> io::Result<()> {
-    std::os::unix::fs::symlink(fs::read_link(from)?, to)
+    winc_backend::fs::copy_symlink(from, to)
 }
 
 /// 其他平台上创建符号链接需要额外权限，复制链接指向的内容。
 #[cfg(not(unix))]
 fn copy_symlink(from: &Path, to: &Path) -> io::Result<()> {
-    fs::copy(from, to).map(drop)
+    winc_backend::fs::copy(from, to).map(drop)
 }
 
 /// 准备粘贴到 Markdown 文档中的文件，返回要写进链接的路径，顺序与 `files` 相同。

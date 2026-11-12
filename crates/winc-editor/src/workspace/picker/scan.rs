@@ -80,21 +80,18 @@ fn list(
     files: &mut Packed,
     dirs: &mut Packed,
 ) {
-    let Ok(entries) = fs::read_dir(root.join(dir)) else {
+    let Ok(entries) = winc_backend::fs::read_dir(root.join(dir)) else {
         return;
     };
     let mut matcher = matcher;
     for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
+        let Some(name) = entry.name.to_str() else {
             continue;
         };
         if HIDDEN.contains(&name) {
             continue;
         }
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
+        let kind = entry.kind;
         // `entry.path()` 需要分配，只为符号链接计算。
         let file = kind.is_file() || kind.is_symlink() && is_listed_file(kind, &entry.path());
         if !file && !kind.is_dir() {
@@ -221,9 +218,9 @@ pub(super) fn patch(
             .or_insert_with(|| listing(root, parent))
             .contains(name);
         let kind = allowed
-            .then(|| fs::symlink_metadata(path).ok())
+            .then(|| winc_backend::fs::symlink_metadata(path).ok())
             .flatten()
-            .map(|m| m.file_type());
+            .map(|m| m.kind);
 
         match kind {
             Some(kind) if is_listed_file(kind, path) => {

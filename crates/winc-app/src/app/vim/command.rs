@@ -304,14 +304,14 @@ impl App {
             None => ("", partial),
         };
         let Ok(entries) =
-            std::fs::read_dir(self.vim_path(if folder.is_empty() { "." } else { folder }))
+            winc_backend::fs::read_dir(self.vim_path(if folder.is_empty() { "." } else { folder }))
         else {
             return Vec::new();
         };
         let mut found: Vec<String> = entries
             .filter_map(Result::ok)
             .filter_map(|entry| {
-                let name = entry.file_name().into_string().ok()?;
+                let name = entry.name.clone().into_string().ok()?;
                 let hidden = name.starts_with('.') && !prefix.starts_with('.');
                 if !name.starts_with(prefix) || hidden {
                     return None;

@@ -6,8 +6,7 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -201,7 +200,8 @@ fn in_repository(dir: &Path) -> bool {
 ///
 /// 只有符号链接才多做一次 stat。指向目录的符号链接不收录、不进入，避免链接成环时无限遍历，
 /// 以及同一棵目录被重复收录。
-pub(crate) fn is_listed_file(kind: fs::FileType, path: &Path) -> bool {
+pub(crate) fn is_listed_file(kind: impl Into<winc_backend::fs::Kind>, path: &Path) -> bool {
+    let kind = kind.into();
     kind.is_file() || kind.is_symlink() && winc_backend::fs::is_file(path)
 }
 
@@ -633,19 +633,12 @@ impl Workspace {
         }
 
         match kind {
-            EntryKind::Dir => fs::create_dir_all(&path)?,
+            EntryKind::Dir => winc_backend::fs::create_dir_all(&path)?,
             EntryKind::File => {
                 if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
+                    winc_backend::fs::create_dir_all(parent)?;
                 }
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)?;
-                if let Err(e) = file.write_all(contents) {
-                    let _ = fs::remove_file(&path);
-                    return Err(e);
-                }
+                winc_backend::fs::create_new(&path, contents)?;
             }
         }
 
@@ -697,7 +690,7 @@ impl Workspace {
         if case_only {
             rename_case(path, &target)?;
         } else {
-            fs::rename(path, &target)?;
+            winc_backend::fs::rename(path, &target)?;
         }
         self.relocated(path, &target);
         Ok(target)
@@ -733,7 +726,7 @@ impl Workspace {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, message));
         }
 
-        fs::rename(path, &target)?;
+        winc_backend::fs::rename(path, &target)?;
         self.relocated(path, &target);
         Ok(target)
     }
@@ -891,9 +884,9 @@ fn rename_case(path: &Path, target: &Path) -> io::Result<()> {
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
     let temp = path.with_file_name(format!(".{name}.{}.rename", std::process::id()));
-    fs::rename(path, &temp)?;
-    if let Err(e) = fs::rename(&temp, target) {
-        let _ = fs::rename(&temp, path);
+    winc_backend::fs::rename(path, &temp)?;
+    if let Err(e) = winc_backend::fs::rename(&temp, target) {
+        let _ = winc_backend::fs::rename(&temp, path);
         return Err(e);
     }
     Ok(())
@@ -954,27 +947,19 @@ fn free_name(dir: &Path, name: &Path) -> PathBuf {
 
 /// 把 `from` 复制到 `to`：文件复制内容和权限，目录连同其中的内容一起复制，符号链接复制为链接本身。
 fn copy_recursive(from: &Path, to: &Path) -> io::Result<()> {
-    let meta = fs::symlink_metadata(from)?;
-    if meta.file_type().is_symlink() {
-        let link = fs::read_link(from)?;
-        #[cfg(unix)]
-        return std::os::unix::fs::symlink(link, to);
-        #[cfg(windows)]
-        return if fs::metadata(from).is_ok_and(|m| m.is_dir()) {
-            std::os::windows::fs::symlink_dir(link, to)
-        } else {
-            std::os::windows::fs::symlink_file(link, to)
-        };
+    let meta = winc_backend::fs::symlink_metadata(from)?;
+    if meta.is_symlink() {
+        return winc_backend::fs::copy_symlink(from, to);
     }
     if meta.is_dir() {
-        fs::create_dir(to)?;
-        for entry in fs::read_dir(from)? {
+        winc_backend::fs::create_dir(to)?;
+        for entry in winc_backend::fs::read_dir(from)? {
             let entry = entry?;
-            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+            copy_recursive(&entry.path(), &to.join(&entry.name))?;
         }
         return Ok(());
     }
-    fs::copy(from, to).map(drop)
+    winc_backend::fs::copy(from, to).map(drop)
 }
 
 /// 是否两个路径指向磁盘上的同一项：不区分大小写的文件系统上，`a` 和 `A` 就是同一项。
@@ -1004,22 +989,21 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 ///
 /// 目录不存在或没有读权限时返回对应的 `std::io::Error`。
 pub fn list_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
-    let mut children: Vec<DirEntry> = fs::read_dir(dir)?
+    let mut children: Vec<DirEntry> = winc_backend::fs::read_dir(dir)?
         .filter_map(Result::ok)
         .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = entry.name.to_string_lossy().into_owned();
 
             if HIDDEN.contains(&name.as_str()) {
                 return None;
             }
 
             let path = entry.path();
-            let file_type = entry.file_type().ok()?;
             // 只有符号链接需要再调用一次 `stat`，判断它指向的是否为目录。
-            let is_dir = if file_type.is_symlink() {
+            let is_dir = if entry.kind.is_symlink() {
                 winc_backend::fs::is_dir(&path)
             } else {
-                file_type.is_dir()
+                entry.kind.is_dir()
             };
             let kind = if is_dir {
                 EntryKind::Dir

@@ -3,11 +3,17 @@
 //! 目前只有本机的实现；虚拟路径一律返回 [`io::ErrorKind::Unsupported`]，不会交给本机的
 //! 文件系统。文件信息用本 crate 的 [`Metadata`] 表示：`std::fs::Metadata` 无法由远端的数据构造。
 
+mod change;
+mod dir;
 mod open;
 mod save;
 #[cfg(test)]
 mod tests;
 
+pub use change::{
+    copy, copy_symlink, create_dir, create_dir_all, create_new, remove_file, rename, write,
+};
+pub use dir::{Entry, ReadDir, read_dir};
 pub use open::{Handle, Opened, open};
 pub use save::{BeforeReplace, SaveError, SaveOptions, save};
 
@@ -28,6 +34,37 @@ pub enum Kind {
     Symlink,
     /// 其他：设备、管道、套接字等。
     Other,
+}
+
+impl Kind {
+    /// 是否为普通文件。
+    pub fn is_file(self) -> bool {
+        self == Self::File
+    }
+
+    /// 是否为目录。
+    pub fn is_dir(self) -> bool {
+        self == Self::Dir
+    }
+
+    /// 是否为符号链接。
+    pub fn is_symlink(self) -> bool {
+        self == Self::Symlink
+    }
+}
+
+impl From<std::fs::FileType> for Kind {
+    fn from(file_type: std::fs::FileType) -> Self {
+        if file_type.is_symlink() {
+            Self::Symlink
+        } else if file_type.is_dir() {
+            Self::Dir
+        } else if file_type.is_file() {
+            Self::File
+        } else {
+            Self::Other
+        }
+    }
 }
 
 /// 修改时间：自 Unix 纪元起的秒数和秒内的纳秒数（0 到 999 999 999），纪元之前秒数为负。
@@ -102,32 +139,23 @@ pub struct Metadata {
 impl Metadata {
     /// 是否为普通文件。
     pub fn is_file(&self) -> bool {
-        self.kind == Kind::File
+        self.kind.is_file()
     }
 
     /// 是否为目录。
     pub fn is_dir(&self) -> bool {
-        self.kind == Kind::Dir
+        self.kind.is_dir()
     }
 
     /// 是否为符号链接。
     pub fn is_symlink(&self) -> bool {
-        self.kind == Kind::Symlink
+        self.kind.is_symlink()
     }
 }
 
 impl From<&std::fs::Metadata> for Metadata {
     fn from(metadata: &std::fs::Metadata) -> Self {
-        let file_type = metadata.file_type();
-        let kind = if file_type.is_symlink() {
-            Kind::Symlink
-        } else if file_type.is_dir() {
-            Kind::Dir
-        } else if file_type.is_file() {
-            Kind::File
-        } else {
-            Kind::Other
-        };
+        let kind = Kind::from(metadata.file_type());
         #[cfg(unix)]
         let unix = {
             use std::os::unix::fs::MetadataExt;
