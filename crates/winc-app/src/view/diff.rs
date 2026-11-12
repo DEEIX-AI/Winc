@@ -24,7 +24,7 @@ use super::editor::{
     trailing_whitespace, whitespace_shown,
 };
 use super::*;
-use crate::app::diff::DiffPane;
+use crate::app::diff::{DIFF_HSCROLL, DiffHScroll, DiffPane};
 use crate::app::vim::CaretShape;
 use crate::app::{DIFF_TEXT_PAD, DiffParts, DiffTarget, Focus, HunkKind, diff_parts};
 use crate::icons::Direction;
@@ -137,6 +137,39 @@ struct Scroll {
     x: f32,
 }
 
+/// 一段未改动内容展开或折叠的过渡在本帧的状态（见 `DiffFoldMotion`）。
+#[derive(Clone)]
+struct FoldShift {
+    /// 该段折叠后隐藏的行在左侧、右侧占用的显示行。
+    rows: [Range<usize>; 2],
+    /// 该段尚未露出的高度（逻辑像素）。
+    hidden: f32,
+    /// 行高（逻辑像素）。
+    line_height: f32,
+}
+
+impl FoldShift {
+    /// 返回第 `side` 侧显示行 `row` 向上收起的高度（逻辑像素）；该行尚未完整露出时返回 `None`，
+    /// 本帧不绘制。
+    fn of(&self, side: usize, row: usize) -> Option<f32> {
+        let rows = &self.rows[side];
+        if row >= rows.end {
+            return Some(self.hidden);
+        }
+        if row < rows.start {
+            return Some(0.0);
+        }
+        let bottom = (row + 1 - rows.start) as f32 * self.line_height;
+        let shown = rows.len() as f32 * self.line_height - self.hidden;
+        (bottom <= shown + 0.5).then_some(0.0)
+    }
+
+    /// 尚未露出的高度相当于多少个显示行（向上取整）：其后的行上移，底部需要多绘制这些行。
+    fn extra_rows(&self) -> usize {
+        (self.hidden / self.line_height).ceil() as usize
+    }
+}
+
 /// 绘制当前标签（第 `index` 个）的差异。
 ///
 /// # Panics
@@ -163,8 +196,18 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let rows = visible_rows(scroll.rows[RIGHT], parts.body.h, app.fonts.line_height);
     let edit = edit_state(app, &view, new_lines(&view, rows));
     let mut hits = Vec::new();
+    // 展开或折叠的过渡：滚动位置改变、该段已不处于展开状态时不再绘制过渡。
+    let shift = (app.diff_fold.as_ref())
+        .filter(|m| m.doc == doc.id && m.scroll == doc.scroll_line && view.is_open(m.gap))
+        .map(|m| FoldShift {
+            rows: m.rows.clone(),
+            hidden: m.hidden(app.fonts.line_height),
+            line_height: app.fonts.line_height,
+        });
+    let scroll = (scroll, shift.as_ref());
 
     draw_body(app, frame, &mut view, &parts, scroll, pos, &edit, &mut hits);
+    let (scroll, _) = scroll;
     sticky::draw(app, frame, &mut view, &parts, scroll, pos, &mut hits);
     draw_header(app, frame, &view, &parts, pos, &mut hits);
     draw_overview(app, frame, &view, &parts, index);
@@ -452,33 +495,42 @@ struct DrawnRow {
 }
 
 /// 返回本帧要绘制的显示行：并排时两侧分别按各自的滚动位置排列，单栏时排为一列。
+///
+/// `shift` 为进行中的展开或折叠过渡：尚未露出的行不绘制，其后的行上移，底部相应多绘制几行。
 fn drawn_rows(
     view: &DiffView,
     body: Rect,
-    scroll: Scroll,
+    (scroll, shift): (Scroll, Option<&FoldShift>),
     pos: f64,
     line_height: f32,
 ) -> Vec<DrawnRow> {
+    let extra = shift.map_or(0, FoldShift::extra_rows);
+    let lift = |side: usize, row: usize| shift.map_or(Some(0.0), |s| s.of(side, row));
     if !view.is_unified() {
         let side_rows = [LEFT, RIGHT].into_iter().flat_map(|side| {
             let rows = visible_rows(scroll.rows[side], body.h, line_height);
-            (rows.start..rows.end.min(view.rows[side].len())).map(move |row| DrawnRow {
-                side,
-                row,
-                y: body.y + (row as f64 - scroll.rows[side]) as f32 * line_height,
-                old_line: None,
+            let end = (rows.end + extra).min(view.rows[side].len());
+            (rows.start..end).filter_map(move |row| {
+                let y = body.y + (row as f64 - scroll.rows[side]) as f32 * line_height;
+                Some(DrawnRow {
+                    side,
+                    row,
+                    y: y - lift(side, row)?,
+                    old_line: None,
+                })
             })
         });
         return side_rows.collect();
     }
-    visible_rows(pos, body.h, line_height)
+    let rows = visible_rows(pos, body.h, line_height);
+    (rows.start..rows.end + extra)
         .filter_map(|index| {
             let (side, row) = view.unified_row(index)?;
             let old_line = unified_old_line(view, side, row, index as f64);
             Some(DrawnRow {
                 side,
                 row,
-                y: body.y + (index as f64 - pos) as f32 * line_height,
+                y: body.y + (index as f64 - pos) as f32 * line_height - lift(side, row)?,
                 old_line,
             })
         })
@@ -552,7 +604,7 @@ fn draw_body(
     frame: &mut Frame<'_>,
     view: &mut DiffView,
     parts: &DiffParts,
-    scroll: Scroll,
+    (scroll, shift): (Scroll, Option<&FoldShift>),
     pos: f64,
     edit: &EditState,
     hits: &mut Vec<(Rect, DiffTarget)>,
@@ -571,18 +623,19 @@ fn draw_body(
     let unified = view.is_unified();
     // 预先取出单栏时的换算表：绘制过程中需要修改差异两侧的着色状态。
     let map = view.unified_map();
-    // 第 `side` 侧显示行 `row` 的顶边。
+    // 第 `side` 侧显示行 `row` 的顶边；展开或折叠的过渡期间，变化的行之后的行上移。
     let row_y = |side: usize, row: usize| {
-        if unified {
+        let y = if unified {
             body.y + (map.pos_of(side, row as f64) - pos) as f32 * lh
         } else {
             body.y + (row as f64 - scroll.rows[side]) as f32 * lh
-        }
+        };
+        y - shift.map_or(0.0, |s| s.of(side, row).unwrap_or(s.hidden))
     };
     // 第 `h` 段改动在单栏中第一行的顶边；并排时为 `None`。
     let hunk_y =
         |view: &DiffView, h: usize| unified.then(|| body.y + (view.hunk_pos(h) - pos) as f32 * lh);
-    let drawn = drawn_rows(view, body, scroll, pos, lh);
+    let drawn = drawn_rows(view, body, (scroll, shift), pos, lh);
     // 各段改动的提交方式；文件不在提交视图里时为空，不绘制任何勾选框。
     let inclusions: Vec<Pick> = app.diff_entry(view).map_or_else(Vec::new, |entry| {
         let all: Vec<(u64, std::ops::Range<usize>)> = (view.keys.iter().zip(&view.hunks))
@@ -698,6 +751,22 @@ fn draw_body(
                 draw_line_number(app, frame, &parts.panes[LEFT], line, baseline, &mut number);
             }
             draw_line_number(app, frame, &pane, line, baseline, &mut number);
+        }
+        // 已展开的未改动段：在重新折叠后第一个隐藏的行上绘制收起标记，位于右侧行号左边的留白
+        // 中；悬停时颜色加深，点击后重新折叠该段。
+        if part == 0
+            && side == RIGHT
+            && let Ok(index) = view.open_folds.binary_search_by_key(&row, |&(_, at)| at)
+        {
+            let target = DiffTarget::Refold(view.open_folds[index].0);
+            let pad = crate::app::diff::DIFF_GUTTER_PAD;
+            let mark = Rect::new(pane.gutter.x, y, pad, lh);
+            let hovered = app.hover == Hover::Diff(target);
+            let color = if hovered { p.text_muted } else { p.text_dim };
+            // 标记略小于留白并偏向左侧，与行号之间留出间隙。
+            let center = (mark.x + mark.w / 2.0 - 1.0, y + lh / 2.0);
+            icons::chevron(frame, center, 5.0, Direction::Down, color, pane.gutter);
+            hits.push((mark.intersect(body), target));
         }
 
         // 行勾选框：只提交部分行的改动始终显示；其他改动在鼠标移到该格时显示。
@@ -1195,6 +1264,18 @@ fn draw_overview(
         scroll,
         content,
     );
+
+    // 两侧各一条水平滚动条，共用一个滚动位置。
+    let scroll_x = app.editor.documents[index].scroll_x;
+    let tab_width = app.editor.active_tab_width();
+    let bars = DiffHScroll::of(parts, view, app.cell, tab_width);
+    for (side, (area, _)) in DIFF_HSCROLL.into_iter().enumerate() {
+        let bar = bars.thumb(side, scroll_x);
+        let look = app.scrollbar_look(area, owner, scroll_x, bar.map(|(track, _)| track));
+        if let Some((_, thumb)) = bar {
+            draw_thumb(frame, p, thumb, look);
+        }
+    }
 }
 
 /// 把该侧第 `line` 行去掉换行符的内容读入 `chars`，最多 [`MAX_LINE_CHARS`] 个字符。
@@ -1211,3 +1292,6 @@ pub(in crate::view) fn line_chars(side: &DiffSide, line: usize, chars: &mut Vec<
             .take(MAX_LINE_CHARS),
     );
 }
+
+#[cfg(test)]
+mod tests;

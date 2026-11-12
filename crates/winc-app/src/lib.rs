@@ -22,6 +22,8 @@ mod layout;
 mod macos;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod portal;
+#[cfg(any(windows, test))]
+mod recents;
 mod shell_command;
 mod system;
 mod theme;

@@ -1,9 +1,12 @@
-//! Windows 上交由系统的操作，读取的系统设置，以及按屏幕刷新绘制动画的显示链接。
+//! Windows 上交由系统的操作，读取的系统设置，任务栏的跳转列表，以及按屏幕刷新绘制动画的
+//! 显示链接。
 
 mod display_link;
+mod jump_list;
 mod touch;
 
 pub use display_link::DisplayLink;
+pub use jump_list::sync_jump_list;
 pub use touch::{WindowHitTest, WindowInput};
 
 use std::io;
