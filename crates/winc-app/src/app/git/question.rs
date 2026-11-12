@@ -190,6 +190,15 @@ impl QuestionView {
     }
 }
 
+/// 输入请求的来源：决定请求何时作废，以及用户取消后由谁提示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum Asker {
+    /// 第几个 Git 操作。
+    Git(u64),
+    /// 到远端主机的连接。
+    Remote,
+}
+
 /// 开始接收第 `id` 个操作的输入请求：写入 `questions` 并唤醒界面线程。
 pub(super) fn listen(
     proxy: WindowProxy,
@@ -218,6 +227,11 @@ impl App {
     /// 已打开的表单被关闭，因为操作正在等待答复。无需输入的请求没有默认答复：键盘焦点不落在按钮上，
     /// 接受主机密钥必须由用户明确选择。
     pub(in crate::app) fn open_git_question(&mut self, id: u64, question: Question) {
+        self.open_question(Asker::Git(id), question);
+    }
+
+    /// 答复来自 `asker` 的输入请求，规则见 [`App::open_git_question`]。
+    pub(in crate::app) fn open_question(&mut self, asker: Asker, question: Question) {
         let Question { prompt, reply } = question;
         if let Prompt::Password { server, .. } = &prompt
             && let Some((known, password)) = self.branch.password.take()
@@ -240,7 +254,7 @@ impl App {
             | Prompt::Other { .. }
             | Prompt::HostKey { .. } => (TextField::masked(), DialogPart::Branch),
         };
-        self.branch.asking = Some((id, reply));
+        self.branch.asking = Some((asker, reply));
         self.show_form_dialog(FormKind::Question(prompt), name, focus);
     }
 
@@ -276,8 +290,10 @@ impl App {
 
     /// 关闭询问对话框时调用：尚未答复的请求按用户取消处理。
     pub(super) fn decline_git_question(&mut self) {
-        if self.branch.asking.take().is_some() {
-            self.branch.declined = true;
+        match self.branch.asking.take() {
+            Some((Asker::Git(_), _)) => self.branch.declined = true,
+            Some((Asker::Remote, _)) => self.remote.declined = true,
+            None => {}
         }
     }
 
@@ -286,7 +302,21 @@ impl App {
         if self.branch.started == id {
             self.branch.password = None;
         }
-        if self.branch.asking.as_ref().is_some_and(|(at, _)| *at == id) {
+        self.end_questions(Asker::Git(id));
+    }
+
+    /// 连接结束时调用：关闭未答复的对话框，不按用户取消处理。
+    pub(in crate::app) fn end_remote_questions(&mut self) {
+        self.end_questions(Asker::Remote);
+    }
+
+    fn end_questions(&mut self, asker: Asker) {
+        if self
+            .branch
+            .asking
+            .as_ref()
+            .is_some_and(|(at, _)| *at == asker)
+        {
             self.branch.asking = None;
             self.close_form_dialog();
         }

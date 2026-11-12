@@ -746,6 +746,7 @@ impl App {
             Setting::GitModule => self.git_enabled(),
             Setting::GitConfirmPush => self.config.git_confirm_push != Some(false),
             Setting::TerminalModule => self.terminal_enabled(),
+            Setting::RemoteModule => self.remote_enabled(),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select == Some(true),
             Setting::TerminalConfirmClose => self.config.terminal_confirm_close != Some(false),
             Setting::TerminalPrompt => self.config.terminal_prompt != Some(false),
@@ -800,6 +801,7 @@ impl App {
             Setting::GitModule => self.config.git_enabled = Some(on),
             Setting::GitConfirmPush => self.config.git_confirm_push = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),
+            Setting::RemoteModule => self.config.remote_enabled = Some(on),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select = Some(on),
             Setting::TerminalConfirmClose => self.config.terminal_confirm_close = Some(on),
             Setting::TerminalPrompt => self.config.terminal_prompt = Some(on),
@@ -843,6 +845,9 @@ impl App {
         }
         if setting == Setting::GitModule {
             self.git_folder_changed();
+        }
+        if setting == Setting::RemoteModule && !on {
+            self.stop_remote();
         }
         if setting == Setting::SystemTitleBar {
             self.sync_title_bar();
@@ -1377,6 +1382,8 @@ impl App {
         let title_bar = old.ui_native_title_bar != new.ui_native_title_bar;
         let stop_terminal =
             old.terminal_enabled != new.terminal_enabled && new.terminal_enabled == Some(false);
+        let stop_remote =
+            old.remote_enabled != new.remote_enabled && new.remote_enabled != Some(true);
 
         if fonts || glyph_language {
             // 别的窗口已经用上了这些字体，这里也用得上；万一用不上，留着原来的字体。
@@ -1417,6 +1424,9 @@ impl App {
         }
         if stop_terminal {
             self.stop_terminal();
+        }
+        if stop_remote {
+            self.stop_remote();
         }
         // 模块关闭后它的那一页不再列出：设置停在该页时改到「模块」页。
         let page = self.settings.selected.page();

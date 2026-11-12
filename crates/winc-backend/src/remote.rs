@@ -7,6 +7,7 @@
 //! 网络的调用不能发生在界面线程上，见 [`forbid_blocking`]。除文件操作外，还可以在远端运行
 //! 命令，见 [`exec`]。
 
+mod deploy;
 #[cfg(unix)]
 mod server;
 #[cfg(test)]
@@ -23,6 +24,7 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub use deploy::{ConnectError, Deploy, Program};
 #[cfg(unix)]
 pub use server::serve;
 use wire::{Frame, Reader, Writer, kind};
@@ -667,6 +669,16 @@ pub fn disconnect(target: &Target) {
     }
 }
 
+/// 断开全部连接；其余同 [`disconnect`]。
+pub fn disconnect_all() {
+    let mut connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
+    let removed = connections.take();
+    drop(connections);
+    for connection in removed.into_iter().flat_map(HashMap::into_values) {
+        connection.shutdown_in_background();
+    }
+}
+
 /// 是否已登记到 `target` 的连接；连接可能已经中断，此时请求会失败。
 pub fn is_connected(target: &Target) -> bool {
     let connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -710,14 +722,27 @@ pub fn forbid_blocking() {
 ///
 /// 目标和 `ssh` 的其余设置取自用户的 `~/.ssh/config`。`-T` 不分配终端，`RemoteCommand=none`
 /// 使配置中为该主机设置的登录命令不替换这里的程序；`server` 作为一个整体交给远端的 shell，
-/// 其中的字符不被解释。
-pub fn ssh_command(target: &Target, server: &str) -> Command {
-    let mut command = Command::new("ssh");
+/// 其中的字符不被解释。`batch` 为真时 `ssh` 不向用户提问（`BatchMode=yes`），需要输入口令或
+/// 确认主机密钥时直接失败。
+pub fn ssh_command(target: &Target, server: &str, batch: bool) -> Command {
+    let mut command = ssh(target, batch);
+    command.arg(quote(server));
     command
-        .args(["-T", "-o", "RemoteCommand=none"])
-        .arg(target.as_str())
-        .arg("--")
-        .arg(quote(server));
+}
+
+/// 返回连接 `target` 的 `ssh` 命令，其后追加的参数是在远端运行的命令；参数的含义见
+/// [`ssh_command`]。
+fn ssh(target: &Target, batch: bool) -> Command {
+    let mut command = Command::new("ssh");
+    // Windows 上图形程序启动命令行程序时默认弹出控制台窗口：`CREATE_NO_WINDOW`（0x0800_0000）
+    // 使其不创建窗口。
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    command.args(["-T", "-o", "RemoteCommand=none"]);
+    if batch {
+        command.args(["-o", "BatchMode=yes"]);
+    }
+    command.arg(target.as_str()).arg("--");
     command
 }
 

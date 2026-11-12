@@ -102,6 +102,10 @@ pub(crate) fn user_config_dir() -> Option<PathBuf> {
 /// 路径不存在或无法读取时返回对应的 `std::io::Error`。
 #[allow(clippy::disallowed_methods)] // 唯一直接调用 `std::fs::canonicalize` 的地方
 pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    // 远端主机上的路径在连接时已取得真实路径，原样返回；本机的文件系统中没有它。
+    if winc_backend::is_remote(path.as_ref()) {
+        return Ok(path.as_ref().to_path_buf());
+    }
     let path = std::fs::canonicalize(path)?;
     Ok(if cfg!(windows) {
         simplify_verbatim(path)

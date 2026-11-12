@@ -13,6 +13,7 @@ pub(crate) mod hits;
 mod input;
 mod lifecycle;
 pub(crate) mod preview;
+pub(crate) mod remote;
 mod settings;
 #[cfg(test)]
 mod snapshot;
@@ -248,6 +249,10 @@ pub enum UserEvent {
     GitOperated,
     /// 后台的 Git 操作发来了输入请求。
     GitQuestion,
+    /// 后台到远端主机的连接已建立或已失败。
+    RemoteConnected,
+    /// 连接远端主机的 `ssh` 发来了输入请求。
+    RemoteQuestion,
     /// 后台已读取三栏合并的两侧。
     GitMergeSides,
     /// 后台已取得日志的一批提交、一个提交的详情或一个文件的差异。
@@ -302,6 +307,8 @@ pub enum PromptKind {
     NewTag { at: String },
     /// 分支的新名称；`old` 为当前名称。
     RenameBranch { old: String },
+    /// 要连接的远端主机和目录。
+    Remote,
     /// Vim 模式下查找的模式；`forward` 为真时向后文查找。
     VimSearch { forward: bool },
     /// Vim 模式的命令行。
@@ -980,6 +987,8 @@ pub struct App {
     pub blame: git::blame::BlameState,
     /// 正在进行的分支操作。
     pub branch: git::branch::BranchState,
+    /// 远程模块：正在进行的连接。
+    pub remote: remote::RemoteState,
     /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
     pub merge: git::merge::MergeState,
     /// 大文件的差异在后台重新比较。
@@ -1105,6 +1114,7 @@ impl App {
             UserEvent::GitCommit => self.poll_commit(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
+            UserEvent::RemoteConnected => self.poll_remote(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
             UserEvent::GitBlame => self.poll_blame(),

@@ -432,11 +432,13 @@ impl App {
             UserEvent::Definitions => self.poll_definitions(),
             UserEvent::FilesChanged => self.files_changed(),
             UserEvent::GitQuestion => self.poll_git_questions(),
+            UserEvent::RemoteQuestion => self.poll_remote_questions(),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
             | UserEvent::GitCommit
             | UserEvent::GitBase
             | UserEvent::GitOperated
+            | UserEvent::RemoteConnected
             | UserEvent::GitMergeSides
             | UserEvent::GitLog
             | UserEvent::GitBlame

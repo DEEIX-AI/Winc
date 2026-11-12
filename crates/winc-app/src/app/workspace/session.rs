@@ -403,6 +403,9 @@ impl App {
         let Some(folder) = self.state.recent.get(index).cloned() else {
             return;
         };
+        if self.reopen_remote(&folder) {
+            return;
+        }
         if winc_backend::fs::is_dir(&folder) {
             self.new_window(Some(folder));
         } else {
@@ -421,7 +424,9 @@ impl App {
                 let Some(folder) = self.state.recent.get(index).cloned() else {
                     return;
                 };
-
+                if self.reopen_remote(&folder) {
+                    return;
+                }
                 if winc_backend::fs::is_dir(&folder) {
                     self.open_path(&folder);
                 } else {

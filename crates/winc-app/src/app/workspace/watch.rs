@@ -101,6 +101,11 @@ impl App {
         let (Some(root), Some(proxy)) = (root, self.proxy.clone()) else {
             return;
         };
+        // 远端主机上的目录不由本机监视，变化同样由 `check_disk` 检查。
+        if winc_backend::is_remote(&root) {
+            self.index_folder();
+            return;
+        }
         // 监视启动失败（例如超出系统允许的监视数量）时 `watcher` 为 `None`，
         // 由 `check_disk` 在窗口重新获得焦点时检查文档并重读文件树。
         self.watcher = Watcher::start(&root, move || {

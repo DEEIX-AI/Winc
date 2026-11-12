@@ -113,6 +113,7 @@ impl App {
             NewWindow => self.new_window(None),
             OpenFile => self.pick(Pick::Open),
             OpenFolder => self.pick(Pick::OpenFolder),
+            RemoteConnect => self.open_remote_prompt(),
             OpenRecent => self.open_recent_folders(),
             Save => self.save_active(),
             SaveAs => {
@@ -486,6 +487,7 @@ impl App {
         match action.module() {
             Some(crate::keymap::Module::Git) => self.git_enabled(),
             Some(crate::keymap::Module::Terminal) => self.terminal_enabled(),
+            Some(crate::keymap::Module::Remote) => self.remote_enabled(),
             None => true,
         }
     }

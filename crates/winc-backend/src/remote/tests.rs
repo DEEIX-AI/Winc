@@ -23,7 +23,11 @@ fn unknown_targets_are_not_connected_and_blocking_can_be_forbidden() {
 #[test]
 fn the_ssh_command_passes_the_program_as_one_quoted_word() {
     let target = Target::new("alice@devbox").unwrap();
-    let command = ssh_command(&target, "/home/alice/.winc-server/it's here/winc-server");
+    let command = ssh_command(
+        &target,
+        "/home/alice/.winc-server/it's here/winc-server",
+        false,
+    );
     let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
     assert_eq!(command.get_program(), "ssh");
     assert_eq!(
@@ -35,6 +39,22 @@ fn the_ssh_command_passes_the_program_as_one_quoted_word() {
             "alice@devbox",
             "--",
             r"'/home/alice/.winc-server/it'\''s here/winc-server'",
+        ]
+    );
+    // 不向用户提问的选项写在主机之前：主机之后的参数属于远端的命令。
+    let command = ssh_command(&target, "server", true);
+    let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+    assert_eq!(
+        args,
+        [
+            "-T",
+            "-o",
+            "RemoteCommand=none",
+            "-o",
+            "BatchMode=yes",
+            "alice@devbox",
+            "--",
+            "'server'"
         ]
     );
 }

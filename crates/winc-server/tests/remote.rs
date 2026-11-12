@@ -462,6 +462,114 @@ fn git_runs_in_a_remote_repository() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 本机的系统和架构，写法与引导脚本报告的相同。
+fn system() -> String {
+    let uname = |flag| {
+        let output = Command::new("uname").arg(flag).output().unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    format!("{}-{}", uname("-s"), uname("-m"))
+}
+
+/// 把刚构建的服务进程作为本机系统的程序，上传目录为 `dir`。
+fn deployment(dir: &str, digest: &str) -> remote::Deploy {
+    remote::Deploy {
+        dir: dir.to_owned(),
+        programs: vec![remote::Program {
+            system: system(),
+            digest: digest.to_owned(),
+            content: std::fs::read(env!("CARGO_BIN_EXE_winc-server")).unwrap(),
+        }],
+    }
+}
+
+/// 在本机直接运行引导命令，不经过 `ssh`。
+fn bootstrap(deploy: &remote::Deploy) -> Command {
+    let words = deploy.command().unwrap();
+    let mut command = Command::new(&words[0]);
+    command.args(&words[1..]);
+    command
+}
+
+#[test]
+fn the_server_is_uploaded_once_and_started_from_the_upload_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch("deploy");
+    let home = dir.join("it's home");
+    let deploy = deployment(home.to_str().unwrap(), "0af3");
+    let installed = home.join("0af3/winc-server");
+    std::fs::write(dir.join("note.txt"), "here").unwrap();
+
+    // 第一次连接：上传目录和程序都不存在，上传后启动，连接可用。
+    let target = Target::new("deploy-first").unwrap();
+    let connection = Connection::deploy(bootstrap(&deploy), &deploy).unwrap();
+    remote::register(target.clone(), connection);
+    assert_eq!(
+        fs::read(through(&target, &dir.join("note.txt"))).unwrap(),
+        b"here"
+    );
+    assert!(std::fs::read(&installed).unwrap() == deploy.programs[0].content);
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!((mode(&installed), mode(&home)), (0o700, 0o700));
+    // 目录中只有程序本身，没有留下临时文件。
+    assert_eq!(std::fs::read_dir(home.join("0af3")).unwrap().count(), 1);
+    remote::disconnect(&target);
+
+    // 第二次连接：程序已在，不再上传。这里给出的内容是空的，若被上传则无法启动。
+    let mut reused = deploy.clone();
+    reused.programs[0].content = Vec::new();
+    let connection = Connection::deploy(bootstrap(&reused), &reused).unwrap();
+    assert!(std::fs::read(&installed).unwrap() == deploy.programs[0].content);
+    drop(connection);
+
+    // 以 `~/` 开头的上传目录相对于主目录。
+    let relative = deployment("~/servers", "0af3");
+    let mut command = bootstrap(&relative);
+    command.env("HOME", &dir);
+    drop(Connection::deploy(command, &relative).unwrap());
+    assert!(dir.join("servers/0af3/winc-server").is_file());
+}
+
+#[test]
+fn a_connection_that_cannot_start_the_server_reports_why() {
+    let dir = scratch("deploy-errors");
+
+    // 远端的系统没有对应的程序：报告远端的系统名，不上传任何内容。
+    let mut other = deployment(dir.join("other").to_str().unwrap(), "0af3");
+    other.programs[0].system = "Plan9-mips".to_owned();
+    let error = Connection::deploy(bootstrap(&other), &other).unwrap_err();
+    assert!(
+        matches!(&error, remote::ConnectError::Unsupported(found) if *found == system()),
+        "{error}"
+    );
+    assert!(!dir.join("other").exists());
+
+    // 上传目录无法创建：原因取自错误输出。
+    std::fs::write(dir.join("file"), "").unwrap();
+    let blocked = deployment(dir.join("file/under").to_str().unwrap(), "0af3");
+    let error = Connection::deploy(bootstrap(&blocked), &blocked).unwrap_err();
+    assert!(
+        matches!(&error, remote::ConnectError::Failed(why) if why.contains("mkdir")),
+        "{error}"
+    );
+
+    // 上传的内容不是可以运行的程序：启动失败，而不是停在等待应答上。
+    let mut broken = deployment(dir.join("broken").to_str().unwrap(), "0af3");
+    broken.programs[0].content = b"not a program".to_vec();
+    let error = Connection::deploy(bootstrap(&broken), &broken).unwrap_err();
+    assert!(matches!(error, remote::ConnectError::Io(_)), "{error}");
+
+    // 子进程没有运行引导命令就结束了（例如登录失败）：给出它的错误输出。
+    let mut refused = Command::new("sh");
+    refused.args(["-c", "echo Permission denied >&2; exit 255"]);
+    let error = Connection::deploy(refused, &blocked).unwrap_err();
+    assert!(
+        matches!(&error, remote::ConnectError::Failed(why) if why == "Permission denied"),
+        "{error}"
+    );
+}
+
 /// 经真实的 `ssh` 连接：需要环境变量 `WINC_TEST_SSH_TARGET`（免输入即可登录的主机）和
 /// `WINC_TEST_SSH_SERVER`（该主机上服务进程的路径）。
 #[test]
@@ -470,8 +578,7 @@ fn over_ssh() {
     let host = std::env::var("WINC_TEST_SSH_TARGET").unwrap();
     let server = std::env::var("WINC_TEST_SSH_SERVER").unwrap();
     let target = Target::new(&host).unwrap();
-    let mut command = remote::ssh_command(&target, &server);
-    command.args(["-o", "BatchMode=yes"]);
+    let command = remote::ssh_command(&target, &server, true);
     remote::register(target.clone(), Connection::spawn(command).unwrap());
 
     let root = virtual_path(&target, b"/");
@@ -505,4 +612,25 @@ fn over_ssh() {
     fs::remove_file(&file).unwrap();
     assert!(!fs::exists(&file));
     remote::disconnect(&target);
+
+    // 部署：经登录 shell 运行引导命令，上传并启动服务进程；再次连接时直接启动。
+    let deploy = deployment("~/.winc-server/it's deployed", "0af3");
+    for _ in 0..2 {
+        let command = deploy.ssh_command(&target, true).unwrap();
+        remote::register(
+            target.clone(),
+            Connection::deploy(command, &deploy).unwrap(),
+        );
+        let passwd = fs::read_to_string(root.join("etc/passwd")).unwrap();
+        assert!(passwd.contains("root:"), "{passwd}");
+        remote::disconnect(&target);
+    }
+    // 无法登录的主机：原因是 `ssh` 的错误输出。
+    let nowhere = Target::new("winc-no-such-host.invalid").unwrap();
+    let command = deploy.ssh_command(&nowhere, true).unwrap();
+    let error = Connection::deploy(command, &deploy).unwrap_err();
+    assert!(
+        matches!(&error, remote::ConnectError::Failed(why) if !why.is_empty()),
+        "{error}"
+    );
 }
