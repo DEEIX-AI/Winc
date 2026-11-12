@@ -476,25 +476,17 @@ impl App {
     /// 把当前文档的纵向和横向滚动位置限制在有效范围内。
     pub(in crate::app) fn clamp_scroll(&mut self) {
         let max_scroll = self.max_scroll_line();
-        let cell = self.cell;
-        let tab_width = self.editor.active_tab_width();
 
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
         doc.scroll_line = doc.scroll_line.clamp(0.0, max_scroll);
-        if let Some(view) = doc.diff.as_deref() {
-            if view.is_wrapping() {
-                doc.scroll_x = 0.0;
-                return;
+        if doc.diff.is_some() {
+            // 差异的两侧共用一个横向滚动位置。
+            let max_x = self.diff_hscroll().map_or(0.0, |h| h.max);
+            if let Some(doc) = self.editor.active_mut() {
+                doc.scroll_x = doc.scroll_x.clamp(0.0, max_x);
             }
-            // 差异的两侧共用一个横向滚动位置，按两侧最长的一行、半个编辑区宽的文字区限制。
-            let text_w = crate::app::diff_parts(self.layout.editor, view, cell).panes[1]
-                .text
-                .w;
-            let widest = view.widest(tab_width) as f32 * cell;
-            let max_x = (widest - text_w + crate::app::DIFF_TEXT_PAD + cell * 8.0).max(0.0);
-            doc.scroll_x = doc.scroll_x.clamp(0.0, max_x);
             return;
         }
         if doc.is_wrapping() {

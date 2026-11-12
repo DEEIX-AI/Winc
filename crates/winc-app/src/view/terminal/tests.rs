@@ -16,14 +16,58 @@ fn bold_is_bright_only_when_asked() {
         min: 0.0,
         bright,
     };
-    assert_eq!(colors(false).style(&bold_red).0, p.ansi[1]);
-    assert_eq!(colors(true).style(&bold_red).0, p.ansi[9]);
+    assert_eq!(colors(false).style(&bold_red).fg, p.ansi[1]);
+    assert_eq!(colors(true).style(&bold_red).fg, p.ansi[9]);
     // 不是粗体、已经是亮色的不变。
     let red = Style {
         attrs: Attrs::default(),
         ..bold_red
     };
-    assert_eq!(colors(true).style(&red).0, p.ansi[1]);
+    assert_eq!(colors(true).style(&red).fg, p.ansi[1]);
+}
+
+/// 对比度保护只调整文字：分隔符、制表符和方块元素保留程序指定的字色，与相邻格子的底色衔接。
+#[test]
+fn contrast_protection_leaves_shape_characters_alone() {
+    let colors = Colors {
+        p: &crate::theme::LIGHT,
+        reverse: false,
+        min: 3.0,
+        bright: false,
+    };
+    // 前一段的底色作字色，后一段的底色作底色：两者接近，对比度不足。
+    let (yellow, green) = ((0xd7, 0x99, 0x21), (0x68, 0x9d, 0x6a));
+    let style = Style {
+        fg: TermColor::Rgb(yellow.0, yellow.1, yellow.2),
+        bg: TermColor::Rgb(green.0, green.1, green.2),
+        ..Style::default()
+    };
+    let paint = colors.style(&style);
+    assert_eq!(paint.shape, Color::hex(0xd79921));
+    assert_eq!(paint.bg, Some(Color::hex(0x689d6a)));
+    assert_ne!(paint.fg, paint.shape, "文字的颜色仍按对比度调整");
+
+    // 淡色按底色调和后同样用于图形字符；隐藏的文字两种颜色都等于底色。
+    let dim = Style {
+        attrs: Attrs(Attrs::DIM),
+        ..style
+    };
+    assert_eq!(colors.style(&dim).shape, colors.style(&dim).fg);
+    let hidden = Style {
+        attrs: Attrs(Attrs::HIDDEN),
+        ..style
+    };
+    assert_eq!(colors.style(&hidden).shape, Color::hex(0x689d6a));
+
+    for c in [
+        '\u{e0b0}', '\u{e0b2}', '\u{e0b4}', '\u{e0d7}', '─', '█', '▟',
+    ] {
+        assert!(is_shape(c), "{c:?}");
+    }
+    // 图标（分支、锁）和普通文字仍受保护。
+    for c in ['\u{e0a0}', '\u{e0a2}', '\u{f418}', 'a', '中', '■'] {
+        assert!(!is_shape(c), "{c:?}");
+    }
 }
 
 #[test]

@@ -317,6 +317,19 @@ impl App {
                 }
                 self.request_redraw();
             }
+            Drag::Scrollbar {
+                bar: bar @ (Scrollbar::DiffLeftHorizontal | Scrollbar::DiffRightHorizontal),
+                grab,
+            } => {
+                let side = usize::from(bar == Scrollbar::DiffRightHorizontal);
+                if let Some(bars) = self.diff_hscroll()
+                    && let Some((track, thumb)) = bars.thumb(side, 0.0)
+                    && let Some(doc) = self.editor.active_mut()
+                {
+                    doc.scroll_x = scroll_for_thumb(track.x, track.w, thumb.w, x, grab, bars.max);
+                }
+                self.request_redraw();
+            }
             // 设置浮层打开时已在前面的分支处理，不会执行到此处。
             Drag::Scrollbar {
                 bar: Scrollbar::Settings,
