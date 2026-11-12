@@ -1,0 +1,115 @@
+//! 文件操作：本机路径的结果与 `std::fs` 一致，虚拟路径被拒绝。
+
+use std::time::Duration;
+
+use super::*;
+use crate::{Target, virtual_path};
+
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir()
+        .join(format!("winc-backend-{}", std::process::id()))
+        .join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn local_files_report_the_same_information_as_the_standard_library() {
+    let dir = scratch("metadata");
+    let file = dir.join("note.txt");
+    std::fs::write(&file, "héllo").unwrap();
+
+    let found = metadata(&file).unwrap();
+    let expected = std::fs::metadata(&file).unwrap();
+    assert_eq!((found.kind, found.len), (Kind::File, 6));
+    assert_eq!(found.modified, expected.modified().ok().map(Stamp::from));
+    assert!(found.is_file() && !found.is_dir() && !found.readonly);
+    assert!(metadata(&dir).unwrap().is_dir());
+    assert_eq!(read(&file).unwrap(), "héllo".as_bytes());
+    assert_eq!(read_to_string(&file).unwrap(), "héllo");
+    assert!(is_file(&file) && !is_dir(&file) && exists(&file));
+    assert!(is_dir(&dir) && !is_file(&dir));
+
+    let missing = dir.join("missing");
+    assert_eq!(
+        metadata(&missing).unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
+    assert!(!exists(&missing) && !is_file(&missing) && !is_dir(&missing));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn symbolic_links_and_unix_attributes_are_reported() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let dir = scratch("unix");
+    let file = dir.join("script.sh");
+    let link = dir.join("link");
+    std::fs::write(&file, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o750)).unwrap();
+    std::os::unix::fs::symlink(&file, &link).unwrap();
+
+    let expected = std::fs::metadata(&file).unwrap();
+    let unix = metadata(&file).unwrap().unix.unwrap();
+    assert_eq!(unix.mode & 0o777, 0o750);
+    assert_eq!((unix.uid, unix.nlink), (expected.uid(), 1));
+    assert_eq!((unix.dev, unix.ino), (expected.dev(), expected.ino()));
+
+    // 跟随链接时得到目标的信息，不跟随时得到链接本身。
+    assert!(metadata(&link).unwrap().is_file());
+    assert!(symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(read_link(&link).unwrap(), file);
+    // 指向不存在目标的链接：本身存在，跟随后不存在。
+    std::fs::remove_file(&file).unwrap();
+    assert!(symlink_metadata(&link).is_ok() && !exists(&link));
+
+    let readonly = dir.join("readonly");
+    std::fs::write(&readonly, "").unwrap();
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o444)).unwrap();
+    assert!(metadata(&readonly).unwrap().readonly);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn stamps_keep_the_nanoseconds_on_both_sides_of_the_epoch() {
+    let after = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_789);
+    assert_eq!(
+        Stamp::from(after),
+        Stamp {
+            secs: 1_700_000_000,
+            nanos: 123_456_789
+        }
+    );
+    assert_eq!(Stamp::from(UNIX_EPOCH), Stamp { secs: 0, nanos: 0 });
+    // 纪元之前 1.25 秒：秒数向下取整为 -2，纳秒部分为 0.75 秒。
+    let before = UNIX_EPOCH - Duration::new(1, 250_000_000);
+    assert_eq!(
+        Stamp::from(before),
+        Stamp {
+            secs: -2,
+            nanos: 750_000_000
+        }
+    );
+    assert_eq!(
+        Stamp::from(UNIX_EPOCH - Duration::from_secs(3)),
+        Stamp { secs: -3, nanos: 0 }
+    );
+    assert!(Stamp::from(before) < Stamp::from(UNIX_EPOCH));
+}
+
+#[test]
+fn virtual_paths_are_refused_without_touching_the_local_file_system() {
+    let file = virtual_path(&Target::new("devbox").unwrap(), b"/etc/hosts");
+    let refused = |result: io::Result<()>| {
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    };
+    refused(metadata(&file).map(drop));
+    refused(symlink_metadata(&file).map(drop));
+    refused(read(&file).map(drop));
+    refused(read_to_string(&file).map(drop));
+    refused(read_link(&file).map(drop));
+    assert!(!exists(&file) && !is_file(&file) && !is_dir(&file));
+}
