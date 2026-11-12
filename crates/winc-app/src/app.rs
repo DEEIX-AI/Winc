@@ -20,6 +20,7 @@ mod snapshot;
 mod status;
 pub(crate) mod terminal;
 pub(crate) mod tickets;
+pub(crate) mod vim;
 pub(crate) mod workspace;
 
 pub use animation::Clock;
@@ -304,6 +305,17 @@ pub enum PromptKind {
     NewTag { at: String },
     /// 分支的新名称；`old` 为当前名称。
     RenameBranch { old: String },
+    /// Vim 模式下查找的模式；`forward` 为真时向后文查找。
+    VimSearch { forward: bool },
+    /// Vim 模式的命令行。
+    VimCommand,
+}
+
+impl PromptKind {
+    /// 是否为 Vim 模式的命令行或查找：输入条显示在状态栏所在的一行。
+    pub fn is_vim(&self) -> bool {
+        matches!(self, Self::VimSearch { .. } | Self::VimCommand)
+    }
 }
 
 /// 键盘焦点所在的区域。
@@ -465,6 +477,8 @@ pub enum Hover {
     Gutter,
     /// 已折叠行末尾的 `⋯`，参数是行号（从 0 起）。
     Folded(usize),
+    /// 超长行截断说明中的「显示整行」，参数是行号（从 0 起）。
+    LongLine(usize),
     /// 滚动条的可点击区域。
     Scrollbar(Scrollbar),
     /// 提示条上的按钮。
@@ -597,6 +611,10 @@ enum Drag {
     MarkdownText,
     /// 在表格中拖选单元格（`App::drag_table`）。
     TableCells,
+    /// 拖动图片预览中的图片（`App::drag_picture`）；`at` 是上一次的鼠标位置（窗口坐标）。
+    Picture {
+        at: (f32, f32),
+    },
     /// 在终端中拖选文字。
     TerminalSelect,
     /// 终端中的程序启用了鼠标上报：按住参数所示的按键拖动，松开时上报。
@@ -816,6 +834,8 @@ pub struct App {
     pub(crate) ruler_cache: Option<crate::view::RulerCache>,
     /// 图片预览缩放后的图片缓存。
     pub(crate) picture_cache: Option<preview::images::PictureCache>,
+    /// 当前图片预览的缩放倍数与滚动位置。
+    pub(crate) picture_view: preview::images::PictureView,
     /// 后台的图片解码和 SVG 绘制任务。
     pub(crate) images: preview::images::ImageJobs,
     pub(crate) tables: preview::tables::TableJobs,
@@ -896,6 +916,8 @@ pub struct App {
     pub copied_image: Option<Vec<u8>>,
     /// 最近一次整行复制的内容；粘贴相同内容时按整行插入到当前行上方。
     line_clipboard: Option<String>,
+    /// Vim 模式的状态；Vim 模式关闭时为 `None`。
+    pub(crate) vim: Option<Box<vim::VimState>>,
 
     // 查找条和跳转条
     /// 当前查找的内容、各文档里已找到的匹配和替换状态。
@@ -1169,8 +1191,9 @@ impl App {
     /// 在每帧绘制之前推进搜索：继续搜索一个时间片；等待中的跳转已有结果时执行跳转，并按
     /// 搜索结果过滤行。
     fn advance_search(&mut self) {
-        // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处。
-        let searching = self.find.open || self.find.pending_jump.is_some();
+        // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处；
+        // Vim 层的查找在查找条关闭时同样高亮匹配。
+        let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
         if searching && let Some((id, _)) = self.update_diff_find() {
             // 记录的跳转只对当时的文档有效，切换标签后作废。
             match self.find.pending_jump {

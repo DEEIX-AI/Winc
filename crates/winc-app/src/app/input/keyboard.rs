@@ -87,6 +87,17 @@ impl App {
             return;
         }
 
+        // Vim 模式开启时，编辑区的按键先交给 Vim 层，列表中的移动按键换成方向键；Vim 层不处理
+        // 的按键继续按原有的顺序处理。
+        // 两步组合键的第二步仍由键位表处理；Vim 没有带 `Alt` 的命令，应用绑定的 `Alt` 组合归应用。
+        if self.vim.is_some()
+            && self.pending_chord.is_none()
+            && !self.alt_shortcut(event, &base)
+            && (self.vim_key_event(event) || self.vim_list_key(&event.logical_key, &base))
+        {
+            return;
+        }
+
         // 快捷键都定义在键位表中，先查表；不是快捷键的按键（打字、方向键、回车）再交给
         // 焦点所在的部件。
         let stroke = self.stroke_of(
@@ -173,6 +184,21 @@ impl App {
             return None;
         }
         Stroke::from_event(key, base, physical, location, self.modifiers)
+    }
+
+    /// 按键 `event` 是否为应用在当前上下文中绑定的 `Alt` 组合；`Ctrl`+`Alt`（AltGr）不算。
+    fn alt_shortcut(&self, event: &KeyEvent, base: &str) -> bool {
+        let stroke =
+            || self.stroke_of(&event.logical_key, base, event.physical_key, event.location);
+        self.modifiers.alt_key()
+            && !self.modifiers.control_key()
+            && stroke().is_some_and(|stroke| self.binds(stroke))
+    }
+
+    /// 应用是否在当前的上下文中绑定了按键 `stroke`，含两步组合键的第一步。
+    pub(in crate::app) fn binds(&self, stroke: Stroke) -> bool {
+        let lookup = keymap::lookup(keymap::current(), stroke, None, self.key_context());
+        !matches!(lookup, Lookup::None)
     }
 
     /// 是否已作为快捷键处理按键 `stroke`。
@@ -469,6 +495,24 @@ impl App {
     /// 处理跳转条和文件树「输入名字」行中的按键。
     fn on_key_prompt(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
         let name_input = self.name_input.is_some();
+        // Vim 模式的命令行与查找：`Esc` 与在空的输入框中退格放弃输入，历史、补全与寄存器的
+        // 插入由 `vim_prompt_key` 处理。
+        if !name_input && self.prompt_kind.is_vim() {
+            if self.vim_prompt_key(&event.logical_key, base) {
+                return;
+            }
+            let empty = (self.goto_input.as_ref()).is_none_or(|field| field.text().is_empty());
+            match &event.logical_key {
+                Key::Named(NamedKey::Escape) => {}
+                Key::Named(NamedKey::Backspace) if empty => {}
+                Key::Named(NamedKey::Enter) => return self.submit_prompt(),
+                _ => return self.on_key_field(event, base, cmd),
+            }
+            self.close_prompt();
+            self.focus = Focus::Editor;
+            self.vim_prompt_cancel();
+            return;
+        }
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
@@ -970,11 +1014,18 @@ impl App {
     /// 编辑区或输入框。
     pub(in crate::app) fn on_ime(&mut self, ime: Ime) {
         match ime {
+            // 组字文字只属于焦点所在的一处，另一处的清空。
             Ime::Preedit(text, _) => {
                 if self.focus.is_field() {
                     self.field_preedit = text;
+                    self.preedit.clear();
                 } else {
+                    // 尚未在预览上点击就开始组字时，预览同样显示光标和组字文字。
+                    if !text.is_empty() && self.focus == Focus::Editor && self.markdown_live() {
+                        self.start_live_editing();
+                    }
                     self.preedit = text;
+                    self.field_preedit.clear();
                 }
             }
             Ime::Commit(text) => {
@@ -1000,10 +1051,60 @@ impl App {
         self.request_redraw();
     }
 
-    /// 把输入法候选窗的位置（`ImeState::cursor`，逻辑像素）同步给窗口；位置没有变化时不重复设置。
+    /// 输入法正在组字的文字，只在焦点位于 `focus` 时返回。
     ///
-    /// 窗口按系统的逻辑坐标接收位置，界面的逻辑像素乘以界面缩放倍数后传入。
+    /// 组字文字显示在焦点所在的一处：编辑区、可编辑的预览和终端都读取同一份文字，各自只在
+    /// 持有焦点时显示。
+    pub(crate) fn preedit_at(&self, focus: Focus) -> &str {
+        if self.focus == focus {
+            &self.preedit
+        } else {
+            ""
+        }
+    }
+
+    /// 焦点所在的位置是否可以输入文字：输入框、未结束的终端，或者可以编辑文字的文档（含光标
+    /// 位于差异中）。输入法只在这些位置生效。
+    ///
+    /// Vim 模式下只有插入模式可以输入文字：其余模式停用输入法，按键以字符送达。
+    pub(in crate::app) fn takes_text(&self) -> bool {
+        match self.focus {
+            Focus::Terminal => self.terminal.tab().is_some_and(|t| t.ended.is_none()),
+            Focus::Editor
+                if self
+                    .vim_mode()
+                    .is_some_and(|mode| mode != winc_vim::Mode::Insert) =>
+            {
+                false
+            }
+            Focus::Editor => self.editor.active().is_some_and(|doc| {
+                let diff = doc.diff.as_deref();
+                doc.edits_text() || diff.is_some_and(|v| v.editing || v.read_caret().is_some())
+            }),
+            focus => focus.is_field(),
+        }
+    }
+
+    /// 让输入法的状态与焦点一致，并把候选窗的位置（`ImeState::cursor`，逻辑像素）同步给窗口。
+    ///
+    /// 焦点不在可以输入文字的位置时停用输入法：按键按原样送达，不进入组字，候选窗也不会出现在
+    /// 上一次输入的位置。位置没有变化时不重复设置；窗口按系统的逻辑坐标接收位置，界面的逻辑
+    /// 像素乘以界面缩放倍数后传入。
     pub(in crate::app) fn update_ime_area(&mut self) {
+        let allowed = self.takes_text();
+        if self.ime.allowed != Some(allowed)
+            && let Some(window) = &self.window.handle
+        {
+            window.set_ime_allowed(allowed);
+            self.ime.allowed = Some(allowed);
+            // 重新启用后再告知一次候选窗的位置。
+            self.ime.last_area = None;
+        }
+        if !allowed && !(self.preedit.is_empty() && self.field_preedit.is_empty()) {
+            self.preedit.clear();
+            self.field_preedit.clear();
+            self.request_redraw();
+        }
         if let (Some(area), Some(window)) = (self.ime.cursor, &self.window.handle)
             && self.ime.last_area != Some(area)
         {
@@ -1023,4 +1124,6 @@ pub struct ImeState {
     /// 输入法候选框应出现的位置。
     pub(crate) cursor: Option<winc_render::Rect>,
     pub(in crate::app) last_area: Option<winc_render::Rect>,
+    /// 上一次告知窗口的输入法是否启用；尚未告知时为 `None`。
+    pub(in crate::app) allowed: Option<bool>,
 }

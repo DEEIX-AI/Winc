@@ -4,6 +4,7 @@ use winc_config::RenderWhitespace;
 use winc_i18n::t;
 
 use super::*;
+use crate::app::vim::CaretShape;
 
 /// 查找光标所在词的其他出现时，在可见列两侧额外检查的字符数（字符）。
 ///
@@ -31,15 +32,15 @@ impl Screen<'_> {
             number,
             guide_indent,
             folded_hits,
+            long_hits,
             ime_cursor,
         } = scratch;
         let (text_rect, lh) = (self.text_rect, self.lh);
-        let y = self.row_y(line);
-        let baseline = baseline_in(
-            Rect::new(text_rect.x, y, text_rect.w, lh),
-            self.app.mono_metrics.ascent,
-            self.app.mono_metrics.descent,
-        );
+        // 第一段的顶边和基线按 `f64` 计算（见 `Screen::line_y`），基线的算法同 `baseline_in`。
+        let y = self.line_y(line);
+        let metrics = self.app.mono_metrics;
+        let lead = (lh - (metrics.ascent + metrics.descent)) / 2.0 + metrics.ascent;
+        let baseline = (y + f64::from(lead)).round();
         // `head` 为行首最多 `MAX_LINE_CHARS` 个字符：着色只处理这一部分，多数行的内容全在其中。
         chars.clear();
         chars.extend(content.chars().take(MAX_LINE_CHARS + 1));
@@ -56,18 +57,42 @@ impl Screen<'_> {
                 self.doc.line_window(line, parts)
             })
             .flatten();
-        let (chars, slice, breaks, truncated) = match &window {
-            Some(w) => (&w.chars[..], &w.text[..], w.breaks.clone(), false),
-            None => {
+        // 不换行时显示整行的超长行只取屏幕上可见的列。
+        let span = (long && !self.doc.is_wrapping() && self.columns.is_none())
+            .then(|| {
+                let from = ((text_rect.x - self.origin_x) / self.cell).floor().max(0.0);
+                let to = ((text_rect.right() - self.origin_x) / self.cell)
+                    .ceil()
+                    .max(0.0);
+                let cells = from as usize..to as usize + 1;
+                self.doc.long_line_span(line, cells, self.tab_width)
+            })
+            .flatten();
+        let (chars, slice, breaks, truncated) = match (&window, &span) {
+            (Some(w), _) => (&w.chars[..], &w.text[..], w.breaks.clone(), false),
+            (None, Some(s)) => (&s.chars[..], &s.text[..], Default::default(), false),
+            (None, None) => {
                 let breaks = fit_breaks(self.doc.line_breaks(line), head.len());
                 (head, content, breaks, long)
             }
         };
-        let (first_part, first_col, ends) =
-            (window.as_deref()).map_or((0, 0, true), |w| (w.part, w.col, w.ends));
+        let (first_part, first_col, ends) = match (&window, &span) {
+            (Some(w), _) => (w.part, w.col, w.ends),
+            (None, Some(s)) => (0, s.col, s.ends),
+            (None, None) => (0, 0, true),
+        };
+        let (x0, base) = match &span {
+            Some(s) => {
+                let base = s.cell % self.tab_width.max(1);
+                let before = (s.cell - base) as f64 * f64::from(self.cell);
+                ((f64::from(self.origin_x) + before) as f32, base)
+            }
+            None => (self.origin_x, 0),
+        };
         let slice = RopeSlice::from(slice);
-        let top = y + first_part as f32 * lh;
-        let parts = visible_parts(top, breaks.rows(), text_rect, lh);
+        let down = first_part as f64 * f64::from(lh);
+        let top = (y + down) as f32;
+        let parts = visible_parts(f64::from(top), breaks.rows(), text_rect, lh);
 
         let start = line_start + first_col;
         let line_end = line_end(self.doc.text(), line, start, chars.len(), truncated);
@@ -83,7 +108,8 @@ impl Screen<'_> {
         // 只有一段的行仅上半部分滚出，最后一段只显示下半部分时同理，两种情况下行号都不得与
         // 下一行的行号重叠。
         let gutter_rows = rows.max(first_part + breaks.rows());
-        let gutter_shift = (text_rect.y - y).clamp(0.0, (gutter_rows - 1) as f32 * lh);
+        let gutter_room = (gutter_rows - 1) as f64 * f64::from(lh);
+        let gutter_shift = (f64::from(text_rect.y) - y).clamp(0.0, gutter_room);
         let row = Row {
             line,
             origin: line_start,
@@ -91,10 +117,12 @@ impl Screen<'_> {
             line_end,
             first_part,
             ends,
+            x0,
+            base,
             y: top,
-            baseline: baseline + first_part as f32 * lh,
-            gutter_y: y + gutter_shift,
-            gutter_baseline: baseline + gutter_shift,
+            baseline: (baseline + down) as f32,
+            gutter_y: (y + gutter_shift) as f32,
+            gutter_baseline: (baseline + gutter_shift) as f32,
             slice,
             head: RopeSlice::from(content),
             chars,
@@ -117,7 +145,7 @@ impl Screen<'_> {
         // 只为前 `MAX_LINE_CHARS` 个字符着色，其后按普通文本绘制。超长行不改变下一行的高亮状态，
         // 与高亮状态推算的规则相同（截断处可能位于字符串中间）；不换行时只需着色到编辑区右边缘。
         let mut colored = head.len();
-        if row.truncated && row.breaks.rows() == 1 {
+        if long && row.breaks.rows() == 1 {
             let shown = ((self.text_rect.right() - self.origin_x) / self.cell)
                 .ceil()
                 .max(0.0);
@@ -143,7 +171,7 @@ impl Screen<'_> {
         }
         self.draw_whitespace(frame, &row);
         let cells = self.draw_content(frame, &row, tokens);
-        self.draw_tail(frame, &row, cells, folded_hits);
+        self.draw_tail(frame, &row, cells, (folded_hits, long_hits));
         self.draw_carets(frame, &row, ime_cursor);
     }
 
@@ -158,11 +186,21 @@ impl Screen<'_> {
         }
         let cells = match &row.aligned {
             Some((positions, ..)) => positions[col.min(positions.len() - 1)],
-            None => row
-                .prefix
-                .get_or_init(|| text::prefix_cells(row.chars, tab_width))[col],
+            None => row.prefix.get_or_init(|| {
+                let mut cells = text::prefix_cells(row.chars, tab_width);
+                // 制表符的宽度取决于所在的显示列，不从 0 起时逐个计算。
+                if row.base > 0 {
+                    let mut at = row.base;
+                    cells[0] = at;
+                    for (cell, &c) in cells[1..].iter_mut().zip(row.chars) {
+                        at += text::char_cells(c, at, tab_width);
+                        *cell = at;
+                    }
+                }
+                cells
+            })[col],
         };
-        (0, origin_x + cells as f32 * cell)
+        (0, row.x0 + cells as f32 * cell)
     }
 
     /// 对文本范围 `start..end` 在屏幕上占据的每一块调用 `f(y, x0, x1)`；跨段时每段一块。
@@ -329,12 +367,21 @@ impl Screen<'_> {
                     row.baseline,
                     text_rect,
                 ),
+                None if row.base > 0 => draw_glyph_run(
+                    app,
+                    frame,
+                    (chars, 0..chars.len(), tokens),
+                    (row.x0, row.base),
+                    row.baseline,
+                    tab_width,
+                    text_rect,
+                ),
                 None => draw_glyphs(
                     app,
                     frame,
                     chars,
                     tokens,
-                    origin_x,
+                    row.x0,
                     row.baseline,
                     tab_width,
                     text_rect,
@@ -397,7 +444,8 @@ impl Screen<'_> {
         }
     }
 
-    /// 在最后一段之后绘制截断说明，以及折叠行的小块（点击区域记录到 `folded_hits`）。
+    /// 在最后一段之后绘制截断说明和「显示整行」，以及折叠行的小块；两者的点击区域分别记录到
+    /// `long_hits`、`folded_hits`。
     ///
     /// `cells` 是最后一段绘制到的单元格数。
     fn draw_tail(
@@ -405,25 +453,36 @@ impl Screen<'_> {
         frame: &mut Frame<'_>,
         row: &Row<'_>,
         cells: usize,
-        folded_hits: &mut Vec<(Rect, usize)>,
+        (folded_hits, long_hits): (&mut LineHits, &mut LineHits),
     ) {
         let (app, p, text_rect) = (self.app, self.app.palette, self.text_rect);
-        let origin_x = self.origin_x;
+        let origin_x = row.x0;
         // 最后一段的 y 坐标和基线。
         let tail_y = row.y + (row.breaks.rows() - 1) as f32 * self.lh;
         let tail_baseline = row.baseline + (row.breaks.rows() - 1) as f32 * self.lh;
 
         if row.truncated {
             let x = origin_x + cells as f32 * self.cell + 4.0;
-            frame.text(
+            let size = app.fonts.ui_small;
+            let note = t!("editor-line-truncated", count = MAX_LINE_CHARS);
+            let x = frame.text(
                 FontKind::Ui,
-                app.fonts.ui_small,
+                size,
                 x,
                 tail_baseline,
-                &t!("editor-line-truncated", count = MAX_LINE_CHARS),
+                &note,
                 p.text_dim,
                 text_rect,
             );
+            // 按列对齐的表格不支持显示整行。
+            if self.columns.is_none() {
+                let hovered = app.hover == Hover::LongLine(row.line);
+                let color = if hovered { p.text } else { p.accent };
+                let show = t!("editor-line-show-whole");
+                let (from, clip) = (x + 8.0, text_rect);
+                let to = frame.text(FontKind::Ui, size, from, tail_baseline, show, color, clip);
+                long_hits.push((Rect::new(from, tail_y, to - from, self.lh), row.line));
+            }
         }
 
         // 折叠行之后绘制一个含三个点的圆角小块，点击后展开。
@@ -453,6 +512,15 @@ impl Screen<'_> {
             let pos = if row.ends { pos.min(end) } else { pos };
             (pos >= row.line_start && (pos < end || row.ends)).then_some(pos)
         };
+        // 空心的块状光标在编辑区没有焦点时仍然绘制。
+        let shown = self.focused || self.vim_caret == Some(CaretShape::Hollow);
+        if let Some(shape) = self.vim_caret
+            && let Some(pos) = caret_pos(self.caret_col).filter(|_| row.line == self.caret_line)
+            && shown
+        {
+            self.draw_vim_caret(frame, row, pos, shape);
+            return;
+        }
         if let Some(pos) =
             caret_pos(self.caret_col).filter(|_| row.line == self.caret_line && self.focused)
         {
@@ -475,6 +543,28 @@ impl Screen<'_> {
                 caret_bar(app, frame, x, row.y + part as f32 * lh, text_rect);
             }
         }
+    }
+}
+
+impl Screen<'_> {
+    /// 绘制 Vim 模式的光标：覆盖位置 `pos` 上字符的块、字符下方的横线，或空心的块。
+    ///
+    /// 块的宽度是字符的显示宽度（宽字符两格，行尾与空行一格）；实心块之下的字符用背景色重画。
+    /// 实心块与横线随光标闪烁，空心块不闪烁。
+    fn draw_vim_caret(&self, frame: &mut Frame<'_>, row: &Row<'_>, pos: usize, shape: CaretShape) {
+        let (app, lh, clip) = (self.app, self.lh, self.text_rect);
+        let (part, x) = self.place(row, pos);
+        let y = row.y + part as f32 * lh;
+        let c = row.chars.get(pos - row.line_start).copied();
+        let width = match c {
+            Some(_) => match self.place(row, pos + 1) {
+                (next, right) if next == part && right > x => right - x,
+                _ => self.cell,
+            },
+            None => self.cell,
+        };
+        let baseline = row.baseline + part as f32 * lh;
+        draw_modal_caret(app, frame, (x, y, width), c, baseline, shape, clip);
     }
 }
 

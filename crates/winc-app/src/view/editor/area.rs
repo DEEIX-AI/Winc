@@ -50,10 +50,11 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         .folds()
         .segments(first_row, rows, doc.text().line_count());
     // CSV 按列对齐时需要每一列的起始位置。
-    let columns = doc.columns(doc.tab_width(app.editor.tab_width));
+    let tab_width = doc.tab_width(app.editor.tab_width);
+    let columns = doc.columns(tab_width);
     let origin_x = layout.text.x + TEXT_PAD - doc.scroll_x;
     let span = (origin_x, layout.text.right(), app.cell);
-    let read_cap = line_read_cap(doc, columns.is_some(), span);
+    let read_cap = line_read_cap(doc, columns.is_some(), span, (layout.text.x, tab_width));
     let states: Vec<Option<LineState>> = segments
         .iter()
         .map(|range| {
@@ -115,10 +116,14 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         let tab_width = doc.tab_width(app.editor.tab_width);
         let lh = app.fonts.line_height;
         // 查找对象是分栏右侧的预览时，匹配位置属于预览文字，不在左侧标注。
-        let show_matches = layout.search.h > 0.0 && !app.markdown_focused();
+        let show_matches =
+            (layout.search.h > 0.0 || app.vim_highlights()) && !app.markdown_focused();
 
         let selection = doc.selection;
-        let (caret_line, caret_col) = text.pos_to_line_col(selection.head);
+        // Vim 的可视模式下光标画在选区的光标一端所含的字符上。
+        let vim_caret = app.vim_caret();
+        let caret = vim_caret.map_or(selection.head, |(pos, _)| pos);
+        let (caret_line, caret_col) = text.pos_to_line_col(caret);
         // 多光标：主选区以外、位于可见范围内的选区和光标（行，列）。光标可能有上万个，
         // 只取可见的部分。
         let shown_range = {
@@ -181,6 +186,9 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             extra: &extra,
             caret_line,
             caret_col,
+            relative: app.vim_relative(),
+            yanked: app.vim_yanked(id),
+            vim_caret: vim_caret.map(|(_, shape)| shape),
             extra_carets: &extra_carets,
             hunks,
             open: app
@@ -203,7 +211,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
 
         // 动画中变化的行：位置不变，只显示动画已展开的部分；起始行的箭头随进度旋转。
         let curtain = motion_ref.map(|m| {
-            let top = screen.top_of(m.rows.start);
+            let top = screen.top_of(m.rows.start) as f32;
             let h = m.rows.len() as f32 * lh - hidden;
             Rect::new(layout.editor.x, top, layout.editor.w, h.max(0.0))
         });
@@ -233,6 +241,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     app.hits.merge = merge_hits;
 
     app.hits.folded = scratch.folded_hits;
+    app.hits.long_lines = scratch.long_hits;
     draw_sticky(app, frame, index);
     minimap::draw_minimap(app, frame, index);
     // 滚动条绘制在固定行的上层，使滚动条从上到下是完整的一条。
@@ -297,6 +306,12 @@ struct Screen<'a> {
     extra: &'a [Selection],
     caret_line: usize,
     caret_col: usize,
+    /// 行号栏是否显示相对行号。
+    relative: bool,
+    /// Vim 模式下刚被复制、仍在高亮的范围。
+    yanked: Option<Selection>,
+    /// Vim 模式下光标的形状；使用竖线光标时为 `None`。
+    vim_caret: Option<crate::app::vim::CaretShape>,
     extra_carets: &'a [(usize, usize)],
     /// 与 `HEAD` 比较得到的改动，以及改动卡片打开的一处。
     hunks: &'a [LineHunk],
@@ -310,6 +325,9 @@ struct Screen<'a> {
     blame_hover: Option<u32>,
 }
 
+/// 行尾可点击的区域及其所在的行。
+type LineHits = Vec<(Rect, usize)>;
+
 /// 逐行绘制时复用的缓冲区，以及从各行收集的结果。
 struct Scratch {
     chars: Vec<char>,
@@ -321,7 +339,9 @@ struct Scratch {
     /// 上一个非空行的缩进（单元格）；空行按该缩进绘制缩进参考线。
     guide_indent: usize,
     /// 折叠行之后的小块及其所在的行，点击小块后展开。
-    folded_hits: Vec<(Rect, usize)>,
+    folded_hits: LineHits,
+    /// 截断说明中「显示整行」的位置及其所在的行。
+    long_hits: LineHits,
     /// 主光标的位置；输入法候选框跟随该位置。
     ime_cursor: Option<Rect>,
 }
@@ -336,6 +356,7 @@ impl Scratch {
             number: String::new(),
             guide_indent: 0,
             folded_hits: Vec::new(),
+            long_hits: Vec::new(),
             ime_cursor: None,
         }
     }
@@ -345,7 +366,8 @@ impl Scratch {
 ///
 /// 按整行断开的长行只取屏幕上可见的若干段（行内窗口，见 `Document::line_window`）：此时
 /// `line_start`、`chars`、`breaks`、`y` 等均以窗口开头为准，`origin`、`first_part` 给出窗口在
-/// 整行中的位置。其他行的窗口即整行。
+/// 整行中的位置。不换行时显示整行的超长行只取可见的列（`Document::long_line_span`），`base`
+/// 给出这些字符之前的显示列数。其他行的窗口即整行。
 struct Row<'r> {
     line: usize,
     /// 整行行首的字符偏移。
@@ -356,6 +378,12 @@ struct Row<'r> {
     /// `chars` 的第一段在整行中的段号（从 0 起），以及 `chars` 是否到行尾为止。
     first_part: usize,
     ends: bool,
+    /// 只有一段时第 0 个单元格的 x 坐标，以及 `chars` 的第一个字符所在的单元格。
+    ///
+    /// 只取可见列的超长行以 `chars` 之前最近的制表位为第 0 格：制表符的宽度不变，坐标也不必由
+    /// 数千万像素之外的行首算起（`f32` 在该量级上只能精确到几个像素）。其他行即行首和 0。
+    x0: f32,
+    base: usize,
     /// `chars` 第一段的顶边和基线。
     y: f32,
     baseline: f32,
@@ -376,8 +404,8 @@ struct Row<'r> {
     aligned: Option<(&'r [usize], &'r [usize], char)>,
     /// 本行是否已折叠。
     collapsed: bool,
-    /// 第 `i` 项是前 `i` 个字符占用的单元格数；首次使用时计算（见 `Screen::place`），
-    /// 一行中的标记无论多少只计算一次。
+    /// 第 `i` 项是 `chars` 的前 `i` 个字符末尾所在的单元格（含 `base`）；首次使用时计算
+    /// （见 `Screen::place`），一行中的标记无论多少只计算一次。
     prefix: std::cell::OnceCell<Vec<usize>>,
 }
 
@@ -407,18 +435,33 @@ impl Screen<'_> {
     }
 
     /// 显示行 `row` 的顶边，不计动画中收起的高度。
-    fn top_of(&self, row: usize) -> f32 {
-        self.text_rect.y + (row as f32 - self.first_row as f32) * self.lh - self.offset
+    ///
+    /// 按 `f64` 计算：显示行号可超过 2²⁴，`f32` 无法逐一表示。
+    fn top_of(&self, row: usize) -> f64 {
+        let rows = row as f64 - self.first_row as f64;
+        f64::from(self.text_rect.y) + rows * f64::from(self.lh) - f64::from(self.offset)
     }
 
     /// 行 `line` 第一段的顶边。
-    fn row_y(&self, line: usize) -> f32 {
+    ///
+    /// 长行的第一段可在屏幕之外数亿像素处，加上段的偏移之后才能转为 `f32`（见 [`Self::part_y`]）。
+    fn line_y(&self, line: usize) -> f64 {
         let row = self.doc.row_of(line);
         let shift = match self.motion {
             Some(m) if row >= m.rows.end => self.hidden,
             _ => 0.0,
         };
-        self.top_of(row) - shift
+        self.top_of(row) - f64::from(shift)
+    }
+
+    /// [`Self::line_y`] 转为 `f32`，用于第一段在屏幕附近的行。
+    fn row_y(&self, line: usize) -> f32 {
+        self.line_y(line) as f32
+    }
+
+    /// 行 `line` 第 `part` 段的顶边。
+    fn part_y(&self, line: usize, part: usize) -> f32 {
+        (self.line_y(line) + part as f64 * f64::from(self.lh)) as f32
     }
 
     /// 行 `line` 是否属于动画中变化的行。
@@ -506,7 +549,7 @@ impl Screen<'_> {
             let line = h.new.start.min(text.line_count() - 1);
             if self.shown(line) {
                 let y = if h.new.start > line {
-                    self.row_y(line) + self.doc.rows_of(line) as f32 * self.lh
+                    self.part_y(line, self.doc.rows_of(line))
                 } else {
                     self.row_y(line)
                 };
@@ -569,26 +612,24 @@ impl Screen<'_> {
             return;
         }
         let editor = self.editor;
-        let row = Rect::new(
-            editor.x + 6.0,
-            self.row_y(line) + part as f32 * self.lh,
-            editor.w - 12.0,
-            self.lh,
-        );
+        let y = self.part_y(line, part);
+        let row = Rect::new(editor.x + 6.0, y, editor.w - 12.0, self.lh);
         frame.rect_clipped(row, self.app.palette.current_line, RADIUS_ROW, editor);
     }
 
     /// 绘制主选区和其余选区。
     fn draw_selections(&self, frame: &mut Frame<'_>) {
         let row_y = |line: usize| self.row_y(line);
-        for &selection in std::iter::once(&self.selection).chain(self.extra) {
+        let line_y = |line: usize| self.line_y(line);
+        let selections = std::iter::once(&self.selection).chain(self.extra);
+        for &selection in selections.chain(&self.yanked) {
             if selection.is_empty() {
                 continue;
             }
             let (app, segments, columns, origin_x) =
                 (self.app, self.segments, self.columns, self.origin_x);
             if self.doc.is_wrapping() {
-                draw_wrapped_selection(app, frame, selection, segments, origin_x, &row_y);
+                draw_wrapped_selection(app, frame, selection, segments, origin_x, &line_y);
             } else {
                 draw_selection(app, frame, selection, segments, columns, origin_x, &row_y);
             }

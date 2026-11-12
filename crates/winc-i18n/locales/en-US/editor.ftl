@@ -15,6 +15,7 @@ editor-welcome-find-in-files = Find in Files
 editor-welcome-toggle-sidebar = Show or Hide Sidebar
 editor-welcome-settings = Settings
 editor-line-truncated = … Line too long; showing the first { $count } characters
+editor-line-show-whole = Show Whole Line
 editor-blame-uncommitted = Uncommitted
 
 ## Find, replace, and multiple cursors.
@@ -30,8 +31,6 @@ editor-replaced = Replaced { $count ->
        *[other] { $count } occurrences
     }
 editor-find-large-multiline = Multiline search isn’t supported in large files
-editor-find-hidden-match = Match is beyond the visible part of the line
-editor-find-hidden-match-wrap = Match is beyond the visible part of the line; turn on word wrap to see it
 editor-replace-all-pending = Search isn’t finished yet; try Replace All again shortly
 editor-replace-all-too-many = More than 10,000 matches; can’t replace all
 editor-replace-all-gave-up = The regular expression backtracked too much on some lines, so the results are incomplete; can’t replace all
@@ -168,6 +167,46 @@ editor-readonly-binary = Binary file; opened as read-only
 editor-readonly-long-lines = The file has lines longer than 16 MB; opened as read-only
 editor-readonly-not-utf8 = The file isn’t UTF-8 encoded; opened as read-only
 editor-selection-too-large-to-edit = The selection is larger than 16 MB and can’t be edited
+editor-vim-unsupported = This command isn’t supported in Vim mode yet
+editor-vim-too-large = Too much text involved; nothing was done
+editor-vim-register-empty = Register { $name } is empty
+editor-vim-register-read-only = Register { $name } can’t be written
+editor-vim-not-found = Pattern not found
+editor-vim-bad-pattern = Unsupported item at character { $column } of the pattern
+editor-vim-no-search = No previous search
+editor-vim-no-mark = Mark { $name } is not set
+editor-vim-bad-command = Not an editor command
+editor-vim-bad-argument = Invalid argument
+editor-vim-bad-range = Invalid range
+editor-vim-no-substitute = No previous substitute
+editor-vim-no-command = No previous command line
+editor-vim-interrupted = Stopped: too many steps or too much time
+editor-vim-unknown-option = Unknown option { $name }
+editor-vim-substituted = { $count } substitutions
+editor-vim-substituted-lines = { $count } substitutions on { $lines } lines
+editor-vim-matched = { $count } matches on { $lines } lines
+editor-vim-more-lines = { $count } more lines
+editor-vim-fewer-lines = { $count } fewer lines
+editor-vim-no-buffer = No such document
+editor-vim-no-file = No file at that path under the cursor
+editor-vim-file-exists = File exists; add ! to overwrite
+editor-vim-written = Wrote { $name }
+editor-vim-diff-read-only = This side of the diff is read-only
+editor-vim-help-title = Vim Mode: Commands
+editor-vim-help-modes = Modes: N normal, V visual, O operator-pending, I insert
+editor-vim-help-keys = Keys
+editor-vim-help-mode = Modes
+editor-vim-help-kind = Kind
+editor-vim-help-status = Status
+editor-vim-help-motion = motion
+editor-vim-help-operator = operator
+editor-vim-help-object = text object
+editor-vim-help-command = command
+editor-vim-help-prefix = prefix
+editor-vim-help-supported = supported
+editor-vim-help-unsupported = unsupported
+editor-vim-help-ex = Command-line commands (the bracketed part is optional)
+editor-vim-help-options = Options for :set (abbreviation in parentheses)
 
 ## Copy and paste.
 

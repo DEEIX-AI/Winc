@@ -88,7 +88,7 @@ binaries. The Arch package uses pacman for updates.
 Each release also has four signed appcasts for the in-app updater: `appcast-macos-arm64.xml`,
 `appcast-macos-x86_64.xml`, `appcast-linux.xml`, and `appcast-windows.xml`. They list the dmg, the
 AppImage, and the NSIS and MSI installers, each with its EdDSA signature; the deb and the portable
-zip are downloads only. `SHA256SUMS` covers every file.
+zip are downloads only. `SHA256SUMS` covers the assets assembled before publication.
 
 ### Update channel (winc.si)
 
@@ -124,8 +124,8 @@ following repository secrets.
 | `WINC_ARCH_SIGNING_PASSPHRASE` | Passphrase for the Arch signing key |
 | `WINC_ARCH_SIGNING_FINGERPRINT` | Full 40-digit uppercase fingerprint without spaces |
 
-Download `winc-arch-repo-<tag>` from the workflow's Artifacts and deploy its contents under
-`https://winc.si/releases/arch/`. Deploy releases in version order. Upload the
+After signing succeeds, download `winc-arch-repo-<tag>.zip` from the release's Assets and deploy its
+contents under `https://winc.si/releases/arch/`. Deploy releases in version order. Upload the
 versioned package and its signature before publishing the indexes and matching signatures together.
 Use the generated installer and publish the full fingerprint on the download page after verifying
 the first deployment.
@@ -133,7 +133,8 @@ the first deployment.
 For local signing, set the same fingerprint and run `bash release/linux/arch/prepare-repo.sh --tag
 v1.2.3 --out target/winc-arch-v1.2.3` on an Arch machine with the signing key and an authenticated `gh`.
 
-On Arch x86_64, download and run the installer to configure the signed repository and install Winc.
+On x86_64 Arch Linux or CachyOS, download and run the installer to configure the signed repository
+and install Winc. The installer runs a full system upgrade and prompts for confirmation.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fL -o install-arch.sh \

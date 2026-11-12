@@ -130,8 +130,11 @@ jobs:
           path: ~/linux-packages
           key: linux-packages-${{ steps.image.outputs.version }}-zsh-fish-dejavu-noto-cjk
 
-      # Restored files that no longer install (they are missing a dependency, say) are replaced
-      # by a fresh download.
+      # The restored files go back to the archive directory of apt, which then installs them
+      # without the network: apt reads package files as an unprivileged user that has no access
+      # to the home directory, so files named there are downloaded again instead. Restored files
+      # that no longer install (they are missing a dependency, say) are replaced by a fresh
+      # download.
       - name: Install Linux packages
         if: runner.os == 'Linux'
         env:
@@ -139,7 +142,8 @@ jobs:
           PACKAGES: zsh fish fonts-dejavu-core fonts-noto-cjk
         run: |
           if [[ "${RESTORED}" == true ]] \
-            && sudo apt-get install -y --no-install-recommends ~/linux-packages/*.deb; then
+            && sudo cp ~/linux-packages/*.deb /var/cache/apt/archives/ \
+            && sudo apt-get install -y --no-install-recommends --no-download ${PACKAGES}; then
             exit 0
           fi
           sudo apt-get clean

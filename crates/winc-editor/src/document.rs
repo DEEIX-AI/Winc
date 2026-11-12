@@ -25,6 +25,8 @@ use crate::Command;
 use crate::diff_view::DiffView;
 use crate::editing::cursors::others;
 use crate::editing::folding::{Folds, LineWindow, Tracked, WindowKey, WrapKey};
+use crate::editing::long_lines::WholeLines;
+use crate::editing::modal::Marks;
 use crate::editing::scopes::{self, FoldRange, Scope, ScopeMemo};
 use crate::navigation::bookmarks::Bookmarks;
 use content::Content;
@@ -475,6 +477,8 @@ pub struct Document {
     pub(crate) folds: Folds,
     /// 书签，按行号从小到大排列；文本变化时随之移动。
     pub(crate) bookmarks: Bookmarks,
+    /// 模态编辑层的标记与修改列表；文本变化时随之移动。
+    pub(crate) marks: Marks,
     /// CSV、TSV 按列对齐时每一列的起始位置，按（版本、Tab 宽度）缓存。
     columns: Option<ColumnsCache>,
     /// 上一次测量列宽时的文字和各列宽度；文字变化时只重新测量改动的行。
@@ -489,6 +493,8 @@ pub struct Document {
     pub(crate) wrap_pending: Option<WrapKey>,
     /// 最近使用的长行行内窗口（见 [`Document::line_window`]），最近使用的排在最后。
     pub(crate) windows: Mutex<Vec<(WindowKey, Arc<LineWindow>)>>,
+    /// 显示整行的行及其列索引，见 [`Document::shows_whole_line`]。
+    pub(crate) whole: WholeLines,
     /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行），供
     /// `Document::unchanged_lines_since` 判断哪些行没有变。
     edits: std::collections::VecDeque<(u64, usize)>,
@@ -566,6 +572,7 @@ impl Document {
             grown: Vec::new(),
             folds: Folds::default(),
             bookmarks: Bookmarks::default(),
+            marks: Marks::default(),
             columns: None,
             column_widths: None,
             fold_cache: None,
@@ -573,6 +580,7 @@ impl Document {
             wrap_wanted: None,
             wrap_pending: None,
             windows: Mutex::new(Vec::new()),
+            whole: WholeLines::default(),
             edits: std::collections::VecDeque::new(),
             text,
             disk_mtime: None,
@@ -615,6 +623,13 @@ impl Document {
     pub fn output(id: DocumentId, title: &str, text: &str) -> Self {
         let mut document = Document::from_text(id, text);
         document.title = Some(title.to_owned());
+        document.readonly = true;
+        document
+    }
+
+    /// 创建只读、不对应文件的文档，与 `text` 共用同一份文本（克隆只增加引用计数）。
+    pub fn snapshot(id: DocumentId, text: Rope) -> Self {
+        let mut document = Document::from_content(id, Content::Rope(text));
         document.readonly = true;
         document
     }
@@ -719,6 +734,11 @@ impl Document {
         col: usize,
         tab_width: usize,
     ) -> usize {
+        if columns.is_none()
+            && let Some(cells) = self.long_col_to_cell(line, col, tab_width)
+        {
+            return cells;
+        }
         let content = self.text.line_content(line);
         match columns {
             Some(columns) => Aligned { columns, tab_width }.col_to_cell(content.slice(), col),
@@ -744,6 +764,11 @@ impl Document {
         cell: usize,
         tab_width: usize,
     ) -> usize {
+        if columns.is_none()
+            && let Some(col) = self.long_cell_to_col(line, cell, tab_width)
+        {
+            return col;
+        }
         let content = self.text.line_content(line);
         match columns {
             Some(columns) => Aligned { columns, tab_width }.cell_to_col(content.slice(), cell),
@@ -1061,6 +1086,8 @@ impl Document {
             text: &mut self.text,
             folds: &mut self.folds,
             bookmarks: &mut self.bookmarks,
+            whole: &mut self.whole,
+            marks: &mut self.marks,
         });
         self.selection = transaction.after.clamped(self.text.end_pos());
         let extra = transaction.extra_after.clone();

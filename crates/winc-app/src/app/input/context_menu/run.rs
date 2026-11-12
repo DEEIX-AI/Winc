@@ -51,13 +51,6 @@ impl App {
                 MenuCommand::NewWorktree => self.open_worktree_dialog(),
                 _ => {}
             },
-            MenuTarget::LogBranch => {
-                if let MenuCommand::LogBranch(i) = command {
-                    let branch = i.checked_sub(1).and_then(|i| menu.branches.get(i));
-                    let branch = branch.map(|b| b.name.clone());
-                    self.change_log_query(|q| q.branch = branch);
-                }
-            }
             MenuTarget::LogAuthor => {
                 if let MenuCommand::LogAuthor(i) = command {
                     let author = i
@@ -140,6 +133,13 @@ impl App {
                     && let Some(&choice) = winc_config::RenderWhitespace::ALL.get(i)
                 {
                     self.set_render_whitespace(choice);
+                }
+            }
+            MenuTarget::VimClipboard => {
+                if let MenuCommand::VimClipboard(i) = command
+                    && let Some(&choice) = winc_config::VimClipboard::ALL.get(i)
+                {
+                    self.set_vim_clipboard(choice);
                 }
             }
             MenuTarget::DefaultShell => match command {
