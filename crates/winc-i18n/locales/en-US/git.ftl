@@ -8,7 +8,6 @@ git-push-no-remote = This repository has no remote configured
 git-file-outside-repository = File isn’t in a Git repository
 git-run-failed = Git failed
 git-run-spawn-failed = Couldn’t run Git ({ $error })
-git-commit-partial-during-operation = { $operation } in progress; can’t commit only some changes
 git-trust-config-unreadable = Couldn’t read the repository’s configuration
 git-trust-required = This repository runs programs automatically during Git operations ({ $commands }). Trust the repository first
 git-list-separator = { ", " }
@@ -317,11 +316,12 @@ git-commit-push-confirm-button = Commit and Push
 git-undo-commit-done = Undid commit { $oid }; its changes are staged
 git-undo-commit-done-in = Undid commit { $oid } in “{ $name }”
 git-undo-commit-failed = Couldn’t undo the commit: { $error }
-git-commit-partial-not-utf8 = “{ $name }” isn’t UTF-8 text, so its changes can’t be partially committed
+git-stage-partial-not-utf8 = “{ $name }” isn’t UTF-8 text, so its changes can’t be partially staged
+git-stage-failed = Couldn’t update the staging area: { $error }
+git-stage-nothing = The current file has no unstaged changes
 git-abort-confirm = Abort { $operation }?
 git-abort-confirm-detail = The working tree returns to its state before the operation began, and resolved conflicts are discarded.
 git-abort-confirm-button = Abort { $operation }
-git-rollback-nothing-checked = Select the files to roll back first
 git-rollback-confirm-one = Roll back changes to “{ $name }”?
 git-rollback-confirm-many = Roll back changes to { $count } files?
 git-rollback-confirm-detail = Tracked files are restored to the last commit, and untracked files are moved to the { common-trash }.
@@ -451,6 +451,7 @@ git-commit-button-files = { $count ->
     [one] Commit 1 File
    *[other] Commit { $count } Files
 }
+git-commit-button-all = Commit All
 git-commit-amend = Amend Last Commit
 git-commit-undo = Undo
 git-commit-next-push = Push

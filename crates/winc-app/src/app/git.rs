@@ -727,7 +727,6 @@ impl App {
                 .remove(root)
         });
         if let (Some(status), Some(root)) = (known, self.git.root.as_deref()) {
-            self.git.commit.head_is(status.oid.as_deref());
             self.git.changes.head_is(status.oid.as_deref());
             self.git.decorations = status.decorations(root);
             self.git.ignored_paths = status.ignored.iter().cloned().collect();
@@ -869,11 +868,18 @@ impl App {
         self.git_take_scan();
         let mut changed = false;
         let mut refreshed = false;
+        let mut reread = false;
         while let Ok(outcome) = self.git.receiver.try_recv() {
             if self.git.root.as_deref() != Some(outcome.root.as_path()) {
                 continue;
             }
             self.git.running = None;
+            // 这份状态读取于暂存的操作写完之前：不采用，随后重新读取。
+            if self.git.commit.outdates_status() {
+                self.git.refs_wanted |= outcome.refs.is_some();
+                reread = true;
+                continue;
+            }
             match outcome.status {
                 Ok(status) => {
                     // `HEAD` 或分支变化（提交、切换、新建、删除）时，重新读取已打开的日志。
@@ -885,7 +891,6 @@ impl App {
                                 .is_some_and(|refs| self.git.branches != refs.branches)
                     });
                     self.git.changes.head_is(status.oid.as_deref());
-                    self.git.commit.head_is(status.oid.as_deref());
                     self.git.decorations = status.decorations(&outcome.root);
                     self.git.ignored_paths = status.ignored.iter().cloned().collect();
                     // 有变化的文件数超过上限时，只在首次超过时提示，之后的刷新不再重复提示。
@@ -940,6 +945,10 @@ impl App {
             self.git.generation += 1;
             changed = true;
         }
+        // 暂存的操作仍在进行时由其结束后读取（见 `App::staging_finished`）。
+        if reread && !self.git.commit.staging_active() {
+            self.git_refresh_status();
+        }
         if changed {
             self.check_git_trust();
             if std::mem::take(&mut self.git.again) {
@@ -947,6 +956,7 @@ impl App {
             }
             if refreshed {
                 self.refresh_git_diffs();
+                self.sync_index_texts();
                 self.prefill_merge_message();
             }
             // 改动全部提交后，提交卡片随之收起。
@@ -1311,6 +1321,7 @@ impl App {
             self.relayout();
             self.clamp_scroll();
             self.land_diff_file();
+            self.sync_index_texts();
             self.request_redraw();
         }
     }

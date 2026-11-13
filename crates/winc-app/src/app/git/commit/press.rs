@@ -127,9 +127,9 @@ impl App {
                     return;
                 };
                 let on = self.git.commit.group_state(status, group) != Some(true);
-                for entry in status.entries.iter().filter(|e| group.holds(e)) {
-                    self.git.commit.set_checked(entry, on);
-                }
+                let held = status.entries.iter().filter(|e| group.holds(e));
+                let paths: Vec<PathBuf> = held.map(|e| e.path.clone()).collect();
+                self.stage_paths(&paths, on);
             }
             CommitTarget::GroupRevert(group) => self.ask_rollback(group),
             // ⌘ 单击目录把它下面的文件加入或移出选区，⇧ 单击选到它：只改选区，不收起展开。
@@ -155,9 +155,10 @@ impl App {
                 };
                 let members = rows.dir(*group, dir);
                 let on = self.git.commit.members_state(status, members) != Some(true);
-                for &i in members {
-                    self.git.commit.set_checked(&status.entries[i], on);
-                }
+                let paths: Vec<PathBuf> = (members.iter())
+                    .map(|&i| status.entries[i].path.clone())
+                    .collect();
+                self.stage_paths(&paths, on);
             }
             CommitTarget::Check(i) => self.toggle_commit_check(i),
             CommitTarget::File(i) => {

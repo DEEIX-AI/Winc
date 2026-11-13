@@ -223,7 +223,11 @@ impl App {
             .iter()
             .find(|b| b.current)
             .map(|b| b.name.clone());
-        let detail = match (self.commit_scope(), branch) {
+        let count = self.commit_scope().map(|scope| match scope {
+            CommitScope::Staged(count) | CommitScope::All(count) => count,
+            CommitScope::Nothing => 0,
+        });
+        let detail = match (count, branch) {
             (Some(count), Some(branch)) => t!(
                 "git-commit-push-confirm-scope",
                 count = count,
@@ -241,97 +245,78 @@ impl App {
         });
     }
 
-    /// 提交勾上的文件。
+    /// 提交暂存区的内容；没有暂存任何内容时提交全部已跟踪文件的改动。
     ///
-    /// 没写提交信息、什么都没勾时在状态栏说明，不提交。
+    /// 没写提交信息、没有可以提交的内容时在状态栏说明，不提交。冲突已解决（不再有冲突标记）的
+    /// 文件随提交加入暂存区。
     pub(in crate::app) fn git_commit(&mut self) {
         if self.git.commit.busy {
             return;
         }
+        // 暂存的操作尚未写完：写完后再提交，提交的才是勾选框显示的内容。
+        if self.git.commit.staging_active() {
+            self.git.commit.commit_queued = true;
+            return;
+        }
         let message = self.git.commit.message.text().trim().to_owned();
-        let rebasing = self
-            .git
-            .status
-            .as_ref()
-            .is_some_and(|s| s.operation == Some(Operation::Rebase));
+        let Some(status) = self.git.status.as_ref() else {
+            return;
+        };
+        let rebasing = status.operation == Some(Operation::Rebase);
         if message.is_empty() && !rebasing {
             self.flash(t!("git-commit-message-required"));
             self.focus = Focus::CommitMessage;
             return;
         }
-        // 提交按磁盘上的内容：勾上的文件在编辑器里有没保存的修改就先保存（只提交一部分改动的
-        // 文件也按保存以后的内容拼），提交的就是用户看到的样子。
-        let Some(status) = self.git.status.as_ref() else {
-            return;
+        let amend = self.git.commit.amend;
+        let scope = CommitScope::of(status);
+        let all = matches!(scope, CommitScope::All(_)) && !amend && status.operation.is_none();
+        let paths_of = |keep: &dyn Fn(&Entry) -> bool| -> Vec<PathBuf> {
+            let kept = status.entries.iter().filter(|e| keep(e));
+            kept.map(|e| e.path.clone()).collect()
         };
-        let checked: Vec<PathBuf> = self
-            .git
-            .commit
-            .checked_entries(status)
-            .map(|e| e.path.clone())
-            .collect();
-        if !self.save_dirty_documents(&checked) {
+        let conflicted = paths_of(&Entry::conflicted);
+        let nothing = scope == CommitScope::Nothing && conflicted.is_empty();
+        if nothing && !amend && status.operation.is_none() {
+            self.flash(t!("git-commit-nothing-checked"));
             return;
         }
-        let Some(status) = self.git.status.as_ref() else {
+        // 提交全部时按磁盘上的内容提交：这些文件在编辑器里未保存的修改先保存。冲突的文件同样
+        // 先保存，下面检查的是磁盘上的内容。
+        let mut saved = conflicted.clone();
+        if all {
+            saved.extend(paths_of(&|e| !e.untracked() && !e.conflicted()));
+        }
+        if !self.save_dirty_documents(&saved) {
             return;
-        };
-        // 勾选的冲突文件中仍有冲突标记时拒绝提交，否则 `git add` 将其视为已解决，标记和两侧内容会
-        // 一并进入提交；这里读取刚保存的磁盘内容，使编辑器刚移除标记、状态尚未刷新时的结果也正确。
-        let unresolved = self
-            .git
-            .commit
-            .checked_entries(status)
-            .filter(|e| e.conflicted() && winc_editor::git::merge::file_has_conflicts(&e.path))
+        }
+        // 仍有冲突标记的文件不能提交，否则 `git add` 将其视为已解决，标记和两侧内容会一并进入
+        // 提交；这里读取刚保存的磁盘内容，使编辑器刚移除标记、状态尚未刷新时的结果也正确。
+        let unresolved = (conflicted.iter())
+            .filter(|path| winc_editor::git::merge::file_has_conflicts(path))
             .count();
         if unresolved > 0 {
             self.flash(t!("git-commit-unresolved-conflicts", count = unresolved));
             return;
         }
-        let mut paths = Vec::new();
-        let mut add = Vec::new();
-        for entry in self.git.commit.checked_entries(status) {
-            paths.push(entry.path.clone());
-            // 改名的文件，原来的路径也要一起提交，否则提交里会同时留着新旧两个文件。
-            paths.extend(entry.from.clone());
-            if entry.untracked() {
-                add.push(entry.path.clone());
-            }
-        }
-        if paths.is_empty() && !self.git.commit.amend && !rebasing {
-            self.flash(t!("git-commit-nothing-checked"));
-            return;
-        }
-        // 只提交一部分改动的文件：按磁盘上的内容拼出要提交的内容。
-        let parts: Vec<(PathBuf, Vec<Skip>)> = self
-            .git
-            .commit
-            .checked_entries(status)
-            .filter_map(|e| {
-                let skipped = self.git.commit.skipped.get(&e.path)?;
-                (!skipped.is_empty()).then(|| (e.path.clone(), skipped.clone()))
-            })
-            .collect();
-        // 变基停下来时：勾上的文件标记为已解决，继续变基（git 用原来的提交信息）。
+        // 变基停下来时：解决了的文件标记为已解决，继续变基（git 用原来的提交信息）。
         if rebasing {
             self.git_operate(t!("git-op-continue-rebase").to_owned(), move |git, root| {
-                if !paths.is_empty() {
-                    git.stage(root, &paths)?;
+                if !conflicted.is_empty() {
+                    git.stage(root, &conflicted)?;
                 }
                 git.continue_operation(root, Operation::Rebase)
             });
             return;
         }
-        let amend = self.git.commit.amend;
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
             let result = git.and_then(|git| {
-                let partial = parts
-                    .iter()
-                    .map(|(path, skipped)| partial_content(git, root, path, skipped))
-                    .collect::<Result<Vec<_>, _>>()?;
-                git.commit(root, &message, &paths, &add, &partial, amend)
+                if !conflicted.is_empty() {
+                    git.stage(root, &conflicted)?;
+                }
+                git.commit(root, &message, all, amend)
             });
             let _ = sender.send(Outcome::Committed(result, message, root.to_path_buf()));
         });
@@ -340,7 +325,7 @@ impl App {
     /// 保存 `paths` 里在编辑器中开着、还没保存的文档，返回是否全部保存成功。
     ///
     /// 有一个保存失败就停下；失败的原因保存时已经说明了。
-    fn save_dirty_documents(&mut self, paths: &[PathBuf]) -> bool {
+    pub(in crate::app) fn save_dirty_documents(&mut self, paths: &[PathBuf]) -> bool {
         for path in paths {
             let canonical = winc_editor::canonical_path(path);
             let dirty = self
@@ -379,23 +364,23 @@ impl App {
         self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitAbort);
     }
 
-    /// 回滚前先确认（系统确认框）；确认后回滚勾上的文件。
+    /// 回滚前先确认（系统确认框）；确认后回滚组 `group` 中勾上的文件，没有勾上的文件时回滚
+    /// 该组的全部文件。
     pub(super) fn ask_rollback(&mut self, group: CommitGroup) {
         let Some(status) = self.git.status.as_ref() else {
             return;
         };
-        let paths: Vec<PathBuf> = self
-            .git
-            .commit
-            .checked_entries(status)
-            .filter(|e| group.holds(e))
+        let held = || status.entries.iter().filter(|e| group.holds(e));
+        let mut paths: Vec<PathBuf> = held()
+            .filter(|e| self.git.commit.checked(e))
             .map(|e| e.path.clone())
             .collect();
         if paths.is_empty() {
-            self.flash(t!("git-rollback-nothing-checked"));
-            return;
+            paths = held().map(|e| e.path.clone()).collect();
         }
-        self.confirm_rollback(paths);
+        if !paths.is_empty() {
+            self.confirm_rollback(paths);
+        }
     }
 
     /// 先请用户确认，确认后回滚 `paths`。
@@ -494,8 +479,6 @@ impl App {
                     self.git.commit.busy = false;
                     match result {
                         Ok(oid) => {
-                            // 勾上的都提交了；按块勾掉的那些改动还在工作区里，下次重新勾。
-                            self.git.commit.skipped.clear();
                             // 提交期间用户又改了信息，就留着改过的，不清空。
                             if self.git.commit.message.text().trim() == message {
                                 self.git.commit.message.remember();
@@ -510,7 +493,6 @@ impl App {
                             }
                             self.git.commit.amend = false;
                             self.git.commit.draft = None;
-                            self.git.commit.reset_checks();
                             self.flash(t!("git-commit-done", oid = &oid, subject = subject));
                             let short: String = oid.chars().take(7).collect();
                             self.git.commit.committed =
@@ -525,6 +507,10 @@ impl App {
                         }
                     }
                     self.git_refresh();
+                }
+                Outcome::Staged(result, root) => self.staging_finished(result, &root),
+                Outcome::IndexText(root, path, version, text) => {
+                    self.index_text_arrived(&root, path, version, text);
                 }
                 Outcome::Last(last, root) => {
                     let oid = self.git.status.as_ref().and_then(|s| s.oid.as_ref());
@@ -606,43 +592,6 @@ impl App {
             work(tool.as_ref().map_err(unusable), &root);
         });
     }
-}
-
-/// 文件 `path` 只提交勾掉的 `skipped` 以外的改动时要提交成的内容：`HEAD` 里的版本用上磁盘上
-/// 其余的改动。
-fn partial_content(
-    git: &Git,
-    root: &Path,
-    path: &Path,
-    skipped: &[Skip],
-) -> Result<Partial, String> {
-    let name = winc_editor::display_name(path).into_owned();
-    let head = git
-        .head_content(root, path, &winc_editor::format::Cancel::default())?
-        .unwrap_or_default();
-    let disk = winc_backend::fs::read(path)
-        .map_err(|e| t!("git-read-file-failed", name = &name, error = e.to_string()))?;
-    let (Ok(head), Ok(disk)) = (String::from_utf8(head), String::from_utf8(disk)) else {
-        return Err(t!("git-commit-partial-not-utf8", name = name));
-    };
-    // 各段改动和勾掉的记录一一对应（见 `state::assign`），内容相同的几处各按各的勾选提交。
-    use winc_core::diff::{Pick, hunk_key, line_hunks, lines, pick_changes};
-    let (a, b) = (lines(&head), lines(&disk));
-    let all: Vec<(u64, std::ops::Range<usize>)> = (line_hunks(&head, &disk).into_iter())
-        .map(|h| {
-            let key = hunk_key(a[h.old.clone()].iter().copied(), b[h.new].iter().copied());
-            (key, h.old)
-        })
-        .collect();
-    let picks = super::state::picks(skipped, &all);
-    let content = pick_changes(&head, &disk, |key, old| {
-        (all.iter().position(|(k, o)| *k == key && *o == old))
-            .map_or(Pick::Apply, |h| picks[h].clone())
-    });
-    Ok(Partial {
-        path: path.to_path_buf(),
-        content: content.into_bytes(),
-    })
 }
 
 #[cfg(test)]

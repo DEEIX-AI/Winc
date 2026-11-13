@@ -17,12 +17,15 @@ mod last;
 mod menu;
 mod message;
 mod press;
+mod staging;
 mod state;
 
+use staging::StageJob;
 use state::*;
+pub(crate) use state::{CommitScope, stages_by_hunk};
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::OsStr;
 use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
@@ -31,7 +34,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use winc_editor::DocumentId;
-use winc_editor::git::{Entry, Git, Head, LastCommit, Operation, Partial, Status};
+use winc_editor::git::{Entry, Git, Head, LastCommit, Operation, Status};
 use winc_i18n::t;
 use winc_render::Rect;
 use winit::event::KeyEvent;
@@ -505,6 +508,11 @@ enum Outcome {
     RolledBack(Result<usize, String>, PathBuf),
     /// 取回了一条储藏（提交号、名字）改动的文件。
     StashFiles(String, String, stash::StashFiles),
+    /// 写入暂存区的一步操作完成，或者失败的原因；在哪个仓库里进行的。
+    Staged(Result<(), String>, PathBuf),
+    /// 读到了文件在暂存区中的内容：仓库、文件、发出读取时暂存区的版本、内容（不是文本时为
+    /// `None`）。
+    IndexText(PathBuf, PathBuf, u64, Option<String>),
     /// 准备好了储藏里一个文件的差异（标签的标题），或者失败的原因。
     StashDiff(
         String,
@@ -576,18 +584,22 @@ pub(crate) struct CommitState {
     draft: Option<String>,
     /// 各位置写了一半的提交信息：切换仓库、工作树时不丢。
     drafts: HashMap<PathBuf, String>,
-    /// 勾选（`excluded`）每变一次加 1，见 [`CommitRows::members_state`]。
+    /// 勾选框的状态每被界面改动一次加 1，见 [`CommitRows::members_state`]。
     checks: u64,
-    /// 用户取消勾选的文件；其余已跟踪的文件都勾着。
-    excluded: HashSet<PathBuf>,
-    /// 用户勾上的未跟踪文件；其余未跟踪的文件都不勾。
-    included: HashSet<PathBuf>,
+    /// 等待写入暂存区的操作，按顺序逐个执行（见 [`App::pump_staging`]）。
+    staging: VecDeque<StageJob>,
+    /// 是否有写入暂存区的操作正在后台执行。
+    staging_running: bool,
+    /// 暂存区写完之后接着提交：按下提交时暂存的操作尚未完成。
+    commit_queued: bool,
+    /// 正在读取的状态开始于最近一次暂存的操作之前：读到后不采用。
+    status_outdated: bool,
+    /// 打开着差异的文件在暂存区中的内容。
+    index: HashMap<PathBuf, IndexText>,
+    /// 暂存区每被界面改动一次加 1：此前发出的读取结果不再采用。
+    index_version: u64,
     /// 这次合并（拣选、还原）的提交信息草稿已经填进去过了：用户清空以后不再填。
     pub(super) prefilled: bool,
-    /// 勾上的文件里取消勾选的各块改动（[`winc_core::diff::hunk_key`]）：这些文件只提交其余的改动。
-    skipped: HashMap<PathBuf, Vec<Skip>>,
-    /// 上一次见到的 `HEAD`：变了（切换分支、在其他窗口提交）时按块的勾选作废，记下的行号对不上了。
-    head: Option<String>,
     /// 收起的组（下标是 `CommitGroup as usize`）。
     collapsed: [bool; CommitGroup::COUNT],
     /// 平铺显示（不按目录排成树）：每个文件一行，名字后面淡色写所在目录。默认平铺；用标题行的
@@ -681,13 +693,6 @@ impl CommitState {
         self.checks
     }
 
-    /// 清掉所有勾选，回到默认（提交完成以后）。
-    pub(super) fn reset_checks(&mut self) {
-        self.excluded.clear();
-        self.included.clear();
-        self.checks += 1;
-    }
-
     /// 只选中 `path`，清掉多选。
     pub(crate) fn select_only(&mut self, path: PathBuf) {
         self.marked.clear();
@@ -717,10 +722,12 @@ impl Default for CommitState {
             amend: false,
             draft: None,
             drafts: HashMap::new(),
-            excluded: HashSet::new(),
-            included: HashSet::new(),
-            skipped: HashMap::new(),
-            head: None,
+            staging: VecDeque::new(),
+            staging_running: false,
+            commit_queued: false,
+            status_outdated: false,
+            index: HashMap::new(),
+            index_version: 0,
             prefilled: false,
             collapsed: [false; CommitGroup::COUNT],
             flat: true,
@@ -1119,16 +1126,15 @@ impl App {
         })
     }
 
-    /// 提交按钮要写明的范围：勾上的文件数；分支就写在上方的分支行里。
+    /// 提交按钮要写明的范围；分支就写在上方的分支行里。
     ///
-    /// 修改提交、合并或变基暂停时按钮另有说法，没有勾选时也不写范围，都返回 `None`。
-    pub(crate) fn commit_scope(&self) -> Option<usize> {
+    /// 修改提交、合并或变基暂停时按钮另有说法，没有可以提交的内容时也不写范围，都返回 `None`。
+    pub(crate) fn commit_scope(&self) -> Option<CommitScope> {
         let status = self.git.status.as_ref()?;
         if self.git.commit.amend || status.operation.is_some() {
             return None;
         }
-        let count = self.git.commit.checked_entries(status).count();
-        (count > 0).then_some(count)
+        Some(CommitScope::of(status)).filter(|scope| *scope != CommitScope::Nothing)
     }
 
     /// 可以撤销的上一次提交：`HEAD` 在分支上，指向的提交还没推送到上游（没有上游，或者本地

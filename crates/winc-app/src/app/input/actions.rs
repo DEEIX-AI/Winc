@@ -404,7 +404,7 @@ impl App {
             GitNewWorktree => self.open_worktree_dialog(),
             // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
             GitSwitchBranch | GitNewBranch | GitStash | GitSync | GitFetch | GitPull
-            | GitPullRebase | GitPush
+            | GitPullRebase | GitPush | GitStageAll | GitUnstageAll | GitStageFile
                 if self.git.root.is_none() =>
             {
                 self.flash(winc_i18n::t!("git-not-a-repository"));
@@ -413,6 +413,9 @@ impl App {
             GitNewBranch => self.open_branch_dialog(None, None),
             GitStash => self.open_stash_prompt(),
             GitSync => self.git_sync(),
+            GitStageAll => self.stage_all(true),
+            GitUnstageAll => self.stage_all(false),
+            GitStageFile => self.stage_current_file(),
             GitFetch | GitPull | GitPullRebase | GitPush => {
                 use crate::app::input::context_menu::MenuCommand;
                 let command = match action {

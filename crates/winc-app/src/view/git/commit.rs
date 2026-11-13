@@ -18,8 +18,8 @@ use crate::app::animation::stage;
 use crate::app::git::log::display_local;
 use crate::app::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE, MESSAGE_PAD, StashLine,
-    StashView, SyncState,
+    CommitRows, CommitScope, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE, MESSAGE_PAD,
+    StashLine, StashView, SyncState,
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
@@ -884,8 +884,11 @@ fn commit_button_text(app: &App) -> (String, f32) {
         (false, None, false) if clean => t!("git-commit-button-nothing").to_owned(),
         (false, None, false) => t!("git-commit-button").to_owned(),
     };
-    let scope = app.commit_scope().filter(|_| !busy && done.is_none());
-    let text = scope.map_or(text, |count| t!("git-commit-button-files", count = count));
+    let text = match app.commit_scope().filter(|_| !busy && done.is_none()) {
+        Some(CommitScope::Staged(count)) => t!("git-commit-button-files", count = count),
+        Some(CommitScope::All(_)) => t!("git-commit-button-all").to_owned(),
+        Some(CommitScope::Nothing) | None => text,
+    };
     let icon_w = if busy || clean { 0.0 } else { 16.0 };
     (text, icon_w)
 }

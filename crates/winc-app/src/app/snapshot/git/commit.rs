@@ -757,6 +757,10 @@ fn snapshot_partial_lines() {
     paint(&mut app);
     let text = std::fs::read_to_string(&file).unwrap();
     let line = text.lines().position(|l| l == "let added_b = 2;").unwrap();
+    // 先暂存这一处改动，再取消暂存其中一行：这处改动显示为部分暂存。
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    let hunk = view.hunks.iter().position(|h| h.new.contains(&line));
+    app.press_diff(DiffTarget::Include(hunk.unwrap()));
     app.press_diff(DiffTarget::IncludeLine(RIGHT, line));
     shoot(&mut app, "diff-partial-lines");
     app.press_diff(DiffTarget::Layout);

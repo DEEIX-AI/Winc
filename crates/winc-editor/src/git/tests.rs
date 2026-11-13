@@ -295,47 +295,45 @@ fn runs_the_real_git() {
     assert_eq!(untracked, Ok(None));
     assert!(status.entries[1].untracked());
 
-    // 另一个文件已在暂存区：只提交 a.rs 时该文件的暂存状态保持不变。
-    std::fs::write(dir.join("c.rs"), "staged\n").unwrap();
-    sh(&["add", "c.rs"]);
+    // 提交暂存区的内容：只暂存 a.rs，未暂存的文件留在工作区。
     let a = root.join("src/a.rs");
-    let oid = git.commit(
-        &root,
-        "second\n\n正文",
-        std::slice::from_ref(&a),
-        &[],
-        &[],
-        false,
-    );
+    git.stage(&root, std::slice::from_ref(&a)).unwrap();
+    let oid = git.commit(&root, "second\n\n正文", false, false);
     assert!(oid.as_ref().is_ok_and(|o| o.len() >= 7), "{oid:?}");
     let status = git.status(&root, &cancel).unwrap();
     let left: Vec<_> = status.entries.iter().map(|e| e.path.clone()).collect();
-    assert_eq!(left, [root.join("c.rs"), root.join("b.rs")]);
+    assert_eq!(left, [root.join("b.rs")]);
     assert_eq!(git.last_message(&root), "second\n\n正文");
 
     // 提交未跟踪的文件：先加入暂存区再提交；修改上一次提交时只改提交说明。
     let b = root.join("b.rs");
-    git.commit(
-        &root,
-        "third",
-        std::slice::from_ref(&b),
-        std::slice::from_ref(&b),
-        &[],
-        false,
-    )
-    .unwrap();
-    git.commit(&root, "third, amended", &[], &[], &[], true)
-        .unwrap();
+    git.stage(&root, std::slice::from_ref(&b)).unwrap();
+    git.commit(&root, "third", false, false).unwrap();
+    git.commit(&root, "third, amended", false, true).unwrap();
     assert_eq!(git.last_message(&root), "third, amended");
     // 以 `#` 开头的行属于提交说明的正文，不能当作注释删除。
-    git.commit(&root, "#42 修复登录\n\n# 不是注释", &[], &[], &[], true)
+    git.commit(&root, "#42 修复登录\n\n# 不是注释", false, true)
         .unwrap();
     assert_eq!(git.last_message(&root), "#42 修复登录\n\n# 不是注释");
     // 没有可提交的内容时返回错误，原因取自 `git` 的输出。
-    assert!(
-        git.commit(&root, "nothing", std::slice::from_ref(&a), &[], &[], false)
-            .is_err()
+    assert!(git.commit(&root, "nothing", false, false).is_err());
+    assert!(git.commit(&root, "nothing", true, false).is_err());
+
+    // 取消暂存：新加入暂存区的文件恢复为未跟踪，改过的文件恢复为未暂存；工作区的内容不变。
+    let c = root.join("c.rs");
+    std::fs::write(&c, "staged\n").unwrap();
+    std::fs::write(&a, "changed\n").unwrap();
+    git.stage(&root, &[a.clone(), c.clone()]).unwrap();
+    git.unstage(&root, &[a.clone(), c.clone()]).unwrap();
+    let status = git.status(&root, &cancel).unwrap();
+    let of = |path: &Path| status.entries.iter().find(|e| e.path == path).unwrap();
+    assert!(of(&c).untracked());
+    assert_eq!(
+        (of(&a).staged, of(&a).unstaged),
+        (None, Some(Change::Modified))
     );
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), "changed\n");
+    git.stage(&root, std::slice::from_ref(&c)).unwrap();
 
     // 回滚：改过的文件恢复为 `HEAD` 的内容，新加入暂存区的文件移除出暂存区（工作区里的
     // 文件保留）。
@@ -355,8 +353,8 @@ fn runs_the_real_git() {
     let c = status.entries.iter().find(|e| e.path == root.join("c.rs"));
     assert_eq!(c.and_then(|c| c.staged), Some(Change::Added));
 
-    // 只提交一部分：`e.rs` 有两处改动，只提交第一处。提交里只含第一处，工作区保留两处
-    // 改动，暂存区里别的文件（`c.rs`）不受影响。
+    // 只暂存一部分：`e.rs` 有两处改动，暂存区中只登记第一处。提交里只含第一处，工作区保留
+    // 两处改动。
     let e = root.join("e.rs");
     std::fs::write(&e, "1\n2\n3\n4\n5\n6\n7\n8\n").unwrap();
     sh(&["add", "e.rs"]);
@@ -364,19 +362,18 @@ fn runs_the_real_git() {
     let worktree = "1\nTWO\n3\n4\n5\n6\nSEVEN\n8\n";
     std::fs::write(&e, worktree).unwrap();
     let first = "1\nTWO\n3\n4\n5\n6\n7\n8\n";
-    let part = Partial {
-        path: e.clone(),
-        content: first.as_bytes().to_vec(),
-    };
-    git.commit(
-        &root,
-        "only the first",
-        std::slice::from_ref(&e),
-        &[],
-        std::slice::from_ref(&part),
-        false,
-    )
-    .unwrap();
+    git.unstage(&root, &[root.join("c.rs")]).unwrap();
+    git.stage_content(&root, &e, first.as_bytes().to_vec())
+        .unwrap();
+    let staged = git.index_content(&root, &e, &cancel).unwrap().unwrap();
+    assert_eq!(String::from_utf8(staged).unwrap(), first);
+    let status = git.status(&root, &cancel).unwrap();
+    let e_entry = status.entries.iter().find(|x| x.path == e).unwrap();
+    assert_eq!(
+        (e_entry.staged, e_entry.unstaged),
+        (Some(Change::Modified), Some(Change::Modified))
+    );
+    git.commit(&root, "only the first", false, false).unwrap();
     let head = git.head_content(&root, &e, &cancel).unwrap().unwrap();
     assert_eq!(String::from_utf8(head).unwrap(), first);
     assert_eq!(std::fs::read_to_string(&e).unwrap(), worktree);
@@ -387,7 +384,7 @@ fn runs_the_real_git() {
         (None, Some(Change::Modified))
     );
     let c = status.entries.iter().find(|x| x.path == root.join("c.rs"));
-    assert_eq!(c.and_then(|c| c.staged), Some(Change::Added));
+    assert!(c.is_some_and(Entry::untracked));
     // `core.autocrlf`：工作区里是 CRLF、提交里是 LF；取 `HEAD` 版本时做同样的转换，两边
     // 内容一致。
     sh(&["config", "core.autocrlf", "true"]);
@@ -624,7 +621,7 @@ fn untrusted_repository_commands_do_not_run() {
     assert!(!marker.exists(), "不可信的仓库里运行了配置中的命令");
     let risks = git.untrusted(&root).expect("应当不可信");
     assert_eq!(risks.filters, ["x"]);
-    let refused = git.commit(&root, "m", &[root.join("a.t")], &[], &[], false);
+    let refused = git.commit(&root, "m", true, false);
     assert!(refused.unwrap_err().contains("信任"));
     assert!(git.operate(&root, &["switch", "-c", "b"]).is_err());
 
@@ -941,11 +938,11 @@ fn undoing_a_commit_keeps_its_changes_staged() {
     let a = root.join("a.rs");
     std::fs::write(&a, "one\n").unwrap();
     let only = std::slice::from_ref(&a);
-    git.commit(&root, "first", only, only, &[], false).unwrap();
+    git.stage(&root, only).unwrap();
+    git.commit(&root, "first", false, false).unwrap();
     let first = git.last_commit(&root).unwrap();
     std::fs::write(&a, "two\n").unwrap();
-    git.commit(&root, "second\n\n正文", only, &[], &[], false)
-        .unwrap();
+    git.commit(&root, "second\n\n正文", true, false).unwrap();
     let second = git.last_commit(&root).unwrap();
     assert_eq!(second.subject, "second");
     assert_eq!(second.message, "second\n\n正文");

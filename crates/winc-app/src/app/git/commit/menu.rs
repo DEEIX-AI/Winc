@@ -128,20 +128,7 @@ impl App {
                     self.focus = Focus::Editor;
                 }
                 MenuCommand::GitRollbackFile => self.confirm_rollback(paths),
-                MenuCommand::CommitCheck(on) => {
-                    let Some(status) = self.git.status.as_ref() else {
-                        return;
-                    };
-                    let entries: Vec<_> = status
-                        .entries
-                        .iter()
-                        .filter(|e| paths.contains(&e.path))
-                        .cloned()
-                        .collect();
-                    for entry in &entries {
-                        self.git.commit.set_checked(entry, on);
-                    }
-                }
+                MenuCommand::CommitCheck(on) => self.stage_paths(&paths, on),
                 MenuCommand::CopyPath => self.copy_paths(&paths, false),
                 MenuCommand::CopyRelativePath => self.copy_paths(&paths, true),
                 _ => {}

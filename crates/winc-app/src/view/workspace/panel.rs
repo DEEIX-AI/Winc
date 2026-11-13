@@ -959,6 +959,32 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
+        // 勾选框读写暂存区：提示写明点击后是暂存还是取消暂存。
+        Hover::Commit(
+            target @ (CommitTarget::Check(_)
+            | CommitTarget::GroupCheck(_)
+            | CommitTarget::DirCheck(_)),
+        ) => {
+            let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
+            let status = app.git.status.as_ref()?;
+            let rows = app.commit_rows();
+            let state = match target {
+                CommitTarget::Check(i) => app.git.commit.file_state(status.entries.get(i)?),
+                CommitTarget::GroupCheck(group) => app.git.commit.group_state(status, group),
+                CommitTarget::DirCheck(row) => match rows.get(row)? {
+                    crate::app::CommitRow::Dir { group, dir, .. } => {
+                        (app.git.commit).members_state(status, rows.dir(*group, dir))
+                    }
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            let label = match state {
+                Some(true) => t!("menu-commit-uncheck"),
+                _ => t!("menu-commit-check"),
+            };
+            Some((rect, label.to_owned()))
+        }
         // 同步控件上没有文字，要做的事写在这里。
         Hover::Commit(target @ CommitTarget::Sync) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;

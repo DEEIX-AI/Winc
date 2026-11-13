@@ -19,6 +19,22 @@ impl Git {
         self.content_at(root, "HEAD", path, cancel)
     }
 
+    /// 返回 `path` 在暂存区中的内容，见 [`Git::content_at`]。
+    ///
+    /// 暂存区中没有该文件、文件处于冲突中时返回 `Ok(None)`。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败、超时或被取消时返回原因。
+    pub fn index_content(
+        &self,
+        root: &Path,
+        path: &Path,
+        cancel: &Cancel,
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.content_at(root, "", path, cancel)
+    }
+
     /// 日志：按 `query` 筛过的提交，孩子在前，按时间排，用 [`LogStream::next`] 一批一批地读。
     ///
     /// 不指定分支时是所有分支、远程分支、标签（不含储藏）能走到的提交，文件历史只用当前分支。

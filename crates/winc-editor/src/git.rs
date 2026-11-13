@@ -96,15 +96,6 @@ pub struct LastCommit {
     pub local: String,
 }
 
-/// 只提交一部分改动的文件：提交成 `content`，工作区里的文件不变。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Partial {
-    /// 文件的路径。
-    pub path: PathBuf,
-    /// 要提交成的内容（工作区里的形式，换行符等与工作区文件相同）。
-    pub content: Vec<u8>,
-}
-
 /// 一个分支。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {

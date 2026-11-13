@@ -22,28 +22,19 @@ impl App {
         self.git.status.as_ref()?.entries.get(i)
     }
 
-    /// 切换第 `i` 个文件的勾选；该文件在多选的选区里时，选中的各个文件一起勾上或取消。
+    /// 暂存或取消暂存第 `i` 个文件；该文件在多选的选区里时，选中的各个文件一起操作。
+    ///
+    /// 只暂存了一部分的文件按未暂存处理：点击后暂存其余的改动。
     pub(super) fn toggle_commit_check(&mut self, i: usize) {
         let Some(entry) = self.commit_entry(i).cloned() else {
             return;
         };
-        let on = !self.git.commit.checked(&entry);
-        if !(self.commit_multi_selected() && self.commit_is_selected(&entry.path)) {
-            self.git.commit.set_checked(&entry, on);
-            return;
-        }
-        let paths = self.commit_selection();
-        let Some(status) = self.git.status.as_ref() else {
-            return;
-        };
-        let entries: Vec<Entry> = status
-            .entries
-            .iter()
-            .filter(|e| paths.contains(&e.path))
-            .cloned()
-            .collect();
-        for entry in &entries {
-            self.git.commit.set_checked(entry, on);
+        let on = self.git.commit.file_state(&entry) != Some(true);
+        if self.commit_multi_selected() && self.commit_is_selected(&entry.path) {
+            let paths = self.commit_selection();
+            self.stage_paths(&paths, on);
+        } else {
+            self.stage_paths(&[entry.path], on);
         }
     }
 
