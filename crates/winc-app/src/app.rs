@@ -328,6 +328,8 @@ pub enum PromptKind {
     GoTo,
     /// 储藏改动的说明（可为空）。
     Stash,
+    /// 储藏这些文件的更改时输入说明。
+    StashFiles(Vec<PathBuf>),
     /// 新 Git 标签的名称；`at` 为标签指向的提交（完整的提交号）。
     NewTag { at: String },
     /// 分支的新名称；`old` 为当前名称。

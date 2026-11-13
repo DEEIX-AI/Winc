@@ -281,6 +281,19 @@ fn partial_commits_failed_commits_and_missing_contents() {
         "{entry:?}"
     );
     assert!(status.entries.iter().any(|e| e.path == b && e.untracked()));
+    // 跳过钩子时可以提交；签署行附加在提交信息末尾。
+    let options = CommitOptions {
+        all: true,
+        sign_off: true,
+        no_verify: true,
+        ..CommitOptions::default()
+    };
+    git.commit_with(&root, "second", options).unwrap();
+    let message = git.last_message(&root);
+    assert!(
+        message.starts_with("second\n\nSigned-off-by: t <t@t>"),
+        "{message}"
+    );
 
     // 必需的过滤器失败：返回错误，不能当成文件不在 `HEAD` 里。
     std::fs::remove_file(&hook).unwrap();

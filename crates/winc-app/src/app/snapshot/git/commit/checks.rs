@@ -523,3 +523,95 @@ fn the_tree_and_tab_menus_stage_and_roll_back_a_changed_file() {
     assert!(listed.ends_with(&[FileHistory]), "{listed:?}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 提交视图里文件的右键菜单：未跟踪的文件可以加入 `.gitignore`，任何文件都可以单独储藏。
+#[test]
+fn a_changed_file_can_be_ignored_or_stashed_from_its_menu() {
+    use crate::app::git::commit::IgnoreKind;
+    use crate::app::input::context_menu::MenuCommand::{GitIgnore, GitStashFiles};
+    use crate::app::input::context_menu::MenuTarget;
+    let Some((mut app, root)) = git_app("git-ignore-and-stash", false) else {
+        return;
+    };
+    let (main, new) = (root.join("src/main.rs"), root.join("src/new.rs"));
+    let commands = |app: &mut App, path: &Path| -> Vec<_> {
+        app.open_context_menu(MenuTarget::CommitFile(path.to_path_buf()), (0.0, 0.0));
+        menu_commands(app).into_iter().map(|(c, _)| c).collect()
+    };
+
+    // 已跟踪的文件没有「加入 .gitignore」；未跟踪的文件有三种范围。
+    let listed = commands(&mut app, &main);
+    assert!(listed.contains(&GitStashFiles));
+    assert!(
+        !listed.iter().any(|c| matches!(c, GitIgnore(_))),
+        "{listed:?}"
+    );
+    let listed = commands(&mut app, &new);
+    for kind in [IgnoreKind::File, IgnoreKind::Extension, IgnoreKind::Folder] {
+        assert!(listed.contains(&GitIgnore(kind)), "{kind:?} {listed:?}");
+    }
+
+    // 忽略这一个文件：写入仓库根目录的 `.gitignore`，它不再列在更改中；重复忽略不重复写入。
+    app.run_menu_command(GitIgnore(IgnoreKind::File));
+    let ignore = root.join(".gitignore");
+    assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "/src/new.rs\n");
+    let listed_paths = |app: &App| -> Vec<PathBuf> {
+        let status = app.git.status.as_ref().unwrap();
+        status.entries.iter().map(|e| e.path.clone()).collect()
+    };
+    assert_eq!(listed_paths(&app), [main.clone(), ignore.clone()]);
+    app.git_ignore(&new, IgnoreKind::File);
+    assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "/src/new.rs\n");
+
+    // 只储藏 `src/main.rs`：它恢复为上次提交的内容，`.gitignore` 仍在更改中。
+    let changed = std::fs::read_to_string(&main).unwrap();
+    let _ = commands(&mut app, &main);
+    app.run_menu_command(GitStashFiles);
+    assert_eq!(app.focus, Focus::Prompt);
+    app.edit_field(|f| f.insert("只有 main"));
+    app.submit_prompt();
+    assert_ne!(std::fs::read_to_string(&main).unwrap(), changed);
+    assert_eq!(listed_paths(&app), std::slice::from_ref(&ignore));
+    assert_eq!(app.git.stashes.len(), 1);
+    assert!(app.git.stashes[0].message.contains("只有 main"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 提交按钮的菜单：签署按仓库记住，跳过钩子只对下一次提交有效。
+#[test]
+fn the_commit_menu_signs_off_and_skips_hooks_once() {
+    use crate::app::input::context_menu::MenuCommand::{CommitNoVerify, CommitSignOff};
+    use crate::app::input::context_menu::MenuEntry;
+    let Some((mut app, root)) = git_app("git-commit-options", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    let menu = app.commit_button_menu();
+    for command in [CommitSignOff, CommitNoVerify] {
+        assert!(
+            menu.contains(&MenuEntry::Item(command, true)),
+            "{command:?}"
+        );
+        assert!(!app.menu_checked(command));
+    }
+    app.run_commit_button_command(CommitSignOff);
+    app.run_commit_button_command(CommitNoVerify);
+    assert!(app.menu_checked(CommitSignOff) && app.menu_checked(CommitNoVerify));
+    assert_eq!(app.state.sign_off_repos, std::slice::from_ref(&root));
+
+    app.git.commit.message.set_text("带签署的提交");
+    app.git_commit();
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["log", "-1", "--format=%B"])
+        .output()
+        .unwrap();
+    let message = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(message.contains("Signed-off-by: t <t@t>"), "{message}");
+    // 提交成功后「跳过钩子」关闭，签署仍然开着；再点一次关闭签署。
+    assert!(!app.menu_checked(CommitNoVerify) && app.menu_checked(CommitSignOff));
+    app.run_commit_button_command(CommitSignOff);
+    assert!(app.state.sign_off_repos.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}

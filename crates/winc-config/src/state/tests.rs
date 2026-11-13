@@ -81,6 +81,7 @@ fn sample() -> State {
         others: vec![PathBuf::from("/b")],
         commit_tree: true,
         commit_all_repositories: true,
+        sign_off_repos: vec![PathBuf::from("/a/项目")],
         pdf_thumbnails_hidden: true,
         vim_marks: vec![('A', PathBuf::from("/a/项目/x.rs"), 12, 3)],
         vim_commands: vec!["%s/a/b/g".into(), "w".into()],

@@ -337,7 +337,12 @@ pub(super) fn draw_banner(
         p.accent
     };
     frame.rounded(rect, tint.alpha(0.12), RADIUS_ROW);
-    let op = operation.label();
+    // 变基时写明进度：正在处理第几个提交，共几个。
+    let op = match status.progress {
+        Some((at, total)) => format!("{} {at}/{total}", operation.label()),
+        None => operation.label().to_owned(),
+    };
+    let op = op.as_str();
     let text = match (unresolved, conflicted) {
         (0, true) => t!("git-operation-banner-resolved", operation = op),
         (0, false) => t!("git-operation-banner", operation = op),

@@ -47,7 +47,7 @@ impl App {
 
     /// 「提交 ⌄」拆分按钮右边箭头的菜单：提交并推送（合并、变基停着时没有推送这回事，没有要提交的
     /// 更改时与主按钮一样不能提交，都灰显）；卡片太窄、底行放不下勾选框时还有修改上一次提交（开着
-    /// 时打勾）。
+    /// 时打勾）；最后是签署和本次跳过钩子两个开关。
     pub(in crate::app) fn commit_button_menu(
         &self,
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
@@ -65,7 +65,31 @@ impl App {
             entries.push(MenuEntry::Separator);
             entries.push(MenuEntry::Item(MenuCommand::CommitAmend, idle));
         }
+        entries.extend([
+            MenuEntry::Separator,
+            MenuEntry::Item(MenuCommand::CommitSignOff, true),
+            MenuEntry::Item(MenuCommand::CommitNoVerify, idle),
+        ]);
         entries
+    }
+
+    /// 当前仓库提交时是否附加签署行（在提交按钮的菜单中打开，按仓库记在状态文件里）。
+    pub(in crate::app) fn commit_signs_off(&self) -> bool {
+        (self.git.root.as_ref()).is_some_and(|root| self.state.sign_off_repos.contains(root))
+    }
+
+    /// 打开或关闭当前仓库提交时的签署行。
+    fn toggle_sign_off(&mut self) {
+        let Some(root) = self.git.root.clone() else {
+            return;
+        };
+        self.update_state(|state| {
+            let repos = &mut state.sign_off_repos;
+            match repos.iter().position(|repo| *repo == root) {
+                Some(at) => drop(repos.remove(at)),
+                None => repos.push(root),
+            }
+        });
     }
 
     /// 「提交 ⌄」的菜单选了 `command`。
@@ -73,6 +97,8 @@ impl App {
         match command {
             MenuCommand::CommitPush => self.confirm_commit_and_push(),
             MenuCommand::CommitAmend => self.toggle_amend(),
+            MenuCommand::CommitSignOff => self.toggle_sign_off(),
+            MenuCommand::CommitNoVerify => self.git.commit.no_verify = !self.git.commit.no_verify,
             _ => {}
         }
         self.request_redraw();
@@ -137,6 +163,7 @@ impl App {
                     self.focus = Focus::Editor;
                 }
                 MenuCommand::GitRollbackFile => self.confirm_rollback(paths),
+                MenuCommand::GitStashFiles => self.ask_stash_files(paths),
                 MenuCommand::CommitCheck(on) => self.stage_paths(&paths, on),
                 MenuCommand::CopyPath => self.copy_paths(&paths, false),
                 MenuCommand::CopyRelativePath => self.copy_paths(&paths, true),
@@ -153,6 +180,8 @@ impl App {
                 }
             }
             MenuCommand::GitRollbackFile => self.confirm_rollback(vec![path]),
+            MenuCommand::GitStashFiles => self.ask_stash_files(vec![path]),
+            MenuCommand::GitIgnore(kind) => self.git_ignore(&path, kind),
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }

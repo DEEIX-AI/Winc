@@ -241,6 +241,8 @@ pub enum MenuCommand {
     GitContinue,
     /// 菜单项「Git：中止停下来的合并、变基……」。
     GitAbort,
+    /// 跳过变基、拣选、还原正在处理的提交，继续处理其后的提交。
+    GitSkip,
     /// 菜单里分支一组的小标题（不能点）：`false` 本地分支，`true` 远程分支。
     GitHeading(bool),
     /// 对分支列表里第几个分支做的事。
@@ -251,6 +253,10 @@ pub enum MenuCommand {
     GitOpenFile,
     /// 提交视图里的文件：回滚这一个文件（先确认）。
     GitRollbackFile,
+    /// 提交视图：储藏选中的文件（先输入说明）。
+    GitStashFiles,
+    /// 提交视图：把未跟踪的文件按给定的范围加入 `.gitignore`。
+    GitIgnore(crate::app::git::commit::IgnoreKind),
     /// 提交视图里多选时：勾上（`true`）或勾掉选中的各个文件。
     CommitCheck(bool),
     /// 差异里的文字：把光标处的一处改动换回 `HEAD` 的样子。
@@ -320,6 +326,10 @@ pub enum MenuCommand {
     /// 「提交 ⌄」（卡片太窄、底行放不下勾选框时）和「上一次提交」的「⋯」：开关「修改上一次
     /// 提交」（开着时打勾）。
     CommitAmend,
+    /// 提交按钮的菜单：这个仓库提交时附加签署行（开着时打勾）。
+    CommitSignOff,
+    /// 提交按钮的菜单：下一次提交不运行钩子（开着时打勾，提交成功后关闭）。
+    CommitNoVerify,
     /// 文件树工具栏的「⋯」：刷新目录。
     TreeRefresh,
     /// 文件树工具栏的「⋯」：折叠所有目录。
@@ -420,9 +430,12 @@ impl MenuCommand {
             MenuCommand::GitAddRemote => t!("git-remote-add"),
             MenuCommand::GitRemote(op, _) => op.label(),
             MenuCommand::GitContinue => t!("menu-git-continue"),
+            MenuCommand::GitSkip => t!("menu-git-skip"),
             MenuCommand::GitShowDiff => t!("menu-git-show-diff"),
             MenuCommand::GitOpenFile => t!("menu-git-open-file"),
             MenuCommand::GitRollbackFile => t!("menu-git-roll-back"),
+            MenuCommand::GitStashFiles => t!("menu-git-stash-files"),
+            MenuCommand::GitIgnore(kind) => kind.label(),
             MenuCommand::GitRevertHunk => t!("menu-git-roll-back-change"),
             MenuCommand::FileHistory => t!("menu-git-file-history"),
             MenuCommand::LogCheckout => t!("menu-log-checkout"),
@@ -452,6 +465,8 @@ impl MenuCommand {
             MenuCommand::CommitCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::CommitPush => t!("menu-commit-and-push"),
             MenuCommand::CommitAmend => t!("menu-commit-amend"),
+            MenuCommand::CommitSignOff => t!("menu-commit-sign-off"),
+            MenuCommand::CommitNoVerify => t!("menu-commit-no-verify"),
             MenuCommand::TreeRefresh => t!("workspace-tree-tool-refresh"),
             MenuCommand::TreeCollapseAll => t!("menu-tree-collapse-all"),
             MenuCommand::TreeLocate => t!("menu-tree-locate"),

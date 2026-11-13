@@ -309,6 +309,12 @@ impl App {
             });
             return;
         }
+        let options = winc_editor::git::CommitOptions {
+            all,
+            amend,
+            sign_off: self.commit_signs_off(),
+            no_verify: self.git.commit.no_verify,
+        };
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
@@ -316,7 +322,7 @@ impl App {
                 if !conflicted.is_empty() {
                     git.stage(root, &conflicted)?;
                 }
-                git.commit(root, &message, all, amend)
+                git.commit_with(root, &message, options)
             });
             let _ = sender.send(Outcome::Committed(result, message, root.to_path_buf()));
         });
@@ -492,6 +498,7 @@ impl App {
                                 self.run_push(intent);
                             }
                             self.git.commit.amend = false;
+                            self.git.commit.no_verify = false;
                             self.git.commit.draft = None;
                             self.flash(t!("git-commit-done", oid = &oid, subject = subject));
                             let short: String = oid.chars().take(7).collect();

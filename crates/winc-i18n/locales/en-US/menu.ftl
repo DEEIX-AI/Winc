@@ -53,6 +53,8 @@ menu-git-continue-operation = Continue { $operation }
 menu-git-abort-operation = Abort { $operation }
 menu-git-continue-desc = Resolve the conflicts in the files, then mark them as resolved
 menu-git-abort-desc = Restore the state from before the operation started
+menu-git-skip = Skip This Commit
+menu-git-skip-desc = Discard this commit’s changes and continue with the rest
 menu-git-push-ahead = { $count ->
         [one] { $count } commit → { $upstream }
        *[other] { $count } commits → { $upstream }
@@ -113,6 +115,11 @@ menu-git-open-file = Open File
 menu-git-pull-rebase = Pull with Rebase
 menu-log-tag = Tag “{ $name }”
 menu-git-roll-back = Roll Back
+menu-git-stash-files = Stash…
+menu-git-ignore = Add to .gitignore
+menu-git-ignore-file = This File
+menu-git-ignore-extension = All Files with This Extension
+menu-git-ignore-folder = Containing Folder
 menu-git-roll-back-change = Roll Back This Change
 menu-git-file-history = Show File History
 menu-git-blame = Blame
@@ -145,3 +152,5 @@ menu-commit-roll-back = Roll Back Checked Files
 menu-commit-undo = Undo Commit
 menu-commit-and-push = Commit and Push
 menu-commit-amend = Amend Last Commit
+menu-commit-sign-off = Sign Off (Signed-off-by)
+menu-commit-no-verify = Skip Hooks for This Commit

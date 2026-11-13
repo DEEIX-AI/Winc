@@ -96,6 +96,19 @@ pub struct LastCommit {
     pub local: String,
 }
 
+/// 提交时的选项，见 [`Git::commit_with`]。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommitOptions {
+    /// 把全部已跟踪文件的改动一并提交（`git commit --all`）；提交失败时暂存区保持原状。
+    pub all: bool,
+    /// 修改上一次提交；暂存区没有改动时只改提交信息。
+    pub amend: bool,
+    /// 在提交信息末尾附加提交者的签署行（`--signoff`）。
+    pub sign_off: bool,
+    /// 不运行 `pre-commit` 和 `commit-msg` 钩子（`--no-verify`）。
+    pub no_verify: bool,
+}
+
 /// 一个分支。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
@@ -394,6 +407,8 @@ pub struct Status {
     pub ignored: Vec<PathBuf>,
     /// 正在进行、停下来等用户处理冲突的操作（合并、变基……）；没有时为 `None`。
     pub operation: Option<Operation>,
+    /// 进行中的变基的进度：（正在处理第几个提交，共几个）；不在变基中、无法读取时为 `None`。
+    pub progress: Option<(u32, u32)>,
     /// 有变化的文件超过 [`STATUS_LIMIT`] 个、`entries` 只含前一部分时为 `true`。
     pub truncated: bool,
     /// 仍含冲突标记（`<<<<<<<` … `>>>>>>>`）的冲突文件。
@@ -459,6 +474,25 @@ impl Operation {
             present.then_some(operation)
         })
     }
+}
+
+/// 返回仓库目录 `git_dir` 中进行中的变基的进度：（正在处理第几个提交，共几个）。
+///
+/// 两种变基方式各用一个目录记录，文件名不同：`rebase-merge` 中是 `msgnum` 和 `end`，
+/// `rebase-apply` 中是 `next` 和 `last`。
+fn rebase_progress(git_dir: &Path) -> Option<(u32, u32)> {
+    let number = |path: PathBuf| -> Option<u32> {
+        let text = winc_backend::fs::read_to_string(path).ok()?;
+        text.trim().parse().ok()
+    };
+    let layouts = [
+        ("rebase-merge", "msgnum", "end"),
+        ("rebase-apply", "next", "last"),
+    ];
+    layouts.into_iter().find_map(|(dir, at, total)| {
+        let dir = git_dir.join(dir);
+        Some((number(dir.join(at))?, number(dir.join(total))?))
+    })
 }
 
 /// 仓库 `root` 的 `.git` 目录：工作树和子模块里 `.git` 是一个写着 `gitdir: <路径>` 的文件。
@@ -632,6 +666,9 @@ impl Git {
         let ((dir, operation), stdout) = crate::background::both(remote, marks, run);
         let mut status = parse_status(&stdout?, root)
             .ok_or_else(|| winc_i18n::t!("git-status-unreadable").to_owned())?;
+        if operation == Some(Operation::Rebase) {
+            status.progress = dir.as_deref().and_then(rebase_progress);
+        }
         (status.git_dir, status.operation) = (dir, operation);
         status.unresolved = status
             .entries
@@ -651,6 +688,17 @@ impl Git {
     /// 还有未解决的冲突、hooks 拒绝时返回 `git` 给出的原因。
     pub fn continue_operation(&self, root: &Path, operation: Operation) -> Result<String, String> {
         self.operate(root, &[operation.command(), "--continue"])
+    }
+
+    /// 跳过 `operation` 正在处理的提交，继续处理其后的提交（例如 `git rebase --skip`）。
+    ///
+    /// 该提交的更改和已经解决的冲突被丢弃。合并没有可以跳过的提交。
+    ///
+    /// # Errors
+    ///
+    /// `git` 报错时返回它的说明。
+    pub fn skip_operation(&self, root: &Path, operation: Operation) -> Result<String, String> {
+        self.operate(root, &[operation.command(), "--skip"])
     }
 
     /// 放弃 `operation`，回到开始之前的状态（例如 `git merge --abort`）。
@@ -766,6 +814,31 @@ impl Git {
     /// 同 [`Git::operate`]。
     pub fn stage(&self, root: &Path, paths: &[PathBuf]) -> Result<String, String> {
         let mut args: Vec<OsString> = ["add", "--all", "--"].map(OsString::from).into();
+        args.extend(relative_all(root, paths));
+        self.operate(root, &args)
+    }
+
+    /// 储藏 `paths` 的改动（含未跟踪的文件），其余的改动留在工作区和暂存区；`message` 是储藏的
+    /// 说明，为空时由 `git` 生成。
+    ///
+    /// 路径以 `/` 分隔并按字面匹配：`[`、`*`、`?` 不作为通配符。
+    ///
+    /// # Errors
+    ///
+    /// 同 [`Git::operate`]。
+    pub fn stash_paths(
+        &self,
+        root: &Path,
+        message: &str,
+        paths: &[PathBuf],
+    ) -> Result<String, String> {
+        let mut args: Vec<OsString> = ["stash", "push", "--include-untracked"]
+            .map(OsString::from)
+            .into();
+        if !message.is_empty() {
+            args.extend(["--message", message].map(OsString::from));
+        }
+        args.push("--".into());
         args.extend(relative_all(root, paths));
         self.operate(root, &args)
     }

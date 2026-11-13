@@ -206,7 +206,7 @@ impl Default for BranchState {
     }
 }
 
-/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续和中止，储藏更改，远程仓库。
+/// 提交视图「⋯」里的 Git 操作：进行中的合并、变基的继续、跳过和中止，储藏更改，远程仓库。
 ///
 /// 拉取、推送、获取和新建分支、工作树都在分支选择器里，各条储藏在改动列表下面的储藏一组里，回滚
 /// 勾选的文件在组标题上，这里不再列出。
@@ -218,8 +218,12 @@ pub(crate) fn branch_menu(
     use MenuCommand::*;
     let mut entries = Vec::new();
     // 合并、变基停下来等着处理冲突：最上面是继续和中止。
-    if operation.is_some() {
+    if let Some(operation) = operation {
         entries.push(MenuEntry::Item(GitContinue, !busy));
+        // 合并只有一个提交，没有可以跳过的。
+        if operation != Operation::Merge {
+            entries.push(MenuEntry::Item(GitSkip, !busy));
+        }
         entries.push(MenuEntry::Item(GitAbort, !busy));
         entries.push(MenuEntry::Separator);
     }
@@ -403,11 +407,14 @@ impl App {
                 }
             }
             GitStash => self.open_stash_prompt(),
-            GitContinue | GitAbort => {
+            GitContinue | GitSkip | GitAbort => {
                 let Some(operation) = self.git.status.as_ref().and_then(|s| s.operation) else {
                     return;
                 };
                 match command {
+                    GitSkip => self.git_operate(t!("git-op-skip").into(), move |git, root| {
+                        git.skip_operation(root, operation)
+                    }),
                     // 合并在提交视图里完成：写好（已经填上的）提交信息再提交。
                     GitContinue if operation == Operation::Merge => self.show_commit(),
                     GitContinue => self

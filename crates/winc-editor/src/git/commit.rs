@@ -38,14 +38,11 @@ impl Git {
         Ok(())
     }
 
-    /// 提交暂存区的内容，返回新提交号的前 7 位。
-    ///
-    /// `all` 为 `true` 时把全部已跟踪文件的改动一并提交（`git commit --all`），提交失败时暂存区
-    /// 保持原状。`amend` 为 `true` 时修改上一次提交，暂存区没有改动时只改提交信息。
+    /// 提交暂存区的内容，返回新提交号的前 7 位；`all`、`amend` 的含义见 [`CommitOptions`]。
     ///
     /// # Errors
     ///
-    /// `git` 报错（hooks 拒绝、没有可提交的内容、身份没配置……）时返回它的说明。
+    /// 同 [`Git::commit_with`]。
     pub fn commit(
         &self,
         root: &Path,
@@ -53,6 +50,31 @@ impl Git {
         all: bool,
         amend: bool,
     ) -> Result<String, String> {
+        let options = CommitOptions {
+            all,
+            amend,
+            ..CommitOptions::default()
+        };
+        self.commit_with(root, message, options)
+    }
+
+    /// 按 `options` 提交暂存区的内容，返回新提交号的前 7 位。
+    ///
+    /// # Errors
+    ///
+    /// `git` 报错（hooks 拒绝、没有可提交的内容、身份没配置……）时返回它的说明。
+    pub fn commit_with(
+        &self,
+        root: &Path,
+        message: &str,
+        options: CommitOptions,
+    ) -> Result<String, String> {
+        let CommitOptions {
+            all,
+            amend,
+            sign_off,
+            no_verify,
+        } = options;
         self.require_trust(root)?;
         let mut command = self.command(root);
         // `whitespace` 只去掉首尾空行和行尾空白；`strip` 还会删掉 `#` 开头的行，
@@ -63,6 +85,12 @@ impl Git {
         }
         if amend {
             command.arg("--amend");
+        }
+        if sign_off {
+            command.arg("--signoff");
+        }
+        if no_verify {
+            command.arg("--no-verify");
         }
         self.run_commit(root, &mut command, message)?;
         self.short_head(root)

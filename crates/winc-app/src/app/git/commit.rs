@@ -7,8 +7,10 @@
 //! `commit_hits`。
 
 mod actions;
+mod ignore;
 pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::{PushIntent, SyncState};
+pub use ignore::IgnoreKind;
 mod list;
 pub(in crate::app::git) use list::rows_of;
 mod stash;
@@ -601,6 +603,8 @@ pub(crate) struct CommitState {
     staging_running: bool,
     /// 暂存区写完之后接着提交：按下提交时暂存的操作尚未完成。
     commit_queued: bool,
+    /// 下一次提交不运行钩子；提交成功后关闭。
+    pub(crate) no_verify: bool,
     /// 正在读取的状态开始于最近一次暂存的操作之前：读到后不采用。
     status_outdated: bool,
     /// 打开着差异的文件在暂存区中的内容。
@@ -734,6 +738,7 @@ impl Default for CommitState {
             staging: VecDeque::new(),
             staging_running: false,
             commit_queued: false,
+            no_verify: false,
             status_outdated: false,
             index: HashMap::new(),
             index_version: 0,

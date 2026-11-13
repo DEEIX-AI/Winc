@@ -563,6 +563,7 @@ impl App {
             MenuTarget::CommitFile(path) => commit_file_menu(
                 winc_backend::fs::exists(path),
                 self.relative_path(path).is_some(),
+                &self.ignore_kinds(path),
             ),
             MenuTarget::SearchResult(_, m) => {
                 search_result_menu(m.is_none(), self.panels.global.replace_open)
@@ -1025,6 +1026,7 @@ impl App {
             }
             (MenuCommand::GitFetch, _) => Some(t!("menu-git-fetch-desc").to_owned()),
             (MenuCommand::GitContinue, _) => Some(t!("menu-git-continue-desc").to_owned()),
+            (MenuCommand::GitSkip, _) => Some(t!("menu-git-skip-desc").to_owned()),
             (MenuCommand::GitAbort, _) => Some(t!("menu-git-abort-desc").to_owned()),
             (MenuCommand::GitPush, Some(up)) if ahead > 0 => {
                 Some(t!("menu-git-push-ahead", count = ahead, upstream = up))
@@ -1137,6 +1139,12 @@ impl App {
         }
         if command == MenuCommand::CommitAllRepositories {
             return self.state.commit_all_repositories;
+        }
+        if command == MenuCommand::CommitSignOff {
+            return self.commit_signs_off();
+        }
+        if command == MenuCommand::CommitNoVerify {
+            return self.git.commit.no_verify;
         }
         if command == MenuCommand::TerminalMaximize {
             return self.terminal.maximized;

@@ -44,6 +44,10 @@ pub struct State {
     ///
     /// `false`（默认）时只显示当前仓库。所有窗口共用，下次启动沿用。
     pub commit_all_repositories: bool,
+    /// 提交时附加签署行（`Signed-off-by`）的仓库，元素是仓库的根目录。
+    ///
+    /// 在提交按钮的菜单中逐个仓库打开；所有窗口共用，下次启动沿用。
+    pub sign_off_repos: Vec<PathBuf>,
     /// PDF 预览是否隐藏页面缩略图栏；默认显示。所有窗口共用，下次启动沿用。
     pub pdf_thumbnails_hidden: bool,
     /// 侧栏宽度（逻辑像素）；`None` 表示没有调整过。所有视图、窗口和仓库共用，下次启动沿用。
@@ -503,6 +507,11 @@ impl State {
                 state.others.push(path);
             }
         }
+        for path in paths(root.get("signOffRepos")) {
+            if !state.sign_off_repos.contains(&path) {
+                state.sign_off_repos.push(path);
+            }
+        }
 
         // 旧格式只记单个 `session`，即上次退出时的目录。
         if let Some(old) = root.get("session").and_then(session)
@@ -552,9 +561,10 @@ impl State {
 
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
-    /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos`、`vimMarks`、
-    /// `vimCommands`、`vimSearches` 为空，`commitTree`、`commitAllRepositories`、
-    /// `pdfThumbnailsHidden`、`stayOutsideApplications` 为假时省略对应的键。
+    /// `last`、`previewMode` 没有值，`otherWindows`、`signOffRepos`、`toolChoices`、
+    /// `trustedRepos`、`vimMarks`、`vimCommands`、`vimSearches` 为空，`commitTree`、
+    /// `commitAllRepositories`、`pdfThumbnailsHidden`、`stayOutsideApplications` 为假时省略
+    /// 对应的键。
     pub fn to_json(&self) -> String {
         let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
         let mut fields = vec![(
@@ -574,6 +584,12 @@ impl State {
 
         if self.commit_tree {
             fields.push(("commitTree", Json::Bool(true)));
+        }
+        if !self.sign_off_repos.is_empty() {
+            fields.push((
+                "signOffRepos",
+                Json::Array(self.sign_off_repos.iter().map(path).collect()),
+            ));
         }
         if self.commit_all_repositories {
             fields.push(("commitAllRepositories", Json::Bool(true)));

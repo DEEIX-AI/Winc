@@ -85,6 +85,7 @@ fn right_clicking_a_changed_file_offers_diff_open_and_rollback() {
             MenuCommand::GitShowDiff,
             MenuCommand::GitOpenFile,
             MenuCommand::GitRollbackFile,
+            MenuCommand::GitStashFiles,
             MenuCommand::RevealInTree,
             MenuCommand::Reveal,
             MenuCommand::CopyPath,
