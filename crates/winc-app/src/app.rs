@@ -17,6 +17,7 @@ mod release_notes;
 pub(crate) mod remote;
 pub(crate) mod scroll;
 mod settings;
+pub(crate) mod setup;
 #[cfg(test)]
 mod snapshot;
 mod status;
@@ -870,8 +871,10 @@ pub struct App {
     pub(crate) split: preview::images::SplitPreview,
     /// Markdown 预览（分栏右侧或仅预览模式）。
     pub(crate) markdown: preview::markdown::MarkdownPreview,
-    /// 最近一次打开更新日志时要显示的版本范围；重试时沿用。
-    pub(crate) release_notes: crate::release_notes::Scope,
+    /// 首次设置开场动画的时钟；没有在播放时为 `None`。
+    pub(crate) setup_intro: Option<animation::Clock>,
+    /// 更新日志的状态：待显示的更新提示、所在的标签和要显示的版本范围。
+    pub(crate) release_notes: release_notes::ReleaseNotes,
     /// 当前标签的 PDF 预览。
     pub(crate) pdf: preview::pdf::PdfPreview,
     /// 窗口背景图的状态。

@@ -302,7 +302,7 @@ fn race(feeds: &[String], key: &VerifyingKey) -> Option<String> {
     for feed in feeds {
         let (tx, feed, key) = (tx.clone(), feed.clone(), *key);
         std::thread::spawn(move || {
-            let body = fetch(&feed, FEED_TIMEOUT)
+            let body = fetch(&feed, FEED_TIMEOUT, None)
                 .and_then(|bytes| signed_part(&bytes, &key).map(<[u8]>::to_vec))
                 .and_then(|bytes| String::from_utf8(bytes).ok())
                 .filter(|text| text.contains("<rss") && text.contains("</rss>"));

@@ -24,18 +24,18 @@ pub(crate) fn command(program: &str) -> Command {
 
 /// 取回 `url` 的内容，最长等待 `timeout` 秒：优先使用 `curl`，未安装时使用 `wget`。
 ///
-/// 请求失败时返回 `None`。
-pub(crate) fn fetch(url: &str, timeout: u64) -> Option<Vec<u8>> {
+/// `limit` 是内容长度的上限（字节）：服务器声明的长度超过它时 `curl` 不下载，取回的内容超过它
+/// 时丢弃。请求失败或超过上限时返回 `None`。
+pub(crate) fn fetch(url: &str, timeout: u64, limit: Option<u64>) -> Option<Vec<u8>> {
     let timeout = timeout.to_string();
+    let within = limit.map(|limit| limit.to_string());
+    let bound = within
+        .iter()
+        .flat_map(|limit| ["--max-filesize", limit.as_str()]);
     let curl = command("curl")
-        .args([
-            "--fail",
-            "--silent",
-            "--location",
-            "--max-time",
-            &timeout,
-            url,
-        ])
+        .args(["--fail", "--silent", "--location", "--max-time", &timeout])
+        .args(bound)
+        .arg(url)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output();
@@ -55,5 +55,6 @@ pub(crate) fn fetch(url: &str, timeout: u64) -> Option<Vec<u8>> {
             .ok()?,
         result => result.ok()?,
     };
-    output.status.success().then_some(output.stdout)
+    let fits = limit.is_none_or(|limit| output.stdout.len() as u64 <= limit);
+    (output.status.success() && fits).then_some(output.stdout)
 }

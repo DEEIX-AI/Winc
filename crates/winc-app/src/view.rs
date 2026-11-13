@@ -24,6 +24,7 @@ use crate::layout::{SearchParts, scrollbar_thumb};
 use crate::theme::*;
 
 mod alert;
+mod controls;
 mod dialog;
 mod diff;
 mod editor;

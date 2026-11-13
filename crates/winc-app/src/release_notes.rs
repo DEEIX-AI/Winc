@@ -22,9 +22,10 @@ const TIMEOUT: u64 = 15;
 const MAX_LENGTH: usize = 1 << 20;
 
 /// 要显示的版本范围。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Scope {
     /// 日志中的全部版本。
+    #[default]
     All,
     /// 更新之后：比上次运行的版本新、且不比当前版本新的各版；上次运行的版本没有记录时只有
     /// 当前版本。
@@ -48,23 +49,23 @@ pub(crate) fn page(locale: Locale) -> &'static str {
     }
 }
 
-/// 取回语言 `locale` 的更新日志，返回其中 `scope` 范围内各版的 Markdown。
+/// 取回语言 `locale` 的更新日志，返回其中 `scope` 范围内各版的 Markdown；`missing` 见
+/// [`select`]。
 ///
-/// 等待网络应答，在后台线程调用。请求失败或内容不是更新日志时返回 `None`。
-pub(crate) fn load(locale: Locale, scope: &Scope) -> Option<String> {
-    let bytes = crate::web::fetch(&url(locale), TIMEOUT)?;
-    select(
-        std::str::from_utf8(&bytes).ok()?,
-        scope,
-        winc_version::VERSION,
-    )
+/// 等待网络应答，在后台线程调用。请求失败、应答超过 [`MAX_LENGTH`] 或内容不是更新日志时返回
+/// `None`。
+pub(crate) fn load(locale: Locale, scope: &Scope, missing: &str) -> Option<String> {
+    let bytes = crate::web::fetch(&url(locale), TIMEOUT, Some(MAX_LENGTH as u64))?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    select(text, scope, winc_version::VERSION, missing)
 }
 
 /// 返回更新日志 `text` 中 `scope` 范围内各版的 Markdown，`current` 是当前版本。
 ///
-/// 范围内没有任何一版时（例如日志尚未包含当前版本）返回全部版本。`text` 超过 [`MAX_LENGTH`]、
-/// 第一个非空行不是版本标题，或没有任何一版时返回 `None`。
-pub(crate) fn select(text: &str, scope: &Scope, current: &str) -> Option<String> {
+/// 范围内没有任何一版时（日志尚未包含当前版本）返回全部版本，并在最前面加一段 `missing`
+/// 说明这一点。`text` 超过 [`MAX_LENGTH`]、第一个非空行不是版本标题，或没有任何一版时返回
+/// `None`。
+pub(crate) fn select(text: &str, scope: &Scope, current: &str, missing: &str) -> Option<String> {
     if text.len() > MAX_LENGTH {
         return None;
     }
@@ -77,13 +78,14 @@ pub(crate) fn select(text: &str, scope: &Scope, current: &str) -> Option<String>
         }
         Scope::Since(None) => compare_versions(version, current).is_eq(),
     };
-    let mut chosen: Vec<&str> = releases
+    let chosen: Vec<&str> = releases
         .iter()
         .filter(|(version, _)| wanted(version))
         .map(|(_, body)| *body)
         .collect();
     if chosen.is_empty() {
-        chosen = releases.iter().map(|(_, body)| *body).collect();
+        let all: String = releases.iter().map(|(_, body)| *body).collect();
+        return Some(format!("{missing}\n\n{}", inert(&all)));
     }
     Some(inert(&chosen.concat()))
 }

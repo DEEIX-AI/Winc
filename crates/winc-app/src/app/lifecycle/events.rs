@@ -175,6 +175,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.renderer = Some(renderer);
         self.measure_fonts();
         self.window.handle = Some(window.clone());
+        self.start_setup_intro();
         #[cfg(windows)]
         {
             self.touch.window_input = crate::windows::WindowInput::new(&window);

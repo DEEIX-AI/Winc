@@ -130,7 +130,8 @@ fn reading_tabs_hold_markdown_without_editable_text() {
     let revision = doc.revision;
     editor.new_untitled();
     let active = editor.active;
-    assert!(editor.update_reading("更新日志", ready("## 1.0.0\n")));
+    let id = editor.documents[first].id;
+    assert!(editor.update_reading(id, ready("## 1.0.0\n")));
     assert_eq!((editor.documents.len(), editor.active), (2, active));
     let doc = &editor.documents[first];
     assert_eq!(doc.reading, Some(ready("## 1.0.0\n")));
@@ -140,7 +141,7 @@ fn reading_tabs_hold_markdown_without_editable_text() {
     assert_eq!(editor.show_reading("更新日志", Reading::Failed), first);
     assert_eq!(editor.active, Some(first));
     editor.documents.remove(first);
-    assert!(!editor.update_reading("更新日志", ready("## 1.0.1\n")));
+    assert!(!editor.update_reading(id, ready("## 1.0.1\n")));
     assert_eq!(editor.documents.len(), 1);
 }
 

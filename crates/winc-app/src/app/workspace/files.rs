@@ -292,8 +292,8 @@ impl App {
         let Some(index) = self.editor.active else {
             return;
         };
-        // 阅读标签没有对应的文件：内容是更新日志，重新取回或在浏览器中查看。
-        if self.editor.documents[index].reading.is_some() {
+        // 「更新日志」标签没有对应的文件：重新取回或在浏览器中查看。
+        if self.is_release_notes_tab(index) {
             match action {
                 PlaceholderAction::Retry => self.reload_release_notes(),
                 PlaceholderAction::OpenInBrowser => self.open_release_notes_page(),

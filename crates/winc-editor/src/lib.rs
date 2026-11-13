@@ -262,18 +262,16 @@ impl Editor {
         self.show_readonly(title, |id| Document::reading(id, title, reading))
     }
 
-    /// 把标题为 `title` 的阅读标签的内容换成 `reading`，不切换标签，返回是否有这个标签。
+    /// 把阅读标签 `id` 的内容换成 `reading`，标题不变，不切换标签；返回是否有这个标签。
     ///
     /// 用于后台取回的内容到达时：标签在此期间已经关闭时不再打开。
-    pub fn update_reading(&mut self, title: &str, reading: Reading) -> bool {
-        let found = self
-            .documents
-            .iter_mut()
-            .find(|d| d.path.is_none() && d.reading.is_some() && d.title.as_deref() == Some(title));
+    pub fn update_reading(&mut self, id: DocumentId, reading: Reading) -> bool {
+        let found = (self.documents.iter_mut()).find(|d| d.id == id && d.reading.is_some());
         let Some(slot) = found else {
             return false;
         };
-        let fresh = Document::reading(slot.id, title, reading);
+        let title = slot.title.clone().unwrap_or_default();
+        let fresh = Document::reading(id, &title, reading);
         replace_document(slot, fresh);
         true
     }

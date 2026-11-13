@@ -337,6 +337,9 @@ impl App {
             }
             MenuTarget::SkipOnSave => skip_menu(&self.settings.languages.format),
             MenuTarget::Locale => locale_menu(),
+            MenuTarget::NamedTheme(dark) => (0..crate::theme::themes(*dark).len())
+                .map(|i| MenuEntry::Item(MenuCommand::NamedTheme(*dark, i), true))
+                .collect(),
             MenuTarget::Whitespace => whitespace_menu(),
             MenuTarget::VimClipboard => vim_clipboard_menu(),
             MenuTarget::DefaultShell => default_shell_menu(self.terminal.shells.len()),
@@ -667,6 +670,7 @@ impl App {
             MenuTarget::CommitButton
                 | MenuTarget::TabList
                 | MenuTarget::Locale
+                | MenuTarget::NamedTheme(_)
                 | MenuTarget::Whitespace
                 | MenuTarget::VimClipboard
                 | MenuTarget::Zoom
@@ -1195,6 +1199,7 @@ impl App {
                 winc_i18n::LocaleChoice::ALL.get(i)
                     == Some(&self.config.language.unwrap_or_default())
             }
+            MenuCommand::NamedTheme(dark, i) => self.theme_slot(dark) == i,
             MenuCommand::Whitespace(i) => {
                 winc_config::RenderWhitespace::ALL.get(i)
                     == Some(&self.config.render_whitespace.unwrap_or_default())

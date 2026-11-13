@@ -14,7 +14,8 @@ fn versions(text: &str) -> Vec<&str> {
 
 #[test]
 fn releases_are_chosen_by_the_versions_run_before_and_now() {
-    let chosen = |scope: Scope, current: &str| select(NOTES_TEXT, &scope, current).unwrap();
+    let chosen =
+        |scope: Scope, current: &str| select(NOTES_TEXT, &scope, current, "（暂缺）").unwrap();
     assert_eq!(
         versions(&chosen(Scope::All, "0.2.0")),
         ["0.3.0", "0.2.0", "0.1.0"]
@@ -29,8 +30,12 @@ fn releases_are_chosen_by_the_versions_run_before_and_now() {
     assert_eq!(versions(&chosen(since("0.1.0"), "0.2.0")), ["0.2.0"]);
     // 上次运行的版本没有记录：只有当前版本。
     assert_eq!(versions(&chosen(Scope::Since(None), "0.2.0")), ["0.2.0"]);
-    // 日志尚未包含当前版本：显示全部。
-    assert_eq!(versions(&chosen(since("0.3.0"), "0.4.0")).len(), 3);
+    // 日志尚未包含当前版本：显示全部，最前面说明这一点；其余情况没有这段说明。
+    let missing = chosen(since("0.3.0"), "0.4.0");
+    assert_eq!(versions(&missing).len(), 3);
+    assert!(missing.starts_with("（暂缺）\n\n## 0.3.0"));
+    assert!(!chosen(since("0.1.0"), "0.3.0").contains("（暂缺）"));
+    assert!(!chosen(Scope::All, "0.4.0").contains("（暂缺）"));
     // 各版的正文原样保留。
     let all = chosen(Scope::All, "0.3.0");
     assert!(all.contains("### 新功能\n\n- 丙\n") && all.contains("[#7](https://example.com/7)"));
@@ -38,7 +43,7 @@ fn releases_are_chosen_by_the_versions_run_before_and_now() {
 
 #[test]
 fn text_that_is_not_a_changelog_is_refused() {
-    let refused = |text: &str| select(text, &Scope::All, "0.1.0").is_none();
+    let refused = |text: &str| select(text, &Scope::All, "0.1.0", "").is_none();
     // 登录页、错误页之类的应答。
     assert!(refused("<!doctype html>\n<html></html>\n"));
     assert!(refused("Not Found\n## 0.1.0 · 2026-01-01\n"));

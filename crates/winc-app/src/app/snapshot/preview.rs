@@ -3256,7 +3256,7 @@ fn release_notes_open_in_a_reading_tab() {
     app.run_placeholder_action(PlaceholderAction::Retry);
     let doc = app.editor.active().unwrap();
     assert_eq!(doc.reading, Some(winc_editor::Reading::Loading));
-    assert_eq!(app.release_notes, Scope::Since(Some("0.1.0".into())));
+    assert_eq!(app.release_notes.scope, Scope::Since(Some("0.1.0".into())));
 
     // 读取期间关闭了标签：之后到达的内容不再打开它。
     let index = app.editor.active.unwrap();
@@ -3267,7 +3267,7 @@ fn release_notes_open_in_a_reading_tab() {
 }
 
 /// 更新之后的第一次启动提示一次，提示记着上次运行的版本；第一次运行、版本没有变化或变旧时
-/// 不提示。每种情况都记下当前版本。
+/// 不提示。每种情况都记下当前版本。第一次运行时开始首次设置，没有完成时下次启动接着显示。
 #[test]
 fn the_first_launch_after_an_update_offers_the_release_notes() {
     let current = winc_version::VERSION;
@@ -3280,16 +3280,28 @@ fn the_first_launch_after_an_update_offers_the_release_notes() {
         app.state.version = version.map(str::to_owned);
         app.note_version();
         assert_eq!(app.state.version.as_deref(), Some(current));
+        // 更新提示在绘制之前、右上角没有别的提示时才显示。
+        assert!(app.notice.text.is_none());
+        app.show_update_notice();
         app
     };
-    // 第一次运行：状态为空。
-    assert!(launch(false, None).notice.action.is_none());
+    // 第一次运行：状态为空，不提示，开始页显示「首次设置」并记入状态。
+    let first = launch(false, None);
+    assert!(first.notice.action.is_none() && first.state.setup_pending);
+    // 上次没有完成首次设置：接着显示。
+    let mut again = blank_app(false);
+    again.state.version = Some(current.to_owned());
+    again.state.setup_pending = true;
+    again.note_version();
+    assert!(again.state.setup_pending && again.setup_shown());
     // 版本没有变化。
-    assert!(launch(true, Some(current)).notice.text.is_none());
+    let same = launch(true, Some(current));
+    assert!(same.notice.text.is_none() && !same.state.setup_pending);
     // 比当前版本新（换回了旧版本）。
     assert!(launch(true, Some("9999.0.0")).notice.text.is_none());
-    // 从旧版本更新而来。
+    // 从旧版本更新而来：提示更新日志，不显示「首次设置」。
     let app = launch(true, Some("0.0.1"));
+    assert!(!app.state.setup_pending);
     assert!(app.notice.text.as_deref().unwrap().contains(current));
     assert!(matches!(
         &app.notice.action,
@@ -3299,6 +3311,22 @@ fn the_first_launch_after_an_update_offers_the_release_notes() {
     assert!(matches!(
         launch(true, None).notice.action,
         Some(NoticeAction::ReleaseNotes(None))
+    ));
+
+    // 启动时右上角已有别的提示（例如正在连接远端主机）：更新提示等它收起后再显示。
+    let mut app = blank_app(false);
+    app.state.recent = vec![PathBuf::from("/项目")];
+    app.state.version = Some("0.0.1".into());
+    app.note_version();
+    app.notify_pinned("正在连接", NoticeAction::CancelConnect);
+    app.show_update_notice();
+    assert_eq!(app.notice.text.as_deref(), Some("正在连接"));
+    app.dismiss_notice();
+    app.notice.leaving = None;
+    app.show_update_notice();
+    assert!(matches!(
+        &app.notice.action,
+        Some(NoticeAction::ReleaseNotes(Some(previous))) if previous == "0.0.1"
     ));
 }
 
@@ -3313,7 +3341,7 @@ fn shoot_release_notes() {
         let mut app = blank_app(dark);
         let scope = crate::release_notes::Scope::All;
         app.open_release_notes(scope.clone());
-        app.show_release_notes(crate::release_notes::select(notes, &scope, "0.2.0"));
+        app.show_release_notes(crate::release_notes::select(notes, &scope, "0.2.0", ""));
         settle(&mut app);
         let theme = if dark { "dark" } else { "light" };
         shoot(&mut app, &format!("release-notes-{theme}"));
