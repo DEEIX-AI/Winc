@@ -40,6 +40,8 @@ pub enum PlaceholderAction {
     Reveal,
     /// SVG 预览无法绘制时切回源代码。
     ShowSource,
+    /// 阅读标签的内容未能取回时，在浏览器中查看。
+    OpenInBrowser,
 }
 
 /// 一个标签在标签栏上的位置，绘制时记录，点击时使用。
@@ -290,6 +292,15 @@ impl App {
         let Some(index) = self.editor.active else {
             return;
         };
+        // 阅读标签没有对应的文件：内容是更新日志，重新取回或在浏览器中查看。
+        if self.editor.documents[index].reading.is_some() {
+            match action {
+                PlaceholderAction::Retry => self.reload_release_notes(),
+                PlaceholderAction::OpenInBrowser => self.open_release_notes_page(),
+                _ => {}
+            }
+            return;
+        }
         let Some(path) = self.editor.documents[index].path.clone() else {
             return;
         };
@@ -312,6 +323,7 @@ impl App {
                 }
             }
             PlaceholderAction::Reveal => self.reveal_in_file_manager(&path),
+            PlaceholderAction::OpenInBrowser => {}
         }
 
         self.relayout();

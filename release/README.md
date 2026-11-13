@@ -105,6 +105,11 @@ The app reads `<channel URL>/appcast-<platform>.xml`, and each appcast's downloa
 URL. Appcasts are signed, so winc.si must serve them unchanged. The channel URL is defined once,
 in `channelBase` in `release/common/config.mjs`.
 
+The in-app release notes are not part of a channel. The app reads
+`https://winc.si/releases/notes/<language>.md` (`en.md`, `zh-cn.md`) when the user opens them;
+winc.si generates these files from its changelog. Each release starts with a `## <version> · <date>`
+line, which the app uses to pick the releases to show (`crates/winc-app/src/release_notes.rs`).
+
 Windows NSIS installations are per-user; MSI installations are per-machine and use the fixed
 UpgradeCode `00FDC6A5-D527-59AE-B4A5-E051B25222F3`. Do not change it between releases. Each installer
 writes `winc-installation` beside the executable. The updater selects the matching NSIS/MSI

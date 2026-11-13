@@ -512,7 +512,7 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
     }
 }
 
-/// 绘制「关于」页的链接：右对齐的显示名后跟外链箭头。
+/// 绘制「关于」页的链接：右对齐的显示名后跟外链箭头；在应用内打开的更新日志后跟朝右的箭头。
 ///
 /// 悬停时只在内容处铺悬停底色（[`crate::layout::value_area`]），点击范围与之相同。
 fn draw_link(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) {
@@ -526,7 +526,11 @@ fn draw_link(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) {
     }
     let right = area.right() - SETTINGS_GLYPH_PAD;
     let center = (right - 4.5, area.y + area.h / 2.0);
-    icons::external(frame, center, p.text_dim, clip);
+    if row.setting == Setting::ReleaseNotes {
+        icons::chevron(frame, center, 6.5, Direction::Right, p.text_dim, clip);
+    } else {
+        icons::external(frame, center, p.text_dim, clip);
+    }
     ui_text(
         frame,
         app,

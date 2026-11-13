@@ -87,6 +87,7 @@ fn sample() -> State {
         stay_outside_applications: true,
         panel_width: Some(360.0),
         preview_mode: Some("split".into()),
+        version: Some("0.1.626".into()),
         window: Some(WindowFrame {
             position: Some((-1280.0, 40.0)),
             width: 900.5,

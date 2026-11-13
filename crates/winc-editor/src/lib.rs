@@ -30,7 +30,7 @@ pub use document::encoding::Encoding;
 pub use document::large::LargeText;
 pub use document::{
     COPY_LIMIT, DiskChange, Document, DocumentId, EDIT_LIMIT, LARGE_FILE, OpenError, PictureState,
-    PreviewKind, PreviewMode, TableState, TableView, Unsupported, looks_binary,
+    PreviewKind, PreviewMode, Reading, TableState, TableView, Unsupported, looks_binary,
 };
 pub use document::{editorconfig, encoding};
 pub use editing::command::Command;
@@ -253,6 +253,29 @@ impl Editor {
     /// 已存在标题相同且没有对应文件的标签时，替换其内容而不新开标签。返回标签序号（从 0 起）。
     pub fn show_output(&mut self, title: &str, text: &str) -> usize {
         self.show_readonly(title, |id| Document::output(id, title, text))
+    }
+
+    /// 在只读的阅读标签中显示 `reading`，标签标题为 `title`，并切换到该标签。
+    ///
+    /// 已存在标题相同且没有对应文件的标签时，替换其内容而不新开标签。返回标签序号（从 0 起）。
+    pub fn show_reading(&mut self, title: &str, reading: Reading) -> usize {
+        self.show_readonly(title, |id| Document::reading(id, title, reading))
+    }
+
+    /// 把标题为 `title` 的阅读标签的内容换成 `reading`，不切换标签，返回是否有这个标签。
+    ///
+    /// 用于后台取回的内容到达时：标签在此期间已经关闭时不再打开。
+    pub fn update_reading(&mut self, title: &str, reading: Reading) -> bool {
+        let found = self
+            .documents
+            .iter_mut()
+            .find(|d| d.path.is_none() && d.reading.is_some() && d.title.as_deref() == Some(title));
+        let Some(slot) = found else {
+            return false;
+        };
+        let fresh = Document::reading(slot.id, title, reading);
+        replace_document(slot, fresh);
+        true
     }
 
     /// 在标签 `slot` 中显示并排差异（替换原有内容）并切换到该标签，返回标签序号（从 0 起）。

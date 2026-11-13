@@ -449,11 +449,11 @@ impl App {
                     MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
                     MenuEntry::Item(MenuCommand::SelectAll, true),
                 ];
-                // docx 的阅读视图由转换得到，没有可以显示的源代码。
+                // docx 的阅读视图由转换得到，阅读标签只有排版后的内容：都没有可以显示的源代码。
                 let has_source = self
                     .editor
                     .active()
-                    .is_some_and(|d| d.unsupported.is_none());
+                    .is_some_and(|d| d.unsupported.is_none() && d.reading.is_none());
                 if has_source {
                     menu.extend([
                         MenuEntry::Separator,

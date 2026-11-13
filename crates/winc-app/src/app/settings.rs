@@ -333,9 +333,13 @@ impl App {
         !matches!(*self.shared.update_state.borrow(), UpdateState::Off)
     }
 
-    /// 在浏览器中打开「关于」页的链接 `setting`；打不开时在状态栏说明原因。
+    /// 打开「关于」页的链接 `setting`：更新日志在阅读标签中打开，其余的在浏览器中打开，打不开
+    /// 时在状态栏说明原因。
     pub(in crate::app) fn settings_open_link(&mut self, setting: Setting) {
         self.settings.selected = setting;
+        if setting == Setting::ReleaseNotes {
+            return self.settings_open_release_notes();
+        }
         let Some(url) = crate::layout::about_link(setting) else {
             return;
         };

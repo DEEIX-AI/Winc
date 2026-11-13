@@ -436,6 +436,7 @@ impl App {
             UserEvent::RemoteStage => self.remote_stage_changed(),
             UserEvent::RemoteHealth => self.request_redraw(),
             UserEvent::RemoteClosed(target) => self.remote_closed(&target),
+            UserEvent::ReleaseNotes(notes) => self.show_release_notes(notes),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
             | UserEvent::GitCommit
@@ -542,6 +543,9 @@ impl App {
                 self.open_settings();
             }
             UserEvent::InstallShellCommand => self.install_shell_command(),
+            UserEvent::OpenReleaseNotes => {
+                self.open_release_notes(crate::release_notes::Scope::All);
+            }
             // 编号为所弹出菜单中的序号，按记录的菜单查找对应的命令。
             UserEvent::MenuCommand(tag) => {
                 let command = self.context_menu.as_ref().and_then(|menu| {

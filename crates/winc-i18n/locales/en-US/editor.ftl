@@ -3,6 +3,8 @@
 editor-preview-failed = Couldn’t show the preview: { $reason }
 editor-show-source = Show Source
 editor-reading = Reading “{ $name }”…
+editor-reading-failed = Couldn’t load “{ $name }”
+editor-open-in-browser = View in Browser
 editor-open-anyway = Open Anyway
 editor-open-with-default-app = Open with Default App
 editor-retry = Retry

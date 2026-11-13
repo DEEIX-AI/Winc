@@ -437,8 +437,9 @@ fn in_fence<'a>(lines: impl Iterator<Item = ropey::RopeSlice<'a>>) -> bool {
 /// 返回当前标签显示 Markdown 预览的区域（分栏的右半边或整个编辑区）；不显示时返回 `None`。
 pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
     let doc = app.editor.active()?;
-    // docx 没有源代码可切换，总是以整个编辑区显示阅读视图。
-    if doc.unsupported == Some(winc_editor::Unsupported::Docx) {
+    // docx 和内容已取回的阅读标签没有源代码可切换，总是以整个编辑区显示阅读视图。
+    let reading = matches!(doc.reading, Some(winc_editor::Reading::Ready(_)));
+    if doc.unsupported == Some(winc_editor::Unsupported::Docx) || reading {
         return Some(app.layout.editor);
     }
     if doc.preview_kind() != Some(PreviewKind::Markdown) {
@@ -501,11 +502,16 @@ impl App {
         let Some(rope) = doc.text().rope().cloned() else {
             return;
         };
+        // 阅读标签的原文不在文档的文本中。
+        let reading = match &doc.reading {
+            Some(winc_editor::Reading::Ready(text)) => Some(Arc::clone(text)),
+            _ => None,
+        };
         md.pending = Some(revision);
         let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
         winc_editor::background::spawn(move || {
             let started = std::time::Instant::now();
-            let text = rope.to_string();
+            let text = reading.map_or_else(|| rope.to_string(), |text| text.to_string());
             let parsed = markdown::parse(&text);
             let done = Done::Parsed(id, revision, parsed, started.elapsed());
             if sender.send(done).is_ok()

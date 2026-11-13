@@ -50,6 +50,9 @@ pub struct State {
     pub preview_mode: Option<String>,
     /// 上次关闭的窗口的大小和位置；没有记录时为 `None`。
     pub window: Option<WindowFrame>,
+    /// 上次运行的程序的版本号（如 `0.1.626`）；没有记录时为 `None`。启动时与当前版本比较，
+    /// 得知这是否为更新之后的第一次启动。
+    pub version: Option<String>,
     /// 从磁盘映像等位置运行时不询问是否移到「应用程序」文件夹：用户曾选择不移动并勾选「不再
     /// 询问」。仅在 macOS 上使用。
     pub stay_outside_applications: bool,
@@ -473,6 +476,11 @@ impl State {
             .get("window")
             .and_then(Json::as_object)
             .and_then(window_frame);
+        state.version = root
+            .get("version")
+            .and_then(Json::as_str)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
         state.preview_mode = root
             .get("previewMode")
             .and_then(Json::as_str)
@@ -566,6 +574,9 @@ impl State {
         }
         if let Some(mode) = &self.preview_mode {
             fields.push(("previewMode", Json::String(mode.clone())));
+        }
+        if let Some(version) = &self.version {
+            fields.push(("version", Json::String(version.clone())));
         }
         if let Some(frame) = &self.window {
             let mut window = vec![

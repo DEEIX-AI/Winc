@@ -258,8 +258,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
-    // 往回走过关于页的七行（版本、更新两行、四个链接），回到快捷键页的搜索框。
-    for _ in 0..7 {
+    // 往回走过关于页的八行（版本、更新两行、更新日志和四个链接），回到快捷键页的搜索框。
+    for _ in 0..8 {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::KeySearch);
@@ -1548,4 +1548,16 @@ fn scrolling_settings_over_a_background_image_looks_the_same() {
     assert_eq!(corner & 0xff_ffff, plain);
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 「关于」页的「更新日志」一行与是否支持应用内更新无关，点击后关闭设置。
+#[test]
+fn the_about_page_opens_the_release_notes() {
+    let mut app = blank_app(false);
+    app.open_settings();
+    app.settings_show_page(SettingsPage::About);
+    paint(&mut app);
+    assert!(!app.updates_supported());
+    click_part(&mut app, SettingsPart::Link(Setting::ReleaseNotes));
+    assert!(!app.settings.open);
 }
