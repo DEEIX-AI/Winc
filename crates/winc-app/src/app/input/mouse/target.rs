@@ -381,9 +381,14 @@ impl App {
         if let Some((hunk, _)) = self.ruler_change_at(x, y) {
             return Target::RulerChange(hunk);
         }
-        // 展开的行同样覆盖文件树的滚动条，鼠标进入滚动条时该行不会立即收起。
+        // 展开的行同样覆盖文件树的滚动条，鼠标进入滚动条时该行不会立即收起。展开的标题列表
+        // 覆盖在宽表格的水平滚动条之上，鼠标经过滚动条时列表同样不收起。
+        let over_toc =
+            self.markdown.area.contains(x, y) && hit(&self.hits.markdown_toc, x, y).is_some();
         if let Some((bar, grab)) = self.scrollbar_at(x, y).filter(|(bar, _)| {
-            !(over_row && *bar == Scrollbar::Tree || over_commit_row && *bar == Scrollbar::Commit)
+            !(over_row && *bar == Scrollbar::Tree
+                || over_commit_row && *bar == Scrollbar::Commit
+                || over_toc && *bar == Scrollbar::MarkdownTable)
         }) {
             return Target::Scrollbar(bar, grab);
         }
