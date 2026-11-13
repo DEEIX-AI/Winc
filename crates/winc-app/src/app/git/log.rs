@@ -244,6 +244,11 @@ pub(crate) fn history_title(path: &Path) -> String {
 
 /// 后台返回的结果。
 enum Loaded {
+    /// 「转到提交号、分支或标签」的解析结果：完整的提交号，以及它是否在不筛选的日志中。
+    GoTo {
+        revision: String,
+        result: Result<(String, bool), String>,
+    },
     /// 一批提交，以及用于继续读取的 `git log`（未出错时）。
     Commits {
         doc: DocumentId,
@@ -470,6 +475,15 @@ impl App {
     /// 该提交尚未读取时（被筛选掉或位于后续批次），清除筛选并从头读取，逐批读取直至读到该提交
     /// 后选中（见 `LogState::seek`）。
     pub(super) fn git_show_log_at(&mut self, oid: &str) {
+        self.show_log_commit(oid, false);
+    }
+
+    /// 打开日志标签并选中提交 `oid`（完整的提交号）：已列出时直接选中，否则清除筛选条件从头
+    /// 读取，读取到后选中。
+    ///
+    /// `pin` 为真时把该提交固定在列表最前面（见 `LogQuery::pin`），用于任何分支都走不到、
+    /// 因而不在日志中的提交。
+    fn show_log_commit(&mut self, oid: &str, pin: bool) {
         if self.git.root.is_none() {
             return;
         }
@@ -486,7 +500,10 @@ impl App {
             Some(row) if !new => self.select_log_row(row),
             _ => {
                 if let Some(view) = self.editor.documents[index].log.as_deref_mut() {
-                    view.query = LogQuery::default();
+                    view.query = LogQuery {
+                        pin: pin.then(|| oid.to_owned()),
+                        ..LogQuery::default()
+                    };
                     view.selected = None;
                     view.reset();
                     view.details = Some(Details {
@@ -502,6 +519,38 @@ impl App {
         }
         self.relayout();
         self.request_redraw();
+    }
+
+    /// 打开「转到提交号、分支或标签」对话框。
+    pub(in crate::app) fn open_go_to_revision(&mut self) {
+        if self.git.root.is_none() {
+            self.flash(t!("git-not-a-repository"));
+            return;
+        }
+        use crate::app::git::form::FormKind;
+        self.show_form_dialog(
+            FormKind::GoToRevision,
+            TextField::default(),
+            crate::layout::DialogPart::Branch,
+        );
+    }
+
+    /// 在日志中转到 `revision`（提交号、分支名或标签名）：在后台解析成提交，之后选中它（见
+    /// [`Self::show_log_commit`]）；任何分支都走不到的提交固定在最前面。无法解析时提示原因。
+    pub(in crate::app) fn go_to_log_revision(&mut self, revision: String) {
+        let Some(root) = self.git.root.clone() else {
+            return;
+        };
+        let sender = self.log.results.0.clone();
+        self.spawn_git(UserEvent::GitLog, move |tool| {
+            let result = tool.map_err(|e| unusable(&e)).and_then(|git| {
+                let cancel = Cancel::default();
+                let oid = git.resolve_revision(&root, &revision, &cancel)?;
+                let listed = git.in_log(&root, &oid, &cancel).unwrap_or(false);
+                Ok((oid, listed))
+            });
+            let _ = sender.send(Loaded::GoTo { revision, result });
+        });
     }
 
     /// 当前标签是否为日志。
@@ -823,6 +872,7 @@ impl App {
                     q.text.clear();
                     q.branch = None;
                     q.author = None;
+                    q.pin = None;
                 });
             }
         }
@@ -961,6 +1011,12 @@ impl App {
     pub(in crate::app) fn poll_log(&mut self) {
         while let Ok(loaded) = self.log.results.1.try_recv() {
             match loaded {
+                Loaded::GoTo { revision, result } => match result {
+                    Ok((oid, listed)) => self.show_log_commit(&oid, !listed),
+                    Err(error) => {
+                        self.notify(t!("git-go-to-failed", revision = revision, error = error));
+                    }
+                },
                 Loaded::Commits {
                     doc,
                     generation,

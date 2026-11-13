@@ -246,6 +246,9 @@ pub struct LogQuery {
     pub author: Option<String>,
     /// 只看改过该文件的提交（文件历史），越过改名继续往前查找。
     pub path: Option<PathBuf>,
+    /// 固定在最前面的提交（完整的提交号），见 [`Git::log_stream`]；「转到提交号、分支或标签」
+    /// 找到的提交不在已列出的提交中时使用。
+    pub pin: Option<String>,
 }
 
 impl LogQuery {
@@ -254,14 +257,20 @@ impl LogQuery {
     /// 这些条件下结果里的父提交大多不在列表里，提交图连不起来；只按分支筛选时提交仍然相连，
     /// 可以画图。
     pub fn graphless(&self) -> bool {
-        !self.text.trim().is_empty() || self.author.is_some() || self.path.is_some()
+        !self.text.trim().is_empty()
+            || self.author.is_some()
+            || self.path.is_some()
+            || self.pin.is_some()
     }
 
-    /// 是否按说明、分支或作者筛选过。
+    /// 是否按说明、分支或作者筛选过，或固定了一个提交。
     ///
     /// 文件历史的文件不算：那本来就是该标签展示的内容。
     pub fn filtered(&self) -> bool {
-        !self.text.trim().is_empty() || self.branch.is_some() || self.author.is_some()
+        !self.text.trim().is_empty()
+            || self.branch.is_some()
+            || self.author.is_some()
+            || self.pin.is_some()
     }
 }
 
@@ -959,7 +968,11 @@ impl Git {
     ///
     /// 文件不在仓库里、`git` 无法启动时返回原因；`git` 报的错在读第一批时返回。
     pub fn log_stream(&self, root: &Path, query: &LogQuery) -> Result<LogStream, String> {
-        let pinned = self.commit_by_hash(root, query.text.trim());
+        // 固定的提交优先；否则筛选文字形如提交号时，按提交号找到的提交排在最前面。
+        let pinned = match &query.pin {
+            Some(oid) => self.commit_by_hash(root, oid),
+            None => self.commit_by_hash(root, query.text.trim()),
+        };
         let mut command = self.command(root);
         command.args(["log", "--date-order", "--decorate=full", "--no-color"]);
         let text = query.text.trim();
@@ -1005,7 +1018,7 @@ impl Git {
     /// 日志筛选同时匹配说明和提交号，使用户粘贴提交号即可定位提交。`git log` 无法按
     /// 「说明或提交号」筛选，因此该提交单独读取并排在最前面。
     fn commit_by_hash(&self, root: &Path, text: &str) -> Option<Box<Commit>> {
-        if !(4..=64).contains(&text.len()) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !is_commit_hash(text) {
             return None;
         }
         let mut command = self.command(root);
@@ -1030,6 +1043,70 @@ impl Git {
             .oid
             .starts_with(&text.to_ascii_lowercase())
             .then(|| Box::new(commit))
+    }
+
+    /// 把提交号（可以缩写）、分支名或标签名 `revision` 解析成完整的提交号。
+    ///
+    /// 提交号也可以是任何分支都走不到的提交（例如修改上次提交之前的那一个），只要对象仍在
+    /// 仓库中。
+    ///
+    /// # Errors
+    ///
+    /// `revision` 为空、含有空白或控制字符、无法唯一解析为一个提交，或 Git 查询失败时返回
+    /// 原因。
+    pub fn resolve_revision(
+        &self,
+        root: &Path,
+        revision: &str,
+        cancel: &Cancel,
+    ) -> Result<String, String> {
+        let unresolved = || winc_i18n::t!("git-go-to-unresolved").to_owned();
+        // 以 `-` 开头的文字会被当成选项；较旧的 Git 的 `rev-parse` 不支持 `--end-of-options`，
+        // 因此直接拒绝。
+        let valid = !revision.is_empty()
+            && !revision.starts_with('-')
+            && !revision
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control());
+        if !valid {
+            return Err(unresolved());
+        }
+        let mut command = self.command(root);
+        command.args(["rev-parse", "--verify", "--quiet"]);
+        command.arg(format!("{revision}^{{commit}}"));
+        let stdout = self
+            .run(&mut command, SHOW_TIMEOUT, cancel)
+            .map_err(|_| unresolved())?;
+        let oid = String::from_utf8_lossy(&stdout).trim().to_owned();
+        if is_commit_hash(&oid) {
+            Ok(oid)
+        } else {
+            Err(unresolved())
+        }
+    }
+
+    /// 提交 `oid` 是否在不筛选的日志中：能从某个分支、远程分支、标签（不含储藏）或 `HEAD`
+    /// 走到，与 [`Git::log_stream`] 列出的范围相同。
+    ///
+    /// # Errors
+    ///
+    /// Git 查询失败时返回原因。
+    pub fn in_log(&self, root: &Path, oid: &str, cancel: &Cancel) -> Result<bool, String> {
+        let mut command = self.command(root);
+        command.args(["for-each-ref", "--format=%(refname)", "--contains"]);
+        command.arg(oid);
+        let stdout = self.run(&mut command, SHOW_TIMEOUT, cancel)?;
+        let listed = String::from_utf8_lossy(&stdout)
+            .lines()
+            .any(|name| !name.is_empty() && name != "refs/stash");
+        if listed {
+            return Ok(true);
+        }
+        // 分离的 `HEAD` 不是引用，单独判断。
+        let mut command = self.command(root);
+        // 完整的十六进制提交号不以 `-` 开头，不会被当成选项。
+        command.args(["merge-base", "--is-ancestor", oid, "HEAD"]);
+        Ok(self.run(&mut command, SHOW_TIMEOUT, cancel).is_ok())
     }
 
     /// 储藏列表，最新的在前。
@@ -1314,6 +1391,11 @@ impl Git {
             Err(e) => Err(describe(&e)),
         }
     }
+}
+
+/// 字符串是否符合完整或缩写提交号的格式。
+pub fn is_commit_hash(text: &str) -> bool {
+    (4..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// 开着的 `git log` 进程，见 [`Git::log_stream`]。

@@ -60,6 +60,21 @@ const OTHER_CONFIRM_LINES: usize = 8;
 const HOST_KEY_LINES: usize = 1;
 
 impl QuestionView {
+    /// 返回「转到提交号、分支或标签」对话框的内容：一个输入框。
+    pub(super) fn go_to_revision() -> Self {
+        Self {
+            title: t!("git-go-to-title").to_owned(),
+            message: None,
+            message_lines: 0,
+            values: Vec::new(),
+            inputs: vec![QuestionInput {
+                label: t!("git-go-to-label"),
+                placeholder: t!("git-go-to-placeholder"),
+            }],
+            confirm: t!("git-go-to-button"),
+        }
+    }
+
     /// 返回添加远程仓库（`editing` 为 `None`）或修改其地址的对话框内容。
     pub(crate) fn remote(editing: Option<&str>) -> QuestionView {
         let input = |label, placeholder| QuestionInput { label, placeholder };

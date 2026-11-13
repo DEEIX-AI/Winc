@@ -4,11 +4,22 @@ use super::*;
 
 impl App {
     /// 比较当前日志里第 `a`、`b` 两行的提交：旧的（下面那行）在左，新的在右。
+    ///
+    /// 固定在最前面的提交（见 `LogQuery::pin`）不在按时间排列的位置上，总是作为旧的一侧：
+    /// 它通常是转到的、已不在任何分支上的较早版本。
     pub(super) fn compare_log_rows(&mut self, a: usize, b: usize) {
         let Some(view) = self.editor.active().and_then(|d| d.log.as_deref()) else {
             return;
         };
-        let (newer, older) = (a.min(b), a.max(b));
+        let pinned = |row: usize| {
+            let oid = view.commits.get(row).map(|c| c.oid.as_str());
+            oid.is_some() && oid == view.query.pin.as_deref()
+        };
+        let (newer, older) = match (pinned(a), pinned(b)) {
+            (true, false) => (b, a),
+            (false, true) => (a, b),
+            _ => (a.min(b), a.max(b)),
+        };
         let (Some(to), Some(from)) = (view.commits.get(newer), view.commits.get(older)) else {
             return;
         };

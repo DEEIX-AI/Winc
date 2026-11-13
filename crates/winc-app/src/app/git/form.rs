@@ -37,6 +37,8 @@ pub(crate) enum FormKind {
     Clone,
     /// 添加远程仓库，或修改 `editing` 的地址。
     Remote { editing: Option<String> },
+    /// 在 Git 日志中转到一个提交：输入提交号、分支名或标签名。
+    GoToRevision,
     /// 交互式变基。
     Rebase(Box<RebaseForm>),
     /// 连接远端主机：主机、端口，见 [`crate::app::remote`]。
@@ -50,6 +52,7 @@ impl FormKind {
             FormKind::Question(prompt, origin) => Some(QuestionView::of(prompt, origin.as_deref())),
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
             FormKind::Connect => Some(QuestionView::connect()),
+            FormKind::GoToRevision => Some(QuestionView::go_to_revision()),
             FormKind::Worktree
             | FormKind::Branch { .. }
             | FormKind::Clone
@@ -247,6 +250,19 @@ impl App {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
             }
             FormKind::Connect => self.connect_plan(dialog),
+            FormKind::GoToRevision => {
+                let revision = dialog.name.text().trim();
+                // 提交号、分支名和标签名都不含空白，也不以 `-` 开头。
+                let problem = revision.starts_with('-') || revision.contains(char::is_whitespace);
+                FormPlan {
+                    problem: problem.then(|| t!("git-go-to-invalid").to_owned()),
+                    confirm: t!("git-go-to-button"),
+                    enabled: !revision.is_empty() && !problem,
+                    base: String::new(),
+                    base_enabled: false,
+                    dir: None,
+                }
+            }
             FormKind::Question(prompt, _) => FormPlan {
                 problem: None,
                 confirm: QuestionView::of(prompt, None).confirm,
@@ -387,6 +403,12 @@ impl App {
             self.submit_connect();
             return;
         }
+        if matches!(dialog.kind, FormKind::GoToRevision) {
+            let revision = dialog.name.text().trim().to_owned();
+            self.close_form_dialog();
+            self.go_to_log_revision(revision);
+            return;
+        }
         // 须在发起操作前记录编号：没有窗口时（测试中）后台操作会同步完成。
         let next = self.branch.started + 1;
         let kind = dialog.kind.clone();
@@ -405,7 +427,7 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
-            FormKind::Question(..) | FormKind::Connect => {}
+            FormKind::Question(..) | FormKind::Connect | FormKind::GoToRevision => {}
             FormKind::Clone => self.submit_clone(),
             FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),
