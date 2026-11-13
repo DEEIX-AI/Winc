@@ -811,10 +811,12 @@ impl App {
             Setting::TerminalShellIntegration => self.config.terminal_shell_integration = Some(on),
             _ => return,
         }
-        // 由命令切换（如 ⌥Z 自动换行）时设置浮层未打开，看不到开关，不必播放动画。
+        // 由命令切换（如 ⌥Z 自动换行）时看不到开关，不必播放动画；开关在设置浮层和「首次设置」
+        // 中可见。
+        let visible = self.settings.open || self.setup_shown();
         self.settings.switch_slide = self
             .clock(super::animation::SWITCH_SLIDE)
-            .filter(|_| self.settings.open)
+            .filter(|_| visible)
             .map(|clock| (setting, clock));
         if setting == Setting::WordWrap {
             self.word_wrap_changed();

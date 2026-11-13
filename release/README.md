@@ -17,7 +17,7 @@ of releasing it again. To retry a failed build, rerun the Release workflow on th
 | `.github/workflows/release.yml` | Entry point: prepare, the four platform builds, and the draft |
 | `.github/workflows/release-arch-repo.yml` | Stages the signed Arch repository after a stable release is published |
 | `.github/workflows/release-{prepare,macos,linux,windows}.yml` | Reusable jobs called by `release.yml` |
-| `.github/actions/build-setup/` | Shared toolchain and cache setup; pins the release Rust version |
+| `.github/actions/build-setup/` | Shared source check and toolchain setup; pins the release Rust version |
 | `release/macos/` | `package.sh` (app, dmg, appcast), `verify.sh`, and Apple signing setup |
 | `release/linux/` | `package.sh` (AppImage and deb), pinned packaging tools, desktop entry and AppRun |
 | `release/linux/arch/` | Arch package recipe, repository staging and installer template |

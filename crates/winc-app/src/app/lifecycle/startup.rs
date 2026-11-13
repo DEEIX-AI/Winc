@@ -102,6 +102,7 @@ impl App {
             split: preview::images::SplitPreview::default(),
             markdown: preview::markdown::MarkdownPreview::default(),
             setup_intro: None,
+            setup_outro: None,
             release_notes: Default::default(),
             pdf: preview::pdf::PdfPreview::default(),
             wallpaper: Default::default(),

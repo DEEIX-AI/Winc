@@ -873,6 +873,8 @@ pub struct App {
     pub(crate) markdown: preview::markdown::MarkdownPreview,
     /// 首次设置开场动画的时钟；没有在播放时为 `None`。
     pub(crate) setup_intro: Option<animation::Clock>,
+    /// 点击「完成」之后从「首次设置」换到开始页的过渡动画的时钟；没有在播放时为 `None`。
+    pub(crate) setup_outro: Option<animation::Clock>,
     /// 更新日志的状态：待显示的更新提示、所在的标签和要显示的版本范围。
     pub(crate) release_notes: release_notes::ReleaseNotes,
     /// 当前标签的 PDF 预览。

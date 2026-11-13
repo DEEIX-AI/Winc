@@ -26,6 +26,13 @@ pub(crate) const CONTENT_START: f32 = 0.70;
 /// 图标淡出途中向上移动的距离（逻辑像素）。
 const SPLASH_RISE: f32 = 12.0;
 
+/// 点击「完成」之后从「首次设置」换到开始页的时长（毫秒）：前段「首次设置」淡出，后段开始页
+/// 淡入，各自的起止见 [`outro_opacity`]。
+///
+/// 取自调参，没有在真实窗口中观察过：淡出约 170 毫秒、淡入约 210 毫秒，与设置浮层出现的时长
+/// 相近。两段不重叠：两个页面的标题位置不同，同时半透明时标题叠成两层。
+pub(in crate::app) const OUTRO: Duration = Duration::from_millis(380);
+
 /// 应用图标，与各平台安装包的图标同一份。
 pub(crate) const ICON: &str = include_str!("../../assets/icon.svg");
 
@@ -70,8 +77,11 @@ impl App {
     }
 
     /// 结束首次设置：开始页换回开始操作和最近目录，之后的启动不再显示。
+    ///
+    /// 「首次设置」先淡出，开始页随后淡入（见 [`OUTRO`]）；动态效果关闭时直接换过去。
     pub(in crate::app) fn finish_setup(&mut self) {
         self.setup_intro = None;
+        self.setup_outro = self.clock(OUTRO);
         self.update_state(|state| state.setup_pending = false);
         self.request_redraw();
     }
@@ -165,6 +175,12 @@ fn posed(build: f32) -> Option<String> {
     svg.push_str("</g>");
     svg.push_str(&ICON[end..]);
     Some(svg)
+}
+
+/// 返回结束首次设置的过渡进行到 `t`（0 到 1，未加缓动）时，「首次设置」和开始页各自的不透明度，
+/// 0 到 1：前者在前 45% 淡出，后者在其后淡入。
+pub(crate) fn outro_opacity(t: f32) -> (f32, f32) {
+    (1.0 - stage(t, 0.0, 0.45), stage(t, 0.45, 1.0))
 }
 
 /// 返回启动动画进行到 `t`（0 到 1，未加缓动）时第 `index` 项内容的不透明度，0 到 1。

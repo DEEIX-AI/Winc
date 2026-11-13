@@ -42,6 +42,20 @@ fn the_logo_builds_up_layer_by_layer_and_ends_as_the_app_icon() {
 }
 
 #[test]
+fn finishing_fades_the_setup_out_before_the_start_page_fades_in() {
+    assert_eq!(outro_opacity(0.0), (1.0, 0.0));
+    assert_eq!(outro_opacity(1.0), (0.0, 1.0));
+    // 「首次设置」先淡出，开始页随后淡入，两者不同时可见。
+    for step in 0..=100 {
+        let (leaving, entering) = outro_opacity(step as f32 / 100.0);
+        assert!(leaving == 0.0 || entering == 0.0, "{step}");
+    }
+    let (leaving, _) = outro_opacity(0.2);
+    let (_, entering) = outro_opacity(0.7);
+    assert!(leaving > 0.0 && leaving < 1.0 && entering > 0.0 && entering < 1.0);
+}
+
+#[test]
 fn the_logo_fades_out_before_the_content_fades_in_one_item_after_another() {
     // 图标先逐层出现，完成后完整地停留，再向上淡出，最后消失。
     let building = splash(0.25).unwrap();

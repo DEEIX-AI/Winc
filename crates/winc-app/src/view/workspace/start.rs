@@ -30,6 +30,8 @@ const DROPDOWN_H: f32 = 26.0;
 const SETUP_BUTTON_H: f32 = 28.0;
 /// 启动动画中窗口中央应用图标的边长（逻辑像素）。
 const SPLASH_LOGO: f32 = 96.0;
+/// 结束首次设置的过渡中，开始页淡入时自下而上移动的距离（逻辑像素）。
+const OUTRO_RISE: f32 = 10.0;
 /// 启动动画中内容淡入时自下而上移动的距离（逻辑像素）。
 const SETUP_RISE: f32 = 8.0;
 /// 最近列表最多显示的目录数（个）。
@@ -75,12 +77,29 @@ fn action_label(action: StartAction) -> &'static str {
 }
 
 /// 绘制开始页，并登记各行的点击区域（`start_hits`）。
+///
+/// 首次设置尚未完成时只显示「首次设置」；刚点击「完成」时「首次设置」淡出，开始页随后自下而上
+/// 淡入，过渡期间「首次设置」不响应点击。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
-    // 首次设置尚未完成：只显示「首次设置」。
     if app.state.setup_pending {
         draw_setup(app, frame);
         return;
     }
+    let Some(t) = app.setup_outro.map(|clock| clock.linear()) else {
+        draw_start(app, frame, 0.0);
+        return;
+    };
+    let (leaving, entering) = crate::app::setup::outro_opacity(t);
+    if leaving > 0.0 {
+        frame.with_opacity(leaving, |frame| draw_setup(app, frame));
+    }
+    app.hits.start.clear();
+    let rise = (1.0 - entering) * OUTRO_RISE;
+    frame.with_opacity(entering, |frame| draw_start(app, frame, rise));
+}
+
+/// 绘制开始操作和最近目录，整体下移 `rise`（逻辑像素），并登记各行的点击区域。
+fn draw_start(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
     let p = app.palette;
     let editor = app.layout.editor;
     let recent = app.state.recent.len().min(MAX_SHOWN);
@@ -99,7 +118,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     let total = title_h + GAP + actions_h + recent_h;
     let w = WIDTH.min(editor.w - 48.0).max(0.0);
     let x = (editor.x + (editor.w - w) / 2.0).round();
-    let mut y = (editor.y + ((editor.h - total) / 2.0 - 24.0).max(16.0)).round();
+    let mut y = (editor.y + ((editor.h - total) / 2.0 - 24.0).max(16.0) + rise).round();
 
     let title = Rect::new(x + 10.0, y, w, 34.0);
     crate::view::label(
