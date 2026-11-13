@@ -13,9 +13,11 @@ pub(crate) mod hits;
 mod input;
 mod lifecycle;
 pub(crate) mod preview;
+mod release_notes;
 pub(crate) mod remote;
 pub(crate) mod scroll;
 mod settings;
+pub(crate) mod setup;
 #[cfg(test)]
 mod snapshot;
 mod status;
@@ -138,6 +140,9 @@ pub enum UserEvent {
     /// 菜单栏的「设置…」（或 ⌘,）被触发；设置已打开时关闭设置。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     OpenSettings,
+    /// 菜单栏的「更新日志」被触发。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    OpenReleaseNotes,
     /// 菜单栏的「安装 winc 命令…」被触发。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     InstallShellCommand,
@@ -157,6 +162,8 @@ pub enum UserEvent {
     /// 仅出现在通过桌面门户选择文件的平台上。
     #[cfg(all(unix, not(target_os = "macos")))]
     PickFailed(Pick, Option<String>),
+    /// 后台已取回更新日志（整理好的 Markdown）；请求失败或内容格式不符时为 `None`。
+    ReleaseNotes(Option<String>),
     /// 后台检查更新发现了新版本（参数为版本号），或状态栏上的更新提示需要收起（`None`）。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     UpdateFound(Option<String>),
@@ -864,6 +871,10 @@ pub struct App {
     pub(crate) split: preview::images::SplitPreview,
     /// Markdown 预览（分栏右侧或仅预览模式）。
     pub(crate) markdown: preview::markdown::MarkdownPreview,
+    /// 首次设置开场动画的时钟；没有在播放时为 `None`。
+    pub(crate) setup_intro: Option<animation::Clock>,
+    /// 更新日志的状态：待显示的更新提示、所在的标签和要显示的版本范围。
+    pub(crate) release_notes: release_notes::ReleaseNotes,
     /// 当前标签的 PDF 预览。
     pub(crate) pdf: preview::pdf::PdfPreview,
     /// 窗口背景图的状态。

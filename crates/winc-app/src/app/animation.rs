@@ -389,6 +389,8 @@ impl App {
         }
         settle(&mut self.settings.mode_slide, |s| s.1);
         settle(&mut self.settings.switch_slide, |s| s.1);
+        settle(&mut self.setup_intro, |c| *c);
+        self.show_update_notice();
         settle(&mut self.log.fade, |c| *c);
         self.settle_hint();
         self.tabs.slides.retain(|s| !s.clock.done());
@@ -483,6 +485,7 @@ impl App {
             || self.alert_card.motion.is_some()
             || self.settings.mode_slide.is_some()
             || self.settings.switch_slide.is_some()
+            || self.setup_intro.is_some()
             || self.log.fade.is_some()
             || self.hint_animating()
             || !self.tabs.slides.is_empty()

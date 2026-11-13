@@ -27,6 +27,7 @@ mod macos;
 mod portal;
 #[cfg(any(windows, test))]
 mod recents;
+mod release_notes;
 mod shell_command;
 mod system;
 mod theme;
@@ -37,6 +38,7 @@ mod updates;
 mod view;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod wayland;
+mod web;
 mod winc;
 #[cfg(windows)]
 mod windows;
@@ -248,6 +250,10 @@ pub fn run() {
         app.state_path = state_path;
         app.backup.root = backup_root;
         app.adopt_restored(restored);
+        // 测量时没有状态文件：不记录版本，开始页也不显示「首次设置」。
+        if app.state_path.is_some() {
+            app.note_version();
+        }
         // 从命令行打开的目录同样记入「最近打开」。
         app.remember_workspace();
         // 上次开着的是远端的目录：启动时没有连接，无法像本机目录那样直接打开，在后台重新连接。
