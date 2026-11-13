@@ -236,7 +236,7 @@ fn new_entry_row_is_drawn_where_it_is_clicked() {
     let row = app.name_input_rect().unwrap();
     assert!(app.layout.tree.contains(row.x, row.y));
     assert_eq!(row.y, app.layout.tree.y);
-    assert!(app.goto_input.is_none());
+    assert!(app.bars.goto_input.is_none());
 
     // 绘制位置与点击判断使用同一个矩形：点击该行时，焦点留在输入框中。
     paint(&mut app);
@@ -522,7 +522,7 @@ fn another_input_taking_focus_finishes_the_name_being_typed() {
     assert!(root.join("notes.md").is_file());
     assert!(app.name_input.is_none());
     app.edit_field(|f| f.insert("2"));
-    assert_eq!(app.goto_input.as_ref().unwrap().text(), "2");
+    assert_eq!(app.bars.goto_input.as_ref().unwrap().text(), "2");
     app.close_prompt();
 
     // 没有输入任何内容就回车：输入行收起，焦点回到文件树，而不是停在已经消失的输入框上。

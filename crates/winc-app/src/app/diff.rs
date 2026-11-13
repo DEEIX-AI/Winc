@@ -511,7 +511,7 @@ impl App {
             side,
             range: (pos, pos),
         });
-        let parts = diff_parts(self.layout.editor, view, self.cell);
+        let parts = diff_parts(self.layout.editor, view, self.metrics.cell);
         let visible = f64::from(parts.body.h / self.fonts.line_height);
         let row = row as f64;
         let top = if view.is_unified() {
@@ -538,7 +538,7 @@ impl App {
         let tab_width = self.editor.tab_width;
         let lh = self.fonts.line_height;
         let editor = self.layout.editor;
-        let cell = self.cell;
+        let cell = self.metrics.cell;
         let Some(view) = self.editor.documents[index].diff.as_deref_mut() else {
             return 0.0;
         };
@@ -899,7 +899,7 @@ impl App {
         let wrap = self.config.word_wrap == Some(true);
         let tab_width = self.editor.active_tab_width();
         let resizing = self.text_width_changing();
-        let (editor, cell) = (self.layout.editor, self.cell);
+        let (editor, cell) = (self.layout.editor, self.metrics.cell);
         let line_height = self.fonts.line_height;
         let Some(doc) = self.editor.active_mut() else {
             return false;
@@ -968,7 +968,7 @@ impl App {
         caret_cell: usize,
     ) {
         let visible = self.visible_lines().saturating_sub(2).max(1);
-        let cell = self.cell;
+        let cell = self.metrics.cell;
         let sticky = self.diff_sticky_depth(index, side, line);
         let (width, pane_height) = {
             let Some(view) = self.editor.documents[index].diff.as_deref() else {
@@ -1112,7 +1112,7 @@ impl App {
     /// 与 `Home` `End` 跳到开头和结尾，`←` `→` 横向滚动。其他按键不处理。
     pub(super) fn diff_key(&mut self, key: &Key, cmd: bool) {
         let page = self.visible_lines().saturating_sub(1).max(1) as f64;
-        let cell = self.cell;
+        let cell = self.metrics.cell;
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
@@ -1486,9 +1486,9 @@ impl App {
     /// 返回当前差异标签的横向滚动范围和轨道；当前标签不是差异时返回 `None`。
     pub(crate) fn diff_hscroll(&self) -> Option<DiffHScroll> {
         let view = self.editor.active()?.diff.as_deref()?;
-        let parts = diff_parts(self.layout.editor, view, self.cell);
+        let parts = diff_parts(self.layout.editor, view, self.metrics.cell);
         let tab_width = self.editor.active_tab_width();
-        Some(DiffHScroll::of(&parts, view, self.cell, tab_width))
+        Some(DiffHScroll::of(&parts, view, self.metrics.cell, tab_width))
     }
 }
 

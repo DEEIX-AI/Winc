@@ -38,11 +38,11 @@ impl App {
         let Some(renderer) = &self.frame.renderer else {
             return;
         };
-        self.ui_metrics = renderer.metrics(FontKind::Ui, self.fonts.ui);
-        self.mono_metrics = renderer.metrics(FontKind::Mono, self.fonts.code);
-        self.cell = self.mono_metrics.cell;
-        self.terminal_metrics = renderer.metrics(FontKind::Terminal, self.fonts.terminal);
-        self.terminal_cell = self.terminal_metrics.cell;
+        self.metrics.ui = renderer.metrics(FontKind::Ui, self.fonts.ui);
+        self.metrics.mono = renderer.metrics(FontKind::Mono, self.fonts.code);
+        self.metrics.cell = self.metrics.mono.cell;
+        self.metrics.terminal = renderer.metrics(FontKind::Terminal, self.fonts.terminal);
+        self.metrics.terminal_cell = self.metrics.terminal.cell;
     }
 
     /// 按配置应用新的字号（逻辑像素）。

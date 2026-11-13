@@ -196,7 +196,7 @@ impl App {
     pub(in crate::app) fn click_sticky(&mut self, row: StickyRow, x: f32) {
         let tab_width = self.editor.active_tab_width();
         let origin = self.layout.text.x + TEXT_PAD;
-        let cell = self.cell;
+        let cell = self.metrics.cell;
         let max = self.max_scroll_line();
         let Some(doc) = self.editor.active_mut() else {
             return;

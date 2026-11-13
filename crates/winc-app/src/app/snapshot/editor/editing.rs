@@ -133,7 +133,7 @@ fn right_clicking_the_text_offers_format_cut_copy_paste() {
     // 在第 `line` 行第 `col` 列（均从 0 起）处按右键。
     let right_click_text = |app: &mut App, line: usize, col: usize| {
         let t = app.layout.text;
-        let x = t.x + TEXT_PAD + col as f32 * app.cell;
+        let x = t.x + TEXT_PAD + col as f32 * app.metrics.cell;
         right_click(app, (x, t.y + (line as f32 + 0.5) * app.fonts.line_height));
     };
     let selection = |app: &App| {
@@ -681,7 +681,7 @@ fn csv_columns_line_up_for_clicks_and_moving_up_and_down() {
     // 点击落在对齐产生的空白中时，光标停在距离更近的字符边界上。
     let t = app.layout.text;
     let doc = app.editor.active().unwrap();
-    let x = t.x + TEXT_PAD - doc.scroll_x + 8.5 * app.cell;
+    let x = t.x + TEXT_PAD - doc.scroll_x + 8.5 * app.metrics.cell;
     let y = t.y + 0.5 * app.fonts.line_height;
     assert_eq!(
         app.pos_at(x, y),
@@ -935,8 +935,8 @@ fn finding_a_match_beyond_the_shown_part_of_a_line_keeps_text_on_screen() {
 
     let find = |app: &mut App| {
         app.open_search(false);
-        app.find.input.set_text("needle");
-        app.search.query = "needle".into();
+        app.bars.find.input.set_text("needle");
+        app.bars.search.query = "needle".into();
         app.search_changed();
         app.status.message = None;
         app.find_next(false);
@@ -949,7 +949,7 @@ fn finding_a_match_beyond_the_shown_part_of_a_line_keeps_text_on_screen() {
     assert_eq!(col, 60_008);
     assert!(doc.shows_whole_line(line) && !doc.shows_whole_line(line + 1));
     // 匹配在文本区内：滚动位置在匹配的左侧不到一屏处。
-    let x = 60_008.0 * app.cell;
+    let x = 60_008.0 * app.metrics.cell;
     let scroll = doc.scroll_x;
     assert!(
         scroll < x && scroll > x - app.layout.text.w && scroll <= max_x,
@@ -957,7 +957,7 @@ fn finding_a_match_beyond_the_shown_part_of_a_line_keeps_text_on_screen() {
     );
     // 匹配处画有文字，点击该处落在匹配上。
     let t = app.layout.text;
-    let at = t.x + TEXT_PAD + x - scroll + 0.4 * app.cell;
+    let at = t.x + TEXT_PAD + x - scroll + 0.4 * app.metrics.cell;
     let row = (doc.row_of(line) as f64 - doc.scroll_line) as f32 + 0.5;
     let pos = app.pos_at(at, t.y + row * app.fonts.line_height).unwrap();
     assert_eq!(pos, app.editor.active().unwrap().selection.from());
@@ -1076,12 +1076,15 @@ fn long_lines_expand_by_clicking_or_by_the_setting() {
 
     // 展开的行可以滚动到行尾：行尾画有文字，点击处与字符对应；未展开的行在该处没有内容。
     let wide = app.text_max_scroll_x();
-    assert!(wide > narrow + 19_000.0 * app.cell, "{narrow} {wide}");
-    let near_end = wide - 20.0 * app.cell;
+    assert!(
+        wide > narrow + 19_000.0 * app.metrics.cell,
+        "{narrow} {wide}"
+    );
+    let near_end = wide - 20.0 * app.metrics.cell;
     scroll_to(&mut app, near_end);
     assert!(inked(&app, 0) && !inked(&app, 2));
     let (t, lh) = (app.layout.text, app.fonts.line_height);
-    let x = t.x + TEXT_PAD + 29_990.0 * app.cell - app.editor.active().unwrap().scroll_x;
+    let x = t.x + TEXT_PAD + 29_990.0 * app.metrics.cell - app.editor.active().unwrap().scroll_x;
     assert_eq!(app.pos_at(x, t.y + 0.5 * lh), Some(29_990));
 
     // 设置打开后所有的行都显示整行，不再有截断说明。
@@ -1117,10 +1120,10 @@ fn the_far_end_of_a_whole_line_is_drawn_in_place() {
     let mut app = app_with(&path, false);
     app.config.whole_lines = Some(true);
     paint(&mut app);
-    app.editor.active_mut().unwrap().scroll_x = (col - 20) as f32 * app.cell;
+    app.editor.active_mut().unwrap().scroll_x = (col - 20) as f32 * app.metrics.cell;
     paint(&mut app);
 
-    let (t, lh, cell) = (app.layout.text, app.fonts.line_height, app.cell);
+    let (t, lh, cell) = (app.layout.text, app.fonts.line_height, app.metrics.cell);
     let scroll = f64::from(app.editor.active().unwrap().scroll_x);
     let expected = f64::from(t.x + TEXT_PAD) + col as f64 * f64::from(cell) - scroll;
     let image = app.frame.renderer.as_ref().unwrap().image().unwrap();

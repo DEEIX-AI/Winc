@@ -24,7 +24,7 @@ fn point(app: &App, line: usize, col: usize) -> (f32, f32) {
     let t = app.layout.text;
     let doc = app.editor.active().unwrap();
     (
-        t.x + TEXT_PAD - doc.scroll_x + col as f32 * app.cell,
+        t.x + TEXT_PAD - doc.scroll_x + col as f32 * app.metrics.cell,
         t.y + ((line as f64 - doc.scroll_line) as f32 + 0.5) * app.fonts.line_height,
     )
 }
@@ -284,8 +284,8 @@ fn line_ends_cursor_undo_and_keyboard_columns() {
 
     // 查找条打开时 ⌥↩ 把全部查找结果变成选区，焦点回到编辑区。
     app.run_action(Action::Find);
-    app.find.input.set_text("let");
-    app.search.query = "let".into();
+    app.bars.find.input.set_text("let");
+    app.bars.search.query = "let".into();
     app.search_changed();
     assert!(press(&mut app, &["alt"], KeyCode::Enter));
     assert_eq!(app.focus, Focus::Editor);

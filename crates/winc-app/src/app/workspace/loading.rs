@@ -175,7 +175,7 @@ impl App {
         self.when_loaded(move |app| {
             then(app);
             if switched {
-                app.scroll_glide = None;
+                app.scroll.glide = None;
             }
         });
     }

@@ -125,7 +125,7 @@ impl App {
         let amount = match delta {
             MouseScrollDelta::LineDelta(_, y) => {
                 if !held || zoomed.is_none() {
-                    self.wheel.zoom = 0.0;
+                    self.scroll.wheel.zoom = 0.0;
                     return false;
                 }
                 // macOS 按滚动速度给出不足一格的量，每个事件按一格计。
@@ -137,10 +137,10 @@ impl App {
             }
             MouseScrollDelta::PixelDelta(delta) => {
                 if fresh {
-                    self.wheel.zooming = held && zoomed.is_some();
-                    self.wheel.zoom = 0.0;
+                    self.scroll.wheel.zooming = held && zoomed.is_some();
+                    self.scroll.wheel.zoom = 0.0;
                 }
-                if !self.wheel.zooming {
+                if !self.scroll.wheel.zooming {
                     return false;
                 }
                 if !held {
@@ -157,10 +157,10 @@ impl App {
         let Some(zoomed) = zoomed else {
             return true;
         };
-        self.wheel.zoom += amount;
-        if self.wheel.zoom.abs() >= 1.0 {
-            let up = self.wheel.zoom > 0.0;
-            self.wheel.zoom = 0.0;
+        self.scroll.wheel.zoom += amount;
+        if self.scroll.wheel.zoom.abs() >= 1.0 {
+            let up = self.scroll.wheel.zoom > 0.0;
+            self.scroll.wheel.zoom = 0.0;
             self.dismiss_hint();
             // PDF 和图片缩放时鼠标处的内容保持在原位。
             match zoomed {

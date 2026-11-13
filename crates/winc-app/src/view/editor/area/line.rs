@@ -38,7 +38,7 @@ impl Screen<'_> {
         let (text_rect, lh) = (self.text_rect, self.lh);
         // 第一段的顶边和基线按 `f64` 计算（见 `Screen::line_y`），基线的算法同 `baseline_in`。
         let y = self.line_y(line);
-        let metrics = self.app.mono_metrics;
+        let metrics = self.app.metrics.mono;
         let lead = (lh - (metrics.ascent + metrics.descent)) / 2.0 + metrics.ascent;
         let baseline = (y + f64::from(lead)).round();
         // `head` 为行首最多 `MAX_LINE_CHARS` 个字符：着色只处理这一部分，多数行的内容全在其中。
@@ -259,7 +259,7 @@ impl Screen<'_> {
         let (line_start, line_end) = (row.line_start, row.line_end);
         let shown = row.shown_cols();
         if self.show_matches {
-            let current = app.search.current_match();
+            let current = app.bars.search.current_match();
 
             // 只取可见列内的结果；可见段延伸到行尾时取到行尾，包括截断后未显示的部分。
             let to = if shown.end == row.chars.len() {
@@ -267,7 +267,7 @@ impl Screen<'_> {
             } else {
                 line_start + shown.end
             };
-            for &(start, end) in app.search.matches_in(line_start + shown.start, to) {
+            for &(start, end) in app.bars.search.matches_in(line_start + shown.start, to) {
                 let color = if current == Some((start, end)) {
                     p.search_current
                 } else {

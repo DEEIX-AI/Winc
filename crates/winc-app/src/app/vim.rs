@@ -257,14 +257,15 @@ impl App {
         };
         state.highlight
             && shared().options.hlsearch
-            && !self.find.open
-            && self.search.regex
-            && (state.pattern.as_ref()).is_some_and(|(query, _)| query.regex == self.search.query)
+            && !self.bars.find.open
+            && self.bars.search.regex
+            && (state.pattern.as_ref())
+                .is_some_and(|(query, _)| query.regex == self.bars.search.query)
     }
 
     /// 返回输入条的位置：Vim 模式的命令行与查找占状态栏所在的一行，其余位于编辑区顶部居中。
     pub(crate) fn prompt_bar(&self) -> Rect {
-        if self.prompt_kind.is_vim() {
+        if self.bars.prompt_kind.is_vim() {
             self.layout.status
         } else {
             crate::layout::goto_bar(self.layout.editor)
@@ -416,10 +417,10 @@ impl App {
             tab_width,
             page: rows.saturating_sub(1).max(1),
             visible,
-            text_width: ((self.layout.text.w / self.cell.max(1.0)) as usize).max(1),
+            text_width: ((self.layout.text.w / self.metrics.cell.max(1.0)) as usize).max(1),
             rows,
             max_scroll: self.max_scroll_line(),
-            cell: self.cell,
+            cell: self.metrics.cell,
             scroll_off: self.vim_scroll_off(),
             numbers: self.config.line_numbers != Some(false),
             whitespace: self.config.render_whitespace == Some(winc_config::RenderWhitespace::All),
@@ -543,8 +544,8 @@ impl App {
         let prompting = self.vim_prompt_open() && self.focus == Focus::Prompt;
         if state.vim.prompt().is_some() {
             if prompting {
-                let text = (self.goto_input.as_ref()).map(|field| field.text().to_owned());
-                let searching = self.prompt_kind != PromptKind::VimCommand;
+                let text = (self.bars.goto_input.as_ref()).map(|field| field.text().to_owned());
+                let searching = self.bars.prompt_kind != PromptKind::VimCommand;
                 if searching && state.previewed != text {
                     let typed = text.clone().unwrap_or_default();
                     let result = self.vim_with(&mut state, |vim, shared, host| {
@@ -785,7 +786,7 @@ impl App {
                         self.navigate(!back);
                     }
                 }
-                Deferred::MarkJump => self.navigation.mark_jump(),
+                Deferred::MarkJump => self.jumps.navigation.mark_jump(),
                 Deferred::Reveal(line, place) => {
                     self.vim_reveal(line, place);
                     revealed = true;
@@ -904,11 +905,11 @@ impl App {
 
     /// 把 `query` 设为查找条的查找内容：查找条与 Vim 层的查找是同一份查找状态。
     fn vim_set_highlight(&mut self, query: &Query) {
-        self.search.query.clone_from(&query.regex);
-        self.search.regex = true;
-        self.search.case_sensitive = !query.ignore_case;
-        self.search.whole_word = false;
-        self.find.input.set_text(&query.regex);
+        self.bars.search.query.clone_from(&query.regex);
+        self.bars.search.regex = true;
+        self.bars.search.case_sensitive = !query.ignore_case;
+        self.bars.search.whole_word = false;
+        self.bars.find.input.set_text(&query.regex);
     }
 
     /// 格式化第 `first` 至 `last` 行：复用格式化选区，之后选区收回为光标。

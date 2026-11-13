@@ -474,7 +474,7 @@ impl App {
         let (first, origin) = self.terminal_origin();
         let lh = self.fonts.terminal_line_height;
         let y = origin + display.saturating_sub(first) as f32 * lh;
-        let right = self.terminal_grid().x + end.col as f32 * self.terminal_cell;
+        let right = self.terminal_grid().x + end.col as f32 * self.metrics.terminal_cell;
         if display >= first && y < bar.bottom() && right > bar.x {
             self.scroll_terminal(((bar.bottom() - y) / lh).ceil() as isize);
         }

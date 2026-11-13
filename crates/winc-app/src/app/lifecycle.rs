@@ -43,3 +43,32 @@ pub(crate) struct FrameState {
     /// 是否需要重新绘制。
     pub(in crate::app) dirty: bool,
 }
+
+/// 各字体的行高、基线等尺寸和字符格的宽度（逻辑像素），随字体设置和缩放比例更新。
+pub(crate) struct TextMetrics {
+    /// 界面字体的行高、基线等尺寸（逻辑像素）。
+    pub ui: Metrics,
+    /// 等宽字体的行高、基线等尺寸（逻辑像素）。
+    pub mono: Metrics,
+    /// 等宽字体单个字符格的宽度（逻辑像素）。
+    pub cell: f32,
+    /// 终端字体的行高、基线等尺寸（逻辑像素）。
+    pub terminal: Metrics,
+    /// 终端里一个字符格的宽度（逻辑像素）。
+    pub terminal_cell: f32,
+}
+
+/// 创建窗口时使用一次的参数：位置、是否全屏、共用的字形缓存和激活令牌。
+pub(crate) struct Opening {
+    /// 新窗口的位置（外框左上角，物理像素）与来源窗口的缩放比例；新窗口相对来源窗口向右下错开。
+    ///
+    /// 创建窗口时按当前显示器校验后使用一次，见 `App::cascade_from`。
+    pub(crate) cascade: Option<((f64, f64), f64)>,
+    /// 窗口创建并显示后是否进入全屏（来源窗口处于全屏时），使用一次。
+    pub(crate) fullscreen: bool,
+    /// 新窗口与来源窗口共用的字体和字形缓存（创建渲染器时使用一次）。
+    pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
+    /// 待使用的激活令牌（见 [`App::set_activation`]）。
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub(in crate::app) activation: Option<winit::window::ActivationToken>,
+}

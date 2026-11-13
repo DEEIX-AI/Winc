@@ -172,7 +172,7 @@ fn the_caret_is_drawn_as_a_block_a_bar_or_an_underline() {
 
     // 块覆盖一个字符格，竖线宽 2 逻辑像素，横线高 2 逻辑像素、宽一个字符格。
     let scale = (SCALE * SCALE) as usize;
-    let cell = app.cell.round() as usize;
+    let cell = app.metrics.cell.round() as usize;
     let line = app.fonts.line_height as usize;
     assert_eq!(bar, 2 * (line - 2) * scale);
     assert_eq!(underline, cell * 2 * scale);
@@ -370,7 +370,10 @@ fn searching_uses_the_prompt_previews_the_match_and_keeps_a_history() {
     let (mut app, dir) = vim_app("vim-search", "one two\nthree two\nfour\n");
     keys(&mut app, "/");
     assert_eq!(app.focus, Focus::Prompt);
-    assert_eq!(app.prompt_kind, PromptKind::VimSearch { forward: true });
+    assert_eq!(
+        app.bars.prompt_kind,
+        PromptKind::VimSearch { forward: true }
+    );
     assert_eq!(app.vim_mode(), None);
 
     // 输入过程中光标即时移到第一处匹配，匹配被高亮；回车之后停在该处。
@@ -387,9 +390,12 @@ fn searching_uses_the_prompt_previews_the_match_and_keeps_a_history() {
 
     // 再次打开时可以翻出上一次的模式；放弃输入时光标回到原处，高亮取消。
     keys(&mut app, "?");
-    assert_eq!(app.prompt_kind, PromptKind::VimSearch { forward: false });
+    assert_eq!(
+        app.bars.prompt_kind,
+        PromptKind::VimSearch { forward: false }
+    );
     assert!(app.vim_prompt_key(&Key::Named(NamedKey::ArrowUp), ""));
-    assert_eq!(app.goto_input.as_ref().unwrap().text(), "two");
+    assert_eq!(app.bars.goto_input.as_ref().unwrap().text(), "two");
     paint(&mut app);
     assert_eq!(head(&app), 14);
     app.close_prompt();
@@ -643,7 +649,7 @@ fn the_command_line_sits_in_the_status_row_with_history_and_completion() {
     let (mut app, dir) = vim_app("vim-command", "one two\nthree\nfour\nfive\n");
     keys(&mut app, ":");
     assert_eq!(
-        (app.focus, app.prompt_kind.clone()),
+        (app.focus, app.bars.prompt_kind.clone()),
         (Focus::Prompt, PromptKind::VimCommand)
     );
     // 输入条占状态栏所在的一行；状态栏隐藏时临时显示。
@@ -670,7 +676,7 @@ fn the_command_line_sits_in_the_status_row_with_history_and_completion() {
 
     // 带次数与可视模式下预填范围。
     keys(&mut app, "gg2:");
-    assert_eq!(app.goto_input.as_ref().unwrap().text(), ".,.+1");
+    assert_eq!(app.bars.goto_input.as_ref().unwrap().text(), ".,.+1");
     app.edit_field(|field| field.insert(">"));
     app.submit_prompt();
     assert_eq!(text(&app), "    one two\n    four\nfive\n");
@@ -680,7 +686,7 @@ fn the_command_line_sits_in_the_status_row_with_history_and_completion() {
     keys(&mut app, ":");
     let up = Key::Named(NamedKey::ArrowUp);
     let down = Key::Named(NamedKey::ArrowDown);
-    let line = |app: &App| app.goto_input.as_ref().unwrap().text().to_owned();
+    let line = |app: &App| app.bars.goto_input.as_ref().unwrap().text().to_owned();
     assert!(app.vim_prompt_key(&up, ""));
     assert_eq!(line(&app), "set ic");
     assert!(app.vim_prompt_key(&up, ""));
@@ -696,21 +702,21 @@ fn the_command_line_sits_in_the_status_row_with_history_and_completion() {
 
     // `Tab` 补全命令名与选项名，连续按下时轮换。
     let tab = Key::Named(NamedKey::Tab);
-    app.goto_input.as_mut().unwrap().set_text("");
+    app.bars.goto_input.as_mut().unwrap().set_text("");
     assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
     app.edit_field(|field| field.insert("tabn"));
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(line(&app), "tabnew");
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(line(&app), "tabnext");
-    app.goto_input.as_mut().unwrap().set_text("");
+    app.bars.goto_input.as_mut().unwrap().set_text("");
     assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
     app.edit_field(|field| field.insert("set sm"));
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(line(&app), "set smartcase");
 
     // `Ctrl-R` 之后是寄存器名，`Ctrl-R Ctrl-W` 是光标处的词。
-    app.goto_input.as_mut().unwrap().set_text("");
+    app.bars.goto_input.as_mut().unwrap().set_text("");
     assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
     app.pointer.modifiers = ModifiersState::CONTROL;
     assert!(app.vim_prompt_key(&Key::Character("r".into()), "r"));
@@ -955,7 +961,7 @@ fn uppercase_marks_reach_other_files_and_are_kept_in_the_state() {
     keys(&mut app, ":");
     app.edit_field(|field| field.insert("b ot"));
     assert!(app.vim_prompt_key(&Key::Named(NamedKey::Tab), ""));
-    assert_eq!(app.goto_input.as_ref().unwrap().text(), "b other.txt");
+    assert_eq!(app.bars.goto_input.as_ref().unwrap().text(), "b other.txt");
     app.submit_prompt();
     assert_eq!(text(&app), "other\n");
     let _ = std::fs::remove_dir_all(&dir);

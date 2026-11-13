@@ -59,7 +59,7 @@ pub(super) fn serve(app: &mut App, term: &winc_pty::Terminal) {
 pub(super) fn cell_center(app: &App, row: usize, col: usize) -> (f32, f32) {
     let grid = app.terminal_grid();
     (
-        grid.x + (col as f32 + 0.5) * app.terminal_cell,
+        grid.x + (col as f32 + 0.5) * app.metrics.terminal_cell,
         grid.y + (row as f32 + 0.5) * app.fonts.terminal_line_height,
     )
 }
@@ -142,7 +142,10 @@ fn the_panel_takes_its_room_from_the_editor_card() {
     // 网格放得下的列数行数和面板一致。
     let size = app.terminal_size();
     let grid = terminal::grid_rect(l.terminal, app.fonts.terminal_line_height);
-    assert_eq!(f32::from(size.cols), (grid.w / app.terminal_cell).floor());
+    assert_eq!(
+        f32::from(size.cols),
+        (grid.w / app.metrics.terminal_cell).floor()
+    );
     assert_eq!(
         f32::from(size.rows),
         (grid.h / app.fonts.terminal_line_height).floor()
@@ -165,13 +168,13 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
     let code = app.fonts.code;
     // 没有单独设置时用默认字号，与编辑区的默认字号相同。
     assert_eq!((app.fonts.terminal, code), (CODE_FONT, CODE_FONT));
-    assert_eq!(app.terminal_cell, app.cell);
+    assert_eq!(app.metrics.terminal_cell, app.metrics.cell);
     let cols = app.terminal_size().cols;
 
     // 终端字号变大：网格的列数变少，编辑区不变。
     app.config.terminal_size = Some(code + 6.0);
     app.apply_font_sizes();
-    assert!(app.terminal_cell > app.cell);
+    assert!(app.metrics.terminal_cell > app.metrics.cell);
     assert!(app.fonts.terminal_line_height > app.fonts.line_height);
     assert!(app.terminal_size().cols < cols);
     assert_eq!(app.fonts.code, code);
@@ -453,9 +456,9 @@ fn dragging_selects_and_command_c_copies() {
     // 从第 0 行第 2 格拖到第 1 行第 4 格（按两格之间的缝隙判定）。
     let (x0, y0) = cell_center(&app, 0, 2);
     let (x1, y1) = cell_center(&app, 1, 4);
-    app.on_mouse_move(x0 - app.terminal_cell / 2.0, y0);
+    app.on_mouse_move(x0 - app.metrics.terminal_cell / 2.0, y0);
     app.on_mouse_down(MouseButton::Left);
-    app.on_mouse_move(x1 + app.terminal_cell / 2.0, y1);
+    app.on_mouse_move(x1 + app.metrics.terminal_cell / 2.0, y1);
     app.on_mouse_up(MouseButton::Left);
     assert!(press(&mut app, &["term"], Char('c')));
     assert_eq!(app.clipboard.copied.as_deref(), Some("cargo build\nerror"));
@@ -668,7 +671,7 @@ fn the_wheel_moves_rows_by_pixels_and_clicks_follow_them() {
     let top = app.terminal_view().y;
     assert!(origin < top);
     let line = tab.row_at(first).unwrap().line(tab);
-    let x = app.terminal_view().x + app.terminal_cell * 0.5;
+    let x = app.terminal_view().x + app.metrics.terminal_cell * 0.5;
     app.on_mouse_move(x, top + 0.5);
     app.on_mouse_down(MouseButton::Left);
     let tab = app.terminal.tab().unwrap();
@@ -1673,7 +1676,7 @@ fn option_click_moves_the_shell_cursor_at_the_prompt() {
 
     // 光标在第 9 格（行尾），点第 2 格：左移 7 次。
     let (x, y) = cell_center(&app, 0, 2);
-    app.on_mouse_move(x - app.terminal_cell / 2.0 + 0.5, y);
+    app.on_mouse_move(x - app.metrics.terminal_cell / 2.0 + 0.5, y);
     app.on_mouse_down(winit::event::MouseButton::Left);
     app.on_mouse_up(winit::event::MouseButton::Left);
     assert_eq!(inputs(&app).concat(), b"\x1b[D".repeat(7));

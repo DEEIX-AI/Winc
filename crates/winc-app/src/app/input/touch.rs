@@ -265,8 +265,8 @@ impl App {
             self.drop_drags();
             // 落指即接管滚动：过渡停在屏幕上显示的位置，惯性滚动停止。
             self.settle_glides();
-            self.wheel.glide = None;
-            self.fling = None;
+            self.scroll.wheel.glide = None;
+            self.scroll.fling = None;
             self.dismiss_hint();
             self.pointer.cursor_inside = true;
             self.on_mouse_move(point.0, point.1);

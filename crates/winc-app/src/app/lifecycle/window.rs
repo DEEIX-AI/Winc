@@ -131,7 +131,7 @@ impl App {
         if let Some(window) = &self.window.handle {
             window.set_minimized(false);
             #[cfg(all(unix, not(target_os = "macos")))]
-            let activated = (self.activation.take())
+            let activated = (self.opening.activation.take())
                 .is_some_and(|token| crate::wayland::activate(window, token));
             #[cfg(not(all(unix, not(target_os = "macos"))))]
             let activated = false;
@@ -147,7 +147,7 @@ impl App {
     pub(crate) fn set_activation(&mut self, token: Option<String>) {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            self.activation = token.map(winit::window::ActivationToken::from_raw);
+            self.opening.activation = token.map(winit::window::ActivationToken::from_raw);
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         let _ = token;
@@ -255,12 +255,12 @@ impl App {
             self.close_picker();
             return;
         }
-        if self.goto_input.is_some() && self.focus != Focus::Prompt {
-            self.goto_input = None;
+        if self.bars.goto_input.is_some() && self.focus != Focus::Prompt {
+            self.bars.goto_input = None;
         }
         // 切换到不能替换的标签时收起替换。
-        if self.find.replace_open && !self.can_replace() {
-            self.find.replace_open = false;
+        if self.bars.find.replace_open && !self.can_replace() {
+            self.bars.find.replace_open = false;
             if self.focus == Focus::Replace {
                 self.focus = Focus::Search;
             }
@@ -278,8 +278,8 @@ impl App {
             ISLAND_MARGIN
         };
         let rows = match (
-            self.find.open && self.editor.active.is_some(),
-            self.find.replace_open,
+            self.bars.find.open && self.editor.active.is_some(),
+            self.bars.find.replace_open,
         ) {
             (false, _) => 0,
             (true, false) => 1,
@@ -606,9 +606,10 @@ impl App {
         // 高亮状态尚未推算完、大文件尚未搜完时，马上绘制下一帧，不按刷新率等：每帧本身有预算
         // （高亮 `HIGHLIGHT_BUDGET` 行、查找一个 8 ms 的时间片），已经不比刷新间隔短，按刷新率
         // 等反而常常错过一次刷新。
-        let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
+        let searching =
+            self.bars.find.open || self.bars.find.pending_jump.is_some() || self.vim_highlights();
         self.frame.dirty |=
-            self.caches.highlight_pending || (searching && !self.search.is_complete());
+            self.caches.highlight_pending || (searching && !self.bars.search.is_complete());
         // 终端查找同样按时间片进行：这一帧之后再找一个时间片，没找完就马上绘制下一帧。
         self.frame.dirty |= self.terminal_find_tick();
         // 动画帧按显示器的刷新率安排。winit 在 macOS 上请求重画后立即绘制，不等待屏幕刷新，
@@ -670,8 +671,8 @@ impl App {
             Next::QuickOpen => self.open_picker(),
             Next::Find(query) => {
                 self.open_search(false);
-                self.find.input.set_text(&query);
-                self.search.query = query;
+                self.bars.find.input.set_text(&query);
+                self.bars.search.query = query;
                 self.search_changed();
             }
             Next::Highlight => {
@@ -686,8 +687,8 @@ impl App {
         if let Some(command) = self.frame.bench.terminal_command(ready) {
             self.terminal_input(format!("{command}\n").into_bytes());
         }
-        let searching = self.find.open || self.find.pending_jump.is_some();
-        let done = !self.caches.highlight_pending && (!searching || self.search.is_complete());
+        let searching = self.bars.find.open || self.bars.find.pending_jump.is_some();
+        let done = !self.caches.highlight_pending && (!searching || self.bars.search.is_complete());
         if self.frame.bench.on_progress(done) {
             self.closing.quit_requested = true;
         }

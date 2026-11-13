@@ -172,7 +172,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         .map(|(a, b)| (a.min(b), a.max(b)))
         .filter(|(a, b)| a < b);
     // 查找条在查预览的文字时，标出匹配。
-    let search = &app.search;
+    let search = &app.bars.search;
     let matches = (app.layout.search.h > 0.0
         && md.find_doc.is_some()
         && search.document() == md.find_doc.as_ref().map(|d| d.id))

@@ -366,14 +366,18 @@ impl App {
     /// 返回鼠标所在输入框对应的焦点；只考虑正在显示的输入框。
     pub(in crate::app) fn field_at(&self, x: f32, y: f32) -> Option<Focus> {
         let visible = [
-            (Focus::Search, self.find.open, &self.find.input),
+            (Focus::Search, self.bars.find.open, &self.bars.find.input),
             (
                 Focus::Replace,
-                self.find.open && self.find.replace_open,
-                &self.find.replace_input,
+                self.bars.find.open && self.bars.find.replace_open,
+                &self.bars.find.replace_input,
             ),
         ];
-        let prompt = self.goto_input.as_ref().map(|f| (Focus::Prompt, true, f));
+        let prompt = self
+            .bars
+            .goto_input
+            .as_ref()
+            .map(|f| (Focus::Prompt, true, f));
         let rename = (self.terminal.rename.as_ref()).map(|(_, f)| (Focus::TerminalRename, true, f));
         let terminal_find =
             (self.terminal.find.as_ref()).map(|f| (Focus::TerminalFind, true, &f.field));

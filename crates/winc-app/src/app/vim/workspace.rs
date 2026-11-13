@@ -263,7 +263,7 @@ impl App {
             None if winc_backend::fs::is_file(&path) => self.open_path(&path),
             None => return self.flash(t!("editor-vim-no-file")),
         }
-        self.navigation.mark_jump();
+        self.jumps.navigation.mark_jump();
         self.focus = Focus::Editor;
         self.when_loaded(move |app| {
             let Some(doc) = app.editor.active_mut() else {

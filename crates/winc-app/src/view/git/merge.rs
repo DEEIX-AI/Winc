@@ -399,7 +399,7 @@ fn draw_side_pane(
     let body_y = rect.y + PANE_HEADER;
     let body = Rect::new(rect.x, body_y, rect.w, (rect.h - PANE_HEADER).max(0.0));
     let clip = Rect::new(ribbon.x, body_y, ribbon.w, body.h);
-    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     let lh = app.fonts.line_height;
     let total = source.text.len_lines();
     let gutter_w = pane_gutter_width(app, total);
@@ -460,7 +460,7 @@ fn draw_side_pane(
         let band = Rect::new(rect.x, row_y(line), rect.w, lh);
         let baseline = baseline_in(band, ascent, descent);
         let number = (line + 1).to_string();
-        let number_x = gutter.right() - PANE_PAD - number.chars().count() as f32 * app.cell;
+        let number_x = gutter.right() - PANE_PAD - number.chars().count() as f32 * app.metrics.cell;
         frame.text(
             FontKind::Mono,
             app.fonts.code,
@@ -535,7 +535,7 @@ fn draw_side_pane(
 /// 返回行数为 `total` 的一侧行号栏的宽度（逻辑像素）。
 fn pane_gutter_width(app: &App, total: usize) -> f32 {
     let digits = total.to_string().len().max(2) as f32;
-    (digits * app.cell + PANE_PAD * 2.0).round()
+    (digits * app.metrics.cell + PANE_PAD * 2.0).round()
 }
 
 /// 绘制三栏合并的标题行和底部操作栏。

@@ -154,7 +154,7 @@ impl App {
         if self.picker.open {
             self.close_picker();
         }
-        if self.goto_input.is_some() {
+        if self.bars.goto_input.is_some() {
             self.close_prompt();
         }
         self.finish_name_input();

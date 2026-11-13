@@ -309,13 +309,13 @@ fn draw_code(app: &App, frame: &mut Frame<'_>, place: &Place, area: Rect) {
         &mut tokens,
     );
 
-    let cell = app.cell;
+    let cell = app.metrics.cell;
     let fit = (area.w / cell).floor() as usize;
     let skip = match place.marks.first() {
         Some(mark) if mark.end + 2 > fit => (mark.end + 4).saturating_sub(fit).min(mark.start),
         _ => 0,
     };
-    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     let baseline = (area.y + (area.h - (ascent + descent)) / 2.0 + ascent).round();
     let size = app.fonts.code;
 

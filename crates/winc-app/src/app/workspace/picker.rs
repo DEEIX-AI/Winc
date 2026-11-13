@@ -277,7 +277,7 @@ impl App {
         let y = text.y + (row - doc.scroll_line) as f32 * self.fonts.line_height;
         let (line, col) = doc.text().pos_to_line_col(pos);
         let cell = doc.col_to_cell(line, col, self.editor.active_tab_width());
-        let x = text.x + TEXT_PAD - doc.scroll_x + cell as f32 * self.cell;
+        let x = text.x + TEXT_PAD - doc.scroll_x + cell as f32 * self.metrics.cell;
         Some((x, y))
     }
 
@@ -369,7 +369,8 @@ impl App {
         if query.trim().is_empty() {
             let active = self.editor.active().and_then(|d| d.path.as_deref());
             let recent: Vec<usize> = self
-                .recent_files
+                .history
+                .files
                 .iter()
                 .filter(|p| Some(p.as_path()) != active)
                 .filter_map(|p| self.picker.index.position_of(p))
@@ -467,9 +468,9 @@ impl App {
         let Some(path) = self.editor.active().and_then(|d| d.path.clone()) else {
             return;
         };
-        self.recent_files.retain(|p| *p != path);
-        self.recent_files.insert(0, path);
-        self.recent_files.truncate(MAX_RECENT_FILES);
+        self.history.files.retain(|p| *p != path);
+        self.history.files.insert(0, path);
+        self.history.files.truncate(MAX_RECENT_FILES);
     }
 
     /// 上下移动选中项，`down` 为 `true` 时向下；到达两端后停止，不绕回。

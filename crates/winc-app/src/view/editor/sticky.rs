@@ -43,7 +43,8 @@ pub(super) fn draw_sticky(app: &mut App, frame: &mut Frame<'_>, index: usize) {
         let row = rows[i];
         if app.config.line_numbers != Some(false) {
             let number = (row.line + 1).to_string();
-            let number_x = layout.gutter.right() - GUTTER_PADDING - number.len() as f32 * app.cell;
+            let number_x =
+                layout.gutter.right() - GUTTER_PADDING - number.len() as f32 * app.metrics.cell;
             frame.text(
                 FontKind::Mono,
                 app.fonts.code,
@@ -112,7 +113,7 @@ pub(in crate::view) fn draw_pinned_rows(
 ) {
     let p = app.palette;
     let line_height = app.fonts.line_height;
-    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     frame.within(area, |frame| {
         for (i, row) in rows.iter().enumerate().rev() {
             let band = Rect::new(area.x, area.y + row.y, area.w, line_height);

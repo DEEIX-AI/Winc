@@ -6,7 +6,7 @@ use super::*;
 
 /// 返回输入条中的文字。
 fn field(app: &App) -> String {
-    app.goto_input.as_ref().unwrap().text().to_owned()
+    app.bars.goto_input.as_ref().unwrap().text().to_owned()
 }
 
 #[test]
@@ -84,13 +84,13 @@ fn completion_restarts_when_the_text_changed_without_a_key() {
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(field(&app), "e other.txt");
     // 输入法上屏或鼠标粘贴换掉了文字：补全重新开始，起点不落在字符中间。
-    app.goto_input.as_mut().unwrap().set_text("文");
+    app.bars.goto_input.as_mut().unwrap().set_text("文");
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(field(&app), "文");
-    app.goto_input.as_mut().unwrap().set_text("e 文o");
+    app.bars.goto_input.as_mut().unwrap().set_text("e 文o");
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(field(&app), "e 文o");
-    app.goto_input.as_mut().unwrap().set_text("set sm");
+    app.bars.goto_input.as_mut().unwrap().set_text("set sm");
     assert!(app.vim_prompt_key(&tab, ""));
     assert_eq!(field(&app), "set smartcase");
     app.close_prompt();

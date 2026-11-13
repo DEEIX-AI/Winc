@@ -2,7 +2,7 @@
 //! 光标、输入法组字、查找条；有 shell 集成时还有命令块：色带、时长和退出码、折起的输出、
 //! 吸顶的命令行。
 //!
-//! 网格按终端字体等宽排版（每格宽 `app.terminal_cell`、每行高 `terminal_line_height`，字形缓存
+//! 网格按终端字体等宽排版（每格宽 `app.metrics.terminal_cell`、每行高 `terminal_line_height`，字形缓存
 //! 与编辑区共用）：一行先画所有样式段的底色，再画选区和查找的底色，最后画字和下划线，宽字符不会
 //! 被后一段的底色盖住；对比度不够时按 `terminal.minimumContrast` 调整文字的颜色，以颜色拼接
 //! 图形的字符（制表符、方块元素、Powerline 分隔符）除外。
@@ -75,8 +75,8 @@ fn draw_panel(app: &mut App, frame: &mut Frame<'_>) {
         return;
     };
 
-    let (cell, lh) = (app.terminal_cell, app.fonts.terminal_line_height);
-    let (ascent, descent) = (app.terminal_metrics.ascent, app.terminal_metrics.descent);
+    let (cell, lh) = (app.metrics.terminal_cell, app.fonts.terminal_line_height);
+    let (ascent, descent) = (app.metrics.terminal.ascent, app.metrics.terminal.descent);
     let colors = Colors {
         p,
         reverse: tab.modes.has(Modes::REVERSE),
@@ -347,8 +347,9 @@ fn draw_outcome(
     let time_w = duration.as_deref().map_or(0.0, |d| measure(frame, d) + 8.0);
     let w = icon + code_w + time_w;
     let x = row.right() - w - 4.0;
-    let used = cells(line.trimmed()).map(|(_, w)| w).sum::<usize>() as f32 * app.terminal_cell;
-    if row.x + used + 2.0 * app.terminal_cell > x {
+    let used =
+        cells(line.trimmed()).map(|(_, w)| w).sum::<usize>() as f32 * app.metrics.terminal_cell;
+    if row.x + used + 2.0 * app.metrics.terminal_cell > x {
         return;
     }
     let center = (x + icon / 2.0, row.y + row.h / 2.0);
@@ -404,8 +405,8 @@ fn draw_sticky(
     }
     let baseline = baseline_in(
         row,
-        app.terminal_metrics.ascent,
-        app.terminal_metrics.descent,
+        app.metrics.terminal.ascent,
+        app.metrics.terminal.descent,
     );
     match tab.sticky_line(index) {
         Some(line) => {

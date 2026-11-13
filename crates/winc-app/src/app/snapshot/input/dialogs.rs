@@ -7,7 +7,7 @@ use winit::keyboard::{Key, NamedKey};
 
 fn opened(app: &App, which: Action) -> bool {
     match which {
-        Action::GoToLine => app.goto_input.is_some(),
+        Action::GoToLine => app.bars.goto_input.is_some(),
         _ => app.picker.open,
     }
 }
@@ -64,7 +64,7 @@ fn clicking_the_editor_closes_the_go_to_bar() {
     crate::app::snapshot::click(&mut app, (e.x + e.w / 2.0, e.y + e.h / 2.0));
     paint(&mut app);
     assert_eq!(app.focus, Focus::Editor);
-    assert!(app.goto_input.is_none());
+    assert!(app.bars.goto_input.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

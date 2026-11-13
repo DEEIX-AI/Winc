@@ -250,9 +250,12 @@ impl App {
                 };
             }
         };
-        self.recent_files.iter_mut().for_each(relocate);
-        self.closed.iter_mut().for_each(|(path, _)| relocate(path));
-        self.navigation.relocate(from, to);
+        self.history.files.iter_mut().for_each(relocate);
+        self.history
+            .closed
+            .iter_mut()
+            .for_each(|(path, _)| relocate(path));
+        self.jumps.navigation.relocate(from, to);
         self.picker_touched(vec![from.to_path_buf(), to.to_path_buf()]);
         self.files_changed_under_results();
     }

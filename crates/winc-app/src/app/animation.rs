@@ -356,8 +356,8 @@ impl App {
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.motion.fold_motion, |m| m.clock);
         self.finish_diff_fold(false);
-        settle(&mut self.scroll_glide, |g| g.clock);
-        self.pane_glides.retain(|g| !g.clock.done());
+        settle(&mut self.scroll.glide, |g| g.clock);
+        self.scroll.pane_glides.retain(|g| !g.clock.done());
         settle(&mut self.picker.motion, |m| m.clock);
         settle(&mut self.preview.pdf.zoom_motion, |m| m.clock);
         settle(&mut self.preview.picture_view.zoom_motion, |m| m.clock);
@@ -461,10 +461,10 @@ impl App {
             || self.global.rows_moving()
             || self.motion.fold_motion.is_some()
             || self.motion.diff_fold.is_some()
-            || self.scroll_glide.is_some()
-            || self.wheel.glide.is_some()
-            || !self.pane_glides.is_empty()
-            || self.fling.is_some()
+            || self.scroll.glide.is_some()
+            || self.scroll.wheel.glide.is_some()
+            || !self.scroll.pane_glides.is_empty()
+            || self.scroll.fling.is_some()
             || self.scroll_input_live()
             || self.picker.motion.is_some()
             || self.preview.pdf.zoom_motion.is_some()

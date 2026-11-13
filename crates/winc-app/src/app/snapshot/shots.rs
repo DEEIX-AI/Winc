@@ -408,9 +408,9 @@ fn snapshot_global_search() {
         // 文件内查找条展开替换：「替换」「全部替换」是图标按钮，鼠标停在「替换」上。
         app.open_path(&dir.join("src/config.rs"));
         app.open_search(true);
-        app.search.query = "Config".into();
-        app.find.input.set_text("Config");
-        app.find.replace_input.set_text("Settings");
+        app.bars.search.query = "Config".into();
+        app.bars.find.input.set_text("Config");
+        app.bars.find.replace_input.set_text("Settings");
         paint(&mut app);
         let one = SearchParts::new(app.layout.search).replace_one;
         app.on_mouse_move(one.x + 4.0, one.y + 4.0);

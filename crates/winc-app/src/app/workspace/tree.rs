@@ -662,7 +662,7 @@ impl App {
 
     /// 插入输入名字的那一行：新建 `kind`，输入框为 `field`，新文件的内容为 `contents`。
     fn open_new_entry(&mut self, kind: EntryKind, field: TextField, contents: Option<Vec<u8>>) {
-        self.goto_input = None;
+        self.bars.goto_input = None;
         let Some(ws) = self.editor.workspace.as_mut() else {
             self.flash(winc_i18n::t!("workspace-open-folder-first"));
             return;
@@ -706,7 +706,7 @@ impl App {
         self.ime.field_preedit.clear();
         // 焦点不能留在已经不存在的输入框上；跳转条同样使用 `Focus::Prompt`，
         // 跳转条打开时保持焦点不变。
-        if self.focus == Focus::Prompt && self.goto_input.is_none() {
+        if self.focus == Focus::Prompt && self.bars.goto_input.is_none() {
             self.focus = Focus::Tree;
         }
         self.relayout();

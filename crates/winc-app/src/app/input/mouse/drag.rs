@@ -420,7 +420,7 @@ impl App {
             .min(std::time::Duration::from_millis(100));
         self.pointer.drag_scrolled_at = Some(now);
         let lh = self.fonts.line_height;
-        let cell = self.cell;
+        let cell = self.metrics.cell;
         let seconds = elapsed.as_secs_f32();
         let max = self.max_scroll_line();
         if let Some(doc) = self.editor.active_mut() {

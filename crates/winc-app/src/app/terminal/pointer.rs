@@ -61,7 +61,7 @@ impl App {
     fn terminal_cell(&self, x: f32, y: f32) -> Option<(u16, u16)> {
         let tab = self.terminal.tab()?;
         let grid = self.terminal_grid();
-        let col = ((x - grid.x) / self.terminal_cell).floor().max(0.0) as usize;
+        let col = ((x - grid.x) / self.metrics.terminal_cell).floor().max(0.0) as usize;
         let cols = usize::from(tab.size.cols).max(1);
         let line = match tab.row_at(self.terminal_display_row(y))? {
             ViewRow::Line(line) => line,
@@ -84,7 +84,7 @@ impl App {
         } else {
             y
         };
-        let cells = (x - grid.x) / self.terminal_cell;
+        let cells = (x - grid.x) / self.metrics.terminal_cell;
         let col = if between {
             cells.round()
         } else {

@@ -34,7 +34,7 @@ fn closing_unsaved_tabs_asks_save_discard_or_cancel() {
         Some(main.as_path())
     );
     assert_eq!(app.editor.active().unwrap().selection.head, 5);
-    assert!(app.closed.is_empty());
+    assert!(app.history.closed.is_empty());
 
     // 保存：先保存，再关闭。
     app.run(Command::Insert("// y\n".into()));

@@ -94,7 +94,7 @@ fn go_to_definition_tries_this_file_then_the_project() {
     app.go_to_definition();
     assert!(!app.picker.open);
     assert_eq!(
-        app.name_hint.as_ref().map(|h| h.text.as_str()),
+        app.jumps.name_hint.as_ref().map(|h| h.text.as_str()),
         Some("未找到「run」的其他用法")
     );
 
@@ -120,7 +120,7 @@ fn go_to_definition_tries_this_file_then_the_project() {
     caret_on(&mut app, "import", 0);
     app.go_to_definition();
     assert_eq!(
-        app.name_hint.as_ref().map(|h| h.text.as_str()),
+        app.jumps.name_hint.as_ref().map(|h| h.text.as_str()),
         Some("未找到「import」的定义")
     );
     app.select(1, 1);
@@ -128,7 +128,7 @@ fn go_to_definition_tries_this_file_then_the_project() {
     caret_on(&mut app, "  ", 0);
     app.go_to_definition();
     assert_eq!(
-        app.name_hint.as_ref().map(|h| h.text.as_str()),
+        app.jumps.name_hint.as_ref().map(|h| h.text.as_str()),
         Some("光标处无可查找的名称")
     );
 
@@ -371,7 +371,7 @@ fn back_and_forward_retrace_jumps() {
     assert_eq!(active_name(&app), "util.py");
     app.navigate(true);
     assert_eq!(where_am_i(&app).0, "main.py");
-    assert!(!app.navigation.can_go(true));
+    assert!(!app.jumps.navigation.can_go(true));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -935,7 +935,7 @@ fn hints_hang_on_the_name_and_go_away() {
     // 没有其他用法：提示显示在名字旁边并对齐名字的开头，不写入状态栏。
     caret_on(&mut app, "run", 0);
     app.go_to_definition();
-    let hint = app.name_hint.as_ref().unwrap();
+    let hint = app.jumps.name_hint.as_ref().unwrap();
     assert_eq!(hint.text, "未找到「run」的其他用法");
     let doc = app.editor.active().unwrap();
     assert_eq!(
@@ -949,20 +949,20 @@ fn hints_hang_on_the_name_and_go_away() {
     // 点击、滚动时消失（测试中没有动画，直接清除）。
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
-    assert!(app.name_hint.is_none());
+    assert!(app.jumps.name_hint.is_none());
     caret_on(&mut app, "run", 0);
     app.go_to_definition();
     app.on_wheel(MouseScrollDelta::LineDelta(0.0, -1.0));
-    assert!(app.name_hint.is_none());
+    assert!(app.jumps.name_hint.is_none());
 
     // 停留时间结束后自动消失；未到时间时返回下次检查的时刻。
     caret_on(&mut app, "run", 0);
     app.go_to_definition();
     let now = std::time::Instant::now();
     assert!(app.hint_tick(now).is_some());
-    assert!(app.name_hint.is_some());
+    assert!(app.jumps.name_hint.is_some());
     app.hint_tick(now + std::time::Duration::from_secs(10));
-    assert!(app.name_hint.is_none());
+    assert!(app.jumps.name_hint.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

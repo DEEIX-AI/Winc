@@ -28,7 +28,7 @@ fn document() -> App {
 #[test]
 fn touch_taps_position_the_caret_at_high_dpi_and_double_taps_select() {
     let mut app = document();
-    let x = app.layout.text.x + TEXT_PAD + app.cell * 3.0;
+    let x = app.layout.text.x + TEXT_PAD + app.metrics.cell * 3.0;
     let y = app.layout.text.y + app.fonts.line_height / 2.0;
     touch(&mut app, 1, TouchPhase::Started, x, y);
     assert_eq!(app.editor.active().unwrap().selection.head, 0);
@@ -48,12 +48,12 @@ fn touch_taps_position_the_caret_at_high_dpi_and_double_taps_select() {
 #[test]
 fn double_tap_tolerates_finger_offset_but_mouse_keeps_tight_tolerance() {
     let mut app = document();
-    let x = app.layout.text.x + TEXT_PAD + app.cell * 2.0;
+    let x = app.layout.text.x + TEXT_PAD + app.metrics.cell * 2.0;
     let y = app.layout.text.y + app.fonts.line_height / 2.0;
     touch(&mut app, 1, TouchPhase::Started, x, y);
     touch(&mut app, 1, TouchPhase::Ended, x, y);
     // 第二次落指在两个方向上的偏移均超过鼠标的连击容差、小于 `TAP_SLOP`，且仍在同一个词内。
-    let second = x + app.cell.min(10.0);
+    let second = x + app.metrics.cell.min(10.0);
     touch(&mut app, 2, TouchPhase::Started, second, y + 6.0);
     touch(&mut app, 2, TouchPhase::Ended, second, y + 6.0);
     assert_eq!(
@@ -188,7 +188,7 @@ fn touch_scrolls_by_logical_pixels_without_moving_the_selection() {
     assert!((doc.scroll_line * f64::from(app.fonts.line_height) - 100.0).abs() < 0.01);
     assert_eq!(doc.selection, selection);
     assert_eq!(app.pointer.drag, Drag::None);
-    assert!(app.wheel.glide.is_none());
+    assert!(app.scroll.wheel.glide.is_none());
 }
 
 #[test]

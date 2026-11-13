@@ -51,7 +51,7 @@ pub(super) fn draw_editor_scrollbar(app: &mut App, frame: &mut Frame<'_>, index:
         ruler.runs(frame, MARK_LANE, rows, color);
     };
     if show_matches {
-        marks(app.search.lines(), p.search_current);
+        marks(app.bars.search.lines(), p.search_current);
     } else if let Some(lines) = occurrences {
         marks(&lines, p.ruler_occurrence);
     }

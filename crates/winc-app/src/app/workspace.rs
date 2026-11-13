@@ -69,3 +69,15 @@ pub(crate) struct DiskState {
     /// `None`。
     pub(in crate::app) ordered: Option<mpsc::Sender<OrderedTask>>,
 }
+
+/// 本窗口最近关闭的标签、最近切换到的文件和最近使用的命令。
+pub(crate) struct History {
+    /// 最近切换到的文件，最近的在前。
+    ///
+    /// 快速打开（`⌘P`）未输入查询时先列出这些文件（当前文件除外），回车即可切回上一个文件。
+    pub files: Vec<PathBuf>,
+    /// 命令面板中最近使用的命令，最近的在前；未输入查询时先列出这些命令。
+    pub commands: Vec<crate::keymap::Action>,
+    /// 最近关闭的标签（路径和光标位置），⇧⌘T 按关闭的相反顺序重新打开。
+    pub closed: Vec<(PathBuf, usize)>,
+}

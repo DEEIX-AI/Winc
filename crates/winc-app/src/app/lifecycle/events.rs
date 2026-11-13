@@ -38,7 +38,7 @@ impl ApplicationHandler<UserEvent> for App {
             .filter(|_| self.config.restore_window != Some(false) && !self.frame.bench.silent());
         // 从已有窗口打开的新窗口使用记录的大小（没有记录时使用默认大小），位置相对来源窗口向
         // 右下方偏移。偏移后的位置与记录的位置都按当前显示器校验，不在任何显示器上时由系统决定。
-        let cascade = self.cascade.take().map(|(at, scale)| WindowFrame {
+        let cascade = self.opening.cascade.take().map(|(at, scale)| WindowFrame {
             position: Some(at),
             scale,
             maximized: false,
@@ -90,7 +90,7 @@ impl ApplicationHandler<UserEvent> for App {
             use winit::platform::wayland::WindowAttributesExtWayland;
             attributes = attributes.with_name("winc", "winc");
             // 激活令牌：Wayland 上新窗口凭该令牌切换到前台，X11 上凭该令牌结束启动通知。
-            if let Some(token) = self.activation.take() {
+            if let Some(token) = self.opening.activation.take() {
                 attributes = attributes.with_activation_token(token);
             }
         }
@@ -152,7 +152,7 @@ impl ApplicationHandler<UserEvent> for App {
         .collect();
 
         // 同一进程中新开的窗口复用来源窗口的字体和字形缓存，两者配置相同，无需重新加载。
-        let renderer = match self.glyphs_from.take() {
+        let renderer = match self.opening.glyphs_from.take() {
             Some(glyphs) => Renderer::with_glyphs(window.clone(), self.palette.frame_bg, glyphs),
             None => Renderer::new(
                 window.clone(),
@@ -251,7 +251,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         #[cfg(not(target_os = "macos"))]
         window.set_visible(true);
-        if std::mem::take(&mut self.open_fullscreen) {
+        if std::mem::take(&mut self.opening.fullscreen) {
             self.enter_fullscreen();
         }
 

@@ -42,3 +42,25 @@ pub(crate) struct EditorCaches {
     /// 光标旁括号的配对结果缓存。
     pub brace_cache: Option<(BraceKey, Option<(usize, usize)>)>,
 }
+
+/// 编辑区顶部的输入条：查找条与跳转条。
+pub(crate) struct InputBars {
+    /// 当前查找的内容、各文档里已找到的匹配和替换状态。
+    pub search: Search,
+    /// 查找条的界面状态。
+    pub find: editor::find::FindBar,
+    /// 跳转条（⌃G）的输入；`None` 表示跳转条未打开。
+    pub goto_input: Option<TextField>,
+    /// 跳转条的当前用途。
+    pub prompt_kind: PromptKind,
+}
+
+/// 跳转：位置历史、后台的定义查找和名字旁的提示。
+pub(crate) struct Jumps {
+    /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
+    pub(crate) name_hint: Option<NameHint>,
+    /// 「后退」「前进」使用的位置历史。
+    pub(crate) navigation: editor::navigation::Navigation,
+    /// 正在后台进行的项目内定义查找。
+    pub(in crate::app) definitions: Option<editor::definition::DefinitionSearch>,
+}

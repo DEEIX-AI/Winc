@@ -63,7 +63,6 @@ pub use lifecycle::title_bar::WindowControl;
 pub(crate) use lifecycle::title_bar::resize_cursor;
 pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
-pub use scroll::ScrollGlide;
 pub(crate) use scroll::ScrollTarget;
 pub use settings::{DialogCache, SettingsState};
 pub use status::motion::{StatusEntry, StatusKey, StatusMotion};
@@ -788,16 +787,8 @@ pub struct App {
     pub palette: &'static Palette,
     /// 界面字体和等宽字体的字体、字号。
     pub fonts: ViewFonts,
-    /// 界面字体的行高、基线等尺寸（逻辑像素）。
-    pub ui_metrics: Metrics,
-    /// 等宽字体的行高、基线等尺寸（逻辑像素）。
-    pub mono_metrics: Metrics,
-    /// 等宽字体单个字符格的宽度（逻辑像素）。
-    pub cell: f32,
-    /// 终端字体的行高、基线等尺寸（逻辑像素）。
-    pub terminal_metrics: Metrics,
-    /// 终端里一个字符格的宽度（逻辑像素）。
-    pub terminal_cell: f32,
+    /// 各字体的行高、基线等尺寸和字符格的宽度（逻辑像素），随字体设置和缩放比例更新。
+    pub(crate) metrics: lifecycle::TextMetrics,
 
     // 焦点、鼠标和键盘
     /// 键盘焦点所在的区域。
@@ -838,14 +829,14 @@ pub struct App {
     pub key_path: status::breadcrumb::KeyPath,
     /// 文件树的界面状态。
     pub tree: workspace::tree::TreeState,
-    /// 各区域滚动条的显示状态：平时隐藏，滚动后或鼠标移到滚动条上时显示。
-    pub(crate) scrollbars: Scrollbars,
+    /// 滚动的状态：滚轮与触控板的输入、平滑滚动的过渡、惯性滚动和滚动条的显示。
+    pub(crate) scroll: scroll::ScrollState,
 
     // 侧栏和文件树
     /// 侧栏的界面状态。
     pub sidebar: workspace::Sidebar,
-    /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
-    pub(crate) name_hint: Option<NameHint>,
+    /// 跳转：位置历史、后台的定义查找和名字旁的提示。
+    pub(crate) jumps: editor::Jumps,
     /// 新建工作树对话框；未打开时为 `None`。
     ///
     /// 打开时覆盖整个窗口，键盘和鼠标事件优先交给对话框处理。
@@ -854,14 +845,6 @@ pub struct App {
     pub(crate) alert: Option<lifecycle::alert::InAppAlert>,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
-    /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
-    pub(crate) scroll_glide: Option<ScrollGlide>,
-    /// 各区域（文件树、列表、预览）跳转式滚动的过渡，每个区域至多一项。
-    pub(crate) pane_glides: Vec<scroll::PaneGlide>,
-    /// 触摸滚动抬手后的惯性滚动；没有时为 `None`。
-    pub(crate) fling: Option<scroll::Fling>,
-    /// 滚轮与触控板滚动的状态。
-    pub wheel: scroll::Wheel,
     /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
     preview_tab: Option<winc_editor::DocumentId>,
     /// 文件树中正在重命名的项及其输入框；没有时为 `None`。
@@ -876,14 +859,10 @@ pub struct App {
     pub(crate) vim: Option<Box<vim::VimState>>,
 
     // 查找条和跳转条
-    /// 当前查找的内容、各文档里已找到的匹配和替换状态。
-    pub search: Search,
-    /// 查找条的界面状态。
-    pub find: editor::find::FindBar,
+    /// 编辑区顶部的输入条：查找条与跳转条。
+    pub(crate) bars: editor::InputBars,
     /// 阅读时固定的词或短选区及其颜色编号，按标记时间从早到晚排列。
     pub(crate) word_highlights: Vec<(usize, WordHighlight)>,
-    /// 跳转条（⌃G）的输入；`None` 表示跳转条未打开。
-    pub goto_input: Option<TextField>,
 
     /// 侧栏搜索面板的状态。
     pub global: GlobalSearch,
@@ -895,22 +874,14 @@ pub struct App {
     pub picker: workspace::picker::Picker,
     /// 与磁盘的同步：目录的监视，以及文件在后台的读取、保存和改动。
     pub(crate) disk: workspace::DiskState,
-    /// 最近切换到的文件，最近的在前。
-    ///
-    /// 快速打开（`⌘P`）未输入查询时先列出这些文件（当前文件除外），回车即可切回上一个文件。
-    pub recent_files: Vec<PathBuf>,
-    /// 命令面板中最近使用的命令，最近的在前；未输入查询时先列出这些命令。
-    pub recent_commands: Vec<crate::keymap::Action>,
+    /// 本窗口最近关闭的标签、最近切换到的文件和最近使用的命令。
+    pub(crate) history: workspace::History,
     /// 两段组合键（如 `⌘K ⌘S`）的第一段，正在等待第二段。
     pub(crate) pending_chord: Option<crate::keymap::Stroke>,
-    /// 「后退」「前进」使用的位置历史。
-    pub(crate) navigation: editor::navigation::Navigation,
     /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。
     pub location_toggled: std::collections::HashSet<PathBuf>,
     /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
     pub branch_folders: std::collections::HashSet<(bool, String)>,
-    /// 正在后台进行的项目内定义查找。
-    definitions: Option<editor::definition::DefinitionSearch>,
 
     /// 设置浮层：当前页、分类和各输入框。
     pub settings: SettingsState,
@@ -937,8 +908,6 @@ pub struct App {
     pub merge: git::merge::MergeState,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: diff::RediffState,
-    /// 跳转条的当前用途。
-    pub prompt_kind: PromptKind,
 
     // 右键菜单、关闭和退出
     /// 右键菜单的目标和内容，选中一项时据此执行。
@@ -949,8 +918,6 @@ pub struct App {
     pub trash: fn(&Path) -> std::io::Result<()>,
     /// 关闭与退出流程的状态。
     pub closing: lifecycle::closing::Closing,
-    /// 最近关闭的标签（路径和光标位置），⇧⌘T 按关闭的相反顺序重新打开。
-    pub closed: Vec<(PathBuf, usize)>,
     /// 退出前是否需要询问用户（各窗口共用同一个值，见 [`crate::winc::Shared::ask_on_quit`]）。
     pub(crate) ask_on_quit: Arc<AtomicBool>,
 
@@ -977,17 +944,8 @@ pub struct App {
     pub(crate) shared: std::rc::Rc<crate::winc::Shared>,
     /// 配置的版本号：本窗口每写入一次配置文件加 1，应用层据此把新配置发给其他窗口。
     pub(crate) config_rev: u64,
-    /// 新窗口的位置（外框左上角，物理像素）与来源窗口的缩放比例；新窗口相对来源窗口向右下错开。
-    ///
-    /// 创建窗口时按当前显示器校验后使用一次，见 `App::cascade_from`。
-    pub(crate) cascade: Option<((f64, f64), f64)>,
-    /// 窗口创建并显示后是否进入全屏（来源窗口处于全屏时），使用一次。
-    pub(crate) open_fullscreen: bool,
-    /// 新窗口与来源窗口共用的字体和字形缓存（创建渲染器时使用一次）。
-    pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
-    /// 待使用的激活令牌（见 [`App::set_activation`]）。
-    #[cfg(all(unix, not(target_os = "macos")))]
-    activation: Option<winit::window::ActivationToken>,
+    /// 创建窗口时使用一次的参数：位置、是否全屏、共用的字形缓存和激活令牌。
+    pub(crate) opening: lifecycle::Opening,
 }
 
 impl App {
@@ -1178,14 +1136,15 @@ impl App {
     fn advance_search(&mut self) {
         // 查找条关闭时也可能有等待中的跳转：⌘G、F3 在大文件中一个时间片内没有搜到下一处；
         // Vim 层的查找在查找条关闭时同样高亮匹配。
-        let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
+        let searching =
+            self.bars.find.open || self.bars.find.pending_jump.is_some() || self.vim_highlights();
         if searching && let Some((id, _)) = self.update_diff_find() {
             // 记录的跳转只对当时的文档有效，切换标签后作废。
-            match self.find.pending_jump {
+            match self.bars.find.pending_jump {
                 Some((pending, pos, backwards)) if pending == id => {
                     self.jump_to_match(pos, backwards);
                 }
-                Some(_) => self.find.pending_jump = None,
+                Some(_) => self.bars.find.pending_jump = None,
                 None => {}
             }
             self.apply_line_filter();
@@ -1200,19 +1159,19 @@ impl App {
         };
         match doc {
             Some(doc) if searching => {
-                self.search.update(doc);
+                self.bars.search.update(doc);
 
                 // 记录的跳转只对当时的文档有效，切换标签后作废。
-                match self.find.pending_jump {
+                match self.bars.find.pending_jump {
                     Some((id, pos, backwards)) if id == doc.id => {
                         self.jump_to_match(pos, backwards);
                     }
-                    Some(_) => self.find.pending_jump = None,
+                    Some(_) => self.bars.find.pending_jump = None,
                     None => {}
                 }
             }
             // 标签全部关闭时，等待中的跳转作废；否则会一直按「尚未搜完」处理，每帧都继续绘制。
-            None => self.find.pending_jump = None,
+            None => self.bars.find.pending_jump = None,
             Some(_) => {}
         }
         self.apply_line_filter();

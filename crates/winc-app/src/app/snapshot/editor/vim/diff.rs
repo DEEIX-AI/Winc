@@ -148,7 +148,7 @@ fn the_caret_in_a_diff_follows_the_mode() {
     assert_eq!(caret(&app), Some((LEFT, 0, CaretShape::Block)));
     // 块覆盖一个字符格，横线高 2 逻辑像素、宽一个字符格。
     let scale = (SCALE * SCALE) as usize;
-    let cell = app.cell.round() as usize;
+    let cell = app.metrics.cell.round() as usize;
     let line = app.fonts.line_height as usize;
     let block = caret_pixels(&mut app);
     assert!(block > cell * (line - 4) * scale, "{block}");

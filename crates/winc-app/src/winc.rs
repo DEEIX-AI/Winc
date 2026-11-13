@@ -753,9 +753,9 @@ impl Winc {
         app.apply_preview_state();
         app.state_path = template.state_path;
         app.backup.root = template.backup_root;
-        app.cascade = cascade;
-        app.open_fullscreen = fullscreen;
-        app.glyphs_from = glyphs;
+        app.opening.cascade = cascade;
+        app.opening.fullscreen = fullscreen;
+        app.opening.glyphs_from = glyphs;
         self.add(key, app);
         self.active = Some(key);
         let Some(app) = self.by_key(key) else {

@@ -65,10 +65,10 @@ fn a_branch_can_be_renamed_including_the_current_one() {
     app.run_branch_op(BranchOp::Rename, branch.clone());
     assert_eq!(app.focus, Focus::Prompt);
     assert_eq!(
-        app.goto_input.as_ref().unwrap().selected_text(),
+        app.bars.goto_input.as_ref().unwrap().selected_text(),
         branch.name
     );
-    app.goto_input.as_mut().unwrap().set_text("renamed");
+    app.bars.goto_input.as_mut().unwrap().set_text("renamed");
     app.submit_prompt();
     let head = output_of(&root, &["symbolic-ref", "--short", "HEAD"]);
     assert_eq!(head.trim(), "renamed");

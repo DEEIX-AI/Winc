@@ -17,11 +17,11 @@ use crate::layout::{PickerParts, SearchButton};
 /// 绘制查找条（⌘F、⌥⌘F）：浮在编辑区右上角，内含查找输入框，展开后含替换输入框。
 pub(super) fn draw_search(app: &mut App, frame: &mut Frame<'_>) {
     // 绘制时需要更新输入框中记录的几何信息：先将输入框从 `app` 中取出，绘制后放回。
-    let mut find = std::mem::take(&mut app.find.input);
-    let mut replace = std::mem::take(&mut app.find.replace_input);
+    let mut find = std::mem::take(&mut app.bars.find.input);
+    let mut replace = std::mem::take(&mut app.bars.find.replace_input);
     let caret = draw_search_bar(app, frame, &mut find, &mut replace);
-    app.find.input = find;
-    app.find.replace_input = replace;
+    app.bars.find.input = find;
+    app.bars.find.replace_input = replace;
 
     if caret.is_some() {
         app.ime.cursor = caret;
@@ -42,7 +42,7 @@ fn draw_search_bar(
     let p = app.palette;
     let bar = app.layout.search;
     let parts = SearchParts::new(bar);
-    let search = &app.search;
+    let search = &app.bars.search;
     let hovered = |button| app.pointer.hover == Hover::Search(button);
     let expanded = parts.replace_field.w > 0.0;
     let can_replace = app.can_replace();
@@ -150,7 +150,7 @@ fn draw_search_bar(
     }
     // 「只显示匹配的行」开关：开启时与三个选项开关一样铺强调色底色。差异标签里用不了（两侧
     // 按改动对齐），预览上也用不了（没有「行」），置灰。
-    let on = app.find.filter_lines;
+    let on = app.bars.find.filter_lines;
     let filter_usable = app.editor.active().is_none_or(|d| d.diff.is_none())
         && !app.markdown_focused()
         && !app.markdown_live();
@@ -215,7 +215,7 @@ fn draw_search_bar(
 
 /// 绘制跳转条（⌃G）：样式与查找条相同，浮在编辑区顶部居中，右端显示总行数。
 pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
-    let Some(mut field) = app.goto_input.take() else {
+    let Some(mut field) = app.bars.goto_input.take() else {
         return;
     };
 
@@ -226,7 +226,7 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
         draw_card(frame, p, bar, RADIUS_BAR, p.popup_bg);
 
         // 跳转到行、储藏说明，或者输入新标签的名字。
-        let (title, placeholder, hint) = match &app.prompt_kind {
+        let (title, placeholder, hint) = match &app.bars.prompt_kind {
             crate::app::PromptKind::GoTo => {
                 let total = app.editor.active().map_or(0, |d| d.text().line_count());
                 (
@@ -270,7 +270,7 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
         draw_bar_field(app, frame, area, &mut field, placeholder, focused)
     };
 
-    app.goto_input = Some(field);
+    app.bars.goto_input = Some(field);
 
     if caret.is_some() {
         app.ime.cursor = caret;

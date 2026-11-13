@@ -44,7 +44,7 @@ impl App {
         let numbers = if self.config.line_numbers == Some(false) {
             0.0
         } else {
-            digits.max(2) as f32 * self.cell
+            digits.max(2) as f32 * self.metrics.cell
         };
         numbers + 2.0 * GUTTER_PADDING + self.blame_width()
     }
@@ -55,7 +55,7 @@ impl App {
     /// 下限取自调参：窗口极窄时每个显示行仍能显示若干字符。
     fn wrap_cells(&self) -> usize {
         let room = self.layout.text.w - TEXT_PAD - SCROLLBAR_HIT;
-        ((room / self.cell).floor() as usize).max(10)
+        ((room / self.metrics.cell).floor() as usize).max(10)
     }
 
     /// 文本区宽度是否正在逐帧变化：侧栏或终端面板的动画进行中，或正在拖动两者的分隔条。
@@ -165,7 +165,7 @@ impl App {
             }
         }
         if changed {
-            self.scroll_glide = None;
+            self.scroll.glide = None;
             self.caches.sticky_cache = None;
             self.motion.fold_motion = None;
             self.clamp_scroll();
@@ -176,7 +176,7 @@ impl App {
     /// 处理自动换行开关的变化：重新断行，视图顶部的文本行保持不动，并在状态栏提示结果。
     pub(in crate::app) fn word_wrap_changed(&mut self) {
         // 正在进行的平滑滚动按断行前的显示行计算，断行后已不再对应原先的内容。
-        self.scroll_glide = None;
+        self.scroll.glide = None;
         self.relayout();
         let message = match (self.config.word_wrap == Some(true), self.editor.active()) {
             (true, Some(doc)) if doc.diff.as_deref().is_some_and(|v| !v.is_wrapping()) => {
@@ -252,7 +252,7 @@ impl App {
     /// 把当前文档滚动到第 `line` 行（可为小数），不播放平滑滚动。
     fn set_minimap_scroll(&mut self, line: f64) {
         let max = self.max_scroll_line();
-        self.scroll_glide = None;
+        self.scroll.glide = None;
         self.set_active_scroll(line.clamp(0.0, max));
         self.clamp_scroll();
         self.request_redraw();
@@ -324,7 +324,7 @@ impl App {
         if row >= doc.row_count() {
             return Some(doc.text().end_pos());
         }
-        let cell = ((x - (t.x + TEXT_PAD - doc.scroll_x)) / self.cell)
+        let cell = ((x - (t.x + TEXT_PAD - doc.scroll_x)) / self.metrics.cell)
             .round()
             .max(0.0) as usize;
         if doc.is_wrapping() {
@@ -355,7 +355,7 @@ impl App {
     pub(crate) fn text_max_scroll_x(&mut self) -> f32 {
         let width = self.layout.text.w;
         let visible = self.visible_lines() + 1;
-        let cell = self.cell;
+        let cell = self.metrics.cell;
         let tab_width = self.editor.active_tab_width();
         let Some(doc) = self.editor.active_mut() else {
             return 0.0;

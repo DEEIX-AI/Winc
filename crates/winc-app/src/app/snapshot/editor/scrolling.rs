@@ -6,6 +6,7 @@ use std::time::Duration;
 use super::*;
 use crate::app::Clock;
 use crate::app::animation::SCROLL_GLIDE;
+use crate::app::scroll::ScrollGlide;
 
 /// 打开一个 480 行的文件并绘制一帧，返回界面与目录。
 ///
@@ -34,7 +35,7 @@ fn scroll(app: &App) -> f64 {
 #[test]
 fn opening_another_tab_does_not_glide() {
     fn jump(app: &mut App) {
-        app.scroll_glide = Some(ScrollGlide {
+        app.scroll.glide = Some(ScrollGlide {
             doc: app.editor.active().unwrap().id,
             from: 0.0,
             clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
@@ -44,12 +45,12 @@ fn opening_another_tab_does_not_glide() {
     std::fs::write(dir.join("src/other.rs"), "fn other() {}\n").unwrap();
 
     app.open_path_then(&dir.join("src/long.rs"), jump);
-    assert!(app.scroll_glide.is_some());
+    assert!(app.scroll.glide.is_some());
 
     app.open_path_then(&dir.join("src/other.rs"), jump);
     assert_eq!(app.editor.active().unwrap().name(), "other.rs");
     paint(&mut app);
-    assert!(app.scroll_glide.is_none());
+    assert!(app.scroll.glide.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -60,11 +61,11 @@ fn far_jumps_glide_and_near_ones_do_not() {
     // 跳转到第 200 行（居中）：距离超过一屏，滚动需要一段动画。
     // 没有窗口时不做动画，滚动位置直接等于目标。
     app.scroll_to_line(200, 0.5, false);
-    assert!(app.scroll_glide.is_none());
+    assert!(app.scroll.glide.is_none());
     let target = scroll(&app);
 
     // 平滑滚动进行到一半：绘制的帧位于中间位置，绘制后恢复为目标，计算始终按目标进行。
-    app.scroll_glide = Some(ScrollGlide {
+    app.scroll.glide = Some(ScrollGlide {
         doc: app.editor.active().unwrap().id,
         from: 0.0,
         clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
@@ -77,12 +78,12 @@ fn far_jumps_glide_and_near_ones_do_not() {
     assert!(app.animating());
 
     // 滚轮事件中止平滑滚动：滚动位置停在屏幕上显示的位置，再加上这一格的距离，不跳到目标。
-    let shown = app.scroll_glide.as_ref().unwrap().shown(target);
+    let shown = app.scroll.glide.as_ref().unwrap().shown(target);
     let text = app.layout.text;
     app.on_mouse_move(text.x + 40.0, text.y + 40.0);
     let notch = f64::from(app.wheel_step().1 / app.fonts.line_height);
     app.on_wheel(winit::event::MouseScrollDelta::LineDelta(0.0, -1.0));
-    assert!(app.scroll_glide.is_none());
+    assert!(app.scroll.glide.is_none());
     assert!(
         (scroll(&app) - (shown + notch)).abs() < 1e-6,
         "{} / {shown}",
@@ -246,14 +247,14 @@ fn a_mouse_wheel_notch_glides_and_a_trackpad_follows_directly() {
     app.start_wheel_glide((0.0, -30.0 * lh), half);
     app.advance_wheel_glide();
     assert!((scroll(&app) - 30.0 * f64::from(progress)).abs() < 0.01);
-    assert!(app.wheel.glide.is_some());
+    assert!(app.scroll.wheel.glide.is_some());
     assert!(app.animating());
 
     // 过渡途中再次滚动：未完成的距离计入新的总距离。
     app.start_wheel_glide((0.0, -10.0 * lh), Clock::stopped(LENGTH, LENGTH));
     app.advance_wheel_glide();
     assert!((scroll(&app) - 40.0).abs() < 0.01);
-    assert!(app.wheel.glide.is_none());
+    assert!(app.scroll.wheel.glide.is_none());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -297,7 +298,7 @@ fn a_fast_spinning_wheel_keeps_the_view_close() {
 fn a_mouse_wheel_notch_scrolls_the_platform_distance() {
     let (mut app, dir) = long_file("wheel-step");
     let text = app.layout.text;
-    let lines = (app.cell * 3.0, app.fonts.line_height * 3.0);
+    let lines = (app.metrics.cell * 3.0, app.fonts.line_height * 3.0);
     app.on_mouse_move(text.x + 20.0, text.y + 20.0);
     // 编辑区中：macOS 上为 3 行；Windows 上随系统设置变化，不检查；其他系统上为 120 像素
     // （`WHEEL_NOTCH`）。
@@ -311,7 +312,7 @@ fn a_mouse_wheel_notch_scrolls_the_platform_distance() {
     app.apply_font_sizes();
     app.layout.terminal = text;
     let lines = (
-        app.terminal_cell * 3.0,
+        app.metrics.terminal_cell * 3.0,
         app.fonts.terminal_line_height * 3.0,
     );
     assert!(lines.1 > app.fonts.line_height * 3.0);
@@ -398,7 +399,7 @@ fn a_click_during_a_glide_lands_on_the_line_under_the_pointer() {
         clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
     };
     let shown = glide.shown(target);
-    app.scroll_glide = Some(glide);
+    app.scroll.glide = Some(glide);
 
     // 点在文本区第 3 个显示行的中间。
     let text = app.layout.text;
@@ -407,7 +408,7 @@ fn a_click_during_a_glide_lands_on_the_line_under_the_pointer() {
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
 
-    assert!(app.scroll_glide.is_none());
+    assert!(app.scroll.glide.is_none());
     assert_eq!(scroll(&app), shown);
     let doc = app.editor.active().unwrap();
     let (line, _) = doc.text().pos_to_line_col(doc.selection.head);
@@ -420,7 +421,7 @@ fn a_click_during_a_glide_lands_on_the_line_under_the_pointer() {
 fn wheeling_the_sidebar_leaves_the_editor_glide_running() {
     let (mut app, dir) = long_file("glide-sidebar");
     app.set_active_scroll(300.0);
-    app.scroll_glide = Some(ScrollGlide {
+    app.scroll.glide = Some(ScrollGlide {
         doc: app.editor.active().unwrap().id,
         from: 0.0,
         clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
@@ -428,7 +429,7 @@ fn wheeling_the_sidebar_leaves_the_editor_glide_running() {
     let side = app.layout.sidebar;
     app.on_mouse_move(side.x + 20.0, side.y + 80.0);
     app.on_wheel(winit::event::MouseScrollDelta::LineDelta(0.0, -1.0));
-    assert!(app.scroll_glide.is_some());
+    assert!(app.scroll.glide.is_some());
     assert_eq!(scroll(&app), 300.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -449,13 +450,13 @@ fn a_wheel_glide_finishes_in_the_area_it_started_in() {
     let side = app.layout.sidebar;
     app.on_mouse_move(side.x + 20.0, side.y + 80.0);
     let tree = app.tree.scroll;
-    if let Some(glide) = app.wheel.glide.as_mut() {
+    if let Some(glide) = app.scroll.wheel.glide.as_mut() {
         glide.clock = Clock::stopped(LENGTH, LENGTH);
     }
     app.advance_wheel_glide();
     assert!((scroll(&app) - 10.0).abs() < 0.01, "{}", scroll(&app));
     assert_eq!(app.tree.scroll, tree);
-    assert!(app.wheel.glide.is_none());
+    assert!(app.scroll.wheel.glide.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -522,7 +523,7 @@ fn trackpad_scrolling_keeps_frames_coming_between_events() {
     ));
     assert!(app.scroll_input_live());
     assert!(app.animating());
-    app.wheel.input_at = Some(std::time::Instant::now() - Duration::from_millis(100));
+    app.scroll.wheel.input_at = Some(std::time::Instant::now() - Duration::from_millis(100));
     assert!(!app.scroll_input_live());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -540,7 +541,7 @@ fn pane_glides_swap_in_for_drawing_and_settle_where_shown() {
         clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
     };
     app.tree.scroll = 400.0;
-    app.pane_glides = vec![glide(0.0)];
+    app.scroll.pane_glides = vec![glide(0.0)];
     let frame = app.begin_scroll_frame();
     let drawn = app.tree.scroll;
     assert!(
@@ -556,15 +557,15 @@ fn pane_glides_swap_in_for_drawing_and_settle_where_shown() {
     app.tree.scroll = 120.0;
     app.end_scroll_frame(frame);
     assert_eq!(app.tree.scroll, 120.0);
-    assert!(app.pane_glides.is_empty());
+    assert!(app.scroll.pane_glides.is_empty());
 
     // 按下鼠标前停在屏幕上显示的位置。
     app.tree.scroll = 400.0;
-    app.pane_glides = vec![glide(0.0)];
+    app.scroll.pane_glides = vec![glide(0.0)];
     let shown = Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE).between(0.0, 400.0);
     app.settle_glides();
     assert_eq!(app.tree.scroll, shown);
-    assert!(app.pane_glides.is_empty());
+    assert!(app.scroll.pane_glides.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -578,7 +579,7 @@ fn a_fling_decelerates_and_stops_at_the_edge() {
 
     // 向下抛：内容向上移动，滚动位置增大。
     app.start_fling(origin, (0.0, -2000.0));
-    assert!(app.fling.is_some() && app.animating());
+    assert!(app.scroll.fling.is_some() && app.animating());
     app.advance_fling(now + Duration::from_millis(50));
     let first = scroll(&app);
     assert!(first > 0.0);
@@ -588,17 +589,17 @@ fn a_fling_decelerates_and_stops_at_the_edge() {
     assert!(second - first < first, "{first} {second}");
     // 足够久之后速度降到最小速度以下，惯性结束。
     app.advance_fling(now + Duration::from_secs(5));
-    assert!(app.fling.is_none());
+    assert!(app.scroll.fling.is_none());
 
     // 已在顶部时向上抛：滚动位置不变，惯性立即结束。
     app.set_active_scroll(0.0);
     app.start_fling(origin, (0.0, 2000.0));
     app.advance_fling(std::time::Instant::now() + Duration::from_millis(16));
     assert_eq!(scroll(&app), 0.0);
-    assert!(app.fling.is_none());
+    assert!(app.scroll.fling.is_none());
 
     // 慢于最小速度的抛掷不产生惯性。
     app.start_fling(origin, (0.0, -10.0));
-    assert!(app.fling.is_none());
+    assert!(app.scroll.fling.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

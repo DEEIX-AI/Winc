@@ -412,32 +412,32 @@ fn showing_only_matching_lines_hides_the_rest_until_turned_off() {
 
     // ⌘F 搜索 `ERROR` 并开启「只显示匹配的行」：只剩四行。
     app.run_action(Action::Find);
-    app.find.input.set_text("ERROR");
-    app.search.query = "ERROR".into();
+    app.bars.find.input.set_text("ERROR");
+    app.bars.search.query = "ERROR".into();
     app.search_changed();
     app.run_action(Action::FilterLines);
     app.advance_search();
     paint(&mut app);
-    assert!(app.find.filter_lines);
+    assert!(app.bars.find.filter_lines);
     assert_eq!(rows(&app), 4);
     let doc = app.editor.active().unwrap();
     let shown: Vec<usize> = (0..4).map(|r| doc.line_of_row(r)).collect();
     assert_eq!(shown, [7, 57, 107, 157]);
 
     // 修改查询：显示的行随之变化；清空查询：显示全部行（200 行加末尾的空行，共 201 行）。
-    app.search.query = "157".into();
+    app.bars.search.query = "157".into();
     app.search_changed();
     app.advance_search();
     paint(&mut app);
     assert_eq!(rows(&app), 1);
-    app.search.query.clear();
+    app.bars.search.query.clear();
     app.search_changed();
     app.advance_search();
     paint(&mut app);
     assert_eq!(rows(&app), 201);
 
     // 筛选状态下修改文本：等重新搜索完成后再筛选，被修改的行仍有匹配时保持显示。
-    app.search.query = "ERROR".into();
+    app.bars.search.query = "ERROR".into();
     app.search_changed();
     app.advance_search();
     paint(&mut app);
@@ -453,7 +453,7 @@ fn showing_only_matching_lines_hides_the_rest_until_turned_off() {
     app.close_search();
     app.advance_search();
     paint(&mut app);
-    assert!(!app.find.filter_lines);
+    assert!(!app.bars.find.filter_lines);
     assert_eq!(rows(&app), 201);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -471,13 +471,13 @@ fn a_filter_that_hides_nothing_leaves_the_scroll_alone() {
     let mut app = app_with(&file, false);
 
     app.run_action(Action::Find);
-    app.find.input.set_text("x");
-    app.search.query = "x".into();
+    app.bars.find.input.set_text("x");
+    app.bars.search.query = "x".into();
     app.search_changed();
     app.run_action(Action::FilterLines);
     app.advance_search();
     paint(&mut app);
-    assert!(app.find.filter_lines);
+    assert!(app.bars.find.filter_lines);
     assert_eq!(app.row_count(), 200);
 
     // 向下滚动（光标仍在第一处匹配上）：之后的每一帧都不应把视图拉回光标处。
@@ -496,12 +496,12 @@ fn closing_the_last_tab_drops_a_pending_jump() {
     let mut app = app_with(&dir.join("a.txt"), false);
     let id = app.editor.active().unwrap().id;
     // 大文件中按 ⌘G，一个时间片内没有搜到下一处：记录待跳转，搜到后再跳。
-    app.find.pending_jump = Some((id, 0, false));
+    app.bars.find.pending_jump = Some((id, 0, false));
     app.run_action(Action::CloseTab);
     assert!(app.editor.documents.is_empty());
     // 已没有标签，等待中的跳转作废；否则每帧都会视为仍在搜索，导致持续重绘。
     app.advance_search();
-    assert!(app.find.pending_jump.is_none());
+    assert!(app.bars.find.pending_jump.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -330,7 +330,7 @@ impl App {
             return Target::Panel(hover);
         }
         // 跳转条绘制在查找条之上（窄窗口中两者会重叠）；正在输入名称的行位于文件树中。
-        if (self.goto_input.is_some() && self.prompt_bar().contains(x, y))
+        if (self.bars.goto_input.is_some() && self.prompt_bar().contains(x, y))
             || self.name_input_rect().is_some_and(|r| r.contains(x, y))
         {
             return Target::Prompt;

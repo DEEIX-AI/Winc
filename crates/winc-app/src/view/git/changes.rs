@@ -45,7 +45,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let shade = hunk_shade(p, &hunk);
     let lh = app.fonts.line_height;
-    let cell = app.cell;
+    let cell = app.metrics.cell;
     let (text_rect, gutter) = (app.layout.text, app.layout.gutter);
     // 卡片中的行号、文字分别与编辑区的行号和文字对齐；「−」位于行号左侧。
     let code_x = text_rect.x + TEXT_PAD;
@@ -190,7 +190,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     );
 
     let body = Rect::new(card.x, header.bottom(), card.w, body_rows as f32 * lh);
-    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     if !hunk.old.is_empty() {
         // 底色延伸到卡片底边时，下方两角随卡片绘制为圆角。
         let tint = Rect::new(body.x, body.y, body.w, shown as f32 * lh);

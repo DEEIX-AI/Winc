@@ -354,10 +354,10 @@ impl App {
         };
         search.engine.start(root, query, dirty, wake);
         search.origin = self.editor.active().map(|d| (d.id, d.selection.head));
-        self.definitions = Some(search);
+        self.jumps.definitions = Some(search);
         // 测试中没有事件循环，同步等待搜索结束。
         if self.proxy.is_none()
-            && let Some(search) = &mut self.definitions
+            && let Some(search) = &mut self.jumps.definitions
         {
             search.engine.wait();
         }
@@ -369,14 +369,14 @@ impl App {
     /// 搜索结束后在后台线程中剔除不算数的命中（测试中没有事件循环，同步进行），全部完成后：只有
     /// 一处结果就跳转，有多处则列出供选择，没有则在状态栏提示。
     pub(in crate::app) fn poll_definitions(&mut self) {
-        let Some(mut search) = self.definitions.take() else {
+        let Some(mut search) = self.jumps.definitions.take() else {
             return;
         };
         if let Some(receiver) = &search.filtering {
             match receiver.try_recv() {
                 Ok(results) => search.engine.results = results,
                 Err(mpsc::TryRecvError::Empty) => {
-                    self.definitions = Some(search);
+                    self.jumps.definitions = Some(search);
                     return;
                 }
                 // 后台线程异常退出：结果已交给它，按没有结果处理。
@@ -385,7 +385,7 @@ impl App {
         } else {
             search.engine.poll();
             if search.engine.is_running() {
-                self.definitions = Some(search);
+                self.jumps.definitions = Some(search);
                 return;
             }
             let results = std::mem::take(&mut search.engine.results);
@@ -401,7 +401,7 @@ impl App {
                         let _ = proxy.send_event(UserEvent::Definitions);
                     });
                     search.filtering = Some(receiver);
-                    self.definitions = Some(search);
+                    self.jumps.definitions = Some(search);
                     return;
                 }
             }
@@ -527,7 +527,7 @@ impl App {
         let origin = self.relative_name();
         self.finish_name_input();
         self.picker.places_out = None;
-        self.name_hint = None;
+        self.jumps.name_hint = None;
         self.picker.places_wheel = 0.0;
         self.picker.places_in = self.clock(POPUP_IN);
         self.picker.branch_rows = None;

@@ -336,10 +336,12 @@ fn shoot_themes() {
             // 在右侧双击选中一个词，光标位于右侧。
             paint(&mut app);
             let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-            let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+            let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
             let lh = app.fonts.line_height;
             let at = (
-                parts.panes[RIGHT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell * 13.3,
+                parts.panes[RIGHT].text.x
+                    + crate::app::diff::DIFF_TEXT_PAD
+                    + app.metrics.cell * 13.3,
                 parts.body.y + lh * 12.5,
             );
             click(&mut app, at);

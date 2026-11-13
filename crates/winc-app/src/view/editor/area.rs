@@ -54,7 +54,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     let tab_width = doc.tab_width(app.editor.tab_width);
     let columns = doc.columns(tab_width);
     let origin_x = layout.text.x + TEXT_PAD - doc.scroll_x;
-    let span = (origin_x, layout.text.right(), app.cell);
+    let span = (origin_x, layout.text.right(), app.metrics.cell);
     let read_cap = line_read_cap(doc, columns.is_some(), span, (layout.text.x, tab_width));
     let mut pending = false;
     let states: Vec<Option<LineState>> = segments
@@ -168,7 +168,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             editor: layout.editor,
             origin_x,
             read_cap,
-            cell: app.cell,
+            cell: app.metrics.cell,
             lh,
             tab_width,
             // 缩进参考线使用该文件自身的缩进宽度，与按 Tab 键插入的缩进一致。

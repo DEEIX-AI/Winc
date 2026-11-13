@@ -636,7 +636,7 @@ pub(in crate::view) fn mono(
     color: Color,
     clip: Rect,
 ) -> f32 {
-    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     let size = app.fonts.ui_small;
     let scale = size / app.fonts.code;
     let baseline = baseline_in(row, ascent * scale, descent * scale);

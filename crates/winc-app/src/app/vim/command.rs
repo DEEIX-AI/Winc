@@ -112,7 +112,7 @@ fn preview(text: &str) -> String {
 impl App {
     /// 输入条是否为 Vim 模式的命令行或查找。
     pub(crate) fn vim_prompt_open(&self) -> bool {
-        self.goto_input.is_some() && self.prompt_kind.is_vim()
+        self.bars.goto_input.is_some() && self.bars.prompt_kind.is_vim()
     }
 
     /// 打开命令行或查找模式的输入条。
@@ -135,7 +135,7 @@ impl App {
 
     /// 把输入条的文字换成 `text`，光标放在末尾。
     fn vim_line_set(&mut self, text: &str) {
-        if let Some(field) = &mut self.goto_input {
+        if let Some(field) = &mut self.bars.goto_input {
             field.set_text(text);
             field.set_caret(text.len(), false);
         }
@@ -169,7 +169,7 @@ impl App {
                     self.vim_recall(&mut line, older);
                     true
                 }
-                Key::Named(NamedKey::Tab) if self.prompt_kind == PromptKind::VimCommand => {
+                Key::Named(NamedKey::Tab) if self.bars.prompt_kind == PromptKind::VimCommand => {
                     self.vim_complete(&mut line, self.pointer.modifiers.shift_key());
                     true
                 }
@@ -205,11 +205,11 @@ impl App {
 
     /// 翻阅历史：只取以开始翻阅时输入的文字为前缀的条目；`older` 为真时取更早的一条。
     fn vim_recall(&mut self, line: &mut Line, older: bool) {
-        let history: Vec<String> = match self.prompt_kind {
+        let history: Vec<String> = match self.bars.prompt_kind {
             PromptKind::VimCommand => shared().command_history().to_vec(),
             _ => shared().search_history().to_vec(),
         };
-        let typed = (self.goto_input.as_ref()).map_or(String::new(), |f| f.text().to_owned());
+        let typed = (self.bars.goto_input.as_ref()).map_or(String::new(), |f| f.text().to_owned());
         let (prefix, index) = line.recall.take().unwrap_or((typed, history.len()));
         let fits = |at: &usize| history[*at].starts_with(&prefix);
         let found = if older {
@@ -232,7 +232,7 @@ impl App {
     ///
     /// 输入条的文字不是上一次补全的结果时重新开始补全。
     fn vim_complete(&mut self, line: &mut Line, back: bool) {
-        let text = (self.goto_input.as_ref()).map_or(String::new(), |f| f.text().to_owned());
+        let text = (self.bars.goto_input.as_ref()).map_or(String::new(), |f| f.text().to_owned());
         let resumed = line.completion.take().filter(|last| last.shown == text);
         let (start, candidates, index) = match resumed {
             Some(last) => {

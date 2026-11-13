@@ -1206,7 +1206,7 @@ fn a_tag_can_be_created_on_a_commit_from_the_log() {
     assert_eq!(app.focus, Focus::Prompt);
     paint(&mut app);
     app.edit_field(|f| f.insert("v9 .0"));
-    assert_eq!(app.goto_input.as_ref().unwrap().text(), "v9.0");
+    assert_eq!(app.bars.goto_input.as_ref().unwrap().text(), "v9.0");
     app.submit_prompt();
     let out = Command::new("git")
         .arg("-C")

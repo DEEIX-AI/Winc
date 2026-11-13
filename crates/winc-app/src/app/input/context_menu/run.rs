@@ -601,7 +601,7 @@ impl App {
     /// 在文件树中就地改名：那一行变成输入框，填入原来的名字，并选中扩展名之前的部分；`↩` 确认，
     /// `Esc` 放弃。
     pub(in crate::app) fn start_rename(&mut self, path: &Path) {
-        self.goto_input = None;
+        self.bars.goto_input = None;
         let Some(ws) = &mut self.editor.workspace else {
             return;
         };

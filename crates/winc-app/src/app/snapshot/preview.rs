@@ -1627,13 +1627,13 @@ fn command_f_searches_the_rendered_preview() {
     super::click(&mut app, (area.x + 5.0, area.bottom() - 5.0));
     assert!(app.markdown_focused());
     app.open_search(false);
-    assert!(app.find.open);
-    app.find.input.set_text("预览");
-    app.search.query = "预览".into();
+    assert!(app.bars.find.open);
+    app.bars.find.input.set_text("预览");
+    app.bars.search.query = "预览".into();
     app.search_changed();
     paint(&mut app);
     // 「预览」在渲染后的文字里出现两次（表格一格、提示块一句），源码中的写法不计入。
-    assert_eq!(app.search.matches().len(), 2);
+    assert_eq!(app.bars.search.matches().len(), 2);
     assert_eq!(app.markdown_selected_text().as_deref(), Some("预览"));
     let first = app.preview.markdown.selection;
     app.find_next(false);
@@ -1644,11 +1644,11 @@ fn command_f_searches_the_rendered_preview() {
     assert_eq!(app.preview.markdown.selection, first);
     // 预览没有「行」的概念：「只显示匹配的行」不生效。
     app.press_search_button(crate::layout::SearchButton::Filter);
-    assert!(!app.find.filter_lines);
+    assert!(!app.bars.find.filter_lines);
     // 排版后的文字不可修改：不展开替换。
     app.close_search();
     app.open_search(true);
-    assert!(!app.find.replace_open);
+    assert!(!app.bars.find.replace_open);
     app.close_search();
 
     // 点击左侧文字后查找文字。
@@ -1657,7 +1657,10 @@ fn command_f_searches_the_rendered_preview() {
     assert!(!app.markdown_focused());
     app.open_search(false);
     app.search_changed();
-    assert_eq!(app.search.document(), app.editor.active().map(|d| d.id));
+    assert_eq!(
+        app.bars.search.document(),
+        app.editor.active().map(|d| d.id)
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1759,8 +1762,8 @@ fn shoot_markdown_preview() {
                 app.markdown_select_all();
                 app.preview.markdown.selection = Some((10, 40));
                 app.open_search(false);
-                app.find.input.set_text("预览");
-                app.search.query = "预览".into();
+                app.bars.find.input.set_text("预览");
+                app.bars.search.query = "预览".into();
                 app.search_changed();
                 settle(&mut app);
                 shoot(&mut app, &format!("{name}-find"));

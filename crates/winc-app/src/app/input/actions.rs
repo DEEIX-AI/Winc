@@ -297,8 +297,8 @@ impl App {
                 self.word_highlights.clear();
                 self.request_redraw();
             }
-            ReplaceOne if self.find.open => self.replace_current(),
-            ReplaceAll if self.find.open => self.replace_all(),
+            ReplaceOne if self.bars.find.open => self.replace_current(),
+            ReplaceAll if self.bars.find.open => self.replace_all(),
             ReplaceOne | ReplaceAll => return false,
             ToggleCase | ToggleWord | ToggleRegex if panel => {
                 self.press_panel_button(match action {
@@ -307,16 +307,15 @@ impl App {
                     _ => PanelButton::Regex,
                 })
             }
-            ToggleCase | ToggleWord | ToggleRegex if self.find.open => {
-                self.press_search_button(match action {
+            ToggleCase | ToggleWord | ToggleRegex if self.bars.find.open => self
+                .press_search_button(match action {
                     ToggleCase => SearchButton::Case,
                     ToggleWord => SearchButton::Word,
                     _ => SearchButton::Regex,
-                })
-            }
+                }),
             ToggleCase | ToggleWord | ToggleRegex => return false,
             FilterLines => {
-                if !self.find.open {
+                if !self.bars.find.open {
                     self.open_search(false);
                 }
                 self.press_search_button(SearchButton::Filter);

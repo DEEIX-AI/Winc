@@ -176,7 +176,8 @@ impl App {
         self.picker.recent = 0;
         if query.trim().is_empty() {
             let recent: Vec<usize> = self
-                .recent_commands
+                .history
+                .commands
                 .iter()
                 .filter(|&&a| self.action_available(a))
                 .filter_map(|&a| palette().iter().position(|&e| e == a))
@@ -199,9 +200,9 @@ impl App {
             return;
         };
         self.close_picker();
-        self.recent_commands.retain(|&a| a != action);
-        self.recent_commands.insert(0, action);
-        self.recent_commands.truncate(5);
+        self.history.commands.retain(|&a| a != action);
+        self.history.commands.insert(0, action);
+        self.history.commands.truncate(5);
         self.run_action(action);
         self.request_redraw();
     }

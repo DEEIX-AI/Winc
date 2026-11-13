@@ -722,12 +722,12 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
 
 /// 在状态栏所在的一行绘制 Vim 模式的命令行或查找：开头是 `:`、`/` 或 `?`，其后是输入框。
 fn draw_command_line(app: &mut App, frame: &mut Frame<'_>) {
-    let Some(mut field) = app.goto_input.take() else {
+    let Some(mut field) = app.bars.goto_input.take() else {
         return;
     };
     let p = app.palette;
     let bar = app.layout.status;
-    let title = match app.prompt_kind {
+    let title = match app.bars.prompt_kind {
         crate::app::PromptKind::VimSearch { forward: true } => "/",
         crate::app::PromptKind::VimSearch { forward: false } => "?",
         _ => ":",
@@ -736,7 +736,7 @@ fn draw_command_line(app: &mut App, frame: &mut Frame<'_>) {
     let area = Rect::new(start, bar.y, (bar.right() - 14.0 - start).max(0.0), bar.h);
     let focused = app.focus == crate::app::Focus::Prompt;
     let caret = super::fields::draw_bar_field(app, frame, area, &mut field, "", focused);
-    app.goto_input = Some(field);
+    app.bars.goto_input = Some(field);
     if caret.is_some() {
         app.ime.cursor = caret;
     }

@@ -251,7 +251,7 @@ fn images_open_as_previews_decoded_in_the_background() {
     // 图片没有文本，不能编辑，也不能查找。
     assert!(doc.readonly);
     app.run_action(crate::keymap::Action::Find);
-    assert!(!app.find.open);
+    assert!(!app.bars.find.open);
     // 小图按原大小显示，占 8 个逻辑像素；显示大小不小于解码后的像素，直接绘制，不另存位图。
     let (picture, area) = app.shown_picture().unwrap();
     let rect = app.preview.picture_view.rect(picture, area).unwrap();

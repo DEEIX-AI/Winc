@@ -233,7 +233,7 @@ impl App {
     fn reset_folder_views(&mut self) {
         // 输入框和浮层中保存的行号、路径属于旧目录，在新目录中无效。
         self.name_input = None;
-        self.goto_input = None;
+        self.bars.goto_input = None;
         self.tree.drag = None;
         self.global.engine.clear();
         self.global.collapsed.clear();
@@ -246,15 +246,15 @@ impl App {
         self.commit.forget_dirs();
         self.picker.index.cancel();
         self.picker.index = FileIndex::default();
-        self.definitions = None;
+        self.jumps.definitions = None;
         if self.picker.open {
             self.close_picker();
         }
         self.tree.motion = None;
         self.tree.scroll = 0.0;
         self.tree.scroll_x = 0.0;
-        self.closed.clear();
-        self.navigation.clear();
+        self.history.closed.clear();
+        self.jumps.navigation.clear();
     }
 
     /// 把当前目录移到最近列表的最前面并立即写入状态文件，避免进程异常中止后丢失。

@@ -343,7 +343,7 @@ impl App {
             Key::Named(NamedKey::Backspace) => Command::Backspace { word },
             Key::Named(NamedKey::Delete) => Command::Delete { word },
             Key::Named(NamedKey::Escape) => {
-                if self.find.open {
+                if self.bars.find.open {
                     self.close_search();
                 } else if let Some(doc) = self.editor.active_mut() {
                     doc.selection = Selection::point(doc.selection.head);
@@ -388,7 +388,7 @@ impl App {
             Key::Named(NamedKey::Enter) => self.find_next(shift),
             Key::Named(NamedKey::ArrowUp) if !shift => self.edit_field(|f| f.recall(true)),
             Key::Named(NamedKey::ArrowDown) if !shift => self.edit_field(|f| f.recall(false)),
-            Key::Named(NamedKey::Tab) if self.find.replace_open => {
+            Key::Named(NamedKey::Tab) if self.bars.find.replace_open => {
                 self.focus = if replacing {
                     Focus::Search
                 } else {
@@ -503,11 +503,11 @@ impl App {
         let name_input = self.name_input.is_some();
         // Vim 模式的命令行与查找：`Esc` 与在空的输入框中退格放弃输入，历史、补全与寄存器的
         // 插入由 `vim_prompt_key` 处理。
-        if !name_input && self.prompt_kind.is_vim() {
+        if !name_input && self.bars.prompt_kind.is_vim() {
             if self.vim_prompt_key(&event.logical_key, base) {
                 return;
             }
-            let empty = (self.goto_input.as_ref()).is_none_or(|field| field.text().is_empty());
+            let empty = (self.bars.goto_input.as_ref()).is_none_or(|field| field.text().is_empty());
             match &event.logical_key {
                 Key::Named(NamedKey::Escape) => {}
                 Key::Named(NamedKey::Backspace) if empty => {}

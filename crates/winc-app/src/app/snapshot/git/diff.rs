@@ -50,7 +50,7 @@ fn expanded_diff_pins_the_enclosing_scopes_for_each_version() {
     let doc = app.editor.active().unwrap();
     let before = doc.scroll_line;
     let view = doc.diff.as_deref().unwrap();
-    let parts = diff_parts(app.layout.editor, view, app.cell);
+    let parts = diff_parts(app.layout.editor, view, app.metrics.cell);
     let visible = f64::from(parts.body.h / app.fonts.line_height);
     let top = view.side_scroll(RIGHT, before, visible).floor() as usize;
     let line = view.line_at(RIGHT, top).unwrap();
@@ -134,7 +134,7 @@ fn sticky_worktree_diff(name: &str) -> (App, std::path::PathBuf) {
 fn right_row_below_top(app: &App, line: usize) -> f64 {
     let doc = app.editor.active().unwrap();
     let view = doc.diff.as_deref().unwrap();
-    let parts = diff_parts(app.layout.editor, view, app.cell);
+    let parts = diff_parts(app.layout.editor, view, app.metrics.cell);
     let visible = f64::from(parts.body.h / app.fonts.line_height);
     view.row_of(RIGHT, line) as f64 - view.side_scroll(RIGHT, doc.scroll_line, visible)
 }
@@ -152,7 +152,7 @@ fn worktree_source(app: &mut App) -> &mut winc_editor::Document {
 fn scroll_right_line_to_top(app: &mut App, line: usize) {
     let parts = {
         let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-        diff_parts(app.layout.editor, view, app.cell)
+        diff_parts(app.layout.editor, view, app.metrics.cell)
     };
     let visible = f64::from(parts.body.h / app.fonts.line_height);
     let doc = app.editor.active_mut().unwrap();
@@ -429,7 +429,7 @@ fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
     // 在右侧点击放置光标：文件在后台打开，差异标签仍是当前标签。
     paint(&mut app);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
     let pane = parts.panes[1];
     let at = (
         pane.text.x + 30.0,
@@ -502,10 +502,10 @@ fn diff_right_side_edits_the_file_and_takes_hunks_from_the_left() {
     // ⌘F 查找右侧的文件：跳转到的匹配是右侧文档的选区，差异随之滚动到该处；查找条位于
     // 差异的标题栏下方。
     assert!(app.run_action(Action::Find));
-    assert!(app.find.open);
+    assert!(app.bars.find.open);
     assert!(app.layout.search.y >= app.layout.editor.y + crate::app::diff::DIFF_HEADER);
-    app.find.input.set_text("value_55 ");
-    app.search.query = "value_55 ".into();
+    app.bars.find.input.set_text("value_55 ");
+    app.bars.search.query = "value_55 ".into();
     app.search_changed();
     assert!(app.editor.active().unwrap().diff.is_some());
     let source = app
@@ -594,8 +594,8 @@ fn shoot_diff_search() {
     app.run_action(Action::GitShowChanges);
     paint(&mut app);
     app.run_action(Action::Find);
-    app.find.input.set_text("value_4");
-    app.search.query = "value_4".into();
+    app.bars.find.input.set_text("value_4");
+    app.bars.search.query = "value_4".into();
     app.search_changed();
     shoot(&mut app, "diff-search");
     let _ = std::fs::remove_dir_all(&dir);
@@ -624,7 +624,7 @@ fn shoot_git_diff() {
         // 光标放在右侧第一处改动上。
         paint(&mut app);
         let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
         let lh = app.fonts.line_height;
         click(
             &mut app,
@@ -790,7 +790,7 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     // 第 `side` 侧第 `line` 行（从 0 起）第 `col` 列的窗口坐标；`gutter` 为真时取该行行号处的坐标。
     let at = |app: &App, side: usize, line: usize, col: usize, gutter: bool| {
         let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
         let row = view.rows[side]
             .iter()
             .position(|r| matches!(r, SideRow::Line { line: l, .. } if *l == line))
@@ -800,7 +800,7 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
         let x = if gutter {
             pane.gutter.x + pane.gutter.w / 2.0
         } else {
-            pane.text.x + DIFF_TEXT_PAD + (col as f32 + 0.3) * app.cell
+            pane.text.x + DIFF_TEXT_PAD + (col as f32 + 0.3) * app.metrics.cell
         };
         (x, parts.body.y + (row as f32 + 0.5) * lh)
     };
@@ -936,13 +936,13 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
 
     let at = |app: &App, side: usize, line: usize, col: usize, gutter: bool| {
         let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
         let pane = parts.panes[side];
         let y = parts.body.y + app.fonts.line_height * (line as f32 + 0.5);
         let x = if gutter {
             pane.gutter.x + pane.gutter.w / 2.0
         } else {
-            pane.text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell * col as f32
+            pane.text.x + crate::app::diff::DIFF_TEXT_PAD + app.metrics.cell * col as f32
         };
         (x, y)
     };
@@ -1041,8 +1041,13 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
     };
     let editor_colors = |app: &App| {
         let text = app.layout.text;
-        [2, 7, 12, 22]
-            .map(|col| pixel(app, text.x + TEXT_PAD + col as f32 * app.cell, text.y + 3.0))
+        [2, 7, 12, 22].map(|col| {
+            pixel(
+                app,
+                text.x + TEXT_PAD + col as f32 * app.metrics.cell,
+                text.y + 3.0,
+            )
+        })
     };
     // `*` 不是快捷键，在词前、词中和选区上都照常输入。
     let star = Stroke {
@@ -1065,7 +1070,7 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
     assert_ne!(pinned[3], automatic[3], "其他出现位置也立即更新颜色");
     app.select(6, 10);
     assert!(app.on_shortcut(toggle));
-    assert!(!app.find.open);
+    assert!(!app.bars.find.open);
     assert_eq!(
         app.editor.active().unwrap().selection,
         Selection::new(6, 10)
@@ -1098,10 +1103,10 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
     assert!(app.on_shortcut(toggle));
     let diff_colors = |app: &App| {
         let view = app.editor.active().unwrap().diff.as_deref().unwrap();
-        let parts = diff_parts(app.layout.editor, view, app.cell);
+        let parts = diff_parts(app.layout.editor, view, app.metrics.cell);
         parts.panes.map(|pane| {
             [1, 7, 12].map(|col| {
-                let x = pane.text.x + DIFF_TEXT_PAD + col as f32 * app.cell;
+                let x = pane.text.x + DIFF_TEXT_PAD + col as f32 * app.metrics.cell;
                 pixel(app, x, parts.body.y + 3.0)
             })
         })
@@ -1157,8 +1162,8 @@ fn find_in_a_commit_diff_searches_the_selected_snapshot() {
         },
     };
     let set_query = |app: &mut App, query: &str| {
-        app.find.input.set_text(query);
-        app.search.query = query.to_owned();
+        app.bars.find.input.set_text(query);
+        app.bars.search.query = query.to_owned();
         app.search_changed();
     };
     let selection = |app: &App| {
@@ -1168,10 +1173,10 @@ fn find_in_a_commit_diff_searches_the_selected_snapshot() {
         view.read_selection.unwrap()
     };
     assert!(app.on_shortcut(find));
-    assert!(app.find.open);
+    assert!(app.bars.find.open);
     assert_eq!(app.focus, crate::app::Focus::Search);
     set_query(&mut app, "命中");
-    assert_eq!(app.search.matches().len(), 2);
+    assert_eq!(app.bars.search.matches().len(), 2);
     let first = selection(&app);
     assert_eq!(first.side, RIGHT);
     let doc = app.editor.active().unwrap();
@@ -1181,37 +1186,37 @@ fn find_in_a_commit_diff_searches_the_selected_snapshot() {
     assert!(doc.scroll_line > 0.0);
     app.advance_search();
     paint(&mut app);
-    assert_eq!(app.search.current_match(), Some(first.range));
+    assert_eq!(app.bars.search.current_match(), Some(first.range));
 
     app.find_next(false);
     assert!(selection(&app).range.0 > first.range.0);
     app.find_next(true);
     assert_eq!(selection(&app), first);
     app.press_search_button(crate::layout::SearchButton::Expand);
-    assert!(!app.find.replace_open);
+    assert!(!app.bars.find.replace_open);
     app.close_search();
 
     let doc = app.editor.active_mut().unwrap();
     doc.scroll_line = 0.0;
     let view = doc.diff.as_deref().unwrap();
-    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
     let point = (
-        parts.panes[LEFT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell,
+        parts.panes[LEFT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.metrics.cell,
         parts.body.y + 4.0,
     );
     click(&mut app, point);
     assert!(app.on_shortcut(find));
-    assert_eq!(app.search.query, "左侧");
+    assert_eq!(app.bars.search.query, "左侧");
     assert_eq!(selection(&app).side, LEFT);
     set_query(&mut app, "命中");
-    assert_eq!(app.search.matches().len(), 1);
+    assert_eq!(app.bars.search.matches().len(), 1);
 
     // 同一标签换成另一份差异后，同一侧的旧结果作废。
     let id = app.editor.active().unwrap().id;
     let deleted = DiffView::new(side("命中\n命中\n命中\n"), side("").with_missing(true));
     app.editor.show_diff_in(Some(id), "deleted.rs", deleted);
     app.advance_search();
-    assert_eq!(app.search.matches().len(), 3);
+    assert_eq!(app.bars.search.matches().len(), 3);
     app.find_next(false);
     assert_eq!(selection(&app).side, LEFT);
 
@@ -1251,23 +1256,24 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
 
     // 替换快捷键只打开查找；光标在符号 `->` 上时不预填。
     set_read(&mut app, LEFT, (3, 3));
-    app.search.query.clear();
+    app.bars.search.query.clear();
     app.open_search(true);
-    assert!(app.find.open && !app.find.replace_open);
-    assert_eq!(app.search.query, "");
+    assert!(app.bars.find.open && !app.bars.find.replace_open);
+    assert_eq!(app.bars.search.query, "");
 
     // 长匹配横向滚动到能显示其末端，且不越过起点。
-    app.find
+    app.bars
+        .find
         .input
         .set_text("long_identifier_at_the_far_right_end_of_the_line");
-    app.search.query = "long_identifier_at_the_far_right_end_of_the_line".into();
+    app.bars.search.query = "long_identifier_at_the_far_right_end_of_the_line".into();
     app.search_changed();
     paint(&mut app);
     let doc = app.editor.active().unwrap();
     let view = doc.diff.as_deref().unwrap();
-    let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+    let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
     let width = parts.panes[LEFT].text.w - 2.0 * crate::app::diff::DIFF_TEXT_PAD;
-    let (x, x_end) = (401.0 * app.cell, 449.0 * app.cell);
+    let (x, x_end) = (401.0 * app.metrics.cell, 449.0 * app.metrics.cell);
     assert!(
         doc.scroll_x <= x && x_end <= doc.scroll_x + width,
         "{}",
@@ -1275,9 +1281,9 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     );
 
     // 查找快照时，其他文档等待中的跳转作废。
-    app.find.pending_jump = Some((other, 0, false));
+    app.bars.find.pending_jump = Some((other, 0, false));
     app.advance_search();
-    assert_eq!(app.find.pending_jump, None);
+    assert_eq!(app.bars.find.pending_jump, None);
 
     // 单栏布局：未改动的行按右侧绘制，查找左侧时同样标出匹配。
     app.close_search();
@@ -1292,7 +1298,7 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
         let (scale, image) = (renderer.scale_factor(), renderer.image().unwrap());
         let doc = app.editor.active().unwrap();
         let view = doc.diff.as_deref().unwrap();
-        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
         // 单栏的第 0 行是未改动的 `a -> b`。
         let y = ((parts.body.y + app.fonts.line_height * 0.5) * scale) as usize;
         let w = image.width as usize;
@@ -1300,8 +1306,8 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     };
     let plain = row(&app);
     app.open_search(false);
-    app.find.input.set_text("->");
-    app.search.query = "->".into();
+    app.bars.find.input.set_text("->");
+    app.bars.search.query = "->".into();
     app.search_changed();
     paint(&mut app);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
@@ -1422,7 +1428,7 @@ fn stepping_through_changes_marks_each_one_and_walks_the_files() {
     let parts = crate::app::diff_parts(
         app.layout.editor,
         app.editor.active().unwrap().diff.as_deref().unwrap(),
-        app.cell,
+        app.metrics.cell,
     );
     click(
         &mut app,
@@ -1581,7 +1587,11 @@ fn the_inline_layout_can_be_toggled_and_edits_only_new_lines() {
     assert!(app.editor.diff_unified);
     let parts = |app: &App| {
         let doc = app.editor.active().unwrap();
-        crate::app::diff_parts(app.layout.editor, doc.diff.as_deref().unwrap(), app.cell)
+        crate::app::diff_parts(
+            app.layout.editor,
+            doc.diff.as_deref().unwrap(),
+            app.metrics.cell,
+        )
     };
     let inline = parts(&app);
     assert_eq!(inline.panes[LEFT].text, inline.panes[RIGHT].text);
@@ -1604,7 +1614,9 @@ fn the_inline_layout_can_be_toggled_and_edits_only_new_lines() {
         let parts = parts(app);
         let y =
             parts.body.y + ((index as f64 - doc.scroll_line) as f32 + 0.5) * app.fonts.line_height;
-        let x = parts.panes[RIGHT].text.x + crate::app::diff::DIFF_TEXT_PAD + app.cell * col as f32;
+        let x = parts.panes[RIGHT].text.x
+            + crate::app::diff::DIFF_TEXT_PAD
+            + app.metrics.cell * col as f32;
         (x, y)
     };
     // 点击旧行：只读，光标位于左侧。
@@ -1996,10 +2008,10 @@ fn word_wrap_applies_to_the_diff_view() {
             unreachable!();
         };
         let indent = view.breaks(RIGHT, line).indent as f32;
-        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
         let lh = app.fonts.line_height;
         let scroll = view.side_scroll(RIGHT, 0.0, f64::from(parts.body.h / lh));
-        let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + indent * app.cell;
+        let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + indent * app.metrics.cell;
         let y = parts.body.y + (row as f64 - scroll) as f32 * lh + 3.0;
         let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let pixel = |x: f32, y: f32| {
@@ -2019,12 +2031,12 @@ fn word_wrap_applies_to_the_diff_view() {
         })
         .unwrap();
     let breaks = view(&app).breaks(RIGHT, line);
-    let parts = crate::app::diff_parts(app.layout.editor, view(&app), app.cell);
+    let parts = crate::app::diff_parts(app.layout.editor, view(&app), app.metrics.cell);
     let visible = f64::from(parts.body.h / app.fonts.line_height);
     let scroll = view(&app).side_scroll(RIGHT, 0.0, visible);
     let y = parts.body.y + ((row as f64 - scroll) as f32 + 0.5) * app.fonts.line_height;
     let cells = breaks.indent + 2;
-    let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + (cells as f32 + 0.3) * app.cell;
+    let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + (cells as f32 + 0.3) * app.metrics.cell;
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
@@ -2062,7 +2074,7 @@ fn toggling_word_wrap_keeps_the_top_line_of_the_diff_in_place() {
     fn top(app: &App) -> (usize, usize, f64) {
         let doc = app.editor.active().unwrap();
         let view = doc.diff.as_deref().unwrap();
-        let parts = crate::app::diff_parts(app.layout.editor, view, app.cell);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
         let visible = f64::from(parts.body.h / app.fonts.line_height);
         let row = view.side_scroll(RIGHT, doc.scroll_line, visible);
         let SideRow::Line { line, part, .. } = view.rows[RIGHT][row as usize] else {

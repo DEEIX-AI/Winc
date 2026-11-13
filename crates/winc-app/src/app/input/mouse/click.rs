@@ -16,7 +16,7 @@ impl App {
         self.motion.fold_motion = None;
         // 跳转过渡期间绘制的是插值位置，而命中测试按滚动位置换算：过渡停在屏幕上显示的位置。
         self.settle_glides();
-        self.fling = None;
+        self.scroll.fling = None;
         self.dismiss_hint();
 
         // 窗口内的提示框、菜单打开时，这次按下只交给它们：点在菜单外面即关掉菜单。

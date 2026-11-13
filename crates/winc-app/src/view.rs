@@ -137,7 +137,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     // 位置浮窗显示在名称旁边，有独立的动画（滑出、淡出）。
-    let bar_open = app.goto_input.is_some() && !app.prompt_kind.is_vim();
+    let bar_open = app.bars.goto_input.is_some() && !app.bars.prompt_kind.is_vim();
     let picker_open = app.picker.open && app.picker.places.is_none();
     app.track_card(Card::Bar, bar_open);
     app.track_card(Card::Picker, picker_open);
@@ -529,7 +529,7 @@ fn baseline_in(rect: Rect, ascent: f32, descent: f32) -> f32 {
 /// 关闭按钮、行底色不对齐；按视觉中心居中后，文字、图标和按钮的垂直位置一致。
 fn optical_center(app: &App, size: f32) -> f32 {
     let k = size / app.fonts.ui;
-    (app.ui_metrics.x_height + app.ui_metrics.cap_height) * k / 4.0
+    (app.metrics.ui.x_height + app.metrics.ui.cap_height) * k / 4.0
 }
 
 /// 返回字号为 `size` 的界面文本在 `row` 内垂直居中时的基线 y 坐标（逻辑像素，取整）。
@@ -697,7 +697,7 @@ fn caps_label(
     color: Color,
     clip: Rect,
 ) -> f32 {
-    let cap = app.ui_metrics.cap_height * size / app.fonts.ui;
+    let cap = app.metrics.ui.cap_height * size / app.fonts.ui;
     let baseline = (rect.y + rect.h / 2.0 + cap / 2.0).round();
     frame.text(FontKind::Ui, size, x, baseline, text, color, clip)
 }

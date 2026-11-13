@@ -139,11 +139,11 @@ impl App {
             return false;
         };
         let now = Instant::now();
-        let last = self.wheel.pixel_at.replace(now);
+        let last = self.scroll.wheel.pixel_at.replace(now);
         let fresh = phase == TouchPhase::Started
             || last.is_none_or(|at| now.duration_since(at) > WHEEL_GESTURE_GAP);
         if fresh {
-            self.wheel.axis = None;
+            self.scroll.wheel.axis = None;
         }
         fresh
     }
@@ -181,16 +181,16 @@ impl App {
         }
         let line = matches!(delta, MouseScrollDelta::LineDelta(..));
         if !line {
-            self.wheel.input_at = Some(Instant::now());
+            self.scroll.wheel.input_at = Some(Instant::now());
         }
         // 触控板竖直滚动时常伴有少量横向位移；只按位移较大的方向滚动，避免长行在竖直滚动时
         // 左右抖动。同一手势中的方向保持不变，斜向滑动不在两个方向之间交替。
-        let axis = match self.wheel.axis {
+        let axis = match self.scroll.wheel.axis {
             Some(axis) if gesture && !line => axis,
             _ => Axis::of(dx, dy),
         };
         if gesture && !line && (dx, dy) != (0.0, 0.0) {
-            self.wheel.axis = Some(axis);
+            self.scroll.wheel.axis = Some(axis);
         }
         let (dx, dy) = axis.keep(dx, dy);
 
@@ -198,7 +198,7 @@ impl App {
         let target = self.scroll_target_at(origin.0, origin.1);
         // 滚轮和触控板由用户直接控制：该区域的跳转过渡停在屏幕上显示的位置，从该位置继续。
         self.settle_glide_of(target);
-        self.fling = None;
+        self.scroll.fling = None;
         let glide = self
             .wheel_glides(delta)
             .then(|| self.next_wheel_glide())
@@ -245,13 +245,13 @@ impl App {
         let (x, y) = self.pointer.mouse;
         if self.layout.terminal.contains(x, y) {
             return (
-                self.terminal_cell * 3.0,
+                self.metrics.terminal_cell * 3.0,
                 self.fonts.terminal_line_height * 3.0,
             );
         }
         #[cfg(target_os = "macos")]
         {
-            (self.cell * 3.0, self.fonts.line_height * 3.0)
+            (self.metrics.cell * 3.0, self.fonts.line_height * 3.0)
         }
         #[cfg(windows)]
         {
@@ -259,7 +259,7 @@ impl App {
             let line = self.fonts.line_height;
             let page = (self.layout.text.h - line).max(line);
             let y = rows.map_or(page, |rows| rows as f32 / WHEEL_LINES * WHEEL_NOTCH);
-            (chars as f32 * self.cell, y)
+            (chars as f32 * self.metrics.cell, y)
         }
         #[cfg(not(any(windows, target_os = "macos")))]
         {
@@ -274,7 +274,12 @@ impl App {
     /// 帧与屏幕刷新不同步，过渡只增加绘制量而不会更平滑。
     fn next_wheel_glide(&mut self) -> Option<Duration> {
         let now = Instant::now();
-        let interval = self.wheel.at.replace(now).map(|at| now.duration_since(at));
+        let interval = self
+            .scroll
+            .wheel
+            .at
+            .replace(now)
+            .map(|at| now.duration_since(at));
         #[cfg(target_os = "macos")]
         let follows_refresh = self.frame.display_link.is_some();
         #[cfg(not(target_os = "macos"))]
@@ -291,14 +296,14 @@ impl App {
         let target = self.scroll_target_at(origin.0, origin.1);
         let shift = self.wheel_shift(delta.0, true);
         let mut rest = (0.0, 0.0);
-        if let Some(glide) = self.wheel.glide.take() {
+        if let Some(glide) = self.scroll.wheel.glide.take() {
             if glide.target == target && glide.shift == shift {
                 rest = glide.rest();
             } else {
                 self.scroll_target_by(glide.target, glide.origin, glide.shift, glide.rest());
             }
         }
-        self.wheel.glide = Some(WheelGlide {
+        self.scroll.wheel.glide = Some(WheelGlide {
             total: (rest.0 + delta.0, rest.1 + delta.1),
             done: 0.0,
             clock,
@@ -313,7 +318,7 @@ impl App {
     ///
     /// 记下的区域已不可滚动时（切换了标签页、关闭了面板）丢弃余下的距离。
     pub(in crate::app) fn advance_wheel_glide(&mut self) {
-        let Some(glide) = &mut self.wheel.glide else {
+        let Some(glide) = &mut self.scroll.wheel.glide else {
             return;
         };
         let (target, origin, shift) = (glide.target, glide.origin, glide.shift);
@@ -324,7 +329,7 @@ impl App {
         let done = glide.clock.done();
         let gone = self.scroll_target_at(origin.0, origin.1) != target;
         if done || gone {
-            self.wheel.glide = None;
+            self.scroll.wheel.glide = None;
         }
         if !gone {
             self.scroll_target_by(target, origin, shift, delta);
@@ -333,7 +338,7 @@ impl App {
 
     /// 是否在触控板或触摸滚动之后的 [`SCROLL_INPUT_HOLD`] 之内，需要继续逐帧绘制。
     pub(in crate::app) fn scroll_input_live(&self) -> bool {
-        (self.wheel.input_at).is_some_and(|at| at.elapsed() < SCROLL_INPUT_HOLD)
+        (self.scroll.wheel.input_at).is_some_and(|at| at.elapsed() < SCROLL_INPUT_HOLD)
     }
 
     /// 把滚轮事件引起的绘制推迟到下一次屏幕刷新，每次刷新最多绘制一帧。
