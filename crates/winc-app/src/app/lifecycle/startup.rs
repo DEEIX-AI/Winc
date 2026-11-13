@@ -77,6 +77,7 @@ impl App {
             title_click: None,
             window: Default::default(),
             close_pressed: None,
+            control_pressed: None,
             cursor_icon: CursorIcon::Default,
             drag_scrolled_at: None,
             blink: Default::default(),

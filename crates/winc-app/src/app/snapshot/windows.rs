@@ -452,9 +452,19 @@ fn a_drawn_title_bar_has_window_buttons_and_resize_edges() {
     app.on_mouse_move(w - 1.0, h / 2.0);
     assert_eq!(app.cursor_icon, CursorIcon::EResize);
 
-    // 关闭按钮：和系统标题栏上的一样关掉该窗口。
+    // 关闭按钮在松开时才生效：按下时就关掉窗口，松开会落到下层窗口的同一位置。按下后移开再
+    // 松开不算点击，窗口保留。
     let (close, _) = app.window_control_rects()[2];
-    click(app, (close.x + close.w / 2.0, close.y + close.h / 2.0));
+    let center = (close.x + close.w / 2.0, close.y + close.h / 2.0);
+    app.on_mouse_move(center.0, center.1);
+    app.on_mouse_down(MouseButton::Left);
+    assert!(!app.window.hidden, "按下时窗口还在");
+    app.on_mouse_move(w / 2.0, h / 2.0);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(!app.window.hidden, "移开后松开不关闭窗口");
+
+    // 关闭按钮：和系统标题栏上的一样关掉该窗口。
+    click(app, center);
     winc.settle_for_test();
     assert_eq!(winc.keys(), [b]);
     let _ = std::fs::remove_dir_all(&dir);

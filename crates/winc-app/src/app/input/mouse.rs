@@ -35,9 +35,10 @@ use crate::theme::*;
 pub(in crate::app) const ZOOM_WHEEL_PIXELS: f32 = 48.0;
 
 impl App {
-    /// 处理鼠标按键 `button` 松开：结束拖动，并在需要时关闭标签。
+    /// 处理鼠标按键 `button` 松开：结束拖动，并在需要时关闭标签或执行窗口按钮。
     ///
-    /// 左键按在关闭按钮上、或中键按在标签上之后，松开时鼠标仍在同一个标签上才关闭该标签。
+    /// 左键按在关闭按钮上、或中键按在标签上之后，松开时鼠标仍在同一个标签上才关闭该标签；
+    /// 左键按在窗口按钮上之后，松开时鼠标仍在同一个按钮上才执行该按钮。
     pub(in crate::app) fn on_mouse_up(&mut self, button: MouseButton) {
         // 拖动标签时悬停目标被清除，松开后重新判断鼠标下方的部件。
         let was_tab = self.dragged_tab().is_some();
@@ -57,6 +58,13 @@ impl App {
         {
             self.tabs.width_lock = self.tabs.widths.get(index).map(|&w| (index, w));
             self.close_tab(index);
+        }
+
+        if button == MouseButton::Left
+            && let Some(control) = self.control_pressed.take()
+            && self.window_control_at(self.mouse.0, self.mouse.1) == Some(control)
+        {
+            self.press_window_control(control);
         }
 
         self.terminal_mouse_up();
