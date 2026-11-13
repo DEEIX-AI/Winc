@@ -70,6 +70,16 @@ pub fn run() {
     crash::install();
     // 本线程是界面线程：不等待远端主机的应答，访问远端文件的操作都在后台线程上进行。
     winc_backend::remote::forbid_blocking();
+    // 连接断开时各项操作失败的原因原样出现在提示里：用界面语言说明。
+    winc_backend::remote::describe_unavailable(|what| {
+        use winc_backend::remote::Unavailable;
+        match what {
+            Unavailable::Lost => winc_i18n::t!("workspace-remote-error-lost").to_owned(),
+            Unavailable::NotConnected => {
+                winc_i18n::t!("workspace-remote-error-not-connected").to_owned()
+            }
+        }
+    });
     #[cfg(windows)]
     windows::attach_console();
     // `--help` 和无法识别的选项不需要窗口，先处理参数；用法与错误信息按系统语言输出。

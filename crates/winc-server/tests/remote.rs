@@ -305,6 +305,47 @@ fn files_are_copied_between_this_machine_and_remote_hosts() {
         "{names:?}"
     );
     std::fs::remove_file(near.join("large.bin")).unwrap();
+
+    // 传输中途停止：两个方向上目标都不出现，对端不留下临时文件。
+    let big = vec![7u8; 3 << 20];
+    std::fs::write(near.join("big.bin"), &big).unwrap();
+    std::fs::write(dir.join("far-big.bin"), &big).unwrap();
+    for (from, to, seen) in [
+        (near.join("big.bin"), far.join("stopped.bin"), dir.clone()),
+        (
+            far.join("far-big.bin"),
+            near.join("stopped.bin"),
+            near.clone(),
+        ),
+    ] {
+        let reported = std::cell::Cell::new(0u64);
+        let stop = |bytes: u64| {
+            reported.set(reported.get() + bytes);
+            false
+        };
+        let error = fs::copy_watched(&from, &to, &stop).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+        assert!(reported.get() > 0 && reported.get() < big.len() as u64);
+        let names: Vec<_> = std::fs::read_dir(&seen)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            !names.iter().any(|name| {
+                let name = name.to_string_lossy();
+                name.contains("stopped") || name.starts_with(".winc-")
+            }),
+            "{names:?}"
+        );
+    }
+    // 不停止时报告的字节数合计等于文件大小。
+    let total = std::cell::Cell::new(0u64);
+    let count = |bytes: u64| {
+        total.set(total.get() + bytes);
+        true
+    };
+    fs::copy_watched(far.join("far-big.bin"), near.join("whole.bin"), &count).unwrap();
+    assert_eq!(total.get(), big.len() as u64);
     let copied = fs::copy(far.join("large.bin"), near.join("large.bin")).unwrap();
     assert_eq!(copied, large.len() as u64);
     assert!(std::fs::read(near.join("large.bin")).unwrap() == large);
@@ -657,13 +698,18 @@ fn the_server_is_uploaded_once_and_started_from_the_upload_directory() {
     std::fs::write(home.join("bbbb/kept by someone"), "").unwrap();
     std::fs::write(home.join("readme"), "").unwrap();
 
-    // 第二次连接：程序已在，不再上传。这里给出的内容是空的，若被上传则无法启动。
+    // 第二次连接：程序已在，不再上传。这里给出的内容长度相同但不是程序，若被上传则无法启动。
     let mut reused = deploy.clone();
-    reused.programs[0].content = Vec::new();
+    reused.programs[0].content = vec![0; deploy.programs[0].content.len()];
     let connection =
         Connection::deploy(bootstrap(&reused), &reused, &remote::Abort::default()).unwrap();
     assert!(std::fs::read(&installed).unwrap() == deploy.programs[0].content);
     drop(connection);
+    // 已有的程序残缺（字节数不符）：重新上传后照常启动。
+    std::fs::write(&installed, "damaged").unwrap();
+    std::fs::set_permissions(&installed, PermissionsExt::from_mode(0o700)).unwrap();
+    drop(Connection::deploy(bootstrap(&deploy), &deploy, &remote::Abort::default()).unwrap());
+    assert!(std::fs::read(&installed).unwrap() == deploy.programs[0].content);
     // 连接时只清理旧版本：名字是摘要、其中只有程序本身的目录。其余的都不动。
     let mut left: Vec<_> = (std::fs::read_dir(&home).unwrap())
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -732,6 +778,36 @@ fn a_connection_that_cannot_start_the_server_reports_why() {
     // 开始之前就已中止的连接不会启动引导。
     let error = Connection::deploy(bootstrap(&blocked), &blocked, &abort).unwrap_err();
     assert!(matches!(error, remote::ConnectError::Aborted), "{error}");
+    // 服务进程报告启动之后没有应答（这里是一条不结束的命令）：中止同样立即返回。
+    let abort = remote::Abort::default();
+    let mut silent = Command::new("sh");
+    silent.args(["-c", "echo winc:ready; sleep 30481"]);
+    let stopper = abort.clone();
+    let waiter = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        stopper.abort();
+    });
+    let started = Instant::now();
+    let error = Connection::deploy(silent, &blocked, &abort).unwrap_err();
+    assert!(matches!(error, remote::ConnectError::Aborted), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    waiter.join().unwrap();
+    // 连接建立之后中止：连接断开，其上的请求随即失败，不算意外中断。
+    let abort = remote::Abort::default();
+    let late = deployment(dir.join("late").to_str().unwrap(), "0af3");
+    let connection = Connection::deploy(bootstrap(&late), &late, &abort).unwrap();
+    let (sender, closed) = std::sync::mpsc::channel();
+    connection.on_close(move || {
+        let _ = sender.send(());
+    });
+    let target = Target::new("deploy-late").unwrap();
+    remote::register(target.clone(), connection);
+    assert!(remote::is_connected(&target));
+    abort.abort();
+    assert!(!remote::is_connected(&target));
+    assert!(fs::metadata(winc_backend::virtual_path(&target, b"/")).is_err());
+    assert!(closed.recv_timeout(Duration::from_millis(300)).is_err());
+    remote::disconnect(&target);
 
     // 子进程没有运行引导命令就结束了（例如登录失败）：给出它的错误输出。
     let mut refused = Command::new("sh");
@@ -1110,4 +1186,62 @@ fn over_ssh() {
         matches!(&error, remote::ConnectError::Failed(why) if !why.is_empty()),
         "{error}"
     );
+}
+
+/// 写入按 `rate`（字节每秒）限速的一端：模拟带宽有限的网络，写入期间占着写的一方。
+struct Throttled<W>(W, u64);
+
+impl<W: io::Write> io::Write for Throttled<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        std::thread::sleep(Duration::from_secs_f64(data.len() as f64 / self.1 as f64));
+        self.0.write(data)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+/// 测量：从远端取回大文件期间，同一条连接上别的请求要等多久。应答一侧限速为 8 MiB/s。
+#[test]
+#[ignore = "测量用，输出等待时间"]
+fn measure_other_requests_during_a_large_read() {
+    use std::os::unix::net::UnixStream;
+
+    let dir = scratch("measure-read");
+    std::fs::write(dir.join("big.bin"), vec![7u8; 24 << 20]).unwrap();
+    std::fs::write(dir.join("small"), "x").unwrap();
+    let (requests_in, requests_out) = UnixStream::pair().unwrap();
+    let (replies_in, replies_out) = UnixStream::pair().unwrap();
+    std::thread::spawn(move || remote::serve(requests_in, Throttled(replies_out, 8 << 20)));
+    let target = Target::new("measure-read").unwrap();
+    remote::register(
+        target.clone(),
+        Connection::over(replies_in, requests_out).unwrap(),
+    );
+    let (far, near) = (through(&target, &dir), dir.clone());
+    let started = Instant::now();
+    let copy = {
+        let far = far.clone();
+        std::thread::spawn(move || fs::copy(far.join("big.bin"), near.join("back.bin")).unwrap())
+    };
+    let mut waits = Vec::new();
+    while !copy.is_finished() {
+        let asked = Instant::now();
+        fs::metadata(far.join("small")).unwrap();
+        waits.push(asked.elapsed());
+        std::thread::sleep(Duration::from_millis(7));
+    }
+    copy.join().unwrap();
+    waits.sort();
+    let at = |part: usize| waits[(waits.len() - 1) * part / 100];
+    eprintln!(
+        "24 MiB at 8 MiB/s: {:?} in all; {} other requests waited median {:?}, p95 {:?}, max {:?}",
+        started.elapsed(),
+        waits.len(),
+        at(50),
+        at(95),
+        at(100),
+    );
+    remote::disconnect(&target);
 }

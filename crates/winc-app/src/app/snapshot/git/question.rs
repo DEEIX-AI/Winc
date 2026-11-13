@@ -213,7 +213,7 @@ fn a_question_replaces_a_form_being_filled_in() {
     app.open_worktree_dialog();
     let _answers = ask(&mut app, passphrase());
     let dialog = app.form_dialog.as_ref().unwrap();
-    assert!(matches!(dialog.kind, FormKind::Question(_)));
+    assert!(matches!(dialog.kind, FormKind::Question(..)));
     paint(&mut app);
 }
 
@@ -242,4 +242,25 @@ fn snapshot_question_dialogs() {
         std::thread::sleep(std::time::Duration::from_millis(400));
         shoot(&mut app, &format!("question-{name}"));
     }
+}
+
+#[test]
+fn a_question_from_a_remote_repository_names_the_host() {
+    let (mut app, _answers) = asking("git-question-origin", password());
+    let view = |app: &App| app.form_dialog.as_ref().unwrap().kind.view().unwrap();
+    // 本机仓库的请求不带来源。
+    assert_eq!(view(&app).values[0].text, "me");
+
+    // 远端仓库的操作提出的请求：只读信息的第一行是那台主机。
+    let target = winc_backend::Target::new("me@devbox").unwrap();
+    app.git.root = Some(winc_backend::virtual_path(&target, b"/srv/app"));
+    let _answers = ask(&mut app, password());
+    paint(&mut app);
+    let view = view(&app);
+    assert_eq!(
+        (view.values[0].label, view.values[0].text.as_str()),
+        ("来自远端", "me@devbox")
+    );
+    assert_eq!(view.values.len(), 3);
+    shoot(&mut app, "git-question-origin");
 }

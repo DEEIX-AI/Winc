@@ -311,19 +311,20 @@ impl App {
     /// 在后台把 `paths` 中的各项复制进目录 `dir`，完成后选中各个副本（[`App::copied_into_tree`]）。
     ///
     /// 同名时副本改名（见 [`winc_editor::copy_entry`]）。目录可能很大，复制时间与内容大小成正比，
-    /// 因此不在界面线程上执行。某一项复制失败时提示原因，其余各项仍然复制。
+    /// 因此不在界面线程上执行（[`App::spawn_copy`]）。某一项复制失败时提示原因，其余各项仍然复制。
     pub(in crate::app) fn copy_entries_into(&mut self, paths: Vec<PathBuf>, dir: PathBuf) {
         let Some(root) = self.editor.root().map(Path::to_path_buf) else {
             return;
         };
-        // 有一侧在远端主机上时内容要经网络传输，可能很久：不占用共用的线程池。
         let remote =
             winc_backend::is_remote(&dir) || paths.iter().any(|path| winc_backend::is_remote(path));
-        let copy = move || {
+        let copy = move |copying: &winc_editor::Copying| {
             let (mut copies, mut failures) = (Vec::new(), Vec::new());
             for from in &paths {
-                match winc_editor::copy_entry(&root, from, &dir) {
+                match winc_editor::copy_entry(&root, from, &dir, copying) {
                     Ok(copy) => copies.push(copy),
+                    // 取消之后其余各项不再复制，也不算失败。
+                    Err(_) if copying.is_cancelled() => break,
                     Err(e) => failures.push(t!(
                         "workspace-tree-copy-failed",
                         name = winc_editor::display_name(from),
@@ -333,23 +334,9 @@ impl App {
             }
             (copies, failures)
         };
-        match self.proxy.clone() {
-            Some(proxy) => {
-                let work = move || {
-                    let (copies, failures) = copy();
-                    let _ = proxy.send_event(UserEvent::Copied(copies, failures));
-                };
-                if remote {
-                    winc_editor::background::spawn_blocking(work);
-                } else {
-                    winc_editor::background::spawn(work);
-                }
-            }
-            // 没有事件循环（测试中）时就地执行。
-            None => {
-                let (copies, failures) = winc_backend::remote::allow_blocking(copy);
-                self.copied_into_tree(copies, failures);
-            }
+        let done = |(copies, failures), copying| UserEvent::Copied(copies, failures, copying);
+        if let Some((copies, failures)) = self.spawn_copy(remote, copy, done) {
+            self.copied_into_tree(copies, failures);
         }
     }
 

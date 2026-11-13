@@ -874,6 +874,9 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 Some(host) if !winc_backend::remote::is_connected(&host) => {
                     t!("workspace-remote-status-lost", host = host.as_str())
                 }
+                Some(host) if winc_backend::remote::is_stalled(&host) => {
+                    t!("workspace-remote-status-stalled", host = host.as_str())
+                }
                 Some(host) => t!("workspace-remote-status-connected", host = host.as_str()),
                 None => t!("workspace-start-remote").to_owned(),
             };

@@ -418,10 +418,12 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
             draw_button(frame, p, pill, bar, hovered, false);
         });
         let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
-        // 打开着远端目录而连接已断开时用提醒色。
-        let lost = (app.editor.root().and_then(winc_backend::locate))
-            .is_some_and(|at| !winc_backend::remote::is_connected(&at.target));
-        let color = if lost {
+        // 打开着远端目录而连接已断开、或对端迟迟没有响应时用提醒色。
+        let troubled = (app.editor.root().and_then(winc_backend::locate)).is_some_and(|at| {
+            !winc_backend::remote::is_connected(&at.target)
+                || winc_backend::remote::is_stalled(&at.target)
+        });
+        let color = if troubled {
             p.warning
         } else if connected || hovered {
             p.text

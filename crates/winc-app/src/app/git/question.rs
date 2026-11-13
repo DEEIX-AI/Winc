@@ -111,8 +111,25 @@ impl QuestionView {
         }
     }
 
-    /// 返回 `prompt` 对应的对话框内容。
-    pub(crate) fn of(prompt: &Prompt) -> QuestionView {
+    /// 返回 `prompt` 对应的对话框内容；`origin` 是提出请求的远端主机，排在只读信息的第一行。
+    ///
+    /// 远端主机上的命令提出的请求，答复会发到那台主机；提示的文字也由它给出，可以写成任何
+    /// 样子。标明主机，用户才知道输入的内容交给了谁。
+    pub(crate) fn of(prompt: &Prompt, origin: Option<&str>) -> QuestionView {
+        let mut view = Self::of_prompt(prompt);
+        if let Some(host) = origin {
+            let from = QuestionValue {
+                label: t!("git-question-origin"),
+                text: host.to_owned(),
+                mono: false,
+            };
+            view.values.insert(0, from);
+        }
+        view
+    }
+
+    /// 返回 `prompt` 本身对应的对话框内容。
+    fn of_prompt(prompt: &Prompt) -> QuestionView {
         let value = |label, text: &str| QuestionValue {
             label,
             text: text.to_owned(),
@@ -284,7 +301,14 @@ impl App {
             | Prompt::HostKey { .. } => (TextField::masked(), DialogPart::Branch),
         };
         self.branch.asking = Some((asker, reply));
-        self.show_form_dialog(FormKind::Question(prompt), name, focus);
+        // 远端仓库的操作提出的请求：答复会发到那台主机上，对话框标明它。
+        let origin = match asker {
+            Asker::Git(_) => (self.git.root.as_deref())
+                .and_then(winc_backend::locate)
+                .map(|at| at.target.as_str().to_owned()),
+            Asker::Remote => None,
+        };
+        self.show_form_dialog(FormKind::Question(prompt, origin), name, focus);
     }
 
     /// 提交询问对话框。
@@ -294,7 +318,7 @@ impl App {
         let Some(dialog) = &mut self.form_dialog else {
             return;
         };
-        let FormKind::Question(prompt) = &dialog.kind else {
+        let FormKind::Question(prompt, _) = &dialog.kind else {
             return;
         };
         let answer = if prompt.is_confirmation() {

@@ -150,7 +150,7 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     app.open_connect_dialog("winc-test.invalid", "22022", true);
     let (enabled, problem, error) = dialog(&app);
     assert!(enabled && problem.is_none());
-    assert!(error.is_some_and(|text| text.contains("缺少在远端运行的服务程序")));
+    assert!(error.is_some_and(|text| text.contains("缺少远端服务程序")));
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
     // 取消是上一步：回到主机面板。
     app.close_form_dialog();
@@ -179,7 +179,7 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert!(titles(&app).is_empty());
     assert!(
         app.remote_picker_message()
-            .is_some_and(|text| text.contains("没有匹配"))
+            .is_some_and(|text| text.contains("无匹配"))
     );
     app.edit_field(|field| field.delete(crate::field::Unit::Char, false));
     // `⇥` 进入选中的目录；输入为空时 `⌫` 回到上级。以 `.` 开头的目录输入 `.` 才列出。
@@ -333,7 +333,10 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
     row_of(&app, "kit");
     let from = root.join("kit/inner/tool.txt");
-    let back = remote::allow_blocking(|| winc_editor::copy_entry(&near, &from, &near)).unwrap();
+    let back = remote::allow_blocking(|| {
+        winc_editor::copy_entry(&near, &from, &near, &Default::default())
+    })
+    .unwrap();
     assert_eq!(std::fs::read(back).unwrap(), b"from here");
 
     // 目录不存在：说明原因，已打开的目录不变。
@@ -399,7 +402,7 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     app.config.remote_enabled = Some(true);
     assert!(app.reopen_remote(&root));
     let notice = app.notice.text.take().unwrap();
-    assert!(notice.contains("缺少在远端运行的服务程序"), "{notice}");
+    assert!(notice.contains("缺少远端服务程序"), "{notice}");
     assert!(app.state.recent.contains(&root));
 
     // 主机面板的最后一行通向 `ssh` 配置文件。`⇥` 在连接对话框中修改选中的主机，不开始连接；
@@ -429,7 +432,7 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     fill(&mut app, "/winc/no/such/key");
     let plan = app.form_plan(app.form_dialog.as_ref().unwrap());
     assert!(!plan.enabled);
-    assert_eq!(plan.problem.as_deref(), Some("找不到密钥文件"));
+    assert_eq!(plan.problem.as_deref(), Some("未找到密钥文件"));
     // 密钥一行的右端是选文件的按钮；在系统面板中选好的文件填进这一行。
     let layout = app.dialog_layout();
     let choose = layout.choose.unwrap();
@@ -533,6 +536,52 @@ fn shoot_remote_picker() {
     );
     shoot(&mut app, "remote-notice");
     remote::disconnect(&target);
+}
+
+#[test]
+fn a_long_copy_shows_its_progress_and_can_be_cancelled() {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use crate::app::NoticeAction;
+
+    let dir = sample_folder("copy-progress").canonicalize().unwrap();
+    std::fs::write(dir.join("big.bin"), vec![0u8; 3 << 20]).unwrap();
+    let mut app = blank_app(false);
+    let copying = Arc::new(winc_editor::Copying::default());
+    winc_editor::copy_entry(&dir, &dir.join("big.bin"), &dir, &copying).unwrap();
+    app.tree.copies.track(Arc::clone(&copying));
+
+    // 右上角正显示着别的提示：不替换它，等它消失之后再显示进度。
+    app.notify("别的提示");
+    let now = Instant::now() + Duration::from_secs(1);
+    assert!(app.copy_tick(now).is_some_and(|next| next > now));
+    assert_eq!(app.notice.text.as_deref(), Some("别的提示"));
+    app.dismiss_notice();
+    let now = now + Duration::from_secs(2);
+    app.copy_tick(now);
+    assert_eq!(app.notice.action, Some(NoticeAction::CancelCopy));
+    assert_eq!(
+        app.notice.text.as_deref(),
+        Some("正在复制「big.bin」… 3.0 MB / 3.0 MB")
+    );
+    shoot(&mut app, "copy-progress");
+
+    // 「取消」：复制收到取消，提示收起，不再显示进度；复制结束时说明已取消。
+    app.run_notice_action();
+    assert!(copying.is_cancelled() && app.notice.text.is_none());
+    assert!(app.copy_tick(now + Duration::from_secs(5)).is_none());
+    assert!(app.copy_finished(&copying));
+    assert_eq!(app.status.message.as_deref(), Some("已取消复制"));
+
+    // 没有被取消的复制结束时收起它的进度。
+    let copying = Arc::new(winc_editor::Copying::default());
+    app.tree.copies.track(Arc::clone(&copying));
+    app.clear_flash();
+    app.copy_tick(now + Duration::from_secs(9));
+    assert_eq!(app.notice.action, Some(NoticeAction::CancelCopy));
+    assert!(!app.copy_finished(&copying));
+    assert!(app.notice.text.is_none() && app.status.message.is_none());
 }
 
 /// 写入的内容延迟 `delay` 之后才到达 `inner`，各次写入互不等待：模拟网络的延迟。

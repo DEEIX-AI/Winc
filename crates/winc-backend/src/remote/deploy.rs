@@ -23,6 +23,7 @@ use crate::Target;
 /// 单引号内的换行和反斜杠处理不一致。`!` 之后只能是空格或 `=`：有的登录 shell 在单引号内仍把
 /// `!` 加其他字符当作历史命令展开。输出的每一行以 `winc:` 开头，与登录脚本的输出区分。
 /// 上传的内容先写入临时文件，字节数相符后才改名，中断的上传不会留下不完整的程序。
+/// 已有的程序字节数与本机的不符（文件损坏）时同样重新上传，不必由用户去删除。
 ///
 /// 启动之前清理上传目录中其他版本的程序：只保留即将运行的这一个，其他版本再次需要时重新
 /// 上传。只删除名字是摘要（小写十六进制）、其中只有 `winc-server` 一个文件的子目录，先删文件
@@ -39,7 +40,7 @@ const SCRIPT: &str = concat!(
     "\"~/\"*) dir=$HOME/${dir#\"~/\"} ;; ",
     "esac; ",
     "bin=$dir/$digest/winc-server; ",
-    "if [ ! -x \"$bin\" ]; then ",
+    "if [ ! -x \"$bin\" ] || [ $(wc -c < \"$bin\") -ne \"$size\" ]; then ",
     "echo \"winc:need $sys\"; umask 077; ",
     "mkdir -p \"$dir/$digest\" && tmp=$bin.$$ && head -c \"$size\" > \"$tmp\" && ",
     "[ $(wc -c < \"$tmp\") -eq \"$size\" ] && chmod 700 \"$tmp\" && mv -f \"$tmp\" \"$bin\" || ",
@@ -186,24 +187,43 @@ impl From<io::Error> for ConnectError {
 
 /// 中止正在进行的连接：结束承载它的子进程，[`Connection::deploy`] 随即返回
 /// [`ConnectError::Aborted`]。可以在连接开始之前、进行当中或结束之后调用，可以调用多次。
-#[derive(Debug, Clone, Default)]
+///
+/// 连接建立之后仍然有效：调用方在连接上还有收尾的请求（例如取得目录的路径）时，中止使连接
+/// 断开，这些请求随即失败。调用方用完之后丢弃它，连接此后不再受它影响。
+#[derive(Clone, Default)]
 pub struct Abort(Arc<Mutex<Aborting>>);
 
-#[derive(Debug, Default)]
+impl std::fmt::Debug for Abort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Abort").finish_non_exhaustive()
+    }
+}
+
+#[derive(Default)]
 struct Aborting {
     aborted: bool,
-    /// 引导阶段的子进程；连接建立后交还给连接。
+    /// 引导阶段的子进程；服务进程启动后交给连接。
     child: Option<Child>,
+    /// 服务进程启动之后的连接。
+    link: Option<Arc<super::Link>>,
 }
 
 impl Abort {
-    /// 中止连接。连接已经建立时没有效果。
+    /// 中止连接：引导阶段结束子进程，之后断开连接。
     pub fn abort(&self) {
         let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         state.aborted = true;
         if let Some(mut child) = state.child.take() {
             abandon(&mut child);
         }
+        if let Some(link) = state.link.take() {
+            link.kill();
+        }
+    }
+
+    /// 是否已中止。
+    pub fn is_aborted(&self) -> bool {
+        (self.0.lock().unwrap_or_else(PoisonError::into_inner)).aborted
     }
 
     /// 交出子进程；已被中止（子进程已结束）时返回 `None`。
@@ -278,7 +298,6 @@ impl Connection {
         let Some(child) = abort.take() else {
             return Err(ConnectError::Aborted);
         };
-        // 子进程此后归这里所有：中止只在引导阶段有效。
         let mut child = child;
         match step {
             Ok(Step::Ready) => {}
@@ -294,15 +313,23 @@ impl Connection {
             }
         }
         // 引导阶段已读入缓冲区的内容属于服务进程的应答，连同缓冲区一起交出。
-        Self::establish(input, output, Some(child)).map_err(|error| {
-            // 服务进程没能启动（例如目录不允许执行）：原因在错误输出中，握手的错误只是结果。
-            let reason = errors.wait();
-            if reason.is_empty() {
-                ConnectError::Io(error)
-            } else {
-                ConnectError::Failed(reason)
+        let connection = Self::attach(input, output, Some(child));
+        {
+            let mut state = abort.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if state.aborted {
+                return Err(ConnectError::Aborted);
             }
-        })
+            state.link = Some(Arc::clone(&connection.link));
+        }
+        match connection.hello() {
+            Ok(()) => Ok(connection),
+            Err(_) if abort.is_aborted() => Err(ConnectError::Aborted),
+            // 服务进程没能启动（例如目录不允许执行）：原因在错误输出中，握手的错误只是结果。
+            Err(error) => Err(match errors.wait() {
+                reason if reason.is_empty() => ConnectError::Io(error),
+                reason => ConnectError::Failed(reason),
+            }),
+        }
     }
 }
 
@@ -394,7 +421,7 @@ fn abandon(child: &mut Child) {
 // 本函数只有对 `libc::kill` 的一次调用需要 `unsafe`，因此只在此处放开 `unsafe_code`。
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn kill_group(child: &Child) {
+pub(super) fn kill_group(child: &Child) {
     if let Ok(group) = i32::try_from(child.id()) {
         // SAFETY: `child` 尚未被回收，其进程号不会被其他进程占用；它是自己进程组的组长，负的
         // 进程号表示该进程组。`kill` 只发送信号，不访问内存，失败时返回 -1。

@@ -62,6 +62,12 @@ struct Link {
     sent: AtomicU64,
     /// 连接意外中断时调用一次的函数（见 [`Connection::on_close`]）。
     on_close: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// 最近一次收到对端的帧，或从没有请求变为有请求在等待的时刻：对端没有动静的时间由此算起。
+    heard: Mutex<Instant>,
+    /// 是否有请求在等待而对端迟迟没有动静（见 [`is_stalled`]）。
+    stalled: AtomicBool,
+    /// 上一项变化时调用的函数（见 [`Connection::on_stall`]）。
+    on_stall: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
 /// 等待应答的请求。
@@ -82,10 +88,14 @@ impl Link {
         let id = {
             let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
             if waiting.closed {
-                return Err(io::ErrorKind::BrokenPipe.into());
+                return Err(unavailable(Unavailable::Lost));
             }
             let id = waiting.next;
             waiting.next = waiting.next.wrapping_add(1);
+            // 此前没有请求在等待：对端此前的安静不算数，从现在算起。
+            if waiting.replies.is_empty() {
+                *self.heard.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
+            }
             waiting.replies.insert(id, sender);
             id
         };
@@ -113,11 +123,11 @@ impl Link {
     /// 写出一帧；连接已中断时返回 [`io::ErrorKind::BrokenPipe`]。
     fn write(&self, kind: u8, id: u32, payload: &[u8]) -> io::Result<()> {
         if self.closed() {
-            return Err(io::ErrorKind::BrokenPipe.into());
+            return Err(unavailable(Unavailable::Lost));
         }
         let mut output = self.output.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(output) = output.as_mut() else {
-            return Err(io::ErrorKind::BrokenPipe.into());
+            return Err(unavailable(Unavailable::Lost));
         };
         wire::write_frame(output, kind, id, payload)?;
         output.flush()
@@ -133,6 +143,8 @@ impl Link {
     fn receive(&self, mut input: impl io::Read) {
         // 读到不合协议的帧、输入结束、读取出错：都无法继续使用该连接。
         while let Ok(Some(frame)) = wire::read_frame(&mut input) {
+            *self.heard.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
+            self.set_stalled(false);
             let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
             // 输出的一段、输入请求之后还有后续的帧，保留接收端；其余类型是最后一帧。
             let sender = if matches!(frame.kind, kind::CHUNK | kind::ASK) {
@@ -164,6 +176,66 @@ impl Link {
             .take();
         if let Some(hook) = hook {
             hook();
+        }
+    }
+
+    /// 记下对端是否迟迟没有动静；有变化时调用 [`Connection::on_stall`] 设置的函数。
+    fn set_stalled(&self, stalled: bool) {
+        if self.stalled.swap(stalled, Ordering::Relaxed) == stalled {
+            return;
+        }
+        let hook = self.on_stall.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(hook) = hook.as_ref() {
+            hook();
+        }
+    }
+
+    /// 每隔 [`PROBE`] 检查一次，直到连接中断：有请求在等待而对端没有动静时发出探测；安静
+    /// 达到 [`STALL`] 时记为没有响应。收到任何一帧（包括探测的应答）即恢复。
+    ///
+    /// 只持有连接的弱引用：连接被丢弃后下一次检查时退出。
+    fn watch(link: std::sync::Weak<Self>) {
+        loop {
+            thread::sleep(PROBE);
+            let Some(link) = link.upgrade() else {
+                return;
+            };
+            let waiting = {
+                let waiting = link.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+                if waiting.closed {
+                    return;
+                }
+                !waiting.replies.is_empty()
+            };
+            if !waiting {
+                continue;
+            }
+            let quiet = (link.heard.lock().unwrap_or_else(PoisonError::into_inner)).elapsed();
+            if quiet >= STALL {
+                link.set_stalled(true);
+            }
+            // 运行很久而没有输出的命令也让对端安静：探测的应答把它与连接停滞区分开。应答
+            // 不必等待，接收端随即丢弃。
+            if quiet >= PROBE {
+                let _ = link.send(kind::PING, &[]);
+            }
+        }
+    }
+
+    /// 由本程序立即断开，不等对端收尾：等待中的请求随即失败，连接的结束不算意外中断。
+    ///
+    /// 子进程是进程组的组长时（见 [`Connection::deploy`]）连同它启动的进程一起结束：它们持有
+    /// 输出的管道，留着的话读取应答的线程等不到结束。
+    fn kill(&self) {
+        self.shutting.store(true, Ordering::Relaxed);
+        self.close();
+        if let Some(child) = (self.child.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+        {
+            #[cfg(unix)]
+            deploy::kill_group(child);
+            let _ = child.kill();
         }
     }
 
@@ -244,6 +316,17 @@ impl Connection {
         output: impl Write + Send + 'static,
         child: Option<Child>,
     ) -> io::Result<Self> {
+        let connection = Self::attach(input, output, child);
+        connection.hello()?;
+        Ok(connection)
+    }
+
+    /// 在一对字节流上开始收发，尚未与对端交换协议版本（见 [`Connection::hello`]）。
+    fn attach(
+        input: impl io::Read + Send + 'static,
+        output: impl Write + Send + 'static,
+        child: Option<Child>,
+    ) -> Self {
         let link = Arc::new(Link {
             output: Mutex::new(Some(BufWriter::new(Box::new(output)))),
             waiting: Mutex::default(),
@@ -251,17 +334,26 @@ impl Connection {
             shutting: AtomicBool::new(false),
             sent: AtomicU64::new(0),
             on_close: Mutex::default(),
+            heard: Mutex::new(Instant::now()),
+            stalled: AtomicBool::new(false),
+            on_stall: Mutex::default(),
         });
         let reader = {
             let link = Arc::clone(&link);
             thread::spawn(move || link.receive(BufReader::new(input)))
         };
-        let connection = Self {
+        let watched = Arc::downgrade(&link);
+        thread::spawn(move || Link::watch(watched));
+        Self {
             link,
             reader: Some(reader),
-        };
+        }
+    }
+
+    /// 与对端交换协议版本。
+    fn hello(&self) -> io::Result<()> {
         let hello = Writer::default().u32(wire::VERSION).finish();
-        let reply = connection.request(kind::HELLO, &hello)?;
+        let reply = self.request(kind::HELLO, &hello)?;
         let mut reply = Reader::new(&reply);
         if reply.u32()? != wire::VERSION {
             return Err(io::Error::new(
@@ -269,14 +361,19 @@ impl Connection {
                 "protocol version mismatch",
             ));
         }
-        reply.finish()?;
-        Ok(connection)
+        reply.finish()
     }
 
     /// 设置连接意外中断（对端退出、`ssh` 因网络中断结束）时调用的函数，在读取应答的线程上
     /// 调用一次；本程序主动断开时不调用。已有的函数被替换。
     pub fn on_close(&self, hook: impl FnOnce() + Send + 'static) {
         *(self.link.on_close.lock()).unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
+    }
+
+    /// 设置「对端是否迟迟没有动静」（见 [`is_stalled`]）变化时调用的函数，在连接自己的线程上
+    /// 调用；已有的函数被替换。
+    pub fn on_stall(&self, hook: impl Fn() + Send + 'static) {
+        *(self.link.on_stall.lock()).unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
     }
 
     /// 发出一个请求并等待应答，返回应答的载荷。
@@ -289,7 +386,7 @@ impl Connection {
         let (_, replies) = self.link.send(kind, payload)?;
         match replies.recv() {
             Ok(frame) => finish(frame),
-            Err(_) => Err(io::ErrorKind::BrokenPipe.into()),
+            Err(_) => Err(unavailable(Unavailable::Lost)),
         }
     }
 
@@ -391,7 +488,7 @@ impl Connection {
         // 目录项分批到达，最后一帧是空的应答或错误。
         loop {
             let Ok(frame) = replies.recv() else {
-                return Err(io::ErrorKind::BrokenPipe.into());
+                return Err(unavailable(Unavailable::Lost));
             };
             if frame.kind != kind::CHUNK {
                 Reader::new(&finish(frame)?).finish()?;
@@ -424,15 +521,28 @@ impl Connection {
             .u64(offset)
             .u32(len.min(wire::MAX_READ))
             .finish();
-        let reply = self.request(kind::READ, &request)?;
-        let mut reply = Reader::new(&reply);
-        let data = reply.bytes()?.to_vec();
-        let end = reply.u8()? != 0;
-        reply.finish()?;
-        // 调用方按请求的长度准备缓冲区：对端多给的数据不能接受。
-        if data.len() > len as usize {
-            return Err(wire::invalid("read returned more than requested"));
-        }
+        let (_, replies) = self.link.send(kind::READ, &request)?;
+        // 较长的数据分段到达：前面各段是 `CHUNK`，最后一帧带着余下的数据和是否已到末尾。
+        let mut data = Vec::new();
+        let end = loop {
+            let Ok(frame) = replies.recv() else {
+                return Err(unavailable(Unavailable::Lost));
+            };
+            let last = frame.kind != kind::CHUNK;
+            let payload = if last { finish(frame)? } else { frame.payload };
+            let mut reply = Reader::new(&payload);
+            let part = if last { reply.bytes()? } else { &payload };
+            // 调用方按请求的长度准备缓冲区：对端多给的数据不能接受。
+            if data.len() + part.len() > len as usize {
+                return Err(wire::invalid("read returned more than requested"));
+            }
+            data.extend_from_slice(part);
+            if last {
+                let end = reply.u8()? != 0;
+                reply.finish()?;
+                break end;
+            }
+        };
         Ok((data, end))
     }
 
@@ -558,7 +668,7 @@ impl Connection {
         self.link.write(kind::SAVE_END, id, &end)?;
         let reply = match replies.recv() {
             Ok(frame) => finish(frame),
-            Err(_) => Err(io::ErrorKind::BrokenPipe.into()),
+            Err(_) => Err(unavailable(Unavailable::Lost)),
         };
         // 本机一侧的错误（例如内容无法按所选的编码写出）优先于对端对「放弃」的应答。
         written?;
@@ -594,7 +704,7 @@ impl Connection {
             let frame = match replies.recv_timeout(CANCEL_POLL) {
                 Ok(frame) => frame,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(io::ErrorKind::BrokenPipe.into());
+                    return Err(unavailable(Unavailable::Lost));
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if !asked && cancel() {
@@ -788,6 +898,18 @@ pub(crate) fn pair(from: &Path, to: &Path) -> io::Result<Option<Pair>> {
         _ => Err(io::ErrorKind::Unsupported.into()),
     }
 }
+
+/// 有请求在等待而对端没有动静时，每隔多久探测一次（5 秒）。
+///
+/// 取值与常见编辑器的远程连接保持活动的间隔一致。没有请求在等待时不探测。本 crate 的测试中
+/// 缩短为 50 ms。
+const PROBE: Duration = Duration::from_millis(if cfg!(test) { 50 } else { 5000 });
+
+/// 有请求在等待而对端安静多久之后记为没有响应（20 秒）。
+///
+/// 取值与常见编辑器判定远程连接超时的时间一致。这里只用于提示，不断开连接：何时放弃由
+/// `ssh` 按用户的设置决定。本 crate 的测试中缩短为 200 ms。
+const STALL: Duration = Duration::from_millis(if cfg!(test) { 200 } else { 20_000 });
 
 /// 等待命令结束时检查是否被取消的间隔（毫秒）。取消由用户的操作或超时触发，50 ms 以内的
 /// 延迟不可察觉；间隔内没有新的输出时线程才被唤醒一次。
@@ -1049,7 +1171,10 @@ impl io::Read for Running {
                 return Ok(0);
             }
             let frame = match self.deadline {
-                None => self.replies.recv().map_err(|_| io::ErrorKind::BrokenPipe)?,
+                None => self
+                    .replies
+                    .recv()
+                    .map_err(|_| unavailable(Unavailable::Lost))?,
                 Some(deadline) => {
                     let left = deadline.saturating_duration_since(Instant::now());
                     match self.replies.recv_timeout(left) {
@@ -1058,7 +1183,7 @@ impl io::Read for Running {
                             return Err(io::ErrorKind::TimedOut.into());
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => {
-                            return Err(io::ErrorKind::BrokenPipe.into());
+                            return Err(unavailable(Unavailable::Lost));
                         }
                     }
                 }
@@ -1103,6 +1228,41 @@ pub fn spawn(dir: &Path, exec: &Exec) -> io::Result<Running> {
         code: None,
         deadline: None,
     })
+}
+
+/// 连接不可用的情形。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unavailable {
+    /// 连接已中断：正在等待和此后的请求都失败。
+    Lost,
+    /// 没有到该目标的连接。
+    NotConnected,
+}
+
+/// 把连接不可用的情形写成给用户看的说明的函数，由 [`describe_unavailable`] 设置。
+static DESCRIBE: Mutex<Option<Describe>> = Mutex::new(None);
+
+/// 把连接不可用的情形写成说明文字的函数。
+type Describe = fn(Unavailable) -> String;
+
+/// 设置连接不可用时错误的说明文字：此后这类错误的 `Display` 是 `describe` 的返回值，在错误
+/// 产生时调用。没有设置时是英文的简短说明。错误的种类（[`io::ErrorKind`]）不受影响。
+///
+/// 这类错误会原样出现在「无法保存：……」一类的提示里，由持有界面语言的一层给出说明。
+pub fn describe_unavailable(describe: Describe) {
+    *DESCRIBE.lock().unwrap_or_else(PoisonError::into_inner) = Some(describe);
+}
+
+/// 返回连接不可用的错误：中断时种类是 [`io::ErrorKind::BrokenPipe`]，没有连接时是
+/// [`io::ErrorKind::NotConnected`]。
+pub(crate) fn unavailable(what: Unavailable) -> io::Error {
+    let describe = *DESCRIBE.lock().unwrap_or_else(PoisonError::into_inner);
+    let (kind, fallback) = match what {
+        Unavailable::Lost => (io::ErrorKind::BrokenPipe, "the connection was lost"),
+        Unavailable::NotConnected => (io::ErrorKind::NotConnected, "not connected to the host"),
+    };
+    let message = describe.map_or_else(|| fallback.to_owned(), |describe| describe(what));
+    io::Error::new(kind, message)
 }
 
 /// 进程中已建立的连接，按连接目标登记。
@@ -1151,6 +1311,17 @@ pub fn is_connected(target: &Target) -> bool {
         .is_some_and(|connection| !connection.link.closed())
 }
 
+/// 是否到 `target` 的连接上有请求在等待，而对端已有 20 秒没有任何动静：网络多半已经
+/// 停滞，`ssh` 还没有判定连接中断。连接仍然保留，对端恢复应答后随即为假。
+pub fn is_stalled(target: &Target) -> bool {
+    let connections = CONNECTIONS.lock().unwrap_or_else(PoisonError::into_inner);
+    (connections.as_ref())
+        .and_then(|all| all.get(target))
+        .is_some_and(|connection| {
+            !connection.link.closed() && connection.link.stalled.load(Ordering::Relaxed)
+        })
+}
+
 /// 返回到 `target` 的连接至今发出的请求数；没有连接时为 0。
 ///
 /// 每个请求要等一次网络往返，往返次数决定了延迟较高的连接上各项操作的快慢；用于测量和测试。
@@ -1186,7 +1357,7 @@ pub(crate) fn connection(target: &Target) -> io::Result<Arc<Connection>> {
     (connections.as_ref())
         .and_then(|all| all.get(target))
         .cloned()
-        .ok_or_else(|| io::ErrorKind::NotConnected.into())
+        .ok_or_else(|| unavailable(Unavailable::NotConnected))
 }
 
 thread_local! {

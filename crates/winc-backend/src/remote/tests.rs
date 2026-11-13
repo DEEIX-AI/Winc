@@ -136,3 +136,69 @@ fn a_command_that_is_not_the_server_fails_the_handshake() {
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     assert!(Connection::spawn(Command::new("winc-no-such-program")).is_err());
 }
+
+#[test]
+fn a_connection_that_stops_answering_is_marked_until_it_answers_again() {
+    use std::sync::atomic::AtomicUsize;
+
+    // 对端：应答握手；探测只在 `answering` 为真时应答，其余请求一概不应答。
+    let (requests_in, requests_out) = io::pipe().unwrap();
+    let (replies_in, mut replies_out) = io::pipe().unwrap();
+    let answering = Arc::new(AtomicBool::new(true));
+    let peer = Arc::clone(&answering);
+    thread::spawn(move || {
+        let mut requests = BufReader::new(requests_in);
+        while let Ok(Some(frame)) = wire::read_frame(&mut requests) {
+            let reply = match frame.kind {
+                kind::HELLO => Writer::default().u32(wire::VERSION).finish(),
+                kind::PING if peer.load(Ordering::Relaxed) => Vec::new(),
+                _ => continue,
+            };
+            if wire::write_frame(&mut replies_out, kind::OK, frame.id, &reply).is_err() {
+                return;
+            }
+        }
+    });
+    let connection = Connection::over(replies_in, requests_out).unwrap();
+    let changes = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&changes);
+    connection.on_stall(move || {
+        seen.fetch_add(1, Ordering::Relaxed);
+    });
+    let target = Target::new("stalls").unwrap();
+    register(target.clone(), connection);
+    let until = |wanted: bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while is_stalled(&target) != wanted && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        is_stalled(&target) == wanted
+    };
+
+    // 没有请求在等待：对端再安静也不算没有响应。
+    thread::sleep(STALL * 2);
+    assert!(!is_stalled(&target));
+
+    // 一个迟迟没有应答的请求（如运行很久的命令），探测仍有应答：不算没有响应。
+    let waiter = {
+        let target = target.clone();
+        thread::spawn(move || {
+            let path = crate::virtual_path(&target, b"/");
+            crate::fs::metadata(path).unwrap_err().kind()
+        })
+    };
+    thread::sleep(STALL * 2);
+    assert!(!is_stalled(&target));
+    assert_eq!(changes.load(Ordering::Relaxed), 0);
+
+    // 探测也没有应答：记为没有响应，连接仍然保留；恢复应答后随即解除。
+    answering.store(false, Ordering::Relaxed);
+    assert!(until(true));
+    assert!(is_connected(&target));
+    answering.store(true, Ordering::Relaxed);
+    assert!(until(false));
+    assert_eq!(changes.load(Ordering::Relaxed), 2);
+
+    disconnect(&target);
+    assert_eq!(waiter.join().unwrap(), io::ErrorKind::BrokenPipe);
+}

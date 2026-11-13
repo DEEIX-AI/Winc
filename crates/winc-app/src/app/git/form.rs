@@ -30,8 +30,9 @@ pub(crate) enum FormKind {
     /// `at` 是日志里选的提交（完整的提交号），从它新建时「基于」不能改；`None` 时「基于」可以
     /// 选分支。
     Branch { at: Option<String> },
-    /// `git`、`ssh` 的输入请求，见 [`super::question`]。
-    Question(Prompt),
+    /// `git`、`ssh` 的输入请求，见 [`super::question`]；请求来自远端主机上的命令时，后一项是
+    /// 那台主机。
+    Question(Prompt, Option<String>),
     /// 克隆仓库：地址、位置。
     Clone,
     /// 添加远程仓库，或修改 `editing` 的地址。
@@ -46,7 +47,7 @@ impl FormKind {
     /// 返回使用询问对话框版式的表单的内容；其他表单返回 `None`。
     pub(crate) fn view(&self) -> Option<QuestionView> {
         match self {
-            FormKind::Question(prompt) => Some(QuestionView::of(prompt)),
+            FormKind::Question(prompt, origin) => Some(QuestionView::of(prompt, origin.as_deref())),
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
             FormKind::Connect => Some(QuestionView::connect()),
             FormKind::Worktree
@@ -186,7 +187,7 @@ impl App {
         let Some(dialog) = self.form_dialog.take() else {
             return;
         };
-        if matches!(dialog.kind, FormKind::Question(_)) {
+        if matches!(dialog.kind, FormKind::Question(..)) {
             self.decline_git_question();
         }
         if matches!(dialog.kind, FormKind::Connect) {
@@ -246,9 +247,9 @@ impl App {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
             }
             FormKind::Connect => self.connect_plan(dialog),
-            FormKind::Question(prompt) => FormPlan {
+            FormKind::Question(prompt, _) => FormPlan {
                 problem: None,
-                confirm: QuestionView::of(prompt).confirm,
+                confirm: QuestionView::of(prompt, None).confirm,
                 // 用户名为空的登录请求必然失败；密码和口令允许为空。
                 enabled: !matches!(prompt, Prompt::Username { .. })
                     || !dialog.name.text().is_empty(),
@@ -378,7 +379,7 @@ impl App {
         if dialog.running.is_some() || !self.form_plan(dialog).enabled {
             return;
         }
-        if matches!(dialog.kind, FormKind::Question(_)) {
+        if matches!(dialog.kind, FormKind::Question(..)) {
             self.answer_git_question();
             return;
         }
@@ -404,7 +405,7 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
-            FormKind::Question(_) | FormKind::Connect => {}
+            FormKind::Question(..) | FormKind::Connect => {}
             FormKind::Clone => self.submit_clone(),
             FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),
@@ -593,7 +594,7 @@ impl App {
         if !layout.card.contains(x, y) {
             // 点击卡片外部不关闭询问对话框：关闭表示取消，会使正在进行的操作失败。
             let asking = (self.form_dialog.as_ref())
-                .is_some_and(|d| matches!(d.kind, FormKind::Question(_)));
+                .is_some_and(|d| matches!(d.kind, FormKind::Question(..)));
             if !asking {
                 self.close_form_dialog();
             }

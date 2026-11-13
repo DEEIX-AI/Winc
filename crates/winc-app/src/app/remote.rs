@@ -478,8 +478,8 @@ fn programs() -> Vec<Program> {
     programs
 }
 
-/// 连接意外中断时的通知。
-type Closed = Arc<dyn Fn() + Send + Sync>;
+/// 连接状况变化的通知：参数为真表示连接意外中断，为假表示对端有无响应的状况变了。
+type Closed = Arc<dyn Fn(bool) + Send + Sync>;
 
 /// 建立到 `target` 的连接并登记；`ssh` 的输入请求交给 `listener`，没有时不允许它提问。连接
 /// 意外中断时调用 `closed`。
@@ -522,7 +522,9 @@ fn connect(
         },
     )?;
     if let Some(closed) = closed.cloned() {
-        connection.on_close(move || closed());
+        let stalled = Arc::clone(&closed);
+        connection.on_close(move || closed(true));
+        connection.on_stall(move || stalled(false));
     }
     remote::register(target.clone(), connection);
     // 写集成脚本不耽误打开目录：在另一个线程上进行，写好之后开的终端才带集成。
@@ -532,14 +534,18 @@ fn connect(
 }
 
 /// 返回 `folder` 在 `target` 上的真实路径所对应的虚拟路径；不是目录或无法进入时返回原因。
-fn resolve(target: &Target, folder: &str) -> std::io::Result<Result<PathBuf, String>> {
+fn resolve(
+    target: &Target,
+    folder: &str,
+    abort: &remote::Abort,
+) -> std::io::Result<Result<PathBuf, String>> {
     let home = winc_backend::virtual_path(target, b"/");
     let exec = Exec::new("sh")
         .arg("-c")
         .arg(RESOLVE)
         .arg("winc")
         .arg(folder);
-    let output = remote::exec(&home, &exec, &|| false)?;
+    let output = remote::exec(&home, &exec, &|| abort.is_aborted())?;
     if output.code != Some(0) {
         let reason = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Ok(Err(reason));
@@ -561,12 +567,12 @@ fn open(
     if !existing {
         connect(target, listener, closed, abort, report)?;
     }
-    match resolve(target, folder) {
+    match resolve(target, folder, abort) {
         Ok(outcome) => outcome,
-        // 沿用的连接已经中断：重新连接一次。
-        Err(_) if existing => {
+        // 沿用的连接已经中断：重新连接一次。用户取消之后不再连接。
+        Err(_) if existing && !abort.is_aborted() => {
             connect(target, listener, closed, abort, report)?;
-            resolve(target, folder).map_err(|e| e.to_string())?
+            resolve(target, folder, abort).map_err(|e| e.to_string())?
         }
         Err(error) => Err(error.to_string()),
     }
@@ -795,8 +801,11 @@ impl App {
             // 端点只在连接期间存在，`listener` 在任务结束时被丢弃。
             let closed = wake.clone().map(|proxy| {
                 let target = target.clone();
-                let notify = move || {
-                    let _ = proxy.send_event(UserEvent::RemoteClosed(target.clone()));
+                let notify = move |ended: bool| {
+                    let _ = proxy.send_event(match ended {
+                        true => UserEvent::RemoteClosed(target.clone()),
+                        false => UserEvent::RemoteHealth,
+                    });
                 };
                 Arc::new(notify) as Closed
             });
@@ -852,7 +861,12 @@ impl App {
             return;
         };
         self.end_remote_questions();
-        self.remote.abort = None;
+        // 取消与完成同时发生时以取消为准：不打开用户已经放弃的目录。
+        let aborted = (self.remote.abort.take()).is_some_and(|abort| abort.is_aborted());
+        let outcome = match outcome {
+            Ok(_) if aborted => Err(String::new()),
+            other => other,
+        };
         // 连接的提示到此为止；它的按钮已经没有可取消的对象。
         if self.notice.action == Some(NoticeAction::CancelConnect) {
             self.dismiss_notice();
@@ -960,7 +974,8 @@ impl App {
         }
     }
 
-    /// 取消正在进行的连接（提示上的「取消」）：结束 `ssh`，后台的连接随即以失败返回。
+    /// 取消正在进行的连接（提示上的「取消」）：结束 `ssh`，后台的连接随即以失败返回；服务
+    /// 进程已经启动、正在取得目录的路径时同样有效。
     pub(in crate::app) fn cancel_remote(&mut self) {
         if let Some(abort) = &self.remote.abort {
             self.remote.declined = true;

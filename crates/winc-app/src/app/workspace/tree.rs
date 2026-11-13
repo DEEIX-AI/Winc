@@ -915,6 +915,8 @@ pub struct TreeState {
     pub(crate) drag: Option<crate::app::workspace::tree_drag::TreeDrag>,
     /// 正在后台重读的、文件树中被其他程序修改的目录。
     pub(in crate::app) scans: crate::app::workspace::watch::TreeScans,
+    /// 正在后台进行的复制（拖入、粘贴）。
+    pub(in crate::app) copies: crate::app::workspace::copying::Copies,
 }
 
 impl Default for TreeState {
@@ -930,6 +932,7 @@ impl Default for TreeState {
             motion: None,
             drag: None,
             scans: Default::default(),
+            copies: Default::default(),
         }
     }
 }

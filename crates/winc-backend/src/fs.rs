@@ -14,8 +14,8 @@ mod save;
 mod tests;
 
 pub use change::{
-    copy, copy_symlink, create_dir, create_dir_all, create_new, remove_all, remove_file, rename,
-    set_mode, write,
+    copy, copy_symlink, copy_watched, create_dir, create_dir_all, create_new, remove_all,
+    remove_file, rename, set_mode, write,
 };
 pub use dir::{Entry, ReadDir, read_dir};
 pub use open::{Handle, Opened, open};
@@ -253,7 +253,9 @@ pub fn metadata_many<P: AsRef<Path>>(paths: &[P]) -> Vec<io::Result<Metadata>> {
         }
     }
     (results.into_iter())
-        .map(|result| result.unwrap_or_else(|| Err(io::ErrorKind::NotConnected.into())))
+        .map(|result| {
+            result.unwrap_or_else(|| Err(remote::unavailable(remote::Unavailable::NotConnected)))
+        })
         .collect()
 }
 

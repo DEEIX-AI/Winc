@@ -16,7 +16,7 @@ common-key-enter = { $platform ->
    *[other] Enter
 }
 common-close = Close
-common-close-dialog-first = A dialog is already open in this window; close it first
+common-close-dialog-first = Close the open dialog first
 
 ## Move to Trash
 
@@ -46,7 +46,7 @@ common-deleted-item = Deleted: { $name }
 common-deleted-items = Deleted { $count } items
 common-trash-delete-failed = Couldn’t delete “{ $name }”: { $error }
 common-trash-invalid-path = Invalid path
-common-trash-no-file-manager = NSFileManager is unavailable
+common-trash-no-file-manager = The system file service is unavailable
 common-trash-failed = Couldn’t move to the { common-trash }
 common-trash-failed-code = Couldn’t move to the { common-trash } (error { $code })
 common-trash-cancelled = Cancelled; nothing was moved to the { common-trash }

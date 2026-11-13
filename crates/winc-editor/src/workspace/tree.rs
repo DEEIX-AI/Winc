@@ -13,6 +13,8 @@ use std::rc::Rc;
 use ignore::WalkBuilder;
 use winc_i18n::t;
 
+use super::copying::{self, Copying};
+
 /// 文件树里一项的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
@@ -706,7 +708,7 @@ impl Workspace {
     ///
     /// 同 [`copy_entry`]。
     pub fn copy_into(&mut self, source: &Path, dir: &Path) -> io::Result<PathBuf> {
-        let target = copy_entry(&self.root, source, dir)?;
+        let target = copy_entry(&self.root, source, dir, &Copying::default())?;
         self.created(&target);
         Ok(target)
     }
@@ -1015,12 +1017,19 @@ fn occupied(path: &Path) -> bool {
 /// 把工作区 `root` 外（或内）的文件或目录 `source` 复制进 `root` 里的目录 `dir`，返回副本的路径。
 ///
 /// 目录连同其中的内容一起复制，符号链接复制为链接本身；`dir` 中已有同名项时不覆盖，副本改名为
-/// 「名字 2.扩展名」「名字 3.扩展名」等。只访问磁盘、不改文件树，可以在后台线程上调用。
+/// 「名字 2.扩展名」「名字 3.扩展名」等。进度记入 `copying`，经它可以取消。只访问磁盘、不改
+/// 文件树，可以在后台线程上调用。
 ///
 /// # Errors
 ///
-/// `dir` 不在工作区内或复制进 `source` 内时返回 `InvalidInput`，其余返回 `std::io::Error`。
-pub fn copy_entry(root: &Path, source: &Path, dir: &Path) -> io::Result<PathBuf> {
+/// `dir` 不在工作区内或复制进 `source` 内时返回 `InvalidInput`，被取消时返回 `Interrupted`
+/// （已复制出的部分随之删除），其余返回 `std::io::Error`。
+pub fn copy_entry(
+    root: &Path,
+    source: &Path,
+    dir: &Path,
+    copying: &Copying,
+) -> io::Result<PathBuf> {
     let invalid = |reason| Err(io::Error::new(io::ErrorKind::InvalidInput, reason));
     if !dir.starts_with(root) {
         return invalid(t!("workspace-tree-target-outside"));
@@ -1032,7 +1041,8 @@ pub fn copy_entry(root: &Path, source: &Path, dir: &Path) -> io::Result<PathBuf>
         return invalid(t!("workspace-tree-cannot-copy"));
     };
     let target = free_name(dir, Path::new(name));
-    copy_recursive(source, &target)?;
+    let links: copying::Links = |from, to| winc_backend::fs::copy_symlink(from, to);
+    copying::copy_item(source, &target, links, copying)?;
     Ok(target)
 }
 
@@ -1056,23 +1066,6 @@ fn free_name(dir: &Path, name: &Path) -> PathBuf {
         .map(|n| dir.join(format!("{stem} {n}{}", ext.as_deref().unwrap_or(""))))
         .find(|p| !occupied(p))
         .expect("总能找到没被占用的名字")
-}
-
-/// 把 `from` 复制到 `to`：文件复制内容和权限，目录连同其中的内容一起复制，符号链接复制为链接本身。
-fn copy_recursive(from: &Path, to: &Path) -> io::Result<()> {
-    let meta = winc_backend::fs::symlink_metadata(from)?;
-    if meta.is_symlink() {
-        return winc_backend::fs::copy_symlink(from, to);
-    }
-    if meta.is_dir() {
-        winc_backend::fs::create_dir(to)?;
-        for entry in winc_backend::fs::read_dir(from)? {
-            let entry = entry?;
-            copy_recursive(&entry.path(), &to.join(&entry.name))?;
-        }
-        return Ok(());
-    }
-    winc_backend::fs::copy(from, to).map(drop)
 }
 
 /// 是否两个路径指向磁盘上的同一项：不区分大小写的文件系统上，`a` 和 `A` 就是同一项。

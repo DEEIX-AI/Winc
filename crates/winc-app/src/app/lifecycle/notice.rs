@@ -21,6 +21,8 @@ pub enum NoticeAction {
     Reconnect(PathBuf),
     /// 「取消」：取消正在进行的到远端主机的连接。
     CancelConnect,
+    /// 「取消」：取消文件树里正在进行的复制。
+    CancelCopy,
 }
 
 /// 到期后正在淡出的提示条。
@@ -36,7 +38,7 @@ pub struct NoticeGhost {
 impl NoticeAction {
     /// 是否这条提示说明的事情正在进行：提示条上显示转动的图标，而不是提醒图标。
     pub fn in_progress(&self) -> bool {
-        matches!(self, NoticeAction::CancelConnect)
+        matches!(self, NoticeAction::CancelConnect | NoticeAction::CancelCopy)
     }
 
     /// 按钮上显示的文字。
@@ -48,7 +50,9 @@ impl NoticeAction {
             NoticeAction::Install { .. } => t!("workspace-notice-install"),
             NoticeAction::FormatSettings => t!("workspace-notice-open-settings"),
             NoticeAction::Reconnect(_) => t!("workspace-notice-reconnect"),
-            NoticeAction::CancelConnect => t!("workspace-notice-cancel"),
+            NoticeAction::CancelConnect | NoticeAction::CancelCopy => {
+                t!("workspace-notice-cancel")
+            }
         }
     }
 }
@@ -173,6 +177,7 @@ impl App {
                 self.reopen_remote(&folder);
             }
             NoticeAction::CancelConnect => self.cancel_remote(),
+            NoticeAction::CancelCopy => self.cancel_copies(),
         }
         self.request_redraw();
     }

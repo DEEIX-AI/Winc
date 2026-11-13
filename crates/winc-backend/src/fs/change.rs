@@ -8,7 +8,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
 use crate::{locate, remote};
@@ -96,14 +96,36 @@ pub fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
 ///
 /// 与 `std::fs::copy` 相同。
 pub fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<u64> {
+    copy_watched(from, to, &|_| true)
+}
+
+/// 同 [`copy`]，复制期间把新复制的字节数报告给 `watch`；`watch` 返回假时停止复制。
+///
+/// 两者不在同一台机器上时内容分段传输，每段报告一次，停止后 `to` 不出现残缺的文件。在同一台
+/// 机器上时由那台机器一次复制完：开始之前报告一次（0 字节），完成之后报告一次，开始之后不能
+/// 停止。
+///
+/// # Errors
+///
+/// `watch` 返回假而停止时返回 [`io::ErrorKind::Interrupted`]，其余与 `std::fs::copy` 相同。
+pub fn copy_watched(
+    from: impl AsRef<Path>,
+    to: impl AsRef<Path>,
+    watch: &dyn Fn(u64) -> bool,
+) -> io::Result<u64> {
     let (from, to) = (from.as_ref(), to.as_ref());
     if crosses(from, to) {
-        return transfer(from, to);
+        return transfer(from, to, watch);
     }
-    match remote::pair(from, to)? {
+    if !watch(0) {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
+    let copied = match remote::pair(from, to)? {
         None => std::fs::copy(from, to),
         Some((connection, from, to)) => connection.copy(&from, &to),
-    }
+    }?;
+    watch(copied);
+    Ok(copied)
 }
 
 /// 是否 `from` 与 `to` 不在同一台机器上。
@@ -114,19 +136,36 @@ fn crosses(from: &Path, to: &Path) -> bool {
 
 /// 把 `from` 的内容经本进程传到另一台机器上的 `to`，返回传输的字节数。
 ///
-/// 内容边读边写，不整个留在内存中；写入按 [`save`](super::save) 的流程，中途失败时 `to`
+/// 内容边读边写，不整个留在内存中，每次读取 [`remote::MAX_READ`] 字节（读取远端文件时一次
+/// 往返取回的上限）；写入按 [`save`](super::save) 的流程，中途失败或被 `watch` 停止时 `to`
 /// 不出现残缺的文件。源文件在 Unix 上时把它的权限位带过去（脚本的可执行位）。
-fn transfer(from: &Path, to: &Path) -> io::Result<u64> {
+fn transfer(from: &Path, to: &Path, watch: &dyn Fn(u64) -> bool) -> io::Result<u64> {
     let mut opened = super::open(from, 0)?;
     // 只带读写执行位：设置用户、设置组的位不带到另一台机器上。
     let mode = opened.metadata.unix.map(|unix| unix.mode & 0o777);
-    let mut copied = 0;
+    let (mut copied, mut stopped) = (0, false);
     let mut reader = opened.reader()?;
     let options = super::SaveOptions::default();
     let saved = super::save(to, &options, |out| {
-        copied = io::copy(&mut reader, out)?;
-        Ok(())
+        let mut buffer = vec![0; remote::MAX_READ as usize];
+        loop {
+            let count = match reader.read(&mut buffer) {
+                Ok(0) => return Ok(()),
+                Ok(count) => count,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            out.write_all(&buffer[..count])?;
+            copied += count as u64;
+            if !watch(count as u64) {
+                stopped = true;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+        }
     });
+    if stopped {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
     match saved {
         Ok(_) => {}
         Err(super::SaveError::Io(error)) => return Err(error),

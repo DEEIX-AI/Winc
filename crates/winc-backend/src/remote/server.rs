@@ -14,8 +14,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -38,7 +38,33 @@ const DRAIN: Duration = Duration::from_secs(2);
 const GRACE: Duration = Duration::from_millis(200);
 
 /// 写应答的一端，由读取请求的线程和各个运行命令的线程共用。
-type Output = Arc<Mutex<Box<dyn Write + Send>>>;
+type Output = Arc<Replies>;
+
+/// 写应答的一端，以及正在等着写的线程数。
+struct Replies {
+    writer: Mutex<Box<dyn Write + Send>>,
+    waiting: AtomicUsize,
+}
+
+impl Replies {
+    /// 取得写的一端。
+    fn lock(&self) -> MutexGuard<'_, Box<dyn Write + Send>> {
+        self.waiting.fetch_add(1, Ordering::Relaxed);
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        self.waiting.fetch_sub(1, Ordering::Relaxed);
+        writer
+    }
+
+    /// 等别的线程都写完之后再取得写的一端：用于成批的数据，让它排在其他应答之后。
+    ///
+    /// 锁本身不保证先来后到：刚放开锁的线程可以立刻再次取得，等着的线程一直轮不到。
+    fn lock_last(&self) -> MutexGuard<'_, Box<dyn Write + Send>> {
+        while self.waiting.load(Ordering::Relaxed) > 0 {
+            thread::yield_now();
+        }
+        self.lock()
+    }
+}
 /// 运行中的命令：请求号对应其状态。
 type Running = Arc<Mutex<HashMap<u32, Arc<Job>>>>;
 
@@ -60,7 +86,10 @@ struct Job {
 ///
 /// 读取、写入失败，或收到不合协议的帧时返回对应的 `io::Error`。
 pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::Result<()> {
-    let output: Output = Arc::new(Mutex::new(Box::new(output)));
+    let output: Output = Arc::new(Replies {
+        writer: Mutex::new(Box::new(output)),
+        waiting: AtomicUsize::new(0),
+    });
     let running = Running::default();
     let mut uploads: HashMap<u32, Upload> = HashMap::new();
     // 载荷超过一帧的请求：先到的各段按请求号存放；超过上限的内容丢弃，请求到达时应答错误。
@@ -122,6 +151,10 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
                 start(frame, &output, &running);
                 Ok(())
             }
+            kind::READ if reads_apart(&frame) => {
+                read_apart(frame, &output);
+                Ok(())
+            }
             // 保存的内容分多帧到达，先按请求号存起来，收到结束的一帧才写入并应答。
             kind::SAVE_BEGIN => {
                 if let Ok(upload) = Upload::begin(&frame.payload) {
@@ -162,7 +195,7 @@ fn reply(output: &Output, id: u32, result: io::Result<Vec<u8>>) -> io::Result<()
         Ok(payload) => (kind::OK, payload),
         Err(error) => (kind::ERROR, wire::encode_error(&error)),
     };
-    let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut output = output.lock();
     wire::write_frame(&mut *output, kind, id, &payload)?;
     output.flush()
 }
@@ -223,6 +256,10 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
             }
             Ok(Writer::default().u32(wire::VERSION).finish())
         }
+        kind::PING => {
+            input.finish()?;
+            Ok(Vec::new())
+        }
         kind::METADATA | kind::SYMLINK_METADATA => {
             let path = path(&mut input)?;
             input.finish()?;
@@ -234,30 +271,8 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
             Ok(wire::write_metadata(Writer::default(), &metadata).finish())
         }
         kind::READ => {
-            let path = path(&mut input)?;
-            let (offset, len) = (input.u64()?, input.u32()?);
-            input.finish()?;
-            if len > wire::MAX_READ {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "read too large",
-                ));
-            }
-            // 只读取普通文件：打开命名管道会一直等到另一端出现，占住读取请求的线程。
-            if !std::fs::metadata(path)?.is_file() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "not a regular file",
-                ));
-            }
-            let mut data = vec![0; len as usize];
-            let handle = crate::fs::open(path, 0)?.into_handle();
-            let read = handle.read_full(offset, &mut data)?;
-            let end = read < data.len();
-            Ok(Writer::default()
-                .bytes(&data[..read])
-                .u8(u8::from(end))
-                .finish())
+            let (data, end) = read(&frame.payload)?;
+            Ok(Writer::default().bytes(&data).u8(u8::from(end)).finish())
         }
         kind::READ_LINK => {
             let path = path(&mut input)?;
@@ -329,6 +344,77 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
             "unknown request",
         )),
     }
+}
+
+/// 执行读取请求 `payload`（路径、偏移、长度），返回读到的数据和是否已到文件末尾。
+fn read(payload: &[u8]) -> io::Result<(Vec<u8>, bool)> {
+    let mut input = Reader::new(payload);
+    let path = path(&mut input)?;
+    let (offset, len) = (input.u64()?, input.u32()?);
+    input.finish()?;
+    if len > wire::MAX_READ {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "read too large",
+        ));
+    }
+    // 只读取普通文件：打开命名管道会一直等到另一端出现，占住读取请求的线程。
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let mut data = vec![0; len as usize];
+    let handle = crate::fs::open(path, 0)?.into_handle();
+    let read = handle.read_full(offset, &mut data)?;
+    data.truncate(read);
+    Ok((data, read < len as usize))
+}
+
+/// 读取请求的长度超过多少字节时分段应答（字节，256 KiB，与保存时一段的大小相同）。
+///
+/// 一帧在写完之前占着应答的一端：整段数据作为一帧时，带宽有限的连接上别的请求要等它写完。
+/// 分成几段、在另一个线程上写出，别的应答可以排在两段之间。
+const READ_PART: usize = 256 << 10;
+
+/// 是否读取请求 `frame` 的长度超过 [`READ_PART`]；载荷不合格式时为假，由通常的流程应答错误。
+fn reads_apart(frame: &Frame) -> bool {
+    let mut input = Reader::new(&frame.payload);
+    let len = (|| {
+        input.bytes()?;
+        input.u64()?;
+        input.u32()
+    })();
+    len.is_ok_and(|len| len as usize > READ_PART)
+}
+
+/// 在新线程上执行读取请求 `frame`：数据分成不超过 [`READ_PART`] 的几段，前面各段作为
+/// [`kind::CHUNK`] 写出，最后一段连同是否已到末尾作为应答。
+fn read_apart(frame: Frame, output: &Output) {
+    let output = Arc::clone(output);
+    thread::spawn(move || {
+        let result = read(&frame.payload).and_then(|(data, end)| {
+            let mut rest = data.as_slice();
+            while rest.len() > READ_PART {
+                let (part, later) = rest.split_at(READ_PART);
+                let mut writer = output.lock_last();
+                wire::write_frame(&mut *writer, kind::CHUNK, frame.id, part)?;
+                writer.flush()?;
+                drop(writer);
+                rest = later;
+            }
+            Ok(Writer::default().bytes(rest).u8(u8::from(end)).finish())
+        });
+        let (kind, payload) = match result {
+            Ok(payload) => (kind::OK, payload),
+            Err(error) => (kind::ERROR, wire::encode_error(&error)),
+        };
+        // 写不出去说明连接已断开，读取请求的线程会随之结束。
+        let mut writer = output.lock_last();
+        let _ = wire::write_frame(&mut *writer, kind, frame.id, &payload);
+        let _ = writer.flush();
+    });
 }
 
 /// 一次保存中留在内存里的内容上限（字节，64 MiB），超过后转存到磁盘上。
@@ -526,7 +612,7 @@ fn list(frame: &Frame, output: &Output) -> Result<(), Failure> {
     let send = |count: u32, items: Writer| {
         let mut payload = Writer::default().u32(count).finish();
         payload.extend_from_slice(&items.finish());
-        let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut output = output.lock();
         wire::write_frame(&mut *output, kind::CHUNK, frame.id, &payload).map_err(Failure::Output)
     };
     let (mut count, mut size, mut items) = (0u32, 0usize, Writer::default());
@@ -824,7 +910,7 @@ fn wait(child: &mut Child, cancelled: &AtomicBool) -> io::Result<Option<std::pro
 
 /// 向对端写出一帧并刷新。
 fn write_frame(output: &Output, kind: u8, id: u32, payload: &[u8]) -> io::Result<()> {
-    let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut output = output.lock();
     wire::write_frame(&mut *output, kind, id, payload)?;
     output.flush()
 }
@@ -847,7 +933,7 @@ fn pump(
                 Err(_) => return,
             };
             let payload = Writer::default().u8(stream).bytes(&buffer[..read]).finish();
-            let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut output = output.lock();
             let sent = wire::write_frame(&mut *output, kind::CHUNK, id, &payload);
             // 连接已断开：不再读取，命令随后被强制结束。
             if sent.and_then(|()| output.flush()).is_err() {

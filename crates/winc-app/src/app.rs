@@ -215,10 +215,10 @@ pub enum UserEvent {
     ReopenEncoding(DocumentId, winc_editor::Encoding),
     /// 后台完成了一张图片的解码，或一个 SVG 的绘制。
     ImageReady,
-    /// 粘贴到文件树中的文件已在后台复制完成：新路径，或失败的原因。
-    Pasted(Result<Vec<PathBuf>, String>),
-    /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径，以及复制失败的说明。
-    Copied(Vec<PathBuf>, Vec<String>),
+    /// 粘贴到文件树中的文件已在后台复制完成：新路径，或失败的原因；以及这次复制。
+    Pasted(Result<Vec<PathBuf>, String>, Arc<winc_editor::Copying>),
+    /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径、复制失败的说明，以及这次复制。
+    Copied(Vec<PathBuf>, Vec<String>, Arc<winc_editor::Copying>),
     /// 窗口已关闭时点击了程序坞中的图标（macOS）：重新显示窗口。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Reopen,
@@ -268,6 +268,8 @@ pub enum UserEvent {
     RemoteQuestion,
     /// 后台到远端主机的连接到达了新的阶段。
     RemoteStage,
+    /// 远端主机有无响应的状况变了：状态栏的连接按钮随之重绘。
+    RemoteHealth,
     /// 后台已读取三栏合并的两侧。
     GitMergeSides,
     /// 后台已取得日志的一批提交、一个提交的详情或一个文件的差异。
