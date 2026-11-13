@@ -974,8 +974,9 @@ impl App {
         }
     }
 
-    /// 记为正在连接 `devbox`，返回这次连接的中止入口；不启动 `ssh`。
-    #[cfg(test)]
+    /// 记为正在连接 `devbox`，返回这次连接的中止入口；不启动 `ssh`。用到它的测试只在 Unix 上
+    /// 编译。
+    #[cfg(all(test, unix))]
     pub(in crate::app) fn begin_connection_for_test(&mut self) -> remote::Abort {
         let abort = remote::Abort::default();
         self.remote.abort = Some(abort.clone());
