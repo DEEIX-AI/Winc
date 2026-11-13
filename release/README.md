@@ -17,7 +17,7 @@ of releasing it again. To retry a failed build, rerun the Release workflow on th
 | `.github/workflows/release.yml` | Entry point: prepare, the four platform builds, and the draft |
 | `.github/workflows/release-arch-repo.yml` | Stages the signed Arch repository after a stable release is published |
 | `.github/workflows/release-{prepare,macos,linux,windows}.yml` | Reusable jobs called by `release.yml` |
-| `.github/actions/build-setup/` | Shared toolchain and cache setup; pins the release Rust version |
+| `.github/actions/build-setup/` | Shared source check and toolchain setup; pins the release Rust version |
 | `release/macos/` | `package.sh` (app, dmg, appcast), `verify.sh`, and Apple signing setup |
 | `release/linux/` | `package.sh` (AppImage and deb), pinned packaging tools, desktop entry and AppRun |
 | `release/linux/arch/` | Arch package recipe, repository staging and installer template |
@@ -104,6 +104,11 @@ The app reads `<channel URL>/appcast-<platform>.xml`, and each appcast's downloa
 `<channel URL>/<file name>`. To ship a version, deploy its appcasts and the files they list to that
 URL. Appcasts are signed, so winc.si must serve them unchanged. The channel URL is defined once,
 in `channelBase` in `release/common/config.mjs`.
+
+The in-app release notes are not part of a channel. The app reads
+`https://winc.si/releases/notes/<language>.md` (`en.md`, `zh-cn.md`) when the user opens them;
+winc.si generates these files from its changelog. Each release starts with a `## <version> · <date>`
+line, which the app uses to pick the releases to show (`crates/winc-app/src/release_notes.rs`).
 
 Windows NSIS installations are per-user; MSI installations are per-machine and use the fixed
 UpgradeCode `00FDC6A5-D527-59AE-B4A5-E051B25222F3`. Do not change it between releases. Each installer

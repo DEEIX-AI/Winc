@@ -190,11 +190,13 @@ impl Link {
         }
     }
 
-    /// 每隔 [`PROBE`] 检查一次，直到连接中断：有请求在等待而对端没有动静时发出探测；安静
-    /// 达到 [`STALL`] 时记为没有响应。收到任何一帧（包括探测的应答）即恢复。
+    /// 每隔 [`PROBE`] 检查一次，直到连接中断：有请求在等待而对端没有动静时发出探测，探测
+    /// 之后仍没有动静、达到 [`STALL`] 时记为没有响应（见 [`check`]）。收到任何一帧（包括探测
+    /// 的应答）即恢复。
     ///
     /// 只持有连接的弱引用：连接被丢弃后下一次检查时退出。
     fn watch(link: std::sync::Weak<Self>) {
+        let mut probed = None;
         loop {
             thread::sleep(PROBE);
             let Some(link) = link.upgrade() else {
@@ -208,15 +210,20 @@ impl Link {
                 !waiting.replies.is_empty()
             };
             if !waiting {
+                probed = None;
                 continue;
             }
-            let quiet = (link.heard.lock().unwrap_or_else(PoisonError::into_inner)).elapsed();
-            if quiet >= STALL {
+            // 先取当前时刻，再读 `heard`：两次读取之间到达的帧使 `heard` 不早于 `now`，不会
+            // 被当作探测之前收到的帧。
+            let now = Instant::now();
+            let heard = *link.heard.lock().unwrap_or_else(PoisonError::into_inner);
+            let (stalled, probe) = check(heard, &mut probed, now);
+            if stalled {
                 link.set_stalled(true);
             }
             // 运行很久而没有输出的命令也让对端安静：探测的应答把它与连接停滞区分开。应答
             // 不必等待，接收端随即丢弃。
-            if quiet >= PROBE {
+            if probe {
                 let _ = link.send(kind::PING, &[]);
             }
         }
@@ -910,6 +917,26 @@ const PROBE: Duration = Duration::from_millis(if cfg!(test) { 50 } else { 5000 }
 /// 取值与常见编辑器判定远程连接超时的时间一致。这里只用于提示，不断开连接：何时放弃由
 /// `ssh` 按用户的设置决定。本 crate 的测试中缩短为 200 ms。
 const STALL: Duration = Duration::from_millis(if cfg!(test) { 200 } else { 20_000 });
+
+/// 在时刻 `now` 检查有请求在等待的连接，返回（是否记为没有响应，是否发出探测）。
+///
+/// `heard` 是对端没有动静的时间的起点（见 [`Link::heard`]）；`probed` 是此后最早一次探测的
+/// 时刻，由本函数维护：`heard` 不早于该时刻时清除，决定探测而尚无记录时记为 `now`。
+///
+/// 没有动静的时间达到 [`STALL`]、并且已有探测在其后没有收到任何帧时，才记为没有响应。检查
+/// 被推迟时（进程被暂停、系统从睡眠中恢复）该时间同样达到 [`STALL`]，但尚未探测，只发出探测。
+fn check(heard: Instant, probed: &mut Option<Instant>, now: Instant) -> (bool, bool) {
+    if probed.is_some_and(|sent| heard >= sent) {
+        *probed = None;
+    }
+    let quiet = now.saturating_duration_since(heard);
+    let stalled = quiet >= STALL && probed.is_some();
+    let probe = quiet >= PROBE;
+    if probe {
+        probed.get_or_insert(now);
+    }
+    (stalled, probe)
+}
 
 /// 等待命令结束时检查是否被取消的间隔（毫秒）。取消由用户的操作或超时触发，50 ms 以内的
 /// 延迟不可察觉；间隔内没有新的输出时线程才被唤醒一次。

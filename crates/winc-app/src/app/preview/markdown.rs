@@ -5,6 +5,8 @@
 //! 按块缓存，见 `view::preview::markdown`。图片读取本地文件（相对文档所在目录）；网址的图片
 //! （README 中的徽章、截图）在后台用系统的 `curl` 下载到临时目录缓存，关闭联网后显示替代文字。
 
+use crate::app::ScrollTarget;
+use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
@@ -322,11 +324,22 @@ impl MarkdownPreview {
             .unwrap_or(0.0)
     }
 
+    /// 返回最大滚动位置（逻辑像素）：内容高于预览区域的部分，不小于 0。
+    pub fn max_scroll(&self) -> f32 {
+        (self.height - self.area.h).max(0.0)
+    }
+
     /// 滚动到 `y`（逻辑像素），限制在内容范围内。
     pub fn scroll_to(&mut self, y: f32) {
-        let max = (self.height - self.area.h).max(0.0);
+        self.set_scroll(y.clamp(0.0, self.max_scroll()));
+    }
+
+    /// 把当前文档预览的滚动位置设为 `y`（逻辑像素），不限制范围。
+    ///
+    /// 供绘制前后换入、恢复过渡中的位置使用；其他情况用 [`Self::scroll_to`]。
+    pub(crate) fn set_scroll(&mut self, y: f32) {
         if let Some(id) = self.doc {
-            self.scrolls.insert(id, y.clamp(0.0, max));
+            self.scrolls.insert(id, y);
         }
     }
 
@@ -424,8 +437,9 @@ fn in_fence<'a>(lines: impl Iterator<Item = ropey::RopeSlice<'a>>) -> bool {
 /// 返回当前标签显示 Markdown 预览的区域（分栏的右半边或整个编辑区）；不显示时返回 `None`。
 pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
     let doc = app.editor.active()?;
-    // docx 没有源代码可切换，总是以整个编辑区显示阅读视图。
-    if doc.unsupported == Some(winc_editor::Unsupported::Docx) {
+    // docx 和内容已取回的阅读标签没有源代码可切换，总是以整个编辑区显示阅读视图。
+    let reading = matches!(doc.reading, Some(winc_editor::Reading::Ready(_)));
+    if doc.unsupported == Some(winc_editor::Unsupported::Docx) || reading {
         return Some(app.layout.editor);
     }
     if doc.preview_kind() != Some(PreviewKind::Markdown) {
@@ -488,11 +502,16 @@ impl App {
         let Some(rope) = doc.text().rope().cloned() else {
             return;
         };
+        // 阅读标签的原文不在文档的文本中。
+        let reading = match &doc.reading {
+            Some(winc_editor::Reading::Ready(text)) => Some(Arc::clone(text)),
+            _ => None,
+        };
         md.pending = Some(revision);
         let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
         winc_editor::background::spawn(move || {
             let started = std::time::Instant::now();
-            let text = rope.to_string();
+            let text = reading.map_or_else(|| rope.to_string(), |text| text.to_string());
             let parsed = markdown::parse(&text);
             let done = Done::Parsed(id, revision, parsed, started.elapsed());
             if sender.send(done).is_ok()
@@ -894,6 +913,8 @@ impl App {
         let page = (area.h * 0.9).max(step);
         let back = self.modifiers.shift_key();
         let y = self.markdown.scroll();
+        // 方向键逐段滚动，直接到达；翻页和到两端的跳转平滑滚动。
+        let small = matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)) && !cmd;
         let to = match key {
             Key::Named(NamedKey::ArrowUp) if cmd => 0.0,
             Key::Named(NamedKey::ArrowDown) if cmd => f32::MAX,
@@ -909,7 +930,11 @@ impl App {
             Key::Named(NamedKey::End) => f32::MAX,
             _ => return false,
         };
-        self.scroll_markdown_to(to);
+        if small {
+            self.scroll_markdown_to(to);
+        } else {
+            self.glide_pane_to(ScrollTarget::Markdown, to);
+        }
         true
     }
 
@@ -2810,7 +2835,7 @@ impl App {
             let scroll = md.scroll();
             if y < scroll || y + 40.0 > scroll + md.area.h {
                 let y = y - md.area.h / 3.0;
-                self.scroll_markdown_to(y);
+                self.glide_pane_to(ScrollTarget::Markdown, y);
             }
         }
         self.request_redraw();
@@ -2856,7 +2881,7 @@ impl App {
         let Some(&top) = self.hits.markdown_toc_tops.get(i) else {
             return;
         };
-        self.scroll_markdown_to(top);
+        self.glide_pane_to(ScrollTarget::Markdown, top);
         self.markdown.toc_picked = Some((i, self.markdown.scroll()));
         let clock = self.clock(crate::app::animation::TOC_FLASH);
         self.markdown.toc_flash = clock.map(|clock| (i, clock));
@@ -2875,10 +2900,10 @@ impl App {
         };
         let lower = anchor.to_lowercase();
         if !(lower.starts_with("fn-") || lower.starts_with("fnref-")) {
-            self.scroll_markdown_to(top);
+            self.glide_pane_to(ScrollTarget::Markdown, top);
             return;
         }
-        self.scroll_markdown_to(top - self.markdown.area.h / 3.0);
+        self.glide_pane_to(ScrollTarget::Markdown, top - self.markdown.area.h / 3.0);
         let clock = self.clock(crate::app::animation::TOC_FLASH);
         self.markdown.anchor_flash = clock.map(|clock| ((top, height), clock));
     }
@@ -2897,7 +2922,7 @@ impl App {
             return;
         };
         let line = laid.line_of_y(y, doc.text().line_count());
-        doc.scroll_line = text_row(doc, line).clamp(0.0, max.max(0.0));
+        set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
         self.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
     }
 
@@ -2927,7 +2952,7 @@ impl App {
     pub(in crate::app) fn scroll_text_to(&mut self, line: f32) {
         let max = self.max_scroll_line();
         if let Some(doc) = self.editor.active_mut() {
-            doc.scroll_line = text_row(doc, line).clamp(0.0, max.max(0.0));
+            set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
         }
     }
 

@@ -569,6 +569,7 @@ impl App {
         let above = depth.min(self.tree_sticky_max()) as f32 * TREE_ROW;
         let visible = y >= self.tree.scroll + above && y + TREE_ROW <= self.tree.scroll + tree_h;
 
+        let before = self.tree.scroll;
         self.tree.scroll = match (visible, center) {
             (true, _) => self.tree.scroll,
             (false, true) => (y - tree_h / 2.0).max(0.0),
@@ -576,6 +577,7 @@ impl App {
                 scroll_to_show(self.tree.scroll, y - above, y + TREE_ROW, tree_h).max(0.0)
             }
         };
+        self.glide_pane(ScrollTarget::Tree, before);
     }
 
     /// 在文件树里展开并选中当前文件。

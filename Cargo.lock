@@ -3253,6 +3253,7 @@ dependencies = [
 name = "winc-render"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "memmap2",
  "objc2 0.6.5",
  "objc2-core-foundation",

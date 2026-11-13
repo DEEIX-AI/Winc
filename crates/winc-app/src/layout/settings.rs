@@ -205,6 +205,7 @@ impl SettingsPage {
                 plain(vec![Setting::Version]),
                 plain(vec![Setting::Updates, Setting::CheckUpdates]),
                 plain(vec![
+                    Setting::ReleaseNotes,
                     Setting::Website,
                     Setting::Repository,
                     Setting::Community,
@@ -313,6 +314,8 @@ pub enum Setting {
     Version,
     /// 「关于」页的更新状态和「检查更新」按钮。
     Updates,
+    /// 「关于」页的「更新日志」：在阅读标签中打开，列出各版的更改。
+    ReleaseNotes,
     /// 「关于」页的官网链接。
     Website,
     /// 「关于」页的源代码仓库（GitHub）链接。
@@ -451,6 +454,7 @@ impl Setting {
             Setting::Version
             | Setting::Updates
             | Setting::CheckUpdates
+            | Setting::ReleaseNotes
             | Setting::Website
             | Setting::Repository
             | Setting::Community
@@ -525,6 +529,7 @@ impl Setting {
             Setting::Community => "Telegram",
             Setting::License => t!("settings-license"),
             Setting::Updates => t!("settings-updates"),
+            Setting::ReleaseNotes => t!("settings-release-notes"),
             Setting::FormatOnSave => t!("settings-format-on-save"),
             Setting::FixOnSave => t!("settings-fix-on-save"),
             Setting::SkipOnSave => t!("settings-skip-on-save"),
@@ -666,9 +671,11 @@ impl Setting {
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Product,
-            Setting::Website | Setting::Repository | Setting::Community | Setting::License => {
-                SettingControl::Link
-            }
+            Setting::ReleaseNotes
+            | Setting::Website
+            | Setting::Repository
+            | Setting::Community
+            | Setting::License => SettingControl::Link,
             Setting::Updates => SettingControl::Button,
         }
     }

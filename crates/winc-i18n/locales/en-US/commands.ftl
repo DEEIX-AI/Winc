@@ -9,6 +9,7 @@ cmd-find-references = Find References
 cmd-go-back = Back
 cmd-go-forward = Forward
 cmd-settings = Settings
+cmd-release-notes = Release Notes
 cmd-keyboard-shortcuts = Keyboard Shortcuts
 cmd-record-keys = Record Keys
 cmd-new-file = New File

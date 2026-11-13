@@ -149,6 +149,17 @@ impl TableView {
     }
 }
 
+/// 阅读标签的内容：由界面在后台取回，取回之前和未能取回时编辑区显示相应的说明。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reading {
+    /// 正在取回。
+    Loading,
+    /// 已取回的 Markdown 原文，排版后显示。
+    Ready(Arc<str>),
+    /// 未能取回。
+    Failed,
+}
+
 /// 可预览文件的种类，见 `Document::preview_kind`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewKind {
@@ -460,6 +471,8 @@ pub struct Document {
     rendered: bool,
     /// 不对应文件的只读标签（格式化工具的输出、安装说明）的标题。
     pub title: Option<String>,
+    /// 阅读标签的内容：编辑区显示排版后的 Markdown，没有可切换的源代码，文本为空。
+    pub reading: Option<Reading>,
     /// 文本每变化一次加 1，搜索结果等缓存据此判断是否失效。
     pub revision: u64,
     /// 滚动位置的首行（行，从 0 起，可以是小数，用于平滑滚动）。
@@ -563,6 +576,7 @@ impl Document {
             split: false,
             rendered: false,
             title: None,
+            reading: None,
             revision: 0,
             scroll_line: 0.0,
             scroll_x: 0.0,
@@ -623,6 +637,15 @@ impl Document {
         let mut document = Document::from_text(id, text);
         document.title = Some(title.to_owned());
         document.readonly = true;
+        document
+    }
+
+    /// 创建只读、不对应文件的阅读标签，标签上显示 `title`，内容为 `reading`。
+    pub fn reading(id: DocumentId, title: &str, reading: Reading) -> Self {
+        let mut document = Document::from_text(id, "");
+        document.title = Some(title.to_owned());
+        document.readonly = true;
+        document.reading = Some(reading);
         document
     }
 
@@ -922,6 +945,20 @@ impl Document {
                 line,
                 HIGHLIGHT_LOOKBACK,
             )),
+        }
+    }
+
+    /// 返回第 `line` 行（从 0 起）开头的近似高亮状态：从上方 `HIGHLIGHT_LOOKBACK` 行处推算。
+    ///
+    /// 供 [`Self::highlight_state`] 尚未推算到时绘制使用，远距离跳转后不先按普通文本着色；跨度
+    /// 超过回看行数的块注释和多行字符串仍可能着色错误，直到精确的状态推算完成。
+    pub fn approx_highlight_state(&mut self, line: usize) -> LineState {
+        match &self.text {
+            Content::Rope(rope) => self.highlighter.state_near(rope, line, HIGHLIGHT_LOOKBACK),
+            Content::Large(large) => {
+                self.highlighter
+                    .state_near(&**large, line, HIGHLIGHT_LOOKBACK)
+            }
         }
     }
 

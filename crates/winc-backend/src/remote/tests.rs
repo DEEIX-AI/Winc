@@ -137,6 +137,28 @@ fn a_command_that_is_not_the_server_fails_the_handshake() {
     assert!(Connection::spawn(Command::new("winc-no-such-program")).is_err());
 }
 
+/// 回归：检查被推迟（进程被暂停、系统从睡眠中恢复）后，对端没有动静的时间已超过期限；尚未
+/// 探测即记为没有响应时，探测的应答到达后随即解除。
+#[test]
+fn a_delayed_check_probes_before_marking_the_connection() {
+    let start = Instant::now();
+    let mut probed = None;
+    // 检查被推迟：没有动静的时间已超过期限，尚未探测，只发出探测。
+    let late = start + STALL * 3;
+    assert_eq!(check(start, &mut probed, late), (false, true));
+    // 探测有了应答：不记为没有响应，探测的记录清除。
+    let answered = late + Duration::from_millis(1);
+    assert_eq!(check(answered, &mut probed, late + PROBE), (false, false));
+    assert_eq!(probed, None);
+    // 探测之后始终没有动静：达到期限时记为没有响应。
+    assert_eq!(check(start, &mut probed, start + PROBE), (false, true));
+    assert_eq!(check(start, &mut probed, start + STALL), (true, true));
+    // 之后有了动静：恢复。
+    let again = start + STALL;
+    assert_eq!(check(again, &mut probed, again), (false, false));
+    assert_eq!(probed, None);
+}
+
 #[test]
 fn a_connection_that_stops_answering_is_marked_until_it_answers_again() {
     use std::sync::atomic::AtomicUsize;
