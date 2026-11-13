@@ -88,12 +88,12 @@ fn markdown_files_get_the_three_way_switch() {
     assert!(doc.shows_text() && !doc.readonly);
     assert!(app.layout.preview.w > 0.0);
     // 右边是预览：绘制在分栏的右半边，已完成排版并记录链接。
-    assert_eq!(app.markdown.area, app.layout.split);
-    assert!(app.markdown.height > app.markdown.area.h);
+    assert_eq!(app.preview.markdown.area, app.layout.split);
+    assert!(app.preview.markdown.height > app.preview.markdown.area.h);
     assert!(app.hits.markdown_links.len() >= 2);
     // 图片已读取，并按显示大小绘制。
     assert!(matches!(
-        app.markdown.images.values().next(),
+        app.preview.markdown.images.values().next(),
         Some(crate::app::preview::markdown::ImageSlot::Ready { pixels, .. }) if !pixels.is_empty()
     ));
 
@@ -103,11 +103,11 @@ fn markdown_files_get_the_three_way_switch() {
     let doc = app.editor.active().unwrap();
     assert!(!doc.readonly && !doc.shows_text() && doc.edits_text());
     assert!(app.markdown_live());
-    assert_eq!(app.markdown.area, app.layout.editor);
+    assert_eq!(app.preview.markdown.area, app.layout.editor);
     app.set_preview_mode(PreviewMode::Source);
     paint(&mut app);
     assert!(!app.editor.active().unwrap().readonly);
-    assert_eq!(app.markdown.area, Rect::default());
+    assert_eq!(app.preview.markdown.area, Rect::default());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -115,30 +115,30 @@ fn markdown_files_get_the_three_way_switch() {
 #[test]
 fn split_preview_follows_edits_and_scrolls() {
     let (mut app, dir) = readme("md-edit", false, PreviewMode::Split);
-    let before = app.markdown.height;
+    let before = app.preview.markdown.height;
     // 在文末追加两段：预览变高。
     app.run(winc_editor::Command::DocEnd { extend: false });
     app.run(winc_editor::Command::Insert(
         "\n\n多一段\n\n再多一段\n".into(),
     ));
     settle(&mut app);
-    assert!(app.markdown.height > before);
+    assert!(app.preview.markdown.height > before);
 
     // 滚轮滚动预览。
-    let area = app.markdown.area;
-    app.mouse = (area.x + 50.0, area.y + 50.0);
-    app.markdown.scroll_to(0.0);
+    let area = app.preview.markdown.area;
+    app.pointer.mouse = (area.x + 50.0, area.y + 50.0);
+    app.preview.markdown.scroll_to(0.0);
     app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
         0.0, -120.0,
     )));
-    assert!(app.markdown.scroll() > 0.0);
+    assert!(app.preview.markdown.scroll() > 0.0);
     // 不会滚动超过底部。
     app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
         0.0, -100_000.0,
     )));
     paint(&mut app);
-    let max = app.markdown.height - area.h;
-    assert!((app.markdown.scroll() - max).abs() < 0.5);
+    let max = app.preview.markdown.height - area.h;
+    assert!((app.preview.markdown.scroll() - max).abs() < 0.5);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -164,17 +164,17 @@ fn split_sides_scroll_together() {
     app.editor.active_mut().unwrap().scroll_line = 80.0;
     paint(&mut app);
     // 差值来自预览顶部的留白。
-    let pad = app.markdown.scroll() - heading_y(&app, 20);
+    let pad = app.preview.markdown.scroll() - heading_y(&app, 20);
     assert!((19.0..=33.0).contains(&pad), "{pad}");
 
     // 右侧滚到第 22 节：左侧同步到第 88 行。
     let target = heading_y(&app, 22) + pad;
-    app.scroll_markdown(app.markdown.scroll() - target);
+    app.scroll_markdown(app.preview.markdown.scroll() - target);
     paint(&mut app);
     let line = app.editor.active().unwrap().scroll_line;
     assert!((line - 88.0).abs() < 0.5, "{line}");
     // 左侧没有再次滚动，右侧也不会被恢复到对齐位置。
-    assert!((app.markdown.scroll() - target).abs() < 1.0);
+    assert!((app.preview.markdown.scroll() - target).abs() < 1.0);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -189,21 +189,21 @@ fn keys_scroll_the_full_preview() {
     assert!(!app.markdown_live());
     // 焦点在其他位置时点击预览，键盘焦点交给预览。
     app.focus = Focus::Tree;
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     super::click(&mut app, (area.x + area.w / 2.0, area.y + area.h / 2.0));
     assert_eq!(app.focus, Focus::Editor);
-    let max = app.markdown.height - app.markdown.area.h;
+    let max = app.preview.markdown.height - app.preview.markdown.area.h;
     assert!(max > 0.0);
     let key = |app: &mut App, key: Key, cmd: bool| {
         assert!(app.markdown_key(&key, cmd));
-        app.markdown.scroll()
+        app.preview.markdown.scroll()
     };
     let down = key(&mut app, Key::Named(NamedKey::ArrowDown), false);
     assert!(down > 0.0);
     assert_eq!(key(&mut app, Key::Named(NamedKey::ArrowUp), false), 0.0);
     // 翻页的距离大于一次 ↓ 的距离、小于预览高度，保留上一屏的部分内容。
     let page = key(&mut app, Key::Named(NamedKey::PageDown), false);
-    assert!(page > down && page < app.markdown.area.h);
+    assert!(page > down && page < app.preview.markdown.area.h);
     assert_eq!(key(&mut app, Key::Named(NamedKey::PageUp), false), 0.0);
     assert_eq!(key(&mut app, Key::Named(NamedKey::Space), false), page);
     assert_eq!(key(&mut app, Key::Named(NamedKey::End), false), max);
@@ -216,7 +216,7 @@ fn keys_scroll_the_full_preview() {
     // Esc 清除选区；没有选区时不处理。
     app.markdown_select_all();
     assert!(app.markdown_key(&Key::Named(NamedKey::Escape), false));
-    assert!(app.markdown.selection.is_none());
+    assert!(app.preview.markdown.selection.is_none());
     assert!(!app.markdown_key(&Key::Named(NamedKey::Escape), false));
 
     // 分栏时焦点在左侧文字上：方向键仍然移动光标，不滚动预览。
@@ -225,11 +225,11 @@ fn keys_scroll_the_full_preview() {
     settle(&mut app);
     assert!(!app.markdown_key(&Key::Named(NamedKey::PageDown), false));
     // 点击右侧预览：键盘滚动预览（左侧同步滚动）；按键输入时焦点回到左侧。
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     super::click(&mut app, (area.x + area.w / 2.0, area.y + area.h / 2.0));
-    let before = app.markdown.scroll();
+    let before = app.preview.markdown.scroll();
     assert!(app.markdown_key(&Key::Named(NamedKey::PageDown), false));
-    assert!(app.markdown.scroll() > before);
+    assert!(app.preview.markdown.scroll() > before);
     assert!(!app.markdown_key(&Key::Character("x".into()), false));
     assert!(!app.markdown_focused());
 
@@ -238,13 +238,13 @@ fn keys_scroll_the_full_preview() {
 
 /// 按住 ⌘（其他平台为 Ctrl）在 `at` 处单击。
 fn command_click(app: &mut App, at: (f32, f32)) {
-    app.modifiers = if cfg!(target_os = "macos") {
+    app.pointer.modifiers = if cfg!(target_os = "macos") {
         command_modifiers()
     } else {
         winit::keyboard::ModifiersState::CONTROL
     };
     super::click(app, at);
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
 }
 
 /// 返回文字光标在原文中的位置（字节偏移）之后的一段原文。
@@ -257,9 +257,9 @@ fn after_caret(app: &App, len: usize) -> String {
 
 /// 返回光标在屏幕上的纵坐标（窗口坐标）。
 fn caret_screen_y(app: &App) -> f32 {
-    let laid = app.markdown.layout.as_ref().unwrap();
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
     let (_, y, _) = laid.caret_point(app.live_caret_source().unwrap()).unwrap();
-    app.markdown.area.y + y - app.markdown.scroll()
+    app.preview.markdown.area.y + y - app.preview.markdown.scroll()
 }
 
 #[test]
@@ -340,9 +340,9 @@ fn the_full_preview_edits_the_document() {
         after_caret(&app, 8)
     );
     // ⇧↑ 扩展选区。
-    app.modifiers = winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::SHIFT;
     assert!(app.markdown_key(&Key::Named(NamedKey::ArrowUp), false));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     paint(&mut app);
     assert!(!app.editor.active().unwrap().selection.is_empty());
     // 其他键交给编辑区。
@@ -354,7 +354,7 @@ fn the_full_preview_edits_the_document() {
     paint(&mut app);
     paint(&mut app);
     let y = caret_screen_y(&app);
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     assert!(y >= area.y && y < area.bottom(), "{y} {area:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -423,43 +423,46 @@ fn the_preview_scrollbar_can_be_dragged() {
         (PreviewMode::Split, "md-drag-split"),
     ] {
         let (mut app, dir) = readme(name, false, mode);
-        let area = app.markdown.area;
-        let height = app.markdown.height;
+        let area = app.preview.markdown.area;
+        let height = app.preview.markdown.height;
         assert!(height > area.h, "{height} {}", area.h);
         let thumb = scrollbar_thumb(area, 0.0, height).unwrap();
         let (x, y) = (thumb.x + thumb.w / 2.0, thumb.y + thumb.h / 2.0);
 
         app.on_mouse_move(x, y);
-        assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::Markdown));
+        assert_eq!(app.pointer.hover, Hover::Scrollbar(Scrollbar::Markdown));
         app.on_mouse_down(MouseButton::Left);
-        assert!(matches!(app.drag, crate::app::Drag::Scrollbar { .. }));
+        assert!(matches!(
+            app.pointer.drag,
+            crate::app::Drag::Scrollbar { .. }
+        ));
 
         // 拖到底部：滚动到末尾，滑块位于底端。
         app.on_mouse_move(x, area.bottom() + 100.0);
         let end = height - area.h;
-        assert!((app.markdown.scroll() - end).abs() < 1.0, "{name}");
+        assert!((app.preview.markdown.scroll() - end).abs() < 1.0, "{name}");
         paint(&mut app);
-        assert!(app.markdown.selection.is_none());
+        assert!(app.preview.markdown.selection.is_none());
         if mode == PreviewMode::Split {
             assert!(app.editor.active().unwrap().scroll_line > 0.0);
         }
 
         // 拖回顶部。
         app.on_mouse_move(x, area.y - 100.0);
-        assert!(app.markdown.scroll() < 1.0, "{name}");
+        assert!(app.preview.markdown.scroll() < 1.0, "{name}");
         app.on_mouse_up(MouseButton::Left);
-        assert!(matches!(app.drag, crate::app::Drag::None));
+        assert!(matches!(app.pointer.drag, crate::app::Drag::None));
 
         // 点击轨道：滑块移到点击处。
         app.on_mouse_move(x, area.bottom() - 2.0);
         app.on_mouse_down(MouseButton::Left);
         app.on_mouse_up(MouseButton::Left);
-        assert!(app.markdown.scroll() > 0.0, "{name}");
+        assert!(app.preview.markdown.scroll() > 0.0, "{name}");
 
         // 滚动条左侧仍然是选择文字。
         app.on_mouse_move(area.x + 50.0, area.y + 50.0);
         app.on_mouse_down(MouseButton::Left);
-        assert!(matches!(app.drag, crate::app::Drag::MarkdownText));
+        assert!(matches!(app.pointer.drag, crate::app::Drag::MarkdownText));
         app.on_mouse_up(MouseButton::Left);
 
         // 回到代码模式：同一个位置是编辑区的滚动条。
@@ -467,7 +470,7 @@ fn the_preview_scrollbar_can_be_dragged() {
         settle(&mut app);
         let track = app.scroll_track();
         app.on_mouse_move(track.right() - 2.0, track.y + 4.0);
-        assert_ne!(app.hover, Hover::Scrollbar(Scrollbar::Markdown));
+        assert_ne!(app.pointer.hover, Hover::Scrollbar(Scrollbar::Markdown));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -588,7 +591,9 @@ fn clicking_table_cells_once_keeps_the_page_still() {
     let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
     let a = shown.chars().position(|s| s == 'a').unwrap();
     let top = crate::app::preview::markdown::laid::offset_top(&app, a).unwrap();
-    app.markdown.scroll_to(top - app.markdown.area.h / 2.0);
+    app.preview
+        .markdown
+        .scroll_to(top - app.preview.markdown.area.h / 2.0);
     settle(&mut app);
     let at = |c: char| shown.chars().position(|s| s == c).unwrap();
     let (a, b, c) = (
@@ -597,11 +602,11 @@ fn clicking_table_cells_once_keeps_the_page_still() {
         point_of(&app, at('c')),
     );
     let row = c.1 - a.1;
-    app.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 2);
+    app.preview.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 2);
     let table = |caret: &str| format!("{filler}{caret}\n\n{filler}");
     // 模拟实际点击：按住鼠标期间绘制数帧并小幅移动指针，松开后再绘制。
     // 单击一次即进入该单元格，页面不滚动。
-    let scroll = app.markdown.scroll();
+    let scroll = app.preview.markdown.scroll();
     let mut click = |(x, y): (f32, f32), want: &str| {
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Left);
@@ -611,7 +616,7 @@ fn clicking_table_cells_once_keeps_the_page_still() {
         app.on_mouse_up(MouseButton::Left);
         settle(&mut app);
         assert_eq!(with_caret(&app), table(want));
-        assert_eq!(app.markdown.scroll(), scroll, "{want}");
+        assert_eq!(app.preview.markdown.scroll(), scroll, "{want}");
     };
     click(
         (b.0 + 8.0, c.1 + 4.0),
@@ -642,14 +647,16 @@ fn every_table_cell_takes_one_click_from_anywhere() {
         "md-table-every",
         &format!("{filler}上面 **粗** 段\n\n{table}\n下面 `码` 段\n\n{filler}"),
     );
-    app.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 2);
+    app.preview.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 2);
     let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
     let a = shown
         .find("名称")
         .map(|b| shown[..b].chars().count())
         .unwrap();
     let top = crate::app::preview::markdown::laid::offset_top(&app, a).unwrap();
-    app.markdown.scroll_to(top - app.markdown.area.h / 2.0);
+    app.preview
+        .markdown
+        .scroll_to(top - app.preview.markdown.area.h / 2.0);
     settle(&mut app);
     let start = doc_text(&app).find("| 名称").unwrap();
     // 光标所在的行号（不计 `|---|`）和列号。
@@ -688,7 +695,7 @@ fn every_table_cell_takes_one_click_from_anywhere() {
         for r in 0..3 {
             for c in 0..3 {
                 put_caret(&mut app, from, true);
-                let scroll = app.markdown.scroll();
+                let scroll = app.preview.markdown.scroll();
                 let grid = crate::view::preview::markdown::tests::table_cells(&app);
                 let cell = grid[r][c];
                 // 单元格中部和左侧（空单元格的光标位于左侧）。
@@ -698,9 +705,10 @@ fn every_table_cell_takes_one_click_from_anywhere() {
                 ] {
                     click(&mut app, (x, y));
                     let got = cell_of(&app);
-                    let moved = app.markdown.scroll() - scroll;
+                    let moved = app.preview.markdown.scroll() - scroll;
                     // 新显示的标记正常淡入；块不应滑动。
                     let motion = app
+                        .preview
                         .markdown
                         .motion
                         .as_ref()
@@ -742,7 +750,7 @@ fn edits_before_the_next_parse_keep_the_live_block_inside_the_text() {
     for keep in ["", "中", "中文\n\n表", "第一段中文\n\n第"] {
         let (mut app, dir) = live_doc("md-stale", text);
         // 按后台解析处理：输入之后的排版与按键仍依据上一版的解析结果。
-        app.markdown.cost = Some(std::time::Duration::MAX);
+        app.preview.markdown.cost = Some(std::time::Duration::MAX);
         let doc = app.editor.active_mut().unwrap();
         let count = doc.text().rope().unwrap().len_chars();
         doc.selection = winc_core::Selection::new(0, count);
@@ -784,7 +792,7 @@ fn deeply_nested_documents_lay_out_and_paint() {
         "\\hat".repeat(50_000),
     );
     let (app, dir) = live_doc("md-deep", &text);
-    assert!(app.markdown.height > app.markdown.area.h);
+    assert!(app.preview.markdown.height > app.preview.markdown.area.h);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -902,9 +910,9 @@ fn tab_nests_list_items_in_the_preview() {
     assert!(app.markdown_key(&tab, false));
     assert_eq!(with_caret(&app), "- 一\n  - 二|\n\n段落\n");
     settle(&mut app);
-    app.modifiers = winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::SHIFT;
     assert!(app.markdown_key(&tab, false));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     assert_eq!(with_caret(&app), "- 一\n- 二|\n\n段落\n");
     settle(&mut app);
     // 第一项无法缩进，也不向文字中插入空格。
@@ -943,9 +951,9 @@ fn enter_in_the_preview_continues_lists_and_splits_paragraphs() {
     assert!(app.markdown_key(&enter, false));
     assert!(with_caret(&app).contains("段落\n\n|一"));
     settle(&mut app);
-    app.modifiers = winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::SHIFT;
     assert!(app.markdown_key(&enter, false));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     assert!(
         with_caret(&app).contains("段落\n\n\n|一"),
         "{}",
@@ -1014,7 +1022,7 @@ fn pasting_a_url_over_selected_text_makes_a_link() {
     // 切换回源代码：预览已释放解析结果，按围栏判断代码块。
     app.set_preview_mode(PreviewMode::Source);
     settle(&mut app);
-    assert!(app.markdown.parsed.is_none() && app.markdown.layout.is_none());
+    assert!(app.preview.markdown.parsed.is_none() && app.preview.markdown.layout.is_none());
     select(&mut app, "块");
     assert!(app.markdown_link_paste("https://a.dev").is_none());
     select(&mut app, "文档");
@@ -1072,7 +1080,7 @@ fn switching_modes_keeps_the_place() {
     settle(&mut app);
     let y = crate::app::preview::markdown::laid::anchor_top(&app, "第-10-节").unwrap();
     // 差值来自预览顶部的留白，分栏同步滚动的映射同样包含这段留白。
-    let pad = app.markdown.scroll() - y;
+    let pad = app.preview.markdown.scroll() - y;
     assert!((0.0..=40.0).contains(&pad), "{pad}");
     assert!(
         !crate::app::preview::markdown::laid::full_text(&app)
@@ -1149,9 +1157,9 @@ fn tables_are_edited_cell_by_cell() {
         "| a | b |\n|---|---|\n| **很粗** | d |\n| | |  |\n\n后文\n"
     );
     settle(&mut app);
-    app.modifiers = winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::SHIFT;
     assert!(app.markdown_key(&tab, false));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     assert_eq!(selected(&app), "d");
     settle(&mut app);
     // 回车到下一行的同一列。
@@ -1226,17 +1234,17 @@ fn the_table_toolbar_adds_aligns_and_deletes() {
         "前文\n\n| a | b |\n|---|---|\n| c | |d |\n\n后文\n"
     );
     // ⌘↩ 在下方插入一行，⌘⇧⌫ 删除当前行；一次撤销即可恢复。
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     assert!(app.markdown_key(&Key::Named(NamedKey::Enter), true));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     settle(&mut app);
     assert_eq!(
         with_caret(&app),
         "前文\n\n| a | b |\n|---|---|\n| c | d |\n|  | | |\n\n后文\n"
     );
-    app.modifiers = command_modifiers() | ModifiersState::SHIFT;
+    app.pointer.modifiers = command_modifiers() | ModifiersState::SHIFT;
     assert!(app.markdown_key(&Key::Named(NamedKey::Backspace), true));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     settle(&mut app);
     assert_eq!(
         with_caret(&app),
@@ -1259,31 +1267,33 @@ fn table_edits_do_not_scroll_the_page() {
     );
     put_caret(&mut app, "c", true);
     // 将表格滚动到屏幕中部：光标不会移出可见区域，页面无需随之滚动。
-    let view = app.markdown.area.h;
-    app.markdown.scroll_to(app.markdown.scroll() + view / 2.0);
+    let view = app.preview.markdown.area.h;
+    app.preview
+        .markdown
+        .scroll_to(app.preview.markdown.scroll() + view / 2.0);
     settle(&mut app);
-    let scroll = app.markdown.scroll();
+    let scroll = app.preview.markdown.scroll();
     assert!(scroll > view, "表格在第一屏以下");
     // 插入行、删除行、删除表格都是文字修改：上方内容不移动，页面不滚动。
     let key = |app: &mut App, mods: ModifiersState, key: NamedKey| {
-        app.modifiers = mods;
+        app.pointer.modifiers = mods;
         assert!(app.markdown_key(&Key::Named(key), true));
-        app.modifiers = ModifiersState::empty();
+        app.pointer.modifiers = ModifiersState::empty();
         // 先绘制一帧（解析结果尚未返回），再等待解析完成。
         paint(app);
         settle(app);
     };
     key(&mut app, command_modifiers(), NamedKey::Enter);
     assert!(doc_text(&app).contains("|  |  |"));
-    assert_eq!(app.markdown.scroll(), scroll, "加行");
+    assert_eq!(app.preview.markdown.scroll(), scroll, "加行");
     let shift = command_modifiers() | ModifiersState::SHIFT;
     key(&mut app, shift, NamedKey::Backspace);
-    assert_eq!(app.markdown.scroll(), scroll, "删行");
+    assert_eq!(app.preview.markdown.scroll(), scroll, "删行");
     assert!(app.live_table_tool("delete"));
     paint(&mut app);
     settle(&mut app);
     assert!(!doc_text(&app).contains("| c |"));
-    assert_eq!(app.markdown.scroll(), scroll, "删表格");
+    assert_eq!(app.preview.markdown.scroll(), scroll, "删表格");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1294,11 +1304,11 @@ fn edits_slide_the_blocks_below_and_fade_in_markers() {
         "md-motion",
         "正文 **粗** 字\n\n| a |\n|---|\n| b |\n| c |\n\n后文\n",
     );
-    app.markdown.frozen = Some(half);
+    app.preview.markdown.frozen = Some(half);
     // 光标移入粗体（未修改文字）：两侧的 `**` 淡入，块高度不变，不滑动。
     put_caret(&mut app, "字", false);
     put_caret(&mut app, "粗", false);
-    let motion = app.markdown.motion.as_ref().expect("标记淡入");
+    let motion = app.preview.markdown.motion.as_ref().expect("标记淡入");
     assert!(!motion.moving());
     assert_eq!(motion.fading.len(), 1);
     assert_eq!(motion.fading[0].1.len(), 2);
@@ -1306,7 +1316,8 @@ fn edits_slide_the_blocks_below_and_fade_in_markers() {
     app.run(winc_editor::Command::Insert("很".into()));
     settle(&mut app);
     assert!(
-        app.markdown
+        app.preview
+            .markdown
             .motion
             .as_ref()
             .is_none_or(|m| m.fading.is_empty())
@@ -1315,7 +1326,7 @@ fn edits_slide_the_blocks_below_and_fade_in_markers() {
     put_caret(&mut app, "c", false);
     assert!(app.live_table_tool("delete-row"));
     settle(&mut app);
-    let motion = app.markdown.motion.as_ref().expect("后文往上滑");
+    let motion = app.preview.markdown.motion.as_ref().expect("后文往上滑");
     let last = motion.from.len() - 1;
     assert!(motion.from[last] > 10.0, "{:?}", motion.from);
     let offset = motion.offset(last);
@@ -1334,7 +1345,7 @@ fn math_and_diagrams_show_the_result_below_the_source() {
         // 光标不在围栏行上时只显示围栏之间的原文，不显示围栏。
         assert!(shown.contains(" A") && !shown.contains("```"), "{shown}");
         assert!(!shown.contains("$$"), "{shown}");
-        let height = app.markdown.height;
+        let height = app.preview.markdown.height;
         let _ = std::fs::remove_dir_all(&dir);
         (height, shown)
     };
@@ -1359,13 +1370,13 @@ fn clicking_an_anchor_link_scrolls_to_the_heading() {
     let (rect, _) = app.hits.markdown_links[index].clone();
     // 可编辑的预览中单击链接只放光标。
     super::click(&mut app, (rect.x + 2.0, rect.y + 2.0));
-    assert_eq!(app.markdown.scroll(), 0.0);
+    assert_eq!(app.preview.markdown.scroll(), 0.0);
     command_click(&mut app, (rect.x + 2.0, rect.y + 2.0));
     let top = crate::app::preview::markdown::laid::anchor_top(&app, "安装").unwrap();
     assert!(top > 0.0);
     // 标题滚动到顶部；其后的内容不足一屏时滚动到底为止。
-    let max = app.markdown.height - app.markdown.area.h;
-    assert_eq!(app.markdown.scroll(), top.min(max));
+    let max = app.preview.markdown.height - app.preview.markdown.area.h;
+    assert_eq!(app.preview.markdown.scroll(), top.min(max));
     // 脚注的编号和末尾的 ↩ 能找到彼此。
     let note = crate::app::preview::markdown::laid::anchor_top(&app, "fn-1").expect("脚注有锚点");
     let back =
@@ -1394,7 +1405,7 @@ fn details_open_and_close_on_click() {
             .contains("藏起来的话")
     };
     assert!(!shown(&app));
-    let height = app.markdown.height;
+    let height = app.preview.markdown.height;
     let toggle = |app: &mut App| {
         let (rect, _) = app
             .hits
@@ -1408,10 +1419,10 @@ fn details_open_and_close_on_click() {
     };
     toggle(&mut app);
     assert!(shown(&app));
-    assert!(app.markdown.height > height);
+    assert!(app.preview.markdown.height > height);
     toggle(&mut app);
     assert!(!shown(&app));
-    assert_eq!(app.markdown.height, height);
+    assert_eq!(app.preview.markdown.height, height);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1468,9 +1479,9 @@ fn links_to_headings_in_other_files_open_there() {
     assert_eq!(doc.preview_mode(), PreviewMode::Preview);
     let top = crate::app::preview::markdown::laid::anchor_top(&app, "用法").unwrap();
     assert!(top > 0.0);
-    assert!(app.markdown.pending_anchor.is_none());
-    let max = app.markdown.height - app.markdown.area.h;
-    assert_eq!(app.markdown.scroll(), top.min(max));
+    assert!(app.preview.markdown.pending_anchor.is_none());
+    let max = app.preview.markdown.height - app.preview.markdown.area.h;
+    assert_eq!(app.preview.markdown.scroll(), top.min(max));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1483,7 +1494,7 @@ fn preview_text_can_be_selected_and_copied() {
     // 分栏时点击了预览：选择的是排版后的文字。可编辑的预览中选的是原文，见
     // `the_full_preview_edits_the_document`。
     let (mut app, dir) = readme("md-select", false, PreviewMode::Split);
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     super::click(&mut app, (area.x + 5.0, area.bottom() - 5.0));
     assert!(app.markdown_focused());
     // ⌘A ⌘C：复制整份文字，段落之间换行，中文软换行处不插入空格，代码保持原样。
@@ -1519,7 +1530,7 @@ fn preview_text_can_be_selected_and_copied() {
     // 点击预览外部（文件树）：清除选区。
     let tree = app.layout.tree;
     super::click(&mut app, (tree.x + 10.0, tree.y + 10.0));
-    assert!(app.markdown.selection.is_none());
+    assert!(app.preview.markdown.selection.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1558,7 +1569,7 @@ fn preview_and_source_point_at_each_other() {
 
         // 反向：光标所在的字在预览上落在点中的那一行。
         let source = app.markdown_caret_source().unwrap();
-        let laid = app.markdown.layout.as_ref().unwrap();
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
         let (_, top, _) =
             crate::app::preview::markdown::laid::point_of(laid, source).expect(target);
         let line = crate::app::preview::markdown::laid::offset_top(&app, at).expect(target);
@@ -1578,7 +1589,7 @@ fn preview_and_source_point_at_each_other() {
     assert_eq!(doc.preview_mode(), PreviewMode::Split);
     let expected = SAMPLE[..SAMPLE.find("打印一行").unwrap()].chars().count();
     assert_eq!(doc.selection, Selection::point(expected));
-    assert!(!app.markdown.focused);
+    assert!(!app.preview.markdown.focused);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1589,7 +1600,7 @@ fn preview_and_source_point_at_each_other() {
 ///
 /// 预览上找不到落在该字符上的一点时 panic。
 fn point_of(app: &App, offset: usize) -> (f32, f32) {
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     // 在预览上逐行扫描，寻找落在该字符上的位置。
     let mut y = area.y;
     while y < area.bottom() {
@@ -1612,7 +1623,7 @@ fn point_of(app: &App, offset: usize) -> (f32, f32) {
 fn command_f_searches_the_rendered_preview() {
     // 分栏时点击了预览：查找排版后的文字。
     let (mut app, dir) = readme("md-find", false, PreviewMode::Split);
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     super::click(&mut app, (area.x + 5.0, area.bottom() - 5.0));
     assert!(app.markdown_focused());
     app.open_search(false);
@@ -1624,13 +1635,13 @@ fn command_f_searches_the_rendered_preview() {
     // 「预览」在渲染后的文字里出现两次（表格一格、提示块一句），源码中的写法不计入。
     assert_eq!(app.search.matches().len(), 2);
     assert_eq!(app.markdown_selected_text().as_deref(), Some("预览"));
-    let first = app.markdown.selection;
+    let first = app.preview.markdown.selection;
     app.find_next(false);
-    assert_ne!(app.markdown.selection, first);
+    assert_ne!(app.preview.markdown.selection, first);
     // 第二处在表格里，预览滚动到它的位置。
-    assert!(app.markdown.scroll() > 0.0);
+    assert!(app.preview.markdown.scroll() > 0.0);
     app.find_next(false);
-    assert_eq!(app.markdown.selection, first);
+    assert_eq!(app.preview.markdown.selection, first);
     // 预览没有「行」的概念：「只显示匹配的行」不生效。
     app.press_search_button(crate::layout::SearchButton::Filter);
     assert!(!app.find.filter_lines);
@@ -1671,17 +1682,17 @@ fn remote_images_come_from_the_cache_and_can_be_turned_off() {
     app.set_preview_mode(PreviewMode::Preview);
     settle(&mut app);
     assert!(matches!(
-        app.markdown.images.get(&cached),
+        app.preview.markdown.images.get(&cached),
         Some(ImageSlot::Ready { pixels, .. }) if !pixels.is_empty()
     ));
-    assert_eq!(app.markdown.layout.as_ref().unwrap().chars(), 0);
+    assert_eq!(app.preview.markdown.layout.as_ref().unwrap().chars(), 0);
 
     // 关闭联网：显示替代文字。
     app.settings_toggle(Setting::RemoteImages);
     assert_eq!(app.config.markdown_remote_images, Some(false));
     settle(&mut app);
-    assert!(app.markdown.images.is_empty());
-    let laid = app.markdown.layout.as_ref().unwrap();
+    assert!(app.preview.markdown.images.is_empty());
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
     assert_eq!(laid.text(0, laid.chars()), "徽章\n");
 
     let _ = std::fs::remove_file(&cached);
@@ -1737,8 +1748,8 @@ fn shoot_markdown_preview() {
             let (mut app, dir) = readme(&name, dark, mode);
             shoot(&mut app, &name);
             if mode == PreviewMode::Preview {
-                let area = app.markdown.area;
-                app.mouse = (area.x + 50.0, area.y + 50.0);
+                let area = app.preview.markdown.area;
+                app.pointer.mouse = (area.x + 50.0, area.y + 50.0);
                 app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
                     0.0, -700.0,
                 )));
@@ -1746,7 +1757,7 @@ fn shoot_markdown_preview() {
                 shoot(&mut app, &format!("{name}-scrolled"));
                 // 选中一段、查找「预览」。
                 app.markdown_select_all();
-                app.markdown.selection = Some((10, 40));
+                app.preview.markdown.selection = Some((10, 40));
                 app.open_search(false);
                 app.find.input.set_text("预览");
                 app.search.query = "预览".into();
@@ -2350,17 +2361,22 @@ fn diagrams_open_full_screen_and_zoom() {
 
     use crate::app::preview::markdown::DiagramTool;
     let (mut app, dir) = diagram_view_app("md-diagram-view", 0, false);
-    let view = app.markdown.diagram.as_ref().expect("打开了全屏查看");
+    let view = app
+        .preview
+        .markdown
+        .diagram
+        .as_ref()
+        .expect("打开了全屏查看");
     assert_eq!(view.area, app.layout.editor);
     assert!(view.zoom.is_none());
     let fit = view.scale();
     assert!(fit > 1.0, "小图放大到适应窗口：{fit}");
     let button = |app: &App, tool| {
-        let view = app.markdown.diagram.as_ref().unwrap();
+        let view = app.preview.markdown.diagram.as_ref().unwrap();
         let (r, _) = view.buttons.iter().find(|(_, t)| *t == tool).unwrap();
         (r.x + r.w / 2.0, r.y + r.h / 2.0)
     };
-    let scale = |app: &App| app.markdown.diagram.as_ref().unwrap().scale();
+    let scale = |app: &App| app.preview.markdown.diagram.as_ref().unwrap().scale();
 
     let at = button(&app, DiagramTool::ZoomIn);
     click(&mut app, at);
@@ -2370,15 +2386,15 @@ fn diagrams_open_full_screen_and_zoom() {
     assert!((scale(&app) - fit).abs() < 1e-3);
 
     // 按住 `⌘` 滚动：以鼠标处为中心放大，鼠标处的内容位置不变。
-    let area = app.markdown.diagram.as_ref().unwrap().area;
+    let area = app.preview.markdown.diagram.as_ref().unwrap().area;
     let at = (area.x + area.w / 4.0, area.y + area.h / 3.0);
     app.on_mouse_move(at.0, at.1);
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     // 滚动量以物理像素给出；离屏窗口的缩放倍数为 2，换算为 100 逻辑像素。
     app.on_wheel(MouseScrollDelta::PixelDelta((0.0, 200.0).into()));
-    app.modifiers = Default::default();
+    app.pointer.modifiers = Default::default();
     paint(&mut app);
-    let view = app.markdown.diagram.as_ref().unwrap();
+    let view = app.preview.markdown.diagram.as_ref().unwrap();
     let k = view.scale() / fit;
     assert!(k > 1.5, "{k}");
     let (cx, cy) = (at.0 - area.x - area.w / 2.0, at.1 - area.y - area.h / 2.0);
@@ -2390,13 +2406,13 @@ fn diagrams_open_full_screen_and_zoom() {
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(at.0 + 30.0, at.1 - 10.0);
     app.on_mouse_up(MouseButton::Left);
-    let view = app.markdown.diagram.as_ref().unwrap();
+    let view = app.preview.markdown.diagram.as_ref().unwrap();
     assert!((view.pan.0 - (before.0 + 30.0)).abs() < 1e-3);
     assert!((view.pan.1 - (before.1 - 10.0)).abs() < 1e-3);
     assert!(view.grab.is_none());
     let at = button(&app, DiagramTool::Fit);
     click(&mut app, at);
-    let view = app.markdown.diagram.as_ref().unwrap();
+    let view = app.preview.markdown.diagram.as_ref().unwrap();
     assert_eq!((view.zoom, view.pan), (None, (0.0, 0.0)));
 
     // 全屏查看期间的输入不写入被遮住的文档。
@@ -2405,17 +2421,17 @@ fn diagrams_open_full_screen_and_zoom() {
     assert_eq!(app.editor.active().unwrap().revision, revision);
 
     assert!(app.diagram_view_key(&Key::Named(NamedKey::Escape), "", false));
-    assert!(app.markdown.diagram.is_none());
+    assert!(app.preview.markdown.diagram.is_none());
 
     // 关闭按钮关闭全屏查看；切回源代码同样关闭。
     let (mut app, dir2) = diagram_view_app("md-diagram-view-close", 0, false);
     let at = button(&app, DiagramTool::Close);
     click(&mut app, at);
-    assert!(app.markdown.diagram.is_none());
+    assert!(app.preview.markdown.diagram.is_none());
     let (mut app, dir3) = diagram_view_app("md-diagram-view-source", 0, false);
     app.set_preview_mode(PreviewMode::Source);
     paint(&mut app);
-    assert!(app.markdown.diagram.is_none());
+    assert!(app.preview.markdown.diagram.is_none());
     for dir in [dir, dir2, dir3] {
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2480,7 +2496,7 @@ fn time_mermaid() {
         eprintln!("mermaid 第一次排版 {:?}", started.elapsed());
         let started = std::time::Instant::now();
         for i in 0..50 {
-            app.markdown.scroll_to((i * 173) as f32);
+            app.preview.markdown.scroll_to((i * 173) as f32);
             paint(&mut app);
         }
         eprintln!("{lang} 滚 50 次 {:?}", started.elapsed());
@@ -2574,7 +2590,7 @@ fn measure_markdown_memory() {
     let mut app = app_with(&path, false);
     paint(&mut app);
     let report = |app: &App, step: &str, base: isize| {
-        let memo = &app.markdown.memo;
+        let memo = &app.preview.markdown.memo;
         eprintln!(
             "{step:<16} {:>7.1} MB  缓存 {} 条",
             mb(
@@ -2590,23 +2606,23 @@ fn measure_markdown_memory() {
     settle(&mut app);
     report(&app, "只看预览", base);
     if std::env::var_os("WINC_MD_BREAKDOWN").is_some() {
-        let laid = app.markdown.layout.take();
+        let laid = app.preview.markdown.layout.take();
         drop(laid);
         report(&app, "去掉排版结果", base);
-        app.markdown.memo = Default::default();
+        app.preview.markdown.memo = Default::default();
         report(&app, "去掉排版缓存", base);
-        heap_breakdown(app.markdown.parsed.as_ref().unwrap());
-        app.markdown.parsed = None;
+        heap_breakdown(app.preview.markdown.parsed.as_ref().unwrap());
+        app.preview.markdown.parsed = None;
         report(&app, "去掉解析结果", base);
         return;
     }
     // 从开头滚动到末尾。
-    let height = app.markdown.height;
+    let height = app.preview.markdown.height;
     let mut y = 0.0;
     while y < height {
-        app.markdown.scroll_to(y);
+        app.preview.markdown.scroll_to(y);
         paint(&mut app);
-        y += app.markdown.area.h;
+        y += app.preview.markdown.area.h;
     }
     report(&app, "滚到底", base);
     // 在中间的段落中输入 300 个字符，每个字符绘制一帧并等待一次解析。
@@ -2747,7 +2763,7 @@ fn time_large_markdown() {
     paint(&mut app);
     eprintln!("改一个字后重排加两帧 {:?}", started.elapsed());
     // 一张图片读取完成：只重排用到该图片的块。
-    app.markdown.loaded.push(dir.join("other.png"));
+    app.preview.markdown.loaded.push(dir.join("other.png"));
     let started = std::time::Instant::now();
     paint(&mut app);
     eprintln!("读好一张图片后重排加两帧 {:?}", started.elapsed());
@@ -2820,7 +2836,7 @@ fn shoot_markdown_blocks() {
         shoot(&mut app, &format!("md-block-{name}"));
     }
     // 删除表格的一行，过渡进行到一半：后文正在向上滑动。
-    app.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 3);
+    app.preview.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 3);
     put_caret(&mut app, "乙", false);
     app.live_table_tool("delete-row");
     settle(&mut app);
@@ -2841,12 +2857,12 @@ fn markdown_images_render_one_size_at_a_time() {
         pixels: Vec::new(),
         drawing: Vec::new(),
     };
-    app.markdown.images.insert(path.clone(), slot);
+    app.preview.markdown.images.insert(path.clone(), slot);
     // 拖动改变窗口大小：每帧需要一个新尺寸，正在绘制时不再提交，只有第一个在后台绘制。
     for width in 100..110 {
         app.request_markdown_pixels(&path, (width, 50));
     }
-    let Some(ImageSlot::Ready { drawing, .. }) = app.markdown.images.get(&path) else {
+    let Some(ImageSlot::Ready { drawing, .. }) = app.preview.markdown.images.get(&path) else {
         panic!("图片不在");
     };
     assert_eq!(drawing, &[(100, 50)]);
@@ -2900,7 +2916,7 @@ fn dragging_the_split_divider_resizes_both_halves() {
     // 按住分隔线向右拖 100：源代码一侧变宽，预览一侧变窄，总宽度不变。
     let (x, y) = (divider.x + divider.w / 2.0, divider.y + divider.h / 2.0);
     app.on_mouse_move(x, y);
-    assert_eq!(app.hover, Hover::SplitDivider);
+    assert_eq!(app.pointer.hover, Hover::SplitDivider);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x + 100.0, y);
     app.on_mouse_up(MouseButton::Left);
@@ -2927,7 +2943,7 @@ fn dragging_the_split_divider_resizes_both_halves() {
         app.on_mouse_up(MouseButton::Left);
     }
     paint(&mut app);
-    assert_eq!(app.split_share, None);
+    assert_eq!(app.preview.split_share, None);
     assert_eq!(app.layout.editor.w, left);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2941,7 +2957,7 @@ fn the_live_preview_hides_its_caret_until_clicked_and_ignores_the_margins() {
     let before = app.editor.active().unwrap().selection;
 
     // 点在内容一栏左侧的空白：不放置光标、不开始选择。
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     super::click(&mut app, (area.x + 2.0, area.y + area.h / 2.0));
     paint(&mut app);
     assert!(!app.live_caret_shown());
@@ -2975,7 +2991,7 @@ fn the_preview_shows_a_heading_indicator() {
 
     app.on_mouse_move(bars.x + 20.0, bars.y + 10.0);
     paint(&mut app);
-    assert!(matches!(app.hover, Hover::MarkdownToc(_)));
+    assert!(matches!(app.pointer.hover, Hover::MarkdownToc(_)));
     // 展开时第一行的横线落在指示条第一条的位置上（尚未滚动到任何标题），横线不跳动。指示条的
     // 范围比第一条高出 8，第一条粗 2。
     let first = find(&app, TocTarget::Heading(0)).unwrap();
@@ -2989,16 +3005,16 @@ fn the_preview_shows_a_heading_indicator() {
     assert!(find(&app, TocTarget::Heading(1)).is_some());
 
     click(&mut app, (row.x + 20.0, row.y + row.h / 2.0));
-    let max = (app.markdown.height - app.markdown.area.h).max(0.0);
+    let max = (app.preview.markdown.height - app.preview.markdown.area.h).max(0.0);
     assert_eq!(
-        app.markdown.scroll(),
+        app.preview.markdown.scroll(),
         app.hits.markdown_toc_tops[1].min(max)
     );
     paint(&mut app);
-    assert_eq!(app.markdown.toc_current, Some(1));
+    assert_eq!(app.preview.markdown.toc_current, Some(1));
 
     // 指示条贴在正文左边，随正文居中的位置移动。
-    let left = app.markdown.layout.as_ref().unwrap().left;
+    let left = app.preview.markdown.layout.as_ref().unwrap().left;
     // 列表展开着时卡片也记作 `Bars`，指示条本身总是最后一项。
     let bars = app.hits.markdown_toc.last().unwrap().0;
     assert!(
@@ -3009,10 +3025,10 @@ fn the_preview_shows_a_heading_indicator() {
     // 点击开头的标题后滚动到底：文末的标题无法滚动到顶部，当前所在的一节取屏幕里最后一个标题。
     app.press_toc(TocTarget::Heading(0));
     paint(&mut app);
-    assert_eq!(app.markdown.toc_current, Some(0));
+    assert_eq!(app.preview.markdown.toc_current, Some(0));
     app.scroll_markdown_to(max);
     paint(&mut app);
-    assert_eq!(app.markdown.toc_current, Some(1));
+    assert_eq!(app.preview.markdown.toc_current, Some(1));
 
     app.set_preview_mode(PreviewMode::Split);
     settle(&mut app);
@@ -3046,7 +3062,7 @@ fn the_heading_list_stays_open_over_a_table_scrollbar() {
         .0;
     app.on_mouse_move(bars.x + 4.0, bars.y + 10.0);
     settle(&mut app);
-    assert!(matches!(app.hover, Hover::MarkdownToc(_)));
+    assert!(matches!(app.pointer.hover, Hover::MarkdownToc(_)));
 
     let bar = app.hits.markdown_table_bar.expect("表格有滚动条");
     // 标题列表展开后有两个 `Bars` 区域：指示条和覆盖其上的卡片，卡片的宽度较大。
@@ -3060,9 +3076,9 @@ fn the_heading_list_stays_open_over_a_table_scrollbar() {
     app.on_mouse_move(edge.0, edge.1);
     paint(&mut app);
     assert!(
-        matches!(app.hover, Hover::MarkdownToc(_)),
+        matches!(app.pointer.hover, Hover::MarkdownToc(_)),
         "{:?}",
-        app.hover
+        app.pointer.hover
     );
     assert!(
         app.hits
@@ -3109,20 +3125,20 @@ fn shoot_preview_heading_indicator() {
         shoot(&mut app, open);
         // 展开到一半：横线正从指示条滑向各行，卡片和文字淡入到一半。
         let at = crate::app::animation::TOC_FADE;
-        app.markdown.toc_fade = Some(crate::app::animation::Clock::frozen(at / 2, at));
+        app.preview.markdown.toc_fade = Some(crate::app::animation::Clock::frozen(at / 2, at));
         let half = if dark {
             "md-toc-opening-dark"
         } else {
             "md-toc-opening-light"
         };
         shoot(&mut app, half);
-        app.markdown.toc_fade = None;
+        app.preview.markdown.toc_fade = None;
         // 点击最后一个标题：滚动到底，它成为当前所在的一节，正文里的底色淡出到三成。
         let last = app.hits.markdown_toc_tops.len() - 1;
         app.press_toc(TocTarget::Heading(last));
         let at = crate::app::animation::TOC_FLASH;
         let clock = crate::app::animation::Clock::frozen(at * 3 / 10, at);
-        app.markdown.toc_flash = Some((last, clock));
+        app.preview.markdown.toc_flash = Some((last, clock));
         app.on_mouse_move(900.0, 400.0);
         paint(&mut app);
         let picked = if dark {
@@ -3226,21 +3242,21 @@ fn docx_files_open_as_a_reading_view() {
     let doc = app.editor.active().unwrap();
     assert_eq!(doc.unsupported, Some(winc_editor::Unsupported::Docx));
     assert!(doc.readonly);
-    assert_eq!(app.markdown.area, app.layout.editor);
-    assert!(app.markdown.failed.is_none());
+    assert_eq!(app.preview.markdown.area, app.layout.editor);
+    assert!(app.preview.markdown.failed.is_none());
     assert_eq!(app.hits.markdown_toc_tops.len(), 2);
     // 图片按文档所在目录解析出路径，但不读磁盘：磁盘上没有这个文件。
     let opened = doc.path.clone().unwrap();
     let logo = opened.parent().unwrap().join("word/media/logo.svg");
     assert!(!logo.exists());
     assert!(matches!(
-        app.markdown.images.get(&logo),
+        app.preview.markdown.images.get(&logo),
         Some(crate::app::preview::markdown::ImageSlot::Ready { pixels, .. }) if !pixels.is_empty()
     ));
-    let laid = app.markdown.layout.as_ref().unwrap();
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
     assert!(laid.chars() > 0);
 
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     right_click(&mut app, (area.x + area.w / 2.0, area.y + 60.0));
     assert!(
         !menu_commands(&app)
@@ -3253,7 +3269,7 @@ fn docx_files_open_as_a_reading_view() {
     app.open_path(&broken);
     settle(&mut app);
     assert_eq!(
-        app.markdown.failed.as_deref(),
+        app.preview.markdown.failed.as_deref(),
         Some(winc_i18n::t!("preview-docx-invalid"))
     );
     assert_eq!(app.hits.placeholder.len(), 2);
@@ -3275,7 +3291,7 @@ fn release_notes_open_in_a_reading_tab() {
     assert!(doc.readonly && !doc.shows_text() && !doc.can_preview());
     assert_eq!(app.editor.documents.len(), tabs + 1);
     // 正在读取：没有排版的内容，也没有按钮。
-    assert_eq!(app.markdown.area, Rect::default());
+    assert_eq!(app.preview.markdown.area, Rect::default());
     assert!(app.hits.placeholder.is_empty());
 
     app.show_release_notes(Some(
@@ -3283,13 +3299,13 @@ fn release_notes_open_in_a_reading_tab() {
     ));
     settle(&mut app);
     assert_eq!(app.editor.documents.len(), tabs + 1);
-    assert_eq!(app.markdown.area, app.layout.editor);
+    assert_eq!(app.preview.markdown.area, app.layout.editor);
     let shown = |app: &App| {
-        let laid = app.markdown.layout.as_ref().unwrap();
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
         laid.text(0, laid.chars())
     };
     assert!(shown(&app).contains("新功能") && shown(&app).contains('乙'));
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     right_click(&mut app, (area.x + area.w / 2.0, area.y + 60.0));
     assert!(
         !menu_commands(&app)
@@ -3300,7 +3316,7 @@ fn release_notes_open_in_a_reading_tab() {
     // 未能读取：标签中有两个按钮，重试沿用上一次的范围并回到正在读取。
     app.show_release_notes(None);
     settle(&mut app);
-    assert_eq!(app.markdown.area, Rect::default());
+    assert_eq!(app.preview.markdown.area, Rect::default());
     let actions: Vec<_> = app.hits.placeholder.iter().map(|(_, a)| *a).collect();
     assert_eq!(
         actions,
@@ -3494,9 +3510,19 @@ fn pdf_files_render_only_the_pages_in_view() {
     let doc = app.editor.active().unwrap();
     assert_eq!(doc.unsupported, Some(winc_editor::Unsupported::Pdf));
     assert!(doc.readonly);
-    assert_eq!(app.pdf.area, app.layout.editor);
-    assert_eq!(app.pdf.pages.as_ref().unwrap().as_ref().unwrap().len(), 30);
-    let first: Vec<usize> = app.pdf.rendered.keys().copied().collect();
+    assert_eq!(app.preview.pdf.area, app.layout.editor);
+    assert_eq!(
+        app.preview
+            .pdf
+            .pages
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .len(),
+        30
+    );
+    let first: Vec<usize> = app.preview.pdf.rendered.keys().copied().collect();
     assert!(first.contains(&0), "{first:?}");
     assert!(first.len() <= 4, "{first:?}");
 
@@ -3505,22 +3531,22 @@ fn pdf_files_render_only_the_pages_in_view() {
         paint(&mut app);
         app.wait_for_pdf();
     }
-    assert_eq!(app.pdf.scroll, app.pdf.max_scroll());
-    let last: Vec<usize> = app.pdf.rendered.keys().copied().collect();
+    assert_eq!(app.preview.pdf.scroll, app.preview.pdf.max_scroll());
+    let last: Vec<usize> = app.preview.pdf.rendered.keys().copied().collect();
     assert!(last.contains(&29) && !last.contains(&0), "{last:?}");
     assert!(last.len() <= 4, "{last:?}");
 
     // 回归：页面滚出预览顶部时，超出预览区域的部分（包括边框）不绘制到标签栏上。
     let above = |app: &mut App| {
         paint(app);
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
-        let scale = app.renderer.as_ref().unwrap().scale_factor();
-        let rows = (app.pdf.area.y * scale).floor() as usize;
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+        let rows = (app.preview.pdf.area.y * scale).floor() as usize;
         image.pixels[..rows * image.width as usize].to_vec()
     };
-    app.pdf.scroll = 0.0;
+    app.preview.pdf.scroll = 0.0;
     let before = above(&mut app);
-    app.pdf.scroll = 300.0;
+    app.preview.pdf.scroll = 300.0;
     assert_eq!(above(&mut app), before);
 
     let broken = dir.join("损坏.pdf");
@@ -3531,7 +3557,8 @@ fn pdf_files_render_only_the_pages_in_view() {
         app.wait_for_pdf();
     }
     assert_eq!(
-        app.pdf
+        app.preview
+            .pdf
             .pages
             .as_ref()
             .unwrap()
@@ -3554,8 +3581,8 @@ fn the_pdf_preview_scrolls_by_its_scrollbar() {
     let path = dir.join("长文档.pdf");
     std::fs::write(&path, sample_pdf(30)).unwrap();
     let mut app = open_pdf(&path, false);
-    let area = app.pdf.area;
-    assert!(app.pdf.max_scroll() > area.h);
+    let area = app.preview.pdf.area;
+    assert!(app.preview.pdf.max_scroll() > area.h);
 
     // 滚动后滚动条显示。
     app.on_mouse_move(area.x + area.w / 2.0, area.y + area.h / 2.0);
@@ -3567,14 +3594,17 @@ fn the_pdf_preview_scrolls_by_its_scrollbar() {
     assert_eq!(app.scrollbar_shown(ScrollArea::Pdf), 1.0);
 
     // 按住滑块拖到底：滚到结尾；拖回顶部：回到开头。
-    let thumb = scrollbar_thumb(area, app.pdf.scroll, app.pdf.height).unwrap();
+    let thumb = scrollbar_thumb(area, app.preview.pdf.scroll, app.preview.pdf.height).unwrap();
     app.on_mouse_move(area.right() - 3.0, thumb.y + thumb.h / 2.0);
-    assert!(matches!(app.hover, Hover::Scrollbar(Scrollbar::Pdf)));
+    assert!(matches!(
+        app.pointer.hover,
+        Hover::Scrollbar(Scrollbar::Pdf)
+    ));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(area.right() - 3.0, area.bottom() + 50.0);
-    assert_eq!(app.pdf.scroll, app.pdf.max_scroll());
+    assert_eq!(app.preview.pdf.scroll, app.preview.pdf.max_scroll());
     app.on_mouse_move(area.right() - 3.0, area.y - 50.0);
-    assert_eq!(app.pdf.scroll, 0.0);
+    assert_eq!(app.preview.pdf.scroll, 0.0);
     app.on_mouse_up(MouseButton::Left);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -3591,35 +3621,35 @@ fn the_pdf_preview_lists_page_thumbnails() {
     let path = dir.join("长文档.pdf");
     std::fs::write(&path, sample_pdf(30)).unwrap();
     let mut app = open_pdf(&path, false);
-    let (area, strip) = (app.pdf.area, app.pdf.strip);
+    let (area, strip) = (app.preview.pdf.area, app.preview.pdf.strip);
     assert!(strip.w > 0.0 && strip.h == area.h && strip.x == area.x);
     // 只渲染栏内及其上下各一项的缩略图，不是全部 30 页；正文的页不受影响。
-    let listed = app.pdf.thumbs.len();
+    let listed = app.preview.pdf.thumbs.len();
     assert!((3..30).contains(&listed), "{listed}");
-    assert!(app.pdf.thumbs.contains_key(&0) && app.pdf.rendered.contains_key(&0));
+    assert!(app.preview.pdf.thumbs.contains_key(&0) && app.preview.pdf.rendered.contains_key(&0));
 
     // 点击第 3 页的缩略图：正文滚动到该页，栏内该页成为当前页。
     let (third, to) = app.hits.pdf_thumbs[2];
     assert!(to > 0.0);
     click(&mut app, (third.x + third.w / 2.0, third.y + third.h / 2.0));
-    assert_eq!(app.pdf.scroll, to);
+    assert_eq!(app.preview.pdf.scroll, to);
     paint(&mut app);
-    assert_eq!(app.pdf.current, 2);
+    assert_eq!(app.preview.pdf.current, 2);
 
     // 在栏上滚动只滚动栏，正文不动；在正文上滚动到结尾后，栏跟到最后一页。
     app.on_mouse_move(strip.x + strip.w / 2.0, strip.y + strip.h / 2.0);
     app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
         0.0, -400.0,
     )));
-    assert!(app.pdf.strip_scroll > 0.0);
-    assert_eq!(app.pdf.scroll, to);
+    assert!(app.preview.pdf.strip_scroll > 0.0);
+    assert_eq!(app.preview.pdf.scroll, to);
     app.scroll_pdf(-f32::MAX);
     for _ in 0..3 {
         paint(&mut app);
         app.wait_for_pdf();
     }
-    assert_eq!(app.pdf.current, 29);
-    assert!(app.pdf.thumbs.contains_key(&29) && !app.pdf.thumbs.contains_key(&0));
+    assert_eq!(app.preview.pdf.current, 29);
+    assert!(app.preview.pdf.thumbs.contains_key(&29) && !app.preview.pdf.thumbs.contains_key(&0));
     assert!(
         app.hits
             .pdf_thumbs
@@ -3628,22 +3658,22 @@ fn the_pdf_preview_lists_page_thumbnails() {
     );
 
     // 栏内有滚动条：按住滑块拖到底，栏滚到最后；正文不动。
-    let scroll = app.pdf.scroll;
-    let strip = app.pdf.strip;
-    let (at, content) = (app.pdf.strip_scroll, app.pdf.strip_height);
+    let scroll = app.preview.pdf.scroll;
+    let strip = app.preview.pdf.strip;
+    let (at, content) = (app.preview.pdf.strip_scroll, app.preview.pdf.strip_height);
     let thumb = crate::layout::scrollbar_thumb(strip, at, content).unwrap();
     app.on_mouse_move(strip.right() - 3.0, thumb.y + thumb.h / 2.0);
     assert!(matches!(
-        app.hover,
+        app.pointer.hover,
         Hover::Scrollbar(crate::layout::Scrollbar::PdfStrip)
     ));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(strip.right() - 3.0, strip.y - 50.0);
-    assert_eq!(app.pdf.strip_scroll, 0.0);
+    assert_eq!(app.preview.pdf.strip_scroll, 0.0);
     app.on_mouse_move(strip.right() - 3.0, strip.bottom() + 50.0);
-    assert_eq!(app.pdf.strip_scroll, content - strip.h);
+    assert_eq!(app.preview.pdf.strip_scroll, content - strip.h);
     app.on_mouse_up(MouseButton::Left);
-    assert_eq!(app.pdf.scroll, scroll);
+    assert_eq!(app.preview.pdf.scroll, scroll);
 
     // 点击工具栏上的开关：隐藏缩略图栏，正文占满预览区域，缩略图释放；再点一次恢复。
     let tool = |app: &App, tool: PdfTool| {
@@ -3656,26 +3686,26 @@ fn the_pdf_preview_lists_page_thumbnails() {
     };
     let toggle = tool(&app, PdfTool::Thumbnails);
     app.on_mouse_move(toggle.0, toggle.1);
-    assert_eq!(app.hover, Hover::PdfTool(PdfTool::Thumbnails));
+    assert_eq!(app.pointer.hover, Hover::PdfTool(PdfTool::Thumbnails));
     click(&mut app, toggle);
     assert!(app.state.pdf_thumbnails_hidden);
     paint(&mut app);
-    assert_eq!(app.pdf.strip.w, 0.0);
-    assert!(app.pdf.thumbs.is_empty() && app.hits.pdf_thumbs.is_empty());
+    assert_eq!(app.preview.pdf.strip.w, 0.0);
+    assert!(app.preview.pdf.thumbs.is_empty() && app.hits.pdf_thumbs.is_empty());
     press(&mut app, PdfTool::Thumbnails);
     paint(&mut app);
-    assert!(!app.state.pdf_thumbnails_hidden && app.pdf.strip.w > 0.0);
+    assert!(!app.state.pdf_thumbnails_hidden && app.preview.pdf.strip.w > 0.0);
 
     // 工具栏上的缩放按钮：放大、缩小各一档，点击倍数还原。
     press(&mut app, PdfTool::ZoomIn);
-    assert_eq!(app.pdf.zoom, 1.25);
+    assert_eq!(app.preview.pdf.zoom, 1.25);
     paint(&mut app);
     press(&mut app, PdfTool::ZoomOut);
     press(&mut app, PdfTool::ZoomOut);
-    assert_eq!(app.pdf.zoom, 0.8);
+    assert_eq!(app.preview.pdf.zoom, 0.8);
     paint(&mut app);
     press(&mut app, PdfTool::ZoomReset);
-    assert_eq!(app.pdf.zoom, 1.0);
+    assert_eq!(app.preview.pdf.zoom, 1.0);
 
     // 只有一页的文档没有缩略图栏，工具栏上也没有它的开关。
     let single = dir.join("单页.pdf");
@@ -3685,7 +3715,7 @@ fn the_pdf_preview_lists_page_thumbnails() {
         paint(&mut app);
         app.wait_for_pdf();
     }
-    assert_eq!(app.pdf.strip.w, 0.0);
+    assert_eq!(app.preview.pdf.strip.w, 0.0);
     assert!(
         app.hits
             .pdf_tools
@@ -3715,37 +3745,37 @@ fn the_pdf_preview_zooms_around_the_pointer() {
         }
     };
     let size = app.config.editor_size;
-    let fit = app.pdf.rendered[&0].width;
-    assert_eq!((app.pdf.zoom, app.pdf.scroll_x), (1.0, 0.0));
+    let fit = app.preview.pdf.rendered[&0].width;
+    assert_eq!((app.preview.pdf.zoom, app.preview.pdf.scroll_x), (1.0, 0.0));
 
     // 字号的快捷键在 PDF 上缩放 PDF，不改字号；还原回到适应宽度。
     app.run_action(Action::DecreaseFontSize);
     settle(&mut app);
-    assert_eq!(app.pdf.zoom, 0.8);
-    assert!(app.pdf.rendered[&0].width < fit);
+    assert_eq!(app.preview.pdf.zoom, 0.8);
+    assert!(app.preview.pdf.rendered[&0].width < fit);
     app.run_action(Action::ResetFontSize);
-    assert_eq!((app.pdf.zoom, app.config.editor_size), (1.0, size));
+    assert_eq!((app.preview.pdf.zoom, app.config.editor_size), (1.0, size));
 
     // 主修饰键加滚轮放大：鼠标处的内容保持在原位，页面比区域宽后可以横向滚动。
-    app.scroll_pdf_to(app.pdf.max_scroll() / 2.0);
+    app.scroll_pdf_to(app.preview.pdf.max_scroll() / 2.0);
     settle(&mut app);
-    let body = app.pdf.area.x + app.pdf.strip.w;
-    let at = (body + 200.0, app.pdf.area.y + 300.0);
+    let body = app.preview.pdf.area.x + app.preview.pdf.strip.w;
+    let at = (body + 200.0, app.preview.pdf.area.y + 300.0);
     app.on_mouse_move(at.0, at.1);
     let under = |app: &App| {
-        let pages = app.pdf.pages.clone().unwrap().unwrap();
-        let width = app.pdf.area.w - app.pdf.strip.w;
-        let (rects, ..) = crate::app::preview::pdf::page_rects(&pages, width, app.pdf.zoom);
+        let pages = app.preview.pdf.pages.clone().unwrap().unwrap();
+        let width = app.preview.pdf.area.w - app.preview.pdf.strip.w;
+        let (rects, ..) = crate::app::preview::pdf::page_rects(&pages, width, app.preview.pdf.zoom);
         let (x, y) = (
-            app.pdf.scroll_x + at.0 - body,
-            app.pdf.scroll + at.1 - app.pdf.area.y,
+            app.preview.pdf.scroll_x + at.0 - body,
+            app.preview.pdf.scroll + at.1 - app.preview.pdf.area.y,
         );
         let page = rects.iter().rposition(|r| r.y <= y).unwrap();
         let r = rects[page];
         (page, (x - r.x) / r.w, (y - r.y) / r.h)
     };
     let before = under(&app);
-    app.modifiers = if cfg!(target_os = "macos") {
+    app.pointer.modifiers = if cfg!(target_os = "macos") {
         winit::keyboard::ModifiersState::SUPER
     } else {
         winit::keyboard::ModifiersState::CONTROL
@@ -3755,33 +3785,33 @@ fn the_pdf_preview_zooms_around_the_pointer() {
         app.on_wheel_event(notch, winit::event::TouchPhase::Moved);
     }
     settle(&mut app);
-    assert_eq!((app.pdf.zoom, app.config.editor_size), (1.5, size));
+    assert_eq!((app.preview.pdf.zoom, app.config.editor_size), (1.5, size));
     let after = under(&app);
     assert_eq!(after.0, before.0);
     assert!((after.1 - before.1).abs() < 0.01 && (after.2 - before.2).abs() < 0.01);
-    assert!(app.pdf.width > app.pdf.area.w - app.pdf.strip.w);
-    assert!(app.pdf.scroll_x > 0.0);
-    app.modifiers = winit::keyboard::ModifiersState::empty();
-    let x = app.pdf.scroll_x;
+    assert!(app.preview.pdf.width > app.preview.pdf.area.w - app.preview.pdf.strip.w);
+    assert!(app.preview.pdf.scroll_x > 0.0);
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
+    let x = app.preview.pdf.scroll_x;
     app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
         -40.0, 0.0,
     )));
-    assert!(app.pdf.scroll_x > x);
+    assert!(app.preview.pdf.scroll_x > x);
 
     // 放大到最大的一档（或位图大小的上限）后不再变化。
     app.run_action(Action::IncreaseFontSize);
-    let most = app.pdf.zoom;
+    let most = app.preview.pdf.zoom;
     app.run_action(Action::IncreaseFontSize);
-    assert_eq!(app.pdf.zoom, most);
+    assert_eq!(app.preview.pdf.zoom, most);
     settle(&mut app);
-    let px = &app.pdf.rendered.values().next().unwrap();
+    let px = &app.preview.pdf.rendered.values().next().unwrap();
     assert!(u64::from(px.width) * u64::from(px.height) <= 17_000_000);
     // 缩小到最小的一档后不再变化，内容不超出区域，横向不能滚动。
     for _ in 0..10 {
         app.run_action(Action::DecreaseFontSize);
     }
     settle(&mut app);
-    assert_eq!((app.pdf.zoom, app.pdf.scroll_x), (0.5, 0.0));
+    assert_eq!((app.preview.pdf.zoom, app.preview.pdf.scroll_x), (0.5, 0.0));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -3798,14 +3828,14 @@ fn the_pdf_preview_animates_zooming_and_the_thumbnail_strip() {
     let path = dir.join("长文档.pdf");
     std::fs::write(&path, sample_pdf(30)).unwrap();
     let mut app = open_pdf(&path, false);
-    let pages = app.pdf.pages.clone().unwrap().unwrap();
-    let body = app.pdf.area.w - app.pdf.strip.w;
-    let fit = app.pdf.rendered[&0].width;
+    let pages = app.preview.pdf.pages.clone().unwrap().unwrap();
+    let body = app.preview.pdf.area.w - app.preview.pdf.strip.w;
+    let fit = app.preview.pdf.rendered[&0].width;
 
     // 放大到 1.5 倍，过渡走到一半：页面介于两种大小之间，第 1 页的指定位置停在锚点上。
     let anchor = (body / 2.0, 200.0);
-    app.pdf.zoom = 1.5;
-    app.pdf.zoom_motion = Some(ZoomMotion {
+    app.preview.pdf.zoom = 1.5;
+    app.preview.pdf.zoom_motion = Some(ZoomMotion {
         from: 1.0,
         clock: Clock::stopped(PDF_MOTION, PDF_MOTION / 2),
         page: 0,
@@ -3818,25 +3848,28 @@ fn the_pdf_preview_animates_zooming_and_the_thumbnail_strip() {
     let zoom = Clock::stopped(PDF_MOTION, PDF_MOTION / 2).between(1.0, 1.5);
     let (now, _, height) = page_rects(&pages, body, zoom);
     assert!(least < height && height < most && small[0].w < now[0].w);
-    assert_eq!(app.pdf.height, height);
+    assert_eq!(app.preview.pdf.height, height);
     let center = now[0].y + now[0].h * 0.25;
-    assert!((center - app.pdf.scroll - anchor.1).abs() < 2.0, "{center}");
+    assert!(
+        (center - app.preview.pdf.scroll - anchor.1).abs() < 2.0,
+        "{center}"
+    );
     // 旧位图还在（缩放显示），已请求的是最终倍数的位图。
-    assert_eq!(app.pdf.rendered[&0].width, fit);
-    app.pdf.zoom_motion = None;
+    assert_eq!(app.preview.pdf.rendered[&0].width, fit);
+    app.preview.pdf.zoom_motion = None;
     for _ in 0..3 {
         paint(&mut app);
         app.wait_for_pdf();
     }
     assert_eq!(
-        app.pdf.rendered[&0].width,
+        app.preview.pdf.rendered[&0].width,
         (large[0].w * SCALE).round() as u32
     );
 
     // 缩略图栏滑出到一半：只露出一部分，命中范围限制在露出的部分之内。
-    app.pdf.strip_motion = Some((false, Clock::stopped(PDF_MOTION, PDF_MOTION / 4)));
+    app.preview.pdf.strip_motion = Some((false, Clock::stopped(PDF_MOTION, PDF_MOTION / 4)));
     paint(&mut app);
-    let strip = app.pdf.strip;
+    let strip = app.preview.pdf.strip;
     assert!(strip.w > 0.0 && strip.w < 136.0, "{strip:?}");
     assert!(
         app.hits
@@ -3856,21 +3889,21 @@ fn a_page_that_fails_to_render_shows_why_instead_of_staying_blank() {
     let path = dir.join("sample.pdf");
     std::fs::write(&path, sample_pdf(2)).unwrap();
     let mut app = open_pdf(&path, false);
-    let width = app.pdf.rendered[&0].width;
-    let height = app.pdf.rendered[&0].height;
+    let width = app.preview.pdf.rendered[&0].width;
+    let height = app.preview.pdf.rendered[&0].height;
 
     // 第一页渲染失败：记下原因，不再请求。
-    app.pdf.rendered.remove(&0);
+    app.preview.pdf.rendered.remove(&0);
     app.fail_pdf_page(0, width, "无法渲染此页（错误代码 0x80004005）");
-    assert!(app.pdf.failed.contains_key(&(0, width)));
+    assert!(app.preview.pdf.failed.contains_key(&(0, width)));
     paint(&mut app);
-    assert!(!app.pdf.is_busy(), "失败的页被重新请求");
-    assert!(!app.pdf.rendered.contains_key(&0));
+    assert!(!app.preview.pdf.is_busy(), "失败的页被重新请求");
+    assert!(!app.preview.pdf.rendered.contains_key(&0));
 
     // 页面可见部分不再全是白色：在中央画出了失败的原因（页面比视口高时画在可见部分的中央）。
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
-    let scale = app.renderer.as_ref().unwrap().scale_factor();
-    let area = app.pdf.area;
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+    let area = app.preview.pdf.area;
     let top = ((area.y + 32.0) * scale) as usize + 2;
     let bottom = ((area.bottom() * scale) as usize).min(top + height as usize) - 2;
     let left = ((area.x + area.w / 2.0) * scale) as usize - width as usize / 2 + 2;
@@ -3947,7 +3980,7 @@ fn wide_tables_keep_their_columns_and_scroll_sideways() {
     app.on_mouse_move(edge.0, edge.1);
     paint(&mut app);
     assert_eq!(
-        app.hover,
+        app.pointer.hover,
         Hover::Scrollbar(crate::layout::Scrollbar::MarkdownTable)
     );
     let thumb_x =
@@ -3978,7 +4011,10 @@ fn wide_tables_keep_their_columns_and_scroll_sideways() {
     settle(&mut app);
     put_caret(&mut app, "需冷藏", false);
     let last = point_of(&app, at("需冷藏"));
-    assert!(app.markdown.area.contains(last.0, last.1), "{last:?}");
+    assert!(
+        app.preview.markdown.area.contains(last.0, last.1),
+        "{last:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3996,7 +4032,7 @@ fn clicking_a_block_formula_puts_the_caret_in_its_source() {
         let at = |c: &str| shown[..shown.find(c).unwrap()].chars().count();
         let (above, below) = (point_of(&app, at("前文")), point_of(&app, at("后文")));
         // 公式在两段之间居中显示：从上往下找第一处落在公式上的点（正文的字不会落到公式的原文处）。
-        let area = app.markdown.area;
+        let area = app.preview.markdown.area;
         let start = text.find(formula).unwrap();
         let x = area.x + area.w / 2.0;
         let middle = (above.1 as usize..below.1 as usize)
@@ -4036,20 +4072,26 @@ fn footnote_jumps_keep_context_above_and_mark_the_target() {
     }
     text.push_str("[^a]: 脚注的内容。\n");
     let (mut app, dir) = live_doc("md-footnote-jump", &text);
-    let max = app.markdown.height - app.markdown.area.h;
-    let third = app.markdown.area.h / 3.0;
+    let max = app.preview.markdown.height - app.preview.markdown.area.h;
+    let third = app.preview.markdown.area.h / 3.0;
 
     app.jump_to_anchor("fn-1");
     let note = crate::app::preview::markdown::laid::anchor_top(&app, "fn-1").unwrap();
-    assert_eq!(app.markdown.scroll(), (note - third).clamp(0.0, max));
+    assert_eq!(
+        app.preview.markdown.scroll(),
+        (note - third).clamp(0.0, max)
+    );
 
     app.jump_to_anchor("fnref-1");
     let back = crate::app::preview::markdown::laid::anchor_top(&app, "fnref-1").unwrap();
-    assert_eq!(app.markdown.scroll(), (back - third).clamp(0.0, max));
+    assert_eq!(
+        app.preview.markdown.scroll(),
+        (back - third).clamp(0.0, max)
+    );
 
     // 标题照旧滚动到顶部。
     app.jump_to_anchor("标题");
-    assert_eq!(app.markdown.scroll(), 0.0);
+    assert_eq!(app.preview.markdown.scroll(), 0.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -4062,7 +4104,7 @@ fn clicking_inline_math_puts_the_caret_in_its_source() {
     let at = |c: &str| shown[..shown.find(c).unwrap()].chars().count();
     let (above, below) = (point_of(&app, at("前文")), point_of(&app, at("后文")));
     let tex = text.find("\\alpha").unwrap();
-    let area = app.markdown.area;
+    let area = app.preview.markdown.area;
     // 从左到右、从上到下找第一处落在公式原文上的点（正文的字不会落到公式的原文处）。
     let spot = (above.1 as usize..below.1 as usize)
         .flat_map(|y| {
@@ -4111,9 +4153,9 @@ fn typing_wide_characters_keeps_the_following_blocks_in_place() {
     let text = "前文\n\n1. 第一\n2. 第二\n3. 第三\n\n1. 第四\n\n后文\n";
     let (mut app, dir) = live_doc("md-typing-wide", text);
     // 按后台解析处理：输入之后的第一帧仍依据上一版的解析结果。
-    app.markdown.cost = Some(std::time::Duration::MAX);
+    app.preview.markdown.cost = Some(std::time::Duration::MAX);
     put_caret(&mut app, "第二", true);
-    let height = app.markdown.height;
+    let height = app.preview.markdown.height;
     for c in ["a", "项", "，", "b"] {
         app.run(winc_editor::Command::Insert(c.into()));
         paint(&mut app);
@@ -4122,9 +4164,9 @@ fn typing_wide_characters_keeps_the_following_blocks_in_place() {
             shown.contains("第三") && shown.contains("第四"),
             "{c}：{shown}"
         );
-        assert!((app.markdown.height - height).abs() < 0.5, "{c}");
+        assert!((app.preview.markdown.height - height).abs() < 0.5, "{c}");
         settle(&mut app);
-        assert!((app.markdown.height - height).abs() < 0.5, "{c}");
+        assert!((app.preview.markdown.height - height).abs() < 0.5, "{c}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4136,16 +4178,16 @@ fn rules_show_their_source_in_place() {
     let text = "前文\n\n---\n\n1. 一\n2. ---\n\n后文\n";
     let (mut app, dir) = live_doc("md-rule-live", text);
     put_caret(&mut app, "前文", true);
-    let height = app.markdown.height;
+    let height = app.preview.markdown.height;
     put_caret(&mut app, "\n---", false);
     let doc = app.editor.active_mut().unwrap();
     doc.selection = winc_core::Selection::point(doc.selection.head + 1);
     settle(&mut app);
-    assert!((app.markdown.height - height).abs() < 0.5);
+    assert!((app.preview.markdown.height - height).abs() < 0.5);
     let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
     assert!(shown.contains("---") && shown.contains("一"), "{shown}");
     put_caret(&mut app, "2. ---", true);
-    assert!((app.markdown.height - height).abs() < 0.5);
+    assert!((app.preview.markdown.height - height).abs() < 0.5);
     let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
     assert!(shown.contains("一") && !shown.contains("1."), "{shown}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -4182,12 +4224,12 @@ fn clicking_a_rule_puts_the_caret_on_it() {
     ] {
         let (mut app, dir) = live_doc("md-rule-click", text);
         put_caret(&mut app, "前文", true);
-        let area = app.markdown.area;
+        let area = app.preview.markdown.area;
         let middle = |app: &App, s: &str| {
-            let laid = app.markdown.layout.as_ref().unwrap();
+            let laid = app.preview.markdown.layout.as_ref().unwrap();
             let at = doc_text(app).find(s).unwrap();
             let (_, y, h) = laid.caret_point(at).unwrap();
-            area.y + y - app.markdown.scroll() + h / 2.0
+            area.y + y - app.preview.markdown.scroll() + h / 2.0
         };
         // 分隔线在上一行文字与「后文」之间，取两者正中。
         let above = if text.contains("一") {
@@ -4210,17 +4252,21 @@ fn typing_shows_the_final_layout_in_the_same_frame() {
     use winit::keyboard::{Key, NamedKey};
     let enter = Key::Named(NamedKey::Enter);
     let (mut app, dir) = live_doc("md-same-frame", "前文\n\n- 一\n- 二\n\n后文\n");
-    app.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 2);
+    app.preview.markdown.frozen = Some(crate::app::animation::MARKDOWN_MOTION / 2);
     let shown = |app: &App| {
         let text = crate::app::preview::markdown::laid::full_text(app).unwrap();
-        (text, app.markdown.height, caret_screen_y(app))
+        (text, app.preview.markdown.height, caret_screen_y(app))
     };
     let step = |app: &mut App, name: &str, act: &dyn Fn(&mut App)| {
         act(app);
         paint(app);
         let first = shown(app);
         assert!(
-            app.markdown.motion.as_ref().is_none_or(|m| !m.moving()),
+            app.preview
+                .markdown
+                .motion
+                .as_ref()
+                .is_none_or(|m| !m.moving()),
             "{name}"
         );
         settle(app);
@@ -4287,7 +4333,7 @@ fn home_and_end_follow_the_wrapped_rows() {
     let start = doc_text(&app).find(&para).unwrap();
     put_caret(&mut app, "折行的段落折", false);
     let caret = |app: &App| {
-        let laid = app.markdown.layout.as_ref().unwrap();
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
         let (x, y, _) = laid.caret_point(app.live_caret_source().unwrap()).unwrap();
         (x, y)
     };
@@ -4430,7 +4476,7 @@ fn block_markers_take_effect_after_a_space() {
             assert!(!shown(&app).contains(marker), "{marker}：{}", shown(&app));
             assert!((caret_screen_y(&app) - y).abs() < 4.0, "{marker}");
         } else {
-            let parsed = app.markdown.parsed.clone().unwrap();
+            let parsed = app.preview.markdown.parsed.clone().unwrap();
             let heading = |b: &winc_preview::markdown::Block| {
                 matches!(b, winc_preview::markdown::Block::Heading(1, _))
             };
@@ -4463,7 +4509,7 @@ fn task_items_can_be_typed() {
         assert_eq!(with_caret(&app), "前文\n\n- [ ] |\n\n后文\n", "{typed:?}");
         app.run(winc_editor::Command::Insert("任务".into()));
         settle(&mut app);
-        let parsed = app.markdown.parsed.clone().unwrap();
+        let parsed = app.preview.markdown.parsed.clone().unwrap();
         let task = parsed.blocks.iter().find_map(|b| match b {
             winc_preview::markdown::Block::List(_, items) => items[0].task,
             _ => None,
@@ -4489,9 +4535,9 @@ fn tab_moves_a_list_item_with_its_children() {
         with_caret(&app),
         "- 一\n  - 二|\n    - 子\n\n      续行\n- 三\n"
     );
-    app.modifiers = winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::SHIFT;
     assert!(app.markdown_key(&tab, false));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     settle(&mut app);
     assert_eq!(with_caret(&app), text.replace("二", "二|"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -4535,9 +4581,9 @@ fn code_blocks_are_created_and_removed_as_a_whole() {
     settle(&mut app);
     assert!(app.markdown_key(&back, false));
     assert_eq!(with_caret(&app), "前文\n\n```\n|x\n```\n\n后文\n");
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     assert!(app.markdown_key(&Key::Named(NamedKey::Enter), true));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     settle(&mut app);
     assert_eq!(with_caret(&app), "前文\n\n```\nx\n```\n\n|\n\n后文\n");
     app.run(winc_editor::Command::Undo);

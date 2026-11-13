@@ -685,7 +685,7 @@ fn sticky_scroll_pins_the_enclosing_blocks() {
     let t = app.layout.text;
     let (x, y) = (t.x + 60.0, t.y + app.fonts.line_height * 1.5);
     app.on_mouse_move(x, y);
-    assert_eq!(app.hover, Hover::Sticky(1));
+    assert_eq!(app.pointer.hover, Hover::Sticky(1));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     let doc = app.editor.active().unwrap();
@@ -862,9 +862,9 @@ fn places_popup_hangs_next_to_the_name() {
     // 鼠标悬停在浮窗的第二行上：这一行有悬停效果；移到浮窗外面即消失，也不会穿透到下方。
     let row = crate::app::workspace::picker::picker_parts(&app, card).row(1, app.picker.scroll);
     app.on_mouse_move(row.x + 100.0, row.y + row.h / 2.0);
-    assert_eq!(app.hover, Hover::PickerRow(1));
+    assert_eq!(app.pointer.hover, Hover::PickerRow(1));
     app.on_mouse_move(card.x + 100.0, card.y + 4.0);
-    assert_eq!(app.hover, Hover::None);
+    assert_eq!(app.pointer.hover, Hover::None);
     app.close_picker();
 
     // 名字位于编辑区底部：下方空间不足，浮窗改放在上方，底边与该行相距 4 逻辑像素。
@@ -995,28 +995,31 @@ fn switching_tabs_closes_lists_that_belong_to_the_old_file() {
 fn hover_is_checked_again_after_keyboard_changes() {
     let dir = sample_folder("hover-refresh");
     let mut app = app_with(&dir.join("a.txt"), false);
-    app.cursor_inside = true;
+    app.pointer.cursor_inside = true;
 
     // 鼠标停在 ⌘P 的第一行上。
     app.open_picker();
     paint(&mut app);
     let list = crate::app::workspace::picker::picker_parts(&app, app.layout.picker).list;
     app.on_mouse_move(list.x + 40.0, list.y + 6.0);
-    assert_eq!(app.hover, Hover::PickerRow(0));
+    assert_eq!(app.pointer.hover, Hover::PickerRow(0));
 
     // 鼠标不动，按 Esc 关闭面板：重绘一帧后按鼠标当前位置重新判定悬停，下次打开面板时
     // 打开时不会立即高亮第一行。
     app.close_picker();
     app.relayout();
-    app.dirty = false;
-    let mut renderer = app.renderer.take().unwrap();
+    app.frame.dirty = false;
+    let mut renderer = app.frame.renderer.take().unwrap();
     renderer.draw(|frame| view::draw(&mut app, frame));
-    app.renderer = Some(renderer);
+    app.frame.renderer = Some(renderer);
     app.refresh_hover();
-    assert_ne!(app.hover, Hover::PickerRow(0));
-    assert_eq!(app.hover, app.hover_at(app.mouse.0, app.mouse.1));
+    assert_ne!(app.pointer.hover, Hover::PickerRow(0));
+    assert_eq!(
+        app.pointer.hover,
+        app.hover_at(app.pointer.mouse.0, app.pointer.mouse.1)
+    );
     // 悬停项已改变，新的高亮需要在下一帧绘制：`redraw` 不能清除该重绘请求。
-    assert!(app.dirty);
+    assert!(app.frame.dirty);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

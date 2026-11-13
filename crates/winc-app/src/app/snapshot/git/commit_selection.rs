@@ -39,9 +39,9 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
             .find(|(_, t)| *t == CommitTarget::File(index))
             .unwrap()
             .0;
-        app.modifiers = modifiers;
+        app.pointer.modifiers = modifiers;
         click(app, (row.x + row.w / 2.0, row.y + 4.0));
-        app.modifiers = ModifiersState::empty();
+        app.pointer.modifiers = ModifiersState::empty();
         paint(app);
     };
 
@@ -180,9 +180,9 @@ fn command_click_on_a_folder_row_selects_every_change_under_it() {
     // ⌘ 单击目录：该目录下的文件都加入选区（`Cargo.toml` 是原来选中的），目录不收起。
     let cargo = root.join("Cargo.toml");
     app.select_commit_files(vec![cargo.clone()]);
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     app.press_commit(CommitTarget::Dir(src_row(&app)));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     let selection = app.commit_selection();
     assert!(selection.contains(&cargo));
     assert!(under_src.iter().all(|p| selection.contains(p)));
@@ -199,9 +199,9 @@ fn command_click_on_a_folder_row_selects_every_change_under_it() {
     assert!(under_src.iter().all(|p| selection.contains(p)));
 
     // 再次 ⌘ 单击同一目录：一起移出选区。
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     app.press_commit(CommitTarget::Dir(src_row(&app)));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert_eq!(app.commit_selection(), [cargo]);
 
     let _ = std::fs::remove_dir_all(&dir);

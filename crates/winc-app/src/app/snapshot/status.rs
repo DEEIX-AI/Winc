@@ -27,8 +27,8 @@ fn the_settings_button_stays_at_the_right_end_of_the_status_bar() {
     // 悬停时提示命令名，点击打开设置。
     let at = (settings.x + settings.w / 2.0, settings.y + settings.h / 2.0);
     app.on_mouse_move(at.0, at.1);
-    assert_eq!(app.hover, Hover::Status(StatusItem::Settings));
-    assert!(app.hover.has_tooltip());
+    assert_eq!(app.pointer.hover, Hover::Status(StatusItem::Settings));
+    assert!(app.pointer.hover.has_tooltip());
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert!(app.settings.open);
@@ -67,9 +67,9 @@ fn every_crumb_opens_the_folder_it_names() {
     let (src, _) = app.hits.crumbs[1];
     let y = src.y + src.h / 2.0;
     app.on_mouse_move(src.x + 4.0, y);
-    assert_eq!(app.hover, Hover::Crumb(1));
+    assert_eq!(app.pointer.hover, Hover::Crumb(1));
     app.on_mouse_move(src.x - 4.0, y);
-    assert_eq!(app.hover, Hover::None);
+    assert_eq!(app.pointer.hover, Hover::None);
 
     // 测试中没有窗口（等同没有系统菜单）：点击后菜单画在窗口中，该段保持按下的样子，Esc 关掉。
     app.on_mouse_move(src.x + 4.0, y);

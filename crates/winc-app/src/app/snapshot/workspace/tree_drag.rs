@@ -81,7 +81,7 @@ fn dragging_a_file_onto_a_folder_moves_it_and_its_tab_follows() {
     assert!(!app.tree_open_pending());
     let drag = app.tree_dragging().unwrap();
     assert_eq!(drag.target.as_deref(), Some(root.join("lib").as_path()));
-    assert_eq!(app.hover, Hover::None);
+    assert_eq!(app.pointer.hover, Hover::None);
     paint(&mut app);
 
     // 拖到文件上等于放入该文件所在的目录；拖回被拖文件原本所在的目录没有意义，因此没有放置目标。

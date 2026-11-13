@@ -37,7 +37,7 @@ pub(super) fn draw_sticky(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let mut chars: Vec<char> = Vec::with_capacity(256);
     let mut tokens = Vec::with_capacity(32);
 
-    let hovered = |row: &StickyRow| app.hover == Hover::Sticky(row.depth);
+    let hovered = |row: &StickyRow| app.pointer.hover == Hover::Sticky(row.depth);
     draw_pinned_shadow(app, frame, area, &rows);
     draw_pinned_rows(app, frame, area, &rows, hovered, |frame, i, baseline| {
         let row = rows[i];

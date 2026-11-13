@@ -28,6 +28,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     // 折叠或展开动画进行中，按展开后的位置与高度绘制：临时替换为该状态的折叠与滚动位置，
     // 绘制后恢复。
     let mut motion = app
+        .motion
         .fold_motion
         .take()
         .filter(|m| m.applies_to(&app.editor.documents[index]));
@@ -69,9 +70,9 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             start.or_else(|| Some(doc.approx_highlight_state(range.start)))
         })
         .collect();
-    app.highlight_pending |= pending;
+    app.caches.highlight_pending |= pending;
     // 鼠标在行号栏上时，所有可折叠的行都绘制箭头（已折叠的行始终绘制）。
-    let foldable: Vec<usize> = if app.hover == Hover::Gutter {
+    let foldable: Vec<usize> = if app.pointer.hover == Hover::Gutter {
         let tab_width = doc.tab_width(app.editor.tab_width);
         doc.block_starts(segments.iter().flat_map(|r| r.clone()), tab_width)
     } else {
@@ -99,7 +100,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
-    let blame_hover = match app.hover {
+    let blame_hover = match app.pointer.hover {
         Hover::Blame(line) => blame.as_ref().and_then(|b| b.lines.get(line).copied()),
         _ => None,
     };
@@ -254,7 +255,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         let doc = &mut app.editor.documents[index];
         doc.swap_folds(&mut m.open);
         crate::app::scroll::swap_scroll_line(doc, &mut m.scroll);
-        app.fold_motion = Some(m);
+        app.motion.fold_motion = Some(m);
     }
 
     if scratch.ime_cursor.is_some() {

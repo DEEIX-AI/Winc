@@ -106,7 +106,10 @@ impl App {
             ScrollTarget::Tree => {
                 Some((f64::from(self.tree.scroll), f64::from(self.tree.scroll_x)))
             }
-            ScrollTarget::Pdf => Some((f64::from(self.pdf.scroll), f64::from(self.pdf.scroll_x))),
+            ScrollTarget::Pdf => Some((
+                f64::from(self.preview.pdf.scroll),
+                f64::from(self.preview.pdf.scroll_x),
+            )),
             _ => self.pane_scroll(target).map(|y| (f64::from(y), 0.0)),
         }
     }

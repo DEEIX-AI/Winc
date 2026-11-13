@@ -162,7 +162,11 @@ impl App {
     /// （[`WheelGlide`]），触控板的滚动量立即生效。
     pub(in crate::app) fn scroll_by_wheel(&mut self, delta: MouseScrollDelta, gesture: bool) {
         self.dismiss_hint();
-        let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
+        let scale = self
+            .frame
+            .renderer
+            .as_ref()
+            .map_or(1.0, Renderer::scale_factor);
         let (dx, dy) = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
                 let (step_x, step_y) = self.wheel_step();
@@ -190,7 +194,7 @@ impl App {
         }
         let (dx, dy) = axis.keep(dx, dy);
 
-        let origin = self.mouse;
+        let origin = self.pointer.mouse;
         let target = self.scroll_target_at(origin.0, origin.1);
         // 滚轮和触控板由用户直接控制：该区域的跳转过渡停在屏幕上显示的位置，从该位置继续。
         self.settle_glide_of(target);
@@ -215,7 +219,7 @@ impl App {
     /// 只用于鼠标滚轮（`line`）。触控板本身支持横向滚动，手指离开后仍持续发出惯性滚动事件；
     /// 此时按 `⇧Tab` 等组合键，惯性滚动会被视为横向滚动，使编辑区意外右移数列。
     fn wheel_shift(&self, dx: f32, line: bool) -> bool {
-        self.modifiers.shift_key() && dx == 0.0 && line
+        self.pointer.modifiers.shift_key() && dx == 0.0 && line
     }
 
     /// 是否对滚动量 `delta` 使用过渡：仅限鼠标滚轮的整格滚动。
@@ -226,7 +230,7 @@ impl App {
         let MouseScrollDelta::LineDelta(x, y) = delta else {
             return false;
         };
-        let (mouse_x, mouse_y) = self.mouse;
+        let (mouse_x, mouse_y) = self.pointer.mouse;
         (x.abs() >= 1.0 || y.abs() >= 1.0) && !self.layout.terminal.contains(mouse_x, mouse_y)
     }
 
@@ -238,7 +242,7 @@ impl App {
     ///   一次滚动一屏时为编辑区的一屏。横向按系统设置的字符数，每个字符一个字符宽度。
     /// - 其他系统上为 `WHEEL_NOTCH`。
     pub(in crate::app) fn wheel_step(&self) -> (f32, f32) {
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         if self.layout.terminal.contains(x, y) {
             return (
                 self.terminal_cell * 3.0,
@@ -272,7 +276,7 @@ impl App {
         let now = Instant::now();
         let interval = self.wheel.at.replace(now).map(|at| now.duration_since(at));
         #[cfg(target_os = "macos")]
-        let follows_refresh = self.display_link.is_some();
+        let follows_refresh = self.frame.display_link.is_some();
         #[cfg(not(target_os = "macos"))]
         let follows_refresh = false;
         follows_refresh.then(|| wheel_glide_length(interval))
@@ -283,7 +287,7 @@ impl App {
     /// 进行中的过渡滚动同一区域时，未完成的距离计入新的总距离；滚动其他区域时，未完成的距离
     /// 立即作用于原来的区域。
     pub(in crate::app) fn start_wheel_glide(&mut self, delta: (f32, f32), clock: Clock) {
-        let origin = self.mouse;
+        let origin = self.pointer.mouse;
         let target = self.scroll_target_at(origin.0, origin.1);
         let shift = self.wheel_shift(delta.0, true);
         let mut rest = (0.0, 0.0);
@@ -339,8 +343,8 @@ impl App {
     /// Windows 上无法启动其线程）或窗口不可见时不推迟。
     pub(in crate::app) fn pace_wheel_frame(&mut self) {
         #[cfg(any(target_os = "macos", windows))]
-        if self.display_link.is_some() && !self.unseen() {
-            self.dirty = false;
+        if self.frame.display_link.is_some() && !self.unseen() {
+            self.frame.dirty = false;
             self.retry_frame(Instant::now());
         }
     }

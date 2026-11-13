@@ -26,7 +26,7 @@ fn long_tree_names_unfold_under_the_mouse() {
     let y = rect.y + rect.h / 2.0;
     app.on_mouse_move(rect.right() - 4.0, y);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::TreeRow(long));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(long));
     app.on_mouse_down(MouseButton::Left);
     assert_eq!(app.editor.workspace.as_ref().unwrap().selected, Some(long));
     app.on_mouse_up(MouseButton::Left);
@@ -46,7 +46,11 @@ fn long_tree_names_unfold_under_the_mouse() {
     app.dismiss_popup();
     app.on_mouse_move(rect.right() + 4.0, y);
     paint(&mut app);
-    assert!(!matches!(app.hover, Hover::TreeRow(_)), "{:?}", app.hover);
+    assert!(
+        !matches!(app.pointer.hover, Hover::TreeRow(_)),
+        "{:?}",
+        app.pointer.hover
+    );
     assert_eq!(app.tree.overflow, None);
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -130,11 +134,14 @@ fn the_scrollbar_strip_belongs_to_the_scrollbar_not_the_row_under_it() {
     // 从树底向上 `SCROLLBAR_HIT` 高的一条属于滚动条：其下的行不显示悬停高亮，长名称也不展开。
     app.on_mouse_move(x, tree.bottom() - SCROLLBAR_HIT);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::TreeHorizontal));
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Scrollbar(Scrollbar::TreeHorizontal)
+    );
     assert_eq!(app.tree.overflow, None);
     assert!(app.scrollbar_active(Scrollbar::TreeHorizontal));
     app.on_mouse_move(x, tree.bottom() - SCROLLBAR_HIT - 1.0);
-    assert_eq!(app.hover, Hover::TreeRow(last_row));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(last_row));
     assert!(!app.scrollbar_active(Scrollbar::TreeHorizontal));
 
     // 点击滑块右侧的轨道：滑块立即跳到点击处，无需移动鼠标。
@@ -146,9 +153,12 @@ fn the_scrollbar_strip_belongs_to_the_scrollbar_not_the_row_under_it() {
     // 拖动滑块时鼠标划过文件树的行，悬停仍保持在滚动条上；松开后才轮到下方的行，
     // 且没有打开其他文件。
     app.on_mouse_move(track_x, tree.y + 10.0);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::TreeHorizontal));
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Scrollbar(Scrollbar::TreeHorizontal)
+    );
     app.on_mouse_up(MouseButton::Left);
-    assert!(matches!(app.hover, Hover::TreeRow(_)));
+    assert!(matches!(app.pointer.hover, Hover::TreeRow(_)));
     assert_eq!(app.editor.active().unwrap().name(), "a.txt");
 
     // 编辑区右侧的滚动条同样如此：该区域属于滚动条，按下时不会把光标放进文本里。
@@ -158,7 +168,7 @@ fn the_scrollbar_strip_belongs_to_the_scrollbar_not_the_row_under_it() {
     paint(&mut app);
     let editor = app.layout.editor;
     app.on_mouse_move(editor.right() - 4.0, editor.bottom() - 40.0);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::Editor));
+    assert_eq!(app.pointer.hover, Hover::Scrollbar(Scrollbar::Editor));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert!(app.editor.active().unwrap().scroll_line > 0.0);
@@ -364,13 +374,13 @@ fn narrow_sidebar_folds_tools_into_more() {
     assert!(hit.w >= TREE_NAME_MIN);
     assert!(app.hits.tree_tools.iter().all(|(r, _)| r.x >= hit.right()));
     app.on_mouse_move(hit.x + hit.w / 2.0, hit.y + hit.h / 2.0);
-    assert_eq!(app.hover, Hover::ProjectName);
+    assert_eq!(app.pointer.hover, Hover::ProjectName);
 
     // 点击「⋯」弹出系统菜单，列出被收起的按钮，顺序与工具栏中的顺序相同；
     // 悬停提示为「更多操作」。
     use crate::app::input::context_menu::{MenuCommand, MenuEntry, MenuTarget};
     app.on_mouse_move(more.x + 4.0, more.y + 4.0);
-    assert_eq!(app.hover, Hover::TreeMore);
+    assert_eq!(app.pointer.hover, Hover::TreeMore);
     app.on_mouse_down(MouseButton::Left);
     let menu = app.context_menu.clone().unwrap();
     assert_eq!(menu.target, MenuTarget::TreeTools);
@@ -489,7 +499,7 @@ fn the_unfolded_name_lines_up_with_its_row_below_the_new_entry_row() {
     let y = tree.y + (long + 1) as f32 * TREE_ROW + TREE_ROW / 2.0;
     app.on_mouse_move(tree.x + 120.0, y);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::TreeRow(long));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(long));
     let (rect, index) = app.tree.overflow.unwrap();
     assert_eq!(index, long);
     assert_eq!(rect.y, tree.y + (long + 1) as f32 * TREE_ROW + 1.0);
@@ -584,7 +594,7 @@ fn folders_stick_to_the_top_while_their_files_scroll() {
     let below = app.tree_row_at(tree.y + 2.0 * TREE_ROW + 5.0).unwrap();
     assert!(below > core + 5, "{below}");
     app.on_mouse_move(tree.x + 80.0, tree.y + TREE_ROW + 5.0);
-    assert_eq!(app.hover, Hover::TreeRow(core));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(core));
 
     // `core` 的最后几行滚到顶部时，`core` 被向上推，部分被 `src` 遮挡。
     let last = core + 30;
@@ -667,7 +677,7 @@ fn double_clicking_below_the_tree_creates_a_file_in_the_root() {
     assert!(app.name_input.is_none());
 
     // 双击：在根目录插入一行输入名称的输入行，并滚动到该行。
-    app.last_click = None;
+    app.pointer.last_click = None;
     click(&mut app, blank);
     click(&mut app, blank);
     let input = app.name_input.as_ref().unwrap();
@@ -687,7 +697,7 @@ fn double_clicking_below_the_tree_creates_a_file_in_the_root() {
     assert!(!dir.join("src/core/新文件.txt").exists());
 
     // 在行上双击时行为不变：目录先展开再收起，不新建文件。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let row = (tree.x + 80.0, app.tree_row_top(src) + 5.0);
     app.tree.scroll = 0.0;
     paint(&mut app);
@@ -907,7 +917,7 @@ fn clicking_a_merged_folder_past_the_sidebar_selects_it() {
     assert!(x > rect.x && x < rect.right(), "{x} {rect:?}");
     app.on_mouse_move(x, y);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::TreeRow(row));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(row));
 
     app.on_mouse_down(MouseButton::Left);
     let ws = app.editor.workspace.as_ref().unwrap();
@@ -1017,14 +1027,14 @@ fn a_row_that_does_not_fit_covers_the_sidebar_splitter() {
     let other = row_of(&app, "zzz");
     app.on_mouse_move(x, app.tree_row_top(other) + TREE_ROW / 2.0);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::Splitter);
+    assert_eq!(app.pointer.hover, Hover::Splitter);
 
     // 从左边移到放不下名称的一行：经过分隔条时仍算在这一行上。
     app.on_mouse_move(x - 20.0, top);
     paint(&mut app);
     assert!(app.tree.overflow.is_some());
     app.on_mouse_move(x, top);
-    assert_eq!(app.hover, Hover::TreeRow(row));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(row));
 }
 
 #[test]
@@ -1156,10 +1166,10 @@ fn hovering_tracks_the_merged_folder_under_the_pointer() {
     app.on_mouse_move(segment_x(&app, row, &main), y);
     paint(&mut app);
     assert_eq!(app.tree.hover_segment.as_ref(), Some(&main));
-    app.dirty = false;
+    app.frame.dirty = false;
     app.on_mouse_move(segment_x(&app, row, &java), y);
     assert_eq!(app.tree.hover_segment.as_ref(), Some(&java));
-    assert!(app.dirty);
+    assert!(app.frame.dirty);
 
     // 移到图标上、其他行上都不再悬停某一级。
     app.on_mouse_move(app.layout.tree.x + 12.0, y);
@@ -1182,11 +1192,11 @@ fn option_clicking_a_folder_expands_and_collapses_it_all_the_way() {
     let row = row_of(&app, "a");
     let click = |app: &mut App, modifiers| {
         let (x, y) = tree_row_center(app, row);
-        app.modifiers = modifiers;
+        app.pointer.modifiers = modifiers;
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Left);
         app.on_mouse_up(MouseButton::Left);
-        app.modifiers = winit::keyboard::ModifiersState::empty();
+        app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
         paint(app);
     };
     let labels = |app: &App| -> Vec<String> {
@@ -1289,7 +1299,11 @@ fn a_row_that_does_not_fit_covers_the_tree_scrollbar() {
 
     // 名称放得下的行：滚动条照常响应。
     app.on_mouse_move(x, other);
-    assert!(matches!(app.hover, Hover::Scrollbar(_)), "{:?}", app.hover);
+    assert!(
+        matches!(app.pointer.hover, Hover::Scrollbar(_)),
+        "{:?}",
+        app.pointer.hover
+    );
 
     // 从左边移到放不下名称的一行：经过滚动条时仍算在这一行上，名称不收起。
     app.on_mouse_move(x - 40.0, top);
@@ -1297,7 +1311,7 @@ fn a_row_that_does_not_fit_covers_the_tree_scrollbar() {
     assert!(app.tree.overflow.is_some());
     app.on_mouse_move(x, top);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::TreeRow(row));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(row));
     assert!(app.tree.overflow.is_some());
 }
 
@@ -1322,12 +1336,16 @@ fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
     assert!(app.tree.overflow.is_some());
     app.on_mouse_move(gutter, top + TREE_ROW / 2.0);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::TreeRow(row));
+    assert_eq!(app.pointer.hover, Hover::TreeRow(row));
     assert_eq!(app.scrollbar_shown(ScrollArea::Tree), 0.0);
 
     // 沿边缘移到下一行：那一行还没展开，滚动条接管，拿得到。
     app.on_mouse_move(gutter, top + TREE_ROW * 1.5);
-    assert!(matches!(app.hover, Hover::Scrollbar(_)), "{:?}", app.hover);
+    assert!(
+        matches!(app.pointer.hover, Hover::Scrollbar(_)),
+        "{:?}",
+        app.pointer.hover
+    );
     paint(&mut app);
     assert_eq!(app.tree.overflow, None);
     assert_eq!(app.scrollbar_shown(ScrollArea::Tree), 1.0);
@@ -1350,7 +1368,7 @@ fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
     assert!(app.tree.overflow.is_some());
     assert!(app.scrollbar_shown(ScrollArea::Tree) > 0.0);
     let pixel = |app: &App, x: f32, y: f32| {
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
     };
@@ -1384,7 +1402,7 @@ fn a_retracting_name_shares_one_background_across_the_sidebar_edge() {
     );
     paint(&mut app);
     assert!(app.tree.labels.moving());
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
@@ -1454,7 +1472,7 @@ fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
     // 切到搜索视图：编辑区上方恢复背景色，不留下收回中的名字。
     app.sidebar.view = SidebarView::Search;
     paint(&mut app);
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
@@ -1477,7 +1495,7 @@ fn click_tree_file(app: &mut App, root: &Path, name: &str, clicks: usize) {
         app.tree_row_top(row) + TREE_ROW / 2.0,
     );
     // 与上一次单击无关：快速连续的测试步骤不被当成双击。
-    app.last_click = None;
+    app.pointer.last_click = None;
     for _ in 0..clicks {
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Left);
@@ -1538,7 +1556,7 @@ fn single_clicks_preview_files_in_one_tab() {
     let index = app.preview_index().unwrap();
     let hit = app.hits.tabs.iter().find(|h| h.index == index).unwrap().tab;
     let (x, y) = (hit.x + hit.w / 2.0, hit.y + hit.h / 2.0);
-    app.last_click = None;
+    app.pointer.last_click = None;
     for _ in 0..2 {
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Left);

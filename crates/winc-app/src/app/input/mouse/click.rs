@@ -10,10 +10,10 @@ impl App {
         if self.picker.fold.take().is_some() {
             self.relayout();
         }
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         let l = self.layout;
         // 折叠动画期间绘制的是展开状态，而点击按的是折叠后的布局：先取消动画，使显示直接到位。
-        self.fold_motion = None;
+        self.motion.fold_motion = None;
         // 跳转过渡期间绘制的是插值位置，而命中测试按滚动位置换算：过渡停在屏幕上显示的位置。
         self.settle_glides();
         self.fling = None;
@@ -52,7 +52,7 @@ impl App {
                 .terminal
                 .tab()
                 .is_some_and(|t| winc_pty::input::wants_mouse(t.modes))
-            && !self.modifiers.shift_key()
+            && !self.pointer.modifiers.shift_key()
         {
             self.terminal_mouse_down(x, y, button);
             return;
@@ -84,7 +84,7 @@ impl App {
         if button == MouseButton::Middle {
             // 标签栏的位置取自上一帧的绘制：其间可能用快捷键关闭了标签，序号可能已不存在，
             // 因此用 `get` 取文档。
-            self.close_pressed = self
+            self.pointer.close_pressed = self
                 .tab_at(x, y)
                 .and_then(|(index, _)| self.editor.documents.get(index))
                 .map(|d| d.id);
@@ -94,10 +94,11 @@ impl App {
         // 右键菜单。macOS 上 `⌃` 加单击也弹出这个菜单，这是系统约定。
         let control_click = cfg!(target_os = "macos")
             && button == MouseButton::Left
-            && self.modifiers.control_key();
+            && self.pointer.modifiers.control_key();
         if button == MouseButton::Right || control_click {
             // 全屏查看的图上不提供右键菜单，被遮住的预览也不响应。
             if self
+                .preview
                 .markdown
                 .diagram
                 .as_ref()
@@ -151,9 +152,9 @@ impl App {
             Target::MarkdownText
                 | Target::Scrollbar(Scrollbar::Markdown | Scrollbar::MarkdownTable, _)
         );
-        if !keeps_preview && self.markdown.focused {
-            self.markdown.focused = false;
-            self.markdown.selection = None;
+        if !keeps_preview && self.preview.markdown.focused {
+            self.preview.markdown.focused = false;
+            self.preview.markdown.selection = None;
         }
 
         // 点击的目标由 `target_at` 决定（与悬停同一个顺序）；只有点击才有的规则写成前面的
@@ -194,7 +195,7 @@ impl App {
             // 从看到的宽度开始拖：记下的宽度可能比这个窗口放得下的大，否则开头一段拖了没有反应。
             Target::Splitter => {
                 let most = (self.layout.window.w - 320.0).max(crate::theme::MIN_PANEL_WIDTH);
-                self.drag = Drag::Splitter {
+                self.pointer.drag = Drag::Splitter {
                     start_x: x,
                     start_width: self.sidebar.width.min(most),
                 };
@@ -213,7 +214,7 @@ impl App {
             Target::PdfThumb(to) => self.scroll_pdf_to(to),
             Target::PdfTool(tool) => self.press_pdf_tool(tool),
             Target::Tab(index, true) => {
-                self.close_pressed = self.editor.documents.get(index).map(|d| d.id);
+                self.pointer.close_pressed = self.editor.documents.get(index).map(|d| d.id);
             }
             Target::Tab(index, false) => {
                 // 双击预览标签使其成为普通标签。
@@ -229,7 +230,7 @@ impl App {
             Target::Crumb(index) => self.open_crumb_menu(index),
             Target::Status(item) => self.open_status_menu(item),
             Target::TitleBar => self.click_title_bar(x, y),
-            Target::WindowControl(control) => self.control_pressed = Some(control),
+            Target::WindowControl(control) => self.pointer.control_pressed = Some(control),
             Target::ResizeEdge(direction) => self.start_resize(direction),
             Target::Tree(_) => self.click_tree(x, y),
             Target::Placeholder(action) => self.run_placeholder_action(action),
@@ -240,7 +241,7 @@ impl App {
                     self.log.details_w = None;
                     self.request_redraw();
                 } else {
-                    self.drag = Drag::LogDivider {
+                    self.pointer.drag = Drag::LogDivider {
                         start_x: x,
                         start_width: self.log_parts().details.w,
                     };
@@ -260,7 +261,9 @@ impl App {
                 }
             }
             // 按住 `⌥` 点击最近的目录时在新窗口中打开，与项目菜单中 `⌥` 的含义保持统一。
-            Target::Start(crate::app::StartAction::Recent(i)) if self.modifiers.alt_key() => {
+            Target::Start(crate::app::StartAction::Recent(i))
+                if self.pointer.modifiers.alt_key() =>
+            {
                 self.open_recent_in_new_window(i);
             }
             Target::Start(action) => self.run_start_action(action),
@@ -283,7 +286,7 @@ impl App {
                 // 详情里没按在可点击的条目上：选字（双击选一整行），按在空白处清掉选中。
                 let count = self.click_count(x, y);
                 if self.press_log_text(x, y, count) {
-                    self.drag = Drag::LogText;
+                    self.pointer.drag = Drag::LogText;
                 }
             }
             Target::Editor => self.click_editor(x, y),
@@ -336,19 +339,19 @@ impl App {
             }
             // 双击分隔线恢复为左右各占一半，单击按住开始拖动。
             Target::SplitDivider if self.click_count(x, y) >= 2 => {
-                self.split_share = None;
+                self.preview.split_share = None;
                 self.relayout();
                 self.request_redraw();
             }
             Target::SplitDivider => {
-                self.drag = Drag::SplitDivider {
+                self.pointer.drag = Drag::SplitDivider {
                     start_x: x,
                     start_left: self.layout.editor.w,
                 };
             }
             Target::OutlineDivider => {
                 let size = self.outline_list().h;
-                self.drag = Drag::OutlineDivider { start: y, size };
+                self.pointer.drag = Drag::OutlineDivider { start: y, size };
             }
             Target::TerminalDivider => {
                 // 拖动分隔条时取消最大化，从当前大小开始拖。
@@ -360,7 +363,7 @@ impl App {
                 } else {
                     (y, l.h)
                 };
-                self.drag = Drag::TerminalDivider { start, size };
+                self.pointer.drag = Drag::TerminalDivider { start, size };
                 self.terminal_dragging(true);
             }
         }
@@ -370,8 +373,8 @@ impl App {
     /// 无需等待鼠标移动。
     pub(super) fn grab_scrollbar(&mut self, bar: Scrollbar, grab: f32) {
         self.settle_glides();
-        self.drag = Drag::Scrollbar { bar, grab };
-        let (x, y) = self.mouse;
+        self.pointer.drag = Drag::Scrollbar { bar, grab };
+        let (x, y) = self.pointer.mouse;
         self.on_mouse_move(x, y);
     }
 
@@ -430,7 +433,7 @@ impl App {
     /// 构成双击时清除记录，下一次按下重新计数。鼠标点击与触摸点按共用该判断。
     pub(in crate::app) fn title_bar_pressed(&mut self, x: f32, y: f32) -> bool {
         let slop = self.repeat_slop();
-        let double = self.title_click.take().is_some_and(|c| {
+        let double = self.pointer.title_click.take().is_some_and(|c| {
             c.at.elapsed() < DOUBLE_CLICK && (c.x - x).abs() < slop && (c.y - y).abs() < slop
         });
 
@@ -438,7 +441,7 @@ impl App {
             return true;
         }
 
-        self.title_click = Some(Click {
+        self.pointer.title_click = Some(Click {
             at: Instant::now(),
             x,
             y,
@@ -454,7 +457,7 @@ impl App {
     /// 返回的容差时，计为连击。
     pub(in crate::app) fn click_count(&mut self, x: f32, y: f32) -> u8 {
         let slop = self.repeat_slop();
-        let count = match self.last_click {
+        let count = match self.pointer.last_click {
             Some(c)
                 if c.at.elapsed() < DOUBLE_CLICK
                     && (c.x - x).abs() < slop
@@ -464,7 +467,7 @@ impl App {
             }
             _ => 1,
         };
-        self.last_click = Some(Click {
+        self.pointer.last_click = Some(Click {
             at: Instant::now(),
             x,
             y,

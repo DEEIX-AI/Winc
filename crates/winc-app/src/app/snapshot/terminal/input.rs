@@ -48,7 +48,7 @@ fn alt_is_meta_unless_the_platform_types_with_it() {
     show_terminal(&mut app, "\x1b[?1000h\x1b[?1006h");
     let log = app.attach_recording_helper(&dir);
     paint(&mut app);
-    app.modifiers = winit::keyboard::ModifiersState::ALT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::ALT;
     let (x, y) = cell_center(&app, 0, 0);
     app.on_mouse_move(x, y);
     app.on_mouse_down(winit::event::MouseButton::Left);

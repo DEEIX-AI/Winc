@@ -301,7 +301,8 @@ impl App {
     ) -> Option<Rect> {
         let row = layout.row(setting)?;
         let measure = |text: &str| {
-            (self.renderer.as_ref()).map_or(0.0, |r| r.measure(FontKind::Ui, self.fonts.ui, text))
+            (self.frame.renderer.as_ref())
+                .map_or(0.0, |r| r.measure(FontKind::Ui, self.fonts.ui, text))
         };
         Some(if setting == Setting::Version {
             let text_w = measure(&crate::layout::version_line());
@@ -353,7 +354,7 @@ impl App {
     /// [`Self::settings_layout_with`]，以同一份字形缓存量出相同的结果。
     pub(crate) fn settings_layout(&self) -> SettingsLayout {
         let size = self.fonts.ui_small;
-        let renderer = self.renderer.as_ref();
+        let renderer = self.frame.renderer.as_ref();
         self.settings_layout_with(&mut |text: &str| {
             renderer.map_or(0.0, |r| r.measure(FontKind::Ui, size, text))
         })
@@ -368,8 +369,12 @@ impl App {
             page: self.settings.selected.page(),
             query: self.settings.search.text(),
             languages: &self.settings.languages,
-            terminal: self.module_fx.terminal.share(self.terminal_enabled()),
-            git: self.module_fx.git.share(self.git_enabled()),
+            terminal: self
+                .motion
+                .module_fx
+                .terminal
+                .share(self.terminal_enabled()),
+            git: self.motion.module_fx.git.share(self.git_enabled()),
             editing: self.settings.editing.as_ref().map(|(s, _)| *s),
             scroll: self.settings.scroll,
         };
@@ -763,7 +768,7 @@ impl App {
     /// 切换开关 `setting` 的状态。
     pub(super) fn settings_toggle(&mut self, setting: Setting) {
         if setting == Setting::StickyScroll {
-            self.sticky_cache = None;
+            self.caches.sticky_cache = None;
         }
         self.settings_set_switch(setting, !self.switch_on(setting));
     }
@@ -846,7 +851,7 @@ impl App {
             self.apply_compact_folders();
         }
         if setting == Setting::RemoteImages {
-            self.markdown.forget_images();
+            self.preview.markdown.forget_images();
         }
         if setting == Setting::GitModule {
             self.git_folder_changed();
@@ -1407,7 +1412,7 @@ impl App {
             self.terminal_theme_changed();
         }
         if sticky {
-            self.sticky_cache = None;
+            self.caches.sticky_cache = None;
         }
         if wrap {
             self.word_wrap_changed();
@@ -1422,7 +1427,7 @@ impl App {
             self.apply_diff_layout();
         }
         if images {
-            self.markdown.forget_images();
+            self.preview.markdown.forget_images();
         }
         if git {
             self.git_folder_changed();

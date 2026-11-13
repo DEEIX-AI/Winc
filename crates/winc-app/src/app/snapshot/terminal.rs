@@ -224,7 +224,7 @@ fn clicks_move_the_focus_and_the_gap_resizes_the_panel() {
     let gap = app.layout.terminal_divider;
     let (x, y) = (gap.x + 200.0, gap.y + gap.h / 2.0);
     app.on_mouse_move(x, y);
-    assert_eq!(app.hover, Hover::TerminalDivider);
+    assert_eq!(app.pointer.hover, Hover::TerminalDivider);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x, y - 50.0);
     app.on_mouse_up(MouseButton::Left);
@@ -387,7 +387,7 @@ fn the_wheel_with_the_command_key_steps_the_terminal_font_size() {
     let before = ViewFonts::of(&app.config);
     let card = app.layout.terminal;
     app.on_mouse_move(card.x + 100.0, card.y + 80.0);
-    app.modifiers = if cfg!(target_os = "macos") {
+    app.pointer.modifiers = if cfg!(target_os = "macos") {
         winit::keyboard::ModifiersState::SUPER
     } else {
         winit::keyboard::ModifiersState::CONTROL
@@ -1054,7 +1054,7 @@ fn reverse_video_keeps_default_text_visible() {
         let mut app = blank_app(true);
         show_terminal(&mut app, bytes);
         paint(&mut app);
-        let renderer = app.renderer.as_ref().unwrap();
+        let renderer = app.frame.renderer.as_ref().unwrap();
         renderer.image().unwrap().pixels.clone()
     };
     let reversed = "\x1b[?25l\x1b[?5h";
@@ -1067,12 +1067,12 @@ fn block_elements_leave_no_gap_between_rows() {
     let mut app = blank_app(true);
     show_terminal(&mut app, "\x1b[?25l█\r\n█");
     let mut scale = 1.0;
-    let renderer = app.renderer.as_mut().unwrap();
+    let renderer = app.frame.renderer.as_mut().unwrap();
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
     let (x, y) = cell_center(&app, 0, 0);
     let lh = app.fonts.terminal_line_height;
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let pixel = |y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]
@@ -1095,10 +1095,10 @@ fn contrast_protection_keeps_shape_characters_seamless() {
     let bytes = format!("\x1b[?25l\x1b[48;2;{yellow}m \x1b[38;2;{yellow};48;2;{green}m█");
     show_terminal(&mut app, &bytes);
     let mut scale = 1.0;
-    let renderer = app.renderer.as_mut().unwrap();
+    let renderer = app.frame.renderer.as_mut().unwrap();
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let pixel = |col: usize| {
         let (x, y) = cell_center(&app, 0, col);
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
@@ -1182,11 +1182,11 @@ fn the_find_bar_has_a_full_border_and_no_shadow() {
     show_terminal(&mut app, "");
     assert!(press(&mut app, &["term"], Char('f')));
     let mut scale = 1.0;
-    let renderer = app.renderer.as_mut().unwrap();
+    let renderer = app.frame.renderer.as_mut().unwrap();
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
     let bar = app.terminal_find_bar().unwrap();
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]
@@ -1536,13 +1536,13 @@ fn the_current_match_shows_above_the_selection() {
     assert!(press(&mut app, &["term"], Char('f')));
     let pixel = |app: &mut App| {
         let mut scale = 1.0;
-        let renderer = app.renderer.as_mut().unwrap();
+        let renderer = app.frame.renderer.as_mut().unwrap();
         renderer.draw(|frame| scale = frame.scale());
         paint(app);
         // 第一格左下角：字形碰不到的地方，只有底色。
         let grid = app.terminal_grid();
         let (x, y) = (grid.x + 0.5, grid.y + app.fonts.terminal_line_height - 1.0);
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
     };
     app.edit_field(|field| {
@@ -1570,7 +1570,7 @@ fn find_results_are_marked_on_the_scrollbar_track() {
             true
         });
         paint(&mut app);
-        let renderer = app.renderer.as_ref().unwrap();
+        let renderer = app.frame.renderer.as_ref().unwrap();
         let image = renderer.image().unwrap();
         let (w, h) = (image.width as usize, image.height as usize);
         // 只看窗口右边一条（滚动条轨道），下半部分（内容区）。
@@ -1609,7 +1609,7 @@ fn shift_click_extends_the_selection() {
     app.on_mouse_up(winit::event::MouseButton::Left);
     let anchor = app.terminal.tab().unwrap().selection.unwrap().anchor;
 
-    app.modifiers = winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::SHIFT;
     let (x, y) = cell_center(&app, 1, 3);
     app.on_mouse_move(x, y);
     app.on_mouse_down(winit::event::MouseButton::Left);
@@ -1661,7 +1661,7 @@ fn option_click_moves_the_shell_cursor_at_the_prompt() {
         id: 1,
         ..Default::default()
     }];
-    app.modifiers = winit::keyboard::ModifiersState::ALT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::ALT;
     let inputs = |app: &App| -> Vec<Vec<u8>> {
         let sent = app.sent_to_helper(&log);
         let bytes = sent.into_iter().filter_map(|m| match m {
@@ -1736,7 +1736,7 @@ fn the_find_bar_leaves_the_tab_bar_alone() {
     }
     app.terminal.active = 0;
     let mut scale = 1.0;
-    let renderer = app.renderer.as_mut().unwrap();
+    let renderer = app.frame.renderer.as_mut().unwrap();
     renderer.draw(|frame| scale = frame.scale());
     // 标签栏从左边到「+」右边的像素。
     let tabs = |app: &mut App| {
@@ -1745,7 +1745,7 @@ fn the_find_bar_leaves_the_tab_bar_alone() {
             .find(|(_, hit)| *hit == terminal::HeaderHit::New)
             .unwrap()
             .0;
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let row = |y: f32| {
             let start = (y * scale) as usize * image.width as usize;
             let end = start + (new.right() * scale) as usize;
@@ -1769,7 +1769,8 @@ fn combining_marks_and_underline_styles_are_drawn() {
         let mut app = blank_app(false);
         show_terminal(&mut app, bytes);
         paint(&mut app);
-        app.renderer
+        app.frame
+            .renderer
             .as_ref()
             .unwrap()
             .image()

@@ -200,7 +200,7 @@ fn the_terminal_page_is_listed_only_when_the_module_is_on() {
 fn freeze_terminal_page(app: &mut App, on: bool, at: std::time::Duration) {
     use crate::app::animation::{Clock, MODULE_FADE};
 
-    let fx = &mut app.module_fx.terminal;
+    let fx = &mut app.motion.module_fx.terminal;
     fx.track(!on, None);
     fx.track(on, Some(Clock::frozen(at, MODULE_FADE)));
 }
@@ -228,7 +228,7 @@ fn the_terminal_page_slides_in_and_out_with_the_module() {
     assert!(terminal.h > 0.0 && terminal.h < SETTINGS_NAV_ROW);
     let moved = row(&app, SettingsPage::Modules).unwrap();
     assert!(moved.y > modules.y && moved.y < modules.y + SETTINGS_NAV_ROW + 2.0);
-    assert!(app.module_fx.terminal.opacity(true) < 1.0);
+    assert!(app.motion.module_fx.terminal.opacity(true) < 1.0);
     freeze_terminal_page(&mut app, true, MODULE_FADE);
     assert_eq!(
         row(&app, SettingsPage::Terminal).unwrap().h,
@@ -242,7 +242,7 @@ fn the_terminal_page_slides_in_and_out_with_the_module() {
         row(&app, SettingsPage::Terminal).unwrap().h,
         SETTINGS_NAV_ROW
     );
-    let opacity = app.module_fx.terminal.opacity(false);
+    let opacity = app.motion.module_fx.terminal.opacity(false);
     assert!(opacity > 0.0 && opacity < 1.0);
     app.settings_show_page(SettingsPage::Terminal);
     assert_eq!(app.settings_layout().page, SettingsPage::Modules);

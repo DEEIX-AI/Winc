@@ -784,9 +784,11 @@ impl App {
     /// 视图 `view` 那一段的显示比例：「提交」一段出现、消失途中小于 1。
     pub(crate) fn view_tab_share(&self, view: crate::layout::SidebarView) -> f32 {
         match view {
-            crate::layout::SidebarView::Commit => {
-                self.module_fx.commit_tab.share(self.git.root.is_some())
-            }
+            crate::layout::SidebarView::Commit => self
+                .motion
+                .module_fx
+                .commit_tab
+                .share(self.git.root.is_some()),
             _ => 1.0,
         }
     }
@@ -794,9 +796,11 @@ impl App {
     /// 侧栏视图切换中 `view` 一段图标的不透明度，0 到 1；只有「提交」一段会出现、消失。
     pub(crate) fn view_tab_opacity(&self, view: crate::layout::SidebarView) -> f32 {
         match view {
-            crate::layout::SidebarView::Commit => {
-                self.module_fx.commit_tab.opacity(self.git.root.is_some())
-            }
+            crate::layout::SidebarView::Commit => self
+                .motion
+                .module_fx
+                .commit_tab
+                .opacity(self.git.root.is_some()),
             _ => 1.0,
         }
     }
@@ -1030,7 +1034,7 @@ impl App {
     /// 提交按钮现在是不是「提交并推送」：按住 ⌥ 时是（和项目菜单里 ⌥ 换出备选项一样），合并、变基
     /// 停着时、修改上一次提交时、正在提交时不是：前两种推送没有意义或要强制推送。
     pub(crate) fn commit_pushes(&self) -> bool {
-        self.modifiers.alt_key()
+        self.pointer.modifiers.alt_key()
             && !self.commit.busy
             && !self.commit.amend
             && (self.git.status.as_ref()).is_some_and(|s| s.operation.is_none())
@@ -1212,7 +1216,7 @@ impl App {
 
     /// 鼠标没在拖东西、侧栏也没在开合：可以在悬停的行上展开写不下的名字。
     pub(crate) fn idle_pointer(&self) -> bool {
-        self.sidebar.motion.is_none() && matches!(self.drag, crate::app::Drag::None)
+        self.sidebar.motion.is_none() && matches!(self.pointer.drag, crate::app::Drag::None)
     }
 
     /// 仓库状态刷新了，`old` 是刷新前的状态，`rows` 是刷新前的各行（提交视图不在屏幕上时为
@@ -1400,12 +1404,12 @@ impl App {
                 self.focus = Focus::CommitList;
                 self.toggle_commit_dir_selected(row);
             }
-            CommitTarget::Dir(row) if self.modifiers.shift_key() => {
+            CommitTarget::Dir(row) if self.pointer.modifiers.shift_key() => {
                 self.focus = Focus::CommitList;
                 self.select_commit_rows(row);
             }
             // `⌥` 单击目录：递归收起或展开。
-            CommitTarget::Dir(row) if self.modifiers.alt_key() => {
+            CommitTarget::Dir(row) if self.pointer.modifiers.alt_key() => {
                 self.toggle_commit_dir_recursively(row);
             }
             CommitTarget::Dir(row) => self.toggle_commit_row(row),
@@ -1434,13 +1438,13 @@ impl App {
                     self.request_redraw();
                     return;
                 }
-                if self.modifiers.shift_key() {
+                if self.pointer.modifiers.shift_key() {
                     self.select_commit_range(path);
                     self.request_redraw();
                     return;
                 }
                 // 双击打开文件本身，单击选中并预览差异。
-                let (x, y) = self.mouse;
+                let (x, y) = self.pointer.mouse;
                 if self.click_count(x, y) >= 2 && winc_backend::fs::is_file(&path) {
                     self.open_path(&path);
                     self.focus = Focus::Editor;
@@ -1690,7 +1694,7 @@ impl App {
         base: &str,
         cmd: bool,
     ) {
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         if !self.commit_message_key(&event.logical_key, cmd, shift) {
             self.on_key_field(event, base, cmd);
         }

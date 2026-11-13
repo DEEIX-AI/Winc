@@ -396,7 +396,7 @@ impl App {
     /// 1 至 2 秒，整个主目录约 3 秒以上。基准测试模式和没有事件循环时不建立，
     /// 避免干扰启动耗时和内存的测量。
     pub(super) fn index_folder(&mut self) {
-        if !self.bench.silent() && self.proxy.is_some() {
+        if !self.frame.bench.silent() && self.proxy.is_some() {
             self.prepare_index();
         }
     }

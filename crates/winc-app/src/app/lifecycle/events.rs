@@ -35,7 +35,7 @@ impl ApplicationHandler<UserEvent> for App {
         let saved = self
             .state
             .window
-            .filter(|_| self.config.restore_window != Some(false) && !self.bench.silent());
+            .filter(|_| self.config.restore_window != Some(false) && !self.frame.bench.silent());
         // 从已有窗口打开的新窗口使用记录的大小（没有记录时使用默认大小），位置相对来源窗口向
         // 右下方偏移。偏移后的位置与记录的位置都按当前显示器校验，不在任何显示器上时由系统决定。
         let cascade = self.cascade.take().map(|(at, scale)| WindowFrame {
@@ -123,7 +123,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 测量时窗口透明且鼠标点击穿透，必须在显示之前设置，保证没有任何一帧可见。
         #[cfg(target_os = "macos")]
-        if self.bench.silent() {
+        if self.frame.bench.silent() {
             crate::macos::make_invisible(&window);
         }
 
@@ -172,7 +172,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
         };
 
-        self.renderer = Some(renderer);
+        self.frame.renderer = Some(renderer);
         self.measure_fonts();
         self.window.handle = Some(window.clone());
         self.start_setup_intro();
@@ -214,7 +214,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 开启「保存时格式化」时，启动后在后台预先读取用户 shell 的环境，避免第一次 `⌘S` 时等待；
         // 读取耗时取决于用户 shell 初始化脚本的速度。测量时不读取，避免干扰启动测量。
-        if self.config.format_on_save == Some(true) && !self.bench.silent() {
+        if self.config.format_on_save == Some(true) && !self.frame.bench.silent() {
             self.format.formatter.prepare(|| {});
         }
 
@@ -243,7 +243,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.sync_window_input();
 
         #[cfg(target_os = "macos")]
-        if self.bench.silent() {
+        if self.frame.bench.silent() {
             // 测量时窗口显示但不抢占焦点（窗口已设为透明）。
             crate::macos::show_without_focus(&window);
         } else {
@@ -259,13 +259,13 @@ impl ApplicationHandler<UserEvent> for App {
         #[cfg(target_os = "macos")]
         {
             let redraw = window.clone();
-            self.display_link =
+            self.frame.display_link =
                 crate::macos::DisplayLink::new(&window, move || redraw.request_redraw());
         }
         #[cfg(windows)]
         {
             let redraw = window.clone();
-            self.display_link = crate::windows::DisplayLink::new(
+            self.frame.display_link = crate::windows::DisplayLink::new(
                 super::window::frame_interval(&window),
                 move || {
                     redraw.request_redraw();
@@ -287,14 +287,14 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Moved(_) => {
                 // 窗口移动后，此前的按下不再参与顶栏双击的判定。触摸拖动窗口时系统接管输入，
                 // 抬手事件可能不再送达，因此在此结束触摸。
-                self.title_click = None;
+                self.pointer.title_click = None;
                 self.cancel_touch();
                 self.note_window_frame();
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 self.cancel_touch();
                 self.note_window_frame();
-                if let Some(renderer) = &mut self.renderer {
+                if let Some(renderer) = &mut self.frame.renderer {
                     renderer.resize();
                 }
 
@@ -351,9 +351,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.set_occluded(occluded);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
+                self.pointer.modifiers = modifiers.state();
                 let pressed = winit::keyboard::ModifiersKeyState::Pressed;
-                self.option_side = (
+                self.pointer.option_side = (
                     modifiers.lalt_state() == pressed,
                     modifiers.ralt_state() == pressed,
                 );
@@ -366,7 +366,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // 拖动文件树项时按下、松开 `⌥` 在移动与复制之间切换，放置目标和拖动卡片随之更新。
                 if self.tree_dragging().is_some() {
-                    let (x, y) = self.mouse;
+                    let (x, y) = self.pointer.mouse;
                     self.drag_tree_item(x, y);
                 }
             }
@@ -391,8 +391,12 @@ impl ApplicationHandler<UserEvent> for App {
             // 窗口在光标所在位置被其他窗口遮挡时不响应移动，悬停状态按光标离开处理。
             WindowEvent::CursorMoved { .. } if !self.under_cursor() => self.cursor_left(),
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_inside = true;
-                let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
+                self.pointer.cursor_inside = true;
+                let scale = self
+                    .frame
+                    .renderer
+                    .as_ref()
+                    .map_or(1.0, Renderer::scale_factor);
                 self.on_mouse_move(position.x as f32 / scale, position.y as f32 / scale);
             }
             WindowEvent::CursorLeft { .. } => self.cursor_left(),
@@ -626,11 +630,11 @@ impl App {
         let mapping = self.vim_tick(now);
         earliest(&mut wake, mapping);
         // 当前标签正在读取且保留上一帧未绘制时，到期仍未读取完成则绘制「正在读取」。
-        if self.loads.held {
+        if self.disk.loads.held {
             match self.holding_frame(now) {
                 Some(until) => earliest(&mut wake, Some(until)),
                 None => {
-                    self.loads.held = false;
+                    self.disk.loads.held = false;
                     self.request_redraw();
                 }
             }
@@ -641,7 +645,7 @@ impl App {
 
         let tooltip_at = self.tooltip.since.map(|since| since + TOOLTIP_DELAY);
 
-        if self.hover.has_tooltip() && !self.tooltip.shown {
+        if self.pointer.hover.has_tooltip() && !self.tooltip.shown {
             let show = tooltip_at.is_none_or(|at| now >= at);
 
             if show {
@@ -718,7 +722,7 @@ impl App {
 
         // 停止绘制后处理空闲的呈现缓冲（每块与窗口大小相同）：
         // 标记为可清除或释放，无需等到下一次绘制。
-        if let Some(renderer) = &mut self.renderer
+        if let Some(renderer) = &mut self.frame.renderer
             && let Some(at) = renderer.purgeable_at()
         {
             if now >= at {
@@ -738,16 +742,16 @@ impl App {
 
         earliest(&mut wake, self.log_tick(now));
 
-        if let Some(at) = self.next_frame {
+        if let Some(at) = self.frame.next_frame {
             if now >= at {
-                self.next_frame = None;
+                self.frame.next_frame = None;
                 self.request_redraw();
             } else {
                 earliest(&mut wake, Some(at));
             }
         }
 
-        if self.dirty
+        if self.frame.dirty
             && !self.unseen()
             && let Some(window) = &self.window.handle
         {

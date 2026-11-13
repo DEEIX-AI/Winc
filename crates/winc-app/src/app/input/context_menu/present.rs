@@ -442,7 +442,7 @@ impl App {
                     MenuEntry::Separator,
                     MenuEntry::Item(
                         MenuCommand::RevealSource,
-                        self.markdown.menu_source.is_some(),
+                        self.preview.markdown.menu_source.is_some(),
                     ),
                 ]);
                 menu
@@ -462,7 +462,7 @@ impl App {
                         MenuEntry::Separator,
                         MenuEntry::Item(
                             MenuCommand::RevealSource,
-                            self.markdown.menu_source.is_some(),
+                            self.preview.markdown.menu_source.is_some(),
                         ),
                     ]);
                 }
@@ -1321,11 +1321,11 @@ impl App {
         let icon = self.menu_icon_kind(command)?;
         let (w, h) = icon.size();
         let clip = Rect::new(0.0, 0.0, w, h);
-        let mut renderer = self.renderer.take()?;
+        let mut renderer = self.frame.renderer.take()?;
         let image = renderer.draw_transparent(w, h, |frame| {
             self.draw_menu_icon(frame, icon, (0.0, 0.0), clip);
         });
-        self.renderer = Some(renderer);
+        self.frame.renderer = Some(renderer);
         Some(image)
     }
 
@@ -1393,10 +1393,10 @@ impl App {
     /// 立即同步绘制一帧，不等待下一轮事件循环。
     pub(in crate::app) fn paint_now(&mut self) {
         self.relayout();
-        if let Some(mut renderer) = self.renderer.take() {
+        if let Some(mut renderer) = self.frame.renderer.take() {
             self.declare_base(&mut renderer);
             renderer.draw(|frame| view::draw(self, frame));
-            self.renderer = Some(renderer);
+            self.frame.renderer = Some(renderer);
         }
     }
 }

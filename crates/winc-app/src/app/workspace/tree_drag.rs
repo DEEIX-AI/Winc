@@ -115,7 +115,7 @@ impl App {
         }
 
         let paths = drag.paths.clone();
-        let target = self.drop_target(&paths, x, y, self.modifiers.alt_key());
+        let target = self.drop_target(&paths, x, y, self.pointer.modifiers.alt_key());
         // 只有鼠标所在行是收起的目录、且该目录正是当前放置目标时才计时；停留的目录改变时重新计时。
         let collapsed = self
             .tree_row_at(y)
@@ -160,30 +160,34 @@ impl App {
             return;
         }
 
-        if self.layout.terminal.contains(self.mouse.0, self.mouse.1) {
+        if self
+            .layout
+            .terminal
+            .contains(self.pointer.mouse.0, self.pointer.mouse.1)
+        {
             // 拖进终端：插入路径，不移动文件。
-            if self.terminal_takes_drop(self.mouse.0, self.mouse.1) {
+            if self.terminal_takes_drop(self.pointer.mouse.0, self.pointer.mouse.1) {
                 for path in &drag.paths {
                     self.drop_path_on_terminal(path);
                 }
             }
-        } else if self.modifiers.alt_key() {
+        } else if self.pointer.modifiers.alt_key() {
             // 按着 `⌥` 松开：复制。松开前才按下 `⌥` 时放置目标没有按复制计算过，这里重新计算。
-            let (x, y) = self.mouse;
+            let (x, y) = self.pointer.mouse;
             if let Some(dir) = self.drop_target(&drag.paths, x, y, true) {
                 self.copy_entries_into(drag.paths, dir);
             }
         } else if let Some(dir) = drag.target {
             self.ask_move(drag.paths, dir);
         }
-        self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
+        self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
         self.request_redraw();
     }
 
     /// 取消拖动（按下 Esc 或窗口失去焦点），不移动任何文件。
     pub(in crate::app) fn cancel_tree_drag(&mut self) {
         if self.tree.drag.take().is_some_and(|d| d.active) {
-            self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
+            self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
             self.request_redraw();
         }
     }
@@ -203,7 +207,7 @@ impl App {
 
         if ws.rows()[index].kind == EntryKind::Dir {
             // 按着 `⌥` 单击：递归展开或收起。
-            if self.modifiers.alt_key() {
+            if self.pointer.modifiers.alt_key() {
                 self.toggle_dir_recursively(index);
             } else {
                 self.set_dir_expanded(index, None);
@@ -247,7 +251,7 @@ impl App {
             }
         }
 
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         let tree = self.layout.tree;
         let push = if !tree.contains(x, y) {
             0.0
@@ -265,7 +269,7 @@ impl App {
             self.tree.scroll = scroll;
             // 文件树滚动后，鼠标下方的行改变，需要重新计算放置目标。
             self.drag_tree_item(x, y);
-            let next = now + self.frame_interval;
+            let next = now + self.frame.frame_interval;
             wake = Some(wake.map_or(next, |w: Instant| w.min(next)));
         }
 

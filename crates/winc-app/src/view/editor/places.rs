@@ -50,7 +50,7 @@ impl<'a> PlacesView<'a> {
             places: app.picker.places.as_ref()?,
             hits: &app.picker.hits,
             selected: app.picker.selected,
-            hovered: match app.hover {
+            hovered: match app.pointer.hover {
                 Hover::PickerRow(i) => Some(i),
                 _ => None,
             },

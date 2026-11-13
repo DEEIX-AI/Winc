@@ -41,7 +41,7 @@ fn snapshot_tree_tools_folding() {
         let mut app = app_with(&dir.join("a.txt"), dark);
         app.on_mouse_move(900.0, 500.0);
         for t in [1.0, 0.75, 0.5, 0.25, 0.0] {
-            app.tool_fold = ToolFold::frozen([1.0, 1.0, 1.0, t, t], 1.0 - t);
+            app.motion.tool_fold = ToolFold::frozen([1.0, 1.0, 1.0, t, t], 1.0 - t);
             shoot(
                 &mut app,
                 &format!("tree-tools-fold-{}-{theme}", (t * 100.0) as u32),

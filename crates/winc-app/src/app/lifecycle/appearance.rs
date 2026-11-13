@@ -11,7 +11,7 @@ impl App {
     /// 把界面缩放倍数交给渲染器和红绿灯；新窗口建好时与缩放改变时调用。
     pub(in crate::app) fn sync_zoom(&mut self) {
         let zoom = self.zoom();
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = &mut self.frame.renderer {
             renderer.set_zoom(zoom);
         }
         #[cfg(target_os = "macos")]
@@ -35,7 +35,7 @@ impl App {
 
     /// 按当前字号重新测量字体度量；字号或字体变化后调用。
     pub(in crate::app) fn measure_fonts(&mut self) {
-        let Some(renderer) = &self.renderer else {
+        let Some(renderer) = &self.frame.renderer else {
             return;
         };
         self.ui_metrics = renderer.metrics(FontKind::Ui, self.fonts.ui);
@@ -119,7 +119,7 @@ impl App {
         self.palette = self.theme_palette(theme == Theme::Dark);
         self.terminal_theme_changed();
 
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = &mut self.frame.renderer {
             renderer.set_background(self.palette.frame_bg);
         }
 
@@ -136,7 +136,7 @@ impl App {
         let [mono, ui, terminal] = self.font_specs();
         let weight = self.font_weight();
 
-        if let Some(renderer) = &mut self.renderer
+        if let Some(renderer) = &mut self.frame.renderer
             && renderer
                 .set_fonts(mono.as_ref(), ui.as_ref(), terminal.as_ref(), weight)
                 .is_err()

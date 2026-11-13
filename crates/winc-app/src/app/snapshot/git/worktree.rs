@@ -709,7 +709,7 @@ fn the_new_worktree_dialog_builds_what_it_shows() {
     // 点击卡片外面关闭对话框。
     fill_dialog(&mut app, "x");
     let card = app.dialog_layout().card;
-    app.mouse = (card.x - 10.0, card.y - 10.0);
+    app.pointer.mouse = (card.x - 10.0, card.y - 10.0);
     app.click_form_dialog(card.x - 10.0, card.y - 10.0);
     assert!(app.form_dialog.is_none());
 
@@ -801,11 +801,11 @@ fn form_dialog_moves_focus_with_tab_and_keeps_failures_in_the_card() {
         ]
     );
     // 空格切换焦点所在的勾选项；焦点不在名称上时，键入的文字不进入输入框。
-    app.modifiers = ModifiersState::SHIFT;
+    app.pointer.modifiers = ModifiersState::SHIFT;
     key(&mut app, NamedKey::Tab);
     key(&mut app, NamedKey::Tab);
     key(&mut app, NamedKey::Tab);
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert_eq!(focus(&app), DialogPart::NewWindow);
     key(&mut app, NamedKey::Space);
     assert!(app.form_dialog.as_ref().unwrap().new_window);

@@ -108,8 +108,8 @@ fn the_log_shows_who_wrote_each_commit_and_copies_its_hash() {
         .find(|(_, t)| *t == LogTarget::Avatar(0))
         .expect("第一行的头像");
     app.on_mouse_move(avatar.x + 4.0, avatar.y + avatar.h / 2.0);
-    assert_eq!(app.hover, Hover::Log(LogTarget::Avatar(0)));
-    assert!(app.hover.has_tooltip());
+    assert_eq!(app.pointer.hover, Hover::Log(LogTarget::Avatar(0)));
+    assert!(app.pointer.hover.has_tooltip());
     // 点头像和点这一行一样：选中该提交。
     click(&mut app, (avatar.x + 4.0, avatar.y + avatar.h / 2.0));
     let oid = {
@@ -151,9 +151,9 @@ fn the_log_files_can_be_walked_with_the_keyboard_and_commits_opened_by_double_cl
         .len()
         - 1;
     app.press_log(LogTarget::Row(0));
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     app.press_log(LogTarget::Row(last));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     paint(&mut app);
     let files = app.log_files_len();
     assert!(files >= 2, "{files}");
@@ -218,9 +218,9 @@ fn shoot_git_log_file_keys() {
         .len()
         - 1;
     app.press_log(LogTarget::Row(0));
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     app.press_log(LogTarget::Row(last));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     paint(&mut app);
     app.log_key(&Key::Named(NamedKey::ArrowRight));
     app.log_key(&Key::Named(NamedKey::ArrowDown));
@@ -319,7 +319,7 @@ fn text_in_the_log_details_can_be_selected_and_copied() {
     let (start, body) = (&runs[0], &runs[1]);
     let y0 = start.row.y + start.row.h / 2.0;
     app.on_mouse_move(start.x + 1.0, y0);
-    assert_eq!(app.cursor_icon, CursorIcon::Text);
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Text);
     app.on_mouse_down(MouseButton::Left);
     let end = *body.edges.last().unwrap();
     app.on_mouse_move(end + 30.0, body.row.y + body.row.h / 2.0);
@@ -390,7 +390,7 @@ fn the_log_details_stop_scrolling_at_their_end() {
     assert!(app.log.runs[0].row.y >= details.y);
 
     // 窗口矮、详情放不下：最多滚到最后一行可见为止。
-    app.renderer =
+    app.frame.renderer =
         Some(Renderer::offscreen(1280.0, 260.0, SCALE, app.palette.frame_bg, None, None).unwrap());
     app.relayout();
     paint(&mut app);
@@ -430,7 +430,7 @@ fn the_details_footer_does_not_fade_with_the_commit() {
     let footer = Rect::new(details.x, details.bottom() - 30.0, details.w, 30.0);
     let content = Rect::new(details.x, details.y, details.w, 120.0);
     let pixels = |app: &App, area: Rect| -> Vec<u32> {
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let w = image.width as usize;
         let (x0, x1) = ((area.x * SCALE) as usize, (area.right() * SCALE) as usize);
         let (y0, y1) = ((area.y * SCALE) as usize, (area.bottom() * SCALE) as usize);

@@ -131,11 +131,11 @@ impl App {
             ScrollTarget::TerminalStrip
         } else if l.terminal.contains(x, y) {
             ScrollTarget::Terminal
-        } else if self.markdown.area.contains(x, y) {
+        } else if self.preview.markdown.area.contains(x, y) {
             ScrollTarget::Markdown
-        } else if self.pdf.strip.contains(x, y) {
+        } else if self.preview.pdf.strip.contains(x, y) {
             ScrollTarget::PdfStrip
-        } else if self.pdf.area.contains(x, y) {
+        } else if self.preview.pdf.area.contains(x, y) {
             ScrollTarget::Pdf
         } else if self.picture_at(x, y) {
             ScrollTarget::Picture
@@ -173,9 +173,9 @@ impl App {
             }
             ScrollTarget::Popup => {
                 // 菜单按鼠标位置选择滚动的层级。
-                let mouse = std::mem::replace(&mut self.mouse, origin);
+                let mouse = std::mem::replace(&mut self.pointer.mouse, origin);
                 self.popup_wheel(dy);
-                self.mouse = mouse;
+                self.pointer.mouse = mouse;
             }
             ScrollTarget::Dialog => self.rebase_wheel(dy),
             ScrollTarget::Settings(true) => self.settings_scroll_by(dy),
@@ -224,7 +224,7 @@ impl App {
             | ScrollTarget::LogDetails => self.scroll_pane_by(target, dy),
         }
         if target.moves_rows() {
-            self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
+            self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
         }
         self.request_redraw();
     }
@@ -261,8 +261,12 @@ impl App {
                 let view = self.editor.active().and_then(|d| d.log.as_deref());
                 view.map(|view| view.details_scroll)
             }
-            ScrollTarget::Markdown => self.markdown.doc.map(|_| self.markdown.scroll()),
-            ScrollTarget::Pdf => Some(self.pdf.scroll),
+            ScrollTarget::Markdown => self
+                .preview
+                .markdown
+                .doc
+                .map(|_| self.preview.markdown.scroll()),
+            ScrollTarget::Pdf => Some(self.preview.pdf.scroll),
             _ => None,
         }
     }
@@ -283,8 +287,8 @@ impl App {
                 tree_max_scroll(self.layout.tree, rows)
             }
             ScrollTarget::LogDetails => self.log.details_max,
-            ScrollTarget::Markdown => self.markdown.max_scroll(),
-            ScrollTarget::Pdf => self.pdf.max_scroll(),
+            ScrollTarget::Markdown => self.preview.markdown.max_scroll(),
+            ScrollTarget::Pdf => self.preview.pdf.max_scroll(),
             _ => 0.0,
         };
         max.max(0.0)
@@ -319,8 +323,8 @@ impl App {
                     view.details_scroll = scroll;
                 }
             }
-            ScrollTarget::Markdown => self.markdown.set_scroll(scroll),
-            ScrollTarget::Pdf => self.pdf.scroll = scroll,
+            ScrollTarget::Markdown => self.preview.markdown.set_scroll(scroll),
+            ScrollTarget::Pdf => self.preview.pdf.scroll = scroll,
             _ => {}
         }
     }

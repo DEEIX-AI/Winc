@@ -71,7 +71,7 @@ fn places_popup_slides_in_and_fades_out() {
     // 卡片里标题行右侧的一点：没有文字，只有卡片底色。
     let probe = (card.right() - 120.0, card.y + 4.0);
     let pixel = |app: &App, (x, y): (f32, f32)| {
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
     };

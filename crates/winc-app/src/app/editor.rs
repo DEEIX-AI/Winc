@@ -20,3 +20,25 @@ pub(super) mod paste;
 pub(super) mod scrollbar;
 pub(super) mod sticky;
 pub(super) mod symbols;
+
+/// 编辑区跨帧复用的缓存和待采用的计算结果。
+pub(crate) struct EditorCaches {
+    /// 粘滞滚动的计算缓存：钉住的行未变化时不重新计算。
+    pub(in crate::app) sticky_cache: Option<editor::sticky::StickyCache>,
+    /// 已完成、待采用的大文件断行结果（见 [`App::poll_wraps`]）。
+    pub(in crate::app) wraps: Arc<Mutex<Vec<(DocumentId, winc_editor::WrapResult)>>>,
+    /// 长行的着色结果，跨帧复用（见 [`crate::view::LineTokens`]）。
+    pub(crate) line_tokens: std::cell::RefCell<crate::view::LineTokens>,
+    /// 缩略图中各行的小块，跨帧复用（见 [`crate::view::MinimapRows`]）。
+    pub(crate) minimap_rows: std::cell::RefCell<crate::view::MinimapRows>,
+    /// 最近一次计算的最大横向滚动量及其依据的条件（见 [`App::text_max_scroll_x`]）。
+    pub(in crate::app) max_scroll_x: Option<(editor::editing::MaxScrollKey, f32)>,
+    /// 各行的显示宽度，供 [`App::text_max_scroll_x`] 复用。
+    pub(in crate::app) line_widths: editor::editing::LineWidths,
+    /// 滚动条上标出的光标所在词的缓存。
+    pub(crate) ruler_cache: Option<crate::view::RulerCache>,
+    /// 高亮状态是否尚未推算到可见区域；为真时需要再绘制一帧。
+    pub highlight_pending: bool,
+    /// 光标旁括号的配对结果缓存。
+    pub brace_cache: Option<(BraceKey, Option<(usize, usize)>)>,
+}

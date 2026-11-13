@@ -208,7 +208,7 @@ impl App {
             doc.filter_lines(None, 0);
         }
         self.find.filter_key = None;
-        self.sticky_cache = None;
+        self.caches.sticky_cache = None;
         if let Some(line) = top {
             self.scroll_to_line(line, 1.0 / 3.0, true);
         }
@@ -263,7 +263,7 @@ impl App {
             filtered = doc.folds().is_filtered();
         }
         self.find.filter_key = Some((key, filtered));
-        self.sticky_cache = None;
+        self.caches.sticky_cache = None;
         self.clamp_scroll();
         self.ensure_caret_visible();
     }
@@ -380,11 +380,11 @@ impl App {
         }
         if self.markdown_focused() {
             if self.markdown_find_doc().is_some()
-                && let Some(doc) = &self.markdown.find_doc
+                && let Some(doc) = &self.preview.markdown.find_doc
             {
                 self.search.update(doc);
             }
-            let from = self.markdown.selection.map_or(0, |(a, b)| a.min(b));
+            let from = self.preview.markdown.selection.map_or(0, |(a, b)| a.min(b));
             self.jump_to_match(from, false);
             self.request_redraw();
             return;
@@ -506,11 +506,12 @@ impl App {
 
         if self.markdown_focused() {
             if self.markdown_find_doc().is_some()
-                && let Some(doc) = &self.markdown.find_doc
+                && let Some(doc) = &self.preview.markdown.find_doc
             {
                 self.search.update(doc);
             }
             let (from, to) = self
+                .preview
                 .markdown
                 .selection
                 .map_or((0, 0), |(a, b)| (a.min(b), a.max(b)));

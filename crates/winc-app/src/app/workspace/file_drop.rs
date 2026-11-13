@@ -92,7 +92,7 @@ impl App {
         {
             return (x / self.zoom(), y / self.zoom());
         }
-        self.mouse
+        self.pointer.mouse
     }
 
     /// 处理拖进窗口松手的文件或目录 `path`，规则见 [`Self::drop_file_at`]。

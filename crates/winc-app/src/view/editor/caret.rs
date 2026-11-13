@@ -468,13 +468,13 @@ pub(super) fn matching_brace(app: &mut App, index: usize) -> Option<(usize, usiz
         head: doc.selection.head,
     };
 
-    if let Some((cached, found)) = app.brace_cache
+    if let Some((cached, found)) = app.caches.brace_cache
         && cached == key
     {
         return found;
     }
 
     let found = movement::matching_bracket(doc.text(), doc.selection.head, BRACE_SCAN_LIMIT);
-    app.brace_cache = Some((key, found));
+    app.caches.brace_cache = Some((key, found));
     found
 }

@@ -108,7 +108,7 @@ pub(in crate::view) fn draw_marker(
         let text = label(target);
         let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + 12.0;
         let rect = Rect::new(x, band.y + (band.h - h) / 2.0, w, h);
-        if app.hover == Hover::Merge(target) {
+        if app.pointer.hover == Hover::Merge(target) {
             frame.rect_clipped(rect, p.hover, RADIUS_ROW, band);
         }
         ui_text_small(frame, app, rect.x + 6.0, band, text, p.accent, band);
@@ -200,7 +200,7 @@ pub(in crate::view) fn draw_merge_card(
             p,
             rect,
             card,
-            app.hover == Hover::Merge(target),
+            app.pointer.hover == Hover::Merge(target),
             false,
         );
         match target {
@@ -304,7 +304,7 @@ fn draw_folded_conflict(
         let text = label(target);
         let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + 12.0;
         let rect = Rect::new(x, band.y + (band.h - h) / 2.0, w, h);
-        if app.hover == Hover::Merge(target) {
+        if app.pointer.hover == Hover::Merge(target) {
             frame.rect_clipped(rect, p.hover, RADIUS_ROW, band);
         }
         ui_text_small(frame, app, rect.x + 6.0, band, text, p.accent, band);
@@ -475,7 +475,7 @@ fn draw_side_pane(
             source
                 .highlighter
                 .state_at(&source.text, line, crate::view::editor::HIGHLIGHT_BUDGET);
-        app.highlight_pending |= state.is_none();
+        app.caches.highlight_pending |= state.is_none();
         tokens.clear();
         let _ = winc_syntax::highlight_line(
             source.highlighter.language(),
@@ -512,7 +512,7 @@ fn draw_side_pane(
         }
         let c = (ribbon.x + ribbon.w / 2.0, mid);
         let target = MergeTarget::Pick(i, pick);
-        let hover = (app.hover == Hover::Merge(target)).then_some(p.hover);
+        let hover = (app.pointer.hover == Hover::Merge(target)).then_some(p.hover);
         if side == 0 {
             icons::line_replace(frame, c, hover, p.accent, clip);
         } else {
@@ -591,7 +591,7 @@ fn draw_merge_chrome(
             p,
             rect,
             bar,
-            app.hover == Hover::Merge(target),
+            app.pointer.hover == Hover::Merge(target),
             false,
         );
         icons::chevron(frame, center(rect), 8.0, direction, p.text_muted, bar);
@@ -619,7 +619,7 @@ fn draw_merge_chrome(
         |frame: &mut Frame<'_>, x: f32, text: &str, role, enabled, target: MergeTarget| {
             let w = width(frame, text);
             let rect = Rect::new(x, y, w, SETTINGS_CONTROL_H);
-            let hovered = app.hover == Hover::Merge(target);
+            let hovered = app.pointer.hover == Hover::Merge(target);
             draw_action_button(app, frame, rect, text, role, enabled, hovered);
             if enabled {
                 hits.push((rect, target));

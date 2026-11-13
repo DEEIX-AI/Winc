@@ -849,7 +849,7 @@ impl App {
             }
             LogTarget::Search => {
                 self.focus = Focus::LogFilter;
-                let (x, y) = self.mouse;
+                let (x, y) = self.pointer.mouse;
                 self.click_field(x, y);
             }
             LogTarget::Branch => self.open_branch_picker(crate::app::GitAnchor::Log),
@@ -1254,7 +1254,7 @@ impl App {
 
     /// 是否正在拖动列表与详情之间的分隔线。
     pub(crate) fn log_dividing(&self) -> bool {
-        matches!(self.drag, crate::app::Drag::LogDivider { .. })
+        matches!(self.pointer.drag, crate::app::Drag::LogDivider { .. })
     }
 }
 

@@ -404,7 +404,7 @@ impl App {
     /// 处理对当前输入框的点击：单击放置光标（按住 `Shift` 时扩展选区），双击选词，三击全选。
     pub(in crate::app) fn click_field(&mut self, x: f32, y: f32) {
         let count = self.click_count(x, y);
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
 
         let Some(field) = self.focused_field() else {
             return;
@@ -416,7 +416,7 @@ impl App {
             3 => field.select_all(),
             _ => {
                 field.set_caret(pos, shift);
-                self.drag = Drag::Field;
+                self.pointer.drag = Drag::Field;
             }
         }
 
@@ -432,7 +432,7 @@ impl App {
     /// 这一行。
     pub(super) fn click_tree(&mut self, x: f32, y: f32) {
         self.focus = Focus::Tree;
-        let (command, shift) = (self.command_held(), self.modifiers.shift_key());
+        let (command, shift) = (self.command_held(), self.pointer.modifiers.shift_key());
 
         // 点在最后一行下面的空白处：不选中任何一项，此时新建的内容放在根目录；
         // 双击则在根目录新建文件。
@@ -506,9 +506,9 @@ impl App {
 
         // `⌘` 单击转到定义，其他平台上为 `Ctrl` 单击。
         let jump = if cfg!(target_os = "macos") {
-            self.modifiers.super_key()
+            self.pointer.modifiers.super_key()
         } else {
-            self.modifiers.control_key()
+            self.pointer.modifiers.control_key()
         };
         if jump && count == 1 && !l.gutter.contains(x, y) {
             self.select(pos, pos);
@@ -517,7 +517,10 @@ impl App {
         }
 
         // `⇧⌥` 按下拖动框出一列；`⌥` 单击添加或移除一个光标，按住拖动则添加一个选区。
-        let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
+        let (shift, alt) = (
+            self.pointer.modifiers.shift_key(),
+            self.pointer.modifiers.alt_key(),
+        );
         if alt && !l.gutter.contains(x, y) {
             if shift {
                 self.start_column_drag(x, y);
@@ -527,7 +530,7 @@ impl App {
                 // 点在已有的光标上是移除，不继续拖动。
                 let added = self.editor.active().map(|d| d.selections().0.len()) > before;
                 if added {
-                    self.drag = Drag::AddSelect { origin: pos };
+                    self.pointer.drag = Drag::AddSelect { origin: pos };
                 }
             }
             return;
@@ -547,7 +550,7 @@ impl App {
             2 => {
                 let (a, b) = movement::word_at(doc.text(), pos);
                 doc.selection = Selection::new(a, b);
-                self.drag = Drag::Select {
+                self.pointer.drag = Drag::Select {
                     by_word: true,
                     origin: (a, b),
                 };
@@ -556,12 +559,12 @@ impl App {
                 let (line, _) = doc.text().pos_to_line_col(pos);
                 let span = doc.text().line_span(line);
                 doc.selection = Selection::new(span.start, span.end);
-                self.drag = Drag::SelectLine { line };
+                self.pointer.drag = Drag::SelectLine { line };
             }
             _ => {
                 let anchor = if shift { doc.selection.anchor } else { pos };
                 doc.selection = Selection::new(anchor, pos);
-                self.drag = Drag::Select {
+                self.pointer.drag = Drag::Select {
                     by_word: false,
                     origin: (anchor, anchor),
                 };
@@ -578,7 +581,7 @@ impl App {
             if let Some(doc) = self.editor.active_mut() {
                 doc.record_cursors();
             }
-            self.drag = Drag::Columns { anchor };
+            self.pointer.drag = Drag::Columns { anchor };
             self.drag_columns(x, y, anchor);
         }
     }

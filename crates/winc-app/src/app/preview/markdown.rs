@@ -461,26 +461,26 @@ impl App {
     pub(crate) fn advance_markdown(&mut self) {
         let shown = shown_area(self).is_some();
         let Some(doc) = self.editor.active().filter(|_| shown) else {
-            if self.markdown.doc.is_some() {
-                self.markdown.reset(None);
+            if self.preview.markdown.doc.is_some() {
+                self.preview.markdown.reset(None);
             }
             return;
         };
         let (id, revision) = (doc.id, doc.revision);
-        let md = &mut self.markdown;
+        let md = &mut self.preview.markdown;
         if md.doc != Some(id) {
             md.reset(Some(id));
         }
         if md.checked == Some(revision) {
             return;
         }
-        if self.parse_markdown_inline() || self.markdown.pending.is_some() {
+        if self.parse_markdown_inline() || self.preview.markdown.pending.is_some() {
             return;
         }
         let Some(doc) = self.editor.active() else {
             return;
         };
-        let md = &mut self.markdown;
+        let md = &mut self.preview.markdown;
         if doc.unsupported == Some(winc_editor::Unsupported::Docx) {
             let Some(path) = doc.path.clone() else {
                 return;
@@ -527,14 +527,14 @@ impl App {
     /// 只在上一次解析不超过 [`INLINE_PARSE`] 时进行：输入、点击、移动光标之后的排版和按键
     /// 处理都依据当前文字的结构，不显示按上一版结构推算的中间帧。正在后台解析的旧版本作废。
     pub(crate) fn parse_markdown_inline(&mut self) -> bool {
-        if !self.markdown_live() || self.markdown.cost.is_none_or(|c| c > INLINE_PARSE) {
+        if !self.markdown_live() || self.preview.markdown.cost.is_none_or(|c| c > INLINE_PARSE) {
             return false;
         }
         let Some(doc) = self.editor.active() else {
             return false;
         };
         let (id, revision) = (doc.id, doc.revision);
-        let md = &mut self.markdown;
+        let md = &mut self.preview.markdown;
         if md.doc != Some(id) {
             return false;
         }
@@ -556,8 +556,8 @@ impl App {
     /// 接收后台完成的解析结果和图片。
     pub(crate) fn poll_markdown(&mut self) {
         let mut changed = false;
-        while let Ok(done) = self.markdown.receiver.try_recv() {
-            let md = &mut self.markdown;
+        while let Ok(done) = self.preview.markdown.receiver.try_recv() {
+            let md = &mut self.preview.markdown;
             match done {
                 Done::Parsed(id, revision, parsed, cost) => {
                     if md.doc != Some(id) || md.pending != Some(revision) {
@@ -632,19 +632,20 @@ impl App {
 
     /// 请求图片 `path`（文件中写的地址为 `url`）：尚未读取时交给后台读取，网址的图片先下载。
     pub(crate) fn request_markdown_image(&mut self, path: &Path, url: &str) {
-        if self.markdown.images.contains_key(path) {
+        if self.preview.markdown.images.contains_key(path) {
             return;
         }
-        self.markdown
+        self.preview
+            .markdown
             .images
             .insert(path.to_path_buf(), ImageSlot::Loading);
         let (sender, proxy, path) = (
-            self.markdown.sender.clone(),
+            self.preview.markdown.sender.clone(),
             self.proxy.clone(),
             path.to_path_buf(),
         );
         let remote = is_remote(url).then(|| url.to_owned());
-        let embedded = self.markdown.embedded.get(&path).cloned();
+        let embedded = self.preview.markdown.embedded.get(&path).cloned();
         let load = move || {
             let result = match (&remote, embedded) {
                 (_, Some(bytes)) if image::is_svg(&path) => std::str::from_utf8(&bytes)
@@ -683,7 +684,7 @@ impl App {
             picture,
             pixels,
             drawing,
-        }) = self.markdown.images.get_mut(path)
+        }) = self.preview.markdown.images.get_mut(path)
         else {
             return;
         };
@@ -692,7 +693,7 @@ impl App {
         }
         drawing.push(size);
         let (sender, proxy, picture, path) = (
-            self.markdown.sender.clone(),
+            self.preview.markdown.sender.clone(),
             self.proxy.clone(),
             Arc::clone(picture),
             path.to_path_buf(),
@@ -709,7 +710,7 @@ impl App {
 
     /// 返回预览上 `(x, y)` 处的链接序号（见 [`MarkdownPreview::links`]）。
     pub(crate) fn markdown_link_at(&self, x: f32, y: f32) -> Option<usize> {
-        if !self.markdown.area.contains(x, y) {
+        if !self.preview.markdown.area.contains(x, y) {
             return None;
         }
         self.hits
@@ -758,11 +759,11 @@ impl App {
         }
         if let Some(id) = url.strip_prefix(crate::app::preview::markdown::laid::DETAILS) {
             if let Ok(id) = u64::from_str_radix(id, 16)
-                && !self.markdown.toggled.remove(&id)
+                && !self.preview.markdown.toggled.remove(&id)
             {
-                self.markdown.toggled.insert(id);
+                self.preview.markdown.toggled.insert(id);
             }
-            self.markdown.toggled_now = Some(url);
+            self.preview.markdown.toggled_now = Some(url);
             return;
         }
         if let Some(anchor) = url.strip_prefix('#') {
@@ -812,7 +813,7 @@ impl App {
         };
         let (id, pos) = (doc.id, rope.byte_to_char(at) + 1);
         let (selections, primary) = doc.selections();
-        let editing = self.markdown.editing == Some(id);
+        let editing = self.preview.markdown.editing == Some(id);
         if let Some(doc) = self.editor.active_mut() {
             doc.collapse_selections();
             doc.selection = winc_core::Selection::new(pos, pos + 1);
@@ -823,8 +824,8 @@ impl App {
             doc.set_selections(selections, primary);
         }
         if !editing {
-            self.markdown.editing = None;
-            self.markdown.followed = self
+            self.preview.markdown.editing = None;
+            self.preview.markdown.followed = self
                 .live_caret_source()
                 .zip(self.editor.active())
                 .map(|(source, d)| (d.id, source, d.revision));
@@ -857,14 +858,14 @@ impl App {
                 app.set_preview_mode(mode);
             }
             if let Some(anchor) = anchor {
-                app.markdown.pending_anchor = Some((id, anchor));
+                app.preview.markdown.pending_anchor = Some((id, anchor));
             }
         });
     }
 
     /// 排版完成后，若有属于该文档的待跳转标题（见 [`App::open_markdown_file`]），滚动到该标题。
     pub(crate) fn scroll_to_pending_anchor(&mut self) {
-        let md = &mut self.markdown;
+        let md = &mut self.preview.markdown;
         let Some((_, anchor)) = md.pending_anchor.take_if(|(id, _)| md.doc == Some(*id)) else {
             return;
         };
@@ -890,7 +891,7 @@ impl App {
             return false;
         }
         if *key == Key::Named(NamedKey::Escape) {
-            if self.markdown.selection.take().is_some() {
+            if self.preview.markdown.selection.take().is_some() {
                 self.request_redraw();
                 return true;
             }
@@ -905,14 +906,14 @@ impl App {
             Key::Named(NamedKey::Enter | NamedKey::Backspace | NamedKey::Delete | NamedKey::Tab)
         );
         if split && typing {
-            self.markdown.focused = false;
-            self.markdown.selection = None;
+            self.preview.markdown.focused = false;
+            self.preview.markdown.selection = None;
             return false;
         }
         let step = self.fonts.line_height * 2.0;
         let page = (area.h * 0.9).max(step);
-        let back = self.modifiers.shift_key();
-        let y = self.markdown.scroll();
+        let back = self.pointer.modifiers.shift_key();
+        let y = self.preview.markdown.scroll();
         // 方向键逐段滚动，直接到达；翻页和到两端的跳转平滑滚动。
         let small = matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)) && !cmd;
         let to = match key {
@@ -947,7 +948,7 @@ impl App {
             if a == self.layout.editor {
                 !self.markdown_live()
             } else {
-                self.markdown.focused
+                self.preview.markdown.focused
             }
         })
     }
@@ -974,12 +975,12 @@ impl App {
     /// 拖到其他块上时该块不切换回排版，鼠标下方的内容不移位。
     pub(crate) fn live_leaf(&self) -> Option<LiveLeaf> {
         let doc = self.editor.active()?;
-        let parsed = self.markdown.parsed.as_ref()?;
+        let parsed = self.preview.markdown.parsed.as_ref()?;
         let rope = doc.text().rope()?;
         let len = rope.len_bytes();
         // 按住鼠标期间按按下之前的光标查找，显示原文的块和标记保持不变，鼠标下方的文字不移动；
         // 否则按下时该块切换为原文，文字移位，单击会变成选中一段。未开始编辑时全部按排版显示。
-        let caret = match self.markdown.live_drag {
+        let caret = match self.preview.markdown.live_drag {
             Some((.., before)) if self.live_dragging() => before?,
             _ => self.live_caret_source()?,
         };
@@ -1086,8 +1087,8 @@ impl App {
         }
         // 判断是否位于代码块、公式、HTML 块中时使用当前版本的解析结果；没有该结果时
         // （未显示预览或尚未解析到当前版本）只检查围栏代码块，统计之前的围栏行。
-        if self.markdown.checked == Some(doc.revision)
-            && let Some(parsed) = self.markdown.parsed.as_ref()
+        if self.preview.markdown.checked == Some(doc.revision)
+            && let Some(parsed) = self.preview.markdown.parsed.as_ref()
         {
             let i = parsed.leaves.partition_point(|l| l.range.start <= from);
             if let Some(leaf) = i.checked_sub(1).map(|i| &parsed.leaves[i])
@@ -1110,7 +1111,8 @@ impl App {
 
     /// 是否正在可编辑的预览上拖动选择文字。
     fn live_dragging(&self) -> bool {
-        self.drag == crate::app::Drag::MarkdownText && self.markdown.live_drag.is_some()
+        self.pointer.drag == crate::app::Drag::MarkdownText
+            && self.preview.markdown.live_drag.is_some()
     }
 
     /// 可编辑的预览中 ↑↓ 按显示行移动光标（加 ⇧ 扩展选区），`PageUp` / `PageDown` 移动一屏；
@@ -1120,7 +1122,7 @@ impl App {
     fn live_key(&mut self, key: &Key, cmd: bool, area: winc_render::Rect) -> bool {
         self.parse_markdown_inline();
         // macOS 上 ⌘← / ⌘→ 与 Home / End 相同，移到显示行的开头、末尾。
-        if cfg!(target_os = "macos") && cmd && !self.modifiers.alt_key() {
+        if cfg!(target_os = "macos") && cmd && !self.pointer.modifiers.alt_key() {
             match key {
                 Key::Named(NamedKey::ArrowLeft) => return self.live_line_edge(false),
                 Key::Named(NamedKey::ArrowRight) => return self.live_line_edge(true),
@@ -1129,16 +1131,16 @@ impl App {
         }
         // 代码块、公式中 ⌘↩ 在块之后另起一段。
         if cmd
-            && !self.modifiers.alt_key()
-            && !self.modifiers.shift_key()
+            && !self.pointer.modifiers.alt_key()
+            && !self.pointer.modifiers.shift_key()
             && *key == Key::Named(NamedKey::Enter)
             && self.live_leave_fenced()
         {
             return true;
         }
         // 表格中 ⌘↩ 在下方插入一行，⌘⇧⌫ 删除当前行。
-        if cmd && !self.modifiers.alt_key() && self.live_leaf().is_some_and(|l| l.table) {
-            let shift = self.modifiers.shift_key();
+        if cmd && !self.pointer.modifiers.alt_key() && self.live_leaf().is_some_and(|l| l.table) {
+            let shift = self.pointer.modifiers.shift_key();
             match key {
                 Key::Named(NamedKey::Enter) if !shift => return self.live_table_tool("row"),
                 Key::Named(NamedKey::Backspace) if shift => {
@@ -1147,11 +1149,11 @@ impl App {
                 _ => {}
             }
         }
-        if cmd || self.modifiers.alt_key() {
+        if cmd || self.pointer.modifiers.alt_key() {
             return false;
         }
         use winc_preview::markdown::cells::Step;
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         match key {
             Key::Named(NamedKey::Tab) => {
                 return self.live_table_step(if shift { Step::Previous } else { Step::Next })
@@ -1194,26 +1196,26 @@ impl App {
     pub(crate) fn start_markdown_motion(&mut self, from: Vec<f32>, fading: Fading) {
         let still = from.iter().all(|d| d.abs() < 0.5);
         if still && fading.is_empty() {
-            self.markdown.motion = None;
+            self.preview.markdown.motion = None;
             return;
         }
         #[cfg(test)]
-        if let Some(at) = self.markdown.frozen {
+        if let Some(at) = self.preview.markdown.frozen {
             let clock = crate::app::Clock::frozen(at, crate::app::animation::MARKDOWN_MOTION);
-            self.markdown.motion = Some(BlockMotion {
+            self.preview.markdown.motion = Some(BlockMotion {
                 clock,
                 from,
                 fading,
             });
             return;
         }
-        self.markdown.motion = self
-            .clock(crate::app::animation::MARKDOWN_MOTION)
-            .map(|clock| BlockMotion {
-                clock,
-                from,
-                fading,
-            });
+        self.preview.markdown.motion =
+            self.clock(crate::app::animation::MARKDOWN_MOTION)
+                .map(|clock| BlockMotion {
+                    clock,
+                    from,
+                    fading,
+                });
     }
 
     /// 执行表格工具栏或右键菜单「表格」中的操作 `op`。
@@ -1265,7 +1267,7 @@ impl App {
     /// 只替换不同的部分，光标移到 `new` 中的 `caret` 处（字节偏移）。随后的重排中各块滑动到
     /// 新位置。
     fn replace_live_text(&mut self, start: usize, old: &str, new: &str, caret: usize) -> bool {
-        self.markdown.slide = true;
+        self.preview.markdown.slide = true;
         let prefix = old
             .char_indices()
             .zip(new.chars())
@@ -1299,7 +1301,7 @@ impl App {
             let at = rope.byte_to_char((start + caret).min(rope.len_bytes()));
             doc.selection = winc_core::Selection::point(at);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1380,7 +1382,7 @@ impl App {
             doc.collapse_selections();
             doc.selection = winc_core::Selection::new(a, b);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         self.reset_blink();
         self.request_redraw();
@@ -1393,8 +1395,8 @@ impl App {
     /// 后方（前方）没有块时停在空行上。落到不显示的块标记（列表记号、引用的 `>`、续行的
     /// 缩进）中时同样跳过，见 [`App::live_visible`]。其余情形返回 `false`，交给编辑区逐字移动。
     fn live_horizontal(&mut self, right: bool) -> bool {
-        self.markdown.line_end = None;
-        let extend = self.modifiers.shift_key();
+        self.preview.markdown.line_end = None;
+        let extend = self.pointer.modifiers.shift_key();
         let Some(live) = self.live_leaf() else {
             return false;
         };
@@ -1451,7 +1453,7 @@ impl App {
             let anchor = if extend { doc.selection.anchor } else { target };
             doc.selection = winc_core::Selection::new(anchor, target);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         self.reset_blink();
         self.request_redraw();
@@ -1548,7 +1550,7 @@ impl App {
         {
             doc.selection = winc_core::Selection::point(caret);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1600,7 +1602,7 @@ impl App {
         {
             doc.selection = winc_core::Selection::point(at);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1695,7 +1697,7 @@ impl App {
         if let Some(doc) = self.editor.active_mut() {
             doc.selection = after;
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1762,7 +1764,7 @@ impl App {
                     if let Some(doc) = self.editor.active_mut() {
                         doc.selection = winc_core::Selection::point(from);
                     }
-                    self.markdown.goal = None;
+                    self.preview.markdown.goal = None;
                     self.start_live_editing();
                     self.request_redraw();
                     return true;
@@ -1773,7 +1775,7 @@ impl App {
                 doc.selection = winc_core::Selection::new(from, to);
             }
             self.run(winc_editor::Command::Insert(String::new()));
-            self.markdown.goal = None;
+            self.preview.markdown.goal = None;
             self.start_live_editing();
             return true;
         };
@@ -1785,7 +1787,7 @@ impl App {
             doc.selection = winc_core::Selection::new(a, b);
         }
         self.run(winc_editor::Command::Insert(edit.text));
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1834,7 +1836,7 @@ impl App {
         if prose {
             self.run(winc_editor::Command::Insert(String::new()));
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         self.request_redraw();
         true
@@ -1874,7 +1876,7 @@ impl App {
             doc.selection = winc_core::Selection::new(a, b);
         }
         self.run(winc_editor::Command::Insert(edit.text));
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1925,7 +1927,7 @@ impl App {
         {
             doc.selection = winc_core::Selection::point(at);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -1983,7 +1985,7 @@ impl App {
         if let Some(doc) = self.editor.active_mut() {
             doc.selection = winc_core::Selection::point(a);
         }
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         self.request_redraw();
     }
@@ -2070,7 +2072,7 @@ impl App {
             doc.selection = winc_core::Selection::point(end);
         }
         self.run(winc_editor::Command::Insert("\n\n".to_owned()));
-        self.markdown.goal = None;
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         true
     }
@@ -2095,8 +2097,8 @@ impl App {
             doc.selection = winc_core::Selection::point(chars);
         }
         self.run(winc_editor::Command::Insert("\n\n".to_owned()));
-        self.markdown.goal = None;
-        self.markdown.line_end = None;
+        self.preview.markdown.goal = None;
+        self.preview.markdown.line_end = None;
         self.start_live_editing();
         self.reset_blink();
         self.request_redraw();
@@ -2162,8 +2164,8 @@ impl App {
         if let Some(doc) = self.editor.active_mut() {
             doc.selection = winc_core::Selection::new(select.0, select.1);
         }
-        self.markdown.goal = None;
-        self.markdown.line_end = None;
+        self.preview.markdown.goal = None;
+        self.preview.markdown.line_end = None;
         self.start_live_editing();
         self.reset_blink();
         self.request_redraw();
@@ -2173,10 +2175,10 @@ impl App {
     /// `Some(false)`，解析结果不是当前版本时为 `None`。
     fn live_prose_at(&self, at: usize) -> Option<bool> {
         let doc = self.editor.active()?;
-        if self.markdown.checked != Some(doc.revision) {
+        if self.preview.markdown.checked != Some(doc.revision) {
             return None;
         }
-        let leaves = &self.markdown.parsed.as_ref()?.leaves;
+        let leaves = &self.preview.markdown.parsed.as_ref()?.leaves;
         let i = leaves.partition_point(|l| l.range.start <= at);
         Some(
             i.checked_sub(1)
@@ -2193,10 +2195,11 @@ impl App {
         let Some(doc) = self.editor.active() else {
             return 0;
         };
-        if self.markdown.checked != Some(doc.revision) {
+        if self.preview.markdown.checked != Some(doc.revision) {
             return 0;
         }
-        let (Some(parsed), Some(rope)) = (self.markdown.parsed.as_ref(), doc.text().rope()) else {
+        let (Some(parsed), Some(rope)) = (self.preview.markdown.parsed.as_ref(), doc.text().rope())
+        else {
             return 0;
         };
         if line >= rope.len_lines() {
@@ -2278,11 +2281,11 @@ impl App {
         if self.live_leaf().is_none_or(|l| !l.prose && !l.table) {
             return false;
         }
-        let extend = self.modifiers.shift_key();
+        let extend = self.pointer.modifiers.shift_key();
         let Some(source) = self.live_caret_source() else {
             return false;
         };
-        let Some(laid) = self.markdown.layout.as_ref() else {
+        let Some(laid) = self.preview.markdown.layout.as_ref() else {
             return false;
         };
         let Some((_, y, h)) = laid.caret_point(source) else {
@@ -2290,11 +2293,11 @@ impl App {
         };
         // 横坐标取内容一栏之外：命中的是该行最左、最右的字缝。
         let x = if end {
-            laid.left + laid.width() + self.markdown.area.w
+            laid.left + laid.width() + self.preview.markdown.area.w
         } else {
-            laid.left - self.markdown.area.w
+            laid.left - self.preview.markdown.area.w
         };
-        let sy = self.markdown.area.y - self.markdown.scroll() + y + h / 2.0;
+        let sy = self.preview.markdown.area.y - self.preview.markdown.scroll() + y + h / 2.0;
         let Some(found) = crate::app::preview::markdown::laid::source_at(self, x, sy) else {
             return false;
         };
@@ -2319,8 +2322,8 @@ impl App {
         doc.collapse_selections();
         let anchor = if extend { doc.selection.anchor } else { pos };
         doc.selection = winc_core::Selection::new(anchor, pos);
-        self.markdown.line_end = wrapped.then_some((pos, revision));
-        self.markdown.goal = None;
+        self.preview.markdown.line_end = wrapped.then_some((pos, revision));
+        self.preview.markdown.goal = None;
         self.start_live_editing();
         self.reset_blink();
         self.request_redraw();
@@ -2333,10 +2336,10 @@ impl App {
     /// 折行处的位置同时是上一行的末尾和下一行的开头：在上一行的右端点击、从上方按 ↓ 移到
     /// 行尾时，光标应留在上一行。
     fn live_row_affinity(&self, source: usize, y: f32) -> bool {
-        let Some(laid) = self.markdown.layout.as_ref() else {
+        let Some(laid) = self.preview.markdown.layout.as_ref() else {
             return false;
         };
-        let y = y - (self.markdown.area.y - self.markdown.scroll());
+        let y = y - (self.preview.markdown.area.y - self.preview.markdown.scroll());
         let far = |p: Option<(f32, f32, f32)>| p.map(|(_, top, h)| (top + h / 2.0 - y).abs());
         laid.set_upstream(None);
         let below = laid.caret_point(source);
@@ -2356,7 +2359,7 @@ impl App {
     /// `MarkdownPreview::line_end`。
     pub(crate) fn live_upstream(&self) -> Option<usize> {
         let doc = self.editor.active()?;
-        let (pos, revision) = self.markdown.line_end?;
+        let (pos, revision) = self.preview.markdown.line_end?;
         (doc.selection.head == pos && doc.revision == revision)
             .then(|| self.live_caret_source())
             .flatten()
@@ -2365,18 +2368,18 @@ impl App {
     /// 将光标向下（`down`）或向上移动一个显示行，或 `by` 逻辑像素；移出第一行、最后一行时
     /// 移到文档的开头、末尾。
     fn live_vertical(&mut self, down: bool, by: Option<f32>) {
-        let extend = self.modifiers.shift_key();
+        let extend = self.pointer.modifiers.shift_key();
         let Some(source) = self.live_caret_source() else {
             return;
         };
-        let Some(laid) = self.markdown.layout.as_ref() else {
+        let Some(laid) = self.preview.markdown.layout.as_ref() else {
             return;
         };
         let Some((x, y, h)) = laid.caret_point(source) else {
             return;
         };
         let head = self.editor.active().map_or(0, |d| d.selection.head);
-        let goal = match self.markdown.goal {
+        let goal = match self.preview.markdown.goal {
             Some((goal, at)) if at == head => goal,
             _ => x,
         };
@@ -2386,7 +2389,7 @@ impl App {
         let screen = |laid: &crate::app::preview::markdown::laid::Laid, v: f32| {
             (
                 laid.left + goal,
-                self.markdown.area.y - self.markdown.scroll() + v,
+                self.preview.markdown.area.y - self.preview.markdown.scroll() + v,
             )
         };
         // 块间留白高于一行时，下一行的目标位置落在留白中，取到的最近一行仍是原来的行；
@@ -2399,7 +2402,12 @@ impl App {
             let found = crate::app::preview::markdown::laid::source_at(self, sx, sy);
             moved = found.filter(|&s| {
                 upstream = self.live_row_affinity(s, sy);
-                let point = self.markdown.layout.as_ref().and_then(|l| l.caret_point(s));
+                let point = self
+                    .preview
+                    .markdown
+                    .layout
+                    .as_ref()
+                    .and_then(|l| l.caret_point(s));
                 point.is_none_or(|(_, py, _)| (py - y).abs() >= 0.5)
             });
             if moved.is_some() || by.is_some() {
@@ -2428,9 +2436,9 @@ impl App {
         let anchor = if extend { doc.selection.anchor } else { pos };
         doc.selection = winc_core::Selection::new(anchor, pos);
         let revision = doc.revision;
-        self.markdown.line_end = (moved.is_some() && upstream).then_some((pos, revision));
-        self.markdown.goal = Some((goal, pos));
-        self.markdown.selection = None;
+        self.preview.markdown.line_end = (moved.is_some() && upstream).then_some((pos, revision));
+        self.preview.markdown.goal = Some((goal, pos));
+        self.preview.markdown.selection = None;
         self.start_live_editing();
         self.reset_blink();
         self.request_redraw();
@@ -2440,12 +2448,12 @@ impl App {
     /// 原文的一行，按住 ⇧ 时将选区扩展到该处。
     fn click_live(&mut self, x: f32, y: f32) {
         // 按下之前的光标位置：未开始编辑时为 `None`，按住鼠标期间整篇按排版显示。
-        let editing = self.editor.active().map(|d| d.id) == self.markdown.editing;
+        let editing = self.editor.active().map(|d| d.id) == self.preview.markdown.editing;
         let before = self.live_caret_source().filter(|_| editing);
         self.ime.preedit.clear();
-        self.markdown.selection = None;
-        self.markdown.goal = None;
-        self.markdown.line_end = None;
+        self.preview.markdown.selection = None;
+        self.preview.markdown.goal = None;
+        self.preview.markdown.line_end = None;
         self.request_redraw();
         let Some(source) = crate::app::preview::markdown::laid::source_at(self, x, y) else {
             // 没有可定位的文字（空文档）：仍然进入编辑，显示光标。
@@ -2453,7 +2461,7 @@ impl App {
             return;
         };
         let count = self.click_count(x, y);
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         let upstream = count == 1 && self.live_row_affinity(source, y);
         // 三击选中一行时不含预览中不显示的块标记：随后输入的文字不会替换掉列表记号。
         let hidden = self
@@ -2471,7 +2479,7 @@ impl App {
             return;
         };
         let pos = rope.byte_to_char(source.min(rope.len_bytes()));
-        self.markdown.line_end = upstream.then_some((pos, doc.revision));
+        self.preview.markdown.line_end = upstream.then_some((pos, doc.revision));
         doc.goal_cell = None;
         doc.record_cursors();
         doc.collapse_selections();
@@ -2493,15 +2501,15 @@ impl App {
         } else {
             winc_core::Selection::new(origin.0, pos)
         };
-        self.markdown.live_drag = Some((origin, by_word, before));
-        self.drag = crate::app::Drag::MarkdownText;
+        self.preview.markdown.live_drag = Some((origin, by_word, before));
+        self.pointer.drag = crate::app::Drag::MarkdownText;
         self.start_live_editing();
         self.reset_blink();
     }
 
     /// 处理可编辑预览上的拖动选择：选区从按下处延伸到鼠标下方的字。
     fn drag_live(&mut self, x: f32, y: f32) {
-        let Some((origin, by_word, _)) = self.markdown.live_drag else {
+        let Some((origin, by_word, _)) = self.preview.markdown.live_drag else {
             return;
         };
         let Some(source) = crate::app::preview::markdown::laid::source_at(self, x, y) else {
@@ -2515,7 +2523,7 @@ impl App {
             return;
         };
         let pos = rope.byte_to_char(source.min(rope.len_bytes()));
-        self.markdown.line_end = upstream.then_some((pos, doc.revision));
+        self.preview.markdown.line_end = upstream.then_some((pos, doc.revision));
         doc.selection = if !by_word {
             winc_core::Selection::new(origin.0, pos)
         } else if pos < origin.0 {
@@ -2539,25 +2547,26 @@ impl App {
         };
         let now = (doc.id, source, doc.revision);
         if self
+            .preview
             .markdown
             .followed
             .is_some_and(|f| f.0 == doc.id && f != now)
         {
-            self.markdown.editing = Some(doc.id);
+            self.preview.markdown.editing = Some(doc.id);
         }
-        self.markdown.editing == Some(doc.id)
+        self.preview.markdown.editing == Some(doc.id)
     }
 
     /// 可编辑的预览中是否显示文字光标：在当前文档的预览上点击、移动光标或输入之后显示
     /// （见 [`App::live_editing`]）。
     pub(crate) fn live_caret_shown(&self) -> bool {
         let id = self.editor.active().map(|d| d.id);
-        id.is_some() && self.markdown.editing == id
+        id.is_some() && self.preview.markdown.editing == id
     }
 
     /// 在可编辑的预览中开始编辑（点击、移动光标、组字）：光标所在的块显示原文。
     pub(in crate::app) fn start_live_editing(&mut self) {
-        self.markdown.editing = self.editor.active().map(|d| d.id);
+        self.preview.markdown.editing = self.editor.active().map(|d| d.id);
     }
 
     /// 可编辑的预览中光标位置改变（输入、点击、移动、查找）后，滚动使光标可见并与边缘保留
@@ -2570,16 +2579,17 @@ impl App {
             .then(|| self.live_caret_source())
             .flatten();
         let (Some(source), Some(doc)) = (source, self.editor.active()) else {
-            self.markdown.followed = None;
+            self.preview.markdown.followed = None;
             return;
         };
         let now = (doc.id, source, doc.revision);
         let moved = self
+            .preview
             .markdown
             .followed
             .is_some_and(|f| f.0 == doc.id && f != now);
-        self.markdown.followed = Some(now);
-        if !moved || self.markdown.editing != Some(doc.id) {
+        self.preview.markdown.followed = Some(now);
+        if !moved || self.preview.markdown.editing != Some(doc.id) {
             return;
         }
         // 全选不滚动：选区的终点在文末，滚动过去会离开正在阅读的位置。
@@ -2587,13 +2597,13 @@ impl App {
         if doc.selection.from() == 0 && doc.selection.to() >= chars && chars > 0 {
             return;
         }
-        let Some(laid) = self.markdown.layout.as_ref() else {
+        let Some(laid) = self.preview.markdown.layout.as_ref() else {
             return;
         };
         let Some((_, y, h)) = laid.caret_point(source) else {
             return;
         };
-        let md = &mut self.markdown;
+        let md = &mut self.preview.markdown;
         let (scroll, view) = (md.scroll(), md.area.h);
         let margin = h.min(view / 4.0);
         if y - margin < scroll {
@@ -2611,7 +2621,7 @@ impl App {
         // 内容一栏两侧的空白：分栏时将键盘焦点交给预览，但不放置光标、不开始选择，保留已有选区。
         if !crate::app::preview::markdown::laid::in_content(self, x) {
             if !self.markdown_live() {
-                self.markdown.focused = true;
+                self.preview.markdown.focused = true;
                 self.request_redraw();
             }
             return;
@@ -2620,20 +2630,20 @@ impl App {
             self.click_live(x, y);
             return;
         }
-        self.markdown.focused = true;
+        self.preview.markdown.focused = true;
         self.request_redraw();
         let Some(at) = crate::app::preview::markdown::laid::offset_at(self, x, y) else {
-            self.markdown.selection = None;
+            self.preview.markdown.selection = None;
             return;
         };
         let count = self.click_count(x, y);
-        let shift = self.modifiers.shift_key();
-        self.markdown.selection = match self.markdown.selection {
+        let shift = self.pointer.modifiers.shift_key();
+        self.preview.markdown.selection = match self.preview.markdown.selection {
             _ if count >= 2 => self.markdown_word(at),
             Some((anchor, _)) if shift => Some((anchor, at)),
             _ => Some((at, at)),
         };
-        self.drag = crate::app::Drag::MarkdownText;
+        self.pointer.drag = crate::app::Drag::MarkdownText;
         // 分栏时左侧的光标移到点中的字上：随后输入的文字（输入时焦点回到左侧）插入在此处。只看
         // 预览时光标不可见，不移动。
         if count == 1
@@ -2643,8 +2653,10 @@ impl App {
         {
             self.place_caret_at_source(source);
             // 预览不随左侧滚动：点中的字保持在鼠标下方。
-            if let (Some(laid), Some(doc)) = (self.markdown.layout.as_ref(), self.editor.active()) {
-                self.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
+            if let (Some(laid), Some(doc)) =
+                (self.preview.markdown.layout.as_ref(), self.editor.active())
+            {
+                self.preview.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
             }
         }
     }
@@ -2652,7 +2664,7 @@ impl App {
     /// 文字光标在原文中的位置（字节偏移）；解析结果不是当前版本时为 `None`。
     pub(crate) fn markdown_caret_source(&self) -> Option<usize> {
         let doc = self.editor.active()?;
-        if self.markdown.checked != Some(doc.revision) {
+        if self.preview.markdown.checked != Some(doc.revision) {
             return None;
         }
         let rope = doc.text().rope()?;
@@ -2664,7 +2676,7 @@ impl App {
     fn current_source_at(&self, x: f32, y: f32) -> Option<usize> {
         let doc = self.editor.active()?;
         // docx 的预览由转换得到，位置不对应文档中的文字。
-        if doc.unsupported.is_some() || self.markdown.checked != Some(doc.revision) {
+        if doc.unsupported.is_some() || self.preview.markdown.checked != Some(doc.revision) {
             return None;
         }
         crate::app::preview::markdown::laid::source_at(self, x, y)
@@ -2691,13 +2703,13 @@ impl App {
     /// 执行「在源代码中显示」：将光标放到右键点中的字在原文中的位置，键盘焦点回到文字；
     /// 只看预览时改为分栏，预览保留在旁边。
     pub(in crate::app) fn reveal_markdown_source(&mut self) {
-        let Some(source) = self.markdown.menu_source.take() else {
+        let Some(source) = self.preview.markdown.menu_source.take() else {
             return;
         };
         if self.editor.active().map(|d| d.preview_mode()) == Some(PreviewMode::Preview) {
             self.set_preview_mode(PreviewMode::Split);
         }
-        self.markdown.focused = false;
+        self.preview.markdown.focused = false;
         self.focus = crate::app::Focus::Editor;
         self.place_caret_at_source(source);
     }
@@ -2707,13 +2719,14 @@ impl App {
     /// 预览获得焦点，点击位置在选区外时取消选区。可编辑的预览中改为将文档的光标移到该处
     /// （点在文档的选区内时不移动）。
     pub(in crate::app) fn markdown_context_target(&mut self, x: f32, y: f32) -> bool {
-        if !self.markdown.area.contains(x, y) || self.markdown_link_at(x, y).is_some() {
+        if !self.preview.markdown.area.contains(x, y) || self.markdown_link_at(x, y).is_some() {
             return false;
         }
         self.focus = crate::app::Focus::Editor;
         if self.markdown_live() {
-            self.markdown.menu_source = crate::app::preview::markdown::laid::source_at(self, x, y);
-            if let Some(source) = self.markdown.menu_source
+            self.preview.markdown.menu_source =
+                crate::app::preview::markdown::laid::source_at(self, x, y);
+            if let Some(source) = self.preview.markdown.menu_source
                 && let Some(doc) = self.editor.active_mut()
                 && let Some(rope) = doc.text().rope()
             {
@@ -2726,16 +2739,17 @@ impl App {
             self.request_redraw();
             return true;
         }
-        self.markdown.focused = true;
-        self.markdown.menu_source = self.current_source_at(x, y);
+        self.preview.markdown.focused = true;
+        self.preview.markdown.menu_source = self.current_source_at(x, y);
         let at = crate::app::preview::markdown::laid::offset_at(self, x, y);
         let inside = self
+            .preview
             .markdown
             .selection
             .zip(at)
             .is_some_and(|((a, b), at)| (a.min(b)..=a.max(b)).contains(&at));
         if !inside {
-            self.markdown.selection = None;
+            self.preview.markdown.selection = None;
         }
         self.request_redraw();
         true
@@ -2743,7 +2757,7 @@ impl App {
 
     /// 返回双击处的词：连续的字母数字、连续的中日韩文字，或单个其他字符。
     fn markdown_word(&self, at: usize) -> Option<(usize, usize)> {
-        let laid = self.markdown.layout.as_ref()?;
+        let laid = self.preview.markdown.layout.as_ref()?;
         const REACH: usize = 64;
         let from = at.saturating_sub(REACH);
         let text: Vec<char> = laid
@@ -2777,7 +2791,7 @@ impl App {
 
     /// 处理拖动选择文字：拖出上下边缘时随之滚动。
     pub(in crate::app) fn drag_markdown(&mut self, x: f32, y: f32) {
-        let area = self.markdown.area;
+        let area = self.preview.markdown.area;
         if y < area.y {
             self.scroll_markdown((area.y - y).min(60.0));
         } else if y > area.bottom() {
@@ -2790,24 +2804,34 @@ impl App {
             return;
         }
         if let Some(at) = crate::app::preview::markdown::laid::offset_at(self, x, y)
-            && let Some((anchor, _)) = self.markdown.selection
+            && let Some((anchor, _)) = self.preview.markdown.selection
         {
-            self.markdown.selection = Some((anchor, at));
+            self.preview.markdown.selection = Some((anchor, at));
         }
         self.request_redraw();
     }
 
     /// 返回预览中选中的文字；没有选中时返回 `None`。
     pub(crate) fn markdown_selected_text(&self) -> Option<String> {
-        let (a, b) = self.markdown.selection?;
-        let text = self.markdown.layout.as_ref()?.text(a.min(b), a.max(b));
+        let (a, b) = self.preview.markdown.selection?;
+        let text = self
+            .preview
+            .markdown
+            .layout
+            .as_ref()?
+            .text(a.min(b), a.max(b));
         (!text.is_empty()).then_some(text)
     }
 
     /// 选中预览中的全部文字（⌘A）。
     pub(crate) fn markdown_select_all(&mut self) {
-        let chars = self.markdown.layout.as_ref().map_or(0, |l| l.chars());
-        self.markdown.selection = Some((0, chars));
+        let chars = self
+            .preview
+            .markdown
+            .layout
+            .as_ref()
+            .map_or(0, |l| l.chars());
+        self.preview.markdown.selection = Some((0, chars));
         self.request_redraw();
     }
 
@@ -2815,23 +2839,23 @@ impl App {
     ///
     /// 尚未排版时返回 `None`。
     pub(crate) fn markdown_find_doc(&mut self) -> Option<&winc_editor::Document> {
-        if self.markdown.find_doc.is_none() {
+        if self.preview.markdown.find_doc.is_none() {
             let text = crate::app::preview::markdown::laid::full_text(self)?;
-            let md = &mut self.markdown;
+            let md = &mut self.preview.markdown;
             md.find_serial += 1;
             // 与实际文档、差异所用的标识互不重叠。
             let id = DocumentId(u64::MAX - 1 - md.find_serial);
             md.find_doc = Some(winc_editor::Document::from_text(id, &text));
         }
-        self.markdown.find_doc.as_ref()
+        self.preview.markdown.find_doc.as_ref()
     }
 
     /// 选中预览中第 `from` 到 `to` 个字符（查找跳转到的匹配）并滚动使其可见：已在屏幕内时
     /// 不滚动，否则滚动到距顶部三分之一屏处。
     pub(crate) fn select_in_markdown(&mut self, from: usize, to: usize) {
-        self.markdown.selection = Some((from, to));
+        self.preview.markdown.selection = Some((from, to));
         if let Some(y) = crate::app::preview::markdown::laid::offset_top(self, from) {
-            let md = &mut self.markdown;
+            let md = &mut self.preview.markdown;
             let scroll = md.scroll();
             if y < scroll || y + 40.0 > scroll + md.area.h {
                 let y = y - md.area.h / 3.0;
@@ -2844,7 +2868,7 @@ impl App {
     /// 在预览上滚动 `dy`（逻辑像素，向上为正，方向约定同滚轮事件）。
     /// 可横向滚动的表格 `key`（见 [`TableBar::key`]）当前的横向滚动位置（逻辑像素）。
     pub(crate) fn markdown_table_scroll(&self, key: (usize, usize)) -> f32 {
-        (self.markdown.layout.as_ref()).map_or(0.0, |laid| laid.hscroll_of(key.0, key.1))
+        (self.preview.markdown.layout.as_ref()).map_or(0.0, |laid| laid.hscroll_of(key.0, key.1))
     }
 
     /// 拖动表格的水平滚动条：按鼠标横坐标 `x` 和按下时在滑块上的位置 `grab` 设置滚动位置。
@@ -2858,15 +2882,15 @@ impl App {
         };
         let max = bar.content - bar.track.w;
         let to = crate::layout::scroll_for_thumb(bar.track.x, bar.track.w, thumb.w, x, grab, max);
-        if let Some(laid) = self.markdown.layout.as_mut() {
+        if let Some(laid) = self.preview.markdown.layout.as_mut() {
             laid.hscroll.insert(bar.key, to.clamp(0.0, max));
         }
-        self.markdown.last_table = Some(bar.key);
+        self.preview.markdown.last_table = Some(bar.key);
         self.request_redraw();
     }
 
     pub(crate) fn scroll_markdown(&mut self, dy: f32) {
-        let y = self.markdown.scroll() - dy;
+        let y = self.preview.markdown.scroll() - dy;
         self.scroll_markdown_to(y);
     }
 
@@ -2882,9 +2906,9 @@ impl App {
             return;
         };
         self.glide_pane_to(ScrollTarget::Markdown, top);
-        self.markdown.toc_picked = Some((i, self.markdown.scroll()));
+        self.preview.markdown.toc_picked = Some((i, self.preview.markdown.scroll()));
         let clock = self.clock(crate::app::animation::TOC_FLASH);
-        self.markdown.toc_flash = clock.map(|clock| (i, clock));
+        self.preview.markdown.toc_flash = clock.map(|clock| (i, clock));
     }
 
     /// 跳转到预览中的锚点 `anchor`（标题、脚注、脚注引用）；找不到时提示。
@@ -2903,27 +2927,32 @@ impl App {
             self.glide_pane_to(ScrollTarget::Markdown, top);
             return;
         }
-        self.glide_pane_to(ScrollTarget::Markdown, top - self.markdown.area.h / 3.0);
+        self.glide_pane_to(
+            ScrollTarget::Markdown,
+            top - self.preview.markdown.area.h / 3.0,
+        );
         let clock = self.clock(crate::app::animation::TOC_FLASH);
-        self.markdown.anchor_flash = clock.map(|clock| ((top, height), clock));
+        self.preview.markdown.anchor_flash = clock.map(|clock| ((top, height), clock));
     }
 
     /// 将预览滚动到 `y`；分栏时左侧的文字随之滚动到对应位置。
     pub(crate) fn scroll_markdown_to(&mut self, y: f32) {
-        self.markdown.scroll_to(y);
+        self.preview.markdown.scroll_to(y);
         self.request_redraw();
         if shown_area(self).is_none_or(|a| a == self.layout.editor) {
             return;
         }
         let max = self.max_scroll_line();
-        let y = self.markdown.scroll();
-        let (Some(laid), Some(doc)) = (self.markdown.layout.as_ref(), self.editor.active_mut())
-        else {
+        let y = self.preview.markdown.scroll();
+        let (Some(laid), Some(doc)) = (
+            self.preview.markdown.layout.as_ref(),
+            self.editor.active_mut(),
+        ) else {
             return;
         };
         let line = laid.line_of_y(y, doc.text().line_count());
         set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
-        self.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
+        self.preview.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
     }
 
     /// 在切换显示方式之前调用：返回只看预览时预览顶部对应的原文行号（小数）。
@@ -2934,18 +2963,18 @@ impl App {
     pub(in crate::app) fn leave_markdown_mode(&mut self, mode: PreviewMode) -> Option<f32> {
         let doc = self.editor.active()?;
         let old = doc.preview_mode();
-        self.markdown.followed = None;
-        self.markdown.editing = None;
+        self.preview.markdown.followed = None;
+        self.preview.markdown.editing = None;
         if old == mode || doc.preview_kind() != Some(PreviewKind::Markdown) {
             return None;
         }
         if mode == PreviewMode::Preview {
-            self.markdown.align = Some(doc.id);
+            self.preview.markdown.align = Some(doc.id);
             return None;
         }
-        let laid = self.markdown.layout.as_ref()?;
-        (old == PreviewMode::Preview && self.markdown.doc == Some(doc.id))
-            .then(|| laid.line_of_y(self.markdown.scroll(), doc.text().line_count()))
+        let laid = self.preview.markdown.layout.as_ref()?;
+        (old == PreviewMode::Preview && self.preview.markdown.doc == Some(doc.id))
+            .then(|| laid.line_of_y(self.preview.markdown.scroll(), doc.text().line_count()))
     }
 
     /// 滚动文字，使原文第 `line` 行（小数）位于顶部。
@@ -2962,31 +2991,33 @@ impl App {
     ///
     /// 排版完成之后、绘制之前调用。
     pub(crate) fn align_markdown_once(&mut self) {
-        let (Some(laid), Some(doc)) = (self.markdown.layout.as_ref(), self.editor.active()) else {
+        let (Some(laid), Some(doc)) = (self.preview.markdown.layout.as_ref(), self.editor.active())
+        else {
             return;
         };
-        if self.markdown.align != Some(doc.id) {
+        if self.preview.markdown.align != Some(doc.id) {
             return;
         }
-        self.markdown.align = None;
+        self.preview.markdown.align = None;
         let y = laid.y_of_line(text_line(doc), doc.text().line_count());
-        self.markdown.scroll_to(y);
+        self.preview.markdown.scroll_to(y);
     }
 
     /// 分栏时左侧文字滚动或预览重排后，将右侧滚动到对应位置。
     ///
     /// 绘制预览之前调用。
     pub(crate) fn sync_markdown_scroll(&mut self) {
-        let (Some(laid), Some(doc)) = (self.markdown.layout.as_ref(), self.editor.active()) else {
+        let (Some(laid), Some(doc)) = (self.preview.markdown.layout.as_ref(), self.editor.active())
+        else {
             return;
         };
         let now = (doc.id, doc.scroll_line, laid.height());
-        if self.markdown.synced == Some(now) {
+        if self.preview.markdown.synced == Some(now) {
             return;
         }
         let y = laid.y_of_line(text_line(doc), doc.text().line_count());
-        self.markdown.scroll_to(y);
-        self.markdown.synced = Some(now);
+        self.preview.markdown.scroll_to(y);
+        self.preview.markdown.synced = Some(now);
     }
 }
 

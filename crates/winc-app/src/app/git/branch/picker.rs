@@ -720,7 +720,7 @@ impl App {
     /// 拉取、推送、获取（`part`）对应的 Git 操作：按住 ⌥ 时拉取是拉取并变基。
     pub(crate) fn picker_action_command(&self, part: PickerPart) -> MenuCommand {
         match part {
-            PickerPart::Pull if self.modifiers.alt_key() => MenuCommand::GitPullRebase,
+            PickerPart::Pull if self.pointer.modifiers.alt_key() => MenuCommand::GitPullRebase,
             PickerPart::Pull => MenuCommand::GitPull,
             PickerPart::Push => MenuCommand::GitPush,
             _ => MenuCommand::GitFetch,

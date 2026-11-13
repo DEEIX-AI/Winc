@@ -293,7 +293,7 @@ impl App {
         if self.hits.tree_segments.is_empty() && self.tree.hover_segment.is_none() {
             return;
         }
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         let segment = matches!(self.hover_at(x, y), Hover::TreeRow(_))
             .then(|| self.tree_row_at(y))
             .flatten()
@@ -323,11 +323,11 @@ impl App {
     ///
     /// 动画中和拖动时不展开，返回 `None`。
     pub(crate) fn overflow_candidate(&self) -> Option<usize> {
-        let idle = self.sidebar.motion.is_none() && matches!(self.drag, Drag::None);
+        let idle = self.sidebar.motion.is_none() && matches!(self.pointer.drag, Drag::None);
         // 拖动文件时没有悬停目标，放不下的名称同样要显示，才看得到、放得进那几级目录。
-        let pointing = matches!(self.hover, Hover::TreeRow(_) | Hover::Splitter)
+        let pointing = matches!(self.pointer.hover, Hover::TreeRow(_) | Hover::Splitter)
             || self.tree_dragging().is_some_and(|drag| drag.active);
-        let (_, y) = self.mouse;
+        let (_, y) = self.pointer.mouse;
         let tree = self.layout.tree;
 
         if !(idle && pointing && (tree.y..tree.bottom()).contains(&y)) {

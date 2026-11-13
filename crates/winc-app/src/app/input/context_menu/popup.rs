@@ -303,7 +303,7 @@ impl App {
         if self.popup().is_some() {
             self.context_menu = None;
             self.menu_button = None;
-            self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
+            self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
             self.request_redraw();
         }
     }
@@ -351,7 +351,7 @@ impl App {
     /// 点在可用的命令上执行它，点在子菜单上展开它；左键点在菜单外面关掉菜单，这次按下不再
     /// 交给下面；右键点在菜单外面时先关掉菜单，再把事件交给下面，在新的位置弹出那里的菜单。
     pub(in crate::app) fn popup_mouse_down(&mut self, button: MouseButton) -> bool {
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         let Some(popup) = self.popup_mut() else {
             return false;
         };
@@ -395,7 +395,7 @@ impl App {
 
     /// 滚轮：窗口内的菜单打开时返回 `true`，滚动鼠标下的那一级菜单。
     pub(in crate::app) fn popup_wheel(&mut self, dy: f32) -> bool {
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         let Some(popup) = self.popup_mut() else {
             return false;
         };

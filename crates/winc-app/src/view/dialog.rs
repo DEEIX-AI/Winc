@@ -18,9 +18,11 @@ use crate::layout::{DialogLayout, DialogPart, QUESTION_LINE_H, REBASE_PILL_W, RE
 pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     let layout = app.dialog_layout();
     let p = app.palette;
-    match app.dialog_card.motion {
+    match app.motion.dialog_card.motion {
         // 换页时遮罩一直在，不随新的一页重新淡入。
-        Some(_) if app.dialog_card.turning.is_some() => frame.rect(app.layout.window, p.scrim),
+        Some(_) if app.motion.dialog_card.turning.is_some() => {
+            frame.rect(app.layout.window, p.scrim)
+        }
         Some((true, clock)) => {
             let fade = dialog_curve(true, clock).0;
             frame.rect(app.layout.window, p.scrim.alpha(p.scrim.a * fade));
@@ -41,7 +43,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
 /// 关闭后淡出期间绘制：遮罩和卡片一起淡出。
 pub(super) fn draw_ghost(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
-    if let Some((clock, _, _)) = app.dialog_card.closing() {
+    if let Some((clock, _, _)) = app.motion.dialog_card.closing() {
         let fade = dialog_curve(false, clock).0;
         frame.rect(app.layout.window, p.scrim.alpha(p.scrim.a * fade));
     }

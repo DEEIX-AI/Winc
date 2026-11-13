@@ -26,13 +26,14 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     paint(&mut app);
     assert!(app.settings.scroll_base.is_some());
     let window = app.layout.window;
-    let scale = app.renderer.as_ref().unwrap().scale_factor();
+    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
     assert!(app.settings_reuses_base(window, scale));
 
     // 之后的帧使用快照，画面与完整绘制相同。
     app.settings_scroll_by(-30.0);
     paint(&mut app);
     let reused = app
+        .frame
         .renderer
         .as_ref()
         .unwrap()
@@ -49,7 +50,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     assert!(app.settings.scroll_base.is_none());
     assert!(!app.settings_reuses_base(window, scale));
     paint(&mut app);
-    let full = &app.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
 
@@ -71,7 +72,7 @@ fn zoom_scales_the_whole_window_in_steps() {
     let mut app = app_with(&dir, false);
     paint(&mut app);
     let window = app.layout.window;
-    let scale = |app: &App| app.renderer.as_ref().unwrap().scale_factor();
+    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale_factor();
     let base = scale(&app);
 
     // 放大一档：渲染倍数变大，窗口的逻辑尺寸按比例变小；字号不变。
@@ -214,7 +215,7 @@ fn settings_is_a_modal_over_the_whole_window() {
     // 模态：下层的文件树和编辑区不响应悬停；按键不会修改文档。
     let tree = app.layout.tree;
     app.on_mouse_move(tree.x + 4.0, tree.y + 4.0);
-    assert_eq!(app.hover, Hover::None);
+    assert_eq!(app.pointer.hover, Hover::None);
     let before = app.editor.active().unwrap().revision;
     app.edit_field(|f| f.insert("x"));
     assert_eq!(app.editor.active().unwrap().revision, before);
@@ -687,7 +688,7 @@ pub(super) fn format_settings_app(name: &str, dark: bool) -> (App, PathBuf) {
 #[test]
 fn scrolled_rows_stay_under_the_header() {
     let (mut app, dir) = format_settings_app("settings-scroll-clip", false);
-    app.renderer =
+    app.frame.renderer =
         Some(Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap());
     app.config.format_commands.insert(
         "python".to_owned(),
@@ -707,7 +708,7 @@ fn scrolled_rows_stay_under_the_header() {
 
     // 标题下沿的一条像素带（标题文字和关闭按钮下方）只应有底色。
     let layout = app.settings_layout();
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let px = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as u32, (y * SCALE) as u32);
         image.pixels[(y * image.width + x) as usize]
@@ -760,7 +761,11 @@ fn the_settings_scrollbar_can_be_dragged() {
         // 悬停认滚动条；按住滑块拖到底再拖回顶，下方的设置项不被选中。
         let thumb = settings_thumb(area, app.settings.scroll, max).unwrap();
         app.on_mouse_move(x, thumb.y + 2.0);
-        assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::Settings), "{page:?}");
+        assert_eq!(
+            app.pointer.hover,
+            Hover::Scrollbar(Scrollbar::Settings),
+            "{page:?}"
+        );
         app.on_mouse_down(MouseButton::Left);
         app.on_mouse_move(x, area.bottom() + 40.0);
         assert_eq!(app.settings.scroll, max, "{page:?}");
@@ -862,10 +867,10 @@ fn settings_scales_in_and_fades_out() {
     assert!(app.animating());
     paint(&mut app);
     assert!(app.settings.cache.is_some());
-    let mut renderer = app.renderer.take().unwrap();
+    let mut renderer = app.frame.renderer.take().unwrap();
     let mut cached = false;
     renderer.draw(|frame| cached = crate::view::tests::settings_draw_cached(&mut app, frame));
-    app.renderer = Some(renderer);
+    app.frame.renderer = Some(renderer);
     assert!(cached);
 
     // 关闭：键盘和鼠标立即回到主界面，浮层继续绘制淡出，结束后才移除。
@@ -1290,7 +1295,7 @@ fn the_background_image_shows_under_the_base_colors() {
         paint(app);
         app.wait_for_wallpaper();
         paint(app);
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let at = (y * SCALE) as usize * image.width as usize + (x * SCALE) as usize;
         let px = image.pixels[at];
         ((px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff)
@@ -1319,7 +1324,7 @@ fn the_background_image_shows_under_the_base_colors() {
     app.set_background_image(Some(image.clone()));
     assert_eq!(sample(&mut app), mixed(plain, 0.15));
     // 图层保持图片的宽高比，缩小到刚好铺满窗口（按逻辑像素，不是物理像素）。
-    let size = app.renderer.as_ref().unwrap().wallpaper_size();
+    let size = app.frame.renderer.as_ref().unwrap().wallpaper_size();
     assert_eq!((SIZE.0, SIZE.1), (1280.0, 820.0));
     assert_eq!(size, Some((1280, 960)));
     // 浮在内容之上的设置卡片不透出背景图。
@@ -1354,14 +1359,14 @@ fn the_background_image_shows_under_the_base_colors() {
     app.settings_adjust(Setting::BackgroundOpacity, false);
     assert_eq!(app.config.ui_background_opacity, Some(0.0));
     assert_eq!(sample(&mut app), plain);
-    assert_eq!(app.renderer.as_ref().unwrap().wallpaper_size(), None);
+    assert_eq!(app.frame.renderer.as_ref().unwrap().wallpaper_size(), None);
     app.config.ui_background_opacity = Some(95.0);
     app.settings_adjust(Setting::BackgroundOpacity, true);
     app.settings_adjust(Setting::BackgroundOpacity, true);
     assert_eq!(app.config.ui_background_opacity, Some(100.0));
     assert_eq!(sample(&mut app), (255, 0, 0));
     // 不透明度超过一半：图层按物理像素生成，这里即图片原来的大小。
-    let size = |app: &App| app.renderer.as_ref().unwrap().wallpaper_size();
+    let size = |app: &App| app.frame.renderer.as_ref().unwrap().wallpaper_size();
     assert_eq!(size(&app), Some((2000, 1500)));
     app.config.ui_background_opacity = Some(20.0);
     assert_eq!(sample(&mut app), mixed(plain, 0.2));
@@ -1398,7 +1403,7 @@ fn the_background_image_shows_under_the_base_colors() {
     // 取消：恢复纯色，图层释放。
     app.set_background_image(None);
     assert_eq!(sample(&mut app), dark);
-    assert_eq!(app.renderer.as_ref().unwrap().wallpaper_size(), None);
+    assert_eq!(app.frame.renderer.as_ref().unwrap().wallpaper_size(), None);
 
     // 无法加载的图片：保持纯色，之后不再重试。
     app.set_background_image(Some(dir.join("不存在.png")));
@@ -1514,7 +1519,8 @@ fn scrolling_settings_over_a_background_image_looks_the_same() {
     app.settings.motion = None;
     let shot = |app: &mut App| {
         paint(app);
-        app.renderer
+        app.frame
+            .renderer
             .as_ref()
             .unwrap()
             .image()
@@ -1648,11 +1654,11 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
     use winit::keyboard::{Key, NamedKey};
     let (enter, total) = (Key::Named(NamedKey::Enter), crate::app::setup::INTRO);
     app.state.setup_pending = true;
-    app.setup_intro = Some(Clock::stopped(total, total.mul_f32(0.3)));
+    app.motion.setup_intro = Some(Clock::stopped(total, total.mul_f32(0.3)));
     paint(&mut app);
     assert!(app.hits.start.is_empty());
     assert!(!app.setup_key(&enter) && app.state.setup_pending);
-    app.setup_intro = None;
+    app.motion.setup_intro = None;
     paint(&mut app);
     assert!(has(&app, StartAction::FinishSetup));
     assert!(!app.setup_key(&Key::Named(NamedKey::Escape)) && app.state.setup_pending);

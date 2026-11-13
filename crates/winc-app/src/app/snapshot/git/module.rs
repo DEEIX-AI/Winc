@@ -548,7 +548,7 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
     paint(&mut app);
     assert_eq!(app.hits.project, project);
     app.on_mouse_move(project.x + 4.0, project.y + 4.0);
-    assert_eq!(app.hover, Hover::ProjectName);
+    assert_eq!(app.pointer.hover, Hover::ProjectName);
     let parts = app.commit_parts();
     assert_eq!(
         parts.tools.map(|(_, t)| t),
@@ -569,7 +569,7 @@ fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
     };
     let branch = hit(&app, CommitTarget::Branch).unwrap();
     app.on_mouse_move(branch.x + 4.0, branch.y + 4.0);
-    assert_eq!(app.hover, Hover::Commit(CommitTarget::Branch));
+    assert_eq!(app.pointer.hover, Hover::Commit(CommitTarget::Branch));
 
     // 分支名很长时在行内截短，右端的按钮还在，不碰到它们。
     git_in(
@@ -695,7 +695,7 @@ fn freeze_modules(app: &mut App, on: bool, at: std::time::Duration) {
 
     // 消失时宽度在内容淡出结束后才开始收起，`at` 从收起开始计时。
     let at = if on { at } else { at + EXIT_FADE };
-    let fx = &mut app.module_fx;
+    let fx = &mut app.motion.module_fx;
     for p in [&mut fx.commit_tab, &mut fx.terminal, &mut fx.branch] {
         p.track(!on, None);
         p.track(on, Some(Clock::frozen(at, MODULE_FADE)));
@@ -714,7 +714,7 @@ fn switching_modules_off_fades_their_chrome_out() {
     };
     app.settings_toggle(Setting::TerminalModule);
     paint(&mut app);
-    assert!(app.module_fx.branch_label.is_some());
+    assert!(app.motion.module_fx.branch_label.is_some());
     let full = app.sidebar_tabs()[2].0;
     let hit = |app: &App, item| app.hits.status.iter().any(|h| h.1 == item);
     assert!(hit(&app, StatusItem::Branch) && hit(&app, StatusItem::Terminal));
@@ -728,13 +728,13 @@ fn switching_modules_off_fades_their_chrome_out() {
     assert_eq!(tabs.len(), 3);
     assert!(tabs[2].0.w > 0.0 && tabs[2].0.w < full.w);
     assert_eq!(tabs[2].0.right(), full.right());
-    assert!(app.module_fx.branch_label.is_some());
+    assert!(app.motion.module_fx.branch_label.is_some());
     assert!(!hit(&app, StatusItem::Branch) && !hit(&app, StatusItem::Terminal));
 
     freeze_modules(&mut app, false, MODULE_FADE);
     app.track_modules();
-    assert!(!app.module_fx.moving());
-    assert!(app.module_fx.branch_label.is_none());
+    assert!(!app.motion.module_fx.moving());
+    assert!(app.motion.module_fx.branch_label.is_none());
     assert_eq!(app.sidebar_tabs().len(), 2);
     let _ = std::fs::remove_dir_all(&root);
 }

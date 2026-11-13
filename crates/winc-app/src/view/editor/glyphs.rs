@@ -299,7 +299,7 @@ impl App {
             return winc_syntax::highlight_line(language, chars, state, tokens);
         }
         let key = (doc.id, doc.revision, line, chars.len(), state, language.id);
-        let mut cache = self.line_tokens.borrow_mut();
+        let mut cache = self.caches.line_tokens.borrow_mut();
         if let Some(i) = cache.entries.iter().position(|(k, ..)| *k == key) {
             let entry = cache.entries.remove(i);
             tokens.clear();

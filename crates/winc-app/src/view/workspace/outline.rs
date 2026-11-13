@@ -62,7 +62,7 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
         draw_fold_all(app, frame, button, clip);
         hits.push((button, OutlineTarget::FoldAll));
     }
-    let hovered = app.hover == Hover::Outline(OutlineTarget::Header);
+    let hovered = app.pointer.hover == Hover::Outline(OutlineTarget::Header);
     if hovered {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
         frame.rect_clipped(shade, p.hover, RADIUS_ROW, clip);
@@ -114,7 +114,7 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
 /// 绘制标题行右端的「全部折叠」（有展开着的符号时）或「全部展开」按钮。
 fn draw_fold_all(app: &App, frame: &mut Frame<'_>, button: Rect, clip: Rect) {
     let p = app.palette;
-    let hovered = app.hover == Hover::Outline(OutlineTarget::FoldAll);
+    let hovered = app.pointer.hover == Hover::Outline(OutlineTarget::FoldAll);
     draw_button(frame, p, button, clip, hovered, false);
     let color = if hovered { p.text } else { p.text_muted };
     if app.outline_any_expanded() {
@@ -153,7 +153,7 @@ fn draw_rows(
         }
         let symbol = &items[i];
         let hovered = matches!(
-            app.hover,
+            app.pointer.hover,
             Hover::Outline(OutlineTarget::Row(h) | OutlineTarget::Arrow(h)) if h == i
         );
         let pill = Rect::new(
@@ -182,7 +182,7 @@ fn draw_rows(
                 _ if app.outline_collapsed(i) => 0.0,
                 _ => 1.0,
             };
-            let arrow_hovered = app.hover == Hover::Outline(OutlineTarget::Arrow(i));
+            let arrow_hovered = app.pointer.hover == Hover::Outline(OutlineTarget::Arrow(i));
             let color = if arrow_hovered { p.text } else { p.text_dim };
             icons::chevron_turned(frame, (x + 4.0, cy), 6.0, open * FRAC_PI_2, color, clip);
             let arrow = Rect::new(x - 4.0, band.y, 16.0, band.h).intersect(band);

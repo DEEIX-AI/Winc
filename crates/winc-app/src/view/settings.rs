@@ -168,8 +168,12 @@ fn draw_nav(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
         // 「Git」「终端」两项随各自的模块淡入淡出（`App::track_modules`），高度在布局中按显示比例收放；
         // 图标和文字仍按整行的高度居中，不随高度挤压。
         let opacity = match page {
-            SettingsPage::Terminal => app.module_fx.terminal.opacity(app.terminal_enabled()),
-            SettingsPage::Git => app.module_fx.git.opacity(app.git_enabled()),
+            SettingsPage::Terminal => app
+                .motion
+                .module_fx
+                .terminal
+                .opacity(app.terminal_enabled()),
+            SettingsPage::Git => app.motion.module_fx.git.opacity(app.git_enabled()),
             _ => 1.0,
         };
         let full = Rect::new(row.x, row.y, row.w, SETTINGS_NAV_ROW);

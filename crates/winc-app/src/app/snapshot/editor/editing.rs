@@ -386,7 +386,7 @@ fn status_bar_changes_indentation_and_line_endings() {
     // 宽度选项在子菜单中。
     let at = status_point(&app, StatusItem::Indent);
     app.on_mouse_move(at.0, at.1);
-    assert_eq!(app.hover, Hover::Status(StatusItem::Indent));
+    assert_eq!(app.pointer.hover, Hover::Status(StatusItem::Indent));
     click(&mut app, at);
     assert_eq!(
         menu_commands(&app)[..2],
@@ -477,7 +477,8 @@ fn the_scrollbar_marks_other_occurrences_of_the_selection() {
     std::fs::write(&file, &text).unwrap();
     let mut app = app_with(&file, false);
     let marks = |app: &App| {
-        app.ruler_cache
+        app.caches
+            .ruler_cache
             .as_ref()
             .and_then(|(_, l)| l.as_deref().map(<[usize]>::to_vec))
     };
@@ -492,12 +493,12 @@ fn the_scrollbar_marks_other_occurrences_of_the_selection() {
     app.select(at, at + 5);
     paint(&mut app);
     assert_eq!(marks(&app), Some(vec![10, 200, 300, 390]));
-    let key = app.ruler_cache.as_ref().unwrap().0.clone();
+    let key = app.caches.ruler_cache.as_ref().unwrap().0.clone();
 
     // 选区不变、滚动：不重新计算。
     app.editor.active_mut().unwrap().scroll_line = 100.0;
     paint(&mut app);
-    assert_eq!(app.ruler_cache.as_ref().unwrap().0, key);
+    assert_eq!(app.caches.ruler_cache.as_ref().unwrap().0, key);
 
     // 选中的文字只出现一次（第 300 行的 `totally`）：不标记。
     let at = app.editor.active().unwrap().text().line_start(300) + 4;
@@ -886,7 +887,7 @@ fn lines_read_up_to_the_right_edge_keep_the_highlight_state() {
         paint(&mut app);
         assert!(app.editor.active().unwrap().is_large());
         let (text, lh) = (app.layout.text, app.fonts.line_height);
-        let renderer = app.renderer.take().unwrap();
+        let renderer = app.frame.renderer.take().unwrap();
         let scale = renderer.scale_factor();
         let image = renderer.image().unwrap();
         let (x0, x1) = (
@@ -901,7 +902,7 @@ fn lines_read_up_to_the_right_edge_keep_the_highlight_state() {
         let pixels: Vec<u32> = (y0..y1)
             .flat_map(|y| image.pixels[y * width + x0..y * width + x1].to_vec())
             .collect();
-        app.renderer = Some(renderer);
+        app.frame.renderer = Some(renderer);
         pixels
     };
     let far = second_row(
@@ -1008,7 +1009,7 @@ fn lines_past_sixteen_million_rows_each_take_their_own_row() {
     paint(&mut app);
 
     let (gutter, text, lh) = (app.layout.gutter, app.layout.text, app.fonts.line_height);
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let width = image.width as usize;
     let px = |v: f32| (v * SCALE) as usize;
     // 行号栏中每一行都画有行号。
@@ -1042,7 +1043,7 @@ fn long_lines_expand_by_clicking_or_by_the_setting() {
     // 文本区第 `row` 行右半边是否画有内容。
     let inked = |app: &App, row: usize| {
         let (t, lh) = (app.layout.text, app.fonts.line_height);
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let px = |v: f32| (v * SCALE) as usize;
         let (y0, y1) = (
             px(t.y + row as f32 * lh + 2.0),
@@ -1122,7 +1123,7 @@ fn the_far_end_of_a_whole_line_is_drawn_in_place() {
     let (t, lh, cell) = (app.layout.text, app.fonts.line_height, app.cell);
     let scroll = f64::from(app.editor.active().unwrap().scroll_x);
     let expected = f64::from(t.x + TEXT_PAD) + col as f64 * f64::from(cell) - scroll;
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let px = |v: f32| (v * SCALE) as usize;
     let (y0, y1) = (px(t.y + 2.0), px(t.y + lh - 2.0));
     let width = image.width as usize;

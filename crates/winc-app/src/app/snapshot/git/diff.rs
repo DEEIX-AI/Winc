@@ -833,7 +833,7 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     assert_eq!(selected(&app), "let value_5 = 500;\n");
 
     // 点击行号选中整行，拖到下一行的行号选中两行。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let (x, y) = at(&app, RIGHT, 6, 0, true);
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
@@ -843,13 +843,13 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     assert_eq!(selected(&app), "let value_6 = 6;\nlet value_7 = 7;\n");
 
     // ⌥ 单击再添加一个光标，键入的字符出现在两处；Esc 先移除多余的光标，再移除右侧的光标。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let point = at(&app, RIGHT, 6, 0, false);
     click(&mut app, point);
-    app.modifiers = ModifiersState::ALT;
+    app.pointer.modifiers = ModifiersState::ALT;
     let point = at(&app, RIGHT, 7, 0, false);
     click(&mut app, point);
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert_eq!(app.editor.documents[source(&app)].selections().0.len(), 2);
     assert!(app.diff_edit_text("X"));
     let text = app.editor.documents[source(&app)]
@@ -872,7 +872,7 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     );
 
     // ⌘D：再选中下一处同样的词。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let word = at(&app, RIGHT, 8, 1, false);
     press(&mut app, word);
     press(&mut app, word);
@@ -898,14 +898,14 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     // 左侧：双击选词，点击行号选中整行，右键菜单只有复制。先关闭已打开的菜单：菜单打开时，
     // 点击菜单外只关闭菜单。
     app.dismiss_popup();
-    app.last_click = None;
+    app.pointer.last_click = None;
     let word = at(&app, LEFT, 5, 6, false);
     press(&mut app, word);
     press(&mut app, word);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
     assert!(!view.editing);
     assert_eq!(view.read_selected().unwrap(), "value_5");
-    app.last_click = None;
+    app.pointer.last_click = None;
     let point = at(&app, LEFT, 9, 0, true);
     click(&mut app, point);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
@@ -979,7 +979,7 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
     paint(&mut app);
 
     // 点击行号选中整行；右键菜单只有复制，选区保留。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let number = at(&app, RIGHT, 1, 0, true);
     click(&mut app, number);
     let line = "let more = 3;\n".to_owned();
@@ -991,14 +991,14 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
     app.dismiss_popup();
 
     // 选区只有一个：双击左侧时选区切换到左侧。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let left = at(&app, LEFT, 0, 4, false);
     click(&mut app, left);
     click(&mut app, left);
     assert_eq!(selected(&app), Some((LEFT, "old".to_owned())));
 
     // 单击放置光标，没有选中内容；点击其他位置之前光标一直保留。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let spot = at(&app, RIGHT, 1, 4, false);
     click(&mut app, spot);
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
@@ -1034,7 +1034,7 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
         mods: Mods::SHIFT,
     };
     let pixel = |app: &App, x: f32, y: f32| {
-        let renderer = app.renderer.as_ref().unwrap();
+        let renderer = app.frame.renderer.as_ref().unwrap();
         let image = renderer.image().unwrap();
         let scale = renderer.scale_factor();
         image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
@@ -1288,7 +1288,7 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     set_read(&mut app, LEFT, (0, 0));
     paint(&mut app);
     let row = |app: &App| {
-        let renderer = app.renderer.as_ref().unwrap();
+        let renderer = app.frame.renderer.as_ref().unwrap();
         let (scale, image) = (renderer.scale_factor(), renderer.image().unwrap());
         let doc = app.editor.active().unwrap();
         let view = doc.diff.as_deref().unwrap();
@@ -1616,14 +1616,14 @@ fn the_inline_layout_can_be_toggled_and_edits_only_new_lines() {
     assert!(!diff.editing);
     assert_eq!(diff.read_caret().map(|c| c.0), Some(LEFT));
     // 选中、复制的是旧行的内容。
-    app.last_click = None;
+    app.pointer.last_click = None;
     click(&mut app, old);
     click(&mut app, old);
     let diff = app.editor.active().unwrap().diff.as_deref().unwrap();
     assert_eq!(diff.read_selected().as_deref(), Some("value_5"));
 
     // 点击新行：光标进入右侧的文档，键入的字符写入文件。
-    app.last_click = None;
+    app.pointer.last_click = None;
     let new = at(&app, start + 1, 0);
     assert!(app.over_diff_editable(new.0, new.1));
     click(&mut app, new);
@@ -2001,7 +2001,7 @@ fn word_wrap_applies_to_the_diff_view() {
         let scroll = view.side_scroll(RIGHT, 0.0, f64::from(parts.body.h / lh));
         let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + indent * app.cell;
         let y = parts.body.y + (row as f64 - scroll) as f32 * lh + 3.0;
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let pixel = |x: f32, y: f32| {
             let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
             image.pixels[y * image.width as usize + x]
@@ -2294,24 +2294,24 @@ fn folding_an_unchanged_run_in_a_diff_is_applied_when_its_transition_ends() {
 
     // 测试中没有窗口的时钟：展开立即生效，不留下过渡。
     app.press_diff(DiffTarget::Fold(gap));
-    assert!(open(&app, gap) && app.diff_fold.is_none());
+    assert!(open(&app, gap) && app.motion.diff_fold.is_none());
 
     // 展开的过渡：差异已是展开状态，过渡期间可以正常绘制，结束后仍然展开。
     assert!(app.begin_diff_fold(gap, true, half));
     paint(&mut app);
-    assert!(app.diff_fold.is_some());
+    assert!(app.motion.diff_fold.is_some());
     assert!(app.begin_diff_fold(gap, true, done));
     app.settle_animations();
-    assert!(app.diff_fold.is_none() && open(&app, gap));
+    assert!(app.motion.diff_fold.is_none() && open(&app, gap));
 
     // 折叠的过渡：进行中仍为展开状态，时钟走完后才折叠。
     assert!(app.begin_diff_fold(gap, false, half));
     paint(&mut app);
     app.settle_animations();
-    assert!(app.diff_fold.is_some() && open(&app, gap));
+    assert!(app.motion.diff_fold.is_some() && open(&app, gap));
     assert!(app.begin_diff_fold(gap, false, done));
     app.settle_animations();
-    assert!(app.diff_fold.is_none() && !open(&app, gap));
+    assert!(app.motion.diff_fold.is_none() && !open(&app, gap));
     // 已折叠的段不能开始过渡。
     assert!(!app.begin_diff_fold(gap, false, half));
 
@@ -2319,7 +2319,7 @@ fn folding_an_unchanged_run_in_a_diff_is_applied_when_its_transition_ends() {
     app.press_diff(DiffTarget::Fold(gap));
     assert!(app.begin_diff_fold(gap, false, half));
     assert!(app.run_action(Action::UnfoldAll));
-    assert!(app.diff_fold.is_none() && open(&app, gap));
+    assert!(app.motion.diff_fold.is_none() && open(&app, gap));
 
     // 过渡期间点击：先结束过渡。
     assert!(app.begin_diff_fold(gap, false, half));
@@ -2328,7 +2328,7 @@ fn folding_an_unchanged_run_in_a_diff_is_applied_when_its_transition_ends() {
         app.layout.editor.bottom() - 10.0,
     );
     app.click_diff(x, y);
-    assert!(app.diff_fold.is_none() && !open(&app, gap));
+    assert!(app.motion.diff_fold.is_none() && !open(&app, gap));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2366,7 +2366,10 @@ fn each_side_of_a_diff_has_a_horizontal_scrollbar_and_the_two_move_together() {
     // 按住左侧的滑块拖到右端：滚动到最右边，两侧的滑块都显示，且都位于各自轨道的右端。
     let y = left.bottom() - 4.0;
     app.on_mouse_move(left.x + 8.0, y);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::DiffLeftHorizontal));
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Scrollbar(Scrollbar::DiffLeftHorizontal)
+    );
     drag_to(&mut app, left.right(), y);
     assert!((scroll_x(&app) - bars.max).abs() < 1.0);
     assert_eq!(app.scrollbar_shown(ScrollArea::DiffLeftHorizontal), 1.0);
@@ -2380,7 +2383,10 @@ fn each_side_of_a_diff_has_a_horizontal_scrollbar_and_the_two_move_together() {
     // 右侧的滑块拖回左端：两侧一起回到行首。
     let y = right.bottom() - 4.0;
     app.on_mouse_move(right.right() - 8.0, y);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::DiffRightHorizontal));
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Scrollbar(Scrollbar::DiffRightHorizontal)
+    );
     drag_to(&mut app, right.x, y);
     assert_eq!(scroll_x(&app), 0.0);
 

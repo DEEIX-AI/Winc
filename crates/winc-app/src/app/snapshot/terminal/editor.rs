@@ -13,7 +13,7 @@ fn cwd(dir: &std::path::Path) -> String {
 
 /// 第 0 行第 `col` 格，按住 ⌘ 移过去，返回认出的链接。
 fn hover_link(app: &mut App, row: usize, col: usize) -> Option<TermLink> {
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     let (x, y) = cell_center(app, row, col);
     app.on_mouse_move(x, y);
     app.terminal.link.clone()
@@ -60,7 +60,7 @@ fn command_hover_finds_urls_osc8_links_and_files() {
     assert!(hover_link(&mut app, 0, 66).is_none());
 
     // 松开 ⌘，链接没了。
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     app.update_terminal_link();
     assert!(app.terminal.link.is_none());
 
@@ -75,7 +75,7 @@ fn command_hover_finds_urls_osc8_links_and_files() {
     // ⌘⇧ 单击：在文件树里定位。
     app.focus = Focus::Terminal;
     hover_link(&mut app, 0, 55);
-    app.modifiers = command_modifiers() | winit::keyboard::ModifiersState::SHIFT;
+    app.pointer.modifiers = command_modifiers() | winit::keyboard::ModifiersState::SHIFT;
     let at = cell_center(&app, 0, 55);
     click(&mut app, at);
     let ws = app.editor.workspace.as_ref().unwrap();

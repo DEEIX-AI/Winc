@@ -299,7 +299,7 @@ impl App {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn folder_icons(&mut self) -> Option<FolderIcons> {
         let (dark, folder_color) = (self.palette.dark, self.palette.folder);
-        let renderer = self.renderer.as_mut()?;
+        let renderer = self.frame.renderer.as_mut()?;
         let s = FOLDER_ICON;
         let clip = Rect::new(0.0, 0.0, s, s);
         let white = Color::hex(0xFFFFFF);

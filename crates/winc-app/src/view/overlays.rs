@@ -43,7 +43,7 @@ fn draw_search_bar(
     let bar = app.layout.search;
     let parts = SearchParts::new(bar);
     let search = &app.search;
-    let hovered = |button| app.hover == Hover::Search(button);
+    let hovered = |button| app.pointer.hover == Hover::Search(button);
     let expanded = parts.replace_field.w > 0.0;
     let can_replace = app.can_replace();
     draw_card(frame, p, bar, RADIUS_BAR, p.popup_bg);
@@ -283,7 +283,7 @@ fn draw_pick_row(app: &App, frame: &mut Frame<'_>, row: Rect, i: usize, clip: Re
     let p = app.palette;
     let color = if i == app.picker.selected {
         p.selected_inactive
-    } else if app.hover == Hover::PickerRow(i) {
+    } else if app.pointer.hover == Hover::PickerRow(i) {
         p.hover
     } else {
         return;
@@ -570,7 +570,7 @@ fn draw_remote_rows(
         let forget = PickerPart::ForgetRemote(i);
         let selected = i == app.picker.selected;
         draw_pick_row(app, frame, row, i, clip);
-        if !selected && app.hover == Hover::PickerPart(forget) {
+        if !selected && app.pointer.hover == Hover::PickerPart(forget) {
             frame.rect_clipped(row.inset(6.0, 1.0), p.hover, RADIUS_ROW, clip);
         }
         let cy = icon_center_y(app, row, app.fonts.ui);
@@ -603,10 +603,10 @@ fn draw_remote_rows(
                 BUTTON_SMALL,
                 row.h - 4.0,
             );
-            let hovered = matches!(app.hover,
+            let hovered = matches!(app.pointer.hover,
                 Hover::PickerRow(r) | Hover::PickerPart(PickerPart::ForgetRemote(r)) if r == i);
             if selected || hovered {
-                let over = app.hover == Hover::PickerPart(forget);
+                let over = app.pointer.hover == Hover::PickerPart(forget);
                 draw_button(frame, p, close, clip, over, false);
                 icons::close(frame, center(close), 6.5, p.text_muted, clip);
                 hits.push((close, forget));
@@ -835,10 +835,10 @@ fn draw_folder_rows(
         let clip = row.intersect(list);
         let forget = PickerPart::ForgetFolder(i);
         let selected = i == app.picker.selected;
-        let hovered = matches!(app.hover,
+        let hovered = matches!(app.pointer.hover,
             Hover::PickerRow(r) | Hover::PickerPart(PickerPart::ForgetFolder(r)) if r == i);
         draw_pick_row(app, frame, row, i, clip);
-        if !selected && app.hover == Hover::PickerPart(forget) {
+        if !selected && app.pointer.hover == Hover::PickerPart(forget) {
             frame.rect_clipped(row.inset(6.0, 1.0), p.hover, RADIUS_ROW, clip);
         }
 
@@ -855,7 +855,7 @@ fn draw_folder_rows(
             row.h - 4.0,
         );
         if selected || hovered {
-            let over = app.hover == Hover::PickerPart(forget);
+            let over = app.pointer.hover == Hover::PickerPart(forget);
             draw_button(frame, p, close, clip, over, false);
             icons::close(frame, center(close), 6.5, p.text_muted, clip);
             hits.push((close, forget));
@@ -965,7 +965,7 @@ pub(super) fn draw_conflict(
     let mut buttons = Vec::new();
     for (&action, w) in ConflictAction::ALL.iter().zip(labels) {
         let button = Rect::new(x, y, w, BUTTON_SMALL);
-        let hovered = app.hover == Hover::ConflictButton(action);
+        let hovered = app.pointer.hover == Hover::ConflictButton(action);
         draw_button(frame, p, button, card, hovered, false);
         ui_text(
             frame,
@@ -1044,7 +1044,7 @@ fn draw_notice(
         button_w - 8.0,
         BUTTON_SMALL,
     );
-    let hovered = app.hover == Hover::NoticeButton;
+    let hovered = app.pointer.hover == Hover::NoticeButton;
     draw_button(frame, p, button, rect, hovered, false);
     ui_text(frame, app, button.x + 8.0, button, label, p.accent, rect);
     (rect, Some(button))

@@ -148,7 +148,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
             ChangeTarget::Next => popup.hunk + 1 < count,
             _ => true,
         };
-        let hovered = enabled && app.hover == Hover::Change(target);
+        let hovered = enabled && app.pointer.hover == Hover::Change(target);
         draw_button(frame, p, rect, card, hovered, false);
         let color = match (enabled, hovered) {
             (false, _) => p.text_dim.alpha(0.5),

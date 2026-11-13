@@ -152,7 +152,10 @@ impl App {
             view.focus = None;
         }
         let count = self.click_count(x, y);
-        let (shift, alt) = (self.modifiers.shift_key(), self.modifiers.alt_key());
+        let (shift, alt) = (
+            self.pointer.modifiers.shift_key(),
+            self.pointer.modifiers.alt_key(),
+        );
 
         let right = parts.panes[RIGHT];
         let on_pane = |pane: &DiffPane| pane.text.contains(x, y) || pane.gutter.contains(x, y);
@@ -187,7 +190,7 @@ impl App {
                     };
                     let range = unit.extend(&view.side(side).text, origin, pos);
                     view.read_selection = Some(ReadSelection { side, range });
-                    self.drag = crate::app::Drag::DiffSelectRead { side, unit, origin };
+                    self.pointer.drag = crate::app::Drag::DiffSelectRead { side, unit, origin };
                 }
             }
             self.reset_blink();
@@ -249,7 +252,7 @@ impl App {
         }
         self.ime.preedit.clear();
         if drag {
-            self.drag = crate::app::Drag::DiffSelect { unit, origin, add };
+            self.pointer.drag = crate::app::Drag::DiffSelect { unit, origin, add };
         }
         self.reset_blink();
         self.request_redraw();
@@ -307,7 +310,7 @@ impl App {
             view.read_selection = None;
         }
         let anchor = (spot.line, spot.cell);
-        self.drag = crate::app::Drag::DiffColumns { anchor };
+        self.pointer.drag = crate::app::Drag::DiffColumns { anchor };
         self.drag_diff_columns(x, y, anchor);
     }
 

@@ -109,7 +109,7 @@ fn blank_app(dark: bool) -> App {
 
     let renderer =
         Renderer::offscreen(SIZE.0, SIZE.1, SCALE, palette.frame_bg, None, None).unwrap();
-    app.renderer = Some(renderer);
+    app.frame.renderer = Some(renderer);
     app.measure_fonts();
     app.relayout();
     app
@@ -140,13 +140,13 @@ fn hover_tree_row(app: &mut App, index: usize, x: f32) {
 pub(super) fn paint(app: &mut App) {
     app.vim_sync();
     app.relayout();
-    let mut renderer = app.renderer.take().unwrap();
+    let mut renderer = app.frame.renderer.take().unwrap();
     app.declare_base(&mut renderer);
     renderer.draw(|frame| view::draw(app, frame));
-    app.hover = app.hover_at(app.mouse.0, app.mouse.1);
+    app.pointer.hover = app.hover_at(app.pointer.mouse.0, app.pointer.mouse.1);
     app.declare_base(&mut renderer);
     renderer.draw(|frame| view::draw(app, frame));
-    app.renderer = Some(renderer);
+    app.frame.renderer = Some(renderer);
 }
 
 /// 直接删除 `path`（文件或目录），不移入废纸篓，避免测试在用户的废纸篓中留下内容。
@@ -210,7 +210,7 @@ fn tree_row_center(app: &App, index: usize) -> (f32, f32) {
 /// 目录取环境变量 `WINC_SNAPSHOT_DIR`；未设置时使用系统临时目录下的 `winc-snapshots`。
 fn shoot(app: &mut App, name: &str) {
     paint(app);
-    let renderer = app.renderer.take().unwrap();
+    let renderer = app.frame.renderer.take().unwrap();
 
     let dir = std::env::var_os("WINC_SNAPSHOT_DIR").map_or_else(
         || std::env::temp_dir().join("winc-snapshots"),
@@ -219,7 +219,7 @@ fn shoot(app: &mut App, name: &str) {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}.png"));
     write_png(&path, renderer.image().unwrap()).unwrap();
-    app.renderer = Some(renderer);
+    app.frame.renderer = Some(renderer);
     eprintln!("{}", path.display());
 }
 

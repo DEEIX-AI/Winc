@@ -248,12 +248,17 @@ fn a_file_read_in_the_background_lists_its_symbols_once_read() {
     let index = app.editor.open_tab(&notes);
     let job = app.editor.begin_load(index).unwrap();
     let id = job.id();
-    let ticket = app.loads.tickets.issue(id);
+    let ticket = app.disk.loads.tickets.issue(id);
     paint(&mut app);
     assert!(app.editor.active().unwrap().is_pending());
     assert_ne!(app.outline.empty, Some(OutlineEmpty::NoSymbols));
 
-    app.loads.results.0.send((id, ticket, job.run())).unwrap();
+    app.disk
+        .loads
+        .results
+        .0
+        .send((id, ticket, job.run()))
+        .unwrap();
     app.poll_loads();
     paint(&mut app);
     assert!(!app.editor.active().unwrap().is_pending());

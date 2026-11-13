@@ -249,7 +249,7 @@ impl App {
         let Some(alert) = self.alert.take() else {
             return;
         };
-        self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
+        self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
         self.request_redraw();
         if let Some(event) = (alert.done)(index, alert.checked) {
             self.handle_event(event);
@@ -273,7 +273,7 @@ impl App {
     ///
     /// 点在按钮上选中它，点在勾选框上切换；点在空白处不做什么（提示框要用按钮关掉）。
     pub(in crate::app) fn alert_mouse_down(&mut self) -> bool {
-        let (x, y) = self.mouse;
+        let (x, y) = self.pointer.mouse;
         let Some(alert) = &mut self.alert else {
             return false;
         };

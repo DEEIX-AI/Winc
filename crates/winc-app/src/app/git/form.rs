@@ -682,7 +682,7 @@ impl App {
             self.request_redraw();
         }
         self.update_cursor_icon();
-        if self.drag == crate::app::Drag::Field
+        if self.pointer.drag == crate::app::Drag::Field
             && let Some(field) = self.focused_field()
         {
             let pos = field.view.position_at_point(x, y);

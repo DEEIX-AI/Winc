@@ -881,7 +881,7 @@ impl App {
                         self.git.remote_list = refs.remote_list;
                         self.git.publish_remote = refs.publish_remote;
                         self.git.home = refs.home;
-                        if let Some(watcher) = &mut self.watcher {
+                        if let Some(watcher) = &mut self.disk.watcher {
                             watcher.watch_git_dir(refs.common_dir.as_deref());
                         }
                         self.branch_picker_refreshed(&before);

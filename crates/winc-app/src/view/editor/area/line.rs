@@ -476,7 +476,7 @@ impl Screen<'_> {
             );
             // 按列对齐的表格不支持显示整行。
             if self.columns.is_none() {
-                let hovered = app.hover == Hover::LongLine(row.line);
+                let hovered = app.pointer.hover == Hover::LongLine(row.line);
                 let color = if hovered { p.text } else { p.accent };
                 let show = t!("editor-line-show-whole");
                 let (from, clip) = (x + 8.0, text_rect);
@@ -490,7 +490,7 @@ impl Screen<'_> {
             let x = (origin_x + (cells + 1) as f32 * self.cell).round();
             let chip = Rect::new(x, tail_y + 3.0, 22.0, app.fonts.line_height - 6.0);
             frame.rect_clipped(chip, p.selected_inactive, 4.0, text_rect);
-            if app.hover == Hover::Folded(row.line) {
+            if app.pointer.hover == Hover::Folded(row.line) {
                 frame.rect_clipped(chip, p.hover, 4.0, text_rect);
             }
             let cy = (chip.y + chip.h / 2.0 - 1.0).round();

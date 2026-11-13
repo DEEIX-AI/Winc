@@ -50,3 +50,22 @@ impl Default for Sidebar {
         }
     }
 }
+
+/// 与磁盘的同步：目录的监视，以及文件在后台的读取、保存和改动。
+pub(crate) struct DiskState {
+    /// 已打开目录的文件监视器；目录内的文件被外部修改时发出通知。
+    pub(in crate::app) watcher: Option<winc_editor::Watcher>,
+    /// 已收到目录变化通知后，统一处理变化的时刻。
+    pub(in crate::app) changes_due: Option<Instant>,
+    /// 正在后台重读的、被其他程序修改的文件。
+    pub(in crate::app) rereads: workspace::watch::Rereads,
+    /// 正在后台保存的大文件。
+    pub(in crate::app) saves: workspace::background_save::BackgroundSaves,
+    /// 正在后台读取的、刚打开的文件。
+    pub(in crate::app) loads: workspace::loading::Loads,
+    /// 正在后台执行的文件操作。
+    pub(in crate::app) file_work: workspace::file_work::FileWork,
+    /// 逐个执行远端文件改动的线程的任务队列（见 [`App::spawn_ordered_then`]）；尚未创建时为
+    /// `None`。
+    pub(in crate::app) ordered: Option<mpsc::Sender<OrderedTask>>,
+}

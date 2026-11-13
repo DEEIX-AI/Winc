@@ -58,7 +58,7 @@ fn head(app: &App) -> usize {
 /// 绘制一帧并返回全部像素。
 fn pixels(app: &mut App) -> Vec<u32> {
     paint(app);
-    let renderer = app.renderer.as_ref().unwrap();
+    let renderer = app.frame.renderer.as_ref().unwrap();
     renderer.image().unwrap().pixels.clone()
 }
 
@@ -712,10 +712,10 @@ fn the_command_line_sits_in_the_status_row_with_history_and_completion() {
     // `Ctrl-R` 之后是寄存器名，`Ctrl-R Ctrl-W` 是光标处的词。
     app.goto_input.as_mut().unwrap().set_text("");
     assert!(!app.vim_prompt_key(&Key::Character("x".into()), "x"));
-    app.modifiers = ModifiersState::CONTROL;
+    app.pointer.modifiers = ModifiersState::CONTROL;
     assert!(app.vim_prompt_key(&Key::Character("r".into()), "r"));
     assert!(app.vim_prompt_key(&Key::Character("w".into()), "w"));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert_eq!(line(&app), "four");
     app.close_prompt();
     app.focus = Focus::Editor;
@@ -986,9 +986,9 @@ fn lists_move_with_vim_keys_and_the_focus_follows_window_commands() {
     }
     // `Ctrl-W` 之后的方向把焦点移回编辑区。
     app.focus = Focus::Tree;
-    app.modifiers = ModifiersState::CONTROL;
+    app.pointer.modifiers = ModifiersState::CONTROL;
     assert!(app.vim_list_key(&key("w"), "w"));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert!(app.vim_list_key(&key("l"), "l"));
     assert_eq!(app.focus, Focus::Editor);
 

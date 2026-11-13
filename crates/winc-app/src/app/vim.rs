@@ -597,9 +597,9 @@ impl App {
             self.place_read_caret();
         }
         // 差异中光标在可编辑的一侧时，不带修饰键的字符先让该侧对应的文档接手。
-        let plain = !(self.modifiers.control_key()
-            || self.modifiers.super_key()
-            || self.modifiers.alt_key());
+        let plain = !(self.pointer.modifiers.control_key()
+            || self.pointer.modifiers.super_key()
+            || self.pointer.modifiers.alt_key());
         if in_diff && plain && matches!(event.logical_key, Key::Character(_)) {
             self.edit_at_read_caret();
         }
@@ -616,7 +616,7 @@ impl App {
             &event.logical_key,
             &event.key_without_modifiers(),
             event.physical_key,
-            self.modifiers,
+            self.pointer.modifiers,
             mode != Mode::Insert,
         );
         let Some(key) = key else {
@@ -722,7 +722,7 @@ impl App {
             &event.logical_key,
             &event.key_without_modifiers(),
             event.physical_key,
-            self.modifiers,
+            self.pointer.modifiers,
             true,
         );
         let mac = cfg!(target_os = "macos");

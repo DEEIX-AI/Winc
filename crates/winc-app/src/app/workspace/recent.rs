@@ -96,7 +96,7 @@ impl App {
         let Some(&index) = self.picker.hits.get(self.picker.selected) else {
             return;
         };
-        let new_window = self.modifiers.alt_key();
+        let new_window = self.pointer.modifiers.alt_key();
         self.close_picker();
         if new_window {
             self.open_recent_in_new_window(index);

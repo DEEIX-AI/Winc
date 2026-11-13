@@ -37,7 +37,7 @@ pub(super) fn draw_editor_scrollbar(app: &mut App, frame: &mut Frame<'_>, index:
     };
     for (i, h) in hunks.iter().enumerate() {
         let color = crate::view::diff::hunk_shade(p, h).mark;
-        let lane = if app.hover == Hover::RulerChange(i) {
+        let lane = if app.pointer.hover == Hover::RulerChange(i) {
             (GIT_LANE.0 + 1.0, GIT_LANE.1 + 1.0)
         } else {
             GIT_LANE
@@ -124,7 +124,7 @@ fn occurrence_lines(app: &mut App, index: usize) -> Option<Arc<[usize]>> {
         occurrences.needle.clone(),
         occurrences.whole_word,
     );
-    if let Some((cached, lines)) = &app.ruler_cache
+    if let Some((cached, lines)) = &app.caches.ruler_cache
         && *cached == key
     {
         return lines.clone();
@@ -145,7 +145,7 @@ fn occurrence_lines(app: &mut App, index: usize) -> Option<Arc<[usize]>> {
             ControlFlow::Continue(())
         });
     let lines: Option<Arc<[usize]>> = (count >= 2).then(|| lines.into());
-    app.ruler_cache = Some((key, lines.clone()));
+    app.caches.ruler_cache = Some((key, lines.clone()));
     lines
 }
 

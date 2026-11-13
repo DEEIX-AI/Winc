@@ -27,7 +27,7 @@ fn no_history_starts_on_the_start_page() {
     // 点「应用设置」打开设置。
     let (row, _) = app.hits.start[0];
     app.on_mouse_move(row.x + 10.0, row.y + 10.0);
-    assert_eq!(app.hover, Hover::Start(StartAction::Settings));
+    assert_eq!(app.pointer.hover, Hover::Start(StartAction::Settings));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert!(app.settings.open);
@@ -37,7 +37,7 @@ fn no_history_starts_on_the_start_page() {
     // 点「新建文件」开一个未命名标签，开始页换成编辑区。
     let (row, _) = app.hits.start[1];
     app.on_mouse_move(row.x + 10.0, row.y + 10.0);
-    assert_eq!(app.hover, Hover::Start(StartAction::NewFile));
+    assert_eq!(app.pointer.hover, Hover::Start(StartAction::NewFile));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert_eq!(app.editor.documents.len(), 1);
@@ -95,7 +95,7 @@ fn recent_folders_open_and_can_be_forgotten() {
     // 悬停在一行上时，右端的 ✕ 才可用；点击 ✕ 只从列表中移除该项，不打开目录。
     let close = rect(&app, StartAction::Forget(0));
     app.on_mouse_move(close.x + 4.0, close.y + 4.0);
-    assert_eq!(app.hover, Hover::Start(StartAction::Forget(0)));
+    assert_eq!(app.pointer.hover, Hover::Start(StartAction::Forget(0)));
     app.on_mouse_down(MouseButton::Left);
     assert!(app.editor.workspace.is_none());
     assert_eq!(app.state.recent.len(), 2);
@@ -308,7 +308,7 @@ fn switching_folders_keeps_each_folders_tabs() {
     let folder_icon = crate::app::input::context_menu::MenuIcon::Folder;
     assert_eq!(icons, [Some(folder_icon), None, None, None]);
     let row = popup.row_rects[0];
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let scale = image.width as f32 / app.layout.window.w;
     let (x0, x1) = ((row.x + 24.0) * scale, (row.x + 46.0) * scale);
     let (y0, y1) = (row.y * scale, row.bottom() * scale);

@@ -197,7 +197,7 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let edit = edit_state(app, &view, new_lines(&view, rows));
     let mut hits = Vec::new();
     // 展开或折叠的过渡：滚动位置改变、该段已不处于展开状态时不再绘制过渡。
-    let shift = (app.diff_fold.as_ref())
+    let shift = (app.motion.diff_fold.as_ref())
         .filter(|m| m.doc == doc.id && m.scroll == doc.scroll_line && view.is_open(m.gap))
         .map(|m| FoldShift {
             rows: m.rows.clone(),
@@ -250,7 +250,7 @@ fn draw_header(
             p,
             rect,
             header,
-            app.hover == Hover::Diff(target),
+            app.pointer.hover == Hover::Diff(target),
             false,
         );
         let c = center(rect);
@@ -673,7 +673,7 @@ fn draw_body(
             SideRow::Fold { gap, ref lines } => {
                 // 折叠的一段：绘制一条淡色底（不绘制上下边线，边线在中间一栏处会断开），行号栏中
                 // 一对朝外的小箭头表示可以展开；悬停时底色加深。
-                let hovered = app.hover == Hover::Diff(DiffTarget::Fold(gap));
+                let hovered = app.pointer.hover == Hover::Diff(DiffTarget::Fold(gap));
                 let fill = if hovered {
                     p.hover
                 } else {
@@ -730,7 +730,7 @@ fn draw_body(
                 .and_then(|h| inclusions.get(h))
                 .is_some_and(|inclusion| {
                     matches!(inclusion, Pick::Lines(_))
-                        || app.hover == Hover::Diff(DiffTarget::IncludeLine(side, line))
+                        || app.pointer.hover == Hover::Diff(DiffTarget::IncludeLine(side, line))
                 });
             if unified && part == 0 && !line_check {
                 let sign = if side == LEFT { "−" } else { "+" };
@@ -761,7 +761,7 @@ fn draw_body(
             let target = DiffTarget::Refold(view.open_folds[index].0);
             let pad = crate::app::diff::DIFF_GUTTER_PAD;
             let mark = Rect::new(pane.gutter.x, y, pad, lh);
-            let hovered = app.hover == Hover::Diff(target);
+            let hovered = app.pointer.hover == Hover::Diff(target);
             let color = if hovered { p.text_muted } else { p.text_dim };
             // 标记略小于留白并偏向左侧，与行号之间留出间隙。
             let center = (mark.x + mark.w / 2.0 - 1.0, y + lh / 2.0);
@@ -773,7 +773,7 @@ fn draw_body(
         if let (0, Some(inclusion)) = (part, hunk.and_then(|h| inclusions.get(h))) {
             let cell = parts.line_checks[side];
             let rect = Rect::new(cell.x, y, cell.w, lh);
-            let hovered = app.hover == Hover::Diff(DiffTarget::IncludeLine(side, line));
+            let hovered = app.pointer.hover == Hover::Diff(DiffTarget::IncludeLine(side, line));
             if hovered || matches!(inclusion, Pick::Lines(_)) {
                 let on = !line_skipped && !matches!(inclusion, Pick::Skip);
                 icons::line_checkbox(
@@ -806,7 +806,7 @@ fn draw_body(
             let state = text_side
                 .highlighter
                 .state_at(&text_side.text, line, HIGHLIGHT_BUDGET);
-            app.highlight_pending |= state.is_none();
+            app.caches.highlight_pending |= state.is_none();
             let language = text_side.highlighter.language();
             tokens.clear();
             let _ = winc_syntax::highlight_line(
@@ -1129,7 +1129,7 @@ fn draw_body(
             let mid = mid.max(body.y + 10.0);
             let c = (parts.include_x, mid);
             // 与左侧的「»」使用同一套线条图标（`icons::line_checkbox`），仅悬停时显示底色。
-            let hovered = app.hover == Hover::Diff(DiffTarget::Include(h));
+            let hovered = app.pointer.hover == Hover::Diff(DiffTarget::Include(h));
             match inclusions.get(h) {
                 Some(Pick::Lines(_)) => icons::line_checkbox_mixed(
                     frame,
@@ -1174,7 +1174,7 @@ fn draw_body(
             // 紧贴顶边的按钮（文件开头的插入）下移半个按钮高度，避免被标题栏裁切。
             let mid = mid.max(body.y + 10.0);
             let c = (parts.revert_x, mid);
-            let hovered = app.hover == Hover::Diff(DiffTarget::Revert(h));
+            let hovered = app.pointer.hover == Hover::Diff(DiffTarget::Revert(h));
             icons::line_replace(frame, c, hovered.then_some(p.hover), p.accent, body);
             let rect = Rect::new(c.0 - 10.0, c.1 - 10.0, 20.0, 20.0);
             hits.push((rect.intersect(body), DiffTarget::Revert(h)));

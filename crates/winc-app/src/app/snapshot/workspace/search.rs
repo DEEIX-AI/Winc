@@ -84,7 +84,7 @@ fn the_exclude_field_toggles_searching_ignored_files() {
     assert!(toggle.w > 0.0);
     let at = (toggle.x + 4.0, toggle.y + 4.0);
     app.on_mouse_move(at.0, at.1);
-    assert_eq!(app.hover, Hover::Panel(PanelButton::Ignored));
+    assert_eq!(app.pointer.hover, Hover::Panel(PanelButton::Ignored));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert!(app.global.include_ignored);
@@ -111,7 +111,7 @@ fn global_search_finds_opens_and_replaces() {
     // 点击侧栏顶部的「搜索」：侧栏切换为搜索面板，焦点在查找输入框，文件树高度变为 0。
     let (search_tab, _) = app.sidebar_tabs()[1];
     app.on_mouse_move(search_tab.x + 4.0, search_tab.y + 4.0);
-    assert_eq!(app.hover, Hover::ViewTab(SidebarView::Search));
+    assert_eq!(app.pointer.hover, Hover::ViewTab(SidebarView::Search));
     app.on_mouse_down(MouseButton::Left);
     assert_eq!(app.sidebar.view, SidebarView::Search);
     assert_eq!(app.focus, Focus::GlobalQuery);
@@ -150,7 +150,7 @@ fn global_search_finds_opens_and_replaces() {
         .unwrap();
     let row = app.result_row_rect(index);
     app.on_mouse_move(row.x + 60.0, row.y + 10.0);
-    assert_eq!(app.hover, Hover::Result(index));
+    assert_eq!(app.pointer.hover, Hover::Result(index));
     app.on_mouse_down(MouseButton::Left);
     let doc = app.editor.active().unwrap();
     assert_eq!(doc.name(), "config.rs");
@@ -176,7 +176,7 @@ fn global_search_finds_opens_and_replaces() {
     paint(&mut app);
     let (_, dismiss) = row_actions(cargo, false);
     app.on_mouse_move(dismiss.x + 4.0, dismiss.y + 4.0);
-    assert_eq!(app.hover, Hover::RowAction(0, RowAction::Dismiss));
+    assert_eq!(app.pointer.hover, Hover::RowAction(0, RowAction::Dismiss));
     app.on_mouse_down(MouseButton::Left);
     assert_eq!(app.global.engine.results.len(), 2);
 
@@ -252,16 +252,16 @@ fn sidebar_top_buttons_hover_in_both_views() {
         // 侧栏开关、两个视图切换按钮和分隔条，在两种视图中都有悬停效果。
         let button = app.layout.sidebar_button;
         app.on_mouse_move(button.x + 4.0, button.y + 4.0);
-        assert_eq!(app.hover, Hover::SidebarButton, "{view:?}");
+        assert_eq!(app.pointer.hover, Hover::SidebarButton, "{view:?}");
 
         for (rect, tab) in app.sidebar_tabs() {
             app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
-            assert_eq!(app.hover, Hover::ViewTab(tab), "{view:?}");
+            assert_eq!(app.pointer.hover, Hover::ViewTab(tab), "{view:?}");
         }
 
         let splitter = app.layout.splitter;
         app.on_mouse_move(splitter.x + 1.0, 300.0);
-        assert_eq!(app.hover, Hover::Splitter, "{view:?}");
+        assert_eq!(app.pointer.hover, Hover::Splitter, "{view:?}");
     }
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -289,14 +289,14 @@ fn hover_and_click_agree_on_what_is_under_the_mouse() {
             for gy in 0..40 {
                 let y = window.y + (gy as f32 + 0.5) * window.h / 40.0;
                 app.on_mouse_move(x, y);
-                let hover = app.hover;
+                let hover = app.pointer.hover;
                 let expected = match hover {
                     Hover::Splitter => "splitter",
                     Hover::Scrollbar(_) => "scrollbar",
                     _ => continue,
                 };
                 app.on_mouse_down(MouseButton::Left);
-                let got = match app.drag {
+                let got = match app.pointer.drag {
                     crate::app::Drag::Splitter { .. } => "splitter",
                     crate::app::Drag::Scrollbar { .. } => "scrollbar",
                     _ => "other",
@@ -345,7 +345,7 @@ fn global_search_replaces_one_match_and_filters() {
     let (replace, _) = row_actions(row, true);
     let replace = replace.unwrap();
     app.on_mouse_move(replace.x + 4.0, replace.y + 4.0);
-    assert_eq!(app.hover, Hover::RowAction(1, RowAction::Replace));
+    assert_eq!(app.pointer.hover, Hover::RowAction(1, RowAction::Replace));
     app.on_mouse_down(MouseButton::Left);
     assert_eq!(
         std::fs::read_to_string(dir.join("src/config.rs")).unwrap(),
@@ -527,7 +527,7 @@ fn the_search_results_scrollbar_can_be_dragged() {
     let results = app.panel_parts().results;
     let x = results.right() - 3.0;
     app.on_mouse_move(x, results.y + 10.0);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::Panel));
+    assert_eq!(app.pointer.hover, Hover::Scrollbar(Scrollbar::Panel));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x, results.bottom() + 40.0);
     assert_eq!(app.global.scroll, app.results_max_scroll());
@@ -992,12 +992,12 @@ fn the_focus_ring_has_even_sides_at_any_scale() {
     for scale in [0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.2] {
         let bg = app.palette.frame_bg;
         let renderer = winc_render::Renderer::offscreen(SIZE.0, SIZE.1, scale, bg, None, None);
-        app.renderer = Some(renderer.unwrap());
+        app.frame.renderer = Some(renderer.unwrap());
         // 每轮加宽侧栏 0.3 逻辑像素，使输入框的边落在非整数的物理像素上。
         app.sidebar.width += 0.3;
         paint(&mut app);
         let field = app.panel_parts().replace;
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let accent = app.palette.accent;
         let target = [accent.r, accent.g, accent.b].map(|c| (c * 255.0).round() as i32);
         let lit = |x: i32, y: i32| {

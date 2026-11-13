@@ -461,9 +461,9 @@ impl App {
             return;
         };
         let directly = if cfg!(target_os = "macos") {
-            self.modifiers.super_key()
+            self.pointer.modifiers.super_key()
         } else {
-            self.modifiers.control_key()
+            self.pointer.modifiers.control_key()
         };
         let browsing = match &list.stage {
             Stage::Browse { target, dir, .. } => Some((target.clone(), dir.clone())),

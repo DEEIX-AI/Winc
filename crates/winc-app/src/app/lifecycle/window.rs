@@ -24,12 +24,12 @@ impl App {
 
     /// 是否认为光标位于窗口内：收到过鼠标移动，且此后没有按光标离开处理。
     pub(crate) fn cursor_inside(&self) -> bool {
-        self.cursor_inside
+        self.pointer.cursor_inside
     }
 
     /// 处理光标离开窗口：清除悬停状态，并解除标签宽度的锁定。
     pub(crate) fn cursor_left(&mut self) {
-        self.cursor_inside = false;
+        self.pointer.cursor_inside = false;
         if self.tabs.width_lock.take().is_some() {
             self.request_redraw();
         }
@@ -59,8 +59,8 @@ impl App {
     /// 测量模式下窗口不激活、完全透明，系统把它当作在后台；仍按前台处理，测得的内存与平时
     /// 使用时可比。
     pub(super) fn update_foreground(&mut self, foreground: bool) {
-        if let Some(renderer) = &mut self.renderer {
-            renderer.set_foreground(foreground || self.bench.silent());
+        if let Some(renderer) = &mut self.frame.renderer {
+            renderer.set_foreground(foreground || self.frame.bench.silent());
         }
     }
 
@@ -102,14 +102,14 @@ impl App {
     /// 窗口是否完全看不见（见 `occluded`）；看得见时，或者测量时（窗口透明，系统当它看不见）
     /// 为假。
     pub(in crate::app) fn unseen(&self) -> bool {
-        self.window.occluded && !self.bench.silent()
+        self.window.occluded && !self.frame.bench.silent()
     }
 
     /// 窗口变得完全看不见或又看得见（`WindowEvent::Occluded`）。
     pub(super) fn set_occluded(&mut self, occluded: bool) {
         self.window.occluded = occluded;
         let unseen = self.unseen();
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = &mut self.frame.renderer {
             renderer.set_occluded(unseen);
         }
         if !occluded {
@@ -119,7 +119,7 @@ impl App {
 
     /// 本窗口的字体和字形缓存，给之后新开的窗口共用；还没有渲染器时为 `None`。
     pub(crate) fn shared_glyphs(&self) -> Option<winc_render::SharedGlyphs> {
-        self.renderer.as_ref().map(Renderer::shared_glyphs)
+        self.frame.renderer.as_ref().map(Renderer::shared_glyphs)
     }
 
     /// 把窗口切到前台：关着的重新显示，最小化的还原。
@@ -265,7 +265,7 @@ impl App {
                 self.focus = Focus::Search;
             }
         }
-        let Some(renderer) = &self.renderer else {
+        let Some(renderer) = &self.frame.renderer else {
             return;
         };
         let (w, h) = renderer.logical_size();
@@ -343,7 +343,7 @@ impl App {
     /// 收回空间。
     fn place_preview_button(&mut self) {
         let present = self.editor.active().is_some_and(|d| d.can_preview());
-        let share = self.module_fx.preview.share(present);
+        let share = self.motion.module_fx.preview.share(present);
         let l = &mut self.layout;
         l.preview = Rect::default();
         let full = crate::layout::PREVIEW_GROUP_W;
@@ -363,7 +363,11 @@ impl App {
     /// 当前文件是网页（`App::browser_page`）时，在标签栏右端留出「在浏览器中打开」按钮，标签栏
     /// 让出该处；出现、消失的动画同预览切换。
     fn place_browser_button(&mut self) {
-        let share = self.module_fx.browser.share(self.browser_page().is_some());
+        let share = self
+            .motion
+            .module_fx
+            .browser
+            .share(self.browser_page().is_some());
         let l = &mut self.layout;
         l.browser = Rect::default();
         if share <= 0.0 || l.tabs.w < BUTTON * 4.0 {
@@ -381,7 +385,8 @@ impl App {
 
     /// 分栏预览中间的分隔线是否正被悬停或拖动。
     pub(crate) fn split_divider_active(&self) -> bool {
-        self.hover == Hover::SplitDivider || matches!(self.drag, Drag::SplitDivider { .. })
+        self.pointer.hover == Hover::SplitDivider
+            || matches!(self.pointer.drag, Drag::SplitDivider { .. })
     }
 
     /// 分栏预览：编辑区左右分开，左边是行号栏和文字，右边画预览，中间一道分隔线。
@@ -418,7 +423,7 @@ impl App {
         const SPLIT_MIN: f32 = 240.0;
         // 分隔线两侧各放宽的可拖动范围（逻辑像素，经验值）。
         const GRIP: f32 = 4.0;
-        let share = self.split_share.unwrap_or(0.5);
+        let share = self.preview.split_share.unwrap_or(0.5);
         let l = &mut self.layout;
         l.split = Rect::default();
         l.split_divider = Rect::default();
@@ -543,8 +548,8 @@ impl App {
         self.load_active_in_background();
         // 当前标签在读：先不画，屏幕上留着上一帧，读好了或到时再画（见 `App::holding_frame`）。
         if self.holding_frame(Instant::now()).is_some() {
-            self.loads.held = true;
-            self.dirty = false;
+            self.disk.loads.held = true;
+            self.frame.dirty = false;
             return;
         }
         self.vim_sync();
@@ -561,12 +566,12 @@ impl App {
         self.advance_search();
         self.advance_images();
 
-        self.highlight_pending = false;
+        self.caches.highlight_pending = false;
         self.ime.cursor = None;
         // 此前的重画请求由这一帧满足；绘制之后（例如 `refresh_hover`）再提出的请求留到下一帧。
-        self.dirty = false;
+        self.frame.dirty = false;
 
-        let Some(mut renderer) = self.renderer.take() else {
+        let Some(mut renderer) = self.frame.renderer.take() else {
             return;
         };
         let started = Instant::now();
@@ -581,17 +586,17 @@ impl App {
         let drawn = renderer.draw(|frame| view::draw(self, frame));
         self.end_scroll_frame(scrolled);
         let elapsed = started.elapsed();
-        self.renderer = Some(renderer);
+        self.frame.renderer = Some(renderer);
         if !drawn {
             self.retry_frame(started);
             return;
         }
-        if self.frame_log.enabled()
+        if self.frame.frame_log.enabled()
             && let Some(window) = &self.window.handle
         {
             let size = window.inner_size();
             let refresh = frame_interval(window);
-            (self.frame_log).record(elapsed, refresh, (size.width, size.height));
+            (self.frame.frame_log).record(elapsed, refresh, (size.width, size.height));
         }
         self.refresh_hover();
         // 命中测试区域随本帧的布局更新；两帧之间的落指与抬手由 `on_touch` 另行同步。
@@ -602,25 +607,26 @@ impl App {
         // （高亮 `HIGHLIGHT_BUDGET` 行、查找一个 8 ms 的时间片），已经不比刷新间隔短，按刷新率
         // 等反而常常错过一次刷新。
         let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
-        self.dirty |= self.highlight_pending || (searching && !self.search.is_complete());
+        self.frame.dirty |=
+            self.caches.highlight_pending || (searching && !self.search.is_complete());
         // 终端查找同样按时间片进行：这一帧之后再找一个时间片，没找完就马上绘制下一帧。
-        self.dirty |= self.terminal_find_tick();
+        self.frame.dirty |= self.terminal_find_tick();
         // 动画帧按显示器的刷新率安排。winit 在 macOS 上请求重画后立即绘制，不等待屏幕刷新，
         // 因此不能直接置 `dirty`，否则绘制频率会远高于刷新率。
         self.schedule_frame(started);
         self.update_ime_area();
         self.after_terminal_frame();
-        self.presented += 1;
+        self.frame.presented += 1;
 
-        match self.bench.on_present(self.presented, elapsed) {
+        match self.frame.bench.on_present(self.frame.presented, elapsed) {
             Next::Continue => {}
             // 应用层看到以后结束事件循环（测量时只有一个窗口）。
             Next::Exit => self.closing.quit_requested = true,
             // 当前显示 Markdown 预览时滚动预览，到达末尾后回到开头。
-            Next::Scroll if self.markdown.area.h > 0.0 => {
-                let before = self.markdown.scroll();
+            Next::Scroll if self.preview.markdown.area.h > 0.0 => {
+                let before = self.preview.markdown.scroll();
                 self.scroll_markdown(-BENCH_PREVIEW_STEP);
-                if self.markdown.scroll() == before {
+                if self.preview.markdown.scroll() == before {
                     self.scroll_markdown_to(0.0);
                 }
                 self.request_redraw();
@@ -648,7 +654,7 @@ impl App {
                 } else {
                     self.run(Command::Insert("x".into()));
                 }
-                self.bench.key_handled(started.elapsed());
+                self.frame.bench.key_handled(started.elapsed());
                 self.request_redraw();
             }
             Next::Preview => {
@@ -677,16 +683,16 @@ impl App {
             }
         }
         let ready = self.terminal_ready();
-        if let Some(command) = self.bench.terminal_command(ready) {
+        if let Some(command) = self.frame.bench.terminal_command(ready) {
             self.terminal_input(format!("{command}\n").into_bytes());
         }
         let searching = self.find.open || self.find.pending_jump.is_some();
-        let done = !self.highlight_pending && (!searching || self.search.is_complete());
-        if self.bench.on_progress(done) {
+        let done = !self.caches.highlight_pending && (!searching || self.search.is_complete());
+        if self.frame.bench.on_progress(done) {
             self.closing.quit_requested = true;
         }
         let scroll = self.editor.active().map_or(0.0, |doc| doc.scroll_line);
-        if self.bench.on_wheel_frame(scroll) {
+        if self.frame.bench.on_wheel_frame(scroll) {
             self.closing.quit_requested = true;
         }
     }
@@ -695,13 +701,13 @@ impl App {
     ///
     /// 文件尚未读完时不送出：总行数未定，滚动会停在已读到的末尾。
     pub(in crate::app) fn bench_wheel_tick(&mut self, now: Instant) -> Option<Instant> {
-        let (send, next) = self.bench.wheel_due(now);
+        let (send, next) = self.frame.bench.wheel_due(now);
         let loading = self.editor.active().is_some_and(|doc| doc.is_pending());
         if send && !loading {
             let text = self.layout.text;
-            self.mouse = (text.x + text.w / 2.0, text.y + text.h / 2.0);
+            self.pointer.mouse = (text.x + text.w / 2.0, text.y + text.h / 2.0);
             let lines = self.wheel_step().1 / self.fonts.line_height;
-            self.bench.wheel_sent(lines);
+            self.frame.bench.wheel_sent(lines);
             self.on_wheel(winit::event::MouseScrollDelta::LineDelta(0.0, -1.0));
         }
         next

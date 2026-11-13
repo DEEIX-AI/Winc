@@ -92,7 +92,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     // 范围之外时需要清除悬停状态。
     let (x, y) = app.mouse();
     if app.tree.overflow.is_none()
-        && matches!(app.hover, Hover::TreeRow(_))
+        && matches!(app.pointer.hover, Hover::TreeRow(_))
         && !layout.tree.contains(x, y)
     {
         app.set_hover(Hover::None);
@@ -105,7 +105,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
     // 本帧没有绘制工具栏（侧栏收起或处于搜索视图）时，收起动画直接结束，不需要额外一帧。
     if app.hits.tree_tools.is_empty() && app.hits.tree_more.is_none() {
-        app.tool_fold.settle();
+        app.motion.tool_fold.settle();
     }
 
     draw_top_bar(app, frame);
@@ -279,7 +279,7 @@ fn draw_tree_drag(app: &App, frame: &mut Frame<'_>) {
         n => Cow::Owned(t!("workspace-tree-drag-items", count = n)),
     };
     // 按住 ⌥ 松开时执行复制。
-    let name = if app.modifiers.alt_key() {
+    let name = if app.pointer.modifiers.alt_key() {
         Cow::Owned(t!("workspace-tree-drag-copy", name = name.as_ref()))
     } else {
         name
@@ -318,7 +318,7 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
     }
     let (button, label): (Rect, String) = match workspace::panel::tooltip(app) {
         Some(tip) => tip,
-        None => match app.hover {
+        None => match app.pointer.hover {
             Hover::Search(button) => (
                 SearchParts::new(app.layout.search).rect(button),
                 button.label(),
@@ -454,7 +454,7 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
     // 单行高 26 逻辑像素，每多一行增加 18。
     const LINE: f32 = 18.0;
     let height = 8.0 + LINE * lines.len() as f32;
-    let rect = if matches!(app.hover, Hover::RulerChange(_)) {
+    let rect = if matches!(app.pointer.hover, Hover::RulerChange(_)) {
         // 概览标尺紧靠窗口右边缘：提示放在标尺左侧、与鼠标同高，不遮挡鼠标所指的标记。
         Rect::new(
             button.x - 8.0 - width,

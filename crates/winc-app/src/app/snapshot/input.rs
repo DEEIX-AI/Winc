@@ -13,7 +13,7 @@ fn a_key_taken_by_the_input_method_is_no_shortcut_while_composing() {
 
     let dir = sample_folder("ime-shortcut");
     let mut app = app_with(&dir, false);
-    app.modifiers = ModifiersState::CONTROL;
+    app.pointer.modifiers = ModifiersState::CONTROL;
     let stroke = |app: &App| {
         app.stroke_of(
             &Key::Named(NamedKey::Process),

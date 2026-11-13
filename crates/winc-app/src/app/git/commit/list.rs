@@ -529,7 +529,7 @@ impl App {
                 | NamedKey::PageDown,
             ) => {
                 if let Some(next) = target {
-                    if self.modifiers.shift_key() && !self.commit.browse {
+                    if self.pointer.modifiers.shift_key() && !self.commit.browse {
                         self.select_commit_range(next);
                     } else {
                         self.select_commit_file(next);

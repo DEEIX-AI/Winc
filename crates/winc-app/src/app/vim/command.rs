@@ -152,7 +152,7 @@ impl App {
         else {
             return false;
         };
-        let ctrl = self.modifiers.control_key();
+        let ctrl = self.pointer.modifiers.control_key();
         let handled = if std::mem::take(&mut line.register) {
             let name = base.chars().next().filter(|_| base.chars().count() == 1);
             if let Some(text) = name.and_then(|name| self.vim_insertion(name, ctrl)) {
@@ -170,7 +170,7 @@ impl App {
                     true
                 }
                 Key::Named(NamedKey::Tab) if self.prompt_kind == PromptKind::VimCommand => {
-                    self.vim_complete(&mut line, self.modifiers.shift_key());
+                    self.vim_complete(&mut line, self.pointer.modifiers.shift_key());
                     true
                 }
                 // 单独的修饰键不打断翻阅与补全。

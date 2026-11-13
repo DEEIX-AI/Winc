@@ -60,7 +60,7 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
 
     for &(rect, view) in &tabs {
         let on = app.sidebar.view == view;
-        let hovered = app.hover == Hover::ViewTab(view);
+        let hovered = app.pointer.hover == Hover::ViewTab(view);
         // 图标外圈（改动小圆点的隔圈）用这一段的底色。
         let base = if on {
             raised
@@ -181,7 +181,7 @@ fn draw_panel_header(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
     for (rect, tool) in parts.tools {
         // 没有结果时「清除」「全部折叠」置灰。
         let enabled = tool == PanelTool::Refresh || has_results;
-        let hovered = enabled && app.hover == Hover::Panel(PanelButton::Tool(tool));
+        let hovered = enabled && app.pointer.hover == Hover::Panel(PanelButton::Tool(tool));
         draw_button(frame, p, rect, header, hovered, false);
 
         let color = match (enabled, hovered) {
@@ -218,7 +218,7 @@ fn draw_panel_inputs(
     let p = app.palette;
     let g = &app.global;
     let panel = app.panel_rect();
-    let hovered = |button| app.hover == Hover::Panel(button);
+    let hovered = |button| app.pointer.hover == Hover::Panel(button);
     let error = g.engine.error().is_some() && g.due.is_none();
 
     let focused = app.focus == Focus::GlobalQuery;
@@ -552,7 +552,7 @@ fn draw_result_row(
     let area = cx.area;
     let is_selected = cx.selected == Some(kind);
     let hovered = index.is_some_and(
-        |index| matches!(app.hover, Hover::Result(i) | Hover::RowAction(i, _) if i == index),
+        |index| matches!(app.pointer.hover, Hover::Result(i) | Hover::RowAction(i, _) if i == index),
     );
     let pill = Rect::new(row.x + 8.0, row.y + 1.0, row.w - 16.0, row.h - 2.0);
 
@@ -591,7 +591,8 @@ fn draw_result_row(
             false,
         );
 
-        let hover_on = |action| index.is_some_and(|i| app.hover == Hover::RowAction(i, action));
+        let hover_on =
+            |action| index.is_some_and(|i| app.pointer.hover == Hover::RowAction(i, action));
 
         if let Some(rect) = replace_rect {
             draw_button(frame, p, rect, area, hover_on(RowAction::Replace), false);
@@ -801,7 +802,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
     use crate::app::{CommitTarget, DiffTarget};
     use crate::keymap::Action;
     use crate::layout::with_key;
-    match app.hover {
+    match app.pointer.hover {
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::ShellMenu) => {
             let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
             Some((rect, t!("terminal-shell-select").to_owned()))

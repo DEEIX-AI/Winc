@@ -787,12 +787,12 @@ fn the_status_bar_opens_the_branch_picker_with_the_sync_actions() {
         app.picker_action_command(PickerPart::Pull),
         MenuCommand::GitPull
     );
-    app.modifiers = winit::keyboard::ModifiersState::ALT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::ALT;
     assert_eq!(
         app.picker_action_command(PickerPart::Pull),
         MenuCommand::GitPullRebase
     );
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1071,7 +1071,7 @@ fn hovering_a_picker_row_leaves_the_selection_alone() {
     let parts = crate::app::workspace::picker::picker_parts(&app, app.layout.picker);
     let row = parts.row(other, app.picker.scroll);
     app.on_mouse_move(row.x + 40.0, row.y + row.h / 2.0);
-    assert_eq!(app.hover, Hover::PickerRow(other));
+    assert_eq!(app.pointer.hover, Hover::PickerRow(other));
     paint(&mut app);
     assert_eq!(app.picker.selected, current);
     assert!(more(&app, other) && more(&app, current));

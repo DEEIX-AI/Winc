@@ -151,12 +151,12 @@ fn snapshot_top_left() {
         app.run(Command::Insert("123".into()));
         for (state, visible) in [("open", true), ("closed", false)] {
             app.set_sidebar(visible);
-            app.renderer = Some(
+            app.frame.renderer = Some(
                 Renderer::offscreen(SIZE.0, SIZE.1, ZOOM, app.palette.frame_bg, None, None)
                     .unwrap(),
             );
             paint(&mut app);
-            let mut renderer = app.renderer.take().unwrap();
+            let mut renderer = app.frame.renderer.take().unwrap();
             renderer.draw(|frame| {
                 view::draw(&mut app, frame);
                 let lights = [0xFF5F57, 0xFEBC2E, 0x28C840];
@@ -186,7 +186,7 @@ fn snapshot_top_left() {
             );
             std::fs::create_dir_all(&out).unwrap();
             write_png(&out.join(format!("top-left-{state}-{tag}.png")), &crop).unwrap();
-            app.renderer = Some(renderer);
+            app.frame.renderer = Some(renderer);
         }
     }
 
@@ -507,7 +507,7 @@ fn snapshot_editor_fold_motion() {
         let motion = app.fold_motion(before, Clock::new(FOLD_ANIMATION)).unwrap();
         // 收起 `load`：截取动画开始后 20、50、90 毫秒的画面（`FOLD_ANIMATION` 为 160 毫秒）。
         for ms in [20, 50, 90] {
-            app.fold_motion = Some(crate::app::FoldMotion {
+            app.motion.fold_motion = Some(crate::app::FoldMotion {
                 clock: Clock::frozen(Duration::from_millis(ms), FOLD_ANIMATION),
                 ..motion.clone()
             });

@@ -530,7 +530,7 @@ impl App {
         let ruler = Ruler::new(self.layout.editor, doc.row_count());
         let mark = ruler.rect(GIT_LANE, ruler_rows(doc, h));
         // 提示跟随鼠标高度：数十行的改动在标尺上较长，锚定在下沿时会远离鼠标。
-        let y = self.mouse.1.clamp(mark.y, mark.bottom());
+        let y = self.pointer.mouse.1.clamp(mark.y, mark.bottom());
         let rect = Rect::new(mark.x, y, mark.w, 10.0);
         let lines = |r: &std::ops::Range<usize>| match r.len() {
             1 => t!("git-change-line", line = r.start + 1),

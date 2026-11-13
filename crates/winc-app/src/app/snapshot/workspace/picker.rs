@@ -173,7 +173,7 @@ fn rows_beyond_the_card_are_not_drawn_below_it() {
     // 显示得下时完全相同，说明多出的行没有画到卡片之外。
     let below = |app: &mut App| {
         paint(app);
-        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
         let card = app.layout.picker;
         let y = ((card.bottom() + PICKER_ROW / 2.0) * SCALE) as u32;
         let (x0, x1) = ((card.x * SCALE) as u32, (card.right() * SCALE) as u32);
@@ -268,7 +268,7 @@ fn rewalking_the_folder_keeps_listing_the_old_table() {
 
     // 最后一个可见行的文件图标仍然绘制，而不是只显示一行「正在索引文件…」、下方留空。
     paint(&mut app);
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let parts = PickerParts::new(app.layout.picker);
     let last = parts.row(PICKER_MAX_ROWS - 1, 0.0);
     let mut colors = std::collections::HashSet::<u32>::new();
@@ -303,7 +303,7 @@ fn scrolling_the_list_keeps_rows_at_the_top() {
     app.picker.scroll = 5.5 * PICKER_ROW;
     paint(&mut app);
     let list = PickerParts::new(app.layout.picker).list;
-    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
     let band = |top: f32, bottom: f32| {
         let mut colors = std::collections::HashSet::<u32>::new();
         for y in (top * SCALE) as u32..(bottom * SCALE) as u32 {

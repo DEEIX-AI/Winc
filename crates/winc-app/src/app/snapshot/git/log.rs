@@ -361,7 +361,7 @@ fn commit_diff_tree_switches_between_tree_and_list() {
     let button = app.log_diff_layout_button();
     app.on_mouse_move(button.x + 4.0, button.y + 4.0);
     paint(&mut app);
-    assert!(app.hover.has_tooltip(), "停留满提示延迟后显示提示");
+    assert!(app.pointer.hover.has_tooltip(), "停留满提示延迟后显示提示");
     let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
     assert_eq!(
         tip.as_deref(),
@@ -474,9 +474,9 @@ fn shoot_git_log() {
             .iter()
             .position(|c| c.subject == "启动日志写到文件里")
             .unwrap();
-        app.modifiers = command_modifiers();
+        app.pointer.modifiers = command_modifiers();
         app.press_log(crate::app::git::log::LogTarget::Row(newer));
-        app.modifiers = ModifiersState::empty();
+        app.pointer.modifiers = ModifiersState::empty();
         shoot(&mut app, &format!("log-compare-{theme}"));
         app.clear_log_compare();
 
@@ -547,7 +547,7 @@ fn log_spills_long_subjects_on_hover_and_drags_the_divider() {
         .unwrap();
     let (x, y) = (divider.x + divider.w / 2.0, divider.y + 200.0);
     app.on_mouse_move(x, y);
-    assert_eq!(app.hover, Hover::Log(LogTarget::Divider));
+    assert_eq!(app.pointer.hover, Hover::Log(LogTarget::Divider));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x - 100.0, y);
     app.on_mouse_up(MouseButton::Left);
@@ -1026,9 +1026,9 @@ fn log_compares_two_commits_or_a_branch_and_the_branch_menu_stashes() {
     let readme = row_of(&app, "补充使用说明");
     let login = row_of(&app, "登录：账号密码表单");
     app.press_log(LogTarget::Row(readme));
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     app.press_log(LogTarget::Row(login));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     let c = compare(&app).expect("在比较");
     let view = app.editor.active().unwrap().log.as_deref().unwrap();
     assert_eq!(c.from, view.commits[login].oid);
@@ -1281,9 +1281,12 @@ fn graph_lines_and_dots_can_be_clicked() {
         .expect("合并提交那一行有 feature/login 的线");
     let at = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
     app.on_mouse_move(at.0, at.1);
-    assert_eq!(app.hover, Hover::Log(LogTarget::Line(merge, feature)));
-    assert_eq!(app.cursor_icon, CursorIcon::Pointer);
-    assert!(app.hover.has_tooltip());
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Log(LogTarget::Line(merge, feature))
+    );
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Pointer);
+    assert!(app.pointer.hover.has_tooltip());
     assert_eq!(app.log_line_target(merge, feature), Some(tip));
     click(&mut app, at);
     let selected = |app: &App| {
@@ -1497,9 +1500,9 @@ fn going_to_an_amended_away_commit_pins_it_for_comparison() {
 
     // `⌘` 单击修改后的提交：比较两者，旧的在左。
     let row = view.commits.iter().position(|c| c.oid == new).unwrap();
-    app.modifiers = command_modifiers();
+    app.pointer.modifiers = command_modifiers();
     app.press_log(LogTarget::Row(row));
-    app.modifiers = Default::default();
+    app.pointer.modifiers = Default::default();
     paint(&mut app);
     let view = log(&app);
     let compare = view.compare.as_ref().unwrap();

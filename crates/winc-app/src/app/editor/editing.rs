@@ -64,7 +64,7 @@ impl App {
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
             || matches!(
-                self.drag,
+                self.pointer.drag,
                 Drag::Splitter { .. } | Drag::TerminalDivider { .. } | Drag::SplitDivider { .. }
             )
     }
@@ -97,8 +97,8 @@ impl App {
         // 设置「超长行完整显示」的变化在此生效：各行的宽度和段数随之变化。
         let whole = doc.show_whole_lines(self.config.whole_lines == Some(true));
         if whole {
-            self.line_widths.1.clear();
-            self.max_scroll_x = None;
+            self.caches.line_widths.1.clear();
+            self.caches.max_scroll_x = None;
         }
         doc.ensure_wrap(width, tab_width);
         let job = doc.take_wrap_job().map(|job| (doc.id, job));
@@ -110,12 +110,12 @@ impl App {
         let wrapping = doc.is_wrapping();
         if doc.wrap_width() != before || whole {
             place.restore(doc, wrapping);
-            self.sticky_cache = None;
-            self.fold_motion = None;
+            self.caches.sticky_cache = None;
+            self.motion.fold_motion = None;
             self.clamp_scroll();
         }
         if let Some((id, job)) = job {
-            let wraps = self.wraps.clone();
+            let wraps = self.caches.wraps.clone();
             self.spawn_blocking_then(UserEvent::Wrapped, move || {
                 let result = job.run();
                 wraps
@@ -135,10 +135,10 @@ impl App {
         doc.show_whole_line(line);
         let wrapping = doc.is_wrapping();
         place.restore(doc, wrapping);
-        self.line_widths.1.remove(&line);
-        self.max_scroll_x = None;
-        self.sticky_cache = None;
-        self.fold_motion = None;
+        self.caches.line_widths.1.remove(&line);
+        self.caches.max_scroll_x = None;
+        self.caches.sticky_cache = None;
+        self.motion.fold_motion = None;
         self.clamp_scroll();
         self.request_redraw();
     }
@@ -147,6 +147,7 @@ impl App {
     pub(in crate::app) fn poll_wraps(&mut self) {
         let results = std::mem::take(
             &mut *self
+                .caches
                 .wraps
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
@@ -165,8 +166,8 @@ impl App {
         }
         if changed {
             self.scroll_glide = None;
-            self.sticky_cache = None;
-            self.fold_motion = None;
+            self.caches.sticky_cache = None;
+            self.motion.fold_motion = None;
             self.clamp_scroll();
             self.request_redraw();
         }
@@ -212,7 +213,8 @@ impl App {
 
     /// 返回绘制缩略图所需的状态：最上方显示的行、滑块的位置，以及滑块是否加深。
     pub(crate) fn minimap_view(&self) -> (usize, Rect, bool) {
-        let active = self.hover == Hover::Minimap || matches!(self.drag, Drag::Minimap { .. });
+        let active = self.pointer.hover == Hover::Minimap
+            || matches!(self.pointer.drag, Drag::Minimap { .. });
         let (first, slider) = self.minimap_place();
         (first, slider, active)
     }
@@ -228,7 +230,7 @@ impl App {
         } else {
             y
         };
-        self.drag = Drag::Minimap { from, scroll };
+        self.pointer.drag = Drag::Minimap { from, scroll };
         self.drag_minimap(y, from, scroll);
     }
 
@@ -376,7 +378,7 @@ impl App {
             cell: cell.to_bits(),
             epoch: doc.long_lines_epoch(),
         };
-        if let Some((cached, max_x)) = &self.max_scroll_x
+        if let Some((cached, max_x)) = &self.caches.max_scroll_x
             && *cached == key
         {
             return *max_x;
@@ -390,7 +392,7 @@ impl App {
             .map_or(0, |c| c.starts.last().copied().unwrap_or(0));
 
         // 行宽按行缓存：滚动时每帧通常只有少数行新进入可见范围。
-        let widths = &mut self.line_widths;
+        let widths = &mut self.caches.line_widths;
         let widths_key = (doc.id, doc.revision, tab_width);
         if widths.0 != widths_key {
             // 编辑不影响改动之上的行，这些行宽仍然有效：在超长行中输入时无需每次按键重新测量整屏。
@@ -406,7 +408,7 @@ impl App {
             widths.1.clear();
         }
         // 截断的行之后有一句说明和「显示整行」，滚动范围为它们留出位置；遇到截断的行时才测量。
-        let (renderer, size) = (&self.renderer, self.fonts.ui_small);
+        let (renderer, size) = (&self.frame.renderer, self.fonts.ui_small);
         let mut note = None;
         let mut note_cells = || {
             *note.get_or_insert_with(|| {
@@ -443,7 +445,7 @@ impl App {
             widest = widest.max(shift + cells);
         }
         let max_x = (widest as f32 * cell - width + TEXT_PAD + cell * 8.0).max(0.0);
-        self.max_scroll_x = Some((key, max_x));
+        self.caches.max_scroll_x = Some((key, max_x));
         max_x
     }
 

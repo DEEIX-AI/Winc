@@ -413,8 +413,11 @@ fn hovering_a_change_offers_open_and_revert() {
     let revert = find(&app, CommitTarget::RevertFile(index)).unwrap();
     assert!(open.right() <= revert.x && revert.right() <= row.right());
     app.on_mouse_move(revert.x + 4.0, revert.y + 4.0);
-    assert_eq!(app.hover, Hover::Commit(CommitTarget::RevertFile(index)));
-    assert!(app.hover.has_tooltip());
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Commit(CommitTarget::RevertFile(index))
+    );
+    assert!(app.pointer.hover.has_tooltip());
 
     app.press_commit(CommitTarget::OpenFile(index));
     let canonical = winc_editor::canonical_path(&main);
@@ -914,7 +917,7 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
     // 点击固定的 `b` 行：列表滚到 `b` 所在行并保持不变，`b` 收起。
     let at = sticky[2].rect;
     app.on_mouse_move(at.x + 120.0, at.y + at.h / 2.0);
-    assert_eq!(app.hover, Hover::Commit(CommitTarget::Sticky(b, 2)));
+    assert_eq!(app.pointer.hover, Hover::Commit(CommitTarget::Sticky(b, 2)));
     click(&mut app, (at.x + 120.0, at.y + at.h / 2.0));
     // 收起后列表变短，内容放得下时滚回顶部。
     let settled = ((b - 2) as f32 * COMMIT_ROW).min(app.commit_max_scroll());
@@ -966,21 +969,21 @@ fn option_clicking_a_changed_folder_collapses_and_expands_it_all_the_way() {
     let alt = winit::keyboard::ModifiersState::ALT;
 
     // 递归收起：只剩最上面的目录行，且收起。
-    app.modifiers = alt;
+    app.pointer.modifiers = alt;
     app.press_commit(CommitTarget::Dir(first));
     assert_eq!(dirs(&app).len(), 1);
     assert!(dirs(&app)[0].1);
 
     // 普通单击只展开一层：下一级目录还是收起的。
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     app.press_commit(CommitTarget::Dir(first));
     assert!(dirs(&app).iter().skip(1).all(|(_, collapsed)| *collapsed));
 
     // 先收起再递归展开：各级全部展开，行数回到最初。
     app.press_commit(CommitTarget::Dir(first));
-    app.modifiers = alt;
+    app.pointer.modifiers = alt;
     app.press_commit(CommitTarget::Dir(first));
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     assert_eq!(dirs(&app).len(), inner);
     assert!(dirs(&app).iter().all(|(_, collapsed)| !collapsed));
     let _ = std::fs::remove_dir_all(&dir);
@@ -1234,7 +1237,7 @@ fn the_changes_list_scrollbar_can_be_dragged() {
     let list = app.commit_parts().list;
     let x = list.right() - 3.0;
     app.on_mouse_move(x, list.y + 10.0);
-    assert_eq!(app.hover, Hover::Scrollbar(Scrollbar::Commit));
+    assert_eq!(app.pointer.hover, Hover::Scrollbar(Scrollbar::Commit));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x, list.bottom() + 40.0);
     assert_eq!(app.commit.scroll, max);
@@ -1296,7 +1299,10 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
     let (ox, oy) = (open.x + open.w / 2.0, open.y + open.h / 2.0);
     app.on_mouse_move(ox, oy);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::Commit(CommitTarget::OpenFile(index)));
+    assert_eq!(
+        app.pointer.hover,
+        Hover::Commit(CommitTarget::OpenFile(index))
+    );
     assert!(app.commit.overflow.is_some_and(|o| o.row == i));
 
     // 展开收起的动画途中：该行就是被收起的行时位置不变，仍写全名；位于被收起的行下方、正在
@@ -1594,10 +1600,10 @@ fn change_list_keys_jump_to_the_ends_and_page() {
 
     // 按住 `⇧` 翻页时扩展选区。
     key(&mut app, NamedKey::Home);
-    app.modifiers = ModifiersState::SHIFT;
+    app.pointer.modifiers = ModifiersState::SHIFT;
     key(&mut app, NamedKey::PageDown);
     assert!(app.commit_multi_selected());
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1616,7 +1622,7 @@ fn long_commit_messages_scroll_with_the_wheel() {
     assert!(bottom > 0.0);
 
     let message = app.commit_parts().message;
-    app.mouse = (message.x + 20.0, message.y + 20.0);
+    app.pointer.mouse = (message.x + 20.0, message.y + 20.0);
     app.on_wheel(MouseScrollDelta::LineDelta(0.0, 2.0));
     paint(&mut app);
     let up = app.commit.message.view.scroll;
@@ -2284,7 +2290,7 @@ fn the_sidebar_keeps_one_width_across_views() {
     let drag = |app: &mut App, y: f32, by: f32| {
         let x = app.layout.splitter.x + 1.0;
         app.on_mouse_move(x, y);
-        assert_eq!(app.hover, Hover::Splitter);
+        assert_eq!(app.pointer.hover, Hover::Splitter);
         app.on_mouse_down(MouseButton::Left);
         app.on_mouse_move(x + by, y);
         app.on_mouse_up(MouseButton::Left);
@@ -2876,7 +2882,7 @@ fn holding_option_turns_commit_into_commit_and_push() {
         "{:?}",
         tip(&app)
     );
-    app.modifiers = winit::keyboard::ModifiersState::ALT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::ALT;
     assert!(app.commit_pushes());
     paint(&mut app);
     assert!(
@@ -2887,7 +2893,7 @@ fn holding_option_turns_commit_into_commit_and_push() {
     app.commit.amend = true;
     assert!(!app.commit_pushes());
     app.commit.amend = false;
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -2954,7 +2960,7 @@ fn shoot_commit_button_motion() {
     app.run_action(Action::ShowCommit);
     app.edit_field(|f| f.insert("修复"));
     let fits = |app: &mut App, modifiers| {
-        app.modifiers = modifiers;
+        app.pointer.modifiers = modifiers;
         paint(app);
         app.commit_parts().amend.is_some()
     };
@@ -2968,11 +2974,11 @@ fn shoot_commit_button_motion() {
         assert!(app.sidebar.width > crate::theme::MIN_PANEL_WIDTH);
         app.sidebar.width -= 2.0;
     };
-    app.modifiers = from_keys;
+    app.pointer.modifiers = from_keys;
     shoot(&mut app, "commit-button-before");
     let before = app.commit_parts();
     let from = before.commit.w + before.commit_menu.w;
-    app.modifiers = to_keys;
+    app.pointer.modifiers = to_keys;
     paint(&mut app);
     let quarter = Clock::frozen(TREE_ANIMATION / 4, TREE_ANIMATION);
     app.commit.button_motion = Some((from, quarter));
@@ -2981,7 +2987,7 @@ fn shoot_commit_button_motion() {
     app.commit.button_motion = None;
     app.commit.amend_motion = None;
     shoot(&mut app, "commit-button-after");
-    app.modifiers = plain;
+    app.pointer.modifiers = plain;
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -3068,7 +3074,7 @@ fn the_full_name_row_covers_the_scrollbar_like_the_file_tree() {
     // 移到滚动条的可点击范围内：仍悬停在这一行上，全名保持显示。
     app.on_mouse_move(list.right() - 3.0, y);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::Commit(CommitTarget::File(index)));
+    assert_eq!(app.pointer.hover, Hover::Commit(CommitTarget::File(index)));
     assert!(app.commit.overflow.is_some_and(|o| o.row == i));
 
     // 在伸出侧栏的部分上滚动：滚动的是改动列表。
@@ -3119,7 +3125,7 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
     ] {
         app.on_mouse_move(x, y);
         paint(&mut app);
-        assert_eq!(app.hover, row, "x = {x}");
+        assert_eq!(app.pointer.hover, row, "x = {x}");
         assert!(app.commit.overflow.is_some_and(|o| o.row == i), "x = {x}");
     }
     click(&mut app, (splitter.x + splitter.w / 2.0, y));
@@ -3133,7 +3139,7 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
     let other = y + 3.0 * COMMIT_ROW;
     app.on_mouse_move(splitter.x + splitter.w / 2.0, other);
     paint(&mut app);
-    assert_eq!(app.hover, Hover::Splitter);
+    assert_eq!(app.pointer.hover, Hover::Splitter);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

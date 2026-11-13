@@ -183,7 +183,7 @@ fn draw_header(
     for (rect, target) in parts.tools {
         let open = target == CommitTarget::More
             && app.menu_button == Some(crate::app::MenuButton::CommitMore);
-        let hovered = app.hover == Hover::Commit(target);
+        let hovered = app.pointer.hover == Hover::Commit(target);
         draw_button(frame, p, rect, header, hovered, open);
         let color = if hovered || open {
             p.text
@@ -252,7 +252,7 @@ fn draw_context_pick(
         room_left + full.min(room) + CONTEXT_PICK_TAIL,
         row.h,
     );
-    let hovered = app.hover == Hover::Commit(target);
+    let hovered = app.pointer.hover == Hover::Commit(target);
     draw_button(frame, p, pick, clip, hovered, open);
     hits.push((pick, target));
     let lit = hovered || open;
@@ -320,7 +320,7 @@ fn draw_location_row(
         names.push((worktree, p.text_muted));
     }
     let open = app.picker_lists_locations();
-    let lit = open || app.hover == Hover::Commit(CommitTarget::Location);
+    let lit = open || app.pointer.hover == Hover::Commit(CommitTarget::Location);
     let dotted = app.git_other_changes() > 0;
     let tool = parts.tools[0].0;
     let row = Rect::new(left, tool.y, (right - left).max(0.0), tool.h);
@@ -419,7 +419,7 @@ fn draw_sync(
     };
     let button = Rect::new(row.right() - width, row.y, width, row.h);
     let running = app.branch.running.is_some();
-    let hovered = !running && app.hover == Hover::Commit(CommitTarget::Sync);
+    let hovered = !running && app.pointer.hover == Hover::Commit(CommitTarget::Sync);
     draw_button(frame, p, button, clip, hovered, false);
     let done = app.branch.finished.filter(|_| !running);
     // 前半段换下的是刚停下的旋转图标，它接着转；后半段换上的是当前状态的图标。
@@ -501,7 +501,7 @@ fn draw_banner(
     }
     let room = Rect::new(rect.x, rect.y, abort.x - 4.0 - rect.x, rect.h);
     ui_text_small(frame, app, x, rect, &text, p.text, clip.intersect(room));
-    let hovered = app.hover == Hover::Commit(CommitTarget::Abort);
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Abort);
     draw_button(frame, p, abort, clip, hovered, false);
     let w = frame.measure(FontKind::Ui, size, t!("git-operation-abort"));
     let color = if hovered { p.text } else { p.text_muted };
@@ -566,7 +566,7 @@ fn draw_undo(
     );
 
     // 「撤销」写成字：最常用的一项，放进菜单里看不出能撤销。
-    let hovered = app.hover == Hover::Commit(CommitTarget::Undo);
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Undo);
     draw_button(frame, p, undo, clip, hovered, false);
     let text = t!("git-commit-undo");
     let w = frame.measure(FontKind::Ui, size, text);
@@ -574,7 +574,7 @@ fn draw_undo(
     ui_text_small(frame, app, x, undo, text, p.accent, clip);
     hits.push((undo, CommitTarget::Undo));
 
-    let hovered = app.hover == Hover::Commit(CommitTarget::LastCommit);
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::LastCommit);
     let open = app.menu_button == Some(crate::app::MenuButton::LastCommit);
     draw_button(frame, p, more, clip, hovered, open);
     let color = if hovered || open {
@@ -624,7 +624,7 @@ fn draw_stashes(
 
     // 标题：和改动列表的组标题一样，小一号的次要色字，右端一个写数量的徽标。
     let head = band(0);
-    if app.hover == Hover::Commit(CommitTarget::Stashes) {
+    if app.pointer.hover == Hover::Commit(CommitTarget::Stashes) {
         frame.rect_clipped(shade(head), p.hover, RADIUS_ROW, clip);
     }
     let cy = head.y + head.h / 2.0;
@@ -675,7 +675,7 @@ fn draw_stashes(
                 continue;
             }
             StashLine::MoreStashes(rest) => {
-                if app.hover == Hover::Commit(CommitTarget::StashMore) {
+                if app.pointer.hover == Hover::Commit(CommitTarget::StashMore) {
                     frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
                 }
                 let text = t!("git-stash-more", count = rest);
@@ -687,7 +687,7 @@ fn draw_stashes(
         };
         let stash = &app.git.stashes[i];
         let hovered = matches!(
-            app.hover,
+            app.pointer.hover,
             Hover::Commit(
                 CommitTarget::Stash(h) | CommitTarget::StashApply(h) | CommitTarget::StashMenu(h)
             ) if h == i
@@ -700,7 +700,7 @@ fn draw_stashes(
         let mut right = row.right() - END_PAD;
         if hovered {
             let (_, more) = file_actions(row);
-            let on = app.hover == Hover::Commit(CommitTarget::StashMenu(i));
+            let on = app.pointer.hover == Hover::Commit(CommitTarget::StashMenu(i));
             draw_button(frame, p, more, clip, on, false);
             let color = if on { p.text } else { p.text_muted };
             icons::more(frame, center(more), color, clip);
@@ -708,7 +708,7 @@ fn draw_stashes(
             let text = t!("git-stash-apply");
             let w = frame.measure(FontKind::Ui, size, text) + 2.0 * STASH_APPLY_PAD;
             let apply = Rect::new(more.x - BUTTON_GAP - w, more.y, w, more.h);
-            let on = app.hover == Hover::Commit(CommitTarget::StashApply(i));
+            let on = app.pointer.hover == Hover::Commit(CommitTarget::StashApply(i));
             draw_button(frame, p, apply, clip, on, false);
             ui_text_small(
                 frame,
@@ -756,7 +756,7 @@ fn draw_stash_file(
     let Some((file, ..)) = view.files.get(at) else {
         return;
     };
-    let hovered = app.hover == Hover::Commit(CommitTarget::StashFile(at));
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::StashFile(at));
     let shade = Rect::new(row.x, row.y + 1.0, row.w, row.h - 2.0);
     if let Some(color) = row_color(p, at == view.at, false, hovered) {
         frame.rect_clipped(shade, color, RADIUS_ROW, clip);
@@ -838,7 +838,7 @@ fn draw_empty(
         return;
     }
     let enabled = app.branch.running.is_none();
-    let hovered = app.hover == Hover::Commit(CommitTarget::NextStep);
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::NextStep);
     draw_action_button(
         app,
         frame,
@@ -1154,7 +1154,7 @@ fn draw_sticky(
         let mut row_hits = Vec::new();
         frame.within(slot, |frame| {
             frame.rect_clipped(s.rect, p.sidebar_bg, 0.0, list);
-            if app.hover == Hover::Commit(CommitTarget::Sticky(s.row, s.level)) {
+            if app.pointer.hover == Hover::Commit(CommitTarget::Sticky(s.row, s.level)) {
                 let band = Rect::new(
                     list.x + 8.0,
                     s.rect.y + 1.0,
@@ -1268,7 +1268,7 @@ fn draw_row(
         CommitRow::Group(group) => {
             let group = *group;
             let hovered = matches!(
-                app.hover,
+                app.pointer.hover,
                 Hover::Commit(
                     CommitTarget::Group(g) | CommitTarget::GroupCheck(g) | CommitTarget::GroupRevert(g)
                 ) if g == group
@@ -1302,7 +1302,7 @@ fn draw_row(
             match revert {
                 Some(rect) => {
                     let target = CommitTarget::GroupRevert(group);
-                    let on = app.hover == Hover::Commit(target);
+                    let on = app.pointer.hover == Hover::Commit(target);
                     draw_button(frame, p, rect, list, on, false);
                     let color = if on { p.text } else { p.text_muted };
                     icons::rollback(frame, center(rect), color, list);
@@ -1323,7 +1323,7 @@ fn draw_row(
             // 组标题已经写了文件数，展开后每个文件都看得见，每层再写一遍是重复信息。
             let level = depth + 1;
             let hovered = matches!(
-                app.hover,
+                app.pointer.hover,
                 Hover::Commit(CommitTarget::Dir(r) | CommitTarget::DirCheck(r)) if r == i
             );
             // 多选时下面的文件都选中了：画成选中状态。
@@ -1404,7 +1404,7 @@ fn draw_row(
             let entry = &status.entries[index];
             let is_selected = app.commit_is_selected(&entry.path);
             let hovered = matches!(
-                app.hover,
+                app.pointer.hover,
                 Hover::Commit(
                     CommitTarget::File(i)
                         | CommitTarget::Check(i)
@@ -1626,7 +1626,7 @@ fn draw_file_actions(
         (open, CommitTarget::OpenFile(index)),
         (revert, CommitTarget::RevertFile(index)),
     ] {
-        let on = app.hover == Hover::Commit(target);
+        let on = app.pointer.hover == Hover::Commit(target);
         draw_button(frame, p, rect, clip, on, false);
         let color = if on { p.text } else { p.text_muted };
         let (cx, cy) = center(rect);
@@ -1729,7 +1729,7 @@ fn draw_card(
             None => (1.0, false),
         };
         let fade = |c: Color| c.alpha(c.a * shown);
-        let hovered = !fading && app.hover == Hover::Commit(CommitTarget::Amend);
+        let hovered = !fading && app.pointer.hover == Hover::Commit(CommitTarget::Amend);
         draw_button(frame, p, amend, clip, hovered, false);
         let cy = amend.y + amend.h / 2.0;
         let state = app.commit.amend.then_some(true);
@@ -1790,7 +1790,7 @@ fn draw_card(
         (main, CommitTarget::Commit),
         (menu, CommitTarget::CommitMenu),
     ] {
-        let hovered = !busy && app.hover == Hover::Commit(target);
+        let hovered = !busy && app.pointer.hover == Hover::Commit(target);
         let lit = match target {
             CommitTarget::Commit => hovered && ready,
             _ => hovered || open,
@@ -1940,7 +1940,7 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
     let status = app.git.status.as_ref()?;
     let root = app.git.root.as_deref()?;
     let rows = app.commit_rows();
-    let row = match app.hover {
+    let row = match app.pointer.hover {
         Hover::Commit(
             CommitTarget::Dir(r) | CommitTarget::DirCheck(r) | CommitTarget::Sticky(r, _),
         ) => r,

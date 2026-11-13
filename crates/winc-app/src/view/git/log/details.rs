@@ -202,7 +202,7 @@ pub(super) fn draw_details(
         area,
     );
     let oid_x = end + 8.0;
-    let hovered = app.hover == Hover::Log(LogTarget::CopyOid);
+    let hovered = app.pointer.hover == Hover::Log(LogTarget::CopyOid);
     let oid_end = mono(
         app,
         frame,
@@ -220,7 +220,7 @@ pub(super) fn draw_details(
         let label = t!("git-log-details-parents", count = commit.parents.len());
         px = ui_text_small(frame, app, px, row, &label, p.text_dim, area) + 8.0;
         for (i, parent) in commit.parents.iter().enumerate() {
-            let hovered = app.hover == Hover::Log(LogTarget::Parent(i));
+            let hovered = app.pointer.hover == Hover::Log(LogTarget::Parent(i));
             let end = mono(app, frame, (px, row), short(parent), link(p, hovered), area);
             hits.push((
                 Rect::new(px - 2.0, y, end - px + 4.0, 22.0).intersect(area),

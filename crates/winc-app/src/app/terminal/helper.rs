@@ -34,7 +34,7 @@ impl App {
         let Some((first, cut)) = self.terminal.tab().map(TermTab::viewport) else {
             return (0, top);
         };
-        let scale = (self.renderer.as_ref()).map_or(1.0, winc_render::Renderer::scale_factor);
+        let scale = (self.frame.renderer.as_ref()).map_or(1.0, winc_render::Renderer::scale_factor);
         let y = top - cut * self.fonts.terminal_line_height;
         (first, (y * scale).round() / scale)
     }
@@ -265,6 +265,7 @@ impl App {
         let cols = (grid.w / self.terminal_cell).floor().max(2.0);
         let rows = (grid.h / self.fonts.terminal_line_height).floor().max(1.0);
         let scale = self
+            .frame
             .renderer
             .as_ref()
             .map_or(1.0, winc_render::Renderer::scale_factor);

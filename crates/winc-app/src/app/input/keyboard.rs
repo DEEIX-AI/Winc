@@ -36,7 +36,7 @@ impl App {
             return;
         }
 
-        let m = self.modifiers;
+        let m = self.pointer.modifiers;
         let cmd = if cfg!(target_os = "macos") {
             m.super_key()
         } else {
@@ -183,15 +183,15 @@ impl App {
         if composing && *key == Key::Named(NamedKey::Process) {
             return None;
         }
-        Stroke::from_event(key, base, physical, location, self.modifiers)
+        Stroke::from_event(key, base, physical, location, self.pointer.modifiers)
     }
 
     /// 按键 `event` 是否为应用在当前上下文中绑定的 `Alt` 组合；`Ctrl`+`Alt`（AltGr）不算。
     fn alt_shortcut(&self, event: &KeyEvent, base: &str) -> bool {
         let stroke =
             || self.stroke_of(&event.logical_key, base, event.physical_key, event.location);
-        self.modifiers.alt_key()
-            && !self.modifiers.control_key()
+        self.pointer.modifiers.alt_key()
+            && !self.pointer.modifiers.control_key()
             && stroke().is_some_and(|stroke| self.binds(stroke))
     }
 
@@ -301,15 +301,15 @@ impl App {
             return;
         }
 
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         // 带 `⌘` / `Ctrl` 但键位表中没有的组合不处理，不会被当作输入或移动。
-        let control = cmd || (cfg!(target_os = "macos") && self.modifiers.control_key());
+        let control = cmd || (cfg!(target_os = "macos") && self.pointer.modifiers.control_key());
 
         // macOS：`⌘←` / `⌘→` 到行首行尾，`⌘↑` / `⌘↓` 到文件首尾，`⌥←` / `⌥→` 按词移动；
         // 其他平台用 `Ctrl←` / `Ctrl→` 按词移动。
         let extend = shift;
         let word = if cfg!(target_os = "macos") {
-            self.modifiers.alt_key()
+            self.pointer.modifiers.alt_key()
         } else {
             cmd
         };
@@ -323,7 +323,9 @@ impl App {
             Key::Named(NamedKey::ArrowLeft) => Command::MoveLeft { word, extend },
             Key::Named(NamedKey::ArrowRight) => Command::MoveRight { word, extend },
             // 移动行、复制行在键位表中定义；没有匹配的 `⌥↑` / `⌥↓` 组合不处理。
-            Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) if self.modifiers.alt_key() => {
+            Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)
+                if self.pointer.modifiers.alt_key() =>
+            {
                 return;
             }
             Key::Named(NamedKey::ArrowUp) => Command::MoveUp { extend },
@@ -377,7 +379,7 @@ impl App {
     /// - `↑` / `↓`（或 `⌥↑` / `⌥↓`）翻阅历史，翻过最新一条时清空；`⇧↑` / `⇧↓` 选到开头或末尾。
     /// - `Tab` 在两个输入框之间切换。其余按键交给输入框。
     fn on_key_search(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         let replacing = self.focus == Focus::Replace;
 
         match &event.logical_key {
@@ -400,7 +402,7 @@ impl App {
 
     /// 处理侧栏搜索面板四个输入框中的按键。
     fn on_key_panel_field(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
 
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => self.leave_panel(),
@@ -433,7 +435,7 @@ impl App {
 
     /// 执行搜索结果列表中按键 `key` 的操作，见 [`App::on_key_results`]。
     pub(in crate::app) fn results_key(&mut self, key: &Key) {
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         let selected = self.global.selected_row();
         let row = selected.and_then(|i| self.global.rows().get(i).copied());
 
@@ -541,7 +543,7 @@ impl App {
     /// - 不在输入框里：`↑` `↓`（`Tab` / `⇧Tab`）在设置项之间移动，`←` `→` 改值，`↩` 或空格激活，
     ///   `Esc`、`⌘,` 或 `⌘W` 关闭浮层。
     fn on_key_settings(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
 
         if self.focus == Focus::KeySearch {
             self.on_key_search_keys(event, base, cmd);
@@ -580,7 +582,7 @@ impl App {
             Key::Named(NamedKey::Enter | NamedKey::Space) => self.settings_activate(),
             _ if cmd && base == "f" => self.focus_settings_search(),
             // 直接打字即开始搜索：焦点移到搜索框，这个字写进去。
-            Key::Character(_) if !cmd && !self.modifiers.control_key() => {
+            Key::Character(_) if !cmd && !self.pointer.modifiers.control_key() => {
                 self.focus = Focus::SettingsSearch;
                 self.on_key_field(event, base, cmd);
             }
@@ -640,7 +642,7 @@ impl App {
         }
         match key {
             Key::Named(NamedKey::Escape) => self.close_form_dialog(),
-            Key::Named(NamedKey::Tab) => self.form_focus_move(self.modifiers.shift_key()),
+            Key::Named(NamedKey::Tab) => self.form_focus_move(self.pointer.modifiers.shift_key()),
             _ if cmd && base == "w" => self.close_form_dialog(),
             Key::Named(NamedKey::Enter) if multiline && !cmd => {
                 self.edit_field(|field| field.insert("\n"));
@@ -672,7 +674,9 @@ impl App {
             Key::Named(NamedKey::ArrowDown) => self.settings_scroll_by(-KEYS_ROW),
             Key::Named(NamedKey::ArrowUp) => self.settings_scroll_by(KEYS_ROW),
             // `⇧Tab` 回到上一项（格式化页的最后一项）；`Tab` 不处理，搜索框已是最后一项。
-            Key::Named(NamedKey::Tab) if self.modifiers.shift_key() => self.settings_move(false),
+            Key::Named(NamedKey::Tab) if self.pointer.modifiers.shift_key() => {
+                self.settings_move(false)
+            }
             Key::Named(NamedKey::Tab) => {}
             _ if cmd && matches!(base, "," | "w") => self.close_settings(),
             _ if cmd && base == "v" => self.paste(),
@@ -721,7 +725,7 @@ impl App {
     /// `↑` `↓`（macOS 上还有 `⌃P` / `⌃N`）在结果之间移动选中项，`↩` 打开，`Esc` 关闭面板。
     /// 其余按键交给输入框，因为面板的输入部分就是一个普通的单行输入框。
     fn on_key_picker(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let ctrl = cfg!(target_os = "macos") && self.modifiers.control_key();
+        let ctrl = cfg!(target_os = "macos") && self.pointer.modifiers.control_key();
         // 浏览远端目录时 `⇥` 进入选中的目录，输入为空时 `⌫` 回到上级。
         if self.remote_picker_key(&event.logical_key) {
             return;
@@ -780,11 +784,11 @@ impl App {
     ///
     /// `⌘V` 粘贴是全局快捷键，按焦点分派，见 `App::paste`。
     pub(in crate::app) fn on_key_field(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let shift = self.modifiers.shift_key();
+        let shift = self.pointer.modifiers.shift_key();
         let mac = cfg!(target_os = "macos");
         let unit = if mac && cmd {
             Unit::Line
-        } else if (mac && self.modifiers.alt_key()) || (!mac && cmd) {
+        } else if (mac && self.pointer.modifiers.alt_key()) || (!mac && cmd) {
             Unit::Word
         } else {
             Unit::Char
@@ -843,10 +847,10 @@ impl App {
     /// 开头的行（见 [`TYPE_RESET`]）；`Esc` 先将多选收回为当前行，再次按下时回到编辑区。
     /// 打开、重命名、删除在键位表中定义。
     pub(in crate::app) fn on_key_tree(&mut self, key: &Key) {
-        let shift = self.modifiers.shift_key();
-        let plain = !(self.modifiers.super_key()
-            || self.modifiers.control_key()
-            || self.modifiers.alt_key());
+        let shift = self.pointer.modifiers.shift_key();
+        let plain = !(self.pointer.modifiers.super_key()
+            || self.pointer.modifiers.control_key()
+            || self.pointer.modifiers.alt_key());
         // 翻一屏移动的行数为可见整行数减一，翻页后原来的最后一行仍然可见。
         let page = ((self.layout.tree.h / crate::theme::TREE_ROW).floor() as usize)
             .saturating_sub(1)

@@ -802,33 +802,12 @@ pub struct App {
     // 焦点、鼠标和键盘
     /// 键盘焦点所在的区域。
     pub focus: Focus,
-    /// 鼠标悬停的目标。
-    pub hover: Hover,
-    pub(crate) modifiers: ModifiersState,
-    /// 左、右 ⌥ 键是否按下，用于按 `terminal.optionAsMeta` 判断视为 Meta 的一侧；
-    /// winit 只在 macOS 上报告左右 ⌥ 的状态。
-    option_side: (bool, bool),
-    /// 鼠标位置（逻辑像素）。
-    mouse: (f32, f32),
+    /// 鼠标与修饰键的状态：位置、悬停与拖动的目标、按下时所在的控件。
+    pub(crate) pointer: input::Pointer,
     /// 当前的触摸接触点与正在识别的触摸手势。
     touch: input::touch::TouchState,
-    drag: Drag,
-    last_click: Option<Click>,
-    /// 上一次在顶栏空白处的按下，用于识别双击。
-    title_click: Option<Click>,
     /// 系统窗口及其状态。
     pub window: lifecycle::window::WindowState,
-    /// 鼠标按下时所在的标签关闭按钮（或中键按下的标签）；松开时仍在同一个标签上才关闭。
-    close_pressed: Option<DocumentId>,
-    /// 鼠标按下时所在的窗口按钮；松开时仍在同一个按钮上才执行。
-    ///
-    /// 在按下时就关闭或最小化窗口，松开事件会落到下层窗口：下层窗口的标题栏按钮如果正好在
-    /// 这个位置（这类按钮通常在松开时触发），就会被误触发。
-    control_pressed: Option<WindowControl>,
-    cursor_icon: CursorIcon,
-    /// 拖选时最近一次因鼠标超出编辑区上下边缘而滚动的时刻，用于按经过的时间计算滚动量
-    /// （见 `scroll_while_dragging`）；鼠标不在边缘之外时为 `None`。
-    drag_scrolled_at: Option<Instant>,
 
     // 光标和输入法
     /// 光标闪烁的状态。
@@ -845,82 +824,36 @@ pub struct App {
     pub diff: diff::DiffState,
     /// 状态栏的界面状态。
     pub status: status::StatusState,
-    /// 粘滞滚动的计算缓存：钉住的行未变化时不重新计算。
-    sticky_cache: Option<editor::sticky::StickyCache>,
-    /// 已完成、待采用的大文件断行结果（见 [`App::poll_wraps`]）。
-    wraps: Arc<Mutex<Vec<(DocumentId, winc_editor::WrapResult)>>>,
-    /// 长行的着色结果，跨帧复用（见 [`crate::view::LineTokens`]）。
-    pub(crate) line_tokens: std::cell::RefCell<crate::view::LineTokens>,
-    /// 缩略图中各行的小块，跨帧复用（见 [`crate::view::MinimapRows`]）。
-    pub(crate) minimap_rows: std::cell::RefCell<crate::view::MinimapRows>,
-    /// 最近一次计算的最大横向滚动量及其依据的条件（见 [`App::text_max_scroll_x`]）。
-    max_scroll_x: Option<(editor::editing::MaxScrollKey, f32)>,
-    /// 各行的显示宽度，供 [`App::text_max_scroll_x`] 复用。
-    line_widths: editor::editing::LineWidths,
-    /// 滚动条上标出的光标所在词的缓存。
-    pub(crate) ruler_cache: Option<crate::view::RulerCache>,
-    /// 图片预览缩放后的图片缓存。
-    pub(crate) picture_cache: Option<preview::images::PictureCache>,
-    /// 当前图片预览的缩放倍数与滚动位置。
-    pub(crate) picture_view: preview::images::PictureView,
-    /// 后台的图片解码和 SVG 绘制任务。
-    pub(crate) images: preview::images::ImageJobs,
-    pub(crate) tables: preview::tables::TableJobs,
-    /// 表格预览上次绘制的几何：工作表标签、最大滚动距离和列宽缓存。
-    pub(crate) table_layout: crate::app::preview::tables::TableLayout,
-    /// 分栏预览右侧的图片。
-    pub(crate) split: preview::images::SplitPreview,
-    /// Markdown 预览（分栏右侧或仅预览模式）。
-    pub(crate) markdown: preview::markdown::MarkdownPreview,
-    /// 首次设置开场动画的时钟；没有在播放时为 `None`。
-    pub(crate) setup_intro: Option<animation::Clock>,
-    /// 点击「完成」之后从「首次设置」换到开始页的过渡动画的时钟；没有在播放时为 `None`。
-    pub(crate) setup_outro: Option<animation::Clock>,
+    /// 编辑区跨帧复用的缓存和待采用的计算结果。
+    pub(crate) caches: editor::EditorCaches,
+    /// 各类预览的状态：图片、表格、分栏、Markdown 与 PDF。
+    pub(crate) preview: preview::PreviewState,
+    /// 界面各处出现、消失与折叠的过渡动画。
+    pub(crate) motion: animation::Motions,
     /// 更新日志的状态：待显示的更新提示、所在的标签和要显示的版本范围。
     pub(crate) release_notes: release_notes::ReleaseNotes,
-    /// 当前标签的 PDF 预览。
-    pub(crate) pdf: preview::pdf::PdfPreview,
     /// 窗口背景图的状态。
     pub(crate) wallpaper: lifecycle::wallpaper::WallpaperState,
     /// 状态栏键路径的缓存与扫描记录。
     pub key_path: status::breadcrumb::KeyPath,
     /// 文件树的界面状态。
     pub tree: workspace::tree::TreeState,
-    /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
-    pub(crate) tool_fold: ToolFold,
     /// 各区域滚动条的显示状态：平时隐藏，滚动后或鼠标移到滚动条上时显示。
     pub(crate) scrollbars: Scrollbars,
 
     // 侧栏和文件树
     /// 侧栏的界面状态。
     pub sidebar: workspace::Sidebar,
-    /// 分栏预览时源代码一侧占编辑区宽度的比例，取值 0 到 1；`None` 表示各占一半。
-    ///
-    /// 拖动中间的分隔线时改变，所有分栏预览的标签共用该值。
-    pub(crate) split_share: Option<f32>,
     /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
     pub(crate) name_hint: Option<NameHint>,
-    /// 编辑区顶部输入条出现、消失的动画。
-    pub(crate) bar_card: animation::CardFx,
     /// 新建工作树对话框；未打开时为 `None`。
     ///
     /// 打开时覆盖整个窗口，键盘和鼠标事件优先交给对话框处理。
     pub(crate) form_dialog: Option<git::form::FormDialog>,
     /// 窗口内绘制的提示框（平台没有系统提示框时使用，见 `lifecycle/alert.rs`）。
     pub(crate) alert: Option<lifecycle::alert::InAppAlert>,
-    /// 对话框出现、消失的动画。
-    pub(crate) dialog_card: animation::CardFx,
-    /// 窗口内绘制的提示框出现、消失的动画。
-    pub(crate) alert_card: animation::CardFx,
-    /// 开关 Git、终端模块时，视图切换器中的「提交」一段、状态栏的终端开关和分支名
-    /// 出现、消失的动画。
-    pub(crate) module_fx: animation::ModuleFx,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
-    /// 代码折叠、展开的动画。
-    pub fold_motion: Option<FoldMotion>,
-    /// 差异标签中未改动内容折叠、展开的过渡。
-    pub(crate) diff_fold: Option<diff::DiffFoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
     pub(crate) scroll_glide: Option<ScrollGlide>,
     /// 各区域（文件树、列表、预览）跳转式滚动的过渡，每个区域至多一项。
@@ -937,10 +870,6 @@ pub struct App {
     file_hover: Option<DropZone>,
 
     // 编辑区
-    /// 高亮状态是否尚未推算到可见区域；为真时需要再绘制一帧。
-    pub highlight_pending: bool,
-    /// 光标旁括号的配对结果缓存。
-    pub brace_cache: Option<(BraceKey, Option<(usize, usize)>)>,
     /// 剪贴板。
     pub(crate) clipboard: editor::clipboard::Clipboard,
     /// Vim 模式的状态；Vim 模式关闭时为 `None`。
@@ -964,16 +893,8 @@ pub struct App {
     // 快速打开
     /// 快速打开面板与位置浮窗的状态。
     pub picker: workspace::picker::Picker,
-    /// 已打开目录的文件监视器；目录内的文件被外部修改时发出通知。
-    watcher: Option<winc_editor::Watcher>,
-    /// 已收到目录变化通知后，统一处理变化的时刻。
-    changes_due: Option<Instant>,
-    /// 正在后台重读的、被其他程序修改的文件。
-    rereads: workspace::watch::Rereads,
-    /// 正在后台保存的大文件。
-    saves: workspace::background_save::BackgroundSaves,
-    /// 正在后台读取的、刚打开的文件。
-    loads: workspace::loading::Loads,
+    /// 与磁盘的同步：目录的监视，以及文件在后台的读取、保存和改动。
+    pub(crate) disk: workspace::DiskState,
     /// 最近切换到的文件，最近的在前。
     ///
     /// 快速打开（`⌘P`）未输入查询时先列出这些文件（当前文件除外），回车即可切回上一个文件。
@@ -1012,11 +933,6 @@ pub struct App {
     pub branch: git::branch::BranchState,
     /// 远程模块：正在进行的连接。
     pub remote: remote::RemoteState,
-    /// 正在后台执行的文件操作。
-    pub(in crate::app) file_work: workspace::file_work::FileWork,
-    /// 逐个执行远端文件改动的线程的任务队列（见 [`App::spawn_ordered_then`]）；尚未创建时为
-    /// `None`。
-    ordered: Option<mpsc::Sender<OrderedTask>>,
     /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
     pub merge: git::merge::MergeState,
     /// 大文件的差异在后台重新比较。
@@ -1043,13 +959,12 @@ pub struct App {
     deleted_told: HashSet<DocumentId>,
     /// 右上角提示条的状态。
     pub notice: lifecycle::notice::Notice,
-    /// 鼠标是否在窗口内：移进来时置位，离开窗口时清除。
-    cursor_inside: bool,
     /// 悬停提示的计时状态。
     pub tooltip: animation::Tooltip,
 
     // 窗口和事件循环
-    renderer: Option<Renderer>,
+    /// 帧的绘制与呈现：渲染器、下一帧的安排和测量。
+    pub(crate) frame: lifecycle::FrameState,
     /// 后台线程和系统回调通过该代理把事件送回事件循环（附带本窗口的编号，见 [`crate::winc`]）；
     /// 测试中没有事件循环，为 `None`。
     proxy: Option<crate::winc::WindowProxy>,
@@ -1073,22 +988,6 @@ pub struct App {
     /// 待使用的激活令牌（见 [`App::set_activation`]）。
     #[cfg(all(unix, not(target_os = "macos")))]
     activation: Option<winit::window::ActivationToken>,
-    /// 动画下一帧的绘制时刻（没有显示链接时按计时器安排）。
-    next_frame: Option<Instant>,
-    /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起、Windows）。
-    #[cfg(target_os = "macos")]
-    display_link: Option<crate::macos::DisplayLink>,
-    /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起、Windows）。
-    #[cfg(windows)]
-    display_link: Option<crate::windows::DisplayLink>,
-    /// 相邻两帧的间隔；动画开始时按窗口所在显示器的刷新率计算。
-    frame_interval: Duration,
-    bench: Bench,
-    /// 帧日志（`WINC_FRAME_LOG`）。
-    frame_log: crate::frame_log::FrameLog,
-    /// 已呈现的帧数，供测量钩子使用。
-    presented: usize,
-    dirty: bool,
 }
 
 impl App {
@@ -1096,7 +995,7 @@ impl App {
     ///
     /// 文件树的可见行变化后都会请求重绘：其中尚未读取的目录在此交给后台（[`App::fetch_tree`]）。
     pub(crate) fn request_redraw(&mut self) {
-        self.dirty = true;
+        self.frame.dirty = true;
         self.fetch_tree();
     }
 
@@ -1156,7 +1055,7 @@ impl App {
             job();
             let _ = proxy.send_event(done);
         });
-        let task = match &self.ordered {
+        let task = match &self.disk.ordered {
             Some(queue) => match queue.send(task) {
                 Ok(()) => return,
                 // 线程已经结束：重新创建。
@@ -1169,13 +1068,13 @@ impl App {
             .name("winc-remote".into())
             .spawn(move || tasks.into_iter().for_each(|task| task()));
         // 线程无法创建时退回单独的线程：任务仍然执行，只是不再保证先后。
-        self.ordered = None;
+        self.disk.ordered = None;
         if worker.is_err() {
             winc_editor::background::spawn_blocking(task);
         } else if let Err(mpsc::SendError(task)) = queue.send(task) {
             winc_editor::background::spawn_blocking(task);
         } else {
-            self.ordered = Some(queue);
+            self.disk.ordered = Some(queue);
         }
     }
 
@@ -1215,20 +1114,20 @@ impl App {
 
     /// 返回鼠标位置（逻辑像素）。
     pub(crate) fn mouse(&self) -> (f32, f32) {
-        self.mouse
+        self.pointer.mouse
     }
 
     /// 是否正在用鼠标拖动（拖选文字、拖动分隔条等）。
     pub(crate) fn dragging(&self) -> bool {
-        self.drag != Drag::None
+        self.pointer.drag != Drag::None
     }
 
     /// 是否按下主修饰键：macOS 上为 ⌘，其他系统上为 Ctrl（用于单击多选、比较、打开链接）。
     pub(crate) fn command_held(&self) -> bool {
         if cfg!(target_os = "macos") {
-            self.modifiers.super_key()
+            self.pointer.modifiers.super_key()
         } else {
-            self.modifiers.control_key()
+            self.pointer.modifiers.control_key()
         }
     }
 
@@ -1242,16 +1141,16 @@ impl App {
         } else {
             hover
         };
-        if hover == self.hover {
+        if hover == self.pointer.hover {
             return;
         }
 
         // 鼠标移到预览的标题指示条上时，标题列表展开并淡入。
         let toc = |h: Hover| matches!(h, Hover::MarkdownToc(_));
-        if toc(hover) && !toc(self.hover) {
-            self.markdown.toc_fade = self.clock(animation::TOC_FADE);
+        if toc(hover) && !toc(self.pointer.hover) {
+            self.preview.markdown.toc_fade = self.clock(animation::TOC_FADE);
         }
-        self.hover = hover;
+        self.pointer.hover = hover;
         self.tooltip.since = hover.has_tooltip().then(Instant::now);
         self.tooltip.shown = false;
         self.request_redraw();
@@ -1264,9 +1163,9 @@ impl App {
     fn drop_drags(&mut self) {
         self.cancel_tree_drag();
         self.release_tab();
-        self.drag = Drag::None;
-        self.close_pressed = None;
-        self.control_pressed = None;
+        self.pointer.drag = Drag::None;
+        self.pointer.close_pressed = None;
+        self.pointer.control_pressed = None;
     }
 
     fn reset_blink(&mut self) {
@@ -1295,7 +1194,7 @@ impl App {
         // 焦点在预览上时查找预览的文字。
         let preview = searching && self.markdown_focused() && self.markdown_find_doc().is_some();
         let doc = if preview {
-            self.markdown.find_doc.as_ref()
+            self.preview.markdown.find_doc.as_ref()
         } else {
             self.editor.active()
         };

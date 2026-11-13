@@ -121,7 +121,7 @@ fn draw_log_diff_version(app: &mut App, frame: &mut Frame<'_>, reveal: f32) -> f
     let p = app.palette;
     let header = app.layout.sidebar_header;
     let button = app.log_diff_layout_button();
-    let hovered = app.hover == Hover::LogDiffLayout;
+    let hovered = app.pointer.hover == Hover::LogDiffLayout;
     draw_button(frame, p, button, header, hovered, false);
     let color = if hovered { p.text } else { p.text_muted };
     if app.log_list().flat() {
@@ -260,7 +260,14 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
         BUTTON_SMALL,
     );
     let open = app.menu_button == Some(MenuButton::Project);
-    draw_button(frame, p, hit, clip, app.hover == Hover::ProjectName, open);
+    draw_button(
+        frame,
+        p,
+        hit,
+        clip,
+        app.pointer.hover == Hover::ProjectName,
+        open,
+    );
     if bar.opened {
         draw_badge(app, frame, badge_rect, &bar.project, clip);
     }
@@ -318,12 +325,12 @@ fn draw_tree_tools(app: &App, frame: &mut Frame<'_>) {
     let header = app.layout.sidebar_header;
     let left = app.hits.project.right() + BUTTON_GAP;
     let clip = Rect::new(left, header.y, (header.right() - left).max(0.0), header.h);
-    let (shown, more_shown) = app.tool_fold.eased();
+    let (shown, more_shown) = app.motion.tool_fold.eased();
     let (tools, more) = folding_tools(header, &shown, more_shown);
 
     for (button, tool, shown) in tools {
         let kept = app.hits.tree_tools.iter().any(|&(_, t)| t == tool);
-        let hovered = kept && app.hover == Hover::TreeTool(tool);
+        let hovered = kept && app.pointer.hover == Hover::TreeTool(tool);
         let color = if hovered { p.text } else { p.text_muted };
         // 透明度比位置变化得快：滑到「⋯」上时已经接近透明，几个图标叠在一起也不会混成一片。
         frame.with_opacity(shown * shown, |frame| {
@@ -335,7 +342,7 @@ fn draw_tree_tools(app: &App, frame: &mut Frame<'_>) {
     if let Some(more) = more {
         // 菜单打开时按钮显示为按下状态。
         let open = app.menu_button == Some(MenuButton::TreeMore);
-        let hovered = app.hits.tree_more.is_some() && app.hover == Hover::TreeMore;
+        let hovered = app.hits.tree_more.is_some() && app.pointer.hover == Hover::TreeMore;
         let color = if hovered || open {
             p.text
         } else {
@@ -566,7 +573,7 @@ fn draw_tree_entry(
     let ws = app.editor.workspace.as_ref();
     let selected = index.is_some_and(|i| ws.is_some_and(|w| w.is_selected(i)));
     let hovered = index.is_some_and(|i| {
-        app.hover == Hover::TreeRow(i) || app.tree.overflow.is_some_and(|(_, o)| o == i)
+        app.pointer.hover == Hover::TreeRow(i) || app.tree.overflow.is_some_and(|(_, o)| o == i)
     });
 
     // 名称放不下时，底色一直铺到侧栏边缘、右侧不留圆角，看起来像被侧栏边缘截断；
@@ -1229,7 +1236,7 @@ fn draw_chain(
                 let name = winc_editor::segment_name(path);
                 let width = frame.measure(FontKind::Ui, app.fonts.ui, &name);
                 let hovered = dropping.is_none()
-                    && matches!(app.hover, Hover::TreeRow(_))
+                    && matches!(app.pointer.hover, Hover::TreeRow(_))
                     && app.tree.hover_segment.as_ref() == Some(path);
                 if hovered || dropping == Some(path.as_path()) {
                     let area = Rect::new(
@@ -1361,7 +1368,7 @@ pub(in crate::view) fn draw_sidebar_button(app: &App, frame: &mut Frame<'_>) {
     let button = app.layout.sidebar_button;
     let open = app.sidebar_open();
 
-    let hovered = app.hover == Hover::SidebarButton;
+    let hovered = app.pointer.hover == Hover::SidebarButton;
     draw_button(frame, p, button, app.layout.window, hovered, false);
     icons::sidebar(frame, center(button), open, p.text_muted, button);
 }

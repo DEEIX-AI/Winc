@@ -375,7 +375,7 @@ impl App {
         let strip = &self.terminal.strip;
         let width = strip.widths[index];
         let total = strip.slot(strip.widths.len()) - TAB_GAP;
-        (self.mouse.0 - grab - strip.left).clamp(0.0, (total - width).max(0.0))
+        (self.pointer.mouse.0 - grab - strip.left).clamp(0.0, (total - width).max(0.0))
     }
 
     /// 让标签 `id` 从距新位置 `from` 处滑过去；还在滑时从当前的偏移继续滑动。

@@ -94,7 +94,7 @@ fn recent_folders_can_be_removed_and_opened_in_a_new_window() {
     let row = crate::app::workspace::picker::picker_parts(app, app.layout.picker)
         .row(0, app.picker.scroll);
     app.on_mouse_move(row.x + 60.0, row.y + row.h / 2.0);
-    assert_eq!(app.hover, Hover::PickerRow(0));
+    assert_eq!(app.pointer.hover, Hover::PickerRow(0));
     paint(app);
     let forget = crate::app::PickerPart::ForgetFolder(0);
     let close = app
@@ -105,7 +105,7 @@ fn recent_folders_can_be_removed_and_opened_in_a_new_window() {
         .unwrap()
         .0;
     app.on_mouse_move(close.x + close.w / 2.0, close.y + close.h / 2.0);
-    assert_eq!(app.hover, Hover::PickerPart(forget));
+    assert_eq!(app.pointer.hover, Hover::PickerPart(forget));
     app.on_mouse_down(MouseButton::Left);
     assert!(app.picker.open && app.picker.folders);
     assert_eq!(app.state.recent, [missing.clone(), canonical(&charlie)]);
@@ -125,9 +125,9 @@ fn recent_folders_can_be_removed_and_opened_in_a_new_window() {
 
     // 按住 `⌥` 回车：请应用层在新窗口打开，此窗口不变。
     app.run_action(Action::OpenRecent);
-    app.modifiers = winit::keyboard::ModifiersState::ALT;
+    app.pointer.modifiers = winit::keyboard::ModifiersState::ALT;
     app.picker_accept();
-    app.modifiers = winit::keyboard::ModifiersState::empty();
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     assert!(app.editor.root().is_none());
     let (requests, _) = winc.settle_for_test();
     assert_eq!(requests, [Request::NewWindow(Some(canonical(&charlie)))]);

@@ -150,7 +150,7 @@ impl App {
     /// 绘制后由 [`Self::end_scroll_frame`] 换回目标位置。正在折叠或展开时取消编辑区的平滑滚动，
     /// 因为折叠动画假定滚动位置不变。
     pub(in crate::app) fn begin_scroll_frame(&mut self) -> ScrollFrame {
-        if self.fold_motion.is_some() {
+        if self.motion.fold_motion.is_some() {
             self.scroll_glide = None;
         }
         let lh = self.fonts.line_height;

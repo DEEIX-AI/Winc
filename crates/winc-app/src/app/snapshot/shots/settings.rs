@@ -47,7 +47,7 @@ fn snapshot_settings() {
 
         // 窗口很矮时，卡片缩小到窗口以内，内容区域改为滚动。
         app.settings.error = None;
-        app.renderer = Some(
+        app.frame.renderer = Some(
             Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
         );
         app.relayout();
@@ -116,7 +116,7 @@ fn snapshot_settings_format() {
         shoot(&mut app, &format!("settings-fix-{tag}"));
 
         // 窗口很矮且滚动到中间：压在标题下沿和卡片底边上的行被裁剪，不会画到这两个边界之外。
-        app.renderer = Some(
+        app.frame.renderer = Some(
             Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
         );
         app.relayout();
@@ -130,7 +130,7 @@ fn snapshot_settings_format() {
         let prettier = dir.join("bin/prettier");
         std::fs::write(&prettier, "#!/bin/sh\ncat\n").unwrap();
         std::fs::set_permissions(&prettier, std::fs::Permissions::from_mode(0o755)).unwrap();
-        app.renderer = Some(
+        app.frame.renderer = Some(
             Renderer::offscreen(SIZE.0, SIZE.1, SCALE, app.palette.frame_bg, None, None).unwrap(),
         );
         app.close_settings();
@@ -205,7 +205,7 @@ fn snapshot_format_error() {
         shoot(&mut app, &format!("format-error-{tag}"));
 
         // 窗口最窄时，提示文字从中间截短，不超出编辑区。
-        app.renderer = Some(
+        app.frame.renderer = Some(
             Renderer::offscreen(640.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
         );
         app.relayout();

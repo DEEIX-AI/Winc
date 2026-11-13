@@ -341,7 +341,7 @@ impl App {
         if rows[RIGHT].start as f64 <= top || rows[LEFT].len() != rows[RIGHT].len() {
             return false;
         }
-        self.diff_fold = Some(DiffFoldMotion {
+        self.motion.diff_fold = Some(DiffFoldMotion {
             doc: doc.id,
             gap,
             rows,
@@ -358,7 +358,7 @@ impl App {
     /// `force` 为假时只在过渡的时钟走完后结束，每帧绘制之前调用；为真时立即结束，在修改折叠
     /// 状态或处理点击之前调用，使后续操作按最终的排版进行。
     pub(in crate::app) fn finish_diff_fold(&mut self, force: bool) {
-        let Some(motion) = self.diff_fold.take_if(|m| force || m.clock.done()) else {
+        let Some(motion) = self.motion.diff_fold.take_if(|m| force || m.clock.done()) else {
             return;
         };
         if motion.expanding {
@@ -473,7 +473,7 @@ impl App {
     /// 右侧是工作区文件时光标放在右侧文档中，否则在该侧选中这一位置（只读）。
     fn click_diff_sticky(&mut self, side: usize, line: usize) {
         let max = self.max_scroll_line();
-        let x = self.mouse.0;
+        let x = self.pointer.mouse.0;
         let Some(index) = self.editor.active else {
             return;
         };

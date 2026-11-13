@@ -119,7 +119,7 @@ fn draw_actions(
         let x = area.x + GUTTER + i as f32 * (w + TAB_GAP);
         let rect = Rect::new(x, area.y + GIT_PICKER_ACTIONS_TOP, w, BUTTON_SMALL);
         let enabled = app.picker_action_enabled(part);
-        let hovered = enabled && app.hover == Hover::PickerPart(part);
+        let hovered = enabled && app.pointer.hover == Hover::PickerPart(part);
         let fill = if hovered {
             p.selected_inactive
         } else {
@@ -202,7 +202,7 @@ impl Line {
         let selected = chosen && !default;
         // 展开、收起的动画期间各行的位置在变化，悬停记录的行号与绘制位置不对应，因此不画悬停。
         let hovered = app.picker.fold.is_none()
-            && matches!(app.hover,
+            && matches!(app.pointer.hover,
                 Hover::PickerRow(r) | Hover::PickerPart(PickerPart::More(r)) if r == i);
         let band = row.inset(GUTTER, 1.0);
         let (text, dim) = if selected {
@@ -365,7 +365,7 @@ impl Line {
     /// 绘制行内按钮悬停时的底色。
     fn draw_row_button(&self, app: &App, frame: &mut Frame<'_>, button: Rect, part: PickerPart) {
         let p = app.palette;
-        let hovered = app.hover == Hover::PickerPart(part);
+        let hovered = app.pointer.hover == Hover::PickerPart(part);
         if hovered && self.selected {
             let fill = p.text_on_accent.alpha(ON_BAND);
             frame.rect_clipped(button, fill, RADIUS_ROW, self.clip);
@@ -676,7 +676,7 @@ fn draw_footer(
         let text = fit(frame, text, size, room, false);
         let w = TEXT_LEFT - GUTTER + frame.measure(FontKind::Ui, size, &text) + 8.0;
         let button = Rect::new(x, y, w, BUTTON_SMALL);
-        let hovered = app.hover == Hover::PickerPart(part);
+        let hovered = app.pointer.hover == Hover::PickerPart(part);
         draw_button(frame, p, button, foot, hovered, false);
         let color = if hovered { p.text } else { p.text_muted };
         // 图标与文字按同一字号垂直居中。

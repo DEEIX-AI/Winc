@@ -450,7 +450,7 @@ fn a_drawn_title_bar_has_window_buttons_and_resize_edges() {
     }
     assert!(!matches!(app.hover_at(w / 2.0, 12.0), Hover::ResizeEdge(_)));
     app.on_mouse_move(w - 1.0, h / 2.0);
-    assert_eq!(app.cursor_icon, CursorIcon::EResize);
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::EResize);
 
     // 关闭按钮在松开时才生效：按下时就关掉窗口，松开会落到下层窗口的同一位置。按下后移开再
     // 松开不算点击，窗口保留。
@@ -508,7 +508,7 @@ fn windows_share_one_background_layer() {
     paint(winc.app(a));
     winc.app(a).wait_for_wallpaper();
     paint(winc.app(a));
-    let layer = |app: &App| app.renderer.as_ref().unwrap().wallpaper().cloned();
+    let layer = |app: &App| app.frame.renderer.as_ref().unwrap().wallpaper().cloned();
     let first = layer(winc.app(a)).expect("第一个窗口的图层");
 
     paint(winc.app(b));

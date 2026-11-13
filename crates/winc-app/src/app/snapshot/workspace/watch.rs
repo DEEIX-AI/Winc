@@ -98,17 +98,17 @@ fn changes_are_handled_together_a_moment_after_the_first() {
     let dir = sample_folder("watch-settle");
     let mut app = app_with(&dir, false);
     // 测试中没有事件循环，不监视目录；但仍可验证收到通知与到期处理的时序。
-    assert!(app.watcher.is_none());
+    assert!(app.disk.watcher.is_none());
     let now = std::time::Instant::now();
     app.files_changed();
-    let due = app.changes_due.unwrap();
+    let due = app.disk.changes_due.unwrap();
     assert!(due > now);
     // 后续到达的通知不推迟到期时刻：持续有改动时也会按时处理。
     app.files_changed();
-    assert_eq!(app.changes_due, Some(due));
+    assert_eq!(app.disk.changes_due, Some(due));
     assert_eq!(app.changes_tick(now), Some(due));
     assert_eq!(app.changes_tick(due), None);
-    assert!(app.changes_due.is_none());
+    assert!(app.disk.changes_due.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -269,7 +269,7 @@ fn conflicts_wait_for_the_user_to_pick_a_side() {
     // 卡片遮挡下方的文字：悬停只识别按钮，点击卡片空白处不移动光标。
     let caret = app.editor.active().unwrap().selection;
     app.on_mouse_move(card.x + 20.0, card.y + card.h / 2.0);
-    assert_eq!(app.hover, Hover::None);
+    assert_eq!(app.pointer.hover, Hover::None);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert_eq!(app.editor.active().unwrap().selection, caret);
@@ -285,7 +285,10 @@ fn conflicts_wait_for_the_user_to_pick_a_side() {
     };
     let compare = button(&app, ConflictAction::Compare);
     app.on_mouse_move(compare.x + 4.0, compare.y + 4.0);
-    assert_eq!(app.hover, Hover::ConflictButton(ConflictAction::Compare));
+    assert_eq!(
+        app.pointer.hover,
+        Hover::ConflictButton(ConflictAction::Compare)
+    );
     app.on_mouse_down(MouseButton::Left);
     let diff = app.editor.active().unwrap();
     assert_eq!(diff.title.as_deref(), Some("比较：a.txt"));
@@ -369,7 +372,10 @@ fn background_rereads_keep_only_the_latest_and_skip_edited_documents() {
         let winc_editor::DiskSync::Reread(reread) = app.editor.documents[index].check_disk() else {
             panic!("干净的文档被改了应该要重读");
         };
-        (app.rereads.tickets.issue(id), DiskBack::Read(reread.read()))
+        (
+            app.disk.rereads.tickets.issue(id),
+            DiskBack::Read(reread.read()),
+        )
     };
     let text = |app: &App| {
         app.editor.documents[index]
@@ -382,7 +388,7 @@ fn background_rereads_keep_only_the_latest_and_skip_edited_documents() {
     // 文件连续修改两次，先发出的读取后到达：采用后发出的结果，后到达的旧内容不覆盖新内容。
     let (first, old) = reread(&mut app, "fn first() {}\n", 1);
     let (second, new) = reread(&mut app, "fn second() {}\n", 2);
-    let sender = app.rereads.results.0.clone();
+    let sender = app.disk.rereads.results.0.clone();
     sender.send((id, second, new)).unwrap();
     sender.send((id, first, old)).unwrap();
     app.poll_rereads();
@@ -456,11 +462,11 @@ fn large_files_save_in_the_background_and_skip_their_own_write() {
 
     // 正在后台保存的文档不随磁盘同步：本程序写出的文件不会被视为外部修改而报告冲突。
     app.run(Command::Insert("B".into()));
-    app.saves.running.insert(id);
+    app.disk.saves.running.insert(id);
     touch_later(&path);
     app.apply_changes(changes(&dir, &["big.log"]));
     assert!(app.active_conflict().is_none());
-    app.saves.running.remove(&id);
+    app.disk.saves.running.remove(&id);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

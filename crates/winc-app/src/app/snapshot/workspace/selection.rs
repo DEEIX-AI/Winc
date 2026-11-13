@@ -19,10 +19,10 @@ fn selected_names(app: &App) -> Vec<String> {
 
 /// 按着 `modifiers` 单击文件树第 `index` 行。
 fn click_row_with(app: &mut App, index: usize, modifiers: ModifiersState) {
-    app.modifiers = modifiers;
+    app.pointer.modifiers = modifiers;
     let at = tree_row_center(app, index);
     click(app, at);
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
 }
 
 /// 返回文件树第 `from` 到第 `to` 行（含）的名字。
@@ -62,10 +62,10 @@ fn command_and_shift_clicks_build_a_selection_and_a_plain_click_resets_it() {
     assert_eq!(app.editor.active().unwrap().name(), "Dockerfile");
 
     // ⇧↓ 往下扩展，Esc 退回只选当前行，再按 Esc 才回到编辑区。
-    app.modifiers = ModifiersState::SHIFT;
+    app.pointer.modifiers = ModifiersState::SHIFT;
     app.on_key_tree(&Key::Named(NamedKey::ArrowDown));
     app.on_key_tree(&Key::Named(NamedKey::ArrowDown));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert_eq!(
         selected_names(&app),
         names_between(&app, docker, docker + 2)
@@ -345,10 +345,10 @@ fn option_dragging_copies_the_selection_instead_of_moving_it() {
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
     let (_, lib_y) = tree_row_center(&app, lib);
-    app.modifiers = ModifiersState::ALT;
+    app.pointer.modifiers = ModifiersState::ALT;
     app.on_mouse_move(x + 10.0, lib_y);
     app.on_mouse_up(MouseButton::Left);
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     for name in ["a.txt", "short.rs"] {
         assert!(root.join(name).is_file(), "{name}");
         assert!(root.join("lib").join(name).is_file(), "{name}");
@@ -409,9 +409,9 @@ fn typing_jumps_to_names_and_home_end_page_keys_move() {
         Some(count - 1)
     );
     app.on_key_tree(&Key::Named(NamedKey::Home));
-    app.modifiers = ModifiersState::SHIFT;
+    app.pointer.modifiers = ModifiersState::SHIFT;
     app.on_key_tree(&Key::Named(NamedKey::End));
-    app.modifiers = ModifiersState::empty();
+    app.pointer.modifiers = ModifiersState::empty();
     assert_eq!(selected_names(&app).len(), count);
 
     // 文件树比一屏短时，翻页停在首行或末行。

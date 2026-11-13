@@ -485,7 +485,7 @@ impl App {
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => self.close_terminal_find(),
             Key::Named(NamedKey::Enter) => {
-                let older = !self.modifiers.shift_key();
+                let older = !self.pointer.modifiers.shift_key();
                 self.terminal_find_step(older);
             }
             _ => self.on_key_field(event, base, cmd),

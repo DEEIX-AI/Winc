@@ -295,9 +295,9 @@ impl App {
     pub(crate) fn card_fx(&mut self, card: Card) -> &mut CardFx {
         match card {
             Card::Picker => &mut self.picker.card,
-            Card::Bar => &mut self.bar_card,
-            Card::Dialog => &mut self.dialog_card,
-            Card::Alert => &mut self.alert_card,
+            Card::Bar => &mut self.motion.bar_card,
+            Card::Dialog => &mut self.motion.dialog_card,
+            Card::Alert => &mut self.motion.alert_card,
         }
     }
 
@@ -311,7 +311,7 @@ impl App {
             return None;
         }
 
-        self.frame_interval = frame_interval(window);
+        self.frame.frame_interval = frame_interval(window);
         Some(Clock::new(duration))
     }
 
@@ -347,21 +347,21 @@ impl App {
         settle(&mut self.commit.stash_motion, |m| m.1);
         settle(&mut self.outline.motion, |m| m.1);
         settle(&mut self.outline.fold, |f| f.clock);
-        settle(&mut self.markdown.toc_fade, |c| *c);
-        settle(&mut self.markdown.toc_flash, |f| f.1);
-        settle(&mut self.markdown.anchor_flash, |f| f.1);
+        settle(&mut self.preview.markdown.toc_fade, |c| *c);
+        settle(&mut self.preview.markdown.toc_flash, |f| f.1);
+        settle(&mut self.preview.markdown.anchor_flash, |f| f.1);
         settle(&mut self.commit.card.motion, |m| m.1);
         settle(&mut self.commit.undo.motion, |m| m.1);
         settle(&mut self.global.field_motion, |m| m.2);
         settle(&mut self.global.motion, |m| m.clock);
-        settle(&mut self.fold_motion, |m| m.clock);
+        settle(&mut self.motion.fold_motion, |m| m.clock);
         self.finish_diff_fold(false);
         settle(&mut self.scroll_glide, |g| g.clock);
         self.pane_glides.retain(|g| !g.clock.done());
         settle(&mut self.picker.motion, |m| m.clock);
-        settle(&mut self.pdf.zoom_motion, |m| m.clock);
-        settle(&mut self.picture_view.zoom_motion, |m| m.clock);
-        settle(&mut self.pdf.strip_motion, |m| m.1);
+        settle(&mut self.preview.pdf.zoom_motion, |m| m.clock);
+        settle(&mut self.preview.picture_view.zoom_motion, |m| m.clock);
+        settle(&mut self.preview.pdf.strip_motion, |m| m.1);
         settle(&mut self.picker.fold, |f| f.clock);
         if self.picker.places_in.is_some_and(|c| c.done()) {
             self.picker.places_in = None;
@@ -381,16 +381,16 @@ impl App {
         settle(&mut self.sidebar.view_slide, |s| s.1);
         settle(&mut self.settings.motion, |m| m.1);
         self.picker.card.settle();
-        self.bar_card.settle();
-        self.dialog_card.settle();
-        self.alert_card.settle();
+        self.motion.bar_card.settle();
+        self.motion.dialog_card.settle();
+        self.motion.alert_card.settle();
         if self.settings.motion.is_none() {
             self.settings.cache = None;
         }
         settle(&mut self.settings.mode_slide, |s| s.1);
         settle(&mut self.settings.switch_slide, |s| s.1);
-        settle(&mut self.setup_intro, |c| *c);
-        settle(&mut self.setup_outro, |c| *c);
+        settle(&mut self.motion.setup_intro, |c| *c);
+        settle(&mut self.motion.setup_outro, |c| *c);
         self.show_update_notice();
         settle(&mut self.log.fade, |c| *c);
         self.settle_hint();
@@ -400,7 +400,7 @@ impl App {
         self.terminal.strip.settle();
         settle(&mut self.terminal.motion, |m| m.clock);
         settle(&mut self.terminal.grow, |g| g.1);
-        settle(&mut self.markdown.motion, |m| m.clock);
+        settle(&mut self.preview.markdown.motion, |m| m.clock);
         self.status.motion.settle();
     }
 
@@ -411,12 +411,12 @@ impl App {
     pub(super) fn schedule_frame(&mut self, started: Instant) {
         let animating = self.animating();
         #[cfg(any(target_os = "macos", windows))]
-        if let Some(link) = &mut self.display_link {
+        if let Some(link) = &mut self.frame.display_link {
             link.set_running(animating);
-            self.next_frame = None;
+            self.frame.next_frame = None;
             return;
         }
-        self.next_frame = animating.then(|| started + self.frame_interval);
+        self.frame.next_frame = animating.then(|| started + self.frame.frame_interval);
     }
 
     /// 本帧未能绘制时（呈现缓冲均被合成器占用，见 `Renderer::draw`）安排重绘。
@@ -426,12 +426,12 @@ impl App {
     /// 绘制成功后 [`Self::schedule_frame`] 会取消该计时器。
     pub(super) fn retry_frame(&mut self, started: Instant) {
         #[cfg(any(target_os = "macos", windows))]
-        if let Some(link) = &mut self.display_link {
+        if let Some(link) = &mut self.frame.display_link {
             link.set_running(true);
-            self.next_frame = Some(started + self.frame_interval * 2);
+            self.frame.next_frame = Some(started + self.frame.frame_interval * 2);
             return;
         }
-        self.next_frame = Some(started + self.frame_interval);
+        self.frame.next_frame = Some(started + self.frame.frame_interval);
     }
 
     /// 是否有动画正在进行，包括滚动条的淡入、淡出和变色。
@@ -450,26 +450,26 @@ impl App {
             || self.commit.stash_motion.is_some()
             || self.outline.motion.is_some()
             || self.outline.fold.is_some()
-            || self.markdown.toc_fade.is_some()
-            || self.markdown.toc_flash.is_some()
-            || self.markdown.anchor_flash.is_some()
+            || self.preview.markdown.toc_fade.is_some()
+            || self.preview.markdown.toc_flash.is_some()
+            || self.preview.markdown.anchor_flash.is_some()
             || self.commit.card.motion.is_some()
             || self.commit.undo.motion.is_some()
             || self.global.field_motion.is_some()
             || self.global.motion.is_some()
             || self.drag_autoscrolling()
             || self.global.rows_moving()
-            || self.fold_motion.is_some()
-            || self.diff_fold.is_some()
+            || self.motion.fold_motion.is_some()
+            || self.motion.diff_fold.is_some()
             || self.scroll_glide.is_some()
             || self.wheel.glide.is_some()
             || !self.pane_glides.is_empty()
             || self.fling.is_some()
             || self.scroll_input_live()
             || self.picker.motion.is_some()
-            || self.pdf.zoom_motion.is_some()
-            || self.picture_view.zoom_motion.is_some()
-            || self.pdf.strip_motion.is_some()
+            || self.preview.pdf.zoom_motion.is_some()
+            || self.preview.picture_view.zoom_motion.is_some()
+            || self.preview.pdf.strip_motion.is_some()
             || self.picker.fold.is_some()
             || self.picker.places_in.is_some()
             || self.picker.places_out.is_some()
@@ -481,13 +481,13 @@ impl App {
             || self.sidebar.view_slide.is_some()
             || self.settings.motion.is_some()
             || self.picker.card.motion.is_some()
-            || self.bar_card.motion.is_some()
-            || self.dialog_card.motion.is_some()
-            || self.alert_card.motion.is_some()
+            || self.motion.bar_card.motion.is_some()
+            || self.motion.dialog_card.motion.is_some()
+            || self.motion.alert_card.motion.is_some()
             || self.settings.mode_slide.is_some()
             || self.settings.switch_slide.is_some()
-            || self.setup_intro.is_some()
-            || self.setup_outro.is_some()
+            || self.motion.setup_intro.is_some()
+            || self.motion.setup_outro.is_some()
             || self.log.fade.is_some()
             || self.hint_animating()
             || !self.tabs.slides.is_empty()
@@ -496,10 +496,10 @@ impl App {
             || self.terminal.strip.animating()
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
-            || self.module_fx.moving()
-            || self.tool_fold.moving()
+            || self.motion.module_fx.moving()
+            || self.motion.tool_fold.moving()
             || self.scrollbars_animating()
-            || self.markdown.motion.is_some()
+            || self.preview.markdown.motion.is_some()
             || self.status.motion.moving()
             || ((self.branch.running.is_some()
                 || self.branch.finished.is_some()
@@ -547,6 +547,29 @@ fn system_reduces_motion() -> bool {
     {
         false
     }
+}
+
+/// 界面各处出现、消失与折叠的过渡动画。
+pub(crate) struct Motions {
+    /// 首次设置开场动画的时钟；没有在播放时为 `None`。
+    pub(crate) setup_intro: Option<animation::Clock>,
+    /// 点击「完成」之后从「首次设置」换到开始页的过渡动画的时钟；没有在播放时为 `None`。
+    pub(crate) setup_outro: Option<animation::Clock>,
+    /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
+    pub(crate) tool_fold: ToolFold,
+    /// 编辑区顶部输入条出现、消失的动画。
+    pub(crate) bar_card: animation::CardFx,
+    /// 对话框出现、消失的动画。
+    pub(crate) dialog_card: animation::CardFx,
+    /// 窗口内绘制的提示框出现、消失的动画。
+    pub(crate) alert_card: animation::CardFx,
+    /// 开关 Git、终端模块时，视图切换器中的「提交」一段、状态栏的终端开关和分支名
+    /// 出现、消失的动画。
+    pub(crate) module_fx: animation::ModuleFx,
+    /// 代码折叠、展开的动画。
+    pub fold_motion: Option<FoldMotion>,
+    /// 差异标签中未改动内容折叠、展开的过渡。
+    pub(crate) diff_fold: Option<diff::DiffFoldMotion>,
 }
 
 #[cfg(test)]

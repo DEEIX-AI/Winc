@@ -162,7 +162,8 @@ impl App {
     ///
     /// 测量时不显示背景图，测量结果不随用户的配置变化。
     fn wallpaper_source(&self) -> Option<Source> {
-        let path = (self.config.ui_background_image.as_deref()).filter(|_| !self.bench.silent())?;
+        let path =
+            (self.config.ui_background_image.as_deref()).filter(|_| !self.frame.bench.silent())?;
         let opacity = (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY);
         (opacity >= 0.5).then(|| Source {
             path: PathBuf::from(path.trim()),

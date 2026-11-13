@@ -279,7 +279,7 @@ impl App {
             return false;
         }
         let selected = form.selected;
-        let alt = self.modifiers.alt_key();
+        let alt = self.pointer.modifiers.alt_key();
         match key {
             Key::Named(NamedKey::ArrowUp) if alt => self.move_rebase_row(true),
             Key::Named(NamedKey::ArrowDown) if alt => self.move_rebase_row(false),
