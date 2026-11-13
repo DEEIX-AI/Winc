@@ -1,6 +1,8 @@
 //! `Renderer` 的测试：整帧绘制的透明度与裁剪、模拟粗体和斜体、多个窗口共用的字形缓存，
 //! 以及由系统提供的字形轮廓。
 
+use std::path::PathBuf;
+
 use super::*;
 
 /// 用字体 `font` 的 `kind` 字形画字符 `c`，返回字形上半部分与下半部分墨迹的平均横坐标
@@ -451,6 +453,55 @@ fn scaled_pixels_take_the_nearest_source_pixel() {
     assert_eq!((at(1, 2), at(10, 2), at(5, 9)), (0, 0, 0));
 }
 
+/// 放大到数万像素宽时，远离左端的源像素边界仍落在准确的位置：
+/// 横向步进的舍入误差不累积到可见的偏移。
+#[test]
+fn scaled_pixels_stay_aligned_far_from_the_left_edge() {
+    // 3 × 1 的位图：红、绿、蓝，放大到 90000 像素宽；绿与蓝的边界在第 60000 个像素处。
+    let rgba = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255];
+    let mut renderer =
+        Renderer::offscreen(8.0, 1.0, 1.0, Color::hex(0x000000), None, None).unwrap();
+    renderer.draw(|frame| {
+        let rect = Rect::new(-59_996.0, 0.0, 90_000.0, 1.0);
+        frame.pixels_scaled(rect, 3, 1, &rgba, Rect::new(0.0, 0.0, 8.0, 1.0));
+    });
+    let image = renderer.image().unwrap();
+    let row: Vec<u32> = image.pixels[..8].iter().map(|p| p & 0xff_ffff).collect();
+    assert_eq!(row[..4], [0x00ff00; 4]);
+    assert_eq!(row[4..], [0x0000ff; 4]);
+}
+
+/// 半透明的棋盘格只绘制裁剪范围内的方格：方格的颜色按其在整个矩形中的行列决定，与矩形超出
+/// 裁剪范围的部分无关。
+#[test]
+fn translucent_checkers_draw_only_the_visible_cells() {
+    let (first, second) = (Color::hex(0xff0000), Color::hex(0x0000ff));
+    let draw = |rect: Rect| {
+        let mut renderer =
+            Renderer::offscreen(8.0, 8.0, 1.0, Color::hex(0x000000), None, None).unwrap();
+        renderer.draw(|frame| {
+            let clip = Rect::new(2.0, 2.0, 4.0, 4.0);
+            frame.with_opacity(0.5, |frame| frame.checker(rect, 2.0, (first, second), clip));
+        });
+        renderer.image().unwrap().pixels.clone()
+    };
+    // 矩形的左上角在裁剪范围之外 2 格（4 像素）处：(2, 2) 位于第 3 行第 3 列，为 `first`。
+    let pixels = draw(Rect::new(-2.0, -2.0, 12.0, 12.0));
+    let at = |x: usize, y: usize| pixels[y * 8 + x] & 0xff_ffff;
+    // `second` 先铺满整个矩形，`first` 再叠在自己的方格上：只有 `first` 的方格带红色。
+    let (red, blue) = (at(2, 2), at(4, 2));
+    assert!(red >> 16 > 0, "{red:06x}");
+    assert!(blue & 0xff > 0 && blue >> 16 == 0, "{blue:06x}");
+    assert_eq!((at(4, 4), at(2, 4)), (red, blue));
+    // 裁剪范围之外保持底色。
+    assert_eq!((at(1, 2), at(6, 2), at(2, 6)), (0, 0, 0));
+    // 矩形向四周延伸到约一亿个方格时画面不变，且立即完成。
+    assert_eq!(
+        draw(Rect::new(-20_002.0, -20_002.0, 40_012.0, 40_012.0)),
+        pixels
+    );
+}
+
 /// 背景图在窗口背景、声明的底色和之后以这些颜色填充的矩形之下透出，颜色为「图片 × 不透明度 +
 /// 底色 × (1 − 不透明度)」；其余颜色照常绘制。底色声明与否画面相同。
 #[test]
@@ -617,4 +668,46 @@ fn the_wallpaper_is_placed_by_its_fit() {
         frame.rect(Rect::new(2.0, 0.0, 2.0, 2.0), bg);
     });
     assert_eq!((image[0], image[2], image[4]), (red, 0x202020, blue));
+}
+
+/// 当前平台上带微调指令的等宽字体：macOS 与 Linux 取随系统或 CI 安装的字体，Windows 取系统字体；
+/// 文件不存在时返回 `None`。
+fn hinted_font() -> Option<FontSpec> {
+    let path = if cfg!(target_os = "macos") {
+        PathBuf::from("/System/Library/Fonts/Supplemental/Andale Mono.ttf")
+    } else if cfg!(windows) {
+        text::font_path::windows_fonts().join("consola.ttf")
+    } else {
+        PathBuf::from("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
+    };
+    path.is_file().then_some(FontSpec::Path(path))
+}
+
+/// 微调把横画对齐到像素行：部分覆盖的像素减少，文字的宽度不变。
+#[test]
+fn hinting_sharpens_horizontal_stems_and_keeps_advances() {
+    let Some(font) = hinted_font() else {
+        return;
+    };
+    // 返回（文字末尾的横坐标，各像素距全覆盖或无覆盖的差之和）；后者越小，边缘越清晰。
+    let draw = |hinting: bool| {
+        let black = Color::hex(0x000000);
+        let mut renderer = Renderer::offscreen(120.0, 24.0, 1.0, black, Some(&font), None).unwrap();
+        renderer.set_hinting(hinting);
+        let mut end = 0.0;
+        renderer.draw(|frame| {
+            let (all, white) = (frame.bounds(), Color::hex(0xffffff));
+            end = frame.text(FontKind::Mono, 13.0, 4.0, 17.0, "EFHLTZ=_-+", white, all);
+        });
+        let image = renderer.image().unwrap();
+        let ink = |p: &u32| (p & 0xff).min(255 - (p & 0xff));
+        (end, image.pixels.iter().map(ink).sum::<u32>())
+    };
+    let (plain_end, plain) = draw(false);
+    let (hinted_end, hinted) = draw(true);
+    assert_eq!(hinted_end, plain_end);
+    assert!(
+        (hinted as f32) < plain as f32 * 0.9,
+        "未微调 {plain}，微调 {hinted}"
+    );
 }

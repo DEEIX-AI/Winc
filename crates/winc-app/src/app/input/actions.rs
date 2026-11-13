@@ -21,6 +21,9 @@ impl App {
         if !self.action_available(action) {
             return false;
         }
+        if action == Copy && self.vim_side_copy() {
+            return true;
+        }
         if let Some(done) = self.diff_edit_action(action) {
             return done;
         }
@@ -64,6 +67,13 @@ impl App {
             }
         }
 
+        // Vim 的普通与可视模式下，撤销、重做、复制、剪切、粘贴由 Vim 层按对应的命令执行。
+        let vim_keys = if self.vim.is_some() && self.focus == Focus::Editor {
+            self.vim_equivalent(action)
+        } else {
+            None
+        };
+
         match action {
             ShowCommands => self.toggle_palette(),
             QuickOpen => {
@@ -71,6 +81,8 @@ impl App {
                     && !self.picker_lists_commands()
                     && !self.picker_lists_symbols()
                     && !self.picker.folders
+                    && self.picker.vim_list.is_none()
+                    && self.picker.remote.is_none()
                 {
                     self.close_picker();
                 } else {
@@ -90,6 +102,7 @@ impl App {
             GoBack => self.navigate(false),
             GoForward => self.navigate(true),
             Settings => self.open_settings(),
+            ReleaseNotes => self.open_release_notes(crate::release_notes::Scope::All),
             KeyboardShortcuts => {
                 self.open_settings();
                 self.settings_show_page(SettingsPage::Keys);
@@ -101,6 +114,8 @@ impl App {
             NewWindow => self.new_window(None),
             OpenFile => self.pick(Pick::Open),
             OpenFolder => self.pick(Pick::OpenFolder),
+            RemoteConnect => self.open_remote_picker(),
+            RemoteDisconnect => self.remote_disconnect(),
             OpenRecent => self.open_recent_folders(),
             Save => self.save_active(),
             SaveAs => {
@@ -150,6 +165,9 @@ impl App {
             }
             Quit => self.request_quit(),
 
+            Undo | Redo | Cut | Copy | Paste if vim_keys.is_some() => {
+                self.vim_feed(vim_keys.unwrap_or_default());
+            }
             Undo => editing(self, Command::Undo),
             Redo => editing(self, Command::Redo),
             // 文件树中剪切选中的文件或目录：粘贴到文件树时移过去。
@@ -339,6 +357,7 @@ impl App {
             ThemeLight => self.set_theme_choice(ThemeChoice::Light),
             ThemeDark => self.set_theme_choice(ThemeChoice::Dark),
             ToggleStickyScroll => self.settings_toggle(crate::layout::Setting::StickyScroll),
+            ToggleVimMode => self.settings_toggle(crate::layout::Setting::VimMode),
             TogglePreview => self.toggle_preview(),
             ToggleWordWrap => self.settings_toggle(crate::layout::Setting::WordWrap),
             ToggleLineNumbers => self.settings_toggle(crate::layout::Setting::LineNumbers),
@@ -459,6 +478,12 @@ impl App {
                 return false;
             }
             Action::EditRunConfigurations if self.editor.root().is_none() => return false,
+            // 只有打开的目录在远端主机上时才有连接可断开。
+            Action::RemoteDisconnect
+                if !self.editor.root().is_some_and(winc_backend::is_remote) =>
+            {
+                return false;
+            }
             // Windows 安装包、deb 包已经把 `winc` 放进 `PATH`，没有要安装的。
             Action::InstallShellCommand | Action::UninstallShellCommand
                 if crate::shell_command::placement().is_none() =>
@@ -470,6 +495,7 @@ impl App {
         match action.module() {
             Some(crate::keymap::Module::Git) => self.git_enabled(),
             Some(crate::keymap::Module::Terminal) => self.terminal_enabled(),
+            Some(crate::keymap::Module::Remote) => self.remote_enabled(),
             None => true,
         }
     }

@@ -60,7 +60,7 @@ pub(super) const POPUP_IN: Duration = Duration::from_millis(150);
 pub(super) const POPUP_OUT: Duration = Duration::from_millis(110);
 /// 可编辑的预览重排后各块滑到新位置、新显示的标记淡入的时长，取 [`TREE_ANIMATION`]。
 pub(crate) const MARKDOWN_MOTION: Duration = TREE_ANIMATION;
-/// PDF 预览缩放、缩略图栏滑入滑出的时长，取 [`TREE_ANIMATION`]。
+/// PDF 预览与图片预览缩放、PDF 缩略图栏滑入滑出的时长，取 [`TREE_ANIMATION`]。
 pub(crate) const PDF_MOTION: Duration = TREE_ANIMATION;
 /// 设置浮层出现的时长（取自调参）：卡片面积远大于小浮窗，时长相应加长。
 pub(super) const DIALOG_IN: Duration = Duration::from_millis(220);
@@ -93,6 +93,9 @@ pub struct CardFx {
     pub shot: Option<(winc_render::Rect, winc_render::Snapshot)>,
     /// 淡入途中存放卡片下方内容（连同阴影）的缓冲，每帧复用；淡入结束后释放。
     pub base: Option<winc_render::Snapshot>,
+    /// 卡片开着换了一页（见 [`App::turn_card`]）时，换页之前的画面及其淡出的时钟；保留到新
+    /// 的一页淡入结束。
+    pub turning: Option<(Clock, winc_render::Rect, winc_render::Snapshot)>,
 }
 
 impl CardFx {
@@ -110,6 +113,7 @@ impl CardFx {
         }
         if self.motion.is_none() {
             self.base = None;
+            self.turning = None;
         }
         if !self.shown && self.motion.is_none() {
             self.shot = None;
@@ -271,6 +275,22 @@ impl App {
         }
     }
 
+    /// 开着的 `card` 即将换成另一页内容：换页之前的画面原地淡出，新的一页按出现的动画淡入。
+    ///
+    /// 卡片没有开着，或系统要求减弱动态效果时什么都不做。
+    pub(crate) fn turn_card(&mut self, card: Card) {
+        let (leave, enter) = (self.clock(DIALOG_OUT), self.clock(DIALOG_IN));
+        let fx = self.card_fx(card);
+        let (Some(leave), Some(enter), true) = (leave, enter, fx.shown) else {
+            return;
+        };
+        let Some((rect, shot)) = fx.shot.take() else {
+            return;
+        };
+        fx.turning = Some((leave, rect, shot));
+        fx.motion = Some((true, enter));
+    }
+
     /// 返回 `card` 的动画状态。
     pub(crate) fn card_fx(&mut self, card: Card) -> &mut CardFx {
         match card {
@@ -335,9 +355,12 @@ impl App {
         settle(&mut self.global.field_motion, |m| m.2);
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.fold_motion, |m| m.clock);
+        self.finish_diff_fold(false);
         settle(&mut self.scroll_glide, |g| g.clock);
+        self.pane_glides.retain(|g| !g.clock.done());
         settle(&mut self.picker.motion, |m| m.clock);
         settle(&mut self.pdf.zoom_motion, |m| m.clock);
+        settle(&mut self.picture_view.zoom_motion, |m| m.clock);
         settle(&mut self.pdf.strip_motion, |m| m.1);
         settle(&mut self.picker.fold, |f| f.clock);
         if self.picker.places_in.is_some_and(|c| c.done()) {
@@ -366,6 +389,9 @@ impl App {
         }
         settle(&mut self.settings.mode_slide, |s| s.1);
         settle(&mut self.settings.switch_slide, |s| s.1);
+        settle(&mut self.setup_intro, |c| *c);
+        settle(&mut self.setup_outro, |c| *c);
+        self.show_update_notice();
         settle(&mut self.log.fade, |c| *c);
         self.settle_hint();
         self.tabs.slides.retain(|s| !s.clock.done());
@@ -434,16 +460,22 @@ impl App {
             || self.drag_autoscrolling()
             || self.global.rows_moving()
             || self.fold_motion.is_some()
+            || self.diff_fold.is_some()
             || self.scroll_glide.is_some()
             || self.wheel.glide.is_some()
+            || !self.pane_glides.is_empty()
+            || self.fling.is_some()
+            || self.scroll_input_live()
             || self.picker.motion.is_some()
             || self.pdf.zoom_motion.is_some()
+            || self.picture_view.zoom_motion.is_some()
             || self.pdf.strip_motion.is_some()
             || self.picker.fold.is_some()
             || self.picker.places_in.is_some()
             || self.picker.places_out.is_some()
             || self.notice.entering.is_some()
             || self.notice.leaving.is_some()
+            || (self.notice.action.as_ref()).is_some_and(|action| action.in_progress())
             || self.diff.fade.is_some()
             || self.diff.pulse.is_some()
             || self.sidebar.view_slide.is_some()
@@ -454,6 +486,8 @@ impl App {
             || self.alert_card.motion.is_some()
             || self.settings.mode_slide.is_some()
             || self.settings.switch_slide.is_some()
+            || self.setup_intro.is_some()
+            || self.setup_outro.is_some()
             || self.log.fade.is_some()
             || self.hint_animating()
             || !self.tabs.slides.is_empty()

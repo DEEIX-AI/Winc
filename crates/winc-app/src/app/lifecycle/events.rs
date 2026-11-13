@@ -175,6 +175,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.renderer = Some(renderer);
         self.measure_fonts();
         self.window.handle = Some(window.clone());
+        self.start_setup_intro();
         #[cfg(windows)]
         {
             self.touch.window_input = crate::windows::WindowInput::new(&window);
@@ -387,18 +388,14 @@ impl ApplicationHandler<UserEvent> for App {
             | WindowEvent::MouseInput { .. }
             | WindowEvent::MouseWheel { .. }
                 if self.touch_blocks_mouse() => {}
+            // 窗口在光标所在位置被其他窗口遮挡时不响应移动，悬停状态按光标离开处理。
+            WindowEvent::CursorMoved { .. } if !self.under_cursor() => self.cursor_left(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_inside = true;
                 let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
                 self.on_mouse_move(position.x as f32 / scale, position.y as f32 / scale);
             }
-            WindowEvent::CursorLeft { .. } => {
-                self.cursor_inside = false;
-                if self.tabs.width_lock.take().is_some() {
-                    self.request_redraw();
-                }
-                self.set_hover(Hover::None);
-            }
+            WindowEvent::CursorLeft { .. } => self.cursor_left(),
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button,
@@ -413,6 +410,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::PinchGesture { delta, .. } => {
                 self.diagram_view_pinch(delta as f32);
                 self.pdf_pinch(delta as f32);
+                self.picture_pinch(delta as f32);
             }
             WindowEvent::HoveredFile(_) => self.hover_file(),
             WindowEvent::HoveredFileCancelled => self.end_file_hover(),
@@ -435,11 +433,21 @@ impl App {
             UserEvent::Definitions => self.poll_definitions(),
             UserEvent::FilesChanged => self.files_changed(),
             UserEvent::GitQuestion => self.poll_git_questions(),
+            UserEvent::RemoteQuestion => self.poll_remote_questions(),
+            UserEvent::RemoteStage => self.remote_stage_changed(),
+            UserEvent::RemoteHealth => self.request_redraw(),
+            UserEvent::RemoteClosed(target) => self.remote_closed(&target),
+            UserEvent::ReleaseNotes(notes) => self.show_release_notes(notes),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
             | UserEvent::GitCommit
             | UserEvent::GitBase
             | UserEvent::GitOperated
+            | UserEvent::RemoteConnected
+            | UserEvent::RemoteListed
+            | UserEvent::RemoteWatching
+            | UserEvent::FormatPlanned
+            | UserEvent::FileWorked
             | UserEvent::GitMergeSides
             | UserEvent::GitLog
             | UserEvent::GitBlame
@@ -500,8 +508,18 @@ impl App {
             UserEvent::OpenFolderIn(path, new_window, never_ask) => {
                 self.open_folder_in(&path, new_window, never_ask);
             }
-            UserEvent::Pasted(result) => self.pasted_into_tree(result),
-            UserEvent::Copied(copies, failures) => self.copied_into_tree(copies, failures),
+            UserEvent::Pasted(result, copying) => {
+                // 取消的那一项不算失败：不提示原因，之前粘贴好的各项照常显示。
+                let result = match self.copy_finished(&copying) {
+                    true => Ok(result.unwrap_or_default()),
+                    false => result,
+                };
+                self.pasted_into_tree(result);
+            }
+            UserEvent::Copied(copies, failures, copying) => {
+                self.copy_finished(&copying);
+                self.copied_into_tree(copies, failures);
+            }
             UserEvent::Reopen => self.show_window(),
             #[cfg(target_os = "macos")]
             UserEvent::OfferMoveToApplications => self.offer_move_to_applications(),
@@ -526,6 +544,9 @@ impl App {
                 self.open_settings();
             }
             UserEvent::InstallShellCommand => self.install_shell_command(),
+            UserEvent::OpenReleaseNotes => {
+                self.open_release_notes(crate::release_notes::Scope::All);
+            }
             // 编号为所弹出菜单中的序号，按记录的菜单查找对应的命令。
             UserEvent::MenuCommand(tag) => {
                 let command = self.context_menu.as_ref().and_then(|menu| {
@@ -602,6 +623,8 @@ impl App {
 
         let resize = self.terminal_resize_tick(now);
         earliest(&mut wake, resize);
+        let mapping = self.vim_tick(now);
+        earliest(&mut wake, mapping);
         // 当前标签正在读取且保留上一帧未绘制时，到期仍未读取完成则绘制「正在读取」。
         if self.loads.held {
             match self.holding_frame(now) {
@@ -613,6 +636,8 @@ impl App {
             }
         }
         earliest(&mut wake, self.terminal_settle_tick(now));
+        let copying = self.copy_tick(now);
+        earliest(&mut wake, copying);
 
         let tooltip_at = self.tooltip.since.map(|since| since + TOOLTIP_DELAY);
 
@@ -647,17 +672,8 @@ impl App {
         // 光标闪烁的定时唤醒需要同时满足：窗口有焦点、窗口可见（被完全遮挡时不绘制）、焦点位于
         // 可输入位置、当前文档可以编辑文字（或光标在差异里）、没有进行中的输入法组字；图片预览和
         // 无法打开的文件不显示光标。离上次输入超过 `BLINK_STOP` 后光标停在亮着的状态。
-        let typing = self.focus.is_field()
-            || (self.focus == Focus::Terminal
-                && self.terminal.tab().is_some_and(|t| t.ended.is_none()))
-            || (self.focus == Focus::Editor
-                && self.editor.active().is_some_and(|doc| {
-                    doc.edits_text()
-                        || doc
-                            .diff
-                            .as_deref()
-                            .is_some_and(|v| v.editing || v.read_caret().is_some())
-                }));
+        // Vim 模式的普通与可视模式不接受文字输入，块状光标仍然闪烁。
+        let typing = self.takes_text() || self.vim_caret().is_some();
 
         let blinking = now.duration_since(self.blink.epoch) < BLINK_STOP;
 
@@ -753,6 +769,7 @@ impl App {
             self.back_up_for_quit();
         }
         self.remember_window();
+        self.vim_persist();
         self.save_session();
     }
 

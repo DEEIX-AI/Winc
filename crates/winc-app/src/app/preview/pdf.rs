@@ -4,8 +4,13 @@
 //! 请求逐页渲染。绘制时只请求视口内和视口附近的页（`App::request_pdf_pages`）：不再需要的页从
 //! 缓存中移除，线程中排队但已不需要的请求跳过，内存只占这几页的位图。切换标签或文件被修改时
 //! 结束线程。左侧缩略图栏中的页同样按需渲染，排在正文的页之后。
+//!
+//! 各文件的阅读位置（[`Place`]）在切换标签、关闭标签后保留，并随目录的现场
+//! （`Session::pdf_places`）保存，再次打开时回到原处。
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::app::ScrollTarget;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use winc_editor::{DocumentId, Unsupported};
@@ -35,8 +40,8 @@ pub(crate) const ZOOM_RANGE: (f32, f32) = (0.5, 2.0);
 ///
 /// 取 2 倍屏上最宽的 A4 页放大到 2 倍时的大小（3440 × 4866）。
 const MAX_PAGE_PIXELS: f64 = 17_000_000.0;
-/// 触控板捏合累计到该比例时缩放一档。
-const PINCH_STEP: f32 = 0.2;
+/// 触控板捏合累计到该比例时缩放一档；PDF 预览与图片预览共用。
+pub(in crate::app::preview) const PINCH_STEP: f32 = 0.2;
 
 /// 各页在内容中的位置（逻辑像素，相对内容左上角），以及内容的宽度和高度。
 ///
@@ -58,6 +63,24 @@ pub(crate) fn page_rects(pages: &[PageSize], width: f32, zoom: f32) -> (Vec<Rect
         })
         .collect();
     (rects, content, y - GAP + PAD)
+}
+
+/// 阅读位置：视口顶边所在的页（页号从 0 起），以及视口顶边到该页顶边的距离与页高之比。
+///
+/// 按页内比例记录，窗口宽度或缩放倍数改变后仍对应同一处内容。视口顶边位于第一页上方的留白
+/// 内时比例小于 0，位于两页之间的间距内时比例大于 1。
+pub(crate) type Place = (usize, f32);
+
+/// 返回滚动位置 `scroll` 在各页位置 `rects` 下对应的阅读位置；没有页时返回 `None`。
+fn place_at(rects: &[Rect], scroll: f32) -> Option<Place> {
+    let page = rects.partition_point(|r| r.y <= scroll).saturating_sub(1);
+    let rect = rects.get(page)?;
+    Some((page, (scroll - rect.y) / rect.h.max(1.0)))
+}
+
+/// 阅读位置 `place` 是否位于文档开头：此时与未记录位置相同，不必保存。
+fn at_start((page, at): Place) -> bool {
+    page == 0 && at <= 0.0
 }
 
 /// 右下角工具栏上的按钮。
@@ -106,6 +129,14 @@ pub(crate) struct PdfPreview {
     pub area: Rect,
     /// 预览的文档及其版本号（`revision`）；文档或版本改变时重新打开。
     doc: Option<(DocumentId, u64)>,
+    /// 预览的文档的路径；没有文档时为 `None`。
+    path: Option<PathBuf>,
+    /// 当前文档在上一帧的阅读位置；尚未排版时为 `None`。
+    place: Option<Place>,
+    /// 打开文档后待恢复的阅读位置，首次排版时生效。
+    restore: Option<Place>,
+    /// 本次运行中预览过的各文件的阅读位置，不含当前文档；切换标签或关闭标签时记入。
+    places: HashMap<PathBuf, Place>,
     /// 当前打开的序号，每次重新打开加一，用来丢弃旧线程送回的结果。
     generation: u64,
     /// 向渲染线程发请求；丢弃时线程结束，文档随之关闭。
@@ -154,6 +185,10 @@ impl Default for PdfPreview {
         let (sender, receiver) = mpsc::channel();
         PdfPreview {
             doc: None,
+            path: None,
+            place: None,
+            restore: None,
+            places: HashMap::new(),
             generation: 0,
             requests: None,
             wanted: Arc::default(),
@@ -182,8 +217,12 @@ impl Default for PdfPreview {
 }
 
 impl PdfPreview {
-    /// 结束渲染线程，释放各页的位图，回到没有文档的状态。
+    /// 结束渲染线程，释放各页的位图，回到没有文档的状态；当前文档的阅读位置记入 `places`。
     fn reset(&mut self) {
+        if let (Some(path), Some(place)) = (self.path.take(), self.place.take()) {
+            self.places.insert(path, place);
+        }
+        self.restore = None;
         self.doc = None;
         self.requests = None;
         self.generation += 1;
@@ -219,17 +258,25 @@ impl PdfPreview {
     /// 排出各页在倍数 `zoom` 下的位置，记下内容的宽度和高度，并限制滚动范围；`width` 为正文
     /// 区域的宽度。返回各页的位置，以及最终倍数与本帧倍数之比（过渡期间不为 1）。
     ///
-    /// 缩放过渡期间倍数逐帧变化，锚点处的内容保持不动。绘制时调用。
+    /// 缩放过渡期间倍数逐帧变化，锚点处的内容保持不动。打开文档后首次排版时滚动到待恢复的
+    /// 阅读位置；每次排版后记下当前的阅读位置。绘制时调用。
     pub(crate) fn lay_out(&mut self, pages: &[PageSize], width: f32) -> (Vec<Rect>, f32) {
         let motion = self.zoom_motion;
         let zoom = motion.map_or(self.zoom, |m| m.clock.between(m.from, self.zoom));
         let (rects, content, height) = page_rects(pages, width, zoom);
         (self.width, self.height) = (content, height);
+        // 记录的页号超出页数（文件已被替换）时不恢复。
+        if let Some((page, at)) = self.restore.take()
+            && let Some(rect) = rects.get(page)
+        {
+            self.scroll = rect.y + at * rect.h;
+        }
         if let Some(m) = motion {
             self.hold(&rects, m.page, m.at, m.anchor);
         }
         self.scroll = self.scroll.clamp(0.0, self.max_scroll());
         self.scroll_x = self.scroll_x.clamp(0.0, (content - width).max(0.0));
+        self.place = place_at(&rects, self.scroll);
         (rects, self.zoom / zoom)
     }
 
@@ -268,10 +315,18 @@ impl App {
         if pdf.doc == Some((id, revision)) {
             return;
         }
-        // 同一文档的版本改变（磁盘上的文件被修改）时保留滚动位置。
+        // 同一文档的版本改变（磁盘上的文件被修改）时保留滚动位置；换文档时回到该文件上次的
+        // 阅读位置，本次运行中没有预览过的文件取目录的现场中的记录。
         let scroll = (pdf.doc.map(|(d, _)| d) == Some(id)).then_some(pdf.scroll);
+        let saved = match scroll {
+            Some(_) => None,
+            None => (pdf.places.get(&path).copied()).or_else(|| self.saved_pdf_place(&path)),
+        };
+        let pdf = &mut self.pdf;
         pdf.reset();
         pdf.scroll = scroll.unwrap_or(0.0);
+        pdf.restore = saved;
+        pdf.path = Some(path.clone());
         pdf.doc = Some((id, revision));
         let (requests, queue) = mpsc::channel::<Request>();
         pdf.requests = Some(requests);
@@ -336,6 +391,38 @@ impl App {
             pdf.requests = None;
             pdf.pages = Some(Err(winc_i18n::t!("preview-pdf-render-failed").to_owned()));
         }
+    }
+
+    /// 返回目录的现场中记录的、文件 `path` 的阅读位置。
+    fn saved_pdf_place(&self, path: &Path) -> Option<Place> {
+        let session = self.state.session_for(self.editor.root()?)?;
+        let (_, place) = session.pdf_places.iter().find(|(file, _)| file == path)?;
+        Some(*place)
+    }
+
+    /// 返回目录 `root` 中各 PDF 文件的阅读位置，按路径排序，用于保存现场。
+    ///
+    /// 以现场中已有的记录为基础，本次运行中预览过的文件改用当前的位置；位于文档开头的文件
+    /// 不记录。
+    pub(in crate::app) fn pdf_session(&self, root: &Path) -> Vec<(PathBuf, Place)> {
+        let mut files: BTreeMap<PathBuf, Place> = self
+            .state
+            .session_for(root)
+            .map(|s| s.pdf_places.iter().cloned().collect())
+            .unwrap_or_default();
+        let pdf = &self.pdf;
+        let current = pdf.path.as_ref().zip(pdf.place.as_ref());
+        for (path, place) in pdf.places.iter().chain(current) {
+            if !path.starts_with(root) {
+                continue;
+            }
+            if at_start(*place) {
+                files.remove(path);
+            } else {
+                files.insert(path.clone(), *place);
+            }
+        }
+        files.into_iter().collect()
     }
 
     /// 收下渲染线程送回的结果。
@@ -436,15 +523,20 @@ impl App {
         }
         // 翻一屏时与上一屏重叠一段，翻页后仍能看到上一屏末尾的内容。
         let page = (self.pdf.area.h - ARROW_STEP * 2.0).max(ARROW_STEP);
+        let y = self.pdf.scroll;
+        // 方向键逐段滚动，直接到达；翻页和到两端的跳转平滑滚动。
         match key {
             Key::Named(NamedKey::ArrowUp) => self.scroll_pdf(ARROW_STEP),
             Key::Named(NamedKey::ArrowDown) => self.scroll_pdf(-ARROW_STEP),
-            Key::Named(NamedKey::PageUp) => self.scroll_pdf(page),
-            Key::Named(NamedKey::PageDown | NamedKey::Space) => self.scroll_pdf(-page),
-            Key::Named(NamedKey::Home) => self.scroll_pdf(f32::MAX),
-            Key::Named(NamedKey::End) => self.scroll_pdf(-f32::MAX),
+            Key::Named(NamedKey::PageUp) => self.glide_pane_to(ScrollTarget::Pdf, y - page),
+            Key::Named(NamedKey::PageDown | NamedKey::Space) => {
+                self.glide_pane_to(ScrollTarget::Pdf, y + page);
+            }
+            Key::Named(NamedKey::Home) => self.glide_pane_to(ScrollTarget::Pdf, 0.0),
+            Key::Named(NamedKey::End) => self.glide_pane_to(ScrollTarget::Pdf, f32::MAX),
             _ => return false,
         }
+        self.request_redraw();
         true
     }
 
@@ -549,7 +641,7 @@ impl App {
 
     /// 把 PDF 预览滚动到位置 `to`（逻辑像素）；点击缩略图时调用。
     pub(in crate::app) fn scroll_pdf_to(&mut self, to: f32) {
-        self.pdf.scroll = to.clamp(0.0, self.pdf.max_scroll());
+        self.glide_pane_to(ScrollTarget::Pdf, to);
         self.request_redraw();
     }
 

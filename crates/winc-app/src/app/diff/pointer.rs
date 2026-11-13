@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::app::scroll::set_scroll_line;
+
 impl App {
     /// 处理差异文字上的右键点击，返回差异标签以及是否为右侧；不在文字上时返回 `None`。
     ///
@@ -134,6 +136,8 @@ impl App {
     /// 右侧是工作区文件时可以编辑，之后输入的文字写入右侧文件；`⌥` 单击添加或移除光标，
     /// `⌥` 拖动添加一个选区，`⇧⌥` 拖动进行列选择。点在选区外时收起选区。
     pub(in crate::app) fn click_diff(&mut self, x: f32, y: f32) -> bool {
+        // 过渡期间行的位置逐帧变化：先结束过渡，点击按最终的排版判定。
+        self.finish_diff_fold(true);
         let Some(index) = self.editor.active else {
             return false;
         };
@@ -258,9 +262,9 @@ impl App {
         let top = editor.y + DIFF_HEADER;
         if let Some(doc) = self.editor.active_mut() {
             if y < top {
-                doc.scroll_line -= 1.0;
+                set_scroll_line(doc, doc.scroll_line - 1.0);
             } else if y > editor.bottom() {
-                doc.scroll_line += 1.0;
+                set_scroll_line(doc, doc.scroll_line + 1.0);
             }
         }
         self.clamp_scroll();

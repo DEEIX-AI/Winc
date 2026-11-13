@@ -15,6 +15,7 @@ mod tree;
 pub(crate) use time::*;
 pub(crate) use tree::LogDiffTree;
 
+use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -44,6 +45,8 @@ pub(crate) fn log_title() -> &'static str {
 ///
 /// 等于差异视图的标题栏高度，使两类标签的标题栏对齐。
 pub(crate) const LOG_HEADER: f32 = 36.0;
+/// 筛选输入框与分支按钮之间的间距（逻辑像素）。
+pub(crate) const LOG_FILTER_GAP: f32 = 8.0;
 /// 详情一栏的最小宽度与最大宽度（逻辑像素）。
 ///
 /// 取自调参：300 可容纳提交说明和文件名；宽于 520 时提交列表过窄。拖动分隔线后不受上限
@@ -93,6 +96,14 @@ pub(crate) struct LogParts {
     pub list: Rect,
     /// 右侧的详情一栏。
     pub details: Rect,
+}
+
+impl LogParts {
+    /// 标题栏左侧的提交筛选输入框。
+    pub(crate) fn search(&self) -> Rect {
+        let header = self.header;
+        Rect::new(header.x + 12.0, header.y + 6.0, 220.0, header.h - 12.0)
+    }
 }
 
 /// 返回日志标签中各部分的位置。
@@ -485,7 +496,7 @@ impl App {
                 }
                 self.log.filter.set_text("");
                 self.log.seek = Some((id, oid.to_owned()));
-                self.editor.documents[index].scroll_line = 0.0;
+                set_scroll_line(&mut self.editor.documents[index], 0.0);
                 self.load_log(id);
             }
         }
@@ -670,9 +681,9 @@ impl App {
         let row = row as f64;
         if let Some(doc) = self.editor.active_mut() {
             if row < doc.scroll_line {
-                doc.scroll_line = row;
+                set_scroll_line(doc, row);
             } else if row + 1.0 > doc.scroll_line + visible {
-                doc.scroll_line = row + 1.0 - visible;
+                set_scroll_line(doc, row + 1.0 - visible);
             }
         }
         self.clamp_scroll();
@@ -792,7 +803,8 @@ impl App {
                 let (x, y) = self.mouse;
                 self.click_field(x, y);
             }
-            LogTarget::Branch | LogTarget::Author => {
+            LogTarget::Branch => self.open_branch_picker(crate::app::GitAnchor::Log),
+            LogTarget::Author => {
                 let Some(rect) = self
                     .hits
                     .log
@@ -802,13 +814,8 @@ impl App {
                 else {
                     return;
                 };
-                let menu = if target == LogTarget::Branch {
-                    MenuTarget::LogBranch
-                } else {
-                    self.log.authors = self.log_authors();
-                    MenuTarget::LogAuthor
-                };
-                self.open_context_menu(menu, (rect.x, rect.bottom() + 4.0));
+                self.log.authors = self.log_authors();
+                self.open_context_menu(MenuTarget::LogAuthor, (rect.x, rect.bottom() + 4.0));
             }
             LogTarget::ClearFilters => {
                 self.log.filter.set_text("");

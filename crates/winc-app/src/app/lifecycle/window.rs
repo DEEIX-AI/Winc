@@ -2,12 +2,40 @@
 
 use super::*;
 
+use crate::app::scroll::set_scroll_line;
+
 /// 预览滚动测量中每帧滚动的距离（逻辑像素）。
 ///
 /// 取默认字号下约三行的高度：文本的滚动测量每帧滚动三行。
 const BENCH_PREVIEW_STEP: f32 = 60.0;
 
 impl App {
+    /// 是否为光标所在位置最上层的窗口。
+    ///
+    /// 只在 macOS 上查询，见 [`under_cursor`](crate::macos::under_cursor)；其他系统只把鼠标移动
+    /// 发给光标下最上层的窗口，恒为是。
+    pub(crate) fn under_cursor(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = &self.window.handle {
+            return crate::macos::under_cursor(window);
+        }
+        true
+    }
+
+    /// 是否认为光标位于窗口内：收到过鼠标移动，且此后没有按光标离开处理。
+    pub(crate) fn cursor_inside(&self) -> bool {
+        self.cursor_inside
+    }
+
+    /// 处理光标离开窗口：清除悬停状态，并解除标签宽度的锁定。
+    pub(crate) fn cursor_left(&mut self) {
+        self.cursor_inside = false;
+        if self.tabs.width_lock.take().is_some() {
+            self.request_redraw();
+        }
+        self.set_hover(Hover::None);
+    }
+
     /// 处理双击顶栏空白处。
     ///
     /// macOS 上执行系统偏好中的标题栏双击动作（缩放或最小化），其他平台切换最大化。
@@ -59,7 +87,10 @@ impl App {
     /// 打开 `targets` 里的文件（目录跳过：已经是本窗口的目录），`文件:行:列` 跳到该位置，再把
     /// 窗口切到前台。
     pub(crate) fn open_files(&mut self, targets: &[crate::cli::Target]) {
-        for target in targets.iter().filter(|t| !t.path.is_dir()) {
+        for target in targets
+            .iter()
+            .filter(|t| !winc_backend::fs::is_dir(&t.path))
+        {
             self.open_path(&target.path);
             if let Some(line) = target.line {
                 self.jump_to(line, target.col.unwrap_or(0), 0);
@@ -240,7 +271,8 @@ impl App {
         let (w, h) = renderer.logical_size();
 
         // 隐藏状态栏时留下和窗口其他三边一样的边距，卡片不贴着窗口底边。
-        let status_height = if self.status_bar_shown() {
+        // Vim 模式的命令行占状态栏所在的一行：状态栏隐藏时临时显示。
+        let status_height = if self.status_bar_shown() || self.vim_prompt_open() {
             STATUS_HEIGHT
         } else {
             ISLAND_MARGIN
@@ -515,8 +547,10 @@ impl App {
             self.dirty = false;
             return;
         }
+        self.vim_sync();
         self.settle_animations();
         self.advance_wheel_glide();
+        self.advance_fling(Instant::now());
         self.continue_drag_scroll();
         self.track_modules();
         self.track_commit_bars();
@@ -543,9 +577,9 @@ impl App {
         if let Some(window) = &self.window.handle {
             window.pre_present_notify();
         }
-        let glide = self.begin_glide_frame();
+        let scrolled = self.begin_scroll_frame();
         let drawn = renderer.draw(|frame| view::draw(self, frame));
-        self.end_glide_frame(glide);
+        self.end_scroll_frame(scrolled);
         let elapsed = started.elapsed();
         self.renderer = Some(renderer);
         if !drawn {
@@ -567,7 +601,7 @@ impl App {
         // 高亮状态尚未推算完、大文件尚未搜完时，马上绘制下一帧，不按刷新率等：每帧本身有预算
         // （高亮 `HIGHLIGHT_BUDGET` 行、查找一个 8 ms 的时间片），已经不比刷新间隔短，按刷新率
         // 等反而常常错过一次刷新。
-        let searching = self.find.open || self.find.pending_jump.is_some();
+        let searching = self.find.open || self.find.pending_jump.is_some() || self.vim_highlights();
         self.dirty |= self.highlight_pending || (searching && !self.search.is_complete());
         // 终端查找同样按时间片进行：这一帧之后再找一个时间片，没找完就马上绘制下一帧。
         self.dirty |= self.terminal_find_tick();
@@ -595,13 +629,26 @@ impl App {
                 let max = self.max_scroll_line();
 
                 if let Some(doc) = self.editor.active_mut() {
-                    doc.scroll_line = if doc.scroll_line + 3.0 > max {
+                    let row = if doc.scroll_line + 3.0 > max {
                         0.0
                     } else {
                         doc.scroll_line + 3.0
                     };
+                    set_scroll_line(doc, row);
                 }
 
+                self.request_redraw();
+            }
+            Next::Key { vim, step } => {
+                let started = Instant::now();
+                if vim {
+                    self.vim_bench_key(step);
+                } else if step % 40 == 39 {
+                    self.run(Command::Newline);
+                } else {
+                    self.run(Command::Insert("x".into()));
+                }
+                self.bench.key_handled(started.elapsed());
                 self.request_redraw();
             }
             Next::Preview => {
@@ -624,7 +671,7 @@ impl App {
             Next::Highlight => {
                 let max = self.max_scroll_line();
                 if let Some(doc) = self.editor.active_mut() {
-                    doc.scroll_line = max;
+                    set_scroll_line(doc, max);
                 }
                 self.request_redraw();
             }

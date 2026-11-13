@@ -18,6 +18,7 @@ pub enum Action {
     GoBack,
     GoForward,
     Settings,
+    ReleaseNotes,
     KeyboardShortcuts,
     RecordKeys,
 
@@ -25,6 +26,8 @@ pub enum Action {
     NewWindow,
     OpenFile,
     OpenFolder,
+    RemoteConnect,
+    RemoteDisconnect,
     OpenRecent,
     Save,
     SaveAs,
@@ -162,6 +165,8 @@ pub enum Action {
     ThemeLight,
     ThemeDark,
     ToggleStickyScroll,
+    /// 开启或关闭 Vim 模式。
+    ToggleVimMode,
     ToggleWordWrap,
     /// 显示或隐藏编辑区右侧的缩略图。
     ToggleMinimap,
@@ -248,6 +253,8 @@ pub enum Module {
     Git,
     /// 终端模块。
     Terminal,
+    /// 远程模块。
+    Remote,
 }
 
 impl Action {
@@ -264,12 +271,15 @@ impl Action {
             GoBack => t!("cmd-go-back"),
             GoForward => t!("cmd-go-forward"),
             Settings => t!("cmd-settings"),
+            ReleaseNotes => t!("cmd-release-notes"),
             KeyboardShortcuts => t!("cmd-keyboard-shortcuts"),
             RecordKeys => t!("cmd-record-keys"),
             NewFile => t!("cmd-new-file"),
             NewWindow => t!("cmd-new-window"),
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
+            RemoteConnect => t!("cmd-remote-connect"),
+            RemoteDisconnect => t!("cmd-remote-disconnect"),
             OpenRecent => t!("cmd-open-recent"),
             Save => t!("cmd-save"),
             SaveAs => t!("cmd-save-as"),
@@ -405,6 +415,7 @@ impl Action {
             ThemeLight => t!("cmd-theme-light"),
             ThemeDark => t!("cmd-theme-dark"),
             ToggleStickyScroll => t!("cmd-toggle-sticky-scroll"),
+            ToggleVimMode => t!("cmd-toggle-vim-mode"),
             ToggleWordWrap => t!("cmd-toggle-word-wrap"),
             ToggleMinimap => t!("cmd-toggle-minimap"),
             ToggleLineNumbers => t!("cmd-toggle-line-numbers"),
@@ -474,12 +485,15 @@ impl Action {
             GoBack => "Go Back",
             GoForward => "Go Forward",
             Settings => "Settings",
+            ReleaseNotes => "Release Notes",
             KeyboardShortcuts => "Keyboard Shortcuts",
             RecordKeys => "Record Keys",
             NewFile => "New File",
             NewWindow => "New Window",
             OpenFile => "Open",
             OpenFolder => "Open Folder",
+            RemoteConnect => "Remote: Connect to SSH Host…",
+            RemoteDisconnect => "Remote: Disconnect",
             OpenRecent => "Open Recent Folder",
             Save => "Save",
             SaveAs => "Save As",
@@ -609,6 +623,7 @@ impl Action {
             ThemeLight => "Theme: Light",
             ThemeDark => "Theme: Dark",
             ToggleStickyScroll => "Toggle Editor Sticky Scroll",
+            ToggleVimMode => "Toggle Vim Mode",
             ToggleWordWrap => "Toggle Word Wrap",
             ToggleMinimap => "Toggle Minimap",
             ToggleLineNumbers => "Toggle Line Numbers",
@@ -678,14 +693,17 @@ impl Action {
             | GoBack
             | GoForward
             | Settings
+            | ReleaseNotes
             | KeyboardShortcuts
             | RecordKeys
             | InstallShellCommand
             | UninstallShellCommand => Group::General,
-            NewFile | OpenFile | OpenFolder | Save | SaveAs | CloseTab | CloseOtherTabs
-            | CloseAllTabs | ReopenClosed | NextTab | PreviousTab | CloseFolder | CloseWindow
-            | CopyPath | CopyRelativePath | RevealInFinder | CopyActivePath | CopyKeyPath
-            | RevealActiveFile | OpenInTerminal | Quit => Group::File,
+            NewFile | OpenFile | OpenFolder | RemoteConnect | RemoteDisconnect | Save | SaveAs
+            | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab | PreviousTab
+            | CloseFolder | CloseWindow | CopyPath | CopyRelativePath | RevealInFinder
+            | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal | Quit => {
+                Group::File
+            }
             NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo
             | Redo
@@ -777,6 +795,7 @@ impl Action {
             | ThemeLight
             | ThemeDark
             | ToggleStickyScroll
+            | ToggleVimMode
             | ToggleWordWrap
             | ToggleMinimap
             | ToggleLineNumbers
@@ -935,6 +954,7 @@ impl Action {
             | Action::NextError
             | Action::PreviousError
             | Action::SendToTerminal => Some(Module::Terminal),
+            Action::RemoteConnect | Action::RemoteDisconnect => Some(Module::Remote),
             _ => None,
         }
     }
@@ -993,6 +1013,7 @@ pub const ACTIONS: &[Action] = {
         GoForward,
         ShowCommands,
         Settings,
+        ReleaseNotes,
         KeyboardShortcuts,
         RecordKeys,
         Format,
@@ -1020,6 +1041,8 @@ pub const ACTIONS: &[Action] = {
         NewWindow,
         OpenFile,
         OpenFolder,
+        RemoteConnect,
+        RemoteDisconnect,
         OpenRecent,
         Save,
         SaveAs,
@@ -1128,6 +1151,7 @@ pub const ACTIONS: &[Action] = {
         ThemeLight,
         ThemeDark,
         ToggleStickyScroll,
+        ToggleVimMode,
         ToggleWordWrap,
         ToggleMinimap,
         ToggleLineNumbers,

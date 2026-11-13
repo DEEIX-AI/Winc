@@ -129,6 +129,8 @@ impl App {
         self.picker.branch_rows = None;
         self.picker.location_rows = None;
         self.picker.folders = false;
+        self.picker.vim_list = None;
+        self.picker.remote = None;
         self.picker.open = true;
         self.picker.doc = self.editor.active().map(|d| d.id);
         self.picker.input.set_text("");
@@ -151,6 +153,8 @@ impl App {
         self.picker.branch_rows = None;
         self.picker.location_rows = None;
         self.picker.folders = false;
+        self.picker.vim_list = None;
+        self.picker.remote = None;
         self.hits.picker_parts.clear();
         self.picker.fold = None;
         self.picker.places_in = None;
@@ -317,6 +321,18 @@ impl App {
             self.folder_picker_refresh();
             return;
         }
+        if self.picker.remote.is_some() {
+            self.picker.goto = None;
+            self.drop_symbols();
+            self.remote_picker_refresh();
+            return;
+        }
+        if self.picker.vim_list.is_some() {
+            self.picker.goto = None;
+            self.drop_symbols();
+            self.vim_list_refresh();
+            return;
+        }
         if self.picker_lists_symbols() {
             self.picker.goto = None;
             self.symbols_refresh();
@@ -424,7 +440,9 @@ impl App {
             && !self.picker_lists_symbols()
             && !self.picker_lists_branches()
             && !self.picker_lists_locations()
-            && !self.picker.folders;
+            && !self.picker.folders
+            && self.picker.remote.is_none()
+            && self.picker.vim_list.is_none();
         if self.picker.open && files && self.picker.places.is_none() {
             let scroll = self.picker.scroll;
             self.picker_refresh();
@@ -474,6 +492,8 @@ impl App {
         if self.picker_lists_symbols() {
             self.symbols_preview();
         }
+        // 浏览远端目录时提前读取选中的子目录。
+        self.prefetch_remote_listing();
         self.request_redraw();
     }
 
@@ -507,6 +527,14 @@ impl App {
         }
         if self.picker.folders {
             self.folder_picker_accept();
+            return;
+        }
+        if self.picker.remote.is_some() {
+            self.remote_picker_accept();
+            return;
+        }
+        if self.picker.vim_list.is_some() {
+            self.vim_list_accept();
             return;
         }
         if self.picker_lists_commands() {
@@ -605,13 +633,13 @@ pub(crate) fn picker_parts(app: &App, card: Rect) -> PickerParts {
     if app.picker.places.is_some() {
         PickerParts::places(card)
     } else if app.picker_is_git() {
-        use crate::app::git::branch::picker::{GIT_PICKER_ACTIONS, GIT_PICKER_FOOT};
+        use crate::app::git::branch::picker::GIT_PICKER_ACTIONS;
         let actions = if app.picker_has_actions() {
             GIT_PICKER_ACTIONS
         } else {
             0.0
         };
-        PickerParts::menu(card, actions, GIT_PICKER_FOOT)
+        PickerParts::menu(card, actions, app.git_picker_footer())
     } else {
         PickerParts::new(card)
     }
@@ -656,6 +684,10 @@ pub struct Picker {
     pub(crate) location_rows: Option<Vec<crate::app::git::location_picker::LocationRow>>,
     /// 面板是否列出最近打开的目录（`⌃R`）；为真时 `Picker::hits` 是最近列表中的下标。
     pub(crate) folders: bool,
+    /// 面板用于连接远端主机（选主机、浏览目录）时的内容；`Picker::hits` 是其各行的下标。
+    pub(crate) remote: Option<crate::app::remote::picker::RemoteList>,
+    /// 面板列出 Vim 模式的寄存器、标记或文档时的各行；`Picker::hits` 是其中的下标。
+    pub(crate) vim_list: Option<crate::app::vim::VimList>,
     /// 分支选择器、位置选择器的展开位置。
     pub(crate) anchor: GitAnchor,
     /// ⌘P 面板上次排版时的高度，以及当时的窗口大小。
@@ -696,6 +728,8 @@ impl Default for Picker {
             branch_rows: None,
             location_rows: None,
             folders: false,
+            remote: None,
+            vim_list: None,
             anchor: GitAnchor::Branch,
             height: None,
             motion: None,

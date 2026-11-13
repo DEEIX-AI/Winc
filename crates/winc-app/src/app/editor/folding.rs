@@ -7,6 +7,8 @@ use winc_editor::{Document, DocumentId, FoldCommand, Folds};
 use winc_i18n::t;
 
 use super::*;
+
+use crate::app::scroll::set_scroll_line;
 use crate::layout::hit;
 
 /// 返回行号栏中绘制折叠箭头的区域：行号右边、文字左边的空白，宽度为 `GUTTER_PADDING`。
@@ -70,6 +72,10 @@ impl App {
     ///
     /// 屏幕最上方的行保持在原处；光标被折入块内时移到该块的首行。
     pub(in crate::app) fn run_fold(&mut self, command: FoldCommand) {
+        // 差异标签中折叠的是未改动的长段。
+        if self.fold_diff(command) {
+            return;
+        }
         let tab_width = self.editor.active_tab_width();
         let Some(doc) = self.editor.active() else {
             return;
@@ -115,7 +121,7 @@ impl App {
         if !change(doc) {
             return;
         }
-        doc.scroll_line = doc.row_of(top) as f64 + fraction;
+        set_scroll_line(doc, doc.row_of(top) as f64 + fraction);
         self.sticky_cache = None;
         self.clamp_scroll();
         if caret_shown {
@@ -186,7 +192,7 @@ impl App {
         let max = self.max_scroll_line();
         if let Some(doc) = self.editor.active_mut() {
             let before = doc.scroll_line;
-            doc.scroll_line = (row - visible * f64::from(at)).clamp(0.0, max);
+            set_scroll_line(doc, (row - visible * f64::from(at)).clamp(0.0, max));
             self.glide_scroll(before);
         }
     }

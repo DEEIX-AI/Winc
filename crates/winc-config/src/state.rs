@@ -50,6 +50,12 @@ pub struct State {
     pub preview_mode: Option<String>,
     /// 上次关闭的窗口的大小和位置；没有记录时为 `None`。
     pub window: Option<WindowFrame>,
+    /// 上次运行的程序的版本号（如 `0.1.626`）；没有记录时为 `None`。启动时与当前版本比较，
+    /// 得知这是否为更新之后的第一次启动。
+    pub version: Option<String>,
+    /// 首次设置（第一次运行时开始页上的语言、外观、主题和模块）是否尚未完成：第一次运行时
+    /// 置位，用户点击「完成」后清除；未完成时下次启动仍然显示。
+    pub setup_pending: bool,
     /// 从磁盘映像等位置运行时不询问是否移到「应用程序」文件夹：用户曾选择不移动并勾选「不再
     /// 询问」。仅在 macOS 上使用。
     pub stay_outside_applications: bool,
@@ -68,7 +74,23 @@ pub struct State {
     ///
     /// 仓库的配置变了（指纹不同）要重新确认。
     trusted_repos: Vec<(PathBuf, u64)>,
+    /// 用户为远端主机指定的密钥文件：（连接目标的文字，密钥文件的路径），按目标排序。
+    ///
+    /// 只记路径，不读取也不保存密钥的内容；路径原样交给 `ssh`。
+    remote_keys: Vec<(String, String)>,
+    /// Vim 模式的大写标记：名字、文件路径、行号与列号（都从 0 起），按名字排序。
+    pub vim_marks: Vec<(char, PathBuf, usize, usize)>,
+    /// Vim 模式命令行的历史，从旧到新，最多 `MAX_VIM_HISTORY` 条。
+    pub vim_commands: Vec<String>,
+    /// Vim 模式的查找历史，从旧到新，最多 `MAX_VIM_HISTORY` 条。
+    pub vim_searches: Vec<String>,
 }
+
+/// Vim 模式的两种历史各自记录的条数上限（条）。
+///
+/// 取自调参：与输入框的历史同一量级。
+const MAX_VIM_HISTORY: usize = 100;
+
 /// 最多记录的项目自带工具选择数量（个）。
 ///
 /// 取 50（经验值），作用于工具选择和已信任仓库两项列表。
@@ -106,6 +128,10 @@ pub struct Session {
     pub outline: Vec<(PathBuf, Vec<String>)>,
     /// 各文件中折叠的块（开头行，末尾行；行号从 0 起），包括当前未打开的文件。
     pub folds: Vec<(PathBuf, Vec<(usize, usize)>)>,
+    /// 各 PDF 文件的阅读位置，包括当前未打开的文件；位于文档开头的文件不记录。
+    ///
+    /// 位置记为视口顶边所在的页（页号从 0 起），以及视口顶边到该页顶边的距离与页高之比。
+    pub pdf_places: Vec<(PathBuf, (usize, f32))>,
     /// 终端面板；终端里没有标签时为 `None`。
     pub terminal: Option<TerminalSession>,
     /// 选中的运行配置的名字。
@@ -278,6 +304,26 @@ impl State {
                         .collect()
                 })
                 .unwrap_or_default();
+            let pdf_places = s
+                .get("pdfPlaces")
+                .and_then(Json::as_object)
+                .map(|files| {
+                    let place = |place: &Json| match place.as_array()? {
+                        [page, at] => {
+                            let page = page.as_number()?;
+                            let at = at.as_number().filter(|n| n.is_finite())?;
+                            (page >= 0.0 && page.fract() == 0.0)
+                                .then_some((page as usize, at as f32))
+                        }
+                        _ => None,
+                    };
+                    files
+                        .iter()
+                        .filter(|(path, _)| !path.is_empty())
+                        .filter_map(|(path, at)| Some((PathBuf::from(path), place(at)?)))
+                        .collect()
+                })
+                .unwrap_or_default();
             let terminal = s.get("terminal").and_then(Json::as_object).and_then(|t| {
                 let number = |key| {
                     t.get(key)
@@ -316,6 +362,7 @@ impl State {
                 bookmarks,
                 outline,
                 folds,
+                pdf_places,
                 terminal,
                 run: s.get("run").and_then(Json::as_str).map(str::to_owned),
                 sidebar_hidden: (s.get("sidebarHidden").and_then(Json::as_bool)).unwrap_or(false),
@@ -365,11 +412,30 @@ impl State {
             .take(MAX_TOOL_CHOICES)
             .collect();
 
+        let remote_keys = root
+            .get("remoteKeys")
+            .and_then(Json::as_object)
+            .map(|items| {
+                (items.iter())
+                    .filter_map(|(target, key)| Some((target.clone(), key.as_str()?.to_owned())))
+                    .filter(|(_, key)| !key.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let vim_marks = vim_marks(root);
+        let vim_commands = vim_history(root, "vimCommands");
+        let vim_searches = vim_history(root, "vimSearches");
+
         let mut state = State {
             recent,
             badges,
             tool_choices,
             trusted_repos,
+            remote_keys,
+            vim_marks,
+            vim_commands,
+            vim_searches,
             ..State::default()
         };
         // 旧文件和手工修改过的文件里，颜色可能缺失、重复或越界；读入后统一理顺。
@@ -413,6 +479,12 @@ impl State {
             .get("window")
             .and_then(Json::as_object)
             .and_then(window_frame);
+        state.setup_pending = root.get("setupPending").and_then(Json::as_bool) == Some(true);
+        state.version = root
+            .get("version")
+            .and_then(Json::as_str)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
         state.preview_mode = root
             .get("previewMode")
             .and_then(Json::as_str)
@@ -454,10 +526,27 @@ impl State {
         self.sessions.truncate(MAX_RECENT);
     }
 
+    /// 把 Vim 模式的大写标记与两种历史加入状态文件的字段 `fields`，为空的不加。
+    fn vim_fields(&self, fields: &mut Vec<(&'static str, Json)>) {
+        if !self.vim_marks.is_empty() {
+            fields.push(("vimMarks", vim_marks_json(&self.vim_marks)));
+        }
+        for (key, history) in [
+            ("vimCommands", &self.vim_commands),
+            ("vimSearches", &self.vim_searches),
+        ] {
+            if !history.is_empty() {
+                let entries = history.iter().map(|entry| Json::String(entry.clone()));
+                fields.push((key, Json::Array(entries.collect())));
+            }
+        }
+    }
+
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
-    /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos` 为空，
-    /// `commitTree`、`pdfThumbnailsHidden`、`stayOutsideApplications` 为假时省略对应的键。
+    /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos`、`vimMarks`、
+    /// `vimCommands`、`vimSearches` 为空，`commitTree`、`pdfThumbnailsHidden`、
+    /// `stayOutsideApplications` 为假时省略对应的键。
     pub fn to_json(&self) -> String {
         let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
         let mut fields = vec![(
@@ -489,6 +578,12 @@ impl State {
         }
         if let Some(mode) = &self.preview_mode {
             fields.push(("previewMode", Json::String(mode.clone())));
+        }
+        if let Some(version) = &self.version {
+            fields.push(("version", Json::String(version.clone())));
+        }
+        if self.setup_pending {
+            fields.push(("setupPending", Json::Bool(true)));
         }
         if let Some(frame) = &self.window {
             let mut window = vec![
@@ -546,6 +641,15 @@ impl State {
                 });
                 items.push(("outline", Json::Object(files.collect())));
             }
+            if !session.pdf_places.is_empty() {
+                // 比例保留四位小数：一页高 10000 逻辑像素时误差为 1 逻辑像素。
+                let files = session.pdf_places.iter().map(|(file, (page, at))| {
+                    let at = (f64::from(*at) * 1e4).round() / 1e4;
+                    let place = vec![Json::Number(*page as f64), Json::Number(at)];
+                    (file.to_string_lossy().into_owned(), Json::Array(place))
+                });
+                items.push(("pdfPlaces", Json::Object(files.collect())));
+            }
             if let Some(t) = &session.terminal {
                 let number = |n: f32| Json::Number(f64::from(n));
                 let mut fields = vec![
@@ -578,6 +682,11 @@ impl State {
         });
         fields.push(("sessions", Json::Array(sessions.collect())));
 
+        if !self.remote_keys.is_empty() {
+            let keys = (self.remote_keys.iter())
+                .map(|(target, key)| (target.clone(), Json::String(key.clone())));
+            fields.push(("remoteKeys", Json::object(keys)));
+        }
         if !self.tool_choices.is_empty() {
             let choices = self.tool_choices.iter().map(|(folder, run)| {
                 Json::object(vec![("folder", path(folder)), ("run", Json::Bool(*run))])
@@ -593,6 +702,7 @@ impl State {
             });
             fields.push(("trustedRepos", Json::Array(repos.collect())));
         }
+        self.vim_fields(&mut fields);
 
         let mut out = Json::object(fields).write(0);
         out.push('\n');
@@ -660,6 +770,22 @@ impl State {
             self.last = None;
         }
         self.assign_badges();
+    }
+
+    /// 返回用户为连接目标 `target` 指定的密钥文件；没有指定时返回 `None`。
+    pub fn remote_key(&self, target: &str) -> Option<&str> {
+        (self.remote_keys.iter())
+            .find(|(known, _)| known == target)
+            .map(|(_, key)| key.as_str())
+    }
+
+    /// 记下连接目标 `target` 使用的密钥文件 `key`；`key` 为空时去掉这条记录。
+    pub fn set_remote_key(&mut self, target: &str, key: &str) {
+        self.remote_keys.retain(|(known, _)| known != target);
+        if !key.is_empty() {
+            self.remote_keys.push((target.to_owned(), key.to_owned()));
+            self.remote_keys.sort();
+        }
     }
 
     /// 返回 `folder` 中项目自带格式化工具的上次选择：运行该目录中的程序（`true`），
@@ -792,6 +918,56 @@ pub(crate) fn user_state_dir() -> Option<PathBuf> {
             .or_else(|| home().map(|home| home.join(".local").join("state")))
             .map(|dir| dir.join("winc"))
     }
+}
+
+/// 从状态文件的根对象读出 `key` 下 Vim 模式的历史：非空的字符串，只留最新的
+/// [`MAX_VIM_HISTORY`] 条。
+fn vim_history(root: &std::collections::BTreeMap<String, Json>, key: &str) -> Vec<String> {
+    let entries = root.get(key).and_then(Json::as_array).unwrap_or_default();
+    let mut history: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| entry.as_str().filter(|text| !text.is_empty()))
+        .map(str::to_owned)
+        .collect();
+    history.split_off(history.len().saturating_sub(MAX_VIM_HISTORY))
+}
+
+/// 返回 Vim 模式的大写标记在状态文件中的写法。
+fn vim_marks_json(marks: &[(char, PathBuf, usize, usize)]) -> Json {
+    let items = marks.iter().map(|(name, path, line, col)| {
+        Json::object(vec![
+            ("name", Json::String(name.to_string())),
+            ("path", Json::String(path.to_string_lossy().into_owned())),
+            ("line", Json::Number(*line as f64)),
+            ("col", Json::Number(*col as f64)),
+        ])
+    });
+    Json::Array(items.collect())
+}
+
+/// 从状态文件的根对象读出 Vim 模式的大写标记：按名字排序，同名的只留一个。
+fn vim_marks(
+    root: &std::collections::BTreeMap<String, Json>,
+) -> Vec<(char, PathBuf, usize, usize)> {
+    let mut marks: Vec<(char, PathBuf, usize, usize)> = root
+        .get("vimMarks")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| {
+            let item = item.as_object()?;
+            let mut name = item.get("name")?.as_str()?.chars();
+            let name = name
+                .next()
+                .filter(|c| c.is_ascii_uppercase() && name.next().is_none())?;
+            let path = item.get("path")?.as_str().filter(|p| !p.is_empty())?;
+            let number = |key: &str| Some(item.get(key)?.as_number()?.max(0.0) as usize);
+            Some((name, PathBuf::from(path), number("line")?, number("col")?))
+        })
+        .collect();
+    marks.sort();
+    marks.dedup_by_key(|mark| mark.0);
+    marks
 }
 
 /// 从 `state.json` 的 `window` 一节读出窗口的大小和位置；缺项或者数值不合理时为 `None`。

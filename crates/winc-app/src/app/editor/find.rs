@@ -7,6 +7,8 @@ use winc_i18n::t;
 
 use super::*;
 
+use crate::app::scroll::set_scroll_line;
+
 /// 返回用于输入分支名、标签名的输入框。
 ///
 /// 依据 `git check-ref-format` 的规则，名称中不能含空白和 `~ ^ : ? * [ \`，输入框拒绝这些字符。
@@ -423,6 +425,18 @@ impl App {
     /// 把匹配滚动到编辑区正中而不是边缘：位于边缘时上下文只显示一两行，反向查找时匹配还可能
     /// 恰好位于查找条下方。
     pub(in crate::app) fn reveal_match(&mut self, start: usize, end: usize) {
+        // 匹配在该行未显示的部分时展开该行。
+        let hidden = self.editor.active().and_then(|doc| {
+            let (line, col) = doc.text().pos_to_line_col(start);
+            let limit = match doc.is_wrapping() {
+                true => doc.wrap_limit_of(line),
+                false => doc.line_limit(line),
+            };
+            (col >= limit).then_some(line)
+        });
+        if let Some(line) = hidden {
+            self.show_whole_line(line);
+        }
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
@@ -439,13 +453,9 @@ impl App {
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
-        let (line, col) = doc.text().pos_to_line_col(start);
+        let line = doc.text().line_of(start);
         let (end_line, end_col) = doc.text().pos_to_line_col(end);
-        // 每行只显示前 `MAX_LINE_CHARS` 个字符，之后的匹配无法显示；
-        // 大文件开启自动换行后按整行断开，不受此限。
-        let large = doc.is_large();
-        let hidden = col >= MAX_LINE_CHARS && !(large && doc.is_wrapping());
-        let end_col = end_col.min(MAX_LINE_CHARS);
+        let end_col = end_col.min(doc.line_limit(end_line));
         let right = text.x + TEXT_PAD + doc.col_to_cell(end_line, end_col, tab_width) as f32 * cell
             - doc.scroll_x;
         let row = doc.row_at(start) as f64;
@@ -455,7 +465,7 @@ impl App {
         } else {
             0.0
         };
-        doc.scroll_line = before;
+        set_scroll_line(doc, before);
         let top = (self.sticky_depth(line) as f64).max(covered).max(1.0);
         let doc = self.editor.active().unwrap();
         let shown = row >= doc.scroll_line + top && row <= doc.scroll_line + visible - 2.0;
@@ -464,15 +474,9 @@ impl App {
             let max = self.max_scroll_line();
             if let Some(doc) = self.editor.active_mut() {
                 let before = doc.scroll_line;
-                doc.scroll_line = (row - visible * 0.5).clamp(0.0, max);
+                set_scroll_line(doc, (row - visible * 0.5).clamp(0.0, max));
                 self.glide_scroll(before);
             }
-        }
-        if hidden {
-            self.flash(match large {
-                true => t!("editor-find-hidden-match-wrap"),
-                false => t!("editor-find-hidden-match"),
-            });
         }
     }
 
@@ -558,7 +562,7 @@ impl App {
     }
 
     /// 打开 `kind` 的输入条，输入框为 `field`，焦点移到输入条上；文件树中正在进行的名称输入先结束。
-    fn open_prompt(&mut self, kind: PromptKind, field: TextField) {
+    pub(in crate::app) fn open_prompt(&mut self, kind: PromptKind, field: TextField) {
         self.finish_name_input();
         self.goto_input = Some(field);
         self.prompt_kind = kind;
@@ -594,6 +598,9 @@ impl App {
             PromptKind::Stash => self.git_stash(&input),
             PromptKind::NewTag { at } => self.git_new_tag(&input, at),
             PromptKind::RenameBranch { old } => self.git_rename_branch(old, &input),
+            PromptKind::VimSearch { .. } | PromptKind::VimCommand => {
+                self.vim_prompt_submit(&input);
+            }
         }
         self.relayout();
         self.request_redraw();

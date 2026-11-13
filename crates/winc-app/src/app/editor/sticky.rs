@@ -9,6 +9,8 @@ use winc_editor::scopes::Scope;
 
 use super::*;
 
+use crate::app::scroll::set_scroll_line;
+
 /// 固定行数的上限（行）。
 ///
 /// 取自调参：限制深层嵌套时固定区域占用的高度。实际行数还受 [`sticky_limit`] 限制，
@@ -152,7 +154,7 @@ impl App {
     /// 返回光标在 `line` 行时顶部需要固定的层数（不超过 `sticky_max`）。
     ///
     /// 光标移到被固定区域遮住的位置时，滚动距离需要增加相同的行数。
-    pub(super) fn sticky_depth(&mut self, line: usize) -> usize {
+    pub(in crate::app) fn sticky_depth(&mut self, line: usize) -> usize {
         if self.config.sticky_scroll == Some(false) {
             return 0;
         }
@@ -206,7 +208,10 @@ impl App {
         doc.selection = Selection::point(winc_core::movement::snap_to_grapheme(doc.text(), pos));
         doc.goal_cell = None;
         let before = doc.scroll_line;
-        doc.scroll_line = (doc.row_of(row.line) as f64 - row.depth as f64).clamp(0.0, max.max(0.0));
+        set_scroll_line(
+            doc,
+            (doc.row_of(row.line) as f64 - row.depth as f64).clamp(0.0, max.max(0.0)),
+        );
         self.glide_scroll(before);
         self.focus = Focus::Editor;
         self.reset_blink();

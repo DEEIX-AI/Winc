@@ -6,6 +6,10 @@ use std::borrow::Cow;
 
 use winc_i18n::t;
 
+mod about;
+
+pub use about::*;
+
 /// 设置的一个分类，对应左侧分类栏中的一项和右侧的一页。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsPage {
@@ -121,9 +125,16 @@ impl SettingsPage {
                 plain(vec![
                     Setting::LineNumbers,
                     Setting::WordWrap,
+                    Setting::WholeLines,
                     Setting::Minimap,
                     Setting::StickyScroll,
                     Setting::RenderWhitespace,
+                ]),
+                plain(vec![
+                    Setting::VimMode,
+                    Setting::VimClipboard,
+                    Setting::VimRelativeNumber,
+                    Setting::VimYankHighlight,
                 ]),
                 plain(vec![
                     Setting::AutoSave,
@@ -134,7 +145,6 @@ impl SettingsPage {
                     Setting::Outline,
                     Setting::CompactFolders,
                     Setting::PreviewOnClick,
-                    Setting::DiffInline,
                     Setting::RemoteImages,
                 ]),
             ],
@@ -155,8 +165,12 @@ impl SettingsPage {
                     plain(behavior),
                 ]
             }
-            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush])],
-            SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
+            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush, Setting::DiffInline])],
+            SettingsPage::Modules => vec![plain(vec![
+                Setting::GitModule,
+                Setting::TerminalModule,
+                Setting::RemoteModule,
+            ])],
             SettingsPage::Format => {
                 let mut sections = vec![
                     plain(vec![
@@ -191,6 +205,7 @@ impl SettingsPage {
                 plain(vec![Setting::Version]),
                 plain(vec![Setting::Updates, Setting::CheckUpdates]),
                 plain(vec![
+                    Setting::ReleaseNotes,
                     Setting::Website,
                     Setting::Repository,
                     Setting::Community,
@@ -253,8 +268,18 @@ pub enum Setting {
     RestoreFolder,
     /// 粘滞滚动：滚动时在编辑区顶部钉住当前所在的函数、类和标题。
     StickyScroll,
+    /// Vim 模式。
+    VimMode,
+    /// Vim 模式下无名寄存器与系统剪贴板的同步方式。
+    VimClipboard,
+    /// Vim 模式下的相对行号。
+    VimRelativeNumber,
+    /// Vim 模式下复制之后高亮被复制的范围。
+    VimYankHighlight,
     /// 自动换行。
     WordWrap,
+    /// 超长行显示全部内容（`wholeLines`）。
+    WholeLines,
     /// 编辑区右侧的缩略图。
     Minimap,
     /// 文件视图底部的大纲。
@@ -289,6 +314,8 @@ pub enum Setting {
     Version,
     /// 「关于」页的更新状态和「检查更新」按钮。
     Updates,
+    /// 「关于」页的「更新日志」：在阅读标签中打开，列出各版的更改。
+    ReleaseNotes,
     /// 「关于」页的官网链接。
     Website,
     /// 「关于」页的源代码仓库（GitHub）链接。
@@ -345,6 +372,8 @@ pub enum Setting {
     GitConfirmPush,
     /// 终端模块的开关。
     TerminalModule,
+    /// 远程模块的开关。
+    RemoteModule,
     /// 「快捷键」页顶部的搜索框。
     ///
     /// 该页没有设置项，选中这一项即表示停留在该页。
@@ -411,16 +440,21 @@ impl Setting {
             | Setting::CompactFolders
             | Setting::PreviewOnClick
             | Setting::StickyScroll
+            | Setting::VimMode
+            | Setting::VimClipboard
+            | Setting::VimRelativeNumber
+            | Setting::VimYankHighlight
             | Setting::WordWrap
+            | Setting::WholeLines
             | Setting::Minimap
             | Setting::Outline
             | Setting::LineNumbers
-            | Setting::DiffInline
             | Setting::RenderWhitespace
             | Setting::RemoteImages => SettingsPage::Editor,
             Setting::Version
             | Setting::Updates
             | Setting::CheckUpdates
+            | Setting::ReleaseNotes
             | Setting::Website
             | Setting::Repository
             | Setting::Community
@@ -441,8 +475,10 @@ impl Setting {
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
-            Setting::GitConfirmPush => SettingsPage::Git,
-            Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
+            Setting::GitConfirmPush | Setting::DiffInline => SettingsPage::Git,
+            Setting::GitModule | Setting::TerminalModule | Setting::RemoteModule => {
+                SettingsPage::Modules
+            }
             Setting::KeySearch => SettingsPage::Keys,
         }
     }
@@ -466,7 +502,12 @@ impl Setting {
             Setting::HotExit => t!("settings-hot-exit"),
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
+            Setting::VimMode => t!("settings-vim-mode"),
+            Setting::VimClipboard => t!("settings-vim-clipboard"),
+            Setting::VimRelativeNumber => t!("settings-vim-relative-number"),
+            Setting::VimYankHighlight => t!("settings-vim-yank-highlight"),
             Setting::WordWrap => t!("settings-word-wrap"),
+            Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
             Setting::LineNumbers => t!("settings-line-numbers"),
             Setting::DiffInline => t!("settings-diff-inline"),
@@ -488,6 +529,7 @@ impl Setting {
             Setting::Community => "Telegram",
             Setting::License => t!("settings-license"),
             Setting::Updates => t!("settings-updates"),
+            Setting::ReleaseNotes => t!("settings-release-notes"),
             Setting::FormatOnSave => t!("settings-format-on-save"),
             Setting::FixOnSave => t!("settings-fix-on-save"),
             Setting::SkipOnSave => t!("settings-skip-on-save"),
@@ -507,6 +549,7 @@ impl Setting {
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
             Setting::TerminalModule => t!("settings-terminal-module"),
+            Setting::RemoteModule => t!("settings-remote-module"),
             Setting::KeySearch => t!("settings-key-search"),
         }
     }
@@ -529,7 +572,12 @@ impl Setting {
             Setting::HotExit => Some(t!("settings-hot-exit-desc")),
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
+            Setting::VimMode => Some(t!("settings-vim-mode-desc")),
+            Setting::VimClipboard => Some(t!("settings-vim-clipboard-desc")),
+            Setting::VimRelativeNumber => Some(t!("settings-vim-relative-number-desc")),
+            Setting::VimYankHighlight => Some(t!("settings-vim-yank-highlight-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
+            Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
             Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
@@ -541,6 +589,7 @@ impl Setting {
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::Animations => Some(t!("settings-animations-desc")),
             Setting::BackgroundImage => Some(t!("settings-background-image-desc")),
+            Setting::BackgroundFit => Some(t!("settings-background-fit-desc")),
             Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
@@ -550,6 +599,7 @@ impl Setting {
             Setting::FixOnSave => Some(t!("settings-fix-on-save-desc")),
             Setting::SkipOnSave => Some(t!("settings-skip-on-save-desc")),
             Setting::GitModule => Some(t!("settings-git-module-desc")),
+            Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
@@ -582,7 +632,11 @@ impl Setting {
             | Setting::CompactFolders
             | Setting::PreviewOnClick
             | Setting::StickyScroll
+            | Setting::VimMode
+            | Setting::VimRelativeNumber
+            | Setting::VimYankHighlight
             | Setting::WordWrap
+            | Setting::WholeLines
             | Setting::Minimap
             | Setting::Outline
             | Setting::LineNumbers
@@ -597,6 +651,7 @@ impl Setting {
             | Setting::GitModule
             | Setting::GitConfirmPush
             | Setting::TerminalModule
+            | Setting::RemoteModule
             | Setting::TerminalCopyOnSelect
             | Setting::TerminalConfirmClose
             | Setting::TerminalPrompt
@@ -610,14 +665,17 @@ impl Setting {
             | Setting::BackgroundFit
             | Setting::Zoom
             | Setting::RenderWhitespace
+            | Setting::VimClipboard
             | Setting::TerminalPosition
             | Setting::TerminalOptionAsMeta => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Product,
-            Setting::Website | Setting::Repository | Setting::Community | Setting::License => {
-                SettingControl::Link
-            }
+            Setting::ReleaseNotes
+            | Setting::Website
+            | Setting::Repository
+            | Setting::Community
+            | Setting::License => SettingControl::Link,
             Setting::Updates => SettingControl::Button,
         }
     }
@@ -664,6 +722,16 @@ pub fn background_fit_label(choice: winc_config::BackgroundFit) -> &'static str 
         Fit => t!("settings-background-fit-fit"),
         Stretch => t!("settings-background-fit-stretch"),
         Tile => t!("settings-background-fit-tile"),
+    }
+}
+
+/// 返回「Vim 剪贴板」设置中选项 `choice` 的名字。
+pub fn vim_clipboard_label(choice: winc_config::VimClipboard) -> &'static str {
+    use winc_config::VimClipboard::{Always, Register, Yank};
+    match choice {
+        Register => t!("settings-vim-clipboard-register"),
+        Yank => t!("settings-vim-clipboard-yank"),
+        Always => t!("settings-vim-clipboard-always"),
     }
 }
 
@@ -723,98 +791,6 @@ pub fn settings_thumb(area: Rect, scroll: f32, max: f32) -> Option<Rect> {
     let track = settings_track(area);
     let thumb = scrollbar_thumb(track, scroll, max + track.h)?;
     Some(Rect::new(track.x, thumb.y, track.w, thumb.h))
-}
-
-/// 社区群组（Telegram）的地址。
-const COMMUNITY_URL: &str = "https://t.me/deeix_chat";
-
-/// 链接文字与其后外链箭头之间的距离，加上箭头的宽度（逻辑像素）。
-pub const LINK_ICON_W: f32 = 6.0 + 9.0;
-
-/// 产品名称，与 README 的标题和 macOS 应用包的显示名一致：显示在「关于」页顶部、开始页，
-/// 以及没有打开目录时的窗口标题中。命令行命令仍是小写的 `winc`。
-pub const PRODUCT_NAME: &str = "Winc";
-
-/// 「关于」页顶部产品信息的各部分：图标、名称所在的行、版本号所在的行，水平居中。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ProductParts {
-    /// 产品图标，边长 [`SETTINGS_LOGO`]。
-    pub logo: Rect,
-    /// 名称所在的行。
-    pub name: Rect,
-    /// 版本号所在的行。
-    pub version: Rect,
-}
-
-impl ProductParts {
-    /// 根据产品信息一行 `row` 计算各部分的位置（见 [`SETTINGS_PRODUCT_H`]）。
-    pub fn new(row: Rect) -> ProductParts {
-        let x = (row.x + (row.w - SETTINGS_LOGO) / 2.0).round();
-        let logo = Rect::new(x, row.y + 20.0, SETTINGS_LOGO, SETTINGS_LOGO);
-        let name = Rect::new(row.x, logo.bottom() + 10.0, row.w, 28.0);
-        let version = Rect::new(row.x, name.bottom() + 2.0, row.w, 24.0);
-        ProductParts {
-            logo,
-            name,
-            version,
-        }
-    }
-
-    /// 返回版本号实际占的区域：宽为文字宽 `text_w` 加左右各 10 的内边距，水平居中；悬停底色和
-    /// 点击范围都取这一块。
-    pub fn version_area(&self, text_w: f32) -> Rect {
-        let w = (text_w + 20.0).min(self.version.w);
-        let x = self.version.x + (self.version.w - w) / 2.0;
-        Rect::new(x, self.version.y, w, self.version.h)
-    }
-}
-
-/// 返回「关于」页顶部版本号一行的文字，例如「版本 0.1.368 (arm64)」。
-pub fn version_line() -> String {
-    t!("settings-version-line", version = version_label())
-}
-
-/// 返回「关于」页中链接的显示名（如「winc.si」）；不是链接时返回 `None`。
-///
-/// 官网、仓库和许可证取自 `Cargo.toml` 的 `homepage`、`repository` 和 `license`。
-pub fn about_value(setting: Setting) -> Option<String> {
-    let text = match setting {
-        Setting::Website => env!("CARGO_PKG_HOMEPAGE"),
-        Setting::Repository => env!("CARGO_PKG_REPOSITORY"),
-        Setting::Community => COMMUNITY_URL,
-        Setting::License => env!("CARGO_PKG_LICENSE"),
-        _ => return None,
-    };
-    let text = text.trim_start_matches("https://");
-    Some(text.strip_prefix("github.com/").unwrap_or(text).to_owned())
-}
-
-/// 返回「关于」页中链接的地址；不是链接时返回 `None`。许可证链接到仓库中的许可证全文。
-pub fn about_link(setting: Setting) -> Option<String> {
-    let repository = env!("CARGO_PKG_REPOSITORY");
-    Some(match setting {
-        Setting::Website => env!("CARGO_PKG_HOMEPAGE").to_owned(),
-        Setting::Repository => repository.to_owned(),
-        Setting::Community => COMMUNITY_URL.to_owned(),
-        Setting::License => format!("{repository}/blob/HEAD/LICENSE"),
-        _ => return None,
-    })
-}
-
-/// 返回链接实际占的区域：右缘与控件 `control` 对齐，宽为内容宽 `content` 加左右内边距，不超过
-/// 控件；悬停底色和点击范围都取这一块。
-pub fn value_area(control: Rect, content: f32) -> Rect {
-    let w = (content + 10.0 + SETTINGS_GLYPH_PAD).min(control.w);
-    Rect::new(control.right() - w, control.y, w, control.h)
-}
-
-/// 「关于」页的版本号：版本和处理器架构，例如「0.1.368 (arm64)」。
-pub fn version_label() -> String {
-    let arch = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        other => other,
-    };
-    format!("{} ({arch})", winc_version::VERSION)
 }
 
 /// 设置浮层中可以单独悬停和点击的部件。

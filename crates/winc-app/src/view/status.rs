@@ -145,8 +145,7 @@ fn draw_group(
                 app.hover == Hover::Status(item),
                 app.menu_button == Some(MenuButton::Status(item))
                     || (item == StatusItem::Branch
-                        && app.picker.open
-                        && app.picker.anchor == crate::app::GitAnchor::Status),
+                        && app.branch_picker_from(crate::app::GitAnchor::Status)),
             );
             hits.push((pill, item));
         }
@@ -322,6 +321,11 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let bar = app.layout.status;
     frame.rect(bar, p.frame_bg);
+    // Vim 模式的命令行与查找占用整行。
+    if app.vim_prompt_open() {
+        draw_command_line(app, frame);
+        return;
+    }
     // 隐藏时只剩窗口底边的边距，没有可以点击的项。
     if !app.status_bar_shown() {
         return;
@@ -389,6 +393,45 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
             frame.rect_clipped(at, dot.alpha(opacity), 2.5, bar);
         }
         if app.terminal_enabled() {
+            status_hits.push((pill, item));
+        }
+    }
+
+    // 远程模块开着时终端开关左边是连接远端主机的按钮：点了打开主机面板。打开的目录在远端
+    // 主机上时图标亮，否则灰。出现、消失的方式与终端开关相同。
+    let enabled = app.remote_enabled();
+    let share = app.module_fx.remote.share(enabled);
+    let opacity = app.module_fx.remote.opacity(enabled);
+    if share > 0.0 {
+        let item = StatusItem::Remote;
+        let slot = right - icons::SIDEBAR_WIDTH;
+        right -= (icons::SIDEBAR_WIDTH + STATUS_GAP) * share;
+        let pill = Rect::new(
+            slot - CRUMB_PAD,
+            bar.y + 4.0,
+            icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD,
+            bar.h - 8.0,
+        );
+        let connected = app.editor.root().is_some_and(winc_backend::is_remote);
+        let hovered = enabled && app.hover == Hover::Status(item);
+        frame.with_opacity(opacity, |frame| {
+            draw_button(frame, p, pill, bar, hovered, false);
+        });
+        let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
+        // 打开着远端目录而连接已断开、或对端迟迟没有响应时用提醒色。
+        let troubled = (app.editor.root().and_then(winc_backend::locate)).is_some_and(|at| {
+            !winc_backend::remote::is_connected(&at.target)
+                || winc_backend::remote::is_stalled(&at.target)
+        });
+        let color = if troubled {
+            p.warning
+        } else if connected || hovered {
+            p.text
+        } else {
+            p.text_muted
+        };
+        icons::remote(frame, center, color.alpha(opacity), bar);
+        if enabled {
             status_hits.push((pill, item));
         }
     }
@@ -652,6 +695,11 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         x += 24.0;
     }
 
+    // Vim 模式的状态（模式、未完成的按键）排在消息之前。
+    if let Some(vim) = app.vim_status() {
+        x = ui_text_small(frame, app, x, bar, &vim, p.text, left) + 16.0;
+    }
+
     // 消息放不下时从中间截短；可用宽度不超过 60 逻辑像素时不显示。
     let room = left.right() - x;
 
@@ -669,6 +717,31 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     app.status.motion = motion;
     app.hits.crumbs = hits;
     app.hits.status = status_hits;
+}
+
+/// 在状态栏所在的一行绘制 Vim 模式的命令行或查找：开头是 `:`、`/` 或 `?`，其后是输入框。
+fn draw_command_line(app: &mut App, frame: &mut Frame<'_>) {
+    let Some(mut field) = app.goto_input.take() else {
+        return;
+    };
+    let p = app.palette;
+    let bar = app.layout.status;
+    let title = match app.prompt_kind {
+        crate::app::PromptKind::VimSearch { forward: true } => "/",
+        crate::app::PromptKind::VimSearch { forward: false } => "?",
+        _ => ":",
+    };
+    let start = super::ui_text(frame, app, bar.x + 14.0, bar, title, p.text, bar) + 2.0;
+    let area = Rect::new(start, bar.y, (bar.right() - 14.0 - start).max(0.0), bar.h);
+    let focused = app.focus == crate::app::Focus::Prompt;
+    let caret = super::fields::draw_bar_field(app, frame, area, &mut field, "", focused);
+    app.goto_input = Some(field);
+    if caret.is_some() {
+        app.ime.cursor = caret;
+    }
+    // 状态栏的各项没有绘制，不可点击。
+    app.hits.crumbs = Vec::new();
+    app.hits.status = Vec::new();
 }
 
 /// 状态栏上的分支：分支名（分离头指针时是提交号），领先、落后时加上 ↑、↓ 和提交数。

@@ -4,7 +4,8 @@
 //!
 //! 网格按终端字体等宽排版（每格宽 `app.terminal_cell`、每行高 `terminal_line_height`，字形缓存
 //! 与编辑区共用）：一行先画所有样式段的底色，再画选区和查找的底色，最后画字和下划线，宽字符不会
-//! 被后一段的底色盖住；对比度不够时按 `terminal.minimumContrast` 调整。
+//! 被后一段的底色盖住；对比度不够时按 `terminal.minimumContrast` 调整文字的颜色，以颜色拼接
+//! 图形的字符（制表符、方块元素、Powerline 分隔符）除外。
 
 mod grid;
 
@@ -213,12 +214,14 @@ fn draw_panel(app: &mut App, frame: &mut Frame<'_>) {
         cell * width_at(line, usize::from(cursor.col)) as f32,
         lh,
     );
-    let start = preedit_x(x, &app.preedit, cell, view.right());
+    let preedit = app.preedit_at(Focus::Terminal);
+    let start = preedit_x(x, preedit, cell, view.right());
+    let composing = !preedit.is_empty();
     if focused {
         // 候选窗对齐组字文字的左边；组字文字超出左边界时对齐可见范围。
         app.ime.cursor = Some(Rect::new(start.max(view.x), y, cell, lh));
     }
-    if focused && !app.preedit.is_empty() {
+    if composing {
         let baseline = baseline_in(at, ascent, descent);
         draw_preedit(app, frame, (start, y), baseline, view);
     } else if cursor.visible && tab.settle.is_none() {

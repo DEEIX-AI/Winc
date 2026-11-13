@@ -51,6 +51,7 @@ fn sample() -> State {
                     vec!["安装".into(), "用法\u{1f}配置".into()],
                 )],
                 folds: vec![(PathBuf::from("/a/项目/README.md"), vec![(0, 12), (3, 7)])],
+                pdf_places: vec![(PathBuf::from("/a/项目/手册.pdf"), (12, 0.375))],
                 terminal: Some(TerminalSession {
                     tabs: vec![PathBuf::from("/a/项目"), PathBuf::from("/a/项目/src")],
                     names: vec![String::new(), "服务".into()],
@@ -70,6 +71,7 @@ fn sample() -> State {
                 bookmarks: Vec::new(),
                 outline: Vec::new(),
                 folds: Vec::new(),
+                pdf_places: Vec::new(),
                 terminal: None,
                 run: None,
                 sidebar_hidden: false,
@@ -79,9 +81,14 @@ fn sample() -> State {
         others: vec![PathBuf::from("/b")],
         commit_tree: true,
         pdf_thumbnails_hidden: true,
+        vim_marks: vec![('A', PathBuf::from("/a/项目/x.rs"), 12, 3)],
+        vim_commands: vec!["%s/a/b/g".into(), "w".into()],
+        vim_searches: vec!["\\<词\\>".into()],
         stay_outside_applications: true,
         panel_width: Some(360.0),
         preview_mode: Some("split".into()),
+        version: Some("0.1.626".into()),
+        setup_pending: true,
         window: Some(WindowFrame {
             position: Some((-1280.0, 40.0)),
             width: 900.5,
@@ -92,9 +99,24 @@ fn sample() -> State {
         badges: Vec::new(),
         tool_choices: vec![(PathBuf::from("/a/项目"), true)],
         trusted_repos: vec![(PathBuf::from("/a/项目"), u64::MAX - 1)],
+        remote_keys: Vec::new(),
     };
+    state.set_remote_key("me@devbox:2200", "~/.ssh/工作 key");
+    state.set_remote_key("build", "/keys/build");
     state.assign_badges();
     state
+}
+
+#[test]
+fn a_key_file_is_kept_per_remote_host_until_cleared() {
+    let mut state = sample();
+    assert_eq!(state.remote_key("build"), Some("/keys/build"));
+    assert_eq!(state.remote_key("me@devbox"), None);
+    state.set_remote_key("build", "/keys/other");
+    assert_eq!(state.remote_key("build"), Some("/keys/other"));
+    state.set_remote_key("build", "");
+    assert_eq!(state.remote_key("build"), None);
+    assert_eq!(state.remote_key("me@devbox:2200"), Some("~/.ssh/工作 key"));
 }
 
 #[test]
@@ -102,6 +124,18 @@ fn round_trips_through_json() {
     let state = sample();
     assert_eq!(State::parse(&state.to_json()), state);
     assert_eq!(State::parse(&State::default().to_json()), State::default());
+}
+
+#[test]
+fn malformed_pdf_places_are_skipped() {
+    // 页号为负数或小数、比例不是数字、缺少一项的记录跳过，其余仍然读取。
+    let text = r#"{"session": {"folder": "/a", "files": [], "pdfPlaces":
+        {"/a/a.pdf": [2, 0.5], "/a/b.pdf": [-1, 0], "/a/c.pdf": [1.5, 0], "/a/d.pdf": [3],
+         "/a/e.pdf": [0, "x"], "/a/f.pdf": 4, "": [1, 0]}}}"#;
+    assert_eq!(
+        State::parse(text).last_session().unwrap().pdf_places,
+        [(PathBuf::from("/a/a.pdf"), (2, 0.5))]
+    );
 }
 
 #[test]
@@ -231,6 +265,7 @@ fn sessions_are_kept_per_folder() {
         bookmarks: Vec::new(),
         outline: Vec::new(),
         folds: Vec::new(),
+        pdf_places: Vec::new(),
         terminal: None,
         run: None,
         sidebar_hidden: false,

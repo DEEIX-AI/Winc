@@ -20,10 +20,11 @@ use crate::app::{App, DropZone, Hover, MenuButton, ScrollArea, ThumbLook, WORD_H
 use crate::field::{FieldView, TextField};
 use crate::icons;
 use crate::keymap::{self, Action};
-use crate::layout::{SearchParts, goto_bar, scrollbar_thumb};
+use crate::layout::{SearchParts, scrollbar_thumb};
 use crate::theme::*;
 
 mod alert;
+mod controls;
 mod dialog;
 mod diff;
 mod editor;
@@ -136,7 +137,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     // 位置浮窗显示在名称旁边，有独立的动画（滑出、淡出）。
-    let bar_open = app.goto_input.is_some();
+    let bar_open = app.goto_input.is_some() && !app.prompt_kind.is_vim();
     let picker_open = app.picker.open && app.picker.places.is_none();
     app.track_card(Card::Bar, bar_open);
     app.track_card(Card::Picker, picker_open);
@@ -144,7 +145,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_card_ghost(app, frame, Card::Bar);
     draw_card_ghost(app, frame, Card::Picker);
     if bar_open {
-        let rect = goto_bar(app.layout.editor);
+        let rect = app.prompt_bar();
         draw_moving_card(app, frame, Card::Bar, rect, draw_goto);
     }
     if picker_open {
@@ -963,7 +964,8 @@ fn blend_card(
 ///
 /// `draw` 绘制卡片内容，卡片位于 `rect`。淡入期间先绘制并保存卡片快照，再恢复卡片下方
 /// （含阴影范围）的画面，之后整张淡入并放大；其余时间每帧也保存一份快照，关闭后由
-/// [`draw_card_ghost`] 用最后一份快照淡出。
+/// [`draw_card_ghost`] 用最后一份快照淡出。开着换页（[`App::turn_card`]）时，换页之前的快照
+/// 先在原处淡出，新的一页叠在其上淡入。
 fn draw_moving_card(
     app: &mut App,
     frame: &mut Frame<'_>,
@@ -985,6 +987,16 @@ fn draw_moving_card(
         app.card_fx(card).shot = Some((rect, shot));
         return;
     };
+    // 换页时旧的一页在新的一页之下淡出。
+    let p = app.palette;
+    let scale = frame.scale();
+    if let Some((clock, at, old)) = &app.card_fx(card).turning
+        && !clock.done()
+        && old.covers(*at, scale)
+    {
+        let curve = dialog_curve(false, *clock);
+        blend_card(frame, p, (*at, old), card.radius(), curve);
+    }
     let mut base = app.card_fx(card).base.take().unwrap_or_default();
     frame.snapshot_into(rect.inset(-CARD_SHADOW, -CARD_SHADOW), &mut base);
     draw(app, frame);

@@ -103,6 +103,33 @@ fn formatting_replaces_the_text_as_one_undo_step() {
 }
 
 #[test]
+fn the_vim_equals_operator_formats_the_lines_it_covers() {
+    let dir = format_folder("format-vim");
+    std::fs::write(dir.join("a.c"), "int a;\nint b;\nint c;\nint d;\n").unwrap();
+    let tool = fake_tool(&dir.join("bin"), "clang-format", "cat; echo \"// $*\"");
+    warm_up(&tool);
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("a.c"));
+    app.config
+        .format_commands
+        .insert("c".to_owned(), format!("'{}' --style=llvm", tool.display()));
+    app.config.vim_enabled = Some(true);
+    app.vim_apply_config();
+
+    // `=j` 覆盖光标所在的行与下一行；格式化之后选区仍是光标。
+    app.vim_feed("j=j");
+    app.wait_formatting();
+    assert!(
+        text(&app).ends_with("// --style=llvm --lines=2:3\n"),
+        "{}",
+        text(&app)
+    );
+    assert!(app.editor.active().unwrap().selection.is_empty());
+    assert_eq!(app.vim_mode(), Some(winc_vim::Mode::Normal));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_selection_can_be_formatted_on_its_own() {
     let dir = format_folder("format-selection");
     std::fs::write(dir.join("a.c"), "int a;\nint b;\nint c;\n").unwrap();
@@ -270,7 +297,7 @@ fn failures_explain_themselves_and_leave_the_text_alone() {
     app.wait_formatting();
     assert_eq!(
         app.notice.text.as_deref(),
-        Some("无法格式化：Makefile 没有可自动使用的格式化工具，请在设置中指定命令")
+        Some("无法格式化：Makefile 无可自动使用的格式化工具，请在设置中指定命令")
     );
     assert_eq!(app.notice.action, Some(NoticeAction::FormatSettings));
     app.run_notice_action();
@@ -689,7 +716,7 @@ fn fixing_is_separate_and_runs_before_formatting_on_save() {
     );
     app.fix_active();
     app.wait_formatting();
-    assert_eq!(app.status.message.as_deref(), Some("没有需要修复的问题"));
+    assert_eq!(app.status.message.as_deref(), Some("无需修复"));
     app.run(Command::Undo);
     assert_eq!(text(&app), "import os\nx=1\n");
 

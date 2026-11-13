@@ -162,7 +162,7 @@ pub(crate) fn restore_tabs(
         let index = match tab {
             Tab::File(path) => take(&mut saved, |b| b.path.as_deref() == Some(path.as_path()))
                 .and_then(|backup| put_back(editor, backup))
-                .or_else(|| path.is_file().then(|| editor.open_pending(path))),
+                .or_else(|| winc_backend::fs::is_file(path).then(|| editor.open_pending(path))),
             Tab::Untitled(name) => take(&mut saved, |b| {
                 b.path.is_none() && b.file.file_name().is_some_and(|n| *n == **name)
             })
@@ -198,11 +198,12 @@ pub(crate) fn restore_at_launch(
     restored
 }
 
-/// 恢复标签时等待备份锁的最长时间（经验值）。
+/// 恢复标签时等待备份锁的最长时间。
 ///
-/// 本进程启动外部程序时，子进程在 fork 之后、exec 之前短暂持有锁文件的描述符，锁在此期间
-/// 取不到；等待超过该时间仍取不到时，才认为目录由另一个 winc 进程使用。
-const RESTORE_LOCK_WAIT: Duration = Duration::from_millis(200);
+/// 只在占用者是本进程启动的外部程序时等待（见 `Backups::lock_within`）：子进程在 fork 之后、
+/// exec 之前持有锁文件的描述符，通常不到 1 毫秒，系统负载很高时测得超过 200 毫秒。取 5 秒
+/// 作为上限，远高于测得的最长占用；目录由另一个 winc 进程使用时不等待。
+const RESTORE_LOCK_WAIT: Duration = Duration::from_secs(5);
 
 /// 移除并返回 `items` 中第一个满足 `wanted` 的元素；没有时返回 `None`。
 fn take<T>(items: &mut Vec<T>, wanted: impl Fn(&T) -> bool) -> Option<T> {
@@ -595,7 +596,11 @@ impl App {
         let backed_up = self.backup.written.contains_key(&doc.id);
         match &doc.path {
             // 发行版暂时无法访问时无法判断文件是否存在，保留标签。
-            Some(path) if backed_up || path.is_file() || !winc_editor::wsl::reachable(path) => {
+            Some(path)
+                if backed_up
+                    || winc_backend::fs::is_file(path)
+                    || !winc_editor::wsl::reachable(path) =>
+            {
                 Some(Tab::File(path.clone()))
             }
             Some(_) => None,

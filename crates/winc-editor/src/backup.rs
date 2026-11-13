@@ -5,10 +5,17 @@
 //! 行尾），其后是文档的全部内容（UTF-8）。同一目录被两个 winc 实例打开时，只有先启动的实例读取、
 //! 写入、删除该目录的备份，即同一时刻只允许一个实例处理同一目录（[`Backups::lock`]）。
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：备份保存在本机的数据目录中"
+)]
+
 use std::fs;
 use std::io::{self, BufRead, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use winc_backend::fs::Stamp;
 
 use ropey::Rope;
 use winc_config::Json;
@@ -37,7 +44,23 @@ pub struct Backups {
 pub struct Lock {
     /// 持有锁的文件句柄；关闭它即释放锁。
     _file: fs::File,
+    /// 锁文件的路径，记在 [`HELD`] 中。
+    path: PathBuf,
 }
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if let Ok(mut held) = HELD.lock() {
+            held.retain(|path| *path != self.path);
+        }
+    }
+}
+
+/// 本进程当前持有的各把锁的锁文件路径。
+///
+/// 取不到锁时据此分辨占用者：锁文件中记着本进程的编号、而这里没有该路径时，占用者是本进程
+/// 启动的外部程序（见 [`Backups::lock_within`]）。
+static HELD: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
 
 /// 待写出的备份：记录取快照那一刻的内容（rope 以共享方式持有，不复制），可以交给其他线程写出。
 pub struct Snapshot {
@@ -62,7 +85,7 @@ pub struct Backup {
     /// 正文在文件里从第几个字节开始（第一行之后）。
     body: u64,
     /// 写备份时磁盘文件的修改时间。
-    pub mtime: Option<SystemTime>,
+    pub mtime: Option<Stamp>,
     /// 备份时的选区，恢复后光标回到原处。
     pub selection: Selection,
     /// 备份时的标签序号（从 0 起）；备份头中缺失时为 `usize::MAX`。
@@ -103,39 +126,66 @@ impl Backups {
     /// 后启动的实例也读取、删除备份时，会把先启动的实例仍在使用的备份当作上次遗留的内容恢复、保存后
     /// 又删除，先启动的实例之后再异常中止时内容就无法找回，因此同一时刻只允许一个实例处理同一目录。
     /// 加锁对象是目录旁边的 `<目录>.lock` 文件，使用建议锁且不删除该文件：删除后再创建时，两个进程
-    /// 可能各锁一个文件。文件系统不支持建议锁时视为加锁成功。
+    /// 可能各锁一个文件。文件系统不支持建议锁时视为加锁成功。取到锁后把本进程的编号写入锁文件，
+    /// 供 [`Self::lock_within`] 分辨占用者；写入失败不影响加锁。
     pub fn lock(&self) -> Option<Lock> {
-        let path = self.dir.with_extension("lock");
+        let path = self.lock_path();
         if let Some(root) = path.parent() {
             fs::create_dir_all(root).ok()?;
         }
-        let file = fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(path)
+            .open(&path)
             .ok()?;
         match file.try_lock() {
             Err(fs::TryLockError::WouldBlock) => None,
-            Ok(()) | Err(fs::TryLockError::Error(_)) => Some(Lock { _file: file }),
+            Ok(()) | Err(fs::TryLockError::Error(_)) => {
+                let _ = file.set_len(0);
+                let _ = file.write_all(std::process::id().to_string().as_bytes());
+                if let Ok(mut held) = HELD.lock() {
+                    held.push(path.clone());
+                }
+                Some(Lock { _file: file, path })
+            }
         }
     }
 
-    /// 同 [`Self::lock`]，锁被占用时每隔 5 ms 重试，最多等待 `wait`。
+    /// 同 [`Self::lock`]，占用者是本进程启动的外部程序时每隔 5 ms 重试，最多等待 `wait`。
     ///
-    /// 本进程启动外部程序时，子进程在 fork 之后、exec 之前继承锁文件的描述符，期间建议锁仍被
-    /// 视为占用；重试使这一短暂的占用不被误认为另一个 winc 实例。
+    /// 本进程启动外部程序时，子进程在 fork 之后、exec 之前继承锁文件的描述符；本进程此时放开
+    /// 锁，建议锁仍由子进程占用到 exec 为止。这一占用很快结束，重试到取到锁；占用者是另一个
+    /// winc 实例时不等待，立即返回 `None`。
     pub fn lock_within(&self, wait: std::time::Duration) -> Option<Lock> {
         let deadline = std::time::Instant::now() + wait;
         loop {
             if let Some(lock) = self.lock() {
                 return Some(lock);
             }
-            if std::time::Instant::now() >= deadline {
+            if !self.held_by_own_child() || std::time::Instant::now() >= deadline {
                 return None;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    /// 返回锁文件的路径。
+    fn lock_path(&self) -> PathBuf {
+        self.dir.with_extension("lock")
+    }
+
+    /// 锁的占用者是否为本进程启动的外部程序：锁文件中记着本进程的编号，而本进程没有持有它。
+    ///
+    /// 只有 Unix 上子进程会继承建议锁，其他平台总是返回 `false`。
+    fn held_by_own_child(&self) -> bool {
+        if !cfg!(unix) {
+            return false;
+        }
+        let path = self.lock_path();
+        let ours =
+            fs::read_to_string(&path).is_ok_and(|pid| pid.trim().parse() == Ok(std::process::id()));
+        ours && HELD.lock().is_ok_and(|held| !held.contains(&path))
     }
 
     /// 返回 `doc` 的备份文件路径。
@@ -178,13 +228,11 @@ impl Backups {
             let path = path.to_string_lossy().into_owned();
             fields.push(("path".to_owned(), Json::String(path)));
         }
-        if let Some(since) = doc
-            .disk_mtime()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        {
+        // 纪元之前的修改时间不记录：读取时只接受非负的秒数。
+        if let Some(stamp) = doc.disk_mtime().filter(|stamp| stamp.secs >= 0) {
             let mtime = vec![
-                Json::Number(since.as_secs() as f64),
-                Json::Number(f64::from(since.subsec_nanos())),
+                Json::Number(stamp.secs as f64),
+                Json::Number(f64::from(stamp.nanos)),
             ];
             fields.push(("mtime".to_owned(), Json::Array(mtime)));
         }
@@ -414,10 +462,13 @@ fn read_header(file: &Path) -> Option<Backup> {
         let nanos = t.get(1)?.as_number()?;
         // 损坏的头（数值过大、为负或 NaN）不能引发 panic：备份在每次启动时读取，panic 会使
         // 程序一直无法启动。
-        if !(0.0..=u64::MAX as f64).contains(&secs) || !(0.0..1e9).contains(&nanos) {
+        if !(0.0..=i64::MAX as f64).contains(&secs) || !(0.0..1e9).contains(&nanos) {
             return None;
         }
-        UNIX_EPOCH.checked_add(Duration::new(secs as u64, nanos as u32))
+        Some(Stamp {
+            secs: secs as i64,
+            nanos: nanos as u32,
+        })
     });
 
     Some(Backup {

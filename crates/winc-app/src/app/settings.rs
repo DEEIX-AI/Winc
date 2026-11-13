@@ -316,8 +316,7 @@ impl App {
     /// 返回边长 `size`（物理像素）的产品图标（RGBA），首次用到或缩放改变时从应用图标的 SVG
     /// 渲染并留存。
     pub(crate) fn product_logo(&mut self, size: u32) -> &[u8] {
-        /// 应用图标，与各平台安装包的图标同一份。
-        const LOGO: &str = include_str!("../../assets/icon.svg");
+        const LOGO: &str = crate::app::setup::ICON;
         if self.settings.logo.as_ref().is_none_or(|&(s, _)| s != size) {
             let rgba = winc_preview::svg::load(LOGO, None, None)
                 .map(|picture| picture.render(size, size).rgba)
@@ -333,9 +332,13 @@ impl App {
         !matches!(*self.shared.update_state.borrow(), UpdateState::Off)
     }
 
-    /// 在浏览器中打开「关于」页的链接 `setting`；打不开时在状态栏说明原因。
+    /// 打开「关于」页的链接 `setting`：更新日志在阅读标签中打开，其余的在浏览器中打开，打不开
+    /// 时在状态栏说明原因。
     pub(in crate::app) fn settings_open_link(&mut self, setting: Setting) {
         self.settings.selected = setting;
+        if setting == Setting::ReleaseNotes {
+            return self.settings_open_release_notes();
+        }
         let Some(url) = crate::layout::about_link(setting) else {
             return;
         };
@@ -578,7 +581,7 @@ impl App {
     }
 
     /// 按滚轮增量 `dy`（逻辑像素）滚动当前页，滚动位置限制在有效范围内。
-    pub(super) fn settings_scroll_by(&mut self, dy: f32) {
+    pub(in crate::app) fn settings_scroll_by(&mut self, dy: f32) {
         let (_, max) = self.settings_scroll_area();
         self.settings.scroll = (self.settings.scroll - dy).clamp(0.0, max);
         self.settings.scrolled_at = Some(Instant::now());
@@ -726,7 +729,11 @@ impl App {
             Setting::HotExit => self.config.hot_exit != Some(false),
             Setting::RestoreFolder => self.config.restore_folder != Some(false),
             Setting::StickyScroll => self.config.sticky_scroll != Some(false),
+            Setting::VimMode => self.config.vim_enabled == Some(true),
+            Setting::VimRelativeNumber => self.config.vim_relative_number == Some(true),
+            Setting::VimYankHighlight => self.config.vim_yank_highlight != Some(0),
             Setting::WordWrap => self.config.word_wrap == Some(true),
+            Setting::WholeLines => self.config.whole_lines == Some(true),
             Setting::Minimap => self.config.minimap == Some(true),
             Setting::Outline => self.config.outline != Some(false),
             Setting::LineNumbers => self.config.line_numbers != Some(false),
@@ -742,6 +749,7 @@ impl App {
             Setting::GitModule => self.git_enabled(),
             Setting::GitConfirmPush => self.config.git_confirm_push != Some(false),
             Setting::TerminalModule => self.terminal_enabled(),
+            Setting::RemoteModule => self.remote_enabled(),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select == Some(true),
             Setting::TerminalConfirmClose => self.config.terminal_confirm_close != Some(false),
             Setting::TerminalPrompt => self.config.terminal_prompt != Some(false),
@@ -764,6 +772,7 @@ impl App {
         if self.switch_on(setting) == on {
             return;
         }
+        self.vim_forget_option(setting);
         match setting {
             Setting::FormatOnSave => self.config.format_on_save = Some(on),
             Setting::FixOnSave => self.config.fix_on_save = Some(on),
@@ -771,7 +780,15 @@ impl App {
             Setting::HotExit => self.config.hot_exit = Some(on),
             Setting::RestoreFolder => self.config.restore_folder = Some(on),
             Setting::StickyScroll => self.config.sticky_scroll = Some(on),
+            Setting::VimMode => {
+                self.config.vim_enabled = Some(on);
+                self.vim_apply_config();
+            }
+            Setting::VimRelativeNumber => self.config.vim_relative_number = Some(on),
+            // 关闭记为 0 毫秒，打开恢复默认的时长。
+            Setting::VimYankHighlight => self.config.vim_yank_highlight = (!on).then_some(0),
             Setting::WordWrap => self.config.word_wrap = Some(on),
+            Setting::WholeLines => self.config.whole_lines = Some(on),
             Setting::Minimap => self.config.minimap = Some(on),
             Setting::Outline => self.config.outline = Some(on),
             Setting::LineNumbers => self.config.line_numbers = Some(on),
@@ -787,16 +804,19 @@ impl App {
             Setting::GitModule => self.config.git_enabled = Some(on),
             Setting::GitConfirmPush => self.config.git_confirm_push = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),
+            Setting::RemoteModule => self.config.remote_enabled = Some(on),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select = Some(on),
             Setting::TerminalConfirmClose => self.config.terminal_confirm_close = Some(on),
             Setting::TerminalPrompt => self.config.terminal_prompt = Some(on),
             Setting::TerminalShellIntegration => self.config.terminal_shell_integration = Some(on),
             _ => return,
         }
-        // 由命令切换（如 ⌥Z 自动换行）时设置浮层未打开，看不到开关，不必播放动画。
+        // 由命令切换（如 ⌥Z 自动换行）时看不到开关，不必播放动画；开关在设置浮层和「首次设置」
+        // 中可见。
+        let visible = self.settings.open || self.setup_shown();
         self.settings.switch_slide = self
             .clock(super::animation::SWITCH_SLIDE)
-            .filter(|_| self.settings.open)
+            .filter(|_| visible)
             .map(|clock| (setting, clock));
         if setting == Setting::WordWrap {
             self.word_wrap_changed();
@@ -830,6 +850,9 @@ impl App {
         }
         if setting == Setting::GitModule {
             self.git_folder_changed();
+        }
+        if setting == Setting::RemoteModule && !on {
+            self.stop_remote();
         }
         if setting == Setting::SystemTitleBar {
             self.sync_title_bar();
@@ -1041,8 +1064,8 @@ impl App {
     /// 焦点在终端时调整终端字号，否则调整编辑区字号，两者互不影响；还原即回到默认字号。改动
     /// 写回配置，界面字号不变。
     pub(super) fn step_font_size(&mut self, up: Option<bool>) {
-        // 当前标签是 PDF 时缩放 PDF。
-        if !self.focus.in_terminal() && self.zoom_pdf(up, None) {
+        // 当前标签是 PDF 或图片时缩放预览。
+        if !self.focus.in_terminal() && (self.zoom_pdf(up, None) || self.zoom_picture(up, None)) {
             return;
         }
         self.step_font_size_in(self.focus.in_terminal(), up);
@@ -1251,8 +1274,17 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置 Vim 模式下无名寄存器与系统剪贴板的同步方式。
+    pub(in crate::app) fn set_vim_clipboard(&mut self, choice: winc_config::VimClipboard) {
+        self.config.vim_clipboard = Some(choice);
+        self.vim_apply_config();
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 设置何时显示空格和制表符。
     pub(in crate::app) fn set_render_whitespace(&mut self, choice: winc_config::RenderWhitespace) {
+        self.vim_forget_option(Setting::RenderWhitespace);
         self.config.render_whitespace = Some(choice);
         self.save_config();
         self.request_redraw();
@@ -1287,6 +1319,14 @@ impl App {
     /// （`config_rev`）加一，应用层据此把新配置发给其他窗口。
     pub(super) fn save_config(&mut self) {
         self.config_rev += 1;
+        // `:set` 的改动只在本次运行中生效：写入时换回配置文件中的值。
+        self.vim_swap_options();
+        self.write_config();
+        self.vim_swap_options();
+    }
+
+    /// 把配置写入配置文件。
+    fn write_config(&mut self) {
         let Some(path) = &self.config_path else {
             return;
         };
@@ -1347,6 +1387,8 @@ impl App {
         let title_bar = old.ui_native_title_bar != new.ui_native_title_bar;
         let stop_terminal =
             old.terminal_enabled != new.terminal_enabled && new.terminal_enabled == Some(false);
+        let stop_remote =
+            old.remote_enabled != new.remote_enabled && new.remote_enabled != Some(true);
 
         if fonts || glyph_language {
             // 别的窗口已经用上了这些字体，这里也用得上；万一用不上，留着原来的字体。
@@ -1388,6 +1430,9 @@ impl App {
         if stop_terminal {
             self.stop_terminal();
         }
+        if stop_remote {
+            self.stop_remote();
+        }
         // 模块关闭后它的那一页不再列出：设置停在该页时改到「模块」页。
         let page = self.settings.selected.page();
         if self.settings.open && !SettingsPage::listed(self.settings_modules()).any(|p| p == page) {
@@ -1397,6 +1442,7 @@ impl App {
         if title_bar {
             self.sync_title_bar();
         }
+        self.vim_apply_config();
         self.relayout();
         self.request_redraw();
     }

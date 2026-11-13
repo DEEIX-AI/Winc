@@ -5,6 +5,8 @@
 //! 按块缓存，见 `view::preview::markdown`。图片读取本地文件（相对文档所在目录）；网址的图片
 //! （README 中的徽章、截图）在后台用系统的 `curl` 下载到临时目录缓存，关闭联网后显示替代文字。
 
+use crate::app::ScrollTarget;
+use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
@@ -19,7 +21,7 @@ use winc_preview::svg;
 use super::images::system_glyphs;
 use winit::keyboard::{Key, NamedKey};
 
-use crate::app::{App, UserEvent};
+use crate::app::{App, Focus, UserEvent};
 use crate::system;
 
 pub(crate) mod laid;
@@ -64,6 +66,8 @@ pub(crate) struct LiveLeaf {
     pub prose: bool,
     /// 是否为表格；表格按单元格编辑。
     pub table: bool,
+    /// 光标是否位于段落、标题之后的空行上。
+    pub blank: bool,
     /// 查找该块所用的位置（字节偏移）。
     ///
     /// 通常是光标位置；按住鼠标期间是按下之前的光标位置。表格中该位置所在的单元格显示原文，
@@ -320,11 +324,22 @@ impl MarkdownPreview {
             .unwrap_or(0.0)
     }
 
+    /// 返回最大滚动位置（逻辑像素）：内容高于预览区域的部分，不小于 0。
+    pub fn max_scroll(&self) -> f32 {
+        (self.height - self.area.h).max(0.0)
+    }
+
     /// 滚动到 `y`（逻辑像素），限制在内容范围内。
     pub fn scroll_to(&mut self, y: f32) {
-        let max = (self.height - self.area.h).max(0.0);
+        self.set_scroll(y.clamp(0.0, self.max_scroll()));
+    }
+
+    /// 把当前文档预览的滚动位置设为 `y`（逻辑像素），不限制范围。
+    ///
+    /// 供绘制前后换入、恢复过渡中的位置使用；其他情况用 [`Self::scroll_to`]。
+    pub(crate) fn set_scroll(&mut self, y: f32) {
         if let Some(id) = self.doc {
-            self.scrolls.insert(id, y.clamp(0.0, max));
+            self.scrolls.insert(id, y);
         }
     }
 
@@ -422,8 +437,9 @@ fn in_fence<'a>(lines: impl Iterator<Item = ropey::RopeSlice<'a>>) -> bool {
 /// 返回当前标签显示 Markdown 预览的区域（分栏的右半边或整个编辑区）；不显示时返回 `None`。
 pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
     let doc = app.editor.active()?;
-    // docx 没有源代码可切换，总是以整个编辑区显示阅读视图。
-    if doc.unsupported == Some(winc_editor::Unsupported::Docx) {
+    // docx 和内容已取回的阅读标签没有源代码可切换，总是以整个编辑区显示阅读视图。
+    let reading = matches!(doc.reading, Some(winc_editor::Reading::Ready(_)));
+    if doc.unsupported == Some(winc_editor::Unsupported::Docx) || reading {
         return Some(app.layout.editor);
     }
     if doc.preview_kind() != Some(PreviewKind::Markdown) {
@@ -486,11 +502,16 @@ impl App {
         let Some(rope) = doc.text().rope().cloned() else {
             return;
         };
+        // 阅读标签的原文不在文档的文本中。
+        let reading = match &doc.reading {
+            Some(winc_editor::Reading::Ready(text)) => Some(Arc::clone(text)),
+            _ => None,
+        };
         md.pending = Some(revision);
         let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
         winc_editor::background::spawn(move || {
             let started = std::time::Instant::now();
-            let text = rope.to_string();
+            let text = reading.map_or_else(|| rope.to_string(), |text| text.to_string());
             let parsed = markdown::parse(&text);
             let done = Done::Parsed(id, revision, parsed, started.elapsed());
             if sender.send(done).is_ok()
@@ -631,7 +652,7 @@ impl App {
                     .and_then(|text| svg::load(text, None, Some(system_glyphs()))),
                 (_, Some(bytes)) => image::load_bytes(&bytes),
                 (Some(url), None) => download(url, &path).and_then(|()| load_downloaded(&path)),
-                (None, None) if image::is_svg(&path) => std::fs::read_to_string(&path)
+                (None, None) if image::is_svg(&path) => winc_backend::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
                     .and_then(|text| svg::load(&text, path.parent(), Some(system_glyphs()))),
                 (None, None) => image::load(&path),
@@ -754,7 +775,7 @@ impl App {
             .and_then(|d| d.path.as_deref())
             .and_then(|path| local_target(path, &url));
         match local {
-            Some(path) if path.is_file() => self.open_markdown_file(&path, &url),
+            Some(path) if winc_backend::fs::is_file(&path) => self.open_markdown_file(&path, &url),
             Some(_) => self.flash(t!("preview-markdown-link-file-not-found")),
             None => {
                 if let Err(e) = system::open_url(&url) {
@@ -892,6 +913,8 @@ impl App {
         let page = (area.h * 0.9).max(step);
         let back = self.modifiers.shift_key();
         let y = self.markdown.scroll();
+        // 方向键逐段滚动，直接到达；翻页和到两端的跳转平滑滚动。
+        let small = matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)) && !cmd;
         let to = match key {
             Key::Named(NamedKey::ArrowUp) if cmd => 0.0,
             Key::Named(NamedKey::ArrowDown) if cmd => f32::MAX,
@@ -907,7 +930,11 @@ impl App {
             Key::Named(NamedKey::End) => f32::MAX,
             _ => return false,
         };
-        self.scroll_markdown_to(to);
+        if small {
+            self.scroll_markdown_to(to);
+        } else {
+            self.glide_pane_to(ScrollTarget::Markdown, to);
+        }
         true
     }
 
@@ -992,6 +1019,10 @@ impl App {
         // 块之间的空行视为正文：回车另起一段。
         let prose = gap || kind.is_some_and(|l| l.prose);
         let table = !gap && kind.is_some_and(|l| l.table);
+        let before = rope.byte_slice(line_start..caret.max(line_start));
+        let blank = line_start > found.start
+            && kind.is_some_and(|l| l.prose)
+            && before.chars().all(char::is_whitespace);
         let block = block_of(found.start)?;
         let range = parsed.ranges[block].start..shift(parsed.ranges[block].end).max(leaf.end);
         // 输入之后、重新解析之前，范围来自上一版文档：起点可能已超出文档，也可能不在字符边界上；
@@ -1011,6 +1042,7 @@ impl App {
             revision: doc.revision,
             prose,
             table,
+            blank,
             at: caret,
             edge,
         })
@@ -1813,7 +1845,8 @@ impl App {
     /// 规则见 `winc_preview::markdown::enter::task`。不是简写、有选区、有多个光标、输入法
     /// 正在组字、或光标位于代码块等块中时返回 `false`，按普通输入处理。
     fn live_space(&mut self) -> bool {
-        if !self.preedit.is_empty() || self.live_leaf().is_some_and(|l| !l.prose) {
+        let composing = !self.preedit_at(Focus::Editor).is_empty();
+        if composing || self.live_leaf().is_some_and(|l| !l.prose) {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -1852,7 +1885,8 @@ impl App {
     /// 未闭合的围栏会使其后的全部内容成为代码，补全之前整篇的外观都会改变。不构成开围栏、
     /// 下方已有闭围栏、有选区、或光标位于代码块等块中时返回 `false`，按普通输入处理。
     fn live_fence_char(&mut self, mark: &str) -> bool {
-        if !self.preedit.is_empty() || self.live_leaf().is_some_and(|l| !l.prose) {
+        let composing = !self.preedit_at(Focus::Editor).is_empty();
+        if composing || self.live_leaf().is_some_and(|l| !l.prose) {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -2521,8 +2555,8 @@ impl App {
         id.is_some() && self.markdown.editing == id
     }
 
-    /// 在可编辑的预览中开始编辑（点击、移动光标）：光标所在的块显示原文。
-    fn start_live_editing(&mut self) {
+    /// 在可编辑的预览中开始编辑（点击、移动光标、组字）：光标所在的块显示原文。
+    pub(in crate::app) fn start_live_editing(&mut self) {
         self.markdown.editing = self.editor.active().map(|d| d.id);
     }
 
@@ -2801,7 +2835,7 @@ impl App {
             let scroll = md.scroll();
             if y < scroll || y + 40.0 > scroll + md.area.h {
                 let y = y - md.area.h / 3.0;
-                self.scroll_markdown_to(y);
+                self.glide_pane_to(ScrollTarget::Markdown, y);
             }
         }
         self.request_redraw();
@@ -2847,7 +2881,7 @@ impl App {
         let Some(&top) = self.hits.markdown_toc_tops.get(i) else {
             return;
         };
-        self.scroll_markdown_to(top);
+        self.glide_pane_to(ScrollTarget::Markdown, top);
         self.markdown.toc_picked = Some((i, self.markdown.scroll()));
         let clock = self.clock(crate::app::animation::TOC_FLASH);
         self.markdown.toc_flash = clock.map(|clock| (i, clock));
@@ -2866,10 +2900,10 @@ impl App {
         };
         let lower = anchor.to_lowercase();
         if !(lower.starts_with("fn-") || lower.starts_with("fnref-")) {
-            self.scroll_markdown_to(top);
+            self.glide_pane_to(ScrollTarget::Markdown, top);
             return;
         }
-        self.scroll_markdown_to(top - self.markdown.area.h / 3.0);
+        self.glide_pane_to(ScrollTarget::Markdown, top - self.markdown.area.h / 3.0);
         let clock = self.clock(crate::app::animation::TOC_FLASH);
         self.markdown.anchor_flash = clock.map(|clock| ((top, height), clock));
     }
@@ -2888,7 +2922,7 @@ impl App {
             return;
         };
         let line = laid.line_of_y(y, doc.text().line_count());
-        doc.scroll_line = text_row(doc, line).clamp(0.0, max.max(0.0));
+        set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
         self.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
     }
 
@@ -2918,7 +2952,7 @@ impl App {
     pub(in crate::app) fn scroll_text_to(&mut self, line: f32) {
         let max = self.max_scroll_line();
         if let Some(doc) = self.editor.active_mut() {
-            doc.scroll_line = text_row(doc, line).clamp(0.0, max.max(0.0));
+            set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
         }
     }
 
@@ -3018,6 +3052,7 @@ const CACHE_MAX: u64 = 200 * 1024 * 1024;
 /// 已下载过时只更新修改时间（清理缓存时据此判断最久未使用的文件）。先写入同目录的临时
 /// 文件，下载完成后再改名，中途失败不会留下不完整的文件。每次启动后首次下载前清理一次缓存
 /// （[`clean_cache`]）。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
 fn download(url: &str, path: &Path) -> Result<(), String> {
     let dir = path
         .parent()
@@ -3059,6 +3094,7 @@ fn download(url: &str, path: &Path) -> Result<(), String> {
 
 /// 删除 `dir` 中超过 [`CACHE_AGE`] 未使用的图片，以及超过一小时未下载完成的临时文件；
 /// 剩余文件超过 [`CACHE_MAX`] 时从最久未使用的开始删除。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
 pub(in crate::app) fn clean_cache(dir: &Path, now: std::time::SystemTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -3106,6 +3142,7 @@ pub(in crate::app) fn clean_cache(dir: &Path, now: std::time::SystemTime) {
 /// 读取下载的图片：内容为 SVG（徽章多为 SVG）时按 SVG 读取，否则按位图读取。
 ///
 /// SVG 中的文字（徽章上的字）用系统字体绘制，与直接预览 SVG 文件时相同。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
 fn load_downloaded(path: &Path) -> Result<Picture, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let head = &bytes[..bytes.len().min(1024)];

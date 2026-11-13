@@ -14,6 +14,9 @@ impl App {
         let l = self.layout;
         // 折叠动画期间绘制的是展开状态，而点击按的是折叠后的布局：先取消动画，使显示直接到位。
         self.fold_motion = None;
+        // 跳转过渡期间绘制的是插值位置，而命中测试按滚动位置换算：过渡停在屏幕上显示的位置。
+        self.settle_glides();
+        self.fling = None;
         self.dismiss_hint();
 
         // 窗口内的提示框、菜单打开时，这次按下只交给它们：点在菜单外面即关掉菜单。
@@ -263,6 +266,10 @@ impl App {
             Target::Start(action) => self.run_start_action(action),
             Target::Sticky(row) => self.click_sticky(row, x),
             Target::Folded(line) => self.click_folded(line),
+            Target::LongLine(line) => {
+                self.focus = Focus::Editor;
+                self.show_whole_line(line);
+            }
             Target::Blame(line) => self.click_blame(line),
             Target::ChangeMark(_) => {
                 self.click_change_mark(x, y);
@@ -280,6 +287,7 @@ impl App {
                 }
             }
             Target::Editor => self.click_editor(x, y),
+            Target::Picture => self.click_picture(x, y),
             Target::Terminal => {
                 if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
@@ -361,7 +369,7 @@ impl App {
     /// 按下滚动条 `bar`，抓住滑块 `grab` 处开始拖；点在轨道上时滑块立即跳到鼠标处，
     /// 无需等待鼠标移动。
     pub(super) fn grab_scrollbar(&mut self, bar: Scrollbar, grab: f32) {
-        self.scroll_glide = None;
+        self.settle_glides();
         self.drag = Drag::Scrollbar { bar, grab };
         let (x, y) = self.mouse;
         self.on_mouse_move(x, y);
@@ -390,7 +398,7 @@ impl App {
 
     /// 处理顶栏空白处的点击：拖动窗口；双击时按系统设置缩放或最小化窗口。
     fn click_title_bar(&mut self, x: f32, y: f32) {
-        if self.title_bar_pressed(x, y) {
+        if self.title_bar_pressed(x, y) && self.title_bar_zooms_at(x) {
             self.title_bar_double_click();
         } else if let Some(window) = &self.window.handle {
             let _ = window.drag_window();
@@ -407,6 +415,14 @@ impl App {
         } else {
             4.0
         }
+    }
+
+    /// 是否在双击顶栏空白处横坐标 `x`（逻辑像素）的位置时执行标题栏的双击动作。
+    ///
+    /// macOS 上该动作由系统偏好决定，任何位置都执行；其他系统上见
+    /// [`Self::title_bar_double_click_zooms`]。
+    pub(in crate::app) fn title_bar_zooms_at(&self, x: f32) -> bool {
+        cfg!(target_os = "macos") || self.title_bar_double_click_zooms(x)
     }
 
     /// 记录顶栏空白处按下的位置和时刻，返回本次按下是否构成双击。

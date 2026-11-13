@@ -8,9 +8,11 @@
 //! 文档。在右侧点击放置光标后，按键与编辑命令转给该文档执行；文件未打开时先在后台打开一个
 //! 标签，执行后重新比较。左侧（`HEAD`）只读。
 
+mod caret;
 mod find;
 mod pointer;
 
+use crate::app::scroll::set_scroll_line;
 use std::path::Path;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -19,16 +21,19 @@ use winc_core::{Lines, Selection, movement};
 
 use winc_editor::background;
 use winc_editor::diff_view::{Compared, DiffView, LEFT, RIGHT, ReadSelection, SideRow};
-use winc_editor::{Document, DocumentId};
+use winc_editor::{Document, DocumentId, FoldCommand};
 use winc_i18n::t;
 use winc_render::Rect;
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
+use super::animation::{Clock, FOLD_ANIMATION};
 use super::git::changes::replace_lines;
 use super::lifecycle::notice::FLASH_DURATION;
-use super::{App, Focus, UserEvent, sticky_limit};
+use super::{App, Focus, ScrollArea, UserEvent, sticky_limit};
 use crate::keymap::Action;
+use crate::layout::{Scrollbar, hscrollbar_thumb};
+use crate::theme::SCROLLBAR_HIT;
 
 /// 差异标签顶部标题栏的高度（逻辑像素）；标题栏包含两侧的标题，右端为统计和按钮。
 pub(crate) const DIFF_HEADER: f32 = 36.0;
@@ -162,8 +167,10 @@ pub enum DiffTarget {
     Layout,
     /// 折叠或展开所有未改动的长段。
     Collapse,
-    /// 折叠的一段，参数为未改动段的序号。
+    /// 折叠的一段，参数为未改动段的序号；点击后展开。
     Fold(usize),
+    /// 已展开的一段未改动内容的收起标记，参数为未改动段的序号；点击后重新折叠。
+    Refold(usize),
     /// 固定在顶部的块头：（侧，行号）。点击后光标放到该行，该行滚到其外层的固定行之下。
     Sticky(usize, usize),
     /// 用左侧替换右侧的一段改动（参数为改动序号），即把该处恢复为 `HEAD` 中的内容。
@@ -267,7 +274,164 @@ pub(crate) struct DiffParts {
     pub include_x: f32,
 }
 
+/// 差异标签中一段未改动内容展开或折叠的过渡。
+///
+/// 过渡期间差异保持该段展开的排版：该段的行自上而下逐行露出，其后的行向上收起尚未露出的高度。
+/// 折叠在过渡结束时才写入差异（见 [`App::finish_diff_fold`]）。
+#[derive(Debug, Clone)]
+pub(crate) struct DiffFoldMotion {
+    /// 过渡所属的文档。
+    pub doc: DocumentId,
+    /// 未改动内容的段号。
+    pub gap: usize,
+    /// 展开状态下，该段折叠后隐藏的行在左侧、右侧占用的显示行；两侧行数相同。
+    pub rows: [std::ops::Range<usize>; 2],
+    /// 是否为展开；`false` 表示折叠。
+    pub expanding: bool,
+    /// 过渡开始时的滚动位置（显示行）；滚动位置改变后过渡不再绘制。
+    pub scroll: f64,
+    /// 过渡的时钟。
+    pub clock: Clock,
+}
+
+impl DiffFoldMotion {
+    /// 返回该段尚未露出的高度（逻辑像素），其后的行向上收起相应高度。
+    ///
+    /// 折叠状态下该段显示为一行，因此完全折叠时保留一行的高度。
+    pub(crate) fn hidden(&self, line_height: f32) -> f32 {
+        let progress = self.clock.progress();
+        let reveal = if self.expanding {
+            progress
+        } else {
+            1.0 - progress
+        };
+        (1.0 - reveal) * self.rows[RIGHT].len().saturating_sub(1) as f32 * line_height
+    }
+}
+
 impl App {
+    /// 开始第 `gap` 段未改动内容展开（`expanding` 为真）或折叠的过渡，返回是否已开始。
+    ///
+    /// 调用时差异中该段须为展开状态。以下情况不做过渡：动态效果已关闭；该段无法折叠为一个
+    /// 连续的区间；该段的起点不在编辑区顶部之下（顶部的行需要保持不动）。
+    fn start_diff_fold(&mut self, gap: usize, expanding: bool) -> bool {
+        (self.clock(FOLD_ANIMATION))
+            .is_some_and(|clock| self.begin_diff_fold(gap, expanding, clock))
+    }
+
+    /// 同 [`Self::start_diff_fold`]，过渡按给定的时钟 `clock` 计时；测试中使用固定时刻的时钟。
+    pub(in crate::app) fn begin_diff_fold(
+        &mut self,
+        gap: usize,
+        expanding: bool,
+        clock: Clock,
+    ) -> bool {
+        let Some(doc) = self.editor.active() else {
+            return false;
+        };
+        let Some(view) = doc.diff.as_deref().filter(|view| view.is_open(gap)) else {
+            return false;
+        };
+        let Some(lines) = view.fold_lines(gap) else {
+            return false;
+        };
+        let rows = [LEFT, RIGHT]
+            .map(|side| view.row_of(side, lines[side].start)..view.row_of(side, lines[side].end));
+        let top = view.row_at(RIGHT, doc.scroll_line.max(0.0));
+        if rows[RIGHT].start as f64 <= top || rows[LEFT].len() != rows[RIGHT].len() {
+            return false;
+        }
+        self.diff_fold = Some(DiffFoldMotion {
+            doc: doc.id,
+            gap,
+            rows,
+            expanding,
+            scroll: doc.scroll_line,
+            clock,
+        });
+        self.request_redraw();
+        true
+    }
+
+    /// 结束进行中的展开或折叠过渡；折叠的过渡此时把折叠写入差异。
+    ///
+    /// `force` 为假时只在过渡的时钟走完后结束，每帧绘制之前调用；为真时立即结束，在修改折叠
+    /// 状态或处理点击之前调用，使后续操作按最终的排版进行。
+    pub(in crate::app) fn finish_diff_fold(&mut self, force: bool) {
+        let Some(motion) = self.diff_fold.take_if(|m| force || m.clock.done()) else {
+            return;
+        };
+        if motion.expanding {
+            return;
+        }
+        if self.editor.active().is_some_and(|d| d.id == motion.doc) {
+            self.refold_diff(|view, row| view.fold(motion.gap, row));
+        } else if let Some(view) = (self.editor.documents.iter_mut())
+            .find(|d| d.id == motion.doc)
+            .and_then(|d| d.diff.as_deref_mut())
+        {
+            view.fold(motion.gap, 0);
+        }
+    }
+
+    /// 在差异标签中执行折叠命令 `command`，作用于未改动的长段；返回当前标签是否为差异标签。
+    ///
+    /// 「全部折叠」「全部展开」作用于所有未改动的长段；折叠、展开和切换作用于只读光标所在的
+    /// 一段，没有只读光标时作用于编辑区顶部往下的第一段。按层级折叠在差异中没有对应的操作。
+    pub(in crate::app) fn fold_diff(&mut self, command: FoldCommand) -> bool {
+        let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
+            return false;
+        };
+        let top = self.editor.active().map_or(0.0, |d| d.scroll_line.max(0.0));
+        let top = view.row_at(RIGHT, top) as usize;
+        let gap = match view.read_caret() {
+            Some((side, pos)) => {
+                let text = &view.side(side).text;
+                view.gap_of(side, text.char_to_line(pos.min(text.len_chars())))
+            }
+            None => view.rows[RIGHT].iter().skip(top).find_map(|row| match row {
+                SideRow::Fold { gap, .. } => Some(*gap),
+                SideRow::Line { line, hunk, .. } => {
+                    hunk.is_none().then(|| view.gap_of(RIGHT, *line)).flatten()
+                }
+            }),
+        };
+        let open = gap.is_some_and(|gap| view.is_open(gap));
+        match (command, gap) {
+            (FoldCommand::FoldAll, _) => self.refold_diff(DiffView::fold_all),
+            (FoldCommand::UnfoldAll, _) => self.refold_diff(DiffView::unfold_all),
+            (FoldCommand::Fold | FoldCommand::FoldRecursively | FoldCommand::Toggle, Some(gap))
+                if open =>
+            {
+                self.press_diff(DiffTarget::Refold(gap))
+            }
+            (
+                FoldCommand::Unfold | FoldCommand::UnfoldRecursively | FoldCommand::Toggle,
+                Some(gap),
+            ) => self.press_diff(DiffTarget::Fold(gap)),
+            _ => {}
+        }
+        true
+    }
+
+    /// 以 `change` 修改当前差异标签的折叠状态，右侧顶部的行保持在顶部。
+    ///
+    /// `change` 的参数为差异视图和修改前右侧顶部的显示行，返回该行的内容在修改后所在的显示行。
+    fn refold_diff(&mut self, change: impl FnOnce(&mut DiffView, usize) -> usize) {
+        self.finish_diff_fold(true);
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        if let Some(view) = doc.diff.as_deref_mut() {
+            let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
+            let row = change(view, row);
+            let row = view.pos_of(RIGHT, row as f64);
+            set_scroll_line(doc, row);
+        }
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
     /// 处理差异标签中 `target` 的点击。
     pub(super) fn press_diff(&mut self, target: DiffTarget) {
         match target {
@@ -276,24 +440,24 @@ impl App {
             DiffTarget::PreviousFile => self.step_diff_file(false),
             DiffTarget::NextFile => self.step_diff_file(true),
             DiffTarget::Layout => self.settings_toggle(crate::layout::Setting::DiffInline),
-            DiffTarget::Collapse => {
-                let Some(doc) = self.editor.active_mut() else {
-                    return;
-                };
-                if let Some(view) = doc.diff.as_deref_mut() {
-                    // 切换后右侧顶部的行保持在顶部。
-                    let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
-                    let on = !view.collapses();
-                    let row = view.set_collapse(on, row);
-                    doc.scroll_line = view.pos_of(RIGHT, row as f64);
-                }
-                self.clamp_scroll();
-            }
+            DiffTarget::Collapse => self.refold_diff(|view, row| {
+                let on = !view.collapses();
+                view.set_collapse(on, row)
+            }),
             DiffTarget::Fold(gap) => {
+                self.finish_diff_fold(true);
                 if let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut()) {
                     view.expand(gap);
                 }
                 self.clamp_scroll();
+                self.start_diff_fold(gap, true);
+            }
+            DiffTarget::Refold(gap) => {
+                self.finish_diff_fold(true);
+                // 有过渡时折叠在过渡结束后写入；没有时立即折叠。
+                if !self.start_diff_fold(gap, false) {
+                    self.refold_diff(|view, row| view.fold(gap, row));
+                }
             }
             DiffTarget::Sticky(side, line) => self.click_diff_sticky(side, line),
             DiffTarget::Revert(hunk) => self.revert_diff_hunk(hunk),
@@ -356,7 +520,7 @@ impl App {
             view.pos_of_top(side, (row - depth).max(0.0), visible)
         };
         let before = doc.scroll_line;
-        doc.scroll_line = top.clamp(0.0, max.max(0.0));
+        set_scroll_line(doc, top.clamp(0.0, max.max(0.0)));
         self.focus = Focus::Editor;
         self.glide_scroll(before);
         self.reset_blink();
@@ -639,7 +803,8 @@ impl App {
         {
             view.pin_new(fade.right.clone());
             let row = view.row_of_new(fade.right.start) as f64 - offset;
-            doc.scroll_line = view.pos_of(RIGHT, row.max(0.0));
+            let row = view.pos_of(RIGHT, row.max(0.0));
+            set_scroll_line(doc, row);
         }
         self.clamp_scroll();
         // 被替换的改动不立即失去颜色，而是在原处淡出；动态效果关闭时不显示淡出。
@@ -681,6 +846,19 @@ impl App {
         view.hunks
             .iter()
             .position(|h| h.new.contains(&line) || (h.new.is_empty() && h.new.start == line))
+    }
+
+    /// 当前标签是差异、其右侧对应的文档被改动或光标移动之后调用：重新比较并滚动到光标处。
+    pub(in crate::app) fn diff_source_changed(&mut self) {
+        let Some(index) = self.editor.active else {
+            return;
+        };
+        if self.editor.documents[index].diff.is_none() {
+            return;
+        }
+        self.relayout();
+        self.sync_diff_source(index);
+        self.diff_caret_visible(index);
     }
 
     /// 光标在差异右侧时由右侧文档执行 `f`（按键、编辑命令），执行后重新比较并滚动到光标处。
@@ -747,8 +925,10 @@ impl App {
         if view.set_wrap(wrap.then_some((cols, tab_width))) {
             let part = part.min(view.breaks(RIGHT, top).rows().saturating_sub(1));
             let first = view.row_of_new(top) + part;
-            doc.scroll_line = view.pos_of_top(RIGHT, first as f64 + row.fract(), visible);
-            if view.is_wrapping() {
+            let row = view.pos_of_top(RIGHT, first as f64 + row.fract(), visible);
+            let wrapping = view.is_wrapping();
+            set_scroll_line(doc, row);
+            if wrapping {
                 doc.scroll_x = 0.0;
             }
             self.clamp_scroll();
@@ -762,8 +942,6 @@ impl App {
         let Some(line) = self.diff_caret_line(index) else {
             return;
         };
-        let visible = self.visible_lines().saturating_sub(2).max(1);
-        let cell = self.cell;
         let tab_width = self.editor.active_tab_width();
         let path = self.editor.documents[index]
             .diff
@@ -777,14 +955,28 @@ impl App {
                 (col, doc.col_to_cell(line, col, tab_width))
             })
             .unwrap_or((0, 0));
-        let sticky = self.diff_sticky_depth(index, RIGHT, line);
+        self.diff_scroll_to(index, RIGHT, (line, caret_col), caret_cell);
+    }
+
+    /// 滚动标签 `index` 中的差异，使第 `side` 侧（行，列）处的光标可见；所在行被折叠时先
+    /// 展开。`caret_cell` 是光标所在的显示列。
+    fn diff_scroll_to(
+        &mut self,
+        index: usize,
+        side: usize,
+        (line, caret_col): (usize, usize),
+        caret_cell: usize,
+    ) {
+        let visible = self.visible_lines().saturating_sub(2).max(1);
+        let cell = self.cell;
+        let sticky = self.diff_sticky_depth(index, side, line);
         let (width, pane_height) = {
             let Some(view) = self.editor.documents[index].diff.as_deref() else {
                 return;
             };
             let parts = diff_parts(self.layout.editor, view, cell);
             (
-                parts.panes[RIGHT].text.w - DIFF_TEXT_PAD,
+                parts.panes[side].text.w - DIFF_TEXT_PAD,
                 f64::from(parts.body.h / self.fonts.line_height),
             )
         };
@@ -792,29 +984,31 @@ impl App {
         let Some(view) = doc.diff.as_deref_mut() else {
             return;
         };
-        view.reveal_line(RIGHT, line);
-        // 按滚动位置比较：左侧较长的改动中右侧不前进，按右侧的行数比较会产生偏差。光标所在行
-        // 的外层块固定在顶部时，光标需要位于这些固定行之下。
-        let row = view.row_of_col(RIGHT, line, caret_col) as f64;
-        let at = view.pos_of(RIGHT, row);
+        view.reveal_line(side, line);
+        // 按滚动位置比较：另一侧较长的改动中本侧不前进，按本侧的行数比较会产生偏差。光标所在
+        // 行的外层块固定在顶部时，光标需要位于这些固定行之下。
+        let row = view.row_of_col(side, line, caret_col) as f64;
+        let at = view.pos_of(side, row);
         let covered = sticky > 0.0
             && if view.is_unified() {
                 at < doc.scroll_line + sticky
             } else {
-                row < view.side_scroll(RIGHT, doc.scroll_line, pane_height) + sticky
+                row < view.side_scroll(side, doc.scroll_line, pane_height) + sticky
             };
+        let wrapping = view.is_wrapping();
         if covered {
-            doc.scroll_line = if view.is_unified() {
+            let row = if view.is_unified() {
                 (at - sticky).max(0.0)
             } else {
-                view.pos_of_top(RIGHT, (row - sticky).max(0.0), pane_height)
+                view.pos_of_top(side, (row - sticky).max(0.0), pane_height)
             };
+            set_scroll_line(doc, row);
         } else if at < doc.scroll_line {
-            doc.scroll_line = at;
+            set_scroll_line(doc, at);
         } else if at >= doc.scroll_line + visible as f64 {
-            doc.scroll_line = at - visible as f64 + 1.0;
+            set_scroll_line(doc, at - visible as f64 + 1.0);
         }
-        let x = if view.is_wrapping() {
+        let x = if wrapping {
             doc.scroll_x
         } else {
             caret_cell as f32 * cell
@@ -923,19 +1117,19 @@ impl App {
             return;
         };
         match key {
-            Key::Named(NamedKey::ArrowUp) if cmd => doc.scroll_line = 0.0,
-            Key::Named(NamedKey::ArrowDown) if cmd => doc.scroll_line = f64::MAX,
-            Key::Named(NamedKey::Home) => doc.scroll_line = 0.0,
-            Key::Named(NamedKey::End) => doc.scroll_line = f64::MAX,
-            Key::Named(NamedKey::ArrowUp) => doc.scroll_line -= 1.0,
-            Key::Named(NamedKey::ArrowDown) => doc.scroll_line += 1.0,
-            Key::Named(NamedKey::PageUp) => doc.scroll_line -= page,
-            Key::Named(NamedKey::PageDown) => doc.scroll_line += page,
+            Key::Named(NamedKey::ArrowUp) if cmd => set_scroll_line(doc, 0.0),
+            Key::Named(NamedKey::ArrowDown) if cmd => set_scroll_line(doc, f64::MAX),
+            Key::Named(NamedKey::Home) => set_scroll_line(doc, 0.0),
+            Key::Named(NamedKey::End) => set_scroll_line(doc, f64::MAX),
+            Key::Named(NamedKey::ArrowUp) => set_scroll_line(doc, doc.scroll_line - 1.0),
+            Key::Named(NamedKey::ArrowDown) => set_scroll_line(doc, doc.scroll_line + 1.0),
+            Key::Named(NamedKey::PageUp) => set_scroll_line(doc, doc.scroll_line - page),
+            Key::Named(NamedKey::PageDown) => set_scroll_line(doc, doc.scroll_line + page),
             Key::Named(NamedKey::ArrowLeft) => doc.scroll_x -= cell * 4.0,
             Key::Named(NamedKey::ArrowRight) => doc.scroll_x += cell * 4.0,
             _ => return,
         }
-        doc.scroll_line = doc.scroll_line.floor();
+        set_scroll_line(doc, doc.scroll_line.floor());
         self.clamp_scroll();
         self.request_redraw();
     }
@@ -952,7 +1146,7 @@ impl App {
             return;
         };
         let before = doc.scroll_line;
-        doc.scroll_line = (view.hunk_pos(hunk) - 3.0).max(0.0);
+        set_scroll_line(doc, (view.hunk_pos(hunk) - 3.0).max(0.0));
         self.clamp_scroll();
         self.glide_scroll(before);
         self.place_diff_caret(hunk);
@@ -1012,7 +1206,7 @@ impl App {
     ///
     /// 在输入文字、编辑按键和编辑命令之前调用：[`App::place_diff_caret`] 不打开文件，
     /// 用户开始编辑时才打开。光标不在可编辑的右侧或文件无法打开时不做任何操作。
-    fn edit_at_read_caret(&mut self) {
+    pub(in crate::app) fn edit_at_read_caret(&mut self) {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return;
         };
@@ -1051,11 +1245,11 @@ impl App {
             };
             let row = view.side_scroll(RIGHT, doc.scroll_line.max(0.0), visible);
             view.set_unified(on);
-            doc.scroll_line = view.pos_of_top(RIGHT, row, visible);
-            let scroll = doc.scroll_line;
+            let scroll = view.pos_of_top(RIGHT, row, visible);
             if let Some((hunk, _)) = view.focus {
                 view.focus = Some((hunk, scroll));
             }
+            set_scroll_line(doc, scroll);
         }
         self.relayout();
         self.clamp_scroll();
@@ -1229,6 +1423,72 @@ pub(crate) fn worktree_title(dirty: bool) -> &'static str {
         t!("git-diff-side-worktree-unsaved")
     } else {
         t!("git-diff-side-worktree")
+    }
+}
+
+/// 差异两侧的水平滚动条，依次为左侧和右侧。
+pub(crate) const DIFF_HSCROLL: [(ScrollArea, Scrollbar); 2] = [
+    (
+        ScrollArea::DiffLeftHorizontal,
+        Scrollbar::DiffLeftHorizontal,
+    ),
+    (
+        ScrollArea::DiffRightHorizontal,
+        Scrollbar::DiffRightHorizontal,
+    ),
+];
+
+/// 差异的横向滚动范围，以及两侧水平滚动条的轨道。
+///
+/// 两侧共用一个横向滚动位置，两条滚动条的滑块同步移动，拖动任意一条效果相同。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DiffHScroll {
+    /// 最大横向滚动量（逻辑像素）；自动换行或内容不超出文字区时为 0。
+    pub max: f32,
+    /// 左侧和右侧的轨道：各侧的文字区，右侧让出竖直滚动条。单栏时两侧显示在同一个文字区，
+    /// 只有右侧的一条，左侧为 `None`。
+    pub tracks: [Option<Rect>; 2],
+}
+
+impl DiffHScroll {
+    /// 计算差异 `view` 在布局 `parts` 中的横向滚动范围和轨道；`cell` 是字符宽度（逻辑像素）。
+    pub(crate) fn of(parts: &DiffParts, view: &DiffView, cell: f32, tab_width: usize) -> Self {
+        let [left, right] = [parts.panes[LEFT].text, parts.panes[RIGHT].text];
+        let max = if view.is_wrapping() {
+            0.0
+        } else {
+            // 按两侧最长的一行、右侧文字区的宽度限制，末尾留出 8 个字符的空白。
+            let widest = view.widest(tab_width) as f32 * cell;
+            (widest - right.w + DIFF_TEXT_PAD + cell * 8.0).max(0.0)
+        };
+        let right = Rect::new(
+            right.x,
+            right.y,
+            (right.w - SCROLLBAR_HIT).max(0.0),
+            right.h,
+        );
+        Self {
+            max,
+            tracks: [(!view.is_unified()).then_some(left), Some(right)],
+        }
+    }
+
+    /// 返回第 `side` 侧的轨道和横向滚动到 `scroll` 时的滑块；该侧没有滚动条或内容不超出时
+    /// 返回 `None`。
+    pub(crate) fn thumb(&self, side: usize, scroll: f32) -> Option<(Rect, Rect)> {
+        let track = self.tracks[side]?;
+        let thumb = hscrollbar_thumb(track, scroll, track.w + self.max)?;
+        Some((track, thumb))
+    }
+}
+
+impl App {
+    /// 返回当前差异标签的横向滚动范围和轨道；当前标签不是差异时返回 `None`。
+    pub(crate) fn diff_hscroll(&self) -> Option<DiffHScroll> {
+        let view = self.editor.active()?.diff.as_deref()?;
+        let parts = diff_parts(self.layout.editor, view, self.cell);
+        let tab_width = self.editor.active_tab_width();
+        Some(DiffHScroll::of(&parts, view, self.cell, tab_width))
     }
 }
 
