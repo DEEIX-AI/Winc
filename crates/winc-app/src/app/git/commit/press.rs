@@ -36,6 +36,29 @@ impl App {
             }
         }
         match target {
+            CommitTarget::Stashes
+            | CommitTarget::Stash(_)
+            | CommitTarget::StashFile(_)
+            | CommitTarget::StashApply(_)
+            | CommitTarget::StashMenu(_)
+            | CommitTarget::StashMore => self.press_commit_stash(target),
+            CommitTarget::Group(_)
+            | CommitTarget::GroupCheck(_)
+            | CommitTarget::GroupRevert(_)
+            | CommitTarget::Dir(_)
+            | CommitTarget::DirCheck(_)
+            | CommitTarget::Check(_)
+            | CommitTarget::File(_)
+            | CommitTarget::Sticky(..)
+            | CommitTarget::OpenFile(_)
+            | CommitTarget::RevertFile(_) => self.press_commit_row(target),
+            _ => self.press_commit_button(target),
+        }
+    }
+
+    /// 处理提交视图中按钮类的目标：工具按钮、位置与分支、同步、提交和上一次提交。
+    fn press_commit_button(&mut self, target: CommitTarget) {
+        match target {
             CommitTarget::Log => self.git_show_log(),
             CommitTarget::Refresh => {
                 self.git.commit.refreshed = Some(Instant::now());
@@ -49,6 +72,50 @@ impl App {
                     menu_below(rect),
                 );
             }
+            CommitTarget::Location => self.open_location_picker(),
+            CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
+            CommitTarget::Sync => self.git_sync(),
+            // 按住 ⌥ 时按钮写的是「提交并推送」（见 `App::commit_pushes`）。
+            CommitTarget::Commit if self.commit_pushes() => self.confirm_commit_and_push(),
+            CommitTarget::Commit => self.git_commit(),
+            CommitTarget::Amend => self.toggle_amend(),
+            CommitTarget::NextStep => self.git_sync(),
+            CommitTarget::Abort => self.confirm_abort(),
+            CommitTarget::Undo => {
+                if let Some(last) = self.commit_undoable().cloned() {
+                    self.confirm_undo_commit(&last);
+                }
+            }
+            CommitTarget::LastCommit => {
+                let Some((_, _, button)) = self.commit_parts().undo else {
+                    return;
+                };
+                self.open_button_menu(
+                    MenuButton::LastCommit,
+                    MenuTarget::LastCommit,
+                    menu_below(button),
+                );
+            }
+            CommitTarget::CommitMenu => {
+                // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
+                // 避免菜单看起来与「⌄」无关。
+                let rect = self.commit_parts().commit_menu;
+                let (_, y) = menu_below(rect);
+                self.open_button_menu(
+                    MenuButton::CommitButton,
+                    MenuTarget::CommitButton,
+                    (rect.right(), y),
+                );
+            }
+            // 其余目标由 [`Self::press_commit`] 交给别的函数。
+            _ => {}
+        }
+        self.request_redraw();
+    }
+
+    /// 处理文件列表中的目标：分组、目录、文件行及其勾选、打开和回滚。
+    fn press_commit_row(&mut self, target: CommitTarget) {
+        match target {
             CommitTarget::Group(group) => {
                 let rows = self.commit_rows();
                 if let Some(row) = rows.iter().position(|r| *r == CommitRow::Group(group)) {
@@ -65,30 +132,6 @@ impl App {
                 }
             }
             CommitTarget::GroupRevert(group) => self.ask_rollback(group),
-            CommitTarget::Stashes => self.toggle_stashes(),
-            CommitTarget::Stash(i) => self.show_stash(i),
-            CommitTarget::StashFile(at) => self.open_stash_file(at),
-            CommitTarget::StashApply(i) => {
-                if let Some(stash) = self.git.stashes.get(i).cloned() {
-                    self.run_stash_op(super::super::branch::StashOp::Apply, stash);
-                }
-            }
-            CommitTarget::StashMenu(i) => {
-                let Some(&(rect, _)) =
-                    (self.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::StashMenu(i))
-                else {
-                    return;
-                };
-                self.open_context_menu(MenuTarget::StashRow(i), menu_below(rect));
-            }
-            CommitTarget::StashMore => {
-                let Some(&(rect, _)) =
-                    (self.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::StashMore)
-                else {
-                    return;
-                };
-                self.open_context_menu(MenuTarget::StashList, (rect.x + 8.0, rect.bottom()));
-            }
             // ⌘ 单击目录把它下面的文件加入或移出选区，⇧ 单击选到它：只改选区，不收起展开。
             CommitTarget::Dir(row) if self.command_held() => {
                 self.focus = Focus::CommitList;
@@ -151,8 +194,7 @@ impl App {
                     Some(CommitRow::Dir { .. }) => CommitTarget::Dir(row),
                     _ => return,
                 };
-                self.press_commit(target);
-                return;
+                return self.press_commit(target);
             }
             CommitTarget::OpenFile(i) => {
                 let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) else {
@@ -170,41 +212,41 @@ impl App {
                     self.confirm_rollback(vec![path]);
                 }
             }
-            CommitTarget::Location => self.open_location_picker(),
-            CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
-            CommitTarget::Sync => self.git_sync(),
-            // 按住 ⌥ 时按钮写的是「提交并推送」（见 `App::commit_pushes`）。
-            CommitTarget::Commit if self.commit_pushes() => self.confirm_commit_and_push(),
-            CommitTarget::Commit => self.git_commit(),
-            CommitTarget::Amend => self.toggle_amend(),
-            CommitTarget::NextStep => self.git_sync(),
-            CommitTarget::Abort => self.confirm_abort(),
-            CommitTarget::Undo => {
-                if let Some(last) = self.commit_undoable().cloned() {
-                    self.confirm_undo_commit(&last);
+            // 其余目标由 [`Self::press_commit`] 交给别的函数。
+            _ => {}
+        }
+        self.request_redraw();
+    }
+
+    /// 处理贮藏列表中的目标：展开、查看、应用和菜单。
+    fn press_commit_stash(&mut self, target: CommitTarget) {
+        match target {
+            CommitTarget::Stashes => self.toggle_stashes(),
+            CommitTarget::Stash(i) => self.show_stash(i),
+            CommitTarget::StashFile(at) => self.open_stash_file(at),
+            CommitTarget::StashApply(i) => {
+                if let Some(stash) = self.git.stashes.get(i).cloned() {
+                    self.run_stash_op(super::super::branch::StashOp::Apply, stash);
                 }
             }
-            CommitTarget::LastCommit => {
-                let Some((_, _, button)) = self.commit_parts().undo else {
+            CommitTarget::StashMenu(i) => {
+                let Some(&(rect, _)) =
+                    (self.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::StashMenu(i))
+                else {
                     return;
                 };
-                self.open_button_menu(
-                    MenuButton::LastCommit,
-                    MenuTarget::LastCommit,
-                    menu_below(button),
-                );
+                self.open_context_menu(MenuTarget::StashRow(i), menu_below(rect));
             }
-            CommitTarget::CommitMenu => {
-                // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
-                // 避免菜单看起来与「⌄」无关。
-                let rect = self.commit_parts().commit_menu;
-                let (_, y) = menu_below(rect);
-                self.open_button_menu(
-                    MenuButton::CommitButton,
-                    MenuTarget::CommitButton,
-                    (rect.right(), y),
-                );
+            CommitTarget::StashMore => {
+                let Some(&(rect, _)) =
+                    (self.hits.commit.iter()).find(|(_, t)| *t == CommitTarget::StashMore)
+                else {
+                    return;
+                };
+                self.open_context_menu(MenuTarget::StashList, (rect.x + 8.0, rect.bottom()));
             }
+            // 其余目标由 [`Self::press_commit`] 交给别的函数。
+            _ => {}
         }
         self.request_redraw();
     }

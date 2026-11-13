@@ -75,11 +75,11 @@ pub(crate) struct History {
     /// 最近切换到的文件，最近的在前。
     ///
     /// 快速打开（`⌘P`）未输入查询时先列出这些文件（当前文件除外），回车即可切回上一个文件。
-    pub files: Vec<PathBuf>,
+    pub(in crate::app) files: Vec<PathBuf>,
     /// 命令面板中最近使用的命令，最近的在前；未输入查询时先列出这些命令。
-    pub commands: Vec<crate::keymap::Action>,
+    pub(in crate::app) commands: Vec<crate::keymap::Action>,
     /// 最近关闭的标签（路径和光标位置），⇧⌘T 按关闭的相反顺序重新打开。
-    pub closed: Vec<(PathBuf, usize)>,
+    pub(in crate::app) closed: Vec<(PathBuf, usize)>,
 }
 
 /// 侧栏及其中的面板：文件树、搜索、大纲，以及文件树中的重命名和拖入。

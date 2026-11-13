@@ -558,7 +558,7 @@ pub(crate) struct Motions {
     /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
     pub(crate) tool_fold: ToolFold,
     /// 编辑区顶部输入条出现、消失的动画。
-    pub(crate) bar_card: animation::CardFx,
+    pub(in crate::app) bar_card: animation::CardFx,
     /// 对话框出现、消失的动画。
     pub(crate) dialog_card: animation::CardFx,
     /// 窗口内绘制的提示框出现、消失的动画。

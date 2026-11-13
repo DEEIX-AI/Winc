@@ -37,9 +37,9 @@ pub(crate) struct FrameState {
     /// 测量钩子的状态。
     pub(in crate::app) bench: Bench,
     /// 帧日志（`WINC_FRAME_LOG`）。
-    pub(in crate::app) frame_log: crate::frame_log::FrameLog,
+    frame_log: crate::frame_log::FrameLog,
     /// 已呈现的帧数，供测量钩子使用。
-    pub(in crate::app) presented: usize,
+    presented: usize,
     /// 是否需要重新绘制。
     pub(in crate::app) dirty: bool,
 }
@@ -70,7 +70,7 @@ pub(crate) struct Opening {
     pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 待使用的激活令牌（见 [`App::set_activation`]）。
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub(in crate::app) activation: Option<winit::window::ActivationToken>,
+    activation: Option<winit::window::ActivationToken>,
 }
 
 /// 本窗口与应用层的联系：事件代理、窗口编号和各窗口共用的状态。
@@ -80,7 +80,7 @@ pub(crate) struct AppLink {
     pub(in crate::app) proxy: Option<crate::winc::WindowProxy>,
     /// 窗口的红绿灯（见 [`crate::macos::TrafficLights`]），窗口创建后才有，随窗口一同释放。
     #[cfg(target_os = "macos")]
-    pub(in crate::app) traffic_lights: Option<crate::macos::TrafficLights>,
+    traffic_lights: Option<crate::macos::TrafficLights>,
     /// 本窗口在进程内的编号；测试中单独创建的 `App` 为 `None`。
     pub(crate) key: Option<crate::winc::WindowKey>,
     /// 各窗口共用的状态：其他窗口打开的内容、剪切的文件，以及请求应用层执行的操作。

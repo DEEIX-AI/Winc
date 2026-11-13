@@ -60,7 +60,7 @@ pub(crate) struct Jumps {
     /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
     pub(crate) name_hint: Option<NameHint>,
     /// 「后退」「前进」使用的位置历史。
-    pub(crate) navigation: editor::navigation::Navigation,
+    pub(in crate::app) navigation: editor::navigation::Navigation,
     /// 正在后台进行的项目内定义查找。
     pub(in crate::app) definitions: Option<editor::definition::DefinitionSearch>,
 }

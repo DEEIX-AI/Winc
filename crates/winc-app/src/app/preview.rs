@@ -54,9 +54,9 @@ pub(crate) struct PreviewState {
     /// 当前图片预览的缩放倍数与滚动位置。
     pub(crate) picture_view: images::PictureView,
     /// 后台的图片解码和 SVG 绘制任务。
-    pub(crate) images: images::ImageJobs,
+    pub(in crate::app) images: images::ImageJobs,
     /// 后台的表格读取任务。
-    pub(crate) tables: tables::TableJobs,
+    pub(in crate::app) tables: tables::TableJobs,
     /// 表格预览上次绘制的几何：工作表标签、最大滚动距离和列宽缓存。
     pub(crate) table_layout: tables::TableLayout,
     /// 分栏预览右侧的图片。
@@ -68,5 +68,5 @@ pub(crate) struct PreviewState {
     /// 分栏预览时源代码一侧占编辑区宽度的比例，取值 0 到 1；`None` 表示各占一半。
     ///
     /// 拖动中间的分隔线时改变，所有分栏预览的标签共用该值。
-    pub(crate) split_share: Option<f32>,
+    pub(in crate::app) split_share: Option<f32>,
 }
