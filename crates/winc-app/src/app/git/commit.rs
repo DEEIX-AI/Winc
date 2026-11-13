@@ -116,6 +116,9 @@ pub(crate) struct CommitLabels {
     pub button: f32,
     /// 「上一次提交」那一栏的「撤销」。
     pub undo: f32,
+    /// 标题行「日志」按钮上文字占的宽度，连同图标后面的间隔；标题行放不下时为 0，按钮只有
+    /// 图标。
+    pub log: f32,
 }
 
 /// 改动列表中悬停行的文件名溢出信息。
@@ -856,9 +859,12 @@ impl App {
         let s = self.layout.sidebar;
         let panel = Rect::new(s.x, TOP_BAR_END, s.w, (s.bottom() - TOP_BAR_END).max(0.0));
         let header = Rect::new(panel.x, panel.y, panel.w, SIDEBAR_HEADER);
+        // 「日志」按钮在图标后面写文字，向左加宽；其余两个按钮只有图标。
+        let label = self.git.commit.labels.log;
         let tool = |i: usize| {
-            let x = header.right() - 8.0 - (3 - i) as f32 * TOOL;
-            Rect::new(x, header.y + (header.h - TOOL) / 2.0, TOOL, TOOL)
+            let wider = if i == 0 { label } else { 0.0 };
+            let x = header.right() - 8.0 - (3 - i) as f32 * TOOL - wider;
+            Rect::new(x, header.y + (header.h - TOOL) / 2.0, TOOL + wider, TOOL)
         };
         let tools = [
             (tool(0), CommitTarget::Log),

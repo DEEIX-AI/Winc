@@ -2,8 +2,9 @@
 
 use super::*;
 
-/// 绘制第二行右端的三个按钮（左边是共用的项目和分支）：「Git 日志」「刷新」「⋯」。
+/// 绘制第二行右端的三个按钮（左边是共用的项目和分支）：「日志」「刷新」「⋯」。
 ///
+/// 「日志」在图标后面写文字，标题行放不下时只有图标（见 `log_label_room`）。
 /// 读取期间「刷新」的图标旋转，至少转满一圈（见 `App::commit_refreshing`）。「⋯」的下拉菜单
 /// 里有同步、储藏、远程仓库和显示方式。
 pub(super) fn draw_header(
@@ -24,9 +25,16 @@ pub(super) fn draw_header(
         } else {
             p.text_muted
         };
-        let c = center(rect);
+        // 「日志」按钮加宽时图标仍在左端的方格里，文字写在后面。
+        let c = (rect.x + rect.h / 2.0, center(rect).1);
         match target {
-            CommitTarget::Log => icons::history(frame, c, color, header),
+            CommitTarget::Log => {
+                icons::history(frame, c, color, header);
+                if rect.w > rect.h {
+                    let label = t!("git-log-button");
+                    ui_text_small(frame, app, rect.x + rect.h, rect, label, color, header);
+                }
+            }
             CommitTarget::Refresh if app.commit_refreshing() => {
                 icons::refresh_turned(frame, c, icons::spin_turn(), color, header);
             }
@@ -119,12 +127,7 @@ pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option
     }
     let bar = ContextBar::new(app, frame);
     let right = app.commit_parts().tools[0].0.x - 4.0;
-    let (repository, worktree) = app.git_location_label();
-    let mut text = frame.measure(FontKind::Ui, app.fonts.ui_small, &repository);
-    if let Some(worktree) = worktree.as_deref() {
-        text += frame.measure(FontKind::Ui, app.fonts.ui_small, &format!(" › {worktree}"));
-    }
-    let width = LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL;
+    let width = location_width(app, frame)?;
     let room = (right - bar.left() - LOCATION_GAP).max(0.0);
     let project = bar.project_full();
     if project + width <= room {
@@ -132,6 +135,19 @@ pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option
         return Some((left, left + width));
     }
     Some((right - width.min((room - project).max(room / 2.0)), right))
+}
+
+/// 返回位置按钮完整显示时的宽度（逻辑像素）；只有一个位置、没有该按钮时为 `None`。
+pub(super) fn location_width(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
+    if !app.git_has_locations() {
+        return None;
+    }
+    let (repository, worktree) = app.git_location_label();
+    let mut text = frame.measure(FontKind::Ui, app.fonts.ui_small, &repository);
+    if let Some(worktree) = worktree.as_deref() {
+        text += frame.measure(FontKind::Ui, app.fonts.ui_small, &format!(" › {worktree}"));
+    }
+    Some(LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL)
 }
 
 /// 绘制项目名后面的位置按钮：仓库，打开的是附属工作树时后面写工作树。

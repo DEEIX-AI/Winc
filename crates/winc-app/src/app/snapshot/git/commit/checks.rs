@@ -478,3 +478,48 @@ fn identical_changes_are_staged_one_by_one() {
     assert!(head.contains("let value_40 = 40;\nlet same = 1;"), "{head}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 文件树和标签的右键菜单对有更改的文件提供暂存、取消暂存与回滚；没有更改的文件没有这几项。
+#[test]
+fn the_tree_and_tab_menus_stage_and_roll_back_a_changed_file() {
+    use crate::app::input::context_menu::MenuCommand::{CommitCheck, FileHistory, GitRollbackFile};
+    use crate::app::input::context_menu::MenuTarget;
+    let Some((mut app, root)) = git_app("git-tree-menu-stage", false) else {
+        return;
+    };
+    let file = root.join("Cargo.toml");
+    let before = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, format!("{before}# changed\n")).unwrap();
+    app.git_refresh();
+    let commands = |app: &mut App, target: MenuTarget| -> Vec<_> {
+        app.open_context_menu(target, (0.0, 0.0));
+        menu_commands(app).into_iter().map(|(c, _)| c).collect()
+    };
+
+    let listed = commands(&mut app, MenuTarget::Tree(Some(file.clone())));
+    assert!(
+        listed.ends_with(&[FileHistory, CommitCheck(true), GitRollbackFile]),
+        "{listed:?}"
+    );
+    app.run_menu_command(CommitCheck(true));
+    assert_eq!(file_state(&app, &file), Some(true));
+
+    // 已全部暂存的文件只有「取消暂存」；标签的菜单相同。
+    app.open_path(&file);
+    let id = app.editor.active().unwrap().id;
+    let listed = commands(&mut app, MenuTarget::Tab(id));
+    assert!(
+        listed.ends_with(&[FileHistory, CommitCheck(false), GitRollbackFile]),
+        "{listed:?}"
+    );
+    app.run_menu_command(CommitCheck(false));
+    assert_eq!(file_state(&app, &file), None);
+
+    // 回滚恢复为上次提交的内容，之后该文件没有更改，菜单里也没有这几项。
+    let _ = commands(&mut app, MenuTarget::Tree(Some(file.clone())));
+    app.run_menu_command(GitRollbackFile);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    let listed = commands(&mut app, MenuTarget::Tree(Some(file)));
+    assert!(listed.ends_with(&[FileHistory]), "{listed:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}

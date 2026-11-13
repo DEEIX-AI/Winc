@@ -314,6 +314,8 @@ impl App {
                     self.git_file_history(path);
                 }
             }
+            MenuCommand::CommitCheck(on) => self.stage_paths(&[target], on),
+            MenuCommand::GitRollbackFile => self.confirm_rollback(vec![target]),
             MenuCommand::NewFile | MenuCommand::NewFolder => {
                 // 右键时已选中了那一行（空白处则取消选中），新建的位置由选中的行决定。
                 self.start_new_entry(command == MenuCommand::NewFolder);
@@ -406,6 +408,16 @@ impl App {
             MenuCommand::FileHistory => {
                 if let Some(path) = path {
                     self.git_file_history(&path);
+                }
+            }
+            MenuCommand::CommitCheck(on) => {
+                if let Some(path) = path {
+                    self.stage_paths(&[path], on);
+                }
+            }
+            MenuCommand::GitRollbackFile => {
+                if let Some(path) = path {
+                    self.confirm_rollback(vec![path]);
                 }
             }
             MenuCommand::Close => self.close_tab(index),

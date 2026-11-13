@@ -446,6 +446,7 @@ git-log-reset-hard-confirm-button = 硬重置
 ## 日志标签和文件历史
 
 git-log-title = Git 日志
+git-log-button = 日志
 git-history-title = { $name } · 历史
 git-log-target-not-loaded = 目标提交尚未加载，请向下滚动列表后重试
 git-log-parent-not-loaded = 父提交尚未加载，请向下滚动列表后重试

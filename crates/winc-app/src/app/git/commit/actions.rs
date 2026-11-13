@@ -384,7 +384,7 @@ impl App {
     }
 
     /// 先请用户确认，确认后回滚 `paths`。
-    pub(super) fn confirm_rollback(&mut self, paths: Vec<PathBuf>) {
+    pub(in crate::app) fn confirm_rollback(&mut self, paths: Vec<PathBuf>) {
         let message = match paths.as_slice() {
             [one] => {
                 let name = winc_editor::display_name(one);

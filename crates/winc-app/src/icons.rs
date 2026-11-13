@@ -731,6 +731,67 @@ pub fn branch_small(frame: &mut Frame<'_>, center: (f32, f32), color: Color, cli
     branch_shape(frame, center, (0.56, 1.25), color, None, clip);
 }
 
+/// 日志中引用徽章上的图标，表明引用的种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefMark {
+    /// 本地分支。
+    Branch,
+    /// 远程分支。
+    Remote,
+    /// 标签。
+    Tag,
+    /// 直接指向提交的 `HEAD`。
+    Commit,
+}
+
+/// 绘制引用徽章上的图标，约 9×9，笔宽 1 逻辑像素：与徽章中 12 号的文字相称。
+///
+/// 本地分支用分支图形（`branch_shape`），远程分支是一朵云，标签是尖端朝左的吊牌，直接指向提交
+/// 的 `HEAD` 是提交图中的一个节点。
+pub fn ref_mark(
+    frame: &mut Frame<'_>,
+    mark: RefMark,
+    (cx, cy): (f32, f32),
+    color: Color,
+    clip: Rect,
+) {
+    const WIDTH: f32 = 1.0;
+    match mark {
+        RefMark::Branch => branch_shape(frame, (cx, cy), (0.5, WIDTH), color, None, clip),
+        RefMark::Remote => {
+            let base = cy + 3.0;
+            let shapes = [
+                Stroke::Arc(cx - 2.2, cy + 0.8, 2.2, FRAC_PI_2, 1.5 * PI),
+                Stroke::Arc(cx + 0.2, cy - 0.4, 2.8, -0.9 * PI, -0.1 * PI),
+                Stroke::Arc(cx + 2.7, cy + 1.2, 1.8, -FRAC_PI_2, FRAC_PI_2),
+                Stroke::Line(cx - 2.2, base, cx + 2.7, base),
+            ];
+            frame.stroke(&shapes, WIDTH, color, clip);
+        }
+        RefMark::Tag => {
+            let (tip, neck, end) = (cx - 4.5, cx - 1.5, cx + 4.0);
+            let (top, bottom) = (cy - 3.5, cy + 3.5);
+            let shapes = [
+                Stroke::Line(tip, cy, neck, top),
+                Stroke::Line(neck, top, end, top),
+                Stroke::Line(end, top, end, bottom),
+                Stroke::Line(end, bottom, neck, bottom),
+                Stroke::Line(neck, bottom, tip, cy),
+                Stroke::Circle(cx - 0.8, cy, 0.6),
+            ];
+            frame.stroke(&shapes, WIDTH, color, clip);
+        }
+        RefMark::Commit => {
+            let shapes = [
+                Stroke::Circle(cx, cy, 2.5),
+                Stroke::Line(cx - 4.5, cy, cx - 2.5, cy),
+                Stroke::Line(cx + 2.5, cy, cx + 4.5, cy),
+            ];
+            frame.stroke(&shapes, WIDTH, color, clip);
+        }
+    }
+}
+
 /// 绘制项目徽章右下角的工作树记号，约 9×9：一个底色为 `fill` 的圆，外圈为 `ring`（与徽章底色
 /// 隔开），内部为缩小的分支图形（`branch_shape`）。
 pub fn worktree_mark(

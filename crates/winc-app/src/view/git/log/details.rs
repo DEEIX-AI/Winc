@@ -143,15 +143,20 @@ pub(super) fn draw_details(
     if !refs.is_empty() {
         y += 8.0;
         let mut bx = x;
-        for (text, fill, ink) in &refs {
-            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + 12.0;
+        for badge in &refs {
+            let size = app.fonts.ui_small;
+            let w = frame.measure(FontKind::Ui, size, &badge.text) + badge.pad();
             if bx > x && bx + w > x + width {
                 bx = x;
                 y += 24.0;
             }
-            let text = truncate_end(frame, text, app.fonts.ui_small, width - 12.0);
+            let text = truncate_end(frame, &badge.text, size, width - badge.pad()).into_owned();
             let row = Rect::new(x, y, width, 22.0);
-            bx = draw_badge(app, frame, (bx, row), &text, *fill, *ink, area) + 6.0;
+            let badge = Badge {
+                text,
+                ..badge.clone()
+            };
+            bx = draw_badge(app, frame, (bx, row), &badge, area) + 6.0;
         }
         y += 22.0;
     }
@@ -286,15 +291,13 @@ fn draw_compare(
         let end = if is_oid {
             mono(app, frame, (end, row), short(rev), p.accent, area)
         } else {
-            draw_badge(
-                app,
-                frame,
-                (end, row),
-                rev,
-                p.accent.alpha(p.accent.a * 0.16),
-                p.accent,
-                area,
-            )
+            let badge = Badge {
+                text: rev.to_owned(),
+                fill: p.accent.alpha(p.accent.a * 0.16),
+                ink: p.accent,
+                mark: None,
+            };
+            draw_badge(app, frame, (end, row), &badge, area)
         };
         if let Some(commit) = commit {
             // 放不下的从末尾截短，不把半个字切在栏的右边缘。

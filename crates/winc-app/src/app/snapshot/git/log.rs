@@ -940,6 +940,14 @@ fn a_tag_can_be_created_on_a_commit_from_the_log() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), oid);
+    // 打开着的日志随之重新读取：该提交上出现这个标签。
+    let mut logs = app.editor.documents.iter().filter_map(|d| d.log.as_deref());
+    let commit = logs.next().unwrap().commits.iter().find(|c| c.oid == oid);
+    let refs = &commit.unwrap().refs;
+    assert!(
+        refs.contains(&winc_editor::git::Ref::Tag("v9.0".into())),
+        "{refs:?}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

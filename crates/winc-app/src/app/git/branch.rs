@@ -786,6 +786,7 @@ impl App {
                 continue;
             }
             self.git.branch.running = None;
+            self.git.logs_outdated |= done.result.is_ok();
             // 操作由表单对话框发起时：成功则关闭对话框，失败则在对话框中显示原因。
             let error = done.result.as_ref().err().map(String::as_str);
             if self.form_operation_done(done.id, error) && error.is_some() {

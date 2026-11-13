@@ -550,6 +550,7 @@ git-log-reset-hard-confirm-button = Hard Reset
 ## Log tab and file history
 
 git-log-title = Git Log
+git-log-button = Log
 git-history-title = { $name } · History
 git-log-target-not-loaded = The target commit hasn’t loaded yet. Scroll down the list and try again
 git-log-parent-not-loaded = The parent commit hasn’t loaded yet. Scroll down the list and try again

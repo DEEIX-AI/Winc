@@ -7,6 +7,7 @@ use winc_editor::format::Cancel;
 use winc_editor::git::Change;
 
 use super::*;
+use crate::app::input::context_menu::MenuEntry;
 
 /// 写入暂存区的一步操作。
 pub(super) enum StageJob {
@@ -169,6 +170,25 @@ impl App {
             Some(path) => self.stage_paths(&[path], true),
             None => self.flash(t!("git-stage-nothing")),
         }
+    }
+
+    /// 返回文件树、标签的右键菜单中针对文件 `path` 的更改的几项：暂存、取消暂存、回滚。
+    ///
+    /// 该文件没有更改时为空；已全部暂存的文件没有「暂存」，没有暂存内容的文件没有「取消暂存」。
+    pub(in crate::app) fn git_change_items(&self, path: &Path) -> Vec<MenuEntry> {
+        let mut entries = self.git.status.iter().flat_map(|s| &s.entries);
+        let Some(entry) = entries.find(|e| e.path == path) else {
+            return Vec::new();
+        };
+        let mut items = Vec::new();
+        if entry.unstaged.is_some() {
+            items.push(MenuEntry::Item(MenuCommand::CommitCheck(true), true));
+        }
+        if self.git.commit.checked(entry) {
+            items.push(MenuEntry::Item(MenuCommand::CommitCheck(false), true));
+        }
+        items.push(MenuEntry::Item(MenuCommand::GitRollbackFile, true));
+        items
     }
 
     /// 把 `job` 排到写入暂存区的队列末尾并开始执行；相邻的同类文件操作合并为一步。

@@ -227,6 +227,10 @@ pub(crate) struct GitState {
     again: bool,
     /// 下一次刷新是否同时读取分支与储藏（由 [`App::git_refresh`] 设置，读取时清除）。
     refs_wanted: bool,
+    /// 刚完成的操作可能改动了引用（标签、远程分支）：下一次读到状态时重新读取已打开的日志。
+    ///
+    /// 状态中只能看出 `HEAD` 和分支的变化，标签的增删看不出。
+    logs_outdated: bool,
     /// 已打开的 Git 差异标签；状态刷新后按需原地更新，标签关闭时移除。
     diff_tabs: HashMap<DocumentId, DiffTab>,
     /// 最近一次切换文件时的（差异标签，切换到的文件）。
@@ -287,6 +291,7 @@ impl Default for GitState {
             running: None,
             again: false,
             refs_wanted: false,
+            logs_outdated: false,
             diff_tabs: HashMap::new(),
             stepped: None,
             preview_seq: 0,
@@ -890,6 +895,7 @@ impl App {
                                 .as_ref()
                                 .is_some_and(|refs| self.git.branches != refs.branches)
                     });
+                    let moved = std::mem::take(&mut self.git.logs_outdated) || moved;
                     self.git.changes.head_is(status.oid.as_deref());
                     self.git.decorations = status.decorations(&outcome.root);
                     self.git.ignored_paths = status.ignored.iter().cloned().collect();

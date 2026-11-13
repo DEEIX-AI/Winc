@@ -46,6 +46,8 @@ use stash::*;
 
 /// Git 上下文按钮里文字右边到按钮右边的宽度（逻辑像素）：空隙加下拉箭头。
 const CONTEXT_PICK_TAIL: f32 = 18.0;
+/// 「日志」按钮上文字右侧的留白（逻辑像素）：与图标左侧到按钮边缘的距离相同。
+const LOG_LABEL_END: f32 = 6.0;
 /// 位置按钮里图标中心和文字左边离按钮左边的距离（逻辑像素）：图标 12 宽，左右各留 6。
 const LOCATION_LEAD: (f32, f32) = (12.0, 24.0);
 /// 项目按钮和位置按钮之间的距离（逻辑像素）。
@@ -91,6 +93,7 @@ pub(in crate::view) fn draw_commit(
         amend: AMEND_TEXT + frame.measure(FontKind::Ui, size, t!("git-commit-amend")) + AMEND_END,
         button: icon_w + frame.measure(FontKind::Ui, size, &text),
         undo: frame.measure(FontKind::Ui, size, t!("git-commit-undo")),
+        log: log_label_room(app, frame),
     });
     let parts = app.commit_parts();
     // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
@@ -859,6 +862,22 @@ fn draw_card(
     ui_text_small(frame, app, x + icon_w, main, &text, ink, clip);
 
     caret
+}
+
+/// 返回标题行「日志」按钮上的文字可以占的宽度（逻辑像素），连同图标后面的间隔；放不下时为 0。
+///
+/// 项目名和位置按钮完整显示之后还有余地时才写文字：文字不挤占它们的位置。
+fn log_label_room(app: &App, frame: &mut Frame<'_>) -> f32 {
+    let parts = app.commit_parts();
+    let header = parts.header;
+    let text = frame.measure(FontKind::Ui, app.fonts.ui_small, t!("git-log-button"));
+    let label = text + LOG_LABEL_END;
+    let bar = ContextBar::new(app, frame);
+    let location = location_width(app, frame).map_or(0.0, |w| LOCATION_GAP + w);
+    // 三个按钮只有图标时占的宽度，连同与左边内容之间的间隔。
+    let tools = header.right() - parts.tools[0].0.x - app.git.commit.labels.log + 4.0;
+    let used = bar.left() - header.x + bar.project_full() + location + tools;
+    if used + label <= header.w { label } else { 0.0 }
 }
 
 /// 提交按钮上的文字和前面对勾占的宽度（不画对勾时为 0）。

@@ -388,13 +388,16 @@ impl App {
                 });
                 let can_paste = self.can_paste_into_tree();
                 let mut menu = tree_menu(kind, can_paste);
-                // Git 模块开着、文件在仓库里：最后加「显示文件历史」。
-                if kind == Some(EntryKind::File) && path.as_deref().is_some_and(|p| self.in_repo(p))
+                // Git 模块开着、文件在仓库里：最后加「显示文件历史」，有更改的文件再加暂存与回滚。
+                if let Some(path) = path.as_deref()
+                    && kind == Some(EntryKind::File)
+                    && self.in_repo(path)
                 {
                     menu.extend([
                         MenuEntry::Separator,
                         MenuEntry::Item(MenuCommand::FileHistory, true),
                     ]);
+                    menu.extend(self.git_change_items(path));
                 }
                 menu
             }
@@ -513,11 +516,12 @@ impl App {
                     path.is_some_and(|p| self.relative_path(p).is_some()),
                     docs.iter().any(|d| !d.is_dirty()),
                 );
-                if path.is_some_and(|p| self.in_repo(p)) {
+                if let Some(path) = path.filter(|p| self.in_repo(p)) {
                     menu.extend([
                         MenuEntry::Separator,
                         MenuEntry::Item(MenuCommand::FileHistory, true),
                     ]);
+                    menu.extend(self.git_change_items(path));
                 }
                 menu
             }
