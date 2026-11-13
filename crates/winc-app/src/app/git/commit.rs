@@ -15,6 +15,8 @@ mod stash;
 pub(crate) use stash::{STASH_GAP, StashLine, StashView};
 mod last;
 mod menu;
+mod others;
+pub(crate) use others::OtherRow;
 mod message;
 mod press;
 mod staging;
@@ -393,6 +395,10 @@ pub enum CommitTarget {
     Refresh,
     /// 标题行的「⋯」：弹出同步、储藏、远程仓库和显示方式的菜单。
     More,
+    /// 另一个仓库的标题行（它在仓库列表中的下标）：切换到该仓库。
+    OtherRepository(usize),
+    /// 另一个仓库中的文件（仓库的下标，文件在其状态各项中的下标）：切换过去并选中该文件。
+    OtherFile(usize, usize),
     /// 组标题行：收起或展开。
     Group(CommitGroup),
     /// 组标题的勾选框：整组勾上或取消。
@@ -1299,7 +1305,7 @@ impl App {
 
     /// 返回提交列表的最大滚动距离；内容超出视口时末尾留出一行空白，表示已到列表末尾。
     pub(crate) fn commit_max_scroll(&self) -> f32 {
-        let rows = self.commit_rows().len() as f32;
+        let rows = (self.commit_rows().len() + self.commit_other_rows().len()) as f32;
         let list = self.commit_parts().list.h;
         if rows * COMMIT_ROW <= list {
             return 0.0;

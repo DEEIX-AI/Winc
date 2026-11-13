@@ -871,9 +871,14 @@ impl App {
     /// 接收后台刷新的结果；成功时同时更新已打开的 Git 差异。
     pub(super) fn poll_git(&mut self) {
         self.git_take_scan();
+        // 其他仓库的状态由后台直接写入，读完时同样到达这里：列着其他仓库时重新绘制。
+        if self.commit_shows_others() && self.commit_shown() {
+            self.request_redraw();
+        }
         let mut changed = false;
         let mut refreshed = false;
         let mut reread = false;
+        let mut others = false;
         while let Ok(outcome) = self.git.receiver.try_recv() {
             if self.git.root.as_deref() != Some(outcome.root.as_path()) {
                 continue;
@@ -885,6 +890,7 @@ impl App {
                 reread = true;
                 continue;
             }
+            let had_refs = outcome.refs.is_some();
             match outcome.status {
                 Ok(status) => {
                     // `HEAD` 或分支变化（提交、切换、新建、删除）时，重新读取已打开的日志。
@@ -938,6 +944,9 @@ impl App {
                     self.git.problem = None;
                     self.fetch_last_commit();
                     refreshed = true;
+                    // 只读了状态的这次刷新没有读其他仓库：列着其他仓库时补读，文件保存后各仓库的
+                    // 更改一起更新。
+                    others |= !had_refs;
                     if moved {
                         self.reload_logs();
                     }
@@ -959,6 +968,9 @@ impl App {
             self.check_git_trust();
             if std::mem::take(&mut self.git.again) {
                 self.git_refresh_status();
+            }
+            if others && self.commit_shows_others() && self.commit_shown() {
+                self.git_read_summaries();
             }
             if refreshed {
                 self.refresh_git_diffs();

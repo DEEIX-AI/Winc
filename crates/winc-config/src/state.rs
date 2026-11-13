@@ -40,6 +40,10 @@ pub struct State {
     ///
     /// `false`（默认）时平铺，每个文件一行。所有窗口和仓库共用，下次启动沿用。
     pub commit_tree: bool,
+    /// 提交视图是否在当前仓库的更改之后列出打开的目录中其他仓库的更改。
+    ///
+    /// `false`（默认）时只显示当前仓库。所有窗口共用，下次启动沿用。
+    pub commit_all_repositories: bool,
     /// PDF 预览是否隐藏页面缩略图栏；默认显示。所有窗口共用，下次启动沿用。
     pub pdf_thumbnails_hidden: bool,
     /// 侧栏宽度（逻辑像素）；`None` 表示没有调整过。所有视图、窗口和仓库共用，下次启动沿用。
@@ -463,6 +467,10 @@ impl State {
             .get("commitTree")
             .and_then(Json::as_bool)
             .unwrap_or(false);
+        state.commit_all_repositories = root
+            .get("commitAllRepositories")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
         state.pdf_thumbnails_hidden = root
             .get("pdfThumbnailsHidden")
             .and_then(Json::as_bool)
@@ -545,8 +553,8 @@ impl State {
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
     /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos`、`vimMarks`、
-    /// `vimCommands`、`vimSearches` 为空，`commitTree`、`pdfThumbnailsHidden`、
-    /// `stayOutsideApplications` 为假时省略对应的键。
+    /// `vimCommands`、`vimSearches` 为空，`commitTree`、`commitAllRepositories`、
+    /// `pdfThumbnailsHidden`、`stayOutsideApplications` 为假时省略对应的键。
     pub fn to_json(&self) -> String {
         let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
         let mut fields = vec![(
@@ -566,6 +574,9 @@ impl State {
 
         if self.commit_tree {
             fields.push(("commitTree", Json::Bool(true)));
+        }
+        if self.commit_all_repositories {
+            fields.push(("commitAllRepositories", Json::Bool(true)));
         }
         if self.pdf_thumbnails_hidden {
             fields.push(("pdfThumbnailsHidden", Json::Bool(true)));

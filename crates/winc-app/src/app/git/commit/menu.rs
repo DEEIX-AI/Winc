@@ -4,7 +4,8 @@ use super::*;
 
 impl App {
     /// 提交视图标题行「⋯」的菜单：Git 操作（继续和中止、储藏、远程仓库，见 [`branch_menu`]）；
-    /// 以树形显示（排成树时打勾）、全部展开、全部折叠（已经是那样的灰显）；显示 Git 输出。
+    /// 以树形显示（排成树时打勾）、显示全部仓库（有多个仓库时才有）、全部展开、全部折叠（已经是
+    /// 那样的灰显）；显示 Git 输出。
     ///
     /// 刷新是标题行上的按钮，拉取、推送、获取在分支选择器里，回滚勾选的文件在组标题上，这里不重复。
     pub(in crate::app) fn commit_more_menu(
@@ -29,6 +30,13 @@ impl App {
         entries.extend([
             MenuEntry::Separator,
             MenuEntry::Item(MenuCommand::CommitTree, true),
+        ]);
+        // 打开的目录中有多个仓库时才有：只有一个仓库时没有可以列出的其他仓库。
+        if self.git.repositories.len() >= 2 {
+            let all = MenuCommand::CommitAllRepositories;
+            entries.push(MenuEntry::Item(all, true));
+        }
+        entries.extend([
             MenuEntry::Item(MenuCommand::CommitExpandAll, !all_expanded),
             MenuEntry::Item(MenuCommand::CommitCollapseAll, !all_collapsed),
             MenuEntry::Separator,
@@ -97,6 +105,7 @@ impl App {
     pub(in crate::app) fn run_commit_more_command(&mut self, command: MenuCommand) {
         match command {
             MenuCommand::CommitTree => self.toggle_commit_layout(),
+            MenuCommand::CommitAllRepositories => self.toggle_all_repositories(),
             MenuCommand::GitShowOutput => self.show_git_output(),
             MenuCommand::CommitExpandAll | MenuCommand::CommitCollapseAll => {
                 // 「全部展开」连收起的目录一起展开。

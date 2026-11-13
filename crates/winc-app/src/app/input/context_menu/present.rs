@@ -1135,6 +1135,9 @@ impl App {
         if command == MenuCommand::CommitTree {
             return !self.git.commit.flat();
         }
+        if command == MenuCommand::CommitAllRepositories {
+            return self.state.commit_all_repositories;
+        }
         if command == MenuCommand::TerminalMaximize {
             return self.terminal.maximized;
         }

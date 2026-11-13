@@ -1,0 +1,95 @@
+//! 「显示全部仓库」：当前仓库的更改之后，列出打开的目录中其他仓库的更改。
+//!
+//! 其他仓库的各行只读：点击标题行或其中的文件即切换到该仓库；勾选、回滚和提交只在当前仓库中
+//! 进行。各行的内容取自后台读到的各仓库状态（`GitState::summaries`）。
+
+use std::sync::PoisonError;
+
+use super::*;
+
+/// 排在当前仓库的更改之后的一行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OtherRow {
+    /// 当前仓库没有更改时排在最前的一行说明。
+    Clean,
+    /// 另一个仓库的标题行：该仓库在仓库列表（`GitState::repositories`）中的下标。
+    Repository(usize),
+    /// 另一个仓库中有更改的文件：仓库的下标，文件在该仓库状态各项中的下标。
+    File(usize, usize),
+}
+
+impl App {
+    /// 是否在当前仓库的更改之后列出其他仓库：开着「显示全部仓库」，打开的目录中有多个仓库，
+    /// 并且不在浏览历史提交的文件。
+    pub(crate) fn commit_shows_others(&self) -> bool {
+        self.state.commit_all_repositories
+            && !self.git.commit.browse
+            && self.git.repositories.len() >= 2
+    }
+
+    /// 返回排在当前仓库的更改之后的各行；不列出其他仓库时为空。
+    ///
+    /// 每个其他仓库一行标题，其下是它有更改的文件；状态尚未读到的仓库只有标题行。
+    pub(crate) fn commit_other_rows(&self) -> Vec<OtherRow> {
+        if !self.commit_shows_others() {
+            return Vec::new();
+        }
+        let root = self.git.root.as_deref();
+        let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
+        let mut rows = Vec::new();
+        for (i, repo) in self.git.repositories.iter().enumerate() {
+            if Some(repo.as_path()) == root {
+                continue;
+            }
+            rows.push(OtherRow::Repository(i));
+            let files = summaries.get(repo).map_or(0, |s| s.entries.len());
+            rows.extend((0..files).map(|entry| OtherRow::File(i, entry)));
+        }
+        let clean = (self.git.status.as_ref()).is_some_and(|s| s.entries.is_empty());
+        if clean && !rows.is_empty() {
+            rows.insert(0, OtherRow::Clean);
+        }
+        rows
+    }
+
+    /// 用第 `repo` 个仓库的根目录和读到的状态调用 `read`；该仓库的状态尚未读到时为 `None`。
+    pub(crate) fn other_status<R>(
+        &self,
+        repo: usize,
+        read: impl FnOnce(&Path, &Status) -> R,
+    ) -> Option<R> {
+        let root = self.git.repositories.get(repo)?;
+        let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
+        summaries.get(root).map(|status| read(root, status))
+    }
+
+    /// 打开或关闭「显示全部仓库」；所有窗口共用，下次启动沿用。
+    pub(in crate::app) fn toggle_all_repositories(&mut self) {
+        let on = !self.state.commit_all_repositories;
+        self.update_state(|state| state.commit_all_repositories = on);
+        if on {
+            self.git_read_summaries();
+        }
+        self.git.commit.scroll = self.git.commit.scroll.min(self.commit_max_scroll());
+        self.request_redraw();
+    }
+
+    /// 点了其他仓库的标题行或文件：切换到该仓库，点的是文件时选中它并预览差异。
+    pub(super) fn press_other(&mut self, target: CommitTarget) {
+        let (repo, entry) = match target {
+            CommitTarget::OtherRepository(repo) => (repo, None),
+            CommitTarget::OtherFile(repo, entry) => (repo, Some(entry)),
+            _ => return,
+        };
+        let path = entry.and_then(|entry| {
+            let path = |status: &Status| status.entries.get(entry).map(|e| e.path.clone());
+            self.other_status(repo, |_, status| path(status)).flatten()
+        });
+        self.git_switch_repository(repo);
+        self.focus = Focus::CommitList;
+        if let Some(path) = path {
+            self.select_commit_file(path);
+        }
+        self.request_redraw();
+    }
+}

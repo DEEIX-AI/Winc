@@ -52,6 +52,9 @@ impl App {
             | CommitTarget::Sticky(..)
             | CommitTarget::OpenFile(_)
             | CommitTarget::RevertFile(_) => self.press_commit_row(target),
+            CommitTarget::OtherRepository(_) | CommitTarget::OtherFile(..) => {
+                self.press_other(target);
+            }
             _ => self.press_commit_button(target),
         }
     }

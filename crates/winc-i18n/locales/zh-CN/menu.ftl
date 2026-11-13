@@ -131,6 +131,7 @@ menu-log-all-authors = 全部作者
 menu-commit-check = 暂存
 menu-commit-uncheck = 取消暂存
 menu-commit-tree = 以树形显示
+menu-commit-all-repositories = 显示全部仓库
 menu-git-show-output = 显示 Git 输出
 menu-commit-expand-all = 全部展开
 menu-commit-collapse-all = 全部折叠

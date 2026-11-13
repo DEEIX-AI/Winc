@@ -303,6 +303,8 @@ pub enum MenuCommand {
     GitStashOp(crate::app::git::branch::StashOp, usize),
     /// 提交视图的「⋯」：在按目录排成树和平铺之间切换（排成树时打勾）。
     CommitTree,
+    /// 提交视图：在当前仓库的更改之后列出其他仓库的更改（开着时打勾）。
+    CommitAllRepositories,
     /// 提交视图的「⋯」：展开所有组和目录。
     CommitExpandAll,
     /// 提交视图的「⋯」：收起所有组。
@@ -442,6 +444,7 @@ impl MenuCommand {
             MenuCommand::ToggleBlame => t!("menu-git-blame"),
             MenuCommand::GitStash => t!("menu-git-stash"),
             MenuCommand::CommitTree => t!("menu-commit-tree"),
+            MenuCommand::CommitAllRepositories => t!("menu-commit-all-repositories"),
             MenuCommand::CommitExpandAll => t!("menu-commit-expand-all"),
             MenuCommand::CommitCollapseAll => t!("menu-commit-collapse-all"),
             MenuCommand::GitShowOutput => t!("menu-git-show-output"),

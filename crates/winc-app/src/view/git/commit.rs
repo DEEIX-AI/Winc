@@ -28,6 +28,8 @@ use crate::view::workspace::sidebar::{
 };
 use crate::view::*;
 
+mod others;
+use others::draw_other_rows;
 mod header;
 mod names;
 mod overflow;
@@ -108,9 +110,18 @@ pub(in crate::view) fn draw_commit(
     match (&app.git.status, &app.git.problem) {
         (Some(status), _) if app.git.commit.shift.is_some() => {
             draw_shift(app, frame, &parts, status, &mut hits);
+            // 其他仓库的各行直接画在过渡结束后的位置。
+            let rows = app.commit_rows().len() as f32;
+            let top = parts.list.y + rows * COMMIT_ROW - app.git.commit.scroll;
+            draw_other_rows(app, frame, parts.list, top, &mut hits);
         }
         (Some(status), _) if !status.entries.is_empty() => {
             draw_list(app, frame, &parts, status, &mut hits);
+        }
+        // 当前仓库没有更改而其他仓库有内容可列：不画空状态，列出其他仓库。
+        (Some(_), _) if !app.commit_other_rows().is_empty() => {
+            let top = parts.list.y - app.git.commit.scroll;
+            draw_other_rows(app, frame, parts.list, top, &mut hits);
         }
         (Some(_), _) => draw_empty(app, frame, &parts, &mut hits),
         (None, Some(problem)) => {
@@ -386,6 +397,15 @@ fn draw_list(
                 hits.extend(row_hits);
             }
         }
+        // 其他仓库的各行跟在最后一行之后，随展开、收起上下移动；动画期间不记录命中区域。
+        let (after, _) = crate::layout::tree_row_slot(
+            list,
+            app.git.commit.scroll,
+            motion.rows.len(),
+            Some(block),
+            hidden,
+        );
+        draw_other_rows(app, frame, list, after.y, &mut Vec::new());
         // 固定的行仍然盖在上面（展开收起的是它们下面的行），否则动画过程中会先消失再出现。
         let mut ignored = Vec::new();
         draw_sticky(app, frame, &cx, &mut ignored);
@@ -407,6 +427,8 @@ fn draw_list(
         let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll;
         draw_row(app, frame, &cx, i, y, hits);
     }
+    let after = list.y + rows.len() as f32 * COMMIT_ROW - app.git.commit.scroll;
+    draw_other_rows(app, frame, list, after, hits);
 
     draw_sticky(app, frame, &cx, hits);
 }

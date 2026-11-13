@@ -9,6 +9,7 @@ use crate::app::git::commit::COMMITTED_SHOWN;
 
 mod checks;
 mod names;
+mod others;
 mod stash;
 mod sync;
 
