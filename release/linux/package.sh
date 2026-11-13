@@ -56,5 +56,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 "$tools/linuxdeploy.AppImage" --appimage-extract-and-
 install -Dm755 "${servers[@]}" -t "$appdir/usr/lib/winc"
 rm -f "$appdir/AppRun"
 install -m755 release/linux/AppRun "$appdir/AppRun"
-APPIMAGE_EXTRACT_AND_RUN=1 "$tools/appimagetool.AppImage" --appimage-extract-and-run \
+# The AppDir holds servers for two architectures, so appimagetool cannot infer the architecture of
+# the AppImage from the files in it and needs it named.
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tools/appimagetool.AppImage" --appimage-extract-and-run \
   --runtime-file "$tools/runtime-x86_64" "$appdir" "$bundle/appimage/$stem.AppImage"
