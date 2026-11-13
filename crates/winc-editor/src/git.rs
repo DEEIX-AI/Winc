@@ -1005,7 +1005,7 @@ impl Git {
     /// 日志筛选同时匹配说明和提交号，使用户粘贴提交号即可定位提交。`git log` 无法按
     /// 「说明或提交号」筛选，因此该提交单独读取并排在最前面。
     fn commit_by_hash(&self, root: &Path, text: &str) -> Option<Box<Commit>> {
-        if !(4..=64).contains(&text.len()) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !is_commit_hash(text) {
             return None;
         }
         let mut command = self.command(root);
@@ -1030,6 +1030,35 @@ impl Git {
             .oid
             .starts_with(&text.to_ascii_lowercase())
             .then(|| Box::new(commit))
+    }
+
+    /// 将本地提交号（可缩写）解析成完整提交号，包括没有分支指向的提交。
+    ///
+    /// # Errors
+    ///
+    /// 提交号格式错误、无法唯一解析为本地提交，或 Git 查询失败时返回原因。
+    pub fn resolve_commit_hash(
+        &self,
+        root: &Path,
+        hash: &str,
+        cancel: &Cancel,
+    ) -> Result<String, String> {
+        let unresolved = || winc_i18n::t!("git-compare-unresolved-id").to_owned();
+        if !is_commit_hash(hash) {
+            return Err(unresolved());
+        }
+        let prefix = hash.to_ascii_lowercase();
+        let mut command = self.command(root);
+        command.args(["rev-parse", "--verify", "--end-of-options"]);
+        command.arg(format!("{prefix}^{{commit}}"));
+        let stdout = self.run(&mut command, SHOW_TIMEOUT, cancel)?;
+        let oid = String::from_utf8_lossy(&stdout);
+        let oid = oid.trim();
+        // 同名的引用也能被 Git 解析；只接受与输入前缀一致的提交号。
+        if !oid.starts_with(&prefix) {
+            return Err(unresolved());
+        }
+        Ok(oid.to_owned())
     }
 
     /// 储藏列表，最新的在前。
@@ -1314,6 +1343,11 @@ impl Git {
             Err(e) => Err(describe(&e)),
         }
     }
+}
+
+/// 字符串是否符合完整或缩写提交号的格式。
+pub fn is_commit_hash(text: &str) -> bool {
+    (4..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// 开着的 `git log` 进程，见 [`Git::log_stream`]。

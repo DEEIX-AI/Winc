@@ -200,8 +200,7 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, parts: &LogParts) -> Rect {
     search
 }
 
-/// 绘制标题栏：筛选输入框右侧是「分支」「作者」两个下拉框（已筛选时铺淡强调色），文件历史另有
-/// 一个显示文件名的标签，已筛选时最后是「清除筛选」；右端是提交数和刷新按钮。
+/// 绘制标题栏：左侧是筛选条件、「比较提交」和文件名，右侧是提交数和刷新按钮。
 fn draw_header(
     app: &App,
     frame: &mut Frame<'_>,
@@ -220,6 +219,20 @@ fn draw_header(
     let mut x = search.right() + LOG_FILTER_GAP;
     let pill_h = search.h;
     let y = search.y;
+    let size = 24.0;
+    let refresh = Rect::new(
+        header.right() - 10.0 - size,
+        header.y + (header.h - size) / 2.0,
+        size,
+        size,
+    );
+    // 窄窗口中用图标保留比较入口，给两个下拉框留出空间。
+    let compare = t!("git-compare-commits-menu");
+    let label_w = frame.measure(FontKind::Ui, app.fonts.ui_small, compare) + 20.0;
+    let room = refresh.x - x - 12.0;
+    let show_label = room - label_w >= 160.0;
+    let compare_w = if show_label { label_w } else { size };
+    let filter_w = ((room - compare_w) / 2.0).max(0.0);
 
     // 两个下拉框，例如「分支 全部」「作者 张伟」。
     let branch = query.branch.as_deref().unwrap_or(t!("git-log-filter-all"));
@@ -239,10 +252,12 @@ fn draw_header(
         ),
     ] {
         let name_w = frame.measure(FontKind::Ui, app.fonts.ui_small, name);
+        let fixed_w = 10.0 + name_w + 6.0 + 20.0;
         let value_w = frame
             .measure(FontKind::Ui, app.fonts.ui_small, value)
-            .min(160.0);
-        let rect = Rect::new(x, y, 10.0 + name_w + 6.0 + value_w + 20.0, pill_h);
+            .min(160.0)
+            .min((filter_w - fixed_w).max(0.0));
+        let rect = Rect::new(x, y, (fixed_w + value_w).min(filter_w), pill_h);
         let hovered = app.hover == Hover::Log(target);
         if on {
             frame.rounded(rect, p.accent.alpha(p.accent.a * 0.14), RADIUS_ROW);
@@ -259,6 +274,17 @@ fn draw_header(
         x = rect.right() + 4.0;
     }
 
+    let rect = Rect::new(x, y, compare_w, pill_h);
+    let hovered = app.hover == Hover::Log(LogTarget::CompareCommits);
+    draw_button(frame, p, rect, header, hovered, true);
+    if show_label {
+        ui_text_small(frame, app, rect.x + 10.0, rect, compare, p.text, rect);
+    } else {
+        icons::compare(frame, center(rect), p.text, rect);
+    }
+    hits.push((rect, LogTarget::CompareCommits));
+    x = rect.right() + 4.0;
+
     // 文件历史：显示所查看的文件。
     if let Some(path) = &query.path {
         let shown = app
@@ -270,24 +296,17 @@ fn draw_header(
             .to_string_lossy()
             .into_owned();
         let text = t!("git-log-filter-file", path = shown);
-        let w = frame
-            .measure(FontKind::Ui, app.fonts.ui_small, &text)
-            .min(320.0)
-            + 20.0;
-        let rect = Rect::new(x + 4.0, y, w, pill_h);
-        frame.rounded(rect, p.hover, RADIUS_ROW);
-        ui_text_small(frame, app, rect.x + 10.0, rect, &text, p.text_muted, rect);
-        x = rect.right() + 4.0;
+        let room = (refresh.x - x - 8.0).min(340.0);
+        if room > 20.0 {
+            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, &text) + 20.0;
+            let rect = Rect::new(x + 4.0, y, w.min(room), pill_h);
+            frame.rounded(rect, p.hover, RADIUS_ROW);
+            ui_text_small(frame, app, rect.x + 10.0, rect, &text, p.text_muted, rect);
+            x = rect.right() + 4.0;
+        }
     }
 
     // 右端为刷新按钮（边长 24 逻辑像素），其左侧为提交数。
-    let size = 24.0;
-    let refresh = Rect::new(
-        header.right() - 10.0 - size,
-        header.y + (header.h - size) / 2.0,
-        size,
-        size,
-    );
     let hovered = app.hover == Hover::Log(LogTarget::Refresh);
     draw_button(frame, p, refresh, header, hovered, false);
     icons::refresh(frame, center(refresh), p.text_muted, refresh);
@@ -309,8 +328,12 @@ fn draw_header(
         t!("git-log-commit-count", count = count, more = more)
     };
     let note_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &note);
-    let note_x = refresh.x - 10.0 - note_w;
-    ui_text_small(frame, app, note_x, header, &note, p.text_dim, header);
+    let mut note_x = refresh.x - 10.0 - note_w;
+    if note_x >= x {
+        ui_text_small(frame, app, note_x, header, &note, p.text_dim, header);
+    } else {
+        note_x = refresh.x;
+    }
 
     // 已筛选时在左侧绘制「清除筛选」，仅在与右端提交数之间的空间足够时绘制。
     if query.filtered() {

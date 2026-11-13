@@ -282,7 +282,7 @@ fn draw_compare(
         let row = Rect::new(x, y, width, 22.0);
         let end = ui_text_small(frame, app, x, row, label, p.text_dim, area) + 10.0;
         let commit = view.commits.iter().find(|c| rev_matches(c, rev));
-        let is_oid = rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit());
+        let is_oid = matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit());
         let end = if is_oid {
             mono(app, frame, (end, row), short(rev), p.accent, area)
         } else {

@@ -195,6 +195,14 @@ git-log-details-parents = { $count ->
 }
 git-log-details-loading-files = 正在读取更改的文件…
 git-compare-title = 比较两个版本
+git-compare-commits-menu = 比较提交…
+git-compare-commits = 比较提交
+git-compare-button = 比较
+git-compare-old-id = 旧提交 ID
+git-compare-new-id = 新提交 ID
+git-compare-invalid-id = 请输入十六进制提交号
+git-compare-unresolved-id = 找不到匹配的提交
+git-compare-resolve-failed = 无法解析提交 { $id }。{ $error }
 git-compare-old = 旧
 git-compare-new = 新
 git-compare-no-differences = 两个版本无差异

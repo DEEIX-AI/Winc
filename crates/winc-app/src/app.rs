@@ -559,6 +559,7 @@ impl Hover {
                 | Hover::Log(
                     git::log::LogTarget::CopyOid
                         | git::log::LogTarget::Refresh
+                        | git::log::LogTarget::CompareCommits
                         | git::log::LogTarget::Avatar(_)
                         | git::log::LogTarget::Row(_)
                         | git::log::LogTarget::File(_)

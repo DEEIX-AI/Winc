@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use winc_editor::git::unique_dir;
+use winc_editor::git::{is_commit_hash, unique_dir};
 use winc_i18n::t;
 
 use super::branch::local_name;
@@ -37,6 +37,8 @@ pub(crate) enum FormKind {
     Clone,
     /// 添加远程仓库，或修改 `editing` 的地址。
     Remote { editing: Option<String> },
+    /// 在 Git 日志中按提交号比较两个版本。
+    CompareCommits,
     /// 交互式变基。
     Rebase(Box<RebaseForm>),
     /// 连接远端主机：主机、端口，见 [`crate::app::remote`]。
@@ -50,6 +52,7 @@ impl FormKind {
             FormKind::Question(prompt, origin) => Some(QuestionView::of(prompt, origin.as_deref())),
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
             FormKind::Connect => Some(QuestionView::connect()),
+            FormKind::CompareCommits => Some(QuestionView::compare_commits()),
             FormKind::Worktree
             | FormKind::Branch { .. }
             | FormKind::Clone
@@ -64,7 +67,7 @@ pub(crate) struct FormDialog {
     pub kind: FormKind,
     /// 名称的输入框；打开对话框时就在这里输入。
     pub name: TextField,
-    /// 询问对话框的第二个输入框：登录的密码（遮盖）、远程仓库的地址；其他表单不显示。
+    /// 询问对话框的第二个输入框，如密码、远程仓库的地址或新提交号。
     pub second: TextField,
     /// 连接对话框的第三个输入框：密钥文件；其他表单不显示。
     pub third: TextField,
@@ -247,6 +250,21 @@ impl App {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
             }
             FormKind::Connect => self.connect_plan(dialog),
+            FormKind::CompareCommits => {
+                let old = dialog.name.text().trim();
+                let new = dialog.second.text().trim();
+                let problem = [old, new]
+                    .iter()
+                    .any(|id| !id.is_empty() && !is_commit_hash(id));
+                FormPlan {
+                    problem: problem.then(|| t!("git-compare-invalid-id").to_owned()),
+                    confirm: t!("git-compare-button"),
+                    enabled: !old.is_empty() && !new.is_empty() && !problem,
+                    base: String::new(),
+                    base_enabled: false,
+                    dir: None,
+                }
+            }
             FormKind::Question(prompt, _) => FormPlan {
                 problem: None,
                 confirm: QuestionView::of(prompt, None).confirm,
@@ -387,6 +405,13 @@ impl App {
             self.submit_connect();
             return;
         }
+        if matches!(dialog.kind, FormKind::CompareCommits) {
+            let old = dialog.name.text().trim().to_owned();
+            let new = dialog.second.text().trim().to_owned();
+            self.close_form_dialog();
+            self.compare_commit_hashes(old, new);
+            return;
+        }
         // 须在发起操作前记录编号：没有窗口时（测试中）后台操作会同步完成。
         let next = self.branch.started + 1;
         let kind = dialog.kind.clone();
@@ -405,7 +430,7 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
-            FormKind::Question(..) | FormKind::Connect => {}
+            FormKind::Question(..) | FormKind::Connect | FormKind::CompareCommits => {}
             FormKind::Clone => self.submit_clone(),
             FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),
@@ -461,7 +486,7 @@ impl App {
         }
         let layout = self.dialog_layout();
         let mut order = Vec::new();
-        // 无需输入的请求没有输入框；第二个输入框只用于登录和添加远程仓库。
+        // 只在版式有对应输入框时将它加入焦点顺序。
         if layout.branch.w > 0.0 {
             order.push(DialogPart::Branch);
         }

@@ -1113,6 +1113,88 @@ fn log_compares_two_commits_or_a_branch_and_the_branch_menu_stashes() {
 }
 
 #[test]
+fn log_compares_amended_commits_by_hash() {
+    use crate::app::git::log::LogTarget;
+
+    let Some((mut app, root)) = git_app("git-compare-amended", false) else {
+        return;
+    };
+    let head = || {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let file = root.join("src/main.rs");
+    let (before, after) = ("fn main() { before(); }\n", "fn main() { after(); }\n");
+    std::fs::write(&file, before).unwrap();
+    git_in(&root, &["add", "src/main.rs"]);
+    git_in(&root, &["commit", "-m", "before amend"]);
+    let old = head();
+    std::fs::write(&file, after).unwrap();
+    git_in(&root, &["commit", "--amend", "-am", "after amend"]);
+    let new = head();
+
+    app.git_refresh();
+    app.run_action(Action::GitShowLog);
+    paint(&mut app);
+    let log = app.editor.active().unwrap().log.as_deref().unwrap();
+    assert!(log.commits.iter().all(|c| c.oid != old));
+    let point = |app: &App, target| {
+        let (r, _) = app.hits.log.iter().find(|(_, t)| *t == target).unwrap();
+        (r.x + r.w / 2.0, r.y + r.h / 2.0)
+    };
+    let button = point(&app, LogTarget::CompareCommits);
+    assert!(point(&app, LogTarget::Author).0 < button.0);
+    click(&mut app, button);
+    assert_eq!(app.focus, Focus::Dialog);
+    let key = |app: &mut App, name| assert!(app.dialog_key(&Key::Named(name), "", false));
+    // 格式正确但对象不存在时，右侧显示错误，不产生可以打开的文件项。
+    app.edit_field(|f| f.insert(&"0".repeat(old.len())));
+    key(&mut app, NamedKey::Tab);
+    app.edit_field(|f| f.insert(&new));
+    key(&mut app, NamedKey::Enter);
+    let log = app.editor.active().unwrap().log.as_deref().unwrap();
+    let compare = log.compare.as_ref().unwrap();
+    assert!(compare.error.is_some());
+    assert!(compare.files.as_ref().unwrap().is_empty());
+    paint(&mut app);
+    click(&mut app, button);
+
+    // 先确认格式错误时不能提交，再用缩写提交号提交，验证不按日志排序交换两侧。
+    app.edit_field(|f| f.insert(&format!(" {} ", new[..12].to_ascii_uppercase())));
+    key(&mut app, NamedKey::Tab);
+    app.edit_field(|f| f.insert("--all"));
+    key(&mut app, NamedKey::Enter);
+    assert!(app.form_dialog.is_some());
+    app.edit_field(|f| {
+        f.set_text(&old[..12]);
+        true
+    });
+    key(&mut app, NamedKey::Enter);
+    assert!(app.form_dialog.is_none());
+
+    paint(&mut app);
+    let log = app.editor.active().unwrap().log.as_deref().unwrap();
+    let compare = log.compare.as_ref().unwrap();
+    assert_eq!((&compare.from, &compare.to), (&new, &old));
+    let files = compare.files.as_ref().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, file);
+    let row = point(&app, LogTarget::File(0));
+    click(&mut app, row);
+    let diff = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(diff.old.text, after);
+    assert_eq!(diff.new.text, before);
+    assert_eq!(head(), new);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn the_log_opens_from_the_commit_view_button_and_the_branch_menu_starts_with_fetch() {
     use crate::app::git::branch::branch_menu;
     use crate::app::input::context_menu::{MenuCommand, MenuEntry};

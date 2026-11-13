@@ -213,6 +213,14 @@ git-log-details-parents = { $count ->
 }
 git-log-details-loading-files = Loading changed files…
 git-compare-title = Compare Two Versions
+git-compare-commits-menu = Compare Commits…
+git-compare-commits = Compare Commits
+git-compare-button = Compare
+git-compare-old-id = Old commit
+git-compare-new-id = New commit
+git-compare-invalid-id = Enter a commit ID (hex)
+git-compare-unresolved-id = No matching commit
+git-compare-resolve-failed = Could not resolve { $id }. { $error }
 git-compare-old = Old
 git-compare-new = New
 git-compare-no-differences = No differences between the two versions

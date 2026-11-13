@@ -101,7 +101,8 @@ impl LogParts {
     /// 标题栏左侧的提交筛选输入框。
     pub(crate) fn search(&self) -> Rect {
         let header = self.header;
-        Rect::new(header.x + 12.0, header.y + 6.0, 220.0, header.h - 12.0)
+        let width = (header.w - 240.0).clamp(56.0, 220.0);
+        Rect::new(header.x + 12.0, header.y + 6.0, width, header.h - 12.0)
     }
 }
 
@@ -151,6 +152,8 @@ pub enum LogTarget {
     Branch,
     /// 标题栏的「作者」下拉，点击时弹出作者菜单。
     Author,
+    /// 标题栏的「比较提交…」，点击时打开提交号输入对话框。
+    CompareCommits,
     /// 标题栏的「清除筛选」。
     ClearFilters,
     /// 列表与详情之间的分隔线：左右拖动改变详情一栏的宽度，双击恢复默认宽度。
@@ -263,7 +266,7 @@ enum Loaded {
         doc: DocumentId,
         from: String,
         to: String,
-        files: Result<Vec<CommitFile>, String>,
+        result: Result<Compare, String>,
     },
     /// 一个文件在一次提交中的差异，打开为标签。
     Diff {
@@ -816,6 +819,7 @@ impl App {
                 self.log.authors = self.log_authors();
                 self.open_context_menu(MenuTarget::LogAuthor, (rect.x, rect.bottom() + 4.0));
             }
+            LogTarget::CompareCommits => self.open_compare_commits(),
             LogTarget::ClearFilters => {
                 self.log.filter.set_text("");
                 self.change_log_query(|q| {
@@ -1019,7 +1023,7 @@ impl App {
                     doc,
                     from,
                     to,
-                    files,
+                    result,
                 } => {
                     let Some(compare) = self
                         .editor
@@ -1030,8 +1034,8 @@ impl App {
                         continue;
                     };
                     self.log.waiting = None;
-                    match files {
-                        Ok(files) => compare.files = Some(files),
+                    match result {
+                        Ok(loaded) => *compare = loaded,
                         Err(e) => {
                             compare.files = Some(Vec::new());
                             compare.error = Some(e);

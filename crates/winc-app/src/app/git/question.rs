@@ -44,7 +44,7 @@ pub(crate) struct QuestionView {
     pub message_lines: usize,
     /// 只读信息。
     pub values: Vec<QuestionValue>,
-    /// 输入框，顺序为 `name`、`password`。
+    /// 输入框，顺序为 `name`、`second`。
     pub inputs: Vec<QuestionInput>,
     /// 主按钮的文字。
     pub confirm: &'static str,
@@ -60,6 +60,26 @@ const OTHER_CONFIRM_LINES: usize = 8;
 const HOST_KEY_LINES: usize = 1;
 
 impl QuestionView {
+    pub(super) fn compare_commits() -> Self {
+        Self {
+            title: t!("git-compare-commits").to_owned(),
+            message: None,
+            message_lines: 0,
+            values: Vec::new(),
+            inputs: vec![
+                QuestionInput {
+                    label: t!("git-compare-old-id"),
+                    placeholder: "",
+                },
+                QuestionInput {
+                    label: t!("git-compare-new-id"),
+                    placeholder: "",
+                },
+            ],
+            confirm: t!("git-compare-button"),
+        }
+    }
+
     /// 返回添加远程仓库（`editing` 为 `None`）或修改其地址的对话框内容。
     pub(crate) fn remote(editing: Option<&str>) -> QuestionView {
         let input = |label, placeholder| QuestionInput { label, placeholder };
