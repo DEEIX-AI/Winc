@@ -633,7 +633,7 @@ impl App {
                     .and_then(|text| svg::load(text, None, Some(system_glyphs()))),
                 (_, Some(bytes)) => image::load_bytes(&bytes),
                 (Some(url), None) => download(url, &path).and_then(|()| load_downloaded(&path)),
-                (None, None) if image::is_svg(&path) => std::fs::read_to_string(&path)
+                (None, None) if image::is_svg(&path) => winc_backend::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
                     .and_then(|text| svg::load(&text, path.parent(), Some(system_glyphs()))),
                 (None, None) => image::load(&path),
@@ -756,7 +756,7 @@ impl App {
             .and_then(|d| d.path.as_deref())
             .and_then(|path| local_target(path, &url));
         match local {
-            Some(path) if path.is_file() => self.open_markdown_file(&path, &url),
+            Some(path) if winc_backend::fs::is_file(&path) => self.open_markdown_file(&path, &url),
             Some(_) => self.flash(t!("preview-markdown-link-file-not-found")),
             None => {
                 if let Err(e) = system::open_url(&url) {
@@ -3027,6 +3027,7 @@ const CACHE_MAX: u64 = 200 * 1024 * 1024;
 /// 已下载过时只更新修改时间（清理缓存时据此判断最久未使用的文件）。先写入同目录的临时
 /// 文件，下载完成后再改名，中途失败不会留下不完整的文件。每次启动后首次下载前清理一次缓存
 /// （[`clean_cache`]）。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
 fn download(url: &str, path: &Path) -> Result<(), String> {
     let dir = path
         .parent()
@@ -3068,6 +3069,7 @@ fn download(url: &str, path: &Path) -> Result<(), String> {
 
 /// 删除 `dir` 中超过 [`CACHE_AGE`] 未使用的图片，以及超过一小时未下载完成的临时文件；
 /// 剩余文件超过 [`CACHE_MAX`] 时从最久未使用的开始删除。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
 pub(in crate::app) fn clean_cache(dir: &Path, now: std::time::SystemTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -3115,6 +3117,7 @@ pub(in crate::app) fn clean_cache(dir: &Path, now: std::time::SystemTime) {
 /// 读取下载的图片：内容为 SVG（徽章多为 SVG）时按 SVG 读取，否则按位图读取。
 ///
 /// SVG 中的文字（徽章上的字）用系统字体绘制，与直接预览 SVG 文件时相同。
+#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
 fn load_downloaded(path: &Path) -> Result<Picture, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let head = &bytes[..bytes.len().min(1024)];

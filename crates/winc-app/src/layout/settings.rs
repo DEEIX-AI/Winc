@@ -166,7 +166,11 @@ impl SettingsPage {
                 ]
             }
             SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush, Setting::DiffInline])],
-            SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
+            SettingsPage::Modules => vec![plain(vec![
+                Setting::GitModule,
+                Setting::TerminalModule,
+                Setting::RemoteModule,
+            ])],
             SettingsPage::Format => {
                 let mut sections = vec![
                     plain(vec![
@@ -365,6 +369,8 @@ pub enum Setting {
     GitConfirmPush,
     /// 终端模块的开关。
     TerminalModule,
+    /// 远程模块的开关。
+    RemoteModule,
     /// 「快捷键」页顶部的搜索框。
     ///
     /// 该页没有设置项，选中这一项即表示停留在该页。
@@ -466,7 +472,9 @@ impl Setting {
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
             Setting::GitConfirmPush | Setting::DiffInline => SettingsPage::Git,
-            Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
+            Setting::GitModule | Setting::TerminalModule | Setting::RemoteModule => {
+                SettingsPage::Modules
+            }
             Setting::KeySearch => SettingsPage::Keys,
         }
     }
@@ -536,6 +544,7 @@ impl Setting {
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
             Setting::TerminalModule => t!("settings-terminal-module"),
+            Setting::RemoteModule => t!("settings-remote-module"),
             Setting::KeySearch => t!("settings-key-search"),
         }
     }
@@ -575,6 +584,7 @@ impl Setting {
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::Animations => Some(t!("settings-animations-desc")),
             Setting::BackgroundImage => Some(t!("settings-background-image-desc")),
+            Setting::BackgroundFit => Some(t!("settings-background-fit-desc")),
             Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
@@ -584,6 +594,7 @@ impl Setting {
             Setting::FixOnSave => Some(t!("settings-fix-on-save-desc")),
             Setting::SkipOnSave => Some(t!("settings-skip-on-save-desc")),
             Setting::GitModule => Some(t!("settings-git-module-desc")),
+            Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
@@ -635,6 +646,7 @@ impl Setting {
             | Setting::GitModule
             | Setting::GitConfirmPush
             | Setting::TerminalModule
+            | Setting::RemoteModule
             | Setting::TerminalCopyOnSelect
             | Setting::TerminalConfirmClose
             | Setting::TerminalPrompt

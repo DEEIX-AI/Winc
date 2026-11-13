@@ -13,6 +13,8 @@ pub enum StartAction {
     Open,
     /// 打开目录（`Ctrl+K Ctrl+O`）；只在选择器不能同时选文件和目录的平台上显示。
     OpenFolder,
+    /// 连接到 SSH 主机；只在远程模块开着时显示。
+    Remote,
     /// 打开最近列表中的目录，参数为列表下标（从 0 起）。
     Recent(usize),
     /// 从最近列表中移除一项（悬停时右端的 ✕），参数为列表下标（从 0 起）。
@@ -377,13 +379,19 @@ impl App {
     /// 把最近打开的目录交给系统：macOS 的最近文档列表（程序坞菜单）、Windows 的任务栏跳转
     /// 列表。没有状态文件（测试、测量）时不做任何事，其他平台没有对应的入口。
     pub(in crate::app) fn sync_system_recents(&self) {
+        // 远端主机上的目录不交给系统：系统的最近列表只能打开本机路径。
+        #[cfg(any(target_os = "macos", windows))]
+        let local: Vec<PathBuf> = (self.state.recent.iter())
+            .filter(|folder| !winc_backend::is_remote(folder))
+            .cloned()
+            .collect();
         #[cfg(target_os = "macos")]
         if self.state_path.is_some() {
-            crate::macos::sync_recent_documents(&self.state.recent);
+            crate::macos::sync_recent_documents(&local);
         }
         #[cfg(windows)]
         if let Some(path) = &self.state_path {
-            crate::windows::sync_jump_list(&self.state.recent, path);
+            crate::windows::sync_jump_list(&local, path);
         }
     }
 
@@ -397,7 +405,10 @@ impl App {
         let Some(folder) = self.state.recent.get(index).cloned() else {
             return;
         };
-        if folder.is_dir() {
+        if self.reopen_remote(&folder) {
+            return;
+        }
+        if winc_backend::fs::is_dir(&folder) {
             self.new_window(Some(folder));
         } else {
             self.forget_missing_recent(&folder);
@@ -411,12 +422,15 @@ impl App {
             StartAction::NewFile => self.new_file(),
             StartAction::Open => self.pick(Pick::Open),
             StartAction::OpenFolder => self.pick(Pick::OpenFolder),
+            StartAction::Remote => self.open_remote_picker(),
             StartAction::Recent(index) => {
                 let Some(folder) = self.state.recent.get(index).cloned() else {
                     return;
                 };
-
-                if folder.is_dir() {
+                if self.reopen_remote(&folder) {
+                    return;
+                }
+                if winc_backend::fs::is_dir(&folder) {
                     self.open_path(&folder);
                 } else {
                     self.forget_missing_recent(&folder);

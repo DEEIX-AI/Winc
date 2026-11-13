@@ -5,13 +5,12 @@
 //! 换行风格、BOM）和检查外部修改。
 
 use std::borrow::Cow;
-use std::fs;
-use std::io::{self, BufReader, Read, Seek, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use winc_backend::fs::Stamp;
 
 use ropey::Rope;
 use winc_core::edit::{EditKind, Transaction};
@@ -501,7 +500,7 @@ pub struct Document {
     /// 文档的文本：`rope`，或按需读取磁盘的大文件。
     pub(crate) text: Content,
     /// 最近一次读写时磁盘文件的修改时间。
-    disk_mtime: Option<SystemTime>,
+    disk_mtime: Option<Stamp>,
     /// 最近一次读写时磁盘文件的大小（字节，含 BOM），用于判断文件是否只在末尾追加了内容。
     disk_len: u64,
     /// 磁盘文件已被其他程序修改，而文档也有未保存的修改：任何一边的内容都不能被静默覆盖。
@@ -523,7 +522,7 @@ struct Loaded {
     /// 检测到的换行风格。
     line_ending: LineEnding,
     /// 读取时文件的修改时间。
-    mtime: Option<SystemTime>,
+    mtime: Option<Stamp>,
     /// 读取时文件的大小（字节）。
     len: u64,
 }
@@ -813,7 +812,7 @@ impl Document {
     ///
     /// `mtime` 是文件存在时的修改时间（记录在备份中）。有值时文件按已删除处理
     /// （[`Document::deleted_on_disk`]），自动保存不重建该文件，用户手动保存时才重新创建。
-    pub fn missing(id: DocumentId, path: PathBuf, mtime: Option<SystemTime>) -> Self {
+    pub fn missing(id: DocumentId, path: PathBuf, mtime: Option<Stamp>) -> Self {
         let mut document = Document::empty(id);
         document.set_path(path);
         document.disk_mtime = mtime;
@@ -1035,7 +1034,7 @@ impl Document {
     }
 
     /// 最近一次读写时磁盘文件的修改时间。
-    pub fn disk_mtime(&self) -> Option<SystemTime> {
+    pub fn disk_mtime(&self) -> Option<Stamp> {
         self.disk_mtime
     }
 
@@ -1048,7 +1047,7 @@ impl Document {
     pub fn restore_unsaved(
         &mut self,
         text: &str,
-        mtime: Option<SystemTime>,
+        mtime: Option<Stamp>,
         selection: Selection,
         conflict: bool,
     ) -> Option<bool> {

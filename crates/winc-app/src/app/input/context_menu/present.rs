@@ -361,6 +361,9 @@ impl App {
                     current,
                     root.is_some(),
                     crate::system::wsl_distributions().len(),
+                    // 每次打开菜单重新读取：用户可能刚修改了 `ssh` 配置。
+                    (self.remote_enabled()).then(crate::app::remote::refresh_hosts),
+                    root.is_some_and(winc_backend::is_remote),
                 ));
                 menu
             }
@@ -545,12 +548,13 @@ impl App {
                 document_language_menu(doc.path.is_some())
             }
             MenuTarget::CommitFile(_) if self.commit_multi_selected() => {
-                let any_exists = self.commit_selection().iter().any(|p| p.exists());
+                let any_exists = self.commit_selection().iter().any(winc_backend::fs::exists);
                 commit_selection_menu(any_exists)
             }
-            MenuTarget::CommitFile(path) => {
-                commit_file_menu(path.exists(), self.relative_path(path).is_some())
-            }
+            MenuTarget::CommitFile(path) => commit_file_menu(
+                winc_backend::fs::exists(path),
+                self.relative_path(path).is_some(),
+            ),
             MenuTarget::SearchResult(_, m) => {
                 search_result_menu(m.is_none(), self.global.replace_open)
             }
@@ -583,9 +587,10 @@ impl App {
                 .map(|&action| MenuEntry::Item(MenuCommand::RebaseAction(action), true))
                 .collect(),
             MenuTarget::FormBase => form_base_menu(&self.git.branches),
-            MenuTarget::LogFile(_, path) => {
-                log_file_menu(path.exists(), self.relative_path(path).is_some())
-            }
+            MenuTarget::LogFile(_, path) => log_file_menu(
+                winc_backend::fs::exists(path),
+                self.relative_path(path).is_some(),
+            ),
             MenuTarget::LogCommit(oid) => {
                 let commit = self.log_commit(oid);
                 let tags: Vec<&str> = (commit.iter().flat_map(|c| &c.refs))

@@ -13,6 +13,7 @@ pub(crate) mod hits;
 mod input;
 mod lifecycle;
 pub(crate) mod preview;
+pub(crate) mod remote;
 mod settings;
 #[cfg(test)]
 mod snapshot;
@@ -85,7 +86,7 @@ pub use workspace::tree_label::{LabelCause, LabelView, TreeLabels};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 // 只在 macOS 的系统回调（⌘Q 前是否询问）中读写。
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
@@ -114,6 +115,9 @@ use crate::layout::{
 };
 use crate::theme::*;
 use crate::view;
+
+/// 交给逐个执行的线程的一个任务（见 [`App::spawn_ordered_then`]）。
+type OrderedTask = Box<dyn FnOnce() + Send>;
 
 /// 后台线程和系统回调（面板、菜单、提示框）送回事件循环的事件。
 #[derive(Debug)]
@@ -211,10 +215,10 @@ pub enum UserEvent {
     ReopenEncoding(DocumentId, winc_editor::Encoding),
     /// 后台完成了一张图片的解码，或一个 SVG 的绘制。
     ImageReady,
-    /// 粘贴到文件树中的文件已在后台复制完成：新路径，或失败的原因。
-    Pasted(Result<Vec<PathBuf>, String>),
-    /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径，以及复制失败的说明。
-    Copied(Vec<PathBuf>, Vec<String>),
+    /// 粘贴到文件树中的文件已在后台复制完成：新路径，或失败的原因；以及这次复制。
+    Pasted(Result<Vec<PathBuf>, String>, Arc<winc_editor::Copying>),
+    /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径、复制失败的说明，以及这次复制。
+    Copied(Vec<PathBuf>, Vec<String>, Arc<winc_editor::Copying>),
     /// 窗口已关闭时点击了程序坞中的图标（macOS）：重新显示窗口。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Reopen,
@@ -248,6 +252,24 @@ pub enum UserEvent {
     GitOperated,
     /// 后台的 Git 操作发来了输入请求。
     GitQuestion,
+    /// 后台到远端主机的连接已建立或已失败。
+    RemoteConnected,
+    /// 远程选择面板在后台读好了一个目录。
+    RemoteListed,
+    /// 后台对远端目录的监视已经启动。
+    RemoteWatching,
+    /// 到远端主机的连接意外中断。
+    RemoteClosed(winc_backend::Target),
+    /// 后台的文件操作（新建、改名、移动、删除）已完成。
+    FileWorked,
+    /// 后台为远端文件的格式化选好了工具。
+    FormatPlanned,
+    /// 连接远端主机的 `ssh` 发来了输入请求。
+    RemoteQuestion,
+    /// 后台到远端主机的连接到达了新的阶段。
+    RemoteStage,
+    /// 远端主机有无响应的状况变了：状态栏的连接按钮随之重绘。
+    RemoteHealth,
     /// 后台已读取三栏合并的两侧。
     GitMergeSides,
     /// 后台已取得日志的一批提交、一个提交的详情或一个文件的差异。
@@ -511,7 +533,7 @@ impl Hover {
                         | terminal::HeaderHit::Hide
                         | terminal::HeaderHit::Run(_),
                 )
-                | Hover::Status(StatusItem::Terminal | StatusItem::Settings)
+                | Hover::Status(StatusItem::Terminal | StatusItem::Remote | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
                 | Hover::LogDiffLayout
@@ -980,6 +1002,13 @@ pub struct App {
     pub blame: git::blame::BlameState,
     /// 正在进行的分支操作。
     pub branch: git::branch::BranchState,
+    /// 远程模块：正在进行的连接。
+    pub remote: remote::RemoteState,
+    /// 正在后台执行的文件操作。
+    pub(in crate::app) file_work: workspace::file_work::FileWork,
+    /// 逐个执行远端文件改动的线程的任务队列（见 [`App::spawn_ordered_then`]）；尚未创建时为
+    /// `None`。
+    ordered: Option<mpsc::Sender<OrderedTask>>,
     /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
     pub merge: git::merge::MergeState,
     /// 大文件的差异在后台重新比较。
@@ -1056,21 +1085,30 @@ pub struct App {
 
 impl App {
     /// 请求在下一帧重绘本窗口。
+    ///
+    /// 文件树的可见行变化后都会请求重绘：其中尚未读取的目录在此交给后台（[`App::fetch_tree`]）。
     pub(crate) fn request_redraw(&mut self) {
         self.dirty = true;
+        self.fetch_tree();
     }
 
     /// 在后台线程上执行 `job`，完成后发送事件 `done` 唤醒界面线程处理结果（[`App::finished`]）。
     ///
     /// 测试中没有事件循环：在当前线程上执行 `job`，之后直接调用 [`App::finished`] 处理结果。
+    ///
+    /// 打开的目录在远端主机上时改用单独的线程（[`App::spawn_blocking_then`]）：这时的任务大多
+    /// 要等待网络，耗时没有上限，放进线程池会占住池中的线程，各窗口的本机任务只能排队。
     fn spawn_then(&mut self, done: UserEvent, job: impl FnOnce() + Send + 'static) {
+        if self.editor.root().is_some_and(winc_backend::is_remote) {
+            return self.spawn_blocking_then(done, job);
+        }
         match self.proxy.clone() {
             Some(proxy) => winc_editor::background::spawn(move || {
                 job();
                 let _ = proxy.send_event(done);
             }),
             None => {
-                job();
+                winc_backend::remote::allow_blocking(job);
                 self.finished(done);
             }
         }
@@ -1089,9 +1127,47 @@ impl App {
                 let _ = proxy.send_event(done);
             }),
             None => {
-                job();
+                winc_backend::remote::allow_blocking(job);
                 self.finished(done);
             }
+        }
+    }
+
+    /// 在本窗口改动远端文件的线程上执行 `job`，完成后发送事件 `done`；其余行为同
+    /// [`App::spawn_then`]。
+    ///
+    /// 这个线程按提交的顺序逐个执行：保存与改名、移动、删除不会交错，先发起的保存一定在随后
+    /// 的改名之前写完。线程在第一次使用时创建，窗口关闭时结束。
+    fn spawn_ordered_then(&mut self, done: UserEvent, job: impl FnOnce() + Send + 'static) {
+        let Some(proxy) = self.proxy.clone() else {
+            winc_backend::remote::allow_blocking(job);
+            self.finished(done);
+            return;
+        };
+        let task: OrderedTask = Box::new(move || {
+            job();
+            let _ = proxy.send_event(done);
+        });
+        let task = match &self.ordered {
+            Some(queue) => match queue.send(task) {
+                Ok(()) => return,
+                // 线程已经结束：重新创建。
+                Err(mpsc::SendError(task)) => task,
+            },
+            None => task,
+        };
+        let (queue, tasks) = mpsc::channel::<OrderedTask>();
+        let worker = std::thread::Builder::new()
+            .name("winc-remote".into())
+            .spawn(move || tasks.into_iter().for_each(|task| task()));
+        // 线程无法创建时退回单独的线程：任务仍然执行，只是不再保证先后。
+        self.ordered = None;
+        if worker.is_err() {
+            winc_editor::background::spawn_blocking(task);
+        } else if let Err(mpsc::SendError(task)) = queue.send(task) {
+            winc_editor::background::spawn_blocking(task);
+        } else {
+            self.ordered = Some(queue);
         }
     }
 
@@ -1105,6 +1181,11 @@ impl App {
             UserEvent::GitCommit => self.poll_commit(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
+            UserEvent::RemoteConnected => self.poll_remote(),
+            UserEvent::RemoteListed => self.poll_remote_listings(),
+            UserEvent::RemoteWatching => self.poll_remote_watcher(),
+            UserEvent::FormatPlanned => self.poll_formatting(),
+            UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
             UserEvent::GitBlame => self.poll_blame(),

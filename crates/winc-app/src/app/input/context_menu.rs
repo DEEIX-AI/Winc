@@ -120,6 +120,14 @@ pub enum MenuCommand {
     OpenFolder,
     /// 项目菜单：打开 WSL 发行版中的目录。
     OpenWslFolder(usize),
+    /// 项目菜单：连接到 SSH 主机，输入主机和目录。
+    RemoteConnect,
+    /// 项目菜单的 SSH 子菜单：连接 `ssh` 配置中的第几个主机（见 `remote::hosts`）。
+    RemoteHost(usize),
+    /// 项目菜单的 SSH 子菜单：连接没有列出的主机。
+    RemoteOther,
+    /// 项目菜单：关闭打开的远端目录并断开到该主机的连接。
+    RemoteDisconnect,
     CloseFolder,
     /// 提交视图「⋯」：新建工作树（输入新分支的名字）。
     NewWorktree,
@@ -500,6 +508,12 @@ impl MenuCommand {
             MenuCommand::OpenWslFolder(i) => crate::system::wsl_distributions()
                 .get(i)
                 .map_or("", String::as_str),
+            MenuCommand::RemoteConnect => t!("workspace-remote-menu"),
+            MenuCommand::RemoteHost(i) => (crate::app::remote::hosts().get(i))
+                .copied()
+                .unwrap_or_default(),
+            MenuCommand::RemoteOther => t!("workspace-remote-other"),
+            MenuCommand::RemoteDisconnect => t!("workspace-remote-disconnect"),
             MenuCommand::CloseFolder => t!("cmd-close-folder"),
             MenuCommand::Cut => t!("cmd-cut"),
             MenuCommand::Copy => t!("cmd-copy"),

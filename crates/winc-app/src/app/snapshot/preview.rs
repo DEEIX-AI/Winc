@@ -3667,7 +3667,7 @@ fn a_page_that_fails_to_render_shows_why_instead_of_staying_blank() {
 
     // 第一页渲染失败：记下原因，不再请求。
     app.pdf.rendered.remove(&0);
-    app.fail_pdf_page(0, width, "无法渲染这一页（错误代码 0x80004005）");
+    app.fail_pdf_page(0, width, "无法渲染此页（错误代码 0x80004005）");
     assert!(app.pdf.failed.contains_key(&(0, width)));
     paint(&mut app);
     assert!(!app.pdf.is_busy(), "失败的页被重新请求");

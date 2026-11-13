@@ -141,7 +141,7 @@ pub struct OutlineState {
 }
 
 impl Default for OutlineState {
-    /// 尚未提取符号的状态：与没有打开文档时相同，写「没有打开的文件」。
+    /// 尚未提取符号的状态：与没有打开文档时相同，写「未打开文件」。
     fn default() -> Self {
         OutlineState {
             open: false,

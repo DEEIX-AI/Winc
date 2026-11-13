@@ -3,6 +3,11 @@
 //! 更新包通过签名核对后交给独立的 PowerShell 进程；它等应用退出后运行相应的静默安装命令，
 //! 要求过重新启动时再启动新版本。MSI 的计算机级安装在需要时请求提升权限。
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：更新包和安装标记在本机"
+)]
+
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

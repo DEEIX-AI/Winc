@@ -5,6 +5,9 @@
 //!
 //! 模块分工见各模块的 `//!`：`document`、`editing`、`workspace`、`navigation`、`git`、`tools`。
 
+// 测试直接在本机的临时目录中准备和检查文件。
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod background;
 pub mod backup;
 pub mod diff_view;
@@ -39,15 +42,16 @@ pub use editing::search::{MAX_MATCHES, Search, TextSearch};
 pub use editing::{paste, scopes};
 pub use navigation::bookmarks::{BookmarkMap, Bookmarks};
 pub use navigation::{bookmarks, definition, keypath, symbols, usages};
-pub use tools::{format, shell, wsl};
+pub use tools::{format, host, remote_env, shell, wsl};
+pub use workspace::copying::Copying;
 pub use workspace::picker::{FileIndex, IndexedFile, MAX_RESULTS as PICKER_MAX_RESULTS};
 pub use workspace::project_search::{
     FileResult, LineMatch, MAX_RESULTS, MAX_THREADS as MAX_SEARCH_THREADS, ProjectSearch, Query,
     ReplacePreview, replace_in_document, replace_in_file,
 };
 pub use workspace::tree::{
-    DirEntry, DirListing, DirScan, EXPAND_DIRS, Entry, EntryKind, Workspace, copy_entry, list_dir,
-    natural_cmp, segment_name,
+    DirEntry, DirListing, DirScan, EXPAND_DIRS, Entry, EntryKind, Workspace, copy_entry, create_at,
+    list_dir, move_at, natural_cmp, rename_at, segment_name,
 };
 pub use workspace::watch::{Changes, Watcher};
 
@@ -596,6 +600,13 @@ fn replace_document(slot: &mut Document, mut fresh: Document) {
 
 /// 返回用于显示的名称：路径的最后一段；没有最后一段（如根目录）时返回整个路径。
 pub fn display_name(path: &Path) -> Cow<'_, str> {
+    // 远端路径：名字按远端的写法显示，根目录显示为 `目标:/`。
+    if let Some(remote) = winc_backend::locate(path) {
+        return match remote.name() {
+            [] => winc_backend::display(path).unwrap_or_default().into(),
+            name => String::from_utf8_lossy(name).into_owned().into(),
+        };
+    }
     path.file_name()
         .map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy())
 }
@@ -603,12 +614,13 @@ pub fn display_name(path: &Path) -> Cow<'_, str> {
 /// 返回用于显示的路径。
 ///
 /// 位于 `root` 之下时返回相对路径；位于用户主目录（环境变量 `HOME`）之下时返回 `~/…`；
-/// 其余情况返回完整路径。
+/// 其余情况返回完整路径。远端主机上的路径不在 `root` 之下时写成 `目标:/路径`。
 pub fn display_path(path: &Path, root: Option<&Path>) -> String {
-    if let Some(root) = root
-        && let Ok(relative) = path.strip_prefix(root)
-    {
-        return relative.display().to_string();
+    if let Some(relative) = root.and_then(|root| winc_backend::relative_lossy(path, root)) {
+        return relative;
+    }
+    if let Some(remote) = winc_backend::display(path) {
+        return remote;
     }
 
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
