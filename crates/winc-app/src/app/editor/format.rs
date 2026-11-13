@@ -12,6 +12,8 @@ use winc_i18n::t;
 
 use super::*;
 
+use crate::app::scroll::set_scroll_line;
+
 /// 手动格式化、修复的最长等待时间。
 ///
 /// 工具在后台运行，期间可以继续输入（输入后结果作废），因此上限放宽：新装的工具首次运行较慢
@@ -784,7 +786,10 @@ impl App {
         } else {
             doc.row_at(top) as f64 + scroll.fract()
         };
-        doc.scroll_line = scroll.clamp(0.0, (doc.row_count() as f64 - 2.0).max(0.0));
+        set_scroll_line(
+            doc,
+            scroll.clamp(0.0, (doc.row_count() as f64 - 2.0).max(0.0)),
+        );
 
         if self.editor.active().map(|d| d.id) == Some(id) {
             self.relayout();

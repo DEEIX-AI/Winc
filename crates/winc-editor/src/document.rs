@@ -925,6 +925,20 @@ impl Document {
         }
     }
 
+    /// 返回第 `line` 行（从 0 起）开头的近似高亮状态：从上方 `HIGHLIGHT_LOOKBACK` 行处推算。
+    ///
+    /// 供 [`Self::highlight_state`] 尚未推算到时绘制使用，远距离跳转后不先按普通文本着色；跨度
+    /// 超过回看行数的块注释和多行字符串仍可能着色错误，直到精确的状态推算完成。
+    pub fn approx_highlight_state(&mut self, line: usize) -> LineState {
+        match &self.text {
+            Content::Rope(rope) => self.highlighter.state_near(rope, line, HIGHLIGHT_LOOKBACK),
+            Content::Large(large) => {
+                self.highlighter
+                    .state_near(&**large, line, HIGHLIGHT_LOOKBACK)
+            }
+        }
+    }
+
     /// 返回已推算出的第 `line` 行（从 0 起）开头的高亮状态，不触发新的推算；尚未推算到时返回
     /// `None`。
     ///

@@ -123,6 +123,8 @@ impl App {
             fold_motion: None,
             diff_fold: None,
             scroll_glide: None,
+            pane_glides: Vec::new(),
+            fling: None,
             wheel: Default::default(),
             preview_tab: None,
             file_hover: None,

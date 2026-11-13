@@ -18,6 +18,7 @@ pub(crate) mod rebase;
 mod repository;
 pub(crate) mod worktree;
 
+use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -1279,7 +1280,7 @@ impl App {
                     .first()
                     .map(|r| r.start)
             }) {
-                doc.scroll_line = row.saturating_sub(3) as f64;
+                set_scroll_line(doc, row.saturating_sub(3) as f64);
             }
             self.relayout();
             self.clamp_scroll();

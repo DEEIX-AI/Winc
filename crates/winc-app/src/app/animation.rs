@@ -357,6 +357,7 @@ impl App {
         settle(&mut self.fold_motion, |m| m.clock);
         self.finish_diff_fold(false);
         settle(&mut self.scroll_glide, |g| g.clock);
+        self.pane_glides.retain(|g| !g.clock.done());
         settle(&mut self.picker.motion, |m| m.clock);
         settle(&mut self.pdf.zoom_motion, |m| m.clock);
         settle(&mut self.picture_view.zoom_motion, |m| m.clock);
@@ -459,6 +460,9 @@ impl App {
             || self.diff_fold.is_some()
             || self.scroll_glide.is_some()
             || self.wheel.glide.is_some()
+            || !self.pane_glides.is_empty()
+            || self.fling.is_some()
+            || self.scroll_input_live()
             || self.picker.motion.is_some()
             || self.pdf.zoom_motion.is_some()
             || self.picture_view.zoom_motion.is_some()
