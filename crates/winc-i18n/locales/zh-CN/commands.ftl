@@ -9,6 +9,7 @@ cmd-find-references = 查找引用
 cmd-go-back = 后退
 cmd-go-forward = 前进
 cmd-settings = 设置
+cmd-release-notes = 更新日志
 cmd-keyboard-shortcuts = 快捷键
 cmd-record-keys = 录制按键
 cmd-new-file = 新建文件

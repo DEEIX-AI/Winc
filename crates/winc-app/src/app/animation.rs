@@ -357,6 +357,7 @@ impl App {
         settle(&mut self.fold_motion, |m| m.clock);
         self.finish_diff_fold(false);
         settle(&mut self.scroll_glide, |g| g.clock);
+        self.pane_glides.retain(|g| !g.clock.done());
         settle(&mut self.picker.motion, |m| m.clock);
         settle(&mut self.pdf.zoom_motion, |m| m.clock);
         settle(&mut self.picture_view.zoom_motion, |m| m.clock);
@@ -388,6 +389,9 @@ impl App {
         }
         settle(&mut self.settings.mode_slide, |s| s.1);
         settle(&mut self.settings.switch_slide, |s| s.1);
+        settle(&mut self.setup_intro, |c| *c);
+        settle(&mut self.setup_outro, |c| *c);
+        self.show_update_notice();
         settle(&mut self.log.fade, |c| *c);
         self.settle_hint();
         self.tabs.slides.retain(|s| !s.clock.done());
@@ -459,6 +463,9 @@ impl App {
             || self.diff_fold.is_some()
             || self.scroll_glide.is_some()
             || self.wheel.glide.is_some()
+            || !self.pane_glides.is_empty()
+            || self.fling.is_some()
+            || self.scroll_input_live()
             || self.picker.motion.is_some()
             || self.pdf.zoom_motion.is_some()
             || self.picture_view.zoom_motion.is_some()
@@ -479,6 +486,8 @@ impl App {
             || self.alert_card.motion.is_some()
             || self.settings.mode_slide.is_some()
             || self.settings.switch_slide.is_some()
+            || self.setup_intro.is_some()
+            || self.setup_outro.is_some()
             || self.log.fade.is_some()
             || self.hint_animating()
             || !self.tabs.slides.is_empty()

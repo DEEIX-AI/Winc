@@ -2,6 +2,7 @@
 
 menu-settings = 设置…
 menu-install-command = 安装 winc 命令…
+menu-release-notes = 更新日志
 menu-check-updates = 检查更新
 menu-window = 窗口
 menu-window-minimize = 最小化

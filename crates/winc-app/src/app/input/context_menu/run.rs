@@ -128,6 +128,13 @@ impl App {
                     self.settings_toggle_skip(language.id);
                 }
             }
+            MenuTarget::NamedTheme(_) => {
+                if let MenuCommand::NamedTheme(dark, i) = command
+                    && i < crate::theme::themes(dark).len()
+                {
+                    self.set_named_theme(dark, i);
+                }
+            }
             MenuTarget::Locale => {
                 if let MenuCommand::Locale(i) = command
                     && let Some(&choice) = winc_i18n::LocaleChoice::ALL.get(i)

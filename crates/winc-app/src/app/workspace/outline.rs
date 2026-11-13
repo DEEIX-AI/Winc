@@ -584,6 +584,7 @@ impl App {
         let list = self.outline_list();
         let max = self.outline_max_scroll();
         let top = row as f32 * TREE_ROW;
+        let before = self.outline.scroll;
         let o = &mut self.outline;
         if top < o.scroll {
             o.scroll = top;
@@ -591,6 +592,7 @@ impl App {
             o.scroll = top + TREE_ROW - list.h;
         }
         o.scroll = o.scroll.clamp(0.0, max);
+        self.glide_pane(ScrollTarget::Outline, before);
     }
 
     /// 收起或展开第 `i` 个符号。

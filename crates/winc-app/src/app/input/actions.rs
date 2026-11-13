@@ -102,6 +102,7 @@ impl App {
             GoBack => self.navigate(false),
             GoForward => self.navigate(true),
             Settings => self.open_settings(),
+            ReleaseNotes => self.open_release_notes(crate::release_notes::Scope::All),
             KeyboardShortcuts => {
                 self.open_settings();
                 self.settings_show_page(SettingsPage::Keys);

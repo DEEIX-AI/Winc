@@ -114,6 +114,38 @@ fn moving_a_tab_keeps_the_active_document() {
 }
 
 #[test]
+fn reading_tabs_hold_markdown_without_editable_text() {
+    let mut editor = Editor::default();
+    let ready = |text: &str| Reading::Ready(text.into());
+    let first = editor.show_reading("更新日志", Reading::Loading);
+    let doc = &editor.documents[first];
+    assert_eq!(doc.name(), "更新日志");
+    assert_eq!(doc.reading, Some(Reading::Loading));
+    // 没有可以编辑、查找或切换到的文本。
+    assert!(doc.readonly_reason().is_some());
+    assert!(!doc.shows_text() && !doc.edits_text() && !doc.can_preview());
+    assert!(!doc.is_dirty());
+
+    // 内容到达：换入同一个标签，不切换标签，`revision` 递增，按它缓存的排版结果不再使用。
+    let revision = doc.revision;
+    editor.new_untitled();
+    let active = editor.active;
+    let id = editor.documents[first].id;
+    assert!(editor.update_reading(id, ready("## 1.0.0\n")));
+    assert_eq!((editor.documents.len(), editor.active), (2, active));
+    let doc = &editor.documents[first];
+    assert_eq!(doc.reading, Some(ready("## 1.0.0\n")));
+    assert!(doc.revision > revision);
+
+    // 再次显示同名的阅读标签：复用并切换到它。标签关闭之后到达的内容不再打开标签。
+    assert_eq!(editor.show_reading("更新日志", Reading::Failed), first);
+    assert_eq!(editor.active, Some(first));
+    editor.documents.remove(first);
+    assert!(!editor.update_reading(id, ready("## 1.0.1\n")));
+    assert_eq!(editor.documents.len(), 1);
+}
+
+#[test]
 fn output_tabs_are_read_only_and_reused() {
     let mut editor = Editor::default();
     editor.new_untitled();

@@ -3,6 +3,8 @@
 editor-preview-failed = 无法显示预览：{ $reason }
 editor-show-source = 显示源代码
 editor-reading = 正在读取「{ $name }」…
+editor-reading-failed = 无法读取「{ $name }」
+editor-open-in-browser = 在浏览器中查看
 editor-open-anyway = 仍然打开
 editor-open-with-default-app = 用默认应用打开
 editor-retry = 重试

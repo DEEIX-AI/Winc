@@ -23,6 +23,8 @@ pub enum NoticeAction {
     CancelConnect,
     /// 「取消」：取消文件树里正在进行的复制。
     CancelCopy,
+    /// 「查看更新日志」：在阅读标签中打开上次运行的版本（没有记录时为 `None`）之后的各版。
+    ReleaseNotes(Option<String>),
 }
 
 /// 到期后正在淡出的提示条。
@@ -53,6 +55,7 @@ impl NoticeAction {
             NoticeAction::CancelConnect | NoticeAction::CancelCopy => {
                 t!("workspace-notice-cancel")
             }
+            NoticeAction::ReleaseNotes(_) => t!("workspace-notice-release-notes"),
         }
     }
 }
@@ -178,6 +181,9 @@ impl App {
             }
             NoticeAction::CancelConnect => self.cancel_remote(),
             NoticeAction::CancelCopy => self.cancel_copies(),
+            NoticeAction::ReleaseNotes(previous) => {
+                self.open_release_notes(crate::release_notes::Scope::Since(previous));
+            }
         }
         self.request_redraw();
     }
