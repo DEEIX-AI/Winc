@@ -185,6 +185,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         .and_then(|d| d.text().rope())
         .map(|rope| (rope, search.current_match()));
     let mut wanted = Vec::new();
+    // 这一帧绘制范围内的图片。
+    let mut images = Vec::new();
     let mut shown = Vec::new();
     let mut toolbar = None;
     // 可横向滚动的表格的滚动条，各块绘制完成后再绘制：（块，表格，显示区域，滚动位置）。
@@ -328,6 +330,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                         Some(px) => frame.pixels((r.x, r.y), px.width, px.height, &px.rgba, area),
                         None => wanted.push((path.clone(), size)),
                     }
+                    images.push(path.clone());
                 }
                 Item::Link { rect, url } => {
                     let r = at(rect).intersect(area);
@@ -478,9 +481,11 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         let (x, y) = (left + x, area.y - scroll + y);
         app.ime.cursor = Some(draw_live_caret(app, frame, (x, y, h), font, area));
     }
+    let missing: Vec<_> = wanted.iter().map(|(path, _)| path.clone()).collect();
     for (path, size) in wanted {
         app.request_markdown_pixels(&path, size);
     }
+    app.release_markdown_images(&images, &missing);
     draw_table_scrollbar(app, frame, chosen, area);
     draw_toc(app, frame, area, pad);
 

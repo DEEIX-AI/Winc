@@ -178,3 +178,71 @@ fn dragging_the_split_divider_resizes_both_halves() {
     assert_eq!(app.layout.editor.w, left);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn markdown_keeps_only_the_images_on_screen() {
+    use crate::app::preview::markdown::ImageSlot;
+
+    // 24 张 800 × 600 的图，每张解码后 1.9 MB；图与图之间有文字，一屏放不下几张。
+    const COUNT: usize = 24;
+    let dir = sample_folder("md-many-images");
+    let rgba = vec![200u8; 800 * 600 * 4];
+    let png = winc_editor::paste::encode_png(800, 600, &rgba).unwrap();
+    let mut text = String::new();
+    for i in 0..COUNT {
+        std::fs::write(dir.join(format!("p{i}.png")), &png).unwrap();
+        text.push_str(&format!(
+            "第 {i} 张图之前的一段文字。\n\n![图 {i}](p{i}.png)\n\n"
+        ));
+    }
+    let path = dir.join("IMAGES.md");
+    std::fs::write(&path, text).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+    app.set_preview_mode(PreviewMode::Preview);
+    settle(&mut app);
+
+    // 返回（已知宽高的图片数，留有像素的图片，留有解码后图片的张数）。
+    let held = |app: &App| {
+        let (mut ready, mut drawn, mut decoded) = (0, Vec::new(), 0);
+        for (path, slot) in &app.preview.markdown.images {
+            if let ImageSlot::Ready {
+                picture, pixels, ..
+            } = slot
+            {
+                ready += 1;
+                if !pixels.is_empty() {
+                    drawn.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                }
+                decoded += usize::from(picture.is_some());
+            }
+        }
+        drawn.sort();
+        (ready, drawn, decoded)
+    };
+
+    // 每张图的宽高都已知（排版需要），只有屏幕上的几张留有像素，解码后的图片全部释放。
+    let (ready, top, decoded) = held(&app);
+    assert_eq!(ready, COUNT);
+    assert!(!top.is_empty() && top.len() < COUNT / 2, "{top:?}");
+    assert!(top.contains(&"p0.png".to_owned()), "{top:?}");
+    assert_eq!(decoded, 0);
+
+    // 滚动到末尾：换成末尾的几张，开头的像素已经释放。
+    let end = app.preview.markdown.height;
+    app.preview.markdown.scroll_to(end);
+    settle(&mut app);
+    let (_, bottom, decoded) = held(&app);
+    assert!(!bottom.is_empty() && bottom.len() < COUNT / 2, "{bottom:?}");
+    assert!(
+        bottom.contains(&format!("p{}.png", COUNT - 1)),
+        "{bottom:?}"
+    );
+    assert!(!bottom.contains(&"p0.png".to_owned()), "{bottom:?}");
+    assert_eq!(decoded, 0);
+
+    // 滚回开头：已经释放的图片重新读取并绘制。
+    app.preview.markdown.scroll_to(0.0);
+    settle(&mut app);
+    assert_eq!(held(&app).1, top);
+}

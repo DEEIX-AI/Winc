@@ -813,7 +813,9 @@ fn markdown_images_render_one_size_at_a_time() {
     let picture = winc_preview::svg::load(svg, None, None).unwrap();
     let path = PathBuf::from("/tmp/winc-shot.svg");
     let slot = ImageSlot::Ready {
-        picture: std::sync::Arc::new(picture),
+        width: picture.width,
+        height: picture.height,
+        picture: Some(std::sync::Arc::new(picture)),
         pixels: Vec::new(),
         drawing: Vec::new(),
     };

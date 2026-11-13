@@ -21,8 +21,12 @@ pub enum ImageSlot {
     /// 已读取；`pixels` 是按显示大小绘制的像素，最近绘制的在前（同一张图可能以多种大小出现，
     /// 例如并排的截图和表格中的缩略图）；`drawing` 是正在后台绘制的大小。
     Ready {
-        /// 解码后的图片。
-        picture: Arc<Picture>,
+        /// 原图的宽度（像素）。
+        width: u32,
+        /// 原图的高度（像素）。
+        height: u32,
+        /// 解码后的图片；不再需要绘制时释放，为 `None`，需要绘制时重新读取。
+        picture: Option<Arc<Picture>>,
         /// 按显示大小绘制的像素。
         pixels: Vec<Arc<Pixels>>,
         /// 正在后台绘制的大小（物理像素）。

@@ -24,6 +24,7 @@ use winit::keyboard::{Key, NamedKey};
 use crate::app::{App, Focus, UserEvent};
 use crate::system;
 
+mod images;
 pub(crate) mod laid;
 mod live;
 mod live_caret;
@@ -44,6 +45,8 @@ enum Done {
     Loaded(PathBuf, Result<Arc<Picture>, String>),
     /// 图片、按显示大小（物理像素）绘制的像素。
     Drawn(PathBuf, Arc<Pixels>),
+    /// 图片、未能绘制的大小（物理像素）：重新读取图片失败。
+    Undrawn(PathBuf, (u32, u32)),
 }
 
 pub(crate) use winc_typeset::ImageSlot;
@@ -135,6 +138,8 @@ pub(crate) struct MarkdownPreview {
     pub memo: crate::app::preview::markdown::laid::Memo,
     /// 用到的图片，键为解析后的本地路径。
     pub images: HashMap<PathBuf, ImageSlot>,
+    /// 各图片在文件中写的地址，键同 `images`：解码后的图片释放之后据此重新读取。
+    urls: HashMap<PathBuf, String>,
     /// docx 包中的图片：键与 `images` 相同（按文档所在目录解析后的路径），值是图片文件的
     /// 内容；读取这些图片时用这里的内容，不读磁盘。
     embedded: HashMap<PathBuf, Arc<[u8]>>,
@@ -280,6 +285,7 @@ impl Default for MarkdownPreview {
             last_table: None,
             memo: Default::default(),
             images: HashMap::new(),
+            urls: HashMap::new(),
             embedded: HashMap::new(),
             failed: None,
             images_version: 0,
@@ -349,6 +355,7 @@ impl MarkdownPreview {
     /// 丢弃已读取的图片（联网设置改变时调用）：下次绘制时重新排版并重新读取。
     pub fn forget_images(&mut self) {
         self.images.clear();
+        self.urls.clear();
         self.images_version += 1;
     }
 
@@ -604,7 +611,9 @@ impl App {
                     }
                     let slot = match result {
                         Ok(picture) => ImageSlot::Ready {
-                            picture,
+                            width: picture.width,
+                            height: picture.height,
+                            picture: Some(picture),
                             pixels: Vec::new(),
                             drawing: Vec::new(),
                         },
@@ -625,90 +634,17 @@ impl App {
                         pixels.truncate(SIZES);
                     }
                 }
+                Done::Undrawn(path, size) => {
+                    if let Some(ImageSlot::Ready { drawing, .. }) = md.images.get_mut(&path) {
+                        drawing.retain(|&d| d != size);
+                    }
+                }
             }
             changed = true;
         }
         if changed {
             self.request_redraw();
         }
-    }
-
-    /// 请求图片 `path`（文件中写的地址为 `url`）：尚未读取时交给后台读取，网址的图片先下载。
-    pub(crate) fn request_markdown_image(&mut self, path: &Path, url: &str) {
-        if self.preview.markdown.images.contains_key(path) {
-            return;
-        }
-        self.preview
-            .markdown
-            .images
-            .insert(path.to_path_buf(), ImageSlot::Loading);
-        let (sender, proxy, path) = (
-            self.preview.markdown.sender.clone(),
-            self.link.proxy.clone(),
-            path.to_path_buf(),
-        );
-        let remote = is_remote(url).then(|| url.to_owned());
-        let embedded = self.preview.markdown.embedded.get(&path).cloned();
-        let load = move || {
-            let result = match (&remote, embedded) {
-                (_, Some(bytes)) if image::is_svg(&path) => std::str::from_utf8(&bytes)
-                    .map_err(|e| e.to_string())
-                    .and_then(|text| svg::load(text, None, Some(system_glyphs()))),
-                (_, Some(bytes)) => image::load_bytes(&bytes),
-                (Some(url), None) => download(url, &path).and_then(|()| load_downloaded(&path)),
-                (None, None) if image::is_svg(&path) => winc_backend::fs::read_to_string(&path)
-                    .map_err(|e| e.to_string())
-                    .and_then(|text| svg::load(&text, path.parent(), Some(system_glyphs()))),
-                (None, None) => image::load(&path),
-            };
-            if sender
-                .send(Done::Loaded(path, result.map(Arc::new)))
-                .is_ok()
-                && let Some(proxy) = proxy
-            {
-                let _ = proxy.send_event(UserEvent::ImageReady);
-            }
-        };
-        // 网络图片由 `curl` 下载，最长等待 `REMOTE_TIMEOUT`；
-        // 在单独的线程上等待，不占用共用的线程池。
-        if is_remote(url) {
-            winc_editor::background::spawn_blocking(load);
-        } else {
-            winc_editor::background::spawn(load);
-        }
-    }
-
-    /// 请求把图片 `path` 按 `size`（物理像素）绘制：已有该尺寸的像素时不提交。
-    ///
-    /// 每张图同一时刻只在后台绘制一个尺寸：拖动改变窗口大小时每帧尺寸都不同，正在绘制时不提交，
-    /// 当前尺寸完成后界面重绘，届时仍缺的尺寸再提交。
-    pub(crate) fn request_markdown_pixels(&mut self, path: &Path, size: (u32, u32)) {
-        let Some(ImageSlot::Ready {
-            picture,
-            pixels,
-            drawing,
-        }) = self.preview.markdown.images.get_mut(path)
-        else {
-            return;
-        };
-        if pixels.iter().any(|p| (p.width, p.height) == size) || !drawing.is_empty() {
-            return;
-        }
-        drawing.push(size);
-        let (sender, proxy, picture, path) = (
-            self.preview.markdown.sender.clone(),
-            self.link.proxy.clone(),
-            Arc::clone(picture),
-            path.to_path_buf(),
-        );
-        winc_editor::background::spawn(move || {
-            let pixels = Arc::new(picture.render(size.0, size.1));
-            if sender.send(Done::Drawn(path, pixels)).is_ok()
-                && let Some(proxy) = proxy
-            {
-                let _ = proxy.send_event(UserEvent::ImageReady);
-            }
-        });
     }
 
     /// 返回预览上 `(x, y)` 处的链接序号（见 [`MarkdownPreview::links`]）。
