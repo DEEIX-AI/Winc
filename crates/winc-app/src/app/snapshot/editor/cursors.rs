@@ -192,7 +192,7 @@ fn copy_and_paste_with_several_cursors() {
 
     // 复制：各选区的文字以换行符连接。粘贴到三个光标处时，每个光标各得一行。
     app.copy(false);
-    assert_eq!(app.copied.as_deref(), Some("alpha\nbeta\ngamma"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("alpha\nbeta\ngamma"));
     app.run(Command::LineEnd { extend: false });
     app.paste();
     assert!(
@@ -204,7 +204,7 @@ fn copy_and_paste_with_several_cursors() {
     app.run(Command::LineStart { extend: true });
     app.copy(true);
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some("let alpha = 1;\nlet beta = 2;\nlet gamma = 3;")
     );
     assert!(text(&app).contains("{\n    \n    \n    \n    println!"));
@@ -212,7 +212,7 @@ fn copy_and_paste_with_several_cursors() {
     app.run(Command::LineEnd { extend: false });
     app.copy(false);
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some("    let alpha = 1;\n    let beta = 2;\n    let gamma = 3;\n")
     );
     // 整行粘贴：剪贴板的行数与光标数相同，每个光标所在行的上方各插入一行。

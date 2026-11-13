@@ -1199,7 +1199,7 @@ fn a_tag_can_be_created_on_a_commit_from_the_log() {
         );
     }
     app.run_log_commit_command(MenuCommand::LogCopyShortOid, &oid);
-    assert_eq!(app.copied.as_deref(), Some(&oid[..7]));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(&oid[..7]));
 
     // 输入标签名后回车：标签创建在该提交上。
     app.run_log_commit_command(MenuCommand::LogNewTag, &oid);

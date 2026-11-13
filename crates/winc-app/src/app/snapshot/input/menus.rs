@@ -112,7 +112,7 @@ fn tree_context_menu_targets_the_clicked_row() {
     );
 
     app.run_menu_command(MenuCommand::CopyRelativePath);
-    assert_eq!(app.copied.as_deref(), Some("Cargo.toml"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("Cargo.toml"));
     assert!(app.context_menu.is_none());
 
     // 在空白处右键：目标是根目录，不能重命名，也不能删除。
@@ -123,7 +123,10 @@ fn tree_context_menu_targets_the_clicked_row() {
     let commands = menu_commands(&app);
     assert!(!commands.iter().any(|(c, _)| *c == MenuCommand::Delete));
     app.run_menu_command(MenuCommand::CopyPath);
-    assert_eq!(app.copied.as_deref(), Some(root.to_str().unwrap()));
+    assert_eq!(
+        app.clipboard.copied.as_deref(),
+        Some(root.to_str().unwrap())
+    );
     // 菜单已经使用过，再次执行菜单命令不产生任何效果。
     app.run_menu_command(MenuCommand::Delete);
     assert!(root.is_dir());
@@ -304,7 +307,7 @@ fn tab_context_menu_closes_others_right_and_saved() {
     assert!(commands.contains(&(MenuCommand::CopyPath, false)));
     assert!(commands.contains(&(MenuCommand::CloseRight, false)));
     app.run_menu_command(MenuCommand::CopyPath);
-    assert!(app.copied.is_none());
+    assert!(app.clipboard.copied.is_none());
 
     // 在 `config.rs` 上「关闭右侧」：右侧的两个标签关闭。
     let at = tab(&app, 1);
@@ -385,7 +388,7 @@ fn cmd_i_copies_a_reference_to_the_lines() {
     let copy = |app: &mut App, anchor, head| {
         app.editor.active_mut().unwrap().selection = Selection { anchor, head };
         assert!(press(app, &["cmd"], Char('i')));
-        app.copied.clone().unwrap()
+        app.clipboard.copied.clone().unwrap()
     };
     // `short.rs` 的第 0 行是 `fn main() {`，第 1 行从字符偏移 12 起，第 2 行从字符偏移 35 起。
     assert_eq!(copy(&mut app, 3, 3), "short.rs:1");
@@ -398,7 +401,7 @@ fn cmd_i_copies_a_reference_to_the_lines() {
     assert!(press(&mut app, &["cmd"], Char('l')));
     let file = app.editor.active().unwrap().path.clone().unwrap();
     let expected = format!("{}:1-3", file.display());
-    assert_eq!(app.copied.as_deref(), Some(expected.as_str()));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(expected.as_str()));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

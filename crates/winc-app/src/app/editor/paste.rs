@@ -14,53 +14,17 @@ use super::*;
 impl App {
     /// 返回剪贴板中的文件（从系统文件管理器或文件树中复制的）；没有时为空。
     pub(super) fn clipboard_files(&mut self) -> Vec<PathBuf> {
-        #[cfg(test)]
-        {
-            self.copied_files.clone()
-        }
-        #[cfg(not(test))]
-        {
-            self.system_clipboard()
-                .and_then(|clipboard| clipboard.get().file_list().ok())
-                .unwrap_or_default()
-        }
+        self.clipboard.files()
     }
 
     /// 返回剪贴板中的图片，编码为 PNG；没有时返回 `None`。
-    ///
-    /// macOS 上直接取出剪贴板中的 PNG（只有 TIFF 时由系统转换）；其他平台上 arboard 给出 RGBA
-    /// 像素，再编码为 PNG。
     fn clipboard_png(&mut self) -> Option<Vec<u8>> {
-        #[cfg(test)]
-        {
-            self.copied_image.clone()
-        }
-        #[cfg(all(not(test), target_os = "macos"))]
-        {
-            crate::macos::pasteboard_png()
-        }
-        #[cfg(all(not(test), not(target_os = "macos")))]
-        {
-            let image = self.system_clipboard()?.get_image().ok()?;
-            paste::encode_png(image.width, image.height, &image.bytes)
-        }
+        self.clipboard.png()
     }
 
-    /// 剪贴板中是否有图片，尽量不取出数据（只有 macOS 能做到，其他平台上要解码一次）。
+    /// 剪贴板中是否有图片。
     fn clipboard_has_image(&mut self) -> bool {
-        #[cfg(test)]
-        {
-            self.copied_image.is_some()
-        }
-        #[cfg(all(not(test), target_os = "macos"))]
-        {
-            crate::macos::pasteboard_has_image()
-        }
-        #[cfg(all(not(test), not(target_os = "macos")))]
-        {
-            self.system_clipboard()
-                .is_some_and(|clipboard| clipboard.get_image().is_ok())
-        }
+        self.clipboard.has_image()
     }
 
     /// 剪贴板中是否有能粘贴到文件树中的内容（文件、文本或图片）。
@@ -81,17 +45,7 @@ impl App {
             return;
         }
         self.shared.cut_files.borrow_mut().clear();
-        self.line_clipboard = None;
-        #[cfg(test)]
-        {
-            self.copied = None;
-            self.copied_image = None;
-            self.copied_files = paths.to_vec();
-        }
-        #[cfg(not(test))]
-        if let Some(clipboard) = self.system_clipboard() {
-            let _ = clipboard.set().file_list(paths);
-        }
+        self.clipboard.set_files(paths);
         self.flash(match paths {
             [path] => t!("editor-paste-copied-item", name = display_name(path)),
             many => t!("editor-paste-copied-items", count = many.len()),

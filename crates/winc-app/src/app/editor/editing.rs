@@ -451,39 +451,12 @@ impl App {
     ///
     /// `whole_line` 为 `true` 表示复制的是整行，粘贴到编辑区时插入当前行上方。
     pub(in crate::app) fn set_clipboard(&mut self, text: String, whole_line: bool) {
-        self.line_clipboard = whole_line.then(|| text.clone());
-
-        #[cfg(test)]
-        {
-            self.copied = Some(text);
-            self.copied_files.clear();
-            self.copied_image = None;
-        }
-        #[cfg(not(test))]
-        if let Some(clipboard) = self.system_clipboard() {
-            let _ = clipboard.set_text(text);
-        }
+        self.clipboard.set_text(text, whole_line);
     }
 
-    /// 返回剪贴板中的文本；测试中返回 `copied` 的内容，没有时返回 `None`。
+    /// 返回剪贴板中的文本；没有时返回 `None`。
     pub(in crate::app) fn clipboard_text(&mut self) -> Option<String> {
-        #[cfg(test)]
-        {
-            self.copied.clone()
-        }
-        #[cfg(not(test))]
-        {
-            self.system_clipboard()?.get_text().ok()
-        }
-    }
-
-    /// 返回系统剪贴板，首次调用时创建；创建失败时返回 `None`。
-    #[cfg(not(test))]
-    pub(super) fn system_clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
-        if self.clipboard.is_none() {
-            self.clipboard = arboard::Clipboard::new().ok();
-        }
-        self.clipboard.as_mut()
+        self.clipboard.text()
     }
 
     /// 复制选区（`cut` 为 `true` 时剪切）；没有选区时操作光标所在的整行。
@@ -644,8 +617,7 @@ impl App {
             .editor
             .active()
             .is_some_and(|d| d.selections().0.iter().all(|s| s.is_empty()));
-        let whole_line =
-            empty_selection && self.line_clipboard.as_deref() == Some(content.as_str());
+        let whole_line = empty_selection && self.clipboard.holds_line(&content);
         self.run(if whole_line {
             Command::InsertLinesAbove(content)
         } else {

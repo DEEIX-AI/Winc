@@ -337,7 +337,7 @@ fn files_cut_in_one_window_move_into_another_windows_folder() {
     let b = winc.add_detached(app_with(&b_dir.join("src/main.rs"), false));
 
     winc.app(a).cut_entries(std::slice::from_ref(&notes));
-    winc.app(b).copied_files = vec![notes.clone()];
+    winc.app(b).clipboard.copied_files = vec![notes.clone()];
     let target = winc.app(b).editor.workspace.as_ref().unwrap().target_dir();
     winc.app(b).paste_into_tree();
     winc.settle_for_test();

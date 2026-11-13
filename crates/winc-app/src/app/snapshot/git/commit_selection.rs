@@ -118,7 +118,10 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
                 .to_string()
         })
         .collect();
-    assert_eq!(app.copied.as_deref(), Some(relative.join("\n").as_str()));
+    assert_eq!(
+        app.clipboard.copied.as_deref(),
+        Some(relative.join("\n").as_str())
+    );
 
     // 回滚后已跟踪的文件恢复原内容，未跟踪的文件被移除；未选中的两个文件保持不变。
     let edited: Vec<(PathBuf, Option<String>)> = files

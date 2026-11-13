@@ -959,7 +959,7 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     assert_eq!(layout.part_at(x, y), None);
     click_part(&mut app, SettingsPart::Copy(Setting::Version));
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some(&*crate::layout::version_label())
     );
     assert_eq!(app.settings.selected, Setting::Version);

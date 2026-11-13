@@ -945,20 +945,8 @@ pub struct App {
     pub highlight_pending: bool,
     /// 光标旁括号的配对结果缓存。
     pub brace_cache: Option<(BraceKey, Option<(usize, usize)>)>,
-    /// 系统剪贴板，首次使用时才初始化。
-    #[cfg(not(test))]
-    clipboard: Option<arboard::Clipboard>,
-    /// 测试中代替系统剪贴板的文本。
-    #[cfg(test)]
-    pub copied: Option<String>,
-    /// 测试中代替系统剪贴板的文件列表。
-    #[cfg(test)]
-    pub copied_files: Vec<PathBuf>,
-    /// 测试中代替系统剪贴板的图片（PNG）。
-    #[cfg(test)]
-    pub copied_image: Option<Vec<u8>>,
-    /// 最近一次整行复制的内容；粘贴相同内容时按整行插入到当前行上方。
-    line_clipboard: Option<String>,
+    /// 剪贴板。
+    pub(crate) clipboard: editor::clipboard::Clipboard,
     /// Vim 模式的状态；Vim 模式关闭时为 `None`。
     pub(crate) vim: Option<Box<vim::VimState>>,
 

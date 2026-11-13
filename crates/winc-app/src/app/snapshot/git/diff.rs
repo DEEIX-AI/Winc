@@ -969,7 +969,7 @@ fn a_read_only_right_side_selects_and_copies_like_the_left() {
     assert_eq!(view.read_caret(), Some((RIGHT, 9)));
     paint(&mut app);
     assert!(app.run_action(Action::Copy));
-    assert_eq!(app.copied.as_deref(), Some("fresh"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("fresh"));
 
     // ⌘A 选中右侧全部。
     assert!(app.run_action(Action::SelectAll));

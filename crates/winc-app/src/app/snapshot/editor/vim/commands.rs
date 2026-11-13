@@ -19,7 +19,7 @@ fn ctrl_keys_reach_vim_where_the_mode_defines_them() {
     keys(&mut app, "l\"a");
     app.vim_copy_selection();
     assert_eq!(
-        (app.copied.as_deref(), app.vim_mode()),
+        (app.clipboard.copied.as_deref(), app.vim_mode()),
         (Some("on"), Some(Mode::Normal))
     );
     assert!(app.vim_press(VimKey::ctrl('a')));
@@ -59,7 +59,7 @@ fn application_commands_drop_the_unfinished_keys_first() {
     keys(&mut app, "d");
     assert!(app.run_action(Action::Copy));
     assert_eq!(
-        (app.copied.as_deref(), text(&app).as_str()),
+        (app.clipboard.copied.as_deref(), text(&app).as_str()),
         (Some("one\n"), "one\ntwo\n")
     );
     keys(&mut app, "x");

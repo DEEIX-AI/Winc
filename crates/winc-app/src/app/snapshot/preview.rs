@@ -1437,7 +1437,7 @@ fn code_blocks_offer_a_copy_button_on_hover() {
         .cloned()
         .expect("鼠标在代码块上时有复制按钮");
     super::click(&mut app, (rect.x + 4.0, rect.y + 4.0));
-    let copied = app.copied.clone().unwrap();
+    let copied = app.clipboard.copied.clone().unwrap();
     assert!(copied.starts_with("fn main() {\n"), "{copied:?}");
     assert!(copied.trim_end().ends_with('}'));
 
@@ -1489,7 +1489,7 @@ fn preview_text_can_be_selected_and_copied() {
     // ⌘A ⌘C：复制整份文字，段落之间换行，中文软换行处不插入空格，代码保持原样。
     assert!(press(&mut app, &["cmd"], Char('a')));
     assert!(press(&mut app, &["cmd"], Char('c')));
-    let all = app.copied.clone().unwrap();
+    let all = app.clipboard.copied.clone().unwrap();
     assert!(
         all.starts_with("winc 编辑器\n一个用 Rust 写的轻量编辑器，启动快"),
         "{all}"

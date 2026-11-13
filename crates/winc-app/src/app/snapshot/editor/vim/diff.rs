@@ -66,11 +66,11 @@ fn a_read_only_side_takes_motions_selections_yanks_searches_and_marks() {
     assert_eq!(app.vim_mode(), Some(Mode::Visual));
     assert_eq!(read(&mut app), Some((RIGHT, 0, 3)));
     keys(&mut app, "\"+y");
-    assert_eq!(app.copied.as_deref(), Some("one"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("one"));
     assert_eq!(app.vim_mode(), Some(Mode::Normal));
     assert_eq!(read(&mut app), Some((RIGHT, 0, 0)));
     keys(&mut app, "j\"+yy");
-    assert_eq!(app.copied.as_deref(), Some("THREE\n"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("THREE\n"));
 
     // 查找：输入条、`n` 与 `*`。
     keys(&mut app, "gg/");
@@ -116,7 +116,7 @@ fn the_left_side_keeps_its_own_cursor_and_marks_and_follows_the_mouse() {
     keys(&mut app, "e");
     assert_eq!(read(&mut app), Some((LEFT, 12, 12)));
     keys(&mut app, "\"+yiw");
-    assert_eq!(app.copied.as_deref(), Some("three"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("three"));
     keys(&mut app, "`b");
     assert_eq!(app.status.message.as_deref(), Some("未设置标记 b"));
     keys(&mut app, "x");
@@ -131,7 +131,7 @@ fn the_left_side_keeps_its_own_cursor_and_marks_and_follows_the_mouse() {
     assert_eq!(app.vim_mode(), Some(Mode::Visual));
     // 应用的复制由 Vim 层执行，随后回到普通模式。
     assert!(app.run_action(Action::Copy));
-    assert_eq!(app.copied.as_deref(), Some("one"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("one"));
     assert_eq!(app.vim_mode(), Some(Mode::Normal));
     point(&mut app, LEFT, (7, 7));
     keys(&mut app, "<Esc>");

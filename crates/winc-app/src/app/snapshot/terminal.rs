@@ -458,20 +458,20 @@ fn dragging_selects_and_command_c_copies() {
     app.on_mouse_move(x1 + app.terminal_cell / 2.0, y1);
     app.on_mouse_up(MouseButton::Left);
     assert!(press(&mut app, &["term"], Char('c')));
-    assert_eq!(app.copied.as_deref(), Some("cargo build\nerror"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("cargo build\nerror"));
 
     // 双击选中整个 `文件:行:列`。
     let at = cell_center(&app, 1, 12);
     click(&mut app, at);
     click(&mut app, at);
     assert!(press(&mut app, &["term"], Char('c')));
-    assert_eq!(app.copied.as_deref(), Some("src/main.rs:12:5"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("src/main.rs:12:5"));
 
     // 三击选中整行；单击清掉选区，⌘C 什么也不复制。
     click(&mut app, at);
     assert!(press(&mut app, &["term"], Char('c')));
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some("error: src/main.rs:12:5 failed")
     );
     let blank = cell_center(&app, 2, 0);
@@ -482,7 +482,7 @@ fn dragging_selects_and_command_c_copies() {
     assert!(press(&mut app, &["term"], Char('a')));
     assert!(press(&mut app, &["term"], Char('c')));
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some("$ cargo build\nerror: src/main.rs:12:5 failed\n$")
     );
     paint(&mut app);
@@ -959,7 +959,7 @@ fn shortcuts_in_the_terminal_fields_stay_with_the_terminal() {
     // 编辑用的快捷键作用于输入框：全选、复制以后清空，再粘贴回来。
     assert!(press(&mut app, &["term"], Char('a')));
     assert!(press(&mut app, &["term"], Char('c')));
-    assert_eq!(app.copied.as_deref(), Some("hi"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("hi"));
     app.edit_field(|f| {
         f.set_text("");
         true

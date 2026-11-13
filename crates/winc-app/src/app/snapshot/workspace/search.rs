@@ -667,7 +667,7 @@ fn right_clicking_a_search_result_offers_its_menu() {
     } else {
         "src/main.rs"
     };
-    assert_eq!(app.copied.as_deref(), Some(relative));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(relative));
     // 焦点在结果列表里时，命令面板的「复制路径」复制的也是选中的结果。macOS 上菜单不写 ⌥⌘C：
     // 在这里它是「区分大小写」开关；其他系统上开关是 Alt+C，菜单上仍写出 Ctrl+Alt+C。
     let in_panel = MenuCommand::CopyPath.shortcut(Context::Panel);
@@ -675,7 +675,10 @@ fn right_clicking_a_search_result_offers_its_menu() {
     assert!(MenuCommand::CopyPath.shortcut(Context::Tree).is_some());
     app.run_action(Action::CopyPath);
     // 按路径比较：Windows 上复制的路径一律用 `\`。
-    assert_eq!(app.copied.as_deref().map(Path::new), Some(main.as_path()));
+    assert_eq!(
+        app.clipboard.copied.as_deref().map(Path::new),
+        Some(main.as_path())
+    );
 
     // 匹配行：复制的是原来的整行（预览去掉了行首空白），不带行尾。
     let found = row_of(&app, ResultRow::Match(2, 0)).unwrap();
@@ -683,7 +686,7 @@ fn right_clicking_a_search_result_offers_its_menu() {
     assert_eq!(commands(&app), [OpenFiles, Copy, DismissResult]);
     app.run_menu_command(Copy);
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some("    let config = load_config();")
     );
 

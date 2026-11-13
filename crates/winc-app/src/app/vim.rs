@@ -436,13 +436,7 @@ impl App {
     /// 在文档 `doc` 上回到普通模式并结束未完成的撤销分组；文档已不存在时只丢弃状态。
     fn vim_leave(&mut self, state: &mut VimState) {
         let view = self.vim_view();
-        let clip = Clip {
-            #[cfg(not(test))]
-            system: &mut self.clipboard,
-            #[cfg(test)]
-            copied: &mut self.copied,
-            whole_line: &mut self.line_clipboard,
-        };
+        let clip = Clip(&mut self.clipboard);
         let documents = &mut self.editor.documents;
         let doc = match &mut state.side {
             Some(held) => Some(&mut held.doc),
@@ -486,13 +480,7 @@ impl App {
             None => 0.0,
         };
         let index = self.vim_target();
-        let clip = Clip {
-            #[cfg(not(test))]
-            system: &mut self.clipboard,
-            #[cfg(test)]
-            copied: &mut self.copied,
-            whole_line: &mut self.line_clipboard,
-        };
+        let clip = Clip(&mut self.clipboard);
         let doc = match &mut state.side {
             Some(held) => &mut held.doc,
             None => self.editor.documents.get_mut(index?)?,

@@ -269,7 +269,10 @@ fn keys_without_a_meaning_never_become_text() {
     keys(&mut app, "i");
     assert_eq!(app.vim_mode(), Some(Mode::Normal));
     keys(&mut app, "l\"+yl");
-    assert_eq!((head(&app), app.copied.as_deref()), (1, Some("b")));
+    assert_eq!(
+        (head(&app), app.clipboard.copied.as_deref()),
+        (1, Some("b"))
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -285,7 +288,7 @@ fn selections_and_commands_from_outside_keep_the_mode_in_step() {
     assert_eq!(app.vim_caret(), Some((6, CaretShape::Block)));
     // 应用的复制等同于复制到系统剪贴板，随后回到普通模式。
     assert!(app.run_action(Action::Copy));
-    assert_eq!(app.copied.as_deref(), Some("two"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("two"));
     assert_eq!((app.vim_mode(), head(&app)), (Some(Mode::Normal), 4));
 
     // 点击行尾之后：光标退到最后一个字符。
@@ -296,7 +299,7 @@ fn selections_and_commands_from_outside_keep_the_mode_in_step() {
     // 应用的剪切、粘贴、撤销、重做由 Vim 层执行。
     assert!(app.run_action(Action::Cut));
     assert_eq!(
-        (text(&app).as_str(), app.copied.as_deref()),
+        (text(&app).as_str(), app.clipboard.copied.as_deref()),
         ("three\n", Some("one two\n"))
     );
     assert!(app.run_action(Action::Paste));
@@ -616,15 +619,15 @@ fn the_clipboard_setting_decides_what_reaches_the_system_clipboard() {
     let (mut app, dir) = vim_app("vim-clipboard", "one\ntwo\n");
     assert_eq!(Setting::VimClipboard.control(), SettingControl::Choice);
     keys(&mut app, "yy");
-    assert_eq!(app.copied, None);
+    assert_eq!(app.clipboard.copied, None);
     app.set_vim_clipboard(winc_config::VimClipboard::Yank);
     keys(&mut app, "yy");
-    assert_eq!(app.copied.as_deref(), Some("one\n"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("one\n"));
     keys(&mut app, "jdd");
-    assert_eq!(app.copied.as_deref(), Some("one\n"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("one\n"));
     app.set_vim_clipboard(winc_config::VimClipboard::Always);
     keys(&mut app, "x");
-    assert_eq!(app.copied.as_deref(), Some("o"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("o"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

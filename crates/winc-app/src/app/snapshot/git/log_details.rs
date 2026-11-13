@@ -119,7 +119,7 @@ fn the_log_shows_who_wrote_each_commit_and_copies_its_hash() {
     };
     // ⌘C 复制选中提交的完整提交号。
     app.run_action(Action::Copy);
-    assert_eq!(app.copied.as_deref(), Some(oid.as_str()));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(oid.as_str()));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -327,7 +327,7 @@ fn text_in_the_log_details_can_be_selected_and_copied() {
     let want = format!("{}\n{}", start.text, body.text);
     assert_eq!(app.log_selected_text().as_deref(), Some(want.as_str()));
     app.run_action(Action::Copy);
-    assert_eq!(app.copied.as_deref(), Some(want.as_str()));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(want.as_str()));
     paint(&mut app);
 
     // 双击一行选中整行（邮箱）；点空白处清掉，⌘C 回到复制提交号。
@@ -353,7 +353,7 @@ fn text_in_the_log_details_can_be_selected_and_copied() {
         let v = app.editor.active().unwrap().log.as_deref().unwrap();
         v.commits[row].oid.clone()
     };
-    assert_eq!(app.copied.as_deref(), Some(oid.as_str()));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(oid.as_str()));
     let _ = std::fs::remove_dir_all(&root);
 }
 

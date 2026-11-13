@@ -162,7 +162,7 @@ fn config_files_show_and_copy_the_key_under_the_caret() {
     paint(&mut app);
     assert_eq!(app.key_path().as_deref(), Some("scripts.build"));
     app.run_action(crate::keymap::Action::CopyKeyPath);
-    assert_eq!(app.copied.as_deref(), Some("scripts.build"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("scripts.build"));
 
     // 光标移出键所在的位置后，没有可显示的键路径。
     app.select(0, 0);

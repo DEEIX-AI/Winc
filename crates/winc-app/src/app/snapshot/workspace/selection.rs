@@ -124,14 +124,17 @@ fn the_menu_on_a_selection_copies_and_deletes_every_selected_item() {
 
     // 复制路径一行一个，复制的文件按显示顺序。
     app.run_menu_command(MenuCommand::CopyRelativePath);
-    assert_eq!(app.copied.as_deref(), Some("src\na.txt\nCargo.toml"));
+    assert_eq!(
+        app.clipboard.copied.as_deref(),
+        Some("src\na.txt\nCargo.toml")
+    );
     right_click(&mut app, at);
     app.run_menu_command(MenuCommand::Copy);
     let expected: Vec<PathBuf> = ["src", "a.txt", "Cargo.toml"]
         .iter()
         .map(|n| root.join(n))
         .collect();
-    assert_eq!(app.copied_files, expected);
+    assert_eq!(app.clipboard.copied_files, expected);
 
     // 删除一次删掉全部。
     right_click(&mut app, at);
@@ -242,7 +245,7 @@ fn cut_and_paste_in_the_tree_moves_the_selection_once() {
         *app.shared.cut_files.borrow(),
         [root.join("a.txt"), root.join("short.rs")]
     );
-    assert_eq!(app.copied_files, *app.shared.cut_files.borrow());
+    assert_eq!(app.clipboard.copied_files, *app.shared.cut_files.borrow());
     assert_eq!(app.status.message.as_deref(), Some("已剪切 2 项"));
 
     // 粘贴到 lib：两项移过去，剪切的记录清掉，移过去的两项选中。

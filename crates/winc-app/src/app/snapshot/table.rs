@@ -363,7 +363,7 @@ fn cells_are_selected_copied_and_merged_cells_read_in_full() {
     shoot(&mut app, "table-merged");
     // 复制合并区域：左上角那一格的文字。
     app.copy(false);
-    let copied = app.copied.clone().unwrap();
+    let copied = app.clipboard.copied.clone().unwrap();
     assert!(
         copied.starts_with("第一段很长的说明文字") && copied.ends_with("第三段"),
         "{copied}"
@@ -381,7 +381,7 @@ fn cells_are_selected_copied_and_merged_cells_read_in_full() {
     app.modifiers = winit::keyboard::ModifiersState::empty();
     assert_eq!(selection(&app), ((3, 2), (1, 0)));
     app.copy(false);
-    let copied = app.copied.clone().unwrap();
+    let copied = app.clipboard.copied.clone().unwrap();
     assert!(copied.starts_with("城市 2\t20\t\"第一段"), "{copied}");
     assert!(
         copied.ends_with("第三段\"\t\n城市 3\t30\t\t\n城市 4\t40\t\t\n"),

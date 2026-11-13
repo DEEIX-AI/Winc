@@ -48,6 +48,52 @@ fn workspace_dependencies_follow_the_layers() {
     assert_eq!(layer_violations(&extra), ["winc-core → winc-render"]);
 }
 
+#[test]
+fn source_files_stay_within_the_size_limit() {
+    let root = root();
+    let sizes = source_sizes(&root, &members(&root).unwrap()).unwrap();
+    assert_eq!(size_violations(&sizes, OVERSIZED), Vec::<String>::new());
+
+    // 未登记的文件超限、登记的文件变长、登记的文件已不超限或不存在，各报告一条。
+    let sizes = [
+        ("a.rs".to_owned(), MAX_LINES),
+        ("b.rs".to_owned(), MAX_LINES + 1),
+        ("c.rs".to_owned(), 2001),
+        ("d.rs".to_owned(), 1999),
+        ("e.rs".to_owned(), 900),
+    ];
+    let registry = [
+        ("c.rs", 2000),
+        ("d.rs", 2000),
+        ("e.rs", 1800),
+        ("f.rs", 1600),
+    ];
+    assert_eq!(
+        size_violations(&sizes, &registry),
+        [
+            "b.rs 有 1501 行，超过 1500 行",
+            "c.rs 有 2001 行，超过登记的 2000 行",
+            "e.rs 已不超限，从登记表中删除",
+            "f.rs 已不超限，从登记表中删除",
+        ]
+    );
+}
+
+#[test]
+fn crate_clippy_configs_repeat_the_root_settings() {
+    let root = root();
+    let (violations, copies) = clippy_violations(&root, &members(&root).unwrap()).unwrap();
+    assert_eq!(violations, Vec::<String>::new());
+    // 至少有一个 crate 有自己的配置，否则上面什么都没有检查。
+    assert!(copies > 0);
+
+    // 缺少的设置行被报告；注释和空行不参与比较。
+    let base = clippy_settings("# 说明\na = 1\n\nb = [\n    \"x\",\n]\n");
+    assert_eq!(base, ["a = 1", "b = [", "\"x\",", "]"]);
+    let copy = clippy_settings("b = [\n    \"x\",\n    \"y\",\n]\n");
+    assert_eq!(missing_settings(&base, &copy), ["a = 1"]);
+}
+
 /// `winc-app` 的逻辑层（`app/`）只在帧入口调用绘制层，并以字段持有绘制缓存的类型。
 #[test]
 fn app_logic_does_not_reference_the_view() {

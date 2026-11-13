@@ -1692,7 +1692,7 @@ fn the_last_local_commit_can_be_undone() {
     app.press_commit(CommitTarget::LastCommit);
     app.run_menu_command(MenuCommand::CommitCopyOid);
     let oid = app.commit_undoable().unwrap().oid.clone();
-    assert_eq!(app.copied.as_deref(), Some(oid.as_str()));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(oid.as_str()));
     app.press_commit(CommitTarget::LastCommit);
     let commands: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
     assert_eq!(

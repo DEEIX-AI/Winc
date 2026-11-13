@@ -135,15 +135,7 @@ impl App {
             name_input: None,
             highlight_pending: false,
             brace_cache: None,
-            #[cfg(not(test))]
-            clipboard: None,
-            #[cfg(test)]
-            copied: None,
-            #[cfg(test)]
-            copied_files: Vec::new(),
-            #[cfg(test)]
-            copied_image: None,
-            line_clipboard: None,
+            clipboard: Default::default(),
             vim,
             search: Search::default(),
             find: Default::default(),

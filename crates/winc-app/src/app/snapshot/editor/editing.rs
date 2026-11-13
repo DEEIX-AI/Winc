@@ -98,7 +98,7 @@ fn copying_without_a_selection_copies_and_pastes_whole_lines() {
     app.select(15, 15);
     app.copy(false);
     assert_eq!(
-        app.copied.as_deref(),
+        app.clipboard.copied.as_deref(),
         Some("    let config = load_config();\n")
     );
 
@@ -111,7 +111,7 @@ fn copying_without_a_selection_copies_and_pastes_whole_lines() {
     // 有选区时复制选区内容，粘贴时按普通文本在光标处插入。
     app.select(4, 7);
     app.copy(false);
-    assert_eq!(app.copied.as_deref(), Some("let"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("let"));
     app.select(0, 0);
     app.paste();
     assert!(line(&app, 0).starts_with("let    let"));
@@ -169,7 +169,7 @@ fn right_clicking_the_text_offers_format_cut_copy_paste() {
     );
     assert_eq!(selection(&app), (20, 26));
     app.run_menu_command(Copy);
-    assert_eq!(app.copied.as_deref(), Some("config"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("config"));
 
     // 该行添加书签后，菜单项变为「删除书签」。
     right_click_text(&mut app, 1, 10);
@@ -191,7 +191,7 @@ fn right_clicking_the_text_offers_format_cut_copy_paste() {
     right_click_text(&mut app, 0, 3);
     assert_eq!(selection(&app), (3, 3));
     app.run_menu_command(Cut);
-    assert_eq!(app.copied.as_deref(), Some("fn main() {\n"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("fn main() {\n"));
     assert_eq!(line(&app, 0), "    let config = load_config();");
 
     // 粘贴整行：插入到光标所在行的上方。

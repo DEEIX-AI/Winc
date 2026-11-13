@@ -164,10 +164,10 @@ fn the_menu_on_a_command_copies_it_and_its_output() {
         ]
     );
     app.run_menu_command(MenuCommand::CopyCommand);
-    assert_eq!(app.copied.as_deref(), Some("echo hi"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("echo hi"));
     right_click(&mut app, 2);
     app.run_menu_command(MenuCommand::CopyOutput);
-    assert_eq!(app.copied.as_deref(), Some("hi\nthere"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("hi\nthere"));
 
     // 提示符那一行的块还没运行：没有块的几项。
     let (target, items) = right_click(&mut app, 3);

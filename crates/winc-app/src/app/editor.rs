@@ -6,6 +6,7 @@
 use super::*;
 
 pub(super) mod bookmarks;
+pub(crate) mod clipboard;
 pub(super) mod conflict;
 pub(super) mod cursors;
 pub(crate) mod definition;

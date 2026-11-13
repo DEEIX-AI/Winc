@@ -702,7 +702,12 @@ fn the_terminal_menu_maximizes_and_the_options_apply() {
     app.run_menu_command(MenuCommand::SelectAll);
     assert!(right_click(&mut app).contains(&(MenuCommand::Copy, true)));
     app.run_menu_command(MenuCommand::Copy);
-    assert!(app.copied.as_deref().is_some_and(|t| t.contains("echo hi")));
+    assert!(
+        app.clipboard
+            .copied
+            .as_deref()
+            .is_some_and(|t| t.contains("echo hi"))
+    );
 
     // 菜单里切换停靠位置，文字说的是切换后的位置。
     assert_eq!(
@@ -742,14 +747,14 @@ fn the_terminal_menu_maximizes_and_the_options_apply() {
     assert_eq!(app.layout.editor.h, EDITOR_MIN + 50.0);
 
     // 选中松开就复制（`copyOnSelect`）。
-    app.copied = None;
+    app.clipboard.copied = None;
     app.config.terminal_copy_on_select = Some(true);
     let (from, to) = (cell_center(&app, 1, 0), cell_center(&app, 1, 1));
     app.on_mouse_move(from.0 - app.terminal_cell / 2.0 + 0.5, from.1);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(to.0 + app.terminal_cell / 2.0 - 0.5, to.1);
     app.on_mouse_up(MouseButton::Left);
-    assert_eq!(app.copied.as_deref(), Some("hi"));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("hi"));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
