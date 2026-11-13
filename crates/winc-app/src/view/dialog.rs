@@ -77,7 +77,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         FormKind::Question(..)
         | FormKind::Remote { .. }
         | FormKind::Connect
-        | FormKind::CompareCommits => {
+        | FormKind::GoToRevision => {
             return draw_question(app, frame, layout);
         }
         FormKind::Clone => return draw_clone(app, frame, layout),

@@ -186,6 +186,7 @@ pub enum Action {
     ToggleDiffLayout,
     GitShowChanges,
     GitShowLog,
+    GitGoToRevision,
     /// 在只读标签中打开 Git 操作的输出。
     GitShowOutput,
     /// 克隆仓库。
@@ -426,6 +427,7 @@ impl Action {
             ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
             GitShowLog => t!("cmd-git-show-log"),
+            GitGoToRevision => t!("cmd-git-go-to-revision"),
             GitShowOutput => t!("cmd-git-show-output"),
             GitClone => t!("cmd-git-clone"),
             GitInit => t!("cmd-git-init"),
@@ -633,6 +635,7 @@ impl Action {
             ToggleDiffLayout => "Toggle Inline Diff",
             GitShowChanges => "Git: Open Changes",
             GitShowLog => "Git: Show Log",
+            GitGoToRevision => "Git: Go to Hash, Branch or Tag",
             GitShowOutput => "Git: Show Output",
             GitClone => "Git: Clone Repository…",
             GitInit => "Git: Initialize Repository",
@@ -805,6 +808,7 @@ impl Action {
             | ToggleDiffLayout
             | GitShowChanges
             | GitShowLog
+            | GitGoToRevision
             | GitShowOutput
             | GitClone
             | GitInit
@@ -912,6 +916,7 @@ impl Action {
         match self {
             Action::GitShowChanges
             | Action::GitShowLog
+            | Action::GitGoToRevision
             | Action::GitShowOutput
             | Action::GitClone
             | Action::GitInit
@@ -1156,6 +1161,7 @@ pub const ACTIONS: &[Action] = {
         ShowCommit,
         GitShowChanges,
         GitShowLog,
+        GitGoToRevision,
         GitShowOutput,
         GitClone,
         GitInit,

@@ -1093,6 +1093,66 @@ fn push_skips_remotes_that_look_like_options() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 转到：提交号（可以缩写）、分支名和标签名都解析成完整的提交号；修改上次提交之后，原来的
+/// 提交仍能解析，但不在日志中，固定后排在最前面。
+#[test]
+fn revisions_resolve_to_commits_and_amended_ones_are_outside_the_log() {
+    let Some(git) = real_git() else {
+        return;
+    };
+    let dir = crate::test_util::scratch("git-resolve-revision");
+    let sh = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+    sh(&["init", "-q", "-b", "main"]);
+    sh(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    sh(&["tag", "-a", "v1", "-m", "v1"]);
+    let first = sh(&["rev-parse", "HEAD"]);
+    sh(&["commit", "-q", "--allow-empty", "-m", "second"]);
+    let old = sh(&["rev-parse", "HEAD"]);
+    sh(&[
+        "commit",
+        "-q",
+        "--amend",
+        "--allow-empty",
+        "-m",
+        "second, amended",
+    ]);
+    let new = sh(&["rev-parse", "HEAD"]);
+    let root = winc_config::files::canonicalize(&dir).unwrap();
+    let cancel = Cancel::default();
+    let resolve = |text: &str| git.resolve_revision(&root, text, &cancel);
+
+    assert_eq!(resolve("main").unwrap(), new);
+    // 附注标签解析到它指向的提交，不是标签对象本身。
+    assert_eq!(resolve("v1").unwrap(), first);
+    assert_eq!(resolve(&old[..8].to_ascii_uppercase()).unwrap(), old);
+    for bad in ["", "-h", "main v1", "no-such-branch", &"0".repeat(12)] {
+        assert!(resolve(bad).is_err(), "{bad:?}");
+    }
+
+    assert!(git.in_log(&root, &new, &cancel).unwrap());
+    assert!(git.in_log(&root, &first, &cancel).unwrap());
+    assert!(!git.in_log(&root, &old, &cancel).unwrap());
+    let query = LogQuery {
+        pin: Some(old.clone()),
+        ..LogQuery::default()
+    };
+    let commits = git.log_stream(&root, &query).unwrap().next(10).unwrap();
+    let oids: Vec<_> = commits.iter().map(|c| c.oid.as_str()).collect();
+    assert_eq!(oids, [old.as_str(), new.as_str(), first.as_str()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 筛选文字形如提交号时同时按提交号查找：解析出的提交排在最前面，说明同样匹配时不重复。
 #[test]
 fn log_filter_also_finds_a_commit_by_its_hash() {

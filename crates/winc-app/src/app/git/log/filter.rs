@@ -48,7 +48,11 @@ impl App {
     /// 筛选输入框里的文字变了：当前日志按新的文字从头再取。
     pub(in crate::app) fn log_filter_changed(&mut self) {
         let text = self.log.filter.text().to_owned();
-        self.change_log_query(|q| q.text = text);
+        // 改了筛选文字即离开转到的提交，不再固定它。
+        self.change_log_query(|q| {
+            q.text = text;
+            q.pin = None;
+        });
     }
 
     /// 改当前日志的筛选条件，从头再取。

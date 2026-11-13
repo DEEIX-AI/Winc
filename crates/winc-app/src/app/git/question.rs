@@ -44,7 +44,7 @@ pub(crate) struct QuestionView {
     pub message_lines: usize,
     /// 只读信息。
     pub values: Vec<QuestionValue>,
-    /// 输入框，顺序为 `name`、`second`。
+    /// 输入框，顺序为 `name`、`password`。
     pub inputs: Vec<QuestionInput>,
     /// 主按钮的文字。
     pub confirm: &'static str,
@@ -60,23 +60,18 @@ const OTHER_CONFIRM_LINES: usize = 8;
 const HOST_KEY_LINES: usize = 1;
 
 impl QuestionView {
-    pub(super) fn compare_commits() -> Self {
+    /// 返回「转到提交号、分支或标签」对话框的内容：一个输入框。
+    pub(super) fn go_to_revision() -> Self {
         Self {
-            title: t!("git-compare-commits").to_owned(),
+            title: t!("git-go-to-title").to_owned(),
             message: None,
             message_lines: 0,
             values: Vec::new(),
-            inputs: vec![
-                QuestionInput {
-                    label: t!("git-compare-old-id"),
-                    placeholder: "",
-                },
-                QuestionInput {
-                    label: t!("git-compare-new-id"),
-                    placeholder: "",
-                },
-            ],
-            confirm: t!("git-compare-button"),
+            inputs: vec![QuestionInput {
+                label: t!("git-go-to-label"),
+                placeholder: t!("git-go-to-placeholder"),
+            }],
+            confirm: t!("git-go-to-button"),
         }
     }
 

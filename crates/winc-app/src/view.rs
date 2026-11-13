@@ -351,16 +351,6 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                     ),
                 }
             }
-            Hover::Log(crate::app::git::log::LogTarget::CompareCommits) => {
-                let Some(&(rect, _)) =
-                    app.hits.log.iter().find(|(_, target)| {
-                        *target == crate::app::git::log::LogTarget::CompareCommits
-                    })
-                else {
-                    return;
-                };
-                (rect, t!("git-compare-commits-menu").to_owned())
-            }
             // 日志列表中的作者头像：提示作者名和邮箱。
             Hover::Log(crate::app::git::log::LogTarget::Avatar(i)) => {
                 let hit = app

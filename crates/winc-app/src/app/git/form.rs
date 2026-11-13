@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use winc_editor::git::{is_commit_hash, unique_dir};
+use winc_editor::git::unique_dir;
 use winc_i18n::t;
 
 use super::branch::local_name;
@@ -37,8 +37,8 @@ pub(crate) enum FormKind {
     Clone,
     /// 添加远程仓库，或修改 `editing` 的地址。
     Remote { editing: Option<String> },
-    /// 在 Git 日志中按提交号比较两个版本。
-    CompareCommits,
+    /// 在 Git 日志中转到一个提交：输入提交号、分支名或标签名。
+    GoToRevision,
     /// 交互式变基。
     Rebase(Box<RebaseForm>),
     /// 连接远端主机：主机、端口，见 [`crate::app::remote`]。
@@ -52,7 +52,7 @@ impl FormKind {
             FormKind::Question(prompt, origin) => Some(QuestionView::of(prompt, origin.as_deref())),
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
             FormKind::Connect => Some(QuestionView::connect()),
-            FormKind::CompareCommits => Some(QuestionView::compare_commits()),
+            FormKind::GoToRevision => Some(QuestionView::go_to_revision()),
             FormKind::Worktree
             | FormKind::Branch { .. }
             | FormKind::Clone
@@ -67,7 +67,7 @@ pub(crate) struct FormDialog {
     pub kind: FormKind,
     /// 名称的输入框；打开对话框时就在这里输入。
     pub name: TextField,
-    /// 询问对话框的第二个输入框，如密码、远程仓库的地址或新提交号。
+    /// 询问对话框的第二个输入框：登录的密码（遮盖）、远程仓库的地址；其他表单不显示。
     pub second: TextField,
     /// 连接对话框的第三个输入框：密钥文件；其他表单不显示。
     pub third: TextField,
@@ -250,16 +250,14 @@ impl App {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
             }
             FormKind::Connect => self.connect_plan(dialog),
-            FormKind::CompareCommits => {
-                let old = dialog.name.text().trim();
-                let new = dialog.second.text().trim();
-                let problem = [old, new]
-                    .iter()
-                    .any(|id| !id.is_empty() && !is_commit_hash(id));
+            FormKind::GoToRevision => {
+                let revision = dialog.name.text().trim();
+                // 提交号、分支名和标签名都不含空白，也不以 `-` 开头。
+                let problem = revision.starts_with('-') || revision.contains(char::is_whitespace);
                 FormPlan {
-                    problem: problem.then(|| t!("git-compare-invalid-id").to_owned()),
-                    confirm: t!("git-compare-button"),
-                    enabled: !old.is_empty() && !new.is_empty() && !problem,
+                    problem: problem.then(|| t!("git-go-to-invalid").to_owned()),
+                    confirm: t!("git-go-to-button"),
+                    enabled: !revision.is_empty() && !problem,
                     base: String::new(),
                     base_enabled: false,
                     dir: None,
@@ -405,11 +403,10 @@ impl App {
             self.submit_connect();
             return;
         }
-        if matches!(dialog.kind, FormKind::CompareCommits) {
-            let old = dialog.name.text().trim().to_owned();
-            let new = dialog.second.text().trim().to_owned();
+        if matches!(dialog.kind, FormKind::GoToRevision) {
+            let revision = dialog.name.text().trim().to_owned();
             self.close_form_dialog();
-            self.compare_commit_hashes(old, new);
+            self.go_to_log_revision(revision);
             return;
         }
         // 须在发起操作前记录编号：没有窗口时（测试中）后台操作会同步完成。
@@ -430,7 +427,7 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
-            FormKind::Question(..) | FormKind::Connect | FormKind::CompareCommits => {}
+            FormKind::Question(..) | FormKind::Connect | FormKind::GoToRevision => {}
             FormKind::Clone => self.submit_clone(),
             FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),
@@ -486,7 +483,7 @@ impl App {
         }
         let layout = self.dialog_layout();
         let mut order = Vec::new();
-        // 只在版式有对应输入框时将它加入焦点顺序。
+        // 无需输入的请求没有输入框；第二个输入框只用于登录和添加远程仓库。
         if layout.branch.w > 0.0 {
             order.push(DialogPart::Branch);
         }

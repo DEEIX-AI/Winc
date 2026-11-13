@@ -393,6 +393,7 @@ impl App {
             }
             GitShowChanges => self.git_show_changes(),
             GitShowLog => self.git_show_log(),
+            GitGoToRevision => self.open_go_to_revision(),
             GitShowOutput => self.show_git_output(),
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
