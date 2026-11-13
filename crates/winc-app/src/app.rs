@@ -811,6 +811,11 @@ pub struct App {
     pub window: lifecycle::window::WindowState,
     /// 鼠标按下时所在的标签关闭按钮（或中键按下的标签）；松开时仍在同一个标签上才关闭。
     close_pressed: Option<DocumentId>,
+    /// 鼠标按下时所在的窗口按钮；松开时仍在同一个按钮上才执行。
+    ///
+    /// 在按下时就关闭或最小化窗口，松开事件会落到下层窗口：下层窗口的标题栏按钮如果正好在
+    /// 这个位置（这类按钮通常在松开时触发），就会被误触发。
+    control_pressed: Option<WindowControl>,
     cursor_icon: CursorIcon,
     /// 拖选时最近一次因鼠标超出编辑区上下边缘而滚动的时刻，用于按经过的时间计算滚动量
     /// （见 `scroll_while_dragging`）；鼠标不在边缘之外时为 `None`。
@@ -1258,6 +1263,7 @@ impl App {
         self.release_tab();
         self.drag = Drag::None;
         self.close_pressed = None;
+        self.control_pressed = None;
     }
 
     fn reset_blink(&mut self) {

@@ -226,7 +226,7 @@ impl App {
             Target::Crumb(index) => self.open_crumb_menu(index),
             Target::Status(item) => self.open_status_menu(item),
             Target::TitleBar => self.click_title_bar(x, y),
-            Target::WindowControl(control) => self.press_window_control(control),
+            Target::WindowControl(control) => self.control_pressed = Some(control),
             Target::ResizeEdge(direction) => self.start_resize(direction),
             Target::Tree(_) => self.click_tree(x, y),
             Target::Placeholder(action) => self.run_placeholder_action(action),
