@@ -29,7 +29,7 @@ impl App {
 
     /// 在当前日志标签里比较 `from`（旧）和 `to`（新），在后台取两者之间改了的文件。
     pub(super) fn start_log_compare(&mut self, from: String, to: String) {
-        self.log.file = None;
+        self.git.log.file = None;
         let Some(root) = self.git.root.clone() else {
             return;
         };
@@ -46,8 +46,8 @@ impl App {
             ..Compare::default()
         });
         view.details_scroll = 0.0;
-        self.log.waiting = Some(Instant::now() + LOADING_DELAY);
-        let sender = self.log.results.0.clone();
+        self.git.log.waiting = Some(Instant::now() + LOADING_DELAY);
+        let sender = self.git.log.results.0.clone();
         self.spawn_git(UserEvent::GitLog, move |tool| {
             let files = match tool {
                 Ok(git) => git.commit_files(&root, Some(&from), &to, &Cancel::default()),
@@ -65,7 +65,7 @@ impl App {
 
     /// 退出比较，详情一栏回到选着的提交。
     pub(in crate::app) fn clear_log_compare(&mut self) {
-        self.log.file = None;
+        self.git.log.file = None;
         if let Some(view) = self.editor.active_mut().and_then(|d| d.log.as_deref_mut())
             && view.compare.take().is_some()
         {

@@ -40,7 +40,7 @@ pub(super) fn draw_glyph_run(
     clip: Rect,
 ) -> usize {
     let p = app.palette;
-    let cell = app.cell;
+    let cell = app.metrics.cell;
     let mut cells = start;
     let mut token = tokens.partition_point(|t| t.end <= range.start);
     for col in range {
@@ -159,11 +159,11 @@ pub(in crate::view) fn draw_whitespace_mark(
             1.0,
         );
         frame.rect_clipped(shaft, color, 0.0, clip);
-        let head = (shaft.right() - app.cell / 4.0, mid);
+        let head = (shaft.right() - app.metrics.cell / 4.0, mid);
         crate::icons::chevron(
             frame,
             head,
-            app.cell / 2.0,
+            app.metrics.cell / 2.0,
             crate::icons::Direction::Right,
             color,
             clip,
@@ -184,7 +184,7 @@ pub(in crate::view) fn draw_glyphs(
     clip: Rect,
 ) -> usize {
     let p = app.palette;
-    let cell = app.cell;
+    let cell = app.metrics.cell;
     let mut cells = 0;
     let mut token = 0;
 
@@ -245,7 +245,7 @@ pub(super) fn draw_columns(
         TokenKind::Builtin,
     ];
     let p = app.palette;
-    let cell = app.cell;
+    let cell = app.metrics.cell;
     for (col, &c) in chars.iter().enumerate() {
         let (start, end) = (positions[col], positions[col + 1]);
         let x = origin_x + start as f32 * cell;
@@ -299,7 +299,7 @@ impl App {
             return winc_syntax::highlight_line(language, chars, state, tokens);
         }
         let key = (doc.id, doc.revision, line, chars.len(), state, language.id);
-        let mut cache = self.line_tokens.borrow_mut();
+        let mut cache = self.caches.line_tokens.borrow_mut();
         if let Some(i) = cache.entries.iter().position(|(k, ..)| *k == key) {
             let entry = cache.entries.remove(i);
             tokens.clear();
