@@ -974,6 +974,15 @@ impl App {
         }
     }
 
+    /// 记为正在连接 `devbox`，返回这次连接的中止入口；不启动 `ssh`。
+    #[cfg(test)]
+    pub(in crate::app) fn begin_connection_for_test(&mut self) -> remote::Abort {
+        let abort = remote::Abort::default();
+        self.remote.abort = Some(abort.clone());
+        self.remote.connecting = Target::new("devbox");
+        abort
+    }
+
     /// 取消正在进行的连接（提示上的「取消」）：结束 `ssh`，后台的连接随即以失败返回；服务
     /// 进程已经启动、正在取得目录的路径时同样有效。
     pub(in crate::app) fn cancel_remote(&mut self) {

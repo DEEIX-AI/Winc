@@ -133,6 +133,10 @@ fn escape_cancels_and_the_failure_is_not_reported_as_an_error() {
     assert!(app.form_dialog.is_none());
     assert!(answers.try_recv().is_err());
     assert!(app.branch.declined);
+    // 取消一次即取消整个操作：`ssh` 再问口令时不再弹出，同样按取消答复。
+    let again = ask(&mut app, passphrase());
+    assert!(app.form_dialog.is_none());
+    assert!(again.recv().is_err());
     app.report_git_failure("推送", "无法推送：could not read Password".into());
     assert!(app.notice.text.is_none());
     assert!(!app.branch.declined);
@@ -263,4 +267,24 @@ fn a_question_from_a_remote_repository_names_the_host() {
     );
     assert_eq!(view.values.len(), 3);
     shoot(&mut app, "git-question-origin");
+}
+
+#[test]
+fn cancelling_a_question_from_ssh_ends_the_connection_at_once() {
+    let mut app = app_with(&sample_folder("question-remote").join("short.rs"), false);
+    let abort = app.begin_connection_for_test();
+    let (reply, answers) = channel();
+    let prompt = Prompt::SshPassword {
+        account: "me".into(),
+        host: "devbox".into(),
+    };
+    app.open_question(
+        crate::app::git::question::Asker::Remote,
+        Question { prompt, reply },
+    );
+    assert!(app.form_dialog.is_some() && !abort.is_aborted());
+    // 取消口令的询问：连接随即中止，`ssh` 没有机会再问第二次、第三次。
+    assert!(app.dialog_key(&Key::Named(NamedKey::Escape), "", false));
+    assert!(abort.is_aborted());
+    assert!(answers.recv().is_err());
 }

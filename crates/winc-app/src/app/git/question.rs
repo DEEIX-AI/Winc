@@ -267,6 +267,10 @@ impl App {
     /// 已打开的表单被关闭，因为操作正在等待答复。无需输入的请求没有默认答复：键盘焦点不落在按钮上，
     /// 接受主机密钥必须由用户明确选择。
     pub(in crate::app) fn open_git_question(&mut self, id: u64, question: Question) {
+        // 用户已取消过这个操作的询问：之后的询问同样按取消答复，不再弹出。
+        if self.branch.declined {
+            return;
+        }
         self.open_question(Asker::Git(id), question);
     }
 
@@ -347,10 +351,13 @@ impl App {
     }
 
     /// 关闭询问对话框时调用：尚未答复的请求按用户取消处理。
+    ///
+    /// 取消一次即取消整件事：`ssh` 在一次询问没有答复后会再问（口令默认问三次）。连接远端
+    /// 主机时直接中止连接；Git 操作此后的询问不再弹出（见 [`App::open_git_question`]）。
     pub(super) fn decline_git_question(&mut self) {
         match self.branch.asking.take() {
             Some((Asker::Git(_), _)) => self.branch.declined = true,
-            Some((Asker::Remote, _)) => self.remote.declined = true,
+            Some((Asker::Remote, _)) => self.cancel_remote(),
             None => {}
         }
     }
