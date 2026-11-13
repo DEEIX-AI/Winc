@@ -640,7 +640,7 @@ fn shoot_git_diff() {
             .unwrap()
             .0;
         app.on_mouse_move(revert.x + 4.0, revert.y + 4.0);
-        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.overlays.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(
             &mut app,
             if dark {
@@ -658,7 +658,7 @@ fn shoot_git_diff() {
             .unwrap()
             .0;
         app.on_mouse_move(check.x + 4.0, check.y + 4.0);
-        app.tooltip.since = None;
+        app.overlays.tooltip.since = None;
         shoot(
             &mut app,
             if dark {
@@ -885,7 +885,7 @@ fn diff_text_clicks_and_cursors_work_like_the_editor() {
     let point = at(&app, RIGHT, 5, 2, false);
     right_click(&mut app, point);
     assert!(matches!(
-        app.context_menu.as_ref().unwrap().target,
+        app.overlays.context_menu.as_ref().unwrap().target,
         MenuTarget::Diff(_, true)
     ));
     let commands = menu_commands(&app);

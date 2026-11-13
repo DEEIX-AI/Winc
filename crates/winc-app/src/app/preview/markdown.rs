@@ -486,7 +486,7 @@ impl App {
                 return;
             };
             md.pending = Some(revision);
-            let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
+            let (sender, proxy) = (md.sender.clone(), self.link.proxy.clone());
             winc_editor::background::spawn(move || {
                 let result = winc_preview::docx::load(&path)
                     .map(|c| (markdown::parse(&c.markdown), c.media));
@@ -508,7 +508,7 @@ impl App {
             _ => None,
         };
         md.pending = Some(revision);
-        let (sender, proxy) = (md.sender.clone(), self.proxy.clone());
+        let (sender, proxy) = (md.sender.clone(), self.link.proxy.clone());
         winc_editor::background::spawn(move || {
             let started = std::time::Instant::now();
             let text = reading.map_or_else(|| rope.to_string(), |text| text.to_string());
@@ -641,7 +641,7 @@ impl App {
             .insert(path.to_path_buf(), ImageSlot::Loading);
         let (sender, proxy, path) = (
             self.preview.markdown.sender.clone(),
-            self.proxy.clone(),
+            self.link.proxy.clone(),
             path.to_path_buf(),
         );
         let remote = is_remote(url).then(|| url.to_owned());
@@ -694,7 +694,7 @@ impl App {
         drawing.push(size);
         let (sender, proxy, picture, path) = (
             self.preview.markdown.sender.clone(),
-            self.proxy.clone(),
+            self.link.proxy.clone(),
             Arc::clone(picture),
             path.to_path_buf(),
         );

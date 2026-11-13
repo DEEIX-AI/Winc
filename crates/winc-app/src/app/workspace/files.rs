@@ -742,7 +742,7 @@ impl App {
     /// macOS 上是系统的面板；Windows 上是系统的文件对话框；其他 Unix 平台通过 XDG 桌面门户由
     /// 桌面环境显示面板（`portal.rs`），门户不可用时说明原因（`App::pick_failed`）。
     pub(in crate::app) fn pick(&mut self, kind: Pick) {
-        let Some(proxy) = self.proxy.clone() else {
+        let Some(proxy) = self.link.proxy.clone() else {
             return;
         };
         // 另存为：默认使用原来的名字，从原来所在的目录开始；新文件从已打开的目录开始。
@@ -958,7 +958,7 @@ impl App {
             if let Some(ws) = (self.editor.workspace.as_mut()).filter(|_| reachable) {
                 ws.refresh();
             }
-            self.picker.stale = true;
+            self.overlays.picker.stale = true;
         }
 
         self.relayout();

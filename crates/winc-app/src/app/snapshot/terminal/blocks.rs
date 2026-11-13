@@ -141,7 +141,7 @@ fn the_menu_on_a_command_copies_it_and_its_output() {
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Right);
         app.on_mouse_up(MouseButton::Right);
-        let menu = app.context_menu.as_ref().unwrap();
+        let menu = app.overlays.context_menu.as_ref().unwrap();
         let items = menu
             .entries
             .iter()
@@ -173,7 +173,7 @@ fn the_menu_on_a_command_copies_it_and_its_output() {
     let (target, items) = right_click(&mut app, 3);
     assert_eq!(target, MenuTarget::Terminal(None));
     assert_eq!(items[0].0, MenuCommand::Copy);
-    app.context_menu = None;
+    app.overlays.context_menu = None;
 
     // 有命令正在执行时不能重新运行。
     app.terminal.tab_mut().unwrap().blocks[1].output = Some(4);

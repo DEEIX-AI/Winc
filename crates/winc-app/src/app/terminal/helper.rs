@@ -66,7 +66,7 @@ impl App {
             self.terminal.error = Some(winc_i18n::t!("terminal-helper-missing").into());
             return;
         };
-        let proxy = self.proxy.clone();
+        let proxy = self.link.proxy.clone();
         let wake = move || {
             if let Some(proxy) = &proxy {
                 let _ = proxy.send_event(UserEvent::Terminal);

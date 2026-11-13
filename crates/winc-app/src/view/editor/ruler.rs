@@ -33,7 +33,7 @@ pub(super) fn draw_editor_scrollbar(app: &mut App, frame: &mut Frame<'_>, index:
     let hunks = if app.merge_panes_placed() {
         Default::default()
     } else {
-        app.changes.hunks(doc.id)
+        app.git.changes.hunks(doc.id)
     };
     for (i, h) in hunks.iter().enumerate() {
         let color = crate::view::diff::hunk_shade(p, h).mark;

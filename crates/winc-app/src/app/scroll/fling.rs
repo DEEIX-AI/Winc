@@ -103,9 +103,10 @@ impl App {
                 let doc = self.editor.active()?;
                 Some((doc.scroll_line, f64::from(doc.scroll_x)))
             }
-            ScrollTarget::Tree => {
-                Some((f64::from(self.tree.scroll), f64::from(self.tree.scroll_x)))
-            }
+            ScrollTarget::Tree => Some((
+                f64::from(self.panels.tree.scroll),
+                f64::from(self.panels.tree.scroll_x),
+            )),
             ScrollTarget::Pdf => Some((
                 f64::from(self.preview.pdf.scroll),
                 f64::from(self.preview.pdf.scroll_x),

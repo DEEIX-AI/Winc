@@ -818,9 +818,9 @@ impl App {
     /// 提交视图是否正在显示；借用提交视图显示历史提交的文件时（`commit.browse`）同样为
     /// `true`。
     pub(crate) fn commit_shown(&self) -> bool {
-        self.sidebar.view == crate::layout::SidebarView::Commit
+        self.panels.sidebar.view == crate::layout::SidebarView::Commit
             && self.layout.sidebar.right() > 0.0
-            && (self.commit.browse || self.log_diff_tree().is_none())
+            && (self.git.commit.browse || self.log_diff_tree().is_none())
     }
 
     /// 改动列表或历史提交的文件列表是否正在显示。
@@ -831,8 +831,8 @@ impl App {
     /// 返回正在显示的列表的状态：显示历史提交的文件时为其浏览列表，否则为提交视图。
     pub(in crate::app) fn shown_commit_list(&self) -> &CommitState {
         match self.log_diff_tree() {
-            Some(_) if !self.commit.browse => self.log_list(),
-            _ => &self.commit,
+            Some(_) if !self.git.commit.browse => self.log_list(),
+            _ => &self.git.commit,
         }
     }
 
@@ -902,14 +902,14 @@ impl App {
         // 和到卡片的距离相等，两者之间没有 `SIDEBAR_LIST_GAP`。改动列表在它上面结束。提交以后
         // 仍有未勾选的文件（未跟踪的文件默认不勾选）时卡片保持显示，栏同样显示。
         // 拉开、收起的途中栏按露出的高度算，里面的东西贴着上沿，从下沿底下露出来。
-        let share = self.commit.undo.share(self.commit_undoable().is_some());
+        let share = self.git.commit.undo.share(self.commit_undoable().is_some());
         let undo = (share > 0.0).then(|| {
             let bottom = card.map_or(panel.bottom(), |card| card.y);
             let bar = Rect::new(panel.x, bottom - UNDO_H * share, panel.w, UNDO_H * share);
             // 「⋯」比标题行的工具按钮小，中心和它们对齐，从上到下是一列。
             let h = UNDO_H - 8.0;
             let more = Rect::new(inner_x + inner_w - (TOOL + h) / 2.0, bar.y + 4.0, h, h);
-            let w = self.commit.labels.undo + 2.0 * UNDO_PAD;
+            let w = self.git.commit.labels.undo + 2.0 * UNDO_PAD;
             let undo = Rect::new(more.x - BUTTON_GAP - w, more.y, w, h);
             (bar, undo, more)
         });
@@ -966,6 +966,7 @@ impl App {
     ) -> (Option<Rect>, Rect, Rect, Option<Rect>, Rect, Rect) {
         let settled_h = self.commit_message_target(panel.h);
         let message_h = self
+            .git
             .commit
             .message_motion
             .map_or(settled_h, |(from, clock)| clock.between(from, settled_h));
@@ -985,7 +986,7 @@ impl App {
             (card.w - 2.0 * CARD_INSET).max(0.0),
             FOOTER_H,
         );
-        let labels = self.commit.labels;
+        let labels = self.git.commit.labels;
         let fitted = labels.button + 2.0 * BUTTON_PAD + BUTTON_MENU_W;
         let amendable = self.commit_amendable();
         let beside = if amendable {
@@ -996,6 +997,7 @@ impl App {
         let compact = beside + fitted <= footer.w;
         let settled_w = if compact { fitted } else { footer.w };
         let button_w = self
+            .git
             .commit
             .button_motion
             .map_or(settled_w, |(from, clock)| clock.between(from, settled_w));
@@ -1004,7 +1006,7 @@ impl App {
         let commit = Rect::new(whole.x, whole.y, whole.w - menu_w, FOOTER_H);
         let commit_menu = Rect::new(commit.right(), whole.y, menu_w, FOOTER_H);
         // 隐去的过渡中仍排出「修改上次提交」，由绘制按进度淡出。
-        let leaving = matches!(self.commit.amend_motion, Some((false, _)));
+        let leaving = matches!(self.git.commit.amend_motion, Some((false, _)));
         let amend = (amendable && (compact || leaving))
             .then(|| Rect::new(footer.x, footer.y, labels.amend, FOOTER_H));
         (
@@ -1027,27 +1029,27 @@ impl App {
         };
         !status.entries.is_empty()
             || status.operation.is_some()
-            || self.commit.amend
-            || self.commit.busy
+            || self.git.commit.amend
+            || self.git.commit.busy
     }
 
     /// 提交按钮现在是不是「提交并推送」：按住 ⌥ 时是（和项目菜单里 ⌥ 换出备选项一样），合并、变基
     /// 停着时、修改上一次提交时、正在提交时不是：前两种推送没有意义或要强制推送。
     pub(crate) fn commit_pushes(&self) -> bool {
         self.pointer.modifiers.alt_key()
-            && !self.commit.busy
-            && !self.commit.amend
+            && !self.git.commit.busy
+            && !self.git.commit.amend
             && (self.git.status.as_ref()).is_some_and(|s| s.operation.is_none())
     }
 
     /// 提交卡片露出的比例：0 表示完全收在视图底部下面，1 表示完全露出；滑进、滑出途中跟着时钟。
     pub(crate) fn commit_card_share(&self) -> f32 {
-        self.commit.card.share(self.commit_compose_shown())
+        self.git.commit.card.share(self.commit_compose_shown())
     }
 
     /// 栏里写的上一次提交：能撤销时是它，收起途中是最近一帧画的那个。
     pub(crate) fn commit_undo_shown(&self) -> Option<&LastCommit> {
-        (self.commit_undoable()).or(self.commit.undo_drawn.as_ref())
+        (self.commit_undoable()).or(self.git.commit.undo_drawn.as_ref())
     }
 
     /// 每帧绘制前调用：与上一帧比较是否显示提交卡片（见 [`App::commit_compose_shown`]）和
@@ -1062,18 +1064,18 @@ impl App {
         let undoable = self.commit_undoable();
         let undo = known.then_some(undoable.is_some());
         if let Some(last) = undoable
-            && self.commit.undo_drawn.as_ref() != Some(last)
+            && self.git.commit.undo_drawn.as_ref() != Some(last)
         {
-            self.commit.undo_drawn = Some(last.clone());
+            self.git.commit.undo_drawn = Some(last.clone());
         }
-        let changing = self.commit.card.changes(card) || self.commit.undo.changes(undo);
+        let changing = self.git.commit.card.changes(card) || self.git.commit.undo.changes(undo);
         let clock = if changing && self.commit_shown() {
             self.clock(crate::app::animation::TREE_ANIMATION)
         } else {
             None
         };
-        self.commit.card.track(card, clock);
-        self.commit.undo.track(undo, clock);
+        self.git.commit.card.track(card, clock);
+        self.git.commit.undo.track(undo, clock);
     }
 
     /// 能不能修改上一次提交：已经有提交，没有进行中的合并、变基。
@@ -1107,7 +1109,7 @@ impl App {
     ///
     /// 读取通常几十毫秒就结束，只按读取的时长转，图标还没动就停了，看不出点过。
     pub(crate) fn commit_refreshing(&self) -> bool {
-        self.commit.refreshed.is_some_and(|at| {
+        self.git.commit.refreshed.is_some_and(|at| {
             self.git.running.is_some()
                 || at.elapsed().as_secs_f32() < 1.0 / crate::theme::SPIN_SPEED
         })
@@ -1118,10 +1120,10 @@ impl App {
     /// 修改提交、合并或变基暂停时按钮另有说法，没有勾选时也不写范围，都返回 `None`。
     pub(crate) fn commit_scope(&self) -> Option<usize> {
         let status = self.git.status.as_ref()?;
-        if self.commit.amend || status.operation.is_some() {
+        if self.git.commit.amend || status.operation.is_some() {
             return None;
         }
-        let count = self.commit.checked_entries(status).count();
+        let count = self.git.commit.checked_entries(status).count();
         (count > 0).then_some(count)
     }
 
@@ -1129,8 +1131,8 @@ impl App {
     /// 领先上游），没有进行中的合并、变基，也没在提交或修改上一次提交。
     pub(crate) fn commit_undoable(&self) -> Option<&LastCommit> {
         let status = self.git.status.as_ref()?;
-        let last = self.commit.last.as_ref()?;
-        if self.commit.busy || self.commit.amend || status.operation.is_some() {
+        let last = self.git.commit.last.as_ref()?;
+        if self.git.commit.busy || self.git.commit.amend || status.operation.is_some() {
             return None;
         }
         if status.oid.as_deref() != Some(last.oid.as_str()) {
@@ -1157,7 +1159,7 @@ impl App {
     /// 返回提交信息框按行数应有的高度（逻辑像素）：[`MESSAGE_MIN_LINES`] 行起，最多
     /// [`MESSAGE_MAX_LINES`] 行；窗口较矮时缩小，为列表留出 [`LIST_MIN`]，但不少于一行。
     fn commit_message_target(&self, panel_h: f32) -> f32 {
-        let lines = (self.commit.message_lines).clamp(MESSAGE_MIN_LINES, MESSAGE_MAX_LINES);
+        let lines = (self.git.commit.message_lines).clamp(MESSAGE_MIN_LINES, MESSAGE_MAX_LINES);
         let want = lines as f32 * MESSAGE_LINE + 2.0 * MESSAGE_PAD;
         let fixed = SIDEBAR_HEADER
             + CONTEXT_ROW
@@ -1172,13 +1174,13 @@ impl App {
 
     /// 记下提交信息折行后的行数 `lines`；行数变化时框高从当前高度过渡到新高度。
     pub(crate) fn set_commit_message_lines(&mut self, lines: usize) {
-        if lines == self.commit.message_lines {
+        if lines == self.git.commit.message_lines {
             return;
         }
         let from = self.commit_parts().message.h;
-        self.commit.message_lines = lines;
+        self.git.commit.message_lines = lines;
         let clock = self.clock(crate::app::animation::TREE_ANIMATION);
-        self.commit.message_motion = clock.map(|c| (from, c));
+        self.git.commit.message_motion = clock.map(|c| (from, c));
     }
 
     /// 记下绘制时量好的文字宽度（见 [`CommitLabels`]）。提交按钮因此变宽、变窄时宽度随之过渡，
@@ -1186,15 +1188,15 @@ impl App {
     ///
     /// 第一次量出宽度时直接到位，不做过渡。
     pub(crate) fn set_commit_labels(&mut self, labels: CommitLabels) {
-        if labels == self.commit.labels {
+        if labels == self.git.commit.labels {
             return;
         }
-        let first = self.commit.labels == CommitLabels::default();
+        let first = self.git.commit.labels == CommitLabels::default();
         let before = self.commit_parts();
         // 「修改上次提交」原本是否显示：过渡中取过渡的终点，否则取当前布局中是否排出。
-        let motion = self.commit.amend_motion.take();
+        let motion = self.git.commit.amend_motion.take();
         let was = motion.map_or(before.amend.is_some(), |(shown, _)| shown);
-        self.commit.labels = labels;
+        self.git.commit.labels = labels;
         if first {
             return;
         }
@@ -1203,10 +1205,10 @@ impl App {
         let from = width(&before);
         if (from - width(&after)).abs() >= 0.5 {
             let clock = self.clock(crate::app::animation::TREE_ANIMATION);
-            self.commit.button_motion = clock.map(|c| (from, c));
+            self.git.commit.button_motion = clock.map(|c| (from, c));
         }
         let now = after.amend.is_some();
-        self.commit.amend_motion = if was == now {
+        self.git.commit.amend_motion = if was == now {
             motion
         } else {
             self.clock(crate::app::animation::TREE_ANIMATION)
@@ -1216,7 +1218,7 @@ impl App {
 
     /// 鼠标没在拖东西、侧栏也没在开合：可以在悬停的行上展开写不下的名字。
     pub(crate) fn idle_pointer(&self) -> bool {
-        self.sidebar.motion.is_none() && matches!(self.pointer.drag, crate::app::Drag::None)
+        self.panels.sidebar.motion.is_none() && matches!(self.pointer.drag, crate::app::Drag::None)
     }
 
     /// 仓库状态刷新了，`old` 是刷新前的状态，`rows` 是刷新前的各行（提交视图不在屏幕上时为
@@ -1235,12 +1237,12 @@ impl App {
         let Some(new) = self.git.status.as_ref() else {
             return;
         };
-        if !entries_changed(&old, new) || self.commit.motion.is_some() {
+        if !entries_changed(&old, new) || self.git.commit.motion.is_some() {
             return;
         }
-        let scroll = self.commit.scroll;
+        let scroll = self.git.commit.scroll;
         let clock = self.clock(crate::app::animation::TREE_ANIMATION);
-        self.commit.shift = clock.map(|clock| CommitShift {
+        self.git.commit.shift = clock.map(|clock| CommitShift {
             status: old,
             rows,
             scroll,
@@ -1259,16 +1261,16 @@ impl App {
     /// 每帧算出 `overflow` 之后调用：换了写全名的文件行时，按钮从原位开始滑到全名后面；
     /// `before` 是上一帧写全名的那一行。
     pub(crate) fn track_commit_actions(&mut self, before: Option<usize>) {
-        let now = (self.commit.overflow)
+        let now = (self.git.commit.overflow)
             .filter(|o| o.actions.is_some())
             .map(|o| o.row);
         if now == before {
             return;
         }
         let animate = self.animate_commit_names();
-        self.commit.actions_slide = now
+        self.git.commit.actions_slide = now
             .filter(|_| animate)
-            .map(|row| (row, self.commit.names.clock()));
+            .map(|row| (row, self.git.commit.names.clock()));
     }
 
     /// 窗口坐标 (`x`, `y`) 是否在改动行伸出侧栏的那一段名字上。
@@ -1300,7 +1302,7 @@ impl App {
         }
         // 从日志打开的差异标签中，提交视图在文件树与工作区改动之间切换。
         self.toggle_log_diff_tree();
-        if !self.sidebar.visible {
+        if !self.panels.sidebar.visible {
             self.set_sidebar(true);
         }
         self.set_sidebar_view(crate::layout::SidebarView::Commit);
@@ -1329,13 +1331,13 @@ impl App {
                 | CommitTarget::StashApply(_)
                 | CommitTarget::StashMenu(_)
         );
-        if indexed && self.commit.hits_generation != self.git.generation {
+        if indexed && self.git.commit.hits_generation != self.git.generation {
             self.request_redraw();
             return;
         }
         // 浏览历史提交的文件时只能展开、收起和查看文件，其余目标（勾选、回滚、储藏、提交等）
         // 都会修改工作区，不处理。
-        if self.commit.browse {
+        if self.git.commit.browse {
             match target {
                 CommitTarget::File(i) => self.browse_commit_file(i),
                 CommitTarget::Group(_) | CommitTarget::Dir(_) | CommitTarget::Sticky(..) => {}
@@ -1348,7 +1350,7 @@ impl App {
         match target {
             CommitTarget::Log => self.git_show_log(),
             CommitTarget::Refresh => {
-                self.commit.refreshed = Some(Instant::now());
+                self.git.commit.refreshed = Some(Instant::now());
                 self.git_refresh();
             }
             CommitTarget::More => {
@@ -1369,9 +1371,9 @@ impl App {
                 let Some(status) = self.git.status.as_ref() else {
                     return;
                 };
-                let on = self.commit.group_state(status, group) != Some(true);
+                let on = self.git.commit.group_state(status, group) != Some(true);
                 for entry in status.entries.iter().filter(|e| group.holds(e)) {
-                    self.commit.set_checked(entry, on);
+                    self.git.commit.set_checked(entry, on);
                 }
             }
             CommitTarget::GroupRevert(group) => self.ask_rollback(group),
@@ -1421,9 +1423,9 @@ impl App {
                     return;
                 };
                 let members = rows.dir(*group, dir);
-                let on = self.commit.members_state(status, members) != Some(true);
+                let on = self.git.commit.members_state(status, members) != Some(true);
                 for &i in members {
-                    self.commit.set_checked(&status.entries[i], on);
+                    self.git.commit.set_checked(&status.entries[i], on);
                 }
             }
             CommitTarget::Check(i) => self.toggle_commit_check(i),
@@ -1454,7 +1456,8 @@ impl App {
             }
             CommitTarget::Sticky(row, level) => {
                 // 先滚到那一行正好停在固定的位置，画面不动；再当作点了那一行。
-                self.commit.scroll = (row as f32 * COMMIT_ROW - level as f32 * COMMIT_ROW).max(0.0);
+                self.git.commit.scroll =
+                    (row as f32 * COMMIT_ROW - level as f32 * COMMIT_ROW).max(0.0);
                 let target = match self.commit_rows().get(row) {
                     Some(CommitRow::Group(group)) => CommitTarget::Group(*group),
                     Some(CommitRow::Dir { .. }) => CommitTarget::Dir(row),
@@ -1533,13 +1536,13 @@ impl App {
                 status.is_some_and(|s| s.entries.iter().any(|e| group.holds(e)))
             })
         };
-        let all_collapsed = shown().all(|group| self.commit.group_collapsed(group));
-        let all_expanded = shown().all(|group| !self.commit.group_collapsed(group))
-            && self.commit.collapsed_dirs.iter().all(HashSet::is_empty);
+        let all_collapsed = shown().all(|group| self.git.commit.group_collapsed(group));
+        let all_expanded = shown().all(|group| !self.git.commit.group_collapsed(group))
+            && self.git.commit.collapsed_dirs.iter().all(HashSet::is_empty);
         let mut entries = branch_menu(
             &self.git.remote_list,
             self.git.status.as_ref().and_then(|s| s.operation),
-            self.branch.running.is_some(),
+            self.git.branch.running.is_some(),
         );
         entries.extend([
             MenuEntry::Separator,
@@ -1560,14 +1563,14 @@ impl App {
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
         use crate::app::input::context_menu::{MenuCommand, MenuEntry};
         let status = self.git.status.as_ref();
-        let idle = !self.commit.busy && status.is_none_or(|s| s.operation.is_none());
+        let idle = !self.git.commit.busy && status.is_none_or(|s| s.operation.is_none());
         let clean = status.is_some_and(|s| s.entries.is_empty());
         let mut entries = vec![MenuEntry::Item(
             MenuCommand::CommitPush,
-            idle && (!clean || self.commit.amend),
+            idle && (!clean || self.git.commit.amend),
         )];
         // 正在淡出的「修改上次提交」视为已移入菜单。
-        let leaving = matches!(self.commit.amend_motion, Some((false, _)));
+        let leaving = matches!(self.git.commit.amend_motion, Some((false, _)));
         if self.commit_amendable() && (self.commit_parts().amend.is_none() || leaving) {
             entries.push(MenuEntry::Separator);
             entries.push(MenuEntry::Item(MenuCommand::CommitAmend, idle));
@@ -1587,11 +1590,11 @@ impl App {
 
     /// 提交勾上的文件，成功以后继续推送。
     pub(in crate::app) fn git_commit_and_push(&mut self) {
-        self.commit.push_after = true;
+        self.git.commit.push_after = true;
         self.git_commit();
         // 没有真的开始提交（没写信息、没勾文件），就不留着「之后推送」。
-        if !self.commit.busy {
-            self.commit.push_after = false;
+        if !self.git.commit.busy {
+            self.git.commit.push_after = false;
         }
     }
 
@@ -1599,10 +1602,10 @@ impl App {
     ///
     /// 记进状态文件：以后打开的窗口、下次启动都用同一种显示方式。
     pub(in crate::app) fn toggle_commit_layout(&mut self) {
-        let flat = !self.commit.flat();
-        self.commit.set_flat(flat);
+        let flat = !self.git.commit.flat();
+        self.git.commit.set_flat(flat);
         self.update_state(|state| state.commit_tree = !flat);
-        self.commit.scroll = self.commit.scroll.min(self.commit_max_scroll());
+        self.git.commit.scroll = self.git.commit.scroll.min(self.commit_max_scroll());
         self.reveal_commit_selection();
         self.sync_log_diff_layout();
         self.request_redraw();
@@ -1615,9 +1618,10 @@ impl App {
             MenuCommand::GitShowOutput => self.show_git_output(),
             MenuCommand::CommitExpandAll | MenuCommand::CommitCollapseAll => {
                 // 「全部展开」连收起的目录一起展开。
-                self.commit
+                self.git
+                    .commit
                     .collapse_all(command == MenuCommand::CommitCollapseAll);
-                self.commit.scroll = self.commit.scroll.min(self.commit_max_scroll());
+                self.git.commit.scroll = self.git.commit.scroll.min(self.commit_max_scroll());
             }
             _ => self.run_branch_command(command),
         }
@@ -1653,7 +1657,7 @@ impl App {
                         .cloned()
                         .collect();
                     for entry in &entries {
-                        self.commit.set_checked(entry, on);
+                        self.git.commit.set_checked(entry, on);
                     }
                 }
                 MenuCommand::CopyPath => self.copy_paths(&paths, false),
@@ -1713,7 +1717,7 @@ impl App {
             Key::Named(NamedKey::Tab) if !cmd => {
                 self.ime.field_preedit.clear();
                 self.focus = Focus::CommitList;
-                if self.commit.selected.is_none()
+                if self.git.commit.selected.is_none()
                     && let Some(first) = self.commit_files().into_iter().next()
                 {
                     self.select_commit_file(first);
@@ -1729,12 +1733,12 @@ impl App {
             // 写了一半的信息不会因为在第一行按了 ↑ 就被换掉。
             Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) if !cmd => {
                 let down = *key == Key::Named(NamedKey::ArrowDown);
-                let message = &self.commit.message;
+                let message = &self.git.commit.message;
                 let browse = !shift && (message.text().is_empty() || message.recalling());
                 if browse {
                     self.edit_field(|f| f.recall(!down));
                 } else {
-                    self.commit.message.move_vertical(down, shift);
+                    self.git.commit.message.move_vertical(down, shift);
                 }
                 self.reset_blink();
             }
@@ -1745,16 +1749,16 @@ impl App {
 
     /// 切换「修改上一次提交」：打开时把上一次提交的信息填进来，关闭时恢复原来写的。
     pub(super) fn toggle_amend(&mut self) {
-        self.commit.amend = !self.commit.amend;
-        if !self.commit.amend {
-            let draft = self.commit.draft.take().unwrap_or_default();
-            self.commit.message.set_text(&draft);
+        self.git.commit.amend = !self.git.commit.amend;
+        if !self.git.commit.amend {
+            let draft = self.git.commit.draft.take().unwrap_or_default();
+            self.git.commit.message.set_text(&draft);
             // 没有改动时关掉以后提交卡片也收起。
             self.settle_commit_focus();
             return;
         }
-        self.commit.draft = Some(self.commit.message.text().to_owned());
-        let sender = self.commit.results.0.clone();
+        self.git.commit.draft = Some(self.git.commit.message.text().to_owned());
+        let sender = self.git.commit.results.0.clone();
         self.run_git_job(move |git, root| {
             let message = match git {
                 Ok(git) => git.last_message(root),
@@ -1767,17 +1771,17 @@ impl App {
     /// `HEAD` 变了（或还没取过）时在后台取它指向的提交，「上一次提交」那一行用。
     pub(super) fn fetch_last_commit(&mut self) {
         let oid = self.git.status.as_ref().and_then(|s| s.oid.clone());
-        if self.commit.last_for.as_ref() == Some(&oid) {
+        if self.git.commit.last_for.as_ref() == Some(&oid) {
             return;
         }
-        self.commit.last_for = Some(oid.clone());
-        if self.commit.last.as_ref().map(|l| &l.oid) != oid.as_ref() {
-            self.commit.last = None;
+        self.git.commit.last_for = Some(oid.clone());
+        if self.git.commit.last.as_ref().map(|l| &l.oid) != oid.as_ref() {
+            self.git.commit.last = None;
         }
         if oid.is_none() {
             return;
         }
-        let sender = self.commit.results.0.clone();
+        let sender = self.git.commit.results.0.clone();
         self.run_git_job(move |git, root| {
             let last = git.ok().and_then(|git| git.last_commit(root));
             let _ = sender.send(Outcome::Last(last, root.to_path_buf()));
@@ -1845,9 +1849,9 @@ impl App {
             return;
         };
         // 那一行先收起，不会再按一次；失败时重新取。
-        self.commit.last = None;
-        self.commit.committed = None;
-        let sender = self.commit.results.0.clone();
+        self.git.commit.last = None;
+        self.git.commit.committed = None;
+        let sender = self.git.commit.results.0.clone();
         self.run_git_job(move |git, root| {
             let result = git.and_then(|git| git.undo_commit(root, &last.oid));
             let _ = sender.send(Outcome::Undone(result, last, root.to_path_buf()));

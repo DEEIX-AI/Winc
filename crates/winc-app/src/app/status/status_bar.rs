@@ -321,7 +321,7 @@ impl App {
     #[cfg(not(target_os = "macos"))]
     fn click_update(&mut self) {
         use crate::winc::UpdateState;
-        let state = self.shared.update_state.borrow().clone();
+        let state = self.link.shared.update_state.borrow().clone();
         match state {
             UpdateState::Ready(_) => {
                 crate::updates::restart();

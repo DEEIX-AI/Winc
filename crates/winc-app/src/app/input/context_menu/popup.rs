@@ -291,18 +291,18 @@ impl App {
 
     /// 窗口内的菜单。
     pub(crate) fn popup(&self) -> Option<&PopupMenu> {
-        self.context_menu.as_ref()?.popup.as_ref()
+        self.overlays.context_menu.as_ref()?.popup.as_ref()
     }
 
     fn popup_mut(&mut self) -> Option<&mut PopupMenu> {
-        self.context_menu.as_mut()?.popup.as_mut()
+        self.overlays.context_menu.as_mut()?.popup.as_mut()
     }
 
     /// 关掉窗口内的菜单，不执行任何命令。
     pub(in crate::app) fn dismiss_popup(&mut self) {
         if self.popup().is_some() {
-            self.context_menu = None;
-            self.menu_button = None;
+            self.overlays.context_menu = None;
+            self.overlays.menu_button = None;
             self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
             self.request_redraw();
         }
@@ -311,17 +311,18 @@ impl App {
     /// 选中编号为 `tag` 的命令：关掉菜单，执行它。
     fn choose_popup(&mut self, tag: isize) {
         let command = self
+            .overlays
             .context_menu
             .as_ref()
             .and_then(|menu| MenuEntry::command_at(&menu.entries, tag));
-        if let Some(menu) = &mut self.context_menu {
+        if let Some(menu) = &mut self.overlays.context_menu {
             menu.popup = None;
         }
         if let Some(command) = command {
             self.run_menu_command(command);
         }
-        self.context_menu = None;
-        self.menu_button = None;
+        self.overlays.context_menu = None;
+        self.overlays.menu_button = None;
         self.request_redraw();
     }
 

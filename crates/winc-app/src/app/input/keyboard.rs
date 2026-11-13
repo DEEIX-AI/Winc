@@ -77,7 +77,7 @@ impl App {
             return;
         }
         // 新建工作树对话框也是模态窗口。
-        if self.form_dialog.is_some() {
+        if self.overlays.form_dialog.is_some() {
             self.on_key_dialog(event, &base, cmd);
             return;
         }
@@ -295,8 +295,8 @@ impl App {
             return;
         }
         // 改动卡片开着时 `Esc` 先关卡片。
-        if self.changes.popup.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
-            self.changes.popup = None;
+        if self.git.changes.popup.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
+            self.git.changes.popup = None;
             self.request_redraw();
             return;
         }
@@ -436,8 +436,8 @@ impl App {
     /// 执行搜索结果列表中按键 `key` 的操作，见 [`App::on_key_results`]。
     pub(in crate::app) fn results_key(&mut self, key: &Key) {
         let shift = self.pointer.modifiers.shift_key();
-        let selected = self.global.selected_row();
-        let row = selected.and_then(|i| self.global.rows().get(i).copied());
+        let selected = self.panels.global.selected_row();
+        let row = selected.and_then(|i| self.panels.global.rows().get(i).copied());
 
         match key {
             Key::Named(NamedKey::Escape) => self.focus = Focus::GlobalQuery,
@@ -457,8 +457,8 @@ impl App {
                 Some(ResultRow::File(f)) => self.set_result_collapsed(f, true),
                 // 在匹配上按 `←` 回到该匹配所在文件的那一行。
                 Some(ResultRow::Match(f, _)) => {
-                    let path = self.global.engine.results[f].path.clone();
-                    self.global.selected = Some((path, None));
+                    let path = self.panels.global.engine.results[f].path.clone();
+                    self.panels.global.selected = Some((path, None));
                 }
                 None => {}
             },
@@ -500,7 +500,7 @@ impl App {
 
     /// 处理跳转条和文件树「输入名字」行中的按键。
     fn on_key_prompt(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
-        let name_input = self.name_input.is_some();
+        let name_input = self.panels.name_input.is_some();
         // Vim 模式的命令行与查找：`Esc` 与在空的输入框中退格放弃输入，历史、补全与寄存器的
         // 插入由 `vim_prompt_key` 处理。
         if !name_input && self.bars.prompt_kind.is_vim() {
@@ -622,7 +622,7 @@ impl App {
 
     /// 处理对话框自身响应的按键（见 [`App::on_key_dialog`]）；按键须交给名称输入框时返回 `false`。
     pub(in crate::app) fn dialog_key(&mut self, key: &Key, base: &str, cmd: bool) -> bool {
-        let on_name = self.form_dialog.as_ref().is_none_or(|d| {
+        let on_name = self.overlays.form_dialog.as_ref().is_none_or(|d| {
             matches!(
                 d.focus,
                 crate::layout::DialogPart::Branch
@@ -632,7 +632,7 @@ impl App {
         });
         // 交互式变基的信息框是多行的：回车换行，⌘回车开始变基。
         let multiline = on_name
-            && (self.form_dialog.as_ref())
+            && (self.overlays.form_dialog.as_ref())
                 .is_some_and(|d| matches!(d.kind, crate::app::git::form::FormKind::Rebase(_)));
         if !cmd
             && !matches!(key, Key::Named(NamedKey::Escape | NamedKey::Tab))
@@ -653,7 +653,7 @@ impl App {
             _ if cmd && base == "v" => self.paste(),
             _ => {
                 // 名称即将被修改，上一次提交失败的原因不再适用。
-                if let Some(dialog) = &mut self.form_dialog {
+                if let Some(dialog) = &mut self.overlays.form_dialog {
                     dialog.error = None;
                 }
                 return false;
@@ -888,7 +888,7 @@ impl App {
             && typed.chars().all(|c| !c.is_control())
         {
             let now = Instant::now();
-            let mut word = match self.tree.typed.take() {
+            let mut word = match self.panels.tree.typed.take() {
                 Some((word, at)) if now.duration_since(at) < TYPE_RESET => word,
                 _ => String::new(),
             };
@@ -910,7 +910,7 @@ impl App {
                             .iter()
                             .any(|path| matches(&segment_name(path)))
                 });
-            self.tree.typed = Some((word, now));
+            self.panels.tree.typed = Some((word, now));
             let Some(hit) = hit else {
                 return;
             };

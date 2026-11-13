@@ -72,3 +72,17 @@ pub(crate) struct Opening {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub(in crate::app) activation: Option<winit::window::ActivationToken>,
 }
+
+/// 本窗口与应用层的联系：事件代理、窗口编号和各窗口共用的状态。
+pub(crate) struct AppLink {
+    /// 后台线程和系统回调通过该代理把事件送回事件循环（附带本窗口的编号，见 [`crate::winc`]）；
+    /// 测试中没有事件循环，为 `None`。
+    pub(in crate::app) proxy: Option<crate::winc::WindowProxy>,
+    /// 窗口的红绿灯（见 [`crate::macos::TrafficLights`]），窗口创建后才有，随窗口一同释放。
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) traffic_lights: Option<crate::macos::TrafficLights>,
+    /// 本窗口在进程内的编号；测试中单独创建的 `App` 为 `None`。
+    pub(crate) key: Option<crate::winc::WindowKey>,
+    /// 各窗口共用的状态：其他窗口打开的内容、剪切的文件，以及请求应用层执行的操作。
+    pub(crate) shared: std::rc::Rc<crate::winc::Shared>,
+}

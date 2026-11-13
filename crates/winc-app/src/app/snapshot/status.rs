@@ -76,11 +76,14 @@ fn every_crumb_opens_the_folder_it_names() {
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert!(app.popup().is_some());
-    assert_eq!(app.menu_button, Some(crate::app::MenuButton::Crumb(1)));
+    assert_eq!(
+        app.overlays.menu_button,
+        Some(crate::app::MenuButton::Crumb(1))
+    );
     app.popup_logical_key(&winit::keyboard::Key::Named(
         winit::keyboard::NamedKey::Escape,
     ));
-    assert_eq!(app.menu_button, None);
+    assert_eq!(app.overlays.menu_button, None);
     assert_eq!(
         app.editor.active().unwrap().path.as_deref(),
         Some(main.as_path())
@@ -261,12 +264,12 @@ fn a_found_update_shows_in_the_status_bar_and_the_setting_turns_checks_off() {
     assert!(!has_update(&app));
 
     // 后台检查找到了新版本：状态栏上有可以点的提示；收起后不再显示。
-    *app.shared.update.borrow_mut() = Some("0.1.400".into());
+    *app.link.shared.update.borrow_mut() = Some("0.1.400".into());
     paint(&mut app);
     assert!(has_update(&app));
     app.open_status_menu(StatusItem::Update);
-    assert!(app.context_menu.is_none());
-    *app.shared.update.borrow_mut() = None;
+    assert!(app.overlays.context_menu.is_none());
+    *app.link.shared.update.borrow_mut() = None;
     paint(&mut app);
     assert!(!has_update(&app));
 
@@ -282,7 +285,7 @@ fn the_update_button_shows_each_step_of_the_update() {
     use crate::winc::UpdateState;
     let dir = sample_folder("status-update-steps");
     let mut app = app_with(&dir.join("short.rs"), false);
-    *app.shared.update.borrow_mut() = Some("0.1.560".into());
+    *app.link.shared.update.borrow_mut() = Some("0.1.560".into());
     let button = |app: &mut App| {
         paint(app);
         let rect = (app.hits.status.iter())
@@ -293,7 +296,7 @@ fn the_update_button_shows_each_step_of_the_update() {
         let tip = crate::view::tests::tooltip(app).unwrap().1;
         (rect.w, tip)
     };
-    let set = |app: &mut App, state| *app.shared.update_state.borrow_mut() = state;
+    let set = |app: &mut App, state| *app.link.shared.update_state.borrow_mut() = state;
 
     // 找到新版本：按钮上只写「更新」，版本号在悬停提示里。
     let (found, tip) = button(&mut app);
@@ -330,9 +333,9 @@ fn shoot_update_button() {
         let dir = sample_folder("status-update-shot");
         let mut app = app_with(&dir.join("short.rs"), dark);
         let tag = if dark { "dark" } else { "light" };
-        *app.shared.update.borrow_mut() = Some("0.1.560".into());
+        *app.link.shared.update.borrow_mut() = Some("0.1.560".into());
         shoot(&mut app, &format!("update-{tag}-found"));
-        let set = |app: &mut App, state| *app.shared.update_state.borrow_mut() = state;
+        let set = |app: &mut App, state| *app.link.shared.update_state.borrow_mut() = state;
         set(&mut app, UpdateState::Downloading("0.1.560".into(), 42));
         shoot(&mut app, &format!("update-{tag}-downloading"));
         if !dark {

@@ -20,7 +20,7 @@ impl App {
             return;
         }
         // 对话框和设置浮层覆盖整个窗口：下方的按钮和文件树不响应悬停，只判断浮层内的各部分。
-        if self.form_dialog.is_some() {
+        if self.overlays.form_dialog.is_some() {
             self.hover_form_dialog(x, y);
             return;
         }
@@ -66,7 +66,7 @@ impl App {
         }
 
         self.track_tree_segment();
-        if self.tree.drag.is_some() {
+        if self.panels.tree.drag.is_some() {
             self.drag_tree_item(x, y);
         }
         if self.tabs.drag.is_some() {
@@ -112,8 +112,8 @@ impl App {
                 // 收起时宽度恢复为拖动前的值，之后用 `⌘B` 打开时仍为拖动前的宽度。
                 let width = start_width + x - start_x;
                 if width < MIN_PANEL_WIDTH / 2.0 {
-                    if self.sidebar.visible {
-                        self.sidebar.width = start_width;
+                    if self.panels.sidebar.visible {
+                        self.panels.sidebar.width = start_width;
                         self.set_sidebar(false);
                         if self.focus_in_sidebar() {
                             self.focus = Focus::Editor;
@@ -122,8 +122,8 @@ impl App {
                     return;
                 }
                 let max = (self.layout.window.w - 320.0).max(MIN_PANEL_WIDTH);
-                self.sidebar.width = width.clamp(MIN_PANEL_WIDTH, max);
-                if self.sidebar.visible {
+                self.panels.sidebar.width = width.clamp(MIN_PANEL_WIDTH, max);
+                if self.panels.sidebar.visible {
                     self.relayout();
                     self.request_redraw();
                 } else {
@@ -163,8 +163,8 @@ impl App {
                 start_width,
             } => {
                 // 向左拖动使详情变宽；按排版允许的范围限制后再保存，使保存的宽度等于绘制的宽度。
-                self.log.details_w = Some(start_width - (x - start_x));
-                self.log.details_w = Some(self.log_parts().details.w);
+                self.git.log.details_w = Some(start_width - (x - start_x));
+                self.git.log.details_w = Some(self.log_parts().details.w);
                 self.request_redraw();
             }
             Drag::Scrollbar {
@@ -176,18 +176,20 @@ impl App {
                 if bar == Scrollbar::TreeHorizontal {
                     let max = self.tree_max_scroll_x();
 
-                    if let Some(thumb) =
-                        hscrollbar_thumb(tree, self.tree.scroll_x, self.tree.content_w)
-                    {
-                        self.tree.scroll_x =
+                    if let Some(thumb) = hscrollbar_thumb(
+                        tree,
+                        self.panels.tree.scroll_x,
+                        self.panels.tree.content_w,
+                    ) {
+                        self.panels.tree.scroll_x =
                             scroll_for_thumb(tree.x, tree.w, thumb.w, x, grab, max);
                     }
                 } else {
                     let rows = self.editor.workspace.as_ref().map_or(0, |w| w.rows().len());
                     let content = (rows as f32 + 1.0) * TREE_ROW;
 
-                    if let Some(thumb) = scrollbar_thumb(tree, self.tree.scroll, content) {
-                        self.tree.scroll = scroll_for_thumb(
+                    if let Some(thumb) = scrollbar_thumb(tree, self.panels.tree.scroll, content) {
+                        self.panels.tree.scroll = scroll_for_thumb(
                             tree.y,
                             tree.h,
                             thumb.h,
@@ -205,9 +207,9 @@ impl App {
                 grab,
             } => {
                 let results = self.panel_parts().results;
-                let content = (self.global.rows().len() as f32 + 1.0) * TREE_ROW;
+                let content = (self.panels.global.rows().len() as f32 + 1.0) * TREE_ROW;
                 if let Some(thumb) = scrollbar_thumb(results, 0.0, content) {
-                    self.global.scroll = scroll_for_thumb(
+                    self.panels.global.scroll = scroll_for_thumb(
                         results.y,
                         results.h,
                         thumb.h,
@@ -227,7 +229,8 @@ impl App {
                     let list = app.commit_parts().list;
                     let max = app.commit_max_scroll();
                     if let Some(thumb) = scrollbar_thumb(list, 0.0, max + list.h) {
-                        app.commit.scroll = scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
+                        app.git.commit.scroll =
+                            scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
                     }
                 };
                 if self.with_log_list(drag).is_none() && self.commit_shown() {
@@ -242,7 +245,8 @@ impl App {
                 let list = self.outline_list();
                 let max = self.outline_max_scroll();
                 if let Some(thumb) = scrollbar_thumb(list, 0.0, max + list.h) {
-                    self.outline.scroll = scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
+                    self.panels.outline.scroll =
+                        scroll_for_thumb(list.y, list.h, thumb.h, y, grab, max);
                 }
                 self.request_redraw();
             }

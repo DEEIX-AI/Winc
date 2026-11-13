@@ -585,7 +585,7 @@ impl App {
         let Some(entry) = self.diff_entry(view).cloned() else {
             return;
         };
-        self.commit.toggle_hunk(&entry, hunk, &all);
+        self.git.commit.toggle_hunk(&entry, hunk, &all);
         self.request_redraw();
     }
 
@@ -616,7 +616,8 @@ impl App {
             return;
         };
         let offset = line - start;
-        self.commit
+        self.git
+            .commit
             .toggle_line(&entry, (hunk, new_len), (side, offset), &all);
         self.request_redraw();
     }
@@ -683,6 +684,7 @@ impl App {
         // 不超过 `REDIFF_IN_PLACE` 行的文档同步比较；更大的文档在后台比较，同一标签同一时刻
         // 只比较一次，完成后若文档再次变化则重新比较，连续输入时任务不排队。
         let Some(proxy) = self
+            .link
             .proxy
             .clone()
             .filter(|_| !now && rope.len_lines() > REDIFF_IN_PLACE)
@@ -692,11 +694,11 @@ impl App {
             view.new.title = worktree_title(dirty).to_owned();
             return;
         };
-        if !self.rediff.running.insert(id) {
+        if !self.diff.rediff.running.insert(id) {
             return;
         }
         let old = view.old.text.clone();
-        let sender = self.rediff.results.0.clone();
+        let sender = self.diff.rediff.results.0.clone();
         background::spawn(move || {
             let compared = Compared::new(&old, &rope);
             let _ = sender.send(Rediffed {
@@ -715,8 +717,8 @@ impl App {
     ///
     /// 文档在比较期间再次变化时，下一帧重新比较。
     pub(super) fn poll_rediffs(&mut self) {
-        while let Ok(done) = self.rediff.results.1.try_recv() {
-            self.rediff.running.remove(&done.id);
+        while let Ok(done) = self.diff.rediff.results.1.try_recv() {
+            self.diff.rediff.running.remove(&done.id);
             let Some(view) = self
                 .editor
                 .document_mut(done.id)
@@ -1350,7 +1352,8 @@ impl App {
         let Some(id) = self.editor.active().map(|d| d.id) else {
             return false;
         };
-        let stash = self.commit.stash_view.is_some() && self.commit.stash_preview == Some(id);
+        let stash =
+            self.git.commit.stash_view.is_some() && self.git.commit.stash_preview == Some(id);
         stash || self.steps_log_files(id) || self.steps_changed_files(id)
     }
 
@@ -1590,7 +1593,7 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
     }
 }
 
-/// 差异视图的界面状态：命中区域以及切换、定位时的过渡。
+/// 差异视图的界面状态：切换、定位时的过渡，以及后台的重新比较。
 #[derive(Default)]
 pub struct DiffState {
     /// 差异中用「»」替换一段改动后正在淡出的颜色。
@@ -1602,4 +1605,6 @@ pub struct DiffState {
     pub(crate) land: Option<bool>,
     /// 差异导航到达首尾时等待再次按键的状态与提示时刻；不在等待时为 `None`。
     pub(crate) cross: Option<(Instant, crate::app::diff::DiffCross)>,
+    /// 大文件的差异在后台重新比较。
+    pub(crate) rediff: RediffState,
 }

@@ -641,7 +641,7 @@ fn draw_body(
         let all: Vec<(u64, std::ops::Range<usize>)> = (view.keys.iter().zip(&view.hunks))
             .map(|(&key, hunk)| (key, hunk.old.clone()))
             .collect();
-        (app.commit).hunk_inclusions(entry, &all)
+        (app.git.commit).hunk_inclusions(entry, &all)
     });
     let mut chars: Vec<char> = Vec::with_capacity(256);
     let mut tokens = Vec::with_capacity(32);

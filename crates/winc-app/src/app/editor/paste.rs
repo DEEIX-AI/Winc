@@ -44,7 +44,7 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        self.shared.cut_files.borrow_mut().clear();
+        self.link.shared.cut_files.borrow_mut().clear();
         self.clipboard.set_files(paths);
         self.flash(match paths {
             [path] => t!("editor-paste-copied-item", name = display_name(path)),
@@ -59,7 +59,7 @@ impl App {
             return;
         }
         self.copy_entries(paths);
-        *self.shared.cut_files.borrow_mut() = paths.to_vec();
+        *self.link.shared.cut_files.borrow_mut() = paths.to_vec();
         self.flash(match paths {
             [path] => t!("editor-paste-cut-item", name = display_name(path)),
             many => t!("editor-paste-cut-items", count = many.len()),
@@ -212,8 +212,8 @@ impl App {
 
         let files = self.clipboard_files();
         // 剪贴板里还是剪切的那些文件：移过去，只移一次。
-        if !files.is_empty() && files == *self.shared.cut_files.borrow() {
-            self.shared.cut_files.borrow_mut().clear();
+        if !files.is_empty() && files == *self.link.shared.cut_files.borrow() {
+            self.link.shared.cut_files.borrow_mut().clear();
             let moving: Vec<PathBuf> = files
                 .into_iter()
                 .filter(|p| p.parent() != Some(dir.as_path()))

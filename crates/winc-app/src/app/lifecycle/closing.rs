@@ -86,7 +86,7 @@ impl App {
     /// 当前窗口。开着目录的窗口与退出一样不逐个询问，未保存的内容写入备份；没开目录的窗口逐个
     /// 询问。窗口关闭后其中的终端随之结束，有程序在运行时先确认；macOS 上终端继续运行，不确认。
     pub(in crate::app) fn request_close_window(&mut self) {
-        if self.shared.others() {
+        if self.link.shared.others() {
             if !self.confirm_terminal_quit(CloseRequest::CloseWindow) {
                 self.request_close(CloseRequest::CloseWindow);
             }

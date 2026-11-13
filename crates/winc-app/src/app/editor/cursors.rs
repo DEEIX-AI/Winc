@@ -140,7 +140,7 @@ impl App {
 
     /// 只保留主光标（`Esc`）；只有一个光标或改动卡片打开时不处理，返回 `false`，按键交给编辑区。
     pub(in crate::app) fn remove_secondary_cursors(&mut self) -> bool {
-        if self.changes.popup.is_some() {
+        if self.git.changes.popup.is_some() {
             return false;
         }
         let removed = self

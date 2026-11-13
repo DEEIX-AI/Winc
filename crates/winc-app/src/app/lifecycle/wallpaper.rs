@@ -175,7 +175,8 @@ impl App {
     /// 图层缓存文件的位置：与状态文件在同一个目录；没有状态文件（测量、测试）时不缓存。
     fn wallpaper_cache(&self) -> Option<PathBuf> {
         Some(
-            self.state_path
+            self.store
+                .state_path
                 .as_deref()?
                 .parent()?
                 .join("wallpaper.cache"),
@@ -199,7 +200,7 @@ impl App {
             return;
         }
         // 其他窗口已有合用的图层：共用，不再生成。
-        let shared = self.shared.wallpaper.borrow().upgrade();
+        let shared = self.link.shared.wallpaper.borrow().upgrade();
         if let Some(layer) = shared.filter(|layer| fits(layer)) {
             self.wallpaper.shown = Some(layer);
             self.request_redraw();
@@ -212,7 +213,7 @@ impl App {
         }
         state.failed = None;
         state.loading = Some(wanted.clone());
-        let (sender, proxy) = (state.sender.clone(), self.proxy.clone());
+        let (sender, proxy) = (state.sender.clone(), self.link.proxy.clone());
         let cache = self.wallpaper_cache();
         winc_editor::background::spawn(move || {
             let made = make(&wanted, window, cache.as_deref());
@@ -271,7 +272,7 @@ impl App {
                         wallpaper: Arc::new(wallpaper),
                         full,
                     });
-                    *self.shared.wallpaper.borrow_mut() = Rc::downgrade(&layer);
+                    *self.link.shared.wallpaper.borrow_mut() = Rc::downgrade(&layer);
                     self.wallpaper.shown = Some(layer);
                 }
                 Err(reason) => {

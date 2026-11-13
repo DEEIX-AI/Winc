@@ -579,7 +579,7 @@ fn draw_product(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Re
 pub(in crate::view) fn update_status(app: &App) -> (String, Color) {
     use crate::winc::UpdateState;
     let p = app.palette;
-    match &*app.shared.update_state.borrow() {
+    match &*app.link.shared.update_state.borrow() {
         UpdateState::Off => (t!("settings-updates-off").to_owned(), p.text_muted),
         UpdateState::Idle => (t!("settings-updates-idle").to_owned(), p.text_muted),
         UpdateState::Checking => (t!("settings-updates-checking").to_owned(), p.text_muted),

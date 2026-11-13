@@ -129,7 +129,7 @@ pub(in crate::view) fn draw_log(app: &mut App, frame: &mut Frame<'_>, index: usi
         draw_list(app, frame, view, &parts, scroll, &mut hits, &mut clipped);
         // 切换到另一个提交时内容淡入（`App::note_log_details_shown`）。
         draw_details_footer(app, frame, view, &parts);
-        let opacity = app.log.fade.map_or(1.0, |c| 0.4 + 0.6 * c.progress());
+        let opacity = app.git.log.fade.map_or(1.0, |c| 0.4 + 0.6 * c.progress());
         details_bottom = frame.with_opacity(opacity, |frame| {
             draw_details(
                 app,
@@ -146,13 +146,13 @@ pub(in crate::view) fn draw_log(app: &mut App, frame: &mut Frame<'_>, index: usi
     if let Some(view) = app.editor.documents[index].log.as_deref_mut() {
         let content = details_bottom + view.details_scroll - details.y + 16.0;
         let max = (content - (details.h - 30.0)).max(0.0);
-        app.log.details_max = max;
+        app.git.log.details_max = max;
         view.details_scroll = view.details_scroll.min(max);
     }
     app.hits.log = hits;
-    app.log.clipped = clipped;
-    app.log.long_files = long_files;
-    app.log.runs = runs;
+    app.git.log.clipped = clipped;
+    app.git.log.long_files = long_files;
+    app.git.log.runs = runs;
 
     // 列表的滚动条紧贴列表右边缘。
     let top = {
@@ -191,9 +191,9 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, parts: &LogParts) -> Rect {
         Some(key) => t!("git-log-filter-placeholder-key", key = key),
         None => t!("git-log-filter-placeholder").to_owned(),
     };
-    let mut field = std::mem::take(&mut app.log.filter);
+    let mut field = std::mem::take(&mut app.git.log.filter);
     let caret = draw_bar_field(app, frame, area, &mut field, &placeholder, focused);
-    app.log.filter = field;
+    app.git.log.filter = field;
     if focused {
         app.ime.cursor = caret;
     }
@@ -458,7 +458,7 @@ fn draw_list(
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     // 键盘焦点位于详情的文件列表时，选中的提交铺无焦点时的底色。
-    let focused = app.focus == Focus::Editor && app.log.file.is_none();
+    let focused = app.focus == Focus::Editor && app.git.log.file.is_none();
     // 高亮选中提交所在的线，其他线淡化。比较两个版本时两端不在同一条线上，不高亮。鼠标指向
     // 一条线时高亮该线：点击后沿该线跳转，高亮用于提示跳转目标。
     let line = match app.pointer.hover {

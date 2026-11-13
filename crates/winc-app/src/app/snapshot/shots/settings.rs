@@ -137,7 +137,7 @@ fn snapshot_settings_format() {
         app.open_settings();
         app.settings_show_page(SettingsPage::Format);
         app.settings_add_language(Task::Format, winc_syntax::find("toml").unwrap());
-        app.context_menu = None;
+        app.overlays.context_menu = None;
         app.settings_add_language(Task::Format, winc_syntax::find("groovy").unwrap());
         app.settings_cancel_field();
         app.settings_scroll_by(-10_000.0);
@@ -179,7 +179,7 @@ fn snapshot_settings_terminal() {
         // 「默认 Shell」的菜单：系统默认和检测到的 shell，副标题是启动命令。
         app.settings_open_menu(Setting::TerminalShell);
         shoot(&mut app, &format!("settings-terminal-shell-{tag}"));
-        app.context_menu = None;
+        app.overlays.context_menu = None;
 
         // 自定义命令：没有设置时输入框为空，以淡色显示填写提示。
         app.settings_start_editing(Setting::TerminalShell);
@@ -296,7 +296,7 @@ fn snapshot_english() {
     shoot(&mut app, "english-settings");
     app.settings_open_menu(Setting::Language);
     shoot(&mut app, "english-settings-language");
-    app.context_menu = None;
+    app.overlays.context_menu = None;
     for page in [
         SettingsPage::Editor,
         SettingsPage::Format,
@@ -322,14 +322,15 @@ fn snapshot_about_page() {
         let mut app = app_with(&dir.join("short.rs"), dark);
         app.open_settings();
         app.settings_show_page(SettingsPage::About);
-        *app.shared.update_state.borrow_mut() = crate::winc::UpdateState::Found("0.1.400".into());
+        *app.link.shared.update_state.borrow_mut() =
+            crate::winc::UpdateState::Found("0.1.400".into());
         paint(&mut app);
         let (x, y) = settings_point(&app, SettingsPart::Action(Setting::Updates));
         app.on_mouse_move(x, y);
         shoot(&mut app, &format!("settings-about-{tag}"));
 
         // 不支持应用内更新：只写明原因，没有按钮；鼠标停在一个链接上。
-        *app.shared.update_state.borrow_mut() = crate::winc::UpdateState::Off;
+        *app.link.shared.update_state.borrow_mut() = crate::winc::UpdateState::Off;
         let (x, y) = settings_point(&app, SettingsPart::Link(Setting::Repository));
         app.on_mouse_move(x, y);
         shoot(&mut app, &format!("settings-about-off-{tag}"));

@@ -580,7 +580,7 @@ impl App {
     /// 关闭跳转条以及文件树中的名称输入行。
     pub(in crate::app) fn close_prompt(&mut self) {
         self.bars.goto_input = None;
-        self.name_input = None;
+        self.panels.name_input = None;
         self.ime.field_preedit.clear();
         self.relayout();
         self.request_redraw();
@@ -588,7 +588,7 @@ impl App {
 
     /// 处理跳转条或文件树名称输入行中的回车。
     pub(in crate::app) fn submit_prompt(&mut self) {
-        if self.name_input.is_some() {
+        if self.panels.name_input.is_some() {
             self.submit_name_input();
             return;
         }

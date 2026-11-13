@@ -144,7 +144,7 @@ fn draw_group(
                 pill,
                 bar,
                 app.pointer.hover == Hover::Status(item),
-                app.menu_button == Some(MenuButton::Status(item))
+                app.overlays.menu_button == Some(MenuButton::Status(item))
                     || (item == StatusItem::Branch
                         && app.branch_picker_from(crate::app::GitAnchor::Status)),
             );
@@ -281,8 +281,8 @@ impl UpdateButton {
 /// macOS 上下载、安装和重新启动都在 Sparkle 的窗口里进行，按钮一直是「更新」。
 fn update_button(app: &App) -> Option<UpdateButton> {
     use crate::winc::UpdateState;
-    app.shared.update.borrow().as_ref()?;
-    let (icon, label) = match &*app.shared.update_state.borrow() {
+    app.link.shared.update.borrow().as_ref()?;
+    let (icon, label) = match &*app.link.shared.update_state.borrow() {
         UpdateState::Downloading(_, percent) => {
             (UpdateIcon::Progress(*percent), format!("{percent}%"))
         }
@@ -307,8 +307,8 @@ fn update_button(app: &App) -> Option<UpdateButton> {
 /// 找到新版本后再次检查失败时，按钮仍是「更新」，提示仍写找到的版本。
 pub(in crate::view) fn update_tooltip(app: &App) -> Option<String> {
     use crate::winc::UpdateState;
-    let version = app.shared.update.borrow().clone()?;
-    let tip = match &*app.shared.update_state.borrow() {
+    let version = app.link.shared.update.borrow().clone()?;
+    let tip = match &*app.link.shared.update_state.borrow() {
         UpdateState::Downloading(..) | UpdateState::Ready(_) | UpdateState::InstallFailed(_) => {
             return Some(super::settings::update_status(app).0);
         }
@@ -581,7 +581,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         .as_ref()
         .and_then(branch_label)
         .map(|mut label| {
-            if let Some(running) = &app.branch.running {
+            if let Some(running) = &app.git.branch.running {
                 label.push_str(" · ");
                 label.push_str(&t!(
                     "workspace-status-branch-running",
@@ -664,7 +664,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
                     pill,
                     left,
                     hovered,
-                    app.menu_button == Some(MenuButton::Crumb(i)),
+                    app.overlays.menu_button == Some(MenuButton::Crumb(i)),
                 );
                 if pill.x < left.right() {
                     let visible = pill.w.min(left.right() - pill.x);

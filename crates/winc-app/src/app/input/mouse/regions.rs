@@ -32,7 +32,7 @@ impl App {
 
         // 文件视图底部的大纲：按绘制时记下的位置找；分隔条由 `Target::Splitter` 处理。
         if self.layout.outline.contains(x, y) {
-            if self.sidebar.visible && self.layout.splitter.contains(x, y) {
+            if self.panels.sidebar.visible && self.layout.splitter.contains(x, y) {
                 return None;
             }
             return Some(hit(&self.hits.outline, x, y).map_or(Hover::None, Hover::Outline));
@@ -49,14 +49,14 @@ impl App {
 
         // 面板只负责顶栏以下、分隔条以左的区域；侧栏开关和分隔条由后面的判断处理。
         let panel = self.panel_rect();
-        let on_splitter = self.sidebar.visible && self.layout.splitter.contains(x, y);
+        let on_splitter = self.panels.sidebar.visible && self.layout.splitter.contains(x, y);
 
         if !self.panel_shown() || !panel.contains(x, y) || on_splitter {
             return None;
         }
 
         let parts = self.panel_parts();
-        let g = &self.global;
+        let g = &self.panels.global;
 
         if let Some(button) = parts.button_at(x, y, g.replace_open) {
             return Some(Hover::Panel(button));
@@ -214,7 +214,7 @@ impl App {
     /// 点在面板内交给面板处理；点在面板外则关闭面板，不会同时点到下方的内容。
     /// 面板没有打开时返回 `false`。
     pub(super) fn click_picker(&mut self, x: f32, y: f32) -> bool {
-        if !self.picker.open {
+        if !self.overlays.picker.open {
             return false;
         }
 
@@ -241,7 +241,7 @@ impl App {
         if parts.bar.contains(x, y) {
             self.focus = Focus::Picker;
             // 位置浮窗的标题行没有输入框：筛选文字直接打字输入。
-            if self.picker.places.is_none() {
+            if self.overlays.picker.places.is_none() {
                 self.click_field(x, y);
             }
             return true;
@@ -249,12 +249,12 @@ impl App {
 
         self.focus = Focus::Picker;
 
-        if let Some(index) = parts.row_at(y, self.picker.scroll)
-            && index < self.picker.hits.len()
+        if let Some(index) = parts.row_at(y, self.overlays.picker.scroll)
+            && index < self.overlays.picker.hits.len()
         {
             // 分组标题点了没有反应。
             if self.picker_row_selectable(index) {
-                self.picker.selected = index;
+                self.overlays.picker.selected = index;
                 self.picker_accept();
             }
         }
@@ -265,7 +265,7 @@ impl App {
     /// (`x`, `y`) 是否在分隔条上、且不在提交视图里写全名的那一行上：该行覆盖在分隔条之上，与文件
     /// 树的处理相同（见 [`App::target_at`]）。
     fn on_splitter_outside_commit_overflow(&self, x: f32, y: f32) -> bool {
-        self.sidebar.visible
+        self.panels.sidebar.visible
             && self.layout.splitter.contains(x, y)
             && !self.over_commit_overflow_row(y)
     }
@@ -309,7 +309,7 @@ impl App {
         }
 
         if self.layout.outline.contains(x, y) {
-            if self.sidebar.visible && self.layout.splitter.contains(x, y) {
+            if self.panels.sidebar.visible && self.layout.splitter.contains(x, y) {
                 return false;
             }
             if let Some(target) = hit(&self.hits.outline, x, y) {
@@ -340,7 +340,7 @@ impl App {
         }
 
         // 分隔条在侧栏右边缘，由后面的分支处理。
-        if self.sidebar.visible && self.layout.splitter.contains(x, y) {
+        if self.panels.sidebar.visible && self.layout.splitter.contains(x, y) {
             return false;
         }
 
@@ -382,7 +382,7 @@ impl App {
         let terminal_find =
             (self.terminal.find.as_ref()).map(|f| (Focus::TerminalFind, true, &f.field));
         let shown = self.panel_shown();
-        let g = &self.global;
+        let g = &self.panels.global;
         let panel = [
             (Focus::GlobalQuery, shown, &g.query),
             (Focus::GlobalReplace, shown && g.replace_open, &g.replace),
@@ -391,7 +391,7 @@ impl App {
             (
                 Focus::CommitMessage,
                 self.commit_shown() && self.commit_compose_shown(),
-                &self.commit.message,
+                &self.git.commit.message,
             ),
         ];
 
@@ -477,7 +477,7 @@ impl App {
         let mut drag = TreeDrag::new(ws, index, (x, y));
         drag.sticky = sticky;
         drag.keep = count == 2;
-        self.tree.drag = Some(drag);
+        self.panels.tree.drag = Some(drag);
     }
 
     /// 处理对编辑区窗口坐标 (`x`, `y`)（逻辑像素）处的点击：放置光标，双击选词，三击或点击行号栏

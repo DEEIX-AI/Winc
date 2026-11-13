@@ -596,7 +596,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
         use crate::app::MenuButton;
         let menu = Rect::new(new.right() + TAB_GAP, button_y, BUTTON, BUTTON);
         let on = app.pointer.hover == Hover::TerminalHeader(HeaderHit::ShellMenu);
-        let open = app.menu_button == Some(MenuButton::TerminalShells);
+        let open = app.overlays.menu_button == Some(MenuButton::TerminalShells);
         draw_button(frame, p, menu, header, on, open);
         let direction = icons::Direction::Down;
         icons::chevron(frame, center(menu), 8.0, direction, p.text_muted, header);
@@ -693,7 +693,7 @@ fn draw_run_buttons(
         return;
     };
     let running = app.run_config_running();
-    let open = app.menu_button == Some(MenuButton::RunConfigs);
+    let open = app.overlays.menu_button == Some(MenuButton::RunConfigs);
 
     draw_button(frame, p, menu, header, hovered(RunButton::Menu), open);
     let color = if open || hovered(RunButton::Menu) {

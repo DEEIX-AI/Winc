@@ -663,20 +663,20 @@ impl App {
                 .collect(),
         };
         self.finish_name_input();
-        self.picker.places = None;
-        self.picker.branch_rows = None;
-        self.picker.location_rows = None;
-        self.picker.folders = false;
-        self.picker.remote = None;
-        self.picker.vim_list = Some(VimList {
+        self.overlays.picker.places = None;
+        self.overlays.picker.branch_rows = None;
+        self.overlays.picker.location_rows = None;
+        self.overlays.picker.folders = false;
+        self.overlays.picker.remote = None;
+        self.overlays.picker.vim_list = Some(VimList {
             kind: listing,
             rows,
         });
-        self.picker.open = true;
-        self.picker.doc = self.editor.active().map(|doc| doc.id);
-        self.picker.input.set_text("");
-        self.picker.selected = 0;
-        self.picker.scroll = 0.0;
+        self.overlays.picker.open = true;
+        self.overlays.picker.doc = self.editor.active().map(|doc| doc.id);
+        self.overlays.picker.input.set_text("");
+        self.overlays.picker.selected = 0;
+        self.overlays.picker.scroll = 0.0;
         self.focus = Focus::Picker;
         self.picker_refresh();
         self.relayout();
@@ -686,21 +686,22 @@ impl App {
 
     /// 按查询筛选列表：名字或内容中含有查询的各行，不区分大小写。
     pub(in crate::app) fn vim_list_refresh(&mut self) {
-        let needle = self.picker.input.text().to_lowercase();
-        let Some(list) = &self.picker.vim_list else {
+        let needle = self.overlays.picker.input.text().to_lowercase();
+        let Some(list) = &self.overlays.picker.vim_list else {
             return;
         };
         let fits = |row: &VimRow| {
             row.label.to_lowercase().contains(&needle) || row.text.to_lowercase().contains(&needle)
         };
         let rows = list.rows.iter().enumerate();
-        self.picker.hits = (rows.filter(|(_, row)| fits(row)).map(|(index, _)| index)).collect();
+        self.overlays.picker.hits =
+            (rows.filter(|(_, row)| fits(row)).map(|(index, _)| index)).collect();
     }
 
     /// 选中列表中的一行：粘贴寄存器、跳转到标记或切换到文档。
     pub(in crate::app) fn vim_list_accept(&mut self) {
-        let row = (self.picker.hits.get(self.picker.selected))
-            .and_then(|index| self.picker.vim_list.as_ref()?.rows.get(*index));
+        let row = (self.overlays.picker.hits.get(self.overlays.picker.selected))
+            .and_then(|index| self.overlays.picker.vim_list.as_ref()?.rows.get(*index));
         let Some(target) = row.map(|row| row.target) else {
             return;
         };

@@ -184,8 +184,8 @@ impl ApplicationHandler<UserEvent> for App {
         window.set_ime_allowed(true);
         #[cfg(target_os = "macos")]
         {
-            let proxy = self.proxy.clone();
-            self.traffic_lights = crate::macos::TrafficLights::new(
+            let proxy = self.link.proxy.clone();
+            self.link.traffic_lights = crate::macos::TrafficLights::new(
                 &window,
                 // 这三个按钮在卡片顶部的顶栏里垂直居中：顶栏上方有 `ISLAND_MARGIN` 的留白，
                 // 按钮按高度为留白两倍加顶栏高度的区域居中。
@@ -202,7 +202,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.place_traffic_lights();
         // 在窗口显示后询问：提示框依附于窗口。
         #[cfg(target_os = "macos")]
-        if let Some(proxy) = &self.proxy {
+        if let Some(proxy) = &self.link.proxy {
             let _ = proxy.send_event(UserEvent::OfferMoveToApplications);
         }
         self.install_system_hooks();
@@ -218,7 +218,10 @@ impl ApplicationHandler<UserEvent> for App {
             self.format.formatter.prepare(|| {});
         }
 
-        if self.editor.active.is_none() && self.editor.workspace.is_some() && self.sidebar.visible {
+        if self.editor.active.is_none()
+            && self.editor.workspace.is_some()
+            && self.panels.sidebar.visible
+        {
             self.focus = Focus::Tree;
         }
 
@@ -329,7 +332,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.reset_blink();
                     self.terminal_window_focused();
                     // 其他 winc 窗口可能修改了最近列表，重新读取后开始页和项目菜单显示最新内容。
-                    if let Some(path) = &self.state_path {
+                    if let Some(path) = &self.store.state_path {
                         self.state = State::load_from(path);
                     }
                 } else {
@@ -361,7 +364,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.update_terminal_link();
                 }
                 // 按住 `⌥` 时分支选择器中的「拉取」变为「拉取并变基」，提交按钮变为「提交并推送」。
-                if (self.picker.open && self.picker_has_actions()) || self.commit_shown() {
+                if (self.overlays.picker.open && self.picker_has_actions()) || self.commit_shown() {
                     self.request_redraw();
                 }
                 // 拖动文件树项时按下、松开 `⌥` 在移动与复制之间切换，放置目标和拖动卡片随之更新。
@@ -553,7 +556,7 @@ impl App {
             }
             // 编号为所弹出菜单中的序号，按记录的菜单查找对应的命令。
             UserEvent::MenuCommand(tag) => {
-                let command = self.context_menu.as_ref().and_then(|menu| {
+                let command = self.overlays.context_menu.as_ref().and_then(|menu| {
                     input::context_menu::MenuEntry::command_at(&menu.entries, tag)
                 });
                 if let Some(command) = command {
@@ -604,16 +607,17 @@ impl App {
         }
 
         if self
+            .git
             .commit
             .committed
             .as_ref()
             .is_some_and(|(_, t)| now >= *t)
         {
-            self.commit.committed = None;
+            self.git.commit.committed = None;
             self.request_redraw();
         }
 
-        let committed = self.commit.committed.as_ref().map(|(_, t)| *t);
+        let committed = self.git.commit.committed.as_ref().map(|(_, t)| *t);
         let mut wake = [
             self.status.until,
             self.notice.until,
@@ -643,13 +647,17 @@ impl App {
         let copying = self.copy_tick(now);
         earliest(&mut wake, copying);
 
-        let tooltip_at = self.tooltip.since.map(|since| since + TOOLTIP_DELAY);
+        let tooltip_at = self
+            .overlays
+            .tooltip
+            .since
+            .map(|since| since + TOOLTIP_DELAY);
 
-        if self.pointer.hover.has_tooltip() && !self.tooltip.shown {
+        if self.pointer.hover.has_tooltip() && !self.overlays.tooltip.shown {
             let show = tooltip_at.is_none_or(|at| now >= at);
 
             if show {
-                self.tooltip.shown = true;
+                self.overlays.tooltip.shown = true;
                 self.request_redraw();
             } else {
                 earliest(&mut wake, tooltip_at);
@@ -659,13 +667,13 @@ impl App {
         // 后台线程唤醒界面的事件经过节流，被丢弃的最后一批结果要等到下一个有匹配的文件或搜索
         // 结束才会送达。因此搜索进行中按 `GLOBAL_POLL` 的间隔主动收取结果，
         // 避免列表长时间停留在不完整的状态。
-        if self.global.engine.is_running() {
+        if self.panels.global.engine.is_running() {
             self.poll_global();
             earliest(&mut wake, Some(now + GLOBAL_POLL));
         }
 
         // 全局搜索的条件变化后，延迟 `SEARCH_DELAY` 到达 `global.due` 再开始搜索，合并连续的输入。
-        if let Some(due) = self.global.due {
+        if let Some(due) = self.panels.global.due {
             if now >= due {
                 self.run_global_search();
             } else {

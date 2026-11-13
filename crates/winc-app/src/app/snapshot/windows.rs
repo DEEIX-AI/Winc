@@ -225,7 +225,7 @@ fn settings_written_back_keep_what_was_edited_in_the_file_meanwhile() {
     let (mut winc, a, b, dir) = two_windows("windows-config-edits");
     let path = dir.join("config.json");
     for key in [a, b] {
-        winc.app(key).config_path = Some(path.clone());
+        winc.app(key).store.config_path = Some(path.clone());
     }
     // 程序运行期间，用户在 winc 之外手动修改了配置文件，之后在设置页中修改了另一项。
     std::fs::write(&path, r#"{"editor": {"size": 16}}"#).unwrap();
@@ -250,7 +250,7 @@ fn files_cut_in_one_window_are_moved_when_pasted_in_another() {
     let (mut winc, a, b, dir) = two_windows("windows-cut");
     let file = dir.join("a.txt");
     winc.app(a).cut_entries(std::slice::from_ref(&file));
-    assert_eq!(*winc.app(b).shared.cut_files.borrow(), [file]);
+    assert_eq!(*winc.app(b).link.shared.cut_files.borrow(), [file]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -259,7 +259,7 @@ fn files_go_to_the_innermost_window_that_contains_them() {
     let (mut winc, a, b, dir) = two_windows("windows-containing");
     winc.app(b).open_path(&dir);
     winc.settle_for_test();
-    let shared = std::rc::Rc::clone(&winc.app(a).shared);
+    let shared = std::rc::Rc::clone(&winc.app(a).link.shared);
     let src = winc_config::files::canonicalize(dir.join("src")).unwrap();
     assert_eq!(
         shared.window_containing(&src.join("main.rs")),
@@ -346,7 +346,10 @@ fn files_cut_in_one_window_move_into_another_windows_folder() {
     assert!(moved.exists() && !notes.exists());
     let doc = winc.app(a).editor.active().unwrap();
     assert_eq!(doc.path.as_deref(), Some(moved.as_path()));
-    assert!(winc.app(b).shared.cut_files.borrow().is_empty(), "只移一次");
+    assert!(
+        winc.app(b).link.shared.cut_files.borrow().is_empty(),
+        "只移一次"
+    );
     let _ = std::fs::remove_dir_all(&a_dir);
     let _ = std::fs::remove_dir_all(&b_dir);
 }

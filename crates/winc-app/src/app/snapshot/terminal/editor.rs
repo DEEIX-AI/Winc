@@ -359,7 +359,7 @@ fn terminal_tabs_are_renamed_in_place() {
     app.on_mouse_down(MouseButton::Right);
     app.on_mouse_up(MouseButton::Right);
     assert_eq!(app.terminal.active, 0);
-    let menu = app.context_menu.as_ref().unwrap();
+    let menu = app.overlays.context_menu.as_ref().unwrap();
     assert_eq!(menu.target, MenuTarget::TerminalTab(id));
     app.run_menu_command(MenuCommand::RenameTerminal);
 
@@ -675,7 +675,7 @@ fn the_terminal_menu_maximizes_and_the_options_apply() {
         app.on_mouse_move(x, y);
         app.on_mouse_down(MouseButton::Right);
         app.on_mouse_up(MouseButton::Right);
-        let menu = app.context_menu.as_ref().unwrap();
+        let menu = app.overlays.context_menu.as_ref().unwrap();
         assert_eq!(menu.target, MenuTarget::Terminal(None));
         menu.entries
             .iter()
@@ -1198,7 +1198,7 @@ fn the_panel_position_survives_a_restart() {
     let dir = sample_folder("terminal-position");
     let path = dir.join("config.json");
     let mut app = app_with(&dir.join("short.rs"), false);
-    app.config_path = Some(path.clone());
+    app.store.config_path = Some(path.clone());
     show_terminal(&mut app, "$ ");
     app.toggle_terminal_position();
     let (config, _) = winc_config::Config::load_from(&path);

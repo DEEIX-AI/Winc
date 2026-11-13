@@ -43,3 +43,21 @@ pub(crate) struct Pointer {
     /// 鼠标是否在窗口内：移进来时置位，离开窗口时清除。
     pub(in crate::app) cursor_inside: bool,
 }
+
+/// 覆盖在界面之上的浮层：右键菜单、快速打开、对话框、提示框和悬停提示。
+pub(crate) struct Overlays {
+    /// 新建工作树对话框；未打开时为 `None`。
+    ///
+    /// 打开时覆盖整个窗口，键盘和鼠标事件优先交给对话框处理。
+    pub(crate) form_dialog: Option<git::form::FormDialog>,
+    /// 窗口内绘制的提示框（平台没有系统提示框时使用，见 `lifecycle/alert.rs`）。
+    pub(crate) alert: Option<lifecycle::alert::InAppAlert>,
+    /// 快速打开面板与位置浮窗的状态。
+    pub picker: workspace::picker::Picker,
+    /// 右键菜单的目标和内容，选中一项时据此执行。
+    pub context_menu: Option<ContextMenu>,
+    /// 系统菜单打开期间，点开该菜单的按钮绘制为按下状态。
+    pub menu_button: Option<MenuButton>,
+    /// 悬停提示的计时状态。
+    pub tooltip: animation::Tooltip,
+}

@@ -60,7 +60,7 @@ impl App {
 
     /// 文本区宽度是否正在逐帧变化：侧栏或终端面板的动画进行中，或正在拖动两者的分隔条。
     pub(in crate::app) fn text_width_changing(&self) -> bool {
-        self.sidebar.motion.is_some()
+        self.panels.sidebar.motion.is_some()
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
             || matches!(

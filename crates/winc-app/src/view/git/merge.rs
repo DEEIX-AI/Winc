@@ -324,7 +324,7 @@ pub(in crate::view) fn draw_side_panes(app: &mut App, frame: &mut Frame<'_>) {
         return;
     };
     let count = app.conflicts(index).len();
-    let Some(mut panes) = app.merge.panes.take() else {
+    let Some(mut panes) = app.git.merge.panes.take() else {
         return;
     };
     let lh = app.fonts.line_height;
@@ -377,7 +377,7 @@ pub(in crate::view) fn draw_side_panes(app: &mut App, frame: &mut Frame<'_>) {
     }
     draw_merge_chrome(app, frame, &panes, count, &mut hits);
     app.hits.merge.extend(hits);
-    app.merge.panes = Some(panes);
+    app.git.merge.panes = Some(panes);
 }
 
 /// 绘制三栏合并的一侧及其与结果一栏之间的连接带：`top` 是第一行的行号（可以是小数），`spans` 是
@@ -392,8 +392,8 @@ fn draw_side_pane(
     hits: &mut Vec<(Rect, MergeTarget)>,
 ) {
     let p = app.palette;
-    let rect = app.merge.pane_rects[side];
-    let ribbon = app.merge.ribbons[side];
+    let rect = app.git.merge.pane_rects[side];
+    let ribbon = app.git.merge.ribbons[side];
     frame.rect(rect, p.editor_bg);
     frame.rect(ribbon, p.editor_bg);
     let body_y = rect.y + PANE_HEADER;
@@ -547,7 +547,7 @@ fn draw_merge_chrome(
     hits: &mut Vec<(Rect, MergeTarget)>,
 ) {
     let p = app.palette;
-    let [left, right] = app.merge.pane_rects;
+    let [left, right] = app.git.merge.pane_rects;
     let whole = Rect::new(left.x, left.y, right.right() - left.x, PANE_HEADER);
     frame.rect(whole, p.editor_bg);
     frame.rect(
@@ -561,7 +561,7 @@ fn draw_merge_chrome(
         right.x + pane_gutter_width(app, panes.sides[1].text.len_lines()) + PANE_PAD,
     ];
     for (side, x) in code_x.into_iter().enumerate() {
-        let rect = app.merge.pane_rects[side];
+        let rect = app.git.merge.pane_rects[side];
         icons::lock(frame, (x + 4.0, whole.y + whole.h / 2.0), p.text_dim, whole);
         let title_x = x + 14.0;
         let room = (rect.right() - 12.0 - title_x).max(0.0);
@@ -608,7 +608,7 @@ fn draw_merge_chrome(
     ui_text_small(frame, app, x - 6.0 - w, bar, &status, color, bar);
 
     // 底部操作栏：左侧为整个文件采用一侧的按钮，右侧为退出和完成。
-    let footer = app.merge.footer;
+    let footer = app.git.merge.footer;
     frame.rect(footer, p.editor_bg);
     frame.rect(Rect::new(footer.x, footer.y, footer.w, 1.0), p.separator);
     let y = footer.y + (footer.h - SETTINGS_CONTROL_H) / 2.0;

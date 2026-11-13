@@ -7,7 +7,7 @@ impl App {
     /// 处理鼠标按键 `button` 在当前鼠标位置按下。
     pub(in crate::app) fn on_mouse_down(&mut self, button: MouseButton) {
         // 选择面板的动画期间高度还在变，而点击按最终的布局：先取消动画，使显示直接到位。
-        if self.picker.fold.take().is_some() {
+        if self.overlays.picker.fold.take().is_some() {
             self.relayout();
         }
         let (x, y) = self.pointer.mouse;
@@ -21,7 +21,7 @@ impl App {
 
         // 窗口内的提示框、菜单打开时，这次按下只交给它们：点在菜单外面即关掉菜单。
         if (button == MouseButton::Left && self.alert_mouse_down())
-            || self.alert.is_some()
+            || self.overlays.alert.is_some()
             || self.popup_mouse_down(button)
         {
             return;
@@ -29,7 +29,7 @@ impl App {
 
         // 鼠标侧面的两个键：后退、前进。
         if matches!(button, MouseButton::Back | MouseButton::Forward) {
-            if !self.settings.open && self.form_dialog.is_none() {
+            if !self.settings.open && self.overlays.form_dialog.is_none() {
                 self.navigate(button == MouseButton::Forward);
             }
             return;
@@ -43,7 +43,7 @@ impl App {
         // 终端网格上的中键、右键：程序要了鼠标时上报给它（左键在下面按部件分发时处理）。
         if matches!(button, MouseButton::Middle | MouseButton::Right)
             && !self.settings.open
-            && self.form_dialog.is_none()
+            && self.overlays.form_dialog.is_none()
             && self.terminal_view().contains(x, y)
             && !self
                 .terminal_find_bar()
@@ -61,8 +61,8 @@ impl App {
         // 中键在编辑区的文字上拖动时进行列选择，效果等同于 `⇧⌥` 拖动。
         if button == MouseButton::Middle
             && !self.settings.open
-            && self.form_dialog.is_none()
-            && !self.picker.open
+            && self.overlays.form_dialog.is_none()
+            && !self.overlays.picker.open
             && l.text.contains(x, y)
             && self.active_shows_text()
             && self.editor.active().is_some_and(|d| d.diff.is_none())
@@ -73,8 +73,8 @@ impl App {
         // 差异里可编辑一侧的文字上同样框出一列。
         if button == MouseButton::Middle
             && !self.settings.open
-            && self.form_dialog.is_none()
-            && !self.picker.open
+            && self.overlays.form_dialog.is_none()
+            && !self.overlays.picker.open
             && self.over_diff_editable(x, y)
         {
             self.start_diff_columns(x, y);
@@ -127,7 +127,7 @@ impl App {
             if card.contains(x, y) {
                 return;
             }
-            self.changes.popup = None;
+            self.git.changes.popup = None;
         }
 
         // 设置浮层位于最上层，打开时所有点击都先交给它。
@@ -135,7 +135,7 @@ impl App {
             self.click_settings(x, y);
             return;
         }
-        if self.form_dialog.is_some() {
+        if self.overlays.form_dialog.is_some() {
             self.click_form_dialog(x, y);
             return;
         }
@@ -169,7 +169,7 @@ impl App {
             Target::Picker => {
                 self.click_picker(x, y);
             }
-            _ if self.picker.open => self.close_picker(),
+            _ if self.overlays.picker.open => self.close_picker(),
             Target::Scrollbar(
                 bar @ (Scrollbar::Panel | Scrollbar::Commit | Scrollbar::Outline),
                 grab,
@@ -183,11 +183,11 @@ impl App {
                 self.focus = Focus::Prompt;
                 self.click_field(x, y);
             }
-            _ if self.name_input.is_some() => self.submit_name_input(),
+            _ if self.panels.name_input.is_some() => self.submit_name_input(),
             Target::Search => self.click_search(x, y),
             // 双击分隔条恢复默认宽度。
             Target::Splitter if self.click_count(x, y) == 2 => {
-                self.sidebar.width = DEFAULT_PANEL_WIDTH;
+                self.panels.sidebar.width = DEFAULT_PANEL_WIDTH;
                 self.remember_panel_width();
                 self.relayout();
                 self.request_redraw();
@@ -197,7 +197,7 @@ impl App {
                 let most = (self.layout.window.w - 320.0).max(crate::theme::MIN_PANEL_WIDTH);
                 self.pointer.drag = Drag::Splitter {
                     start_x: x,
-                    start_width: self.sidebar.width.min(most),
+                    start_width: self.panels.sidebar.width.min(most),
                 };
             }
             Target::TreeTool(tool) => self.run_tree_tool(tool),
@@ -238,7 +238,7 @@ impl App {
             Target::Log(crate::app::git::log::LogTarget::Divider) => {
                 // 双击回到默认宽度。
                 if self.click_count(x, y) == 2 {
-                    self.log.details_w = None;
+                    self.git.log.details_w = None;
                     self.request_redraw();
                 } else {
                     self.pointer.drag = Drag::LogDivider {

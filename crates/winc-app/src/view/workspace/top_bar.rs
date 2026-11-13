@@ -361,7 +361,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
     icons::plus(frame, center(new_tab), 9.0, p.text_muted, area);
     if let Some(list) = list {
         // 菜单打开时按钮显示为按下状态。
-        let open = app.menu_button == Some(MenuButton::TabList);
+        let open = app.overlays.menu_button == Some(MenuButton::TabList);
         let hovered = app.pointer.hover == Hover::TabList;
         draw_button(frame, p, list, area, hovered, open);
         let color = if hovered || open {

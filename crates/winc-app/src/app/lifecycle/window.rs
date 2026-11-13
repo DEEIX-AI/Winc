@@ -182,7 +182,7 @@ impl App {
     /// 窗口建不起来（系统窗口或渲染器）：还有别的窗口时只放弃这一个（标成关掉，应用层去掉它），
     /// 否则结束。
     pub(super) fn give_up_window(&mut self, event_loop: &ActiveEventLoop) {
-        if self.shared.others() {
+        if self.link.shared.others() {
             self.window.handle = None;
             self.window.hidden = true;
         } else {
@@ -229,7 +229,7 @@ impl App {
     /// 摆放。
     pub(super) fn place_traffic_lights(&self) {
         #[cfg(target_os = "macos")]
-        if let (Some(window), Some(lights)) = (&self.window.handle, &self.traffic_lights)
+        if let (Some(window), Some(lights)) = (&self.window.handle, &self.link.traffic_lights)
             && let Some(end) = lights.place()
             && crate::layout::set_traffic_lights_end(end as f32)
         {
@@ -245,13 +245,15 @@ impl App {
         // 面板打开以后换了标签（⌘W、切换标签、后退前进、新建文件）：面板里的符号、书签、用法
         // 都属于原来的文档，回车会在新标签里跳到错误的位置，所以关掉。`close_picker` 会再次
         // 调用本函数，那时面板已经关了。
-        if self.picker.open && self.editor.active().map(|d| d.id) != self.picker.doc {
+        if self.overlays.picker.open
+            && self.editor.active().map(|d| d.id) != self.overlays.picker.doc
+        {
             self.close_picker();
             return;
         }
         // 浮层和焦点不分家：快捷键、点击把焦点挪到了其他位置（⌘F、⇧⌘F、⌃G、⌃Tab、点编辑区……）
         // 时面板、输入条跟着关掉。否则 Esc 和回车都到不了面板，面板会一直留在屏幕上。
-        if self.picker.open && self.focus != Focus::Picker {
+        if self.overlays.picker.open && self.focus != Focus::Picker {
             self.close_picker();
             return;
         }
@@ -287,15 +289,15 @@ impl App {
         };
         // ⌘P 面板高度随结果数变化：至少一行（显示「正在整理文件…」「没有匹配」），最多
         // `PICKER_MAX_ROWS` 行，且不能延伸到状态栏。
-        let picker_rows = if self.picker.open {
+        let picker_rows = if self.overlays.picker.open {
             let room =
                 (h - status_height - TOP_BAR_END - BAR_HEIGHT - 2.0 * PICKER_PAD - 16.0).max(0.0);
             let most = ((room / PICKER_ROW).floor() as usize).clamp(1, PICKER_MAX_ROWS);
-            self.picker.hits.len().clamp(1, most)
+            self.overlays.picker.hits.len().clamp(1, most)
         } else {
             0
         };
-        let (panel, shown) = (self.sidebar.width, self.sidebar_shown());
+        let (panel, shown) = (self.panels.sidebar.width, self.sidebar_shown());
         self.layout = Layout::compute(
             w,
             h,
@@ -309,7 +311,7 @@ impl App {
         self.place_places();
         self.place_git_picker();
         self.animate_picker((w, h));
-        if let Some(bottom) = self.picker.places_bottom {
+        if let Some(bottom) = self.overlays.picker.places_bottom {
             self.layout.picker.y = bottom - self.layout.picker.h;
         }
 
@@ -328,7 +330,7 @@ impl App {
 
         self.place_outline();
         // 搜索和历史差异各有自己的列表，不能命中工作区文件树原来的区域。
-        if self.sidebar.view == SidebarView::Search || self.log_diff_tree().is_some() {
+        if self.panels.sidebar.view == SidebarView::Search || self.log_diff_tree().is_some() {
             let tree = self.layout.tree;
             self.layout.tree = Rect::new(tree.x, tree.y, 0.0, 0.0);
         }
@@ -665,7 +667,7 @@ impl App {
             Next::Terminal => self.toggle_terminal(),
             Next::Search(query) => {
                 self.open_global_search(false);
-                self.global.query.set_text(&query);
+                self.panels.global.query.set_text(&query);
                 self.global_changed(true);
             }
             Next::QuickOpen => self.open_picker(),

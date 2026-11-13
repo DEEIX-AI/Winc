@@ -160,7 +160,7 @@ fn delete_for_test(path: &Path) -> std::io::Result<()> {
 
 /// 在 `(x, y)` 处按下并释放右键。
 ///
-/// 测试中没有窗口，系统菜单不会真正弹出；菜单内容保存在 `app.context_menu` 中，
+/// 测试中没有窗口，系统菜单不会真正弹出；菜单内容保存在 `app.overlays.context_menu` 中，
 /// 可用 [`menu_commands`] 读取。
 fn right_click(app: &mut App, (x, y): (f32, f32)) {
     app.on_mouse_move(x, y);
@@ -192,7 +192,10 @@ fn menu_commands(app: &App) -> Vec<(MenuCommand, bool)> {
         }
     }
     let mut out = Vec::new();
-    flatten(&app.context_menu.as_ref().unwrap().entries, &mut out);
+    flatten(
+        &app.overlays.context_menu.as_ref().unwrap().entries,
+        &mut out,
+    );
     out
 }
 
@@ -247,7 +250,7 @@ fn search_folder(name: &str) -> PathBuf {
 
 /// 等待后台搜索完成，接收结果并绘制一帧。
 fn finish_search(app: &mut App) {
-    app.global.engine.wait();
+    app.panels.global.engine.wait();
     app.poll_global();
     paint(app);
 }
@@ -412,10 +415,10 @@ fn a_commit_finishing_after_a_folder_switch_does_not_push_the_new_repo() {
     let dir = sample_folder("commit-elsewhere");
     let mut app = app_with(&dir, false);
     let elsewhere = dir.join("other-repo");
-    app.commit.busy = true;
+    app.git.commit.busy = true;
     app.committed_in(&elsewhere);
-    assert!(app.branch.running.is_none());
-    assert!(app.commit.busy, "这边正在提交的不受影响");
+    assert!(app.git.branch.running.is_none());
+    assert!(app.git.commit.busy, "这边正在提交的不受影响");
     assert_eq!(
         app.status.message.as_deref(),
         Some("已在「other-repo」中提交 abc1234")

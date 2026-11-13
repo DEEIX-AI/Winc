@@ -47,15 +47,15 @@ impl<'a> PlacesView<'a> {
     /// 打开中的浮窗。
     fn live(app: &'a App) -> Option<PlacesView<'a>> {
         Some(PlacesView {
-            places: app.picker.places.as_ref()?,
-            hits: &app.picker.hits,
-            selected: app.picker.selected,
+            places: app.overlays.picker.places.as_ref()?,
+            hits: &app.overlays.picker.hits,
+            selected: app.overlays.picker.selected,
             hovered: match app.pointer.hover {
                 Hover::PickerRow(i) => Some(i),
                 _ => None,
             },
-            scroll: app.picker.scroll,
-            filter: app.picker.input.text(),
+            scroll: app.overlays.picker.scroll,
+            filter: app.overlays.picker.input.text(),
             caret: app.focus == Focus::Picker && app.blink.visible,
         })
     }
@@ -80,7 +80,11 @@ impl<'a> PlacesView<'a> {
 /// 三次缓出（最后一段慢慢停稳）。
 pub(in crate::view) fn draw_live(app: &App, frame: &mut Frame<'_>, rect: Rect) -> Option<Rect> {
     let view = PlacesView::live(app)?;
-    let t = app.picker.places_in.map_or(1.0, |clock| clock.linear());
+    let t = app
+        .overlays
+        .picker
+        .places_in
+        .map_or(1.0, |clock| clock.linear());
     let opacity = 1.0 - (1.0 - t).powi(2);
     let rect = slid(rect, app.places_above(), (1.0 - t).powi(3));
     frame.with_opacity(opacity, |frame| draw_places(app, frame, rect, &view))

@@ -179,14 +179,14 @@ fn the_tree_copies_files_and_pastes_text_and_images_as_new_files() {
     app.clipboard.copied_files.clear();
     app.clipboard.copied = Some("{\"name\": \"winc\"}".into());
     app.paste();
-    let entry = app.name_input.as_ref().expect("打开名字输入行");
+    let entry = app.panels.name_input.as_ref().expect("打开名字输入行");
     assert_eq!(entry.dir, dir);
     assert_eq!(entry.field.text(), "untitled.json");
     assert_eq!(entry.field.selected_text(), "untitled");
     assert_eq!(app.focus, Focus::Prompt);
     app.edit_field(|f| f.insert("package"));
     app.submit_prompt();
-    assert!(app.name_input.is_none());
+    assert!(app.panels.name_input.is_none());
     assert_eq!(
         std::fs::read_to_string(dir.join("package.json")).unwrap(),
         "{\"name\": \"winc\"}"
@@ -202,7 +202,10 @@ fn the_tree_copies_files_and_pastes_text_and_images_as_new_files() {
     app.clipboard.copied_image = Some(b"png".to_vec());
     select(&mut app, &dir.join("Cargo.toml"));
     app.paste();
-    assert_eq!(app.name_input.as_ref().unwrap().field.text(), "image.png");
+    assert_eq!(
+        app.panels.name_input.as_ref().unwrap().field.text(),
+        "image.png"
+    );
     app.close_name_input();
     assert!(!dir.join("image.png").exists());
     select(&mut app, &dir.join("Cargo.toml"));
@@ -211,7 +214,10 @@ fn the_tree_copies_files_and_pastes_text_and_images_as_new_files() {
     assert_eq!(std::fs::read(dir.join("image.png")).unwrap(), b"png");
     select(&mut app, &dir.join("Cargo.toml"));
     app.paste();
-    assert_eq!(app.name_input.as_ref().unwrap().field.text(), "image-1.png");
+    assert_eq!(
+        app.panels.name_input.as_ref().unwrap().field.text(),
+        "image-1.png"
+    );
     app.close_name_input();
 
     // 右键菜单：剪贴板中有文件、文本或图片时可以粘贴，剪贴板为空时「粘贴」灰显。

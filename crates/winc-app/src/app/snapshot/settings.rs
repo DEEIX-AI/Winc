@@ -112,7 +112,7 @@ fn zoom_scales_the_whole_window_in_steps() {
     app.open_settings();
     app.settings_open_menu(Setting::Zoom);
     assert_eq!(
-        app.context_menu.as_ref().map(|m| &m.target),
+        app.overlays.context_menu.as_ref().map(|m| &m.target),
         Some(&MenuTarget::Zoom)
     );
     assert!(app.menu_checked(MenuCommand::Zoom(3)));
@@ -188,7 +188,7 @@ fn font_size_keys_change_the_editor_font_size_and_reset() {
             .is_some_and(|m| m.contains("无法继续调整"))
     );
     // 测试中没有配置文件路径，不会写入用户的配置。
-    assert!(app.config_path.is_none());
+    assert!(app.store.config_path.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -356,7 +356,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert!(app.setting_value(Setting::EditorSize).2);
 
     // 测试环境没有配置路径，这些改动都不会写入磁盘。
-    assert!(app.config_path.is_none());
+    assert!(app.store.config_path.is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -973,10 +973,10 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     assert!(!app.can_check_updates());
     click_part(&mut app, SettingsPart::Action(Setting::Updates));
     assert_eq!(app.settings.selected, Setting::Updates);
-    assert!(app.context_menu.is_none());
-    *app.shared.update_state.borrow_mut() = UpdateState::Found("0.1.400".into());
+    assert!(app.overlays.context_menu.is_none());
+    *app.link.shared.update_state.borrow_mut() = UpdateState::Found("0.1.400".into());
     assert!(app.can_check_updates());
-    *app.shared.update_state.borrow_mut() = UpdateState::Checking;
+    *app.link.shared.update_state.borrow_mut() = UpdateState::Checking;
     assert!(!app.can_check_updates());
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1008,12 +1008,12 @@ fn a_font_can_be_chosen_from_the_menu() {
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
     assert_eq!(
-        app.context_menu.as_ref().map(|m| &m.target),
+        app.overlays.context_menu.as_ref().map(|m| &m.target),
         Some(&MenuTarget::Font(Setting::EditorFont))
     );
     assert!(app.settings.editing.is_none());
     assert!(app.menu_checked(MenuCommand::FontDefault));
-    app.context_menu = None;
+    app.overlays.context_menu = None;
     paint(&mut app);
 
     // 编辑器字体直接列出等宽字体，其余字体在子菜单里；界面字体全部直接列出。
@@ -1090,9 +1090,9 @@ fn the_about_page_links_out_and_hides_unavailable_updates() {
     // 不支持应用内更新时不显示「检查更新」按钮，也点不到。
     let button = app.settings_layout().row(Setting::Updates).unwrap().control;
     let (x, y) = (button.x + button.w / 2.0, button.y + button.h / 2.0);
-    *app.shared.update_state.borrow_mut() = UpdateState::Off;
+    *app.link.shared.update_state.borrow_mut() = UpdateState::Off;
     assert_eq!(app.settings_part_at(x, y), None);
-    *app.shared.update_state.borrow_mut() = UpdateState::Idle;
+    *app.link.shared.update_state.borrow_mut() = UpdateState::Idle;
     assert_eq!(
         app.settings_part_at(x, y),
         Some(SettingsPart::Action(Setting::Updates))
@@ -1119,7 +1119,14 @@ fn the_language_and_ui_font_controls_line_up() {
     // 语言菜单比控件短，打开后与控件同宽并对齐。
     app.settings_open_menu(Setting::Language);
     paint(&mut app);
-    let popup = app.context_menu.as_ref().unwrap().popup.as_ref().unwrap();
+    let popup = app
+        .overlays
+        .context_menu
+        .as_ref()
+        .unwrap()
+        .popup
+        .as_ref()
+        .unwrap();
     let menu = popup.levels[0].rect;
     assert_eq!((menu.x, menu.w), (language.x, language.w));
 
@@ -1286,7 +1293,7 @@ fn the_background_image_shows_under_the_base_colors() {
     write_png(&image, &red).unwrap();
     let mut app = app_with(&dir.join("short.rs"), false);
     // 状态文件所在的目录即缓存所在的目录。
-    app.state_path = Some(dir.join("state.json"));
+    app.store.state_path = Some(dir.join("state.json"));
     let cache = dir.join("wallpaper.cache");
     assert_eq!(Setting::BackgroundImage.page(), SettingsPage::Appearance);
     assert_eq!(app.setting_value(Setting::BackgroundOpacity).0, "15");
@@ -1614,7 +1621,7 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
 
     // 主题：弹出当前外观（深色）的主题菜单，当前的一项打勾，选中的写入深色主题的设置。
     pick(&mut app, StartAction::Theme);
-    let menu = app.context_menu.as_ref().unwrap();
+    let menu = app.overlays.context_menu.as_ref().unwrap();
     assert_eq!(menu.target, MenuTarget::NamedTheme(true));
     let themes = crate::theme::themes(true);
     let listed: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
@@ -1632,10 +1639,10 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
     // 语言：弹出设置中同一个「语言」菜单。
     pick(&mut app, StartAction::Language);
     assert_eq!(
-        app.context_menu.as_ref().unwrap().target,
+        app.overlays.context_menu.as_ref().unwrap().target,
         MenuTarget::Locale
     );
-    app.context_menu = None;
+    app.overlays.context_menu = None;
     paint(&mut app);
 
     assert!(!app.git_enabled());

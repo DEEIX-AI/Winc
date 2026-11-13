@@ -6,7 +6,7 @@ impl App {
     /// 返回 `Focus::Prompt` 对应的输入框：文件树中正在输入名字的那一行，或跳转条；都没有时
     /// 返回 `None`。
     fn prompt_field_mut(&mut self) -> Option<&mut TextField> {
-        if let Some(entry) = &mut self.name_input {
+        if let Some(entry) = &mut self.panels.name_input {
             return Some(&mut entry.field);
         }
 
@@ -19,17 +19,17 @@ impl App {
             Focus::Search => Some(&mut self.bars.find.input),
             Focus::Replace => Some(&mut self.bars.find.replace_input),
             Focus::Prompt => self.prompt_field_mut(),
-            Focus::GlobalQuery => Some(&mut self.global.query),
-            Focus::CommitMessage => Some(&mut self.commit.message),
-            Focus::GlobalReplace => Some(&mut self.global.replace),
-            Focus::GlobalInclude => Some(&mut self.global.include),
-            Focus::GlobalExclude => Some(&mut self.global.exclude),
-            Focus::Picker => Some(&mut self.picker.input),
+            Focus::GlobalQuery => Some(&mut self.panels.global.query),
+            Focus::CommitMessage => Some(&mut self.git.commit.message),
+            Focus::GlobalReplace => Some(&mut self.panels.global.replace),
+            Focus::GlobalInclude => Some(&mut self.panels.global.include),
+            Focus::GlobalExclude => Some(&mut self.panels.global.exclude),
+            Focus::Picker => Some(&mut self.overlays.picker.input),
             Focus::Setting => self.settings.editing.as_mut().map(|(_, field)| field),
             Focus::KeySearch => Some(&mut self.settings.keys_query),
             Focus::SettingsSearch => Some(&mut self.settings.search),
-            Focus::LogFilter => Some(&mut self.log.filter),
-            Focus::Dialog => self.form_dialog.as_mut().map(|d| match d.focus {
+            Focus::LogFilter => Some(&mut self.git.log.filter),
+            Focus::Dialog => self.overlays.form_dialog.as_mut().map(|d| match d.focus {
                 crate::layout::DialogPart::Second => &mut d.second,
                 crate::layout::DialogPart::Third => &mut d.third,
                 _ => &mut d.name,

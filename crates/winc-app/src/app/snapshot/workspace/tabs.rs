@@ -1015,8 +1015,16 @@ fn the_tab_list_lists_every_tab_when_they_overflow() {
     // 两个同名文件的副标题为标签上标注的上级目录。
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
-    assert_eq!(app.menu_button, Some(crate::app::MenuButton::TabList));
-    let entries = &app.context_menu.as_ref().expect("弹出了标签列表").entries;
+    assert_eq!(
+        app.overlays.menu_button,
+        Some(crate::app::MenuButton::TabList)
+    );
+    let entries = &app
+        .overlays
+        .context_menu
+        .as_ref()
+        .expect("弹出了标签列表")
+        .entries;
     let count = app.editor.documents.len();
     assert_eq!(entries.len(), count);
     let active = app.editor.active.unwrap();

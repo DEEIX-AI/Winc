@@ -610,7 +610,7 @@ impl App {
         };
         // 编辑区上方的改动卡片先由 `Esc` 关闭。
         let escape = event.logical_key == Key::Named(NamedKey::Escape);
-        if escape && self.changes.popup.is_some() {
+        if escape && self.git.changes.popup.is_some() {
             return false;
         }
         let key = convert(

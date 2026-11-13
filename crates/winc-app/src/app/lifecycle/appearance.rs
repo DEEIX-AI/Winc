@@ -15,7 +15,7 @@ impl App {
             renderer.set_zoom(zoom);
         }
         #[cfg(target_os = "macos")]
-        if let Some(lights) = &self.traffic_lights {
+        if let Some(lights) = &self.link.traffic_lights {
             lights.set_zoom(f64::from(zoom));
         }
         self.ime.last_area = None;

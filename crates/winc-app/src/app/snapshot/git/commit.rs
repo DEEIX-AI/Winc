@@ -64,7 +64,7 @@ fn commit_only_the_checked_hunks() {
     app.press_diff(DiffTarget::Include(1));
     let status = app.git.status.clone().unwrap();
     let entry = status.entries.iter().find(|e| e.path == file).unwrap();
-    assert_eq!(app.commit.file_state(entry), Some(false));
+    assert_eq!(app.git.commit.file_state(entry), Some(false));
 
     // 勾掉后又修改这一处（删掉的行换成别的内容）：在 `HEAD` 中仍是同几行，依然不提交。
     let disk = std::fs::read_to_string(&file).unwrap();
@@ -77,7 +77,7 @@ fn commit_only_the_checked_hunks() {
     )
     .unwrap();
 
-    app.commit.message.set_text("only value_5");
+    app.git.commit.message.set_text("only value_5");
     app.git_commit();
     let head = Command::new("git")
         .arg("-C")
@@ -104,7 +104,7 @@ fn commit_list_groups_changes_by_directory() {
         return;
     };
     // 默认显示为列表；本测试检查按目录排列的树形视图。
-    app.commit.set_flat(false);
+    app.git.commit.set_flat(false);
     // 几层目录：`pkg` 与 `model` 之间没有其他文件，`core/model` 并成一行；`pkg` 下另有 `z.rs`。
     for path in [
         "pkg/core/model/a.rs",
@@ -164,7 +164,7 @@ fn commit_list_groups_changes_by_directory() {
     // 新文件默认勾着。目录的勾选框取消目录下的所有文件，再点一次全部勾上。
     let row = |app: &App, r: &CommitRow| app.commit_rows().iter().position(|x| x == r).unwrap();
     let pkg = row(&app, &dir("pkg", "pkg", 0));
-    let checked = |app: &App, name: &str| app.commit.checked(&status.entries[index(name)]);
+    let checked = |app: &App, name: &str| app.git.commit.checked(&status.entries[index(name)]);
     assert!(checked(&app, "model/a.rs") && checked(&app, "top.rs"));
     app.press_commit(CommitTarget::DirCheck(pkg));
     assert!(!checked(&app, "model/a.rs") && !checked(&app, "pkg/z.rs"));
@@ -175,11 +175,11 @@ fn commit_list_groups_changes_by_directory() {
     let members = rows.dir(CommitGroup::Changes, Path::new("pkg"));
     // `pkg` 目录这一组：合并后的 `core/model` 与 `pkg/z.rs` 里的文件都算在内。
     assert_eq!(members.len(), 3);
-    assert_eq!(app.commit.members_state(&status, members), Some(true));
+    assert_eq!(app.git.commit.members_state(&status, members), Some(true));
     // 组与目录的勾选框每帧都要查其下所有文件：结果按勾选的版本缓存，勾选不变时复用上次的结果。
     let cached = |app: &App| {
-        let compute = || app.commit.members_state(&status, members);
-        rows.members_state(members, app.commit.checks(), compute)
+        let compute = || app.git.commit.members_state(&status, members);
+        rows.members_state(members, app.git.commit.checks(), compute)
     };
     assert_eq!(cached(&app), Some(true));
     app.press_commit(CommitTarget::DirCheck(pkg));
@@ -225,10 +225,10 @@ fn right_clicking_a_changed_file_offers_diff_open_and_rollback() {
         .0;
     right_click(&mut app, (row.x + 120.0, row.y + row.h / 2.0));
     assert_eq!(
-        app.context_menu.as_ref().map(|m| m.target.clone()),
+        app.overlays.context_menu.as_ref().map(|m| m.target.clone()),
         Some(MenuTarget::CommitFile(main.clone()))
     );
-    assert_eq!(app.commit.selected.as_deref(), Some(main.as_path()));
+    assert_eq!(app.git.commit.selected.as_deref(), Some(main.as_path()));
     let commands: Vec<MenuCommand> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
     assert_eq!(
         commands,
@@ -266,7 +266,7 @@ fn commit_view_commits_only_the_checked_files() {
     git_in(&dir, &["add", "src/new.rs"]);
     let mut app = app_with(&dir, false);
     // 默认显示为列表；本测试检查按目录排列的树形视图。
-    app.commit.set_flat(false);
+    app.git.commit.set_flat(false);
     // 模块关闭时：侧栏没有 Git 按钮，⌃⇧G 不响应。
     assert_eq!(app.sidebar_views().len(), 2);
     assert!(!app.run_action(Action::ShowCommit));
@@ -277,7 +277,7 @@ fn commit_view_commits_only_the_checked_files() {
     }
     assert_eq!(app.sidebar_views().last(), Some(&SidebarView::Commit));
     assert!(app.run_action(Action::ShowCommit));
-    assert_eq!(app.sidebar.view, SidebarView::Commit);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Commit);
     assert_eq!(app.focus, Focus::CommitMessage);
     paint(&mut app);
 
@@ -300,10 +300,10 @@ fn commit_view_commits_only_the_checked_files() {
             CommitRow::File { index: 1, depth: 1 },
         ]
     );
-    assert!(app.commit.checked(&status.entries[0]));
-    assert!(app.commit.checked(&status.entries[1]));
+    assert!(app.git.commit.checked(&status.entries[0]));
+    assert!(app.git.commit.checked(&status.entries[1]));
     assert_eq!(
-        app.commit.group_state(&status, CommitGroup::Changes),
+        app.git.commit.group_state(&status, CommitGroup::Changes),
         Some(true)
     );
 
@@ -312,7 +312,7 @@ fn commit_view_commits_only_the_checked_files() {
         |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
     let check = target(&app, CommitTarget::Check(1));
     click(&mut app, (check.x + 4.0, check.y + 4.0));
-    assert!(!app.commit.checked(&status.entries[1]));
+    assert!(!app.git.commit.checked(&status.entries[1]));
     let row = target(&app, CommitTarget::File(0));
     click(&mut app, (row.x + row.w / 2.0, row.y + 4.0));
     assert_eq!(
@@ -326,7 +326,7 @@ fn commit_view_commits_only_the_checked_files() {
     assert_eq!(app.focus, Focus::CommitList);
     key(&mut app, NamedKey::ArrowDown);
     assert_eq!(
-        app.commit.selected.as_deref(),
+        app.git.commit.selected.as_deref(),
         Some(status.entries[1].path.as_path())
     );
     assert_eq!(app.editor.documents.len(), tabs);
@@ -335,10 +335,10 @@ fn commit_view_commits_only_the_checked_files() {
         Some("new.rs · 差异")
     );
     key(&mut app, NamedKey::Space);
-    assert!(app.commit.checked(&status.entries[1]));
+    assert!(app.git.commit.checked(&status.entries[1]));
     key(&mut app, NamedKey::ArrowUp);
     assert_eq!(
-        app.commit.selected.as_deref(),
+        app.git.commit.selected.as_deref(),
         Some(status.entries[0].path.as_path())
     );
 
@@ -355,21 +355,21 @@ fn commit_view_commits_only_the_checked_files() {
     app.edit_field(|f| f.insert("加上 new.rs"));
     app.commit_message_key(&Key::Named(NamedKey::Enter), false, false);
     app.edit_field(|f| f.insert("正文"));
-    assert_eq!(app.commit.message.text(), "加上 new.rs\n正文");
+    assert_eq!(app.git.commit.message.text(), "加上 new.rs\n正文");
     app.commit_message_key(&Key::Named(NamedKey::Enter), true, false);
-    assert!(!app.commit.busy);
-    assert_eq!(app.commit.message.text(), "");
+    assert!(!app.git.commit.busy);
+    assert_eq!(app.git.commit.message.text(), "");
     let status = app.git.status.clone().unwrap();
     let left: Vec<_> = status.entries.iter().map(|e| e.path.clone()).collect();
     let root = app.git.root.clone().unwrap();
     assert_eq!(left, [root.join("src/main.rs")]);
     // 用户取消过的勾选在提交后重置：剩下的 `src/main.rs` 重新处于勾选状态。
-    assert!(app.commit.checked(&status.entries[0]));
+    assert!(app.git.commit.checked(&status.entries[0]));
 
     // 修改上一次提交：信息填进输入框，修改后提交。
     app.run_commit_button_command(crate::app::input::context_menu::MenuCommand::CommitAmend);
-    assert_eq!(app.commit.message.text(), "加上 new.rs\n正文");
-    app.commit.message.set_text("加上 new.rs 和 main.rs");
+    assert_eq!(app.git.commit.message.text(), "加上 new.rs\n正文");
+    app.git.commit.message.set_text("加上 new.rs 和 main.rs");
     app.git_commit();
     assert!(app.git.status.as_ref().unwrap().entries.is_empty());
     paint(&mut app);
@@ -452,7 +452,7 @@ fn shoot_commit_row_actions() {
     paint(&mut app);
     let revert = find(&app, CommitTarget::RevertFile(index));
     app.on_mouse_move(revert.x + 4.0, revert.y + 4.0);
-    app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+    app.overlays.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
     shoot(&mut app, "commit-row-actions");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -492,7 +492,7 @@ fn shoot_commit_view() {
         // 鼠标停在标题行的「Git 日志」按钮上，提示已显示。
         let log = app.commit_parts().tools[0].0;
         app.on_mouse_move(log.x + 4.0, log.y + 4.0);
-        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.overlays.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(&mut app, if dark { "commit-dark" } else { "commit-light" });
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -521,7 +521,7 @@ fn shoot_commit_widths() {
                 "feature/login-lockout-after-three-tries",
             ],
         );
-        app.sidebar.width = width;
+        app.panels.sidebar.width = width;
         app.git_refresh();
         app.run_action(Action::ShowCommit);
         app.edit_field(|f| f.insert("修复日志刷新没有反馈"));
@@ -612,17 +612,17 @@ fn shoot_commit_motion() {
     paint(&mut app);
     let closed = app.commit_parts().stashes.unwrap().h;
     app.press_commit(CommitTarget::Stashes);
-    app.commit.stash_motion = Some((closed, Clock::frozen(TREE_ANIMATION / 3, TREE_ANIMATION)));
+    app.git.commit.stash_motion = Some((closed, Clock::frozen(TREE_ANIMATION / 3, TREE_ANIMATION)));
     shoot(&mut app, "commit-stash-opening");
 
-    app.commit.stash_motion = None;
+    app.git.commit.stash_motion = None;
     git_in(&root, &["commit", "-q", "-am", "now"]);
     app.git_refresh();
-    app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    app.git.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
     shoot(&mut app, "commit-card-leaving");
 
     // 推送了：「上一次提交」收起到一半。
-    app.commit.card.motion = None;
+    app.git.commit.card.motion = None;
     git_in(
         &root,
         &["remote", "add", "origin", "https://example.invalid/r.git"],
@@ -631,7 +631,7 @@ fn shoot_commit_motion() {
     git_in(&root, &["branch", "-q", "--set-upstream-to=origin/main"]);
     app.track_commit_bars();
     app.git_refresh();
-    app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 3, TREE_ANIMATION)));
+    app.git.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 3, TREE_ANIMATION)));
     shoot(&mut app, "commit-undo-folding");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -669,11 +669,11 @@ fn switching_the_module_off_takes_focus_out_of_the_commit_view() {
     app.run_action(Action::ShowCommit);
     assert_eq!(app.focus, Focus::CommitMessage);
     app.settings_toggle(Setting::GitModule);
-    assert_eq!(app.sidebar.view, SidebarView::Files);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Files);
     assert_eq!(app.focus, Focus::Editor);
     // 键入的字符不会进入已隐藏的提交信息。
     app.edit_field(|f| f.insert("x"));
-    assert_eq!(app.commit.message.text(), "");
+    assert_eq!(app.git.commit.message.text(), "");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -686,7 +686,7 @@ fn committing_a_checked_file_saves_its_unsaved_edits_first() {
     app.run(winc_editor::Command::Insert("// 还没保存\n".into()));
     assert!(app.editor.active().unwrap().is_dirty());
     app.run_action(Action::ShowCommit);
-    app.commit.message.set_text("带上没保存的修改");
+    app.git.commit.message.set_text("带上没保存的修改");
     app.git_commit();
     // 提交的是编辑器中看到的内容（整个勾选的文件也会先保存），而不是磁盘上的旧内容。
     assert!(!app.editor.active().unwrap().is_dirty());
@@ -708,6 +708,7 @@ fn clicks_on_rows_drawn_before_a_refresh_are_ignored() {
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     let before = app
+        .git
         .commit
         .checked(&app.git.status.as_ref().unwrap().entries[0]);
     // 状态在绘制以后刷新过：按上一帧记下的行号点，不处理。
@@ -715,7 +716,8 @@ fn clicks_on_rows_drawn_before_a_refresh_are_ignored() {
     app.git_refresh();
     app.press_commit(CommitTarget::Check(0));
     assert_eq!(
-        app.commit
+        app.git
+            .commit
             .checked(&app.git.status.as_ref().unwrap().entries[0]),
         before
     );
@@ -742,7 +744,7 @@ fn the_commit_more_menu_greys_out_what_does_not_apply() {
     for group in CommitGroup::ALL {
         for _ in 0..3 {
             let status = app.git.status.clone().unwrap();
-            if app.commit.group_state(&status, group).is_none() {
+            if app.git.commit.group_state(&status, group).is_none() {
                 break;
             }
             app.press_commit(CommitTarget::GroupCheck(group));
@@ -764,11 +766,11 @@ fn the_commit_more_menu_greys_out_what_does_not_apply() {
 
     app.run_commit_more_command(MenuCommand::CommitCollapseAll);
     let groups = [CommitGroup::Changes];
-    assert!(groups.iter().all(|g| app.commit.group_collapsed(*g)));
+    assert!(groups.iter().all(|g| app.git.commit.group_collapsed(*g)));
     assert!(enabled(&app, MenuCommand::CommitExpandAll));
     assert!(!enabled(&app, MenuCommand::CommitCollapseAll));
     app.run_commit_more_command(MenuCommand::CommitExpandAll);
-    assert!(groups.iter().all(|g| !app.commit.group_collapsed(*g)));
+    assert!(groups.iter().all(|g| !app.git.commit.group_collapsed(*g)));
 
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
     paint(&mut app);
@@ -811,10 +813,10 @@ fn the_commit_message_grows_with_its_text_and_the_list_follows() {
 
     // 清空后框高从八行过渡回两行：途中介于两者之间，文字仍按两行的高度排版。
     use crate::app::animation::{Clock, TREE_ANIMATION};
-    app.commit.message.set_text("");
+    app.git.commit.message.set_text("");
     paint(&mut app);
     let half = Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION);
-    app.commit.message_motion = Some((8.0 * 20.0 + 4.0, half));
+    app.git.commit.message_motion = Some((8.0 * 20.0 + 4.0, half));
     let parts = app.commit_parts();
     assert!(parts.message.h > 44.0 && parts.message.h < 8.0 * 20.0 + 4.0);
     assert_eq!(parts.message_settled.h, 44.0);
@@ -838,13 +840,13 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
     assert!(app.commit_parts().amend.is_some());
     assert!(!menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    let width = app.sidebar.width;
-    app.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
+    let width = app.panels.sidebar.width;
+    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);
     assert!(app.commit_parts().amend.is_none());
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    app.sidebar.width = width;
+    app.panels.sidebar.width = width;
     paint(&mut app);
 
     // 回归：主按钮显示没有要提交的更改时，菜单不能再提供「提交并推送」；修改上一次提交仍然可用。
@@ -852,19 +854,19 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, false)));
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    app.commit.amend = true;
+    app.git.commit.amend = true;
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
-    app.commit.amend = false;
+    app.git.commit.amend = false;
     app.git.status.as_mut().unwrap().entries = entries;
 
     // 「修改上次提交」启用时打勾，按钮写「修改提交」。
     assert!(!app.menu_checked(MenuCommand::CommitAmend));
     app.run_commit_button_command(MenuCommand::CommitAmend);
-    assert!(app.commit.amend);
+    assert!(app.git.commit.amend);
     assert!(app.menu_checked(MenuCommand::CommitAmend));
     app.run_commit_button_command(MenuCommand::CommitAmend);
-    assert!(!app.commit.amend);
+    assert!(!app.git.commit.amend);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -882,7 +884,7 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
     git_in(&dir, &["add", "-A"]);
     let mut app = app_with(&dir, false);
     // 默认显示为列表；本测试检查按目录排列的树形视图。
-    app.commit.set_flat(false);
+    app.git.commit.set_flat(false);
     app.settings_toggle(Setting::GitModule);
     if git_unusable(&app) {
         return;
@@ -900,8 +902,8 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
         .iter()
         .position(|r| matches!(r, CommitRow::Dir { label, .. } if label == "b"))
         .unwrap();
-    app.commit.scroll = (b + 4) as f32 * COMMIT_ROW;
-    assert!(app.commit.scroll <= app.commit_max_scroll());
+    app.git.commit.scroll = (b + 4) as f32 * COMMIT_ROW;
+    assert!(app.git.commit.scroll <= app.commit_max_scroll());
     paint(&mut app);
     let sticky = app.commit_sticky(&rows);
     let pinned: Vec<usize> = sticky.iter().map(|s| s.row).collect();
@@ -921,7 +923,7 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
     click(&mut app, (at.x + 120.0, at.y + at.h / 2.0));
     // 收起后列表变短，内容放得下时滚回顶部。
     let settled = ((b - 2) as f32 * COMMIT_ROW).min(app.commit_max_scroll());
-    assert_eq!(app.commit.scroll, settled);
+    assert_eq!(app.git.commit.scroll, settled);
     let CommitRow::Dir {
         group, dir: folder, ..
     } = &rows[b]
@@ -929,7 +931,7 @@ fn scrolled_changes_keep_their_group_and_folders_pinned_on_top() {
         panic!("第 {b} 行不是目录");
     };
     assert!(folder.ends_with("assets/pets/b"));
-    assert!(app.commit.dir_collapsed(*group, folder));
+    assert!(app.git.commit.dir_collapsed(*group, folder));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -939,7 +941,7 @@ fn option_clicking_a_changed_folder_collapses_and_expands_it_all_the_way() {
         return;
     };
     let mut app = app_with(&dir, false);
-    app.commit.set_flat(false);
+    app.git.commit.set_flat(false);
     app.settings_toggle(Setting::GitModule);
     if git_unusable(&app) {
         return;
@@ -953,7 +955,7 @@ fn option_clicking_a_changed_folder_collapses_and_expands_it_all_the_way() {
             .iter()
             .filter_map(|row| match row {
                 CommitRow::Dir { group, dir, .. } => {
-                    Some((dir.clone(), app.commit.dir_collapsed(*group, dir)))
+                    Some((dir.clone(), app.git.commit.dir_collapsed(*group, dir)))
                 }
                 _ => None,
             })
@@ -996,7 +998,7 @@ fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
     };
     let mut app = app_with(&dir, false);
     // 默认显示为列表；本测试检查按目录排列的树形视图。
-    app.commit.set_flat(false);
+    app.git.commit.set_flat(false);
     app.settings_toggle(Setting::GitModule);
     if git_unusable(&app) {
         return;
@@ -1009,7 +1011,7 @@ fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
         .iter()
         .position(|r| matches!(r, CommitRow::Dir { label, .. } if label == "b"))
         .unwrap();
-    app.commit.scroll = (b + 4) as f32 * COMMIT_ROW;
+    app.git.commit.scroll = (b + 4) as f32 * COMMIT_ROW;
     paint(&mut app);
     let covered = app
         .commit_sticky(&rows)
@@ -1027,14 +1029,14 @@ fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
         .enumerate()
         .find(|(i, r)| {
             matches!(r, CommitRow::File { .. })
-                && list.y + *i as f32 * COMMIT_ROW - app.commit.scroll >= covered
+                && list.y + *i as f32 * COMMIT_ROW - app.git.commit.scroll >= covered
         })
         .unwrap();
-    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
-    let scroll = app.commit.scroll;
+    let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
+    let scroll = app.git.commit.scroll;
     click(&mut app, (list.x + 160.0, y));
     paint(&mut app);
-    assert_eq!(app.commit.scroll, scroll);
+    assert_eq!(app.git.commit.scroll, scroll);
     let after = app
         .commit_sticky(&rows)
         .iter()
@@ -1044,7 +1046,7 @@ fn clicking_a_visible_change_under_the_pinned_rows_does_not_scroll() {
 
     // 被向上推的固定行只占自己那一格：可点击区域不伸入上一层的固定行。
     for step in 0..(rows.len() * 4) {
-        app.commit.scroll = step as f32 * COMMIT_ROW / 4.0;
+        app.git.commit.scroll = step as f32 * COMMIT_ROW / 4.0;
         paint(&mut app);
         for s in app.commit_sticky(&rows) {
             let slot = list.y + s.level as f32 * COMMIT_ROW;
@@ -1073,7 +1075,7 @@ fn showing_as_tree_switches_the_changes_between_a_tree_and_a_flat_list() {
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     // 默认平铺：没有目录行，每个文件一行，按路径排；「刷新」在「Git 日志」后面。
-    assert!(app.commit.flat());
+    assert!(app.git.commit.flat());
     let flat = app.commit_rows();
     assert!(!flat.iter().any(|r| matches!(r, CommitRow::Dir { .. })));
     let files = flat
@@ -1104,7 +1106,7 @@ fn showing_as_tree_switches_the_changes_between_a_tree_and_a_flat_list() {
     };
     assert!(!app.menu_checked(MenuCommand::CommitTree));
     toggle(&mut app);
-    assert!(!app.commit.flat());
+    assert!(!app.git.commit.flat());
     assert!(app.menu_checked(MenuCommand::CommitTree));
     assert!(
         app.commit_rows()
@@ -1114,7 +1116,7 @@ fn showing_as_tree_switches_the_changes_between_a_tree_and_a_flat_list() {
     assert!(app.state.commit_tree);
     // 再点回到平铺。
     toggle(&mut app);
-    assert!(app.commit.flat());
+    assert!(app.git.commit.flat());
     assert!(!app.state.commit_tree);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1132,7 +1134,7 @@ fn shoot_deep_changes() {
         app.settings_toggle(Setting::GitModule);
         app.run_action(Action::ShowCommit);
         paint(&mut app);
-        app.commit.scroll = 12.0 * COMMIT_ROW;
+        app.git.commit.scroll = 12.0 * COMMIT_ROW;
         shoot(&mut app, &format!("{name}-tree"));
         // 固定的行被下一个目录向上推：只在自己那一格内移动。
         let rows = app.commit_rows();
@@ -1140,17 +1142,17 @@ fn shoot_deep_changes() {
         let pushed = (0..rows.len() * 4)
             .map(|q| q as f32 * COMMIT_ROW / 4.0)
             .find(|&scroll| {
-                app.commit.scroll = scroll;
+                app.git.commit.scroll = scroll;
                 app.commit_sticky(&rows)
                     .iter()
                     .any(|s| s.level > 0 && s.rect.y < list.y + s.level as f32 * COMMIT_ROW - 8.0)
             });
         if let Some(scroll) = pushed {
-            app.commit.scroll = scroll;
+            app.git.commit.scroll = scroll;
             shoot(&mut app, &format!("{name}-pushed"));
         }
         app.toggle_commit_layout();
-        app.commit.scroll = 0.0;
+        app.git.commit.scroll = 0.0;
         shoot(&mut app, &format!("{name}-flat"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1166,7 +1168,7 @@ fn folding_a_changes_folder_slides_its_rows_like_the_file_tree() {
     };
     let mut app = app_with(&dir, false);
     // 默认显示为列表；本测试检查按目录排列的树形视图。
-    app.commit.set_flat(false);
+    app.git.commit.set_flat(false);
     app.settings_toggle(Setting::GitModule);
     if git_unusable(&app) {
         return;
@@ -1188,14 +1190,14 @@ fn folding_a_changes_folder_slides_its_rows_like_the_file_tree() {
         std::time::Duration::from_millis(1000),
         std::time::Duration::from_millis(2000),
     );
-    app.commit.motion = Some(CommitMotion {
+    app.git.commit.motion = Some(CommitMotion {
         rows: before.clone(),
         parent: a,
         count: 12,
         expanding: false,
         clock: half,
     });
-    let motion = app.commit.motion.as_ref().unwrap();
+    let motion = app.git.commit.motion.as_ref().unwrap();
     let hidden = motion.hidden();
     assert!(hidden > 0.0 && hidden < 12.0 * COMMIT_ROW);
     paint(&mut app);
@@ -1231,7 +1233,7 @@ fn the_changes_list_scrollbar_can_be_dragged() {
     paint(&mut app);
     let max = app.commit_max_scroll();
     assert!(max > 0.0);
-    let selected = app.commit.selected.clone();
+    let selected = app.git.commit.selected.clone();
 
     // 行的右端（状态字母所在处）就是滚动条：悬停认作滚动条，按下拖到底再拖回顶部，不选中文件。
     let list = app.commit_parts().list;
@@ -1240,11 +1242,11 @@ fn the_changes_list_scrollbar_can_be_dragged() {
     assert_eq!(app.pointer.hover, Hover::Scrollbar(Scrollbar::Commit));
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x, list.bottom() + 40.0);
-    assert_eq!(app.commit.scroll, max);
+    assert_eq!(app.git.commit.scroll, max);
     app.on_mouse_move(x, list.y - 40.0);
-    assert_eq!(app.commit.scroll, 0.0);
+    assert_eq!(app.git.commit.scroll, 0.0);
     app.on_mouse_up(MouseButton::Left);
-    assert_eq!(app.commit.selected, selected);
+    assert_eq!(app.git.commit.selected, selected);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1273,15 +1275,15 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
         })
         .unwrap();
     let list = app.commit_parts().list;
-    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+    let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
 
     // 未悬停时名称截短，没有伸出的部分。
-    assert!(app.commit.overflow.is_none());
+    assert!(app.git.commit.overflow.is_none());
 
     // 停在这一行上：写全名，伸出侧栏；「打开文件」「回滚」跟在全名之后，也在伸出的那一段里。
     app.on_mouse_move(list.x + 120.0, y);
     paint(&mut app);
-    let overflow = app.commit.overflow.expect("long name spills");
+    let overflow = app.git.commit.overflow.expect("long name spills");
     assert_eq!(overflow.row, i);
     let spill = overflow.spill.expect("past the sidebar");
     assert_eq!(spill.x, list.right());
@@ -1303,7 +1305,7 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
         app.pointer.hover,
         Hover::Commit(CommitTarget::OpenFile(index))
     );
-    assert!(app.commit.overflow.is_some_and(|o| o.row == i));
+    assert!(app.git.commit.overflow.is_some_and(|o| o.row == i));
 
     // 展开收起的动画途中：该行就是被收起的行时位置不变，仍写全名；位于被收起的行下方、正在
     // 移动时恢复截短显示。
@@ -1318,20 +1320,20 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
         ),
     };
     app.on_mouse_move(list.x + 120.0, y);
-    app.commit.motion = Some(motion(i));
+    app.git.commit.motion = Some(motion(i));
     paint(&mut app);
-    assert!(app.commit.overflow.is_some_and(|o| o.row == i));
+    assert!(app.git.commit.overflow.is_some_and(|o| o.row == i));
     if i > 0 {
-        app.commit.motion = Some(motion(i - 1));
+        app.git.commit.motion = Some(motion(i - 1));
         paint(&mut app);
-        assert!(app.commit.overflow.is_none());
+        assert!(app.git.commit.overflow.is_none());
     }
-    app.commit.motion = None;
+    app.git.commit.motion = None;
 
     // 移开：恢复截短显示。
     app.on_mouse_move(list.x + 120.0, list.bottom() - 4.0);
     paint(&mut app);
-    assert!(app.commit.overflow.is_none_or(|o| o.row != i));
+    assert!(app.git.commit.overflow.is_none_or(|o| o.row != i));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1347,7 +1349,7 @@ fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
     if git_unusable(&app) {
         return;
     }
-    app.commit.names.animate_without_window = true;
+    app.git.commit.names.animate_without_window = true;
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     let status = app.git.status.clone().unwrap();
@@ -1359,17 +1361,17 @@ fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
     let i = (rows.iter())
         .position(|r| matches!(r, CommitRow::File { index, .. } if status.entries[*index].path == entry.path))
         .unwrap();
-    let rest = app.commit.names.peek(&key).unwrap();
-    assert!(!app.commit.names.moving());
+    let rest = app.git.commit.names.peek(&key).unwrap();
+    assert!(!app.git.commit.names.moving());
 
     let list = app.commit_parts().list;
-    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+    let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
     app.on_mouse_move(list.x + 120.0, y);
     paint(&mut app);
-    let overflow = app.commit.overflow.expect("long name spills");
+    let overflow = app.git.commit.overflow.expect("long name spills");
     let (_, revert) = overflow.actions.unwrap();
-    let view = app.commit.names.peek(&key).unwrap();
-    assert!(app.commit.names.moving());
+    let view = app.git.commit.names.peek(&key).unwrap();
+    assert!(app.git.commit.names.moving());
     assert!(view.width < revert.x - list.x, "{}", view.width);
     assert!(
         (view.width - rest.width).abs() < 40.0,
@@ -1380,26 +1382,26 @@ fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
     assert!(!view.old.is_empty());
     assert!(app.over_commit_overflow_row(y));
 
-    app.commit.names.finish();
+    app.git.commit.names.finish();
     paint(&mut app);
-    let out = app.commit.names.peek(&key).unwrap();
+    let out = app.git.commit.names.peek(&key).unwrap();
     assert!(out.width > rest.width + 40.0);
 
     // 移开：命中范围立即消失，宽度从全名开始缓动回去。
     app.on_mouse_move(list.x + 120.0, list.bottom() - 4.0);
     paint(&mut app);
-    assert!(app.commit.overflow.is_none_or(|o| o.row != i));
-    let back = app.commit.names.peek(&key).unwrap();
-    assert!(app.commit.names.moving());
+    assert!(app.git.commit.overflow.is_none_or(|o| o.row != i));
+    let back = app.git.commit.names.peek(&key).unwrap();
+    assert!(app.git.commit.names.moving());
     assert!(
         back.width > rest.width + 40.0,
         "{} {}",
         back.width,
         rest.width
     );
-    app.commit.names.finish();
+    app.git.commit.names.finish();
     paint(&mut app);
-    assert_eq!(app.commit.names.peek(&key).unwrap().width, rest.width);
+    assert_eq!(app.git.commit.names.peek(&key).unwrap().width, rest.width);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1422,7 +1424,7 @@ fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
     if git_unusable(&app) {
         return;
     }
-    app.commit.names.animate_without_window = true;
+    app.git.commit.names.animate_without_window = true;
     app.run_action(Action::ShowCommit);
     paint(&mut app);
     let status = app.git.status.clone().unwrap();
@@ -1440,19 +1442,19 @@ fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
             continue;
         };
         app.on_mouse_move(away.0, away.1);
-        app.commit.scroll = ((i as f32 - 3.0) * COMMIT_ROW).clamp(0.0, app.commit_max_scroll());
+        app.git.commit.scroll = ((i as f32 - 3.0) * COMMIT_ROW).clamp(0.0, app.commit_max_scroll());
         paint(&mut app);
-        app.commit.names.finish();
+        app.git.commit.names.finish();
         paint(&mut app);
         let path = (status.entries.iter())
             .find(|e| e.path.ends_with(name))
             .unwrap();
         let key = CommitName::File(path.path.clone());
-        let rest = app.commit.names.peek(&key).unwrap().width;
-        let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+        let rest = app.git.commit.names.peek(&key).unwrap().width;
+        let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
         app.on_mouse_move(list.x + 120.0, y);
         paint(&mut app);
-        let Some(overflow) = app.commit.overflow else {
+        let Some(overflow) = app.git.commit.overflow else {
             continue;
         };
         let (end, _) = overflow.actions.unwrap();
@@ -1460,9 +1462,9 @@ fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
             .find(|(_, t)| matches!(t, CommitTarget::OpenFile(_)))
             .unwrap()
             .0;
-        let moving = app.commit.names.moving();
-        app.commit.names.finish();
-        let full = app.commit.names.peek(&key).unwrap().width;
+        let moving = app.git.commit.names.moving();
+        app.git.commit.names.finish();
+        let full = app.git.commit.names.peek(&key).unwrap().width;
         if rest == full && slight.is_none() {
             slight = Some((start.x, end.x, moving));
         }
@@ -1508,9 +1510,9 @@ fn shoot_commit_overflow() {
         let list = app.commit_parts().list;
         // 滚到该行位于列表上部，悬停后截图。
         let scroll = (i as f32 - 3.0) * COMMIT_ROW;
-        app.commit.scroll = scroll.clamp(0.0, app.commit_max_scroll());
+        app.git.commit.scroll = scroll.clamp(0.0, app.commit_max_scroll());
         paint(&mut app);
-        let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+        let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
         app.on_mouse_move(list.x + 120.0, y);
         shoot(&mut app, name);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1532,16 +1534,16 @@ fn switching_folders_keeps_the_commit_view_while_there_is_a_repository() {
     }
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.sidebar.view, SidebarView::Commit);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Commit);
 
     // 换到另一个仓库：还在提交视图，焦点在提交信息里。
     app.switch_folder(&second);
-    assert_eq!(app.sidebar.view, SidebarView::Commit);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Commit);
     assert_eq!(app.focus, Focus::CommitMessage);
 
     // 换到不是仓库的目录：没有提交视图了，回到文件树。
     app.switch_folder(&plain);
-    assert_eq!(app.sidebar.view, SidebarView::Files);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Files);
     assert_eq!(app.focus, Focus::Tree);
     for dir in [first, second, plain] {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1565,7 +1567,7 @@ fn change_list_keys_jump_to_the_ends_and_page() {
     let files = app.commit_files();
     let rows = app.commit_rows();
     let row_of = |app: &App| {
-        let selected = app.commit.selected.clone();
+        let selected = app.git.commit.selected.clone();
         rows.iter()
             .position(|r| match r {
                 CommitRow::File { index, .. } => {
@@ -1579,11 +1581,11 @@ fn change_list_keys_jump_to_the_ends_and_page() {
 
     // `Home`、`End` 移到第一个、最后一个文件（跳过组、目录行），列表随之滚动到可见位置。
     key(&mut app, NamedKey::End);
-    assert_eq!(app.commit.selected.as_ref(), files.last());
-    assert!(app.commit.scroll > 0.0);
+    assert_eq!(app.git.commit.selected.as_ref(), files.last());
+    assert!(app.git.commit.scroll > 0.0);
     key(&mut app, NamedKey::Home);
-    assert_eq!(app.commit.selected.as_ref(), files.first());
-    assert_eq!(app.commit.scroll, 0.0);
+    assert_eq!(app.git.commit.selected.as_ref(), files.first());
+    assert_eq!(app.git.commit.scroll, 0.0);
 
     // 翻页距离至少为可见整行数减一，且落在文件上；到达末尾时停在最后一个文件。
     let page = (app.commit_parts().list.h / COMMIT_ROW).floor() as usize - 1;
@@ -1596,7 +1598,7 @@ fn change_list_keys_jump_to_the_ends_and_page() {
     for _ in 0..rows.len() {
         key(&mut app, NamedKey::PageDown);
     }
-    assert_eq!(app.commit.selected.as_ref(), files.last());
+    assert_eq!(app.git.commit.selected.as_ref(), files.last());
 
     // 按住 `⇧` 翻页时扩展选区。
     key(&mut app, NamedKey::Home);
@@ -1615,42 +1617,42 @@ fn long_commit_messages_scroll_with_the_wheel() {
     };
     app.run_action(Action::ShowCommit);
     let text: Vec<String> = (1..=30).map(|i| format!("第 {i} 行")).collect();
-    app.commit.message.set_text(&text.join("\n"));
+    app.git.commit.message.set_text(&text.join("\n"));
     paint(&mut app);
     // 光标在末尾，框内露出的是最后几行。
-    let bottom = app.commit.message.view.scroll;
+    let bottom = app.git.commit.message.view.scroll;
     assert!(bottom > 0.0);
 
     let message = app.commit_parts().message;
     app.pointer.mouse = (message.x + 20.0, message.y + 20.0);
     app.on_wheel(MouseScrollDelta::LineDelta(0.0, 2.0));
     paint(&mut app);
-    let up = app.commit.message.view.scroll;
+    let up = app.git.commit.message.view.scroll;
     assert!(up < bottom);
     // 往上滚过头停在第一行，不出现负的滚动量。
     for _ in 0..20 {
         app.on_wheel(MouseScrollDelta::LineDelta(0.0, 5.0));
     }
     paint(&mut app);
-    assert_eq!(app.commit.message.view.scroll, 0.0);
+    assert_eq!(app.git.commit.message.view.scroll, 0.0);
     // 往下滚过头停在最后一行。
     for _ in 0..20 {
         app.on_wheel(MouseScrollDelta::LineDelta(0.0, -5.0));
     }
     paint(&mut app);
-    assert_eq!(app.commit.message.view.scroll, bottom);
+    assert_eq!(app.git.commit.message.view.scroll, bottom);
 
     // 键入文字后回到光标所在的行。
     app.on_wheel(MouseScrollDelta::LineDelta(0.0, 5.0));
     paint(&mut app);
     app.focus = Focus::CommitMessage;
-    let end = app.commit.message.text().len();
+    let end = app.git.commit.message.text().len();
     app.edit_field(|f| {
         f.set_caret(end, false);
         f.insert("！")
     });
     paint(&mut app);
-    assert_eq!(app.commit.message.view.scroll, bottom);
+    assert_eq!(app.git.commit.message.view.scroll, bottom);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1668,7 +1670,7 @@ fn the_last_local_commit_can_be_undone() {
         Some(first.clone())
     );
 
-    app.commit.message.set_text("加上改动\n\n正文");
+    app.git.commit.message.set_text("加上改动\n\n正文");
     app.git_commit();
     let second = app.git.status.as_ref().unwrap().oid.clone().unwrap();
     assert_ne!(second, first);
@@ -1716,12 +1718,12 @@ fn the_last_local_commit_can_be_undone() {
         app.git.status.as_ref().unwrap().oid.as_deref(),
         Some(oid.as_str())
     );
-    assert!(!app.alert.as_ref().unwrap().buttons[0].destructive);
+    assert!(!app.overlays.alert.as_ref().unwrap().buttons[0].destructive);
     press_alert(&mut app, 0);
     let status = app.git.status.clone().unwrap();
     assert_eq!(status.oid.as_deref(), Some(first.as_str()));
     assert!(!status.entries.is_empty());
-    assert_eq!(app.commit.message.text(), "加上改动\n\n正文");
+    assert_eq!(app.git.commit.message.text(), "加上改动\n\n正文");
 
     // 推送到上游以后不能撤销。
     git_in(
@@ -1758,9 +1760,9 @@ fn files_staged_in_the_terminal_commit_what_is_in_the_working_tree() {
     let status = app.git.status.clone().unwrap();
     let entry = status.entries.iter().find(|e| e.path == main).unwrap();
     assert!(entry.staged.is_some() && entry.unstaged.is_some());
-    assert_eq!(app.commit.file_state(entry), Some(true));
+    assert_eq!(app.git.commit.file_state(entry), Some(true));
 
-    app.commit.message.set_text("提交工作区里的内容");
+    app.git.commit.message.set_text("提交工作区里的内容");
     app.git_commit();
     let head = Command::new("git")
         .arg("-C")
@@ -1812,7 +1814,7 @@ fn the_sync_control_stays_one_button() {
     assert!(ahead.w > tool.w);
 
     // 运行时宽度不变，分支名不会跟着动。
-    app.branch.running = Some("获取".into());
+    app.git.branch.running = Some("获取".into());
     paint(&mut app);
     assert_eq!(sync(&app), ahead);
     app.on_mouse_move(ahead.x + 4.0, ahead.y + 4.0);
@@ -1820,7 +1822,7 @@ fn the_sync_control_stays_one_button() {
     assert_eq!(tip.as_deref(), Some("正在获取…"));
 
     // 不在分支上时只有图标，操作仍在同一个位置显示。
-    app.branch.running = None;
+    app.git.branch.running = None;
     git_in(&root, &["checkout", "-q", "--detach"]);
     app.git_refresh();
     paint(&mut app);
@@ -1869,7 +1871,7 @@ fn the_sync_control_explains_what_it_will_do() {
         .unwrap()
         .0;
     app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
-    assert!(app.tooltip.since.is_some());
+    assert!(app.overlays.tooltip.since.is_some());
     let tip = crate::view::tests::tooltip(&app).map(|(_, text)| text);
     assert_eq!(
         tip.as_deref(),
@@ -1899,10 +1901,10 @@ fn the_sync_control_follows_the_remotes() {
     assert!(!sync(&app));
 
     // 操作的进度仍然显示在这里。
-    app.branch.running = Some("签出".into());
+    app.git.branch.running = Some("签出".into());
     paint(&mut app);
     assert!(sync(&app));
-    app.branch.running = None;
+    app.git.branch.running = None;
 
     // 刚配好的远程还没有任何远程分支，一样可以发布。
     git_in(
@@ -1958,7 +1960,7 @@ fn a_deleted_upstream_keeps_its_commits_and_its_remote() {
     let branch = (app.git.branches.iter()).find(|b| b.current).unwrap();
     assert!(branch.upstream.is_none() && branch.gone);
     let oid = app.git.status.as_ref().unwrap().oid.clone().unwrap();
-    app.commit.last = Some(winc_editor::git::LastCommit {
+    app.git.commit.last = Some(winc_editor::git::LastCommit {
         oid,
         subject: "two".to_owned(),
         message: String::new(),
@@ -1966,7 +1968,7 @@ fn a_deleted_upstream_keeps_its_commits_and_its_remote() {
         local: String::new(),
     });
     assert!(app.commit_undoable().is_none());
-    app.commit.last = None;
+    app.git.commit.last = None;
 
     assert_eq!(app.git_sync_state(), SyncState::Publish);
     app.press_commit(CommitTarget::Sync);
@@ -2008,17 +2010,17 @@ fn the_sync_control_confirms_a_finished_operation() {
     paint(&mut app);
 
     app.press_commit(CommitTarget::Sync);
-    assert!(app.branch.finished.is_some());
+    assert!(app.git.branch.finished.is_some());
 
     // 新操作开始时不再显示上一个的结果。
-    app.branch.finished = Some(Clock::stopped(COMMITTED_SHOWN, Duration::from_millis(800)));
+    app.git.branch.finished = Some(Clock::stopped(COMMITTED_SHOWN, Duration::from_millis(800)));
     git_in(
         &root,
         &["remote", "set-url", "origin", "/nonexistent/repo.git"],
     );
     app.press_commit(CommitTarget::Sync);
-    assert!(app.branch.finished.is_none());
-    assert!(app.branch.running.is_none());
+    assert!(app.git.branch.finished.is_none());
+    assert!(app.git.branch.running.is_none());
 
     // 中途是不透明的对勾，两端完全透明。
     let at = |ms| Clock::stopped(COMMITTED_SHOWN, Duration::from_millis(ms));
@@ -2105,9 +2107,9 @@ fn a_clean_branch_ahead_of_its_upstream_turns_the_commit_button_into_sync() {
     assert_eq!(tip.as_deref(), Some("推送 1 个提交到 origin/main"));
 
     // 在修改上一次提交时不显示；有改动时还在，提交按钮不再兼做同步。
-    app.commit.amend = true;
+    app.git.commit.amend = true;
     assert_eq!(app.git_sync_state(), SyncState::Hidden);
-    app.commit.amend = false;
+    app.git.commit.amend = false;
     std::fs::write(root.join("new.txt"), "x\n").unwrap();
     app.git_refresh();
     assert_eq!(app.git_sync_state(), SyncState::Push(1));
@@ -2129,8 +2131,8 @@ fn shoot_commit_narrow_dirs() {
     std::fs::create_dir_all(&view).unwrap();
     std::fs::write(view.join("commit.rs"), "b\n").unwrap();
     app.git_refresh();
-    app.commit.set_flat(false);
-    app.sidebar.width = 200.0;
+    app.git.commit.set_flat(false);
+    app.panels.sidebar.width = 200.0;
     app.relayout();
     app.run_action(Action::ShowCommit);
     shoot(&mut app, "commit-narrow-dirs");
@@ -2149,10 +2151,10 @@ fn untracked_files_stay_out_of_the_commit_until_checked() {
     let entry = status.entries.iter().find(|e| e.path == new).unwrap();
 
     // 未跟踪的文件单独成组，默认显示但不勾，不计入提交范围。
-    assert!(!app.commit.group_collapsed(CommitGroup::Untracked));
-    assert!(!app.commit.checked(entry));
+    assert!(!app.git.commit.group_collapsed(CommitGroup::Untracked));
+    assert!(!app.git.commit.checked(entry));
     assert_eq!(
-        app.commit.group_state(&status, CommitGroup::Untracked),
+        app.git.commit.group_state(&status, CommitGroup::Untracked),
         None
     );
     assert_eq!(app.commit_files(), [main.clone(), new.clone()]);
@@ -2161,18 +2163,18 @@ fn untracked_files_stay_out_of_the_commit_until_checked() {
     // 收起和展开不改变勾选；收起时切换文件跳过这一组。
     app.press_commit(CommitTarget::Group(CommitGroup::Untracked));
     assert_eq!(app.commit_files(), std::slice::from_ref(&main));
-    assert!(!app.commit.checked(entry));
+    assert!(!app.git.commit.checked(entry));
     app.press_commit(CommitTarget::Group(CommitGroup::Untracked));
     assert_eq!(app.commit_files(), [main.clone(), new.clone()]);
 
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
-    assert!(app.commit.checked(entry));
+    assert!(app.git.commit.checked(entry));
     assert_eq!(app.commit_scope(), Some(2));
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
-    assert!(!app.commit.checked(entry));
+    assert!(!app.git.commit.checked(entry));
 
     // 没有勾上时提交只包含已跟踪的改动，未跟踪的文件仍未跟踪。
-    app.commit.message.set_text("只提交改动");
+    app.git.commit.message.set_text("只提交改动");
     app.git_commit();
     let status = app.git.status.clone().unwrap();
     assert_eq!(status.entries.len(), 1);
@@ -2182,7 +2184,7 @@ fn untracked_files_stay_out_of_the_commit_until_checked() {
     // 勾上以后随提交加入仓库；提交后勾选回到默认。
     assert_eq!(app.commit_scope(), None);
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
-    app.commit.message.set_text("加入新文件");
+    app.git.commit.message.set_text("加入新文件");
     app.git_commit();
     assert!(app.git.status.as_ref().unwrap().entries.is_empty());
     std::fs::write(&new, "changed\n").unwrap();
@@ -2190,7 +2192,7 @@ fn untracked_files_stay_out_of_the_commit_until_checked() {
     app.git_refresh();
     let status = app.git.status.clone().unwrap();
     let another = status.entries.iter().find(|e| e.untracked()).unwrap();
-    assert!(!app.commit.checked(another));
+    assert!(!app.git.commit.checked(another));
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2208,9 +2210,9 @@ fn the_commit_button_names_its_scope_only_for_a_plain_commit() {
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
     assert_eq!(app.commit_scope(), None);
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Changes));
-    app.commit.amend = true;
+    app.git.commit.amend = true;
     assert_eq!(app.commit_scope(), None);
-    app.commit.amend = false;
+    app.git.commit.amend = false;
 
     // 游离 `HEAD` 时也写文件数，分支写在上方的分支行里。
     git_in(&root, &["checkout", "-q", "--detach"]);
@@ -2256,7 +2258,7 @@ fn a_rewritten_branch_is_not_force_pushed_without_confirmation() {
     app.press_commit(CommitTarget::Sync);
     press_alert(&mut app, 0);
     assert_eq!(pushed(&root), before);
-    assert!(app.alert.as_ref().unwrap().buttons[0].destructive);
+    assert!(app.overlays.alert.as_ref().unwrap().buttons[0].destructive);
     // 取消后还是不推送，可以再问一次。
     press_alert(&mut app, 1);
     assert_eq!(pushed(&root), before);
@@ -2281,10 +2283,10 @@ fn the_sidebar_keeps_one_width_across_views() {
         return;
     };
     paint(&mut app);
-    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH);
+    assert_eq!(app.panels.sidebar.width, DEFAULT_PANEL_WIDTH);
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.sidebar.width, DEFAULT_PANEL_WIDTH);
+    assert_eq!(app.panels.sidebar.width, DEFAULT_PANEL_WIDTH);
 
     // 提交视图里按住分隔条拖动：列表、提交信息框旁边都能拖。
     let drag = |app: &mut App, y: f32, by: f32| {
@@ -2299,14 +2301,14 @@ fn the_sidebar_keeps_one_width_across_views() {
     let message = app.commit_parts().message;
     drag(&mut app, message.y + 4.0, 40.0);
     let dragged = DEFAULT_PANEL_WIDTH + 40.0;
-    assert_eq!(app.sidebar.width, dragged);
+    assert_eq!(app.panels.sidebar.width, dragged);
     assert_eq!(app.state.panel_width, Some(dragged));
 
     // 切到文件树、搜索还是这个宽度。
     app.show_files();
-    assert_eq!(app.sidebar.width, dragged);
+    assert_eq!(app.panels.sidebar.width, dragged);
     app.set_sidebar_view(SidebarView::Search);
-    assert_eq!(app.sidebar.width, dragged);
+    assert_eq!(app.panels.sidebar.width, dragged);
 
     // 文件树里拖动，切回提交视图也是拖过的宽度。
     app.show_files();
@@ -2315,19 +2317,19 @@ fn the_sidebar_keeps_one_width_across_views() {
     let dragged = dragged - 20.0;
     assert_eq!(app.state.panel_width, Some(dragged));
     app.run_action(Action::ShowCommit);
-    assert_eq!(app.sidebar.width, dragged);
+    assert_eq!(app.panels.sidebar.width, dragged);
 
     // 记下的宽度比这个窗口放得下的大：从看到的宽度开始拖，一动就有反应。
-    app.sidebar.width = 5000.0;
+    app.panels.sidebar.width = 5000.0;
     paint(&mut app);
     let shown = app.layout.window.w - 320.0;
     drag(&mut app, 400.0, -20.0);
-    assert_eq!(app.sidebar.width, shown - 20.0);
+    assert_eq!(app.panels.sidebar.width, shown - 20.0);
 
     // 新窗口、下次启动从状态恢复，太窄的值抬到最小宽度。
     app.state.panel_width = Some(10.0);
     app.restore_panel_width();
-    assert_eq!(app.sidebar.width, crate::theme::MIN_PANEL_WIDTH);
+    assert_eq!(app.panels.sidebar.width, crate::theme::MIN_PANEL_WIDTH);
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2378,12 +2380,12 @@ fn commit_only_the_checked_lines() {
     );
     let status = app.git.status.clone().unwrap();
     let entry = status.entries.iter().find(|e| e.path == file).unwrap();
-    assert_eq!(app.commit.file_state(entry), Some(false));
+    assert_eq!(app.git.commit.file_state(entry), Some(false));
     for other in (0..hunks).filter(|&h| h != hunk) {
         app.press_diff(DiffTarget::Include(other));
     }
 
-    app.commit.message.set_text("only added_a");
+    app.git.commit.message.set_text("only added_a");
     app.git_commit();
     let head = Command::new("git")
         .arg("-C")
@@ -2421,32 +2423,38 @@ fn line_checks_keep_their_state_until_the_change_is_edited() {
         .clone();
     let (key, old) = (7, 0..2);
     let all = [(key, old.clone())];
-    let inclusion =
-        |app: &App, key| app.commit.hunk_inclusions(&entry, &[(key, old.clone())])[0].clone();
+    let inclusion = |app: &App, key| {
+        app.git
+            .commit
+            .hunk_inclusions(&entry, &[(key, old.clone())])[0]
+            .clone()
+    };
     assert_eq!(inclusion(&app, key), Pick::Apply);
 
     // 勾掉一行：按行提交。再勾回来：整处提交。
-    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
+    app.git.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     assert!(matches!(inclusion(&app, key), Pick::Lines(_)));
-    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
+    app.git.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     assert_eq!(inclusion(&app, key), Pick::Apply);
 
     // 内容变了：行号不再对应，整处不提交。
-    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
+    app.git.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     assert_eq!(inclusion(&app, key + 1), Pick::Skip);
 
     // 整段的勾选框把只提交部分行的改动恢复为整处提交。
-    app.commit.toggle_hunk(&entry, 0, &all);
+    app.git.commit.toggle_hunk(&entry, 0, &all);
     assert_eq!(inclusion(&app, key), Pick::Apply);
 
     // 所有行都勾掉时文件也勾掉。
     for (side, line) in [(LEFT, 0), (LEFT, 1), (RIGHT, 0)] {
-        app.commit.toggle_line(&entry, (0, 1), (side, line), &all);
+        app.git
+            .commit
+            .toggle_line(&entry, (0, 1), (side, line), &all);
     }
-    assert_eq!(app.commit.file_state(&entry), None);
+    assert_eq!(app.git.commit.file_state(&entry), None);
 
     // 文件没勾时勾上一行：文件勾上，只提交这一行。
-    app.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
+    app.git.commit.toggle_line(&entry, (0, 1), (RIGHT, 0), &all);
     let Pick::Lines(set) = inclusion(&app, key) else {
         panic!("应当按行提交");
     };
@@ -2504,7 +2512,7 @@ fn a_shorter_list_is_visible_after_scrolling_far_down() {
     paint(&mut app);
     let max = app.commit_max_scroll();
     assert!(max > 0.0, "样本需要超出列表高度");
-    app.commit.scroll = max;
+    app.git.commit.scroll = max;
     paint(&mut app);
 
     // 只留下一个改动：其余的全部提交到仓库。
@@ -2528,8 +2536,8 @@ fn a_shorter_list_is_visible_after_scrolling_far_down() {
     app.git_refresh();
     paint(&mut app);
 
-    assert!(app.commit.scroll <= app.commit_max_scroll());
-    assert_eq!(app.commit.scroll, 0.0);
+    assert!(app.git.commit.scroll <= app.commit_max_scroll());
+    assert_eq!(app.git.commit.scroll, 0.0);
     assert!(
         (app.hits.commit.iter()).any(|(_, target)| matches!(target, CommitTarget::File(_))),
         "列表应当画出剩下的改动"
@@ -2618,12 +2626,12 @@ fn a_clean_tree_hides_the_commit_card_and_offers_the_next_step() {
     app.press_commit(CommitTarget::LastCommit);
     app.run_menu_command(crate::app::input::context_menu::MenuCommand::CommitAmend);
     paint(&mut app);
-    assert!(app.commit.amend);
+    assert!(app.git.commit.amend);
     assert!(app.commit_parts().card.is_some());
     assert_eq!(app.focus, Focus::CommitMessage);
     app.press_commit(CommitTarget::Amend);
     paint(&mut app);
-    assert!(!app.commit.amend);
+    assert!(!app.git.commit.amend);
     assert!(app.commit_parts().card.is_none());
     assert_eq!(app.focus, Focus::CommitList);
     let _ = std::fs::remove_dir_all(&root);
@@ -2643,7 +2651,7 @@ fn the_refresh_button_spins_for_at_least_one_turn() {
     assert!(app.commit_refreshing());
     assert!(app.animating());
     let turn = Duration::from_secs_f32(1.0 / crate::theme::SPIN_SPEED);
-    app.commit.refreshed = Instant::now().checked_sub(turn);
+    app.git.commit.refreshed = Instant::now().checked_sub(turn);
     assert!(!app.commit_refreshing());
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2683,7 +2691,7 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
 
     // 点一下：两个文件，已跟踪的在前；预览标签里是第一个，标题写着储藏的名字。
     app.press_commit(CommitTarget::Stash(0));
-    let view = app.commit.stash_view.clone().unwrap();
+    let view = app.git.commit.stash_view.clone().unwrap();
     let names: Vec<String> = (view.files.iter())
         .map(|(f, ..)| winc_editor::display_name(&f.path).into_owned())
         .collect();
@@ -2691,12 +2699,12 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     assert!(view.files[1].1.is_none());
     let doc = app.editor.active().unwrap();
     assert!(doc.diff.is_some());
-    assert_eq!(app.commit.stash_preview, Some(doc.id));
+    assert_eq!(app.git.commit.stash_preview, Some(doc.id));
     assert!(doc.name().contains("stash@{0}"));
     assert!(app.diff_steps_files());
     // 下一个文件是一起收进去的未跟踪文件。
     app.step_diff_file(true);
-    assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 1);
+    assert_eq!(app.git.commit.stash_view.as_ref().unwrap().at, 1);
     assert!(app.editor.active().unwrap().name().contains("notes.txt"));
     assert_eq!(app.next_stash_file(true), None);
 
@@ -2712,7 +2720,7 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     );
     assert!((app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::StashFile(1)));
     app.press_commit(CommitTarget::StashFile(0));
-    assert_eq!(app.commit.stash_view.as_ref().unwrap().at, 0);
+    assert_eq!(app.git.commit.stash_view.as_ref().unwrap().at, 0);
     assert!(app.editor.active().unwrap().name().contains("main.rs"));
 
     // 再次点击这条储藏：文件收起，预览标签保留；再次点击时重新展开。
@@ -2754,7 +2762,8 @@ fn the_stash_group_opens_like_a_drawer() {
     let open = app.commit_parts().stashes.unwrap();
     assert_eq!(open.h, closed.h + COMMIT_ROW);
 
-    app.commit.stash_motion = Some((closed.h, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    app.git.commit.stash_motion =
+        Some((closed.h, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
     let parts = app.commit_parts();
     let half = parts.stashes.unwrap();
     assert!(closed.h < half.h && half.h < open.h, "{half:?}");
@@ -2767,9 +2776,9 @@ fn the_stash_group_opens_like_a_drawer() {
     assert!(has(&app, CommitTarget::Stashes));
     assert!(!has(&app, CommitTarget::Stash(0)));
 
-    app.commit.stash_motion = Some((closed.h, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
+    app.git.commit.stash_motion = Some((closed.h, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
     app.settle_animations();
-    assert!(app.commit.stash_motion.is_none());
+    assert!(app.git.commit.stash_motion.is_none());
     paint(&mut app);
     assert!(has(&app, CommitTarget::Stash(0)));
     assert_eq!(app.stash_chevron(), 1.0);
@@ -2804,7 +2813,7 @@ fn the_last_commit_bar_folds_away_once_it_is_pushed() {
     let gone = app.commit_parts();
     assert!(gone.undo.is_none());
 
-    app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    app.git.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
     let parts = app.commit_parts();
     let (half, ..) = parts.undo.unwrap();
     assert!(0.0 < half.h && half.h < bar.h, "{half:?}");
@@ -2814,9 +2823,9 @@ fn the_last_commit_bar_folds_away_once_it_is_pushed() {
     paint(&mut app);
     assert!(!(app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Undo));
 
-    app.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
+    app.git.commit.undo.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
     app.settle_animations();
-    assert!(app.commit.undo.motion.is_none());
+    assert!(app.git.commit.undo.motion.is_none());
     assert_eq!(app.commit_parts().list, gone.list);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2834,17 +2843,17 @@ fn the_commit_card_slides_away_once_nothing_is_left_to_commit() {
     let card = rest.card.unwrap();
     // 测试里没有窗口，记下的只是「上一帧显示着卡片」，不会开始过渡。
     app.track_commit_bars();
-    assert!(app.commit.card.motion.is_none());
+    assert!(app.git.commit.card.motion.is_none());
 
     git_in(&root, &["add", "-A"]);
     git_in(&root, &["commit", "-q", "-m", "base"]);
     app.git_refresh();
     app.track_commit_bars();
-    assert!(app.commit.card.motion.is_none());
+    assert!(app.git.commit.card.motion.is_none());
     let gone = app.commit_parts();
     assert!(gone.card.is_none());
 
-    app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
+    app.git.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION)));
     let parts = app.commit_parts();
     let half = parts.card.unwrap();
     assert_eq!((half.x, half.w, half.h), (card.x, card.w, card.h));
@@ -2857,9 +2866,9 @@ fn the_commit_card_slides_away_once_nothing_is_left_to_commit() {
     paint(&mut app);
     assert!(!(app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Commit));
 
-    app.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
+    app.git.commit.card.motion = Some((1.0, Clock::frozen(TREE_ANIMATION, TREE_ANIMATION)));
     app.settle_animations();
-    assert!(app.commit.card.motion.is_none());
+    assert!(app.git.commit.card.motion.is_none());
     assert_eq!(app.commit_parts().list, gone.list);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2890,9 +2899,9 @@ fn holding_option_turns_commit_into_commit_and_push() {
         "{:?}",
         tip(&app)
     );
-    app.commit.amend = true;
+    app.git.commit.amend = true;
     assert!(!app.commit_pushes());
-    app.commit.amend = false;
+    app.git.commit.amend = false;
     app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2914,7 +2923,7 @@ fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
     let from = before.commit.w + before.commit_menu.w;
     assert!(before.amend.is_some());
 
-    app.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
+    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
     paint(&mut app);
     let settled = app.commit_parts();
     let to = settled.commit.w + settled.commit_menu.w;
@@ -2922,8 +2931,8 @@ fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
     assert!(to > from);
 
     let half = Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION);
-    app.commit.button_motion = Some((from, half));
-    app.commit.amend_motion = Some((false, half));
+    app.git.commit.button_motion = Some((from, half));
+    app.git.commit.amend_motion = Some((false, half));
     paint(&mut app);
     let parts = app.commit_parts();
     let width = parts.commit.w + parts.commit_menu.w;
@@ -2940,8 +2949,8 @@ fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
     assert!(app.commit_button_menu().contains(&amend));
     assert!(app.animating());
 
-    app.commit.button_motion = None;
-    app.commit.amend_motion = None;
+    app.git.commit.button_motion = None;
+    app.git.commit.amend_motion = None;
     assert_eq!(app.commit_parts(), settled);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2971,8 +2980,8 @@ fn shoot_commit_button_motion() {
             (false, true) => break (alt, plain),
             _ => {}
         }
-        assert!(app.sidebar.width > crate::theme::MIN_PANEL_WIDTH);
-        app.sidebar.width -= 2.0;
+        assert!(app.panels.sidebar.width > crate::theme::MIN_PANEL_WIDTH);
+        app.panels.sidebar.width -= 2.0;
     };
     app.pointer.modifiers = from_keys;
     shoot(&mut app, "commit-button-before");
@@ -2981,11 +2990,11 @@ fn shoot_commit_button_motion() {
     app.pointer.modifiers = to_keys;
     paint(&mut app);
     let quarter = Clock::frozen(TREE_ANIMATION / 4, TREE_ANIMATION);
-    app.commit.button_motion = Some((from, quarter));
-    app.commit.amend_motion = Some((false, quarter));
+    app.git.commit.button_motion = Some((from, quarter));
+    app.git.commit.amend_motion = Some((false, quarter));
     shoot(&mut app, "commit-button-quarter");
-    app.commit.button_motion = None;
-    app.commit.amend_motion = None;
+    app.git.commit.button_motion = None;
+    app.git.commit.amend_motion = None;
     shoot(&mut app, "commit-button-after");
     app.pointer.modifiers = plain;
     let _ = std::fs::remove_dir_all(&root);
@@ -3022,7 +3031,7 @@ fn committed_rows_fade_out_instead_of_vanishing() {
     assert!(new.entries.is_empty());
     assert!(crate::app::git::commit::entries_changed(&old, &new));
 
-    app.commit.shift = Some(crate::app::git::commit::CommitShift {
+    app.git.commit.shift = Some(crate::app::git::commit::CommitShift {
         status: old,
         rows,
         scroll: 0.0,
@@ -3031,11 +3040,11 @@ fn committed_rows_fade_out_instead_of_vanishing() {
     assert!(app.animating());
     paint(&mut app);
     assert!(!has_rows(&app));
-    assert!(app.commit.overflow.is_none());
+    assert!(app.git.commit.overflow.is_none());
 
-    app.commit.shift.as_mut().unwrap().clock = Clock::frozen(TREE_ANIMATION, TREE_ANIMATION);
+    app.git.commit.shift.as_mut().unwrap().clock = Clock::frozen(TREE_ANIMATION, TREE_ANIMATION);
     app.settle_animations();
-    assert!(app.commit.shift.is_none());
+    assert!(app.git.commit.shift.is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -3066,22 +3075,26 @@ fn the_full_name_row_covers_the_scrollbar_like_the_file_tree() {
         .unwrap();
     let list = app.commit_parts().list;
     assert!(app.commit_max_scroll() > 0.0, "list must scroll");
-    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+    let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
     app.on_mouse_move(list.x + 120.0, y);
     paint(&mut app);
-    let spill = app.commit.overflow.and_then(|o| o.spill).unwrap();
+    let spill = app.git.commit.overflow.and_then(|o| o.spill).unwrap();
 
     // 移到滚动条的可点击范围内：仍悬停在这一行上，全名保持显示。
     app.on_mouse_move(list.right() - 3.0, y);
     paint(&mut app);
     assert_eq!(app.pointer.hover, Hover::Commit(CommitTarget::File(index)));
-    assert!(app.commit.overflow.is_some_and(|o| o.row == i));
+    assert!(app.git.commit.overflow.is_some_and(|o| o.row == i));
 
     // 在伸出侧栏的部分上滚动：滚动的是改动列表。
     app.on_mouse_move(spill.x + 20.0, y);
-    let before = app.commit.scroll;
+    let before = app.git.commit.scroll;
     app.on_wheel(MouseScrollDelta::LineDelta(0.0, -2.0));
-    assert!(app.commit.scroll > before, "{} {before}", app.commit.scroll);
+    assert!(
+        app.git.commit.scroll > before,
+        "{} {before}",
+        app.git.commit.scroll
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3111,10 +3124,10 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
         })
         .unwrap();
     let list = app.commit_parts().list;
-    let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll + COMMIT_ROW / 2.0;
+    let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll + COMMIT_ROW / 2.0;
     app.on_mouse_move(list.x + 120.0, y);
     paint(&mut app);
-    assert!(app.commit.overflow.is_some_and(|o| o.row == i));
+    assert!(app.git.commit.overflow.is_some_and(|o| o.row == i));
 
     let splitter = app.layout.splitter;
     let row = Hover::Commit(CommitTarget::File(index));
@@ -3126,11 +3139,14 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
         app.on_mouse_move(x, y);
         paint(&mut app);
         assert_eq!(app.pointer.hover, row, "x = {x}");
-        assert!(app.commit.overflow.is_some_and(|o| o.row == i), "x = {x}");
+        assert!(
+            app.git.commit.overflow.is_some_and(|o| o.row == i),
+            "x = {x}"
+        );
     }
     click(&mut app, (splitter.x + splitter.w / 2.0, y));
     assert_eq!(
-        app.commit.selected.as_deref(),
+        app.git.commit.selected.as_deref(),
         Some(status.entries[index].path.as_path())
     );
     assert_eq!(app.layout.splitter, splitter);
@@ -3179,7 +3195,7 @@ fn identical_changes_are_checked_one_by_one() {
         let all: Vec<_> = (view.keys.iter().zip(&view.hunks))
             .map(|(&k, h)| (k, h.old.clone()))
             .collect();
-        app.commit.hunk_inclusions(entry, &all)
+        app.git.commit.hunk_inclusions(entry, &all)
     };
     let view = app.editor.active().unwrap().diff.as_deref().unwrap();
     let same: Vec<usize> = (0..view.hunks.len())
@@ -3199,7 +3215,7 @@ fn identical_changes_are_checked_one_by_one() {
     app.press_diff(DiffTarget::Include(first));
     let now = picks(&app);
     assert_eq!((&now[first], &now[second]), (&Pick::Skip, &Pick::Apply));
-    app.commit.message.set_text("only the second");
+    app.git.commit.message.set_text("only the second");
     app.git_commit();
     let head = Command::new("git")
         .arg("-C")

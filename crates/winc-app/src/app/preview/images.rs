@@ -171,7 +171,7 @@ impl App {
             Box::new(move || image::load(&path))
         };
         self.preview.images.pending.insert(key);
-        let (sender, proxy) = (self.preview.images.sender.clone(), self.proxy.clone());
+        let (sender, proxy) = (self.preview.images.sender.clone(), self.link.proxy.clone());
         winc_editor::background::spawn(move || {
             let result = job();
             if sender.send((key.0, key.1, result)).is_ok()
@@ -208,7 +208,10 @@ impl App {
         let text = rope.to_string();
         let base = doc.path.as_deref().and_then(|p| p.parent()).map(Into::into);
         self.preview.split.pending = Some(revision);
-        let (sender, proxy) = (self.preview.images.split_sender.clone(), self.proxy.clone());
+        let (sender, proxy) = (
+            self.preview.images.split_sender.clone(),
+            self.link.proxy.clone(),
+        );
         winc_editor::background::spawn(move || {
             let base: Option<std::path::PathBuf> = base;
             let result = svg::load(&text, base.as_deref(), Some(system_glyphs()));
@@ -263,7 +266,7 @@ impl App {
         self.preview.images.drawing = Some((id, Arc::as_ptr(picture) as usize, size, region, base));
         let (sender, proxy, picture, drawing) = (
             self.preview.images.rendered_sender.clone(),
-            self.proxy.clone(),
+            self.link.proxy.clone(),
             Arc::clone(picture),
             Arc::clone(drawing),
         );

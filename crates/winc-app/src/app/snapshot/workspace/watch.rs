@@ -39,7 +39,7 @@ fn outside_changes_reach_the_tree_the_index_and_open_files() {
     app.open_path(&dir.join("a.txt"));
     app.open_picker();
     app.close_picker();
-    let indexed = app.picker.index.len();
+    let indexed = app.overlays.picker.index.len();
 
     // 其他程序新建了一个文件；修改了已打开且没有未保存修改的 `short.rs`（直接重新读取）；
     // 修改了已打开且有未保存修改的 `a.txt`（提示冲突，不覆盖）。
@@ -72,19 +72,25 @@ fn outside_changes_reach_the_tree_the_index_and_open_files() {
 
     // ⌘P 的文件表在后台更新：测试中没有事件循环，需要等待更新完成后手动取回。
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !app.picker.index.is_ready() || app.picker.index.len() == indexed {
+    while !app.overlays.picker.index.is_ready() || app.overlays.picker.index.len() == indexed {
         assert!(std::time::Instant::now() < deadline, "⌘P 的文件表没改好");
         std::thread::sleep(Duration::from_millis(5));
         app.picker_indexed();
     }
-    assert_eq!(app.picker.index.len(), indexed + 1);
-    assert!(app.picker.index.position_of(&dir.join("new.rs")).is_some());
+    assert_eq!(app.overlays.picker.index.len(), indexed + 1);
+    assert!(
+        app.overlays
+            .picker
+            .index
+            .position_of(&dir.join("new.rs"))
+            .is_some()
+    );
 
     // 删除文件后：文件树和文件表中都不再有该文件。
     std::fs::remove_file(dir.join("new.rs")).unwrap();
     app.apply_changes(changes(&dir, &["new.rs"]));
     assert!(!tree_names(&app).contains(&"new.rs".to_owned()));
-    while !app.picker.index.is_ready() || app.picker.index.len() != indexed {
+    while !app.overlays.picker.index.is_ready() || app.overlays.picker.index.len() != indexed {
         assert!(std::time::Instant::now() < deadline, "⌘P 的文件表没改好");
         std::thread::sleep(Duration::from_millis(5));
         app.picker_indexed();
@@ -118,11 +124,11 @@ fn search_results_follow_only_the_files_that_changed() {
     let dir = sample_folder("watch-search");
     let dir = winc_config::files::canonicalize(&dir).unwrap();
     let mut app = app_with(&dir, false);
-    app.global.query.set_text("println");
+    app.panels.global.query.set_text("println");
     app.run_global_search();
     finish_search(&mut app);
     let files = |app: &App| -> Vec<String> {
-        let results = &app.global.engine.results;
+        let results = &app.panels.global.engine.results;
         results.iter().map(|f| f.relative.clone()).collect()
     };
     let before = files(&app);
@@ -163,7 +169,7 @@ fn files_made_here_reach_quick_open_without_walking_again() {
     let mut app = app_with(&dir, false);
     app.open_picker();
     app.close_picker();
-    let before = app.picker.index.len();
+    let before = app.overlays.picker.index.len();
 
     // 在文件树中一次创建两级的目录和文件：`docs` → `guide` → `intro.md`。
     app.start_new_entry(false);
@@ -174,6 +180,7 @@ fn files_made_here_reach_quick_open_without_walking_again() {
     // 后台只更新新增的目录与文件（测试中没有事件循环，需要手动取回结果）。
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while app
+        .overlays
         .picker
         .index
         .position_of(&dir.join("docs/guide/intro.md"))
@@ -183,7 +190,7 @@ fn files_made_here_reach_quick_open_without_walking_again() {
         std::thread::sleep(Duration::from_millis(5));
         app.picker_indexed();
     }
-    assert_eq!(app.picker.index.len(), before + 1);
+    assert_eq!(app.overlays.picker.index.len(), before + 1);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -193,13 +200,13 @@ fn logs_written_by_others_are_followed_at_the_end() {
     use std::io::Write as _;
 
     let dir = sample_folder("watch-follow");
-    let log = dir.join("app.log");
+    let log = dir.join("app.git.log");
     let lines =
         |from: usize, to: usize| -> String { (from..to).map(|i| format!("line {i}\n")).collect() };
     std::fs::write(&log, lines(0, 200)).unwrap();
     let mut app = app_with(&log, false);
     let root = app.editor.root().unwrap().to_path_buf();
-    let log = root.join("app.log");
+    let log = root.join("app.git.log");
     let append = |from: usize, to: usize, n: u64| {
         let mut file = std::fs::File::options().append(true).open(&log).unwrap();
         file.write_all(lines(from, to).as_bytes()).unwrap();
@@ -216,7 +223,7 @@ fn logs_written_by_others_are_followed_at_the_end() {
     let end = app.editor.active().unwrap().text().end_pos();
     app.select(end, end);
     append(200, 300, 1);
-    app.apply_changes(changes(&root, &["app.log"]));
+    app.apply_changes(changes(&root, &["app.git.log"]));
     assert_eq!(caret_line(&app), 300);
     assert!(app.status.message.is_none());
     let doc = app.editor.active().unwrap();
@@ -228,7 +235,7 @@ fn logs_written_by_others_are_followed_at_the_end() {
     app.select(at, at);
     let scroll = app.editor.active().unwrap().scroll_line;
     append(300, 310, 2);
-    app.apply_changes(changes(&root, &["app.log"]));
+    app.apply_changes(changes(&root, &["app.git.log"]));
     assert_eq!(caret_line(&app), 10);
     assert_eq!(app.editor.active().unwrap().scroll_line, scroll);
     assert_eq!(app.editor.active().unwrap().text().line_count(), 311);
@@ -417,7 +424,7 @@ fn background_tree_scans_keep_only_the_latest_per_folder() {
         let tickets: Vec<u64> = scan
             .dirs()
             .iter()
-            .map(|d| app.tree.scans.tickets.issue(d.clone()))
+            .map(|d| app.panels.tree.scans.tickets.issue(d.clone()))
             .collect();
         (tickets, scan.run())
     };
@@ -427,7 +434,7 @@ fn background_tree_scans_keep_only_the_latest_per_folder() {
     let old = scan(&mut app);
     std::fs::write(dir.join("second.rs"), "").unwrap();
     let new = scan(&mut app);
-    let sender = app.tree.scans.results.0.clone();
+    let sender = app.panels.tree.scans.results.0.clone();
     sender.send(new).unwrap();
     sender.send(old).unwrap();
     app.poll_tree_scans();

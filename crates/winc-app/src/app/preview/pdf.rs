@@ -334,7 +334,7 @@ impl App {
             pdf.generation,
             pdf.sender.clone(),
             Arc::clone(&pdf.wanted),
-            self.proxy.clone(),
+            self.link.proxy.clone(),
         );
         let notify = move || {
             if let Some(proxy) = &proxy {

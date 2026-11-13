@@ -762,19 +762,12 @@ pub struct App {
     pub(crate) run: terminal::run::RunConfigs,
     /// 当前生效的配置。
     pub config: Config,
-    /// 配置文件当前的内容，即上次读入或写出时的配置。
-    ///
-    /// 写回时只写入 `config` 中与本字段不同的项，
-    /// 因此运行期间在配置文件中手动修改的其他项保持不变。
-    pub(crate) saved_config: Config,
-    /// 配置写回的文件；`None` 时只修改内存中的配置（测试使用，避免改动用户的配置）。
-    pub config_path: Option<PathBuf>,
+    /// 配置与状态文件的写回：文件的路径、配置文件当前的内容和配置的版本号。
+    pub(crate) store: settings::Store,
     /// 配置中的主题选择；`Auto` 时跟随系统外观。
     pub theme_choice: ThemeChoice,
     /// 最近打开的目录和各目录的现场。
     pub state: State,
-    /// 状态写回的文件；`None` 时只记录在内存中（测试和性能测量使用，避免改动用户的历史）。
-    pub state_path: Option<PathBuf>,
     /// 未保存内容的备份，用于退出后恢复。
     pub backup: lifecycle::backup::BackupState,
     /// 临时打开（`--wait`、`-`）时需要等待的标签和标准输入的读取状态。
@@ -827,30 +820,20 @@ pub struct App {
     pub(crate) wallpaper: lifecycle::wallpaper::WallpaperState,
     /// 状态栏键路径的缓存与扫描记录。
     pub key_path: status::breadcrumb::KeyPath,
-    /// 文件树的界面状态。
-    pub tree: workspace::tree::TreeState,
+    /// 侧栏及其中的面板：文件树、搜索、大纲，以及文件树中的重命名和拖入。
+    pub(crate) panels: workspace::Panels,
     /// 滚动的状态：滚轮与触控板的输入、平滑滚动的过渡、惯性滚动和滚动条的显示。
     pub(crate) scroll: scroll::ScrollState,
 
     // 侧栏和文件树
-    /// 侧栏的界面状态。
-    pub sidebar: workspace::Sidebar,
     /// 跳转：位置历史、后台的定义查找和名字旁的提示。
     pub(crate) jumps: editor::Jumps,
-    /// 新建工作树对话框；未打开时为 `None`。
-    ///
-    /// 打开时覆盖整个窗口，键盘和鼠标事件优先交给对话框处理。
-    pub(crate) form_dialog: Option<git::form::FormDialog>,
-    /// 窗口内绘制的提示框（平台没有系统提示框时使用，见 `lifecycle/alert.rs`）。
-    pub(crate) alert: Option<lifecycle::alert::InAppAlert>,
+    /// 覆盖在界面之上的浮层：右键菜单、快速打开、对话框、提示框和悬停提示。
+    pub(crate) overlays: input::Overlays,
     /// 编辑区水平滚动条的内容宽度（逻辑像素），绘制时更新；没有水平滚动条时为 0。
     pub text_content_w: f32,
     /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
     preview_tab: Option<winc_editor::DocumentId>,
-    /// 文件树中正在重命名的项及其输入框；没有时为 `None`。
-    pub name_input: Option<NameInput>,
-    /// 从文件管理器等来源拖动文件经过窗口时的放置位置；未在拖动时为 `None`。
-    file_hover: Option<DropZone>,
 
     // 编辑区
     /// 剪贴板。
@@ -864,56 +847,27 @@ pub struct App {
     /// 阅读时固定的词或短选区及其颜色编号，按标记时间从早到晚排列。
     pub(crate) word_highlights: Vec<(usize, WordHighlight)>,
 
-    /// 侧栏搜索面板的状态。
-    pub global: GlobalSearch,
-    /// 文件视图底部大纲的状态。
-    pub outline: OutlineState,
-
     // 快速打开
-    /// 快速打开面板与位置浮窗的状态。
-    pub picker: workspace::picker::Picker,
     /// 与磁盘的同步：目录的监视，以及文件在后台的读取、保存和改动。
     pub(crate) disk: workspace::DiskState,
     /// 本窗口最近关闭的标签、最近切换到的文件和最近使用的命令。
     pub(crate) history: workspace::History,
     /// 两段组合键（如 `⌘K ⌘S`）的第一段，正在等待第二段。
     pub(crate) pending_chord: Option<crate::keymap::Stroke>,
-    /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。
-    pub location_toggled: std::collections::HashSet<PathBuf>,
-    /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
-    pub branch_folders: std::collections::HashSet<(bool, String)>,
 
     /// 设置浮层：当前页、分类和各输入框。
     pub settings: SettingsState,
 
     /// 保存时格式化和修复的状态。
     pub format: FormatState,
-    /// Git 模块：仓库状态、文件树装饰。
+    /// Git 模块：仓库状态、文件树装饰，以及提交、日志、追溯、分支、合并各视图的状态。
     ///
     /// 模块关闭时为空。
     pub git: git::GitState,
-    /// Git 的提交视图：勾选、提交信息。
-    pub commit: git::commit::CommitState,
-    /// 行号栏的 Git 改动标记和已展开的改动卡片。
-    pub changes: git::changes::LineChanges,
-    /// Git 日志标签的后台通道和点击区域。
-    pub log: git::log::LogState,
-    /// 逐行追溯（`git blame`）的状态。
-    pub blame: git::blame::BlameState,
-    /// 正在进行的分支操作。
-    pub branch: git::branch::BranchState,
     /// 远程模块：正在进行的连接。
     pub remote: remote::RemoteState,
-    /// 文件内合并冲突的解决状态：识别出的冲突与可点击区域。
-    pub merge: git::merge::MergeState,
-    /// 大文件的差异在后台重新比较。
-    pub(crate) rediff: diff::RediffState,
 
     // 右键菜单、关闭和退出
-    /// 右键菜单的目标和内容，选中一项时据此执行。
-    pub context_menu: Option<ContextMenu>,
-    /// 系统菜单打开期间，点开该菜单的按钮绘制为按下状态。
-    pub menu_button: Option<MenuButton>,
     /// 删除文件使用的函数：正常运行时移到废纸篓，测试中替换为直接删除，避免写入用户的废纸篓。
     pub trash: fn(&Path) -> std::io::Result<()>,
     /// 关闭与退出流程的状态。
@@ -926,24 +880,12 @@ pub struct App {
     deleted_told: HashSet<DocumentId>,
     /// 右上角提示条的状态。
     pub notice: lifecycle::notice::Notice,
-    /// 悬停提示的计时状态。
-    pub tooltip: animation::Tooltip,
 
     // 窗口和事件循环
     /// 帧的绘制与呈现：渲染器、下一帧的安排和测量。
     pub(crate) frame: lifecycle::FrameState,
-    /// 后台线程和系统回调通过该代理把事件送回事件循环（附带本窗口的编号，见 [`crate::winc`]）；
-    /// 测试中没有事件循环，为 `None`。
-    proxy: Option<crate::winc::WindowProxy>,
-    /// 窗口的红绿灯（见 [`crate::macos::TrafficLights`]），窗口创建后才有，随窗口一同释放。
-    #[cfg(target_os = "macos")]
-    traffic_lights: Option<crate::macos::TrafficLights>,
-    /// 本窗口在进程内的编号；测试中单独创建的 `App` 为 `None`。
-    pub(crate) key: Option<crate::winc::WindowKey>,
-    /// 各窗口共用的状态：其他窗口打开的内容、剪切的文件，以及请求应用层执行的操作。
-    pub(crate) shared: std::rc::Rc<crate::winc::Shared>,
-    /// 配置的版本号：本窗口每写入一次配置文件加 1，应用层据此把新配置发给其他窗口。
-    pub(crate) config_rev: u64,
+    /// 本窗口与应用层的联系：事件代理、窗口编号和各窗口共用的状态。
+    pub(crate) link: lifecycle::AppLink,
     /// 创建窗口时使用一次的参数：位置、是否全屏、共用的字形缓存和激活令牌。
     pub(crate) opening: lifecycle::Opening,
 }
@@ -967,7 +909,7 @@ impl App {
         if self.editor.root().is_some_and(winc_backend::is_remote) {
             return self.spawn_blocking_then(done, job);
         }
-        match self.proxy.clone() {
+        match self.link.proxy.clone() {
             Some(proxy) => winc_editor::background::spawn(move || {
                 job();
                 let _ = proxy.send_event(done);
@@ -986,7 +928,7 @@ impl App {
     ///
     /// 测试中没有事件循环：在当前线程上执行 `job`，之后直接调用 [`App::finished`] 处理结果。
     fn spawn_blocking_then(&mut self, done: UserEvent, job: impl FnOnce() + Send + 'static) {
-        match self.proxy.clone() {
+        match self.link.proxy.clone() {
             Some(proxy) => winc_editor::background::spawn_blocking(move || {
                 job();
                 let _ = proxy.send_event(done);
@@ -1004,7 +946,7 @@ impl App {
     /// 这个线程按提交的顺序逐个执行：保存与改名、移动、删除不会交错，先发起的保存一定在随后
     /// 的改名之前写完。线程在第一次使用时创建，窗口关闭时结束。
     fn spawn_ordered_then(&mut self, done: UserEvent, job: impl FnOnce() + Send + 'static) {
-        let Some(proxy) = self.proxy.clone() else {
+        let Some(proxy) = self.link.proxy.clone() else {
             winc_backend::remote::allow_blocking(job);
             self.finished(done);
             return;
@@ -1109,8 +1051,8 @@ impl App {
             self.preview.markdown.toc_fade = self.clock(animation::TOC_FADE);
         }
         self.pointer.hover = hover;
-        self.tooltip.since = hover.has_tooltip().then(Instant::now);
-        self.tooltip.shown = false;
+        self.overlays.tooltip.since = hover.has_tooltip().then(Instant::now);
+        self.overlays.tooltip.shown = false;
         self.request_redraw();
     }
 

@@ -775,24 +775,28 @@ fn lists_options_and_highlighting_follow_the_command_line() {
     let (mut app, dir) = vim_app("vim-lists", "one two\nthree two\n");
     keys(&mut app, "yiwjma");
     ex(&mut app, "reg");
-    assert!(app.picker.open && app.picker.vim_list.is_some());
+    assert!(app.overlays.picker.open && app.overlays.picker.vim_list.is_some());
     paint(&mut app);
     // 输入的文字筛选各行；回车粘贴选中的寄存器。
-    app.picker.input.set_text("\"0");
+    app.overlays.picker.input.set_text("\"0");
     app.picker_refresh();
-    assert_eq!(app.picker.hits.len(), 1);
+    assert_eq!(app.overlays.picker.hits.len(), 1);
     app.picker_accept();
-    assert!(!app.picker.open && app.picker.vim_list.is_none());
+    assert!(!app.overlays.picker.open && app.overlays.picker.vim_list.is_none());
     assert_eq!(text(&app), "one two\ntonehree two\n");
     keys(&mut app, "ugg");
     ex(&mut app, "marks");
-    app.picker.input.set_text("'a");
+    app.overlays.picker.input.set_text("'a");
     app.picker_refresh();
     app.picker_accept();
     assert_eq!(line(&app), 1);
     ex(&mut app, "ls");
     assert_eq!(
-        app.picker.vim_list.as_ref().map(|list| list.rows.len()),
+        app.overlays
+            .picker
+            .vim_list
+            .as_ref()
+            .map(|list| list.rows.len()),
         Some(1)
     );
     app.close_picker();
@@ -933,7 +937,7 @@ fn uppercase_marks_reach_other_files_and_are_kept_in_the_state() {
     ex(&mut app, "e other.txt");
     assert_eq!(text(&app), "other\n");
     ex(&mut app, "marks");
-    let rows = &app.picker.vim_list.as_ref().unwrap().rows;
+    let rows = &app.overlays.picker.vim_list.as_ref().unwrap().rows;
     assert!(
         rows.iter()
             .any(|row| row.label == "'A" && row.text.ends_with("vim.txt:2"))

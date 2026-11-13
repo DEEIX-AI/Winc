@@ -449,13 +449,13 @@ fn a_wheel_glide_finishes_in_the_area_it_started_in() {
 
     let side = app.layout.sidebar;
     app.on_mouse_move(side.x + 20.0, side.y + 80.0);
-    let tree = app.tree.scroll;
+    let tree = app.panels.tree.scroll;
     if let Some(glide) = app.scroll.wheel.glide.as_mut() {
         glide.clock = Clock::stopped(LENGTH, LENGTH);
     }
     app.advance_wheel_glide();
     assert!((scroll(&app) - 10.0).abs() < 0.01, "{}", scroll(&app));
-    assert_eq!(app.tree.scroll, tree);
+    assert_eq!(app.panels.tree.scroll, tree);
     assert!(app.scroll.wheel.glide.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -540,31 +540,31 @@ fn pane_glides_swap_in_for_drawing_and_settle_where_shown() {
         from,
         clock: Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE),
     };
-    app.tree.scroll = 400.0;
+    app.panels.tree.scroll = 400.0;
     app.scroll.pane_glides = vec![glide(0.0)];
     let frame = app.begin_scroll_frame();
-    let drawn = app.tree.scroll;
+    let drawn = app.panels.tree.scroll;
     assert!(
         drawn > 0.0 && drawn < 400.0 && drawn == drawn.round(),
         "{drawn}"
     );
     app.end_scroll_frame(frame);
-    assert_eq!(app.tree.scroll, 400.0);
+    assert_eq!(app.panels.tree.scroll, 400.0);
     assert!(app.animating());
 
     // 绘制时收紧了上限：保留绘制后的值，过渡结束。
     let frame = app.begin_scroll_frame();
-    app.tree.scroll = 120.0;
+    app.panels.tree.scroll = 120.0;
     app.end_scroll_frame(frame);
-    assert_eq!(app.tree.scroll, 120.0);
+    assert_eq!(app.panels.tree.scroll, 120.0);
     assert!(app.scroll.pane_glides.is_empty());
 
     // 按下鼠标前停在屏幕上显示的位置。
-    app.tree.scroll = 400.0;
+    app.panels.tree.scroll = 400.0;
     app.scroll.pane_glides = vec![glide(0.0)];
     let shown = Clock::frozen(SCROLL_GLIDE / 2, SCROLL_GLIDE).between(0.0, 400.0);
     app.settle_glides();
-    assert_eq!(app.tree.scroll, shown);
+    assert_eq!(app.panels.tree.scroll, shown);
     assert!(app.scroll.pane_glides.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }

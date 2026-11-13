@@ -242,10 +242,13 @@ fn cut_and_paste_in_the_tree_moves_the_selection_once() {
     app.focus = Focus::Tree;
     app.run_action(crate::keymap::Action::Cut);
     assert_eq!(
-        *app.shared.cut_files.borrow(),
+        *app.link.shared.cut_files.borrow(),
         [root.join("a.txt"), root.join("short.rs")]
     );
-    assert_eq!(app.clipboard.copied_files, *app.shared.cut_files.borrow());
+    assert_eq!(
+        app.clipboard.copied_files,
+        *app.link.shared.cut_files.borrow()
+    );
     assert_eq!(app.status.message.as_deref(), Some("已剪切 2 项"));
 
     // 粘贴到 lib：两项移过去，剪切的记录清掉，移过去的两项选中。
@@ -256,7 +259,7 @@ fn cut_and_paste_in_the_tree_moves_the_selection_once() {
     assert!(root.join("lib/a.txt").is_file());
     assert!(root.join("lib/short.rs").is_file());
     assert!(!root.join("a.txt").exists() && !root.join("short.rs").exists());
-    assert!(app.shared.cut_files.borrow().is_empty());
+    assert!(app.link.shared.cut_files.borrow().is_empty());
     assert_eq!(selected_names(&app), ["a.txt", "short.rs"]);
 
     // 先前剪切过的文件不参与这次复制：按普通复制处理。
@@ -265,7 +268,7 @@ fn cut_and_paste_in_the_tree_moves_the_selection_once() {
     app.focus = Focus::Tree;
     app.run_action(crate::keymap::Action::Cut);
     app.run_action(crate::keymap::Action::Copy);
-    assert!(app.shared.cut_files.borrow().is_empty());
+    assert!(app.link.shared.cut_files.borrow().is_empty());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -374,7 +377,7 @@ fn typing_jumps_to_names_and_home_end_page_keys_move() {
     };
     // 把上次键入的时刻提前到 `TYPE_RESET` 之前，使下一个字符开始新一轮查找。
     let pause = |app: &mut App| {
-        if let Some((_, at)) = &mut app.tree.typed {
+        if let Some((_, at)) = &mut app.panels.tree.typed {
             *at = Instant::now() - Duration::from_secs(1);
         }
     };

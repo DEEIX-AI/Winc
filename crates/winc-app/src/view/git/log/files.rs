@@ -63,7 +63,7 @@ pub(super) fn draw_files(
         }
         let hovered = app.pointer.hover == Hover::Log(LogTarget::File(i));
         // 键盘选中的文件（按 `→` 进入文件列表以后）铺选中的底色。
-        let chosen = app.log.file == Some(i);
+        let chosen = app.git.log.file == Some(i);
         if let Some(color) = row_color(p, chosen, app.focus == Focus::Editor, hovered) {
             frame.rect_clipped(row, color, RADIUS_ROW, area);
         }

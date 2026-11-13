@@ -98,7 +98,7 @@ impl App {
         self.disk.watcher = None;
         self.disk.changes_due = None;
         self.git_folder_changed();
-        let (Some(root), Some(proxy)) = (root, self.proxy.clone()) else {
+        let (Some(root), Some(proxy)) = (root, self.link.proxy.clone()) else {
             return;
         };
         // 远端主机上的目录由服务进程在那台主机上监视；启动要发出请求，在后台进行。
@@ -121,7 +121,7 @@ impl App {
         let root = (self.disk.watcher.as_ref())
             .filter(|watcher| watcher.exited())
             .map(|watcher| watcher.root().to_path_buf());
-        let (Some(root), Some(proxy)) = (root, self.proxy.clone()) else {
+        let (Some(root), Some(proxy)) = (root, self.link.proxy.clone()) else {
             return;
         };
         // 远端的监视随连接中断而结束：连接恢复后重新启动。
@@ -148,7 +148,7 @@ impl App {
     /// 启动失败（服务进程无法监视、连接中断）时没有监视，变化由 `check_disk` 在窗口重新获得
     /// 焦点时检查。
     fn start_remote_watcher(&mut self, root: PathBuf) {
-        let Some(proxy) = self.proxy.clone() else {
+        let Some(proxy) = self.link.proxy.clone() else {
             return;
         };
         let slot = Arc::clone(&self.remote.watching);
@@ -218,9 +218,9 @@ impl App {
                 let tickets = scan
                     .dirs()
                     .iter()
-                    .map(|dir| self.tree.scans.tickets.issue(dir.clone()))
+                    .map(|dir| self.panels.tree.scans.tickets.issue(dir.clone()))
                     .collect();
-                let sender = self.tree.scans.results.0.clone();
+                let sender = self.panels.tree.scans.results.0.clone();
                 self.spawn_then(UserEvent::TreeScanned, move || {
                     let _ = sender.send((tickets, scan.run()));
                 });
@@ -237,7 +237,7 @@ impl App {
             self.results_touched(&changes.paths);
         }
         self.git_paths_changed(&changes.paths, changes.rescan, changes.git);
-        self.picker.index.apply(changes);
+        self.overlays.picker.index.apply(changes);
 
         self.relayout();
         self.clamp_scroll();
@@ -280,16 +280,16 @@ impl App {
     /// 收取后台重读完成的目录（见 [`TreeScans`]）并换进文件树；之后又发出过重读的目录不换。
     pub(in crate::app) fn poll_tree_scans(&mut self) {
         let mut changed = false;
-        while let Ok((tickets, mut listing)) = self.tree.scans.results.1.try_recv() {
+        while let Ok((tickets, mut listing)) = self.panels.tree.scans.results.1.try_recv() {
             let mut tickets = tickets.into_iter();
-            let scans = &mut self.tree.scans.tickets;
+            let scans = &mut self.panels.tree.scans.tickets;
             listing.retain(|dir| tickets.next().is_some_and(|t| scans.redeem(dir, t)));
             if let Some(ws) = &mut self.editor.workspace {
                 changed |= ws.apply_scan(listing);
             }
         }
         if changed {
-            self.tree.motion = None;
+            self.panels.tree.motion = None;
             self.clamp_tree_scroll();
             // 换入的目录中可能又露出尚未读取的目录，随重绘的请求一并读取。
             self.request_redraw();
@@ -303,9 +303,9 @@ impl App {
             return;
         };
         let tickets = (scan.dirs().iter())
-            .map(|dir| self.tree.scans.tickets.issue(dir.clone()))
+            .map(|dir| self.panels.tree.scans.tickets.issue(dir.clone()))
             .collect();
-        let sender = self.tree.scans.results.0.clone();
+        let sender = self.panels.tree.scans.results.0.clone();
         self.spawn_then(UserEvent::TreeScanned, move || {
             let _ = sender.send((tickets, scan.run()));
         });

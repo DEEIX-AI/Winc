@@ -75,7 +75,7 @@ impl App {
             })
         };
         self.preview.tables.pending.insert(key);
-        let (sender, proxy) = (self.preview.tables.sender.clone(), self.proxy.clone());
+        let (sender, proxy) = (self.preview.tables.sender.clone(), self.link.proxy.clone());
         winc_editor::background::spawn(move || {
             let result = job();
             if sender.send((key.0, key.1, result)).is_ok()

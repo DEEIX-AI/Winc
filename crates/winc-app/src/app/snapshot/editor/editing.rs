@@ -148,7 +148,7 @@ fn right_clicking_the_text_offers_format_cut_copy_paste() {
     // 在选区内右键：保留选区，菜单命令作用于该选区。
     app.select(20, 26);
     right_click_text(&mut app, 1, 10);
-    let menu = app.context_menu.as_ref().unwrap();
+    let menu = app.overlays.context_menu.as_ref().unwrap();
     assert!(matches!(menu.target, MenuTarget::Editor(_)));
     assert_eq!(
         menu_commands(&app),
@@ -205,7 +205,7 @@ fn right_clicking_the_text_offers_format_cut_copy_paste() {
     paint(&mut app);
     let bar = app.layout.search;
     right_click(&mut app, (bar.x + bar.w / 2.0, bar.y + bar.h / 2.0));
-    assert!(app.context_menu.is_none());
+    assert!(app.overlays.context_menu.is_none());
 
     // 只读文档：格式化、修复、剪切、粘贴不可用，转到定义、查找引用和复制仍可用。
     app.editor.active_mut().unwrap().readonly = true;
@@ -445,10 +445,10 @@ fn status_bar_changes_indentation_and_line_endings() {
     assert!(doc(&app).is_dirty());
     app.run_action(crate::keymap::Action::ChangeEndOfLine);
     assert!(matches!(
-        app.context_menu.as_ref().map(|m| &m.target),
+        app.overlays.context_menu.as_ref().map(|m| &m.target),
         Some(crate::app::input::context_menu::MenuTarget::LineEnding(_))
     ));
-    app.context_menu = None;
+    app.overlays.context_menu = None;
 
     // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮。
     app.editor.show_output("格式化输出", "x\n");
@@ -558,12 +558,12 @@ fn bookmarks_jump_list_and_survive_closing_and_restarting() {
 
     // 列出书签：卡片中有两行，回车跳转到选中的书签。
     app.run_action(Action::ListBookmarks);
-    assert!(app.picker.open);
-    assert_eq!(app.picker.hits.len(), 2);
+    assert!(app.overlays.picker.open);
+    assert_eq!(app.overlays.picker.hits.len(), 2);
     paint(&mut app);
-    app.picker.selected = 0;
+    app.overlays.picker.selected = 0;
     app.places_accept();
-    assert!(!app.picker.open);
+    assert!(!app.overlays.picker.open);
     assert_eq!(line_of(&app), 1);
 
     // 关闭标签后重新打开：书签仍在。
@@ -741,7 +741,7 @@ fn word_wrap_folds_long_lines_to_the_editor_width() {
     // 编辑区变窄（侧栏变宽）：长行断为更多段；滚动位置顶部的文本行保持不变。宽度减少文本区的
     // 一半：减少固定宽度时，某些字体下断出的段数恰好不变。
     app.editor.active_mut().unwrap().scroll_line = 2.0;
-    app.sidebar.width += app.layout.text.w / 2.0;
+    app.panels.sidebar.width += app.layout.text.w / 2.0;
     paint(&mut app);
     let doc = app.editor.active().unwrap();
     assert!(doc.rows_of(1) > rows);

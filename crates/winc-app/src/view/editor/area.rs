@@ -113,7 +113,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         let hunks = if app.merge_panes_placed() {
             &[][..]
         } else {
-            app.changes.hunks(id)
+            app.git.changes.hunks(id)
         };
         let doc = &app.editor.documents[index];
         let text = doc.text();
@@ -196,6 +196,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             extra_carets: &extra_carets,
             hunks,
             open: app
+                .git
                 .changes
                 .popup
                 .filter(|popup| popup.doc == id)
@@ -480,6 +481,7 @@ impl Screen<'_> {
     fn draw_merge_tints(&self, frame: &mut Frame<'_>) {
         let Some((_, aligned)) = self
             .app
+            .git
             .merge
             .panes
             .as_ref()

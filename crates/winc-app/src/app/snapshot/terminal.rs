@@ -257,17 +257,17 @@ fn only_command_shortcuts_reach_past_the_terminal() {
         // ⌃ 组合交给 shell：⌃⇧G（显示提交）在终端里不是快捷键。
         assert!(!press(&mut app, &["ctrl", "shift"], Char('g')));
         // 其余带 ⌘ 的全局快捷键仍然生效：⌘B 收起侧栏。
-        let shown = app.sidebar.visible;
+        let shown = app.panels.sidebar.visible;
         assert!(press(&mut app, &["cmd"], Char('b')));
-        assert_ne!(app.sidebar.visible, shown);
+        assert_ne!(app.panels.sidebar.visible, shown);
         assert_eq!(app.focus, Focus::Terminal, "收起侧栏不动终端的焦点");
     } else {
         // 单按 Ctrl 的组合交给 shell：Ctrl+B（收起侧栏）在终端里不是快捷键。
         assert!(!press(&mut app, &["ctrl"], Char('b')));
         // 带 Ctrl+Shift 的全局快捷键仍然生效：Ctrl+Shift+E 显示文件树（焦点随之到文件树）。
-        app.sidebar.view = SidebarView::Search;
+        app.panels.sidebar.view = SidebarView::Search;
         assert!(press(&mut app, &["ctrl", "shift"], Char('e')));
-        assert_eq!(app.sidebar.view, SidebarView::Files);
+        assert_eq!(app.panels.sidebar.view, SidebarView::Files);
         app.focus = Focus::Terminal;
     }
     // ⌘K（其他系统 Ctrl+Shift+K）在终端里是清屏，不是组合键的第一段。
@@ -1315,11 +1315,15 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     assert_eq!(menu.x - new.right(), crate::theme::TAB_GAP);
     click(&mut app, (menu.x + menu.w / 2.0, menu.y + menu.h / 2.0));
     assert_eq!(
-        app.menu_button,
+        app.overlays.menu_button,
         Some(crate::app::MenuButton::TerminalShells)
     );
     assert_eq!(
-        app.context_menu.as_ref().expect("弹出了菜单").entries,
+        app.overlays
+            .context_menu
+            .as_ref()
+            .expect("弹出了菜单")
+            .entries,
         [
             MenuEntry::Item(MenuCommand::NewTerminalShell(0), true),
             MenuEntry::Item(MenuCommand::NewTerminalShell(1), true),

@@ -155,7 +155,7 @@ fn caption_controls_cover_top_bar_targets() {
     app.relayout();
     paint(&mut app);
     verify(&app);
-    app.sidebar.visible = true;
+    app.panels.sidebar.visible = true;
     app.relayout();
     paint(&mut app);
     verify(&app);
@@ -210,9 +210,9 @@ fn touch_scroll_stays_in_the_panel_where_it_started() {
     touch(&mut app, 1, TouchPhase::Started, x, y);
     touch(&mut app, 1, TouchPhase::Moved, editor_x, y - 100.0);
     touch(&mut app, 1, TouchPhase::Ended, x, y - 100.0);
-    assert_eq!(app.tree.scroll, 100.0);
+    assert_eq!(app.panels.tree.scroll, 100.0);
     assert!(app.editor.documents.is_empty());
-    assert!(app.tree.drag.is_none());
+    assert!(app.panels.tree.drag.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -438,7 +438,7 @@ fn native_touch_caption_matches_application_targets() {
     app.relayout();
     paint(&mut app);
     verify(&app);
-    app.sidebar.visible = true;
+    app.panels.sidebar.visible = true;
     app.relayout();
     paint(&mut app);
     verify(&app);

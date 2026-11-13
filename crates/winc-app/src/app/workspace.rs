@@ -81,3 +81,19 @@ pub(crate) struct History {
     /// 最近关闭的标签（路径和光标位置），⇧⌘T 按关闭的相反顺序重新打开。
     pub closed: Vec<(PathBuf, usize)>,
 }
+
+/// 侧栏及其中的面板：文件树、搜索、大纲，以及文件树中的重命名和拖入。
+pub(crate) struct Panels {
+    /// 文件树的界面状态。
+    pub tree: workspace::tree::TreeState,
+    /// 侧栏的界面状态。
+    pub sidebar: workspace::Sidebar,
+    /// 文件树中正在重命名的项及其输入框；没有时为 `None`。
+    pub name_input: Option<NameInput>,
+    /// 从文件管理器等来源拖动文件经过窗口时的放置位置；未在拖动时为 `None`。
+    pub(in crate::app) file_hover: Option<DropZone>,
+    /// 侧栏搜索面板的状态。
+    pub global: GlobalSearch,
+    /// 文件视图底部大纲的状态。
+    pub outline: OutlineState,
+}

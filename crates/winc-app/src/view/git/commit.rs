@@ -64,9 +64,9 @@ pub(in crate::view) fn draw_commit(
     let row = app.commit_parts().branch;
     let width = message_area(app, Rect::new(row.x, 0.0, row.w, 0.0)).w;
     let focused = app.focus == Focus::CommitMessage;
-    let mut field = std::mem::take(&mut app.commit.message);
+    let mut field = std::mem::take(&mut app.git.commit.message);
     let wrap = wrap_area_field(app, frame, width, &mut field, focused);
-    app.commit.message = field;
+    app.git.commit.message = field;
     app.set_commit_message_lines(wrap.lines());
     // 底行的勾选框、按钮和「撤销」按文字宽度排：先量好，排版时就用上了。
     let size = app.fonts.ui_small;
@@ -79,15 +79,15 @@ pub(in crate::view) fn draw_commit(
     let parts = app.commit_parts();
     // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
     // 展开、收起的动画中列表按动画结束时的行计算，由动画自己处理。
-    if app.commit.motion.is_none() && app.git.status.is_some() {
-        app.commit.scroll = app.commit.scroll.min(app.commit_max_scroll());
+    if app.git.commit.motion.is_none() && app.git.status.is_some() {
+        app.git.commit.scroll = app.git.commit.scroll.min(app.commit_max_scroll());
     }
     let mut hits = Vec::new();
     frame.with_opacity(tools, |frame| draw_header(app, frame, &parts, &mut hits));
     let animate = app.animate_commit_names();
-    app.commit.names.begin_frame(animate);
+    app.git.commit.names.begin_frame(animate);
     match (&app.git.status, &app.git.problem) {
-        (Some(status), _) if app.commit.shift.is_some() => {
+        (Some(status), _) if app.git.commit.shift.is_some() => {
             draw_shift(app, frame, &parts, status, &mut hits);
         }
         (Some(status), _) if !status.entries.is_empty() => {
@@ -100,10 +100,10 @@ pub(in crate::view) fn draw_commit(
         }
         (None, None) => draw_note(app, frame, &parts, t!("git-commit-view-loading"), false),
     }
-    app.commit.names.end_frame();
+    app.git.commit.names.end_frame();
     // 列表的滚动条贴在列表右边，盖在固定的行上面；放得下时没有。
     let content = app.commit_max_scroll() + parts.list.h;
-    let scroll = app.commit.scroll;
+    let scroll = app.git.commit.scroll;
     draw_scrollbar(
         app,
         frame,
@@ -119,7 +119,7 @@ pub(in crate::view) fn draw_commit(
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
     app.hits.commit = hits;
-    app.commit.hits_generation = app.git.generation;
+    app.git.commit.hits_generation = app.git.generation;
     caret
 }
 
@@ -128,22 +128,22 @@ pub(in crate::view) fn draw_commit(
 /// 借用提交视图时调用：列表的排列、写全名、固定在顶部的目录和各种过渡与提交视图相同。
 pub(in crate::view) fn draw_commit_browse(app: &mut App, frame: &mut Frame<'_>) {
     let parts = app.commit_parts();
-    if app.commit.motion.is_none() && app.git.status.is_some() {
-        app.commit.scroll = app.commit.scroll.min(app.commit_max_scroll());
+    if app.git.commit.motion.is_none() && app.git.status.is_some() {
+        app.git.commit.scroll = app.git.commit.scroll.min(app.commit_max_scroll());
     }
     let mut hits = Vec::new();
     let animate = app.animate_commit_names();
-    app.commit.names.begin_frame(animate);
+    app.git.commit.names.begin_frame(animate);
     if let Some(status) = &app.git.status {
-        if app.commit.shift.is_some() {
+        if app.git.commit.shift.is_some() {
             draw_shift(app, frame, &parts, status, &mut hits);
         } else {
             draw_list(app, frame, &parts, status, &mut hits);
         }
     }
-    app.commit.names.end_frame();
+    app.git.commit.names.end_frame();
     let content = app.commit_max_scroll() + parts.list.h;
-    let scroll = app.commit.scroll;
+    let scroll = app.git.commit.scroll;
     let owner = app.editor.active().map_or(0, |doc| doc.id.0);
     draw_scrollbar(
         app,
@@ -155,7 +155,7 @@ pub(in crate::view) fn draw_commit_browse(app: &mut App, frame: &mut Frame<'_>) 
         content,
     );
     app.hits.commit = hits;
-    app.commit.hits_generation = app.git.generation;
+    app.git.commit.hits_generation = app.git.generation;
 }
 
 /// 只绘制标题行右端的工具按钮，不透明度为 `opacity`，不记录点击区域：切换到历史差异文件列表
@@ -182,7 +182,7 @@ fn draw_header(
     let p = app.palette;
     for (rect, target) in parts.tools {
         let open = target == CommitTarget::More
-            && app.menu_button == Some(crate::app::MenuButton::CommitMore);
+            && app.overlays.menu_button == Some(crate::app::MenuButton::CommitMore);
         let hovered = app.pointer.hover == Hover::Commit(target);
         draw_button(frame, p, rect, header, hovered, open);
         let color = if hovered || open {
@@ -361,7 +361,7 @@ fn draw_branch_row(
     let p = app.palette;
     let mut right = row.right();
     // 没有远程时没有东西可同步；但操作的进度和结果仍然显示在这里。
-    let active = app.branch.running.is_some() || app.branch.finished.is_some();
+    let active = app.git.branch.running.is_some() || app.git.branch.finished.is_some();
     if app.git.status.is_some() && (active || app.git_sync_state() != SyncState::NoRemote) {
         right = draw_sync(app, frame, row, clip, hits) - BUTTON_GAP;
     }
@@ -418,10 +418,10 @@ fn draw_sync(
         SYNC_TEXT_LEFT + frame.measure(FontKind::Ui, size, &counts) + BUTTON_SMALL
     };
     let button = Rect::new(row.right() - width, row.y, width, row.h);
-    let running = app.branch.running.is_some();
+    let running = app.git.branch.running.is_some();
     let hovered = !running && app.pointer.hover == Hover::Commit(CommitTarget::Sync);
     draw_button(frame, p, button, clip, hovered, false);
-    let done = app.branch.finished.filter(|_| !running);
+    let done = app.git.branch.finished.filter(|_| !running);
     // 前半段换下的是刚停下的旋转图标，它接着转；后半段换上的是当前状态的图标。
     let leaving = running || done.is_some_and(|clock| clock.linear() < 0.5);
     let check = if running { 0.0 } else { app.sync_check() };
@@ -575,7 +575,7 @@ fn draw_undo(
     hits.push((undo, CommitTarget::Undo));
 
     let hovered = app.pointer.hover == Hover::Commit(CommitTarget::LastCommit);
-    let open = app.menu_button == Some(crate::app::MenuButton::LastCommit);
+    let open = app.overlays.menu_button == Some(crate::app::MenuButton::LastCommit);
     draw_button(frame, p, more, clip, hovered, open);
     let color = if hovered || open {
         p.text
@@ -643,8 +643,8 @@ fn draw_stashes(
     draw_count_pill(app, frame, head, &app.git.stashes.len().to_string(), clip);
     hits.push((head, CommitTarget::Stashes));
     // 展开、收起的途中各行跟着标题移动，露出多少由一组的范围裁掉；这时行还没停稳，不响应点击。
-    let moving = app.commit.stash_motion.is_some();
-    if !app.commit.stash_open && !moving {
+    let moving = app.git.commit.stash_motion.is_some();
+    if !app.git.commit.stash_open && !moving {
         return;
     }
     let mut still = Vec::new();
@@ -653,8 +653,8 @@ fn draw_stashes(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
-    let viewing = (app.commit.stash_view.as_ref())
-        .filter(|_| app.editor.active().map(|d| d.id) == app.commit.stash_preview)
+    let viewing = (app.git.commit.stash_view.as_ref())
+        .filter(|_| app.editor.active().map(|d| d.id) == app.git.commit.stash_preview)
         .map(|view| view.oid.as_str());
     let listed = app.listed_stash_view();
     for (n, line) in app.stash_lines().into_iter().enumerate() {
@@ -837,7 +837,7 @@ fn draw_empty(
     if rect.bottom() > list.bottom() {
         return;
     }
-    let enabled = app.branch.running.is_none();
+    let enabled = app.git.branch.running.is_none();
     let hovered = app.pointer.hover == Hover::Commit(CommitTarget::NextStep);
     draw_action_button(
         app,
@@ -958,7 +958,7 @@ fn draw_list(
     // 组、目录正在展开或收起：按动画中的那一版绘制。子行的位置不动，只露出已经露出来的那一段，
     // 下面的行随之上下移动。被展开、收起的行及其上方各行位置不变，行号在动画前后相同，仍记录
     // 命中区域，悬停底色不因动画中断；其余各行在动画期间不记录。
-    if let Some(motion) = &app.commit.motion {
+    if let Some(motion) = &app.git.commit.motion {
         let cx = ListContext {
             list,
             status,
@@ -969,7 +969,7 @@ fn draw_list(
         let (block, hidden) = (motion.block(), motion.hidden());
         for v in 0..motion.rows.len() {
             let (rect, clip) =
-                crate::layout::tree_row_slot(list, app.commit.scroll, v, Some(block), hidden);
+                crate::layout::tree_row_slot(list, app.git.commit.scroll, v, Some(block), hidden);
             let clip = clip.intersect(list);
             if clip.h <= 0.0 || rect.bottom() < list.y || rect.y > list.bottom() {
                 continue;
@@ -996,11 +996,11 @@ fn draw_list(
         rows: &rows,
         multi,
     };
-    let first = (app.commit.scroll / COMMIT_ROW).floor() as usize;
+    let first = (app.git.commit.scroll / COMMIT_ROW).floor() as usize;
     let visible = (list.h / COMMIT_ROW).ceil() as usize + 1;
 
     for i in (first..rows.len()).take(visible) {
-        let y = list.y + i as f32 * COMMIT_ROW - app.commit.scroll;
+        let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll;
         draw_row(app, frame, &cx, i, y, hits);
     }
 
@@ -1019,7 +1019,7 @@ fn draw_shift(
     status: &Status,
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
-    let Some(shift) = &app.commit.shift else {
+    let Some(shift) = &app.git.commit.shift else {
         return;
     };
     let list = parts.list;
@@ -1080,7 +1080,7 @@ fn draw_shift(
     }
     leave_until(&mut slots, shift.rows.len());
 
-    let scroll = shift.scroll + (app.commit.scroll - shift.scroll) * t;
+    let scroll = shift.scroll + (app.git.commit.scroll - shift.scroll) * t;
     let mut y = list.y - scroll;
     for (slot, share) in slots {
         let h = COMMIT_ROW * share;
@@ -1208,7 +1208,7 @@ fn draw_row(
     let row = &rows[i];
     let focused = app.focus == Focus::CommitList;
     // 浏览历史提交的文件时没有勾选框，也没有回滚、打开文件等按钮。
-    let browse = app.commit.browse;
+    let browse = app.git.commit.browse;
     let checkbox = |frame: &mut Frame<'_>, x: f32, cy: f32, state: Option<bool>| {
         if browse {
             return;
@@ -1227,12 +1227,13 @@ fn draw_row(
     // 鼠标停着的这一行名字放不下：写全名，状态字母让开；伸出侧栏时底色铺到侧栏边缘、右边是
     // 直角，和伸出去的那一段（`draw_commit_overflow`）连成一条。
     let full = app
+        .git
         .commit
         .overflow
         .filter(|o| o.row == i && (o.y - y).abs() < 0.5);
     let spill = full.and_then(|o| o.spill);
     // 名字写全名还是截短，按行判断，不看位置：固定在顶部的行和列表里被它盖住的那一行一样。
-    let wanted = app.commit.overflow.is_some_and(|o| o.row == i);
+    let wanted = app.git.commit.overflow.is_some_and(|o| o.row == i);
     let cause = LabelCause {
         hovered: wanted,
         levels: 0,
@@ -1276,13 +1277,13 @@ fn draw_row(
             if hovered {
                 frame.rect_clipped(shade, p.hover, RADIUS_ROW, list);
             }
-            let open = !app.commit.group_collapsed(group);
+            let open = !app.git.commit.group_collapsed(group);
             chevron(app, frame, (arrow_x(0), cy), (i, open), p.text_dim, list);
             let group_check = check_x(0);
             let members = rows.group(group);
-            let checks = app.commit.checks();
+            let checks = app.git.commit.checks();
             let state = rows.members_state(members, checks, || {
-                app.commit.members_state(status, members)
+                app.git.commit.members_state(status, members)
             });
             checkbox(frame, group_check, cy, state);
             // 组标题：小一号的次要色字，右端一个写文件数的小圆角徽标。
@@ -1342,6 +1343,7 @@ fn draw_row(
             let width = parts_width(app, frame, &parts, true);
             let key = CommitName::Dir(*group, dir.clone());
             let view = app
+                .git
                 .commit
                 .names
                 .sync(&key, cause, &parts, shown_width(width, room));
@@ -1355,7 +1357,7 @@ fn draw_row(
             if let Some(color) = color {
                 fill(frame, color, retracting);
             }
-            let open = !app.commit.dir_collapsed(*group, dir);
+            let open = !app.git.commit.dir_collapsed(*group, dir);
             chevron(
                 app,
                 frame,
@@ -1365,9 +1367,9 @@ fn draw_row(
                 list,
             );
             let dir_check = check_x(level);
-            let checks = app.commit.checks();
+            let checks = app.git.commit.checks();
             let state = rows.members_state(members, checks, || {
-                app.commit.members_state(status, members)
+                app.git.commit.members_state(status, members)
             });
             checkbox(frame, dir_check, cy, state);
             // 目录和文件的图标在同一列（宽 `FOLDER_WIDTH`）里居中，名字从同一处开始，
@@ -1428,7 +1430,7 @@ fn draw_row(
                 .unwrap_or_default();
             let icon_x = file_check + ICON;
             let text_x = icon_x + icons::FOLDER_WIDTH + LABEL_GAP;
-            let dir = (app.commit.flat())
+            let dir = (app.git.commit.flat())
                 .then(|| entry.path.parent().and_then(|p| p.strip_prefix(root).ok()))
                 .flatten()
                 .filter(|p| !p.as_os_str().is_empty())
@@ -1446,6 +1448,7 @@ fn draw_row(
             let width = parts_width(app, frame, &parts, false);
             let key = CommitName::File(entry.path.clone());
             let view = app
+                .git
                 .commit
                 .names
                 .sync(&key, cause, &parts, shown_width(width, room));
@@ -1470,7 +1473,7 @@ fn draw_row(
                     retracting && text_x + view.width > text_clip.right(),
                 );
             }
-            checkbox(frame, file_check, cy, app.commit.file_state(entry));
+            checkbox(frame, file_check, cy, app.git.commit.file_state(entry));
             // 未跟踪的整个目录在 Git 的输出里只有一项，画目录图标。文件图标在图标那一列里居中。
             if entry.is_dir {
                 icons::folder(frame, (icon_x, (cy - 6.0).round()), false, p.folder, list);
@@ -1585,7 +1588,7 @@ fn chevron(
     color: Color,
     clip: Rect,
 ) {
-    let turned = match &app.commit.motion {
+    let turned = match &app.git.commit.motion {
         Some(m) if m.parent == i => 1.0 - m.hidden() / (m.count as f32 * COMMIT_ROW),
         _ => f32::from(u8::from(open)),
     };
@@ -1702,14 +1705,14 @@ fn draw_card(
     // 框高过渡途中文字按过渡结束后的高度排版，只绘制在当前的框内，行的位置和滚动量不随框高变化。
     let rect = parts.message;
     let area = message_area(app, parts.message_settled);
-    let mut field = std::mem::take(&mut app.commit.message);
+    let mut field = std::mem::take(&mut app.git.commit.message);
     // 占位文字只写快捷键：分支就在上面一行，长分支名写进来会被截掉。
     let key = if cfg!(target_os = "macos") {
         "⌘↩"
     } else {
         "Ctrl+Enter"
     };
-    let placeholder = if app.commit.amend {
+    let placeholder = if app.git.commit.amend {
         t!("git-commit-message-amend-placeholder").to_owned()
     } else {
         t!("git-commit-message-placeholder", key = key)
@@ -1717,13 +1720,13 @@ fn draw_card(
     let caret = frame.within(rect, |frame| {
         draw_area_field(app, frame, area, &mut field, wrap, &placeholder, focused)
     });
-    app.commit.message = field;
+    app.git.commit.message = field;
     let clip = panel.intersect(card);
 
     // 「修改上次提交」：勾选框连同文字整段可点击，悬停时铺底色。随提交按钮变宽而隐去、变窄而
     // 出现时按进度淡出、淡入，过渡中不响应鼠标。
     if let Some(amend) = parts.amend {
-        let (shown, fading) = match app.commit.amend_motion {
+        let (shown, fading) = match app.git.commit.amend_motion {
             Some((true, clock)) => (clock.progress(), true),
             Some((false, clock)) => (1.0 - clock.progress(), true),
             None => (1.0, false),
@@ -1732,7 +1735,7 @@ fn draw_card(
         let hovered = !fading && app.pointer.hover == Hover::Commit(CommitTarget::Amend);
         draw_button(frame, p, amend, clip, hovered, false);
         let cy = amend.y + amend.h / 2.0;
-        let state = app.commit.amend.then_some(true);
+        let state = app.git.commit.amend.then_some(true);
         let border = fade(p.text_dim.alpha(0.55));
         let check = (amend.x + AMEND_CHECK, cy);
         icons::checkbox(
@@ -1765,15 +1768,15 @@ fn draw_card(
     // 只是不响应悬停，按钮不在提交前后闪成灰色。
     let (main, menu) = (parts.commit, parts.commit_menu);
     let whole = Rect::new(main.x, main.y, menu.right() - main.x, main.h);
-    let busy = app.commit.busy;
+    let busy = app.git.commit.busy;
     let ready = !busy
         && app
             .git
             .status
             .as_ref()
-            .is_some_and(|s| app.commit.blocker(s).is_none());
+            .is_some_and(|s| app.git.commit.blocker(s).is_none());
     // 刚提交成功时提交信息已清空，按钮本应变淡；显示「已提交」期间仍使用强调色。
-    let done = app.commit.committed.as_ref().filter(|_| !busy);
+    let done = app.git.commit.committed.as_ref().filter(|_| !busy);
     // 不能提交时用灰底、淡色字，表示不可用；把蓝底和白字一起调淡时，浅色主题里的对比度不足。
     let (fill, ink, shade) = if ready || busy || done.is_some() {
         (
@@ -1785,7 +1788,7 @@ fn draw_card(
         (p.hover, p.text_dim, p.hover)
     };
     frame.rounded(whole, fill, RADIUS_ROW);
-    let open = app.menu_button == Some(crate::app::MenuButton::CommitButton);
+    let open = app.overlays.menu_button == Some(crate::app::MenuButton::CommitButton);
     for (rect, target) in [
         (main, CommitTarget::Commit),
         (menu, CommitTarget::CommitMenu),
@@ -1822,11 +1825,11 @@ fn draw_card(
 /// 合并、变基暂停时按钮用于完成当前操作；刚提交成功时短暂显示新提交的提交号；平时写明提交几个
 /// 文件，分支写在上方的分支行里。
 fn commit_button_text(app: &App) -> (String, f32) {
-    let busy = app.commit.busy;
-    let done = app.commit.committed.as_ref().filter(|_| !busy);
+    let busy = app.git.commit.busy;
+    let done = app.git.commit.committed.as_ref().filter(|_| !busy);
     let operation = app.git.status.as_ref().and_then(|s| s.operation);
     let clean = (app.git.status.as_ref()).is_some_and(|s| s.entries.is_empty());
-    let text = match (busy, operation, app.commit.amend) {
+    let text = match (busy, operation, app.git.commit.amend) {
         _ if let Some((oid, _)) = done => t!("git-commit-button-committed", oid = oid.as_str()),
         _ if app.commit_pushes() => return (t!("menu-commit-and-push").to_owned(), 16.0),
         (true, ..) => t!("git-commit-button-committing").to_owned(),
@@ -1876,11 +1879,11 @@ struct RowText {
 /// 按目录排成树时比所在目录深一层，平铺时不缩进。
 /// 返回箭头到勾选框中心的距离（逻辑像素）：浏览历史提交的文件时没有勾选框，为 0。
 fn check_gap(app: &App) -> f32 {
-    if app.commit.browse { 0.0 } else { CHECK }
+    if app.git.commit.browse { 0.0 } else { CHECK }
 }
 
 fn file_column(app: &App, depth: usize) -> usize {
-    if app.commit.flat() { 0 } else { depth + 1 }
+    if app.git.commit.flat() { 0 } else { depth + 1 }
 }
 
 /// 返回第 `row` 行名字的排法（组标题行返回 `None`）；列位置与 [`draw_row`] 使用同一组常量。
@@ -1911,7 +1914,7 @@ fn row_text(app: &App, status: &Status, root: &Path, row: &CommitRow) -> Option<
                 .path
                 .parent()
                 .and_then(|p| p.strip_prefix(root).ok())
-                .filter(|p| app.commit.flat() && !p.as_os_str().is_empty())
+                .filter(|p| app.git.commit.flat() && !p.as_os_str().is_empty())
                 .map(|p| p.to_string_lossy().into_owned());
             let change = entry.shown();
             let selected = app.commit_is_selected(&entry.path);
@@ -1934,7 +1937,7 @@ fn row_text(app: &App, status: &Status, root: &Path, row: &CommitRow) -> Option<
 /// 返回 `None`。
 pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Option<CommitOverflow> {
     // 刷新以后各行还在移动（见 `draw_shift`），按行号对不上。
-    if !app.commit_shown() || !app.idle_pointer() || app.commit.shift.is_some() {
+    if !app.commit_shown() || !app.idle_pointer() || app.git.commit.shift.is_some() {
         return None;
     }
     let status = app.git.status.as_ref()?;
@@ -1955,7 +1958,13 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
             .position(|r| matches!(r, CommitRow::File { index, .. } if *index == f))?,
         _ => return None,
     };
-    if app.commit.motion.as_ref().is_some_and(|m| row > m.parent) {
+    if app
+        .git
+        .commit
+        .motion
+        .as_ref()
+        .is_some_and(|m| row > m.parent)
+    {
         return None;
     }
     let list = app.commit_parts().list;
@@ -1969,7 +1978,7 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
             return None;
         }
         ((end + 8.0).min(window), None)
-    } else if app.commit.browse {
+    } else if app.git.commit.browse {
         // 浏览历史提交的文件时没有按钮：名字放不下（状态字母之前）时才写全名。
         if end <= band.right() - END_CENTER * 2.0 {
             return None;
@@ -2009,7 +2018,7 @@ pub(in crate::view) fn commit_overflow(app: &App, frame: &mut Frame<'_>) -> Opti
 /// （[`App::track_commit_actions`]），取两者中较大的距离：名字无需加长、只为按钮让出位置时，
 /// 名字不动，按钮仍然滑向终点。
 fn actions_lag(app: &App, row: usize, band: Rect, open: Rect, name_lag: f32) -> f32 {
-    let slide = app.commit.actions_slide.filter(|&(r, _)| r == row);
+    let slide = app.git.commit.actions_slide.filter(|&(r, _)| r == row);
     let rest = slide.map_or(0.0, |(_, clock)| {
         let (home, _) = file_actions(band);
         (open.x - home.x).max(0.0) * (1.0 - clock.progress())
@@ -2050,7 +2059,7 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
         y,
         spill: Some(spill),
         actions,
-    }) = app.commit.overflow
+    }) = app.git.commit.overflow
     else {
         return;
     };
@@ -2061,7 +2070,7 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     let Some(text) = rows.get(row).and_then(|r| row_text(app, status, root, r)) else {
         return;
     };
-    let Some(view) = app.commit.names.peek(&name_key(status, &rows[row])) else {
+    let Some(view) = app.git.commit.names.peek(&name_key(status, &rows[row])) else {
         return;
     };
     let list = app.commit_parts().list;
@@ -2114,7 +2123,7 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
 ///
 /// 底色和列表里的那一段一起淡出（`retracting_color`），写的是收回前的全名，与文件树相同。
 pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame<'_>) {
-    if !app.commit_shown() || !app.commit.names.moving() {
+    if !app.commit_shown() || !app.git.commit.names.moving() {
         return;
     }
     let (Some(status), Some(root)) = (app.git.status.as_ref(), app.git.root.as_deref()) else {
@@ -2123,14 +2132,21 @@ pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame
     let p = app.palette;
     let rows = app.commit_rows();
     let list = app.commit_parts().list;
-    let open = app.commit.overflow.map(|o| o.row);
+    let open = app.git.commit.overflow.map(|o| o.row);
     let window = app.layout.window.right() - 8.0;
     let focused = app.focus == Focus::CommitList;
-    for (key, view) in app.commit.names.moving_rows() {
+    for (key, view) in app.git.commit.names.moving_rows() {
         let Some(row) = (0..rows.len()).find(|&i| name_key(status, &rows[i]) == key) else {
             continue;
         };
-        if Some(row) == open || app.commit.motion.as_ref().is_some_and(|m| row > m.parent) {
+        if Some(row) == open
+            || app
+                .git
+                .commit
+                .motion
+                .as_ref()
+                .is_some_and(|m| row > m.parent)
+        {
             continue;
         }
         let Some(text) = row_text(app, status, root, &rows[row]) else {
@@ -2206,7 +2222,7 @@ fn full_parts(text: &RowText) -> Vec<Cow<'_, str>> {
 fn row_top(app: &App, rows: &CommitRows, row: usize, list: Rect) -> f32 {
     match app.commit_sticky(rows).iter().find(|s| s.row == row) {
         Some(s) => s.rect.y,
-        None => list.y + row as f32 * COMMIT_ROW - app.commit.scroll,
+        None => list.y + row as f32 * COMMIT_ROW - app.git.commit.scroll,
     }
 }
 
