@@ -1707,7 +1707,7 @@ impl App {
             Key::Named(NamedKey::Enter) => self.edit_field(|f| f.insert("\n")),
             // 提交信息不接受制表符，因此 `Tab` 移到改动列表；列表中按 `Tab` 返回提交信息。
             Key::Named(NamedKey::Tab) if !cmd => {
-                self.field_preedit.clear();
+                self.ime.field_preedit.clear();
                 self.focus = Focus::CommitList;
                 if self.commit.selected.is_none()
                     && let Some(first) = self.commit_files().into_iter().next()
@@ -1716,7 +1716,7 @@ impl App {
                 }
             }
             Key::Named(NamedKey::Escape) => {
-                self.field_preedit.clear();
+                self.ime.field_preedit.clear();
                 if self.editor.active.is_some() {
                     self.focus = Focus::Editor;
                 }

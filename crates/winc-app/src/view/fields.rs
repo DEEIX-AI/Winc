@@ -41,7 +41,7 @@ pub(crate) fn wrap_area_field(
     focused: bool,
 ) -> AreaWrap {
     let preedit = if focused {
-        app.field_preedit.as_str()
+        app.ime.field_preedit.as_str()
     } else {
         ""
     };
@@ -294,7 +294,7 @@ pub(super) fn draw_bar_field(
 ) -> Option<Rect> {
     let p = app.palette;
     let preedit = if focused {
-        app.field_preedit.as_str()
+        app.ime.field_preedit.as_str()
     } else {
         ""
     };

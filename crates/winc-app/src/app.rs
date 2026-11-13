@@ -833,11 +833,7 @@ pub struct App {
     // 光标和输入法
     /// 光标闪烁的状态。
     pub blink: animation::Blink,
-    /// 编辑区中输入法正在组字的文字。
-    pub preedit: String,
-    /// 输入框中输入法正在组字的文字。
-    pub field_preedit: String,
-    /// 输入法候选框的定位状态。
+    /// 输入法的状态。
     pub ime: input::keyboard::ImeState,
 
     // 布局，以及绘制时记录、点击时使用的几何

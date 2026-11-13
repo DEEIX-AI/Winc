@@ -499,7 +499,7 @@ impl App {
         } else {
             Focus::GlobalQuery
         };
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.relayout();
         self.reset_blink();
         self.request_redraw();
@@ -1339,7 +1339,7 @@ impl App {
             self.global.select_row(0);
         }
 
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.reset_blink();
         self.request_redraw();
     }

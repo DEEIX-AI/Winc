@@ -291,7 +291,7 @@ impl App {
         let id = doc.id;
 
         self.focus = Focus::Editor;
-        self.preedit.clear();
+        self.ime.preedit.clear();
         Some(id)
     }
 

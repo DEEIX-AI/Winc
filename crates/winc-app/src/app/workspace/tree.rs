@@ -694,7 +694,7 @@ impl App {
             contents,
         });
         self.focus = Focus::Prompt;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.scroll_tree_to_slot(index, depth, false);
         self.relayout();
         self.request_redraw();
@@ -703,7 +703,7 @@ impl App {
     /// 关闭文件树中输入名字的那一行，不新建也不改名。
     pub(in crate::app) fn close_name_input(&mut self) {
         self.name_input = None;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         // 焦点不能留在已经不存在的输入框上；跳转条同样使用 `Focus::Prompt`，
         // 跳转条打开时保持焦点不变。
         if self.focus == Focus::Prompt && self.goto_input.is_none() {

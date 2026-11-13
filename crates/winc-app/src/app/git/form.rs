@@ -196,7 +196,7 @@ impl App {
         if matches!(dialog.kind, FormKind::Connect) {
             self.connect_dialog_closed();
         }
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         if self.focus == Focus::Dialog {
             self.focus = dialog.back;
         }
@@ -522,7 +522,7 @@ impl App {
             None => 0,
         };
         dialog.focus = order[next];
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.request_redraw();
     }
 

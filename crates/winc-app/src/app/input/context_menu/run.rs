@@ -633,7 +633,7 @@ impl App {
             contents: None,
         });
         self.focus = Focus::Prompt;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.scroll_tree_to(index, false);
         self.relayout();
         self.request_redraw();

@@ -255,7 +255,7 @@ impl App {
         self.terminal.rename = Some((tab.id, field));
         self.terminal.strip.drag = None;
         self.activate_terminal_tab(index);
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.focus = Focus::TerminalRename;
         self.request_redraw();
     }
@@ -274,7 +274,7 @@ impl App {
         if self.focus == Focus::TerminalRename {
             self.focus = Focus::Terminal;
         }
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.request_redraw();
     }
 

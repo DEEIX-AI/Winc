@@ -87,7 +87,7 @@ impl App {
 
     /// 固定或取消光标下的词；查找条、选区和滚动位置保持原样。
     pub(in crate::app) fn toggle_word_highlight(&mut self) -> bool {
-        if !self.preedit.is_empty() {
+        if !self.ime.preedit.is_empty() {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -157,7 +157,7 @@ impl App {
         self.stop_line_filter();
         self.find.open = false;
         self.find.pending_jump = None;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.focus = Focus::Editor;
         self.relayout();
         self.request_redraw();
@@ -566,7 +566,7 @@ impl App {
         self.finish_name_input();
         self.goto_input = Some(field);
         self.prompt_kind = kind;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.focus = Focus::Prompt;
         self.relayout();
         self.request_redraw();
@@ -576,7 +576,7 @@ impl App {
     pub(in crate::app) fn close_prompt(&mut self) {
         self.goto_input = None;
         self.name_input = None;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.relayout();
         self.request_redraw();
     }

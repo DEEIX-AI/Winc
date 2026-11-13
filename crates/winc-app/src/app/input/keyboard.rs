@@ -179,7 +179,7 @@ impl App {
         physical: PhysicalKey,
         location: KeyLocation,
     ) -> Option<Stroke> {
-        let composing = !self.preedit.is_empty() || !self.field_preedit.is_empty();
+        let composing = !self.ime.preedit.is_empty() || !self.ime.field_preedit.is_empty();
         if composing && *key == Key::Named(NamedKey::Process) {
             return None;
         }
@@ -488,7 +488,7 @@ impl App {
 
     /// 处理 `Esc`：离开搜索面板，焦点回到编辑区；没有打开的文档时回到搜索输入框。
     fn leave_panel(&mut self) {
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.focus = if self.editor.active.is_some() {
             Focus::Editor
         } else {
@@ -996,20 +996,20 @@ impl App {
             // 组字文字只属于焦点所在的一处，另一处的清空。
             Ime::Preedit(text, _) => {
                 if self.focus.is_field() {
-                    self.field_preedit = text;
-                    self.preedit.clear();
+                    self.ime.field_preedit = text;
+                    self.ime.preedit.clear();
                 } else {
                     // 尚未在预览上点击就开始组字时，预览同样显示光标和组字文字。
                     if !text.is_empty() && self.focus == Focus::Editor && self.markdown_live() {
                         self.start_live_editing();
                     }
-                    self.preedit = text;
-                    self.field_preedit.clear();
+                    self.ime.preedit = text;
+                    self.ime.field_preedit.clear();
                 }
             }
             Ime::Commit(text) => {
-                self.preedit.clear();
-                self.field_preedit.clear();
+                self.ime.preedit.clear();
+                self.ime.field_preedit.clear();
 
                 let focus = self.focus;
                 match focus {
@@ -1021,8 +1021,8 @@ impl App {
                 }
             }
             Ime::Disabled => {
-                self.preedit.clear();
-                self.field_preedit.clear();
+                self.ime.preedit.clear();
+                self.ime.field_preedit.clear();
             }
             Ime::Enabled => {}
         }
@@ -1036,7 +1036,7 @@ impl App {
     /// 持有焦点时显示。
     pub(crate) fn preedit_at(&self, focus: Focus) -> &str {
         if self.focus == focus {
-            &self.preedit
+            &self.ime.preedit
         } else {
             ""
         }
@@ -1079,9 +1079,9 @@ impl App {
             // 重新启用后再告知一次候选窗的位置。
             self.ime.last_area = None;
         }
-        if !allowed && !(self.preedit.is_empty() && self.field_preedit.is_empty()) {
-            self.preedit.clear();
-            self.field_preedit.clear();
+        if !allowed && !(self.ime.preedit.is_empty() && self.ime.field_preedit.is_empty()) {
+            self.ime.preedit.clear();
+            self.ime.field_preedit.clear();
             self.request_redraw();
         }
         if let (Some(area), Some(window)) = (self.ime.cursor, &self.window.handle)
@@ -1097,9 +1097,13 @@ impl App {
     }
 }
 
-/// 输入法候选框的定位状态。
+/// 输入法的状态：正在组字的文字，以及候选框的定位。
 #[derive(Default)]
 pub struct ImeState {
+    /// 编辑区中输入法正在组字的文字。
+    pub preedit: String,
+    /// 输入框中输入法正在组字的文字。
+    pub field_preedit: String,
     /// 输入法候选框应出现的位置。
     pub(crate) cursor: Option<winc_render::Rect>,
     pub(in crate::app) last_area: Option<winc_render::Rect>,

@@ -2442,7 +2442,7 @@ impl App {
         // 按下之前的光标位置：未开始编辑时为 `None`，按住鼠标期间整篇按排版显示。
         let editing = self.editor.active().map(|d| d.id) == self.markdown.editing;
         let before = self.live_caret_source().filter(|_| editing);
-        self.preedit.clear();
+        self.ime.preedit.clear();
         self.markdown.selection = None;
         self.markdown.goal = None;
         self.markdown.line_end = None;

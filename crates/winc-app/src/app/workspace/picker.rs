@@ -171,7 +171,7 @@ impl App {
                 clock,
             });
         }
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
 
         if self.focus == Focus::Picker {
             self.focus = Focus::Editor;

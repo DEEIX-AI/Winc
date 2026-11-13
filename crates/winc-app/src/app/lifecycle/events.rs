@@ -684,7 +684,7 @@ impl App {
                 self.blink.visible = false;
                 self.request_redraw();
             }
-        } else if !self.unseen() && typing && blinking && self.preedit.is_empty() {
+        } else if !self.unseen() && typing && blinking && self.ime.preedit.is_empty() {
             let phase = now.duration_since(self.blink.epoch).as_millis() / BLINK.as_millis();
             let visible = phase.is_multiple_of(2);
 

@@ -487,7 +487,7 @@ impl App {
             return;
         }
         self.focus = Focus::Editor;
-        self.preedit.clear();
+        self.ime.preedit.clear();
 
         // 差异、图片、表格这类不显示文本的标签：点击只拿焦点，表格底部的工作表标签例外，
         // 点它会换工作表。
@@ -572,7 +572,7 @@ impl App {
     /// 在窗口坐标 (`x`, `y`)（逻辑像素）处开始列选择：先在这里放一个光标，拖动时框出一列。
     pub(super) fn start_column_drag(&mut self, x: f32, y: f32) {
         self.focus = Focus::Editor;
-        self.preedit.clear();
+        self.ime.preedit.clear();
         let x = x.max(self.layout.text.x);
         if let Some(anchor) = self.line_cell_at(x, y) {
             if let Some(doc) = self.editor.active_mut() {

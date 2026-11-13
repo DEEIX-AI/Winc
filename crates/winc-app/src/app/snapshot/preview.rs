@@ -394,7 +394,7 @@ fn the_caret_paragraph_keeps_its_look() {
     assert!(caret_screen_y(&app) > line + 10.0);
     // 输入法组字排入光标所在的行，其后的文字向后移动，不被组字覆盖。
     put_caret(&mut app, "粗", true);
-    app.preedit = "中文".into();
+    app.ime.preedit = "中文".into();
     paint(&mut app);
     let shown = full_text(&app).unwrap();
     assert!(shown.contains("粗中文** 和"), "{shown}");
@@ -2792,7 +2792,7 @@ fn shoot_markdown_reveal() {
     }
     // 标题中的输入法组字使用标题的字号和粗体。
     put_caret(&mut app, "编辑器", false);
-    app.preedit = "中文".into();
+    app.ime.preedit = "中文".into();
     shoot(&mut app, "md-reveal-preedit");
     let _ = std::fs::remove_dir_all(&dir);
 }

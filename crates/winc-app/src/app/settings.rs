@@ -244,7 +244,7 @@ impl App {
         self.settings.error = None;
         self.settings.hover = None;
         self.settings.logo = None;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
 
         self.set_recording(false);
         if matches!(

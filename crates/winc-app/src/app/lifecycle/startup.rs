@@ -81,8 +81,6 @@ impl App {
             cursor_icon: CursorIcon::Default,
             drag_scrolled_at: None,
             blink: Default::default(),
-            preedit: String::new(),
-            field_preedit: String::new(),
             ime: Default::default(),
             layout: Layout::default(),
             tabs: TabBar::default(),

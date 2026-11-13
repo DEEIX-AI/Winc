@@ -19,7 +19,7 @@ impl App {
         let index = self.editor.active?;
         let id = self.editor.documents[index].id;
         self.focus = Focus::Editor;
-        self.preedit.clear();
+        self.ime.preedit.clear();
         if !self.over_diff_editable(x, y) {
             let view = self.editor.documents[index].diff.as_deref()?;
             let parts = diff_parts(self.layout.editor, view, self.cell);
@@ -247,7 +247,7 @@ impl App {
         if let Some(view) = self.editor.documents[index].diff.as_deref_mut() {
             view.editing = true;
         }
-        self.preedit.clear();
+        self.ime.preedit.clear();
         if drag {
             self.drag = crate::app::Drag::DiffSelect { unit, origin, add };
         }
@@ -297,7 +297,7 @@ impl App {
     /// 在右侧开始列选择（`⇧⌥` 拖动、中键拖动）：先在按下处放置一个光标，拖动时选择一列。
     pub(in crate::app) fn start_diff_columns(&mut self, x: f32, y: f32) {
         self.focus = Focus::Editor;
-        self.preedit.clear();
+        self.ime.preedit.clear();
         let Some(spot) = self.diff_line_cell_at(x, y, true) else {
             return;
         };
