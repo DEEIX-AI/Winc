@@ -152,6 +152,11 @@ impl App {
                 t!("git-log-detach-confirm-detail").to_owned(),
                 t!("git-log-detach-confirm-button"),
             ),
+            LogConfirmed::CheckoutTag(name) => (
+                t!("git-tag-checkout-confirm", name = name.as_str()),
+                t!("git-log-detach-confirm-detail").to_owned(),
+                t!("git-log-detach-confirm-button"),
+            ),
             LogConfirmed::ResetHard(oid) => {
                 let (b, c) = (branch.as_str(), short(oid));
                 (
@@ -197,6 +202,16 @@ impl App {
     /// 确认框上确认了 `op`。
     pub(in crate::app) fn run_log_confirmed(&mut self, op: LogConfirmed) {
         match op {
+            LogConfirmed::CheckoutTag(name) => {
+                // 写全引用：标签与分支同名时不会签出成分支。
+                let target = format!("refs/tags/{name}");
+                self.git_operate(
+                    t!("git-op-checkout", name = name.as_str()),
+                    move |git, root| {
+                        git.operate(root, &["switch", "--detach", "--end-of-options", &target])
+                    },
+                );
+            }
             LogConfirmed::Detach(oid) => {
                 let tag = short(&oid).to_owned();
                 self.git_operate(

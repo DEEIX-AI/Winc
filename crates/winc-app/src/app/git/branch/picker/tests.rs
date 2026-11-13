@@ -53,6 +53,7 @@ fn rows(
         query: &needle(query),
         text: query,
         toggled,
+        tags: &[],
     })
 }
 
@@ -76,6 +77,11 @@ fn outline(rows: &[BranchRow]) -> Vec<String> {
                 let mark = if *open { "v" } else { ">" };
                 format!("{}{mark} {label} {count}", "  ".repeat(*depth))
             }
+            BranchRow::Tags { count, open } => {
+                let mark = if *open { "v" } else { ">" };
+                format!("{mark} tags {count}")
+            }
+            BranchRow::Tag(index) => format!("tag {index}"),
             BranchRow::Branch { depth, label, .. } => format!("{}{label}", "  ".repeat(*depth)),
             BranchRow::Create(name) => format!("+ {name}"),
         })
@@ -277,4 +283,37 @@ fn contiguous_matches_hide_scattered_ones() {
         outline(&scattered),
         ["Local", "v feature 1", "  login", "+ flg"]
     );
+}
+
+/// 标签一组排在分支之后，平时收起；展开后按给定的顺序列出，搜索时只列命中的标签。
+#[test]
+fn tags_follow_the_branches_and_open_on_demand_or_while_searching() {
+    let branches = sample();
+    let tags = ["v2.0".to_owned(), "v1.1".to_owned(), "beta".to_owned()];
+    let list = |query: &str, toggled: &HashSet<(bool, String)>| {
+        let recent: Vec<String> = Vec::new();
+        let rows = branch_rows(&BranchList {
+            branches: &branches,
+            recent: &recent,
+            query: &needle(query),
+            text: query,
+            toggled,
+            tags: &tags,
+        });
+        outline(&rows)
+    };
+    let closed = list("", &HashSet::new());
+    assert_eq!(closed.last().map(String::as_str), Some("> tags 3"));
+    assert_eq!(closed[closed.len() - 2], "> remotes 1");
+
+    let toggled = HashSet::from([(false, String::new())]);
+    let open = list("", &toggled);
+    assert_eq!(
+        open[open.len() - 4..],
+        ["v tags 3", "tag 0", "tag 1", "tag 2"]
+    );
+
+    // 搜索时只列命中的标签，并且可以用查询的文字新建分支。
+    let found = list("v1", &HashSet::new());
+    assert_eq!(found, ["v tags 1", "tag 1", "+ v1"]);
 }

@@ -240,6 +240,9 @@ pub enum MenuCommand {
     /// Git：继续停下来的合并、变基……（合并是打开提交视图去完成）。
     GitContinue,
     /// 菜单项「Git：中止停下来的合并、变基……」。
+    /// 分支选择器中对第几个标签做的事：`None` 是签出，其余见
+    /// [`TagOp`](crate::app::git::branch::TagOp)。
+    PickerTag(Option<crate::app::git::branch::TagOp>, usize),
     GitAbort,
     /// 跳过变基、拣选、还原正在处理的提交，继续处理其后的提交。
     GitSkip,
@@ -429,6 +432,8 @@ impl MenuCommand {
             MenuCommand::GitPullRebase => t!("menu-git-pull-rebase"),
             MenuCommand::GitAddRemote => t!("git-remote-add"),
             MenuCommand::GitRemote(op, _) => op.label(),
+            MenuCommand::PickerTag(None, _) => t!("git-branch-checkout"),
+            MenuCommand::PickerTag(Some(op), _) => op.label(),
             MenuCommand::GitContinue => t!("menu-git-continue"),
             MenuCommand::GitSkip => t!("menu-git-skip"),
             MenuCommand::GitShowDiff => t!("menu-git-show-diff"),
@@ -694,6 +699,8 @@ pub enum MenuTarget {
     Language(DocumentId),
     /// 分支选择器里第几个分支（[`crate::app::git::GitState::branches`] 的下标）的操作。
     BranchOps(usize),
+    /// 分支选择器中第几个标签（`GitState::tags` 的下标）行尾的「⋯」。
+    TagOps(usize),
     /// 位置选择器里一个位置的操作：目录，以及它在当前仓库的工作树列表里的下标。
     Location(PathBuf, Option<usize>),
     /// 提交视图标题行的「⋯」。

@@ -995,6 +995,9 @@ fn shoot_branch_picker() {
         git_in(&root, &["checkout", "-q", "fix/one"]);
         git_in(&root, &["checkout", "-q", "main"]);
         git_in(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        for tag in ["v1.0", "v1.1", "v2.0-beta"] {
+            git_in(&root, &["tag", tag]);
+        }
         std::fs::write(root.join("src/main.rs"), "fn changed() {}\n").unwrap();
         app.git_refresh();
         paint(&mut app);
@@ -1004,6 +1007,13 @@ fn shoot_branch_picker() {
         app.overlays.alert = None;
         app.open_branch_picker(GitAnchor::Branch);
         shoot(&mut app, &format!("branch-picker-{theme}"));
+        // 展开「标签」一组，选中其中一个标签：行尾是「⋯」。
+        let rows = app.overlays.picker.branch_rows.clone().unwrap();
+        app.overlays.picker.selected = rows.len() - 1;
+        app.branch_picker_accept();
+        app.overlays.picker.selected = app.overlays.picker.branch_rows.as_ref().unwrap().len() - 2;
+        app.picker_reveal();
+        shoot(&mut app, &format!("branch-picker-tags-{theme}"));
         app.overlays.picker.input.set_text("rel");
         app.picker_refresh();
         shoot(&mut app, &format!("branch-picker-search-{theme}"));

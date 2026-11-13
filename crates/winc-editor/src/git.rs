@@ -737,6 +737,21 @@ impl Git {
         Ok(parse_branches(&String::from_utf8_lossy(&stdout)))
     }
 
+    /// 返回仓库中各个标签的名字，最近创建的在前。
+    ///
+    /// # Errors
+    ///
+    /// `git` 运行失败或超时时返回原因。
+    pub fn tags(&self, root: &Path, cancel: &Cancel) -> Result<Vec<String>, String> {
+        let mut command = self.command(root);
+        // `lstrip=2` 去掉 `refs/tags/`：`short` 在标签与分支同名时会带上 `tags/`。
+        let format = "--format=%(refname:lstrip=2)";
+        command.args(["for-each-ref", "--sort=-creatordate", format, "refs/tags"]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, cancel)?;
+        let names = String::from_utf8_lossy(&stdout);
+        Ok(names.lines().map(str::to_owned).collect())
+    }
+
     /// 返回仓库配置的远程名。
     ///
     /// # Errors

@@ -98,6 +98,8 @@ struct Outcome {
 struct Refs {
     /// 本地和远程分支，本地的在前。
     branches: Vec<Branch>,
+    /// 各个标签的名字，最近创建的在前。
+    tags: Vec<String>,
     /// 仓库配置的远程名。
     remotes: Vec<String>,
     /// 仓库配置的远程仓库和地址。
@@ -197,6 +199,8 @@ pub(crate) struct GitState {
     pub status: Option<Status>,
     /// 本地和远程分支（本地分支在前），与状态一起刷新。
     pub branches: Vec<Branch>,
+    /// 当前仓库的各个标签，最近创建的在前；分支选择器的「标签」一组列出它们。
+    pub tags: Vec<String>,
     /// 仓库配置的远程名，与状态一起刷新。
     pub remotes: Vec<String>,
     /// 仓库配置的远程仓库和地址，与状态一起刷新。
@@ -277,6 +281,7 @@ impl Default for GitState {
             tool: SharedGit::default(),
             status: None,
             branches: Vec::new(),
+            tags: Vec::new(),
             remotes: Vec::new(),
             remote_list: Vec::new(),
             publish_remote: None,
@@ -356,6 +361,7 @@ impl GitState {
         self.tool.forget();
         self.status = None;
         self.branches.clear();
+        self.tags.clear();
         self.remotes.clear();
         self.remote_list.clear();
         self.publish_remote = None;
@@ -818,6 +824,7 @@ impl App {
                         return (status, None);
                     }
                     let branches = scope.spawn(|| git.branches(root, cancel));
+                    let tags = scope.spawn(|| git.tags(root, cancel));
                     let remotes = scope.spawn(|| git.remotes(root, cancel));
                     let remote_list = scope.spawn(|| git.remote_list(root, cancel));
                     let publish_remote = scope.spawn(|| git.publish_target(root));
@@ -832,6 +839,7 @@ impl App {
                             .ok()
                             .and_then(Result::ok)
                             .unwrap_or_default(),
+                        tags: tags.join().ok().and_then(Result::ok).unwrap_or_default(),
                         remotes: remotes.join().ok().and_then(Result::ok).unwrap_or_default(),
                         remote_list: (remote_list.join().ok())
                             .and_then(Result::ok)
@@ -893,13 +901,12 @@ impl App {
             let had_refs = outcome.refs.is_some();
             match outcome.status {
                 Ok(status) => {
-                    // `HEAD` 或分支变化（提交、切换、新建、删除）时，重新读取已打开的日志。
+                    // `HEAD`、分支或标签变化（提交、切换、新建、删除）时，重新读取已打开的日志。
                     let moved = self.git.status.as_ref().is_some_and(|old| {
                         old.oid != status.oid
-                            || outcome
-                                .refs
-                                .as_ref()
-                                .is_some_and(|refs| self.git.branches != refs.branches)
+                            || outcome.refs.as_ref().is_some_and(|refs| {
+                                self.git.branches != refs.branches || self.git.tags != refs.tags
+                            })
                     });
                     let moved = std::mem::take(&mut self.git.logs_outdated) || moved;
                     self.git.changes.head_is(status.oid.as_deref());
@@ -917,6 +924,7 @@ impl App {
                     if let Some(refs) = outcome.refs {
                         let before = std::mem::replace(&mut self.git.branches, refs.branches);
                         self.git.stashes = refs.stashes;
+                        self.git.tags = refs.tags;
                         self.git.recent_branches = refs.recent_branches;
                         self.git.remotes = refs.remotes;
                         self.git.remote_list = refs.remote_list;

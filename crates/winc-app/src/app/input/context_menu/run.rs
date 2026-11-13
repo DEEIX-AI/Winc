@@ -21,7 +21,7 @@ impl App {
         // 选择器里的菜单选了一项：操作开始，选择器不再需要；取消时选择器留着。
         if matches!(
             menu.target,
-            MenuTarget::BranchOps(_) | MenuTarget::Location(..)
+            MenuTarget::BranchOps(_) | MenuTarget::TagOps(_) | MenuTarget::Location(..)
         ) {
             self.close_picker();
         }
@@ -220,6 +220,11 @@ impl App {
                     && let Some(branch) = menu.branches.get(i).cloned()
                 {
                     self.run_branch_op(op, branch);
+                }
+            }
+            MenuTarget::TagOps(_) => {
+                if let MenuCommand::PickerTag(op, i) = command {
+                    self.run_picker_tag(op, i);
                 }
             }
             MenuTarget::Location(path, worktree) => match command {

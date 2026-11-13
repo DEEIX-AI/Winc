@@ -323,3 +323,70 @@ fn snapshot_repository_dialogs() {
     std::thread::sleep(std::time::Duration::from_millis(400));
     shoot(&mut app, "git-remote-add");
 }
+
+/// 分支选择器的「标签」一组：平时收起，展开后列出各个标签；行尾的菜单可以签出、推送和删除，
+/// 回车签出它指向的提交。
+#[test]
+fn the_branch_picker_lists_tags_and_checks_one_out() {
+    use crate::app::GitAnchor;
+    use crate::app::git::branch::picker::BranchRow;
+    use crate::app::input::context_menu::{MenuCommand, MenuTarget};
+    let dir = search_folder("git-picker-tags");
+    let Some(work) = repo_with_remote(&dir) else {
+        return;
+    };
+    let first = output_of(&work, &["rev-parse", "HEAD"]);
+    git_in(&work, &["tag", "v1"]);
+    std::fs::write(work.join("more.txt"), "more\n").unwrap();
+    git_in(&work, &["add", "more.txt"]);
+    // 身份写在命令行上：测试仓库没有配置身份，不依赖本机的全局配置。
+    let identity = ["-c", "user.name=t", "-c", "user.email=t@t"];
+    let commit = ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "more"];
+    git_in(&work, &[&identity[..], &commit[..]].concat());
+    git_in(&work, &["tag", "v2"]);
+    let Some(mut app) = git_app(&work) else {
+        return;
+    };
+    let mut names = app.git.tags.clone();
+    names.sort();
+    assert_eq!(names, ["v1", "v2"]);
+
+    // 最后一行是收起的「标签」；确认它即展开，各个标签列在其后。
+    app.open_branch_picker(GitAnchor::Branch);
+    let rows = |app: &App| app.overlays.picker.branch_rows.clone().unwrap();
+    let group = rows(&app).len() - 1;
+    let closed = BranchRow::Tags {
+        count: 2,
+        open: false,
+    };
+    assert_eq!(rows(&app)[group], closed);
+    app.overlays.picker.selected = group;
+    app.branch_picker_accept();
+    let v1 = app.git.tags.iter().position(|tag| tag == "v1").unwrap();
+    let row = (rows(&app).iter()).position(|row| *row == BranchRow::Tag(v1));
+    let row = row.unwrap();
+
+    // 行尾的菜单：签出，推送、删除、从远程删除。
+    app.overlays.picker.selected = row;
+    app.open_branch_row_menu(MenuTarget::TagOps(v1));
+    let commands: Vec<MenuCommand> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
+    let ops = TagOp::ALL.map(|op| MenuCommand::PickerTag(Some(op), v1));
+    assert_eq!(commands[0], MenuCommand::PickerTag(None, v1));
+    assert_eq!(commands[1..], ops);
+    app.run_menu_command(MenuCommand::PickerTag(Some(TagOp::Push), v1));
+    assert_eq!(
+        output_of(&dir.join("bare.git"), &["tag", "--list"]).trim(),
+        "v1"
+    );
+
+    // 回车签出标签指向的提交（没有窗口时确认直接通过），选择器随之关闭。
+    app.open_branch_picker(GitAnchor::Branch);
+    app.overlays.picker.selected = row;
+    app.branch_picker_accept();
+    assert!(!app.overlays.picker.open);
+    assert_eq!(output_of(&work, &["rev-parse", "HEAD"]), first);
+
+    // 删除后列表随刷新更新。
+    app.run_tag_op(TagOp::Delete, "v1".into());
+    assert_eq!(app.git.tags, ["v2"]);
+}

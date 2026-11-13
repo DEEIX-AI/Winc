@@ -659,6 +659,9 @@ impl App {
                 &self.git.stale_branches(),
                 self.git.branch.running.is_some(),
             ),
+            MenuTarget::TagOps(index) => {
+                crate::app::git::branch::tag_ops(*index, self.git.branch.running.is_some())
+            }
         };
 
         // 菜单上显示的快捷键按菜单弹出的位置取：文件树中取文件树的键位，编辑区中取编辑区的键位。

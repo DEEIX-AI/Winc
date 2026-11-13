@@ -247,6 +247,17 @@ pub(crate) fn branch_menu(
     entries
 }
 
+/// 分支选择器中第 `index` 个标签的菜单：签出，分隔线，推送、删除、从远程删除（删除先确认）。
+pub(crate) fn tag_ops(index: usize, busy: bool) -> Vec<MenuEntry> {
+    let mut ops = vec![
+        MenuEntry::Item(MenuCommand::PickerTag(None, index), !busy),
+        MenuEntry::Separator,
+    ];
+    let rest = TagOp::ALL.into_iter().map(Some);
+    ops.extend(rest.map(|op| MenuEntry::Item(MenuCommand::PickerTag(op, index), !busy)));
+    ops
+}
+
 /// 第 `index` 条储藏的菜单：应用、应用并删除，分隔线，删除（删除先确认）。
 pub(crate) fn stash_ops(index: usize, busy: bool) -> Vec<MenuEntry> {
     let mut ops: Vec<MenuEntry> = (StashOp::ALL.into_iter())

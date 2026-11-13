@@ -215,6 +215,8 @@ pub enum LogConfirmed {
     ///
     /// 参数是完整的提交号。
     Detach(String),
+    /// 签出一个标签指向的提交，进入分离的 `HEAD`；参数是标签名。
+    CheckoutTag(String),
     /// 将当前分支硬重置到该提交。
     ResetHard(String),
     /// 删除一条储藏；执行时按提交号查找（[`winc_editor::git::Git::stash`]）。

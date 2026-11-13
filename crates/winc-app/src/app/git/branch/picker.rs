@@ -14,7 +14,7 @@ use winc_editor::git::{Branch, Status};
 use winc_i18n::t;
 use winc_render::Rect;
 
-use super::local_name;
+use super::{TagOp, local_name};
 use crate::app::animation::TREE_ANIMATION;
 use crate::app::git::location_picker::LocationRow;
 use crate::app::input::context_menu::{MenuCommand, MenuTarget};
@@ -122,6 +122,15 @@ pub enum BranchRow {
         /// 是否展开。
         open: bool,
     },
+    /// 可以展开的「标签」一组，排在分支之后。
+    Tags {
+        /// 这一组的标签数。
+        count: usize,
+        /// 是否展开。
+        open: bool,
+    },
+    /// 一个标签：[`GitState::tags`](crate::app::git::GitState::tags) 的下标。
+    Tag(usize),
     /// 一个分支。
     Branch {
         /// [`GitState::branches`](crate::app::git::GitState::branches) 的下标。
@@ -148,6 +157,9 @@ impl BranchRow {
         match (self, other) {
             (BranchRow::All, BranchRow::All) => true,
             (BranchRow::Remotes { .. }, BranchRow::Remotes { .. }) => true,
+            (BranchRow::Tags { .. }, BranchRow::Tags { .. }) => true,
+            // 标签只在列表末尾增减，名字不随刷新移动到别的下标的情况不多；下标相同即视为同一项。
+            (BranchRow::Tag(index), BranchRow::Tag(i)) => index == i,
             (
                 BranchRow::Folder { remote, path, .. },
                 BranchRow::Folder {
@@ -229,8 +241,11 @@ pub struct BranchList<'a> {
     pub query: &'a [char],
     /// 原样的查询文字，新建分支时用作名字。
     pub text: &'a str,
-    /// 改变过默认展开状态的目录：（是否远程，目录路径）；远程分支一组的路径是空的。
+    /// 改变过默认展开状态的目录：（是否远程，目录路径）；远程分支一组的路径是空的。标签一组
+    /// 记作本地、路径为空的一项：本地分支的目录路径不会为空。
     pub toggled: &'a HashSet<(bool, String)>,
+    /// 各个标签的名字，最近创建的在前。
+    pub tags: &'a [String],
 }
 
 /// 排出分支选择器的各行。
@@ -295,6 +310,21 @@ pub fn branch_rows(list: &BranchList<'_>) -> Vec<BranchRow> {
             // 和本地分支同一层：这一行只是分组标题，名字的列上下对齐。
             let remote = strip_single_remote(remote);
             tree(true).push(remote, "", 0, &mut rows);
+        }
+    }
+    // 标签一组平时收起：标签可以很多，展开或搜索时才列出。
+    let tags: Vec<usize> = (list.tags.iter().enumerate())
+        .filter(|(_, tag)| !searching || rate(query, tag).is_some_and(|s| s < SCATTERED))
+        .map(|(index, _)| index)
+        .collect();
+    if !tags.is_empty() {
+        let open = searching || list.toggled.contains(&(false, String::new()));
+        rows.push(BranchRow::Tags {
+            count: tags.len(),
+            open,
+        });
+        if open {
+            rows.extend(tags.into_iter().map(BranchRow::Tag));
         }
     }
     let name = list.text.trim();
@@ -681,6 +711,15 @@ impl App {
             self.open_branch_row_menu(MenuTarget::BranchOps(index));
             return;
         }
+        let tag =
+            (self.overlays.picker.branch_rows.as_ref()).and_then(|rows| match rows.get(row) {
+                Some(BranchRow::Tag(index)) => Some(*index),
+                _ => None,
+            });
+        if let Some(index) = tag {
+            self.open_branch_row_menu(MenuTarget::TagOps(index));
+            return;
+        }
         let place =
             (self.overlays.picker.location_rows.as_ref()).and_then(|rows| match rows.get(row) {
                 Some(LocationRow::Place(place)) => Some(place.clone()),
@@ -878,6 +917,7 @@ impl App {
             query: &query,
             text: self.overlays.picker.input.text(),
             toggled: &self.git.branch_folders,
+            tags: &self.git.tags,
         })
     }
 
@@ -925,6 +965,8 @@ impl App {
         }
         match row {
             Some(BranchRow::Remotes { .. }) => self.toggle_branch_folder(true, String::new()),
+            Some(BranchRow::Tags { .. }) => self.toggle_branch_folder(false, String::new()),
+            Some(BranchRow::Tag(index)) => self.run_picker_tag(None, index),
             Some(BranchRow::Folder { remote, path, .. }) => self.toggle_branch_folder(remote, path),
             Some(BranchRow::Branch { index, .. }) => self.pick_branch(index),
             Some(BranchRow::Create(name)) => self.create_branch_from_picker(name, None),
@@ -1013,6 +1055,12 @@ impl App {
             (BranchRow::Remotes { open, .. }, _) if open != right => {
                 self.toggle_branch_folder(true, String::new());
             }
+            (BranchRow::Tags { open, .. }, _) if open != right => {
+                self.toggle_branch_folder(false, String::new());
+            }
+            (BranchRow::Tag(index), true) => {
+                self.open_branch_row_menu(MenuTarget::TagOps(index));
+            }
             (
                 BranchRow::Folder {
                     remote, path, open, ..
@@ -1022,7 +1070,10 @@ impl App {
             (BranchRow::Branch { index, .. }, true) => {
                 self.open_branch_row_menu(MenuTarget::BranchOps(index));
             }
-            (BranchRow::Folder { .. } | BranchRow::Remotes { .. }, true) => {
+            (
+                BranchRow::Folder { .. } | BranchRow::Remotes { .. } | BranchRow::Tags { .. },
+                true,
+            ) => {
                 self.overlays.picker.selected = self.branch_picker_step(true);
                 self.overlays.picker.default = None;
                 self.picker_reveal();
@@ -1061,6 +1112,18 @@ impl App {
             self.overlays.picker.default = None;
             self.picker_reveal();
             self.request_redraw();
+        }
+    }
+
+    /// 对第 `index` 个标签执行 `op`：`None` 是签出它指向的提交（先确认），其余见 [`TagOp`]。
+    pub(in crate::app) fn run_picker_tag(&mut self, op: Option<TagOp>, index: usize) {
+        let Some(name) = self.git.tags.get(index).cloned() else {
+            return;
+        };
+        self.close_picker();
+        match op {
+            Some(op) => self.run_tag_op(op, name),
+            None => self.confirm_log(crate::app::git::log::LogConfirmed::CheckoutTag(name)),
         }
     }
 

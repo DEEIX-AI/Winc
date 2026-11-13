@@ -515,7 +515,11 @@ fn draw_branch_rows(
         }
         // 展开的远程分支一组和其他分组一样，上沿有分隔线；选中时底色盖住它。收起时只有这一行，
         // 下面紧接着底栏的分隔线，再画一条就太密了。
-        if matches!(rows[i], BranchRow::Remotes { open: true, .. }) && i > 0 {
+        let group = matches!(
+            rows[i],
+            BranchRow::Remotes { open: true, .. } | BranchRow::Tags { open: true, .. }
+        );
+        if group && i > 0 {
             let (row, clip) = placed_row(app, parts, i);
             draw_divider(frame, app.palette, row, row.y + 1.0, clip);
         }
@@ -533,6 +537,24 @@ fn draw_branch_rows(
                 ui_text_small(frame, app, x, line.row, title, line.dim, line.clip);
                 let mut right = line.right();
                 line.draw_pill(app, frame, &mut right, *count);
+            }
+            BranchRow::Tags { count, open } => {
+                line.draw_fold(app, frame, (i, 0, *open));
+                let title = t!("git-branch-picker-tags");
+                let x = line.columns(0).1;
+                ui_text_small(frame, app, x, line.row, title, line.dim, line.clip);
+                let mut right = line.right();
+                line.draw_pill(app, frame, &mut right, *count);
+            }
+            // 标签与分支同列：对勾的位置画标签图标，选中或悬停时行尾是「⋯」。
+            BranchRow::Tag(index) => {
+                let (icon, text) = line.columns(0);
+                let mark = crate::icons::RefMark::Tag;
+                icons::ref_mark(frame, mark, (icon, line.cy), line.dim, line.clip);
+                let more = line.draw_more(app, frame, i, hits);
+                let name = app.git.tags.get(*index).map_or("", String::as_str);
+                let end = more.unwrap_or(line.right());
+                line.draw_name(app, frame, (text, end), name, line.text);
             }
             // 目录不写分支数：展开就看得见，每层写一遍是重复信息。
             BranchRow::Folder {
