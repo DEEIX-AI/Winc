@@ -578,7 +578,7 @@ impl App {
     }
 
     /// 按滚轮增量 `dy`（逻辑像素）滚动当前页，滚动位置限制在有效范围内。
-    pub(super) fn settings_scroll_by(&mut self, dy: f32) {
+    pub(in crate::app) fn settings_scroll_by(&mut self, dy: f32) {
         let (_, max) = self.settings_scroll_area();
         self.settings.scroll = (self.settings.scroll - dy).clamp(0.0, max);
         self.settings.scrolled_at = Some(Instant::now());

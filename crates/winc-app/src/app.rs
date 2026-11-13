@@ -14,6 +14,7 @@ mod input;
 mod lifecycle;
 pub(crate) mod preview;
 pub(crate) mod remote;
+pub(crate) mod scroll;
 mod settings;
 #[cfg(test)]
 mod snapshot;
@@ -31,7 +32,6 @@ use animation::{
 pub(crate) use diff::{DIFF_TEXT_PAD, DiffParts, DiffTarget, HunkKind, diff_parts};
 pub use editor::conflict::{ConflictAction, OverwriteChoice};
 pub use editor::editing::BraceKey;
-pub use editor::editing::ScrollGlide;
 pub use editor::folding::FoldMotion;
 pub(crate) use editor::folding::fold_column;
 pub use editor::format::{FormatState, ToolAnswer};
@@ -61,6 +61,8 @@ pub use lifecycle::title_bar::WindowControl;
 pub(crate) use lifecycle::title_bar::resize_cursor;
 pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
+pub use scroll::ScrollGlide;
+pub(crate) use scroll::ScrollTarget;
 pub use settings::{DialogCache, SettingsState};
 pub use status::motion::{StatusEntry, StatusKey, StatusMotion};
 pub use status::status_bar::{StatusItem, indent_label};
@@ -907,8 +909,12 @@ pub struct App {
     pub(crate) diff_fold: Option<diff::DiffFoldMotion>,
     /// 编辑区跳转式滚动（翻页、跳到行、查找跳转）的平滑滚动状态。
     pub(crate) scroll_glide: Option<ScrollGlide>,
-    /// 鼠标滚轮滚动的过渡状态。
-    pub wheel: input::mouse::Wheel,
+    /// 各区域（文件树、列表、预览）跳转式滚动的过渡，每个区域至多一项。
+    pub(crate) pane_glides: Vec<scroll::PaneGlide>,
+    /// 触摸滚动抬手后的惯性滚动；没有时为 `None`。
+    pub(crate) fling: Option<scroll::Fling>,
+    /// 滚轮与触控板滚动的状态。
+    pub wheel: scroll::Wheel,
     /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
     preview_tab: Option<winc_editor::DocumentId>,
     /// 文件树中正在重命名的项及其输入框；没有时为 `None`。

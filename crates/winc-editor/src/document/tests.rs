@@ -1187,3 +1187,24 @@ fn a_document_on_a_remote_host_opens_saves_and_notices_changes() {
     );
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// 远距离跳转后精确的高亮状态尚未推算到时，近似状态按回看范围内的块注释着色。
+#[test]
+fn far_lines_get_an_approximate_highlight_state_before_the_exact_one() {
+    // 第 20000 行起是一段块注释，跳到其中的第 20005 行：每帧只推算 10 行时远未到达。
+    let mut text = "let a = 1;\n".repeat(20_000);
+    text.push_str("/*\n");
+    text.push_str(&" * note\n".repeat(10));
+    text.push_str("*/\n");
+    let mut doc = Document::from_text(DocumentId(1), &text);
+    doc.set_language("a.rs");
+    let line = 20_005;
+    assert_eq!(doc.highlight_state(line, 10), None);
+    let approx = doc.approx_highlight_state(line);
+    assert!(
+        matches!(approx, LineState::BlockComment { .. }),
+        "{approx:?}"
+    );
+    // 精确的状态推算完成后与近似状态一致。
+    assert_eq!(doc.highlight_state(line, usize::MAX), Some(approx));
+}
