@@ -3020,6 +3020,59 @@ fn the_preview_shows_a_heading_indicator() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：展开的标题列表覆盖宽表格的水平滚动条时，鼠标在列表内经过该滚动条，列表收起。
+#[test]
+fn the_heading_list_stays_open_over_a_table_scrollbar() {
+    use crate::app::preview::markdown::TocTarget;
+
+    let head = format!("|{}", " 很长的列标题 |".repeat(24));
+    let rule = format!("|{}", "---|".repeat(24));
+    let row = format!("|{}", " 单元格 |".repeat(24));
+    let headings: String = (1..=12)
+        .map(|i| format!("## 第 {i} 节\n\n正文\n\n"))
+        .collect();
+    let (mut app, dir) = live_doc(
+        "md-toc-table",
+        &format!("# 标题\n\n{head}\n{rule}\n{row}\n\n{headings}"),
+    );
+    // 表格的滚动条在鼠标经过该表格后开始响应点击，鼠标经过另一个表格后不再响应。
+    let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
+    let cell = point_of(&app, shown[..shown.find("单元格").unwrap()].chars().count());
+    app.on_mouse_move(cell.0, cell.1);
+    paint(&mut app);
+    let bars = (app.hits.markdown_toc.iter())
+        .find(|(_, t)| *t == TocTarget::Bars)
+        .unwrap()
+        .0;
+    app.on_mouse_move(bars.x + 4.0, bars.y + 10.0);
+    settle(&mut app);
+    assert!(matches!(app.hover, Hover::MarkdownToc(_)));
+
+    let bar = app.hits.markdown_table_bar.expect("表格有滚动条");
+    // 标题列表展开后有两个 `Bars` 区域：指示条和覆盖其上的卡片，卡片的宽度较大。
+    let card = (app.hits.markdown_toc.iter())
+        .filter(|(_, t)| *t == TocTarget::Bars)
+        .map(|(rect, _)| *rect)
+        .max_by(|a, b| a.w.total_cmp(&b.w))
+        .unwrap();
+    let edge = (bar.track.x + 4.0, bar.track.bottom() - 4.0);
+    assert!(card.contains(edge.0, edge.1), "{card:?} {:?}", bar.track);
+    app.on_mouse_move(edge.0, edge.1);
+    paint(&mut app);
+    assert!(
+        matches!(app.hover, Hover::MarkdownToc(_)),
+        "{:?}",
+        app.hover
+    );
+    assert!(
+        app.hits
+            .markdown_toc
+            .iter()
+            .any(|(_, t)| *t != TocTarget::Bars)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 截图：本仓库的 README 只看预览，滚动到第三个标题，鼠标停在标题指示条上；点击最后一个
 /// 标题后正文中的底色。深浅两套配色。
 #[test]
