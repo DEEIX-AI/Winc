@@ -92,12 +92,13 @@ fn symbolic_links_and_unix_attributes_are_reported() {
 
 #[test]
 fn stamps_keep_the_nanoseconds_on_both_sides_of_the_epoch() {
-    let after = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_789);
+    // 纳秒部分取 100 的整数倍：Windows 的系统时间以 100 纳秒为单位，更细的部分存不下。
+    let after = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_700);
     assert_eq!(
         Stamp::from(after),
         Stamp {
             secs: 1_700_000_000,
-            nanos: 123_456_789
+            nanos: 123_456_700
         }
     );
     assert_eq!(Stamp::from(UNIX_EPOCH), Stamp { secs: 0, nanos: 0 });
