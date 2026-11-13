@@ -381,10 +381,12 @@ impl App {
         if let Some((hunk, _)) = self.ruler_change_at(x, y) {
             return Target::RulerChange(hunk);
         }
-        // 展开的行同样覆盖文件树的滚动条，鼠标进入滚动条时该行不会立即收起。展开的标题列表
-        // 覆盖在宽表格的水平滚动条之上，鼠标经过滚动条时列表同样不收起。
-        let over_toc =
-            self.markdown.area.contains(x, y) && hit(&self.hits.markdown_toc, x, y).is_some();
+        // 展开的行覆盖文件树的滚动条，鼠标进入滚动条时该行不收起；展开的标题列表覆盖宽表格的
+        // 水平滚动条，鼠标经过该滚动条时列表同样不收起。下方判定标题列表时沿用此处的命中结果。
+        let toc = (self.markdown.area.contains(x, y))
+            .then(|| hit(&self.hits.markdown_toc, x, y))
+            .flatten();
+        let over_toc = toc.is_some();
         if let Some((bar, grab)) = self.scrollbar_at(x, y).filter(|(bar, _)| {
             !(over_row && *bar == Scrollbar::Tree
                 || over_commit_row && *bar == Scrollbar::Commit
@@ -461,9 +463,7 @@ impl App {
             return Target::LogText;
         }
         // 标题指示条和展开的标题列表覆盖在预览文字之上，先于文字判断。
-        if self.markdown.area.contains(x, y)
-            && let Some(target) = hit(&self.hits.markdown_toc, x, y)
-        {
+        if let Some(target) = toc {
             return Target::MarkdownToc(target);
         }
         // 可编辑的预览中单击文字用于放置光标，便于编辑链接文本；按住 `⌘`（其他平台为 `Ctrl`）
