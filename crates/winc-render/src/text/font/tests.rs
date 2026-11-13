@@ -233,8 +233,8 @@ fn only_files_users_cannot_change_are_mapped() {
     assert!(matches!(*system, FontData::Mapped(_)));
 }
 
-/// 回归：系统按需下载的字体属于系统的服务账号而不是 root，按属主是否为 root 判断时，几十兆的
-/// 字体文件整份读进内存并一直占用。
+/// 回归：系统按需下载的字体属于系统的服务账号而不是 root，只映射 root 的文件时，这些字体
+/// 整份读进内存。
 #[cfg(unix)]
 #[test]
 fn files_of_other_accounts_are_not_modifiable() {

@@ -431,12 +431,11 @@ static LOADED: Mutex<Vec<(Source, Weak<FontData>)>> = Mutex::new(Vec::new());
 
 /// 返回字体文件 `path` 的内容；无法读取时返回 `None`。
 ///
-/// 该文件的内容正在使用、文件此后也没有变化时，返回已有的那一份（见 [`LOADED`]）。
+/// 该文件的内容正在使用、文件此后没有变化时，返回已有的那一份（见 [`LOADED`]）。
 ///
-/// 映射的文件被其他进程截断以后，访问被截掉的页会收到 SIGBUS，整个进程退出。因此只映射当前
-/// 用户无法修改的文件（见 [`is_modifiable`]）：系统卷上的字体、系统按需下载的字体、Linux 的
-/// `/usr/share/fonts`；映射的内容与其他进程共用系统的页缓存，只有访问过的页占用内存。用户
-/// 自己的字体（`~/Library/Fonts`、配置里写的路径）可能在使用中被替换或截断，因此读进内存。
+/// 映射的文件被其他进程截断后，访问被截掉的页会收到 SIGBUS，进程中止。因此只映射当前用户
+/// 无法修改的文件（见 [`is_modifiable`]），与其他进程共用系统的页缓存，只有访问过的页占用
+/// 内存；当前用户可以修改的字体可能在使用中被替换或截断，读进内存。
 pub(crate) fn load(path: &Path) -> Option<Arc<FontData>> {
     let file = File::open(path).ok()?;
     let metadata = file.metadata().ok()?;
@@ -457,7 +456,7 @@ pub(crate) fn load(path: &Path) -> Option<Arc<FontData>> {
     let data = Arc::new(read(&file, &metadata)?);
     let mut loaded = lock();
     loaded.retain(|(_, data)| data.strong_count() > 0);
-    // 另一个线程在这期间载入了同一个文件：改用它的那一份。
+    // 读取期间另一个线程载入了同一个文件：改用已登记的那一份。
     if let Some(data) = in_use(&loaded) {
         return Some(data);
     }
@@ -478,7 +477,7 @@ fn read(file: &File, metadata: &Metadata) -> Option<FontData> {
     map(file).map(FontData::Mapped)
 }
 
-/// 权限位中组和其他用户的写权限。
+/// 权限位中组和其他用户的写权限（`S_IWGRP | S_IWOTH`）。
 #[cfg(unix)]
 const WRITABLE_BY_OTHERS: u32 = 0o022;
 

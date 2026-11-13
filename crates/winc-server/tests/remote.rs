@@ -1095,7 +1095,7 @@ fn over_ssh() {
         .collect();
     assert!(names.iter().any(|name| name == "etc"), "{names:?}");
     let passwd = fs::read_to_string(root.join("etc/passwd")).unwrap();
-    assert!(passwd.contains("root:"), "{passwd}");
+    assert!(passwd.contains("root:"));
     let absent = fs::metadata(root.join("no/such/file")).unwrap_err();
     assert!(fs::is_absent(&absent));
     // 命令在远端运行：工作目录是远端的路径。
@@ -1128,7 +1128,7 @@ fn over_ssh() {
             Connection::deploy(command, &deploy, &remote::Abort::default()).unwrap(),
         );
         let passwd = fs::read_to_string(root.join("etc/passwd")).unwrap();
-        assert!(passwd.contains("root:"), "{passwd}");
+        assert!(passwd.contains("root:"));
         remote::disconnect(&target);
     }
     // 连接复用：以可复用的方式连接后，另一条 `ssh` 经它开会话，不再登录；断开后控制套接字
