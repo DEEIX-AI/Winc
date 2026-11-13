@@ -77,55 +77,14 @@ const LAYERS: &[(&str, &[&str])] = &[
 /// 单个源文件的行数上限（行）：项目约定的规模上限，超出的文件按职责拆分。
 const MAX_LINES: usize = 1500;
 
-/// 允许超过 [`MAX_LINES`] 的源文件及其最大行数（路径相对 workspace 根目录，行）。
+/// 返回超过 [`MAX_LINES`] 的源文件，每项写明行数；全部合规时为空。
 ///
-/// 表中的文件在修改时按职责拆分，拆分到上限以内后删除对应的一项；本表不新增条目。
-/// 表中的文件变长时必须同时增大对应的行数，否则检查不通过。
-const OVERSIZED: &[(&str, usize)] = &[
-    ("crates/winc-app/src/app/diff.rs", 1610),
-    ("crates/winc-app/src/app/git/commit.rs", 1860),
-    ("crates/winc-app/src/app/preview/markdown.rs", 3244),
-    ("crates/winc-app/src/app/snapshot/git/commit.rs", 3230),
-    ("crates/winc-app/src/app/snapshot/git/diff.rs", 2419),
-    ("crates/winc-app/src/app/snapshot/git/log.rs", 1533),
-    ("crates/winc-app/src/app/snapshot/preview.rs", 4646),
-    ("crates/winc-app/src/app/snapshot/settings.rs", 1680),
-    ("crates/winc-app/src/app/snapshot/terminal.rs", 1796),
-    ("crates/winc-app/src/app/snapshot/workspace/tree.rs", 1594),
-    ("crates/winc-app/src/view/git/commit.rs", 2435),
-    ("crates/winc-backend/src/remote.rs", 1613),
-    ("crates/winc-editor/src/git.rs", 1659),
-    ("crates/winc-editor/src/git/tests.rs", 1813),
-    ("crates/winc-pty/src/term/tests.rs", 1511),
-    ("crates/winc-syntax/src/lexer.rs", 2080),
-    ("crates/winc-typeset/src/lib.rs", 2028),
-];
-
-/// 返回违反规模约定的文件，每项说明原因；全部合规时为空。
-///
-/// `sizes` 是各源文件的路径（相对 workspace 根目录，以 `/` 分隔）和行数，`registry` 是允许
-/// 超限的文件及其最大行数。三种情况视为违规：未登记的文件超过 [`MAX_LINES`]；登记的文件超过
-/// 登记的行数；登记的文件已经不超限或不存在，对应的一项应当删除。
-fn size_violations(sizes: &[(String, usize)], registry: &[(&str, usize)]) -> Vec<String> {
-    let mut violations = Vec::new();
-    for (path, lines) in sizes {
-        match registry.iter().find(|(name, _)| name == path) {
-            Some((_, allowed)) if lines > allowed => {
-                violations.push(format!("{path} 有 {lines} 行，超过登记的 {allowed} 行"));
-            }
-            None if *lines > MAX_LINES => {
-                violations.push(format!("{path} 有 {lines} 行，超过 {MAX_LINES} 行"));
-            }
-            _ => {}
-        }
-    }
-    for (name, _) in registry {
-        let lines = sizes.iter().find(|(path, _)| path == name).map(|(_, n)| *n);
-        if lines.is_none_or(|n| n <= MAX_LINES) {
-            violations.push(format!("{name} 已不超限，从登记表中删除"));
-        }
-    }
-    violations
+/// `sizes` 是各源文件的路径（相对 workspace 根目录，以 `/` 分隔）和行数。
+fn size_violations(sizes: &[(String, usize)]) -> Vec<String> {
+    (sizes.iter())
+        .filter(|(_, lines)| *lines > MAX_LINES)
+        .map(|(path, lines)| format!("{path} 有 {lines} 行，超过 {MAX_LINES} 行"))
+        .collect()
 }
 
 /// 返回 `members` 各自目录下全部 `.rs` 文件的路径（相对 `root`，以 `/` 分隔）和行数，按路径排序。
@@ -378,12 +337,9 @@ pub fn test(args: &[String]) -> Result<bool, String> {
             violations.join("、")
         ));
     }
-    let violations = size_violations(&source_sizes(&root, &members)?, OVERSIZED);
+    let violations = size_violations(&source_sizes(&root, &members)?);
     if !violations.is_empty() {
-        return Err(format!(
-            "文件不符合规模约定（见 `OVERSIZED`）：{}",
-            violations.join("、")
-        ));
+        return Err(format!("文件不符合规模约定：{}", violations.join("、")));
     }
     let (violations, _) = clippy_violations(&root, &members)?;
     if !violations.is_empty() {

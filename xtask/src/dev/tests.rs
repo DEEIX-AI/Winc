@@ -52,31 +52,14 @@ fn workspace_dependencies_follow_the_layers() {
 fn source_files_stay_within_the_size_limit() {
     let root = root();
     let sizes = source_sizes(&root, &members(&root).unwrap()).unwrap();
-    assert_eq!(size_violations(&sizes, OVERSIZED), Vec::<String>::new());
+    assert_eq!(size_violations(&sizes), Vec::<String>::new());
 
-    // 未登记的文件超限、登记的文件变长、登记的文件已不超限或不存在，各报告一条。
+    // 正好达到上限的文件合规，超过一行即报告。
     let sizes = [
         ("a.rs".to_owned(), MAX_LINES),
         ("b.rs".to_owned(), MAX_LINES + 1),
-        ("c.rs".to_owned(), 2001),
-        ("d.rs".to_owned(), 1999),
-        ("e.rs".to_owned(), 900),
     ];
-    let registry = [
-        ("c.rs", 2000),
-        ("d.rs", 2000),
-        ("e.rs", 1800),
-        ("f.rs", 1600),
-    ];
-    assert_eq!(
-        size_violations(&sizes, &registry),
-        [
-            "b.rs 有 1501 行，超过 1500 行",
-            "c.rs 有 2001 行，超过登记的 2000 行",
-            "e.rs 已不超限，从登记表中删除",
-            "f.rs 已不超限，从登记表中删除",
-        ]
-    );
+    assert_eq!(size_violations(&sizes), ["b.rs 有 1501 行，超过 1500 行"]);
 }
 
 #[test]
