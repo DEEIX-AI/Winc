@@ -1005,3 +1005,63 @@ fn committed_rows_fade_out_instead_of_vanishing() {
     assert!(app.git.commit.shift.is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_commit_message_wraps_between_words() {
+    let dir = search_folder("commit-message-wrap");
+    if !long_repo(&dir) {
+        return;
+    }
+    std::fs::write(dir.join("src/config.rs"), "pub struct Config;\n").unwrap();
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    app.run_action(Action::ShowCommit);
+    // 返回各显示行的文字。
+    let rows = |app: &mut App, text: &str| {
+        app.git.commit.message.set_text("");
+        app.edit_field(|f| f.insert(text));
+        paint(app);
+        let view = &app.git.commit.message.view;
+        let last = view.rows.last().copied().unwrap_or(0);
+        (0..=last)
+            .map(|row| {
+                let mut stops = (view.stops.iter().zip(&view.rows)).filter(|(_, r)| **r == row);
+                let start = stops.next().map_or(0, |(s, _)| s.0);
+                let end = (view.ends.iter().find(|(r, ..)| *r == row))
+                    .map(|&(_, pos, _)| pos)
+                    .or(stops.next_back().map(|(s, _)| s.0))
+                    .unwrap_or(start);
+                text[start..end].to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // 英文在空格处折行：每一行都以完整的词结尾，行与行之间不丢字。
+    let text = "refactor: split four long functions and narrow the visibility of App state";
+    let lines = rows(&mut app, text);
+    assert!(lines.len() > 1, "{lines:?}");
+    assert_eq!(lines.concat(), text);
+    for line in &lines[..lines.len() - 1] {
+        assert!(line.ends_with(' '), "{lines:?}");
+    }
+    assert_eq!(app.git.commit.message.view.ends.len(), lines.len() - 1);
+
+    // 一个词比一行还宽：从放不下的字符处折行。
+    let long = "x".repeat(200);
+    let lines = rows(&mut app, &long);
+    assert!(lines.len() > 1 && lines.concat() == long, "{lines:?}");
+
+    // 中文可以在任意两个字之间折行，不需要空格。
+    let cjk = "修复配置读取时的错误".repeat(8);
+    let lines = rows(&mut app, &cjk);
+    assert!(lines.len() > 1 && lines.concat() == cjk, "{lines:?}");
+
+    // 中英文混排：英文单词不从中间断开。
+    let mixed = format!("{}configuration", "配置".repeat(20));
+    let lines = rows(&mut app, &mixed);
+    assert!(
+        lines.iter().any(|l| l.ends_with("configuration")),
+        "{lines:?}"
+    );
+    assert!(lines.iter().all(|l| !l.ends_with("config")), "{lines:?}");
+}

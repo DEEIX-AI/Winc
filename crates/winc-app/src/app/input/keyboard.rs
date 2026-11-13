@@ -816,16 +816,75 @@ impl App {
                 false
             }
         };
+        // 移到文字的开头或末尾。
+        let edge = |forward: bool| {
+            move |f: &mut TextField| {
+                f.move_to_edge(forward, shift);
+                false
+            }
+        };
+
+        // macOS 的文本输入约定：`⌃A` `⌃E` 到段首、段尾，`⌃F` `⌃B` 前后移动一个字符，`⌃N` `⌃P`
+        // 下移、上移一行，`⌃D` `⌃H` 删除后一个、前一个字符，`⌃K` 删除到段尾。
+        if mac && !cmd && self.pointer.modifiers.control_key() {
+            match base {
+                "a" => return self.edit_field(movement(false, Unit::Paragraph)),
+                "e" => return self.edit_field(movement(true, Unit::Paragraph)),
+                "f" => return self.edit_field(movement(true, Unit::Char)),
+                "b" => return self.edit_field(movement(false, Unit::Char)),
+                "n" | "p" => {
+                    return self.edit_field(|f| {
+                        f.move_vertical(base == "n", shift);
+                        false
+                    });
+                }
+                "d" => return self.edit_field(|f| f.delete(Unit::Char, true)),
+                "h" => return self.edit_field(|f| f.delete(Unit::Char, false)),
+                "k" => return self.edit_field(|f| f.delete(Unit::Paragraph, true)),
+                _ => {}
+            }
+        }
 
         match &event.logical_key {
             Key::Named(NamedKey::ArrowLeft) => self.edit_field(movement(false, unit)),
             Key::Named(NamedKey::ArrowRight) => self.edit_field(movement(true, unit)),
-            // 单行输入框中 `↑` / `↓` 移到开头或末尾，加 `Shift` 则选到开头或末尾。
-            Key::Named(NamedKey::ArrowUp | NamedKey::Home) => {
-                self.edit_field(movement(false, Unit::Line))
+            // `⌘↑` `⌘↓`（macOS）到文字的开头、末尾。
+            Key::Named(key @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) if mac && cmd => {
+                self.edit_field(edge(*key == NamedKey::ArrowDown));
             }
-            Key::Named(NamedKey::ArrowDown | NamedKey::End) => {
-                self.edit_field(movement(true, Unit::Line))
+            // `↑` `↓`：多行输入框中上移、下移一个显示行，已在第一行、最后一行时到文字的开头、
+            // 末尾；单行输入框中直接到开头、末尾。
+            Key::Named(key @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) => {
+                let down = *key == NamedKey::ArrowDown;
+                self.edit_field(|f| {
+                    if f.is_multiline() {
+                        f.move_vertical(down, shift);
+                    } else {
+                        f.move_to_edge(down, shift);
+                    }
+                    false
+                });
+            }
+            // `Home` `End` 到行首、行尾；其他平台上加 `Ctrl` 到文字的开头、末尾。
+            Key::Named(key @ (NamedKey::Home | NamedKey::End)) => {
+                let forward = *key == NamedKey::End;
+                if cmd && !mac {
+                    self.edit_field(edge(forward));
+                } else {
+                    self.edit_field(movement(forward, Unit::Line));
+                }
+            }
+            // `PageUp` `PageDown`：多行输入框中移动一页；单行输入框中到开头、末尾。
+            Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) => {
+                let down = *key == NamedKey::PageDown;
+                self.edit_field(|f| {
+                    if f.is_multiline() {
+                        f.move_page(down, shift);
+                    } else {
+                        f.move_to_edge(down, shift);
+                    }
+                    false
+                });
             }
             Key::Named(NamedKey::Backspace) => self.edit_field(|f| f.delete(unit, false)),
             Key::Named(NamedKey::Delete) => self.edit_field(|f| f.delete(unit, true)),
