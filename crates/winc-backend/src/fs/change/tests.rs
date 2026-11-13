@@ -85,15 +85,17 @@ fn virtual_paths_need_a_connection_and_both_paths_on_one_host() {
     fails(unconnected, rename(&remote, &remote));
     fails(unconnected, copy(&remote, &remote).map(drop));
     fails(unconnected, copy_symlink(&remote, &remote));
-    // 一个在本机、一个在远端，或分属两台主机：不支持，本机的文件不受影响。
+    // 一个在本机、一个在远端，或分属两台主机：改名不支持，本机的文件不受影响。
     let unsupported = io::ErrorKind::Unsupported;
     fails(unsupported, rename(&local, &remote));
     fails(unsupported, rename(&remote, &local));
     fails(unsupported, rename(&remote, &other));
-    fails(unsupported, copy(&local, &remote).map(drop));
-    fails(unsupported, copy(&remote, &local).map(drop));
-    fails(unsupported, copy_symlink(&local, &remote));
-    fails(unsupported, copy_symlink(&remote, &other));
+    // 复制可以跨主机，内容经本进程中转：这里没有连接，在访问远端的一侧时失败。
+    fails(unconnected, copy(&local, &remote).map(drop));
+    fails(unconnected, copy(&remote, &local).map(drop));
+    fails(unconnected, copy(&remote, &other).map(drop));
+    fails(unconnected, copy_symlink(&remote, &other));
+    fails(unconnected, set_mode(&remote, 0o644));
     assert_eq!(std::fs::read(&local).unwrap(), b"x");
     std::fs::remove_dir_all(&dir).unwrap();
 }

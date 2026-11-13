@@ -16,7 +16,7 @@ use winc_i18n::t;
 use winc_pty::protocol::ToHelper;
 
 use super::HeaderHit;
-use super::helper::{Launch, environment, launch, os_bytes};
+use super::helper::{Integration, Launch, environment, launch, os_bytes};
 use crate::app::input::context_menu::menu_below;
 use crate::app::input::context_menu::{MenuButton, MenuTarget};
 use crate::app::lifecycle::alert::AlertButton;
@@ -153,7 +153,7 @@ fn run_launch(
         .cwd
         .as_ref()
         .map_or(root.to_path_buf(), |cwd| root.join(cwd));
-    let mut launch = launch(shell, os_bytes(dir.as_os_str()), windows);
+    let mut launch = launch(shell, os_bytes(dir.as_os_str()), windows, Integration::Off);
     let kind = launch_kind(&launch, windows);
     let mut line = command_line(config, kind);
     let args: Vec<String> = match kind {

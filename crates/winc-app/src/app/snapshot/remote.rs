@@ -219,6 +219,29 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
         Some(root.join("src/main.rs").as_path())
     );
     assert!(doc.text().rope().unwrap().to_string().contains("println!"));
+    // 格式化在那台主机上进行：工具按名字在那里查找，内容经标准输入送去；本机的环境不带过去。
+    let shown = |app: &App| app.editor.active().unwrap().text_range(0, usize::MAX);
+    let before = shown(&app).unwrap();
+    let command = "tr a-z A-Z".to_owned();
+    app.config
+        .format_commands
+        .insert("rust".to_owned(), command);
+    app.format_active();
+    app.wait_formatting();
+    assert_eq!(shown(&app).unwrap(), before.to_uppercase());
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+    // 那台主机上没有的工具：说明找不到。
+    let missing = "winc-no-such-formatter".to_owned();
+    app.config
+        .format_commands
+        .insert("rust".to_owned(), missing);
+    app.format_active();
+    app.wait_formatting();
+    let notice = app.notice.text.take().unwrap();
+    assert!(notice.contains("winc-no-such-formatter"), "{notice}");
+    app.config.format_commands.clear();
+    assert!(app.run_action(Action::Undo));
+    assert_eq!(shown(&app).unwrap(), before);
 
     // 目录名之后标出主机；打开远端目录时才有「断开连接」。
     let name = &app.editor.workspace.as_ref().unwrap().name;
@@ -297,6 +320,21 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     app.delete_entries(&[root.join("renamed.rs"), root.join("old")]);
     assert!(!dir.join("renamed.rs").exists() && !dir.join("old").exists());
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+
+    // 本机的文件和目录拖进远端的文件树：内容传到那台主机上；远端的文件也能复制回本机。
+    let near = sample_folder("remote-near").canonicalize().unwrap();
+    std::fs::create_dir_all(near.join("kit/inner")).unwrap();
+    std::fs::write(near.join("kit/inner/tool.txt"), "from here").unwrap();
+    app.copy_entries_into(vec![near.join("kit")], root.clone());
+    assert_eq!(
+        std::fs::read(dir.join("kit/inner/tool.txt")).unwrap(),
+        b"from here"
+    );
+    assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
+    row_of(&app, "kit");
+    let from = root.join("kit/inner/tool.txt");
+    let back = remote::allow_blocking(|| winc_editor::copy_entry(&near, &from, &near)).unwrap();
+    assert_eq!(std::fs::read(back).unwrap(), b"from here");
 
     // 目录不存在：说明原因，已打开的目录不变。
     app.open_remote_picker();

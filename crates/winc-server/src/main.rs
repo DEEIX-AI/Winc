@@ -6,10 +6,17 @@
 //!
 //! 以 `watch <目录>` 为参数时改为监视该目录，把变化写到标准输出（见 `winc_watch`）：由服务
 //! 进程在需要监视时再次运行自身，连接断开或不再需要时结束它。
+//!
+//! 环境中有 `WINC_ASKPASS_SOCKET` 时是被 `git` 或 `ssh` 当作 askpass 程序运行：把参数中的
+//! 提示交给启动那条命令的服务进程，由它转给本机的 winc 询问用户，再把答复写到标准输出。
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    #[cfg(unix)]
+    if std::env::var_os(winc_backend::remote::ASKPASS_SOCKET).is_some() {
+        return answer();
+    }
     let mut args = std::env::args_os().skip(1);
     if args.next().is_some_and(|arg| arg == "watch") {
         let Some(root) = args.next().map(std::path::PathBuf::from) else {
@@ -38,5 +45,23 @@ fn main() -> ExitCode {
     {
         eprintln!("winc-server: this platform is not supported");
         ExitCode::FAILURE
+    }
+}
+
+/// 作为 askpass 程序：提示是第一个参数，答复写到标准输出并以换行结束；用户没有答复、或无法
+/// 联系服务进程时以失败状态退出，`git` 和 `ssh` 按用户取消处理。
+#[cfg(unix)]
+fn answer() -> ExitCode {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+
+    let prompt = std::env::args_os().nth(1).unwrap_or_default();
+    let Ok(Some(mut reply)) = winc_backend::remote::answer_from_server(prompt.as_bytes()) else {
+        return ExitCode::FAILURE;
+    };
+    reply.push(b'\n');
+    match std::io::stdout().write_all(&reply) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::FAILURE,
     }
 }

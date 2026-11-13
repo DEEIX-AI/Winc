@@ -244,6 +244,116 @@ fn files_are_created_changed_and_removed_through_a_connection() {
 }
 
 #[test]
+fn files_are_copied_between_this_machine_and_remote_hosts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (near, dir) = (scratch("transfer-near"), scratch("transfer-far"));
+    let (one, two) = (connect("transfer-one"), connect("transfer-two"));
+    let (far, other) = (through(&one, &dir), through(&two, &dir));
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+    // 本机到远端：内容和可执行位都带过去。
+    std::fs::write(near.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+    std::fs::set_permissions(near.join("run.sh"), PermissionsExt::from_mode(0o750)).unwrap();
+    assert_eq!(
+        fs::copy(near.join("run.sh"), far.join("run.sh")).unwrap(),
+        18
+    );
+    assert_eq!(
+        std::fs::read(dir.join("run.sh")).unwrap(),
+        b"#!/bin/sh\necho hi\n"
+    );
+    assert_eq!(mode(&dir.join("run.sh")), 0o750);
+    // 远端到本机，以及两台远端之间。
+    std::fs::write(dir.join("data"), "from afar").unwrap();
+    assert_eq!(fs::copy(far.join("data"), near.join("data")).unwrap(), 9);
+    assert_eq!(std::fs::read(near.join("data")).unwrap(), b"from afar");
+    assert_eq!(fs::copy(far.join("data"), other.join("again")).unwrap(), 9);
+    assert_eq!(std::fs::read(dir.join("again")).unwrap(), b"from afar");
+    // 符号链接按原样的目标带过去。
+    std::os::unix::fs::symlink("run.sh", near.join("link")).unwrap();
+    fs::copy_symlink(near.join("link"), far.join("link")).unwrap();
+    assert_eq!(
+        std::fs::read_link(dir.join("link")).unwrap(),
+        Path::new("run.sh")
+    );
+    fs::copy_symlink(far.join("link"), near.join("back")).unwrap();
+    assert_eq!(
+        std::fs::read_link(near.join("back")).unwrap(),
+        Path::new("run.sh")
+    );
+    // 源文件不存在：目标不出现。
+    assert!(fs::is_absent(
+        &fs::copy(near.join("none"), far.join("none")).unwrap_err()
+    ));
+    assert!(!dir.join("none").exists());
+
+    // 比留在内存里的上限更大的内容转存到磁盘再写入，不留下临时文件；读回来一致。
+    let large: Vec<u8> = (0..66_000_000u32).map(|i| (i % 253) as u8).collect();
+    std::fs::write(near.join("large.bin"), &large).unwrap();
+    let copied = fs::copy(near.join("large.bin"), far.join("large.bin")).unwrap();
+    assert_eq!(copied, large.len() as u64);
+    assert!(std::fs::read(dir.join("large.bin")).unwrap() == large);
+    let names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(
+        !names
+            .iter()
+            .any(|name| name.to_string_lossy().starts_with(".winc-")),
+        "{names:?}"
+    );
+    std::fs::remove_file(near.join("large.bin")).unwrap();
+    let copied = fs::copy(far.join("large.bin"), near.join("large.bin")).unwrap();
+    assert_eq!(copied, large.len() as u64);
+    assert!(std::fs::read(near.join("large.bin")).unwrap() == large);
+    remote::disconnect(&one);
+    remote::disconnect(&two);
+}
+
+#[test]
+fn a_command_can_ask_the_user_through_the_connection() {
+    let target = connect("asking");
+    let root = virtual_path(&target, b"/");
+    let script = r#"a=$("$GIT_ASKPASS" 'Password for x: ') && printf 'got:%s' "$a"
+SSH_ASKPASS_PROMPT=confirm "$SSH_ASKPASS" 'Trust it?' || printf ' declined:%s' "$?""#;
+    let asked = std::sync::Mutex::new(Vec::new());
+    let answer = |ask: &remote::Ask| {
+        asked.lock().unwrap().push(ask.clone());
+        ask.mode.is_empty().then(|| b"s3cret".to_vec())
+    };
+    let exec = sh(script).asking();
+    let output = remote::exec_asking(&root, &exec, &|| false, &answer).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "got:s3cret declined:1",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ask = |mode: &str, prompt: &str| remote::Ask {
+        mode: mode.into(),
+        prompt: prompt.into(),
+    };
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [ask("", "Password for x: "), ask("confirm", "Trust it?")]
+    );
+    // 没有要求转交输入请求的命令：环境里没有 askpass 程序。
+    let plain = run(&root, &sh(r#"printf '%s' "${GIT_ASKPASS:-none}""#)).unwrap();
+    assert_eq!(plain.stdout, b"none");
+    // 提问用的套接字随命令结束而删除。
+    let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("winc-ask-"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    remote::disconnect(&target);
+}
+
+#[test]
 fn documents_are_opened_and_saved_through_a_connection() {
     use std::io::Read;
     use std::os::unix::fs::PermissionsExt;

@@ -443,6 +443,7 @@ impl App {
             | UserEvent::RemoteConnected
             | UserEvent::RemoteListed
             | UserEvent::RemoteWatching
+            | UserEvent::FormatPlanned
             | UserEvent::FileWorked
             | UserEvent::GitMergeSides
             | UserEvent::GitLog

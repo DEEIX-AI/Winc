@@ -10,11 +10,12 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -38,8 +39,17 @@ const GRACE: Duration = Duration::from_millis(200);
 
 /// 写应答的一端，由读取请求的线程和各个运行命令的线程共用。
 type Output = Arc<Mutex<Box<dyn Write + Send>>>;
-/// 运行中的命令：请求号对应其取消标记。
-type Running = Arc<Mutex<HashMap<u32, Arc<AtomicBool>>>>;
+/// 运行中的命令：请求号对应其状态。
+type Running = Arc<Mutex<HashMap<u32, Arc<Job>>>>;
+
+/// 一条运行中的命令。
+#[derive(Default)]
+struct Job {
+    /// 是否已要求强制结束。
+    cancelled: AtomicBool,
+    /// 命令提出、尚未得到答复的输入请求：编号对应等待答复的一方。
+    asks: Mutex<HashMap<u32, mpsc::Sender<Option<Vec<u8>>>>>,
+}
 
 /// 逐个处理 `input` 中的请求并把应答写到 `output`，直到输入结束。
 ///
@@ -88,8 +98,23 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
         let sent = match frame.kind {
             kind::CANCEL => {
                 let running = running.lock().unwrap_or_else(PoisonError::into_inner);
-                if let Some(cancelled) = running.get(&frame.id) {
-                    cancelled.store(true, Ordering::Relaxed);
+                if let Some(job) = running.get(&frame.id) {
+                    job.cancelled.store(true, Ordering::Relaxed);
+                }
+                Ok(())
+            }
+            kind::ANSWER => {
+                let job = (running.lock().unwrap_or_else(PoisonError::into_inner))
+                    .get(&frame.id)
+                    .cloned();
+                // 命令已经结束，或答复不合格式：没有等待它的一方，丢弃。
+                if let (Some(job), Ok((ticket, reply))) = (job, read_answer(&frame.payload)) {
+                    let waiting = (job.asks.lock())
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&ticket);
+                    if let Some(waiting) = waiting {
+                        let _ = waiting.send(reply);
+                    }
                 }
                 Ok(())
             }
@@ -106,7 +131,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static) -> io::R
             }
             kind::SAVE_DATA => {
                 if let Some(upload) = uploads.get_mut(&frame.id) {
-                    upload.push(&frame.payload);
+                    upload.push(&frame.payload, frame.id);
                 }
                 Ok(())
             }
@@ -144,14 +169,18 @@ fn reply(output: &Output, id: u32, result: io::Result<Vec<u8>>) -> io::Result<()
 
 /// 在新线程上运行 `frame` 请求的命令，结束时写出应答。
 fn start(frame: Frame, output: &Output, running: &Running) {
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let job = Arc::new(Job::default());
     running
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .insert(frame.id, Arc::clone(&cancelled));
+        .insert(frame.id, Arc::clone(&job));
     let (output, running) = (Arc::clone(output), Arc::clone(running));
     thread::spawn(move || {
-        let result = exec(&frame, &cancelled, &output);
+        let result = exec(&frame, &job, &output);
+        // 还在等答复的输入请求不会再有答复：丢弃发送端，等待的一方按没有答复处理。
+        (job.asks.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         running
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -167,8 +196,8 @@ fn drain(running: &Running) {
     loop {
         let left = {
             let running = running.lock().unwrap_or_else(PoisonError::into_inner);
-            for cancelled in running.values() {
-                cancelled.store(true, Ordering::Relaxed);
+            for job in running.values() {
+                job.cancelled.store(true, Ordering::Relaxed);
             }
             running.len()
         };
@@ -270,6 +299,19 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
             }
             Ok(Vec::new())
         }
+        kind::SET_MODE => {
+            let (path, mode) = (path(&mut input)?, input.u32()?);
+            input.finish()?;
+            crate::fs::set_mode(path, mode)?;
+            Ok(Vec::new())
+        }
+        kind::SYMLINK => {
+            let target = input.bytes()?.to_vec();
+            let link = path(&mut input)?;
+            input.finish()?;
+            std::os::unix::fs::symlink(OsStr::from_bytes(&target), link)?;
+            Ok(Vec::new())
+        }
         kind::REMOVE_FILE => {
             let path = path(&mut input)?;
             input.finish()?;
@@ -289,10 +331,11 @@ fn handle(frame: &Frame) -> io::Result<Vec<u8>> {
     }
 }
 
-/// 一次保存中已收到的内容上限（字节，64 MiB），超过时该次保存失败。
+/// 一次保存中留在内存里的内容上限（字节，64 MiB），超过后转存到磁盘上。
 ///
-/// 内容收齐之前留在内存中。全部在内存中的文档不超过 `LARGE_FILE`（16 MiB），按其他编码写出时
-/// 可能更大（UTF-16 至多为 UTF-8 的两倍）；取其四倍，对方无法让本进程无限占用内存。
+/// 全部在内存中的文档不超过 `LARGE_FILE`（16 MiB），按其他编码写出时可能更大（UTF-16 至多为
+/// UTF-8 的两倍）；取其四倍，文档的保存都在内存中收齐。更大的内容（传到这台主机上的文件）
+/// 写进目标目录里的临时文件，对方无法让本进程无限占用内存。
 const UPLOAD_MAX: usize = 64 << 20;
 
 /// 正在接收的一次保存。
@@ -301,8 +344,11 @@ struct Upload {
     bom: bool,
     in_memory: bool,
     content: Vec<u8>,
-    /// 是否已超过 [`UPLOAD_MAX`]：之后的内容不再保留，结束时报错。
-    overflowed: bool,
+    /// 超过 [`UPLOAD_MAX`] 之后存放内容的临时文件：已从目录中删除，只由这个句柄引用，关闭后
+    /// 占用的空间随即释放。
+    spilled: Option<std::fs::File>,
+    /// 转存或写入临时文件时的错误：之后的内容不再保留，结束时报告它。
+    failed: Option<io::Error>,
 }
 
 impl Upload {
@@ -317,18 +363,47 @@ impl Upload {
             bom,
             in_memory,
             content: Vec::new(),
-            overflowed: false,
+            spilled: None,
+            failed: None,
         })
     }
 
-    fn push(&mut self, data: &[u8]) {
-        if self.content.len() + data.len() > UPLOAD_MAX {
-            self.overflowed = true;
-            self.content = Vec::new();
+    fn push(&mut self, data: &[u8], id: u32) {
+        if self.failed.is_some() {
+            return;
         }
-        if !self.overflowed {
+        if self.spilled.is_none() && self.content.len() + data.len() <= UPLOAD_MAX {
             self.content.extend_from_slice(data);
+            return;
         }
+        let written = match &mut self.spilled {
+            Some(file) => file.write_all(data),
+            None => self.spill(id).and_then(|mut file| {
+                file.write_all(&std::mem::take(&mut self.content))?;
+                file.write_all(data)?;
+                self.spilled = Some(file);
+                Ok(())
+            }),
+        };
+        if let Err(error) = written {
+            (self.content, self.spilled, self.failed) = (Vec::new(), None, Some(error));
+        }
+    }
+
+    /// 在目标所在的目录里建一个只有本进程能访问的临时文件并立即从目录中删除；`id` 是这次
+    /// 保存的请求号，用来区分同时进行的几次保存。与目标在同一个文件系统上：那里本来就要有
+    /// 放下这些内容的空间。
+    fn spill(&self, id: u32) -> io::Result<std::fs::File> {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let dir = absolute(&self.path)?.parent().unwrap_or(Path::new("/"));
+        let name = format!(".winc-upload-{}-{id}", std::process::id());
+        let path = dir.join(name);
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true).mode(0o600);
+        let file = options.open(&path)?;
+        std::fs::remove_file(&path)?;
+        Ok(file)
     }
 }
 
@@ -342,8 +417,9 @@ fn finish_upload(upload: Option<Upload>, payload: &[u8]) -> io::Result<Vec<u8>> 
     if !commit {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "save abandoned"));
     }
-    if upload.overflowed {
-        return Err(io::Error::other("content too large"));
+    let mut upload = upload;
+    if let Some(error) = upload.failed.take() {
+        return Err(error);
     }
     let options = crate::fs::SaveOptions {
         bom: upload.bom,
@@ -357,7 +433,14 @@ fn finish_upload(upload: Option<Upload>, payload: &[u8]) -> io::Result<Vec<u8>> 
         reason = "服务进程只在 Unix 上运行，路径没有需要去掉的前缀"
     )]
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let saved = crate::fs::save(&target, &options, |out| out.write_all(&upload.content));
+    let saved = crate::fs::save(&target, &options, |out| match &mut upload.spilled {
+        Some(file) => {
+            use std::io::Seek;
+            file.rewind()?;
+            io::copy(file, out).map(drop)
+        }
+        None => out.write_all(&upload.content),
+    });
     let result = match saved {
         Ok(metadata) => {
             return Ok(wire::write_metadata(Writer::default().u8(kind::SAVED), &metadata).finish());
@@ -463,9 +546,137 @@ fn list(frame: &Frame, output: &Output) -> Result<(), Failure> {
     Ok(())
 }
 
-/// 运行 `frame` 请求的命令：输出分段写到 `output`，结束时返回退出码；`cancelled` 被设置时
+/// 解析 [`kind::ANSWER`] 的载荷：请求的编号和答复（没有答复时为 `None`）。
+fn read_answer(payload: &[u8]) -> io::Result<(u32, Option<Vec<u8>>)> {
+    let mut input = Reader::new(payload);
+    let (ticket, answered) = (input.u32()?, input.u8()? != 0);
+    let reply = input.bytes()?.to_vec();
+    input.finish()?;
+    Ok((ticket, answered.then_some(reply)))
+}
+
+/// 把运行中的命令提出的输入请求转给对端的通道：一个只有用户本人可以访问的套接字，命令的
+/// askpass 程序（服务进程自身，见 [`answer_from_server`]）连上它提问。
+///
+/// 套接字放在一个新建的、权限为 0700 的临时目录里；丢弃时停止接受连接并删除目录。
+struct Relay {
+    dir: PathBuf,
+    done: Arc<AtomicBool>,
+}
+
+impl Relay {
+    /// 套接字的路径。
+    fn socket(&self) -> PathBuf {
+        self.dir.join("ask")
+    }
+
+    /// 建立通道并开始接受连接；`id` 是命令的请求号。
+    fn open(id: u32, job: &Arc<Job>, output: &Output) -> io::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let name = format!("winc-ask-{}-{id}", std::process::id());
+        let dir = std::env::temp_dir().join(name);
+        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+        let relay = Self {
+            dir,
+            done: Arc::default(),
+        };
+        let listener = UnixListener::bind(relay.socket())?;
+        listener.set_nonblocking(true)?;
+        let (done, job, output) = (Arc::clone(&relay.done), Arc::clone(job), Arc::clone(output));
+        thread::spawn(move || {
+            let mut ticket = 0;
+            while !done.load(Ordering::Relaxed) {
+                let Ok((stream, _)) = listener.accept() else {
+                    thread::sleep(POLL);
+                    continue;
+                };
+                ticket += 1;
+                let (job, output) = (Arc::clone(&job), Arc::clone(&output));
+                // 每次提问各用一个线程：等用户答复期间不耽误别的提问。
+                thread::spawn(move || {
+                    let _ = relay_one(stream, id, ticket, &job, &output);
+                });
+            }
+        });
+        Ok(relay)
+    }
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Relaxed);
+        let _ = std::fs::remove_file(self.socket());
+        let _ = std::fs::remove_dir(&self.dir);
+    }
+}
+
+/// 处理 askpass 程序的一次提问：读入它发来的提问方式和提示，转给对端，等到答复后写回。
+///
+/// 发来的内容是提问的方式、一个换行、提示的文字；写回的第一个字节是有没有答复，其后是答复。
+fn relay_one(
+    mut stream: UnixStream,
+    id: u32,
+    ticket: u32,
+    job: &Job,
+    output: &Output,
+) -> io::Result<()> {
+    // 有的系统上接受的连接沿用监听套接字的非阻塞设置。
+    stream.set_nonblocking(false)?;
+    let mut request = Vec::new();
+    (&mut stream)
+        .take(ASK_MAX as u64)
+        .read_to_end(&mut request)?;
+    let split = request.iter().position(|&b| b == b'\n');
+    let (mode, prompt) = request.split_at(split.unwrap_or(0));
+    let prompt = prompt.strip_prefix(b"\n").unwrap_or(prompt);
+    let (sender, answer) = mpsc::channel();
+    (job.asks.lock())
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(ticket, sender);
+    let payload = Writer::default().u32(ticket).bytes(mode).bytes(prompt);
+    write_frame(output, kind::ASK, id, &payload.finish())?;
+    // 命令结束、连接断开时发送端被丢弃：按没有答复处理。
+    match answer.recv().ok().flatten() {
+        Some(reply) => {
+            stream.write_all(&[1])?;
+            stream.write_all(&reply)
+        }
+        None => stream.write_all(&[0]),
+    }
+}
+
+/// 一次提问的内容上限（字节，64 KiB）：提示是一两行文字，远小于此；超出的部分不读。
+const ASK_MAX: usize = 64 << 10;
+
+/// 作为命令的 askpass 程序运行时调用：把提示 `prompt` 交给启动该命令的服务进程（经环境变量
+/// [`ASKPASS_SOCKET`](super::ASKPASS_SOCKET) 给出的套接字），返回用户的答复；用户没有答复时
+/// 返回 `None`。
+///
+/// # Errors
+///
+/// 没有该环境变量，或无法连接、读写套接字时返回对应的 `io::Error`。
+pub fn answer_from_server(prompt: &[u8]) -> io::Result<Option<Vec<u8>>> {
+    let socket = std::env::var_os(super::ASKPASS_SOCKET)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no askpass socket"))?;
+    let mut stream = UnixStream::connect(socket)?;
+    let mode = std::env::var_os("SSH_ASKPASS_PROMPT").unwrap_or_default();
+    stream.write_all(mode.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.write_all(prompt)?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply)?;
+    Ok(match reply.split_first() {
+        Some((1, answer)) => Some(answer.to_vec()),
+        _ => None,
+    })
+}
+
+/// 运行 `frame` 请求的命令：输出分段写到 `output`，结束时返回退出码；`job` 被要求结束时
 /// 强制结束命令并返回 [`io::ErrorKind::Interrupted`]。
-fn exec(frame: &Frame, cancelled: &AtomicBool, output: &Output) -> io::Result<Vec<u8>> {
+fn exec(frame: &Frame, job: &Arc<Job>, output: &Output) -> io::Result<Vec<u8>> {
+    let cancelled = &job.cancelled;
     let mut input = Reader::new(&frame.payload);
     let text = |bytes: &[u8]| -> io::Result<()> {
         if bytes.contains(&0) {
@@ -505,7 +716,22 @@ fn exec(frame: &Frame, cancelled: &AtomicBool, output: &Output) -> io::Result<Ve
         command.env(OsStr::from_bytes(name), OsStr::from_bytes(value));
     }
     let stdin = input.bytes()?.to_vec();
+    let ask = input.u8()? != 0;
     input.finish()?;
+    // 命令需要用户输入时运行服务进程自身来提问（`git` 和它启动的 `ssh` 各认一个变量）；
+    // `SSH_ASKPASS_REQUIRE` 使 `ssh` 不依赖 `DISPLAY` 和控制终端。通道随命令结束而关闭。
+    // 通道建不起来（临时目录不可写）时命令照常运行，只是需要输入时会失败。
+    let relay = ask
+        .then(|| Relay::open(frame.id, job, output).ok())
+        .flatten();
+    if let Some(relay) = &relay {
+        let this = std::env::current_exe()?;
+        command
+            .env("GIT_ASKPASS", &this)
+            .env("SSH_ASKPASS", &this)
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env(super::ASKPASS_SOCKET, relay.socket());
+    }
 
     // 命令自成一个进程组：取消时连同它启动的子进程一起结束，否则子进程继续占着输出的管道。
     let mut child = command
@@ -594,6 +820,13 @@ fn wait(child: &mut Child, cancelled: &AtomicBool) -> io::Result<Option<std::pro
         }
         thread::sleep(POLL);
     }
+}
+
+/// 向对端写出一帧并刷新。
+fn write_frame(output: &Output, kind: u8, id: u32, payload: &[u8]) -> io::Result<()> {
+    let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+    wire::write_frame(&mut *output, kind, id, payload)?;
+    output.flush()
 }
 
 /// 在新线程上把 `pipe` 的内容分段写成来源为 `stream` 的 [`kind::CHUNK`]，直到管道关闭。

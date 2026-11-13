@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 pub use deploy::{Abort, ConnectError, Deploy, Program, Stage};
 #[cfg(unix)]
-pub use server::serve;
+pub use server::{answer_from_server, serve};
 pub(crate) use wire::MAX_READ;
 use wire::{Frame, Reader, Writer, kind};
 
@@ -134,8 +134,8 @@ impl Link {
         // 读到不合协议的帧、输入结束、读取出错：都无法继续使用该连接。
         while let Ok(Some(frame)) = wire::read_frame(&mut input) {
             let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
-            // 输出的一段之后还有后续的帧，保留接收端；其余类型是最后一帧。
-            let sender = if frame.kind == kind::CHUNK {
+            // 输出的一段、输入请求之后还有后续的帧，保留接收端；其余类型是最后一帧。
+            let sender = if matches!(frame.kind, kind::CHUNK | kind::ASK) {
                 waiting.replies.get(&frame.id).cloned()
             } else {
                 waiting.replies.remove(&frame.id)
@@ -509,6 +509,18 @@ impl Connection {
         self.command(kind::COPY_SYMLINK, payload)
     }
 
+    /// 把远端文件 `path` 的权限位设为 `mode`。
+    pub(crate) fn set_mode(&self, path: &[u8], mode: u32) -> io::Result<()> {
+        let payload = Writer::default().bytes(path).u32(mode).finish();
+        self.command(kind::SET_MODE, payload)
+    }
+
+    /// 在远端创建指向 `target` 的符号链接 `link`。
+    pub(crate) fn symlink(&self, target: &[u8], link: &[u8]) -> io::Result<()> {
+        let payload = Writer::default().bytes(target).bytes(link).finish();
+        self.command(kind::SYMLINK, payload)
+    }
+
     /// 删除远端文件 `path`。
     pub(crate) fn remove_file(&self, path: &[u8]) -> io::Result<()> {
         self.command(kind::REMOVE_FILE, Writer::default().bytes(path).finish())
@@ -569,7 +581,12 @@ impl Connection {
     ///
     /// 等待期间每隔 [`CANCEL_POLL`] 调用 `cancel`：返回真时通知对端强制结束命令（连同它启动的
     /// 子进程），命令结束后返回 [`io::ErrorKind::Interrupted`]。
-    fn exec(&self, exec: &Exec, cancel: &dyn Fn() -> bool) -> io::Result<Output> {
+    fn exec(
+        &self,
+        exec: &Exec,
+        cancel: &dyn Fn() -> bool,
+        answer: &dyn Fn(&Ask) -> Option<Vec<u8>>,
+    ) -> io::Result<Output> {
         let (id, replies) = self.link.send(kind::EXEC, &exec.encode())?;
         let mut output = Output::default();
         let mut asked = false;
@@ -587,6 +604,24 @@ impl Connection {
                     continue;
                 }
             };
+            // 命令在等用户输入：答复之前它不会继续，也不会有别的输出。
+            if frame.kind == kind::ASK {
+                let mut request = Reader::new(&frame.payload);
+                let ticket = request.u32()?;
+                let ask = Ask {
+                    mode: request.bytes()?.to_vec(),
+                    prompt: request.bytes()?.to_vec(),
+                };
+                request.finish()?;
+                let reply = answer(&ask);
+                let payload = Writer::default()
+                    .u32(ticket)
+                    .flag(reply.is_some())
+                    .bytes(&reply.unwrap_or_default())
+                    .finish();
+                self.link.write(kind::ANSWER, id, &payload)?;
+                continue;
+            }
             if frame.kind != kind::CHUNK {
                 let reply = finish(frame)?;
                 let mut reply = Reader::new(&reply);
@@ -742,8 +777,8 @@ pub(crate) type Pair = (Arc<Connection>, Vec<u8>, Vec<u8>);
 ///
 /// # Errors
 ///
-/// 一个在本机、一个在远端，或分属两个连接时返回 [`io::ErrorKind::Unsupported`]：跨主机的改名和
-/// 复制尚不支持。其余同 [`connection`]。
+/// 一个在本机、一个在远端，或分属两个连接时返回 [`io::ErrorKind::Unsupported`]：改名不能跨
+/// 主机，复制由调用方先分出跨主机的情况。其余同 [`connection`]。
 pub(crate) fn pair(from: &Path, to: &Path) -> io::Result<Option<Pair>> {
     match (crate::locate(from), crate::locate(to)) {
         (None, None) => Ok(None),
@@ -768,9 +803,24 @@ pub struct Exec {
     args: Vec<Vec<u8>>,
     envs: Vec<(Vec<u8>, Vec<u8>)>,
     stdin: Vec<u8>,
+    /// 命令需要用户输入时是否转给本机答复，见 [`Exec::asking`]。
+    ask: bool,
     /// 输出（标准输出与标准错误合计）的字节数上限；只在本机一侧使用，不发给对端。
     limit: Option<usize>,
 }
+
+/// 远端运行的命令提出的一次输入请求。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ask {
+    /// 提问的方式：`ssh` 设置的 `SSH_ASKPASS_PROMPT`（`confirm`、`none`），没有时为空。
+    pub mode: Vec<u8>,
+    /// 提示的文字。
+    pub prompt: Vec<u8>,
+}
+
+/// 远端的命令向用户提问时，服务进程交给它的 askpass 程序（服务进程自身）用来找到服务进程的
+/// 环境变量：值是一个只有用户本人可以访问的套接字的路径。
+pub const ASKPASS_SOCKET: &str = "WINC_ASKPASS_SOCKET";
 
 impl Exec {
     /// 创建运行程序 `program` 的命令；`program` 不含 `/` 时在远端的 `PATH` 中查找。
@@ -808,6 +858,14 @@ impl Exec {
         self
     }
 
+    /// 让命令（`git`，以及它启动的 `ssh`）需要用户输入时把请求转回本机，由 [`exec_asking`] 的
+    /// 调用方答复。对端为此把 `GIT_ASKPASS`、`SSH_ASKPASS` 设为服务进程自身。
+    #[must_use]
+    pub fn asking(mut self) -> Self {
+        self.ask = true;
+        self
+    }
+
     /// 设置写入命令标准输入的内容；命令、参数和输入合计不能超过一帧（约 1 MiB）。
     #[must_use]
     pub fn stdin(mut self, stdin: impl Into<Vec<u8>>) -> Self {
@@ -828,7 +886,7 @@ impl Exec {
         for (name, value) in &self.envs {
             out = out.bytes(name).bytes(value);
         }
-        out.bytes(&self.stdin).finish()
+        out.bytes(&self.stdin).flag(self.ask).finish()
     }
 }
 
@@ -854,12 +912,27 @@ pub struct Output {
 /// 远端无法启动命令时返回对端报告的错误；被取消时返回 [`io::ErrorKind::Interrupted`]。
 /// 命令以非零的退出码结束不是错误，见 [`Output::code`]。
 pub fn exec(dir: &Path, exec: &Exec, cancel: &dyn Fn() -> bool) -> io::Result<Output> {
+    exec_asking(dir, exec, cancel, &|_| None)
+}
+
+/// 同 [`exec`]；命令提出输入请求时（见 [`Exec::asking`]）调用 `answer`，返回 `None` 表示
+/// 不答复，命令按用户取消处理。`answer` 在调用本函数的线程上执行，可以等待用户。
+///
+/// # Errors
+///
+/// 同 [`exec`]。
+pub fn exec_asking(
+    dir: &Path,
+    exec: &Exec,
+    cancel: &dyn Fn() -> bool,
+    answer: &dyn Fn(&Ask) -> Option<Vec<u8>>,
+) -> io::Result<Output> {
     let Some(at) = crate::locate(dir) else {
         return Err(io::ErrorKind::InvalidInput.into());
     };
     let mut exec = exec.clone();
     exec.cwd = at.path;
-    connection(&at.target)?.exec(&exec, cancel)
+    connection(&at.target)?.exec(&exec, cancel, answer)
 }
 
 /// 在远端运行、输出随到随读的命令，由 [`spawn`] 启动。
@@ -1015,6 +1088,8 @@ pub fn spawn(dir: &Path, exec: &Exec) -> io::Result<Running> {
     };
     let mut exec = exec.clone();
     exec.cwd = at.path;
+    // 输出随到随读的命令没有答复输入请求的一方。
+    exec.ask = false;
     let connection = connection(&at.target)?;
     let (id, replies) = connection.link.send(kind::EXEC, &exec.encode())?;
     Ok(Running {

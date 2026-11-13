@@ -274,13 +274,74 @@ fn remote_exec(command: &Command, input: Vec<u8>) -> winc_backend::remote::Exec 
     for arg in command.get_args() {
         exec = exec.arg(arg.as_encoded_bytes());
     }
-    // 值为 `None` 的是要从环境中移除的变量：本机的环境本来就不传递，无需处理。
+    // 值为 `None` 的是要从环境中移除的变量：本机的环境本来就不传递，无需处理。本机的 askpass
+    // 程序和它的端点在远端没有意义，不传：远端的输入请求另经连接转回（见 `Askpass`）。
     for (name, value) in command.get_envs() {
-        if let Some(value) = value {
+        if let Some(value) = value.filter(|_| !ASKPASS_VARS.iter().any(|var| name == *var)) {
             exec = exec.env(name.as_encoded_bytes(), value.as_encoded_bytes());
         }
     }
     exec
+}
+
+/// 为本机的 `git` 设置 askpass 程序的各个环境变量，见 `Git::ask_through`。
+const ASKPASS_VARS: [&str; 4] = [
+    "GIT_ASKPASS",
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    crate::git::ASKPASS_ENDPOINT,
+];
+
+/// `command` 上设置的本机 askpass 程序及其端点：远端运行的命令需要用户输入时，由它在本机
+/// 询问用户。
+struct Askpass {
+    program: std::ffi::OsString,
+    endpoint: std::ffi::OsString,
+}
+
+impl Askpass {
+    /// 取出 `command` 上设置的 askpass 程序；没有设置时返回 `None`。
+    fn of(command: &Command) -> Option<Self> {
+        let value = |wanted: &str| {
+            let found = command.get_envs().find(|(name, _)| *name == wanted)?;
+            found.1.map(std::ffi::OsStr::to_os_string)
+        };
+        Some(Self {
+            program: value("GIT_ASKPASS")?,
+            endpoint: value(crate::git::ASKPASS_ENDPOINT)?,
+        })
+    }
+
+    /// 运行本机的 askpass 程序回答远端的一次提问，方式与 `git` 运行它相同：提示作为参数，
+    /// 答复取自标准输出；用户取消（程序以失败状态退出）时返回 `None`。
+    fn answer(&self, ask: &winc_backend::remote::Ask) -> Option<Vec<u8>> {
+        let mut program = Command::new(&self.program);
+        program
+            .arg(String::from_utf8_lossy(&ask.prompt).as_ref())
+            .env(crate::git::ASKPASS_ENDPOINT, &self.endpoint)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null());
+        // Windows 上图形程序启动命令行工具时默认弹出控制台窗口：`CREATE_NO_WINDOW`
+        // （0x0800_0000）使其不创建窗口。
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(&mut program, 0x0800_0000);
+        if !ask.mode.is_empty() {
+            program.env(
+                "SSH_ASKPASS_PROMPT",
+                String::from_utf8_lossy(&ask.mode).as_ref(),
+            );
+        }
+        let output = program
+            .output()
+            .ok()
+            .filter(|output| output.status.success())?;
+        let reply = output.stdout;
+        Some(
+            reply
+                .strip_suffix(b"\n")
+                .map_or(reply.clone(), <[u8]>::to_vec),
+        )
+    }
 }
 
 /// 在目录 `dir` 所在的远端主机上运行 `command`，以 `dir` 为工作目录。
@@ -297,13 +358,18 @@ fn run_remote(
 ) -> Result<Output, RunError> {
     use winc_backend::remote;
 
-    let exec = remote_exec(command, input).limit(MAX_OUTPUT);
+    let mut exec = remote_exec(command, input).limit(MAX_OUTPUT);
+    let askpass = Askpass::of(command);
+    if askpass.is_some() {
+        exec = exec.asking();
+    }
     if cancel.is_cancelled() {
         return Err(RunError::Cancelled);
     }
     let deadline = Instant::now() + timeout;
     let stop = || cancel.is_cancelled() || Instant::now() >= deadline;
-    let output = match remote::exec(dir, &exec, &stop) {
+    let answer = |ask: &remote::Ask| askpass.as_ref().and_then(|askpass| askpass.answer(ask));
+    let output = match remote::exec_asking(dir, &exec, &stop, &answer) {
         Ok(output) => output,
         Err(_) if cancel.is_cancelled() => return Err(RunError::Cancelled),
         Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(RunError::Timeout),

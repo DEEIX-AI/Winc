@@ -826,10 +826,8 @@ impl Git {
         let Some(askpass) = &self.askpass else {
             return;
         };
-        // askpass 程序在本机，远端的 `git` 无法运行它：远端仓库需要输入时直接失败。
-        if winc_backend::is_remote(root) {
-            return;
-        }
+        // 远端的仓库：`git` 在那台主机上运行，它的输入请求由服务进程转回本机，再交给这里的
+        // askpass 程序（见 `process::run`），这些变量本身不发到远端。
         command
             .env("GIT_ASKPASS", &askpass.program)
             .env("SSH_ASKPASS", &askpass.program)

@@ -15,7 +15,7 @@ mod tests;
 
 pub use change::{
     copy, copy_symlink, create_dir, create_dir_all, create_new, remove_all, remove_file, rename,
-    write,
+    set_mode, write,
 };
 pub use dir::{Entry, ReadDir, read_dir};
 pub use open::{Handle, Opened, open};

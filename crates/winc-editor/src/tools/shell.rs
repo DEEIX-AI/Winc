@@ -252,7 +252,13 @@ fn windows_names(name: &str, pathext: &str) -> Vec<String> {
 }
 
 /// 是否为可执行文件：Unix 上要求是普通文件且设置了执行权限位，其他平台只要求是普通文件。
+/// 远端主机上的路径按那台主机上的权限位判断，要等远端应答。
 pub(crate) fn is_executable(path: &Path) -> bool {
+    if winc_backend::is_remote(path) {
+        return winc_backend::fs::metadata(path).is_ok_and(|metadata| {
+            metadata.kind.is_file() && metadata.unix.is_some_and(|unix| unix.mode & 0o111 != 0)
+        });
+    }
     let Ok(metadata) = std::fs::metadata(path) else {
         return false;
     };

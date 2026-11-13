@@ -33,6 +33,44 @@ const SERVER_DIR: &str = "WINC_SERVER_DIR";
 /// 服务进程的文件名前缀，其后是它所运行的系统（写法见 [`Program::system`]）。
 const SERVER_PREFIX: &str = "winc-server-";
 
+/// 把 shell 集成脚本写到远端的脚本：参数是成对的相对路径和内容，写到主目录下的
+/// `winc_pty::scripts::REMOTE_DIR`。先写到旁边再改名替换：正在启动的 shell 不会读到写了一半的
+/// 脚本。目录和文件只有用户本人可以访问。
+const INSTALL_SHELL: &str = concat!(
+    r#"umask 077; d=$HOME/$1; shift; while [ $# -gt 1 ]; do f=$d/$1; "#,
+    r#"mkdir -p "${f%/*}" && printf %s "$2" > "$f.new" && mv -f "$f.new" "$f" || exit 1; "#,
+    r#"shift 2; done"#,
+);
+
+/// 集成脚本已经写好的主机：在这些主机上开的终端注入 shell 集成。
+static SHELL_READY: Mutex<Vec<Target>> = Mutex::new(Vec::new());
+
+/// 是否 `target` 上的 shell 集成脚本已经写好。
+pub(crate) fn shell_ready(target: &Target) -> bool {
+    let ready = SHELL_READY.lock().unwrap_or_else(PoisonError::into_inner);
+    ready.contains(target)
+}
+
+/// 把 shell 集成脚本写到 `target` 上，一次往返；写不成（主目录只读）时那台主机上的终端不带
+/// 集成，其余不受影响。脚本每次连接都重写：内容随本程序的版本变化。
+fn install_shell_scripts(target: &Target) {
+    let mut exec = Exec::new("sh")
+        .arg("-c")
+        .arg(INSTALL_SHELL)
+        .arg("winc")
+        .arg(winc_pty::scripts::REMOTE_DIR);
+    for (name, content) in winc_pty::scripts::remote() {
+        exec = exec.arg(name).arg(content);
+    }
+    let home = winc_backend::virtual_path(target, b"/");
+    let written = remote::exec(&home, &exec, &|| false).is_ok_and(|output| output.code == Some(0));
+    let mut ready = SHELL_READY.lock().unwrap_or_else(PoisonError::into_inner);
+    ready.retain(|known| known != target);
+    if written {
+        ready.push(target.clone());
+    }
+}
+
 /// 取得目录在远端的真实路径的脚本，参数是用户输入的目录。
 ///
 /// 相对路径和以 `~/` 开头的路径相对于主目录，空的输入表示主目录；`pwd -P` 给出不经过符号
@@ -487,6 +525,9 @@ fn connect(
         connection.on_close(move || closed());
     }
     remote::register(target.clone(), connection);
+    // 写集成脚本不耽误打开目录：在另一个线程上进行，写好之后开的终端才带集成。
+    let host = target.clone();
+    std::thread::spawn(move || install_shell_scripts(&host));
     Ok(())
 }
 
@@ -1132,6 +1173,37 @@ Host -oProxyCommand=x a;b
         )
         .unwrap_err();
         assert!(missing.contains("/winc/no/such/folder"), "{missing}");
+
+        // 那台主机上登录 shell 的 `PATH` 和按名字查找程序：格式化工具由此找到。
+        let path = winc_editor::remote_env::login_path(&home).unwrap();
+        assert!(path.split(':').any(|dir| dir == "/usr/bin"), "{path}");
+        let sh = winc_editor::remote_env::find_program(&home, "sh").unwrap();
+        assert!(sh.is_absolute() && sh.ends_with("sh"), "{}", sh.display());
+        assert_eq!(
+            winc_editor::remote_env::find_program(&home, "winc-no-such-tool"),
+            None
+        );
+
+        // shell 集成脚本在连接之后写到那台主机上，只有用户本人可以读。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !shell_ready(&target) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(shell_ready(&target));
+        for (name, content) in winc_pty::scripts::remote() {
+            let file = home.join(winc_pty::scripts::REMOTE_DIR).join(name);
+            assert_eq!(
+                winc_backend::fs::read_to_string(&file).unwrap(),
+                content,
+                "{name}"
+            );
+            let mode = winc_backend::fs::metadata(&file)
+                .unwrap()
+                .unix
+                .unwrap()
+                .mode;
+            assert_eq!(mode & 0o077, 0, "{name}");
+        }
         remote::disconnect(&target);
     }
 }

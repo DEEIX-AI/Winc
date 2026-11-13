@@ -262,6 +262,8 @@ pub enum UserEvent {
     RemoteClosed(winc_backend::Target),
     /// 后台的文件操作（新建、改名、移动、删除）已完成。
     FileWorked,
+    /// 后台为远端文件的格式化选好了工具。
+    FormatPlanned,
     /// 连接远端主机的 `ssh` 发来了输入请求。
     RemoteQuestion,
     /// 后台到远端主机的连接到达了新的阶段。
@@ -1180,6 +1182,7 @@ impl App {
             UserEvent::RemoteConnected => self.poll_remote(),
             UserEvent::RemoteListed => self.poll_remote_listings(),
             UserEvent::RemoteWatching => self.poll_remote_watcher(),
+            UserEvent::FormatPlanned => self.poll_formatting(),
             UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),

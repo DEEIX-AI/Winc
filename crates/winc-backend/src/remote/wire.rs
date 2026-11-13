@@ -14,7 +14,7 @@ use crate::fs::{Kind, Metadata, Stamp, Unix};
 
 /// 协议的版本号。连接建立时双方交换，不一致时不继续：服务进程随安装包发布，版本总是相同，
 /// 不一致说明远端的程序不是这一版安装包上传的。
-pub(crate) const VERSION: u32 = 3;
+pub(crate) const VERSION: u32 = 4;
 /// 一次读取请求最多返回的字节数（字节，1 MiB）。
 ///
 /// 取值由两方面约束：单帧在发送完之前占用连接，过大时其他请求等待的时间变长；过小时读取一个
@@ -70,6 +70,13 @@ pub(crate) mod kind {
     pub(crate) const SAVE_END: u8 = 18;
     /// 删除文件，或目录连同其中的全部内容：载荷是路径，应答为空。
     pub(crate) const REMOVE_ALL: u8 = 19;
+    /// 设置文件的权限位：载荷是路径和权限位（`u32`，只取低 12 位），应答为空。
+    pub(crate) const SET_MODE: u8 = 22;
+    /// 创建符号链接：载荷是链接指向的目标（原样的写法）和链接的路径，应答为空。
+    pub(crate) const SYMLINK: u8 = 23;
+    /// 答复运行中的命令提出的输入请求（见 [`ASK`]）：请求号是那条命令的，载荷是请求的编号
+    /// （`u32`）、是否给出了答复（`u8`）和答复的内容。没有应答。
+    pub(crate) const ANSWER: u8 = 24;
     /// 一个请求的载荷放不进一帧时在前面发出的部分：载荷是其中一段。没有应答；同一请求号随后
     /// 的请求以各段依次相接、再接上它自己的载荷作为完整的载荷。
     pub(crate) const PART: u8 = 20;
@@ -92,6 +99,9 @@ pub(crate) mod kind {
     /// 请求尚未结束，载荷是结果的一段。运行命令时是输出的一段：来源（`u8`，见 [`STDOUT`]、
     /// [`STDERR`]）和数据；列目录时是一批目录项：项数（`u32`）和各项的种类与名字。
     pub(crate) const CHUNK: u8 = 0x81;
+    /// 运行中的命令需要用户输入（口令、是否信任主机）：载荷是请求的编号（`u32`）、提问的
+    /// 方式（`ssh` 的 `SSH_ASKPASS_PROMPT`，没有时为空）和提示的文字。对端以 [`ANSWER`] 答复。
+    pub(crate) const ASK: u8 = 0x82;
     /// [`CHUNK`] 的来源：标准输出。
     pub(crate) const STDOUT: u8 = 1;
     /// [`CHUNK`] 的来源：标准错误。

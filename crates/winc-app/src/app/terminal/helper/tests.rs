@@ -95,7 +95,7 @@ fn launched(
     windows: bool,
 ) -> (Option<String>, Vec<String>, String) {
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
-    let launch = launch(shell, cwd.as_bytes().to_vec(), windows);
+    let launch = launch(shell, cwd.as_bytes().to_vec(), windows, Integration::Off);
     (
         launch.program.as_deref().map(text),
         launch.args.iter().map(|arg| text(arg)).collect(),
@@ -111,6 +111,30 @@ fn the_terminal_signs_in_with_the_key_file_given_for_the_host() {
     let (_, args, _) = launched(None, dir.to_str().unwrap(), false);
     assert_eq!(args[3..6], ["-i", "~/.ssh/id_work", "me@keyed-terminal"]);
     winc_backend::remote::set_identity(&target, None);
+}
+
+#[test]
+fn a_remote_shell_gets_the_integration_once_its_scripts_are_there() {
+    let target = winc_backend::Target::new("me@integrated").unwrap();
+    let at = winc_backend::locate(&winc_backend::virtual_path(&target, b"/srv/app")).unwrap();
+    let command = |integration, ready| {
+        let launch = remote_launch(&at, integration, ready);
+        String::from_utf8(launch.args.last().unwrap().clone()).unwrap()
+    };
+    let plain = "cd '/srv/app' && exec $SHELL -l";
+    assert_eq!(command(Integration::Off, true), plain);
+    // 脚本还没有写到那台主机上：照常启动登录 shell。
+    assert_eq!(command(Integration::On { prompt: true }, false), plain);
+    let integrated = command(Integration::On { prompt: false }, true);
+    assert!(
+        integrated.starts_with("cd '/srv/app' && exec sh -c '"),
+        "{integrated}"
+    );
+    // 随机数的位置留给辅助进程填，其后是「不换提示符」。
+    assert!(
+        integrated.ends_with("' winc @WINC_NONCE@ 0"),
+        "{integrated}"
+    );
 }
 
 #[test]

@@ -22,7 +22,6 @@ format-tool-not-installed-names = 未安装 { $names }
 format-tool-list-separator = { " 或 " }
 format-tool-reads-disk = 该命令读取磁盘上的文件，不包含未保存的修改
 format-tool-not-found = 未找到「{ $tool }」
-format-remote-unsupported = 远端主机上的文件暂不支持格式化
 format-install-link = 安装方法…
 format-tool-custom-command = 自定义命令…
 format-tool-remove = 移除

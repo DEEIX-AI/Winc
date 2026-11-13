@@ -316,6 +316,9 @@ impl App {
         let Some(root) = self.editor.root().map(Path::to_path_buf) else {
             return;
         };
+        // 有一侧在远端主机上时内容要经网络传输，可能很久：不占用共用的线程池。
+        let remote =
+            winc_backend::is_remote(&dir) || paths.iter().any(|path| winc_backend::is_remote(path));
         let copy = move || {
             let (mut copies, mut failures) = (Vec::new(), Vec::new());
             for from in &paths {
@@ -331,12 +334,20 @@ impl App {
             (copies, failures)
         };
         match self.proxy.clone() {
-            Some(proxy) => winc_editor::background::spawn(move || {
-                let (copies, failures) = copy();
-                let _ = proxy.send_event(UserEvent::Copied(copies, failures));
-            }),
+            Some(proxy) => {
+                let work = move || {
+                    let (copies, failures) = copy();
+                    let _ = proxy.send_event(UserEvent::Copied(copies, failures));
+                };
+                if remote {
+                    winc_editor::background::spawn_blocking(work);
+                } else {
+                    winc_editor::background::spawn(work);
+                }
+            }
+            // 没有事件循环（测试中）时就地执行。
             None => {
-                let (copies, failures) = copy();
+                let (copies, failures) = winc_backend::remote::allow_blocking(copy);
                 self.copied_into_tree(copies, failures);
             }
         }
