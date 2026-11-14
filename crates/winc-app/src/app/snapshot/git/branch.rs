@@ -1208,18 +1208,17 @@ fn publishing_asks_with_the_target_remote_until_told_not_to() {
     assert!(app.switch_on(Setting::GitConfirmPush));
 
     app.run_branch_command(MenuCommand::GitPush);
-    let alert = app.overlays.alert.as_ref().unwrap();
-    assert!(alert.message.contains("origin"), "{}", alert.message);
-    assert!(
-        alert.detail.contains(origin.to_str().unwrap()),
-        "{}",
-        alert.detail
-    );
-    assert!(alert.suppression.is_some() && !alert.checked);
+    // 推送对话框：远程先填选出的 `origin`，有两个远程时可以换；目标分支与当前分支同名。
+    let dialog = app.overlays.form_dialog.as_ref().unwrap();
+    assert_eq!(dialog.base.as_deref(), Some("origin"));
+    assert_eq!(dialog.name.text(), "main");
+    let plan = app.form_plan(dialog);
+    assert!(plan.base_enabled && plan.enabled && plan.confirm == "发布");
+    assert!(!dialog.new_window && !dialog.copy);
 
     // 勾选「不再询问」后确认：推到 `origin`，配置随之写入。测试中没有配置文件路径，不写入用户的
     // 配置。
-    app.overlays.alert.as_mut().unwrap().checked = true;
+    app.overlays.form_dialog.as_mut().unwrap().new_window = true;
     press_alert(&mut app, 0);
     app.git_refresh();
     let has = |bare: &Path| {

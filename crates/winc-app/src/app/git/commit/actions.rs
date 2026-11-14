@@ -143,6 +143,12 @@ impl App {
         let Some((intent, subjects, total)) = preview else {
             return;
         };
+        // 推送和发布用推送对话框：可以改远程和目标分支、一并推送标签。同步先拉取再推送，目标
+        // 不能改，仍用提示框确认。
+        if intent != PushIntent::Sync {
+            self.open_push_dialog(intent, subjects, total);
+            return;
+        }
         let (message, mut detail, button) = self.push_prompt(&intent);
         for subject in &subjects {
             detail.push_str("\n· ");
@@ -179,6 +185,31 @@ impl App {
             self.save_config();
         }
         self.run_push(intent);
+    }
+
+    /// 推送对话框按了主按钮：推到 `remote` 的分支 `target`，`tags` 为真时一并推送全部标签；
+    /// 勾选了「不再询问」（`never`）时写入配置。
+    ///
+    /// 目标没有改、也不推送标签时与直接推送相同（[`App::run_push`]）；发布时把目标设为上游。
+    pub(in crate::app) fn submit_push(
+        &mut self,
+        form: super::super::form::PushForm,
+        (remote, target): (String, String),
+        tags: bool,
+        never: bool,
+    ) {
+        if never {
+            self.config.git_confirm_push = Some(false);
+            self.save_config();
+        }
+        if !tags && remote == form.remote && target == form.target {
+            self.run_push(form.intent);
+            return;
+        }
+        let track = matches!(form.intent, PushIntent::Publish(_));
+        self.git_operate(t!("git-op-push").into(), move |git, root| {
+            git.push_to(root, &remote, &target, tags, track)
+        });
     }
 
     /// 确认 `intent` 的提示框内容：（标题，说明，确认按钮的文字）。

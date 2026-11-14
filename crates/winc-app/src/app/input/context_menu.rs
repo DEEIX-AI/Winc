@@ -270,6 +270,8 @@ pub enum MenuCommand {
     StatusPlace(usize),
     /// 新建工作树的起点：0 是当前分支，`i + 1` 是分支列表里第 `i` 个分支。
     FormBase(usize),
+    /// 推送对话框的远程：远程列表里第几个。
+    FormRemote(usize),
     /// 日志的作者筛选：0 是全部作者，`i + 1` 是作者菜单里第 `i` 个作者。
     LogAuthor(usize),
     /// 日志里的提交：签出（有本地分支指着它就签出该分支，没有就签出提交本身，先确认）。
@@ -538,7 +540,7 @@ impl MenuCommand {
             MenuCommand::GitStashOp(op, _) => op.label(),
             MenuCommand::LogAuthor(0) => t!("menu-log-all-authors"),
             MenuCommand::FormBase(0) => t!("menu-git-current-branch"),
-            MenuCommand::LogAuthor(_) | MenuCommand::FormBase(_) => "",
+            MenuCommand::LogAuthor(_) | MenuCommand::FormBase(_) | MenuCommand::FormRemote(_) => "",
             MenuCommand::GitAbort => t!("git-operation-abort"),
             MenuCommand::GitHeading(false) => t!("menu-git-local-branches"),
             MenuCommand::GitHeading(true) => t!("menu-git-remote-branches"),
@@ -758,6 +760,8 @@ pub enum MenuTarget {
     CommitFile(PathBuf),
     /// 新建工作树对话框的「基于」。
     FormBase,
+    /// 推送对话框的远程。
+    FormRemote,
     /// 交互式变基列表第几行的处理方式。
     RebaseAction(usize),
     /// 提交视图里第几条储藏的菜单：应用、应用并删除、删除。

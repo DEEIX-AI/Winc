@@ -9,6 +9,7 @@ use winit::keyboard::{Key, NamedKey};
 
 use crate::app::git::Target;
 use crate::app::git::commit::CommitGroup;
+use crate::app::git::form::FormKind;
 use crate::app::{ChangeTarget, CommitRow, CommitTarget, DiffTarget};
 use crate::keymap::Action;
 
@@ -119,8 +120,24 @@ fn choose_in_branch_menu(app: &mut App, command: crate::app::MenuCommand) {
 }
 
 /// 按窗口内提示框的第 `button` 个按钮：第一个是默认按钮，最后一个是「取消」。
+///
+/// 推送和发布由推送对话框确认：没有提示框而开着推送对话框时，第一个按钮是它的主按钮，其余
+/// 是「取消」。
 fn press_alert(app: &mut App, button: usize) {
     paint(app);
+    let pushing =
+        (app.overlays.form_dialog.as_ref()).is_some_and(|d| matches!(d.kind, FormKind::Push(_)));
+    if app.overlays.alert.is_none() && pushing {
+        let layout = app.dialog_layout();
+        let rect = if button == 0 {
+            layout.confirm
+        } else {
+            layout.cancel
+        };
+        app.click_form_dialog(rect.x + 4.0, rect.y + 4.0);
+        app.poll_branch_ops();
+        return;
+    }
     let rect = app.overlays.alert.as_ref().unwrap().parts.buttons[button];
     app.on_mouse_move(rect.x + 4.0, rect.y + 4.0);
     app.alert_mouse_down();

@@ -42,6 +42,14 @@ impl App {
                     self.choose_form_base(base.map(|b| b.name.clone()));
                 }
             }
+            MenuTarget::FormRemote => {
+                if let MenuCommand::FormRemote(i) = command {
+                    let remote = self.git.remotes.get(i).cloned();
+                    if remote.is_some() {
+                        self.choose_form_base(remote);
+                    }
+                }
+            }
             MenuTarget::StatusPlaces(places) => match command {
                 MenuCommand::StatusPlace(i) => {
                     if let Some(place) = places.get(i) {

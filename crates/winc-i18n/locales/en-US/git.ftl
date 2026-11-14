@@ -313,6 +313,14 @@ git-push-confirm-push-button = Push
 git-push-confirm-sync = Sync with { $upstream }?
 git-push-confirm-sync-detail = Pulls { $behind } and pushes { $ahead } commits with { $target }.
 git-push-confirm-sync-button = Sync
+git-push-form-title = Push { $branch }
+git-push-form-remote = Remote
+git-push-form-branch = Branch
+git-push-form-commits = Commits
+git-push-form-tags = Push all tags
+git-push-form-pushing = Pushing…
+git-push-form-nothing = No new commits
+git-push-form-branch-invalid = Invalid branch name
 git-commit-push-confirm = Commit and push?
 git-commit-push-confirm-scope = { $count ->
     [one] 1 file will be committed to “{ $branch }” and pushed to upstream.

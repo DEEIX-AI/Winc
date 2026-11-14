@@ -1007,6 +1007,36 @@ impl Git {
         )
     }
 
+    /// 把当前分支推送到远程 `remote` 的分支 `branch`；`tags` 为真时一并推送全部标签，`track`
+    /// 为真时把它设为上游。
+    ///
+    /// # Errors
+    ///
+    /// `remote`、`branch` 以 `-` 开头，或 `git` 报错（被拒绝、需要认证）时返回原因。
+    pub fn push_to(
+        &self,
+        root: &Path,
+        remote: &str,
+        branch: &str,
+        tags: bool,
+        track: bool,
+    ) -> Result<String, String> {
+        self.require_trust(root)?;
+        if remote.starts_with('-') || branch.starts_with('-') {
+            return Err(winc_i18n::t!("git-push-no-remote").to_owned());
+        }
+        let spec = format!("HEAD:refs/heads/{branch}");
+        let mut args = vec!["push"];
+        if tags {
+            args.push("--tags");
+        }
+        if track {
+            args.push("--set-upstream");
+        }
+        args.extend(["--end-of-options", remote, &spec]);
+        self.operate(root, &args)
+    }
+
     /// 返回发布当前分支（第一次推送）时使用的远程：优先取分支和仓库配置的推送目标，其次是
     /// `origin`，都没有时取第一个；跳过以 `-` 开头的远程名。
     ///

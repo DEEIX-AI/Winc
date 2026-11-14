@@ -441,8 +441,8 @@ fn a_folder_without_a_repository_offers_to_initialize_one() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 推送前的确认框列出会送出的提交：最新的在前，超过上限的写明还有几个；第二个按钮「查看提交」
-/// 打开 Git 日志。
+/// 推送对话框列出会送出的提交：最新的在前，超过上限的只列最新的几个并记下总数；远程和目标
+/// 分支先填上游。
 #[test]
 fn the_push_confirmation_lists_the_commits_it_will_send() {
     use crate::app::git::commit::PushIntent;
@@ -468,12 +468,21 @@ fn the_push_confirmation_lists_the_commits_it_will_send() {
     };
     app.git_refresh();
     app.ask_push(PushIntent::Push);
-    let alert = app.overlays.alert.as_ref().unwrap();
-    let detail: Vec<&str> = alert.detail.lines().collect();
-    assert_eq!(detail[detail.len() - 2..], ["· 加上重试", "· 修复登录"]);
-    assert_eq!(alert.buttons.len(), 3);
-    assert_eq!(alert.buttons[1].title, "查看提交");
-    app.overlays.alert = None;
+    let form = |app: &App| match &app.overlays.form_dialog.as_ref().unwrap().kind {
+        FormKind::Push(form) => form.clone(),
+        kind => panic!("{kind:?}"),
+    };
+    let shown = form(&app);
+    assert_eq!(shown.subjects, ["加上重试", "修复登录"]);
+    assert_eq!((shown.total, shown.lines()), (2, 2));
+    assert_eq!(
+        (shown.remote.as_str(), shown.target.as_str()),
+        ("origin", "main")
+    );
+    let dialog = app.overlays.form_dialog.as_ref().unwrap();
+    assert_eq!(dialog.name.text(), "main");
+    assert_eq!(dialog.focus, DialogPart::Confirm);
+    app.close_form_dialog();
 
     // 提交很多时只列最新的几个，最后一行写明其余的个数，两者加起来是全部。
     for i in 0..20 {
@@ -481,12 +490,67 @@ fn the_push_confirmation_lists_the_commits_it_will_send() {
     }
     app.git_refresh();
     app.ask_push(PushIntent::Push);
-    let alert = app.overlays.alert.as_ref().unwrap();
-    let listed = (alert.detail.lines().filter(|line| line.starts_with("· "))).count();
+    let shown = form(&app);
+    let listed = shown.subjects.len();
     assert!(listed > 0 && listed < 22, "{listed}");
-    assert!(alert.detail.contains("· 第 19 个"));
-    let rest = format!("另有 {} 个提交", 22 - listed);
-    assert!(alert.detail.ends_with(&rest), "{}", alert.detail);
+    assert_eq!(shown.subjects[0], "第 19 个");
+    assert_eq!((shown.total, shown.lines()), (22, listed + 1));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 推送对话框里改了目标分支、勾上「推送全部标签」：推到远程的那个分支，标签一并送出，上游
+/// 不变；完成后对话框关闭。目标分支名无效时不能推送。
+#[test]
+fn the_push_dialog_pushes_to_another_branch_with_tags() {
+    use crate::app::git::commit::PushIntent;
+    let dir = sample_folder("git-push-target");
+    let Some(work) = repo_with_remote(&dir) else {
+        return;
+    };
+    let git = |at: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(at)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        (out.status.success()).then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    };
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "待评审"]).unwrap();
+    git(&work, &["tag", "v1"]).unwrap();
+    let head = git(&work, &["rev-parse", "HEAD"]).unwrap();
+    let bare = dir.join("bare.git");
+    let Some(mut app) = git_app(&work) else {
+        return;
+    };
+    app.git_refresh();
+    app.ask_push(PushIntent::Push);
+
+    let dialog = app.overlays.form_dialog.as_mut().unwrap();
+    dialog.name.set_text("-review");
+    let dialog = app.overlays.form_dialog.as_ref().unwrap();
+    assert!(!app.form_plan(dialog).enabled);
+
+    let dialog = app.overlays.form_dialog.as_mut().unwrap();
+    dialog.name.set_text("review");
+    dialog.copy = true;
+    app.submit_form_dialog();
+    app.poll_branch_ops();
+    assert!(app.overlays.form_dialog.is_none());
+    assert_eq!(
+        git(&bare, &["rev-parse", "refs/heads/review"]),
+        Some(head.clone())
+    );
+    assert_eq!(
+        git(&bare, &["rev-parse", "refs/tags/v1"]),
+        Some(head.clone())
+    );
+    // 原来的上游没有收到这个提交，跟踪关系也没有变。
+    assert_ne!(git(&bare, &["rev-parse", "refs/heads/main"]), Some(head));
+    let upstream = git(&work, &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    assert_eq!(upstream.as_deref(), Some("origin/main"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -504,7 +568,7 @@ fn shoot_commit_no_repository() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 截图：推送前的确认框，列出会送出的提交（`push-preview`）。
+/// 截图：推送对话框，列出会送出的提交（`push-preview`）。
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_push_preview() {

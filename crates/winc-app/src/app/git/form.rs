@@ -11,6 +11,7 @@ use winc_editor::git::unique_dir;
 use winc_i18n::t;
 
 use super::branch::local_name;
+use super::commit::PushIntent;
 use super::log::short;
 use super::question::QuestionView;
 use super::rebase::RebaseForm;
@@ -43,6 +44,33 @@ pub(crate) enum FormKind {
     Rebase(Box<RebaseForm>),
     /// 连接远端主机：主机、端口，见 [`crate::app::remote`]。
     Connect,
+    /// 推送：远程、目标分支、待推送的提交，可一并推送标签。
+    Push(Box<PushForm>),
+}
+
+/// 推送对话框打开时的内容。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PushForm {
+    /// 推送还是发布。
+    pub intent: PushIntent,
+    /// 当前分支的名字。
+    pub branch: String,
+    /// 默认的远程：上游所在的远程，发布时是选出的远程。
+    pub remote: String,
+    /// 默认的目标分支：上游的分支名，发布时与当前分支同名。
+    pub target: String,
+    /// 待推送的提交的标题，最新的在前；提交多时只有最新的几个。
+    pub subjects: Vec<String>,
+    /// 待推送的提交数。
+    pub total: usize,
+}
+
+impl PushForm {
+    /// 提交列表占几行：每个标题一行，没有列出的提交另占一行；没有待推送的提交时是一行说明。
+    pub(crate) fn lines(&self) -> usize {
+        let more = usize::from(self.total > self.subjects.len());
+        (self.subjects.len() + more).max(1)
+    }
 }
 
 impl FormKind {
@@ -56,6 +84,7 @@ impl FormKind {
             FormKind::Worktree
             | FormKind::Branch { .. }
             | FormKind::Clone
+            | FormKind::Push(_)
             | FormKind::Rebase(_) => None,
         }
     }
@@ -125,6 +154,48 @@ impl App {
     /// 提交开始（这时「基于」不能改）。
     pub(in crate::app) fn open_branch_dialog(&mut self, from: Option<String>, at: Option<String>) {
         self.open_form_dialog(FormKind::Branch { at }, from);
+    }
+
+    /// 打开推送对话框：`subjects` 是待推送的提交的标题，`total` 是提交数。
+    ///
+    /// 远程和目标分支先填上游（发布时是选出的远程和同名分支），键盘焦点在主按钮上，回车即推送。
+    pub(in crate::app) fn open_push_dialog(
+        &mut self,
+        intent: PushIntent,
+        subjects: Vec<String>,
+        total: usize,
+    ) {
+        if self.overlays.form_dialog.is_some() {
+            return;
+        }
+        let current = self.git.branches.iter().find(|b| b.current && !b.remote);
+        let branch = current.map_or("HEAD", |b| b.name.as_str()).to_owned();
+        let upstream = current.and_then(|b| b.upstream.clone()).unwrap_or_default();
+        // 上游写作「远程名/分支名」，远程名本身可以含 `/`，按已知的远程名匹配最长的一个。
+        let tracked = (self.git.remotes.iter())
+            .filter(|r| upstream.starts_with(&format!("{r}/")))
+            .max_by_key(|r| r.len());
+        let (remote, target) = match (&intent, tracked) {
+            (PushIntent::Publish(remote), _) => (remote.clone(), branch.clone()),
+            (_, Some(remote)) => (remote.clone(), upstream[remote.len() + 1..].to_owned()),
+            (_, None) => (upstream, branch.clone()),
+        };
+        let mut name = ref_name_field();
+        name.set_text(&target);
+        name.set_caret(target.len(), false);
+        let form = PushForm {
+            intent,
+            branch,
+            remote: remote.clone(),
+            target,
+            subjects,
+            total,
+        };
+        self.show_form_dialog(FormKind::Push(Box::new(form)), name, DialogPart::Confirm);
+        if let Some(dialog) = &mut self.overlays.form_dialog {
+            dialog.base = Some(remote);
+            dialog.copy = false;
+        }
     }
 
     /// 打开表单对话框；不在 Git 仓库里时说明。
@@ -222,6 +293,12 @@ impl App {
             Some(FormKind::Branch { .. }) => {
                 DialogLayout::compute(window, false, &[DialogPart::Checkout])
             }
+            // 两个勾选项借用已有的部件：`Copy` 是「推送全部标签」，`NewWindow` 是「不再询问」。
+            Some(FormKind::Push(form)) => DialogLayout::push(
+                window,
+                form.lines(),
+                &[DialogPart::Copy, DialogPart::NewWindow],
+            ),
             _ if self.config.git_worktree_copy.is_empty() => {
                 DialogLayout::compute(window, true, &[DialogPart::NewWindow])
             }
@@ -250,6 +327,7 @@ impl App {
                 self.remote_plan(editing.as_deref(), dialog.name.text(), dialog.second.text())
             }
             FormKind::Connect => self.connect_plan(dialog),
+            FormKind::Push(form) => self.push_plan(dialog, form),
             FormKind::GoToRevision => {
                 let revision = dialog.name.text().trim();
                 // 提交号、分支名和标签名都不含空白，也不以 `-` 开头。
@@ -273,6 +351,24 @@ impl App {
                 base_enabled: false,
                 dir: None,
             },
+        }
+    }
+
+    /// 推送：目标分支不能为空，不含空白，也不以 `-` 开头；有多个远程时可以换远程。
+    fn push_plan(&self, dialog: &FormDialog, form: &PushForm) -> FormPlan {
+        let name = dialog.name.text().trim();
+        let invalid = name.starts_with('-') || name.contains(char::is_whitespace);
+        let remote = dialog.base.clone().unwrap_or_else(|| form.remote.clone());
+        FormPlan {
+            problem: invalid.then(|| t!("git-push-form-branch-invalid").to_owned()),
+            confirm: match form.intent {
+                PushIntent::Publish(_) => t!("git-push-confirm-publish-button"),
+                _ => t!("git-push-confirm-push-button"),
+            },
+            enabled: !name.is_empty() && !invalid && !remote.is_empty(),
+            base: remote,
+            base_enabled: self.git.remotes.len() > 1,
+            dir: None,
         }
     }
 
@@ -429,6 +525,12 @@ impl App {
             }
             FormKind::Question(..) | FormKind::Connect | FormKind::GoToRevision => {}
             FormKind::Clone => self.submit_clone(),
+            FormKind::Push(form) => {
+                let remote = dialog.base.clone().unwrap_or_else(|| form.remote.clone());
+                let target = dialog.name.text().trim().to_owned();
+                let (tags, never) = (dialog.copy, dialog.new_window);
+                self.submit_push(*form, (remote, target), tags, never);
+            }
             FormKind::Rebase(_) => self.submit_rebase(),
             FormKind::Remote { editing } => self.submit_remote(editing),
         }
@@ -658,7 +760,11 @@ impl App {
             DialogPart::Base => {
                 use crate::app::input::context_menu::{MenuTarget, menu_below};
                 let base = self.dialog_layout().base;
-                self.open_context_menu(MenuTarget::FormBase, menu_below(base));
+                let target = match shown {
+                    Some(FormKind::Push(_)) => MenuTarget::FormRemote,
+                    _ => MenuTarget::FormBase,
+                };
+                self.open_context_menu(target, menu_below(base));
             }
             DialogPart::Change if connecting => self.pick(crate::app::Pick::KeyFile),
             DialogPart::Change => self.pick(crate::app::Pick::WorktreeFolder),
@@ -721,6 +827,12 @@ impl App {
                 .get(i)
                 .is_some_and(|b| dialog.base.as_deref() == Some(b.name.as_str())),
         }
+    }
+
+    /// 推送对话框的远程菜单里第 `i` 个远程是不是现在选的。
+    pub(in crate::app) fn form_remote_chosen(&self, i: usize) -> bool {
+        let chosen = (self.overlays.form_dialog.as_ref()).and_then(|d| d.base.as_deref());
+        chosen.is_some() && chosen == self.git.remotes.get(i).map(String::as_str)
     }
 
     /// 目录按钮选好了目录：工作树建在它下面。

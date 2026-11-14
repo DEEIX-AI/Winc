@@ -610,6 +610,11 @@ impl App {
                 .map(|&action| MenuEntry::Item(MenuCommand::RebaseAction(action), true))
                 .collect(),
             MenuTarget::FormBase => form_base_menu(&self.git.branches),
+            // 以 `-` 开头的远程名不能推送，不列出。
+            MenuTarget::FormRemote => (self.git.remotes.iter().enumerate())
+                .filter(|(_, remote)| !remote.starts_with('-'))
+                .map(|(i, _)| MenuEntry::Item(MenuCommand::FormRemote(i), true))
+                .collect(),
             MenuTarget::LogFile(_, path) => log_file_menu(
                 winc_backend::fs::exists(path),
                 self.relative_path(path).is_some(),
@@ -942,6 +947,9 @@ impl App {
             MenuCommand::FormBase(i) => {
                 MenuLabel::plain(self.git.branches.get(i - 1).map_or("", |b| b.name.as_str()))
             }
+            MenuCommand::FormRemote(i) => {
+                MenuLabel::plain(self.git.remotes.get(i).map_or("", String::as_str))
+            }
             MenuCommand::LogAuthor(i @ 1..) => {
                 MenuLabel::plain(self.git.log.authors.get(i - 1).map_or("", String::as_str))
             }
@@ -1192,6 +1200,9 @@ impl App {
             .map(|v| &v.query);
         if let MenuCommand::FormBase(i) = command {
             return self.form_base_chosen(i);
+        }
+        if let MenuCommand::FormRemote(i) = command {
+            return self.form_remote_chosen(i);
         }
         if let MenuCommand::StatusPlace(i) = command {
             return self.location_places().get(i).is_some_and(|p| p.current);
