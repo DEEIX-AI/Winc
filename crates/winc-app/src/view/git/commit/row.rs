@@ -31,12 +31,15 @@ struct RowBox<'a> {
     browse: bool,
     /// 是否在暂存区视图中：此时没有勾选框，行尾是暂存、取消暂存的按钮。
     staging: bool,
+    /// 整个改动列表多缩进的层数（见 [`App::commit_base_level`]）。
+    base: usize,
 }
 
 impl RowBox<'_> {
-    /// 返回第 `level` 层箭头的横坐标：每深一层向右缩进 `INDENT`。
+    /// 返回第 `level` 层箭头的横坐标：每深一层向右缩进 `INDENT`；多仓库时整个改动列表在当前
+    /// 仓库的标题下面，再多缩进 `base` 层。
     fn arrow_x(&self, level: usize) -> f32 {
-        self.band.x + ARROW + level as f32 * INDENT
+        self.band.x + ARROW + (level + self.base) as f32 * INDENT
     }
 
     /// 返回第 `level` 层勾选框中心的横坐标：目录的箭头在勾选框左边。
@@ -116,6 +119,7 @@ pub(super) fn draw_row(
         focused: app.focus == Focus::CommitList,
         browse: app.git.commit.browse,
         staging: app.git.commit.staging(),
+        base: app.commit_base_level(),
     };
     let row = &cx.rows[i];
     // 缩进参考线：每一层上级目录一条，位于该目录的箭头正下方，相邻行连成一条竖线，

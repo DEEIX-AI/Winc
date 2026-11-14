@@ -649,7 +649,7 @@ fn the_classic_card_keeps_amend_above_the_message_and_buttons_on_the_left() {
             amend.y >= card.y && amend.bottom() <= parts.message.y,
             "{width}"
         );
-        assert_eq!(parts.commit.x, amend.x, "{width}");
+        assert_eq!(parts.commit.x, amend.x + 1.0, "{width}");
         assert!(parts.commit.y >= parts.message.bottom(), "{width}");
         assert!(parts.commit_menu.right() <= card.right(), "{width}");
         assert!(parts.commit.right() < parts.commit_menu.x, "{width}");

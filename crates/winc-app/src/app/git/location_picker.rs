@@ -101,9 +101,15 @@ impl App {
         usable.count() >= 2
     }
 
-    /// 从标题行的工作树按钮展开选择器：只列当前仓库的工作树。
+    /// 标题行是否有位置按钮：打开的目录中有多个仓库，或者当前仓库有多个工作树。
+    pub(crate) fn git_has_locations_button(&self) -> bool {
+        self.git.repositories.len() >= 2 || self.git_has_worktrees()
+    }
+
+    /// 从标题行的位置按钮展开选择器：有多个仓库时列出全部仓库和工作树，否则只列当前仓库的
+    /// 工作树。
     pub(in crate::app) fn open_worktree_picker(&mut self) {
-        self.open_places(false);
+        self.open_places(self.git.repositories.len() >= 2);
     }
 
     /// 展开选择器并选中当前位置，同时在后台重新查找一次仓库；`all` 见

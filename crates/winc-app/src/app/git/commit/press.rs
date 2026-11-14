@@ -58,7 +58,20 @@ impl App {
             CommitTarget::OtherRepository(_)
             | CommitTarget::OtherFile(..)
             | CommitTarget::OtherStagedFile(..) => self.press_other(target),
-            CommitTarget::OtherGroup(..) => {}
+            CommitTarget::OtherGroup(repo, group) => {
+                self.toggle_other_fold(Some(repo), Some(group))
+            }
+            CommitTarget::OtherFold(repo) => self.toggle_other_fold(Some(repo), None),
+            CommitTarget::CurrentRepository => self.toggle_other_fold(None, None),
+            CommitTarget::CurrentCheck => {
+                let entries = self.git.status.iter().flat_map(|s| &s.entries);
+                let paths: Vec<PathBuf> = entries.map(|e| e.path.clone()).collect();
+                let all =
+                    self.git.status.as_ref().is_some_and(|s| {
+                        self.git.commit.picked_entries(s).count() == s.entries.len()
+                    });
+                self.set_commit_checked(&paths, !all);
+            }
             CommitTarget::OtherStage(..) | CommitTarget::OtherGroupStage(..) => {
                 self.press_other_stage(target);
             }
@@ -67,7 +80,9 @@ impl App {
                 self.paint_now();
                 self.open_branch_picker(GitAnchor::Branch);
             }
-            CommitTarget::OtherGroupCheck(_) | CommitTarget::OtherCheck(..) => {
+            CommitTarget::OtherGroupCheck(_)
+            | CommitTarget::OtherGroupFiles(..)
+            | CommitTarget::OtherCheck(..) => {
                 self.press_other_check(target);
             }
             _ => self.press_commit_button(target),

@@ -454,7 +454,8 @@ fn the_commit_message_grows_with_its_text_and_the_list_follows() {
     assert!(one.commit_menu.right() <= card.right());
     let amend = one.amend.unwrap();
     assert!(amend.y >= card.y && amend.bottom() <= one.message.y);
-    assert_eq!(one.commit.x, amend.x);
+    // 「修改上次提交」整段左移 1，里面勾选框（离左边 1）的左边与按钮的左边对齐。
+    assert_eq!(one.commit.x, amend.x + 1.0);
 
     // 写入三行时框高增加一行，卡片往上长，列表随之变短。
     app.edit_field(|f| f.insert("修复配置读取\n\n启动时不再报错"));
@@ -1171,4 +1172,17 @@ fn the_commit_message_wraps_between_words() {
         "{lines:?}"
     );
     assert!(lines.iter().all(|l| !l.ends_with("config")), "{lines:?}");
+
+    // 标点禁则：句号、逗号不放在行首，左括号不留在行末；不论句子在哪里折行都成立。
+    for n in 1..30 {
+        let text = format!("{}。（说明），结束", "字".repeat(n));
+        let lines = rows(&mut app, &text);
+        assert_eq!(lines.concat(), text);
+        for line in &lines[1..] {
+            assert!(!line.starts_with(['。', '，', '）']), "{lines:?}");
+        }
+        for line in &lines[..lines.len() - 1] {
+            assert!(!line.ends_with('（'), "{lines:?}");
+        }
+    }
 }

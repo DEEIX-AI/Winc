@@ -115,7 +115,7 @@ pub(super) fn draw_context_pick(
 ///
 /// 放得下时紧贴项目按钮；放不下时位置按钮最多让到一半，再由项目名截短。
 pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option<(f32, f32)> {
-    if !app.git_has_worktrees() {
+    if !app.git_has_locations_button() {
         return None;
     }
     let bar = ContextBar::new(app, frame);
@@ -132,7 +132,7 @@ pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option
 
 /// 返回位置按钮完整显示时的宽度（逻辑像素）；只有一个位置、没有该按钮时为 `None`。
 pub(super) fn location_width(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
-    if !app.git_has_worktrees() {
+    if !app.git_has_locations_button() {
         return None;
     }
     let label = worktree_button_label(app, frame);
@@ -140,11 +140,15 @@ pub(super) fn location_width(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
     Some(LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL)
 }
 
-/// 工作树按钮上写的名字：主工作树写「主工作树」，附属工作树写它自己的名字。
+/// 位置按钮上写的名字：打开的目录中有多个仓库时写当前仓库；否则写工作树，主工作树写「主工作树」，
+/// 附属工作树写它自己的名字。
 ///
 /// 标题行放不下完整的项目名和「主工作树」时不写后者，按钮只有图标和下拉箭头：项目名优先，
-/// 是哪个工作树写在悬停提示里。附属工作树的名字始终写出。
+/// 是哪个工作树写在悬停提示里。仓库名、附属工作树的名字始终写出。
 fn worktree_button_label(app: &App, frame: &mut Frame<'_>) -> String {
+    if app.git.repositories.len() >= 2 {
+        return app.git_current_repository_name();
+    }
     let label = app.git_worktree_label();
     if label != t!("git-location-main-worktree") {
         return label;
@@ -161,7 +165,8 @@ fn worktree_button_label(app: &App, frame: &mut Frame<'_>) -> String {
     }
 }
 
-/// 绘制项目名后面的工作树按钮：当前仓库有多个工作树时才有，写着现在在哪个工作树。
+/// 绘制项目名后面的位置按钮：有多个仓库或多个工作树时才有，写着现在在哪个仓库或工作树。图标
+/// 在当前仓库有多个工作树时是工作树，否则是文件夹。
 ///
 /// 当前仓库的其他工作树有未提交的更改时，图标右上角有一个强调色的小圆点，和视图标签上的圆点
 /// 同一个意思；几个写在悬停提示里，是哪几个在选择器里。
@@ -190,7 +195,11 @@ pub(super) fn draw_location_row(
         CommitTarget::Location,
         open,
         |frame, (x, y), color| {
-            icons::worktree_small(frame, (x, y), color, clip);
+            if app.git_has_worktrees() {
+                icons::worktree_small(frame, (x, y), color, clip);
+            } else {
+                icons::folder_small(frame, (x, y), color, clip);
+            }
             if dotted {
                 let dot = Rect::new(x + 3.5, y - 7.0, 5.0, 5.0);
                 let ring = dot.inset(-1.0, -1.0);
@@ -225,22 +234,8 @@ pub(super) fn draw_branch_row(
         right = draw_sync(app, frame, row, clip, hits) - BUTTON_GAP;
     }
     let head = head_label(app);
-    // 打开的目录中有多个仓库时，分支前面淡色写当前仓库：上面的更改、这个分支和提交都是它的。
-    let root = app.git.root.as_ref();
-    let repository = (app.git.repositories.len() >= 2)
-        .then(|| {
-            app.git
-                .repositories
-                .iter()
-                .position(|repo| Some(repo) == root)
-        })
-        .flatten()
-        .map(|i| app.git_repository_name(i));
-    let mut names = Vec::new();
-    if let Some(repository) = repository.as_deref() {
-        names.extend([(repository, p.text_muted), (" › ", p.text_dim)]);
-    }
-    names.push((head.as_str(), p.text));
+    // 当前是哪个仓库写在标题行的位置按钮上，这里只写分支。
+    let names = vec![(head.as_str(), p.text)];
     draw_context_pick(
         app,
         frame,
@@ -491,13 +486,15 @@ pub(super) fn draw_undo(
         subject_clip,
     );
 
-    // 「撤销」写成字：最常用的一项，放进菜单里看不出能撤销。
+    // 「撤销」写成字：最常用的一项，放进菜单里看不出能撤销。平时用次要色，不比提交按钮显眼，
+    // 悬停时才用强调色。
     let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Undo);
     draw_button(frame, p, undo, clip, hovered, false);
     let text = t!("git-commit-undo");
     let w = frame.measure(FontKind::Ui, size, text);
     let x = (undo.x + (undo.w - w) / 2.0).round();
-    ui_text_small(frame, app, x, undo, text, p.accent, clip);
+    let ink = if hovered { p.accent } else { p.text_muted };
+    ui_text_small(frame, app, x, undo, text, ink, clip);
     hits.push((undo, CommitTarget::Undo));
 
     let hovered = app.pointer.hover == Hover::Commit(CommitTarget::LastCommit);

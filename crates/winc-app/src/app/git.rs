@@ -751,8 +751,14 @@ impl App {
         if root == self.git.root {
             return;
         }
-        // 未完成的提交信息按位置保存，切换回来时恢复。
-        if let Some(old) = self.git.root.clone() {
+        // 未完成的提交信息按位置保存，切换回来时恢复。多仓库时列表里的各个仓库共用一条提交信息、
+        // 各文件的勾选也照样留着：在列表里点另一个仓库只换当前仓库，不换要提交的内容。
+        let carried = self
+            .commit_shows_others()
+            .then(|| self.git.commit.draft_text());
+        let carrying = carried.is_some() && self.git.root.is_some();
+        self.carry_checks_out();
+        if let Some(old) = self.git.root.clone().filter(|_| carried.is_none()) {
             self.git.commit.keep_draft(old);
         }
         // 保存即将离开的仓库的状态，切换回来时可立即显示。
@@ -777,8 +783,15 @@ impl App {
         self.git.branch.finished = None;
         self.reset_commit_view();
         self.git.root = root;
-        if let Some(root) = self.git.root.clone() {
-            self.git.commit.restore_draft(&root);
+        // 换到的仓库的状态读到以后（下面已知的，或稍后刷新读到的），把它的勾选带回来。
+        self.git.commit.carry_in = carrying;
+        match carried {
+            Some(text) => self.git.commit.message.set_text(&text),
+            None => {
+                if let Some(root) = self.git.root.clone() {
+                    self.git.commit.restore_draft(&root);
+                }
+            }
         }
         // 先显示上次读取的状态，后台读取完成后再更新，避免提交视图短暂显示「正在读取」。
         let known = self.git.root.as_ref().and_then(|root| {
@@ -795,6 +808,7 @@ impl App {
             self.git.ignored_paths = status.ignored.iter().cloned().collect();
             self.git.status = Some(status);
             self.git.generation += 1;
+            self.carry_checks_in();
         }
         // 不再位于仓库中时提交视图不可用，切换回文件树；焦点位于提交视图时同样移出，
         // 否则键入的文字会进入不可见的输入框。
@@ -1012,6 +1026,7 @@ impl App {
                     }
                     let rows = self.commit_shown().then(|| self.commit_rows());
                     let old = self.git.status.replace(status);
+                    self.carry_checks_in();
                     self.begin_commit_shift(old, rows);
                     if let Some(refs) = outcome.refs {
                         let before = std::mem::replace(&mut self.git.branches, refs.branches);

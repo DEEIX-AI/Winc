@@ -288,6 +288,10 @@ git-commit-failed = Couldn’t commit: { $error }
 git-commit-done-in = Committed { $oid } in “{ $name }”
 git-commit-failed-in = Couldn’t commit in “{ $name }”: { $error }
 git-commit-partial = committed in { $done }; { $name }: { $error }
+git-commit-others-left = Committed. { $count ->
+    [one] 1 checked file in other repositories was
+   *[other] { $count } checked files in other repositories were
+} not committed: amending, or a merge or rebase in that repository, commits the current repository only
 git-commit-hint-subject = Subject { $count }/{ $limit }
 git-commit-hint-blank-line = Blank line after subject
 git-commit-todo-confirm = { $count ->
@@ -415,6 +419,7 @@ git-trust-allow = Trust
 git-commit-view-problem = { $problem }. Click Refresh to try again
 git-commit-view-loading = Reading repository status…
 git-commit-view-empty = Nothing to Commit
+git-commit-repository-clean = No changes
 git-commit-empty-in-sync = Up to date with the upstream branch
 git-commit-empty-ahead = { $count ->
     [one] 1 commit ahead of the upstream branch
@@ -426,7 +431,6 @@ git-commit-empty-behind = { $count ->
 }
 git-commit-empty-diverged = { $ahead } ahead and { $behind } behind the upstream branch
 git-commit-empty-unpublished = This branch hasn’t been published yet
-git-commit-empty-local = All changes are committed
 git-operation-banner = { $operation } in progress
 git-operation-banner-resolved = { $operation } in progress · Conflicts resolved
 git-operation-banner-conflicts = { $count ->

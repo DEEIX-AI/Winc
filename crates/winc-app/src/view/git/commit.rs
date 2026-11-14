@@ -29,7 +29,7 @@ use crate::view::workspace::sidebar::{
 use crate::view::*;
 
 mod others;
-use others::draw_other_rows;
+use others::{draw_other_rows, draw_sections};
 mod header;
 mod names;
 mod overflow;
@@ -98,7 +98,8 @@ pub(in crate::view) fn draw_commit(
     let parts = app.commit_parts();
     // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
     // 展开、收起的动画中列表按动画结束时的行计算，由动画自己处理。
-    if app.git.commit.motion.is_none() && app.git.status.is_some() {
+    let moving = app.git.commit.motion.is_some() || app.git.commit.fold_motion.is_some();
+    if !moving && app.git.status.is_some() {
         app.git.commit.scroll = app.git.commit.scroll.min(app.commit_max_scroll());
     }
     let mut hits = Vec::new();
@@ -106,20 +107,20 @@ pub(in crate::view) fn draw_commit(
     let animate = app.animate_commit_names();
     app.git.commit.names.begin_frame(animate);
     match (&app.git.status, &app.git.problem) {
-        (Some(status), _) if app.git.commit.shift.is_some() => {
+        (Some(status), _) if app.git.commit.shift.is_some() && !app.current_section_folded() => {
             draw_shift(app, frame, &parts, status, &mut hits);
             // 其他仓库的各行直接画在过渡结束后的位置。
-            let rows = app.commit_rows().len() as f32;
-            let top = parts.list.y + rows * COMMIT_ROW - app.git.commit.scroll;
-            draw_other_rows(app, frame, parts.list, top, &mut hits);
+            let block = app.commit_block_len() as f32 * COMMIT_ROW;
+            draw_sections(app, frame, parts.list, block);
+            draw_other_rows(app, frame, parts.list, block, &mut hits);
         }
         (Some(status), _) if !status.entries.is_empty() => {
             draw_list(app, frame, &parts, status, &mut hits);
         }
         // 当前仓库没有更改而其他仓库有内容可列：不画空状态，列出其他仓库。
         (Some(_), _) if !app.commit_other_rows().is_empty() => {
-            let top = parts.list.y - app.git.commit.scroll;
-            draw_other_rows(app, frame, parts.list, top, &mut hits);
+            draw_sections(app, frame, parts.list, 0.0);
+            draw_other_rows(app, frame, parts.list, 0.0, &mut hits);
         }
         (Some(_), _) => draw_empty(app, frame, &parts, &mut hits),
         (None, Some(problem)) => {
@@ -227,7 +228,7 @@ fn draw_empty(
         frame,
         (list, sidebar_span(app)),
         t!("git-commit-view-empty"),
-        Some(&detail),
+        detail.as_deref(),
     );
     let mut bottom = bottom;
     if let Some(upstream) = upstream {
@@ -311,8 +312,9 @@ fn draw_no_repository(
 }
 
 /// 没有改动时的下一步：按钮上的动作（和上游一致、没有远程或这时不同步时为 `None`）、写在标题
-/// 下面的当前分支与上游的关系，以及上游的名字（没有上游时为 `None`）。
-fn next_step(app: &App) -> (Option<String>, String, Option<&str>) {
+/// 下面的当前分支与上游的关系（没有远程时为 `None`：标题已经说明没有更改，不再重复），以及
+/// 上游的名字（没有上游时为 `None`）。
+fn next_step(app: &App) -> (Option<String>, Option<String>, Option<&str>) {
     let upstream = (app.git.branches.iter())
         .find(|b| b.current)
         .and_then(|b| b.upstream.as_deref());
@@ -334,11 +336,9 @@ fn next_step(app: &App) -> (Option<String>, String, Option<&str>) {
             t!("git-commit-empty-unpublished").to_owned(),
         ),
         SyncState::InSync => (None, t!("git-commit-empty-in-sync").to_owned()),
-        SyncState::NoRemote | SyncState::Hidden => {
-            return (None, t!("git-commit-empty-local").to_owned(), None);
-        }
+        SyncState::NoRemote | SyncState::Hidden => return (None, None, None),
     };
-    (action.map(str::to_owned), relation, upstream)
+    (action.map(str::to_owned), Some(relation), upstream)
 }
 
 /// 列表的位置上写一行说明（没有改动、正在读取、出错的原因）。
@@ -424,9 +424,14 @@ fn draw_list(
             multi,
         };
         let (block, hidden) = (motion.block(), motion.hidden());
+        // 当前仓库的改动列表在动画中的高度：各个仓库一节的底按它先铺好。
+        let scroll = app.commit_block_scroll();
+        let (after, _) =
+            crate::layout::tree_row_slot(list, scroll, motion.rows.len(), Some(block), hidden);
+        let height = after.y - (list.y - scroll);
+        draw_sections(app, frame, list, height);
         for v in 0..motion.rows.len() {
-            let (rect, clip) =
-                crate::layout::tree_row_slot(list, app.git.commit.scroll, v, Some(block), hidden);
+            let (rect, clip) = crate::layout::tree_row_slot(list, scroll, v, Some(block), hidden);
             let clip = clip.intersect(list);
             if clip.h <= 0.0 || rect.bottom() < list.y || rect.y > list.bottom() {
                 continue;
@@ -440,14 +445,7 @@ fn draw_list(
             }
         }
         // 其他仓库的各行跟在最后一行之后，随展开、收起上下移动；动画期间不记录命中区域。
-        let (after, _) = crate::layout::tree_row_slot(
-            list,
-            app.git.commit.scroll,
-            motion.rows.len(),
-            Some(block),
-            hidden,
-        );
-        draw_other_rows(app, frame, list, after.y, &mut Vec::new());
+        draw_other_rows(app, frame, list, height, &mut Vec::new());
         // 固定的行仍然盖在上面（展开收起的是它们下面的行），否则动画过程中会先消失再出现。
         let mut ignored = Vec::new();
         draw_sticky(app, frame, &cx, &mut ignored);
@@ -462,15 +460,42 @@ fn draw_list(
         rows: &rows,
         multi,
     };
-    let first = (app.git.commit.scroll / COMMIT_ROW).floor() as usize;
+    // 多仓库时当前仓库的改动列表排在它的标题行下面，按它自己的滚动量排（见
+    // `App::commit_block_scroll`）；它那一节收起时不画。各个仓库一节的底先铺好，行画在上面。
+    let block = app.commit_block_len() as f32 * COMMIT_ROW;
+    draw_sections(app, frame, list, block);
+    // 某个仓库一节或一组正在展开、收起：改动列表按动画中的位置和高度画，只露出已露出的一段；
+    // 它可能随上方的仓库移动，动画期间不记录命中区域、不画固定的行。
+    if app.git.commit.fold_motion.is_some() {
+        let layout = others::OtherLayout::new(app, list, block);
+        let top = layout.block_top();
+        let clip = Rect::new(list.x, top, list.w, layout.block()).intersect(list);
+        if clip.h > 0.0 {
+            for i in 0..rows.len() {
+                let y = top + i as f32 * COMMIT_ROW;
+                if y + COMMIT_ROW > clip.y && y < clip.bottom() {
+                    frame.within(clip, |frame| {
+                        draw_row(app, frame, &cx, i, y, &mut Vec::new());
+                    });
+                }
+            }
+        }
+        draw_other_rows(app, frame, list, block, hits);
+        return;
+    }
+    if app.current_section_folded() {
+        draw_other_rows(app, frame, list, block, hits);
+        return;
+    }
+    let scroll = app.commit_block_scroll();
+    let first = (scroll / COMMIT_ROW).floor().max(0.0) as usize;
     let visible = (list.h / COMMIT_ROW).ceil() as usize + 1;
 
     for i in (first..rows.len()).take(visible) {
-        let y = list.y + i as f32 * COMMIT_ROW - app.git.commit.scroll;
+        let y = list.y + i as f32 * COMMIT_ROW - scroll;
         draw_row(app, frame, &cx, i, y, hits);
     }
-    let after = list.y + rows.len() as f32 * COMMIT_ROW - app.git.commit.scroll;
-    draw_other_rows(app, frame, list, after, hits);
+    draw_other_rows(app, frame, list, block, hits);
 
     draw_sticky(app, frame, &cx, hits);
 }
@@ -549,7 +574,8 @@ fn draw_shift(
     leave_until(&mut slots, shift.rows.len());
 
     let scroll = shift.scroll + (app.git.commit.scroll - shift.scroll) * t;
-    let mut y = list.y - scroll;
+    let before = app.commit_rows_before() as f32 * COMMIT_ROW;
+    let mut y = list.y - scroll + before;
     for (slot, share) in slots {
         let h = COMMIT_ROW * share;
         let room = Rect::new(list.x, y, list.w, h).intersect(list);
@@ -622,6 +648,16 @@ fn draw_sticky(
         let mut row_hits = Vec::new();
         frame.within(slot, |frame| {
             frame.rect_clipped(s.rect, p.sidebar_bg, 0.0, list);
+            // 多仓库时固定的行也在当前仓库一节里：盖住卡片以后补上卡片的底色。
+            if app.commit_base_level() > 0 {
+                let band = Rect::new(list.x + 8.0, s.rect.y, list.w - 16.0, COMMIT_ROW);
+                frame.rect_clipped(
+                    band,
+                    others::section_fill(app, app.repository_color(None)),
+                    0.0,
+                    list,
+                );
+            }
             if app.pointer.hover == Hover::Commit(CommitTarget::Sticky(s.row, s.level)) {
                 let band = Rect::new(
                     list.x + 8.0,
@@ -914,7 +950,8 @@ fn draw_card(
             .is_some_and(|s| app.commit_blocker(s).is_none());
     // 刚提交成功时提交信息已清空，按钮本应变淡；显示「已提交」期间仍使用强调色。
     let done = app.git.commit.committed.as_ref().filter(|_| !busy);
-    // 不能提交时用灰底、淡色字，表示不可用；把蓝底和白字一起调淡时，浅色主题里的对比度不足。
+    // 不能提交时铺一层很淡的强调色、字用淡强调色：仍看得出这是主按钮，旁边灰色的「提交并推送…」
+    // 是次要按钮。不把蓝底和白字一起调淡：浅色主题里那样的对比度不足。
     let (fill, ink, shade) = if ready || busy || done.is_some() {
         (
             p.accent_fill,
@@ -922,7 +959,7 @@ fn draw_card(
             p.text_on_accent.alpha(0.12),
         )
     } else {
-        (p.hover, p.text_dim, p.hover)
+        (p.accent.alpha(0.12), p.accent.alpha(0.6), p.hover)
     };
     frame.rounded(whole, fill, RADIUS_ROW);
     let open = app.overlays.menu_button == Some(crate::app::MenuButton::CommitButton);
@@ -1071,8 +1108,10 @@ fn file_column(app: &App, depth: usize) -> usize {
 fn row_text(app: &App, status: &Status, root: &Path, row: &CommitRow) -> Option<RowText> {
     let p = app.palette;
     // 箭头、勾选框、图标、图标那一列宽、间隔（见 `draw_row` 和 `ARROW` 那一组常量）。
+    let base = app.commit_base_level();
     let offset = |level: usize| {
-        ARROW + level as f32 * INDENT + check_gap(app) + ICON + icons::FOLDER_WIDTH + LABEL_GAP
+        let indent = (level + base) as f32 * INDENT;
+        ARROW + indent + check_gap(app) + ICON + icons::FOLDER_WIDTH + LABEL_GAP
     };
     match row {
         CommitRow::Group(_) => None,

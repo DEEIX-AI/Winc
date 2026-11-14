@@ -265,6 +265,11 @@ impl App {
 
     /// 让选中的文件露在列表里：盖在固定的组、目录下面、或者已滚出列表时，滚到它正好露出来。
     pub(in crate::app) fn reveal_commit_selection(&mut self) {
+        // 当前仓库一节收起着：选中的文件不在列表里，不滚动（键盘移动选中时先展开，见
+        // `App::unfold_current_section`）。
+        if self.current_section_folded() {
+            return;
+        }
         let Some(status) = self.git.status.as_ref() else {
             return;
         };
@@ -279,7 +284,12 @@ impl App {
             return;
         };
         let list = self.commit_parts().list;
-        let (top, bottom) = (i as f32 * COMMIT_ROW, (i + 1) as f32 * COMMIT_ROW);
+        // 多仓库时改动列表排在其他仓库的各行和当前仓库的标题行下面。
+        let before = self.commit_rows_before() as f32 * COMMIT_ROW;
+        let (top, bottom) = (
+            before + i as f32 * COMMIT_ROW,
+            before + (i + 1) as f32 * COMMIT_ROW,
+        );
         // 只在固定行盖住该行时才滚：滚到该行正好露在它所在的组、目录（层数对应的行数，不超过
         // 能固定的层数）下面。已经露着的不动，单击列表不会跳、顶上固定的行也不会变。
         let covered = self
@@ -313,6 +323,7 @@ impl App {
             return;
         }
         // 动画期间按行数较多的状态画：展开时画展开后的行，收起时画收起前的行（收回的行还在）。
+        self.git.commit.fold_motion = None;
         let rows = if expanding { after } else { before };
         self.git.commit.motion = self
             .clock(crate::app::animation::TREE_ANIMATION)
@@ -338,7 +349,7 @@ impl App {
     /// 固定它自己。这一层最后一行的下沿滚到固定的位置之下时，它被往上推，下面不再固定别的。
     pub(crate) fn commit_sticky(&self, rows: &[CommitRow]) -> Vec<CommitSticky> {
         let list = self.commit_parts().list;
-        let scroll = self.git.commit.scroll;
+        let scroll = self.commit_block_scroll();
         let max = self.commit_sticky_max();
         let mut stack: Vec<CommitSticky> = Vec::new();
         while stack.len() < max {
@@ -564,6 +575,7 @@ impl App {
         let row = moved.and_then(|i| files.get(i)).map(|&(row, _)| row);
         if target.is_some() {
             self.git.commit.cursor = row;
+            self.unfold_current_section();
         }
 
         match key {

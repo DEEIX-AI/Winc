@@ -119,6 +119,10 @@ impl App {
             return;
         }
         let merging = status.operation.is_some();
+        let committed: Vec<PathBuf> = others.iter().map(|(root, ..)| root.clone()).collect();
+        self.git.commit.others_left = self.others_left(&committed);
+        self.git.commit.committed_with = committed;
+        let state = &self.git.commit;
         let options = CommitOptions {
             all: false,
             amend,
@@ -155,7 +159,8 @@ impl App {
 impl App {
     /// 其他仓库中勾上的文件各自的提交内容：仓库的根目录、要写入暂存区的内容、是否附加签署行。
     ///
-    /// 其他仓库只按整个文件勾选；有合并、变基等操作进行中的仓库不在这里提交。
+    /// 换仓库时带过来的、只勾了一部分改动的文件只提交勾上的改动；有合并、变基等操作进行中的
+    /// 仓库不在这里提交。
     fn other_plans(&self) -> Vec<(PathBuf, PickedCommit, bool)> {
         if self.other_checked_count() == 0 {
             return Vec::new();
@@ -171,9 +176,13 @@ impl App {
                 continue;
             }
             let mut plan = PickedCommit::default();
+            let skipped = &self.git.commit.other_skipped;
             for entry in &status.entries {
                 let checked = self.other_checked(&entry.path) && !entry.conflicted();
-                if checked {
+                let partial = skipped.get(&entry.path).filter(|s| !s.is_empty());
+                if let Some(partial) = partial.filter(|_| checked) {
+                    plan.partial.push((entry.path.clone(), partial.clone()));
+                } else if checked {
                     plan.whole.push(entry.path.clone());
                     plan.whole.extend(entry.from.clone());
                     if entry.untracked() {
@@ -184,7 +193,7 @@ impl App {
                     plan.dropped.extend(entry.from.clone());
                 }
             }
-            if !plan.whole.is_empty() {
+            if !(plan.whole.is_empty() && plan.partial.is_empty()) {
                 let sign_off = self.state.sign_off_repos.contains(repo);
                 plans.push((repo.clone(), plan, sign_off));
             }

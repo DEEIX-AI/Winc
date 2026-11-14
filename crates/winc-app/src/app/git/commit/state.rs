@@ -12,8 +12,8 @@ impl CommitState {
     /// 冲突标记按状态中读取的结果判断：编辑器中刚移除、尚未保存时按钮仍置灰，
     /// 按下后先保存再重新检查。
     ///
-    /// `others` 是暂存区视图中其他仓库里随之提交的文件数（见 [`App::other_staged_count`]），
-    /// 不为 0 时当前仓库没有内容也可以提交。
+    /// `others` 是其他仓库里随之提交的文件数：勾选式下勾上的（见 [`App::other_checked_count`]），
+    /// 暂存区视图中暂存的（见 [`App::other_staged_count`]）；不为 0 时当前仓库没有内容也可以提交。
     pub fn blocker(&self, status: &Status, others: usize) -> Option<String> {
         if self.busy {
             return None;
@@ -22,8 +22,7 @@ impl CommitState {
         // 勾选式：至少勾上一个文件，勾上的冲突文件不能仍有冲突标记。
         if !self.staging {
             let mut checked = self.picked_entries(status).peekable();
-            let others = self.other_checked.is_empty();
-            if checked.peek().is_none() && others && !self.amend && !rebasing {
+            if checked.peek().is_none() && others == 0 && !self.amend && !rebasing {
                 return Some(t!("git-commit-nothing-checked").to_owned());
             }
             let unresolved = checked
@@ -57,15 +56,20 @@ impl CommitState {
 
     /// 把正在写的提交信息记到位置 `root` 名下；什么都没写时清掉记录。
     pub(in crate::app) fn keep_draft(&mut self, root: PathBuf) {
-        let text = if self.amend {
-            self.draft.clone().unwrap_or_default()
-        } else {
-            self.message.text().to_owned()
-        };
+        let text = self.draft_text();
         if text.trim().is_empty() {
             self.drafts.remove(&root);
         } else {
             self.drafts.insert(root, text);
+        }
+    }
+
+    /// 用户自己写的提交信息：修改上一次提交时是打开该模式之前写的那一段。
+    pub(in crate::app) fn draft_text(&self) -> String {
+        if self.amend {
+            self.draft.clone().unwrap_or_default()
+        } else {
+            self.message.text().to_owned()
         }
     }
 

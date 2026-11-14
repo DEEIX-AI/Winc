@@ -49,8 +49,8 @@ impl App {
         let context_y = header.bottom();
         let branch = Rect::new(inner_x, context_y, inner_w, CONTEXT_ROW);
         // 工作树按钮在标题行上，选择面板从标题行下面展开，和各行同宽。
-        let location =
-            (self.git_has_worktrees()).then(|| Rect::new(inner_x, header.y, inner_w, header.h));
+        let location = (self.git_has_locations_button())
+            .then(|| Rect::new(inner_x, header.y, inner_w, header.h));
         let banner = (self.commit_banner_height() > 0.0).then(|| {
             let rect = Rect::new(inner_x, branch.bottom() + SIDEBAR_GAP, inner_w, BANNER_H);
             let w = BANNER_ABORT_W.min(rect.w);
@@ -147,7 +147,7 @@ impl App {
         } else {
             0.0
         };
-        let card_h = top_row + message_h + FOOTER_H + CARD_INSET;
+        let card_h = top_row + message_h + FOOTER_GAP + FOOTER_H + CARD_INSET;
         let sunk = (1.0 - share) * (card_h + MARGIN);
         let card = Rect::new(
             inner_x,
@@ -159,14 +159,17 @@ impl App {
         let message_settled = Rect::new(card.x, card.y + top_row, card.w, settled_h);
         let footer = Rect::new(
             card.x + CARD_INSET,
-            message.bottom(),
+            message.bottom() + FOOTER_GAP,
             (card.w - 2.0 * CARD_INSET).max(0.0),
             FOOTER_H,
         );
         let labels = self.git.commit.labels;
         let buttons = self.classic_card_buttons(footer);
+        // 「修改上次提交」的勾选框在这一段里离左边留 1，整段左移 1：勾选框的左边与按钮、信息文字
+        // 的左边对齐。
+        let amend_x = footer.x - 1.0;
         let amend =
-            amendable.then(|| Rect::new(footer.x, card.y + CARD_INSET, labels.amend, FOOTER_H));
+            amendable.then(|| Rect::new(amend_x, card.y + CARD_INSET, labels.amend, FOOTER_H));
         (Some(card), message, message_settled, amend, buttons)
     }
 

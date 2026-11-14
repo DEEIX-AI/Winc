@@ -821,11 +821,10 @@ fn the_location_picker_searches_and_switches() {
     assert!(app.overlays.context_menu.is_some());
     app.overlays.context_menu = None;
 
-    // 命令「切换仓库」展开位置选择器，选中的是当前位置。当前仓库只有一个工作树，标题行没有
-    // 工作树按钮，面板在分支行下方。
+    // 命令「切换仓库」展开位置选择器，选中的是当前位置。打开的目录中有多个仓库，标题行有写着
+    // 当前仓库的位置按钮，面板在它下方。
     let parts = app.commit_parts();
-    assert!(parts.location.is_none());
-    let row = parts.branch;
+    let row = parts.location.expect("多个仓库时标题行有位置按钮");
     app.open_places(true);
     assert!(app.picker_lists_locations());
     let place = |row: &LocationRow| match row {
@@ -916,6 +915,10 @@ fn drafts_stay_with_their_location() {
         return;
     };
     app.run_action(Action::ShowCommit);
+    // 只显示当前仓库时各位置各有一份草稿。
+    if app.commit_all_repositories() {
+        app.toggle_all_repositories();
+    }
     app.git.commit.message.set_text("a 的草稿");
     app.git_switch_repository(1);
     assert_eq!(app.git.commit.message.text(), "");
@@ -923,6 +926,10 @@ fn drafts_stay_with_their_location() {
     app.git_switch_repository(0);
     assert_eq!(app.git.commit.message.text(), "a 的草稿");
     app.git_switch_repository(1);
+    assert_eq!(app.git.commit.message.text(), "b 的草稿");
+    // 显示全部仓库时各仓库一起提交，共用一条提交信息：换仓库时照样留着。
+    app.toggle_all_repositories();
+    app.git_switch_repository(0);
     assert_eq!(app.git.commit.message.text(), "b 的草稿");
     std::fs::remove_dir_all(&dir).unwrap();
 }

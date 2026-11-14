@@ -23,7 +23,7 @@ mod menu;
 mod others;
 mod parts;
 mod picks;
-pub(crate) use others::{OtherRow, commits_staged};
+pub(crate) use others::{OtherGroup, OtherRow};
 mod message;
 mod press;
 mod staging;
@@ -63,11 +63,15 @@ pub(crate) const COMMIT_ROW: f32 = 24.0;
 const TOOL: f32 = 24.0;
 /// 提交卡片底行的高度（逻辑像素）：勾选框和提交按钮一行，与 `BUTTON_SMALL` 同高。
 const FOOTER_H: f32 = 24.0;
-/// 提交卡片底行与卡片左、右、下边缘的距离（逻辑像素）。
+/// 提交卡片里「修改上次提交」一行、按钮一行与卡片边缘的距离（逻辑像素）。
 ///
-/// 取 4：按钮外沿到卡片边缘的空隙和文字到卡片左边的空隙（`MESSAGE_PAD` 加行高里字形左右的
-/// 空白，约 5.5）相近。
-const CARD_INSET: f32 = 4.0;
+/// 取 6：按钮、勾选框的左边与信息文字的左边（`MESSAGE_PAD` 加行高里字形左右的空白，约 5.5）
+/// 对齐，按钮也不贴着卡片的边。
+const CARD_INSET: f32 = 6.0;
+/// 提交信息与下面按钮一行之间的距离（逻辑像素）。
+///
+/// 取 6：文字最后一行到按钮的空隙与上面勾选框到文字第一行的空隙（约 11）相等，按钮不贴着文字。
+const FOOTER_GAP: f32 = 6.0;
 /// 提交按钮文字两侧的留白（逻辑像素）。
 ///
 /// 按钮 24 高，比对话框里 28 高的按钮（文字两侧留 14）小一号，留白随之取 10。
@@ -414,6 +418,37 @@ impl CommitMotion {
     }
 }
 
+/// 多仓库时某个仓库一节或其中一组的展开、收起动画。动画期间按行数较多的状态画；其他仓库的
+/// 子行位置不动，只露出已露出的一段，下面的行随之移动；当前仓库一节则是改动列表的高度随之变化。
+#[derive(Debug, Clone)]
+pub(crate) struct FoldMotion {
+    /// 动画期间画的各行：展开时是展开以后的，收起时是收起之前的。
+    pub rows: Vec<OtherRow>,
+    /// 展开或收起的标题行在 `rows` 里的下标。
+    pub parent: usize,
+    /// 露出或收回的行数；当前仓库一节为 0，收回的是它的改动列表。
+    pub count: usize,
+    /// 露出或收回的总高度（逻辑像素）。
+    pub height: f32,
+    /// 是展开；`false` 是收起。
+    pub expanding: bool,
+    /// 这一段动画的时钟。
+    pub(in crate::app) clock: crate::app::Clock,
+}
+
+impl FoldMotion {
+    /// 已露出的比例：0 是完全收起，1 是完全展开。
+    pub fn reveal(&self) -> f32 {
+        let eased = self.clock.progress();
+        if self.expanding { eased } else { 1.0 - eased }
+    }
+
+    /// 还没露出来的高度（逻辑像素）。
+    pub fn hidden(&self) -> f32 {
+        (1.0 - self.reveal()) * self.height
+    }
+}
+
 /// 提交视图里可以点的地方。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitTarget {
@@ -448,9 +483,17 @@ pub enum CommitTarget {
     OtherStagedFile(usize, usize),
     /// 暂存区视图中另一个仓库文件行行尾的「＋」（第三项为真）或「−」：暂存或取消暂存该文件。
     OtherStage(usize, usize, bool),
-    /// 暂存区视图中另一个仓库的分组行（仓库的下标，是否为已暂存的一组）：悬停时行尾显示按钮，
-    /// 点击没有动作。
-    OtherGroup(usize, bool),
+    /// 另一个仓库里的一组的标题行（仓库的下标，组）：折叠或展开这一组；暂存区视图中悬停时行尾
+    /// 显示暂存、取消暂存整组的按钮。
+    OtherGroup(usize, others::OtherGroup),
+    /// 勾选式下另一个仓库里一组标题的勾选框：勾上或取消这一组的全部文件。
+    OtherGroupFiles(usize, others::OtherGroup),
+    /// 另一个仓库标题行左端的折叠箭头：折叠或展开这个仓库的一节。
+    OtherFold(usize),
+    /// 多仓库时当前仓库的标题行：折叠或展开它的各组。
+    CurrentRepository,
+    /// 勾选式下当前仓库标题行的勾选框：勾上或取消当前仓库的全部文件。
+    CurrentCheck,
     /// 暂存区视图中另一个仓库分组行行尾的「＋」（第二项为真）或「−」：暂存或取消暂存整组。
     OtherGroupStage(usize, bool),
     /// 组标题行：收起或展开。
@@ -697,6 +740,20 @@ pub(crate) struct CommitState {
     /// 勾选式下在其他仓库中勾上的文件：提交时连同当前仓库勾上的文件，各自提交到所在的仓库。
     /// 其他仓库的文件默认都不勾。
     other_checked: HashSet<PathBuf>,
+    /// 其他仓库中勾上的文件里取消勾选的各处改动（换仓库时由当前仓库带过来）：这些文件只提交
+    /// 其余的改动。
+    other_skipped: HashMap<PathBuf, Vec<Skip>>,
+    /// 这次提交一并写入的其他仓库的根目录：提交成功后据此清掉它们的勾选，「提交并推送」
+    /// 「提交并同步」时一并推送。
+    committed_with: Vec<PathBuf>,
+    /// 这次提交时其他仓库中勾上、暂存了而没有一并提交的文件数（修改上一次提交、该仓库有合并
+    /// 或变基进行中）：提交成功后说明。
+    others_left: usize,
+    /// 刚在多仓库的列表里换到当前仓库，它在其他仓库里的勾选还没有改记成当前仓库的勾选（见
+    /// [`App::carry_checks_in`]）。
+    pub(in crate::app::git) carry_in: bool,
+    /// 多仓库时折叠着的其他仓库（组为 `None`）和其中折叠着的组，按仓库的根目录记。
+    other_folds: HashSet<(PathBuf, Option<others::OtherGroup>)>,
     /// 勾选式下勾上的文件里取消勾选的各处改动：这些文件只提交其余的改动。
     skipped: HashMap<PathBuf, Vec<Skip>>,
     /// 上一次见到的 `HEAD`：变化（切换分支、在别处提交）时按处的勾选作废，记下的行号不再对应。
@@ -750,6 +807,8 @@ pub(crate) struct CommitState {
     pub scroll: f32,
     /// 正在展开或收起的组、目录的动画。
     pub(crate) motion: Option<CommitMotion>,
+    /// 正在展开或收起的仓库一节、其他仓库的组的动画。
+    pub(crate) fold_motion: Option<FoldMotion>,
     /// 刷新以后各行的过渡；不在过渡中时为 `None`。
     pub(crate) shift: Option<CommitShift>,
     /// 鼠标停着的那一行名字放不下时，这一行写全名（每帧绘制前算，见
@@ -882,6 +941,11 @@ impl Default for CommitState {
             excluded: HashSet::new(),
             included: HashSet::new(),
             other_checked: HashSet::new(),
+            other_skipped: HashMap::new(),
+            committed_with: Vec::new(),
+            others_left: 0,
+            carry_in: false,
+            other_folds: HashSet::new(),
             skipped: HashMap::new(),
             head: None,
             staging_queue: VecDeque::new(),
@@ -907,6 +971,7 @@ impl Default for CommitState {
             rows: RefCell::new(None),
             scroll: 0.0,
             motion: None,
+            fold_motion: None,
             overflow: None,
             actions_slide: None,
             names: Default::default(),
@@ -1175,6 +1240,7 @@ impl App {
             + CONTEXT_ROW
             + self.commit_banner_height()
             + 2.0 * SIDEBAR_LIST_GAP
+            + FOOTER_GAP
             + FOOTER_H
             + CARD_INSET
             + MARGIN;
@@ -1281,7 +1347,7 @@ impl App {
 
     /// 返回提交列表的最大滚动距离；内容超出视口时末尾留出一行空白，表示已到列表末尾。
     pub(crate) fn commit_max_scroll(&self) -> f32 {
-        let rows = (self.commit_rows().len() + self.commit_other_rows().len()) as f32;
+        let rows = (self.commit_block_len() + self.commit_other_rows().len()) as f32;
         let list = self.commit_parts().list.h;
         if rows * COMMIT_ROW <= list {
             return 0.0;

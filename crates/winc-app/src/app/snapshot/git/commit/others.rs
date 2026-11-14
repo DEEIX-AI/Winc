@@ -51,25 +51,69 @@ fn other_repositories_are_listed_after_the_current_one_and_a_click_switches() {
     app.run_commit_more_command(toggle);
     assert!(app.menu_checked(toggle));
 
-    // 另一个仓库的标题行和它的两个文件排在当前仓库的更改之后，一起滚动。
+    // 按仓库列表的顺序每个仓库一节：当前仓库的标题行下面是它的改动列表，另一个仓库的标题行
+    // 下面按组列出它的文件，一起滚动。
+    use crate::app::OtherGroup::{Changes, Untracked};
     let listed = [
+        OtherRow::Current,
         OtherRow::Repository(1),
+        OtherRow::Group(1, Changes),
         OtherRow::File(1, 0),
+        OtherRow::Group(1, Untracked),
         OtherRow::File(1, 1),
     ];
     assert_eq!(app.commit_other_rows(), listed);
+    assert_eq!(app.commit_rows_before(), 1);
     app.layout.sidebar.h = 200.0;
     assert!(app.commit_max_scroll() > alone);
     app.relayout();
     paint(&mut app);
     let rows = app.commit_rows().len();
     let hit = |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
+    let current = hit(&app, CommitTarget::CurrentRepository);
+    let first = hit(&app, CommitTarget::Group(CommitGroup::Changes));
+    assert_eq!(first.y, current.y + COMMIT_ROW);
     let header = hit(&app, CommitTarget::OtherRepository(1));
     let last = hit(&app, CommitTarget::File(1));
     assert_eq!(header.y, last.y + COMMIT_ROW);
     assert_eq!(rows, 4);
 
-    // 点另一个仓库的文件：切换到那个仓库，选中该文件并预览差异；原来的仓库列到后面。
+    // 折叠：另一个仓库只剩标题行；当前仓库一节也只剩标题行，下面的仓库紧跟在它后面。
+    app.press_commit(CommitTarget::OtherFold(1));
+    assert_eq!(app.commit_other_rows(), listed[..2]);
+    app.press_commit(CommitTarget::OtherFold(1));
+    app.press_commit(CommitTarget::CurrentRepository);
+    assert!(app.current_section_folded() && app.commit_block_len() == 0);
+    paint(&mut app);
+    assert_eq!(
+        hit(&app, CommitTarget::OtherRepository(1)).y,
+        current.y + COMMIT_ROW
+    );
+    let has = |app: &App, t: CommitTarget| app.hits.commit.iter().any(|(_, h)| *h == t);
+    assert!(!has(&app, CommitTarget::Group(CommitGroup::Changes)));
+
+    // 收起到一半：只记录当前仓库标题行及其上方的命中区域，正在移动的行不记录。
+    let half = crate::app::Clock::frozen(
+        std::time::Duration::from_millis(1000),
+        std::time::Duration::from_millis(2000),
+    );
+    app.git.commit.fold_motion = Some(crate::app::git::commit::FoldMotion {
+        rows: listed.to_vec(),
+        parent: 0,
+        count: 0,
+        height: rows as f32 * COMMIT_ROW,
+        expanding: false,
+        clock: half,
+    });
+    paint(&mut app);
+    assert!(has(&app, CommitTarget::CurrentRepository));
+    assert!(!has(&app, CommitTarget::OtherRepository(1)));
+    app.git.commit.fold_motion = None;
+    app.press_commit(CommitTarget::CurrentRepository);
+    assert!(!app.current_section_folded());
+    paint(&mut app);
+
+    // 点另一个仓库的文件：切换到那个仓库，选中该文件并预览差异；列表的顺序不变，✓ 移过去。
     let file = hit(&app, CommitTarget::OtherFile(1, 0));
     click(&mut app, (file.x + 60.0, file.y + 4.0));
     assert_eq!(app.git.root.as_ref(), Some(&b));
@@ -80,23 +124,79 @@ fn other_repositories_are_listed_after_the_current_one_and_a_click_switches() {
         Some("main.rs · 差异")
     );
     assert_eq!(app.commit_other_rows()[0], OtherRow::Repository(0));
+    assert_eq!(app.commit_other_rows().last(), Some(&OtherRow::Current));
 
-    // 当前仓库没有更改时不画空状态：先写一行说明，再列出其他仓库。
+    // 当前仓库没有更改时不画空状态：照样列出各个仓库，当前仓库的标题行下面没有行。
     git_in(&b, &["checkout", "-q", "--", "."]);
     std::fs::remove_file(b.join("src/new.rs")).unwrap();
     app.git_refresh();
-    assert_eq!(
-        app.commit_other_rows()[..2],
-        [OtherRow::Clean, OtherRow::Repository(0)]
-    );
+    assert_eq!(app.commit_other_rows()[0], OtherRow::Repository(0));
+    assert_eq!(app.commit_other_rows().last(), Some(&OtherRow::Current));
     paint(&mut app);
     let header = hit(&app, CommitTarget::OtherRepository(0));
     click(&mut app, (header.x + 60.0, header.y + 4.0));
     assert_eq!(app.git.root.as_ref(), Some(&a));
+    // 没有更改的仓库只有一行。
+    app.git_read_summaries();
+    app.poll_git();
+    assert_eq!(
+        app.commit_other_rows(),
+        [OtherRow::Current, OtherRow::Quiet(1)]
+    );
 
     // 关闭后只剩当前仓库。
     app.run_commit_more_command(toggle);
     assert!(app.commit_other_rows().is_empty());
+    let _ = std::fs::remove_dir_all(a.parent().unwrap());
+}
+
+/// 在列表里换仓库只换当前仓库，不换要提交的内容：各文件的勾选和提交信息照样留着。修改上一次
+/// 提交时不一并提交其他仓库，它们的勾选留着；提交按钮只算列表里看得到的勾选。
+#[test]
+fn switching_repositories_keeps_checks_and_the_message() {
+    let Some((mut app, a, b)) = two_repositories("git-commit-switch-keeps", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    // 当前仓库 `a`：改过的文件默认勾上，未跟踪的不勾；`b` 的文件默认都不勾，这里只勾一个。
+    app.git.commit.message.set_text("一起提交");
+    app.press_commit(CommitTarget::OtherCheck(1, 0));
+    let a_state = app.current_check_state();
+    assert_eq!(a_state, Some(false));
+
+    // 点 `b` 的文件：换到 `b`，勾选和提交信息不变。
+    app.press_commit(CommitTarget::OtherFile(1, 0));
+    assert_eq!(app.git.root.as_ref(), Some(&b));
+    assert_eq!(app.git.commit.message.text(), "一起提交");
+    assert_eq!(app.current_check_state(), Some(false));
+    assert_eq!(app.other_group_state(0, None), a_state);
+    assert_eq!(app.other_checked_count(), 1);
+
+    // 换回 `a`：照样。
+    app.press_commit(CommitTarget::OtherRepository(0));
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    assert_eq!(app.current_check_state(), a_state);
+    assert_eq!(app.other_group_state(1, None), Some(false));
+    assert_eq!(app.git.commit.message.text(), "一起提交");
+
+    // 关掉「显示全部仓库」、当前仓库一个都不勾：只剩看不到的勾选时提交按钮不可用。
+    // 部分勾选时先全部勾上，再点一次全部取消。
+    app.press_commit(CommitTarget::CurrentCheck);
+    app.press_commit(CommitTarget::CurrentCheck);
+    assert_eq!(app.current_check_state(), None);
+    let status = app.git.status.clone().unwrap();
+    assert!(app.commit_blocker(&status).is_none());
+    app.run_commit_more_command(MenuCommand::CommitAllRepositories);
+    assert!(app.commit_blocker(&status).is_some());
+    app.run_commit_more_command(MenuCommand::CommitAllRepositories);
+
+    // 修改上一次提交：只改当前仓库，`b` 勾上的文件不提交，勾选留着。
+    app.press_commit(CommitTarget::CurrentCheck);
+    app.git.commit.amend = true;
+    app.git.commit.message.set_text("改过的说明");
+    app.git_commit();
+    assert_eq!(app.other_checked_count(), 1);
     let _ = std::fs::remove_dir_all(a.parent().unwrap());
 }
 
@@ -109,7 +209,7 @@ fn checked_files_of_other_repositories_are_committed_alongside() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    assert_eq!(app.other_group_state(1), None);
+    assert_eq!(app.other_group_state(1, None), None);
     assert_eq!(app.other_checked_count(), 0);
     let subject = |repo: &Path| {
         let out = std::process::Command::new("git")
@@ -128,7 +228,7 @@ fn checked_files_of_other_repositories_are_committed_alongside() {
     let check = hit(&app, CommitTarget::OtherCheck(1, 0));
     click(&mut app, (check.x + 8.0, check.y + 8.0));
     assert_eq!(app.git.root.as_ref(), Some(&a));
-    assert_eq!(app.other_group_state(1), Some(false));
+    assert_eq!(app.other_group_state(1, None), Some(false));
     assert_eq!(app.other_checked_count(), 1);
     assert_ne!(app.commit_scope(), own);
 
@@ -136,9 +236,9 @@ fn checked_files_of_other_repositories_are_committed_alongside() {
     paint(&mut app);
     let group = hit(&app, CommitTarget::OtherGroupCheck(1));
     click(&mut app, (group.x + 8.0, group.y + 8.0));
-    assert_eq!(app.other_group_state(1), Some(true));
+    assert_eq!(app.other_group_state(1, None), Some(true));
     click(&mut app, (group.x + 8.0, group.y + 8.0));
-    assert_eq!(app.other_group_state(1), None);
+    assert_eq!(app.other_group_state(1, None), None);
     app.press_commit(CommitTarget::OtherCheck(1, 0));
 
     app.git.commit.message.set_text("两个仓库一起提交");
@@ -181,9 +281,11 @@ fn staged_files_of_other_repositories_are_committed_alongside() {
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
+    use crate::app::OtherGroup::{Changes, Staged};
     let unstaged = [
+        OtherRow::Current,
         OtherRow::Repository(1),
-        OtherRow::Group(1, false),
+        OtherRow::Group(1, Changes),
         OtherRow::File(1, 0),
         OtherRow::File(1, 1),
     ];
@@ -208,10 +310,11 @@ fn staged_files_of_other_repositories_are_committed_alongside() {
         "M  src/main.rs\n?? src/new.rs"
     );
     let staged = [
+        OtherRow::Current,
         OtherRow::Repository(1),
-        OtherRow::Group(1, true),
+        OtherRow::Group(1, Staged),
         OtherRow::Staged(1, 0),
-        OtherRow::Group(1, false),
+        OtherRow::Group(1, Changes),
         OtherRow::File(1, 1),
     ];
     assert_eq!(app.commit_other_rows(), staged);

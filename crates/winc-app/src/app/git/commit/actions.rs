@@ -97,11 +97,19 @@ impl App {
 
     /// 在后台同步（[`winc_editor::git::Git::sync`]）；需要强制推送而 `force` 为假时转为询问。
     pub(in crate::app) fn run_git_sync(&mut self, force: bool) {
+        self.run_git_sync_with(Vec::new(), force);
+    }
+
+    /// 同步当前分支，之后把一并提交了的其他仓库 `others` 推送出去（见 [`push_others`]）。
+    fn run_git_sync_with(&mut self, others: Vec<PathBuf>, force: bool) {
         self.git_operate_then(t!("git-op-sync").into(), move |git, root| {
             let (synced, then) =
                 keep_changes(git, root, t!("git-op-sync"), |git| git.sync(root, force))?;
             Ok(match synced {
-                Synced::Done(summary) => (summary, then),
+                Synced::Done(summary) => {
+                    push_others(git, &others)?;
+                    (summary, then)
+                }
                 Synced::NeedsForce(count) => (String::new(), Then::ConfirmForcePush(count)),
             })
         });
@@ -266,16 +274,24 @@ impl App {
 
     /// 执行确认过的 `intent`：发布推到确认时写明的远程。
     pub(in crate::app) fn run_push(&mut self, intent: PushIntent) {
+        self.run_push_with(intent, Vec::new());
+    }
+
+    /// 按 `intent` 推送当前分支，之后把一并提交了的其他仓库 `others` 推送出去（见
+    /// [`push_others`]）。
+    fn run_push_with(&mut self, intent: PushIntent, others: Vec<PathBuf>) {
         match intent {
             PushIntent::Publish(remote) => {
                 self.git_operate(t!("git-op-push").into(), move |git, root| {
-                    git.publish(root, &remote)
+                    let summary = git.publish(root, &remote)?;
+                    push_others(git, &others).map(|()| summary)
                 });
             }
-            PushIntent::Push => {
-                self.git_operate(t!("git-op-push").into(), |git, root| git.push(root, true))
-            }
-            PushIntent::Sync => self.run_git_sync(false),
+            PushIntent::Push => self.git_operate(t!("git-op-push").into(), move |git, root| {
+                let summary = git.push(root, true)?;
+                push_others(git, &others).map(|()| summary)
+            }),
+            PushIntent::Sync => self.run_git_sync_with(others, false),
         }
     }
 
@@ -445,6 +461,9 @@ impl App {
             sign_off: self.commit_signs_off(),
             no_verify: self.git.commit.no_verify,
         };
+        let committed: Vec<PathBuf> = others.iter().map(|(root, _)| root.clone()).collect();
+        self.git.commit.others_left = self.others_left(&committed);
+        self.git.commit.committed_with = committed;
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
@@ -657,10 +676,12 @@ impl App {
                     self.git.commit.busy = false;
                     match result {
                         Ok(oid) => {
-                            // 其他仓库勾上或暂存的文件也已提交：清掉勾选，重读它们的状态。
-                            let staged = self.other_staged_count() > 0;
-                            if staged || !self.git.commit.other_checked.is_empty() {
-                                self.git.commit.other_checked.clear();
+                            // 一并提交了的其他仓库：清掉它们的勾选，重读状态。没有一并提交的勾选
+                            // 留着，并说明一声。
+                            let others = self.git.commit.committed_with.clone();
+                            let left = std::mem::take(&mut self.git.commit.others_left);
+                            if !others.is_empty() {
+                                self.clear_committed_checks();
                                 self.git_read_summaries();
                             }
                             // 提交期间用户又改了信息，就留着改过的，不清空。
@@ -677,8 +698,10 @@ impl App {
                                 && let Some(intent) = self.push_intent()
                             {
                                 match (sync, intent) {
-                                    (true, PushIntent::Push) => self.run_git_sync(false),
-                                    (_, intent) => self.run_push(intent),
+                                    (true, PushIntent::Push) => {
+                                        self.run_git_sync_with(others, false)
+                                    }
+                                    (_, intent) => self.run_push_with(intent, others),
                                 }
                             }
                             // 勾上的都提交了；取消勾选的各处改动还在工作区里，下次重新勾选。
@@ -687,13 +710,20 @@ impl App {
                             self.git.commit.amend = false;
                             self.git.commit.no_verify = false;
                             self.git.commit.draft = None;
-                            self.flash(t!("git-commit-done", oid = &oid, subject = subject));
+                            if left > 0 {
+                                self.notify(t!("git-commit-others-left", count = left));
+                            } else {
+                                self.flash(t!("git-commit-done", oid = &oid, subject = subject));
+                            }
                             let short: String = oid.chars().take(7).collect();
                             self.git.commit.committed =
                                 Some((short, Instant::now() + COMMITTED_SHOWN));
                         }
                         Err(e) => {
                             self.git.commit.push_after = false;
+                            self.git.commit.sync_after = false;
+                            self.git.commit.committed_with.clear();
+                            self.git.commit.others_left = 0;
                             self.notify_with(
                                 t!("git-commit-failed", error = e),
                                 NoticeAction::GitOutput,
@@ -779,6 +809,8 @@ impl App {
         self.git.commit.sort = old.sort;
         self.git.commit.staging = old.staging;
         self.git.commit.other_checked = old.other_checked;
+        self.git.commit.other_skipped = old.other_skipped;
+        self.git.commit.other_folds = old.other_folds;
         // 写入其他仓库暂存区的操作按仓库的路径进行，与当前是哪个仓库无关：换仓库时接着做完，
         // 界面上已经按做完的结果显示了。
         self.git.commit.other_stage_queue = old.other_stage_queue;
@@ -800,6 +832,23 @@ impl App {
             work(tool.as_ref().map_err(unusable), &root);
         });
     }
+}
+
+/// 「提交并推送」「提交并同步」时把一并提交了的其他仓库 `others` 的当前分支依次推到各自的
+/// 上游，没有上游时发布。只推送、不拉取：被拒绝时说明是哪个仓库，由用户到该仓库同步。
+fn push_others(git: &Git, others: &[PathBuf]) -> Result<(), String> {
+    for other in others {
+        let upstream = [
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ];
+        let tracked = git.operate(other, &upstream).is_ok();
+        let pushed = git.push(other, tracked);
+        pushed.map_err(|error| format!("{}: {error}", winc_editor::display_name(other)))?;
+    }
+    Ok(())
 }
 
 /// 一次提交依次写入几个仓库时，已经提交了的：失败时的说明里写明哪些仓库已经提交，用户不会
