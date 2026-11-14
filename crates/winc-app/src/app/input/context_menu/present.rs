@@ -1160,6 +1160,15 @@ impl App {
         if command == MenuCommand::CommitTree {
             return !self.git.commit.flat();
         }
+        if command == MenuCommand::CommitList {
+            return self.git.commit.flat();
+        }
+        if command == MenuCommand::CommitChangeList {
+            return !self.git.commit.staging();
+        }
+        if let MenuCommand::CommitSortBy(sort) = command {
+            return self.git.commit.sort() == sort;
+        }
         if command == MenuCommand::CommitAllRepositories {
             return self.commit_all_repositories();
         }

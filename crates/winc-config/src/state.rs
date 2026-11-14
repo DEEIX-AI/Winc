@@ -40,6 +40,9 @@ pub struct State {
     ///
     /// `false`（默认）时平铺，每个文件一行。所有窗口和仓库共用，下次启动沿用。
     pub commit_tree: bool,
+    /// 提交视图中各组里文件的排序方式：`name` 按文件名，`status` 按更改的类型；为空（默认）时按
+    /// 路径。所有窗口和仓库共用，下次启动沿用。
+    pub commit_sort: String,
     /// 提交视图是否在当前仓库的更改之后列出打开的目录中其他仓库的更改。
     ///
     /// `None`（没有选过）时由提交视图的样式决定：勾选式列出，暂存区视图只显示当前仓库。所有
@@ -472,6 +475,11 @@ impl State {
             .get("commitTree")
             .and_then(Json::as_bool)
             .unwrap_or(false);
+        state.commit_sort = root
+            .get("commitSort")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
         state.commit_all_repositories = root.get("commitAllRepositories").and_then(Json::as_bool);
         state.pdf_thumbnails_hidden = root
             .get("pdfThumbnailsHidden")
@@ -582,6 +590,9 @@ impl State {
 
         if self.commit_tree {
             fields.push(("commitTree", Json::Bool(true)));
+        }
+        if !self.commit_sort.is_empty() {
+            fields.push(("commitSort", Json::String(self.commit_sort.clone())));
         }
         if !self.sign_off_repos.is_empty() {
             fields.push((

@@ -37,10 +37,10 @@ fn other_repositories_are_listed_after_the_current_one_and_a_click_switches() {
     // 没有选过时随样式：暂存区视图只显示当前仓库，勾选式列出其他仓库。有多个仓库时「⋯」菜单
     // 里有开关，关掉以后只显示当前仓库。
     let toggle = MenuCommand::CommitAllRepositories;
-    assert!(
-        app.commit_more_menu()
-            .contains(&MenuEntry::Item(toggle, true))
-    );
+    assert!(app.commit_more_menu().iter().any(|entry| match entry {
+        MenuEntry::Submenu(_, items) => items.contains(&MenuEntry::Item(toggle, true)),
+        _ => false,
+    }));
     app.git.commit.set_staging(true);
     assert!(!app.menu_checked(toggle) && app.commit_other_rows().is_empty());
     app.git.commit.set_staging(false);
@@ -160,6 +160,97 @@ fn checked_files_of_other_repositories_are_committed_alongside() {
     let _ = std::fs::remove_dir_all(a.parent().unwrap());
 }
 
+/// 暂存区视图中其他仓库的文件分为已暂存、未暂存两组，行尾的按钮暂存或取消暂存，不切换仓库；
+/// 已暂存的内容随当前仓库一起提交，此时当前仓库没有暂存的更改不会被一并提交。
+#[test]
+fn staged_files_of_other_repositories_are_committed_alongside() {
+    let Some((mut app, a, b)) = two_repositories("git-stage-other-repositories", false) else {
+        return;
+    };
+    app.settings_toggle(Setting::GitStagingArea);
+    app.run_action(Action::ShowCommit);
+    app.run_commit_more_command(MenuCommand::CommitAllRepositories);
+    app.poll_git();
+    paint(&mut app);
+    let git = |repo: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    let unstaged = [
+        OtherRow::Repository(1),
+        OtherRow::Group(1, false),
+        OtherRow::File(1, 0),
+        OtherRow::File(1, 1),
+    ];
+    assert_eq!(app.commit_other_rows(), unstaged);
+    assert_eq!(app.other_staged_count(), 0);
+
+    // 暂存另一个仓库改过的文件：写入那个仓库的暂存区，当前仓库不变，按钮写明提交 1 个文件。
+    let hit = |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
+    // 行尾的按钮悬停时才出现，取代状态字母。
+    let has = |app: &App, t: CommitTarget| app.hits.commit.iter().any(|(_, h)| *h == t);
+    assert!(!has(&app, CommitTarget::OtherStage(1, 0, true)));
+    let row = hit(&app, CommitTarget::OtherFile(1, 0));
+    app.on_mouse_move(row.x + 60.0, row.y + 4.0);
+    paint(&mut app);
+    let plus = hit(&app, CommitTarget::OtherStage(1, 0, true));
+    click(&mut app, (plus.x + 8.0, plus.y + 8.0));
+    app.poll_commit();
+    app.poll_git();
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    assert_eq!(
+        git(&b, &["status", "--porcelain"]),
+        "M  src/main.rs\n?? src/new.rs"
+    );
+    let staged = [
+        OtherRow::Repository(1),
+        OtherRow::Group(1, true),
+        OtherRow::Staged(1, 0),
+        OtherRow::Group(1, false),
+        OtherRow::File(1, 1),
+    ];
+    assert_eq!(app.commit_other_rows(), staged);
+    assert_eq!(app.commit_scope(), Some(CommitScope::Staged(1)));
+
+    // 分组行的按钮作用于整组：全部取消暂存，再全部暂存，然后把未跟踪的文件移出。
+    app.press_commit(CommitTarget::OtherGroupStage(1, false));
+    app.poll_commit();
+    app.poll_git();
+    assert_eq!(app.commit_other_rows(), unstaged);
+    app.press_commit(CommitTarget::OtherGroupStage(1, true));
+    app.poll_commit();
+    app.poll_git();
+    assert_eq!(app.other_staged_count(), 2);
+    app.press_commit(CommitTarget::OtherStage(1, 1, false));
+    app.poll_commit();
+    app.poll_git();
+    assert_eq!(app.commit_other_rows(), staged);
+
+    // 提交：只有另一个仓库暂存的文件进入提交，当前仓库未暂存的更改原样保留。
+    let status = app.git.status.clone().unwrap();
+    assert!(app.commit_blocker(&status).is_some());
+    app.git.commit.message.set_text("提交另一个仓库暂存的内容");
+    assert_eq!(app.commit_blocker(&status), None);
+    app.git_commit();
+    app.poll_commit();
+    assert_eq!(
+        git(&b, &["log", "-1", "--format=%s"]),
+        "提交另一个仓库暂存的内容"
+    );
+    assert_eq!(git(&b, &["status", "--porcelain"]), "?? src/new.rs");
+    assert_eq!(git(&a, &["log", "-1", "--format=%s"]), "first");
+    assert_eq!(
+        git(&a, &["status", "--porcelain"]),
+        " M src/main.rs\n?? src/new.rs"
+    );
+    let _ = std::fs::remove_dir_all(a.parent().unwrap());
+}
+
 /// 其他仓库标题行上的分支可以直接点：切换到那个仓库，并展开它的分支选择面板。
 #[test]
 fn the_branch_on_another_repository_opens_its_branch_picker() {
@@ -194,6 +285,37 @@ fn shoot_commit_all_repositories() {
         app.run_action(Action::ShowCommit);
         paint(&mut app);
         app.press_commit(CommitTarget::OtherCheck(1, 0));
+        shoot(&mut app, &name);
+        let _ = std::fs::remove_dir_all(a.parent().unwrap());
+    }
+}
+
+/// 截图：暂存区视图中列出其他仓库，另一个仓库有一个已暂存的文件（`commit-staging-others-*`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_commit_staging_others() {
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let name = format!("commit-staging-others-{theme}");
+        let Some((mut app, a, _)) = two_repositories(&name, dark) else {
+            return;
+        };
+        app.settings_toggle(Setting::GitStagingArea);
+        app.run_action(Action::ShowCommit);
+        app.run_commit_more_command(MenuCommand::CommitAllRepositories);
+        app.poll_git();
+        app.press_commit(CommitTarget::OtherStage(1, 0, true));
+        app.poll_commit();
+        app.poll_git();
+        // 鼠标停在未暂存的那一行上：行尾的状态字母换成「＋」。
+        paint(&mut app);
+        let rows = app.hits.commit.iter();
+        let row = rows
+            .clone()
+            .find(|(_, h)| *h == CommitTarget::OtherFile(1, 1));
+        if let Some((row, _)) = row.copied() {
+            app.on_mouse_move(row.x + 60.0, row.y + 4.0);
+        }
         shoot(&mut app, &name);
         let _ = std::fs::remove_dir_all(a.parent().unwrap());
     }

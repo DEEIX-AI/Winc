@@ -45,8 +45,8 @@ pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitScope, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, OtherRow, STASH_GAP,
-    StashLine, StashView, SyncState,
+    CommitRows, CommitScope, CommitSort, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, OtherRow,
+    STASH_GAP, StashLine, StashView, SyncState,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -244,12 +244,18 @@ pub enum UserEvent {
     GitRollback(Vec<PathBuf>),
     /// 确认框中确认中止进行中的合并、变基等操作。
     GitAbort,
+    /// 确认框里选了跳过：跳过变基、拣选等操作停着的这个提交。
+    GitSkip,
     /// 提示框中选择切换到参数中的分支；为 `true` 时先储藏未提交的更改，否则把更改带到新分支。
     GitSwitchBranch(winc_editor::git::Branch, bool),
     /// 确认框中确认强制推送当前分支。
     GitForcePush,
     /// 提示框中确认发布、推送或同步当前分支；为 `true` 时勾选了「不再询问」。
     GitPushConfirmed(crate::app::git::commit::PushIntent, bool),
+    /// 推送的确认框里选了「查看提交」：打开 Git 日志。
+    GitShowLog,
+    /// Git 输出有了新的内容：开着的输出标签接着显示。
+    GitOutput,
     /// 提示框中确认提交已勾选的文件并推送。
     GitCommitAndPush,
     /// 提示框中确认撤销上一次提交。

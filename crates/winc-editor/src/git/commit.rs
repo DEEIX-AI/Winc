@@ -161,17 +161,19 @@ impl Git {
     /// 运行 `git commit`，提交信息由标准输入传入。
     fn run_commit(&self, root: &Path, command: &mut Command, message: &str) -> Result<(), String> {
         command.stderr(Stdio::piped());
-        match process::run(
-            command,
-            message.as_bytes().to_vec(),
-            COMMIT_TIMEOUT,
-            &Cancel::default(),
-        ) {
+        // 钩子可能运行很久：命令一开始就记下，钩子的输出随到随记。
+        let live = output::begin(root, &["commit"]);
+        let watch: process::Watch = {
+            let live = std::sync::Arc::clone(&live);
+            std::sync::Arc::new(move |bytes: &[u8]| output::feed(&live, bytes))
+        };
+        let (input, cancel) = (message.as_bytes().to_vec(), Cancel::default());
+        match process::run_watched(command, input, COMMIT_TIMEOUT, &cancel, Some(watch)) {
             Ok(output) => {
                 // hooks 的输出可能在标准输出里。
                 let mut text = output.stderr;
                 text.extend_from_slice(&output.stdout);
-                output::record(root, &["commit"], output.status.code(), &text);
+                output::finish(&live, output.status.code(), &text);
                 if output.status.success() {
                     Ok(())
                 } else {
@@ -180,7 +182,7 @@ impl Git {
             }
             Err(e) => {
                 let reason = describe(&e);
-                output::record(root, &["commit"], None, reason.as_bytes());
+                output::finish(&live, None, reason.as_bytes());
                 Err(reason)
             }
         }

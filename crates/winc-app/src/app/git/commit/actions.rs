@@ -1,5 +1,7 @@
 //! 提交和回滚：先保存要提交的文件、请用户确认回滚，在后台运行 git 并收下结果。
 
+use std::sync::{Arc, PoisonError};
+
 use winc_editor::git::Synced;
 use winc_i18n::t;
 
@@ -41,6 +43,10 @@ pub(crate) enum PushIntent {
     /// 同步：拉取上游的新提交，再推送本地的提交。
     Sync,
 }
+
+/// 推送的确认框里最多列出几个提交的标题：确认框不能滚动，一屏之内读得完；超出的写明个数，
+/// 全部提交在「查看提交」打开的日志里。
+const PUSH_PREVIEW: usize = 8;
 
 /// 提交成功后按钮显示「✓ 已提交」的时长（经验值）。
 ///
@@ -108,15 +114,62 @@ impl App {
             self.run_push(intent);
             return;
         }
-        let (message, detail, button) = self.push_prompt(&intent);
+        // 先在后台读出会送出的提交，读到以后再问（[`App::take_push_preview`]）：确认框里列出它们，
+        // 推送之前看得到送出去的是什么。
+        let slot = Arc::clone(&self.git.push_preview);
+        let Some(root) = self.git.root.clone() else {
+            return;
+        };
+        self.spawn_git(UserEvent::GitStatus, move |tool| {
+            let publish = matches!(intent, PushIntent::Publish(_));
+            let read = tool
+                .ok()
+                .map(|git| git.outgoing(&root, publish, PUSH_PREVIEW));
+            let (subjects, total) = read.and_then(Result::ok).unwrap_or_default();
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((intent, subjects, total));
+        });
+        // 没有事件循环（测试中）时后台的工作已经就地做完：直接取用。
+        self.take_push_preview();
+    }
+
+    /// 后台读到了会送出的提交：弹出确认框，说明后面列出这些提交的标题；超出的写明还有几个。
+    ///
+    /// 第二个按钮「查看提交」打开 Git 日志：送出的就是上游的标记上面的那些提交，点开能看各自
+    /// 改了哪些文件。
+    pub(in crate::app) fn take_push_preview(&mut self) {
+        let preview = (self.git.push_preview.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some((intent, subjects, total)) = preview else {
+            return;
+        };
+        let (message, mut detail, button) = self.push_prompt(&intent);
+        for subject in &subjects {
+            detail.push_str("\n· ");
+            detail.push_str(subject);
+        }
+        if total > subjects.len() {
+            let more = total - subjects.len();
+            detail.push('\n');
+            detail.push_str(&t!("git-push-confirm-more", count = more));
+        }
         let buttons = vec![
             AlertButton::new(&button),
+            AlertButton::new(t!("git-push-confirm-review")),
             AlertButton::cancel(t!("common-cancel")),
         ];
         let asked = Some((t!("common-dont-ask"), false));
-        self.show_alert(&message, &detail, buttons, asked, move |choice, never| {
-            (choice == 0).then(|| UserEvent::GitPushConfirmed(intent.clone(), never))
-        });
+        self.show_alert(
+            &message,
+            &detail,
+            buttons,
+            asked,
+            move |choice, never| match choice {
+                0 => Some(UserEvent::GitPushConfirmed(intent.clone(), never)),
+                1 => Some(UserEvent::GitShowLog),
+                _ => None,
+            },
+        );
     }
 
     /// 提示框中确认了 `intent`：勾选了「不再询问」（`never`）时写入配置，然后执行。
@@ -212,7 +265,7 @@ impl App {
     pub(in crate::app) fn confirm_commit_and_push(&mut self) {
         let ready = !self.git.commit.busy
             && (self.git.status.as_ref())
-                .is_some_and(|status| self.git.commit.blocker(status).is_none());
+                .is_some_and(|status| self.commit_blocker(status).is_none());
         if !ready {
             self.git_commit_and_push();
             return;
@@ -254,7 +307,7 @@ impl App {
             return;
         }
         // 暂存的操作尚未写完：写完后再提交，提交的才是界面上显示的内容。
-        if self.git.commit.staging_active() {
+        if self.git.commit.staging_active() || self.git.commit.other_staging_active() {
             self.git.commit.commit_queued = true;
             return;
         }
@@ -273,14 +326,22 @@ impl App {
         }
         let amend = self.git.commit.amend;
         let scope = CommitScope::of(status);
-        let all = matches!(scope, CommitScope::All(_)) && !amend && status.operation.is_none();
+        // 修改上次提交、合并或变基暂停时只动当前仓库。其他仓库有暂存的内容时，当前仓库只提交
+        // 已暂存的部分，不扩大为全部已跟踪文件。
+        let held = amend || status.operation.is_some();
+        let others = if held {
+            Vec::new()
+        } else {
+            self.other_staged_roots()
+        };
+        let all = matches!(scope, CommitScope::All(_)) && !held && others.is_empty();
         let paths_of = |keep: &dyn Fn(&Entry) -> bool| -> Vec<PathBuf> {
             let kept = status.entries.iter().filter(|e| keep(e));
             kept.map(|e| e.path.clone()).collect()
         };
         let conflicted = paths_of(&Entry::conflicted);
-        let nothing = scope == CommitScope::Nothing && conflicted.is_empty();
-        if nothing && !amend && status.operation.is_none() {
+        let own = held || all || !conflicted.is_empty() || matches!(scope, CommitScope::Staged(_));
+        if !own && others.is_empty() {
             self.flash(t!("git-commit-nothing-checked"));
             return;
         }
@@ -321,11 +382,29 @@ impl App {
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
+            // 先提交当前仓库，再依次提交其他仓库暂存的内容；其中一个失败就停下，已经提交的保留。
             let result = git.and_then(|git| {
-                if !conflicted.is_empty() {
-                    git.stage(root, &conflicted)?;
+                let mut first = None;
+                if own {
+                    if !conflicted.is_empty() {
+                        git.stage(root, &conflicted)?;
+                    }
+                    first = Some(git.commit_with(root, &message, options)?);
                 }
-                git.commit_with(root, &message, options)
+                for (other, sign_off) in &others {
+                    let options = winc_editor::git::CommitOptions {
+                        all: false,
+                        amend: false,
+                        sign_off: *sign_off,
+                        ..options
+                    };
+                    let name = winc_editor::display_name(other);
+                    let oid = git
+                        .commit_with(other, &message, options)
+                        .map_err(|error| format!("{name}: {error}"))?;
+                    first.get_or_insert(oid);
+                }
+                Ok(first.unwrap_or_default())
             });
             let _ = sender.send(Outcome::Committed(result, message, root.to_path_buf()));
         });
@@ -371,6 +450,27 @@ impl App {
         }
         // 没有窗口（测试中）时直接中止。
         self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitAbort);
+    }
+
+    /// 确认后跳过变基、拣选等操作停着的这个提交。
+    ///
+    /// 跳过会丢弃这个提交的更改和为它解决到一半的冲突，因此须先确认。
+    pub(super) fn confirm_skip(&mut self) {
+        let operation = self.git.status.as_ref().and_then(|s| s.operation);
+        if operation.is_none_or(|operation| operation == Operation::Merge) {
+            return;
+        }
+        if self.window.handle.is_some() {
+            let message = t!("git-skip-confirm");
+            let detail = t!("git-skip-confirm-detail");
+            let button = t!("git-skip-confirm-button");
+            self.show_confirm(message, detail, button, move |ok| {
+                ok.then_some(UserEvent::GitSkip)
+            });
+            return;
+        }
+        // 没有窗口（测试中）时直接跳过。
+        self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitSkip);
     }
 
     /// 回滚前先确认（系统确认框）；确认后回滚组 `group` 中勾上的文件，没有勾上的文件时回滚
@@ -494,8 +594,9 @@ impl App {
                     self.git.commit.busy = false;
                     match result {
                         Ok(oid) => {
-                            // 其他仓库勾上的文件也已提交：清掉勾选，重读它们的状态。
-                            if !self.git.commit.other_checked.is_empty() {
+                            // 其他仓库勾上或暂存的文件也已提交：清掉勾选，重读它们的状态。
+                            let staged = self.other_staged_count() > 0;
+                            if staged || !self.git.commit.other_checked.is_empty() {
                                 self.git.commit.other_checked.clear();
                                 self.git_read_summaries();
                             }
@@ -533,6 +634,7 @@ impl App {
                     self.git_refresh();
                 }
                 Outcome::Staged(result, root) => self.staging_finished(result, &root),
+                Outcome::OtherStaged(result) => self.other_staging_finished(result),
                 Outcome::IndexText(root, path, version, text) => {
                     self.index_text_arrived(&root, path, version, text);
                 }
@@ -599,6 +701,7 @@ impl App {
         let old = std::mem::take(&mut self.git.commit);
         self.git.commit.results = old.results;
         self.git.commit.flat = old.flat;
+        self.git.commit.sort = old.sort;
         self.git.commit.staging = old.staging;
         self.git.commit.other_checked = old.other_checked;
         self.git.commit.collapsed = old.collapsed;

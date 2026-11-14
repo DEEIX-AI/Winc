@@ -1006,10 +1006,19 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         .collect();
     let expected = [
         Setting::GitStagingArea,
-        Setting::GitConfirmPush,
+        Setting::GitTree,
         Setting::DiffInline,
+        Setting::GitConfirmPush,
+        Setting::GitSystemProxy,
     ];
     assert_eq!(rows, expected);
+    // 「树形显示更改」与提交视图「⋯」菜单里的是同一个开关，记在状态文件里。
+    assert!(app.git.commit.flat() && !app.switch_on(Setting::GitTree));
+    app.settings_toggle(Setting::GitTree);
+    assert!(!app.git.commit.flat() && app.state.commit_tree);
+    assert!(app.switch_on(Setting::GitTree));
+    app.settings_toggle(Setting::GitTree);
+    assert!(app.git.commit.flat() && !app.state.commit_tree);
     // 配置文件中打开「显示暂存区」：提交视图随之换成暂存区视图。
     assert!(!app.git.commit.staging());
     let mut config = app.config.clone();

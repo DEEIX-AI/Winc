@@ -188,6 +188,9 @@ pub struct Config {
     ///
     /// 提示框上勾选「不再询问」后写成 `false`，可在设置中重新打开。
     pub git_confirm_push: Option<bool>,
+    /// `git` 访问网络时是否跟随系统的代理设置，默认为是；`git` 自己配置了代理或环境里已有代理
+    /// 变量时以它们为准。
+    pub git_system_proxy: Option<bool>,
     /// 提交视图是否显示暂存区：分出「已暂存的更改」一组，各项的状态取自暂存区；默认为否，
     /// 用勾选决定提交的内容。
     pub git_staging_area: Option<bool>,

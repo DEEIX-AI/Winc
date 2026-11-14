@@ -71,11 +71,24 @@ const GIT_PICKER_GAP: f32 = 4.0;
 /// 选择面板底栏的高度（逻辑像素）：上面留 4，`BUTTON_SMALL` 高的按钮，下面留 6，和顶部的搜索行
 /// 对称。
 const GIT_PICKER_FOOT: f32 = 34.0;
-/// 分支选择器中拉取、推送、获取一行的高度（逻辑像素）：上下各留 4，中间是 `BUTTON_SMALL` 高的
-/// 按钮。加上搜索行下方的 4，按钮与搜索框相距 8，不贴近搜索框获得焦点时的外框。
-pub const GIT_PICKER_ACTIONS: f32 = 32.0;
-/// 拉取、推送、获取按钮上方的留白（逻辑像素）。
+/// 分支选择器搜索框下面的操作，自上而下各占一行。
+pub const GIT_PICKER_ACTION_LIST: [PickerPart; 5] = [
+    PickerPart::Pull,
+    PickerPart::Push,
+    PickerPart::Fetch,
+    PickerPart::NewBranch,
+    PickerPart::NewWorktree,
+];
+/// 分支选择器中操作一段的高度（逻辑像素）：上面留 `GIT_PICKER_ACTIONS_TOP`，各项一行，下面是
+/// 一条分隔线和它上下的留白。
+pub const GIT_PICKER_ACTIONS: f32 = GIT_PICKER_ACTIONS_TOP
+    + GIT_PICKER_ACTION_LIST.len() as f32 * PICKER_ROW
+    + GIT_PICKER_ACTIONS_END;
+/// 操作一段上方的留白（逻辑像素）。
 pub const GIT_PICKER_ACTIONS_TOP: f32 = 4.0;
+/// 操作一段下方分隔线占的高度（逻辑像素）：线在正中，上下各留 2；加上各行底色上下各缩的 1，
+/// 线到两边底色的距离相等。
+pub const GIT_PICKER_ACTIONS_END: f32 = 5.0;
 /// 从状态栏展开时面板的宽度（逻辑像素）：和默认宽度的侧栏里从分支行展开时一样宽（侧栏 300
 /// 减去两边各 8 的边距）。
 const STATUS_PICKER_W: f32 = crate::theme::DEFAULT_PANEL_WIDTH - 16.0;
@@ -83,14 +96,10 @@ const STATUS_PICKER_W: f32 = crate::theme::DEFAULT_PANEL_WIDTH - 16.0;
 /// 分支选择器的分组标题。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchSection {
-    /// 最近使用。
-    Recent,
     /// 本地分支。
     Local,
     /// 日志分支筛选中的远程分支：有多个远程时按远程分组，带远程名；只有一个远程时为 `None`。
     Remote(Option<String>),
-    /// 最近使用以外的本地分支。
-    Other,
 }
 
 /// 分支选择器的一行。
@@ -100,6 +109,15 @@ pub enum BranchRow {
     All,
     /// 分组标题，不能选中。
     Heading(BranchSection),
+    /// 可以收起的「最近」或「本地」一组，默认展开。
+    Locals {
+        /// 是否是「最近」一组。
+        recent: bool,
+        /// 这一组的分支数。
+        count: usize,
+        /// 是否展开。
+        open: bool,
+    },
     /// 可以展开的「远程分支」一组。
     Remotes {
         /// 这一组的分支数。
@@ -157,6 +175,7 @@ impl BranchRow {
         match (self, other) {
             (BranchRow::All, BranchRow::All) => true,
             (BranchRow::Remotes { .. }, BranchRow::Remotes { .. }) => true,
+            (BranchRow::Locals { recent: a, .. }, BranchRow::Locals { recent: b, .. }) => a == b,
             (BranchRow::Tags { .. }, BranchRow::Tags { .. }) => true,
             // 标签只在列表末尾增减，名字不随刷新移动到别的下标的情况不多；下标相同即视为同一项。
             (BranchRow::Tag(index), BranchRow::Tag(i)) => index == i,
@@ -231,6 +250,13 @@ fn log_branch_rows(branches: &[Branch], query: &[char]) -> Vec<BranchRow> {
     rows
 }
 
+/// 「最近」（`recent` 为真）或「本地」一组在 [`BranchList::toggled`] 中的记法：记作本地的一项，
+/// 路径以分支名中不会出现的空字符开头，不与目录的路径相同。
+pub fn locals_key(recent: bool) -> (bool, String) {
+    let name = if recent { "\0recent" } else { "\0local" };
+    (false, name.to_owned())
+}
+
 /// 排列分支选择器时用到的内容。
 pub struct BranchList<'a> {
     /// 全部分支。
@@ -262,9 +288,17 @@ pub fn branch_rows(list: &BranchList<'_>) -> Vec<BranchRow> {
     } else {
         Vec::new()
     };
+    // 「最近」「本地」两组默认展开，点标题行收起；搜索时都展开。
+    let shown = |recent: bool| searching || !list.toggled.contains(&locals_key(recent));
     if !latest.is_empty() {
-        rows.push(BranchRow::Heading(BranchSection::Recent));
-        rows.extend(latest.iter().map(|&index| BranchRow::Branch {
+        let open = shown(true);
+        rows.push(BranchRow::Locals {
+            recent: true,
+            count: latest.len(),
+            open,
+        });
+        let latest = latest.iter().filter(|_| open);
+        rows.extend(latest.map(|&index| BranchRow::Branch {
             index,
             depth: 0,
             label: branches[index].name.clone(),
@@ -285,20 +319,21 @@ pub fn branch_rows(list: &BranchList<'_>) -> Vec<BranchRow> {
         current,
         toggled: list.toggled,
     };
-    let mut local = items(false);
-    local.retain(|(index, _)| !latest.contains(index));
+    // 各组都列全：「最近」只是捷径，其中的分支在「本地」里照样有；「远程」不因为已有本地分支
+    // 而少列，否则看起来像远程上没有这个分支。
+    let local = items(false);
     if !local.is_empty() {
-        let section = if latest.is_empty() {
-            BranchSection::Local
-        } else {
-            BranchSection::Other
-        };
-        rows.push(BranchRow::Heading(section));
-        tree(false).push(local, "", 0, &mut rows);
+        let open = shown(false);
+        rows.push(BranchRow::Locals {
+            recent: false,
+            count: local.len(),
+            open,
+        });
+        if open {
+            tree(false).push(local, "", 0, &mut rows);
+        }
     }
-    // 已有本地分支的远程分支只在搜索时列出：平时选本地那一行就是它，搜索时还能拿它比较、合并。
-    let mut remote = items(true);
-    remote.retain(|&(index, _)| searching || !has_local_branch(branches, &branches[index]));
+    let remote = items(true);
     if !remote.is_empty() {
         let flipped = list.toggled.contains(&(true, String::new()));
         let open = searching || flipped;
@@ -335,13 +370,6 @@ pub fn branch_rows(list: &BranchList<'_>) -> Vec<BranchRow> {
         ));
     }
     rows
-}
-
-/// 远程分支 `remote` 是否已有本地分支：同名，或者有本地分支跟踪它。
-pub(in crate::app) fn has_local_branch(branches: &[Branch], remote: &Branch) -> bool {
-    let name = local_name(remote);
-    (branches.iter().filter(|b| !b.remote))
-        .any(|b| b.name == name || b.upstream.as_deref() == Some(remote.name.as_str()))
 }
 
 /// 只有一个远程时去掉分支名里的远程名：少一层没有信息量的目录。
@@ -751,16 +779,17 @@ impl App {
         self.branch_picker_from(GitAnchor::Log)
     }
 
-    /// 返回选择面板底栏的高度（逻辑像素）：日志的分支筛选没有新建分支、工作树的入口，没有底栏。
+    /// 返回选择面板底栏的高度（逻辑像素）：列出位置时底栏里是新建工作树；列出分支时新建的入口
+    /// 在搜索框下面的操作里，没有底栏。
     pub(crate) fn git_picker_footer(&self) -> f32 {
-        if self.picker_filters_log() {
-            0.0
-        } else {
+        if self.picker_lists_locations() {
             GIT_PICKER_FOOT
+        } else {
+            0.0
         }
     }
 
-    /// 搜索框下面有没有拉取、推送、获取一行：列出分支时有。
+    /// 搜索框下面有没有操作一段（拉取、推送、获取、新建分支、新建工作树）：列出分支时有。
     pub(crate) fn picker_has_actions(&self) -> bool {
         self.picker_lists_branches() && !self.picker_filters_log()
     }
@@ -787,6 +816,15 @@ impl App {
             PickerPart::Pull => self.has_upstream(),
             PickerPart::Push => on_branch,
             _ => true,
+        }
+    }
+
+    /// 操作一段里的 `part` 现在能不能用：新建分支、新建工作树始终可用，其余见
+    /// [`Self::picker_action_enabled`]。
+    pub(crate) fn picker_part_enabled(&self, part: PickerPart) -> bool {
+        match part {
+            PickerPart::NewBranch | PickerPart::NewWorktree => true,
+            part => self.picker_action_enabled(part),
         }
     }
 
@@ -837,7 +875,7 @@ impl App {
             None
         } else if self.picker_filters_log() {
             self.applied_log_filter_row(&rows)
-        } else if rows.first() == Some(&BranchRow::Heading(BranchSection::Recent)) {
+        } else if matches!(rows.first(), Some(BranchRow::Locals { recent: true, .. })) {
             None
         } else {
             rows.iter().position(|row| {
@@ -964,6 +1002,10 @@ impl App {
             return;
         }
         match row {
+            Some(BranchRow::Locals { recent, .. }) => {
+                let (remote, path) = locals_key(recent);
+                self.toggle_branch_folder(remote, path);
+            }
             Some(BranchRow::Remotes { .. }) => self.toggle_branch_folder(true, String::new()),
             Some(BranchRow::Tags { .. }) => self.toggle_branch_folder(false, String::new()),
             Some(BranchRow::Tag(index)) => self.run_picker_tag(None, index),
@@ -1052,6 +1094,10 @@ impl App {
             return false;
         };
         match (row, right) {
+            (BranchRow::Locals { recent, open, .. }, _) if open != right => {
+                let (remote, path) = locals_key(recent);
+                self.toggle_branch_folder(remote, path);
+            }
             (BranchRow::Remotes { open, .. }, _) if open != right => {
                 self.toggle_branch_folder(true, String::new());
             }
@@ -1071,7 +1117,10 @@ impl App {
                 self.open_branch_row_menu(MenuTarget::BranchOps(index));
             }
             (
-                BranchRow::Folder { .. } | BranchRow::Remotes { .. } | BranchRow::Tags { .. },
+                BranchRow::Folder { .. }
+                | BranchRow::Locals { .. }
+                | BranchRow::Remotes { .. }
+                | BranchRow::Tags { .. },
                 true,
             ) => {
                 self.overlays.picker.selected = self.branch_picker_step(true);
@@ -1104,7 +1153,7 @@ impl App {
         let parent = (0..self.overlays.picker.selected).rev().find(|&i| {
             matches!(
                 rows[i],
-                BranchRow::Folder { .. } | BranchRow::Remotes { .. }
+                BranchRow::Folder { .. } | BranchRow::Remotes { .. } | BranchRow::Locals { .. }
             ) && depth_of(&rows[i]) < Some(depth)
         });
         if let Some(parent) = parent {

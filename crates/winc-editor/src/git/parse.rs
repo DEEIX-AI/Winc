@@ -120,6 +120,17 @@ pub(super) fn parse_recent_branches(output: &str) -> Vec<String> {
 ///
 /// 本地的分支在前，远程的在后，各自按名字排列；远程的 `HEAD` 指针不列。上游引用已不存在的（远程
 /// 分支被删除后获取时清掉了）算作没有上游：`--prune` 之后没有什么可以和它同步。
+/// 解析 `%(upstream:track,nobracket)`（`ahead 3, behind 1`、`ahead 2`、`gone`、空）成领先、
+/// 落后上游的提交数。
+fn parse_track(track: &str) -> (u16, u16) {
+    let count = |word: &str| {
+        let part = track.split(", ").find_map(|part| part.strip_prefix(word));
+        let count: u64 = part.and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+        u16::try_from(count).unwrap_or(u16::MAX)
+    };
+    (count("ahead "), count("behind "))
+}
+
 pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
     let mut local = Vec::new();
     let mut remote = Vec::new();
@@ -135,6 +146,7 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
             .and_then(|t| t.parse().ok())
             .unwrap_or_default();
         let date = fields.next().unwrap_or_default().to_owned();
+        let (ahead, behind) = parse_track(fields.next().unwrap_or_default());
         if let Some(name) = name.strip_prefix("refs/heads/") {
             local.push(Branch {
                 name: name.to_owned(),
@@ -145,6 +157,8 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
                 oid,
                 time,
                 local: date,
+                ahead,
+                behind,
             });
         } else if let Some(name) = name.strip_prefix("refs/remotes/") {
             if name.ends_with("/HEAD") {
@@ -159,6 +173,8 @@ pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
                 oid,
                 time,
                 local: date,
+                ahead: 0,
+                behind: 0,
             });
         }
     }

@@ -165,6 +165,63 @@ fn branches_list_local_first_and_skip_remote_head() {
 }
 
 #[test]
+fn a_new_repository_ignores_what_its_project_type_builds() {
+    use super::remote::starter_ignore;
+    assert_eq!(starter_ignore(&[]), ".DS_Store\nThumbs.db\n");
+    let rust = starter_ignore(&["Cargo.toml"]);
+    assert!(rust.lines().any(|line| line == "/target/"));
+    assert!(!rust.contains("node_modules"));
+    let mixed = starter_ignore(&["package.json", "requirements.txt"]);
+    for line in ["node_modules/", "__pycache__/", ".venv/"] {
+        assert!(mixed.lines().any(|l| l == line), "{line}");
+    }
+    assert!(mixed.ends_with('\n'));
+}
+
+#[test]
+fn the_git_version_is_read_from_its_first_two_numbers() {
+    use super::sync::parse_version;
+    assert_eq!(
+        parse_version("git version 2.54.0 (Apple Git-157)\n"),
+        Some((2, 54))
+    );
+    assert_eq!(
+        parse_version("git version 2.47.1.windows.2\n"),
+        Some((2, 47))
+    );
+    assert_eq!(parse_version("git version 2.30"), Some((2, 30)));
+    assert_eq!(parse_version("git version 3.0.0-rc1"), Some((3, 0)));
+    assert_eq!(parse_version("something else"), None);
+    // 版本按（主，次）比较：2.9 比 2.30 旧，读不出版本时不加新选项。
+    assert!(parse_version("git version 2.9.5") < Some((2, 30)));
+    assert!(parse_version("?") < Some((2, 30)));
+}
+
+#[test]
+fn branches_carry_how_far_they_are_from_their_upstream() {
+    let line =
+        |name: &str, track: &str| format!("refs/heads/{name}\0 \0origin/{name}\0a\00\0\0{track}\n");
+    let output = [
+        line("ahead", "ahead 3"),
+        line("behind", "behind 2"),
+        line("both", "ahead 1, behind 4"),
+        line("even", ""),
+        line("lost", "gone"),
+    ]
+    .concat();
+    let branches = parse_branches(&output);
+    let track = |name: &str| {
+        let branch = branches.iter().find(|b| b.name == name).unwrap();
+        (branch.ahead, branch.behind)
+    };
+    assert_eq!(track("ahead"), (3, 0));
+    assert_eq!(track("behind"), (0, 2));
+    assert_eq!(track("both"), (1, 4));
+    assert_eq!(track("even"), (0, 0));
+    assert_eq!(track("lost"), (0, 0));
+}
+
+#[test]
 fn an_upstream_that_no_longer_exists_counts_as_none() {
     let output = "refs/heads/gone\0 \0origin/gone\0a\nrefs/heads/kept\0 \0origin/kept\0b\n\
                   refs/heads/local\0 \0kept\0c\nrefs/heads/origin/kept\0 \0remotes/origin/kept\0d\n\

@@ -922,7 +922,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             if app.git.commit.busy {
                 return None;
             }
-            if let Some(reason) = app.git.commit.blocker(status) {
+            if let Some(reason) = app.commit_blocker(status) {
                 return Some((parts.commit, reason));
             }
             let name = match (status.operation, &status.head) {

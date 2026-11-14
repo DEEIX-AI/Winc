@@ -2,6 +2,7 @@
 
 git-unavailable-not-installed = Git not found
 git-unavailable-no-developer-tools = Command Line Developer Tools aren’t installed
+git-version-too-old = Git { $version } is too old; some operations need { $minimum } or later
 git-status-unreadable = Couldn’t read the output of git status
 git-status-truncated = Too many changed files in the repository; only the first { $count } are shown
 git-push-no-remote = This repository has no remote configured
@@ -303,6 +304,11 @@ git-push-confirm-push-detail = { $count ->
     [one] 1 commit will be pushed to { $target }.
    *[other] { $count } commits will be pushed to { $target }.
 }
+git-push-confirm-review = Review Commits
+git-push-confirm-more = { $count ->
+    [one] and 1 more commit
+   *[other] and { $count } more commits
+}
 git-push-confirm-push-button = Push
 git-push-confirm-sync = Sync with { $upstream }?
 git-push-confirm-sync-detail = Pulls { $behind } and pushes { $ahead } commits with { $target }.
@@ -324,6 +330,9 @@ git-stage-failed = Couldn’t update the staging area: { $error }
 git-stage-nothing = The current file has no unstaged changes
 git-ignore-done = Added to .gitignore: { $pattern }
 git-ignore-failed = Couldn’t write .gitignore: { $error }
+git-skip-confirm = Skip this commit?
+git-skip-confirm-detail = Its changes and any conflicts you have resolved will be discarded, then the remaining commits continue.
+git-skip-confirm-button = Skip Commit
 git-abort-confirm = Abort { $operation }?
 git-abort-confirm-detail = The working tree returns to its state before the operation began, and resolved conflicts are discarded.
 git-abort-confirm-button = Abort { $operation }
@@ -347,6 +356,8 @@ git-read-file-failed = Couldn’t read “{ $name }”: { $error }
 ## Repository status and file diffs
 
 git-unusable = Can’t use Git: { $error }
+git-no-repository-detail = Initialize one to review changes, commit and sync here
+git-no-repository-clone = Clone Repository…
 git-not-a-repository = The current folder isn’t a Git repository
 git-no-file-in-tab = The current tab has no file
 git-diff-title = { $name } · Diff
@@ -448,7 +459,8 @@ git-switch-stash-message = Changes on “{ $branch }” before switching branche
 git-commit-button-nothing = No Changes to Commit
 git-branch-picker-empty = No matching branches
 git-branch-picker-recent = Recent
-git-branch-picker-other = Other Local Branches
+git-branch-picker-other = Local
+git-branch-picker-remote = Remote
 git-commit-button = Commit
 git-commit-button-files = { $count ->
     [one] Commit 1 File

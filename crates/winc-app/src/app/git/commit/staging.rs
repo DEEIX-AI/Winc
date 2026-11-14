@@ -39,36 +39,12 @@ impl App {
         let mut touched = Vec::new();
         let mut unresolved = 0;
         for entry in (status.entries.iter_mut()).filter(|e| paths.contains(&e.path)) {
-            if on {
-                if entry.unstaged.is_none() {
-                    continue;
-                }
-                if entry.conflicted() && status.unresolved.contains(&entry.path) {
-                    unresolved += 1;
-                    continue;
-                }
-                entry.staged = Some(match (entry.staged, entry.unstaged) {
-                    (Some(Change::Added), _) | (_, Some(Change::Untracked)) => Change::Added,
-                    (_, Some(Change::Deleted)) => Change::Deleted,
-                    (Some(Change::Renamed), _) => Change::Renamed,
-                    _ => Change::Modified,
-                });
-                entry.unstaged = None;
-                touched.push(entry.path.clone());
-            } else {
-                let Some(staged) = entry.staged.filter(|_| !entry.conflicted()) else {
-                    continue;
-                };
-                entry.unstaged = Some(match (staged, entry.unstaged) {
-                    (Change::Added, _) => Change::Untracked,
-                    (Change::Deleted, _) | (_, Some(Change::Deleted)) => Change::Deleted,
-                    _ => Change::Modified,
-                });
-                entry.staged = None;
-                touched.push(entry.path.clone());
-                // 改名的文件，原来的路径一并移出暂存区。
-                touched.extend(entry.from.clone());
+            let pending = on && entry.unstaged.is_some();
+            if pending && entry.conflicted() && status.unresolved.contains(&entry.path) {
+                unresolved += 1;
+                continue;
             }
+            flip_staged(entry, on, &mut touched);
         }
         if unresolved > 0 {
             self.flash(t!("git-commit-unresolved-conflicts", count = unresolved));
@@ -328,6 +304,38 @@ impl App {
         if current {
             self.git.commit.set_index_text(path, text);
         }
+    }
+}
+
+/// 把 `entry` 改写为暂存（`on` 为真）或取消暂存之后的状态，要写入暂存区的路径加到 `touched`。
+///
+/// 已经处于该状态的文件不动；冲突中的文件不能取消暂存。
+pub(super) fn flip_staged(entry: &mut Entry, on: bool, touched: &mut Vec<PathBuf>) {
+    if on {
+        if entry.unstaged.is_none() {
+            return;
+        }
+        entry.staged = Some(match (entry.staged, entry.unstaged) {
+            (Some(Change::Added), _) | (_, Some(Change::Untracked)) => Change::Added,
+            (_, Some(Change::Deleted)) => Change::Deleted,
+            (Some(Change::Renamed), _) => Change::Renamed,
+            _ => Change::Modified,
+        });
+        entry.unstaged = None;
+        touched.push(entry.path.clone());
+    } else {
+        let Some(staged) = entry.staged.filter(|_| !entry.conflicted()) else {
+            return;
+        };
+        entry.unstaged = Some(match (staged, entry.unstaged) {
+            (Change::Added, _) => Change::Untracked,
+            (Change::Deleted, _) | (_, Some(Change::Deleted)) => Change::Deleted,
+            _ => Change::Modified,
+        });
+        entry.staged = None;
+        touched.push(entry.path.clone());
+        // 改名的文件，原来的路径一并移出暂存区。
+        touched.extend(entry.from.clone());
     }
 }
 

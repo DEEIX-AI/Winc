@@ -237,8 +237,12 @@ pub fn run() {
     let mut winc = Winc::new(Some(event_loop.create_proxy()), template);
     let (key, proxy) = winc.reserve();
     let mut app = App::new(editor, proxy, bench, config);
+    app.watch_git_output();
+    winc_editor::git::follow_system_proxy(app.config.git_system_proxy != Some(false));
     app.store.config_path = config_path;
     app.git.commit.set_flat(!state.commit_tree);
+    let sort = crate::app::CommitSort::from_key(&state.commit_sort);
+    app.git.commit.set_sort(sort);
     app.git
         .commit
         .set_staging(app.config.git_staging_area == Some(true));

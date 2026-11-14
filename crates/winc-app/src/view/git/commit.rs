@@ -88,10 +88,10 @@ pub(in crate::view) fn draw_commit(
     app.set_commit_message_lines(wrap.lines());
     // 底行的勾选框、按钮和「撤销」按文字宽度排：先量好，排版时就用上了。
     let size = app.fonts.ui_small;
-    let (text, icon_w) = commit_button_text(app);
+    let text = commit_button_text(app);
     app.set_commit_labels(CommitLabels {
         amend: AMEND_TEXT + frame.measure(FontKind::Ui, size, t!("git-commit-amend")) + AMEND_END,
-        button: icon_w + frame.measure(FontKind::Ui, size, &text),
+        button: frame.measure(FontKind::Ui, size, &text),
         undo: frame.measure(FontKind::Ui, size, t!("git-commit-undo")),
         push: frame.measure(FontKind::Ui, size, t!("git-commit-push-button")),
     });
@@ -125,6 +125,9 @@ pub(in crate::view) fn draw_commit(
         (None, Some(problem)) => {
             let text = t!("git-commit-view-problem", problem = problem.as_str());
             draw_note(app, frame, &parts, &text, true);
+        }
+        (None, None) if app.git_no_repository() => {
+            draw_no_repository(app, frame, &parts, &mut hits)
         }
         (None, None) => draw_note(app, frame, &parts, t!("git-commit-view-loading"), false),
     }
@@ -263,6 +266,47 @@ fn draw_empty(
     );
     if enabled {
         hits.push((rect, CommitTarget::NextStep));
+    }
+}
+
+/// 打开的目录不是 Git 仓库时列表区的空状态：一句说明，下面是「初始化仓库」（主按钮）和
+/// 「克隆仓库…」两个按钮，上下排列。
+fn draw_no_repository(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &CommitParts,
+    hits: &mut Vec<(Rect, CommitTarget)>,
+) {
+    let list = parts.list;
+    let detail = t!("git-no-repository-detail");
+    let title = t!("git-not-a-repository");
+    let mut top = draw_empty_state(app, frame, (list, sidebar_span(app)), title, Some(detail));
+    let buttons = [
+        (
+            CommitTarget::InitRepository,
+            t!("git-op-init"),
+            ButtonRole::Primary,
+        ),
+        (
+            CommitTarget::CloneRepository,
+            t!("git-no-repository-clone"),
+            ButtonRole::Normal,
+        ),
+    ];
+    let enabled = app.git.branch.running.is_none();
+    for (target, label, role) in buttons {
+        let w = (frame.measure(FontKind::Ui, app.fonts.ui, label) + 2.0 * NEXT_PAD).min(list.w);
+        let x = (list.x + (list.w - w) / 2.0).round();
+        let rect = Rect::new(x, top + NEXT_GAP, w, SETTINGS_CONTROL_H);
+        if rect.bottom() > list.bottom() {
+            return;
+        }
+        let hovered = app.pointer.hover == Hover::Commit(target);
+        draw_action_button(app, frame, rect, label, role, enabled, hovered);
+        if enabled {
+            hits.push((rect, target));
+        }
+        top = rect.bottom();
     }
 }
 
@@ -818,28 +862,21 @@ fn draw_card(
     app.git.commit.message = field;
     let clip = panel.intersect(card);
 
-    // 「修改上次提交」：勾选框连同文字整段可点击，悬停时铺底色。随提交按钮变宽而隐去、变窄而
-    // 出现时按进度淡出、淡入，过渡中不响应鼠标。
+    // 「修改上次提交」：勾选框连同文字整段可点击，悬停时铺底色。
     if let Some(amend) = parts.amend {
-        let (shown, fading) = match app.git.commit.amend_motion {
-            Some((true, clock)) => (clock.progress(), true),
-            Some((false, clock)) => (1.0 - clock.progress(), true),
-            None => (1.0, false),
-        };
-        let fade = |c: Color| c.alpha(c.a * shown);
-        let hovered = !fading && app.pointer.hover == Hover::Commit(CommitTarget::Amend);
+        let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Amend);
         draw_button(frame, p, amend, clip, hovered, false);
         let cy = amend.y + amend.h / 2.0;
         let state = app.git.commit.amend.then_some(true);
-        let border = fade(p.text_dim.alpha(0.55));
+        let border = p.text_dim.alpha(0.55);
         let check = (amend.x + AMEND_CHECK, cy);
         icons::checkbox(
             frame,
             check,
             state,
-            fade(p.accent),
+            p.accent,
             border,
-            fade(p.text_on_accent),
+            p.text_on_accent,
             clip,
         );
         let x = amend.x + AMEND_TEXT;
@@ -849,12 +886,10 @@ fn draw_card(
             x,
             amend,
             t!("git-commit-amend"),
-            fade(p.text_muted),
+            p.text_muted,
             clip,
         );
-        if !fading {
-            hits.push((amend, CommitTarget::Amend));
-        }
+        hits.push((amend, CommitTarget::Amend));
     }
 
     // 「提交 ⌄」：强调色的拆分按钮，左边「✓ 提交」，右边一道细竖线隔开下拉箭头。
@@ -876,7 +911,7 @@ fn draw_card(
             .git
             .status
             .as_ref()
-            .is_some_and(|s| app.git.commit.blocker(s).is_none());
+            .is_some_and(|s| app.commit_blocker(s).is_none());
     // 刚提交成功时提交信息已清空，按钮本应变淡；显示「已提交」期间仍使用强调色。
     let done = app.git.commit.committed.as_ref().filter(|_| !busy);
     // 不能提交时用灰底、淡色字，表示不可用；把蓝底和白字一起调淡时，浅色主题里的对比度不足。
@@ -915,15 +950,11 @@ fn draw_card(
     }
     hits.push((menu, CommitTarget::CommitMenu));
     let size = app.fonts.ui_small;
-    let (text, icon_w) = commit_button_text(app);
+    let text = commit_button_text(app);
     let text_w = frame.measure(FontKind::Ui, size, &text);
-    let x = (main.x + (main.w - icon_w - text_w) / 2.0).round();
+    let x = (main.x + (main.w - text_w) / 2.0).round();
     let clip = panel.intersect(main);
-    if icon_w > 0.0 {
-        let cy = icon_center_y(app, main, size);
-        icons::check(frame, (x + 5.0, cy), 10.0, ink, clip);
-    }
-    ui_text_small(frame, app, x + icon_w, main, &text, ink, clip);
+    ui_text_small(frame, app, x, main, &text, ink, clip);
 
     caret
 }
@@ -943,18 +974,18 @@ fn draw_push_button(app: &App, frame: &mut Frame<'_>, rect: Rect, ready: bool, c
     ui_text_small(frame, app, x, rect, text, ink, clip.intersect(rect));
 }
 
-/// 提交按钮上的文字和前面对勾占的宽度（不画对勾时为 0）。
+/// 提交按钮上的文字；按钮上只有文字，没有图标。
 ///
 /// 合并、变基暂停时按钮用于完成当前操作；刚提交成功时短暂显示新提交的提交号；平时写明提交几个
 /// 文件，分支写在上方的分支行里。
-fn commit_button_text(app: &App) -> (String, f32) {
+fn commit_button_text(app: &App) -> String {
     let busy = app.git.commit.busy;
     let done = app.git.commit.committed.as_ref().filter(|_| !busy);
     let operation = app.git.status.as_ref().and_then(|s| s.operation);
     let clean = (app.git.status.as_ref()).is_some_and(|s| s.entries.is_empty());
     let text = match (busy, operation, app.git.commit.amend) {
         _ if let Some((oid, _)) = done => t!("git-commit-button-committed", oid = oid.as_str()),
-        _ if app.commit_pushes() => return (t!("menu-commit-and-push").to_owned(), 16.0),
+        _ if app.commit_pushes() => return t!("menu-commit-and-push").to_owned(),
         (true, ..) => t!("git-commit-button-committing").to_owned(),
         (false, Some(Operation::Rebase), _) => t!("git-commit-button-continue-rebase").to_owned(),
         (false, Some(Operation::Merge), _) => t!("git-commit-button-finish-merge").to_owned(),
@@ -966,13 +997,11 @@ fn commit_button_text(app: &App) -> (String, f32) {
         (false, None, false) if clean => t!("git-commit-button-nothing").to_owned(),
         (false, None, false) => t!("git-commit-button").to_owned(),
     };
-    let text = match app.commit_scope().filter(|_| !busy && done.is_none()) {
+    match app.commit_scope().filter(|_| !busy && done.is_none()) {
         Some(CommitScope::Staged(count)) => t!("git-commit-button-files", count = count),
         Some(CommitScope::All(_)) => t!("git-commit-button-all").to_owned(),
         Some(CommitScope::Nothing) | None => text,
-    };
-    let icon_w = if busy || clean { 0.0 } else { 16.0 };
-    (text, icon_w)
+    }
 }
 
 /// 文件名的颜色：正文色，删掉的用次要色。

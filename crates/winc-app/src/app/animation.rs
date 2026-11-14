@@ -343,7 +343,6 @@ impl App {
         settle(&mut self.git.commit.motion, |m| m.clock);
         settle(&mut self.git.commit.message_motion, |m| m.1);
         settle(&mut self.git.commit.button_motion, |m| m.1);
-        settle(&mut self.git.commit.amend_motion, |m| m.1);
         settle(&mut self.git.commit.stash_motion, |m| m.1);
         settle(&mut self.panels.outline.motion, |m| m.1);
         settle(&mut self.panels.outline.fold, |f| f.clock);
@@ -446,7 +445,6 @@ impl App {
             || self.git.commit.motion.is_some()
             || self.git.commit.message_motion.is_some()
             || self.git.commit.button_motion.is_some()
-            || self.git.commit.amend_motion.is_some()
             || self.git.commit.stash_motion.is_some()
             || self.panels.outline.motion.is_some()
             || self.panels.outline.fold.is_some()

@@ -11,7 +11,10 @@ impl CommitState {
     /// 检查项与 [`App::git_commit`] 相同。提交按钮据此置灰，悬停提示显示原因。
     /// 冲突标记按状态中读取的结果判断：编辑器中刚移除、尚未保存时按钮仍置灰，
     /// 按下后先保存再重新检查。
-    pub fn blocker(&self, status: &Status) -> Option<String> {
+    ///
+    /// `others` 是暂存区视图中其他仓库里随之提交的文件数（见 [`App::other_staged_count`]），
+    /// 不为 0 时当前仓库没有内容也可以提交。
+    pub fn blocker(&self, status: &Status, others: usize) -> Option<String> {
         if self.busy {
             return None;
         }
@@ -41,7 +44,8 @@ impl CommitState {
             return Some(t!("git-commit-blocker-conflicts", count = unresolved));
         }
         let nothing = matches!(CommitScope::of(status), CommitScope::Nothing)
-            && !status.entries.iter().any(Entry::conflicted);
+            && !status.entries.iter().any(Entry::conflicted)
+            && others == 0;
         if nothing && !self.amend && status.operation.is_none() {
             return Some(t!("git-commit-nothing-checked").to_owned());
         }
@@ -162,6 +166,11 @@ impl CommitState {
         self.staging_running || !self.staging_queue.is_empty()
     }
 
+    /// 是否有写入其他仓库暂存区的操作尚未完成。
+    pub(in crate::app) fn other_staging_active(&self) -> bool {
+        self.other_stage_running || !self.other_stage_queue.is_empty()
+    }
+
     /// 组 `group` 是否收起。
     pub fn group_collapsed(&self, group: CommitGroup) -> bool {
         self.collapsed[group.index()]
@@ -247,6 +256,34 @@ impl CommitState {
         }
     }
 
+    /// 各组里文件的排序方式。
+    pub(crate) fn sort(&self) -> CommitSort {
+        self.sort
+    }
+
+    /// 设定各组里文件的排序方式。
+    pub(crate) fn set_sort(&mut self, sort: CommitSort) {
+        if self.sort != sort {
+            self.sort = sort;
+            self.layout += 1;
+        }
+    }
+
+    /// 按 [`CommitState::sort`] 排 `files`（各项在状态中的下标和相对仓库根的路径）。
+    fn sort_files(&self, status: &Status, files: &mut [(usize, &Path)]) {
+        let letter = |index: usize| status.entries.get(index).map(|e| e.shown().letter());
+        files.sort_by(|a, b| match self.sort {
+            CommitSort::Path => natural_path_cmp(a.1, b.1),
+            CommitSort::Name => {
+                let name = |path: &Path| path.file_name().map(Path::new).unwrap_or(path).to_owned();
+                natural_path_cmp(&name(a.1), &name(b.1)).then_with(|| natural_path_cmp(a.1, b.1))
+            }
+            CommitSort::Status => {
+                (letter(a.0).cmp(&letter(b.0))).then_with(|| natural_path_cmp(a.1, b.1))
+            }
+        });
+    }
+
     /// 全部收起，或者全部展开（连收起的目录一起展开）。
     pub(super) fn collapse_all(&mut self, collapse: bool) {
         self.collapsed = [collapse; CommitGroup::COUNT];
@@ -315,12 +352,12 @@ impl CommitState {
             if self.collapsed[group.index()] {
                 out.members.extend(files.iter().map(|&(index, _)| index));
             } else if self.flat {
-                // 平铺：按路径排，每个文件一行。
+                // 平铺：每个文件一行，按选定的方式排。
                 let mut files = files;
-                files.sort_by(|a, b| natural_path_cmp(a.1, b.1));
+                self.sort_files(status, &mut files);
                 out.push_files(&files, 0);
             } else {
-                self.push_level(group, Path::new(""), files, 0, &mut out);
+                self.push_level(status, group, Path::new(""), files, 0, &mut out);
             }
             out.groups[group.index()] = start..out.members.len();
         }
@@ -331,6 +368,7 @@ impl CommitState {
     /// 往下排），再是文件。
     fn push_level<'a>(
         &self,
+        status: &Status,
         group: CommitGroup,
         dir: &Path,
         items: Vec<(usize, &'a Path)>,
@@ -371,11 +409,11 @@ impl CommitState {
             if self.dir_collapsed(group, &full) {
                 out.members.extend(sub.iter().map(|&(index, _)| index));
             } else {
-                self.push_level(group, &full, sub, depth + 1, out);
+                self.push_level(status, group, &full, sub, depth + 1, out);
             }
             out.dirs[group.index()].insert(full, start..out.members.len());
         }
-        files.sort_by(|a, b| natural_path_cmp(a.1, b.1));
+        self.sort_files(status, &mut files);
         out.push_files(&files, depth);
     }
 }

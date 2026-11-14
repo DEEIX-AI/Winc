@@ -792,6 +792,91 @@ pub fn ref_mark(
     }
 }
 
+/// 绘制小号「拉取」图标，约 10×10，笔宽 1.25：指向左下的箭头，提交从远程落到本地。
+pub fn pull_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (far, near, arm) = (4.5, -4.5, 5.0);
+    let (x, y) = (cx + near, cy - near);
+    let shapes = [
+        Stroke::Line(cx + far, cy - far, x, y),
+        Stroke::Line(x, y, x, y - arm),
+        Stroke::Line(x, y, x + arm, y),
+    ];
+    frame.stroke(&shapes, 1.25, color, clip);
+}
+
+/// 绘制小号「推送」图标，约 10×10，笔宽 1.25：指向右上的箭头，与 [`pull_small`] 方向相反。
+pub fn push_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (far, arm) = (4.5, 5.0);
+    let (x, y) = (cx + far, cy - far);
+    let shapes = [
+        Stroke::Line(cx - far, cy + far, x, y),
+        Stroke::Line(x, y, x - arm, y),
+        Stroke::Line(x, y, x, y + arm),
+    ];
+    frame.stroke(&shapes, 1.25, color, clip);
+}
+
+/// 绘制小号「获取」图标，约 10×11，笔宽 1.25：向下的箭头落在一条横线上，只把远程的提交取到
+/// 本地，不改动分支。
+pub fn fetch_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (top, tip, base, arm) = (cy - 5.0, cy + 1.5, cy + 5.0, 3.0);
+    let shapes = [
+        Stroke::Line(cx, top, cx, tip),
+        Stroke::Line(cx, tip, cx - arm, tip - arm),
+        Stroke::Line(cx, tip, cx + arm, tip - arm),
+        Stroke::Line(cx - 4.5, base, cx + 4.5, base),
+    ];
+    frame.stroke(&shapes, 1.25, color, clip);
+}
+
+/// 绘制列表各行名字前面的引用图标，约 12×10，笔宽 1.25 逻辑像素：与 [`branch_small`] 同样粗细，
+/// 用在小号文字旁。图形与 [`ref_mark`] 相同，按列表的行放大，横向不再压在 9 以内。
+pub fn ref_icon(
+    frame: &mut Frame<'_>,
+    mark: RefMark,
+    (cx, cy): (f32, f32),
+    color: Color,
+    clip: Rect,
+) {
+    const WIDTH: f32 = 1.25;
+    match mark {
+        RefMark::Branch => branch_small(frame, (cx, cy), color, clip),
+        RefMark::Remote => {
+            let base = cy + 4.0;
+            let shapes = [
+                Stroke::Arc(cx - 3.2, cy + 1.0, 3.0, FRAC_PI_2, 1.5 * PI),
+                Stroke::Arc(cx, cy - 0.6, 3.6, -0.9 * PI, -0.1 * PI),
+                Stroke::Arc(cx + 3.4, cy + 1.15, 2.85, -FRAC_PI_2, FRAC_PI_2),
+                Stroke::Line(cx - 3.2, base, cx + 3.4, base),
+            ];
+            frame.stroke(&shapes, WIDTH, color, clip);
+        }
+        RefMark::Tag => {
+            let (tip, neck, end) = (cx - 6.0, cx - 2.0, cx + 5.5);
+            let (top, bottom, c) = (cy - 4.5, cy + 4.5, 1.5);
+            let shapes = [
+                Stroke::Line(tip, cy, neck, top),
+                Stroke::Line(neck, top, end - c, top),
+                Stroke::Arc(end - c, top + c, c, -FRAC_PI_2, 0.0),
+                Stroke::Line(end, top + c, end, bottom - c),
+                Stroke::Arc(end - c, bottom - c, c, 0.0, FRAC_PI_2),
+                Stroke::Line(end - c, bottom, neck, bottom),
+                Stroke::Line(neck, bottom, tip, cy),
+                Stroke::Circle(cx - 1.5, cy, 0.9),
+            ];
+            frame.stroke(&shapes, WIDTH, color, clip);
+        }
+        RefMark::Commit => {
+            let shapes = [
+                Stroke::Circle(cx, cy, 3.0),
+                Stroke::Line(cx - 6.5, cy, cx - 3.0, cy),
+                Stroke::Line(cx + 3.0, cy, cx + 6.5, cy),
+            ];
+            frame.stroke(&shapes, WIDTH, color, clip);
+        }
+    }
+}
+
 /// 绘制项目徽章右下角的工作树记号，约 9×9：一个底色为 `fill` 的圆，外圈为 `ring`（与徽章底色
 /// 隔开），内部为缩小的分支图形（`branch_shape`）。
 pub fn worktree_mark(

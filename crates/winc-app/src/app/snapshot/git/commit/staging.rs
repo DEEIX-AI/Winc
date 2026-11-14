@@ -230,7 +230,7 @@ fn untracked_files_stay_out_of_the_commit_until_staged() {
     // 只剩未跟踪的文件时没有可以提交的内容；暂存以后随提交加入仓库。
     assert_eq!(app.commit_scope(), None);
     app.git.commit.message.set_text("加入新文件");
-    assert!(app.git.commit.blocker(&status).is_some());
+    assert!(app.commit_blocker(&status).is_some());
     app.press_commit(CommitTarget::GroupCheck(CommitGroup::Untracked));
     app.git_commit();
     assert!(app.git.status.as_ref().unwrap().entries.is_empty());

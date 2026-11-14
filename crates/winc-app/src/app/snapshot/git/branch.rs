@@ -271,7 +271,7 @@ fn head_name(app: &App) -> Option<String> {
 
 #[test]
 fn the_branch_row_opens_the_picker_below_it_and_enter_switches() {
-    use crate::app::git::branch::picker::{BranchRow, BranchSection};
+    use crate::app::git::branch::picker::BranchRow;
 
     let Some((mut app, root)) = picker_repo("pk", false) else {
         return;
@@ -298,11 +298,34 @@ fn the_branch_row_opens_the_picker_below_it_and_enter_switches() {
     // 分支不多：不单列最近使用，一开始选中当前分支；它所在的目录默认展开。
     app.open_branch_picker(GitAnchor::Branch);
     let rows = app.overlays.picker.branch_rows.clone().unwrap();
-    assert_eq!(rows[0], BranchRow::Heading(BranchSection::Local));
+    assert!(matches!(
+        rows[0],
+        BranchRow::Locals {
+            recent: false,
+            open: true,
+            ..
+        }
+    ));
     assert!(matches!(
         &rows[app.overlays.picker.selected],
         BranchRow::Branch { label, .. } if label == "search"
     ));
+    paint(&mut app);
+
+    // 「本地」一组可以收起：选中标题行按回车，下面的分支都收起来；再按一次展开。
+    let all = rows.len();
+    app.overlays.picker.selected = 0;
+    app.picker_accept();
+    let folded = app.overlays.picker.branch_rows.clone().unwrap();
+    assert!(matches!(folded[0], BranchRow::Locals { open: false, .. }));
+    assert!(folded.len() < all);
+    assert!(
+        !folded
+            .iter()
+            .any(|row| matches!(row, BranchRow::Branch { .. }))
+    );
+    app.picker_accept();
+    assert_eq!(app.overlays.picker.branch_rows.clone().unwrap().len(), all);
     paint(&mut app);
 
     // 再点分支行（面板之外）关闭。
@@ -1103,7 +1126,7 @@ fn hovering_a_picker_row_leaves_the_selection_alone() {
 /// 当前分支混淆；回车仍切回它。移动选中项或输入查询后改为普通的选中样式，清空查询后恢复。
 #[test]
 fn the_default_branch_row_is_highlighted_softly() {
-    use crate::app::git::branch::picker::{BranchRow, BranchSection};
+    use crate::app::git::branch::picker::BranchRow;
 
     let Some((mut app, root)) = picker_repo("git-picker-default", false) else {
         return;
@@ -1117,7 +1140,7 @@ fn the_default_branch_row_is_highlighted_softly() {
     app.open_branch_picker(GitAnchor::Branch);
     paint(&mut app);
     let rows = app.overlays.picker.branch_rows.clone().unwrap();
-    assert_eq!(rows[0], BranchRow::Heading(BranchSection::Recent));
+    assert!(matches!(rows[0], BranchRow::Locals { recent: true, .. }));
     assert!(matches!(
         &rows[app.overlays.picker.selected],
         BranchRow::Branch { label, .. } if label == "topic-07"

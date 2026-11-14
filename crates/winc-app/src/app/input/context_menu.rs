@@ -310,8 +310,22 @@ pub enum MenuCommand {
     GitStash,
     /// 提交视图「⋯」：对第几条储藏做的事。
     GitStashOp(crate::app::git::branch::StashOp, usize),
-    /// 提交视图的「⋯」：在按目录排成树和平铺之间切换（排成树时打勾）。
+    /// 提交视图的「⋯」里的一条 Git 命令：与命令面板中的同名命令相同，标题去掉前面的「Git：」。
+    GitAction(Action),
+    /// 提交视图的「⋯」：提交，与提交按钮相同。
+    CommitRun,
+    /// 提交视图的「⋯」：放弃全部已跟踪文件的更改（先确认）。
+    CommitDiscardAll,
+    /// 提交视图的「⋯」：变更列表里勾上（为真）或取消勾选全部文件。
+    CommitCheckAll(bool),
+    /// 提交视图的「⋯」：按目录排成树（排成树时打勾）。
     CommitTree,
+    /// 提交视图的「⋯」：平铺成列表，每个文件一行（平铺时打勾）。
+    CommitList,
+    /// 提交视图的「⋯」：变更列表，用勾选框决定提交什么（是这种视图时打勾）。
+    CommitChangeList,
+    /// 提交视图的「⋯」：各组里文件的排序方式（是这种方式时打勾）。
+    CommitSortBy(crate::app::CommitSort),
     /// 提交视图：在当前仓库的更改之后列出其他仓库的更改（开着时打勾）。
     CommitAllRepositories,
     /// 提交视图：显示暂存区，列表分出「已暂存的更改」一组（开着时打勾）。
@@ -385,6 +399,11 @@ impl MenuCommand {
     /// 返回菜单项的标题；带数据的项（最近的目录、工作树）由调用方给出标题，这里返回空串。
     pub fn label(self) -> &'static str {
         match self {
+            MenuCommand::GitAction(action) => {
+                let title = action.title();
+                let rest = title.split_once(['：', ':']).map(|(_, rest)| rest);
+                rest.map_or(title, str::trim_start)
+            }
             MenuCommand::NewFile => t!("menu-new-file"),
             MenuCommand::NewFolder => t!("menu-new-folder"),
             MenuCommand::Reveal | MenuCommand::LocationReveal => crate::system::reveal_label(),
@@ -463,7 +482,18 @@ impl MenuCommand {
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
             MenuCommand::ToggleBlame => t!("menu-git-blame"),
             MenuCommand::GitStash => t!("menu-git-stash"),
+            MenuCommand::CommitRun => t!("git-commit-button"),
+            MenuCommand::CommitDiscardAll => t!("menu-commit-discard-all"),
+            MenuCommand::CommitCheckAll(true) => t!("menu-commit-check-all"),
+            MenuCommand::CommitCheckAll(false) => t!("menu-commit-uncheck-all"),
             MenuCommand::CommitTree => t!("menu-commit-tree"),
+            MenuCommand::CommitList => t!("menu-commit-list"),
+            MenuCommand::CommitChangeList => t!("menu-commit-change-list"),
+            MenuCommand::CommitSortBy(sort) => match sort {
+                crate::app::CommitSort::Path => t!("menu-commit-sort-path"),
+                crate::app::CommitSort::Name => t!("menu-commit-sort-name"),
+                crate::app::CommitSort::Status => t!("menu-commit-sort-status"),
+            },
             MenuCommand::CommitAllRepositories => t!("menu-commit-all-repositories"),
             MenuCommand::CommitStagingArea => t!("menu-commit-staging-area"),
             MenuCommand::CommitExpandAll => t!("menu-commit-expand-all"),
@@ -587,6 +617,7 @@ impl MenuCommand {
     /// 返回键位表中对应的命令，菜单右侧据此显示该命令的快捷键；没有对应命令时返回 `None`。
     pub fn action(self) -> Option<Action> {
         Some(match self {
+            MenuCommand::GitAction(action) => action,
             MenuCommand::Reveal => Action::RevealInFinder,
             MenuCommand::OpenInTerminal => Action::OpenInTerminal,
             MenuCommand::FindInFolder => Action::FindInFolder,

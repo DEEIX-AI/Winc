@@ -55,8 +55,12 @@ impl App {
             | CommitTarget::RevertFile(_)
             | CommitTarget::StageFile(..)
             | CommitTarget::GroupStage(_) => self.press_commit_row(target),
-            CommitTarget::OtherRepository(_) | CommitTarget::OtherFile(..) => {
-                self.press_other(target);
+            CommitTarget::OtherRepository(_)
+            | CommitTarget::OtherFile(..)
+            | CommitTarget::OtherStagedFile(..) => self.press_other(target),
+            CommitTarget::OtherGroup(..) => {}
+            CommitTarget::OtherStage(..) | CommitTarget::OtherGroupStage(..) => {
+                self.press_other_stage(target);
             }
             CommitTarget::OtherBranch(repo) => {
                 self.press_other(CommitTarget::OtherRepository(repo));
@@ -94,6 +98,8 @@ impl App {
             CommitTarget::Commit => self.git_commit(),
             CommitTarget::Amend => self.toggle_amend(),
             CommitTarget::NextStep => self.git_sync(),
+            CommitTarget::InitRepository => self.git_init(),
+            CommitTarget::CloneRepository => self.open_clone_dialog(),
             CommitTarget::Abort => self.confirm_abort(),
             CommitTarget::Undo => {
                 if let Some(last) = self.commit_undoable().cloned() {

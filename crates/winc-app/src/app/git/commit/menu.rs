@@ -1,13 +1,18 @@
 //! 提交视图的菜单：「提交」按钮旁的菜单、「⋯」菜单和文件行的菜单，以及各项对应的命令。
 
 use super::*;
+use crate::app::PickerPart;
+use crate::keymap::Action;
 
 impl App {
-    /// 提交视图标题行「⋯」的菜单：Git 操作（继续和中止、储藏、远程仓库，见 [`branch_menu`]）；
-    /// 以树形显示（排成树时打勾）、显示暂存区、显示全部仓库（有多个仓库时才有）、全部展开、
-    /// 全部折叠（已经是那样的灰显）；显示 Git 输出。
+    /// 提交视图标题行「⋯」的菜单，自上而下：进行中的操作的继续、跳过和中止；拉取、推送、获取；
+    /// 储藏更改、远程仓库（见 [`branch_menu`]），提交、更改、分支、标签、工作树、仓库几个子菜单
+    /// （更改一项的内容随视图不同）；以树形显示（排成
+    /// 树时打勾）、显示暂存区、显示全部仓库（有多个仓库时才有）、全部展开、全部折叠（已经是那样
+    /// 的灰显）；显示 Git 日志、显示 Git 输出。
     ///
-    /// 刷新是标题行上的按钮，拉取、推送、获取在分支选择器里，回滚勾选的文件在组标题上，这里不重复。
+    /// 三个子菜单里是命令面板中已有的命令，快捷键相同。刷新是标题行上的按钮，回滚勾选的文件在
+    /// 组标题上，这里不重复。
     pub(in crate::app) fn commit_more_menu(
         &self,
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
@@ -26,33 +31,117 @@ impl App {
         let all_collapsed = shown().all(|group| self.git.commit.group_collapsed(group));
         let all_expanded = shown().all(|group| !self.git.commit.group_collapsed(group))
             && self.git.commit.collapsed_dirs.iter().all(HashSet::is_empty);
+        let busy = self.git.branch.running.is_some();
         let mut entries = branch_menu(
             &self.git.remote_list,
             self.git.status.as_ref().and_then(|s| s.operation),
-            self.git.branch.running.is_some(),
+            busy,
         );
-        entries.extend([
+        // 与远程交换提交的三项排在最前（进行中的操作之后）：不用先展开分支选择面板。
+        let sync = [
+            MenuCommand::GitPull,
+            MenuCommand::GitPush,
+            MenuCommand::GitFetch,
+        ];
+        let at = (entries.iter())
+            .position(|entry| *entry == MenuEntry::Item(MenuCommand::GitStash, !busy))
+            .unwrap_or(0);
+        let enabled = |command| match command {
+            MenuCommand::GitPull => self.picker_action_enabled(PickerPart::Pull),
+            MenuCommand::GitPush => self.picker_action_enabled(PickerPart::Push),
+            _ => self.picker_action_enabled(PickerPart::Fetch),
+        };
+        let quick = sync.map(|command| MenuEntry::Item(command, enabled(command)));
+        entries.splice(at..at, quick.into_iter().chain([MenuEntry::Separator]));
+        // 分支、工作树、仓库各一个子菜单，里面是命令面板中已有的命令。
+        let item = |action: Action| MenuEntry::Item(MenuCommand::GitAction(action), true);
+        let branches = vec![
+            item(Action::GitSwitchBranch),
+            item(Action::GitNewBranch),
+            item(Action::GitGoToRevision),
+        ];
+        let mut worktrees = vec![item(Action::GitNewWorktree)];
+        if self.git_has_worktrees() {
+            worktrees.insert(0, item(Action::GitSwitchWorktree));
+        }
+        let mut repositories = vec![item(Action::GitClone)];
+        if self.git.repositories.len() >= 2 {
+            repositories.insert(0, item(Action::GitSwitchRepository));
+        }
+        // 提交：提交和提交并推送，修改与撤销上次提交，签署和跳过钩子，两种视图都有。
+        let status = self.git.status.as_ref();
+        let ready = status.is_some_and(|s| self.commit_blocker(s).is_none());
+        let mut commits = vec![MenuEntry::Item(MenuCommand::CommitRun, ready && !busy)];
+        commits.extend(self.commit_button_menu());
+        let amend = MenuEntry::Item(MenuCommand::CommitAmend, self.commit_amendable());
+        if !commits
+            .iter()
+            .any(|e| matches!(e, MenuEntry::Item(MenuCommand::CommitAmend, _)))
+        {
+            commits.extend([MenuEntry::Separator, amend]);
+        }
+        let undo = MenuCommand::CommitUndo;
+        commits.push(MenuEntry::Item(undo, self.commit_undoable().is_some()));
+        // 更改：暂存视图中是全部暂存、全部取消暂存，变更列表中是全部勾选、全部取消勾选；放弃
+        // 所有更改两种视图都有。
+        let changed = status.is_some_and(|s| !s.entries.is_empty());
+        let tracked = status.is_some_and(|s| s.entries.iter().any(|e| !e.untracked()));
+        let mut changes = if self.git.commit.staging() {
+            vec![item(Action::GitStageAll), item(Action::GitUnstageAll)]
+        } else {
+            vec![
+                MenuEntry::Item(MenuCommand::CommitCheckAll(true), changed),
+                MenuEntry::Item(MenuCommand::CommitCheckAll(false), changed),
+            ]
+        };
+        changes.extend([
             MenuEntry::Separator,
-            MenuEntry::Item(MenuCommand::CommitTree, true),
-            MenuEntry::Item(MenuCommand::CommitStagingArea, true),
+            MenuEntry::Item(MenuCommand::CommitDiscardAll, tracked && !busy),
         ]);
+        let head = status.is_some_and(|s| s.oid.is_some());
+        let tags = vec![MenuEntry::Item(MenuCommand::LogNewTag, head && !busy)];
+        entries.extend([
+            MenuEntry::Submenu(t!("menu-commit-commits").to_owned(), commits),
+            MenuEntry::Submenu(t!("menu-commit-changes").to_owned(), changes),
+            MenuEntry::Submenu(t!("menu-git-branches").to_owned(), branches),
+            MenuEntry::Submenu(t!("menu-git-tags").to_owned(), tags),
+            MenuEntry::Submenu(t!("menu-git-worktrees").to_owned(), worktrees),
+            MenuEntry::Submenu(t!("menu-git-repositories").to_owned(), repositories),
+        ]);
+        // 显示与排序：三组单选（列表或树形、变更列表或暂存区、排序方式），下面是只在这种显示下
+        // 有用的几项。
+        let mut view = vec![
+            MenuEntry::Item(MenuCommand::CommitList, true),
+            MenuEntry::Item(MenuCommand::CommitTree, true),
+            MenuEntry::Separator,
+            MenuEntry::Item(MenuCommand::CommitChangeList, true),
+            MenuEntry::Item(MenuCommand::CommitStagingArea, true),
+            MenuEntry::Separator,
+        ];
+        let sorts = CommitSort::ALL.map(MenuCommand::CommitSortBy);
+        view.extend(sorts.map(|command| MenuEntry::Item(command, true)));
+        view.push(MenuEntry::Separator);
         // 打开的目录中有多个仓库时才有：只有一个仓库时没有可以列出的其他仓库。
         if self.git.repositories.len() >= 2 {
             let all = MenuCommand::CommitAllRepositories;
-            entries.push(MenuEntry::Item(all, true));
+            view.push(MenuEntry::Item(all, true));
         }
-        entries.extend([
+        view.extend([
             MenuEntry::Item(MenuCommand::CommitExpandAll, !all_expanded),
             MenuEntry::Item(MenuCommand::CommitCollapseAll, !all_collapsed),
+        ]);
+        entries.extend([
             MenuEntry::Separator,
+            MenuEntry::Submenu(t!("menu-commit-view").to_owned(), view),
+            MenuEntry::Separator,
+            item(Action::GitShowLog),
             MenuEntry::Item(MenuCommand::GitShowOutput, true),
         ]);
         entries
     }
 
     /// 「提交 ⌄」拆分按钮右边箭头的菜单：提交并推送（合并、变基停着时没有推送这回事，没有要提交的
-    /// 更改时与主按钮一样不能提交，都灰显）；卡片太窄、底行放不下勾选框时还有修改上一次提交（开着
-    /// 时打勾）；最后是签署和本次跳过钩子两个开关。
+    /// 更改时与主按钮一样不能提交，都灰显）；随后是签署和本次跳过钩子两个开关。
     pub(in crate::app) fn commit_button_menu(
         &self,
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
@@ -64,12 +153,6 @@ impl App {
             MenuCommand::CommitPush,
             idle && (!clean || self.git.commit.amend),
         )];
-        // 正在淡出的「修改上次提交」视为已移入菜单。
-        let leaving = matches!(self.git.commit.amend_motion, Some((false, _)));
-        if self.commit_amendable() && (self.commit_parts().amend.is_none() || leaving) {
-            entries.push(MenuEntry::Separator);
-            entries.push(MenuEntry::Item(MenuCommand::CommitAmend, idle));
-        }
         entries.extend([
             MenuEntry::Separator,
             MenuEntry::Item(MenuCommand::CommitSignOff, true),
@@ -135,10 +218,54 @@ impl App {
     /// 提交视图标题行「⋯」的菜单选了 `command`。
     pub(in crate::app) fn run_commit_more_command(&mut self, command: MenuCommand) {
         match command {
-            MenuCommand::CommitTree => self.toggle_commit_layout(),
+            MenuCommand::CommitTree | MenuCommand::CommitList => {
+                if self.git.commit.flat() != (command == MenuCommand::CommitList) {
+                    self.toggle_commit_layout();
+                }
+            }
             MenuCommand::CommitAllRepositories => self.toggle_all_repositories(),
-            MenuCommand::CommitStagingArea => self.toggle_staging_area(),
+            MenuCommand::CommitStagingArea | MenuCommand::CommitChangeList => {
+                if self.git.commit.staging() != (command == MenuCommand::CommitStagingArea) {
+                    self.toggle_staging_area();
+                }
+            }
+            // 中止和跳过都会丢弃内容：从菜单里选也先确认，与说明条上的「中止」按钮相同。
+            MenuCommand::GitAbort => self.confirm_abort(),
+            MenuCommand::GitSkip => self.confirm_skip(),
+            MenuCommand::CommitRun => self.git_commit(),
+            MenuCommand::CommitPush
+            | MenuCommand::CommitAmend
+            | MenuCommand::CommitSignOff
+            | MenuCommand::CommitNoVerify => self.run_commit_button_command(command),
+            MenuCommand::CommitUndo => self.run_last_commit_command(command),
+            MenuCommand::CommitCheckAll(on) => {
+                let entries = self.git.status.iter().flat_map(|s| &s.entries);
+                let paths: Vec<PathBuf> = entries.map(|e| e.path.clone()).collect();
+                self.set_commit_checked(&paths, on);
+            }
+            MenuCommand::CommitDiscardAll => {
+                let entries = self.git.status.iter().flat_map(|s| &s.entries);
+                let tracked = entries.filter(|e| !e.untracked() && !e.conflicted());
+                let paths: Vec<PathBuf> = tracked.map(|e| e.path.clone()).collect();
+                if !paths.is_empty() {
+                    self.confirm_rollback(paths);
+                }
+            }
+            MenuCommand::LogNewTag => {
+                let oid = self.git.status.as_ref().and_then(|s| s.oid.clone());
+                if let Some(oid) = oid {
+                    self.open_tag_prompt(oid);
+                }
+            }
+            MenuCommand::CommitSortBy(sort) => {
+                self.git.commit.set_sort(sort);
+                self.update_state(|state| state.commit_sort = sort.key().to_owned());
+                self.reveal_commit_selection();
+            }
             MenuCommand::GitShowOutput => self.show_git_output(),
+            MenuCommand::GitAction(action) => {
+                self.run_action(action);
+            }
             MenuCommand::CommitExpandAll | MenuCommand::CommitCollapseAll => {
                 // 「全部展开」连收起的目录一起展开。
                 self.git

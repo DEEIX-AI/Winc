@@ -586,7 +586,16 @@ fn holding_option_turns_commit_into_commit_and_push() {
         "{:?}",
         tip(&app)
     );
+    // 旁边并排放着「提交并推送…」时按住 ⌥ 不改主按钮：两个按钮不写同一件事。
     app.pointer.modifiers = winit::keyboard::ModifiersState::ALT;
+    assert!(app.commit_parts().push.is_some());
+    assert!(!app.commit_pushes());
+    // 侧栏窄到放不下并排的按钮时，⌥ 才把主按钮换成「提交并推送」。
+    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    assert!(app.commit_parts().push.is_none());
+    let button = app.commit_parts().commit;
+    app.on_mouse_move(button.x + button.w / 2.0, button.y + button.h / 2.0);
     assert!(app.commit_pushes());
     paint(&mut app);
     assert!(

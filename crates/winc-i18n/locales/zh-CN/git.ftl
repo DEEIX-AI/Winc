@@ -2,6 +2,7 @@
 
 git-unavailable-not-installed = 未找到 Git
 git-unavailable-no-developer-tools = 尚未安装命令行开发者工具
+git-version-too-old = Git { $version } 版本过低，部分操作需要 { $minimum } 或更高版本
 git-status-unreadable = 无法读取 git status 的输出
 git-status-truncated = 仓库中更改的文件过多，仅显示前 { $count } 个
 git-push-no-remote = 此仓库未配置远程仓库
@@ -247,6 +248,8 @@ git-push-confirm-publish-detail = 「{ $branch }」将推送到 { $target }，�
 git-push-confirm-publish-button = 发布
 git-push-confirm-push = 要推送到 { $upstream } 吗？
 git-push-confirm-push-detail = { $count } 个提交将推送到 { $target }。
+git-push-confirm-review = 查看提交
+git-push-confirm-more = 另有 { $count } 个提交
 git-push-confirm-push-button = 推送
 git-push-confirm-sync = 要与 { $upstream } 同步吗？
 git-push-confirm-sync-detail = 将从 { $target } 拉取 { $behind } 个提交，并推送 { $ahead } 个提交。
@@ -265,6 +268,9 @@ git-stage-failed = 无法更新暂存区：{ $error }
 git-stage-nothing = 当前文件没有未暂存的更改
 git-ignore-done = 已加入 .gitignore：{ $pattern }
 git-ignore-failed = 无法写入 .gitignore：{ $error }
+git-skip-confirm = 要跳过此提交吗？
+git-skip-confirm-detail = 此提交的更改和已解决的冲突将被丢弃，然后继续处理其后的提交。
+git-skip-confirm-button = 跳过提交
 git-abort-confirm = 要中止{ $operation }吗？
 git-abort-confirm-detail = 工作区将恢复到操作开始前的状态，已解决的冲突将被丢弃。
 git-abort-confirm-button = 中止{ $operation }
@@ -282,6 +288,8 @@ git-read-file-failed = 无法读取「{ $name }」：{ $error }
 ## 仓库状态和文件的差异
 
 git-unusable = 无法使用 Git：{ $error }
+git-no-repository-detail = 初始化后可以在这里查看更改、提交和同步
+git-no-repository-clone = 克隆仓库…
 git-not-a-repository = 当前目录不是 Git 仓库
 git-no-file-in-tab = 当前标签页未关联文件
 git-diff-title = { $name } · 差异
@@ -355,8 +363,9 @@ git-switch-failed-stashed = { $error }（未提交的更改已储藏，可从储
 git-switch-stash-message = 切换分支前「{ $branch }」上的更改
 git-commit-button-nothing = 暂无待提交的更改
 git-branch-picker-empty = 无匹配的分支
-git-branch-picker-recent = 最近使用
-git-branch-picker-other = 其他本地分支
+git-branch-picker-recent = 最近
+git-branch-picker-other = 本地
+git-branch-picker-remote = 远程
 git-commit-button = 提交
 git-commit-button-files = 提交 { $count } 个文件
 git-commit-button-all = 提交全部

@@ -118,6 +118,8 @@ struct Refs {
     worktrees: Option<Vec<Worktree>>,
     /// 仓库所在系统中用户的主目录（[`winc_editor::wsl::home_dir`]）。
     home: Option<PathBuf>,
+    /// 仓库所在系统中 `git` 的主、次版本号；读不出时为 `None`。
+    version: Option<(u32, u32)>,
 }
 
 /// 差异的打开方式。
@@ -174,6 +176,8 @@ const SUMMARY_REPOSITORIES: usize = 32;
 
 /// 后台深层查找的结果：（查找的目录，找到的仓库）。
 type ScannedRepositories = (PathBuf, Vec<PathBuf>);
+/// 等着确认的推送：要做的推送、会送出的提交的标题（最新的在前）和总数。
+pub type PushPreview = (commit::PushIntent, Vec<String>, usize);
 
 /// Git 模块的状态。
 pub(crate) struct GitState {
@@ -264,6 +268,14 @@ pub(crate) struct GitState {
     pub location_toggled: HashSet<PathBuf>,
     /// 位置选择器是否列出全部仓库和它们的工作树；否则只列当前仓库的工作树。
     pub location_all: bool,
+    /// 后台读到的、等着确认的推送：要做的推送、会送出的提交的标题和总数（见
+    /// [`App::ask_push`]）。
+    pub push_preview: Arc<Mutex<Option<PushPreview>>>,
+    /// 已提示过 `git` 版本过低：每次运行只提示一次。
+    pub(super) old_git_warned: bool,
+    /// 开着的 Git 输出标签已经显示到记录的第几个字节（见 `winc_editor::git::output_snapshot`）；
+    /// 标签里是「暂无输出」的说明时为 0。
+    pub output_shown: u64,
     /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
     pub branch_folders: HashSet<(bool, String)>,
 }
@@ -313,6 +325,9 @@ impl Default for GitState {
             merge: Default::default(),
             location_toggled: HashSet::new(),
             location_all: false,
+            output_shown: 0,
+            push_preview: Arc::default(),
+            old_git_warned: false,
             branch_folders: HashSet::new(),
             prepared: channel(),
         }
@@ -529,6 +544,11 @@ impl App {
         });
     }
 
+    /// 是否正在查找目录里的仓库：从开始查找到 [`App::git_take_scan`] 收到这个目录的结果。
+    pub(in crate::app) fn git_scanning(&self) -> bool {
+        self.git.scan_running.is_some()
+    }
+
     /// 接收后台查找的结果，新的仓库加在列表末尾；尚无当前仓库时使用找到的第一个。
     ///
     /// 菜单与选择器按下标引用仓库，因此已有仓库的下标不能改变。
@@ -545,6 +565,9 @@ impl App {
         if self.editor.root() != Some(dir.as_path()) || !self.git_enabled() {
             return;
         }
+        // 这个目录的查找结束了：一个仓库都没找到时提交视图从「正在读取」换成不是仓库的说明。
+        self.git.scan_running = None;
+        self.request_redraw();
         let known = self.git.repositories.len();
         for repo in found {
             if !self.git.repositories.contains(&repo) {
@@ -836,6 +859,7 @@ impl App {
                     let stashes = scope.spawn(|| git.stashes(root, cancel));
                     let recent_branches = scope.spawn(|| git.recent_branches(root, cancel));
                     let worktrees = scope.spawn(|| git.worktrees(root, cancel));
+                    let version = scope.spawn(|| git.version(root, cancel));
                     // 线程中的函数不会 panic；万一发生，该项按读取失败处理。
                     let refs = Refs {
                         branches: branches
@@ -856,12 +880,32 @@ impl App {
                             .unwrap_or_default(),
                         worktrees: worktrees.join().ok().and_then(Result::ok),
                         home: winc_editor::wsl::home_dir(root),
+                        version: version.join().ok().flatten(),
                     };
                     (status, Some(refs))
                 }),
             };
             let _ = sender.send(Outcome { root, status, refs });
         });
+    }
+
+    /// `version` 低于 [`winc_editor::git::MINIMUM_VERSION`] 时提示一次：部分命令在旧版本上
+    /// 会因不认识的选项而失败。读不出版本时不提示。
+    pub(in crate::app) fn warn_old_git(&mut self, version: Option<(u32, u32)>) {
+        let minimum = winc_editor::git::MINIMUM_VERSION;
+        let Some(found) = version.filter(|v| *v < minimum && !self.git.old_git_warned) else {
+            return;
+        };
+        self.git.old_git_warned = true;
+        let (found, minimum) = (
+            format!("{}.{}", found.0, found.1),
+            format!("{}.{}", minimum.0, minimum.1),
+        );
+        self.notify(t!(
+            "git-version-too-old",
+            version = found.as_str(),
+            minimum = minimum.as_str()
+        ));
     }
 
     /// 在后台执行一项 Git 任务，完成后以 `done` 唤醒界面线程接收结果。
@@ -883,6 +927,7 @@ impl App {
     /// 接收后台刷新的结果；成功时同时更新已打开的 Git 差异。
     pub(super) fn poll_git(&mut self) {
         self.git_take_scan();
+        self.take_push_preview();
         // 其他仓库的状态由后台直接写入，读完时同样到达这里：列着其他仓库时重新绘制。
         if self.commit_shows_others() && self.commit_shown() {
             self.prune_other_checked();
@@ -936,6 +981,7 @@ impl App {
                         self.git.remote_list = refs.remote_list;
                         self.git.publish_remote = refs.publish_remote;
                         self.git.home = refs.home;
+                        self.warn_old_git(refs.version);
                         if let Some(watcher) = &mut self.disk.watcher {
                             watcher.watch_git_dir(refs.common_dir.as_deref());
                         }

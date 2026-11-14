@@ -13,6 +13,8 @@ fn branch(name: &str, remote: bool, current: bool) -> Branch {
         oid: String::new(),
         time: 0,
         local: String::new(),
+        ahead: 0,
+        behind: 0,
     }
 }
 
@@ -63,6 +65,8 @@ fn outline(rows: &[BranchRow]) -> Vec<String> {
         .map(|row| match row {
             BranchRow::All => "All".to_owned(),
             BranchRow::Heading(section) => format!("{section:?}"),
+            BranchRow::Locals { recent: true, .. } => "Recent".to_owned(),
+            BranchRow::Locals { recent: false, .. } => "Local".to_owned(),
             BranchRow::Remotes { count, open } => {
                 let mark = if *open { "v" } else { ">" };
                 format!("{mark} remotes {count}")
@@ -100,7 +104,7 @@ fn only_the_current_branchs_folder_starts_open() {
             "  search",
             "> fix/deep 1",
             "main",
-            "> remotes 1",
+            "> remotes 3",
         ]
     );
 }
@@ -152,7 +156,7 @@ fn toggled_folders_flip_their_default_state() {
         (true, "release".to_owned()),
     ]);
     let rows = rows(&sample(), &[], "", &toggled);
-    // 只有一个远程时不写它的名字：少一层没有信息量的目录。
+    // 只有一个远程时不写它的名字：少一层没有信息量的目录。已有本地分支的远程分支照样列出。
     assert_eq!(
         outline(&rows),
         [
@@ -161,9 +165,11 @@ fn toggled_folders_flip_their_default_state() {
             "v fix/deep 1",
             "  one",
             "main",
-            "v remotes 1",
+            "v remotes 3",
+            "> feature 1",
             "v release 1",
             "  1",
+            "main",
         ]
     );
 }
@@ -175,61 +181,57 @@ fn several_remotes_keep_their_names() {
     let toggled = HashSet::from([(true, String::new())]);
     let rows = rows(&branches, &[], "", &toggled);
     let outline = outline(&rows);
-    assert!(
-        outline.contains(&"> origin/release 1".to_owned()),
-        "{outline:?}"
-    );
+    assert!(outline.contains(&"> origin 3".to_owned()), "{outline:?}");
     assert!(outline.contains(&"> fork 1".to_owned()), "{outline:?}");
 }
 
 #[test]
 fn few_local_branches_do_not_list_recent() {
     let rows = rows(&sample(), &["main", "feature/search"], "", &HashSet::new());
-    assert_eq!(rows[0], BranchRow::Heading(BranchSection::Local));
-    assert!(!rows.contains(&BranchRow::Heading(BranchSection::Recent)));
+    assert!(matches!(rows[0], BranchRow::Locals { recent: false, .. }));
+    assert!(
+        !rows
+            .iter()
+            .any(|r| matches!(r, BranchRow::Locals { recent: true, .. }))
+    );
 }
 
 #[test]
 fn recent_puts_the_default_branch_first_and_skips_the_current_one() {
     let recent = ["b00", "gone", "b05", "origin/main"];
     let rows = rows(&many(), &recent, "", &HashSet::new());
-    assert_eq!(outline(&rows)[..4], ["Recent", "main", "b05", "Other"]);
+    assert_eq!(outline(&rows)[..4], ["Recent", "main", "b05", "Local"]);
 }
 
 #[test]
-fn recent_branches_are_not_listed_again() {
+fn recent_branches_stay_in_the_local_group() {
     let outline = outline(&rows(&many(), &["b05"], "", &HashSet::new()));
     for name in ["main", "b05"] {
         let times = outline.iter().filter(|line| *line == name).count();
-        assert_eq!(times, 1, "{name}: {outline:?}");
+        assert_eq!(times, 2, "{name}: {outline:?}");
     }
-    // 当前分支不在最近使用里，留在下面。
+    // 当前分支不在最近使用里，只在下面。
     assert!(outline.contains(&"b00".to_owned()));
 }
 
 #[test]
-fn remote_branches_with_a_local_branch_wait_for_a_search() {
+fn remote_branches_are_listed_even_with_a_local_branch() {
     let mut branches = sample();
-    // 本地分支跟踪它，名字不一样也算。
+    // 本地分支跟踪它，名字不一样。
     branches.push(Branch {
         upstream: Some("origin/topic".to_owned()),
         ..branch("work", false, false)
     });
     branches.push(branch("origin/topic", true, false));
 
-    // 平时只列本地没有的：`origin/release/1`。
+    // 远程一组列全：已有同名本地分支的 `main`、被本地分支跟踪的 `topic` 都在。
     let opened = HashSet::from([(true, String::new()), (true, "release".to_owned())]);
     let listed = outline(&rows(&branches, &[], "", &opened));
+    let start = listed.iter().position(|l| l == "v remotes 4").unwrap();
     assert_eq!(
-        listed[listed.len() - 3..],
-        ["v remotes 1", "v release 1", "  1"]
+        listed[start + 1..],
+        ["> feature 1", "v release 1", "  1", "main", "topic"]
     );
-
-    // 搜索时列全：还能拿它比较、合并。
-    let found = rows(&branches, &[], "topic", &HashSet::new());
-    assert!(outline(&found).contains(&"v remotes 1".to_owned()));
-    let found = rows(&branches, &[], "main", &HashSet::new());
-    assert!(outline(&found).contains(&"v remotes 1".to_owned()));
 }
 
 #[test]
@@ -240,7 +242,7 @@ fn recent_keeps_at_most_five_branches() {
     let rows = rows(&branches, &recent, "", &HashSet::new());
     let end = rows
         .iter()
-        .position(|r| *r == BranchRow::Heading(BranchSection::Other))
+        .position(|r| matches!(r, BranchRow::Locals { recent: false, .. }))
         .unwrap();
     assert_eq!(end - 1, RECENT_BRANCHES);
 }
@@ -304,7 +306,7 @@ fn tags_follow_the_branches_and_open_on_demand_or_while_searching() {
     };
     let closed = list("", &HashSet::new());
     assert_eq!(closed.last().map(String::as_str), Some("> tags 3"));
-    assert_eq!(closed[closed.len() - 2], "> remotes 1");
+    assert_eq!(closed[closed.len() - 2], "> remotes 3");
 
     let toggled = HashSet::from([(false, String::new())]);
     let open = list("", &toggled);

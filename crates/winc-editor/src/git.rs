@@ -11,14 +11,16 @@ pub mod merge;
 mod commit;
 mod output;
 mod parse;
+mod proxy;
 mod rebase;
 mod remote;
 mod sync;
 
-pub use output::output_text;
+pub use output::{on_output, output_since, output_snapshot, output_text};
+pub use proxy::follow_system_proxy;
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
 pub use remote::{Remote, TagTarget, repository_dir_name};
-pub use sync::{Carried, Synced};
+pub use sync::{Carried, MINIMUM_VERSION, Synced};
 mod history;
 mod trust;
 mod worktree;
@@ -132,6 +134,10 @@ pub struct Branch {
     pub time: i64,
     /// 提交时间在本机时区的写法「2026-10-26 14:32」。
     pub local: String,
+    /// 领先上游的提交数；没有上游时为 0，超过 `u16::MAX` 时记作 `u16::MAX`。
+    pub ahead: u16,
+    /// 落后上游的提交数；没有上游时为 0，超过 `u16::MAX` 时记作 `u16::MAX`。
+    pub behind: u16,
 }
 /// 日志里的一个提交。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -729,7 +735,8 @@ impl Git {
         command.args([
             "for-each-ref",
             "--format=%(refname)%00%(HEAD)%00%(upstream:short)%00%(objectname)\
-             %00%(committerdate:unix)%00%(committerdate:format-local:%Y-%m-%d %H:%M)",
+             %00%(committerdate:unix)%00%(committerdate:format-local:%Y-%m-%d %H:%M)\
+             %00%(upstream:track,nobracket)",
             "refs/heads",
             "refs/remotes",
         ]);
@@ -878,13 +885,24 @@ impl Git {
     ) -> Result<String, String> {
         let mut command = self.command(root);
         self.ask_through(root, &mut command);
+        // 本机的 `git`（不是远端主机和 WSL 里的）跟随系统的代理设置。
+        if !winc_backend::is_remote(root) && crate::wsl::locate_here(root).is_none() {
+            proxy::apply(&mut command);
+        }
         prepare(&mut command);
         command.args(args).stderr(Stdio::piped());
-        match process::run(&mut command, Vec::new(), timeout, &Cancel::default()) {
+        // 命令一开始就记下，输出随到随记：开着的输出标签不用等命令结束。
+        let live = output::begin(root, args);
+        let watch: process::Watch = {
+            let live = Arc::clone(&live);
+            Arc::new(move |bytes: &[u8]| output::feed(&live, bytes))
+        };
+        let cancel = Cancel::default();
+        match process::run_watched(&mut command, Vec::new(), timeout, &cancel, Some(watch)) {
             Ok(output) => {
                 let mut text = output.stderr;
                 text.extend_from_slice(&output.stdout);
-                output::record(root, args, output.status.code(), &text);
+                output::finish(&live, output.status.code(), &text);
                 if output.status.success() {
                     Ok(summary(&text))
                 } else {
@@ -893,7 +911,7 @@ impl Git {
             }
             Err(e) => {
                 let reason = describe(&e);
-                output::record(root, args, None, reason.as_bytes());
+                output::finish(&live, None, reason.as_bytes());
                 Err(reason)
             }
         }

@@ -390,3 +390,165 @@ fn the_branch_picker_lists_tags_and_checks_one_out() {
     app.run_tag_op(TagOp::Delete, "v1".into());
     assert_eq!(app.git.tags, ["v2"]);
 }
+
+/// 打开的目录不是仓库时，提交视图给出「初始化仓库」和「克隆仓库…」；初始化以后按项目类型生成
+/// `.gitignore`，开着的 Git 输出标签不用重开就看得到这条命令。
+#[test]
+fn a_folder_without_a_repository_offers_to_initialize_one() {
+    let dir = search_folder("git-no-repository");
+    std::fs::write(dir.join("Cargo.toml"), "[package]\n").unwrap();
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let dir = app.editor.root().unwrap().to_path_buf();
+    app.run_action(Action::ShowCommit);
+    // 查找仓库的结果由事件循环收取；测试里没有事件循环，这里收一次。
+    app.git_take_scan();
+    paint(&mut app);
+    assert!(app.git_no_repository());
+    let hit = |app: &App, target| app.hits.commit.iter().any(|(_, t)| *t == target);
+    assert!(hit(&app, CommitTarget::InitRepository));
+    assert!(hit(&app, CommitTarget::CloneRepository));
+
+    // 先打开输出标签，再初始化：标签里接着出现这条命令，仍是同一个标签。
+    app.show_git_output();
+    let tabs = app.editor.documents.len();
+    let output = |app: &App| {
+        let title = winc_i18n::t!("git-output-title");
+        let doc = (app.editor.documents.iter()).find(|d| d.title.as_deref() == Some(title));
+        doc.unwrap().text().rope().unwrap().to_string()
+    };
+    let ours = format!("{}\n$ git init", dir.display());
+    assert!(!output(&app).contains(&ours));
+    app.press_commit(CommitTarget::InitRepository);
+    app.refresh_git_output();
+    assert!(output(&app).contains(&ours), "{}", output(&app));
+    assert_eq!(app.editor.documents.len(), tabs);
+
+    // 成了仓库：不再是空状态；`.gitignore` 里有 Rust 项目的构建目录，已有的文件不会被覆盖。
+    assert_eq!(app.git.root.as_deref(), Some(dir.as_path()));
+    assert!(!app.git_no_repository());
+    let ignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
+    assert!(ignore.lines().any(|line| line == "/target/"), "{ignore}");
+    std::fs::write(dir.join(".gitignore"), "mine\n").unwrap();
+    app.git_init();
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+        "mine\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 推送前的确认框列出会送出的提交：最新的在前，超过上限的写明还有几个；第二个按钮「查看提交」
+/// 打开 Git 日志。
+#[test]
+fn the_push_confirmation_lists_the_commits_it_will_send() {
+    use crate::app::git::commit::PushIntent;
+    let dir = sample_folder("git-push-preview");
+    let Some(work) = repo_with_remote(&dir) else {
+        return;
+    };
+    let commit = |subject: &str| {
+        let identity = ["-c", "user.name=t", "-c", "user.email=t@t"];
+        let made = Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(identity)
+            .args(["-c", "commit.gpgsign=false"])
+            .args(["commit", "-q", "--allow-empty", "-m", subject])
+            .output();
+        assert!(made.is_ok_and(|o| o.status.success()));
+    };
+    commit("修复登录");
+    commit("加上重试");
+    let Some(mut app) = git_app(&work) else {
+        return;
+    };
+    app.git_refresh();
+    app.ask_push(PushIntent::Push);
+    let alert = app.overlays.alert.as_ref().unwrap();
+    let detail: Vec<&str> = alert.detail.lines().collect();
+    assert_eq!(detail[detail.len() - 2..], ["· 加上重试", "· 修复登录"]);
+    assert_eq!(alert.buttons.len(), 3);
+    assert_eq!(alert.buttons[1].title, "查看提交");
+    app.overlays.alert = None;
+
+    // 提交很多时只列最新的几个，最后一行写明其余的个数，两者加起来是全部。
+    for i in 0..20 {
+        commit(&format!("第 {i} 个"));
+    }
+    app.git_refresh();
+    app.ask_push(PushIntent::Push);
+    let alert = app.overlays.alert.as_ref().unwrap();
+    let listed = (alert.detail.lines().filter(|line| line.starts_with("· "))).count();
+    assert!(listed > 0 && listed < 22, "{listed}");
+    assert!(alert.detail.contains("· 第 19 个"));
+    let rest = format!("另有 {} 个提交", 22 - listed);
+    assert!(alert.detail.ends_with(&rest), "{}", alert.detail);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：打开的目录不是仓库时的提交视图（`commit-no-repository`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_commit_no_repository() {
+    let dir = search_folder("commit-no-repository");
+    let Some(mut app) = git_app(&dir) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    app.git_take_scan();
+    shoot(&mut app, "commit-no-repository");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：推送前的确认框，列出会送出的提交（`push-preview`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_push_preview() {
+    let dir = sample_folder("push-preview");
+    let Some(work) = repo_with_remote(&dir) else {
+        return;
+    };
+    for subject in [
+        "修复登录页的焦点顺序",
+        "日志刷新后保留选中的提交",
+        "补上推送前的预览",
+    ] {
+        let made = Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(["commit", "-q", "--allow-empty", "-m", subject])
+            .output();
+        assert!(made.is_ok_and(|o| o.status.success()));
+    }
+    let Some(mut app) = git_app(&work) else {
+        return;
+    };
+    app.git_refresh();
+    app.run_action(Action::ShowCommit);
+    app.ask_push(crate::app::git::commit::PushIntent::Push);
+    shoot(&mut app, "push-preview");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `git` 版本低于最低要求时提示一次，之后不再重复；版本足够或读不出时不提示。
+#[test]
+fn old_git_is_reported_once() {
+    let dir = search_folder("git-old-version");
+    let mut app = app_with(&dir, false);
+    let minimum = winc_editor::git::MINIMUM_VERSION;
+    app.warn_old_git(None);
+    app.warn_old_git(Some(minimum));
+    assert_eq!(app.notice.text, None);
+    app.warn_old_git(Some((minimum.0, minimum.1 - 1)));
+    let text = app.notice.text.take().expect("旧版本应有提示");
+    assert!(text.contains("2.23") && text.contains("2.24"), "{text}");
+    app.warn_old_git(Some((1, 9)));
+    assert_eq!(app.notice.text, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

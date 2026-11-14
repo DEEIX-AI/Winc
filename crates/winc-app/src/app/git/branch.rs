@@ -68,6 +68,10 @@ impl BranchOp {
 /// 对日志里一个标签做的事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TagOp {
+    /// 从该标签新建分支（输入名字）。
+    NewBranch,
+    /// 把该标签指向的提交合并到当前分支。
+    Merge,
     /// 推送到远程仓库。
     Push,
     /// 删除本地标签（先确认）。
@@ -78,11 +82,19 @@ pub enum TagOp {
 
 impl TagOp {
     /// 全部操作，顺序就是子菜单里的顺序。
-    pub const ALL: [TagOp; 3] = [TagOp::Push, TagOp::Delete, TagOp::DeleteRemote];
+    pub const ALL: [TagOp; 5] = [
+        TagOp::NewBranch,
+        TagOp::Merge,
+        TagOp::Push,
+        TagOp::Delete,
+        TagOp::DeleteRemote,
+    ];
 
     /// 子菜单里的文字。
     pub fn label(self) -> &'static str {
         match self {
+            TagOp::NewBranch => t!("git-branch-new-from"),
+            TagOp::Merge => t!("git-branch-merge-into-current"),
             TagOp::Push => t!("git-tag-push"),
             TagOp::Delete => t!("git-tag-delete"),
             TagOp::DeleteRemote => t!("git-tag-delete-remote"),
@@ -247,15 +259,21 @@ pub(crate) fn branch_menu(
     entries
 }
 
-/// 分支选择器中第 `index` 个标签的菜单：签出，分隔线，推送、删除、从远程删除（删除先确认）。
+/// 分支选择器里第 `index` 个标签的操作菜单，和分支的菜单同样分组：签出和新建、合并到当前
+/// 分支、推送、删除，组之间有分隔线。
 pub(crate) fn tag_ops(index: usize, busy: bool) -> Vec<MenuEntry> {
-    let mut ops = vec![
-        MenuEntry::Item(MenuCommand::PickerTag(None, index), !busy),
+    let item = |op: Option<TagOp>| MenuEntry::Item(MenuCommand::PickerTag(op, index), !busy);
+    vec![
+        item(None),
+        item(Some(TagOp::NewBranch)),
         MenuEntry::Separator,
-    ];
-    let rest = TagOp::ALL.into_iter().map(Some);
-    ops.extend(rest.map(|op| MenuEntry::Item(MenuCommand::PickerTag(op, index), !busy)));
-    ops
+        item(Some(TagOp::Merge)),
+        MenuEntry::Separator,
+        item(Some(TagOp::Push)),
+        MenuEntry::Separator,
+        item(Some(TagOp::Delete)),
+        item(Some(TagOp::DeleteRemote)),
+    ]
 }
 
 /// 第 `index` 条储藏的菜单：应用、应用并删除，分隔线，删除（删除先确认）。

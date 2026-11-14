@@ -205,6 +205,10 @@ pub(super) fn draw_branch_row(
     clip: Rect,
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
+    // 不是仓库时没有分支可写：不画一个空的按钮。
+    if app.git.root.is_none() {
+        return;
+    }
     let p = app.palette;
     let mut right = row.right();
     if sync_shown(app) {
@@ -352,9 +356,9 @@ pub(super) fn draw_sync(
     button.x
 }
 
-/// 「上一次提交」一栏中提交信息离行左边的距离（逻辑像素）：前面是 10 宽的提交记号，左右各留 2
+/// 「上一次提交」一栏中提交信息离行左边的距离（逻辑像素）：前面是 13 宽的提交记号，左右各留 2
 /// 和 6。
-const LAST_COMMIT_TEXT: f32 = 18.0;
+const LAST_COMMIT_TEXT: f32 = 21.0;
 
 /// 绘制合并、变基等暂停时提交信息上方的说明条。
 ///
@@ -457,8 +461,8 @@ pub(super) fn draw_undo(
     ui_text_small(frame, app, time_x, row, &time, p.text_dim, clip);
     let room = Rect::new(row.x, row.y, (time_x - 8.0 - row.x).max(0.0), row.h);
     // 前面一个提交的记号：这一行写的是上一次提交，不是一条普通的说明。
-    let mark = (row.x + 7.0, row.y + row.h / 2.0);
-    icons::ref_mark(
+    let mark = (row.x + 8.5, row.y + row.h / 2.0);
+    icons::ref_icon(
         frame,
         icons::RefMark::Commit,
         mark,

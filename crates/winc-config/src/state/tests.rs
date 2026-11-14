@@ -80,6 +80,7 @@ fn sample() -> State {
         last: Some(PathBuf::from("/a/项目")),
         others: vec![PathBuf::from("/b")],
         commit_tree: true,
+        commit_sort: "status".into(),
         commit_all_repositories: Some(true),
         sign_off_repos: vec![PathBuf::from("/a/项目")],
         pdf_thumbnails_hidden: true,

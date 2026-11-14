@@ -433,10 +433,23 @@ pub enum CommitTarget {
     OtherFile(usize, usize),
     /// 另一个仓库标题行上的分支：切换到该仓库并展开它的分支选择面板。
     OtherBranch(usize),
+    /// 打开的目录不是仓库时的「初始化仓库」。
+    InitRepository,
+    /// 打开的目录不是仓库时的「克隆仓库…」。
+    CloneRepository,
     /// 勾选式下另一个仓库标题行的勾选框：勾上或取消该仓库的全部文件。
     OtherGroupCheck(usize),
     /// 勾选式下另一个仓库中文件的勾选框（仓库的下标，文件的下标）。
     OtherCheck(usize, usize),
+    /// 暂存区视图中另一个仓库已暂存的文件（仓库的下标，文件的下标）：切换过去并选中该文件。
+    OtherStagedFile(usize, usize),
+    /// 暂存区视图中另一个仓库文件行行尾的「＋」（第三项为真）或「−」：暂存或取消暂存该文件。
+    OtherStage(usize, usize, bool),
+    /// 暂存区视图中另一个仓库的分组行（仓库的下标，是否为已暂存的一组）：悬停时行尾显示按钮，
+    /// 点击没有动作。
+    OtherGroup(usize, bool),
+    /// 暂存区视图中另一个仓库分组行行尾的「＋」（第二项为真）或「−」：暂存或取消暂存整组。
+    OtherGroupStage(usize, bool),
     /// 组标题行：收起或展开。
     Group(CommitGroup),
     /// 组标题的勾选框：整组勾上或取消。
@@ -497,6 +510,38 @@ pub enum CommitTarget {
     ///
     /// 参数是它在各行里的下标和固定在第几层。
     Sticky(usize, usize),
+}
+
+/// 提交视图各组里文件的排序方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommitSort {
+    /// 按路径：同一个目录的文件排在一起。
+    #[default]
+    Path,
+    /// 按文件名，不看所在的目录。
+    Name,
+    /// 按更改的类型（状态字母），同一类型内按路径。
+    Status,
+}
+
+impl CommitSort {
+    /// 全部排序方式，顺序就是菜单里的顺序。
+    pub const ALL: [CommitSort; 3] = [CommitSort::Path, CommitSort::Name, CommitSort::Status];
+
+    /// 记在状态文件里的写法；按路径是默认，记作空串。
+    pub fn key(self) -> &'static str {
+        match self {
+            CommitSort::Path => "",
+            CommitSort::Name => "name",
+            CommitSort::Status => "status",
+        }
+    }
+
+    /// 从状态文件里的写法读出；认不出的按路径。
+    pub fn from_key(key: &str) -> CommitSort {
+        let known = CommitSort::ALL.into_iter().find(|sort| sort.key() == key);
+        known.unwrap_or_default()
+    }
 }
 
 /// 提交视图的几何。
@@ -560,6 +605,8 @@ enum Outcome {
     StashFiles(String, String, stash::StashFiles),
     /// 写入暂存区的一步操作完成，或者失败的原因；在哪个仓库里进行的。
     Staged(Result<(), String>, PathBuf),
+    /// 写入其他仓库暂存区的一步操作完成，或者失败的原因。
+    OtherStaged(Result<(), String>),
     /// 读到了文件在暂存区中的内容：仓库、文件、发出读取时暂存区的版本、内容（不是文本时为
     /// `None`）。
     IndexText(PathBuf, PathBuf, u64, Option<String>),
@@ -619,9 +666,6 @@ pub(crate) struct CommitState {
     /// 提交按钮宽度变化（文字变了，例如按住 ⌥ 换成「提交并推送」）时过渡的起始宽度（逻辑像素，
     /// 连同下拉箭头）与时钟；不在过渡中时为 `None`。
     pub button_motion: Option<(f32, crate::app::animation::Clock)>,
-    /// 「修改上次提交」随按钮变宽隐去、变窄出现的过渡：终点是否显示与时钟；不在过渡中时为
-    /// `None`。
-    pub amend_motion: Option<(bool, crate::app::animation::Clock)>,
     /// 提交卡片滑进、滑出（见 [`App::track_commit_bars`]）。
     pub(crate) card: Slide,
     /// 「上一次提交」那一栏拉开、收起。
@@ -654,6 +698,10 @@ pub(crate) struct CommitState {
     staging_queue: VecDeque<StageJob>,
     /// 是否有写入暂存区的操作正在后台执行。
     staging_running: bool,
+    /// 等待写入其他仓库暂存区的操作：仓库的根目录、暂存还是取消暂存、各个文件。
+    other_stage_queue: VecDeque<(PathBuf, bool, Vec<PathBuf>)>,
+    /// 是否有写入其他仓库暂存区的操作正在后台执行。
+    other_stage_running: bool,
     /// 暂存区写完之后接着提交：按下提交时暂存的操作尚未完成。
     commit_queued: bool,
     /// 下一次提交不运行钩子；提交成功后关闭。
@@ -671,6 +719,8 @@ pub(crate) struct CommitState {
     /// 平铺显示（不按目录排成树）：每个文件一行，名字后面淡色写所在目录。默认平铺；用标题行的
     /// 切换按钮改成树形。
     flat: bool,
+    /// 各组里文件的排序方式；排成树时是每个目录里文件的顺序。
+    sort: CommitSort,
     /// 是否把只有一个子目录、没有文件的各级目录合成一行（「src/core」），跟随设置
     /// `compactFolders`。
     compact: bool,
@@ -751,6 +801,7 @@ impl CommitState {
         CommitState {
             browse: true,
             flat: like.flat,
+            sort: like.sort,
             compact: like.compact,
             ..CommitState::default()
         }
@@ -806,7 +857,6 @@ impl Default for CommitState {
             message_lines: 1,
             message_motion: None,
             button_motion: None,
-            amend_motion: None,
             card: Slide::default(),
             undo: Slide::default(),
             undo_drawn: None,
@@ -821,6 +871,8 @@ impl Default for CommitState {
             head: None,
             staging_queue: VecDeque::new(),
             staging_running: false,
+            other_stage_queue: VecDeque::new(),
+            other_stage_running: false,
             commit_queued: false,
             no_verify: false,
             status_outdated: false,
@@ -829,6 +881,7 @@ impl Default for CommitState {
             prefilled: false,
             collapsed: [false; CommitGroup::COUNT],
             flat: true,
+            sort: CommitSort::Path,
             compact: true,
             collapsed_dirs: Default::default(),
             layout: 0,
@@ -961,9 +1014,11 @@ impl App {
     }
 
     /// 提交按钮现在是不是「提交并推送」：按住 ⌥ 时是（和项目菜单里 ⌥ 换出备选项一样），合并、变基
-    /// 停着时、修改上一次提交时、正在提交时不是：前两种推送没有意义或要强制推送。
+    /// 停着时、修改上一次提交时、正在提交时不是：前两种推送没有意义或要强制推送。旁边已经并排
+    /// 放着「提交并推送…」时也不是：两个按钮不写同一件事。
     pub(crate) fn commit_pushes(&self) -> bool {
         self.pointer.modifiers.alt_key()
+            && self.commit_parts().push.is_none()
             && !self.git.commit.busy
             && !self.git.commit.amend
             && (self.git.status.as_ref()).is_some_and(|s| s.operation.is_none())
@@ -1054,7 +1109,13 @@ impl App {
             let count = self.git.commit.picked_entries(status).count() + self.other_checked_count();
             return (count > 0).then_some(CommitScope::Staged(count));
         }
-        Some(CommitScope::of(status)).filter(|scope| *scope != CommitScope::Nothing)
+        // 其他仓库暂存的内容一并提交；此时当前仓库只提交已暂存的部分。
+        let others = self.other_staged_count();
+        match CommitScope::of(status) {
+            CommitScope::Staged(count) => Some(CommitScope::Staged(count + others)),
+            _ if others > 0 => Some(CommitScope::Staged(others)),
+            scope => Some(scope).filter(|scope| *scope != CommitScope::Nothing),
+        }
     }
 
     /// 可以撤销的上一次提交：`HEAD` 在分支上，指向的提交还没推送到上游（没有上游，或者本地
@@ -1113,8 +1174,7 @@ impl App {
         self.git.commit.message_motion = clock.map(|c| (from, c));
     }
 
-    /// 记下绘制时量好的文字宽度（见 [`CommitLabels`]）。提交按钮因此变宽、变窄时宽度随之过渡，
-    /// 左边的「修改上次提交」因按钮放不下而隐去、因腾出位置而出现时同时淡出、淡入。
+    /// 记下绘制时量好的文字宽度（见 [`CommitLabels`]）。提交按钮因此变宽、变窄时宽度随之过渡。
     ///
     /// 第一次量出宽度时直接到位，不做过渡。
     pub(crate) fn set_commit_labels(&mut self, labels: CommitLabels) {
@@ -1123,32 +1183,16 @@ impl App {
         }
         let first = self.git.commit.labels == CommitLabels::default();
         let before = self.commit_parts();
-        // 「修改上次提交」原本是否显示：过渡中取过渡的终点，否则取当前布局中是否排出。
-        let motion = self.git.commit.amend_motion.take();
-        let was = motion.map_or(before.amend.is_some(), |(shown, _)| shown);
         self.git.commit.labels = labels;
         if first {
             return;
         }
         let after = self.commit_parts();
-        // 勾选式下提交按钮独立成块，只看它自己的宽度；暂存区视图中看整组按钮。
-        let classic = !self.git.commit.staging;
-        let width = |parts: &CommitParts| match classic {
-            true => parts.commit.w,
-            false => parts.commit_menu.right() - parts.commit.x,
-        };
-        let from = width(&before);
-        if (from - width(&after)).abs() >= 0.5 {
+        let from = before.commit.w;
+        if (from - after.commit.w).abs() >= 0.5 {
             let clock = self.clock(crate::app::animation::TREE_ANIMATION);
             self.git.commit.button_motion = clock.map(|c| (from, c));
         }
-        let now = after.amend.is_some();
-        self.git.commit.amend_motion = if was == now {
-            motion
-        } else {
-            self.clock(crate::app::animation::TREE_ANIMATION)
-                .map(|c| (now, c))
-        };
     }
 
     /// 鼠标没在拖东西、侧栏也没在开合：可以在悬停的行上展开写不下的名字。
@@ -1231,8 +1275,14 @@ impl App {
     /// 当前标签是从日志打开的差异时，提交视图已经可见则在该差异的文件树与工作区改动之间
     /// 切换，否则显示文件树（见 [`App::toggle_log_diff_tree`]）。
     pub(in crate::app) fn show_commit(&mut self) {
+        // 不是仓库：仍然打开提交视图，那里写明原因并给出初始化和克隆的入口；没有可以写的提交
+        // 信息，焦点不动。
         if self.git.root.is_none() {
-            self.flash(t!("git-not-a-repository"));
+            if !self.panels.sidebar.visible {
+                self.set_sidebar(true);
+            }
+            self.set_sidebar_view(crate::layout::SidebarView::Commit);
+            self.request_redraw();
             return;
         }
         // 从日志打开的差异标签中，提交视图在文件树与工作区改动之间切换。
