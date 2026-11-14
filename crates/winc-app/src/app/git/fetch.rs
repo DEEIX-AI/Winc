@@ -52,7 +52,7 @@ impl App {
         let done = Arc::clone(&self.git.auto_fetch.done);
         self.spawn_git(UserEvent::GitStatus, move |tool| {
             if let Ok(git) = tool {
-                let _ = git.operate(&root, &["fetch", "--all", "--prune"]);
+                let _ = git.fetch_unattended(&root);
             }
             done.store(true, Ordering::Release);
         });

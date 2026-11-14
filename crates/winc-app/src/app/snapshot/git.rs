@@ -185,7 +185,7 @@ fn git_app_in(name: &str, long: bool, dark: bool) -> Option<(App, PathBuf)> {
 /// 日志默认只显示当前分支；使用本函数的测试检查包括其他分支在内的提交图。
 fn show_all_log(app: &mut App) -> bool {
     let shown = app.run_action(Action::GitShowLog);
-    app.change_log_query(|q| q.branch = None);
+    app.change_log_query(|q| q.branches.clear());
     shown
 }
 

@@ -231,6 +231,8 @@ fn checked_files_of_other_repositories_are_committed_alongside() {
     assert_eq!(app.other_group_state(1, None), Some(false));
     assert_eq!(app.other_checked_count(), 1);
     assert_ne!(app.commit_scope(), own);
+    // 「提交并推送」的确认框写明另外推送哪个仓库。
+    assert_eq!(app.other_commit_names(), ["b"]);
 
     // 仓库标题行的勾选框：全部勾上，再点一次全部取消。
     paint(&mut app);
@@ -422,4 +424,47 @@ fn shoot_commit_staging_others() {
         shoot(&mut app, &name);
         let _ = std::fs::remove_dir_all(a.parent().unwrap());
     }
+}
+
+/// 打开另一个仓库里的文件（提交视图开着时当前仓库不跟着换）：当前行追溯按文件所在的仓库跑；
+/// 未跟踪的文件不跑，也不提示失败。
+#[test]
+fn inline_blame_follows_the_repository_of_the_file() {
+    let Some((mut app, a, b)) = two_repositories("git-blame-other-repository", false) else {
+        return;
+    };
+    // `b` 的 main.rs 恢复成提交里的样子：各行都有提交可以点。
+    git_in(&b, &["checkout", "-q", "--", "src/main.rs"]);
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    app.git_read_summaries();
+    app.poll_git();
+    let blamed = |app: &mut App, path: &Path| {
+        app.open_path(path);
+        let id = app.editor.active().unwrap().id;
+        app.update_blame(id);
+        app.poll_blame();
+        app.blame_of(id).is_some_and(|b| !b.lines.is_empty())
+    };
+    assert!(blamed(&mut app, &b.join("src/main.rs")));
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+
+    // 点追溯的一行：切换到文件所在的仓库，在它的日志里选中那个提交。
+    let id = app.editor.active().unwrap().id;
+    let blame = app.blame_of(id).unwrap();
+    let line = (blame.lines.iter())
+        .position(|&c| !blame.commits[c as usize].uncommitted)
+        .unwrap();
+    let oid = blame.commits[blame.lines[line] as usize].oid.clone();
+    app.click_blame(line);
+    assert_eq!(app.git.root.as_ref(), Some(&b));
+    let log = app.editor.active().unwrap().log.as_deref().unwrap();
+    assert_eq!(
+        log.details.as_ref().map(|d| d.oid.as_str()),
+        Some(oid.as_str())
+    );
+    app.git_switch_repository(0);
+    assert!(!blamed(&mut app, &b.join("src/new.rs")));
+    assert!(app.status.message.is_none());
+    let _ = std::fs::remove_dir_all(a.parent().unwrap());
 }

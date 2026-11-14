@@ -680,6 +680,11 @@ enum Drag {
         start_x: f32,
         start_width: f32,
     },
+    /// 拖动日志列表里作者一列的左边缘：按下时的横坐标、作者一列当时的宽度。
+    LogColumn {
+        start_x: f32,
+        start_width: f32,
+    },
     /// 拖动缩略图的滑块；指针在纵坐标 `from`（逻辑像素）时，滚动位置是 `scroll`。
     Minimap {
         from: f32,

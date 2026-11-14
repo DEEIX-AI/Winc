@@ -274,6 +274,8 @@ pub enum MenuCommand {
     FormRemote(usize),
     /// 日志的作者筛选：0 是全部作者，`i + 1` 是作者菜单里第 `i` 个作者。
     LogAuthor(usize),
+    /// 日志列表显示、隐藏一列。
+    LogColumn(crate::app::git::log::LogColumn),
     /// 日志的作者筛选：只看自己（仓库配置的 `user.email`）的提交。
     LogAuthorMe,
     /// 日志的日期筛选：只看最近几天的提交，0 是全部日期。
@@ -571,6 +573,7 @@ impl MenuCommand {
             MenuCommand::LogPath(0) => t!("menu-log-all-paths"),
             MenuCommand::LogPathOther => t!("menu-log-other-path"),
             MenuCommand::LogAuthorMe => t!("menu-log-author-me"),
+            MenuCommand::LogColumn(column) => column.label(),
             MenuCommand::LogSince(_) | MenuCommand::LogPath(_) => "",
             MenuCommand::FormBase(0) => t!("menu-git-current-branch"),
             MenuCommand::LogAuthor(_) | MenuCommand::FormBase(_) | MenuCommand::FormRemote(_) => "",
@@ -805,6 +808,8 @@ pub enum MenuTarget {
     StatusPlaces(Vec<Place>),
     /// 日志标题栏的「作者」下拉。
     LogAuthor,
+    /// 日志标题栏的「⋯」：显示哪几列。
+    LogColumns,
     /// 日志标题栏的「日期」下拉。
     LogDate,
     /// 日志标题栏的「路径」下拉。

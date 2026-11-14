@@ -743,6 +743,11 @@ pub(crate) struct CommitState {
     /// 其他仓库中勾上的文件里取消勾选的各处改动（换仓库时由当前仓库带过来）：这些文件只提交
     /// 其余的改动。
     other_skipped: HashMap<PathBuf, Vec<Skip>>,
+    /// 其他仓库在换仓库那一刻的 `HEAD`：它们的 `HEAD` 变了以后，带过来的按处取消勾选的记录
+    /// 作废（与当前仓库的 [`CommitState::head_is`] 相同）。
+    other_heads: HashMap<PathBuf, Option<String>>,
+    /// 「提交并同步」要先确认强制推送时，一并提交了、确认以后要推送的其他仓库。
+    force_others: Vec<PathBuf>,
     /// 这次提交一并写入的其他仓库的根目录：提交成功后据此清掉它们的勾选，「提交并推送」
     /// 「提交并同步」时一并推送。
     committed_with: Vec<PathBuf>,
@@ -754,6 +759,8 @@ pub(crate) struct CommitState {
     pub(in crate::app::git) carry_in: bool,
     /// 多仓库时折叠着的其他仓库（组为 `None`）和其中折叠着的组，按仓库的根目录记。
     other_folds: HashSet<(PathBuf, Option<others::OtherGroup>)>,
+    /// 其他仓库各行的缓存（见 [`App::commit_other_rows`]）。
+    other_rows: std::cell::RefCell<Option<(others::OtherRowsKey, Vec<others::OtherRow>)>>,
     /// 勾选式下勾上的文件里取消勾选的各处改动：这些文件只提交其余的改动。
     skipped: HashMap<PathBuf, Vec<Skip>>,
     /// 上一次见到的 `HEAD`：变化（切换分支、在别处提交）时按处的勾选作废，记下的行号不再对应。
@@ -942,10 +949,13 @@ impl Default for CommitState {
             included: HashSet::new(),
             other_checked: HashSet::new(),
             other_skipped: HashMap::new(),
+            other_heads: HashMap::new(),
+            force_others: Vec::new(),
             committed_with: Vec::new(),
             others_left: 0,
             carry_in: false,
             other_folds: HashSet::new(),
+            other_rows: Default::default(),
             skipped: HashMap::new(),
             head: None,
             staging_queue: VecDeque::new(),
@@ -1190,7 +1200,8 @@ impl App {
             return None;
         }
         if !self.git.commit.staging {
-            let count = self.git.commit.picked_entries(status).count() + self.other_checked_count();
+            let count =
+                self.git.commit.picked_entries(status).count() + self.other_committed_count();
             return (count > 0).then_some(CommitScope::Staged(count));
         }
         // 其他仓库暂存的内容一并提交；此时当前仓库只提交已暂存的部分。

@@ -96,12 +96,19 @@ impl App {
     }
 
     /// 在后台同步（[`winc_editor::git::Git::sync`]）；需要强制推送而 `force` 为假时转为询问。
+    /// 确认强制推送以后，询问前一并提交了的其他仓库照样推送出去。
     pub(in crate::app) fn run_git_sync(&mut self, force: bool) {
-        self.run_git_sync_with(Vec::new(), force);
+        let others = match force {
+            true => std::mem::take(&mut self.git.commit.force_others),
+            false => Vec::new(),
+        };
+        self.run_git_sync_with(others, force);
     }
 
     /// 同步当前分支，之后把一并提交了的其他仓库 `others` 推送出去（见 [`push_others`]）。
+    /// 需要先确认强制推送时记下 `others`，确认以后再推（见 [`App::run_git_sync`]）。
     fn run_git_sync_with(&mut self, others: Vec<PathBuf>, force: bool) {
+        self.git.commit.force_others = others.clone();
         self.git_operate_then(t!("git-op-sync").into(), move |git, root| {
             let (synced, then) =
                 keep_changes(git, root, t!("git-op-sync"), |git| git.sync(root, force))?;
@@ -216,8 +223,21 @@ impl App {
             return;
         }
         let track = matches!(form.intent, PushIntent::Publish(_));
-        self.git_operate(t!("git-op-push").into(), move |git, root| {
-            git.push_to(root, &remote, &target, tags, track)
+        // 同步改了目标或要一并推送标签：仍然先拉取（与同步相同），再按对话框推送，本地落后上游
+        // 时推送才不会被拒绝。
+        let sync = matches!(form.intent, PushIntent::Sync);
+        let what = if sync {
+            t!("git-op-sync")
+        } else {
+            t!("git-op-push")
+        };
+        self.git_operate_then(what.into(), move |git, root| {
+            let then = match sync {
+                true => keep_changes(git, root, t!("git-op-pull"), |git| git.pull(root))?.1,
+                false => Then::Nothing,
+            };
+            let summary = git.push_to(root, &remote, &target, tags, track)?;
+            Ok((summary, then))
         });
     }
 
@@ -352,6 +372,20 @@ impl App {
             ),
             (_, _, false) => t!("git-commit-push-confirm-detail").to_owned(),
             (_, _, true) => t!("git-commit-sync-confirm-detail").to_owned(),
+        };
+        // 一并提交的其他仓库也会推送出去：写明是哪几个。
+        let others = self.other_commit_names();
+        let detail = match others.is_empty() {
+            true => detail,
+            false => {
+                let names = others.join(t!("common-list-separator"));
+                let extra = t!(
+                    "git-commit-push-others",
+                    count = others.len(),
+                    names = names
+                );
+                format!("{detail}\n{extra}")
+            }
         };
         let (message, button) = match sync {
             false => (
@@ -810,6 +844,7 @@ impl App {
         self.git.commit.staging = old.staging;
         self.git.commit.other_checked = old.other_checked;
         self.git.commit.other_skipped = old.other_skipped;
+        self.git.commit.other_heads = old.other_heads;
         self.git.commit.other_folds = old.other_folds;
         // 写入其他仓库暂存区的操作按仓库的路径进行，与当前是哪个仓库无关：换仓库时接着做完，
         // 界面上已经按做完的结果显示了。
@@ -835,8 +870,10 @@ impl App {
 }
 
 /// 「提交并推送」「提交并同步」时把一并提交了的其他仓库 `others` 的当前分支依次推到各自的
-/// 上游，没有上游时发布。只推送、不拉取：被拒绝时说明是哪个仓库，由用户到该仓库同步。
+/// 上游，没有上游时发布。只推送、不拉取。当前仓库这时已经推送了：一个仓库失败不影响其余的，
+/// 最后的说明写明当前仓库已推送、哪些仓库失败及原因，由用户到那些仓库同步。
 fn push_others(git: &Git, others: &[PathBuf]) -> Result<(), String> {
+    let mut failed = Vec::new();
     for other in others {
         let upstream = [
             "rev-parse",
@@ -845,8 +882,13 @@ fn push_others(git: &Git, others: &[PathBuf]) -> Result<(), String> {
             "@{upstream}",
         ];
         let tracked = git.operate(other, &upstream).is_ok();
-        let pushed = git.push(other, tracked);
-        pushed.map_err(|error| format!("{}: {error}", winc_editor::display_name(other)))?;
+        if let Err(error) = git.push(other, tracked) {
+            failed.push(format!("{}: {error}", winc_editor::display_name(other)));
+        }
+    }
+    if !failed.is_empty() {
+        let failed = failed.join(t!("common-list-separator"));
+        return Err(t!("git-push-others-failed", failed = failed));
     }
     Ok(())
 }

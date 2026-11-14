@@ -138,8 +138,11 @@ pub struct Details {
     pub oid: String,
     /// 完整的说明。
     pub message: Option<String>,
-    /// 改动的文件（和第一个父提交比）。
+    /// 改动的文件（和 `base` 比）。
     pub files: Option<Vec<CommitFile>>,
+    /// 改动的文件对照的版本：第一个父提交，根提交为 `None`。按路径筛选的日志里列表上的父提交
+    /// 是改写过的（[`crate::git::LogQuery::rewrites_parents`]），这里是真正的父提交。
+    pub base: Option<String>,
     /// 取详情失败的原因。
     pub error: Option<String>,
     /// 包含该提交的本地分支和远程分支（[`crate::git::Git::containing_branches`]），本地的在前；

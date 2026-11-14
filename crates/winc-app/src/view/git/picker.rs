@@ -16,9 +16,7 @@ use winc_i18n::t;
 use super::super::popup_menu::band_ink;
 use super::commit::draw_count_pill_in;
 use crate::app::git::branch::local_name;
-use crate::app::git::branch::picker::{
-    BranchRow, BranchSection, GIT_PICKER_ACTION_LIST, GIT_PICKER_ACTIONS_TOP,
-};
+use crate::app::git::branch::picker::{BranchRow, GIT_PICKER_ACTION_LIST, GIT_PICKER_ACTIONS_TOP};
 use crate::app::git::location_picker::{LocationRow, Place};
 use crate::app::git::log::display_local;
 use crate::app::{Focus, PICKER_ROW, PickerPart};
@@ -586,10 +584,6 @@ fn draw_branch_rows(
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     for i in drawn_rows(app, parts, rows.len()) {
-        if let BranchRow::Heading(section) = &rows[i] {
-            draw_heading(app, frame, parts, i, section);
-            continue;
-        }
         // 展开的远程分支一组和其他分组一样，上沿有分隔线；选中时底色盖住它。收起时只有这一行，
         let group = matches!(
             rows[i],
@@ -603,10 +597,9 @@ fn draw_branch_rows(
             draw_divider(frame, app.palette, row, row.y + (gap - 1.0) / 2.0, clip);
         }
         let line = Line::begin_below(app, frame, parts, i, gap);
-        // 分组里的各行比标题缩进一层，日志的分支筛选没有分组，不缩进。
-        let inner = usize::from(!app.picker_filters_log());
+        // 分组里的各行比标题缩进一层（日志的分支筛选也分组，与平时相同）。
+        let inner = 1;
         match &rows[i] {
-            BranchRow::Heading(_) => {}
             BranchRow::All => {
                 draw_log_branch_row(app, frame, &line, t!("menu-log-all-branches"), None);
             }
@@ -658,13 +651,6 @@ fn draw_branch_rows(
                 label, depth, open, ..
             } => {
                 // 分组里的目录行：文件夹图标和名字与同层的分支对齐，箭头在图标左边一层的位置。
-                // 日志的分支筛选没有分组，目录行只有箭头和名字。
-                if inner == 0 {
-                    line.draw_fold(app, frame, (i, *depth, *open));
-                    let at = (line.columns(*depth).1, line.right());
-                    line.draw_name(app, frame, at, label, line.text);
-                    continue;
-                }
                 let depth = *depth + inner;
                 line.draw_fold(app, frame, (i, depth - 1, *open));
                 let (icon, text) = line.columns(depth);
@@ -676,10 +662,6 @@ fn draw_branch_rows(
                 depth,
                 label,
             } => {
-                if app.picker_filters_log() {
-                    draw_log_branch_row(app, frame, &line, label, Some(label));
-                    continue;
-                }
                 let row = BranchLine {
                     index: *index,
                     depth: *depth + inner,
@@ -718,30 +700,6 @@ fn draw_log_branch_row(
 fn draw_divider(frame: &mut Frame<'_>, p: &Palette, rect: Rect, y: f32, clip: Rect) {
     let line = Rect::new(rect.x + GUTTER, y, rect.w - 2.0 * GUTTER, 1.0);
     frame.rect_clipped(line, p.separator, 0.0, clip);
-}
-
-/// 绘制第 `i` 行的分组标题：不是第一行时上沿有一条分隔线，和菜单里分组的写法一样。
-fn draw_heading(
-    app: &App,
-    frame: &mut Frame<'_>,
-    parts: &PickerParts,
-    i: usize,
-    section: &BranchSection,
-) {
-    let (row, clip) = placed_row(app, parts, i);
-    let title = match section {
-        BranchSection::Local => t!("git-branch-picker-other"),
-        BranchSection::Remote(None) => t!("git-branch-picker-remote"),
-        BranchSection::Remote(Some(remote)) => remote.as_str(),
-    };
-    let band = if i > 0 {
-        draw_divider(frame, app.palette, row, row.y + 2.0, clip);
-        Rect::new(row.x, row.y + 4.0, row.w, row.h - 4.0)
-    } else {
-        row
-    };
-    let x = row.x + TEXT_LEFT;
-    ui_text_small(frame, app, x, band, title, app.palette.text_dim, clip);
 }
 
 /// 一个分支行的内容。

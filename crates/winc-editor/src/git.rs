@@ -252,10 +252,10 @@ pub struct BlameCommit {
 pub struct LogQuery {
     /// 说明里含有这段文字（不分大小写，按字面找，不是正则）。
     pub text: String,
-    /// 只看该分支（本地或远程，如 `origin/main`）能走到的提交。
-    pub branch: Option<String>,
-    /// 作者名字或邮箱里含有这段文字（不分大小写，按字面找）。
-    pub author: Option<String>,
+    /// 只看这些分支（本地或远程，如 `origin/main`）能走到的提交；空着是全部分支。
+    pub branches: Vec<String>,
+    /// 作者名字或邮箱里含有其中任一段文字（不分大小写，按字面找）；空着是全部作者。
+    pub authors: Vec<String>,
     /// 只看改过该文件的提交（文件历史），越过改名继续往前查找。
     pub path: Option<PathBuf>,
     /// 与 `path` 一起使用：只看改过这几行的提交（`git log -L`），按 `HEAD` 中的行号，从 1 起，
@@ -275,13 +275,18 @@ impl LogQuery {
     /// 是否因为按说明、作者或文件筛选而画不出提交图。
     ///
     /// 这些条件下结果里的父提交大多不在列表里，提交图连不起来；只按分支筛选时提交仍然相连，
-    /// 可以画图。
+    /// 可以画图；按路径筛选时父提交按路径改写（[`Self::rewrites_parents`]），同样可以画图。
     pub fn graphless(&self) -> bool {
         !self.text.trim().is_empty()
-            || self.author.is_some()
+            || !self.authors.is_empty()
             || self.path.is_some()
-            || !self.paths.is_empty()
             || self.pin.is_some()
+    }
+
+    /// 是否按路径筛选、父提交按路径改写（`--parents`）：每个提交的父提交是它往下最近一个也改过
+    /// 这些路径的提交，提交图照样连得起来。真正的父提交另外查（见 [`log::Details::base`]）。
+    pub fn rewrites_parents(&self) -> bool {
+        !self.paths.is_empty() && self.path.is_none()
     }
 
     /// 是否按说明、分支或作者筛选过，或固定了一个提交。
@@ -289,8 +294,8 @@ impl LogQuery {
     /// 文件历史的文件不算：那本来就是该标签展示的内容。
     pub fn filtered(&self) -> bool {
         !self.text.trim().is_empty()
-            || self.branch.is_some()
-            || self.author.is_some()
+            || !self.branches.is_empty()
+            || !self.authors.is_empty()
             || self.pin.is_some()
             || self.since_days.is_some()
             || !self.paths.is_empty()
@@ -839,6 +844,25 @@ impl Git {
         self.run_operation(root, args, OPERATION_TIMEOUT)
     }
 
+    /// 在后台无人值守地获取所有远程（`git fetch --all --prune`）：需要密码、口令或确认主机密钥
+    /// 时直接失败，不等输入。
+    ///
+    /// `git` 自己的提示已经由 `GIT_TERMINAL_PROMPT` 关掉；`ssh` 还会从控制终端读口令（从终端
+    /// 启动时），这里让它只用 askpass，而 askpass 程序是总是失败的 `false`（不存在时同样失败）。
+    ///
+    /// # Errors
+    ///
+    /// 同 [`Git::operate`]。
+    pub fn fetch_unattended(&self, root: &Path) -> Result<String, String> {
+        self.require_trust(root)?;
+        let args = ["fetch", "--all", "--prune"];
+        self.run_prepared(root, &args, OPERATION_TIMEOUT, |command| {
+            command
+                .env("SSH_ASKPASS", "false")
+                .env("SSH_ASKPASS_REQUIRE", "force");
+        })
+    }
+
     /// 把 `paths` 的当前状态加入暂存区（`git add --all`），已删除的文件记为删除。
     ///
     /// 路径以 `/` 分隔并按字面匹配：`[`、`*`、`?` 不作为通配符。
@@ -897,8 +921,10 @@ impl Git {
     ) -> Result<String, String> {
         let mut command = self.command(root);
         self.ask_through(root, &mut command);
-        // 本机的 `git`（不是远端主机和 WSL 里的）跟随系统的代理设置。
-        if !winc_backend::is_remote(root) && crate::wsl::locate_here(root).is_none() {
+        // 本机的 `git`（不是远端主机和 WSL 里的）在联网的命令上跟随系统的代理设置；暂存、提交
+        // 这些不联网的命令不读系统设置，不为它们多跑一个进程。
+        let online = proxy::online(args.iter().map(AsRef::as_ref));
+        if online && !winc_backend::is_remote(root) && crate::wsl::locate_here(root).is_none() {
             proxy::apply(&mut command);
         }
         prepare(&mut command);

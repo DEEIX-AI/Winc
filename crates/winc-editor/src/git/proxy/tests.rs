@@ -123,3 +123,22 @@ fn address_prefixes_become_networks_and_odd_patterns_are_dropped() {
     assert_eq!(list(&["172.2*", "<local>", "*"]), "");
     assert_eq!(list(&["host.example"]), "host.example");
 }
+
+#[test]
+fn only_online_commands_follow_the_proxy() {
+    use std::ffi::OsStr;
+    let online = |args: &[&str]| super::online(args.iter().map(OsStr::new));
+    assert!(online(&["fetch", "--all"]));
+    assert!(online(&["push", "--set-upstream", "origin", "HEAD"]));
+    assert!(online(&[
+        "-c",
+        "protocol.ext.allow=never",
+        "clone",
+        "--",
+        "url",
+        "dir"
+    ]));
+    assert!(!online(&["add", "--all", "--", "a.rs"]));
+    assert!(!online(&["commit", "-m", "x"]));
+    assert!(!online(&["-c", "core.fsmonitor=false", "stash", "push"]));
+}

@@ -7,7 +7,7 @@
 //! 追溯（`git.inlineBlame`）用同一份结果，在光标所在行的末尾写出一行说明。
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
@@ -168,20 +168,39 @@ impl App {
 
     /// 返回文档 `id` 所在的仓库与文件路径；不是仓库中的文本文件时返回 `None`。
     fn blame_path(&self, id: DocumentId) -> Option<(PathBuf, PathBuf)> {
-        let root = self.git.root.clone()?;
         let doc = self.editor.document(id)?;
         if !doc.shows_text() || doc.is_large() {
             return None;
         }
-        let path = doc.path.clone()?;
-        let path = if path.starts_with(&root) {
-            path
-        } else {
-            winc_config::files::canonicalize(path)
-                .ok()
-                .filter(|p| p.starts_with(&root))?
+        // 文件所在的仓库：打开的目录里有几个仓库时不一定是当前仓库，取包含它的最里层那个。
+        let owner = |path: &Path| {
+            let repos = self.git.repositories.iter().chain(&self.git.root);
+            let inside = repos.filter(|r| path.starts_with(r));
+            inside.max_by_key(|r| r.as_os_str().len()).cloned()
         };
-        Some((root, path))
+        let path = doc.path.clone()?;
+        if let Some(root) = owner(&path) {
+            return Some((root, path));
+        }
+        let path = winc_config::files::canonicalize(path).ok()?;
+        Some((owner(&path)?, path))
+    }
+
+    /// 仓库 `root` 里的文件 `path` 是否未跟踪或被忽略：`git blame` 对它总是失败。仓库的状态还
+    /// 没读到时按已跟踪算。
+    fn blame_untracked(&self, root: &Path, path: &Path) -> bool {
+        let check = |status: &winc_editor::git::Status| {
+            let untracked = status.entries.iter();
+            let mut untracked = untracked.filter(|e| e.untracked());
+            untracked.any(|e| path.starts_with(&e.path))
+                || status.ignored.iter().any(|i| path.starts_with(i))
+        };
+        if self.git.root.as_deref() == Some(root) {
+            return self.git.status.as_ref().is_some_and(check);
+        }
+        let summaries = self.git.summaries.lock();
+        let summaries = summaries.unwrap_or_else(std::sync::PoisonError::into_inner);
+        summaries.get(root).is_some_and(check)
     }
 
     /// 在绘制前更新文档 `id` 的逐行追溯；未开启或结果已是最新时不做处理。
@@ -219,6 +238,11 @@ impl App {
         let Some((root, path)) = self.blame_path(id) else {
             return;
         };
+        // 只为当前行追溯时，未跟踪、被忽略的文件不跑：`git blame` 必然失败，停止输入后又跑一次。
+        // 开着追溯一栏时照样跑，失败了说明原因。
+        if !self.git.blame.is_on(id) && self.blame_untracked(&root, &path) {
+            return;
+        }
         self.git.blame.due.remove(&id);
         self.git.blame.computing.insert(id, revision);
         let sender = self.git.blame.results.0.clone();
@@ -346,6 +370,8 @@ impl App {
     }
 
     /// 处理对逐行追溯第 `line` 行的点击：在日志标签中选中对应的提交。
+    ///
+    /// 文件在另一个仓库里时（打开的目录里有几个仓库）先切换到那个仓库：提交在它的日志里。
     pub(in crate::app) fn click_blame(&mut self, line: usize) {
         let Some(commit) = self.blame_commit(line) else {
             return;
@@ -353,6 +379,14 @@ impl App {
         if commit.uncommitted {
             self.flash(t!("git-blame-line-uncommitted"));
             return;
+        }
+        let owner = (self.editor.active())
+            .and_then(|doc| self.blame_path(doc.id))
+            .map(|(root, _)| root)
+            .filter(|root| self.git.root.as_ref() != Some(root));
+        let index = owner.and_then(|root| self.git.repositories.iter().position(|r| *r == root));
+        if let Some(index) = index {
+            self.git_switch_repository(index);
         }
         self.git_show_log_at(&commit.oid);
     }

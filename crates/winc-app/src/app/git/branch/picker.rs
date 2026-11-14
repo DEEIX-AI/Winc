@@ -93,22 +93,11 @@ pub const GIT_PICKER_ACTIONS_END: f32 = 5.0;
 /// 减去两边各 8 的边距）。
 const STATUS_PICKER_W: f32 = crate::theme::DEFAULT_PANEL_WIDTH - 16.0;
 
-/// 分支选择器的分组标题。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BranchSection {
-    /// 本地分支。
-    Local,
-    /// 日志分支筛选中的远程分支：有多个远程时按远程分组，带远程名；只有一个远程时为 `None`。
-    Remote(Option<String>),
-}
-
 /// 分支选择器的一行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchRow {
     /// 清除日志的分支筛选。
     All,
-    /// 分组标题，不能选中。
-    Heading(BranchSection),
     /// 可以收起的「最近」或「本地」一组，默认展开。
     Locals {
         /// 是否是「最近」一组。
@@ -163,11 +152,6 @@ pub enum BranchRow {
 }
 
 impl BranchRow {
-    /// 这一行能否选中。
-    pub fn selectable(&self) -> bool {
-        !matches!(self, BranchRow::Heading(_))
-    }
-
     /// 两行是否是同一项：展开状态变化、列表刷新以后据此留住选中项。
     ///
     /// 分支的下标按各自所在的列表解释：`self` 是 `old` 的，`other` 是 `new` 的。
@@ -209,45 +193,19 @@ fn branch_hit<'a>(branches: &[Branch], query: &'a [char]) -> impl Fn(&Branch) ->
     move |branch| !searching || score(branch).is_some_and(|s| !contiguous || s < SCATTERED)
 }
 
-/// 排出日志分支筛选的各行：没有查询时最前面是「全部」，之后是本地分支和远程分支。
-///
-/// 命中规则与 [`branch_rows`] 相同。远程分支按远程分组，各行省去远程名，由组标题写明；只有
-/// 一个远程时只有一组，标题为「远程分支」。
-fn log_branch_rows(branches: &[Branch], query: &[char]) -> Vec<BranchRow> {
-    let hit = branch_hit(branches, query);
-    let mut rows = Vec::new();
-    if query.is_empty() {
-        rows.push(BranchRow::All);
-    }
-    let row = |index: usize, label: &str| BranchRow::Branch {
-        index,
-        depth: 0,
-        label: label.to_owned(),
-    };
-    let mut local = branches
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| !b.remote && hit(b))
-        .peekable();
-    if local.peek().is_some() {
-        rows.push(BranchRow::Heading(BranchSection::Local));
-        rows.extend(local.map(|(index, b)| row(index, &b.name)));
-    }
-    let mut remotes: BTreeMap<&str, Vec<(usize, &str)>> = BTreeMap::new();
-    for (index, branch) in branches.iter().enumerate().filter(|(_, b)| b.remote) {
-        let (remote, name) = branch.name.split_once('/').unwrap_or(("", &branch.name));
-        let group = remotes.entry(remote).or_default();
-        if hit(branch) {
-            group.push((index, name));
+/// 去掉「最近」一组（标题和其中的分支）：日志里按分支筛选时用不上捷径，同一个分支列两遍、
+/// 筛选着的分支亮两处，反而看不清（日志左侧的分支面板和日志的分支筛选）。
+pub fn without_recent(rows: Vec<BranchRow>) -> Vec<BranchRow> {
+    let mut recent = false;
+    let kept = rows.into_iter().filter(|row| {
+        match row {
+            BranchRow::Locals { recent: r, .. } => recent = *r,
+            BranchRow::Remotes { .. } | BranchRow::Tags { .. } => recent = false,
+            _ => {}
         }
-    }
-    let single = remotes.len() == 1;
-    for (remote, group) in remotes.into_iter().filter(|(_, g)| !g.is_empty()) {
-        let title = (!single).then(|| remote.to_owned());
-        rows.push(BranchRow::Heading(BranchSection::Remote(title)));
-        rows.extend(group.into_iter().map(|(index, name)| row(index, name)));
-    }
-    rows
+        !recent
+    });
+    kept.collect()
 }
 
 /// 「最近」（`recent` 为真）或「本地」一组在 [`BranchList::toggled`] 中的记法：记作本地的一项，
@@ -758,10 +716,9 @@ impl App {
         }
     }
 
-    /// 选择面板的第 `row` 行能否选中：分组标题不能。
+    /// 选择面板的第 `row` 行能否选中：列出分支时每一行都能选，只要这一行存在。
     pub(in crate::app) fn picker_row_selectable(&self, row: usize) -> bool {
-        (self.overlays.picker.branch_rows.as_ref())
-            .is_none_or(|rows| rows.get(row).is_some_and(BranchRow::selectable))
+        (self.overlays.picker.branch_rows.as_ref()).is_none_or(|rows| row < rows.len())
     }
 
     /// 面板是否正在列出分支。
@@ -888,7 +845,7 @@ impl App {
                 rows.iter()
                     .position(|row| matches!(row, BranchRow::Branch { .. }))
             })
-            .or_else(|| rows.iter().position(BranchRow::selectable))
+            .or_else(|| (!rows.is_empty()).then_some(0))
             .unwrap_or(0);
         self.overlays.picker.default = plain.then_some(self.overlays.picker.selected);
         self.set_branch_rows(rows);
@@ -935,7 +892,7 @@ impl App {
         self.overlays.picker.selected = rows
             .iter()
             .position(same)
-            .or_else(|| rows.iter().position(BranchRow::selectable))
+            .or_else(|| (!rows.is_empty()).then_some(0))
             .unwrap_or(0);
         // 自动选中的行换了位置仍是自动选中的。
         self.overlays.picker.default = default.then_some(self.overlays.picker.selected);
@@ -946,17 +903,24 @@ impl App {
 
     fn current_branch_rows(&self) -> Vec<BranchRow> {
         let query = needle(self.overlays.picker.input.text());
-        if self.picker_filters_log() {
-            return log_branch_rows(&self.git.branches, &query);
-        }
-        branch_rows(&BranchList {
+        let rows = branch_rows(&BranchList {
             branches: &self.git.branches,
             recent: &self.git.recent_branches,
             query: &query,
             text: self.overlays.picker.input.text(),
             toggled: &self.git.branch_folders,
             tags: &self.git.tags,
-        })
+        });
+        if !self.picker_filters_log() {
+            return rows;
+        }
+        // 日志的分支筛选：与平时同样的分组、目录（日志左侧的分支面板也是这样），最上面是「全部
+        // 分支」；没有「最近」一组（见 `without_recent`），筛选不新建分支。
+        let all = query.is_empty().then_some(BranchRow::All);
+        let rows = rows
+            .into_iter()
+            .filter(|r| !matches!(r, BranchRow::Create(_)));
+        all.into_iter().chain(rows).collect()
     }
 
     fn set_branch_rows(&mut self, rows: Vec<BranchRow>) {
@@ -974,9 +938,9 @@ impl App {
             .unwrap_or_default();
         let at = self.overlays.picker.selected;
         let next = if down {
-            (at + 1..rows.len()).find(|&i| rows[i].selectable())
+            (at + 1 < rows.len()).then_some(at + 1)
         } else {
-            (0..at).rev().find(|&i| rows[i].selectable())
+            at.checked_sub(1)
         };
         next.unwrap_or(at)
     }
@@ -986,20 +950,24 @@ impl App {
         let row = (self.overlays.picker.branch_rows.as_ref())
             .and_then(|rows| rows.get(self.overlays.picker.selected))
             .cloned();
+        // 日志的分支筛选：选分支、标签只看它的提交，「全部分支」看全部；组、目录照常展开、收起。
         if self.picker_filters_log() {
-            let branch = match row {
-                Some(BranchRow::All) => None,
+            let chosen = match &row {
+                Some(BranchRow::All) => Some(None),
                 Some(BranchRow::Branch { index, .. }) => {
-                    let Some(branch) = self.git.branches.get(index) else {
-                        return;
-                    };
-                    Some(branch.name.clone())
+                    self.git.branches.get(*index).map(|b| Some(b.name.clone()))
                 }
-                _ => return,
+                Some(BranchRow::Tag(index)) => self.git.tags.get(*index).map(|t| Some(t.clone())),
+                _ => None,
             };
-            self.close_picker();
-            self.change_log_query(|q| q.branch = branch);
-            return;
+            if let Some(branch) = chosen {
+                self.close_picker();
+                self.change_log_query(|q| q.branches = branch.into_iter().collect());
+                return;
+            }
+            if matches!(row, Some(BranchRow::Create(_))) {
+                return;
+            }
         }
         match row {
             Some(BranchRow::Locals { recent, .. }) => {
@@ -1012,7 +980,7 @@ impl App {
             Some(BranchRow::Folder { remote, path, .. }) => self.toggle_branch_folder(remote, path),
             Some(BranchRow::Branch { index, .. }) => self.pick_branch(index),
             Some(BranchRow::Create(name)) => self.create_branch_from_picker(name, None),
-            Some(BranchRow::All | BranchRow::Heading(_)) | None => {}
+            Some(BranchRow::All) | None => {}
         }
     }
 
@@ -1081,10 +1049,7 @@ impl App {
     /// 处理没有查询时的左右键：右键展开目录、打开分支的操作菜单，左键收起目录、回到上一级目录。
     /// 返回是否已处理；有查询时左右键移动输入框的光标。
     pub(in crate::app) fn branch_picker_side(&mut self, right: bool) -> bool {
-        if !self.picker_lists_branches()
-            || self.picker_filters_log()
-            || !self.overlays.picker.input.text().is_empty()
-        {
+        if !self.picker_lists_branches() || !self.overlays.picker.input.text().is_empty() {
             return false;
         }
         let Some(row) = (self.overlays.picker.branch_rows.as_ref())

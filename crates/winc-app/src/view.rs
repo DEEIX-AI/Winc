@@ -407,7 +407,10 @@ fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                     .find(|(_, t)| *t == LogTarget::BranchRow(i));
                 let row = app.log_branch_rows().into_iter().nth(i);
                 match (hit, row) {
-                    (Some(&(rect, _)), Some(BranchRow::Branch { name, .. })) => (rect, name),
+                    (Some(&(rect, _)), Some(BranchRow::Branch { index, .. })) => {
+                        let branch = app.git.branches.get(index);
+                        (rect, branch.map_or_else(String::new, |b| b.name.clone()))
+                    }
                     _ => return,
                 }
             }

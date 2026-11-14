@@ -9,8 +9,11 @@
     reason = "只访问本机：读取本机的系统代理设置"
 )]
 
+use std::ffi::OsStr;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use super::STATUS_TIMEOUT;
 use crate::tools::shell::process;
@@ -189,6 +192,45 @@ fn system_proxy() -> Option<SystemProxy> {
 }
 
 /// 代理的环境变量；`git` 用的库大小写两种写法都认。
+/// 会访问网络、需要代理的 `git` 子命令。
+const ONLINE: [&str; 6] = ["fetch", "pull", "push", "clone", "ls-remote", "remote"];
+
+/// `git args` 的子命令是否会访问网络（见 [`ONLINE`]）：跳过前面的 `-c 键=值` 和其他选项，看第一个
+/// 子命令。
+pub(super) fn online<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> bool {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "-c" {
+            args.next();
+            continue;
+        }
+        if arg.to_string_lossy().starts_with('-') {
+            continue;
+        }
+        return ONLINE.iter().any(|command| arg == *command);
+    }
+    false
+}
+
+/// 读到的系统代理保留多久：几个仓库依次推送、获取时只读一次；改了系统设置以后很快就用上。
+const PROXY_FRESH: Duration = Duration::from_secs(10);
+
+/// 最近一次读到的系统代理和读取的时刻。
+static CACHED: Mutex<Option<(Instant, SystemProxy)>> = Mutex::new(None);
+
+/// 系统的代理设置，[`PROXY_FRESH`] 之内复用上次读到的。
+fn cached_proxy() -> SystemProxy {
+    let mut cached = CACHED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((at, proxy)) = cached.as_ref()
+        && at.elapsed() < PROXY_FRESH
+    {
+        return proxy.clone();
+    }
+    let proxy = system_proxy().unwrap_or_default();
+    *cached = Some((Instant::now(), proxy.clone()));
+    proxy
+}
+
 const PROXY_VARS: [&str; 6] = [
     "http_proxy",
     "https_proxy",
@@ -212,7 +254,7 @@ pub(super) fn apply(command: &mut Command) {
     if configured {
         return;
     }
-    for (name, value) in system_proxy().unwrap_or_default().vars() {
+    for (name, value) in cached_proxy().vars() {
         command.env(name, value);
     }
 }

@@ -636,6 +636,7 @@ impl App {
                         .is_some_and(|s| s.operation.is_some());
                 log_commit_menu(!busy, &self.current_branch_label(), &tags)
             }
+            MenuTarget::LogColumns => self.log_columns_menu(),
             MenuTarget::LogDate | MenuTarget::LogPath | MenuTarget::LogAuthor => {
                 self.log_filter_menu(&target)
             }
@@ -1161,6 +1162,9 @@ impl App {
                 .active()
                 .is_some_and(|d| self.git.blame.is_on(d.id));
         }
+        if let MenuCommand::LogColumn(column) = command {
+            return self.log_column_shown(column);
+        }
         if let Some(on) = self.log_filter_checked(command) {
             return on;
         }
@@ -1217,8 +1221,8 @@ impl App {
         }
         if let (MenuCommand::LogAuthor(i), Some(q)) = (command, query) {
             return match i.checked_sub(1) {
-                None => q.author.is_none(),
-                Some(i) => self.git.log.authors.get(i) == q.author.as_ref(),
+                None => q.authors.is_empty(),
+                Some(i) => (self.git.log.authors.get(i)).is_some_and(|a| q.authors.contains(a)),
             };
         }
 

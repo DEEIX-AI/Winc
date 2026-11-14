@@ -192,6 +192,9 @@ pub(crate) struct GitState {
     followed: Option<DocumentId>,
     /// 各仓库最近一次读取的状态；位置选择器据此显示分支和改动数，切换仓库时先显示该状态。
     summaries: Arc<Mutex<HashMap<PathBuf, Status>>>,
+    /// `summaries` 每改一次加 1（后台读到新状态、切换仓库时放进、取出）：按它缓存由这些状态
+    /// 排出来的东西（见 `App::commit_other_rows`）。
+    summaries_version: Arc<std::sync::atomic::AtomicU64>,
     /// 各仓库最近一次读取的工作树；位置选择器据此在仓库下列出工作树。
     summary_worktrees: Arc<Mutex<HashMap<PathBuf, Vec<Worktree>>>>,
     /// 正在运行的读取；重新读取时取消。
@@ -307,6 +310,7 @@ impl Default for GitState {
             repositories: Vec::new(),
             followed: None,
             summaries: Arc::default(),
+            summaries_version: Arc::default(),
             summary_worktrees: Arc::default(),
             summaries_running: None,
             scanned: Arc::default(),
@@ -361,6 +365,17 @@ impl Default for GitState {
 }
 
 impl GitState {
+    /// 记下各仓库的状态（`summaries`）改过了。
+    pub(crate) fn summaries_changed(&self) {
+        (self.summaries_version).fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// 各仓库状态的版本，见 `summaries_version`。
+    pub(crate) fn summaries_version(&self) -> u64 {
+        self.summaries_version
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// 返回文件树中 `path` 显示的状态。
     pub fn change_of(&self, path: &Path) -> Option<Change> {
         self.decorations.get(path).copied()
@@ -527,6 +542,7 @@ impl App {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clear();
+            self.git.summaries_changed();
             self.git
                 .summary_worktrees
                 .lock()
@@ -654,6 +670,7 @@ impl App {
         self.git.summaries_running = Some(cancel.clone());
         let repositories = self.git.repositories.clone();
         let summaries = Arc::clone(&self.git.summaries);
+        let version = Arc::clone(&self.git.summaries_version);
         let worktrees = Arc::clone(&self.git.summary_worktrees);
         self.spawn_git(UserEvent::GitStatus, move |tool| {
             let Ok(git) = tool else {
@@ -682,6 +699,7 @@ impl App {
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)
                             .insert(path, status);
+                        version.fetch_add(1, std::sync::atomic::Ordering::Release);
                     }
                 }
             }
@@ -774,6 +792,7 @@ impl App {
                 .unwrap_or_else(PoisonError::into_inner)
                 .insert(old, status);
         }
+        self.git.summaries_changed();
         // 仅更换仓库时 `git` 不变，无需重新查找，也无需重新检查已检查过的仓库配置。
         let tool = root.as_ref().and(self.git.tool.get());
         self.git.clear_for(root.as_deref());
@@ -806,6 +825,7 @@ impl App {
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(root)
         });
+        self.git.summaries_changed();
         if let (Some(status), Some(root)) = (known, self.git.root.as_deref()) {
             self.git.changes.head_is(status.oid.as_deref());
             self.git.commit.head_is(status.oid.as_deref());

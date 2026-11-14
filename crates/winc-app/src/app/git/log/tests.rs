@@ -121,3 +121,12 @@ fn changed_files_group_by_directory_in_display_order() {
     let pinned = log_file_rows(Some(root), &files, (false, true));
     assert_eq!(pinned[..3], [Dir("b".into()), File(0), File(3)]);
 }
+
+#[test]
+fn short_cuts_only_commit_hashes() {
+    assert_eq!(short("3c1848e5f0a2"), "3c1848e");
+    assert_eq!(short("abc"), "abc");
+    // 分支名不截短：名字里有汉字也不会截在一个字的中间。
+    assert_eq!(short("feature/login"), "feature/login");
+    assert_eq!(short("功能/登录"), "功能/登录");
+}

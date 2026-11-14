@@ -59,6 +59,21 @@ pub(crate) enum OtherRow {
     File(usize, usize),
 }
 
+/// 决定 [`App::commit_other_rows`] 的各项：都没变时各行也不变。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OtherRowsKey {
+    /// 各仓库状态的版本。
+    version: u64,
+    /// 当前仓库。
+    root: Option<PathBuf>,
+    /// 是否暂存区视图（分组不同）。
+    staging: bool,
+    /// 仓库列表。
+    repositories: Vec<PathBuf>,
+    /// 折叠着的仓库和组。
+    folds: HashSet<(PathBuf, Option<OtherGroup>)>,
+}
+
 /// `entry` 暂存的内容是否随提交写入：暂存区中有内容，并且不在冲突中。暂存区视图中据此把其他
 /// 仓库的文件分成「已暂存的更改」和「更改」两组。
 fn commits_staged(entry: &Entry) -> bool {
@@ -85,10 +100,33 @@ impl App {
     ///
     /// 有更改的仓库一行标题，其下按组列出文件，两部分都有内容的文件在暂存区视图的两组中各列
     /// 一次；折叠的仓库、组只有标题行。没有更改的仓库只有一行，状态尚未读到的仓库只有标题行。
+    ///
+    /// 每帧要用好几次（排行、铺卡片、算滚动），按决定它的各项缓存（[`OtherRowsKey`]），没变时
+    /// 不再锁各仓库的状态重排。
     pub(crate) fn commit_other_rows(&self) -> Vec<OtherRow> {
         if !self.commit_shows_others() {
             return Vec::new();
         }
+        let key = OtherRowsKey {
+            version: self.git.summaries_version(),
+            root: self.git.root.clone(),
+            staging: self.git.commit.staging(),
+            repositories: self.git.repositories.clone(),
+            folds: self.git.commit.other_folds.clone(),
+        };
+        let mut cache = self.git.commit.other_rows.borrow_mut();
+        if let Some((cached, rows)) = cache.as_ref()
+            && *cached == key
+        {
+            return rows.clone();
+        }
+        let rows = self.build_other_rows();
+        *cache = Some((key, rows.clone()));
+        rows
+    }
+
+    /// 排出 [`App::commit_other_rows`] 的各行。
+    fn build_other_rows(&self) -> Vec<OtherRow> {
         let root = self.git.root.as_deref();
         let staging = self.git.commit.staging();
         let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
@@ -354,14 +392,58 @@ impl App {
 
     /// 其他仓库中勾上并且仍然有更改的文件数。
     pub(crate) fn other_checked_count(&self) -> usize {
+        self.count_other_checked(false)
+    }
+
+    /// 其他仓库中勾上、会随这次提交写进去的文件数：有合并、变基等操作进行中的仓库不一并提交，
+    /// 不算在内。提交按钮、确认框上的文件数和能不能提交都按它。
+    pub(crate) fn other_committed_count(&self) -> usize {
+        self.count_other_checked(true)
+    }
+
+    /// 会随这次提交一并提交（「提交并推送」时也一并推送）的其他仓库，写成仓库列表里的名字。
+    pub(crate) fn other_commit_names(&self) -> Vec<String> {
+        if self.git.commit.amend || !self.commit_shows_others() {
+            return Vec::new();
+        }
+        let roots: Vec<PathBuf> = match self.git.commit.staging() {
+            true => self
+                .other_staged_roots()
+                .into_iter()
+                .map(|(r, _)| r)
+                .collect(),
+            false => {
+                let root = self.git.root.as_deref();
+                let summaries = self.git.summaries.lock();
+                let summaries = summaries.unwrap_or_else(PoisonError::into_inner);
+                let others = (self.git.repositories.iter()).filter(|r| Some(r.as_path()) != root);
+                let taken = others.filter(|repo| {
+                    summaries.get(*repo).is_some_and(|s| {
+                        s.operation.is_none()
+                            && s.entries.iter().any(|e| self.other_checked(&e.path))
+                    })
+                });
+                taken.cloned().collect()
+            }
+        };
+        let index = |root: &PathBuf| self.git.repositories.iter().position(|r| r == root);
+        roots
+            .iter()
+            .filter_map(index)
+            .map(|i| self.git_repository_name(i))
+            .collect()
+    }
+
+    /// 其他仓库中勾上的文件数；`committable` 时跳过有操作进行中的仓库。
+    fn count_other_checked(&self, committable: bool) -> usize {
         if self.git.commit.other_checked.is_empty() || !self.commit_shows_others() {
             return 0;
         }
         let root = self.git.root.as_deref();
         let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
         let others = (self.git.repositories.iter()).filter(|repo| Some(repo.as_path()) != root);
-        let entries = others
-            .filter_map(|repo| summaries.get(repo))
+        let entries = (others.filter_map(|repo| summaries.get(repo)))
+            .filter(|s| !committable || s.operation.is_none())
             .flat_map(|s| &s.entries);
         entries.filter(|e| self.other_checked(&e.path)).count()
     }
@@ -378,9 +460,21 @@ impl App {
                 .any(|s| s.entries.iter().any(|e| e.path == *path))
         };
         self.git.commit.other_checked.retain(changed);
-        let checked = &self.git.commit.other_checked;
-        self.git
-            .commit
+        // 那个仓库的 `HEAD` 变了（在别处提交、切换了分支）：按处取消勾选的记录对不上了，作废，
+        // 这些文件按整个文件勾选（与当前仓库的 `CommitState::head_is` 相同）。
+        let commit = &mut self.git.commit;
+        let moved: Vec<PathBuf> = (commit.other_heads.iter())
+            .filter(|(repo, head)| summaries.get(*repo).is_some_and(|s| s.oid != **head))
+            .map(|(repo, _)| repo.clone())
+            .collect();
+        for repo in moved {
+            commit.other_heads.remove(&repo);
+            for entry in summaries.get(&repo).iter().flat_map(|s| &s.entries) {
+                commit.other_skipped.remove(&entry.path);
+            }
+        }
+        let checked = &commit.other_checked;
+        commit
             .other_skipped
             .retain(|path, _| checked.contains(path));
     }
@@ -404,6 +498,9 @@ impl App {
             return;
         };
         let commit = &mut self.git.commit;
+        if let Some(root) = self.git.root.clone() {
+            commit.other_heads.insert(root, status.oid.clone());
+        }
         for entry in &status.entries {
             let path = &entry.path;
             if !commit.picked(entry) {
@@ -429,6 +526,9 @@ impl App {
             return;
         };
         self.git.commit.carry_in = false;
+        if let Some(root) = &self.git.root {
+            self.git.commit.other_heads.remove(root);
+        }
         if self.git.commit.staging() || !self.commit_shows_others() {
             return;
         }
@@ -541,6 +641,42 @@ impl App {
         counted.collect()
     }
 
+    /// 提交前格式化时其他仓库里要格式化的文件和所在仓库：会整个写进这次提交的文件（勾选式下
+    /// 勾上、没有按处取消勾选的；暂存区视图中暂存了、工作区里没有另外改动的）。修改上一次提交、
+    /// 有合并或变基进行中的仓库不一并提交，也不格式化。
+    pub(super) fn other_reformat_paths(&self) -> Vec<(PathBuf, PathBuf)> {
+        if !self.commit_shows_others() || self.git.commit.amend {
+            return Vec::new();
+        }
+        let root = self.git.root.as_deref();
+        let staging = self.git.commit.staging();
+        let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
+        let mut paths = Vec::new();
+        for repo in (self.git.repositories.iter()).filter(|r| Some(r.as_path()) != root) {
+            let Some(status) = summaries.get(repo).filter(|s| s.operation.is_none()) else {
+                continue;
+            };
+            for e in &status.entries {
+                let gone =
+                    [e.staged, e.unstaged].contains(&Some(winc_editor::git::Change::Deleted));
+                if gone || e.is_dir || e.conflicted() {
+                    continue;
+                }
+                let taken = match staging {
+                    true => commits_staged(e) && e.unstaged.is_none(),
+                    false => {
+                        let partial = self.git.commit.other_skipped.contains_key(&e.path);
+                        self.other_checked(&e.path) && !partial
+                    }
+                };
+                if taken {
+                    paths.push((e.path.clone(), repo.clone()));
+                }
+            }
+        }
+        paths
+    }
+
     /// 暂存区视图中其他仓库里随当前仓库一并提交的文件数。
     pub(crate) fn other_staged_count(&self) -> usize {
         self.other_staged().iter().map(|(_, count)| count).sum()
@@ -561,7 +697,7 @@ impl App {
     pub(crate) fn commit_blocker(&self, status: &Status) -> Option<String> {
         let others = match self.git.commit.staging() {
             true => self.other_staged_count(),
-            false => self.other_checked_count(),
+            false => self.other_committed_count(),
         };
         self.git.commit.blocker(status, others)
     }
@@ -590,6 +726,7 @@ impl App {
                 staging::flip_staged(e, on, &mut touched);
             }
         }
+        self.git.summaries_changed();
         if touched.is_empty() {
             return;
         }

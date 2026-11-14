@@ -195,6 +195,7 @@ git-log-details-parents = { $count ->
    *[other] 父提交
 }
 git-log-local-diff-title = { $name } · { $rev } ↔ 本地
+git-patch-merge = Git 不为合并提交生成补丁
 git-log-copied-patch = 已复制提交 { $commit } 的补丁
 git-log-patch-failed = 无法生成补丁：{ $error }
 git-log-details-branches = 所在分支
@@ -209,6 +210,8 @@ git-log-path-placeholder = 相对仓库根目录，例如 src/app 或 *.rs
 git-log-path-button = 筛选
 git-log-filter-date = 日期
 git-log-filter-path = 路径
+git-log-filter-branches = { $count } 个分支
+git-log-filter-authors = { $count } 位作者
 git-log-filter-paths = { $count } 个路径
 git-go-to-title = 转到提交号、分支或标签
 git-go-to-label = 目标
@@ -251,6 +254,8 @@ git-commit-done = 已提交 { $oid }：{ $subject }
 git-commit-failed = 无法提交：{ $error }
 git-commit-done-in = 已在「{ $name }」中提交 { $oid }
 git-commit-failed-in = 无法在「{ $name }」中提交：{ $error }
+git-commit-push-others = 另外推送 { $count } 个仓库：{ $names }
+git-push-others-failed = 当前仓库已推送；其他仓库推送失败：{ $failed }
 git-commit-partial = 已提交到 { $done }；{ $name }：{ $error }
 git-commit-others-left = 已提交。其他仓库中有 { $count } 个文件未一并提交：修改上一次提交，或该仓库正在合并、变基时只提交当前仓库
 git-commit-hint-subject = 首行 { $count }/{ $limit }

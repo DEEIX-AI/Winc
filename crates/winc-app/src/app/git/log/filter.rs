@@ -118,7 +118,7 @@ impl App {
             }
             MenuCommand::LogAuthorMe => {
                 let me = self.git.my_email.as_str();
-                Some(query.is_some_and(|q| q.author.as_deref() == Some(me)))
+                Some(query.is_some_and(|q| q.authors.iter().any(|a| a == me)))
             }
             MenuCommand::LogPath(i) => Some(query.is_some_and(|q| match i.checked_sub(1) {
                 None => q.paths.is_empty(),
@@ -167,9 +167,28 @@ impl App {
         );
     }
 
-    /// 当前日志的分支筛选条件。
+    /// 作者筛选里加上或去掉 `author`。
+    pub(in crate::app) fn toggle_log_author(&mut self, author: String) {
+        self.change_log_query(|q| match q.authors.iter().position(|a| *a == author) {
+            Some(at) => _ = q.authors.remove(at),
+            None => q.authors.push(author),
+        });
+    }
+
+    /// 当前日志只按一个分支筛选时的那个分支；没按分支筛选、或选了几个分支时为 `None`。
     pub(crate) fn log_branch_filter(&self) -> Option<&str> {
-        self.editor.active()?.log.as_ref()?.query.branch.as_deref()
+        match self
+            .editor
+            .active()?
+            .log
+            .as_ref()?
+            .query
+            .branches
+            .as_slice()
+        {
+            [one] => Some(one.as_str()),
+            _ => None,
+        }
     }
 
     /// 打开文件 `path` 的历史：一个只看改过这个文件的提交的日志标签（跟着改名往前找）；已经
@@ -329,26 +348,42 @@ impl App {
 
     /// 作者菜单里列的作者：已经取回来的提交里的作者，按提交数从多到少，最多 30 个
     /// （经验值：再长菜单就超出窗口高度）。
+    ///
+    /// 已经按作者筛选时取回来的只剩这几位的提交：沿用这个标签上次弹出时的名单，才能再加别的
+    /// 作者。
     pub(super) fn log_authors(&self) -> Vec<String> {
-        let Some(view) = self.editor.active().and_then(|d| d.log.as_deref()) else {
+        let Some(doc) = self.editor.active() else {
             return Vec::new();
         };
+        let Some(view) = doc.log.as_deref() else {
+            return Vec::new();
+        };
+        let same = self.git.log.authors_of == Some(doc.id);
+        if !view.query.authors.is_empty() && same && !self.git.log.authors.is_empty() {
+            let mut list = self.git.log.authors.clone();
+            for author in &view.query.authors {
+                if !list.contains(author) && *author != self.git.my_email {
+                    list.insert(0, author.clone());
+                }
+            }
+            return list;
+        }
         let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for commit in &view.commits {
             *counts.entry(commit.author.as_str()).or_default() += 1;
         }
         let mut authors: Vec<(&str, usize)> = counts.into_iter().collect();
         authors.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-        // 当前按作者筛选时，列表里只剩该作者：也列出来，以便打勾。
+        // 当前按作者筛选时，列表里只剩这几位作者：也列出来，以便打勾、取消。
         let mut list: Vec<String> = authors
             .into_iter()
             .take(30)
             .map(|(a, _)| a.to_owned())
             .collect();
-        if let Some(author) = &view.query.author
-            && !list.contains(author)
-        {
-            list.insert(0, author.clone());
+        for author in view.query.authors.iter().rev() {
+            if !list.contains(author) && *author != self.git.my_email {
+                list.insert(0, author.clone());
+            }
         }
         list
     }

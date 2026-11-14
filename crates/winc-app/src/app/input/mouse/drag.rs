@@ -158,6 +158,10 @@ impl App {
                     self.request_redraw();
                 }
             }
+            Drag::LogColumn {
+                start_x,
+                start_width,
+            } => self.drag_log_author_edge(x, (start_x, start_width)),
             Drag::LogDivider {
                 start_x,
                 start_width,

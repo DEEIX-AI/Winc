@@ -100,21 +100,38 @@ impl App {
                     false => tracked.push(entry.path.clone()),
                 }
             }
-            if tracked.is_empty() && untracked.is_empty() {
-                return false;
-            }
+        }
+        // 当前仓库，然后是一并提交的其他仓库：各自取新增的行。
+        let current = TodoScope {
+            repo: None,
+            staged,
+            tracked,
+            untracked,
+        };
+        let mut scopes = vec![current];
+        scopes.extend(self.other_todo_scopes());
+        let empty = |s: &TodoScope| !s.staged && s.tracked.is_empty() && s.untracked.is_empty();
+        if scopes.iter().all(empty) {
+            return false;
         }
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
             let mut lines = Vec::new();
-            if staged || !tracked.is_empty() {
-                let added = git.and_then(|git| git.added_lines(root, staged, &tracked));
-                lines = added.unwrap_or_default();
-            }
-            for path in &untracked {
-                let text = winc_backend::fs::read(path).unwrap_or_default();
-                lines.extend(String::from_utf8_lossy(&text).lines().map(str::to_owned));
+            for scope in &scopes {
+                let repo = scope.repo.as_deref().unwrap_or(root);
+                if scope.staged || !scope.tracked.is_empty() {
+                    let added = (git.as_ref().ok())
+                        .and_then(|git| git.added_lines(repo, scope.staged, &scope.tracked).ok());
+                    lines.extend(added.unwrap_or_default());
+                }
+                lines.extend(
+                    scope
+                        .untracked
+                        .iter()
+                        .filter_map(|p| text_lines(p))
+                        .flatten(),
+                );
             }
             let count = lines.iter().filter(|line| has_todo(line)).count();
             let _ = sender.send(Outcome::TodoChecked(count, root.to_path_buf()));
@@ -274,6 +291,84 @@ pub(super) fn has_todo(line: &str) -> bool {
             edge(before) && edge(after)
         })
     })
+}
+
+/// 提交前的 TODO 检查在一个仓库里查的范围。
+struct TodoScope {
+    /// 仓库的根目录；`None` 是当前仓库。
+    repo: Option<PathBuf>,
+    /// 查暂存区相对 `HEAD` 新增的行（暂存区视图）；否则查 `tracked` 在工作区里新增的行。
+    staged: bool,
+    /// 勾上的已跟踪文件。
+    tracked: Vec<PathBuf>,
+    /// 勾上的未跟踪文件：整个文件都是新增的。
+    untracked: Vec<PathBuf>,
+}
+
+impl App {
+    /// 一并提交的其他仓库各自的 TODO 检查范围：勾选式下勾上的文件，暂存区视图中暂存区里的内容。
+    /// 修改上一次提交、有合并或变基进行中的仓库不一并提交，也不查。
+    fn other_todo_scopes(&self) -> Vec<TodoScope> {
+        if !self.commit_shows_others() || self.git.commit.amend {
+            return Vec::new();
+        }
+        if self.git.commit.staging() {
+            let roots = self.other_staged_roots().into_iter();
+            return roots
+                .map(|(repo, _)| TodoScope {
+                    repo: Some(repo),
+                    staged: true,
+                    tracked: Vec::new(),
+                    untracked: Vec::new(),
+                })
+                .collect();
+        }
+        let root = self.git.root.as_deref();
+        let summaries = self.git.summaries.lock();
+        let summaries = summaries.unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut scopes = Vec::new();
+        for repo in (self.git.repositories.iter()).filter(|r| Some(r.as_path()) != root) {
+            let Some(status) = summaries.get(repo).filter(|s| s.operation.is_none()) else {
+                continue;
+            };
+            let picked = status
+                .entries
+                .iter()
+                .filter(|e| self.other_checked(&e.path));
+            let (untracked, tracked): (Vec<&Entry>, Vec<&Entry>) =
+                picked.partition(|e| e.untracked());
+            if tracked.is_empty() && untracked.is_empty() {
+                continue;
+            }
+            let paths = |list: Vec<&Entry>| list.into_iter().map(|e| e.path.clone()).collect();
+            scopes.push(TodoScope {
+                repo: Some(repo.clone()),
+                staged: false,
+                tracked: paths(tracked),
+                untracked: paths(untracked),
+            });
+        }
+        scopes
+    }
+}
+
+/// 未跟踪文件 `path` 的各行：大于 [`winc_editor::LARGE_FILE`] 或是二进制的文件不读，与差异视图的
+/// 规则相同，勾上很大的数据文件时提交不会卡在检查上。
+fn text_lines(path: &Path) -> Option<Vec<String>> {
+    let size = winc_backend::fs::metadata(path).ok()?.len;
+    if size > winc_editor::LARGE_FILE {
+        return None;
+    }
+    let bytes = winc_backend::fs::read(path).ok()?;
+    if winc_editor::looks_binary(&bytes) {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 #[cfg(test)]

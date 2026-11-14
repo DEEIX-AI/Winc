@@ -40,13 +40,19 @@ impl App {
                 .map(|e| e.path.clone())
                 .collect()
         };
+        // 其他仓库里一并提交的文件同样先格式化，记下所在的仓库：暂存区视图中格式化后要重新暂存。
+        let root = self.git.root.clone().unwrap_or_default();
+        let mut targets: Vec<(PathBuf, PathBuf)> =
+            paths.into_iter().map(|p| (p, root.clone())).collect();
+        targets.extend(self.other_reformat_paths());
+        let paths: Vec<PathBuf> = targets.iter().map(|(p, _)| p.clone()).collect();
         if !self.save_dirty_documents(&paths) {
             return false;
         }
-        let jobs: Vec<(PathBuf, Plan, std::time::Duration)> = (paths.into_iter())
-            .filter_map(|path| {
+        let jobs: Vec<(PathBuf, PathBuf, Plan, std::time::Duration)> = (targets.into_iter())
+            .filter_map(|(path, repo)| {
                 let (plan, timeout) = self.commit_format_plan(&path)?;
-                Some((path, plan, timeout))
+                Some((path, repo, plan, timeout))
             })
             .collect();
         if jobs.is_empty() {
@@ -56,12 +62,11 @@ impl App {
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
-            let mut changed = Vec::new();
-            for (path, plan, timeout) in jobs {
+            let mut changed: Vec<(PathBuf, PathBuf)> = Vec::new();
+            for (path, repo, plan, timeout) in jobs {
                 let Ok(bytes) = winc_backend::fs::read(&path) else {
                     continue;
                 };
-                // 不是 UTF-8 的文件不整理：工具按 UTF-8 读写，转换会改动原有的编码。
                 let Ok(text) = String::from_utf8(bytes) else {
                     continue;
                 };
@@ -83,12 +88,21 @@ impl App {
                     change.apply(&mut rope);
                 }
                 if winc_backend::fs::write(&path, rope.to_string()).is_ok() {
-                    changed.push(path);
+                    changed.push((path, repo));
                 }
             }
-            // 暂存视图提交的是暂存区：整理过的文件重新暂存。
-            if staging && !changed.is_empty() {
-                let _ = git.and_then(|git| git.stage(root, &changed).map(drop));
+            // 暂存区视图提交的是暂存区：格式化过的文件在各自的仓库里重新暂存。
+            if staging && let Ok(git) = git {
+                let mut repos: Vec<&PathBuf> = changed.iter().map(|(_, r)| r).collect();
+                repos.sort();
+                repos.dedup();
+                for repo in repos {
+                    let files: Vec<PathBuf> = (changed.iter())
+                        .filter(|(_, r)| r == repo)
+                        .map(|(p, _)| p.clone())
+                        .collect();
+                    let _ = git.stage(repo, &files);
+                }
             }
             let _ = sender.send(Outcome::Reformatted(changed.len(), root.to_path_buf()));
         });

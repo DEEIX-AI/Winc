@@ -494,7 +494,7 @@ fn log_streams_read_batches_from_one_git() {
 
     // `git` 自己报的错（分支不存在）在读第一批时返回。
     let missing = LogQuery {
-        branch: Some("no-such-branch".into()),
+        branches: vec!["no-such-branch".into()],
         ..LogQuery::default()
     };
     let mut stream = git.log_stream(&root, &missing).unwrap();

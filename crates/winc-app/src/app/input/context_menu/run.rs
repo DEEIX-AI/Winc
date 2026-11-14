@@ -59,6 +59,11 @@ impl App {
                 MenuCommand::NewWorktree => self.open_worktree_dialog(),
                 _ => {}
             },
+            MenuTarget::LogColumns => {
+                if let MenuCommand::LogColumn(column) = command {
+                    self.toggle_log_column(column);
+                }
+            }
             MenuTarget::LogDate => {
                 if let MenuCommand::LogSince(days) = command {
                     self.change_log_query(|q| q.since_days = (days > 0).then_some(days));
@@ -76,15 +81,15 @@ impl App {
             },
             MenuTarget::LogAuthor if command == MenuCommand::LogAuthorMe => {
                 let me = self.git.my_email.clone();
-                self.change_log_query(|q| q.author = Some(me));
+                self.toggle_log_author(me);
             }
+            // 作者可以选几位：选一位加上或去掉它，「全部作者」清空。
             MenuTarget::LogAuthor => {
                 if let MenuCommand::LogAuthor(i) = command {
-                    let author = i
-                        .checked_sub(1)
-                        .and_then(|i| self.git.log.authors.get(i))
-                        .cloned();
-                    self.change_log_query(|q| q.author = author);
+                    match i.checked_sub(1).and_then(|i| self.git.log.authors.get(i)) {
+                        Some(author) => self.toggle_log_author(author.clone()),
+                        None => self.change_log_query(|q| q.authors.clear()),
+                    }
                 }
             }
             MenuTarget::Editor(id) => self.run_editor_command(command, id),

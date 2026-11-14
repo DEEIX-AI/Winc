@@ -65,6 +65,9 @@ pub struct State {
     pub commit_all_repositories: Option<bool>,
     /// Git 日志左侧是否显示分支面板；`None`（没有选过）时显示。所有窗口共用，下次启动沿用。
     pub log_branches: Option<bool>,
+    /// Git 日志列表右边显示的列（`author`、`date`、`hash`）；`None`（没有选过）时显示作者和
+    /// 日期。所有窗口共用，下次启动沿用。
+    pub log_columns: Option<Vec<String>>,
     /// 提交过的信息，最新的在前，最多 `MAX_COMMIT_MESSAGES` 条。提交信息框里按 `↑` 翻阅，
     /// 提交按钮的菜单里列出最近的几条；所有窗口和仓库共用，下次启动沿用。
     pub commit_messages: Vec<String>,
@@ -506,6 +509,10 @@ impl State {
             .to_owned();
         state.commit_all_repositories = root.get("commitAllRepositories").and_then(Json::as_bool);
         state.log_branches = root.get("logBranches").and_then(Json::as_bool);
+        state.log_columns = (root.get("logColumns").and_then(Json::as_array)).map(|columns| {
+            let names = columns.iter().filter_map(Json::as_str);
+            names.map(str::to_owned).collect()
+        });
         state.commit_messages = (root.get("commitMessages").and_then(Json::as_array))
             .unwrap_or_default()
             .iter()
@@ -640,6 +647,10 @@ impl State {
         }
         if let Some(shown) = self.log_branches {
             fields.push(("logBranches", Json::Bool(shown)));
+        }
+        if let Some(columns) = &self.log_columns {
+            let names = columns.iter().map(|c| Json::String(c.clone()));
+            fields.push(("logColumns", Json::Array(names.collect())));
         }
         if !self.commit_messages.is_empty() {
             let messages = self.commit_messages.iter().map(|m| Json::String(m.clone()));

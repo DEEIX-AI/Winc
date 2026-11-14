@@ -64,7 +64,6 @@ fn outline(rows: &[BranchRow]) -> Vec<String> {
     rows.iter()
         .map(|row| match row {
             BranchRow::All => "All".to_owned(),
-            BranchRow::Heading(section) => format!("{section:?}"),
             BranchRow::Locals { recent: true, .. } => "Recent".to_owned(),
             BranchRow::Locals { recent: false, .. } => "Local".to_owned(),
             BranchRow::Remotes { count, open } => {
@@ -201,6 +200,23 @@ fn recent_puts_the_default_branch_first_and_skips_the_current_one() {
     let recent = ["b00", "gone", "b05", "origin/main"];
     let rows = rows(&many(), &recent, "", &HashSet::new());
     assert_eq!(outline(&rows)[..4], ["Recent", "main", "b05", "Local"]);
+}
+
+/// 日志里按分支筛选时没有「最近」一组：每个分支只列一次，其余各行不变。
+#[test]
+fn log_lists_drop_the_recent_group() {
+    let all = rows(&many(), &["b05"], "", &HashSet::new());
+    let kept = without_recent(all.clone());
+    assert_eq!(outline(&kept)[0], "Local");
+    let local = all
+        .iter()
+        .position(|r| matches!(r, BranchRow::Locals { recent: false, .. }));
+    let recent = local.unwrap();
+    assert_eq!(kept, all[recent..]);
+    for name in ["main", "b05"] {
+        let times = outline(&kept).iter().filter(|line| *line == name).count();
+        assert_eq!(times, 1, "{name}");
+    }
 }
 
 #[test]

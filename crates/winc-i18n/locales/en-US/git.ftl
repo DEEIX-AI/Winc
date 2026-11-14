@@ -213,6 +213,7 @@ git-log-details-parents = { $count ->
    *[other] Parents
 }
 git-log-local-diff-title = { $name } · { $rev } ↔ Local
+git-patch-merge = Git doesn’t create patches for merge commits
 git-log-copied-patch = Copied the patch of commit { $commit }
 git-log-patch-failed = Couldn’t create the patch: { $error }
 git-log-details-branches = Branches
@@ -227,6 +228,8 @@ git-log-path-placeholder = Relative to the repository root, e.g. src/app or *.rs
 git-log-path-button = Filter
 git-log-filter-date = Date
 git-log-filter-path = Path
+git-log-filter-branches = { $count } branches
+git-log-filter-authors = { $count } authors
 git-log-filter-paths = { $count } paths
 git-go-to-title = Go to Hash, Branch or Tag
 git-go-to-label = Target
@@ -301,6 +304,11 @@ git-commit-done = Committed { $oid }: { $subject }
 git-commit-failed = Couldn’t commit: { $error }
 git-commit-done-in = Committed { $oid } in “{ $name }”
 git-commit-failed-in = Couldn’t commit in “{ $name }”: { $error }
+git-commit-push-others = { $count ->
+    [one] Also pushes 1 repository: { $names }
+   *[other] Also pushes { $count } repositories: { $names }
+}
+git-push-others-failed = Pushed the current repository; other repositories failed: { $failed }
 git-commit-partial = committed in { $done }; { $name }: { $error }
 git-commit-others-left = Committed. { $count ->
     [one] 1 checked file in other repositories was

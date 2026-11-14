@@ -342,6 +342,7 @@ impl App {
         settle(&mut self.git.commit.actions_slide, |s| s.1);
         settle(&mut self.git.commit.motion, |m| m.clock);
         settle(&mut self.git.log.branches_motion, |m| m.1);
+        settle(&mut self.git.log.branch_fold, |m| m.clock);
         self.git.log.pills.settle();
         settle(&mut self.git.commit.fold_motion, |m| m.clock);
         settle(&mut self.git.commit.message_motion, |m| m.1);
@@ -447,6 +448,7 @@ impl App {
             || self.git.commit.shift.is_some()
             || self.git.commit.motion.is_some()
             || self.git.log.branches_motion.is_some()
+            || self.git.log.branch_fold.is_some()
             || self.git.log.pills.moving()
             || self.git.commit.fold_motion.is_some()
             || self.git.commit.message_motion.is_some()
