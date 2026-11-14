@@ -79,7 +79,9 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, bar: Rect) {
     field_box(app, frame, field, p.popup_bg, focused, false);
     let icon = (bar.x + ICON_CENTER, field.y + field.h / 2.0);
     icons::magnifier(frame, icon, p.text_dim, field);
-    let placeholder = if app.picker_lists_locations() {
+    let placeholder = if app.picker_lists_locations() && !app.git.location_all {
+        t!("git-worktree-picker-placeholder")
+    } else if app.picker_lists_locations() {
         t!("git-location-picker-placeholder")
     } else if app.picker_filters_log() {
         t!("git-log-branch-picker-placeholder")
@@ -411,7 +413,12 @@ fn draw_location_rows(
             .unwrap_or_default(),
     };
     if rows.is_empty() {
-        draw_empty(app, frame, parts.list, t!("git-location-picker-empty"));
+        let none = if app.git.location_all {
+            t!("git-location-picker-empty")
+        } else {
+            t!("git-worktree-picker-empty")
+        };
+        draw_empty(app, frame, parts.list, none);
         return;
     }
     for i in drawn_rows(app, parts, rows.len()) {

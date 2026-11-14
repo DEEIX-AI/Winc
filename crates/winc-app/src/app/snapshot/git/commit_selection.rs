@@ -56,8 +56,7 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
     click_file(&mut app, &files[3], ModifiersState::SHIFT);
     assert_eq!(app.commit_selection(), files[2..]);
 
-    // 空格：选中的文件一起暂存或取消暂存：都暂存了时一起取消，再按一起暂存。
-    app.stage_paths(&files[2..], true);
+    // 空格：选中的文件一起切换勾选（新文件默认也勾着）：都勾着时一起取消，再按一起勾上。
     let checked = |app: &App, path: &Path| {
         let status = app.git.status.as_ref().unwrap();
         app.git
@@ -73,7 +72,6 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
     assert!(!checked(&app, &files[2]) && !checked(&app, &files[3]));
 
     // 右键点在选区里：菜单作用于两个文件；复制路径一行一个，回滚一次作用于两个。
-    paint(&mut app);
     let status = app.git.status.as_ref().unwrap();
     let index = status
         .entries
@@ -108,11 +106,9 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
     app.run_menu_command(MenuCommand::CommitCheck(true));
     assert!(checked(&app, &files[2]) && checked(&app, &files[3]));
     assert_eq!(others(&app), before);
-    paint(&mut app);
     right_click(&mut app, (row.x + 120.0, row.y + row.h / 2.0));
     app.run_menu_command(MenuCommand::CommitCheck(false));
     assert!(!checked(&app, &files[2]) && !checked(&app, &files[3]));
-    paint(&mut app);
     right_click(&mut app, (row.x + 120.0, row.y + row.h / 2.0));
     app.run_menu_command(MenuCommand::CopyRelativePath);
     let relative: Vec<String> = files[2..]

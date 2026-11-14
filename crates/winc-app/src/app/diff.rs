@@ -456,7 +456,19 @@ impl App {
 
     /// 暂存或取消暂存第 `hunk` 处改动：已全部暂存时取消暂存，否则暂存其余的部分。
     fn toggle_diff_hunk(&mut self, hunk: usize) {
-        self.toggle_diff_part(hunk, None);
+        if self.git.commit.staging() {
+            return self.toggle_diff_part(hunk, None);
+        }
+        // 勾选式：记在界面中，提交时只提交勾上的改动。
+        let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
+            return;
+        };
+        let all = hunk_ids(view);
+        let Some(entry) = self.diff_entry(view).cloned() else {
+            return;
+        };
+        self.git.commit.toggle_hunk(&entry, hunk, &all);
+        self.request_redraw();
     }
 
     /// 暂存或取消暂存 `side` 侧第 `line` 行所在改动中的这一行。
@@ -474,6 +486,18 @@ impl App {
         let Some(hunk) = view.hunks.iter().position(|h| range(h).contains(&line)) else {
             return;
         };
+        if !self.git.commit.staging() {
+            let target = &view.hunks[hunk];
+            let (new_len, offset) = (target.new.len(), line - range(target).start);
+            let all = hunk_ids(view);
+            let Some(entry) = self.diff_entry(view).cloned() else {
+                return;
+            };
+            let state = &mut self.git.commit;
+            state.toggle_line(&entry, (hunk, new_len), (side, offset), &all);
+            self.request_redraw();
+            return;
+        }
         let line = if side == LEFT {
             StageLine::Old(line)
         } else {
@@ -1269,4 +1293,11 @@ pub struct DiffState {
     pub(crate) cross: Option<(Instant, crate::app::diff::DiffCross)>,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: RediffState,
+}
+
+/// 返回差异 `view` 中各处改动的键和在左侧的行区间，按块勾选时据此识别各处改动。
+fn hunk_ids(view: &DiffView) -> Vec<(u64, std::ops::Range<usize>)> {
+    (view.keys.iter().zip(&view.hunks))
+        .map(|(&key, hunk)| (key, hunk.old.clone()))
+        .collect()
 }

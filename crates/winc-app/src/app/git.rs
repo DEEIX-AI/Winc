@@ -262,6 +262,8 @@ pub(crate) struct GitState {
     pub merge: merge::MergeState,
     /// 位置选择器里改变过默认展开状态的仓库（主工作树的目录）。
     pub location_toggled: HashSet<PathBuf>,
+    /// 位置选择器是否列出全部仓库和它们的工作树；否则只列当前仓库的工作树。
+    pub location_all: bool,
     /// 分支选择器里改变过默认展开状态的目录：（是否远程，目录路径）。
     pub branch_folders: HashSet<(bool, String)>,
 }
@@ -310,6 +312,7 @@ impl Default for GitState {
             branch: Default::default(),
             merge: Default::default(),
             location_toggled: HashSet::new(),
+            location_all: false,
             branch_folders: HashSet::new(),
             prepared: channel(),
         }
@@ -739,6 +742,7 @@ impl App {
         });
         if let (Some(status), Some(root)) = (known, self.git.root.as_deref()) {
             self.git.changes.head_is(status.oid.as_deref());
+            self.git.commit.head_is(status.oid.as_deref());
             self.git.decorations = status.decorations(root);
             self.git.ignored_paths = status.ignored.iter().cloned().collect();
             self.git.status = Some(status);
@@ -881,6 +885,7 @@ impl App {
         self.git_take_scan();
         // 其他仓库的状态由后台直接写入，读完时同样到达这里：列着其他仓库时重新绘制。
         if self.commit_shows_others() && self.commit_shown() {
+            self.prune_other_checked();
             self.request_redraw();
         }
         let mut changed = false;
@@ -910,6 +915,7 @@ impl App {
                     });
                     let moved = std::mem::take(&mut self.git.logs_outdated) || moved;
                     self.git.changes.head_is(status.oid.as_deref());
+                    self.git.commit.head_is(status.oid.as_deref());
                     self.git.decorations = status.decorations(&outcome.root);
                     self.git.ignored_paths = status.ignored.iter().cloned().collect();
                     // 有变化的文件数超过上限时，只在首次超过时提示，之后的刷新不再重复提示。

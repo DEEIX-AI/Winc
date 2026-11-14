@@ -10,6 +10,7 @@ use crate::app::git::commit::COMMITTED_SHOWN;
 mod checks;
 mod names;
 mod others;
+mod staging;
 mod stash;
 mod sync;
 
@@ -219,9 +220,11 @@ fn shoot_commit_view() {
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_commit_widths() {
+    // 第三个宽度放得下底行的全部内容：「修改上次提交」与两个并排的按钮。
     for width in [
         crate::theme::MIN_PANEL_WIDTH,
         crate::theme::DEFAULT_PANEL_WIDTH,
+        420.0,
     ] {
         let name = format!("commit-width-{width}");
         let Some((mut app, root)) = git_app(&name, false) else {
@@ -433,18 +436,20 @@ fn the_commit_message_grows_with_its_text_and_the_list_follows() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    // 自上而下依次是改动列表和底部的提交卡片；卡片里提交信息在上，底行左边是「修改上次提交」，
-    // 右边是「提交 ⌄」。空信息时高度为两行。
+    // 自上而下依次是改动列表和底部的提交卡片；卡片里先是「修改上次提交」一行，再是提交信息，
+    // 底行靠左是「提交」「提交并推送…」，最右是下拉箭头。空信息时高度为两行。
     let one = app.commit_parts();
     let card = one.card.unwrap();
     assert_eq!(one.message.h, 2.0 * 20.0 + 4.0);
     assert_eq!(card.bottom(), app.layout.sidebar.bottom() - 8.0);
     assert!(one.list.bottom() <= card.y);
     assert!(one.commit.y >= one.message.bottom());
-    assert_eq!(one.commit_menu.x, one.commit.right());
+    let push = one.push.unwrap();
+    assert!(one.commit.right() < push.x && push.right() < one.commit_menu.x);
     assert!(one.commit_menu.right() <= card.right());
     let amend = one.amend.unwrap();
-    assert!(amend.right() < one.commit.x);
+    assert!(amend.y >= card.y && amend.bottom() <= one.message.y);
+    assert_eq!(one.commit.x, amend.x);
 
     // 写入三行时框高增加一行，卡片往上长，列表随之变短。
     app.edit_field(|f| f.insert("修复配置读取\n\n启动时不再报错"));

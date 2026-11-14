@@ -753,6 +753,7 @@ impl App {
             Setting::SystemTitleBar => self.config.ui_native_title_bar == Some(true),
             Setting::GitModule => self.git_enabled(),
             Setting::GitConfirmPush => self.config.git_confirm_push != Some(false),
+            Setting::GitStagingArea => self.config.git_staging_area == Some(true),
             Setting::TerminalModule => self.terminal_enabled(),
             Setting::RemoteModule => self.remote_enabled(),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select == Some(true),
@@ -808,6 +809,7 @@ impl App {
             Setting::SystemTitleBar => self.config.ui_native_title_bar = Some(on),
             Setting::GitModule => self.config.git_enabled = Some(on),
             Setting::GitConfirmPush => self.config.git_confirm_push = Some(on),
+            Setting::GitStagingArea => self.config.git_staging_area = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),
             Setting::RemoteModule => self.config.remote_enabled = Some(on),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select = Some(on),
@@ -838,6 +840,9 @@ impl App {
         }
         if setting == Setting::DiffInline {
             self.apply_diff_layout();
+        }
+        if setting == Setting::GitStagingArea {
+            self.apply_staging_view();
         }
         // 关闭预览标签时，现有的预览标签成为普通标签。
         if setting == Setting::PreviewOnClick && !on {
@@ -1385,6 +1390,7 @@ impl App {
             || old.status_bar != new.status_bar;
         let compact = old.compact_folders != new.compact_folders;
         let diff_layout = old.diff_inline != new.diff_inline;
+        let staging_view = old.git_staging_area != new.git_staging_area;
         // 窗口字体同步。
         let glyph_language = old.language != new.language
             && crate::set_locale(new.language.unwrap_or_default().resolve());
@@ -1425,6 +1431,9 @@ impl App {
         }
         if diff_layout {
             self.apply_diff_layout();
+        }
+        if staging_view {
+            self.apply_staging_view();
         }
         if images {
             self.preview.markdown.forget_images();

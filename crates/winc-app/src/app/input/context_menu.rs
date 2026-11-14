@@ -314,6 +314,8 @@ pub enum MenuCommand {
     CommitTree,
     /// 提交视图：在当前仓库的更改之后列出其他仓库的更改（开着时打勾）。
     CommitAllRepositories,
+    /// 提交视图：显示暂存区，列表分出「已暂存的更改」一组（开着时打勾）。
+    CommitStagingArea,
     /// 提交视图的「⋯」：展开所有组和目录。
     CommitExpandAll,
     /// 提交视图的「⋯」：收起所有组。
@@ -463,6 +465,7 @@ impl MenuCommand {
             MenuCommand::GitStash => t!("menu-git-stash"),
             MenuCommand::CommitTree => t!("menu-commit-tree"),
             MenuCommand::CommitAllRepositories => t!("menu-commit-all-repositories"),
+            MenuCommand::CommitStagingArea => t!("menu-commit-staging-area"),
             MenuCommand::CommitExpandAll => t!("menu-commit-expand-all"),
             MenuCommand::CommitCollapseAll => t!("menu-commit-collapse-all"),
             MenuCommand::GitShowOutput => t!("menu-git-show-output"),
@@ -610,6 +613,9 @@ impl MenuCommand {
             MenuCommand::RenameTerminal => Action::RenameTerminal,
             MenuCommand::CloseTerminal => Action::CloseTerminal,
             MenuCommand::GitRevertHunk => Action::GitRevertChange,
+            MenuCommand::GitShowDiff => Action::ChangesShowDiff,
+            MenuCommand::GitOpenFile => Action::ChangesOpenSource,
+            MenuCommand::GitRollbackFile => Action::ChangesRollback,
             MenuCommand::GoToDefinition => Action::GoToDefinition,
             MenuCommand::FindReferences => Action::FindReferences,
             MenuCommand::AddBookmark | MenuCommand::RemoveBookmark => Action::ToggleBookmark,

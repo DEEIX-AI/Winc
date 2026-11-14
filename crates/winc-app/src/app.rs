@@ -588,8 +588,8 @@ impl Hover {
                         | CommitTarget::RevertFile(_)
                         | CommitTarget::GroupRevert(_)
                         | CommitTarget::Check(_)
-                        | CommitTarget::GroupCheck(_)
-                        | CommitTarget::DirCheck(_)
+                        | CommitTarget::StageFile(..)
+                        | CommitTarget::GroupStage(_)
                 )
                 | Hover::Diff(
                     DiffTarget::Previous

@@ -4,8 +4,8 @@ use super::*;
 
 impl App {
     /// 提交视图标题行「⋯」的菜单：Git 操作（继续和中止、储藏、远程仓库，见 [`branch_menu`]）；
-    /// 以树形显示（排成树时打勾）、显示全部仓库（有多个仓库时才有）、全部展开、全部折叠（已经是
-    /// 那样的灰显）；显示 Git 输出。
+    /// 以树形显示（排成树时打勾）、显示暂存区、显示全部仓库（有多个仓库时才有）、全部展开、
+    /// 全部折叠（已经是那样的灰显）；显示 Git 输出。
     ///
     /// 刷新是标题行上的按钮，拉取、推送、获取在分支选择器里，回滚勾选的文件在组标题上，这里不重复。
     pub(in crate::app) fn commit_more_menu(
@@ -16,7 +16,11 @@ impl App {
         let shown = || {
             let status = self.git.status.as_ref();
             CommitGroup::ALL.into_iter().filter(move |group| {
-                status.is_some_and(|s| s.entries.iter().any(|e| group.holds(e)))
+                status.is_some_and(|s| {
+                    s.entries
+                        .iter()
+                        .any(|e| group.holds(e, self.git.commit.staging()))
+                })
             })
         };
         let all_collapsed = shown().all(|group| self.git.commit.group_collapsed(group));
@@ -30,6 +34,7 @@ impl App {
         entries.extend([
             MenuEntry::Separator,
             MenuEntry::Item(MenuCommand::CommitTree, true),
+            MenuEntry::Item(MenuCommand::CommitStagingArea, true),
         ]);
         // 打开的目录中有多个仓库时才有：只有一个仓库时没有可以列出的其他仓库。
         if self.git.repositories.len() >= 2 {
@@ -132,6 +137,7 @@ impl App {
         match command {
             MenuCommand::CommitTree => self.toggle_commit_layout(),
             MenuCommand::CommitAllRepositories => self.toggle_all_repositories(),
+            MenuCommand::CommitStagingArea => self.toggle_staging_area(),
             MenuCommand::GitShowOutput => self.show_git_output(),
             MenuCommand::CommitExpandAll | MenuCommand::CommitCollapseAll => {
                 // 「全部展开」连收起的目录一起展开。
@@ -164,7 +170,7 @@ impl App {
                 }
                 MenuCommand::GitRollbackFile => self.confirm_rollback(paths),
                 MenuCommand::GitStashFiles => self.ask_stash_files(paths),
-                MenuCommand::CommitCheck(on) => self.stage_paths(&paths, on),
+                MenuCommand::CommitCheck(on) => self.set_commit_checked(&paths, on),
                 MenuCommand::CopyPath => self.copy_paths(&paths, false),
                 MenuCommand::CopyRelativePath => self.copy_paths(&paths, true),
                 _ => {}
@@ -181,6 +187,7 @@ impl App {
             }
             MenuCommand::GitRollbackFile => self.confirm_rollback(vec![path]),
             MenuCommand::GitStashFiles => self.ask_stash_files(vec![path]),
+            MenuCommand::CommitCheck(on) => self.set_commit_checked(&[path], on),
             MenuCommand::GitIgnore(kind) => self.git_ignore(&path, kind),
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);

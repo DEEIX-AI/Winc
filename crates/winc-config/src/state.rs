@@ -42,8 +42,9 @@ pub struct State {
     pub commit_tree: bool,
     /// 提交视图是否在当前仓库的更改之后列出打开的目录中其他仓库的更改。
     ///
-    /// `false`（默认）时只显示当前仓库。所有窗口共用，下次启动沿用。
-    pub commit_all_repositories: bool,
+    /// `None`（没有选过）时由提交视图的样式决定：勾选式列出，暂存区视图只显示当前仓库。所有
+    /// 窗口共用，下次启动沿用。
+    pub commit_all_repositories: Option<bool>,
     /// 提交时附加签署行（`Signed-off-by`）的仓库，元素是仓库的根目录。
     ///
     /// 在提交按钮的菜单中逐个仓库打开；所有窗口共用，下次启动沿用。
@@ -471,10 +472,7 @@ impl State {
             .get("commitTree")
             .and_then(Json::as_bool)
             .unwrap_or(false);
-        state.commit_all_repositories = root
-            .get("commitAllRepositories")
-            .and_then(Json::as_bool)
-            .unwrap_or(false);
+        state.commit_all_repositories = root.get("commitAllRepositories").and_then(Json::as_bool);
         state.pdf_thumbnails_hidden = root
             .get("pdfThumbnailsHidden")
             .and_then(Json::as_bool)
@@ -591,8 +589,8 @@ impl State {
                 Json::Array(self.sign_off_repos.iter().map(path).collect()),
             ));
         }
-        if self.commit_all_repositories {
-            fields.push(("commitAllRepositories", Json::Bool(true)));
+        if let Some(all) = self.commit_all_repositories {
+            fields.push(("commitAllRepositories", Json::Bool(all)));
         }
         if self.pdf_thumbnails_hidden {
             fields.push(("pdfThumbnailsHidden", Json::Bool(true)));

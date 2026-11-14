@@ -19,10 +19,16 @@ pub(crate) enum OtherRow {
 }
 
 impl App {
+    /// 「显示全部仓库」是否开着：没有选过时勾选式开着，暂存区视图关着。
+    pub(crate) fn commit_all_repositories(&self) -> bool {
+        let chosen = self.state.commit_all_repositories;
+        chosen.unwrap_or(!self.git.commit.staging())
+    }
+
     /// 是否在当前仓库的更改之后列出其他仓库：开着「显示全部仓库」，打开的目录中有多个仓库，
     /// 并且不在浏览历史提交的文件。
     pub(crate) fn commit_shows_others(&self) -> bool {
-        self.state.commit_all_repositories
+        self.commit_all_repositories()
             && !self.git.commit.browse
             && self.git.repositories.len() >= 2
     }
@@ -65,8 +71,8 @@ impl App {
 
     /// 打开或关闭「显示全部仓库」；所有窗口共用，下次启动沿用。
     pub(in crate::app) fn toggle_all_repositories(&mut self) {
-        let on = !self.state.commit_all_repositories;
-        self.update_state(|state| state.commit_all_repositories = on);
+        let on = !self.commit_all_repositories();
+        self.update_state(|state| state.commit_all_repositories = Some(on));
         if on {
             self.git_read_summaries();
         }
@@ -89,6 +95,78 @@ impl App {
         self.focus = Focus::CommitList;
         if let Some(path) = path {
             self.select_commit_file(path);
+        }
+        self.request_redraw();
+    }
+
+    /// 其他仓库中文件 `path` 是否勾上了。
+    pub(crate) fn other_checked(&self, path: &Path) -> bool {
+        self.git.commit.other_checked.contains(path)
+    }
+
+    /// 第 `repo` 个仓库标题行的勾选框：全部勾上为 `Some(true)`，勾了一部分为 `Some(false)`，
+    /// 一个都没勾或没有文件时为 `None`。
+    pub(crate) fn other_group_state(&self, repo: usize) -> Option<bool> {
+        let checked = &self.git.commit.other_checked;
+        let count = |status: &Status| {
+            let on = status.entries.iter().filter(|e| checked.contains(&e.path));
+            (on.count(), status.entries.len())
+        };
+        match self.other_status(repo, |_, status| count(status))? {
+            (0, _) => None,
+            (on, all) => Some(on == all),
+        }
+    }
+
+    /// 其他仓库中勾上并且仍然有更改的文件数。
+    pub(crate) fn other_checked_count(&self) -> usize {
+        if self.git.commit.other_checked.is_empty() || !self.commit_shows_others() {
+            return 0;
+        }
+        let root = self.git.root.as_deref();
+        let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
+        let others = (self.git.repositories.iter()).filter(|repo| Some(repo.as_path()) != root);
+        let entries = others
+            .filter_map(|repo| summaries.get(repo))
+            .flat_map(|s| &s.entries);
+        entries.filter(|e| self.other_checked(&e.path)).count()
+    }
+
+    /// 其他仓库的状态重读以后，去掉已经没有更改的文件的勾选。
+    pub(in crate::app) fn prune_other_checked(&mut self) {
+        if self.git.commit.other_checked.is_empty() {
+            return;
+        }
+        let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
+        let changed = |path: &PathBuf| {
+            summaries
+                .values()
+                .any(|s| s.entries.iter().any(|e| e.path == *path))
+        };
+        self.git.commit.other_checked.retain(changed);
+    }
+
+    /// 点了其他仓库的勾选框：文件的勾选框只管这一个文件；标题行的勾选框在全部勾上时取消全部，
+    /// 否则全部勾上。
+    pub(super) fn press_other_check(&mut self, target: CommitTarget) {
+        let paths = |status: &Status, entry: Option<usize>| -> Vec<PathBuf> {
+            let entries = status.entries.iter().enumerate();
+            let wanted = entries.filter(|(i, _)| entry.is_none_or(|entry| entry == *i));
+            wanted.map(|(_, e)| e.path.clone()).collect()
+        };
+        let (repo, entry) = match target {
+            CommitTarget::OtherGroupCheck(repo) => (repo, None),
+            CommitTarget::OtherCheck(repo, entry) => (repo, Some(entry)),
+            _ => return,
+        };
+        let Some(paths) = self.other_status(repo, |_, status| paths(status, entry)) else {
+            return;
+        };
+        let checked = &mut self.git.commit.other_checked;
+        if paths.iter().all(|path| checked.contains(path)) {
+            checked.retain(|path| !paths.contains(path));
+        } else {
+            checked.extend(paths);
         }
         self.request_redraw();
     }

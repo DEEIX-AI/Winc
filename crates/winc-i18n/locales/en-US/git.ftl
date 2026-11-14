@@ -317,6 +317,8 @@ git-commit-push-confirm-button = Commit and Push
 git-undo-commit-done = Undid commit { $oid }; its changes are staged
 git-undo-commit-done-in = Undid commit { $oid } in “{ $name }”
 git-undo-commit-failed = Couldn’t undo the commit: { $error }
+git-commit-partial-not-utf8 = “{ $name }” isn’t UTF-8 text, so its changes can’t be partially committed
+git-rollback-nothing-checked = Select the files to roll back first
 git-stage-partial-not-utf8 = “{ $name }” isn’t UTF-8 text, so its changes can’t be partially staged
 git-stage-failed = Couldn’t update the staging area: { $error }
 git-stage-nothing = The current file has no unstaged changes
@@ -401,6 +403,8 @@ git-branch-picker-create-row = Create branch “{ $name }”
 git-branch-picker-current = Current
 git-location-picker-placeholder = Search repositories and worktrees
 git-location-picker-empty = No matching repositories or worktrees
+git-worktree-picker-placeholder = Search worktrees
+git-worktree-picker-empty = No matching worktrees
 git-location-main-worktree = Main worktree
 git-location-only-one = This folder has only one repository and worktree
 git-location-new-window = Open in New Window
@@ -414,10 +418,6 @@ git-location-count = { $count ->
 git-tip-other-worktrees = { $count ->
     [one] 1 other worktree has uncommitted changes
    *[other] { $count } other worktrees have uncommitted changes
-}
-git-tip-other-locations = { $count ->
-    [one] 1 other repository or worktree has uncommitted changes
-   *[other] { $count } other repositories or worktrees have uncommitted changes
 }
 git-tip-fetch = Fetch from remotes
 git-tip-in-sync = Fetch from remotes (in sync with { $upstream })
@@ -455,6 +455,7 @@ git-commit-button-files = { $count ->
    *[other] Commit { $count } Files
 }
 git-commit-button-all = Commit All
+git-commit-push-button = Commit and Push…
 git-commit-amend = Amend Last Commit
 git-commit-undo = Undo
 git-commit-next-push = Push
@@ -555,7 +556,6 @@ git-log-reset-hard-confirm-button = Hard Reset
 ## Log tab and file history
 
 git-log-title = Git Log
-git-log-button = Log
 git-history-title = { $name } · History
 git-log-target-not-loaded = The target commit hasn’t loaded yet. Scroll down the list and try again
 git-log-parent-not-loaded = The parent commit hasn’t loaded yet. Scroll down the list and try again
@@ -665,6 +665,7 @@ git-change-popup-more-lines = { $count ->
 ## Commit view file list
 
 git-commit-group-changes = Changes
+git-commit-group-staged = Staged Changes
 git-commit-group-conflicts = Conflicts
 git-commit-group-untracked = Untracked Files
 git-commit-open-deleted = The file was deleted and can’t be opened

@@ -12,26 +12,25 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    // 卡片放得下勾选框时「修改上次提交」在卡片里，菜单里只有提交并推送；侧栏最窄时勾选框收进
-    // 菜单。
+    // 「修改上次提交」单独占信息上方的一行，不在菜单里；默认宽度下「提交」「提交并推送…」并排。
+    let amend = MenuEntry::Item(MenuCommand::CommitAmend, true);
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
-    assert!(app.commit_parts().amend.is_some());
-    assert!(!menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    let width = app.panels.sidebar.width;
-    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
-    paint(&mut app);
-    assert!(app.commit_parts().amend.is_none());
-    let menu = app.commit_button_menu();
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
-    app.panels.sidebar.width = width;
-    paint(&mut app);
+    let parts = app.commit_parts();
+    assert!(parts.push.is_some() && parts.amend.is_some());
+    assert!(!menu.contains(&amend));
+    let pressed = |app: &App, target| app.hits.commit.iter().any(|(_, t)| *t == target);
+    assert!(pressed(&app, CommitTarget::CommitPush));
+    // 暂存区视图中卡片的排法相同。
+    app.git.commit.set_staging(true);
+    assert_eq!(app.commit_parts().amend, parts.amend);
+    assert_eq!(app.commit_parts().commit.x, parts.commit.x);
+    app.git.commit.set_staging(false);
 
     // 回归：主按钮显示没有要提交的更改时，菜单不能再提供「提交并推送」；修改上一次提交仍然可用。
     let entries = std::mem::take(&mut app.git.status.as_mut().unwrap().entries);
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, false)));
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitAmend, true)));
     app.git.commit.amend = true;
     let menu = app.commit_button_menu();
     assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
@@ -602,51 +601,43 @@ fn holding_option_turns_commit_into_commit_and_push() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 提交按钮变宽（例如按住 ⌥）到放不下「修改上次提交」时：按钮宽度从原宽度过渡到占满整行；
-/// 「修改上次提交」在过渡中仍绘制并淡出，不响应鼠标，按钮的菜单里已有该项；过渡结束后不再排出。
+/// 勾选式的提交卡片：「修改上次提交」在提交信息上方，任何宽度下都可见；「提交」「提交并推送…」
+/// 靠左并排，下拉箭头在最右；侧栏最窄时「提交并推送…」收进菜单。
 #[test]
-fn the_commit_button_widens_while_the_amend_toggle_fades_out() {
-    use crate::app::animation::{Clock, TREE_ANIMATION};
+fn the_classic_card_keeps_amend_above_the_message_and_buttons_on_the_left() {
     use crate::app::input::context_menu::{MenuCommand, MenuEntry};
-
-    let Some((mut app, root)) = git_app("git-commit-button-motion", false) else {
+    let Some((mut app, root)) = git_app("git-classic-card", false) else {
         return;
     };
     app.run_action(Action::ShowCommit);
-    app.edit_field(|f| f.insert("修复"));
     paint(&mut app);
-    let before = app.commit_parts();
-    let from = before.commit.w + before.commit_menu.w;
-    assert!(before.amend.is_some());
-
-    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
-    paint(&mut app);
-    let settled = app.commit_parts();
-    let to = settled.commit.w + settled.commit_menu.w;
-    assert!(settled.amend.is_none());
-    assert!(to > from);
-
-    let half = Clock::frozen(TREE_ANIMATION / 2, TREE_ANIMATION);
-    app.git.commit.button_motion = Some((from, half));
-    app.git.commit.amend_motion = Some((false, half));
+    let amend_item = MenuEntry::Item(MenuCommand::CommitAmend, true);
+    for width in [
+        crate::theme::DEFAULT_PANEL_WIDTH,
+        crate::theme::MIN_PANEL_WIDTH,
+    ] {
+        app.panels.sidebar.width = width;
+        paint(&mut app);
+        let parts = app.commit_parts();
+        let (card, amend) = (parts.card.unwrap(), parts.amend.unwrap());
+        assert!(
+            amend.y >= card.y && amend.bottom() <= parts.message.y,
+            "{width}"
+        );
+        assert_eq!(parts.commit.x, amend.x, "{width}");
+        assert!(parts.commit.y >= parts.message.bottom(), "{width}");
+        assert!(parts.commit_menu.right() <= card.right(), "{width}");
+        assert!(parts.commit.right() < parts.commit_menu.x, "{width}");
+        // 勾选框已经在卡片里，菜单里不再重复。
+        assert!(!app.commit_button_menu().contains(&amend_item), "{width}");
+        let wide = width == crate::theme::DEFAULT_PANEL_WIDTH;
+        assert_eq!(parts.push.is_some(), wide, "{width}");
+    }
+    // 修改上一次提交时没有并排的「提交并推送…」，勾选框仍在原处。
+    app.panels.sidebar.width = crate::theme::DEFAULT_PANEL_WIDTH;
+    app.git.commit.amend = true;
     paint(&mut app);
     let parts = app.commit_parts();
-    let width = parts.commit.w + parts.commit_menu.w;
-    assert!(width > from && width < to, "{from} < {width} < {to}");
-    assert_eq!(parts.commit_menu.right(), settled.commit_menu.right());
-    assert!(parts.amend.is_some());
-    assert!(
-        !app.hits
-            .commit
-            .iter()
-            .any(|(_, t)| *t == CommitTarget::Amend)
-    );
-    let amend = MenuEntry::Item(MenuCommand::CommitAmend, true);
-    assert!(app.commit_button_menu().contains(&amend));
-    assert!(app.animating());
-
-    app.git.commit.button_motion = None;
-    app.git.commit.amend_motion = None;
-    assert_eq!(app.commit_parts(), settled);
+    assert!(parts.push.is_none() && parts.amend.is_some());
     let _ = std::fs::remove_dir_all(&root);
 }

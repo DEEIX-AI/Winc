@@ -16,6 +16,24 @@ impl CommitState {
             return None;
         }
         let rebasing = status.operation == Some(Operation::Rebase);
+        // 勾选式：至少勾上一个文件，勾上的冲突文件不能仍有冲突标记。
+        if !self.staging {
+            let mut checked = self.picked_entries(status).peekable();
+            let others = self.other_checked.is_empty();
+            if checked.peek().is_none() && others && !self.amend && !rebasing {
+                return Some(t!("git-commit-nothing-checked").to_owned());
+            }
+            let unresolved = checked
+                .filter(|e| status.unresolved.contains(&e.path))
+                .count();
+            if unresolved > 0 {
+                return Some(t!("git-commit-blocker-conflicts", count = unresolved));
+            }
+            if self.message.text().trim().is_empty() && !rebasing {
+                return Some(t!("git-commit-message-required").to_owned());
+            }
+            return None;
+        }
         let unresolved = (status.entries.iter())
             .filter(|e| e.conflicted() && status.unresolved.contains(&e.path))
             .count();
@@ -54,16 +72,26 @@ impl CommitState {
         }
     }
 
-    /// 文件 `entry` 在暂存区中是否有内容（全部或一部分改动已暂存）。
+    /// 文件 `entry` 是否进入提交：勾选式下是它是否勾上，暂存区视图中是暂存区里是否有它的内容
+    /// （全部或一部分改动已暂存）。
     pub fn checked(&self, entry: &Entry) -> bool {
-        entry.staged.is_some() && !entry.conflicted()
+        if self.staging {
+            entry.staged.is_some() && !entry.conflicted()
+        } else {
+            self.picked(entry)
+        }
     }
 
-    /// 文件的勾选框：`Some(true)` 全部改动已暂存，`Some(false)` 只暂存了一部分，`None` 没有暂存。
+    /// 文件进入提交的程度：`Some(true)` 全部改动，`Some(false)` 只有一部分，`None` 不进入提交。
     ///
-    /// 勾选框显示暂存区的状态：在终端里暂存的文件同样显示为勾上。
+    /// 勾选式下取自界面中的勾选，与暂存区无关；暂存区视图中取自暂存区，在终端里暂存的文件同样
+    /// 算在内。
     pub fn file_state(&self, entry: &Entry) -> Option<bool> {
-        self.checked(entry).then_some(entry.unstaged.is_none())
+        if self.staging {
+            self.checked(entry).then_some(entry.unstaged.is_none())
+        } else {
+            self.pick_state(entry)
+        }
     }
 
     /// 返回文件 `entry` 在差异 `view` 中各段改动的暂存状态，下标同 `view.hunks`。
@@ -71,6 +99,12 @@ impl CommitState {
     /// [`Pick::Apply`] 为已暂存，[`Pick::Skip`] 为未暂存，[`Pick::Lines`] 列出未暂存的行。该文件
     /// 只能按文件暂存（见 [`stages_by_hunk`]）、暂存区中的内容不是文本时为空。
     pub fn hunk_inclusions(&self, entry: &Entry, view: &DiffView) -> Vec<Pick> {
+        if !self.staging {
+            let all: HunkIds = (view.keys.iter().zip(&view.hunks))
+                .map(|(&key, hunk)| (key, hunk.old.clone()))
+                .collect();
+            return self.pick_inclusions(entry, &all);
+        }
         if !stages_by_hunk(entry) {
             return Vec::new();
         }
@@ -125,7 +159,7 @@ impl CommitState {
 
     /// 是否有写入暂存区的操作尚未完成。
     pub(in crate::app) fn staging_active(&self) -> bool {
-        self.staging_running || !self.staging.is_empty()
+        self.staging_running || !self.staging_queue.is_empty()
     }
 
     /// 组 `group` 是否收起。
@@ -246,7 +280,12 @@ impl CommitState {
 
     /// 一组的勾选状态，含义同 [`CommitState::members_state`]。
     pub fn group_state(&self, status: &Status, group: CommitGroup) -> Option<bool> {
-        self.tri_state(status.entries.iter().filter(|e| group.holds(e)))
+        self.tri_state(
+            status
+                .entries
+                .iter()
+                .filter(|e| group.holds(e, self.staging)),
+        )
     }
 
     /// `members`（`Status::entries` 的下标，见 [`CommitRows::group`]、[`CommitRows::dir`]）的
@@ -265,7 +304,7 @@ impl CommitState {
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| group.holds(e))
+                .filter(|(_, e)| group.holds(e, self.staging))
                 .map(|(i, e)| (i, e.path.strip_prefix(root).unwrap_or(&e.path)))
                 .collect();
             if files.is_empty() {

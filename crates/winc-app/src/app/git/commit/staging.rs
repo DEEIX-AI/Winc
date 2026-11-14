@@ -138,6 +138,26 @@ impl App {
         });
     }
 
+    /// 打开或关闭暂存区视图：与设置中「Git」一页的「显示暂存区」是同一项（`git.stagingArea`）。
+    pub(in crate::app) fn toggle_staging_area(&mut self) {
+        self.settings_toggle(crate::layout::Setting::GitStagingArea);
+    }
+
+    /// 按设置使提交视图成为暂存区视图或勾选式。
+    ///
+    /// 两种方式的记录互不相通：切换后勾选回到默认，暂存区中已有的内容不变。
+    pub(in crate::app) fn apply_staging_view(&mut self) {
+        let on = self.config.git_staging_area == Some(true);
+        self.git.commit.set_staging(on);
+        self.sync_index_texts();
+        // 没有选过「显示全部仓库」时它随样式开关：换到列出其他仓库的样式后读它们的状态。
+        if self.commit_shows_others() {
+            self.git_read_summaries();
+        }
+        self.git.commit.scroll = self.git.commit.scroll.min(self.commit_max_scroll());
+        self.request_redraw();
+    }
+
     /// 暂存全部已跟踪文件的更改（`on` 为真），或者把暂存区中的全部内容移出暂存区。
     ///
     /// 未跟踪的文件不随「暂存全部」加入：它们只在逐个勾选后进入暂存区。
@@ -172,7 +192,8 @@ impl App {
         }
     }
 
-    /// 返回文件树、标签的右键菜单中针对文件 `path` 的更改的几项：暂存、取消暂存、回滚。
+    /// 返回文件树、标签的右键菜单中针对文件 `path` 的更改的几项：回滚，暂存区视图中另有暂存、
+    /// 取消暂存。
     ///
     /// 该文件没有更改时为空；已全部暂存的文件没有「暂存」，没有暂存内容的文件没有「取消暂存」。
     pub(in crate::app) fn git_change_items(&self, path: &Path) -> Vec<MenuEntry> {
@@ -181,10 +202,12 @@ impl App {
             return Vec::new();
         };
         let mut items = Vec::new();
-        if entry.unstaged.is_some() {
+        // 暂存与取消暂存只在暂存区视图中提供：勾选式下界面上没有暂存区。
+        let staging = self.git.commit.staging();
+        if staging && entry.unstaged.is_some() {
             items.push(MenuEntry::Item(MenuCommand::CommitCheck(true), true));
         }
-        if self.git.commit.checked(entry) {
+        if staging && self.git.commit.checked(entry) {
             items.push(MenuEntry::Item(MenuCommand::CommitCheck(false), true));
         }
         items.push(MenuEntry::Item(MenuCommand::GitRollbackFile, true));
@@ -197,7 +220,7 @@ impl App {
         self.git.commit.status_outdated = self.git.running.is_some();
         // 文件所在的组可能变化（未跟踪的文件暂存后是新增的文件），各行需要重新排列。
         self.git.generation += 1;
-        let queue = &mut self.git.commit.staging;
+        let queue = &mut self.git.commit.staging_queue;
         match (queue.back_mut(), job) {
             (Some(StageJob::Add(last)), StageJob::Add(more))
             | (Some(StageJob::Remove(last)), StageJob::Remove(more)) => last.extend(more),
@@ -212,7 +235,7 @@ impl App {
         if self.git.commit.staging_running || self.git.root.is_none() {
             return;
         }
-        let Some(job) = self.git.commit.staging.pop_front() else {
+        let Some(job) = self.git.commit.staging_queue.pop_front() else {
             return;
         };
         self.git.commit.staging_running = true;
@@ -240,12 +263,12 @@ impl App {
         self.git.commit.staging_running = false;
         if let Err(e) = result {
             // 界面已按成功的结果显示：放弃其余的操作，按仓库的实际状态重新显示。
-            self.git.commit.staging.clear();
+            self.git.commit.staging_queue.clear();
             self.git.commit.commit_queued = false;
             self.git.commit.index.clear();
             self.notify(t!("git-stage-failed", error = e));
         }
-        if !self.git.commit.staging.is_empty() {
+        if !self.git.commit.staging_queue.is_empty() {
             self.pump_staging();
             return;
         }
@@ -259,7 +282,7 @@ impl App {
     ///
     /// 差异标签据此显示各段改动的暂存状态。暂存的操作尚未写完时不读取，写完后会再次调用。
     pub(in crate::app) fn sync_index_texts(&mut self) {
-        if self.git.commit.staging_active() {
+        if self.git.commit.staging_active() || !self.git.commit.staging() {
             return;
         }
         let staged = |path: &Path| {

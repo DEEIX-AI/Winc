@@ -268,6 +268,7 @@ fn round_trips_through_json() {
         terminal_right: Some(true),
         git_enabled: Some(true),
         git_confirm_push: Some(false),
+        git_staging_area: Some(true),
         repository_scan_depth: Some(4),
         git_worktree_root: Some("~/worktrees".to_string()),
         remote_enabled: Some(true),

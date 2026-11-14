@@ -748,6 +748,9 @@ impl Winc {
             .map(State::load_from)
             .unwrap_or_default();
         app.git.commit.set_flat(!app.state.commit_tree);
+        app.git
+            .commit
+            .set_staging(app.config.git_staging_area == Some(true));
         app.restore_panel_width();
         app.editor.diff_unified = app.config.diff_inline == Some(true);
         app.apply_preview_state();

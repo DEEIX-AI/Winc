@@ -34,14 +34,19 @@ fn other_repositories_are_listed_after_the_current_one_and_a_click_switches() {
     paint(&mut app);
     assert_eq!(app.git.root.as_ref(), Some(&a));
 
-    // 默认只显示当前仓库；有多个仓库时「⋯」菜单里有开关。
-    assert!(app.commit_other_rows().is_empty());
+    // 没有选过时随样式：暂存区视图只显示当前仓库，勾选式列出其他仓库。有多个仓库时「⋯」菜单
+    // 里有开关，关掉以后只显示当前仓库。
     let toggle = MenuCommand::CommitAllRepositories;
     assert!(
         app.commit_more_menu()
             .contains(&MenuEntry::Item(toggle, true))
     );
-    assert!(!app.menu_checked(toggle));
+    app.git.commit.set_staging(true);
+    assert!(!app.menu_checked(toggle) && app.commit_other_rows().is_empty());
+    app.git.commit.set_staging(false);
+    assert!(app.menu_checked(toggle) && !app.commit_other_rows().is_empty());
+    app.run_commit_more_command(toggle);
+    assert!(!app.menu_checked(toggle) && app.commit_other_rows().is_empty());
     let alone = app.commit_max_scroll();
     app.run_commit_more_command(toggle);
     assert!(app.menu_checked(toggle));
@@ -95,6 +100,87 @@ fn other_repositories_are_listed_after_the_current_one_and_a_click_switches() {
     let _ = std::fs::remove_dir_all(a.parent().unwrap());
 }
 
+/// 勾选式下其他仓库的文件有勾选框，默认不勾；勾上的文件随当前仓库的一起提交，各自提交到所在
+/// 的仓库，用同一条提交信息。点勾选框不切换仓库。
+#[test]
+fn checked_files_of_other_repositories_are_committed_alongside() {
+    let Some((mut app, a, b)) = two_repositories("git-commit-other-repositories", false) else {
+        return;
+    };
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.other_group_state(1), None);
+    assert_eq!(app.other_checked_count(), 0);
+    let subject = |repo: &Path| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let before = subject(&b);
+
+    // 勾上另一个仓库改过的文件：仓库的勾选框成为部分勾选，当前仓库不变，按钮的文件数加一。
+    let hit = |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
+    let own = app.commit_scope();
+    let check = hit(&app, CommitTarget::OtherCheck(1, 0));
+    click(&mut app, (check.x + 8.0, check.y + 8.0));
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    assert_eq!(app.other_group_state(1), Some(false));
+    assert_eq!(app.other_checked_count(), 1);
+    assert_ne!(app.commit_scope(), own);
+
+    // 仓库标题行的勾选框：全部勾上，再点一次全部取消。
+    paint(&mut app);
+    let group = hit(&app, CommitTarget::OtherGroupCheck(1));
+    click(&mut app, (group.x + 8.0, group.y + 8.0));
+    assert_eq!(app.other_group_state(1), Some(true));
+    click(&mut app, (group.x + 8.0, group.y + 8.0));
+    assert_eq!(app.other_group_state(1), None);
+    app.press_commit(CommitTarget::OtherCheck(1, 0));
+
+    app.git.commit.message.set_text("两个仓库一起提交");
+    app.git_commit();
+    assert_eq!(subject(&a), "两个仓库一起提交");
+    assert_eq!(subject(&b), "两个仓库一起提交");
+    assert_ne!(before, subject(&b));
+    assert_eq!(app.other_checked_count(), 0);
+
+    // 没勾的文件留在另一个仓库里，没有被提交。
+    assert!(b.join("src/new.rs").exists());
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&b)
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "?? src/new.rs");
+    let _ = std::fs::remove_dir_all(a.parent().unwrap());
+}
+
+/// 其他仓库标题行上的分支可以直接点：切换到那个仓库，并展开它的分支选择面板。
+#[test]
+fn the_branch_on_another_repository_opens_its_branch_picker() {
+    let Some((mut app, a, b)) = two_repositories("git-other-branch", false) else {
+        return;
+    };
+    git_in(&b, &["branch", "-q", "topic"]);
+    app.run_action(Action::ShowCommit);
+    paint(&mut app);
+    assert_eq!(app.git.root.as_ref(), Some(&a));
+    let hit = |app: &App, t: CommitTarget| app.hits.commit.iter().find(|(_, h)| *h == t).unwrap().0;
+    let chip = hit(&app, CommitTarget::OtherBranch(1));
+    let header = hit(&app, CommitTarget::OtherRepository(1));
+    assert!(chip.x > header.x && chip.right() < header.right());
+    click(&mut app, (chip.x + 4.0, chip.y + 4.0));
+    assert_eq!(app.git.root.as_ref(), Some(&b));
+    assert!(app.picker_lists_branches());
+    assert!(app.git.branches.iter().any(|branch| branch.name == "topic"));
+    let _ = std::fs::remove_dir_all(a.parent().unwrap());
+}
+
 /// 截图：开着「显示全部仓库」的提交视图（`commit-all-repositories-*`）。
 #[test]
 #[ignore = "截图，手动运行"]
@@ -106,7 +192,8 @@ fn shoot_commit_all_repositories() {
             return;
         };
         app.run_action(Action::ShowCommit);
-        app.run_commit_more_command(MenuCommand::CommitAllRepositories);
+        paint(&mut app);
+        app.press_commit(CommitTarget::OtherCheck(1, 0));
         shoot(&mut app, &name);
         let _ = std::fs::remove_dir_all(a.parent().unwrap());
     }

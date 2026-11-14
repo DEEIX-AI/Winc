@@ -253,10 +253,13 @@ impl App {
         if self.git.commit.busy {
             return;
         }
-        // 暂存的操作尚未写完：写完后再提交，提交的才是勾选框显示的内容。
+        // 暂存的操作尚未写完：写完后再提交，提交的才是界面上显示的内容。
         if self.git.commit.staging_active() {
             self.git.commit.commit_queued = true;
             return;
+        }
+        if !self.git.commit.staging() {
+            return self.git_commit_picked();
         }
         let message = self.git.commit.message.text().trim().to_owned();
         let Some(status) = self.git.status.as_ref() else {
@@ -376,11 +379,17 @@ impl App {
         let Some(status) = self.git.status.as_ref() else {
             return;
         };
-        let held = || status.entries.iter().filter(|e| group.holds(e));
+        let staging = self.git.commit.staging();
+        let held = || status.entries.iter().filter(|e| group.holds(e, staging));
         let mut paths: Vec<PathBuf> = held()
             .filter(|e| self.git.commit.checked(e))
             .map(|e| e.path.clone())
             .collect();
+        // 勾选式下只回滚勾上的文件；暂存区视图中组里没有已暂存的文件时回滚整组。
+        if paths.is_empty() && !self.git.commit.staging() {
+            self.flash(t!("git-rollback-nothing-checked"));
+            return;
+        }
         if paths.is_empty() {
             paths = held().map(|e| e.path.clone()).collect();
         }
@@ -485,6 +494,11 @@ impl App {
                     self.git.commit.busy = false;
                     match result {
                         Ok(oid) => {
+                            // 其他仓库勾上的文件也已提交：清掉勾选，重读它们的状态。
+                            if !self.git.commit.other_checked.is_empty() {
+                                self.git.commit.other_checked.clear();
+                                self.git_read_summaries();
+                            }
                             // 提交期间用户又改了信息，就留着改过的，不清空。
                             if self.git.commit.message.text().trim() == message {
                                 self.git.commit.message.remember();
@@ -497,6 +511,9 @@ impl App {
                             {
                                 self.run_push(intent);
                             }
+                            // 勾上的都提交了；取消勾选的各处改动还在工作区里，下次重新勾选。
+                            self.git.commit.skipped.clear();
+                            self.git.commit.reset_checks();
                             self.git.commit.amend = false;
                             self.git.commit.no_verify = false;
                             self.git.commit.draft = None;
@@ -582,6 +599,8 @@ impl App {
         let old = std::mem::take(&mut self.git.commit);
         self.git.commit.results = old.results;
         self.git.commit.flat = old.flat;
+        self.git.commit.staging = old.staging;
+        self.git.commit.other_checked = old.other_checked;
         self.git.commit.collapsed = old.collapsed;
         self.git.commit.drafts = old.drafts;
     }

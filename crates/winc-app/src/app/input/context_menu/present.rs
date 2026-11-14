@@ -247,7 +247,7 @@ impl App {
                     .as_ref()?
                     .entries
                     .iter()
-                    .filter(|e| group.holds(e))
+                    .filter(|e| group.holds(e, self.git.commit.staging()))
                     .map(|e| e.path.clone())
                     .collect();
                 let first = files.first()?.clone();
@@ -560,11 +560,24 @@ impl App {
                 let any_exists = self.commit_selection().iter().any(winc_backend::fs::exists);
                 commit_selection_menu(any_exists)
             }
-            MenuTarget::CommitFile(path) => commit_file_menu(
-                winc_backend::fs::exists(path),
-                self.relative_path(path).is_some(),
-                &self.ignore_kinds(path),
-            ),
+            MenuTarget::CommitFile(path) => {
+                let mut menu = commit_file_menu(
+                    winc_backend::fs::exists(path),
+                    self.relative_path(path).is_some(),
+                    &self.ignore_kinds(path),
+                );
+                // 暂存区视图中在「回滚」之前加暂存、取消暂存，按该文件现在的状态列出。
+                let stage = self.git_change_items(path);
+                let stage = stage.into_iter().filter(|entry| {
+                    matches!(entry, MenuEntry::Item(MenuCommand::CommitCheck(_), _))
+                });
+                let at = (menu.iter())
+                    .position(|e| matches!(e, MenuEntry::Item(MenuCommand::GitRollbackFile, _)));
+                if let Some(at) = at {
+                    menu.splice(at..at, stage);
+                }
+                menu
+            }
             MenuTarget::SearchResult(_, m) => {
                 search_result_menu(m.is_none(), self.panels.global.replace_open)
             }
@@ -670,6 +683,7 @@ impl App {
             MenuTarget::Editor(_) | MenuTarget::Diff(..) | MenuTarget::Markdown => Context::Editor,
             MenuTarget::Terminal(_) | MenuTarget::TerminalTab(_) => Context::Terminal,
             MenuTarget::SearchResult(..) => Context::Panel,
+            MenuTarget::CommitFile(_) => Context::Changes,
             _ => Context::Other,
         };
         // 状态栏的菜单行为类似弹出式按钮：当前选中的项显示在被点击的位置上。
@@ -841,6 +855,12 @@ impl App {
                     tooltip: None,
                 }
             }
+            // 暂存区视图中这两项是暂存、取消暂存；勾选式下是勾选、取消勾选。
+            MenuCommand::CommitCheck(on) if self.git.commit.staging() => MenuLabel::plain(if on {
+                t!("menu-git-stage")
+            } else {
+                t!("menu-git-unstage")
+            }),
             MenuCommand::TerminalDock => {
                 let title = if self.terminal_right() {
                     t!("terminal-dock-bottom")
@@ -1141,7 +1161,10 @@ impl App {
             return !self.git.commit.flat();
         }
         if command == MenuCommand::CommitAllRepositories {
-            return self.state.commit_all_repositories;
+            return self.commit_all_repositories();
+        }
+        if command == MenuCommand::CommitStagingArea {
+            return self.git.commit.staging();
         }
         if command == MenuCommand::CommitSignOff {
             return self.commit_signs_off();

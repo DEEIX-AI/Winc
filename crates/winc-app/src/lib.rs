@@ -239,6 +239,9 @@ pub fn run() {
     let mut app = App::new(editor, proxy, bench, config);
     app.store.config_path = config_path;
     app.git.commit.set_flat(!state.commit_tree);
+    app.git
+        .commit
+        .set_staging(app.config.git_staging_area == Some(true));
     app.editor.diff_unified = app.config.diff_inline == Some(true);
     app.state = state;
     app.restore_panel_width();

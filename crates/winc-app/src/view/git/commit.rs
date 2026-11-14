@@ -48,8 +48,6 @@ use stash::*;
 
 /// Git 上下文按钮里文字右边到按钮右边的宽度（逻辑像素）：空隙加下拉箭头。
 const CONTEXT_PICK_TAIL: f32 = 18.0;
-/// 「日志」按钮上文字右侧的留白（逻辑像素）：与图标左侧到按钮边缘的距离相同。
-const LOG_LABEL_END: f32 = 6.0;
 /// 位置按钮里图标中心和文字左边离按钮左边的距离（逻辑像素）：图标 12 宽，左右各留 6。
 const LOCATION_LEAD: (f32, f32) = (12.0, 24.0);
 /// 项目按钮和位置按钮之间的距离（逻辑像素）。
@@ -95,7 +93,7 @@ pub(in crate::view) fn draw_commit(
         amend: AMEND_TEXT + frame.measure(FontKind::Ui, size, t!("git-commit-amend")) + AMEND_END,
         button: icon_w + frame.measure(FontKind::Ui, size, &text),
         undo: frame.measure(FontKind::Ui, size, t!("git-commit-undo")),
-        log: log_label_room(app, frame),
+        push: frame.measure(FontKind::Ui, size, t!("git-commit-push-button")),
     });
     let parts = app.commit_parts();
     // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
@@ -614,7 +612,7 @@ fn draw_sticky(
     hits.splice(0..0, pinned);
 }
 
-/// 在行底色 `row` 右端画一个写着 `count` 的小圆角徽标，右边和行右端的悬停按钮对齐。
+/// 在行底色 `row` 右端用淡色写数字 `count`，右边和行右端的悬停按钮对齐。
 pub(in crate::view) fn draw_count_pill(
     app: &App,
     frame: &mut Frame<'_>,
@@ -623,9 +621,11 @@ pub(in crate::view) fn draw_count_pill(
     clip: Rect,
 ) {
     let p = app.palette;
-    // 徽标右边和悬停按钮的右边缘对齐（`draw_count_pill_in` 留 4）。
+    // 数字右边和悬停按钮的右边缘对齐（`draw_count_pill_in` 留 4）。没有底色：行右端还有状态
+    // 字母和悬停按钮，数字只用淡色。
     let row = Rect::new(row.x, row.y, row.w + 4.0 - END_PAD, row.h);
-    draw_count_pill_in(app, frame, row, count, (p.hover, p.text_muted), clip);
+    let clear = p.hover.alpha(0.0);
+    draw_count_pill_in(app, frame, row, count, (clear, p.text_dim), clip);
 }
 
 /// 与 [`draw_count_pill`] 相同，但徽标的底色和字色是 `colors`。
@@ -681,32 +681,61 @@ fn file_actions(band: Rect) -> (Rect, Rect) {
     (open, revert)
 }
 
-/// 绘制第 `index` 个文件的「打开文件」「回滚」两个按钮（位置为 `open`、`revert`），只绘制在
-/// `clip` 之内；悬停的按钮铺底色，图标用正文色。
+/// 返回文件行行尾两个按钮各自的目标：`group` 是该行所在的组，`index` 是文件在状态中的下标。
+///
+/// 勾选式下和冲突的文件是「打开文件」「回滚」。暂存区视图中，已暂存的文件是「打开文件」
+/// 「取消暂存」，其余是「回滚」「暂存」。
+fn file_action_targets(app: &App, group: Option<CommitGroup>, index: usize) -> [CommitTarget; 2] {
+    let plain = [
+        CommitTarget::OpenFile(index),
+        CommitTarget::RevertFile(index),
+    ];
+    match group {
+        _ if !app.git.commit.staging() => plain,
+        Some(CommitGroup::Conflicts) => plain,
+        Some(CommitGroup::Staged) => [plain[0], CommitTarget::StageFile(index, false)],
+        _ => [plain[1], CommitTarget::StageFile(index, true)],
+    }
+}
+
+/// 绘制文件行行尾的两个按钮（位置为 `first`、`second`，目标见 [`file_action_targets`]），只绘制
+/// 在 `clip` 之内；悬停的按钮铺底色，图标用正文色。
 fn draw_file_actions(
     app: &App,
     frame: &mut Frame<'_>,
-    (open, revert): (Rect, Rect),
-    index: usize,
+    (first, second): (Rect, Rect),
+    targets: [CommitTarget; 2],
     clip: Rect,
 ) {
     let p = app.palette;
-    for (rect, target) in [
-        (open, CommitTarget::OpenFile(index)),
-        (revert, CommitTarget::RevertFile(index)),
-    ] {
+    for (rect, target) in [(first, targets[0]), (second, targets[1])] {
         let on = app.pointer.hover == Hover::Commit(target);
         draw_button(frame, p, rect, clip, on, false);
         let color = if on { p.text } else { p.text_muted };
-        let (cx, cy) = center(rect);
-        match target {
-            CommitTarget::OpenFile(_) => {
-                let (w, h) = (10.0, 12.0);
-                let at = ((cx - w / 2.0).round(), (cy - h / 2.0).round());
-                icons::document(frame, at, (w, h), color, clip);
-            }
-            _ => icons::rollback(frame, (cx, cy), color, clip),
+        draw_action_icon(frame, target, center(rect), color, clip);
+    }
+}
+
+/// 画行尾按钮 `target` 的图标：打开文件、回滚，或者暂存（加号）、取消暂存（减号）。
+fn draw_action_icon(
+    frame: &mut Frame<'_>,
+    target: CommitTarget,
+    (cx, cy): (f32, f32),
+    color: Color,
+    clip: Rect,
+) {
+    match target {
+        CommitTarget::OpenFile(_) => {
+            let (w, h) = (10.0, 12.0);
+            let at = ((cx - w / 2.0).round(), (cy - h / 2.0).round());
+            icons::document(frame, at, (w, h), color, clip);
         }
+        CommitTarget::StageFile(_, true) => icons::plus(frame, (cx, cy), 8.0, color, clip),
+        CommitTarget::StageFile(_, false) | CommitTarget::GroupStage(CommitGroup::Staged) => {
+            icons::minus(frame, (cx, cy), 8.0, color, clip);
+        }
+        CommitTarget::GroupStage(_) => icons::plus(frame, (cx, cy), 8.0, color, clip),
+        _ => icons::rollback(frame, (cx, cy), color, clip),
     }
 }
 
@@ -832,8 +861,15 @@ fn draw_card(
     // 无法提交（见 `CommitState::blocker`：未勾选文件、未填写说明、仍有冲突标记）时按钮整体
     // 变淡且悬停不变色，表示按下不会生效；变基暂停时无需勾选即可继续。正在提交时保持强调色，
     // 只是不响应悬停，按钮不在提交前后闪成灰色。
+    // 底行放得下时「提交并推送…」排在提交按钮旁边，下拉箭头成为单独的小按钮；放不下时推送在
+    // 下拉菜单里，提交按钮与箭头连成一个拆分按钮。
     let (main, menu) = (parts.commit, parts.commit_menu);
-    let whole = Rect::new(main.x, main.y, menu.right() - main.x, main.h);
+    // 下拉箭头紧贴提交按钮时两者连成一个拆分按钮，否则各自成块。
+    let joined = parts.push.is_none() && (menu.x - main.right()).abs() < 0.5;
+    let whole = match joined {
+        true => Rect::new(main.x, main.y, menu.right() - main.x, main.h),
+        false => main,
+    };
     let busy = app.git.commit.busy;
     let ready = !busy
         && app
@@ -855,23 +891,29 @@ fn draw_card(
     };
     frame.rounded(whole, fill, RADIUS_ROW);
     let open = app.overlays.menu_button == Some(crate::app::MenuButton::CommitButton);
-    for (rect, target) in [
-        (main, CommitTarget::Commit),
-        (menu, CommitTarget::CommitMenu),
-    ] {
-        let hovered = !busy && app.pointer.hover == Hover::Commit(target);
-        let lit = match target {
-            CommitTarget::Commit => hovered && ready,
-            _ => hovered || open,
-        };
-        if lit {
-            frame.rect_clipped(rect, shade, RADIUS_ROW, whole);
-        }
-        hits.push((rect, target));
+    let hover = |target: CommitTarget| !busy && app.pointer.hover == Hover::Commit(target);
+    if hover(CommitTarget::Commit) && ready {
+        frame.rect_clipped(main, shade, RADIUS_ROW, whole);
     }
-    let divider = Rect::new(menu.x, menu.y + 6.0, 1.0, menu.h - 12.0);
-    frame.rect_clipped(divider, ink.alpha(ink.a * 0.3), 0.0, whole);
-    icons::chevron(frame, center(menu), 6.0, Direction::Down, ink, whole);
+    hits.push((main, CommitTarget::Commit));
+    let menu_lit = hover(CommitTarget::CommitMenu) || open;
+    if let Some(push) = parts.push {
+        draw_push_button(app, frame, push, ready, panel.intersect(card));
+        hits.push((push, CommitTarget::CommitPush));
+    }
+    if !joined {
+        draw_button(frame, p, menu, panel.intersect(card), menu_lit, open);
+        let arrow = if menu_lit { p.text } else { p.text_muted };
+        icons::chevron(frame, center(menu), 6.0, Direction::Down, arrow, menu);
+    } else {
+        if menu_lit {
+            frame.rect_clipped(menu, shade, RADIUS_ROW, whole);
+        }
+        let divider = Rect::new(menu.x, menu.y + 6.0, 1.0, menu.h - 12.0);
+        frame.rect_clipped(divider, ink.alpha(ink.a * 0.3), 0.0, whole);
+        icons::chevron(frame, center(menu), 6.0, Direction::Down, ink, whole);
+    }
+    hits.push((menu, CommitTarget::CommitMenu));
     let size = app.fonts.ui_small;
     let (text, icon_w) = commit_button_text(app);
     let text_w = frame.measure(FontKind::Ui, size, &text);
@@ -886,20 +928,19 @@ fn draw_card(
     caret
 }
 
-/// 返回标题行「日志」按钮上的文字可以占的宽度（逻辑像素），连同图标后面的间隔；放不下时为 0。
-///
-/// 项目名和位置按钮完整显示之后还有余地时才写文字：文字不挤占它们的位置。
-fn log_label_room(app: &App, frame: &mut Frame<'_>) -> f32 {
-    let parts = app.commit_parts();
-    let header = parts.header;
-    let text = frame.measure(FontKind::Ui, app.fonts.ui_small, t!("git-log-button"));
-    let label = text + LOG_LABEL_END;
-    let bar = ContextBar::new(app, frame);
-    let location = location_width(app, frame).map_or(0.0, |w| LOCATION_GAP + w);
-    // 三个按钮只有图标时占的宽度，连同与左边内容之间的间隔。
-    let tools = header.right() - parts.tools[0].0.x - app.git.commit.labels.log + 4.0;
-    let used = bar.left() - header.x + bar.project_full() + location + tools;
-    if used + label <= header.w { label } else { 0.0 }
+/// 画与提交按钮并排的「提交并推送…」：次要按钮，淡底色、正文色的字；`ready` 为假（这时无法
+/// 提交）时字变淡，悬停不变色。
+fn draw_push_button(app: &App, frame: &mut Frame<'_>, rect: Rect, ready: bool, clip: Rect) {
+    let p = app.palette;
+    frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+    if ready && app.pointer.hover == Hover::Commit(CommitTarget::CommitPush) {
+        frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+    }
+    let text = t!("git-commit-push-button");
+    let width = frame.measure(FontKind::Ui, app.fonts.ui_small, text);
+    let x = (rect.x + (rect.w - width) / 2.0).round();
+    let ink = if ready { p.text } else { p.text_dim };
+    ui_text_small(frame, app, x, rect, text, ink, clip.intersect(rect));
 }
 
 /// 提交按钮上的文字和前面对勾占的宽度（不画对勾时为 0）。
@@ -962,9 +1003,13 @@ struct RowText {
 /// 返回深 `depth` 层的文件行的勾选框在第几列缩进。
 ///
 /// 按目录排成树时比所在目录深一层，平铺时不缩进。
-/// 返回箭头到勾选框中心的距离（逻辑像素）：浏览历史提交的文件时没有勾选框，为 0。
+/// 返回箭头到勾选框中心的距离（逻辑像素）：浏览历史提交的文件、暂存区视图中没有勾选框，为 0。
 fn check_gap(app: &App) -> f32 {
-    if app.git.commit.browse { 0.0 } else { CHECK }
+    if app.git.commit.browse || app.git.commit.staging() {
+        0.0
+    } else {
+        CHECK
+    }
 }
 
 fn file_column(app: &App, depth: usize) -> usize {

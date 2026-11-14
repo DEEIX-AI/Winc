@@ -394,13 +394,16 @@ impl App {
                 self.settings_toggle(crate::layout::Setting::DiffInline);
             }
             GitShowChanges => self.git_show_changes(),
+            ChangesShowDiff | ChangesOpenSource | ChangesRollback => {
+                return self.run_changes_action(action);
+            }
             GitShowLog => self.git_show_log(),
             GitGoToRevision => self.open_go_to_revision(),
             GitShowOutput => self.show_git_output(),
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
-            GitSwitchRepository => self.switch_location(),
-            GitSwitchWorktree => self.switch_location(),
+            GitSwitchRepository => self.switch_location(true),
+            GitSwitchWorktree => self.switch_location(false),
             GitNewWorktree => self.open_worktree_dialog(),
             // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
             GitSwitchBranch | GitNewBranch | GitStash | GitSync | GitFetch | GitPull

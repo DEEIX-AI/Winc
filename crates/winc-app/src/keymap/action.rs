@@ -186,6 +186,12 @@ pub enum Action {
     /// 切换差异的单栏显示和并排显示。
     ToggleDiffLayout,
     GitShowChanges,
+    /// 更改列表：显示选中文件的差异，焦点移到差异上。
+    ChangesShowDiff,
+    /// 更改列表：在编辑区打开选中的文件。
+    ChangesOpenSource,
+    /// 更改列表：回滚选中的文件（先确认）。
+    ChangesRollback,
     GitShowLog,
     GitGoToRevision,
     /// 在只读标签中打开 Git 操作的输出。
@@ -434,6 +440,9 @@ impl Action {
             PreviousDiffFile => t!("cmd-previous-diff-file"),
             ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
+            ChangesShowDiff => t!("cmd-changes-show-diff"),
+            ChangesOpenSource => t!("cmd-changes-open-source"),
+            ChangesRollback => t!("cmd-changes-rollback"),
             GitShowLog => t!("cmd-git-show-log"),
             GitGoToRevision => t!("cmd-git-go-to-revision"),
             GitShowOutput => t!("cmd-git-show-output"),
@@ -646,6 +655,9 @@ impl Action {
             PreviousDiffFile => "Go to Previous File in Diff",
             ToggleDiffLayout => "Toggle Inline Diff",
             GitShowChanges => "Git: Open Changes",
+            ChangesShowDiff => "Git: Show Diff of Selected Change",
+            ChangesOpenSource => "Git: Open Selected Change",
+            ChangesRollback => "Git: Roll Back Selected Changes",
             GitShowLog => "Git: Show Log",
             GitGoToRevision => "Git: Go to Hash, Branch or Tag",
             GitShowOutput => "Git: Show Output",
@@ -823,6 +835,9 @@ impl Action {
             | PreviousDiffFile
             | ToggleDiffLayout
             | GitShowChanges
+            | ChangesShowDiff
+            | ChangesOpenSource
+            | ChangesRollback
             | GitShowLog
             | GitGoToRevision
             | GitShowOutput
@@ -934,6 +949,9 @@ impl Action {
     pub fn module(self) -> Option<Module> {
         match self {
             Action::GitShowChanges
+            | Action::ChangesShowDiff
+            | Action::ChangesOpenSource
+            | Action::ChangesRollback
             | Action::GitShowLog
             | Action::GitGoToRevision
             | Action::GitShowOutput
@@ -1183,6 +1201,9 @@ pub const ACTIONS: &[Action] = {
         TogglePreview,
         ShowCommit,
         GitShowChanges,
+        ChangesShowDiff,
+        ChangesOpenSource,
+        ChangesRollback,
         GitShowLog,
         GitGoToRevision,
         GitShowOutput,

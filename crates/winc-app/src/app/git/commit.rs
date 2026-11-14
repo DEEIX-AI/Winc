@@ -18,12 +18,15 @@ pub(crate) use stash::{STASH_GAP, StashLine, StashView};
 mod last;
 mod menu;
 mod others;
+mod parts;
+mod picks;
 pub(crate) use others::OtherRow;
 mod message;
 mod press;
 mod staging;
 mod state;
 
+use picks::Skip;
 use staging::StageJob;
 use state::*;
 pub(crate) use state::{CommitScope, stages_by_hunk};
@@ -66,10 +69,6 @@ const CARD_INSET: f32 = 4.0;
 ///
 /// 按钮 24 高，比对话框里 28 高的按钮（文字两侧留 14）小一号，留白随之取 10。
 const BUTTON_PAD: f32 = 10.0;
-/// 底行里勾选框的文字和提交按钮之间至少留出的距离（逻辑像素）；放不下时勾选框收进按钮的菜单。
-///
-/// 取 12：比按钮之间的间隔（`BUTTON_GAP`，2）宽得多，两样东西不会看成一组按钮。
-const FOOTER_GAP: f32 = 12.0;
 /// 提交信息框最少显示的行数（行）。
 ///
 /// 取 2：只有一行时底行的按钮比信息本身还高，看起来像一个按钮而不是写信息的地方。
@@ -88,6 +87,11 @@ const CONTEXT_ROW: f32 = 24.0;
 const BANNER_ABORT_W: f32 = 40.0;
 /// 拆分按钮右边下拉箭头那一段的宽度（逻辑像素），与 `TOGGLE_W` 同宽：两个字符宽的图标。
 const BUTTON_MENU_W: f32 = 26.0;
+/// 并排的「提交」「提交并推送…」和下拉箭头之间的间隔（逻辑像素）。
+const PUSH_GAP: f32 = 4.0;
+
+/// 提交卡片底行的按钮：提交、下拉箭头、并排的「提交并推送…」（没有时为 `None`）。
+type CardButtons = (Rect, Rect, Option<Rect>);
 /// 「上一次提交」那一栏里「撤销」文字两侧的留白（逻辑像素），与悬停底色的圆角相当。
 const UNDO_PAD: f32 = 6.0;
 /// 提交卡片、说明条左右的边距（逻辑像素），和标题行的项目名、右端按钮对齐；卡片离视图底边
@@ -120,9 +124,8 @@ pub(crate) struct CommitLabels {
     pub button: f32,
     /// 「上一次提交」那一栏的「撤销」。
     pub undo: f32,
-    /// 标题行「日志」按钮上文字占的宽度，连同图标后面的间隔；标题行放不下时为 0，按钮只有
-    /// 图标。
-    pub log: f32,
+    /// 「提交并推送…」按钮上的文字。
+    pub push: f32,
 }
 
 /// 改动列表中悬停行的文件名溢出信息。
@@ -161,17 +164,20 @@ pub enum CommitGroup {
     Conflicts,
     /// 未跟踪的文件（状态字母 U）：默认不勾，只有勾上才随提交加入仓库。
     Untracked,
+    /// 暂存区中有内容的文件；只在暂存区视图中有。只暂存了一部分的文件同时列在「更改」一组。
+    Staged,
 }
 
 impl CommitGroup {
     /// 各组在列表中自上而下的顺序。
     pub const ALL: [CommitGroup; CommitGroup::COUNT] = [
         CommitGroup::Conflicts,
+        CommitGroup::Staged,
         CommitGroup::Changes,
         CommitGroup::Untracked,
     ];
     /// 组的个数。
-    pub const COUNT: usize = 3;
+    pub const COUNT: usize = 4;
 }
 
 impl CommitGroup {
@@ -181,6 +187,7 @@ impl CommitGroup {
             CommitGroup::Changes => t!("git-commit-group-changes"),
             CommitGroup::Conflicts => t!("git-commit-group-conflicts"),
             CommitGroup::Untracked => t!("git-commit-group-untracked"),
+            CommitGroup::Staged => t!("git-commit-group-staged"),
         }
     }
 
@@ -188,12 +195,20 @@ impl CommitGroup {
         self as usize
     }
 
-    /// `entry` 是否属于这一组。
-    pub fn holds(self, entry: &Entry) -> bool {
+    /// `entry` 是否属于这一组；`staging` 表示是否在暂存区视图中。
+    ///
+    /// 暂存区视图中「更改」一组只含有未暂存改动的文件，全部暂存的文件只在「已暂存的更改」中；
+    /// 勾选式下没有「已暂存的更改」，已跟踪文件的改动都在「更改」中。
+    pub fn holds(self, entry: &Entry, staging: bool) -> bool {
+        let plain = !entry.conflicted();
         match self {
             CommitGroup::Conflicts => entry.conflicted(),
-            CommitGroup::Changes => !entry.conflicted() && !entry.untracked(),
-            CommitGroup::Untracked => !entry.conflicted() && entry.untracked(),
+            CommitGroup::Staged => staging && plain && entry.staged.is_some(),
+            CommitGroup::Changes if staging => {
+                plain && !entry.untracked() && entry.unstaged.is_some()
+            }
+            CommitGroup::Changes => plain && !entry.untracked(),
+            CommitGroup::Untracked => plain && entry.untracked(),
         }
     }
 }
@@ -260,6 +275,14 @@ pub(crate) struct CommitRows {
 type MemberStates = (u64, HashMap<(usize, usize), Option<bool>>);
 
 impl CommitRows {
+    /// 返回第 `row` 行所在的组：该行或它之前最近的组标题行；没有这一行时为 `None`。
+    pub fn group_of(&self, row: usize) -> Option<CommitGroup> {
+        self.rows.get(..=row)?.iter().rev().find_map(|r| match r {
+            CommitRow::Group(group) => Some(*group),
+            _ => None,
+        })
+    }
+
     /// 组 `group` 里的文件（`Status::entries` 的下标）。
     pub fn group(&self, group: CommitGroup) -> &[usize] {
         &self.members[self.groups[group.index()].clone()]
@@ -397,10 +420,23 @@ pub enum CommitTarget {
     Refresh,
     /// 标题行的「⋯」：弹出同步、储藏、远程仓库和显示方式的菜单。
     More,
+    /// 与提交按钮并排的「提交并推送…」：确认后提交并推送。
+    CommitPush,
+    /// 暂存区视图中文件行行尾的「＋」（第二项为真）或「−」：暂存或取消暂存第几个文件。
+    StageFile(usize, bool),
+    /// 暂存区视图中组标题行尾的「＋」或「−」：暂存这一组的全部文件，「已暂存的更改」一组是
+    /// 全部取消暂存。
+    GroupStage(CommitGroup),
     /// 另一个仓库的标题行（它在仓库列表中的下标）：切换到该仓库。
     OtherRepository(usize),
     /// 另一个仓库中的文件（仓库的下标，文件在其状态各项中的下标）：切换过去并选中该文件。
     OtherFile(usize, usize),
+    /// 另一个仓库标题行上的分支：切换到该仓库并展开它的分支选择面板。
+    OtherBranch(usize),
+    /// 勾选式下另一个仓库标题行的勾选框：勾上或取消该仓库的全部文件。
+    OtherGroupCheck(usize),
+    /// 勾选式下另一个仓库中文件的勾选框（仓库的下标，文件的下标）。
+    OtherCheck(usize, usize),
     /// 组标题行：收起或展开。
     Group(CommitGroup),
     /// 组标题的勾选框：整组勾上或取消。
@@ -468,7 +504,7 @@ pub enum CommitTarget {
 pub(crate) struct CommitParts {
     /// 标题行（左边是项目和分支的上下文栏，右端是工具按钮）。
     pub header: Rect,
-    /// 标题行右端的工具按钮，从左到右：「Git 日志」「刷新」「⋯」。
+    /// 标题行右端的「Git 日志」「刷新」「⋯」三个按钮。
     pub tools: [(Rect, CommitTarget); 3],
     /// 合并、变基等操作暂停时改动列表上方的说明条及其右端的「中止」按钮。
     ///
@@ -488,6 +524,9 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
+    /// 与提交按钮并排的「提交并推送…」按钮；底行放不下、或者这时不能推送时为 `None`，推送在
+    /// 下拉菜单中。
+    pub push: Option<Rect>,
     /// 位置选择面板对着的区域：标题行里内容的范围；只有一个位置时没有。
     pub location: Option<Rect>,
     /// 分支行。
@@ -597,8 +636,22 @@ pub(crate) struct CommitState {
     drafts: HashMap<PathBuf, String>,
     /// 勾选框的状态每被界面改动一次加 1，见 [`CommitRows::members_state`]。
     checks: u64,
+    /// 是否显示暂存区：为真时各项的状态取自暂存区，列表分出「已暂存的更改」一组；为假（默认）
+    /// 时是勾选式，勾选记在下面几项中，提交时才写入暂存区。
+    staging: bool,
+    /// 勾选式下用户取消勾选的文件；其余已跟踪的文件都勾着。
+    excluded: HashSet<PathBuf>,
+    /// 勾选式下用户勾上的未跟踪文件；其余未跟踪的文件都不勾。
+    included: HashSet<PathBuf>,
+    /// 勾选式下在其他仓库中勾上的文件：提交时连同当前仓库勾上的文件，各自提交到所在的仓库。
+    /// 其他仓库的文件默认都不勾。
+    other_checked: HashSet<PathBuf>,
+    /// 勾选式下勾上的文件里取消勾选的各处改动：这些文件只提交其余的改动。
+    skipped: HashMap<PathBuf, Vec<Skip>>,
+    /// 上一次见到的 `HEAD`：变化（切换分支、在别处提交）时按处的勾选作废，记下的行号不再对应。
+    head: Option<String>,
     /// 等待写入暂存区的操作，按顺序逐个执行（见 [`App::pump_staging`]）。
-    staging: VecDeque<StageJob>,
+    staging_queue: VecDeque<StageJob>,
     /// 是否有写入暂存区的操作正在后台执行。
     staging_running: bool,
     /// 暂存区写完之后接着提交：按下提交时暂存的操作尚未完成。
@@ -650,6 +703,8 @@ pub(crate) struct CommitState {
     marked: HashSet<PathBuf>,
     /// 按 ⇧ 扩展选区的起点。
     anchor: Option<PathBuf>,
+    /// 上次用键盘选中的行（各行的下标）：同一个文件有两行时据此确定当前在哪一行。
+    cursor: Option<usize>,
     /// 预览差异的标签；选中别的文件时在该标签里换内容。
     pub(super) preview: Option<DocumentId>,
     /// 是否正在提交或回滚。
@@ -701,6 +756,29 @@ impl CommitState {
         }
     }
 
+    /// 是否显示暂存区（见 [`CommitState::staging`] 字段）。
+    pub(crate) fn staging(&self) -> bool {
+        self.staging
+    }
+
+    /// 切换到暂存区视图（`on` 为真）或勾选式；两种方式的记录互不相通，切换时勾选回到默认。
+    pub(crate) fn set_staging(&mut self, on: bool) {
+        if self.staging != on {
+            self.staging = on;
+            self.reset_checks();
+            self.skipped.clear();
+            self.index.clear();
+            self.layout += 1;
+        }
+    }
+
+    /// 清除勾选式下的全部勾选，回到默认（提交完成以后）。
+    pub(super) fn reset_checks(&mut self) {
+        self.excluded.clear();
+        self.included.clear();
+        self.checks += 1;
+    }
+
     /// 勾选的版本：勾选每变一次加 1。
     pub(crate) fn checks(&self) -> u64 {
         self.checks
@@ -735,7 +813,13 @@ impl Default for CommitState {
             amend: false,
             draft: None,
             drafts: HashMap::new(),
-            staging: VecDeque::new(),
+            staging: false,
+            excluded: HashSet::new(),
+            included: HashSet::new(),
+            other_checked: HashSet::new(),
+            skipped: HashMap::new(),
+            head: None,
+            staging_queue: VecDeque::new(),
             staging_running: false,
             commit_queued: false,
             no_verify: false,
@@ -759,6 +843,7 @@ impl Default for CommitState {
             selected: None,
             marked: HashSet::new(),
             anchor: None,
+            cursor: None,
             preview: None,
             busy: false,
             committed: None,
@@ -859,192 +944,6 @@ impl App {
             Some(_) if !self.git.commit.browse => self.log_list(),
             _ => &self.git.commit,
         }
-    }
-
-    /// 计算提交视图的布局。
-    ///
-    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、还没推送的上一次提交，
-    /// 最下面是提交卡片（提交信息在上，「修改上次提交」和「提交 ⌄」一行在下）。先看改了什么、再写
-    /// 信息、最后提交，从上往下就是这个顺序。
-    pub(crate) fn commit_parts(&self) -> CommitParts {
-        let s = self.layout.sidebar;
-        let panel = Rect::new(s.x, TOP_BAR_END, s.w, (s.bottom() - TOP_BAR_END).max(0.0));
-        let header = Rect::new(panel.x, panel.y, panel.w, SIDEBAR_HEADER);
-        // 「日志」按钮在图标后面写文字，向左加宽；其余两个按钮只有图标。
-        let label = self.git.commit.labels.log;
-        let tool = |i: usize| {
-            let wider = if i == 0 { label } else { 0.0 };
-            let x = header.right() - 8.0 - (3 - i) as f32 * TOOL - wider;
-            Rect::new(x, header.y + (header.h - TOOL) / 2.0, TOOL + wider, TOOL)
-        };
-        let tools = [
-            (tool(0), CommitTarget::Log),
-            (tool(1), CommitTarget::Refresh),
-            (tool(2), CommitTarget::More),
-        ];
-        // 浏览历史提交的文件时只有标题行和列表：列表从标题行下面一直到视图底部。
-        if self.shown_commit_list().browse {
-            let list_y = header.bottom() + SIDEBAR_LIST_GAP;
-            let list = Rect::new(panel.x, list_y, panel.w, (panel.bottom() - list_y).max(0.0));
-            return CommitParts {
-                header,
-                tools,
-                location: None,
-                branch: Rect::new(panel.x, header.bottom(), panel.w, 0.0),
-                banner: None,
-                card: None,
-                message: Rect::default(),
-                message_settled: Rect::default(),
-                amend: None,
-                commit: Rect::default(),
-                commit_menu: Rect::default(),
-                undo: None,
-                stashes: None,
-                list,
-            };
-        }
-        let inner_x = panel.x + MARGIN;
-        let inner_w = (panel.w - 2.0 * MARGIN).max(0.0);
-
-        // Git 上下文：写在哪、在哪个分支、和上游差多少，提交前一眼能看到。
-        let context_y = header.bottom();
-        let branch = Rect::new(inner_x, context_y, inner_w, CONTEXT_ROW);
-        // 位置按钮在标题行上，选择面板从标题行下面展开，和各行同宽。
-        let location =
-            (self.git_has_locations()).then(|| Rect::new(inner_x, header.y, inner_w, header.h));
-        let banner = (self.commit_banner_height() > 0.0).then(|| {
-            let rect = Rect::new(inner_x, branch.bottom() + SIDEBAR_GAP, inner_w, BANNER_H);
-            let w = BANNER_ABORT_W.min(rect.w);
-            let abort = Rect::new(rect.right() - 2.0 - w, rect.y + 2.0, w, rect.h - 4.0);
-            (rect, abort)
-        });
-
-        let share = self.commit_card_share();
-        let card_share = share;
-        let (card, message, message_settled, amend, commit, commit_menu) = if share > 0.0 {
-            self.commit_card_parts(panel, inner_x, inner_w, share)
-        } else {
-            Default::default()
-        };
-        // 「上一次提交」在视图底部，有提交卡片时紧接在卡片上沿：栏内上下各留 4，文字到上方分隔线
-        // 和到卡片的距离相等，两者之间没有 `SIDEBAR_LIST_GAP`。改动列表在它上面结束。提交以后
-        // 仍有未勾选的文件（未跟踪的文件默认不勾选）时卡片保持显示，栏同样显示。
-        // 拉开、收起的途中栏按露出的高度算，里面的东西贴着上沿，从下沿底下露出来。
-        let share = self.git.commit.undo.share(self.commit_undoable().is_some());
-        let undo = (share > 0.0).then(|| {
-            let bottom = card.map_or(panel.bottom(), |card| card.y);
-            let bar = Rect::new(panel.x, bottom - UNDO_H * share, panel.w, UNDO_H * share);
-            // 「⋯」比标题行的工具按钮小，中心和它们对齐，从上到下是一列。
-            let h = UNDO_H - 8.0;
-            let more = Rect::new(inner_x + inner_w - (TOOL + h) / 2.0, bar.y + 4.0, h, h);
-            let w = self.git.commit.labels.undo + 2.0 * UNDO_PAD;
-            let undo = Rect::new(more.x - BUTTON_GAP - w, more.y, w, h);
-            (bar, undo, more)
-        });
-        let list_y = banner.map_or(branch.bottom(), |(rect, _)| rect.bottom()) + SIDEBAR_LIST_GAP;
-        let above = match (undo, card) {
-            (Some((bar, ..)), _) => bar.y,
-            // 卡片滑入、滑出时这段间隔按露出比例伸缩，卡片完全收起时列表的下沿与视图底部重合。
-            (None, Some(card)) => card.y - SIDEBAR_LIST_GAP * card_share,
-            (None, None) => panel.bottom(),
-        };
-        // 储藏一组在改动列表下面，标题和各条储藏各占一行，上下各留 `STASH_GAP`。一组的下沿紧贴
-        // 卡片：`SIDEBAR_LIST_GAP` 是改动列表和卡片之间的间隔，再加上它时下方空隙远大于上方。
-        let h = self.stash_section_height();
-        let stash_bottom = match (undo, card) {
-            (None, Some(card)) => card.y,
-            _ => above,
-        };
-        let stashes = (h > 0.0).then(|| Rect::new(panel.x, stash_bottom - h, panel.w, h));
-        let list_end = stashes.map_or(above, |rect| rect.y);
-        let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
-        CommitParts {
-            header,
-            tools,
-            location,
-            branch,
-            banner,
-            card,
-            message,
-            message_settled,
-            amend,
-            commit,
-            commit_menu,
-            undo,
-            stashes,
-            list,
-        }
-    }
-
-    /// 提交卡片的各部分：卡片、提交信息（当前的和过渡结束后的）、「修改上次提交」、提交按钮的
-    /// 左右两段。
-    ///
-    /// 卡片贴着视图底部，信息变长时往上长。底行左边是「修改上次提交」，提交按钮按文字宽度靠右；
-    /// 一行放不下两样时按钮占满整行，「修改上次提交」收进按钮的菜单。进行中的合并、变基不能修改
-    /// 上一次提交，没有这个勾选框。
-    ///
-    /// `share` 是卡片露出的比例（见 [`App::commit_card_share`]）：不到 1 时整张卡片往下移，没露
-    /// 出的部分在视图底部下面。
-    fn commit_card_parts(
-        &self,
-        panel: Rect,
-        inner_x: f32,
-        inner_w: f32,
-        share: f32,
-    ) -> (Option<Rect>, Rect, Rect, Option<Rect>, Rect, Rect) {
-        let settled_h = self.commit_message_target(panel.h);
-        let message_h = self
-            .git
-            .commit
-            .message_motion
-            .map_or(settled_h, |(from, clock)| clock.between(from, settled_h));
-        let card_h = message_h + FOOTER_H + CARD_INSET;
-        let sunk = (1.0 - share) * (card_h + MARGIN);
-        let card = Rect::new(
-            inner_x,
-            panel.bottom() - MARGIN - card_h + sunk,
-            inner_w,
-            card_h,
-        );
-        let message = Rect::new(card.x, card.y, card.w, message_h);
-        let message_settled = Rect::new(card.x, card.y, card.w, settled_h);
-        let footer = Rect::new(
-            card.x + CARD_INSET,
-            message.bottom(),
-            (card.w - 2.0 * CARD_INSET).max(0.0),
-            FOOTER_H,
-        );
-        let labels = self.git.commit.labels;
-        let fitted = labels.button + 2.0 * BUTTON_PAD + BUTTON_MENU_W;
-        let amendable = self.commit_amendable();
-        let beside = if amendable {
-            labels.amend + FOOTER_GAP
-        } else {
-            0.0
-        };
-        let compact = beside + fitted <= footer.w;
-        let settled_w = if compact { fitted } else { footer.w };
-        let button_w = self
-            .git
-            .commit
-            .button_motion
-            .map_or(settled_w, |(from, clock)| clock.between(from, settled_w));
-        let whole = Rect::new(footer.right() - button_w, footer.y, button_w, FOOTER_H);
-        let menu_w = BUTTON_MENU_W.min(whole.w);
-        let commit = Rect::new(whole.x, whole.y, whole.w - menu_w, FOOTER_H);
-        let commit_menu = Rect::new(commit.right(), whole.y, menu_w, FOOTER_H);
-        // 隐去的过渡中仍排出「修改上次提交」，由绘制按进度淡出。
-        let leaving = matches!(self.git.commit.amend_motion, Some((false, _)));
-        let amend = (amendable && (compact || leaving))
-            .then(|| Rect::new(footer.x, footer.y, labels.amend, FOOTER_H));
-        (
-            Some(card),
-            message,
-            message_settled,
-            amend,
-            commit,
-            commit_menu,
-        )
     }
 
     /// 是否显示提交卡片：有改动、有进行中的合并或变基、开着「修改上一次提交」或正在提交时显示。
@@ -1151,6 +1050,10 @@ impl App {
         if self.git.commit.amend || status.operation.is_some() {
             return None;
         }
+        if !self.git.commit.staging {
+            let count = self.git.commit.picked_entries(status).count() + self.other_checked_count();
+            return (count > 0).then_some(CommitScope::Staged(count));
+        }
         Some(CommitScope::of(status)).filter(|scope| *scope != CommitScope::Nothing)
     }
 
@@ -1228,7 +1131,12 @@ impl App {
             return;
         }
         let after = self.commit_parts();
-        let width = |parts: &CommitParts| parts.commit.w + parts.commit_menu.w;
+        // 勾选式下提交按钮独立成块，只看它自己的宽度；暂存区视图中看整组按钮。
+        let classic = !self.git.commit.staging;
+        let width = |parts: &CommitParts| match classic {
+            true => parts.commit.w,
+            false => parts.commit_menu.right() - parts.commit.x,
+        };
         let from = width(&before);
         if (from - width(&after)).abs() >= 0.5 {
             let clock = self.clock(crate::app::animation::TREE_ANIMATION);

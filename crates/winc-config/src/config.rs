@@ -188,6 +188,9 @@ pub struct Config {
     ///
     /// 提示框上勾选「不再询问」后写成 `false`，可在设置中重新打开。
     pub git_confirm_push: Option<bool>,
+    /// 提交视图是否显示暂存区：分出「已暂存的更改」一组，各项的状态取自暂存区；默认为否，
+    /// 用勾选决定提交的内容。
+    pub git_staging_area: Option<bool>,
     /// 在打开的目录下查找仓库的层数，默认见 [`Config::REPOSITORY_SCAN_DEPTH`]，可用范围见
     /// [`Config::REPOSITORY_SCAN_DEPTH_RANGE`]。
     pub repository_scan_depth: Option<usize>,

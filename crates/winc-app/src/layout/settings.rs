@@ -165,7 +165,11 @@ impl SettingsPage {
                     plain(behavior),
                 ]
             }
-            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush, Setting::DiffInline])],
+            SettingsPage::Git => vec![plain(vec![
+                Setting::GitStagingArea,
+                Setting::GitConfirmPush,
+                Setting::DiffInline,
+            ])],
             SettingsPage::Modules => vec![plain(vec![
                 Setting::GitModule,
                 Setting::TerminalModule,
@@ -370,6 +374,8 @@ pub enum Setting {
     GitModule,
     /// 发布、推送或同步分支前确认（`git.confirmPush`）。
     GitConfirmPush,
+    /// 提交视图显示暂存区（`git.stagingArea`）；关闭时用勾选决定提交的内容。
+    GitStagingArea,
     /// 终端模块的开关。
     TerminalModule,
     /// 远程模块的开关。
@@ -475,7 +481,9 @@ impl Setting {
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
-            Setting::GitConfirmPush | Setting::DiffInline => SettingsPage::Git,
+            Setting::GitStagingArea | Setting::GitConfirmPush | Setting::DiffInline => {
+                SettingsPage::Git
+            }
             Setting::GitModule | Setting::TerminalModule | Setting::RemoteModule => {
                 SettingsPage::Modules
             }
@@ -548,6 +556,7 @@ impl Setting {
             Setting::TerminalOptionAsMeta => t!("settings-terminal-option-as-meta"),
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
+            Setting::GitStagingArea => t!("settings-git-staging-area"),
             Setting::TerminalModule => t!("settings-terminal-module"),
             Setting::RemoteModule => t!("settings-remote-module"),
             Setting::KeySearch => t!("settings-key-search"),
@@ -601,6 +610,7 @@ impl Setting {
             Setting::GitModule => Some(t!("settings-git-module-desc")),
             Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
+            Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
             Setting::TerminalPrompt => Some(t!("settings-terminal-prompt-desc")),
@@ -650,6 +660,7 @@ impl Setting {
             | Setting::FixOnSave
             | Setting::GitModule
             | Setting::GitConfirmPush
+            | Setting::GitStagingArea
             | Setting::TerminalModule
             | Setting::RemoteModule
             | Setting::TerminalCopyOnSelect

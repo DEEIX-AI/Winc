@@ -12,6 +12,7 @@ impl App {
                 | CommitTarget::File(_)
                 | CommitTarget::OpenFile(_)
                 | CommitTarget::RevertFile(_)
+                | CommitTarget::StageFile(..)
                 | CommitTarget::Dir(_)
                 | CommitTarget::DirCheck(_)
                 | CommitTarget::Stash(_)
@@ -51,9 +52,19 @@ impl App {
             | CommitTarget::File(_)
             | CommitTarget::Sticky(..)
             | CommitTarget::OpenFile(_)
-            | CommitTarget::RevertFile(_) => self.press_commit_row(target),
+            | CommitTarget::RevertFile(_)
+            | CommitTarget::StageFile(..)
+            | CommitTarget::GroupStage(_) => self.press_commit_row(target),
             CommitTarget::OtherRepository(_) | CommitTarget::OtherFile(..) => {
                 self.press_other(target);
+            }
+            CommitTarget::OtherBranch(repo) => {
+                self.press_other(CommitTarget::OtherRepository(repo));
+                self.paint_now();
+                self.open_branch_picker(GitAnchor::Branch);
+            }
+            CommitTarget::OtherGroupCheck(_) | CommitTarget::OtherCheck(..) => {
+                self.press_other_check(target);
             }
             _ => self.press_commit_button(target),
         }
@@ -75,7 +86,7 @@ impl App {
                     menu_below(rect),
                 );
             }
-            CommitTarget::Location => self.open_location_picker(),
+            CommitTarget::Location => self.open_worktree_picker(),
             CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
             CommitTarget::Sync => self.git_sync(),
             // 按住 ⌥ 时按钮写的是「提交并推送」（见 `App::commit_pushes`）。
@@ -99,6 +110,7 @@ impl App {
                     menu_below(button),
                 );
             }
+            CommitTarget::CommitPush => self.confirm_commit_and_push(),
             CommitTarget::CommitMenu => {
                 // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
                 // 避免菜单看起来与「⌄」无关。
@@ -130,9 +142,10 @@ impl App {
                     return;
                 };
                 let on = self.git.commit.group_state(status, group) != Some(true);
-                let held = status.entries.iter().filter(|e| group.holds(e));
+                let staging = self.git.commit.staging();
+                let held = status.entries.iter().filter(|e| group.holds(e, staging));
                 let paths: Vec<PathBuf> = held.map(|e| e.path.clone()).collect();
-                self.stage_paths(&paths, on);
+                self.set_commit_checked(&paths, on);
             }
             CommitTarget::GroupRevert(group) => self.ask_rollback(group),
             // ⌘ 单击目录把它下面的文件加入或移出选区，⇧ 单击选到它：只改选区，不收起展开。
@@ -161,7 +174,7 @@ impl App {
                 let paths: Vec<PathBuf> = (members.iter())
                     .map(|&i| status.entries[i].path.clone())
                     .collect();
-                self.stage_paths(&paths, on);
+                self.set_commit_checked(&paths, on);
             }
             CommitTarget::Check(i) => self.toggle_commit_check(i),
             CommitTarget::File(i) => {
@@ -215,6 +228,19 @@ impl App {
                 if let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) {
                     self.confirm_rollback(vec![path]);
                 }
+            }
+            CommitTarget::StageFile(i, on) => {
+                if let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) {
+                    self.stage_paths(&[path], on);
+                }
+            }
+            CommitTarget::GroupStage(group) => {
+                let Some(status) = self.git.status.as_ref() else {
+                    return;
+                };
+                let held = status.entries.iter().filter(|e| group.holds(e, true));
+                let paths: Vec<PathBuf> = held.map(|e| e.path.clone()).collect();
+                self.stage_paths(&paths, group != CommitGroup::Staged);
             }
             // 其余目标由 [`Self::press_commit`] 交给别的函数。
             _ => {}
