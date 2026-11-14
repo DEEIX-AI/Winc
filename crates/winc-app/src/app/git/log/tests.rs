@@ -1,4 +1,4 @@
-//! 日志模块的测试：提交时间的显示和本地时间的换算。
+//! 日志模块的测试：提交时间的显示和本地时间的换算，改动的文件按目录分组的排法。
 
 use super::*;
 
@@ -81,4 +81,43 @@ fn caret_lines_map_back_to_head() {
     assert_eq!(head_line(&hunks, 5), 3);
     assert_eq!(head_line(&hunks, 9), 6);
     assert_eq!(head_line(&hunks, 10), 7);
+}
+
+#[test]
+fn changed_files_group_by_directory_in_display_order() {
+    use winc_editor::git::Change;
+    let root = Path::new("/r");
+    let file = |path: &str| CommitFile {
+        path: root.join(path),
+        from: None,
+        change: Change::Modified,
+        lines: Some((1, 0)),
+    };
+    let files = [
+        file("b/x.rs"),
+        file("a.rs"),
+        file("b/c/y.rs"),
+        file("b/z.rs"),
+    ];
+    let rows = log_file_rows(Some(root), &files, (false, false));
+    use details::{
+        LogFileRow::{Dir, File},
+        log_file_rows,
+    };
+    assert_eq!(
+        rows,
+        [
+            File(1),
+            Dir("b".into()),
+            File(0),
+            File(3),
+            Dir("b/c".into()),
+            File(2),
+        ]
+    );
+    let flat = log_file_rows(Some(root), &files, (true, false));
+    assert_eq!(flat, [File(0), File(1), File(2), File(3)]);
+    // 文件历史查看的文件（第一个）所在的组排在最前，它在组里也最前。
+    let pinned = log_file_rows(Some(root), &files, (false, true));
+    assert_eq!(pinned[..3], [Dir("b".into()), File(0), File(3)]);
 }

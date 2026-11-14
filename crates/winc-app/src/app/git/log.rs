@@ -14,7 +14,7 @@ mod time;
 mod tree;
 
 pub(crate) use branches::{BRANCH_ROW, BranchRow};
-pub(crate) use details::{LogFileRow, log_file_rows};
+pub(crate) use details::LogFileRow;
 pub(crate) use filter::{LogPill, since_label};
 pub(crate) use time::*;
 pub(crate) use tree::LogDiffTree;
@@ -305,6 +305,16 @@ enum Loaded {
         message: Result<String, String>,
         files: Result<Vec<CommitFile>, String>,
     },
+    /// 一个文件在某个版本里与工作区里的并排差异，打开为新标签。
+    LocalDiff {
+        title: String,
+        view: Result<Box<DiffView>, String>,
+    },
+    /// 一个提交的补丁（[`Git::commit_patch`]），复制到剪贴板。
+    Patch {
+        oid: String,
+        result: Result<String, String>,
+    },
     /// 包含一个提交的分支（[`Git::containing_branches`]）。
     Branches {
         doc: DocumentId,
@@ -391,12 +401,16 @@ pub(crate) struct LogState {
     pub long_files: Vec<usize>,
     /// 拖动分隔线后详情一栏的宽度（逻辑像素）；`None` 表示默认宽度，随窗口宽度变化。
     pub details_w: Option<f32>,
+    /// 分支面板里名字截短了的行（[`App::log_branch_rows`] 的下标）；悬停时提示全名。
+    ///
+    /// 绘制时更新。
+    pub long_branches: Vec<usize>,
     /// 分支面板滚动的距离（逻辑像素）。
     pub branches_scroll: f32,
     /// 分支面板的最大滚动距离（逻辑像素），绘制时按行数计算。
     pub branches_max: f32,
-    /// 分支面板里收起的组：本地分支、远程分支。
-    pub branch_folds: [bool; 2],
+    /// 分支面板里收起的组：`None` 是本地分支，否则是远程仓库的名字。
+    pub branch_folds: HashSet<Option<String>>,
     /// 标题栏各个筛选下拉的宽度过渡：换了筛选条件、文字变长变短时宽度缓动，旧文字淡出、新文字
     /// 淡入，与状态栏右侧各项相同。
     pub(crate) pills: crate::app::StatusMotion<LogPill>,
@@ -432,6 +446,10 @@ pub(crate) struct LogState {
     fetching: HashSet<String>,
     /// 正在后台查找包含它的分支的提交。
     branches_fetching: HashSet<String>,
+    /// 没查出包含它的分支的提交（超时、出错）：详情里不画「所在分支」。
+    pub(crate) branches_failed: HashSet<String>,
+    /// 选中停下以后才去查所在分支：日志标签和开始查的时刻（见 [`App::log_tick`]）。
+    branches_due: Option<(DocumentId, Instant)>,
     /// 各日志标签打开的 `git log`（[`Git::log_stream`]）及打开时的重新读取次数。
     ///
     /// 下一批从该流继续读取。
@@ -493,9 +511,10 @@ impl Default for LogState {
             clipped: None,
             long_files: Vec::new(),
             details_w: None,
+            long_branches: Vec::new(),
             branches_scroll: 0.0,
             branches_max: 0.0,
-            branch_folds: [false; 2],
+            branch_folds: HashSet::new(),
             branches_motion: None,
             pills: Default::default(),
             waiting: None,
@@ -510,6 +529,8 @@ impl Default for LogState {
             details_max: 0.0,
             fetching: HashSet::new(),
             branches_fetching: HashSet::new(),
+            branches_failed: HashSet::new(),
+            branches_due: None,
             streams: HashMap::new(),
             wrapped: Default::default(),
         }
@@ -796,7 +817,7 @@ impl App {
             }
         }
         self.prefetch_log_neighbours(id, row);
-        self.fetch_log_branches(id);
+        self.schedule_log_branches(id);
         // 使选中行可见：位于屏幕外时滚动到距顶部三行处，紧邻边缘时滚动一行。
         let row = row as f64;
         if let Some(doc) = self.editor.active_mut() {
@@ -827,35 +848,6 @@ impl App {
         for (oid, parent) in wanted {
             self.fetch_log_details(id, oid, parent);
         }
-    }
-
-    /// 在后台查找包含日志标签 `id` 选中的提交的分支（已经查到或正在查时不再查）；只查选中的，
-    /// 不随详情预取：分支多、历史长时较慢，键盘连续移动时只查停下的那个。
-    fn fetch_log_branches(&mut self, id: DocumentId) {
-        let Some(root) = self.git.root.clone() else {
-            return;
-        };
-        let view = self.editor.document(id).and_then(|d| d.log.as_deref());
-        let Some(details) = view.and_then(|v| v.details.as_ref()) else {
-            return;
-        };
-        let oid = details.oid.clone();
-        if details.branches.is_some() || !self.git.log.branches_fetching.insert(oid.clone()) {
-            return;
-        }
-        let sender = self.git.log.results.0.clone();
-        self.spawn_git(UserEvent::GitLog, move |tool| {
-            let cancel = Cancel::default();
-            let result = match tool {
-                Ok(git) => git.containing_branches(&root, &oid, &cancel),
-                Err(e) => Err(unusable(&e)),
-            };
-            let _ = sender.send(Loaded::Branches {
-                doc: id,
-                oid,
-                result,
-            });
-        });
     }
 
     fn fetch_log_details(&mut self, id: DocumentId, oid: String, parent: Option<String>) {
@@ -1195,18 +1187,36 @@ impl App {
                     self.git.log.waiting = None;
                     if self.git.log.open_first.as_deref() == Some(oid.as_str()) {
                         self.git.log.open_first = None;
-                        self.open_log_file(0);
+                        if let Some(&first) = self.log_file_order().first() {
+                            self.open_log_file(first);
+                        }
                     }
                 }
+                Loaded::LocalDiff { title, view } => match view {
+                    Ok(view) => {
+                        self.editor.show_diff(&title, *view);
+                        self.focus = Focus::Editor;
+                        self.relayout();
+                    }
+                    Err(e) => self.notify(e),
+                },
+                Loaded::Patch { oid, result } => match result {
+                    Ok(patch) => {
+                        self.set_clipboard(patch, false);
+                        self.flash(t!("git-log-copied-patch", commit = short(&oid)));
+                    }
+                    Err(e) => self.notify(t!("git-log-patch-failed", error = e)),
+                },
                 Loaded::Branches { doc, oid, result } => {
                     self.git.log.branches_fetching.remove(&oid);
                     let view = self.editor.document_mut(doc);
                     let Some(view) = view.and_then(|d| d.log.as_deref_mut()) else {
                         continue;
                     };
-                    // 查不出来（超时等）时写「不在任何分支上」会误导：留空，下次选中时再查。
-                    if let Ok(branches) = result {
-                        view.set_branches(&oid, &branches);
+                    // 查不出来（超时等）时写「不在任何分支上」会误导：这一行不画，下次选中时再查。
+                    match result {
+                        Ok(branches) => view.set_branches(&oid, &branches),
+                        Err(_) => _ = self.git.log.branches_failed.insert(oid),
                     }
                 }
                 Loaded::Compare {
@@ -1364,11 +1374,20 @@ impl App {
         )
     }
 
-    /// 等待详情超过 `LOADING_DELAY` 仍未返回时重绘，显示「正在读取…」。
+    /// 等待详情超过 `LOADING_DELAY` 仍未返回时重绘，显示「正在读取…」；选中停下
+    /// [`branches::BRANCHES_DELAY`] 以后去查所在分支。
     ///
     /// 返回下一次唤醒的时刻。
     pub(in crate::app) fn log_tick(&mut self, now: Instant) -> Option<Instant> {
         let (mut wake, mut due) = (None, false);
+        match self.git.log.branches_due {
+            Some((_, at)) if now < at => wake = Some(at),
+            Some((id, _)) => {
+                self.git.log.branches_due = None;
+                self.fetch_log_branches(id);
+            }
+            None => {}
+        }
         for slot in [&mut self.git.log.waiting, &mut self.git.log.list_waiting] {
             match *slot {
                 Some(at) if now < at => wake = Some(wake.map_or(at, |w: Instant| w.min(at))),

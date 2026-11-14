@@ -170,7 +170,10 @@ impl Git {
         let count = format!("--max-count={commits}");
         command.args(["log", "--no-merges", "--format=%aN <%aE>%x00%B%x1e", &count]);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
-        let mut history = RecentHistory::default();
+        let mut history = RecentHistory {
+            me: me.clone(),
+            ..RecentHistory::default()
+        };
         for record in String::from_utf8_lossy(&stdout).split('\x1e') {
             let Some((author, message)) = record.trim_start_matches('\n').split_once('\0') else {
                 continue;
@@ -336,4 +339,6 @@ pub struct RecentHistory {
     pub authors: Vec<String>,
     /// 当前用户写的提交信息，最近的在前。
     pub own: Vec<String>,
+    /// 仓库配置的当前用户的邮箱（`user.email`，小写）；没有配置时为空。
+    pub me: String,
 }

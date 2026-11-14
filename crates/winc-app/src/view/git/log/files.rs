@@ -4,7 +4,7 @@
 //! 分组（见 [`log_file_rows`]）。截短的路径记进 `long_files`，鼠标悬停时提示完整路径。
 
 use super::*;
-use crate::app::git::log::{LogFileRow, log_file_rows};
+use crate::app::git::log::LogFileRow;
 
 /// 绘制改动的文件：标题行「N 个文件 +A −D」，下面一个文件一行（图标、按变化着色的名字、
 /// 淡色的目录、右端的增删统计），点击后打开差异。
@@ -67,7 +67,7 @@ pub(super) fn draw_files(
     y += 26.0;
 
     let root = app.git.root.as_deref();
-    for entry in log_file_rows(root, files, flat) {
+    for entry in app.log_file_rows_of(files) {
         let row = Rect::new(area.x + 6.0, y, area.w - 12.0, FILE_ROW);
         y += FILE_ROW;
         if row.bottom() < area.y || row.y > area.bottom() {

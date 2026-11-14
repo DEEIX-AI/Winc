@@ -207,6 +207,7 @@ pub fn log_commit_menu(enabled: bool, branch: &str, tags: &[&str]) -> Vec<MenuEn
         Item(LogCopyOid, true),
         Item(LogCopyShortOid, true),
         Item(LogCopyMessage, true),
+        Item(LogCopyPatch, true),
         Separator,
         Item(LogGoTo, true),
     ]);
@@ -224,6 +225,7 @@ pub fn log_file_menu(exists: bool, in_workspace: bool) -> Vec<MenuEntry> {
 
     vec![
         Item(GitShowDiff, true),
+        Item(LogCompareWithLocal, exists),
         Item(GitOpenFile, exists),
         Item(FileHistory, true),
         Separator,

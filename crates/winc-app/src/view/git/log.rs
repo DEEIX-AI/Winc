@@ -109,6 +109,7 @@ pub(in crate::view) fn draw_log(app: &mut App, frame: &mut Frame<'_>, index: usi
     let mut hits = Vec::new();
     let mut clipped = None;
     let mut long_files = Vec::new();
+    let mut long_branches = Vec::new();
     let mut runs = Vec::new();
     let details_bottom;
     let branches_max;
@@ -138,7 +139,7 @@ pub(in crate::view) fn draw_log(app: &mut App, frame: &mut Frame<'_>, index: usi
         };
         draw_header(app, frame, view, &parts, (search, &pills), &mut hits);
         draw_branches_button(app, frame, &parts, &mut hits);
-        branches_max = draw_branches(app, frame, view, &parts, &mut hits);
+        branches_max = draw_branches(app, frame, view, &parts, (&mut hits, &mut long_branches));
         draw_list(app, frame, view, &parts, scroll, &mut hits, &mut clipped);
         // 切换到另一个提交时内容淡入（`App::note_log_details_shown`）。
         draw_details_footer(app, frame, view, &parts);
@@ -164,6 +165,23 @@ pub(in crate::view) fn draw_log(app: &mut App, frame: &mut Frame<'_>, index: usi
     }
     app.git.log.branches_max = branches_max;
     app.git.log.branches_scroll = app.git.log.branches_scroll.min(branches_max);
+    app.git.log.long_branches = long_branches;
+    // 分支面板的滚动条贴在面板右边，与侧栏各列表相同。
+    let panel = parts.branches;
+    if panel.w > 0.0 {
+        let track = Rect::new(panel.x, panel.y, panel.w - 1.0, panel.h);
+        let scroll = app.git.log.branches_scroll;
+        let content = branches_max + panel.h;
+        draw_scrollbar(
+            app,
+            frame,
+            ScrollArea::LogBranches,
+            0,
+            track,
+            scroll,
+            content,
+        );
+    }
     app.hits.log = hits;
     app.git.log.clipped = clipped;
     app.git.log.long_files = long_files;
@@ -386,7 +404,14 @@ fn log_pills(app: &App, frame: &mut Frame<'_>, query: &LogQuery) -> Vec<StatusEn
     let size = app.fonts.ui_small;
     let value = |pill| match pill {
         LogPill::Branch => query.branch.clone().unwrap_or_else(|| all.to_owned()),
-        LogPill::Author => query.author.clone().unwrap_or_else(|| all.to_owned()),
+        // 按自己的邮箱筛选时写「我」。
+        LogPill::Author => match &query.author {
+            Some(a) if !app.git.my_email.is_empty() && *a == app.git.my_email => {
+                t!("menu-log-author-me").to_owned()
+            }
+            Some(a) => a.clone(),
+            None => all.to_owned(),
+        },
         LogPill::Date => query.since_days.map_or(all.to_owned(), since_label),
         LogPill::Path => match query.paths.as_slice() {
             [] => all.to_owned(),

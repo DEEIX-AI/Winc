@@ -171,7 +171,10 @@ impl App {
             }
             _ if self.overlays.picker.open => self.close_picker(),
             Target::Scrollbar(
-                bar @ (Scrollbar::Panel | Scrollbar::Commit | Scrollbar::Outline),
+                bar @ (Scrollbar::Panel
+                | Scrollbar::Commit
+                | Scrollbar::Outline
+                | Scrollbar::LogBranches),
                 grab,
             ) => {
                 self.grab_scrollbar(bar, grab);
@@ -247,8 +250,18 @@ impl App {
                     };
                 }
             }
+            // 双击分支面板里的分支：签出它（第一下已经按它筛选了）。
+            Target::Log(crate::app::git::log::LogTarget::BranchRow(i))
+                if self.click_count(x, y) == 2 =>
+            {
+                self.checkout_log_branch_row(i);
+            }
             Target::Log(target) => {
-                let count = self.click_count(x, y);
+                let count = match target {
+                    // 分支行上面已经记过这次点击。
+                    crate::app::git::log::LogTarget::BranchRow(_) => 1,
+                    _ => self.click_count(x, y),
+                };
                 self.press_log(target);
                 // 双击一个提交时打开其改动的第一个文件，效果等同于按回车。
                 if let (

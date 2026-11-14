@@ -274,6 +274,8 @@ pub enum MenuCommand {
     FormRemote(usize),
     /// 日志的作者筛选：0 是全部作者，`i + 1` 是作者菜单里第 `i` 个作者。
     LogAuthor(usize),
+    /// 日志的作者筛选：只看自己（仓库配置的 `user.email`）的提交。
+    LogAuthorMe,
     /// 日志的日期筛选：只看最近几天的提交，0 是全部日期。
     LogSince(u32),
     /// 日志的路径筛选：0 是全部路径，`i + 1` 是路径菜单里第 `i` 个路径（勾上或取消）。
@@ -310,6 +312,10 @@ pub enum MenuCommand {
     LogCopyShortOid,
     /// 日志里的提交：复制完整的说明。
     LogCopyMessage,
+    /// 日志里的提交：复制它的补丁（`git format-patch`）。
+    LogCopyPatch,
+    /// 日志里改动的一个文件：把它在这个提交里的版本和工作区里的版本并排比较。
+    LogCompareWithLocal,
     /// 日志：转到提交号、分支或标签。
     LogGoTo,
     /// 编辑区：开关逐行追溯（开着时打勾）。
@@ -498,6 +504,8 @@ impl MenuCommand {
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogGoTo => t!("menu-log-go-to"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
+            MenuCommand::LogCopyPatch => t!("menu-log-copy-patch"),
+            MenuCommand::LogCompareWithLocal => t!("menu-log-compare-with-local"),
             MenuCommand::ToggleBlame => t!("menu-git-blame"),
             MenuCommand::GitStash => t!("menu-git-stash"),
             MenuCommand::CommitRun => t!("git-commit-button"),
@@ -562,6 +570,7 @@ impl MenuCommand {
             MenuCommand::LogSince(0) => t!("menu-log-all-dates"),
             MenuCommand::LogPath(0) => t!("menu-log-all-paths"),
             MenuCommand::LogPathOther => t!("menu-log-other-path"),
+            MenuCommand::LogAuthorMe => t!("menu-log-author-me"),
             MenuCommand::LogSince(_) | MenuCommand::LogPath(_) => "",
             MenuCommand::FormBase(0) => t!("menu-git-current-branch"),
             MenuCommand::LogAuthor(_) | MenuCommand::FormBase(_) | MenuCommand::FormRemote(_) => "",

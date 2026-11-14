@@ -166,6 +166,8 @@ impl App {
             MenuTarget::CommitFile(path)
         } else if let Some((i, path)) = self.log_file_context_target(x, y) {
             MenuTarget::LogFile(i, path)
+        } else if let Some(index) = self.log_branch_context_target(x, y) {
+            MenuTarget::BranchOps(index)
         } else if let Some(oid) = self.log_context_target(x, y) {
             MenuTarget::LogCommit(oid)
         } else if let Some((id, right)) = self.diff_context_target(x, y) {

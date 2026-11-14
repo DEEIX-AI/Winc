@@ -74,6 +74,10 @@ impl App {
                 MenuCommand::LogPathOther => self.open_log_path_dialog(),
                 _ => {}
             },
+            MenuTarget::LogAuthor if command == MenuCommand::LogAuthorMe => {
+                let me = self.git.my_email.clone();
+                self.change_log_query(|q| q.author = Some(me));
+            }
             MenuTarget::LogAuthor => {
                 if let MenuCommand::LogAuthor(i) = command {
                     let author = i

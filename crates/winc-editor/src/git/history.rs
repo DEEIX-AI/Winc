@@ -183,6 +183,20 @@ impl Git {
         }
     }
 
+    /// 返回提交 `oid` 的补丁（`git format-patch` 的格式，含作者、时间、说明和改动），可以用
+    /// `git am` 应用到别的仓库。
+    ///
+    /// # Errors
+    ///
+    /// Git 运行失败时返回原因。
+    pub fn commit_patch(&self, root: &Path, oid: &str, cancel: &Cancel) -> Result<String, String> {
+        let mut command = self.command(root);
+        // 完整的十六进制提交号不以 `-` 开头，不会被当成选项。
+        command.args(["format-patch", "-1", "--stdout", "--no-color", oid]);
+        let stdout = self.run(&mut command, SHOW_TIMEOUT, cancel)?;
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
+    }
+
     /// 返回包含提交 `oid` 的本地分支和远程分支的短名，本地的在前，各自按名字排序；不含远程的
     /// `HEAD`（如 `origin/HEAD`）。
     ///

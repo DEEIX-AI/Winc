@@ -12,11 +12,12 @@ pub(crate) enum LogFileRow {
 }
 
 /// 改动的文件 `files` 在详情里怎么排：平铺（`flat`）时按原来的顺序一个文件一行；否则按所在
-/// 目录分组，每组一行目录标题，组内按原来的顺序。`root` 是仓库的根目录。
+/// 目录分组，每组一行目录标题，组内按原来的顺序。`root` 是仓库的根目录。`pinned` 时第一个
+/// 文件（文件历史查看的文件）所在的组排在最前。
 pub(crate) fn log_file_rows(
     root: Option<&Path>,
     files: &[CommitFile],
-    flat: bool,
+    (flat, pinned): (bool, bool),
 ) -> Vec<LogFileRow> {
     if flat {
         return (0..files.len()).map(LogFileRow::File).collect();
@@ -27,7 +28,11 @@ pub(crate) fn log_file_rows(
         relative.map_or_else(String::new, |d| d.to_string_lossy().into_owned())
     };
     let mut order: Vec<(String, usize)> = files.iter().map(dir).zip(0..).collect();
-    order.sort_by(|a, b| a.0.cmp(&b.0));
+    let first = order.first().filter(|_| pinned).map(|(d, _)| d.clone());
+    order.sort_by(|a, b| {
+        let later = |d: &String| first.as_ref() != Some(d);
+        (later(&a.0), &a.0).cmp(&(later(&b.0), &b.0))
+    });
     let mut rows = Vec::new();
     let mut last: Option<&str> = None;
     for (dir, i) in &order {
@@ -264,6 +269,7 @@ impl App {
                 }
             }
             MenuCommand::FileHistory => self.git_file_history(&path),
+            MenuCommand::LogCompareWithLocal => self.compare_log_file_with_local(path),
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }
@@ -290,8 +296,16 @@ impl App {
 
     /// 详情里改动的文件排成的各行（见 [`log_file_rows`]），平铺还是按目录分组跟随提交视图。
     pub(crate) fn log_file_layout(&self) -> Vec<LogFileRow> {
-        let files = self.log_shown_files().unwrap_or_default();
-        log_file_rows(self.git.root.as_deref(), files, self.git.commit.flat())
+        self.log_file_rows_of(self.log_shown_files().unwrap_or_default())
+    }
+
+    /// 详情里文件 `files` 排成的各行：平铺还是分组跟随提交视图，文件历史查看的文件所在的组
+    /// 排在最前（比较两个版本时没有）。
+    pub(crate) fn log_file_rows_of(&self, files: &[CommitFile]) -> Vec<LogFileRow> {
+        let view = self.editor.active().and_then(|d| d.log.as_deref());
+        let pinned = view.is_some_and(|v| v.query.path.is_some() && v.compare.is_none());
+        let flat = self.git.commit.flat();
+        log_file_rows(self.git.root.as_deref(), files, (flat, pinned))
     }
 
     /// 详情里各文件从上到下的顺序（文件列表里的下标）：键盘上下移动、打开第一个文件都按它。

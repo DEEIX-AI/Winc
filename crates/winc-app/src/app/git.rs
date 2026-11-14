@@ -285,6 +285,9 @@ pub(crate) struct GitState {
     /// 当前仓库里自己最近写的提交信息，最近的在前：在别处（终端、其他工具）提交的也在其中，
     /// 补在本程序记住的提交信息后面。
     pub(crate) own_messages: Vec<String>,
+    /// 仓库配置的当前用户的邮箱（见 [`winc_editor::git::RecentHistory::me`]）；日志的作者筛选里
+    /// 「我」按它筛选。没有读到时为空。
+    pub(crate) my_email: String,
     /// 读作者时的仓库和它的 `HEAD`：换了仓库或 `HEAD` 动过（提交、拉取、切换）时重读。
     authors_for: Option<(PathBuf, Option<String>)>,
     /// 已经读过 `git` 版本的仓库：每个仓库每次运行只读一次，不随每次刷新多运行一条命令。
@@ -348,6 +351,7 @@ impl Default for GitState {
             version_read: HashSet::new(),
             authors: Vec::new(),
             own_messages: Vec::new(),
+            my_email: String::new(),
             authors_for: None,
             auto_fetch: fetch::AutoFetch::default(),
             branch_folders: HashSet::new(),
@@ -410,6 +414,7 @@ impl GitState {
         self.home = None;
         self.authors.clear();
         self.own_messages.clear();
+        self.my_email.clear();
         self.authors_for = None;
         self.problem = None;
         self.generation += 1;
@@ -1041,6 +1046,7 @@ impl App {
                         if let Some(history) = refs.history {
                             self.git.authors = history.authors;
                             self.git.own_messages = history.own;
+                            self.git.my_email = history.me;
                             self.git.commit.message_history_changed();
                         }
                         if let Some(watcher) = &mut self.disk.watcher {

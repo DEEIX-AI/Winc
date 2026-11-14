@@ -212,6 +212,9 @@ git-log-details-parents = { $count ->
     [one] Parent
    *[other] Parents
 }
+git-log-local-diff-title = { $name } · { $rev } ↔ Local
+git-log-copied-patch = Copied the patch of commit { $commit }
+git-log-patch-failed = Couldn’t create the patch: { $error }
 git-log-details-branches = Branches
 git-log-details-branches-loading = Looking…
 git-log-details-branches-none = Not on any branch

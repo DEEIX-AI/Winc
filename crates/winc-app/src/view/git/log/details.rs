@@ -279,6 +279,11 @@ fn draw_branches(
     let row = Rect::new(x, y, width, 22.0);
     let label = t!("git-log-details-branches");
     let start = ui_text_small(frame, app, x, row, label, p.text_dim, area) + 8.0;
+    // 没查出来：不画这一行。
+    let failed = details.is_some_and(|d| app.git.log.branches_failed.contains(&d.oid));
+    if failed {
+        return y;
+    }
     let Some(branches) = details.and_then(|d| d.branches.as_ref()) else {
         let text = t!("git-log-details-branches-loading");
         ui_text_small(frame, app, start, row, text, p.text_dim, area);

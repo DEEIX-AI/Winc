@@ -78,7 +78,12 @@ impl App {
                 )
             }
         };
-        let mut menu = vec![item(all), MenuEntry::Separator];
+        let mut menu = vec![item(all)];
+        // 作者菜单：读到了自己的邮箱时，「全部作者」下面是「我」。
+        if *target == MenuTarget::LogAuthor && !self.git.my_email.is_empty() {
+            menu.push(item(MenuCommand::LogAuthorMe));
+        }
+        menu.push(MenuEntry::Separator);
         let listed = !rest.is_empty();
         menu.extend(rest.into_iter().map(item));
         if *target == MenuTarget::LogPath {
@@ -110,6 +115,10 @@ impl App {
         match command {
             MenuCommand::LogSince(days) => {
                 Some(query.is_some_and(|q| q.since_days.unwrap_or(0) == days))
+            }
+            MenuCommand::LogAuthorMe => {
+                let me = self.git.my_email.as_str();
+                Some(query.is_some_and(|q| q.author.as_deref() == Some(me)))
             }
             MenuCommand::LogPath(i) => Some(query.is_some_and(|q| match i.checked_sub(1) {
                 None => q.paths.is_empty(),

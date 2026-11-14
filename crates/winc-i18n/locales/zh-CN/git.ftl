@@ -194,6 +194,9 @@ git-log-details-commit = 提交
 git-log-details-parents = { $count ->
    *[other] 父提交
 }
+git-log-local-diff-title = { $name } · { $rev } ↔ 本地
+git-log-copied-patch = 已复制提交 { $commit } 的补丁
+git-log-patch-failed = 无法生成补丁：{ $error }
 git-log-details-branches = 所在分支
 git-log-details-branches-loading = 正在查找…
 git-log-details-branches-none = 不在任何分支上

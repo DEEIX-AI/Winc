@@ -21,7 +21,7 @@ pub(super) fn draw_branches_button(
     hits.push((button, LogTarget::BranchesToggle));
 }
 
-/// 绘制分支面板，返回最大滚动距离（逻辑像素）。
+/// 绘制分支面板，返回最大滚动距离（逻辑像素）；名字截短了的行记进 `long`。
 ///
 /// 一行一个分支：分支图标和名字，当前分支后面打 ✓；正在按它筛选的一行铺选中的底色，没有按
 /// 分支筛选时「全部分支」铺选中的底色。组的标题小号淡色，前面是折叠箭头。右边一道分隔线。
@@ -30,7 +30,7 @@ pub(super) fn draw_branches(
     frame: &mut Frame<'_>,
     view: &LogView,
     parts: &LogParts,
-    hits: &mut Vec<(Rect, LogTarget)>,
+    (hits, long): (&mut Vec<(Rect, LogTarget)>, &mut Vec<usize>),
 ) -> f32 {
     let area = parts.branches;
     if area.w <= 0.0 {
@@ -62,7 +62,7 @@ pub(super) fn draw_branches(
         let hovered = app.pointer.hover == Hover::Log(target);
         let chosen = match row {
             BranchRow::All => filter.is_none(),
-            BranchRow::Branch(name, _) => filter == Some(name.as_str()),
+            BranchRow::Branch { name, .. } => filter == Some(name.as_str()),
             BranchRow::Heading(_) => false,
         };
         if let Some(color) = row_color(p, chosen, false, hovered) {
@@ -82,22 +82,35 @@ pub(super) fn draw_branches(
                     area,
                 );
             }
-            BranchRow::Heading(remote) => {
-                let open = !app.git.log.branch_folds[usize::from(*remote)];
+            BranchRow::Heading(group) => {
+                let open = !app.git.log.branch_folds.contains(group);
                 let turn = if open { FRAC_PI_2 } else { 0.0 };
                 icons::chevron_turned(frame, (x + 3.0, cy), 6.0, turn, p.text_dim, area);
-                let title = match remote {
-                    false => t!("menu-git-local-branches"),
-                    true => t!("menu-git-remote-branches"),
+                // 只有一个远程时标题写「远程分支」，几个远程时写远程名。
+                let remotes = rows
+                    .iter()
+                    .filter(|r| matches!(r, BranchRow::Heading(Some(_))));
+                let title = match group {
+                    None => t!("menu-git-local-branches"),
+                    Some(_) if remotes.count() == 1 => t!("menu-git-remote-branches"),
+                    Some(remote) => remote.as_str(),
                 };
                 ui_text_small(frame, app, x + 14.0, band, title, p.text_dim, area);
             }
-            BranchRow::Branch(name, current) => {
+            BranchRow::Branch {
+                label: name,
+                current,
+                ..
+            } => {
                 let x = x + crate::theme::TREE_INDENT;
                 icons::branch_small(frame, (x + 4.0, cy), p.text_muted, area);
                 let check = if *current { 16.0 } else { 0.0 };
                 let room = (band.right() - x - 14.0 - check - 6.0).max(0.0);
                 let shown = truncate_end(frame, name, app.fonts.ui_small, room);
+                // 截短了：悬停时提示全名。
+                if shown != name.as_str() {
+                    long.push(i);
+                }
                 let end = ui_text_small(frame, app, x + 14.0, band, &shown, p.text, area);
                 if *current {
                     icons::check(frame, (end + 10.0, cy), 9.0, p.accent, area);

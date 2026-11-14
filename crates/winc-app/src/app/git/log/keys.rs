@@ -47,7 +47,9 @@ impl App {
             }
             Key::Named(NamedKey::End) => count - 1,
             Key::Named(NamedKey::Enter) => {
-                self.open_log_file(0);
+                if let Some(&first) = self.log_file_order().first() {
+                    self.open_log_file(first);
+                }
                 return;
             }
             _ => return,
