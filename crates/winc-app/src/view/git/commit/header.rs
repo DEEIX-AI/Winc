@@ -135,19 +135,29 @@ pub(super) fn location_width(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
     if !app.git_has_worktrees() {
         return None;
     }
-    let label = worktree_button_label(app);
+    let label = worktree_button_label(app, frame);
     let text = frame.measure(FontKind::Ui, app.fonts.ui_small, &label);
     Some(LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL)
 }
 
-/// 工作树按钮上写的名字：附属工作树的名字。在主工作树上不写，按钮只有图标和下拉箭头，是哪个
-/// 工作树写在悬停提示里。
-fn worktree_button_label(app: &App) -> String {
+/// 工作树按钮上写的名字：主工作树写「主工作树」，附属工作树写它自己的名字。
+///
+/// 标题行放不下完整的项目名和「主工作树」时不写后者，按钮只有图标和下拉箭头：项目名优先，
+/// 是哪个工作树写在悬停提示里。附属工作树的名字始终写出。
+fn worktree_button_label(app: &App, frame: &mut Frame<'_>) -> String {
     let label = app.git_worktree_label();
-    if label == t!("git-location-main-worktree") {
-        String::new()
-    } else {
+    if label != t!("git-location-main-worktree") {
+        return label;
+    }
+    let bar = ContextBar::new(app, frame);
+    let right = app.commit_parts().tools[0].0.x - 4.0;
+    let room = (right - bar.left() - LOCATION_GAP).max(0.0);
+    let text = frame.measure(FontKind::Ui, app.fonts.ui_small, &label);
+    let full = LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL;
+    if bar.project_full() + full <= room {
         label
+    } else {
+        String::new()
     }
 }
 
@@ -164,7 +174,7 @@ pub(super) fn draw_location_row(
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
     let p = app.palette;
-    let label = worktree_button_label(app);
+    let label = worktree_button_label(app, frame);
     let names = [(label.as_str(), p.text_muted)];
     let open = app.picker_lists_locations();
     let lit = open || app.pointer.hover == Hover::Commit(CommitTarget::Location);

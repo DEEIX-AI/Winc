@@ -25,9 +25,9 @@ use super::*;
 use crate::app::animation::{Clock, TREE_ANIMATION};
 use crate::layout::SidebarView;
 
-/// 大纲标题行上下各留的空隙（逻辑像素），与侧栏里列表和上下相邻部分的间隔相同
-/// （`SIDEBAR_LIST_GAP`）：上面是分隔线，下面是侧栏卡片的下沿或符号列表，悬停的底色不贴边。
-pub(crate) const OUTLINE_GAP: f32 = SIDEBAR_LIST_GAP;
+/// 大纲标题行上下各留的空隙（逻辑像素）：列表间隔（`SIDEBAR_LIST_GAP`）的一半，与提交视图中
+/// 储藏一组的标题相同，侧栏底部收着的各栏等高。上面是分隔线，下面是侧栏卡片的下沿或符号列表。
+pub(crate) const OUTLINE_GAP: f32 = SIDEBAR_LIST_GAP / 2.0;
 /// 大纲标题行的高度（逻辑像素）：一行 `TREE_ROW`，上下各留 [`OUTLINE_GAP`]。
 pub(crate) const OUTLINE_HEADER: f32 = TREE_ROW + 2.0 * OUTLINE_GAP;
 /// 第一次展开时符号列表的高度（逻辑像素）：十行。

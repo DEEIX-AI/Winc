@@ -170,6 +170,11 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
             _ => (t!("common-dialog-checkout-after-create"), checkout),
         };
         let end = draw_check_option(app, frame, row, text, on);
+        if part == DialogPart::Copy && push.is_some() {
+            // 名称后面淡淡地说明范围：送出的是本地的全部标签。
+            let hint = t!("git-push-form-tags-hint");
+            ui_text_small(frame, app, end + 8.0, row, hint, p.text_dim, card);
+        }
         if part == DialogPart::Copy && push.is_none() {
             // 名称后面淡淡地跟着要复制的（配置 `git.worktreeCopy`）。
             let globs = app

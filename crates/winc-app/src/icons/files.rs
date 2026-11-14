@@ -172,31 +172,25 @@ pub fn folder_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, c
     frame.stroke(&shapes, WIDTH, color, clip);
 }
 
-/// 绘制小号工作树图标，12×12，以 `(cx, cy)` 为中心：前后错开的两个圆角方框，后面一个只露出
-/// 右上的两条边，表示同一个仓库签出的另一份目录。线条和小号分支图标一样细。
+/// 绘制小号工作树图标，12×12，以 `(cx, cy)` 为中心：左上、右下各一个圆角方框，由一道折线
+/// 相连，表示从同一个仓库另外签出的目录。线条和小号分支图标一样细。
 pub fn worktree_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
     const WIDTH: f32 = 1.25;
-    let h = WIDTH / 2.0;
-    let c = 2.0;
-    // 前面的方框在左下，后面的在右上，各 8.5 见方，错开 2.5。
-    let (l, t, r, b) = (cx - 6.0 + h, cy - 3.5 + h, cx + 3.5 - h, cy + 6.0 - h);
-    let (bl, bt, br, bb) = (l + 2.5, cy - 6.0 + h, cx + 6.0 - h, b - 2.5);
-    let shapes = [
-        Stroke::Line(l, b - c, l, t + c),
-        Stroke::Arc(l + c, t + c, c, -PI, -FRAC_PI_2),
-        Stroke::Line(l + c, t, r - c, t),
-        Stroke::Arc(r - c, t + c, c, -FRAC_PI_2, 0.0),
-        Stroke::Line(r, t + c, r, b - c),
-        Stroke::Arc(r - c, b - c, c, 0.0, FRAC_PI_2),
-        Stroke::Line(r - c, b, l + c, b),
-        Stroke::Arc(l + c, b - c, c, FRAC_PI_2, PI),
-        Stroke::Arc(bl + c, bt + c, c, -PI, -FRAC_PI_2),
-        Stroke::Line(bl + c, bt, br - c, bt),
-        Stroke::Arc(br - c, bt + c, c, -FRAC_PI_2, 0.0),
-        Stroke::Line(br, bt + c, br, bb - c),
-        Stroke::Arc(br - c, bb - c, c, 0.0, FRAC_PI_2),
+    // 方框 5 见方，圆角 1.5；两个方框横竖各隔 0.75。
+    let (side, h) = (5.0, WIDTH / 2.0);
+    let (near, far) = (-6.0 + h, 6.0 - h - side);
+    let first = rounded_outline(cx + near, cy + near, side, side, 1.5);
+    let second = rounded_outline(cx + far, cy + far, side, side, 1.5);
+    // 折线：从第一个方框底边的中点往下，拐一个圆角，接到第二个方框左边的中点。
+    let (x, y, c) = (cx + near + side / 2.0, cy + far + side / 2.0, 1.5);
+    let link = [
+        Stroke::Line(x, cy + near + side, x, y - c),
+        Stroke::Arc(x + c, y - c, c, FRAC_PI_2, PI),
+        Stroke::Line(x + c, y, cx + far, y),
     ];
-    frame.stroke(&shapes, WIDTH, color, clip);
+    frame.stroke(&first, WIDTH, color, clip);
+    frame.stroke(&second, WIDTH, color, clip);
+    frame.stroke(&link, WIDTH, color, clip);
 }
 
 /// 绘制「新建文件」图标，占 12×15 的位置（左上角 `(x, y)`）：和文件树工具栏的 [`add_file`] 是

@@ -293,7 +293,7 @@ impl App {
             Some(FormKind::Branch { .. }) => {
                 DialogLayout::compute(window, false, &[DialogPart::Checkout])
             }
-            // 两个勾选项借用已有的部件：`Copy` 是「推送全部标签」，`NewWindow` 是「不再询问」。
+            // 两个勾选项借用已有的部件：`Copy` 是「推送标签」，`NewWindow` 是「不再询问」。
             Some(FormKind::Push(form)) => DialogLayout::push(
                 window,
                 form.lines(),

@@ -469,7 +469,8 @@ pub fn refresh_turned(
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
 
-/// 绘制「同步」图标，约 13×13：同一个圆上相对的两段圆弧，各自顺时针画到直角箭头为止。
+/// 绘制「同步」图标，约 13×13：同一个圆上相对的两段圆弧，各自顺时针画到直角箭头为止。圆弧止于
+/// 右上、左下 45° 处，箭头的两臂因此一横一竖。
 ///
 /// 用于与远程交换提交的操作；只重读本地状态的操作用 [`refresh`]。
 pub fn sync(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Rect) {
@@ -485,20 +486,22 @@ pub fn sync_turned(
     clip: Rect,
 ) {
     let r = RING;
-    // 两段圆弧之间的空隙（弧度）。取 0.5：箭头落在空隙里，不碰到另一段圆弧。
-    let gap = 0.5;
+    // 圆弧起点离 9 点钟、3 点钟的角度（弧度）：起点不碰到另一段圆弧的箭头。
+    let lead = 0.2;
+    // 圆弧的跨度：止于离起始方向 135° 处，那里的切线与水平成 45°。
+    let span = 0.75 * PI - lead;
     // 箭头臂长（逻辑像素），与「刷新」图标相同。
     let arm = 3.0;
     let base = turn.rem_euclid(1.0) * 2.0 * PI;
-    // 从 `start` 起顺时针画半圈减去两个空隙的圆弧，末端加箭头。
+    // 从 `start` 起顺时针画 `span` 的圆弧，末端加箭头。
     let half = |start: f32| {
         // 起点映射到 -π 至 π 之间，理由同 `refresh_turned`。
         let mut from = start + base;
         while from >= PI {
             from -= 2.0 * PI;
         }
-        let to = from + PI - 2.0 * gap;
-        // 箭头两臂与切线各成 45°，分在圆弧内外两侧。
+        let to = from + span;
+        // 箭头两臂与切线各成 45°，分在圆弧内外两侧；不旋转时一臂竖直、一臂水平。
         let (sin, cos) = to.sin_cos();
         let (tx, ty) = (cx + r * cos, cy + r * sin);
         let k = FRAC_1_SQRT_2 * arm;
@@ -510,8 +513,8 @@ pub fn sync_turned(
         ]
     };
     // 上半段从 9 点钟附近开始，下半段从 3 点钟附近开始。
-    let [a, b, c] = half(-PI + gap);
-    let [d, e, f] = half(gap);
+    let [a, b, c] = half(-PI + lead);
+    let [d, e, f] = half(lead);
     let shapes = [a, b, c, d, e, f];
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
@@ -812,19 +815,6 @@ pub fn push_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, cli
         Stroke::Line(cx - far, cy + far, x, y),
         Stroke::Line(x, y, x - arm, y),
         Stroke::Line(x, y, x, y + arm),
-    ];
-    frame.stroke(&shapes, 1.25, color, clip);
-}
-
-/// 绘制小号「获取」图标，约 10×11，笔宽 1.25：向下的箭头落在一条横线上，只把远程的提交取到
-/// 本地，不改动分支。
-pub fn fetch_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
-    let (top, tip, base, arm) = (cy - 5.0, cy + 1.5, cy + 5.0, 3.0);
-    let shapes = [
-        Stroke::Line(cx, top, cx, tip),
-        Stroke::Line(cx, tip, cx - arm, tip - arm),
-        Stroke::Line(cx, tip, cx + arm, tip - arm),
-        Stroke::Line(cx - 4.5, base, cx + 4.5, base),
     ];
     frame.stroke(&shapes, 1.25, color, clip);
 }

@@ -498,7 +498,7 @@ fn the_push_confirmation_lists_the_commits_it_will_send() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 推送对话框里改了目标分支、勾上「推送全部标签」：推到远程的那个分支，标签一并送出，上游
+/// 推送对话框里改了目标分支、勾上「推送标签」：推到远程的那个分支，标签一并送出，上游
 /// 不变；完成后对话框关闭。目标分支名无效时不能推送。
 #[test]
 fn the_push_dialog_pushes_to_another_branch_with_tags() {

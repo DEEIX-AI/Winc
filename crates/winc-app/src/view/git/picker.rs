@@ -146,7 +146,8 @@ fn draw_actions(
                 (app.picker_action_command(part).label(), ahead)
             }
             PickerPart::Fetch => {
-                icons::fetch_small(frame, icon, color, area);
+                // 与分支行同步控件空闲时（点击即获取）的图标相同。
+                icons::sync(frame, icon, color, area);
                 (app.picker_action_command(part).label(), 0)
             }
             PickerPart::NewBranch => {
