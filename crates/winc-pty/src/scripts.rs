@@ -37,8 +37,18 @@ const REMOTE_START: &str = concat!(
 );
 
 /// 返回远端主机上各个集成脚本的相对路径和内容，写到那台主机的 [`REMOTE_DIR`] 之下。
-pub fn remote() -> impl Iterator<Item = (&'static str, &'static str)> {
-    [ZSH, BASH, FISH, LAUNCH].into_iter().flatten().copied()
+///
+/// 换行符统一为 LF：`include_str!` 内嵌的是检出时的字节，Windows 机器上 `core.autocrlf=true`
+/// 时检出为 CRLF，而远端的 `sh`（dash）把回车当作词的一部分，`case … in` 会解析失败。
+/// 与本机辅助进程 `helper::integration` 写脚本时的转换一致。
+pub fn remote() -> impl Iterator<Item = (&'static str, std::borrow::Cow<'static, str>)> {
+    [ZSH, BASH, FISH, LAUNCH]
+        .into_iter()
+        .flatten()
+        .map(|&(name, content)| {
+            let content = content.replace("\r\n", "\n");
+            (name, std::borrow::Cow::Owned(content))
+        })
 }
 
 /// 返回在远端启动带集成的登录 shell 的命令，接在 `cd '目录' &&` 之后交给 `ssh`；`prompt` 为
@@ -51,6 +61,19 @@ pub fn remote_command(prompt: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_scripts_are_written_with_unix_endings() {
+        // `include_str!` 内嵌的是检出时的字节：Windows 构建机上 `core.autocrlf=true` 时会是
+        // CRLF，而远端 `sh`（dash）把回车当作词的一部分。推给远端的必须是 LF。
+        for (_, content) in remote() {
+            assert!(!content.contains('\r'));
+        }
+        assert_eq!(
+            std::borrow::Cow::<str>::from("case ${shell##*/} in\r\nzsh)\r\n".replace("\r\n", "\n")),
+            "case ${shell##*/} in\nzsh)\n"
+        );
+    }
 
     #[test]
     fn the_remote_command_survives_any_login_shell() {
