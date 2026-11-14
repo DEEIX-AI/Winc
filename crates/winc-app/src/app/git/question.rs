@@ -75,6 +75,21 @@ impl QuestionView {
         }
     }
 
+    /// 返回「按路径筛选」对话框的内容：一个输入框。
+    pub(super) fn log_path() -> Self {
+        Self {
+            title: t!("git-log-path-title").to_owned(),
+            message: None,
+            message_lines: 0,
+            values: Vec::new(),
+            inputs: vec![QuestionInput {
+                label: t!("git-log-path-label"),
+                placeholder: t!("git-log-path-placeholder"),
+            }],
+            confirm: t!("git-log-path-button"),
+        }
+    }
+
     /// 返回添加远程仓库（`editing` 为 `None`）或修改其地址的对话框内容。
     pub(crate) fn remote(editing: Option<&str>) -> QuestionView {
         let input = |label, placeholder| QuestionInput { label, placeholder };

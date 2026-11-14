@@ -65,7 +65,7 @@ pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
 pub(crate) use scroll::ScrollTarget;
 pub use settings::{DialogCache, SettingsState};
-pub use status::motion::{StatusEntry, StatusKey, StatusMotion};
+pub use status::motion::{StatusEntry, StatusKey, StatusMotion, StatusRow};
 pub use status::status_bar::{StatusItem, indent_label};
 pub use workspace::file_drop::DropZone;
 pub use workspace::files::{Pick, PlaceholderAction, TabBar, TabHit};

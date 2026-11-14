@@ -274,6 +274,12 @@ pub enum MenuCommand {
     FormRemote(usize),
     /// 日志的作者筛选：0 是全部作者，`i + 1` 是作者菜单里第 `i` 个作者。
     LogAuthor(usize),
+    /// 日志的日期筛选：只看最近几天的提交，0 是全部日期。
+    LogSince(u32),
+    /// 日志的路径筛选：0 是全部路径，`i + 1` 是路径菜单里第 `i` 个路径（勾上或取消）。
+    LogPath(usize),
+    /// 日志的路径筛选：输入其他路径。
+    LogPathOther,
     /// 日志里的提交：签出（有本地分支指着它就签出该分支，没有就签出提交本身，先确认）。
     LogCheckout,
     /// 日志里的提交：从这里新建分支（输入名字）。
@@ -553,6 +559,10 @@ impl MenuCommand {
             },
             MenuCommand::GitStashOp(op, _) => op.label(),
             MenuCommand::LogAuthor(0) => t!("menu-log-all-authors"),
+            MenuCommand::LogSince(0) => t!("menu-log-all-dates"),
+            MenuCommand::LogPath(0) => t!("menu-log-all-paths"),
+            MenuCommand::LogPathOther => t!("menu-log-other-path"),
+            MenuCommand::LogSince(_) | MenuCommand::LogPath(_) => "",
             MenuCommand::FormBase(0) => t!("menu-git-current-branch"),
             MenuCommand::LogAuthor(_) | MenuCommand::FormBase(_) | MenuCommand::FormRemote(_) => "",
             MenuCommand::GitAbort => t!("git-operation-abort"),
@@ -786,6 +796,10 @@ pub enum MenuTarget {
     StatusPlaces(Vec<Place>),
     /// 日志标题栏的「作者」下拉。
     LogAuthor,
+    /// 日志标题栏的「日期」下拉。
+    LogDate,
+    /// 日志标题栏的「路径」下拉。
+    LogPath,
     /// 日志里的一个提交（完整的提交号）。
     LogCommit(String),
     /// 日志详情（或比较）里改动的一个文件：文件列表里的下标和文件的路径。

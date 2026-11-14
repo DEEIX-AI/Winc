@@ -1,12 +1,163 @@
-//! 筛选：按文字、分支、作者，以及一个文件的历史。
+//! 筛选：按文字、分支、作者、日期、路径，以及一个文件的历史。
 
 use winc_core::Lines;
 
 use super::*;
+use crate::app::input::context_menu::MenuEntry;
 
 use crate::app::scroll::set_scroll_line;
 
+/// 标题栏的一个筛选下拉；按声明的顺序从左到右排。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LogPill {
+    /// 分支。
+    Branch,
+    /// 作者。
+    Author,
+    /// 日期。
+    Date,
+    /// 路径；文件历史没有。
+    Path,
+}
+
+impl LogPill {
+    /// 全部筛选下拉。
+    pub(crate) const ALL: [LogPill; 4] = [
+        LogPill::Branch,
+        LogPill::Author,
+        LogPill::Date,
+        LogPill::Path,
+    ];
+
+    /// 点它时的目标。
+    pub(crate) fn target(self) -> LogTarget {
+        match self {
+            LogPill::Branch => LogTarget::Branch,
+            LogPill::Author => LogTarget::Author,
+            LogPill::Date => LogTarget::Date,
+            LogPill::Path => LogTarget::Path,
+        }
+    }
+}
+
+/// 日期菜单里「最近几天」的几项（天）：最近 24 小时、一周、30 天、一年。自选日期区间要用日历
+/// 选择，这里以这几项常用的范围代替。
+const LOG_SINCE_DAYS: [u32; 4] = [1, 7, 30, 365];
+
+/// 「最近 `days` 天」在日期菜单和标题栏里的写法。
+pub(crate) fn since_label(days: u32) -> String {
+    match days {
+        1 => t!("menu-log-last-day").to_owned(),
+        365 => t!("menu-log-last-year").to_owned(),
+        _ => t!("menu-log-last-days", count = days),
+    }
+}
+
 impl App {
+    /// 标题栏「日期」「路径」「作者」下拉弹出的菜单：最上面是不筛选的一项，下面是各个选项；路径
+    /// 菜单最后是「其他路径…」。
+    pub(in crate::app) fn log_filter_menu(&self, target: &MenuTarget) -> Vec<MenuEntry> {
+        let item = |command| MenuEntry::Item(command, true);
+        let (all, rest): (MenuCommand, Vec<MenuCommand>) = match target {
+            MenuTarget::LogDate => (
+                MenuCommand::LogSince(0),
+                LOG_SINCE_DAYS.map(MenuCommand::LogSince).to_vec(),
+            ),
+            MenuTarget::LogPath => {
+                let paths = 1..=self.git.log.paths.len();
+                (
+                    MenuCommand::LogPath(0),
+                    paths.map(MenuCommand::LogPath).collect(),
+                )
+            }
+            _ => {
+                let authors = 1..=self.git.log.authors.len();
+                (
+                    MenuCommand::LogAuthor(0),
+                    authors.map(MenuCommand::LogAuthor).collect(),
+                )
+            }
+        };
+        let mut menu = vec![item(all), MenuEntry::Separator];
+        let listed = !rest.is_empty();
+        menu.extend(rest.into_iter().map(item));
+        if *target == MenuTarget::LogPath {
+            if listed {
+                menu.push(MenuEntry::Separator);
+            }
+            menu.push(item(MenuCommand::LogPathOther));
+        }
+        menu
+    }
+
+    /// 筛选菜单里一个选项（作者、最近几天、路径）的文字。
+    pub(in crate::app) fn log_filter_label(&self, command: MenuCommand) -> String {
+        let listed = |list: &[String], i: usize| list.get(i - 1).cloned().unwrap_or_default();
+        match command {
+            MenuCommand::LogAuthor(i) => listed(&self.git.log.authors, i),
+            MenuCommand::LogPath(i) => listed(&self.git.log.paths, i),
+            MenuCommand::LogSince(days) => since_label(days),
+            _ => String::new(),
+        }
+    }
+
+    /// 日期、路径菜单里的一项是否打勾（是当前日志的筛选条件）；不是这两种菜单项时为 `None`。
+    pub(in crate::app) fn log_filter_checked(&self, command: MenuCommand) -> Option<bool> {
+        let query = self
+            .editor
+            .active()
+            .and_then(|d| Some(&d.log.as_deref()?.query));
+        match command {
+            MenuCommand::LogSince(days) => {
+                Some(query.is_some_and(|q| q.since_days.unwrap_or(0) == days))
+            }
+            MenuCommand::LogPath(i) => Some(query.is_some_and(|q| match i.checked_sub(1) {
+                None => q.paths.is_empty(),
+                Some(i) => (self.git.log.paths.get(i)).is_some_and(|p| q.paths.contains(p)),
+            })),
+            _ => None,
+        }
+    }
+
+    /// 路径菜单列出的路径：仓库根目录下的各个目录（不含隐藏的，按文件树的顺序），以及已经选上
+    /// 的其他路径。
+    pub(super) fn log_path_choices(&self) -> Vec<String> {
+        let mut paths: Vec<String> = Vec::new();
+        if let Some(root) = self.git.root.as_deref()
+            && let Ok(entries) = winc_editor::list_dir(root)
+        {
+            let dirs = entries
+                .into_iter()
+                .filter(|e| e.kind == winc_editor::EntryKind::Dir);
+            paths.extend(dirs.map(|e| e.name).filter(|n| !n.starts_with('.')));
+        }
+        let chosen = self.editor.active().and_then(|d| d.log.as_deref());
+        for path in chosen.iter().flat_map(|v| &v.query.paths) {
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+        paths
+    }
+
+    /// 路径筛选里加上或去掉 `path`。
+    pub(in crate::app) fn toggle_log_path(&mut self, path: String) {
+        self.change_log_query(|q| match q.paths.iter().position(|p| *p == path) {
+            Some(at) => _ = q.paths.remove(at),
+            None => q.paths.push(path),
+        });
+    }
+
+    /// 打开输入其他路径的对话框（路径菜单的「其他路径…」）。
+    pub(in crate::app) fn open_log_path_dialog(&mut self) {
+        use crate::app::git::form::FormKind;
+        self.show_form_dialog(
+            FormKind::LogPath,
+            TextField::default(),
+            crate::layout::DialogPart::Branch,
+        );
+    }
+
     /// 当前日志的分支筛选条件。
     pub(crate) fn log_branch_filter(&self) -> Option<&str> {
         self.editor.active()?.log.as_ref()?.query.branch.as_deref()

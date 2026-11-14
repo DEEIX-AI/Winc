@@ -23,6 +23,7 @@ mod commit_selection;
 mod diff;
 mod log;
 mod log_details;
+mod log_filters;
 mod merge;
 mod module;
 mod question;

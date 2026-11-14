@@ -194,8 +194,19 @@ git-log-details-commit = 提交
 git-log-details-parents = { $count ->
    *[other] 父提交
 }
+git-log-details-branches = 所在分支
+git-log-details-branches-loading = 正在查找…
+git-log-details-branches-none = 不在任何分支上
+git-log-details-branches-more = 等另外 { $count } 个
 git-log-details-loading-files = 正在读取更改的文件…
 git-compare-title = 比较两个版本
+git-log-path-title = 按路径筛选
+git-log-path-label = 路径
+git-log-path-placeholder = 相对仓库根目录，例如 src/app 或 *.rs
+git-log-path-button = 筛选
+git-log-filter-date = 日期
+git-log-filter-path = 路径
+git-log-filter-paths = { $count } 个路径
 git-go-to-title = 转到提交号、分支或标签
 git-go-to-label = 目标
 git-go-to-placeholder = 提交号、分支或标签，如 a1b2c3d 或 main
@@ -409,6 +420,7 @@ git-commit-button-finish-revert = 完成还原
 
 git-log-filter-placeholder = 按说明或提交号筛选
 git-log-filter-placeholder-key = 按说明或提交号筛选（{ $key }）
+git-log-all-branches = 全部分支
 git-log-filter-all = 全部
 git-log-filter-branch = 分支
 git-log-branch-picker-placeholder = 搜索分支名

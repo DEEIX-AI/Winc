@@ -82,6 +82,7 @@ fn sample() -> State {
         commit_tree: true,
         commit_sort: "status".into(),
         commit_all_repositories: Some(true),
+        log_branches: Some(false),
         commit_messages: vec!["修复登录\n\n说明".into(), "first".into()],
         commit_check_todo: true,
         commit_reformat: true,

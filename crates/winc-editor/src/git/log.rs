@@ -142,6 +142,9 @@ pub struct Details {
     pub files: Option<Vec<CommitFile>>,
     /// 取详情失败的原因。
     pub error: Option<String>,
+    /// 包含该提交的本地分支和远程分支（[`crate::git::Git::containing_branches`]），本地的在前；
+    /// 取回来之前为 `None`。分支随时会变，重取日志时作废。
+    pub branches: Option<Vec<String>>,
 }
 
 impl LogView {
@@ -245,6 +248,19 @@ impl LogView {
         self.error = None;
         if self.selected.is_none() {
             self.details = None;
+        }
+        // 重取多半是分支变了（提交、拉取、切换）：包含各提交的分支重新查。
+        let details = self.details.iter_mut().chain(&mut self.previous);
+        for d in details.chain(&mut self.cache) {
+            d.branches = None;
+        }
+    }
+
+    /// 记下包含提交 `oid` 的分支：选中的、之前显示的和缓存里的详情一并更新。
+    pub fn set_branches(&mut self, oid: &str, branches: &[String]) {
+        let details = self.details.iter_mut().chain(&mut self.previous);
+        for d in details.chain(&mut self.cache).filter(|d| d.oid == oid) {
+            d.branches = Some(branches.to_vec());
         }
     }
 

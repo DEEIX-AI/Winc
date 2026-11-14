@@ -634,16 +634,8 @@ impl App {
                         .is_some_and(|s| s.operation.is_some());
                 log_commit_menu(!busy, &self.current_branch_label(), &tags)
             }
-            MenuTarget::LogAuthor => {
-                let mut menu = vec![
-                    MenuEntry::Item(MenuCommand::LogAuthor(0), true),
-                    MenuEntry::Separator,
-                ];
-                menu.extend(
-                    (0..self.git.log.authors.len())
-                        .map(|i| MenuEntry::Item(MenuCommand::LogAuthor(i + 1), true)),
-                );
-                menu
+            MenuTarget::LogDate | MenuTarget::LogPath | MenuTarget::LogAuthor => {
+                self.log_filter_menu(&target)
             }
             // 目录菜单不经过这里（`App::open_crumb_menu`）。
             MenuTarget::Folder => return,
@@ -955,9 +947,9 @@ impl App {
             MenuCommand::FormRemote(i) => {
                 MenuLabel::plain(self.git.remotes.get(i).map_or("", String::as_str))
             }
-            MenuCommand::LogAuthor(i @ 1..) => {
-                MenuLabel::plain(self.git.log.authors.get(i - 1).map_or("", String::as_str))
-            }
+            MenuCommand::LogAuthor(1..)
+            | MenuCommand::LogSince(1..)
+            | MenuCommand::LogPath(1..) => MenuLabel::plain(&self.log_filter_label(command)),
             MenuCommand::GitBranch(..)
             | MenuCommand::GitFetch
             | MenuCommand::GitPush
@@ -1166,6 +1158,9 @@ impl App {
                 .editor
                 .active()
                 .is_some_and(|d| self.git.blame.is_on(d.id));
+        }
+        if let Some(on) = self.log_filter_checked(command) {
+            return on;
         }
         if command == MenuCommand::CommitAmend {
             return self.git.commit.amend;

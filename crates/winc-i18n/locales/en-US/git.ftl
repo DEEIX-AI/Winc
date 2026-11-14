@@ -212,8 +212,19 @@ git-log-details-parents = { $count ->
     [one] Parent
    *[other] Parents
 }
+git-log-details-branches = Branches
+git-log-details-branches-loading = Looking…
+git-log-details-branches-none = Not on any branch
+git-log-details-branches-more = and { $count } more
 git-log-details-loading-files = Loading changed files…
 git-compare-title = Compare Two Versions
+git-log-path-title = Filter by Path
+git-log-path-label = Path
+git-log-path-placeholder = Relative to the repository root, e.g. src/app or *.rs
+git-log-path-button = Filter
+git-log-filter-date = Date
+git-log-filter-path = Path
+git-log-filter-paths = { $count } paths
 git-go-to-title = Go to Hash, Branch or Tag
 git-go-to-label = Target
 git-go-to-placeholder = Hash, branch or tag, such as a1b2c3d or main
@@ -519,6 +530,7 @@ git-commit-button-finish-revert = Finish Revert
 
 git-log-filter-placeholder = Filter by message or hash
 git-log-filter-placeholder-key = Filter by message or hash ({ $key })
+git-log-all-branches = All Branches
 git-log-filter-all = All
 git-log-filter-branch = Branch
 git-log-branch-picker-placeholder = Search branches by name

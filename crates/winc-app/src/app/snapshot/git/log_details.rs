@@ -155,7 +155,7 @@ fn the_log_files_can_be_walked_with_the_keyboard_and_commits_opened_by_double_cl
     app.press_log(LogTarget::Row(last));
     app.pointer.modifiers = ModifiersState::empty();
     paint(&mut app);
-    let files = app.log_files_len();
+    let files = app.log_file_order().len();
     assert!(files >= 2, "{files}");
 
     // → 进到文件列表，↓ 选下一个，End 到最后，← 回到提交列表。

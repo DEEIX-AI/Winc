@@ -63,6 +63,8 @@ pub struct State {
     /// `None`（没有选过）时由提交视图的样式决定：勾选式列出，暂存区视图只显示当前仓库。所有
     /// 窗口共用，下次启动沿用。
     pub commit_all_repositories: Option<bool>,
+    /// Git 日志左侧是否显示分支面板；`None`（没有选过）时显示。所有窗口共用，下次启动沿用。
+    pub log_branches: Option<bool>,
     /// 提交过的信息，最新的在前，最多 `MAX_COMMIT_MESSAGES` 条。提交信息框里按 `↑` 翻阅，
     /// 提交按钮的菜单里列出最近的几条；所有窗口和仓库共用，下次启动沿用。
     pub commit_messages: Vec<String>,
@@ -503,6 +505,7 @@ impl State {
             .unwrap_or_default()
             .to_owned();
         state.commit_all_repositories = root.get("commitAllRepositories").and_then(Json::as_bool);
+        state.log_branches = root.get("logBranches").and_then(Json::as_bool);
         state.commit_messages = (root.get("commitMessages").and_then(Json::as_array))
             .unwrap_or_default()
             .iter()
@@ -634,6 +637,9 @@ impl State {
         }
         if let Some(all) = self.commit_all_repositories {
             fields.push(("commitAllRepositories", Json::Bool(all)));
+        }
+        if let Some(shown) = self.log_branches {
+            fields.push(("logBranches", Json::Bool(shown)));
         }
         if !self.commit_messages.is_empty() {
             let messages = self.commit_messages.iter().map(|m| Json::String(m.clone()));

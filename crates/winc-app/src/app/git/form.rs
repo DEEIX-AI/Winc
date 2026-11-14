@@ -41,6 +41,8 @@ pub(crate) enum FormKind {
     Remote { editing: Option<String> },
     /// 在 Git 日志中转到一个提交：输入提交号、分支名或标签名。
     GoToRevision,
+    /// 按路径筛选 Git 日志：输入相对仓库根目录的路径或通配。
+    LogPath,
     /// 交互式变基。
     Rebase(Box<RebaseForm>),
     /// 连接远端主机：主机、端口，见 [`crate::app::remote`]。
@@ -89,6 +91,7 @@ impl FormKind {
             FormKind::Remote { editing } => Some(QuestionView::remote(editing.as_deref())),
             FormKind::Connect => Some(QuestionView::connect()),
             FormKind::GoToRevision => Some(QuestionView::go_to_revision()),
+            FormKind::LogPath => Some(QuestionView::log_path()),
             FormKind::Worktree
             | FormKind::Branch { .. }
             | FormKind::Clone
@@ -355,6 +358,17 @@ impl App {
                     dir: None,
                 }
             }
+            FormKind::LogPath => {
+                let path = dialog.name.text().trim();
+                FormPlan {
+                    problem: None,
+                    confirm: t!("git-log-path-button"),
+                    enabled: !path.is_empty(),
+                    base: String::new(),
+                    base_enabled: false,
+                    dir: None,
+                }
+            }
             FormKind::Question(prompt, _) => FormPlan {
                 problem: None,
                 confirm: QuestionView::of(prompt, None).confirm,
@@ -519,6 +533,16 @@ impl App {
             self.go_to_log_revision(revision);
             return;
         }
+        if matches!(dialog.kind, FormKind::LogPath) {
+            // 写成相对仓库根目录的样子：开头的 `./`、`/` 和末尾的 `/` 去掉。
+            let text = dialog.name.text().trim();
+            let path = text.trim_start_matches("./").trim_matches('/').to_owned();
+            self.close_form_dialog();
+            if !path.is_empty() {
+                self.toggle_log_path(path);
+            }
+            return;
+        }
         // 须在发起操作前记录编号：没有窗口时（测试中）后台操作会同步完成。
         let next = self.git.branch.started + 1;
         let kind = dialog.kind.clone();
@@ -537,7 +561,10 @@ impl App {
                 let checkout = dialog.checkout;
                 self.git_new_branch(name, from, checkout);
             }
-            FormKind::Question(..) | FormKind::Connect | FormKind::GoToRevision => {}
+            FormKind::Question(..)
+            | FormKind::Connect
+            | FormKind::GoToRevision
+            | FormKind::LogPath => {}
             FormKind::Clone => self.submit_clone(),
             FormKind::Push(form) => {
                 let remote = dialog.base.clone().unwrap_or_else(|| form.remote.clone());

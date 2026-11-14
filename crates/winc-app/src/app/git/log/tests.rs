@@ -31,11 +31,12 @@ fn times_read_like_a_person_would_say_them() {
     assert_eq!(display_time(&c, at + 17 * 3600 + 28 * 60), "昨天 14:32");
     assert_eq!(display_time(&c, at + 30 * 86_400), "10月26日");
     assert_eq!(display_time(&c, at + 120 * 86_400), "2026年10月26日");
-    // 列表里一种全是数字的写法：今年的「月-日 时:分」（补零），更早的「年-月-日」；不写
-    // 「今天」「几分钟前」。
+    // 列表里今天、昨天的写「今天」「昨天」，今年更早的「月-日 时:分」（补零），更早的
+    // 「年-月-日」；不写「几分钟前」。
     assert_eq!(list_time(&c, at + 30 * 86_400), "10-26 14:32");
-    assert_eq!(list_time(&c, at + 3 * 3600), "10-26 14:32");
-    assert_eq!(list_time(&c, at + 30), "10-26 14:32");
+    assert_eq!(list_time(&c, at + 3 * 3600), "今天 14:32");
+    assert_eq!(list_time(&c, at + 30), "今天 14:32");
+    assert_eq!(list_time(&c, at + 17 * 3600 + 28 * 60), "昨天 14:32");
     assert_eq!(list_time(&c, at + 120 * 86_400), "2026-10-26");
     let early = commit("2026-09-03 18:22", at - 53 * 86_400);
     assert_eq!(list_time(&early, at), "09-03 18:22");

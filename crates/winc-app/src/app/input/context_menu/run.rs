@@ -59,6 +59,21 @@ impl App {
                 MenuCommand::NewWorktree => self.open_worktree_dialog(),
                 _ => {}
             },
+            MenuTarget::LogDate => {
+                if let MenuCommand::LogSince(days) = command {
+                    self.change_log_query(|q| q.since_days = (days > 0).then_some(days));
+                }
+            }
+            MenuTarget::LogPath => match command {
+                MenuCommand::LogPath(0) => self.change_log_query(|q| q.paths.clear()),
+                MenuCommand::LogPath(i) => {
+                    if let Some(path) = self.git.log.paths.get(i - 1).cloned() {
+                        self.toggle_log_path(path);
+                    }
+                }
+                MenuCommand::LogPathOther => self.open_log_path_dialog(),
+                _ => {}
+            },
             MenuTarget::LogAuthor => {
                 if let MenuCommand::LogAuthor(i) = command {
                     let author = i

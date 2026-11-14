@@ -61,6 +61,9 @@ impl Git {
         if let Some(author) = &query.author {
             command.arg(format!("--author={author}"));
         }
+        if let Some(days) = query.since_days {
+            command.arg(format!("--since={days}.days.ago"));
+        }
         command.arg(LOG_DATE).arg(LOG_FORMAT);
         // 按行范围查找时文件写在 `-L` 里，不能再写路径；`-s` 不输出每个提交改了这段的哪些地方。
         let range = match (&query.path, query.lines) {
@@ -96,6 +99,9 @@ impl Git {
         }
         if let Some(path) = query.path.as_ref().filter(|_| range.is_none()) {
             command.arg("--").arg(slash_path(root, path)?);
+        } else if query.path.is_none() && !query.paths.is_empty() {
+            // 路径规格写在 `--` 之后：以 `-` 开头的也不会被当成选项。
+            command.arg("--").args(&query.paths);
         }
         let stream = process::Stream::spawn(&mut command).map_err(|e| describe(&e))?;
         Ok(LogStream {
@@ -175,6 +181,36 @@ impl Git {
         } else {
             Err(unresolved())
         }
+    }
+
+    /// 返回包含提交 `oid` 的本地分支和远程分支的短名，本地的在前，各自按名字排序；不含远程的
+    /// `HEAD`（如 `origin/HEAD`）。
+    ///
+    /// # Errors
+    ///
+    /// Git 查询失败时返回原因。
+    pub fn containing_branches(
+        &self,
+        root: &Path,
+        oid: &str,
+        cancel: &Cancel,
+    ) -> Result<Vec<String>, String> {
+        let mut command = self.command(root);
+        command.args(["for-each-ref", "--format=%(refname)", "--contains"]);
+        // 完整的十六进制提交号不以 `-` 开头，不会被当成选项。
+        command.args([oid, "refs/heads", "refs/remotes"]);
+        let stdout = self.run(&mut command, SHOW_TIMEOUT, cancel)?;
+        let text = String::from_utf8_lossy(&stdout);
+        fn short(name: &str) -> Option<(u8, &str)> {
+            let local = name.strip_prefix("refs/heads/").map(|n| (0, n));
+            local.or_else(|| name.strip_prefix("refs/remotes/").map(|n| (1, n)))
+        }
+        let mut names: Vec<(u8, &str)> = (text.lines())
+            .filter_map(short)
+            .filter(|(kind, name)| *kind == 0 || !name.ends_with("/HEAD"))
+            .collect();
+        names.sort();
+        Ok(names.into_iter().map(|(_, n)| n.to_owned()).collect())
     }
 
     /// 提交 `oid` 是否在不筛选的日志中：能从某个分支、远程分支、标签（不含储藏）或 `HEAD`
