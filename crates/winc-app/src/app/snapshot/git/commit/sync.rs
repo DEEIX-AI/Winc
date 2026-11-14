@@ -12,10 +12,17 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     };
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    // 「修改上次提交」单独占信息上方的一行，不在菜单里；默认宽度下「提交」「提交并推送…」并排。
+    // 「修改上次提交」单独占信息上方的一行，不在菜单里；默认宽度下「提交」「提交并推送…」并排，
+    // 菜单里不再重复列出「提交并推送」。
     let amend = MenuEntry::Item(MenuCommand::CommitAmend, true);
+    let pushes = |menu: &[MenuEntry]| {
+        (menu.iter()).find_map(|entry| match entry {
+            MenuEntry::Item(MenuCommand::CommitPush, enabled) => Some(*enabled),
+            _ => None,
+        })
+    };
     let menu = app.commit_button_menu();
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
+    assert_eq!(pushes(&menu), None);
     let parts = app.commit_parts();
     assert!(parts.push.is_some() && parts.amend.is_some());
     assert!(!menu.contains(&amend));
@@ -27,14 +34,23 @@ fn the_commit_button_menu_pushes_after_committing_or_amends() {
     assert_eq!(app.commit_parts().commit.x, parts.commit.x);
     app.git.commit.set_staging(false);
 
-    // 回归：主按钮显示没有要提交的更改时，菜单不能再提供「提交并推送」；修改上一次提交仍然可用。
+    // 修改上一次提交时没有并排的推送按钮，「提交并推送」回到菜单里，可以用；回归：主按钮显示
+    // 没有要提交的更改时，菜单不能提供「提交并推送」，修改上一次提交仍然可用。
     let entries = std::mem::take(&mut app.git.status.as_mut().unwrap().entries);
-    let menu = app.commit_button_menu();
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, false)));
     app.git.commit.amend = true;
-    let menu = app.commit_button_menu();
-    assert!(menu.contains(&MenuEntry::Item(MenuCommand::CommitPush, true)));
+    assert!(app.commit_parts().push.is_none());
+    assert_eq!(pushes(&app.commit_button_menu()), Some(true));
     app.git.commit.amend = false;
+    let narrow = app.panels.sidebar.width;
+    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
+    app.relayout();
+    paint(&mut app);
+    if app.commit_parts().push.is_none() {
+        assert_eq!(pushes(&app.commit_button_menu()), Some(false));
+    }
+    app.panels.sidebar.width = narrow;
+    app.relayout();
+    paint(&mut app);
     app.git.status.as_mut().unwrap().entries = entries;
 
     // 「修改上次提交」启用时打勾，按钮写「修改提交」。

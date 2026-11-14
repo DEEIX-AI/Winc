@@ -344,6 +344,8 @@ pub enum MenuCommand {
     CommitCopyOid,
     /// 「提交 ⌄」：提交以后继续推送。
     CommitPush,
+    /// 「提交 ⌄」：提交以后与上游同步（先拉取再推送）。
+    CommitSync,
     /// 「提交 ⌄」（卡片太窄、底行放不下勾选框时）和「上一次提交」的「⋯」：开关「修改上一次
     /// 提交」（开着时打勾）。
     CommitAmend,
@@ -351,6 +353,14 @@ pub enum MenuCommand {
     CommitSignOff,
     /// 提交按钮的菜单：下一次提交不运行钩子（开着时打勾，提交成功后关闭）。
     CommitNoVerify,
+    /// 提交按钮的菜单：提交前检查新增的 TODO（开着时打勾）。
+    CommitCheckTodo,
+    /// 提交按钮的菜单：提交前格式化要提交的文件（开着时打勾）。
+    CommitReformat,
+    /// 提交按钮的菜单：最近的第几条提交信息。
+    CommitMessage(usize),
+    /// 提交按钮的菜单：添加第几个共同作者。
+    CommitCoAuthor(usize),
     /// 文件树工具栏的「⋯」：刷新目录。
     TreeRefresh,
     /// 文件树工具栏的「⋯」：折叠所有目录。
@@ -504,8 +514,12 @@ impl MenuCommand {
             MenuCommand::CommitUndo => t!("menu-commit-undo"),
             MenuCommand::CommitCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::CommitPush => t!("menu-commit-and-push"),
+            MenuCommand::CommitSync => t!("menu-commit-and-sync"),
             MenuCommand::CommitAmend => t!("menu-commit-amend"),
             MenuCommand::CommitSignOff => t!("menu-commit-sign-off"),
+            MenuCommand::CommitCheckTodo => t!("menu-commit-check-todo"),
+            MenuCommand::CommitReformat => t!("menu-commit-reformat"),
+            MenuCommand::CommitMessage(_) | MenuCommand::CommitCoAuthor(_) => "",
             MenuCommand::CommitNoVerify => t!("menu-commit-no-verify"),
             MenuCommand::TreeRefresh => t!("workspace-tree-tool-refresh"),
             MenuCommand::TreeCollapseAll => t!("menu-tree-collapse-all"),

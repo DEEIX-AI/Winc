@@ -288,6 +288,18 @@ git-commit-failed = Couldn’t commit: { $error }
 git-commit-done-in = Committed { $oid } in “{ $name }”
 git-commit-failed-in = Couldn’t commit in “{ $name }”: { $error }
 git-commit-partial = committed in { $done }; { $name }: { $error }
+git-commit-hint-subject = Subject { $count }/{ $limit }
+git-commit-hint-blank-line = Blank line after subject
+git-commit-todo-confirm = { $count ->
+    [one] The new content has 1 TODO or FIXME
+   *[other] The new content has { $count } TODOs or FIXMEs
+}
+git-commit-todo-confirm-detail = Commit anyway?
+git-commit-todo-confirm-button = Commit Anyway
+git-commit-reformatted = { $count ->
+    [one] Reformatted 1 file before committing
+   *[other] Reformatted { $count } files before committing
+}
 git-undo-commit-confirm = Undo the last commit?
 git-undo-commit-confirm-detail = The changes in “{ $subject }” stay staged, and its message returns to the commit box.
 git-undo-commit-confirm-button = Undo Commit
@@ -330,6 +342,13 @@ git-commit-push-confirm-scope = { $count ->
 }
 git-commit-push-confirm-detail = The commit will be pushed to the upstream branch.
 git-commit-push-confirm-button = Commit and Push
+git-commit-sync-confirm = Commit and sync?
+git-commit-sync-confirm-scope = { $count ->
+    [one] 1 file will be committed to “{ $branch }”, then synced with the upstream: pull, then push.
+   *[other] { $count } files will be committed to “{ $branch }”, then synced with the upstream: pull, then push.
+}
+git-commit-sync-confirm-detail = After committing, sync with the upstream: pull, then push.
+git-commit-sync-confirm-button = Commit and Sync
 git-undo-commit-done = Undid commit { $oid }; its changes are staged
 git-undo-commit-done-in = Undid commit { $oid } in “{ $name }”
 git-undo-commit-failed = Couldn’t undo the commit: { $error }

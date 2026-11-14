@@ -251,7 +251,12 @@ fn the_history_of_selected_lines_lists_only_their_commits() {
     let text = app.editor.active().unwrap().text();
     let (from, to) = (text.line_start(5), text.line_start(6) - 1);
     app.select(from, to);
-    assert!(app.run_action(Action::GitSelectionHistory));
+    // 从编辑区的右键菜单选「显示所选代码的历史」。
+    let id = app.editor.active().unwrap().id;
+    let target = crate::app::input::context_menu::MenuTarget::Editor(id);
+    app.open_context_menu(target, (0.0, 0.0));
+    let action = Action::GitSelectionHistory;
+    app.run_menu_command(crate::app::MenuCommand::GitAction(action));
     assert!(app.log_active());
     let view = app.editor.active().unwrap().log.as_deref().unwrap();
     assert_eq!(view.query.lines, Some((4, 4)));

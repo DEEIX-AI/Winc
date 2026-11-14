@@ -295,11 +295,22 @@ impl App {
     /// 提交并推送：可以提交时用提示框询问，写明提交多少文件、推到哪个分支；不能提交时由提交的入口
     /// 说明原因。
     pub(in crate::app) fn confirm_commit_and_push(&mut self) {
+        self.confirm_commit_then(false);
+    }
+
+    /// 提交并同步：可以提交时用提示框询问，写明提交多少文件、在哪个分支上同步；不能提交时由提交的
+    /// 入口说明原因。
+    pub(in crate::app) fn confirm_commit_and_sync(&mut self) {
+        self.confirm_commit_then(true);
+    }
+
+    /// 「提交并推送」（`sync` 为假）或「提交并同步」的询问。
+    fn confirm_commit_then(&mut self, sync: bool) {
         let ready = !self.git.commit.busy
             && (self.git.status.as_ref())
                 .is_some_and(|status| self.commit_blocker(status).is_none());
         if !ready {
-            self.git_commit_and_push();
+            self.git_commit_then(sync);
             return;
         }
         let branch = self
@@ -312,21 +323,39 @@ impl App {
             CommitScope::Staged(count) | CommitScope::All(count) => count,
             CommitScope::Nothing => 0,
         });
-        let detail = match (count, branch) {
-            (Some(count), Some(branch)) => t!(
+        let detail = match (count, branch, sync) {
+            (Some(count), Some(branch), false) => t!(
                 "git-commit-push-confirm-scope",
                 count = count,
                 branch = branch.as_str()
             ),
-            _ => t!("git-commit-push-confirm-detail").to_owned(),
+            (Some(count), Some(branch), true) => t!(
+                "git-commit-sync-confirm-scope",
+                count = count,
+                branch = branch.as_str()
+            ),
+            (_, _, false) => t!("git-commit-push-confirm-detail").to_owned(),
+            (_, _, true) => t!("git-commit-sync-confirm-detail").to_owned(),
+        };
+        let (message, button) = match sync {
+            false => (
+                t!("git-commit-push-confirm"),
+                t!("git-commit-push-confirm-button"),
+            ),
+            true => (
+                t!("git-commit-sync-confirm"),
+                t!("git-commit-sync-confirm-button"),
+            ),
         };
         let buttons = vec![
-            AlertButton::new(t!("git-commit-push-confirm-button")),
+            AlertButton::new(button),
             AlertButton::cancel(t!("common-cancel")),
         ];
-        let message = t!("git-commit-push-confirm");
-        self.show_alert(message, &detail, buttons, None, |choice, _| {
-            (choice == 0).then_some(UserEvent::GitCommitAndPush)
+        self.show_alert(message, &detail, buttons, None, move |choice, _| {
+            (choice == 0).then_some(match sync {
+                false => UserEvent::GitCommitAndPush,
+                true => UserEvent::GitCommitAndSync,
+            })
         });
     }
 
@@ -341,6 +370,11 @@ impl App {
         // 暂存的操作尚未写完：写完后再提交，提交的才是界面上显示的内容。
         if self.git.commit.staging_active() || self.git.commit.other_staging_active() {
             self.git.commit.commit_queued = true;
+            return;
+        }
+        // 提交前先格式化、再检查新增的 TODO：都在后台进行，做完再接着提交（见
+        // `App::reformatted`、`App::todo_checked`）。
+        if self.reformat_first() || self.check_todo_first() {
             return;
         }
         if !self.git.commit.staging() {
@@ -630,16 +664,22 @@ impl App {
                                 self.git_read_summaries();
                             }
                             // 提交期间用户又改了信息，就留着改过的，不清空。
+                            self.remember_commit_message(&message);
                             if self.git.commit.message.text().trim() == message {
                                 self.git.commit.message.remember();
                                 self.git.commit.message.set_text("");
                             }
                             let subject = message.lines().next().unwrap_or_default();
-                            // 「提交并推送」已经确认过，推送不再询问。
+                            // 「提交并推送」「提交并同步」已经确认过，推送、同步不再询问。没有上游
+                            // 时同步无从谈起，与推送一样发布到远程。
+                            let sync = std::mem::take(&mut self.git.commit.sync_after);
                             if std::mem::take(&mut self.git.commit.push_after)
                                 && let Some(intent) = self.push_intent()
                             {
-                                self.run_push(intent);
+                                match (sync, intent) {
+                                    (true, PushIntent::Push) => self.run_git_sync(false),
+                                    (_, intent) => self.run_push(intent),
+                                }
                             }
                             // 勾上的都提交了；取消勾选的各处改动还在工作区里，下次重新勾选。
                             self.git.commit.skipped.clear();
@@ -668,6 +708,8 @@ impl App {
                 }
                 Outcome::Staged(result, root) => self.staging_finished(result, &root),
                 Outcome::OtherStaged(result) => self.other_staging_finished(result),
+                Outcome::TodoChecked(count, root) => self.todo_checked(count, &root),
+                Outcome::Reformatted(count, root) => self.reformatted(count, &root),
                 Outcome::IndexText(root, path, version, text) => {
                     self.index_text_arrived(&root, path, version, text);
                 }

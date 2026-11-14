@@ -72,7 +72,8 @@ impl App {
         let status = self.git.status.as_ref();
         let ready = status.is_some_and(|s| self.commit_blocker(s).is_none());
         let mut commits = vec![MenuEntry::Item(MenuCommand::CommitRun, ready && !busy)];
-        commits.extend(self.commit_button_menu());
+        // 这里是完整的命令列表：卡片里有并排的推送按钮时也列出「提交并推送」。
+        commits.extend(self.commit_menu_items(true));
         let amend = MenuEntry::Item(MenuCommand::CommitAmend, self.commit_amendable());
         if !commits
             .iter()
@@ -140,24 +141,35 @@ impl App {
         entries
     }
 
-    /// 「提交 ⌄」拆分按钮右边箭头的菜单：提交并推送（合并、变基停着时没有推送这回事，没有要提交的
-    /// 更改时与主按钮一样不能提交，都灰显）；随后是签署和本次跳过钩子两个开关。
+    /// 「提交 ⌄」拆分按钮右边箭头的菜单：提交并推送（只在卡片里没有并排的「提交并推送…」按钮时
+    /// 列出，不重复；合并、变基停着时没有推送这回事，没有要提交的更改时与主按钮一样不能提交，
+    /// 都灰显）；随后是签署和本次跳过钩子两个开关。
     pub(in crate::app) fn commit_button_menu(
         &self,
     ) -> Vec<crate::app::input::context_menu::MenuEntry> {
+        self.commit_menu_items(self.commit_parts().push.is_none())
+    }
+
+    /// 提交按钮菜单的各项；`push` 为假时不列「提交并推送」。
+    fn commit_menu_items(&self, push: bool) -> Vec<crate::app::input::context_menu::MenuEntry> {
         use crate::app::input::context_menu::{MenuCommand, MenuEntry};
         let status = self.git.status.as_ref();
         let idle = !self.git.commit.busy && status.is_none_or(|s| s.operation.is_none());
         let clean = status.is_some_and(|s| s.entries.is_empty());
-        let mut entries = vec![MenuEntry::Item(
-            MenuCommand::CommitPush,
-            idle && (!clean || self.git.commit.amend),
-        )];
+        let mut entries = Vec::new();
+        let enabled = idle && (!clean || self.git.commit.amend);
+        if push {
+            entries.push(MenuEntry::Item(MenuCommand::CommitPush, enabled));
+        }
         entries.extend([
+            MenuEntry::Item(MenuCommand::CommitSync, enabled),
             MenuEntry::Separator,
+        ]);
+        entries.extend([
             MenuEntry::Item(MenuCommand::CommitSignOff, true),
             MenuEntry::Item(MenuCommand::CommitNoVerify, idle),
         ]);
+        entries.extend(self.compose_menu_entries());
         entries
     }
 
@@ -184,8 +196,13 @@ impl App {
     pub(in crate::app) fn run_commit_button_command(&mut self, command: MenuCommand) {
         match command {
             MenuCommand::CommitPush => self.confirm_commit_and_push(),
+            MenuCommand::CommitSync => self.confirm_commit_and_sync(),
             MenuCommand::CommitAmend => self.toggle_amend(),
             MenuCommand::CommitSignOff => self.toggle_sign_off(),
+            MenuCommand::CommitCheckTodo => self.toggle_check_todo(),
+            MenuCommand::CommitReformat => self.toggle_reformat(),
+            MenuCommand::CommitMessage(i) => self.use_commit_message(i),
+            MenuCommand::CommitCoAuthor(i) => self.add_co_author(i),
             MenuCommand::CommitNoVerify => self.git.commit.no_verify = !self.git.commit.no_verify,
             _ => {}
         }
@@ -194,11 +211,23 @@ impl App {
 
     /// 提交勾上的文件，成功以后继续推送。
     pub(in crate::app) fn git_commit_and_push(&mut self) {
+        self.git_commit_then(false);
+    }
+
+    /// 提交勾上的文件，成功以后与上游同步（先拉取再推送）。
+    pub(in crate::app) fn git_commit_and_sync(&mut self) {
+        self.git_commit_then(true);
+    }
+
+    /// 提交，成功以后推送（`sync` 时同步）。
+    pub(super) fn git_commit_then(&mut self, sync: bool) {
         self.git.commit.push_after = true;
+        self.git.commit.sync_after = sync;
         self.git_commit();
         // 没有真的开始提交（没写信息、没勾文件），就不留着「之后推送」。
         if !self.git.commit.busy {
             self.git.commit.push_after = false;
+            self.git.commit.sync_after = false;
         }
     }
 
@@ -234,6 +263,7 @@ impl App {
             MenuCommand::GitSkip => self.confirm_skip(),
             MenuCommand::CommitRun => self.git_commit(),
             MenuCommand::CommitPush
+            | MenuCommand::CommitSync
             | MenuCommand::CommitAmend
             | MenuCommand::CommitSignOff
             | MenuCommand::CommitNoVerify => self.run_commit_button_command(command),

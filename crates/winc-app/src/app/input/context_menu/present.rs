@@ -942,6 +942,9 @@ impl App {
                 }
             }
             MenuCommand::StatusPlace(i) => self.location_menu_label(i),
+            MenuCommand::CommitMessage(_) | MenuCommand::CommitCoAuthor(_) => self
+                .compose_menu_label(command)
+                .unwrap_or_else(|| MenuLabel::plain("")),
             MenuCommand::FormBase(0) => match self.git.branches.iter().find(|b| b.current) {
                 Some(b) => MenuLabel::plain(&t!("menu-form-base-current-branch", branch = &b.name)),
                 None => MenuLabel::plain(t!("menu-form-base-current-commit")),
@@ -1190,6 +1193,12 @@ impl App {
         }
         if command == MenuCommand::CommitNoVerify {
             return self.git.commit.no_verify;
+        }
+        if command == MenuCommand::CommitCheckTodo {
+            return self.state.commit_check_todo;
+        }
+        if command == MenuCommand::CommitReformat {
+            return self.state.commit_reformat;
         }
         if command == MenuCommand::TerminalMaximize {
             return self.terminal.maximized;

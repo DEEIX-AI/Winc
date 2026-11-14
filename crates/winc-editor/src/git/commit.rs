@@ -122,6 +122,75 @@ impl Git {
         Ok(())
     }
 
+    /// 返回这次提交会新增的行（不含开头的 `+`）：`staged` 时是暂存区相对 `HEAD` 新增的，否则是
+    /// `paths` 在工作区里相对 `HEAD` 新增的。未跟踪的文件不在其中，由调用方自己读。
+    ///
+    /// # Errors
+    ///
+    /// `git` 报错时返回说明。
+    pub fn added_lines(
+        &self,
+        root: &Path,
+        staged: bool,
+        paths: &[PathBuf],
+    ) -> Result<Vec<String>, String> {
+        let cancel = Cancel::default();
+        let mut command = self.command(root);
+        command.args(["diff", "--no-color", "--no-ext-diff", "--unified=0"]);
+        command.arg(if staged { "--cached" } else { "HEAD" });
+        command.arg("--").args(relative_all(root, paths));
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
+        let text = String::from_utf8_lossy(&stdout);
+        let added = text
+            .lines()
+            .filter(|l| l.starts_with('+') && !l.starts_with("+++"));
+        Ok(added.map(|l| l[1..].to_owned()).collect())
+    }
+
+    /// 读最近 `commits` 个提交：其他作者（`名字 <邮箱>`，按 `.mailmap` 归并，最近的在前，不重复，
+    /// 不含仓库配置的当前用户），以及当前用户自己写的提交信息（最近的在前，不重复，最多 `own` 条）。
+    ///
+    /// # Errors
+    ///
+    /// `git` 报错时返回说明。
+    pub fn recent_history(
+        &self,
+        root: &Path,
+        commits: usize,
+        own: usize,
+    ) -> Result<RecentHistory, String> {
+        let cancel = Cancel::default();
+        let mut command = self.command(root);
+        command.args(["config", "user.email"]);
+        let me = self
+            .run(&mut command, STATUS_TIMEOUT, &cancel)
+            .unwrap_or_default();
+        let me = String::from_utf8_lossy(&me).trim().to_lowercase();
+        let mut command = self.command(root);
+        let count = format!("--max-count={commits}");
+        command.args(["log", "--no-merges", "--format=%aN <%aE>%x00%B%x1e", &count]);
+        let stdout = self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
+        let mut history = RecentHistory::default();
+        for record in String::from_utf8_lossy(&stdout).split('\x1e') {
+            let Some((author, message)) = record.trim_start_matches('\n').split_once('\0') else {
+                continue;
+            };
+            let mine = !me.is_empty() && author.to_lowercase().ends_with(&format!("<{me}>"));
+            if !mine {
+                if !author.is_empty() && !history.authors.iter().any(|a| a == author) {
+                    history.authors.push(author.to_owned());
+                }
+                continue;
+            }
+            let message = message.trim_end();
+            let known = history.own.iter().any(|m| m == message);
+            if !message.is_empty() && !known && history.own.len() < own {
+                history.own.push(message.to_owned());
+            }
+        }
+        Ok(history)
+    }
+
     /// 把 `content` 登记为文件 `path` 在暂存区中的内容，工作区里的文件不变。
     ///
     /// `content` 是工作区里的形式，写入时套用该路径的过滤器（换行符的转换等）；文件的模式取自
@@ -258,4 +327,13 @@ impl Git {
             Err(_) => String::new(),
         }
     }
+}
+
+/// 最近的提交里读出的作者和自己写的提交信息，见 [`Git::recent_history`]。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecentHistory {
+    /// 其他作者，`名字 <邮箱>`，最近的在前。
+    pub authors: Vec<String>,
+    /// 当前用户写的提交信息，最近的在前。
+    pub own: Vec<String>,
 }

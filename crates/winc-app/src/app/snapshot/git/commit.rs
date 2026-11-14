@@ -8,6 +8,7 @@ use crate::app::animation::{Clock, TREE_ANIMATION};
 use crate::app::git::commit::COMMITTED_SHOWN;
 
 mod checks;
+mod compose;
 mod names;
 mod others;
 mod staging;

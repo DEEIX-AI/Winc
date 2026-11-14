@@ -956,6 +956,28 @@ fn draw_card(
     let clip = panel.intersect(main);
     ui_text_small(frame, app, x, main, &text, ink, clip);
 
+    // 首行的格式提示（过长、没有空行）：不阻止提交，用提示色靠右写在「修改上次提交」一行；
+    // 没有那一行时写在按钮和下拉箭头之间。放不下时不写。
+    if let Some(hint) = app.commit_message_hint() {
+        let (left, row) = match parts.amend {
+            Some(amend) => (amend.right() + 8.0, amend),
+            None => (
+                parts.push.map_or(main.right(), |push| push.right()) + 8.0,
+                main,
+            ),
+        };
+        let right = match parts.amend {
+            Some(_) => menu.right() - 4.0,
+            None => menu.x - 8.0,
+        };
+        let hint_w = frame.measure(FontKind::Ui, size, &hint);
+        if right - left >= hint_w {
+            let room = Rect::new(left, row.y, right - left, row.h);
+            let clip = panel.intersect(card).intersect(room);
+            ui_text_small(frame, app, right - hint_w, row, &hint, p.warning, clip);
+        }
+    }
+
     caret
 }
 

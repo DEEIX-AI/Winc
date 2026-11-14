@@ -250,6 +250,8 @@ pub enum UserEvent {
     GitSwitchBranch(winc_editor::git::Branch, bool),
     /// 确认框中确认强制推送当前分支。
     GitForcePush,
+    /// 新增 TODO 的确认框：仍然提交（`true`）或取消。
+    GitCommitTodo(bool),
     /// 提示框中确认发布、推送或同步当前分支；为 `true` 时勾选了「不再询问」。
     GitPushConfirmed(crate::app::git::commit::PushIntent, bool),
     /// 推送的确认框里选了「查看提交」：打开 Git 日志。
@@ -258,6 +260,8 @@ pub enum UserEvent {
     GitOutput,
     /// 提示框中确认提交已勾选的文件并推送。
     GitCommitAndPush,
+    /// 「提交并同步」的提示框确认了。
+    GitCommitAndSync,
     /// 提示框中确认撤销上一次提交。
     GitUndoCommit,
     /// 后台已取得某个文件在 `HEAD` 中的内容（行号栏改动标记的基准）。

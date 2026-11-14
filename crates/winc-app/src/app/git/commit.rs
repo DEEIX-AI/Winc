@@ -7,9 +7,12 @@
 //! `commit_hits`。
 
 mod actions;
+mod compose;
 mod ignore;
+mod reformat;
 pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::{PUSH_PREVIEW, PushIntent, SyncState};
+pub(crate) use compose::{AUTHOR_COMMITS, OWN_MESSAGES};
 pub use ignore::IgnoreKind;
 mod list;
 pub(in crate::app::git) use list::rows_of;
@@ -605,6 +608,10 @@ enum Outcome {
     StashFiles(String, String, stash::StashFiles),
     /// 写入暂存区的一步操作完成，或者失败的原因；在哪个仓库里进行的。
     Staged(Result<(), String>, PathBuf),
+    /// 提交前检查完了新增的内容：其中 TODO、FIXME 的处数，在哪个仓库里检查的。
+    TodoChecked(usize, PathBuf),
+    /// 提交前的格式化做完了：改动了几个文件，在哪个仓库里进行的。
+    Reformatted(usize, PathBuf),
     /// 写入其他仓库暂存区的一步操作完成，或者失败的原因。
     OtherStaged(Result<(), String>),
     /// 读到了文件在暂存区中的内容：仓库、文件、发出读取时暂存区的版本、内容（不是文本时为
@@ -698,6 +705,12 @@ pub(crate) struct CommitState {
     staging_queue: VecDeque<StageJob>,
     /// 是否有写入暂存区的操作正在后台执行。
     staging_running: bool,
+    /// 提交信息框的输入历史已经放进了状态文件里提交过的信息（见 [`App::seed_message_history`]）。
+    history_seeded: bool,
+    /// 提交前的 TODO 检查已经通过或确认过，放行下一次提交。
+    todo_passed: bool,
+    /// 提交前的格式化已经做过，放行下一次提交。
+    reformat_passed: bool,
     /// 等待写入其他仓库暂存区的操作：仓库的根目录、暂存还是取消暂存、各个文件。
     other_stage_queue: VecDeque<(PathBuf, bool, Vec<PathBuf>)>,
     /// 是否有写入其他仓库暂存区的操作正在后台执行。
@@ -785,6 +798,8 @@ pub(crate) struct CommitState {
     pub(crate) browse: bool,
     /// 提交成功以后继续推送（「提交并推送」）。
     push_after: bool,
+    /// 与 `push_after` 一起：推送改为同步，先拉取上游的新提交再推送（「提交并同步」）。
+    sync_after: bool,
     /// `HEAD` 指向的提交，「上一次提交」那一行用。
     pub last: Option<LastCommit>,
     /// `last` 是按哪个 `HEAD` 取的（外层为 `None` 表示还没取过）；`HEAD` 变了重新取。
@@ -871,6 +886,9 @@ impl Default for CommitState {
             head: None,
             staging_queue: VecDeque::new(),
             staging_running: false,
+            history_seeded: false,
+            todo_passed: false,
+            reformat_passed: false,
             other_stage_queue: VecDeque::new(),
             other_stage_running: false,
             commit_queued: false,
@@ -910,6 +928,7 @@ impl Default for CommitState {
             stash_preview: None,
             browse: false,
             push_after: false,
+            sync_after: false,
             last: None,
             last_for: None,
             hits_generation: 0,

@@ -121,6 +121,8 @@ struct Refs {
     home: Option<PathBuf>,
     /// 仓库所在系统中 `git` 的主、次版本号；读不出时为 `None`。
     version: Option<(u32, u32)>,
+    /// 最近提交的作者和自己写的提交信息（见 [`Git::recent_history`]）；这次没有读时为 `None`。
+    history: Option<winc_editor::git::RecentHistory>,
 }
 
 /// 差异的打开方式。
@@ -278,6 +280,13 @@ pub(crate) struct GitState {
     pub(super) old_git_warned: bool,
     /// 定时获取的状态（见 [`fetch`]）。
     pub(super) auto_fetch: fetch::AutoFetch,
+    /// 当前仓库最近提交的作者（`名字 <邮箱>`），提交按钮的菜单里用来添加共同作者。
+    pub(crate) authors: Vec<String>,
+    /// 当前仓库里自己最近写的提交信息，最近的在前：在别处（终端、其他工具）提交的也在其中，
+    /// 补在本程序记住的提交信息后面。
+    pub(crate) own_messages: Vec<String>,
+    /// 读作者时的仓库和它的 `HEAD`：换了仓库或 `HEAD` 动过（提交、拉取、切换）时重读。
+    authors_for: Option<(PathBuf, Option<String>)>,
     /// 已经读过 `git` 版本的仓库：每个仓库每次运行只读一次，不随每次刷新多运行一条命令。
     version_read: HashSet<PathBuf>,
     /// 开着的 Git 输出标签已经显示到记录的第几个字节（见 `winc_editor::git::output_snapshot`）；
@@ -337,6 +346,9 @@ impl Default for GitState {
             push_outgoing: Arc::default(),
             old_git_warned: false,
             version_read: HashSet::new(),
+            authors: Vec::new(),
+            own_messages: Vec::new(),
+            authors_for: None,
             auto_fetch: fetch::AutoFetch::default(),
             branch_folders: HashSet::new(),
             prepared: channel(),
@@ -396,6 +408,9 @@ impl GitState {
         self.stashes.clear();
         self.worktrees.clear();
         self.home = None;
+        self.authors.clear();
+        self.own_messages.clear();
+        self.authors_for = None;
         self.problem = None;
         self.generation += 1;
         self.decorations.clear();
@@ -846,6 +861,12 @@ impl App {
         self.git.running = Some(cancel.clone());
         let sender = self.git.sender.clone();
         let read_version = !self.git.old_git_warned && self.git.version_read.insert(root.clone());
+        let head = self.git.status.as_ref().and_then(|s| s.oid.clone());
+        let authors_key = (root.clone(), head);
+        let read_authors = self.git.authors_for.as_ref() != Some(&authors_key);
+        if read_authors {
+            self.git.authors_for = Some(authors_key);
+        }
         // 上次未找到 `git` 时本次在后台重新查找（用户可能刚安装）。
         self.spawn_git(UserEvent::GitStatus, move |tool| {
             let (status, refs) = match &tool {
@@ -871,6 +892,12 @@ impl App {
                     let recent_branches = scope.spawn(|| git.recent_branches(root, cancel));
                     let worktrees = scope.spawn(|| git.worktrees(root, cancel));
                     let version = read_version.then(|| scope.spawn(|| git.version(root, cancel)));
+                    let history = read_authors.then(|| {
+                        scope.spawn(|| {
+                            let (commits, own) = (commit::AUTHOR_COMMITS, commit::OWN_MESSAGES);
+                            git.recent_history(root, commits, own)
+                        })
+                    });
                     // 线程中的函数不会 panic；万一发生，该项按读取失败处理。
                     let refs = Refs {
                         branches: branches
@@ -892,6 +919,7 @@ impl App {
                         worktrees: worktrees.join().ok().and_then(Result::ok),
                         home: winc_editor::wsl::home_dir(root),
                         version: version.and_then(|v| v.join().ok().flatten()),
+                        history: history.and_then(|h| h.join().ok().and_then(Result::ok)),
                     };
                     (status, Some(refs))
                 }),
@@ -995,6 +1023,11 @@ impl App {
                         self.git.publish_remote = refs.publish_remote;
                         self.git.home = refs.home;
                         self.warn_old_git(refs.version);
+                        if let Some(history) = refs.history {
+                            self.git.authors = history.authors;
+                            self.git.own_messages = history.own;
+                            self.git.commit.message_history_changed();
+                        }
                         if let Some(watcher) = &mut self.disk.watcher {
                             watcher.watch_git_dir(refs.common_dir.as_deref());
                         }

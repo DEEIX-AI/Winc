@@ -16,6 +16,7 @@ mod rebase;
 mod remote;
 mod sync;
 
+pub use commit::RecentHistory;
 pub use output::{on_output, output_since, output_snapshot, output_text};
 pub use proxy::follow_system_proxy;
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
