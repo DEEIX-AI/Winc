@@ -755,6 +755,8 @@ impl App {
             Setting::GitModule => self.git_enabled(),
             Setting::GitConfirmPush => self.config.git_confirm_push != Some(false),
             Setting::GitSystemProxy => self.config.git_system_proxy != Some(false),
+            Setting::GitInlineBlame => self.config.git_inline_blame != Some(false),
+            Setting::GitAutoFetch => self.config.git_auto_fetch == Some(true),
             Setting::GitTree => !self.git.commit.flat(),
             Setting::GitStagingArea => self.config.git_staging_area == Some(true),
             Setting::TerminalModule => self.terminal_enabled(),
@@ -819,6 +821,8 @@ impl App {
                 winc_editor::git::follow_system_proxy(on);
             }
             Setting::GitStagingArea => self.config.git_staging_area = Some(on),
+            Setting::GitInlineBlame => self.config.git_inline_blame = Some(on),
+            Setting::GitAutoFetch => self.config.git_auto_fetch = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),
             Setting::RemoteModule => self.config.remote_enabled = Some(on),
             Setting::TerminalCopyOnSelect => self.config.terminal_copy_on_select = Some(on),

@@ -469,8 +469,8 @@ pub fn refresh_turned(
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
 
-/// 绘制「同步」图标，约 13×13：同一个圆上相对的两段圆弧，各自顺时针画到直角箭头为止。圆弧止于
-/// 右上、左下 45° 处，箭头的两臂因此一横一竖。
+/// 绘制「同步」图标，约 12×12：同一个圆上相对的两段圆弧，各从 9 点钟（3 点钟）顺时针画到
+/// 右上（左下）45° 处，再顺着切线接到一个横平竖直的直角箭头。
 ///
 /// 用于与远程交换提交的操作；只重读本地状态的操作用 [`refresh`]。
 pub fn sync(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Rect) {
@@ -485,38 +485,35 @@ pub fn sync_turned(
     color: Color,
     clip: Rect,
 ) {
-    let r = RING;
-    // 圆弧起点离 9 点钟、3 点钟的角度（弧度）：起点不碰到另一段圆弧的箭头。
-    let lead = 0.2;
-    // 圆弧的跨度：止于离起始方向 135° 处，那里的切线与水平成 45°。
-    let span = 0.75 * PI - lead;
-    // 箭头臂长（逻辑像素），与「刷新」图标相同。
-    let arm = 3.0;
+    // 圆弧半径（逻辑像素）。
+    let r = 5.4;
+    // 箭头的直角离圆心横向 `r`、纵向 `corner`；两臂沿横竖方向伸出 `arm`。
+    let (corner, arm) = (2.4, 3.0);
     let base = turn.rem_euclid(1.0) * 2.0 * PI;
-    // 从 `start` 起顺时针画 `span` 的圆弧，末端加箭头。
-    let half = |start: f32| {
+    let (sin, cos) = base.sin_cos();
+    let at = |x: f32, y: f32| (cx + x * cos - y * sin, cy + x * sin + y * cos);
+    // 右上的一半；`flip` 为 -1 时是左下的一半（绕圆心转半圈）。
+    let half = |flip: f32| {
+        let mut from = -PI + base + if flip < 0.0 { PI } else { 0.0 };
         // 起点映射到 -π 至 π 之间，理由同 `refresh_turned`。
-        let mut from = start + base;
         while from >= PI {
             from -= 2.0 * PI;
         }
-        let to = from + span;
-        // 箭头两臂与切线各成 45°，分在圆弧内外两侧；不旋转时一臂竖直、一臂水平。
-        let (sin, cos) = to.sin_cos();
-        let (tx, ty) = (cx + r * cos, cy + r * sin);
-        let k = FRAC_1_SQRT_2 * arm;
-        let (bx, by) = (sin, -cos);
+        let end = r * FRAC_1_SQRT_2;
+        let (ex, ey) = at(flip * end, -flip * end);
+        let (tx, ty) = at(flip * r, -flip * corner);
+        let (ux, uy) = at(flip * r, -flip * (corner + arm));
+        let (lx, ly) = at(flip * (r - arm), -flip * corner);
         [
-            Stroke::Arc(cx, cy, r, from, to),
-            Stroke::Line(tx, ty, tx + (bx - cos) * k, ty + (by - sin) * k),
-            Stroke::Line(tx, ty, tx + (bx + cos) * k, ty + (by + sin) * k),
+            Stroke::Arc(cx, cy, r, from, from + 0.75 * PI),
+            Stroke::Line(ex, ey, tx, ty),
+            Stroke::Line(tx, ty, ux, uy),
+            Stroke::Line(tx, ty, lx, ly),
         ]
     };
-    // 上半段从 9 点钟附近开始，下半段从 3 点钟附近开始。
-    let [a, b, c] = half(-PI + lead);
-    let [d, e, f] = half(lead);
-    let shapes = [a, b, c, d, e, f];
-    frame.stroke(&shapes, RING_STROKE, color, clip);
+    let [a, b, c, d] = half(1.0);
+    let [e, f, g, h] = half(-1.0);
+    frame.stroke(&[a, b, c, d, e, f, g, h], RING_STROKE, color, clip);
 }
 
 /// 绘制「全部折叠」图标，11×12：圆角卡片内一道横线，卡片上方露出后面一张较窄卡片的上沿，表示

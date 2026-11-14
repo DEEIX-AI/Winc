@@ -227,6 +227,8 @@ pub enum Action {
     /// 把当前文件的更改加入暂存区。
     GitStageFile,
     GitFileHistory,
+    /// 当前文件中选中的几行的历史。
+    GitSelectionHistory,
     GitBlame,
     ShowCommit,
     GitRevertChange,
@@ -463,6 +465,7 @@ impl Action {
             GitUnstageAll => t!("cmd-git-unstage-all"),
             GitStageFile => t!("cmd-git-stage-file"),
             GitFileHistory => t!("cmd-git-file-history"),
+            GitSelectionHistory => t!("cmd-git-selection-history"),
             GitBlame => t!("cmd-git-blame"),
             ShowCommit => t!("cmd-show-commit"),
             GitRevertChange => t!("cmd-git-revert-change"),
@@ -678,6 +681,7 @@ impl Action {
             GitUnstageAll => "Git: Unstage All Changes",
             GitStageFile => "Git: Stage Current File",
             GitFileHistory => "Git: Show File History",
+            GitSelectionHistory => "Git: Show History for Selection",
             GitBlame => "Git: Toggle Blame",
             ShowCommit => "Git: Commit",
             GitRevertChange => "Git: Revert Change",
@@ -858,6 +862,7 @@ impl Action {
             | GitUnstageAll
             | GitStageFile
             | GitFileHistory
+            | GitSelectionHistory
             | GitBlame
             | ShowCommit
             | GitRevertChange
@@ -972,6 +977,7 @@ impl Action {
             | Action::GitUnstageAll
             | Action::GitStageFile
             | Action::GitFileHistory
+            | Action::GitSelectionHistory
             | Action::GitBlame
             | Action::ShowCommit
             | Action::GitRevertChange => Some(Module::Git),
@@ -1224,6 +1230,7 @@ pub const ACTIONS: &[Action] = {
         GitUnstageAll,
         GitStageFile,
         GitFileHistory,
+        GitSelectionHistory,
         GitBlame,
         GitRevertChange,
         ToggleTerminal,

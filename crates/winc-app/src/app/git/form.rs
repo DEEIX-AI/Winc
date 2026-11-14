@@ -6,18 +6,19 @@
 //! 跟踪远程的，或者已经在别的工作树里签出着（主按钮换成「打开」）；不能做的原因写在框里。
 
 use std::path::PathBuf;
+use std::sync::{Arc, PoisonError};
 
 use winc_editor::git::unique_dir;
 use winc_i18n::t;
 
 use super::branch::local_name;
-use super::commit::PushIntent;
+use super::commit::{PUSH_PREVIEW, PushIntent};
 use super::log::short;
 use super::question::QuestionView;
 use super::rebase::RebaseForm;
 use super::worktree::NameTarget;
 use crate::app::editor::find::ref_name_field;
-use crate::app::{App, Focus, Hover, TextField};
+use crate::app::{App, Focus, Hover, TextField, UserEvent};
 use crate::askpass::Prompt;
 use crate::layout::{DialogLayout, DialogPart};
 
@@ -63,6 +64,10 @@ pub(crate) struct PushForm {
     pub subjects: Vec<String>,
     /// 待推送的提交数。
     pub total: usize,
+    /// 提交列表按哪个目标读出（远程、分支）；改了目标以后在后台重读，读到时换上。
+    pub read_for: (String, String),
+    /// 提交列表占的行数：打开以来最多的一次，改目标时对话框不忽高忽低。
+    pub rows: usize,
 }
 
 impl PushForm {
@@ -72,6 +77,9 @@ impl PushForm {
         (self.subjects.len() + more).max(1)
     }
 }
+
+/// 推送对话框改了目标后在后台读到的提交：读的目标（远程、分支）、标题和总数。
+pub(crate) type PushOutgoing = ((String, String), Vec<String>, usize);
 
 impl FormKind {
     /// 返回使用询问对话框版式的表单的内容；其他表单返回 `None`。
@@ -187,9 +195,15 @@ impl App {
             intent,
             branch,
             remote: remote.clone(),
-            target,
+            target: target.clone(),
             subjects,
             total,
+            read_for: (remote.clone(), target),
+            rows: 0,
+        };
+        let form = PushForm {
+            rows: form.lines(),
+            ..form
         };
         self.show_form_dialog(FormKind::Push(Box::new(form)), name, DialogPart::Confirm);
         if let Some(dialog) = &mut self.overlays.form_dialog {
@@ -296,7 +310,7 @@ impl App {
             // 两个勾选项借用已有的部件：`Copy` 是「推送标签」，`NewWindow` 是「不再询问」。
             Some(FormKind::Push(form)) => DialogLayout::push(
                 window,
-                form.lines(),
+                form.rows,
                 &[DialogPart::Copy, DialogPart::NewWindow],
             ),
             _ if self.config.git_worktree_copy.is_empty() => {
@@ -590,6 +604,11 @@ impl App {
         }
         let layout = self.dialog_layout();
         let mut order = Vec::new();
+        // 推送对话框的远程菜单在分支输入框上面，按从上到下的顺序先到它。
+        let pushing = matches!(dialog.kind, FormKind::Push(_));
+        if pushing && plan.base_enabled {
+            order.push(DialogPart::Base);
+        }
         // 无需输入的请求没有输入框；第二个输入框只用于登录和添加远程仓库。
         if layout.branch.w > 0.0 {
             order.push(DialogPart::Branch);
@@ -600,7 +619,7 @@ impl App {
         if layout.third.w > 0.0 {
             order.push(DialogPart::Third);
         }
-        if plan.base_enabled {
+        if plan.base_enabled && !pushing {
             order.push(DialogPart::Base);
         }
         if layout.change().is_some() {
@@ -811,6 +830,7 @@ impl App {
         if let Some(dialog) = &mut self.overlays.form_dialog {
             dialog.base = base;
         }
+        self.refresh_push_list();
         self.request_redraw();
     }
 
@@ -826,6 +846,68 @@ impl App {
                 .branches
                 .get(i)
                 .is_some_and(|b| dialog.base.as_deref() == Some(b.name.as_str())),
+        }
+    }
+
+    /// 推送对话框的目标（远程、分支）改了以后，在后台重读会送出的提交，读到时由
+    /// [`App::take_push_outgoing`] 换上；目标没变或分支名无效时不读。
+    pub(in crate::app) fn refresh_push_list(&mut self) {
+        use winc_editor::git::Outgoing;
+        let Some(dialog) = &mut self.overlays.form_dialog else {
+            return;
+        };
+        let FormKind::Push(form) = &mut dialog.kind else {
+            return;
+        };
+        let remote = dialog.base.clone().unwrap_or_else(|| form.remote.clone());
+        let branch = dialog.name.text().trim().to_owned();
+        let invalid = branch.starts_with('-') || branch.contains(char::is_whitespace);
+        let wanted = (remote, branch);
+        if invalid || wanted.1.is_empty() || wanted == form.read_for {
+            return;
+        }
+        form.read_for = wanted.clone();
+        let default = wanted.0 == form.remote && wanted.1 == form.target;
+        let publish = matches!(form.intent, PushIntent::Publish(_));
+        let (Some(root), slot) = (self.git.root.clone(), Arc::clone(&self.git.push_outgoing))
+        else {
+            return;
+        };
+        self.spawn_git(UserEvent::GitStatus, move |tool| {
+            let (remote, branch) = &wanted;
+            let target = match (default, publish) {
+                (true, true) => Outgoing::Publish,
+                (true, false) => Outgoing::Upstream,
+                (false, _) => Outgoing::To { remote, branch },
+            };
+            let read = tool
+                .ok()
+                .map(|git| git.outgoing(&root, target, PUSH_PREVIEW));
+            let (subjects, total) = read.and_then(Result::ok).unwrap_or_default();
+            let read = Some((wanted.clone(), subjects, total));
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = read;
+        });
+        // 没有事件循环（测试中）时后台的工作已经就地做完：直接取用。
+        self.take_push_outgoing();
+    }
+
+    /// 收下 [`App::refresh_push_list`] 读到的提交；读的不是对话框现在的目标时不用。
+    pub(in crate::app) fn take_push_outgoing(&mut self) {
+        let read = (self.git.push_outgoing.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some((target, subjects, total)) = read else {
+            return;
+        };
+        let dialog = self.overlays.form_dialog.as_mut();
+        let Some(FormKind::Push(form)) = dialog.map(|d| &mut d.kind) else {
+            return;
+        };
+        if form.read_for == target {
+            form.subjects = subjects;
+            form.total = total;
+            form.rows = form.rows.max(form.lines());
+            self.request_redraw();
         }
     }
 

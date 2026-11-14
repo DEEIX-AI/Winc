@@ -20,7 +20,7 @@ pub use output::{on_output, output_since, output_snapshot, output_text};
 pub use proxy::follow_system_proxy;
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
 pub use remote::{Remote, TagTarget, repository_dir_name};
-pub use sync::{Carried, MINIMUM_VERSION, Synced};
+pub use sync::{Carried, MINIMUM_VERSION, Outgoing, Synced};
 mod history;
 mod trust;
 mod worktree;
@@ -257,6 +257,9 @@ pub struct LogQuery {
     pub author: Option<String>,
     /// 只看改过该文件的提交（文件历史），越过改名继续往前查找。
     pub path: Option<PathBuf>,
+    /// 与 `path` 一起使用：只看改过这几行的提交（`git log -L`），按 `HEAD` 中的行号，从 1 起，
+    /// 首尾都含。`git` 随各次提交挪动这段范围，越过改名继续往前查找。
+    pub lines: Option<(usize, usize)>,
     /// 固定在最前面的提交（完整的提交号），见 [`Git::log_stream`]；「转到提交号、分支或标签」
     /// 找到的提交不在已列出的提交中时使用。
     pub pin: Option<String>,

@@ -237,6 +237,7 @@ git-commit-done = 已提交 { $oid }：{ $subject }
 git-commit-failed = 无法提交：{ $error }
 git-commit-done-in = 已在「{ $name }」中提交 { $oid }
 git-commit-failed-in = 无法在「{ $name }」中提交：{ $error }
+git-commit-partial = 已提交到 { $done }；{ $name }：{ $error }
 git-undo-commit-confirm = 要撤销上次提交吗？
 git-undo-commit-confirm-detail = 「{ $subject }」中的更改将保留在暂存区，提交信息将放回输入框。
 git-undo-commit-confirm-button = 撤销提交
@@ -474,6 +475,7 @@ git-log-reset-hard-confirm-button = 硬重置
 
 git-log-title = Git 日志
 git-history-title = { $name } · 历史
+git-lines-history-title = { $name }:{ $start }–{ $end } · 历史
 git-log-target-not-loaded = 目标提交尚未加载，请向下滚动列表后重试
 git-log-parent-not-loaded = 父提交尚未加载，请向下滚动列表后重试
 git-next-file = 已切换到下一个文件：{ $name }（{ $index }/{ $total }）

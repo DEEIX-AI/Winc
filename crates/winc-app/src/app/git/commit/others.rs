@@ -24,8 +24,9 @@ pub(crate) enum OtherRow {
     File(usize, usize),
 }
 
-/// `entry` 暂存的内容是否随提交写入：暂存区中有内容，并且不在冲突中。
-fn commits_staged(entry: &Entry) -> bool {
+/// `entry` 暂存的内容是否随提交写入：暂存区中有内容，并且不在冲突中。暂存区视图中据此把其他
+/// 仓库的文件分成「已暂存的更改」和「更改」两组。
+pub(crate) fn commits_staged(entry: &Entry) -> bool {
     entry.staged.is_some() && !entry.conflicted()
 }
 
@@ -306,7 +307,9 @@ impl App {
             self.pump_other_staging();
             return;
         }
+        // 这期间可能已经换到了其中一个仓库：当前仓库的状态和其他仓库的一起重读。
         self.git_read_summaries();
+        self.git_refresh();
         if std::mem::take(&mut self.git.commit.commit_queued) {
             self.git_commit();
         }

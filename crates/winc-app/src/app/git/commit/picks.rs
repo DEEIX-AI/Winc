@@ -130,15 +130,10 @@ impl App {
         self.run_git_job(move |git, root| {
             // 先提交当前仓库，再依次提交其他仓库勾上的文件；其中一个失败就停下，已经提交的保留。
             let work = |git: &Git| {
-                let mut first = None;
+                let mut done = super::actions::CommittedIn::default();
                 if own || amend {
-                    first = Some(write_picked(
-                        git,
-                        root,
-                        (&message, options),
-                        &plan,
-                        merging,
-                    )?);
+                    let oid = write_picked(git, root, (&message, options), &plan, merging)?;
+                    done.add(root, oid);
                 }
                 for (other, plan, sign_off) in &others {
                     let options = CommitOptions {
@@ -146,12 +141,10 @@ impl App {
                         sign_off: *sign_off,
                         ..options
                     };
-                    let name = winc_editor::display_name(other);
-                    let oid = write_picked(git, other, (&message, options), plan, false)
-                        .map_err(|error| format!("{name}: {error}"))?;
-                    first.get_or_insert(oid);
+                    let oid = write_picked(git, other, (&message, options), plan, false);
+                    done.add(other, oid.map_err(|error| done.failed(other, &error))?);
                 }
-                Ok(first.unwrap_or_default())
+                Ok(done.first.unwrap_or_default())
             };
             let result = git.and_then(work);
             let _ = sender.send(Outcome::Committed(result, message, root.to_path_buf()));

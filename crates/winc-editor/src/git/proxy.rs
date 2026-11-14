@@ -12,6 +12,9 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::STATUS_TIMEOUT;
+use crate::tools::shell::process;
+
 /// 是否跟随系统代理，见 [`follow_system_proxy`]。
 static FOLLOW: AtomicBool = AtomicBool::new(true);
 
@@ -159,15 +162,24 @@ pub(super) fn parse_registry(text: &str) -> SystemProxy {
 
 /// 读出系统现在的代理设置；读不到时为 `None`。Linux 上没有统一的系统代理，约定用环境变量，
 /// 不另外读取。
+///
+/// 经由 [`process::run`] 运行：Windows 上不弹出控制台窗口，卡住时与读取状态同样按时限结束，
+/// 此时不设代理，命令照常运行。
 fn system_proxy() -> Option<SystemProxy> {
-    let output = if cfg!(target_os = "macos") {
-        Command::new("scutil").arg("--proxy").output().ok()?
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("scutil");
+        command.arg("--proxy");
+        command
     } else if cfg!(windows) {
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-        Command::new("reg").args(["query", key]).output().ok()?
+        let mut command = Command::new("reg");
+        command.args(["query", key]);
+        command
     } else {
         return None;
     };
+    let cancel = process::Cancel::default();
+    let output = process::run(&mut command, Vec::new(), STATUS_TIMEOUT, &cancel).ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     Some(if cfg!(windows) {
         parse_registry(&text)

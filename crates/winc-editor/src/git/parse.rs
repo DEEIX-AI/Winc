@@ -115,11 +115,6 @@ pub(super) fn parse_recent_branches(output: &str) -> Vec<String> {
     names
 }
 
-/// 解析 `git for-each-ref` 的输出（每行的引用名、`*` 或空格、上游、提交号、提交时间、本机时区的
-/// 提交时间之间用 NUL 隔开）。
-///
-/// 本地的分支在前，远程的在后，各自按名字排列；远程的 `HEAD` 指针不列。上游引用已不存在的（远程
-/// 分支被删除后获取时清掉了）算作没有上游：`--prune` 之后没有什么可以和它同步。
 /// 解析 `%(upstream:track,nobracket)`（`ahead 3, behind 1`、`ahead 2`、`gone`、空）成领先、
 /// 落后上游的提交数。
 fn parse_track(track: &str) -> (u16, u16) {
@@ -131,6 +126,11 @@ fn parse_track(track: &str) -> (u16, u16) {
     (count("ahead "), count("behind "))
 }
 
+/// 解析 `git for-each-ref` 的输出（每行的引用名、`*` 或空格、上游、提交号、提交时间、本机时区的
+/// 提交时间、与上游的差异之间用 NUL 隔开）。
+///
+/// 本地的分支在前，远程的在后，各自按名字排列；远程的 `HEAD` 指针不列。上游引用已不存在的（远程
+/// 分支被删除后获取时清掉了）算作没有上游：`--prune` 之后没有什么可以和它同步。
 pub(super) fn parse_branches(output: &str) -> Vec<Branch> {
     let mut local = Vec::new();
     let mut remote = Vec::new();

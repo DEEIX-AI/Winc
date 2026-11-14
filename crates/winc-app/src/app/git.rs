@@ -9,6 +9,7 @@ pub(crate) mod blame;
 pub(crate) mod branch;
 pub(super) mod changes;
 pub(super) mod commit;
+pub(super) mod fetch;
 pub(crate) mod form;
 pub(crate) mod location_picker;
 pub(crate) mod log;
@@ -271,8 +272,14 @@ pub(crate) struct GitState {
     /// 后台读到的、等着确认的推送：要做的推送、会送出的提交的标题和总数（见
     /// [`App::ask_push`]）。
     pub push_preview: Arc<Mutex<Option<PushPreview>>>,
+    /// 推送对话框改了目标后在后台读到的提交（见 [`App::refresh_push_list`]）。
+    pub(super) push_outgoing: Arc<Mutex<Option<form::PushOutgoing>>>,
     /// 已提示过 `git` 版本过低：每次运行只提示一次。
     pub(super) old_git_warned: bool,
+    /// 定时获取的状态（见 [`fetch`]）。
+    pub(super) auto_fetch: fetch::AutoFetch,
+    /// 已经读过 `git` 版本的仓库：每个仓库每次运行只读一次，不随每次刷新多运行一条命令。
+    version_read: HashSet<PathBuf>,
     /// 开着的 Git 输出标签已经显示到记录的第几个字节（见 `winc_editor::git::output_snapshot`）；
     /// 标签里是「暂无输出」的说明时为 0。
     pub output_shown: u64,
@@ -327,7 +334,10 @@ impl Default for GitState {
             location_all: false,
             output_shown: 0,
             push_preview: Arc::default(),
+            push_outgoing: Arc::default(),
             old_git_warned: false,
+            version_read: HashSet::new(),
+            auto_fetch: fetch::AutoFetch::default(),
             branch_folders: HashSet::new(),
             prepared: channel(),
         }
@@ -835,6 +845,7 @@ impl App {
         let cancel = Cancel::default();
         self.git.running = Some(cancel.clone());
         let sender = self.git.sender.clone();
+        let read_version = !self.git.old_git_warned && self.git.version_read.insert(root.clone());
         // 上次未找到 `git` 时本次在后台重新查找（用户可能刚安装）。
         self.spawn_git(UserEvent::GitStatus, move |tool| {
             let (status, refs) = match &tool {
@@ -859,7 +870,7 @@ impl App {
                     let stashes = scope.spawn(|| git.stashes(root, cancel));
                     let recent_branches = scope.spawn(|| git.recent_branches(root, cancel));
                     let worktrees = scope.spawn(|| git.worktrees(root, cancel));
-                    let version = scope.spawn(|| git.version(root, cancel));
+                    let version = read_version.then(|| scope.spawn(|| git.version(root, cancel)));
                     // 线程中的函数不会 panic；万一发生，该项按读取失败处理。
                     let refs = Refs {
                         branches: branches
@@ -880,7 +891,7 @@ impl App {
                             .unwrap_or_default(),
                         worktrees: worktrees.join().ok().and_then(Result::ok),
                         home: winc_editor::wsl::home_dir(root),
-                        version: version.join().ok().flatten(),
+                        version: version.and_then(|v| v.join().ok().flatten()),
                     };
                     (status, Some(refs))
                 }),
@@ -928,6 +939,8 @@ impl App {
     pub(super) fn poll_git(&mut self) {
         self.git_take_scan();
         self.take_push_preview();
+        self.take_push_outgoing();
+        self.take_auto_fetch();
         // 其他仓库的状态由后台直接写入，读完时同样到达这里：列着其他仓库时重新绘制。
         if self.commit_shows_others() && self.commit_shown() {
             self.prune_other_checked();

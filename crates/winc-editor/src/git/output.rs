@@ -50,17 +50,26 @@ fn append(text: &str) {
     {
         let mut log = LOG.lock().unwrap_or_else(PoisonError::into_inner);
         log.text.push_str(text);
-        if log.text.len() > LOG_LIMIT {
-            let over = log.text.len() - LOG_LIMIT;
-            let cut = log.text[over..]
-                .find('\n')
-                .map_or(log.text.len(), |at| over + at + 1);
-            log.text.drain(..cut);
-            log.dropped += cut as u64;
-        }
+        let cut = trim_front(&mut log.text, LOG_LIMIT);
+        log.dropped += cut as u64;
     }
     let mut listeners = LISTENERS.lock().unwrap_or_else(PoisonError::into_inner);
     listeners.retain(|listener| listener());
+}
+
+/// `text` 超过 `limit` 字节时从开头起丢弃整行，直到不超过为止，返回丢弃的字节数。
+///
+/// 按字节找换行：超出的位置可能落在多字节字符中间，不能在那里切字符串；换行之后总是字符边界。
+fn trim_front(text: &mut String, limit: usize) -> usize {
+    if text.len() <= limit {
+        return 0;
+    }
+    let over = text.len() - limit;
+    let cut = (text.as_bytes()[over..].iter())
+        .position(|&b| b == b'\n')
+        .map_or(text.len(), |at| over + at + 1);
+    text.drain(..cut);
+    cut
 }
 
 /// 两条命令之间的空行：记录不为空时在新的一条前面加一个换行。

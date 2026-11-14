@@ -46,7 +46,7 @@ pub(crate) enum PushIntent {
 
 /// 推送的确认框里最多列出几个提交的标题：确认框不能滚动，一屏之内读得完；超出的写明个数，
 /// 全部提交在「查看提交」打开的日志里。
-const PUSH_PREVIEW: usize = 8;
+pub(crate) const PUSH_PREVIEW: usize = 8;
 
 /// 提交成功后按钮显示「✓ 已提交」的时长（经验值）。
 ///
@@ -121,10 +121,11 @@ impl App {
             return;
         };
         self.spawn_git(UserEvent::GitStatus, move |tool| {
-            let publish = matches!(intent, PushIntent::Publish(_));
-            let read = tool
-                .ok()
-                .map(|git| git.outgoing(&root, publish, PUSH_PREVIEW));
+            let target = match intent {
+                PushIntent::Publish(_) => winc_editor::git::Outgoing::Publish,
+                _ => winc_editor::git::Outgoing::Upstream,
+            };
+            let read = (tool.ok()).map(|git| git.outgoing(&root, target, PUSH_PREVIEW));
             let (subjects, total) = read.and_then(Result::ok).unwrap_or_default();
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((intent, subjects, total));
         });
@@ -415,12 +416,12 @@ impl App {
         self.run_git_job(move |git, root| {
             // 先提交当前仓库，再依次提交其他仓库暂存的内容；其中一个失败就停下，已经提交的保留。
             let result = git.and_then(|git| {
-                let mut first = None;
+                let mut done = CommittedIn::default();
                 if own {
                     if !conflicted.is_empty() {
                         git.stage(root, &conflicted)?;
                     }
-                    first = Some(git.commit_with(root, &message, options)?);
+                    done.add(root, git.commit_with(root, &message, options)?);
                 }
                 for (other, sign_off) in &others {
                     let options = winc_editor::git::CommitOptions {
@@ -429,13 +430,10 @@ impl App {
                         sign_off: *sign_off,
                         ..options
                     };
-                    let name = winc_editor::display_name(other);
-                    let oid = git
-                        .commit_with(other, &message, options)
-                        .map_err(|error| format!("{name}: {error}"))?;
-                    first.get_or_insert(oid);
+                    let oid = git.commit_with(other, &message, options);
+                    done.add(other, oid.map_err(|error| done.failed(other, &error))?);
                 }
-                Ok(first.unwrap_or_default())
+                Ok(done.first.unwrap_or_default())
             });
             let _ = sender.send(Outcome::Committed(result, message, root.to_path_buf()));
         });
@@ -660,6 +658,10 @@ impl App {
                                 t!("git-commit-failed", error = e),
                                 NoticeAction::GitOutput,
                             );
+                            // 失败前可能已经提交了其他仓库：重读它们的状态。
+                            if self.commit_shows_others() {
+                                self.git_read_summaries();
+                            }
                         }
                     }
                     self.git_refresh();
@@ -735,6 +737,10 @@ impl App {
         self.git.commit.sort = old.sort;
         self.git.commit.staging = old.staging;
         self.git.commit.other_checked = old.other_checked;
+        // 写入其他仓库暂存区的操作按仓库的路径进行，与当前是哪个仓库无关：换仓库时接着做完，
+        // 界面上已经按做完的结果显示了。
+        self.git.commit.other_stage_queue = old.other_stage_queue;
+        self.git.commit.other_stage_running = old.other_stage_running;
         self.git.commit.collapsed = old.collapsed;
         self.git.commit.drafts = old.drafts;
     }
@@ -751,6 +757,40 @@ impl App {
         self.spawn_git(UserEvent::GitCommit, move |tool| {
             work(tool.as_ref().map_err(unusable), &root);
         });
+    }
+}
+
+/// 一次提交依次写入几个仓库时，已经提交了的：失败时的说明里写明哪些仓库已经提交，用户不会
+/// 以为什么都没发生。
+#[derive(Default)]
+pub(super) struct CommittedIn {
+    /// 第一个新提交的提交号。
+    pub first: Option<String>,
+    /// 已经提交了的仓库的名字。
+    names: Vec<String>,
+}
+
+impl CommittedIn {
+    /// 记下仓库 `root` 已经提交，新提交号是 `oid`。
+    pub fn add(&mut self, root: &Path, oid: String) {
+        self.first.get_or_insert(oid);
+        self.names
+            .push(winc_editor::display_name(root).into_owned());
+    }
+
+    /// 仓库 `root` 提交失败（原因 `error`）时的说明：写明是哪个仓库，前面已经提交了的一并写出。
+    pub fn failed(&self, root: &Path, error: &str) -> String {
+        let name = winc_editor::display_name(root);
+        if self.names.is_empty() {
+            return format!("{name}: {error}");
+        }
+        let done = self.names.join(t!("common-list-separator"));
+        t!(
+            "git-commit-partial",
+            done = done,
+            name = name,
+            error = error
+        )
     }
 }
 

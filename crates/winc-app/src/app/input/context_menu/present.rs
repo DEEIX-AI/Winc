@@ -414,10 +414,12 @@ impl App {
                     !doc.selection.is_empty(),
                     bookmarked,
                 );
-                // Git 模块开着、文件在仓库里：最后是「逐行追溯」开关。
+                // Git 模块开着、文件在仓库里：最后是所选代码的历史和「逐行追溯」开关。
                 if doc.path.as_deref().is_some_and(|p| self.in_repo(p)) {
+                    let history = Action::GitSelectionHistory;
                     menu.extend([
                         MenuEntry::Separator,
+                        MenuEntry::Item(MenuCommand::GitAction(history), true),
                         MenuEntry::Item(MenuCommand::ToggleBlame, true),
                     ]);
                 }

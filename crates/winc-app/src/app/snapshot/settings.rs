@@ -1008,7 +1008,9 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         Setting::GitStagingArea,
         Setting::GitTree,
         Setting::DiffInline,
+        Setting::GitInlineBlame,
         Setting::GitConfirmPush,
+        Setting::GitAutoFetch,
         Setting::GitSystemProxy,
     ];
     assert_eq!(rows, expected);

@@ -183,6 +183,7 @@ cmd-git-stage-all = Git: Stage All Changes
 cmd-git-unstage-all = Git: Unstage All Changes
 cmd-git-stage-file = Git: Stage Current File
 cmd-git-file-history = Git: Show History of Current File
+cmd-git-selection-history = Git: Show History for Selection
 cmd-git-blame = Git: Blame
 cmd-show-commit = Git: Commit…
 cmd-git-revert-change = Git: Roll Back Change at Cursor

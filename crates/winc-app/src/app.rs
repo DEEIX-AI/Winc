@@ -46,7 +46,7 @@ pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
     CommitRows, CommitScope, CommitSort, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, OtherRow,
-    STASH_GAP, StashLine, StashView, SyncState,
+    STASH_GAP, StashLine, StashView, SyncState, commits_staged,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,

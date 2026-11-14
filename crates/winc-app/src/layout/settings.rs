@@ -171,7 +171,9 @@ impl SettingsPage {
                 Setting::GitStagingArea,
                 Setting::GitTree,
                 Setting::DiffInline,
+                Setting::GitInlineBlame,
                 Setting::GitConfirmPush,
+                Setting::GitAutoFetch,
                 Setting::GitSystemProxy,
             ])],
             SettingsPage::Modules => vec![plain(vec![
@@ -380,6 +382,10 @@ pub enum Setting {
     GitConfirmPush,
     /// `git` 跟随系统的代理设置（`git.systemProxy`）。
     GitSystemProxy,
+    /// 光标所在行末尾的追溯提示（`git.inlineBlame`）。
+    GitInlineBlame,
+    /// 定时在后台获取（`git.autoFetch`）。
+    GitAutoFetch,
     /// 提交视图的更改列表按目录排成树；记在状态文件里，与「⋯」菜单中的是同一个开关。
     GitTree,
     /// 提交视图显示暂存区（`git.stagingArea`）；关闭时用勾选决定提交的内容。
@@ -492,6 +498,8 @@ impl Setting {
             Setting::GitStagingArea
             | Setting::GitConfirmPush
             | Setting::GitSystemProxy
+            | Setting::GitInlineBlame
+            | Setting::GitAutoFetch
             | Setting::GitTree
             | Setting::DiffInline => SettingsPage::Git,
             Setting::GitModule | Setting::TerminalModule | Setting::RemoteModule => {
@@ -567,6 +575,8 @@ impl Setting {
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
             Setting::GitSystemProxy => t!("settings-git-system-proxy"),
+            Setting::GitInlineBlame => t!("settings-git-inline-blame"),
+            Setting::GitAutoFetch => t!("settings-git-auto-fetch"),
             Setting::GitTree => t!("settings-git-tree"),
             Setting::GitStagingArea => t!("settings-git-staging-area"),
             Setting::TerminalModule => t!("settings-terminal-module"),
@@ -623,6 +633,8 @@ impl Setting {
             Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
             Setting::GitSystemProxy => Some(t!("settings-git-system-proxy-desc")),
+            Setting::GitInlineBlame => Some(t!("settings-git-inline-blame-desc")),
+            Setting::GitAutoFetch => Some(t!("settings-git-auto-fetch-desc")),
             Setting::GitTree => Some(t!("settings-git-tree-desc")),
             Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
@@ -675,6 +687,8 @@ impl Setting {
             | Setting::GitModule
             | Setting::GitConfirmPush
             | Setting::GitSystemProxy
+            | Setting::GitInlineBlame
+            | Setting::GitAutoFetch
             | Setting::GitTree
             | Setting::GitStagingArea
             | Setting::TerminalModule

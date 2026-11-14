@@ -733,6 +733,8 @@ impl App {
 
         earliest(&mut wake, self.blame_tick(now));
 
+        earliest(&mut wake, self.auto_fetch_tick(now));
+
         // 停止绘制后处理空闲的呈现缓冲（每块与窗口大小相同）：
         // 标记为可清除或释放，无需等到下一次绘制。
         if let Some(renderer) = &mut self.frame.renderer

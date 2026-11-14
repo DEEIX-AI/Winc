@@ -287,6 +287,7 @@ git-commit-done = Committed { $oid }: { $subject }
 git-commit-failed = Couldn’t commit: { $error }
 git-commit-done-in = Committed { $oid } in “{ $name }”
 git-commit-failed-in = Couldn’t commit in “{ $name }”: { $error }
+git-commit-partial = committed in { $done }; { $name }: { $error }
 git-undo-commit-confirm = Undo the last commit?
 git-undo-commit-confirm-detail = The changes in “{ $subject }” stay staged, and its message returns to the commit box.
 git-undo-commit-confirm-button = Undo Commit
@@ -578,6 +579,7 @@ git-log-reset-hard-confirm-button = Hard Reset
 
 git-log-title = Git Log
 git-history-title = { $name } · History
+git-lines-history-title = { $name }:{ $start }–{ $end } · History
 git-log-target-not-loaded = The target commit hasn’t loaded yet. Scroll down the list and try again
 git-log-parent-not-loaded = The parent commit hasn’t loaded yet. Scroll down the list and try again
 git-next-file = Switched to the next file: { $name } ({ $index }/{ $total })

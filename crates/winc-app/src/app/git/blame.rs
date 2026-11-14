@@ -3,7 +3,8 @@
 //! 按文档开关（命令「Git：逐行追溯」、编辑区右键菜单）。开启后在后台运行
 //! `git blame --porcelain --contents -`，将编辑器中的内容（含未保存的修改）交给 `git`，使行号与
 //! 编辑器一致，已修改但未提交的行记为「未提交」。输入时不每次运行 `git`，停止输入
-//! [`BLAME_IDLE`] 后或保存后在后台重新计算。该栏由 `view/editor.rs` 在行号栏中绘制。
+//! [`BLAME_IDLE`] 后或保存后在后台重新计算。该栏由 `view/editor.rs` 在行号栏中绘制。当前行
+//! 追溯（`git.inlineBlame`）用同一份结果，在光标所在行的末尾写出一行说明。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -112,6 +113,36 @@ impl App {
         }
     }
 
+    /// 当前行追溯是否作用于文档 `id`：设置开着、Git 模块开着，并且它是当前文档。
+    fn inline_blame_on(&self, id: DocumentId) -> bool {
+        self.config.git_inline_blame != Some(false)
+            && self.git_enabled()
+            && self.editor.active().is_some_and(|doc| doc.id == id)
+    }
+
+    /// 文档 `id` 是否需要逐行追溯的结果：开着追溯一栏，或者用于当前行追溯。
+    fn blame_wanted(&self, id: DocumentId) -> bool {
+        self.git.blame.is_on(id) || self.inline_blame_on(id)
+    }
+
+    /// 当前行追溯的内容：光标所在的行和「作者, 时间 · 提交说明」。
+    ///
+    /// 有选区、有多个光标、这一行尚未提交或还没有追溯结果时为 `None`。
+    pub(crate) fn inline_blame(&self, now: i64) -> Option<(usize, String)> {
+        let doc = self.editor.active()?;
+        let single = doc.selection.is_empty() && doc.extra_selections().is_empty();
+        if !single || !self.inline_blame_on(doc.id) {
+            return None;
+        }
+        let line = doc.text().line_of(doc.selection.head);
+        let commit = self.blame_commit(line).filter(|c| !c.uncommitted)?;
+        let time = blame_time(&commit, now);
+        Some((
+            line,
+            format!("{}, {time} · {}", commit.author, commit.summary),
+        ))
+    }
+
     /// 切换当前文档的逐行追溯（命令「Git：逐行追溯」）。
     pub(in crate::app) fn toggle_blame(&mut self) {
         let Some(doc) = self.editor.active() else {
@@ -158,7 +189,7 @@ impl App {
     /// 尚无结果或到达重新计算的时刻时，在后台运行 `git blame`（同一文档同一时刻只计算一次）。
     /// 文本刚变化时先按改动平移上一次的结果，停止输入 [`BLAME_IDLE`] 后再重新计算。
     pub(crate) fn update_blame(&mut self, id: DocumentId) {
-        if !self.git.blame.is_on(id) {
+        if !self.blame_wanted(id) {
             return;
         }
         let Some(doc) = self.editor.document(id) else {
@@ -208,7 +239,7 @@ impl App {
 
     /// 在文档 `id` 保存后立即重新计算逐行追溯，不等待停止输入；未开启时不做处理。
     pub(in crate::app) fn blame_saved(&mut self, id: DocumentId) {
-        if self.git.blame.is_on(id) {
+        if self.blame_wanted(id) {
             self.git.blame.due.insert(id, Instant::now());
             self.update_blame(id);
         }
@@ -228,13 +259,21 @@ impl App {
 
     /// 接收后台计算完成的逐行追溯。
     ///
-    /// 失败时（文件尚未被跟踪）提示原因并关闭逐行追溯。
+    /// 开着追溯一栏时，失败（文件尚未被跟踪）提示原因并关闭逐行追溯。只用于当前行追溯时不提示，
+    /// 记下一份空结果：这一行不显示说明，文本不变时也不反复运行 `git`。
     pub(in crate::app) fn poll_blame(&mut self) {
         while let Ok(done) = self.git.blame.results.1.try_recv() {
             self.git.blame.computing.remove(&done.doc);
-            if !self.git.blame.is_on(done.doc) {
+            if !self.blame_wanted(done.doc) {
                 continue;
             }
+            let done = match done.result {
+                Err(_) if !self.git.blame.is_on(done.doc) => Computed {
+                    result: Ok(Blame::default()),
+                    ..done
+                },
+                _ => done,
+            };
             match done.result {
                 Ok(blame) => {
                     let entry = Entry {

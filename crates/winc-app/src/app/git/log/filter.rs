@@ -1,5 +1,7 @@
 //! 筛选：按文字、分支、作者，以及一个文件的历史。
 
+use winc_core::Lines;
+
 use super::*;
 
 use crate::app::scroll::set_scroll_line;
@@ -13,6 +15,38 @@ impl App {
     /// 打开文件 `path` 的历史：一个只看改过这个文件的提交的日志标签（跟着改名往前找）；已经
     /// 开着就切过去。
     pub(in crate::app) fn git_file_history(&mut self, path: &Path) {
+        self.open_history(path, None);
+    }
+
+    /// 当前文件中选中的几行（没有选区时是光标所在的一行）的历史（命令「Git：显示所选代码的
+    /// 历史」）：只看改过这几行的提交。
+    ///
+    /// `git log -L` 按 `HEAD` 中的行号查找：未提交的改动先按与 `HEAD` 的差异换算，新加的行
+    /// 换成它所在位置在 `HEAD` 中的那一行。
+    pub(in crate::app) fn git_selection_history(&mut self) {
+        self.fresh_line_changes();
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        let Some(path) = doc.path.clone() else {
+            self.flash(t!("git-no-file-in-tab"));
+            return;
+        };
+        let text = doc.text();
+        let (from, to) = (doc.selection.from(), doc.selection.to());
+        let first = text.line_of(from);
+        // 选区结束在下一行行首时，那一行没有被选中。
+        let last = match text.line_of(to) {
+            line if line > first && text.line_start(line) == to => line - 1,
+            line => line,
+        };
+        let hunks = self.git.changes.hunks(doc.id);
+        let range = (head_line(hunks, first) + 1, head_line(hunks, last) + 1);
+        self.open_history(&path, Some(range));
+    }
+
+    /// 打开文件 `path` 的历史标签；`lines` 是只看的行范围（见 [`LogQuery::lines`]）。
+    fn open_history(&mut self, path: &Path, lines: Option<(usize, usize)>) {
         let Some(root) = self.git.root.clone() else {
             self.flash(t!("git-not-a-repository"));
             return;
@@ -26,11 +60,25 @@ impl App {
                 return;
             }
         };
-        let (index, new) = self.editor.show_log(&history_title(&path));
+        let title = match lines {
+            Some((start, end)) => {
+                let name = winc_editor::display_name(&path);
+                let (start, end) = (start.to_string(), end.to_string());
+                t!(
+                    "git-lines-history-title",
+                    name = name,
+                    start = start,
+                    end = end
+                )
+            }
+            None => history_title(&path),
+        };
+        let (index, new) = self.editor.show_log(&title);
         let id = self.editor.documents[index].id;
         if new {
             if let Some(view) = self.editor.documents[index].log.as_deref_mut() {
                 view.query.path = Some(path);
+                view.query.lines = lines;
             }
             self.load_log(id);
         }
@@ -144,4 +192,24 @@ impl App {
         }
         list
     }
+}
+
+/// 把当前文本的第 `line` 行（从 0 起）换成 `HEAD` 中对应的行：`hunks` 是从 `HEAD` 到当前文本的
+/// 改动。改动之后的行按前面增减的行数平移；落在改动里的行换成这段改动在 `HEAD` 中的开头，
+/// 那段在 `HEAD` 中没有内容（新加的行）时是它前面的一行。
+pub(crate) fn head_line(hunks: &[winc_core::diff::LineHunk], line: usize) -> usize {
+    let mut shift: isize = 0;
+    for hunk in hunks {
+        if line < hunk.new.start {
+            break;
+        }
+        if line < hunk.new.end {
+            return match hunk.old.is_empty() {
+                true => hunk.old.start.saturating_sub(1),
+                false => hunk.old.start,
+            };
+        }
+        shift += hunk.old.len() as isize - hunk.new.len() as isize;
+    }
+    line.saturating_add_signed(shift)
 }

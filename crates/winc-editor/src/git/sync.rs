@@ -27,6 +27,22 @@ pub enum Carried {
     Kept,
 }
 
+/// 推送的目标，用来算出会送出哪些提交（见 [`Git::outgoing`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outgoing<'a> {
+    /// 当前分支的上游。
+    Upstream,
+    /// 还没有上游的分支第一次推送：任何远程分支都没有的提交。
+    Publish,
+    /// 远程 `remote` 上的分支 `branch`；那里还没有这个分支时，是该远程的任何分支都没有的提交。
+    To {
+        /// 远程名。
+        remote: &'a str,
+        /// 远程上的分支名。
+        branch: &'a str,
+    },
+}
+
 /// 各项操作所需的最低 `git` 版本：`switch`、`restore` 与 `--end-of-options` 自该版本起齐备。
 pub const MINIMUM_VERSION: (u32, u32) = (2, 24);
 
@@ -137,32 +153,45 @@ impl Git {
         Carried::Restored
     }
 
-    /// 返回推送会送出的提交：最新的在前、最多 `limit` 个提交的标题，以及这样的提交一共多少个。
-    ///
-    /// 有上游时是上游没有的提交；`publish`（分支还没有上游）时是任何远程分支都没有的提交。
+    /// 返回推送到 `target` 会送出的提交：最新的在前、最多 `limit` 个提交的标题，以及这样的提交
+    /// 一共多少个。
     ///
     /// # Errors
     ///
-    /// `git` 运行失败时返回原因。
+    /// 远程名、分支名以 `-` 开头，或 `git` 运行失败时返回原因。
     pub fn outgoing(
         &self,
         root: &Path,
-        publish: bool,
+        target: Outgoing<'_>,
         limit: usize,
     ) -> Result<(Vec<String>, usize), String> {
         let cancel = Cancel::default();
-        let range: &[&str] = if publish {
-            &["HEAD", "--not", "--remotes"]
-        } else {
-            &["@{upstream}..HEAD"]
+        let range: Vec<String> = match target {
+            Outgoing::Upstream => vec!["@{upstream}..HEAD".into()],
+            Outgoing::Publish => ["HEAD", "--not", "--remotes"].map(String::from).into(),
+            Outgoing::To { remote, branch } => {
+                if remote.starts_with('-') || branch.starts_with('-') {
+                    return Err(winc_i18n::t!("git-push-no-remote").to_owned());
+                }
+                let tracking = format!("refs/remotes/{remote}/{branch}");
+                let mut command = self.command(root);
+                command.args(["rev-parse", "--verify", "--quiet", &tracking]);
+                match self.run(&mut command, STATUS_TIMEOUT, &cancel) {
+                    Ok(_) => vec![format!("{tracking}..HEAD")],
+                    // `--remotes=<名字>` 匹配 `refs/remotes/<名字>/*`。
+                    Err(_) => vec!["HEAD".into(), "--not".into(), format!("--remotes={remote}")],
+                }
+            }
         };
         let mut command = self.command(root);
-        command.args(["rev-list", "--count"]).args(range);
+        command.args(["rev-list", "--count"]).args(&range);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
         let total = String::from_utf8_lossy(&stdout).trim().parse().unwrap_or(0);
         let mut command = self.command(root);
         let count = format!("--max-count={limit}");
-        command.args(["log", "--format=%s", &count]).args(range);
+        // `log.showSignature` 等配置会在标题之间插入签名校验的输出，这里关掉。
+        let args = ["log", "--no-show-signature", "--format=%s", &count];
+        command.args(args).args(&range);
         let stdout = self.run(&mut command, STATUS_TIMEOUT, &cancel)?;
         let subjects = String::from_utf8_lossy(&stdout);
         Ok((subjects.lines().map(str::to_owned).collect(), total))

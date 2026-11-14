@@ -430,6 +430,7 @@ impl App {
                 self.run_branch_command(command);
             }
             GitFileHistory => self.git_current_file_history(),
+            GitSelectionHistory => self.git_selection_history(),
             GitBlame => self.toggle_blame(),
             GitRevertChange if self.editor.active().is_some_and(|d| d.diff.is_some()) => {
                 self.revert_diff_hunk_here();

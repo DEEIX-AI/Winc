@@ -183,6 +183,7 @@ cmd-git-stage-all = Git：暂存全部更改
 cmd-git-unstage-all = Git：取消暂存全部更改
 cmd-git-stage-file = Git：暂存当前文件
 cmd-git-file-history = Git：显示当前文件的历史
+cmd-git-selection-history = Git：显示所选代码的历史
 cmd-git-blame = Git：逐行追溯
 cmd-show-commit = Git：提交…
 cmd-git-revert-change = Git：回滚光标处的更改

@@ -518,6 +518,10 @@ fn the_push_dialog_pushes_to_another_branch_with_tags() {
             .unwrap();
         (out.status.success()).then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
     };
+    // 远程上 `main` 有「已推送」，`old` 停在它之前。
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "已推送"]).unwrap();
+    git(&work, &["push", "-q", "origin", "main"]).unwrap();
+    git(&work, &["push", "-q", "origin", "HEAD~1:refs/heads/old"]).unwrap();
     git(&work, &["commit", "-q", "--allow-empty", "-m", "待评审"]).unwrap();
     git(&work, &["tag", "v1"]).unwrap();
     let head = git(&work, &["rev-parse", "HEAD"]).unwrap();
@@ -527,6 +531,28 @@ fn the_push_dialog_pushes_to_another_branch_with_tags() {
     };
     app.git_refresh();
     app.ask_push(PushIntent::Push);
+    let subjects = |app: &App| match &app.overlays.form_dialog.as_ref().unwrap().kind {
+        FormKind::Push(form) => (form.subjects.clone(), form.total),
+        kind => panic!("{kind:?}"),
+    };
+    assert_eq!(subjects(&app), (vec!["待评审".to_owned()], 1));
+
+    // 改了目标分支，提交列表按新目标重读：推到 `old` 要送出两个提交；推到远程还没有的
+    // `review`，送出的是远程哪个分支都没有的那一个。
+    let retarget = |app: &mut App, name: &str| {
+        app.overlays
+            .form_dialog
+            .as_mut()
+            .unwrap()
+            .name
+            .set_text(name);
+        app.refresh_push_list();
+    };
+    retarget(&mut app, "old");
+    let both = vec!["待评审".to_owned(), "已推送".to_owned()];
+    assert_eq!(subjects(&app), (both, 2));
+    retarget(&mut app, "review");
+    assert_eq!(subjects(&app), (vec!["待评审".to_owned()], 1));
 
     let dialog = app.overlays.form_dialog.as_mut().unwrap();
     dialog.name.set_text("-review");
@@ -614,5 +640,56 @@ fn old_git_is_reported_once() {
     assert!(text.contains("2.23") && text.contains("2.24"), "{text}");
     app.warn_old_git(Some((1, 9)));
     assert_eq!(app.notice.text, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 开启定时获取后第一个周期立即获取：远程的新提交取回本地，分支行上的落后数随之更新；
+/// 下一次在一个周期之后。关闭时不安排获取。
+#[test]
+fn auto_fetch_brings_in_new_upstream_commits() {
+    let dir = sample_folder("git-auto-fetch");
+    let (bare, work, other) = (dir.join("bare.git"), dir.join("work"), dir.join("other"));
+    let git = |at: &Path, args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(at)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    let made = git(&dir, &["init", "-q", "--bare", "-b", "main", "bare.git"])
+        && git(&dir, &["clone", "-q", "bare.git", "work"])
+        && git(&work, &["commit", "-q", "--allow-empty", "-m", "first"])
+        && git(&work, &["push", "-q", "-u", "origin", "main"])
+        && git(&dir, &["clone", "-q", "bare.git", "other"])
+        && git(&other, &["commit", "-q", "--allow-empty", "-m", "upstream"])
+        && git(&other, &["push", "-q", "origin", "main"]);
+    if !made {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let _ = bare;
+    let Some(mut app) = git_app(&work) else {
+        return;
+    };
+    app.git_refresh();
+    let behind = |app: &App| app.git.status.as_ref().map_or(0, |s| s.behind);
+    assert_eq!(behind(&app), 0);
+
+    let now = std::time::Instant::now();
+    assert_eq!(app.auto_fetch_tick(now), None);
+    app.config.git_auto_fetch = Some(true);
+    assert_eq!(
+        app.auto_fetch_tick(now),
+        Some(now + crate::app::git::fetch::FETCH_PERIOD)
+    );
+    assert_eq!(behind(&app), 1);
+    // 还没到下一个周期：不再获取。
+    assert_eq!(
+        app.auto_fetch_tick(now),
+        Some(now + crate::app::git::fetch::FETCH_PERIOD)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

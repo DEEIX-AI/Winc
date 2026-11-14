@@ -62,8 +62,24 @@ impl Git {
             command.arg(format!("--author={author}"));
         }
         command.arg(LOG_DATE).arg(LOG_FORMAT);
-        if query.path.is_some() {
-            command.arg("--follow");
+        // 按行范围查找时文件写在 `-L` 里，不能再写路径；`-s` 不输出每个提交改了这段的哪些地方。
+        let range = match (&query.path, query.lines) {
+            (Some(path), Some((start, end))) => {
+                // 路径按原样接在后面：不是 UTF-8 的文件名也不受影响。
+                let mut range = std::ffi::OsString::from(format!("-L{start},{end}:"));
+                range.push(slash_path(root, path)?);
+                Some(range)
+            }
+            _ => None,
+        };
+        match &range {
+            Some(range) => {
+                command.arg("-s").arg(range);
+            }
+            None if query.path.is_some() => {
+                command.arg("--follow");
+            }
+            None => {}
         }
         // 选项都在前面，最后是从哪些提交往回走、看哪个文件。分支名前面加 `--end-of-options`：
         // 叫 `-x` 的分支也不会被当成选项。
@@ -78,7 +94,7 @@ impl Git {
                 command.args(["--exclude=refs/stash", "--all"]);
             }
         }
-        if let Some(path) = &query.path {
+        if let Some(path) = query.path.as_ref().filter(|_| range.is_none()) {
             command.arg("--").arg(slash_path(root, path)?);
         }
         let stream = process::Stream::spawn(&mut command).map_err(|e| describe(&e))?;

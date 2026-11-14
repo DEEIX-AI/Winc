@@ -104,3 +104,19 @@ fn a_command_without_live_output_records_it_at_the_end() {
     let expected = format!("fatal: late-record-output\n{status}\n");
     assert!(output_text().contains(&expected), "{}", output_text());
 }
+
+/// 超出上限时从开头丢弃整行：超出的位置落在汉字中间也不出错，留下的从下一行开始。
+#[test]
+fn trimming_the_front_keeps_whole_lines_of_any_text() {
+    let mut text = "提交说明\n第二行\n末行\n".to_owned();
+    let full = text.len();
+    // 超出 1 字节：位置落在「提」的第二个字节上。
+    let cut = trim_front(&mut text, full - 1);
+    assert_eq!(text, "第二行\n末行\n");
+    assert_eq!(cut, "提交说明\n".len());
+    assert_eq!(trim_front(&mut text, full), 0);
+    // 最后一行也放不下时全部丢弃。
+    let mut text = "没有换行的一整段".to_owned();
+    assert_eq!(trim_front(&mut text, 3), "没有换行的一整段".len());
+    assert!(text.is_empty());
+}

@@ -56,3 +56,28 @@ fn civil_dates_round_trip() {
     }
     assert_eq!(days_from_civil(1970, 1, 2), 1);
 }
+
+/// 当前文本的行号换算成 `HEAD` 中的行号：改动之后的按增减的行数平移，改动里的换成这段在
+/// `HEAD` 中的开头，新加的行换成它前面的一行。
+#[test]
+fn caret_lines_map_back_to_head() {
+    use super::filter::head_line;
+    use winc_core::diff::LineHunk;
+    // 第 2 行后插入两行（新 2..4），原第 6 行改成两行（旧 6..7，新 8..10）。
+    let hunks = [
+        LineHunk {
+            old: 2..2,
+            new: 2..4,
+        },
+        LineHunk {
+            old: 6..7,
+            new: 8..10,
+        },
+    ];
+    assert_eq!(head_line(&hunks, 1), 1);
+    assert_eq!(head_line(&hunks, 2), 1);
+    assert_eq!(head_line(&hunks, 3), 1);
+    assert_eq!(head_line(&hunks, 5), 3);
+    assert_eq!(head_line(&hunks, 9), 6);
+    assert_eq!(head_line(&hunks, 10), 7);
+}

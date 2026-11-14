@@ -1,7 +1,7 @@
 //! 「显示全部仓库」时其他仓库各行的绘制：仓库的标题行和其下的文件行。
 
 use super::*;
-use crate::app::OtherRow;
+use crate::app::{OtherRow, commits_staged};
 
 /// 从上沿 `top`（逻辑像素）起绘制其他仓库的各行，记下可点击的位置。
 ///
@@ -176,11 +176,10 @@ fn draw_other_group(
     let p = app.palette;
     let count = |status: &Status| {
         let entries = status.entries.iter();
-        let ready = |e: &&winc_editor::git::Entry| e.staged.is_some() && !e.conflicted();
         match staged {
-            true => entries.filter(ready).count(),
+            true => entries.filter(|e| commits_staged(e)).count(),
             false => entries
-                .filter(|e| e.unstaged.is_some() || !ready(e))
+                .filter(|e| e.unstaged.is_some() || !commits_staged(e))
                 .count(),
         }
     };

@@ -9,7 +9,7 @@
 mod actions;
 mod ignore;
 pub(in crate::app) use actions::COMMITTED_SHOWN;
-pub(crate) use actions::{PushIntent, SyncState};
+pub(crate) use actions::{PUSH_PREVIEW, PushIntent, SyncState};
 pub use ignore::IgnoreKind;
 mod list;
 pub(in crate::app::git) use list::rows_of;
@@ -20,7 +20,7 @@ mod menu;
 mod others;
 mod parts;
 mod picks;
-pub(crate) use others::OtherRow;
+pub(crate) use others::{OtherRow, commits_staged};
 mod message;
 mod press;
 mod staging;
