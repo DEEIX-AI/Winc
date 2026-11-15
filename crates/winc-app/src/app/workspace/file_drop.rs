@@ -36,7 +36,8 @@ impl App {
         if self.terminal_takes_drop(x, y) {
             return DropZone::Terminal;
         }
-        let on_tree = self.sidebar.view == SidebarView::Files && self.layout.sidebar.right() > 0.0;
+        let on_tree =
+            self.panels.sidebar.view == SidebarView::Files && self.layout.sidebar.right() > 0.0;
         match on_tree.then(|| self.tree_dir_at(x, y)).flatten() {
             Some(dir) => DropZone::Tree(dir),
             None => DropZone::Open,
@@ -45,7 +46,7 @@ impl App {
 
     /// 拖动中的落点（见 [`DropZone`]），绘制时据此铺底色；没有拖动时为 `None`。
     pub(crate) fn file_hover(&self) -> Option<&DropZone> {
-        self.file_hover.as_ref()
+        self.panels.file_hover.as_ref()
     }
 
     /// 文件或目录拖入了窗口（`HoveredFile`；同时拖动多项时每项触发一次）：开始跟踪落点。
@@ -55,7 +56,7 @@ impl App {
 
     /// 拖出了窗口或松了手：不再标出落点。
     pub(in crate::app) fn end_file_hover(&mut self) {
-        if self.file_hover.take().is_some() {
+        if self.panels.file_hover.take().is_some() {
             self.request_redraw();
         }
     }
@@ -63,7 +64,7 @@ impl App {
     /// 拖动文件经过窗口时，按 [`POLL`] 的间隔查询鼠标位置并更新落点，返回下一次查询的时刻；
     /// 没有拖动时返回 `None`。
     pub(in crate::app) fn file_hover_tick(&mut self, now: Instant) -> Option<Instant> {
-        self.file_hover.as_ref()?;
+        self.panels.file_hover.as_ref()?;
         self.update_file_hover();
         Some(now + POLL)
     }
@@ -72,27 +73,28 @@ impl App {
     fn update_file_hover(&mut self) {
         let (x, y) = self.drop_point();
         let zone = Some(self.drop_zone(x, y));
-        if zone != self.file_hover {
-            self.file_hover = zone;
+        if zone != self.panels.file_hover {
+            self.panels.file_hover = zone;
             self.request_redraw();
         }
     }
 
     /// 返回拖入中的文件此刻的位置（逻辑像素）。
     ///
-    /// 系统在拖动期间不发送鼠标移动事件，需要向系统查询；查不到时（测试中没有窗口，或平台不
-    /// 支持）使用最后一次鼠标移动的位置。
+    /// 系统在拖动期间不发送鼠标移动事件，需要向系统查询；查不到时（测试中没有窗口）使用最后一次
+    /// 鼠标移动的位置。Wayland 上 winit 不传递拖入的文件，不会走到这里。
     fn drop_point(&self) -> (f32, f32) {
         #[cfg(target_os = "macos")]
-        if let Some((x, y)) = self
-            .window
-            .handle
-            .as_ref()
-            .and_then(|w| crate::macos::mouse_location(w))
-        {
+        let query = crate::macos::mouse_location;
+        #[cfg(windows)]
+        let query = crate::windows::mouse_location;
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let query = crate::x11::mouse_location;
+        #[cfg(any(unix, windows))]
+        if let Some((x, y)) = self.window.handle.as_ref().and_then(|w| query(w)) {
             return (x / self.zoom(), y / self.zoom());
         }
-        self.mouse
+        self.pointer.mouse
     }
 
     /// 处理拖进窗口松手的文件或目录 `path`，规则见 [`Self::drop_file_at`]。
@@ -128,7 +130,7 @@ impl App {
             return;
         }
         ws.reveal(path);
-        self.tree.motion = None;
+        self.panels.tree.motion = None;
         self.focus = Focus::Tree;
         if let Some(index) = ws.selected {
             self.scroll_tree_to(index, false);

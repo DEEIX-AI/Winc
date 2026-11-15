@@ -35,10 +35,10 @@ impl ApplicationHandler<UserEvent> for App {
         let saved = self
             .state
             .window
-            .filter(|_| self.config.restore_window != Some(false) && !self.bench.silent());
+            .filter(|_| self.config.restore_window != Some(false) && !self.frame.bench.silent());
         // 从已有窗口打开的新窗口使用记录的大小（没有记录时使用默认大小），位置相对来源窗口向
         // 右下方偏移。偏移后的位置与记录的位置都按当前显示器校验，不在任何显示器上时由系统决定。
-        let cascade = self.cascade.take().map(|(at, scale)| WindowFrame {
+        let cascade = self.opening.cascade.take().map(|(at, scale)| WindowFrame {
             position: Some(at),
             scale,
             maximized: false,
@@ -90,7 +90,7 @@ impl ApplicationHandler<UserEvent> for App {
             use winit::platform::wayland::WindowAttributesExtWayland;
             attributes = attributes.with_name("winc", "winc");
             // 激活令牌：Wayland 上新窗口凭该令牌切换到前台，X11 上凭该令牌结束启动通知。
-            if let Some(token) = self.activation.take() {
+            if let Some(token) = self.opening.activation.take() {
                 attributes = attributes.with_activation_token(token);
             }
         }
@@ -123,7 +123,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 测量时窗口透明且鼠标点击穿透，必须在显示之前设置，保证没有任何一帧可见。
         #[cfg(target_os = "macos")]
-        if self.bench.silent() {
+        if self.frame.bench.silent() {
             crate::macos::make_invisible(&window);
         }
 
@@ -138,28 +138,37 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 配置中的字体找不到或无法绘制时仍使用默认字体启动，并提示用户；否则手动修改配置时写错
         // 字体名，用户只能看到设置未生效而不知道原因。仅在配置了字体时才解析字体。
+        // 列表中的字体逐个检查，提示第一个不可用的；终端字体与编辑区字体相同时不重复提示。
         let missing: Vec<String> = [
-            ("editor.font", &mono, &self.config.editor_font),
-            ("ui.font", &ui, &self.config.ui_font),
-            ("terminal.font", &terminal, &self.config.terminal_font),
+            ("editor.font", &self.config.editor_font, true),
+            ("ui.font", &self.config.ui_font, true),
+            (
+                "terminal.font",
+                &self.config.terminal_font,
+                !terminal.is_empty(),
+            ),
         ]
         .into_iter()
-        .filter(|(_, spec, _)| spec.as_ref().is_some_and(|s| s.check().is_err()))
-        .map(|(key, _, name)| {
-            let name = name.as_deref().unwrap_or_default();
-            winc_i18n::t!("workspace-font-missing-item", key = key, name = name)
+        .filter(|&(_, _, own)| own)
+        .filter_map(|(key, value, _)| {
+            let (_, name, _) = unusable_font(value)?;
+            Some(winc_i18n::t!(
+                "workspace-font-missing-item",
+                key = key,
+                name = name
+            ))
         })
         .collect();
 
         // 同一进程中新开的窗口复用来源窗口的字体和字形缓存，两者配置相同，无需重新加载。
-        let renderer = match self.glyphs_from.take() {
+        let renderer = match self.opening.glyphs_from.take() {
             Some(glyphs) => Renderer::with_glyphs(window.clone(), self.palette.frame_bg, glyphs),
             None => Renderer::new(
                 window.clone(),
                 self.palette.frame_bg,
-                mono.as_ref(),
-                ui.as_ref(),
-                terminal.as_ref(),
+                &mono,
+                &ui,
+                &terminal,
                 self.font_weight(),
             ),
         };
@@ -172,7 +181,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
         };
 
-        self.renderer = Some(renderer);
+        self.frame.renderer = Some(renderer);
         self.measure_fonts();
         self.window.handle = Some(window.clone());
         self.start_setup_intro();
@@ -184,8 +193,8 @@ impl ApplicationHandler<UserEvent> for App {
         window.set_ime_allowed(true);
         #[cfg(target_os = "macos")]
         {
-            let proxy = self.proxy.clone();
-            self.traffic_lights = crate::macos::TrafficLights::new(
+            let proxy = self.link.proxy.clone();
+            self.link.traffic_lights = crate::macos::TrafficLights::new(
                 &window,
                 // 这三个按钮在卡片顶部的顶栏里垂直居中：顶栏上方有 `ISLAND_MARGIN` 的留白，
                 // 按钮按高度为留白两倍加顶栏高度的区域居中。
@@ -202,7 +211,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.place_traffic_lights();
         // 在窗口显示后询问：提示框依附于窗口。
         #[cfg(target_os = "macos")]
-        if let Some(proxy) = &self.proxy {
+        if let Some(proxy) = &self.link.proxy {
             let _ = proxy.send_event(UserEvent::OfferMoveToApplications);
         }
         self.install_system_hooks();
@@ -214,11 +223,14 @@ impl ApplicationHandler<UserEvent> for App {
 
         // 开启「保存时格式化」时，启动后在后台预先读取用户 shell 的环境，避免第一次 `⌘S` 时等待；
         // 读取耗时取决于用户 shell 初始化脚本的速度。测量时不读取，避免干扰启动测量。
-        if self.config.format_on_save == Some(true) && !self.bench.silent() {
+        if self.config.format_on_save == Some(true) && !self.frame.bench.silent() {
             self.format.formatter.prepare(|| {});
         }
 
-        if self.editor.active.is_none() && self.editor.workspace.is_some() && self.sidebar.visible {
+        if self.editor.active.is_none()
+            && self.editor.workspace.is_some()
+            && self.panels.sidebar.visible
+        {
             self.focus = Focus::Tree;
         }
 
@@ -243,7 +255,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.sync_window_input();
 
         #[cfg(target_os = "macos")]
-        if self.bench.silent() {
+        if self.frame.bench.silent() {
             // 测量时窗口显示但不抢占焦点（窗口已设为透明）。
             crate::macos::show_without_focus(&window);
         } else {
@@ -251,7 +263,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         #[cfg(not(target_os = "macos"))]
         window.set_visible(true);
-        if std::mem::take(&mut self.open_fullscreen) {
+        if std::mem::take(&mut self.opening.fullscreen) {
             self.enter_fullscreen();
         }
 
@@ -259,13 +271,13 @@ impl ApplicationHandler<UserEvent> for App {
         #[cfg(target_os = "macos")]
         {
             let redraw = window.clone();
-            self.display_link =
+            self.frame.display_link =
                 crate::macos::DisplayLink::new(&window, move || redraw.request_redraw());
         }
         #[cfg(windows)]
         {
             let redraw = window.clone();
-            self.display_link = crate::windows::DisplayLink::new(
+            self.frame.display_link = crate::windows::DisplayLink::new(
                 super::window::frame_interval(&window),
                 move || {
                     redraw.request_redraw();
@@ -287,14 +299,14 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Moved(_) => {
                 // 窗口移动后，此前的按下不再参与顶栏双击的判定。触摸拖动窗口时系统接管输入，
                 // 抬手事件可能不再送达，因此在此结束触摸。
-                self.title_click = None;
+                self.pointer.title_click = None;
                 self.cancel_touch();
-                self.note_window_frame();
+                self.window_frame_changed();
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 self.cancel_touch();
-                self.note_window_frame();
-                if let Some(renderer) = &mut self.renderer {
+                self.window_frame_changed();
+                if let Some(renderer) = &mut self.frame.renderer {
                     renderer.resize();
                 }
 
@@ -329,7 +341,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.reset_blink();
                     self.terminal_window_focused();
                     // 其他 winc 窗口可能修改了最近列表，重新读取后开始页和项目菜单显示最新内容。
-                    if let Some(path) = &self.state_path {
+                    if let Some(path) = &self.store.state_path {
                         self.state = State::load_from(path);
                     }
                 } else {
@@ -351,9 +363,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.set_occluded(occluded);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
+                self.pointer.modifiers = modifiers.state();
                 let pressed = winit::keyboard::ModifiersKeyState::Pressed;
-                self.option_side = (
+                self.pointer.option_side = (
                     modifiers.lalt_state() == pressed,
                     modifiers.ralt_state() == pressed,
                 );
@@ -361,12 +373,12 @@ impl ApplicationHandler<UserEvent> for App {
                     self.update_terminal_link();
                 }
                 // 按住 `⌥` 时分支选择器中的「拉取」变为「拉取并变基」，提交按钮变为「提交并推送」。
-                if (self.picker.open && self.picker_has_actions()) || self.commit_shown() {
+                if (self.overlays.picker.open && self.picker_has_actions()) || self.commit_shown() {
                     self.request_redraw();
                 }
                 // 拖动文件树项时按下、松开 `⌥` 在移动与复制之间切换，放置目标和拖动卡片随之更新。
                 if self.tree_dragging().is_some() {
-                    let (x, y) = self.mouse;
+                    let (x, y) = self.pointer.mouse;
                     self.drag_tree_item(x, y);
                 }
             }
@@ -391,8 +403,12 @@ impl ApplicationHandler<UserEvent> for App {
             // 窗口在光标所在位置被其他窗口遮挡时不响应移动，悬停状态按光标离开处理。
             WindowEvent::CursorMoved { .. } if !self.under_cursor() => self.cursor_left(),
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_inside = true;
-                let scale = self.renderer.as_ref().map_or(1.0, Renderer::scale_factor);
+                self.pointer.cursor_inside = true;
+                let scale = self
+                    .frame
+                    .renderer
+                    .as_ref()
+                    .map_or(1.0, Renderer::scale_factor);
                 self.on_mouse_move(position.x as f32 / scale, position.y as f32 / scale);
             }
             WindowEvent::CursorLeft { .. } => self.cursor_left(),
@@ -461,13 +477,20 @@ impl App {
             UserEvent::Rediffed => self.poll_rediffs(),
             UserEvent::Outline => self.poll_outline(),
             UserEvent::GitRollback(paths) => self.git_rollback(paths),
+            UserEvent::GitSkip => {
+                self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitSkip);
+            }
             UserEvent::GitAbort => {
                 self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitAbort);
             }
             UserEvent::GitSwitchBranch(branch, stash) => self.switch_branch(branch, stash),
             UserEvent::GitForcePush => self.run_git_sync(true),
+            UserEvent::GitCommitTodo(ok) => self.todo_confirmed(ok),
             UserEvent::GitPushConfirmed(intent, never) => self.push_confirmed(intent, never),
+            UserEvent::GitShowLog => self.git_show_log(),
+            UserEvent::GitOutput => self.refresh_git_output(),
             UserEvent::GitCommitAndPush => self.git_commit_and_push(),
+            UserEvent::GitCommitAndSync => self.git_commit_and_sync(),
             UserEvent::GitUndoCommit => self.undo_last_commit(),
             UserEvent::ReplaceAllConfirmed(total) => self.replace_all_confirmed(total),
             UserEvent::RunApproved(config) => self.approved_run(*config),
@@ -549,7 +572,7 @@ impl App {
             }
             // 编号为所弹出菜单中的序号，按记录的菜单查找对应的命令。
             UserEvent::MenuCommand(tag) => {
-                let command = self.context_menu.as_ref().and_then(|menu| {
+                let command = self.overlays.context_menu.as_ref().and_then(|menu| {
                     input::context_menu::MenuEntry::command_at(&menu.entries, tag)
                 });
                 if let Some(command) = command {
@@ -600,16 +623,17 @@ impl App {
         }
 
         if self
+            .git
             .commit
             .committed
             .as_ref()
             .is_some_and(|(_, t)| now >= *t)
         {
-            self.commit.committed = None;
+            self.git.commit.committed = None;
             self.request_redraw();
         }
 
-        let committed = self.commit.committed.as_ref().map(|(_, t)| *t);
+        let committed = self.git.commit.committed.as_ref().map(|(_, t)| *t);
         let mut wake = [
             self.status.until,
             self.notice.until,
@@ -626,11 +650,11 @@ impl App {
         let mapping = self.vim_tick(now);
         earliest(&mut wake, mapping);
         // 当前标签正在读取且保留上一帧未绘制时，到期仍未读取完成则绘制「正在读取」。
-        if self.loads.held {
+        if self.disk.loads.held {
             match self.holding_frame(now) {
                 Some(until) => earliest(&mut wake, Some(until)),
                 None => {
-                    self.loads.held = false;
+                    self.disk.loads.held = false;
                     self.request_redraw();
                 }
             }
@@ -639,13 +663,17 @@ impl App {
         let copying = self.copy_tick(now);
         earliest(&mut wake, copying);
 
-        let tooltip_at = self.tooltip.since.map(|since| since + TOOLTIP_DELAY);
+        let tooltip_at = self
+            .overlays
+            .tooltip
+            .since
+            .map(|since| since + TOOLTIP_DELAY);
 
-        if self.hover.has_tooltip() && !self.tooltip.shown {
+        if self.pointer.hover.has_tooltip() && !self.overlays.tooltip.shown {
             let show = tooltip_at.is_none_or(|at| now >= at);
 
             if show {
-                self.tooltip.shown = true;
+                self.overlays.tooltip.shown = true;
                 self.request_redraw();
             } else {
                 earliest(&mut wake, tooltip_at);
@@ -655,13 +683,13 @@ impl App {
         // 后台线程唤醒界面的事件经过节流，被丢弃的最后一批结果要等到下一个有匹配的文件或搜索
         // 结束才会送达。因此搜索进行中按 `GLOBAL_POLL` 的间隔主动收取结果，
         // 避免列表长时间停留在不完整的状态。
-        if self.global.engine.is_running() {
+        if self.panels.global.engine.is_running() {
             self.poll_global();
             earliest(&mut wake, Some(now + GLOBAL_POLL));
         }
 
         // 全局搜索的条件变化后，延迟 `SEARCH_DELAY` 到达 `global.due` 再开始搜索，合并连续的输入。
-        if let Some(due) = self.global.due {
+        if let Some(due) = self.panels.global.due {
             if now >= due {
                 self.run_global_search();
             } else {
@@ -684,7 +712,7 @@ impl App {
                 self.blink.visible = false;
                 self.request_redraw();
             }
-        } else if !self.unseen() && typing && blinking && self.preedit.is_empty() {
+        } else if !self.unseen() && typing && blinking && self.ime.preedit.is_empty() {
             let phase = now.duration_since(self.blink.epoch).as_millis() / BLINK.as_millis();
             let visible = phase.is_multiple_of(2);
 
@@ -706,6 +734,8 @@ impl App {
 
         earliest(&mut wake, self.file_hover_tick(now));
 
+        earliest(&mut wake, self.window_frame_tick(now));
+
         earliest(&mut wake, self.backup_tick(now));
 
         earliest(&mut wake, self.tab_drag_tick(now));
@@ -716,9 +746,11 @@ impl App {
 
         earliest(&mut wake, self.blame_tick(now));
 
+        earliest(&mut wake, self.auto_fetch_tick(now));
+
         // 停止绘制后处理空闲的呈现缓冲（每块与窗口大小相同）：
         // 标记为可清除或释放，无需等到下一次绘制。
-        if let Some(renderer) = &mut self.renderer
+        if let Some(renderer) = &mut self.frame.renderer
             && let Some(at) = renderer.purgeable_at()
         {
             if now >= at {
@@ -738,16 +770,16 @@ impl App {
 
         earliest(&mut wake, self.log_tick(now));
 
-        if let Some(at) = self.next_frame {
+        if let Some(at) = self.frame.next_frame {
             if now >= at {
-                self.next_frame = None;
+                self.frame.next_frame = None;
                 self.request_redraw();
             } else {
                 earliest(&mut wake, Some(at));
             }
         }
 
-        if self.dirty
+        if self.frame.dirty
             && !self.unseen()
             && let Some(window) = &self.window.handle
         {

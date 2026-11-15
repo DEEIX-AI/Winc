@@ -182,8 +182,8 @@ impl App {
         };
         match doc.begin_reopen_with_encoding(encoding) {
             Ok(job) => {
-                let ticket = self.rereads.reencodes.issue(id);
-                let sender = self.rereads.results.0.clone();
+                let ticket = self.disk.rereads.reencodes.issue(id);
+                let sender = self.disk.rereads.results.0.clone();
                 self.spawn_then(UserEvent::Reread, move || {
                     let _ = sender.send((id, ticket, DiskBack::Reencoded(job.read())));
                 });
@@ -212,7 +212,7 @@ impl App {
             Ok(true) => {
                 let damaged = doc.encoding == Encoding::Lossy;
                 if self.editor.active().is_some_and(|d| d.id == id) {
-                    self.sticky_cache = None;
+                    self.caches.sticky_cache = None;
                     self.relayout();
                     self.clamp_scroll();
                     self.ensure_caret_visible();
@@ -293,16 +293,6 @@ impl App {
         self.request_redraw();
     }
 
-    /// 执行命令面板中的「更改文件的语言」：弹出状态栏上的语言菜单。
-    ///
-    /// 输出标签（格式化的结果）没有这一项，不弹出该菜单。
-    pub(in crate::app) fn open_language_menu(&mut self) {
-        if self.editor.active().is_none_or(|d| d.title.is_some()) {
-            return;
-        }
-        self.open_status_menu(StatusItem::Language);
-    }
-
     /// 执行命令面板中的「更改行尾序列」：弹出状态栏上的行尾菜单。
     pub(in crate::app) fn open_line_ending_menu(&mut self) {
         self.open_status_menu(StatusItem::LineEnding);
@@ -321,7 +311,7 @@ impl App {
     #[cfg(not(target_os = "macos"))]
     fn click_update(&mut self) {
         use crate::winc::UpdateState;
-        let state = self.shared.update_state.borrow().clone();
+        let state = self.link.shared.update_state.borrow().clone();
         match state {
             UpdateState::Ready(_) => {
                 crate::updates::restart();

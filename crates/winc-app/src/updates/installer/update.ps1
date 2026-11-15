@@ -1,13 +1,14 @@
 # Runs outside the application so Windows can replace both native executables.
-param(
-    [Parameter(Mandatory)][int]$ParentId,
-    [Parameter(Mandatory)][string]$Setup,
-    [Parameter(Mandatory)][string]$Executable,
-    [Parameter(Mandatory)][ValidateSet('nsis', 'msi')][string]$Installer,
-    [ValidateSet('0', '1')][string]$Relaunch = '0'
-)
+# Passed with -Command; the parameters come from WINC_UPDATE_* environment variables.
 $ErrorActionPreference = 'Stop'
+$ParentId = [int]$env:WINC_UPDATE_PARENT
+$Setup = $env:WINC_UPDATE_SETUP
+$Executable = $env:WINC_UPDATE_EXE
+$Installer = $env:WINC_UPDATE_KIND
+$Relaunch = $env:WINC_UPDATE_RELAUNCH
 try {
+    # The installer and the relaunched application inherit this environment.
+    Remove-Item -Path Env:WINC_UPDATE_*
     $parent = Get-Process -Id $ParentId -ErrorAction SilentlyContinue
     if ($parent) { $parent.WaitForExit() }
     $directory = Split-Path -Parent $Executable

@@ -1,9 +1,10 @@
 //! 点击行号栏改动标记后打开的卡片：上方是标题栏，下方是该处改动在 `HEAD` 中的原内容。
 //!
 //! 标题栏左侧是与标记同色的竖条、「修改 2 行」（或「新增」「删除」）和基准版本，右侧是「1 / 4」、
-//! 上一处、下一处、回滚、在差异视图中打开、关闭。原内容使用与差异视图左侧相同的改动底色，每行
-//! 前有「−」及该行在 `HEAD` 中的行号。卡片位于 `ChangePopup::anchor` 指定的各行下方，空间不足时
-//! 位于上方，上下边落在行的分界上。坐标均为逻辑像素，原点在窗口左上角。
+//! 上一处、下一处、回滚、在差异视图中打开、关闭。原内容是回滚后会回来、保留改动则被替换掉的
+//! 文字，使用删除的底色，每行前有「−」及该行在 `HEAD` 中的行号。卡片与编辑区同宽，位于
+//! `ChangePopup::anchor` 指定的各行下方，空间不足时位于上方，上下边落在行的分界上。坐标均为
+//! 逻辑像素，原点在窗口左上角。
 
 use std::fmt::Write as _;
 
@@ -23,7 +24,7 @@ const BUTTON: f32 = 24.0;
 
 /// 绘制已打开的改动卡片，并把按钮的可点击范围记录到 `app.hits.changes`。
 pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
-    let Some(popup) = app.changes.popup else {
+    let Some(popup) = app.git.changes.popup else {
         return;
     };
     if app.editor.active().map(|d| d.id) != Some(popup.doc) {
@@ -36,16 +37,18 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     let Some(doc) = app.editor.active() else {
         return;
     };
-    let hunks = app.changes.hunks(doc.id);
+    let hunks = app.git.changes.hunks(doc.id);
     let Some(hunk) = hunks.get(popup.hunk).cloned() else {
         return;
     };
     let count = hunks.len();
     let tab = doc.tab_width(app.editor.tab_width);
     let p = app.palette;
+    // 标题栏的色条与行号栏的标记同色；原内容按删除的配色绘制。
     let shade = hunk_shade(p, &hunk);
+    let removed = p.diff_deleted;
     let lh = app.fonts.line_height;
-    let cell = app.cell;
+    let cell = app.metrics.cell;
     let (text_rect, gutter) = (app.layout.text, app.layout.gutter);
     // 卡片中的行号、文字分别与编辑区的行号和文字对齐；「−」位于行号左侧。
     let code_x = text_rect.x + TEXT_PAD;
@@ -64,7 +67,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
         _ => t!("git-change-popup-modified", count = lines),
     };
     // 说明下方内容所属的版本；新增的块没有原内容，说明该内容不在 `HEAD` 中。
-    let note = match (hunk.old.is_empty(), app.changes.short_head()) {
+    let note = match (hunk.old.is_empty(), app.git.changes.short_head()) {
         (true, _) => t!("git-change-popup-not-in-head").to_owned(),
         (false, Some(oid)) => format!("HEAD · {oid}"),
         (false, None) => "HEAD".to_owned(),
@@ -79,23 +82,14 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
         measure(frame, &counter),
     );
 
-    // 宽度取最长一行与标题栏中的较大者，不超出编辑区。
+    // 卡片与编辑区同宽，左右边对齐，不随原内容的长短忽宽忽窄；右边让出滚动条。
     let body_rows = shown + usize::from(more > 0);
     let header_rows = (HEADER / lh).ceil() as usize;
     let rows = header_rows + body_rows;
     // 逐行追溯打开时从追溯栏右侧开始，不遮挡追溯栏。
     let blame_w = app.blame_width();
     let x = gutter.x + blame_w + 2.0;
-    let longest = preview
-        .lines
-        .iter()
-        .map(|l| cells(&l.chars, l.chars.len(), tab))
-        .max()
-        .unwrap_or(0);
-    let content_w = code_x + longest as f32 * cell + 24.0 - x;
-    let header_w = 12.0 + 11.0 + title_w + 10.0 + note_w + 24.0 + counter_w + 6.0 * BUTTON + 30.0;
-    let room = text_rect.right() - 16.0 - x;
-    let w = content_w.max(header_w).max(360.0).min(room);
+    let w = (text_rect.right() - 16.0 - x).max(0.0);
 
     // 位置（以显示行计）：优先位于改动各行的下方，空间不足时位于上方；两侧都放不下时限制在
     // 可见范围内。
@@ -135,6 +129,9 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     let mut tx = chip.right() + 8.0;
     ui_text_small(frame, app, tx, header, &title, p.text, card);
     tx += title_w + 10.0;
+    // 说明写不下时截短，不压到右侧的按钮下面。
+    let room = (card.right() - 6.0 - 6.0 * BUTTON - 24.0 - counter_w - 12.0 - tx).max(0.0);
+    let note = ellipsize(frame, &note, app.fonts.ui_small, room.min(note_w));
     ui_text_small(frame, app, tx, header, &note, p.text_dim, card);
 
     // 按钮从右往左排列，各组之间以竖线分隔。
@@ -148,7 +145,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
             ChangeTarget::Next => popup.hunk + 1 < count,
             _ => true,
         };
-        let hovered = enabled && app.hover == Hover::Change(target);
+        let hovered = enabled && app.pointer.hover == Hover::Change(target);
         draw_button(frame, p, rect, card, hovered, false);
         let color = match (enabled, hovered) {
             (false, _) => p.text_dim.alpha(0.5),
@@ -190,17 +187,17 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     );
 
     let body = Rect::new(card.x, header.bottom(), card.w, body_rows as f32 * lh);
-    let (ascent, descent) = (app.mono_metrics.ascent, app.mono_metrics.descent);
+    let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     if !hunk.old.is_empty() {
         // 底色延伸到卡片底边时，下方两角随卡片绘制为圆角。
         let tint = Rect::new(body.x, body.y, body.w, shown as f32 * lh);
         if more == 0 {
             let tint = Rect::new(tint.x, tint.y, tint.w, card.bottom() - tint.y);
-            frame.rect_clipped(tint, shade.line, RADIUS_POPUP, card);
+            frame.rect_clipped(tint, removed.line, RADIUS_POPUP, card);
             let square = Rect::new(tint.x, tint.y, tint.w, RADIUS_POPUP.min(tint.h));
-            frame.rect_clipped(square, shade.line, 0.0, card);
+            frame.rect_clipped(square, removed.line, 0.0, card);
         } else {
-            frame.rect_clipped(tint, shade.line, 0.0, card);
+            frame.rect_clipped(tint, removed.line, 0.0, card);
         }
         let mut number = String::new();
         let clip = Rect::new(code_x, card.y, card.right() - 8.0 - code_x, card.h);
@@ -220,12 +217,12 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
                 card,
             );
             let sign = (gutter.x + blame_w + 10.0, center(row).1);
-            icons::minus(frame, sign, 6.0, shade.mark, card);
+            icons::minus(frame, sign, 6.0, removed.mark, card);
             for range in &line.words {
                 let x0 = code_x + cells(&line.chars, range.start, tab) as f32 * cell;
                 let x1 = code_x + cells(&line.chars, range.end, tab) as f32 * cell;
                 let word = Rect::new(x0, row.y + 2.0, (x1 - x0).max(2.0), lh - 4.0);
-                frame.rect_clipped(word, shade.word, 3.0, clip);
+                frame.rect_clipped(word, removed.word, 3.0, clip);
             }
             draw_glyphs(
                 app,

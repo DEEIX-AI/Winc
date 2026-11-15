@@ -57,6 +57,8 @@ preview-svg-missing-text-path = 沿路径排列的文字
 preview-markdown-image-alt = 图片
 preview-markdown-code-copied = 已复制代码
 preview-markdown-heading-not-found = 未在文档中找到此标题
+preview-markdown-toc-pin = 钉住标题列表
+preview-markdown-toc-unpin = 取消钉住标题列表
 preview-markdown-link-file-not-found = 未找到链接指向的文件
 preview-markdown-link-open-failed = 无法打开链接：{ $error }
 preview-markdown-cache-folder-invalid = 缓存目录无效
@@ -96,6 +98,14 @@ preview-docx-chart-titled = 图表：{ $title }
 preview-docx-chart-series = { $count } 组数据：{ $names }
 preview-docx-chart-category = 类别
 preview-docx-image-unsupported = 图片「{ $name }」为 { $format } 格式，无法预览
+
+## EPUB 电子书预览
+
+preview-epub-invalid = 不是有效的 EPUB 文件
+preview-epub-unsupported = 不支持加密或 zip64 格式的 EPUB 文件
+preview-epub-drm = 无法预览受数字版权保护（DRM）的电子书
+preview-epub-too-large = 文件过大
+preview-epub-chapter-damaged = 无法读取「{ $name }」：文件已损坏
 
 ## PDF 预览
 

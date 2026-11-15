@@ -58,7 +58,7 @@ fn conflicts_resolve_in_the_file_and_finish_the_merge() {
     let index = app.editor.active.unwrap();
     assert_eq!(app.conflicts(index).len(), 1);
     // 合并的提交信息草稿已经填入。
-    assert!(app.commit.message.text().contains("other"));
+    assert!(app.git.commit.message.text().contains("other"));
 
     // 标记行上有按钮；右上角的卡片显示还剩一处。
     paint(&mut app);
@@ -153,7 +153,7 @@ fn files_with_conflict_markers_are_not_committed() {
             .any(|(_, t)| *t == CommitTarget::Abort)
     );
     // 仍有冲突标记时按钮不可用，按下也不会提交。
-    let blocker = app.commit.blocker(&status);
+    let blocker = app.commit_blocker(&status);
     assert_eq!(blocker.as_deref(), Some("1 个文件仍有未解决的冲突"));
     app.git_commit();
     app.git_refresh();
@@ -260,23 +260,23 @@ fn the_three_way_view_shows_both_sides_next_to_the_file() {
         return;
     };
     let editor_w = app.layout.editor.w;
-    assert!(app.merge.pane_rects[0].w == 0.0);
+    assert!(app.git.merge.pane_rects[0].w == 0.0);
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
     assert!(app.merge_panes_shown());
-    let [left, right] = app.merge.pane_rects;
+    let [left, right] = app.git.merge.pane_rects;
     assert!(left.w > 0.0 && right.w > 0.0);
     // 中栏位于两侧之间，文字区随文档移动。
-    assert!(app.layout.editor.x >= app.merge.ribbons[0].right());
-    assert!(app.layout.editor.right() <= app.merge.ribbons[1].x);
-    assert!(app.merge.footer.y >= left.bottom());
+    assert!(app.layout.editor.x >= app.git.merge.ribbons[0].right());
+    assert!(app.layout.editor.right() <= app.git.merge.ribbons[1].x);
+    assert!(app.git.merge.footer.y >= left.bottom());
     // 冲突折叠成一行，文件的内容不变。
     let conflict = app.conflicts(app.editor.active.unwrap())[0].clone();
     let doc = app.editor.active().unwrap();
     assert!(doc.folds().is_collapsed(conflict.start));
     assert!(doc.text().rope().unwrap().to_string().contains("<<<<<<<"));
     assert!(app.layout.text.x >= app.layout.editor.x);
-    let panes = app.merge.panes.as_ref().unwrap();
+    let panes = app.git.merge.panes.as_ref().unwrap();
     assert_eq!(
         panes.sides[0].text.to_string(),
         "one\nTWO main\nthree\nfour\nfive\n"
@@ -288,7 +288,7 @@ fn the_three_way_view_shows_both_sides_next_to_the_file() {
 
     // 右栏的按钮采用对方这一段；中间是普通文档，修改可以撤销。
     let target = MergeTarget::Pick(0, Pick::Theirs);
-    let ribbon = app.merge.ribbons[1];
+    let ribbon = app.git.merge.ribbons[1];
     assert!(
         (app.hits.merge.iter()).any(|(rect, t)| *t == target && ribbon.contains(rect.x, rect.y)),
         "连接带上应当有采用按钮"
@@ -320,7 +320,7 @@ fn the_three_way_view_shows_both_sides_next_to_the_file() {
     app.git_refresh();
     paint(&mut app);
     assert!(!app.merge_panes_shown());
-    assert_eq!(app.merge.pane_rects[0].w, 0.0);
+    assert_eq!(app.git.merge.pane_rects[0].w, 0.0);
     assert_eq!(app.layout.editor.w, editor_w);
     assert!(std::fs::read_to_string(&file).unwrap().contains("FIVE"));
 }
@@ -333,7 +333,7 @@ fn the_three_way_view_can_be_closed() {
     let editor_w = app.layout.editor.w;
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
-    assert!(app.merge.pane_rects[0].w > 0.0);
+    assert!(app.git.merge.pane_rects[0].w > 0.0);
     // 关闭后文档恢复原来的宽度。
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
@@ -388,7 +388,7 @@ fn conflicts_are_unfolded_when_the_panes_no_longer_fit() {
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
     assert!(!app.editor.active().unwrap().folds().is_empty());
-    app.merge.pane_rects = [Rect::default(); 2];
+    app.git.merge.pane_rects = [Rect::default(); 2];
     app.sync_merge_panes();
     assert!(app.editor.active().unwrap().folds().is_empty());
 }
@@ -456,13 +456,13 @@ fn a_finished_merge_forgets_its_side_panes() {
     };
     app.press_merge(MergeTarget::ThreePane);
     paint(&mut app);
-    assert!(app.merge.panes.is_some());
+    assert!(app.git.merge.panes.is_some());
     app.press_merge(MergeTarget::Pick(0, Pick::Ours));
     paint(&mut app);
     app.press_merge(MergeTarget::MarkResolved);
     app.git_refresh();
     paint(&mut app);
-    assert!(app.merge.panes.is_none());
+    assert!(app.git.merge.panes.is_none());
 }
 
 /// 创建一个文件，第 100 到 159 行在两个分支上都改过：合并后这一段是 120 多行的冲突。
@@ -508,7 +508,7 @@ fn ribbon_buttons_ignore_clicks_until_the_alignment_is_current() {
     crate::app::git::changes::replace_lines(doc, 0..0, "new\n".into()).unwrap();
     let revision = doc.revision;
     // 测试里后台任务就地完成：标记为正在计算，模拟结果尚未送达。
-    app.merge.panes.as_mut().unwrap().aligning = Some(revision);
+    app.git.merge.panes.as_mut().unwrap().aligning = Some(revision);
     paint(&mut app);
     assert!(!ribbon(&app));
 }
@@ -634,7 +634,7 @@ fn an_older_alignment_never_replaces_a_newer_one() {
         let side = |pick| SideAlign::new(&rope, &[], "x\n", pick);
         [side(Pick::Ours), side(Pick::Theirs)]
     };
-    let panes = app.merge.panes.as_mut().unwrap();
+    let panes = app.git.merge.panes.as_mut().unwrap();
     let at = panes.aligned.as_ref().unwrap().0;
     panes.aligning = Some(at + 1);
     panes.accept_alignment(at + 1, align());
@@ -644,4 +644,47 @@ fn an_older_alignment_never_replaces_a_newer_one() {
     panes.accept_alignment(at, align());
     assert_eq!(panes.aligned.as_ref().unwrap().0, at + 1);
     assert_eq!(panes.aligning, Some(at + 2));
+}
+
+/// 变基停在冲突处时写明进度，「⋯」菜单里可以跳过正在处理的提交；合并没有可以跳过的提交。
+#[test]
+fn a_stopped_rebase_shows_its_progress_and_can_skip_the_commit() {
+    use crate::app::input::context_menu::{MenuCommand, MenuEntry};
+    use winc_editor::git::Operation;
+    let dir = search_folder("git-rebase-skip");
+    if !conflicted_repo(&dir) {
+        return;
+    }
+    let mut app = app_with(&dir, false);
+    app.settings_toggle(Setting::GitModule);
+    if git_unusable(&app) {
+        return;
+    }
+    let skip = MenuEntry::Item(MenuCommand::GitSkip, true);
+    assert_eq!(app.git.status.as_ref().unwrap().progress, None);
+    assert!(!app.commit_more_menu().contains(&skip));
+
+    // 改成变基：`main` 上的一个提交在 `other` 之上重放时冲突。
+    git_in(&dir, &["merge", "--abort"]);
+    let rebase = Command::new("git")
+        .arg("-C")
+        .arg(&dir)
+        .args(["rebase", "other"])
+        .output()
+        .unwrap();
+    assert!(!rebase.status.success());
+    app.git_refresh();
+    let status = app.git.status.clone().unwrap();
+    assert_eq!(status.operation, Some(Operation::Rebase));
+    assert_eq!(status.progress, Some((1, 1)));
+    assert!(app.commit_more_menu().contains(&skip));
+
+    // 跳过这个提交：没有其他提交要处理，变基结束，分支停在 `other` 的内容上。
+    app.run_commit_more_command(MenuCommand::GitSkip);
+    let status = app.git.status.clone().unwrap();
+    assert_eq!(status.operation, None);
+    assert!(status.entries.is_empty());
+    let text = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
+    assert!(text.contains("let value_10 = 1000; // other"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

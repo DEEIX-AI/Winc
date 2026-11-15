@@ -7,11 +7,11 @@ use super::*;
 impl App {
     /// 处理菜单中选中的命令 `command`：作用于弹出菜单时记录的目标。
     pub(in crate::app) fn run_menu_command(&mut self, command: MenuCommand) {
-        let Some(menu) = self.context_menu.take() else {
+        let Some(menu) = self.overlays.context_menu.take() else {
             return;
         };
         // 弹出菜单的按钮在菜单关掉以后放开。
-        self.menu_button = None;
+        self.overlays.menu_button = None;
 
         // 菜单中灰显的项本来点不到，这里再校验一次（例如菜单打开期间按了它的快捷键）。
         if !MenuEntry::offers(&menu.entries, command) {
@@ -21,7 +21,7 @@ impl App {
         // 选择器里的菜单选了一项：操作开始，选择器不再需要；取消时选择器留着。
         if matches!(
             menu.target,
-            MenuTarget::BranchOps(_) | MenuTarget::Location(..)
+            MenuTarget::BranchOps(_) | MenuTarget::TagOps(_) | MenuTarget::Location(..)
         ) {
             self.close_picker();
         }
@@ -42,6 +42,14 @@ impl App {
                     self.choose_form_base(base.map(|b| b.name.clone()));
                 }
             }
+            MenuTarget::FormRemote => {
+                if let MenuCommand::FormRemote(i) = command {
+                    let remote = self.git.remotes.get(i).cloned();
+                    if remote.is_some() {
+                        self.choose_form_base(remote);
+                    }
+                }
+            }
             MenuTarget::StatusPlaces(places) => match command {
                 MenuCommand::StatusPlace(i) => {
                     if let Some(place) = places.get(i) {
@@ -51,13 +59,37 @@ impl App {
                 MenuCommand::NewWorktree => self.open_worktree_dialog(),
                 _ => {}
             },
+            MenuTarget::LogColumns => {
+                if let MenuCommand::LogColumn(column) = command {
+                    self.toggle_log_column(column);
+                }
+            }
+            MenuTarget::LogDate => {
+                if let MenuCommand::LogSince(days) = command {
+                    self.change_log_query(|q| q.since_days = (days > 0).then_some(days));
+                }
+            }
+            MenuTarget::LogPath => match command {
+                MenuCommand::LogPath(0) => self.change_log_query(|q| q.paths.clear()),
+                MenuCommand::LogPath(i) => {
+                    if let Some(path) = self.git.log.paths.get(i - 1).cloned() {
+                        self.toggle_log_path(path);
+                    }
+                }
+                MenuCommand::LogPathOther => self.open_log_path_dialog(),
+                _ => {}
+            },
+            MenuTarget::LogAuthor if command == MenuCommand::LogAuthorMe => {
+                let me = self.git.my_email.clone();
+                self.toggle_log_author(me);
+            }
+            // 作者可以选几位：选一位加上或去掉它，「全部作者」清空。
             MenuTarget::LogAuthor => {
                 if let MenuCommand::LogAuthor(i) = command {
-                    let author = i
-                        .checked_sub(1)
-                        .and_then(|i| self.log.authors.get(i))
-                        .cloned();
-                    self.change_log_query(|q| q.author = author);
+                    match i.checked_sub(1).and_then(|i| self.git.log.authors.get(i)) {
+                        Some(author) => self.toggle_log_author(author.clone()),
+                        None => self.change_log_query(|q| q.authors.clear()),
+                    }
                 }
             }
             MenuTarget::Editor(id) => self.run_editor_command(command, id),
@@ -70,6 +102,14 @@ impl App {
                 }
                 MenuCommand::SelectAll => self.markdown_select_all(),
                 MenuCommand::RevealSource => self.reveal_markdown_source(),
+                MenuCommand::TextWidth(i) => {
+                    if let Some(&width) = winc_config::TextWidth::ALL.get(i) {
+                        self.set_text_width(width);
+                    }
+                }
+                MenuCommand::MarkdownLineNumbers => {
+                    self.settings_toggle(crate::layout::Setting::MarkdownLineNumbers);
+                }
                 MenuCommand::Table(op) => {
                     self.live_table_tool(op);
                 }
@@ -168,6 +208,13 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::TextWidth => {
+                if let MenuCommand::TextWidth(i) = command
+                    && let Some(&width) = winc_config::TextWidth::ALL.get(i)
+                {
+                    self.set_text_width(width);
+                }
+            }
             MenuTarget::BackgroundFit => {
                 if let MenuCommand::BackgroundFit(i) = command
                     && let Some(&fit) = winc_config::BackgroundFit::ALL.get(i)
@@ -203,7 +250,12 @@ impl App {
                 MenuCommand::FontDefault => self.settings_choose_font(setting, None),
                 MenuCommand::Font(i) => {
                     if let Some(family) = winc_render::installed_fonts().get(i) {
-                        self.settings_choose_font(setting, Some(family.name.clone()));
+                        self.settings_choose_primary_font(setting, &family.name);
+                    }
+                }
+                MenuCommand::FallbackFont(i) => {
+                    if let Some(family) = winc_render::installed_fonts().get(i) {
+                        self.settings_toggle_fallback_font(setting, &family.name);
                     }
                 }
                 _ => {}
@@ -220,6 +272,11 @@ impl App {
                     && let Some(branch) = menu.branches.get(i).cloned()
                 {
                     self.run_branch_op(op, branch);
+                }
+            }
+            MenuTarget::TagOps(_) => {
+                if let MenuCommand::PickerTag(op, i) = command {
+                    self.run_picker_tag(op, i);
                 }
             }
             MenuTarget::Location(path, worktree) => match command {
@@ -314,6 +371,8 @@ impl App {
                     self.git_file_history(path);
                 }
             }
+            MenuCommand::CommitCheck(on) => self.stage_paths(&[target], on),
+            MenuCommand::GitRollbackFile => self.confirm_rollback(vec![target]),
             MenuCommand::NewFile | MenuCommand::NewFolder => {
                 // 右键时已选中了那一行（空白处则取消选中），新建的位置由选中的行决定。
                 self.start_new_entry(command == MenuCommand::NewFolder);
@@ -360,6 +419,9 @@ impl App {
         }
         match command {
             MenuCommand::ToggleBlame => self.toggle_blame(),
+            MenuCommand::GitAction(action) => {
+                self.run_action(action);
+            }
             MenuCommand::Cut => self.copy(true),
             MenuCommand::Copy => self.copy(false),
             MenuCommand::Paste => self.paste(),
@@ -406,6 +468,16 @@ impl App {
             MenuCommand::FileHistory => {
                 if let Some(path) = path {
                     self.git_file_history(&path);
+                }
+            }
+            MenuCommand::CommitCheck(on) => {
+                if let Some(path) = path {
+                    self.stage_paths(&[path], on);
+                }
+            }
+            MenuCommand::GitRollbackFile => {
+                if let Some(path) = path {
+                    self.confirm_rollback(vec![path]);
                 }
             }
             MenuCommand::Close => self.close_tab(index),
@@ -587,13 +659,13 @@ impl App {
             .map(|relative| format!("./{relative}"))
             .unwrap_or_default();
 
-        if include != self.global.include.text() {
-            self.global.include.set_text(&include);
+        if include != self.panels.global.include.text() {
+            self.panels.global.include.set_text(&include);
         }
-        self.global.details_open |= !include.is_empty();
+        self.panels.global.details_open |= !include.is_empty();
         self.open_global_search(false);
 
-        if !self.global.query.text().is_empty() {
+        if !self.panels.global.query.text().is_empty() {
             self.global_changed(true);
         }
     }
@@ -601,7 +673,7 @@ impl App {
     /// 在文件树中就地改名：那一行变成输入框，填入原来的名字，并选中扩展名之前的部分；`↩` 确认，
     /// `Esc` 放弃。
     pub(in crate::app) fn start_rename(&mut self, path: &Path) {
-        self.goto_input = None;
+        self.bars.goto_input = None;
         let Some(ws) = &mut self.editor.workspace else {
             return;
         };
@@ -622,7 +694,7 @@ impl App {
         field.set_caret(0, false);
         field.set_caret(stem, true);
 
-        self.name_input = Some(NameInput {
+        self.panels.name_input = Some(NameInput {
             dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
             kind,
             index,
@@ -633,7 +705,7 @@ impl App {
             contents: None,
         });
         self.focus = Focus::Prompt;
-        self.field_preedit.clear();
+        self.ime.field_preedit.clear();
         self.scroll_tree_to(index, false);
         self.relayout();
         self.request_redraw();
@@ -686,7 +758,7 @@ impl App {
             }
             Err(e) => {
                 entry.error = Some(e.to_string());
-                self.name_input = Some(entry);
+                self.panels.name_input = Some(entry);
                 self.focus = Focus::Prompt;
             }
         }
@@ -821,7 +893,7 @@ impl App {
             ws.refresh();
             let count = ws.rows().len();
             ws.select(was.filter(|_| count > 0).map(|i| i.min(count - 1)));
-            self.tree.motion = None;
+            self.panels.tree.motion = None;
             self.clamp_tree_scroll();
         }
 
@@ -859,7 +931,12 @@ impl App {
     /// 没有目标时返回 `None`。
     pub(in crate::app) fn shortcut_target(&self) -> Option<PathBuf> {
         if self.focus == Focus::Results {
-            return self.global.selected.as_ref().map(|(path, _)| path.clone());
+            return self
+                .panels
+                .global
+                .selected
+                .as_ref()
+                .map(|(path, _)| path.clone());
         }
         if self.focus == Focus::Tree {
             return self

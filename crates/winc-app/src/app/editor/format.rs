@@ -216,6 +216,43 @@ impl App {
         }
     }
 
+    /// 提交前格式化磁盘上的文件 `path` 所用的工具；不能不经询问就格式化时为 `None`，这个文件
+    /// 照原样提交。
+    ///
+    /// 工具的选法与手动格式化相同（项目设置优先于用户设置）。保存时不格式化的语言、远端的文件、
+    /// 还没有允许运行的项目工具或项目命令都跳过：提交途中不弹出询问。
+    pub(in crate::app) fn commit_format_plan(&self, path: &Path) -> Option<(Plan, Duration)> {
+        if winc_backend::is_remote(path) {
+            return None;
+        }
+        let name = path.file_name()?.to_string_lossy();
+        let language = winc_syntax::detect(&name);
+        let project = self.project_format();
+        let excluded =
+            |config: &Config| (config.format_on_save_exclude.iter()).any(|l| l == language.id);
+        if excluded(&self.config) || project.as_ref().is_some_and(excluded) {
+            return None;
+        }
+        let root = self.editor.root();
+        let command = |config: &Config| {
+            task_commands(config, Task::Format)
+                .get(language.id)
+                .cloned()
+        };
+        let project = project.as_ref().and_then(command);
+        let configured = project.clone().or_else(|| command(&self.config));
+        let task = Task::Format;
+        let mut plan = Plan::for_task(task, language, path, root, configured.as_deref()).ok()?;
+        if let Some(approval) = approval(&plan, root, project.as_deref()) {
+            match self.state.tool_choice(&approval.folder) {
+                Some(true) => {}
+                Some(false) if approval.searchable => plan.use_system(),
+                _ => return None,
+            }
+        }
+        Some((plan, TIMEOUT))
+    }
+
     /// 是否需要在保存（`⌘S`）前先修复或格式化文档 `id`。
     pub(in crate::app) fn prepares_on_save(&self, id: DocumentId) -> bool {
         let project = self.project_format();
@@ -477,7 +514,7 @@ impl App {
             timeout: if save { SAVE_TIMEOUT } else { TIMEOUT },
         };
         let (formatter, sender) = (self.format.formatter.clone(), self.format.sender.clone());
-        let proxy = self.proxy.clone();
+        let proxy = self.link.proxy.clone();
         // 格式化工具最长运行 `TIMEOUT`（30 秒），在单独的线程上等待，不占用共用的线程池。
         winc_editor::background::spawn_blocking(move || {
             let result = formatter.run(job, &cancel);

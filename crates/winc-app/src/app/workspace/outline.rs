@@ -25,9 +25,9 @@ use super::*;
 use crate::app::animation::{Clock, TREE_ANIMATION};
 use crate::layout::SidebarView;
 
-/// 大纲标题行上下各留的空隙（逻辑像素），与侧栏里列表和上下相邻部分的间隔相同
-/// （`SIDEBAR_LIST_GAP`）：上面是分隔线，下面是侧栏卡片的下沿或符号列表，悬停的底色不贴边。
-pub(crate) const OUTLINE_GAP: f32 = SIDEBAR_LIST_GAP;
+/// 大纲标题行上下各留的空隙（逻辑像素）：列表间隔（`SIDEBAR_LIST_GAP`）的一半，与提交视图中
+/// 储藏一组的标题相同，侧栏底部收着的各栏等高。上面是分隔线，下面是侧栏卡片的下沿或符号列表。
+pub(crate) const OUTLINE_GAP: f32 = SIDEBAR_LIST_GAP / 2.0;
 /// 大纲标题行的高度（逻辑像素）：一行 `TREE_ROW`，上下各留 [`OUTLINE_GAP`]。
 pub(crate) const OUTLINE_HEADER: f32 = TREE_ROW + 2.0 * OUTLINE_GAP;
 /// 第一次展开时符号列表的高度（逻辑像素）：十行。
@@ -97,6 +97,12 @@ pub enum OutlineEmpty {
     TooLarge,
     /// 文档里没有识别出符号。
     NoSymbols,
+    /// PDF 的目录还在读。
+    Reading,
+    /// PDF 没有目录（书签）。
+    NoBookmarks,
+    /// EPUB 没有目录。
+    NoContents,
 }
 
 /// 大纲的状态。
@@ -121,6 +127,10 @@ pub struct OutlineState {
     due: Option<Instant>,
     /// 当前文档的符号，按在文件中出现的顺序排列。
     pub items: Vec<Symbol>,
+    /// 列出的内容的种类：决定点击一项时转到哪里、当前项怎样确定。
+    pub kind: OutlineKind,
+    /// EPUB 目录各项在预览中的高度（见 [`AnchorTops`]）；排版改变后在下一次查询时重新计算。
+    anchor_tops: std::cell::RefCell<Option<AnchorTops>>,
     /// 各符号的路径（见 [`symbol_paths`]），随 `items` 一起更新，绘制时不再逐帧拼接。
     paths: Vec<String>,
     /// 没有符号时的原因；有符号时为 `None`。
@@ -161,6 +171,8 @@ impl Default for OutlineState {
             scroll: 0.0,
             selected: None,
             revealed: None,
+            kind: OutlineKind::Symbols,
+            anchor_tops: std::cell::RefCell::new(None),
         }
     }
 }
@@ -175,6 +187,49 @@ enum OutlineDoc {
     /// 未保存过的文档。
     Untitled(DocumentId),
 }
+
+/// 把 PDF 或 EPUB 的目录（各条的标题、层级和指向的页）换成大纲的各项：页记在 `line`（没有页
+/// 时为 `usize::MAX`），上级是外一层最近的一条，收起状态按名字记录时与代码的符号相同。
+fn contents_symbols<'a>(
+    entries: impl Iterator<Item = (&'a str, usize, Option<usize>)>,
+) -> Vec<Symbol> {
+    let mut parents: Vec<String> = Vec::new();
+    entries
+        .map(|(title, level, page)| {
+            parents.truncate(level);
+            let symbol = Symbol {
+                name: title.to_owned(),
+                kind: symbols::SymbolKind::Heading,
+                line: page.unwrap_or(usize::MAX),
+                col: 0,
+                container: parents.last().cloned(),
+                depth: parents.len(),
+                heading: 0,
+            };
+            parents.push(title.to_owned());
+            symbol
+        })
+        .collect()
+}
+
+/// 大纲列出的内容的种类。
+#[derive(Debug, Clone, PartialEq)]
+pub enum OutlineKind {
+    /// 文档中的符号：各项的 `line` 是起始行，点击时移动光标，当前项按光标所在的行确定。
+    Symbols,
+    /// PDF 的书签：各项的 `line` 是指向的页（从 0 起，没有页时为 `usize::MAX`）；值是各项在
+    /// 页内的位置（到页面上沿的距离与页高之比，只指向整页时为 0）。
+    Pages(Vec<f32>),
+    /// EPUB 的目录：值是各项指向的锚点（指向书外时为 `None`），点击时预览转到该锚点。
+    Anchors(Vec<Option<String>>),
+}
+
+/// EPUB 目录各项的锚点在预览中的高度（逻辑像素，相对内容顶部；找不到锚点时为 `None`），
+/// 以及计算时的排版：解析结果的地址、排版条件、总高度（`f32` 的位）和块数，任一项变化即重算。
+type AnchorTops = (
+    (usize, crate::app::preview::markdown::laid::Key, u32, usize),
+    Vec<Option<f32>>,
+);
 
 /// 返回各符号的路径：从最外层上级到自身的名字，以 `\u{1f}`（单元分隔符）连接。
 ///
@@ -213,11 +268,11 @@ impl App {
         let l = &mut self.layout;
         l.outline = Rect::default();
         let off = self.config.outline == Some(false);
-        if off || self.sidebar.view != SidebarView::Files || l.tree.h <= 0.0 {
+        if off || self.panels.sidebar.view != SidebarView::Files || l.tree.h <= 0.0 {
             return;
         }
         let room = (l.tree.h - OUTLINE_HEADER - OUTLINE_MIN).max(0.0);
-        let o = &self.outline;
+        let o = &self.panels.outline;
         let target = if o.open {
             o.height.clamp(OUTLINE_MIN.min(room), room)
         } else {
@@ -239,7 +294,7 @@ impl App {
 
     /// 标题行上沿可以拖动调整高度的一条（逻辑像素，上下各 3）；大纲收起或不显示时为空。
     pub(crate) fn outline_divider(&self) -> Rect {
-        if !self.outline.open || self.layout.outline.h <= 0.0 {
+        if !self.panels.outline.open || self.layout.outline.h <= 0.0 {
             return Rect::default();
         }
         let o = self.layout.outline;
@@ -248,19 +303,19 @@ impl App {
 
     /// 拖动标题行的上沿：按下时的纵坐标为 `start`、列表高度为 `size`，鼠标移到 `y`。
     pub(in crate::app) fn drag_outline_divider(&mut self, start: f32, size: f32, y: f32) {
-        self.outline.height = size - (y - start);
+        self.panels.outline.height = size - (y - start);
         self.relayout();
         // 记下排版后实际的高度：超出范围时停在边界上，再往回拖立即生效。
-        self.outline.height = self.outline_list().h;
+        self.panels.outline.height = self.outline_list().h;
         self.request_redraw();
     }
 
     /// 展开或收起大纲，从现在的高度过渡过去。收起时焦点在大纲上的，交给文件树。
     pub(in crate::app) fn toggle_outline_section(&mut self) {
         let from = self.outline_list().h;
-        self.outline.open = !self.outline.open;
-        self.outline.motion = self.clock(TREE_ANIMATION).map(|clock| (from, clock));
-        if !self.outline.open && self.focus == Focus::Outline {
+        self.panels.outline.open = !self.panels.outline.open;
+        self.panels.outline.motion = self.clock(TREE_ANIMATION).map(|clock| (from, clock));
+        if !self.panels.outline.open && self.focus == Focus::Outline {
             self.focus = Focus::Tree;
         }
         self.relayout();
@@ -275,14 +330,14 @@ impl App {
             return;
         }
         self.set_sidebar_view(SidebarView::Files);
-        if !self.sidebar.visible {
+        if !self.panels.sidebar.visible {
             self.set_sidebar(true);
         }
-        if !self.outline.open {
+        if !self.panels.outline.open {
             self.toggle_outline_section();
         }
         self.focus = Focus::Outline;
-        self.outline.selected = None;
+        self.panels.outline.selected = None;
         self.sync_outline(Instant::now());
         self.request_redraw();
     }
@@ -300,7 +355,7 @@ impl App {
             return None;
         }
         let current = self.editor.active().map(|doc| (doc.id, doc.revision));
-        let o = &mut self.outline;
+        let o = &mut self.panels.outline;
         if current == o.source {
             o.due = None;
             return None;
@@ -319,11 +374,51 @@ impl App {
         None
     }
 
+    /// EPUB 目录各项 `anchors` 中已经读到的最后一项的序号：锚点不低于视口上沿。滚到底时预览中
+    /// 露出的都算读到，末尾的几项滚不到上沿。
+    fn book_reached(&self, anchors: &[Option<String>]) -> Option<usize> {
+        let md = &self.preview.markdown;
+        let laid = md.layout.as_ref()?;
+        let key = (
+            laid.source,
+            laid.key,
+            laid.height.to_bits(),
+            laid.blocks.len(),
+        );
+        let mut cache = self.panels.outline.anchor_tops.borrow_mut();
+        if cache.as_ref().is_none_or(|(k, _)| *k != key) {
+            let mut found: HashMap<&str, f32> = HashMap::new();
+            for ((_, block), top) in laid.blocks.iter().zip(&laid.tops) {
+                for (id, y) in &block.anchors {
+                    found.entry(id.as_str()).or_insert(top + y);
+                }
+            }
+            let tops = anchors
+                .iter()
+                .map(|a| a.as_deref().and_then(|a| found.get(a).copied()));
+            *cache = Some((key, tops.collect()));
+        }
+        let (_, tops) = cache.as_ref()?;
+        let (scroll, max) = (md.scroll(), md.max_scroll());
+        let probe = if max > 0.0 && scroll >= max - 1.0 {
+            scroll + md.area.h
+        } else {
+            scroll + 1.0
+        };
+        tops.iter().rposition(|t| t.is_some_and(|y| y <= probe))
+    }
+
+    /// 列出的内容来源变了（PDF、EPUB 的目录读完了）：下一帧重新提取。
+    pub(in crate::app) fn outline_source_changed(&mut self) {
+        self.panels.outline.source = None;
+        self.request_redraw();
+    }
+
     /// 重新提取当前文档的符号：文本在后台线程提取（没有事件循环的测试里直接提取），不是文本、
-    /// 文件过大时直接换上说明。
+    /// 文件过大时直接换上说明；预览的 PDF 列出它的目录。
     fn refresh_outline(&mut self) {
         let Some(doc) = self.editor.active() else {
-            let o = &mut self.outline;
+            let o = &mut self.panels.outline;
             o.source = None;
             o.seen = None;
             o.due = None;
@@ -332,11 +427,48 @@ impl App {
             return;
         };
         let (id, revision) = (doc.id, doc.revision);
-        let o = &mut self.outline;
+        let o = &mut self.panels.outline;
         o.source = Some((id, revision));
         o.seen = o.source;
         o.due = None;
         o.pending = None;
+        o.anchor_tops.replace(None);
+        o.kind = OutlineKind::Symbols;
+        let pdf = doc.unsupported == Some(winc_editor::Unsupported::Pdf);
+        if pdf && winc_preview::pdf::supported() {
+            let path = doc.path.clone();
+            let outline = self.preview.pdf.outline_of(path.as_deref());
+            let empty = match outline.as_deref() {
+                Some([]) => Some(OutlineEmpty::NoBookmarks),
+                Some(_) => None,
+                None => Some(OutlineEmpty::Reading),
+            };
+            let items = outline.as_deref().unwrap_or_default();
+            let tops = items.iter().map(|i| i.top.unwrap_or(0.0)).collect();
+            self.panels.outline.kind = OutlineKind::Pages(tops);
+            let entries = items.iter().map(|i| (i.title.as_str(), i.level, i.page));
+            self.apply_outline(Some(id), contents_symbols(entries), empty);
+            return;
+        }
+        if doc.unsupported == Some(winc_editor::Unsupported::Epub) {
+            let md = &self.preview.markdown;
+            let current = md.doc == Some(id);
+            let contents = current.then(|| md.contents.clone()).flatten();
+            // 转换失败的书没有目录可读。
+            let empty = match contents.as_deref() {
+                Some([]) => Some(OutlineEmpty::NoContents),
+                Some(_) => None,
+                None if current && md.failed.is_some() => Some(OutlineEmpty::NotText),
+                None => Some(OutlineEmpty::Reading),
+            };
+            let entries = contents.as_deref().unwrap_or_default();
+            let anchors = entries.iter().map(|e| e.anchor.clone()).collect();
+            self.panels.outline.kind = OutlineKind::Anchors(anchors);
+            let rows =
+                (entries.iter()).map(|e| (e.title.as_str(), e.level, e.anchor.as_ref().map(|_| 0)));
+            self.apply_outline(Some(id), contents_symbols(rows), empty);
+            return;
+        }
         // Markdown 的预览也是可以编辑的文本，同样列出标题。
         let empty = if !doc.edits_text() {
             Some(OutlineEmpty::NotText)
@@ -351,7 +483,7 @@ impl App {
             return;
         };
         let language = doc.highlighter.language();
-        let Some(proxy) = self.proxy.clone() else {
+        let Some(proxy) = self.link.proxy.clone() else {
             let items = symbols::symbols(&rope, language);
             self.apply_outline(Some(id), items, None);
             return;
@@ -363,20 +495,20 @@ impl App {
             let _ = sender.send((id, revision, items));
             let _ = proxy.send_event(UserEvent::Outline);
         });
-        self.outline.pending = Some(receiver);
+        self.panels.outline.pending = Some(receiver);
     }
 
     /// 收下后台提取好的符号；不是最近一次开始的提取（期间又切换了文档或修改了内容）时丢弃。
     pub(in crate::app) fn poll_outline(&mut self) {
-        let Some(receiver) = self.outline.pending.take() else {
+        let Some(receiver) = self.panels.outline.pending.take() else {
             return;
         };
         match receiver.try_recv() {
-            Ok((id, revision, items)) if self.outline.source == Some((id, revision)) => {
+            Ok((id, revision, items)) if self.panels.outline.source == Some((id, revision)) => {
                 self.apply_outline(Some(id), items, None);
             }
             Ok(_) | Err(TryRecvError::Disconnected) => {}
-            Err(TryRecvError::Empty) => self.outline.pending = Some(receiver),
+            Err(TryRecvError::Empty) => self.panels.outline.pending = Some(receiver),
         }
     }
 
@@ -402,12 +534,12 @@ impl App {
         });
         // 文件首次列出符号时，从目录的现场读入上次的收起状态。
         if let Some(key @ OutlineDoc::File(path)) = &doc
-            && !self.outline.collapsed.contains_key(key)
+            && !self.panels.outline.collapsed.contains_key(key)
         {
             let saved = self.saved_outline(path);
-            self.outline.collapsed.insert(key.clone(), saved);
+            self.panels.outline.collapsed.insert(key.clone(), saved);
         }
-        let o = &mut self.outline;
+        let o = &mut self.panels.outline;
         let switched = o.shown != id;
         o.shown_doc = doc;
         o.empty = empty.or_else(|| items.is_empty().then_some(OutlineEmpty::NoSymbols));
@@ -446,7 +578,7 @@ impl App {
             .session_for(root)
             .map(|s| s.outline.iter().cloned().collect())
             .unwrap_or_default();
-        for (doc, set) in &self.outline.collapsed {
+        for (doc, set) in &self.panels.outline.collapsed {
             let OutlineDoc::File(path) = doc else {
                 continue;
             };
@@ -466,7 +598,7 @@ impl App {
 
     /// 第 `i` 个符号的路径是否记为已收起。
     fn path_collapsed(&self, i: usize) -> bool {
-        let o = &self.outline;
+        let o = &self.panels.outline;
         let (Some(doc), Some(path)) = (&o.shown_doc, o.paths.get(i)) else {
             return false;
         };
@@ -481,9 +613,10 @@ impl App {
     /// 绘制时的各行：下级正在展开或收起时，按展开后的样子排列，并给出动画中的那一段。
     pub(crate) fn outline_layout(&self) -> OutlineLayout {
         let Some(fold) = self
+            .panels
             .outline
             .fold
-            .filter(|f| f.symbol < self.outline.items.len())
+            .filter(|f| f.symbol < self.panels.outline.items.len())
         else {
             return OutlineLayout {
                 rows: self.outline_rows(),
@@ -493,7 +626,7 @@ impl App {
             };
         };
         let rows = self.outline_rows_opening(Some(fold.symbol));
-        let items = &self.outline.items;
+        let items = &self.panels.outline.items;
         let depth = items[fold.symbol].depth;
         let block = rows.iter().position(|&i| i == fold.symbol).map(|parent| {
             let count = rows[parent + 1..]
@@ -514,7 +647,7 @@ impl App {
 
     /// 列出的各行，`opening` 指定的符号按展开着处理（它的下级正在收起时仍要绘制）。
     fn outline_rows_opening(&self, opening: Option<usize>) -> Vec<usize> {
-        let o = &self.outline;
+        let o = &self.panels.outline;
         let mut rows = Vec::with_capacity(o.items.len());
         // 正在隐藏的下级：收起的符号的层级，比它深的符号不列出。
         let mut hidden_below: Option<usize> = None;
@@ -537,17 +670,28 @@ impl App {
     }
 
     /// 光标所在的符号：起始行不晚于光标所在行的最后一个符号；它被收起的上级挡住时为该上级。
+    /// PDF 和 EPUB 的目录按预览读到的位置：指向的位置已经到了视口上沿的最后一项。
     pub(crate) fn outline_current(&self, rows: &[usize]) -> Option<usize> {
         let doc = self.editor.active()?;
-        let line = doc.text().pos_to_line_col(doc.selection.head).0;
-        let at = self.outline.items.iter().rposition(|s| s.line <= line)?;
+        let o = &self.panels.outline;
+        let at = match &o.kind {
+            OutlineKind::Symbols => {
+                let line = doc.text().pos_to_line_col(doc.selection.head).0;
+                o.items.iter().rposition(|s| s.line <= line)?
+            }
+            OutlineKind::Pages(tops) => {
+                let marks = (o.items.iter().zip(tops)).map(|(s, &top)| (s.line, top));
+                self.pdf_reached(marks)?
+            }
+            OutlineKind::Anchors(anchors) => self.book_reached(anchors)?,
+        };
         // 被挡住的符号属于它前面最近的那个列出的符号（收起的上级）。
         rows.iter().rev().copied().find(|&i| i <= at)
     }
 
     /// 高亮的行：键盘选中的符号，没有时为光标所在的符号。
     pub(crate) fn outline_highlight(&self, rows: &[usize]) -> Option<usize> {
-        let selected = self.outline.selected.filter(|i| rows.contains(i));
+        let selected = self.panels.outline.selected.filter(|i| rows.contains(i));
         selected.or_else(|| self.outline_current(rows))
     }
 
@@ -570,10 +714,10 @@ impl App {
         let Some(current) = self.outline_current(&rows) else {
             return;
         };
-        if self.outline.revealed == Some(current) || self.outline.selected.is_some() {
+        if self.panels.outline.revealed == Some(current) || self.panels.outline.selected.is_some() {
             return;
         }
-        self.outline.revealed = Some(current);
+        self.panels.outline.revealed = Some(current);
         if let Some(row) = rows.iter().position(|&i| i == current) {
             self.scroll_outline_to(row);
         }
@@ -584,8 +728,8 @@ impl App {
         let list = self.outline_list();
         let max = self.outline_max_scroll();
         let top = row as f32 * TREE_ROW;
-        let before = self.outline.scroll;
-        let o = &mut self.outline;
+        let before = self.panels.outline.scroll;
+        let o = &mut self.panels.outline;
         if top < o.scroll {
             o.scroll = top;
         } else if top + TREE_ROW > o.scroll + list.h {
@@ -597,7 +741,7 @@ impl App {
 
     /// 收起或展开第 `i` 个符号。
     pub(in crate::app) fn toggle_outline(&mut self, i: usize) {
-        let o = &mut self.outline;
+        let o = &mut self.panels.outline;
         let (Some(doc), Some(path)) = (o.shown_doc.clone(), o.paths.get(i)) else {
             return;
         };
@@ -607,7 +751,7 @@ impl App {
             set.insert(path.clone());
         }
         let clock = self.clock(TREE_ANIMATION);
-        self.outline.fold = clock.map(|clock| OutlineFold {
+        self.panels.outline.fold = clock.map(|clock| OutlineFold {
             symbol: i,
             expanding,
             clock,
@@ -617,14 +761,14 @@ impl App {
 
     /// 是否有展开着的、带下级的符号：有时「全部折叠」，否则「全部展开」。
     pub(crate) fn outline_any_expanded(&self) -> bool {
-        (0..self.outline.items.len())
-            .any(|i| has_children(&self.outline.items, i) && !self.outline_collapsed(i))
+        (0..self.panels.outline.items.len())
+            .any(|i| has_children(&self.panels.outline.items, i) && !self.outline_collapsed(i))
     }
 
     /// 全部折叠（有展开着的符号时）或全部展开。
     pub(in crate::app) fn fold_all_outline(&mut self) {
         let collapse = self.outline_any_expanded();
-        let o = &mut self.outline;
+        let o = &mut self.panels.outline;
         let Some(doc) = o.shown_doc.clone() else {
             return;
         };
@@ -641,19 +785,35 @@ impl App {
         }
         o.selected = None;
         o.fold = None;
-        self.outline.scroll = self.outline.scroll.min(self.outline_max_scroll());
+        self.panels.outline.scroll = self.panels.outline.scroll.min(self.outline_max_scroll());
         self.request_redraw();
     }
 
     /// 跳转到第 `i` 个符号并选中它的名字，焦点交给编辑区。
     pub(in crate::app) fn jump_to_outline(&mut self, i: usize) {
-        let Some(symbol) = self.outline.items.get(i) else {
+        let Some(symbol) = self.panels.outline.items.get(i) else {
             return;
         };
         let (line, col, len) = (symbol.line, symbol.col, symbol.name.chars().count());
-        self.outline.selected = None;
-        self.outline.revealed = Some(i);
-        self.jump_to(line, col, len);
+        self.panels.outline.selected = None;
+        self.panels.outline.revealed = Some(i);
+        match &self.panels.outline.kind {
+            OutlineKind::Symbols => self.jump_to(line, col, len),
+            // PDF 的书签、EPUB 的目录：转到指向的位置；指向书外（网址、别的文件）的不动。
+            OutlineKind::Pages(tops) => {
+                if line != usize::MAX {
+                    let top = tops.get(i).copied().unwrap_or(0.0);
+                    self.focus = Focus::Editor;
+                    self.scroll_pdf_to_place(line, top);
+                }
+            }
+            OutlineKind::Anchors(anchors) => {
+                if let Some(anchor) = anchors.get(i).cloned().flatten() {
+                    self.focus = Focus::Editor;
+                    self.jump_to_anchor(&anchor);
+                }
+            }
+        }
     }
 
     /// 点击了大纲里的 `target`。
@@ -662,7 +822,7 @@ impl App {
             OutlineTarget::Row(i) => self.jump_to_outline(i),
             OutlineTarget::Arrow(i) => {
                 self.focus = Focus::Outline;
-                self.outline.selected = Some(i);
+                self.panels.outline.selected = Some(i);
                 self.toggle_outline(i);
             }
             OutlineTarget::Header => self.toggle_outline_section(),
@@ -681,7 +841,7 @@ impl App {
             return;
         };
         let row = rows.iter().position(|&i| i == at).unwrap_or(0);
-        let items = &self.outline.items;
+        let items = &self.panels.outline.items;
         let depth = items[at].depth;
         let target = match key {
             Key::Named(NamedKey::ArrowUp) => rows.get(row.wrapping_sub(1)).copied(),
@@ -715,7 +875,7 @@ impl App {
             _ => None,
         };
         if let Some(target) = target {
-            self.outline.selected = Some(target);
+            self.panels.outline.selected = Some(target);
             let rows = self.outline_rows();
             if let Some(row) = rows.iter().position(|&i| i == target) {
                 self.scroll_outline_to(row);

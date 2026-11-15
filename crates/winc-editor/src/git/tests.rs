@@ -5,74 +5,10 @@
 
 use super::*;
 
+mod history;
+
 fn root() -> PathBuf {
     PathBuf::from("/repo")
-}
-
-#[test]
-fn log_records_split_into_commits_with_their_refs() {
-    let (a, b, p1, p2) = (
-        "a".repeat(40),
-        "b".repeat(64),
-        "1".repeat(40),
-        "2".repeat(40),
-    );
-    let text = format!(
-        "{a}\x1f{p1} {p2}\x1fAnn\x1fann@x\x1f1700000000\x1f2023-11-15 06:13\x1fHEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, tag: refs/tags/v1\x1fMerge it\x1e\n\
-         {b}\x1f\x1fBob\x1fbob@x\x1f1600000000\x1f2020-09-13 20:26\x1f\x1fRoot: a \u{1f}b\x1e\n"
-    );
-    let commits = parse_log(&text);
-    assert_eq!(commits.len(), 2);
-    assert_eq!(commits[0].oid, a);
-    assert_eq!(commits[0].parents, [p1, p2]);
-    assert_eq!(
-        commits[0].refs,
-        [
-            Ref::Head("main".into()),
-            Ref::Remote("origin/main".into()),
-            Ref::Tag("v1".into()),
-        ]
-    );
-    assert_eq!(commits[0].subject, "Merge it");
-    assert!(commits[1].parents.is_empty() && commits[1].refs.is_empty());
-    assert_eq!(commits[1].time, 1_600_000_000);
-    assert_eq!(commits[1].local, "2020-09-13 20:26");
-    assert_eq!(
-        parse_refs("HEAD, refs/heads/dev"),
-        [Ref::Detached, Ref::Branch("dev".into())]
-    );
-}
-
-#[test]
-fn log_subject_cannot_forge_a_record() {
-    let (a, p) = ("a".repeat(40), "1".repeat(40));
-    // 提交说明中含有 `0x1e`，之后是一条提交号为选项的伪造记录。
-    let text = format!(
-        "{a}\x1f{p}\x1fAnn\x1fann@x\x1f1700000000\x1f2023-11-15 06:13\x1f\x1fx\x1e--output=/tmp/x\x1f{p}\x1fa\x1fe\x1f0\x1fl\x1f\x1fs\x1e\n\
-         {p}\x1f--all\x1fBob\x1fbob@x\x1f1600000000\x1f2020-09-13 20:26\x1f\x1fbad parent\x1e\n"
-    );
-    let commits = parse_log(&text);
-    assert_eq!(commits.len(), 1);
-    assert_eq!(commits[0].oid, a);
-}
-
-#[test]
-fn blame_maps_every_line_to_its_commit() {
-    let a = "a".repeat(40);
-    let zero = "0".repeat(40);
-    let text = format!(
-        "{a} 1 1 2\nauthor Ann\nauthor-mail <ann@x>\nauthor-time 1700000000\nauthor-tz +0800\nsummary First\nfilename f\n\tline one\n\
-             {a} 2 2\n\tline two\n\
-             {zero} 3 3 1\nauthor Not Committed Yet\nauthor-time 1800000000\nauthor-tz -0530\nsummary Version of f from -\nfilename f\n\tnew line\n"
-    );
-    let blame = parse_blame(&text);
-    assert_eq!(blame.lines, [0, 0, 1]);
-    assert_eq!(blame.commits[0].author, "Ann");
-    assert_eq!(blame.commits[0].summary, "First");
-    assert_eq!(blame.commits[0].offset, 8 * 3600);
-    assert!(!blame.commits[0].uncommitted);
-    assert!(blame.commits[1].uncommitted);
-    assert_eq!(blame.commits[1].offset, -(5 * 3600 + 30 * 60));
 }
 
 #[test]
@@ -229,6 +165,63 @@ fn branches_list_local_first_and_skip_remote_head() {
 }
 
 #[test]
+fn a_new_repository_ignores_what_its_project_type_builds() {
+    use super::remote::starter_ignore;
+    assert_eq!(starter_ignore(&[]), ".DS_Store\nThumbs.db\n");
+    let rust = starter_ignore(&["Cargo.toml"]);
+    assert!(rust.lines().any(|line| line == "/target/"));
+    assert!(!rust.contains("node_modules"));
+    let mixed = starter_ignore(&["package.json", "requirements.txt"]);
+    for line in ["node_modules/", "__pycache__/", ".venv/"] {
+        assert!(mixed.lines().any(|l| l == line), "{line}");
+    }
+    assert!(mixed.ends_with('\n'));
+}
+
+#[test]
+fn the_git_version_is_read_from_its_first_two_numbers() {
+    use super::sync::parse_version;
+    assert_eq!(
+        parse_version("git version 2.54.0 (Apple Git-157)\n"),
+        Some((2, 54))
+    );
+    assert_eq!(
+        parse_version("git version 2.47.1.windows.2\n"),
+        Some((2, 47))
+    );
+    assert_eq!(parse_version("git version 2.30"), Some((2, 30)));
+    assert_eq!(parse_version("git version 3.0.0-rc1"), Some((3, 0)));
+    assert_eq!(parse_version("something else"), None);
+    // 版本按（主，次）比较：2.9 比 2.30 旧，读不出版本时不加新选项。
+    assert!(parse_version("git version 2.9.5") < Some((2, 30)));
+    assert!(parse_version("?") < Some((2, 30)));
+}
+
+#[test]
+fn branches_carry_how_far_they_are_from_their_upstream() {
+    let line =
+        |name: &str, track: &str| format!("refs/heads/{name}\0 \0origin/{name}\0a\00\0\0{track}\n");
+    let output = [
+        line("ahead", "ahead 3"),
+        line("behind", "behind 2"),
+        line("both", "ahead 1, behind 4"),
+        line("even", ""),
+        line("lost", "gone"),
+    ]
+    .concat();
+    let branches = parse_branches(&output);
+    let track = |name: &str| {
+        let branch = branches.iter().find(|b| b.name == name).unwrap();
+        (branch.ahead, branch.behind)
+    };
+    assert_eq!(track("ahead"), (3, 0));
+    assert_eq!(track("behind"), (0, 2));
+    assert_eq!(track("both"), (1, 4));
+    assert_eq!(track("even"), (0, 0));
+    assert_eq!(track("lost"), (0, 0));
+}
+
+#[test]
 fn an_upstream_that_no_longer_exists_counts_as_none() {
     let output = "refs/heads/gone\0 \0origin/gone\0a\nrefs/heads/kept\0 \0origin/kept\0b\n\
                   refs/heads/local\0 \0kept\0c\nrefs/heads/origin/kept\0 \0remotes/origin/kept\0d\n\
@@ -288,94 +281,6 @@ fn failures_pick_the_line_that_explains() {
         summary(b"Updating a..b\nFast-forward\n file | 1 +\n"),
         "file | 1 +"
     );
-}
-
-/// 合并冲突的处理：状态里识别出「合并中」和冲突的文件，文件里识别出冲突标记；在文件里
-/// 解决并提交之后合并完成。
-///
-/// 找不到 `git` 时跳过。
-#[test]
-fn merge_conflicts_resolve_and_commit() {
-    let shell = Shell::with_vars(std::env::vars_os().collect());
-    let Ok(git) = Git::find(&shell) else {
-        return;
-    };
-    let dir = crate::test_util::scratch("merge");
-    let git_in = |args: &[&str]| {
-        Command::new("git")
-            .arg("-C")
-            .arg(&dir)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args([
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "merge.conflictStyle=merge",
-            ])
-            .args(args)
-            .output()
-            .unwrap()
-            .status
-            .success()
-    };
-    let sh = |args: &[&str]| assert!(git_in(args), "git {args:?}");
-    sh(&["init", "-q", "-b", "main"]);
-    sh(&["config", "user.name", "t"]);
-    sh(&["config", "user.email", "t@t"]);
-    sh(&["config", "commit.gpgsign", "false"]);
-    let m = dir.join("m.rs");
-    std::fs::write(&m, "top\nbase\nbottom\n").unwrap();
-    sh(&["add", "."]);
-    sh(&["commit", "-q", "-m", "base"]);
-    sh(&["switch", "-q", "-c", "other"]);
-    std::fs::write(&m, "top\ntheirs\nbottom\n").unwrap();
-    sh(&["commit", "-q", "-am", "theirs"]);
-    sh(&["switch", "-q", "main"]);
-    std::fs::write(&m, "top\nours\nbottom\n").unwrap();
-    sh(&["commit", "-q", "-am", "ours"]);
-    assert!(!git_in(&["merge", "other"]), "应当出冲突");
-
-    let root = winc_config::files::canonicalize(&dir).unwrap();
-    let m = root.join("m.rs");
-    let cancel = Cancel::default();
-    let status = git.status(&root, &cancel).unwrap();
-    assert_eq!(status.operation, Some(Operation::Merge));
-    let entry = status.entries.iter().find(|e| e.path == m).unwrap();
-    assert_eq!(entry.shown(), Change::Conflicted);
-    assert!(
-        git.merge_message(&root)
-            .is_some_and(|m| m.contains("other"))
-    );
-
-    let rope = ropey::Rope::from_str(&std::fs::read_to_string(&m).unwrap());
-    let conflicts = merge::find_conflicts(&rope);
-    assert_eq!(conflicts.len(), 1);
-    let both = merge::resolution(&rope, &conflicts[0], merge::Pick::Both);
-    assert_eq!(both, "ours\ntheirs\n");
-    std::fs::write(&m, format!("top\n{both}bottom\n")).unwrap();
-
-    // 合并中不能只提交一部分；整个提交以后合并完成。
-    let part = Partial {
-        path: m.clone(),
-        content: b"x\n".to_vec(),
-    };
-    assert!(
-        git.commit(&root, "m", std::slice::from_ref(&m), &[], &[part], false)
-            .is_err()
-    );
-    git.commit(
-        &root,
-        "merge other",
-        std::slice::from_ref(&m),
-        &[],
-        &[],
-        false,
-    )
-    .unwrap();
-    let status = git.status(&root, &cancel).unwrap();
-    assert_eq!(status.operation, None);
-    assert!(status.entries.is_empty());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// 返回不依赖本机全局配置的 `git`：给定提交身份，关掉提交签名。
@@ -447,47 +352,45 @@ fn runs_the_real_git() {
     assert_eq!(untracked, Ok(None));
     assert!(status.entries[1].untracked());
 
-    // 另一个文件已在暂存区：只提交 a.rs 时该文件的暂存状态保持不变。
-    std::fs::write(dir.join("c.rs"), "staged\n").unwrap();
-    sh(&["add", "c.rs"]);
+    // 提交暂存区的内容：只暂存 a.rs，未暂存的文件留在工作区。
     let a = root.join("src/a.rs");
-    let oid = git.commit(
-        &root,
-        "second\n\n正文",
-        std::slice::from_ref(&a),
-        &[],
-        &[],
-        false,
-    );
+    git.stage(&root, std::slice::from_ref(&a)).unwrap();
+    let oid = git.commit(&root, "second\n\n正文", false, false);
     assert!(oid.as_ref().is_ok_and(|o| o.len() >= 7), "{oid:?}");
     let status = git.status(&root, &cancel).unwrap();
     let left: Vec<_> = status.entries.iter().map(|e| e.path.clone()).collect();
-    assert_eq!(left, [root.join("c.rs"), root.join("b.rs")]);
+    assert_eq!(left, [root.join("b.rs")]);
     assert_eq!(git.last_message(&root), "second\n\n正文");
 
     // 提交未跟踪的文件：先加入暂存区再提交；修改上一次提交时只改提交说明。
     let b = root.join("b.rs");
-    git.commit(
-        &root,
-        "third",
-        std::slice::from_ref(&b),
-        std::slice::from_ref(&b),
-        &[],
-        false,
-    )
-    .unwrap();
-    git.commit(&root, "third, amended", &[], &[], &[], true)
-        .unwrap();
+    git.stage(&root, std::slice::from_ref(&b)).unwrap();
+    git.commit(&root, "third", false, false).unwrap();
+    git.commit(&root, "third, amended", false, true).unwrap();
     assert_eq!(git.last_message(&root), "third, amended");
     // 以 `#` 开头的行属于提交说明的正文，不能当作注释删除。
-    git.commit(&root, "#42 修复登录\n\n# 不是注释", &[], &[], &[], true)
+    git.commit(&root, "#42 修复登录\n\n# 不是注释", false, true)
         .unwrap();
     assert_eq!(git.last_message(&root), "#42 修复登录\n\n# 不是注释");
     // 没有可提交的内容时返回错误，原因取自 `git` 的输出。
-    assert!(
-        git.commit(&root, "nothing", std::slice::from_ref(&a), &[], &[], false)
-            .is_err()
+    assert!(git.commit(&root, "nothing", false, false).is_err());
+    assert!(git.commit(&root, "nothing", true, false).is_err());
+
+    // 取消暂存：新加入暂存区的文件恢复为未跟踪，改过的文件恢复为未暂存；工作区的内容不变。
+    let c = root.join("c.rs");
+    std::fs::write(&c, "staged\n").unwrap();
+    std::fs::write(&a, "changed\n").unwrap();
+    git.stage(&root, &[a.clone(), c.clone()]).unwrap();
+    git.unstage(&root, &[a.clone(), c.clone()]).unwrap();
+    let status = git.status(&root, &cancel).unwrap();
+    let of = |path: &Path| status.entries.iter().find(|e| e.path == path).unwrap();
+    assert!(of(&c).untracked());
+    assert_eq!(
+        (of(&a).staged, of(&a).unstaged),
+        (None, Some(Change::Modified))
     );
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), "changed\n");
+    git.stage(&root, std::slice::from_ref(&c)).unwrap();
 
     // 回滚：改过的文件恢复为 `HEAD` 的内容，新加入暂存区的文件移除出暂存区（工作区里的
     // 文件保留）。
@@ -507,8 +410,8 @@ fn runs_the_real_git() {
     let c = status.entries.iter().find(|e| e.path == root.join("c.rs"));
     assert_eq!(c.and_then(|c| c.staged), Some(Change::Added));
 
-    // 只提交一部分：`e.rs` 有两处改动，只提交第一处。提交里只含第一处，工作区保留两处
-    // 改动，暂存区里别的文件（`c.rs`）不受影响。
+    // 只暂存一部分：`e.rs` 有两处改动，暂存区中只登记第一处。提交里只含第一处，工作区保留
+    // 两处改动。
     let e = root.join("e.rs");
     std::fs::write(&e, "1\n2\n3\n4\n5\n6\n7\n8\n").unwrap();
     sh(&["add", "e.rs"]);
@@ -516,19 +419,18 @@ fn runs_the_real_git() {
     let worktree = "1\nTWO\n3\n4\n5\n6\nSEVEN\n8\n";
     std::fs::write(&e, worktree).unwrap();
     let first = "1\nTWO\n3\n4\n5\n6\n7\n8\n";
-    let part = Partial {
-        path: e.clone(),
-        content: first.as_bytes().to_vec(),
-    };
-    git.commit(
-        &root,
-        "only the first",
-        std::slice::from_ref(&e),
-        &[],
-        std::slice::from_ref(&part),
-        false,
-    )
-    .unwrap();
+    git.unstage(&root, &[root.join("c.rs")]).unwrap();
+    git.stage_content(&root, &e, first.as_bytes().to_vec())
+        .unwrap();
+    let staged = git.index_content(&root, &e, &cancel).unwrap().unwrap();
+    assert_eq!(String::from_utf8(staged).unwrap(), first);
+    let status = git.status(&root, &cancel).unwrap();
+    let e_entry = status.entries.iter().find(|x| x.path == e).unwrap();
+    assert_eq!(
+        (e_entry.staged, e_entry.unstaged),
+        (Some(Change::Modified), Some(Change::Modified))
+    );
+    git.commit(&root, "only the first", false, false).unwrap();
     let head = git.head_content(&root, &e, &cancel).unwrap().unwrap();
     assert_eq!(String::from_utf8(head).unwrap(), first);
     assert_eq!(std::fs::read_to_string(&e).unwrap(), worktree);
@@ -539,7 +441,7 @@ fn runs_the_real_git() {
         (None, Some(Change::Modified))
     );
     let c = status.entries.iter().find(|x| x.path == root.join("c.rs"));
-    assert_eq!(c.and_then(|c| c.staged), Some(Change::Added));
+    assert!(c.is_some_and(Entry::untracked));
     // `core.autocrlf`：工作区里是 CRLF、提交里是 LF；取 `HEAD` 版本时做同样的转换，两边
     // 内容一致。
     sh(&["config", "core.autocrlf", "true"]);
@@ -597,188 +499,6 @@ fn the_exit_code_of_test_decides_the_file_mode() {
     assert_eq!(mode_from_test(Some(2)), None);
     assert_eq!(mode_from_test(Some(-1)), None);
     assert_eq!(mode_from_test(None), None);
-}
-
-#[cfg(unix)]
-#[test]
-fn partial_commits_keep_other_staged_files_and_the_execute_bit() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut vars: Vec<_> = std::env::vars_os().collect();
-    for (k, v) in [
-        ("GIT_AUTHOR_NAME", "t"),
-        ("GIT_AUTHOR_EMAIL", "t@t"),
-        ("GIT_COMMITTER_NAME", "t"),
-        ("GIT_COMMITTER_EMAIL", "t@t"),
-        ("GIT_CONFIG_COUNT", "1"),
-        ("GIT_CONFIG_KEY_0", "commit.gpgsign"),
-        ("GIT_CONFIG_VALUE_0", "false"),
-    ] {
-        vars.push((k.into(), v.into()));
-    }
-    let shell = Shell::with_vars(vars);
-    let Ok(git) = Git::find(&shell) else {
-        return;
-    };
-    let dir = crate::test_util::scratch("git-partial-index");
-    let root = winc_config::files::canonicalize(&dir).unwrap();
-    let sh = |args: &[&str]| {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}");
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
-    };
-    sh(&["init", "-q", "-b", "main"]);
-    sh(&["config", "user.name", "t"]);
-    sh(&["config", "user.email", "t@t"]);
-    sh(&["config", "commit.gpgsign", "false"]);
-    let script = root.join("run.sh");
-    std::fs::write(&script, "1\n2\n").unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    sh(&["add", "run.sh"]);
-    sh(&["commit", "-q", "-m", "first"]);
-
-    // `staged.txt` 已暂存；只提交 `run.sh` 的一部分。
-    std::fs::write(root.join("staged.txt"), "s\n").unwrap();
-    sh(&["add", "staged.txt"]);
-    std::fs::write(&script, "1\n2\n3\n4\n").unwrap();
-    let part = Partial {
-        path: script.clone(),
-        content: b"1\n2\n3\n".to_vec(),
-    };
-    git.commit(
-        &root,
-        "part",
-        std::slice::from_ref(&script),
-        &[],
-        std::slice::from_ref(&part),
-        false,
-    )
-    .unwrap();
-
-    assert_eq!(sh(&["diff", "--cached", "--name-only"]), "staged.txt");
-    assert!(sh(&["ls-tree", "HEAD", "run.sh"]).starts_with("100755 "));
-    assert_eq!(sh(&["show", "HEAD:run.sh"]), "1\n2\n3");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn partial_commits_failed_commits_and_missing_contents() {
-    let mut vars: Vec<_> = std::env::vars_os().collect();
-    for (k, v) in [
-        ("GIT_AUTHOR_NAME", "t"),
-        ("GIT_AUTHOR_EMAIL", "t@t"),
-        ("GIT_COMMITTER_NAME", "t"),
-        ("GIT_COMMITTER_EMAIL", "t@t"),
-        ("GIT_CONFIG_COUNT", "1"),
-        ("GIT_CONFIG_KEY_0", "commit.gpgsign"),
-        ("GIT_CONFIG_VALUE_0", "false"),
-    ] {
-        vars.push((k.into(), v.into()));
-    }
-    let shell = Shell::with_vars(vars);
-    let Ok(git) = Git::find(&shell) else {
-        return;
-    };
-    let dir = crate::test_util::scratch("git-unborn");
-    let root = winc_config::files::canonicalize(&dir).unwrap();
-    let sh = |args: &[&str]| {
-        let ok = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .unwrap()
-            .status
-            .success();
-        assert!(ok, "git {args:?}");
-    };
-    sh(&["init", "-q", "-b", "main"]);
-    let cancel = Cancel::default();
-
-    // 还没有提交过：文件不在 `HEAD` 里，不算失败；只提交一部分时同样可以提交。
-    let a = root.join("a.txt");
-    std::fs::write(&a, "1\n2\n").unwrap();
-    assert_eq!(git.head_content(&root, &a, &cancel), Ok(None));
-    let part = Partial {
-        path: a.clone(),
-        content: b"1\n".to_vec(),
-    };
-    git.commit(
-        &root,
-        "first",
-        std::slice::from_ref(&a),
-        &[],
-        std::slice::from_ref(&part),
-        false,
-    )
-    .unwrap();
-    let head = git.head_content(&root, &a, &cancel).unwrap();
-    assert_eq!(head.as_deref(), Some(&b"1\n"[..]));
-    assert_eq!(std::fs::read_to_string(&a).unwrap(), "1\n2\n");
-
-    // 版本不存在不是「没有该文件」。
-    assert!(git.content_at(&root, "no-such-rev", &a, &cancel).is_err());
-    assert_eq!(
-        git.content_at(&root, "HEAD", &root.join("none.txt"), &cancel),
-        Ok(None)
-    );
-
-    // 提交被 hooks 拒绝：未跟踪的文件不留在暂存区。
-    let hook = root.join(".git/hooks/pre-commit");
-    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\necho 不许提交 >&2\nexit 1\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let risks = git.inspect(&root).unwrap();
-    git.trust(&root, risks.fingerprint);
-    let b = root.join("b.txt");
-    std::fs::write(&b, "new\n").unwrap();
-    let refused = git.commit(
-        &root,
-        "second",
-        std::slice::from_ref(&b),
-        std::slice::from_ref(&b),
-        &[],
-        false,
-    );
-    assert!(refused.unwrap_err().contains("不许提交"));
-    let status = git.status(&root, &cancel).unwrap();
-    let entry = status.entries.iter().find(|e| e.path == b).unwrap();
-    assert!(entry.untracked(), "{entry:?}");
-
-    // 必需的过滤器失败：返回错误，不能当成文件不在 `HEAD` 里。
-    std::fs::remove_file(&hook).unwrap();
-    std::fs::write(root.join(".gitattributes"), "*.t filter=x\n").unwrap();
-    let t = root.join("a.t");
-    std::fs::write(&t, "hi\n").unwrap();
-    sh(&["add", "a.t", ".gitattributes"]);
-    sh(&[
-        "-c",
-        "user.name=t",
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "commit.gpgsign=false",
-        "commit",
-        "-q",
-        "-m",
-        "t",
-    ]);
-    sh(&["config", "filter.x.smudge", "false"]);
-    sh(&["config", "filter.x.required", "true"]);
-    let risks = git.inspect(&root).unwrap();
-    git.trust(&root, risks.fingerprint);
-    assert!(git.head_content(&root, &t, &cancel).is_err());
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -958,7 +678,7 @@ fn untrusted_repository_commands_do_not_run() {
     assert!(!marker.exists(), "不可信的仓库里运行了配置中的命令");
     let risks = git.untrusted(&root).expect("应当不可信");
     assert_eq!(risks.filters, ["x"]);
-    let refused = git.commit(&root, "m", &[root.join("a.t")], &[], &[], false);
+    let refused = git.commit(&root, "m", true, false);
     assert!(refused.unwrap_err().contains("信任"));
     assert!(git.operate(&root, &["switch", "-c", "b"]).is_err());
 
@@ -1089,127 +809,6 @@ fn push_skips_remotes_that_look_like_options() {
     assert!(git.untrusted(&root).is_none());
     assert!(git.push(&root, false).is_err());
     assert!(!marker.exists(), "远程的名字被当成了选项");
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// 筛选文字形如提交号时同时按提交号查找：解析出的提交排在最前面，说明同样匹配时不重复。
-#[test]
-fn log_filter_also_finds_a_commit_by_its_hash() {
-    let Some(git) = real_git() else {
-        return;
-    };
-    let dir = crate::test_util::scratch("git-log-hash");
-    let sh = |args: &[&str]| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&dir)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "git {args:?}");
-        String::from_utf8_lossy(&output.stdout).trim().to_owned()
-    };
-    sh(&["init", "-q", "-b", "main"]);
-    // 提交说明使用十六进制数以外的字母，查找文字不会碰巧出现在别的提交的提交号里。
-    for i in 0..4 {
-        sh(&["commit", "-q", "--allow-empty", "-m", &format!("x{i}")]);
-    }
-    let first = sh(&["rev-parse", "HEAD~3"]);
-    let root = winc_config::files::canonicalize(&dir).unwrap();
-    let subjects = |text: &str, batch: usize| {
-        let query = LogQuery {
-            text: text.to_owned(),
-            ..LogQuery::default()
-        };
-        let mut stream = git.log_stream(&root, &query).unwrap();
-        let mut subjects = Vec::new();
-        loop {
-            let commits = stream.next(batch).unwrap();
-            let done = commits.len() < batch;
-            subjects.extend(commits.into_iter().map(|c| c.subject));
-            if done {
-                return subjects;
-            }
-        }
-    };
-    assert_eq!(subjects(&first[..7], 10), ["x0"]);
-    assert_eq!(subjects(&first[..7].to_uppercase(), 10), ["x0"]);
-    // 提交说明里包含该提交号时，该提交只出现一次并排在最前面；分批读取时结果相同。
-    sh(&[
-        "commit",
-        "-q",
-        "--allow-empty",
-        "-m",
-        &format!("revert {}", &first[..7]),
-    ]);
-    sh(&["commit", "-q", "--allow-empty", "-m", "x5"]);
-    assert_eq!(
-        subjects(&first[..7], 10),
-        ["x0", &format!("revert {}", &first[..7])]
-    );
-    assert_eq!(
-        subjects(&first[..7], 1),
-        ["x0", &format!("revert {}", &first[..7])]
-    );
-    // 不形如提交号、或无法解析的文字仍按提交说明查找。
-    // 无法解析的提交号取 40 位：没有提交以它开头，7 位提交号的提交说明里也不含这 40 位。
-    assert_eq!(subjects("x3", 10), ["x3"]);
-    assert_eq!(subjects(&"f".repeat(40), 10), Vec::<String>::new());
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// 日志从同一个运行中的 `git log` 分批读取，顺序与一次读取全部时相同；
-/// 中途丢弃日志时 `git log` 进程随之结束。
-#[test]
-fn log_streams_read_batches_from_one_git() {
-    let Some(git) = real_git() else {
-        return;
-    };
-    let dir = crate::test_util::scratch("git-log-stream");
-    let sh = |args: &[&str]| {
-        let ok = Command::new("git")
-            .arg("-C")
-            .arg(&dir)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .output()
-            .unwrap()
-            .status
-            .success();
-        assert!(ok, "git {args:?}");
-    };
-    sh(&["init", "-q", "-b", "main"]);
-    for i in 0..5 {
-        sh(&["commit", "-q", "--allow-empty", "-m", &format!("c{i}")]);
-    }
-    let root = winc_config::files::canonicalize(&dir).unwrap();
-    let query = LogQuery::default();
-
-    let mut stream = git.log_stream(&root, &query).unwrap();
-    let mut subjects = Vec::new();
-    for expected in [2, 2, 1, 0] {
-        let batch = stream.next(2).unwrap();
-        assert_eq!(batch.len(), expected);
-        subjects.extend(batch.into_iter().map(|c| c.subject));
-    }
-    assert_eq!(subjects, ["c4", "c3", "c2", "c1", "c0"]);
-
-    // 读了一半就丢弃：结束 `git` 进程时不等它写完输出。
-    let mut half = git.log_stream(&root, &query).unwrap();
-    assert_eq!(half.next(1).unwrap().len(), 1);
-    drop(half);
-
-    // `git` 自己报的错（分支不存在）在读第一批时返回。
-    let missing = LogQuery {
-        branch: Some("no-such-branch".into()),
-        ..LogQuery::default()
-    };
-    let mut stream = git.log_stream(&root, &missing).unwrap();
-    assert!(stream.next(10).is_err());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1396,11 +995,11 @@ fn undoing_a_commit_keeps_its_changes_staged() {
     let a = root.join("a.rs");
     std::fs::write(&a, "one\n").unwrap();
     let only = std::slice::from_ref(&a);
-    git.commit(&root, "first", only, only, &[], false).unwrap();
+    git.stage(&root, only).unwrap();
+    git.commit(&root, "first", false, false).unwrap();
     let first = git.last_commit(&root).unwrap();
     std::fs::write(&a, "two\n").unwrap();
-    git.commit(&root, "second\n\n正文", only, &[], &[], false)
-        .unwrap();
+    git.commit(&root, "second\n\n正文", true, false).unwrap();
     let second = git.last_commit(&root).unwrap();
     assert_eq!(second.subject, "second");
     assert_eq!(second.message, "second\n\n正文");
@@ -1566,29 +1165,6 @@ fn operations_ask_through_the_askpass_program_and_keep_their_output() {
     assert!(output.contains(&status), "{output}");
     assert!(!output.contains("s3cret"), "{output}");
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// 储藏的说明开头写着储藏时的分支：「On 分支:」是带说明的，「WIP on 分支:」是没写说明的。
-#[test]
-fn a_stash_knows_the_branch_it_was_made_on() {
-    let stash = |message: &str| Stash {
-        name: "stash@{0}".into(),
-        oid: String::new(),
-        parents: Vec::new(),
-        time: 0,
-        local: String::new(),
-        message: message.into(),
-    };
-    assert_eq!(stash("On main: 试一下").branch(), Some("main"));
-    assert_eq!(
-        stash("WIP on feature/a: 1a2b3c4 改登录").branch(),
-        Some("feature/a")
-    );
-    assert_eq!(
-        stash("WIP on (no branch): 1a2b3c4 x").branch(),
-        Some("(no branch)")
-    );
-    assert_eq!(stash("autostash").branch(), None);
 }
 
 #[test]

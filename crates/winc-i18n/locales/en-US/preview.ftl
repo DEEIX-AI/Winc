@@ -57,6 +57,8 @@ preview-svg-missing-text-path = text on paths
 preview-markdown-image-alt = Image
 preview-markdown-code-copied = Copied code
 preview-markdown-heading-not-found = This heading isn’t in the document
+preview-markdown-toc-pin = Pin Heading List
+preview-markdown-toc-unpin = Unpin Heading List
 preview-markdown-link-file-not-found = The linked file wasn’t found
 preview-markdown-link-open-failed = Couldn’t open the link: { $error }
 preview-markdown-cache-folder-invalid = Invalid cache folder
@@ -96,6 +98,14 @@ preview-docx-chart-titled = Chart: { $title }
 preview-docx-chart-series = { $count } series: { $names }
 preview-docx-chart-category = Category
 preview-docx-image-unsupported = The image “{ $name }” is in { $format } format and can’t be previewed
+
+## EPUB book preview
+
+preview-epub-invalid = Not a valid EPUB file
+preview-epub-unsupported = Encrypted and zip64 EPUB files aren’t supported
+preview-epub-drm = Books protected by DRM can’t be previewed
+preview-epub-too-large = The file is too large
+preview-epub-chapter-damaged = Can’t read “{ $name }”: the file is damaged
 
 ## PDF preview
 

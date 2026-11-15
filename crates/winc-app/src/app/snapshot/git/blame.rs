@@ -97,7 +97,7 @@ fn blame_annotates_lines_and_jumps_to_the_commit_in_the_log() {
     let selected = view.selected.map(|i| view.commits[i].subject.clone());
     assert_eq!(selected.as_deref(), Some("服务器：对外网开放"));
     // 日志显示完整的历史，不按该提交筛选。
-    assert!(view.query.text.is_empty() && app.log.filter.text().is_empty());
+    assert!(view.query.text.is_empty() && app.git.log.filter.text().is_empty());
     assert!(view.commits.len() > 1);
 
     // 回到文件再关闭追溯：行号栏恢复原来的宽度。
@@ -178,11 +178,98 @@ fn blame_click_finds_a_commit_older_than_the_first_log_batch() {
     // 逐批读取到该提交后选中；日志仍是完整的历史，不按该提交筛选。
     let view = app.editor.active().unwrap().log.as_deref().unwrap();
     assert_eq!(view.selected_oid(), Some(target.oid.as_str()));
-    assert!(view.query.text.is_empty() && app.log.filter.text().is_empty());
+    assert!(view.query.text.is_empty() && app.git.log.filter.text().is_empty());
     assert!(view.commits.len() > BATCH);
     let details = view.details.as_ref().unwrap();
     assert_eq!(details.oid, target.oid);
     assert!(details.files.is_some());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 当前行追溯：不开追溯一栏也算好，光标所在行的末尾写「作者, 时间 · 说明」；改过没提交的行、
+/// 有选区时不写；关掉设置后不再写。
+#[test]
+fn the_caret_line_names_its_last_commit() {
+    let Some((mut app, root)) = git_app("git-inline-blame", false) else {
+        return;
+    };
+    blame_repo(&root);
+    app.git_refresh();
+    app.open_path(&root.join("src/server.rs"));
+    paint(&mut app);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert_eq!(app.blame_width(), 0.0);
+    let at = |app: &App, line: usize| app.editor.active().unwrap().text().line_start(line);
+    let start = at(&app, 3);
+    app.select(start, start);
+    let (line, text) = app.inline_blame(now).expect("光标所在行有提交");
+    assert_eq!(line, 3);
+    assert!(
+        text.starts_with("Alice Chen, ") && text.ends_with(" · 服务器：对外网开放"),
+        "{text}"
+    );
+
+    // 有选区时不写。
+    let end = at(&app, 4);
+    app.select(start, end);
+    assert_eq!(app.inline_blame(now), None);
+
+    // 改过没提交的行不写。
+    app.select(start, start);
+    app.run(winc_editor::Command::Insert("// 新加的\n".into()));
+    paint(&mut app);
+    let added = at(&app, 3);
+    app.select(added, added);
+    assert_eq!(app.inline_blame(now), None);
+
+    // 关掉设置后不写。
+    let start = at(&app, 6);
+    app.select(start, start);
+    assert!(app.inline_blame(now).is_some());
+    app.settings_toggle(Setting::GitInlineBlame);
+    assert_eq!(app.inline_blame(now), None);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 所选代码的历史：只列出改过这几行的提交；前面有未提交的新增行时，行号先换算成 `HEAD`
+/// 中的行号再查。
+#[test]
+fn the_history_of_selected_lines_lists_only_their_commits() {
+    let Some((mut app, root)) = git_app("git-lines-history", false) else {
+        return;
+    };
+    blame_repo(&root);
+    app.git_refresh();
+    app.open_path(&root.join("src/server.rs"));
+    // 前面插入两行（不保存）：原来的第 4 行（监听地址）现在是第 6 行。
+    app.select(0, 0);
+    app.run(winc_editor::Command::Insert("// 一\n// 二\n".into()));
+    paint(&mut app);
+    let text = app.editor.active().unwrap().text();
+    let (from, to) = (text.line_start(5), text.line_start(6) - 1);
+    app.select(from, to);
+    // 从编辑区的右键菜单选「显示所选代码的历史」。
+    let id = app.editor.active().unwrap().id;
+    let target = crate::app::input::context_menu::MenuTarget::Editor(id);
+    app.open_context_menu(target, (0.0, 0.0));
+    let action = Action::GitSelectionHistory;
+    app.run_menu_command(crate::app::MenuCommand::GitAction(action));
+    assert!(app.log_active());
+    let view = app.editor.active().unwrap().log.as_deref().unwrap();
+    assert_eq!(view.query.lines, Some((4, 4)));
+    let subjects: Vec<&str> = view.commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["服务器：对外网开放", "服务器：监听 8080 端口"]);
+    let title = app
+        .editor
+        .active()
+        .unwrap()
+        .title
+        .clone()
+        .unwrap_or_default();
+    assert!(title.starts_with("server.rs:4–4"), "{title}");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -210,8 +297,29 @@ fn shoot_blame() {
         let l = app.layout;
         let y = l.text.y + 6.5 * app.fonts.line_height;
         app.on_mouse_move(l.gutter.x + 40.0, y);
-        app.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
+        app.overlays.tooltip.since = Some(std::time::Instant::now() - crate::theme::TOOLTIP_DELAY);
         shoot(&mut app, &format!("blame-{theme}"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// 截图：当前行追溯（`inline-blame-light`、`inline-blame-dark`），光标在第 4 行。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_inline_blame() {
+    for dark in [false, true] {
+        let theme = if dark { "dark" } else { "light" };
+        let name = format!("git-inline-blame-shot-{theme}");
+        let Some((mut app, root)) = git_app_in(&name, false, dark) else {
+            return;
+        };
+        blame_repo(&root);
+        app.git_refresh();
+        app.open_path(&root.join("src/server.rs"));
+        paint(&mut app);
+        let at = app.editor.active().unwrap().text().line_start(3) + 8;
+        app.select(at, at);
+        shoot(&mut app, &format!("inline-blame-{theme}"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

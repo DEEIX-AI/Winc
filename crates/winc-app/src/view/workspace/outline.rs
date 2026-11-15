@@ -54,7 +54,7 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
         (header.w - 16.0).max(0.0),
         (header.h - 2.0 * OUTLINE_GAP).max(0.0),
     );
-    let fold = (app.outline.open && !app.outline.items.is_empty()).then(|| {
+    let fold = (app.panels.outline.open && !app.panels.outline.items.is_empty()).then(|| {
         let y = band.y + (band.h - BUTTON_SMALL) / 2.0;
         Rect::new(band.right() - BUTTON_SMALL, y, BUTTON_SMALL, BUTTON_SMALL)
     });
@@ -62,17 +62,17 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
         draw_fold_all(app, frame, button, clip);
         hits.push((button, OutlineTarget::FoldAll));
     }
-    let hovered = app.hover == Hover::Outline(OutlineTarget::Header);
+    let hovered = app.pointer.hover == Hover::Outline(OutlineTarget::Header);
     if hovered {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
         frame.rect_clipped(shade, p.hover, RADIUS_ROW, clip);
     }
     let cy = band.y + band.h / 2.0;
     // 箭头随展开的进度从朝右转到朝下。
-    let open = f32::from(u8::from(app.outline.open));
-    let share = app.outline.motion.map_or(open, |(_, clock)| {
+    let open = f32::from(u8::from(app.panels.outline.open));
+    let share = app.panels.outline.motion.map_or(open, |(_, clock)| {
         let progress = clock.progress();
-        if app.outline.open {
+        if app.panels.outline.open {
             progress
         } else {
             1.0 - progress
@@ -95,12 +95,15 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
 
     let list = app.outline_list();
     if list.h > 0.0 {
-        if let Some(empty) = app.outline.empty {
+        if let Some(empty) = app.panels.outline.empty {
             let title = match empty {
                 OutlineEmpty::NoFile => t!("workspace-outline-no-file"),
                 OutlineEmpty::NotText => t!("workspace-outline-unsupported"),
                 OutlineEmpty::TooLarge => t!("workspace-outline-too-large"),
                 OutlineEmpty::NoSymbols => t!("workspace-outline-no-symbols"),
+                OutlineEmpty::Reading => t!("workspace-outline-reading"),
+                OutlineEmpty::NoBookmarks => t!("workspace-outline-no-bookmarks"),
+                OutlineEmpty::NoContents => t!("workspace-outline-no-contents"),
             };
             // 说明在列表里上下、左右居中：大纲高度可以拖动，居中参照列表本身。
             draw_empty_state(app, frame, (list, list), title, None);
@@ -114,7 +117,7 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
 /// 绘制标题行右端的「全部折叠」（有展开着的符号时）或「全部展开」按钮。
 fn draw_fold_all(app: &App, frame: &mut Frame<'_>, button: Rect, clip: Rect) {
     let p = app.palette;
-    let hovered = app.hover == Hover::Outline(OutlineTarget::FoldAll);
+    let hovered = app.pointer.hover == Hover::Outline(OutlineTarget::FoldAll);
     draw_button(frame, p, button, clip, hovered, false);
     let color = if hovered { p.text } else { p.text_muted };
     if app.outline_any_expanded() {
@@ -138,11 +141,16 @@ fn draw_rows(
     let layout = app.outline_layout();
     let rows = &layout.rows;
     let content = (rows.len() + 1) as f32 * TREE_ROW - layout.hidden;
-    let scroll = app.outline.scroll.clamp(0.0, (content - list.h).max(0.0));
-    app.outline.scroll = scroll;
+    let scroll = app
+        .panels
+        .outline
+        .scroll
+        .clamp(0.0, (content - list.h).max(0.0));
+    app.panels.outline.scroll = scroll;
     let highlight = app.outline_highlight(&app.outline_rows());
     let focused = app.focus == Focus::Outline;
-    let items = &app.outline.items;
+    let items = &app.panels.outline.items;
+    let pages = matches!(app.panels.outline.kind, crate::app::OutlineKind::Pages(_));
     let first = (scroll / TREE_ROW).floor().max(0.0) as usize;
     let shown =
         (list.h / TREE_ROW).ceil() as usize + 1 + (layout.hidden / TREE_ROW).ceil() as usize;
@@ -153,7 +161,7 @@ fn draw_rows(
         }
         let symbol = &items[i];
         let hovered = matches!(
-            app.hover,
+            app.pointer.hover,
             Hover::Outline(OutlineTarget::Row(h) | OutlineTarget::Arrow(h)) if h == i
         );
         let pill = Rect::new(
@@ -182,7 +190,7 @@ fn draw_rows(
                 _ if app.outline_collapsed(i) => 0.0,
                 _ => 1.0,
             };
-            let arrow_hovered = app.hover == Hover::Outline(OutlineTarget::Arrow(i));
+            let arrow_hovered = app.pointer.hover == Hover::Outline(OutlineTarget::Arrow(i));
             let color = if arrow_hovered { p.text } else { p.text_dim };
             icons::chevron_turned(frame, (x + 4.0, cy), 6.0, open * FRAC_PI_2, color, clip);
             let arrow = Rect::new(x - 4.0, band.y, 16.0, band.h).intersect(band);
@@ -192,7 +200,16 @@ fn draw_rows(
         icons::symbol(frame, (x + 14.0 + 1.5, cy - 7.5), glyph, color, clip);
 
         let label_x = row.x + LABEL + symbol.depth as f32 * TREE_INDENT;
-        let room = (row.right() - 12.0 - label_x).max(0.0);
+        let mut right = row.right() - 12.0;
+        // PDF 的书签在行尾用小一号的次要色写出页码（从 1 起），名字让出这一段。
+        if pages && symbol.line != usize::MAX {
+            let number = (symbol.line + 1).to_string();
+            let size = app.fonts.ui_small;
+            let x = right - frame.measure(FontKind::Ui, size, &number);
+            label(frame, app, size, (x, row), &number, p.text_muted, clip);
+            right = x - 8.0;
+        }
+        let room = (right - label_x).max(0.0);
         // Markdown 标题照原文写出 `#`，一眼看出级别。
         let marks = "#".repeat(usize::from(symbol.heading));
         let label = if marks.is_empty() {
@@ -204,7 +221,7 @@ fn draw_rows(
         ui_text(frame, app, label_x, row, &name, p.text, clip);
         hits.push((band, OutlineTarget::Row(i)));
     }
-    let scroll = app.outline.scroll;
+    let scroll = app.panels.outline.scroll;
     draw_scrollbar(app, frame, ScrollArea::Outline, 0, list, scroll, content);
 }
 

@@ -34,7 +34,7 @@ fn closing_unsaved_tabs_asks_save_discard_or_cancel() {
         Some(main.as_path())
     );
     assert_eq!(app.editor.active().unwrap().selection.head, 5);
-    assert!(app.closed.is_empty());
+    assert!(app.history.closed.is_empty());
 
     // 保存：先保存，再关闭。
     app.run(Command::Insert("// y\n".into()));
@@ -112,8 +112,8 @@ fn tree_context_menu_targets_the_clicked_row() {
     );
 
     app.run_menu_command(MenuCommand::CopyRelativePath);
-    assert_eq!(app.copied.as_deref(), Some("Cargo.toml"));
-    assert!(app.context_menu.is_none());
+    assert_eq!(app.clipboard.copied.as_deref(), Some("Cargo.toml"));
+    assert!(app.overlays.context_menu.is_none());
 
     // 在空白处右键：目标是根目录，不能重命名，也不能删除。
     let below = app.layout.tree.bottom() - 10.0;
@@ -123,7 +123,10 @@ fn tree_context_menu_targets_the_clicked_row() {
     let commands = menu_commands(&app);
     assert!(!commands.iter().any(|(c, _)| *c == MenuCommand::Delete));
     app.run_menu_command(MenuCommand::CopyPath);
-    assert_eq!(app.copied.as_deref(), Some(root.to_str().unwrap()));
+    assert_eq!(
+        app.clipboard.copied.as_deref(),
+        Some(root.to_str().unwrap())
+    );
     // 菜单已经使用过，再次执行菜单命令不产生任何效果。
     app.run_menu_command(MenuCommand::Delete);
     assert!(root.is_dir());
@@ -133,7 +136,7 @@ fn tree_context_menu_targets_the_clicked_row() {
     let at = tree_row_center(&app, src);
     right_click(&mut app, at);
     app.run_menu_command(MenuCommand::NewFile);
-    let entry = app.name_input.as_ref().unwrap();
+    let entry = app.panels.name_input.as_ref().unwrap();
     assert_eq!(entry.dir, root.join("src"));
     app.close_name_input();
 
@@ -142,9 +145,9 @@ fn tree_context_menu_targets_the_clicked_row() {
     let at = tree_row_center(&app, src);
     right_click(&mut app, at);
     app.run_menu_command(MenuCommand::FindInFolder);
-    assert_eq!(app.sidebar.view, SidebarView::Search);
-    assert_eq!(app.global.include.text(), "./src");
-    assert!(app.global.details_open);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Search);
+    assert_eq!(app.panels.global.include.text(), "./src");
+    assert!(app.panels.global.details_open);
     assert_eq!(app.focus, Focus::GlobalQuery);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -167,7 +170,7 @@ fn rename_in_the_tree_moves_open_documents() {
     let at = tree_row_center(&app, main);
     right_click(&mut app, at);
     app.run_menu_command(MenuCommand::Rename);
-    let entry = app.name_input.as_ref().unwrap();
+    let entry = app.panels.name_input.as_ref().unwrap();
     assert_eq!(entry.index, main);
     assert_eq!(entry.field.selected_text(), "main");
     assert_eq!(app.focus, Focus::Prompt);
@@ -190,7 +193,7 @@ fn rename_in_the_tree_moves_open_documents() {
     app.edit_field(|f| f.insert("config"));
     app.submit_prompt();
     assert_eq!(
-        app.name_input.as_ref().unwrap().error.as_deref(),
+        app.panels.name_input.as_ref().unwrap().error.as_deref(),
         Some("已存在同名项")
     );
 
@@ -200,7 +203,7 @@ fn rename_in_the_tree_moves_open_documents() {
         f.insert("app.rs")
     });
     app.submit_prompt();
-    assert!(app.name_input.is_none());
+    assert!(app.panels.name_input.is_none());
     assert!(root.join("src/app.rs").is_file() && !root.join("src/main.rs").exists());
     let doc = app.editor.active().unwrap();
     assert_eq!(doc.path.as_deref(), Some(root.join("src/app.rs").as_path()));
@@ -304,7 +307,7 @@ fn tab_context_menu_closes_others_right_and_saved() {
     assert!(commands.contains(&(MenuCommand::CopyPath, false)));
     assert!(commands.contains(&(MenuCommand::CloseRight, false)));
     app.run_menu_command(MenuCommand::CopyPath);
-    assert!(app.copied.is_none());
+    assert!(app.clipboard.copied.is_none());
 
     // 在 `config.rs` 上「关闭右侧」：右侧的两个标签关闭。
     let at = tab(&app, 1);
@@ -336,7 +339,7 @@ fn tab_context_menu_closes_others_right_and_saved() {
     let at = tab(&app, 0);
     right_click(&mut app, at);
     app.run_menu_command(MenuCommand::RevealInTree);
-    assert_eq!(app.sidebar.view, SidebarView::Files);
+    assert_eq!(app.panels.sidebar.view, SidebarView::Files);
     let ws = app.editor.workspace.as_ref().unwrap();
     assert_eq!(ws.selected_entry().unwrap().name, "main.rs");
 
@@ -358,16 +361,16 @@ fn bookmark_commands_are_available_in_the_editor_menu() {
         popup: None,
     };
 
-    app.context_menu = Some(menu(false));
+    app.overlays.context_menu = Some(menu(false));
     app.run_menu_command(crate::app::MenuCommand::AddBookmark);
     assert_eq!(app.editor.active().unwrap().bookmark_lines(), [0]);
 
-    app.context_menu = Some(menu(true));
+    app.overlays.context_menu = Some(menu(true));
     app.run_menu_command(crate::app::MenuCommand::ListBookmarks);
-    assert!(app.picker.open && app.picker.places.is_some());
+    assert!(app.overlays.picker.open && app.overlays.picker.places.is_some());
     app.close_picker();
 
-    app.context_menu = Some(menu(true));
+    app.overlays.context_menu = Some(menu(true));
     app.run_menu_command(crate::app::MenuCommand::RemoveBookmark);
     assert!(app.editor.active().unwrap().bookmark_lines().is_empty());
 
@@ -385,7 +388,7 @@ fn cmd_i_copies_a_reference_to_the_lines() {
     let copy = |app: &mut App, anchor, head| {
         app.editor.active_mut().unwrap().selection = Selection { anchor, head };
         assert!(press(app, &["cmd"], Char('i')));
-        app.copied.clone().unwrap()
+        app.clipboard.copied.clone().unwrap()
     };
     // `short.rs` 的第 0 行是 `fn main() {`，第 1 行从字符偏移 12 起，第 2 行从字符偏移 35 起。
     assert_eq!(copy(&mut app, 3, 3), "short.rs:1");
@@ -398,7 +401,7 @@ fn cmd_i_copies_a_reference_to_the_lines() {
     assert!(press(&mut app, &["cmd"], Char('l')));
     let file = app.editor.active().unwrap().path.clone().unwrap();
     let expected = format!("{}:1-3", file.display());
-    assert_eq!(app.copied.as_deref(), Some(expected.as_str()));
+    assert_eq!(app.clipboard.copied.as_deref(), Some(expected.as_str()));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -453,8 +456,8 @@ fn menus_without_a_system_menu_are_drawn_in_the_window() {
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
-    assert!(app.context_menu.is_none());
-    assert_eq!(app.menu_button, None);
+    assert!(app.overlays.context_menu.is_none());
+    assert_eq!(app.overlays.menu_button, None);
 
     // 键盘：↓ 停在第一项，→ 展开子菜单并停在第一项，← 收起，Esc 关掉。
     app.open_status_menu(StatusItem::Encoding);
@@ -471,7 +474,7 @@ fn menus_without_a_system_menu_are_drawn_in_the_window() {
     key(&mut app, NamedKey::ArrowLeft);
     assert_eq!(app.popup().unwrap().levels.len(), 1);
     key(&mut app, NamedKey::Escape);
-    assert!(app.context_menu.is_none());
+    assert!(app.overlays.context_menu.is_none());
 
     // 左键点在菜单外面：只关掉菜单，这次点击不传给下层，光标不动。
     app.open_status_menu(StatusItem::Encoding);
@@ -481,8 +484,162 @@ fn menus_without_a_system_menu_are_drawn_in_the_window() {
     app.on_mouse_move(text.x + 200.0, text.y + 60.0);
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_up(MouseButton::Left);
-    assert!(app.context_menu.is_none());
+    assert!(app.overlays.context_menu.is_none());
     assert_eq!(app.editor.active().unwrap().selection, caret);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 窗口内绘制的语言菜单可以键入文字筛选：第一行写出键入的文字，名称以它开头的排在前面，停在
+/// 第一项，↩ 选中；`⌫` 删去最后一个字，没有匹配时写一行说明，`Esc` 先清空筛选、再关掉菜单。
+/// 按住 ⌘/Ctrl 的按键不筛选；有子菜单的菜单（编码）不筛选。
+#[test]
+fn typing_filters_the_language_menu() {
+    use crate::app::PopupRow;
+    use crate::app::status::status_bar::StatusItem;
+    use winit::keyboard::{Key, NamedKey};
+    let dir = sample_folder("popup-filter");
+    let mut app = app_with(&dir.join("a.txt"), false);
+    paint(&mut app);
+    let typed = |app: &mut App, text: &str| {
+        for c in text.chars() {
+            let key = match c {
+                ' ' => Key::Named(NamedKey::Space),
+                c => Key::Character(c.to_string().into()),
+            };
+            assert!(app.popup_logical_key(&key));
+        }
+    };
+    let named = |app: &mut App, key: NamedKey| assert!(app.popup_logical_key(&Key::Named(key)));
+    let titles = |app: &App| -> Vec<String> {
+        (app.popup().unwrap().levels[0].rows.iter())
+            .filter_map(|r| match r {
+                PopupRow::Item { label, .. } => Some(label.title.clone()),
+                PopupRow::Query(q) => Some(format!("[{q}]")),
+                _ => None,
+            })
+            .collect()
+    };
+
+    app.open_status_menu(StatusItem::Language);
+    paint(&mut app);
+    let all = app.popup().unwrap().levels[0].rows.len();
+    typed(&mut app, "Ru");
+    let found = titles(&app);
+    assert_eq!(found[0], "[Ru]");
+    assert_eq!(found[1], "Ruby");
+    assert!(found.contains(&"Rust".to_owned()));
+    // 名称以「ru」开头的都排在只是含有「ru」的之前。
+    let prefix: Vec<bool> = (found[1..].iter())
+        .map(|t| t.to_lowercase().starts_with("ru"))
+        .collect();
+    assert!(prefix.windows(2).all(|w| w[0] || !w[1]), "{found:?}");
+    assert_eq!(app.popup().unwrap().levels[0].hover, Some(1));
+    typed(&mut app, "s");
+    assert_eq!(&titles(&app)[1..], ["Rust"]);
+    named(&mut app, NamedKey::Enter);
+    assert!(app.overlays.context_menu.is_none());
+    assert_eq!(
+        app.editor.active().unwrap().highlighter.language().name,
+        "Rust"
+    );
+
+    // 没有匹配：一行说明，不能选中；⌫ 删字后恢复匹配。
+    app.open_status_menu(StatusItem::Language);
+    paint(&mut app);
+    typed(&mut app, "zzq");
+    assert_eq!(titles(&app), ["[zzq]", "无匹配项"]);
+    assert_eq!(app.popup().unwrap().levels[0].hover, None);
+    named(&mut app, NamedKey::Backspace);
+    assert_eq!(app.popup().unwrap().query, "zz");
+    // 按住 ⌘/Ctrl 的按键是快捷键，不写进筛选文字。
+    app.pointer.modifiers = if cfg!(target_os = "macos") {
+        winit::keyboard::ModifiersState::SUPER
+    } else {
+        winit::keyboard::ModifiersState::CONTROL
+    };
+    typed(&mut app, "c");
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
+    assert_eq!(app.popup().unwrap().query, "zz");
+    // Esc：先清空筛选，列出全部；再按一次关掉菜单。
+    named(&mut app, NamedKey::Escape);
+    assert_eq!(app.popup().unwrap().levels[0].rows.len(), all);
+    named(&mut app, NamedKey::Escape);
+    assert!(app.overlays.context_menu.is_none());
+
+    // 筛选时空格是文字：「Visual Basic」这类名字可以接着键入。
+    app.open_status_menu(StatusItem::Language);
+    paint(&mut app);
+    typed(&mut app, "a b");
+    assert_eq!(app.popup().unwrap().query, "a b");
+    named(&mut app, NamedKey::Escape);
+    named(&mut app, NamedKey::Escape);
+
+    // 编码菜单有子菜单：键入的文字不筛选。
+    app.open_status_menu(StatusItem::Encoding);
+    paint(&mut app);
+    typed(&mut app, "u");
+    assert!(app.popup().unwrap().query.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：键入「ru」筛选语言菜单（`popup-filter-light`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_popup_filter() {
+    use crate::app::status::status_bar::StatusItem;
+    use winit::keyboard::Key;
+    let dir = sample_folder("popup-filter-shot");
+    let mut app = app_with(&dir.join("a.txt"), false);
+    paint(&mut app);
+    app.open_status_menu(StatusItem::Language);
+    paint(&mut app);
+    for c in ["r", "u"] {
+        app.popup_logical_key(&Key::Character(c.into()));
+    }
+    shoot(&mut app, "popup-filter-light");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 命令「更改文件的语言」在面板中列出语言，键入文字筛选：查询恰好是扩展名的语言排在最前，名字
+/// 中分散出现的也能找到；没有匹配时列表为空。
+#[test]
+fn the_language_picker_filters_by_name_and_extension() {
+    use crate::app::LanguageRow;
+    let dir = sample_folder("language-picker");
+    let mut app = app_with(&dir.join("a.txt"), false);
+    paint(&mut app);
+    app.run_action(crate::keymap::Action::ChangeLanguageMode);
+    let first = |app: &mut App, query: &str| {
+        app.overlays.picker.input.set_text(query);
+        app.picker_refresh();
+        (app.overlays.picker.hits.first())
+            .and_then(|&h| LanguageRow::of(h))
+            .map(LanguageRow::title)
+    };
+    assert_eq!(first(&mut app, "ts"), Some("TypeScript"));
+    assert_eq!(first(&mut app, "md"), Some("Markdown"));
+    assert_eq!(first(&mut app, "rust"), Some("Rust"));
+    assert!(first(&mut app, "rs").is_some());
+    assert_eq!(first(&mut app, "zzqq"), None);
+    // 命中的字标出：「rust」标出 Rust 的四个字。
+    first(&mut app, "rust");
+    assert_eq!(app.language_matched(0), [0, 1, 2, 3]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：面板中的语言列表，键入「ru」筛选（`language-picker-light`）。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_language_picker() {
+    let dir = sample_folder("language-picker-shot");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    paint(&mut app);
+    app.run_action(crate::keymap::Action::ChangeLanguageMode);
+    paint(&mut app);
+    shoot(&mut app, "language-picker-open");
+    app.overlays.picker.input.set_text("ru");
+    app.picker_refresh();
+    shoot(&mut app, "language-picker-light");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -536,7 +693,7 @@ fn alerts_without_a_system_dialog_are_drawn_in_the_window() {
 
     // 没有系统提示框：画在窗口里；第一个按钮在最右边，其余依次向左。
     ask(&mut app);
-    let parts = app.alert.as_ref().unwrap().parts.clone();
+    let parts = app.overlays.alert.as_ref().unwrap().parts.clone();
     assert_eq!(parts.buttons.len(), 3);
     assert!(parts.buttons[0].x > parts.buttons[1].x && parts.buttons[1].x > parts.buttons[2].x);
     // 已经有提示框时不再弹第二个。
@@ -552,25 +709,28 @@ fn alerts_without_a_system_dialog_are_drawn_in_the_window() {
     let center = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
     let (x, y) = center(parts.checkbox.unwrap());
     app.on_mouse_move(x, y);
-    assert_eq!(app.alert.as_ref().unwrap().hover, Some(AlertPart::Checkbox));
+    assert_eq!(
+        app.overlays.alert.as_ref().unwrap().hover,
+        Some(AlertPart::Checkbox)
+    );
     app.on_mouse_down(MouseButton::Left);
-    assert!(app.alert.as_ref().unwrap().checked);
+    assert!(app.overlays.alert.as_ref().unwrap().checked);
     let (x, y) = center(parts.buttons[0]);
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
-    assert!(app.alert.is_none());
+    assert!(app.overlays.alert.is_none());
     assert!(app.settings.open);
     app.close_settings();
 
     // ↩ 选默认按钮，Esc 选「取消」，⌘D（其他平台 Ctrl+D）选绑了 D 的按钮。
     ask(&mut app);
     assert!(app.alert_key(&Key::Named(NamedKey::Escape), false));
-    assert!(app.alert.is_none() && !app.settings.open);
+    assert!(app.overlays.alert.is_none() && !app.settings.open);
     ask(&mut app);
     assert!(app.alert_key(&Key::Character("d".into()), false));
-    assert!(app.alert.is_some(), "没按着 ⌘ 时 D 不算");
+    assert!(app.overlays.alert.is_some(), "没按着 ⌘ 时 D 不算");
     assert!(app.alert_key(&Key::Character("d".into()), true));
-    assert!(app.alert.is_none() && !app.settings.open);
+    assert!(app.overlays.alert.is_none() && !app.settings.open);
     ask(&mut app);
     assert!(app.alert_key(&Key::Named(NamedKey::Enter), false));
     assert!(app.settings.open);
@@ -603,7 +763,7 @@ fn shoot_alert() {
             |_, _| None,
         );
         paint(&mut app);
-        let button = app.alert.as_ref().unwrap().parts.buttons[1];
+        let button = app.overlays.alert.as_ref().unwrap().parts.buttons[1];
         app.on_mouse_move(button.x + 10.0, button.y + 10.0);
         shoot(&mut app, &format!("alert-{theme}"));
         let _ = std::fs::remove_dir_all(&dir);

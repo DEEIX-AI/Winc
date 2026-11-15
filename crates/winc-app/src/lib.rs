@@ -42,6 +42,8 @@ mod web;
 mod winc;
 #[cfg(windows)]
 mod windows;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod x11;
 
 /// 大块内存释放后立即归还给系统。
 #[cfg(target_os = "macos")]
@@ -237,8 +239,15 @@ pub fn run() {
     let mut winc = Winc::new(Some(event_loop.create_proxy()), template);
     let (key, proxy) = winc.reserve();
     let mut app = App::new(editor, proxy, bench, config);
-    app.config_path = config_path;
-    app.commit.set_flat(!state.commit_tree);
+    app.watch_git_output();
+    winc_editor::git::follow_system_proxy(app.config.git_system_proxy != Some(false));
+    app.store.config_path = config_path;
+    app.git.commit.set_flat(!state.commit_tree);
+    let sort = crate::app::CommitSort::from_key(&state.commit_sort);
+    app.git.commit.set_sort(sort);
+    app.git
+        .commit
+        .set_staging(app.config.git_staging_area == Some(true));
     app.editor.diff_unified = app.config.diff_inline == Some(true);
     app.state = state;
     app.restore_panel_width();
@@ -247,11 +256,11 @@ pub fn run() {
     if args.one_off() {
         app.start_one_off(&args);
     } else {
-        app.state_path = state_path;
+        app.store.state_path = state_path;
         app.backup.root = backup_root;
         app.adopt_restored(restored);
         // 测量时没有状态文件：不记录版本，开始页也不显示「首次设置」。
-        if app.state_path.is_some() {
+        if app.store.state_path.is_some() {
             app.note_version();
         }
         // 从命令行打开的目录同样记入「最近打开」。

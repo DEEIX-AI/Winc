@@ -2,17 +2,60 @@
 
 use super::*;
 
+/// 详情里改动的文件排成的一行：目录的标题，或一个文件（文件列表里的下标）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LogFileRow {
+    /// 按目录分组时一组的标题：相对仓库根目录的目录。仓库根目录下的文件排在最前，没有标题。
+    Dir(String),
+    /// 一个文件。
+    File(usize),
+}
+
+/// 改动的文件 `files` 在详情里怎么排：平铺（`flat`）时按原来的顺序一个文件一行；否则按所在
+/// 目录分组，每组一行目录标题，组内按原来的顺序。`root` 是仓库的根目录。`pinned` 时第一个
+/// 文件（文件历史查看的文件）所在的组排在最前。
+pub(crate) fn log_file_rows(
+    root: Option<&Path>,
+    files: &[CommitFile],
+    (flat, pinned): (bool, bool),
+) -> Vec<LogFileRow> {
+    if flat {
+        return (0..files.len()).map(LogFileRow::File).collect();
+    }
+    let dir = |file: &CommitFile| {
+        let parent = file.path.parent();
+        let relative = parent.and_then(|d| root.and_then(|r| d.strip_prefix(r).ok()));
+        relative.map_or_else(String::new, |d| d.to_string_lossy().into_owned())
+    };
+    let mut order: Vec<(String, usize)> = files.iter().map(dir).zip(0..).collect();
+    let first = order.first().filter(|_| pinned).map(|(d, _)| d.clone());
+    order.sort_by(|a, b| {
+        let later = |d: &String| first.as_ref() != Some(d);
+        (later(&a.0), &a.0).cmp(&(later(&b.0), &b.0))
+    });
+    let mut rows = Vec::new();
+    let mut last: Option<&str> = None;
+    for (dir, i) in &order {
+        if last != Some(dir.as_str()) && !dir.is_empty() {
+            rows.push(LogFileRow::Dir(dir.clone()));
+        }
+        last = Some(dir.as_str());
+        rows.push(LogFileRow::File(*i));
+    }
+    rows
+}
+
 impl App {
     /// 绘制前记下详情一栏这一帧要画哪个提交（`oid`）：换成了另一个提交（不是从没有到有）时，
     /// 内容从四成不透明淡入（`DETAILS_FADE`）；动态效果关闭、没有窗口时不淡入。
     pub(crate) fn note_log_details_shown(&mut self, oid: Option<String>) {
-        if oid == self.log.shown {
+        if oid == self.git.log.shown {
             return;
         }
-        if self.log.shown.is_some() && oid.is_some() {
-            self.log.fade = self.clock(crate::app::animation::DETAILS_FADE);
+        if self.git.log.shown.is_some() && oid.is_some() {
+            self.git.log.fade = self.clock(crate::app::animation::DETAILS_FADE);
         }
-        self.log.shown = oid;
+        self.git.log.shown = oid;
     }
 
     /// 详情里 `(x, y)` 处的字的位置。
@@ -20,7 +63,7 @@ impl App {
     /// `near` 为 `true` 时（拖着选的时候）不在任何一行上也取
     /// 最近的一行，拖到头尾以外时停在头尾；否则只认正落在某一行上的位置。
     pub(crate) fn log_text_at(&self, x: f32, y: f32, near: bool) -> Option<TextPoint> {
-        let runs = &self.log.runs;
+        let runs = &self.git.log.runs;
         // 同一行上可能有几段（作者、邮箱）：取开头在鼠标左边的最后一段。
         let on = runs
             .iter()
@@ -71,7 +114,7 @@ impl App {
 
     /// 第 `run` 行选中了第几个字到第几个字（`len` 是这一行的字数）；这一行没选中时为 `None`。
     pub(crate) fn log_selected_chars(&self, run: usize, len: usize) -> Option<(usize, usize)> {
-        let (a, b) = self.log.text_sel?;
+        let (a, b) = self.git.log.text_sel?;
         let (from, to) = (a.min(b), a.max(b));
         if run < from.run || run > to.run {
             return None;
@@ -85,11 +128,11 @@ impl App {
     ///
     /// 一段话折成的几行直接连起来，不同的行之间换行；截短显示的邮箱在整行选中时给出完整内容。
     pub(crate) fn log_selected_text(&self) -> Option<String> {
-        let (a, b) = self.log.text_sel?;
+        let (a, b) = self.git.log.text_sel?;
         let (from, to) = (a.min(b), a.max(b));
         let mut out = String::new();
-        for run in from.run..=to.run.min(self.log.runs.len().saturating_sub(1)) {
-            let r = self.log.runs.get(run)?;
+        for run in from.run..=to.run.min(self.git.log.runs.len().saturating_sub(1)) {
+            let r = self.git.log.runs.get(run)?;
             let len = r.edges.len();
             let (start, end) = self.log_selected_chars(run, len).unwrap_or((0, 0));
             if run > from.run && !r.soft {
@@ -108,12 +151,12 @@ impl App {
     pub(in crate::app) fn press_log_text(&mut self, x: f32, y: f32, count: u8) -> bool {
         self.focus = Focus::Editor;
         let Some(at) = self.log_text_at(x, y, false) else {
-            self.log.text_sel = None;
+            self.git.log.text_sel = None;
             self.request_redraw();
             return false;
         };
-        self.log.text_sel = Some(if count >= 2 {
-            let len = self.log.runs[at.run].edges.len();
+        self.git.log.text_sel = Some(if count >= 2 {
+            let len = self.git.log.runs[at.run].edges.len();
             (
                 TextPoint { run: at.run, ch: 0 },
                 TextPoint {
@@ -130,8 +173,10 @@ impl App {
 
     /// 拖着选字时鼠标到了 `(x, y)`。
     pub(in crate::app) fn drag_log_text(&mut self, x: f32, y: f32) {
-        if let (Some((anchor, _)), Some(head)) = (self.log.text_sel, self.log_text_at(x, y, true)) {
-            self.log.text_sel = Some((anchor, head));
+        if let (Some((anchor, _)), Some(head)) =
+            (self.git.log.text_sel, self.log_text_at(x, y, true))
+        {
+            self.git.log.text_sel = Some((anchor, head));
             self.request_redraw();
         }
     }
@@ -204,7 +249,7 @@ impl App {
         };
         let path = self.log_file(i)?.path.clone();
         self.focus = Focus::Editor;
-        self.log.file = Some(i);
+        self.git.log.file = Some(i);
         Some((i, path))
     }
 
@@ -224,6 +269,7 @@ impl App {
                 }
             }
             MenuCommand::FileHistory => self.git_file_history(&path),
+            MenuCommand::LogCompareWithLocal => self.compare_log_file_with_local(path),
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }
@@ -237,22 +283,39 @@ impl App {
         self.request_redraw();
     }
 
-    /// 详情里列着几个改动的文件（比较两个版本时是两者之间的）；还没取回来时是 0。
-    pub(crate) fn log_files_len(&self) -> usize {
-        let Some(view) = self.editor.active().and_then(|d| d.log.as_deref()) else {
-            return 0;
-        };
+    /// 详情里列着的改动的文件（比较两个版本时是两者之间的）；还没取回来时为 `None`。
+    fn log_shown_files(&self) -> Option<&[CommitFile]> {
+        let view = self.editor.active().and_then(|d| d.log.as_deref())?;
         if let Some(compare) = &view.compare {
-            return compare.files.as_ref().map_or(0, Vec::len);
+            return compare.files.as_deref();
         }
-        let Some(oid) = view.selected_oid() else {
-            return 0;
-        };
-        view.details
-            .as_ref()
-            .filter(|d| d.oid == oid)
-            .and_then(|d| d.files.as_ref())
-            .map_or(0, Vec::len)
+        let oid = view.selected_oid()?;
+        let details = view.details.as_ref().filter(|d| d.oid == oid)?;
+        details.files.as_deref()
+    }
+
+    /// 详情里改动的文件排成的各行（见 [`log_file_rows`]），平铺还是按目录分组跟随提交视图。
+    pub(crate) fn log_file_layout(&self) -> Vec<LogFileRow> {
+        self.log_file_rows_of(self.log_shown_files().unwrap_or_default())
+    }
+
+    /// 详情里文件 `files` 排成的各行：平铺还是分组跟随提交视图，文件历史查看的文件所在的组
+    /// 排在最前（比较两个版本时没有）。
+    pub(crate) fn log_file_rows_of(&self, files: &[CommitFile]) -> Vec<LogFileRow> {
+        let view = self.editor.active().and_then(|d| d.log.as_deref());
+        let pinned = view.is_some_and(|v| v.query.path.is_some() && v.compare.is_none());
+        let flat = self.git.commit.flat();
+        log_file_rows(self.git.root.as_deref(), files, (flat, pinned))
+    }
+
+    /// 详情里各文件从上到下的顺序（文件列表里的下标）：键盘上下移动、打开第一个文件都按它。
+    pub(crate) fn log_file_order(&self) -> Vec<usize> {
+        let rows = self.log_file_layout().into_iter();
+        let files = rows.filter_map(|r| match r {
+            LogFileRow::File(i) => Some(i),
+            LogFileRow::Dir(_) => None,
+        });
+        files.collect()
     }
 
     /// 让详情里第 `i` 个文件露出来：按上一帧画出来的文件行推算它在哪，在详情一栏外面就滚。
@@ -260,8 +323,14 @@ impl App {
         let area = self.log_parts().details;
         // 最下面一行小字（比较的提示）占 30 逻辑像素。
         let bottom = area.bottom() - 30.0;
+        // 目录标题行和文件行一样高：按两个文件在各行里的位置之差推算。
+        let rows = self.log_file_layout();
+        let at = |i: usize| rows.iter().position(|r| *r == LogFileRow::File(i));
         let Some(top) = self.hits.log.iter().find_map(|(rect, t)| match t {
-            LogTarget::File(j) => Some(rect.y + (i as f32 - *j as f32) * LOG_FILE_ROW),
+            LogTarget::File(j) => {
+                let (to, from) = (at(i)?, at(*j)?);
+                Some(rect.y + (to as f32 - from as f32) * LOG_FILE_ROW)
+            }
             _ => None,
         }) else {
             return;
@@ -285,10 +354,10 @@ impl App {
         else {
             return;
         };
-        if self.log_files_len() > 0 {
-            self.open_log_file(0);
+        if let Some(&first) = self.log_file_order().first() {
+            self.open_log_file(first);
         } else {
-            self.log.open_first = Some(oid);
+            self.git.log.open_first = Some(oid);
         }
     }
 }

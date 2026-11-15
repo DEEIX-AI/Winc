@@ -52,6 +52,7 @@ fn sample() -> State {
                 )],
                 folds: vec![(PathBuf::from("/a/项目/README.md"), vec![(0, 12), (3, 7)])],
                 pdf_places: vec![(PathBuf::from("/a/项目/手册.pdf"), (12, 0.375))],
+                book_places: vec![(PathBuf::from("/a/项目/小说.epub"), (340, 0.5))],
                 terminal: Some(TerminalSession {
                     tabs: vec![PathBuf::from("/a/项目"), PathBuf::from("/a/项目/src")],
                     names: vec![String::new(), "服务".into()],
@@ -60,6 +61,7 @@ fn sample() -> State {
                     open: true,
                     height: 320.0,
                     width: 0.0,
+                    maximized: true,
                 }),
                 run: Some("后端".into()),
                 sidebar_hidden: true,
@@ -72,6 +74,7 @@ fn sample() -> State {
                 outline: Vec::new(),
                 folds: Vec::new(),
                 pdf_places: Vec::new(),
+                book_places: Vec::new(),
                 terminal: None,
                 run: None,
                 sidebar_hidden: false,
@@ -80,7 +83,16 @@ fn sample() -> State {
         last: Some(PathBuf::from("/a/项目")),
         others: vec![PathBuf::from("/b")],
         commit_tree: true,
+        commit_sort: "status".into(),
+        commit_all_repositories: Some(true),
+        log_branches: Some(false),
+        log_columns: Some(vec!["date".into(), "hash".into()]),
+        commit_messages: vec!["修复登录\n\n说明".into(), "first".into()],
+        commit_check_todo: true,
+        commit_reformat: true,
+        sign_off_repos: vec![PathBuf::from("/a/项目")],
         pdf_thumbnails_hidden: true,
+        markdown_toc_pinned: true,
         vim_marks: vec![('A', PathBuf::from("/a/项目/x.rs"), 12, 3)],
         vim_commands: vec!["%s/a/b/g".into(), "w".into()],
         vim_searches: vec!["\\<词\\>".into()],
@@ -266,6 +278,7 @@ fn sessions_are_kept_per_folder() {
         outline: Vec::new(),
         folds: Vec::new(),
         pdf_places: Vec::new(),
+        book_places: Vec::new(),
         terminal: None,
         run: None,
         sidebar_hidden: false,
@@ -346,4 +359,21 @@ fn window_frames_need_a_usable_size_and_may_have_no_position() {
     );
     assert_eq!(read(r#"{"window":{"width":800,"height":600}}"#), None);
     assert_eq!(read(r#"{"window":"nothing"}"#), None);
+}
+
+/// 提交过的信息：相同的移到最前，最多留 `MAX_COMMIT_MESSAGES` 条。
+#[test]
+fn commit_messages_keep_the_newest_without_repeats() {
+    let mut state = State::default();
+    for i in 0..MAX_COMMIT_MESSAGES + 5 {
+        state.remember_commit_message(&format!("m{i}"));
+    }
+    state.remember_commit_message("m10");
+    state.remember_commit_message("");
+    assert_eq!(state.commit_messages.len(), MAX_COMMIT_MESSAGES);
+    assert_eq!(state.commit_messages[0], "m10");
+    assert_eq!(
+        state.commit_messages.iter().filter(|m| *m == "m10").count(),
+        1
+    );
 }

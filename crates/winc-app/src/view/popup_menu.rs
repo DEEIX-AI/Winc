@@ -30,7 +30,12 @@ pub(super) fn band_ink(p: &Palette) -> (Color, Color) {
 
 /// 绘制窗口内的菜单（打开着时），并把各级菜单的位置记回菜单。
 pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
-    let Some(mut popup) = app.context_menu.as_mut().and_then(|menu| menu.popup.take()) else {
+    let Some(mut popup) = app
+        .overlays
+        .context_menu
+        .as_mut()
+        .and_then(|menu| menu.popup.take())
+    else {
         return;
     };
     let window = app.layout.window;
@@ -92,7 +97,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
             .collect();
         draw_level(app, frame, level);
     }
-    if let Some(menu) = app.context_menu.as_mut() {
+    if let Some(menu) = app.overlays.context_menu.as_mut() {
         menu.popup = Some(popup);
     }
 }
@@ -128,6 +133,7 @@ fn measure(app: &App, frame: &mut Frame<'_>, rows: &[PopupRow]) -> (f32, f32) {
                 let arrow = if *dir { KEY_GAP } else { 0.0 };
                 frame.measure(FontKind::Ui, size, name) + arrow
             }
+            PopupRow::Query(query) => frame.measure(FontKind::Ui, size, query),
         };
         w = w.max(lead + text + RIGHT_PAD);
     }
@@ -221,6 +227,22 @@ fn draw_level(app: &App, frame: &mut Frame<'_>, level: &PopupLevel) {
                     MenuIcon::File(glyph, colors)
                 };
                 (name.as_str(), None, Some(icon), *checked, true, "", *dir)
+            }
+            // 键入的文字：搜索图标放在打勾的一列，文字与各行的名称对齐，下面一条分隔线。
+            PopupRow::Query(query) => {
+                let title_row = Rect::new(rect.x, rect.y, rect.w, ROW);
+                let cy = icon_center_y(app, title_row, app.fonts.ui);
+                icons::search(frame, (rect.x + 13.0, cy), 0.75, p.text_muted, clip);
+                let text_x = rect.x + CHECK_COLUMN + icons;
+                ui_text(frame, app, text_x, title_row, query, p.text, clip);
+                let line = Rect::new(
+                    rect.x + ROW_INSET + 6.0,
+                    rect.bottom() - 1.0,
+                    rect.w - 2.0 * ROW_INSET - 12.0,
+                    1.0,
+                );
+                frame.rect_clipped(line, p.separator, 0.0, clip);
+                continue;
             }
         };
         let hovered = level.hover == Some(i);

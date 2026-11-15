@@ -256,9 +256,16 @@ fn the_menu_selects_and_the_file_is_watched() {
     app.relayout();
     let menu = run_button(&mut app, RunButton::Menu).unwrap();
     click(&mut app, menu);
-    assert_eq!(app.menu_button, Some(crate::app::MenuButton::RunConfigs));
     assert_eq!(
-        app.context_menu.as_ref().expect("弹出了菜单").entries,
+        app.overlays.menu_button,
+        Some(crate::app::MenuButton::RunConfigs)
+    );
+    assert_eq!(
+        app.overlays
+            .context_menu
+            .as_ref()
+            .expect("弹出了菜单")
+            .entries,
         [
             MenuEntry::Item(MenuCommand::RunSelect(0), true),
             MenuEntry::Item(MenuCommand::RunSelect(1), true),
@@ -427,7 +434,7 @@ fn the_stop_button_appears_only_while_running() {
     app.new_terminal_tab_in(Vec::new());
     paint(&mut app);
     assert!(hit(&app, stop).is_none());
-    let position = hit(&app, HeaderHit::Position).unwrap();
+    let position = hit(&app, HeaderHit::Maximize).unwrap();
     let idle = hit(&app, start).unwrap();
     assert_eq!(position.x - idle.right(), crate::theme::TAB_GAP);
 

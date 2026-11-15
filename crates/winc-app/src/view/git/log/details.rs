@@ -23,7 +23,7 @@ const COMMAND: &str = if cfg!(target_os = "macos") {
 fn wrapped(app: &App, frame: &mut Frame<'_>, message: &str, width: f32) -> Rc<Wrapped> {
     let (ui, small) = (app.fonts.ui, app.fonts.ui_small);
     let key = (width.to_bits(), ui.to_bits(), small.to_bits());
-    let mut cache = app.log.wrapped.borrow_mut();
+    let mut cache = app.git.log.wrapped.borrow_mut();
     if let Some(w) = cache.as_ref()
         && w.key.0 == message
         && (w.key.1, w.key.2, w.key.3) == key
@@ -143,15 +143,20 @@ pub(super) fn draw_details(
     if !refs.is_empty() {
         y += 8.0;
         let mut bx = x;
-        for (text, fill, ink) in &refs {
-            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + 12.0;
+        for badge in &refs {
+            let size = app.fonts.ui_small;
+            let w = frame.measure(FontKind::Ui, size, &badge.text) + badge.pad();
             if bx > x && bx + w > x + width {
                 bx = x;
                 y += 24.0;
             }
-            let text = truncate_end(frame, text, app.fonts.ui_small, width - 12.0);
+            let text = truncate_end(frame, &badge.text, size, width - badge.pad()).into_owned();
             let row = Rect::new(x, y, width, 22.0);
-            bx = draw_badge(app, frame, (bx, row), &text, *fill, *ink, area) + 6.0;
+            let badge = Badge {
+                text,
+                ..badge.clone()
+            };
+            bx = draw_badge(app, frame, (bx, row), &badge, area) + 6.0;
         }
         y += 22.0;
     }
@@ -202,7 +207,7 @@ pub(super) fn draw_details(
         area,
     );
     let oid_x = end + 8.0;
-    let hovered = app.hover == Hover::Log(LogTarget::CopyOid);
+    let hovered = app.pointer.hover == Hover::Log(LogTarget::CopyOid);
     let oid_end = mono(
         app,
         frame,
@@ -220,7 +225,7 @@ pub(super) fn draw_details(
         let label = t!("git-log-details-parents", count = commit.parents.len());
         px = ui_text_small(frame, app, px, row, &label, p.text_dim, area) + 8.0;
         for (i, parent) in commit.parents.iter().enumerate() {
-            let hovered = app.hover == Hover::Log(LogTarget::Parent(i));
+            let hovered = app.pointer.hover == Hover::Log(LogTarget::Parent(i));
             let end = mono(app, frame, (px, row), short(parent), link(p, hovered), area);
             hits.push((
                 Rect::new(px - 2.0, y, end - px + 4.0, 22.0).intersect(area),
@@ -230,6 +235,7 @@ pub(super) fn draw_details(
         }
     }
     y += 22.0;
+    y = draw_branches(app, frame, details, (x, y, width), area);
 
     // 改动的文件。
     y += 12.0;
@@ -253,6 +259,67 @@ pub(super) fn draw_details(
         return y + 22.0;
     };
     draw_files(app, frame, files, (x, y, width), area, (hits, long_files))
+}
+
+/// 详情里「所在分支」一项最多写几行，其余的收成「+N」。
+const BRANCH_LINES: usize = 3;
+
+/// 在 (`x`, `y`) 画包含这个提交的分支：标签「所在分支」，后面依次写分支名，本地分支用正文色、
+/// 远程分支用淡色，放不下换行，最多 [`BRANCH_LINES`] 行。还在查时写「正在查找…」，占着同样的
+/// 一行，查到以后下面的文件列表不跳。返回下一行的位置。
+fn draw_branches(
+    app: &App,
+    frame: &mut Frame<'_>,
+    details: Option<&winc_editor::git::log::Details>,
+    (x, mut y, width): (f32, f32, f32),
+    area: Rect,
+) -> f32 {
+    let p = app.palette;
+    let size = app.fonts.ui_small;
+    let row = Rect::new(x, y, width, 22.0);
+    let label = t!("git-log-details-branches");
+    let start = ui_text_small(frame, app, x, row, label, p.text_dim, area) + 8.0;
+    // 没查出来：不画这一行。
+    let failed = details.is_some_and(|d| app.git.log.branches_failed.contains(&d.oid));
+    if failed {
+        return y;
+    }
+    let Some(branches) = details.and_then(|d| d.branches.as_ref()) else {
+        let text = t!("git-log-details-branches-loading");
+        ui_text_small(frame, app, start, row, text, p.text_dim, area);
+        return y + 22.0;
+    };
+    if branches.is_empty() {
+        let text = t!("git-log-details-branches-none");
+        ui_text_small(frame, app, start, row, text, p.text_muted, area);
+        return y + 22.0;
+    }
+    let local = |name: &str| (app.git.branches.iter()).any(|b| !b.remote && b.name == name);
+    let gap = frame.measure(FontKind::Ui, size, "  ");
+    let (mut bx, mut line) = (start, 1);
+    for (i, name) in branches.iter().enumerate() {
+        let w = frame.measure(FontKind::Ui, size, name);
+        if bx > start && bx + w > x + width {
+            // 最后一行放不下：剩下的收成「+N」。
+            if line == BRANCH_LINES {
+                let more = t!("git-log-details-branches-more", count = branches.len() - i);
+                let row = Rect::new(x, y, width, 22.0);
+                ui_text_small(frame, app, bx, row, &more, p.text_dim, area);
+                break;
+            }
+            (bx, line) = (start, line + 1);
+            y += 20.0;
+        }
+        let row = Rect::new(x, y, width, 22.0);
+        let ink = if local(name) {
+            p.text_muted
+        } else {
+            p.text_dim
+        };
+        let shown = truncate_end(frame, name, size, x + width - bx);
+        bx = ui_text_small(frame, app, bx, row, &shown, ink, area) + gap;
+    }
+    y + 22.0
 }
 
 /// 绘制比较两个版本时的详情：「比较」，旧的一边、新的一边（提交号或分支名，后面是说明），
@@ -282,19 +349,17 @@ fn draw_compare(
         let row = Rect::new(x, y, width, 22.0);
         let end = ui_text_small(frame, app, x, row, label, p.text_dim, area) + 10.0;
         let commit = view.commits.iter().find(|c| rev_matches(c, rev));
-        let is_oid = rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit());
+        let is_oid = matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit());
         let end = if is_oid {
             mono(app, frame, (end, row), short(rev), p.accent, area)
         } else {
-            draw_badge(
-                app,
-                frame,
-                (end, row),
-                rev,
-                p.accent.alpha(p.accent.a * 0.16),
-                p.accent,
-                area,
-            )
+            let badge = Badge {
+                text: rev.to_owned(),
+                fill: p.accent.alpha(p.accent.a * 0.16),
+                ink: p.accent,
+                mark: None,
+            };
+            draw_badge(app, frame, (end, row), &badge, area)
         };
         if let Some(commit) = commit {
             // 放不下的从末尾截短，不把半个字切在栏的右边缘。
@@ -306,7 +371,7 @@ fn draw_compare(
         y += 24.0;
     }
     let row = Rect::new(x, y, width, 20.0);
-    let items: [(String, &str); 3] = if app.log.file.is_some() {
+    let items: [(String, &str); 3] = if app.git.log.file.is_some() {
         [
             ("↑↓".into(), t!("git-log-hint-select-file")),
             (t!("common-key-enter").into(), t!("git-log-hint-open-diff")),
@@ -382,7 +447,7 @@ pub(super) fn draw_details_footer(
     }
     let row = Rect::new(area.x, area.bottom() - 30.0, area.w, 30.0);
     frame.rect(Rect::new(area.x, row.y, area.w, 1.0), p.separator);
-    let mut items: Vec<(String, &str)> = if app.log.file.is_some() {
+    let mut items: Vec<(String, &str)> = if app.git.log.file.is_some() {
         vec![
             ("↑↓".into(), t!("git-log-hint-select-file")),
             (t!("common-key-enter").into(), t!("git-log-hint-open-diff")),
@@ -402,7 +467,7 @@ pub(super) fn draw_details_footer(
         ]
     };
     // 顺着线、父提交跳过以后：显示如何返回。
-    if !app.log.back.is_empty()
+    if !app.git.log.back.is_empty()
         && let Some(key) = keymap::shortcut(Action::GoBack)
     {
         items.insert(0, (key, t!("git-log-hint-go-back")));

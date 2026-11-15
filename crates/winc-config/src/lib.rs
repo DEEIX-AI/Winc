@@ -13,16 +13,17 @@ mod state;
 mod version;
 
 pub use config::{
-    BackgroundFit, Backup, Config, OptionAsMeta, RenderWhitespace, Saved, ThemeChoice,
+    BackgroundFit, Backup, Config, OptionAsMeta, RenderWhitespace, Saved, TextWidth, ThemeChoice,
     VimClipboard, VimMapMode, VimMapping, config_path,
 };
-pub use font::{FontRequest, resolve_font};
+pub use font::{FontRequest, font_list, resolve_font, resolve_font_list};
 pub use json::Json;
 pub use run::{
     RunConfig, affects_detected_configs, create_run_configs, detected_run_configs,
     load_run_configs, run_configs_path,
 };
 pub use state::{
-    BADGE_COLORS, MAX_RECENT, Session, State, Tab, TerminalSession, WindowFrame, state_path,
+    BADGE_COLORS, MAX_COMMIT_MESSAGES, MAX_RECENT, Session, State, Tab, TerminalSession,
+    WindowFrame, state_path,
 };
 pub use version::compare_versions;

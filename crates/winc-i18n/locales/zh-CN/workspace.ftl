@@ -31,6 +31,9 @@ workspace-outline-off = 大纲已在设置中关闭
 workspace-outline-no-file = 打开文件后在此显示大纲
 workspace-outline-unsupported = 当前标签页无大纲
 workspace-outline-too-large = 文件过大，不显示大纲
+workspace-outline-reading = 正在读取目录…
+workspace-outline-no-bookmarks = 此 PDF 没有书签
+workspace-outline-no-contents = 此电子书没有目录
 workspace-outline-no-symbols = 文件中无可列出的符号
 workspace-sidebar-commit = 提交
 workspace-sidebar-no-folder = 未打开目录
@@ -220,6 +223,7 @@ workspace-tag-hint = 基于 { $commit } · { common-key-enter } 创建
 
 ## 快速打开
 
+workspace-picker-languages = { $count } 种语言
 workspace-picker-commands = { $count } 个命令
 workspace-picker-symbols = { $count } 个符号
 workspace-picker-files-matched = { $matched } / { $total } 个文件
@@ -233,11 +237,13 @@ workspace-picker-folder-empty = 此目录中无文件
 workspace-picker-no-matching-files = 未找到匹配的文件。被忽略的文件不在搜索范围内。
 workspace-picker-recently-opened = 最近打开
 workspace-picker-no-matching-commands = 无匹配的命令
+workspace-picker-no-matching-languages = 无匹配的语言
 workspace-picker-recently-used = 最近使用
 workspace-picker-symbols-too-large = 文件过大，无法列出符号
 workspace-picker-no-symbols = 此文件中未找到符号
 workspace-picker-no-matching-symbols = 无匹配的符号
 workspace-picker-folders-placeholder = 按目录名或路径查找…
+workspace-picker-languages-placeholder = 选择语言…
 workspace-picker-folders-new-window = { $platform ->
     [macos] ⌥↩
    *[other] Alt+Enter
