@@ -6,6 +6,8 @@ $Setup = $env:WINC_UPDATE_SETUP
 $Executable = $env:WINC_UPDATE_EXE
 $Installer = $env:WINC_UPDATE_KIND
 $Relaunch = $env:WINC_UPDATE_RELAUNCH
+# Kept for the catch block: the environment variables are removed before the installer runs.
+$Log = if ($Setup) { Join-Path (Split-Path -Parent $Setup) 'install-error.log' }
 try {
     # The installer and the relaunched application inherit this environment.
     Remove-Item -Path Env:WINC_UPDATE_*
@@ -30,6 +32,11 @@ try {
     if ($Relaunch -eq '1') { Start-Process -FilePath $Executable -WorkingDirectory $directory }
     exit 0
 } catch {
-    $_ | Out-String | Set-Content -Path (Join-Path (Split-Path -Parent $Setup) 'install-error.log')
+    # Writing the log must not replace the error being reported: `$Setup` is empty when the
+    # caller passed no environment variables, and `Split-Path -Parent $null` would throw here.
+    if ($Log) {
+        try { $_ | Out-String | Set-Content -Path $Log -ErrorAction Stop }
+        catch { Write-Error "could not write $Log" -ErrorAction Continue }
+    }
     exit 1
 }

@@ -74,8 +74,19 @@ foreach ($kind in @('nsis', 'msi')) {
         }
         # A short-lived parent exercises the updater's wait before reinstalling.
         $parent = Start-Process powershell.exe -ArgumentList '-NoProfile -Command "Start-Sleep -Seconds 2"' -PassThru -WindowStyle Hidden
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $update -ParentId $parent.Id -Setup $setup -Executable "$directory/winc.exe" -Installer $kind -Relaunch 0
-        if ($LASTEXITCODE -ne 0) { throw "$kind updater failed" }
+        # The updater is started the way the application starts it: `-Command` with the script
+        # inlined, and its parameters in `WINC_UPDATE_*` environment variables. Passing them as
+        # `-File` arguments would reach a script that no longer declares `param`, leaving every
+        # parameter empty.
+        $env:WINC_UPDATE_PARENT = "$($parent.Id)"
+        $env:WINC_UPDATE_SETUP = $setup
+        $env:WINC_UPDATE_EXE = "$directory/winc.exe"
+        $env:WINC_UPDATE_KIND = $kind
+        $env:WINC_UPDATE_RELAUNCH = '0'
+        & powershell.exe -NoProfile -NonInteractive -Command (Get-Content -LiteralPath $update -Raw)
+        $status = $LASTEXITCODE
+        Remove-Item Env:WINC_UPDATE_*
+        if ($status -ne 0) { throw "$kind updater failed" }
         foreach ($file in @('winc.exe', 'winc-pty.exe')) {
             if ((Get-FileHash "$directory/$file").Hash -ne (Get-FileHash "$root/target/$Target/release/$file").Hash) {
                 throw "$kind update changed $file"
