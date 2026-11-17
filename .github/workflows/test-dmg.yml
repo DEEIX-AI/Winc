@@ -1,0 +1,67 @@
+# 只用于在 fork 里打一个用来试用的 dmg：ad-hoc 签名、不公证、不做更新源。
+name: Test DMG
+
+on:
+  push:
+    branches: [test-dmg]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    env:
+      ARCH: ${{ matrix.arch }}
+      TARGET: ${{ matrix.arch == 'arm64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26.12.1"
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
+      - name: Compile
+        run: |
+          cargo build --release --locked --target "$TARGET" -p winc -p winc-pty
+          cargo xtask icons "target/$TARGET/release/bundle/icons"
+      - name: Bundle app
+        run: bash release/macos/package.sh app "$TARGET"
+      - name: Create DMG
+        run: bash release/macos/package.sh dmg "$TARGET"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: target/${{ matrix.arch == 'arm64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    needs: dmg
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dmgs
+          merge-multiple: true
+      - name: Publish a test build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l dmgs
+          gh release delete test-build --yes --cleanup-tag || true
+          gh release create test-build dmgs/*.dmg \
+            --target "$GITHUB_SHA" \
+            --title "Test build ${GITHUB_SHA:0:7}" \
+            --notes "Unsigned (ad-hoc) test build of the commit graph work. See the commit message of $GITHUB_SHA."
