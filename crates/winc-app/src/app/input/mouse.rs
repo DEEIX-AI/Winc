@@ -18,6 +18,7 @@ use winit::window::CursorIcon;
 use winc_core::{Lines, Selection, movement};
 use winc_render::Renderer;
 
+use crate::app::git::graph::graph_rows;
 use crate::app::{
     App, Click, DOUBLE_CLICK, Drag, Focus, Hover, MenuCommand, TreeDrag, WindowControl,
     resize_cursor, tree_max_scroll,
@@ -81,6 +82,10 @@ impl App {
         }
         if matches!(self.pointer.drag, Drag::Splitter { .. }) {
             self.remember_panel_width();
+        }
+        // 提交图上按下后没拖动过：算点击，打开按下的那一行。
+        if let Drag::GraphPan { start, row, .. } = self.pointer.drag {
+            self.release_graph_pan(start, row);
         }
         self.pointer.drag = Drag::None;
         // 拖动分隔条期间不重新断行（`sync_wrap`）；松开后重绘，重绘前的布局按最终宽度断行。

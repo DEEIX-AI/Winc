@@ -153,7 +153,18 @@ pub(in crate::view) fn draw_commit(
     draw_context(app, frame, &parts, &mut hits);
     draw_banner(app, frame, &parts, &mut hits);
     draw_stashes(app, frame, &parts, &mut hits);
+    // 提交图：先按此刻的高度收紧滚动位置（提交变少、视图变高后不会留在空白处），画完行再把
+    // 滚动条叠在上面；滚动条贴在行区域右边，标题行和上沿的分隔线上没有。
+    let graph_bar = parts.graph.map(crate::app::git::graph::graph_rows);
+    if let Some(rows) = graph_bar {
+        app.git.graph.scroll = app.git.graph.scroll.min(app.graph_scroll_max(rows));
+    }
     draw_graph(app, frame, &parts, &mut hits);
+    if let Some(rows) = graph_bar {
+        let content = app.graph_scroll_max(rows) + rows.h;
+        let scroll = app.git.graph.scroll;
+        draw_scrollbar(app, frame, ScrollArea::Graph, 0, rows, scroll, content);
+    }
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
     app.hits.commit = hits;

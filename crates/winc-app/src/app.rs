@@ -686,6 +686,15 @@ enum Drag {
         start_x: f32,
         start_width: f32,
     },
+    /// 上下拖动提交视图底部的提交图（`App::drag_graph`）。
+    ///
+    /// `start` 是按下时的坐标，`scroll` 是按下时内容的滚动位置，`row` 是按下的那一行（空白处
+    /// 为 `None`）；松开时没移动过就打开这一行。
+    GraphPan {
+        start: (f32, f32),
+        scroll: f32,
+        row: Option<usize>,
+    },
     /// 拖动日志列表里作者一列的左边缘：按下时的横坐标、作者一列当时的宽度。
     LogColumn {
         start_x: f32,

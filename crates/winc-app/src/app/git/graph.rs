@@ -3,13 +3,15 @@
 //! 与 Git 日志标签里的提交图用的是同一套车道算法（[`winc_core::graph`]），这里只取最近
 //! [`GRAPH_COMMITS`] 个提交，一次读完，不随日志标签滚动、筛选。`HEAD`、分支或点击刷新后重新
 //! 读取（见 [`App::reload_graph`]）；读取期间旧内容留着，避免图闪一下。
+//!
+//! 一屏放不下时上下滚动：滚轮、拖动右边细条（[`graph_rows`] 的右端），或者按住一行直接拖。
 
 use winc_core::graph::{Graph, GraphRow};
 use winc_editor::git::{Commit, LogQuery};
 
 use super::log::Loaded;
 use super::unusable;
-use crate::app::{App, Rect, UserEvent};
+use crate::app::{App, Drag, Rect, UserEvent};
 
 /// 提交视图里的提交图取多少个提交（个）。
 ///
@@ -105,6 +107,8 @@ impl App {
     }
 
     /// 点中提交图里的第 `index` 行：在 Git 日志标签中打开这个提交。
+    ///
+    /// 按下时只记住起点（见 [`Self::begin_graph_pan`]），松开时没拖动过才走到这里。
     pub(in crate::app) fn press_graph_row(&mut self, index: usize) {
         let Some(oid) = self.git.graph.oid(index) else {
             return;
@@ -123,12 +127,58 @@ impl App {
         Some(GRAPH_HEIGHT.min(room - GRAPH_MIN_ROOM))
     }
 
-    /// 提交图最多能滚动多远（逻辑像素）：行数乘以行高，减去 `area` 里看得到的那部分。
-    pub(crate) fn graph_scroll_max(&self, area: Rect) -> f32 {
-        let rows = self.git.graph.commits.len() as f32;
-        let room = (area.h - GRAPH_HEADER).max(0.0);
-        (rows * GRAPH_ROW - room).max(0.0)
+    /// 提交图最多能滚动多远（逻辑像素）：行数乘以行高，减去 `rows`（[`graph_rows`] 的结果）
+    /// 里看得到的那部分。
+    pub(crate) fn graph_scroll_max(&self, rows: Rect) -> f32 {
+        let rows_count = self.git.graph.commits.len() as f32;
+        (rows_count * GRAPH_ROW - rows.h.max(0.0)).max(0.0)
     }
+
+    /// 在提交图上按下第 `row` 行：开始上下拖动，内容跟着指针走。
+    ///
+    /// 拖动也从行上开始，按下时不打开提交；松开时移动不到 [`GRAPH_DRAG_SLOP`] 才当点击处理
+    /// （见 [`Self::release_graph_pan`]）。
+    pub(in crate::app) fn begin_graph_pan(&mut self, row: Option<usize>) {
+        self.settle_glides();
+        self.pointer.drag = Drag::GraphPan {
+            start: self.pointer.mouse,
+            scroll: self.git.graph.scroll,
+            row,
+        };
+    }
+
+    /// 拖动提交图：指针移动多少，内容就跟着走多少，限制在两端之间。
+    pub(in crate::app) fn drag_graph(&mut self, start: (f32, f32), scroll: f32, y: f32) {
+        let max = self
+            .commit_parts()
+            .graph
+            .map_or(0.0, |area| self.graph_scroll_max(graph_rows(area)));
+        self.git.graph.scroll = (scroll - (y - start.1)).clamp(0.0, max);
+        self.request_redraw();
+    }
+
+    /// 松开提交图上的拖动：移动不到 [`GRAPH_DRAG_SLOP`] 时按点击处理，打开按下的那一行。
+    ///
+    /// 拖过一段距离时停在这里，不回到整行：与滚轮一样按像素滚动，行可以停在屏幕中间。
+    pub(in crate::app) fn release_graph_pan(&mut self, start: (f32, f32), row: Option<usize>) {
+        let (_, y) = self.pointer.mouse;
+        if (y - start.1).abs() > GRAPH_DRAG_SLOP {
+            return;
+        }
+        if let Some(row) = row {
+            self.press_graph_row(row);
+        }
+    }
+}
+
+/// 提交图里画行的区域：去掉上沿标题行，滚动条和命中的范围都按这一块算（逻辑像素）。
+pub(crate) fn graph_rows(area: Rect) -> Rect {
+    Rect::new(
+        area.x,
+        area.y + GRAPH_HEADER,
+        area.w,
+        (area.h - GRAPH_HEADER).max(0.0),
+    )
 }
 
 /// 提交图占的高度（逻辑像素）：一行标题加八行提交。
@@ -144,3 +194,5 @@ const GRAPH_MIN: f32 = 120.0;
 pub(crate) const GRAPH_HEADER: f32 = 24.0;
 /// 提交图一行的行高（逻辑像素）。
 pub(crate) const GRAPH_ROW: f32 = 20.0;
+/// 按下一行后移动不到这么多，松开时算点击（逻辑像素）。
+const GRAPH_DRAG_SLOP: f32 = 3.0;

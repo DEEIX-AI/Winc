@@ -91,6 +91,7 @@ impl App {
 
         match self.pointer.drag {
             Drag::Picture { at } => self.drag_picture(x, y, at),
+            Drag::GraphPan { start, scroll, .. } => self.drag_graph(start, scroll, y),
             Drag::TerminalSelect | Drag::TerminalMouse(_) => self.terminal_mouse_drag(x, y),
             Drag::None if self.layout.terminal.contains(x, y) => self.terminal_mouse_hover(x, y),
             Drag::Select { by_word, origin } => self.drag_select(x, y, by_word, origin),
@@ -270,6 +271,19 @@ impl App {
                 };
                 if self.with_log_list(drag).is_none() && self.commit_shown() {
                     drag(self);
+                }
+                self.request_redraw();
+            }
+            Drag::Scrollbar {
+                bar: Scrollbar::Graph,
+                grab,
+            } => {
+                if let Some(rows) = self.commit_parts().graph.map(graph_rows) {
+                    let max = self.graph_scroll_max(rows);
+                    if let Some(thumb) = scrollbar_thumb(rows, 0.0, max + rows.h) {
+                        self.git.graph.scroll =
+                            scroll_for_thumb(rows.y, rows.h, thumb.h, y, grab, max);
+                    }
                 }
                 self.request_redraw();
             }

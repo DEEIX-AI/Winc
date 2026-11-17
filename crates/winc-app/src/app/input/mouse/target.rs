@@ -188,6 +188,8 @@ impl App {
         // 拖动文件树中的项或标签时没有悬停目标；文件树中高亮的是放置目标目录，而不是鼠标所在的行。
         match self.pointer.drag {
             Drag::Scrollbar { bar, .. } => return Hover::Scrollbar(bar),
+            // 拖动提交图时内容跟着走，指针下面那一行不再高亮。
+            Drag::GraphPan { .. } => return Hover::None,
             _ if self.tree_dragging().is_some() || self.dragged_tab().is_some() => {
                 return Hover::None;
             }
@@ -321,7 +323,11 @@ impl App {
         let side = |bar| {
             matches!(
                 bar,
-                Scrollbar::Panel | Scrollbar::Commit | Scrollbar::Outline | Scrollbar::LogBranches
+                Scrollbar::Panel
+                    | Scrollbar::Commit
+                    | Scrollbar::Graph
+                    | Scrollbar::Outline
+                    | Scrollbar::LogBranches
             )
         };
         if let Some((bar, grab)) = self.scrollbar_at(x, y).filter(|(bar, _)| side(*bar))
@@ -575,6 +581,23 @@ impl App {
                 let content = self.commit_max_scroll() + list.h;
                 let thumb = scrollbar_thumb(list, self.git.commit.scroll, content)?;
                 return Some((Scrollbar::Commit, grab(y, thumb.y, thumb.h)));
+            }
+        }
+
+        // 提交视图底部的提交图：标题行下面那几行的右端。
+        if self.commit_shown()
+            && let Some(area) = self.commit_parts().graph
+        {
+            let rows = graph_rows(area);
+            if rows.contains(x, y)
+                && x >= rows.right() - SCROLLBAR_HIT
+                && let Some(thumb) = scrollbar_thumb(
+                    rows,
+                    self.git.graph.scroll,
+                    self.graph_scroll_max(rows) + rows.h,
+                )
+            {
+                return Some((Scrollbar::Graph, grab(y, thumb.y, thumb.h)));
             }
         }
 
@@ -851,6 +874,15 @@ impl App {
         {
             // 提交图中的线可点击（沿线跳转）；终端中命令块的色带和吸顶的命令行同样可点击。
             CursorIcon::Pointer
+        } else if matches!(self.pointer.drag, Drag::GraphPan { .. }) {
+            // 拖动提交图：内容跟着指针走，指针显示抓取中。
+            CursorIcon::Grabbing
+        } else if matches!(
+            self.pointer.hover,
+            Hover::Commit(crate::app::CommitTarget::GraphRow(_))
+        ) {
+            // 提交图上的行可以按住上下拖动。
+            CursorIcon::Grab
         } else if matches!(self.pointer.drag, Drag::Picture { .. }) {
             CursorIcon::Grabbing
         } else if self.picture_pannable() && matches!(self.target_at(x, y), Target::Picture) {

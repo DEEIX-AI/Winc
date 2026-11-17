@@ -37,7 +37,7 @@ impl App {
             }
         }
         match target {
-            CommitTarget::GraphRow(index) => self.press_graph_row(index),
+            CommitTarget::GraphRow(index) => self.begin_graph_pan(Some(index)),
             CommitTarget::Stashes
             | CommitTarget::Stash(_)
             | CommitTarget::StashFile(_)

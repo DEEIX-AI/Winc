@@ -308,10 +308,9 @@ impl App {
             }
             ScrollTarget::Tabs => self.tabs.max_scroll(),
             ScrollTarget::Commit => self.commit_max_scroll(),
-            ScrollTarget::Graph => self
-                .commit_parts()
-                .graph
-                .map_or(0.0, |area| self.graph_scroll_max(area)),
+            ScrollTarget::Graph => self.commit_parts().graph.map_or(0.0, |area| {
+                self.graph_scroll_max(crate::app::git::graph::graph_rows(area))
+            }),
             ScrollTarget::Outline => self.outline_max_scroll(),
             ScrollTarget::Results => self.results_max_scroll(),
             ScrollTarget::Tree => {
