@@ -5,8 +5,9 @@ use super::*;
 impl App {
     /// 计算提交视图的布局。
     ///
-    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、还没推送的上一次
-    /// 提交，最下面是提交卡片。先看改了什么、再写信息、最后提交，从上往下就是这个顺序。
+    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、储藏、提交图、还没
+    /// 推送的上一次提交，最下面是提交卡片。先看改了什么、再写信息、最后提交，从上往下就是这个
+    /// 顺序；储藏和提交图贴着下方，改动列表占剩下的空间。
     pub(crate) fn commit_parts(&self) -> CommitParts {
         let s = self.layout.sidebar;
         let panel = Rect::new(s.x, TOP_BAR_END, s.w, (s.bottom() - TOP_BAR_END).max(0.0));
@@ -39,6 +40,7 @@ impl App {
                 push: None,
                 undo: None,
                 stashes: None,
+                graph: None,
                 list,
             };
         }
@@ -97,7 +99,14 @@ impl App {
             _ => above,
         };
         let stashes = (h > 0.0).then(|| Rect::new(panel.x, stash_bottom - h, panel.w, h));
-        let list_end = stashes.map_or(above, |rect| rect.y);
+        let mut list_end = stashes.map_or(above, |rect| rect.y);
+        // 提交图在改动列表下面、储藏上面：最近若干提交连成的图，点一行打开该提交。
+        let graph = self
+            .graph_section_height(list_end - list_y)
+            .map(|h| Rect::new(panel.x, list_end - h, panel.w, h));
+        if let Some(rect) = graph {
+            list_end = rect.y;
+        }
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
             header,
@@ -114,6 +123,7 @@ impl App {
             push,
             undo,
             stashes,
+            graph,
             list,
         }
     }

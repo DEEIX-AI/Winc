@@ -37,6 +37,7 @@ impl App {
             }
         }
         match target {
+            CommitTarget::GraphRow(index) => self.press_graph_row(index),
             CommitTarget::Stashes
             | CommitTarget::Stash(_)
             | CommitTarget::StashFile(_)
@@ -96,6 +97,7 @@ impl App {
             CommitTarget::Refresh => {
                 self.git.commit.refreshed = Some(Instant::now());
                 self.git_refresh();
+                self.reload_graph();
             }
             CommitTarget::More => {
                 let rect = self.commit_parts().tools[2].0;

@@ -158,7 +158,11 @@ fn the_stash_group_opens_like_a_drawer() {
     let half = parts.stashes.unwrap();
     assert!(closed.h < half.h && half.h < open.h, "{half:?}");
     assert_eq!(half.bottom(), open.bottom());
-    assert_eq!(parts.list.bottom(), half.y);
+    // 提交图在改动列表和储藏之间，列表到它为止。
+    assert_eq!(
+        parts.list.bottom(),
+        parts.graph.map_or(half.y, |graph| graph.y)
+    );
     assert!(0.0 < app.stash_chevron() && app.stash_chevron() < 1.0);
     assert!(app.animating());
     paint(&mut app);

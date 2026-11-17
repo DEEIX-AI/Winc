@@ -291,7 +291,7 @@ pub(crate) fn history_title(path: &Path) -> String {
 }
 
 /// 后台返回的结果。
-enum Loaded {
+pub(super) enum Loaded {
     /// 「转到提交号、分支或标签」的解析结果：完整的提交号，以及它是否在不筛选的日志中。
     GoTo {
         revision: String,
@@ -313,6 +313,12 @@ enum Loaded {
         files: Result<Vec<CommitFile>, String>,
         /// 改动的文件对照的版本（见 [`Details::base`]）。
         base: Option<String>,
+    },
+    /// 提交视图底部提交图的一批提交（[`super::graph`]）。
+    Graph {
+        /// 发出请求时提交图的版本号；不一致时结果已过时。
+        generation: u64,
+        result: Result<Vec<Commit>, String>,
     },
     /// 一个文件在某个版本里与工作区里的并排差异，打开为新标签。
     LocalDiff {
@@ -360,7 +366,7 @@ enum Loaded {
 
 /// 从日志打开的差异所属的提交或比较。
 #[derive(PartialEq, Eq)]
-struct LogDiffSource {
+pub(super) struct LogDiffSource {
     /// 所在仓库的根目录。
     root: PathBuf,
     /// 旧的一侧的提交；根提交没有父提交，为 `None`。
@@ -375,7 +381,7 @@ struct LogDiffSource {
 
 /// 日志标签的状态：与后台之间的通道和点击区域；标签的数据存放在 `Document::log` 中。
 pub(crate) struct LogState {
-    results: (Sender<Loaded>, Receiver<Loaded>),
+    pub(super) results: (Sender<Loaded>, Receiver<Loaded>),
     /// 标题栏的筛选输入框（按说明查找）。
     ///
     /// 所有日志标签共用一个输入框，切换标签时换为该标签的筛选文字。
@@ -611,7 +617,7 @@ impl App {
     ///
     /// `pin` 为真时把该提交固定在列表最前面（见 `LogQuery::pin`），用于任何分支都走不到、
     /// 因而不在日志中的提交。
-    fn show_log_commit(&mut self, oid: &str, pin: bool) {
+    pub(in crate::app) fn show_log_commit(&mut self, oid: &str, pin: bool) {
         if self.git.root.is_none() {
             return;
         }

@@ -200,7 +200,7 @@ fn arrow(frame: &mut Frame<'_>, tip: (f32, f32), down: bool, color: Color, clip:
 /// 同一条车道是一条竖线；换车道的那段一头连着圆点（行的中间），在圆点那一高度横着走，到
 /// 另一条车道时用半径 `CORNER` 的圆角拐成竖的：`into_dot` 为 `true` 是上半行合进圆点（先竖
 /// 着下来、拐弯、横着进圆点），否则是下半行从圆点分出去（先横着出去、拐弯、竖着下去）。
-pub(super) fn lane_edge(a: (f32, f32), b: (f32, f32), into_dot: bool) -> Vec<Stroke> {
+pub(in crate::view::git) fn lane_edge(a: (f32, f32), b: (f32, f32), into_dot: bool) -> Vec<Stroke> {
     let dx = b.0 - a.0;
     if dx.abs() < 0.5 {
         return vec![Stroke::Line(a.0, a.1, b.0, b.1)];

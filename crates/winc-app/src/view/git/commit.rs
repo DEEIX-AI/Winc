@@ -4,6 +4,9 @@
 //!
 //! 每个文件占一行：勾选框、文件图标、文件名（平铺时其后以淡色显示所在目录）、右端着色的
 //! 状态字母；悬停时状态字母替换为「打开文件」「回滚」两个按钮。改动行不显示行数。
+//!
+//! 改动列表下面还有最近若干提交连成的提交图（见 `graph`，状态在 `crate::app::git::graph`）：
+//! 最左边是车道，其后是提交说明，作者淡色排在行尾，点一行在 Git 日志标签里打开该提交。
 //! 坐标均为逻辑像素。
 
 use std::borrow::Cow;
@@ -28,6 +31,8 @@ use crate::view::workspace::sidebar::{
 };
 use crate::view::*;
 
+mod graph;
+use graph::*;
 mod others;
 use others::{draw_other_rows, draw_sections};
 mod header;
@@ -148,6 +153,7 @@ pub(in crate::view) fn draw_commit(
     draw_context(app, frame, &parts, &mut hits);
     draw_banner(app, frame, &parts, &mut hits);
     draw_stashes(app, frame, &parts, &mut hits);
+    draw_graph(app, frame, &parts, &mut hits);
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
     app.hits.commit = hits;

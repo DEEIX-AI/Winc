@@ -91,7 +91,11 @@ fn the_last_local_commit_can_be_undone() {
         Some(card) => assert!(bar.bottom() <= card.y),
         None => assert_eq!(bar.bottom(), app.layout.sidebar.bottom()),
     }
-    assert_eq!(parts.list.bottom(), bar.y);
+    // 提交图在改动列表和这一栏之间，列表到它为止。
+    assert_eq!(
+        parts.list.bottom(),
+        parts.graph.map_or(bar.y, |graph| graph.y)
+    );
     assert!(undo.right() <= button.x);
     for (rect, target) in [
         (undo, CommitTarget::Undo),
@@ -572,7 +576,11 @@ fn the_last_commit_bar_folds_away_once_it_is_pushed() {
     let (half, ..) = parts.undo.unwrap();
     assert!(0.0 < half.h && half.h < bar.h, "{half:?}");
     assert_eq!(half.bottom(), bar.bottom());
-    assert_eq!(parts.list.bottom(), half.y);
+    // 提交图在改动列表和这一栏之间，列表到它为止。
+    assert_eq!(
+        parts.list.bottom(),
+        parts.graph.map_or(half.y, |graph| graph.y)
+    );
     assert_eq!(app.commit_undo_shown().unwrap().subject, "加上改动");
     paint(&mut app);
     assert!(!(app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Undo));

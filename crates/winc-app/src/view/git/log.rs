@@ -8,7 +8,7 @@ mod badges;
 mod branches;
 mod details;
 mod files;
-mod graph;
+pub(in crate::view::git) mod graph;
 
 use badges::*;
 use branches::*;
@@ -40,11 +40,11 @@ use crate::view::*;
 use winc_editor::git::LogQuery;
 
 /// 提交图中相邻两条车道的间距（逻辑像素）。
-const LANE: f32 = 12.0;
+pub(in crate::view::git) const LANE: f32 = 12.0;
 /// 提交图线条的粗细（逻辑像素）。
 ///
 /// 取自调参：多条车道并排时仍可区分，在浅色底上走向清晰，且不比说明文字的笔画更重。
-const GRAPH_LINE: f32 = 1.5;
+pub(in crate::view::git) const GRAPH_LINE: f32 = 1.5;
 /// 换车道的线在拐弯处的圆角半径（逻辑像素）。
 const CORNER: f32 = 6.0;
 /// 拐弯处圆弧的折线近似段数（段）：段数越多越圆滑，绘制开销也越大。
@@ -52,9 +52,9 @@ const CORNER_STEPS: usize = 6;
 /// 选中提交时，不在选中提交所在线上的线和圆点保留的不透明度（0 到 1）。
 ///
 /// 取自调参：淡化后仍可辨认走向和颜色，同时选中的线更突出。
-const GRAPH_FADED: f32 = 0.55;
+pub(in crate::view::git) const GRAPH_FADED: f32 = 0.55;
 /// 提交图最多绘制的车道数（条）：超出的车道压缩在最右侧，避免提交说明的可用宽度被占满。
-const MAX_LANES: usize = 10;
+pub(in crate::view::git) const MAX_LANES: usize = 10;
 /// 时间一列的宽度（逻辑像素）。
 const DATE_W: f32 = 104.0;
 /// 单个引用徽章的最大宽度（逻辑像素）；更长的名字从末尾截短，详情中显示全名。
@@ -851,7 +851,7 @@ fn matches(text: &str, needle: &str) -> Vec<Range<usize>> {
 }
 
 /// 返回提交图第 `color` 种颜色（[`GraphRow::color`]、[`winc_core::graph::Segment::color`]）的线色。
-fn lane_color(p: &Palette, color: u8) -> Color {
+pub(in crate::view::git) fn lane_color(p: &Palette, color: u8) -> Color {
     let i = LANE_ORDER[color as usize % LANE_ORDER.len()];
     p.badges[i % p.badges.len()].0
 }

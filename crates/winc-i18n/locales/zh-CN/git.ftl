@@ -43,6 +43,7 @@ git-branch-force-delete-confirm = 分支「{ $name }」尚未完全合并，仍�
 git-branch-force-delete-confirm-detail = 仅属于此分支的提交可能丢失。
 git-branch-force-delete-confirm-button = 仍要删除
 git-branch-compare-with-current = 与当前分支比较
+git-graph-title = 提交图
 git-stash-group = 储藏
 git-stash-more-files = 还有 { $count } 个文件
 git-stash-more = 另有 { $count } 个储藏…

@@ -13,6 +13,7 @@ impl App {
                         self.notify(t!("git-go-to-failed", revision = revision, error = error));
                     }
                 },
+                Loaded::Graph { generation, result } => self.graph_arrived(generation, result),
                 Loaded::Commits {
                     doc,
                     generation,

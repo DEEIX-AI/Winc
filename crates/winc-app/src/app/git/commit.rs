@@ -551,6 +551,10 @@ pub enum CommitTarget {
     LastCommit,
     /// 合并、变基暂停时说明条右端的「中止」按钮。
     Abort,
+    /// 提交图里的第几行（提交图里 `Commit` 的下标）：在 Git 日志标签中打开这个提交。
+    ///
+    /// 见 [`crate::app::git::graph`]。
+    GraphRow(usize),
     /// 固定在列表顶部的组或目录：列表先滚到它真正那一行停在固定的位置（画面不动），再收起或
     /// 展开。
     ///
@@ -631,6 +635,8 @@ pub(crate) struct CommitParts {
     pub stashes: Option<Rect>,
     /// 改动列表。
     pub list: Rect,
+    /// 提交图（改动列表下面、储藏上面，整个侧栏宽）；没有提交或者侧栏太矮时为 `None`。
+    pub graph: Option<Rect>,
 }
 
 /// 后台交回来的结果。
@@ -1393,6 +1399,10 @@ impl App {
             self.git_refresh();
         }
         self.focus = self.commit_view_focus();
+        // 提交图在这个视图第一次显示时读取（之后随 `HEAD` 变化一起更新）。
+        if self.git.graph.is_empty() {
+            self.reload_graph();
+        }
         self.request_redraw();
     }
 }

@@ -30,6 +30,8 @@ pub(crate) enum ScrollTarget {
     CommitMessage,
     /// 提交视图的更改列表。
     Commit,
+    /// 提交视图底部的提交图。
+    Graph,
     /// 文件视图底部的大纲列表。
     Outline,
     /// 全局搜索的结果列表。
@@ -119,6 +121,12 @@ impl App {
             ScrollTarget::LogList
         } else if self.commit_shown() && self.commit_parts().message.contains(x, y) {
             ScrollTarget::CommitMessage
+        } else if self
+            .commit_parts()
+            .graph
+            .is_some_and(|graph| graph.contains(x, y))
+        {
+            ScrollTarget::Graph
         } else if self.commit_shown() && in_list(self) {
             ScrollTarget::Commit
         } else if self.outline_shown() && self.outline_list().contains(x, y) {
@@ -233,6 +241,7 @@ impl App {
             ScrollTarget::Table => self.scroll_table(sx, sy, origin),
             ScrollTarget::Editor(id) => self.scroll_editor_by_pixels(id, sx, sy),
             ScrollTarget::Picker
+            | ScrollTarget::Graph
             | ScrollTarget::Commit
             | ScrollTarget::Outline
             | ScrollTarget::Results
@@ -271,6 +280,7 @@ impl App {
             ScrollTarget::Picker => Some(self.overlays.picker.scroll),
             ScrollTarget::Tabs => Some(self.tabs.scroll),
             ScrollTarget::Commit => Some(self.git.commit.scroll),
+            ScrollTarget::Graph => Some(self.git.graph.scroll),
             ScrollTarget::Outline => Some(self.panels.outline.scroll),
             ScrollTarget::Results => Some(self.panels.global.scroll),
             ScrollTarget::Tree => Some(self.panels.tree.scroll),
@@ -298,6 +308,10 @@ impl App {
             }
             ScrollTarget::Tabs => self.tabs.max_scroll(),
             ScrollTarget::Commit => self.commit_max_scroll(),
+            ScrollTarget::Graph => self
+                .commit_parts()
+                .graph
+                .map_or(0.0, |area| self.graph_scroll_max(area)),
             ScrollTarget::Outline => self.outline_max_scroll(),
             ScrollTarget::Results => self.results_max_scroll(),
             ScrollTarget::Tree => {
@@ -333,6 +347,7 @@ impl App {
             ScrollTarget::Picker => self.overlays.picker.scroll = scroll,
             ScrollTarget::Tabs => self.tabs.scroll = scroll,
             ScrollTarget::Commit => self.git.commit.scroll = scroll,
+            ScrollTarget::Graph => self.git.graph.scroll = scroll,
             ScrollTarget::Outline => self.panels.outline.scroll = scroll,
             ScrollTarget::Results => self.panels.global.scroll = scroll,
             ScrollTarget::Tree => self.panels.tree.scroll = scroll,
