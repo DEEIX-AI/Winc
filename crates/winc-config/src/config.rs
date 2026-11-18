@@ -65,6 +65,8 @@ pub struct Config {
     ///
     /// 关闭后每次启动都显示开始页；命令行指定了目录或文件时仍然打开。
     pub restore_folder: Option<bool>,
+    /// 把目录拖进已打开目录的窗口时怎样处理，默认每次询问。
+    pub drop_folder: Option<FolderDrop>,
     /// 已经打开了目录的窗口里再打开另一个目录时，`true` 在新窗口打开，`false` 在此窗口打开
     /// （替换当前目录）；没写时每次询问。
     ///
@@ -171,7 +173,7 @@ pub struct Config {
     /// 终端运行的程序和参数，以空白分隔（如 `wsl.exe -d Ubuntu`）。未设置时运行系统默认的 shell；
     /// 打开的目录位于 WSL 发行版中时进入对应的发行版。
     pub terminal_shell: Option<String>,
-    /// 终端是否自动注入 shell 集成（zsh、bash、fish 的命令块），默认为是。
+    /// 终端是否自动注入 shell 集成（命令块与项目内 Python 环境），默认为是。
     pub terminal_shell_integration: Option<bool>,
     /// 关闭还有程序在运行的终端标签前是否先确认，默认为是。
     pub terminal_confirm_close: Option<bool>,
@@ -185,6 +187,10 @@ pub struct Config {
     /// 终端面板是否放在编辑区右边（配置里的 `"position": "right"`）；否则（`"bottom"` 或
     /// 没写）放在下面。
     pub terminal_right: Option<bool>,
+    /// 是否在面板右侧使用竖向列表管理终端，默认为否。
+    pub terminal_vertical_tabs: Option<bool>,
+    /// 暂停终端内容增强的快捷键，保留终端管理和复制、粘贴；默认关闭。
+    pub terminal_application_priority: Option<bool>,
     /// 是否启用远程模块（经 `ssh` 打开其他主机上的目录），默认为否。
     pub remote_enabled: Option<bool>,
     /// 是否启用 Git 模块（文件状态、分支、变更视图），默认为否。
@@ -193,6 +199,8 @@ pub struct Config {
     ///
     /// 提示框上勾选「不再询问」后写成 `false`，可在设置中重新打开。
     pub git_confirm_push: Option<bool>,
+    /// 是否允许把通过验证的 HTTP(S) 密码保存在系统的凭据存储中，默认为是；关闭时清除已保存的。
+    pub git_remember_credentials: Option<bool>,
     /// `git` 访问网络时是否跟随系统的代理设置，默认为是；`git` 自己配置了代理或环境里已有代理
     /// 变量时以它们为准。
     pub git_system_proxy: Option<bool>,
@@ -212,6 +220,11 @@ pub struct Config {
     /// 开头的 `~/` 指仓库所在系统（本机或 WSL 发行版）中用户的主目录，相对路径相对于主工作树。
     /// 未设置，或者该目录与仓库不在同一系统中时，存放在仓库旁边的 `<仓库名>.worktrees` 中。
     pub git_worktree_root: Option<String>,
+    /// `git` 程序：完整路径，或在 `PATH` 里查找的程序名；未设置时在 `PATH` 里找 `git`。只用于
+    /// 本机的仓库。
+    pub git_path: Option<String>,
+    /// 点击工作树时在哪个窗口打开它，默认每次询问。
+    pub git_open_worktree: Option<WorktreeOpen>,
     /// 新建工作树时复制过去的被忽略的文件（gitignore 写法的 glob，如 `.env*`），默认不复制。
     pub git_worktree_copy: Vec<String>,
     /// 保存时先格式化，默认为否。
@@ -278,6 +291,40 @@ pub enum VimClipboard {
 impl VimClipboard {
     /// 全部取值，按设置菜单中的顺序排列。
     pub const ALL: [Self; 3] = [Self::Register, Self::Yank, Self::Always];
+}
+
+/// 把目录拖进已打开目录的窗口时怎样处理。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FolderDrop {
+    /// 每次询问。
+    #[default]
+    Ask,
+    /// 加为窗口的附加目录。
+    Add,
+    /// 不添加，按落点处理：落在编辑区时打开该目录，落在文件树上时复制进目标目录。
+    Open,
+}
+
+impl FolderDrop {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 3] = [Self::Ask, Self::Add, Self::Open];
+}
+
+/// 点击工作树时在哪个窗口打开它。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorktreeOpen {
+    /// 每次询问。
+    #[default]
+    Ask,
+    /// 在新窗口中打开，当前窗口不变。
+    NewWindow,
+    /// 在当前窗口中打开，替换当前打开的目录。
+    CurrentWindow,
+}
+
+impl WorktreeOpen {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 3] = [Self::Ask, Self::NewWindow, Self::CurrentWindow];
 }
 
 /// Vim 模式下映射生效的模式。

@@ -26,6 +26,8 @@ pub enum Action {
     NewWindow,
     OpenFile,
     OpenFolder,
+    /// 把一个目录加为窗口的附加目录。
+    AddFolder,
     RemoteConnect,
     RemoteDisconnect,
     OpenRecent,
@@ -65,6 +67,8 @@ pub enum Action {
     MarkdownCode,
     /// 可编辑的 Markdown 预览中切换删除线（`~~`）。
     MarkdownStrikethrough,
+    /// 可编辑的 Markdown 预览中切换高亮（`==`）。
+    MarkdownHighlight,
     DeleteLine,
     DeleteAllLeft,
     IndentLines,
@@ -177,6 +181,10 @@ pub enum Action {
     /// 全部显示或不显示空白符。
     ToggleWhitespace,
     TogglePreview,
+    /// 把当前标签设为只读或恢复为可以编辑。
+    ToggleReadOnly,
+    /// 把窗口里的全部标签设为只读或恢复。
+    ToggleReadOnlyAll,
     NextDifference,
     PreviousDifference,
     /// 差异里的下一个文件。
@@ -233,6 +241,10 @@ pub enum Action {
     ShowCommit,
     GitRevertChange,
     ToggleTerminal,
+    /// 显示或隐藏终端面板，与焦点位置无关。
+    ToggleTerminalPanel,
+    /// 启用终端模块；模块关闭时列出，使内置终端可以从命令面板找到。
+    EnableTerminal,
     /// 运行当前选中的配置；运行中时重新运行。
     RunConfiguration,
     /// 停止当前选中的配置。
@@ -244,8 +256,21 @@ pub enum Action {
     CloseTerminal,
     NextTerminal,
     PreviousTerminal,
+    FocusTerminal1,
+    FocusTerminal2,
+    FocusTerminal3,
+    FocusTerminal4,
+    FocusTerminal5,
+    FocusTerminal6,
+    FocusTerminal7,
+    FocusTerminal8,
+    FocusTerminal9,
     FindInTerminal,
     MaximizeTerminal,
+    /// 把终端翻到回滚缓冲的最上面。
+    ScrollTerminalTop,
+    /// 把终端翻回最新的输出。
+    ScrollTerminalBottom,
     ToggleTerminalPosition,
     InstallShellCommand,
     UninstallShellCommand,
@@ -273,6 +298,26 @@ pub enum Module {
 }
 
 impl Action {
+    /// 按显示顺序聚焦第 1 至第 9 个终端的命令，供数字键绑定和编号查询共用。
+    pub const TERMINAL_FOCUS: [Self; 9] = [
+        Self::FocusTerminal1,
+        Self::FocusTerminal2,
+        Self::FocusTerminal3,
+        Self::FocusTerminal4,
+        Self::FocusTerminal5,
+        Self::FocusTerminal6,
+        Self::FocusTerminal7,
+        Self::FocusTerminal8,
+        Self::FocusTerminal9,
+    ];
+
+    /// 返回终端聚焦命令的标签下标（从 0 起），其他命令返回 `None`。
+    pub fn terminal_index(self) -> Option<usize> {
+        Self::TERMINAL_FOCUS
+            .iter()
+            .position(|action| *action == self)
+    }
+
     /// 返回命令在当前界面语言中的名称，命令面板、「快捷键」页和菜单都使用它。
     pub fn title(self) -> &'static str {
         use Action::*;
@@ -293,6 +338,7 @@ impl Action {
             NewWindow => t!("cmd-new-window"),
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
+            AddFolder => t!("cmd-add-folder"),
             RemoteConnect => t!("cmd-remote-connect"),
             RemoteDisconnect => t!("cmd-remote-disconnect"),
             OpenRecent => t!("cmd-open-recent"),
@@ -333,6 +379,7 @@ impl Action {
             MarkdownItalic => t!("cmd-markdown-italic"),
             MarkdownCode => t!("cmd-markdown-code"),
             MarkdownStrikethrough => t!("cmd-markdown-strikethrough"),
+            MarkdownHighlight => t!("cmd-markdown-highlight"),
             DeleteLine => t!("cmd-delete-line"),
             DeleteAllLeft => t!("cmd-delete-all-left"),
             IndentLines => t!("cmd-indent-lines"),
@@ -470,6 +517,8 @@ impl Action {
             ShowCommit => t!("cmd-show-commit"),
             GitRevertChange => t!("cmd-git-revert-change"),
             ToggleTerminal => t!("cmd-toggle-terminal"),
+            ToggleTerminalPanel => t!("cmd-toggle-terminal-panel"),
+            EnableTerminal => t!("cmd-enable-terminal"),
             RunConfiguration => t!("cmd-run-configuration"),
             StopConfiguration => t!("cmd-stop-configuration"),
             EditRunConfigurations => t!("cmd-edit-run-configurations"),
@@ -478,8 +527,19 @@ impl Action {
             CloseTerminal => t!("cmd-close-terminal"),
             NextTerminal => t!("cmd-next-terminal"),
             PreviousTerminal => t!("cmd-previous-terminal"),
+            FocusTerminal1 => t!("cmd-terminal-1"),
+            FocusTerminal2 => t!("cmd-terminal-2"),
+            FocusTerminal3 => t!("cmd-terminal-3"),
+            FocusTerminal4 => t!("cmd-terminal-4"),
+            FocusTerminal5 => t!("cmd-terminal-5"),
+            FocusTerminal6 => t!("cmd-terminal-6"),
+            FocusTerminal7 => t!("cmd-terminal-7"),
+            FocusTerminal8 => t!("cmd-terminal-8"),
+            FocusTerminal9 => t!("cmd-terminal-9"),
             FindInTerminal => t!("cmd-find-in-terminal"),
             MaximizeTerminal => t!("cmd-maximize-terminal"),
+            ScrollTerminalTop => t!("cmd-scroll-terminal-top"),
+            ScrollTerminalBottom => t!("cmd-scroll-terminal-bottom"),
             ToggleTerminalPosition => t!("cmd-toggle-terminal-position"),
             InstallShellCommand => t!("cmd-install-shell-command"),
             UninstallShellCommand => t!("cmd-uninstall-shell-command"),
@@ -492,6 +552,8 @@ impl Action {
             PreviousError => t!("cmd-previous-error"),
             SendToTerminal => t!("cmd-send-to-terminal"),
             TogglePreview => t!("cmd-toggle-preview"),
+            ToggleReadOnly => t!("cmd-toggle-read-only"),
+            ToggleReadOnlyAll => t!("cmd-toggle-read-only-all"),
         }
     }
 
@@ -515,6 +577,7 @@ impl Action {
             NewWindow => "New Window",
             OpenFile => "Open",
             OpenFolder => "Open Folder",
+            AddFolder => "Add Folder to Window",
             RemoteConnect => "Remote: Connect to SSH Host…",
             RemoteDisconnect => "Remote: Disconnect",
             OpenRecent => "Open Recent Folder",
@@ -549,6 +612,7 @@ impl Action {
             MarkdownItalic => "Markdown: Toggle Italic",
             MarkdownCode => "Markdown: Toggle Inline Code",
             MarkdownStrikethrough => "Markdown: Toggle Strikethrough",
+            MarkdownHighlight => "Markdown: Toggle Highlight",
             DeleteLine => "Delete Line",
             DeleteAllLeft => "Delete All Left",
             IndentLines => "Indent Line",
@@ -686,6 +750,8 @@ impl Action {
             ShowCommit => "Git: Commit",
             GitRevertChange => "Git: Revert Change",
             ToggleTerminal => "Toggle Terminal",
+            ToggleTerminalPanel => "Terminal: Toggle Panel",
+            EnableTerminal => "Terminal: Enable Built-in Terminal",
             RunConfiguration => "Run Configuration",
             StopConfiguration => "Stop Configuration",
             EditRunConfigurations => "Edit Run Configurations",
@@ -694,8 +760,19 @@ impl Action {
             CloseTerminal => "Terminal: Close Tab",
             NextTerminal => "Terminal: Next Tab",
             PreviousTerminal => "Terminal: Previous Tab",
+            FocusTerminal1 => "Terminal: Focus Tab 1",
+            FocusTerminal2 => "Terminal: Focus Tab 2",
+            FocusTerminal3 => "Terminal: Focus Tab 3",
+            FocusTerminal4 => "Terminal: Focus Tab 4",
+            FocusTerminal5 => "Terminal: Focus Tab 5",
+            FocusTerminal6 => "Terminal: Focus Tab 6",
+            FocusTerminal7 => "Terminal: Focus Tab 7",
+            FocusTerminal8 => "Terminal: Focus Tab 8",
+            FocusTerminal9 => "Terminal: Focus Tab 9",
             FindInTerminal => "Terminal: Find",
             MaximizeTerminal => "Terminal: Maximize Panel",
+            ScrollTerminalTop => "Terminal: Scroll to Top",
+            ScrollTerminalBottom => "Terminal: Scroll to Bottom",
             ToggleTerminalPosition => "Terminal: Toggle Panel Position",
             InstallShellCommand => "Shell Command: Install winc Command",
             UninstallShellCommand => "Shell Command: Uninstall winc Command",
@@ -708,6 +785,8 @@ impl Action {
             PreviousError => "Terminal: Previous Error",
             SendToTerminal => "Terminal: Run Selected Text",
             TogglePreview => "Toggle Preview",
+            ToggleReadOnly => "Toggle Read-Only",
+            ToggleReadOnlyAll => "Toggle Read-Only for All Files",
         }
     }
 
@@ -729,12 +808,11 @@ impl Action {
             | RecordKeys
             | InstallShellCommand
             | UninstallShellCommand => Group::General,
-            NewFile | OpenFile | OpenFolder | RemoteConnect | RemoteDisconnect | Save | SaveAs
-            | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab | PreviousTab
-            | CloseFolder | CloseWindow | CopyPath | CopyRelativePath | RevealInFinder
-            | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal | Quit => {
-                Group::File
-            }
+            NewFile | OpenFile | OpenFolder | AddFolder | RemoteConnect | RemoteDisconnect
+            | Save | SaveAs | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab
+            | PreviousTab | CloseFolder | CloseWindow | CopyPath | CopyRelativePath
+            | RevealInFinder | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal
+            | Quit => Group::File,
             NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo
             | Redo
@@ -747,6 +825,7 @@ impl Action {
             | MarkdownItalic
             | MarkdownCode
             | MarkdownStrikethrough
+            | MarkdownHighlight
             | DeleteLine
             | DeleteAllLeft
             | IndentLines
@@ -833,6 +912,8 @@ impl Action {
             | ToggleStatusBar
             | ToggleWhitespace
             | TogglePreview
+            | ToggleReadOnly
+            | ToggleReadOnlyAll
             | NextDifference
             | PreviousDifference
             | NextDiffFile
@@ -867,6 +948,8 @@ impl Action {
             | ShowCommit
             | GitRevertChange
             | ToggleTerminal
+            | ToggleTerminalPanel
+            | EnableTerminal
             | RunConfiguration
             | StopConfiguration
             | EditRunConfigurations
@@ -875,8 +958,19 @@ impl Action {
             | CloseTerminal
             | NextTerminal
             | PreviousTerminal
+            | FocusTerminal1
+            | FocusTerminal2
+            | FocusTerminal3
+            | FocusTerminal4
+            | FocusTerminal5
+            | FocusTerminal6
+            | FocusTerminal7
+            | FocusTerminal8
+            | FocusTerminal9
             | FindInTerminal
             | MaximizeTerminal
+            | ScrollTerminalTop
+            | ScrollTerminalBottom
             | ToggleTerminalPosition
             | RenameTerminal
             | PreviousCommand
@@ -937,7 +1031,8 @@ impl Action {
             | MarkdownBold
             | MarkdownItalic
             | MarkdownCode
-            | MarkdownStrikethrough => false,
+            | MarkdownStrikethrough
+            | MarkdownHighlight => false,
             _ => self.group() == Group::Edit,
         }
     }
@@ -982,6 +1077,7 @@ impl Action {
             | Action::ShowCommit
             | Action::GitRevertChange => Some(Module::Git),
             Action::ToggleTerminal
+            | Action::ToggleTerminalPanel
             | Action::RunConfiguration
             | Action::StopConfiguration
             | Action::EditRunConfigurations
@@ -990,8 +1086,19 @@ impl Action {
             | Action::CloseTerminal
             | Action::NextTerminal
             | Action::PreviousTerminal
+            | Action::FocusTerminal1
+            | Action::FocusTerminal2
+            | Action::FocusTerminal3
+            | Action::FocusTerminal4
+            | Action::FocusTerminal5
+            | Action::FocusTerminal6
+            | Action::FocusTerminal7
+            | Action::FocusTerminal8
+            | Action::FocusTerminal9
             | Action::FindInTerminal
             | Action::MaximizeTerminal
+            | Action::ScrollTerminalTop
+            | Action::ScrollTerminalBottom
             | Action::ToggleTerminalPosition
             | Action::RenameTerminal
             | Action::PreviousCommand
@@ -1088,6 +1195,7 @@ pub const ACTIONS: &[Action] = {
         NewWindow,
         OpenFile,
         OpenFolder,
+        AddFolder,
         RemoteConnect,
         RemoteDisconnect,
         OpenRecent,
@@ -1122,6 +1230,7 @@ pub const ACTIONS: &[Action] = {
         MarkdownItalic,
         MarkdownCode,
         MarkdownStrikethrough,
+        MarkdownHighlight,
         DeleteLine,
         DeleteAllLeft,
         IndentLines,
@@ -1205,6 +1314,8 @@ pub const ACTIONS: &[Action] = {
         ToggleStatusBar,
         ToggleWhitespace,
         TogglePreview,
+        ToggleReadOnly,
+        ToggleReadOnlyAll,
         ShowCommit,
         GitShowChanges,
         ChangesShowDiff,
@@ -1234,6 +1345,8 @@ pub const ACTIONS: &[Action] = {
         GitBlame,
         GitRevertChange,
         ToggleTerminal,
+        ToggleTerminalPanel,
+        EnableTerminal,
         RunConfiguration,
         StopConfiguration,
         EditRunConfigurations,
@@ -1241,6 +1354,8 @@ pub const ACTIONS: &[Action] = {
         ClearTerminal,
         FindInTerminal,
         MaximizeTerminal,
+        ScrollTerminalTop,
+        ScrollTerminalBottom,
         ToggleTerminalPosition,
         InstallShellCommand,
         UninstallShellCommand,
@@ -1248,6 +1363,15 @@ pub const ACTIONS: &[Action] = {
         CloseTerminal,
         NextTerminal,
         PreviousTerminal,
+        FocusTerminal1,
+        FocusTerminal2,
+        FocusTerminal3,
+        FocusTerminal4,
+        FocusTerminal5,
+        FocusTerminal6,
+        FocusTerminal7,
+        FocusTerminal8,
+        FocusTerminal9,
         PreviousCommand,
         NextCommand,
         FoldOutput,

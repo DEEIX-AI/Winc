@@ -21,6 +21,8 @@ pub enum Pick {
     SaveAs(DocumentId),
     /// 新建工作树对话框「位置」右端的目录按钮：选工作树放在哪个目录下面。
     WorktreeFolder,
+    /// 选择要加为附加目录的目录。
+    AddFolder,
     /// 设置中选择窗口的背景图片。
     BackgroundImage,
     /// 连接远端主机对话框中密钥文件右端的按钮：选密钥文件，从 `~/.ssh` 开始。
@@ -182,9 +184,81 @@ impl App {
         }
     }
 
+    /// 返回 `path` 作为操作目标时的目录：目录取它自己，文件取所在的目录。
+    pub(in crate::app) fn folder_of(&self, path: &Path) -> PathBuf {
+        if self.is_folder(path) {
+            path.to_path_buf()
+        } else {
+            path.parent().unwrap_or(path).to_path_buf()
+        }
+    }
+
+    /// `path` 是否目录。
+    ///
+    /// 本机的路径以磁盘为准。远端的路径不能在界面线程上查询，查询的结果一律是「不是目录」：类别
+    /// 取自文件树和已打开的文档（[`Self::known_folder`]），其中没有的才查询磁盘。
+    pub(in crate::app) fn is_folder(&self, path: &Path) -> bool {
+        let known = winc_backend::is_remote(path)
+            .then(|| self.known_folder(path))
+            .flatten();
+        known.unwrap_or_else(|| winc_backend::fs::is_dir(path))
+    }
+
+    /// 不查询磁盘能确定时返回 `path` 是否目录：打开的目录、文件树上可见的行（合并显示的各级
+    /// 目录也算）和已打开的文档。
+    pub(in crate::app) fn known_folder(&self, path: &Path) -> Option<bool> {
+        if let Some(workspace) = &self.editor.workspace {
+            if path == workspace.root.as_path() {
+                return Some(true);
+            }
+            if let Some(row) = workspace.row_of(path) {
+                return Some(workspace.rows()[row].kind == winc_editor::EntryKind::Dir);
+            }
+        }
+        // 打开的文档都是文件。
+        let documents = &self.editor.documents;
+        let open = documents
+            .iter()
+            .any(|doc| doc.path.as_deref() == Some(path));
+        open.then_some(false)
+    }
+
+    /// `path` 是否可以当作文件打开。
+    ///
+    /// 本机的路径以磁盘为准。远端的路径在界面线程上查不到：文件树和已打开的文档知道的照实
+    /// 回答，其余按可以打开处理，文件不存在时由随后的读取在标签中报告，而不是把存在的文件当作
+    /// 不存在。
+    pub(in crate::app) fn may_be_file(&self, path: &Path) -> bool {
+        if !winc_backend::is_remote(path) {
+            return winc_backend::fs::is_file(path);
+        }
+        self.known_folder(path).is_none_or(|folder| !folder)
+    }
+
+    /// `path` 是否存在；远端的路径查不到时按存在处理，规则同 [`Self::may_be_file`]。
+    pub(in crate::app) fn may_exist(&self, path: &Path) -> bool {
+        winc_backend::is_remote(path) || winc_backend::fs::exists(path)
+    }
+
+    /// 终端输出中的路径 `path` 是否可以作为跳转的目标；`numbered` 表示它带有行号。
+    ///
+    /// 远端的路径查不到时不能把每个像路径的词都当作文件：只认打开的目录之内、带行号的位置
+    /// （编译器的报错）。
+    pub(in crate::app) fn terminal_target(&self, path: &Path, numbered: bool) -> bool {
+        if !winc_backend::is_remote(path) {
+            return winc_backend::fs::exists(path);
+        }
+        let inside = || {
+            self.editor
+                .root()
+                .is_some_and(|root| path.starts_with(root))
+        };
+        self.known_folder(path).is_some() || numbered && inside()
+    }
+
     /// 打开文件或目录 `path`；`preview` 为真时在预览标签中打开文件（见 [`Self::preview_path`]）。
     fn open_file(&mut self, path: &Path, preview: bool) {
-        if winc_backend::fs::is_dir(path) {
+        if self.is_folder(path) {
             self.open_folder(path);
             return;
         }
@@ -273,6 +347,34 @@ impl App {
         self.request_redraw();
     }
 
+    /// 把当前标签设为只读或恢复为可以编辑；因自身的状态而只读的标签给出原因。
+    pub(in crate::app) fn toggle_read_only(&mut self) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        match doc.unwritable_reason() {
+            Some(reason) => self.flash(reason),
+            None => self.set_read_only(doc.id, !doc.is_locked()),
+        }
+    }
+
+    /// 把文档 `id` 设为只读（`on`）或恢复为可以编辑，并记入会话。
+    pub(in crate::app) fn set_read_only(&mut self, id: DocumentId, on: bool) {
+        let Some(doc) = self.editor.document_mut(id) else {
+            return;
+        };
+        doc.set_locked(on);
+        self.remember_session();
+        self.request_redraw();
+    }
+
+    /// 把窗口里的全部标签设为只读（`on`）或恢复，并记入会话。
+    pub(in crate::app) fn set_read_only_all(&mut self, on: bool) {
+        self.editor.set_all_locked(on);
+        self.remember_session();
+        self.request_redraw();
+    }
+
     /// 当前文档只读时，在状态栏说明原因；无法打开的文件已在编辑区说明，不重复提示。
     pub(in crate::app) fn announce_readonly(&mut self) {
         if let Some(reason) = self
@@ -280,7 +382,7 @@ impl App {
             .active()
             // 尚未读取完成的文档不提示：读取完成后再判断（`loading.rs`）。
             .filter(|d| d.shows_text() && !d.is_pending())
-            .and_then(|d| d.readonly_reason())
+            .and_then(|d| d.unwritable_reason())
         {
             self.flash(reason);
         }
@@ -318,6 +420,9 @@ impl App {
                     self.load_active_in_background();
                 }
             }
+            PlaceholderAction::OpenWithDefaultApp if winc_backend::is_remote(&path) => {
+                self.notify(t!("workspace-remote-local-only"));
+            }
             PlaceholderAction::OpenWithDefaultApp => {
                 if let Err(e) = system::open_with_default_app(&path) {
                     self.notify(t!(
@@ -336,6 +441,10 @@ impl App {
 
     /// 在系统文件管理器中显示 `path`；失败时提示原因。
     pub(in crate::app) fn reveal_in_file_manager(&mut self, path: &Path) {
+        if winc_backend::is_remote(path) {
+            self.notify(t!("workspace-remote-local-only"));
+            return;
+        }
         if let Err(e) = system::reveal_in_file_manager(path) {
             self.notify(t!(
                 "workspace-reveal-failed",
@@ -352,8 +461,7 @@ impl App {
     /// 终端程序由配置项 `terminal.external` 指定。基准测量和测试中不启动终端，只记录目录。
     pub(in crate::app) fn open_in_terminal(&mut self, path: Option<&Path>) {
         let dir = match path {
-            Some(path) if winc_backend::fs::is_dir(path) => path.to_path_buf(),
-            Some(path) => path.parent().unwrap_or(path).to_path_buf(),
+            Some(path) => self.folder_of(path),
             None => match self.editor.root() {
                 Some(root) => root.to_path_buf(),
                 None => std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from),
@@ -362,8 +470,16 @@ impl App {
         if self.open_in_builtin_terminal(&dir) {
             return;
         }
+        let remote = winc_backend::is_remote(&dir);
         if self.frame.bench.silent() || cfg!(test) {
-            self.opened_terminal = Some(dir);
+            self.opened_terminal = Some(dir.clone());
+            if !remote {
+                return;
+            }
+        }
+        // 远端主机上的目录只能在内置终端中打开：本机的终端程序进不去。
+        if remote {
+            self.notify(t!("workspace-remote-terminal"));
             return;
         }
         if let Err(e) = system::open_terminal(&dir, self.config.external_terminal.as_deref()) {
@@ -513,7 +629,7 @@ impl App {
 
         if doc.title.is_some() {
             // 格式化工具的输出标签只用于查看，不可保存。
-            if let Some(reason) = doc.readonly_reason() {
+            if let Some(reason) = doc.unwritable_reason() {
                 self.flash(reason);
             }
         } else if doc.path.is_none() {
@@ -565,7 +681,7 @@ impl App {
                 continue;
             };
             let candidate =
-                doc.is_dirty() && doc.title.is_none() && doc.readonly_reason().is_none();
+                doc.is_dirty() && doc.title.is_none() && doc.unwritable_reason().is_none();
             // 文件已从磁盘上删除：不自动写回，改为提示一次重新创建的方法；文件恢复后被再次删除时
             // 重新提示。
             if candidate && doc.deleted_on_disk() {
@@ -762,6 +878,7 @@ impl App {
             | Pick::OpenFolder
             | Pick::WslFolder(_)
             | Pick::WorktreeFolder
+            | Pick::AddFolder
             | Pick::BackgroundImage => (String::new(), None),
         };
 
@@ -777,10 +894,12 @@ impl App {
                     files: true,
                     dir: dir.as_deref(),
                 },
-                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => Panel::Open {
-                    files: false,
-                    dir: None,
-                },
+                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder | Pick::AddFolder => {
+                    Panel::Open {
+                        files: false,
+                        dir: None,
+                    }
+                }
                 Pick::SaveAs(_) => Panel::Save {
                     name: &name,
                     dir: dir.as_deref(),
@@ -816,7 +935,7 @@ impl App {
                     };
                     (choose, t!("workspace-remote-dialog-key-choose"))
                 }
-                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
+                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder | Pick::AddFolder => {
                     let choose = Choose::Open {
                         directory: true,
                         dir: None,
@@ -849,6 +968,7 @@ impl App {
                 Pick::Open | Pick::BackgroundImage => t!("cmd-open-file"),
                 Pick::KeyFile => t!("workspace-remote-dialog-key-choose"),
                 Pick::OpenFolder | Pick::WorktreeFolder => t!("cmd-open-folder"),
+                Pick::AddFolder => t!("cmd-add-folder"),
                 Pick::WslFolder(_) => t!("cmd-open-wsl-folder"),
                 Pick::SaveAs(_) => t!("cmd-save-as"),
             };
@@ -862,15 +982,19 @@ impl App {
             }
             // 对话框有自己的消息循环，在后台线程上等待关闭，事件循环正常运行。
             std::thread::spawn(move || {
-                // 检查发行版的根目录可能要等发行版启动，不在界面线程上进行。
+                // 从发行版内用户的主目录开始，查不到时从根目录开始。查询可能要等发行版启动，
+                // 不在界面线程上进行。
                 if let Pick::WslFolder(distro) = &kind {
-                    dialog = dialog.set_directory(winc_editor::wsl::distro_root(distro));
+                    let root = winc_editor::wsl::distro_root(distro);
+                    let home = winc_editor::wsl::home_dir(&root);
+                    dialog = dialog.set_directory(home.unwrap_or(root));
                 }
                 let path = match &kind {
                     Pick::Open | Pick::BackgroundImage | Pick::KeyFile => dialog.pick_file(),
-                    Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => {
-                        dialog.pick_folder()
-                    }
+                    Pick::OpenFolder
+                    | Pick::WslFolder(_)
+                    | Pick::WorktreeFolder
+                    | Pick::AddFolder => dialog.pick_folder(),
                     Pick::SaveAs(_) => dialog.set_file_name(&name).save_file(),
                 };
                 let _ = proxy.send_event(UserEvent::Picked(kind, path));
@@ -904,6 +1028,7 @@ impl App {
             | Pick::OpenFolder
             | Pick::WslFolder(_)
             | Pick::WorktreeFolder
+            | Pick::AddFolder
             | Pick::BackgroundImage
             | Pick::KeyFile => None,
         };
@@ -913,6 +1038,7 @@ impl App {
         match kind {
             Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) => self.open_path(&path),
             Pick::WorktreeFolder => self.worktree_folder_picked(path),
+            Pick::AddFolder => self.add_folder(&path),
             Pick::BackgroundImage => self.set_background_image(Some(path)),
             Pick::KeyFile => self.key_file_picked(&path),
             Pick::SaveAs(id) => {

@@ -3,6 +3,21 @@
 use super::*;
 
 #[test]
+fn terminal_application_priority_is_optional_and_round_trips() {
+    assert_eq!(Config::default().terminal_application_priority, None);
+    for enabled in [true, false] {
+        let text = format!(r#"{{"terminal":{{"applicationPriority":{enabled}}}}}"#);
+        let (config, problems) = Config::parse(&text);
+        assert!(problems.is_empty());
+        assert_eq!(config.terminal_application_priority, Some(enabled));
+        assert_eq!(Config::parse(&config.to_json()).0, config);
+    }
+    let (config, problems) = Config::parse(r#"{"terminal":{"applicationPriority":"true"}}"#);
+    assert_eq!(config.terminal_application_priority, None);
+    assert!(!problems.is_empty());
+}
+
+#[test]
 fn empty_and_partial_configs_fall_back_to_defaults() {
     let (config, problems) = Config::parse("{}");
     assert_eq!(config, Config::default());
@@ -268,14 +283,20 @@ fn round_trips_through_json() {
         terminal_copy_on_select: Some(true),
         terminal_bold_is_bright: Some(true),
         terminal_right: Some(true),
+        terminal_vertical_tabs: Some(true),
+        terminal_application_priority: Some(true),
         git_enabled: Some(true),
         git_confirm_push: Some(false),
+        drop_folder: Some(FolderDrop::Add),
+        git_remember_credentials: Some(false),
         git_system_proxy: Some(false),
         git_inline_blame: Some(false),
         git_auto_fetch: Some(true),
         git_staging_area: Some(true),
         repository_scan_depth: Some(4),
         git_worktree_root: Some("~/worktrees".to_string()),
+        git_open_worktree: Some(WorktreeOpen::NewWindow),
+        git_path: Some("C:\\Tools\\wslgit.exe".to_string()),
         remote_enabled: Some(true),
         git_worktree_copy: vec![".env*".to_string(), "config/local.toml".to_string()],
         format_on_save: Some(false),
@@ -617,4 +638,21 @@ fn vim_mappings_are_read_in_order_and_bad_items_are_reported() {
     assert_eq!(config.vim_keys.len(), 1);
     let (config, problems) = Config::parse(r#"{ "vim": { "keys": {} } }"#);
     assert_eq!((problems.len(), config.vim_keys.len()), (1, 0));
+}
+
+#[test]
+fn open_worktree_reads_its_three_values_and_rejects_others() {
+    for (text, expected) in [
+        ("ask", WorktreeOpen::Ask),
+        ("newWindow", WorktreeOpen::NewWindow),
+        ("currentWindow", WorktreeOpen::CurrentWindow),
+    ] {
+        let json = format!(r#"{{ "git": {{ "openWorktree": "{text}" }} }}"#);
+        let (config, problems) = Config::parse(&json);
+        assert_eq!(config.git_open_worktree, Some(expected));
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let (config, problems) = Config::parse(r#"{ "git": { "openWorktree": "tab" } }"#);
+    assert_eq!(config.git_open_worktree, None);
+    assert_eq!(problems.len(), 1);
 }

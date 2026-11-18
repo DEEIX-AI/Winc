@@ -47,6 +47,12 @@ foreach ($kind in @('nsis', 'msi')) {
         if ((Get-Content "$directory/bin/winc" -Raw) -match "`r") { throw "${kind}: bin/winc has CRLF line endings" }
         if ((Get-CommandPath $kind) -notcontains "$directory\bin") { throw "${kind}: bin is not on the Path" }
         if ((Get-Content "$directory/winc-installation" -Raw).Trim() -ne $kind) { throw 'incorrect installation marker' }
+        # Each type's ProgID shows the document icon of its group.
+        foreach ($pair in @(@('JSON', 'json'), @('MD', 'markdown'), @('RS', 'rust'), @('SQL', 'code'))) {
+            $icon = (Get-ItemProperty -LiteralPath "$classes\winc.$($pair[0])\DefaultIcon").'(default)'
+            if ($icon -ne "$directory\icons\$($pair[1]).ico") { throw "${kind}: wrong icon for $($pair[0]): $icon" }
+            if (-not (Test-Path -LiteralPath $icon)) { throw "${kind}: missing $icon" }
+        }
         $command = (Get-ItemProperty -LiteralPath "$classes\winc.JSON\shell\open\command").'(default)'
         if ($command -ne "`"$directory\winc.exe`" `"%1`"") { throw "${kind}: wrong open command: $command" }
         if ($null -eq (Get-ItemProperty -LiteralPath "$classes\Applications\winc.exe\SupportedTypes").'.json') { throw "${kind}: json is not a supported type" }
@@ -71,6 +77,16 @@ foreach ($kind in @('nsis', 'msi')) {
         }
         foreach ($type in @('bat', 'cmd')) {
             if (Test-Path -LiteralPath "$classes\winc.$type") { throw "${kind}: $type must not be registered" }
+        }
+        # Listing winc under the types is the user's choice. Once chosen it survives a later silent
+        # installation, which is how updates run; /FILETYPES=0 turns it off again.
+        if ($kind -eq 'nsis') {
+            $listed = { $null -ne (Get-ItemProperty -LiteralPath "$classes\.json\OpenWithProgids" -ErrorAction SilentlyContinue).'winc.JSON' }
+            foreach ($step in @(@('/FILETYPES=1', $true), @('', $true), @('/FILETYPES=0', $false), @('', $false))) {
+                $process = Start-Process -FilePath $setup -ArgumentList "/S $($step[0]) /D=$directory" -Wait -PassThru
+                if ($process.ExitCode -ne 0) { throw "nsis installation with '$($step[0])' failed: $($process.ExitCode)" }
+                if ((& $listed) -ne $step[1]) { throw "nsis: after '$($step[0])' the json listing is not $($step[1])" }
+            }
         }
         # A short-lived parent exercises the updater's wait before reinstalling.
         $parent = Start-Process powershell.exe -ArgumentList '-NoProfile -Command "Start-Sleep -Seconds 2"' -PassThru -WindowStyle Hidden
@@ -104,6 +120,7 @@ foreach ($kind in @('nsis', 'msi')) {
     }
     if ((Get-CommandPath $kind) -contains "$directory\bin") { throw "${kind}: uninstall left bin on the Path" }
     if (Test-Path -LiteralPath "$classes\winc.JSON") { throw "${kind}: uninstall left the file type behind" }
+    if (Test-Path "$directory/icons") { throw "${kind}: uninstall left the icons behind" }
     if (Test-Path -LiteralPath "$classes\Applications\winc.exe") { throw "${kind}: uninstall left the application behind" }
     foreach ($key in @('SystemFileAssociations\.json', 'Directory', 'Directory\Background')) {
         if (Test-Path -LiteralPath "$classes\$key\shell\winc") { throw "${kind}: uninstall left the context menu under $key" }

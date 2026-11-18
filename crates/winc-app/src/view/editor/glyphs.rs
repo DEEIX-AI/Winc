@@ -43,12 +43,15 @@ pub(super) fn draw_glyph_run(
     let cell = app.metrics.cell;
     let mut cells = start;
     let mut token = tokens.partition_point(|t| t.end <= range.start);
+    // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
+    let mut joined = range.start;
+    let mut behind = text::Behind::before(chars, range.start);
     for col in range {
         let c = chars[col];
-        let width = text::char_cells(c, cells, tab_width);
+        let width = behind.cells(c, cells, tab_width);
         let x = origin_x + cells as f32 * cell;
         cells += width;
-        if c == ' ' || c == '\t' || x > clip.right() {
+        if c == ' ' || c == '\t' || x > clip.right() || col < joined {
             continue;
         }
         while tokens.get(token).is_some_and(|t| t.end <= col) {
@@ -58,17 +61,9 @@ pub(super) fn draw_glyph_run(
             .get(token)
             .filter(|t| t.start <= col)
             .map_or(TokenKind::Text, |t| t.kind);
-        frame.cell_char(
-            token_font(kind),
-            app.fonts.code,
-            x,
-            baseline,
-            cell,
-            width.max(1),
-            c,
-            p.token(kind),
-            clip,
-        );
+        let font = (token_font(kind), app.fonts.code, cell);
+        let (at, color) = ((x, baseline), p.token(kind));
+        joined = col + draw_grid_char(frame, font, at, (chars, col), color, clip);
     }
     cells
 }
@@ -187,9 +182,12 @@ pub(in crate::view) fn draw_glyphs(
     let cell = app.metrics.cell;
     let mut cells = 0;
     let mut token = 0;
+    // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
+    let mut joined = 0;
+    let mut behind = text::Behind::default();
 
     for (col, &c) in chars.iter().enumerate() {
-        let width = text::char_cells(c, cells, tab_width);
+        let width = behind.cells(c, cells, tab_width);
         let x = origin_x + cells as f32 * cell;
         cells += width;
 
@@ -197,7 +195,11 @@ pub(in crate::view) fn draw_glyphs(
             break;
         }
 
-        if c == ' ' || c == '\t' || x + width as f32 * cell < clip.x {
+        if c == ' ' || c == '\t' || col < joined {
+            continue;
+        }
+        // 序列的首字符在裁剪框左侧时仍需绘制：合成的图形可能延伸到裁剪框内。
+        if x + width as f32 * cell < clip.x && chars.get(col + 1).is_none_or(|&n| n < '\u{200d}') {
             continue;
         }
 
@@ -209,17 +211,9 @@ pub(in crate::view) fn draw_glyphs(
             .get(token)
             .filter(|t| t.start <= col)
             .map_or(TokenKind::Text, |t| t.kind);
-        frame.cell_char(
-            token_font(kind),
-            app.fonts.code,
-            x,
-            baseline,
-            cell,
-            width.max(1),
-            c,
-            p.token(kind),
-            clip,
-        );
+        let font = (token_font(kind), app.fonts.code, cell);
+        let (at, color) = ((x, baseline), p.token(kind));
+        joined = col + draw_grid_char(frame, font, at, (chars, col), color, clip);
     }
     cells
 }
@@ -246,13 +240,14 @@ pub(super) fn draw_columns(
     ];
     let p = app.palette;
     let cell = app.metrics.cell;
+    let mut joined = 0;
     for (col, &c) in chars.iter().enumerate() {
         let (start, end) = (positions[col], positions[col + 1]);
         let x = origin_x + start as f32 * cell;
         if x > clip.right() {
             break;
         }
-        if c.is_whitespace() || x + (end - start) as f32 * cell < clip.x {
+        if c.is_whitespace() || x + (end - start) as f32 * cell < clip.x || col < joined {
             continue;
         }
         let field = fields[col];
@@ -264,18 +259,8 @@ pub(super) fn draw_columns(
             p.token(COLORS[field % COLORS.len()])
         };
         // 按字符自身的宽度绘制，不计入为对齐而留出的空白。
-        let width = text::char_cells(c, 0, 1).max(1);
-        frame.cell_char(
-            FontKind::Mono,
-            app.fonts.code,
-            x,
-            baseline,
-            cell,
-            width,
-            c,
-            color,
-            clip,
-        );
+        let font = (FontKind::Mono, app.fonts.code, cell);
+        joined = col + draw_grid_char(frame, font, (x, baseline), (chars, col), color, clip);
     }
     positions.last().copied().unwrap_or(0)
 }
@@ -315,4 +300,51 @@ impl App {
         cache.entries.push((key, tokens.clone(), next));
         next
     }
+}
+
+/// 在等宽网格上绘制 `chars[col]`，返回已处理的字符数：该字符及其后属于同一 emoji 序列的字符。
+///
+/// 序列由 emoji 字体合成一个图形，占 [`text::sequence_cells`] 给出的列数；无法合成时只绘制首字符。
+/// `(font, size, cell)` 是字体、字号和一格的宽度，`(x, baseline)` 是该字符所在格的左边缘和基线。
+pub(in crate::view) fn draw_grid_char(
+    frame: &mut Frame<'_>,
+    (font, size, cell): (FontKind, f32, f32),
+    (x, baseline): (f32, f32),
+    (chars, col): (&[char], usize),
+    color: Color,
+    clip: Rect,
+) -> usize {
+    let c = chars[col];
+    let next = chars.get(col + 1).copied();
+    if !next.is_some_and(|next| winc_emoji::may_join(c, next)) {
+        let cells = text::char_cells(c, 0, 1).max(1);
+        frame.cell_char(font, size, x, baseline, cell, cells, c, color, clip);
+        return 1;
+    }
+    let len = winc_emoji::sequence_len(chars[col..].iter().copied());
+    let span = text::sequence_cells(chars[col..col + len].iter().copied(), 0, 1).max(1);
+    let unit: String = chars[col..col + len].iter().collect();
+    if len == 1 || !frame.cell_sequence(font, size, x, baseline, cell, span, &unit, color, clip) {
+        frame.cell_char(font, size, x, baseline, cell, span, c, color, clip);
+    }
+    len
+}
+
+/// 返回 `chars` 中各字符在等宽网格上占的格数，制表符按 `tab_width` 计。
+///
+/// 与 [`text::Behind::cells`] 的区别：控制字符和孤立的组合符号占 1 格，
+/// 只有 emoji 序列的后续字符占 0 格。用于输入法组字和定义列表中的预览，其中每个字符都必须可见。
+pub(in crate::view) fn loose_cells(chars: &[char], tab_width: usize) -> Vec<usize> {
+    let mut behind = text::Behind::default();
+    let mut cells = 0;
+    (chars.iter().enumerate())
+        .map(|(col, &c)| {
+            let before = |back: usize| col.checked_sub(back).map(|k| chars[k]);
+            let member = winc_emoji::joined((before(2), before(1)), c);
+            let width = behind.cells(c, cells, tab_width);
+            let width = if member { width } else { width.max(1) };
+            cells += width;
+            width
+        })
+        .collect()
 }

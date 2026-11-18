@@ -9,6 +9,7 @@ impl App {
     pub(in crate::app) fn on_mouse_move(&mut self, x: f32, y: f32) {
         self.pointer.mouse = (x, y);
         self.update_scrollbar_hover(x, y);
+        self.track_pdf_tools(x, y);
 
         // 鼠标离开顶栏时解除关闭标签期间锁定的宽度，标签重新排布。
         if y >= TOP_BAR_END && self.tabs.width_lock.take().is_some() {
@@ -72,7 +73,7 @@ impl App {
         if self.tabs.drag.is_some() {
             self.drag_tab(x);
         }
-        self.drag_terminal_tab(x);
+        self.drag_terminal_tab(self.terminal.strip.along((x, y)));
 
         self.set_hover(self.hover_at(x, y));
         let code = self
@@ -318,6 +319,14 @@ impl App {
                 grab,
             } => self.drag_markdown_table_scrollbar(x, grab),
             Drag::Scrollbar {
+                bar: Scrollbar::MarkdownToc,
+                grab,
+            } => self.drag_toc_scrollbar(y, grab),
+            Drag::Scrollbar {
+                bar: bar @ (Scrollbar::Table | Scrollbar::TableHorizontal),
+                grab,
+            } => self.drag_table_scrollbar(bar == Scrollbar::TableHorizontal, (x, y), grab),
+            Drag::Scrollbar {
                 bar: Scrollbar::PdfStrip,
                 grab,
             } => {
@@ -412,8 +421,10 @@ impl App {
         let t = self.layout.text;
         let scrolled = self.scroll_while_dragging(Some(x), y);
 
-        if let Some(pos) = self.pos_at(x.clamp(t.x, t.right()), y.clamp(t.y, t.bottom() - 1.0))
-            && let Some(doc) = self.editor.active_mut()
+        if let Some(pos) = self.pos_at(
+            x.clamp(t.x, t.right()),
+            y.clamp(t.y, (t.bottom() - 1.0).max(t.y)),
+        ) && let Some(doc) = self.editor.active_mut()
         {
             doc.selection = if !by_word {
                 Selection::new(origin.0, pos)
@@ -532,7 +543,7 @@ impl App {
         let t = self.layout.text;
         let scrolled = self.scroll_while_dragging(None, y);
 
-        if let Some(pos) = self.pos_at(x, y.clamp(t.y, t.bottom() - 1.0))
+        if let Some(pos) = self.pos_at(x, y.clamp(t.y, (t.bottom() - 1.0).max(t.y)))
             && let Some(doc) = self.editor.active_mut()
         {
             let line = doc.text().pos_to_line_col(pos).0;

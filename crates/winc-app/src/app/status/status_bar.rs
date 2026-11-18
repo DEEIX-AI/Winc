@@ -5,7 +5,7 @@
 
 use winc_core::{Indent, LineEnding};
 use winc_editor::encoding::CHOICES;
-use winc_editor::{DocumentId, Encoding, EncodingRead};
+use winc_editor::{DocumentId, Encoding, EncodingRead, PreviewMode};
 use winc_i18n::t;
 
 use super::*;
@@ -36,6 +36,8 @@ pub enum StatusItem {
     Settings,
     /// 后台检查找到了新版本：点了打开更新窗口。
     Update,
+    /// 只读开关：菜单中可把当前文件或全部文件设为只读，或恢复为可以编辑。
+    ReadOnly,
 }
 
 /// 返回状态栏上显示的缩进文案，例如「空格: 4」「制表符长度: 4」。
@@ -85,6 +87,7 @@ impl App {
             (StatusItem::LineEnding, Some(id)) => MenuTarget::LineEnding(id),
             (StatusItem::Encoding, Some(id)) => MenuTarget::Encoding(id),
             (StatusItem::Language, Some(id)) => MenuTarget::Language(id),
+            (StatusItem::ReadOnly, Some(id)) => MenuTarget::ReadOnly(id),
             (
                 StatusItem::Branch
                 | StatusItem::Terminal
@@ -107,6 +110,8 @@ impl App {
             return;
         }
         match command {
+            MenuCommand::ReadOnly(on) => self.set_read_only(id, on),
+            MenuCommand::ReadOnlyAll(on) => self.set_read_only_all(on),
             MenuCommand::IndentUsingSpaces => self.use_indent(false),
             MenuCommand::IndentUsingTabs => self.use_indent(true),
             MenuCommand::IndentSize(size) => {
@@ -286,6 +291,14 @@ impl App {
     ///
     /// 文件之后改名、另存为时按新的文件名重新识别。
     pub(in crate::app) fn use_language(&mut self, language: &'static winc_syntax::Language) {
+        // 预览或分栏中换成预览方式不同的语言时，先回到源代码。
+        let leaves = self.editor.active().is_some_and(|doc| {
+            doc.preview_mode() != PreviewMode::Source
+                && winc_editor::PreviewKind::of(language) != doc.preview_kind()
+        });
+        if leaves {
+            self.set_preview_mode(PreviewMode::Source);
+        }
         if let Some(doc) = self.editor.active_mut() {
             doc.choose_language(language);
         }

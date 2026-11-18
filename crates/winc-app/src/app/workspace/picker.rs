@@ -435,7 +435,12 @@ impl App {
             self.picker_invalidate();
         }
 
-        if self.overlays.picker.index.root() != Some(root.as_path()) {
+        if !self
+            .overlays
+            .picker
+            .index
+            .covers(&root, &self.extra_folders())
+        {
             self.overlays.picker.index.cancel();
             self.build_index(&root);
         }
@@ -639,14 +644,15 @@ impl App {
     ///
     /// 已有旧表时保留旧表，新表建好之前面板仍可使用，不会变空。测试中没有事件循环，同步建立。
     fn build_index(&mut self, root: &Path) {
+        let extra = self.extra_folders();
         let Some(proxy) = self.link.proxy.clone() else {
-            self.overlays.picker.index = FileIndex::collect_now(root);
+            self.overlays.picker.index = FileIndex::collect_now_with(root, &extra);
             return;
         };
-        if self.overlays.picker.index.root() == Some(root) {
+        if self.overlays.picker.index.covers(root, &extra) {
             self.overlays.picker.index.refresh();
         } else {
-            self.overlays.picker.index = FileIndex::spawn(root, move || {
+            self.overlays.picker.index = FileIndex::spawn_with(root, &extra, move || {
                 let _ = proxy.send_event(UserEvent::Indexed);
             });
         }
@@ -716,7 +722,7 @@ pub struct Picker {
     /// 面板列出分支（分支选择器）时的各行。
     pub(crate) branch_rows: Option<Vec<crate::app::git::branch::picker::BranchRow>>,
     /// 面板列出位置（位置选择器）时的各行。
-    pub(crate) location_rows: Option<Vec<crate::app::git::location_picker::LocationRow>>,
+    pub(crate) location_rows: Option<Vec<crate::app::git::location_picker::Place>>,
     /// 面板是否列出最近打开的目录（`⌃R`）；为真时 `Picker::hits` 是最近列表中的下标。
     pub(crate) folders: bool,
     /// 面板是否列出语言（更改文件的语言）；为真时 `Picker::hits` 的含义见

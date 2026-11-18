@@ -130,6 +130,7 @@ impl SettingsPage {
                     Setting::AutoSave,
                     Setting::HotExit,
                     Setting::RestoreFolder,
+                    Setting::DropFolder,
                     Setting::PreviewOnClick,
                 ]),
                 plain(vec![Setting::Outline, Setting::CompactFolders]),
@@ -157,9 +158,11 @@ impl SettingsPage {
                         Setting::TerminalShell,
                         Setting::TerminalPrompt,
                         Setting::TerminalShellIntegration,
+                        Setting::TerminalApplicationPriority,
                     ]),
                     plain(vec![
                         Setting::TerminalPosition,
+                        Setting::TerminalTabPosition,
                         Setting::TerminalFont,
                         Setting::TerminalSize,
                     ]),
@@ -167,10 +170,12 @@ impl SettingsPage {
                 ]
             }
             SettingsPage::Git => vec![
+                plain(vec![Setting::GitPath, Setting::GitOpenWorktree]),
                 plain(vec![Setting::GitStagingArea, Setting::GitTree]),
                 plain(vec![Setting::DiffInline, Setting::GitInlineBlame]),
                 plain(vec![
                     Setting::GitConfirmPush,
+                    Setting::GitRememberCredentials,
                     Setting::GitAutoFetch,
                     Setting::GitSystemProxy,
                 ]),
@@ -365,6 +370,8 @@ pub enum Setting {
     TerminalShell,
     /// 终端面板的位置：编辑区下方或右侧。
     TerminalPosition,
+    /// 终端标签的位置：顶部或右侧。
+    TerminalTabPosition,
     /// 终端字体。
     TerminalFont,
     /// 终端字号。
@@ -377,12 +384,16 @@ pub enum Setting {
     TerminalPrompt,
     /// 注入 shell 集成，按命令分块。
     TerminalShellIntegration,
+    /// 暂停内容增强的快捷键，保留终端管理和复制、粘贴。
+    TerminalApplicationPriority,
     /// 终端中用作 Meta 键的 ⌥（只在 macOS 上列出）。
     TerminalOptionAsMeta,
     /// Git 模块的开关。
     GitModule,
     /// 发布、推送或同步分支前确认（`git.confirmPush`）。
     GitConfirmPush,
+    /// 允许记住 HTTP(S) 密码（`git.rememberCredentials`）。
+    GitRememberCredentials,
     /// `git` 跟随系统的代理设置（`git.systemProxy`）。
     GitSystemProxy,
     /// 光标所在行末尾的追溯提示（`git.inlineBlame`）。
@@ -393,6 +404,12 @@ pub enum Setting {
     GitTree,
     /// 提交视图显示暂存区（`git.stagingArea`）；关闭时用勾选决定提交的内容。
     GitStagingArea,
+    /// 点击工作树时在哪个窗口打开它（`git.openWorktree`）。
+    GitOpenWorktree,
+    /// 把目录拖进已打开目录的窗口时怎样处理（`dropFolder`）。
+    DropFolder,
+    /// `git` 程序的路径（`git.path`）；未设置时在 `PATH` 里查找。
+    GitPath,
     /// 终端模块的开关。
     TerminalModule,
     /// 远程模块的开关。
@@ -460,6 +477,7 @@ impl Setting {
             | Setting::AutoSave
             | Setting::HotExit
             | Setting::RestoreFolder
+            | Setting::DropFolder
             | Setting::CompactFolders
             | Setting::PreviewOnClick
             | Setting::StickyScroll
@@ -493,15 +511,20 @@ impl Setting {
             | Setting::AddFixLanguage => SettingsPage::Format,
             Setting::TerminalShell
             | Setting::TerminalPosition
+            | Setting::TerminalTabPosition
             | Setting::TerminalFont
             | Setting::TerminalSize
             | Setting::TerminalCopyOnSelect
             | Setting::TerminalConfirmClose
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
+            | Setting::TerminalApplicationPriority
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
             Setting::GitStagingArea
+            | Setting::GitOpenWorktree
+            | Setting::GitPath
             | Setting::GitConfirmPush
+            | Setting::GitRememberCredentials
             | Setting::GitSystemProxy
             | Setting::GitInlineBlame
             | Setting::GitAutoFetch
@@ -532,6 +555,7 @@ impl Setting {
             Setting::AutoSave => t!("settings-auto-save"),
             Setting::HotExit => t!("settings-hot-exit"),
             Setting::RestoreFolder => t!("settings-restore-folder"),
+            Setting::DropFolder => t!("settings-drop-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
             Setting::VimMode => t!("settings-vim-mode"),
             Setting::VimClipboard => t!("settings-vim-clipboard"),
@@ -572,20 +596,25 @@ impl Setting {
             Setting::AddLanguage | Setting::AddFixLanguage => t!("settings-add-language"),
             Setting::TerminalShell => t!("settings-terminal-shell"),
             Setting::TerminalPosition => t!("settings-terminal-position"),
+            Setting::TerminalTabPosition => t!("settings-terminal-tab-position"),
             Setting::TerminalFont => t!("settings-terminal-font"),
             Setting::TerminalSize => t!("settings-terminal-size"),
             Setting::TerminalCopyOnSelect => t!("settings-terminal-copy-on-select"),
             Setting::TerminalConfirmClose => t!("settings-terminal-confirm-close"),
             Setting::TerminalPrompt => t!("settings-terminal-prompt"),
             Setting::TerminalShellIntegration => t!("settings-terminal-shell-integration"),
+            Setting::TerminalApplicationPriority => t!("settings-terminal-application-priority"),
             Setting::TerminalOptionAsMeta => t!("settings-terminal-option-as-meta"),
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
+            Setting::GitRememberCredentials => t!("settings-git-remember-credentials"),
             Setting::GitSystemProxy => t!("settings-git-system-proxy"),
             Setting::GitInlineBlame => t!("settings-git-inline-blame"),
             Setting::GitAutoFetch => t!("settings-git-auto-fetch"),
             Setting::GitTree => t!("settings-git-tree"),
             Setting::GitStagingArea => t!("settings-git-staging-area"),
+            Setting::GitOpenWorktree => t!("settings-git-open-worktree"),
+            Setting::GitPath => t!("settings-git-path"),
             Setting::TerminalModule => t!("settings-terminal-module"),
             Setting::RemoteModule => t!("settings-remote-module"),
             Setting::KeySearch => t!("settings-key-search"),
@@ -609,6 +638,7 @@ impl Setting {
             Setting::AutoSave => Some(t!("settings-auto-save-desc")),
             Setting::HotExit => Some(t!("settings-hot-exit-desc")),
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
+            Setting::DropFolder => Some(t!("settings-drop-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
             Setting::VimMode => Some(t!("settings-vim-mode-desc")),
             Setting::VimClipboard => Some(t!("settings-vim-clipboard-desc")),
@@ -641,11 +671,15 @@ impl Setting {
             Setting::GitModule => Some(t!("settings-git-module-desc")),
             Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
+            Setting::GitRememberCredentials => Some(t!("settings-git-remember-credentials-desc")),
             Setting::GitSystemProxy => Some(t!("settings-git-system-proxy-desc")),
             Setting::GitInlineBlame => Some(t!("settings-git-inline-blame-desc")),
             Setting::GitAutoFetch => Some(t!("settings-git-auto-fetch-desc")),
             Setting::GitTree => Some(t!("settings-git-tree-desc")),
             Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
+            Setting::GitOpenWorktree => Some(t!("settings-git-open-worktree-desc")),
+            Setting::GitPath => Some(t!("settings-git-path-desc")),
+            Setting::TerminalShell => Some(t!("settings-terminal-shell-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
             Setting::TerminalPrompt => Some(t!("settings-terminal-prompt-desc")),
@@ -653,6 +687,9 @@ impl Setting {
                 Some(t!("settings-terminal-shell-integration-desc"))
             }
             Setting::TerminalOptionAsMeta => Some(t!("settings-terminal-option-as-meta-desc")),
+            Setting::TerminalApplicationPriority => {
+                Some(t!("settings-terminal-application-priority-desc"))
+            }
             _ => None,
         };
         text.map(Cow::Borrowed)
@@ -696,6 +733,7 @@ impl Setting {
             | Setting::FixOnSave
             | Setting::GitModule
             | Setting::GitConfirmPush
+            | Setting::GitRememberCredentials
             | Setting::GitSystemProxy
             | Setting::GitInlineBlame
             | Setting::GitAutoFetch
@@ -706,10 +744,12 @@ impl Setting {
             | Setting::TerminalCopyOnSelect
             | Setting::TerminalConfirmClose
             | Setting::TerminalPrompt
-            | Setting::TerminalShellIntegration => SettingControl::Switch,
-            Setting::FormatCommand(_) | Setting::FixCommand(_) | Setting::TerminalShell => {
-                SettingControl::Command
-            }
+            | Setting::TerminalShellIntegration
+            | Setting::TerminalApplicationPriority => SettingControl::Switch,
+            Setting::FormatCommand(_)
+            | Setting::FixCommand(_)
+            | Setting::TerminalShell
+            | Setting::GitPath => SettingControl::Command,
             Setting::SkipOnSave
             | Setting::Language
             | Setting::BackgroundImage
@@ -719,7 +759,10 @@ impl Setting {
             | Setting::RenderWhitespace
             | Setting::VimClipboard
             | Setting::TerminalPosition
-            | Setting::TerminalOptionAsMeta => SettingControl::Choice,
+            | Setting::TerminalTabPosition
+            | Setting::TerminalOptionAsMeta
+            | Setting::DropFolder
+            | Setting::GitOpenWorktree => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Product,
@@ -784,6 +827,27 @@ pub fn text_width_label(choice: winc_config::TextWidth) -> &'static str {
         Standard => t!("settings-text-width-standard"),
         Wide => t!("settings-text-width-wide"),
         Full => t!("settings-text-width-full"),
+    }
+}
+
+/// 返回「打开工作树」设置中选项 `choice` 的名字。
+pub fn drop_folder_label(choice: winc_config::FolderDrop) -> &'static str {
+    use winc_config::FolderDrop::{Add, Ask, Open};
+
+    match choice {
+        Ask => t!("settings-git-open-worktree-ask"),
+        Add => t!("settings-drop-folder-add"),
+        Open => t!("settings-drop-folder-open"),
+    }
+}
+
+/// 返回打开工作树的方式 `choice` 在设置中显示的名称。
+pub fn open_worktree_label(choice: winc_config::WorktreeOpen) -> &'static str {
+    use winc_config::WorktreeOpen::{Ask, CurrentWindow, NewWindow};
+    match choice {
+        Ask => t!("settings-git-open-worktree-ask"),
+        NewWindow => t!("settings-git-open-worktree-new"),
+        CurrentWindow => t!("settings-git-open-worktree-current"),
     }
 }
 
@@ -1335,7 +1399,11 @@ fn row_height(
             let tile = theme_tile_size((row.w - SETTINGS_INSET * 2.0).max(0.0));
             rows * tile.1 + (rows - 1.0) * THEME_GRID_GAP + THEME_GRID_PAD * 2.0
         }
-        SettingControl::Command if setting != Setting::TerminalShell => SETTINGS_ROW_TALL,
+        SettingControl::Command
+            if !matches!(setting, Setting::TerminalShell | Setting::GitPath) =>
+        {
+            SETTINGS_ROW_TALL
+        }
         SettingControl::Product => SETTINGS_PRODUCT_H,
         _ => match setting.description() {
             Some(text) => {

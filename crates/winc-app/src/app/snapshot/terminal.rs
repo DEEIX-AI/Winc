@@ -6,6 +6,8 @@ mod editor;
 mod find;
 mod input;
 mod run;
+mod shortcuts;
+mod tabs;
 
 use super::editor::navigation::press;
 use super::*;
@@ -325,19 +327,10 @@ fn tabs_switch_close_and_take_the_panel_with_the_last_one() {
     let _ = add_tab(&mut app, "vim", "three");
     assert_eq!(app.terminal.active, 2);
 
-    // ⌘⇧] 和 ⌘⇧[（其他系统 Ctrl+PageDown、Ctrl+PageUp）在终端里切终端的标签，到头绕回去；
+    // ⌘⇧] 和 ⌘⇧[（其他系统 Ctrl+Shift+]、Ctrl+Shift+[）在终端里切终端的标签，到头绕回去；
     // 编辑区的标签不动。
     let step = |app: &mut App, next: bool| {
-        if cfg!(target_os = "macos") {
-            press(app, &["cmd", "shift"], Char(if next { ']' } else { '[' }))
-        } else {
-            let key = if next {
-                crate::keymap::KeyCode::PageDown
-            } else {
-                crate::keymap::KeyCode::PageUp
-            };
-            press(app, &["ctrl"], key)
-        }
+        press(app, &["cmd", "shift"], Char(if next { ']' } else { '[' }))
     };
     let doc = app.editor.active;
     assert!(step(&mut app, true));
@@ -654,7 +647,9 @@ fn snapshot_terminal() {
         "\x1b[38;5;208m256 色\x1b[0m \x1b[38;2;120;200;255m真彩色\x1b[0m \x1b[7m 反色 \x1b[0m ",
         "\x1b[2m淡色\x1b[0m \x1b[3m斜体\x1b[0m \x1b[9m删除线\x1b[0m \x1b[4:3;58;5;1m波浪线\x1b[0m\r\n",
         "\x1b[42;30m 全部通过 \x1b[0m 731 passed\r\n",
-        "\x1b[1;32m➜\x1b[0m  \x1b[36mwinc\x1b[0m echo 中文和 emoji 😀",
+        "\x1b[1;32m➜\x1b[0m  \x1b[36mwinc\x1b[0m echo 中文和 emoji 😀 ",
+        // emoji 序列各占两格：变体选择符、肤色、连接符连起来的组合、国旗。
+        "❤\u{fe0f} 👍\u{1f3fd} 👨\u{200d}👩\u{200d}👧 🇨🇳|",
     );
     for dark in [false, true] {
         let mut app = app_with(&dir.join("short.rs"), dark);
@@ -1105,9 +1100,9 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     let session = app.terminal_session().unwrap();
     assert_eq!(session.shells, ["", "/bin/bash"]);
 
-    // 退出后重新启动：还是这个 shell。
+    // 异常退出的标签留着，重新启动后还是这个 shell（正常退出的标签直接关闭）。
     let id = app.terminal.tab().unwrap().id;
-    app.terminal_message(FromHelper::Exited { tab: id, code: 0 });
+    app.terminal_message(FromHelper::Exited { tab: id, code: 1 });
     app.restart_terminal_tab();
     app.relayout();
     assert_eq!(started(&app, &log, b"/bin/bash"), 2);
@@ -1159,7 +1154,7 @@ fn the_new_button_stays_put_once_the_tabs_narrow() {
     for _ in 0..30 {
         let _ = add_tab(&mut app, "cargo", "");
         paint(&mut app);
-        let widths = &app.terminal.strip.widths;
+        let widths = &app.terminal.strip.sizes;
         if widths.iter().any(|&w| w < TAB_MIN) {
             narrowed += 1;
             let at = *pinned.get_or_insert(new(&app));
@@ -1167,7 +1162,7 @@ fn the_new_button_stays_put_once_the_tabs_narrow() {
         }
     }
     assert!(narrowed > 5, "覆盖了变窄的整个过程：{narrowed}");
-    let widths = &app.terminal.strip.widths;
+    let widths = &app.terminal.strip.sizes;
     assert!(widths.iter().all(|&w| w == TAB_SQUEEZED));
 }
 

@@ -85,6 +85,7 @@ settings-terminal-module = Terminal
 settings-remote-module = SSH Remote (Experimental)
 settings-terminal-shell = Default Shell
 settings-terminal-position = Panel Position
+settings-terminal-tab-position = Tab Position
 settings-terminal-font = Font
 settings-terminal-size = Font Size
 settings-terminal-copy-on-select = Copy on Select
@@ -93,10 +94,12 @@ settings-git-system-proxy = Use System Proxy
 settings-git-inline-blame = Current Line Blame
 settings-git-auto-fetch = Auto Fetch
 settings-git-tree = Show Changes as Tree
+settings-git-remember-credentials = Remember Passwords
 settings-git-confirm-push = Confirm Before Pushing
 settings-git-staging-area = Staging Area
 settings-terminal-prompt = Winc Prompt
 settings-terminal-shell-integration = Shell Integration
+settings-terminal-application-priority = Terminal Application Priority
 settings-terminal-option-as-meta = Meta Key
 settings-key-search = Search Shortcuts
 
@@ -107,6 +110,18 @@ settings-hot-exit-desc = Quit without confirming each file and restore unsaved c
 settings-restore-folder-desc = Reopen the last folder and its tabs on launch
 settings-sticky-scroll-desc = Pin the current function, class or heading to the top while scrolling
 settings-vim-mode-desc = Use Vim modes and keys in the editor
+settings-git-path = Git Program
+settings-git-path-auto = Automatic
+settings-git-path-desc = Path to the Git executable; found on PATH when empty
+settings-git-open-worktree = Open Worktrees In
+settings-git-open-worktree-ask = Always Ask
+settings-git-open-worktree-new = New Window
+settings-git-open-worktree-current = Current Window
+settings-git-open-worktree-desc = Which window a clicked worktree opens in
+settings-drop-folder = Dropped Folders
+settings-drop-folder-add = Add to Window
+settings-drop-folder-open = Don’t Add
+settings-drop-folder-desc = When not added, a folder opens from the editor area and is copied from the file tree
 settings-vim-clipboard-desc = When yanked or deleted text goes to the system clipboard
 settings-vim-relative-number-desc = Show the line number on the current line and distances on the others
 settings-vim-yank-highlight-desc = Briefly highlight the text that was just yanked
@@ -160,6 +175,7 @@ settings-git-system-proxy-desc = Use the system proxy for network operations whe
 settings-git-inline-blame-desc = Show the author, time and message of the last change at the end of the caret line
 settings-git-auto-fetch-desc = Fetch from remotes in the background every 3 minutes
 settings-git-tree-desc = Group changes by folder; when off, list every file
+settings-git-remember-credentials-desc = Keep verified HTTPS passwords in the system keychain; turning this off removes the saved ones
 settings-git-confirm-push-desc = List the target repository and outgoing commits before pushing
 settings-git-staging-area-desc = Choose changes to commit with the staging area; when off, with checkboxes
 settings-terminal-module-desc-key = Terminal panel below the editor ({ $key }); starts a helper process when opened
@@ -167,11 +183,13 @@ settings-terminal-module-desc = Terminal panel below the editor; starts a helper
 settings-remote-module-desc = Open folders on remote hosts over SSH, running a server process on the host while connected
 settings-terminal-copy-on-select-desc = Copy selected text to the clipboard automatically
 settings-terminal-confirm-close-desc = Ask before closing a tab that’s still running a program
+settings-terminal-shell-desc = Shell for new terminals; quote paths that contain spaces
 settings-terminal-prompt-desc = Replace the default prompt with the folder, Git branch and exit status
 settings-terminal-shell-integration-desc = { $platform ->
-    [windows] Split WSL zsh, bash and fish output into command blocks to fold and jump between
-   *[other] Split zsh, bash and fish output into command blocks to fold and jump between
+    [windows] Group WSL output by command and load Python environments automatically
+   *[other] Group output by command and load Python environments automatically
 }
+settings-terminal-application-priority-desc = Pass shortcuts to the terminal application, keeping terminal management, copy and paste
 settings-terminal-option-as-meta-desc = Send an Esc prefix instead of typing special characters with the chosen ⌥
 
 ## Setting values and hints.
@@ -186,9 +204,11 @@ settings-font-others = Other Fonts
 settings-font-fallbacks = Fallback Fonts
 settings-terminal-shell-default = System Default
 settings-terminal-shell-custom = Custom Command…
-settings-terminal-shell-placeholder = Enter a command; quote paths that contain spaces
+settings-terminal-shell-placeholder = Enter a command
 settings-terminal-position-bottom = Bottom
 settings-terminal-position-right = Right
+settings-terminal-tab-position-top = Top
+settings-terminal-tab-position-right = Right
 settings-terminal-font-default = Match Editor
 settings-terminal-option-as-meta-left = Left ⌥
 settings-terminal-option-as-meta-right = Right ⌥

@@ -842,6 +842,16 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
     use crate::keymap::Action;
     use crate::layout::with_key;
     match app.pointer.hover {
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::New) => {
+            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            Some((rect, t!("terminal-new").to_owned()))
+        }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Tab(i))
+            if app.terminal_tab_list().is_some() =>
+        {
+            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            Some((rect, app.terminal.tabs.get(i)?.label().to_owned()))
+        }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::ShellMenu) => {
             let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
             Some((rect, t!("terminal-shell-select").to_owned()))
@@ -882,7 +892,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
             Some((
                 rect,
-                with_key(t!("terminal-hide-panel"), Some(Action::ToggleTerminal)),
+                with_key(t!("terminal-hide-panel"), Some(Action::ToggleTerminalPanel)),
             ))
         }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Run(button)) => {
@@ -911,7 +921,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             } else {
                 t!("terminal-show-panel")
             };
-            Some((rect, with_key(label, Some(Action::ToggleTerminal))))
+            Some((rect, with_key(label, Some(Action::ToggleTerminalPanel))))
         }
         Hover::Status(item @ crate::app::StatusItem::Remote) => {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
@@ -930,6 +940,11 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 None => t!("workspace-start-remote").to_owned(),
             };
             Some((rect, with_key(&label, Some(Action::RemoteConnect))))
+        }
+        Hover::Status(item @ crate::app::StatusItem::ReadOnly) => {
+            let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
+            let label = with_key(t!("cmd-toggle-read-only"), Some(Action::ToggleReadOnly));
+            Some((rect, label))
         }
         Hover::Status(item @ crate::app::StatusItem::Update) => {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
@@ -1058,16 +1073,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
-        // 选择器开着时每一行都写着，不再提示。
-        Hover::Commit(target @ CommitTarget::Location) if !app.picker_lists_locations() => {
+        // 工作树一组收起时各行不可见：其他工作树有更改时在标题上提示。
+        Hover::Commit(target @ CommitTarget::Worktrees) if !app.git.commit.worktrees.open => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let count = app.git_other_changes();
-            // 按钮上写的是现在在哪个工作树（主工作树上只有图标）；其他工作树有更改时提示它。
-            let label = match count {
-                0 => app.git_worktree_label(),
-                count => t!("git-tip-other-worktrees", count = count),
-            };
-            Some((rect, label))
+            (count > 0).then(|| (rect, t!("git-tip-other-worktrees", count = count)))
+        }
+        Hover::Commit(target @ CommitTarget::WorktreeNew) => {
+            let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
+            Some((rect, t!("git-branch-picker-new-worktree").to_owned()))
         }
         Hover::Commit(CommitTarget::Location) => None,
         // 历史差异文件列表的显示方式按钮：写明点击后切换成哪一种。

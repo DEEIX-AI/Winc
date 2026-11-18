@@ -173,6 +173,21 @@ pub(crate) struct MarkdownPreview {
     pub last_table: Option<(usize, usize)>,
     /// 标题列表展开时淡入的时钟；不在淡入中时为 `None`。
     pub toc_fade: Option<crate::app::animation::Clock>,
+    /// 鼠标进入标题指示条的时刻，满 `TOC_HOVER_DELAY` 后列表展开；
+    /// 不在指示条和标题列表上时为 `None`。
+    pub toc_rest: Option<std::time::Instant>,
+    /// 本次停留是否已展开标题列表。
+    pub toc_shown: bool,
+    /// 正文左边缘在钉住过渡结束后的位置（窗口坐标，逻辑像素）。
+    pub toc_left: f32,
+    /// 钉住过渡开始时正文左边缘的位置（窗口坐标，逻辑像素），终点是
+    /// [`Self::toc_left`]；不在过渡中时为 `None`。
+    pub toc_slide: Option<f32>,
+    /// 标题列表收起过渡的时钟；不在收起中时为 `None`。
+    pub toc_close: Option<crate::app::animation::Clock>,
+    /// 悬停展开的标题列表上边缘相对预览区域上边缘的位置（逻辑像素）：展开时确定，
+    /// 滚动预览时不变，收起后为 `None`。
+    pub toc_top: Option<f32>,
     /// 标题列表钉住（`true`）或取消钉住（`false`）的过渡时钟；不在过渡中时为 `None`。
     pub toc_pin: Option<(bool, crate::app::animation::Clock)>,
     /// 在标题列表中点击过的标题（`toc_tops` 的序号）和点击后的滚动位置。
@@ -182,6 +197,10 @@ pub(crate) struct MarkdownPreview {
     pub toc_picked: Option<(usize, f32)>,
     /// 上一帧标题指示条标出的当前所在一节（`toc_tops` 的序号）；没有时为 `None`。
     pub toc_current: Option<usize>,
+    /// 展开的标题列表列出的一段，供滚轮滚动。
+    pub toc_list: scroll::TocList,
+    /// 分帧排版的状态。
+    pub catch_up: scroll::CatchUp,
     /// 点击过的标题在正文中的底色：标题的序号与淡出的时钟。
     pub toc_flash: Option<(usize, crate::app::animation::Clock)>,
     /// 跳转到的脚注或脚注引用在正文中的底色：范围（上边缘和高度，相对内容顶部，逻辑像素）与
@@ -309,9 +328,17 @@ impl Default for MarkdownPreview {
             toggled_now: None,
             pending_anchor: None,
             toc_fade: None,
+            toc_rest: None,
+            toc_shown: false,
+            toc_left: 0.0,
+            toc_slide: None,
+            toc_close: None,
+            toc_top: None,
             toc_pin: None,
             toc_picked: None,
             toc_current: None,
+            toc_list: scroll::TocList::default(),
+            catch_up: scroll::CatchUp::default(),
             toc_flash: None,
             anchor_flash: None,
             diagram: None,
@@ -757,7 +784,7 @@ impl App {
             .and_then(|d| d.path.as_deref())
             .and_then(|path| local_target(path, &url));
         match local {
-            Some(path) if winc_backend::fs::is_file(&path) => self.open_markdown_file(&path, &url),
+            Some(path) if self.may_be_file(&path) => self.open_markdown_file(&path, &url),
             Some(_) => self.flash(t!("preview-markdown-link-file-not-found")),
             None => {
                 if let Err(e) = system::open_url(&url) {
@@ -933,7 +960,7 @@ impl App {
             && self
                 .editor
                 .active()
-                .is_some_and(|d| d.edits_text() && !d.readonly)
+                .is_some_and(|d| d.edits_text() && d.readonly_reason().is_none())
     }
 
     /// 重排后开始过渡动画（见 [`BlockMotion`]）。
@@ -1150,7 +1177,7 @@ impl App {
         } else if y > area.bottom() {
             self.scroll_markdown(-(y - area.bottom()).min(60.0));
         }
-        let y = y.clamp(area.y, area.bottom() - 1.0);
+        let y = y.clamp(area.y, (area.bottom() - 1.0).max(area.y));
         if self.markdown_live() {
             self.drag_live(x, y);
             self.request_redraw();

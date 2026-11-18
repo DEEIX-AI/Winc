@@ -46,7 +46,7 @@ pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
     CommitRows, CommitScope, CommitSort, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, OtherGroup,
-    OtherRow, STASH_GAP, StashLine, StashView, SyncState,
+    OtherRow, STASH_GAP, StashLine, StashView, SyncState, WorktreeLine,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -78,7 +78,7 @@ pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
 };
-pub(crate) use workspace::recent::{Parent, folder_label, parents};
+pub(crate) use workspace::recent::{Parent, parents};
 pub use workspace::session::StartAction;
 pub use workspace::tab_drag::{TabDrag, TabSlide};
 pub use workspace::tool_fold::ToolFold;
@@ -300,6 +300,8 @@ pub enum UserEvent {
     TerminalClose(u16),
     /// 确认框中确认重新启动参数所指的终端标签（伪终端已断开，其中的程序可能仍在运行）。
     TerminalRestart(u16),
+    /// 提示框中回答了是否为终端加载第一个参数所指的 Python 环境。
+    PythonEnvironment(PathBuf, bool),
     /// 需要授权的 `winc` 命令安装或卸载已结束。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     ShellCommandDone(crate::shell_command::Done),
@@ -313,6 +315,13 @@ pub enum UserEvent {
     GitLogConfirmed(git::log::LogConfirmed),
     /// 确认框中确认移除参数所指的工作树；第二个参数是一并删除的分支（勾选「同时删除分支」时）。
     GitRemoveWorktree(PathBuf, Option<String>),
+    /// 提示框中选定了打开工作树的方式：目录、是否在新窗口、是否记住。
+    GitOpenWorktree(PathBuf, bool, bool),
+    /// 拖放结束后询问拖入的目录怎样处理：目录，以及落在文件树上时的目标目录。
+    FolderDropAsk(PathBuf, Option<PathBuf>),
+    /// 对拖入目录的询问的答复：目录、文件树上的目标目录、是否加为附加目录（否则按落点处理）、
+    /// 是否记住这个选择。
+    FolderDropped(PathBuf, Option<PathBuf>, bool, bool),
     /// 后台已计算完一个文档的逐行追溯。
     GitBlame,
     /// 后台已检查或重读被其他程序修改的文件。
@@ -594,6 +603,8 @@ impl Hover {
                     CommitTarget::Log
                         | CommitTarget::Sync
                         | CommitTarget::Location
+                        | CommitTarget::WorktreeNew
+                        | CommitTarget::WorktreeMenu(_)
                         | CommitTarget::Refresh
                         | CommitTarget::More
                         | CommitTarget::Commit
@@ -1068,10 +1079,21 @@ impl App {
             return;
         }
 
-        // 鼠标移到预览的标题指示条上时，标题列表展开并淡入。
-        let toc = |h: Hover| matches!(h, Hover::MarkdownToc(_));
-        if toc(hover) && !toc(self.pointer.hover) {
-            self.preview.markdown.toc_fade = self.clock(animation::TOC_FADE);
+        // 鼠标进入标题指示条时开始计时，满 `TOC_HOVER_DELAY` 后由 `tick` 展开标题列表；
+        // 在指示条与列表之间移动不重新计时。
+        let toc = |h: Hover| {
+            matches!(
+                h,
+                Hover::MarkdownToc(_) | Hover::Scrollbar(Scrollbar::MarkdownToc)
+            )
+        };
+        if toc(hover) != toc(self.pointer.hover) {
+            // 鼠标离开时收起已展开的列表。
+            if self.preview.markdown.toc_shown {
+                self.preview.markdown.toc_close = self.clock(animation::TOC_FADE);
+            }
+            self.preview.markdown.toc_rest = toc(hover).then(Instant::now);
+            self.preview.markdown.toc_shown = false;
         }
         self.pointer.hover = hover;
         self.overlays.tooltip.since = hover.has_tooltip().then(Instant::now);

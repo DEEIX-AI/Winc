@@ -57,6 +57,16 @@ pub fn line_ending_menu(current: LineEnding, editable: bool) -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回状态栏只读菜单的菜单项。
+///
+/// `own` 表示文档自身已设为只读；`all` 表示窗口的全部文档已设为只读，此时文档自身的一项禁用。
+pub fn read_only_menu(own: bool, all: bool) -> Vec<MenuEntry> {
+    vec![
+        MenuEntry::Item(MenuCommand::ReadOnly(!own), !all),
+        MenuEntry::Item(MenuCommand::ReadOnlyAll(!all), true),
+    ]
+}
+
 /// 返回状态栏语言菜单的菜单项：有文件名（`named`）时第一项是按文件名识别，然后是纯文本，
 /// 其余语言按名字排序。
 pub fn document_language_menu(named: bool) -> Vec<MenuEntry> {
@@ -71,6 +81,31 @@ pub fn document_language_menu(named: bool) -> Vec<MenuEntry> {
     menu.push(Item(MenuCommand::UsePlainText, true));
     menu.extend((languages.into_iter()).map(|(i, _)| Item(MenuCommand::UseLanguage(i), true)));
     menu
+}
+
+/// 去掉 `menu` 中只能在本机执行的项，并合并因此相邻的分隔线。
+///
+/// 远端主机上的文件无法交给本机的文件管理器；`terminal` 为 `false`（终端模块关闭）时
+/// 「在终端中打开」只能启动本机的终端程序，同样去掉。
+pub fn without_local_only(menu: Vec<MenuEntry>, terminal: bool) -> Vec<MenuEntry> {
+    use MenuCommand::{LocationReveal, OpenInTerminal, Reveal};
+
+    let mut kept: Vec<MenuEntry> = Vec::with_capacity(menu.len());
+    for entry in menu {
+        let dropped = match &entry {
+            MenuEntry::Item(Reveal | LocationReveal, _) => true,
+            MenuEntry::Item(OpenInTerminal, _) => !terminal,
+            MenuEntry::Separator => matches!(kept.last(), None | Some(MenuEntry::Separator)),
+            _ => false,
+        };
+        if !dropped {
+            kept.push(entry);
+        }
+    }
+    if matches!(kept.last(), Some(MenuEntry::Separator)) {
+        kept.pop();
+    }
+    kept
 }
 
 /// 返回文件树菜单的菜单项。
@@ -208,6 +243,8 @@ pub fn log_commit_menu(enabled: bool, branch: &str, tags: &[&str]) -> Vec<MenuEn
         Item(LogCopyShortOid, true),
         Item(LogCopyMessage, true),
         Item(LogCopyPatch, true),
+        Separator,
+        Item(LogCompareRevision, true),
         Separator,
         Item(LogGoTo, true),
     ]);
@@ -526,6 +563,13 @@ pub fn locale_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回「打开工作树」菜单的菜单项，当前的选择打勾。
+pub fn open_worktree_menu() -> Vec<MenuEntry> {
+    (0..winc_config::WorktreeOpen::ALL.len())
+        .map(|i| MenuEntry::Item(MenuCommand::OpenWorktree(i), true))
+        .collect()
+}
+
 /// 返回「Vim 剪贴板」菜单的菜单项，当前的选择打勾。
 pub fn vim_clipboard_menu() -> Vec<MenuEntry> {
     (0..winc_config::VimClipboard::ALL.len())
@@ -573,6 +617,13 @@ pub fn background_menu() -> Vec<MenuEntry> {
 pub fn terminal_position_menu() -> Vec<MenuEntry> {
     [false, true]
         .map(|right| MenuEntry::Item(MenuCommand::TerminalPosition(right), true))
+        .into()
+}
+
+/// 返回终端「标签位置」菜单的菜单项：顶部、右侧，当前的选择打勾。
+pub fn terminal_tab_position_menu() -> Vec<MenuEntry> {
+    [false, true]
+        .map(|right| MenuEntry::Item(MenuCommand::TerminalTabPosition(right), true))
         .into()
 }
 

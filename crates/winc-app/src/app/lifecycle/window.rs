@@ -17,7 +17,8 @@ impl App {
     pub(crate) fn under_cursor(&self) -> bool {
         #[cfg(target_os = "macos")]
         if let Some(window) = &self.window.handle {
-            return crate::macos::under_cursor(window);
+            let log = &self.frame.frame_log;
+            return log.time_query(|| crate::macos::under_cursor(window));
         }
         true
     }
@@ -87,10 +88,10 @@ impl App {
     /// 打开 `targets` 里的文件（目录跳过：已经是本窗口的目录），`文件:行:列` 跳到该位置，再把
     /// 窗口切到前台。
     pub(crate) fn open_files(&mut self, targets: &[crate::cli::Target]) {
-        for target in targets
-            .iter()
-            .filter(|t| !winc_backend::fs::is_dir(&t.path))
-        {
+        for target in targets {
+            if self.is_folder(&target.path) {
+                continue;
+            }
             self.open_path(&target.path);
             if let Some(line) = target.line {
                 self.jump_to(line, target.col.unwrap_or(0), 0);
@@ -242,6 +243,7 @@ impl App {
     ///
     /// 窗口尺寸、面板宽度、标签或预览状态变化后调用；面板跟着焦点关闭也在这一步完成。
     pub(crate) fn relayout(&mut self) {
+        self.note_terminal_tab_position();
         // 面板打开以后换了标签（⌘W、切换标签、后退前进、新建文件）：面板里的符号、书签、用法
         // 都属于原来的文档，回车会在新标签里跳到错误的位置，所以关掉。`close_picker` 会再次
         // 调用本函数，那时面板已经关了。
@@ -571,6 +573,32 @@ impl App {
         l.search = Rect::default();
     }
 
+    /// 右上角的提示、冲突卡片和输入条所在的区域：平常是编辑区；面板铺满编辑区一栏时，以及从
+    /// 铺满还原的途中，是面板标签栏以下的内容区域。
+    pub(crate) fn overlay_area(&self) -> Rect {
+        let card = self.terminal_content_card();
+        let restoring = self.terminal.grow.is_some() && !self.terminal.maximized;
+        let covered = self.layout.editor.w <= 0.0 || restoring;
+        if !covered || card.w <= 0.0 || card.h <= 0.0 {
+            return self.layout.editor;
+        }
+        let top = card.y + terminal::header_height(card);
+        Rect::new(card.x, top, card.w, card.bottom() - top)
+    }
+
+    /// 右上角浮层的上边界（不含留白）：编辑区或面板的查找条打开时是查找条的下边。
+    pub(crate) fn overlay_top(&self) -> f32 {
+        let area = self.overlay_area();
+        if area != self.layout.editor {
+            return self.terminal_find_bar().map_or(area.y, |bar| bar.bottom());
+        }
+        if self.layout.search.h > 0.0 {
+            self.layout.search.bottom()
+        } else {
+            area.y
+        }
+    }
+
     /// 向渲染器声明下一帧的底色矩形（`view::base`），使其随窗口背景色一趟绘制。
     ///
     /// 同时让渲染器的背景图与配置一致（见 `App::sync_wallpaper`）。
@@ -639,6 +667,7 @@ impl App {
         let elapsed = started.elapsed();
         self.frame.renderer = Some(renderer);
         if !drawn {
+            self.frame.frame_log.frame_skipped();
             self.retry_frame(started);
             return;
         }
@@ -647,7 +676,9 @@ impl App {
         {
             let size = window.inner_size();
             let refresh = frame_interval(window);
-            (self.frame.frame_log).record(elapsed, refresh, (size.width, size.height));
+            let reclaimed = (self.frame.renderer.as_mut()).map_or(0, Renderer::take_reclaimed);
+            let size = (size.width, size.height);
+            (self.frame.frame_log).record(elapsed, refresh, size, reclaimed);
         }
         self.refresh_hover();
         // 命中测试区域随本帧的布局更新；两帧之间的落指与抬手由 `on_touch` 另行同步。

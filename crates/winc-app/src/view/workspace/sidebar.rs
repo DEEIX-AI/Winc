@@ -62,12 +62,9 @@ fn draw_commit_view(app: &mut App, frame: &mut Frame<'_>) {
     let share = app.log_tree_share();
     let version = (2.0 * share - 1.0).clamp(0.0, 1.0);
     let tools = (1.0 - 2.0 * share).clamp(0.0, 1.0);
-    // 项目栏的右端：提交视图在工具按钮（或位置按钮）之前，文件列表在提交号之前；上下文栏
-    // 自己会在右边留出 4 的间距。
-    let commit_right = app.with_log_tree_shown(false, |app| {
-        let tools = app.commit_parts().tools[0].0.x - 4.0;
-        git::commit::location_span(app, frame).map_or(tools, |(left, _)| left)
-    });
+    // 项目栏的右端：提交视图在工具按钮之前，文件列表在提交号之前；上下文栏自己会在右边留出
+    // 4 的间距。
+    let commit_right = app.with_log_tree_shown(false, |app| app.commit_parts().tools[0].0.x - 4.0);
     let right = match log_version_left(app, frame) {
         Some(left) => commit_right + (left - 4.0 - commit_right) * share,
         None => commit_right,
@@ -216,11 +213,6 @@ impl ContextBar {
         if self.opened { BADGE_ROOM } else { 6.0 }
     }
 
-    /// 项目按钮的左边。
-    pub(in crate::view) fn left(&self) -> f32 {
-        self.left
-    }
-
     /// 项目按钮完整显示时的宽度。
     pub(in crate::view) fn project_full(&self) -> f32 {
         self.name_offset() + self.project_w + 18.0
@@ -278,7 +270,8 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
     app.hits.project = hit.intersect(clip);
 }
 
-/// 绘制项目名前面的徽章：圆角方块内是 [`crate::theme::ProjectBadge::initials`]。
+/// 绘制项目名前面的徽章：圆角方块内是 [`crate::theme::ProjectBadge::initials`]；窗口中有附加的
+/// 目录时是一组目录的图标。
 ///
 /// 打开的是附属工作树时，徽章用主工作树的颜色（同一个仓库的工作树颜色相同），右下角加一个工作树
 /// 记号。
@@ -294,16 +287,26 @@ fn draw_badge(app: &App, frame: &mut Frame<'_>, rect: Rect, project: &str, heade
     let badge = app.palette.project_badge(project, color);
     frame.rect_clipped(rect, badge.background, 6.0, header);
 
-    let w = frame.measure(FontKind::Ui, app.fonts.initials, &badge.initials);
-    caps_label(
-        frame,
-        app,
-        app.fonts.initials,
-        (rect.x + (rect.w - w) / 2.0, rect),
-        &badge.initials,
-        badge.text,
-        header,
-    );
+    let group = (app.editor.workspace.as_ref()).is_some_and(|ws| !ws.extra_folders().is_empty());
+    if group {
+        // 图标 15×12，在徽章中居中。
+        let at = (
+            (rect.x + (rect.w - 15.0) / 2.0).round(),
+            (rect.y + (rect.h - 12.0) / 2.0).round(),
+        );
+        icons::folders(frame, at, badge.text, header);
+    } else {
+        let w = frame.measure(FontKind::Ui, app.fonts.initials, &badge.initials);
+        caps_label(
+            frame,
+            app,
+            app.fonts.initials,
+            (rect.x + (rect.w - w) / 2.0, rect),
+            &badge.initials,
+            badge.text,
+            header,
+        );
+    }
     if main.is_some() {
         let colors = (app.palette.sidebar_bg, badge.background, badge.text);
         icons::worktree_mark(

@@ -95,6 +95,8 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         | FormKind::Remote { .. }
         | FormKind::Connect
         | FormKind::GoToRevision
+        | FormKind::CompareRevision { .. }
+        | FormKind::RenameGroup
         | FormKind::LogPath => {
             return draw_question(app, frame, layout);
         }
@@ -264,6 +266,7 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     };
     let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
     let (running, error) = (dialog.running.is_some(), dialog.error.clone());
+    let remember = dialog.checkout;
     let card = layout.card;
     frame.rounded(card, p.editor_bg, RADIUS_CARD);
 
@@ -326,6 +329,9 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     for (input, (rect, part)) in view.inputs.iter().zip(fields) {
         draw_field(app, frame, rect, part, &plan, input.placeholder);
     }
+    for &(_, row) in &layout.options {
+        draw_check_option(app, frame, row, t!("git-question-remember"), remember);
+    }
     // 密钥文件右端选文件的按钮，样子同「位置」右端的目录按钮。
     if let Some(choose) = layout.choose {
         if hover == Some(DialogPart::Change) {
@@ -361,6 +367,8 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         DialogPart::Change => layout.choose,
         DialogPart::Cancel => Some(layout.cancel),
         DialogPart::Confirm => Some(layout.confirm),
+        DialogPart::Checkout => (layout.options.first())
+            .map(|&(_, row)| Rect::new(row.x - 1.0, row.y + row.h / 2.0 - 7.0, 14.0, 14.0)),
         _ => None,
     };
     if let Some(rect) = ring {

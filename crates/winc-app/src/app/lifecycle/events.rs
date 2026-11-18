@@ -403,6 +403,7 @@ impl ApplicationHandler<UserEvent> for App {
             // 窗口在光标所在位置被其他窗口遮挡时不响应移动，悬停状态按光标离开处理。
             WindowEvent::CursorMoved { .. } if !self.under_cursor() => self.cursor_left(),
             WindowEvent::CursorMoved { position, .. } => {
+                self.frame.frame_log.pointer_moved();
                 self.pointer.cursor_inside = true;
                 let scale = self
                     .frame
@@ -496,6 +497,9 @@ impl App {
             UserEvent::RunApproved(config) => self.approved_run(*config),
             UserEvent::TerminalClose(id) => self.confirmed_terminal_close(id),
             UserEvent::TerminalRestart(id) => self.confirmed_terminal_restart(id),
+            UserEvent::PythonEnvironment(venv, load) => {
+                self.answered_python_environment(venv, load)
+            }
             UserEvent::ShellCommandDone(done) => self.shell_command_done(done),
             UserEvent::TerminalShells(shells) => {
                 self.terminal.shells = shells;
@@ -511,6 +515,13 @@ impl App {
             }
             UserEvent::GitLogConfirmed(op) => self.run_log_confirmed(op),
             UserEvent::GitRemoveWorktree(path, branch) => self.remove_worktree_now(&path, branch),
+            UserEvent::GitOpenWorktree(path, new, remember) => {
+                self.open_worktree_chosen(&path, new, remember);
+            }
+            UserEvent::FolderDropAsk(path, into) => self.ask_folder_drop(&path, into),
+            UserEvent::FolderDropped(path, into, add, remember) => {
+                self.folder_drop_chosen(&path, into, add, remember);
+            }
             UserEvent::Indexed => self.picker_indexed(),
             UserEvent::QuitRequested => self.request_quit(),
             UserEvent::SaveChoice(choice) => self.answer_save_prompt(choice),
@@ -647,8 +658,12 @@ impl App {
 
         let resize = self.terminal_resize_tick(now);
         earliest(&mut wake, resize);
+        let find = self.terminal_find_wake(now);
+        earliest(&mut wake, find);
         let mapping = self.vim_tick(now);
         earliest(&mut wake, mapping);
+        let pdf_tools = self.pdf_tools_tick(now);
+        earliest(&mut wake, pdf_tools);
         // 当前标签正在读取且保留上一帧未绘制时，到期仍未读取完成则绘制「正在读取」。
         if self.disk.loads.held {
             match self.holding_frame(now) {
@@ -662,6 +677,21 @@ impl App {
         earliest(&mut wake, self.terminal_settle_tick(now));
         let copying = self.copy_tick(now);
         earliest(&mut wake, copying);
+
+        // 鼠标在标题指示条上停留满 `TOC_HOVER_DELAY`：展开标题列表。
+        if let Some(since) = self.preview.markdown.toc_rest
+            && !self.preview.markdown.toc_shown
+        {
+            let at = since + crate::theme::TOC_HOVER_DELAY;
+            if now >= at {
+                self.preview.markdown.toc_shown = true;
+                self.preview.markdown.toc_close = None;
+                self.preview.markdown.toc_fade = self.clock(animation::TOC_FADE);
+                self.request_redraw();
+            } else {
+                earliest(&mut wake, Some(at));
+            }
+        }
 
         let tooltip_at = self
             .overlays
