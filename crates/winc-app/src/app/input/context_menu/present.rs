@@ -176,6 +176,8 @@ impl App {
             MenuTarget::Terminal(block)
         } else if self.markdown_context_target(x, y) {
             MenuTarget::Markdown
+        } else if let Some(id) = self.properties_context_target(x, y) {
+            MenuTarget::Properties(id)
         } else if let Some(id) = self.editor_context_target(x, y) {
             MenuTarget::Editor(id)
         } else {
@@ -301,6 +303,7 @@ impl App {
         }
         let id = doc.id;
 
+        self.unfocus_properties();
         self.focus = Focus::Editor;
         self.ime.preedit.clear();
         Some(id)
@@ -517,6 +520,10 @@ impl App {
                 ]);
                 menu
             }
+            MenuTarget::Properties(_) => vec![
+                MenuEntry::Item(MenuCommand::Copy, self.properties_has_selection()),
+                MenuEntry::Item(MenuCommand::SelectAll, true),
+            ],
             MenuTarget::Markdown => {
                 let mut menu = vec![
                     MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
@@ -802,6 +809,7 @@ impl App {
             | MenuTarget::Diff(..)
             | MenuTarget::DiffGutter(..)
             | MenuTarget::Markdown
+            | MenuTarget::Properties(_)
             | MenuTarget::LogCommit(_) => Context::Editor,
             MenuTarget::Terminal(_) | MenuTarget::TerminalTab(_) => Context::Terminal,
             MenuTarget::SearchResult(..) => Context::Panel,

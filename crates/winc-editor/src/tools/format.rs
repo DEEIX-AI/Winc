@@ -1066,7 +1066,7 @@ impl Document {
     ///
     /// 文档只读（含预览、二进制、无法解码）或属于大文件时返回原因。
     pub fn format_source(&self) -> Result<Rope, String> {
-        if let Some(reason) = self.readonly_reason() {
+        if let Some(reason) = self.preprocessing_blocked_reason() {
             return Err(reason.to_owned());
         }
         match &self.text {
@@ -1087,7 +1087,7 @@ impl Document {
         changes: Vec<Change>,
         top: usize,
     ) -> Option<usize> {
-        if self.text.rope() != Some(sent) || self.readonly_reason().is_some() {
+        if self.text.rope() != Some(sent) || self.preprocessing_blocked_reason().is_some() {
             return None;
         }
         if changes.is_empty() {
@@ -1098,7 +1098,7 @@ impl Document {
         // `map_positions` 按输入的数量返回位置，因此这里正好取到三个。
         let mapped = diff::map_positions(&changes, &[before.anchor, before.head, top]);
         let after = Selection::new(mapped[0], mapped[1]);
-        self.apply(Transaction::new(changes, before, after, EditKind::Other));
+        self.apply_to_source(Transaction::new(changes, before, after, EditKind::Other));
         self.goal_cell = None;
         self.detected_indent = indent::detect(&self.text);
         Some(mapped[2])

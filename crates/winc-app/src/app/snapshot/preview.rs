@@ -15,6 +15,7 @@ mod options;
 mod pdf;
 #[cfg(any(target_os = "macos", windows))]
 mod pdf_places;
+mod properties;
 mod reading;
 mod tables;
 mod writing;
@@ -941,6 +942,7 @@ fn each_kind_of_file_keeps_its_own_preview_mode() {
         [
             PreviewMode::Source,
             PreviewMode::Preview,
+            PreviewMode::Source,
             PreviewMode::Source,
             PreviewMode::Source
         ]

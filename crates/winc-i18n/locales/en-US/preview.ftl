@@ -2,7 +2,7 @@
 
 ## Preview mode
 
-preview-mode-unsupported = Only SVG, Markdown, CSV, and TSV files can be previewed
+preview-mode-unsupported = Only SVG, Markdown, LaTeX, CSV, TSV, and Properties files can be previewed
 preview-mode-source = Source
 preview-mode-split = Split
 preview-mode-preview = Preview

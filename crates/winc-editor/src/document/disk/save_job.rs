@@ -157,7 +157,7 @@ impl Document {
                 t!("editor-file-no-path"),
             ));
         };
-        if let Some(reason) = self.unwritable_reason() {
+        if let Some(reason) = self.save_blocked_reason() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
         }
         let text = match &self.text {
@@ -200,7 +200,7 @@ impl Document {
                 t!("editor-file-no-path"),
             ));
         };
-        if let Some(reason) = self.unwritable_reason() {
+        if let Some(reason) = self.save_blocked_reason() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
         }
         self.write_copy(copy)?;

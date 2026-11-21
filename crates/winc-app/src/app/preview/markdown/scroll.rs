@@ -230,16 +230,8 @@ impl App {
             return;
         };
         let line = laid.line_of_y(y, doc.text().line_count());
-        set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
+        set_scroll_line(doc, source_row(doc, f64::from(line)).clamp(0.0, max));
         self.preview.markdown.synced = Some((doc.id, doc.scroll_line, laid.height()));
-    }
-
-    /// 滚动文字，使原文第 `line` 行（小数）位于顶部。
-    pub(in crate::app) fn scroll_text_to(&mut self, line: f32) {
-        let max = self.max_scroll_line();
-        if let Some(doc) = self.editor.active_mut() {
-            set_scroll_line(doc, text_row(doc, line).clamp(0.0, max.max(0.0)));
-        }
     }
 
     /// 将预览滚动到文字顶端那一行对应的位置；仅在刚切换为只显示预览后执行一次。

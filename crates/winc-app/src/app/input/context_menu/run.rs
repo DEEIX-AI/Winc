@@ -100,6 +100,14 @@ impl App {
                 }
             }
             MenuTarget::Editor(id) => self.run_editor_command(command, id),
+            MenuTarget::Properties(id) => {
+                if self.editor.active().map(|doc| doc.id) == Some(id)
+                    && self.properties_focused()
+                    && let Some(action) = command.action()
+                {
+                    self.run_action(action);
+                }
+            }
             MenuTarget::Markdown => match command {
                 MenuCommand::Cut => self.copy(true),
                 MenuCommand::Copy => self.copy(false),

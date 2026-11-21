@@ -61,13 +61,17 @@ pub(crate) enum ScrollArea {
     Table,
     /// 表格预览的水平滚动条。
     TableHorizontal,
+    /// Properties 预览的竖直滚动条。
+    Properties,
+    /// Properties 预览的水平滚动条。
+    PropertiesHorizontal,
     /// 链接地址和写作命令的补全列表。
     Suggest,
 }
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 20] = [
+    const ALL: [ScrollArea; 22] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::DiffLeftHorizontal,
@@ -87,6 +91,8 @@ impl ScrollArea {
         ScrollArea::MarkdownToc,
         ScrollArea::Table,
         ScrollArea::TableHorizontal,
+        ScrollArea::Properties,
+        ScrollArea::PropertiesHorizontal,
         ScrollArea::Suggest,
     ];
 
@@ -112,6 +118,8 @@ impl ScrollArea {
             ScrollArea::MarkdownToc => Some(Scrollbar::MarkdownToc),
             ScrollArea::Table => Some(Scrollbar::Table),
             ScrollArea::TableHorizontal => Some(Scrollbar::TableHorizontal),
+            ScrollArea::Properties => Some(Scrollbar::Properties),
+            ScrollArea::PropertiesHorizontal => Some(Scrollbar::PropertiesHorizontal),
             ScrollArea::Suggest => None,
         }
     }
@@ -125,6 +133,7 @@ impl ScrollArea {
                 | ScrollArea::TreeHorizontal
                 | ScrollArea::MarkdownTable
                 | ScrollArea::TableHorizontal
+                | ScrollArea::PropertiesHorizontal
         )
     }
 }
@@ -169,7 +178,7 @@ struct Reveal {
 }
 
 /// 编辑区窗格里的滚动条：拆分后每个窗格各有一份显示状态。
-pub(crate) const PANE_AREAS: [ScrollArea; 11] = [
+pub(crate) const PANE_AREAS: [ScrollArea; 13] = [
     ScrollArea::Editor,
     ScrollArea::EditorHorizontal,
     ScrollArea::DiffLeftHorizontal,
@@ -181,6 +190,8 @@ pub(crate) const PANE_AREAS: [ScrollArea; 11] = [
     ScrollArea::MarkdownToc,
     ScrollArea::Table,
     ScrollArea::TableHorizontal,
+    ScrollArea::Properties,
+    ScrollArea::PropertiesHorizontal,
 ];
 
 /// 各区域滚动条的显示状态，以及鼠标所在的滚动条。

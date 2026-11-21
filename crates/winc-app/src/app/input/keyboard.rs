@@ -99,6 +99,7 @@ impl App {
         // 的按键继续按原有的顺序处理。
         // 两步组合键的第二步仍由键位表处理；Vim 没有带 `Alt` 的命令，应用绑定的 `Alt` 组合归应用。
         if self.vim.is_some()
+            && !self.properties_focused()
             && self.pending_chord.is_none()
             && !self.alt_shortcut(event, &base)
             && (self.vim_key_event(event) || self.vim_list_key(&event.logical_key, &base))
@@ -291,6 +292,17 @@ impl App {
         if self.editor.active.is_none() {
             if !event.repeat {
                 self.setup_key(&event.logical_key);
+            }
+            return;
+        }
+        if self.properties_focused() {
+            if event.logical_key == Key::Named(NamedKey::Escape) {
+                if self.bars.find.open {
+                    self.close_search();
+                }
+                self.unfocus_properties();
+            } else {
+                self.properties_key(&event.logical_key, cmd);
             }
             return;
         }
@@ -1144,6 +1156,7 @@ impl App {
     pub(in crate::app) fn takes_text(&self) -> bool {
         match self.focus {
             Focus::Terminal => self.terminal.tab().is_some_and(|t| t.ended.is_none()),
+            Focus::Editor if self.properties_focused() => false,
             Focus::Editor
                 if self
                     .vim_mode()

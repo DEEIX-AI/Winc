@@ -103,6 +103,113 @@ fn save_round_trip_preserves_bytes() {
 }
 
 #[test]
+fn image_and_workbook_previews_cannot_overwrite_their_files() {
+    let dir = scratch("readonly-binary-previews");
+    for (name, kind, bytes) in [
+        ("image.png", Unsupported::Image, &b"\x89PNG\r\n\x1a\n"[..]),
+        ("workbook.xlsx", Unsupported::Workbook, &b"PK\x03\x04"[..]),
+    ] {
+        let path = dir.join(name);
+        fs::write(&path, bytes).unwrap();
+        let mut doc = Document::open_any(DocumentId(1), path.clone());
+        assert_eq!(doc.unsupported, Some(kind));
+
+        assert_eq!(
+            doc.save().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            doc.begin_save().err().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let copy = dir.join("copy");
+        assert_eq!(
+            doc.begin_handed_save(&copy).err().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            doc.save_as(copy.clone()).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(doc.path.as_deref(), Some(path.as_path()));
+        assert!(!copy.exists());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn properties_full_preview_can_save_pending_source_edits() {
+    let dir = scratch("properties-preview-save");
+    let path = dir.join("a.properties");
+    let original = "greeting=\\u4F60\\u597D\n";
+    fs::write(&path, original).unwrap();
+    let mut doc = Document::open(DocumentId(1), path.clone()).unwrap();
+
+    assert!(doc.set_preview_mode(PreviewMode::Split));
+    assert_eq!(doc.preview_mode(), PreviewMode::Split);
+    assert!(doc.shows_text() && doc.text_editable() && !doc.readonly);
+    doc.execute(Command::Insert("# edited\n".into()), 10, 4);
+    assert!(doc.is_dirty());
+    assert!(doc.set_preview_mode(PreviewMode::Preview));
+    assert!(!doc.shows_text() && doc.text_editable() && doc.readonly);
+    // 自动保存与显式保存使用同一个判断。
+    assert!(doc.save_blocked_reason().is_none());
+    doc.execute(Command::Insert("unexpected".into()), 10, 4);
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+
+    assert!(doc.begin_save().unwrap().is_none());
+    doc.save().unwrap();
+    let expected = format!("# edited\n{original}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    assert!(!doc.is_dirty());
+
+    let copy = dir.join("another.properties");
+    doc.save_as(copy.clone()).unwrap();
+    assert_eq!(doc.preview_mode(), PreviewMode::Preview);
+    assert_eq!(fs::read_to_string(&copy).unwrap(), expected);
+    assert!(doc.set_preview_mode(PreviewMode::Source));
+    assert!(doc.shows_text() && !doc.readonly);
+    doc.execute(Command::Undo, 10, 4);
+    assert_eq!(doc.text().rope().unwrap().to_string(), original);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn full_previews_preserve_source_save_restrictions() {
+    let dir = scratch("readonly-source-previews");
+    let bytes = b"key=value\xff\n";
+    let path = dir.join("readonly.properties");
+    fs::write(&path, bytes).unwrap();
+    let mut doc = Document::open(DocumentId(1), path.clone()).unwrap();
+    doc.reopen_with_encoding(Encoding::Utf8).unwrap();
+    assert_eq!(doc.encoding, Encoding::Lossy);
+    assert!(doc.set_preview_mode(PreviewMode::Preview));
+    assert_eq!(
+        doc.save().unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert!(doc.set_preview_mode(PreviewMode::Split));
+    assert!(doc.shows_text() && doc.readonly);
+
+    for (name, text) in [("a.svg", "<svg/>"), ("a.csv", "id,name\n1,test\n")] {
+        let path = dir.join(name);
+        fs::write(&path, text).unwrap();
+        let mut doc = Document::open(DocumentId(1), path.clone()).unwrap();
+        assert!(doc.set_preview_mode(PreviewMode::Preview));
+        // 图片和表格的预览仍不能写回：自动保存同样跳过。
+        assert!(doc.save_blocked_reason().is_some());
+        assert_eq!(
+            doc.save().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn rejects_binary_and_marks_invalid_utf8_readonly() {
     let dir = scratch("bin");
     let binary = dir.join("a.bin");
@@ -448,6 +555,33 @@ fn tidying_keeps_every_cursor_and_its_line() {
 }
 
 #[test]
+fn properties_preview_tidies_and_saves_the_source() {
+    let dir = scratch("properties-preview-tidy");
+    fs::write(
+        dir.join(".editorconfig"),
+        "root = true\n[*]\ntrim_trailing_whitespace = true\ninsert_final_newline = true\n",
+    )
+    .unwrap();
+    let path = dir.join("a.properties");
+    fs::write(&path, "key=\\u4F60  ").unwrap();
+    let mut doc = Document::open(DocumentId(1), path.clone()).unwrap();
+    assert!(doc.set_preview_mode(PreviewMode::Preview));
+
+    // 预览期间仍按 .editorconfig 清理源代码，再写回磁盘。
+    assert!(doc.tidy_for_save(None, false));
+    doc.save().unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "key=\\u4F60\n");
+    assert_eq!(doc.preview_mode(), PreviewMode::Preview);
+    assert!(doc.readonly);
+
+    // 清理仍可撤销：回到源代码后撤销，原文的空白和缺失的末尾换行都回来了。
+    assert!(doc.set_preview_mode(PreviewMode::Source));
+    doc.execute(Command::Undo, 10, 4);
+    assert_eq!(doc.text_range(0, usize::MAX).unwrap(), "key=\\u4F60  ");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_failed_save_as_keeps_the_old_path() {
     let dir = scratch("save-as-fails");
     let path = dir.join("gbk.txt");
@@ -631,6 +765,39 @@ fn growing_files_only_read_what_was_added() {
             .unwrap()
             .ends_with("很多字\nafter save\n")
     );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn properties_preview_returns_to_source_when_a_disk_reload_makes_it_large() {
+    let dir = scratch("properties-preview-reload");
+    let path = dir.join("a.properties");
+    for (mode, line, readonly) in [
+        (PreviewMode::Preview, "entry=\\u4F60\n", false),
+        (PreviewMode::Split, "entry=\\u4F60\n", false),
+        (PreviewMode::Preview, "x", true),
+    ] {
+        fs::write(&path, "before=\\u4F60\n").unwrap();
+        let mut doc = Document::open(DocumentId(1), path.clone()).unwrap();
+        assert!(doc.set_preview_mode(mode));
+        fs::write(&path, line.repeat(LARGE_FILE as usize / line.len() + 1)).unwrap();
+
+        assert_eq!(doc.sync_with_disk().unwrap(), DiskChange::Reloaded);
+        assert!(doc.is_large() && doc.shows_text() && !doc.can_preview());
+        assert_eq!(doc.preview_mode(), PreviewMode::Source);
+        assert_eq!(doc.readonly, readonly);
+        doc.execute(Command::Insert("#".into()), 10, 4);
+        assert_eq!(doc.is_dirty(), !readonly);
+        if !readonly {
+            doc.execute(Command::Undo, 10, 4);
+            assert!(!doc.is_dirty());
+        }
+
+        fs::write(&path, "after=\\u597D\n").unwrap();
+        assert_eq!(doc.sync_with_disk().unwrap(), DiskChange::Reloaded);
+        assert!(doc.can_preview() && doc.shows_text() && !doc.readonly);
+        assert_eq!(doc.preview_mode(), PreviewMode::Source);
+    }
     fs::remove_dir_all(&dir).unwrap();
 }
 

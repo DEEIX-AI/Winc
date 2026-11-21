@@ -348,6 +348,12 @@ impl App {
                 grab,
             } => self.drag_table_scrollbar(bar == Scrollbar::TableHorizontal, (x, y), grab),
             Drag::Scrollbar {
+                bar: bar @ (Scrollbar::Properties | Scrollbar::PropertiesHorizontal),
+                grab,
+            } => {
+                self.drag_properties_scrollbar(bar == Scrollbar::PropertiesHorizontal, (x, y), grab)
+            }
+            Drag::Scrollbar {
                 bar: Scrollbar::PdfStrip,
                 grab,
             } => {
@@ -423,6 +429,7 @@ impl App {
             Drag::LogText => self.drag_log_text(x, y),
             Drag::Hex => self.drag_hex(x, y),
             Drag::MarkdownText => self.drag_markdown(x, y),
+            Drag::PropertiesText => self.drag_properties(x, y),
             Drag::ImageResize => self.drag_image_resize(x),
             Drag::TableCells => self.drag_table(x, y),
             Drag::Field => {

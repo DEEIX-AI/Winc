@@ -378,7 +378,7 @@ fn svg_opens_as_source_and_toggles_to_a_preview() {
     app.run_action(Action::TogglePreview);
     assert_eq!(
         app.status.message.as_deref(),
-        Some("仅支持预览 SVG、Markdown、CSV 和 TSV 文件")
+        Some("仅支持预览 SVG、Markdown、LaTeX、CSV、TSV 和 Properties 文件")
     );
 
     let _ = std::fs::remove_dir_all(&dir);

@@ -1287,25 +1287,27 @@ fn window_json(frame: &WindowFrame) -> Json {
     Json::object(window)
 }
 
-/// 从 `state.json` 的 `window` 一节读出窗口的大小和位置；缺项或者数值不合理时为 `None`。
-/// 读取 `previewMode`：对象按种类取各自的方式，字符串用于全部种类。
+/// 读取 `previewMode`：对象按种类取各自的方式，旧版字符串设置只用于 Markdown、SVG 和表格。
 fn preview_modes(json: Option<&Json>) -> BTreeMap<String, String> {
-    const KINDS: [&str; 3] = ["markdown", "svg", "table"];
+    const LEGACY: [&str; 3] = ["markdown", "svg", "table"];
     let valid = |mode: &&str| matches!(*mode, "split" | "preview");
     match json {
         Some(Json::Object(modes)) => (modes.iter())
-            .filter(|(kind, _)| KINDS.contains(&kind.as_str()))
+            .filter(|(kind, _)| {
+                LEGACY.contains(&kind.as_str()) || matches!(kind.as_str(), "latex" | "properties")
+            })
             .filter_map(|(kind, mode)| {
                 Some((kind.clone(), mode.as_str().filter(valid)?.to_owned()))
             })
             .collect(),
         Some(Json::String(mode)) if valid(&mode.as_str()) => {
-            KINDS.map(|kind| (kind.to_owned(), mode.clone())).into()
+            LEGACY.map(|kind| (kind.to_owned(), mode.clone())).into()
         }
         _ => BTreeMap::new(),
     }
 }
 
+/// 从 `state.json` 的 `window` 一节读出窗口的大小和位置；缺项或者数值不合理时为 `None`。
 fn window_frame(json: &std::collections::BTreeMap<String, Json>) -> Option<WindowFrame> {
     let number = |key: &str| json.get(key).and_then(Json::as_number);
     let (width, height, scale) = (number("width")?, number("height")?, number("scale")?);

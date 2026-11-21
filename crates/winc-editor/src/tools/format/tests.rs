@@ -634,3 +634,26 @@ fn tools_found_in_a_wsl_distro_are_remembered_until_forgotten() {
     formatter.forget_wsl();
     assert_eq!(formatter.wsl_asked("Ubuntu", "ruff"), None);
 }
+
+#[test]
+fn properties_preview_can_read_and_apply_formatted_source() {
+    use crate::{Command, DocumentId, PreviewMode};
+
+    let old = "key=\\u4F60\n";
+    let new = "key = \\u4F60\n";
+    let mut doc = Document::from_text(DocumentId(1), old);
+    doc.set_language("a.properties");
+    assert!(doc.set_preview_mode(PreviewMode::Preview));
+
+    // 预览期间仍提供源代码给格式化工具，结果也写回源代码。
+    let sent = doc.format_source().unwrap();
+    assert_eq!(
+        doc.apply_formatted(&sent, diff::line_changes(old, new), 0),
+        Some(0)
+    );
+    assert_eq!(doc.text_range(0, usize::MAX).unwrap(), new);
+
+    assert!(doc.set_preview_mode(PreviewMode::Source));
+    doc.execute(Command::Undo, 10, 4);
+    assert_eq!(doc.text_range(0, usize::MAX).unwrap(), old);
+}

@@ -1,5 +1,4 @@
-//! 文档预览：图片、SVG、Markdown 与表格的呈现、编辑区与预览之间的切换，以及解码好的图片、
-//! 读好的表格等派生状态。
+//! 文档预览：编辑区与预览之间的切换，以及解码好的图片、读好的表格等派生状态。
 
 use super::*;
 
@@ -12,8 +11,8 @@ impl Document {
         }
     }
 
-    /// 是否在编辑区显示文本：不是图片、差异、日志、阅读标签或无法打开的文件，且 SVG 没有切换
-    /// 到预览。
+    /// 是否在编辑区显示普通文本。图片、差异、日志、阅读标签、无法打开的文件以及只看预览时
+    /// 各自使用专门的界面。
     ///
     /// 光标、查找、折叠等只对文本有意义。
     pub fn shows_text(&self) -> bool {
@@ -21,6 +20,7 @@ impl Document {
             && self.picture.is_none()
             && (self.table.is_none() || self.split)
             && !self.rendered
+            && !self.properties
             && self.diff.is_none()
             && self.log.is_none()
             && self.hex.is_none()
@@ -36,7 +36,8 @@ impl Document {
         self.shows_text() || self.rendered
     }
 
-    /// 是否可以切换到预览：语言是 SVG、Markdown、LaTeX、CSV 或 TSV 的文本，且不是大文件。
+    /// 是否可以切换到预览：SVG、Markdown、LaTeX、CSV、TSV 和 Properties 文本，
+    /// 其中只有表格支持大文件。
     pub fn can_preview(&self) -> bool {
         self.preview_kind().is_some()
     }
@@ -45,7 +46,7 @@ impl Document {
     ///
     /// 按文档当前的语言判断，与文件名无关：未保存的新文件和扩展名不符的文件选择语言后同样可以预览。
     pub fn preview_kind(&self) -> Option<PreviewKind> {
-        if self.unsupported.is_some() || self.title.is_some() {
+        if !self.holds_file_text() || self.title.is_some() {
             return None;
         }
         let kind = PreviewKind::of(self.highlighter.language())?;
@@ -53,14 +54,27 @@ impl Document {
         (!self.is_large() || kind == PreviewKind::Table).then_some(kind)
     }
 
-    /// 是否正在只看预览（SVG 的图、排好版的 Markdown 或 csv 的表格）。
-    pub(super) fn previewing(&self) -> bool {
-        self.picture.is_some() || self.rendered || (self.table.is_some() && !self.split)
+    /// 是否是 Properties 文件：可以切换代码、分栏和预览。
+    pub fn is_properties(&self) -> bool {
+        self.preview_kind() == Some(PreviewKind::Properties)
     }
 
-    /// 文本是否可以编辑。
+    /// 是否正在只看 Properties 预览；分栏右侧的预览不算（见 [`Document::is_properties`]）。
+    pub fn properties_preview(&self) -> bool {
+        self.properties
+    }
+
+    /// 是否正在只看预览（SVG、Markdown、LaTeX、表格或 Properties 的转换文本）。
+    pub(super) fn previewing(&self) -> bool {
+        self.picture.is_some()
+            || self.rendered
+            || self.properties
+            || (self.table.is_some() && !self.split)
+    }
+
+    /// 源代码是否可以编辑。
     ///
-    /// 与 `readonly` 不同：正在预览的 SVG 在预览期间暂时只读，文本仍可编辑，切回源代码即可
+    /// 与 `readonly` 不同：只看预览时界面可以暂时只读，切回源代码即可
     /// 修改；未保存的修改仍需备份，也可以换成磁盘版本。
     pub fn text_editable(&self) -> bool {
         if self.previewing() && self.can_preview() {
@@ -85,20 +99,14 @@ impl Document {
 
     /// 换成 `mode` 显示。
     ///
-    /// 只看 SVG、表格、LaTeX 的预览期间文档只读（看不到文字），离开时恢复原来的只读状态；
+    /// 只看 SVG、表格、LaTeX、Properties 的预览期间文档只读，离开时恢复原来的只读状态；
     /// Markdown 的预览可以直接编辑，不改只读状态。不满足 [`Document::can_preview`] 时不切换，
     /// 返回 `false`。
     pub fn set_preview_mode(&mut self, mode: PreviewMode) -> bool {
         let Some(kind) = self.preview_kind() else {
             return false;
         };
-        if self.previewing() {
-            self.picture = None;
-            self.rendered = false;
-            self.readonly = self.readonly_before_preview;
-        }
-        // 表格在只看预览和分栏时都有，换显示方式时一律重新读。
-        self.table = None;
+        self.clear_preview();
         self.split = mode == PreviewMode::Split;
         if self.split && kind == PreviewKind::Table {
             self.table = Some(TableView::loading(self.revision));
@@ -112,12 +120,25 @@ impl Document {
                 PreviewKind::Svg => self.picture = Some(PictureState::Loading),
                 PreviewKind::Markdown | PreviewKind::Latex => self.rendered = true,
                 PreviewKind::Table => self.table = Some(TableView::loading(self.revision)),
+                PreviewKind::Properties => self.properties = true,
             }
         }
         true
     }
 
-    /// 在 SVG 的源代码（或分栏）和只看预览之间切换，返回切换后是否处于预览。
+    /// 退出文本预览，恢复源代码的只读状态，清除派生的预览内容。
+    pub(super) fn clear_preview(&mut self) {
+        if self.previewing() {
+            self.picture = None;
+            self.rendered = false;
+            self.properties = false;
+            self.readonly = self.readonly_before_preview;
+        }
+        self.table = None;
+        self.split = false;
+    }
+
+    /// 在源代码（或分栏）和只看预览之间切换，返回切换后是否处于预览。
     ///
     /// 不满足 [`Document::can_preview`] 时不切换，返回 `false`。
     pub fn toggle_preview(&mut self) -> bool {

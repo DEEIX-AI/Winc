@@ -284,6 +284,7 @@ impl App {
     /// 的一侧。
     fn vim_applies(&self) -> bool {
         self.focus == Focus::Editor
+            && !self.properties_focused()
             && (self.vim_document().is_some_and(Document::shows_text) || self.vim_side().is_some())
     }
 

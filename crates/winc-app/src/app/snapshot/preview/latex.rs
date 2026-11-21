@@ -78,7 +78,7 @@ fn latex_previews_read_only_and_scrolls_by_source_lines() {
     app.set_preview_mode(PreviewMode::Split);
     settle(&mut app);
     let line = text.lines().position(|l| l == "\\section{结论}").unwrap();
-    app.scroll_text_to(line as f32);
+    app.scroll_text_to(line as f64);
     settle(&mut app);
     let heading = crate::app::preview::markdown::laid::anchor_top(&app, "结论").unwrap();
     let scroll = app.preview.markdown.scroll();
@@ -389,7 +389,7 @@ fn real_tex_compiles_and_syncs() {
         .lines()
         .position(|l| l.starts_with("Paragraph 25."))
         .unwrap();
-    app.scroll_text_to(last as f32);
+    app.scroll_text_to(last as f64);
     app.advance_previews();
     paint(&mut app);
     let pdf = &app.preview.pdf;
