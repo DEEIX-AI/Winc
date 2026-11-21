@@ -98,6 +98,8 @@ pub enum Command {
     },
     /// 删除光标到行首之间的文本（`⌘⌫`）。
     DeleteToLineStart,
+    /// 删除光标到行尾之间的文本（`⌃K`，macOS）；光标在行尾时删除换行符。
+    DeleteToLineEnd,
     /// 插入一级缩进；有选区时按整块缩进处理。
     Indent,
     /// 光标所在的行（或选区覆盖的行）整行加一级缩进（`⌘]`）。
@@ -120,6 +122,8 @@ pub enum Command {
     },
     /// 改变选区的大小写；没有选区时改变光标所在的词。
     ChangeCase(Case),
+    /// 交换光标前后的两个字素（`⌃T`，macOS）；光标在行尾时交换行末的两个字素。
+    TransposeChars,
     /// 对选中的行排序；选区在一行之内时对整个文件排序。
     SortLines {
         /// 是否按降序排列。
@@ -420,6 +424,7 @@ impl Document {
             }
             &Command::Delete { word } => edit::delete_forward(text, sel, word),
             Command::DeleteToLineStart => edit::delete_to_line_start(text, sel),
+            Command::DeleteToLineEnd => edit::delete_to_line_end(text, sel),
             Command::Indent => Some(edit::indent(text, sel, &options)),
             Command::IndentLines => Some(edit::indent_lines(text, sel, &options)),
             Command::Outdent => edit::outdent(text, sel, &options),
@@ -428,6 +433,7 @@ impl Document {
             &Command::MoveLines { down } => edit::move_lines(text, sel, down),
             &Command::CopyLines { down } => Some(edit::copy_lines(text, sel, down, &options)),
             &Command::ChangeCase(case) => transform::change_case(text, sel, case),
+            Command::TransposeChars => transform::transpose(text, sel),
             &Command::SortLines { descending } => transform::sort_lines(text, sel, descending),
             Command::JoinLines => transform::join_lines(text, sel),
             Command::TrimTrailingWhitespace => transform::trim_trailing_whitespace(text, sel),

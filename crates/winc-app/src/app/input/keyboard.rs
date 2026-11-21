@@ -356,6 +356,26 @@ impl App {
             Key::Named(NamedKey::End) if cmd => Command::DocEnd { extend },
             Key::Named(NamedKey::Home) => Command::LineStart { extend },
             Key::Named(NamedKey::End) => Command::LineEnd { extend },
+            // macOS 的文本输入约定：`⌃A` `⌃E` 到行首、行尾，`⌃F` `⌃B` 前后移动一个字素，
+            // `⌃N` `⌃P` 下移、上移一行，`⌃D` `⌃H` 删除后一个、前一个字素，`⌃K` 删除到行尾，
+            // `⌃T` 交换前后两个字素，`⌃V` 翻到下一页；与输入框中的按键相同（见
+            // `App::on_key_field`）。`Shift` 扩展选区，其余组合不处理。`⌃L` 把光标所在行滚到
+            // 视图中间，不是单个编辑命令，在此直接处理。
+            Key::Character(c)
+                if cfg!(target_os = "macos")
+                    && !cmd
+                    && self.pointer.modifiers.control_key()
+                    && !self.pointer.modifiers.alt_key() =>
+            {
+                if c.eq_ignore_ascii_case("l") {
+                    self.recenter_caret();
+                    return;
+                }
+                match emacs_command(c, extend) {
+                    Some(command) => command,
+                    None => return,
+                }
+            }
             Key::Named(NamedKey::Enter | NamedKey::Tab) if control => return,
             Key::Named(NamedKey::Enter) => Command::Newline,
             Key::Named(NamedKey::Tab) if shift => Command::Outdent,
@@ -1205,3 +1225,35 @@ pub struct ImeState {
     /// 上一次告知窗口的输入法是否启用；尚未告知时为 `None`。
     pub(in crate::app) allowed: Option<bool>,
 }
+
+/// macOS 编辑区的 Emacs 风格按键映射成的命令；不是 Emacs 按键时返回 `None`。
+///
+/// 与输入框中的按键一致（见 [`App::on_key_field`]）：`⌃A` `⌃E` 到行首、行尾，`⌃F` `⌃B`
+/// 前后移动一个字素，`⌃N` `⌃P` 下移、上移一行，`⌃D` `⌃H` 删除后一个、前一个字素，
+/// `⌃K` 删除到行尾，`⌃T` 交换前后两个字素，`⌃V` 翻到下一页；`extend` 扩展选区。
+fn emacs_command(key: &str, extend: bool) -> Option<Command> {
+    let command = match key.to_lowercase().as_str() {
+        "a" => Command::LineStart { extend },
+        "e" => Command::LineEnd { extend },
+        "f" => Command::MoveRight {
+            word: false,
+            extend,
+        },
+        "b" => Command::MoveLeft {
+            word: false,
+            extend,
+        },
+        "n" => Command::MoveDown { extend },
+        "p" => Command::MoveUp { extend },
+        "d" => Command::Delete { word: false },
+        "h" => Command::Backspace { word: false },
+        "k" => Command::DeleteToLineEnd,
+        "t" => Command::TransposeChars,
+        "v" => Command::PageDown { extend },
+        _ => return None,
+    };
+    Some(command)
+}
+
+#[cfg(test)]
+mod tests;

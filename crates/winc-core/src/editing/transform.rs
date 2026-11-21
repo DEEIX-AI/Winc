@@ -521,6 +521,56 @@ pub fn expand_selection(text: &impl Lines, selection: Selection) -> Option<Selec
         .map(|(a, b)| Selection::new(a, b))
 }
 
+/// 返回交换光标前后的两个字素（`⌃T`，macOS）的事务。
+///
+/// 光标在行中间时交换光标前后的两个字素，光标移到交换后的两个字素之后；在行尾时交换行末的
+/// 两个字素，光标留在行尾，与 Emacs、系统文本框相同。行首（包括空行）没有可交换的字素，
+/// 选区非空时也不处理，都返回 `None`。
+pub fn transpose(text: &impl Lines, selection: Selection) -> Option<Transaction> {
+    if !selection.is_empty() {
+        return None;
+    }
+    let pos = selection.head;
+    let start = text.line_start(text.line_of(pos));
+    let end = text.line_end(text.line_of(pos));
+
+    // 行首（包括空行）时本行没有可交换的字素，不处理；否则行首的 `prev_grapheme` 会跨到上一行。
+    if pos == start {
+        return None;
+    }
+
+    let (from, middle, to, after) = if pos >= end {
+        // 行尾：交换行末的两个字素；行内不足两个字素时不处理。
+        let back = movement::prev_grapheme(text, end);
+        if back == start {
+            return None;
+        }
+        let front = movement::prev_grapheme(text, back);
+        (front, back, end, end)
+    } else {
+        // 行中：光标前的字素与光标后的字素交换；行首没有前一个字素，上面已排除。
+        let back = movement::next_grapheme(text, pos);
+        let front = movement::prev_grapheme(text, pos);
+        (front, pos, back, back)
+    };
+
+    let head = text.substring(from, middle);
+    let tail = text.substring(middle, to);
+    if head == tail {
+        return None;
+    }
+    Some(Transaction::new(
+        vec![Change {
+            start: from,
+            removed: text.substring(from, to),
+            inserted: format!("{tail}{head}"),
+        }],
+        selection,
+        Selection::point(after),
+        EditKind::Other,
+    ))
+}
+
 /// 返回包住选区的引号字符串的位置区间，依次是不含引号、含引号两种。
 ///
 /// 只在选区所在的一行内查找，选区跨行时返回空表。

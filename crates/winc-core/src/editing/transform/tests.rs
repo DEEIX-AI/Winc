@@ -267,3 +267,28 @@ fn expanding_through_deep_nesting_shares_one_budget() {
     let wider = expand_selection(&text, Selection::new(4, 8)).unwrap();
     assert_eq!((wider.from(), wider.to()), (1, 8));
 }
+
+#[test]
+fn transpose_swaps_graphemes_around_the_caret() {
+    // 行中：光标前后的两个字素交换，光标移到交换后的两个字素之后。
+    assert_eq!(
+        run("abcd", Selection::point(2), transpose),
+        Some(("acbd".into(), Selection::point(3)))
+    );
+    // 行尾：交换行末的两个字素，光标留在行尾。
+    assert_eq!(
+        run("abc", Selection::point(3), transpose),
+        Some(("acb".into(), Selection::point(3)))
+    );
+    // 行首、空行、单字行的行尾、有选区、前后相同：都不处理。
+    assert_eq!(run("abcd", Selection::point(0), transpose), None);
+    assert_eq!(run("a\n\nb", Selection::point(2), transpose), None);
+    assert_eq!(run("x", Selection::point(1), transpose), None);
+    assert_eq!(run("abcd", Selection::new(1, 3), transpose), None);
+    assert_eq!(run("aa", Selection::point(1), transpose), None);
+    // 一个字素可以是多个码点：emoji 整体交换。
+    assert_eq!(
+        run("a👍b", Selection::point(2), transpose),
+        Some(("ab👍".into(), Selection::point(3)))
+    );
+}

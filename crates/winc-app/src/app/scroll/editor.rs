@@ -172,6 +172,34 @@ impl App {
         }
     }
 
+    /// 把光标所在行滚动到编辑区视图的中间（`⌃L`，macOS）。
+    ///
+    /// 与 [`Self::ensure_caret_visible`] 一样，光标在折叠的块内时先展开；光标位置不变。
+    pub(in crate::app) fn recenter_caret(&mut self) {
+        let before = self.editor.active().map(|d| d.scroll_line);
+        self.reveal_caret();
+        // 先按不可变借用算好目标位置，再写入滚动位置（同 `Self::reveal_caret`）。
+        let visible = self.visible_lines() as f64;
+        let row = self
+            .editor
+            .active()
+            .map_or(0.0, |d| d.row_at(d.selection.head) as f64);
+        let max_scroll = self.max_scroll_line();
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        // 居中的算法与 Markdown 的打字机模式相同（见 `Self::reveal_caret`）。
+        set_scroll_line(
+            doc,
+            (row + 0.5 - visible / 2.0).clamp(0.0, max_scroll.max(row)),
+        );
+        self.clamp_scroll();
+        if let Some(before) = before {
+            self.glide_scroll(before);
+        }
+        self.request_redraw();
+    }
+
     /// 滚动编辑区使光标可见，不做平滑滚动；供 [`Self::ensure_caret_visible`] 调用。
     fn reveal_caret(&mut self) {
         if let Some(doc) = self.editor.active_mut() {
