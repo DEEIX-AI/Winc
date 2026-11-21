@@ -164,6 +164,15 @@ impl App {
         let TocTarget::Heading(i) = target else {
             return;
         };
+        // 收起的一节中的标题：展开后跳到该标题。
+        let key = (self.hits.markdown_toc_blocks.get(i))
+            .zip(self.preview.markdown.parsed.as_ref())
+            .and_then(|(&block, parsed)| parsed.heading_keys().into_iter().nth(block).flatten());
+        if let Some(key) = key
+            && self.unfold_to_anchor(&key)
+        {
+            return;
+        }
         let Some(&top) = self.hits.markdown_toc_tops.get(i) else {
             return;
         };
@@ -181,11 +190,19 @@ impl App {
     pub(in crate::app) fn jump_to_anchor(&mut self, anchor: &str) {
         let Some((top, height)) = crate::app::preview::markdown::laid::anchor_box(self, anchor)
         else {
-            self.flash(t!("preview-markdown-heading-not-found"));
+            if !self.unfold_to_anchor(anchor) {
+                self.flash(t!("preview-markdown-heading-not-found"));
+            }
             return;
         };
         let lower = anchor.to_lowercase();
         if !(lower.starts_with("fn-") || lower.starts_with("fnref-")) {
+            // 书中不用过渡：过渡中的滚动会被当成用户滚动，不再对齐。
+            if self.hold_book_at(top) {
+                self.settle_glide_of(ScrollTarget::Markdown);
+                self.scroll_markdown_to(top);
+                return;
+            }
             self.glide_pane_to(ScrollTarget::Markdown, top);
             return;
         }

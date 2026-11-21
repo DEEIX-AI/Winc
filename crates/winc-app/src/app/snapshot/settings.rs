@@ -1,15 +1,95 @@
-//! 设置浮层与字号缩放的测试：模态行为、键盘遍历、鼠标命中、字体名校验、滚动、动画。
+//! 设置浮层与字号缩放的测试：模态行为、键盘遍历、鼠标命中、字体名校验、滚动、拖动、动画。
 
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 mod appearance;
 #[cfg(unix)]
 mod format;
 mod search;
+mod shortcuts;
 mod terminal;
 
 use super::*;
 #[cfg(unix)]
 use winc_editor::format::{PRESETS, Task};
+
+#[test]
+fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
+    use std::time::{Duration, Instant};
+
+    let dir = sample_folder("settings-drag");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.open_settings();
+    app.settings.motion = None;
+    paint(&mut app);
+    let before = app.settings_layout();
+    let window = app.layout.window;
+
+    // 按住标题行的空白处拖动：卡片随鼠标移动，关闭按钮等部件跟着走。
+    let header = before.header;
+    let (x, y) = (header.x + header.w / 2.0, header.y + header.h / 2.0);
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(x - 100.0, y + 40.0);
+    let moved = app.settings_layout();
+    assert_eq!(
+        (moved.card.x, moved.card.y),
+        (before.card.x - 100.0, before.card.y + 40.0)
+    );
+    let close = moved.close;
+    let at = (close.x + close.w / 2.0, close.y + close.h / 2.0);
+    assert_eq!(app.settings_part_at(at.0, at.1), Some(SettingsPart::Close));
+
+    // 拖动期间只重绘卡片，画面与完整绘制相同。
+    paint(&mut app);
+    assert!(app.settings.scroll_base.is_some());
+    app.on_mouse_move(x - 120.0, y + 60.0);
+    paint(&mut app);
+    let reused = app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .image()
+        .unwrap()
+        .pixels
+        .clone();
+    assert!(
+        app.settings_scroll_tick(Instant::now() + Duration::from_secs(1))
+            .is_none()
+    );
+    paint(&mut app);
+    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "拖动时使用快照的画面与完整绘制不同");
+
+    // 拖得再远，卡片也停在窗口四周的边距以内。
+    app.on_mouse_move(-5000.0, -5000.0);
+    app.on_mouse_up(MouseButton::Left);
+    let card = app.settings_layout().card;
+    assert_eq!(
+        (card.x, card.y),
+        (window.x + SETTINGS_MARGIN, window.y + SETTINGS_MARGIN)
+    );
+
+    // 按住时关闭设置，拖动随之结束。
+    let strip = app.settings_layout().title_strip();
+    app.on_mouse_move(strip.x + 4.0, strip.y + strip.h / 2.0);
+    app.on_mouse_down(MouseButton::Left);
+    assert!(app.settings_dragging());
+    app.close_settings();
+    assert!(!app.settings_dragging());
+    app.on_mouse_up(MouseButton::Left);
+
+    // 关闭后再打开，卡片仍在原处；点在卡片外照常关闭。
+    app.open_settings();
+    assert_eq!(app.settings_layout().card, card);
+    app.on_mouse_move(window.right() - 5.0, window.bottom() - 5.0);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(!app.settings.open);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
 #[test]
 fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
@@ -217,8 +297,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
-    // 往回走过关于页的八行（版本、更新两行、更新日志和四个链接），回到快捷键页的搜索框。
-    for _ in 0..8 {
+    // 往回走过关于页的九行（版本、更新三行、更新日志和四个链接），回到快捷键页的搜索框。
+    for _ in 0..9 {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::KeySearch);
@@ -262,12 +342,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，macOS 以外的平台还有「使用系统标题栏」，
-    // 然后是状态栏、记住窗口、动态效果三个开关和背景的图片、显示方式、不透明度，再下面是两组
-    // 主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；
-    // 到头后不再变化。
-    let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..11 + title_bar {
+    // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，然后是状态栏、动态效果、记住窗口三个
+    // 开关和各平台多出的一个（macOS 上是平滑滚动，其他平台上是使用系统标题栏），以及背景的图片、
+    // 显示方式、不透明度，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：
+    // → 换到下一个，外观回到深色；到头后不再变化。
+    for _ in 0..12 {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -389,6 +468,7 @@ fn settings_pages_are_listed_on_the_left() {
             git: 1.0,
             editing: None,
             scroll: 0.0,
+            offset: (0.0, 0.0),
         };
         let layout = SettingsLayout::compute(app.layout.window, &view, &mut |_| 0.0);
         for row in &layout.rows {
@@ -523,8 +603,6 @@ fn settings_open_from_the_shortcut_without_a_tab() {
 /// `jq`，没有 `ruff`。因此哪些工具能找到，与本机实际安装的工具无关。
 #[cfg(unix)]
 pub(super) fn format_settings_app(name: &str, dark: bool) -> (App, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = search_folder(name);
     std::fs::write(
         dir.join("pyproject.toml"),
@@ -534,8 +612,7 @@ pub(super) fn format_settings_app(name: &str, dark: bool) -> (App, PathBuf) {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     for tool in ["rustfmt", "gofmt", "jq"] {
-        std::fs::write(bin.join(tool), "#!/bin/sh\ncat\n").unwrap();
-        std::fs::set_permissions(bin.join(tool), std::fs::Permissions::from_mode(0o755)).unwrap();
+        winc_backend::testing::write_script(&bin.join(tool), "#!/bin/sh\ncat\n");
     }
 
     let mut app = app_with(&dir, dark);
@@ -650,6 +727,7 @@ fn the_settings_scrollbar_can_be_dragged() {
 
 #[test]
 fn the_keys_page_lists_searches_and_records() {
+    crate::app::snapshot::use_vscode_keys();
     use crate::keymap::{Action, KeyCode, Mods, Stroke};
 
     let mut app = blank_app(false);
@@ -661,11 +739,8 @@ fn the_keys_page_lists_searches_and_records() {
     let all = app.keys_layout().rows.len();
     assert!(all > 50, "{all}");
     let actions = |app: &App| {
-        app.keys_layout()
-            .rows
-            .iter()
-            .map(|(_, r)| r.action)
-            .collect::<Vec<_>>()
+        let keys = app.keys_layout();
+        keys.rows().map(|(_, r)| r.action).collect::<Vec<_>>()
     };
 
     // 按名称搜索，中文名和英文名都可以。
@@ -982,6 +1057,27 @@ fn the_animations_switch_overrides_the_system_setting() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 平滑滚动默认开着，可以单独关掉，不影响其他动态效果；只在 macOS 上列出。
+#[test]
+fn smooth_scrolling_switches_off_on_its_own() {
+    let dir = sample_folder("settings-smooth-scrolling");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    assert_eq!(app.config.smooth_scrolling, None);
+    assert!(app.smooth_scrolling() && app.switch_on(Setting::SmoothScrolling));
+    assert_eq!(Setting::SmoothScrolling.page(), SettingsPage::Appearance);
+
+    app.settings_toggle(Setting::SmoothScrolling);
+    assert_eq!(app.config.smooth_scrolling, Some(false));
+    assert!(!app.smooth_scrolling() && app.animations_on());
+
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Appearance);
+    let listed =
+        (app.settings_layout().rows.iter()).any(|row| row.setting == Setting::SmoothScrolling);
+    assert_eq!(listed, cfg!(target_os = "macos"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 「Git」页只在 Git 模块开启时列出，放着 Git 的选项；停在该页时关闭模块，改到模块页。
 #[test]
 fn the_git_page_is_listed_only_when_the_module_is_on() {
@@ -1009,12 +1105,14 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         Setting::GitTree,
         Setting::DiffInline,
         Setting::GitInlineBlame,
+        Setting::GitPullMode,
         Setting::GitConfirmPush,
         Setting::GitRememberCredentials,
         Setting::GitAutoFetch,
-        Setting::GitSystemProxy,
     ];
     assert_eq!(rows, expected);
+    // 代理不只管 Git：放在「关于」页的更新旁边，关掉 Git 模块也找得到。
+    assert_eq!(Setting::SystemProxy.page(), SettingsPage::About);
     // 「树形显示更改」与提交视图「⋯」菜单里的是同一个开关，记在状态文件里。
     assert!(app.git.commit.flat() && !app.switch_on(Setting::GitTree));
     app.settings_toggle(Setting::GitTree);
@@ -1052,7 +1150,8 @@ fn the_about_page_opens_the_release_notes() {
 }
 
 /// 首次设置尚未完成时开始页只有「首次设置」：外观、主题和模块的修改立即生效并写入配置，语言
-/// 和主题从菜单中选。点击「完成」或按回车后换回开始操作，状态中记下已经完成。
+/// 和主题从菜单中选。点击「继续」或按回车进入快捷键一页，选好方案后点击「完成」或按回车换回
+/// 开始操作，状态中记下已经完成。
 #[test]
 fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
     use crate::app::StartAction;
@@ -1061,7 +1160,7 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
     let has = |app: &App, wanted: StartAction| app.hits.start.iter().any(|(_, a)| *a == wanted);
     let mut app = blank_app(false);
     paint(&mut app);
-    assert!(has(&app, StartAction::Settings) && !has(&app, StartAction::FinishSetup));
+    assert!(has(&app, StartAction::Settings) && !has(&app, StartAction::SetupNext));
 
     app.state.setup_pending = true;
     paint(&mut app);
@@ -1072,7 +1171,7 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
         click(app, (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0));
         paint(app);
     };
-    // 语言、外观三段、主题、三个模块的开关和「完成」，没有开始操作。
+    // 语言、外观三段、主题、三个模块的开关和「继续」，没有开始操作。
     assert_eq!(app.hits.start.len(), 1 + 3 + 1 + 3 + 1);
     assert!(!has(&app, StartAction::Settings));
     // 各控件的右端对齐在同一条线上。
@@ -1081,7 +1180,7 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
         rect.right()
     };
     // 下拉值的箭头与这条线对齐，悬停底色因此向右多出一段。
-    let edge = right(&app, StartAction::FinishSetup);
+    let edge = right(&app, StartAction::SetupNext);
     let past = crate::theme::SETTINGS_GLYPH_PAD - 1.0;
     assert_eq!(right(&app, StartAction::Language), edge + past);
     assert_eq!(right(&app, StartAction::Theme), edge + past);
@@ -1127,12 +1226,35 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
     pick(&mut app, StartAction::Module(Module::Git));
     assert!(!app.git_enabled());
 
+    // 快捷键一页：各方案在前，默认选中 IDEA 方案；选 VS Code 后完成，写入配置。「返回」回到
+    // 上一页，选择保留。
+    pick(&mut app, StartAction::SetupNext);
+    assert!(app.setup.shown && app.setup.choice == 0);
+    assert!(has(&app, StartAction::SetupKeymap(1)) && has(&app, StartAction::SetupBack));
+    assert_eq!(right(&app, StartAction::FinishSetup), edge);
+    pick(&mut app, StartAction::SetupKeymap(1));
+    pick(&mut app, StartAction::SetupBack);
+    assert!(!app.setup.shown && has(&app, StartAction::SetupNext));
+    // 两页之间切换途中只有淡入的一页响应点击。
+    let total = crate::app::setup::OUTRO;
+    let clock = crate::app::animation::Clock::stopped(total, total.mul_f32(0.2));
+    app.motion.setup_page = Some(clock);
+    paint(&mut app);
+    assert!(has(&app, StartAction::SetupNext) && !has(&app, StartAction::SetupBack));
+    app.motion.setup_page = None;
+    pick(&mut app, StartAction::SetupNext);
+    assert_eq!(app.setup.choice, 1);
     pick(&mut app, StartAction::FinishSetup);
     assert!(!app.state.setup_pending);
+    assert_eq!(app.config.keymap.as_deref(), Some("vscode"));
+    assert_eq!(
+        crate::keymap::current_preset(),
+        crate::keymap::Preset::VsCode
+    );
     assert!(has(&app, StartAction::Settings) && !has(&app, StartAction::FinishSetup));
     assert!(!has(&app, StartAction::Appearance(ThemeChoice::Auto)));
 
-    // 回车等同于「完成」；启动动画期间各项尚未显示，回车不结束首次设置，点击也不响应。
+    // 回车等同于「继续」「完成」；启动动画期间各项尚未显示，回车不结束首次设置，点击也不响应。
     use crate::app::animation::Clock;
     use winit::keyboard::{Key, NamedKey};
     let (enter, total) = (Key::Named(NamedKey::Enter), crate::app::setup::INTRO);
@@ -1142,9 +1264,18 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
     assert!(app.hits.start.is_empty());
     assert!(!app.setup_key(&enter) && app.state.setup_pending);
     app.motion.setup_intro = None;
+    app.setup.shown = false;
     paint(&mut app);
-    assert!(has(&app, StartAction::FinishSetup));
+    assert!(has(&app, StartAction::SetupNext));
     assert!(!app.setup_key(&Key::Named(NamedKey::Escape)) && app.state.setup_pending);
+    assert!(app.setup_key(&enter) && app.setup.shown && app.state.setup_pending);
+    // 快捷键一页：上下键换选中的一项，`Esc` 回到上一页。
+    let named = |key| Key::Named(key);
+    app.setup_choose(0);
+    assert!(app.setup_key(&named(NamedKey::ArrowDown)) && app.setup.choice == 1);
+    assert!(app.setup_key(&named(NamedKey::ArrowUp)) && app.setup.choice == 0);
+    assert!(app.setup_key(&named(NamedKey::Escape)) && !app.setup.shown);
+    assert!(app.setup_key(&enter) && app.setup.shown);
     assert!(app.setup_key(&enter) && !app.state.setup_pending);
     assert!(!app.setup_key(&enter));
 
@@ -1175,4 +1306,28 @@ fn the_window_frame_is_noted_once_resizing_settles() {
     assert_eq!(app.window.frame_due, None);
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 截图：「Git」页，含拉取方式和它的菜单。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_settings_git_page() {
+    let dir = sample_folder("settings-git-shot");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.open_settings();
+    app.settings_toggle(Setting::GitModule);
+    app.settings_show_page(SettingsPage::Git);
+    paint(&mut app);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    shoot(&mut app, "settings-git");
+    let row = (app.settings_layout().rows.iter())
+        .find(|row| row.setting == Setting::GitPullMode)
+        .unwrap()
+        .control;
+    app.on_mouse_move(row.x + 4.0, row.y + 4.0);
+    app.on_mouse_down(winit::event::MouseButton::Left);
+    app.on_mouse_up(winit::event::MouseButton::Left);
+    paint(&mut app);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    shoot(&mut app, "settings-git-pull-menu");
 }

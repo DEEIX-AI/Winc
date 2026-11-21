@@ -7,28 +7,67 @@ use crate::test_util::scratch;
 
 #[test]
 fn names_follow_the_numbered_and_copy_schemes() {
-    assert_eq!(split_name("a.tar.gz"), ("a.tar", ".gz"));
-    assert_eq!(split_name(".env"), (".env", ""));
-    assert_eq!(split_name("Makefile"), ("Makefile", ""));
-    assert_eq!(candidate("image", ".png", 0, Naming::Numbered), "image.png");
-    assert_eq!(
-        candidate("image", ".png", 2, Naming::Numbered),
-        "image-2.png"
-    );
-    assert_eq!(candidate("a", ".txt", 1, Naming::Copy), "a 副本.txt");
-    assert_eq!(candidate("a", ".txt", 2, Naming::Copy), "a 副本 2.txt");
+    let split = |name: &str| split_name(OsStr::new(name));
+    assert_eq!(split("a.tar.gz"), ("a.tar".into(), ".gz".into()));
+    assert_eq!(split(".env"), (".env".into(), "".into()));
+    assert_eq!(split("Makefile"), ("Makefile".into(), "".into()));
+    let name =
+        |stem: &str, ext: &str, n, naming| candidate(OsStr::new(stem), OsStr::new(ext), n, naming);
+    assert_eq!(name("image", ".png", 0, Naming::Numbered), "image.png");
+    assert_eq!(name("image", ".png", 2, Naming::Numbered), "image-2.png");
+    assert_eq!(name("a", ".txt", 1, Naming::Copy), "a 副本.txt");
+    assert_eq!(name("a", ".txt", 2, Naming::Copy), "a 副本 2.txt");
+    // 不是 UTF-8 的名字原样保留，副本只加上后缀。
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let stem = OsStr::from_bytes(b"caf\xE9");
+        let copy = candidate(stem, OsStr::new(".txt"), 1, Naming::Copy);
+        assert_eq!(copy.as_bytes(), b"caf\xE9 \xE5\x89\xAF\xE6\x9C\xAC.txt");
+    }
 }
 
 #[test]
 fn saved_images_never_overwrite() {
     let dir = scratch("image");
-    let first = save_image(&dir, b"one").unwrap();
-    let second = save_image(&dir, b"two").unwrap();
+    let first = save_image(&dir, IMAGE_NAME, b"one").unwrap();
+    let second = save_image(&dir, IMAGE_NAME, b"two").unwrap();
     assert_eq!(first, dir.join("image.png"));
     assert_eq!(second, dir.join("image-1.png"));
     assert_eq!(fs::read(&first).unwrap(), b"one");
     assert_eq!(fs::read(&second).unwrap(), b"two");
+    // 图片目录不存在时先创建。
+    let third = save_image(&dir.join("assets/notes"), "shot.png", b"three").unwrap();
+    assert_eq!(third, dir.join("assets/notes/shot.png"));
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn image_folder_and_name_follow_the_settings() {
+    let doc = Path::new("/p/docs/notes.md");
+    assert_eq!(image_folder(doc, None), Path::new("/p/docs"));
+    assert_eq!(image_folder(doc, Some(" ")), Path::new("/p/docs"));
+    assert_eq!(
+        image_folder(doc, Some("assets")),
+        Path::new("/p/docs/assets")
+    );
+    let typora = image_folder(doc, Some("${filename}.assets"));
+    assert_eq!(typora, Path::new("/p/docs/notes.assets"));
+    assert_eq!(
+        image_folder(doc, Some("../img")),
+        Path::new("/p/docs/../img")
+    );
+    assert_eq!(image_folder(doc, Some("/srv/img")), Path::new("/srv/img"));
+
+    let date = || "20261119-153012".to_owned();
+    assert_eq!(image_name(doc, None, date), "image.png");
+    assert_eq!(
+        image_name(doc, Some("${filename}-${date}"), date),
+        "notes-20261119-153012.png"
+    );
+    // 没有 `${date}` 时不读取时间；名字中的路径分隔符被替换。
+    let name = image_name(doc, Some("a/b"), || unreachable!());
+    assert_eq!(name, "a-b.png");
 }
 
 #[test]
@@ -58,6 +97,17 @@ fn copies_files_and_folders_without_overwriting() {
     assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "changed");
     let third = copy_into(&sources[..1], &dest, &Copying::default()).unwrap();
     assert_eq!(third, [dest.join("a 副本 2.txt")]);
+
+    // 某一项失败时停止，错误中带上之前复制好的各项。
+    let missing = src.join("gone.txt");
+    let error = copy_into(
+        &[sources[0].clone(), missing.clone()],
+        &dest,
+        &Copying::default(),
+    )
+    .unwrap_err();
+    assert_eq!(error.path, missing);
+    assert_eq!(error.done, [dest.join("a 副本 3.txt")]);
 
     // 粘贴到源文件所在的目录：得到一个副本。
     let beside = copy_into(&sources[..1], &src, &Copying::default()).unwrap();
@@ -163,12 +213,16 @@ fn images_from_outside_the_project_are_copied_next_to_the_document() {
         dir.join("photo.JPG"),
         dir.join("report.pdf"),
     ];
-    let targets = bring_images(&docs, Some(&project), &files).unwrap();
+    let targets = bring_images(&docs, &docs, Some(&project), &files).unwrap();
     // 项目里的图片和项目外的其他文件原样引用；项目外的图片复制到文档旁边，重名时加序号。
     assert_eq!(targets[0], project.join("inside.png"));
     assert_eq!(targets[1], docs.join("photo-1.JPG"));
     assert_eq!(fs::read_to_string(&targets[1]).unwrap(), "out");
     assert_eq!(targets[2], dir.join("report.pdf"));
+    // 设置了图片目录时复制到该目录，不存在时先创建。
+    let assets = docs.join("notes.assets");
+    let targets = bring_images(&docs, &assets, Some(&project), &files[1..2]).unwrap();
+    assert_eq!(targets, [assets.join("photo.JPG")]);
 
     let _ = fs::remove_dir_all(&dir);
 }

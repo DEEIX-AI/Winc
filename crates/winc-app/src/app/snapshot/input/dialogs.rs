@@ -31,7 +31,7 @@ fn a_dialog_closes_when_a_shortcut_takes_its_focus() {
         Action::GoToSymbol,
         Action::GoToLine,
     ] {
-        for b in crate::keymap::current() {
+        for b in crate::keymap::current().iter() {
             if b.second.is_some() || matches!(b.action, Action::Quit | Action::CloseWindow) {
                 continue;
             }
@@ -103,7 +103,7 @@ fn dialogs_fade_in_and_out_like_settings() {
         paint(&mut app);
         let r = match card {
             Card::Picker => app.layout.picker,
-            Card::Bar => crate::layout::goto_bar(app.layout.editor),
+            Card::Bar => crate::layout::goto_bar(app.layout.editor, false),
             Card::Dialog => app.dialog_layout().card,
             Card::Alert => app.overlays.alert.as_ref().unwrap().parts.buttons[0],
         };

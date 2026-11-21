@@ -3,10 +3,27 @@
 //! 系统文件面板由 [`Pick`] 描述用途，[`App::pick`] 弹出，选择结果经事件循环回到
 //! [`App::on_picked`]。保存有界面线程与后台两条路径，后台保存见 `background_save.rs`。
 
+use std::time::{Duration, Instant};
+
+use winc_config::AutoSave;
 use winc_i18n::t;
 
 use super::*;
 use crate::system;
+
+/// 「停止输入后」自动保存时，最后一次修改之后等待的时间。
+const AUTO_SAVE_DELAY: Duration = Duration::from_secs(1);
+
+/// 自动保存的时机（见 [`App::auto_save_tick`]）。
+#[derive(Debug, Default)]
+pub(crate) struct AutoSaveWatch {
+    /// 上次检查时的焦点。
+    focus: Option<Focus>,
+    /// 等待保存的文档（标识和版本号）和到期时刻；文档再被修改时重新计时。
+    due: Option<(Vec<(DocumentId, u64)>, Instant)>,
+    /// 上次保存时的文档和版本号。
+    tried: Vec<(DocumentId, u64)>,
+}
 
 /// 系统文件对话框的用途。
 #[derive(Debug, Clone)]
@@ -27,6 +44,8 @@ pub enum Pick {
     BackgroundImage,
     /// 连接远端主机对话框中密钥文件右端的按钮：选密钥文件，从 `~/.ssh` 开始。
     KeyFile,
+    /// 远端文件树的「下载…」：选本机的目录，把参数中的各项下载到那里。
+    Download(Vec<PathBuf>),
 }
 
 /// 无法打开的文件在编辑区中给出的操作。
@@ -34,6 +53,8 @@ pub enum Pick {
 pub enum PlaceholderAction {
     /// 以文本方式打开二进制文件，只读。
     OpenAsText,
+    /// 按十六进制查看文件的字节。
+    ShowHex,
     /// 读取失败时重试。
     Retry,
     /// 用系统默认应用打开。
@@ -154,6 +175,16 @@ impl App {
         self.open_file(path, false);
     }
 
+    /// 从窗口外打开了文件 `path`（命令行、文件管理器、程序坞、拖入、「打开」面板）：记入最近
+    /// 打开的文件；目录不记。
+    pub(in crate::app) fn note_opened_file(&mut self, path: &Path) {
+        let path = winc_config::files::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if self.is_folder(&path) || !self.may_be_file(&path) {
+            return;
+        }
+        self.update_state(|state| state.remember_file(&path));
+    }
+
     /// 在预览标签中打开文件 `path`。
     ///
     /// 文件已打开时切换到其标签；否则替换现有的预览标签，没有预览标签时新建一个。
@@ -268,7 +299,7 @@ impl App {
             self.preview_tab = None;
         }
         self.auto_save_active();
-        let count = self.editor.documents.len();
+        let count = self.editor.tab_count();
         let index = self.editor.open_tab(path);
         let id = self.editor.documents[index].id;
         if !preview {
@@ -276,7 +307,7 @@ impl App {
             if self.preview_tab == Some(id) {
                 self.preview_tab = None;
             }
-        } else if self.editor.documents.len() > count {
+        } else if self.editor.tab_count() > count {
             if let Some(old) = replace {
                 self.replace_preview_tab(old, index);
             }
@@ -413,6 +444,7 @@ impl App {
 
         match action {
             PlaceholderAction::ShowSource => self.toggle_preview(),
+            PlaceholderAction::ShowHex => self.show_hex(),
             PlaceholderAction::OpenAsText | PlaceholderAction::Retry => {
                 let as_text = action == PlaceholderAction::OpenAsText;
                 // 读好后由 `poll_loads` 换入标签并提示只读的原因。
@@ -420,15 +452,23 @@ impl App {
                     self.load_active_in_background();
                 }
             }
-            PlaceholderAction::OpenWithDefaultApp if winc_backend::is_remote(&path) => {
-                self.notify(t!("workspace-remote-local-only"));
-            }
             PlaceholderAction::OpenWithDefaultApp => {
-                if let Err(e) = system::open_with_default_app(&path) {
-                    self.notify(t!(
-                        "workspace-open-default-app-failed",
-                        error = e.to_string()
-                    ));
+                // 远端的文件：挂载在本机时（`remote.localFolders`）打开本机上的那一份。
+                let local = if winc_backend::is_remote(&path) {
+                    self.local_folder(&path)
+                } else {
+                    Some(path)
+                };
+                match local {
+                    None => self.notify(NoticeKind::Warning, t!("workspace-remote-local-only")),
+                    Some(path) => {
+                        if let Err(e) = system::open_with_default_app(&path) {
+                            self.notify(
+                                NoticeKind::Error,
+                                t!("workspace-open-default-app-failed", error = e.to_string()),
+                            );
+                        }
+                    }
                 }
             }
             PlaceholderAction::Reveal => self.reveal_in_file_manager(&path),
@@ -440,17 +480,30 @@ impl App {
     }
 
     /// 在系统文件管理器中显示 `path`；失败时提示原因。
+    ///
+    /// 远端的文件在挂载到本机的目录之内时（配置项 `remote.localFolders`）显示本机上的那一份；
+    /// 没有挂载时说明可以怎样设置。
     pub(in crate::app) fn reveal_in_file_manager(&mut self, path: &Path) {
-        if winc_backend::is_remote(path) {
-            self.notify(t!("workspace-remote-local-only"));
-            return;
-        }
+        let local;
+        let path = if winc_backend::is_remote(path) {
+            let Some(mapped) = self.local_folder(path) else {
+                self.notify(NoticeKind::Warning, t!("workspace-remote-reveal-unmapped"));
+                return;
+            };
+            local = mapped;
+            local.as_path()
+        } else {
+            path
+        };
         if let Err(e) = system::reveal_in_file_manager(path) {
-            self.notify(t!(
-                "workspace-reveal-failed",
-                action = system::reveal_label(),
-                error = e.to_string()
-            ));
+            self.notify(
+                NoticeKind::Error,
+                t!(
+                    "workspace-reveal-failed",
+                    action = system::reveal_label(),
+                    error = e.to_string()
+                ),
+            );
         }
     }
 
@@ -479,17 +532,20 @@ impl App {
         }
         // 远端主机上的目录只能在内置终端中打开：本机的终端程序进不去。
         if remote {
-            self.notify(t!("workspace-remote-terminal"));
+            self.notify(NoticeKind::Warning, t!("workspace-remote-terminal"));
             return;
         }
         if let Err(e) = system::open_terminal(&dir, self.config.external_terminal.as_deref()) {
             let app = self.config.external_terminal.as_deref();
             let app = app.unwrap_or(t!("workspace-terminal-app-fallback"));
-            self.notify(t!(
-                "workspace-open-app-failed",
-                app = app,
-                error = e.to_string()
-            ));
+            self.notify(
+                NoticeKind::Error,
+                t!(
+                    "workspace-open-app-failed",
+                    app = app,
+                    error = e.to_string()
+                ),
+            );
         }
     }
 
@@ -503,11 +559,13 @@ impl App {
         self.open_button_menu(MenuButton::TabList, MenuTarget::TabList, (list.right(), y));
     }
 
-    /// 切换到第 `index` 个标签；下标超出范围时不处理。
+    /// 切换到第 `index` 个文档；它只在其他窗格里打开时先成为前台窗格的标签。下标超出范围时不
+    /// 处理。
     pub(in crate::app) fn activate_tab(&mut self, index: usize) {
         if index >= self.editor.documents.len() {
             return;
         }
+        let index = self.editor.bring(index);
 
         if self.editor.active != Some(index) {
             self.auto_save_active();
@@ -606,7 +664,7 @@ impl App {
 
     /// 循环切换标签：`forward` 为 `true` 时切到下一个，否则切到上一个；到两端后绕回。
     pub(in crate::app) fn cycle_tab(&mut self, forward: bool) {
-        let n = self.editor.documents.len();
+        let n = self.editor.tab_count();
 
         if n > 0 {
             let current = self.editor.active.unwrap_or(0);
@@ -650,6 +708,58 @@ impl App {
         }
     }
 
+    /// 设置什么时候自动保存。
+    pub(in crate::app) fn set_auto_save(&mut self, choice: AutoSave) {
+        self.config.auto_save = Some(choice);
+        self.save_config();
+        self.request_redraw();
+    }
+
+    /// 事件循环空闲时调用：焦点离开编辑区（例如切到终端）时保存当前文档；「停止输入后」时，有
+    /// 修改的文档在最后一次修改 [`AUTO_SAVE_DELAY`] 之后保存。返回下一次需要调用的时刻。
+    pub(in crate::app) fn auto_save_tick(&mut self, now: Instant) -> Option<Instant> {
+        // 查找条和跳转条在编辑区之内，不算离开。
+        let left = self.auto_save_watch.focus == Some(Focus::Editor)
+            && !matches!(
+                self.focus,
+                Focus::Editor | Focus::Search | Focus::Replace | Focus::Prompt
+            );
+        self.auto_save_watch.focus = Some(self.focus);
+        if left {
+            self.auto_save_active();
+        }
+
+        let watch = &mut self.auto_save_watch;
+        if self.config.auto_save != Some(AutoSave::AfterDelay) {
+            watch.due = None;
+            return None;
+        }
+        let dirty: Vec<(DocumentId, u64)> = (self.editor.documents.iter())
+            .filter(|doc| doc.is_dirty() && !doc.in_conflict())
+            .map(|doc| (doc.id, doc.revision))
+            .collect();
+        // 保存过而没有保存成功的（只读、已删除、没有路径）不每隔一段时间重试，再修改后再保存。
+        if dirty.is_empty() || dirty == watch.tried {
+            watch.due = None;
+            return None;
+        }
+        match &watch.due {
+            Some((seen, at)) if *seen == dirty && now < *at => Some(*at),
+            Some((seen, _)) if *seen == dirty => {
+                let ids: Vec<DocumentId> = dirty.iter().map(|&(id, _)| id).collect();
+                watch.due = None;
+                watch.tried = dirty;
+                self.auto_save(&ids);
+                None
+            }
+            _ => {
+                let at = now + AUTO_SAVE_DELAY;
+                watch.due = Some((dirty, at));
+                Some(at)
+            }
+        }
+    }
+
     /// 开启「自动保存」时，在切换离开之前保存当前文档。
     fn auto_save_active(&mut self) {
         if let Some(id) = self.editor.active().map(|d| d.id) {
@@ -664,7 +774,7 @@ impl App {
     /// 窗口上有提示框时也不保存，提示框会使窗口失去焦点，用户随后点「不保存」就不再有效。保存成功
     /// 时不提示，失败时仍然提示。
     pub(in crate::app) fn auto_save(&mut self, ids: &[DocumentId]) {
-        if self.config.auto_save != Some(true) {
+        if self.config.auto_save.unwrap_or_default() == AutoSave::Off {
             return;
         }
         #[cfg(target_os = "macos")]
@@ -691,7 +801,7 @@ impl App {
                         Some(key) => t!("workspace-deleted-on-disk-key", name = name, key = key),
                         None => t!("workspace-deleted-on-disk", name = name),
                     };
-                    self.notify(message);
+                    self.notify(NoticeKind::Warning, message);
                 }
                 continue;
             }
@@ -756,7 +866,10 @@ impl App {
                 .as_deref()
                 .map(winc_editor::display_name)
                 .unwrap_or_default();
-            self.notify(t!("workspace-save-as-dirty-elsewhere", name = name));
+            self.notify(
+                NoticeKind::Error,
+                t!("workspace-save-as-dirty-elsewhere", name = name),
+            );
             return false;
         }
 
@@ -771,7 +884,10 @@ impl App {
             if let Some(index) = self.editor.index_of(id) {
                 self.activate_tab(index);
             }
-            self.notify(t!("workspace-save-conflict", name = name));
+            self.notify(
+                NoticeKind::Error,
+                t!("workspace-save-conflict", name = name),
+            );
             return false;
         }
         let Some(doc) = self.editor.document_mut(id) else {
@@ -810,11 +926,10 @@ impl App {
                 Ok(None) => {}
                 Err(e) => {
                     let name = doc.name().into_owned();
-                    self.notify(t!(
-                        "workspace-save-failed",
-                        name = name,
-                        error = e.to_string()
-                    ));
+                    self.notify(
+                        NoticeKind::Error,
+                        t!("workspace-save-failed", name = name, error = e.to_string()),
+                    );
                     return false;
                 }
             }
@@ -834,7 +949,7 @@ impl App {
                 self.run_file_saved(id);
                 if saved_as {
                     if let Some((other, _)) = other {
-                        self.remove_tabs(&[other]);
+                        self.close_documents(&[other]);
                     }
                     let path = self.editor.document(id).and_then(|d| d.path.clone());
                     if let (Some(ws), Some(path)) = (&mut self.editor.workspace, &path) {
@@ -844,12 +959,16 @@ impl App {
                 }
                 true
             }
+            // 另存为的新位置不以管理员身份重试：那是用户刚选的地方，可以换一个。
+            Err(e) if saved_as => {
+                self.notify(
+                    NoticeKind::Error,
+                    t!("workspace-save-failed", name = name, error = e.to_string()),
+                );
+                false
+            }
             Err(e) => {
-                self.notify(t!(
-                    "workspace-save-failed",
-                    name = name,
-                    error = e.to_string()
-                ));
+                self.save_failed(id, &name, &e);
                 false
             }
         }
@@ -879,7 +998,8 @@ impl App {
             | Pick::WslFolder(_)
             | Pick::WorktreeFolder
             | Pick::AddFolder
-            | Pick::BackgroundImage => (String::new(), None),
+            | Pick::BackgroundImage
+            | Pick::Download(_) => (String::new(), None),
         };
 
         #[cfg(target_os = "macos")]
@@ -894,12 +1014,14 @@ impl App {
                     files: true,
                     dir: dir.as_deref(),
                 },
-                Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder | Pick::AddFolder => {
-                    Panel::Open {
-                        files: false,
-                        dir: None,
-                    }
-                }
+                Pick::OpenFolder
+                | Pick::WslFolder(_)
+                | Pick::WorktreeFolder
+                | Pick::AddFolder
+                | Pick::Download(_) => Panel::Open {
+                    files: false,
+                    dir: None,
+                },
                 Pick::SaveAs(_) => Panel::Save {
                     name: &name,
                     dir: dir.as_deref(),
@@ -942,6 +1064,13 @@ impl App {
                     };
                     (choose, t!("cmd-open-folder"))
                 }
+                Pick::Download(_) => {
+                    let choose = Choose::Open {
+                        directory: true,
+                        dir: None,
+                    };
+                    (choose, t!("menu-download"))
+                }
                 Pick::SaveAs(_) => (
                     Choose::Save {
                         name: &name,
@@ -971,6 +1100,7 @@ impl App {
                 Pick::AddFolder => t!("cmd-add-folder"),
                 Pick::WslFolder(_) => t!("cmd-open-wsl-folder"),
                 Pick::SaveAs(_) => t!("cmd-save-as"),
+                Pick::Download(_) => t!("menu-download"),
             };
             // 对话框的标题不带省略号；挂在窗口上，打开期间窗口不响应。
             let mut dialog = rfd::FileDialog::new().set_title(title.trim_end_matches('…'));
@@ -994,7 +1124,8 @@ impl App {
                     Pick::OpenFolder
                     | Pick::WslFolder(_)
                     | Pick::WorktreeFolder
-                    | Pick::AddFolder => dialog.pick_folder(),
+                    | Pick::AddFolder
+                    | Pick::Download(_) => dialog.pick_folder(),
                     Pick::SaveAs(_) => dialog.set_file_name(&name).save_file(),
                 };
                 let _ = proxy.send_event(UserEvent::Picked(kind, path));
@@ -1012,10 +1143,13 @@ impl App {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub(in crate::app) fn pick_failed(&mut self, kind: Pick, error: Option<&str>) {
         self.on_picked(kind, None);
-        self.notify(match error {
-            Some(error) => t!("workspace-picker-failed", error = error),
-            None => t!("workspace-picker-unavailable").to_owned(),
-        });
+        self.notify(
+            NoticeKind::Error,
+            match error {
+                Some(error) => t!("workspace-picker-failed", error = error),
+                None => t!("workspace-picker-unavailable").to_owned(),
+            },
+        );
     }
 
     /// 处理系统面板的选择结果：`path` 为选中的路径，用户取消时为 `None`。
@@ -1030,17 +1164,23 @@ impl App {
             | Pick::WorktreeFolder
             | Pick::AddFolder
             | Pick::BackgroundImage
-            | Pick::KeyFile => None,
+            | Pick::KeyFile
+            | Pick::Download(_) => None,
         };
 
         let Some(path) = path else { return };
 
         match kind {
-            Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) => self.open_path(&path),
+            Pick::Open => {
+                self.open_path(&path);
+                self.note_opened_file(&path);
+            }
+            Pick::OpenFolder | Pick::WslFolder(_) => self.open_path(&path),
             Pick::WorktreeFolder => self.worktree_folder_picked(path),
             Pick::AddFolder => self.add_folder(&path),
             Pick::BackgroundImage => self.set_background_image(Some(path)),
             Pick::KeyFile => self.key_file_picked(&path),
+            Pick::Download(paths) => self.download(paths, path),
             Pick::SaveAs(id) => {
                 if self.save_document(id, Some(path))
                     && let Some(prompt) = continuation

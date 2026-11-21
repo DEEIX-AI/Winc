@@ -124,6 +124,32 @@ fn new_worktrees_go_next_to_the_repository_with_unique_names() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 子模块（Git 目录在外层仓库的 `.git` 里）的新工作树放在最外层仓库旁边，目录名带上子模块的
+/// 相对路径；只是放在别的仓库目录里的独立仓库仍放在自己旁边。
+#[test]
+fn submodule_worktrees_go_next_to_the_superproject() {
+    let dir =
+        winc_config::files::canonicalize(crate::test_util::scratch("worktree-anchor")).unwrap();
+    let app = dir.join("app");
+    let core = app.join("libs").join("core");
+    std::fs::create_dir_all(app.join(".git/modules/libs/core")).unwrap();
+    std::fs::create_dir_all(&core).unwrap();
+    std::fs::write(core.join(".git"), "gitdir: ../../.git/modules/libs/core\n").unwrap();
+    let vendored = app.join("vendor");
+    std::fs::create_dir_all(vendored.join(".git")).unwrap();
+    // 外面一层也是仓库（例如主目录），但 `app` 不是它的子模块。
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+
+    assert_eq!(worktree_anchor(&core), app);
+    assert_eq!(
+        worktree_dir(&core, None, None, "feat/x"),
+        dir.join("app.worktrees").join("libs-core-feat-x")
+    );
+    assert_eq!(worktree_anchor(&vendored), vendored);
+    assert_eq!(worktree_anchor(&app), app);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 配置的目录以 `~/` 开头时放在仓库所在系统的主目录下；主目录未知时用默认位置。
 #[test]
 fn configured_roots_starting_with_a_tilde_use_the_given_home() {
@@ -172,8 +198,6 @@ fn configured_roots_on_another_system_are_not_used() {
 #[cfg(unix)]
 #[test]
 fn old_git_lists_worktrees_without_nul() {
-    use std::os::unix::fs::PermissionsExt;
-
     let Some(git) = super::super::tests::real_git() else {
         return;
     };
@@ -212,8 +236,7 @@ fn old_git_lists_worktrees_without_nul() {
          exec '{}' \"$@\"\n",
         git.program.display()
     );
-    std::fs::write(&script, body).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    winc_backend::testing::write_script(&script, &body);
     let rejected = Command::new(&script)
         .arg("-C")
         .arg(&main)

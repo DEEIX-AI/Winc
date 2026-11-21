@@ -143,7 +143,7 @@ impl App {
         }
     }
 
-    /// 是否在 (`x`, `y`) 落指后立即开始拖动，适用于滚动条、缩略图和分隔条。
+    /// 是否在 (`x`, `y`) 落指后立即开始拖动，适用于滚动条、缩略图、分隔条和设置卡片的顶部一条。
     ///
     /// 列表、按钮和文字需要先区分点按与滑动，不在落指时开始拖动。
     pub(in crate::app) fn touch_drag_at(&self, x: f32, y: f32) -> bool {
@@ -151,8 +151,10 @@ impl App {
             return false;
         }
         if self.settings.open {
+            let layout = self.settings_layout();
             return self.settings_part_at(x, y).is_none()
-                && self.settings_scrollbar_at(x, y).is_some();
+                && (self.settings_scrollbar_at(x, y).is_some()
+                    || layout.title_strip().contains(x, y));
         }
         if self
             .preview
@@ -171,8 +173,11 @@ impl App {
                 | Target::TerminalDivider
                 | Target::OutlineDivider
                 | Target::SplitDivider
+                | Target::PaneDivider(_)
                 | Target::Log(crate::app::git::log::LogTarget::Divider)
+                | Target::Log(crate::app::git::log::LogTarget::BranchesEdge)
                 | Target::Log(crate::app::git::log::LogTarget::AuthorEdge)
+                | Target::Diff(crate::app::DiffTarget::FilesEdge)
         )
     }
 
@@ -188,7 +193,7 @@ impl App {
         // 拖动文件树中的项或标签时没有悬停目标；文件树中高亮的是放置目标目录，而不是鼠标所在的行。
         match self.pointer.drag {
             Drag::Scrollbar { bar, .. } => return Hover::Scrollbar(bar),
-            _ if self.tree_dragging().is_some() || self.dragged_tab().is_some() => {
+            _ if self.tree_dragging().is_some() || self.tab_dragging() => {
                 return Hover::None;
             }
             _ => {}
@@ -227,8 +232,12 @@ impl App {
             Target::Preview(mode) => Hover::Preview(mode),
             Target::Browser => Hover::Browser,
             Target::MarkdownLink(link) => Hover::MarkdownLink(link),
+            Target::Suggest(row) => Hover::Suggest(row),
+            Target::SelectionTool(tool) => Hover::SelectionTool(tool),
             Target::MarkdownToc(target) => Hover::MarkdownToc(target),
-            Target::MarkdownText | Target::PdfThumb(_) | Target::Picture => Hover::None,
+            Target::MarkdownText(Some(link)) => Hover::MarkdownLinkText(link),
+            Target::ImageHandle => Hover::ImageHandle,
+            Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture => Hover::None,
             Target::PdfTool(tool) => Hover::PdfTool(tool),
             Target::Tab(index, on_close) => Hover::Tab(index, on_close),
             Target::RulerChange(hunk) => Hover::RulerChange(hunk),
@@ -248,6 +257,7 @@ impl App {
             Target::TerminalDivider => Hover::TerminalDivider,
             Target::OutlineDivider => Hover::OutlineDivider,
             Target::SplitDivider => Hover::SplitDivider,
+            Target::PaneDivider(index) => Hover::PaneDivider(index),
             Target::TerminalHeader(hit) => Hover::TerminalHeader(hit),
             Target::TerminalBlock(hit) => Hover::TerminalBlock(hit),
             // 遮挡下方但没有按钮的区域，以及没有悬停效果的部件：输入条、顶栏空白、编辑区文字。
@@ -275,6 +285,18 @@ impl App {
         }
         if let Some(control) = self.window_control_at(x, y) {
             return Target::WindowControl(control);
+        }
+        // 链接地址的补全列表浮在文字上。
+        if let Some(card) = self.hits.suggest_card
+            && card.contains(x, y)
+        {
+            return hit(&self.hits.suggest, x, y).map_or(Target::Blocked, Target::Suggest);
+        }
+        if let Some(card) = self.hits.selection_card
+            && card.contains(x, y)
+        {
+            let tool = hit(&self.hits.selection_tools, x, y);
+            return tool.map_or(Target::Blocked, Target::SelectionTool);
         }
         // 浮于编辑区之上的卡片和提示条：只响应其中的按钮，卡片的其余区域遮挡下方的部件。
         if let Some(card) = self.hits.changes_card
@@ -420,6 +442,9 @@ impl App {
         if l.split_divider.contains(x, y) {
             return Target::SplitDivider;
         }
+        if let Some(index) = self.pane_divider_at(x, y) {
+            return Target::PaneDivider(index);
+        }
         if let Some(hit) = hit(&self.hits.terminal, x, y) {
             return Target::TerminalHeader(hit);
         }
@@ -482,6 +507,10 @@ impl App {
         if let Some(target) = toc {
             return Target::MarkdownToc(target);
         }
+        // 图片的把手优先于图片上的链接。
+        if self.image_handle_at(x, y).is_some() {
+            return Target::ImageHandle;
+        }
         // 可编辑的预览中单击文字用于放置光标，便于编辑链接文本；按住 `⌘`（其他平台为 `Ctrl`）
         // 点击才打开链接。复制按钮、折叠块的标题仍然单击生效。
         if let Some(link) = self.markdown_link_at(x, y)
@@ -506,9 +535,10 @@ impl App {
                 .find(|(rect, _)| rect.contains(x, y));
             return thumb.map_or(Target::Blocked, |&(_, to)| Target::PdfThumb(to));
         }
-        // 在预览上按下时选择文字并获得焦点，以便用键盘滚动和复制。
+        // 在预览上按下时选择文字并获得焦点，以便用键盘滚动和复制。可编辑的预览中停在链接上时
+        // 记下是哪个链接，用来提示地址。
         if self.preview.markdown.area.contains(x, y) {
-            return Target::MarkdownText;
+            return Target::MarkdownText(self.markdown_link_at(x, y));
         }
         if self.picture_at(x, y) {
             return Target::Picture;
@@ -561,15 +591,8 @@ impl App {
                 return Some((Scrollbar::Outline, grab(y, thumb.y, thumb.h)));
             }
         }
-        // Git 侧栏里正在显示的改动列表，或历史提交的文件列表。
-        if self.log_diff_tree().is_some() {
-            let list = self.commit_parts().list;
-            if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
-                let content = self.log_list_max_scroll() + list.h;
-                let thumb = scrollbar_thumb(list, self.log_list().scroll, content)?;
-                return Some((Scrollbar::Commit, grab(y, thumb.y, thumb.h)));
-            }
-        } else if self.commit_shown() {
+        // Git 侧栏里正在显示的改动列表。
+        if self.commit_shown() {
             let list = self.commit_parts().list;
             if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
                 let content = self.commit_max_scroll() + list.h;
@@ -765,8 +788,12 @@ impl App {
                 .is_some_and(|(card, _)| card.contains(x, y))
     }
 
-    /// 根据鼠标位置和拖动状态更新鼠标指针的样式。
+    /// 根据鼠标位置和拖动状态更新鼠标指针的样式；鼠标在其他窗格上时按那个窗格判断。
     pub(in crate::app) fn update_cursor_icon(&mut self) {
+        self.in_hovered_pane(Self::place_cursor_icon);
+    }
+
+    fn place_cursor_icon(&mut self) {
         let (x, y) = self.pointer.mouse;
         // 新建工作树对话框打开时只判断对话框自身：
         // 名称输入框上显示文本光标（I 形），其余位置显示箭头。
@@ -835,6 +862,10 @@ impl App {
 
         let icon = if let Hover::ResizeEdge(direction) = self.pointer.hover {
             resize_cursor(direction)
+        } else if matches!(self.pointer.drag, Drag::ImageResize)
+            || self.pointer.hover == Hover::ImageHandle
+        {
+            CursorIcon::ColResize
         } else if let Some(drag) = self.tree_dragging() {
             // 鼠标在文件树内但放置没有效果（目标在被拖项自身之内，或被拖项已在该目录中）时显示
             // 禁止图标；在文件树之外松开则不移动，显示普通箭头。
@@ -847,6 +878,11 @@ impl App {
             || self.pointer.hover == Hover::OutlineDivider
         {
             CursorIcon::RowResize
+        } else if let Some(axis) = self.pane_divider_axis() {
+            match axis {
+                winc_editor::panes::Axis::Row => CursorIcon::ColResize,
+                winc_editor::panes::Axis::Column => CursorIcon::RowResize,
+            }
         } else if matches!(self.pointer.drag, Drag::TerminalDivider { .. })
             || self.pointer.hover == Hover::TerminalDivider
         {
@@ -860,6 +896,8 @@ impl App {
             self.pointer.drag,
             Drag::Splitter { .. }
                 | Drag::LogDivider { .. }
+                | Drag::LogBranches { .. }
+                | Drag::DiffFiles { .. }
                 | Drag::LogColumn { .. }
                 | Drag::SplitDivider { .. }
         ) || matches!(
@@ -867,7 +905,9 @@ impl App {
             Hover::Splitter
                 | Hover::SplitDivider
                 | Hover::Log(crate::app::git::log::LogTarget::Divider)
+                | Hover::Log(crate::app::git::log::LogTarget::BranchesEdge)
                 | Hover::Log(crate::app::git::log::LogTarget::AuthorEdge)
+                | Hover::Diff(crate::app::DiffTarget::FilesEdge)
         ) {
             CursorIcon::ColResize
         } else if matches!(
@@ -947,9 +987,16 @@ pub(super) enum Target {
     Browser,
     /// Markdown 预览中的链接，参数为其在本帧 `links` 中的下标。
     MarkdownLink(usize),
+    /// 链接地址补全列表的一行，参数为行号。
+    Suggest(usize),
+    /// 格式工具栏中的按钮。
+    SelectionTool(crate::app::preview::markdown::toolbar::Tool),
     MarkdownToc(crate::app::preview::markdown::TocTarget),
-    /// Markdown 预览中链接以外的区域，用于选择文字。
-    MarkdownText,
+    /// Markdown 预览中可以选择文字的区域；参数为鼠标下的链接（可编辑的预览中单击链接放置
+    /// 光标，不打开它）。
+    MarkdownText(Option<usize>),
+    /// 可编辑的预览中图片的把手。
+    ImageHandle,
     /// 标签，参数为标签下标与是否位于关闭按钮上。
     Tab(usize, bool),
     /// 概览标尺上的改动，参数为改动块的序号。
@@ -994,6 +1041,8 @@ pub(super) enum Target {
     OutlineDivider,
     /// 分栏预览中间的分隔线。
     SplitDivider,
+    /// 编辑区窗格之间的第几道分隔线。
+    PaneDivider(usize),
     /// 编辑区右侧的缩略图。
     Minimap,
     /// 终端面板标签栏上的按钮。

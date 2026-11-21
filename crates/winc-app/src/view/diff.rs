@@ -6,6 +6,8 @@
 //! 一层。并排时「»」和改动勾选框位于带子上，「»」用左侧的一段替换右侧；行勾选框位于行号栏靠近
 //! 文字的一侧。折叠的一段同样用带子连接。
 
+mod blame;
+mod files;
 mod sticky;
 
 use std::fmt::Write as _;
@@ -177,7 +179,11 @@ impl FoldShift {
 /// `index` 超出 `documents` 的范围时 panic。
 pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     app.sync_diff_source(index);
+    // 文件栏展开、收起途中每帧更新露出的比例。
+    app.sync_log_files_panel();
     // 绘制时需要推进两侧的着色状态，同时读取 `app` 的字体和配色：先从文档中取出差异，绘制后恢复。
+    // 逐行追溯要读差异两侧的文字和开关，在取出差异之前更新。
+    app.update_diff_blame(index);
     let Some(mut view) = app.editor.documents[index].diff.take() else {
         return;
     };
@@ -185,7 +191,7 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let doc = &app.editor.documents[index];
     let visible = f64::from(parts.body.h / app.fonts.line_height);
     // 滚动位置由两侧共用，各侧分别换算为自己的显示行（见 `DiffView::row_at`）。
-    let pos = doc.scroll_line.max(0.0);
+    let pos = drawn_scroll_line(doc.scroll_line, app.fonts.line_height).max(0.0);
     let scroll = Scroll {
         rows: [
             view.side_scroll(LEFT, pos, visible),
@@ -206,15 +212,121 @@ pub(super) fn draw_diff(app: &mut App, frame: &mut Frame<'_>, index: usize) {
         });
     let scroll = (scroll, shift.as_ref());
 
-    draw_body(app, frame, &mut view, &parts, scroll, pos, &edit, &mut hits);
+    let drawn = draw_body(app, frame, &mut view, &parts, scroll, pos, &edit, &mut hits);
+    let id = app.editor.documents[index].id;
+    blame::draw(app, frame, (id, &view), &parts, &drawn, &mut hits);
     let (scroll, _) = scroll;
     sticky::draw(app, frame, &mut view, &parts, scroll, pos, &mut hits);
     draw_header(app, frame, &view, &parts, pos, &mut hits);
+    draw_banner(app, frame, &view, &parts, &mut hits);
+    files::draw(app, frame, &parts, &mut hits);
     draw_overview(app, frame, &view, &parts, index);
 
     app.hits.diff = hits;
     app.editor.documents[index].diff = Some(view);
 }
+
+/// 绘制标题栏上方的提交说明条：左边是文件栏的开关、提交号、说明和作者、时间，右边是
+/// 「返回日志」。不是从日志打开的差异时没有。
+fn draw_banner(
+    app: &App,
+    frame: &mut Frame<'_>,
+    view: &DiffView,
+    parts: &DiffParts,
+    hits: &mut Vec<(Rect, DiffTarget)>,
+) {
+    let Some(banner) = &view.banner else {
+        return;
+    };
+    let p = app.palette;
+    let bar = parts.banner;
+    frame.rect(bar, p.sidebar_bg);
+    frame.rect(
+        Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0),
+        p.separator,
+    );
+    let size = app.fonts.ui_small;
+    let y = bar.y + (bar.h - BUTTON) / 2.0;
+    // 这一行字号不同的几段文字（提交号、说明、作者和时间、「返回日志」）共用说明的基线。
+    let baseline = ui_baseline(app, bar, app.fonts.ui);
+
+    // 右端是「返回日志」。
+    let back_text = t!("git-log-diff-back");
+    let back_w = frame.measure(FontKind::Ui, size, back_text) + 30.0;
+    let back = Rect::new(bar.right() - 10.0 - back_w, y, back_w, BUTTON);
+    let lit = |target| app.pointer.hover == Hover::Diff(target);
+    draw_button(frame, p, back, bar, lit(DiffTarget::BannerBack), false);
+    let ink = if lit(DiffTarget::BannerBack) {
+        p.text
+    } else {
+        p.text_muted
+    };
+    icons::chevron(
+        frame,
+        (back.x + 11.0, back.y + back.h / 2.0),
+        7.0,
+        Direction::Left,
+        ink,
+        back,
+    );
+    frame.text(
+        FontKind::Ui,
+        size,
+        back.x + 20.0,
+        baseline,
+        back_text,
+        ink,
+        back,
+    );
+    hits.push((back, DiffTarget::BannerBack));
+    // 左端是文件栏的开关，在文件栏正上方：位置、画法与日志的分支面板开关相同，展开时按下。
+    let toggle = Rect::new(bar.x + 8.0, y, BUTTON, BUTTON);
+    // 按要切换到的状态画：收起途中按钮已经弹起，展开途中已经按下。
+    let on = app.log_files_open() && parts.files_w > 0.0;
+    let hovered = lit(DiffTarget::FilesToggle);
+    draw_button(frame, p, toggle, bar, hovered, on);
+    let ink = if hovered || on { p.text } else { p.text_muted };
+    icons::sidebar(frame, center(toggle), on, ink, toggle);
+    hits.push((toggle, DiffTarget::FilesToggle));
+
+    // 左边：图标、提交号、说明、作者和时间；放不下时从说明往后截短。
+    let clip = Rect::new(bar.x, bar.y, (back.x - 14.0 - bar.x).max(0.0), bar.h);
+    let x = toggle.right() + 10.0;
+    icons::history(frame, (x + 6.0, bar.y + bar.h / 2.0), p.text_muted, clip);
+    let x = x + 20.0;
+    let version = &banner.version;
+    let end = frame.text(
+        FontKind::Mono,
+        size,
+        x,
+        baseline,
+        version,
+        p.text_muted,
+        clip,
+    );
+    let mut x = end + 10.0;
+    if !banner.subject.is_empty() {
+        let room = (clip.right() - x).max(0.0);
+        let subject = ellipsize(frame, &banner.subject, app.fonts.ui, room);
+        x = frame.text(
+            FontKind::Ui,
+            app.fonts.ui,
+            x,
+            baseline,
+            &subject,
+            p.text,
+            clip,
+        ) + 10.0;
+    }
+    if !banner.detail.is_empty() {
+        let room = (clip.right() - x).max(0.0);
+        let detail = ellipsize(frame, &banner.detail, size, room);
+        frame.text(FontKind::Ui, size, x, baseline, &detail, p.text_dim, clip);
+    }
+}
+
+/// 标题栏里一侧的标题至少要有的宽度（逻辑像素，含锁图标）；更窄时不写这一侧的标题。
+const TITLE_MIN: f32 = 64.0;
 
 /// 绘制标题栏：两侧标题、改动处数与增删行数，右端是布局切换、折叠开关和导航按钮。
 fn draw_header(
@@ -234,15 +346,18 @@ fn draw_header(
     );
 
     // 右端从右往左依次为：布局切换、折叠开关、下一个文件与上一个文件（可跨文件导航时）、下一处、
-    // 上一处。布局切换和折叠开关按状态更换图标，不绘制按下状态。
+    // 上一处、打开文件（有对应的文件时）。布局切换和折叠开关按状态更换图标，不绘制按下状态。
     let y = header.y + (header.h - BUTTON) / 2.0;
     let mut right = header.right() - 10.0;
     let files = [DiffTarget::NextFile, DiffTarget::PreviousFile];
     let files = files.iter().copied().filter(|_| app.diff_steps_files());
+    let open = view.file_path().map(|_| DiffTarget::OpenFile);
     let targets = [DiffTarget::Layout, DiffTarget::Collapse]
         .into_iter()
-        .chain(files);
-    for target in targets.chain([DiffTarget::Next, DiffTarget::Previous]) {
+        .chain(files)
+        .chain([DiffTarget::Next, DiffTarget::Previous])
+        .chain(open);
+    for target in targets {
         let rect = Rect::new(right - BUTTON, y, BUTTON, BUTTON);
         right = rect.x - 2.0;
         draw_button(
@@ -265,6 +380,8 @@ fn draw_header(
             DiffTarget::NextFile => {
                 icons::chevron(frame, c, 8.0, Direction::Right, p.text_muted, rect)
             }
+            // 同提交视图文件行上的「打开文件」。
+            DiffTarget::OpenFile => icons::open_file(frame, c, p.text_muted, rect),
             // 图标表示点击后切换到的布局。
             DiffTarget::Layout if view.is_unified() => {
                 icons::split(frame, c, p.text_muted, rect);
@@ -306,16 +423,20 @@ fn draw_header(
     for (side, pane) in parts.panes.iter().enumerate() {
         let title = if side == LEFT { &view.old } else { &view.new };
         let end = pane.text.right().min(stats_left);
-        let clip = Rect::new(
-            pane.text.x,
-            header.y,
-            (end - pane.text.x).max(0.0),
-            header.h,
-        );
+        // 开着逐行追溯时右侧的文字区往右移了：标题从右半边（追溯一栏）的左边开始。
+        let start = match (view.is_unified(), side) {
+            (false, RIGHT) if pane.blame.w > 0.0 => pane.blame.x,
+            _ => pane.text.x,
+        };
+        let clip = Rect::new(start, header.y, (end - start).max(0.0), header.h);
         let mut x = match after {
             Some(end) => ui_text(frame, app, end + 8.0, header, "→", p.text_dim, clip) + 8.0,
-            None => pane.text.x + DIFF_TEXT_PAD,
+            None => start + DIFF_TEXT_PAD,
         };
+        // 差异很窄、标题挤在统计前面写不下几个字时不写，不画出被截掉一半的字。
+        if clip.right() - x < TITLE_MIN {
+            continue;
+        }
         if title.path.is_none() {
             icons::lock(
                 frame,
@@ -331,7 +452,8 @@ fn draw_header(
             Some((main, rest)) => (main, Some(rest)),
             None => (title.title.as_str(), None),
         };
-        let mut end = ui_text(frame, app, x, header, main, p.text, clip);
+        let main = ellipsize(frame, main, app.fonts.ui, (clip.right() - x).max(0.0));
+        let mut end = ui_text(frame, app, x, header, &main, p.text, clip);
         if let Some(rest) = rest {
             let rest = format!(" · {rest}");
             end = ui_text(frame, app, end, header, &rest, p.text_dim, clip);
@@ -597,7 +719,8 @@ fn draw_line_number(
     );
 }
 
-/// 绘制两侧的代码与行号、改动的底色和带子、查找结果与选区、光标，以及勾选框和「»」按钮。
+/// 绘制两侧的代码与行号、改动的底色和带子、查找结果与选区、光标，以及勾选框和「»」按钮；返回
+/// 画出的显示行。
 #[allow(clippy::too_many_arguments)]
 fn draw_body(
     app: &mut App,
@@ -608,7 +731,7 @@ fn draw_body(
     pos: f64,
     edit: &EditState,
     hits: &mut Vec<(Rect, DiffTarget)>,
-) {
+) -> Vec<DrawnRow> {
     let p = app.palette;
     let lh = app.fonts.line_height;
     let body = parts.body;
@@ -1182,6 +1305,7 @@ fn draw_body(
             hits.push((rect.intersect(body), DiffTarget::Revert(h)));
         }
     }
+    drawn
 }
 
 /// 在 `area` 内绘制一条带子：左端为 `left` 的上下沿，右端为 `right` 的上下沿，中间按 S 形曲线

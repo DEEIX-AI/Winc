@@ -598,6 +598,8 @@ fn typing_shows_the_final_layout_in_the_same_frame() {
         (text, app.preview.markdown.height, caret_screen_y(app))
     };
     let step = |app: &mut App, name: &str, act: &dyn Fn(&mut App)| {
+        // 固定在界面线程上解析：按上一次解析的耗时选择，机器繁忙时会改到后台。
+        app.preview.markdown.cost = Some(std::time::Duration::ZERO);
         act(app);
         paint(app);
         let first = shown(app);
@@ -696,9 +698,11 @@ fn format_commands_toggle_inline_marks_in_the_live_preview() {
     let before = doc_text(&app);
     assert!(app.run_action(Action::MarkdownItalic));
     assert_eq!(doc_text(&app), before);
-    // 换成源代码后这些命令不可用，同一个键执行其他命令。
+    // 源代码中同样可用（`markdown.shortcuts` 默认开着），关闭后同一个键执行其他命令。
     app.set_preview_mode(PreviewMode::Source);
     paint(&mut app);
+    assert!(app.action_available(Action::MarkdownBold));
+    app.config.markdown_shortcuts = Some(false);
     assert!(!app.action_available(Action::MarkdownBold));
     let _ = std::fs::remove_dir_all(&dir);
 }

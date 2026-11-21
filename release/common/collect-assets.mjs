@@ -10,7 +10,7 @@ const specifications = {
   "macos-arm64": [["dmg", ".dmg", "update"], ["updates", "appcast-macos-arm64.xml", "feed"]],
   "macos-x64": [["dmg", ".dmg", "update"], ["updates", "appcast-macos-x86_64.xml", "feed"]],
   "linux-x64": [
-    ["appimage", ".AppImage", "update"], ["deb", ".deb", "download"],
+    ["appimage", ".AppImage", "update"], ["deb", ".deb", "download"], ["rpm", ".rpm", "download"],
     ["updates", "appcast-linux.xml", "feed"],
   ],
   "windows-x64": [

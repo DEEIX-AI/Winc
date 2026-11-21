@@ -19,7 +19,7 @@ cmd-open-folder = 打开目录…
 cmd-add-folder = 添加目录到窗口…
 cmd-remote-connect = 远程：连接到 SSH 主机…
 cmd-remote-disconnect = 远程：断开连接
-cmd-open-recent = 打开最近的目录…
+cmd-open-recent = 打开最近的项目…
 cmd-open-wsl-folder = 打开 WSL 目录
 cmd-save = 保存
 cmd-save-as = 另存为…
@@ -27,6 +27,16 @@ cmd-close-tab = 关闭标签页
 cmd-close-other-tabs = 关闭其他标签页
 cmd-close-all-tabs = 关闭所有标签页
 cmd-reopen-closed = 重新打开关闭的标签页
+cmd-split-right = 向右拆分
+cmd-split-down = 向下拆分
+cmd-move-to-split-right = 移到右侧新窗格
+cmd-move-to-split-down = 移到下方新窗格
+cmd-unsplit = 合并全部窗格
+cmd-next-pane = 下一个窗格
+cmd-previous-pane = 上一个窗格
+cmd-split-terminal = 拆分终端
+cmd-next-terminal-pane = 终端中的下一个窗格
+cmd-previous-terminal-pane = 终端中的上一个窗格
 cmd-next-tab = 下一个标签页
 cmd-previous-tab = 上一个标签页
 cmd-close-folder = 关闭目录
@@ -53,6 +63,24 @@ cmd-markdown-italic = Markdown：切换斜体
 cmd-markdown-code = Markdown：切换行内代码
 cmd-markdown-strikethrough = Markdown：切换删除线
 cmd-markdown-highlight = Markdown：切换高亮
+cmd-markdown-heading-1 = Markdown：一级标题
+cmd-markdown-heading-2 = Markdown：二级标题
+cmd-markdown-heading-3 = Markdown：三级标题
+cmd-markdown-heading-4 = Markdown：四级标题
+cmd-markdown-heading-5 = Markdown：五级标题
+cmd-markdown-heading-6 = Markdown：六级标题
+cmd-markdown-paragraph = Markdown：正文
+cmd-markdown-quote = Markdown：切换引用
+cmd-markdown-ordered-list = Markdown：切换有序列表
+cmd-markdown-bullet-list = Markdown：切换无序列表
+cmd-markdown-code-block = Markdown：代码块
+cmd-markdown-math-block = Markdown：公式块
+cmd-markdown-table = Markdown：插入表格
+cmd-markdown-link = Markdown：插入链接
+cmd-markdown-image = Markdown：插入图片
+cmd-markdown-focus-mode = Markdown：切换专注模式
+cmd-markdown-typewriter-mode = Markdown：切换打字机模式
+cmd-markdown-paste-plain = Markdown：粘贴为纯文本
 cmd-delete-line = 删除行
 cmd-delete-all-left = 删除到行首
 cmd-indent-lines = 增加缩进
@@ -133,6 +161,7 @@ cmd-next-result = 下一个搜索结果
 cmd-previous-result = 上一个搜索结果
 cmd-rename-file = 重命名…
 cmd-delete-file = 删除
+cmd-delete-file-permanently = 永久删除
 cmd-open-selected = 打开
 cmd-preview-selected = 打开（焦点保留在文件树）
 cmd-find-in-folder = 在目录中查找…
@@ -167,6 +196,9 @@ cmd-changes-open-source = Git：打开选中的文件
 cmd-changes-rollback = Git：回滚选中的文件
 cmd-git-show-log = Git：显示日志
 cmd-git-go-to-revision = Git：转到提交号、分支或标签…
+cmd-git-reword-commit = Git：编辑提交说明…
+cmd-git-go-to-child-commit = Git：转到子提交
+cmd-git-go-to-parent-commit = Git：转到父提交
 cmd-git-show-output = Git：显示输出
 cmd-git-clone = Git：克隆仓库…
 cmd-git-init = Git：初始化仓库
@@ -178,7 +210,9 @@ cmd-git-new-branch = Git：新建分支…
 cmd-git-fetch = Git：获取
 cmd-git-pull = Git：拉取
 cmd-git-pull-rebase = Git：拉取并变基
+cmd-git-pull-from = Git：拉取自…
 cmd-git-push = Git：推送
+cmd-git-push-to = Git：推送到…
 cmd-git-sync = Git：同步
 cmd-git-stash = Git：储藏更改…
 cmd-git-stage-all = Git：暂存全部更改
@@ -196,6 +230,8 @@ cmd-run-configuration = 运行当前配置
 cmd-stop-configuration = 停止当前配置
 cmd-edit-run-configurations = 编辑运行配置
 cmd-clear-terminal = 终端：清除
+cmd-terminal-copy = 终端：复制
+cmd-terminal-paste = 终端：粘贴
 cmd-new-terminal = 新建终端
 cmd-close-terminal = 终端：关闭标签页
 cmd-next-terminal = 终端：下一个标签页
@@ -251,12 +287,19 @@ cmd-cli-usage =
       winc                  恢复上次打开的目录
       winc .                打开当前目录
       winc 文件:行[:列]     打开文件并转到指定行
+      winc ssh://主机/目录 [ssh://主机/文件:行[:列]]
+                            打开远端主机上的目录和其中的文件（需要启用远程模块）
       winc -                读取标准输入（例如 cargo build 2>&1 | winc -）
       -w, --wait            文件的标签页全部关闭后再退出（例如 git config core.editor "winc -w"）
       -n, --new-instance    不复用正在运行的 Winc，启动新进程（例如在 Winc 的终端中运行开发版本）
       -h, --help            显示帮助
       -v, --version         显示版本号
 cmd-cli-unknown-option = 无法识别的选项「{ $flag }」
+cmd-cli-bad-link = 无法打开链接「{ $link }」：应为 winc://file/ 加绝对路径
+cmd-cli-bad-ssh = 无法打开「{ $link }」：应为 ssh://[用户@]主机[:端口]/绝对路径
+cmd-cli-ssh-mixed = ssh:// 参数必须指向同一台主机，且不能与本机路径一起使用
+cmd-cli-ssh-one-off = --wait 和 - 不能用于 ssh:// 参数
+cmd-cli-ssh-folders = ssh:// 参数中只能有一个目录，其余应为其中的文件
 cmd-cli-wait-needs-file = --wait 需要指定文件
 cmd-cli-wsl-needs-name = --wsl 需要指定发行版名称
 cmd-cli-wait-needs-openable-file = --wait 需要至少一个可打开的文件

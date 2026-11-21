@@ -22,7 +22,7 @@ use crate::app::{
 use crate::field::{FieldView, TextField};
 use crate::icons;
 use crate::keymap::{self, Action};
-use crate::layout::{SearchParts, scrollbar_thumb};
+use crate::layout::{SearchParts, drawn_scroll, drawn_scroll_line, scrollbar_thumb};
 use crate::theme::*;
 
 mod alert;
@@ -33,11 +33,15 @@ mod editor;
 mod fields;
 mod git;
 mod overlays;
+#[cfg(all(test, unix))]
+pub(crate) use overlays::NOTICE_TEXT_X;
 mod popup_menu;
 pub(crate) mod preview;
 mod settings;
 mod status;
+mod suggest;
 mod terminal;
+mod tooltip;
 mod workspace;
 
 use editor::draw_editor;
@@ -62,8 +66,48 @@ pub(crate) fn base(app: &App) -> [(Rect, Color); 3] {
     [
         (l.sidebar, p.sidebar_bg),
         (l.top_bar, p.editor_bg),
-        (l.editor, p.editor_bg),
+        // 拆分后编辑区只是前台窗格的那一块：底色铺满整个卡片。
+        (app.panes.card.unwrap_or(l.editor), p.editor_bg),
     ]
+}
+
+/// 绘制一个窗格：标签栏和编辑区，以及分栏预览、合并的两侧等随标签变化的部分。`front` 为假
+/// 时是前台以外的窗格：合并的冲突只由前台窗格折叠、展开。
+fn draw_pane(app: &mut App, frame: &mut Frame<'_>, front: bool) {
+    draw_top_bar(app, frame);
+    if front {
+        app.sync_merge_panes();
+    }
+    draw_editor(app, frame);
+    editor::draw_split(app, frame);
+    preview::markdown::draw_diagram_view(app, frame);
+    git::merge::draw_side_panes(app, frame);
+}
+
+/// 绘制窗格之间的分隔线；悬停或拖动时加深。
+fn draw_pane_dividers(app: &App, frame: &mut Frame<'_>) {
+    let p = app.palette;
+    for divider in &app.panes.dividers {
+        let active = app.active_pane_divider() == Some(divider.index);
+        let color = if active { p.accent } else { p.border };
+        frame.rect(divider.line, color);
+    }
+}
+
+/// 拖动标签时标出松开后放进的窗格或拆出的那一半，底色同拖入文件的放置目标；拖到另一个窗格的
+/// 标签栏上时画出插入处的竖线。
+fn draw_tab_drop(app: &App, frame: &mut Frame<'_>) {
+    use crate::app::workspace::panes::TabDrop;
+    match app.panes.drop {
+        Some((TabDrop::Into { at: Some(_), .. }, line)) => {
+            frame.rect(line, app.palette.accent);
+        }
+        Some((_, area)) => {
+            let area = area.inset(6.0, 6.0);
+            frame.rect_clipped(area, app.palette.drop_target, RADIUS_ISLAND - 4.0, area);
+        }
+        None => {}
+    }
 }
 
 /// 绘制一帧界面，并重置、重新收集本帧的命中区域（文件树工具栏、项目名等）。
@@ -80,16 +124,9 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     let layout = app.layout;
     app.panels.tree.overflow = tree_overflow(app, frame);
     app.panels.global.overflow = workspace::panel::result_overflow(app, frame);
-    app.track_log_tree();
     let before = app.git.commit.overflow.map(|o| o.row);
     app.git.commit.overflow = git::commit::commit_overflow(app, frame);
     app.track_commit_actions(before);
-    // 历史提交的文件列表借用提交视图的列表，同样计算写全名的那一行。
-    app.with_log_list(|app| {
-        let before = app.git.commit.overflow.map(|o| o.row);
-        app.git.commit.overflow = git::commit::commit_overflow(app, frame);
-        app.track_commit_actions(before);
-    });
 
     // 鼠标停在名称展开的行上并滚动文件树后，该位置对应的行可能不再展开名称；鼠标位于文件树
     // 范围之外时需要清除悬停状态。
@@ -111,12 +148,10 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         app.motion.tool_fold.settle();
     }
 
-    draw_top_bar(app, frame);
-    app.sync_merge_panes();
-    draw_editor(app, frame);
-    editor::draw_split(app, frame);
-    preview::markdown::draw_diagram_view(app, frame);
-    git::merge::draw_side_panes(app, frame);
+    // 拆分后最后画前台窗格：浮层和各区域记下的位置都是它的。
+    app.draw_panes(|app, front| draw_pane(app, frame, front));
+    draw_pane_dividers(app, frame);
+    draw_tab_drop(app, frame);
     // 最大化、还原途中面板盖在编辑区上面：编辑区的圆角先修整好，面板再画在上面。
     let covered = app.terminal.grow.is_some();
     if covered {
@@ -137,10 +172,6 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     git::commit::draw_commit_overflow(app, frame);
     workspace::panel::draw_result_overflow_closing(app, frame);
     workspace::panel::draw_result_overflow(app, frame);
-    app.with_log_list(|app| {
-        git::commit::draw_commit_overflow_closing(app, frame);
-        git::commit::draw_commit_overflow(app, frame);
-    });
     git::changes::draw_change_popup(app, frame);
 
     if layout.search.h > 0.0 {
@@ -190,7 +221,9 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         draw_notice_ghost(app, frame, ghost);
     }
 
+    suggest::draw_suggest(app, frame);
     draw_tree_drag(app, frame);
+    draw_tab_drag(app, frame);
 
     // 新建工作树对话框覆盖整个窗口，打开时同样不绘制悬停提示。
     let dialog_open = app.overlays.form_dialog.is_some();
@@ -220,7 +253,8 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     if modal {
         return;
     }
-    draw_tooltip(app, frame);
+    // 鼠标在其他窗格上时，提示按那个窗格的标签和按钮写。
+    app.in_hovered_pane(|app| tooltip::draw_tooltip(app, frame));
 }
 
 /// 绘制已打开的窗口内菜单和提示框；提示框覆盖在菜单之上。
@@ -267,7 +301,13 @@ fn draw_file_drop(app: &App, frame: &mut Frame<'_>) {
     let l = &app.layout;
     let area = match app.file_hover() {
         Some(DropZone::Terminal) => l.terminal,
-        Some(DropZone::Open) => Rect::new(
+        Some(DropZone::Open(Some(drop))) => {
+            let Some(area) = app.drop_area(drop.pane, drop.edge) else {
+                return;
+            };
+            area
+        }
+        Some(DropZone::Open(None)) => Rect::new(
             l.top_bar.x,
             l.top_bar.y,
             l.top_bar.w,
@@ -288,14 +328,40 @@ fn draw_tree_drag(app: &App, frame: &mut Frame<'_>) {
     let Some(drag) = app.tree_dragging() else {
         return;
     };
-    let p = app.palette;
-    let window = app.layout.window;
-    let (x, y) = app.mouse();
-
     let name = match drag.paths.len() {
         1 => ellipsize(frame, &drag.name, app.fonts.ui, 240.0),
         n => Cow::Owned(t!("workspace-tree-drag-items", count = n)),
     };
+    let (card, icon_x, cy) = draw_drag_card(app, frame, name);
+    let p = app.palette;
+    if drag.kind == EntryKind::Dir {
+        icons::folder(frame, (icon_x, (cy - 6.0).round()), false, p.folder, card);
+    } else {
+        draw_file_icon(frame, p, (icon_x + 1.5, cy), &drag.name, card);
+    }
+}
+
+/// 绘制拖出标签栏的标签跟随鼠标的小卡片，样式同拖动文件树条目时的卡片。
+fn draw_tab_drag(app: &App, frame: &mut Frame<'_>) {
+    let docs = app.tabs_dragged_out();
+    let Some(doc) = docs.first().and_then(|id| app.editor.document(*id)) else {
+        return;
+    };
+    let file = doc.name();
+    let name = match docs.len() {
+        1 => ellipsize(frame, &file, app.fonts.ui, 240.0),
+        n => Cow::Owned(t!("workspace-tree-drag-items", count = n)),
+    };
+    let (card, icon_x, cy) = draw_drag_card(app, frame, name);
+    draw_file_icon(frame, app.palette, (icon_x + 1.5, cy), &file, card);
+}
+
+/// 在鼠标右下方画拖动时的卡片和名称 `name`（按住 `⌥` 时注明复制），返回卡片、图标的横坐标和
+/// 中线。
+fn draw_drag_card(app: &App, frame: &mut Frame<'_>, name: Cow<'_, str>) -> (Rect, f32, f32) {
+    let p = app.palette;
+    let window = app.layout.window;
+    let (x, y) = app.mouse();
     // 按住 ⌥ 松开时执行复制。
     let name = if app.pointer.modifiers.alt_key() {
         Cow::Owned(t!("workspace-tree-drag-copy", name = name.as_ref()))
@@ -310,251 +376,10 @@ fn draw_tree_drag(app: &App, frame: &mut Frame<'_>) {
         TREE_ROW,
     );
     draw_card(frame, p, card, RADIUS_ROW, p.popup_bg);
-
     let cy = icon_center_y(app, card, app.fonts.ui);
     let icon_x = card.x + 12.0;
-    if drag.kind == EntryKind::Dir {
-        icons::folder(frame, (icon_x, (cy - 6.0).round()), false, p.folder, card);
-    } else {
-        draw_file_icon(frame, p, (icon_x + 1.5, cy), &drag.name, card);
-    }
     ui_text(frame, app, icon_x + 18.0, card, &name, p.text, card);
-}
-
-/// 绘制按钮的悬停提示。
-///
-/// 鼠标在按钮上停留满 `TOOLTIP_DELAY`（500 毫秒）才显示，避免鼠标扫过时闪现。提示位于按钮
-/// 下方并水平居中；下方放不下时（状态栏上的按钮）改在上方；概览标尺上的提示位于标尺左侧。
-fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
-    // 停留时间不足时直接返回，不拼接提示文字，也不查找命中框。
-    let rested = app
-        .overlays
-        .tooltip
-        .since
-        .is_some_and(|since| since.elapsed() >= TOOLTIP_DELAY);
-    if !rested {
-        return;
-    }
-    let (button, label): (Rect, String) = match workspace::panel::tooltip(app) {
-        Some(tip) => tip,
-        None => match app.pointer.hover {
-            Hover::Search(button) => (
-                SearchParts::new(app.layout.search).rect(button),
-                button.label(),
-            ),
-            Hover::TreeTool(tool) => match app.hits.tree_tools.iter().find(|(_, t)| *t == tool) {
-                Some(&(button, _)) => (button, tool.label().to_owned()),
-                None => return,
-            },
-            Hover::TreeMore => match app.hits.tree_more {
-                Some(button) => (button, t!("workspace-tip-more-actions").to_owned()),
-                None => return,
-            },
-            Hover::SidebarButton => (
-                app.layout.sidebar_button,
-                crate::layout::with_key(t!("cmd-toggle-sidebar"), Some(Action::ToggleSidebar)),
-            ),
-            Hover::Browser => (app.layout.browser, t!("preview-browser-open").to_owned()),
-            Hover::Preview(mode) => {
-                use winc_editor::PreviewMode::*;
-                let [source, split, preview] = crate::layout::preview_segments(app.layout.preview);
-                // 「预览」对应 ⇧⌘V（在源代码与预览之间切换）。
-                match mode {
-                    Source => (source, t!("preview-mode-source").to_owned()),
-                    Split => (split, t!("preview-mode-split").to_owned()),
-                    Preview => (
-                        preview,
-                        crate::layout::with_key(
-                            t!("preview-mode-preview"),
-                            Some(Action::TogglePreview),
-                        ),
-                    ),
-                }
-            }
-            // 日志列表中的作者头像：提示作者名和邮箱。
-            Hover::Log(crate::app::git::log::LogTarget::Avatar(i)) => {
-                let hit = app
-                    .hits
-                    .log
-                    .iter()
-                    .find(|(_, t)| *t == crate::app::git::log::LogTarget::Avatar(i));
-                let commit = app
-                    .editor
-                    .active()
-                    .and_then(|d| d.log.as_deref())
-                    .and_then(|v| v.commits.get(i));
-                match (hit, commit) {
-                    (Some(&(rect, _)), Some(c)) => (rect, format!("{} <{}>", c.author, c.email)),
-                    _ => return,
-                }
-            }
-            // 提交图中线段的目标：点击后跳转到的提交。
-            Hover::Log(crate::app::git::log::LogTarget::Line(row, line)) => {
-                let target = crate::app::git::log::LogTarget::Line(row, line);
-                if !app.hits.log.iter().any(|(_, t)| *t == target) {
-                    return;
-                }
-                // 线段的命中框很小，提示放在鼠标下方，不按命中框居中。
-                let (mx, my) = app.mouse();
-                let rect = Rect::new(mx, my + 6.0, 0.0, 0.0);
-                let commit = app.log_line_target(row, line).and_then(|j| {
-                    app.editor
-                        .active()
-                        .and_then(|d| d.log.as_deref())
-                        .and_then(|v| v.commits.get(j))
-                });
-                let label = match commit {
-                    Some(c) => t!(
-                        "workspace-tip-log-go-to",
-                        commit = crate::app::git::log::short(&c.oid),
-                        subject = c.subject.as_str()
-                    ),
-                    None => t!("workspace-tip-log-target-not-loaded").to_owned(),
-                };
-                (rect, label)
-            }
-            // 日志分支面板中截短了的分支名：提示全名。
-            Hover::Log(crate::app::git::log::LogTarget::BranchRow(i))
-                if app.git.log.long_branches.contains(&i) =>
-            {
-                use crate::app::git::log::{BranchRow, LogTarget};
-                let hit = app
-                    .hits
-                    .log
-                    .iter()
-                    .find(|(_, t)| *t == LogTarget::BranchRow(i));
-                let row = app.log_branch_rows().into_iter().nth(i);
-                match (hit, row) {
-                    (Some(&(rect, _)), Some(BranchRow::Branch { index, .. })) => {
-                        let branch = app.git.branches.get(index);
-                        (rect, branch.map_or_else(String::new, |b| b.name.clone()))
-                    }
-                    _ => return,
-                }
-            }
-            // 日志详情中目录被截短或文件被改名的条目：显示完整路径。
-            Hover::Log(crate::app::git::log::LogTarget::File(i))
-                if app.git.log.long_files.contains(&i) =>
-            {
-                let hit = app
-                    .hits
-                    .log
-                    .iter()
-                    .find(|(_, t)| *t == crate::app::git::log::LogTarget::File(i));
-                match (hit, app.log_file_tip(i)) {
-                    (Some(&(rect, _)), Some(tip)) => (rect, tip),
-                    _ => return,
-                }
-            }
-            // 日志列表中延伸到右端仍放不下的提交说明：提示整句。
-            Hover::Log(crate::app::git::log::LogTarget::Row(i))
-                if app.git.log.clipped == Some(i) =>
-            {
-                let hit = app
-                    .hits
-                    .log
-                    .iter()
-                    .find(|(_, t)| *t == crate::app::git::log::LogTarget::Row(i));
-                let commit = app
-                    .editor
-                    .active()
-                    .and_then(|d| d.log.as_deref())
-                    .and_then(|v| v.commits.get(i));
-                match (hit, commit) {
-                    (Some(&(rect, _)), Some(c)) => (rect, c.subject.clone()),
-                    _ => return,
-                }
-            }
-            _ => return,
-        },
-    };
-    let label = label.as_str();
-
-    let p = app.palette;
-    // 提示分「名称   快捷键」两栏，快捷键以淡色显示在右侧，两栏间距至少 16 逻辑像素。含 `\n` 时
-    // 第一段为正文，其余各段为淡色说明（如标签的文件名和所在目录）。
-    let (name, key) = match label.split_once(crate::layout::TIP_KEY) {
-        Some((name, key)) => (name, Some(key)),
-        None => (label, None),
-    };
-    let size = app.fonts.ui_small;
-    let key_w = key.map_or(0.0, |k| 16.0 + frame.measure(FontKind::Ui, size, k));
-    // 提示宽度不超过 `TOOLTIP_MAX_WIDTH`，也不超出窗口（左右各留 4 逻辑像素边距）；
-    // 文字区再减去左右各 10 逻辑像素的内边距。
-    let max_width = TOOLTIP_MAX_WIDTH.min(app.layout.window.w - 8.0);
-    let room = max_width - 20.0;
-    let lines = tip_lines(name, room, key_w, |piece| {
-        frame.measure(FontKind::Ui, size, piece)
-    });
-    let name_w = lines
-        .iter()
-        .map(|(line, _)| frame.measure(FontKind::Ui, size, line))
-        .fold(0.0, f32::max);
-    let width = (name_w + key_w + 20.0).min(max_width);
-    // 单行高 26 逻辑像素，每多一行增加 18。
-    const LINE: f32 = 18.0;
-    let height = 8.0 + LINE * lines.len() as f32;
-    let rect = if matches!(app.pointer.hover, Hover::RulerChange(_)) {
-        // 概览标尺紧靠窗口右边缘：提示放在标尺左侧、与鼠标同高，不遮挡鼠标所指的标记。
-        Rect::new(
-            button.x - 8.0 - width,
-            button.y + button.h / 2.0 - height / 2.0,
-            width,
-            height,
-        )
-    } else {
-        let below = button.bottom() + 6.0;
-        let y = if below + height > app.layout.window.bottom() {
-            button.y - 6.0 - height
-        } else {
-            below
-        };
-        Rect::new(
-            (button.x + (button.w - width) / 2.0)
-                .clamp(4.0, (app.layout.window.right() - width - 4.0).max(4.0)),
-            y,
-            width,
-            height,
-        )
-    };
-    draw_card(frame, p, rect, RADIUS_ROW, p.popup_bg);
-    for (i, &(line, body)) in lines.iter().enumerate() {
-        let row = Rect::new(rect.x, rect.y + 4.0 + LINE * i as f32, rect.w, LINE);
-        let color = if body { p.text } else { p.text_dim };
-        ui_text_small(frame, app, rect.x + 10.0, row, line, color, rect);
-    }
-    if let Some(key) = key {
-        let w = frame.measure(FontKind::Ui, size, key);
-        let row = Rect::new(rect.x, rect.y + 4.0, rect.w, LINE);
-        ui_text_small(
-            frame,
-            app,
-            rect.right() - 10.0 - w,
-            row,
-            key,
-            p.text_dim,
-            rect,
-        );
-    }
-}
-
-/// 把提示正文 `name` 按宽度 `room`（逻辑像素）折行，返回各行及其是否属于正文段。
-///
-/// `name` 以 `\n` 分段，第一段为正文，其余为说明；正文折出的各行都属于正文段。快捷键只占
-/// 第一行，因此第一段的宽度再减去 `key_w`。`measure` 返回一段文字的宽度（逻辑像素）。
-fn tip_lines(
-    name: &str,
-    room: f32,
-    key_w: f32,
-    mut measure: impl FnMut(&str) -> f32,
-) -> Vec<(&str, bool)> {
-    let mut lines = Vec::new();
-    for (i, part) in name.split('\n').enumerate() {
-        let width = (room - if i == 0 { key_w } else { 0.0 }).max(1.0);
-        let wrapped = crate::layout::wrap_text(part, width, &mut measure);
-        lines.extend(wrapped.into_iter().map(|line| (line, i == 0)));
-    }
-    lines
+    (card, icon_x, cy)
 }
 
 /// 返回文本在 `rect` 内垂直居中时的基线 y 坐标（逻辑像素，取整）。
@@ -583,6 +408,18 @@ fn ui_baseline(app: &App, row: Rect, size: f32) -> f32 {
 /// 结果取整到 0.5 逻辑像素：缩放倍数为 2 时，结果落在整数物理像素上，线条边缘清晰。
 fn icon_center_y(app: &App, row: Rect, size: f32) -> f32 {
     let center = ui_baseline(app, row, size) - optical_center(app, size);
+    (center * 2.0).round() / 2.0
+}
+
+/// 返回与 `row` 内界面文本 `text` 对齐的图标中心 y 坐标（逻辑像素）：含全角字符时对齐汉字的
+/// 视觉中心，即大写字母高度的一半；否则与 [`icon_center_y`] 相同。
+fn text_icon_center_y(app: &App, row: Rect, size: f32, text: &str) -> f32 {
+    let wide = |c: char| winc_core::text::char_cells(c, 0, 1) > 1;
+    if !text.chars().any(wide) {
+        return icon_center_y(app, row, size);
+    }
+    let k = size / app.fonts.ui;
+    let center = ui_baseline(app, row, size) - app.metrics.ui.cap_height * k / 2.0;
     (center * 2.0).round() / 2.0
 }
 

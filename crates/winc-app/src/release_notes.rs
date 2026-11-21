@@ -41,6 +41,15 @@ pub(crate) fn url(locale: Locale) -> String {
     format!("{NOTES}{file}")
 }
 
+/// 返回语言 `locale` 的下载页地址：不由应用自己更新的安装从这里取得新版本。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(crate) fn downloads(locale: Locale) -> &'static str {
+    match locale {
+        Locale::ZhCn => "https://winc.si/zh-cn/downloads",
+        Locale::EnUs => "https://winc.si/downloads",
+    }
+}
+
 /// 返回语言 `locale` 的、在浏览器中查看完整更新日志的页面地址。
 pub(crate) fn page(locale: Locale) -> &'static str {
     match locale {
@@ -55,7 +64,7 @@ pub(crate) fn page(locale: Locale) -> &'static str {
 /// 等待网络应答，在后台线程调用。请求失败、应答超过 [`MAX_LENGTH`] 或内容不是更新日志时返回
 /// `None`。
 pub(crate) fn load(locale: Locale, scope: &Scope, missing: &str) -> Option<String> {
-    let bytes = crate::web::fetch(&url(locale), TIMEOUT, Some(MAX_LENGTH as u64))?;
+    let bytes = crate::web::fetch(&url(locale), TIMEOUT, Some(MAX_LENGTH as u64)).ok()?;
     let text = std::str::from_utf8(&bytes).ok()?;
     select(text, scope, winc_version::VERSION, missing)
 }

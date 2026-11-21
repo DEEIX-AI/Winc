@@ -135,8 +135,115 @@ fn go_to_definition_tries_this_file_then_the_project() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 转到定义和查找用法一并搜索附加的目录，其中的文件和快速打开一样以目录名开头。
+#[test]
+fn definitions_and_usages_reach_added_folders() {
+    let main = winc_config::files::canonicalize(sample_folder("definition-main")).unwrap();
+    let vendor = winc_config::files::canonicalize(sample_folder("definition-vendor")).unwrap();
+    std::fs::write(main.join("app.py"), "w = Widget()\n").unwrap();
+    std::fs::write(
+        vendor.join("lib.py"),
+        "class Widget:\n    pass\n\ndef build():\n    count = 1\n    count += 1\n    return count\n",
+    )
+    .unwrap();
+    std::fs::write(vendor.join("use.py"), "x = Widget()\n").unwrap();
+    let mut app = app_with(&main, false);
+    app.add_folder(&vendor);
+    app.open_path(&main.join("app.py"));
+
+    // 定义只在附加目录中：直接跳过去。
+    caret_on(&mut app, "Widget", 0);
+    app.go_to_definition();
+    assert_eq!(
+        app.editor.active().unwrap().path,
+        Some(vendor.join("lib.py"))
+    );
+
+    // 在定义处列出用法：根目录和附加目录中的都在。
+    app.go_to_definition();
+    let places = app.overlays.picker.places.clone().unwrap();
+    assert_eq!(places.kind, PlacesKind::Usages);
+    let mut listed: Vec<&str> = places.items.iter().map(|p| p.relative.as_str()).collect();
+    listed.sort_unstable();
+    assert_eq!(listed, ["app.py", "definition-vendor/use.py"]);
+    app.close_picker();
+
+    // 当前文件在附加目录中时，它里面的位置也以目录名开头。
+    caret_on(&mut app, "count", 0);
+    app.go_to_definition();
+    let places = app.overlays.picker.places.clone().unwrap();
+    assert!(
+        (places.items.iter()).all(|p| p.relative == "definition-vendor/lib.py"),
+        "{:?}",
+        places.items.iter().map(|p| &p.relative).collect::<Vec<_>>()
+    );
+    let _ = std::fs::remove_dir_all(&main);
+    let _ = std::fs::remove_dir_all(&vendor);
+}
+
 /// 回归：光标在 `struct Item0` 上列出用法时，其他文件中各自定义的同名 `struct Item0` 被当成
 /// 用法；注释、字符串和文档中的同名文字也被列出；局部变量在整个项目中查找。
+/// 终端在右侧时，定义的浮窗仍在名字下方，不挪到编辑区正中，也不伸到终端上。
+#[cfg(unix)]
+#[test]
+fn the_places_popup_stays_by_the_name_with_the_terminal_right() {
+    let dir = navigation_folder("places-terminal-right");
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("main.py"));
+    crate::app::snapshot::terminal::show_terminal(&mut app, "$ ");
+    app.config.terminal_right = Some(true);
+    app.focus = Focus::Editor;
+    app.relayout();
+
+    caret_on(&mut app, "load", 0);
+    app.go_to_definition();
+    assert!(app.overlays.picker.places.is_some());
+    paint(&mut app);
+    let anchor = app.overlays.picker.places.as_ref().unwrap().anchor;
+    let (x, _) = app.anchor_point(anchor).unwrap();
+    let (picker, editor) = (app.layout.picker, app.layout.editor);
+    let right = editor.right() - crate::theme::SCROLLBAR_HIT - 8.0;
+    let near = (x - 12.0).min(right - picker.w).max(editor.x + 8.0).round();
+    assert_eq!(picker.x, near);
+    assert!(picker.right() <= editor.right());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 项目里找不到定义时到被忽略的依赖目录（`node_modules`）里找，很快找到时不提示正在查找；那里也
+/// 没有时才提示找不到。
+#[test]
+fn definitions_fall_back_to_dependency_folders() {
+    let dir = winc_config::files::canonicalize(sample_folder("definition-deps")).unwrap();
+    let lib = dir.join("node_modules/left-pad");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(dir.join(".ignore"), "node_modules/\n").unwrap();
+    std::fs::write(
+        lib.join("index.js"),
+        "function leftPad(text, n) {\n  return text;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("main.js"), "leftPad('a', 2);\nmissingThing();\n").unwrap();
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("main.js"));
+
+    // 很快找到时直接跳过去，不留下「正在依赖目录中查找」的提示。
+    caret_on(&mut app, "leftPad", 0);
+    app.go_to_definition();
+    assert_eq!(active_name(&app), "index.js");
+    assert_eq!(selected_text(&app), "leftPad");
+    assert!(app.jumps.name_hint.is_none());
+
+    app.open_path(&dir.join("main.js"));
+    caret_on(&mut app, "missingThing", 0);
+    app.go_to_definition();
+    assert_eq!(active_name(&app), "main.js");
+    let hint = app.jumps.name_hint.as_ref().map(|h| h.text.clone());
+    let expected = winc_i18n::t!("editor-definition-not-found", name = "missingThing");
+    assert_eq!(hint, Some(expected));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn usages_skip_other_definitions_comments_and_unrelated_files() {
     let dir = winc_config::files::canonicalize(sample_folder("usages")).unwrap();
@@ -245,22 +352,24 @@ fn command_palette_runs_commands_and_remembers_them() {
     app.overlays.picker.input.set_text(">");
     app.picker_refresh();
     // 模块关闭时（Git）其命令不列出；开发构建没有要安装的 `winc` 命令，同样不列出；Markdown 的
-    // 行内格式只在可编辑的 Markdown 预览中列出。
+    // Markdown 的写作命令只在编辑 Markdown 时列出。
     let installable = |a: &&crate::keymap::Action| {
         use crate::keymap::Action::{
-            InstallShellCommand, MarkdownBold, MarkdownCode, MarkdownHighlight, MarkdownItalic,
-            MarkdownStrikethrough, UninstallShellCommand,
+            InstallShellCommand, MoveToSplitDown, MoveToSplitRight, NextPane, PreviousPane,
+            UninstallShellCommand, Unsplit,
         };
-        !matches!(
-            a,
-            InstallShellCommand
-                | UninstallShellCommand
-                | MarkdownBold
-                | MarkdownItalic
-                | MarkdownCode
-                | MarkdownStrikethrough
-                | MarkdownHighlight
-        )
+        // 窗格的命令只在拆分过、或有不止一个标签时列出。
+        !a.markdown_only()
+            && !matches!(
+                a,
+                InstallShellCommand
+                    | UninstallShellCommand
+                    | Unsplit
+                    | NextPane
+                    | PreviousPane
+                    | MoveToSplitRight
+                    | MoveToSplitDown
+            )
     };
     let always = (palette().iter())
         .filter(|a| a.module().is_none())
@@ -495,6 +604,7 @@ pub(in crate::app::snapshot) fn press(
 
 #[test]
 fn shortcuts_come_from_the_keymap() {
+    crate::app::snapshot::use_vscode_keys();
     use crate::keymap::KeyCode::{self, Char};
 
     let dir = navigation_folder("keymap");
@@ -576,6 +686,7 @@ fn shortcuts_come_from_the_keymap() {
 
 #[test]
 fn editing_commands_from_keys_and_the_palette() {
+    crate::app::snapshot::use_vscode_keys();
     use crate::keymap::KeyCode::{Char, Right};
 
     let dir = navigation_folder("edit-commands");

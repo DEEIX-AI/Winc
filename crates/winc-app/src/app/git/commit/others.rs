@@ -7,6 +7,7 @@
 use std::sync::PoisonError;
 
 use super::*;
+use crate::app::NoticeKind;
 
 /// 多仓库时其他仓库一节里的一组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,12 +93,9 @@ impl App {
         chosen.unwrap_or(!self.git.commit.staging())
     }
 
-    /// 是否在当前仓库的更改之后列出其他仓库：开着「显示全部仓库」，打开的目录中有多个仓库，
-    /// 并且不在浏览历史提交的文件。
+    /// 是否在当前仓库的更改之后列出其他仓库：开着「显示全部仓库」，打开的目录中有多个仓库。
     pub(crate) fn commit_shows_others(&self) -> bool {
-        self.commit_all_repositories()
-            && !self.git.commit.browse
-            && self.git.repositories.len() >= 2
+        self.commit_all_repositories() && self.git.repositories.len() >= 2
     }
 
     /// 返回多仓库时当前仓库那一节以外的各行，按仓库列表的顺序；当前仓库的位置是一行
@@ -608,7 +606,7 @@ impl App {
                 continue;
             }
             commit.other_checked.insert(path.clone());
-            match commit.skipped.remove(path).filter(|s| !s.is_empty()) {
+            match commit.picks.take_skips(path).filter(|s| !s.is_empty()) {
                 Some(skipped) => commit.other_skipped.insert(path.clone(), skipped),
                 None => commit.other_skipped.remove(path),
             };
@@ -635,18 +633,9 @@ impl App {
         for entry in &status.entries {
             let path = &entry.path;
             let on = commit.other_checked.remove(path);
-            commit.included.remove(path);
-            commit.excluded.remove(path);
-            match (on, entry.untracked()) {
-                (true, true) => _ = commit.included.insert(path.clone()),
-                (false, false) => _ = commit.excluded.insert(path.clone()),
-                _ => {}
-            }
-            if let Some(skipped) = commit.other_skipped.remove(path).filter(|_| on) {
-                commit.skipped.insert(path.clone(), skipped);
-            }
+            let skips = commit.other_skipped.remove(path);
+            commit.picks.restore(path, (entry.untracked(), on), skips);
         }
-        commit.checks += 1;
     }
 
     /// 其他仓库中勾上或暂存了、但不随这次提交写入的文件数：`committed` 是一并提交的仓库。
@@ -861,7 +850,7 @@ impl App {
             // 界面已按成功的结果显示：放弃其余的操作，按各仓库的实际状态重新显示。
             self.git.commit.other_stage_queue.clear();
             self.git.commit.commit_queued = false;
-            self.notify(t!("git-stage-failed", error = e));
+            self.notify(NoticeKind::Error, t!("git-stage-failed", error = e));
         }
         if !self.git.commit.other_stage_queue.is_empty() {
             self.pump_other_staging();

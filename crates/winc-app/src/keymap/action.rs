@@ -4,6 +4,8 @@ use winc_i18n::t;
 
 use super::*;
 
+mod english;
+
 /// 可以用快捷键或命令面板执行的命令。
 ///
 /// 变体按所属分组（[`Group`]）依次排列；各命令的显示名见 [`Action::title`] 和 [`Action::english`]。
@@ -39,6 +41,13 @@ pub enum Action {
     ReopenClosed,
     NextTab,
     PreviousTab,
+    SplitRight,
+    SplitDown,
+    MoveToSplitRight,
+    MoveToSplitDown,
+    Unsplit,
+    NextPane,
+    PreviousPane,
     CloseFolder,
     CloseWindow,
     CopyPath,
@@ -59,16 +68,52 @@ pub enum Action {
     Paste,
     SelectAll,
     ToggleComment,
-    /// 可编辑的 Markdown 预览中切换粗体（`**`）。
+    /// Markdown 中切换粗体（`**`）。
     MarkdownBold,
-    /// 可编辑的 Markdown 预览中切换斜体（`*`）。
+    /// Markdown 中切换斜体（`*`）。
     MarkdownItalic,
-    /// 可编辑的 Markdown 预览中切换行内代码（`` ` ``）。
+    /// Markdown 中切换行内代码（`` ` ``）。
     MarkdownCode,
-    /// 可编辑的 Markdown 预览中切换删除线（`~~`）。
+    /// Markdown 中切换删除线（`~~`）。
     MarkdownStrikethrough,
-    /// 可编辑的 Markdown 预览中切换高亮（`==`）。
+    /// Markdown 中切换高亮（`==`）。
     MarkdownHighlight,
+    /// Markdown 中设为一级标题；已经是时改回正文。
+    MarkdownHeading1,
+    /// Markdown 中设为二级标题。
+    MarkdownHeading2,
+    /// Markdown 中设为三级标题。
+    MarkdownHeading3,
+    /// Markdown 中设为四级标题。
+    MarkdownHeading4,
+    /// Markdown 中设为五级标题。
+    MarkdownHeading5,
+    /// Markdown 中设为六级标题。
+    MarkdownHeading6,
+    /// Markdown 中标题改回正文。
+    MarkdownParagraph,
+    /// Markdown 中选中的各行加上或去掉一层引用。
+    MarkdownQuote,
+    /// Markdown 中选中的各行改为有序列表，或去掉列表记号。
+    MarkdownOrderedList,
+    /// Markdown 中选中的各行改为无序列表，或去掉列表记号。
+    MarkdownBulletList,
+    /// Markdown 中把选中的各行放进代码块，或插入一个空的代码块。
+    MarkdownCodeBlock,
+    /// Markdown 中把选中的各行放进公式块，或插入一个空的公式块。
+    MarkdownMathBlock,
+    /// Markdown 中插入两列的表格。
+    MarkdownTable,
+    /// Markdown 中把选中的文字做成链接；剪贴板里是网址时作为地址。
+    MarkdownLink,
+    /// Markdown 中插入图片；选中的文字作为替代文字。
+    MarkdownImage,
+    /// Markdown 中切换专注模式。
+    MarkdownFocusMode,
+    /// Markdown 中切换打字机模式。
+    MarkdownTypewriterMode,
+    /// Markdown 中粘贴为纯文本。
+    MarkdownPastePlain,
     DeleteLine,
     DeleteAllLeft,
     IndentLines,
@@ -151,6 +196,7 @@ pub enum Action {
 
     RenameFile,
     DeleteFile,
+    DeleteFilePermanently,
     OpenSelected,
     PreviewSelected,
     FindInFolder,
@@ -202,6 +248,12 @@ pub enum Action {
     ChangesRollback,
     GitShowLog,
     GitGoToRevision,
+    /// 日志：编辑选中提交的说明。
+    GitRewordCommit,
+    /// 日志：转到选中提交的子提交。
+    GitGoToChildCommit,
+    /// 日志：转到选中提交的父提交（合并提交是第一个父提交）。
+    GitGoToParentCommit,
     /// 在只读标签中打开 Git 操作的输出。
     GitShowOutput,
     /// 克隆仓库。
@@ -222,8 +274,12 @@ pub enum Action {
     GitPull,
     /// 拉取当前分支的上游并变基。
     GitPullRebase,
+    /// 打开拉取对话框：选远程和分支拉取到当前分支。
+    GitPullFrom,
     /// 推送当前分支（没有上游时推上去并设为上游）。
     GitPush,
+    /// 打开推送对话框：选远程和目标分支推送。
+    GitPushTo,
     /// 和上游同步：先拉取再推送。
     GitSync,
     /// 储藏工作区里的更改（输入说明）。
@@ -252,10 +308,17 @@ pub enum Action {
     /// 打开运行配置文件。
     EditRunConfigurations,
     ClearTerminal,
+    /// 复制终端的选区。
+    TerminalCopy,
+    /// 把剪贴板粘贴到终端（见 `App::terminal_paste`）。
+    TerminalPaste,
     NewTerminal,
     CloseTerminal,
     NextTerminal,
     PreviousTerminal,
+    SplitTerminal,
+    NextTerminalPane,
+    PreviousTerminalPane,
     FocusTerminal1,
     FocusTerminal2,
     FocusTerminal3,
@@ -350,6 +413,13 @@ impl Action {
             ReopenClosed => t!("cmd-reopen-closed"),
             NextTab => t!("cmd-next-tab"),
             PreviousTab => t!("cmd-previous-tab"),
+            SplitRight => t!("cmd-split-right"),
+            SplitDown => t!("cmd-split-down"),
+            MoveToSplitRight => t!("cmd-move-to-split-right"),
+            MoveToSplitDown => t!("cmd-move-to-split-down"),
+            Unsplit => t!("cmd-unsplit"),
+            NextPane => t!("cmd-next-pane"),
+            PreviousPane => t!("cmd-previous-pane"),
             CloseFolder => t!("cmd-close-folder"),
             CloseWindow => t!("cmd-close-window"),
             CopyPath => t!("cmd-copy-path"),
@@ -380,6 +450,24 @@ impl Action {
             MarkdownCode => t!("cmd-markdown-code"),
             MarkdownStrikethrough => t!("cmd-markdown-strikethrough"),
             MarkdownHighlight => t!("cmd-markdown-highlight"),
+            MarkdownHeading1 => t!("cmd-markdown-heading-1"),
+            MarkdownHeading2 => t!("cmd-markdown-heading-2"),
+            MarkdownHeading3 => t!("cmd-markdown-heading-3"),
+            MarkdownHeading4 => t!("cmd-markdown-heading-4"),
+            MarkdownHeading5 => t!("cmd-markdown-heading-5"),
+            MarkdownHeading6 => t!("cmd-markdown-heading-6"),
+            MarkdownParagraph => t!("cmd-markdown-paragraph"),
+            MarkdownQuote => t!("cmd-markdown-quote"),
+            MarkdownOrderedList => t!("cmd-markdown-ordered-list"),
+            MarkdownBulletList => t!("cmd-markdown-bullet-list"),
+            MarkdownCodeBlock => t!("cmd-markdown-code-block"),
+            MarkdownMathBlock => t!("cmd-markdown-math-block"),
+            MarkdownTable => t!("cmd-markdown-table"),
+            MarkdownLink => t!("cmd-markdown-link"),
+            MarkdownImage => t!("cmd-markdown-image"),
+            MarkdownFocusMode => t!("cmd-markdown-focus-mode"),
+            MarkdownTypewriterMode => t!("cmd-markdown-typewriter-mode"),
+            MarkdownPastePlain => t!("cmd-markdown-paste-plain"),
             DeleteLine => t!("cmd-delete-line"),
             DeleteAllLeft => t!("cmd-delete-all-left"),
             IndentLines => t!("cmd-indent-lines"),
@@ -460,6 +548,7 @@ impl Action {
             PreviousResult => t!("cmd-previous-result"),
             RenameFile => t!("cmd-rename-file"),
             DeleteFile => t!("cmd-delete-file"),
+            DeleteFilePermanently => t!("cmd-delete-file-permanently"),
             OpenSelected => t!("cmd-open-selected"),
             PreviewSelected => t!("cmd-preview-selected"),
             FindInFolder => t!("cmd-find-in-folder"),
@@ -494,6 +583,9 @@ impl Action {
             ChangesRollback => t!("cmd-changes-rollback"),
             GitShowLog => t!("cmd-git-show-log"),
             GitGoToRevision => t!("cmd-git-go-to-revision"),
+            GitRewordCommit => t!("cmd-git-reword-commit"),
+            GitGoToChildCommit => t!("cmd-git-go-to-child-commit"),
+            GitGoToParentCommit => t!("cmd-git-go-to-parent-commit"),
             GitShowOutput => t!("cmd-git-show-output"),
             GitClone => t!("cmd-git-clone"),
             GitInit => t!("cmd-git-init"),
@@ -505,7 +597,9 @@ impl Action {
             GitFetch => t!("cmd-git-fetch"),
             GitPull => t!("cmd-git-pull"),
             GitPullRebase => t!("cmd-git-pull-rebase"),
+            GitPullFrom => t!("cmd-git-pull-from"),
             GitPush => t!("cmd-git-push"),
+            GitPushTo => t!("cmd-git-push-to"),
             GitSync => t!("cmd-git-sync"),
             GitStash => t!("cmd-git-stash"),
             GitStageAll => t!("cmd-git-stage-all"),
@@ -523,10 +617,15 @@ impl Action {
             StopConfiguration => t!("cmd-stop-configuration"),
             EditRunConfigurations => t!("cmd-edit-run-configurations"),
             ClearTerminal => t!("cmd-clear-terminal"),
+            TerminalCopy => t!("cmd-terminal-copy"),
+            TerminalPaste => t!("cmd-terminal-paste"),
             NewTerminal => t!("cmd-new-terminal"),
             CloseTerminal => t!("cmd-close-terminal"),
             NextTerminal => t!("cmd-next-terminal"),
             PreviousTerminal => t!("cmd-previous-terminal"),
+            SplitTerminal => t!("cmd-split-terminal"),
+            NextTerminalPane => t!("cmd-next-terminal-pane"),
+            PreviousTerminalPane => t!("cmd-previous-terminal-pane"),
             FocusTerminal1 => t!("cmd-terminal-1"),
             FocusTerminal2 => t!("cmd-terminal-2"),
             FocusTerminal3 => t!("cmd-terminal-3"),
@@ -557,237 +656,18 @@ impl Action {
         }
     }
 
-    /// 返回命令的英文名；在命令面板中输入英文也能搜到该命令。
-    pub fn english(self) -> &'static str {
-        use Action::*;
-        match self {
-            ShowCommands => "Show All Commands",
-            QuickOpen => "Go to File",
-            GoToSymbol => "Go to Symbol in Editor",
-            GoToLine => "Go to Line",
-            GoToDefinition => "Go to Definition",
-            FindReferences => "Find All References",
-            GoBack => "Go Back",
-            GoForward => "Go Forward",
-            Settings => "Settings",
-            ReleaseNotes => "Release Notes",
-            KeyboardShortcuts => "Keyboard Shortcuts",
-            RecordKeys => "Record Keys",
-            NewFile => "New File",
-            NewWindow => "New Window",
-            OpenFile => "Open",
-            OpenFolder => "Open Folder",
-            AddFolder => "Add Folder to Window",
-            RemoteConnect => "Remote: Connect to SSH Host…",
-            RemoteDisconnect => "Remote: Disconnect",
-            OpenRecent => "Open Recent Folder",
-            Save => "Save",
-            SaveAs => "Save As",
-            CloseTab => "Close Editor",
-            CloseOtherTabs => "Close Other Editors",
-            CloseAllTabs => "Close All Editors",
-            ReopenClosed => "Reopen Closed Editor",
-            NextTab => "Open Next Editor",
-            PreviousTab => "Open Previous Editor",
-            CloseFolder => "Close Folder",
-            CloseWindow => "Close Window",
-            CopyPath => "Copy Path",
-            CopyRelativePath => "Copy Relative Path",
-            CopyReference => "Copy Reference",
-            CopyAbsoluteReference => "Copy Absolute Reference",
-            RevealInFinder => "Reveal in File Explorer",
-            CopyActivePath => "Copy Path of Active File",
-            CopyKeyPath => "Copy Key Path",
-            RevealActiveFile => "Reveal Active File",
-            OpenInTerminal => "Open in External Terminal",
-            Quit => "Quit",
-            Undo => "Undo",
-            Redo => "Redo",
-            Cut => "Cut",
-            Copy => "Copy",
-            Paste => "Paste",
-            SelectAll => "Select All",
-            ToggleComment => "Toggle Line Comment",
-            MarkdownBold => "Markdown: Toggle Bold",
-            MarkdownItalic => "Markdown: Toggle Italic",
-            MarkdownCode => "Markdown: Toggle Inline Code",
-            MarkdownStrikethrough => "Markdown: Toggle Strikethrough",
-            MarkdownHighlight => "Markdown: Toggle Highlight",
-            DeleteLine => "Delete Line",
-            DeleteAllLeft => "Delete All Left",
-            IndentLines => "Indent Line",
-            OutdentLines => "Outdent Line",
-            MoveLinesUp => "Move Line Up",
-            MoveLinesDown => "Move Line Down",
-            CopyLinesUp => "Copy Line Up",
-            CopyLinesDown => "Copy Line Down",
-            JoinLines => "Join Lines",
-            ExpandSelection => "Expand Selection",
-            ShrinkSelection => "Shrink Selection",
-            AddCursorAbove => "Add Cursor Above",
-            AddCursorBelow => "Add Cursor Below",
-            AddNextOccurrence => "Add Selection to Next Find Match",
-            SkipToNextOccurrence => "Move Last Selection to Next Find Match",
-            SelectAllOccurrences => "Select All Occurrences of Find Match",
-            RemoveSecondaryCursors => "Remove Secondary Cursors",
-            AddCursorsToLineEnds => "Add Cursors to Line Ends",
-            CursorUndo => "Cursor Undo",
-            CursorRedo => "Cursor Redo",
-            ColumnSelectUp => "Column Select Up",
-            ColumnSelectDown => "Column Select Down",
-            ColumnSelectLeft => "Column Select Left",
-            ColumnSelectRight => "Column Select Right",
-            JumpToBracket => "Go to Bracket",
-            TransformToUppercase => "Transform to Uppercase",
-            TransformToLowercase => "Transform to Lowercase",
-            TransformToTitlecase => "Transform to Title Case",
-            SortLinesAscending => "Sort Lines Ascending",
-            SortLinesDescending => "Sort Lines Descending",
-            TrimTrailingWhitespace => "Trim Trailing Whitespace",
-            IndentUsingSpaces => "Indent Using Spaces",
-            IndentUsingTabs => "Indent Using Tabs",
-            ConvertIndentationToSpaces => "Convert Indentation to Spaces",
-            ConvertIndentationToTabs => "Convert Indentation to Tabs",
-            DetectIndentation => "Detect Indentation from Content",
-            ChangeEndOfLine => "Change End of Line Sequence",
-            ChangeLanguageMode => "Change Language Mode",
-            Fold => "Fold",
-            Unfold => "Unfold",
-            ToggleFold => "Toggle Fold",
-            FoldRecursively => "Fold Recursively",
-            UnfoldRecursively => "Unfold Recursively",
-            FoldAll => "Fold All",
-            UnfoldAll => "Unfold All",
-            FoldLevel1 => "Fold Level 1",
-            FoldLevel2 => "Fold Level 2",
-            FoldLevel3 => "Fold Level 3",
-            FoldLevel4 => "Fold Level 4",
-            FoldLevel5 => "Fold Level 5",
-            FoldLevel6 => "Fold Level 6",
-            FoldLevel7 => "Fold Level 7",
-            ToggleBookmark => "Toggle Bookmark",
-            NextBookmark => "Next Bookmark",
-            PreviousBookmark => "Previous Bookmark",
-            ListBookmarks => "List Bookmarks",
-            ClearBookmarks => "Clear Bookmarks",
-            Format => "Format Document",
-            FormatSelection => "Format Selection",
-            Fix => "Fix All Problems",
-            Find => "Find",
-            Replace => "Replace",
-            FindNext => "Find Next",
-            FindPrevious => "Find Previous",
-            HighlightWord => "Toggle Word Highlight",
-            ClearWordHighlights => "Clear Word Highlights",
-            ReplaceOne => "Replace",
-            ReplaceAll => "Replace All",
-            SelectAllMatches => "Select All Matches",
-            ToggleCase => "Toggle Case Sensitive",
-            ToggleWord => "Toggle Whole Word",
-            ToggleRegex => "Toggle Regex",
-            FilterLines => "Show Only Matching Lines",
-            FindInFiles => "Find in Files",
-            ReplaceInFiles => "Replace in Files",
-            ReplaceAllInFiles => "Replace All in Files",
-            NextResult => "Focus Next Search Result",
-            PreviousResult => "Focus Previous Search Result",
-            RenameFile => "Rename",
-            DeleteFile => "Delete",
-            OpenSelected => "Open",
-            PreviewSelected => "Open and Keep Focus",
-            FindInFolder => "Find in Folder",
-            ToggleSidebar => "Toggle Sidebar",
-            FocusSidebar => "Focus Sidebar",
-            ShowFiles => "Show Explorer",
-            ShowOutline => "Show Outline",
-            IncreaseFontSize => "Increase Font Size",
-            DecreaseFontSize => "Decrease Font Size",
-            ResetFontSize => "Reset Font Size",
-            ZoomIn => "Zoom In",
-            ZoomOut => "Zoom Out",
-            ResetZoom => "Reset Zoom",
-            ThemeAuto => "Theme: Auto",
-            ThemeLight => "Theme: Light",
-            ThemeDark => "Theme: Dark",
-            ToggleStickyScroll => "Toggle Editor Sticky Scroll",
-            ToggleVimMode => "Toggle Vim Mode",
-            ToggleWordWrap => "Toggle Word Wrap",
-            ToggleMinimap => "Toggle Minimap",
-            ToggleLineNumbers => "Toggle Line Numbers",
-            ToggleStatusBar => "Toggle Status Bar",
-            ToggleWhitespace => "Toggle Render Whitespace",
-            NextDifference => "Go to Next Difference",
-            PreviousDifference => "Go to Previous Difference",
-            NextDiffFile => "Go to Next File in Diff",
-            PreviousDiffFile => "Go to Previous File in Diff",
-            ToggleDiffLayout => "Toggle Inline Diff",
-            GitShowChanges => "Git: Open Changes",
-            ChangesShowDiff => "Git: Show Diff of Selected Change",
-            ChangesOpenSource => "Git: Open Selected Change",
-            ChangesRollback => "Git: Roll Back Selected Changes",
-            GitShowLog => "Git: Show Log",
-            GitGoToRevision => "Git: Go to Hash, Branch or Tag",
-            GitShowOutput => "Git: Show Output",
-            GitClone => "Git: Clone Repository…",
-            GitInit => "Git: Initialize Repository",
-            GitSwitchRepository => "Git: Switch Repository",
-            GitSwitchWorktree => "Git: Switch Worktree…",
-            GitNewWorktree => "Git: New Worktree…",
-            GitSwitchBranch => "Git: Switch Branch…",
-            GitNewBranch => "Git: New Branch…",
-            GitFetch => "Git: Fetch",
-            GitPull => "Git: Pull",
-            GitPullRebase => "Git: Pull with Rebase",
-            GitPush => "Git: Push",
-            GitSync => "Git: Sync",
-            GitStash => "Git: Stash Changes…",
-            GitStageAll => "Git: Stage All Changes",
-            GitUnstageAll => "Git: Unstage All Changes",
-            GitStageFile => "Git: Stage Current File",
-            GitFileHistory => "Git: Show File History",
-            GitSelectionHistory => "Git: Show History for Selection",
-            GitBlame => "Git: Toggle Blame",
-            ShowCommit => "Git: Commit",
-            GitRevertChange => "Git: Revert Change",
-            ToggleTerminal => "Toggle Terminal",
-            ToggleTerminalPanel => "Terminal: Toggle Panel",
-            EnableTerminal => "Terminal: Enable Built-in Terminal",
-            RunConfiguration => "Run Configuration",
-            StopConfiguration => "Stop Configuration",
-            EditRunConfigurations => "Edit Run Configurations",
-            ClearTerminal => "Terminal: Clear",
-            NewTerminal => "New Terminal",
-            CloseTerminal => "Terminal: Close Tab",
-            NextTerminal => "Terminal: Next Tab",
-            PreviousTerminal => "Terminal: Previous Tab",
-            FocusTerminal1 => "Terminal: Focus Tab 1",
-            FocusTerminal2 => "Terminal: Focus Tab 2",
-            FocusTerminal3 => "Terminal: Focus Tab 3",
-            FocusTerminal4 => "Terminal: Focus Tab 4",
-            FocusTerminal5 => "Terminal: Focus Tab 5",
-            FocusTerminal6 => "Terminal: Focus Tab 6",
-            FocusTerminal7 => "Terminal: Focus Tab 7",
-            FocusTerminal8 => "Terminal: Focus Tab 8",
-            FocusTerminal9 => "Terminal: Focus Tab 9",
-            FindInTerminal => "Terminal: Find",
-            MaximizeTerminal => "Terminal: Maximize Panel",
-            ScrollTerminalTop => "Terminal: Scroll to Top",
-            ScrollTerminalBottom => "Terminal: Scroll to Bottom",
-            ToggleTerminalPosition => "Terminal: Toggle Panel Position",
-            InstallShellCommand => "Shell Command: Install winc Command",
-            UninstallShellCommand => "Shell Command: Uninstall winc Command",
-            RenameTerminal => "Terminal: Rename",
-            PreviousCommand => "Terminal: Previous Command",
-            NextCommand => "Terminal: Next Command",
-            FoldOutput => "Terminal: Fold Command Output",
-            UnfoldOutput => "Terminal: Unfold Command Output",
-            NextError => "Terminal: Next Error",
-            PreviousError => "Terminal: Previous Error",
-            SendToTerminal => "Terminal: Run Selected Text",
-            TogglePreview => "Toggle Preview",
-            ToggleReadOnly => "Toggle Read-Only",
-            ToggleReadOnlyAll => "Toggle Read-Only for All Files",
-        }
+    /// 返回命令在配置文件中的名字：变体名，首字母小写（如 `quickOpen`）。
+    pub fn id(self) -> String {
+        let name = format!("{self:?}");
+        let mut chars = name.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_ascii_lowercase().to_string() + chars.as_str()
+        })
+    }
+
+    /// 按配置文件中的名字 `id` 返回命令；不认识时返回 `None`。
+    pub fn from_id(id: &str) -> Option<Action> {
+        ACTIONS.iter().copied().find(|action| action.id() == id)
     }
 
     /// 返回命令所属的分组。
@@ -826,6 +706,24 @@ impl Action {
             | MarkdownCode
             | MarkdownStrikethrough
             | MarkdownHighlight
+            | MarkdownHeading1
+            | MarkdownHeading2
+            | MarkdownHeading3
+            | MarkdownHeading4
+            | MarkdownHeading5
+            | MarkdownHeading6
+            | MarkdownParagraph
+            | MarkdownQuote
+            | MarkdownOrderedList
+            | MarkdownBulletList
+            | MarkdownCodeBlock
+            | MarkdownMathBlock
+            | MarkdownTable
+            | MarkdownLink
+            | MarkdownImage
+            | MarkdownFocusMode
+            | MarkdownTypewriterMode
+            | MarkdownPastePlain
             | DeleteLine
             | DeleteAllLeft
             | IndentLines
@@ -890,7 +788,12 @@ impl Action {
             | ReplaceOne | ReplaceAll | SelectAllMatches | ToggleCase | ToggleWord
             | ToggleRegex | FilterLines | FindInFiles | ReplaceInFiles | ReplaceAllInFiles
             | NextResult | PreviousResult => Group::Find,
-            RenameFile | DeleteFile | OpenSelected | PreviewSelected | FindInFolder => Group::Tree,
+            RenameFile
+            | DeleteFile
+            | DeleteFilePermanently
+            | OpenSelected
+            | PreviewSelected
+            | FindInFolder => Group::Tree,
             ToggleSidebar
             | FocusSidebar
             | ShowFiles
@@ -925,6 +828,9 @@ impl Action {
             | ChangesRollback
             | GitShowLog
             | GitGoToRevision
+            | GitRewordCommit
+            | GitGoToChildCommit
+            | GitGoToParentCommit
             | GitShowOutput
             | GitClone
             | GitInit
@@ -936,7 +842,9 @@ impl Action {
             | GitFetch
             | GitPull
             | GitPullRebase
+            | GitPullFrom
             | GitPush
+            | GitPushTo
             | GitSync
             | GitStash
             | GitStageAll
@@ -954,10 +862,15 @@ impl Action {
             | StopConfiguration
             | EditRunConfigurations
             | ClearTerminal
+            | TerminalCopy
+            | TerminalPaste
             | NewTerminal
             | CloseTerminal
             | NextTerminal
             | PreviousTerminal
+            | SplitTerminal
+            | NextTerminalPane
+            | PreviousTerminalPane
             | FocusTerminal1
             | FocusTerminal2
             | FocusTerminal3
@@ -979,7 +892,14 @@ impl Action {
             | UnfoldOutput
             | NextError
             | PreviousError
-            | SendToTerminal => Group::View,
+            | SendToTerminal
+            | SplitRight
+            | SplitDown
+            | MoveToSplitRight
+            | MoveToSplitDown
+            | Unsplit
+            | NextPane
+            | PreviousPane => Group::View,
         }
     }
 
@@ -989,6 +909,38 @@ impl Action {
         matches!(
             self,
             NextDifference | PreviousDifference | NextDiffFile | PreviousDiffFile
+        )
+    }
+
+    /// 是否为只在编辑 Markdown 时可用的命令：行内格式、段落类型、插入块和链接，以及专注、
+    /// 打字机模式。
+    pub fn markdown_only(self) -> bool {
+        use Action::*;
+        matches!(
+            self,
+            MarkdownBold
+                | MarkdownItalic
+                | MarkdownCode
+                | MarkdownStrikethrough
+                | MarkdownHighlight
+                | MarkdownHeading1
+                | MarkdownHeading2
+                | MarkdownHeading3
+                | MarkdownHeading4
+                | MarkdownHeading5
+                | MarkdownHeading6
+                | MarkdownParagraph
+                | MarkdownQuote
+                | MarkdownOrderedList
+                | MarkdownBulletList
+                | MarkdownCodeBlock
+                | MarkdownMathBlock
+                | MarkdownTable
+                | MarkdownLink
+                | MarkdownImage
+                | MarkdownFocusMode
+                | MarkdownTypewriterMode
+                | MarkdownPastePlain
         )
     }
 
@@ -1032,7 +984,25 @@ impl Action {
             | MarkdownItalic
             | MarkdownCode
             | MarkdownStrikethrough
-            | MarkdownHighlight => false,
+            | MarkdownHighlight
+            | MarkdownHeading1
+            | MarkdownHeading2
+            | MarkdownHeading3
+            | MarkdownHeading4
+            | MarkdownHeading5
+            | MarkdownHeading6
+            | MarkdownParagraph
+            | MarkdownQuote
+            | MarkdownOrderedList
+            | MarkdownBulletList
+            | MarkdownCodeBlock
+            | MarkdownMathBlock
+            | MarkdownTable
+            | MarkdownLink
+            | MarkdownImage
+            | MarkdownFocusMode
+            | MarkdownTypewriterMode
+            | MarkdownPastePlain => false,
             _ => self.group() == Group::Edit,
         }
     }
@@ -1054,6 +1024,9 @@ impl Action {
             | Action::ChangesRollback
             | Action::GitShowLog
             | Action::GitGoToRevision
+            | Action::GitRewordCommit
+            | Action::GitGoToChildCommit
+            | Action::GitGoToParentCommit
             | Action::GitShowOutput
             | Action::GitClone
             | Action::GitInit
@@ -1065,7 +1038,9 @@ impl Action {
             | Action::GitFetch
             | Action::GitPull
             | Action::GitPullRebase
+            | Action::GitPullFrom
             | Action::GitPush
+            | Action::GitPushTo
             | Action::GitSync
             | Action::GitStash
             | Action::GitStageAll
@@ -1082,10 +1057,15 @@ impl Action {
             | Action::StopConfiguration
             | Action::EditRunConfigurations
             | Action::ClearTerminal
+            | Action::TerminalCopy
+            | Action::TerminalPaste
             | Action::NewTerminal
             | Action::CloseTerminal
             | Action::NextTerminal
             | Action::PreviousTerminal
+            | Action::SplitTerminal
+            | Action::NextTerminalPane
+            | Action::PreviousTerminalPane
             | Action::FocusTerminal1
             | Action::FocusTerminal2
             | Action::FocusTerminal3
@@ -1127,6 +1107,8 @@ impl Action {
                 | Cut
                 | Copy
                 | Paste
+                | TerminalCopy
+                | TerminalPaste
                 | FindNext
                 | FindPrevious
                 | ReplaceOne
@@ -1144,6 +1126,7 @@ impl Action {
                 | PreviousResult
                 | RenameFile
                 | DeleteFile
+                | DeleteFilePermanently
                 | OpenSelected
                 | PreviewSelected
                 | FindInFolder
@@ -1207,6 +1190,13 @@ pub const ACTIONS: &[Action] = {
         ReopenClosed,
         NextTab,
         PreviousTab,
+        SplitRight,
+        SplitDown,
+        MoveToSplitRight,
+        MoveToSplitDown,
+        Unsplit,
+        NextPane,
+        PreviousPane,
         CloseFolder,
         CloseWindow,
         CopyPath,
@@ -1231,6 +1221,24 @@ pub const ACTIONS: &[Action] = {
         MarkdownCode,
         MarkdownStrikethrough,
         MarkdownHighlight,
+        MarkdownHeading1,
+        MarkdownHeading2,
+        MarkdownHeading3,
+        MarkdownHeading4,
+        MarkdownHeading5,
+        MarkdownHeading6,
+        MarkdownParagraph,
+        MarkdownQuote,
+        MarkdownOrderedList,
+        MarkdownBulletList,
+        MarkdownCodeBlock,
+        MarkdownMathBlock,
+        MarkdownTable,
+        MarkdownLink,
+        MarkdownImage,
+        MarkdownFocusMode,
+        MarkdownTypewriterMode,
+        MarkdownPastePlain,
         DeleteLine,
         DeleteAllLeft,
         IndentLines,
@@ -1290,6 +1298,7 @@ pub const ACTIONS: &[Action] = {
         ClearBookmarks,
         RenameFile,
         DeleteFile,
+        DeleteFilePermanently,
         OpenSelected,
         PreviewSelected,
         FindInFolder,
@@ -1323,6 +1332,9 @@ pub const ACTIONS: &[Action] = {
         ChangesRollback,
         GitShowLog,
         GitGoToRevision,
+        GitRewordCommit,
+        GitGoToChildCommit,
+        GitGoToParentCommit,
         GitShowOutput,
         GitClone,
         GitInit,
@@ -1334,7 +1346,9 @@ pub const ACTIONS: &[Action] = {
         GitFetch,
         GitPull,
         GitPullRebase,
+        GitPullFrom,
         GitPush,
+        GitPushTo,
         GitSync,
         GitStash,
         GitStageAll,
@@ -1352,6 +1366,8 @@ pub const ACTIONS: &[Action] = {
         EditRunConfigurations,
         NewTerminal,
         ClearTerminal,
+        TerminalCopy,
+        TerminalPaste,
         FindInTerminal,
         MaximizeTerminal,
         ScrollTerminalTop,
@@ -1363,6 +1379,9 @@ pub const ACTIONS: &[Action] = {
         CloseTerminal,
         NextTerminal,
         PreviousTerminal,
+        SplitTerminal,
+        NextTerminalPane,
+        PreviousTerminalPane,
         FocusTerminal1,
         FocusTerminal2,
         FocusTerminal3,

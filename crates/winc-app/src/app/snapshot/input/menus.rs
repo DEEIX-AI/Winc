@@ -378,7 +378,7 @@ fn bookmark_commands_are_available_in_the_editor_menu() {
 }
 
 #[test]
-fn cmd_i_copies_a_reference_to_the_lines() {
+fn copy_reference_copies_the_lines() {
     use crate::app::snapshot::editor::navigation::press;
     use crate::keymap::KeyCode::Char;
     use winc_core::Selection;
@@ -387,7 +387,7 @@ fn cmd_i_copies_a_reference_to_the_lines() {
     let mut app = app_with(&dir.join("short.rs"), false);
     let copy = |app: &mut App, anchor, head| {
         app.editor.active_mut().unwrap().selection = Selection { anchor, head };
-        assert!(press(app, &["cmd"], Char('i')));
+        assert!(press(app, &["cmd", "shift", "alt"], Char('c')));
         app.clipboard.copied.clone().unwrap()
     };
     // `short.rs` 的第 0 行是 `fn main() {`，第 1 行从字符偏移 12 起，第 2 行从字符偏移 35 起。
@@ -397,8 +397,8 @@ fn cmd_i_copies_a_reference_to_the_lines() {
     assert_eq!(copy(&mut app, 0, 35), "short.rs:1-2");
     assert_eq!(copy(&mut app, 0, 36), "short.rs:1-3");
 
-    // ⌘L：完整路径。
-    assert!(press(&mut app, &["cmd"], Char('l')));
+    // 完整路径。
+    assert!(app.run_action(crate::keymap::Action::CopyAbsoluteReference));
     let file = app.editor.active().unwrap().path.clone().unwrap();
     let expected = format!("{}:1-3", file.display());
     assert_eq!(app.clipboard.copied.as_deref(), Some(expected.as_str()));
@@ -738,7 +738,7 @@ fn alerts_without_a_system_dialog_are_drawn_in_the_window() {
 }
 
 /// 截图：窗口内绘制的提示框（关闭有未保存修改的标签时那样的三个按钮和「不再询问」）
-/// （`alert-light`、`alert-dark`）。
+/// （`alert-light`、`alert-dark`），以及只有一句的关闭前确认（`alert-short-*`）。
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_alert() {
@@ -766,6 +766,52 @@ fn shoot_alert() {
         let button = app.overlays.alert.as_ref().unwrap().parts.buttons[1];
         app.on_mouse_move(button.x + 10.0, button.y + 10.0);
         shoot(&mut app, &format!("alert-{theme}"));
+
+        // 只有一句的提示框按内容收窄。
+        let mut app = app_with(&dir.join("short.rs"), dark);
+        app.config.confirm_close = Some(true);
+        app.ask_quit();
+        paint(&mut app);
+        shoot(&mut app, &format!("alert-short-{theme}"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// 二进制文件「以文本打开」以后，编码菜单里「通过编码重新打开」的各项可用，选了 UTF-16 LE 就按它
+/// 显示，不再只读。
+#[test]
+fn a_binary_file_can_be_reopened_with_an_encoding() {
+    use crate::app::PlaceholderAction;
+    use crate::app::status::status_bar::StatusItem;
+    use winc_editor::Encoding;
+    use winc_editor::encoding::CHOICES;
+    let dir = sample_folder("reopen-binary-menu");
+    let path = dir.join("wide.txt");
+    let wide: Vec<u8> = "中文 ok\n"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    std::fs::write(&path, wide).unwrap();
+    let mut app = app_with(&path, false);
+    app.run_placeholder_action(PlaceholderAction::OpenAsText);
+    let doc = app.editor.active().unwrap();
+    assert_eq!(doc.encoding, Encoding::Binary);
+    let id = doc.id;
+
+    paint(&mut app);
+    app.open_status_menu(StatusItem::Encoding);
+    let reopen = (menu_commands(&app).into_iter())
+        .filter(|(command, _)| matches!(command, MenuCommand::ReopenEncoding(_)));
+    assert!(reopen.into_iter().all(|(_, enabled)| enabled));
+    app.overlays.context_menu = None;
+
+    let le = (CHOICES.iter())
+        .position(|(e, _)| *e == Encoding::Utf16Le)
+        .unwrap();
+    app.run_status_command(MenuCommand::ReopenEncoding(le), id);
+    let doc = app.editor.active().unwrap();
+    assert_eq!(doc.encoding, Encoding::Utf16Le);
+    assert_eq!(doc.text().rope().unwrap().to_string(), "中文 ok\n");
+    assert!(doc.readonly_reason().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
 }

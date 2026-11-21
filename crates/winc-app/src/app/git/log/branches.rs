@@ -6,11 +6,12 @@ use super::*;
 pub(crate) use crate::app::git::branch::picker::BranchRow;
 use crate::app::git::branch::picker::{BranchList, branch_rows, locals_key, without_recent};
 
-/// 分支面板一组或一个目录展开、收起中的一帧（与提交视图里组、目录的动画相同）。
+/// 日志里一个列表（分支面板、改动的文件）展开、收起一行时的一帧（与提交视图里组、目录的动画
+/// 相同）。
 #[derive(Debug, Clone)]
-pub(crate) struct PanelFold {
+pub(crate) struct PanelFold<R = Vec<BranchRow>> {
     /// 动画期间画的各行：展开时是展开以后的，收起时是收起之前的。
-    pub rows: Vec<BranchRow>,
+    pub rows: R,
     /// 展开、收起的那一行在 `rows` 里的下标。
     pub parent: usize,
     /// 露出或收回的行数。
@@ -21,7 +22,7 @@ pub(crate) struct PanelFold {
     pub(in crate::app) clock: crate::app::Clock,
 }
 
-impl PanelFold {
+impl<R> PanelFold<R> {
     /// 已露出的比例：0 是完全收起，1 是完全展开。
     pub fn reveal(&self) -> f32 {
         let eased = self.clock.progress();
@@ -46,7 +47,7 @@ impl App {
     /// 在后台查找包含日志标签 `id` 选中的提交的分支（已经查到或正在查时不再查）；只查选中的，
     /// 不随详情预取：分支多、历史长时较慢，键盘连续移动时只查停下的那个。
     pub(super) fn fetch_log_branches(&mut self, id: DocumentId) {
-        let Some(root) = self.git.root.clone() else {
+        let Some(root) = self.log_root(id) else {
             return;
         };
         let view = self.editor.document(id).and_then(|d| d.log.as_deref());

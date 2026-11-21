@@ -203,11 +203,16 @@ pub(crate) fn uninstall(_: &Placement) -> Outcome {
     Outcome::Failed(String::new())
 }
 
-/// 返回通过系统授权对话框执行 `command` 的 `AppleScript` 脚本。
+/// 返回通过系统授权对话框执行 `command` 的 `AppleScript` 脚本；`prompt` 是对话框中的说明，
+/// 没有时用系统的说法。
 #[cfg(any(target_os = "macos", all(test, unix)))]
-fn authorized_script(command: &str) -> String {
-    let escaped = command.replace('\\', r"\\").replace('"', "\\\"");
-    format!("do shell script \"{escaped}\" with administrator privileges")
+pub(crate) fn authorized_script(command: &str, prompt: Option<&str>) -> String {
+    let escape = |text: &str| text.replace('\\', r"\\").replace('"', "\\\"");
+    let prompt = prompt.map_or_else(String::new, |p| format!(" with prompt \"{}\"", escape(p)));
+    format!(
+        "do shell script \"{}\"{prompt} with administrator privileges",
+        escape(command)
+    )
 }
 
 /// 返回需要授权时执行的 shell 命令：`installing` 为真时创建链接，否则移除。
@@ -230,7 +235,7 @@ fn authorized_command(placement: &Placement, installing: bool) -> String {
 pub(crate) fn run_authorized(placement: &Placement, installing: bool) -> Option<Outcome> {
     /// `osascript` 报告的「用户已取消」错误码（`AppleScript` 的 `userCanceledErr`）。
     const USER_CANCELED: &str = "(-128)";
-    let script = authorized_script(&authorized_command(placement, installing));
+    let script = authorized_script(&authorized_command(placement, installing), None);
     let output = std::process::Command::new("/usr/bin/osascript")
         .args(["-e", &script])
         .output();
@@ -295,6 +300,10 @@ pub(crate) fn report_unreadable(args: &mut Args) -> bool {
 ///
 /// 只尝试打开目录和普通文件：打开没有写入端的命名管道会一直阻塞。
 fn unreadable(path: &std::path::Path) -> Option<String> {
+    // 远端的路径连接之后才能访问，由打开的流程报告。
+    if winc_backend::is_remote(path) {
+        return None;
+    }
     let result = std::fs::metadata(path).and_then(|meta| {
         if meta.is_dir() {
             std::fs::read_dir(path).map(|_| ())
@@ -408,7 +417,7 @@ fn launch_bundle(args: &Args) -> Option<bool> {
     Some(status.is_ok_and(|status| status.success()))
 }
 
-/// 返回通过 `open` 启动应用包 `bundle` 的参数：绝对路径的目标，`文件:行:列` 的行号和列号从 1 起。
+/// 返回通过 `open` 启动应用包 `bundle` 的参数：各目标按 [`crate::cli::argument`] 写出。
 #[cfg(any(target_os = "macos", all(test, unix)))]
 fn open_arguments(bundle: &std::path::Path, args: &Args) -> Vec<std::ffi::OsString> {
     let mut out: Vec<std::ffi::OsString> = vec!["-n".into(), "-a".into(), bundle.into()];
@@ -416,16 +425,7 @@ fn open_arguments(bundle: &std::path::Path, args: &Args) -> Vec<std::ffi::OsStri
         return out;
     }
     out.push("--args".into());
-    for target in &args.targets {
-        let mut arg = std::ffi::OsString::from(crate::instance::absolute(&target.path));
-        if let Some(line) = target.line {
-            arg.push(format!(":{}", line + 1));
-            if let Some(col) = target.col {
-                arg.push(format!(":{}", col + 1));
-            }
-        }
-        out.push(arg);
-    }
+    out.extend(args.targets.iter().map(crate::cli::argument));
     out
 }
 

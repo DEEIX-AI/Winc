@@ -8,9 +8,11 @@ use winc_i18n::t;
 
 mod about;
 mod controls;
+mod keys;
 
 pub use about::*;
 pub use controls::*;
+pub use keys::*;
 
 /// 设置的一个分类，对应左侧分类栏中的一项和右侧的一页。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -24,7 +26,7 @@ pub enum SettingsPage {
     Format,
     /// Git：Git 模块的选项；模块关闭时不列出。
     Git,
-    /// 终端：默认 shell、面板位置、字体、字号和终端行为。
+    /// 终端：默认 shell、面板位置、字体、字号、字重和终端行为。
     Terminal,
     /// 模块：可选模块的开关。
     Modules,
@@ -84,12 +86,13 @@ impl SettingsPage {
         let plain = |items: Vec<Setting>| Section { title: None, items };
         match self {
             SettingsPage::Appearance => {
-                // 系统标题栏只在其他平台列出：macOS 上标题栏总是和内容融为一体。
-                let mut window = vec![
-                    Setting::StatusBar,
-                    Setting::Animations,
-                    Setting::RestoreWindow,
-                ];
+                // 系统标题栏只在其他平台列出：macOS 上标题栏总是和内容融为一体。平滑滚动只在
+                // macOS 上列出：其他平台上滚轮本来就一格一格立即滚动。
+                let mut window = vec![Setting::StatusBar, Setting::Animations];
+                if cfg!(target_os = "macos") {
+                    window.push(Setting::SmoothScrolling);
+                }
+                window.push(Setting::RestoreWindow);
                 if !cfg!(target_os = "macos") {
                     window.push(Setting::SystemTitleBar);
                 }
@@ -129,6 +132,7 @@ impl SettingsPage {
                 plain(vec![
                     Setting::AutoSave,
                     Setting::HotExit,
+                    Setting::ConfirmClose,
                     Setting::RestoreFolder,
                     Setting::DropFolder,
                     Setting::PreviewOnClick,
@@ -138,6 +142,10 @@ impl SettingsPage {
                     Setting::RemoteImages,
                     Setting::TextWidth,
                     Setting::MarkdownLineNumbers,
+                    Setting::MarkdownShortcuts,
+                    Setting::MarkdownFocus,
+                    Setting::MarkdownTypewriter,
+                    Setting::MarkdownSelectionToolbar,
                 ]),
                 plain(vec![
                     Setting::VimMode,
@@ -165,6 +173,7 @@ impl SettingsPage {
                         Setting::TerminalTabPosition,
                         Setting::TerminalFont,
                         Setting::TerminalSize,
+                        Setting::TerminalFontWeight,
                     ]),
                     plain(behavior),
                 ]
@@ -174,10 +183,10 @@ impl SettingsPage {
                 plain(vec![Setting::GitStagingArea, Setting::GitTree]),
                 plain(vec![Setting::DiffInline, Setting::GitInlineBlame]),
                 plain(vec![
+                    Setting::GitPullMode,
                     Setting::GitConfirmPush,
                     Setting::GitRememberCredentials,
                     Setting::GitAutoFetch,
-                    Setting::GitSystemProxy,
                 ]),
             ],
             SettingsPage::Modules => vec![plain(vec![
@@ -217,7 +226,11 @@ impl SettingsPage {
             SettingsPage::Keys => Vec::new(),
             SettingsPage::About => vec![
                 plain(vec![Setting::Version]),
-                plain(vec![Setting::Updates, Setting::CheckUpdates]),
+                plain(vec![
+                    Setting::Updates,
+                    Setting::CheckUpdates,
+                    Setting::SystemProxy,
+                ]),
                 plain(vec![
                     Setting::ReleaseNotes,
                     Setting::Website,
@@ -278,6 +291,8 @@ pub enum Setting {
     AutoSave,
     /// 热退出：退出时不逐个询问是否保存，下次打开时恢复未保存的修改。
     HotExit,
+    /// 关闭窗口或退出前先确认。
+    ConfirmClose,
     /// 启动时打开上次退出时打开的目录和标签。
     RestoreFolder,
     /// 粘滞滚动：滚动时在编辑区顶部钉住当前所在的函数、类和标题。
@@ -310,6 +325,8 @@ pub enum Setting {
     RestoreWindow,
     /// 播放界面的过渡动画。
     Animations,
+    /// 鼠标滚轮平滑滚动（`editor.smoothScrolling`）。
+    SmoothScrolling,
     /// 窗口的背景图片（`ui.backgroundImage`）。
     BackgroundImage,
     /// 背景图片的显示方式（`ui.backgroundFit`）。
@@ -326,8 +343,18 @@ pub enum Setting {
     TextWidth,
     /// Markdown 预览显示行号（`markdown.lineNumbers`）。
     MarkdownLineNumbers,
+    /// Markdown 文件的源代码也使用写作快捷键（`markdown.shortcuts`）。
+    MarkdownShortcuts,
+    /// 编辑 Markdown 时淡化光标所在段落以外的文字（`markdown.focusMode`）。
+    MarkdownFocus,
+    /// 编辑 Markdown 时光标所在的行停在中间（`markdown.typewriterMode`）。
+    MarkdownTypewriter,
+    /// 选中文字后显示格式工具栏（`markdown.selectionToolbar`）。
+    MarkdownSelectionToolbar,
     /// 定时检查更新。
     CheckUpdates,
+    /// 联网的命令跟随系统的代理设置（`network.systemProxy`）。
+    SystemProxy,
     /// 「关于」页的版本号，只读。
     Version,
     /// 「关于」页的更新状态和「检查更新」按钮。
@@ -376,6 +403,8 @@ pub enum Setting {
     TerminalFont,
     /// 终端字号。
     TerminalSize,
+    /// 终端字重（`terminal.fontWeight`）。
+    TerminalFontWeight,
     /// 终端中选中文字时自动复制。
     TerminalCopyOnSelect,
     /// 关闭仍有程序运行的终端标签前确认。
@@ -394,8 +423,6 @@ pub enum Setting {
     GitConfirmPush,
     /// 允许记住 HTTP(S) 密码（`git.rememberCredentials`）。
     GitRememberCredentials,
-    /// `git` 跟随系统的代理设置（`git.systemProxy`）。
-    GitSystemProxy,
     /// 光标所在行末尾的追溯提示（`git.inlineBlame`）。
     GitInlineBlame,
     /// 定时在后台获取（`git.autoFetch`）。
@@ -406,6 +433,8 @@ pub enum Setting {
     GitStagingArea,
     /// 点击工作树时在哪个窗口打开它（`git.openWorktree`）。
     GitOpenWorktree,
+    /// 拉取、同步时合并还是变基（`git.pull`）。
+    GitPullMode,
     /// 把目录拖进已打开目录的窗口时怎样处理（`dropFolder`）。
     DropFolder,
     /// `git` 程序的路径（`git.path`）；未设置时在 `PATH` 里查找。
@@ -468,6 +497,7 @@ impl Setting {
             | Setting::StatusBar
             | Setting::RestoreWindow
             | Setting::Animations
+            | Setting::SmoothScrolling
             | Setting::BackgroundImage
             | Setting::BackgroundFit
             | Setting::BackgroundOpacity => SettingsPage::Appearance,
@@ -476,6 +506,7 @@ impl Setting {
             | Setting::TabWidth
             | Setting::AutoSave
             | Setting::HotExit
+            | Setting::ConfirmClose
             | Setting::RestoreFolder
             | Setting::DropFolder
             | Setting::CompactFolders
@@ -493,10 +524,15 @@ impl Setting {
             | Setting::RenderWhitespace
             | Setting::RemoteImages
             | Setting::TextWidth
-            | Setting::MarkdownLineNumbers => SettingsPage::Editor,
+            | Setting::MarkdownLineNumbers
+            | Setting::MarkdownShortcuts
+            | Setting::MarkdownFocus
+            | Setting::MarkdownTypewriter
+            | Setting::MarkdownSelectionToolbar => SettingsPage::Editor,
             Setting::Version
             | Setting::Updates
             | Setting::CheckUpdates
+            | Setting::SystemProxy
             | Setting::ReleaseNotes
             | Setting::Website
             | Setting::Repository
@@ -514,6 +550,7 @@ impl Setting {
             | Setting::TerminalTabPosition
             | Setting::TerminalFont
             | Setting::TerminalSize
+            | Setting::TerminalFontWeight
             | Setting::TerminalCopyOnSelect
             | Setting::TerminalConfirmClose
             | Setting::TerminalPrompt
@@ -522,10 +559,10 @@ impl Setting {
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
             Setting::GitStagingArea
             | Setting::GitOpenWorktree
+            | Setting::GitPullMode
             | Setting::GitPath
             | Setting::GitConfirmPush
             | Setting::GitRememberCredentials
-            | Setting::GitSystemProxy
             | Setting::GitInlineBlame
             | Setting::GitAutoFetch
             | Setting::GitTree
@@ -554,6 +591,7 @@ impl Setting {
             Setting::TabWidth => t!("settings-tab-width"),
             Setting::AutoSave => t!("settings-auto-save"),
             Setting::HotExit => t!("settings-hot-exit"),
+            Setting::ConfirmClose => t!("settings-confirm-close"),
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::DropFolder => t!("settings-drop-folder"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
@@ -570,6 +608,7 @@ impl Setting {
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::Animations => t!("settings-animations"),
+            Setting::SmoothScrolling => t!("settings-smooth-scrolling"),
             Setting::BackgroundImage => t!("settings-background-image"),
             Setting::BackgroundFit => t!("settings-background-fit"),
             Setting::BackgroundOpacity => t!("settings-background-opacity"),
@@ -579,6 +618,10 @@ impl Setting {
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::TextWidth => t!("settings-text-width"),
             Setting::MarkdownLineNumbers => t!("settings-markdown-line-numbers"),
+            Setting::MarkdownShortcuts => t!("settings-markdown-shortcuts"),
+            Setting::MarkdownFocus => t!("settings-markdown-focus"),
+            Setting::MarkdownTypewriter => t!("settings-markdown-typewriter"),
+            Setting::MarkdownSelectionToolbar => t!("settings-markdown-selection-toolbar"),
             Setting::CheckUpdates => t!("settings-check-updates"),
             Setting::Version => t!("settings-version"),
             Setting::Website => t!("settings-website"),
@@ -599,6 +642,7 @@ impl Setting {
             Setting::TerminalTabPosition => t!("settings-terminal-tab-position"),
             Setting::TerminalFont => t!("settings-terminal-font"),
             Setting::TerminalSize => t!("settings-terminal-size"),
+            Setting::TerminalFontWeight => t!("settings-terminal-font-weight"),
             Setting::TerminalCopyOnSelect => t!("settings-terminal-copy-on-select"),
             Setting::TerminalConfirmClose => t!("settings-terminal-confirm-close"),
             Setting::TerminalPrompt => t!("settings-terminal-prompt"),
@@ -608,12 +652,13 @@ impl Setting {
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
             Setting::GitRememberCredentials => t!("settings-git-remember-credentials"),
-            Setting::GitSystemProxy => t!("settings-git-system-proxy"),
+            Setting::SystemProxy => t!("settings-system-proxy"),
             Setting::GitInlineBlame => t!("settings-git-inline-blame"),
             Setting::GitAutoFetch => t!("settings-git-auto-fetch"),
             Setting::GitTree => t!("settings-git-tree"),
             Setting::GitStagingArea => t!("settings-git-staging-area"),
             Setting::GitOpenWorktree => t!("settings-git-open-worktree"),
+            Setting::GitPullMode => t!("settings-git-pull"),
             Setting::GitPath => t!("settings-git-path"),
             Setting::TerminalModule => t!("settings-terminal-module"),
             Setting::RemoteModule => t!("settings-remote-module"),
@@ -637,6 +682,7 @@ impl Setting {
             Setting::SystemTitleBar => Some(t!("settings-system-title-bar-desc")),
             Setting::AutoSave => Some(t!("settings-auto-save-desc")),
             Setting::HotExit => Some(t!("settings-hot-exit-desc")),
+            Setting::ConfirmClose => Some(t!("settings-confirm-close-desc")),
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::DropFolder => Some(t!("settings-drop-folder-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
@@ -656,12 +702,19 @@ impl Setting {
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::Animations => Some(t!("settings-animations-desc")),
+            Setting::SmoothScrolling => Some(t!("settings-smooth-scrolling-desc")),
             Setting::BackgroundImage => Some(t!("settings-background-image-desc")),
             Setting::BackgroundFit => Some(t!("settings-background-fit-desc")),
             Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::TextWidth => Some(t!("settings-text-width-desc")),
             Setting::MarkdownLineNumbers => Some(t!("settings-markdown-line-numbers-desc")),
+            Setting::MarkdownShortcuts => Some(t!("settings-markdown-shortcuts-desc")),
+            Setting::MarkdownFocus => Some(t!("settings-markdown-focus-desc")),
+            Setting::MarkdownTypewriter => Some(t!("settings-markdown-typewriter-desc")),
+            Setting::MarkdownSelectionToolbar => {
+                Some(t!("settings-markdown-selection-toolbar-desc"))
+            }
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
             Setting::Updates => Some(t!("settings-updates-off")),
@@ -672,12 +725,13 @@ impl Setting {
             Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
             Setting::GitRememberCredentials => Some(t!("settings-git-remember-credentials-desc")),
-            Setting::GitSystemProxy => Some(t!("settings-git-system-proxy-desc")),
+            Setting::SystemProxy => Some(t!("settings-system-proxy-desc")),
             Setting::GitInlineBlame => Some(t!("settings-git-inline-blame-desc")),
             Setting::GitAutoFetch => Some(t!("settings-git-auto-fetch-desc")),
             Setting::GitTree => Some(t!("settings-git-tree-desc")),
             Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
             Setting::GitOpenWorktree => Some(t!("settings-git-open-worktree-desc")),
+            Setting::GitPullMode => Some(t!("settings-git-pull-desc")),
             Setting::GitPath => Some(t!("settings-git-path-desc")),
             Setting::TerminalShell => Some(t!("settings-terminal-shell-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
@@ -704,12 +758,13 @@ impl Setting {
             | Setting::FontWeight
             | Setting::BackgroundOpacity
             | Setting::TerminalSize
+            | Setting::TerminalFontWeight
             | Setting::TabWidth => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar
-            | Setting::AutoSave
             | Setting::HotExit
+            | Setting::ConfirmClose
             | Setting::RestoreFolder
             | Setting::CompactFolders
             | Setting::PreviewOnClick
@@ -726,15 +781,20 @@ impl Setting {
             | Setting::StatusBar
             | Setting::RestoreWindow
             | Setting::Animations
+            | Setting::SmoothScrolling
             | Setting::RemoteImages
             | Setting::MarkdownLineNumbers
+            | Setting::MarkdownShortcuts
+            | Setting::MarkdownFocus
+            | Setting::MarkdownTypewriter
+            | Setting::MarkdownSelectionToolbar
             | Setting::CheckUpdates
             | Setting::FormatOnSave
             | Setting::FixOnSave
             | Setting::GitModule
             | Setting::GitConfirmPush
             | Setting::GitRememberCredentials
-            | Setting::GitSystemProxy
+            | Setting::SystemProxy
             | Setting::GitInlineBlame
             | Setting::GitAutoFetch
             | Setting::GitTree
@@ -762,7 +822,9 @@ impl Setting {
             | Setting::TerminalTabPosition
             | Setting::TerminalOptionAsMeta
             | Setting::DropFolder
-            | Setting::GitOpenWorktree => SettingControl::Choice,
+            | Setting::AutoSave
+            | Setting::GitOpenWorktree
+            | Setting::GitPullMode => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Product,
@@ -830,7 +892,18 @@ pub fn text_width_label(choice: winc_config::TextWidth) -> &'static str {
     }
 }
 
-/// 返回「打开工作树」设置中选项 `choice` 的名字。
+/// 返回「自动保存」设置中选项 `choice` 的名字。
+pub fn auto_save_label(choice: winc_config::AutoSave) -> &'static str {
+    use winc_config::AutoSave::{AfterDelay, Off, OnFocusChange};
+
+    match choice {
+        Off => t!("settings-auto-save-off"),
+        OnFocusChange => t!("settings-auto-save-focus"),
+        AfterDelay => t!("settings-auto-save-delay"),
+    }
+}
+
+/// 返回「拖入目录」设置中选项 `choice` 的名字。
 pub fn drop_folder_label(choice: winc_config::FolderDrop) -> &'static str {
     use winc_config::FolderDrop::{Add, Ask, Open};
 
@@ -848,6 +921,16 @@ pub fn open_worktree_label(choice: winc_config::WorktreeOpen) -> &'static str {
         Ask => t!("settings-git-open-worktree-ask"),
         NewWindow => t!("settings-git-open-worktree-new"),
         CurrentWindow => t!("settings-git-open-worktree-current"),
+    }
+}
+
+/// 返回拉取方式 `choice` 在设置中显示的名称。
+pub fn pull_mode_label(choice: winc_config::PullMode) -> &'static str {
+    use winc_config::PullMode::{Config, Merge, Rebase};
+    match choice {
+        Config => t!("settings-git-pull-config"),
+        Merge => t!("settings-git-pull-merge"),
+        Rebase => t!("settings-git-pull-rebase"),
     }
 }
 
@@ -946,6 +1029,20 @@ pub enum SettingsPart {
     KeySearch,
     /// 搜索框右端的「录制按键」。
     Record,
+    /// 「快捷键」页「键位方案」一行的值：点击后弹出方案和导入的菜单。
+    Keymap,
+    /// 「快捷键」页列表中的一行，参数是该行的命令：点击后修改该命令的快捷键。
+    KeyRow(keymap::Action),
+    /// 悬停在一行上时出现的「编辑」。
+    KeyEdit(keymap::Action),
+    /// 悬停在改过的一行上时出现的「恢复默认」。
+    KeyReset(keymap::Action),
+    /// 修改快捷键时第几个已有的键上的 ×。
+    KeyRemove(usize),
+    /// 修改快捷键时的「保存」。
+    KeySave,
+    /// 修改快捷键时的「取消」。
+    KeyCancel,
     /// 数值的减号。
     Decrease(Setting),
     /// 数值的加号。
@@ -974,6 +1071,28 @@ pub struct SettingsView<'a> {
     pub editing: Option<Setting>,
     /// 正文的滚动量（像素）。
     pub scroll: f32,
+    /// 卡片相对窗口中央的偏移（逻辑像素），见 [`settings_card`]。
+    pub offset: (f32, f32),
+}
+
+/// 返回设置卡片在窗口 `window` 中的位置：从中央移动 `offset`，四周至少留出 `SETTINGS_MARGIN`。
+pub fn settings_card(window: Rect, (dx, dy): (f32, f32)) -> Rect {
+    let w = SETTINGS_W.min(window.w - SETTINGS_MARGIN * 2.0).max(0.0);
+    let h = SETTINGS_H.min(window.h - SETTINGS_MARGIN * 2.0).max(0.0);
+    // 窗口过小时上下限颠倒，以下限为准，不用 `clamp`。
+    let place = |start: f32, span: f32, size: f32, d: f32| {
+        let centered = start + (span - size) / 2.0 + d;
+        centered
+            .min(start + span - SETTINGS_MARGIN - size)
+            .max(start + SETTINGS_MARGIN)
+            .round()
+    };
+    Rect::new(
+        place(window.x, window.w, w, dx),
+        place(window.y, window.h, h, dy),
+        w,
+        h,
+    )
 }
 
 /// 返回搜索 `query` 时正文列出的各组：各页中名称或说明含有 `query` 的设置项
@@ -1081,16 +1200,10 @@ impl SettingsLayout {
             git,
             editing,
             scroll,
+            offset,
         } = view;
         let searching = !query.trim().is_empty();
-        let w = SETTINGS_W.min(window.w - SETTINGS_MARGIN * 2.0).max(0.0);
-        let h = SETTINGS_H.min(window.h - SETTINGS_MARGIN * 2.0).max(0.0);
-        let card = Rect::new(
-            (window.x + (window.w - w) / 2.0).round(),
-            (window.y + (window.h - h) / 2.0).round(),
-            w,
-            h,
-        );
+        let card = settings_card(window, offset);
 
         let nav = Rect::new(card.x, card.y, SETTINGS_NAV_W.min(card.w), card.h);
         // 搜索框与右侧标题行垂直居中对齐，各页列在其下。「终端」一项的高度按显示比例收放，
@@ -1136,7 +1249,7 @@ impl SettingsLayout {
             body.x + SETTINGS_PAD,
             (body.w - SETTINGS_PAD * 2.0).max(0.0),
         );
-        let mut y = body.y - scroll;
+        let mut y = body.y - super::drawn_scroll(scroll);
         let mut groups = Vec::new();
         let mut headings = Vec::new();
         let mut separators = Vec::new();
@@ -1228,6 +1341,11 @@ impl SettingsLayout {
         (self.content_h - self.body.h).max(0.0)
     }
 
+    /// 卡片顶部与标题行同高的一条，横跨两栏：其中没有部件的地方可以拖动卡片。
+    pub fn title_strip(&self) -> Rect {
+        Rect::new(self.card.x, self.card.y, self.card.w, self.header.h)
+    }
+
     /// 返回 `(x, y)` 处可点击的部件；落在控件之外时返回 `None`。
     pub fn part_at(&self, x: f32, y: f32) -> Option<SettingsPart> {
         if self.close.contains(x, y) {
@@ -1282,101 +1400,6 @@ impl SettingsLayout {
             SettingControl::Link => Some(SettingsPart::Link(row.setting)),
             SettingControl::Search => None,
         }
-    }
-}
-
-/// 「快捷键」页的几何：顶部固定的搜索框（右端是「录制按键」），下方按分组列出命令和键位，可以滚动。
-///
-/// 页面布局相同：组上方是小标题，组内每行一个命令，行与行之间有一条细线。
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct KeysLayout {
-    /// 搜索框。
-    pub search: Rect,
-    /// 搜索框右端的「录制按键」按钮。
-    pub record: Rect,
-    /// 搜索框下方可以滚动的区域。
-    pub list: Rect,
-    /// 各组的标题：标题所在行的位置和标题文字。
-    pub headings: Vec<(Rect, &'static str)>,
-    /// 各组的底色区域。
-    pub groups: Vec<Rect>,
-    /// 组内行与行之间的细线。
-    pub separators: Vec<Rect>,
-    /// 各命令行的位置和对应的键位行。
-    pub rows: Vec<(Rect, &'static keymap::Row)>,
-    /// 内容的总高度（像素），用于计算最大滚动量。
-    pub content_h: f32,
-}
-
-impl KeysLayout {
-    /// 计算「快捷键」页的几何。
-    ///
-    /// `body` 是设置标题下方的区域，`groups` 是筛选后的各组，`scroll` 是列表的滚动量（像素）。
-    pub fn compute(
-        body: Rect,
-        groups: Vec<(keymap::Group, Vec<&'static keymap::Row>)>,
-        scroll: f32,
-    ) -> Self {
-        let x = body.x + SETTINGS_PAD;
-        let w = (body.w - SETTINGS_PAD * 2.0).max(0.0);
-        let (search, record) = Self::header(body);
-        let top = search.bottom() + 12.0;
-        let list = Rect::new(body.x, top, body.w, (body.bottom() - top).max(0.0));
-
-        let mut layout = KeysLayout {
-            search,
-            record,
-            list,
-            ..KeysLayout::default()
-        };
-        let mut y = list.y - scroll;
-        for (i, (group, rows)) in groups
-            .into_iter()
-            .filter(|(_, r)| !r.is_empty())
-            .enumerate()
-        {
-            if i > 0 {
-                y += SETTINGS_GROUP_GAP;
-            }
-            let title = Rect::new(x + SETTINGS_INSET, y, w, SETTINGS_TITLE);
-            layout.headings.push((title, group.title()));
-            y += SETTINGS_TITLE;
-            let block = y;
-            for (n, row) in rows.into_iter().enumerate() {
-                if n > 0 {
-                    let inner = (w - SETTINGS_INSET * 2.0).max(0.0);
-                    layout
-                        .separators
-                        .push(Rect::new(x + SETTINGS_INSET, y, inner, 1.0));
-                }
-                layout.rows.push((Rect::new(x, y, w, KEYS_ROW), row));
-                y += KEYS_ROW;
-            }
-            layout.groups.push(Rect::new(x, block, w, y - block));
-        }
-        layout.content_h = y + scroll - list.y + SETTINGS_BOTTOM;
-        layout
-    }
-
-    /// 返回 `body` 中搜索框和其右端「录制按键」按钮的位置。
-    ///
-    /// 两者固定在页面顶部，与列表内容和滚动无关；悬停、点击只需这两个矩形，不必筛选整张键位表。
-    pub fn header(body: Rect) -> (Rect, Rect) {
-        let x = body.x + SETTINGS_PAD;
-        let w = (body.w - SETTINGS_PAD * 2.0).max(0.0);
-        let search = Rect::new(x, body.y + 4.0, w, KEYS_SEARCH_H);
-        let record = Rect::new(
-            search.right() - 4.0 - KEYS_RECORD,
-            search.y + (search.h - KEYS_RECORD) / 2.0,
-            KEYS_RECORD,
-            KEYS_RECORD,
-        );
-        (search, record)
-    }
-
-    /// 返回列表的最大滚动量（像素）。
-    pub fn max_scroll(&self) -> f32 {
-        (self.content_h - self.list.h).max(0.0)
     }
 }
 

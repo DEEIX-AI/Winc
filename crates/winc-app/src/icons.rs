@@ -11,11 +11,13 @@ mod files;
 mod search;
 mod settings;
 mod symbols;
+mod writing;
 
 pub use files::*;
 pub use search::*;
 pub use settings::*;
 pub use symbols::*;
+pub use writing::*;
 
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
 
@@ -183,6 +185,36 @@ pub fn warning(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: 
     frame.rect_clipped(Rect::new(cx - 0.75, cy + 2.25, 1.5, 1.5), color, 0.75, clip);
 }
 
+/// 绘制信息图标，11×11：圆圈内一个「i」，与 [`warning`] 同一大小。
+pub fn info(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let shapes = [
+        Stroke::Circle(cx, cy, RING),
+        Stroke::Line(cx, cy - 0.5, cx, cy + 2.75),
+    ];
+    frame.stroke(&shapes, GLYPH_STROKE, color, clip);
+    frame.rect_clipped(Rect::new(cx - 0.75, cy - 3.0, 1.5, 1.5), color, 0.75, clip);
+}
+
+/// 绘制完成图标，11×11：圆圈内一个勾。
+pub fn done(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let shapes = [
+        Stroke::Circle(cx, cy, RING),
+        Stroke::Line(cx - 2.5, cy + 0.25, cx - 0.75, cy + 2.0),
+        Stroke::Line(cx - 0.75, cy + 2.0, cx + 2.5, cy - 1.75),
+    ];
+    frame.stroke(&shapes, GLYPH_STROKE, color, clip);
+}
+
+/// 绘制出错图标，11×11：圆圈内一个感叹号。
+pub fn error(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let shapes = [
+        Stroke::Circle(cx, cy, RING),
+        Stroke::Line(cx, cy - 2.75, cx, cy + 0.5),
+    ];
+    frame.stroke(&shapes, GLYPH_STROKE, color, clip);
+    frame.rect_clipped(Rect::new(cx - 0.75, cy + 1.5, 1.5, 1.5), color, 0.75, clip);
+}
+
 /// 绘制关闭图标（×），`size` 是叉的边长。
 pub fn close(frame: &mut Frame<'_>, (cx, cy): (f32, f32), size: f32, color: Color, clip: Rect) {
     let h = size / 2.0;
@@ -311,12 +343,11 @@ fn small_plus(cx: f32, cy: f32, h: f32) -> [Stroke; 2] {
     ]
 }
 
-/// 绘制「新建文件」图标，10×12：右上角折起的纸，纸上一个加号。
-pub fn add_file(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+/// 右上角折起的纸的轮廓，10×12，中心在 `(cx, cy)`：「新建文件」「打开文件」图标共用。
+fn page((cx, cy): (f32, f32)) -> [Stroke; 8] {
     let (left, top, right, bottom) = (cx - 5.0, cy - 6.0, cx + 5.0, cy + 6.0);
     let (r, fold) = (1.5, 3.5);
-    let [h, v] = small_plus(cx, cy + 1.0, 2.25);
-    let shapes = [
+    [
         Stroke::Line(left + r, top, right - fold, top),
         Stroke::Line(right - fold, top, right, top + fold),
         Stroke::Line(right, top + fold, right, bottom - r),
@@ -325,9 +356,26 @@ pub fn add_file(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip:
         Stroke::Arc(left + r, bottom - r, r, FRAC_PI_2, PI),
         Stroke::Line(left, bottom - r, left, top + r),
         Stroke::Arc(left + r, top + r, r, -PI, -FRAC_PI_2),
-        h,
-        v,
-    ];
+    ]
+}
+
+/// 绘制「新建文件」图标，10×12：右上角折起的纸，纸上一个加号。
+pub fn add_file(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let [h, v] = small_plus(cx, cy + 1.0, 2.25);
+    let mut shapes = page((cx, cy)).to_vec();
+    shapes.extend([h, v]);
+    frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
+/// 绘制「打开文件」图标，10×12：右上角折起的纸，纸上一个指向右上方的箭头（同 [`external`]）。
+pub fn open_file(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (x, y, r) = (cx - 0.25, cy + 1.25, 2.25);
+    let mut shapes = page((cx, cy)).to_vec();
+    shapes.extend([
+        Stroke::Line(x - r, y + r, x + r, y - r),
+        Stroke::Line(x - 0.75, y - r, x + r, y - r),
+        Stroke::Line(x + r, y - r, x + r, y + 0.75),
+    ]);
     frame.stroke(&shapes, RING_STROKE, color, clip);
 }
 

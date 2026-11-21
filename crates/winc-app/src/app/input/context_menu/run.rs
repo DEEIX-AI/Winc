@@ -1,5 +1,6 @@
 //! 执行菜单里选中的命令，以及几个命令共用的动作（复制路径、改名、删除、在目录中查找）。
 
+use winc_editor::panes::Axis;
 use winc_i18n::t;
 
 use super::*;
@@ -30,6 +31,12 @@ impl App {
             MenuTarget::Tree(path) => self.run_tree_command(command, path),
             MenuTarget::Tab(id) => self.run_tab_command(command, id),
             MenuTarget::CommitFile(path) => self.run_commit_file_command(command, path),
+            // 提交上的分支子菜单：分支按弹出菜单时的列表解释。
+            MenuTarget::LogCommit(_) if let MenuCommand::GitBranch(op, i) = command => {
+                if let Some(branch) = menu.branches.get(i).cloned() {
+                    self.run_branch_op(op, branch);
+                }
+            }
             MenuTarget::LogCommit(oid) => self.run_log_commit_command(command, &oid),
             MenuTarget::LogFile(i, path) => self.run_log_file_command(command, i, path),
             MenuTarget::SearchResult(path, m) => self.run_search_result_command(command, path, m),
@@ -113,6 +120,13 @@ impl App {
                 MenuCommand::Table(op) => {
                     self.live_table_tool(op);
                 }
+                MenuCommand::ImageWidth(percent) => self.resize_image_to(percent),
+                MenuCommand::PastePlain => self.paste_plain(),
+                MenuCommand::OpenImage => {
+                    if let Some(path) = self.preview.markdown.menu_picture.take() {
+                        self.open_path(&path);
+                    }
+                }
                 _ => {}
             },
             MenuTarget::Terminal(block) => self.run_terminal_command(command, block),
@@ -122,9 +136,19 @@ impl App {
                 };
                 match command {
                     MenuCommand::RenameTerminal => self.open_terminal_rename(index),
+                    MenuCommand::SplitTerminal => {
+                        self.activate_terminal_tab(index);
+                        self.split_terminal();
+                    }
                     MenuCommand::CloseTerminal => self.close_terminal_tab(index),
                     MenuCommand::CloseOtherTerminals => self.close_other_terminal_tabs(id),
                     _ => {}
+                }
+            }
+            // 「逐行追溯」同时开关两侧。
+            MenuTarget::DiffGutter(id) => {
+                if self.editor.active().map(|d| d.id) == Some(id) {
+                    self.toggle_diff_blame();
                 }
             }
             // 和快捷键走同一条路：光标在右侧时由右侧的文档执行，只读的一侧有选区时复制这一侧。
@@ -201,11 +225,25 @@ impl App {
                     self.set_drop_folder(choice);
                 }
             }
+            MenuTarget::AutoSave => {
+                if let MenuCommand::AutoSave(i) = command
+                    && let Some(&choice) = winc_config::AutoSave::ALL.get(i)
+                {
+                    self.set_auto_save(choice);
+                }
+            }
             MenuTarget::OpenWorktree => {
                 if let MenuCommand::OpenWorktree(i) = command
                     && let Some(&choice) = winc_config::WorktreeOpen::ALL.get(i)
                 {
                     self.set_open_worktree(choice);
+                }
+            }
+            MenuTarget::PullMode => {
+                if let MenuCommand::PullMode(i) = command
+                    && let Some(&choice) = winc_config::PullMode::ALL.get(i)
+                {
+                    self.set_pull_mode(choice);
                 }
             }
             MenuTarget::VimClipboard => {
@@ -287,6 +325,19 @@ impl App {
             MenuTarget::Tool(task, id) => {
                 self.settings_choose_tool(tool_setting(task, id), command)
             }
+            MenuTarget::Keymap => match command {
+                MenuCommand::KeymapPreset(preset) => self.set_keymap_preset(preset),
+                MenuCommand::ImportKeymap(i) => self.import_keymap(i),
+                MenuCommand::ResetAllShortcuts => self.reset_all_shortcuts(),
+                _ => {}
+            },
+            MenuTarget::Shortcut(action) => match command {
+                MenuCommand::ShortcutChange => self.start_key_edit(action, false),
+                MenuCommand::ShortcutAdd => self.start_key_edit(action, true),
+                MenuCommand::ShortcutRemove => self.remove_shortcuts(action),
+                MenuCommand::ShortcutReset => self.reset_shortcuts(action),
+                _ => {}
+            },
             MenuTarget::Indent(id)
             | MenuTarget::LineEnding(id)
             | MenuTarget::Encoding(id)
@@ -392,8 +443,11 @@ impl App {
                     }
                 }
                 MenuCommand::Cut => self.cut_entries(&self.tree_targets()),
-                MenuCommand::Copy => self.copy_entries(&self.tree_targets()),
-                MenuCommand::Delete => self.ask_delete_all(self.tree_targets()),
+                MenuCommand::Copy => {
+                    self.copy_entries(&self.tree_targets());
+                }
+                MenuCommand::Delete => self.ask_delete_all(self.tree_targets(), false),
+                MenuCommand::Download => self.pick(Pick::Download(self.tree_targets())),
                 MenuCommand::CopyPath => self.copy_paths(&selection, false),
                 MenuCommand::CopyRelativePath => self.copy_paths(&selection, true),
                 _ => {}
@@ -426,6 +480,7 @@ impl App {
             MenuCommand::Copy => self.copy_entry(&target),
             // 右键时已选中了那一行（空白处则取消选中），粘贴到的目录由选中的行决定。
             MenuCommand::Paste => self.paste_into_tree(),
+            MenuCommand::Download => self.pick(Pick::Download(vec![target])),
             _ => {}
         }
     }
@@ -438,7 +493,7 @@ impl App {
             _ => {}
         }
         match command {
-            MenuCommand::Copy => self.terminal_copy(),
+            MenuCommand::Copy => self.terminal_copy(false),
             MenuCommand::Paste => self.terminal_paste(),
             MenuCommand::SelectAll => self.terminal_select_all(),
             MenuCommand::TerminalFind => self.open_terminal_find(),
@@ -446,7 +501,8 @@ impl App {
             MenuCommand::TerminalMaximize => self.toggle_terminal_maximized(),
             MenuCommand::TerminalDock => self.toggle_terminal_position(),
             MenuCommand::NewTerminal => self.new_terminal_tab(),
-            MenuCommand::CloseTerminal => self.close_terminal_tab(self.terminal.active),
+            MenuCommand::SplitTerminal => self.split_terminal(),
+            MenuCommand::CloseTerminal => self.close_terminal_pane(),
             _ => {}
         }
     }
@@ -462,6 +518,9 @@ impl App {
             }
             MenuCommand::Cut => self.copy(true),
             MenuCommand::Copy => self.copy(false),
+            MenuCommand::HexCopyText => self.copy_hex(true),
+            MenuCommand::SelectAll if self.hex_active() => self.select_all_hex(),
+            MenuCommand::HexGoTo => self.open_goto(),
             MenuCommand::Paste => self.paste(),
             MenuCommand::Format => self.format_active(),
             MenuCommand::FormatSelection => self.format_selection(),
@@ -477,10 +536,14 @@ impl App {
     }
 
     fn run_tab_command(&mut self, command: MenuCommand, id: DocumentId) {
-        let Some(index) = self.editor.index_of(id) else {
+        let Some(index) = self
+            .editor
+            .index_of(id)
+            .filter(|&i| i < self.editor.tab_count())
+        else {
             return;
         };
-        let docs = &self.editor.documents;
+        let docs = self.editor.tabs();
         let path = docs[index].path.clone();
 
         // 右键点在多选的标签上：关闭、关闭其他作用于选中的各个标签，关闭左侧、右侧以选中的
@@ -519,6 +582,16 @@ impl App {
                 }
             }
             MenuCommand::Close => self.close_tab(index),
+            MenuCommand::SplitRight | MenuCommand::SplitDown => {
+                self.activate_tab(index);
+                let down = command == MenuCommand::SplitDown;
+                self.split_editor(if down { Axis::Column } else { Axis::Row });
+            }
+            MenuCommand::MoveToSplitRight | MenuCommand::MoveToSplitDown => {
+                self.activate_tab(index);
+                let down = command == MenuCommand::MoveToSplitDown;
+                self.move_to_split(if down { Axis::Column } else { Axis::Row });
+            }
             MenuCommand::ReadOnly(on) => self.set_read_only(id, on),
             MenuCommand::CloseOthers => {
                 let ids = docs.iter().filter(|d| d.id != id).map(|d| d.id).collect();
@@ -807,13 +880,13 @@ impl App {
 
     /// 删除前先确认（[`App::show_confirm`]），确认后移到废纸篓。
     pub(in crate::app) fn ask_delete(&mut self, path: &Path) {
-        self.ask_delete_all(vec![path.to_path_buf()]);
+        self.ask_delete_all(vec![path.to_path_buf()], false);
     }
 
-    /// 一次删除 `paths` 里的各项（文件树里多选时）。
+    /// 一次删除 `paths` 里的各项（文件树里多选时）；`permanent` 时不经废纸篓，确认时说明无法恢复。
     ///
     /// 打开的目录、附加的目录本身和它们以外的路径不删；一项都不剩时什么也不做。
-    pub(in crate::app) fn ask_delete_all(&mut self, mut paths: Vec<PathBuf>) {
+    pub(in crate::app) fn ask_delete_all(&mut self, mut paths: Vec<PathBuf>, permanent: bool) {
         let Some(workspace) = &self.editor.workspace else {
             return;
         };
@@ -822,47 +895,58 @@ impl App {
             return;
         }
 
+        // 远端主机上和 WSL 发行版中的文件同样不经过废纸篓。
+        let permanent = permanent || crate::system::has_no_trash(&paths[0], cfg!(windows));
         if self.window.handle.is_some() {
-            // 远端主机上和 WSL 发行版中的文件不经过废纸篓，直接删除：确认时说明无法恢复。
-            let permanent = crate::system::has_no_trash(&paths[0], cfg!(windows));
-            let message = match paths.as_slice() {
-                [path] => {
-                    let name = winc_editor::display_name(path);
-                    // 类别取自文件树：远端的路径不能在界面线程上查询。
-                    let folder = self.is_folder(path);
-                    match (folder, permanent) {
-                        (true, false) => t!("common-trash-confirm-folder", name = name),
-                        (false, false) => t!("common-trash-confirm-item", name = name),
-                        (true, true) => t!("common-delete-confirm-folder", name = name),
-                        (false, true) => t!("common-delete-confirm-item", name = name),
-                    }
-                }
-                many if permanent => t!("common-delete-confirm-items", count = many.len()),
-                many => t!("common-trash-confirm-items", count = many.len()),
-            };
-            let (detail, button) = if permanent {
-                (
-                    t!("common-delete-confirm-detail"),
-                    t!("common-delete-button"),
-                )
-            } else {
-                (t!("common-trash-confirm-detail"), t!("common-trash-move"))
-            };
-            self.show_confirm(&message, detail, button, move |ok| {
-                ok.then(|| UserEvent::Delete(paths.clone()))
+            let (message, detail, button) = self.delete_prompt(&paths, permanent);
+            self.show_confirm(&message, &detail, &button, move |ok| {
+                ok.then(|| UserEvent::Delete(paths.clone(), permanent))
             });
             return;
         }
 
         // 没有窗口（测试中）时直接删除。
-        self.delete_entries(&paths);
+        self.delete_entries(&paths, permanent);
     }
 
-    /// 把 `paths` 里的各项移到废纸篓。
+    /// 返回删除 `paths` 前确认框的问题、说明和按钮；`permanent` 时说明无法恢复。
+    pub(in crate::app) fn delete_prompt(
+        &self,
+        paths: &[PathBuf],
+        permanent: bool,
+    ) -> (String, String, String) {
+        let message = match paths {
+            [path] => {
+                let name = winc_editor::display_name(path);
+                // 类别取自文件树：远端的路径不能在界面线程上查询。
+                let folder = self.is_folder(path);
+                match (folder, permanent) {
+                    (true, false) => t!("common-trash-confirm-folder", name = name),
+                    (false, false) => t!("common-trash-confirm-item", name = name),
+                    (true, true) => t!("common-delete-confirm-folder", name = name),
+                    (false, true) => t!("common-delete-confirm-item", name = name),
+                }
+            }
+            many if permanent => t!("common-delete-confirm-items", count = many.len()),
+            many => t!("common-trash-confirm-items", count = many.len()),
+        };
+        let (detail, button) = if permanent {
+            (
+                t!("common-delete-confirm-detail"),
+                t!("common-delete-button"),
+            )
+        } else {
+            (t!("common-trash-confirm-detail"), t!("common-trash-move"))
+        };
+        (message, detail.to_string(), button.to_string())
+    }
+
+    /// 把 `paths` 里的各项删除：`permanent` 时直接删除，否则移到废纸篓（远端的路径总是直接
+    /// 删除）。
     ///
     /// 其中文件对应的标签：没有修改的关闭，有修改的保留，内容仍在，保存时会重新创建文件。
     /// 某一项删除失败时提示原因，其余各项仍然删除。
-    pub(in crate::app) fn delete_entries(&mut self, paths: &[PathBuf]) {
+    pub(in crate::app) fn delete_entries(&mut self, paths: &[PathBuf], permanent: bool) {
         // 先等待后台保存完成，否则已删除的文件会被保存重新写出。远端的保存与删除按顺序执行。
         if !paths.iter().any(|path| winc_backend::is_remote(path)) {
             self.wait_for_saves();
@@ -872,23 +956,26 @@ impl App {
         };
         let (trash, paths) = (self.trash, paths.to_vec());
         let delete = move || {
-            let remove = |path: &PathBuf| match winc_backend::is_remote(path) {
+            let remove = |path: &PathBuf| match permanent || winc_backend::is_remote(path) {
                 true => winc_backend::fs::remove_all(path),
                 false => trash(path),
             };
             let results: Vec<std::io::Result<()>> = paths.iter().map(remove).collect();
             (paths, results)
         };
-        self.file_work(&first, delete, |app, (paths, results)| {
-            app.entries_deleted(paths, results);
+        self.file_work(&first, delete, move |app, (paths, results)| {
+            app.entries_deleted(paths, results, permanent);
         });
     }
 
-    /// 删除完成：关闭对应的标签，更新文件树并提示；`results` 是 `paths` 中各项的结果。
-    fn entries_deleted(&mut self, paths: Vec<PathBuf>, results: Vec<std::io::Result<()>>) {
-        let permanent = paths
-            .first()
-            .is_some_and(|path| crate::system::has_no_trash(path, cfg!(windows)));
+    /// 删除完成：关闭对应的标签，更新文件树并提示；`results` 是 `paths` 中各项的结果，
+    /// `permanent` 表示没有经过废纸篓。
+    fn entries_deleted(
+        &mut self,
+        paths: Vec<PathBuf>,
+        results: Vec<std::io::Result<()>>,
+        permanent: bool,
+    ) {
         let mut deleted = Vec::new();
         for (path, result) in paths.into_iter().zip(results) {
             match result {
@@ -896,7 +983,10 @@ impl App {
                 Err(e) => {
                     let name = winc_editor::display_name(&path);
                     let error = e.to_string();
-                    self.notify(t!("common-trash-delete-failed", name = name, error = error));
+                    self.notify(
+                        NoticeKind::Error,
+                        t!("common-trash-delete-failed", name = name, error = error),
+                    );
                 }
             }
         }
@@ -916,7 +1006,7 @@ impl App {
             })
             .map(|d| d.id)
             .collect();
-        self.remove_tabs(&ids);
+        self.close_documents(&ids);
 
         // 选中原位置上的下一行，便于继续用 `⌘⌫` 连续删除。
         if let Some(ws) = &mut self.editor.workspace {

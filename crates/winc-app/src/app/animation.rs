@@ -356,7 +356,6 @@ impl App {
 
         settle(&mut self.panels.sidebar.motion, |m| m.clock);
         settle(&mut self.panels.tree.motion, |m| m.clock);
-        self.settle_log_tree();
         self.panels.tree.labels.settle();
         self.git.commit.names.settle();
         self.panels.global.names.settle();
@@ -366,6 +365,12 @@ impl App {
         settle(&mut self.git.commit.motion, |m| m.clock);
         settle(&mut self.git.log.branches_motion, |m| m.1);
         settle(&mut self.git.log.branch_fold, |m| m.clock);
+        settle(&mut self.git.log.details_fold, |m| m.clock);
+        settle(&mut self.git.log.panel_fold, |m| m.clock);
+        settle(&mut self.git.log.files_motion, |m| m.1);
+        self.git.log.details_names.settle();
+        self.git.log.panel_names.settle();
+        self.git.log.branch_names.settle();
         self.git.log.pills.settle();
         settle(&mut self.git.commit.fold_motion, |m| m.clock);
         settle(&mut self.git.commit.message_motion, |m| m.1);
@@ -418,9 +423,15 @@ impl App {
             self.settings.cache = None;
         }
         settle(&mut self.settings.mode_slide, |s| s.1);
+        settle(&mut self.overlays.tooltip.leaving, |l| l.3);
+        if let Some(bar) = &mut self.disk.loads.bar {
+            bar.settle();
+        }
         settle(&mut self.settings.switch_slide, |s| s.1);
+        settle(&mut self.settings.key_slide, |s| s.1);
         settle(&mut self.motion.setup_intro, |c| *c);
         settle(&mut self.motion.setup_outro, |c| *c);
+        settle(&mut self.motion.setup_page, |c| *c);
         self.show_update_notice();
         settle(&mut self.git.log.fade, |c| *c);
         self.settle_hint();
@@ -468,7 +479,6 @@ impl App {
     pub(super) fn animating(&self) -> bool {
         self.panels.sidebar.motion.is_some()
             || self.panels.tree.motion.is_some()
-            || self.log_tree_animating()
             || self.panels.tree.labels.moving()
             || self.git.commit.names.moving()
             || self.panels.global.names.moving()
@@ -477,6 +487,12 @@ impl App {
             || self.git.commit.motion.is_some()
             || self.git.log.branches_motion.is_some()
             || self.git.log.branch_fold.is_some()
+            || self.git.log.details_fold.is_some()
+            || self.git.log.panel_fold.is_some()
+            || self.git.log.files_motion.is_some()
+            || self.git.log.details_names.moving()
+            || self.git.log.panel_names.moving()
+            || self.git.log.branch_names.moving()
             || self.git.log.pills.moving()
             || self.git.commit.fold_motion.is_some()
             || self.git.commit.message_motion.is_some()
@@ -526,8 +542,10 @@ impl App {
             || self.motion.alert_card.motion.is_some()
             || self.settings.mode_slide.is_some()
             || self.settings.switch_slide.is_some()
+            || self.settings.key_slide.is_some()
             || self.motion.setup_intro.is_some()
             || self.motion.setup_outro.is_some()
+            || self.motion.setup_page.is_some()
             || self.git.log.fade.is_some()
             || self.hint_animating()
             || !self.tabs.slides.is_empty()
@@ -541,6 +559,9 @@ impl App {
             || self.scrollbars_animating()
             || self.preview.markdown.motion.is_some()
             || self.status.motion.moving()
+            || self.overlays.tooltip.leaving.is_some()
+            || self.tooltip_fading_in()
+            || (self.disk.loads.bar).is_some_and(|b| b.clock.is_some())
             || ((self.git.branch.running.is_some()
                 || self.git.branch.finished.is_some()
                 || self.commit_refreshing())
@@ -551,6 +572,17 @@ impl App {
 mod presence;
 pub use presence::*;
 
+/// 悬停提示相对它对着的范围放在哪里。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TipPlace {
+    /// 按钮下方居中（下方放不下时在上方）。
+    Below,
+    /// 按钮左侧、与按钮同高：概览标尺紧靠窗口右边缘。
+    Beside,
+    /// 列表的一行：文字从鼠标的横坐标开始，放在这一行下方（放不下时在上方）。
+    Pointer,
+}
+
 /// 工具栏按钮悬停提示的计时状态。
 #[derive(Default)]
 pub struct Tooltip {
@@ -558,6 +590,41 @@ pub struct Tooltip {
     pub(crate) since: Option<Instant>,
     /// 提示是否已绘制出来；已绘制时无需再为提示唤醒事件循环。
     pub(crate) shown: bool,
+    /// 开始悬停时鼠标的横坐标：对着列表一行的提示从这里开始（见 [`TipPlace::Pointer`]）。
+    pub(crate) pointer_x: f32,
+    /// 最近一次画出的提示：对着的范围、文字和位置（见 `view::draw_tip`）。
+    pub(crate) last: std::cell::RefCell<Option<(Rect, String, TipPlace)>>,
+    /// 鼠标离开后正在淡出的提示和淡出的时钟。
+    pub(crate) leaving: Option<(Rect, String, TipPlace, Clock)>,
+}
+
+/// 悬停提示淡入、淡出的时长，取 [`DETAILS_FADE`]：只为缓和出现和消失，比卡片的动画短。
+pub(crate) const TOOLTIP_FADE: Duration = DETAILS_FADE;
+
+impl App {
+    /// 悬停提示此刻的不透明度：停留满 `TOOLTIP_DELAY` 之后在 [`TOOLTIP_FADE`] 内淡入；关闭了
+    /// 动画效果时直接显示。
+    pub(crate) fn tooltip_opacity(&self) -> f32 {
+        let Some(since) = self.overlays.tooltip.since.filter(|_| self.animations_on()) else {
+            return 1.0;
+        };
+        let shown = since.elapsed().saturating_sub(crate::theme::TOOLTIP_DELAY);
+        (shown.as_secs_f32() / TOOLTIP_FADE.as_secs_f32()).min(1.0)
+    }
+
+    /// 悬停提示是否正在淡入。
+    fn tooltip_fading_in(&self) -> bool {
+        self.overlays.tooltip.shown && self.tooltip_opacity() < 1.0
+    }
+
+    /// 悬停的目标变了：正显示着的提示开始淡出。
+    pub(super) fn leave_tooltip(&mut self) {
+        let last = self.overlays.tooltip.last.take();
+        if let (true, Some((rect, label, place))) = (self.overlays.tooltip.shown, last) {
+            let clock = self.clock(TOOLTIP_FADE);
+            self.overlays.tooltip.leaving = clock.map(|c| (rect, label, place, c));
+        }
+    }
 }
 
 /// 光标闪烁的状态：当前是否显示，以及闪烁周期的起点。
@@ -595,6 +662,8 @@ pub(crate) struct Motions {
     pub(crate) setup_intro: Option<animation::Clock>,
     /// 点击「完成」之后从「首次设置」换到开始页的过渡动画的时钟；没有在播放时为 `None`。
     pub(crate) setup_outro: Option<animation::Clock>,
+    /// 「首次设置」两页之间切换的过渡动画的时钟；没有在播放时为 `None`。
+    pub(crate) setup_page: Option<animation::Clock>,
     /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
     pub(crate) tool_fold: ToolFold,
     /// 编辑区顶部输入条出现、消失的动画。

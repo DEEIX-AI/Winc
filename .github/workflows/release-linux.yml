@@ -47,6 +47,8 @@ jobs:
         run: cargo xtask server
       - name: Bundle and verify Arch package
         run: bash release/linux/arch/package.sh "$TARGET"
+      - name: Bundle and verify RPM package
+        run: bash release/linux/rpm/package.sh "$TARGET"
       - name: Prepare native packaging tools
         run: node release/linux/download-tools.mjs
       - name: Bundle deb and AppImage

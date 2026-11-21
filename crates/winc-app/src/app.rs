@@ -45,8 +45,8 @@ pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
     COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitScope, CommitSort, CommitTarget, MESSAGE_LINE, MESSAGE_PAD, OtherGroup,
-    OtherRow, STASH_GAP, StashLine, StashView, SyncState, WorktreeLine,
+    CommitRows, CommitScope, CommitSort, CommitTarget, DRAWER_TOP, MESSAGE_LINE, MESSAGE_PAD,
+    OtherGroup, OtherRow, StashLine, StashView, SyncState, WorktreeLine,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -54,16 +54,17 @@ pub(crate) use input::context_menu::{
 };
 pub use input::context_menu::{ContextMenu, MenuButton, MenuCommand};
 pub use input::palette::palette;
-pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts};
+pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts, InAppAlert};
 use lifecycle::appearance::{forced_theme, unusable_font};
 pub(crate) use lifecycle::backup::{restore_at_launch, restore_tabs};
 pub use lifecycle::closing::{CloseRequest, SaveChoice, SavePrompt};
-pub use lifecycle::notice::{NoticeAction, NoticeGhost};
+pub use lifecycle::notice::{NoticeAction, NoticeGhost, NoticeKind};
 pub use lifecycle::title_bar::WindowControl;
 pub(crate) use lifecycle::title_bar::resize_cursor;
 pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
 pub(crate) use scroll::ScrollTarget;
+pub(crate) use settings::shortcuts::KeyEdit;
 pub use settings::{DialogCache, SettingsState};
 pub(crate) use status::language_picker::LanguageRow;
 pub use status::motion::{StatusEntry, StatusKey, StatusMotion, StatusRow};
@@ -72,13 +73,15 @@ pub use workspace::file_drop::DropZone;
 pub use workspace::files::{Pick, PlaceholderAction, TabBar, TabHit};
 pub(crate) use workspace::global::ResultOverflow;
 pub use workspace::global::{GlobalSearch, ResultRow};
-pub(crate) use workspace::outline::{OUTLINE_GAP, has_children as outline_has_children};
+pub(crate) use workspace::outline::{
+    OUTLINE_GAP, OUTLINE_TOP, has_children as outline_has_children,
+};
 pub use workspace::outline::{OutlineEmpty, OutlineKind, OutlineState, OutlineTarget};
 pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
 };
-pub(crate) use workspace::recent::{Parent, parents};
+pub(crate) use workspace::recent::{Parent, Recent, parents};
 pub use workspace::session::StartAction;
 pub use workspace::tab_drag::{TabDrag, TabSlide};
 pub use workspace::tool_fold::ToolFold;
@@ -177,8 +180,8 @@ pub enum UserEvent {
     /// 右键菜单中选中一项，参数是 `AppKit` 菜单项的编号（`tag`）。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     MenuCommand(isize),
-    /// 删除确认框中选择了「移到废纸篓」，参数是要删除的各个路径。
-    Delete(Vec<PathBuf>),
+    /// 删除确认框中确认了删除，参数是要删除的各个路径，以及是否不经废纸篓直接删除。
+    Delete(Vec<PathBuf>, bool),
     /// 「要保存修改吗」提示框中的一个按钮被点击。
     SaveChoice(SaveChoice),
     /// 状态栏路径的目录菜单中选中了一个文件。
@@ -209,11 +212,12 @@ pub enum UserEvent {
     ///
     /// 由应用层决定切换到哪个窗口或新建窗口，并经通道答复是否接收；该事件不会分发到窗口。
     Launched(crate::instance::Launch, std::sync::mpsc::Sender<bool>),
-    /// 系统交来要打开的文件和目录（拖到程序坞图标上、文件管理器中的「打开方式」）。
+    /// 系统交来要打开的文件和目录（拖到程序坞图标上、文件管理器中的「打开方式」、
+    /// `winc://` 链接）。
     ///
     /// 处理方式同 [`UserEvent::Launched`]：由应用层决定在哪个窗口打开。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    Opened(Vec<PathBuf>),
+    Opened(Vec<crate::cli::Target>),
     /// 程序坞菜单中选择了「新建窗口」。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     NewWindow,
@@ -223,10 +227,15 @@ pub enum UserEvent {
     Overwrite(DocumentId, OverwriteChoice),
     /// 用户确认放弃未保存的修改，按指定编码重新打开文档。
     ReopenEncoding(DocumentId, winc_editor::Encoding),
+    /// 用户确认放弃未保存的修改，改按十六进制查看文档。
+    ShowHex(DocumentId),
     /// 后台完成了一张图片的解码，或一个 SVG 的绘制。
     ImageReady,
-    /// 粘贴到文件树中的文件已在后台复制完成：新路径，或失败的原因；以及这次复制。
-    Pasted(Result<Vec<PathBuf>, String>, Arc<winc_editor::Copying>),
+    /// 粘贴到文件树中的文件已在后台复制完成：复制好的新路径、失败的原因（没有失败时为 `None`），
+    /// 以及这次复制。
+    Pasted(Vec<PathBuf>, Option<String>, Arc<winc_editor::Copying>),
+    /// 远端的各项已下载到本机：下载好的路径、失败的原因（没有失败时为 `None`），以及这次复制。
+    Downloaded(Vec<PathBuf>, Option<String>, Arc<winc_editor::Copying>),
     /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径、复制失败的说明，以及这次复制。
     Copied(Vec<PathBuf>, Vec<String>, Arc<winc_editor::Copying>),
     /// 窗口已关闭时点击了程序坞中的图标（macOS）：重新显示窗口。
@@ -296,8 +305,8 @@ pub enum UserEvent {
     GitLog,
     /// 终端的辅助进程发来了消息。
     Terminal,
-    /// 确认框中确认关闭参数所指的终端标签（其中仍有程序在运行）。
-    TerminalClose(u16),
+    /// 确认框中确认关闭参数所指的终端（其中仍有程序在运行）：为真时关掉它所在的整个标签。
+    TerminalClose(u16, bool),
     /// 确认框中确认重新启动参数所指的终端标签（伪终端已断开，其中的程序可能仍在运行）。
     TerminalRestart(u16),
     /// 提示框中回答了是否为终端加载第一个参数所指的 Python 环境。
@@ -309,8 +318,12 @@ pub enum UserEvent {
     TerminalShells(Vec<terminal::shells::ShellChoice>),
     /// 退出或关闭窗口前的确认结果（终端中有程序在运行）：用户确认时为真，取消时为假。
     TerminalQuit(bool),
+    /// 关闭前确认（`confirm_close`）的结果：用户确认时为真，取消时为假。
+    CloseConfirmed(bool),
     /// 确认框中确认把文字粘贴到指定的终端标签（多行文字，且程序未开启括号粘贴）。
     TerminalPaste(u16, String),
+    /// 要粘贴到远端终端标签的图片或文件已在后台传到那台主机：标签，那里的路径或失败的原因。
+    TerminalUploaded(u16, Result<Vec<String>, String>),
     /// 确认框中确认日志中对一个提交的操作（签出该提交、硬重置）。
     GitLogConfirmed(git::log::LogConfirmed),
     /// 确认框中确认移除参数所指的工作树；第二个参数是一并删除的分支（勾选「同时删除分支」时）。
@@ -332,6 +345,8 @@ pub enum UserEvent {
     Saved,
     /// 后台已读取一个刚打开的文件。
     Loaded,
+    /// 后台已数好 Markdown 文档的字数。
+    Counted,
     /// 后台已写入一批热退出备份。
     BackedUp,
     /// 跨文件替换已在后台写回全部未打开的文件。
@@ -347,6 +362,8 @@ pub enum UserEvent {
 pub enum PromptKind {
     /// 跳转到行（`⌃G`）。
     GoTo,
+    /// 十六进制视图里转到偏移（`⌃G`）。
+    GoToOffset,
     /// 储藏改动的说明（可为空）。
     Stash,
     /// 储藏这些文件的更改时输入说明。
@@ -365,6 +382,14 @@ impl PromptKind {
     /// 是否为 Vim 模式的命令行或查找：输入条显示在状态栏所在的一行。
     pub fn is_vim(&self) -> bool {
         matches!(self, Self::VimSearch { .. } | Self::VimCommand)
+    }
+
+    /// 是否输入一段文字（储藏说明、标签名、分支名）：输入条更宽。
+    pub fn takes_text(&self) -> bool {
+        matches!(
+            self,
+            Self::Stash | Self::StashFiles(_) | Self::NewTag { .. } | Self::RenameBranch { .. }
+        )
     }
 }
 
@@ -481,14 +506,20 @@ pub enum Hover {
     Browser,
     /// Markdown 预览里的链接（`MarkdownPreview::links` 的序号）。
     MarkdownLink(usize),
+    /// 链接地址补全列表的第几行。
+    Suggest(usize),
+    /// 格式工具栏中的按钮。
+    SelectionTool(crate::app::preview::markdown::toolbar::Tool),
+    /// 可编辑的 Markdown 预览中鼠标下的链接（单击放置光标，`⌘` 单击才打开）。
+    MarkdownLinkText(usize),
+    /// 可编辑的 Markdown 预览中图片的把手。
+    ImageHandle,
     /// Markdown 预览左侧的标题指示条或展开的标题列表。
     MarkdownToc(crate::app::preview::markdown::TocTarget),
     /// PDF 预览右下角工具栏上的按钮。
     PdfTool(crate::app::preview::pdf::PdfTool),
     Search(SearchButton),
     TreeRow(usize),
-    /// 历史差异侧栏标题行中切换树形与列表的按钮。
-    LogDiffLayout,
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
     Tab(usize, bool),
     Splitter,
@@ -498,6 +529,8 @@ pub enum Hover {
     OutlineDivider,
     /// 分栏预览中间的分隔线（左右拖动可调整两侧的宽度）。
     SplitDivider,
+    /// 编辑区窗格之间的第几道分隔线（拖动可调整两侧的大小）。
+    PaneDivider(usize),
     /// 终端面板标签栏上的标签、关闭按钮、「+」和位置按钮。
     TerminalHeader(terminal::HeaderHit),
     /// 终端中命令块的色带与吸顶的命令行。
@@ -568,7 +601,6 @@ impl Hover {
                 | Hover::Status(StatusItem::Terminal | StatusItem::Remote | StatusItem::Settings)
                 | Hover::TreeMore
                 | Hover::SidebarButton
-                | Hover::LogDiffLayout
                 | Hover::Tab(..)
                 | Hover::TabList
                 | Hover::Preview(_)
@@ -576,6 +608,8 @@ impl Hover {
                 | Hover::ViewTab(_)
                 | Hover::Outline(OutlineTarget::FoldAll)
                 | Hover::MarkdownToc(preview::markdown::TocTarget::Pin)
+                | Hover::MarkdownLink(_)
+                | Hover::MarkdownLinkText(_)
                 | Hover::Search(_)
                 | Hover::Panel(
                     PanelButton::Tool(_)
@@ -596,6 +630,7 @@ impl Hover {
                         | git::log::LogTarget::Row(_)
                         | git::log::LogTarget::File(_)
                         | git::log::LogTarget::Line(..)
+                        | git::log::LogTarget::BranchRow(_)
                 )
                 | Hover::Blame(_)
                 | Hover::PickerPart(PickerPart::Pull | PickerPart::Push | PickerPart::Fetch)
@@ -615,14 +650,20 @@ impl Hover {
                         | CommitTarget::Check(_)
                         | CommitTarget::StageFile(..)
                         | CommitTarget::GroupStage(_)
+                        | CommitTarget::DirStage(..)
                 )
                 | Hover::Diff(
                     DiffTarget::Previous
                         | DiffTarget::Next
                         | DiffTarget::PreviousFile
                         | DiffTarget::NextFile
+                        | DiffTarget::OpenFile
+                        | DiffTarget::Blame(..)
                         | DiffTarget::Layout
                         | DiffTarget::Collapse
+                        | DiffTarget::FilesToggle
+                        | DiffTarget::FilesLayout
+                        | DiffTarget::File(_)
                         | DiffTarget::Revert(_)
                         | DiffTarget::Include(_)
                         | DiffTarget::IncludeLine(..)
@@ -636,6 +677,10 @@ impl Hover {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Drag {
     None,
+    /// 拖动设置卡片的标题行；`grab` 是按下处相对卡片左上角的位置。
+    SettingsCard {
+        grab: (f32, f32),
+    },
     /// 拖选文字。
     ///
     /// `by_word` 表示双击后按词扩展；`origin` 是起点（按词时是起始词的范围）。
@@ -661,8 +706,12 @@ enum Drag {
     },
     /// 在日志详情中拖选文字（`App::drag_log_text`）。
     LogText,
+    /// 在十六进制视图中拖选字节（`App::drag_hex`）。
+    Hex,
     /// 在 Markdown 预览中拖选文字（`App::drag_markdown`）。
     MarkdownText,
+    /// 拖动预览中图片的把手调整大小（`App::drag_image_resize`）。
+    ImageResize,
     /// 在表格中拖选单元格（`App::drag_table`）。
     TableCells,
     /// 拖动图片预览中的图片（`App::drag_picture`）；`at` 是上一次的鼠标位置（窗口坐标）。
@@ -690,8 +739,22 @@ enum Drag {
         start_x: f32,
         start_left: f32,
     },
+    /// 拖动编辑区窗格之间的第 `index` 道分隔线。
+    PaneDivider {
+        index: usize,
+    },
     /// 拖动日志标签中列表与详情之间的分隔线：按下时的横坐标、详情栏当时的宽度。
     LogDivider {
+        start_x: f32,
+        start_width: f32,
+    },
+    /// 拖动日志标签中分支面板的右边缘：按下时的横坐标、面板当时的宽度。
+    LogBranches {
+        start_x: f32,
+        start_width: f32,
+    },
+    /// 拖动差异左侧文件栏的右边缘：按下时的横坐标、文件栏当时的宽度。
+    DiffFiles {
         start_x: f32,
         start_width: f32,
     },
@@ -838,6 +901,8 @@ pub struct App {
     pub layout: Layout,
     /// 标签栏的标签和滚动状态。
     pub tabs: TabBar,
+    /// 编辑区的各个窗格在界面上的位置和状态。
+    pub(crate) panes: workspace::panes::PaneUi,
     /// 差异视图的界面状态。
     pub diff: diff::DiffState,
     /// 状态栏的界面状态。
@@ -888,6 +953,10 @@ pub struct App {
     pub(crate) history: workspace::History,
     /// 两段组合键（如 `⌘K ⌘S`）的第一段，正在等待第二段。
     pub(crate) pending_chord: Option<crate::keymap::Stroke>,
+    /// 单按修饰键的状态，用于连按两下修饰键的快捷键。
+    pub(crate) taps: input::tap::Taps,
+    /// 「首次设置」中快捷键一页的状态。
+    pub(crate) setup: setup::SetupKeys,
 
     /// 设置浮层：当前页、分类和各输入框。
     pub settings: SettingsState,
@@ -912,6 +981,8 @@ pub struct App {
     // 状态栏消息和悬停提示
     /// 文件已从磁盘删除、自动保存因此未写入且已提示过用户的文档；失去焦点时不再重复提示。
     deleted_told: HashSet<DocumentId>,
+    /// 自动保存的时机：焦点是否离开编辑区，停止输入后何时保存。
+    auto_save_watch: workspace::files::AutoSaveWatch,
     /// 右上角提示条的状态。
     pub notice: lifecycle::notice::Notice,
 
@@ -1034,6 +1105,7 @@ impl App {
             UserEvent::TreeScanned => self.poll_tree_scans(),
             UserEvent::Saved => self.poll_saves(),
             UserEvent::Loaded => self.poll_loads(),
+            UserEvent::Counted => self.poll_words(),
             UserEvent::BackedUp => self.collect_backups(false),
             UserEvent::Replaced => self.poll_replace_all(),
             UserEvent::Wrapped => self.poll_wraps(),
@@ -1095,8 +1167,12 @@ impl App {
             self.preview.markdown.toc_rest = toc(hover).then(Instant::now);
             self.preview.markdown.toc_shown = false;
         }
+        if hover != self.pointer.hover {
+            self.leave_tooltip();
+        }
         self.pointer.hover = hover;
         self.overlays.tooltip.since = hover.has_tooltip().then(Instant::now);
+        self.overlays.tooltip.pointer_x = self.mouse().0;
         self.overlays.tooltip.shown = false;
         self.request_redraw();
     }
@@ -1107,7 +1183,7 @@ impl App {
     /// 移动鼠标时分隔条、选区、滚动条和标签仍会跟随移动。
     fn drop_drags(&mut self) {
         self.cancel_tree_drag();
-        self.release_tab();
+        self.cancel_tab_drag();
         self.pointer.drag = Drag::None;
         self.pointer.close_pressed = None;
         self.pointer.control_pressed = None;

@@ -13,6 +13,7 @@ mod edit;
 mod files;
 mod find;
 mod fold;
+mod open;
 mod pointer;
 
 use crate::app::scroll::set_scroll_line;
@@ -36,12 +37,17 @@ use super::git::changes::replace_lines;
 use super::git::commit::stages_by_hunk;
 use super::lifecycle::notice::FLASH_DURATION;
 use super::{App, Focus, ScrollArea, UserEvent, sticky_limit};
+use crate::app::NoticeKind;
 use crate::keymap::Action;
 use crate::layout::{Scrollbar, hscrollbar_thumb};
 use crate::theme::SCROLLBAR_HIT;
 
 /// 差异标签顶部标题栏的高度（逻辑像素）；标题栏包含两侧的标题，右端为统计和按钮。
 pub(crate) const DIFF_HEADER: f32 = 36.0;
+/// 有文件栏时差异本身至少要有的宽度（逻辑像素）：地方不够时文件栏先变窄。
+const DIFF_MIN_WITH_FILES: f32 = 480.0;
+/// 文件栏最窄的宽度（逻辑像素）；再窄就不显示。
+pub(crate) const DIFF_FILES_MIN: f32 = 200.0;
 /// 左侧行号左边放置「»」的列宽（逻辑像素）。
 const DIFF_ARROWS: f32 = 22.0;
 /// 右侧行号右边放置勾选框的列宽（逻辑像素），用于按块提交时勾选每处改动。
@@ -58,6 +64,9 @@ pub(crate) const DIFF_GUTTER_PAD: f32 = 10.0;
 const DIFF_SIGN_CELLS: f32 = 1.5;
 /// 文字和文字区边缘之间的空白（逻辑像素）。
 pub(crate) const DIFF_TEXT_PAD: f32 = 10.0;
+/// 差异一侧逐行追溯一栏的宽度（逻辑像素，经验值）：色条、作者和时间，比编辑区的一栏窄一些，
+/// 名字放不下时截短，完整的在悬停提示中。
+pub(crate) const DIFF_BLAME_W: f32 = 160.0;
 
 /// 「»」替换一段改动后，该段改动的颜色在原处淡出的时长（毫秒）。
 ///
@@ -168,6 +177,10 @@ pub enum DiffTarget {
     PreviousFile,
     /// 下一个文件。
     NextFile,
+    /// 在编辑区打开差异对应的工作区文件。
+    OpenFile,
+    /// 逐行追溯一栏中的一行：（侧，行号，从 0 起）。悬停提示提交，点击在日志中选中它。
+    Blame(usize, usize),
     /// 切换单栏显示和并排显示。
     Layout,
     /// 折叠或展开所有未改动的长段。
@@ -176,6 +189,18 @@ pub enum DiffTarget {
     Fold(usize),
     /// 已展开的一段未改动内容的收起标记，参数为未改动段的序号；点击后重新折叠。
     Refold(usize),
+    /// 提交说明条上展开、收起文件栏的按钮。
+    FilesToggle,
+    /// 文件栏的右边缘：左右拖动改变宽度，双击恢复默认宽度。
+    FilesEdge,
+    /// 文件栏标题行上平铺与树的切换。
+    FilesLayout,
+    /// 文件栏里树的一个目录（[`App::log_files_rows`] 的下标）：点击收起或展开。
+    FilesDir(usize),
+    /// 文件栏里的第几个文件（提交的文件列表中的下标）。
+    File(usize),
+    /// 提交说明条上的「返回日志」。
+    BannerBack,
     /// 固定在顶部的块头：（侧，行号）。点击后光标放到该行，该行滚到其外层的固定行之下。
     Sticky(usize, usize),
     /// 用左侧替换右侧的一段改动（参数为改动序号），即把该处恢复为 `HEAD` 中的内容。
@@ -253,6 +278,8 @@ pub(crate) struct DiffPane {
     pub gutter: Rect,
     /// 行号右端的横坐标（逻辑像素），行号据此右对齐。
     pub number_end: f32,
+    /// 逐行追溯一栏：并排时在行号与中间的连接带之间，单栏时两侧共用行号之后的一栏；没开时宽为 0。
+    pub blame: Rect,
     /// 文字区。
     pub text: Rect,
 }
@@ -260,6 +287,12 @@ pub(crate) struct DiffPane {
 /// 差异标签的几何。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DiffParts {
+    /// 最上面的提交说明条（见 [`DiffView::banner`]）；没有时高为 0。
+    pub banner: Rect,
+    /// 提交说明条下面左侧的文件栏露出的部分（见 [`DiffView::panel`]）；没有时宽为 0。
+    pub files: Rect,
+    /// 文件栏展开时的宽度（逻辑像素）：展开、收起途中各行按它排，跟着右边缘滑进、滑出。
+    pub files_w: f32,
     /// 顶部的标题栏：两侧的标题各自与文字区对齐，右端依次为当前改动序号、增删行数、
     /// 上一处、下一处和折叠开关。
     pub header: Rect,
@@ -322,6 +355,19 @@ impl App {
             DiffTarget::Next => self.jump_difference(true),
             DiffTarget::PreviousFile => self.step_diff_file(false),
             DiffTarget::NextFile => self.step_diff_file(true),
+            DiffTarget::OpenFile => self.open_diff_file(),
+            DiffTarget::Blame(side, line) => self.click_diff_blame(side, line),
+            DiffTarget::FilesToggle => self.toggle_log_files_panel(),
+            DiffTarget::FilesLayout => self.toggle_diff_files_layout(),
+            DiffTarget::FilesDir(row) => {
+                let rows = self.log_files_rows();
+                if let Some(crate::app::git::log::LogFileRow::Dir { dir, .. }) = rows.get(row) {
+                    self.toggle_log_files_dir(row, dir);
+                }
+            }
+            DiffTarget::File(i) => self.open_log_diff_file(i),
+            DiffTarget::FilesEdge => {}
+            DiffTarget::BannerBack => self.git_show_log(),
             DiffTarget::Layout => self.settings_toggle(crate::layout::Setting::DiffInline),
             DiffTarget::Collapse => self.refold_diff(|view, row| {
                 let on = !view.collapses();
@@ -728,7 +774,7 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.notify(t!("git-diff-revert-failed", error = e));
+                        self.notify(NoticeKind::Error, t!("git-diff-revert-failed", error = e));
                         return;
                     }
                 }
@@ -987,6 +1033,16 @@ impl App {
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
+        // 从日志打开的差异：Esc 回到日志，选中的提交和文件列表保持原样。
+        if *key == Key::Named(NamedKey::Escape)
+            && doc.diff.as_ref().is_some_and(|v| v.banner.is_some())
+        {
+            self.git_show_log();
+            return;
+        }
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
         match key {
             Key::Named(NamedKey::ArrowUp) if cmd => set_scroll_line(doc, 0.0),
             Key::Named(NamedKey::ArrowDown) if cmd => set_scroll_line(doc, f64::MAX),
@@ -1181,33 +1237,66 @@ impl App {
     }
 }
 
+/// 差异中显示行区域的上边离编辑区上边多远（逻辑像素）：标题栏，有提交说明条时再加上它。
+pub(crate) fn diff_top(view: &DiffView) -> f32 {
+    if view.banner.is_some() {
+        2.0 * DIFF_HEADER
+    } else {
+        DIFF_HEADER
+    }
+}
+
 /// 在编辑区 `editor` 中计算差异 `view` 的几何布局。
 ///
 /// 中间从左到右依次是「»」、左侧行号栏、连接带、右侧行号栏、勾选框，两侧文字区平分剩余宽度；
 /// 行号栏按两侧最大行号的位数定宽。
-pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts {
-    let header = Rect::new(editor.x, editor.y, editor.w, DIFF_HEADER);
+pub(crate) fn diff_parts(area: Rect, view: &DiffView, cell: f32) -> DiffParts {
+    let banner_h = diff_top(view) - DIFF_HEADER;
+    let banner = Rect::new(area.x, area.y, area.w, banner_h);
+    // 提交说明条下面，左边是文件栏：地方不够时先变窄，窄到最小宽度仍放不下时不显示。
+    let full = match view.panel.min(area.w - DIFF_MIN_WITH_FILES) {
+        w if view.panel > 0.0 && w >= DIFF_FILES_MIN => w.round(),
+        _ => 0.0,
+    };
+    let files_w = (full * view.panel_shown.clamp(0.0, 1.0)).round();
+    let files = Rect::new(
+        area.x,
+        banner.bottom(),
+        files_w,
+        (area.bottom() - banner.bottom()).max(0.0),
+    );
+    let editor = Rect::new(area.x + files_w, area.y, area.w - files_w, area.h);
+    let header = Rect::new(editor.x, banner.bottom(), editor.w, DIFF_HEADER);
     let body = Rect::new(
         editor.x,
         header.bottom(),
         editor.w,
-        (editor.h - DIFF_HEADER).max(0.0),
+        (editor.bottom() - header.bottom()).max(0.0),
     );
     let lines = view.old.text.len_lines().max(view.new.text.len_lines());
     let digits = lines.to_string().len().max(2) as f32;
     let gutter_w = (digits * cell + 2.0 * DIFF_GUTTER_PAD).round();
     let column = |x: f32, w: f32| Rect::new(x, body.y, w, body.h);
     if view.is_unified() {
-        // 单栏：「»」、修改前的行号、修改后的行号、勾选框、加减号（行勾选框与之同列）和文字。
+        // 单栏：「»」、修改前的行号、修改后的行号、逐行追溯（开着时）、勾选框、加减号（行勾选框与
+        // 之同列）和文字。
+        let blamed = view.blamed.contains(&true);
         let arrows = column(editor.x, DIFF_ARROWS);
         let left_gutter = column(arrows.right(), gutter_w);
         let right_gutter = column(left_gutter.right(), gutter_w);
-        let checks = column(right_gutter.right(), DIFF_CHECKS);
+        let blame = column(
+            right_gutter.right(),
+            if blamed { DIFF_BLAME_W } else { 0.0 },
+        );
+        let checks = column(blame.right(), DIFF_CHECKS);
         let sign = (DIFF_SIGN_CELLS * cell).round();
         let lines = column(checks.right(), sign);
         let text = column(lines.right(), (editor.right() - lines.right()).max(0.0));
         let rect = column(editor.x, editor.w);
         return DiffParts {
+            banner,
+            files,
+            files_w: full,
             header,
             body,
             panes: [
@@ -1215,12 +1304,14 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
                     rect,
                     gutter: left_gutter,
                     number_end: left_gutter.right() - DIFF_GUTTER_PAD,
+                    blame,
                     text,
                 },
                 DiffPane {
                     rect,
                     gutter: right_gutter,
                     number_end: right_gutter.right() - DIFF_GUTTER_PAD,
+                    blame,
                     text,
                 },
             ],
@@ -1239,31 +1330,40 @@ pub(crate) fn diff_parts(editor: Rect, view: &DiffView, cell: f32) -> DiffParts 
     };
     let extra = (line_w - DIFF_GUTTER_PAD).max(0.0);
     let gutter_w = gutter_w + extra;
-    let middle = 2.0 * gutter_w + DIFF_RIBBON;
+    // 开着逐行追溯的一侧在行号和中间的连接带之间多一栏；两侧的文字区仍一样宽。
+    let blame_w = view.blamed.map(|on| if on { DIFF_BLAME_W } else { 0.0 });
+    let middle = 2.0 * gutter_w + DIFF_RIBBON + blame_w[LEFT] + blame_w[RIGHT];
     let text_w = ((editor.w - middle) / 2.0).max(0.0).floor();
 
     let left_text = column(editor.x, text_w);
     let left_gutter = column(left_text.right(), gutter_w);
-    let ribbon = column(left_gutter.right(), DIFF_RIBBON);
-    let right_gutter = column(ribbon.right(), gutter_w);
+    let left_blame = column(left_gutter.right(), blame_w[LEFT]);
+    let ribbon = column(left_blame.right(), DIFF_RIBBON);
+    let right_blame = column(ribbon.right(), blame_w[RIGHT]);
+    let right_gutter = column(right_blame.right(), gutter_w);
     let right_text = column(
         right_gutter.right(),
         (editor.right() - right_gutter.right()).max(0.0),
     );
     DiffParts {
+        banner,
+        files,
+        files_w: full,
         header,
         body,
         panes: [
             DiffPane {
-                rect: column(editor.x, left_gutter.right() - editor.x),
+                rect: column(editor.x, left_blame.right() - editor.x),
                 gutter: left_gutter,
                 number_end: left_gutter.right() - DIFF_GUTTER_PAD,
+                blame: left_blame,
                 text: left_text,
             },
             DiffPane {
-                rect: column(right_gutter.x, editor.right() - right_gutter.x),
+                rect: column(right_blame.x, editor.right() - right_blame.x),
                 gutter: right_gutter,
                 number_end: right_gutter.right() - DIFF_GUTTER_PAD - extra,
+                blame: right_blame,
                 text: right_text,
             },
         ],

@@ -7,6 +7,7 @@ use winc_editor::format::Cancel;
 use winc_editor::git::Change;
 
 use super::*;
+use crate::app::NoticeKind;
 use crate::app::input::context_menu::MenuEntry;
 
 /// 写入暂存区的一步操作。
@@ -38,7 +39,9 @@ impl App {
         };
         let mut touched = Vec::new();
         let mut unresolved = 0;
-        for entry in (status.entries.iter_mut()).filter(|e| paths.contains(&e.path)) {
+        // 暂存整个目录、全部暂存时路径成千上万：按集合查找，不逐条比较。
+        let wanted: HashSet<&PathBuf> = paths.iter().collect();
+        for entry in (status.entries.iter_mut()).filter(|e| wanted.contains(&e.path)) {
             let pending = on && entry.unstaged.is_some();
             if pending && entry.conflicted() && status.unresolved.contains(&entry.path) {
                 unresolved += 1;
@@ -242,7 +245,7 @@ impl App {
             self.git.commit.staging_queue.clear();
             self.git.commit.commit_queued = false;
             self.git.commit.index.clear();
-            self.notify(t!("git-stage-failed", error = e));
+            self.notify(NoticeKind::Error, t!("git-stage-failed", error = e));
         }
         if !self.git.commit.staging_queue.is_empty() {
             self.pump_staging();

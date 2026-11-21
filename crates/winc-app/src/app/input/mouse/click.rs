@@ -6,12 +6,12 @@ use super::*;
 impl App {
     /// 处理鼠标按键 `button` 在当前鼠标位置按下。
     pub(in crate::app) fn on_mouse_down(&mut self, button: MouseButton) {
+        self.scroll.keyed = false;
         // 选择面板的动画期间高度还在变，而点击按最终的布局：先取消动画，使显示直接到位。
         if self.overlays.picker.fold.take().is_some() {
             self.relayout();
         }
         let (x, y) = self.pointer.mouse;
-        let l = self.layout;
         // 折叠动画期间绘制的是展开状态，而点击按的是折叠后的布局：先取消动画，使显示直接到位。
         self.motion.fold_motion = None;
         // 跳转过渡期间绘制的是插值位置，而命中测试按滚动位置换算：过渡停在屏幕上显示的位置。
@@ -26,6 +26,16 @@ impl App {
         {
             return;
         }
+
+        // 点在前台以外的窗格里：先把它换到前台，这次按下按它的位置处理。
+        if let Some(pane) = self.background_pane_at(x, y)
+            && self.pane_divider_at(x, y).is_none()
+        {
+            self.focus_pane(pane);
+        }
+        // 点在终端标签里不在前台的终端上：同样先换到前台。
+        self.focus_terminal_pane_at(x, y);
+        let l = self.layout;
 
         // 鼠标侧面的两个键：后退、前进。
         if matches!(button, MouseButton::Back | MouseButton::Forward) {
@@ -160,7 +170,7 @@ impl App {
         let target = self.target_at(x, y);
         let keeps_preview = matches!(
             target,
-            Target::MarkdownText
+            Target::MarkdownText(_)
                 | Target::Scrollbar(Scrollbar::Markdown | Scrollbar::MarkdownTable, _)
         );
         if !keeps_preview && self.preview.markdown.focused {
@@ -224,7 +234,12 @@ impl App {
             Target::Browser => self.open_in_browser(),
             Target::MarkdownLink(link) => self.open_markdown_link(link),
             Target::MarkdownToc(target) => self.press_toc(target),
-            Target::MarkdownText => self.click_markdown(x, y),
+            Target::MarkdownText(_) => self.click_markdown(x, y),
+            Target::ImageHandle => {
+                if let Some(image) = self.image_handle_at(x, y) {
+                    self.start_image_resize(image, x);
+                }
+            }
             Target::PdfThumb(to) => self.scroll_pdf_to(to),
             Target::PdfTool(tool) => self.press_pdf_tool(tool),
             Target::Tab(index, true) => {
@@ -233,7 +248,7 @@ impl App {
             Target::Tab(index, false) => {
                 // 双击预览标签使其成为普通标签。
                 let double = self.click_count(x, y) == 2;
-                self.press_tab(index, x);
+                self.press_tab(index, (x, y));
                 if double {
                     self.keep_tab(index);
                 }
@@ -248,6 +263,19 @@ impl App {
             Target::ResizeEdge(direction) => self.start_resize(direction),
             Target::Tree(_) => self.click_tree(x, y),
             Target::Placeholder(action) => self.run_placeholder_action(action),
+            Target::Suggest(row) => self.accept_suggest(row),
+            Target::SelectionTool(tool) => self.run_selection_tool(tool),
+            // 文件栏的右边缘：双击恢复默认宽度，否则开始拖动。
+            Target::Diff(crate::app::DiffTarget::FilesEdge) => {
+                if self.click_count(x, y) == 2 {
+                    self.reset_log_files_width();
+                } else {
+                    self.pointer.drag = Drag::DiffFiles {
+                        start_x: x,
+                        start_width: self.log_files_width(),
+                    };
+                }
+            }
             Target::Diff(target) => self.press_diff(target),
             Target::Log(crate::app::git::log::LogTarget::AuthorEdge) => {
                 let double = self.click_count(x, y) == 2;
@@ -262,6 +290,18 @@ impl App {
                     self.pointer.drag = Drag::LogDivider {
                         start_x: x,
                         start_width: self.log_parts().details.w,
+                    };
+                }
+            }
+            Target::Log(crate::app::git::log::LogTarget::BranchesEdge) => {
+                // 双击回到默认宽度。
+                if self.click_count(x, y) == 2 {
+                    self.git.log.branches_w = None;
+                    self.request_redraw();
+                } else {
+                    self.pointer.drag = Drag::LogBranches {
+                        start_x: x,
+                        start_width: self.log_parts().branches_w,
                     };
                 }
             }
@@ -366,6 +406,12 @@ impl App {
                     HeaderHit::Hide => self.click_terminal_button(),
                     HeaderHit::Run(_) | HeaderHit::Find(_) => {}
                 }
+            }
+            Target::PaneDivider(index) if self.click_count(x, y) >= 2 => {
+                self.reset_pane_divider(index);
+            }
+            Target::PaneDivider(index) => {
+                self.pointer.drag = Drag::PaneDivider { index };
             }
             // 双击分隔线恢复为左右各占一半，单击按住开始拖动。
             Target::SplitDivider if self.click_count(x, y) >= 2 => {

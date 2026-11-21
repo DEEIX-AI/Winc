@@ -23,12 +23,32 @@ pub enum NoticeAction {
     CancelConnect,
     /// 「取消」：取消文件树里正在进行的复制。
     CancelCopy,
+    /// 在系统文件管理器中显示这个路径，如刚下载到本机的文件。
+    Reveal(PathBuf),
+    /// 「以管理员身份重试…」：保存被系统拒绝的文档，经系统的授权对话框再保存一次。
+    SaveAsAdmin(DocumentId),
     /// 「查看更新日志」：在阅读标签中打开上次运行的版本（没有记录时为 `None`）之后的各版。
     ReleaseNotes(Option<String>),
 }
 
+/// 提示的种类，决定提示条左侧的图标和颜色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NoticeKind {
+    /// 说明情况，不需要处理。
+    Info,
+    /// 操作完成。
+    Done,
+    /// 需要用户注意或处理，但操作没有失败。
+    #[default]
+    Warning,
+    /// 操作失败。
+    Error,
+}
+
 /// 到期后正在淡出的提示条。
 pub struct NoticeGhost {
+    /// 提示的种类。
+    pub kind: NoticeKind,
     /// 提示的消息。
     pub message: String,
     /// 按钮上的文字；没有按钮时为 `None`。
@@ -56,6 +76,8 @@ impl NoticeAction {
                 t!("workspace-notice-cancel")
             }
             NoticeAction::ReleaseNotes(_) => t!("workspace-notice-release-notes"),
+            NoticeAction::Reveal(_) => crate::system::reveal_label(),
+            NoticeAction::SaveAsAdmin(_) => t!("workspace-save-admin"),
         }
     }
 }
@@ -75,7 +97,7 @@ impl App {
     /// 隐藏状态栏时改用右上角的提示（[`App::notify`]），否则这条消息看不到。
     pub(crate) fn flash(&mut self, message: impl Into<String>) {
         if !self.status_bar_shown() {
-            self.notify(message);
+            self.notify(NoticeKind::Info, message);
             return;
         }
         self.status.message = Some(message.into());
@@ -95,16 +117,17 @@ impl App {
         self.request_redraw();
     }
 
-    /// 在编辑区右上角显示一条提示，显示时间为 [`NOTICE_DURATION`]，用于出错、冲突、未保存等
-    /// 需要用户注意的情况。
+    /// 在编辑区右上角显示一条 `kind` 种类的提示，显示时间为 [`NOTICE_DURATION`]，用于出错、
+    /// 冲突、未保存等需要用户注意的情况。
     ///
     /// 出错消息统一写成「无法……：原因」。
-    pub(in crate::app) fn notify(&mut self, message: impl Into<String>) {
+    pub(in crate::app) fn notify(&mut self, kind: NoticeKind, message: impl Into<String>) {
         // 换一条消息时重新播放入场动画；同一条消息再来一次只延长显示时间，不重新播放。
         let message = message.into();
-        if self.notice.text.as_deref() != Some(message.as_str()) {
+        if self.notice.text.as_deref() != Some(message.as_str()) || self.notice.kind != kind {
             self.notice.entering = self.clock(POPUP_IN);
         }
+        self.notice.kind = kind;
         self.notice.text = Some(message);
         self.notice.until = Some(Instant::now() + NOTICE_DURATION);
         self.notice.action = None;
@@ -124,8 +147,13 @@ impl App {
     }
 
     /// 显示带一个按钮的提示（例如「查看输出」），显示时间为 [`NOTICE_ACTION_DURATION`]。
-    pub(in crate::app) fn notify_with(&mut self, message: impl Into<String>, action: NoticeAction) {
-        self.notify(message);
+    pub(in crate::app) fn notify_with(
+        &mut self,
+        kind: NoticeKind,
+        message: impl Into<String>,
+        action: NoticeAction,
+    ) {
+        self.notify(kind, message);
         self.notice.until = Some(Instant::now() + NOTICE_ACTION_DURATION);
         self.notice.action = Some(action);
     }
@@ -137,7 +165,7 @@ impl App {
         message: impl Into<String>,
         action: NoticeAction,
     ) {
-        self.notify_with(message, action);
+        self.notify_with(NoticeKind::Info, message, action);
         self.notice.until = None;
     }
 
@@ -181,6 +209,8 @@ impl App {
             }
             NoticeAction::CancelConnect => self.cancel_remote(),
             NoticeAction::CancelCopy => self.cancel_copies(),
+            NoticeAction::Reveal(path) => self.reveal_in_file_manager(&path),
+            NoticeAction::SaveAsAdmin(id) => self.save_as_admin(id),
             NoticeAction::ReleaseNotes(previous) => {
                 self.open_release_notes(crate::release_notes::Scope::Since(previous));
             }
@@ -194,6 +224,8 @@ impl App {
 pub struct Notice {
     /// 编辑区右上角需要用户注意的提示。
     pub(crate) text: Option<String>,
+    /// 提示的种类。
+    pub(crate) kind: NoticeKind,
     pub(in crate::app) until: Option<Instant>,
     /// 提示条上的按钮。
     pub(crate) action: Option<NoticeAction>,

@@ -30,9 +30,10 @@ pub(crate) enum PopupRow {
         checked: bool,
         tag: isize,
     },
-    /// 子菜单：标题、是否打勾、子项。
+    /// 子菜单：标题、图标、是否打勾、子项。
     Submenu {
         label: MenuLabel,
+        icon: Option<MenuIcon>,
         checked: bool,
         rows: Vec<PopupRow>,
     },
@@ -353,6 +354,8 @@ impl App {
                     let children = self.popup_rows(items, context, numbered);
                     rows.push(PopupRow::Submenu {
                         label: MenuLabel::plain(title),
+                        icon: super::present::submenu_lead(items)
+                            .and_then(|c| self.menu_icon_kind(c)),
                         checked: false,
                         rows: children,
                     });
@@ -385,7 +388,7 @@ impl App {
         if self.popup().is_some() {
             self.overlays.context_menu = None;
             self.overlays.menu_button = None;
-            self.set_hover(self.hover_at(self.pointer.mouse.0, self.pointer.mouse.1));
+            self.refresh_pointer_hover();
             self.request_redraw();
         }
     }

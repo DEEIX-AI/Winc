@@ -36,6 +36,10 @@ fn several_windows_keep_each_others_changes() {
 fn sample() -> State {
     let mut state = State {
         recent: vec![PathBuf::from("/a/项目"), PathBuf::from("/b")],
+        recent_files: vec![
+            PathBuf::from("/a/项目/main.rs"),
+            PathBuf::from("/c/笔记.md"),
+        ],
         sessions: vec![
             Session {
                 folder: PathBuf::from("/a/项目"),
@@ -69,6 +73,32 @@ fn sample() -> State {
                 readonly: vec![PathBuf::from("/a/项目/main.rs")],
                 readonly_all: true,
                 sidebar_hidden: true,
+                window: Some(WindowFrame {
+                    position: Some((0.0, 25.0)),
+                    width: 1440.0,
+                    height: 875.0,
+                    scale: 2.0,
+                    maximized: true,
+                }),
+                panes: Some(SessionPanes {
+                    tree: PaneNode::Split {
+                        column: false,
+                        share: 0.25,
+                        first: Box::new(PaneNode::Pane(0)),
+                        second: Box::new(PaneNode::Pane(1)),
+                    },
+                    panes: vec![
+                        SessionPane {
+                            tabs: vec![0],
+                            active: Some(0),
+                        },
+                        SessionPane {
+                            tabs: vec![1, 0],
+                            active: None,
+                        },
+                    ],
+                    focused: 1,
+                }),
             },
             Session {
                 folder: PathBuf::from("/b"),
@@ -86,6 +116,8 @@ fn sample() -> State {
                 readonly: Vec::new(),
                 readonly_all: false,
                 sidebar_hidden: false,
+                window: None,
+                panes: None,
             },
         ],
         last: Some(PathBuf::from("/a/项目")),
@@ -94,6 +126,8 @@ fn sample() -> State {
         commit_sort: "status".into(),
         commit_all_repositories: Some(true),
         log_branches: Some(false),
+        log_files_tree: Some(false),
+        diff_files_tree: Some(true),
         log_columns: Some(vec!["date".into(), "hash".into()]),
         commit_messages: vec!["修复登录\n\n说明".into(), "first".into()],
         commit_check_todo: true,
@@ -106,7 +140,11 @@ fn sample() -> State {
         vim_searches: vec!["\\<词\\>".into()],
         stay_outside_applications: true,
         panel_width: Some(360.0),
-        preview_mode: Some("split".into()),
+        preview_modes: [
+            ("markdown".into(), "preview".into()),
+            ("svg".into(), "split".into()),
+        ]
+        .into(),
         version: Some("0.1.626".into()),
         setup_pending: true,
         window: Some(WindowFrame {
@@ -144,6 +182,30 @@ fn round_trips_through_json() {
     let state = sample();
     assert_eq!(State::parse(&state.to_json()), state);
     assert_eq!(State::parse(&State::default().to_json()), State::default());
+}
+
+#[test]
+fn preview_modes_are_read_per_kind() {
+    let modes = |text: &str| {
+        State::parse(text)
+            .preview_modes
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    let pair = |kind: &str, mode: &str| (kind.to_owned(), mode.to_owned());
+    // 字符串用于全部种类。
+    assert_eq!(
+        modes(r#"{"previewMode": "split"}"#),
+        [
+            pair("markdown", "split"),
+            pair("svg", "split"),
+            pair("table", "split")
+        ]
+    );
+    // 未知的种类和方式跳过。
+    let text = r#"{"previewMode": {"markdown": "preview", "svg": "x", "pdf": "split"}}"#;
+    assert_eq!(modes(text), [pair("markdown", "preview")]);
+    assert!(modes(r#"{"previewMode": "source"}"#).is_empty());
 }
 
 #[test]
@@ -198,11 +260,14 @@ fn bad_input_means_no_history() {
 #[test]
 fn recent_list_moves_to_front_and_is_capped() {
     let mut state = State::default();
-    for i in 0..15 {
+    for i in 0..MAX_RECENT + 5 {
         state.remember(Path::new(&format!("/p{i}")));
     }
     assert_eq!(state.recent.len(), MAX_RECENT);
-    assert_eq!(state.recent[0], PathBuf::from("/p14"));
+    assert_eq!(
+        state.recent[0],
+        PathBuf::from(format!("/p{}", MAX_RECENT + 4))
+    );
 
     state.remember(Path::new("/p10"));
     assert_eq!(state.recent[0], PathBuf::from("/p10"));
@@ -226,9 +291,30 @@ fn recent_list_moves_to_front_and_is_capped() {
 }
 
 #[test]
+fn recent_files_move_to_front_and_are_capped() {
+    let mut state = State::default();
+    for i in 0..MAX_RECENT_FILES + 5 {
+        state.remember_file(Path::new(&format!("/f{i}.rs")));
+    }
+    state.remember_file(Path::new("/f10.rs"));
+    assert_eq!(state.recent_files.len(), MAX_RECENT_FILES);
+    assert_eq!(state.recent_files[0], Path::new("/f10.rs"));
+    assert_eq!(
+        state
+            .recent_files
+            .iter()
+            .filter(|p| p.ends_with("f10.rs"))
+            .count(),
+        1
+    );
+    state.forget_file(Path::new("/f10.rs"));
+    assert!(!state.recent_files.iter().any(|p| p.ends_with("f10.rs")));
+}
+
+#[test]
 fn recent_folders_keep_their_own_badge_colors() {
     let mut state = State::default();
-    for i in 0..MAX_RECENT {
+    for i in 0..BADGE_COLORS {
         state.remember(Path::new(&format!("/projects/p{i}")));
     }
 
@@ -239,7 +325,7 @@ fn recent_folders_keep_their_own_badge_colors() {
     let mut all = colors(&state);
     all.sort_unstable();
     all.dedup();
-    assert_eq!(all.len(), MAX_RECENT);
+    assert_eq!(all.len(), BADGE_COLORS);
 
     // 重新打开已有目录：移到最前面，该目录与其他目录的颜色都不变。
     let before = state.badge_color(Path::new("/projects/p3"));
@@ -254,11 +340,14 @@ fn recent_folders_keep_their_own_badge_colors() {
         assert_eq!(state.badge_color(&folder), color);
     }
 
-    // 新目录替换最旧的目录并获得其释放的颜色；序列化后再读回，颜色保持不变。
+    // 新目录把第十个目录挤出前十并获得它让出的颜色；该目录仍在列表中，按名字取色。序列化
+    // 后再读回，颜色保持不变。
     let oldest = state.recent.last().cloned().unwrap();
     let freed = state.badge_color(&oldest);
     state.remember(Path::new("/projects/new"));
     assert_eq!(state.badge_color(Path::new("/projects/new")), freed);
+    assert_eq!(state.recent.get(BADGE_COLORS), Some(&oldest));
+    assert_eq!(state.badge_color(&oldest), preferred_color(&oldest));
     assert_eq!(colors(&State::parse(&state.to_json())), colors(&state));
 
     // 旧文件缺少颜色、手工改成重复或越界时，读入后颜色被理顺为互不相同。
@@ -294,6 +383,8 @@ fn sessions_are_kept_per_folder() {
         readonly: Vec::new(),
         readonly_all: false,
         sidebar_hidden: false,
+        window: None,
+        panes: None,
     });
     assert_eq!(state.sessions.len(), 2);
     assert_eq!(state.sessions[0].folder, PathBuf::from("/b"));
@@ -305,7 +396,7 @@ fn sessions_are_kept_per_folder() {
             ..Session::default()
         });
     }
-    assert_eq!(state.sessions.len(), MAX_RECENT);
+    assert_eq!(state.sessions.len(), MAX_SESSIONS);
 
     // 旧格式只记单个 `session`，读入后作为上次退出时的现场。
     let old = "{\"recent\": [\"/a\"], \"session\": {\"folder\": \"/a\", \"files\": [\"/a/x\"]}}";

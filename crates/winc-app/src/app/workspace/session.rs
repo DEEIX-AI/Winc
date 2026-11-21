@@ -27,7 +27,13 @@ pub enum StartAction {
     Theme,
     /// 「首次设置」：开启或关闭一个可选模块。
     Module(crate::keymap::Module),
-    /// 「首次设置」底部的「完成」：结束首次设置。
+    /// 「首次设置」第一页底部的「继续」：进入快捷键一页。
+    SetupNext,
+    /// 「首次设置」快捷键一页底部的「返回」。
+    SetupBack,
+    /// 「首次设置」快捷键一页中的一项，参数见 `SetupKeys::choice`。
+    SetupKeymap(usize),
+    /// 「首次设置」快捷键一页底部的「完成」：结束首次设置。
     FinishSetup,
 }
 
@@ -135,11 +141,14 @@ impl App {
     pub(crate) fn open_folder_now(&mut self, path: &Path) {
         if let Err(e) = self.editor.open_folder(path) {
             let name = winc_editor::display_name(path);
-            self.notify(winc_i18n::t!(
-                "workspace-open-folder-failed",
-                name = name,
-                error = e.to_string()
-            ));
+            self.notify(
+                NoticeKind::Error,
+                winc_i18n::t!(
+                    "workspace-open-folder-failed",
+                    name = name,
+                    error = e.to_string()
+                ),
+            );
             return;
         }
 
@@ -331,6 +340,7 @@ impl App {
 
         let mut tabs = Vec::new();
         let mut active = None;
+        let mut slots = Vec::new();
         for (i, doc) in self.editor.documents.iter().enumerate() {
             let Some(tab) = self.session_tab(doc) else {
                 continue;
@@ -338,8 +348,10 @@ impl App {
             if self.editor.active == Some(i) {
                 active = Some(tabs.len());
             }
+            slots.push((doc.id, tabs.len()));
             tabs.push(tab);
         }
+        let panes = self.session_panes(&slots);
 
         let terminal = self.terminal_session();
         let run = self.run.selected.clone();
@@ -368,6 +380,8 @@ impl App {
         let folds = self.editor.all_folds().into_iter().collect();
         let pdf_places = self.pdf_session(&folder);
         let book_places = self.book_session(&folder);
+        let earlier = self.state.session_for(&folder).and_then(|s| s.window);
+        let window = self.window_frame_now().or(earlier);
         self.update_state(|state| {
             state.set_session(Session {
                 folder,
@@ -385,6 +399,8 @@ impl App {
                 readonly,
                 readonly_all,
                 sidebar_hidden,
+                window,
+                panes,
             });
         });
     }
@@ -392,10 +408,13 @@ impl App {
     /// 最近列表中的目录已不存在（删除、移动，或者外接磁盘未挂载）：从列表中移除并提示。
     pub(in crate::app) fn forget_missing_recent(&mut self, folder: &Path) {
         self.update_state(|state| state.forget(folder));
-        self.notify(winc_i18n::t!(
-            "workspace-recent-missing",
-            path = winc_editor::display_path(folder, None)
-        ));
+        self.notify(
+            NoticeKind::Warning,
+            winc_i18n::t!(
+                "workspace-recent-missing",
+                path = winc_editor::display_path(folder, None)
+            ),
+        );
     }
 
     /// 修改状态（最近目录、各目录的现场）并写入状态文件；失败时在标准错误输出原因。
@@ -415,22 +434,26 @@ impl App {
         self.sync_system_recents();
     }
 
-    /// 把最近打开的目录交给系统：macOS 的最近文档列表（程序坞菜单）、Windows 的任务栏跳转
-    /// 列表。没有状态文件（测试、测量）时不做任何事，其他平台没有对应的入口。
+    /// 把最近打开的目录和文件交给系统：macOS 的最近文档列表（程序坞菜单）、Windows 的任务栏
+    /// 跳转列表。没有状态文件（测试、测量）时不做任何事，其他平台没有对应的入口。
     pub(in crate::app) fn sync_system_recents(&self) {
-        // 远端主机上的目录不交给系统：系统的最近列表只能打开本机路径。
+        // 远端主机上的目录和文件不交给系统：系统的最近列表只能打开本机路径。
         #[cfg(any(target_os = "macos", windows))]
-        let local: Vec<PathBuf> = (self.state.recent.iter())
-            .filter(|folder| !winc_backend::is_remote(folder))
-            .cloned()
-            .collect();
+        let local = |paths: &[PathBuf]| -> Vec<PathBuf> {
+            let local = paths.iter().filter(|path| !winc_backend::is_remote(path));
+            local.cloned().collect()
+        };
+        #[cfg(any(target_os = "macos", windows))]
+        let (folders, files) = (local(&self.state.recent), local(&self.state.recent_files));
         #[cfg(target_os = "macos")]
         if self.store.state_path.is_some() {
-            crate::macos::sync_recent_documents(&local);
+            let exists = |path: &Path| winc_backend::fs::exists(path);
+            let (folders, files) = crate::recents::dock_entries(&folders, &files, exists);
+            crate::macos::sync_recent_documents(&folders, &files);
         }
         #[cfg(windows)]
         if let Some(path) = &self.store.state_path {
-            crate::windows::sync_jump_list(&local, path);
+            crate::windows::sync_jump_list(&folders, &files, path);
         }
     }
 
@@ -478,6 +501,9 @@ impl App {
                 self.open_context_menu(target, (control.right(), y));
             }
             StartAction::Appearance(choice) => self.set_theme_choice(choice),
+            StartAction::SetupNext => self.setup_next(),
+            StartAction::SetupBack => self.setup_back(),
+            StartAction::SetupKeymap(choice) => self.setup_choose(choice),
             StartAction::FinishSetup => self.finish_setup(),
             StartAction::Module(module) => {
                 use crate::keymap::Module;

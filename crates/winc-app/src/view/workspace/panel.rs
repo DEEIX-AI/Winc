@@ -474,7 +474,7 @@ fn draw_results(app: &mut App, frame: &mut Frame<'_>, parts: &PanelParts) {
     }
     let animate = app.animate_tree_labels();
     app.panels.global.names.begin_frame(animate);
-    let scroll = app.panels.global.scroll;
+    let scroll = drawn_scroll(app.panels.global.scroll);
     let rows = app.panels.global.rows().len();
     let replace_open = app.panels.global.replace_open;
     // 行号一栏按结果里最大的行号定宽（各文件的匹配按行号排序，最后一处就是最大的），滚动、
@@ -1015,11 +1015,16 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
-        Hover::Commit(target @ (CommitTarget::StageFile(..) | CommitTarget::GroupStage(_))) => {
+        Hover::Commit(
+            target @ (CommitTarget::StageFile(..)
+            | CommitTarget::GroupStage(_)
+            | CommitTarget::DirStage(..)),
+        ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let unstage = matches!(
                 target,
                 CommitTarget::StageFile(_, false)
+                    | CommitTarget::DirStage(_, false)
                     | CommitTarget::GroupStage(crate::app::CommitGroup::Staged)
             );
             let label = if unstage {
@@ -1084,15 +1089,6 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, t!("git-branch-picker-new-worktree").to_owned()))
         }
         Hover::Commit(CommitTarget::Location) => None,
-        // 历史差异文件列表的显示方式按钮：写明点击后切换成哪一种。
-        Hover::LogDiffLayout => {
-            let label = if app.log_list().flat() {
-                t!("workspace-tip-show-as-tree")
-            } else {
-                t!("workspace-tip-show-as-list")
-            };
-            Some((app.log_diff_layout_button(), label.to_owned()))
-        }
         Hover::Commit(CommitTarget::CommitMenu) => Some((
             app.commit_parts().commit_menu,
             t!("workspace-tip-commit-menu").to_owned(),
@@ -1182,10 +1178,22 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 DiffTarget::NextFile => {
                     with_key(t!("workspace-tip-next-file"), Some(Action::NextDiffFile))
                 }
+                DiffTarget::OpenFile => t!("workspace-tip-open-file").to_owned(),
+                DiffTarget::Blame(side, line) => app.diff_blame_tip(side, line)?,
                 DiffTarget::Layout if app.editor.diff_unified => {
                     t!("workspace-tip-diff-side-by-side").to_owned()
                 }
                 DiffTarget::Layout => t!("workspace-tip-diff-inline").to_owned(),
+                DiffTarget::FilesToggle if app.log_files_open() => {
+                    t!("git-log-diff-hide-files").to_owned()
+                }
+                DiffTarget::FilesToggle => t!("git-log-diff-show-files").to_owned(),
+                DiffTarget::FilesLayout if app.diff_files_flat() => {
+                    t!("workspace-tip-show-as-tree").to_owned()
+                }
+                DiffTarget::FilesLayout => t!("workspace-tip-show-as-list").to_owned(),
+                // 文件栏里截短或改过名的文件：完整路径；其余文件不提示。
+                DiffTarget::File(i) => app.log_diff_file_tip(i)?,
                 DiffTarget::Revert(_) => with_key(
                     t!("workspace-tip-revert-to-left"),
                     Some(Action::GitRevertChange),

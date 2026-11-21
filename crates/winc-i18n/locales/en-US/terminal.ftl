@@ -14,6 +14,7 @@ terminal-module-disabled = The terminal module isn’t enabled
 
 terminal-helper-missing = Couldn’t find the terminal helper; reinstall Winc
 terminal-helper-start-failed = Couldn’t start the terminal helper: { $error }
+terminal-needs-conpty = The terminal needs Windows 10 version 1809 or later
 terminal-helper-exited = The terminal helper exited
 terminal-helper-version-mismatch = The terminal helper’s version doesn’t match Winc; reinstall Winc
 terminal-process-exited = Process exited (exit code { $code })
@@ -81,6 +82,13 @@ terminal-paste-confirm = { $count ->
        *[other] Paste { $count } lines into the terminal?
     }
 terminal-paste-confirm-detail = The program in the terminal hasn’t enabled bracketed paste, so each line will run as a separate command right away.
+terminal-upload-started = Sending the clipboard to { $host }…
+terminal-upload-failed = Couldn’t send the clipboard to the remote host: { $error }
+terminal-upload-folder = Folders can’t be pasted into a remote terminal: { $name }
+terminal-upload-too-large = { $size } is too large to send to the remote host ({ $limit } at most)
+terminal-upload-no-image = Couldn’t read the image on the clipboard
+terminal-upload-no-folder = Couldn’t create a folder for it on the remote host
+terminal-upload-elsewhere = Sent to the remote host: { $path }
 
 ## 运行配置。
 

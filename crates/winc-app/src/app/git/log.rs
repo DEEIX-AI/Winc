@@ -6,18 +6,20 @@
 
 mod arrive;
 mod branches;
-mod columns;
+pub(crate) mod columns;
 mod compare;
 mod details;
 mod filter;
 mod keys;
 pub(crate) mod menus;
+mod repository;
 mod time;
 mod tree;
+pub(crate) use tree::FILES_TITLE;
 
 pub(crate) use branches::{BRANCH_ROW, BranchRow, PanelFold};
-pub(crate) use columns::{AUTHOR_DEFAULT, LogColumn, log_author_width};
-pub(crate) use details::LogFileRow;
+pub(crate) use columns::{AUTHOR_PAD, LogColumn, author_fit, log_author_width};
+pub(crate) use details::{FileFolds, LogFileRow, RowName};
 pub(crate) use filter::{LogPill, since_label};
 pub(crate) use time::*;
 pub(crate) use tree::LogDiffTree;
@@ -25,11 +27,12 @@ pub(crate) use tree::LogDiffTree;
 use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use winc_editor::diff_view::{DiffSide, DiffView};
+use winc_editor::diff_view::{BlameSource, DiffSide, DiffView};
 use winc_editor::encoding::decode_unknown;
 use winc_editor::format::Cancel;
 use winc_editor::git::log::{Arrival, Compare, Details};
@@ -94,9 +97,14 @@ const LOG_HISTORY: usize = 100;
 /// 取自调参：详情通常在数十毫秒内返回，等待该时长可避免提示出现后立即被结果替换而闪烁。
 const LOADING_DELAY: Duration = Duration::from_millis(300);
 
-/// 左侧分支面板的宽度（逻辑像素）：小号字约 24 个字符，常见的分支名（含远程名）写得下，
-/// 更长的截短。
+/// 左侧分支面板的默认宽度（逻辑像素）：小号字约 24 个字符，常见的分支名（含远程名）写得下，
+/// 更长的截短，可拖动右边缘加宽。
 pub(crate) const BRANCHES_W: f32 = 200.0;
+/// 拖动后分支面板的最小、最大宽度（逻辑像素）。
+const BRANCHES_RANGE: (f32, f32) = (140.0, 480.0);
+
+/// 作者一列宽度的依据：日志标签、重取次数、是否还是重取之前的提交、提交数和字号。
+pub(crate) type AuthorFitKey = (DocumentId, u64, bool, usize, u32);
 
 /// 日志标签的几何。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,6 +113,8 @@ pub(crate) struct LogParts {
     pub header: Rect,
     /// 左侧的分支面板；不显示时宽度为 0。
     pub branches: Rect,
+    /// 分支面板完全打开时的宽度；放不下时为 0。
+    pub branches_w: f32,
     /// 左侧的提交列表。
     pub list: Rect,
     /// 右侧的详情一栏。
@@ -134,13 +144,21 @@ impl LogParts {
 /// 返回日志标签中各部分的位置。
 ///
 /// 标题栏下方左侧为列表，右侧为详情；详情默认约占 38% 的宽度，拖动分隔线后为 `details_w`。
-/// 最左边是分支面板，露出 `branches`（0 到 1，打开、关闭途中在两者之间）；放不下（列表和
-/// 详情不够最小宽度）时不显示。
-pub(crate) fn log_parts(editor: Rect, details_w: Option<f32>, branches: f32) -> LogParts {
+/// 最左边是分支面板，宽 `branches_w`（拖动右边缘后的宽度，`None` 是默认宽度），露出
+/// `branches`（0 到 1，打开、关闭途中在两者之间）；列表和详情不够最小宽度时面板变窄，窄到
+/// 最小宽度仍放不下时不显示。
+pub(crate) fn log_parts(
+    editor: Rect,
+    details_w: Option<f32>,
+    (branches_w, branches): (Option<f32>, f32),
+) -> LogParts {
     let header = Rect::new(editor.x, editor.y, editor.w, LOG_HEADER);
     let body_h = (editor.h - LOG_HEADER).max(0.0);
-    let room = editor.w - BRANCHES_W >= LIST_MIN + DETAILS_MIN;
-    let side = if room { BRANCHES_W * branches } else { 0.0 };
+    let (min, max) = BRANCHES_RANGE;
+    let width =
+        (branches_w.unwrap_or(BRANCHES_W).clamp(min, max)).min(editor.w - LIST_MIN - DETAILS_MIN);
+    let branches_w = if width >= min { width.round() } else { 0.0 };
+    let side = branches_w * branches;
     let branches = Rect::new(editor.x, header.bottom(), side, body_h);
     let editor = Rect::new(editor.x + side, editor.y, editor.w - side, editor.h);
     // 窗口较窄时详情最多占一半宽度；较宽时至少为列表保留 `LIST_MIN`。
@@ -155,6 +173,7 @@ pub(crate) fn log_parts(editor: Rect, details_w: Option<f32>, branches: f32) -> 
     LogParts {
         header,
         branches,
+        branches_w,
         list,
         details,
     }
@@ -188,8 +207,10 @@ pub enum LogTarget {
     Date,
     /// 标题栏的「路径」下拉，点击时弹出路径菜单。
     Path,
-    /// 详情里改动的文件一行右端的按钮：平铺、按目录分组之间切换（与提交视图一起）。
+    /// 详情里改动的文件一行右端的按钮：平铺与树之间切换。
     FilesLayout,
+    /// 详情里文件树的一个目录（[`App::log_file_layout`] 的下标）：点击收起或展开。
+    FilesDir(usize),
     /// 标题栏最左边的按钮：显示、隐藏分支面板。
     BranchesToggle,
     /// 标题栏右边的「⋯」：选择显示哪几列。
@@ -202,6 +223,8 @@ pub enum LogTarget {
     ClearFilters,
     /// 列表与详情之间的分隔线：左右拖动改变详情一栏的宽度，双击恢复默认宽度。
     Divider,
+    /// 分支面板的右边缘：左右拖动改变面板的宽度，双击恢复默认宽度。
+    BranchesEdge,
     /// 提交图中第 `.0` 行的一段线，属于编号为 `.1` 的线（`GraphRow::line`）。
     ///
     /// 悬停时高亮该线并提示其连接的提交，点击时沿该线跳转到该提交（`App::log_line_target`）。
@@ -275,6 +298,8 @@ pub enum LogConfirmed {
     DeleteTag(String, winc_editor::git::TagTarget),
     /// 移除一个远程仓库。
     RemoveRemote(String),
+    /// 删除范围里的第一个提交，之后的提交重新应用（[`App::drop_commit`]）。
+    DropCommit(Box<winc_editor::git::RebasePlan>),
 }
 
 /// 一个提交上的本地分支；签出时优先签出该分支，不进入分离的 `HEAD`。
@@ -369,8 +394,19 @@ struct LogDiffSource {
     new: String,
     /// 标题中显示的版本：提交号，或「旧…新」两个提交号。
     version: String,
+    /// 提交说明的第一行；比较两个版本时为空。
+    subject: String,
+    /// 作者和时间；比较两个版本时为空。
+    detail: String,
     /// 改动的文件。
     files: Vec<CommitFile>,
+}
+
+impl LogDiffSource {
+    /// 两侧的提交，文件栏按它区分是哪组文件。
+    fn id(&self) -> String {
+        format!("{}..{}", self.old.as_deref().unwrap_or_default(), self.new)
+    }
 }
 
 /// 日志标签的状态：与后台之间的通道和点击区域；标签的数据存放在 `Document::log` 中。
@@ -390,16 +426,9 @@ pub(crate) struct LogState {
     preview: Option<DocumentId>,
     /// 当前预览对应的提交及文件列表，独立于日志中后来选中的提交。
     tree: Option<LogDiffTree>,
-    /// 文件列表的浏览状态（见 [`App::with_log_list`]）。
-    list: crate::app::git::commit::CommitState,
-    /// 文件列表对应的仓库状态：该提交改动的文件，下标与 `tree` 中的文件相同。
-    status: Option<winc_editor::git::Status>,
     /// 只接收最后一次打开文件的后台结果。
     diff_request: u64,
-    /// 提交视图与文件列表之间的过渡（见 [`App::track_log_tree`]）：上一帧是否显示文件列表、
-    /// 侧栏上一帧是否显示提交视图，以及过渡的时钟。
-    header: (bool, bool, Option<crate::app::Clock>),
-    /// 键盘焦点位于详情文件列表时选中的文件下标（`→` 进入，`←` / `Esc` 退出）。
+    /// 键盘焦点位于详情文件列表时选中的文件下标（`Tab` 进入，`←` / `Esc` 退出）。
     ///
     /// 焦点位于提交列表时为 `None`。
     pub file: Option<usize>,
@@ -418,14 +447,40 @@ pub(crate) struct LogState {
     ///
     /// 绘制时更新。
     pub long_files: Vec<usize>,
+    /// 最近一次排好的文件各行（见 [`App::cached_file_rows`]）：详情和差异的文件栏每帧都要，
+    /// 提交改动的文件很多时重排一次要几毫秒。
+    rows_cache: std::cell::RefCell<details::FileRowsCache>,
+    /// 详情里收起的目录。
+    pub(super) details_folds: details::FileFolds,
+    /// 详情里的目录正在展开、收起时的一帧；各行见 [`App::log_file_layout`]。
+    pub(crate) details_fold: Option<PanelFold<Rc<[LogFileRow]>>>,
+    /// 差异文件栏展开、收起的过渡：（开始时露出的比例，时钟）。
+    pub(in crate::app) files_motion: Option<(f32, crate::app::Clock)>,
+    /// 差异文件栏里的目录正在展开、收起时的一帧。
+    pub(crate) panel_fold: Option<PanelFold<Rc<[LogFileRow]>>>,
+    /// 详情里文件、目录名字的过渡：放不下的名字随鼠标展开、收回。
+    pub(crate) details_names: crate::app::TreeLabels<RowName>,
+    /// 差异文件栏里文件、目录名字的过渡。
+    pub(crate) panel_names: crate::app::TreeLabels<RowName>,
+    /// 分支面板里分支、标签、目录名字的过渡。
+    pub(crate) branch_names: crate::app::TreeLabels<RowName>,
     /// 拖动分隔线后详情一栏的宽度（逻辑像素）；`None` 表示默认宽度，随窗口宽度变化。
     pub details_w: Option<f32>,
-    /// 拖动左边缘后作者一列的宽度（逻辑像素）；`None` 是默认宽度 [`AUTHOR_DEFAULT`]。
+    /// 拖动右边缘后分支面板的宽度（逻辑像素）；`None` 是默认宽度 [`BRANCHES_W`]。
+    pub branches_w: Option<f32>,
+    /// 拖动左边缘后作者一列的宽度（逻辑像素）；`None` 是按作者名字算出的宽度（`author_fit`）。
     pub author_w: Option<f32>,
+    /// 按已读取的提交中最宽的作者名字算出的作者一列宽度，和算它时的依据（见
+    /// [`AuthorFitKey`]）；绘制时更新。
+    pub author_fit: Option<(AuthorFitKey, f32)>,
+    /// 时间一列的宽度，和算它时的字号、界面语言；绘制时更新。
+    pub date_fit: Option<((u32, winc_i18n::Locale), f32)>,
     /// 分支面板里名字截短了的行（[`App::log_branch_rows`] 的下标）；悬停时提示全名。
     ///
     /// 绘制时更新。
     pub long_branches: Vec<usize>,
+    /// 从日志打开的差异左侧的文件栏。
+    pub files: tree::FilesPanel,
     /// 分支面板滚动的距离（逻辑像素）。
     pub branches_scroll: f32,
     /// 分支面板的最大滚动距离（逻辑像素），绘制时按行数计算。
@@ -492,6 +547,8 @@ pub(crate) struct LogState {
     /// 读取期间由后台任务持有，返回后再放回此处；重新读取、读取完毕或关闭标签时移除，
     /// `git` 进程随之结束。
     streams: HashMap<DocumentId, (u64, LogStream)>,
+    /// 换了仓库、还没读到它的分支：日志等读到以后按当前分支读取。
+    waiting_branches: bool,
     /// 详情栏中已折行的提交说明，绘制时填入（见 [`Wrapped`]）。
     pub(crate) wrapped: std::cell::RefCell<Option<std::rc::Rc<Wrapped>>>,
 }
@@ -521,7 +578,6 @@ impl LogState {
         if self.preview == Some(id) {
             self.preview = None;
             self.tree = None;
-            self.status = None;
             self.diff_request += 1;
         }
     }
@@ -537,18 +593,27 @@ impl Default for LogState {
             paths: Vec::new(),
             preview: None,
             tree: None,
-            list: crate::app::git::commit::CommitState::browsing(&Default::default()),
-            status: None,
             diff_request: 0,
-            header: (false, false, None),
             file: None,
             open_first: None,
             seek: None,
             clipped: None,
             long_files: Vec::new(),
+            rows_cache: Default::default(),
+            details_folds: Default::default(),
+            details_fold: None,
+            panel_fold: None,
+            files_motion: None,
+            details_names: Default::default(),
+            panel_names: Default::default(),
+            branch_names: Default::default(),
             details_w: None,
+            branches_w: None,
             author_w: None,
+            author_fit: None,
+            date_fit: None,
             long_branches: Vec::new(),
+            files: tree::FilesPanel::default(),
             branches_scroll: 0.0,
             branches_max: 0.0,
             branch_fold: None,
@@ -570,6 +635,7 @@ impl Default for LogState {
             branches_failed: HashSet::new(),
             branches_due: None,
             streams: HashMap::new(),
+            waiting_branches: false,
             wrapped: Default::default(),
         }
     }
@@ -586,10 +652,9 @@ impl App {
         let id = self.editor.documents[index].id;
         if new {
             // 新打开的日志默认只显示当前分支的提交；分离 `HEAD` 时显示全部分支。
-            let current = self.git.branches.iter().find(|b| b.current);
-            let branches = current.map(|b| b.name.clone()).into_iter().collect();
+            let (root, branches) = (self.git.root.clone(), self.current_branches());
             if let Some(view) = self.editor.documents[index].log.as_deref_mut() {
-                view.query.branches = branches;
+                view.restart(root, branches);
             }
             self.load_log(id);
         }
@@ -627,7 +692,9 @@ impl App {
         match row {
             Some(row) if !new => self.select_log_row(row),
             _ => {
+                let root = self.git.root.clone();
                 if let Some(view) = self.editor.documents[index].log.as_deref_mut() {
+                    view.root = root;
                     view.query = LogQuery {
                         pin: pin.then(|| oid.to_owned()),
                         ..LogQuery::default()
@@ -666,7 +733,7 @@ impl App {
     /// 在日志中转到 `revision`（提交号、分支名或标签名）：在后台解析成提交，之后选中它（见
     /// [`Self::show_log_commit`]）；任何分支都走不到的提交固定在最前面。无法解析时提示原因。
     pub(in crate::app) fn go_to_log_revision(&mut self, revision: String) {
-        let Some(root) = self.git.root.clone() else {
+        let Some(root) = self.active_log_root().map(Path::to_path_buf) else {
             return;
         };
         let sender = self.git.log.results.0.clone();
@@ -690,7 +757,7 @@ impl App {
     ///
     /// 正在读取或已全部读取时不做任何操作。
     pub(crate) fn load_log(&mut self, id: DocumentId) {
-        let Some(root) = self.git.root.clone() else {
+        let Some(root) = self.log_root(id) else {
             return;
         };
         let Some(view) = self
@@ -761,13 +828,14 @@ impl App {
         }
     }
 
-    /// 在 `HEAD` 或分支变化后重新读取所有已打开的日志标签。
+    /// 在当前仓库的 `HEAD` 或分支变化后重新读取它已打开的日志标签。
     pub(super) fn reload_logs(&mut self) {
+        let root = self.git.root.clone();
         let ids: Vec<DocumentId> = self
             .editor
             .documents
             .iter()
-            .filter(|d| d.log.is_some())
+            .filter(|d| d.log.as_deref().is_some_and(|v| v.root == root))
             .map(|d| d.id)
             .collect();
         for id in ids {
@@ -889,7 +957,7 @@ impl App {
     }
 
     fn fetch_log_details(&mut self, id: DocumentId, oid: String, parent: Option<String>) {
-        let Some(root) = self.git.root.clone() else {
+        let Some(root) = self.log_root(id) else {
             return;
         };
         if !self.git.log.fetching.insert(oid.clone()) {
@@ -950,7 +1018,7 @@ impl App {
             }
             LogTarget::File(i) => self.open_log_file(i),
             // 拖动由 `mouse.rs` 开始处理。
-            LogTarget::Divider => {}
+            LogTarget::Divider | LogTarget::BranchesEdge => {}
             LogTarget::Line(row, line) => {
                 self.focus = Focus::Editor;
                 match self.log_line_target(row, line) {
@@ -1010,7 +1078,13 @@ impl App {
                 self.git.log.authors_of = self.editor.active().map(|d| d.id);
                 self.open_context_menu(MenuTarget::LogAuthor, (rect.x, rect.bottom() + 4.0));
             }
-            LogTarget::FilesLayout => self.toggle_commit_layout(),
+            LogTarget::FilesLayout => self.toggle_log_details_layout(),
+            LogTarget::FilesDir(row) => {
+                let rows = self.log_file_layout();
+                if let Some(LogFileRow::Dir { dir, .. }) = rows.get(row) {
+                    self.toggle_log_details_dir(row, dir);
+                }
+            }
             LogTarget::BranchesToggle => self.toggle_log_branches(),
             // 拖动由 `mouse.rs` 开始处理。
             LogTarget::AuthorEdge => {}
@@ -1060,44 +1134,40 @@ impl App {
 
     /// 打开日志标签 `log` 中选中提交（或比较）的第 `i` 个改动文件的差异。
     fn open_log_file_of(&mut self, log: DocumentId, i: usize) {
-        let Some(root) = self.git.root.clone() else {
+        let Some(root) = self.log_root(log) else {
             return;
         };
         // 比较两个版本时左侧为旧版本、右侧为新版本；否则左侧为第一个父提交（根提交没有父提交）。
-        let Some((old, new, version, files)) = self.editor.document(log).and_then(|d| {
+        let Some(source) = self.editor.document(log).and_then(|d| {
             let view = d.log.as_deref()?;
             if let Some(compare) = &view.compare {
-                let version = format!("{}…{}", short(&compare.from), short(&compare.to));
-                return Some((
-                    Some(compare.from.clone()),
-                    compare.to.clone(),
-                    version,
-                    compare.files.as_ref()?,
-                ));
+                return Some(LogDiffSource {
+                    root: root.clone(),
+                    old: Some(compare.from.clone()),
+                    new: compare.to.clone(),
+                    version: format!("{}…{}", short(&compare.from), short(&compare.to)),
+                    subject: String::new(),
+                    detail: String::new(),
+                    files: compare.files.clone()?,
+                });
             }
             let commit = view.commits.get(view.selected?)?;
             // 和详情里的文件同一个对照版本（按路径筛选时是真正的父提交）。
             let details = view.details.as_ref()?;
-            Some((
-                details.base.clone(),
-                commit.oid.clone(),
-                short(&commit.oid).to_owned(),
-                details.files.as_ref()?,
-            ))
+            Some(LogDiffSource {
+                root: root.clone(),
+                old: details.base.clone(),
+                new: commit.oid.clone(),
+                version: short(&commit.oid).to_owned(),
+                subject: commit.subject.clone(),
+                detail: format!("{} · {}", commit.author, commit.local),
+                files: details.files.clone()?,
+            })
         }) else {
             return;
         };
         self.diff.land = None;
-        self.load_log_diff(
-            Arc::new(LogDiffSource {
-                root,
-                old,
-                new,
-                version,
-                files: files.clone(),
-            }),
-            i,
-        );
+        self.load_log_diff(Arc::new(source), i);
     }
 
     fn load_log_diff(&mut self, source: Arc<LogDiffSource>, i: usize) {
@@ -1131,15 +1201,10 @@ impl App {
         });
     }
 
-    /// 标签 `id` 是否为当前仓库从日志打开的差异。
+    /// 标签 `id` 是否为从仍打开着的日志打开的差异。
     pub(in crate::app) fn steps_log_files(&self, id: DocumentId) -> bool {
         self.git.log.preview == Some(id)
-            && self
-                .git
-                .log
-                .tree
-                .as_ref()
-                .is_some_and(|tree| self.git.root.as_ref() == Some(&tree.source.root))
+            && (self.git.log.tree.as_ref()).is_some_and(|tree| self.log_open_in(&tree.source.root))
     }
 
     /// 返回按文件树显示顺序排列时，同一提交中的下一个（`forward`）或上一个文件。
@@ -1188,7 +1253,7 @@ impl App {
         log_parts(
             self.layout.editor,
             self.git.log.details_w,
-            self.log_branches_shown(),
+            (self.git.log.branches_w, self.log_branches_shown()),
         )
     }
 
@@ -1239,6 +1304,16 @@ impl App {
     pub(crate) fn log_dividing(&self) -> bool {
         matches!(self.pointer.drag, crate::app::Drag::LogDivider { .. })
     }
+
+    /// 是否正在拖动分支面板的右边缘。
+    pub(crate) fn log_branches_resizing(&self) -> bool {
+        matches!(self.pointer.drag, crate::app::Drag::LogBranches { .. })
+    }
+
+    /// 是否正在拖动差异文件栏的右边缘。
+    pub(crate) fn log_files_resizing(&self) -> bool {
+        matches!(self.pointer.drag, crate::app::Drag::DiffFiles { .. })
+    }
 }
 
 /// 在后台准备一个文件在两个版本之间的差异。
@@ -1279,21 +1354,31 @@ pub(in crate::app) fn commit_diff(
         (Some(oid), false) => t!("git-diff-side-commit-missing", commit = short(oid)),
         (None, _) => t!("git-diff-side-before-root").to_owned(),
     };
+    let blame = |rev: &str, path: &Path| BlameSource {
+        root: root.to_path_buf(),
+        path: path.to_path_buf(),
+        rev: Some(rev.to_owned()),
+    };
+    let mut old_side = DiffSide::new(
+        side_title(old_rev, old.is_some()),
+        old.as_deref().unwrap_or(""),
+        None,
+        language,
+    )
+    .with_missing(old_rev.is_some() && old.is_none());
+    if let Some(rev) = old_rev {
+        old_side = old_side.with_blame(blame(rev, &old_path));
+    }
     let mut view = DiffView::new(
-        DiffSide::new(
-            side_title(old_rev, old.is_some()),
-            old.as_deref().unwrap_or(""),
-            None,
-            language,
-        )
-        .with_missing(old_rev.is_some() && old.is_none()),
+        old_side,
         DiffSide::new(
             side_title(Some(new_rev), new.is_some()),
             new.as_deref().unwrap_or(""),
             None,
             language,
         )
-        .with_missing(new.is_none()),
+        .with_missing(new.is_none())
+        .with_blame(blame(new_rev, &file.path)),
     );
     view.snapshot_path = Some(file.path.clone());
     Ok(view)

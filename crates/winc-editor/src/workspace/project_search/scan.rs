@@ -33,7 +33,7 @@ pub(super) fn search_disk(
     buffer.clear();
     let mut left = size;
     read_chunk(&mut file, buffer, &mut left, CHUNK.max(BINARY_SNIFF)).ok()?;
-    if looks_binary(buffer) || (large && utf16_bom(buffer)) {
+    if looks_binary(buffer) || (large && utf16_text(buffer)) {
         return None;
     }
 
@@ -67,7 +67,7 @@ pub(super) fn search_disk(
         lossy: false,
         index: 0,
     };
-    let streamed = if utf16_bom(buffer) {
+    let streamed = if utf16_text(buffer) {
         None
     } else {
         search.run(buffer, &mut file, left, large, cancel)

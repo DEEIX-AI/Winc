@@ -228,6 +228,7 @@ fn terminal_focus_commands_reveal_an_existing_tab_in_a_hidden_panel() {
 
 #[test]
 fn the_panel_toggle_closes_in_one_press_wherever_the_focus_is() {
+    crate::app::snapshot::use_vscode_keys();
     let mut app = blank_app(false);
     show_terminal(&mut app, "one");
     let toggle = key(cmd(), KeyCode::Char('j'));
@@ -266,4 +267,29 @@ fn terminal_numbers_leave_the_tool_view_keys_alone() {
             assert!(actions.iter().all(|a| a.terminal_index().is_none()));
         }
     }
+}
+
+/// 单按 Ctrl 的复制键（Windows 上的 `Ctrl+C`）只在有选区时复制，复制后清除选区，再按一次即
+/// 发给程序。
+#[test]
+fn plain_ctrl_c_copies_only_with_a_selection() {
+    use crate::keymap::{Custom, Preset};
+    let shortcuts = [("terminalCopy".to_owned(), vec!["ctrl+c".to_owned()])].into();
+    crate::keymap::install(Preset::VsCode, &Custom::from_config(&shortcuts).0);
+    let mut app = blank_app(false);
+    show_terminal(&mut app, "output");
+    app.focus = Focus::Terminal;
+    let ctrl_c = key(Mods::CTRL, KeyCode::Char('c'));
+    assert_eq!(app.lookup_shortcut(ctrl_c, None), Lookup::None);
+
+    app.terminal_select_all();
+    assert!(matches!(
+        app.lookup_shortcut(ctrl_c, None),
+        Lookup::Run(actions) if actions == [Action::TerminalCopy]
+    ));
+    assert!(app.on_shortcut(ctrl_c));
+    assert_eq!(app.clipboard.copied.as_deref(), Some("output"));
+    assert!(app.terminal.tab().unwrap().selection.is_none());
+    assert!(!app.on_shortcut(ctrl_c));
+    crate::keymap::install(Preset::VsCode, &Custom::default());
 }

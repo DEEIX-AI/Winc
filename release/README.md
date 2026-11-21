@@ -76,19 +76,24 @@ version (see below). Neither needs a repository Variable.
 | --- | --- |
 | macOS Apple silicon | `macos-arm64.dmg` |
 | macOS Intel | `macos-x64.dmg` |
-| Linux x86_64 | `linux-x64.AppImage`, `linux-x64.deb` |
+| Linux x86_64 | `linux-x64.AppImage`, `linux-x64.deb`, `linux-x64.rpm` |
 | Windows x86_64 | `windows-x64-setup.exe`, `windows-x64.msi`, `windows-x64-portable.zip` |
 
 All packages include the terminal helper. macOS containers use the same final app and retain the
 macOS 11 minimum. Linux packages are built on Ubuntu 24.04; the deb declares glibc 2.39 or newer.
-Debian prerelease versions use `~` so the final release sorts after its betas.
+The rpm wraps the same binaries in a Fedora container: rpmbuild derives the glibc requirement, and
+the window system libraries loaded at run time are required by soname, so it installs on Fedora 40
+or newer, RHEL 10 and openSUSE Tumbleweed. Debian and RPM prerelease versions use `~` so the final
+release sorts after its betas.
 Stable `X.Y.Z` releases also include `winc-<version>-1-x86_64.pkg.tar.zst` built from the same Linux
 binaries. The Arch package uses pacman for updates.
 
 Each release also has four signed appcasts for the in-app updater: `appcast-macos-arm64.xml`,
 `appcast-macos-x86_64.xml`, `appcast-linux.xml`, and `appcast-windows.xml`. They list the dmg, the
-AppImage, and the NSIS and MSI installers, each with its EdDSA signature; the deb and the portable
-zip are downloads only. `SHA256SUMS` covers the assets assembled before publication.
+AppImage, and the NSIS and MSI installers, each with its EdDSA signature; the deb, the rpm and the
+portable zip are downloads only. Installs that cannot update themselves (deb, rpm, the Arch
+package, the portable zip) still read their platform's appcast and only notify: the update button
+opens the downloads page, or suggests `pacman -Syu` for the Arch package. `SHA256SUMS` covers the assets assembled before publication.
 
 ### Update channel (winc.si)
 

@@ -1,9 +1,11 @@
 //! 文件树拖放的测试：拖动阈值、拖入目录移动文件、放回原处、悬停展开与边缘滚动，
-//! 以及从窗口外拖入文件。
+//! 拖出窗口，以及从窗口外拖入文件。
 
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::app::workspace::file_drop::PaneDrop;
+use winc_editor::panes::Axis;
 
 /// 创建拖放测试用的目录并返回其路径。
 ///
@@ -189,6 +191,38 @@ fn a_folder_cannot_go_into_itself_and_escape_cancels() {
 }
 
 #[test]
+fn dragging_out_of_the_window_hands_local_files_to_the_system() {
+    let dir = drag_folder("drag-out");
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+    let notes = row_of(&app, "notes.md");
+    let lib = row_of(&app, "lib");
+    let from = path_of(&app, notes);
+    let outside = (app.layout.window.x - 20.0, app.layout.window.y + 40.0);
+
+    // 拖出窗口：交给系统的拖放，窗口内的拖动随之结束，松开鼠标不再移动。
+    drag_row(&mut app, notes, lib);
+    app.on_mouse_move(outside.0, outside.1);
+    assert_eq!(app.panels.tree.dragged_out, std::slice::from_ref(&from));
+    assert!(app.tree_dragging().is_none());
+    app.on_mouse_up(MouseButton::Left);
+    assert!(from.is_file());
+
+    // 远程的项不交给系统，仍在窗口内拖动。
+    app.panels.tree.dragged_out.clear();
+    drag_row(&mut app, notes, lib);
+    let target = winc_backend::Target::new("drag-out").unwrap();
+    app.panels.tree.drag.as_mut().unwrap().paths =
+        vec![winc_backend::virtual_path(&target, b"/notes.md")];
+    app.on_mouse_move(outside.0, outside.1);
+    assert!(app.panels.tree.dragged_out.is_empty());
+    assert!(app.tree_dragging().is_some());
+    app.cancel_tree_drag();
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn resting_on_a_closed_folder_opens_it_and_the_edges_scroll() {
     let dir = drag_folder("drag-rest");
     for i in 0..40 {
@@ -292,12 +326,19 @@ fn files_dragged_over_the_window_mark_where_they_will_land() {
     assert_eq!(app.file_hover(), Some(&DropZone::Tree(path_of(&app, lib))));
     shoot(&mut app, "drop-hover-tree");
 
-    // 拖到编辑区：松手是打开，整个编辑区连同标签栏铺底色。
+    // 拖到编辑区中部：松手是打开，整个编辑区连同标签栏铺底色。
     let editor = app.layout.editor;
-    app.on_mouse_move(editor.x + 200.0, editor.y + 200.0);
+    let pane = app.editor.panes.focused;
+    app.on_mouse_move(editor.x + editor.w / 2.0, editor.y + editor.h / 2.0);
     assert!(app.file_hover_tick(Instant::now()).is_some());
-    assert_eq!(app.file_hover(), Some(&DropZone::Open));
+    let open = |edge| Some(DropZone::Open(Some(PaneDrop { pane, edge })));
+    assert_eq!(app.file_hover().cloned(), open(None));
     shoot(&mut app, "drop-hover-editor");
+
+    // 贴近编辑区的右边：松手是在右边拆出的窗格里打开，底色铺在右半边。
+    app.on_mouse_move(editor.right() - 20.0, editor.y + editor.h / 2.0);
+    app.file_hover_tick(Instant::now());
+    assert_eq!(app.file_hover().cloned(), open(Some((Axis::Row, false))));
 
     // 拖出窗口，或者松了手：不再标出。
     app.end_file_hover();

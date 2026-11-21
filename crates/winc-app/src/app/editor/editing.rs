@@ -64,7 +64,10 @@ impl App {
             || self.terminal.grow.is_some()
             || matches!(
                 self.pointer.drag,
-                Drag::Splitter { .. } | Drag::TerminalDivider { .. } | Drag::SplitDivider { .. }
+                Drag::Splitter { .. }
+                    | Drag::TerminalDivider { .. }
+                    | Drag::SplitDivider { .. }
+                    | Drag::PaneDivider { .. }
             )
     }
 
@@ -297,8 +300,11 @@ impl App {
         if self.log_active() {
             return self.log_parts().list;
         }
-        if self.editor.active().is_some_and(|d| d.diff.is_some()) {
-            let header = crate::app::diff::DIFF_HEADER;
+        if self.hex_active() {
+            return self.hex_parts().body;
+        }
+        if let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) {
+            let header = crate::app::diff::diff_top(view);
             Rect::new(
                 editor.x,
                 editor.y + header,
@@ -452,7 +458,9 @@ impl App {
     ///
     /// `whole_line` 为 `true` 表示复制的是整行，粘贴到编辑区时插入当前行上方。
     pub(in crate::app) fn set_clipboard(&mut self, text: String, whole_line: bool) {
-        self.clipboard.set_text(text, whole_line);
+        if self.clipboard.set_text(text, whole_line) {
+            self.forget_remote_copy();
+        }
     }
 
     /// 返回剪贴板中的文本；没有时返回 `None`。
@@ -462,6 +470,13 @@ impl App {
 
     /// 复制选区（`cut` 为 `true` 时剪切）；没有选区时操作光标所在的整行。
     pub(in crate::app) fn copy(&mut self, cut: bool) {
+        // 十六进制视图：复制选中的字节，写成十六进制；只读，不能剪切。
+        if self.hex_active() {
+            if !cut {
+                self.copy_hex(false);
+            }
+            return;
+        }
         // 日志标签：详情中有选中文字时复制选中的文字，否则复制选中提交的完整提交号，
         // 效果同点击详情中的提交号。
         if self.log_active() {
@@ -608,10 +623,10 @@ impl App {
     /// 在编辑区粘贴文本 `content`。
     ///
     /// 没有选区且 `content` 等于最近一次整行复制的内容时，插入到当前行上方；否则在光标处插入。
-    /// Markdown 中选中文字后粘贴网址时生成链接，见 [`App::markdown_link_paste`]。
+    /// Markdown 中网址、图片网址和表格单元格按 [`App::markdown_paste`] 改写。
     pub(super) fn paste_text(&mut self, content: String) {
-        if let Some(link) = self.markdown_link_paste(&content) {
-            self.run(Command::Insert(link));
+        if let Some(text) = self.markdown_paste(&content) {
+            self.run(Command::Insert(text));
             return;
         }
         let empty_selection = self

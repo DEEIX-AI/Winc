@@ -49,6 +49,12 @@ workspace-tree-copy-failed = Couldn’t copy “{ $name }”: { $error }
 workspace-tree-copying-file = Copying “{ $name }”… { $done } of { $total }
 workspace-tree-copying-folder = Copying “{ $name }”… { $done } copied
 workspace-tree-copy-canceled = Copy canceled
+workspace-download-done-one = Downloaded “{ $name }”
+workspace-download-done-many = Downloaded { $count } items
+workspace-download-failed = Couldn’t download “{ $name }”: { $error }
+workspace-download-file = Downloading “{ $name }”… { $done } of { $total }
+workspace-download-folder = Downloading “{ $name }”… { $done } downloaded
+workspace-download-canceled = Download canceled
 workspace-tree-move-confirm-one = Move “{ $name }” to “{ $folder }”?
 workspace-tree-move-confirm-many = { $count ->
         [one] Move { $count } item to “{ $folder }”?
@@ -82,6 +88,12 @@ workspace-start-module-remote = SSH Remote
 workspace-start-theme = Theme
 workspace-start-setup-intro = Your personal workspace starts here.
 workspace-start-setup-done = Done
+workspace-start-setup-next = Continue
+workspace-start-setup-back = Back
+workspace-start-keymap-title = Shortcuts
+workspace-start-keymap-intro = Choose a keymap, or import your shortcuts from another editor
+workspace-start-keymap-import = Import from an editor on this computer
+workspace-start-keymap-default = Default
 workspace-start-section-start = Start
 workspace-start-section-recent = Recent
 
@@ -264,7 +276,7 @@ workspace-release-notes-missing = There are no release notes for { $version } ye
 workspace-release-notes-updated = Winc was updated to { $version }
 workspace-rename-branch-title = Rename Branch
 workspace-rename-branch-placeholder = Branch name
-workspace-rename-branch-hint = Currently { $name } · { common-key-enter } Rename
+workspace-rename-branch-hint = { common-key-enter } Rename
 workspace-tag-title = New Tag
 workspace-tag-placeholder = Tag name
 workspace-tag-hint = From { $commit } · { common-key-enter } Create
@@ -297,7 +309,7 @@ workspace-picker-indexing = Indexing files…
 workspace-picker-goto-line-column = Go to line { $line }, column { $column }
 workspace-picker-goto-line = Go to line { $line }
 workspace-picker-folder-empty = No files in this folder
-workspace-picker-no-matching-files = No matching files. Ignored files aren’t searched.
+workspace-picker-no-matching-files = No matching files. Ignored files are listed only after you open them in this window.
 workspace-picker-recently-opened = Recently opened
 workspace-picker-no-matching-commands = No matching commands
 workspace-picker-no-matching-languages = No matching languages
@@ -305,14 +317,14 @@ workspace-picker-recently-used = Recently used
 workspace-picker-symbols-too-large = File too large to list symbols
 workspace-picker-no-symbols = No symbols found in this file
 workspace-picker-no-matching-symbols = No matching symbols
-workspace-picker-folders-placeholder = Search folders by name or path…
+workspace-picker-folders-placeholder = Search by name or path…
 workspace-picker-languages-placeholder = Select a language…
 workspace-picker-folders-new-window = { $platform ->
     [macos] ⌥↩
    *[other] Alt+Enter
 } Open in New Window
-workspace-picker-no-recent-folders = No recently opened folders
-workspace-picker-no-matching-folders = No matching folders
+workspace-picker-no-recent-folders = No recently opened folders or files
+workspace-picker-no-matching-folders = No matching folders or files
 workspace-conflict-modified = “{ $name }” was changed by another app
 
 ## Tooltips
@@ -362,8 +374,15 @@ workspace-status-spaces = Spaces: { $size }
 workspace-status-update = Update
 workspace-status-update-restart = Restart
 workspace-status-update-retry = Retry
+workspace-status-update-pacman = Run sudo pacman -Syu to update Winc
 workspace-status-not-shown = Not shown: { $features }
 workspace-status-position-selected = { $position } ({ $count } selected)
+workspace-status-words =
+    { $count ->
+        [one] { $count } word
+       *[other] { $count } words
+    }
+workspace-status-words-selected = { $selected } / { $count } words
 workspace-status-selections = { $count ->
         [one] { $count } selection
        *[other] { $count } selections
@@ -437,6 +456,7 @@ workspace-drop-folder-open = Open
 workspace-drop-folder-copy = Copy
 workspace-drop-folder-copy-detail = An added folder is listed beside the current one, and nothing on disk changes.
 workspace-remote-local-only = Files on a remote host can’t be opened with programs on this computer
+workspace-remote-reveal-unmapped = To show remote files here, add the local folder they are mounted at to remote.localFolders in the config file
 workspace-remote-terminal = Folders on a remote host open only in the built-in terminal; enable Terminal in Settings first
 workspace-terminal-app-fallback = Terminal
 workspace-open-app-failed = Couldn’t open “{ $app }”: { $error }
@@ -446,6 +466,11 @@ workspace-deleted-on-disk = “{ $name }” was deleted from disk and wasn’t a
 workspace-save-as-dirty-elsewhere = Couldn’t save as “{ $name }”: that file has unsaved changes in another tab
 workspace-save-conflict = Couldn’t save “{ $name }”: the file was changed by another app; choose which version to keep first
 workspace-save-failed = Couldn’t save “{ $name }”: { $error }
+workspace-save-admin = Retry as Administrator…
+workspace-save-admin-cancelled = Saving as administrator was canceled
+workspace-save-admin-failed = Writing as administrator failed
+workspace-save-admin-unavailable = Can’t ask for administrator rights: no authorization agent (pkexec) is available
+workspace-save-admin-prompt = Winc wants to save “{ $name }” as administrator.
 workspace-saved = Saved { $name }
 workspace-drop-to-open = Drag a file or folder into the window to open it
 workspace-picker-unavailable = No file chooser is available. Install xdg-desktop-portal, or drag files and folders into the window to open them
@@ -454,6 +479,7 @@ workspace-open-folder-failed = Couldn’t open folder “{ $name }”: { $error 
 workspace-recent-missing = Couldn’t find “{ $path }”; removed it from the recent list
 workspace-folder-missing = Couldn’t find “{ $path }”
 workspace-jump-list-recent = Recent Folders
+workspace-jump-list-recent-files = Recent Files
 workspace-reloaded = Reloaded { $names }
 workspace-disk-conflicts = { $names } changed on disk and conflict with unsaved changes; switch to each tab to choose which version to keep
 

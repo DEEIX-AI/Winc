@@ -3,7 +3,9 @@
 //! 快捷键和命令面板都经由 [`App::run_action`] 执行，每个命令只有一处实现。
 
 use winc_core::transform::Case;
+use winc_editor::panes::Axis;
 use winc_editor::{Command, EntryKind, FoldCommand};
+use winc_preview::markdown::paragraph::Kind;
 
 use super::*;
 use crate::field::TextField;
@@ -56,7 +58,7 @@ impl App {
         if self.focus == Focus::Terminal {
             match action {
                 Copy => {
-                    self.terminal_copy();
+                    self.terminal_copy(false);
                     return true;
                 }
                 SelectAll => {
@@ -143,6 +145,16 @@ impl App {
                 self.close_tabs(all);
             }
             ReopenClosed => self.reopen_closed(),
+            SplitRight => self.split_editor(Axis::Row),
+            SplitDown => self.split_editor(Axis::Column),
+            MoveToSplitRight => self.move_to_split(Axis::Row),
+            MoveToSplitDown => self.move_to_split(Axis::Column),
+            Unsplit => self.unsplit_editor(),
+            NextPane => self.cycle_pane(true),
+            PreviousPane => self.cycle_pane(false),
+            SplitTerminal => self.split_terminal(),
+            NextTerminalPane => self.cycle_terminal_pane(true),
+            PreviousTerminalPane => self.cycle_terminal_pane(false),
             NextTab => self.cycle_tab(true),
             PreviousTab => self.cycle_tab(false),
             CloseFolder => self.close_folder(),
@@ -167,7 +179,7 @@ impl App {
                     None => self.flash(winc_i18n::t!("cmd-no-file-for-tab")),
                 }
             }
-            Quit => self.request_quit(),
+            Quit => self.ask_quit(),
 
             Undo | Redo | Cut | Copy | Paste if vim_keys.is_some() => {
                 self.vim_feed(vim_keys.unwrap_or_default());
@@ -201,13 +213,47 @@ impl App {
                     ws.select_all();
                 }
             }
+            SelectAll if self.hex_active() => self.select_all_hex(),
             SelectAll => editing(self, Command::SelectAll),
+            // 语言没有任何注释写法（纯文本、日志、CSV）：说明一声，不是没反应。
+            ToggleComment
+                if (self.editor.active()).is_some_and(|doc| {
+                    let language = doc.highlighter.language();
+                    language.line_comments.is_empty() && language.block_comments.is_empty()
+                }) =>
+            {
+                let name = self.editor.active().map(|d| d.highlighter.language().name);
+                self.flash(winc_i18n::t!(
+                    "editor-no-comment",
+                    language = name.unwrap_or_default()
+                ));
+            }
             ToggleComment => editing(self, Command::ToggleComment),
             MarkdownBold => self.live_format("**"),
             MarkdownItalic => self.live_format("*"),
             MarkdownCode => self.live_format("`"),
             MarkdownStrikethrough => self.live_format("~~"),
             MarkdownHighlight => self.live_format("=="),
+            MarkdownHeading1 => self.markdown_paragraph(Kind::Heading(1)),
+            MarkdownHeading2 => self.markdown_paragraph(Kind::Heading(2)),
+            MarkdownHeading3 => self.markdown_paragraph(Kind::Heading(3)),
+            MarkdownHeading4 => self.markdown_paragraph(Kind::Heading(4)),
+            MarkdownHeading5 => self.markdown_paragraph(Kind::Heading(5)),
+            MarkdownHeading6 => self.markdown_paragraph(Kind::Heading(6)),
+            MarkdownParagraph => self.markdown_paragraph(Kind::Heading(0)),
+            MarkdownQuote => self.markdown_paragraph(Kind::Quote),
+            MarkdownOrderedList => self.markdown_paragraph(Kind::Ordered),
+            MarkdownBulletList => self.markdown_paragraph(Kind::Bullet),
+            MarkdownCodeBlock => self.markdown_fenced("```"),
+            MarkdownMathBlock => self.markdown_fenced("$$"),
+            MarkdownTable => self.markdown_table(),
+            MarkdownLink => self.markdown_link(false),
+            MarkdownImage => self.markdown_link(true),
+            MarkdownFocusMode => self.settings_toggle(crate::layout::Setting::MarkdownFocus),
+            MarkdownPastePlain => self.paste_plain(),
+            MarkdownTypewriterMode => {
+                self.settings_toggle(crate::layout::Setting::MarkdownTypewriter);
+            }
             DeleteLine => editing(self, Command::DeleteLine),
             DeleteAllLeft => editing(self, Command::DeleteToLineStart),
             IndentLines => editing(self, Command::IndentLines),
@@ -331,18 +377,19 @@ impl App {
             NextResult => self.next_result(false),
             PreviousResult => self.next_result(true),
 
-            RenameFile | DeleteFile | FindInFolder => {
+            RenameFile | DeleteFile | DeleteFilePermanently | FindInFolder => {
                 let Some(path) = self.shortcut_target() else {
                     return false;
                 };
                 match action {
                     RenameFile => self.start_rename(&path),
+                    FindInFolder => self.find_in_folder(&path),
                     // 文件树里删除选中的各项。
-                    DeleteFile if self.focus == Focus::Tree => {
-                        self.ask_delete_all(self.tree_targets());
+                    _ if self.focus == Focus::Tree => {
+                        let paths = self.tree_targets();
+                        self.ask_delete_all(paths, action == DeleteFilePermanently);
                     }
-                    DeleteFile => self.ask_delete(&path),
-                    _ => self.find_in_folder(&path),
+                    _ => self.ask_delete_all(vec![path], action == DeleteFilePermanently),
                 }
             }
             OpenSelected => self.open_selected(false),
@@ -404,6 +451,9 @@ impl App {
             }
             GitShowLog => self.git_show_log(),
             GitGoToRevision => self.open_go_to_revision(),
+            GitRewordCommit => self.reword_selected_commit(),
+            GitGoToChildCommit => self.go_to_log_relative(false),
+            GitGoToParentCommit => self.go_to_log_relative(true),
             GitShowOutput => self.show_git_output(),
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
@@ -412,15 +462,22 @@ impl App {
             GitNewWorktree => self.open_worktree_dialog(),
             // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
             GitSwitchBranch | GitNewBranch | GitStash | GitSync | GitFetch | GitPull
-            | GitPullRebase | GitPush | GitStageAll | GitUnstageAll | GitStageFile
+            | GitPullRebase | GitPullFrom | GitPush | GitPushTo | GitStageAll | GitUnstageAll
+            | GitStageFile
                 if self.git.root.is_none() =>
             {
                 self.flash(winc_i18n::t!("git-not-a-repository"));
+            }
+            // 拉取自…、推送到…按当前分支选目标：游离的 `HEAD` 上没有分支可用。
+            GitPullFrom | GitPushTo if !self.on_branch() => {
+                self.flash(winc_i18n::t!("git-not-on-branch"));
             }
             GitSwitchBranch => self.switch_branch_from_command(),
             GitNewBranch => self.open_branch_dialog(None, None),
             GitStash => self.open_stash_prompt(),
             GitSync => self.git_sync(),
+            GitPullFrom => self.open_pull_dialog(),
+            GitPushTo => self.push_to(),
             GitStageAll => self.stage_all(true),
             GitUnstageAll => self.stage_all(false),
             GitStageFile => self.stage_current_file(),
@@ -450,8 +507,10 @@ impl App {
             StopConfiguration => self.stop_current_config(),
             EditRunConfigurations => self.edit_run_configs(),
             ClearTerminal => self.clear_terminal(),
+            TerminalCopy => self.terminal_copy(false),
+            TerminalPaste => self.terminal_paste(),
             NewTerminal => self.new_terminal_tab(),
-            CloseTerminal => self.close_terminal_tab(self.terminal.active),
+            CloseTerminal => self.close_terminal_pane(),
             NextTerminal => self.cycle_terminal_tab(true),
             PreviousTerminal => self.cycle_terminal_tab(false),
             FocusTerminal1 | FocusTerminal2 | FocusTerminal3 | FocusTerminal4 | FocusTerminal5
@@ -487,22 +546,47 @@ impl App {
     pub(in crate::app) fn action_available(&self, action: Action) -> bool {
         match action {
             Action::RunConfiguration if self.editor.root().is_none() => return false,
+            // 编辑提交说明只在日志里可用；其余位置同一个键执行其他命令。
+            Action::GitRewordCommit if !self.log_active() => return false,
+            // 转到子提交、父提交只在日志的提交列表上可用：文件列表里 `←` 是返回。
+            Action::GitGoToChildCommit | Action::GitGoToParentCommit
+                if !self.log_list_focused() =>
+            {
+                return false;
+            }
             // 只有打开的目录还不是仓库时才能初始化。
             Action::GitInit if self.editor.root().is_none() || self.git.root.is_some() => {
                 return false;
             }
             Action::StopConfiguration if !self.run_config_running() => return false,
-            // 行内格式只在可编辑的 Markdown 预览中可用；其余位置同一个键执行其他命令。
-            Action::MarkdownBold
-            | Action::MarkdownItalic
-            | Action::MarkdownCode
-            | Action::MarkdownStrikethrough
-            | Action::MarkdownHighlight
-                if !self.markdown_live() =>
+            // 写作命令只在编辑 Markdown 时可用；其余位置同一个键执行其他命令。专注、打字机模式
+            // 不受 `markdown.shortcuts` 影响。
+            Action::MarkdownFocusMode | Action::MarkdownTypewriterMode => {
+                if !self.markdown_writing() {
+                    return false;
+                }
+            }
+            action if action.markdown_only() && !self.markdown_keys() => return false,
+            Action::EditRunConfigurations if self.editor.root().is_none() => return false,
+            // 窗格的命令只在有东西可拆、可换时可用，否则同一个键执行其他命令或交给终端。
+            Action::SplitRight | Action::SplitDown if self.editor.active.is_none() => {
+                return false;
+            }
+            Action::MoveToSplitRight | Action::MoveToSplitDown
+                if self.editor.active.is_none() || self.editor.tab_count() < 2 =>
             {
                 return false;
             }
-            Action::EditRunConfigurations if self.editor.root().is_none() => return false,
+            Action::Unsplit | Action::NextPane | Action::PreviousPane
+                if !self.editor.panes.is_split() =>
+            {
+                return false;
+            }
+            Action::NextTerminalPane | Action::PreviousTerminalPane
+                if self.terminal.tab().is_none_or(|t| t.pane_count() < 2) =>
+            {
+                return false;
+            }
             // 只有打开的目录在远端主机上时才有连接可断开。
             Action::RemoteDisconnect
                 if !self.editor.root().is_some_and(winc_backend::is_remote) =>

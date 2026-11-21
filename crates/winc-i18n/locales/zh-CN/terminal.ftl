@@ -14,6 +14,7 @@ terminal-module-disabled = 终端模块未启用
 
 terminal-helper-missing = 未找到终端组件，请重新安装 Winc
 terminal-helper-start-failed = 无法启动终端组件：{ $error }
+terminal-needs-conpty = 终端需要 Windows 10 1809 或更高版本
 terminal-helper-exited = 终端组件已退出
 terminal-helper-version-mismatch = 终端组件的版本与 Winc 不一致，请重新安装 Winc
 terminal-process-exited = 进程已退出（退出码 { $code }）
@@ -65,6 +66,13 @@ terminal-close-confirm = 要结束「{ $name }」吗？
 terminal-close-confirm-detail = 关闭此终端标签页将结束其中正在运行的程序。
 terminal-paste-confirm = 要将 { $count } 行文字粘贴到终端吗？
 terminal-paste-confirm-detail = 终端中的程序未开启括号粘贴，每一行将作为单独的命令立即执行。
+terminal-upload-started = 正在把剪贴板中的内容传到 { $host }…
+terminal-upload-failed = 无法把剪贴板中的内容传到远端主机：{ $error }
+terminal-upload-folder = 不能把文件夹粘贴到远端终端：{ $name }
+terminal-upload-too-large = { $size } 太大，没有传到远端主机（每次最多 { $limit }）
+terminal-upload-no-image = 剪贴板中的图片无法读取
+terminal-upload-no-folder = 无法在远端主机上创建存放目录
+terminal-upload-elsewhere = 已传到远端主机：{ $path }
 
 ## 运行配置。
 

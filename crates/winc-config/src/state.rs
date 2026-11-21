@@ -3,24 +3,25 @@
 //! 状态由程序维护，保存为 `state.json`。读取时容错：格式错误时返回空状态，类型不符或越界的项
 //! 被丢弃，其余仍然读取。
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::json::Json;
 
-/// 最近目录和各目录现场的最大数量（个）。
-///
-/// 取 10（经验值），作用于最近项目菜单、每个目录现场的保存数量和徽章颜色分配。
-pub const MAX_RECENT: usize = 10;
+/// 最近打开的目录的最大数量（个），全部列在「打开最近的项目」中。
+pub const MAX_RECENT: usize = 50;
+
+/// 最近打开的文件的最大数量（个），与最近目录相同，列在「打开最近的项目」的目录之后。
+pub const MAX_RECENT_FILES: usize = MAX_RECENT;
+
+/// 项目名菜单列出的最近目录数（个），与徽章颜色数相同：菜单中的目录颜色互不相同。
+pub const RECENT_IN_MENU: usize = BADGE_COLORS;
+
+/// 保存现场的目录数和退出时记下的其他窗口数的上限（个）。
+pub const MAX_SESSIONS: usize = 10;
 
 /// 项目徽章的颜色数量（种）。
-///
-/// 取 10（经验值）：最近列表里的目录各用一种颜色，互不相同，因此 [`MAX_RECENT`] 不能超过
-/// 该值。
 pub const BADGE_COLORS: usize = 10;
-const _: () = assert!(
-    MAX_RECENT <= BADGE_COLORS,
-    "最近列表中的每个目录必须使用不同的颜色"
-);
 
 /// 记住的提交信息的条数上限，与输入框的输入历史相同。
 pub const MAX_COMMIT_MESSAGES: usize = 50;
@@ -42,7 +43,9 @@ impl State {
 pub struct State {
     /// 最近打开的目录，最新的在前，不重复。
     pub recent: Vec<PathBuf>,
-    /// 每个目录上次的现场，最近的在前，每个目录一条，最多 [`MAX_RECENT`] 条。
+    /// 最近打开的文件，最新的在前，不重复；所有窗口共用。
+    pub recent_files: Vec<PathBuf>,
+    /// 每个目录上次的现场，最近的在前，每个目录一条，最多 [`MAX_SESSIONS`] 条。
     pub sessions: Vec<Session>,
     /// 上次退出时开着的目录；退出时没有打开目录则为 `None`，下次启动显示开始页。
     pub last: Option<PathBuf>,
@@ -65,6 +68,11 @@ pub struct State {
     pub commit_all_repositories: Option<bool>,
     /// Git 日志左侧是否显示分支面板；`None`（没有选过）时显示。所有窗口共用，下次启动沿用。
     pub log_branches: Option<bool>,
+    /// Git 日志详情里改动的文件是否按目录分组；`None`（没有选过）时同提交视图（`commit_tree`）。
+    /// 所有窗口共用，下次启动沿用。
+    pub log_files_tree: Option<bool>,
+    /// 从 Git 日志打开的差异左侧文件栏是否按目录分组，规则同 `log_files_tree`。
+    pub diff_files_tree: Option<bool>,
     /// Git 日志列表右边显示的列（`author`、`date`、`hash`）；`None`（没有选过）时显示作者和
     /// 日期。所有窗口共用，下次启动沿用。
     pub log_columns: Option<Vec<String>>,
@@ -86,10 +94,10 @@ pub struct State {
     pub markdown_toc_pinned: bool,
     /// 侧栏宽度（逻辑像素）；`None` 表示没有调整过。所有视图、窗口和仓库共用，下次启动沿用。
     pub panel_width: Option<f32>,
-    /// 能预览的文件（SVG、Markdown、表格）打开时的显示方式：`"split"`（分栏）或 `"preview"`
-    /// （只看预览）；`None` 表示源代码。记录用户最近一次在标签栏右端选择的方式，下次启动
-    /// 沿用。
-    pub preview_mode: Option<String>,
+    /// 各类能预览的文件打开时的显示方式：键为种类（`markdown`、`svg`、`table`），值为
+    /// `"split"`（分栏）或 `"preview"`（只看预览），没有记录的种类显示源代码。记录用户最近一次
+    /// 在标签栏右端为该类文件选择的方式，下次启动沿用。
+    pub preview_modes: BTreeMap<String, String>,
     /// 上次关闭的窗口的大小和位置；没有记录时为 `None`。
     pub window: Option<WindowFrame>,
     /// 上次运行的程序的版本号（如 `0.1.626`）；没有记录时为 `None`。启动时与当前版本比较，
@@ -101,10 +109,11 @@ pub struct State {
     /// 从磁盘映像等位置运行时不询问是否移到「应用程序」文件夹：用户曾选择不移动并勾选「不再
     /// 询问」。仅在 macOS 上使用。
     pub stay_outside_applications: bool,
-    /// 最近列表里每个目录的徽章颜色（值在 `0..BADGE_COLORS` 之内），互不相同。
+    /// 最近列表前 [`BADGE_COLORS`] 个目录的徽章颜色（值在 `0..BADGE_COLORS` 之内），互不相同；
+    /// 更早的目录按名字取色。
     ///
-    /// 目录第一次进入最近列表时，选一个其他目录未使用的颜色，之后保持不变，使项目名旁和最近
-    /// 项目菜单中始终显示同一种颜色。
+    /// 目录进入这一段时选一个其他目录未使用的颜色，之后保持不变，使项目名旁和最近项目菜单中
+    /// 始终显示同一种颜色。
     badges: Vec<(PathBuf, usize)>,
     /// 用户对项目自带格式化工具（位于 `node_modules/.bin` 等目录）的确认结果，最近的在前。
     ///
@@ -192,6 +201,10 @@ pub struct Session {
     pub readonly_all: bool,
     /// 侧栏是否收起；没有记录过的目录为 `false`，打开时显示文件树。
     pub sidebar_hidden: bool,
+    /// 开着这个目录的窗口关闭时的大小和位置；没有记录时用 [`State::window`]。
+    pub window: Option<WindowFrame>,
+    /// 编辑区拆分成的窗格；没有拆分时为 `None`。
+    pub panes: Option<SessionPanes>,
 }
 
 /// 现场里的终端面板：各标签的工作目录（按标签栏中的顺序）、正在看的标签、面板开着没有、大小。
@@ -265,6 +278,12 @@ impl State {
         for path in paths(root.get("recent")) {
             if !recent.contains(&path) && recent.len() < MAX_RECENT {
                 recent.push(path);
+            }
+        }
+        let mut recent_files = Vec::new();
+        for path in paths(root.get("recentFiles")) {
+            if !recent_files.contains(&path) && recent_files.len() < MAX_RECENT_FILES {
+                recent_files.push(path);
             }
         }
 
@@ -426,6 +445,8 @@ impl State {
                 readonly_all: s.get("readOnlyAll").and_then(Json::as_bool) == Some(true),
                 name: s.get("name").and_then(Json::as_str).map(str::to_owned),
                 sidebar_hidden: (s.get("sidebarHidden").and_then(Json::as_bool)).unwrap_or(false),
+                window: (s.get("window").and_then(Json::as_object)).and_then(window_frame),
+                panes: s.get("panes").and_then(read_panes),
             })
         };
 
@@ -489,6 +510,7 @@ impl State {
 
         let mut state = State {
             recent,
+            recent_files,
             badges,
             tool_choices,
             trusted_repos,
@@ -508,7 +530,7 @@ impl State {
             .filter_map(session)
         {
             if !state.sessions.iter().any(|old| old.folder == s.folder)
-                && state.sessions.len() < MAX_RECENT
+                && state.sessions.len() < MAX_SESSIONS
             {
                 state.sessions.push(s);
             }
@@ -530,6 +552,8 @@ impl State {
             .to_owned();
         state.commit_all_repositories = root.get("commitAllRepositories").and_then(Json::as_bool);
         state.log_branches = root.get("logBranches").and_then(Json::as_bool);
+        state.log_files_tree = root.get("logFilesTree").and_then(Json::as_bool);
+        state.diff_files_tree = root.get("diffFilesTree").and_then(Json::as_bool);
         state.log_columns = (root.get("logColumns").and_then(Json::as_array)).map(|columns| {
             let names = columns.iter().filter_map(Json::as_str);
             names.map(str::to_owned).collect()
@@ -568,13 +592,9 @@ impl State {
             .and_then(Json::as_str)
             .filter(|v| !v.is_empty())
             .map(str::to_owned);
-        state.preview_mode = root
-            .get("previewMode")
-            .and_then(Json::as_str)
-            .filter(|m| matches!(*m, "split" | "preview"))
-            .map(str::to_owned);
+        state.preview_modes = preview_modes(root.get("previewMode"));
         for path in paths(root.get("otherWindows")) {
-            if !state.others.contains(&path) && state.others.len() < MAX_RECENT {
+            if !state.others.contains(&path) && state.others.len() < MAX_SESSIONS {
                 state.others.push(path);
             }
         }
@@ -607,11 +627,11 @@ impl State {
 
     /// 记录一个目录的现场并移到最前面。
     ///
-    /// 同目录的旧记录被替换，超出 [`MAX_RECENT`] 的从末尾移除。
+    /// 同目录的旧记录被替换，超出 [`MAX_SESSIONS`] 的从末尾移除。
     pub fn set_session(&mut self, session: Session) {
         self.sessions.retain(|s| s.folder != session.folder);
         self.sessions.insert(0, session);
-        self.sessions.truncate(MAX_RECENT);
+        self.sessions.truncate(MAX_SESSIONS);
     }
 
     /// 把 Vim 模式的大写标记与两种历史加入状态文件的字段 `fields`，为空的不加。
@@ -632,7 +652,7 @@ impl State {
 
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
-    /// `last`、`previewMode` 没有值，`otherWindows`、`signOffRepos`、`toolChoices`、
+    /// `last` 没有值，`previewMode` 为空，`recentFiles`、`otherWindows`、`signOffRepos`、`toolChoices`、
     /// `trustedRepos`、`vimMarks`、`vimCommands`、`vimSearches` 为空，`commitTree`、
     /// `commitAllRepositories`、`pdfThumbnailsHidden`、`stayOutsideApplications` 为假时省略
     /// 对应的键。
@@ -643,6 +663,10 @@ impl State {
             Json::Array(self.recent.iter().map(path).collect()),
         )];
 
+        if !self.recent_files.is_empty() {
+            let files = self.recent_files.iter().map(path).collect();
+            fields.push(("recentFiles", Json::Array(files)));
+        }
         if let Some(last) = &self.last {
             fields.push(("last", path(last)));
         }
@@ -671,6 +695,12 @@ impl State {
         if let Some(shown) = self.log_branches {
             fields.push(("logBranches", Json::Bool(shown)));
         }
+        if let Some(tree) = self.log_files_tree {
+            fields.push(("logFilesTree", Json::Bool(tree)));
+        }
+        if let Some(tree) = self.diff_files_tree {
+            fields.push(("diffFilesTree", Json::Bool(tree)));
+        }
         if let Some(columns) = &self.log_columns {
             let names = columns.iter().map(|c| Json::String(c.clone()));
             fields.push(("logColumns", Json::Array(names.collect())));
@@ -697,8 +727,10 @@ impl State {
         if let Some(width) = self.panel_width {
             fields.push(("panelWidth", Json::Number(f64::from(width))));
         }
-        if let Some(mode) = &self.preview_mode {
-            fields.push(("previewMode", Json::String(mode.clone())));
+        if !self.preview_modes.is_empty() {
+            let modes = self.preview_modes.iter();
+            let modes = modes.map(|(kind, mode)| (kind.clone(), Json::String(mode.clone())));
+            fields.push(("previewMode", Json::Object(modes.collect())));
         }
         if let Some(version) = &self.version {
             fields.push(("version", Json::String(version.clone())));
@@ -707,17 +739,7 @@ impl State {
             fields.push(("setupPending", Json::Bool(true)));
         }
         if let Some(frame) = &self.window {
-            let mut window = vec![
-                ("width", Json::Number(frame.width)),
-                ("height", Json::Number(frame.height)),
-                ("scale", Json::Number(frame.scale)),
-                ("maximized", Json::Bool(frame.maximized)),
-            ];
-            if let Some((x, y)) = frame.position {
-                window.push(("x", Json::Number(x)));
-                window.push(("y", Json::Number(y)));
-            }
-            fields.push(("window", Json::object(window)));
+            fields.push(("window", window_json(frame)));
         }
 
         let badges = self.badges.iter().map(|(folder, color)| {
@@ -814,6 +836,12 @@ impl State {
             if session.sidebar_hidden {
                 items.push(("sidebarHidden", Json::Bool(true)));
             }
+            if let Some(frame) = &session.window {
+                items.push(("window", window_json(frame)));
+            }
+            if let Some(panes) = &session.panes {
+                items.push(("panes", panes_json(panes)));
+            }
             Json::object(items)
         });
         fields.push(("sessions", Json::Array(sessions.collect())));
@@ -895,6 +923,18 @@ impl State {
         self.assign_badges();
     }
 
+    /// 记录打开了一个文件：移到最前面，超出 [`MAX_RECENT_FILES`] 的从末尾移除。
+    pub fn remember_file(&mut self, file: &Path) {
+        self.recent_files.retain(|p| p != file);
+        self.recent_files.insert(0, file.to_path_buf());
+        self.recent_files.truncate(MAX_RECENT_FILES);
+    }
+
+    /// 从最近列表中移除文件 `file`（文件已不存在）。
+    pub fn forget_file(&mut self, file: &Path) {
+        self.recent_files.retain(|p| p != file);
+    }
+
     /// 从最近列表中移除目录 `folder`（目录已不存在，或用户选择移除）。
     ///
     /// 同时丢弃该目录的现场；该目录是上次退出时的目录时，清空 `last`。其徽章颜色被释放，
@@ -956,8 +996,8 @@ impl State {
         self.trusted_repos.truncate(MAX_TOOL_CHOICES);
     }
 
-    /// 返回目录 `folder` 的徽章颜色（值在 `0..BADGE_COLORS` 之内）；不在最近列表中时按名字
-    /// 计算一个。
+    /// 返回目录 `folder` 的徽章颜色（值在 `0..BADGE_COLORS` 之内）；不在最近列表的前
+    /// [`BADGE_COLORS`] 个中时按名字计算一个。
     pub fn badge_color(&self, folder: &Path) -> usize {
         self.badges
             .iter()
@@ -965,10 +1005,9 @@ impl State {
             .map_or_else(|| preferred_color(folder), |&(_, color)| color)
     }
 
-    /// 使最近列表里的目录各有一个互不相同的颜色。
+    /// 使最近列表前 [`BADGE_COLORS`] 个目录各有一个互不相同的颜色。
     ///
-    /// 已有的颜色保持不变，新来的目录从按名字算出的颜色起向后取第一个未占用的颜色；列表
-    /// 最多 [`MAX_RECENT`] 个，且 `MAX_RECENT <= BADGE_COLORS`，颜色一定够用。
+    /// 已有的颜色保持不变，新来的目录从按名字算出的颜色起向后取第一个未占用的颜色。
     fn assign_badges(&mut self) {
         // 先保留已有的颜色，再给新来的目录分配：新来的目录排在列表最前面，先分配会占用其他
         // 目录已有的颜色。
@@ -976,6 +1015,7 @@ impl State {
         let mut colors: Vec<Option<usize>> = self
             .recent
             .iter()
+            .take(BADGE_COLORS)
             .map(|folder| {
                 let color = self
                     .badges
@@ -1106,7 +1146,166 @@ fn vim_marks(
     marks
 }
 
+/// 编辑区拆分成的窗格：排列、各窗格的标签和前台的窗格。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionPanes {
+    /// 窗格的排列，叶子是 `panes` 中的序号。
+    pub tree: PaneNode,
+    /// 各窗格的标签。
+    pub panes: Vec<SessionPane>,
+    /// 前台的窗格（`panes` 中的序号）。
+    pub focused: usize,
+}
+
+/// 窗格排列的节点。
+#[derive(Debug, Clone, PartialEq)]
+pub enum PaneNode {
+    /// 一个窗格（`SessionPanes::panes` 中的序号）。
+    Pane(usize),
+    /// 拆成两半：`column` 为真时上下排，`share` 是前一半所占的比例。
+    Split {
+        /// 是否上下排。
+        column: bool,
+        /// 前一半所占的比例。
+        share: f32,
+        /// 前一半。
+        first: Box<PaneNode>,
+        /// 后一半。
+        second: Box<PaneNode>,
+    },
+}
+
+/// 一个窗格的标签：`Session::tabs` 中的序号，以及其中的当前标签。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SessionPane {
+    /// 标签，按标签栏中的顺序。
+    pub tabs: Vec<usize>,
+    /// 当前标签。
+    pub active: Option<usize>,
+}
+
+/// 读取 `"panes"`：格式不对时返回 `None`，只是不恢复拆分。
+fn read_panes(value: &Json) -> Option<SessionPanes> {
+    let object = value.as_object()?;
+    let index = |v: &Json| {
+        v.as_number()
+            .filter(|n| n.is_finite() && *n >= 0.0)
+            .map(|n| n as usize)
+    };
+    let panes = (object.get("panes")?.as_array()?.iter())
+        .map(|pane| {
+            let pane = pane.as_object()?;
+            let tabs = pane
+                .get("tabs")?
+                .as_array()?
+                .iter()
+                .filter_map(index)
+                .collect();
+            Some(SessionPane {
+                tabs,
+                active: pane.get("active").and_then(index),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let tree = read_node(object.get("tree")?, 0)?;
+    let focused = object.get("focused").and_then(index).unwrap_or(0);
+    Some(SessionPanes {
+        tree,
+        panes,
+        focused,
+    })
+}
+
+/// 读取窗格排列的一个节点；嵌套过深时放弃。
+fn read_node(value: &Json, depth: usize) -> Option<PaneNode> {
+    if depth > 32 {
+        return None;
+    }
+    let object = value.as_object()?;
+    if let Some(pane) = object.get("pane") {
+        let at = pane.as_number().filter(|n| n.is_finite() && *n >= 0.0)?;
+        return Some(PaneNode::Pane(at as usize));
+    }
+    let share = object.get("share")?.as_number()?.clamp(0.05, 0.95) as f32;
+    Some(PaneNode::Split {
+        column: object.get("split")?.as_str()? == "column",
+        share,
+        first: Box::new(read_node(object.get("first")?, depth + 1)?),
+        second: Box::new(read_node(object.get("second")?, depth + 1)?),
+    })
+}
+
+/// 返回写进 `state.json` 的窗格，格式见 [`read_panes`]。
+fn panes_json(panes: &SessionPanes) -> Json {
+    let pane = |p: &SessionPane| {
+        let tabs = p.tabs.iter().map(|&t| Json::Number(t as f64)).collect();
+        let mut items = vec![("tabs", Json::Array(tabs))];
+        if let Some(active) = p.active {
+            items.push(("active", Json::Number(active as f64)));
+        }
+        Json::object(items)
+    };
+    Json::object(vec![
+        ("tree", node_json(&panes.tree)),
+        ("panes", Json::Array(panes.panes.iter().map(pane).collect())),
+        ("focused", Json::Number(panes.focused as f64)),
+    ])
+}
+
+fn node_json(node: &PaneNode) -> Json {
+    match node {
+        PaneNode::Pane(at) => Json::object(vec![("pane", Json::Number(*at as f64))]),
+        PaneNode::Split {
+            column,
+            share,
+            first,
+            second,
+        } => Json::object(vec![
+            (
+                "split",
+                Json::String(if *column { "column" } else { "row" }.into()),
+            ),
+            ("share", Json::Number(f64::from(*share))),
+            ("first", node_json(first)),
+            ("second", node_json(second)),
+        ]),
+    }
+}
+
+/// 返回写进 `state.json` 的窗口大小和位置，格式见 [`window_frame`]。
+fn window_json(frame: &WindowFrame) -> Json {
+    let mut window = vec![
+        ("width", Json::Number(frame.width)),
+        ("height", Json::Number(frame.height)),
+        ("scale", Json::Number(frame.scale)),
+        ("maximized", Json::Bool(frame.maximized)),
+    ];
+    if let Some((x, y)) = frame.position {
+        window.push(("x", Json::Number(x)));
+        window.push(("y", Json::Number(y)));
+    }
+    Json::object(window)
+}
+
 /// 从 `state.json` 的 `window` 一节读出窗口的大小和位置；缺项或者数值不合理时为 `None`。
+/// 读取 `previewMode`：对象按种类取各自的方式，字符串用于全部种类。
+fn preview_modes(json: Option<&Json>) -> BTreeMap<String, String> {
+    const KINDS: [&str; 3] = ["markdown", "svg", "table"];
+    let valid = |mode: &&str| matches!(*mode, "split" | "preview");
+    match json {
+        Some(Json::Object(modes)) => (modes.iter())
+            .filter(|(kind, _)| KINDS.contains(&kind.as_str()))
+            .filter_map(|(kind, mode)| {
+                Some((kind.clone(), mode.as_str().filter(valid)?.to_owned()))
+            })
+            .collect(),
+        Some(Json::String(mode)) if valid(&mode.as_str()) => {
+            KINDS.map(|kind| (kind.to_owned(), mode.clone())).into()
+        }
+        _ => BTreeMap::new(),
+    }
+}
+
 fn window_frame(json: &std::collections::BTreeMap<String, Json>) -> Option<WindowFrame> {
     let number = |key: &str| json.get(key).and_then(Json::as_number);
     let (width, height, scale) = (number("width")?, number("height")?, number("scale")?);

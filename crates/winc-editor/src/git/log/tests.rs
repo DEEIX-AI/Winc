@@ -1,4 +1,5 @@
-//! 日志标签数据的测试：重取时保留旧提交、同一时刻只有一个请求、批量递增、详情缓存的上限。
+//! 日志标签数据的测试：重取时保留旧提交、换仓库时清空、同一时刻只有一个请求、批量递增、
+//! 详情缓存的上限。
 
 use super::*;
 
@@ -60,6 +61,37 @@ fn a_reload_keeps_the_old_commits_until_the_first_batch_arrives() {
     let mut empty = LogView::new();
     empty.reset();
     assert!(!empty.stale);
+}
+
+#[test]
+fn another_repository_starts_over_and_drops_the_running_request() {
+    let mut view = LogView::new();
+    load(&mut view, vec![commit("b", &["a"]), commit("a", &[])]);
+    view.selected = Some(0);
+    view.details = Some(Details {
+        oid: "b".into(),
+        ..Details::default()
+    });
+    view.query.text = "fix".into();
+    view.compare = Some(Compare::default());
+    view.reset();
+    let running = view.begin().unwrap();
+    let request = view.compare_request;
+
+    view.restart(Some("/other".into()), vec!["main".into()]);
+    assert!(view.commits.is_empty() && !view.stale);
+    assert!(view.selected.is_none() && view.details.is_none() && view.compare.is_none());
+    assert_eq!(view.root.as_deref(), Some(std::path::Path::new("/other")));
+    assert_eq!(view.query.branches, ["main"]);
+    assert!(view.query.text.is_empty());
+    assert_ne!(view.compare_request, request);
+
+    // 旧仓库的那一批交回来时作废，按新仓库再取一次。
+    assert_eq!(view.begin(), None);
+    let late = vec![commit("old", &[])];
+    assert_eq!(view.finish(running.generation, Ok(late)), Arrival::Refetch);
+    assert!(view.commits.is_empty());
+    assert!(view.begin().is_some());
 }
 
 #[test]
@@ -167,4 +199,29 @@ fn the_head_row_is_noted_as_commits_arrive() {
     assert_eq!(view.head_row(), Some(1));
     load(&mut view, vec![with("d", &["c"], vec![Ref::Detached])]);
     assert_eq!(view.head_row(), Some(0));
+}
+
+/// 提交是否在 `HEAD` 上按父提交判断；列表连不起来时说不准。
+#[test]
+fn commits_on_head_follow_the_parents() {
+    // main: a ← b ← d（HEAD），side: b ← c。
+    let mut view = LogView::new();
+    let mut head = commit("d", &["b"]);
+    head.refs.push(Ref::Head("main".into()));
+    view.commits = vec![
+        head,
+        commit("c", &["b"]),
+        commit("b", &["a"]),
+        commit("a", &[]),
+    ];
+    assert_eq!(view.on_head("d"), Some(true));
+    assert_eq!(view.on_head("b"), Some(true));
+    assert_eq!(view.on_head("a"), Some(true));
+    assert_eq!(view.on_head("c"), Some(false));
+    assert_eq!(view.on_head("x"), None);
+    view.query.authors.push("t".into());
+    assert_eq!(view.on_head("c"), None);
+    view.query.authors.clear();
+    view.commits[0].refs.clear();
+    assert_eq!(view.on_head("b"), None);
 }

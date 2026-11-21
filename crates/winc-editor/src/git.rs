@@ -11,14 +11,12 @@ pub mod merge;
 mod commit;
 mod output;
 mod parse;
-mod proxy;
 mod rebase;
 mod remote;
 mod sync;
 
 pub use commit::RecentHistory;
 pub use output::{on_output, output_since, output_snapshot, output_text};
-pub use proxy::follow_system_proxy;
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
 pub use remote::{Remote, TagTarget, repository_dir_name};
 pub use sync::{Carried, MINIMUM_VERSION, Outgoing, Synced};
@@ -47,7 +45,7 @@ use crate::tools::shell::process::{self, Cancel, RunError};
 /// `git status` 最长的运行时间（30 秒）。
 ///
 /// 几十万个文件的仓库第一次运行需要数秒；超过该时间视为 `git` 失去响应。
-const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// 日志中日期的格式参数。
 ///
 /// 本机时区的换算由 `git` 完成（`format-local`），不需要读取时区数据库。
@@ -925,9 +923,9 @@ impl Git {
         self.ask_through(root, &mut command);
         // 本机的 `git`（不是远端主机和 WSL 里的）在联网的命令上跟随系统的代理设置；暂存、提交
         // 这些不联网的命令不读系统设置，不为它们多跑一个进程。
-        let online = proxy::online(args.iter().map(AsRef::as_ref));
+        let online = online(args.iter().map(AsRef::as_ref));
         if online && !winc_backend::is_remote(root) && crate::wsl::locate_here(root).is_none() {
-            proxy::apply(&mut command);
+            crate::proxy::apply(&mut command);
         }
         prepare(&mut command);
         command.args(args).stderr(Stdio::piped());
@@ -1015,7 +1013,8 @@ impl Git {
         }
     }
 
-    /// 推送当前分支。
+    /// 推送当前分支：有上游时推到上游，上游与当前分支不同名时写明推到上游的分支（`git` 默认
+    /// 拒绝推到不同名的上游）；推送去另一个远程或设置了 `push.default` 时按其设置。
     ///
     /// 没有上游时发布到 [`Git::publish_target`] 选出的远程（见 [`Git::publish`]）。
     ///
@@ -1025,7 +1024,9 @@ impl Git {
     pub fn push(&self, root: &Path, has_upstream: bool) -> Result<String, String> {
         self.require_trust(root)?;
         if has_upstream {
-            return self.operate(root, &["push"]);
+            let mut args = vec!["push".to_owned()];
+            args.extend(self.push_target(root, &Cancel::default()));
+            return self.operate(root, &args);
         }
         let remote = self.publish_target(root)?;
         self.publish(root, &remote)
@@ -1049,8 +1050,8 @@ impl Git {
         )
     }
 
-    /// 把当前分支推送到远程 `remote` 的分支 `branch`；`tags` 为真时一并推送全部标签，`track`
-    /// 为真时把它设为上游。
+    /// 把 `head`（`HEAD` 或一个提交号）推送到远程 `remote` 的分支 `branch`；`tags` 为真时一并
+    /// 推送全部标签，`track` 为真时把它设为上游。
     ///
     /// # Errors
     ///
@@ -1058,8 +1059,7 @@ impl Git {
     pub fn push_to(
         &self,
         root: &Path,
-        remote: &str,
-        branch: &str,
+        (head, remote, branch): (&str, &str, &str),
         tags: bool,
         track: bool,
     ) -> Result<String, String> {
@@ -1067,7 +1067,7 @@ impl Git {
         if remote.starts_with('-') || branch.starts_with('-') {
             return Err(winc_i18n::t!("git-push-no-remote").to_owned());
         }
-        let spec = format!("HEAD:refs/heads/{branch}");
+        let spec = format!("{head}:refs/heads/{branch}");
         let mut args = vec!["push"];
         if tags {
             args.push("--tags");
@@ -1098,11 +1098,7 @@ impl Git {
     /// 仍然留着 `branch.<名字>.remote`。
     fn preferred_remote(&self, root: &Path) -> Vec<String> {
         let cancel = Cancel::default();
-        let mut command = self.command(root);
-        command.args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
-        let branch = self.run(&mut command, STATUS_TIMEOUT, &cancel);
-        let branch = branch.map(|out| String::from_utf8_lossy(&out).trim().to_owned());
-        let branch = branch.unwrap_or_default();
+        let branch = self.current_branch(root, &cancel).unwrap_or_default();
         [
             format!("branch.{branch}.pushRemote"),
             "remote.pushDefault".to_owned(),
@@ -1123,6 +1119,9 @@ impl Git {
             .env("GIT_TERMINAL_PROMPT", "0")
             // 不打开编辑器：`rebase --continue` 等操作会打开它修改提交信息，这里沿用原来的信息。
             .env("GIT_EDITOR", ":")
+            // 待办列表也不打开编辑器（`sequence.editor` 优先于 `GIT_EDITOR`）：`pull.rebase` 设为
+            // `interactive` 时按 `git` 生成的待办执行；交互式变基另行指定。
+            .env("GIT_SEQUENCE_EDITOR", ":")
             // 不验证签名：验证需要运行 `gpg.program`，仓库配置不可信时它可以是任意命令；验证结果
             // 还会混入 `log`、`show`、`stash list` 的输出，破坏解析。
             .args(["-c", "log.showSignature=false"]);
@@ -1449,6 +1448,26 @@ pub fn scan_repositories(dir: &Path, depth: usize, cancel: &Cancel) -> Vec<PathB
     }
     found.sort();
     found
+}
+
+/// 会访问网络、需要代理的 `git` 子命令。
+const ONLINE: [&str; 6] = ["fetch", "pull", "push", "clone", "ls-remote", "remote"];
+
+/// `git args` 的子命令是否会访问网络（见 [`ONLINE`]）：跳过前面的 `-c 键=值` 和其他选项，看第一个
+/// 子命令。
+fn online<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> bool {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "-c" {
+            args.next();
+            continue;
+        }
+        if arg.to_string_lossy().starts_with('-') {
+            continue;
+        }
+        return ONLINE.iter().any(|command| arg == *command);
+    }
+    false
 }
 
 /// 选出发布分支（第一次推送）的远程：先按 `preferred`（当前分支和仓库配置的推送目标，优先的在前），

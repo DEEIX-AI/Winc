@@ -10,11 +10,34 @@ use winc_editor::{Workspace, display_name};
 use winc_i18n::t;
 
 use super::*;
+use crate::app::workspace::copying::copy_outcome;
+use crate::winc::RemoteCopy;
 
 impl App {
     /// 返回剪贴板中的文件（从系统文件管理器或文件树中复制的）；没有时为空。
-    pub(super) fn clipboard_files(&mut self) -> Vec<PathBuf> {
+    ///
+    /// 文件树里复制的远端文件不在系统剪贴板的文件列表中（见 [`Self::copy_entries`]）：剪贴板里
+    /// 还是复制时写入的那段文字时取这些文件，先于系统剪贴板；文字已被替换时不再取，读系统
+    /// 剪贴板。顺序不能反过来：复制远端文件时系统剪贴板里可能正好留着更早复制的本机文件。
+    pub(in crate::app) fn clipboard_files(&mut self) -> Vec<PathBuf> {
+        let copied = self.link.shared.remote_copy.borrow().clone();
+        if let Some(copied) = copied {
+            if self
+                .clipboard
+                .text()
+                .is_some_and(|text| copied.holds(&text))
+            {
+                return copied.paths;
+            }
+            *self.link.shared.remote_copy.borrow_mut() = None;
+        }
         self.clipboard.files()
+    }
+
+    /// 忘掉文件树里复制的远端文件：剪贴板里的文字是 Winc 刚写入的别的内容（即使碰巧与复制时
+    /// 写入的路径相同，例如「复制路径」），不再当作那些文件。
+    pub(in crate::app) fn forget_remote_copy(&mut self) {
+        *self.link.shared.remote_copy.borrow_mut() = None;
     }
 
     /// 返回剪贴板中的图片，编码为 PNG；没有时返回 `None`。
@@ -28,9 +51,11 @@ impl App {
     }
 
     /// 剪贴板中是否有能粘贴到文件树中的内容（文件、文本或图片）。
+    ///
+    /// 文件树里复制的远端文件在剪贴板中是文字，按文字计。
     pub(in crate::app) fn can_paste_into_tree(&mut self) -> bool {
-        !self.clipboard_files().is_empty()
-            || self.clipboard_text().is_some_and(|text| !text.is_empty())
+        self.clipboard_text().is_some_and(|text| !text.is_empty())
+            || !self.clipboard.files().is_empty()
             || self.clipboard_has_image()
     }
 
@@ -40,25 +65,52 @@ impl App {
     }
 
     /// 同 [`Self::copy_entry`]，一次放入 `paths` 里的各项（文件树里多选时）。
-    pub(in crate::app) fn copy_entries(&mut self, paths: &[PathBuf]) {
+    ///
+    /// 本机的文件放进系统剪贴板的文件列表。其中有远端的文件时，系统剪贴板放不下（见
+    /// [`Clipboard::set_files`](super::clipboard::Clipboard::set_files)）：改为写入它们在远端
+    /// 主机上的路径（每行一个），文件本身记在各窗口共用的 [`RemoteCopy`] 中，粘贴到文件树、
+    /// 编辑区时取用（见 [`Self::clipboard_files`]），粘贴到终端时得到路径。写不进剪贴板时说明
+    /// 原因，不提示已复制；返回是否放进了剪贴板。
+    pub(in crate::app) fn copy_entries(&mut self, paths: &[PathBuf]) -> bool {
         if paths.is_empty() {
-            return;
+            return false;
         }
+        let (written, copy) = if paths.iter().any(|path| winc_backend::is_remote(path)) {
+            let lines: Vec<_> = paths
+                .iter()
+                .map(|p| winc_backend::native_lossy(p))
+                .collect();
+            let text = lines.join("\n");
+            let written = self.clipboard.set_text(text.clone(), false);
+            let copy = RemoteCopy {
+                paths: paths.to_vec(),
+                text,
+            };
+            (written, Some(copy))
+        } else {
+            (self.clipboard.set_files(paths), None)
+        };
+        if !written {
+            self.notify(NoticeKind::Error, t!("editor-paste-clipboard-unavailable"));
+            return false;
+        }
+        // 写入成功后才替换：写不进时剪贴板里还是上一次的内容，上一次的剪切和远端文件仍然有效。
+        *self.link.shared.remote_copy.borrow_mut() = copy;
         self.link.shared.cut_files.borrow_mut().clear();
-        self.clipboard.set_files(paths);
         self.flash(match paths {
             [path] => t!("editor-paste-copied-item", name = display_name(path)),
             many => t!("editor-paste-copied-items", count = many.len()),
         });
+        true
     }
 
     /// 剪切文件树里的 `paths`：和复制一样放到剪贴板中，再记下这些路径；之后粘贴到文件树时把
-    /// 它们移过去，而不是复制（粘贴到系统文件管理器、编辑区时仍是复制和插入）。
+    /// 它们移过去，而不是复制（粘贴到系统文件管理器、编辑区时仍是复制和插入）。没能放进剪贴板
+    /// 时不记下。
     pub(in crate::app) fn cut_entries(&mut self, paths: &[PathBuf]) {
-        if paths.is_empty() {
+        if !self.copy_entries(paths) {
             return;
         }
-        self.copy_entries(paths);
         *self.link.shared.cut_files.borrow_mut() = paths.to_vec();
         self.flash(match paths {
             [path] => t!("editor-paste-cut-item", name = display_name(path)),
@@ -66,13 +118,21 @@ impl App {
         });
     }
 
-    /// 粘贴到编辑区：剪贴板中有文件时粘贴文件，其次是文本，最后是图片。
+    /// 粘贴到编辑区：依次尝试剪贴板中的文件、文本和图片。
     pub(super) fn paste_into_editor(&mut self) {
         let files = self.clipboard_files();
         if !files.is_empty() {
             self.paste_files(&files);
         } else if let Some(text) = self.clipboard_text() {
-            self.paste_text(text);
+            // 网址和表格单元格的改写（`markdown_paste`）优先于 HTML 的转换。
+            let markdown = match self.markdown_paste(&text) {
+                Some(markdown) => Some(markdown),
+                None => self.markdown_html_paste(),
+            };
+            match markdown {
+                Some(markdown) => self.run(Command::Insert(markdown)),
+                None => self.paste_text(text),
+            }
         } else if let Some(png) = self.clipboard_png() {
             self.paste_image(&png);
         }
@@ -108,48 +168,63 @@ impl App {
 
     /// 把文件 `files` 粘贴到当前文档中。
     ///
-    /// Markdown 文档中写成链接（图片写成 `![…](…)`），项目之外的图片先复制到文档旁边；其他
-    /// 文档中写成文件的绝对路径，每行一个。
+    /// Markdown 文档中写成链接（图片写成 `![…](…)`），项目之外的图片先复制到图片目录；其他文档
+    /// 中写成文件的绝对路径，每行一个。
     fn paste_files(&mut self, files: &[PathBuf]) {
         if !self.can_paste_into_document() {
             return;
         }
         let Some(doc_dir) = self.markdown_dir() else {
-            let paths: Vec<_> = files.iter().map(|p| p.to_string_lossy()).collect();
+            // 远端的文件写成那台主机上的路径，不写虚拟路径。
+            let paths: Vec<_> = files
+                .iter()
+                .map(|p| winc_backend::native_lossy(p))
+                .collect();
             self.run(Command::Paste(paths.join("\n")));
             return;
         };
 
         let root = self.editor.root().map(Path::to_path_buf);
-        let targets = match &doc_dir {
-            Some(dir) => match paste::bring_images(dir, root.as_deref(), files) {
-                Ok(targets) => targets,
-                Err(CopyError { path, error }) => {
-                    self.notify(t!(
-                        "editor-paste-copy-failed",
-                        name = display_name(&path),
-                        error = error.to_string()
-                    ));
-                    return;
+        let folder = self.markdown_image_folder();
+        let targets = match (&doc_dir, &folder) {
+            (Some(dir), Some(folder)) => {
+                match paste::bring_images(dir, folder, root.as_deref(), files) {
+                    Ok(targets) => targets,
+                    Err(CopyError { path, error, done }) => {
+                        self.notify(
+                            NoticeKind::Error,
+                            t!(
+                                "editor-paste-copy-failed",
+                                name = display_name(&path),
+                                error = error.to_string()
+                            ),
+                        );
+                        // 失败之前已复制的图片保留在磁盘上，同样刷新显示。
+                        self.files_created(
+                            done.into_iter().filter(|t| !files.contains(t)).collect(),
+                        );
+                        return;
+                    }
                 }
-            },
-            None => files.to_vec(),
+            }
+            _ => files.to_vec(),
         };
-        let copied: Vec<PathBuf> = targets
+        let mut copied: Vec<PathBuf> = targets
             .iter()
             .filter(|t| !files.contains(t))
             .cloned()
             .collect();
+        // 图片目录可能是新建的，一并刷新。
+        copied.extend(folder.filter(|f| !copied.is_empty() && doc_dir.as_ref() != Some(f)));
         let snippet = paste::markdown_links(doc_dir.as_deref(), root.as_deref(), &targets);
         self.insert_snippet(snippet);
         self.files_created(copied);
     }
 
-    /// 把剪贴板中的图片 `png` 粘贴到当前文档：存到 Markdown 文档所在的目录中，插入
-    /// `![image](image.png)` 并选中替代文字。
+    /// 把剪贴板中的图片 `png` 存入图片目录，在当前文档中插入 `![主名](…)` 并选中替代文字。
     ///
     /// 其他文档、尚未保存的 Markdown 文档中不能粘贴图片，提示原因。
-    fn paste_image(&mut self, png: &[u8]) {
+    pub(in crate::app) fn paste_image(&mut self, png: &[u8]) {
         let dir = match self.markdown_dir() {
             Some(Some(dir)) => dir,
             Some(None) => {
@@ -165,16 +240,34 @@ impl App {
             return;
         }
 
-        match paste::save_image(&dir, png) {
+        let Some(doc) = self.editor.active().and_then(|d| d.path.clone()) else {
+            return;
+        };
+        let folder = paste::image_folder(&doc, self.config.markdown_image_folder.as_deref());
+        let setting = self.config.markdown_image_name.as_deref();
+        let name = paste::image_name(&doc, setting, local_stamp);
+        match paste::save_image(&folder, &name, png) {
             Ok(path) => {
                 let root = self.editor.root().map(Path::to_path_buf);
                 let snippet =
                     paste::markdown_links(Some(&dir), root.as_deref(), std::slice::from_ref(&path));
                 self.insert_snippet(snippet);
-                self.files_created(vec![path]);
+                let mut created = vec![path];
+                created.extend((folder != dir).then_some(folder));
+                self.files_created(created);
             }
-            Err(e) => self.notify(t!("editor-paste-image-save-failed", error = e.to_string())),
+            Err(e) => self.notify(
+                NoticeKind::Error,
+                t!("editor-paste-image-save-failed", error = e.to_string()),
+            ),
         }
+    }
+
+    /// 返回当前文档的图片目录（`markdown.imageFolder`）；文档尚未保存时为 `None`。
+    fn markdown_image_folder(&self) -> Option<PathBuf> {
+        let doc = self.editor.active()?.path.as_deref()?;
+        let setting = self.config.markdown_image_folder.as_deref();
+        Some(paste::image_folder(doc, setting))
     }
 
     /// 在光标处插入 `snippet`，并选中其中的占位文字（有时）。
@@ -211,30 +304,37 @@ impl App {
         };
 
         let files = self.clipboard_files();
-        // 剪贴板里还是剪切的那些文件：移过去，只移一次。
+        // 剪贴板里还是剪切的那些文件：移过去，只移一次。不同主机之间不能移动（只能在同一个连接
+        // 上改名），改为复制，原处的保留。
         if !files.is_empty() && files == *self.link.shared.cut_files.borrow() {
             self.link.shared.cut_files.borrow_mut().clear();
-            let moving: Vec<PathBuf> = files
-                .into_iter()
-                .filter(|p| p.parent() != Some(dir.as_path()))
-                .collect();
-            self.move_entries(&moving, &dir);
-            return;
+            let host = |path: &Path| winc_backend::locate(path).map(|at| at.target);
+            if files.iter().all(|file| host(file) == host(&dir)) {
+                let moving: Vec<PathBuf> = files
+                    .into_iter()
+                    .filter(|p| p.parent() != Some(dir.as_path()))
+                    .collect();
+                self.move_entries(&moving, &dir);
+                return;
+            }
+            self.notify(NoticeKind::Info, t!("editor-paste-cut-copied-across-hosts"));
         }
         if !files.is_empty() {
             let remote = winc_backend::is_remote(&dir)
                 || files.iter().any(|path| winc_backend::is_remote(path));
             let copy = move |copying: &winc_editor::Copying| {
-                paste::copy_into(&files, &dir, copying).map_err(|CopyError { path, error }| {
+                let copied = paste::copy_into(&files, &dir, copying);
+                copy_outcome(copied, copying, |path, error| {
                     t!(
                         "editor-paste-failed",
-                        name = display_name(&path),
+                        name = display_name(path),
                         error = error.to_string()
                     )
                 })
             };
-            if let Some(result) = self.spawn_copy(remote, copy, UserEvent::Pasted) {
-                self.pasted_into_tree(result);
+            let done = |(done, failure), copying| UserEvent::Pasted(done, failure, copying);
+            if let Some((done, failure)) = self.spawn_copy(remote, false, copy, done) {
+                self.pasted_into_tree(done, failure);
             }
             return;
         }
@@ -250,13 +350,16 @@ impl App {
         }
     }
 
-    /// 粘贴到文件树完成：刷新文件树，选中最后粘贴的一项；失败时提示原因（失败之前粘贴好的项
-    /// 保留，同样显示出来）。
-    pub(in crate::app) fn pasted_into_tree(&mut self, result: Result<Vec<PathBuf>, String>) {
-        let pasted = result.unwrap_or_else(|message| {
-            self.notify(message);
-            Vec::new()
-        });
+    /// 粘贴到文件树完成：刷新文件树，选中最后粘贴的一项 `pasted`；失败时提示原因 `failure`
+    /// （失败之前粘贴好的项保留，同样显示出来）。
+    pub(in crate::app) fn pasted_into_tree(
+        &mut self,
+        pasted: Vec<PathBuf>,
+        failure: Option<String>,
+    ) {
+        if let Some(message) = failure {
+            self.notify(NoticeKind::Error, message);
+        }
         let Some(ws) = self.editor.workspace.as_mut() else {
             return;
         };
@@ -271,4 +374,10 @@ impl App {
         self.relayout();
         self.request_redraw();
     }
+}
+
+/// 返回当前本地时间，格式为 `20261119-153012`，用于图片名中的 `${date}`。
+fn local_stamp() -> String {
+    let (y, mo, d, h, mi, sec) = crate::system::local_time();
+    format!("{y:04}{mo:02}{d:02}-{h:02}{mi:02}{sec:02}")
 }

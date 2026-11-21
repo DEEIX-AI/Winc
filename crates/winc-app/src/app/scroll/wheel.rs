@@ -94,6 +94,8 @@ pub struct WheelGlide {
     pub(crate) origin: (f32, f32),
     /// 是否按住 `Shift`：竖直滚动按横向处理。
     pub(crate) shift: bool,
+    /// 开始时的前台窗格：在其他窗格上滚动时临时换到前台的那个。
+    pub(crate) pane: winc_editor::panes::PaneId,
 }
 
 impl WheelGlide {
@@ -270,8 +272,9 @@ impl App {
     /// 返回本格鼠标滚轮滚动的过渡时长（见 [`wheel_glide_length`]），并记录本格的时刻；不使用
     /// 过渡时返回 `None`，直接滚动。
     ///
-    /// 只有 macOS 上存在显示链接时使用过渡。Windows 上每格立即滚动；其他系统上按计时器绘制，
-    /// 帧与屏幕刷新不同步，过渡只增加绘制量而不会更平滑。
+    /// 只有 macOS 上存在显示链接、并且开着平滑滚动（`editor.smoothScrolling`）时使用过渡。
+    /// Windows 上每格立即滚动；其他系统上按计时器绘制，帧与屏幕刷新不同步，过渡只增加绘制量
+    /// 而不会更平滑。
     fn next_wheel_glide(&mut self) -> Option<Duration> {
         let now = Instant::now();
         let interval = self
@@ -284,19 +287,25 @@ impl App {
         let follows_refresh = self.frame.display_link.is_some();
         #[cfg(not(target_os = "macos"))]
         let follows_refresh = false;
-        follows_refresh.then(|| wheel_glide_length(interval))
+        (follows_refresh && self.smooth_scrolling()).then(|| wheel_glide_length(interval))
+    }
+
+    /// 鼠标滚轮是否平滑滚动（`editor.smoothScrolling`，没写时为是）。
+    pub(in crate::app) fn smooth_scrolling(&self) -> bool {
+        self.config.smooth_scrolling != Some(false)
     }
 
     /// 在鼠标所在的区域追加滚动距离 `delta`（逻辑像素），按 `clock` 重新计时。
     ///
     /// 进行中的过渡滚动同一区域时，未完成的距离计入新的总距离；滚动其他区域时，未完成的距离
-    /// 立即作用于原来的区域。
+    /// 立即作用于原来的区域，原来的区域在另一个窗格里时丢掉。
     pub(in crate::app) fn start_wheel_glide(&mut self, delta: (f32, f32), clock: Clock) {
         let origin = self.pointer.mouse;
         let target = self.scroll_target_at(origin.0, origin.1);
         let shift = self.wheel_shift(delta.0, true);
         let mut rest = (0.0, 0.0);
-        if let Some(glide) = self.scroll.wheel.glide.take() {
+        let pane = self.editor.panes.focused;
+        if let Some(glide) = self.scroll.wheel.glide.take().filter(|g| g.pane == pane) {
             if glide.target == target && glide.shift == shift {
                 rest = glide.rest();
             } else {
@@ -310,6 +319,7 @@ impl App {
             target,
             origin,
             shift,
+            pane,
         });
         self.request_redraw();
     }
@@ -318,6 +328,24 @@ impl App {
     ///
     /// 记下的区域已不可滚动时（切换了标签页、关闭了面板）丢弃余下的距离。
     pub(in crate::app) fn advance_wheel_glide(&mut self) {
+        let Some(pane) = self.scroll.wheel.glide.as_ref().map(|g| g.pane) else {
+            return;
+        };
+        if pane != self.editor.panes.focused {
+            // 在其他窗格上开始的：换到那个窗格里接着滚。
+            let known = self.panes.rects.iter().any(|r| r.id == pane);
+            if known {
+                self.with_pane(pane, Self::step_wheel_glide);
+            } else {
+                self.scroll.wheel.glide = None;
+            }
+            return;
+        }
+        self.step_wheel_glide();
+    }
+
+    /// 按时钟应用本帧的一段滚动距离。
+    fn step_wheel_glide(&mut self) {
         let Some(glide) = &mut self.scroll.wheel.glide else {
             return;
         };

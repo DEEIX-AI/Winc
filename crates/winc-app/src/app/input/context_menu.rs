@@ -20,6 +20,7 @@ use crate::icons;
 use crate::keymap::{self, Action, Context, Stroke};
 use crate::layout::hit;
 
+mod labels;
 mod menus;
 mod popup;
 mod present;
@@ -132,10 +133,30 @@ pub enum MenuCommand {
     /// 关闭所有没有未保存修改的标签。
     CloseSaved,
     CloseAll,
+    /// 在右边、下边拆出新窗格打开这个标签。
+    SplitRight,
+    SplitDown,
+    /// 把这个标签移到右边、下边新拆出的窗格。
+    MoveToSplitRight,
+    MoveToSplitDown,
     /// 把标签设为只读（`true`）或恢复为可以编辑。
     ReadOnly(bool),
     /// 把窗口里的全部标签设为只读（`true`）或恢复。
     ReadOnlyAll(bool),
+    /// 「快捷键」页：按新键取代命令原有的快捷键。
+    ShortcutChange,
+    /// 「快捷键」页：给命令再加一个快捷键。
+    ShortcutAdd,
+    /// 「快捷键」页：移除命令的全部快捷键。
+    ShortcutRemove,
+    /// 「快捷键」页：恢复命令在键位方案中的快捷键。
+    ShortcutReset,
+    /// 「快捷键」页：改用一个键位方案。
+    KeymapPreset(crate::keymap::Preset),
+    /// 「快捷键」页：从第几处来源（`SettingsState::import_sources` 的下标）导入快捷键。
+    ImportKeymap(usize),
+    /// 「快捷键」页：恢复全部命令的默认快捷键。
+    ResetAllShortcuts,
     /// 在文件树中显示并选中该文件。
     RevealInTree,
     /// 标签列表：切换到指定标签，参数为 `documents` 的下标。
@@ -181,6 +202,8 @@ pub enum MenuCommand {
     Cut,
     Copy,
     Paste,
+    /// 远端的文件树：把这一项（多选时选中的各项）下载到本机的一个目录。
+    Download,
     GoToDefinition,
     FindReferences,
     /// 在当前行添加书签。
@@ -211,9 +234,15 @@ pub enum MenuCommand {
     /// 设置中「打开工作树」菜单的一项，参数为
     /// [`WorktreeOpen::ALL`](winc_config::WorktreeOpen::ALL) 中的序号（从 0 起）。
     OpenWorktree(usize),
+    /// 设置中「拉取方式」菜单的一项，参数为 [`PullMode::ALL`](winc_config::PullMode::ALL) 中的
+    /// 序号（从 0 起）。
+    PullMode(usize),
     /// 设置中「拖入目录」菜单的一项，参数为
     /// [`FolderDrop::ALL`](winc_config::FolderDrop::ALL) 中的序号（从 0 起）。
     DropFolder(usize),
+    /// 设置中「自动保存」菜单的一项，参数为
+    /// [`AutoSave::ALL`](winc_config::AutoSave::ALL) 中的序号（从 0 起）。
+    AutoSave(usize),
     /// 设置中「默认 Shell」菜单的一项：`None` 为系统默认，`Some(i)` 为检测到的第 `i` 个 shell
     /// （从 0 起）。
     DefaultShell(Option<usize>),
@@ -268,6 +297,12 @@ pub enum MenuCommand {
     LineEnding(LineEnding),
     /// 通过编码重新打开，参数为编码在 `encoding::CHOICES` 中的序号（从 0 起）。
     ReopenEncoding(usize),
+    /// 改按十六进制查看文件的字节。
+    ReopenHex,
+    /// 十六进制视图：把选中的字节按文字复制。
+    HexCopyText,
+    /// 十六进制视图：转到偏移。
+    HexGoTo,
     /// 通过编码保存，参数为编码在 `encoding::CHOICES` 中的序号（从 0 起）。
     SaveEncoding(usize),
     /// 状态栏语言菜单：改用这种语言，参数为语言在 `winc_syntax::languages()` 中的序号（从 0 起）。
@@ -282,6 +317,8 @@ pub enum MenuCommand {
     GitPull,
     /// 拉取并把本地提交变基到上游（`pull --rebase`）。
     GitPullRebase,
+    /// 拉取并合并（`git pull --no-rebase`）：拉取方式设为变基时按住 ⌥ 换出。
+    GitPullMerge,
     /// 添加远程仓库。
     GitAddRemote,
     /// 对第几个远程仓库做的事。
@@ -355,6 +392,22 @@ pub enum MenuCommand {
     LogNewTag,
     /// 从这个提交开始交互式变基。
     LogInteractiveRebase,
+    /// 日志里的提交：编辑提交说明（`HEAD` 修改上一次提交，更早的提交变基）。
+    LogReword,
+    /// 日志里的提交：把要提交的更改修正到它（`fixup!`），只留它原来的说明。
+    LogFixup,
+    /// 日志里的提交：把要提交的更改压缩到它（`squash!`），两段说明都留下。
+    LogSquashInto,
+    /// 日志里的提交：删除它，之后的提交重新应用（先确认）。
+    LogDropCommit,
+    /// 日志里 `HEAD` 指向的提交：撤销提交，更改留在暂存区（先确认）。
+    LogUndoCommit,
+    /// 日志里的提交：把它和之前的提交推送到远程（推送对话框）。
+    LogPushUpTo,
+    /// 日志里的提交：转到它的子提交。
+    LogGoToChild,
+    /// 日志里的提交：转到它的父提交。
+    LogGoToParent,
     /// 交互式变基列表一行的处理方式。
     RebaseAction(winc_editor::git::RebaseAction),
     /// 对提交上第几个标签做的事。
@@ -448,6 +501,8 @@ pub enum MenuCommand {
     /// 把终端面板停靠到另一边。
     TerminalDock,
     NewTerminal,
+    /// 终端：拆分标签，新终端在当前终端的目录里启动。
+    SplitTerminal,
     /// 终端标签：改名字。
     RenameTerminal,
     CloseTerminal,
@@ -470,6 +525,12 @@ pub enum MenuCommand {
     ///
     /// 操作名与表格工具栏共用，见 `view::preview::markdown` 的 `table_tools`。
     Table(&'static str),
+    /// 把右键点击的图片的宽度改为正文宽度的百分比，0 表示去掉写明的大小。
+    ImageWidth(u32),
+    /// 可编辑的预览：粘贴为纯文本。
+    PastePlain,
+    /// 在新标签中打开右键点击的本地图片。
+    OpenImage,
 }
 
 /// 行尾菜单中可列出的行尾；CR 只在文件本来就是 CR 时才列出。
@@ -502,8 +563,13 @@ impl MenuCommand {
             MenuCommand::CopyReference => t!("cmd-copy-reference"),
             MenuCommand::Rename => t!("cmd-rename-file"),
             MenuCommand::Delete => t!("cmd-delete-file"),
+            MenuCommand::Download => t!("menu-download"),
             MenuCommand::Close => t!("common-close"),
             MenuCommand::CloseOthers => t!("cmd-close-other-tabs"),
+            MenuCommand::SplitRight => t!("cmd-split-right"),
+            MenuCommand::SplitDown => t!("cmd-split-down"),
+            MenuCommand::MoveToSplitRight => t!("cmd-move-to-split-right"),
+            MenuCommand::MoveToSplitDown => t!("cmd-move-to-split-down"),
             MenuCommand::CloseRight => t!("menu-close-tabs-right"),
             MenuCommand::CloseLeft => t!("menu-close-tabs-left"),
             MenuCommand::OpenFiles => t!("cmd-open-selected"),
@@ -515,10 +581,17 @@ impl MenuCommand {
             MenuCommand::ReadOnly(false) => t!("menu-clear-read-only"),
             MenuCommand::ReadOnlyAll(true) => t!("menu-set-read-only-all"),
             MenuCommand::ReadOnlyAll(false) => t!("menu-clear-read-only-all"),
+            MenuCommand::ShortcutChange => t!("menu-shortcut-change"),
+            MenuCommand::ShortcutAdd => t!("menu-shortcut-add"),
+            MenuCommand::ShortcutRemove => t!("menu-shortcut-remove"),
+            MenuCommand::ShortcutReset => t!("menu-shortcut-reset"),
+            MenuCommand::KeymapPreset(preset) => preset.title(),
+            MenuCommand::ResetAllShortcuts => t!("menu-shortcuts-reset-all"),
             MenuCommand::CloseAll => t!("cmd-close-all-tabs"),
             MenuCommand::RevealInTree => t!("menu-reveal-in-tree"),
             MenuCommand::RunEdit => t!("cmd-edit-run-configurations"),
             MenuCommand::OpenRecent(_)
+            | MenuCommand::ImportKeymap(_)
             | MenuCommand::ShowTab(_)
             | MenuCommand::RunSelect(_)
             | MenuCommand::NewTerminalShell(_)
@@ -547,6 +620,7 @@ impl MenuCommand {
             MenuCommand::GitPull => t!("menu-git-pull"),
             MenuCommand::GitPush => t!("menu-git-push"),
             MenuCommand::GitPullRebase => t!("menu-git-pull-rebase"),
+            MenuCommand::GitPullMerge => t!("menu-git-pull-merge"),
             MenuCommand::GitAddRemote => t!("git-remote-add"),
             MenuCommand::GitRemote(op, _) => op.label(),
             MenuCommand::PickerTag(None, _) => t!("git-branch-checkout"),
@@ -561,7 +635,7 @@ impl MenuCommand {
             MenuCommand::GitRevertHunk => t!("menu-git-roll-back-change"),
             MenuCommand::FileHistory => t!("menu-git-file-history"),
             MenuCommand::LogCheckout => t!("menu-log-checkout"),
-            MenuCommand::LogNewBranch => t!("git-branch-new-from"),
+            MenuCommand::LogNewBranch => t!("menu-log-new-branch"),
             MenuCommand::LogNewWorktree => t!("menu-log-new-worktree"),
             MenuCommand::LogCherryPick => t!("menu-log-cherry-pick"),
             MenuCommand::LogRevert => t!("menu-log-revert"),
@@ -571,6 +645,14 @@ impl MenuCommand {
             MenuCommand::LogNewTag => t!("menu-log-new-tag"),
             MenuCommand::LogTag(op, _) => op.label(),
             MenuCommand::LogInteractiveRebase => t!("menu-log-interactive-rebase"),
+            MenuCommand::LogReword => t!("menu-log-reword"),
+            MenuCommand::LogFixup => t!("menu-log-fixup"),
+            MenuCommand::LogSquashInto => t!("menu-log-squash-into"),
+            MenuCommand::LogDropCommit => t!("menu-log-drop-commit"),
+            MenuCommand::LogUndoCommit => t!("menu-log-undo-commit"),
+            MenuCommand::LogPushUpTo => t!("menu-log-push-up-to"),
+            MenuCommand::LogGoToChild => t!("menu-log-go-to-child"),
+            MenuCommand::LogGoToParent => t!("menu-log-go-to-parent"),
             MenuCommand::RebaseAction(action) => crate::app::git::rebase::action_label(action),
             MenuCommand::LogCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
@@ -618,6 +700,7 @@ impl MenuCommand {
             MenuCommand::TerminalClear => t!("menu-terminal-clear"),
             MenuCommand::TerminalMaximize => t!("menu-terminal-maximize"),
             MenuCommand::NewTerminal => t!("cmd-new-terminal"),
+            MenuCommand::SplitTerminal => t!("cmd-split-terminal"),
             MenuCommand::RenameTerminal => t!("cmd-rename-file"),
             MenuCommand::CloseTerminal => t!("menu-terminal-close"),
             MenuCommand::CloseOtherTerminals => t!("cmd-close-other-tabs"),
@@ -666,9 +749,15 @@ impl MenuCommand {
             MenuCommand::OpenWorktree(i) => winc_config::WorktreeOpen::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::open_worktree_label(choice)),
+            MenuCommand::PullMode(i) => winc_config::PullMode::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::pull_mode_label(choice)),
             MenuCommand::DropFolder(i) => winc_config::FolderDrop::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::drop_folder_label(choice)),
+            MenuCommand::AutoSave(i) => winc_config::AutoSave::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::auto_save_label(choice)),
             MenuCommand::Locale(i) => winc_i18n::LocaleChoice::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::locale_label(choice)),
@@ -682,6 +771,15 @@ impl MenuCommand {
             MenuCommand::NewWindow => t!("cmd-new-window"),
             MenuCommand::BackgroundChoose => t!("settings-background-choose"),
             MenuCommand::BackgroundNone => t!("settings-background-none"),
+            MenuCommand::PastePlain => t!("menu-paste-plain"),
+            MenuCommand::OpenImage => t!("menu-open-image"),
+            MenuCommand::ImageWidth(percent) => match percent {
+                25 => "25%",
+                50 => "50%",
+                75 => "75%",
+                100 => "100%",
+                _ => t!("menu-image-original-size"),
+            },
             MenuCommand::TextWidth(i) => winc_config::TextWidth::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::text_width_label(choice)),
@@ -728,6 +826,9 @@ impl MenuCommand {
             MenuCommand::ReopenEncoding(i) | MenuCommand::SaveEncoding(i) => {
                 CHOICES.get(i).map_or("", |(_, label)| label)
             }
+            MenuCommand::ReopenHex => t!("editor-encoding-hex"),
+            MenuCommand::HexCopyText => t!("menu-hex-copy-text"),
+            MenuCommand::HexGoTo => t!("menu-hex-go-to"),
             MenuCommand::UseLanguage(i) => winc_syntax::languages().get(i).map_or("", |l| l.name),
             MenuCommand::UsePlainText => winc_syntax::detect("").name,
             MenuCommand::DetectLanguage => t!("menu-detect-language"),
@@ -738,6 +839,12 @@ impl MenuCommand {
     pub fn action(self) -> Option<Action> {
         Some(match self {
             MenuCommand::GitAction(action) => action,
+            // 日志中 ⌘C 复制选中提交的提交号；右键时选中的就是这个提交。
+            MenuCommand::LogCopyOid => Action::Copy,
+            MenuCommand::LogGoTo => Action::GitGoToRevision,
+            MenuCommand::LogReword => Action::GitRewordCommit,
+            MenuCommand::LogGoToChild => Action::GitGoToChildCommit,
+            MenuCommand::LogGoToParent => Action::GitGoToParentCommit,
             MenuCommand::Reveal => Action::RevealInFinder,
             MenuCommand::OpenInTerminal => Action::OpenInTerminal,
             MenuCommand::FindInFolder => Action::FindInFolder,
@@ -748,6 +855,10 @@ impl MenuCommand {
             MenuCommand::Delete => Action::DeleteFile,
             MenuCommand::Close => Action::CloseTab,
             MenuCommand::CloseOthers => Action::CloseOtherTabs,
+            MenuCommand::SplitRight => Action::SplitRight,
+            MenuCommand::SplitDown => Action::SplitDown,
+            MenuCommand::MoveToSplitRight => Action::MoveToSplitRight,
+            MenuCommand::MoveToSplitDown => Action::MoveToSplitDown,
             MenuCommand::ReadOnly(_) => Action::ToggleReadOnly,
             MenuCommand::ReadOnlyAll(_) => Action::ToggleReadOnlyAll,
             MenuCommand::CloseAll => Action::CloseAllTabs,
@@ -763,9 +874,11 @@ impl MenuCommand {
             MenuCommand::TerminalMaximize => Action::MaximizeTerminal,
             MenuCommand::TerminalDock => Action::ToggleTerminalPosition,
             MenuCommand::NewTerminal => Action::NewTerminal,
+            MenuCommand::SplitTerminal => Action::SplitTerminal,
             MenuCommand::RenameTerminal => Action::RenameTerminal,
             MenuCommand::CloseTerminal => Action::CloseTerminal,
             MenuCommand::GitRevertHunk => Action::GitRevertChange,
+            MenuCommand::ToggleBlame => Action::GitBlame,
             MenuCommand::GitShowDiff => Action::ChangesShowDiff,
             MenuCommand::GitOpenFile => Action::ChangesOpenSource,
             MenuCommand::GitRollbackFile => Action::ChangesRollback,
@@ -796,9 +909,14 @@ impl MenuCommand {
         if self == MenuCommand::NewFile {
             return None;
         }
-        let action = self.action()?;
+        // 终端里的复制、粘贴另有终端的命令和键。
+        let action = match (self.action()?, context) {
+            (Action::Copy, Context::Terminal) => Action::TerminalCopy,
+            (Action::Paste, Context::Terminal) => Action::TerminalPaste,
+            (action, _) => action,
+        };
         let stroke = keymap::single_stroke(action, context)?;
-        match keymap::lookup(keymap::current(), stroke, None, context) {
+        match keymap::lookup(&keymap::current(), stroke, None, context) {
             keymap::Lookup::Run(actions) if actions.first() == Some(&action) => Some(stroke),
             _ => None,
         }
@@ -818,6 +936,8 @@ pub enum MenuTarget {
     Markdown,
     /// 差异标签里的文字：`true` 是右侧（工作区，可以编辑），`false` 是左侧。
     Diff(DocumentId, bool),
+    /// 差异标签中两侧的行号栏、逐行追溯一栏。
+    DiffGutter(DocumentId),
     /// 侧栏顶部的项目名。
     Project,
     /// 设置的格式化页中格式化工具（修复工具）一组下面的「添加语言…」。
@@ -834,8 +954,12 @@ pub enum MenuTarget {
     VimClipboard,
     /// 设置的 Git 页中的「打开工作树」。
     OpenWorktree,
+    /// 设置的 Git 页中的「拉取方式」。
+    PullMode,
     /// 设置的编辑器页中的「拖入目录」。
     DropFolder,
+    /// 设置的编辑器页中的「自动保存」。
+    AutoSave,
     /// 设置的外观页中的「界面缩放」。
     Zoom,
     /// 设置的外观页中的「背景图片」。
@@ -864,6 +988,10 @@ pub enum MenuTarget {
     Encoding(DocumentId),
     /// 状态栏中一个文档的只读标记。
     ReadOnly(DocumentId),
+    /// 「快捷键」页中一个命令的一行。
+    Shortcut(Action),
+    /// 「快捷键」页「键位方案」一行的值。
+    Keymap,
     /// 状态栏中一个文档的语言。
     Language(DocumentId),
     /// 分支选择器里第几个分支（[`crate::app::git::GitState::branches`] 的下标）的操作。

@@ -22,6 +22,7 @@ use winc_i18n::t;
 use winc_render::Rect;
 
 use super::changes::replace_lines;
+use crate::app::NoticeKind;
 use crate::app::{App, UserEvent};
 
 /// 三栏合并的标题行高度（逻辑像素），等于差异视图的标题栏高度。
@@ -117,6 +118,18 @@ pub(crate) struct MergeState {
     loaded: Option<(Sender<SidesLoaded>, Receiver<SidesLoaded>)>,
     /// 后台计算对齐的结果。
     aligned: Option<(Sender<SidesAligned>, Receiver<SidesAligned>)>,
+}
+
+impl MergeState {
+    /// 两侧、色带和底栏的位置，随当前标签放置。
+    pub(crate) fn geometry(&self) -> ([Rect; 2], [Rect; 2], Rect) {
+        (self.pane_rects, self.ribbons, self.footer)
+    }
+
+    /// 换回 [`Self::geometry`] 记下的位置。
+    pub(crate) fn set_geometry(&mut self, (panes, ribbons, footer): ([Rect; 2], [Rect; 2], Rect)) {
+        (self.pane_rects, self.ribbons, self.footer) = (panes, ribbons, footer);
+    }
 }
 
 impl App {
@@ -237,7 +250,7 @@ impl App {
     fn open_merge_panes(&mut self, loaded: SidesLoaded) {
         let sides = match loaded.sides {
             Ok(sides) => sides,
-            Err(reason) => return self.notify(reason),
+            Err(reason) => return self.notify(NoticeKind::Error, reason),
         };
         let Some(doc) = self.editor.document(loaded.doc) else {
             return;
@@ -248,7 +261,10 @@ impl App {
         let text = |bytes: Option<Vec<u8>>| String::from_utf8(bytes.unwrap_or_default());
         let (Ok(ours), Ok(theirs)) = (text(ours), text(theirs)) else {
             let name = winc_editor::display_name(&loaded.path);
-            return self.notify(t!("git-merge-panes-not-utf8", name = name));
+            return self.notify(
+                NoticeKind::Error,
+                t!("git-merge-panes-not-utf8", name = name),
+            );
         };
         let [ours_title, theirs_title] = labels;
         self.git.merge.panes = Some(MergePanes {

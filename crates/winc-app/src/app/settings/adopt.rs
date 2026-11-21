@@ -10,10 +10,19 @@ impl App {
     pub(crate) fn adopt_config(&mut self, config: Config) {
         let old = std::mem::replace(&mut self.config, config);
         let new = &self.config;
+        if old.keymap != new.keymap || old.shortcuts != new.shortcuts {
+            for problem in crate::keymap::install_from(new) {
+                eprintln!("winc: {problem}");
+            }
+            self.keymap_changed();
+        }
+        let new = &self.config;
         let zoom = old.ui_zoom != new.ui_zoom;
         let fonts = (old.editor_font != new.editor_font || old.ui_font != new.ui_font)
             || (old.editor_size != new.editor_size || old.ui_size != new.ui_size)
-            || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size);
+            || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size)
+            || (old.ui_font_weight != new.ui_font_weight
+                || old.terminal_font_weight != new.terminal_font_weight);
         let theme = (old.theme != new.theme || old.dark_theme != new.dark_theme)
             || old.light_theme != new.light_theme;
         let tab_width = (old.tab_width != new.tab_width)
@@ -79,7 +88,7 @@ impl App {
         if staging_view {
             self.apply_staging_view();
         }
-        winc_editor::git::follow_system_proxy(self.config.git_system_proxy != Some(false));
+        winc_editor::proxy::follow_system_proxy(self.config.system_proxy != Some(false));
         if images {
             self.preview.markdown.forget_images();
         }

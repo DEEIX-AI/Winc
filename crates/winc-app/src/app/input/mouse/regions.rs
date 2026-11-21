@@ -20,17 +20,6 @@ impl App {
             return Some(Hover::ProjectName);
         }
 
-        // 历史提交的文件列表借用提交视图的列表，按绘制时记下的位置找。
-        if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
-            if self.log_diff_layout_button().contains(x, y) {
-                return Some(Hover::LogDiffLayout);
-            }
-            if self.on_splitter_outside_commit_overflow(x, y) {
-                return None;
-            }
-            return Some(hit(&self.hits.commit, x, y).map_or(Hover::None, Hover::Commit));
-        }
-
         // 文件视图底部的大纲：按绘制时记下的位置找；分隔条由 `Target::Splitter` 处理。
         if self.layout.outline.contains(x, y) {
             if self.panels.sidebar.visible && self.layout.splitter.contains(x, y) {
@@ -124,7 +113,16 @@ impl App {
             self.close_settings();
             return;
         }
+        // 顶部一条的空白处：拖动卡片，正在编辑的输入框保持不变。
+        if part.is_none() && layout.title_strip().contains(x, y) {
+            let grab = (x - layout.card.x, y - layout.card.y);
+            self.pointer.drag = Drag::SettingsCard { grab };
+            return;
+        }
 
+        if !self.keeps_key_edit(part) {
+            self.cancel_key_edit();
+        }
         let editing = self.settings.editing.as_ref().map(|(s, _)| *s);
         if editing.is_some() && part != editing.map(SettingsPart::Field) {
             self.settings_leave_field();
@@ -183,6 +181,15 @@ impl App {
             }
             Some(SettingsPart::Action(setting)) => self.settings_open_menu(setting),
             Some(SettingsPart::Record) => self.toggle_recording(),
+            Some(SettingsPart::Keymap) => self.open_keymap_menu(),
+            Some(
+                part @ (SettingsPart::KeyRow(_)
+                | SettingsPart::KeyEdit(_)
+                | SettingsPart::KeyReset(_)
+                | SettingsPart::KeyRemove(_)
+                | SettingsPart::KeySave
+                | SettingsPart::KeyCancel),
+            ) => self.click_keys_part(part),
             Some(SettingsPart::KeySearch) => {
                 self.set_recording(false);
                 self.focus = Focus::KeySearch;
@@ -295,21 +302,6 @@ impl App {
         }
         if self.hits.project.contains(x, y) {
             self.open_project_menu();
-            return true;
-        }
-
-        if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
-            if self.log_diff_layout_button().contains(x, y) {
-                self.toggle_log_diff_layout();
-                return true;
-            }
-            if self.on_splitter_outside_commit_overflow(x, y) {
-                return false;
-            }
-            if let Some(target) = hit(&self.hits.commit, x, y) {
-                self.with_log_list(|app| app.press_commit(target));
-            }
-            self.request_redraw();
             return true;
         }
 
@@ -504,6 +496,9 @@ impl App {
 
         if self.click_diff(x, y) {
             return;
+        }
+        if self.hex_active() {
+            return self.hex_press(x, y);
         }
         self.focus = Focus::Editor;
         self.ime.preedit.clear();

@@ -57,7 +57,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     assert_eq!(head(&app), "featurex");
     assert!(app.git.branches.iter().any(|b| b.name == "side"));
 
-    // 菜单里：当前分支只能重命名，别的分支能检出、新建、比较、合并、变基、删除。
+    // 菜单里：当前分支只能从它新建分支和重命名，别的分支能检出、新建、比较、合并、变基、删除。
     // 没有上游：分支选择器里的拉取灰显。
     assert!(!app.picker_action_enabled(crate::app::PickerPart::Pull));
     let ops = |app: &App, name: &str| {
@@ -66,7 +66,7 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
             .filter(|entry| matches!(entry, MenuEntry::Item(..)))
             .count()
     };
-    assert_eq!(ops(&app, "featurex"), 1);
+    assert_eq!(ops(&app, "featurex"), 2);
     assert_eq!(ops(&app, "main"), 8);
 
     // 检出 main，再删除 featurex。
@@ -381,6 +381,40 @@ fn switching_with_uncommitted_changes_asks_to_bring_or_stash_them() {
         .count();
     assert_eq!(tracked, 0);
     assert_eq!(app.git.stashes.len(), stashes + 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 终端在右侧时，侧栏的分支、目录菜单和日志的分支筛选仍贴着触发它们的位置。
+#[test]
+fn git_pickers_stay_by_their_buttons_with_the_terminal_right() {
+    let Some((mut app, root)) = picker_repo("git-picker-terminal-right", false) else {
+        return;
+    };
+    crate::app::snapshot::terminal::show_terminal(&mut app, "$ ");
+    app.config.terminal_right = Some(true);
+    app.relayout();
+    paint(&mut app);
+
+    let parts = app.commit_parts();
+    for (anchor, row) in [
+        (GitAnchor::Branch, parts.branch),
+        (GitAnchor::Location, parts.location.unwrap_or(parts.branch)),
+    ] {
+        app.open_branch_picker(anchor);
+        paint(&mut app);
+        let picker = app.layout.picker;
+        assert_eq!((picker.x, picker.y > row.bottom()), (row.x, true));
+        app.close_picker();
+    }
+
+    app.run_action(Action::GitShowLog);
+    paint(&mut app);
+    let branch = crate::app::git::log::LogTarget::Branch;
+    let (button, _) = *app.hits.log.iter().find(|(_, t)| *t == branch).unwrap();
+    app.open_branch_picker(GitAnchor::Log);
+    paint(&mut app);
+    let picker = app.layout.picker;
+    assert_eq!(picker.x, button.x);
     let _ = std::fs::remove_dir_all(&root);
 }
 

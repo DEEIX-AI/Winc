@@ -4,9 +4,12 @@
 //! 再写回 [`winc_config::Config`]。关闭浮层时先离开输入框。
 
 mod adopt;
+mod card;
 mod formatters;
+pub(super) mod shortcuts;
+mod stepper;
 
-use std::ops::RangeInclusive;
+use stepper::step;
 
 use winc_editor::format::{
     Auto, FormatError, PRESETS, Plan, Program, Task, knows_how_to_install, presets,
@@ -18,7 +21,7 @@ use super::editor::format::{task_commands, task_commands_mut};
 use super::input::context_menu::{MenuTarget, menu_below, tool_setting as tool_setting_of};
 use super::*;
 use crate::keymap::{self, Os, Stroke};
-use crate::layout::{KeysLayout, SettingsView, ToolLanguages};
+use crate::layout::{KeyRows, KeysLayout, SettingsView, ToolLanguages};
 
 /// 设置浮层的状态。
 #[derive(Debug, Default)]
@@ -65,6 +68,12 @@ pub struct SettingsState {
     pub recording: bool,
     /// 搜索框中的内容是否为录制的按键（按键搜索，而不是按名称搜索）。
     pub keys_recorded: bool,
+    /// 「快捷键」页中正在修改的一行。
+    pub(crate) key_edit: Option<shortcuts::KeyEdit>,
+    /// 「快捷键」页中一行展开、收起的过渡：同时收起的另一行和时钟；展开的是 `key_edit` 的一行。
+    pub key_slide: Option<(Option<keymap::Action>, super::animation::Clock)>,
+    /// 「导入…」菜单列出的来源，打开菜单时查找。
+    pub(crate) import_sources: Vec<crate::keymap::import::Source>,
     /// 浮层正在出现（`true`）或消失（`false`）的动画：出现时遮罩淡入，卡片整张淡入、从 95%
     /// 放大到原大；消失时整张淡出、略微缩小。
     ///
@@ -76,17 +85,14 @@ pub struct SettingsState {
     pub switch_slide: Option<(Setting, super::animation::Clock)>,
     /// 出现、消失动画用的快照，动画开头画一次存下来，动画结束就释放。
     pub cache: Option<DialogCache>,
-    /// 设置页滚动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
+    /// 设置页滚动或拖动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
     pub scroll_base: Option<winc_render::Snapshot>,
-    /// 最近一次滚动的时刻；未在滚动时为 `None`。
+    /// 最近一次滚动或拖动的时刻；两者都未进行时为 `None`。
     pub scrolled_at: Option<Instant>,
+    /// 卡片相对窗口中央的偏移（逻辑像素），拖动标题行时改变；窗口存在期间保留，再次打开时
+    /// 卡片仍在原处。
+    pub offset: (f32, f32),
 }
-
-/// 停止滚动后保留快照的时长（毫秒）。
-///
-/// 取值约为 60 Hz 下 9 帧的间隔，滚动事件短暂间断时不必重新保存快照。这段时间内浮层下方的变化在
-/// 释放快照后统一绘制。
-const SCROLL_BASE_KEEP: Duration = Duration::from_millis(150);
 
 /// 设置浮层出现、消失的动画用的两张快照：动画开头画一次，途中每帧直接拿来用。
 #[derive(Debug)]
@@ -169,18 +175,6 @@ fn font_error(value: &Option<String>) -> Option<String> {
 /// 100% 附近每档 10%，便于微调；更大的倍数每档 25%，较少几次即可放大到上限。
 pub(crate) const ZOOM_STEPS: [u16; 9] = [70, 80, 90, 100, 110, 125, 150, 175, 200];
 
-/// 设置页中背景图片不透明度每次调整的量（百分比）。
-const OPACITY_STEP: f32 = 5.0;
-
-/// 设置页中字重每次调整的量。
-const FONT_WEIGHT_STEP: u16 = 100;
-
-/// 把 `value` 加 1（`up` 为 `true`）或减 1，结果限制在 `range` 之内。
-fn step(value: f32, up: bool, range: RangeInclusive<f32>) -> f32 {
-    let next = if up { value + 1.0 } else { value - 1.0 };
-    next.clamp(*range.start(), *range.end())
-}
-
 impl App {
     /// 打开设置浮层；已经打开时不处理。
     ///
@@ -236,6 +230,10 @@ impl App {
         }
 
         self.settings_cancel_field();
+        self.cancel_key_edit();
+        if self.settings_dragging() {
+            self.pointer.drag = Drag::None;
+        }
         self.settings.open = false;
         self.settings.motion = self
             .clock(super::animation::DIALOG_OUT)
@@ -267,14 +265,11 @@ impl App {
     /// 链接不可点击。
     pub(super) fn settings_part_at(&self, x: f32, y: f32) -> Option<SettingsPart> {
         let layout = self.settings_layout();
-        if layout.page == SettingsPage::Keys && !layout.searching {
-            let (search, record) = KeysLayout::header(layout.body);
-            if record.contains(x, y) {
-                return Some(SettingsPart::Record);
-            }
-            if search.contains(x, y) {
-                return Some(SettingsPart::KeySearch);
-            }
+        if layout.page == SettingsPage::Keys
+            && !layout.searching
+            && let Some(part) = self.keys_part_at(layout.body, x, y)
+        {
+            return Some(part);
         }
         let link = self
             .hits
@@ -381,6 +376,7 @@ impl App {
             git: self.motion.module_fx.git.share(self.git_enabled()),
             editing: self.settings.editing.as_ref().map(|(s, _)| *s),
             scroll: self.settings.scroll,
+            offset: self.settings.offset,
         };
         SettingsLayout::compute(self.layout.window, &view, measure)
     }
@@ -474,19 +470,28 @@ impl App {
 
     /// 返回快捷键页当前帧的几何布局，内容按搜索框中的文字筛选。
     pub(crate) fn keys_layout(&self) -> KeysLayout {
+        let open = self.settings.key_edit.as_ref().map(|edit| edit.action);
+        let (closing, t) = match self.settings.key_slide {
+            Some((closing, clock)) => (closing, clock.progress()),
+            None => (None, 1.0),
+        };
+        self.keys_layout_with(KeyRows { open, closing, t })
+    }
+
+    /// 返回快捷键页各行高度按 `rows` 计算时的几何布局。
+    pub(crate) fn keys_layout_with(&self, rows: KeyRows) -> KeysLayout {
         let query = self.settings.keys_query.text();
         let recorded = self.settings.keys_recorded;
-        let groups = keymap::current_rows()
-            .iter()
-            .map(|(group, rows)| {
-                let rows = rows
-                    .iter()
-                    .filter(|row| keymap::row_matches(row, query, Os::CURRENT, recorded))
-                    .collect();
-                (*group, rows)
-            })
-            .collect();
-        KeysLayout::compute(self.settings_layout().body, groups, self.settings.scroll)
+        let keep = |row: &keymap::Row| keymap::row_matches(row, query, Os::CURRENT, recorded);
+        let body = self.settings_layout().body;
+        let scroll = self.settings.scroll;
+        let layout = KeysLayout::compute(body, keymap::current_rows(), keep, rows, scroll);
+        // 收起一行后列表变短，滚动量超出范围时内容贴住底部。
+        let max = layout.max_scroll();
+        if scroll <= max {
+            return layout;
+        }
+        KeysLayout::compute(body, keymap::current_rows(), keep, rows, max)
     }
 
     /// 录制按键时处理一次按键 `stroke`：写入搜索框。
@@ -592,7 +597,8 @@ impl App {
     /// 按滚轮增量 `dy`（逻辑像素）滚动当前页，滚动位置限制在有效范围内。
     pub(in crate::app) fn settings_scroll_by(&mut self, dy: f32) {
         let (_, max) = self.settings_scroll_area();
-        self.settings.scroll = (self.settings.scroll - dy).clamp(0.0, max);
+        // 列表收短后（如快捷键页收起一行）滚动量可能超出范围，从有效范围内的位置起算。
+        self.settings.scroll = (self.settings.scroll.min(max) - dy).clamp(0.0, max);
         self.settings.scrolled_at = Some(Instant::now());
         self.request_redraw();
     }
@@ -606,26 +612,6 @@ impl App {
             let layout = self.settings_layout();
             (layout.body, layout.max_scroll())
         }
-    }
-
-    /// 当前帧是否可以使用保存的快照：设置页正在滚动，且快照与窗口的尺寸、缩放比例相同。
-    pub(crate) fn settings_reuses_base(&self, bounds: Rect, scale: f32) -> bool {
-        self.settings.open
-            && self.settings.motion.is_none()
-            && self.settings.scrolled_at.is_some()
-            && (self.settings.scroll_base.as_ref()).is_some_and(|b| b.covers(bounds, scale))
-    }
-
-    /// 滚动结束后释放快照并请求重绘，显示滚动期间浮层下方的变化；返回下一次唤醒的时刻。
-    pub(crate) fn settings_scroll_tick(&mut self, now: Instant) -> Option<Instant> {
-        let due = self.settings.scrolled_at? + SCROLL_BASE_KEEP;
-        if now < due {
-            return Some(due);
-        }
-        self.settings.scrolled_at = None;
-        self.settings.scroll_base = None;
-        self.request_redraw();
-        None
     }
 
     /// 处理 `←` `→`（`forward` 为 `true` 时为 `→`）：数值减一或加一，主题在缩略图之间移动一张。
@@ -734,8 +720,8 @@ impl App {
         match setting {
             Setting::FormatOnSave => self.config.format_on_save == Some(true),
             Setting::FixOnSave => self.config.fix_on_save == Some(true),
-            Setting::AutoSave => self.config.auto_save == Some(true),
             Setting::HotExit => self.config.hot_exit != Some(false),
+            Setting::ConfirmClose => self.config.confirm_close == Some(true),
             Setting::RestoreFolder => self.config.restore_folder != Some(false),
             Setting::StickyScroll => self.config.sticky_scroll != Some(false),
             Setting::VimMode => self.config.vim_enabled == Some(true),
@@ -750,16 +736,23 @@ impl App {
             Setting::StatusBar => self.config.status_bar != Some(false),
             Setting::RestoreWindow => self.config.restore_window != Some(false),
             Setting::Animations => self.animations_on(),
+            Setting::SmoothScrolling => self.smooth_scrolling(),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
             Setting::PreviewOnClick => self.config.preview_on_click == Some(true),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers != Some(false),
+            Setting::MarkdownShortcuts => self.config.markdown_shortcuts != Some(false),
+            Setting::MarkdownFocus => self.config.markdown_focus == Some(true),
+            Setting::MarkdownTypewriter => self.config.markdown_typewriter == Some(true),
+            Setting::MarkdownSelectionToolbar => {
+                self.config.markdown_selection_toolbar != Some(false)
+            }
             Setting::CheckUpdates => self.config.update_auto_check != Some(false),
             Setting::SystemTitleBar => self.config.ui_native_title_bar == Some(true),
             Setting::GitModule => self.git_enabled(),
             Setting::GitConfirmPush => self.config.git_confirm_push != Some(false),
             Setting::GitRememberCredentials => self.config.git_remember_credentials != Some(false),
-            Setting::GitSystemProxy => self.config.git_system_proxy != Some(false),
+            Setting::SystemProxy => self.config.system_proxy != Some(false),
             Setting::GitInlineBlame => self.config.git_inline_blame != Some(false),
             Setting::GitAutoFetch => self.config.git_auto_fetch == Some(true),
             Setting::GitTree => !self.git.commit.flat(),
@@ -795,8 +788,8 @@ impl App {
         match setting {
             Setting::FormatOnSave => self.config.format_on_save = Some(on),
             Setting::FixOnSave => self.config.fix_on_save = Some(on),
-            Setting::AutoSave => self.config.auto_save = Some(on),
             Setting::HotExit => self.config.hot_exit = Some(on),
+            Setting::ConfirmClose => self.config.confirm_close = Some(on),
             Setting::RestoreFolder => self.config.restore_folder = Some(on),
             Setting::StickyScroll => self.config.sticky_scroll = Some(on),
             Setting::VimMode => {
@@ -815,10 +808,15 @@ impl App {
             Setting::StatusBar => self.config.status_bar = Some(on),
             Setting::RestoreWindow => self.config.restore_window = Some(on),
             Setting::Animations => self.config.ui_animations = Some(on),
+            Setting::SmoothScrolling => self.config.smooth_scrolling = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
             Setting::PreviewOnClick => self.config.preview_on_click = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers = Some(on),
+            Setting::MarkdownShortcuts => self.config.markdown_shortcuts = Some(on),
+            Setting::MarkdownFocus => self.config.markdown_focus = Some(on),
+            Setting::MarkdownTypewriter => self.config.markdown_typewriter = Some(on),
+            Setting::MarkdownSelectionToolbar => self.config.markdown_selection_toolbar = Some(on),
             Setting::CheckUpdates => self.config.update_auto_check = Some(on),
             Setting::SystemTitleBar => self.config.ui_native_title_bar = Some(on),
             Setting::GitModule => self.config.git_enabled = Some(on),
@@ -831,9 +829,9 @@ impl App {
             }
             Setting::GitTree if on == self.git.commit.flat() => self.toggle_commit_layout(),
             Setting::GitTree => {}
-            Setting::GitSystemProxy => {
-                self.config.git_system_proxy = Some(on);
-                winc_editor::git::follow_system_proxy(on);
+            Setting::SystemProxy => {
+                self.config.system_proxy = Some(on);
+                winc_editor::proxy::follow_system_proxy(on);
             }
             Setting::GitStagingArea => self.config.git_staging_area = Some(on),
             Setting::GitInlineBlame => self.config.git_inline_blame = Some(on),
@@ -1202,92 +1200,6 @@ impl App {
         self.save_config();
     }
 
-    /// 返回数值设置当前的显示值，以及是否已到范围的下限、上限（到限的一侧按钮变淡）。
-    pub(crate) fn setting_value(&self, setting: Setting) -> (String, bool, bool) {
-        let (value, range) = match setting {
-            Setting::EditorSize => (
-                self.config.editor_size.unwrap_or(CODE_FONT),
-                Config::EDITOR_SIZE_RANGE,
-            ),
-            Setting::UiSize => (
-                self.config.ui_size.unwrap_or(UI_FONT),
-                Config::UI_SIZE_RANGE,
-            ),
-            Setting::FontWeight => (f32::from(self.font_weight()), Config::FONT_WEIGHT_RANGE),
-            Setting::BackgroundOpacity => (
-                (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY),
-                Config::BACKGROUND_OPACITY_RANGE,
-            ),
-            Setting::TerminalSize => (
-                ViewFonts::of(&self.config).terminal,
-                Config::EDITOR_SIZE_RANGE,
-            ),
-            Setting::TabWidth => (
-                self.config.tab_width.unwrap_or(self.editor.tab_width) as f32,
-                Config::TAB_WIDTH_RANGE,
-            ),
-            _ => return (String::new(), true, true),
-        };
-
-        (
-            format!("{value:.0}"),
-            value <= *range.start(),
-            value >= *range.end(),
-        )
-    }
-
-    /// 对字号、Tab 宽度这类数值设置加一（`up` 为 `true`）或减一，并写回配置。
-    pub(super) fn settings_adjust(&mut self, setting: Setting, up: bool) {
-        match setting {
-            Setting::EditorSize => {
-                let current = self.config.editor_size.unwrap_or(CODE_FONT);
-                self.config.editor_size = Some(step(current, up, Config::EDITOR_SIZE_RANGE));
-                self.apply_fonts().ok();
-            }
-            Setting::UiSize => {
-                let current = self.config.ui_size.unwrap_or(UI_FONT);
-                self.config.ui_size = Some(step(current, up, Config::UI_SIZE_RANGE));
-                self.apply_fonts().ok();
-            }
-            // 配置中的值不在档位上时，移到该方向上最近的一档。
-            Setting::FontWeight => {
-                let (current, range) = (self.font_weight(), Config::FONT_WEIGHT_RANGE);
-                let next = if up {
-                    (current / FONT_WEIGHT_STEP + 1) * FONT_WEIGHT_STEP
-                } else {
-                    current.saturating_sub(1) / FONT_WEIGHT_STEP * FONT_WEIGHT_STEP
-                };
-                let next = next.clamp(*range.start() as u16, *range.end() as u16);
-                self.config.ui_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
-                self.apply_fonts().ok();
-            }
-            Setting::BackgroundOpacity => {
-                let range = Config::BACKGROUND_OPACITY_RANGE;
-                let current =
-                    (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY);
-                let next = current + if up { OPACITY_STEP } else { -OPACITY_STEP };
-                self.config.ui_background_opacity = Some(next.clamp(*range.start(), *range.end()));
-            }
-            // 只改字号，无需重新加载字体。
-            Setting::TerminalSize => {
-                let current = ViewFonts::of(&self.config).terminal;
-                self.config.terminal_size = Some(step(current, up, Config::EDITOR_SIZE_RANGE));
-                self.apply_font_sizes();
-            }
-            Setting::TabWidth => {
-                let current = self.config.tab_width.unwrap_or(self.editor.tab_width);
-                let next = step(current as f32, up, Config::TAB_WIDTH_RANGE) as usize;
-                self.config.tab_width = Some(next);
-                self.editor.tab_width = next;
-                self.ensure_caret_visible();
-            }
-            _ => return,
-        }
-
-        self.save_config();
-        self.request_redraw();
-    }
-
     /// 选中深色（`dark`）或浅色主题列表里的第 `index` 个并记住。
     ///
     /// 外观固定为另一种时切过去，选中后立刻生效；跟随系统时只换该外观的主题，当前不是那种外观时
@@ -1367,6 +1279,13 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置拉取、同步时合并还是变基。
+    pub(in crate::app) fn set_pull_mode(&mut self, choice: winc_config::PullMode) {
+        self.config.git_pull = Some(choice);
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 设置 Vim 模式下无名寄存器与系统剪贴板的同步方式。
     pub(in crate::app) fn set_vim_clipboard(&mut self, choice: winc_config::VimClipboard) {
         self.config.vim_clipboard = Some(choice);
@@ -1440,18 +1359,24 @@ impl App {
             Ok(saved) => {
                 if let Some(backup) = saved.backup {
                     let path = backup.path.display().to_string();
-                    self.notify(if backup.comments {
-                        t!("settings-config-comments-backed-up", path = path)
-                    } else {
-                        t!("settings-config-backed-up", path = path)
-                    });
+                    self.notify(
+                        NoticeKind::Warning,
+                        if backup.comments {
+                            t!("settings-config-comments-backed-up", path = path)
+                        } else {
+                            t!("settings-config-backed-up", path = path)
+                        },
+                    );
                 }
                 self.store.saved_config = saved.config.clone();
                 if saved.config != self.config {
                     self.adopt_config(saved.config);
                 }
             }
-            Err(e) => self.notify(t!("settings-config-write-failed", error = e.to_string())),
+            Err(e) => self.notify(
+                NoticeKind::Error,
+                t!("settings-config-write-failed", error = e.to_string()),
+            ),
         }
     }
 }

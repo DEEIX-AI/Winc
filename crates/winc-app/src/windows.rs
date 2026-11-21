@@ -1,12 +1,17 @@
 //! Windows 上交由系统的操作，读取的系统设置，任务栏的跳转列表，按屏幕刷新绘制动画的显示链接，
-//! 以及拖文件进来时查询鼠标位置。
+//! 以及文件拖进拖出时的鼠标位置和系统拖放。
 
 mod display_link;
+// 测试中以 `TreeState::dragged_out` 代替系统的拖放。
+#[cfg_attr(test, allow(dead_code))]
+mod drag;
 mod jump_list;
 mod pointer;
 mod touch;
 
 pub use display_link::DisplayLink;
+#[cfg_attr(test, allow(unused_imports))]
+pub use drag::drag_files;
 pub use jump_list::sync_jump_list;
 pub use pointer::mouse_location;
 pub use touch::{WindowHitTest, WindowInput};
@@ -87,6 +92,19 @@ pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
         )));
     }
     Ok(())
+}
+
+/// 系统有没有终端要用的伪终端接口（ConPTY，Windows 10 1809 起才有）。
+#[allow(unsafe_code)] // GetModuleHandleW、GetProcAddress
+pub fn has_conpty() -> bool {
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    let name: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
+    // SAFETY: `kernel32.dll` 在每个进程中都已加载；两个名字都以 NUL 结尾，只查函数在不在。
+    unsafe {
+        let module = GetModuleHandleW(name.as_ptr());
+        !module.is_null()
+            && GetProcAddress(module, c"CreatePseudoConsole".as_ptr().cast()).is_some()
+    }
 }
 
 /// 离开当前接上的控制台；没有接上控制台时没有效果。

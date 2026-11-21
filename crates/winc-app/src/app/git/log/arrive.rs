@@ -1,6 +1,7 @@
 //! 日志标签接收后台返回的结果：一批提交、详情、所在分支、比较的文件、差异和补丁。
 
 use super::*;
+use crate::app::NoticeKind;
 
 impl App {
     /// 接收后台返回的结果。
@@ -10,7 +11,10 @@ impl App {
                 Loaded::GoTo { revision, result } => match result {
                     Ok((oid, listed)) => self.show_log_commit(&oid, !listed),
                     Err(error) => {
-                        self.notify(t!("git-go-to-failed", revision = revision, error = error));
+                        self.notify(
+                            NoticeKind::Error,
+                            t!("git-go-to-failed", revision = revision, error = error),
+                        );
                     }
                 },
                 Loaded::Commits {
@@ -72,7 +76,7 @@ impl App {
                     self.git.log.waiting = None;
                     if self.git.log.open_first.as_deref() == Some(oid.as_str()) {
                         self.git.log.open_first = None;
-                        if let Some(&first) = self.log_file_order().first() {
+                        if let Some(first) = self.log_first_file() {
                             self.open_log_file(first);
                         }
                     }
@@ -83,14 +87,14 @@ impl App {
                         self.focus = Focus::Editor;
                         self.relayout();
                     }
-                    Err(e) => self.notify(e),
+                    Err(e) => self.notify(NoticeKind::Error, e),
                 },
                 Loaded::Patch { oid, result } => match result {
                     Ok(patch) => {
                         self.set_clipboard(patch, false);
                         self.flash(t!("git-log-copied-patch", commit = short(&oid)));
                     }
-                    Err(e) => self.notify(t!("git-log-patch-failed", error = e)),
+                    Err(e) => self.notify(NoticeKind::Error, t!("git-log-patch-failed", error = e)),
                 },
                 Loaded::Branches { doc, oid, result } => {
                     self.git.log.branches_fetching.remove(&oid);
@@ -150,16 +154,15 @@ impl App {
                             self.git.log.file = None;
                             self.git.log.waiting = None;
                         }
-                        Err(error) => self.notify(t!(
-                            "git-compare-failed",
-                            revision = revision,
-                            error = error
-                        )),
+                        Err(error) => self.notify(
+                            NoticeKind::Error,
+                            t!("git-compare-failed", revision = revision, error = error),
+                        ),
                     }
                 }
                 Loaded::Diff { request, .. } if request != self.git.log.diff_request => {}
-                // 等待结果期间更换了目录：结果属于旧仓库，不在此处打开标签。
-                Loaded::Diff { source, .. } if self.git.root.as_ref() != Some(&source.root) => {}
+                // 等待结果期间关掉了那个仓库的日志：不在此处打开标签。
+                Loaded::Diff { source, .. } if !self.log_open_in(&source.root) => {}
                 Loaded::Diff {
                     source,
                     file,
@@ -167,22 +170,21 @@ impl App {
                     view,
                     ..
                 } => match view {
-                    Ok(view) => {
-                        // 只在新建差异标签时打开侧栏的文件树，之后保留用户对侧栏的选择。
-                        let new_tab = (self.git.log.preview)
-                            .and_then(|id| self.editor.document(id))
-                            .is_none();
+                    Ok(mut view) => {
+                        // 标题栏上方写明是哪个提交；侧栏仍是工作区的改动，不换成这个提交的文件。
+                        view.banner = Some(winc_editor::diff_view::DiffBanner {
+                            version: source.version.clone(),
+                            subject: source.subject.clone(),
+                            detail: source.detail.clone(),
+                        });
                         let index = self
                             .editor
                             .show_diff_in(self.git.log.preview, &title, *view);
                         self.git.log.preview = Some(self.editor.documents[index].id);
                         self.select_log_diff(source, file);
-                        if new_tab {
-                            self.set_sidebar_view(crate::layout::SidebarView::Commit);
-                            self.set_sidebar(true);
-                        }
+                        self.sync_log_files_panel();
+                        self.reveal_log_files_selected();
                         self.relayout();
-                        self.reveal_log_diff_file();
                         self.clamp_scroll();
                         self.land_diff_file();
                     }

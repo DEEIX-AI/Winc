@@ -19,7 +19,7 @@ cmd-open-folder = Open Folder…
 cmd-add-folder = Add Folder to Window…
 cmd-remote-connect = Remote: Connect to SSH Host…
 cmd-remote-disconnect = Remote: Disconnect
-cmd-open-recent = Open Recent Folder…
+cmd-open-recent = Open Recent…
 cmd-open-wsl-folder = Open WSL Folder
 cmd-save = Save
 cmd-save-as = Save As…
@@ -27,6 +27,16 @@ cmd-close-tab = Close Tab
 cmd-close-other-tabs = Close Other Tabs
 cmd-close-all-tabs = Close All Tabs
 cmd-reopen-closed = Reopen Closed Tab
+cmd-split-right = Split Right
+cmd-split-down = Split Down
+cmd-move-to-split-right = Move to New Split Right
+cmd-move-to-split-down = Move to New Split Below
+cmd-unsplit = Join All Splits
+cmd-next-pane = Next Split
+cmd-previous-pane = Previous Split
+cmd-split-terminal = Split Terminal
+cmd-next-terminal-pane = Next Terminal Pane
+cmd-previous-terminal-pane = Previous Terminal Pane
 cmd-next-tab = Next Tab
 cmd-previous-tab = Previous Tab
 cmd-close-folder = Close Folder
@@ -53,6 +63,24 @@ cmd-markdown-italic = Markdown: Toggle Italic
 cmd-markdown-code = Markdown: Toggle Inline Code
 cmd-markdown-strikethrough = Markdown: Toggle Strikethrough
 cmd-markdown-highlight = Markdown: Toggle Highlight
+cmd-markdown-heading-1 = Markdown: Heading 1
+cmd-markdown-heading-2 = Markdown: Heading 2
+cmd-markdown-heading-3 = Markdown: Heading 3
+cmd-markdown-heading-4 = Markdown: Heading 4
+cmd-markdown-heading-5 = Markdown: Heading 5
+cmd-markdown-heading-6 = Markdown: Heading 6
+cmd-markdown-paragraph = Markdown: Paragraph
+cmd-markdown-quote = Markdown: Toggle Quote
+cmd-markdown-ordered-list = Markdown: Toggle Ordered List
+cmd-markdown-bullet-list = Markdown: Toggle Bulleted List
+cmd-markdown-code-block = Markdown: Code Block
+cmd-markdown-math-block = Markdown: Math Block
+cmd-markdown-table = Markdown: Insert Table
+cmd-markdown-link = Markdown: Insert Link
+cmd-markdown-image = Markdown: Insert Image
+cmd-markdown-focus-mode = Markdown: Toggle Focus Mode
+cmd-markdown-typewriter-mode = Markdown: Toggle Typewriter Mode
+cmd-markdown-paste-plain = Markdown: Paste as Plain Text
 cmd-delete-line = Delete Line
 cmd-delete-all-left = Delete to Line Start
 cmd-indent-lines = Indent Line
@@ -133,6 +161,7 @@ cmd-next-result = Next Search Result
 cmd-previous-result = Previous Search Result
 cmd-rename-file = Rename…
 cmd-delete-file = Delete
+cmd-delete-file-permanently = Delete Permanently
 cmd-open-selected = Open
 cmd-preview-selected = Open (Keep Focus in File Tree)
 cmd-find-in-folder = Find in Folder…
@@ -167,6 +196,9 @@ cmd-changes-open-source = Git: Open Selected Change
 cmd-changes-rollback = Git: Roll Back Selected Changes
 cmd-git-show-log = Git: Show Log
 cmd-git-go-to-revision = Git: Go to Hash, Branch or Tag…
+cmd-git-reword-commit = Git: Edit Commit Message…
+cmd-git-go-to-child-commit = Git: Go to Child Commit
+cmd-git-go-to-parent-commit = Git: Go to Parent Commit
 cmd-git-show-output = Git: Show Output
 cmd-git-clone = Git: Clone Repository…
 cmd-git-init = Git: Initialize Repository
@@ -178,7 +210,9 @@ cmd-git-new-branch = Git: New Branch…
 cmd-git-fetch = Git: Fetch
 cmd-git-pull = Git: Pull
 cmd-git-pull-rebase = Git: Pull with Rebase
+cmd-git-pull-from = Git: Pull From…
 cmd-git-push = Git: Push
+cmd-git-push-to = Git: Push To…
 cmd-git-sync = Git: Sync
 cmd-git-stash = Git: Stash Changes…
 cmd-git-stage-all = Git: Stage All Changes
@@ -196,6 +230,8 @@ cmd-run-configuration = Run Current Configuration
 cmd-stop-configuration = Stop Current Configuration
 cmd-edit-run-configurations = Edit Run Configurations
 cmd-clear-terminal = Terminal: Clear
+cmd-terminal-copy = Terminal: Copy
+cmd-terminal-paste = Terminal: Paste
 cmd-new-terminal = New Terminal
 cmd-close-terminal = Terminal: Close Tab
 cmd-next-terminal = Terminal: Next Tab
@@ -251,12 +287,19 @@ cmd-cli-usage =
       winc                  Restore the last opened folder
       winc .                Open the current folder
       winc file:line[:col]  Open a file and go to that line
+      winc ssh://host/folder [ssh://host/file:line[:col]]
+                            Open a folder on a remote host and files in it (needs the Remote module)
       winc -                Read standard input (e.g. cargo build 2>&1 | winc -)
       -w, --wait            Exit after all of the files’ tabs are closed (e.g. git config core.editor "winc -w")
       -n, --new-instance    Start a separate process instead of handing off to the running Winc
       -h, --help            Show this help
       -v, --version         Show the version
 cmd-cli-unknown-option = Unrecognized option “{ $flag }”
+cmd-cli-bad-link = Can’t open the link “{ $link }”: expected winc://file/ followed by an absolute path
+cmd-cli-bad-ssh = Can’t open “{ $link }”: expected ssh://[user@]host[:port]/absolute-path
+cmd-cli-ssh-mixed = ssh:// arguments must all name the same host and can’t be mixed with local paths
+cmd-cli-ssh-one-off = --wait and - can’t be used with ssh:// arguments
+cmd-cli-ssh-folders = Only one ssh:// argument can be a folder; the others must be files in it
 cmd-cli-wait-needs-file = --wait requires a file
 cmd-cli-wsl-needs-name = --wsl requires a distribution name
 cmd-cli-wait-needs-openable-file = --wait requires at least one file that can be opened

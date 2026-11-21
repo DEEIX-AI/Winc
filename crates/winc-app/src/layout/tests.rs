@@ -371,14 +371,21 @@ fn search_floats_inside_editor() {
 fn keys_header_matches_the_full_keys_layout() {
     // 悬停只算搜索框和「录制按键」，位置必须与整页布局一致，与列表内容和滚动无关。
     let body = Rect::new(200.0, 60.0, 640.0, 500.0);
-    let groups = keymap::current_rows()
-        .iter()
-        .map(|(group, rows)| (*group, rows.iter().collect()))
-        .collect();
-    let keys = KeysLayout::compute(body, groups, 120.0);
+    let keys = KeysLayout::compute(
+        body,
+        keymap::current_rows(),
+        |_| true,
+        KeyRows::default(),
+        120.0,
+    );
     assert!(!keys.rows.is_empty());
-    assert_eq!(KeysLayout::header(body), (keys.search, keys.record));
-    assert!(keys.search.contains(keys.record.x, keys.record.y));
+    let header = keys.header;
+    assert_eq!(KeysLayout::header(body), header);
+    assert!(header.search.contains(header.record.x, header.record.y));
+    // 搜索框在标题行中，键位方案一行在标题下方，它的值靠右，在这一行之内。
+    assert!(header.search.bottom() <= body.y && header.keymap.y >= body.y);
+    assert!(header.value.x > header.keymap.x + header.keymap.w / 2.0);
+    assert!(header.value.y >= header.keymap.y && header.value.bottom() <= header.keymap.bottom());
 }
 
 #[test]
@@ -406,4 +413,19 @@ fn setting_descriptions_wrap_up_to_a_limit() {
     // 「软件更新」下方是单行的状态，不折行。
     let lines = description_lines(Setting::Updates, "一二三四五六", 30.0, &mut measure);
     assert_eq!(lines, ["一二三四五六"]);
+}
+
+/// 绘制用的滚动位置取整到整像素：与原位置相差不到半个像素，按行计的换成像素后也是整数。
+#[test]
+fn drawn_scroll_positions_are_whole_pixels() {
+    assert_eq!(
+        (drawn_scroll(12.4), drawn_scroll(12.6), drawn_scroll(0.0)),
+        (12.0, 13.0, 0.0)
+    );
+    for line in [0.0, 3.37, 3.5, 12.999, 1234.01] {
+        let lh = 20.0;
+        let px = drawn_scroll_line(line, lh) * f64::from(lh);
+        assert_eq!(px.fract(), 0.0, "{line}");
+        assert!((px - line * f64::from(lh)).abs() <= 0.5, "{line}");
+    }
 }

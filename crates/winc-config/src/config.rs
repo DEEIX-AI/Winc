@@ -34,7 +34,8 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::ZOOM_RANGE`]。
     pub ui_zoom: Option<u16>,
-    /// 全部文字的字重，默认为 400（各字体自身的字重）；范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    /// 界面和编辑区文字的字重，默认为 400（各字体自身的字重）；范围见
+    /// [`Config::FONT_WEIGHT_RANGE`]。终端没有设置 `terminal.fontWeight` 时也用它。
     pub ui_font_weight: Option<u16>,
     /// 窗口背景图片的路径；没写时没有背景图。
     pub ui_background_image: Option<String>,
@@ -57,10 +58,12 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::TAB_WIDTH_RANGE`]。
     pub tab_width: Option<usize>,
-    /// 是否在切换标签或窗口失去焦点时保存修改，默认为否。
-    pub auto_save: Option<bool>,
+    /// 什么时候自动保存修改，默认不保存。
+    pub auto_save: Option<AutoSave>,
     /// 热退出：退出时不逐个询问是否保存，未保存的内容在下次启动时恢复，默认为开。
     pub hot_exit: Option<bool>,
+    /// 关闭窗口或退出前是否先确认，默认为否。
+    pub confirm_close: Option<bool>,
     /// 启动时打开上次退出时打开的目录和标签，默认为开。
     ///
     /// 关闭后每次启动都显示开始页；命令行指定了目录或文件时仍然打开。
@@ -80,6 +83,8 @@ pub struct Config {
     pub whole_lines: Option<bool>,
     /// 在编辑区右侧显示缩略图，默认为否。
     pub minimap: Option<bool>,
+    /// 鼠标滚轮每滚一格平滑地滑到位，而不是立即跳到，默认为是。
+    pub smooth_scrolling: Option<bool>,
     /// 在侧栏文件视图的底部显示大纲（当前文件的函数、类型、标题），默认为是。
     pub outline: Option<bool>,
     /// 何时显示空格和制表符，默认为选中时。
@@ -107,6 +112,21 @@ pub struct Config {
     /// Markdown 预览是否显示行号，默认为是：可编辑的预览在左侧写原文行号，其余预览在代码块中
     /// 写从 1 起的行号。
     pub markdown_line_numbers: Option<bool>,
+    /// Markdown 文件的源代码是否也使用写作快捷键（标题、列表、链接等），默认为是；可编辑的
+    /// 预览总是使用。
+    pub markdown_shortcuts: Option<bool>,
+    /// 编辑 Markdown 时是否淡化光标所在段落以外的文字（专注模式），默认为否。
+    pub markdown_focus: Option<bool>,
+    /// 编辑 Markdown 时是否让光标所在的行停在编辑区中间（打字机模式），默认为否。
+    pub markdown_typewriter: Option<bool>,
+    /// 可编辑的预览中用鼠标选中文字后是否显示格式工具栏，默认为是。
+    pub markdown_selection_toolbar: Option<bool>,
+    /// 粘贴、拖入 Markdown 的图片的目录，相对文档所在的目录，`${filename}` 表示文档主名；未设置
+    /// 时为文档所在的目录。
+    pub markdown_image_folder: Option<String>,
+    /// 粘贴图片的文件名（不含扩展名），`${filename}` 表示文档主名，`${date}` 表示粘贴时刻，
+    /// 未设置时为 `image`。
+    pub markdown_image_name: Option<String>,
     /// 是否定时检查更新（启动后 5 秒、之后每天一次），默认为是。
     ///
     /// 关闭后仍可从菜单「检查更新…」手动检查。
@@ -160,6 +180,10 @@ pub struct Config {
     ///
     /// 可用范围同 [`Config::EDITOR_SIZE_RANGE`]。
     pub terminal_size: Option<f32>,
+    /// 终端文字的字重；未设置时跟随全局字重（[`Config::ui_font_weight`]）。
+    ///
+    /// 可用范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    pub terminal_font_weight: Option<u16>,
     /// 终端回滚缓冲的行数。
     ///
     /// 可用范围见 [`Config::SCROLLBACK_RANGE`]，默认 10000 行。
@@ -193,6 +217,16 @@ pub struct Config {
     pub terminal_application_priority: Option<bool>,
     /// 是否启用远程模块（经 `ssh` 打开其他主机上的目录），默认为否。
     pub remote_enabled: Option<bool>,
+    /// 远端目录挂载在本机的位置（SSHFS、Samba 映射的盘符等）：键是远端目录的显示写法
+    /// `目标:/路径`（如 `devbox:/home/me`），值是本机上对应的目录（如 `Z:\`）。
+    ///
+    /// 远端的文件在这些目录之内时，「在文件管理器中显示」「用默认应用打开」改为对本机上
+    /// 对应的位置执行；默认没有。键已规范：路径中没有空段、`.` 和 `..`。
+    pub remote_local_folders: BTreeMap<String, String>,
+    /// 键位方案：`idea` 或 `vscode`；没写时用 `idea`。
+    pub keymap: Option<String>,
+    /// 改过的快捷键：命令名 → 按键写法的数组，空数组表示不设快捷键。
+    pub shortcuts: BTreeMap<String, Vec<String>>,
     /// 是否启用 Git 模块（文件状态、分支、变更视图），默认为否。
     pub git_enabled: Option<bool>,
     /// 发布、推送或同步分支前是否先确认目标远程仓库，默认为是。
@@ -201,9 +235,9 @@ pub struct Config {
     pub git_confirm_push: Option<bool>,
     /// 是否允许把通过验证的 HTTP(S) 密码保存在系统的凭据存储中，默认为是；关闭时清除已保存的。
     pub git_remember_credentials: Option<bool>,
-    /// `git` 访问网络时是否跟随系统的代理设置，默认为是；`git` 自己配置了代理或环境里已有代理
-    /// 变量时以它们为准。
-    pub git_system_proxy: Option<bool>,
+    /// 联网的命令（`git`、检查更新、网络图片）是否跟随系统的代理设置，默认为是；环境里已有代理
+    /// 变量或 `git` 自己配置了代理时以它们为准。
+    pub system_proxy: Option<bool>,
     /// 是否在光标所在行的末尾淡淡地显示最后修改这一行的作者、时间和提交说明，默认为是。
     pub git_inline_blame: Option<bool>,
     /// 是否定时在后台获取远程仓库的更新，默认为否：获取会连接远程，需要认证的远程可能每次都
@@ -225,6 +259,8 @@ pub struct Config {
     pub git_path: Option<String>,
     /// 点击工作树时在哪个窗口打开它，默认每次询问。
     pub git_open_worktree: Option<WorktreeOpen>,
+    /// 拉取、同步时怎样并入上游的提交，默认按 Git 的配置。
+    pub git_pull: Option<PullMode>,
     /// 新建工作树时复制过去的被忽略的文件（gitignore 写法的 glob，如 `.env*`），默认不复制。
     pub git_worktree_copy: Vec<String>,
     /// 保存时先格式化，默认为否。
@@ -293,6 +329,23 @@ impl VimClipboard {
     pub const ALL: [Self; 3] = [Self::Register, Self::Yank, Self::Always];
 }
 
+/// 什么时候自动保存有修改的文档。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AutoSave {
+    /// 不自动保存。
+    #[default]
+    Off,
+    /// 切换标签、编辑区失去焦点（例如切到终端）或窗口失去焦点时保存。
+    OnFocusChange,
+    /// 停止输入一段时间后保存，切换焦点时也保存。
+    AfterDelay,
+}
+
+impl AutoSave {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 3] = [Self::Off, Self::OnFocusChange, Self::AfterDelay];
+}
+
 /// 把目录拖进已打开目录的窗口时怎样处理。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FolderDrop {
@@ -308,6 +361,32 @@ pub enum FolderDrop {
 impl FolderDrop {
     /// 全部取值，按设置菜单中的顺序排列。
     pub const ALL: [Self; 3] = [Self::Ask, Self::Add, Self::Open];
+}
+
+/// 拉取当前分支时怎样并入上游的提交。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PullMode {
+    /// 按 Git 的配置（`branch.<分支>.rebase`、`pull.rebase`），都没有配置时合并。
+    #[default]
+    Config,
+    /// 合并（`git pull --no-rebase`）。
+    Merge,
+    /// 把本地提交变基到上游之上（`git pull --rebase`）。
+    Rebase,
+}
+
+impl PullMode {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 3] = [Self::Config, Self::Merge, Self::Rebase];
+
+    /// 是否变基；按 Git 配置时为 `None`。
+    pub fn rebase(self) -> Option<bool> {
+        match self {
+            Self::Config => None,
+            Self::Merge => Some(false),
+            Self::Rebase => Some(true),
+        }
+    }
 }
 
 /// 点击工作树时在哪个窗口打开它。
@@ -597,12 +676,19 @@ impl Config {
                 continue;
             }
             let old = old.and_then(Json::as_object);
+            // 没有修改、新位置上也没有的项沿用旧位置上的值。
+            let moved = |field: &Field| {
+                let root = root.filter(|_| !changed(field))?;
+                moved_from(root, name, field.key).cloned()
+            };
             let mut items: Vec<(&str, Json)> = fields
                 .iter()
-                .filter_map(|field| Some((field.key, value(field, old)?)))
+                .filter_map(|field| Some((field.key, value(field, old).or_else(|| moved(field))?)))
                 .collect();
             if let Some(old) = old {
-                let unknown = old.iter().filter(|(key, _)| find(fields, key).is_none());
+                let unknown = old
+                    .iter()
+                    .filter(|(key, _)| find(fields, key).is_none() && !is_moved(name, key));
                 items.extend(unknown.map(|(key, value)| (key.as_str(), value.clone())));
             }
             if !items.is_empty() {
