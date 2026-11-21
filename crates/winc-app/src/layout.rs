@@ -499,6 +499,10 @@ pub enum Scrollbar {
     Table,
     /// 表格预览的水平滚动条。
     TableHorizontal,
+    /// Properties 预览的竖直滚动条。
+    Properties,
+    /// Properties 预览的水平滚动条。
+    PropertiesHorizontal,
     /// 设置页（含快捷键列表）的竖直滚动条。
     Settings,
 }

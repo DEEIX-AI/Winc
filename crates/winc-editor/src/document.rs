@@ -175,15 +175,18 @@ pub enum PreviewKind {
     Table,
     /// LaTeX：预览只读。
     Latex,
+    /// Properties：预览把 Unicode 转义显示为字符，由界面按源代码的行布局绘制。
+    Properties,
 }
 
 impl PreviewKind {
     /// 全部种类。
-    pub const ALL: [PreviewKind; 4] = [
+    pub const ALL: [PreviewKind; 5] = [
         PreviewKind::Svg,
         PreviewKind::Markdown,
         PreviewKind::Table,
         PreviewKind::Latex,
+        PreviewKind::Properties,
     ];
 
     /// 是否按 Markdown 预览排版（Markdown，以及转换成 Markdown 的 LaTeX）。
@@ -198,19 +201,20 @@ impl PreviewKind {
             "markdown" => Some(PreviewKind::Markdown),
             "csv" | "tsv" => Some(PreviewKind::Table),
             "latex" => Some(PreviewKind::Latex),
+            "properties" => Some(PreviewKind::Properties),
             _ => None,
         }
     }
 }
 
-/// 可预览文件（SVG、Markdown）的显示方式。
+/// 可预览文本文件的显示方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewMode {
     /// 只显示源代码。
     Source,
     /// 左侧显示源代码（可以继续编辑），右侧随文字实时预览。
     Split,
-    /// 只显示预览，文档暂时只读。
+    /// 只显示预览。
     Preview,
 }
 
@@ -509,7 +513,7 @@ pub struct Document {
     pub log: Option<Box<crate::git::log::LogView>>,
     /// 编辑区按十六进制显示文件的字节，而不是文本；只读，文本为空。
     pub hex: Option<Box<crate::hex::HexView>>,
-    /// 切换到预览之前的 `readonly`：SVG 的预览期间强制只读，切回源代码时恢复该值。
+    /// 切换到预览之前的 `readonly`，离开预览时恢复该值。
     readonly_before_preview: bool,
     /// 分栏预览（`PreviewMode::Split`）：文本仍然显示，右侧的预览由界面管理。
     split: bool,
@@ -517,6 +521,8 @@ pub struct Document {
     ///
     /// SVG 的预览使用 `picture`。
     rendered: bool,
+    /// 是否为 Properties 仅预览模式：编辑区只读绘制把 Unicode 转义换成字符后的文本。
+    properties: bool,
     /// 不对应文件的只读标签（格式化工具的输出、安装说明）的标题。
     pub title: Option<String>,
     /// 阅读标签的内容：编辑区显示排版后的 Markdown，没有可切换的源代码，文本为空。
@@ -633,6 +639,7 @@ impl Document {
             readonly_before_preview: false,
             split: false,
             rendered: false,
+            properties: false,
             title: None,
             reading: None,
             revision: 0,
@@ -978,15 +985,42 @@ impl Document {
         (self.locked, self.all_locked) = held;
     }
 
-    /// 返回文档因自身的状态而只读的原因（显示给用户），此时也不能保存。
+    /// 返回文档因自身的状态而不能编辑的原因（显示给用户）。
     ///
     /// 不包括用户设置的只读。
     pub fn unwritable_reason(&self) -> Option<&'static str> {
+        self.unwritable_reason_for(self.readonly, self.previewing())
+    }
+
+    /// 返回阻止保存的原因；Properties 的仅预览模式仍可保存源代码，源代码本身的只读限制
+    /// 照常生效。
+    ///
+    /// 其他预览方式（图片、SVG、表格）在预览期间的只读与 `unwritable_reason` 一致；保存
+    /// 写的一直是源代码缓冲。
+    pub fn save_blocked_reason(&self) -> Option<&'static str> {
+        if self.properties {
+            self.unwritable_reason_for(self.readonly_before_preview, false)
+        } else {
+            self.unwritable_reason()
+        }
+    }
+
+    /// 返回阻止保存前修改（`.editorconfig` 清理、保存时格式化）的原因。
+    ///
+    /// Properties 的仅预览期间仍可修改源代码；图片、SVG、表格的预览以及用户设置的只读
+    /// 照常阻止。
+    pub(crate) fn preprocessing_blocked_reason(&self) -> Option<&'static str> {
+        self.save_blocked_reason()
+            .or_else(|| self.locked.then(|| t!("editor-readonly-locked")))
+            .or_else(|| self.all_locked.then(|| t!("editor-readonly-all")))
+    }
+
+    fn unwritable_reason_for(&self, readonly: bool, previewing: bool) -> Option<&'static str> {
         match &self.text {
-            _ if !self.readonly => None,
+            _ if !readonly => None,
             _ if self.pending => Some(t!("editor-readonly-pending")),
             _ if self.unsupported.is_some() => Some(t!("editor-readonly-unsupported")),
-            _ if self.previewing() => Some(t!("editor-readonly-previewing")),
+            _ if previewing => Some(t!("editor-readonly-previewing")),
             _ if self.title.is_some() => Some(t!("editor-readonly-tab")),
             _ if self.hex.is_some() => Some(t!("editor-readonly-hex")),
             _ if self.encoding == Encoding::Binary => Some(t!("editor-readonly-binary")),
@@ -1248,6 +1282,17 @@ impl Document {
         if !extra.is_empty() {
             self.restore_extra(extra);
         }
+    }
+
+    /// 应用对源代码的修改，用于保存前的清理和格式化；Properties 仅预览期间的临时只读
+    /// 不阻止这些修改。用户设置的只读和源代码自身的只读照常阻止。
+    pub(crate) fn apply_to_source(&mut self, transaction: Transaction) {
+        let held = self.readonly;
+        if self.properties {
+            self.readonly = self.readonly_before_preview;
+        }
+        self.apply(transaction);
+        self.readonly = held;
     }
 
     /// 记录最近一次改动（`revision` 已递增）的起始行 `line`。

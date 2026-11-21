@@ -2,7 +2,7 @@
 
 ## 预览模式
 
-preview-mode-unsupported = 仅支持预览 SVG、Markdown、CSV 和 TSV 文件
+preview-mode-unsupported = 仅支持预览 SVG、Markdown、LaTeX、CSV、TSV 和 Properties 文件
 preview-mode-source = 代码
 preview-mode-split = 分栏
 preview-mode-preview = 预览

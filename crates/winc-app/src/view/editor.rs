@@ -198,6 +198,10 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
         return;
     }
     let doc = &app.editor.documents[index];
+    if doc.properties_preview() {
+        super::preview::properties::draw(app, frame, app.layout.editor, doc.id);
+        return;
+    }
     if doc
         .preview_kind()
         .is_some_and(winc_editor::PreviewKind::typeset)

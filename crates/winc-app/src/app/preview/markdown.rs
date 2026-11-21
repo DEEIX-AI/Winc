@@ -6,6 +6,7 @@
 //! （README 中的徽章、截图）在后台用系统的 `curl` 下载到临时目录缓存，关闭联网后显示替代文字。
 
 use crate::app::ScrollTarget;
+use crate::app::scroll::editor::{source_row, top_source_line};
 use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1272,18 +1273,7 @@ pub(super) fn preview_line(doc: &winc_editor::Document, lines: Option<&LineMap>)
 /// 返回文字滚动位置的第一个显示行 `doc.scroll_line` 对应的原文行号（小数：自动换行折成
 /// 多段的行按段数等分）。
 pub(super) fn text_line(doc: &winc_editor::Document) -> f32 {
-    let row = doc.scroll_line.max(0.0);
-    let (line, part) = doc.line_and_part(row as usize);
-    let rows = doc.rows_of(line).max(1) as f64;
-    line as f32 + ((part as f64 + row.fract()) / rows) as f32
-}
-
-/// [`text_line`] 的逆运算：返回原文第 `line` 行（小数）对应的显示行。
-fn text_row(doc: &winc_editor::Document, line: f32) -> f64 {
-    let last = doc.text().line_count().saturating_sub(1);
-    let whole = (line.max(0.0) as usize).min(last);
-    let rows = doc.rows_of(whole).max(1) as f64;
-    doc.row_of(whole) as f64 + f64::from((line - whole as f32).clamp(0.0, 1.0)) * rows
+    top_source_line(doc) as f32
 }
 
 /// 网址图片的下载缓存目录，文件名为网址的哈希。

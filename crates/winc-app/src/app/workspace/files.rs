@@ -569,6 +569,7 @@ impl App {
 
         if self.editor.active != Some(index) {
             self.auto_save_active();
+            self.unfocus_properties();
         }
         self.editor.active = Some(index);
         self.load_active_in_background();
@@ -790,8 +791,9 @@ impl App {
             let Some(doc) = self.editor.document(id) else {
                 continue;
             };
+            // 预览期间的临时只读不阻止保存：与显式保存一致，自动保存写的也是源代码。
             let candidate =
-                doc.is_dirty() && doc.title.is_none() && doc.unwritable_reason().is_none();
+                doc.is_dirty() && doc.title.is_none() && doc.save_blocked_reason().is_none();
             // 文件已从磁盘上删除：不自动写回，改为提示一次重新创建的方法；文件恢复后被再次删除时
             // 重新提示。
             if candidate && doc.deleted_on_disk() {

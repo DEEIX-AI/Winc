@@ -50,6 +50,10 @@ pub(in crate::view) fn draw_split(app: &mut App, frame: &mut Frame<'_>) {
         }
         return;
     }
+    if kind == Some(winc_editor::PreviewKind::Properties) {
+        crate::view::preview::properties::draw(app, frame, area, id);
+        return;
+    }
     if app.preview.split.doc != Some(id) {
         return;
     }

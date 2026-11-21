@@ -1,7 +1,8 @@
 //! 预览：Markdown（后台解析、滚动、链接和图片）、图片和 SVG（后台解码、分栏预览）、表格（后台
-//! 读取 xlsx、csv）、PDF（渲染线程逐页渲染）、LaTeX（本机的 TeX 编译出 PDF）。
+//! 读取 xlsx、csv）、PDF（渲染线程逐页渲染）、LaTeX（本机的 TeX 编译出 PDF）和 Properties
+//! （按可见物理行解码）。
 //!
-//! 各种预览都在后台线程完成解码、解析和绘制，界面只收结果；排版与绘制在 `view` 模块中完成。
+//! 排版与绘制在 `view` 模块中完成。
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +14,7 @@ pub(crate) mod images;
 pub(crate) mod latex;
 pub(crate) mod markdown;
 pub(crate) mod pdf;
+pub(crate) mod properties;
 pub(crate) mod tables;
 
 /// 能在浏览器中打开的网页文件的扩展名（小写）。
@@ -53,7 +55,7 @@ impl App {
     }
 }
 
-/// 各类预览的状态：图片、表格、分栏、Markdown 与 PDF。
+/// 各类预览的状态。
 pub(crate) struct PreviewState {
     /// 图片预览缩放后的图片缓存。
     pub(crate) picture_cache: Option<images::PictureCache>,
@@ -69,6 +71,8 @@ pub(crate) struct PreviewState {
     pub(crate) split: images::SplitPreview,
     /// Markdown 预览（分栏右侧或仅预览模式）。
     pub(crate) markdown: markdown::MarkdownPreview,
+    /// Properties 预览（分栏右侧或仅预览模式）。
+    pub(crate) properties: properties::PropertiesPreview,
     /// 当前标签的 PDF 预览。
     pub(crate) pdf: pdf::PdfPreview,
     /// LaTeX 文档的编译，各窗格共用。
@@ -87,6 +91,7 @@ pub(crate) struct PanePreview {
     table_layout: tables::TableLayout,
     split: images::SplitPreview,
     markdown: markdown::MarkdownPreview,
+    properties: properties::PropertiesPreview,
     pdf: pdf::PdfPreview,
 }
 
@@ -111,6 +116,7 @@ impl PreviewState {
         std::mem::swap(&mut self.table_layout, &mut other.table_layout);
         std::mem::swap(&mut self.split, &mut other.split);
         std::mem::swap(&mut self.markdown, &mut other.markdown);
+        std::mem::swap(&mut self.properties, &mut other.properties);
         std::mem::swap(&mut self.pdf, &mut other.pdf);
         self.markdown.trade_places(&mut other.markdown);
         self.pdf.trade_places(&mut other.pdf);

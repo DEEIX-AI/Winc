@@ -193,7 +193,7 @@ fn preview_modes_are_read_per_kind() {
             .collect::<Vec<_>>()
     };
     let pair = |kind: &str, mode: &str| (kind.to_owned(), mode.to_owned());
-    // 字符串用于全部种类。
+    // 旧版字符串设置作用于 Markdown、SVG 和表格。
     assert_eq!(
         modes(r#"{"previewMode": "split"}"#),
         [
@@ -202,10 +202,34 @@ fn preview_modes_are_read_per_kind() {
             pair("table", "split")
         ]
     );
+    assert_eq!(
+        modes(r#"{"previewMode": "preview"}"#),
+        [
+            pair("markdown", "preview"),
+            pair("svg", "preview"),
+            pair("table", "preview")
+        ]
+    );
     // 未知的种类和方式跳过。
     let text = r#"{"previewMode": {"markdown": "preview", "svg": "x", "pdf": "split"}}"#;
     assert_eq!(modes(text), [pair("markdown", "preview")]);
     assert!(modes(r#"{"previewMode": "source"}"#).is_empty());
+
+    for mode in ["split", "preview"] {
+        let text = format!(
+            r#"{{"previewMode": {{"latex": "preview", "properties": "{mode}", "table": "split"}}}}"#
+        );
+        let state = State::parse(&text);
+        assert_eq!(
+            modes(&text),
+            [
+                pair("latex", "preview"),
+                pair("properties", mode),
+                pair("table", "split")
+            ]
+        );
+        assert_eq!(State::parse(&state.to_json()), state);
+    }
 }
 
 #[test]

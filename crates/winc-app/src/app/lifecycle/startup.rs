@@ -114,6 +114,7 @@ impl App {
                 table_layout: Default::default(),
                 split: preview::images::SplitPreview::default(),
                 markdown: preview::markdown::MarkdownPreview::default(),
+                properties: preview::properties::PropertiesPreview::default(),
                 pdf: preview::pdf::PdfPreview::default(),
                 latex: preview::latex::LatexBuilds::default(),
                 split_share: None,

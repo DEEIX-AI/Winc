@@ -141,7 +141,7 @@ impl Document {
         if to.is_none() {
             self.editorconfig = config.clone();
         }
-        if !config.tidies() || self.readonly_reason().is_some() {
+        if !config.tidies() || self.preprocessing_blocked_reason().is_some() {
             return false;
         }
         let Content::Rope(rope) = &self.text else {
@@ -183,7 +183,7 @@ impl Document {
             Transaction::new(changes, all[primary], mapped[after], EditKind::Other);
         transaction.extra_before = others(&all, primary);
         transaction.extra_after = others(&mapped, after);
-        self.apply(transaction);
+        self.apply_to_source(transaction);
         true
     }
 }

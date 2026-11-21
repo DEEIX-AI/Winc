@@ -470,6 +470,23 @@ impl App {
 
     /// 复制选区（`cut` 为 `true` 时剪切）；没有选区时操作光标所在的整行。
     pub(in crate::app) fn copy(&mut self, cut: bool) {
+        if self.properties_focused() {
+            // 与其他只读文字预览相同，剪切只复制，不修改源文档。
+            if self.properties_has_selection() {
+                if let Some(text) = self.properties_selected_text() {
+                    if !text.is_empty() {
+                        self.set_clipboard(text, false);
+                        self.flash(t!("editor-selection-copied"));
+                    }
+                } else {
+                    self.flash(t!(
+                        "editor-selection-too-large-to-copy",
+                        size = COPY_LIMIT >> 20
+                    ));
+                }
+            }
+            return;
+        }
         // 十六进制视图：复制选中的字节，写成十六进制；只读，不能剪切。
         if self.hex_active() {
             if !cut {
@@ -611,7 +628,7 @@ impl App {
                     self.edit_field(|field| field.insert(&content));
                 }
             }
-            Focus::Editor => self.paste_into_editor(),
+            Focus::Editor if !self.properties_focused() => self.paste_into_editor(),
             Focus::Tree => self.paste_into_tree(),
             Focus::Terminal => self.terminal_paste(),
             _ => {}
@@ -645,6 +662,9 @@ impl App {
     ///
     /// 文档不可编辑时在状态栏提示原因，不执行命令。
     pub(in crate::app) fn run(&mut self, command: Command) {
+        if self.properties_focused() {
+            return;
+        }
         let page = self.page_lines();
         let tab_width = self.editor.active_tab_width();
         let lines_before = self.line_count();

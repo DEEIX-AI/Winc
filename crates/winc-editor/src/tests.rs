@@ -3,6 +3,27 @@
 
 use super::*;
 
+#[test]
+fn opening_properties_as_hex_ignores_the_saved_preview_mode() {
+    let dir = crate::test_util::scratch("properties-hex");
+    let path = dir.join("a.properties");
+    std::fs::write(&path, "key=\\u4F60\n").unwrap();
+
+    for mode in [PreviewMode::Split, PreviewMode::Preview] {
+        let mut editor = Editor::default();
+        editor.preview_defaults[PreviewKind::Properties as usize] = mode;
+        let index = editor.open(&path);
+        assert_eq!(editor.documents[index].preview_mode(), mode);
+
+        assert!(editor.show_hex(index) && editor.load(index));
+        let doc = &mut editor.documents[index];
+        assert!(doc.hex.is_some() && doc.readonly);
+        assert!(!doc.can_preview() && !doc.set_preview_mode(mode));
+        assert_eq!(doc.preview_mode(), PreviewMode::Source);
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn documents_under_a_symlinked_folder_follow_a_rename_in_the_tree() {

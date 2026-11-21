@@ -54,6 +54,8 @@ pub(crate) enum ScrollTarget {
     Picture,
     /// 表格预览。
     Table,
+    /// Properties 预览。
+    Properties(DocumentId),
     /// 编辑区中显示的文档。
     Editor(DocumentId),
     /// 不在任何可滚动的区域上。
@@ -137,6 +139,10 @@ impl App {
             ScrollTarget::TerminalStrip
         } else if l.terminal.contains(x, y) {
             ScrollTarget::Terminal
+        } else if self.properties_area_at(x, y)
+            && let Some(doc) = self.editor.active()
+        {
+            ScrollTarget::Properties(doc.id)
         } else if self.preview.markdown.area.contains(x, y) {
             ScrollTarget::Markdown
         } else if self.preview.pdf.strip.contains(x, y) {
@@ -232,6 +238,13 @@ impl App {
             ScrollTarget::Pdf => self.scroll_pdf_by(sx, sy),
             ScrollTarget::Picture => self.scroll_picture_by(sx, sy),
             ScrollTarget::Table => self.scroll_table(sx, sy, origin),
+            ScrollTarget::Properties(id) => {
+                if self.editor.active().is_some_and(|doc| doc.id == id)
+                    && self.properties_area().is_some()
+                {
+                    self.scroll_properties_by(sx, sy);
+                }
+            }
             ScrollTarget::Editor(id) => self.scroll_editor_by_pixels(id, sx, sy),
             ScrollTarget::Picker
             | ScrollTarget::Commit

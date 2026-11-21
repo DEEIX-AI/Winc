@@ -177,6 +177,13 @@ impl App {
             self.preview.markdown.focused = false;
             self.preview.markdown.selection = None;
         }
+        if !matches!(
+            target,
+            Target::Properties
+                | Target::Scrollbar(Scrollbar::Properties | Scrollbar::PropertiesHorizontal, _)
+        ) {
+            self.unfocus_properties();
+        }
 
         // 点击的目标由 `target_at` 决定（与悬停同一个顺序）；只有点击才有的规则写成前面的
         // 分支：快速打开面板开着时点其他位置关掉快速打开面板，正在输入名字时点其他位置
@@ -235,6 +242,7 @@ impl App {
             Target::MarkdownLink(link) => self.open_markdown_link(link),
             Target::MarkdownToc(target) => self.press_toc(target),
             Target::MarkdownText(_) => self.click_markdown(x, y),
+            Target::Properties => self.click_properties(x, y),
             Target::ImageHandle => {
                 if let Some(image) = self.image_handle_at(x, y) {
                     self.start_image_resize(image, x);
@@ -259,7 +267,12 @@ impl App {
                 }
             }
             Target::RulerChange(hunk) => self.go_to_change(hunk),
-            Target::Scrollbar(bar, grab) => self.grab_scrollbar(bar, grab),
+            Target::Scrollbar(bar, grab) => {
+                if matches!(bar, Scrollbar::Properties | Scrollbar::PropertiesHorizontal) {
+                    self.focus_properties();
+                }
+                self.grab_scrollbar(bar, grab);
+            }
             Target::Minimap => self.press_minimap(y),
             Target::Crumb(index) => self.open_crumb_menu(index),
             Target::Status(item) => self.open_status_menu(item),

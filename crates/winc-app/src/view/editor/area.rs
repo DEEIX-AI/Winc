@@ -179,7 +179,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             active_guide: line::active_guide(text, caret_line, &visible, tab_width, indent_unit),
             columns: columns.as_deref(),
             language: doc.highlighter.language(),
-            focused: app.focus == Focus::Editor,
+            focused: app.focus == Focus::Editor && !app.properties_focused(),
             show_matches,
             // 光标所在的词在屏幕上其他位置的出现。查找条打开时只标注查找结果，避免两种底色混杂；
             // 屏幕上只有该词本身时不标注。

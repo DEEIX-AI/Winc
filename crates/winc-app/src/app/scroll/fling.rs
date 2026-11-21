@@ -111,6 +111,10 @@ impl App {
                 f64::from(self.preview.pdf.scroll),
                 f64::from(self.preview.pdf.scroll_x),
             )),
+            ScrollTarget::Properties(_) => Some((
+                self.preview.properties.top_line,
+                f64::from(self.preview.properties.scroll_x),
+            )),
             _ => self.pane_scroll(target).map(|y| (f64::from(y), 0.0)),
         }
     }

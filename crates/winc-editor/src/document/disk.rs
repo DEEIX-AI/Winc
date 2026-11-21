@@ -214,7 +214,7 @@ impl Document {
             ));
         };
 
-        if let Some(reason) = self.unwritable_reason() {
+        if let Some(reason) = self.save_blocked_reason() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, reason));
         }
 
@@ -856,14 +856,18 @@ impl Document {
 
     /// 换上读好的内容 `loaded`：按编码决定是否只读，更新编码、换行风格、修改时间和缩进检测。
     pub(super) fn set_content(&mut self, loaded: Loaded) {
-        let overlong = matches!(&loaded.text, Content::Large(large) if large.has_overlong_lines());
+        let mode = self.preview_mode();
+        self.text = loaded.text;
+        if mode != PreviewMode::Source && !self.can_preview() {
+            self.clear_preview();
+        }
+        let overlong = matches!(&self.text, Content::Large(large) if large.has_overlong_lines());
         self.readonly = matches!(loaded.encoding, Encoding::Lossy | Encoding::Binary) || overlong;
         // 正在预览时仍保持只读；切回源代码时恢复为新读取内容对应的 `readonly`。
         if self.previewing() {
             self.readonly_before_preview = self.readonly;
             self.readonly = true;
         }
-        self.text = loaded.text;
         self.whole.forget();
         self.clear_folds();
         self.encoding = loaded.encoding;

@@ -9,7 +9,7 @@ use winc_preview::markdown::paragraph::Kind;
 
 use super::*;
 use crate::field::TextField;
-use crate::keymap::{Action, Context};
+use crate::keymap::{Action, Context, Group};
 use crate::layout::{PanelButton, SearchButton, SettingsPage, SidebarView};
 
 impl App {
@@ -23,7 +23,7 @@ impl App {
         if !self.action_available(action) {
             return false;
         }
-        if action == Copy && self.vim_side_copy() {
+        if action == Copy && !self.properties_focused() && self.vim_side_copy() {
             return true;
         }
         if let Some(done) = self.diff_edit_action(action) {
@@ -70,11 +70,12 @@ impl App {
         }
 
         // Vim 的普通与可视模式下，撤销、重做、复制、剪切、粘贴由 Vim 层按对应的命令执行。
-        let vim_keys = if self.vim.is_some() && self.focus == Focus::Editor {
-            self.vim_equivalent(action)
-        } else {
-            None
-        };
+        let vim_keys =
+            if self.vim.is_some() && self.focus == Focus::Editor && !self.properties_focused() {
+                self.vim_equivalent(action)
+            } else {
+                None
+            };
 
         match action {
             ShowCommands => self.toggle_palette(),
@@ -207,6 +208,7 @@ impl App {
             Copy => self.copy(false),
             Paste => self.paste(),
             SelectAll if self.markdown_focused() => self.markdown_select_all(),
+            SelectAll if self.properties_focused() => self.properties_select_all(),
             SelectAll if self.table_focused() => self.table_select_all(),
             SelectAll if self.focus == Focus::Tree => {
                 if let Some(ws) = &mut self.editor.workspace {
@@ -544,6 +546,20 @@ impl App {
 
     /// 命令当前是否可用：属于某个模块的命令只在模块开着时可用。
     pub(in crate::app) fn action_available(&self, action: Action) -> bool {
+        if self.properties_focused()
+            && !matches!(action, Action::Copy | Action::Cut | Action::SelectAll)
+            && (action.group() == Group::Edit
+                || matches!(
+                    action,
+                    Action::FindNext
+                        | Action::FindPrevious
+                        | Action::ReplaceOne
+                        | Action::ReplaceAll
+                        | Action::GitRevertChange
+                ))
+        {
+            return false;
+        }
         match action {
             Action::RunConfiguration if self.editor.root().is_none() => return false,
             // 编辑提交说明只在日志里可用；其余位置同一个键执行其他命令。

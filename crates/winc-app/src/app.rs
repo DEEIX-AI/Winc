@@ -718,6 +718,8 @@ enum Drag {
     Hex,
     /// 在 Markdown 预览中拖选文字（`App::drag_markdown`）。
     MarkdownText,
+    /// 在 Properties 预览中拖选解码后的文字。
+    PropertiesText,
     /// 拖动预览中图片的把手调整大小（`App::drag_image_resize`）。
     ImageResize,
     /// 在表格中拖选单元格（`App::drag_table`）。

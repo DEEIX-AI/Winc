@@ -237,7 +237,10 @@ impl App {
             Target::MarkdownToc(target) => Hover::MarkdownToc(target),
             Target::MarkdownText(Some(link)) => Hover::MarkdownLinkText(link),
             Target::ImageHandle => Hover::ImageHandle,
-            Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture => Hover::None,
+            Target::MarkdownText(None)
+            | Target::PdfThumb(_)
+            | Target::Picture
+            | Target::Properties => Hover::None,
             Target::PdfTool(tool) => Hover::PdfTool(tool),
             Target::LatexStatus => Hover::LatexStatus,
             Target::LatexProblem(line) => Hover::LatexProblem(line),
@@ -466,6 +469,9 @@ impl App {
                 None => Target::Terminal,
             };
         }
+        if self.properties_area_at(x, y) {
+            return Target::Properties;
+        }
         if l.tree.contains(x, y) || self.in_tree_overflow(x, y) {
             return Target::Tree(self.tree_row_at(y));
         }
@@ -646,6 +652,21 @@ impl App {
         }
 
         // 预览（分栏时位于右侧，仅预览时占满编辑区）先于编辑区判断，仅预览时两者重叠。
+        if self.properties_area_at(x, y) {
+            let (track, scroll, content) = self.properties_vscrollbar()?;
+            if x >= track.right() - SCROLLBAR_HIT
+                && let Some(thumb) = scrollbar_thumb(track, scroll, content)
+            {
+                return Some((Scrollbar::Properties, grab(y, thumb.y, thumb.h)));
+            }
+            let (track, scroll, content) = self.properties_hscrollbar()?;
+            if track.contains(x, y) && y >= track.bottom() - SCROLLBAR_HIT {
+                let thumb = hscrollbar_thumb(track, scroll, content)?;
+                return Some((Scrollbar::PropertiesHorizontal, grab(x, thumb.x, thumb.w)));
+            }
+            return None;
+        }
+
         let preview = self.preview.markdown.area;
         // 标题列表覆盖在预览之上，先于预览判断；图钉按钮所在的位置不属于滚动条。
         let list = &self.preview.markdown.toc_list;
@@ -871,7 +892,11 @@ impl App {
             || self.over_diff_text(x, y) && x < self.layout.editor.right() - SCROLLBAR_HIT;
         // 日志详情中可选择的文字上（不含可点击的提交号和文件）显示文本光标。
         let in_field = self.field_at(x, y).is_some()
-            || matches!(self.pointer.drag, Drag::LogText | Drag::MarkdownText)
+            || matches!(
+                self.pointer.drag,
+                Drag::LogText | Drag::MarkdownText | Drag::PropertiesText
+            )
+            || self.properties_area_at(x, y)
             || (self.preview.markdown.area.contains(x, y) && self.markdown_link_at(x, y).is_none())
             || (self.log_active()
                 && crate::layout::hit(&self.hits.log, x, y).is_none()
@@ -1018,6 +1043,8 @@ pub(super) enum Target {
     /// Markdown 预览中可以选择文字的区域；参数为鼠标下的链接（可编辑的预览中单击链接放置
     /// 光标，不打开它）。
     MarkdownText(Option<usize>),
+    /// Properties 预览的文字区域。
+    Properties,
     /// 可编辑的预览中图片的把手。
     ImageHandle,
     /// 标签，参数为标签下标与是否位于关闭按钮上。

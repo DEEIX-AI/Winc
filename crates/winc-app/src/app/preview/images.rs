@@ -6,8 +6,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock, mpsc};
 
-use winc_editor::DocumentId;
-use winc_editor::{PictureState, PreviewKind, PreviewMode};
+use winc_editor::{Document, DocumentId, PictureState, PreviewKind, PreviewMode};
 use winc_preview::image::{self, Picture, Pixels, Source};
 use winc_preview::svg;
 
@@ -438,7 +437,14 @@ impl App {
     pub(in crate::app) fn set_preview_mode(&mut self, mode: PreviewMode) {
         // 换了显示方式，键盘先回到文字（只看预览时本来就对着预览）。
         self.preview.markdown.focused = false;
-        let top = self.leave_markdown_mode(mode);
+        if mode == PreviewMode::Preview
+            && self.bars.find.open
+            && self.editor.active().is_some_and(Document::is_properties)
+        {
+            self.close_search();
+        }
+        let markdown_top = self.leave_markdown_mode(mode).map(f64::from);
+        let properties_top = self.prepare_properties_mode(mode);
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
@@ -479,8 +485,11 @@ impl App {
         }
         self.relayout();
         // 从只看预览换回来：文字滚到预览顶上的那一处，不回到换走之前的位置。
-        if let Some(line) = top {
+        if let Some(line) = markdown_top.or(properties_top) {
             self.scroll_text_to(line);
+        }
+        if properties_top.is_some() && mode == PreviewMode::Split {
+            self.remember_properties_source_line();
         }
         self.request_redraw();
     }
@@ -537,6 +546,7 @@ fn preview_key(kind: PreviewKind) -> &'static str {
         PreviewKind::Markdown => "markdown",
         PreviewKind::Table => "table",
         PreviewKind::Latex => "latex",
+        PreviewKind::Properties => "properties",
     }
 }
 

@@ -70,7 +70,29 @@ impl TopRow {
     }
 }
 
+/// 将源代码的顶部显示行换算成物理行号，自动换行折成多段的行按段数等分。
+pub(crate) fn top_source_line(doc: &Document) -> f64 {
+    let row = doc.scroll_line.max(0.0);
+    let (line, part) = doc.line_and_part(row as usize);
+    line as f64 + (part as f64 + row.fract()) / doc.rows_of(line).max(1) as f64
+}
+
+/// 返回物理行号对应的源代码显示行。折叠内的行映射到折叠处。
+pub(crate) fn source_row(doc: &Document, line: f64) -> f64 {
+    let last = doc.text().line_count().saturating_sub(1);
+    let whole = (line.max(0.0) as usize).min(last);
+    doc.row_of(whole) as f64 + (line - whole as f64).clamp(0.0, 1.0) * doc.rows_of(whole) as f64
+}
+
 impl App {
+    /// 滚动源代码，使物理行 `line` 位于顶部。
+    pub(in crate::app) fn scroll_text_to(&mut self, line: f64) {
+        let max = self.max_scroll_line();
+        if let Some(doc) = self.editor.active_mut() {
+            set_scroll_line(doc, source_row(doc, line).clamp(0.0, max));
+        }
+    }
+
     /// 返回 `scroll_line` 的最大值（显示行）：内容能完整显示时不滚动；否则滚动到底时，
     /// 最后一行下方留出四成屏高的空白（[`OVERSCROLL`](crate::layout::OVERSCROLL)）。
     pub(in crate::app) fn max_scroll_line(&self) -> f64 {
@@ -165,6 +187,14 @@ impl App {
     /// 上下各留一行余量（顶部有固定行时，留出固定行占用的行数），左右各留 4 个单元格。
     /// 选区的任一端处在折叠的块内（查找、转到行、撤销都可能把光标移到折叠处）时，先展开。
     pub(in crate::app) fn ensure_caret_visible(&mut self) {
+        // 只看 Properties 预览时，文档的滚动位置记录阅读位置；隐藏的源代码光标不影响它。
+        if self
+            .editor
+            .active()
+            .is_some_and(Document::properties_preview)
+        {
+            return;
+        }
         let before = self.editor.active().map(|d| d.scroll_line);
         self.reveal_caret();
         if let Some(before) = before {
