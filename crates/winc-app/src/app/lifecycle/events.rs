@@ -777,6 +777,8 @@ impl App {
 
         earliest(&mut wake, self.changes_tick(now));
 
+        earliest(&mut wake, self.git_status_tick(now));
+
         earliest(&mut wake, self.sync_outline(now));
 
         earliest(&mut wake, self.blame_tick(now));
