@@ -47,17 +47,10 @@ sign_external() {
     curl -fsSL --connect-timeout 20 --max-time 120 --retry 2 -- "$SIGN_AND_NOTARIZE_SCRIPT_URL" > "$helper"
     [[ -s "$helper" ]] || fail "the signing helper is empty"
   fi
-  # The helper's downloads use HTTP/1.1; the signing CDN resets HTTP/2 transfers.
-  local bin="$RUNNER_TEMP/signing-bin" curl
-  curl="$(command -v curl)"
-  mkdir -p "$bin"
-  printf '#!/bin/sh\nexec %q --http1.1 "$@"\n' "$curl" > "$bin/curl"
-  chmod +x "$bin/curl"
-  PATH="$bin:$PATH" \
   API_BASE_URL="$SIGN_AND_NOTARIZE_BASE_URL" \
   API_TOKEN="$SIGN_AND_NOTARIZE_API_TOKEN" \
   RESULT_HELPER_URL="$SIGN_AND_NOTARIZE_HELPER_URL" \
-    bash "$helper" "$1" "$2"
+    bash -c "$(cat "$helper")" -- "$1" "$2"
 }
 
 case "$phase" in
