@@ -706,6 +706,7 @@ fn recognize(
                 | "vue"
                 | "wxml"
                 | "wxs"
+                | "mpx"
                 | "java"
                 | "groovy"
                 | "scala"

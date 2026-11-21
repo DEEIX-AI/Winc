@@ -433,6 +433,16 @@ pub(super) static WXML: Language = Language {
     ..HTML
 };
 
+/// Mpx 单文件组件的规则，其余字段沿用 HTML：结构与 Vue 相同，模板沿用 WXML 的写法，`<wxs>` 中的
+/// WXS 按脚本着色。
+pub(super) static MPX: Language = Language {
+    id: "mpx",
+    name: "Mpx",
+    extensions: &["mpx"],
+    script_tags: &["script", "wxs"],
+    ..HTML
+};
+
 /// CSS 的规则。
 ///
 /// CSS 没有 `//` 行注释：识别 `//` 会让 `url(http://…)` 中 `//` 之后的部分被当作注释。
