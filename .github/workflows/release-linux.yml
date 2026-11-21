@@ -50,6 +50,8 @@ jobs:
       - name: Bundle and verify RPM package
         run: bash release/linux/rpm/package.sh "$TARGET"
       - name: Prepare native packaging tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node release/linux/download-tools.mjs
       - name: Bundle deb and AppImage
         env:
