@@ -208,7 +208,7 @@ fn by_extension(ext: &str) -> Option<(FileGlyph, [u32; 2])> {
         "m" | "mm" => (Code, C),
         "cs" | "csx" => (Letters("C#"), DOTNET),
         "fs" | "fsx" | "vb" => (Code, DOTNET),
-        "html" | "htm" | "xhtml" | "vue" | "svelte" | "astro" | "wxml" => (Code, ORANGE),
+        "html" | "htm" | "xhtml" | "vue" | "svelte" | "astro" | "wxml" | "mpx" => (Code, ORANGE),
         // 生成 HTML 的模板。
         "hbs" | "handlebars" | "mustache" | "ejs" | "pug" | "jade" | "njk" | "liquid" | "twig"
         | "j2" | "jinja" | "jinja2" | "haml" | "slim" | "tmpl" | "tpl" | "gohtml" | "cshtml"

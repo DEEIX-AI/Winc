@@ -236,6 +236,16 @@ fn detects_wechat_mini_program_files() {
     assert!(!wxss.is_related(wxs));
 }
 
+/// Mpx 单文件组件是一种语言，沿用 HTML 的规则；与脚本、样式和小程序的语言互相查找用法。
+#[test]
+fn detects_mpx_components() {
+    let mpx = detect("index.mpx");
+    assert_eq!(mpx.name, "Mpx");
+    assert_eq!(mpx.markup, Markup::Html);
+    assert!(mpx.is_related(detect("a.ts")) && mpx.is_related(detect("a.css")));
+    assert!(mpx.is_related(detect("utils.wxs")) && mpx.is_related(detect("app.wxss")));
+}
+
 #[test]
 fn log_files_are_detected_with_rotation_suffixes() {
     for name in [

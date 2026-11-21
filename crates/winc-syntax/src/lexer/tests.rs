@@ -816,6 +816,26 @@ fn wxml_embeds_wxs_as_script() {
     assert_eq!(next, LineState::Normal);
 }
 
+/// Mpx 中 `<script>` 和 `<wxs>` 的内容按脚本着色，`<style>` 的内容按样式表着色。
+#[test]
+fn mpx_embeds_scripts_and_styles() {
+    let (_, next) = lex("index.mpx", "<script lang=\"ts\">", LineState::Normal);
+    assert!(matches!(next, LineState::Embedded { script: true, .. }));
+    let (tokens, next) = lex("index.mpx", "const a = 1; </script>", next);
+    assert_eq!(tokens[0], ("const".into(), TokenKind::Keyword));
+    assert_eq!(next, LineState::Normal);
+
+    let (_, next) = lex("index.mpx", "<wxs module=\"m\">", LineState::Normal);
+    assert!(matches!(next, LineState::Embedded { script: true, .. }));
+
+    let (tokens, _) = lex(
+        "index.mpx",
+        "<style>a { color: #fff }</style>",
+        LineState::Normal,
+    );
+    assert!(tokens.contains(&("color".into(), TokenKind::Property)));
+}
+
 #[test]
 fn markdown_blocks_and_inlines() {
     let headings = |line: &str| texts("a.md", line, LineState::Normal, TokenKind::Heading);
