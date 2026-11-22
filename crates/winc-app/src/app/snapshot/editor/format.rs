@@ -113,13 +113,12 @@ fn the_vim_equals_operator_formats_the_lines_it_covers() {
     app.config.vim_enabled = Some(true);
     app.vim_apply_config();
 
-    // `=j` 覆盖光标所在的行与下一行；格式化之后选区仍是光标。
+    // `=j` 覆盖光标所在的两行：`clang-format` 认识区段的参数，只处理这两行。
     app.vim_feed("j=j");
     app.wait_formatting();
-    assert!(
-        text(&app).ends_with("// --style=llvm --lines=2:3\n"),
-        "{}",
-        text(&app)
+    assert_eq!(
+        text(&app),
+        "int a;\nint b;\nint c;\nint d;\n// --style=llvm --lines=2:3\n"
     );
     assert!(app.editor.active().unwrap().selection.is_empty());
     assert_eq!(app.vim_mode(), Some(winc_vim::Mode::Normal));
@@ -139,14 +138,13 @@ fn a_selection_can_be_formatted_on_its_own() {
         .format_commands
         .insert("c".to_owned(), format!("'{}' --style=llvm", tool.display()));
 
-    // 选区为第二行（结束于第三行行首）：只格式化第二行。
+    // 选区为第二行（结束于第三行行首）：工具认识区段的参数，只格式化第二行。
     app.select(7, 14);
     app.format_selection();
     app.wait_formatting();
-    assert!(
-        text(&app).ends_with("// --style=llvm --lines=2:2\n"),
-        "{}",
-        text(&app)
+    assert_eq!(
+        text(&app),
+        "int a;\nint b;\nint c;\n// --style=llvm --lines=2:2\n"
     );
     assert_eq!(
         app.status.message.as_deref(),
@@ -160,18 +158,19 @@ fn a_selection_can_be_formatted_on_its_own() {
     app.wait_formatting();
     assert!(text(&app).ends_with("// --style=llvm\n"), "{}", text(&app));
 
-    // 不支持格式化部分内容的工具：提示原因，不改为格式化整个文件。
+    // 不认识区段参数的命令也支持所选内容：由 `winc` 截出区段再拼回，命令不收到区段的参数，
+    // 也不会改到所选内容之外的行。
     app.open_path(&dir.join("src/main.rs"));
     use_reindent(&mut app, &dir);
     let before = text(&app);
-    app.select(0, 5);
+    let first = before.find("  run();").unwrap();
+    app.select(first, first + 8);
     app.format_selection();
+    app.wait_formatting();
     assert_eq!(app.formatting_count(), 0);
-    assert_eq!(
-        app.notice.text.as_deref(),
-        Some("无法格式化：「reindent」不支持格式化所选内容")
-    );
-    assert_eq!(text(&app), before);
+    // 只改了选中的那一行（两格缩进改为四格），其余原样。
+    let expected = before.replacen("  run();", "    run();", 1);
+    assert_eq!(text(&app), expected);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

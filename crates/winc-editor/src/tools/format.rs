@@ -32,6 +32,9 @@ use crate::tools::shell::{Shell, is_executable};
 use crate::{Document, display_name};
 use tools::Detected;
 
+/// `ESLint` 把修好后的内容放在 JSON 报告的 `output` 字段里，而不是直接给全文。
+const ESLINT_DRY_RUN: &str = "--fix-dry-run";
+
 /// 外部工具执行的任务。
 ///
 /// 两种任务的输出都会替换文档内容，区别在于工具是否会改动程序的行为。
@@ -181,6 +184,11 @@ pub struct Plan {
     language: &'static str,
     /// 这次要做的是格式化还是修复。
     task: Task,
+    /// 是否设置里写的自定义命令（见 [`Plan::as_custom`]）。
+    ///
+    /// 自定义命令从标准输入读全文、从标准输出给全文，本身不知道区段：只格式化一部分时由
+    /// [`slice_range_out`] 截掉区段之后的内容，再把结果拼回全文。
+    custom: bool,
 }
 
 impl Plan {
@@ -306,7 +314,14 @@ impl Plan {
             guesses: Vec::new(),
             language: "",
             task: Task::Format,
+            custom: false,
         })
+    }
+
+    /// 把计划标成设置里的自定义命令：只格式化一部分时由 `winc` 截掉区段之后的内容、运行后再
+    /// 拼回全文（见 [`slice_range_out`]），不要求命令自己认识区段的参数。
+    pub fn as_custom(&mut self) {
+        self.custom = true;
     }
 
     /// 是否要等到运行前才能确定工具：项目里看不出用什么工具，需要看装了哪个
@@ -326,6 +341,9 @@ impl Plan {
         if self.guesses.is_empty() {
             return Some(Ok(self.clone()));
         }
+        if let Some(range) = &self.range {
+            return self.settle_restricted(range, &installed);
+        }
         for &preset in &self.guesses {
             if installed(preset.program())? {
                 // 预设的命令都是预先写好的，一定能拆分。使用系统中安装的程序，不去项目里找
@@ -334,7 +352,6 @@ impl Plan {
                     Plan::with_command(preset.command, Some((preset.name, None)), &self.file, None)
                         .ok()?;
                 plan.program = Program::Search(preset.program().to_owned());
-                plan.range = self.range.clone();
                 plan.language = self.language;
                 plan.task = self.task;
                 return Some(Ok(plan));
@@ -356,6 +373,46 @@ impl Plan {
         }))
     }
 
+    /// [`Plan::settle`] 用于只格式化一部分的计划：按区段逐个检查候选工具，第一个能用的胜出。
+    ///
+    /// 认识区段参数的工具优先；都不认识时用第一个已安装的工具，由 [`Plan::become_custom`]
+    /// 截出区段。候选工具都没有安装时与 [`Plan::settle`] 相同，返回 [`FormatError::NoTool`]。
+    fn settle_restricted(
+        &self,
+        range: &FormatRange,
+        installed: &impl Fn(&str) -> Option<bool>,
+    ) -> Option<Result<Plan, FormatError>> {
+        let mut sliced = None;
+        for &preset in &self.guesses {
+            if !installed(preset.program())? {
+                continue;
+            }
+            let mut plan =
+                Plan::with_command(preset.command, Some((preset.name, None)), &self.file, None)
+                    .ok()?;
+            plan.program = Program::Search(preset.program().to_owned());
+            plan.language = self.language;
+            plan.task = self.task;
+            plan.range = Some(range.clone());
+            if self.custom || plan.range_args().is_ok() {
+                return Some(Ok(plan));
+            }
+            // 换成第一个参数里写的程序：`run` 据 `args[0]` 定位自定义命令的程序。
+            if plan.become_custom().is_ok() {
+                let head = match &plan.program {
+                    Program::Search(name) => name.clone(),
+                    Program::Path(path) => path.to_string_lossy().into_owned(),
+                    Program::Project { path, .. } => path.to_string_lossy().into_owned(),
+                };
+                plan.args[0] = head;
+                if sliced.is_none() {
+                    sliced = Some(plan);
+                }
+            }
+        }
+        sliced.map(Ok)
+    }
+
     /// 返回这次计划要做的任务。
     pub fn task(&self) -> Task {
         self.task
@@ -363,24 +420,68 @@ impl Plan {
 
     /// 返回程序的名字（例如 `prettier`），用于提示信息。
     pub fn tool(&self) -> Cow<'_, str> {
+        if self.custom {
+            return (self.args.first()).map_or_else(
+                || Cow::Borrowed(""),
+                |program| display_name(Path::new(program)),
+            );
+        }
         match &self.program {
             Program::Search(name) => Cow::Borrowed(name),
             Program::Project { path, .. } | Program::Path(path) => display_name(path),
         }
     }
 
-    /// 限定只格式化 `range` 这一区段；工具不支持时返回原因，命令保持不变。
+    /// 是否设置里写的自定义命令：它不认识区段的参数，只处理一份完整的内容。
+    pub fn is_custom(&self) -> bool {
+        self.custom
+    }
+
+    /// 限定只格式化 `range` 这一区段。
     ///
-    /// 需要运行前才能确定工具的计划留到那时再检查。
+    /// 优先让工具自己只处理区段（见 `tools::range_args`）。工具不认识区段参数时，只要它从标准
+    /// 输入读全文、从标准输出给全文，就改由 [`Plan::as_custom`] 的做法：`winc` 截出区段再拼回，
+    /// 设置里写的命令都是这样。需要运行前才能确定工具的计划留到那时再检查（见
+    /// [`Formatter::resolve`]）。
     ///
     /// # Errors
     ///
-    /// 已知工具不支持区段格式化（见 `tools::range_args`）时返回 [`FormatError::Unavailable`]。
+    /// 工具读磁盘上的文件（[`Plan::reads_file_from_disk`]）、或者工具的输出不是修好后的全文
+    /// （`ESLint` 的 `--fix-dry-run`）时返回 [`FormatError::Unavailable`]：这两种情形只能整篇处理。
     pub fn restrict(&mut self, range: &FormatRange) -> Result<(), FormatError> {
-        if !self.is_guess() {
-            self.range_args()?;
+        if !self.is_guess() && !self.is_custom() {
+            if self.range_args().is_ok() {
+                self.range = Some(range.clone());
+                return Ok(());
+            }
+            self.become_custom()?;
         }
         self.range = Some(range.clone());
+        Ok(())
+    }
+
+    /// 改成由 `winc` 截出区段的做法，见 [`Plan::as_custom`]。
+    ///
+    /// # Errors
+    ///
+    /// 命令读磁盘上的文件、或者输出不是修好后的全文时返回 [`FormatError::Unavailable`]，此时
+    /// 计划保持不变。
+    fn become_custom(&mut self) -> Result<(), FormatError> {
+        let tool = self.tool().into_owned();
+        // 写在命令里的绝对路径是设置里自己的程序，不是项目自带的程序。数据流相同，因而同样可以
+        // 截出区段。
+        let own_program = matches!(self.program, Program::Path(_));
+        let refused = if !own_program && Self::reads_file_from_disk(&self.args.join(" ")) {
+            Some(t!("format-range-reads-file", tool = tool).to_owned())
+        } else if self.args.iter().any(|a| a == ESLINT_DRY_RUN) {
+            Some(t!("format-no-range", tool = tool).to_owned())
+        } else {
+            None
+        };
+        if let Some(message) = refused {
+            return Err(FormatError::Unavailable(message));
+        }
+        self.as_custom();
         Ok(())
     }
 
@@ -728,10 +829,20 @@ impl Formatter {
         let plan = &self.resolve(&job.plan)?;
         let tool = plan.tool().into_owned();
         let range_args = match &plan.range {
-            Some(range) => plan.range_args()?.iter().map(|a| range.expand(a)).collect(),
-            None => Vec::new(),
+            Some(range) if !plan.is_custom() => {
+                plan.range_args()?.iter().map(|a| range.expand(a)).collect()
+            }
+            _ => Vec::new(),
         };
-        let program = self.locate_for(&plan.file, &plan.program).ok_or_else(|| {
+        // 自定义命令的程序写在第一个参数里，与 `Plan::with_command` 的区分方式相同：含 `/` 的
+        // 是路径，否则在 `PATH` 里查找。
+        let head = plan.args.first().filter(|_| plan.is_custom());
+        let program = match head {
+            Some(head) if !head.contains('/') => Program::Search(head.clone()),
+            Some(head) => Program::Path(PathBuf::from(head)),
+            None => plan.program.clone(),
+        };
+        let program = self.locate_for(&plan.file, &program).ok_or_else(|| {
             let message = match &plan.auto {
                 Some((preset, Some(reason))) => {
                     let (preset, reason, tool) = (*preset, reason.as_str(), tool.as_str());
@@ -809,7 +920,17 @@ impl Formatter {
         // 工具收到的内容统一为 LF，使只用 CR 换行的旧文件不会被当作一整行；输出再转换回文件
         // 原有的换行符。`old` 留着和输出比较；送去格式化的输入直接移交给写标准输入的线程。
         let old = job.text.to_string();
-        let input = unify_newlines(&old, "\n").into_owned().into_bytes();
+        // 自定义命令不认识区段：只把区段送进去（见 `slice_range_out`），拼回时整段换成工具
+        // 的结果。
+        let lf = unify_newlines(&old, "\n").into_owned();
+        let (sent, cut) = match &plan.range {
+            Some(range) if head.is_some() => match slice_bounds(&lf, range) {
+                Some(bounds) => (slice_range_out(&lf, range), Some(bounds)),
+                None => (lf.clone(), None),
+            },
+            _ => (lf.clone(), None),
+        };
+        let input = sent.as_bytes().to_vec();
         let output = match process::run(&mut command, input, job.timeout, cancel) {
             Ok(output) => output,
             Err(RunError::Spawn(e)) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -870,7 +991,7 @@ impl Formatter {
         // ESLint 不直接输出修复后的内容，见 `eslint_output`。仍有无法自动修复的问题时退出码是 1，
         // 不算失败。按参数 `--fix-dry-run` 识别，而不是按程序名：项目里的路径是
         // `node_modules/.bin/eslint`，Windows 上是 `eslint.cmd`，用户也可能在外面套一层 `npx`。
-        let eslint = plan.args.iter().any(|a| a == "--fix-dry-run");
+        let eslint = plan.args.iter().any(|a| a == ESLINT_DRY_RUN);
         let finished = output.status.success() || (eslint && output.status.code() == Some(1));
         if !finished {
             for line in stderr.lines() {
@@ -908,7 +1029,15 @@ impl Formatter {
             formatted
         };
         let formatted = formatted.strip_prefix('\u{feff}').unwrap_or(&formatted);
-        let new = unify_newlines(formatted, job.line_ending.as_str());
+        // 只送了一部分：工具的结果整段换回选区的位置。
+        let spliced;
+        let new = match cut {
+            Some((start, end)) => {
+                spliced = splice_range(formatted, &lf, start, end);
+                unify_newlines(&spliced, job.line_ending.as_str())
+            }
+            None => unify_newlines(formatted, job.line_ending.as_str()),
+        };
         let changes = diff::line_changes(&old, &new);
         let lines = changes
             .iter()
@@ -920,6 +1049,68 @@ impl Formatter {
             tool,
         })
     }
+}
+
+/// 在 `text`（换行已统一为 LF）中找出区段 `range` 的范围：返回起点与选区末行行尾的字符序号。
+///
+/// 区段从选区第一个字符起（不在行首时也如此），起点之前的文本一个字符都不动。终点是选区
+/// 最后一行的行尾（含换行符）：工具往往不输出末尾换行，按行收尾多半会缺一个。
+fn slice_bounds(text: &str, range: &FormatRange) -> Option<(usize, usize)> {
+    // `start_offset` 按 UTF-16 码元计（见 `FormatRange::new`）：换算成字符个数，再换算成字节。
+    let start_char = (text.chars())
+        .scan(0, |units, c| {
+            *units += c.len_utf16();
+            Some(*units)
+        })
+        .take_while(|units| *units <= range.start_offset)
+        .count();
+    // 选区末行是第 `end_line` 行（从 1 起）：它的换行符之后。
+    let last = range.end_line.checked_sub(1)?;
+    let end = match text.match_indices('\n').map(|(at, _)| at + 1).nth(last) {
+        Some(end) => end,
+        None => text.len(),
+    };
+    let end = text[..end].chars().count();
+    Some((start_char, end.max(start_char)))
+}
+
+/// 送进工具的内容：选区原文，原样、不加任何标记。
+///
+/// 不加标记的理由：标记只用来在输出里定位选区的起点，而工具会删掉开头的空行、抹掉首行缩进，
+/// 还可能把标记与相邻的注释合并（`vkbeautify` 正是如此），反复出问题。把选区整段送进去、
+/// 结果整段换回来，定位就不需要了；对任何语言都成立，包括不接受注释的 JSON。
+///
+/// 选区从行中间开始时，那一行在选区起点之前的部分不算在区段里：工具看到的是从选区起点开始
+/// 的一段，那个半行原样留在原文里（见 [`splice_range`]）。
+fn slice_range_out(text: &str, range: &FormatRange) -> String {
+    let Some((start_char, end_char)) = slice_bounds(text, range) else {
+        return text.to_owned();
+    };
+    let (start, end) = (byte_of(text, start_char), byte_of(text, end_char));
+    text[start..end].to_owned()
+}
+
+/// 返回 `text` 中第 `chars` 个字符的字节位置；超出时返回文本长度。
+fn byte_of(text: &str, chars: usize) -> usize {
+    (text.char_indices())
+        .nth(chars)
+        .map_or(text.len(), |(at, _)| at)
+}
+
+/// 把工具的结果拼回全文：原文到选区起点为止，接上工具给出的区段（见 [`slice_range_out`]），
+/// 再接上原文从选区终点起的那一部分。
+///
+/// `start`、`end` 是区段起止的字符序号（见 [`slice_bounds`]）。区段之后还有内容时两者之间必须
+/// 隔一个换行：工具的输出通常没有末尾换行。
+fn splice_range(formatted: &str, original: &str, start: usize, end: usize) -> String {
+    let (from, to) = (byte_of(original, start), byte_of(original, end));
+    let (left, rest) = (&original[..from], &original[to..]);
+    let mut out = String::with_capacity(left.len() + formatted.len() + rest.len() + 12);
+    out.push_str(left);
+    out.push_str(formatted.trim_end_matches(['\n', '\r']));
+    out.push('\n');
+    out.push_str(rest);
+    out
 }
 
 /// 解析 `ESLint` 的 `--fix-dry-run --format json` 输出：修复过的内容在 `output` 字段里，

@@ -222,7 +222,13 @@ impl App {
             None => (*name).to_owned(),
         });
         let plan = match configured {
-            Some(command) => Some(Plan::for_task(task, language, file, root, Some(command))),
+            Some(command) => Some(
+                Plan::for_task(task, language, file, root, Some(command)).map(|mut plan| {
+                    // 设置里的命令不认识区段的参数：只格式化一部分时由 `winc` 截取再拼回。
+                    plan.as_custom();
+                    plan
+                }),
+            ),
             None => auto,
         };
         let (warning, install) = match plan {

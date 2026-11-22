@@ -57,6 +57,191 @@ fn format(
     Ok(rope.to_string())
 }
 
+/// 设置里写的自定义命令不认识区段的参数：只格式化一部分时送进去的就是选中的文本，结果整段
+/// 换回原文；选区之前的原文一个字符都不动。
+#[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
+#[test]
+fn custom_commands_format_only_the_rest_after_the_selection() {
+    let dir = scratch("custom-range");
+    let bin = dir.join("bin");
+    let seen = dir.join("seen");
+    // 记下收到的内容，再给每行加上 `>>`，看得出哪些行被处理过。
+    let quoted = format!("'{}'", seen.display());
+    let script = format!("tee {quoted} | sed 's/^/>>/'");
+    fake_tool(&bin, "mark", &script);
+    let formatter = formatter(&bin);
+    let file = dir.join("a.sql");
+    let text = "a\nb\nc\n";
+    let mut plan = Plan::new(language("sql"), &file, None, Some("mark")).unwrap();
+    plan.as_custom();
+    assert!(plan.is_custom());
+    let range = FormatRange::new(&Rope::from_str(text), 2, 4);
+    plan.restrict(&range).unwrap();
+    let job = Job {
+        plan,
+        text: Rope::from_str(text),
+        line_ending: LineEnding::Lf,
+        timeout: TOOL_TIMEOUT,
+    };
+    let formatted = formatter.run(job, &Cancel::default()).unwrap();
+    // 送到工具的就是选中的那一段。
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), "b\n");
+    let mut rope = Rope::from_str(text);
+    for change in &formatted.changes {
+        rope.remove(change.start..change.start + change.removed.chars().count());
+        rope.insert(change.start, &change.inserted);
+    }
+    // 只有选中的部分被处理，其余原样。
+    assert_eq!(rope.to_string(), "a\n>>b\nc\n");
+}
+
+/// 用户实际的情形：选区上方是空行与 `// a`，选区从 `SELECT` 行中间开始。只送选区、结果整段
+/// 换回，选区之前的空行与注释、以及那一行选区起点之前的内容都不动，`SELECT` 完整。
+#[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
+#[test]
+fn custom_range_keeps_comments_and_indent_above_the_selection() {
+    let dir = scratch("custom-range-real");
+    let bin = dir.join("bin");
+    let seen = dir.join("seen");
+    let quoted = format!("'{}'", seen.display());
+    fake_tool(&bin, "mark", &format!("tee {quoted} | sed 's/^/>>/'"));
+    let formatter = formatter(&bin);
+    let file = dir.join("a.sql");
+    let text = "\n// a\nSELECT  `pay_time`\n       ,`pay_status`\n";
+    let mut plan = Plan::new(language("sql"), &file, None, Some("mark")).unwrap();
+    plan.as_custom();
+    let from = text.find("SELECT").unwrap();
+    let range = FormatRange::new(&Rope::from_str(text), from, text.len());
+    plan.restrict(&range).unwrap();
+    let job = Job {
+        plan,
+        text: Rope::from_str(text),
+        line_ending: LineEnding::Lf,
+        timeout: TOOL_TIMEOUT,
+    };
+    let formatted = formatter.run(job, &Cancel::default()).unwrap();
+    // 工具只收到从 `SELECT` 开始的两行。
+    assert_eq!(
+        std::fs::read_to_string(&seen).unwrap(),
+        "SELECT  `pay_time`\n       ,`pay_status`\n"
+    );
+    let mut rope = Rope::from_str(text);
+    for change in &formatted.changes {
+        rope.remove(change.start..change.start + change.removed.chars().count());
+        rope.insert(change.start, &change.inserted);
+    }
+    // 空行与 `// a` 原样；`SELECT` 前面的缩进在选区之外，也原样。
+    assert_eq!(
+        rope.to_string(),
+        "\n// a\n>>SELECT  `pay_time`\n>>       ,`pay_status`\n"
+    );
+}
+
+/// 选区上方还有空行：那些行、以及选区首行在选区起点之前的部分，一个字符都不动。
+#[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
+#[test]
+fn custom_range_leaves_everything_before_the_selection_alone() {
+    let dir = scratch("custom-range-before");
+    let bin = dir.join("bin");
+    // 每行行首加 `>>`（跳过缩进），看得出工具处理了哪一段。
+    fake_tool(&bin, "mark", r"sed 's/^\( *\)/\1>>/'");
+    let formatter = formatter(&bin);
+    let file = dir.join("a.sql");
+    let text = "\n\n// a\nabcd SELECT  x\n          ,y\n";
+    let mut plan = Plan::new(language("sql"), &file, None, Some("mark")).unwrap();
+    plan.as_custom();
+    // 从 `// a` 往后选中到 `,y` 那行末尾。
+    let from = text.find("// a").unwrap();
+    let range = FormatRange::new(&Rope::from_str(text), from, text.len());
+    plan.restrict(&range).unwrap();
+    let job = Job {
+        plan,
+        text: Rope::from_str(text),
+        line_ending: LineEnding::Lf,
+        timeout: TOOL_TIMEOUT,
+    };
+    let formatted = formatter.run(job, &Cancel::default()).unwrap();
+    let mut rope = Rope::from_str(text);
+    for change in &formatted.changes {
+        rope.remove(change.start..change.start + change.removed.chars().count());
+        rope.insert(change.start, &change.inserted);
+    }
+    let got = rope.to_string();
+    // 选区之前的两个空行原样；选区里的文本各行都被工具处理过。
+    assert!(got.starts_with("\n\n"), "{got:?}");
+    assert!(got.contains("abcd\n") || got.contains("abcd"), "{got:?}");
+    let marked = (got.lines()).filter(|l| l.contains(">>")).count();
+    assert!(marked >= 2, "{got:?}");
+}
+
+/// 工具抹掉缩进（`vkbeautify` 就是这样）：选区从行中间开始时，只送选区，左边未被选中的
+/// 缩进留在原文里，词完整。
+#[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
+#[test]
+fn custom_range_keeps_the_first_word_when_the_tool_trims_indent() {
+    let dir = scratch("custom-range-indent");
+    let bin = dir.join("bin");
+    fake_tool(&bin, "trim", "sed 's/^ *//'");
+    let formatter = formatter(&bin);
+    let file = dir.join("a.sql");
+    let text = "abcd\n       SELECT  x\n       ,y\n";
+    let mut plan = Plan::new(language("sql"), &file, None, Some("trim")).unwrap();
+    plan.as_custom();
+    // 从 `SELECT` 起选中到 `,y` 那行末尾。
+    let from = text.find("SELECT").unwrap();
+    let to = text.len();
+    let range = FormatRange::new(&Rope::from_str(text), from, to);
+    plan.restrict(&range).unwrap();
+    let job = Job {
+        plan,
+        text: Rope::from_str(text),
+        line_ending: LineEnding::Lf,
+        timeout: TOOL_TIMEOUT,
+    };
+    let formatted = formatter.run(job, &Cancel::default()).unwrap();
+    let mut rope = Rope::from_str(text);
+    for change in &formatted.changes {
+        rope.remove(change.start..change.start + change.removed.chars().count());
+        rope.insert(change.start, &change.inserted);
+    }
+    // 首行前面的缩进在选区之外：原样保留；选区内的其余各行由工具去掉缩进。
+    assert_eq!(rope.to_string(), "abcd\n       SELECT  x\n,y\n");
+}
+
+/// 工具在区段之后补了末尾换行、或一次把多行区段格式化成一个更长的块时，区段之后原文的
+/// 内容都原样保留，不丢行。
+#[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
+#[test]
+fn custom_range_keeps_every_line_outside_the_selection() {
+    let dir = scratch("custom-range-keep");
+    let bin = dir.join("bin");
+    // 把选区的每个空格换成换行：`select a` 变成两行，后面的行不该被吃掉。
+    fake_tool(&bin, "split", "tr ' ' '\\n'");
+    let formatter = formatter(&bin);
+    let file = dir.join("a.sql");
+    let text = "one\nselect a\nthree\nfour\n";
+    let mut plan = Plan::new(language("sql"), &file, None, Some("split")).unwrap();
+    plan.as_custom();
+    // 选区从 `select a` 整行开始：整个选区进工具，那行的空格被工具拆成换行。
+    let from = text.find("select").unwrap();
+    let range = FormatRange::new(&Rope::from_str(text), from, from + "select a".len());
+    plan.restrict(&range).unwrap();
+    let job = Job {
+        plan,
+        text: Rope::from_str(text),
+        line_ending: LineEnding::Lf,
+        timeout: TOOL_TIMEOUT,
+    };
+    let formatted = formatter.run(job, &Cancel::default()).unwrap();
+    let mut rope = Rope::from_str(text);
+    for change in &formatted.changes {
+        rope.remove(change.start..change.start + change.removed.chars().count());
+        rope.insert(change.start, &change.inserted);
+    }
+    // 选区内那行的空格被工具拆成两行；选区之前的行原样，之后的行一行不少。
+    assert_eq!(rope.to_string(), "one\nselect\na\nthree\nfour\n");
+}
+
 #[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
 #[test]
 fn output_replaces_the_text_with_the_files_own_newlines() {
@@ -410,6 +595,7 @@ fn only_tools_that_can_format_part_of_a_file_are_restricted() {
     .unwrap();
     plan.restrict(&range).unwrap();
     assert!(plan.is_restricted());
+    assert!(!plan.is_custom(), "工具认识区段的参数，就不截取");
     let job = Job {
         plan,
         text: text.clone(),
@@ -418,15 +604,77 @@ fn only_tools_that_can_format_part_of_a_file_are_restricted() {
     };
     let out = formatter.run(job, &Cancel::default()).unwrap();
     assert_eq!(out.changes[0].inserted, "--style=llvm --lines=2:2 \n");
+}
+
+/// 预设 · 识别出的工具不认识区段参数：运行前确定之后改由 `winc` 截出区段。
+#[cfg(unix)] // 用不带扩展名的脚本冒充工具；Windows 上程序要带 PATHEXT 中的扩展名
+#[test]
+fn guessed_tools_without_range_options_slice_the_selection() {
+    let root = scratch("plan-guess-range");
+    let bin = root.join("bin");
+    let file = root.join("a.sh");
+    fake_tool(&bin, "shfmt", r"sed 's/^/>>/'");
+    let formatter = formatter(&bin);
+    let mut plan = Plan::new(language("shell"), &file, None, None).unwrap();
+    assert!(plan.is_guess());
+    let text = Rope::from_str("a\nb\nc\n");
+    plan.restrict(&FormatRange::new(&text, 2, 3)).unwrap();
+    assert!(!plan.is_custom(), "还不知道用哪个工具，先等运行前确定");
+    let job = Job {
+        plan,
+        text: text.clone(),
+        line_ending: LineEnding::Lf,
+        timeout: TOOL_TIMEOUT,
+    };
+    let formatted = formatter.run(job, &Cancel::default()).unwrap();
+    // `shfmt` 不认识区段参数，只收到选中的那一行。
+    assert_eq!(formatted.tool, "shfmt");
+    assert_eq!(formatted.changes[0].inserted, ">>b\n");
+}
+
+/// 不认识区段参数、但读写标准输入输出的命令：区段由 `winc` 截出再拼回。
+#[test]
+fn commands_without_range_options_fall_back_to_slicing() {
+    let dir = scratch("range-fallback");
+    let text = Rope::from_str("int a;\nint b;\nint c;\n");
+    let range = FormatRange::new(&text, 7, 10);
 
     let mut gofmt = Plan::new(language("go"), &dir.join("a.go"), None, Some("gofmt")).unwrap();
+    gofmt.restrict(&range).unwrap();
+    assert!(gofmt.is_restricted());
+    assert!(gofmt.is_custom());
+
+    // 命令带 `{file}`、直接读磁盘上的文件：改的是整个文件，只能整篇处理。
+    let mut reads = Plan::new(
+        language("go"),
+        &dir.join("a.go"),
+        None,
+        Some("gofmt {file}"),
+    )
+    .unwrap();
     assert_eq!(
-        gofmt.restrict(&range),
+        reads.restrict(&range),
         Err(FormatError::Unavailable(
-            "「gofmt」不支持格式化所选内容".to_owned()
+            "「gofmt」直接读取磁盘上的文件，不支持格式化所选内容".to_owned()
         ))
     );
-    assert!(!gofmt.is_restricted());
+    assert!(!reads.is_restricted());
+
+    // ESLint 的输出是 JSON 报告，不是修好后的全文。
+    let mut eslint = Plan::new(
+        language("javascript"),
+        &dir.join("a.js"),
+        None,
+        Some("eslint --stdin --fix-dry-run --format json"),
+    )
+    .unwrap();
+    assert_eq!(
+        eslint.restrict(&range),
+        Err(FormatError::Unavailable(
+            "「eslint」不支持格式化所选内容".to_owned()
+        ))
+    );
+    assert!(!eslint.is_restricted());
 }
 
 #[test]
