@@ -87,6 +87,12 @@ impl ApplicationHandler<UserEvent> for App {
             use winit::platform::startup_notify::WindowAttributesExtStartupNotify;
             use winit::platform::wayland::WindowAttributesExtWayland;
             attributes = attributes.with_name("winc", "winc");
+            // X11 的停靠栏在系统里找不到 `winc.desktop`（AppImage 不安装桌面项）时显示窗口
+            // 自身的 `_NET_WM_ICON`：把随程序分发的图标也设到窗口上，停靠栏始终有图可显。
+            // Wayland 的窗口图标由桌面项按 app_id 提供，此设置在该平台上没有作用。
+            if let Some(icon) = dock_icon() {
+                attributes = attributes.with_window_icon(Some(icon));
+            }
             // 激活令牌：Wayland 上新窗口凭该令牌切换到前台，X11 上凭该令牌结束启动通知。
             if let Some(token) = self.opening.activation.take() {
                 attributes = attributes.with_activation_token(token);
@@ -944,4 +950,19 @@ impl App {
 /// 将 `at` 并入下一次唤醒的时间，取两者中较早的一个；`at` 为 `None` 时不变。
 fn earliest(wake: &mut Option<Instant>, at: Option<Instant>) {
     *wake = (*wake).into_iter().chain(at).min();
+}
+
+/// Linux 上设到窗口上的停靠栏图标（`_NET_WM_ICON` 的来源）。
+///
+/// 从随程序分发的 256 像素 PNG 解码；见设置窗口属性处对使用场景的说明。
+#[cfg(all(unix, not(target_os = "macos")))]
+fn dock_icon() -> Option<winit::window::Icon> {
+    let bytes: &[u8] = include_bytes!("../../../assets/winc.png");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .ok()?;
+    let mut pixels = vec![0; reader.output_buffer_size()?];
+    reader.next_frame(&mut pixels).ok()?;
+    let info = reader.info();
+    winit::window::Icon::from_rgba(pixels, info.width, info.height).ok()
 }
