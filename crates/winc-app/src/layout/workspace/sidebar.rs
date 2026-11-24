@@ -210,7 +210,7 @@ pub fn view_tabs(
         .enumerate()
         .map(|(i, v)| (SEGMENT_W + gap(i)) * v.1);
     let track_w = widths.sum::<f32>() + 4.0;
-    let left = (sidebar.right() - 8.0 - track_w).max(toggle.right() + SEGMENT_GAP) + 2.0;
+    let left = sidebar.x + 8.0 + 2.0;
     let y = toggle.y + (toggle.h - SEGMENT_H) / 2.0;
     let mut x = left;
     views

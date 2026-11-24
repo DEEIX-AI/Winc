@@ -468,17 +468,21 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     // 面板在右边时标签栏在顶栏那一行，右端让给窗口按钮（由应用绘制标题栏时）；最大化、侧栏
     // 收起时面板伸到窗口左边，左端让给侧栏开关（macOS 上还有它左边的红绿灯）。
     let toggle = app.layout.sidebar_button;
-    let left = if toggle.y < header.bottom() && toggle.right() > card.x {
-        (card.x + tab_inset(card)).max(toggle.right() + TAB_GAP)
+    let lights = crate::layout::traffic_lights_end();
+    let left = if lights > 0.0 && card.x < lights + crate::theme::LIGHTS_GAP {
+        (card.x + tab_inset(card)).max(lights + crate::theme::LIGHTS_GAP)
     } else {
         card.x + tab_inset(card)
     };
     let controls = app.layout.controls;
-    let end = if controls.w > 0.0 && controls.y < header.bottom() && controls.x < header.right() {
+    let mut end = if controls.w > 0.0 && controls.y < header.bottom() && controls.x < header.right() {
         controls.x - TAB_GAP
     } else {
         header.right()
     };
+    if toggle.y < header.bottom() && toggle.x < header.right() && toggle.right() > card.x {
+        end = end.min(toggle.x + BUTTONS_END - TAB_GAP);
+    }
     // 按钮的尺寸和间距与编辑区标签栏相同；标签放不下时「+」紧贴右边的按钮。
     let button_y = card.y + (header.h - BUTTON) / 2.0;
     let hide = Rect::new(end - BUTTONS_END - BUTTON, button_y, BUTTON, BUTTON);

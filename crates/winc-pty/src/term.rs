@@ -542,7 +542,7 @@ impl Emulator {
             insert: false,
             modes: Modes(Modes::ALT_SCROLL),
             cursor_visible: true,
-            shape: CursorShape::Block,
+            shape: CursorShape::Bar,
             blink: true,
             tabs: Vec::new(),
             charsets: [false; 2],

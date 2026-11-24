@@ -123,12 +123,11 @@ impl Layout {
             .min((width - 320.0).max(MIN_PANEL_WIDTH))
             .round();
         let visible_w = (full_w * shown.clamp(0.0, 1.0)).round();
-        let side_x = visible_w - full_w;
-        // 侧栏占据的一列宽 `full_w`：左侧和上方留出 `ISLAND_MARGIN`，右侧留出卡片间距的一半，
-        // 其余是侧栏卡片。
+        // 侧栏位于窗口右侧：展开时占 `[width - full_w .. width]`，收起时向右滑出窗口外。
+        let side_x = width - visible_w;
         let m = ISLAND_MARGIN;
         let sidebar = Rect::new(
-            side_x + m,
+            side_x + ISLAND_GAP / 2.0,
             m,
             full_w - m - ISLAND_GAP / 2.0,
             (body_h - m).max(0.0),
@@ -140,32 +139,37 @@ impl Layout {
             sidebar.w,
             (body_h - sidebar_header.bottom()).max(0.0),
         );
-        // 侧栏动画进行中（`shown` 小于 1）不显示分隔条，因此不能拖动；显示时宽 6 像素
-        // （`ISLAND_GAP`）。
+        // 分隔条位于编辑区与右侧栏之间的 `ISLAND_GAP` 中。
         let splitter_w = if shown >= 1.0 { 6.0 } else { 0.0 };
-        let splitter = Rect::new(visible_w - 3.0, 0.0, splitter_w, body_h);
+        let splitter = Rect::new(side_x - 3.0, 0.0, splitter_w, body_h);
 
-        // 编辑区卡片从侧栏卡片右侧的间距之后开始；侧栏隐藏时与窗口左边缘相隔 `ISLAND_MARGIN`。
-        let main_x = (visible_w + ISLAND_GAP / 2.0).max(m);
-        let main_w = (width - m - main_x).max(0.0);
+        // 编辑区卡片始终从左侧 `ISLAND_MARGIN` 开始；右侧在侧栏展开时让出侧栏，
+        // 收起时延伸到 `width - ISLAND_MARGIN`。
+        let main_x = m;
+        let main_right = (width - visible_w - ISLAND_GAP / 2.0).min(width - m);
+        let main_w = (main_right - main_x).max(0.0);
         let top_bar = Rect::new(main_x, m, main_w, TOP_BAR);
 
-        // 侧栏开关固定在红绿灯右侧，侧栏展开、收起和动画期间位置不变，连续点击时无需重新定位。
-        // 侧栏收起时标签从开关右侧开始，与开关相隔 `TAB_GAP`，和标签之间的间距相同；
-        // 侧栏展开时开关右边是视图切换图标（`view_tabs`）。
+        // 侧栏开关固定在窗口右上角（距右边缘 `m + 8.0`），展开和收起时位置不变。
         let button_y = m + (TOP_BAR - BUTTON) / 2.0;
         let sidebar_button = Rect::new(
-            first_button_x(icons::SIDEBAR_WIDTH),
+            width - m - 8.0 - BUTTON,
             button_y,
             BUTTON,
             BUTTON,
         );
-        let tabs_x = (main_x + TAB_INSET).max(sidebar_button.right() + TAB_GAP);
-        // 标签栏延伸到顶栏右端：查找由快捷键打开，设置的入口位于菜单栏和命令面板中。
+        // 标签栏左侧避开 macOS 左上角红绿灯，右侧避开右上角的侧栏开关（预览/浏览器按钮也锚定于 `tabs.right()`）。
+        let lights = traffic_lights_end();
+        let tabs_x = if lights > 0.0 {
+            (main_x + TAB_INSET).max(lights + LIGHTS_GAP)
+        } else {
+            main_x + TAB_INSET
+        };
+        let tabs_right = (top_bar.right() - 8.0).min(sidebar_button.x - TAB_GAP);
         let tabs = Rect::new(
             tabs_x,
             m,
-            (top_bar.right() - 8.0 - tabs_x).max(0.0),
+            (tabs_right - tabs_x).max(0.0),
             TOP_BAR,
         );
 

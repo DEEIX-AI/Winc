@@ -254,7 +254,7 @@ pub(crate) fn has_children(items: &[Symbol], i: usize) -> bool {
 impl App {
     /// 符号列表是否正在显示：侧栏可见、在文件视图，且大纲展开着（含展开、收起的途中）。
     pub(crate) fn outline_shown(&self) -> bool {
-        self.layout.sidebar.right() > 0.0 && self.layout.outline.h > OUTLINE_HEADER
+        self.layout.sidebar.x < self.layout.window.w && self.layout.outline.h > OUTLINE_HEADER
     }
 
     /// 在文件树下面排出大纲，文件树让出这一段；不在文件视图时没有大纲。

@@ -251,7 +251,7 @@ impl Emulator {
         self.scheme_reports = false;
         self.soft_reset();
         self.modes = Modes(Modes::ALT_SCROLL);
-        self.shape = CursorShape::Block;
+        self.shape = CursorShape::Bar;
         self.blink = true;
         self.sync = false;
         self.reset_tabs();

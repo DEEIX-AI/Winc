@@ -1102,7 +1102,7 @@ impl App {
     /// 提交视图是否正在显示。
     pub(crate) fn commit_shown(&self) -> bool {
         self.panels.sidebar.view == crate::layout::SidebarView::Commit
-            && self.layout.sidebar.right() > 0.0
+            && self.layout.sidebar.x < self.layout.window.w
     }
 
     /// 是否显示提交卡片：有改动、有进行中的合并或变基、开着「修改上一次提交」或正在提交时显示。

@@ -229,9 +229,10 @@ impl Perform for Emulator {
             ([b' '], 'q') => {
                 let style = args.get(0, 0);
                 self.shape = match style {
+                    1 | 2 => CursorShape::Block,
                     3 | 4 => CursorShape::Underline,
                     5 | 6 => CursorShape::Bar,
-                    _ => CursorShape::Block,
+                    _ => CursorShape::Bar,
                 };
                 self.blink = matches!(style, 0 | 1 | 3 | 5);
             }

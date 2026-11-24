@@ -150,7 +150,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     app.begin_scrollbars();
 
-    if layout.sidebar.right() > 0.0 {
+    if layout.sidebar.x < layout.window.w {
         draw_sidebar(app, frame);
     }
     // 本帧没有绘制工具栏（侧栏收起或处于搜索视图）时，收起动画直接结束，不需要额外一帧。
@@ -304,7 +304,7 @@ fn draw_island_corners(app: &App, frame: &mut Frame<'_>, editor: bool) {
     let l = &app.layout;
     let p = app.palette;
 
-    if l.sidebar.right() > 0.0 {
+    if l.sidebar.x < l.window.w {
         frame.round_corners(l.sidebar, RADIUS_ISLAND, p.frame_bg);
     }
     if editor {

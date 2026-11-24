@@ -133,7 +133,8 @@ impl App {
             } => {
                 // 宽度拖到最小宽度的一半以下时收起侧栏，拖回该阈值以上时重新打开。
                 // 收起时宽度恢复为拖动前的值，之后用 `⌘B` 打开时仍为拖动前的宽度。
-                let width = start_width + x - start_x;
+                // 侧栏在右侧：向左拖增大宽度，向右拖减小宽度并收起。
+                let width = start_width - (x - start_x);
                 if width < MIN_PANEL_WIDTH / 2.0 {
                     if self.panels.sidebar.visible {
                         self.panels.sidebar.width = start_width;

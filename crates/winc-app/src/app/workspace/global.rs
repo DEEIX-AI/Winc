@@ -442,7 +442,7 @@ impl App {
 
     /// 搜索面板是否正在显示：侧栏当前是搜索视图，且侧栏可见。
     pub(crate) fn panel_shown(&self) -> bool {
-        self.panels.sidebar.view == SidebarView::Search && self.layout.sidebar.right() > 0.0
+        self.panels.sidebar.view == SidebarView::Search && self.layout.sidebar.x < self.layout.window.w
     }
 
     /// 把侧栏切换到视图 `view`（文件树或搜索）。

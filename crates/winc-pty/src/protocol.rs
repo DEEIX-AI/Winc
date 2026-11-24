@@ -220,11 +220,11 @@ impl Line {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CursorShape {
     /// 方块。
-    #[default]
     Block,
     /// 下划线。
     Underline,
     /// 竖线。
+    #[default]
     Bar,
 }
 
