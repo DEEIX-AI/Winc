@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use winit::keyboard::{Key, NamedKey};
+use winc_config::Json;
 use winc_core::Lines;
 use winc_editor::{Document, DocumentId};
 use winc_i18n::t;
@@ -25,7 +25,7 @@ use winc_lsp::message::{
 };
 use winc_lsp::position;
 use winc_lsp::rpc::{Id, Message};
-use winc_config::Json;
+use winit::keyboard::{Key, NamedKey};
 
 use super::*;
 
@@ -85,7 +85,9 @@ pub(in crate::app) fn sync_actions(
     let mut actions = Vec::new();
     for (id, state) in synced {
         if !docs.iter().any(|d| d.doc.0 == *id) {
-            actions.push(SyncAction::Close { uri: state.uri.clone() });
+            actions.push(SyncAction::Close {
+                uri: state.uri.clone(),
+            });
         }
     }
     actions.extend(
@@ -106,15 +108,24 @@ pub(in crate::app) fn sync_actions(
 
 /// 服务器可执行文件名：Windows 带 `.exe`。
 pub(in crate::app) fn server_file_name(name: &str) -> String {
-    if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() }
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    }
 }
 
 /// 按 `dirs` 的顺序返回其中第一个含有 `name` 的路径；找不到时返回 `None`。
 ///
 /// 只查本机：这些目录来自本机的 `PATH` 与 Go 的安装位置（远端工作区不启动服务器）。
-#[allow(clippy::disallowed_methods, reason = "只访问本机：PATH 与 Go 的安装位置")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "只访问本机：PATH 与 Go 的安装位置"
+)]
 pub(in crate::app) fn first_existing(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
-    dirs.iter().map(|dir| dir.join(name)).find(|path| path.is_file())
+    dirs.iter()
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
 }
 
 /// 语言 `language` 要启动的程序。
@@ -165,7 +176,11 @@ pub(in crate::app) fn content_changes(
     previous: u64,
     incremental: bool,
 ) -> Vec<ContentChange> {
-    let full = || vec![ContentChange::Full(doc.text().substring(0, doc.text().end_pos()))];
+    let full = || {
+        vec![ContentChange::Full(
+            doc.text().substring(0, doc.text().end_pos()),
+        )]
+    };
     if !incremental {
         return full();
     }
@@ -189,7 +204,10 @@ pub(in crate::app) fn content_changes(
 }
 
 /// 从 `start` 起走过 `removed` 之后的 LSP 位置：换行符按行推进，其余按 UTF-16 列推进。
-pub(in crate::app) fn advance(start: winc_lsp::message::Position, removed: &str) -> winc_lsp::message::Position {
+pub(in crate::app) fn advance(
+    start: winc_lsp::message::Position,
+    removed: &str,
+) -> winc_lsp::message::Position {
     match removed.rfind('\n') {
         Some(at) => {
             let lines = removed.matches('\n').count() as u32;
@@ -201,8 +219,7 @@ pub(in crate::app) fn advance(start: winc_lsp::message::Position, removed: &str)
         }
         None => winc_lsp::message::Position {
             line: start.line,
-            character: start.character
-                + removed.chars().map(|c| c.len_utf16() as u32).sum::<u32>(),
+            character: start.character + removed.chars().map(|c| c.len_utf16() as u32).sum::<u32>(),
         },
     }
 }
@@ -395,7 +412,6 @@ impl LspState {
         self.unavailable = Some((command.to_owned(), reason.to_owned()));
     }
 
-
     /// 配置里这条命令改过了：清掉不可用标记，下次需要启动时重新求值。
     pub(in crate::app) fn recheck_config(&mut self, config: &winc_config::Config) {
         let Some((command, _)) = &self.unavailable else {
@@ -499,14 +515,24 @@ impl LspState {
     }
 
     /// 光标处的诊断气泡是否已经弹出过（同一范围、同样的消息）。
-    pub(in crate::app) fn diag_hint_seen(&self, doc: DocumentId, anchor: usize, text: &str) -> bool {
+    pub(in crate::app) fn diag_hint_seen(
+        &self,
+        doc: DocumentId,
+        anchor: usize,
+        text: &str,
+    ) -> bool {
         self.diag_hint
             .as_ref()
             .is_some_and(|(at, a, t)| *at == doc && *a == anchor && t == text)
     }
 
     /// 记下已经弹出过诊断气泡的位置与消息。
-    pub(in crate::app) fn remember_diag_hint(&mut self, doc: DocumentId, anchor: usize, text: &str) {
+    pub(in crate::app) fn remember_diag_hint(
+        &mut self,
+        doc: DocumentId,
+        anchor: usize,
+        text: &str,
+    ) {
         self.diag_hint = Some((doc, anchor, text.to_owned()));
     }
 
@@ -621,7 +647,10 @@ impl App {
     /// 处理服务器发来的一条报文。
     fn lsp_message(&mut self, message: Message) {
         match message {
-            Message::Notification { method: name, params } => {
+            Message::Notification {
+                method: name,
+                params,
+            } => {
                 let params = params.as_ref();
                 match name.as_str() {
                     method::PUBLISH_DIAGNOSTICS => {
@@ -690,7 +719,10 @@ impl App {
         };
         let response = CompletionResponse::from_json(result);
         let items = response.map(|r| r.items().to_vec()).unwrap_or_default();
-        let current = self.editor.active().and_then(editor::completion::Completion::context);
+        let current = self
+            .editor
+            .active()
+            .and_then(editor::completion::Completion::context);
         self.completion.response(id, current.as_ref(), items)
     }
 
@@ -764,7 +796,8 @@ impl App {
             match program_for(&self.config, &language, &server_search_dirs()) {
                 Some(program) => self.start_lsp(&program, &language, &command),
                 None => {
-                    self.lsp.mark_unavailable(&language, &command, "未找到可执行文件");
+                    self.lsp
+                        .mark_unavailable(&language, &command, "未找到可执行文件");
                     self.flash(t!("editor-lsp-not-installed", command = command));
                     return;
                 }
@@ -848,7 +881,8 @@ impl App {
     /// 按本帧的文档集合发 didOpen/didChange/didClose，并更新同步表与空闲计时。
     fn sync_lsp_documents(&mut self, docs: Vec<SyncDoc>) {
         // 关闭的文档不再显示诊断（服务器可能还会推一次，找不到文档就丢弃）。
-        self.diagnostics.retain(|id| self.editor.document(id).is_some());
+        self.diagnostics
+            .retain(|id| self.editor.document(id).is_some());
         for action in sync_actions(self.lsp.synced(), &docs) {
             match action {
                 SyncAction::Close { uri } => {
@@ -984,7 +1018,8 @@ impl App {
                 let down = matches!(key, Key::Named(NamedKey::ArrowDown));
                 let selected = self.completion.selected();
                 let step = if down { 1 } else { n - 1 };
-                self.completion.select((selected + step) % n, COMPLETION_VISIBLE);
+                self.completion
+                    .select((selected + step) % n, COMPLETION_VISIBLE);
             }
             Key::Named(NamedKey::Enter | NamedKey::Tab) => self.accept_completion(),
             Key::Named(NamedKey::Escape) => self.completion.escaped(),
@@ -1025,8 +1060,10 @@ impl App {
         // 累积不足一行的位移：触控板的小步滚动也能平滑滚到下一行。
         let steps = (dy / row).trunc();
         let first = self.completion.first() as isize - steps as isize;
-        self.completion
-            .scroll_to(first.clamp(0, (n - COMPLETION_VISIBLE) as isize) as usize, COMPLETION_VISIBLE);
+        self.completion.scroll_to(
+            first.clamp(0, (n - COMPLETION_VISIBLE) as isize) as usize,
+            COMPLETION_VISIBLE,
+        );
         self.request_redraw();
         true
     }
@@ -1048,7 +1085,10 @@ impl App {
             return;
         };
         editor::completion::apply_edit(doc, &edit);
-        let current = self.editor.active().and_then(editor::completion::Completion::context);
+        let current = self
+            .editor
+            .active()
+            .and_then(editor::completion::Completion::context);
         self.completion.accepted(current);
         let lines_after = self.editor.active().map_or(0, |d| d.text().line_count());
         if lines_after != lines_before {
@@ -1136,7 +1176,7 @@ impl App {
         let Some(pos) = self.pos_at(x, y) else {
             self.end_diagnostic_hint();
             return;
-        };        // 先在只读借用里算出要显示的内容，之后才能改界面状态。
+        }; // 先在只读借用里算出要显示的内容，之后才能改界面状态。
         let found = {
             let mut hits = self.diagnostics.at(id, pos);
             if hits.is_empty() {
@@ -1153,12 +1193,10 @@ impl App {
                     .collect::<Vec<_>>()
                     .join("\n");
                 // 排序后首条即最高级别（错误 0，警告 1）。
-                let level = hits
-                    .first()
-                    .map_or(0, |p| match p.severity {
-                        winc_lsp::message::Severity::Error => 0,
-                        winc_lsp::message::Severity::Warning => 1,
-                    });
+                let level = hits.first().map_or(0, |p| match p.severity {
+                    winc_lsp::message::Severity::Error => 0,
+                    winc_lsp::message::Severity::Warning => 1,
+                });
                 Some((anchor, text, level))
             }
         };
@@ -1219,8 +1257,7 @@ impl App {
 
     /// 当前光标处的诊断气泡是否已经针对同一处、同样的消息弹出过。
     fn diagnostics_hint_seen(&self, doc: DocumentId, anchor: usize, text: &str) -> bool {
-        self.lsp.diag_hint_seen(doc, anchor, text)
-            || self.diagnostic_hint_is(text, anchor)
+        self.lsp.diag_hint_seen(doc, anchor, text) || self.diagnostic_hint_is(text, anchor)
     }
 
     /// 每帧：按光标处的上下文推进补全会话。输入法组字期间不看不改（按键交给输入法）。
@@ -1304,11 +1341,20 @@ mod tests {
         config
             .language_servers
             .insert("go".into(), custom.to_string_lossy().into_owned());
-        assert_eq!(program_for(&config, "go", std::slice::from_ref(&go_dir)), Some(custom));
+        assert_eq!(
+            program_for(&config, "go", std::slice::from_ref(&go_dir)),
+            Some(custom)
+        );
         config.language_servers.insert("go".into(), String::new());
-        assert_eq!(program_for(&config, "go", std::slice::from_ref(&go_dir)), None);
+        assert_eq!(
+            program_for(&config, "go", std::slice::from_ref(&go_dir)),
+            None
+        );
         // 没有服务器的语言不启动。
-        assert_eq!(program_for(&winc_config::Config::default(), "rust", &[]), None);
+        assert_eq!(
+            program_for(&winc_config::Config::default(), "rust", &[]),
+            None
+        );
     }
 
     /// 单条改动按增量发（含删除多行时终点的行号）；多条改动或不支持增量时发全量。
@@ -1317,7 +1363,11 @@ mod tests {
         let mut doc = Document::from_text(DocumentId(1), "abc\ndef");
         let before = doc.revision;
         doc.apply(Transaction::new(
-            vec![Change { start: 1, removed: "b".into(), inserted: "BB".into() }],
+            vec![Change {
+                start: 1,
+                removed: "b".into(),
+                inserted: "BB".into(),
+            }],
             Selection::point(1),
             Selection::point(3),
             EditKind::Other,
@@ -1326,8 +1376,14 @@ mod tests {
             content_changes(&doc, before, true),
             [ContentChange::Incremental {
                 range: winc_lsp::message::Range {
-                    start: winc_lsp::message::Position { line: 0, character: 1 },
-                    end: winc_lsp::message::Position { line: 0, character: 2 },
+                    start: winc_lsp::message::Position {
+                        line: 0,
+                        character: 1
+                    },
+                    end: winc_lsp::message::Position {
+                        line: 0,
+                        character: 2
+                    },
                 },
                 text: "BB".into(),
             }]
@@ -1337,7 +1393,11 @@ mod tests {
         let mut doc = Document::from_text(DocumentId(2), "ab\ncd\nef");
         let before = doc.revision;
         doc.apply(Transaction::new(
-            vec![Change { start: 1, removed: "b\ncd".into(), inserted: String::new() }],
+            vec![Change {
+                start: 1,
+                removed: "b\ncd".into(),
+                inserted: String::new(),
+            }],
             Selection::point(1),
             Selection::point(1),
             EditKind::Other,
@@ -1346,17 +1406,37 @@ mod tests {
         else {
             panic!("单条改动应是增量的");
         };
-        assert_eq!(range.start, winc_lsp::message::Position { line: 0, character: 1 });
-        assert_eq!(range.end, winc_lsp::message::Position { line: 1, character: 2 });
+        assert_eq!(
+            range.start,
+            winc_lsp::message::Position {
+                line: 0,
+                character: 1
+            }
+        );
+        assert_eq!(
+            range.end,
+            winc_lsp::message::Position {
+                line: 1,
+                character: 2
+            }
+        );
         assert_eq!(text, "");
 
         // 删除含换行的文本：终点按被删除的文本推进，而不是当前文本的同一偏移。
-        let mut doc = Document::from_text(DocumentId(5), "ab
-cd");
+        let mut doc = Document::from_text(
+            DocumentId(5),
+            "ab
+cd",
+        );
         let before = doc.revision;
         doc.apply(Transaction::new(
-            vec![Change { start: 1, removed: "b
-".into(), inserted: String::new() }],
+            vec![Change {
+                start: 1,
+                removed: "b
+"
+                .into(),
+                inserted: String::new(),
+            }],
             Selection::point(1),
             Selection::point(1),
             EditKind::Other,
@@ -1365,16 +1445,36 @@ cd");
         else {
             panic!("单条改动应是增量的");
         };
-        assert_eq!(range.start, winc_lsp::message::Position { line: 0, character: 1 });
-        assert_eq!(range.end, winc_lsp::message::Position { line: 1, character: 0 });
+        assert_eq!(
+            range.start,
+            winc_lsp::message::Position {
+                line: 0,
+                character: 1
+            }
+        );
+        assert_eq!(
+            range.end,
+            winc_lsp::message::Position {
+                line: 1,
+                character: 0
+            }
+        );
 
         // 一次改动多处（多光标）：全量。
         let mut doc = Document::from_text(DocumentId(3), "abc");
         let before = doc.revision;
         doc.apply(Transaction::new(
             vec![
-                Change { start: 0, removed: "a".into(), inserted: "x".into() },
-                Change { start: 2, removed: "c".into(), inserted: "y".into() },
+                Change {
+                    start: 0,
+                    removed: "a".into(),
+                    inserted: "x".into(),
+                },
+                Change {
+                    start: 2,
+                    removed: "c".into(),
+                    inserted: "y".into(),
+                },
             ],
             Selection::point(0),
             Selection::point(0),
@@ -1388,7 +1488,11 @@ cd");
         let mut doc = Document::from_text(DocumentId(4), "abc");
         let before = doc.revision;
         doc.apply(Transaction::new(
-            vec![Change { start: 1, removed: "b".into(), inserted: "B".into() }],
+            vec![Change {
+                start: 1,
+                removed: "b".into(),
+                inserted: "B".into(),
+            }],
             Selection::point(1),
             Selection::point(2),
             EditKind::Other,
@@ -1403,11 +1507,31 @@ cd");
     #[test]
     fn sync_decisions_close_open_and_change() {
         let mut synced = HashMap::new();
-        synced.insert(1, Synced { uri: "u1".into(), revision: 5 });
-        synced.insert(3, Synced { uri: "u3".into(), revision: 2 });
+        synced.insert(
+            1,
+            Synced {
+                uri: "u1".into(),
+                revision: 5,
+            },
+        );
+        synced.insert(
+            3,
+            Synced {
+                uri: "u3".into(),
+                revision: 2,
+            },
+        );
         let docs = [
-            SyncDoc { doc: DocumentId(1), revision: 6, uri: "u1".into() },
-            SyncDoc { doc: DocumentId(2), revision: 1, uri: "u2".into() },
+            SyncDoc {
+                doc: DocumentId(1),
+                revision: 6,
+                uri: "u1".into(),
+            },
+            SyncDoc {
+                doc: DocumentId(2),
+                revision: 1,
+                uri: "u2".into(),
+            },
         ];
         let actions = sync_actions(&synced, &docs);
         assert_eq!(actions.len(), 3);
@@ -1415,12 +1539,25 @@ cd");
         assert_eq!(actions[1], SyncAction::Open(docs[1].clone()));
         assert_eq!(
             actions[2],
-            SyncAction::Change { doc: docs[0].clone(), previous: 5 }
+            SyncAction::Change {
+                doc: docs[0].clone(),
+                previous: 5
+            }
         );
         // 没有变化时没有动作。
         let mut synced = HashMap::new();
-        synced.insert(1, Synced { uri: "u1".into(), revision: 5 });
-        let unchanged = [SyncDoc { doc: DocumentId(1), revision: 5, uri: "u1".into() }];
+        synced.insert(
+            1,
+            Synced {
+                uri: "u1".into(),
+                revision: 5,
+            },
+        );
+        let unchanged = [SyncDoc {
+            doc: DocumentId(1),
+            revision: 5,
+            uri: "u1".into(),
+        }];
         assert!(sync_actions(&synced, &unchanged).is_empty());
     }
 
@@ -1429,24 +1566,42 @@ cd");
     fn only_documents_with_a_server_are_synced() {
         let dir = unique_dir("docs");
         let go = dir.join("main.go");
-        fs::write(&go, "package main
-").unwrap();
+        fs::write(
+            &go,
+            "package main
+",
+        )
+        .unwrap();
         let md = dir.join("a.md");
-        fs::write(&md, "# 标题
-").unwrap();
+        fs::write(
+            &md,
+            "# 标题
+",
+        )
+        .unwrap();
         let mut editor = Editor::default();
         editor.workspace = Some(winc_editor::Workspace::open(&dir).unwrap());
         editor.open(&go);
         editor.open(&md);
         editor.show_output("输出", "内容");
-        let app = App::new(editor, None, Bench::from_env(), winc_config::Config::default());
+        let app = App::new(
+            editor,
+            None,
+            Bench::from_env(),
+            winc_config::Config::default(),
+        );
         let docs = app.server_documents();
         assert_eq!(docs.len(), 1, "只有 Go 文档");
         assert_eq!(docs[0].1, "go");
         // 没有打开目录时没有工作区根，调用方因此不会启动服务器。
         let mut editor = Editor::default();
         editor.open(&go);
-        let app = App::new(editor, None, Bench::from_env(), winc_config::Config::default());
+        let app = App::new(
+            editor,
+            None,
+            Bench::from_env(),
+            winc_config::Config::default(),
+        );
         assert!(app.editor.root().is_none());
     }
 
@@ -1495,11 +1650,16 @@ cd");
         };
         assert!(!reason.is_empty());
         assert!(state.connection.is_none(), "启动失败不该有连接");
-        assert!(state.begin_start("go", "gopls", None).is_none(), "本会话不再自动启动");
+        assert!(
+            state.begin_start("go", "gopls", None).is_none(),
+            "本会话不再自动启动"
+        );
 
         // 用户改了命令：允许重试。
         let mut config = winc_config::Config::default();
-        config.language_servers.insert("go".into(), "nightly-gopls".into());
+        config
+            .language_servers
+            .insert("go".into(), "nightly-gopls".into());
         state.recheck_config(&config);
         assert!(state.unavailable().is_none());
         assert!(state.begin_start("go", "nightly-gopls", None).is_some());
@@ -1510,7 +1670,10 @@ cd");
     fn polling_and_sending_without_a_connection_do_nothing() {
         let mut state = LspState::default();
         assert!(matches!(state.poll(), Poll::Empty));
-        state.send(&Message::Notification { method: "exit".into(), params: None });
+        state.send(&Message::Notification {
+            method: "exit".into(),
+            params: None,
+        });
         assert!(state.connection.is_none());
     }
 }

@@ -19,7 +19,9 @@ fn next(connection: &Connection, woken: &Receiver<()>) -> Message {
     loop {
         match connection.poll() {
             Poll::Message(message) => return message,
-            Poll::Empty => woken.recv_timeout(Duration::from_secs(10)).expect("等唤醒超时"),
+            Poll::Empty => woken
+                .recv_timeout(Duration::from_secs(10))
+                .expect("等唤醒超时"),
             Poll::Closed => panic!("连接提前断开"),
         }
     }
@@ -31,7 +33,9 @@ fn closed(connection: &Connection, woken: &Receiver<()>) {
         match connection.poll() {
             Poll::Closed => return,
             Poll::Message(message) => panic!("断开前不该再有报文：{message:?}"),
-            Poll::Empty => woken.recv_timeout(Duration::from_secs(10)).expect("等唤醒超时"),
+            Poll::Empty => woken
+                .recv_timeout(Duration::from_secs(10))
+                .expect("等唤醒超时"),
         }
     }
 }
@@ -63,9 +67,9 @@ fn handshake_document_sync_completion_and_shutdown() {
         ),
     });
     let capabilities = match next(&connection, &rx) {
-        Message::Response { result: Some(json), .. } => {
-            ServerCapabilities::from_json(&json).expect("能力能解析")
-        }
+        Message::Response {
+            result: Some(json), ..
+        } => ServerCapabilities::from_json(&json).expect("能力能解析"),
         other => panic!("应是握手响应：{other:?}"),
     };
     assert!(capabilities.incremental);
@@ -78,15 +82,28 @@ fn handshake_document_sync_completion_and_shutdown() {
         params: Some(Json::Null),
     });
     let params = match next(&connection, &rx) {
-        Message::Notification { method, params: Some(json) } if method == method::PUBLISH_DIAGNOSTICS => {
+        Message::Notification {
+            method,
+            params: Some(json),
+        } if method == method::PUBLISH_DIAGNOSTICS => {
             PublishDiagnosticsParams::from_json(&json).expect("诊断参数能解析")
         }
         other => panic!("应是诊断推送：{other:?}"),
     };
     assert_eq!(params.uri, "file:///test/main.go");
     assert_eq!(params.diagnostics.len(), 2);
-    assert!(params.diagnostics.iter().any(|d| d.severity == Severity::Error && d.message == "undefined: x"));
-    assert!(params.diagnostics.iter().any(|d| d.severity == Severity::Warning && d.message == "unused variable"));
+    assert!(
+        params
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.message == "undefined: x")
+    );
+    assert!(
+        params
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Warning && d.message == "unused variable")
+    );
 
     // didOpen：诊断按文档的 uri 与版本推。
     connection.send(&Message::Notification {
@@ -102,7 +119,9 @@ fn handshake_document_sync_completion_and_shutdown() {
         ),
     });
     match next(&connection, &rx) {
-        Message::Notification { params: Some(json), .. } => {
+        Message::Notification {
+            params: Some(json), ..
+        } => {
             let params = PublishDiagnosticsParams::from_json(&json).expect("诊断参数能解析");
             assert_eq!(params.uri, "file:///opened/main.go");
             assert_eq!(params.version, Some(1));
@@ -118,16 +137,25 @@ fn handshake_document_sync_completion_and_shutdown() {
         params: Some(
             CompletionParams {
                 uri: "file:///opened/main.go".into(),
-                position: Position { line: 0, character: 0 },
+                position: Position {
+                    line: 0,
+                    character: 0,
+                },
                 context: None,
             }
             .to_json(),
         ),
     });
     match next(&connection, &rx) {
-        Message::Response { result: Some(json), .. } => {
+        Message::Response {
+            result: Some(json), ..
+        } => {
             let completion = CompletionResponse::from_json(&json).expect("补全响应能解析");
-            let labels: Vec<&str> = completion.items().iter().map(|item| item.label.as_str()).collect();
+            let labels: Vec<&str> = completion
+                .items()
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect();
             assert_eq!(labels, ["Print", "Printf", "Println"]);
             assert!(matches!(&completion, CompletionResponse::List(list) if list.is_incomplete));
         }
@@ -141,10 +169,16 @@ fn handshake_document_sync_completion_and_shutdown() {
         params: None,
     });
     match next(&connection, &rx) {
-        Message::Response { result: Some(result), .. } => assert_eq!(result, Json::Null),
+        Message::Response {
+            result: Some(result),
+            ..
+        } => assert_eq!(result, Json::Null),
         other => panic!("应是 shutdown 响应：{other:?}"),
     }
-    connection.send(&Message::Notification { method: method::EXIT.into(), params: None });
+    connection.send(&Message::Notification {
+        method: method::EXIT.into(),
+        params: None,
+    });
     closed(&connection, &rx);
     // 断开是持久的：再取还是 Closed。
     assert!(matches!(connection.poll(), Poll::Closed));

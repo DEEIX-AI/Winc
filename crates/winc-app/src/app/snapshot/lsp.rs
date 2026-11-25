@@ -2,8 +2,8 @@
 //! 以及鼠标悬停时的诊断气泡。
 
 use winc_core::Selection;
-use winit::keyboard::{Key, NamedKey};
 use winc_lsp::message::{CompletionItem, Position, Range, Severity, TextEdit};
+use winit::keyboard::{Key, NamedKey};
 
 use super::*;
 use crate::app::editor::diagnostics::Problem;
@@ -41,7 +41,9 @@ fn show_list(app: &mut App, items: Vec<CompletionItem>) -> crate::app::editor::c
     app.completion.observe(Some(context.clone()), now);
     context.revision = doc.revision;
     app.completion.observe(Some(context.clone()), now);
-    app.completion.tick(now + crate::app::editor::completion::DELAY).unwrap();
+    app.completion
+        .tick(now + crate::app::editor::completion::DELAY)
+        .unwrap();
     app.completion.sent(1, context.clone());
     assert!(app.completion.response(1, Some(&context), items));
     paint(app);
@@ -75,14 +77,21 @@ fn the_completion_card_lists_candidates_below_the_caret() {
 /// 继续输入时列表按新的前缀收窄；滚动仍然按收窄后的项数算。
 #[test]
 fn typing_filters_the_list() {
-    let (mut app, dir) = go_app("lsp-filter", "package main
+    let (mut app, dir) = go_app(
+        "lsp-filter",
+        "package main
 
 r.
-");
+",
+    );
     let doc = app.editor.active_mut().unwrap();
-    doc.selection = Selection::point("package main
+    doc.selection = Selection::point(
+        "package main
 
-r.".chars().count());
+r."
+        .chars()
+        .count(),
+    );
     paint(&mut app);
     let mut items: Vec<CompletionItem> = (0..20).map(|i| item(&format!("Cand{i:02}"), 3)).collect();
     // 让「Cand1x」与「Cand00」都有，过滤后只剩带 1 的。
@@ -94,7 +103,8 @@ r.".chars().count());
         prefix: "Cand1".into(),
         ..context.clone()
     };
-    app.completion.observe(Some(narrowed), std::time::Instant::now());
+    app.completion
+        .observe(Some(narrowed), std::time::Instant::now());
     paint(&mut app);
     assert_eq!(app.completion.rows().len(), 10, "只剩 Cand1x 的 10 项");
     assert!(app.hits.completion_card.is_some());
@@ -105,17 +115,20 @@ r.".chars().count());
 /// 光标靠近窗口底部、下方放不下时，列表翻到光标上方。
 #[test]
 fn the_card_flips_above_the_caret_near_the_bottom() {
-    let (mut app, dir) = go_app(
-        "lsp-flip",
-        &format!("package main\n{}r.", "\n".repeat(30)),
-    );
+    let (mut app, dir) = go_app("lsp-flip", &format!("package main\n{}r.", "\n".repeat(30)));
     let doc = app.editor.active_mut().unwrap();
     doc.selection = Selection::point(doc.text().end_pos());
     paint(&mut app);
-    show_list(&mut app, (0..8).map(|i| item(&format!("Cand{i}"), 3)).collect());
+    show_list(
+        &mut app,
+        (0..8).map(|i| item(&format!("Cand{i}"), 3)).collect(),
+    );
     let card = app.hits.completion_card.expect("画出了列表");
     let caret = app.ime.cursor.expect("有光标");
-    assert!(card.bottom() <= caret.y, "列表应翻到光标上方：{card:?} {caret:?}");
+    assert!(
+        card.bottom() <= caret.y,
+        "列表应翻到光标上方：{card:?} {caret:?}"
+    );
     shoot(&mut app, "lsp-completion-flipped");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -127,8 +140,14 @@ fn a_long_list_scrolls() {
     let doc = app.editor.active_mut().unwrap();
     doc.selection = Selection::point("package main\n\nr.".chars().count());
     paint(&mut app);
-    show_list(&mut app, (0..30).map(|i| item(&format!("Cand{i:02}"), 3)).collect());
-    assert_eq!(app.hits.completion.len(), crate::app::lsp::COMPLETION_VISIBLE);
+    show_list(
+        &mut app,
+        (0..30).map(|i| item(&format!("Cand{i:02}"), 3)).collect(),
+    );
+    assert_eq!(
+        app.hits.completion.len(),
+        crate::app::lsp::COMPLETION_VISIBLE
+    );
     // 滚轮在列表上滚动列表。
     let card = app.hits.completion_card.unwrap();
     let inside = (card.x + 20.0, card.y + 20.0);
@@ -149,7 +168,12 @@ fn clicking_a_row_accepts_it() {
     let row = app.hits.completion[1].0;
     let at = (row.x + row.w / 2.0, row.y + row.h / 2.0);
     click(&mut app, at);
-    let text = app.editor.active().unwrap().text().substring(0, app.editor.active().unwrap().text().end_pos());
+    let text = app
+        .editor
+        .active()
+        .unwrap()
+        .text()
+        .substring(0, app.editor.active().unwrap().text().end_pos());
     assert!(text.ends_with("r.Reader\n"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -160,14 +184,21 @@ fn server_messages_reach_the_open_document_and_the_completion_list() {
     use winc_config::Json;
     use winc_lsp::message::{Diagnostic, Position, Range, Severity};
 
-    let (mut app, dir) = go_app("lsp-messages", "package main
+    let (mut app, dir) = go_app(
+        "lsp-messages",
+        "package main
 
 r.
-");
+",
+    );
     let doc = app.editor.active_mut().unwrap();
-    doc.selection = Selection::point("package main
+    doc.selection = Selection::point(
+        "package main
 
-r.".chars().count());
+r."
+        .chars()
+        .count(),
+    );
     let path = app.editor.active().unwrap().path.clone().unwrap();
     let id = app.editor.active().unwrap().id;
     let uri = winc_lsp::message::file_uri(&path).unwrap();
@@ -176,8 +207,14 @@ r.".chars().count());
         version: None,
         diagnostics: vec![Diagnostic {
             range: Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 1 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
             },
             severity: Severity::Error,
             message: "错误".into(),
@@ -188,7 +225,8 @@ r.".chars().count());
     paint(&mut app);
 
     // 补全响应：当前光标处的上下文与请求时一致时打开列表。
-    let context = crate::app::editor::completion::Completion::context(app.editor.active().unwrap()).unwrap();
+    let context =
+        crate::app::editor::completion::Completion::context(app.editor.active().unwrap()).unwrap();
     app.completion.sent(9, context);
     let response = Json::object([(
         "items",
@@ -200,7 +238,8 @@ r.".chars().count());
     assert!(app.completion_response(&winc_lsp::rpc::Id::Number(9), &response));
     assert!(app.completion.shown());
     // 对不上的 id 丢弃。
-    let context = crate::app::editor::completion::Completion::context(app.editor.active().unwrap()).unwrap();
+    let context =
+        crate::app::editor::completion::Completion::context(app.editor.active().unwrap()).unwrap();
     app.completion.sent(10, context);
     assert!(!app.completion_response(&winc_lsp::rpc::Id::Number(11), &response));
     let _ = std::fs::remove_dir_all(&dir);
@@ -223,8 +262,18 @@ fn squiggles_use_the_error_and_warning_colors() {
     app.diagnostics.replace(
         id,
         vec![
-            Problem { start: error_at, end: error_at + 1, severity: Severity::Error, message: "未声明的标识符 x".into() },
-            Problem { start: warn_at, end: warn_at + 1, severity: Severity::Warning, message: "多余的赋值".into() },
+            Problem {
+                start: error_at,
+                end: error_at + 1,
+                severity: Severity::Error,
+                message: "未声明的标识符 x".into(),
+            },
+            Problem {
+                start: warn_at,
+                end: warn_at + 1,
+                severity: Severity::Warning,
+                message: "多余的赋值".into(),
+            },
         ],
     );
     paint(&mut app);
@@ -251,20 +300,27 @@ fn squiggles_use_the_error_and_warning_colors() {
 /// 鼠标停在诊断范围上并停稳后弹出消息气泡，按严重级别排序；移开后淡出，光标进入不弹。
 #[test]
 fn hovering_a_diagnostic_shows_its_message_and_leaving_fades_it() {
-    use std::time::{Duration, Instant};
     use crate::app::lsp::HOVER_STILL;
-    let (mut app, dir) = go_app(
-        "lsp-hint",
-        "package main\n\nfunc main() {\n\tx := 1\n}\n",
-    );
+    use std::time::{Duration, Instant};
+    let (mut app, dir) = go_app("lsp-hint", "package main\n\nfunc main() {\n\tx := 1\n}\n");
     let doc = app.editor.active().unwrap();
     let line_start = doc.text().line_start(3);
     let id = doc.id;
     app.diagnostics.replace(
         id,
         vec![
-            Problem { start: line_start, end: line_start + 1, severity: Severity::Warning, message: "警告的话".into() },
-            Problem { start: line_start, end: line_start + 1, severity: Severity::Error, message: "错误的话".into() },
+            Problem {
+                start: line_start,
+                end: line_start + 1,
+                severity: Severity::Warning,
+                message: "警告的话".into(),
+            },
+            Problem {
+                start: line_start,
+                end: line_start + 1,
+                severity: Severity::Error,
+                message: "错误的话".into(),
+            },
         ],
     );
     let t0 = Instant::now();
@@ -273,7 +329,10 @@ fn hovering_a_diagnostic_shows_its_message_and_leaving_fades_it() {
     app.pointer.mouse = (0.0, 0.0);
     app.pointer.cursor_inside = true;
     app.track_diagnostic_hint(t0);
-    assert!(app.jumps.name_hint.is_none(), "光标位于诊断处不应自动弹气泡");
+    assert!(
+        app.jumps.name_hint.is_none(),
+        "光标位于诊断处不应自动弹气泡"
+    );
 
     // 鼠标移到诊断所在字符上：还没停稳，先不弹。
     paint(&mut app);
@@ -295,7 +354,10 @@ fn hovering_a_diagnostic_shows_its_message_and_leaving_fades_it() {
     // 鼠标停在原处：保持显示，不因超时消失。
     app.jumps.name_hint.as_mut().unwrap().text = String::new();
     app.track_diagnostic_hint(t0 + HOVER_STILL + Duration::from_millis(100));
-    assert!(app.jumps.name_hint.as_ref().is_some_and(|h| h.diagnostic), "停着不动保持显示");
+    assert!(
+        app.jumps.name_hint.as_ref().is_some_and(|h| h.diagnostic),
+        "停着不动保持显示"
+    );
 
     // 鼠标移出诊断范围：气泡淡出。
     app.pointer.mouse = (0.0, 0.0);
@@ -306,7 +368,10 @@ fn hovering_a_diagnostic_shows_its_message_and_leaving_fades_it() {
     app.track_diagnostic_hint(t0 + HOVER_STILL + Duration::from_millis(300));
     assert!(app.jumps.name_hint.is_none(), "移回后未停稳不弹");
     app.track_diagnostic_hint(t0 + HOVER_STILL + Duration::from_millis(300) + HOVER_STILL);
-    assert!(app.jumps.name_hint.as_ref().is_some_and(|h| h.diagnostic), "停稳后重新弹出");
+    assert!(
+        app.jumps.name_hint.as_ref().is_some_and(|h| h.diagnostic),
+        "停稳后重新弹出"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -314,18 +379,24 @@ fn hovering_a_diagnostic_shows_its_message_and_leaving_fades_it() {
 /// 鼠标再次移动到诊断上停稳才弹（VSCode 的悬停语义：悬停由移动触发）。
 #[test]
 fn typing_through_intermediate_diagnostics_does_not_pop_the_hint() {
-    use std::time::{Duration, Instant};
     use crate::app::lsp::HOVER_STILL;
-    let (mut app, dir) = go_app("lsp-hint-typing", "package main\n\nfunc main() {\n\tk.\n}\n");
+    use std::time::{Duration, Instant};
+    let (mut app, dir) = go_app(
+        "lsp-hint-typing",
+        "package main\n\nfunc main() {\n\tk.\n}\n",
+    );
     let doc = app.editor.active().unwrap();
     let line_start = doc.text().line_start(3);
     let id = doc.id;
     app.editor.active_mut().unwrap().selection = Selection::point(line_start);
     app.diagnostics.replace(
         id,
-        vec![
-            Problem { start: line_start, end: line_start + 2, severity: Severity::Error, message: "expected selector".into() },
-        ],
+        vec![Problem {
+            start: line_start,
+            end: line_start + 2,
+            severity: Severity::Error,
+            message: "expected selector".into(),
+        }],
     );
     paint(&mut app);
     let caret = app.ime.cursor.expect("光标在屏幕上");
@@ -347,9 +418,12 @@ fn typing_through_intermediate_diagnostics_does_not_pop_the_hint() {
     // 服务器随后推送中间态的新诊断（消息变了）。
     app.diagnostics.replace(
         id,
-        vec![
-            Problem { start: line_start, end: line_start + 4, severity: Severity::Error, message: "k.tt undefined".into() },
-        ],
+        vec![Problem {
+            start: line_start,
+            end: line_start + 4,
+            severity: Severity::Error,
+            message: "k.tt undefined".into(),
+        }],
     );
     // 静止的鼠标不重弹：不管过了多久。
     app.track_diagnostic_hint(typed + Duration::from_millis(100));
@@ -379,9 +453,12 @@ fn typing_through_intermediate_diagnostics_does_not_pop_the_hint() {
 /// 补全列表显示期间鼠标移到诊断上：不弹诊断气泡（建议列表打开时隐藏悬停，同 `VSCode`）。
 #[test]
 fn the_diagnostic_hint_stays_hidden_while_the_completion_card_is_open() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
-    let (mut app, dir) = go_app("lsp-hint-completion", "package main\n\nfunc main() {\n\tk.\n}\n");
+    use std::time::Instant;
+    let (mut app, dir) = go_app(
+        "lsp-hint-completion",
+        "package main\n\nfunc main() {\n\tk.\n}\n",
+    );
     let caret_at = "package main\n\nfunc main() {\n\tk.".chars().count();
     app.editor.active_mut().unwrap().selection = Selection::point(caret_at);
     let doc = app.editor.active().unwrap();
@@ -389,9 +466,12 @@ fn the_diagnostic_hint_stays_hidden_while_the_completion_card_is_open() {
     let id = doc.id;
     app.diagnostics.replace(
         id,
-        vec![
-            Problem { start: line_start, end: line_start + 2, severity: Severity::Error, message: "expected selector".into() },
-        ],
+        vec![Problem {
+            start: line_start,
+            end: line_start + 2,
+            severity: Severity::Error,
+            message: "expected selector".into(),
+        }],
     );
     paint(&mut app);
     show_list(&mut app, vec![item("tt", 5)]);
@@ -402,10 +482,7 @@ fn the_diagnostic_hint_stays_hidden_while_the_completion_card_is_open() {
     app.pointer.mouse = (caret.x + 2.0, caret.y + 2.0);
     app.track_diagnostic_hint(t0);
     app.track_diagnostic_hint(t0 + HOVER_STILL);
-    assert!(
-        app.jumps.name_hint.is_none(),
-        "补全列表打开时不弹诊断气泡"
-    );
+    assert!(app.jumps.name_hint.is_none(), "补全列表打开时不弹诊断气泡");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -434,9 +511,12 @@ fn completion_rows_show_colored_kind_icons() {
 /// 悬停到期时由定时唤醒就地评估：鼠标停下后没有新事件，不必再等鼠标移动才弹。
 #[test]
 fn the_hover_deadline_wakes_the_event_loop() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
-    let (mut app, dir) = go_app("lsp-hover-wake", "package main\n\nfunc main() {\n\tx := 1\n}\n");
+    use std::time::Instant;
+    let (mut app, dir) = go_app(
+        "lsp-hover-wake",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
     let doc = app.editor.active().unwrap();
     let line_start = doc.text().line_start(3);
     let id = doc.id;
@@ -475,8 +555,8 @@ fn the_hover_deadline_wakes_the_event_loop() {
 /// 气泡左侧的严重级别图标：错误用错误色、警告用警告色；长消息折成多行、卡片随之变高。
 #[test]
 fn the_diagnostic_bubble_shows_level_icons_and_wraps_long_messages() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
+    use std::time::Instant;
     let (mut app, dir) = go_app(
         "lsp-hint-level",
         "package main\n\nfunc main() {\n\tx := 1\n}\n",
@@ -510,9 +590,12 @@ fn the_diagnostic_bubble_shows_level_icons_and_wraps_long_messages() {
     let editor = app.layout.editor;
     let found = |want: winc_render::Color| {
         (0..(editor.h as i32)).step_by(2).any(|y| {
-            (0..(editor.w as i32))
-                .step_by(2)
-                .any(|x| near(pixel(&app, (editor.x + x as f32, editor.y + y as f32)), want))
+            (0..(editor.w as i32)).step_by(2).any(|x| {
+                near(
+                    pixel(&app, (editor.x + x as f32, editor.y + y as f32)),
+                    want,
+                )
+            })
         })
     };
     assert!(found(p.warning), "气泡里有警告色图标");
@@ -522,8 +605,8 @@ fn the_diagnostic_bubble_shows_level_icons_and_wraps_long_messages() {
 /// 气泡左侧的严重级别图标与首行文字的视觉中心对齐，不再比文字高出约 4 逻辑像素。
 #[test]
 fn the_diagnostic_bubble_icon_aligns_with_its_first_line() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
+    use std::time::Instant;
     let (mut app, dir) = go_app(
         "lsp-hint-align",
         "package main\n\nfunc main() {\n\tx := 1\n}\n",
@@ -581,8 +664,8 @@ fn the_diagnostic_bubble_icon_aligns_with_its_first_line() {
 /// 鼠标从诊断文字移向气泡、停在气泡上时，气泡保持显示而不是淡出。
 #[test]
 fn the_diagnostic_bubble_survives_the_pointer_moving_onto_it() {
-    use std::time::{Duration, Instant};
     use crate::app::lsp::HOVER_STILL;
+    use std::time::{Duration, Instant};
     let (mut app, dir) = go_app(
         "lsp-hint-hover",
         "package main\n\nfunc main() {\n\tx := 1\n}\n",
@@ -621,8 +704,8 @@ fn the_diagnostic_bubble_survives_the_pointer_moving_onto_it() {
 /// 在气泡文字上拖选后按复制，得到选中的片段（而不是编辑区的选区）。
 #[test]
 fn the_diagnostic_bubble_text_can_be_selected_and_copied() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
+    use std::time::Instant;
     let (mut app, dir) = go_app(
         "lsp-hint-copy",
         "package main\n\nfunc main() {\n\tx := 1\n}\n",
@@ -669,8 +752,8 @@ fn the_diagnostic_bubble_text_can_be_selected_and_copied() {
 /// 气泡里文字的上下留白足够，行高也比原先的 17 像素宽松（用户反馈框太小、上下边距太挤）。
 #[test]
 fn the_diagnostic_bubble_has_roomy_vertical_padding() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
+    use std::time::Instant;
     let (mut app, dir) = go_app(
         "lsp-hint-padding",
         "package main\n\nfunc main() {\n\tx := 1\n}\n",
@@ -719,8 +802,8 @@ fn the_diagnostic_bubble_has_roomy_vertical_padding() {
 /// 悬停计时从鼠标移动事件起算，不依赖鼠标停下后还能不能再画一帧。
 #[test]
 fn the_hover_timer_starts_from_the_mouse_event() {
-    use std::time::Instant;
     use crate::app::lsp::HOVER_STILL;
+    use std::time::Instant;
     let (mut app, dir) = go_app(
         "lsp-hint-event",
         "package main\n\nfunc main() {\n\tx := 1\n}\n",
@@ -770,14 +853,25 @@ fn a_text_edit_from_the_server_is_applied() {
     let mut item = item("ReadAll", 3);
     item.text_edit = Some(TextEdit {
         range: Range {
-            start: Position { line: 3, character: 2 },
-            end: Position { line: 3, character: 4 },
+            start: Position {
+                line: 3,
+                character: 2,
+            },
+            end: Position {
+                line: 3,
+                character: 4,
+            },
         },
         new_text: "ReadAll".into(),
     });
     show_list(&mut app, vec![item]);
     app.accept_completion();
-    let text = app.editor.active().unwrap().text().substring(0, app.editor.active().unwrap().text().end_pos());
+    let text = app
+        .editor
+        .active()
+        .unwrap()
+        .text()
+        .substring(0, app.editor.active().unwrap().text().end_pos());
     // 函数候选（kind 3）接受时补上调用括号。
     assert!(text.ends_with("r.ReadAll()\n"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);

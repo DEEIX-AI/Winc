@@ -12,7 +12,11 @@ fn request(method: &str, id: i64, params: Json) -> Message {
 
 #[test]
 fn envelope_round_trip() {
-    let message = request("initialize", 1, Json::object([("processId", Json::Number(7.0))]));
+    let message = request(
+        "initialize",
+        1,
+        Json::object([("processId", Json::Number(7.0))]),
+    );
     assert_eq!(Message::from_json(&message.to_json()), Some(message));
 
     // 通知没有 id。
@@ -20,23 +24,42 @@ fn envelope_round_trip() {
         method: "textDocument/didOpen".into(),
         params: Some(Json::Null),
     };
-    assert_eq!(Message::from_json(&notification.to_json()), Some(notification.clone()));
+    assert_eq!(
+        Message::from_json(&notification.to_json()),
+        Some(notification.clone())
+    );
     assert_eq!(notification.method(), Some("textDocument/didOpen"));
 
     // 不带参数的通知（params 字段不写）。
-    let bare = Message::Notification { method: "exit".into(), params: None };
+    let bare = Message::Notification {
+        method: "exit".into(),
+        params: None,
+    };
     assert_eq!(Message::from_json(&bare.to_json()), Some(bare));
 
     // 成功响应的 result 可以是 null（字段写了就算有结果）。
     let null_result = parse(r#"{"id": 3, "jsonrpc": "2.0", "result": null}"#);
     let message = Message::from_json(&null_result).expect("null 也是结果");
-    assert!(matches!(message, Message::Response { result: Some(Json::Null), error: None, .. }));
+    assert!(matches!(
+        message,
+        Message::Response {
+            result: Some(Json::Null),
+            error: None,
+            ..
+        }
+    ));
 
     // 错误响应。
-    let error = parse(r#"{"error": {"code": -32601, "message": "method not found"}, "id": 9, "jsonrpc": "2.0"}"#);
+    let error = parse(
+        r#"{"error": {"code": -32601, "message": "method not found"}, "id": 9, "jsonrpc": "2.0"}"#,
+    );
     let message = Message::from_json(&error).expect("错误响应");
     match message {
-        Message::Response { result: None, error: Some(error), .. } => {
+        Message::Response {
+            result: None,
+            error: Some(error),
+            ..
+        } => {
             assert_eq!(error.code, -32601);
             assert_eq!(error.message, "method not found");
         }
@@ -46,7 +69,9 @@ fn envelope_round_trip() {
     // 字符串 id 原样保留（服务器请求可能用字符串）。
     let text_id = parse(r#"{"id": "cfg-17", "jsonrpc": "2.0", "result": []}"#);
     let message = Message::from_json(&text_id).expect("字符串 id");
-    assert!(matches!(message, Message::Response { id: Id::Text(ref text), .. } if text == "cfg-17"));
+    assert!(
+        matches!(message, Message::Response { id: Id::Text(ref text), .. } if text == "cfg-17")
+    );
 
     // 既没有 method 也没有 result/error 的报文按无法理解丢弃。
     assert!(Message::from_json(&parse(r#"{"id": 4, "jsonrpc": "2.0"}"#)).is_none());
@@ -55,7 +80,11 @@ fn envelope_round_trip() {
 
 #[test]
 fn frame_encoding_round_trip() {
-    let message = request("textDocument/completion", 42, Json::object([("ok", Json::Bool(true))]));
+    let message = request(
+        "textDocument/completion",
+        42,
+        Json::object([("ok", Json::Bool(true))]),
+    );
     let bytes = frame(&message);
     let text = String::from_utf8(bytes.clone()).expect("帧是 UTF-8");
     assert!(text.starts_with("Content-Length: "));
@@ -79,16 +108,25 @@ fn frame_encoding_round_trip() {
 #[test]
 fn decoder_splits_stuck_together_frames() {
     let first = frame(&request("initialize", 1, Json::Null));
-    let second = frame(&Message::Notification { method: "exit".into(), params: None });
+    let second = frame(&Message::Notification {
+        method: "exit".into(),
+        params: None,
+    });
     // 粘包：两条帧一次喂入。
     let mut stuck = first.clone();
     stuck.extend_from_slice(&second);
     let mut decoder = Decoder::new();
     decoder.push(&stuck);
-    assert_eq!(decoder.next_message(), Some(request("initialize", 1, Json::Null)));
     assert_eq!(
         decoder.next_message(),
-        Some(Message::Notification { method: "exit".into(), params: None })
+        Some(request("initialize", 1, Json::Null))
+    );
+    assert_eq!(
+        decoder.next_message(),
+        Some(Message::Notification {
+            method: "exit".into(),
+            params: None
+        })
     );
     assert_eq!(decoder.next_message(), None);
 }
@@ -104,7 +142,10 @@ fn decoder_waits_for_half_frame() {
         assert_eq!(decoder.next_message(), None, "没喂完不该有消息");
     }
     decoder.push(chunks.last().expect("至少一个分块"));
-    assert_eq!(decoder.next_message(), Some(request("shutdown", 5, Json::Null)));
+    assert_eq!(
+        decoder.next_message(),
+        Some(request("shutdown", 5, Json::Null))
+    );
 
     // 跨帧半包：第一条完整、第二条只有一半。
     let mut decoder = Decoder::new();
@@ -113,7 +154,10 @@ fn decoder_waits_for_half_frame() {
     let mut input = frame(&request("shutdown", 5, Json::Null));
     input.extend_from_slice(&second[..cut]);
     decoder.push(&input);
-    assert_eq!(decoder.next_message(), Some(request("shutdown", 5, Json::Null)));
+    assert_eq!(
+        decoder.next_message(),
+        Some(request("shutdown", 5, Json::Null))
+    );
     assert_eq!(decoder.next_message(), None, "第二条还不完整");
     decoder.push(&second[cut..]);
     assert_eq!(decoder.next_message(), Some(request("exit", 6, Json::Null)));
@@ -127,7 +171,10 @@ fn decoder_skips_bad_header_and_resyncs() {
     let mut decoder = Decoder::new();
     decoder.push(bad);
     decoder.push(&good);
-    assert_eq!(decoder.next_message(), Some(request("initialize", 2, Json::Null)));
+    assert_eq!(
+        decoder.next_message(),
+        Some(request("initialize", 2, Json::Null))
+    );
 }
 
 #[test]

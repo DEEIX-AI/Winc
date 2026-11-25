@@ -39,7 +39,10 @@ pub fn utf16_to_chars(line: &str, units: u32) -> usize {
 
 /// 组装 LSP Position：`line_text` 是文档该行的文本，`char_in_line` 是行内字符偏移。
 pub fn position_at(line: u32, line_text: &str, char_in_line: usize) -> Position {
-    Position { line, character: chars_to_utf16(line_text, char_in_line) }
+    Position {
+        line,
+        character: chars_to_utf16(line_text, char_in_line),
+    }
 }
 
 /// 把 LSP Position 的行内列换回行内字符偏移；`line_text` 是文档该行的文本。

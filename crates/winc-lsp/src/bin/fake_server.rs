@@ -16,7 +16,11 @@ fn main() {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut reader = stdin.lock();
-    let mut server = Server { writer: stdout.lock(), pushed: false, shut_down: false };
+    let mut server = Server {
+        writer: stdout.lock(),
+        pushed: false,
+        shut_down: false,
+    };
     let mut decoder = rpc::Decoder::new();
     let mut buf = vec![0u8; 64 << 10];
     loop {
@@ -70,7 +74,11 @@ impl<W: Write> Server<W> {
                 ]);
                 // 真实服务器的 result 里包一层 `capabilities`。
                 let result = Json::object([("capabilities", capabilities)]);
-                self.send(&Message::Response { id, result: Some(result), error: None });
+                self.send(&Message::Response {
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
             }
             "textDocument/completion" => {
                 let items = ["Print", "Printf", "Println"].map(|label| {
@@ -85,17 +93,28 @@ impl<W: Write> Server<W> {
                     ("isIncomplete", Json::Bool(true)),
                     ("items", Json::Array(items.to_vec())),
                 ]);
-                self.send(&Message::Response { id, result: Some(list), error: None });
+                self.send(&Message::Response {
+                    id,
+                    result: Some(list),
+                    error: None,
+                });
             }
             "shutdown" => {
                 self.shut_down = true;
-                self.send(&Message::Response { id, result: Some(Json::Null), error: None });
+                self.send(&Message::Response {
+                    id,
+                    result: Some(Json::Null),
+                    error: None,
+                });
             }
             _ => {
                 self.send(&Message::Response {
                     id,
                     result: None,
-                    error: Some(rpc::RpcError { code: -32601, message: "method not found".into() }),
+                    error: Some(rpc::RpcError {
+                        code: -32601,
+                        message: "method not found".into(),
+                    }),
                 });
             }
         }
@@ -127,16 +146,28 @@ impl<W: Write> Server<W> {
                 vec![
                     Diagnostic {
                         range: Range {
-                            start: Position { line: 0, character: 1 },
-                            end: Position { line: 0, character: 2 },
+                            start: Position {
+                                line: 0,
+                                character: 1,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 2,
+                            },
                         },
                         severity: Severity::Error,
                         message: "undefined: x".into(),
                     },
                     Diagnostic {
                         range: Range {
-                            start: Position { line: 1, character: 0 },
-                            end: Position { line: 1, character: 3 },
+                            start: Position {
+                                line: 1,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 1,
+                                character: 3,
+                            },
                         },
                         severity: Severity::Warning,
                         message: "unused variable".into(),
@@ -170,15 +201,26 @@ impl<W: Write> Server<W> {
         else {
             return;
         };
-        let Some(uri) = document.get("uri").and_then(Json::as_str) else { return };
-        let version = document.get("version").and_then(Json::as_number).map(|n| n as i32);
+        let Some(uri) = document.get("uri").and_then(Json::as_str) else {
+            return;
+        };
+        let version = document
+            .get("version")
+            .and_then(Json::as_number)
+            .map(|n| n as i32);
         self.push_diagnostics(
             uri,
             version,
             vec![Diagnostic {
                 range: Range {
-                    start: Position { line: 0, character: 0 },
-                    end: Position { line: 0, character: 1 },
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 1,
+                    },
                 },
                 severity: Severity::Error,
                 message: "did open".into(),

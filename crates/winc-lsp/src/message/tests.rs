@@ -9,9 +9,17 @@ fn parse(text: &str) -> Json {
 
 #[test]
 fn position_round_trip() {
-    let position = Position { line: 12, character: 7 };
+    let position = Position {
+        line: 12,
+        character: 7,
+    };
     assert_eq!(Position::from_json(&position.to_json()), Some(position));
-    assert_eq!(parse(r#"{"character": 3, "line": 0}"#).as_object().map(|m| m.len()), Some(2));
+    assert_eq!(
+        parse(r#"{"character": 3, "line": 0}"#)
+            .as_object()
+            .map(|m| m.len()),
+        Some(2)
+    );
     // 缺字段或类型不对都返回 `None`。
     assert!(Position::from_json(&parse(r#"{"line": 1}"#)).is_none());
     assert!(Position::from_json(&parse(r#"{"line": "x", "character": 0}"#)).is_none());
@@ -20,8 +28,14 @@ fn position_round_trip() {
 #[test]
 fn range_round_trip() {
     let range = Range {
-        start: Position { line: 1, character: 0 },
-        end: Position { line: 1, character: 4 },
+        start: Position {
+            line: 1,
+            character: 0,
+        },
+        end: Position {
+            line: 1,
+            character: 4,
+        },
     };
     assert_eq!(Range::from_json(&range.to_json()), Some(range));
 }
@@ -30,14 +44,25 @@ fn range_round_trip() {
 fn text_edit_round_trip() {
     let edit = TextEdit {
         range: Range {
-            start: Position { line: 0, character: 2 },
-            end: Position { line: 0, character: 5 },
+            start: Position {
+                line: 0,
+                character: 2,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
         },
         new_text: "Println".into(),
     };
     assert_eq!(TextEdit::from_json(&edit.to_json()), Some(edit.clone()));
-    let json = parse(r#"{"newText": "你好", "range": {"end": {"character": 1, "line": 0}, "start": {"character": 0, "line": 0}}}"#);
-    assert_eq!(TextEdit::from_json(&json).map(|edit| edit.new_text), Some("你好".into()));
+    let json = parse(
+        r#"{"newText": "你好", "range": {"end": {"character": 1, "line": 0}, "start": {"character": 0, "line": 0}}}"#,
+    );
+    assert_eq!(
+        TextEdit::from_json(&json).map(|edit| edit.new_text),
+        Some("你好".into())
+    );
 }
 
 #[test]
@@ -120,11 +145,18 @@ fn initialize_serialization() {
         Some("file:///D:/code/go")
     );
     // 客户端能力里声明了补全。
-    let caps = map.get("capabilities").and_then(Json::as_object).expect("capabilities");
+    let caps = map
+        .get("capabilities")
+        .and_then(Json::as_object)
+        .expect("capabilities");
     assert!(caps.contains_key("textDocument"));
 
     // 无根（散开的单文件）时 rootUri 为 null。
-    let no_root = InitializeParams { process_id: 1, root_uri: None }.to_json();
+    let no_root = InitializeParams {
+        process_id: 1,
+        root_uri: None,
+    }
+    .to_json();
     assert_eq!(
         no_root.as_object().and_then(|m| m.get("rootUri")),
         Some(&Json::Null)
@@ -143,7 +175,11 @@ fn server_capabilities_both_sync_forms() {
 
     // 数字形式（其他服务器）与缺失。
     let number_form = parse(r#"{"capabilities": {"textDocumentSync": 1}}"#);
-    assert!(!ServerCapabilities::from_json(&number_form).expect("数字形式").incremental);
+    assert!(
+        !ServerCapabilities::from_json(&number_form)
+            .expect("数字形式")
+            .incremental
+    );
     let empty = parse(r#"{"capabilities": {}}"#);
     let caps = ServerCapabilities::from_json(&empty).expect("能力可缺");
     assert!(!caps.incremental);
@@ -173,8 +209,14 @@ fn document_sync_serialization() {
         changes: vec![
             ContentChange::Incremental {
                 range: Range {
-                    start: Position { line: 0, character: 12 },
-                    end: Position { line: 0, character: 12 },
+                    start: Position {
+                        line: 0,
+                        character: 12,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 12,
+                    },
                 },
                 text: "\n".into(),
             },
@@ -188,10 +230,23 @@ fn document_sync_serialization() {
         .and_then(Json::as_array)
         .expect("contentChanges");
     assert_eq!(changes.len(), 2);
-    assert!(changes[0].as_object().expect("增量带范围").contains_key("range"));
-    assert!(!changes[1].as_object().expect("全量不带范围").contains_key("range"));
+    assert!(
+        changes[0]
+            .as_object()
+            .expect("增量带范围")
+            .contains_key("range")
+    );
+    assert!(
+        !changes[1]
+            .as_object()
+            .expect("全量不带范围")
+            .contains_key("range")
+    );
 
-    let close = DidCloseParams { uri: "file:///home/x/main.go".into() }.to_json();
+    let close = DidCloseParams {
+        uri: "file:///home/x/main.go".into(),
+    }
+    .to_json();
     assert_eq!(
         close
             .as_object()
@@ -207,7 +262,10 @@ fn document_sync_serialization() {
 fn completion_params_with_and_without_context() {
     let params = CompletionParams {
         uri: "file:///home/x/main.go".into(),
-        position: Position { line: 5, character: 7 },
+        position: Position {
+            line: 5,
+            character: 7,
+        },
         context: Some(CompletionContext {
             trigger_kind: 2,
             trigger_character: Some(".".into()),
@@ -221,10 +279,19 @@ fn completion_params_with_and_without_context() {
 
     let manual = CompletionParams {
         uri: "file:///home/x/main.go".into(),
-        position: Position { line: 5, character: 0 },
+        position: Position {
+            line: 5,
+            character: 0,
+        },
         context: None,
     };
-    assert!(!manual.to_json().as_object().expect("对象").contains_key("context"));
+    assert!(
+        !manual
+            .to_json()
+            .as_object()
+            .expect("对象")
+            .contains_key("context")
+    );
 }
 
 #[test]
@@ -254,9 +321,18 @@ fn show_message_params() {
 #[cfg(unix)]
 #[test]
 fn file_uri_unix() {
-    assert_eq!(file_uri(Path::new("/home/x/main.go")).as_deref(), Some("file:///home/x/main.go"));
-    assert_eq!(file_uri(Path::new("/tmp/a b.go")).as_deref(), Some("file:///tmp/a%20b.go"));
-    assert_eq!(file_uri(Path::new("/代码/主.go")).as_deref(), Some("file:///%E4%BB%A3%E7%A0%81/%E4%B8%BB.go"));
+    assert_eq!(
+        file_uri(Path::new("/home/x/main.go")).as_deref(),
+        Some("file:///home/x/main.go")
+    );
+    assert_eq!(
+        file_uri(Path::new("/tmp/a b.go")).as_deref(),
+        Some("file:///tmp/a%20b.go")
+    );
+    assert_eq!(
+        file_uri(Path::new("/代码/主.go")).as_deref(),
+        Some("file:///%E4%BB%A3%E7%A0%81/%E4%B8%BB.go")
+    );
     // 相对路径与空路径没有根。
     assert_eq!(file_uri(Path::new("main.go")), None);
     assert_eq!(file_uri(Path::new("")), None);
@@ -265,10 +341,19 @@ fn file_uri_unix() {
 #[cfg(windows)]
 #[test]
 fn file_uri_windows() {
-    assert_eq!(file_uri(Path::new(r"D:\code\main.go")).as_deref(), Some("file:///D:/code/main.go"));
-    assert_eq!(file_uri(Path::new("D:/code/a b.go")).as_deref(), Some("file:///D:/code/a%20b.go"));
+    assert_eq!(
+        file_uri(Path::new(r"D:\code\main.go")).as_deref(),
+        Some("file:///D:/code/main.go")
+    );
+    assert_eq!(
+        file_uri(Path::new("D:/code/a b.go")).as_deref(),
+        Some("file:///D:/code/a%20b.go")
+    );
     // Unix 风格根也能转（挂在当前盘符下的场景不出现，但编码路径一致）。
-    assert_eq!(file_uri(Path::new("/code/main.go")).as_deref(), Some("file:///code/main.go"));
+    assert_eq!(
+        file_uri(Path::new("/code/main.go")).as_deref(),
+        Some("file:///code/main.go")
+    );
 }
 
 #[test]
@@ -281,10 +366,17 @@ fn uri_to_path_round_trip() {
     ] {
         // 输入按 `/` 分隔（file_uri 的输出形态），来回一致。
         let forward_slashes = path.replace('\\', "/");
-        assert_eq!(uri_to_path(uri).as_deref(), Some(Path::new(&forward_slashes)), "{uri}");
+        assert_eq!(
+            uri_to_path(uri).as_deref(),
+            Some(Path::new(&forward_slashes)),
+            "{uri}"
+        );
     }
     // 省掉第三个斜杠的 Windows 写法。
-    assert_eq!(uri_to_path("file://D:/code/x.go").as_deref(), Some(Path::new("D:/code/x.go")));
+    assert_eq!(
+        uri_to_path("file://D:/code/x.go").as_deref(),
+        Some(Path::new("D:/code/x.go"))
+    );
     // 非 file 协议、带主机名、坏编码都拒绝。
     assert_eq!(uri_to_path("http://example.com/x"), None);
     assert_eq!(uri_to_path("file://server/share/x.go"), None);

@@ -32,5 +32,8 @@ fn other_server_requests_get_null() {
         assert_eq!(reply, Json::Null, "{method}");
     }
     // 参数缺席也一样。
-    assert_eq!(auto_reply_result("client/registerCapability", &None), Json::Null);
+    assert_eq!(
+        auto_reply_result("client/registerCapability", &None),
+        Json::Null
+    );
 }

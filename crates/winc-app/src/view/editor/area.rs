@@ -17,8 +17,8 @@ use winc_syntax::{Language, Token};
 
 use super::*;
 use crate::app::FoldMotion;
-use crate::app::editor::diagnostics::Underline;
 use crate::app::animation::CaretTarget;
+use crate::app::editor::diagnostics::Underline;
 use crate::app::git::merge::MergeTarget;
 
 /// 绘制当前文档的文本区，`index` 是它在 `documents` 中的位置。

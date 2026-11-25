@@ -978,15 +978,13 @@ pub(super) const FORMAT: &[Field] = &[
 ///
 /// 语言可以写 id 或状态栏上显示的名字（如 `go`、`Go`），统一存成 id。与
 /// `format.commands` 不同，空字符串不是「没写」，而是显式禁用该语言的服务器。
-pub(super) const LSP: &[Field] = &[
-    Field {
-        key: "servers",
-        read: |config, value, name, problems| {
-            read_language_servers(value, name, &mut config.language_servers, problems)
-        },
-        write: |config| language_servers_json(&config.language_servers),
+pub(super) const LSP: &[Field] = &[Field {
+    key: "servers",
+    read: |config, value, name, problems| {
+        read_language_servers(value, name, &mut config.language_servers, problems)
     },
-];
+    write: |config| language_servers_json(&config.language_servers),
+}];
 
 /// 把「语言 → 服务器命令」的对象（`lsp.servers`）读入 `out`，无法理解的地方记入
 /// `problems`，文案中用 `name` 指代这一项。
@@ -1012,7 +1010,11 @@ fn read_language_servers(
             continue;
         };
         if out.insert(id, command.to_owned()).is_some() {
-            problems.push(t!("config-duplicate-language", name = name, language = language.as_str()));
+            problems.push(t!(
+                "config-duplicate-language",
+                name = name,
+                language = language.as_str()
+            ));
         }
     }
 }

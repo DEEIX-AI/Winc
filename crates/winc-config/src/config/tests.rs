@@ -894,7 +894,11 @@ fn language_servers_read_and_lookup() {
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(config.language_server("go"), None);
     // 禁用写回时保留，不能丢。
-    assert!(config.to_json().contains("\"go\": \"\""), "{}", config.to_json());
+    assert!(
+        config.to_json().contains("\"go\": \"\""),
+        "{}",
+        config.to_json()
+    );
 
     // 命令两端的空白去掉。
     let (config, _) = Config::parse(r#"{"lsp":{"servers":{"go":"  gopls  "}}}"#);

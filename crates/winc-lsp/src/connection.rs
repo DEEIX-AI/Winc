@@ -110,7 +110,11 @@ impl Connection {
                 let _ = child.wait();
             })?;
 
-        Ok(Connection { outbox, inbox, woken })
+        Ok(Connection {
+            outbox,
+            inbox,
+            woken,
+        })
     }
 
     /// 发一条报文。
@@ -219,7 +223,14 @@ fn read_messages(
             match message {
                 Message::Request { id, method, params } => {
                     let result = auto_reply_result(&method, &params);
-                    queue_frame(outbox, &Message::Response { id, result: Some(result), error: None });
+                    queue_frame(
+                        outbox,
+                        &Message::Response {
+                            id,
+                            result: Some(result),
+                            error: None,
+                        },
+                    );
                 }
                 other => batch.push(other),
             }

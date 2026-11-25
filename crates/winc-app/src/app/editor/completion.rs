@@ -336,7 +336,12 @@ pub(crate) fn edit_for(doc: &Document, context: &Context, item: &CompletionItem)
     let mut edit = if let Some(edit) = &item.text_edit {
         let start = char_offset(doc, edit.range.start);
         let end = char_offset(doc, edit.range.end).max(start);
-        Edit { start, end, text: edit.new_text.clone(), caret: None }
+        Edit {
+            start,
+            end,
+            text: edit.new_text.clone(),
+            caret: None,
+        }
     } else {
         Edit {
             start: context.start,
@@ -385,10 +390,7 @@ pub(crate) fn apply_edit(doc: &mut Document, edit: &Edit) {
         removed,
         inserted: edit.text.clone(),
     };
-    let caret = start
-        + edit
-            .caret
-            .unwrap_or_else(|| edit.text.chars().count());
+    let caret = start + edit.caret.unwrap_or_else(|| edit.text.chars().count());
     doc.apply(winc_core::edit::Transaction::new(
         vec![change],
         before,

@@ -171,7 +171,8 @@ fn an_older_response_does_not_hide_the_newer_one() {
 }
 
 #[test]
-fn an_empty_response_opens_nothing() {    let mut c = Completion::default();
+fn an_empty_response_opens_nothing() {
+    let mut c = Completion::default();
     let now = Instant::now();
     let ctx = trigger(&mut c, now);
     let request = c.tick(now + DELAY).unwrap();
@@ -244,13 +245,18 @@ fn leaving_the_identifier_closes_the_list() {
 /// 接受候选：有 `textEdit` 时按它替换；没有时替换已输入的词；整段插入是一个撤销单元。
 #[test]
 fn accepting_a_candidate_replaces_the_typed_prefix() {
-    use winc_lsp::message::{TextEdit, Range, Position};
-    let mut doc = Document::from_text(DocumentId(1), "var x Reader
+    use winc_lsp::message::{Position, Range, TextEdit};
+    let mut doc = Document::from_text(
+        DocumentId(1),
+        "var x Reader
 x.Fi
-");
+",
+    );
     let before = doc.revision;
     let caret = "var x Reader
-x.Fi".chars().count();
+x.Fi"
+        .chars()
+        .count();
     doc.selection = winc_core::Selection::point(caret);
     let context = Completion::context(&doc).expect("有上下文");
     assert_eq!(context.prefix, "Fi");
@@ -264,18 +270,32 @@ x.Fi".chars().count();
         additional_text_edits: Vec::new(),
     };
     let edit = edit_for(&doc, &context, &item);
-    assert_eq!((edit.start, edit.end, edit.text.as_str()), (context.start, caret, "Field"));
+    assert_eq!(
+        (edit.start, edit.end, edit.text.as_str()),
+        (context.start, caret, "Field")
+    );
     apply_edit(&mut doc, &edit);
-    assert_eq!(doc.text().substring(0, doc.text().end_pos()), "var x Reader
+    assert_eq!(
+        doc.text().substring(0, doc.text().end_pos()),
+        "var x Reader
 x.Field
-");
-    assert_eq!(doc.selection.head, "var x Reader
-x.Field".chars().count());
+"
+    );
+    assert_eq!(
+        doc.selection.head,
+        "var x Reader
+x.Field"
+            .chars()
+            .count()
+    );
     // 一次撤销回退整段插入，不残留半个词。
     doc.execute(winc_editor::Command::Undo, 10, 4);
-    assert_eq!(doc.text().substring(0, doc.text().end_pos()), "var x Reader
+    assert_eq!(
+        doc.text().substring(0, doc.text().end_pos()),
+        "var x Reader
 x.Fi
-");
+"
+    );
     assert!(doc.revision > before);
 
     // 服务器给了 textEdit：按它的范围替换（这里把 `x.Fi` 整段换成 `x.Reader.Field`）。
@@ -285,8 +305,14 @@ x.Fi
     let item = CompletionItem {
         text_edit: Some(TextEdit {
             range: Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 4 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 4,
+                },
             },
             new_text: "x.Reader.Field".into(),
         }),
@@ -294,7 +320,10 @@ x.Fi
     };
     let edit = edit_for(&doc, &context, &item);
     apply_edit(&mut doc, &edit);
-    assert_eq!(doc.text().substring(0, doc.text().end_pos()), "x.Reader.Field");
+    assert_eq!(
+        doc.text().substring(0, doc.text().end_pos()),
+        "x.Reader.Field"
+    );
     assert_eq!(doc.selection.head, "x.Reader.Field".chars().count());
 }
 
@@ -384,8 +413,14 @@ fn function_candidates_are_accepted_with_call_parentheses() {
     let mut edited = item("get");
     edited.text_edit = Some(TextEdit {
         range: Range {
-            start: Position { line: 1, character: 2 },
-            end: Position { line: 1, character: 3 },
+            start: Position {
+                line: 1,
+                character: 2,
+            },
+            end: Position {
+                line: 1,
+                character: 3,
+            },
         },
         new_text: "get".into(),
     });
@@ -394,7 +429,10 @@ fn function_candidates_are_accepted_with_call_parentheses() {
     assert_eq!(edit.caret, Some(4));
     // 应用后光标确实在括号之间。
     apply_edit(&mut doc, &edit);
-    assert_eq!(doc.text().substring(0, doc.text().end_pos()), "var k KV\nk.get()");
+    assert_eq!(
+        doc.text().substring(0, doc.text().end_pos()),
+        "var k KV\nk.get()"
+    );
     assert_eq!(doc.selection.head, "var k KV\nk.get(".chars().count());
 }
 

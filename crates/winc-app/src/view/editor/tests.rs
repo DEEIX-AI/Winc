@@ -55,7 +55,8 @@ fn wrapped_spans_end_where_each_row_ends() {
 }
 
 #[test]
-fn occurrences_of_the_word_under_the_caret() {    let mut doc = Document::from_text(DocumentId(1), "let id = width + id_x + id;\n");
+fn occurrences_of_the_word_under_the_caret() {
+    let mut doc = Document::from_text(DocumentId(1), "let id = width + id_x + id;\n");
     // 光标在 `id` 的末尾（右边是空格）时也算在词上。
     doc.selection = Selection::point(6);
     let line = "let id = width + id_x + id;";

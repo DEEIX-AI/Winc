@@ -10,7 +10,13 @@ fn ascii_is_one_unit_per_char() {
     // 与 LSP Position 的组装/拆开往返。
     let line = "\tfmt.Pri";
     let position = position_at(5, line, 8);
-    assert_eq!(position, Position { line: 5, character: 8 });
+    assert_eq!(
+        position,
+        Position {
+            line: 5,
+            character: 8
+        }
+    );
     assert_eq!(char_in_line(position, line), 8);
 }
 

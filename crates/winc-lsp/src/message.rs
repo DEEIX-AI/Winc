@@ -46,7 +46,9 @@ fn u32_field(map: &BTreeMap<String, Json>, key: &str) -> Option<u32> {
 
 /// 从对象里读一个整数字段（文档版本号用，服务器不会发小数）。
 fn i32_field(map: &BTreeMap<String, Json>, key: &str) -> Option<i32> {
-    map.get(key).and_then(Json::as_number).map(|n| n as i64 as i32)
+    map.get(key)
+        .and_then(Json::as_number)
+        .map(|n| n as i64 as i32)
 }
 
 /// 从对象里读一个布尔字段。
@@ -148,7 +150,10 @@ impl TextEdit {
 
     /// 写出 `{"range": {...}, "newText": "..."}`。
     pub fn to_json(&self) -> Json {
-        Json::object([("range", self.range.to_json()), ("newText", Json::String(self.new_text.clone()))])
+        Json::object([
+            ("range", self.range.to_json()),
+            ("newText", Json::String(self.new_text.clone())),
+        ])
     }
 }
 
@@ -164,7 +169,11 @@ pub enum Severity {
 impl Severity {
     /// 从 LSP 的数字解析：1 为错误，其余（含缺失）按警告。
     fn from_code(code: u32) -> Severity {
-        if code == 1 { Severity::Error } else { Severity::Warning }
+        if code == 1 {
+            Severity::Error
+        } else {
+            Severity::Warning
+        }
     }
 
     /// 写回 LSP 的数字。
@@ -278,8 +287,9 @@ impl CompletionResponse {
                     .collect(),
             }));
         }
-        json.as_array()
-            .map(|items| CompletionResponse::Items(items.iter().filter_map(CompletionItem::from_json).collect()))
+        json.as_array().map(|items| {
+            CompletionResponse::Items(items.iter().filter_map(CompletionItem::from_json).collect())
+        })
     }
 
     /// 全部候选（两种形式统一取）。
@@ -454,7 +464,10 @@ pub struct DidCloseParams {
 impl DidCloseParams {
     /// 写出参数。
     pub fn to_json(&self) -> Json {
-        Json::object([("textDocument", Json::object([("uri", Json::String(self.uri.clone()))]))])
+        Json::object([(
+            "textDocument",
+            Json::object([("uri", Json::String(self.uri.clone()))]),
+        )])
     }
 }
 
@@ -561,7 +574,10 @@ impl ShowMessageParams {
 /// 非 UTF-8 路径返回 `None`（没有根的文档进不了 LSP）。
 pub fn file_uri(path: &Path) -> Option<String> {
     let text = path.to_str()?;
-    let parts: Vec<&str> = text.split(['/', '\\']).filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = text
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
     let drive = parts.first().copied().filter(|first| {
         let bytes = first.as_bytes();
         bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
@@ -571,13 +587,19 @@ pub fn file_uri(path: &Path) -> Option<String> {
         if !text.starts_with('/') {
             return None;
         }
-        let encoded = parts.iter().map(|part| encode_component(part)).collect::<Vec<_>>();
+        let encoded = parts
+            .iter()
+            .map(|part| encode_component(part))
+            .collect::<Vec<_>>();
         let mut out = String::from("file:///");
         out.push_str(&encoded.join("/"));
         return Some(out);
     };
     // Windows 盘符：`D:` 原样（`:` 是 URI 允许的保留字符），其余组件编码。
-    let rest = parts[1..].iter().map(|part| encode_component(part)).collect::<Vec<_>>();
+    let rest = parts[1..]
+        .iter()
+        .map(|part| encode_component(part))
+        .collect::<Vec<_>>();
     let mut out = format!("file:///{drive}");
     if !rest.is_empty() {
         out.push('/');

@@ -12,6 +12,7 @@ pub(crate) mod git;
 pub(crate) mod hits;
 mod input;
 mod lifecycle;
+pub(crate) mod lsp;
 pub(crate) mod preview;
 mod release_notes;
 pub(crate) mod remote;
@@ -21,7 +22,6 @@ pub(crate) mod setup;
 #[cfg(test)]
 mod snapshot;
 mod status;
-pub(crate) mod lsp;
 pub(crate) mod terminal;
 pub(crate) mod tickets;
 pub(crate) mod vim;

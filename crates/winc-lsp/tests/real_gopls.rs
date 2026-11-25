@@ -23,7 +23,9 @@ fn gopls() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         dirs.push(PathBuf::from(home).join("go").join("bin"));
     }
-    dirs.iter().map(|dir| dir.join(name)).find(|path| path.is_file())
+    dirs.iter()
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
 }
 
 fn next(connection: &Connection, woken: &Receiver<()>, timeout: Duration) -> Option<Message> {
@@ -53,7 +55,10 @@ fn wait_notification(
     loop {
         let left = until.checked_duration_since(Instant::now())?;
         let message = next(connection, woken, left)?;
-        if let Message::Notification { method: name, params } = message
+        if let Message::Notification {
+            method: name,
+            params,
+        } = message
             && name == method
         {
             return params;
@@ -100,7 +105,12 @@ fn a_real_gopls_session_reports_diagnostics_and_completions() {
         let Some(message) = next(&connection, &rx, Duration::from_secs(60)) else {
             panic!("gopls 未在 60 秒内应答 initialize");
         };
-        if let Message::Response { id: Id::Number(1), result: Some(json), .. } = message {
+        if let Message::Response {
+            id: Id::Number(1),
+            result: Some(json),
+            ..
+        } = message
+        {
             break ServerCapabilities::from_json(&json).expect("能力能解析");
         }
     };
@@ -134,7 +144,10 @@ fn a_real_gopls_session_reports_diagnostics_and_completions() {
     .expect("首次分析后会推送诊断");
     let diagnostics = PublishDiagnosticsParams::from_json(&params).expect("诊断能解析");
     assert!(
-        diagnostics.diagnostics.iter().any(|d| d.message.contains("Fi")),
+        diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Fi")),
         "应有 r.Fi 的错误：{:?}",
         diagnostics.diagnostics
     );
@@ -164,7 +177,12 @@ fn a_real_gopls_session_reports_diagnostics_and_completions() {
         let Some(message) = next(&connection, &rx, Duration::from_secs(60)) else {
             panic!("gopls 未在 60 秒内应答补全");
         };
-        if let Message::Response { id: Id::Number(2), result: Some(json), .. } = message {
+        if let Message::Response {
+            id: Id::Number(2),
+            result: Some(json),
+            ..
+        } = message
+        {
             break CompletionResponse::from_json(&json)
                 .map(|r| r.items().to_vec())
                 .unwrap_or_default();
@@ -172,7 +190,10 @@ fn a_real_gopls_session_reports_diagnostics_and_completions() {
     };
     let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
     assert!(labels.contains(&"Field"), "成员补全里有 Field：{labels:?}");
-    assert!(labels.contains(&"ReadAll"), "成员补全里有 ReadAll：{labels:?}");
+    assert!(
+        labels.contains(&"ReadAll"),
+        "成员补全里有 ReadAll：{labels:?}"
+    );
 
     // 增量修改：把 `r.Fi` 换成 `r.Field`，gopls 应清掉该诊断（再推一次为空）。
     let after = position::position_at(line as u32, line_text, caret - line_start + 2);
@@ -183,7 +204,10 @@ fn a_real_gopls_session_reports_diagnostics_and_completions() {
                 uri: uri.clone(),
                 version: 2,
                 changes: vec![ContentChange::Incremental {
-                    range: Range { start: at, end: after },
+                    range: Range {
+                        start: at,
+                        end: after,
+                    },
                     text: "Field".into(),
                 }],
             }

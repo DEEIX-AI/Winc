@@ -36,11 +36,7 @@ const ICON_SIZE: f32 = 14.0;
 pub(super) const ICON_ROOM: f32 = 21.0;
 
 /// 气泡宽度：内容宽夹在 [`MIN_WIDTH`] 与编辑区宽度的 [`MAX_SHARE`] 之间，外加两侧留白。
-pub(in crate::view) fn bubble_width(
-    content: f32,
-    padding: f32,
-    editor: Rect,
-) -> f32 {
+pub(in crate::view) fn bubble_width(content: f32, padding: f32, editor: Rect) -> f32 {
     let max = (editor.w * MAX_SHARE).max(MIN_WIDTH);
     (content + padding).clamp(MIN_WIDTH, max)
 }
@@ -139,7 +135,12 @@ pub(in crate::view) fn draw_name_hint(app: &mut App, frame: &mut Frame<'_>) {
             MAX_LINES,
         );
         let card_h = lines.len() as f32 * row_h + 2.0 * pad_v;
-        (w, card_h, lines, hint_level(app).map(|level| (level.glyph(), level.color(p))))
+        (
+            w,
+            card_h,
+            lines,
+            hint_level(app).map(|level| (level.glyph(), level.color(p))),
+        )
     } else {
         let w = frame.measure(FontKind::Ui, size, &hint.text) + 2.0 * PAD;
         (w, row_h + 2.0 * pad_v, vec![hint.text.clone()], None)
@@ -370,7 +371,10 @@ pub(in crate::view) fn place_above_name(
     height: f32,
 ) -> (f32, f32, bool) {
     let right = editor.right() - SCROLLBAR_HIT - 8.0;
-    let x = (name_x - 20.0).min(right - width).max(editor.x + 8.0).round();
+    let x = (name_x - 20.0)
+        .min(right - width)
+        .max(editor.x + 8.0)
+        .round();
     let above_y = top - GAP - POINTER - height;
     let below_y = top + line_h + GAP + POINTER;
     let fits_above = above_y >= editor.y + 4.0;
@@ -385,7 +389,12 @@ pub(in crate::view) fn place_above_name(
     } else {
         below_y
     };
-    let y = y.clamp(editor.y + 4.0, (editor.bottom() - height - 4.0).max(editor.y + 4.0)).round();
+    let y = y
+        .clamp(
+            editor.y + 4.0,
+            (editor.bottom() - height - 4.0).max(editor.y + 4.0),
+        )
+        .round();
     let is_above = y + height <= top;
     (x, y, is_above)
 }

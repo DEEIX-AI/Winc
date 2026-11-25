@@ -1299,7 +1299,11 @@ fn changes_since_tracks_edits_undo_and_other_revisions() {
     doc.set_language("x.go");
     doc.selection = Selection::point(2);
     let base = doc.revision;
-    assert_eq!(doc.changes_since(base), Some(Vec::new()), "当前版本没有修改");
+    assert_eq!(
+        doc.changes_since(base),
+        Some(Vec::new()),
+        "当前版本没有修改"
+    );
 
     // 连续编辑：两次插入累积成两条修改，后面一条的偏移在前面应用之后的文本上。
     doc.execute(Command::Insert("c".to_string()), 10, 4);
@@ -1308,15 +1312,27 @@ fn changes_since_tracks_edits_undo_and_other_revisions() {
     assert_eq!(
         doc.changes_since(base),
         Some(vec![
-            Change { start: 2, removed: String::new(), inserted: "c".to_string() },
-            Change { start: 3, removed: String::new(), inserted: "d".to_string() },
+            Change {
+                start: 2,
+                removed: String::new(),
+                inserted: "c".to_string()
+            },
+            Change {
+                start: 3,
+                removed: String::new(),
+                inserted: "d".to_string()
+            },
         ])
     );
     // 从中间版本起只取后半。
     let middle = doc.revision - 1;
     assert_eq!(
         doc.changes_since(middle),
-        Some(vec![Change { start: 3, removed: String::new(), inserted: "d".to_string() }])
+        Some(vec![Change {
+            start: 3,
+            removed: String::new(),
+            inserted: "d".to_string()
+        }])
     );
 
     // 撤销：连续键入合并成一个撤销单元，一次撤回「cd」，记录的逆向修改与之对应。
@@ -1325,7 +1341,11 @@ fn changes_since_tracks_edits_undo_and_other_revisions() {
     assert_eq!(text_of(&doc), "ab");
     assert_eq!(
         doc.changes_since(before_undo),
-        Some(vec![Change { start: 2, removed: "cd".to_string(), inserted: String::new() }])
+        Some(vec![Change {
+            start: 2,
+            removed: "cd".to_string(),
+            inserted: String::new()
+        }])
     );
     // 重做：恢复原修改。
     doc.execute(Command::Redo, 10, 4);
@@ -1333,8 +1353,16 @@ fn changes_since_tracks_edits_undo_and_other_revisions() {
     assert_eq!(
         doc.changes_since(before_undo),
         Some(vec![
-            Change { start: 2, removed: "cd".to_string(), inserted: String::new() },
-            Change { start: 2, removed: String::new(), inserted: "cd".to_string() },
+            Change {
+                start: 2,
+                removed: "cd".to_string(),
+                inserted: String::new()
+            },
+            Change {
+                start: 2,
+                removed: String::new(),
+                inserted: "cd".to_string()
+            },
         ])
     );
 
@@ -1355,10 +1383,14 @@ fn changes_since_beyond_the_log_falls_back_to_none() {
     for c in "0123456789abcdef".chars().cycle().take(EDIT_LOG + 6) {
         doc.execute(Command::Insert(c.to_string()), 10, 4);
     }
-    assert!(doc.changes_since(old).is_none(), "超过日志条数的版本不可追溯");
+    assert!(
+        doc.changes_since(old).is_none(),
+        "超过日志条数的版本不可追溯"
+    );
     let recent = doc.revision - 1;
     assert!(
-        doc.changes_since(recent).is_some_and(|changes| changes.len() == 1),
+        doc.changes_since(recent)
+            .is_some_and(|changes| changes.len() == 1),
         "最近一次修改仍在"
     );
 }

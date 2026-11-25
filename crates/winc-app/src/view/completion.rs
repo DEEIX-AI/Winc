@@ -5,7 +5,7 @@ use super::popup_menu::{MARGIN, ROW_INSET, band_ink};
 use super::*;
 use crate::app::lsp::COMPLETION_VISIBLE;
 use crate::app::{POPUP_PAD, ScrollArea};
-use crate::icons::{symbol, SymbolGlyph, FILE_WIDTH};
+use crate::icons::{FILE_WIDTH, SymbolGlyph, symbol};
 use winc_i18n::t;
 
 /// 卡片的最小、最大宽度（逻辑像素）。
@@ -60,7 +60,10 @@ pub(super) fn draw_completion(app: &mut App, frame: &mut Frame<'_>) {
         .map(|item| item.label.clone())
         .collect();
     let size = app.fonts.ui;
-    let widest = rows.iter().map(|label| frame.measure(FontKind::Ui, size, label)).fold(0.0, f32::max);
+    let widest = rows
+        .iter()
+        .map(|label| frame.measure(FontKind::Ui, size, label))
+        .fold(0.0, f32::max);
     let area = app.layout.editor;
     let w = (PAD * 2.0 + FILE_WIDTH + ICON_GAP + widest + KIND_ROOM)
         .clamp(WIDTH.0, WIDTH.1)
@@ -126,7 +129,15 @@ pub(super) fn draw_completion(app: &mut App, frame: &mut Frame<'_>) {
         let room = band.right() - PAD - kind_w - KIND_GAP - text_x;
         let shown_label = ellipsize(frame, label, size, room.max(0.0));
         ui_text(frame, app, text_x, row, &shown_label, ink, clip);
-        ui_text_small(frame, app, band.right() - PAD - kind_w, row, kind, kind_ink, clip);
+        ui_text_small(
+            frame,
+            app,
+            band.right() - PAD - kind_w,
+            row,
+            kind,
+            kind_ink,
+            clip,
+        );
         hits.push((row, row_index));
     }
     // 项数多于可见行数时画滚动条，样式与其他列表相同。
@@ -134,7 +145,15 @@ pub(super) fn draw_completion(app: &mut App, frame: &mut Frame<'_>) {
         let track = Rect::new(card.x, card.y + POPUP_PAD, card.w, shown as f32 * LIST_ROW);
         let (scroll, content) = (first as f32 * LIST_ROW, rows.len() as f32 * LIST_ROW);
         let owner = app.editor.active().map_or(0, |doc| doc.id.0);
-        draw_scrollbar(app, frame, ScrollArea::Suggest, owner, track, scroll, content);
+        draw_scrollbar(
+            app,
+            frame,
+            ScrollArea::Suggest,
+            owner,
+            track,
+            scroll,
+            content,
+        );
     }
     app.hits.completion = hits;
     app.hits.completion_card = Some(card);

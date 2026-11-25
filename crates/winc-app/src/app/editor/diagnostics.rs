@@ -11,7 +11,6 @@ use winc_editor::{Document, DocumentId};
 use winc_lsp::message::{Diagnostic, Severity};
 use winc_lsp::position;
 
-
 /// 一条诊断：字符范围、严重级别和消息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Problem {
@@ -81,7 +80,11 @@ impl Diagnostics {
             let start = problem.start.min(text.end_pos());
             let end = problem.end.max(start).min(text.end_pos());
             let first = text.line_of(start);
-            let last = if end > start { text.line_of(end - 1) } else { first };
+            let last = if end > start {
+                text.line_of(end - 1)
+            } else {
+                first
+            };
             for line in first..=last {
                 let line_start = text.line_start(line);
                 let line_end = line_start + text.line_len(line);
@@ -93,7 +96,10 @@ impl Diagnostics {
                 } else {
                     (a.saturating_sub(1), a)
                 };
-                lines.entry(line).or_default().push((a, b, problem.severity));
+                lines
+                    .entry(line)
+                    .or_default()
+                    .push((a, b, problem.severity));
             }
         }
         lines.into_iter().collect()
@@ -144,13 +150,24 @@ mod tests {
 
     fn range(start: (u32, u32), end: (u32, u32)) -> Range {
         Range {
-            start: Position { line: start.0, character: start.1 },
-            end: Position { line: end.0, character: end.1 },
+            start: Position {
+                line: start.0,
+                character: start.1,
+            },
+            end: Position {
+                line: end.0,
+                character: end.1,
+            },
         }
     }
 
     fn problem(start: usize, end: usize, severity: Severity, message: &str) -> Problem {
-        Problem { start, end, severity, message: message.into() }
+        Problem {
+            start,
+            end,
+            severity,
+            message: message.into(),
+        }
     }
 
     #[test]
@@ -249,7 +266,10 @@ hij
         // 行尾的零宽诊断：画在最后一个字符上。
         let mut all = Diagnostics::default();
         let at = doc.text().line_end(1);
-        all.replace(DocumentId(1), vec![problem(at, at, Severity::Warning, "缺分号")]);
+        all.replace(
+            DocumentId(1),
+            vec![problem(at, at, Severity::Warning, "缺分号")],
+        );
         let lines = all.by_line(&doc);
         assert_eq!(lines, [(1, vec![(3, 4, Severity::Warning)])]);
     }
@@ -264,7 +284,12 @@ hij
                 problem(0, 1, Severity::Error, "前"),
             ],
         );
-        let starts: Vec<usize> = all.get(DocumentId(1)).unwrap().iter().map(|p| p.start).collect();
+        let starts: Vec<usize> = all
+            .get(DocumentId(1))
+            .unwrap()
+            .iter()
+            .map(|p| p.start)
+            .collect();
         assert_eq!(starts, [0, 6]);
     }
 }
