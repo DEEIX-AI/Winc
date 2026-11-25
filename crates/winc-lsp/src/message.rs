@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use winc_json::Json;
+use winc_config::Json;
 
 /// JSON-RPC 方法名。
 pub mod method {

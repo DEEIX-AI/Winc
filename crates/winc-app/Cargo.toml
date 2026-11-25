@@ -17,7 +17,6 @@ winc-syntax.workspace = true
 winc-render.workspace = true
 winc-editor.workspace = true
 winc-lsp.workspace = true
-winc-json.workspace = true
 winc-preview.workspace = true
 winc-typeset.workspace = true
 winc-vim.workspace = true
@@ -110,6 +109,7 @@ roxmltree.workspace = true
 
 [dev-dependencies]
 winc-backend = { workspace = true, features = ["test-support"] }
+winc-search.workspace = true
 
 [lints]
 workspace = true

@@ -12,7 +12,9 @@ mod shell;
 mod strings;
 mod style;
 
-use crate::lang::{Heredocs, Language, Markup, RawStrings, Variables, language_at};
+use crate::lang::{
+    BlockEscapes, Heredocs, Interpolation, Language, Markup, RawStrings, Variables, language_at,
+};
 
 /// 行开头的词法状态：上一行是否停在尚未结束的注释或字符串里，以及是哪种结构。
 ///
@@ -344,6 +346,8 @@ pub enum TokenKind {
     Deleted,
     /// 日志中的警告级别。
     Warning,
+    /// 表格（CSV、TSV）中分列的字符，颜色较淡（见 [`crate::columns`]）。
+    Separator,
 }
 
 /// `#` 开头、其后按代码着色的指令：条件编译、宏定义和包含（见 `Lexer::directive`）。
@@ -391,9 +395,11 @@ struct Span {
     kind: TokenKind,
     /// 到行尾还没结束时带到下一行的状态；不能跨行的结构为 `Normal`。
     carry: LineState,
-    /// 其中按代码着色的插值的开头和收尾字符，规则见 [`Language::interpolation`] 与
+    /// 其中按代码着色的插值，规则见 [`Language::interpolation`] 与
     /// [`Language::template_interpolation`]。
-    interpolation: Option<(&'static str, char)>,
+    interpolation: Option<Interpolation>,
+    /// 块字符串的转义写法（[`crate::BlockString::escapes`]）；其他字符串为 `None`。
+    block_escapes: BlockEscapes,
     /// 其中的变量引用是否单独着色（[`Language::variables`]）。
     variables: bool,
 }
@@ -446,8 +452,9 @@ fn quoted_span(
         doubled: language.doubled_quotes,
         kind: TokenKind::String,
         carry,
-        interpolation: interpolation.map(|it| (it.open, it.close)),
+        interpolation,
         variables,
+        block_escapes: BlockEscapes::None,
     }
 }
 
@@ -462,6 +469,7 @@ fn literal_span(close: &'static str, kind: TokenKind, carry: LineState) -> Span 
         carry,
         interpolation: None,
         variables: false,
+        block_escapes: BlockEscapes::None,
     }
 }
 
@@ -487,6 +495,15 @@ impl LineState {
     }
 }
 
+/// 模板字符串（[`Language::template_interpolation`]）中的 `${…}` 插值。
+const TEMPLATE: Interpolation = Interpolation {
+    open: "${",
+    close: '}',
+    prefixes: &[],
+    single_quotes: false,
+    doubled: false,
+};
+
 /// 返回反引号字符串的规则。
 ///
 /// JS 的模板字符串用反引号，支持 `${…}` 插值；SQL 的反引号是标识符。
@@ -501,11 +518,12 @@ fn backtick_span(language: &Language) -> Span {
         doubled: false,
         kind: TokenKind::String,
         carry: LineState::Backtick,
-        interpolation: language.template_interpolation.then_some(("${", '}')),
+        interpolation: language.template_interpolation.then_some(TEMPLATE),
         variables: !matches!(
             language.variables,
             Variables::None | Variables::InStrings | Variables::Ruby
         ),
+        block_escapes: BlockEscapes::None,
     }
 }
 
@@ -520,8 +538,9 @@ fn block_string_span(language: &Language, index: u8) -> Option<Span> {
         doubled: language.doubled_quotes,
         kind: TokenKind::String,
         carry: LineState::BlockString(index),
-        interpolation: interpolation.map(|it| (it.open, it.close)),
+        interpolation,
         variables: block.interpolate && language.variables != Variables::None,
+        block_escapes: block.escapes,
     })
 }
 
@@ -889,15 +908,26 @@ impl Lexer<'_> {
 
         while j < n {
             let c = self.chars[j];
-            if let Some((open, closer)) = span.interpolation
-                && starts_with(self.chars, j, open)
+            if span.block_escapes == BlockEscapes::Nix
+                && let Some(len) = nix_escape_len(self.chars, j)
             {
-                // `{{` 是字面的花括号（C#、Python 的插值字符串）。
-                if open == "{" && self.chars.get(j + 1) == Some(&'{') {
+                let end = (j + len).min(n);
+                self.push(start, j, span.kind);
+                self.push(j, end, TokenKind::Escape);
+                start = end;
+                j = end;
+                continue;
+            }
+            if let Some(it) = span.interpolation {
+                // 连写的开头首字符（`{{`、`$$`）是字面字符，不开始插值。
+                if it.doubled && it.open.starts_with(c) && self.chars.get(j + 1) == Some(&c) {
                     j += 2;
                     continue;
                 }
-                if let Some(end) = self.interpolation(start, j + open.chars().count(), closer) {
+                let open = j + it.open.chars().count();
+                if starts_with(self.chars, j, it.open)
+                    && let Some(end) = self.interpolation(start, open, it.close)
+                {
                     // 收尾的括号与紧随其后的字符串内容一起着色。
                     start = end - 1;
                     j = end;
@@ -1242,7 +1272,9 @@ impl Lexer<'_> {
         }
 
         if is_ident_start(c) {
-            let end = scan(chars, i + 1, is_ident);
+            // 名字中可以有 `'` 的语言（Haskell 的 `foldl'`、Nix 的 `x''`），`'` 不开始字符串。
+            let prime = language.name_chars.contains(&'\'');
+            let end = scan(chars, i + 1, |c| is_ident(c) || (prime && c == '\''));
 
             if self.tokens.is_some()
                 && let Some(kind) = self.classify(i, end)
@@ -1375,6 +1407,19 @@ fn starts_with(chars: &[char], i: usize, pattern: &str) -> bool {
         .chars()
         .enumerate()
         .all(|(k, p)| chars.get(i + k) == Some(&p))
+}
+
+/// 返回 `i` 处开始的 Nix 缩进字符串转义的长度（字符）：`'''`、`''$` 为 3，`''\` 连同其后的
+/// 一个字符为 4（行尾时可能超出 `chars`）；`i` 处不是转义时返回 `None`。
+fn nix_escape_len(chars: &[char], i: usize) -> Option<usize> {
+    if !starts_with(chars, i, "''") {
+        return None;
+    }
+    match chars.get(i + 2) {
+        Some('\'' | '$') => Some(3),
+        Some('\\') => Some(4),
+        _ => None,
+    }
 }
 
 /// `chars` 从位置 `i` 起是否以 `pattern` 开头，不区分 ASCII 大小写。

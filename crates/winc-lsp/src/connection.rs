@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
-use winc_json::Json;
+use winc_config::Json;
 
 use crate::rpc::{self, Message};
 

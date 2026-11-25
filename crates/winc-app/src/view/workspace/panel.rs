@@ -434,8 +434,8 @@ fn draw_summary(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
     } else if searching && total == 0 {
         (t!("workspace-search-searching").to_owned(), p.text_dim)
     } else {
-        // 截断了、有行因正则回溯过多而放弃查找，或远端没能列出文件：计数是下限。
-        let more = if engine.is_truncated() || engine.gave_up() || engine.timed_out() {
+        // 截断了、有行因正则回溯过多而放弃查找，或远端没能搜完：计数是下限。
+        let more = if engine.is_truncated() || engine.gave_up() || engine.remote_failed() {
             "+"
         } else {
             ""
@@ -469,13 +469,13 @@ fn draw_summary(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
 /// 显示时文件排在各级目录下面，不写所在目录。
 fn draw_results(app: &mut App, frame: &mut Frame<'_>, parts: &PanelParts) {
     let area = parts.results;
-    if app.no_search_results() && app.panels.global.engine.timed_out() {
+    if app.no_search_results() && app.panels.global.engine.remote_failed() {
         draw_empty_state(
             app,
             frame,
             (area, sidebar_span(app)),
-            t!("workspace-search-remote-timeout"),
-            Some(t!("workspace-search-remote-timeout-hint")),
+            t!("workspace-search-remote-failed"),
+            Some(t!("workspace-search-remote-failed-hint")),
         );
         return;
     }
@@ -885,6 +885,23 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let rect = app.terminal_hovered_hit(hit)?;
             Some((rect, label.to_owned()))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Editor) => {
+            let rect = app.terminal_hovered_hit(hit)?;
+            Some((
+                rect,
+                with_key(
+                    t!("terminal-move-to-editor"),
+                    Some(Action::MoveTerminalToEditor),
+                ),
+            ))
+        }
+        Hover::TerminalHeader(crate::app::terminal::HeaderHit::Panel) => Some((
+            app.layout.terminal_return,
+            with_key(
+                t!("terminal-move-to-panel"),
+                Some(Action::MoveTerminalToPanel),
+            ),
+        )),
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Maximize) => {
             let rect = app.terminal_hovered_hit(hit)?;
             let label = if app.terminal.maximized {
@@ -1029,16 +1046,30 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         }
         Hover::Commit(
             target @ (CommitTarget::OpenFile(_)
+            | CommitTarget::OtherOpen(..)
             | CommitTarget::RevertFile(_)
-            | CommitTarget::GroupRevert(_)),
+            | CommitTarget::OtherRevert(..)
+            | CommitTarget::DirRevert(_)
+            | CommitTarget::OtherDirRevert(_)
+            | CommitTarget::GroupRevert(_)
+            | CommitTarget::OtherGroupRevert(..)),
         ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
-                CommitTarget::OpenFile(_) => t!("workspace-tip-open-file"),
-                CommitTarget::GroupRevert(_) if app.git.commit.staging() => {
+                CommitTarget::OpenFile(_) | CommitTarget::OtherOpen(..) => {
+                    t!("workspace-tip-open-file")
+                }
+                CommitTarget::DirRevert(_) | CommitTarget::OtherDirRevert(_) => {
+                    t!("git-commit-revert-folder")
+                }
+                CommitTarget::GroupRevert(_) | CommitTarget::OtherGroupRevert(..)
+                    if app.git.commit.staging() =>
+                {
                     t!("git-commit-revert-group")
                 }
-                CommitTarget::GroupRevert(_) => t!("menu-commit-roll-back"),
+                CommitTarget::GroupRevert(_) | CommitTarget::OtherGroupRevert(..) => {
+                    t!("git-commit-revert-all")
+                }
                 _ => t!("workspace-tip-revert-change"),
             };
             Some((rect, label.to_owned()))
@@ -1046,17 +1077,22 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         Hover::Commit(
             target @ (CommitTarget::StageFile(..)
             | CommitTarget::GroupStage(_)
-            | CommitTarget::DirStage(..)),
+            | CommitTarget::DirStage(..)
+            | CommitTarget::OtherStage(..)
+            | CommitTarget::OtherGroupStage(..)
+            | CommitTarget::OtherDirStage(..)),
         ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
-                CommitTarget::GroupStage(crate::app::CommitGroup::Staged) => {
-                    t!("git-commit-unstage-group")
+                CommitTarget::GroupStage(crate::app::CommitGroup::Staged)
+                | CommitTarget::OtherGroupStage(_, false) => t!("git-commit-unstage-group"),
+                CommitTarget::GroupStage(_) | CommitTarget::OtherGroupStage(_, true) => {
+                    t!("git-commit-stage-group")
                 }
-                CommitTarget::GroupStage(_) => t!("git-commit-stage-group"),
-                CommitTarget::StageFile(_, false) | CommitTarget::DirStage(_, false) => {
-                    t!("menu-git-unstage")
-                }
+                CommitTarget::StageFile(_, false)
+                | CommitTarget::DirStage(_, false)
+                | CommitTarget::OtherStage(_, _, false)
+                | CommitTarget::OtherDirStage(_, false) => t!("menu-git-unstage"),
                 _ => t!("menu-git-stage"),
             };
             Some((rect, label.to_owned()))

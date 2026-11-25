@@ -6,6 +6,8 @@ terminal-maximize-panel = Maximize panel
 terminal-restore-panel = Restore panel
 terminal-hide-panel = Hide terminal panel
 terminal-show-panel = Show terminal panel
+terminal-move-to-editor = Move terminal to editor area
+terminal-move-to-panel = Move terminal to panel
 terminal-tab-default-name = Terminal
 terminal-new = New Terminal
 terminal-module-disabled = The terminal module isn’t enabled
@@ -117,3 +119,7 @@ terminal-run-stopped = Stopped
 terminal-run-finished = Completed
 terminal-run-failed = “{ $name }” failed (exit code { $code })
 terminal-run-menu-running = Running · { $command }
+terminal-split-group = { $count ->
+    [one] { $count } terminal
+   *[other] { $count } terminals
+}

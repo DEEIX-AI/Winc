@@ -126,7 +126,7 @@ impl App {
                 self.open_folder(&target.path);
                 continue;
             }
-            self.open_path(&target.path);
+            self.open_path_or_new(&target.path);
             self.note_opened_file(&target.path);
             if let Some(line) = target.line {
                 self.jump_to(line, target.col.unwrap_or(0), 0);
@@ -188,7 +188,7 @@ impl App {
             #[cfg(not(all(unix, not(target_os = "macos"))))]
             let activated = false;
             if !activated {
-                window.focus_window();
+                focus_window(window);
             }
         }
         self.request_redraw();
@@ -274,7 +274,7 @@ impl App {
         self.redraw();
         if let Some(window) = &self.window.handle {
             window.set_visible(true);
-            window.focus_window();
+            focus_window(window);
         }
     }
 
@@ -298,6 +298,7 @@ impl App {
     ///
     /// 窗口尺寸、面板宽度、标签或预览状态变化后调用；面板跟着焦点关闭也在这一步完成。
     pub(crate) fn relayout(&mut self) {
+        self.sync_editor_terminal_focus();
         self.track_recent_tabs();
         self.note_terminal_tab_position();
         self.sync_project_offer();
@@ -393,16 +394,36 @@ impl App {
         }
         self.sync_wrap();
         self.sync_terminal();
+        // 新建、重开的终端标签此时才有名字。
+        self.sync_terminal_editor_titles();
         self.prepare_combined();
     }
 
     /// 在编辑区里放置随当前标签变化的部分：标签栏右端的按钮、分栏预览、合并的两侧、缩略图。
     pub(in crate::app) fn place_editor_parts(&mut self) {
+        self.place_terminal_return();
         self.place_preview_button();
         self.place_browser_button();
         self.place_split();
         self.place_merge_panes();
         self.place_minimap();
+    }
+
+    /// 当前标签是终端时，在标签栏右端留出「将终端移到面板」按钮；终端自己的标签栏不绘制。
+    fn place_terminal_return(&mut self) {
+        let l = &mut self.layout;
+        l.terminal_return = Rect::default();
+        if !self.editor.active().is_some_and(|doc| doc.terminal) || l.tabs.w < BUTTON * 3.0 {
+            return;
+        }
+        let bar = l.tabs;
+        l.terminal_return = Rect::new(
+            bar.right() - BUTTON,
+            bar.y + (bar.h - BUTTON) / 2.0,
+            BUTTON,
+            BUTTON,
+        );
+        l.tabs.w -= BUTTON + TAB_GAP;
     }
 
     /// 当前文件能预览（SVG）时，在标签栏右端留出「源代码 / 分栏 / 预览」三个按钮，标签栏
@@ -874,9 +895,7 @@ impl App {
             }
             Next::Terminal => self.toggle_terminal(),
             Next::Search(query) => {
-                self.open_global_search(false);
-                self.panels.global.query.set_text(&query);
-                self.global_changed(true);
+                self.show_global_search(false, Some(query));
             }
             Next::QuickOpen => self.open_picker(),
             Next::Find(query) => {
@@ -935,6 +954,17 @@ pub(in crate::app) fn frame_interval(window: &Window) -> Duration {
         .filter(|&mhz| mhz >= 30_000)
         .unwrap_or(60_000);
     Duration::from_micros(1_000_000_000 / u64::from(millihertz))
+}
+
+/// 请系统把窗口 `window` 切到前台。
+///
+/// Windows 上不使用 `Window::focus_window`：该方法先模拟按下 Alt 键，会使其他进程转让来的前台
+/// 权限失效（见 `crate::windows::focus_window`）。
+fn focus_window(window: &Window) {
+    #[cfg(windows)]
+    crate::windows::focus_window(window);
+    #[cfg(not(windows))]
+    window.focus_window();
 }
 
 /// 系统窗口及其状态：窗口句柄、是否有焦点、是否隐藏、是否由应用绘制窗口按钮、保存的位置。

@@ -6,8 +6,8 @@
 //!
 //! 消息子集：只实现补全与诊断所需——`initialize`/`initialized`/`shutdown`/`exit`、
 //! `textDocument/didOpen`/`didChange`/`didClose`、`textDocument/completion`、
-//! `textDocument/publishDiagnostics`。序列化复用 `winc-json`（workspace 不引 serde），
-//! 每个消息类型手写与 [`Json`](winc_json::Json) 的双向转换，转换正确性由
+//! `textDocument/publishDiagnostics`。序列化复用 `winc-config` 里内置的 `Json`（workspace
+//! 不引 serde），每个消息类型手写与 [`Json`](winc_config::Json) 的双向转换，转换正确性由
 //! `tests/golden/` 里的真实 gopls 报文回放比对保证。
 //!
 //! 位置：编辑器全库用 char 偏移，LSP 用「行号 + UTF-16 code unit 列」，换算集中在

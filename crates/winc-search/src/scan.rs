@@ -1,26 +1,40 @@
 //! 读磁盘上的文件：按块读、解码并逐行匹配，不把整个文件读进内存。
 
-#![allow(
-    clippy::disallowed_methods,
-    reason = "搜索引擎运行在文件所在的机器上，直接读取文件"
-)]
+use std::io::Read;
+use std::ops::ControlFlow;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-use super::*;
+use memchr::{memchr_iter, memchr2_iter};
+
+use crate::file::{BINARY_SNIFF, LARGE_FILE, LINE_CAP, OPEN_LIMIT, looks_binary, visible_len};
+use crate::lines::{LineMatch, collect, for_each_line, joined_matches, joined_text};
+use crate::matcher::Matcher;
+use crate::text::{UTF8_BOM, decode, unicode_escapes_view, utf16_text};
+
+/// 读文件时每块的大小（字节，256 KiB；测试中为 7 字节）。
+///
+/// 文件按块读取、按块搜索，内存中只有当前块加上尚未读完的那一行，与文件大小无关。测试中取很小的值，
+/// 使换行符、`\r\n` 和多字节字符落在块的边界上。
+const CHUNK: usize = if cfg!(test) { 7 } else { 256 << 10 };
+/// 读文件的缓冲容量上限（字节，1 MiB，取自调参）。
+///
+/// 超长行使缓冲容量超过该值时，搜索完当前文件后释放缓冲，避免每个工作线程长期持有大块内存。
+const BUFFER_MAX: usize = 1 << 20;
 
 /// 读磁盘文件并搜索，最多收 `limit` 处，`cancel` 置位时停止；二进制或无法读取的文件返回 `None`，
 /// 返回值的第二项表示是否有字节按 U+FFFD 替换字符解码。
 ///
-/// 判断规则与打开文件时相同，因此搜出的行号和列与打开后一致：开头 `BINARY_SNIFF` 字节含 NUL
+/// 判断规则与打开文件时相同，因此搜出的行号和列与打开后一致：开头 [`BINARY_SNIFF`] 字节含 NUL
 /// 的文件是二进制；不是 UTF-8 时整个读入内存并识别编码；大文件（按需从磁盘读取）只按 `\n` 分行，非
-/// UTF-8 的字节替换为 U+FFFD。
-pub(super) fn search_disk(
+/// UTF-8 的字节替换为 U+FFFD。`buffer` 是读文件的缓冲，同一线程搜索多个文件时复用。
+pub fn search_file(
     matcher: &Matcher,
     buffer: &mut Vec<u8>,
     path: &Path,
     limit: usize,
     cancel: &AtomicBool,
 ) -> Option<(Vec<LineMatch>, bool)> {
-    // 经后端打开：远端主机上的文件由连接读取，小文件连同文件信息一次往返取回。
     let mut opened = winc_backend::fs::open(path, 0).ok()?;
     let size = opened.metadata.len;
     if size > OPEN_LIMIT {
@@ -39,8 +53,7 @@ pub(super) fn search_disk(
 
     // `.properties` 的 `\uXXXX` 转义按打开后显示的字符查找（见 `unicode_escapes_view`），行号和
     // 列与打开后一致。
-    let name = path.file_name().map(|n| n.to_string_lossy());
-    if !large && name.is_some_and(|n| winc_syntax::detect(&n).id == "properties") {
+    if !large && is_properties(path) {
         let mut bytes = std::mem::take(buffer);
         bytes.try_reserve_exact(size as usize + 1).ok()?;
         file.read_to_end(&mut bytes).ok()?;
@@ -368,3 +381,12 @@ fn count_breaks(bytes: &[u8]) -> usize {
         .filter(|&i| !(bytes[i] == b'\n' && i > 0 && bytes[i - 1] == b'\r'))
         .count()
 }
+
+/// 是否是 Java 的 `.properties` 文件：其中的 `\uXXXX` 转义打开后显示为字符。
+fn is_properties(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("properties"))
+}
+
+#[cfg(test)]
+mod tests;

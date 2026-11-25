@@ -3,14 +3,17 @@
 //! 每一项设置的键名和读写规则由 `fields` 模块给出。
 
 mod fields;
+mod transfer;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::files::{config_dir, write_atomic};
-use winc_json::{self as json, Json};
+use crate::json::{self, Json};
 use fields::*;
 use winc_i18n::{LocaleChoice, t};
+
+pub use transfer::{Imported, export_config, import_config};
 
 /// 用户配置。
 ///
@@ -92,6 +95,8 @@ pub struct Config {
     pub sticky_scroll: Option<bool>,
     /// 自动换行：按编辑区宽度把长行断开显示（不修改文件），默认为否。
     pub word_wrap: Option<bool>,
+    /// CSV、TSV 按列对齐显示（不修改文件），默认为开；关闭时按原文排布，仍按列着色。
+    pub align_columns: Option<bool>,
     /// 超长行显示全部内容，而不是只显示开头的一部分，默认为否。
     pub whole_lines: Option<bool>,
     /// 在编辑区右侧显示缩略图，默认为否。
@@ -168,6 +173,8 @@ pub struct Config {
     pub compact_folders: Option<bool>,
     /// 在文件树中单击文件时是否在预览标签中打开；未设置时为否。
     pub preview_on_click: Option<bool>,
+    /// 切换、打开文件时是否在文件树中展开并选中该文件；未设置时为是。
+    pub tree_auto_reveal: Option<bool>,
     /// 「在外部终端中打开」使用的终端程序；未设置时使用系统默认的终端程序。
     pub external_terminal: Option<String>,
     /// 是否开启 Vim 模式，默认为否。

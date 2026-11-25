@@ -490,9 +490,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
             });
         let message = match goto {
             Some(goto) if app.editor.active.is_some() => goto,
-            _ if app.overlays.picker.index.timed_out() => {
-                t!("workspace-picker-remote-timeout").to_owned()
-            }
+            _ if app.overlays.picker.index.failed() => t!("workspace-picker-unlisted").to_owned(),
             _ if app.overlays.picker.index.quick_open_len() == 0 => {
                 t!("workspace-picker-folder-empty").to_owned()
             }
@@ -606,6 +604,9 @@ fn draw_remote_rows(
         match item.icon {
             RowIcon::Host => icons::server(frame, (middle, cy), p.text_muted, clip),
             RowIcon::Config => icons::gear(frame, (middle, cy), p.text_muted, clip),
+            RowIcon::Project => {
+                draw_file_icon(frame, p, (row.x + PICKER_ICON_X, cy), &item.title, clip);
+            }
             RowIcon::Folder | RowIcon::Open => {
                 let x = middle - icons::FOLDER_WIDTH / 2.0;
                 let open = item.icon == RowIcon::Open;

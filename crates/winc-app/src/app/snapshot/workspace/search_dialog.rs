@@ -269,6 +269,72 @@ fn a_short_file_preview_is_read_once() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 预览的首行带着文件中推算出的高亮状态：Vue 的 `<script>` 中的行按脚本着色，没有打开的文件
+/// 和已打开的文件相同。
+#[test]
+fn the_preview_highlights_lines_inside_a_vue_script() {
+    let dir = search_folder("search-dialog-vue");
+    // 匹配的一行在 `<script>` 中靠后的位置：预览的首行也在脚本中，从文件开头推算才知道。
+    let filler = "const filler = 0\n".repeat(40);
+    let text = format!(
+        "<template>\n<p>hi</p>\n</template>\n<script setup>\n{filler}{}",
+        "const vue_marker = 1\n</script>\n"
+    );
+    std::fs::write(dir.join("src/App.vue"), text).unwrap();
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+    app.open_search_dialog();
+    app.search_dialog.query.set_text("vue_marker");
+    app.search_dialog_changed(true);
+    app.search_dialog.engine.wait();
+    app.poll_search_dialog(Instant::now());
+    let closed = app.search_dialog_context().unwrap();
+    assert_ne!(
+        closed.3,
+        winc_syntax::LineState::Normal,
+        "首行在 <template> 中"
+    );
+
+    // 着色从首行起依次传下去：匹配的一行按脚本着色。
+    let language = winc_syntax::detect("App.vue");
+    let mut state = closed.3;
+    let mut tokens = Vec::new();
+    for line in &closed.2 {
+        let chars: Vec<char> = line.chars().collect();
+        let next = winc_syntax::highlight_line(language, &chars, state, &mut tokens);
+        if line.contains("vue_marker") {
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| t.kind == winc_syntax::TokenKind::Keyword),
+                "{line}"
+            );
+        }
+        state = next;
+    }
+
+    // 列表中的一行：没有打开的文件在后台推算行首的状态，送回后按脚本着色。
+    let place = &app.search_dialog.places.as_ref().unwrap().items[0];
+    let (file, line) = (place.path.clone(), place.line);
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while app.place_highlight(&file, line).1 == winc_syntax::LineState::Normal {
+        assert!(Instant::now() < deadline, "后台一直没有送回状态");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        app.poll_search_dialog(Instant::now());
+    }
+
+    // 打开文件后用文档推算出的状态，结果相同；文档还没推算到列出的行时接着推算。
+    app.open_path(&dir.join("src/App.vue"));
+    app.poll_search_dialog(Instant::now());
+    assert_ne!(
+        app.place_highlight(&file, line).1,
+        winc_syntax::LineState::Normal
+    );
+    app.search_dialog.context_forget();
+    assert_eq!(app.search_dialog_context().unwrap().3, closed.3);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 换了查询而新的结果还没到时，列表留着上一次的结果（淡色），新的结果到了再换上并回到第一条。
 #[test]
 fn old_results_stay_until_new_ones_arrive() {
@@ -395,4 +461,82 @@ fn the_wheel_scrolls_settings_over_the_search_dialog() {
     app.on_wheel_event(MouseScrollDelta::LineDelta(0.0, -1.0), TouchPhase::Moved);
     assert_eq!(app.search_dialog.scroll, 0.0, "滚到了下面的对话框");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 在文件中查找的对话框里搜 `load_config`，等结果列出来。
+fn search_dialog_with_results(name: &str) -> (App, std::path::PathBuf) {
+    let dir = search_folder(name);
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    paint(&mut app);
+    app.open_search_dialog();
+    app.search_dialog.query.set_text("load_config");
+    app.search_dialog_changed(true);
+    app.search_dialog.engine.wait();
+    app.poll_search_dialog(Instant::now());
+    paint(&mut app);
+    (app, dir)
+}
+
+/// 回归：在文件中查找的对话框盖在编辑区上，在它上面右键不弹出编辑区的菜单，光标不动。
+#[test]
+fn right_clicks_on_the_search_dialog_reach_no_menu() {
+    let (mut app, dir) = search_dialog_with_results("search-dialog-menu");
+    let list = app.search_dialog_parts().list.list;
+    let at = (list.x + list.w / 2.0, list.y + list.h / 2.0);
+    assert!(app.layout.editor.contains(at.0, at.1), "对话框盖在编辑区上");
+    let caret = app.editor.active().unwrap().selection;
+    right_click(&mut app, at);
+    assert!(app.overlays.context_menu.is_none());
+    assert_eq!(app.editor.active().unwrap().selection, caret);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：底部面板的「搜索」标签盖在终端上，在它上面右键不弹出终端的菜单。
+#[cfg(unix)]
+#[test]
+fn right_clicks_on_the_search_tab_reach_no_menu() {
+    let (mut app, dir) = search_dialog_with_results("search-tab-menu");
+    let _term = super::super::terminal::show_terminal(&mut app, "$ ");
+    app.dock_search_results();
+    paint(&mut app);
+    assert!(app.docked_search_shown());
+    let row = app
+        .docked_parts()
+        .unwrap()
+        .list
+        .row(0, app.search_dialog.scroll);
+    let at = (row.x + 40.0, row.y + 4.0);
+    assert!(
+        app.layout.terminal.contains(at.0, at.1),
+        "「搜索」标签盖在终端上"
+    );
+    right_click(&mut app, at);
+    assert!(app.overlays.context_menu.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 截图：搜索 Vue 文件中 `<script>` 里的名字，列表和预览都按脚本着色。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_search_dialog_vue() {
+    let dir = search_folder("search-dialog-vue-shot");
+    let filler = "const filler = ref(0)\n".repeat(30);
+    let template = "<template>\n  <div class=\"app\">{{ count }}</div>\n</template>\n";
+    let script = "<script setup lang=\"ts\">\nimport { ref } from 'vue'\n";
+    let text = format!("{template}{script}{filler}const count = ref(1) // count\n</script>\n");
+    std::fs::write(dir.join("src/App.vue"), text).unwrap();
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+    app.open_search_dialog();
+    app.search_dialog.query.set_text("count");
+    app.search_dialog_changed(true);
+    app.search_dialog.engine.wait();
+    for _ in 0..50 {
+        app.poll_search_dialog(Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    app.search_dialog.selected = 1;
+    paint(&mut app);
+    shoot(&mut app, "search-dialog-vue");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

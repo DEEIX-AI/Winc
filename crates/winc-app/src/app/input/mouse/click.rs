@@ -68,7 +68,8 @@ impl App {
             self.finish_terminal_rename(true);
         }
 
-        // 终端网格上的中键、右键：程序要了鼠标时上报给它（左键在下面按部件分发时处理）。
+        // 终端网格上的中键、右键：程序要了鼠标时上报给它（左键在下面按部件分发时处理）。网格被
+        // 底部面板的「搜索」标签、在文件中查找的对话框等部件遮挡时不上报。
         if matches!(button, MouseButton::Middle | MouseButton::Right)
             && !self.settings.open
             && self.overlays.form_dialog.is_none()
@@ -76,6 +77,7 @@ impl App {
             && !self
                 .terminal_find_bar()
                 .is_some_and(|bar| bar.contains(x, y))
+            && !self.blocks_context_menu(x, y)
             && self
                 .terminal
                 .tab()
@@ -113,11 +115,20 @@ impl App {
         if button == MouseButton::Middle
             && let Some(&(_, hit)) =
                 (self.hits.terminal.iter()).find(|(rect, _)| rect.contains(x, y))
-            && let crate::app::terminal::HeaderHit::Tab(index)
-            | crate::app::terminal::HeaderHit::Close(index) = hit
         {
-            self.close_terminal_tab(index);
-            return;
+            use crate::app::terminal::HeaderHit;
+            match hit {
+                HeaderHit::Tab(index) | HeaderHit::Close(index) => {
+                    self.close_terminal_tab(index);
+                    return;
+                }
+                // 列表里拆分出的一个终端：只关掉它。
+                HeaderHit::Pane(index, at) | HeaderHit::ClosePane(index, at) => {
+                    self.close_terminal_pane_at(index, at);
+                    return;
+                }
+                _ => {}
+            }
         }
 
         if button == MouseButton::Middle {
@@ -194,6 +205,14 @@ impl App {
         if !keeps_preview && self.preview.markdown.focused {
             self.preview.markdown.focused = false;
             self.preview.markdown.selection = None;
+        }
+        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘交回左侧。
+        let keeps_table = matches!(
+            target,
+            Target::Table | Target::Scrollbar(Scrollbar::Table | Scrollbar::TableHorizontal, _)
+        );
+        if !keeps_table {
+            self.preview.table_layout.focused = false;
         }
 
         // 点击的目标由 `target_at` 决定（与悬停同一个顺序）；只有点击才有的规则写成前面的
@@ -396,6 +415,11 @@ impl App {
             }
             Target::Editor => self.click_editor(x, y),
             Target::Picture => self.click_picture(x, y),
+            Target::Table => {
+                self.focus = Focus::Editor;
+                self.preview.table_layout.focused = true;
+                self.click_table(x, y);
+            }
             Target::Terminal => {
                 if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
@@ -443,6 +467,13 @@ impl App {
                         self.press_terminal_tab(i, at);
                     }
                     HeaderHit::Close(i) => self.close_terminal_tab(i),
+                    // 双击列表里拆分出的终端：换到前台并重命名它。
+                    HeaderHit::Pane(i, at) if self.click_count(x, y) == 2 => {
+                        self.select_terminal_pane(i, at);
+                        self.open_terminal_rename(i);
+                    }
+                    HeaderHit::Pane(i, at) => self.select_terminal_pane(i, at),
+                    HeaderHit::ClosePane(i, at) => self.close_terminal_pane_at(i, at),
                     HeaderHit::New => self.new_terminal_tab(),
                     HeaderHit::ShellMenu => self.open_terminal_shell_menu(),
                     HeaderHit::Restart => self.request_terminal_restart(),
@@ -450,6 +481,8 @@ impl App {
                     HeaderHit::Maximize => self.toggle_terminal_maximized(),
                     HeaderHit::Split => self.split_terminal(),
                     HeaderHit::Hide => self.click_terminal_button(),
+                    HeaderHit::Editor => self.move_terminal_to_editor(),
+                    HeaderHit::Panel => self.move_terminal_to_panel(),
                     HeaderHit::Run(_) | HeaderHit::Find(_) => {}
                 }
             }

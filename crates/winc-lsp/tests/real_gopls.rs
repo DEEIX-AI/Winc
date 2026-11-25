@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
-use winc_json::Json;
+use winc_config::Json;
 use winc_lsp::connection::{Connection, Poll};
 use winc_lsp::message::{
     self, CompletionContext, CompletionParams, CompletionResponse, ContentChange, DidChangeParams,

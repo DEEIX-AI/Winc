@@ -42,7 +42,7 @@ editor-large-no-multi-cursor = 文件过大，不支持多光标查找
 
 editor-word-wrap-on-large = 文件过大，无法自动换行
 editor-word-wrap-on-pending = 已开启自动换行（大文件模式）
-editor-word-wrap-on-table = 按列对齐的表格不支持自动换行
+editor-word-wrap-on-table = 按列对齐的表格不支持自动换行，关闭「CSV、TSV 按列对齐」后可换行
 editor-word-wrap-on = 已开启自动换行
 editor-word-wrap-off = 已关闭自动换行
 editor-fold-large = 文件过大，无法折叠
@@ -117,6 +117,20 @@ editor-large-identity = 文件有多个硬链接或属于其他用户，保存�
 editor-large-handed-save = 大文件不能以管理员身份保存
 editor-moved-while-saving = 文件在保存期间被移走
 editor-large-cannot-compare = 文件过大，无法比较
+editor-compare-no-text = 当前标签页中没有可比较的文本
+editor-compare-clipboard-empty = 剪贴板中没有文字
+editor-compare-clipboard-too-large = 剪贴板中的文字过大，无法比较
+editor-compare-clipboard-identical = 「{ $name }」与剪贴板中的文字相同
+editor-compare-clipboard-identical-selection = 所选内容与剪贴板中的文字相同
+editor-compare-clipboard-title = 剪贴板 ↔ { $name }
+editor-compare-saved-untitled = 「{ $name }」尚未保存过
+editor-compare-saved-failed = 无法读取「{ $name }」：{ $error }
+editor-compare-saved-identical = 「{ $name }」与已保存的版本相同
+editor-compare-saved-title = 已保存的版本 ↔ { $name }
+editor-compare-side-clipboard = 剪贴板
+editor-compare-side-saved = 已保存的版本
+editor-compare-side-line = { $name } 第 { $line } 行
+editor-compare-side-lines = { $name } 第 { $first }–{ $last } 行
 editor-large-utf8-only = 文件过大，只能按 UTF-8 打开
 editor-file-read-only = 文件为只读
 editor-temp-file-failed = 无法创建临时文件
@@ -130,6 +144,7 @@ editor-download-skipped-link-loop = 符号链接存在循环
 editor-open-binary = 此文件为二进制文件，无法打开
 editor-open-too-large = 文件过大（{ $size } MB），超过 { $limit } GB 的上限
 editor-unreadable-not-found = 文件不存在
+editor-new-file = 新文件，保存后写入磁盘
 editor-unreadable-permission = 无读取权限
 editor-unreadable-failed = 读取失败（{ $error }）
 editor-unsupported-image = 图片
@@ -203,6 +218,7 @@ editor-vim-help-supported = 支持
 editor-vim-help-unsupported = 不支持
 editor-vim-help-ex = 命令行的命令（方括号中的部分可省略）
 editor-vim-help-options = :set 的选项（括号中是缩写）
+editor-vim-key-notice = { $key } 已由 Vim 处理，未执行「{ $action }」
 
 ## 复制和粘贴。
 

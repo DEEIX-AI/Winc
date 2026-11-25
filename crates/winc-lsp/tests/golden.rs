@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use winc_json::Json;
+use winc_config::Json;
 use winc_lsp::message::{
     CompletionResponse, PublishDiagnosticsParams, ServerCapabilities, Severity,
 };

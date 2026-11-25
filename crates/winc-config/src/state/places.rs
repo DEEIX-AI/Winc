@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use super::State;
-use winc_json::Json;
+use crate::json::Json;
 
 /// 记下位置的文件数上限（个）；超出时丢掉最久没有用到的。
 pub const MAX_PLACES: usize = 100;

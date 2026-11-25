@@ -44,10 +44,10 @@ try {
         $process = Start-Process -FilePath $Setup -ArgumentList "/S /D=$directory" -Wait -PassThru
     }
     if ($process.ExitCode -notin @(0, 1641, 3010)) { throw "installer failed with $($process.ExitCode)" }
-    # A silent installer skips a file that is still in use and reports success all the same.
-    # With 1641 or 3010 the files are replaced at the next restart, so they are unchanged for now.
+    # The silent NSIS installer skips a file that is still in use and reports success all the
+    # same. Windows Installer replaces such a file at the next restart and reports 1641 or 3010.
     $after = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
-    if ($process.ExitCode -eq 0 -and $after -eq $before) {
+    if ($Installer -ne 'msi' -and $process.ExitCode -eq 0 -and $after -eq $before) {
         throw 'the installer left the application unchanged'
     }
     $held.Dispose()

@@ -315,6 +315,32 @@ fn hover_and_click_agree_on_what_is_under_the_mouse() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 在文件中查找只在焦点在编辑区时取光标处的词：焦点在文件树上按 `⇧⌘F`（在文件夹中查找）只
+/// 限定范围，点击侧栏的搜索按钮只切到这一页，查询都沿用上一次的。
+#[test]
+fn only_the_editor_seeds_find_in_files() {
+    let dir = winc_config::files::canonicalize(search_folder("global-seed")).unwrap();
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("src/main.rs"));
+    app.panels.global.query.set_text("earlier");
+
+    app.focus = Focus::Tree;
+    app.find_in_folder(&dir.join("src/main.rs"));
+    assert_eq!(app.panels.global.query.text(), "earlier");
+    assert_eq!(app.panels.global.include.text(), "./src");
+
+    app.focus = Focus::Editor;
+    app.show_global_search(false, None);
+    assert_eq!(app.panels.global.query.text(), "earlier");
+
+    // 快捷键从编辑区打开：取光标所在的词。
+    app.focus = Focus::Editor;
+    app.open_global_search(false);
+    assert_eq!(app.panels.global.query.text(), "fn");
+    finish_search(&mut app);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn global_search_replaces_one_match_and_filters() {
     let dir = search_folder("global-one");
@@ -1205,11 +1231,11 @@ fn long_result_files_unfold_under_the_mouse() {
         Hover::RowAction(long, RowAction::Dismiss)
     );
 
-    // 这一行上的分隔条仍然可以拖动，鼠标停在上面时全名保持展开。
+    // 这一行画在分隔条上：鼠标停在上面时仍在这一行上，全名保持展开。
     let splitter = app.layout.splitter;
     app.on_mouse_move(splitter.x + splitter.w / 2.0, y);
     paint(&mut app);
-    assert_eq!(app.pointer.hover, Hover::Splitter);
+    assert_eq!(app.pointer.hover, Hover::Result(long));
     assert_eq!(app.panels.global.overflow.map(|o| o.index), Some(long));
 
     // 鼠标移到伸出部分之外的编辑区：收起。

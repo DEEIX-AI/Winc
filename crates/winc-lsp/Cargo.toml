@@ -9,7 +9,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-winc-json.workspace = true
+winc-config.workspace = true
 
 [lints]
 workspace = true

@@ -25,7 +25,7 @@ use winc_lsp::message::{
 };
 use winc_lsp::position;
 use winc_lsp::rpc::{Id, Message};
-use winc_json::Json;
+use winc_config::Json;
 
 use super::*;
 

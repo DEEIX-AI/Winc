@@ -5,7 +5,7 @@
 //! 写出的形态）。[`Decoder`] 是流式的：读线程把任意大小的字节块喂进来，每次取走零或一条
 //! 完整报文，粘包自动拆开、半包留在缓冲区里等下一块。
 
-use winc_json::Json;
+use winc_config::Json;
 
 /// JSON-RPC 报文信封：请求、响应或通知。
 #[derive(Debug, Clone, PartialEq)]

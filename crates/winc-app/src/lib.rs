@@ -194,6 +194,7 @@ pub fn run() {
         .then(|| state.last_session())
         .flatten()
         .filter(|session| open_session_folder(&mut editor, session));
+    let restored_folder = session.is_some();
     // 从命令行打开的目录没有现场，只恢复其未保存的内容；临时打开时不恢复任何内容。
     let restored = if args.one_off() {
         Default::default()
@@ -278,11 +279,18 @@ pub fn run() {
     let sort = crate::app::CommitSort::from_key(&state.commit_sort);
     app.git.commit.set_sort(sort);
     app.editor.diff_unified = app.config.diff_inline == Some(true);
+    (app.editor).set_align_columns(app.config.align_columns != Some(false));
     app.editor.diff_collapse = app.config.diff_collapse_unchanged != Some(false);
     app.state = state;
+    if restored_folder {
+        app.restore_launch_group();
+    }
     app.restore_text_places();
     app.restore_panel_width();
     app.load_at_launch(opened.jumps);
+    if !args.targets.is_empty() {
+        app.announce_new_file();
+    }
     // 临时打开（`--wait`、`-`）时不记录现场、不加入最近列表、不备份，下次启动的状态不受影响。
     if args.one_off() {
         app.start_one_off(&args);
@@ -290,6 +298,7 @@ pub fn run() {
         app.store.state_path = state_path;
         app.backup.root = backup_root;
         app.adopt_restored(restored);
+        app.reveal_restored();
         if let Some(file) = opened.project.as_deref().or(last_project.as_deref())
             && app.editor.root().is_none()
         {
@@ -344,6 +353,7 @@ pub(crate) struct Opened {
 /// 按命令行参数打开目录和文件。
 ///
 /// 只给出文件时不打开其所在的目录；`文件:行` 形式的目标会跳到对应行（行号和列号从 0 起）。
+/// 不存在的文件打开为新文件，保存时才写入磁盘（见 [`Editor::open_tab_or_new`]）。
 /// 大文件只开标签不读取，留给窗口在后台读取（见 [`App::load_at_launch`]）。临时打开（`--wait`、
 /// `-`）时不接受目录。远端的目标（`ssh://`）跳过：连接之后才能打开，见 [`cli::remote_open`]。
 pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Opened {
@@ -374,7 +384,17 @@ pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Opened {
             }
             continue;
         }
-        let index = editor.open_tab(&target.path);
+        if cli::names_folder(&target.path) && !winc_backend::fs::exists(&target.path) {
+            let path = target.path.display().to_string();
+            let error = winc_i18n::t!("cmd-cli-no-such-folder");
+            problems.push(winc_i18n::t!(
+                "cmd-cli-open-failed",
+                path = path,
+                error = error
+            ));
+            continue;
+        }
+        let index = editor.open_tab_or_new(&target.path);
         if winc_editor::opens_as_large(&target.path) {
             if let Some(line) = target.line {
                 jumps.push((editor.documents[index].id, line, target.col.unwrap_or(0)));

@@ -8,7 +8,7 @@
 
 use std::io::{Read, Write};
 
-use winc_json::Json;
+use winc_config::Json;
 use winc_lsp::message::{Diagnostic, Position, Range, Severity, method};
 use winc_lsp::rpc::{self, Id, Message};
 

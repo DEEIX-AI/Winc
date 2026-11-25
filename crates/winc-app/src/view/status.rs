@@ -591,7 +591,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
             ),
             (
                 StatusKey::Encoding,
-                doc.encoding.label().to_owned(),
+                winc_editor::encoding::label(doc.encoding).to_owned(),
                 clickable(StatusItem::Encoding),
             ),
             (StatusKey::Indent, indent, clickable(StatusItem::Indent)),

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use winc_i18n::t;
 
-use winc_json::Json;
+use crate::json::Json;
 
 mod detect;
 

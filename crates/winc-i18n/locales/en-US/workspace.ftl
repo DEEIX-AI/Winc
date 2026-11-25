@@ -2,6 +2,7 @@
 
 workspace-open-folder-first = Open a folder first
 workspace-no-open-file = No file is open
+workspace-file-outside-folders = The current file isn’t in the open folders
 workspace-list-separator = { ", " }
 workspace-quoted-name = “{ $name }”
 
@@ -139,8 +140,8 @@ workspace-search-summary-searching = { $total ->
 workspace-search-no-results = No results found
 workspace-search-no-results-hint = Try different keywords, or adjust the match options and filters
 workspace-search-no-results-hint-ignored = Try other keywords or match options. Ignored files aren’t searched; turn them on next to Exclude.
-workspace-search-remote-timeout = The remote host didn’t list its files in time
-workspace-search-remote-timeout-hint = The results are incomplete; search again later
+workspace-search-remote-failed = The search on the remote host didn’t finish
+workspace-search-remote-failed-hint = The results are incomplete; search again
 workspace-search-not-utf8 = Not UTF-8 encoded; can’t replace
 workspace-search-tool-refresh = Search again
 workspace-search-tool-clear = Clear search results
@@ -162,7 +163,7 @@ workspace-search-line-copied = Line copied
 workspace-replace-all-busy = The previous Replace All hasn’t finished; try again later
 workspace-replace-all-searching = The search hasn’t finished; try Replace All again later
 workspace-replace-all-too-many = More than { $max } results; narrow the search before replacing all
-workspace-replace-all-remote-timeout = The remote host didn’t list its files in time, so the results are incomplete; can’t replace all
+workspace-replace-all-remote-failed = The search on the remote host didn’t finish, so the results are incomplete; can’t replace all
 workspace-replace-all-nothing = No results to replace
 workspace-replace-all-confirm-delete = Delete { $total ->
         [one] { $total } match
@@ -282,6 +283,7 @@ workspace-remote-installing = Installing the server program on { $host }…
 workspace-remote-starting = Starting the server program on { $host }…
 workspace-remote-canceled = Connection canceled
 workspace-remote-failed = Couldn’t connect to { $host }: { $error }
+workspace-remote-not-project = “{ $name }” isn’t a folder or project file
 workspace-remote-no-server = the installation is missing the remote server program; reinstall Winc
 workspace-remote-unsupported-system = the host’s system ({ $system }) is not supported
 workspace-remote-disabled = Couldn’t open: the SSH Remote module is turned off
@@ -331,7 +333,7 @@ workspace-restoring-tabs = Restoring tabs…
 workspace-picker-goto-line-column = Go to line { $line }, column { $column }
 workspace-picker-goto-line = Go to line { $line }
 workspace-picker-folder-empty = No files in this folder
-workspace-picker-remote-timeout = The remote host didn’t list its files in time; reopen this panel to retry
+workspace-picker-unlisted = The remote host couldn’t list its files; reopen this panel to retry
 workspace-picker-no-matching-files = No matching files. Ignored files are listed only after you open them in this window.
 workspace-picker-recently-opened = Recently opened
 workspace-picker-no-matching-commands = No matching commands

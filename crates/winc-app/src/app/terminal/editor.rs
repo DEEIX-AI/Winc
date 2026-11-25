@@ -9,6 +9,12 @@ use winc_pty::protocol::Modes;
 
 use super::{App, Focus, os_bytes};
 
+/// 返回拖到终端上的 `path` 插入的文字：该文件在所在主机上的路径，按需加引号，后跟一个空格。
+fn dropped_path_text(path: &Path) -> String {
+    let native = winc_backend::native_lossy(path);
+    format!("{} ", shell_quote(Path::new(&*native)))
+}
+
 /// 字符 `c` 在 shell 中是否不需要引号。
 pub(crate) fn shell_safe(c: char) -> bool {
     c.is_alphanumeric()
@@ -56,11 +62,11 @@ impl App {
     }
 
     /// 文件拖到了终端上（见 [`Self::terminal_takes_drop`]）：在光标处插入加好引号的路径，后面
-    /// 跟一个空格。松在不在用的一栏上时先改用那一栏。
+    /// 跟一个空格；远端的文件插入在远端主机上的路径。松在不在用的一栏上时先改用那一栏。
     pub(crate) fn drop_path_on_terminal(&mut self, path: &Path) {
         let (x, y) = self.pointer.mouse;
         self.focus_terminal_group_at(x, y);
-        let text = format!("{} ", shell_quote(path));
+        let text = dropped_path_text(path);
         self.terminal_input(text.into_bytes());
         self.focus = Focus::Terminal;
         self.request_redraw();

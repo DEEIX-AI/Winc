@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use super::top_bar::file_name_color;
 use super::*;
 use crate::app::{PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X};
 
@@ -42,13 +43,23 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
             frame.rect_clipped(row.inset(6.0, 1.0), p.selected_inactive, RADIUS_ROW, card);
         }
         let cy = icon_center_y(app, row, app.fonts.ui);
-        let icon = tab_icon_name(doc);
-        draw_file_icon(frame, p, (row.x + PICKER_ICON_X, cy), &icon, card);
+        if doc.terminal {
+            icons::terminal(
+                frame,
+                (row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0, cy),
+                p.text_muted,
+                card,
+            );
+        } else {
+            let icon = tab_icon_name(doc);
+            draw_file_icon(frame, p, (row.x + PICKER_ICON_X, cy), &icon, card);
+        }
         let name = doc.name();
         let right = row.right() - 12.0;
         let name_x = row.x + PICKER_TEXT_X;
         let shown_name = ellipsize(frame, &name, app.fonts.ui, (right - name_x).max(0.0));
-        ui_text(frame, app, name_x, row, &shown_name, p.text, card);
+        let color = file_name_color(app, doc, p.text);
+        ui_text(frame, app, name_x, row, &shown_name, color, card);
 
         // 所在目录：工作区内的写相对路径，工作区外的写完整路径。
         let parent = doc.path.as_deref().and_then(Path::parent);

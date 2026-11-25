@@ -1,6 +1,8 @@
 //! Git 差异标签：比较哪两份内容（[`DiffKind`]）、在后台准备差异、打开与预览、状态刷新后重新
 //! 比较，以及收下后台准备好的结果。
 
+use winc_editor::FolderLinks;
+
 use super::*;
 
 /// 提交视图打开的差异比较哪两份内容。
@@ -75,6 +77,8 @@ impl DiffTab {
 
 /// 在后台准备一个文件的差异 `kind`：左侧是 `HEAD`（「更改」时是暂存区）中的版本，右侧是编辑器
 /// 中的快照，未打开时读取磁盘（「暂存的更改」时是暂存区中的版本，只读）。
+///
+/// 右侧可编辑时记下的文件路径按 `links` 换成文档路径的写法（见 [`FolderLinks::document_path`]）。
 pub(super) fn prepare(
     git: &Git,
     root: &Path,
@@ -82,6 +86,7 @@ pub(super) fn prepare(
     snapshot: Option<Snapshot>,
     oid: Option<&str>,
     kind: DiffKind,
+    links: &FolderLinks,
 ) -> Result<DiffView, String> {
     let name = winc_editor::display_name(path).into_owned();
     if winc_backend::fs::is_dir(path) {
@@ -171,9 +176,9 @@ pub(super) fn prepare(
         (_, Some(_), Some(oid)) => format!("HEAD · {}", &oid[..oid.len().min(7)]),
         (_, Some(_), None) => "HEAD".to_owned(),
     };
-    // 右侧是工作区且文件存在时才可编辑。路径按编辑器的规则规范化，以便与已打开的标签匹配。
+    // 右侧是工作区且文件存在时才可编辑。路径换成文档路径的写法，以便与已打开的标签匹配。
     let worktree = kind != DiffKind::Staged;
-    let editable = (worktree && new.is_some()).then(|| winc_editor::canonical_path(path));
+    let editable = (worktree && new.is_some()).then(|| links.document_path(path));
     let blame = |rev: Option<&str>| BlameSource {
         root: root.to_path_buf(),
         path: path.to_path_buf(),
@@ -212,7 +217,7 @@ impl App {
     ///
     /// 打开的是大文件时为 `Err`：不比较，整体读入字符串会超出内存预算。
     pub(super) fn editor_snapshot(&self, path: &Path) -> Result<Option<Snapshot>, ()> {
-        let canonical = winc_editor::canonical_path(path);
+        let canonical = self.editor.document_path(path);
         let doc = self
             .editor
             .documents
@@ -270,11 +275,38 @@ impl App {
     /// 文件可能已变化，同样重新比较；其余标签的右侧由 [`App::sync_diff_source`] 随编辑器中的
     /// 文档更新，无需再运行 `git`。有一侧是暂存区的差异总是重新比较：暂存区可能在别处改变。
     pub(super) fn refresh_git_diffs(&mut self) {
+        self.refresh_diff_tabs(false);
+    }
+
+    /// 其他仓库的状态读到了新的一版：按 [`App::refresh_git_diffs`] 的规则重新比较这些仓库中文件
+    /// 的差异标签；没有变化时不做处理。
+    pub(super) fn refresh_other_diffs(&mut self) {
+        let version = self.git.summaries_version();
+        if version != self.git.diffs_seen {
+            self.git.diffs_seen = version;
+            self.refresh_diff_tabs(true);
+        }
+    }
+
+    /// 重新比较已过时的差异标签：`others` 为真时只看其他仓库中的文件，否则只看当前仓库中的文件。
+    fn refresh_diff_tabs(&mut self, others: bool) {
         let editor = &self.editor;
         self.git
             .diff_tabs
             .retain(|id, _| editor.document(*id).is_some_and(|d| d.diff.is_some()));
-        let oid = self.git.status.as_ref().and_then(|s| s.oid.as_deref());
+        // 各标签按文件所在仓库的提交号比较；其他仓库还没有读到状态时没有提交号。
+        let current = self.git.root.clone();
+        let heads: Vec<(DocumentId, Option<PathBuf>, Option<String>)> = (self.git.diff_tabs.iter())
+            .map(|(id, tab)| {
+                let root = self.repo_of(&tab.path).map(|(root, _)| root);
+                let oid = (root.as_deref())
+                    .and_then(|root| self.status_in(root, |s| s.oid.clone()))
+                    .flatten();
+                (*id, root, oid)
+            })
+            .collect();
+        let head_of = |id: &DocumentId| heads.iter().find(|(i, ..)| i == id);
+        let editor = &self.editor;
         let follows_editor = |id: DocumentId| {
             editor
                 .document(id)
@@ -292,7 +324,13 @@ impl App {
             .diff_tabs
             .iter()
             .filter(|(id, tab)| {
-                tab.kind != DiffKind::Whole || tab.oid.as_deref() != oid || !follows_editor(**id)
+                let Some((_, root, oid)) = head_of(id) else {
+                    return false;
+                };
+                if root.is_none() || (*root != current) != others {
+                    return false;
+                }
+                tab.kind != DiffKind::Whole || tab.oid != *oid || !follows_editor(**id)
             })
             .map(|(id, tab)| (*id, tab.path.clone(), tab.kind))
             .collect();
@@ -307,22 +345,15 @@ impl App {
     }
 
     /// 在后台准备 `path` 的差异 `kind`，完成后按 `target` 交给界面线程。
+    ///
+    /// 文件在所在的已知仓库中比较（见 [`App::repo_of`]），可以不是当前仓库。
     pub(in crate::app) fn fetch_diff(&mut self, path: &Path, target: Target, kind: DiffKind) {
-        let Some(root) = self.git.root.clone() else {
-            self.flash(t!("git-not-a-repository"));
+        let Some((root, path)) = self.repo_of(path) else {
+            self.flash(match self.git.root {
+                Some(_) => t!("git-file-outside-repository"),
+                None => t!("git-not-a-repository"),
+            });
             return;
-        };
-        // 路径可能经过符号链接（macOS 的 `/var` 指向 `/private/var`），不在仓库下时规范化后再比较。
-        let path = if path.starts_with(&root) {
-            path.to_path_buf()
-        } else {
-            match winc_config::files::canonicalize(path) {
-                Ok(real) if real.starts_with(&root) => real,
-                _ => {
-                    self.flash(t!("git-file-outside-repository"));
-                    return;
-                }
-            }
         };
 
         let Ok(snapshot) = self.editor_snapshot(&path) else {
@@ -333,11 +364,12 @@ impl App {
             return;
         };
 
-        let oid = self.git.status.as_ref().and_then(|s| s.oid.clone());
+        let oid = self.status_in(&root, |s| s.oid.clone()).flatten();
         let sender = self.git.prepared.0.clone();
+        let links = self.editor.folder_links();
         self.spawn_git(UserEvent::GitContent, move |tool| {
             let view = match &tool {
-                Ok(git) => prepare(git, &root, &path, snapshot, oid.as_deref(), kind),
+                Ok(git) => prepare(git, &root, &path, snapshot, oid.as_deref(), kind, &links),
                 Err(e) => Err(unusable(e)),
             };
             let _ = sender.send(Prepared {
@@ -356,8 +388,10 @@ impl App {
     /// 仓库已更换、预览请求不是最新的一次或原地更新失败时丢弃结果。
     pub(in crate::app) fn poll_git_content(&mut self) {
         while let Ok(prepared) = self.git.prepared.1.try_recv() {
-            // 等待结果期间更换了目录：文件属于旧仓库，不在新目录或开始页中打开标签。
-            if self.git.root.as_deref() != Some(prepared.root.as_path()) {
+            // 等待结果期间更换了目录：文件属于旧目录中的仓库，不在新目录或开始页中打开标签。
+            let known = self.git.root.as_ref() == Some(&prepared.root)
+                || self.git.repositories.contains(&prepared.root);
+            if !known {
                 continue;
             }
             // 预览只采用最新的一次请求。

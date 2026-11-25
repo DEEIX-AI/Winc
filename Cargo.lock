@@ -3173,11 +3173,11 @@ dependencies = [
  "winc-editor",
  "winc-emoji",
  "winc-i18n",
- "winc-json",
  "winc-lsp",
  "winc-preview",
  "winc-pty",
  "winc-render",
+ "winc-search",
  "winc-syntax",
  "winc-typeset",
  "winc-version",
@@ -3203,7 +3203,6 @@ version = "0.0.0"
 dependencies = [
  "winc-backend",
  "winc-i18n",
- "winc-json",
  "winc-syntax",
 ]
 
@@ -3230,13 +3229,13 @@ dependencies = [
  "notify",
  "png",
  "regex",
- "regex-syntax",
  "ropey",
  "winc-backend",
  "winc-config",
  "winc-core",
  "winc-i18n",
  "winc-preview",
+ "winc-search",
  "winc-syntax",
 ]
 
@@ -3255,14 +3254,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "winc-json"
-version = "0.0.0"
-
-[[package]]
 name = "winc-lsp"
 version = "0.0.0"
 dependencies = [
- "winc-json",
+ "winc-config",
 ]
 
 [[package]]
@@ -3317,10 +3312,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "winc-search"
+version = "0.0.0"
+dependencies = [
+ "chardetng",
+ "encoding_rs",
+ "fancy-regex",
+ "ignore",
+ "memchr",
+ "regex",
+ "winc-backend",
+ "winc-core",
+]
+
+[[package]]
 name = "winc-server"
 version = "0.0.0"
 dependencies = [
  "winc-backend",
+ "winc-search",
  "winc-watch",
 ]
 

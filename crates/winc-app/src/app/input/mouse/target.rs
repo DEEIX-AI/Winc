@@ -123,6 +123,9 @@ impl App {
         if self.browser_page().is_some() {
             controls.push(l.browser);
         }
+        if self.editor.active().is_some_and(|doc| doc.terminal) {
+            controls.push(l.terminal_return);
+        }
         controls
     }
 
@@ -258,7 +261,9 @@ impl App {
             Target::MarkdownToc(target) => Hover::MarkdownToc(target),
             Target::MarkdownText(Some(link)) => Hover::MarkdownLinkText(link),
             Target::ImageHandle => Hover::ImageHandle,
-            Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture => Hover::None,
+            Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture | Target::Table => {
+                Hover::None
+            }
             Target::PdfTool(tool) => Hover::PdfTool(tool),
             Target::LatexStatus => Hover::LatexStatus,
             Target::LatexProblem(line) => Hover::LatexProblem(line),
@@ -420,7 +425,8 @@ impl App {
             return Target::Panel(hover);
         }
         // 跳转条绘制在查找条之上（窄窗口中两者会重叠）；正在输入名称的行位于文件树中。
-        if (self.bars.goto_input.is_some() && self.prompt_bar().contains(x, y))
+        if (self.bars.goto_input.is_some()
+            && self.hits.prompt_bar.is_some_and(|r| r.contains(x, y)))
             || self.name_input_rect().is_some_and(|r| r.contains(x, y))
         {
             return Target::Prompt;
@@ -428,9 +434,9 @@ impl App {
         if l.search.contains(x, y) {
             return Target::Search;
         }
-        // 展开的全名可以画在分隔条上，分隔条仍然可以拖动；鼠标停在分隔条上时全名保持展开。
+        // 写全名的那一行画在分隔条之上，在这一行的高度内按下作用于这一行；其他高度拖动分隔条。
         let over_row = self.over_tree_overflow_row(y);
-        if self.panels.sidebar.visible && l.splitter.contains(x, y) {
+        if self.on_sidebar_splitter(x, y) {
             return Target::Splitter;
         }
         if let Some(tool) = hit(&self.hits.tree_tools, x, y) {
@@ -462,6 +468,17 @@ impl App {
         // 切换到非网页文件后，按钮收起的动画过程中不响应点击。
         if l.browser.contains(x, y) && self.browser_page().is_some() {
             return Target::Browser;
+        }
+        if l.terminal_return.contains(x, y) && self.editor.active().is_some_and(|doc| doc.terminal)
+        {
+            return Target::TerminalHeader(crate::app::terminal::HeaderHit::Panel);
+        }
+        if self.field_at(x, y) == Some(Focus::TerminalRename)
+            && self.editor.active().is_some_and(|doc| doc.terminal)
+        {
+            return Target::TerminalHeader(crate::app::terminal::HeaderHit::Tab(
+                self.terminal.active,
+            ));
         }
         if let Some((index, on_close)) = self.tab_at(x, y) {
             return Target::Tab(index, on_close);
@@ -522,7 +539,7 @@ impl App {
         if let Some(part) = self.docked_part_at(x, y) {
             return Target::SearchDock(part);
         }
-        if l.terminal.contains(x, y) {
+        if self.terminal_contains(x, y) {
             if self
                 .terminal_tab_list()
                 .is_some_and(|list| list.contains(x, y))
@@ -650,6 +667,9 @@ impl App {
         }
         if self.picture_at(x, y) {
             return Target::Picture;
+        }
+        if self.active_shows_text() && self.table_at(x, y) {
+            return Target::Table;
         }
         if l.editor.contains(x, y) && self.editor.active.is_some() {
             return Target::Editor;
@@ -885,19 +905,25 @@ impl App {
         self.track_tree_segment();
     }
 
-    /// `(x, y)` 是否位于编辑区右上角的卡片（冲突卡片、提示条）上。
-    ///
-    /// 卡片浮于文字之上，点击、右键和指针样式都不应作用于下方的文字。
-    pub(in crate::app) fn over_corner_card(&self, x: f32, y: f32) -> bool {
-        self.hits
-            .notice_card
-            .is_some_and(|card| card.contains(x, y))
-            || self.hits.merge_card.is_some_and(|card| card.contains(x, y))
-            || self
-                .hits
-                .conflict_card
-                .as_ref()
-                .is_some_and(|(card, _)| card.contains(x, y))
+    /// `(x, y)` 处最上层的部件是否遮挡下方且自身没有右键菜单：卡片、补全列表、工具栏、标题
+    /// 列表、在文件中查找的对话框和底部面板的「搜索」标签，以及输入条。右键点在这些部件上时
+    /// 不弹出下方部件的菜单。
+    pub(in crate::app) fn blocks_context_menu(&self, x: f32, y: f32) -> bool {
+        matches!(
+            self.target_at(x, y),
+            Target::Blocked
+                | Target::NoticeButton
+                | Target::Change(_)
+                | Target::Merge(_)
+                | Target::Conflict(_)
+                | Target::Suggest(_)
+                | Target::SelectionTool(_)
+                | Target::MarkdownToc(_)
+                | Target::SearchDialog(_)
+                | Target::SearchDock(_)
+                | Target::Prompt
+                | Target::Search
+        )
     }
 
     /// 根据鼠标位置和拖动状态更新鼠标指针的样式；鼠标在其他窗格上时按那个窗格判断。
@@ -998,26 +1024,13 @@ impl App {
             return;
         }
 
-        // 差异两侧和 Markdown 预览按最上层的目标判断：滚动条、折叠的一段、标题列表、工具栏、
-        // 盖在上面的卡片和面板，以及链接处不显示文本光标；拖选期间一直显示。
-        let in_text = self.editor.active.is_some()
-            && self.active_shows_text()
-            && !matches!(
-                self.pointer.hover,
-                Hover::TreeRow(_)
-                    | Hover::Sticky(_)
-                    | Hover::Folded(_)
-                    | Hover::LongLine(_)
-                    | Hover::Scrollbar(_)
-            )
-            && self.layout.text.contains(x, y)
-            && !self.layout.search.contains(x, y)
-            && !(self.overlays.picker.open && self.layout.picker.contains(x, y))
-            && !self.over_corner_card(x, y)
+        // 源代码、差异、Markdown 预览和日志详情仅在最上层的目标为文字时显示文本光标；拖选差异、
+        // 预览和日志详情期间保持显示。
+        let target = self.target_at(x, y);
+        let in_text = (self.active_shows_text() && self.layout.text.contains(x, y)
+            || self.over_diff_text(x, y))
             && x < self.layout.editor.right() - SCROLLBAR_HIT
-            || self.over_diff_text(x, y)
-                && x < self.layout.editor.right() - SCROLLBAR_HIT
-                && matches!(self.target_at(x, y), Target::Editor);
+            && matches!(target, Target::Editor);
         // 日志详情中可选择的文字上（不含可点击的提交号和文件）显示文本光标。
         let in_field = self.field_at(x, y).is_some()
             || matches!(
@@ -1029,11 +1042,8 @@ impl App {
                     | Drag::DiffSelectRead { .. }
                     | Drag::DiffColumns { .. }
             )
-            || (self.preview.markdown.area.contains(x, y)
-                && matches!(self.target_at(x, y), Target::MarkdownText(None)))
-            || (self.log_active()
-                && crate::layout::hit(&self.hits.log, x, y).is_none()
-                && self.log_text_at(x, y, false).is_some())
+            || matches!(target, Target::MarkdownText(None))
+            || (matches!(target, Target::LogText) && self.log_text_at(x, y, false).is_some())
             // 诊断气泡中的文字同样可以选中复制。
             || self.hits.hint_card.is_some_and(|card| card.contains(x, y));
 
@@ -1116,7 +1126,7 @@ impl App {
             CursorIcon::Pointer
         } else if matches!(self.pointer.drag, Drag::Picture { .. }) {
             CursorIcon::Grabbing
-        } else if self.picture_pannable() && matches!(self.target_at(x, y), Target::Picture) {
+        } else if self.picture_pannable() && matches!(target, Target::Picture) {
             // 图片超出预览区域时可以按住拖动。
             CursorIcon::Grab
         } else if in_text || in_field {
@@ -1239,6 +1249,8 @@ pub(super) enum Target {
     Editor,
     /// 图片或 SVG 的预览区域。
     Picture,
+    /// 分栏时右侧的表格：点击后键盘作用于表格。只看预览时表格位于编辑区，属于 [`Target::Editor`]。
+    Table,
     /// 终端面板。
     Terminal,
     /// 编辑区与终端面板之间的间距。

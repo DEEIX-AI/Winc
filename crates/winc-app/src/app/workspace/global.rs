@@ -449,10 +449,10 @@ impl App {
         self.finish_name_input();
         self.relayout();
 
-        // 切回文件树时，在搜索中打开过的文件已在树中展开并选中，滚动文件树使其可见。
+        // 切回文件树时，按设置定位从搜索中打开的当前文件，滚动文件树使其可见。
         if view == SidebarView::Files {
             self.clamp_tree_scroll();
-            self.reveal_active();
+            self.auto_reveal_active();
         }
         // 其他位置的状态只在提交视图里看得见，看不见的时候没有读。
         if view == SidebarView::Commit {
@@ -476,9 +476,18 @@ impl App {
 
     /// 把侧栏切换到搜索面板，并把焦点放进查找输入框（`⇧⌘F` / `⇧⌘H`）。
     ///
-    /// 有合适的选区（没有选区时为光标所在的词）时，用它作为查找内容。`replace` 为 `true` 时
-    /// 同时展开替换行；此时如果已有查找内容，焦点放进替换输入框。没有打开目录时在状态栏提示。
+    /// 焦点在编辑区、有合适的选区（没有选区时为光标所在的词）时，用它作为查找内容（见
+    /// [`Self::files_search_seed`]）。`replace` 为 `true` 时同时展开替换行；此时如果已有查找内容，
+    /// 焦点放进替换输入框。没有打开目录时在状态栏提示。
     pub(in crate::app) fn open_global_search(&mut self, replace: bool) {
+        let seed = self.files_search_seed();
+        self.show_global_search(replace, seed);
+    }
+
+    /// 同 [`Self::open_global_search`]，查找内容换成 `seed`；为 `None` 时沿用上一次的查询并全选。
+    ///
+    /// 点击侧栏的搜索按钮时不预填：只是切到这一页。
+    pub(in crate::app) fn show_global_search(&mut self, replace: bool, seed: Option<String>) {
         if self.editor.workspace.is_none() {
             self.flash(t!("workspace-open-folder-first"));
             return;
@@ -490,7 +499,7 @@ impl App {
             self.set_sidebar(true);
         }
 
-        if let Some(seed) = self.search_seed()
+        if let Some(seed) = seed
             && seed != self.panels.global.query.text()
         {
             self.panels.global.query.remember();
@@ -728,8 +737,8 @@ impl App {
             ));
         } else if g.engine.gave_up() {
             self.flash(t!("editor-replace-all-gave-up"));
-        } else if g.engine.timed_out() {
-            self.flash(t!("workspace-replace-all-remote-timeout"));
+        } else if g.engine.remote_failed() {
+            self.flash(t!("workspace-replace-all-remote-failed"));
         } else if g.engine.total() == 0 {
             self.flash(t!("workspace-replace-all-nothing"));
         } else {
@@ -942,7 +951,7 @@ impl App {
     }
 
     /// 返回路径为 `path`、有未保存修改的文档的当前内容；没有这样的文档时返回 `None`。
-    fn dirty_rope(&self, path: &Path) -> Option<ropey::Rope> {
+    pub(in crate::app) fn dirty_rope(&self, path: &Path) -> Option<ropey::Rope> {
         self.editor
             .documents
             .iter()

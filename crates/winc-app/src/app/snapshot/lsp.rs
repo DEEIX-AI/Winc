@@ -157,7 +157,7 @@ fn clicking_a_row_accepts_it() {
 /// 服务器推送的诊断按 URI 找到打开的文档，存成字符范围；补全响应按请求的上下文对上。
 #[test]
 fn server_messages_reach_the_open_document_and_the_completion_list() {
-    use winc_json::Json;
+    use winc_config::Json;
     use winc_lsp::message::{Diagnostic, Position, Range, Severity};
 
     let (mut app, dir) = go_app("lsp-messages", "package main

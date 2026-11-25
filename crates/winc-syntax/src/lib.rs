@@ -3,6 +3,7 @@
 //! [`Highlighter`] 按文档逐行缓存行首状态，编辑后从修改行开始失效，绘制时只推算可见区域。
 //! 本 crate 不依赖绘制与主题：token 只标出类别，颜色由 `winc-render` 和 `winc-app` 决定。
 
+pub mod columns;
 mod lang;
 mod lexer;
 
@@ -13,8 +14,8 @@ pub use winc_core::text::MAX_LINE_CHARS;
 use winc_core::text::{Lines, MAX_LINE_BYTES};
 
 pub use lang::{
-    BlockString, Heredocs, Interpolation, Language, Markup, RawStrings, Variables, detect,
-    detect_with_first_line, find, languages,
+    BlockEscapes, BlockString, Heredocs, Interpolation, Language, Markup, RawStrings, Variables,
+    detect, detect_with_first_line, find, languages,
 };
 pub use lexer::{LineState, Token, TokenKind, highlight_line};
 
