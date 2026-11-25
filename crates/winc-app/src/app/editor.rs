@@ -17,7 +17,7 @@ pub(super) mod find;
 pub(super) mod folding;
 pub(super) mod format;
 pub(crate) mod hex;
-pub(super) mod hint;
+pub(crate) mod hint;
 pub(crate) mod http;
 pub(crate) mod links;
 pub(super) mod navigation;
@@ -64,6 +64,8 @@ pub(crate) struct InputBars {
 pub(crate) struct Jumps {
     /// 光标所在名字旁边的提示气泡（例如没有找到定义）；没有时为 `None`。
     pub(crate) name_hint: Option<NameHint>,
+    /// 提示气泡里选中的文字范围（与 `Hits::hint_lines` 的行、字符对应）；没选中时为 `None`。
+    pub(crate) hint_selection: Option<(hint::HintPoint, hint::HintPoint)>,
     /// 「后退」「前进」使用的位置历史。
     pub(in crate::app) navigation: editor::navigation::Navigation,
     /// 正在后台进行的项目内定义查找。

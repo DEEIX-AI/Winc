@@ -92,7 +92,9 @@ impl App {
         );
         // 名字旁边的提示气泡在按下任意键（单独按修饰键除外）时淡出；同时作废诊断气泡的
         // 悬停待发——打字停顿后出现在静止鼠标下的波浪线不弹气泡，要等鼠标再移动。
-        if !modifier {
+        // 例外：气泡里有选中的文字时，复制键留给气泡本身（见 `App::copy`），不先收走气泡。
+        let copy_hint = cmd && base == "c" && self.hint_has_selection();
+        if !modifier && !copy_hint {
             self.dismiss_hint();
             self.lsp.disarm_diagnostic_hint();
         }

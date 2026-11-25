@@ -294,6 +294,7 @@ impl App {
             | Target::Prompt
             | Target::TitleBar
             | Target::LogText
+            | Target::HintText
             | Target::Editor
             | Target::Terminal
             | Target::None => Hover::None,
@@ -637,6 +638,15 @@ impl App {
         // 记下是哪个链接，用来提示地址。
         if self.preview.markdown.area.contains(x, y) {
             return Target::MarkdownText(self.markdown_link_at(x, y));
+        }
+        // 诊断气泡浮在编辑区文字上：它盖住的地方交给气泡，用于选中消息文字和复制。
+        if self.jumps.name_hint.is_some()
+            && self
+                .hits
+                .hint_hover
+                .is_some_and(|hover| hover.contains(x, y))
+        {
+            return Target::HintText;
         }
         if self.picture_at(x, y) {
             return Target::Picture;
@@ -1013,6 +1023,7 @@ impl App {
             || matches!(
                 self.pointer.drag,
                 Drag::LogText
+                    | Drag::HintText
                     | Drag::MarkdownText
                     | Drag::DiffSelect { .. }
                     | Drag::DiffSelectRead { .. }
@@ -1022,7 +1033,9 @@ impl App {
                 && matches!(self.target_at(x, y), Target::MarkdownText(None)))
             || (self.log_active()
                 && crate::layout::hit(&self.hits.log, x, y).is_none()
-                && self.log_text_at(x, y, false).is_some());
+                && self.log_text_at(x, y, false).is_some())
+            // 诊断气泡中的文字同样可以选中复制。
+            || self.hits.hint_card.is_some_and(|card| card.contains(x, y));
 
         let icon = if let Hover::ResizeEdge(direction) = self.pointer.hover {
             resize_cursor(direction)
@@ -1221,6 +1234,8 @@ pub(super) enum Target {
     Gutter,
     /// 日志详情中的文字。
     LogText,
+    /// 诊断气泡（连同指向文字的小三角）上的文字。
+    HintText,
     Editor,
     /// 图片或 SVG 的预览区域。
     Picture,

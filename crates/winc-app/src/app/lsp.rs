@@ -218,8 +218,8 @@ pub(in crate::app) fn position_of(doc: &Document, pos: usize) -> winc_lsp::messa
 }
 
 /// 诊断气泡的悬停延迟：鼠标移到诊断范围上停稳多久才弹消息，避免扫过时乱闪（取自调参：
-/// 与 `VSCode` 的默认悬停延迟同档，够区分「扫过」与「查看」）。
-pub(crate) const HOVER_STILL: Duration = Duration::from_millis(250);
+/// 略短于 `VSCode` 的默认悬停延迟，够区分「扫过」与「查看」，又不会让人等）。
+pub(crate) const HOVER_STILL: Duration = Duration::from_millis(200);
 
 /// 一个窗口的语言服务器状态。
 ///
@@ -1088,13 +1088,16 @@ impl App {
             .collect()
     }
 
-    /// 每帧：鼠标移动到诊断波浪线上停稳后弹出消息气泡，移开后淡出。
+    /// 鼠标移动到诊断波浪线上停稳后弹出消息气泡，移开后淡出。
     ///
-    /// 悬停只由**鼠标移动**触发（同 `VSCode`）：与上一帧位置不同才算一次移动，移到某处
-    /// 才开始待发，满 [`HOVER_STILL`] 时只评估一次——当时鼠标下有诊断就弹，没有就作废。
-    /// 因此打字时出现在静止鼠标下的新诊断不弹，打字停顿后也不弹；任意按键作废待发，
-    /// 补全列表显示期间不弹。按严重级别从高到低合并同一处的多条诊断；鼠标停着不动时
-    /// 保持气泡，不自动超时消失。
+    /// 悬停只由**鼠标移动**触发（同 `VSCode`）：位置变化才算一次移动，移到某处才开始待发，
+    /// 满 [`HOVER_STILL`] 时只评估一次——当时鼠标下有诊断就弹，没有就作废。因此打字时出现
+    /// 在静止鼠标下的新诊断不弹，打字停顿后也不弹；任意按键作废待发，补全列表显示期间不弹。
+    /// 按严重级别从高到低合并同一处的多条诊断；鼠标停着不动时保持气泡，不自动超时消失。
+    ///
+    /// 鼠标移动事件里也会直接调用（见 `App::on_mouse_move`）：普通的光标移动不一定让界面
+    /// 重绘，只在每帧的 `prepare_frame` 里计时会漏掉最后的移动——鼠标停稳后没有新事件，
+    /// 计时就永远没开始，气泡时有时无。事件里先记下起算时刻，`tick` 的到期唤醒负责评估。
     pub(in crate::app) fn track_diagnostic_hint(&mut self, now: Instant) {
         let Some(doc) = self.editor.active() else {
             self.end_diagnostic_hint();
@@ -1105,12 +1108,25 @@ impl App {
             self.end_diagnostic_hint();
             return;
         }
-        // 与上一帧的鼠标位置不同才算一次「鼠标移动」：重新开始悬停计时。
+        // 与上一次记录的鼠标位置不同才算一次「鼠标移动」：重新开始悬停计时。
         let (x, y) = self.pointer.mouse;
         let moved = self.lsp.hover_pos != Some((x, y));
         self.lsp.hover_pos = Some((x, y));
         if moved {
             self.lsp.hover_at = Some(((x, y), now));
+        }
+        // 鼠标已移到气泡上（卡片或指向文字的小三角），或正在气泡里拖选：保持气泡，不因离开
+        // 波浪线范围而淡出，这样才够得着、选得中消息文字。
+        if self.jumps.name_hint.as_ref().is_some_and(|h| h.diagnostic)
+            && (self
+                .hits
+                .hint_hover
+                .is_some_and(|hover| hover.contains(x, y))
+                || matches!(self.pointer.drag, Drag::HintText))
+        {
+            self.lsp.disarm_diagnostic_hint();
+            self.hold_diagnostic_hint();
+            return;
         }
         if !doc.shows_text() || !self.pointer.cursor_inside || !self.over_editor_text() {
             self.end_diagnostic_hint();

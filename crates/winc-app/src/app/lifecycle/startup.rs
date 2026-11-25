@@ -164,6 +164,7 @@ impl App {
             },
             jumps: crate::app::editor::Jumps {
                 name_hint: None,
+                hint_selection: None,
                 navigation: Default::default(),
                 definitions: None,
             },

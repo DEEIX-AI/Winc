@@ -124,6 +124,12 @@ pub struct Hits {
     pub(crate) tab_switch: Vec<(Rect, usize)>,
     /// `.http` 文件行号栏中发送请求的按钮的位置和请求行的行号（从 0 起）。
     pub(crate) http_runs: Vec<(Rect, usize)>,
+    /// 上一帧绘制的诊断气泡卡片；没有气泡时为 `None`。
+    pub(crate) hint_card: Option<Rect>,
+    /// 上一帧诊断气泡连同指向文字的小三角所占的区域；鼠标在这里时气泡保持显示。
+    pub(crate) hint_hover: Option<Rect>,
+    /// 上一帧诊断气泡中可选中复制的各行文字（位置与每个字符的右边界）。
+    pub(crate) hint_lines: Vec<crate::app::editor::hint::HintLine>,
 }
 
 impl Hits {
@@ -183,7 +189,13 @@ impl Hits {
             keys_parts,
             tab_switch,
             http_runs,
+            hint_card,
+            hint_hover,
+            hint_lines,
         } = self;
+        *hint_card = None;
+        *hint_hover = None;
+        hint_lines.clear();
         start.clear();
         *suggest_card = None;
         *completion_card = None;

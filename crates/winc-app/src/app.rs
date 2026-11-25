@@ -805,6 +805,8 @@ enum Drag {
     },
     /// 在日志详情中拖选文字（`App::drag_log_text`）。
     LogText,
+    /// 在诊断气泡中拖选文字（`App::drag_hint_text`）。
+    HintText,
     /// 在十六进制视图中拖选字节（`App::drag_hex`）。
     Hex,
     /// 在 Markdown 预览中拖选文字（`App::drag_markdown`）。

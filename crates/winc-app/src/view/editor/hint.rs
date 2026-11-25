@@ -5,12 +5,17 @@
 
 use winc_render::Stroke;
 
+use crate::app::editor::hint::{HintLine, HintPoint};
+
 use super::*;
 
-/// 气泡的高度（逻辑像素）。
-pub(super) const HEIGHT: f32 = 34.0;
+/// 单行气泡的高度（逻辑像素）：一行文字加下上留白（摆放测试用）。
+#[cfg(test)]
+pub(super) const HEIGHT: f32 = 36.0;
 /// 文字左右的留白（逻辑像素）。
 pub(super) const PAD: f32 = 14.0;
+/// 文字上下的留白（逻辑像素）：消息框里文字的上下边距。
+const PAD_V: f32 = 8.0;
 /// 小三角的高度（逻辑像素），底边宽为它的两倍。
 const POINTER: f32 = 6.0;
 /// 小三角尖端与名字所在行之间的距离（逻辑像素）。
@@ -23,11 +28,12 @@ const MIN_WIDTH: f32 = 180.0;
 const MAX_SHARE: f32 = 0.6;
 /// 诊断消息最多显示的行数，超出截断并加省略号。
 const MAX_LINES: usize = 6;
-/// 每行文字的高度（逻辑像素）：比行高略收紧，多行消息不至于太高。
-const LINE_H: f32 = 17.0;
-/// 图标列的宽度（逻辑像素）：图标在文字左侧，`ICON_ROOM` 是图标加它与文字的间距。
-const ICON_SIZE: f32 = 13.0;
-pub(super) const ICON_ROOM: f32 = 19.0;
+/// 每行文字的最小高度（逻辑像素）：随界面字号放大，至少留出这么高。
+const LINE_H: f32 = 20.0;
+/// 图标的最小尺寸与图标列的最小宽度（逻辑像素）：图标在文字左侧，`ICON_ROOM` 是图标加它
+/// 与文字的间距。
+const ICON_SIZE: f32 = 14.0;
+pub(super) const ICON_ROOM: f32 = 21.0;
 
 /// 气泡宽度：内容宽夹在 [`MIN_WIDTH`] 与编辑区宽度的 [`MAX_SHARE`] 之间，外加两侧留白。
 pub(in crate::view) fn bubble_width(
@@ -94,7 +100,7 @@ pub(in crate::view) fn wrap_message(
 
 /// 绘制名字旁的提示气泡；没有气泡、它挂的文档不是当前文档，或名字不在屏幕上（包括编辑区被
 /// 铺满的终端面板遮住）时不绘制。
-pub(in crate::view) fn draw_name_hint(app: &App, frame: &mut Frame<'_>) {
+pub(in crate::view) fn draw_name_hint(app: &mut App, frame: &mut Frame<'_>) {
     let Some(hint) = &app.jumps.name_hint else {
         return;
     };
@@ -114,22 +120,29 @@ pub(in crate::view) fn draw_name_hint(app: &App, frame: &mut Frame<'_>) {
     };
 
     let p = app.palette;
+    // 消息用界面字号显示：与界面里其它文字一致。不跟编辑区字号放大——编辑区字号较大时
+    // 气泡文字会显得比代码还大。行高与上下留白仍随字号放大。
+    let size = app.fonts.ui;
+    let row_h = (size * 1.55).round().max(LINE_H);
+    let pad_v = (size * 0.6).round().max(PAD_V);
+    let icon_size = (size * 1.1).round().max(ICON_SIZE);
+    let icon_room = (icon_size + 7.0).max(ICON_ROOM);
     // 诊断气泡：图标列 + 限宽折行的多行消息；名字旁的提示仍是一行。
     let (w, card_h, lines, icon) = if hint.diagnostic {
-        let room = ICON_ROOM + 2.0 * PAD;
-        let content = frame.measure(FontKind::Ui, app.fonts.ui, &hint.text);
+        let room = icon_room + 2.0 * PAD;
+        let content = frame.measure(FontKind::Ui, size, &hint.text);
         let w = bubble_width(content, room, editor);
         let lines = wrap_message(
             &hint.text,
-            |s| frame.measure(FontKind::Ui, app.fonts.ui, s),
+            |s| frame.measure(FontKind::Ui, size, s),
             w - room,
             MAX_LINES,
         );
-        let card_h = lines.len() as f32 * LINE_H + 8.0;
+        let card_h = lines.len() as f32 * row_h + 2.0 * pad_v;
         (w, card_h, lines, hint_level(app).map(|level| (level.glyph(), level.color(p))))
     } else {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, &hint.text) + 2.0 * PAD;
-        (w, HEIGHT, vec![hint.text.clone()], None)
+        let w = frame.measure(FontKind::Ui, size, &hint.text) + 2.0 * PAD;
+        (w, row_h + 2.0 * pad_v, vec![hint.text.clone()], None)
     };
     // 气泡锚定在文字处：诊断气泡挂在波浪线所在行的上方，名字旁的提示挂在名字上方。
     let (x, y, above) = place_above_name(name_x, top, line_h, editor, w, card_h);
@@ -152,26 +165,90 @@ pub(in crate::view) fn draw_name_hint(app: &App, frame: &mut Frame<'_>) {
         .clamp(card.x + 16.0, (card.right() - 16.0).max(card.x + 16.0))
         .round();
 
+    // 鼠标从诊断文字移向气泡时要经过卡片与文字之间的空隙：把这个小三角的范围也一并算作
+    // 「在气泡上」，鼠标才不会在半路把气泡淡出。
+    let bridge = if above {
+        Rect::new(tip_x - POINTER, card.bottom(), 2.0 * POINTER, POINTER + GAP)
+    } else {
+        Rect::new(
+            tip_x - POINTER,
+            card.y - POINTER - GAP,
+            2.0 * POINTER,
+            POINTER + GAP,
+        )
+    };
+    let hover = Rect::new(
+        card.x.min(bridge.x),
+        card.y.min(bridge.y),
+        card.right().max(bridge.right()) - card.x.min(bridge.x),
+        card.bottom().max(bridge.bottom()) - card.y.min(bridge.y),
+    );
+
+    let selection = app.jumps.hint_selection;
+    let mut drawn: Vec<HintLine> = Vec::with_capacity(lines.len());
     frame.with_opacity(opacity, |frame| {
         draw_card(frame, p, card, RADIUS_POPUP, p.popup_bg);
         draw_pointer(frame, p, card, tip_x, above);
         let mut text_x = card.x + PAD;
         if let Some((glyph, color)) = icon {
-            // 图标与第一行文字的中心对齐。
-            let first = Rect::new(text_x, card.y, ICON_ROOM, LINE_H);
-            draw_level_icon(frame, app, first, glyph, color);
-            text_x += ICON_ROOM;
+            // 图标与第一行文字的中心对齐：首行从卡片上留白 `pad_v` 处开始，与下面的文字行相同。
+            let first = Rect::new(text_x, card.y + pad_v, icon_room, row_h);
+            draw_level_icon(frame, app, first, size, glyph, color);
+            text_x += icon_room;
         }
         for (i, line) in lines.iter().enumerate() {
             let row = Rect::new(
                 text_x - PAD,
-                card.y + 4.0 + i as f32 * LINE_H,
+                card.y + pad_v + i as f32 * row_h,
                 card.w - (text_x - card.x) - PAD,
-                LINE_H,
+                row_h,
             );
-            ui_text(frame, app, text_x, row, line, p.text, card);
+            // 记录每个字符的右边界，供拖选与复制按位置找字。
+            let mut edges = Vec::with_capacity(line.chars().count());
+            let mut right = text_x;
+            let mut buf = [0u8; 4];
+            for c in line.chars() {
+                right += frame.measure(FontKind::Ui, size, c.encode_utf8(&mut buf));
+                edges.push(right);
+            }
+            if let Some((from, to)) = selected_chars(selection, i, edges.len()) {
+                let left = if from == 0 { text_x } else { edges[from - 1] };
+                let band = Rect::new(left, row.y + 1.0, edges[to - 1] - left, row.h - 2.0);
+                frame.rect_clipped(band, p.selection, 2.0, card);
+            }
+            label(frame, app, size, (text_x, row), line, p.text, card);
+            drawn.push(HintLine {
+                row,
+                x: text_x,
+                text: line.clone(),
+                edges,
+            });
         }
     });
+    app.hits.hint_card = Some(card);
+    app.hits.hint_hover = Some(hover);
+    app.hits.hint_lines = drawn;
+}
+
+/// 第 `line` 行在气泡选区 `selection` 中选中的字符范围（`len` 是这一行的字符数）；没选中时
+/// 为 `None`。
+fn selected_chars(
+    selection: Option<(HintPoint, HintPoint)>,
+    line: usize,
+    len: usize,
+) -> Option<(usize, usize)> {
+    let (a, b) = selection?;
+    let (from, to) = if a <= b { (a, b) } else { (b, a) };
+    if line < from.line || line > to.line {
+        return None;
+    }
+    let start = if line == from.line {
+        from.ch.min(len)
+    } else {
+        0
+    };
+    let end = if line == to.line { to.ch.min(len) } else { len };
+    (start < end).then_some((start, end))
 }
 
 /// 诊断气泡的严重级别：从消息里带的信息取出（多条合并时取最严重的）。
@@ -224,17 +301,19 @@ enum LevelGlyph {
     Triangle,
 }
 
-/// 在 `row` 的左侧画严重级别图标，与行内文字的视觉中心对齐。
+/// 在 `row` 的左侧画严重级别图标，与字号为 `size` 的行内文字的视觉中心对齐。
 fn draw_level_icon(
     frame: &mut Frame<'_>,
     app: &App,
     row: Rect,
+    size: f32,
     glyph: LevelGlyph,
     color: Color,
 ) {
-    let cx = row.x + ICON_SIZE / 2.0 + 1.0;
-    let cy = icon_center_y(app, row, app.fonts.ui);
-    let r = ICON_SIZE / 2.0;
+    let icon = (size * 1.1).round().max(ICON_SIZE);
+    let cx = row.x + icon / 2.0 + 1.0;
+    let cy = icon_center_y(app, row, size);
+    let r = icon / 2.0;
     match glyph {
         LevelGlyph::Cross => {
             frame.stroke(&[Stroke::Circle(cx, cy, r)], 1.3, color, row);

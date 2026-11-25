@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use winc_core::movement;
 use winc_editor::DocumentId;
+use winc_render::Rect;
 
 use super::*;
 
@@ -36,6 +37,42 @@ pub struct NameHint {
     pub level: Option<u32>,
 }
 
+/// 诊断气泡里的一行文字：位置、内容与每个字符的右边界，供拖选与复制时按位置找字。
+#[derive(Debug, Clone)]
+pub(crate) struct HintLine {
+    /// 这一行占用的整行矩形；选区的底色按其高度绘制。
+    pub row: Rect,
+    /// 第一个字符的左边界（逻辑像素）。
+    pub x: f32,
+    /// 绘制的文字。
+    pub text: String,
+    /// 每个字符的右边界（逻辑像素），与 `text` 的字符一一对应。
+    pub edges: Vec<f32>,
+}
+
+impl HintLine {
+    /// 返回横坐标 `x` 之后的第一个字符的序号（0 到字符数）；越过字符宽度的一半即算在其后。
+    fn index_at(&self, x: f32) -> usize {
+        let mut left = self.x;
+        for (i, &right) in self.edges.iter().enumerate() {
+            if x < (left + right) / 2.0 {
+                return i;
+            }
+            left = right;
+        }
+        self.edges.len()
+    }
+}
+
+/// 诊断气泡中文字选区的一端。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct HintPoint {
+    /// 所在行（`Hits::hint_lines` 的下标）。
+    pub line: usize,
+    /// 行内的字符序号。
+    pub ch: usize,
+}
+
 impl App {
     /// 在 `anchor` 上方弹出诊断消息 `text`：鼠标停在诊断范围内时调用，离开范围后淡出。
     ///
@@ -51,6 +88,7 @@ impl App {
         };
         let (text, id) = (text.into(), doc.id);
         let fade_in = self.clock(POPUP_IN);
+        self.jumps.hint_selection = None;
         self.jumps.name_hint = Some(NameHint {
             text,
             doc: id,
@@ -82,6 +120,148 @@ impl App {
             .is_some_and(|h| h.text == text && h.anchor == anchor && h.fade_out.is_none())
     }
 
+    /// 气泡里 `(x, y)` 处的字的位置。
+    ///
+    /// `near` 为 `true` 时（拖着选的时候）不在任何一行上也取最近的一行，拖到首行以上或末行
+    /// 以下时停在首尾；否则只认正落在某一行上的位置。
+    pub(in crate::app) fn hint_text_at(&self, x: f32, y: f32, near: bool) -> Option<HintPoint> {
+        let lines = &self.hits.hint_lines;
+        // 同一行上可能有几段（多行消息的每一行是一段）：取开头在鼠标左边的最后一段。
+        let on = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.row.y <= y && y < l.row.bottom())
+            .filter(|(_, l)| l.x - 2.0 <= x)
+            .map(|(i, _)| i)
+            .next_back()
+            .or_else(|| {
+                lines
+                    .iter()
+                    .position(|l| l.row.y <= y && y < l.row.bottom())
+                    .filter(|_| near)
+            });
+        let line = match on {
+            Some(i) => i,
+            None if near => {
+                let first = lines.first()?;
+                if y < first.row.y {
+                    return Some(HintPoint { line: 0, ch: 0 });
+                }
+                let last = lines.len() - 1;
+                if y >= lines[last].row.bottom() {
+                    return Some(HintPoint {
+                        line: last,
+                        ch: lines[last].edges.len(),
+                    });
+                }
+                // 两行之间的空隙：算上面那一行的行尾。
+                let above = lines.iter().rposition(|l| l.row.bottom() <= y)?;
+                return Some(HintPoint {
+                    line: above,
+                    ch: lines[above].edges.len(),
+                });
+            }
+            None => return None,
+        };
+        // 只在字上（不在行尾以外的空白里）才算按在字上；拖着的时候行尾以外算到行尾。
+        let l = &lines[line];
+        let end = l.edges.last().copied().unwrap_or(l.x);
+        if !near && (x < l.x - 2.0 || x > end + 4.0) {
+            return None;
+        }
+        Some(HintPoint {
+            line,
+            ch: l.index_at(x),
+        })
+    }
+
+    /// 气泡里第 `line` 行选中了第几个字到第几个字（`len` 是这一行的字数）；这一行没选中时
+    /// 为 `None`。
+    pub(in crate::app) fn hint_selected_chars(
+        &self,
+        line: usize,
+        len: usize,
+    ) -> Option<(usize, usize)> {
+        let (a, b) = self.jumps.hint_selection?;
+        let (from, to) = (a.min(b), a.max(b));
+        if line < from.line || line > to.line {
+            return None;
+        }
+        let start = if line == from.line {
+            from.ch.min(len)
+        } else {
+            0
+        };
+        let end = if line == to.line { to.ch.min(len) } else { len };
+        (start < end).then_some((start, end))
+    }
+
+    /// 气泡里选中的文字；没选中时为 `None`。
+    ///
+    /// 折成多行的消息按屏幕上的各行以换行符连接。
+    pub(in crate::app) fn hint_selected_text(&self) -> Option<String> {
+        let (a, b) = self.jumps.hint_selection?;
+        let (from, to) = (a.min(b), a.max(b));
+        let mut out = String::new();
+        for line in from.line..=to.line.min(self.hits.hint_lines.len().saturating_sub(1)) {
+            let l = self.hits.hint_lines.get(line)?;
+            let len = l.edges.len();
+            let (start, end) = self.hint_selected_chars(line, len).unwrap_or((0, 0));
+            if line > from.line {
+                out.push('\n');
+            }
+            out.extend(l.text.chars().skip(start).take(end - start));
+        }
+        (!out.trim().is_empty()).then_some(out)
+    }
+
+    /// 气泡里是否有选中的文字（此时按复制键要复制气泡而不是编辑区）。
+    pub(in crate::app) fn hint_has_selection(&self) -> bool {
+        self.jumps.hint_selection.is_some()
+    }
+
+    /// 在气泡的文字上按下鼠标：按在字上开始选字，`count` 为 2（双击）时选中这一整行；按在
+    /// 空白处清掉选中。返回是否继续拖动以扩展选区。
+    pub(in crate::app) fn press_hint_text(&mut self, x: f32, y: f32, count: u8) -> bool {
+        self.focus = Focus::Editor;
+        let Some(at) = self.hint_text_at(x, y, false) else {
+            self.jumps.hint_selection = None;
+            self.request_redraw();
+            return false;
+        };
+        self.jumps.hint_selection = Some(if count >= 2 {
+            let len = self
+                .hits
+                .hint_lines
+                .get(at.line)
+                .map_or(0, |l| l.edges.len());
+            (
+                HintPoint {
+                    line: at.line,
+                    ch: 0,
+                },
+                HintPoint {
+                    line: at.line,
+                    ch: len,
+                },
+            )
+        } else {
+            (at, at)
+        });
+        self.request_redraw();
+        count < 2
+    }
+
+    /// 在气泡里拖着选字时鼠标到了 `(x, y)`。
+    pub(in crate::app) fn drag_hint_text(&mut self, x: f32, y: f32) {
+        if let (Some((anchor, _)), Some(head)) =
+            (self.jumps.hint_selection, self.hint_text_at(x, y, true))
+        {
+            self.jumps.hint_selection = Some((anchor, head));
+            self.request_redraw();
+        }
+    }
+
     /// 在光标所在的名字上方弹出提示 `text`；没有打开文档时改为写在状态栏。
     pub(super) fn hint_at_name(&mut self, text: impl Into<String>) {
         let text = text.into();
@@ -95,6 +275,7 @@ impl App {
         );
         let id = doc.id;
         let fade_in = self.clock(POPUP_IN);
+        self.jumps.hint_selection = None;
         self.jumps.name_hint = Some(NameHint {
             text,
             doc: id,
@@ -110,6 +291,8 @@ impl App {
 
     /// 让提示气泡淡出；没有窗口（测试中）或动态效果关闭时直接去掉。
     pub(in crate::app) fn dismiss_hint(&mut self) {
+        // 气泡要走之前先放掉选中的文字：复制走的是同一把气泡，见 `App::copy`。
+        self.jumps.hint_selection = None;
         let Some(hint) = &self.jumps.name_hint else {
             return;
         };
@@ -151,6 +334,7 @@ impl App {
         }
         if hint.fade_out.is_some_and(|c| c.done()) {
             self.jumps.name_hint = None;
+            self.jumps.hint_selection = None;
         }
     }
 

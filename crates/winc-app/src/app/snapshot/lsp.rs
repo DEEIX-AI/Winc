@@ -519,6 +519,247 @@ fn the_diagnostic_bubble_shows_level_icons_and_wraps_long_messages() {
     shoot(&mut app, "lsp-hint-level");
     let _ = std::fs::remove_dir_all(&dir);
 }
+/// 气泡左侧的严重级别图标与首行文字的视觉中心对齐，不再比文字高出约 4 逻辑像素。
+#[test]
+fn the_diagnostic_bubble_icon_aligns_with_its_first_line() {
+    use std::time::Instant;
+    use crate::app::lsp::HOVER_STILL;
+    let (mut app, dir) = go_app(
+        "lsp-hint-align",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
+    let doc = app.editor.active().unwrap();
+    let line_start = doc.text().line_start(3);
+    let id = doc.id;
+    app.editor.active_mut().unwrap().selection = Selection::point(line_start);
+    app.diagnostics.replace(
+        id,
+        vec![Problem {
+            start: line_start,
+            end: line_start + 1,
+            severity: Severity::Error,
+            // 全大写：字面从基线顶到大写字母高度，字面中心即视觉中心，便于和图标的圆心比较。
+            message: "UNUSED".into(),
+        }],
+    );
+    paint(&mut app);
+    let caret = app.ime.cursor.expect("光标在屏幕上");
+    app.pointer.cursor_inside = true;
+    app.pointer.mouse = (caret.x + 2.0, caret.y + 2.0);
+    let t0 = Instant::now();
+    app.track_diagnostic_hint(t0);
+    app.track_diagnostic_hint(t0 + HOVER_STILL);
+    paint(&mut app);
+    let card = app.hits.hint_card.expect("画出了气泡");
+    let p = app.palette;
+    // 某一颜色像素的垂直中心。
+    let center = |want: winc_render::Color, left: f32, right: f32| {
+        let (mut top, mut bottom) = (f32::MAX, f32::MIN);
+        let mut y = card.y;
+        while y < card.bottom() {
+            let mut x = left;
+            while x < right {
+                if near(pixel(&app, (x, y)), want) {
+                    top = top.min(y);
+                    bottom = bottom.max(y);
+                }
+                x += 0.5;
+            }
+            y += 0.5;
+        }
+        (top + bottom) / 2.0
+    };
+    let icon = center(p.error, card.x, card.x + 32.0);
+    let text = center(p.text, card.x + 33.0, card.right());
+    assert!(
+        (icon - text).abs() <= 1.5,
+        "图标中心 {icon} 应与首行文字中心 {text} 对齐"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 鼠标从诊断文字移向气泡、停在气泡上时，气泡保持显示而不是淡出。
+#[test]
+fn the_diagnostic_bubble_survives_the_pointer_moving_onto_it() {
+    use std::time::{Duration, Instant};
+    use crate::app::lsp::HOVER_STILL;
+    let (mut app, dir) = go_app(
+        "lsp-hint-hover",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
+    let doc = app.editor.active().unwrap();
+    let line_start = doc.text().line_start(3);
+    let id = doc.id;
+    app.editor.active_mut().unwrap().selection = Selection::point(line_start);
+    app.diagnostics.replace(
+        id,
+        vec![Problem {
+            start: line_start,
+            end: line_start + 1,
+            severity: Severity::Error,
+            message: "UNUSED".into(),
+        }],
+    );
+    paint(&mut app);
+    let caret = app.ime.cursor.expect("光标在屏幕上");
+    app.pointer.cursor_inside = true;
+    app.pointer.mouse = (caret.x + 2.0, caret.y + 2.0);
+    let t0 = Instant::now();
+    app.track_diagnostic_hint(t0);
+    app.track_diagnostic_hint(t0 + HOVER_STILL);
+    paint(&mut app);
+    let card = app.hits.hint_card.expect("画出了气泡");
+    // 把鼠标移到气泡正中：已经离开波浪线范围，但仍在气泡上。
+    app.pointer.mouse = (card.x + card.w / 2.0, card.y + card.h / 2.0);
+    app.track_diagnostic_hint(t0 + HOVER_STILL + Duration::from_millis(100));
+    let hint = app.jumps.name_hint.as_ref().expect("气泡仍在");
+    assert!(hint.diagnostic, "还是诊断气泡");
+    assert!(hint.fade_out.is_none(), "移到气泡上不应淡出");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 在气泡文字上拖选后按复制，得到选中的片段（而不是编辑区的选区）。
+#[test]
+fn the_diagnostic_bubble_text_can_be_selected_and_copied() {
+    use std::time::Instant;
+    use crate::app::lsp::HOVER_STILL;
+    let (mut app, dir) = go_app(
+        "lsp-hint-copy",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
+    let doc = app.editor.active().unwrap();
+    let line_start = doc.text().line_start(3);
+    let id = doc.id;
+    app.editor.active_mut().unwrap().selection = Selection::point(line_start);
+    app.diagnostics.replace(
+        id,
+        vec![Problem {
+            start: line_start,
+            end: line_start + 1,
+            severity: Severity::Error,
+            message: "UNUSED".into(),
+        }],
+    );
+    paint(&mut app);
+    let caret = app.ime.cursor.expect("光标在屏幕上");
+    app.pointer.cursor_inside = true;
+    app.pointer.mouse = (caret.x + 2.0, caret.y + 2.0);
+    let t0 = Instant::now();
+    app.track_diagnostic_hint(t0);
+    app.track_diagnostic_hint(t0 + HOVER_STILL);
+    paint(&mut app);
+    let line = app.hits.hint_lines.first().cloned().expect("气泡里有文字");
+    assert_eq!(line.text, "UNUSED");
+    let y = line.row.y + line.row.h / 2.0;
+    // 从行首拖到第 3 个字符的左半边，选中前两个字符「UN」。
+    let from = line.x + 1.0;
+    let to = line.edges[1] + (line.edges[2] - line.edges[1]) * 0.25;
+    app.pointer.mouse = (from, y);
+    app.on_mouse_down(winit::event::MouseButton::Left);
+    app.pointer.mouse = (to, y);
+    app.on_mouse_move(to, y);
+    app.on_mouse_up(winit::event::MouseButton::Left);
+    assert_eq!(app.hint_selected_text().as_deref(), Some("UN"), "拖选的字");
+    assert!(app.jumps.name_hint.is_some(), "选字时气泡不消失");
+    app.copy(false);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("UN"), "复制的字");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 气泡里文字的上下留白足够，行高也比原先的 17 像素宽松（用户反馈框太小、上下边距太挤）。
+#[test]
+fn the_diagnostic_bubble_has_roomy_vertical_padding() {
+    use std::time::Instant;
+    use crate::app::lsp::HOVER_STILL;
+    let (mut app, dir) = go_app(
+        "lsp-hint-padding",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
+    let doc = app.editor.active().unwrap();
+    let line_start = doc.text().line_start(3);
+    let id = doc.id;
+    app.editor.active_mut().unwrap().selection = Selection::point(line_start);
+    app.diagnostics.replace(
+        id,
+        vec![Problem {
+            start: line_start,
+            end: line_start + 1,
+            severity: Severity::Error,
+            message: "UNUSED".into(),
+        }],
+    );
+    paint(&mut app);
+    let caret = app.ime.cursor.expect("光标在屏幕上");
+    app.pointer.cursor_inside = true;
+    app.pointer.mouse = (caret.x + 2.0, caret.y + 2.0);
+    let t0 = Instant::now();
+    app.track_diagnostic_hint(t0);
+    app.track_diagnostic_hint(t0 + HOVER_STILL);
+    paint(&mut app);
+    let card = app.hits.hint_card.expect("画出了气泡");
+    let line = app.hits.hint_lines.first().cloned().expect("气泡里有文字");
+    assert!(
+        line.row.y - card.y >= 8.0 - 0.01,
+        "文字上留白应至少 8 像素，实际 {}",
+        line.row.y - card.y
+    );
+    assert!(
+        card.bottom() - (line.row.y + line.row.h) >= 8.0 - 0.01,
+        "文字下留白应至少 8 像素，实际 {}",
+        card.bottom() - (line.row.y + line.row.h)
+    );
+    assert!(
+        line.row.h >= 20.0,
+        "行高应至少 20 像素，实际 {}",
+        line.row.h
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 悬停计时从鼠标移动事件起算，不依赖鼠标停下后还能不能再画一帧。
+#[test]
+fn the_hover_timer_starts_from_the_mouse_event() {
+    use std::time::Instant;
+    use crate::app::lsp::HOVER_STILL;
+    let (mut app, dir) = go_app(
+        "lsp-hint-event",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
+    let doc = app.editor.active().unwrap();
+    let line_start = doc.text().line_start(3);
+    let id = doc.id;
+    app.editor.active_mut().unwrap().selection = Selection::point(line_start);
+    app.diagnostics.replace(
+        id,
+        vec![Problem {
+            start: line_start,
+            end: line_start + 1,
+            severity: Severity::Error,
+            message: "UNUSED".into(),
+        }],
+    );
+    paint(&mut app);
+    let caret = app.ime.cursor.expect("光标在屏幕上");
+    app.pointer.cursor_inside = true;
+    let before = Instant::now();
+    // 只走鼠标移动事件（模拟移动后没有重绘帧）。
+    app.on_mouse_move(caret.x + 2.0, caret.y + 2.0);
+    let due = app
+        .lsp
+        .hover_deadline()
+        .expect("鼠标移动事件就应开始悬停计时");
+    assert!(
+        due >= before && due <= Instant::now() + HOVER_STILL,
+        "到期时刻应约为移动后 {HOVER_STILL:?}"
+    );
+    app.hover_tick(due);
+    assert!(
+        app.jumps.name_hint.as_ref().is_some_and(|h| h.diagnostic),
+        "到期即弹出气泡"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_text_edit_from_the_server_is_applied() {
     let (mut app, dir) = go_app("lsp-textedit", "package main\n\nvar r Reader\nr.Re\n");
