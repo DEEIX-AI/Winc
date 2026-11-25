@@ -9,8 +9,9 @@ impl Cx<'_, '_> {
             return RawState::Laid;
         };
         let start = match block {
+            // 空段落（块之间多出的空行）没有对照，取段落的起点。
             Block::Paragraph(inline) | Block::Heading(_, inline) => {
-                (!inline.map.is_empty()).then_some(inline.source)
+                (!inline.map.is_empty() || inline.text.is_empty()).then_some(inline.source)
             }
             Block::Code { map, .. } => map.source(0),
             Block::Rule(at) => *at,
@@ -30,7 +31,7 @@ impl Cx<'_, '_> {
                         _ => RawState::Skip,
                     };
                 }
-                // 表格照常排，只有光标所在的那一格显示原文。
+                // 表格仍然排版，只有光标所在的那一格显示原文。
                 if let Block::Table(_, rows, _) = block
                     && let Some(cell) = self.live_cell(rows)
                 {
@@ -298,7 +299,7 @@ impl Cx<'_, '_> {
         };
         let language = winc_syntax::find(lang);
         let markdown = winc_syntax::find("markdown");
-        let mut state = winc_syntax::LineState::default();
+        let mut state = language.map_or(winc_syntax::LineState::Normal, |l| l.start_state());
         let bg_at = out.len();
         let (mut top, mut first_baseline) = (y + pad, None);
         let mut start = leaf.start;

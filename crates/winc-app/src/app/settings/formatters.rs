@@ -232,7 +232,7 @@ impl App {
                     .filter(|p| tools.iter().any(|t| t == p.program()))
                     .map(|p| p.name)
                     .collect();
-                // 按钮上已经写着该工具时，不再重复它的名字。
+                // 按钮上已经显示该工具时，不再重复它的名字。
                 let warning = if names == [tool.as_str()] {
                     t!("format-tool-not-installed").to_owned()
                 } else {
@@ -309,17 +309,21 @@ impl App {
             | Setting::GitOpenWorktree
             | Setting::GitPullMode
             | Setting::DropFolder
+            | Setting::FindInFiles
             | Setting::AutoSave
+            | Setting::SmoothCaret
             | Setting::Zoom
             | Setting::BackgroundImage
             | Setting::BackgroundFit
             | Setting::TextWidth
+            | Setting::DefaultLanguage
             | Setting::TerminalPosition
             | Setting::TerminalTabPosition
             | Setting::TerminalOptionAsMeta
             | Setting::UiFont
             | Setting::EditorFont
-            | Setting::TerminalFont => {
+            | Setting::TerminalFont
+            | Setting::MarkdownFont => {
                 let target = match setting {
                     Setting::Language => MenuTarget::Locale,
                     Setting::RenderWhitespace => MenuTarget::Whitespace,
@@ -327,11 +331,14 @@ impl App {
                     Setting::GitOpenWorktree => MenuTarget::OpenWorktree,
                     Setting::GitPullMode => MenuTarget::PullMode,
                     Setting::DropFolder => MenuTarget::DropFolder,
+                    Setting::FindInFiles => MenuTarget::SearchStyle,
                     Setting::AutoSave => MenuTarget::AutoSave,
+                    Setting::SmoothCaret => MenuTarget::SmoothCaret,
                     Setting::Zoom => MenuTarget::Zoom,
                     Setting::BackgroundImage => MenuTarget::BackgroundImage,
                     Setting::BackgroundFit => MenuTarget::BackgroundFit,
                     Setting::TextWidth => MenuTarget::TextWidth,
+                    Setting::DefaultLanguage => MenuTarget::DefaultLanguage,
                     Setting::TerminalPosition => MenuTarget::TerminalPosition,
                     Setting::TerminalTabPosition => MenuTarget::TerminalTabPosition,
                     Setting::TerminalOptionAsMeta => MenuTarget::OptionAsMeta,
@@ -346,6 +353,8 @@ impl App {
             Setting::TerminalShell => (MenuTarget::DefaultShell, row.control),
             Setting::GitPath | Setting::LatexPath => return self.settings_start_editing(setting),
             Setting::Updates => return self.settings_check_updates(),
+            Setting::Keymap => return self.open_keymap_menu_at(row.control),
+            Setting::KeyMatches => return self.show_key_matches(),
             _ => return,
         };
         self.settings.selected = setting;

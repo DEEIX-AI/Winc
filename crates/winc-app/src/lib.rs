@@ -12,6 +12,8 @@ mod app;
 mod askpass;
 mod bench;
 mod cli;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod color_scheme;
 mod crash;
 mod credentials;
 mod elevated;
@@ -31,6 +33,7 @@ mod portal;
 mod recents;
 mod release_notes;
 mod shell_command;
+mod shell_integration;
 mod system;
 mod theme;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -52,7 +55,7 @@ mod x11;
 #[global_allocator]
 static ALLOC: large_alloc::LargeAlloc = large_alloc::LargeAlloc;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use winc_core::Lines;
 
@@ -76,6 +79,8 @@ pub fn run() {
     if let Some(code) = elevated::helper() {
         std::process::exit(code);
     }
+    // 在启动任何线程之前取出激活令牌，见 `LaunchTokens::take`。
+    let tokens = instance::LaunchTokens::take();
     shell_command::enter_real_path();
     crash::install();
     // 本线程是界面线程：不等待远端主机的应答，访问远端文件的操作都在后台线程上进行。
@@ -151,24 +156,24 @@ pub fn run() {
         .and_then(Path::parent)
         .map(|dir| dir.join("backups"));
 
-    // 已经有 winc 在运行：交给它打开并切到前台，本进程不再启动。
-    // 临时打开（`--wait`、`-`）要等标签关闭或读标准输入，总是自己打开；测量时、指定了
-    // `--new-instance` 时也不交出去。
-    // 读不了的目标现在就报告：之后可能交给其他进程，错误不再回到这个终端。
+    // 已经有 winc 在运行：交给它打开并切到前台，本进程不再启动。临时打开（`--wait`、`-`）要等标签关
+    // 闭或读标准输入，总是自己打开；测量时、指定了 `--new-instance` 时也不交出去。读不了的目标现在
+    // 就报告：之后可能交给其他进程，错误不再回到这个终端。
     let mut args = args;
     let failed = shell_command::report_unreadable(&mut args);
     if failed && args.targets.is_empty() {
         std::process::exit(1);
     }
-    if !args.one_off() && !args.new_instance && !bench.silent() && hand_over(&args) {
+    if !args.one_off() && !args.new_instance && !bench.silent() && hand_over(&args, &tokens) {
         std::process::exit(i32::from(failed));
     }
     // 从终端启动时窗口进程转到后台，命令立即返回。
-    if !bench.silent() && shell_command::detach(&args) {
+    if !bench.silent() && shell_command::detach(&args, &tokens) {
         std::process::exit(i32::from(failed));
     }
 
-    for problem in open_targets(&mut editor, &args) {
+    let opened = open_targets(&mut editor, &args);
+    for problem in &opened.problems {
         eprintln!("winc: {problem}");
     }
     // `--wait` 给的全是打不开的目标（例如目录）时没有标签可等，窗口在命令行目标处理完之后
@@ -180,8 +185,12 @@ pub fn run() {
         );
         std::process::exit(1);
     }
-    // 没有命令行目标时恢复上次的现场；没有现场则显示开始页。
-    let session = (args.targets.is_empty() && !args.one_off())
+    // 没有命令行目标时恢复上次的现场；没有现场则显示开始页。上次打开的是项目时，窗口建好后按
+    // 项目文件打开（见 `App::open_folder_now`）。
+    let restore = args.targets.is_empty() && !args.one_off();
+    let last_project =
+        (state.last.clone()).filter(|last| restore && app::workspace::project::is_project(last));
+    let session = (restore && last_project.is_none())
         .then(|| state.last_session())
         .flatten()
         .filter(|session| open_session_folder(&mut editor, session));
@@ -223,6 +232,18 @@ pub fn run() {
         }
     };
 
+    // X11、Wayland 上经门户读取系统的外观，在建窗口之前开始。
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let proxy = event_loop.create_proxy();
+        color_scheme::watch(move |theme| {
+            let _ = proxy.send_event(Envelope {
+                to: winc::Recipient::Active,
+                event: app::UserEvent::SystemThemeChanged(theme),
+            });
+        });
+    }
+
     // 拖到程序坞图标上、由系统转交给 winc 打开的文件和目录。winc 因此被启动时，系统在启动
     // 完成之前就交来这些路径，因此必须在事件循环开始运行之前注册回调；这些事件在窗口建好以后
     // 才处理。测量时不注册，样本文件只能由命令行指定。
@@ -248,18 +269,20 @@ pub fn run() {
     let mut winc = Winc::new(Some(event_loop.create_proxy()), template);
     let (key, proxy) = winc.reserve();
     let mut app = App::new(editor, proxy, bench, config);
+    // 第一个窗口出示启动本进程时给出的激活令牌，合成器随之结束启动通知。
+    app.set_activation(tokens.for_window(is_wayland(&event_loop)));
     app.watch_git_output();
     winc_editor::proxy::follow_system_proxy(app.config.system_proxy != Some(false));
     app.store.config_path = config_path;
     app.git.commit.set_flat(!state.commit_tree);
     let sort = crate::app::CommitSort::from_key(&state.commit_sort);
     app.git.commit.set_sort(sort);
-    app.git
-        .commit
-        .set_staging(app.config.git_staging_area == Some(true));
     app.editor.diff_unified = app.config.diff_inline == Some(true);
+    app.editor.diff_collapse = app.config.diff_collapse_unchanged != Some(false);
     app.state = state;
+    app.restore_text_places();
     app.restore_panel_width();
+    app.load_at_launch(opened.jumps);
     // 临时打开（`--wait`、`-`）时不记录现场、不加入最近列表、不备份，下次启动的状态不受影响。
     if args.one_off() {
         app.start_one_off(&args);
@@ -267,6 +290,11 @@ pub fn run() {
         app.store.state_path = state_path;
         app.backup.root = backup_root;
         app.adopt_restored(restored);
+        if let Some(file) = opened.project.as_deref().or(last_project.as_deref())
+            && app.editor.root().is_none()
+        {
+            app.open_folder_now(file);
+        }
         // 测量时没有状态文件：不记录版本，开始页也不显示「首次设置」。
         if app.store.state_path.is_some() {
             app.note_version();
@@ -277,7 +305,12 @@ pub fn run() {
         // `ssh://` 参数，或者上次开着的远端目录。
         match cli::remote_open(&args.targets) {
             Some(open) => app.open_remote(open),
-            None if args.targets.is_empty() => app.restore_remote_folder(),
+            None if args.targets.is_empty() => {
+                let reconnecting = app.restore_remote_folder();
+                if !reconnecting {
+                    app.start_with_new_file();
+                }
+            }
             None => {}
         }
     }
@@ -297,17 +330,35 @@ pub fn run() {
     updates::after_exit();
 }
 
-/// 按命令行参数打开目录和文件，返回需要提示用户的 `Vec<String>`。
+/// 按命令行参数打开目录和文件的结果。
+#[derive(Debug, Default)]
+pub(crate) struct Opened {
+    /// 需要提示用户的问题。
+    pub problems: Vec<String>,
+    /// 还没有读取的文档读好以后要跳到的（行，列），从 0 起。
+    pub jumps: Vec<(winc_editor::DocumentId, usize, usize)>,
+    /// 要打开的项目文件，在窗口建好后打开（见 [`App::open_folder_now`]）。
+    pub project: Option<PathBuf>,
+}
+
+/// 按命令行参数打开目录和文件。
 ///
 /// 只给出文件时不打开其所在的目录；`文件:行` 形式的目标会跳到对应行（行号和列号从 0 起）。
-/// 临时打开（`--wait`、`-`）时不接受目录。远端的目标（`ssh://`）跳过：连接之后才能打开，见
-/// [`cli::remote_open`]。
-pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Vec<String> {
+/// 大文件只开标签不读取，留给窗口在后台读取（见 [`App::load_at_launch`]）。临时打开（`--wait`、
+/// `-`）时不接受目录。远端的目标（`ssh://`）跳过：连接之后才能打开，见 [`cli::remote_open`]。
+pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Opened {
     let mut problems = Vec::new();
+    let mut jumps = Vec::new();
     let mut first_file = None;
+    let mut project = None;
     let local = args.targets.iter();
     for target in local.filter(|t| !winc_backend::is_remote(&t.path)) {
-        if winc_backend::fs::is_dir(&target.path) {
+        let is_project = app::workspace::project::is_project(&target.path);
+        if is_project && !args.one_off() {
+            project.get_or_insert_with(|| target.path.clone());
+            continue;
+        }
+        if winc_backend::fs::is_dir(&target.path) || is_project {
             if args.one_off() {
                 let path = target.path.display().to_string();
                 problems.push(winc_i18n::t!("cmd-cli-wait-folder", path = path));
@@ -323,7 +374,15 @@ pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Vec<String>
             }
             continue;
         }
-        let index = editor.open(&target.path);
+        let index = editor.open_tab(&target.path);
+        if winc_editor::opens_as_large(&target.path) {
+            if let Some(line) = target.line {
+                jumps.push((editor.documents[index].id, line, target.col.unwrap_or(0)));
+            }
+            first_file.get_or_insert(index);
+            continue;
+        }
+        editor.load(index);
         if let Some(line) = target.line {
             let doc = &mut editor.documents[index];
             let text = doc.text();
@@ -337,12 +396,16 @@ pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Vec<String>
     if let Some(index) = first_file {
         editor.active = Some(index);
     }
-    problems
+    Opened {
+        problems,
+        jumps,
+        project,
+    }
 }
 
 /// 是否已将要打开的目录和文件交给正在运行的 winc，由该进程切到打开该目录的窗口、新建窗口或
 /// 切到前台。
-fn hand_over(args: &cli::Args) -> bool {
+fn hand_over(args: &cli::Args, tokens: &instance::LaunchTokens) -> bool {
     let targets: Vec<cli::Target> = args
         .targets
         .iter()
@@ -351,7 +414,20 @@ fn hand_over(args: &cli::Args) -> bool {
             ..t.clone()
         })
         .collect();
-    instance::forward_to_app(&targets, instance::launch_token().as_deref())
+    instance::forward_to_app(&targets, tokens.forwarded())
+}
+
+/// 事件循环是否使用 Wayland。
+#[cfg(all(unix, not(target_os = "macos")))]
+fn is_wayland<T>(event_loop: &EventLoop<T>) -> bool {
+    use winit::platform::wayland::EventLoopExtWayland;
+    event_loop.is_wayland()
+}
+
+/// 事件循环是否使用 Wayland；本平台始终为否。
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn is_wayland<T>(_event_loop: &EventLoop<T>) -> bool {
+    false
 }
 
 /// 设置界面语言，并让汉字按界面语言的字形显示，返回字形所用的语言是否发生变化。
@@ -384,7 +460,7 @@ fn set_encoding_region() {
 
 /// 打开上次退出时的项目目录，返回是否打开成功。
 ///
-/// 目录已不存在时不做任何事，开始页的最近列表仍保留该条目。标签由 `app::restore_tabs`
+/// 目录已不存在时不做任何事，开始页的最近列表仍保留该条目。标签由 `app::restore_at_launch`
 /// 按现场恢复。
 pub(crate) fn open_session_folder(editor: &mut Editor, session: &Session) -> bool {
     winc_backend::fs::is_dir(&session.folder) && editor.open_folder(&session.folder).is_ok()

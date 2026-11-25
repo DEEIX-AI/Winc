@@ -38,14 +38,14 @@ pub struct History {
 /// 连续键入合并为一个撤销单元的最长间隔（毫秒）。
 ///
 /// 两次键入的间隔不超过 1000 ms 时合并；间隔超过该时长后，下一次键入另起一个撤销单元。
-/// 1000 ms 为经验值：它长于连续输入单个词或短句的停顿，短于阅读、思考后的停顿。
+/// 1000 ms 长于连续输入单个词或短句的停顿，短于阅读、思考后的停顿。
 pub(super) const MERGE_WINDOW: Duration = Duration::from_millis(1000);
 
 /// 撤销栈占用内存的上限（字节，估算方法见 [`changes_size`]）。
 ///
 /// 整份文件的操作（格式化、全部替换、排序、转换换行符）把全文记进撤销栈，大文件上做几次就是
 /// 几百 MB，且要到关闭标签页才释放。超过上限时从最早的事务开始丢弃，最近一次事务总会保留。
-/// 该值为经验值：64 MB 足以撤回普通文件上很长一段时间的编辑。
+/// 该值取自调参：64 MB 足以撤回普通文件上很长一段时间的编辑。
 const MAX_UNDO_BYTES: usize = 64 << 20;
 
 impl History {
@@ -127,26 +127,39 @@ impl History {
     ///
     /// 同时清空重做栈并分配新的版本号；符合合并条件的键入并入栈顶事务，分组期间的事务并入
     /// 该分组的撤销单元（[`History::begin_group`]），撤销栈超过上限时丢弃最早的事务。
-    pub fn push(&mut self, mut transaction: Transaction) {
+    pub fn push(&mut self, transaction: Transaction) {
+        self.record(transaction, false);
+    }
+
+    /// 记录一个已经应用到文本上的事务，并入撤销栈顶的撤销单元：撤销时与上一次修改一起撤回。
+    ///
+    /// 用于紧随一次修改的连带修改；撤销栈为空时与 [`History::push`] 相同。
+    pub fn amend(&mut self, transaction: Transaction) {
+        self.record(transaction, true);
+    }
+
+    /// [`History::push`] 与 [`History::amend`] 的实现；`amend` 为真时总是并入栈顶事务。
+    fn record(&mut self, mut transaction: Transaction, amend: bool) {
         self.redo.clear();
         self.next_version += 1;
         transaction.version = self.next_version;
 
         let grouping = self.groups > 0;
-        if !self.sealed
+        if (amend || !self.sealed)
             && let Some(last) = self.undo.last_mut()
-            && (if grouping {
-                self.grouped
-            } else {
-                can_merge(last, &transaction)
-            })
+            && (amend
+                || if grouping {
+                    self.grouped
+                } else {
+                    can_merge(last, &transaction)
+                })
         {
             // 紧邻的插入直接追加到上一处修改的 `inserted` 末尾：逐字符各记一处修改，会使每个
             // 字符多占一个 `Change` 和一次堆分配，撤销栈随键入量线性增大。
             // 多光标的修改各在一处，只能整组追加。分组期间不经 `can_merge`，在此判断是否紧邻。
             let single = transaction.extra_after.is_empty();
             let added = match (last.changes.last_mut(), transaction.changes.as_slice()) {
-                (Some(prev), [next]) if single && (!grouping || extends(prev, next)) => {
+                (Some(prev), [next]) if single && (!(grouping || amend) || extends(prev, next)) => {
                     let before = heap(&prev.inserted);
                     prev.inserted.push_str(&next.inserted);
                     heap(&prev.inserted) - before

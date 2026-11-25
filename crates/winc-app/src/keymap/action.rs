@@ -5,6 +5,9 @@ use winc_i18n::t;
 use super::*;
 
 mod english;
+mod list;
+
+pub use list::ACTIONS;
 
 /// 可以用快捷键或命令面板执行的命令。
 ///
@@ -16,6 +19,7 @@ pub enum Action {
     GoToSymbol,
     GoToLine,
     GoToDefinition,
+    OpenLink,
     FindReferences,
     GoBack,
     GoForward,
@@ -30,6 +34,10 @@ pub enum Action {
     OpenFolder,
     /// 把一个目录加为窗口的附加目录。
     AddFolder,
+    /// 把窗口中的目录另存为项目文件。
+    SaveProjectAs,
+    /// 选择项目文件并打开。
+    OpenProject,
     RemoteConnect,
     RemoteDisconnect,
     OpenRecent,
@@ -41,6 +49,19 @@ pub enum Action {
     ReopenClosed,
     NextTab,
     PreviousTab,
+    FocusTab1,
+    FocusTab2,
+    FocusTab3,
+    FocusTab4,
+    FocusTab5,
+    FocusTab6,
+    FocusTab7,
+    FocusTab8,
+    FocusTab9,
+    /// 按最近使用的顺序切换标签页（见 `App::switch_tab`）。
+    SwitchTab,
+    /// 按最近使用的顺序反向切换标签页。
+    SwitchTabBack,
     SplitRight,
     SplitDown,
     MoveToSplitRight,
@@ -116,6 +137,27 @@ pub enum Action {
     MarkdownPastePlain,
     DeleteLine,
     DeleteAllLeft,
+    /// 与方向键、`Home` `End`、`⌫` `⌦` 相同的命令：macOS 上两套方案按各自编辑器的默认键位绑定
+    /// `⌃` 字母键（见 [`App::press_editor_key`](crate::app::App)）。
+    CursorLeft,
+    CursorRight,
+    CursorUp,
+    CursorDown,
+    CursorHome,
+    CursorEnd,
+    /// 光标移到这一行的第 0 列、末尾：不按折行分段，也不停在首个非空白字符处。
+    CursorLineStart,
+    CursorLineEnd,
+    DeleteLeft,
+    DeleteRight,
+    DeleteAllRight,
+    /// 剪切光标到行尾的文字；光标在行尾时剪切换行符。
+    CutToLineEnd,
+    TransposeLetters,
+    /// 在光标处换行，光标留在原处。
+    InsertLineBreak,
+    /// 把光标所在行滚到编辑区中间。
+    ScrollToCenter,
     IndentLines,
     OutdentLines,
     MoveLinesUp,
@@ -145,6 +187,9 @@ pub enum Action {
     SortLinesAscending,
     SortLinesDescending,
     TrimTrailingWhitespace,
+    /// 把 `\uXXXX` 转义换成字符，或把 ASCII 以外的字符写成转义；没有选区时转换整个文件。
+    UnescapeUnicode,
+    EscapeUnicode,
     IndentUsingSpaces,
     IndentUsingTabs,
     ConvertIndentationToSpaces,
@@ -189,6 +234,7 @@ pub enum Action {
     ToggleRegex,
     FilterLines,
     FindInFiles,
+    OpenSearchDialog,
     ReplaceInFiles,
     ReplaceAllInFiles,
     NextResult,
@@ -240,6 +286,10 @@ pub enum Action {
     /// 切换差异的单栏显示和并排显示。
     ToggleDiffLayout,
     GitShowChanges,
+    /// 打开「未提交的更改」标签：所有未提交的更改按文件依次排在一个标签里。
+    GitShowAllChanges,
+    /// 点击提交视图中的文件时是否在「未提交的更改」标签中查看（`git.combinedDiff`）。
+    GitToggleCombinedDiff,
     /// 更改列表：显示选中文件的差异，焦点移到差异上。
     ChangesShowDiff,
     /// 更改列表：在编辑区打开选中的文件。
@@ -307,6 +357,8 @@ pub enum Action {
     StopConfiguration,
     /// 打开运行配置文件。
     EditRunConfigurations,
+    /// 发送 `.http` 文件中光标所在的请求（见 `App::send_http_request`）。
+    SendHttpRequest,
     ClearTerminal,
     /// 复制终端的选区。
     TerminalCopy,
@@ -317,6 +369,8 @@ pub enum Action {
     NextTerminal,
     PreviousTerminal,
     SplitTerminal,
+    /// 终端：把正在看的标签移到正在用的一栏后面新加的一栏（见 `App::move_terminal_to_new_group`）。
+    MoveTerminalToGroup,
     NextTerminalPane,
     PreviousTerminalPane,
     FocusTerminal1,
@@ -374,6 +428,24 @@ impl Action {
         Self::FocusTerminal9,
     ];
 
+    /// 按顺序切到编辑区第 1 至第 9 个标签页的命令，供数字键绑定和编号查询共用。
+    pub const TAB_FOCUS: [Self; 9] = [
+        Self::FocusTab1,
+        Self::FocusTab2,
+        Self::FocusTab3,
+        Self::FocusTab4,
+        Self::FocusTab5,
+        Self::FocusTab6,
+        Self::FocusTab7,
+        Self::FocusTab8,
+        Self::FocusTab9,
+    ];
+
+    /// 返回切换标签页命令的标签下标（从 0 起），其他命令返回 `None`。
+    pub fn tab_index(self) -> Option<usize> {
+        Self::TAB_FOCUS.iter().position(|action| *action == self)
+    }
+
     /// 返回终端聚焦命令的标签下标（从 0 起），其他命令返回 `None`。
     pub fn terminal_index(self) -> Option<usize> {
         Self::TERMINAL_FOCUS
@@ -390,6 +462,7 @@ impl Action {
             GoToSymbol => t!("cmd-go-to-symbol"),
             GoToLine => t!("cmd-go-to-line"),
             GoToDefinition => t!("cmd-go-to-definition"),
+            OpenLink => t!("cmd-open-link"),
             FindReferences => t!("cmd-find-references"),
             GoBack => t!("cmd-go-back"),
             GoForward => t!("cmd-go-forward"),
@@ -402,6 +475,8 @@ impl Action {
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
             AddFolder => t!("cmd-add-folder"),
+            SaveProjectAs => t!("cmd-save-project-as"),
+            OpenProject => t!("cmd-open-project"),
             RemoteConnect => t!("cmd-remote-connect"),
             RemoteDisconnect => t!("cmd-remote-disconnect"),
             OpenRecent => t!("cmd-open-recent"),
@@ -413,6 +488,17 @@ impl Action {
             ReopenClosed => t!("cmd-reopen-closed"),
             NextTab => t!("cmd-next-tab"),
             PreviousTab => t!("cmd-previous-tab"),
+            FocusTab1 => t!("cmd-tab-1"),
+            FocusTab2 => t!("cmd-tab-2"),
+            FocusTab3 => t!("cmd-tab-3"),
+            FocusTab4 => t!("cmd-tab-4"),
+            FocusTab5 => t!("cmd-tab-5"),
+            FocusTab6 => t!("cmd-tab-6"),
+            FocusTab7 => t!("cmd-tab-7"),
+            FocusTab8 => t!("cmd-tab-8"),
+            FocusTab9 => t!("cmd-tab-9"),
+            SwitchTab => t!("cmd-switch-tab"),
+            SwitchTabBack => t!("cmd-switch-tab-back"),
             SplitRight => t!("cmd-split-right"),
             SplitDown => t!("cmd-split-down"),
             MoveToSplitRight => t!("cmd-move-to-split-right"),
@@ -470,6 +556,21 @@ impl Action {
             MarkdownPastePlain => t!("cmd-markdown-paste-plain"),
             DeleteLine => t!("cmd-delete-line"),
             DeleteAllLeft => t!("cmd-delete-all-left"),
+            CursorLeft => t!("cmd-cursor-left"),
+            CursorRight => t!("cmd-cursor-right"),
+            CursorUp => t!("cmd-cursor-up"),
+            CursorDown => t!("cmd-cursor-down"),
+            CursorHome => t!("cmd-cursor-home"),
+            CursorEnd => t!("cmd-cursor-end"),
+            CursorLineStart => t!("cmd-cursor-line-start"),
+            CursorLineEnd => t!("cmd-cursor-line-end"),
+            DeleteLeft => t!("cmd-delete-left"),
+            DeleteRight => t!("cmd-delete-right"),
+            DeleteAllRight => t!("cmd-delete-all-right"),
+            CutToLineEnd => t!("cmd-cut-to-line-end"),
+            TransposeLetters => t!("cmd-transpose-letters"),
+            InsertLineBreak => t!("cmd-insert-line-break"),
+            ScrollToCenter => t!("cmd-scroll-to-center"),
             IndentLines => t!("cmd-indent-lines"),
             OutdentLines => t!("cmd-outdent-lines"),
             MoveLinesUp => t!("cmd-move-lines-up"),
@@ -499,6 +600,8 @@ impl Action {
             SortLinesAscending => t!("cmd-sort-lines-ascending"),
             SortLinesDescending => t!("cmd-sort-lines-descending"),
             TrimTrailingWhitespace => t!("cmd-trim-trailing-whitespace"),
+            UnescapeUnicode => t!("cmd-unescape-unicode"),
+            EscapeUnicode => t!("cmd-escape-unicode"),
             IndentUsingSpaces => t!("cmd-indent-using-spaces"),
             IndentUsingTabs => t!("cmd-indent-using-tabs"),
             ConvertIndentationToSpaces => t!("cmd-convert-indentation-to-spaces"),
@@ -542,6 +645,7 @@ impl Action {
             ToggleRegex => t!("cmd-toggle-regex"),
             FilterLines => t!("cmd-filter-lines"),
             FindInFiles => t!("cmd-find-in-files"),
+            OpenSearchDialog => t!("cmd-open-search-dialog"),
             ReplaceInFiles => t!("cmd-replace-in-files"),
             ReplaceAllInFiles => t!("cmd-replace-all-in-files"),
             NextResult => t!("cmd-next-result"),
@@ -578,6 +682,8 @@ impl Action {
             PreviousDiffFile => t!("cmd-previous-diff-file"),
             ToggleDiffLayout => t!("cmd-toggle-diff-layout"),
             GitShowChanges => t!("cmd-git-show-changes"),
+            GitShowAllChanges => t!("cmd-git-show-all-changes"),
+            GitToggleCombinedDiff => t!("cmd-git-toggle-combined-diff"),
             ChangesShowDiff => t!("cmd-changes-show-diff"),
             ChangesOpenSource => t!("cmd-changes-open-source"),
             ChangesRollback => t!("cmd-changes-rollback"),
@@ -614,6 +720,7 @@ impl Action {
             ToggleTerminalPanel => t!("cmd-toggle-terminal-panel"),
             EnableTerminal => t!("cmd-enable-terminal"),
             RunConfiguration => t!("cmd-run-configuration"),
+            SendHttpRequest => t!("cmd-send-http-request"),
             StopConfiguration => t!("cmd-stop-configuration"),
             EditRunConfigurations => t!("cmd-edit-run-configurations"),
             ClearTerminal => t!("cmd-clear-terminal"),
@@ -624,6 +731,7 @@ impl Action {
             NextTerminal => t!("cmd-next-terminal"),
             PreviousTerminal => t!("cmd-previous-terminal"),
             SplitTerminal => t!("cmd-split-terminal"),
+            MoveTerminalToGroup => t!("cmd-move-terminal-to-group"),
             NextTerminalPane => t!("cmd-next-terminal-pane"),
             PreviousTerminalPane => t!("cmd-previous-terminal-pane"),
             FocusTerminal1 => t!("cmd-terminal-1"),
@@ -679,6 +787,7 @@ impl Action {
             | GoToSymbol
             | GoToLine
             | GoToDefinition
+            | OpenLink
             | FindReferences
             | GoBack
             | GoForward
@@ -688,11 +797,13 @@ impl Action {
             | RecordKeys
             | InstallShellCommand
             | UninstallShellCommand => Group::General,
-            NewFile | OpenFile | OpenFolder | AddFolder | RemoteConnect | RemoteDisconnect
-            | Save | SaveAs | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab
-            | PreviousTab | CloseFolder | CloseWindow | CopyPath | CopyRelativePath
-            | RevealInFinder | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal
-            | Quit => Group::File,
+            NewFile | OpenFile | OpenFolder | OpenProject | AddFolder | SaveProjectAs
+            | RemoteConnect | RemoteDisconnect | Save | SaveAs | CloseTab | CloseOtherTabs
+            | CloseAllTabs | ReopenClosed | NextTab | PreviousTab | FocusTab1 | FocusTab2
+            | FocusTab3 | FocusTab4 | FocusTab5 | FocusTab6 | FocusTab7 | FocusTab8 | FocusTab9
+            | SwitchTab | SwitchTabBack | CloseFolder | CloseWindow | CopyPath
+            | CopyRelativePath | RevealInFinder | CopyActivePath | CopyKeyPath
+            | RevealActiveFile | OpenInTerminal | Quit => Group::File,
             NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo
             | Redo
@@ -726,6 +837,21 @@ impl Action {
             | MarkdownPastePlain
             | DeleteLine
             | DeleteAllLeft
+            | CursorLeft
+            | CursorRight
+            | CursorUp
+            | CursorDown
+            | CursorHome
+            | CursorEnd
+            | CursorLineStart
+            | CursorLineEnd
+            | DeleteLeft
+            | DeleteRight
+            | DeleteAllRight
+            | CutToLineEnd
+            | TransposeLetters
+            | InsertLineBreak
+            | ScrollToCenter
             | IndentLines
             | OutdentLines
             | MoveLinesUp
@@ -755,6 +881,8 @@ impl Action {
             | SortLinesAscending
             | SortLinesDescending
             | TrimTrailingWhitespace
+            | UnescapeUnicode
+            | EscapeUnicode
             | IndentUsingSpaces
             | IndentUsingTabs
             | ConvertIndentationToSpaces
@@ -786,8 +914,8 @@ impl Action {
             | Fix => Group::Edit,
             Find | Replace | FindNext | FindPrevious | HighlightWord | ClearWordHighlights
             | ReplaceOne | ReplaceAll | SelectAllMatches | ToggleCase | ToggleWord
-            | ToggleRegex | FilterLines | FindInFiles | ReplaceInFiles | ReplaceAllInFiles
-            | NextResult | PreviousResult => Group::Find,
+            | ToggleRegex | FilterLines | FindInFiles | OpenSearchDialog | ReplaceInFiles
+            | ReplaceAllInFiles | NextResult | PreviousResult => Group::Find,
             RenameFile
             | DeleteFile
             | DeleteFilePermanently
@@ -823,6 +951,8 @@ impl Action {
             | PreviousDiffFile
             | ToggleDiffLayout
             | GitShowChanges
+            | GitShowAllChanges
+            | GitToggleCombinedDiff
             | ChangesShowDiff
             | ChangesOpenSource
             | ChangesRollback
@@ -861,6 +991,7 @@ impl Action {
             | RunConfiguration
             | StopConfiguration
             | EditRunConfigurations
+            | SendHttpRequest
             | ClearTerminal
             | TerminalCopy
             | TerminalPaste
@@ -869,6 +1000,7 @@ impl Action {
             | NextTerminal
             | PreviousTerminal
             | SplitTerminal
+            | MoveTerminalToGroup
             | NextTerminalPane
             | PreviousTerminalPane
             | FocusTerminal1
@@ -946,10 +1078,10 @@ impl Action {
 
     /// 光标在差异标签右侧时，是否把命令交给右侧对应的源文档执行。
     ///
-    /// 「编辑」分组的命令默认都交给右侧，新加的编辑命令在差异里也能直接用；另外加上保存和
-    /// 「选中全部匹配」。排除的是不改动文字、只作用于编辑器视图或文件设置的命令：折叠与书签
-    /// 只对普通编辑器的视图有意义；缩进方式、缩进转换、检测缩进、换行符和语言模式改的是整份
-    /// 文件的设置，不在差异里执行。
+    /// 「编辑」分组的命令默认都交给右侧，新加的编辑命令在差异里也能直接用；另外加上保存和「选中全部
+    /// 匹配」。等同于方向键、删除键的命令照真的按键处理，不在此列。排除的还有不改动文字、只作用于编
+    /// 辑器视图或文件设置的命令：滚到中间、折叠与书签只对普通编辑器的视图有意义；缩进方式、缩进
+    /// 转换、检测缩进、换行符和语言模式改的是整份文件的设置，不在差异里执行。
     pub fn edits_in_diff(self) -> bool {
         use Action::*;
         match self {
@@ -980,6 +1112,15 @@ impl Action {
             | DetectIndentation
             | ChangeEndOfLine
             | ChangeLanguageMode
+            | CursorLeft
+            | CursorRight
+            | CursorUp
+            | CursorDown
+            | CursorHome
+            | CursorEnd
+            | DeleteLeft
+            | DeleteRight
+            | ScrollToCenter
             | MarkdownBold
             | MarkdownItalic
             | MarkdownCode
@@ -1010,15 +1151,19 @@ impl Action {
     /// 焦点在终端里时，带 ⌘ 的全局快捷键是否还作用于这个命令。
     ///
     /// 编辑和查找的命令针对编辑区里的文档，在终端里按下不能改到看不见的文档，交给终端
-    /// （粘贴由终端自己处理；复制、全选在终端里另有绑定）。
+    /// （粘贴由终端自己处理；复制、全选在终端里另有绑定）。按最近使用切换标签页的两个方向都
+    /// 交给终端：其默认键单按 `Ctrl`，正向本来就交给终端程序。
     pub fn reaches_terminal(self) -> bool {
-        self == Action::Paste || !matches!(self.group(), Group::Edit | Group::Find)
+        let switch = matches!(self, Action::SwitchTab | Action::SwitchTabBack);
+        self == Action::Paste || !switch && !matches!(self.group(), Group::Edit | Group::Find)
     }
 
     /// 命令属于哪个可选模块；不属于任何模块的命令总是可用。
     pub fn module(self) -> Option<Module> {
         match self {
             Action::GitShowChanges
+            | Action::GitShowAllChanges
+            | Action::GitToggleCombinedDiff
             | Action::ChangesShowDiff
             | Action::ChangesOpenSource
             | Action::ChangesRollback
@@ -1064,6 +1209,7 @@ impl Action {
             | Action::NextTerminal
             | Action::PreviousTerminal
             | Action::SplitTerminal
+            | Action::MoveTerminalToGroup
             | Action::NextTerminalPane
             | Action::PreviousTerminalPane
             | Action::FocusTerminal1
@@ -1095,7 +1241,8 @@ impl Action {
 
     /// 是否在命令面板中列出。
     ///
-    /// 不列出的命令：命令面板自身（`ShowCommands`）、`RecordKeys`、剪贴板命令、`Quit`，以及
+    /// 不列出的命令：命令面板自身（`ShowCommands`）、`RecordKeys`、剪贴板命令、`Quit`、等同于
+    /// 方向键和删除键的命令，以及
     /// 只在特定位置有意义、离开该位置就无法执行的命令（文件树中选中的项、查找条和搜索面板的
     /// 开关与翻页）。
     pub fn in_palette(self) -> bool {
@@ -1118,6 +1265,16 @@ impl Action {
                 | ColumnSelectDown
                 | ColumnSelectLeft
                 | ColumnSelectRight
+                | CursorLeft
+                | CursorRight
+                | CursorUp
+                | CursorDown
+                | CursorHome
+                | CursorEnd
+                | CursorLineStart
+                | CursorLineEnd
+                | DeleteLeft
+                | DeleteRight
                 | ToggleCase
                 | ToggleWord
                 | ToggleRegex
@@ -1134,274 +1291,3 @@ impl Action {
         )
     }
 }
-
-/// 全部命令。
-///
-/// 命令面板按此顺序列出（最常用的在前），「快捷键」页先分组、再按此顺序排列。
-pub const ACTIONS: &[Action] = {
-    use Action::*;
-    &[
-        QuickOpen,
-        GoToSymbol,
-        GoToLine,
-        GoToDefinition,
-        FindReferences,
-        GoBack,
-        GoForward,
-        ShowCommands,
-        Settings,
-        ReleaseNotes,
-        KeyboardShortcuts,
-        RecordKeys,
-        Format,
-        FormatSelection,
-        Fix,
-        Find,
-        Replace,
-        FindNext,
-        FindPrevious,
-        HighlightWord,
-        ClearWordHighlights,
-        ReplaceOne,
-        ReplaceAll,
-        SelectAllMatches,
-        ToggleCase,
-        ToggleWord,
-        ToggleRegex,
-        FilterLines,
-        FindInFiles,
-        ReplaceInFiles,
-        ReplaceAllInFiles,
-        NextResult,
-        PreviousResult,
-        NewFile,
-        NewWindow,
-        OpenFile,
-        OpenFolder,
-        AddFolder,
-        RemoteConnect,
-        RemoteDisconnect,
-        OpenRecent,
-        Save,
-        SaveAs,
-        CloseTab,
-        CloseOtherTabs,
-        CloseAllTabs,
-        ReopenClosed,
-        NextTab,
-        PreviousTab,
-        SplitRight,
-        SplitDown,
-        MoveToSplitRight,
-        MoveToSplitDown,
-        Unsplit,
-        NextPane,
-        PreviousPane,
-        CloseFolder,
-        CloseWindow,
-        CopyPath,
-        CopyRelativePath,
-        CopyReference,
-        CopyAbsoluteReference,
-        RevealInFinder,
-        CopyActivePath,
-        CopyKeyPath,
-        RevealActiveFile,
-        OpenInTerminal,
-        Quit,
-        Undo,
-        Redo,
-        Cut,
-        Copy,
-        Paste,
-        SelectAll,
-        ToggleComment,
-        MarkdownBold,
-        MarkdownItalic,
-        MarkdownCode,
-        MarkdownStrikethrough,
-        MarkdownHighlight,
-        MarkdownHeading1,
-        MarkdownHeading2,
-        MarkdownHeading3,
-        MarkdownHeading4,
-        MarkdownHeading5,
-        MarkdownHeading6,
-        MarkdownParagraph,
-        MarkdownQuote,
-        MarkdownOrderedList,
-        MarkdownBulletList,
-        MarkdownCodeBlock,
-        MarkdownMathBlock,
-        MarkdownTable,
-        MarkdownLink,
-        MarkdownImage,
-        MarkdownFocusMode,
-        MarkdownTypewriterMode,
-        MarkdownPastePlain,
-        DeleteLine,
-        DeleteAllLeft,
-        IndentLines,
-        OutdentLines,
-        MoveLinesUp,
-        MoveLinesDown,
-        CopyLinesUp,
-        CopyLinesDown,
-        JoinLines,
-        ExpandSelection,
-        ShrinkSelection,
-        AddCursorAbove,
-        AddCursorBelow,
-        AddNextOccurrence,
-        SkipToNextOccurrence,
-        SelectAllOccurrences,
-        RemoveSecondaryCursors,
-        AddCursorsToLineEnds,
-        CursorUndo,
-        CursorRedo,
-        ColumnSelectUp,
-        ColumnSelectDown,
-        ColumnSelectLeft,
-        ColumnSelectRight,
-        JumpToBracket,
-        TransformToUppercase,
-        TransformToLowercase,
-        TransformToTitlecase,
-        SortLinesAscending,
-        SortLinesDescending,
-        TrimTrailingWhitespace,
-        IndentUsingSpaces,
-        IndentUsingTabs,
-        ConvertIndentationToSpaces,
-        ConvertIndentationToTabs,
-        DetectIndentation,
-        ChangeEndOfLine,
-        ChangeLanguageMode,
-        Fold,
-        Unfold,
-        ToggleFold,
-        FoldRecursively,
-        UnfoldRecursively,
-        FoldAll,
-        UnfoldAll,
-        FoldLevel1,
-        FoldLevel2,
-        FoldLevel3,
-        FoldLevel4,
-        FoldLevel5,
-        FoldLevel6,
-        FoldLevel7,
-        ToggleBookmark,
-        NextBookmark,
-        PreviousBookmark,
-        ListBookmarks,
-        ClearBookmarks,
-        RenameFile,
-        DeleteFile,
-        DeleteFilePermanently,
-        OpenSelected,
-        PreviewSelected,
-        FindInFolder,
-        ToggleSidebar,
-        FocusSidebar,
-        ShowFiles,
-        ShowOutline,
-        IncreaseFontSize,
-        DecreaseFontSize,
-        ResetFontSize,
-        ZoomIn,
-        ZoomOut,
-        ResetZoom,
-        ThemeAuto,
-        ThemeLight,
-        ThemeDark,
-        ToggleStickyScroll,
-        ToggleVimMode,
-        ToggleWordWrap,
-        ToggleMinimap,
-        ToggleLineNumbers,
-        ToggleStatusBar,
-        ToggleWhitespace,
-        TogglePreview,
-        ToggleReadOnly,
-        ToggleReadOnlyAll,
-        ShowCommit,
-        GitShowChanges,
-        ChangesShowDiff,
-        ChangesOpenSource,
-        ChangesRollback,
-        GitShowLog,
-        GitGoToRevision,
-        GitRewordCommit,
-        GitGoToChildCommit,
-        GitGoToParentCommit,
-        GitShowOutput,
-        GitClone,
-        GitInit,
-        GitSwitchRepository,
-        GitSwitchWorktree,
-        GitNewWorktree,
-        GitSwitchBranch,
-        GitNewBranch,
-        GitFetch,
-        GitPull,
-        GitPullRebase,
-        GitPullFrom,
-        GitPush,
-        GitPushTo,
-        GitSync,
-        GitStash,
-        GitStageAll,
-        GitUnstageAll,
-        GitStageFile,
-        GitFileHistory,
-        GitSelectionHistory,
-        GitBlame,
-        GitRevertChange,
-        ToggleTerminal,
-        ToggleTerminalPanel,
-        EnableTerminal,
-        RunConfiguration,
-        StopConfiguration,
-        EditRunConfigurations,
-        NewTerminal,
-        ClearTerminal,
-        TerminalCopy,
-        TerminalPaste,
-        FindInTerminal,
-        MaximizeTerminal,
-        ScrollTerminalTop,
-        ScrollTerminalBottom,
-        ToggleTerminalPosition,
-        InstallShellCommand,
-        UninstallShellCommand,
-        RenameTerminal,
-        CloseTerminal,
-        NextTerminal,
-        PreviousTerminal,
-        SplitTerminal,
-        NextTerminalPane,
-        PreviousTerminalPane,
-        FocusTerminal1,
-        FocusTerminal2,
-        FocusTerminal3,
-        FocusTerminal4,
-        FocusTerminal5,
-        FocusTerminal6,
-        FocusTerminal7,
-        FocusTerminal8,
-        FocusTerminal9,
-        PreviousCommand,
-        NextCommand,
-        FoldOutput,
-        UnfoldOutput,
-        NextError,
-        PreviousError,
-        SendToTerminal,
-        NextDifference,
-        PreviousDifference,
-        NextDiffFile,
-        PreviousDiffFile,
-        ToggleDiffLayout,
-    ]
-};

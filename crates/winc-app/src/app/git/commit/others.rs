@@ -42,13 +42,13 @@ impl OtherGroup {
 }
 
 /// 多仓库时改动列表中当前仓库那一节以外的一行。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OtherRow {
     /// 当前仓库的标题行；它的改动列表（[`App::commit_rows`]）紧接在下面。
     Current,
     /// 另一个仓库的标题行：该仓库在仓库列表（`GitState::repositories`）中的下标。
     Repository(usize),
-    /// 没有更改的另一个仓库：只有这一行，写着它的分支和与上游的差异。
+    /// 没有更改的另一个仓库：只有这一行，显示它的分支和与上游的差异。
     Quiet(usize),
     /// 没有更改的各仓库一组的标题行；展开时其下每个仓库一行。
     QuietGroup,
@@ -59,6 +59,10 @@ pub(crate) enum OtherRow {
     /// 另一个仓库中有更改的文件：仓库的下标，文件在该仓库状态各项中的下标。暂存区视图中是
     /// 尚未暂存的那一部分。
     File(usize, usize),
+    /// 其他仓库更改树中的目录：仓库、分组、相对路径、合并显示的名称、层数。
+    Dir(usize, OtherGroup, PathBuf, String, usize),
+    /// 其他仓库更改树中的文件：仓库、状态下标、分组、层数。
+    TreeFile(usize, usize, OtherGroup, usize),
 }
 
 /// 决定 [`App::commit_other_rows`] 的各项：都没变时各行也不变。
@@ -70,6 +74,8 @@ pub(crate) struct OtherRowsKey {
     root: Option<PathBuf>,
     /// 是否暂存区视图（分组不同）。
     staging: bool,
+    /// 列表、树形、排序、紧凑目录及目录折叠状态的版本。
+    layout: u64,
     /// 仓库列表。
     repositories: Vec<PathBuf>,
     /// 折叠着的仓库和组。
@@ -84,6 +90,68 @@ pub(crate) struct OtherRowsKey {
 /// 仓库的文件分成「已暂存的更改」和「更改」两组。
 fn commits_staged(entry: &Entry) -> bool {
     entry.staged.is_some() && !entry.conflicted()
+}
+
+/// 将其他仓库一组的改动按目录排列，沿用当前仓库的紧凑目录和文件排序规则。
+fn push_other_level<'a>(
+    commit: &CommitState,
+    status: &Status,
+    (repo, root, group): (usize, &Path, OtherGroup),
+    dir: &Path,
+    items: Vec<(usize, &'a Path)>,
+    depth: usize,
+    out: &mut Vec<OtherRow>,
+) {
+    let mut files = Vec::new();
+    let mut dirs: BTreeMap<NaturalName<'a>, Vec<(usize, &'a Path)>> = BTreeMap::new();
+    for (index, path) in items {
+        let mut parts = path.components();
+        match (parts.next(), parts.as_path()) {
+            (Some(first), rest) if !rest.as_os_str().is_empty() => {
+                dirs.entry(NaturalName(first.as_os_str()))
+                    .or_default()
+                    .push((index, rest));
+            }
+            _ => files.push((index, path)),
+        }
+    }
+    for (NaturalName(name), mut sub) in dirs {
+        let mut label = PathBuf::from(name);
+        while let Some(next) = only_subdir(&sub).filter(|_| commit.compact) {
+            label.push(next);
+            for (_, path) in &mut sub {
+                let rest: &'a Path = path;
+                *path = rest.strip_prefix(next).unwrap_or(Path::new(""));
+            }
+        }
+        let full = dir.join(&label);
+        let label = label
+            .components()
+            .map(|p| p.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        out.push(OtherRow::Dir(repo, group, full.clone(), label, depth));
+        if !commit
+            .other_collapsed_dirs
+            .contains(&(root.to_path_buf(), group, full.clone()))
+        {
+            push_other_level(
+                commit,
+                status,
+                (repo, root, group),
+                &full,
+                sub,
+                depth + 1,
+                out,
+            );
+        }
+    }
+    commit.sort_files(status, &mut files);
+    out.extend(
+        files
+            .into_iter()
+            .map(|(index, _)| OtherRow::TreeFile(repo, index, group, depth)),
+    );
 }
 
 impl App {
@@ -101,11 +169,10 @@ impl App {
     /// 返回多仓库时当前仓库那一节以外的各行，按仓库列表的顺序；当前仓库的位置是一行
     /// [`OtherRow::Current`]，它的改动列表画在那一行下面。不列出其他仓库时为空。
     ///
-    /// 有更改的仓库一行标题，其下按组列出文件，两部分都有内容的文件在暂存区视图的两组中各列
-    /// 一次；折叠的仓库、组只有标题行。没有更改的仓库只有一行，状态尚未读到的仓库只有标题行。
+    /// 有更改的仓库一行标题，其下按组列出文件，两部分都有内容的文件在暂存区视图的两组中各列一次；
+    /// 折叠的仓库、组只有标题行。没有更改的仓库只有一行，状态尚未读到的仓库只有标题行。
     ///
-    /// 每帧要用好几次（排行、铺卡片、算滚动），按决定它的各项缓存（[`OtherRowsKey`]），没变时
-    /// 不再锁各仓库的状态重排。
+    /// 每帧要用多次，按决定它的各项缓存（[`OtherRowsKey`]），没变时不再锁各仓库的状态重排。
     pub(crate) fn commit_other_rows(&self) -> Vec<OtherRow> {
         if !self.commit_shows_others() {
             return Vec::new();
@@ -114,6 +181,7 @@ impl App {
             version: self.git.summaries_version(),
             root: self.git.root.clone(),
             staging: self.git.commit.staging(),
+            layout: self.git.commit.layout,
             repositories: self.git.repositories.clone(),
             folds: self.git.commit.other_folds.clone(),
             current_changed: self.current_changed(),
@@ -185,10 +253,30 @@ impl App {
                 if folded.contains(&(repo.clone(), Some(group))) {
                     continue;
                 }
-                rows.extend(files.into_iter().map(|n| match group {
-                    OtherGroup::Staged => OtherRow::Staged(i, n),
-                    _ => OtherRow::File(i, n),
-                }));
+                let mut files: Vec<(usize, &Path)> = files
+                    .into_iter()
+                    .map(|n| {
+                        let path = &status.entries[n].path;
+                        (n, path.strip_prefix(repo).unwrap_or(path))
+                    })
+                    .collect();
+                if self.git.commit.flat() {
+                    self.git.commit.sort_files(status, &mut files);
+                    rows.extend(files.into_iter().map(|(n, _)| match group {
+                        OtherGroup::Staged => OtherRow::Staged(i, n),
+                        _ => OtherRow::File(i, n),
+                    }));
+                } else {
+                    push_other_level(
+                        &self.git.commit,
+                        status,
+                        (i, repo, group),
+                        Path::new(""),
+                        files,
+                        0,
+                        &mut rows,
+                    );
+                }
             }
         }
         // 当前仓库不在仓库列表里（刚打开、还没查找完）时排在最前。
@@ -351,6 +439,37 @@ impl App {
         self.git.commit.other_folds.contains(&(root.clone(), group))
     }
 
+    /// 其他仓库中某一组的目录是否收起。
+    pub(crate) fn other_dir_folded(&self, repo: usize, group: OtherGroup, dir: &Path) -> bool {
+        self.git.repositories.get(repo).is_some_and(|root| {
+            self.git
+                .commit
+                .other_collapsed_dirs
+                .contains(&(root.clone(), group, dir.to_path_buf()))
+        })
+    }
+
+    /// 点击其他仓库的目录，仅展开、收起该目录，保留当前仓库。
+    pub(super) fn toggle_other_dir(&mut self, row: usize) {
+        let rows = self.commit_other_rows();
+        let Some(OtherRow::Dir(repo, group, dir, ..)) = rows.get(row) else {
+            return;
+        };
+        let Some(root) = self.git.repositories.get(*repo) else {
+            return;
+        };
+        let key = (root.clone(), *group, dir.clone());
+        let commit = &mut self.git.commit;
+        if !commit.other_collapsed_dirs.remove(&key) {
+            commit.other_collapsed_dirs.insert(key);
+        }
+        commit.layout += 1;
+        commit.motion = None;
+        commit.fold_motion = None;
+        self.git.commit.scroll = self.git.commit.scroll.min(self.commit_max_scroll());
+        self.request_redraw();
+    }
+
     /// 标题行 `header` 的折叠箭头转过的比例：0 指向右（收起），1 指向下（展开）。该行正在展开
     /// 或收起时随动画转动，否则按 `open`。
     pub(crate) fn other_fold_turn(&self, header: OtherRow, open: bool) -> f32 {
@@ -428,7 +547,7 @@ impl App {
     /// 打开或关闭「显示全部仓库」；所有窗口共用，下次启动沿用。
     pub(in crate::app) fn toggle_all_repositories(&mut self) {
         let on = !self.commit_all_repositories();
-        self.update_state(|state| state.commit_all_repositories = Some(on));
+        self.update_state(move |state| state.commit_all_repositories = Some(on));
         if on {
             self.git_read_summaries();
         }
@@ -436,7 +555,7 @@ impl App {
         self.request_redraw();
     }
 
-    /// 点了其他仓库的标题行或文件：切换到该仓库，点的是文件时选中它并预览差异。
+    /// 点击其他仓库的标题行或文件：切换到该仓库，点的是文件时选中它并预览差异。
     pub(super) fn press_other(&mut self, target: CommitTarget) {
         let (repo, entry) = match target {
             CommitTarget::OtherRepository(repo) => (repo, None),
@@ -672,7 +791,7 @@ impl App {
         }
     }
 
-    /// 点了其他仓库的勾选框：文件的勾选框只管这一个文件；仓库、组标题的勾选框在其中全部勾上时
+    /// 点击其他仓库的勾选框：文件的勾选框只管这一个文件；仓库、组标题的勾选框在其中全部勾上时
     /// 取消全部，否则全部勾上。
     pub(super) fn press_other_check(&mut self, target: CommitTarget) {
         let paths = |status: &Status, entry: Option<usize>| -> Vec<PathBuf> {
@@ -790,7 +909,7 @@ impl App {
         self.git.commit.blocker(status, others)
     }
 
-    /// 点了其他仓库文件行或分组行行尾的「＋」「−」：界面立即变化，命令在后台按顺序执行。
+    /// 点击其他仓库文件行或分组行行尾的「＋」「−」：界面立即变化，命令在后台按顺序执行。
     ///
     /// 冲突中的文件不在这里处理：切换到该仓库解决后再暂存。
     pub(super) fn press_other_stage(&mut self, target: CommitTarget) {
@@ -850,6 +969,7 @@ impl App {
             // 界面已按成功的结果显示：放弃其余的操作，按各仓库的实际状态重新显示。
             self.git.commit.other_stage_queue.clear();
             self.git.commit.commit_queued = false;
+            self.git.commit.drop_push_intent();
             self.notify(NoticeKind::Error, t!("git-stage-failed", error = e));
         }
         if !self.git.commit.other_stage_queue.is_empty() {
@@ -860,7 +980,7 @@ impl App {
         self.git_read_summaries();
         self.git_refresh();
         if std::mem::take(&mut self.git.commit.commit_queued) {
-            self.git_commit();
+            self.git_commit_resumed();
         }
     }
 }

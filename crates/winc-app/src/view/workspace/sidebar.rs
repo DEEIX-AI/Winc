@@ -104,10 +104,13 @@ pub(in crate::view) const BADGE_ROOM: f32 = 34.0;
 /// 徽章中心相对项目按钮左边的距离（逻辑像素）。
 pub(in crate::view) const BADGE_CENTER: f32 = 16.0;
 
+/// 项目名与其后未保存的标注之间的间隔（逻辑像素）。
+const UNSAVED_GAP: f32 = 6.0;
+
 /// 侧栏第二行左边的上下文栏：现在在哪个项目。
 ///
 /// 项目按钮三个视图（文件、搜索、提交）都一样，切换视图时不动：首字母徽章、项目名和下拉箭头，
-/// 点了弹项目菜单（最近的目录、打开目录、关闭目录）。
+/// 点击弹项目菜单（最近的目录、打开目录、关闭目录）。
 pub(in crate::view) struct ContextBar {
     /// 项目名；没有打开目录时是「未打开目录」。
     project: String,
@@ -117,6 +120,8 @@ pub(in crate::view) struct ContextBar {
     left: f32,
     /// 项目名完整显示时的文字宽度。
     project_w: f32,
+    /// 项目未保存时项目名后的淡色标注及其宽度（见 [`App::project_unsaved`]）。
+    unsaved: Option<(String, f32)>,
 }
 
 impl ContextBar {
@@ -127,11 +132,17 @@ impl ContextBar {
             .project_name()
             .unwrap_or_else(|| t!("workspace-sidebar-no-folder").to_owned());
         let project_w = frame.measure(FontKind::Ui, app.fonts.ui, &project);
+        let unsaved = app.project_unsaved().then(|| {
+            let tag = t!("workspace-project-unsaved").to_owned();
+            let width = frame.measure(FontKind::Ui, app.fonts.ui, &tag);
+            (tag, width)
+        });
         ContextBar {
             project,
             opened,
             left: app.layout.sidebar_header.x + 8.0,
             project_w,
+            unsaved,
         }
     }
 
@@ -141,9 +152,16 @@ impl ContextBar {
         if self.opened { BADGE_ROOM } else { 6.0 }
     }
 
+    /// 「未保存」标注的宽度，含与项目名之间的间隔。
+    fn unsaved_w(&self) -> f32 {
+        self.unsaved
+            .as_ref()
+            .map_or(0.0, |(_, width)| UNSAVED_GAP + width)
+    }
+
     /// 项目按钮完整显示时的宽度。
     pub(in crate::view) fn project_full(&self) -> f32 {
-        self.name_offset() + self.project_w + 18.0
+        self.name_offset() + self.project_w + self.unsaved_w() + 18.0
     }
 }
 
@@ -169,10 +187,10 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
     let name_max = if fits {
         f32::INFINITY
     } else {
-        (bar.left + project_w - 18.0 - name_x).max(0.0)
+        (bar.left + project_w - 18.0 - bar.unsaved_w() - name_x).max(0.0)
     };
     let name = truncate_end(frame, &bar.project, app.fonts.ui, name_max);
-    let name_end = name_x + frame.measure(FontKind::Ui, app.fonts.ui, &name);
+    let name_end = name_x + frame.measure(FontKind::Ui, app.fonts.ui, &name) + bar.unsaved_w();
     let hit = Rect::new(
         bar.left,
         header.y + (header.h - BUTTON_SMALL) / 2.0,
@@ -192,7 +210,10 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
         draw_badge(app, frame, badge_rect, &bar.project, clip);
     }
     let color = if bar.opened { p.text } else { p.text_muted };
-    let x = ui_text(frame, app, name_x, header, &name, color, clip);
+    let mut x = ui_text(frame, app, name_x, header, &name, color, clip);
+    if let Some((tag, _)) = &bar.unsaved {
+        x = ui_text(frame, app, x + UNSAVED_GAP, header, tag, p.text_muted, clip);
+    }
     let arrow = (x + 9.0, icon_center_y(app, header, app.fonts.ui));
     icons::chevron(frame, arrow, 6.5, Direction::Down, p.text_muted, clip);
     app.hits.project = hit.intersect(clip);
@@ -766,7 +787,7 @@ fn draw_name_input(
         frame.rect_corners(pill.inset(-1.0, -1.0), p.error, ring, row_clip);
     }
     // 用悬停的浅色而不是选中色：重命名时文件名主干是选中的，选中色底上看不出文字的选区。
-    // 先和侧栏底色混合成不透明的颜色，盖住底下的红线。
+    // 先和侧栏底色混合成不透明的颜色，遮住底下的红线。
     let fill = super::panel::over(p.sidebar_bg, p.hover);
     frame.rect_corners(pill, fill, radii, row_clip);
 
@@ -831,13 +852,13 @@ fn draw_name_input(
     *ime = caret;
 }
 
-/// 名字收回时，末尾的淡出从过渡的这个进度开始出现（经验值）：名字已基本缩回侧栏。
+/// 名字收回时，末尾的淡出从过渡的这个进度开始出现：名字已基本缩回侧栏。
 pub(in crate::view) const FADE_FROM: f32 = 0.7;
-/// 合并显示的目录中没有突出的各级的不透明度（经验值）：比突出的那一级淡，仍能看清。
+/// 合并显示的目录中没有突出的各级的不透明度：比突出的那一级淡，仍能看清。
 const CHAIN_DIM: f32 = 0.6;
-/// 合并显示的目录之间分隔符的不透明度（经验值）：比目录名淡，一眼能分出各级。
+/// 合并显示的目录之间分隔符的不透明度：比目录名淡，一眼能分出各级。
 pub(in crate::view) const CHAIN_SEPARATOR: f32 = 0.45;
-/// 合并显示的目录之间分隔符两侧各留的空白（逻辑像素，经验值）。
+/// 合并显示的目录之间分隔符两侧各留的空白（逻辑像素，取自调参）。
 pub(in crate::view) const CHAIN_GAP: f32 = 4.0;
 /// 合并显示的目录放不下时代替被折叠的各级的记号。
 pub(in crate::view) const CHAIN_FOLD: &str = "…";
@@ -1008,7 +1029,7 @@ fn draw_overflow_band(
     if right <= rect.x {
         return;
     }
-    // 这一行在最上层：底色从滚动条的范围起，滚动条只被这一行的高度挡住，上下两段照常显示。
+    // 这一行在最上层：底色从滚动条的范围起，滚动条只被这一行的高度挡住，上下两段仍然显示。
     let left = tree.right() - SCROLLBAR_HIT;
     let rect = Rect::new(left, rect.y, right - left, rect.h);
     let clip = Rect::new(rect.x, tree.y, rect.w, tree.h);
@@ -1157,12 +1178,11 @@ fn label_width(app: &App, frame: &mut Frame<'_>, entry: &Entry) -> f32 {
 
 /// 逐级绘制合并显示的目录，起点是 `at` 的横坐标和所在的行；`report` 收到每一级的左右边界和路径。
 ///
-/// 拖动放进其中某一级或鼠标悬停在某一级时，那一级加上底色并突出；选中这一行（`style` 的第二项）
-/// 时突出选中的那一级。突出的一级用文字颜色（`style` 的第一项），其余按 [`CHAIN_DIM`] 变淡，被 Git
-/// 忽略等本身较淡的文字也能分出是哪一级。分隔符和留白归入相邻的两级，各占一半。
+/// 拖动放进其中某一级或鼠标悬停在某一级时，那一级加上底色并突出；选中这一行（`style` 的第二项）时突
+/// 出选中的那一级。突出的一级用文字颜色（`style` 的第一项），其余按 [`CHAIN_DIM`] 变淡。
 ///
-/// `at` 的第三项是要显示的各部分（见 [`fold_chain`]），`None` 时显示全部；第四项是过渡的绘制
-/// 参数，相同的前缀之后的部分按它淡入。
+/// `at` 的第三项是要显示的各部分（见 [`fold_chain`]），`None` 时显示全部；第四项是过渡的绘制参数，
+/// 相同的前缀之后的部分按它淡入。
 fn draw_chain(
     app: &App,
     frame: &mut Frame<'_>,

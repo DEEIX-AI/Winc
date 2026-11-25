@@ -3,6 +3,10 @@
 use super::*;
 use crate::lang::detect;
 
+mod astro;
+mod http;
+mod template;
+
 fn lex(file: &str, line: &str, state: LineState) -> (Vec<(String, TokenKind)>, LineState) {
     let chars: Vec<char> = line.chars().collect();
     let mut tokens = Vec::new();
@@ -489,6 +493,21 @@ fn markdown_code_spans_and_fences() {
     // 信息字符串中有反引号的是行内代码，不是代码块。
     let (_, next) = lex("a.md", "``` a ```", LineState::Normal);
     assert_eq!(next, LineState::Normal);
+}
+
+/// 一长串没有闭合的嵌套插值：每处都要扫到行尾才知道没有闭合，扫描量必须与行长成正比。
+#[test]
+fn unclosed_nested_interpolations_are_scanned_in_linear_time() {
+    let line = format!("s = `{}", "${`".repeat(2000));
+    let started = std::time::Instant::now();
+    let (tokens, _) = lex("a.js", &line, LineState::Normal);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(tokens.iter().all(|(_, kind)| *kind != TokenKind::Variable));
+    // 闭合的插值不计入，一行里有很多处时仍然着色。
+    let line = format!("s = `{}`", "${a}".repeat(200));
+    let (tokens, _) = lex("a.js", &line, LineState::Normal);
+    let pieces = tokens.iter().filter(|(_, kind)| *kind == TokenKind::String);
+    assert!(pieces.count() >= 200, "{tokens:?}");
 }
 
 #[test]
@@ -1200,6 +1219,21 @@ fn markdown_fences_highlight_by_language() {
     // HTML 代码块中按标签着色。
     let (_, next) = lex("a.md", "```html", LineState::Normal);
     let (tokens, _) = lex("a.md", "<p class=\"a\">x</p>", next);
+    assert_eq!(tokens[0], ("p".into(), TokenKind::Tag));
+
+    // Astro 代码块同样识别开头的 frontmatter。
+    let (_, next) = lex("a.md", "```astro", LineState::Normal);
+    let (tokens, next) = lex("a.md", "---", next);
+    assert_eq!(tokens, vec![("---".into(), TokenKind::Decorator)]);
+    // 跨行的块注释也保持在 frontmatter 中，后面的代码仍按 TypeScript 着色。
+    let (tokens, next) = lex("a.md", "/* note", next);
+    assert_eq!(tokens, vec![("/* note".into(), TokenKind::Comment)]);
+    let (tokens, next) = lex("a.md", "still note */", next);
+    assert_eq!(tokens, vec![("still note */".into(), TokenKind::Comment)]);
+    let (tokens, next) = lex("a.md", "const a = 1;", next);
+    assert_eq!(tokens[0], ("const".into(), TokenKind::Keyword));
+    let (_, next) = lex("a.md", "---", next);
+    let (tokens, _) = lex("a.md", "<p>", next);
     assert_eq!(tokens[0], ("p".into(), TokenKind::Tag));
 }
 

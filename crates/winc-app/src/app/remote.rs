@@ -9,6 +9,7 @@
 
 pub(crate) mod mounts;
 pub(crate) mod picker;
+mod shell_setup;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,95 +26,19 @@ use crate::app::animation::Card;
 use crate::app::git::form::{FormDialog, FormKind, FormPlan};
 use crate::app::git::question::Asker;
 use crate::app::lifecycle::notice::NoticeAction;
-use crate::app::terminal::shells::ShellChoice;
 use crate::app::{App, TextField, UserEvent};
 use crate::askpass::{Listener, Question};
 use crate::layout::DialogPart;
+
+pub(crate) use shell_setup::{Setup, shell_pending, shell_ready, shells};
+#[cfg(all(test, unix))]
+pub(crate) use shell_setup::{set_shell_ready, set_shells};
 
 /// 指定服务进程所在目录的环境变量；未设置时在安装位置中查找（见 [`server_dirs`]）。
 const SERVER_DIR: &str = "WINC_SERVER_DIR";
 
 /// 服务进程的文件名前缀，其后是它所运行的系统（写法见 [`Program::system`]）。
 const SERVER_PREFIX: &str = "winc-server-";
-
-/// 把 shell 集成脚本写到远端的脚本：参数是成对的相对路径和内容，写到主目录下的
-/// `winc_pty::scripts::REMOTE_DIR`。先写到旁边再改名替换：正在启动的 shell 不会读到写了一半的
-/// 脚本。目录和文件只有用户本人可以访问。
-const INSTALL_SHELL: &str = concat!(
-    r#"umask 077; d=$HOME/$1; shift; while [ $# -gt 1 ]; do f=$d/$1; "#,
-    r#"mkdir -p "${f%/*}" && printf %s "$2" > "$f.new" && mv -f "$f.new" "$f" || exit 1; "#,
-    r#"shift 2; done"#,
-);
-
-/// 集成脚本已经写好的主机：在这些主机上开的终端注入 shell 集成。
-static SHELL_READY: Mutex<Vec<Target>> = Mutex::new(Vec::new());
-
-/// 各台主机上检测到的 shell，供终端的 shell 菜单列出。
-static SHELLS: Mutex<Vec<(Target, Vec<ShellChoice>)>> = Mutex::new(Vec::new());
-
-/// 列出主机上的 shell 最长等待的时间：5 秒，与查询远端环境的时限相同，超时按没有检测到处理。
-const SHELLS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// 返回 `target` 上检测到的 shell，登录 shell 排在最前；尚未检测完或检测失败时为空。
-pub(crate) fn shells(target: &Target) -> Vec<ShellChoice> {
-    let known = SHELLS.lock().unwrap_or_else(PoisonError::into_inner);
-    let found = known.iter().find(|(host, _)| host == target);
-    found.map(|(_, shells)| shells.clone()).unwrap_or_default()
-}
-
-/// 测试中直接记下 `target` 上的 shell，代替经连接检测；用到它的测试只在 Unix 上编译。
-#[cfg(all(test, unix))]
-pub(crate) fn set_shells(target: &Target, shells: Vec<ShellChoice>) {
-    let mut known = SHELLS.lock().unwrap_or_else(PoisonError::into_inner);
-    known.retain(|(host, _)| host != target);
-    known.push((target.clone(), shells));
-}
-
-/// 列出 `target` 上的 shell 并记下来，一次往返；每次连接都重新检测。
-fn detect_shells(target: &Target) {
-    let mut exec = Exec::new("sh")
-        .arg("-c")
-        .arg(crate::app::terminal::shells::REMOTE_DETECT)
-        .arg("winc");
-    for path in crate::app::terminal::shells::remote_candidates() {
-        exec = exec.arg(path);
-    }
-    let home = winc_backend::virtual_path(target, b"/");
-    let deadline = std::time::Instant::now() + SHELLS_TIMEOUT;
-    let output = remote::exec(&home, &exec, &|| std::time::Instant::now() >= deadline);
-    let found = output.ok().map_or_else(Vec::new, |output| {
-        crate::app::terminal::shells::remote_shells(&String::from_utf8_lossy(&output.stdout))
-    });
-    let mut known = SHELLS.lock().unwrap_or_else(PoisonError::into_inner);
-    known.retain(|(host, _)| host != target);
-    known.push((target.clone(), found));
-}
-
-/// 是否 `target` 上的 shell 集成脚本已经写好。
-pub(crate) fn shell_ready(target: &Target) -> bool {
-    let ready = SHELL_READY.lock().unwrap_or_else(PoisonError::into_inner);
-    ready.contains(target)
-}
-
-/// 把 shell 集成脚本写到 `target` 上，一次往返；写不成（主目录只读）时那台主机上的终端不带
-/// 集成，其余不受影响。脚本每次连接都重写：内容随本程序的版本变化。
-fn install_shell_scripts(target: &Target) {
-    let mut exec = Exec::new("sh")
-        .arg("-c")
-        .arg(INSTALL_SHELL)
-        .arg("winc")
-        .arg(winc_pty::scripts::REMOTE_DIR);
-    for (name, content) in winc_pty::scripts::remote() {
-        exec = exec.arg(name).arg(content.as_ref());
-    }
-    let home = winc_backend::virtual_path(target, b"/");
-    let written = remote::exec(&home, &exec, &|| false).is_ok_and(|output| output.code == Some(0));
-    let mut ready = SHELL_READY.lock().unwrap_or_else(PoisonError::into_inner);
-    ready.retain(|known| known != target);
-    if written {
-        ready.push(target.clone());
-    }
-}
 
 /// 取得目录在远端的真实路径的脚本，参数是用户输入的目录。
 ///
@@ -195,11 +120,11 @@ pub(crate) struct RemoteState {
     stepping: bool,
     /// 选择面板在后台读好的目录。
     pub(in crate::app) listed: picker::Listings,
-    /// 后台启动好的对远端目录的监视，由 `App::poll_remote_watcher` 取走。
-    pub(in crate::app) watching: Arc<Mutex<Option<winc_editor::Watcher>>>,
     /// 正在进行的连接成功、打开目录之后要打开的文件，及参数中写的目录（见
     /// [`App::open_remote`]）；没有时为 `None`。
     files: Option<(PathBuf, Vec<crate::cli::Target>)>,
+    /// 连接成功后要打开的项目文件，其第一个目录在远端（见 [`App::open_folder`]）。
+    pub(in crate::app) project: Option<PathBuf>,
 }
 
 impl Default for RemoteState {
@@ -217,8 +142,8 @@ impl Default for RemoteState {
             paused: false,
             stepping: false,
             listed: picker::Listings::default(),
-            watching: Arc::default(),
             files: None,
+            project: None,
         }
     }
 }
@@ -463,12 +388,20 @@ const CONNECTING: u64 = u64::MAX;
 
 /// 把用户输入的 `主机`、`主机:端口`、`主机:目录` 或 `主机:端口:目录` 拆成连接目标和目录；没有
 /// 目录时目录为空。主机之后全是数字的一段是端口。主机或端口不符合 [`Target`] 的要求时返回
-/// `None`。
+/// `None`。IPv6 地址写在方括号中。
 fn parse_destination(input: &str) -> Option<(Target, &str)> {
     let input = input.trim();
-    let Some((host, rest)) = input.split_once(':') else {
-        return Some((Target::new(input)?, ""));
-    };
+    if let Some(target) = Target::with_port(input, None) {
+        return Some((target, ""));
+    }
+    // 主机的方括号中的 `:` 不拆分。
+    let open = input
+        .find('[')
+        .filter(|&open| input.find(':').is_some_and(|colon| open < colon));
+    let bracket = open.and_then(|_| input.find(']')).map_or(0, |at| at + 1);
+    let (host, rest) = input[bracket..]
+        .split_once(':')
+        .map(|(tail, rest)| (&input[..bracket + tail.len()], rest))?;
     let (port, folder) = match rest.split_once(':') {
         Some((port, folder)) if is_port(port) => (Some(port), folder),
         None if is_port(rest) => (Some(rest), ""),
@@ -556,15 +489,26 @@ fn programs() -> Vec<Program> {
     programs
 }
 
-/// 连接状况变化的通知：参数为真表示连接意外中断，为假表示对端有无响应的状况变了。
-type Closed = Arc<dyn Fn(bool) + Send + Sync>;
+/// 连接状况的变化。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Signal {
+    /// 连接意外中断。
+    Ended,
+    /// 对端有无响应的状况变了。
+    Health,
+    /// 集成脚本和 shell 列表已经准备完（或失败）。
+    Shells,
+}
+
+/// 连接状况变化的通知。
+type Notify = Arc<dyn Fn(Signal) + Send + Sync>;
 
 /// 建立到 `target` 的连接并登记；`ssh` 的输入请求交给 `listener`，没有时不允许它提问。连接
-/// 意外中断时调用 `closed`。
+/// 状况变化时调用 `notify`。
 fn connect(
     target: &Target,
     listener: Option<&Listener>,
-    closed: Option<&Closed>,
+    notify: Option<&Notify>,
     abort: &remote::Abort,
     report: &dyn Fn(Stage),
 ) -> Result<(), String> {
@@ -599,18 +543,19 @@ fn connect(
             other => other.to_string(),
         },
     )?;
-    if let Some(closed) = closed.cloned() {
-        let stalled = Arc::clone(&closed);
-        connection.on_close(move || closed(true));
-        connection.on_stall(move || stalled(false));
+    if let Some(notify) = notify.cloned() {
+        let stalled = Arc::clone(&notify);
+        connection.on_close(move || notify(Signal::Ended));
+        connection.on_stall(move || stalled(Signal::Health));
     }
     remote::register(target.clone(), connection);
-    // 写集成脚本不耽误打开目录：在另一个线程上进行，写好之后开的终端才带集成。
-    let host = target.clone();
-    std::thread::spawn(move || {
-        install_shell_scripts(&host);
-        detect_shells(&host);
+    // 在另一个线程上写集成脚本，不阻塞打开目录；那台主机上的终端在结束后启动。
+    let done = notify.cloned().map(|notify| {
+        let done: Box<dyn Fn() + Send> = Box::new(move || notify(Signal::Shells));
+        done
     });
+    let setup = Setup::begin(target, done);
+    std::thread::spawn(move || setup.run());
     Ok(())
 }
 
@@ -658,24 +603,53 @@ fn rebase(files: &[crate::cli::Target], wanted: &Path, folder: &Path) -> Vec<cra
         .collect()
 }
 
+/// 各主机正在进行的连接：同一台主机同时只建立一条，见 [`turn`]。
+static TURNS: Mutex<Vec<(Target, Arc<Mutex<()>>)>> = Mutex::new(Vec::new());
+
+/// 等别的窗口到 `target` 的连接结束的间隔（毫秒）：期间检查用户是否取消了这一次。
+const TURN_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// 返回到 `target` 的连接要先占用的锁：几个窗口同时连接同一台主机时逐个进行，后来的发现已有
+/// 连接就沿用。否则后登记的连接会顶掉先登记的，先前窗口正在进行的请求全部失败。
+fn turn(target: &Target) -> Arc<Mutex<()>> {
+    let mut connecting = TURNS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, turn)) = connecting.iter().find(|(host, _)| host == target) {
+        return Arc::clone(turn);
+    }
+    let turn = Arc::default();
+    connecting.push((target.clone(), Arc::clone(&turn)));
+    turn
+}
+
 /// 连接 `target`（已有连接时沿用）并取得 `folder` 的虚拟路径。
 fn open(
     target: &Target,
     folder: &str,
     listener: Option<&Listener>,
-    closed: Option<&Closed>,
+    notify: Option<&Notify>,
     abort: &remote::Abort,
     report: &dyn Fn(Stage),
 ) -> Outcome {
+    let turn = turn(target);
+    let _held = loop {
+        match turn.try_lock() {
+            Ok(held) => break held,
+            Err(std::sync::TryLockError::Poisoned(held)) => break held.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) if abort.is_aborted() => {
+                return Err(t!("workspace-remote-canceled").to_owned());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(TURN_POLL),
+        }
+    };
     let existing = remote::is_connected(target);
     if !existing {
-        connect(target, listener, closed, abort, report)?;
+        connect(target, listener, notify, abort, report)?;
     }
     match resolve(target, folder, abort) {
         Ok(outcome) => outcome,
         // 沿用的连接已经中断：重新连接一次。用户取消之后不再连接。
         Err(_) if existing && !abort.is_aborted() => {
-            connect(target, listener, closed, abort, report)?;
+            connect(target, listener, notify, abort, report)?;
             resolve(target, folder, abort).map_err(|e| e.to_string())?
         }
         Err(error) => Err(error.to_string()),
@@ -773,7 +747,8 @@ impl App {
         dialog.error = None;
         // 密钥文件按主机记下：此后经最近的目录、重新连接和终端登录这台主机时都用它。
         if self.state.remote_key(target.as_str()).unwrap_or_default() != key {
-            self.update_state(|state| state.set_remote_key(target.as_str(), &key));
+            let host = target.clone();
+            self.update_state(move |state| state.set_remote_key(host.as_str(), &key));
         }
         self.remote.form = Some((host, port));
         self.remote_open(target, String::new(), After::Browse);
@@ -863,6 +838,14 @@ impl App {
         true
     }
 
+    /// 是否为远端主机的窗口：开着远端主机上的目录，或没有目录、正在连接远端主机。
+    pub(crate) fn is_remote_window(&self) -> bool {
+        match self.editor.root() {
+            Some(root) => winc_backend::is_remote(root),
+            None => self.remote.connecting.is_some(),
+        }
+    }
+
     /// 打开 `ssh://` 参数指定的远端项目 `open` 并切到前台：本窗口开着该目录时直接打开其中的
     /// 文件；否则在后台连接（已有连接时沿用），打开目录之后再打开文件，带行号的跳到该位置。
     pub(crate) fn open_remote(&mut self, open: crate::cli::RemoteOpen) {
@@ -887,12 +870,14 @@ impl App {
     }
 
     /// 启动时调用：上次退出时开着的目录在远端主机上时，重新连接并打开它，标签按那个目录的
-    /// 现场恢复。连接在后台进行，窗口先显示开始页；需要口令时照常询问。
-    pub(crate) fn restore_remote_folder(&mut self) {
+    /// 现场恢复，返回是否开始了连接。连接在后台进行，窗口先显示开始页；需要口令时仍然询问。
+    pub(crate) fn restore_remote_folder(&mut self) -> bool {
         let wanted = self.editor.root().is_none() && self.remote_enabled();
-        if let Some(folder) = self.state.last.clone().filter(|_| wanted) {
-            self.reopen_remote(&folder);
+        let folder = self.state.last.clone().filter(|_| wanted);
+        if let Some(folder) = &folder {
+            self.reopen_remote(folder);
         }
+        folder.is_some()
     }
 
     /// 在后台连接 `target`（已有连接时沿用）并取得其上目录 `folder` 的真实路径（空表示主目录），
@@ -931,15 +916,16 @@ impl App {
         let questions = self.remote.questions.0.clone();
         self.spawn_blocking_then(UserEvent::RemoteConnected, move || {
             // 端点只在连接期间存在，`listener` 在任务结束时被丢弃。
-            let closed = wake.clone().map(|proxy| {
+            let notify = wake.clone().map(|proxy| {
                 let target = target.clone();
-                let notify = move |ended: bool| {
-                    let _ = proxy.send_event(match ended {
-                        true => UserEvent::RemoteClosed(target.clone()),
-                        false => UserEvent::RemoteHealth,
+                let notify = move |signal| {
+                    let _ = proxy.send_event(match signal {
+                        Signal::Ended => UserEvent::RemoteClosed(target.clone()),
+                        Signal::Health => UserEvent::RemoteHealth,
+                        Signal::Shells => UserEvent::RemoteShells,
                     });
                 };
-                Arc::new(notify) as Closed
+                Arc::new(notify) as Notify
             });
             let listener = wake.filter(|_| !quiet).and_then(|proxy| {
                 Listener::bind(false, move |question| {
@@ -953,8 +939,8 @@ impl App {
                     let _ = proxy.send_event(UserEvent::RemoteStage);
                 }
             };
-            let (listener, closed) = (listener.as_ref(), closed.as_ref());
-            let outcome = open(&target, &folder, listener, closed, &abort, &report);
+            let (listener, notify) = (listener.as_ref(), notify.as_ref());
+            let outcome = open(&target, &folder, listener, notify, &abort, &report);
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
         });
     }
@@ -1181,6 +1167,22 @@ impl App {
 mod tests {
     use super::*;
 
+    /// 同一台主机的连接共用一把锁，逐个进行；不同主机互不相干。
+    #[test]
+    fn connections_to_one_host_take_turns() {
+        let (here, there) = (
+            Target::new("turn-a").unwrap(),
+            Target::new("turn-b").unwrap(),
+        );
+        let (first, second) = (turn(&here), turn(&here));
+        assert!(Arc::ptr_eq(&first, &second));
+        let held = first.lock().unwrap();
+        assert!(second.try_lock().is_err());
+        assert!(turn(&there).try_lock().is_ok());
+        drop(held);
+        assert!(second.try_lock().is_ok());
+    }
+
     #[test]
     fn hosts_in_included_files_are_listed_once() {
         let dir = std::env::temp_dir().join(format!("winc-ssh-include-{}", std::process::id()));
@@ -1250,6 +1252,20 @@ mod tests {
         assert_eq!(parsed("me@devbox:"), Some((host, "")));
         // 主机之后的内容原样作为目录，其中的 `:` 不再拆分。
         assert_eq!(parsed("box:/a:b"), Some(("box".to_owned(), "/a:b")));
+        // IPv6 地址。
+        let ipv6 = "me@[2001:db8::1]".to_owned();
+        assert_eq!(parsed("me@2001:db8::1"), Some((ipv6.clone(), "")));
+        assert_eq!(parsed("me@[2001:db8::1]"), Some((ipv6.clone(), "")));
+        assert_eq!(parsed("me@[2001:db8::1]:~/app"), Some((ipv6, "~/app")));
+        assert_eq!(
+            parsed("[::1]:22022:/srv/a[1]:b"),
+            Some(("[::1]:22022".to_owned(), "/srv/a[1]:b"))
+        );
+        assert_eq!(
+            parsed("box:/srv/a[1]:b"),
+            Some(("box".to_owned(), "/srv/a[1]:b"))
+        );
+        assert_eq!(parsed("[::1]x:/srv"), None);
         // 主机之后全是数字的一段是端口，其后才是目录。
         assert_eq!(
             parsed("me@box:22022"),
@@ -1402,16 +1418,12 @@ Host -oProxyCommand=x a;b
             None
         );
 
-        // shell 集成脚本在连接之后写到那台主机上，只有用户本人可以读。
+        // shell 集成脚本在连接之后写到那台主机上，只有用户本人可以读；shell 随后列出。
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !shell_ready(&target) && std::time::Instant::now() < deadline {
+        while shell_pending(&target) && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(shell_ready(&target));
-        // 那台主机上的 shell 随后列出，供终端的 shell 菜单使用。
-        while shells(&target).is_empty() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
         let found = shells(&target);
         assert!(found.iter().all(|shell| shell.command.starts_with('/')));
         assert!(!found.is_empty());

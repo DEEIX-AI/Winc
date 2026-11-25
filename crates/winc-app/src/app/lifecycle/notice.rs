@@ -29,6 +29,8 @@ pub enum NoticeAction {
     SaveAsAdmin(DocumentId),
     /// 「查看更新日志」：在阅读标签中打开上次运行的版本（没有记录时为 `None`）之后的各版。
     ReleaseNotes(Option<String>),
+    /// 「打开项目」：打开该项目文件。
+    OpenProject(PathBuf),
 }
 
 /// 提示的种类，决定提示条左侧的图标和颜色。
@@ -78,6 +80,7 @@ impl NoticeAction {
             NoticeAction::ReleaseNotes(_) => t!("workspace-notice-release-notes"),
             NoticeAction::Reveal(_) => crate::system::reveal_label(),
             NoticeAction::SaveAsAdmin(_) => t!("workspace-save-admin"),
+            NoticeAction::OpenProject(_) => t!("workspace-notice-open-project"),
         }
     }
 }
@@ -137,7 +140,7 @@ impl App {
 
     /// 返回 `shown`，即系统的提示框或面板是否弹出了。
     ///
-    /// 没有弹出（窗口上已挂着别的提示框或面板）时提示用户先关闭它，
+    /// 没有弹出（窗口上已有别的提示框或面板）时提示用户先关闭它，
     /// 否则这次操作既不执行也不说明原因。
     pub(in crate::app) fn dialog_shown(&mut self, shown: bool) -> bool {
         if !shown {
@@ -214,6 +217,7 @@ impl App {
             NoticeAction::ReleaseNotes(previous) => {
                 self.open_release_notes(crate::release_notes::Scope::Since(previous));
             }
+            NoticeAction::OpenProject(file) => self.open_folder(&file),
         }
         self.request_redraw();
     }

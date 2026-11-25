@@ -1,19 +1,23 @@
-//! Windows 上交由系统的操作，读取的系统设置，任务栏的跳转列表，按屏幕刷新绘制动画的显示链接，
-//! 以及文件拖进拖出时的鼠标位置和系统拖放。
+//! Windows 上交由系统的操作，读取的系统设置，任务栏的跳转列表，在文件管理器中显示文件，
+//! 文件对话框的拥有者，按屏幕刷新绘制动画的显示链接，以及文件拖进拖出时的鼠标位置和系统拖放。
 
 mod display_link;
 // 测试中以 `TreeState::dragged_out` 代替系统的拖放。
 #[cfg_attr(test, allow(dead_code))]
 mod drag;
+mod file_dialog;
 mod jump_list;
 mod pointer;
+mod reveal;
 mod touch;
 
 pub use display_link::DisplayLink;
 #[cfg_attr(test, allow(unused_imports))]
 pub use drag::drag_files;
+pub use file_dialog::{DialogOwner, MainWindow, raise_file_dialog};
 pub use jump_list::sync_jump_list;
 pub use pointer::mouse_location;
+pub use reveal::reveal_in_file_manager;
 pub use touch::{WindowHitTest, WindowInput};
 
 use std::io;

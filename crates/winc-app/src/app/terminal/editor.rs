@@ -56,8 +56,10 @@ impl App {
     }
 
     /// 文件拖到了终端上（见 [`Self::terminal_takes_drop`]）：在光标处插入加好引号的路径，后面
-    /// 跟一个空格。
+    /// 跟一个空格。松在不在用的一栏上时先改用那一栏。
     pub(crate) fn drop_path_on_terminal(&mut self, path: &Path) {
+        let (x, y) = self.pointer.mouse;
+        self.focus_terminal_group_at(x, y);
         let text = format!("{} ", shell_quote(path));
         self.terminal_input(text.into_bytes());
         self.focus = Focus::Terminal;

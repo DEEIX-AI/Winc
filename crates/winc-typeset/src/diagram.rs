@@ -193,9 +193,8 @@ impl Cx<'_, '_> {
         let mut wrap = 1.0;
         let mut items = Vec::new();
         // 图宽于可用宽度时，先按 `NARROW_WRAP` 折窄文字重排，仍然过宽再按超出的比例缩小字号
-        // 重排，使整张图无需横向滚动即可完整显示。文字折行不随字号严格按比例变化，一次缩小后
-        // 可能仍然过宽。宽度按实际绘制范围计算：子图、连线避让处可能使图左侧留有空白，放置时
-        // 去掉这段空白。
+        // 重排；折行不随字号严格按比例变化，一次缩小后可能仍然过宽。宽度按实际绘制范围计算，
+        // 子图、连线避让处使图左侧留出的空白在放置时去掉。
         let mut bounds = (0.0, 0.0);
         let mut h = 0.0;
         // 最多折窄 1 次、缩小字号 5 次：通常 1 至 2 次即可放下；5 次后仍然过宽时不再缩小，超出的
@@ -272,7 +271,7 @@ impl Cx<'_, '_> {
             };
             // 开合按钮：文字和指向展开方向的箭头。
             let size = self.base * 0.8125;
-            let text_w = self.frame.measure(FontKind::Ui, size, label);
+            let text_w = self.frame.measure(FontKind::Prose, size, label);
             let (arrow, gap, pad) = (size * 0.32, size * 0.4, size * 0.9);
             let pill_w = (pad * 2.0 + text_w + gap + arrow * 2.0).round();
             let pill_h = (size * 1.9).round();
@@ -293,7 +292,7 @@ impl Cx<'_, '_> {
                 x: pill.x + pad,
                 baseline: pill.y + pill_h / 2.0 + size * 0.35,
                 text: label.into(),
-                font: FontKind::Ui,
+                font: FontKind::Prose,
                 faux: Default::default(),
                 size,
                 color,
@@ -546,7 +545,7 @@ impl Cx<'_, '_> {
     /// 连线文字，返回各方框的位置和图的宽高（逻辑像素）。
     ///
     /// `flow` 只用到连线的起止、文字和分组，节点的形状均按矩形处理；连线本身由 `draw` 画，参数
-    /// 为连线的序号和平滑后经过的点。方框由调用方在之后画出，盖住连线的端点。
+    /// 为连线的序号和平滑后经过的点。方框由调用方在之后画出，遮住连线的端点。
     #[allow(clippy::too_many_arguments)]
     fn boxed(
         &mut self,

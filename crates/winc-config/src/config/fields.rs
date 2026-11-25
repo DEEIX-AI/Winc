@@ -169,7 +169,11 @@ const EDITOR: &[Field] = &[
     },
     bool_field!("hotExit", hot_exit),
     bool_field!("confirmClose", confirm_close),
+    bool_field!("quitOnLastWindowClose", quit_on_last_window_close),
     bool_field!("restoreFolder", restore_folder),
+    bool_field!("newFileOnStartup", new_file_on_startup),
+    string_field!("defaultLanguage", default_language),
+    bool_field!("detectLanguageOnPaste", detect_language_on_paste),
     bool_field!("openFolderInNewWindow", open_folder_in_new_window),
     Field {
         key: "dropFolder",
@@ -193,11 +197,46 @@ const EDITOR: &[Field] = &[
             Some(Json::String(value.into()))
         },
     },
+    Field {
+        key: "findInFiles",
+        read: |config, value, name, problems| {
+            config.find_in_files = match value.as_str() {
+                Some("sidebar") => Some(SearchStyle::Sidebar),
+                Some("dialog") => Some(SearchStyle::Dialog),
+                _ => {
+                    problems.push(t!("config-find-in-files-invalid", name = name));
+                    None
+                }
+            };
+        },
+        write: |config| {
+            let value = match config.find_in_files? {
+                SearchStyle::Sidebar => "sidebar",
+                SearchStyle::Dialog => "dialog",
+            };
+            Some(Json::String(value.into()))
+        },
+    },
     bool_field!("stickyScroll", sticky_scroll),
+    bool_field!("dragAndDrop", drag_and_drop),
     bool_field!("wordWrap", word_wrap),
     bool_field!("wholeLines", whole_lines),
     bool_field!("minimap", minimap),
     bool_field!("smoothScrolling", smooth_scrolling),
+    Field {
+        key: "smoothCaretMovement",
+        read: |config, value, name, problems| {
+            config.smooth_caret_movement = value.as_str().and_then(SmoothCaret::from_value);
+            if config.smooth_caret_movement.is_none() {
+                problems.push(t!("config-smooth-caret-invalid", name = name));
+            }
+        },
+        write: |config| {
+            config
+                .smooth_caret_movement
+                .map(|choice| Json::String(choice.as_str().into()))
+        },
+    },
     bool_field!("outline", outline),
     Field {
         key: "renderWhitespace",
@@ -224,8 +263,10 @@ const EDITOR: &[Field] = &[
         },
     },
     bool_field!("diffInline", diff_inline),
+    bool_field!("diffCollapseUnchanged", diff_collapse_unchanged),
     bool_field!("lineNumbers", line_numbers),
     bool_field!("statusBar", status_bar),
+    bool_field!("fullTabNames", full_tab_names),
     bool_field!("restoreWindow", restore_window),
 ];
 
@@ -312,6 +353,16 @@ const TREE: &[Field] = &[
 /// `markdown` 一节。
 const MARKDOWN: &[Field] = &[
     bool_field!("remoteImages", markdown_remote_images),
+    string_field!("font", markdown_font),
+    Field {
+        key: "size",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-font-size");
+            config.markdown_size =
+                read_number(value, name, Config::EDITOR_SIZE_RANGE, label, problems)
+        },
+        write: |config| config.markdown_size.map(number),
+    },
     bool_field!("lineNumbers", markdown_line_numbers),
     bool_field!("shortcuts", markdown_shortcuts),
     bool_field!("focusMode", markdown_focus),
@@ -634,6 +685,7 @@ const GIT: &[Field] = &[
     bool_field!("inlineBlame", git_inline_blame),
     bool_field!("autoFetch", git_auto_fetch),
     bool_field!("stagingArea", git_staging_area),
+    bool_field!("combinedDiff", git_combined_diff),
     Field {
         key: "repositoryScanDepth",
         read: |config, value, name, problems| {
@@ -729,7 +781,7 @@ const GIT: &[Field] = &[
 /// `network` 一节。
 const NETWORK: &[Field] = &[bool_field!("systemProxy", system_proxy)];
 
-/// 挪过位置的设置：（旧的节，旧的键，新的节，新的键）。旧的位置照样读入，写回时只写新的位置。
+/// 挪过位置的设置：（旧的节，旧的键，新的节，新的键）。旧的位置仍然读入，写回时只写新的位置。
 const MOVED: &[(&str, &str, &str, &str)] = &[("git", "systemProxy", "network", "systemProxy")];
 
 /// 节 `name` 中的 `key` 挪去的位置的那一项。
@@ -922,6 +974,17 @@ pub(super) const FORMAT: &[Field] = &[
 /// 在 `fields` 中找键名为 `key` 的一项。
 pub(super) fn find<'a>(fields: &'a [Field], key: &str) -> Option<&'a Field> {
     fields.iter().find(|field| field.key == key)
+}
+
+/// 返回名为 `name` 的设置：节名加键名（如 `editor.size`），或顶层的键（如 `theme`）。
+pub(super) fn named(name: &str) -> Option<&'static Field> {
+    match name.split_once('.') {
+        Some((section, key)) => {
+            let fields = SECTIONS.iter().find(|&&(name, _)| name == section)?.1;
+            find(fields, key)
+        }
+        None => find(TOP_LEVEL, name),
+    }
 }
 
 /// 顶层的 `key` 是否是认识的设置：[`SECTIONS`] 中某一节的名字，或 [`TOP_LEVEL`] 中的一项。

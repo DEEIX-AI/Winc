@@ -60,6 +60,32 @@ fn auto_pairs_and_skips() {
     assert_eq!(d.selection, Selection::point(3));
 }
 
+#[test]
+fn markdown_pairs_chinese_brackets_and_quotes() {
+    let mut d = doc("a.md", "", 0);
+    type_str(&mut d, "（");
+    assert_eq!(
+        (text(&d), d.selection),
+        ("（）".to_owned(), Selection::point(1))
+    );
+    type_str(&mut d, "甲）");
+    assert_eq!(
+        (text(&d), d.selection),
+        ("（甲）".to_owned(), Selection::point(3))
+    );
+    let mut d = doc("a.md", "", 0);
+    type_str(&mut d, "“引”");
+    assert_eq!(text(&d), "“引”");
+    assert_eq!(backspace("a.md", "【】", 1), (String::new(), 0));
+    // 光标后紧跟文字、不是 Markdown 时不补全。
+    let mut d = doc("a.md", "文字", 0);
+    type_str(&mut d, "《");
+    assert_eq!(text(&d), "《文字");
+    let mut d = doc("a.py", "", 0);
+    type_str(&mut d, "（");
+    assert_eq!(text(&d), "（");
+}
+
 fn backspace(file: &str, content: &str, pos: usize) -> (String, usize) {
     let mut d = doc(file, content, pos);
     d.execute(Command::Backspace { word: false }, 10, 4);
@@ -248,4 +274,42 @@ fn vertical_movement_keeps_goal() {
         4,
     );
     assert_eq!(d.goal_cell, None);
+}
+
+/// Astro frontmatter 的 `---` 分隔行不参与切换注释：注释之后 frontmatter 仍然闭合，模板仍按
+/// HTML 着色。
+#[test]
+fn comment_toggling_skips_astro_frontmatter_fences() {
+    let src = "---\nconst a = 1;\n---\n<div>{a}</div>\n";
+    let commented = "---\n// const a = 1;\n---\n<div>{a}</div>\n";
+    let toggled = |from: usize, to: usize| {
+        let mut d = doc("Page.astro", src, 0);
+        let (start, end) = (d.text().line_start(from), d.text().line_end(to));
+        d.selection = Selection::new(start, end);
+        d.execute(Command::ToggleComment, 10, 4);
+        (text(&d), d.selection)
+    };
+
+    // 第 1 至 2 行：结束的分隔行不注释。
+    let (result, _) = toggled(1, 2);
+    assert_eq!(result, commented);
+    // 从第 0 行开始：开头的分隔行同样跳过，注释按 TypeScript 写 `//`；选区仍从文件开头开始。
+    let (result, selection) = toggled(0, 2);
+    assert_eq!(result, commented);
+    assert_eq!(selection.from(), 0);
+    // 只选分隔行时不修改。
+    assert_eq!(toggled(0, 0).0, src);
+    assert_eq!(toggled(2, 2).0, src);
+}
+
+/// Liquid 与 Nunjucks 切换注释时使用模板自己的注释，注释掉的内容不会输出到页面。
+#[test]
+fn templates_comment_with_their_own_syntax() {
+    let mut d = doc("page.njk", "<p>{{ a }}</p>\n", 0);
+    d.execute(Command::ToggleComment, 10, 4);
+    assert_eq!(text(&d), "{# <p>{{ a }}</p> #}\n");
+
+    let mut d = doc("page.liquid", "<p>{{ a }}</p>\n", 0);
+    d.execute(Command::ToggleComment, 10, 4);
+    assert_eq!(text(&d), "{% comment %} <p>{{ a }}</p> {% endcomment %}\n");
 }

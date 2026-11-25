@@ -25,6 +25,16 @@ fn remote_paths_survive_a_round_trip() {
         assert_eq!(located.target, target());
         assert_eq!(located.path, path, "{}", String::from_utf8_lossy(path));
     }
+    // 带端口和 IPv6 地址的连接目标。
+    for text in [
+        "alice@devbox:22022",
+        "root@[2001:db8::1]:22022",
+        "[fe80::1%eth0]",
+    ] {
+        let target = Target::new(text).unwrap();
+        let located = locate(&virtual_path(&target, b"/srv/app")).unwrap();
+        assert_eq!((located.target, &*located.path), (target, &b"/srv/app"[..]));
+    }
     // 空段和 `.` 忽略，相对路径按相对于根目录处理。
     assert_eq!(remote(&virtual_path(&target(), b"//a/./b/")), "/a/b");
     assert_eq!(remote(&virtual_path(&target(), b"a/b")), "/a/b");
@@ -206,4 +216,19 @@ fn native_and_relative_forms_use_the_remote_spelling() {
         relative_lossy(&local, Path::new("relative")).unwrap(),
         "file.txt"
     );
+}
+
+#[test]
+fn paths_that_name_a_host_start_with_two_separators() {
+    for path in [
+        "//host/share/a",
+        r"\\host\share\a",
+        r"\\?\C:\a",
+        r"/\host\a",
+    ] {
+        assert!(names_host(path), "{path}");
+    }
+    for path in ["/tmp/a", r"C:\a", "a//b", "", "/"] {
+        assert!(!names_host(path), "{path}");
+    }
 }

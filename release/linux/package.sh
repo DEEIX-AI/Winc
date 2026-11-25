@@ -2,15 +2,16 @@
 # Native Rust packages: an AppImage with bundled libraries, and a system-managed deb.
 set -euo pipefail
 target="${1:?a Rust target triple is required}"
-[[ "$target" == x86_64-unknown-linux-gnu ]] || { echo "unsupported Linux target: $target" >&2; exit 1; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
+source release/linux/target.sh
+source release/linux/baseline.env
 version="$(node release/common/version.mjs)"
 deb_version="${version//-/~}"
 release="$root/target/$target/release"
 bundle="$release/bundle"
 tools="$root/target/release-tools"
-stem="Winc-$version-linux-x64"
+stem="Winc-$version-$platform"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 appdir="$workdir/winc.AppDir"
@@ -31,6 +32,10 @@ install -Dm755 "${servers[@]}" -t "$deb/usr/lib/winc"
 # File manager context menus and the winc:// link handler belong to the installed package only: the
 # AppImage installs nothing.
 install -m644 release/linux/winc-url-handler.desktop "$deb/usr/share/applications/"
+# The .winc-project type; the shared-mime-info trigger updates the database.
+install -Dm644 release/linux/winc.xml "$deb/usr/share/mime/packages/winc.xml"
+install -Dm644 crates/winc-app/assets/file-icons/project.svg \
+  "$deb/usr/share/icons/hicolor/scalable/mimetypes/application-x-winc-project.svg"
 desktop-file-validate "$deb/usr/share/applications/winc-url-handler.desktop"
 install -Dm644 release/linux/file-manager/winc-open-file.desktop release/linux/file-manager/winc-open-folder.desktop \
   -t "$deb/usr/share/kio/servicemenus"
@@ -41,10 +46,11 @@ Package: winc
 Version: $deb_version
 Section: editors
 Priority: optional
-Architecture: amd64
+Architecture: $deb_arch
 Maintainer: DEEIX-AI <41963680+Noxiven@users.noreply.github.com>
 Homepage: https://winc.si
-Depends: libc6 (>= 2.39), libgcc-s1, fontconfig, fonts-dejavu-core, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libwayland-client0
+Depends: libc6 (>= $GLIBC_FLOOR), libgcc-s1, fontconfig, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libwayland-client0
+Recommends: fonts-dejavu-core
 Description: A lighter, faster desktop code editor
  A native Rust editor with its own rendering engine, Git integration and terminal.
 EOF
@@ -61,5 +67,5 @@ rm -f "$appdir/AppRun"
 install -m755 release/linux/AppRun "$appdir/AppRun"
 # The AppDir holds servers for two architectures, so appimagetool cannot infer the architecture of
 # the AppImage from the files in it and needs it named.
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tools/appimagetool.AppImage" --appimage-extract-and-run \
-  --runtime-file "$tools/runtime-x86_64" "$appdir" "$bundle/appimage/$stem.AppImage"
+ARCH="$machine" APPIMAGE_EXTRACT_AND_RUN=1 "$tools/appimagetool.AppImage" --appimage-extract-and-run \
+  --runtime-file "$tools/runtime" "$appdir" "$bundle/appimage/$stem.AppImage"

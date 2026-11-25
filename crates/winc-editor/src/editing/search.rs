@@ -3,16 +3,10 @@
 //! 搜索按时间片分段进行，每次 `update` 最多耗时 `SLICE`，长文件不会阻塞界面；结果按位置排序，
 //! 匹配数达到 [`MAX_MATCHES`] 后停止搜索并标记结果不完整。
 
-mod matcher;
+pub(crate) use winc_search::{Matcher, Options, Pattern, count_chars, joined, unescape};
 
-pub(crate) use matcher::*;
-
-use std::borrow::Cow;
 use std::ops::ControlFlow;
 use std::time::{Duration, Instant};
-
-use memchr::memmem::Finder;
-use regex::{Regex, RegexBuilder};
 
 use winc_core::{Change, EditKind, Lines, Selection, Transaction};
 use winc_i18n::t;
@@ -25,7 +19,7 @@ use crate::document::{Document, DocumentId};
 pub const MAX_MATCHES: usize = 10_000;
 /// 单次 `update` 的搜索时间上限（毫秒）。
 ///
-/// 经验值：限制一次调用阻塞界面的时间。
+/// 取自调参：限制一次调用阻塞界面的时间。
 const SLICE: Duration = Duration::from_millis(8);
 /// 检查一次时钟之间处理的行数（行）。
 ///
@@ -33,7 +27,7 @@ const SLICE: Duration = Duration::from_millis(8);
 const CLOCK_INTERVAL: usize = 256;
 /// 检查一次时钟之间处理的字节数（字节，256 KiB），与 `CLOCK_INTERVAL` 先到者为准。
 ///
-/// 只按行数计时，大文件中每行几 MB 时 256 行就是数百 MB，一次调用会阻塞界面数秒。经验值。
+/// 只按行数计时，大文件中每行几 MB 时 256 行就是数百 MB，一次调用会阻塞界面数秒。取自调参。
 const CLOCK_BYTES: usize = 256 << 10;
 
 /// 不依赖文档的查找：在给定的文字里按和 [`Search`] 相同的条件找，语义完全相同。
@@ -117,17 +111,6 @@ struct Key {
     revision: u64,
     /// 在差异标签的哪一侧快照中搜索（`LEFT` 或 `RIGHT`）；搜索文档自身的文本时为 `None`。
     snapshot_side: Option<usize>,
-}
-
-/// 查找选项，各字段含义同 [`Search`] 的同名字段。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Options {
-    /// 是否区分大小写。
-    pub case_sensitive: bool,
-    /// 是否全字匹配。
-    pub whole_word: bool,
-    /// 是否按正则匹配。
-    pub regex: bool,
 }
 
 /// 搜索断点：下次从第 `line` 行（从 0 起）继续，`pos` 是该行行首的位置（字符偏移）。

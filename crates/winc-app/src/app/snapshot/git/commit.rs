@@ -1025,7 +1025,9 @@ fn the_refresh_button_spins_for_at_least_one_turn() {
     paint(&mut app);
     assert!(!app.commit_refreshing());
     app.press_commit(CommitTarget::Refresh);
-    // 测试里读取就地完成，这时转的只是至少一圈的时长。
+    // 测试里读取就地完成，这时转的只是至少一圈的时长；起点改为此刻，免得读取慢时已转满。
+    assert!(app.git.commit.refreshed.is_some());
+    app.git.commit.refreshed = Some(Instant::now());
     assert!(app.commit_refreshing());
     assert!(app.animating());
     let turn = Duration::from_secs_f32(1.0 / crate::theme::SPIN_SPEED);
@@ -1077,7 +1079,7 @@ fn the_commit_card_slides_away_once_nothing_is_left_to_commit() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 提交以后改动列表不是一下子换掉：过渡途中离开的行按刷新前的状态还画着、各行不响应点击，空状态
+/// 提交以后改动列表不是立即换掉：过渡途中离开的行按刷新前的状态还画着、各行不响应点击，空状态
 /// 同时淡入；只是保存了文件（改动的文件和状态都没变）时不做过渡。
 #[test]
 fn committed_rows_fade_out_instead_of_vanishing() {

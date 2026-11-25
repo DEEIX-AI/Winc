@@ -14,6 +14,7 @@ impl App {
     ) -> Self {
         // 启动时打开的目录在界面创建之前读入，此处补充设置文件树的显示方式。
         let compact = config.compact_folders != Some(false);
+        let staging = config.git_staging_area == Some(true);
         if let Some(ws) = &mut editor.workspace {
             ws.set_compact(compact);
         }
@@ -54,6 +55,7 @@ impl App {
                 saved_config: config.clone(),
                 config_path: None,
                 state_path: None,
+                state_requests: 0,
                 config_rev: 0,
             },
             config,
@@ -76,6 +78,7 @@ impl App {
                 hover: Hover::None,
                 modifiers: ModifiersState::empty(),
                 option_side: (false, false),
+                link: None,
                 mouse: (0.0, 0.0),
                 drag: Drag::None,
                 last_click: None,
@@ -92,6 +95,7 @@ impl App {
             ime: Default::default(),
             layout: Layout::default(),
             tabs: TabBar::default(),
+            tab_switch: Default::default(),
             panes: Default::default(),
             diff: Default::default(),
             status: Default::default(),
@@ -122,13 +126,16 @@ impl App {
                 setup_intro: None,
                 setup_outro: None,
                 setup_page: None,
+                about_logo: None,
                 tool_fold: ToolFold::default(),
                 bar_card: Default::default(),
                 dialog_card: Default::default(),
                 alert_card: Default::default(),
+                search_card: Default::default(),
                 module_fx: Default::default(),
                 fold_motion: None,
                 diff_fold: None,
+                caret_motion: None,
             },
             release_notes: Default::default(),
             wallpaper: Default::default(),
@@ -167,6 +174,7 @@ impl App {
             },
             text_content_w: 0.0,
             preview_tab: None,
+            startup_file: None,
             clipboard: Default::default(),
             vim,
             bars: crate::app::editor::InputBars {
@@ -176,12 +184,18 @@ impl App {
                 prompt_kind: PromptKind::GoTo,
             },
             word_highlights: Vec::new(),
+            search_dialog: Default::default(),
             hits: Default::default(),
             disk: crate::app::workspace::DiskState {
                 watcher: None,
                 extra_watchers: Vec::new(),
+                restoring: None,
+                prepared: Arc::default(),
+                starting: Vec::new(),
+                started: Arc::default(),
                 solo: false,
                 open_alone: None,
+                project_offer: None,
                 changes_due: None,
                 rereads: Default::default(),
                 saves: Default::default(),
@@ -199,9 +213,11 @@ impl App {
             setup: Default::default(),
             settings: SettingsState::default(),
             format: FormatState::new(formatter()),
+            http: Default::default(),
             git: {
                 let mut git = git::GitState::default();
                 git.commit.set_compact(compact);
+                git.commit.set_staging(staging);
                 git
             },
             remote: Default::default(),

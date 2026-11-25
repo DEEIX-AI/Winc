@@ -63,6 +63,7 @@ editor-symbol-variable = 变量
 editor-symbol-heading = 标题
 editor-symbol-section = 小节
 editor-definition-no-name = 光标处无可查找的名称
+editor-no-link = 光标处无链接
 editor-usages-not-found = 未找到「{ $name }」的其他用法
 editor-definition-at-caret = 光标处即为「{ $name }」的定义
 editor-definition-not-found = 未找到「{ $name }」的定义
@@ -70,6 +71,7 @@ editor-open-folder-first = 请先打开一个目录
 editor-places-definitions-count = { $count } 处定义
 editor-places-usages-count = { $count } 个用法
 editor-places-bookmarks-count = { $count } 个书签
+editor-places-search-count = { $count } 个结果
 editor-places-no-match = 无匹配的位置
 editor-places-usages-suffix = { " " }的用法
 editor-places-definitions-suffix = { " " }的定义
@@ -103,6 +105,8 @@ editor-encoding-windows-1258 = 越南文 (Windows 1258)
 editor-encoding-windows-874 = 泰文 (Windows 874)
 editor-encoding-lossy = 非 UTF-8
 editor-encoding-binary = 二进制
+editor-encoding-unicode-escapes = Unicode 转义 (\uXXXX)
+editor-encoding-unicode-escapes-short = Unicode 转义
 editor-encoding-unencodable = 「{ $char }」无法以 { $encoding } 编码保存，请使用「通过编码保存」另存为 UTF-8
 
 ## 读写文件。
@@ -119,6 +123,10 @@ editor-temp-file-failed = 无法创建临时文件
 editor-large-original-truncated = 原文件读取失败或已被截短，内容不完整
 editor-paste-cannot-copy = 无法复制此项
 editor-paste-into-itself = 无法复制到其自身内部
+editor-download-skipped-special = 不是普通文件
+editor-download-skipped-link-missing = 符号链接的目标不存在
+editor-download-skipped-link-folder = 符号链接指向目录
+editor-download-skipped-link-loop = 符号链接存在循环
 editor-open-binary = 此文件为二进制文件，无法打开
 editor-open-too-large = 文件过大（{ $size } MB），超过 { $limit } GB 的上限
 editor-unreadable-not-found = 文件不存在
@@ -226,3 +234,18 @@ hex-goto-placeholder = 0x4E 或 78
 hex-goto-total = 共 { $size }
 editor-readonly-hex = 十六进制视图只能查看
 editor-definition-in-dependencies = 项目中没有「{ $name }」的定义，正在依赖目录中查找…
+
+## HTTP 请求文件。
+
+editor-http-sending = 正在发送请求…
+editor-http-cancel = 取消请求
+editor-http-cancelled = 已取消请求
+editor-http-received = 已收到响应：{ $status }，用时 { $millis } 毫秒
+editor-http-failed = 无法发送请求：{ $error }
+editor-http-no-request = 光标处未找到请求
+editor-http-undefined-variable = 无法发送请求：变量「{ $name }」未定义
+editor-http-response-title = 响应：{ $request }
+editor-http-binary-body = （二进制内容，{ $size } 字节）
+editor-http-body-truncated = （仅显示前 { $shown } 字节，共 { $size } 字节）
+editor-http-curl-missing = 未找到 curl
+editor-http-too-large = 响应过大

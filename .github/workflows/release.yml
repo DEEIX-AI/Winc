@@ -69,6 +69,16 @@ jobs:
     uses: ./.github/workflows/release-linux.yml
     with:
       source-sha: ${{ needs.prepare.outputs.source-sha }}
+      arch: x64
+    secrets: inherit
+
+  linux-arm64:
+    name: Linux arm64
+    needs: prepare
+    uses: ./.github/workflows/release-linux.yml
+    with:
+      source-sha: ${{ needs.prepare.outputs.source-sha }}
+      arch: arm64
     secrets: inherit
 
   windows-x64:
@@ -85,7 +95,7 @@ jobs:
 
   publish:
     name: Assemble draft release
-    needs: [prepare, macos-arm64, macos-x64, linux-x64, windows-x64]
+    needs: [prepare, macos-arm64, macos-x64, linux-x64, linux-arm64, windows-x64]
     if: needs.prepare.outputs.release-tag != ''
     runs-on: ubuntu-24.04
     permissions:
@@ -109,7 +119,7 @@ jobs:
           pattern: release-assets-*
           path: release-assets
           merge-multiple: true
-      # One writer creates the draft and SHA256SUMS only after all four targets pass
+      # One writer creates the draft and SHA256SUMS only after all five targets pass
       # verification. Publishing the draft, and deploying it to winc.si, remain human steps.
       - name: Upload release assets
         env:

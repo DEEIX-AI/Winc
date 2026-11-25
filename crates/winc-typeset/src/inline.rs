@@ -102,7 +102,11 @@ impl Cx<'_, '_> {
             para.size
         };
         RunStyle {
-            font: if code { FontKind::Mono } else { FontKind::Ui },
+            font: if code {
+                FontKind::Mono
+            } else {
+                FontKind::Prose
+            },
             faux: Faux {
                 bold: !code && (para.bold || style.has(Style::STRONG)),
                 italic: style.has(Style::EMPHASIS),
@@ -175,7 +179,8 @@ impl Cx<'_, '_> {
         };
         // 不超过一行的宽度，按比例缩小。
         let fit = (room / w).min(1.0);
-        Some((path, (w * fit).floor().max(1.0), (h * fit).floor().max(1.0)))
+        let (w, h) = bounded((w * fit).floor().max(1.0), (h * fit).floor().max(1.0));
+        Some((path, w, h))
     }
 
     /// 把行内文字拆成一个个字，量好宽度、标好哪里能换行。
@@ -206,6 +211,7 @@ impl Cx<'_, '_> {
             }
             let code = style.has(Style::CODE);
             let pad = st.size * 0.4;
+            let lead = atoms.len();
             if code {
                 atoms.push(Atom {
                     kind: AtomKind::Pad,
@@ -258,6 +264,10 @@ impl Cx<'_, '_> {
                 self.push_char(&mut atoms, c, run, st, source);
             }
             if code {
+                // 开头的留白和第一个字之间不换行：否则留白留在上一行的行尾，画成一块空的底色。
+                if let Some(first) = atoms.get_mut(lead + 1) {
+                    first.brk = false;
+                }
                 atoms.push(Atom {
                     kind: AtomKind::Pad,
                     width: pad,
@@ -359,7 +369,7 @@ impl Cx<'_, '_> {
             .flatten();
         let mut top = y;
         let mut first_baseline = None;
-        let main = self.frame.metrics(FontKind::Ui, para.size);
+        let main = self.frame.metrics(FontKind::Prose, para.size);
         let mut prev_end = 0;
         for line in lines {
             // 块文字里：`<br>`、硬换行处换行，自动折行处不插入字符。
@@ -434,7 +444,7 @@ impl Cx<'_, '_> {
                     x: pen,
                     baseline,
                     text: "".into(),
-                    font: FontKind::Ui,
+                    font: FontKind::Prose,
                     faux: Faux::default(),
                     size: para.size,
                     color: para.color,
@@ -558,7 +568,7 @@ impl Cx<'_, '_> {
                     end - start,
                     m.ascent + m.descent + pad * 2.0,
                 );
-                // 高亮底色（经验值）：深色主题用 30% 不透明的暗黄，浅色主题用浅黄。
+                // 高亮底色：深色主题用 30% 不透明的暗黄，浅色主题用浅黄。
                 let color = if self.dark {
                     Color::hex(0xbb8009).alpha(0.3)
                 } else {
@@ -691,11 +701,22 @@ fn break_lines(atoms: &[Atom], width: f32) -> Vec<std::ops::Range<usize>> {
         // 保留 0.01 逻辑像素的余量：测得的宽度加上边距再减去（表格的列宽）会产生浮点误差，
         // 恰好放得下的最后一个字符不应折到下一行。
         if x + atom.width > width + 0.01 && i > start && !atom.space {
-            // 没有可断处、只能在字与字之间强制断行时，若下一行将以不能出现在行首的标点开头，
-            // 断点向前移一个字，使该标点与前一个字一起换行。
+            // 没有可断处、只能在字与字之间强制断行时，若下一行将以不能出现在行首的标点或行内代码
+            // 结尾的留白开头，断点向前移一个字，使它与前一个字一起换行；行内代码开头的留白不留在
+            // 行尾。
             let forced = |mut at: usize| {
                 while at > start + 1
-                    && matches!(atoms[at].kind, AtomKind::Char(c) if no_break_before(c))
+                    && match atoms[at].kind {
+                        AtomKind::Char(c) => no_break_before(c),
+                        AtomKind::Pad => !atoms[at].brk,
+                        _ => false,
+                    }
+                {
+                    at -= 1;
+                }
+                if at > start + 1
+                    && matches!(atoms[at - 1].kind, AtomKind::Pad)
+                    && atoms[at - 1].brk
                 {
                     at -= 1;
                 }
@@ -754,6 +775,24 @@ fn no_break_before(c: char) -> bool {
 /// 标点 `c` 是否不能出现在行尾。
 fn no_break_after(c: char) -> bool {
     "（〔［｛「『【《〈〖〘〝“‘«‹([{".contains(c)
+}
+
+/// 行内图片显示面积的上限（逻辑像素的平方）。
+///
+/// 图片按显示大小分配像素，显示大小取自文档（`height` 属性、SVG 自身的尺寸），不限制时一张
+/// 图即可要求任意多的内存。取自调参：1600 万相当于 800 × 20000 的长截图，更大的图按比例
+/// 缩小；长边因此不超过 1600 万，仍可由 `f32` 逐一表示。
+const MAX_IMAGE_AREA: f32 = 16_000_000.0;
+
+/// 返回把 `width` × `height`（逻辑像素，均不小于 1）按比例缩小到 [`MAX_IMAGE_AREA`] 以内的
+/// 大小，每边至少 1 像素；已在上限以内时原样返回。
+fn bounded(width: f32, height: f32) -> (f32, f32) {
+    let shrink = (MAX_IMAGE_AREA / (width * height)).sqrt();
+    if shrink >= 1.0 {
+        return (width, height);
+    }
+    let side = |side: f32| (side * shrink).floor().clamp(1.0, MAX_IMAGE_AREA);
+    (side(width), side(height))
 }
 
 #[cfg(test)]

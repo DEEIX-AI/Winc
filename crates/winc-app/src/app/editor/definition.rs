@@ -1,7 +1,7 @@
 //! 转到定义（`F12`、`⌘` 单击、右键菜单）和查找引用（`⇧F12`）。
 //!
 //! 不使用语言服务：定义按常见的声明写法在文本中查找（见 `winc_editor::definition`），先查当前文件，
-//! 没有再在后台搜索整个项目；查找引用是全字匹配、区分大小写的全局搜索。光标本来就在定义上时，
+//! 没有再在后台搜索整个项目；查找引用是全字匹配、区分大小写的全局搜索。光标原本就在定义上时，
 //! 转到定义改为列出该名字的用法：局部变量只在当前文件中找，其余在项目中全字搜索后，再在后台
 //! 按词法分析剔除注释、字符串、无关语言和其他同名定义中的命中（见 `winc_editor::usages`）。
 
@@ -48,6 +48,8 @@ pub enum PlacesKind {
     Usages,
     /// 一个文件中的书签。
     Bookmarks,
+    /// 在文件中查找的各处匹配。
+    Search,
 }
 
 impl PlacesKind {
@@ -57,6 +59,7 @@ impl PlacesKind {
             PlacesKind::Definitions => t!("editor-places-definitions-count", count = n),
             PlacesKind::Usages => t!("editor-places-usages-count", count = n),
             PlacesKind::Bookmarks => t!("editor-places-bookmarks-count", count = n),
+            PlacesKind::Search => t!("editor-places-search-count", count = n),
         }
     }
 }
@@ -80,6 +83,18 @@ pub struct Places {
 }
 
 impl Places {
+    /// 返回在文件中查找列出的各处匹配，`query` 是查询的文字。
+    pub fn search(query: String, items: Vec<Place>) -> Places {
+        Places {
+            kind: PlacesKind::Search,
+            name: query,
+            items,
+            origin: String::new(),
+            anchor: 0,
+            widest_label: Default::default(),
+        }
+    }
+
     /// 返回全部条目中最宽的「文件名 + 行号」的宽度（逻辑像素），由 `measure` 量出。
     ///
     /// 这一栏的宽度只取决于条目和字号（`sizes`：界面字号、小字号），条目在浮窗打开期间不变，
@@ -97,7 +112,7 @@ impl Places {
     }
 }
 
-/// 在依赖目录里找定义时，过了这么久还没找完才提示正在查找，与其他「正在读取」的提示相同。
+/// 在依赖目录里找定义时，超过该时长还没找完才提示正在查找，与其他「正在读取」的提示相同。
 const DEPENDENCY_HINT_DELAY: Duration = Duration::from_millis(300);
 
 /// 正在后台搜索整个项目的定义或用法。
@@ -186,13 +201,10 @@ impl App {
 
     /// 转到光标所在名字的定义（`F12`、`⌘` 单击）。
     ///
-    /// 当前文件内有定义时，跳到离光标最近的一处：优先取光标之前（含同一行）最近的一处，
-    /// 因为局部变量通常定义在使用位置之前；光标之前没有时取文件中的第一处。当前文件内没有定义时，
-    /// 在项目中后台搜索：只有一处就直接跳转，有多处则列出供选择。
-    ///
-    /// 光标本来就在定义上时改为列出用法：局部变量只在当前文件中找（见
-    /// [`Self::show_local_usages`]），其余在项目中找（见 [`Self::show_usages`]）。光标处是重新
-    /// 赋值（之前已有同名的定义）时不算在定义上，照常跳到之前的定义。
+    /// 当前文件内有定义时，跳到离光标最近的一处：优先取光标之前（含同一行）最近的一处，光标之前没有
+    /// 时取第一处；没有定义时在项目中后台搜索，只有一处就直接跳转，有多处则列出供选择。光标原本就在
+    /// 定义上时改为列出用法：局部变量只在当前文件中找（见 [`Self::show_local_usages`]），其余在项目
+    /// 中找（见 [`Self::show_usages`]）；重新赋值（之前已有同名的定义）时不算在定义上。
     pub(in crate::app) fn go_to_definition(&mut self) {
         let Some(name) = self.name_at_caret() else {
             return;

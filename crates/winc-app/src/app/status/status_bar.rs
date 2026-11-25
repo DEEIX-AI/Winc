@@ -24,17 +24,17 @@ pub enum StatusItem {
     Encoding,
     /// 文档的语言：手动改用别的语言（没保存过的文件选了语言才能格式化），或按文件名重新识别。
     Language,
-    /// 当前的仓库或工作树（有多个位置时才有）：点了弹出系统菜单切换。
+    /// 当前的仓库或工作树（有多个位置时才有）：点击弹出系统菜单切换。
     Worktree,
-    /// Git 的当前分支：点了弹出系统菜单切换。
+    /// Git 的当前分支：点击弹出系统菜单切换。
     Branch,
     /// 终端面板的开关（终端模块开着时在设置按钮左边）。
     Terminal,
-    /// 连接远端主机的按钮（远程模块开着时在终端开关左边）：点了打开主机面板。
+    /// 连接远端主机的按钮（远程模块开着时在终端开关左边）：点击打开主机面板。
     Remote,
-    /// 设置按钮（始终在最右边）：点了打开设置。
+    /// 设置按钮（始终在最右边）：点击打开设置。
     Settings,
-    /// 后台检查找到了新版本：点了打开更新窗口。
+    /// 后台检查找到了新版本：点击打开更新窗口。
     Update,
     /// 只读开关：菜单中可把当前文件或全部文件设为只读，或恢复为可以编辑。
     ReadOnly,
@@ -62,7 +62,7 @@ impl App {
         if item == StatusItem::Remote {
             return self.open_remote_picker();
         }
-        // 面板开着时点在面板外先关掉它（`click_picker`），再点一下才展开：点分支名就是开和关。
+        // 面板开着时点在面板外先关掉它（`click_picker`），再点击一次才展开：点分支名就是开和关。
         if item == StatusItem::Branch {
             return self.open_branch_picker(crate::app::GitAnchor::Status);
         }
@@ -138,6 +138,7 @@ impl App {
             MenuCommand::UseLanguage(i) => {
                 if let Some(&language) = winc_syntax::languages().get(i) {
                     self.use_language(language);
+                    self.update_state(move |state| state.remember_language(language.id));
                 }
             }
             MenuCommand::UsePlainText => self.use_language(winc_syntax::detect("")),
@@ -227,7 +228,10 @@ impl App {
                     self.ensure_caret_visible();
                 }
                 if damaged {
-                    self.flash(t!("workspace-reopen-lossy", encoding = encoding.label()));
+                    self.flash(t!(
+                        "workspace-reopen-lossy",
+                        encoding = winc_editor::encoding::label(encoding)
+                    ));
                 }
             }
             Ok(false) => {}
@@ -326,8 +330,9 @@ impl App {
 }
 
 impl App {
-    /// 点了状态栏上的更新提示（macOS 以外的平台）：新版本已经准备好时重新启动，正在下载时不
-    /// 处理，否则开始下载安装。不由应用自己更新的安装改为打开下载页，Arch 包提示用 pacman 更新。
+    /// 点击状态栏上的更新提示（macOS 以外的平台）：新版本已经准备好时重新启动，正在下载时不
+    /// 处理，否则开始下载安装。不由应用自己更新的安装改为打开下载页，Arch 包和 Scoop 装的提示用
+    /// 各自的命令更新。
     #[cfg(not(target_os = "macos"))]
     fn click_update(&mut self) {
         use crate::updates::Delivery;
@@ -350,6 +355,7 @@ impl App {
                     }
                 }
                 Some(Delivery::Pacman) => self.flash(t!("workspace-status-update-pacman")),
+                Some(Delivery::Scoop) => self.flash(t!("workspace-status-update-scoop")),
                 _ => crate::updates::install(),
             },
         }

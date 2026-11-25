@@ -119,6 +119,15 @@ pub fn locate(path: &Path) -> Option<Location> {
     Some(Location { target, path })
 }
 
+/// 是否 `path` 以两个路径分隔符开头：Windows 的网络路径（`\\主机\共享`）和设备路径（`\\?\…`）。
+///
+/// 来自链接、文档内容的路径是这种形式时不应访问：Windows 上查看它是否存在就会向那台主机发起
+/// 连接和身份验证。
+pub fn names_host(path: &str) -> bool {
+    let separator = |c: char| c == '/' || c == '\\';
+    path.chars().take(2).filter(|c| separator(*c)).count() == 2
+}
+
 /// 是否为虚拟路径，即指向远端主机上的文件。
 pub fn is_remote(path: &Path) -> bool {
     leading_target(&mut path.components()).is_some()
@@ -179,7 +188,7 @@ pub fn relative_lossy(path: &Path, root: &Path) -> Option<String> {
 fn root(target: &Target) -> PathBuf {
     #[cfg(unix)]
     let text = format!("/{}/{}/{PREFIX}{}", BASE[0], BASE[1], target.as_str());
-    // Windows 的设备名中不能有 `:`：端口之前的 `:` 写成 `+`（连接目标中没有这个字符）。
+    // Windows 的设备名中不能有 `:`：连接目标中的 `:` 写成 `+`（连接目标中没有这个字符）。
     #[cfg(windows)]
     let text = format!(r"\\.\{PREFIX}{}\", target.as_str().replace(':', "+"));
     PathBuf::from(text)

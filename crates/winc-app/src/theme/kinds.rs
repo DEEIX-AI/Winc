@@ -32,6 +32,8 @@ const DART: [u32; 2] = [0x5CB8E6, 0x1A78A8];
 const JULIA: [u32; 2] = [0x7FA8D8, 0x3B6AA0];
 const C: [u32; 2] = [0x8FA6D6, 0x4A65A0];
 const DOTNET: [u32; 2] = [0x9B8BE0, 0x5A47B0];
+/// 项目文件的颜色：Winc 的蓝色。
+const PROJECT: [u32; 2] = [0x6FA3FF, 0x1769FC];
 /// 未识别的类型的颜色。
 const PLAIN: [u32; 2] = [0x9AA0AA, 0x6B707A];
 
@@ -174,6 +176,11 @@ fn document_kind(stem: &str) -> Option<(FileGlyph, [u32; 2])> {
     }
 }
 
+/// 返回语言 `language` 的类型记号和颜色：这种语言的文件用的那一个，纯文本用文本文件的。
+pub fn language_kind(language: &winc_syntax::Language) -> (FileGlyph, [u32; 2]) {
+    (language.file_name("a")).map_or_else(|| file_kind("a.txt"), |name| file_kind(&name))
+}
+
 /// 扩展名表认不出、编辑器能高亮的文件：按该语言的主扩展名配图标，没有时画 `Code`。编辑器新加
 /// 的语言不必在扩展名表中再登记一次。
 fn by_language(name: &str) -> Option<(FileGlyph, [u32; 2])> {
@@ -210,9 +217,9 @@ fn by_extension(ext: &str) -> Option<(FileGlyph, [u32; 2])> {
         "fs" | "fsx" | "vb" => (Code, DOTNET),
         "html" | "htm" | "xhtml" | "vue" | "svelte" | "astro" | "wxml" => (Code, ORANGE),
         // 生成 HTML 的模板。
-        "hbs" | "handlebars" | "mustache" | "ejs" | "pug" | "jade" | "njk" | "liquid" | "twig"
-        | "j2" | "jinja" | "jinja2" | "haml" | "slim" | "tmpl" | "tpl" | "gohtml" | "cshtml"
-        | "razor" => (Code, ORANGE),
+        "hbs" | "handlebars" | "mustache" | "ejs" | "pug" | "jade" | "njk" | "nunjucks"
+        | "liquid" | "twig" | "j2" | "jinja" | "jinja2" | "haml" | "slim" | "tmpl" | "tpl"
+        | "gohtml" | "cshtml" | "razor" => (Code, ORANGE),
         "xml" | "xsd" | "xsl" | "xslt" | "plist" | "props" | "targets" | "xib" | "storyboard"
         | "wsdl" | "xaml" | "rss" | "atom" | "kml" | "gpx" | "manifest" | "xcscheme"
         | "xcworkspacedata" => (Code, ORANGE),
@@ -254,6 +261,8 @@ fn by_extension(ext: &str) -> Option<(FileGlyph, [u32; 2])> {
         "ps1" | "psm1" | "psd1" | "bat" | "cmd" | "vbs" | "vbe" | "wsf" => (Shell, BLUE),
         "applescript" | "scpt" | "ahk" => (Shell, GREY),
 
+        // 项目文件：Winc 及其他编辑器。
+        "winc-project" | "code-workspace" | "sublime-project" | "ipr" => (Project, PROJECT),
         // 配置和数据。
         "json" | "jsonc" | "json5" | "jsonl" | "ndjson" | "geojson" | "topojson" | "jsonld"
         | "har" | "webmanifest" => (Json, YELLOW),

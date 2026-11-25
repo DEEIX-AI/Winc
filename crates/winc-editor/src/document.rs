@@ -401,17 +401,14 @@ fn changed_lines(old: &ropey::Rope, new: &ropey::Rope) -> (usize, usize, usize) 
 /// 一次连续输入与随后的滚动查询通常只涉及几十次改动，64 条足以覆盖；记录更多只会增加内存开销。
 const EDIT_LOG: usize = 64;
 
-/// 可打开的文件大小上限（字节，4 GiB）。
-///
-/// 超过该大小的文件不打开。上限取自调参：`rope` 把全文放在内存中并额外维护树的节点，内存占用
-/// 随文件大小线性增长，超过该值后占用达到可用内存的量级。该上限同时约束打开文件与全局搜索的扫描，
-/// 按需读取的方式见 [`LARGE_FILE`]。
-pub(crate) const OPEN_LIMIT: u64 = 4 << 30;
-/// 大文件的大小下限（字节，16 MiB）。
-///
-/// 超过该大小的文件按大文件打开：原文留在磁盘上按需读取，内存里只记录改动。下限取自调参：按大文件
-/// 打开后每次滚动都要读磁盘，只有当整个文件读入内存的占用和耗时不可忽略时，这一代价才值得承担。
-pub const LARGE_FILE: u64 = 16 << 20;
+pub(crate) use winc_search::OPEN_LIMIT;
+pub use winc_search::{LARGE_FILE, looks_binary};
+
+/// 本机上的文件 `path` 是否超过 [`LARGE_FILE`]、按大文件打开；远端的文件不查询，返回 `false`。
+pub fn opens_as_large(path: &Path) -> bool {
+    !winc_backend::is_remote(path)
+        && winc_backend::fs::metadata(path).is_ok_and(|m| m.len > LARGE_FILE)
+}
 /// 一次复制的最大字节数（字节，64 MiB）。
 ///
 /// 大文件全选后复制会把整个文件读进内存，因此需要限制。
@@ -436,21 +433,7 @@ const HIGHLIGHT_LOOKBACK: usize = 256;
 /// 与编辑区绘制时的每帧预算取同一个值：推算不完时本次结果不缓存，下一帧重新计算。该值取自调参，
 /// 上限越大，跳到文件靠后位置时粘滞块能更早算出，单帧耗时也随之增长。
 pub(crate) const STICKY_HIGHLIGHT_BUDGET: usize = 4_000;
-/// 二进制检测读取的文件前缀长度（字节，8 KiB）。
-///
-/// 这段前缀中出现 NUL 即视为二进制文件；带 UTF-16 BOM 的文件除外。
-pub(crate) const BINARY_SNIFF: usize = 8 << 10;
-
-// 打开文件和全局搜索（project_search.rs）使用同一套判断：是否为二进制、如何去掉 BOM、
-// 非 UTF-8 时如何解码。两处判断一致，搜索结果的匹配位置才与打开后的文本和行号对应。
-
-/// 是否为二进制文件：开头 `BINARY_SNIFF` 字节内含 NUL。
-///
-/// UTF-16 文件含大量 NUL，因此是 UTF-16 的文字（带 BOM，或认得出的不带 BOM 的）时不算
-/// 二进制。`bytes` 应从文件开头起，超出 `BINARY_SNIFF` 的部分不检查。
-pub fn looks_binary(bytes: &[u8]) -> bool {
-    !utf16_text(bytes) && memchr::memchr(0, &bytes[..bytes.len().min(BINARY_SNIFF)]).is_some()
-}
+pub(crate) use winc_search::BINARY_SNIFF;
 
 /// 一个打开的文档：文本、选区、撤销历史、高亮状态，以及对应的磁盘文件。
 ///
@@ -519,6 +502,9 @@ pub struct Document {
     rendered: bool,
     /// 不对应文件的只读标签（格式化工具的输出、安装说明）的标题。
     pub title: Option<String>,
+    /// 未命名文档在标签上显示的名字（见 [`Document::make_untitled`]）；为 `None` 时显示
+    /// `untitled`。有路径时不使用。
+    pub untitled_name: Option<String>,
     /// 阅读标签的内容：编辑区显示排版后的 Markdown，没有可切换的源代码，文本为空。
     pub reading: Option<Reading>,
     /// 文本每变化一次加 1，搜索结果等缓存据此判断是否失效。
@@ -580,6 +566,8 @@ pub struct Document {
     /// 用户通过「通过编码重新打开」选的编码：之后从磁盘重新读取时按它解码，不再识别编码，也不
     /// 再判断是否二进制。
     chosen: Option<Encoding>,
+    /// 按 Unicode 转义读入时各行原来的写法：保存时未修改的行按它写回。
+    escape_origin: Option<std::sync::Arc<charset::EscapeOrigin>>,
 }
 
 /// 从磁盘读出的内容。
@@ -593,6 +581,8 @@ struct Loaded {
     mtime: Option<Stamp>,
     /// 读取时文件的大小（字节）。
     len: u64,
+    /// 按 Unicode 转义读入时各行原来的写法，见 [`charset::EscapeOrigin`]。
+    origin: Option<std::sync::Arc<charset::EscapeOrigin>>,
 }
 
 impl Document {
@@ -634,6 +624,7 @@ impl Document {
             split: false,
             rendered: false,
             title: None,
+            untitled_name: None,
             reading: None,
             revision: 0,
             scroll_line: 0.0,
@@ -662,6 +653,7 @@ impl Document {
             pending_as_text: false,
             pending_hex: false,
             chosen: None,
+            escape_origin: None,
         }
     }
 
@@ -699,6 +691,29 @@ impl Document {
         document.title = Some(title.to_owned());
         document.readonly = true;
         document
+    }
+
+    /// 把输出标签转为可编辑的未命名文档，标签上仍显示原来的标题。
+    ///
+    /// 当前内容作为保存基线：不修改时关闭不询问是否保存。不是输出标签时不做处理。
+    pub fn make_untitled(&mut self) {
+        if self.reading.is_some() || self.diff.is_some() || self.log.is_some() {
+            return;
+        }
+        if let Some(title) = self.title.take() {
+            self.untitled_name = Some(title);
+            self.readonly = false;
+        }
+    }
+
+    /// 把 [`Document::make_untitled`] 转出的未命名文档恢复为只读的输出标签。
+    pub fn make_output(&mut self) {
+        if self.path.is_none()
+            && let Some(name) = self.untitled_name.take()
+        {
+            self.title = Some(name);
+            self.readonly = true;
+        }
     }
 
     /// 创建只读、不对应文件的阅读标签，标签上显示 `title`，内容为 `reading`。
@@ -1010,6 +1025,7 @@ impl Document {
         // 作用于整个文件的命令需要读取并改写整个文件，大文件不支持。
         let whole_file = match command {
             Command::TrimTrailingWhitespace => true,
+            &Command::UnescapeUnicode { whole } | &Command::EscapeUnicode { whole } => whole,
             Command::SortLines { .. } => {
                 winc_core::transform::sorts_whole_file(&self.text, self.selection)
             }
@@ -1162,17 +1178,19 @@ impl Document {
         // 扩展名（`a.txt` → `a.csv`）时文本不变，因此递增 `revision` 使缓存失效。
         self.revision += 1;
         self.columns = None;
+        self.follow_unicode_escapes();
     }
 
-    /// 标签上显示的名字：输出标签用 `title`，否则用文件名，没有文件名时是 `untitled`。
+    /// 标签上显示的名字：输出标签用 `title`，否则用文件名；未命名文档用 `untitled_name`，没有
+    /// 时是 `untitled`。
     pub fn name(&self) -> Cow<'_, str> {
         if let Some(title) = &self.title {
             return Cow::Borrowed(title);
         }
-        self.path
-            .as_deref()
-            .and_then(Path::file_name)
-            .map_or(Cow::Borrowed("untitled"), |n| n.to_string_lossy())
+        if let Some(name) = self.path.as_deref().and_then(Path::file_name) {
+            return name.to_string_lossy();
+        }
+        Cow::Borrowed(self.untitled_name.as_deref().unwrap_or("untitled"))
     }
 
     /// 是否有未保存的修改。
@@ -1224,6 +1242,18 @@ impl Document {
     ///
     /// 只读文档忽略。
     pub fn apply(&mut self, transaction: Transaction) {
+        self.apply_as(transaction, false);
+    }
+
+    /// 应用一个事务，并入撤销栈顶的撤销单元（见 `History::amend`）。
+    ///
+    /// 只读文档忽略。
+    pub fn amend(&mut self, transaction: Transaction) {
+        self.apply_as(transaction, true);
+    }
+
+    /// [`Document::apply`] 与 [`Document::amend`] 的实现。
+    fn apply_as(&mut self, transaction: Transaction, amend: bool) {
         if self.readonly || self.locked || self.all_locked {
             return;
         }
@@ -1241,7 +1271,11 @@ impl Document {
 
         if !transaction.changes.is_empty() {
             let first = transaction.first_offset();
-            self.history.push(transaction);
+            if amend {
+                self.history.amend(transaction);
+            } else {
+                self.history.push(transaction);
+            }
             self.after_change(first);
         }
         // 事务不含其余选区时，文本改动后其余选区随版本号变化自动失效；含其余选区时按事务恢复。
@@ -1294,16 +1328,17 @@ impl Document {
     }
 }
 
-/// 是否第 `line` 行（从 0 起）的开头处于多行字符串或块注释中。
+/// 是否第 `line` 行（从 0 起）的开头处于跨行的非普通代码结构中（见
+/// [`LineState::is_quoted`]）。
 ///
 /// 普通文档只使用已经推算好的高亮状态，不向后推算，尚未推算到的行视为不在其中；大文件按
 /// `HIGHLIGHT_LOOKBACK` 回看推算。
 pub(crate) fn starts_quoted(highlighter: &mut Highlighter, text: &Content, line: usize) -> bool {
     match text {
         Content::Rope(rope) => rope_starts_quoted(highlighter, rope, line),
-        Content::Large(large) => {
-            highlighter.state_near(&**large, line, HIGHLIGHT_LOOKBACK) != LineState::Normal
-        }
+        Content::Large(large) => highlighter
+            .state_near(&**large, line, HIGHLIGHT_LOOKBACK)
+            .is_quoted(),
     }
 }
 
@@ -1311,5 +1346,5 @@ pub(crate) fn starts_quoted(highlighter: &mut Highlighter, text: &Content, line:
 pub(crate) fn rope_starts_quoted(highlighter: &mut Highlighter, rope: &Rope, line: usize) -> bool {
     highlighter
         .state_at(rope, line, 0)
-        .is_some_and(|s| s != LineState::Normal)
+        .is_some_and(LineState::is_quoted)
 }

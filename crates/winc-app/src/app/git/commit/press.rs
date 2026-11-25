@@ -3,7 +3,7 @@
 use super::*;
 
 impl App {
-    /// 点了提交视图里的 `target`。
+    /// 点击提交视图里的 `target`。
     pub(in crate::app) fn press_commit(&mut self, target: CommitTarget) {
         // 按下标找文件的目标，状态在绘制以后变过就不处理：下标可能已经指向别的文件。
         let indexed = matches!(
@@ -56,6 +56,7 @@ impl App {
             CommitTarget::OtherGroup(repo, group) => {
                 self.toggle_other_fold(Some(repo), Some(group))
             }
+            CommitTarget::OtherDir(row) => self.toggle_other_dir(row),
             CommitTarget::OtherFold(repo) => self.toggle_other_fold(Some(repo), None),
             CommitTarget::CurrentFold => self.toggle_other_fold(None, None),
             CommitTarget::CurrentRepository => self.focus = Focus::CommitList,
@@ -95,7 +96,9 @@ impl App {
                 self.git_refresh();
             }
             CommitTarget::More => {
-                let rect = self.commit_parts().tools[2].0;
+                let tools = self.commit_parts().tools;
+                let more = tools.iter().find(|(_, t)| *t == CommitTarget::More);
+                let rect = more.map_or(Rect::default(), |(rect, _)| *rect);
                 self.open_button_menu(
                     MenuButton::CommitMore,
                     MenuTarget::CommitMore,
@@ -212,8 +215,12 @@ impl App {
                     self.request_redraw();
                     return;
                 }
-                // 双击打开文件本身，单击选中并预览差异。
+                // 双击打开文件本身，单击选中并预览差异。同一个文件在两组各有一行时，记下点的是
+                // 哪一行：预览按它所在的组比较，之后用键盘也从这一行移动。
                 let (x, y) = self.pointer.mouse;
+                if let Some(row) = self.commit_row_at(y) {
+                    self.git.commit.cursor = Some(row);
+                }
                 if self.click_count(x, y) >= 2 && self.may_be_file(&path) {
                     self.open_path(&path);
                     self.focus = Focus::Editor;
@@ -222,7 +229,7 @@ impl App {
                 }
             }
             CommitTarget::Sticky(row, level) => {
-                // 先滚到那一行正好停在固定的位置，画面不动；再当作点了那一行。
+                // 先滚到那一行正好停在固定的位置，画面不动；再当作点击了那一行。
                 self.git.commit.scroll =
                     (row as f32 * COMMIT_ROW - level as f32 * COMMIT_ROW).max(0.0);
                 let target = match self.commit_rows().get(row) {
@@ -245,7 +252,7 @@ impl App {
             }
             CommitTarget::RevertFile(i) => {
                 if let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) {
-                    self.confirm_rollback(vec![path]);
+                    self.confirm_commit_rollback(vec![path]);
                 }
             }
             CommitTarget::StageFile(i, on) => {

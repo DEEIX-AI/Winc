@@ -558,8 +558,9 @@ fn dragging_past_the_sidebar_reaches_merged_folders_that_do_not_fit() {
     app.on_mouse_up(MouseButton::Left);
 }
 
+/// 放不下名称的一行展开后画在分隔条上，分隔条仍然可以拖动；鼠标停在分隔条上时全名保持展开。
 #[test]
-fn a_row_that_does_not_fit_covers_the_sidebar_splitter() {
+fn a_row_that_does_not_fit_keeps_the_sidebar_splitter() {
     let dir = sample_folder("compact-splitter");
     let root = dir.join("project");
     let names = [
@@ -577,18 +578,20 @@ fn a_row_that_does_not_fit_covers_the_sidebar_splitter() {
     let top = app.tree_row_top(row) + TREE_ROW / 2.0;
     assert!(app.layout.splitter.contains(x, top));
 
-    // 名称放得下的行：分隔条照常可以拖动。
+    // 名称放得下的行：分隔条仍然可以拖动。
     let other = row_of(&app, "zzz");
     app.on_mouse_move(x, app.tree_row_top(other) + TREE_ROW / 2.0);
     paint(&mut app);
     assert_eq!(app.pointer.hover, Hover::Splitter);
 
-    // 从左边移到放不下名称的一行：经过分隔条时仍算在这一行上。
+    // 从左边移到放不下名称的一行：经过分隔条时可以拖动，全名仍然展开。
     app.on_mouse_move(x - 20.0, top);
     paint(&mut app);
     assert!(app.panels.tree.overflow.is_some());
     app.on_mouse_move(x, top);
-    assert_eq!(app.pointer.hover, Hover::TreeRow(row));
+    paint(&mut app);
+    assert_eq!(app.pointer.hover, Hover::Splitter);
+    assert!(app.panels.tree.overflow.is_some_and(|(_, i)| i == row));
 }
 
 #[test]
@@ -770,7 +773,7 @@ fn a_row_that_does_not_fit_covers_the_tree_scrollbar() {
     let other = app.tree_row_top(row + 2) + TREE_ROW / 2.0;
     let x = app.layout.tree.right() - 3.0;
 
-    // 名称放得下的行：滚动条照常响应。
+    // 名称放得下的行：滚动条仍然响应。
     app.on_mouse_move(x, other);
     assert!(
         matches!(app.pointer.hover, Hover::Scrollbar(_)),

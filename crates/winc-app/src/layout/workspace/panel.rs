@@ -10,13 +10,23 @@ pub enum PanelTool {
     Refresh,
     /// 清除搜索结果。
     Clear,
+    /// 在对话框中打开搜索。
+    OpenDialog,
+    /// 在列表和树形之间切换结果的显示方式；图标是点击后换成的那一种。
+    Layout,
     /// 折叠全部结果；全部结果都已折叠时变为「展开」。
     CollapseAll,
 }
 
 impl PanelTool {
     /// 全部工具按钮，顺序为从左到右。
-    pub const ALL: [PanelTool; 3] = [PanelTool::Refresh, PanelTool::Clear, PanelTool::CollapseAll];
+    pub const ALL: [PanelTool; 5] = [
+        PanelTool::Refresh,
+        PanelTool::Clear,
+        PanelTool::OpenDialog,
+        PanelTool::Layout,
+        PanelTool::CollapseAll,
+    ];
 }
 
 /// 搜索面板中可以点击的按钮。
@@ -78,7 +88,7 @@ pub struct PanelParts {
     /// 标题行，工具按钮位于其右端。
     pub header: Rect,
     /// 顶部的工具按钮及其位置。
-    pub tools: [(Rect, PanelTool); 3],
+    pub tools: [(Rect, PanelTool); PanelTool::ALL.len()],
     /// 查找输入框左端的「展开替换」箭头。
     pub expand: Rect,
     /// 查找输入框。
@@ -116,11 +126,10 @@ pub struct PanelParts {
 impl PanelParts {
     /// 计算搜索面板各部件的位置。
     ///
-    /// `panel` 为侧栏中顶栏以下的区域；`replace_shown` 为替换行展开的比例（0 为收起，
-    /// 1 为完全展开），`details_shown` 为「包含」「排除」两行展开的比例；
-    /// `summary` 表示结果统计行是否有内容。展开途中各行只占比例对应的高度，
-    /// 下方的行随之移动；输入框尺寸不变，从上一行下方滑出。`heights` 是查找、替换输入框的高度，
-    /// 文字折成多行时大于 [`PANEL_FIELD`]。
+    /// `panel` 为侧栏中顶栏以下的区域；`replace_shown` 为替换行展开的比例（0 为收起，1 为完全
+    /// 展开），`details_shown` 为「包含」「排除」两行展开的比例；`summary` 表示结果统计行是否有
+    /// 内容。展开途中各行只占比例对应的高度，下方的行随之移动；输入框尺寸不变，从上一行下方滑出。
+    /// `heights` 是查找、替换输入框的高度，文字折成多行时大于 [`PANEL_FIELD`]。
     pub fn new(
         panel: Rect,
         replace_shown: f32,

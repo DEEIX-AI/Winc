@@ -500,7 +500,7 @@ fn option_clicking_a_folder_expands_and_collapses_it_all_the_way() {
     };
     let alt = winit::keyboard::ModifiersState::ALT;
 
-    // 一次展开到底，单子目录照常合并。
+    // 一次展开到底，单子目录仍然合并。
     click(&mut app, alt);
     assert_eq!(labels(&app), ["a", "b/c", "d/e", "other"]);
 
@@ -667,7 +667,7 @@ fn shoot_preview_tab() {
     click_tree_file(&mut app, &dir, "short.rs", 1);
     shoot(&mut app, "preview-tab-light");
     app.open_settings();
-    app.settings_show_page(crate::layout::SettingsPage::Editor);
+    app.settings_show_page(crate::layout::SettingsPage::Files);
     app.settings.scroll = app.settings_layout().max_scroll();
     shoot(&mut app, "preview-tab-settings-light");
     let _ = std::fs::remove_dir_all(&dir);

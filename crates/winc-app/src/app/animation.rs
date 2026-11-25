@@ -140,6 +140,8 @@ pub enum Card {
     Dialog,
     /// 窗口内绘制的提示框（平台没有系统提示框时使用）。
     Alert,
+    /// 在文件中查找的对话框。
+    Search,
 }
 
 impl Card {
@@ -147,7 +149,7 @@ impl Card {
     pub fn radius(self) -> f32 {
         match self {
             Card::Picker | Card::Bar => crate::theme::RADIUS_BAR,
-            Card::Dialog | Card::Alert => crate::theme::RADIUS_CARD,
+            Card::Dialog | Card::Alert | Card::Search => crate::theme::RADIUS_CARD,
         }
     }
 }
@@ -239,8 +241,8 @@ impl Clock {
         }
     }
 
-    /// 返回往回走的时钟：时长不变，从此刻接着当前的位置反向过渡，新时钟的进度等于 1 减去
-    /// 当前的进度，动画不会跳一下。
+    /// 返回往回走的时钟：时长不变，从此刻继续当前的位置反向过渡，新时钟的进度等于 1 减去
+    /// 当前的进度，动画不会跳变。
     pub fn reversed(&self) -> Clock {
         let back = 1.0 - self.progress();
         // 缓出曲线的反函数：进度为 `back` 时经过的时间比例。
@@ -321,6 +323,7 @@ impl App {
             Card::Bar => &mut self.motion.bar_card,
             Card::Dialog => &mut self.motion.dialog_card,
             Card::Alert => &mut self.motion.alert_card,
+            Card::Search => &mut self.motion.search_card,
         }
     }
 
@@ -354,6 +357,9 @@ impl App {
             if slot.as_ref().is_some_and(|m| clock(m).done()) {
                 *slot = None;
             }
+        }
+        if self.panes.motion.as_ref().is_some_and(|m| m.done()) {
+            self.panes.motion = None;
         }
 
         settle(&mut self.panels.sidebar.motion, |m| m.clock);
@@ -391,7 +397,11 @@ impl App {
         settle(&mut self.panels.global.field_motion, |m| m.2);
         settle(&mut self.panels.global.motion, |m| m.clock);
         settle(&mut self.motion.fold_motion, |m| m.clock);
+        if let Some(motion) = &mut self.motion.caret_motion {
+            motion.settle();
+        }
         self.finish_diff_fold(false);
+        self.finish_combined_fold(false);
         settle(&mut self.scroll.glide, |g| g.clock);
         self.scroll.pane_glides.retain(|g| !g.clock.done());
         settle(&mut self.overlays.picker.motion, |m| m.clock);
@@ -422,6 +432,7 @@ impl App {
         self.motion.bar_card.settle();
         self.motion.dialog_card.settle();
         self.motion.alert_card.settle();
+        self.motion.search_card.settle();
         if self.settings.motion.is_none() {
             self.settings.cache = None;
         }
@@ -435,6 +446,7 @@ impl App {
         settle(&mut self.motion.setup_intro, |c| *c);
         settle(&mut self.motion.setup_outro, |c| *c);
         settle(&mut self.motion.setup_page, |c| *c);
+        settle(&mut self.motion.about_logo, |l| l.0);
         self.show_update_notice();
         settle(&mut self.git.log.fade, |c| *c);
         self.settle_hint();
@@ -445,6 +457,7 @@ impl App {
         settle(&mut self.terminal.motion, |m| m.clock);
         settle(&mut self.terminal.grow, |c| *c);
         settle(&mut self.preview.markdown.motion, |m| m.clock);
+        settle(&mut self.http.finished, |f| f.clock);
         self.status.motion.settle();
     }
 
@@ -482,6 +495,7 @@ impl App {
     pub(super) fn animating(&self) -> bool {
         self.panels.sidebar.motion.is_some()
             || self.panels.tree.motion.is_some()
+            || self.panes.motion.is_some()
             || self.panels.tree.labels.moving()
             || self.git.commit.names.moving()
             || self.panels.global.names.moving()
@@ -519,6 +533,8 @@ impl App {
             || self.panels.global.rows_moving()
             || self.motion.fold_motion.is_some()
             || self.motion.diff_fold.is_some()
+            || self.git.combined.as_ref().is_some_and(|t| t.folding())
+            || self.motion.caret_motion.is_some_and(|m| m.moving())
             || self.scroll.glide.is_some()
             || self.scroll.wheel.glide.is_some()
             || !self.scroll.pane_glides.is_empty()
@@ -544,12 +560,14 @@ impl App {
             || self.motion.bar_card.motion.is_some()
             || self.motion.dialog_card.motion.is_some()
             || self.motion.alert_card.motion.is_some()
+            || self.motion.search_card.motion.is_some()
             || self.settings.mode_slide.is_some()
             || self.settings.switch_slide.is_some()
             || self.settings.key_slide.is_some()
             || self.motion.setup_intro.is_some()
             || self.motion.setup_outro.is_some()
             || self.motion.setup_page.is_some()
+            || self.motion.about_logo.is_some()
             || self.git.log.fade.is_some()
             || self.hint_animating()
             || !self.tabs.slides.is_empty()
@@ -566,12 +584,18 @@ impl App {
             || self.overlays.tooltip.leaving.is_some()
             || self.tooltip_fading_in()
             || (self.disk.loads.bar).is_some_and(|b| b.clock.is_some())
+            || self.http_animating()
             || ((self.git.branch.running.is_some()
                 || self.git.branch.finished.is_some()
                 || self.commit_refreshing())
                 && self.commit_shown())
     }
 }
+
+mod caret;
+pub(crate) use caret::CaretTarget;
+#[cfg(test)]
+pub(in crate::app) use caret::{CARET_MOVE, ease};
 
 mod presence;
 pub use presence::*;
@@ -668,6 +692,9 @@ pub(crate) struct Motions {
     pub(crate) setup_outro: Option<animation::Clock>,
     /// 「首次设置」两页之间切换的过渡动画的时钟；没有在播放时为 `None`。
     pub(crate) setup_page: Option<animation::Clock>,
+    /// 「关于」页的图标逐层出现的动画：时钟，以及动画开始前等待的那一段占时长的比例（设置
+    /// 浮层出现期间）；没有在播放时为 `None`。
+    pub(crate) about_logo: Option<(animation::Clock, f32)>,
     /// 工具栏按钮收入「⋯」或从「⋯」中移出的动画。
     pub(crate) tool_fold: ToolFold,
     /// 编辑区顶部输入条出现、消失的动画。
@@ -676,6 +703,8 @@ pub(crate) struct Motions {
     pub(crate) dialog_card: animation::CardFx,
     /// 窗口内绘制的提示框出现、消失的动画。
     pub(crate) alert_card: animation::CardFx,
+    /// 在文件中查找的对话框出现、消失的动画。
+    pub(crate) search_card: animation::CardFx,
     /// 开关 Git、终端模块时，视图切换器中的「提交」一段、状态栏的终端开关和分支名
     /// 出现、消失的动画。
     pub(crate) module_fx: animation::ModuleFx,
@@ -683,6 +712,8 @@ pub(crate) struct Motions {
     pub fold_motion: Option<FoldMotion>,
     /// 差异标签中未改动内容折叠、展开的过渡。
     pub(crate) diff_fold: Option<diff::DiffFoldMotion>,
+    /// 主光标从上一位置滑到新位置的动画。
+    pub(crate) caret_motion: Option<caret::CaretMotion>,
 }
 
 #[cfg(test)]

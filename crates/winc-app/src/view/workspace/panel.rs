@@ -13,6 +13,7 @@ use crate::layout::{
 };
 
 mod overflow;
+mod tree;
 
 use overflow::{actions_lag, draw_text, file_text, moved_back, sync_name, text_width};
 pub(in crate::view) use overflow::{
@@ -22,7 +23,7 @@ pub(in crate::view) use overflow::{
 /// 视图切换里的图标比原大小略小（约占 13 逻辑像素，放在 22 逻辑像素的一段里四周留出 4.5）。
 const VIEW_ICON: f32 = 0.93;
 
-/// 结果行上悬停按钮左侧渐隐区域的宽度（逻辑像素，经验值）。
+/// 结果行上悬停按钮左侧渐隐区域的宽度（逻辑像素，取自调参）。
 ///
 /// 其下的文本在该区域内逐渐淡出，而不是被直接截断。
 const COVER_FADE: f32 = 20.0;
@@ -50,7 +51,8 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
     let track_bg = over(p.sidebar_bg, p.hover);
     let (raised, edge) = segment_colors(p, track_bg);
 
-    // 凸起的那一段：切换视图时从上一个视图的位置滑过来（`Sidebar::view_slide`），先绘制，图标压在上面。
+    // 凸起的那一段：切换视图时从上一个视图的位置滑过来（`Sidebar::view_slide`），先绘制，
+    // 图标压在上面。
     let at = |view: SidebarView| tabs.iter().find(|t| t.1 == view).map(|t| t.0);
     if let Some(to) = at(app.panels.sidebar.view) {
         let slot = match app
@@ -121,7 +123,7 @@ pub(in crate::view) fn segment_colors(p: &Palette, track: Color) -> (Color, Colo
 ///
 /// 具体几个改动写在悬停提示和列表的组标题里。
 ///
-/// 圆点放在图标（中心 ±7 逻辑像素）与按钮边（±14 逻辑像素）之间：压在图标上会盖住 Git 图标
+/// 圆点放在图标（中心 ±7 逻辑像素）与按钮边（±14 逻辑像素）之间：压在图标上会遮住 Git 图标
 /// 右上的提交标记。
 fn draw_change_dot(frame: &mut Frame<'_>, p: &Palette, button: Rect, ring: Color, clip: Rect) {
     let (cx, cy) = center(button);
@@ -135,7 +137,7 @@ fn draw_change_dot(frame: &mut Frame<'_>, p: &Palette, button: Rect, ring: Color
 
 /// 绘制全局搜索面板，返回有焦点的输入框的光标矩形（供输入法候选框定位）。
 pub(super) fn draw_panel(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
-    app.panels.global.sync_rows();
+    app.sync_result_rows();
     // 查找、替换输入框随内容长高：先按框的宽度折好行（宽度和高度无关），框的高度按行数定，
     // 绘制时继续使用折好的行。
     let wraps = {
@@ -179,7 +181,7 @@ pub(super) fn draw_panel(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
     caret
 }
 
-/// 绘制面板第一行右端的三个按钮（左边是共用的项目和分支）。
+/// 绘制面板第一行右端的工具按钮（左边是共用的项目和分支）。
 fn draw_panel_header(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
     let p = app.palette;
     let header = parts.header;
@@ -187,8 +189,12 @@ fn draw_panel_header(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
     let has_results = !app.panels.global.engine.results.is_empty();
 
     for (rect, tool) in parts.tools {
-        // 没有结果时「清除」「全部折叠」置灰。
-        let enabled = tool == PanelTool::Refresh || has_results;
+        // 没有结果时「清除」「全部折叠」置灰；显示方式随时可以切换，下次搜索沿用。
+        let always = matches!(
+            tool,
+            PanelTool::Refresh | PanelTool::OpenDialog | PanelTool::Layout
+        );
+        let enabled = always || has_results;
         let hovered = enabled && app.pointer.hover == Hover::Panel(PanelButton::Tool(tool));
         draw_button(frame, p, rect, header, hovered, false);
 
@@ -202,6 +208,10 @@ fn draw_panel_header(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
         match tool {
             PanelTool::Refresh => icons::refresh(frame, c, color, header),
             PanelTool::Clear => icons::clear_results(frame, c, color, header),
+            PanelTool::OpenDialog => icons::float_window(frame, c, color, header),
+            // 图标是点击后换成的显示方式，同日志里文件列表的开关。
+            PanelTool::Layout if app.search_tree() => icons::list_view(frame, c, color, header),
+            PanelTool::Layout => icons::tree_view(frame, c, color, header),
             PanelTool::CollapseAll if app.panels.global.all_collapsed() => {
                 icons::expand_all(frame, c, color, header);
             }
@@ -424,8 +434,8 @@ fn draw_summary(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
     } else if searching && total == 0 {
         (t!("workspace-search-searching").to_owned(), p.text_dim)
     } else {
-        // 截断了，或有行因正则回溯过多而放弃查找：计数是下限。
-        let more = if engine.is_truncated() || engine.gave_up() {
+        // 截断了、有行因正则回溯过多而放弃查找，或远端没能搜完：计数是下限。
+        let more = if engine.is_truncated() || engine.gave_up() || engine.remote_failed() {
             "+"
         } else {
             ""
@@ -455,9 +465,20 @@ fn draw_summary(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
     ui_text_small(frame, app, x, row, &text, color, row);
 }
 
-/// 绘制结果列表：每个文件一行（箭头、图标、文件名、所在目录、匹配数），其下每处匹配一行。
+/// 绘制结果列表：每个文件一行（箭头、图标、文件名、所在目录、匹配数），其下每处匹配一行；以树形
+/// 显示时文件排在各级目录下面，不写所在目录。
 fn draw_results(app: &mut App, frame: &mut Frame<'_>, parts: &PanelParts) {
     let area = parts.results;
+    if app.no_search_results() && app.panels.global.engine.remote_failed() {
+        draw_empty_state(
+            app,
+            frame,
+            (area, sidebar_span(app)),
+            t!("workspace-search-remote-failed"),
+            Some(t!("workspace-search-remote-failed-hint")),
+        );
+        return;
+    }
     if app.no_search_results() {
         draw_empty_state(
             app,
@@ -592,10 +613,15 @@ fn draw_result_row(
         (Some(o), ResultRow::File(f)) => Some(moved_back(o.actions, actions_lag(app, frame, f))),
         _ => None,
     };
+    // 以树形显示时按所在的层缩进：箭头、图标和文字一起右移，右端的计数、按钮不动。
+    tree::draw_guides(app, frame, kind, row, area);
+    let shift = tree::shift(app, kind);
+    let content = Rect::new(row.x + shift, row.y, row.w - shift, row.h);
     match kind {
-        ResultRow::File(f) => draw_file_row(app, frame, row, area, f, (&end, moved)),
+        ResultRow::Dir(d) => tree::draw_dir_row(app, frame, content, area, d, &end),
+        ResultRow::File(f) => draw_file_row(app, frame, content, area, f, (&end, moved)),
         ResultRow::Match(f, m) => {
-            draw_match_row(app, frame, row, area, (f, m), &end, cx.replacement);
+            draw_match_row(app, frame, content, area, (f, m), &end, cx.replacement);
         }
     }
 
@@ -681,19 +707,8 @@ fn draw_file_row(
     draw_file_icon(frame, p, (row.x + PANEL_LEFT, cy), text.name, clip);
     let x = row.x + PANEL_TEXT;
 
-    // 右端的匹配数绘制为与按钮同高的胶囊，右边缘与按钮对齐；
-    // 文字的右边界按胶囊计算，悬停时保持不变。
-    let count = file.matches.len().to_string();
-    let size = app.fonts.ui_small;
-    let count_w = frame.measure(FontKind::Ui, size, &count);
-    let slot = end.slot;
-    let badge_w = (count_w + 2.0 * end.pad).max(slot.w);
-    let badge = Rect::new(slot.right() - badge_w, slot.y, badge_w, slot.h);
-    if !end.covered {
-        frame.rect_clipped(badge, p.hover, slot.h / 2.0, clip);
-        let x = badge.right() - end.pad - count_w;
-        caps_label(frame, app, size, (x, badge), &count, p.text_muted, clip);
-    }
+    // 右端的匹配数绘制为与按钮同高的胶囊；文字的右边界按胶囊计算，悬停时保持不变。
+    let badge_x = tree::draw_count(app, frame, file.matches.len(), end, clip);
 
     // 写全名：完整绘制，按展开到的宽度露出，在跟过来的按钮之前截断。
     if let Some((replace, dismiss)) = moved {
@@ -706,7 +721,7 @@ fn draw_file_row(
         return;
     }
 
-    let right = badge.x - end.pad;
+    let right = badge_x - end.pad;
     let name_max = (right - x).max(0.0);
     let name = ellipsize(frame, text.name, app.fonts.ui, name_max);
     let mut end_x = ui_text(frame, app, x, row, &name, p.text, clip);
@@ -843,17 +858,17 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
     use crate::layout::with_key;
     match app.pointer.hover {
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::New) => {
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             Some((rect, t!("terminal-new").to_owned()))
         }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Tab(i))
             if app.terminal_tab_list().is_some() =>
         {
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
-            Some((rect, app.terminal.tabs.get(i)?.label().to_owned()))
+            let rect = app.terminal_hovered_hit(hit)?;
+            Some((rect, app.terminal_hovered_tab(i)?.label().to_owned()))
         }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::ShellMenu) => {
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             Some((rect, t!("terminal-shell-select").to_owned()))
         }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Find(part)) => {
@@ -867,11 +882,11 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 FindPart::Word => t!("workspace-find-whole-word"),
                 FindPart::Regex => t!("workspace-find-use-regex"),
             };
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             Some((rect, label.to_owned()))
         }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Maximize) => {
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             let label = if app.terminal.maximized {
                 t!("terminal-restore-panel")
             } else {
@@ -879,8 +894,13 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, with_key(label, Some(Action::MaximizeTerminal))))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Split) => {
+            let rect = app.terminal_hovered_hit(hit)?;
+            let label = t!("cmd-split-terminal");
+            Some((rect, with_key(label, Some(Action::SplitTerminal))))
+        }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Position) => {
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             let label = if app.terminal_right() {
                 t!("terminal-dock-bottom")
             } else {
@@ -888,8 +908,13 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::SearchDialog) => {
+            let rect = app.terminal_hovered_hit(hit)?;
+            let name = t!("workspace-search-tool-open-dialog");
+            Some((rect, with_key(name, Some(Action::OpenSearchDialog))))
+        }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Hide) => {
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             Some((
                 rect,
                 with_key(t!("terminal-hide-panel"), Some(Action::ToggleTerminalPanel)),
@@ -897,7 +922,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Run(button)) => {
             use crate::app::terminal::run::RunButton;
-            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let rect = app.terminal_hovered_hit(hit)?;
             let label = match button {
                 RunButton::Menu => t!("terminal-run-select").to_owned(),
                 RunButton::Start if app.run.list.is_empty() => t!("terminal-run-add").to_owned(),
@@ -954,7 +979,7 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
             Some((rect, with_key(t!("cmd-settings"), Some(Action::Settings))))
         }
-        // 分支选择器的拉取、推送、获取：写明会做什么（和谁差几个提交、推到哪儿）；不能用时写原因。
+        // 分支选择器的拉取、推送、获取：写明会做什么（和谁差几个提交、推到哪里）；不能用时写原因。
         Hover::PickerPart(
             part @ (crate::app::PickerPart::Pull
             | crate::app::PickerPart::Push
@@ -1010,6 +1035,9 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
                 CommitTarget::OpenFile(_) => t!("workspace-tip-open-file"),
+                CommitTarget::GroupRevert(_) if app.git.commit.staging() => {
+                    t!("git-commit-revert-group")
+                }
                 CommitTarget::GroupRevert(_) => t!("menu-commit-roll-back"),
                 _ => t!("workspace-tip-revert-change"),
             };
@@ -1021,16 +1049,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             | CommitTarget::DirStage(..)),
         ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
-            let unstage = matches!(
-                target,
-                CommitTarget::StageFile(_, false)
-                    | CommitTarget::DirStage(_, false)
-                    | CommitTarget::GroupStage(crate::app::CommitGroup::Staged)
-            );
-            let label = if unstage {
-                t!("menu-git-unstage")
-            } else {
-                t!("menu-git-stage")
+            let label = match target {
+                CommitTarget::GroupStage(crate::app::CommitGroup::Staged) => {
+                    t!("git-commit-unstage-group")
+                }
+                CommitTarget::GroupStage(_) => t!("git-commit-stage-group"),
+                CommitTarget::StageFile(_, false) | CommitTarget::DirStage(_, false) => {
+                    t!("menu-git-unstage")
+                }
+                _ => t!("menu-git-stage"),
             };
             Some((rect, label.to_owned()))
         }
@@ -1093,6 +1120,35 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             app.commit_parts().commit_menu,
             t!("workspace-tip-commit-menu").to_owned(),
         )),
+        Hover::Combined(hit) => {
+            use crate::app::git::combined::CombinedHit;
+            let rect = app.hits.combined.iter().find(|(_, h)| *h == hit)?.0;
+            let tip = match hit {
+                CombinedHit::OpenFile(_) => t!("git-combined-open-file").to_owned(),
+                CombinedHit::OpenDiff(_) => t!("git-combined-open-diff").to_owned(),
+                CombinedHit::Previous => with_key(
+                    t!("git-combined-previous"),
+                    Some(Action::PreviousDifference),
+                ),
+                CombinedHit::Next => {
+                    with_key(t!("git-combined-next"), Some(Action::NextDifference))
+                }
+                CombinedHit::Collapse if app.combined_collapses() => {
+                    t!("workspace-tip-expand-unchanged").to_owned()
+                }
+                CombinedHit::Collapse => t!("workspace-tip-collapse-unchanged").to_owned(),
+                CombinedHit::Layout if app.editor.diff_unified => {
+                    t!("workspace-tip-diff-side-by-side").to_owned()
+                }
+                CombinedHit::Layout => t!("workspace-tip-diff-inline").to_owned(),
+                CombinedHit::View => with_key(
+                    t!("settings-git-combined-diff"),
+                    Some(Action::GitToggleCombinedDiff),
+                ),
+                CombinedHit::Header(_) => return None,
+            };
+            Some((rect, tip))
+        }
         Hover::Commit(target) => {
             let rect = app
                 .commit_parts()
@@ -1163,7 +1219,11 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, label))
         }
         Hover::Diff(target) => {
-            let rect = app.hits.diff.iter().find(|(_, t)| *t == target)?.0;
+            // 「未提交的更改」中是鼠标下那一段的部件。
+            let rect = match app.combined_hovered_hit(target) {
+                Some(rect) => rect,
+                None => app.hits.diff.iter().find(|(_, t)| *t == target)?.0,
+            };
             let label = match target {
                 DiffTarget::Previous => with_key(
                     t!("workspace-tip-previous-change"),
@@ -1181,7 +1241,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                     with_key(t!("workspace-tip-next-file"), Some(Action::NextDiffFile))
                 }
                 DiffTarget::OpenFile => t!("workspace-tip-open-file").to_owned(),
-                DiffTarget::Blame(side, line) => app.diff_blame_tip(side, line)?,
+                DiffTarget::Blame(side, line) => match app.combined_tab().and_then(|t| t.hovered) {
+                    Some(i) if app.combined_active() => app.combined_blame_tip(i, side, line)?,
+                    _ => app.diff_blame_tip(side, line)?,
+                },
                 DiffTarget::Layout if app.editor.diff_unified => {
                     t!("workspace-tip-diff-side-by-side").to_owned()
                 }
@@ -1202,6 +1265,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 ),
                 DiffTarget::Include(_) => t!("workspace-tip-include-change").to_owned(),
                 DiffTarget::IncludeLine(..) => t!("workspace-tip-include-line").to_owned(),
+                DiffTarget::Combined => with_key(
+                    t!("settings-git-combined-diff"),
+                    Some(Action::GitToggleCombinedDiff),
+                ),
                 _ if app.editor.active()?.diff.as_deref()?.collapses() => {
                     t!("workspace-tip-expand-unchanged").to_owned()
                 }
@@ -1255,6 +1322,12 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let label = match tool {
                 PanelTool::Refresh => t!("workspace-search-tool-refresh"),
                 PanelTool::Clear => t!("workspace-search-tool-clear"),
+                PanelTool::OpenDialog => {
+                    let name = t!("workspace-search-tool-open-dialog");
+                    return Some((rect, with_key(name, Some(Action::OpenSearchDialog))));
+                }
+                PanelTool::Layout if app.search_tree() => t!("workspace-tip-show-as-list"),
+                PanelTool::Layout => t!("workspace-tip-show-as-tree"),
                 PanelTool::CollapseAll if app.panels.global.all_collapsed() => {
                     t!("workspace-search-tool-expand-all")
                 }

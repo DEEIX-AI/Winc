@@ -20,7 +20,8 @@ pub(super) fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
     if !rested {
         return;
     }
-    let (button, label): (Rect, String) = match workspace::panel::tooltip(app) {
+    let tip = workspace::panel::tooltip(app).or_else(|| workspace::search_dialog::tooltip(app));
+    let (button, label): (Rect, String) = match tip {
         Some(tip) => tip,
         None => match app.pointer.hover {
             Hover::Search(button) => (
@@ -40,6 +41,19 @@ pub(super) fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                 crate::layout::with_key(t!("cmd-toggle-sidebar"), Some(Action::ToggleSidebar)),
             ),
             Hover::Browser => (app.layout.browser, t!("preview-browser-open").to_owned()),
+            Hover::HttpRun(line) => match app.hits.http_runs.iter().find(|(_, l)| *l == line) {
+                Some(&(button, _)) => (
+                    button,
+                    crate::layout::with_key(
+                        match app.http_sending(line) {
+                            true => t!("editor-http-cancel"),
+                            false => t!("cmd-send-http-request"),
+                        },
+                        Some(Action::SendHttpRequest),
+                    ),
+                ),
+                None => return,
+            },
             Hover::Preview(mode) => {
                 use winc_editor::PreviewMode::*;
                 let [source, split, preview] = crate::layout::preview_segments(app.layout.preview);

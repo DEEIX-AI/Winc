@@ -1,9 +1,13 @@
-name: Release · Linux x64
+name: Release · Linux
 
 on:
   workflow_call:
     inputs:
       source-sha:
+        required: true
+        type: string
+      arch:
+        description: arm64 or x64
         required: true
         type: string
 
@@ -12,11 +16,14 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Each architecture is built and packaged on a runner of its own kind, never cross-compiled.
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: 0
-      TARGET: x86_64-unknown-linux-gnu
+      ARCH: ${{ inputs.arch }}
+      PLATFORM: linux-${{ inputs.arch }}
+      TARGET: ${{ inputs.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
     defaults:
       run:
         shell: bash
@@ -24,6 +31,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+      - name: Validate architecture
+        run: '[[ "$ARCH" == arm64 || "$ARCH" == x64 ]]'
       - uses: ./.github/actions/build-setup
         with:
           target: ${{ env.TARGET }}
@@ -37,15 +46,20 @@ jobs:
           WINC_UPDATE_PRIVATE_KEY: ${{ secrets.WINC_UPDATE_PRIVATE_KEY }}
         run: |
           node release/common/config.mjs --output "$RUNNER_TEMP/build-config.json"
+      # Compiled against the oldest supported glibc (release/linux/baseline.env), not the runner's.
       - name: Compile
         run: |
-          cargo build --release --locked --target "$TARGET" -p winc -p winc-pty
-          cargo xtask icons "target/$TARGET/release/bundle/icons"
+          bash release/linux/baseline.sh cargo build --release --locked --target "$TARGET" -p winc -p winc-pty
+          bash release/linux/baseline.sh cargo xtask icons "target/$TARGET/release/bundle/icons"
+      - name: Verify glibc baseline
+        run: bash release/linux/verify-baseline.sh "target/$TARGET/release/winc" "target/$TARGET/release/winc-pty"
       # The remote server runs on Linux hosts whatever system this package is for. It is static and
       # has no C code, so the linker bundled with Rust builds every architecture on any runner.
       - name: Compile remote server
-        run: cargo xtask server
+        run: bash release/linux/baseline.sh cargo xtask server
+      # Arch Linux itself is x86_64 only.
       - name: Bundle and verify Arch package
+        if: inputs.arch == 'x64'
         run: bash release/linux/arch/package.sh "$TARGET"
       - name: Bundle and verify RPM package
         run: bash release/linux/rpm/package.sh "$TARGET"
@@ -56,11 +70,15 @@ jobs:
       - name: Bundle deb and AppImage
         env:
           LINUXDEPLOY_DEBUG_LOG: ${{ runner.temp }}/linuxdeploy.log
+        run: bash release/linux/package.sh "$TARGET"
+      # The signing key is given only to the step that signs: the packaging tools above are
+      # downloaded programs and do not need it.
+      - name: Sign the update feed
+        env:
           WINC_UPDATE_PRIVATE_KEY: ${{ secrets.WINC_UPDATE_PRIVATE_KEY }}
-        run: |
-          bash release/linux/package.sh "$TARGET"
-          node release/common/sign-updates.mjs --platform linux-x64 --bundle "target/$TARGET/release/bundle"
-          cargo test --locked -p winc-app updates::tests::release_appcast_matches_packages -- --ignored
+        run: node release/common/sign-updates.mjs --platform "$PLATFORM" --bundle "target/$TARGET/release/bundle"
+      - name: Check the update feed against the packages
+        run: bash release/linux/baseline.sh cargo test --locked -p winc-app updates::tests::release_appcast_matches_packages -- --ignored
       - name: Show linuxdeploy log
         if: always()
         run: cat "$RUNNER_TEMP/linuxdeploy.log" 2>/dev/null || echo "(no linuxdeploy log)"
@@ -89,11 +107,11 @@ jobs:
           grep -q ./usr/lib/winc/winc-server-Linux-aarch64 "$RUNNER_TEMP/deb-contents"
       - name: Stage release assets
         run: |
-          node release/common/collect-assets.mjs --platform linux-x64 \
+          node release/common/collect-assets.mjs --platform "$PLATFORM" \
             --bundle "target/$TARGET/release/bundle" --out "$RUNNER_TEMP/release-assets"
       - uses: actions/upload-artifact@v7
         with:
-          name: release-assets-linux-x64
+          name: release-assets-linux-${{ inputs.arch }}
           path: ${{ runner.temp }}/release-assets
           compression-level: 0
           if-no-files-found: error

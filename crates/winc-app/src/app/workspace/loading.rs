@@ -90,6 +90,15 @@ impl Default for Loads {
 }
 
 impl App {
+    /// 启动时没有读取的当前标签交给后台读取；`jumps` 中的文档读好以后跳到（行，列）。
+    pub(crate) fn load_at_launch(&mut self, jumps: Vec<(DocumentId, usize, usize)>) {
+        for (id, line, col) in jumps {
+            let then: Then = Box::new(move |app| app.jump_to(line, col, 0));
+            self.disk.loads.then.push((id, then));
+        }
+        self.load_active_in_background();
+    }
+
     /// 当前标签尚未读取、也没有正在进行的读取时，交给后台读取。
     pub(in crate::app) fn load_active_in_background(&mut self) {
         if let Some(index) = self.editor.active {
@@ -130,13 +139,21 @@ impl App {
             if self.disk.loads.since.is_some_and(|(s, _)| s == id) {
                 self.disk.loads.since = None;
             }
+            // 已不存在的文件不再留在最近打开的文件中：快速打开里点开的可能是别处删掉的文件。
+            if let Some(path) = loaded.missing() {
+                let path = path.to_path_buf();
+                self.forget_recent(&[path]);
+            }
             let Some(index) = self.editor.finish_load(loaded) else {
                 continue;
             };
+            // 先回到上次的位置，为它记录的跳转（`run_when_loaded`）在后，以跳转为准。
+            self.restore_text_place(index);
             // 未读取的标签不参与磁盘同步，读取期间文件可能再次被修改：读完后按路径同步一次元数据。
             if let Some(path) = self.editor.documents[index].path.clone() {
                 self.sync_documents(|p| p == path);
             }
+            self.diff_source_loaded(index);
             // 不是当前标签时记录的动作保留，再次切到该标签时由 `run_when_loaded` 执行。
             if self.editor.active == Some(index) {
                 self.loaded_active();

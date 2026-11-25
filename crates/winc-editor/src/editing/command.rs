@@ -9,7 +9,7 @@ use winc_core::edit::{self, EditKind, EditOptions, Transaction};
 use winc_core::text::Aligned;
 use winc_core::transform::{self, Case};
 use winc_core::{Lines, Restored, Selection, movement};
-use winc_syntax::Language;
+use winc_syntax::{Language, LineState};
 
 use crate::Document;
 use crate::editing::folding::Tracked;
@@ -66,6 +66,16 @@ pub enum Command {
         /// 是否扩展选区（按住 Shift）。
         extend: bool,
     },
+    /// 光标移到这一行的第 0 列：不按折行分段，也不停在首个非空白字符处。
+    WholeLineStart {
+        /// 是否扩展选区（按住 Shift）。
+        extend: bool,
+    },
+    /// 光标移到这一行的末尾，不按折行分段。
+    WholeLineEnd {
+        /// 是否扩展选区（按住 Shift）。
+        extend: bool,
+    },
     /// 光标移到文档开头。
     DocStart {
         /// 是否扩展选区（按住 Shift）。
@@ -98,6 +108,8 @@ pub enum Command {
     },
     /// 删除光标到行首之间的文本（`⌘⌫`）。
     DeleteToLineStart,
+    /// 删除光标到行尾之间的文本；光标在行尾时删除换行符。
+    DeleteToLineEnd,
     /// 插入一级缩进；有选区时按整块缩进处理。
     Indent,
     /// 光标所在的行（或选区覆盖的行）整行加一级缩进（`⌘]`）。
@@ -118,8 +130,19 @@ pub enum Command {
         /// 是否向下复制。
         down: bool,
     },
+    /// 把选中的文字拖放到位置 `at`（字符偏移）：`copy` 为真时复制，否则移动。
+    DropText {
+        /// 放下的位置（字符偏移）。
+        at: usize,
+        /// 是否复制，而不是移动。
+        copy: bool,
+    },
     /// 改变选区的大小写；没有选区时改变光标所在的词。
     ChangeCase(Case),
+    /// 交换光标两侧的两个字素；光标在行尾时交换行末的两个字素。
+    TransposeChars,
+    /// 在光标处换行（缩进与回车相同），光标留在原处。
+    LineBreakInsert,
     /// 对选中的行排序；选区在一行之内时对整个文件排序。
     SortLines {
         /// 是否按降序排列。
@@ -129,6 +152,17 @@ pub enum Command {
     JoinLines,
     /// 删除整个文件中每行行尾的空白。
     TrimTrailingWhitespace,
+    /// 把 `\uXXXX` 转义换成对应的字符：`whole` 为真时（所有选区都是空的）转换整个文件，否则只
+    /// 转换各个选区。
+    UnescapeUnicode {
+        /// 是否转换整个文件。
+        whole: bool,
+    },
+    /// 把 ASCII 以外的字符写成 `\uXXXX` 转义，`whole` 同 [`Command::UnescapeUnicode`]。
+    EscapeUnicode {
+        /// 是否转换整个文件。
+        whole: bool,
+    },
     /// 跳到配对的括号（`⇧⌘\`）。
     JumpToBracket,
     /// 扩大选区（`⌃⇧⌘→`）。
@@ -156,6 +190,8 @@ impl Command {
                 | Command::PageDown { .. }
                 | Command::LineStart { .. }
                 | Command::LineEnd { .. }
+                | Command::WholeLineStart { .. }
+                | Command::WholeLineEnd { .. }
                 | Command::DocStart { .. }
                 | Command::DocEnd { .. }
                 | Command::SelectAll
@@ -365,6 +401,12 @@ impl Document {
                     .unwrap_or_else(|| text.line_end(line));
                 sel.moved_to(pos, extend)
             }
+            Command::WholeLineStart { extend } => {
+                sel.moved_to(text.line_start(text.line_of(sel.head)), extend)
+            }
+            Command::WholeLineEnd { extend } => {
+                sel.moved_to(text.line_end(text.line_of(sel.head)), extend)
+            }
             Command::DocStart { extend } => sel.moved_to(0, extend),
             Command::DocEnd { extend } => sel.moved_to(text.end_pos(), extend),
             Command::SelectAll => Selection::new(0, text.end_pos()),
@@ -375,17 +417,52 @@ impl Document {
         }
     }
 
+    /// 返回切换注释时处理的选区和注释所用的语言（选区第一行所在那段代码的语言）。
+    ///
+    /// Astro frontmatter 两端的 `---` 分隔行不参与：选区从开头的分隔行开始时从下一行算起，从
+    /// frontmatter 中开始时到结束的分隔行之前为止。分隔行注释后 frontmatter 不再闭合，之后的
+    /// 模板会被当作 TypeScript。选区只含分隔行时选区为 `None`。
+    fn comment_scope(&self, sel: Selection) -> (Option<Selection>, &'static Language) {
+        let text = &self.text;
+        let language = self.highlighter.language();
+        let state = |line| self.highlighter.peek_state(text, line, COMMENT_SCAN);
+        let (mut first, mut last) = edit::selected_lines(text, sel);
+        let mut start = state(first);
+        if start == Some(LineState::Start) && is_fence(text, first) {
+            first += 1;
+            start = state(first);
+        }
+        let code = start
+            .and_then(LineState::embedded_language)
+            .unwrap_or(language);
+        if matches!(start, Some(LineState::Frontmatter { .. })) {
+            let closes = |line| {
+                is_fence(text, line)
+                    && state(line).is_some_and(|s| {
+                        matches!(s, LineState::Frontmatter { .. }) && !s.is_quoted()
+                    })
+            };
+            if let Some(close) = (first..=last).find(|&line| closes(line)) {
+                last = close.saturating_sub(1);
+            }
+        }
+        let target = if first > last || first >= text.line_count() {
+            None
+        } else if (first, last) == edit::selected_lines(text, sel) {
+            Some(sel)
+        } else {
+            Some(Selection::new(text.line_start(first), text.line_end(last)))
+        };
+        (target, code)
+    }
+
     /// 把编辑类命令转换为事务；命令没有产生修改时返回 `None`。
     pub(crate) fn transaction(&self, command: &Command, tab_width: usize) -> Option<Transaction> {
         let text = &self.text;
         let sel = self.selection;
         let language = self.highlighter.language();
         let line_ending = self.line_ending.as_str();
-        // 注释按选区所在那段代码的语言。
-        let first = text.pos_to_line_col(sel.from()).0;
-        let code = (self.highlighter.peek_state(text, first, COMMENT_SCAN))
-            .and_then(winc_syntax::LineState::embedded_language)
-            .unwrap_or(language);
+        let (comment_target, code) = self.comment_scope(sel);
         let options = EditOptions {
             tab_width,
             indent_unit: self.indent().unit(),
@@ -420,20 +497,50 @@ impl Document {
             }
             &Command::Delete { word } => edit::delete_forward(text, sel, word),
             Command::DeleteToLineStart => edit::delete_to_line_start(text, sel),
+            Command::DeleteToLineEnd => edit::delete_to_line_end(text, sel),
             Command::Indent => Some(edit::indent(text, sel, &options)),
             Command::IndentLines => Some(edit::indent_lines(text, sel, &options)),
             Command::Outdent => edit::outdent(text, sel, &options),
-            Command::ToggleComment => edit::toggle_comment(text, sel, &options),
+            Command::ToggleComment => {
+                let target = comment_target?;
+                let mut transaction = edit::toggle_comment(text, target, &options)?;
+                if target != sel {
+                    transaction.before = sel;
+                    transaction.after = edit::shift_selection(sel, &transaction.changes);
+                }
+                Some(transaction)
+            }
             Command::DeleteLine => edit::delete_lines(text, sel),
             &Command::MoveLines { down } => edit::move_lines(text, sel, down),
             &Command::CopyLines { down } => Some(edit::copy_lines(text, sel, down, &options)),
+            &Command::DropText { at, copy } => edit::drop_text(text, sel, at, copy),
             &Command::ChangeCase(case) => transform::change_case(text, sel, case),
+            Command::TransposeChars => transform::transpose(text, sel),
+            Command::LineBreakInsert => {
+                let mut transaction = edit::newline(text, sel, &options);
+                transaction.after = Selection::point(sel.from());
+                Some(transaction)
+            }
             &Command::SortLines { descending } => transform::sort_lines(text, sel, descending),
             Command::JoinLines => transform::join_lines(text, sel),
             Command::TrimTrailingWhitespace => transform::trim_trailing_whitespace(text, sel),
+            // 只转换选区时，空的选区不转换（否则会转换整个文件）。
+            &Command::UnescapeUnicode { whole } if whole || !sel.is_empty() => {
+                transform::unescape_unicode(text, sel)
+            }
+            &Command::EscapeUnicode { whole } if whole || !sel.is_empty() => {
+                transform::escape_unicode(text, sel)
+            }
             _ => None,
         }
     }
+}
+
+/// 第 `line` 行是否是 frontmatter 的分隔行：只含 `---`，后面可以有空白。
+fn is_fence(text: &impl Lines, line: usize) -> bool {
+    text.substring(text.line_start(line), text.line_end(line))
+        .trim_end()
+        == "---"
 }
 
 /// 把外部文本中的换行统一为 `line_ending`；一致时直接借用原文。
@@ -469,7 +576,9 @@ fn insert(text: &impl Lines, sel: Selection, s: &str, language: &Language) -> Tr
     let prev = sel.from().checked_sub(1).and_then(|pos| text.char_at(pos));
     let wrapping = !sel.is_empty();
 
-    if !wrapping && matches!(c, ')' | ']' | '}' | '"' | '\'' | '`') && next == Some(c) {
+    let skips = matches!(c, ')' | ']' | '}' | '"' | '\'' | '`')
+        || (language.markdown && CJK_PAIRS.iter().any(|p| p.1 == c));
+    if !wrapping && skips && next == Some(c) {
         return Transaction::new(
             Vec::new(),
             sel,
@@ -478,6 +587,7 @@ fn insert(text: &impl Lines, sel: Selection, s: &str, language: &Language) -> Tr
         );
     }
 
+    let cjk_close = CJK_PAIRS.iter().find(|&&(open, _)| open == c).map(|p| p.1);
     let close = match c {
         '(' => Some(')'),
         '[' => Some(']'),
@@ -488,6 +598,7 @@ fn insert(text: &impl Lines, sel: Selection, s: &str, language: &Language) -> Tr
         // 紧跟在单词之后的引号多用作撇号（如 don't），不补全；紧跟在同种引号之后时通常是在
         // 输入连续引号（```、"""），同样不补全。
         '"' | '\'' | '`' => (wrapping || !follows_word_or_quote(prev, c)).then_some(c),
+        _ if language.markdown && cjk_close.is_some() => cjk_close,
         _ if wrapping && language.surround.contains(&c) => Some(c),
         _ => None,
     };
@@ -505,6 +616,19 @@ fn insert(text: &impl Lines, sel: Selection, s: &str, language: &Language) -> Tr
     }
 }
 
+/// Markdown 中自动补全的中文括号和引号（左半边，右半边）。
+///
+/// 中文的左右引号是不同的字符，没有撇号的歧义，按括号处理。
+const CJK_PAIRS: [(char, char); 7] = [
+    ('（', '）'),
+    ('【', '】'),
+    ('《', '》'),
+    ('「', '」'),
+    ('『', '』'),
+    ('“', '”'),
+    ('‘', '’'),
+];
+
 /// 位于字符 `prev` 之后的引号 `quote` 是否不作为字符串的起始引号。
 ///
 /// 紧跟单词的引号是撇号（如 don't），紧跟同种引号的是代码块围栏或三引号字符串的一部分。
@@ -514,7 +638,15 @@ fn follows_word_or_quote(prev: Option<char>, quote: char) -> bool {
 
 /// 光标后的字符 `next` 是否允许自动补全右侧字符：只有文档末尾、空白、右括号和分隔符允许。
 fn before_gap(next: Option<char>) -> bool {
-    next.is_none_or(|n| n.is_whitespace() || matches!(n, ')' | ']' | '}' | ',' | ';' | ':'))
+    next.is_none_or(|n| {
+        n.is_whitespace()
+            || matches!(n, ')' | ']' | '}' | ',' | ';' | ':')
+            || matches!(
+                n,
+                '）' | '】' | '》' | '」' | '』' | '”' | '’' | '，' | '。' | '、'
+            )
+            || matches!(n, '；' | '：' | '！' | '？')
+    })
 }
 
 /// 光标是否位于空的括号或引号对之间，此时退格同时删除左右两个字符。
@@ -535,7 +667,7 @@ fn inside_empty_pair(text: &impl Lines, sel: Selection, language: &Language) -> 
         ('"', '"') => quotes_pair(text, sel.head, open),
         ('\'', '\'') => language.single_quote_string && quotes_pair(text, sel.head, open),
         ('`', '`') => language.backtick_string && quotes_pair(text, sel.head, open),
-        _ => false,
+        pair => language.markdown && CJK_PAIRS.contains(&pair),
     }
 }
 

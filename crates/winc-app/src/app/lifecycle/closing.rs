@@ -104,9 +104,8 @@ impl App {
         if self.config.confirm_close != Some(true) || self.window.hidden {
             return false;
         }
-        // 关闭最后一个窗口在 macOS 以外的平台上就是退出。
-        let quits = request == CloseRequest::Quit
-            || !self.link.shared.others() && !cfg!(target_os = "macos");
+        let quits =
+            request == CloseRequest::Quit || !self.link.shared.others() && self.last_window_quits();
         let (message, button) = if quits {
             (t!("close-confirm-quit"), t!("cmd-quit"))
         } else {
@@ -132,21 +131,27 @@ impl App {
         }
     }
 
+    /// 关闭最后一个窗口是否退出应用：macOS 以外的平台上总是退出，macOS 上按设置
+    /// `editor.quitOnLastWindowClose`。
+    fn last_window_quits(&self) -> bool {
+        !cfg!(target_os = "macos") || self.config.quit_on_last_window_close == Some(true)
+    }
+
     /// 关闭窗口，不再询问是否关闭。
     ///
-    /// macOS 上关闭窗口不退出应用：关闭目录和所有标签，隐藏窗口，应用留在程序坞中，点击
-    /// 图标时窗口带着开始页回来，退出用 ⌘Q；其他平台上关闭窗口就是退出，还有别的窗口时只关闭
-    /// 当前窗口。开着目录的窗口与退出一样不逐个询问，未保存的内容写入备份；没开目录的窗口逐个
+    /// macOS 上关闭窗口默认不退出应用：关闭目录和所有标签，隐藏窗口，应用留在程序坞中，点击
+    /// 图标时窗口带着开始页回来，退出用 ⌘Q；开了 `editor.quitOnLastWindowClose` 时与其他平台
+    /// 相同，关闭最后一个窗口就是退出。还有别的窗口时只关闭当前窗口。开着目录的窗口与退出一样不逐个询问，未保存的内容写入备份；没开目录的窗口逐个
     /// 询问。窗口关闭后其中的终端随之结束，有程序在运行时先确认；macOS 上终端继续运行，不确认。
     fn close_window_confirmed(&mut self) {
         if self.link.shared.others() {
             if !self.confirm_terminal_quit(CloseRequest::CloseWindow) {
                 self.request_close(CloseRequest::CloseWindow);
             }
-        } else if cfg!(target_os = "macos") {
-            self.request_close(CloseRequest::CloseWindow);
-        } else {
+        } else if self.last_window_quits() {
             self.request_quit();
+        } else {
+            self.request_close(CloseRequest::CloseWindow);
         }
     }
 
@@ -190,8 +195,15 @@ impl App {
         if self.format.then_close.is_some() {
             return;
         }
-        // 后台在存的大文件先存完：要不要问、备份哪些，都按存完以后的样子算。
-        self.wait_for_saves();
+        // 后台在存的文档先存完：要不要问、备份哪些，都按存完以后的样子算。只关几个标签时只等
+        // 这几个文档：别的文档的保存（经远端连接的、在等系统授权的）不应拦住无关的标签。
+        match &request {
+            CloseRequest::Tabs(ids) => ids
+                .clone()
+                .into_iter()
+                .for_each(|id| self.wait_for_save(id)),
+            _ => self.wait_for_saves(),
+        }
         // 已经在询问时（例如提示框打开期间再次按 `⌘Q`）不再询问第二次。
         if self.closing.prompt.is_some() {
             return;
@@ -202,7 +214,10 @@ impl App {
         let backed_up = match request {
             CloseRequest::Quit => self.back_up_for_quit(),
             CloseRequest::CloseWindow if self.editor.workspace.is_some() => self.back_up_for_quit(),
-            _ => Default::default(),
+            _ => {
+                self.keep_no_backups();
+                Default::default()
+            }
         };
         let dirty: Vec<DocumentId> = self
             .editor
@@ -266,7 +281,7 @@ impl App {
                 t!("workspace-close-save"),
             )
         } else {
-            // 文件过多时只列出前 `SHOWN` 个，避免提示框高度超过屏幕。`SHOWN` 的单位为个，是经验值。
+            // 文件过多时只列出前 `SHOWN` 个，避免提示框高度超过屏幕。`SHOWN` 的单位为个，取自调参。
             const SHOWN: usize = 10;
             let mut list = names.iter().take(SHOWN).cloned().collect::<Vec<_>>();
             if names.len() > SHOWN {
@@ -424,6 +439,11 @@ impl App {
     /// 全部关完以后才重新排版一次：逐个排版时，中途轮到当前的每个文档都会按自动换行整篇折一遍，
     /// 下一步又被关掉。
     pub(in crate::app) fn remove_tabs(&mut self, ids: &[DocumentId]) {
+        // 前台窗格的标签全部关掉时窗格随之去掉：先记下现在的样子，供过渡使用。
+        if self.editor.panes.is_split() && self.editor.tabs().iter().all(|d| ids.contains(&d.id)) {
+            self.capture_panes();
+        }
+        self.remember_text_places(ids);
         let mut closed = false;
         for id in ids {
             if let Some(index) = self.editor.index_of(*id) {
@@ -445,6 +465,7 @@ impl App {
         let Some(index) = self.editor.index_of(id) else {
             return;
         };
+        self.remember_text_places(&[id]);
         self.cancel_format(id);
         if self.vim.is_some() {
             self.vim_store_marks(id);
@@ -502,7 +523,7 @@ impl App {
     ///
     /// 未命名的文档无法重新打开，不记录；同一个文件只保留最近一次。
     fn remember_closed(&mut self, path: Option<PathBuf>, caret: usize) {
-        // 最多保留的已关闭标签数（个，经验值），超出时丢弃最早的。
+        // 最多保留的已关闭标签数（个，取自调参），超出时丢弃最早的。
         const MAX_CLOSED: usize = 20;
 
         let Some(path) = path else {

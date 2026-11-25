@@ -78,11 +78,40 @@ impl App {
 
     /// 隐藏窗口（macOS 上关闭窗口时）：应用留在程序坞中，点击图标时由 [`App::show_window`]
     /// 重新显示。
+    ///
+    /// 全屏的窗口不直接隐藏，否则留下黑色的全屏空间：还有别的窗口时它随后被关掉，由系统退出
+    /// 全屏；否则先退出全屏，完成后再隐藏（[`App::finish_hiding`]）。
     pub(super) fn hide_window(&mut self) {
+        self.window.hidden = true;
+        #[cfg(target_os = "macos")]
+        if let Some(window) = (self.window.handle.as_ref()).filter(|w| w.fullscreen().is_some())
+            && (self.link.shared.others() || self.link.traffic_lights.is_some())
+        {
+            if !self.link.shared.others() {
+                window.set_fullscreen(None);
+                self.window.hide_after_fullscreen = true;
+            }
+            return;
+        }
         if let Some(window) = &self.window.handle {
             window.set_visible(false);
         }
-        self.window.hidden = true;
+    }
+
+    /// 关闭时开始的退出全屏已经完成：隐藏窗口（见 [`App::hide_window`]）。
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) fn finish_hiding(&mut self) {
+        let windowed =
+            (self.link.traffic_lights.as_ref()).is_none_or(crate::macos::TrafficLights::windowed);
+        if !self.window.hide_after_fullscreen || !windowed {
+            return;
+        }
+        self.window.hide_after_fullscreen = false;
+        if self.window.hidden
+            && let Some(window) = &self.window.handle
+        {
+            window.set_visible(false);
+        }
     }
 
     /// 打开 `targets` 里的文件（目录跳过：已经是本窗口的目录），`文件:行:列` 跳到该位置，再把
@@ -90,6 +119,11 @@ impl App {
     pub(crate) fn open_files(&mut self, targets: &[crate::cli::Target]) {
         for target in targets {
             if self.is_folder(&target.path) {
+                continue;
+            }
+            // 项目文件：窗口已按其第一个目录选定，此处载入项目。
+            if crate::app::workspace::project::is_project(&target.path) {
+                self.open_folder(&target.path);
                 continue;
             }
             self.open_path(&target.path);
@@ -101,10 +135,26 @@ impl App {
         self.raise();
     }
 
-    /// 窗口是否完全看不见（见 `occluded`）；看得见时，或者测量时（窗口透明，系统当它看不见）
-    /// 为假。
+    /// 窗口是否完全不可见（见 `occluded`、`minimized`）；测量时为假：窗口透明，系统将其视为
+    /// 不可见，但仍需绘制。
     pub(in crate::app) fn unseen(&self) -> bool {
-        self.window.occluded && !self.frame.bench.silent()
+        (self.window.occluded || self.window.minimized) && !self.frame.bench.silent()
+    }
+
+    /// 窗口尺寸变化后记录窗口是否最小化（见 `WindowState::minimized`），返回是否最小化。
+    ///
+    /// 最小化时暂停显示链接：Windows 上显示链接仍随合成器的刷新回调，最小化期间不绘制，没有
+    /// 一帧会将其暂停。
+    pub(super) fn note_minimized(&mut self) -> bool {
+        let size = (self.window.handle.as_ref()).map(|window| window.inner_size());
+        self.window.minimized = size.is_some_and(|size| size.width == 0 || size.height == 0);
+        #[cfg(any(target_os = "macos", windows))]
+        if self.window.minimized
+            && let Some(link) = &mut self.frame.display_link
+        {
+            link.set_running(false);
+        }
+        self.window.minimized
     }
 
     /// 窗口变得完全看不见或又看得见（`WindowEvent::Occluded`）。
@@ -144,7 +194,7 @@ impl App {
         self.request_redraw();
     }
 
-    /// 记下新启动的 winc 交来的激活令牌 `token`（见 [`crate::instance::launch_token`]），在下一次
+    /// 记下新启动的 winc 交来的激活令牌 `token`（见 [`crate::instance::LaunchTokens`]），在下一次
     /// 建系统窗口或切到前台时使用一次。不使用 X11、Wayland 的平台上忽略。
     pub(crate) fn set_activation(&mut self, token: Option<String>) {
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -163,9 +213,9 @@ impl App {
     /// 返回从本窗口打开的新窗口的位置（外框左上角，物理像素）和本窗口的缩放比例：比本窗口往
     /// 右下错开，形成层叠。
     ///
-    /// 本窗口最小化时按最小化之前正常显示的位置（`WindowState::frame`）错开：最小化期间系统报告的位置
-    /// 不在屏幕上，Windows 上为 (-32000, -32000)。本窗口隐藏，或最小化且没有记下正常显示的位置时
-    /// 返回 `None`，新窗口改用上次关闭窗口时记下的位置。
+    /// 本窗口最小化时按最小化之前正常显示的位置（`WindowState::frame`）错开：
+    /// 最小化期间系统报告的位置不在屏幕上，Windows 上为 (-32000, -32000)。本窗口隐藏，
+    /// 或最小化且没有记下正常显示的位置时返回 `None`，新窗口改用上次关闭窗口时记下的位置。
     pub(crate) fn cascade_from(&self) -> Option<((f64, f64), f64)> {
         let window = self.window.handle.as_ref()?;
         if self.window.hidden {
@@ -213,6 +263,10 @@ impl App {
             return;
         }
         self.window.hidden = false;
+        #[cfg(target_os = "macos")]
+        {
+            self.window.hide_after_fullscreen = false;
+        }
         // 关着时系统当它看不见；显示之前先画好一帧，不等 `Occluded(false)`。
         self.set_occluded(false);
         self.relayout();
@@ -244,7 +298,9 @@ impl App {
     ///
     /// 窗口尺寸、面板宽度、标签或预览状态变化后调用；面板跟着焦点关闭也在这一步完成。
     pub(crate) fn relayout(&mut self) {
+        self.track_recent_tabs();
         self.note_terminal_tab_position();
+        self.sync_project_offer();
         // 面板打开以后换了标签（⌘W、切换标签、后退前进、新建文件）：面板里的符号、书签、用法
         // 都属于原来的文档，回车会在新标签里跳到错误的位置，所以关掉。`close_picker` 会再次
         // 调用本函数，那时面板已经关了。
@@ -311,7 +367,7 @@ impl App {
             self.gutter_width(),
             status_height,
         );
-        // 差异标签：查找条放在差异的标题栏下面，不盖住标题栏右端的按钮。
+        // 差异标签：查找条放在差异的标题栏下面，不遮住标题栏右端的按钮。
         let diff = self.editor.active().and_then(|d| d.diff.as_deref());
         if let Some(view) = diff.filter(|_| self.layout.search.h > 0.0) {
             self.layout.search.y += crate::app::diff::diff_top(view);
@@ -337,6 +393,7 @@ impl App {
         }
         self.sync_wrap();
         self.sync_terminal();
+        self.prepare_combined();
     }
 
     /// 在编辑区里放置随当前标签变化的部分：标签栏右端的按钮、分栏预览、合并的两侧、缩略图。
@@ -406,9 +463,9 @@ impl App {
     /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`；编辑区太窄、
     /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
     fn place_minimap(&mut self) {
-        // 编辑区窄于该宽度时不显示（逻辑像素，经验值）：优先留给代码。
+        // 编辑区窄于该宽度时不显示（逻辑像素）：优先留给代码。
         const MINIMAP_MIN: f32 = 480.0;
-        // 缩略图占的宽度（逻辑像素，经验值），右边一段让给滚动条。
+        // 缩略图占的宽度（逻辑像素，取自调参），右边一段让给滚动条。
         const MINIMAP_W: f32 = 84.0;
         self.layout.minimap = Rect::default();
         let shows_code = self.editor.active().is_some_and(|doc| {
@@ -416,7 +473,7 @@ impl App {
                 && doc.diff.is_none()
                 && doc.log.is_none()
                 && doc.preview_mode() != winc_editor::PreviewMode::Preview
-        });
+        }) && !self.combined_active();
         let l = &mut self.layout;
         if self.config.minimap != Some(true) || !shows_code || l.editor.w < MINIMAP_MIN {
             return;
@@ -431,9 +488,9 @@ impl App {
     }
 
     fn place_split(&mut self) {
-        // 分栏时每一半的最小宽度（逻辑像素，经验值）。
+        // 分栏时每一半的最小宽度（逻辑像素，取自调参）。
         const SPLIT_MIN: f32 = 240.0;
-        // 分隔线两侧各放宽的可拖动范围（逻辑像素，经验值）。
+        // 分隔线两侧各放宽的可拖动范围（逻辑像素，取自调参）。
         const GRIP: f32 = 4.0;
         let share = self.preview.split_share.unwrap_or(0.5);
         let l = &mut self.layout;
@@ -465,13 +522,12 @@ impl App {
         l.search.x -= shrink;
     }
 
-    /// 终端面板开着时从编辑区卡片下面切出一张卡片：编辑区变矮，两张卡片之间留间距，间距里
-    /// 可以上下拖动改面板高度。
+    /// 终端面板开着时从编辑区卡片下面切出一张卡片：编辑区变矮，两张卡片之间留间距，间距里可以上下拖
+    /// 动改面板高度。
     ///
-    /// 放在右边时（`terminal.position`）从编辑区右边切出整个一栏，间距里左右拖动改面板宽度；
-    /// 窗口放不下最小尺寸时面板不显示。动画里面板只露出一部分，这时间距不能拖。最大化时两种
-    /// 位置相同：面板铺满编辑区一栏（连同顶栏那一行），编辑区不占地方，见
-    /// [`Self::place_full_terminal`]。
+    /// 放在右边时（`terminal.position`）从编辑区右边切出整个一栏，间距里左右拖动改面板宽度；窗口放
+    /// 不下最小尺寸时面板不显示。动画里面板只露出一部分，这时间距不能拖。最大化时两种位置相同：面板
+    /// 铺满编辑区一栏（连同顶栏那一行），编辑区不占地方，见 [`Self::place_full_terminal`]。
     fn place_terminal(&mut self) {
         let (shown, right) = self.terminal_shown();
         let full = self.terminal_fill();
@@ -551,7 +607,7 @@ impl App {
     /// 中间，浮在面板上。
     ///
     /// 打开、收起的动画里面板整个从窗口边上滑进滑出（下面的滑到状态栏后面，右边的滑出窗口），
-    /// 这时编辑区照常显示在它后面。
+    /// 这时编辑区仍然显示在它后面。
     fn place_full_terminal(&mut self, column: Rect, shown: f32, right: bool) {
         let l = &mut self.layout;
         let slide = 1.0 - shown;
@@ -645,6 +701,35 @@ impl App {
         }
     }
 
+    /// 绘制一帧之前推进动画、滚动和预览，并重新排版。
+    pub(in crate::app) fn prepare_frame(&mut self) {
+        self.vim_sync();
+        self.settle_animations();
+        self.advance_wheel_glide();
+        self.advance_fling(Instant::now());
+        self.continue_drag_scroll();
+        self.track_modules();
+        self.track_about_logo();
+        self.track_commit_bars();
+        self.track_search_rows();
+        self.track_words();
+        self.track_suggest();
+        self.git_follow_active();
+        self.relayout();
+        self.run_when_loaded();
+        self.advance_search();
+        self.advance_images();
+    }
+
+    /// 按各区域在屏幕上的滚动位置（见 `App::begin_scroll_frame`）用 `renderer` 绘制并提交一帧，
+    /// 返回是否画成。
+    pub(in crate::app) fn draw_scrolled(&mut self, renderer: &mut Renderer) -> bool {
+        let scrolled = self.begin_scroll_frame();
+        let drawn = renderer.draw(|frame| view::draw(self, frame));
+        self.end_scroll_frame(scrolled);
+        drawn
+    }
+
     /// 绘制一帧并提交。
     ///
     /// 窗口看不见时跳过绘制；当前标签还在后台读取时保留上一帧；绘制后重新判断悬停目标，
@@ -663,21 +748,7 @@ impl App {
             self.frame.dirty = false;
             return;
         }
-        self.vim_sync();
-        self.settle_animations();
-        self.advance_wheel_glide();
-        self.advance_fling(Instant::now());
-        self.continue_drag_scroll();
-        self.track_modules();
-        self.track_commit_bars();
-        self.track_search_rows();
-        self.track_words();
-        self.track_suggest();
-        self.git_follow_active();
-        self.relayout();
-        self.run_when_loaded();
-        self.advance_search();
-        self.advance_images();
+        self.prepare_frame();
 
         self.caches.highlight_pending = false;
         self.ime.cursor = None;
@@ -695,9 +766,7 @@ impl App {
         if let Some(window) = &self.window.handle {
             window.pre_present_notify();
         }
-        let scrolled = self.begin_scroll_frame();
-        let drawn = renderer.draw(|frame| view::draw(self, frame));
-        self.end_scroll_frame(scrolled);
+        let drawn = self.draw_scrolled(&mut renderer);
         let elapsed = started.elapsed();
         self.frame.renderer = Some(renderer);
         if !drawn {
@@ -735,7 +804,9 @@ impl App {
         self.after_terminal_frame();
         self.frame.presented += 1;
 
-        match self.frame.bench.on_present(self.frame.presented, elapsed) {
+        let loading = self.editor.active().is_some_and(|d| d.is_pending());
+        let next = (self.frame.bench).on_present(self.frame.presented, elapsed, loading);
+        match next {
             Next::Continue => {}
             // 应用层看到以后结束事件循环（测量时只有一个窗口）。
             Next::Exit => self.closing.quit_requested = true,
@@ -798,9 +869,7 @@ impl App {
             }
             Next::Terminal => self.toggle_terminal(),
             Next::Search(query) => {
-                self.open_global_search(false);
-                self.panels.global.query.set_text(&query);
-                self.global_changed(true);
+                self.show_global_search(false, Some(query));
             }
             Next::QuickOpen => self.open_picker(),
             Next::Find(query) => {
@@ -879,6 +948,12 @@ pub struct WindowState {
     pub(in crate::app) frame_due: Option<Instant>,
     /// 窗口是否完全不可见（被遮挡、最小化或位于其他桌面）；不可见时不绘制，窗口画面标记为可清除。
     pub(in crate::app) occluded: bool,
+    /// 窗口是否因最小化而尺寸为 0：Windows 上最小化时如此，且不发出 `WindowEvent::Occluded`。
+    /// 为真时同样不绘制，也不按 0 尺寸重新排版：按 0 尺寸排版的一帧会改变各区域的滚动位置。
+    pub(in crate::app) minimized: bool,
+    /// 关闭时窗口处于全屏：退出全屏完成后再隐藏（见 `App::hide_window`）。
+    #[cfg(target_os = "macos")]
+    pub(in crate::app) hide_after_fullscreen: bool,
 }
 
 impl Default for WindowState {
@@ -891,6 +966,9 @@ impl Default for WindowState {
             frame: None,
             frame_due: None,
             occluded: false,
+            minimized: false,
+            #[cfg(target_os = "macos")]
+            hide_after_fullscreen: false,
         }
     }
 }

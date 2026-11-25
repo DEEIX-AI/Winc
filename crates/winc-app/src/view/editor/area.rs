@@ -17,6 +17,7 @@ use winc_syntax::{Language, Token};
 
 use super::*;
 use crate::app::FoldMotion;
+use crate::app::animation::CaretTarget;
 use crate::app::git::merge::MergeTarget;
 
 /// 绘制当前文档的文本区，`index` 是它在 `documents` 中的位置。
@@ -131,6 +132,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         let vim_caret = app.vim_caret();
         let caret = vim_caret.map_or(selection.head, |(pos, _)| pos);
         let (caret_line, caret_col) = text.pos_to_line_col(caret);
+        let text_drop = app.text_drop().map(|pos| text.pos_to_line_col(pos));
         // 多光标：主选区以外、位于可见范围内的选区和光标（行，列）。光标可能有上万个，
         // 只取可见的部分。
         let shown_range = {
@@ -193,6 +195,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             extra: &extra,
             caret_line,
             caret_col,
+            text_drop,
             relative: app.vim_relative(),
             yanked: app.vim_yanked(id),
             vim_caret: vim_caret.map(|(_, shape)| shape),
@@ -211,6 +214,8 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             blame_hover,
             line_blame,
             problems: app.latex_problem_lines(id),
+            http_requests: app.http_request_lines(doc),
+            http_mark: app.http_mark(id),
         };
 
         screen.draw_conflict_tints(frame, &conflicts);
@@ -261,8 +266,25 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     }
     app.hits.merge = merge_hits;
 
+    // 主光标的移动动画在行都画完之后绘制：滑动途中经过其他行时不会被后面绘制的行遮住。
+    // 前台以外的窗格没有光标，动画状态属于前台的文档。
+    if !app.panes.drawing_background {
+        match scratch.caret {
+            CaretDraw::Sliding(target) => {
+                let rect = app.advance_caret(target);
+                caret_bar(app, frame, rect.x, rect.y, layout.text);
+            }
+            CaretDraw::Static => app.caret_hidden(),
+            // 光标这一帧不在屏幕上，视口正随跳转滚向它：保留动画状态，滚到目标时从原来的位置
+            // 滑过去。用滚轮滚出视野的光标不保留，回来时直接出现。
+            CaretDraw::Offscreen if app.focus == Focus::Editor && app.caret_scrolls() => {}
+            CaretDraw::Offscreen => app.caret_hidden(),
+        }
+    }
+
     app.hits.folded = scratch.folded_hits;
     app.hits.long_lines = scratch.long_hits;
+    app.hits.http_runs = scratch.http_hits;
     draw_sticky(app, frame, index);
     minimap::draw_minimap(app, frame, index);
     // 滚动条绘制在固定行的上层，使滚动条从上到下是完整的一条。
@@ -327,6 +349,8 @@ struct Screen<'a> {
     extra: &'a [Selection],
     caret_line: usize,
     caret_col: usize,
+    /// 拖动选中的文字时将放下的位置（行，列）；没有在拖动时为 `None`。
+    text_drop: Option<(usize, usize)>,
     /// 行号栏是否显示相对行号。
     relative: bool,
     /// Vim 模式下刚被复制、仍在高亮的范围。
@@ -348,6 +372,10 @@ struct Screen<'a> {
     line_blame: Option<(usize, String)>,
     /// LaTeX 编译出错的行（从 0 起，从小到大）。
     problems: Vec<usize>,
+    /// `.http` 文件中请求行的行号（从 0 起，从小到大）；不是 `.http` 文件时为 `None`。
+    http_requests: Option<std::rc::Rc<[usize]>>,
+    /// 正在发送或刚结束的请求：（请求行的行号，按钮的样子）。
+    http_mark: Option<(usize, crate::app::editor::http::RunMark)>,
 }
 
 /// 行尾可点击的区域及其所在的行。
@@ -367,8 +395,24 @@ struct Scratch {
     folded_hits: LineHits,
     /// 截断说明中「显示整行」的位置及其所在的行。
     long_hits: LineHits,
+    /// `.http` 文件行号栏中发送请求的按钮及其所在的请求行。
+    http_hits: LineHits,
     /// 主光标的位置；输入法候选框跟随该位置。
     ime_cursor: Option<Rect>,
+    /// 主光标这一帧的绘制方式。
+    caret: CaretDraw,
+}
+
+/// 主光标这一帧的绘制方式。
+#[derive(Debug, Clone, Copy, Default)]
+enum CaretDraw {
+    /// 光标这一帧没有画出来：它不在屏幕上，或者编辑区没有焦点。
+    #[default]
+    Offscreen,
+    /// 光标画在目标处，不播放动画。
+    Static,
+    /// 光标播放移动动画，按记录的目标位置推进。
+    Sliding(CaretTarget),
 }
 
 impl Scratch {
@@ -382,7 +426,9 @@ impl Scratch {
             guide_indent: 0,
             folded_hits: Vec::new(),
             long_hits: Vec::new(),
+            http_hits: Vec::new(),
             ime_cursor: None,
+            caret: CaretDraw::default(),
         }
     }
 }
@@ -648,16 +694,26 @@ impl Screen<'_> {
         let row_y = |line: usize| self.row_y(line);
         let line_y = |line: usize| self.line_y(line);
         let selections = std::iter::once(&self.selection).chain(self.extra);
-        for &selection in selections.chain(&self.yanked) {
-            if selection.is_empty() {
+        // 按住修饰键时鼠标下的链接：下划线。
+        let link = (self.app.pointer.link.as_ref())
+            .filter(|link| (link.doc, link.revision) == (self.doc.id, self.doc.revision))
+            .map(|link| {
+                (
+                    Selection::new(link.from, link.to),
+                    Some(self.app.palette.text),
+                )
+            });
+        let selections = selections.chain(&self.yanked).map(|&s| (s, None));
+        for marked in selections.chain(link) {
+            if marked.0.is_empty() {
                 continue;
             }
             let (app, segments, columns, origin_x) =
                 (self.app, self.segments, self.columns, self.origin_x);
             if self.doc.is_wrapping() {
-                draw_wrapped_selection(app, frame, selection, segments, origin_x, &line_y);
+                draw_wrapped_selection(app, frame, marked, segments, origin_x, &line_y);
             } else {
-                draw_selection(app, frame, selection, segments, columns, origin_x, &row_y);
+                draw_selection(app, frame, marked, segments, columns, origin_x, &row_y);
             }
         }
     }

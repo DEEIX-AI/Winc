@@ -4,9 +4,11 @@
 mod blocks;
 mod editor;
 mod find;
+mod groups;
 mod input;
 mod run;
 mod shortcuts;
+mod split;
 mod tabs;
 
 use super::editor::navigation::press;
@@ -262,7 +264,7 @@ fn clicks_move_the_focus_and_the_gap_resizes_the_panel() {
         app.layout.window.y + crate::theme::ISLAND_MARGIN
     );
     assert_eq!(app.layout.terminal.bottom(), column_bottom);
-    // 同一次拖动中往回拖：松开吸附，从最小高度接着拖。
+    // 同一次拖动中往回拖：松开吸附，从最小高度继续拖。
     app.on_mouse_move(x, y + 100.0);
     app.on_mouse_up(MouseButton::Left);
     assert!(!app.terminal.maximized);
@@ -618,17 +620,19 @@ fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
     assert_eq!(tab.x - card.x, app.terminal_view().y - tab.bottom());
     assert_eq!(tab.x - card.x, 5.0);
 
-    // 「+」、运行、最大化、切换位置、收起五个按钮间距相同，尺寸和间距与编辑区标签栏一致。
+    // 「+」、运行、拆分、最大化、切换位置、收起六个按钮间距相同，尺寸和间距与编辑区标签栏一致。
     let new = hit(&app, terminal::HeaderHit::New);
     let run = hit(
         &app,
         terminal::HeaderHit::Run(terminal::run::RunButton::Start),
     );
+    let split = hit(&app, terminal::HeaderHit::Split);
     let maximize = hit(&app, terminal::HeaderHit::Maximize);
     let position = hit(&app, terminal::HeaderHit::Position);
     let hide = hit(&app, terminal::HeaderHit::Hide);
     assert_eq!(run.x - new.right(), crate::theme::TAB_GAP);
-    assert_eq!(maximize.x - run.right(), crate::theme::TAB_GAP);
+    assert_eq!(split.x - run.right(), crate::theme::TAB_GAP);
+    assert_eq!(maximize.x - split.right(), crate::theme::TAB_GAP);
     assert_eq!(position.x - maximize.right(), crate::theme::TAB_GAP);
     assert_eq!(hide.x - position.right(), crate::theme::TAB_GAP);
     assert_eq!(new.w, crate::theme::BUTTON);
@@ -1018,6 +1022,129 @@ fn contrast_protection_keeps_shape_characters_seamless() {
     };
     assert_eq!(pixel(0), 0x00d7_9921);
     assert_eq!(pixel(1), pixel(0));
+}
+
+/// 回归：Powerline 分隔符的字形低于行高，相邻格子的色块在其上下露出。
+#[test]
+fn powerline_separators_fill_the_cell_height() {
+    // 左半圆、黄底的空格、右向三角。
+    let yellow = "215;153;33";
+    let (round, wedge) = ('\u{e0b6}', '\u{e0b0}');
+    let bytes = format!(
+        "\x1b[?25l\x1b[38;2;{yellow}m{round}\x1b[0;48;2;{yellow}m \x1b[0;38;2;{yellow}m{wedge}"
+    );
+    // 各种字号：格子的宽度不是整数个物理像素时，平边同样与相邻的色块对齐。
+    for size in [11.0, 12.0, 13.0, 14.0, 15.0, 17.0] {
+        let mut app = blank_app(false);
+        app.config.terminal_size = Some(size);
+        app.apply_font_sizes();
+        show_terminal(&mut app, &bytes);
+        let mut scale = 1.0;
+        let renderer = app.frame.renderer.as_mut().unwrap();
+        renderer.draw(|frame| scale = frame.scale());
+        paint(&mut app);
+        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let yellow = |x: usize, y: usize| {
+            image.pixels[y * image.width as usize + x] & 0x00ff_ffff == 0x00d7_9921
+        };
+        // 从黄底的那一格的中心量出这一行的上下边，不依赖字体的度量。
+        let (x, y) = cell_center(&app, 0, 1);
+        let (x, y) = ((x * scale) as usize, (y * scale) as usize);
+        assert!(yellow(x, y), "字号 {size}");
+        let top = (0..=y).rev().take_while(|&y| yellow(x, y)).last().unwrap();
+        let bottom = (y..).take_while(|&y| yellow(x, y)).last().unwrap();
+        // 每一行上黄色从中间那一格的中心向左、向右各延伸多少个物理像素。
+        let reach = |y: usize, left: bool| {
+            let step = |n: &usize| yellow(if left { x - n } else { x + n }, y);
+            (1..x).take_while(step).count()
+        };
+        // 最上面一行三角的尖端不足一个像素：向右量到的就是中间那一格的右边缘。向左的距离
+        // 与它相差不超过一个像素。
+        let edge = reach(top, false);
+        // 半圆的平边和三角的底边紧贴中间那一格，从上到下没有缺口。
+        for y in top + 4..=bottom - 4 {
+            let row = y - top;
+            assert!(reach(y, true) >= edge + 3, "字号 {size}，半圆，第 {row} 行");
+            assert!(reach(y, false) > edge, "字号 {size}，三角，第 {row} 行");
+        }
+        // 圆弧和斜边之外是底色：靠上的一行到不了相邻那一格的另一侧。
+        let across = 3 * edge - 2;
+        assert!(reach(top + 4, true) < across && reach(top + 4, false) < across);
+    }
+}
+
+/// 回归：远端主机的集成脚本和 shell 列表尚未准备完时恢复终端标签。
+#[cfg(unix)]
+#[test]
+fn restored_remote_tabs_wait_for_the_shell_setup() {
+    use crate::app::remote;
+    use crate::app::terminal::shells::ShellChoice;
+    use std::os::unix::ffi::OsStrExt;
+    use winc_pty::protocol::ToHelper;
+    let dir = sample_folder("terminal-remote-setup");
+    let mut app = app_with(&dir.join("short.rs"), true);
+    app.config.terminal_enabled = Some(true);
+    app.terminal.open = true;
+    app.terminal.height = terminal::DEFAULT_HEIGHT;
+    let log = app.attach_recording_helper(&dir);
+    let started = |app: &App| -> Vec<String> {
+        let sent = app.sent_to_helper(&log);
+        let commands = sent.iter().filter_map(|m| match m {
+            ToHelper::Spawn { args, .. } => args.last(),
+            _ => None,
+        });
+        commands
+            .map(|command| String::from_utf8_lossy(command).into_owned())
+            .collect()
+    };
+    let restore = |app: &mut App, host: &str| {
+        let target = winc_backend::Target::new(host).unwrap();
+        let folder = winc_backend::virtual_path(&target, b"/srv");
+        app.terminal
+            .want
+            .push(folder.as_os_str().as_bytes().to_vec());
+        app.terminal.want_shells = vec![Some("/usr/bin/fish".to_owned())];
+        let setup = remote::Setup::begin(&target, None);
+        app.relayout();
+        (target, setup)
+    };
+
+    let (host, setup) = restore(&mut app, "me@setup-host");
+    assert_eq!(started(&app), [""; 0]);
+    assert_eq!(app.terminal.want.len(), 1);
+    // 等待期间面板中有一行说明。
+    let shot = |app: &mut App| {
+        paint(app);
+        let renderer = app.frame.renderer.as_ref().unwrap();
+        renderer.image().unwrap().pixels.clone()
+    };
+    let waiting = shot(&mut app);
+    let want = std::mem::take(&mut app.terminal.want);
+    assert_ne!(shot(&mut app), waiting);
+    app.terminal.want = want;
+    remote::set_shell_ready(&host, true);
+    let fish = ShellChoice {
+        name: "fish".into(),
+        command: "/usr/bin/fish".into(),
+    };
+    remote::set_shells(&host, vec![fish]);
+    drop(setup);
+    app.relayout();
+    let commands = started(&app);
+    assert_eq!(commands.len(), 1);
+    assert!(
+        commands[0].contains(winc_pty::scripts::REMOTE_DIR),
+        "{commands:?}"
+    );
+    assert!(commands[0].contains("/usr/bin/fish"), "{commands:?}");
+    let shell = app.terminal.tab().unwrap().shell.as_deref();
+    assert_eq!(shell, Some("/usr/bin/fish"));
+
+    let (_, setup) = restore(&mut app, "me@setup-failed");
+    assert_eq!(started(&app).len(), 1);
+    drop(setup);
+    app.relayout();
+    assert_eq!(started(&app)[1], "cd '/srv' && exec $SHELL -l");
 }
 
 /// 能选的 shell 不止一个时才有下拉箭头；选中的 shell 用来启动，重新启动和现场都带着它。

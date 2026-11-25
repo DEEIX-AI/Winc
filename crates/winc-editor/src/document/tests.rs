@@ -9,6 +9,8 @@ use crate::test_util::scratch;
 use std::fs;
 use std::time::SystemTime;
 
+mod unicode_escapes;
+
 #[cfg(unix)]
 #[test]
 fn atomic_writes_use_a_fresh_private_temporary_file() {
@@ -1246,4 +1248,23 @@ fn far_lines_get_an_approximate_highlight_state_before_the_exact_one() {
     );
     // 精确的状态推算完成后与近似状态一致。
     assert_eq!(doc.highlight_state(line, usize::MAX), Some(approx));
+}
+
+#[test]
+fn only_local_files_over_the_limit_open_as_large() {
+    let dir = scratch("opens-as-large");
+    let (small, large) = (dir.join("small"), dir.join("large"));
+    fs::File::create(&small)
+        .unwrap()
+        .set_len(LARGE_FILE)
+        .unwrap();
+    fs::File::create(&large)
+        .unwrap()
+        .set_len(LARGE_FILE + 1)
+        .unwrap();
+
+    assert!(opens_as_large(&large));
+    assert!(!opens_as_large(&small));
+    assert!(!opens_as_large(&dir.join("missing")));
+    let _ = fs::remove_dir_all(&dir);
 }

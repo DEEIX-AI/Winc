@@ -64,13 +64,14 @@ fn tab_nests_list_items_in_the_preview() {
 fn arrows_skip_the_blank_lines_between_blocks() {
     use winit::keyboard::{Key, NamedKey};
 
-    let (mut app, dir) = live_doc("md-gap", "甲\n\n\n乙\n");
+    // 多出的空行显示为空段落，光标停在上面，见 `blank_lines`。
+    let (mut app, dir) = live_doc("md-gap", "甲\n\n乙\n");
     put_caret(&mut app, "甲", true);
     assert!(app.markdown_key(&Key::Named(NamedKey::ArrowRight), false));
-    assert_eq!(with_caret(&app), "甲\n\n\n|乙\n");
+    assert_eq!(with_caret(&app), "甲\n\n|乙\n");
     settle(&mut app);
     assert!(app.markdown_key(&Key::Named(NamedKey::ArrowLeft), false));
-    assert_eq!(with_caret(&app), "甲|\n\n\n乙\n");
+    assert_eq!(with_caret(&app), "甲|\n\n乙\n");
     settle(&mut app);
     // 块内的逐字移动交给编辑区。
     assert!(!app.markdown_key(&Key::Named(NamedKey::ArrowLeft), false));
@@ -171,6 +172,32 @@ fn pasting_web_content_writes_markdown() {
     app.clipboard.copied_html = Some("<b>纯</b>".into());
     assert!(app.run_action(crate::keymap::Action::MarkdownPastePlain));
     assert!(doc_text(&app).ends_with("(https://winc.si)纯\n"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归（#426）：从别的编辑器复制几百行粘贴到 Markdown 文档里，只粘贴进前面几十行。剪贴板里的
+/// HTML 片段被写入的程序截短（片段范围按字符计算，内容含中文时结尾提前），转换后的代码块代替了
+/// 完整的纯文本。HTML 只是纯文本的开头一段时改用纯文本；完整的照常写成代码块。
+#[test]
+fn a_cut_short_html_copy_pastes_the_whole_text() {
+    let (mut app, dir) = live_doc("md-paste-cut", "前文\n");
+    put_caret(&mut app, "前文", true);
+    let lines: Vec<String> = (1..=300)
+        .map(|i| format!("let x{i} = \"第{i}行\";"))
+        .collect();
+    let text = lines.join("\n");
+    let html = |count: usize| format!("<pre>{}</pre>", lines[..count].join("\n"));
+    app.clipboard.copied = Some(text.clone());
+    // 截短的片段没有结束标签。
+    app.clipboard.copied_html = Some(html(40).trim_end_matches("</pre>").to_owned());
+    app.paste();
+    assert!(doc_text(&app).ends_with(&format!("{text}\n")));
+    assert!(!doc_text(&app).contains("```"));
+
+    app.run(winc_editor::Command::Insert("\n\n".into()));
+    app.clipboard.copied_html = Some(html(300));
+    app.paste();
+    assert!(doc_text(&app).ends_with(&format!("```\n{text}\n```\n")));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1084,7 +1111,7 @@ fn block_markers_take_effect_after_a_space() {
     let shown = |app: &App| crate::app::preview::markdown::laid::full_text(app).unwrap();
     for marker in ["-", "1.", "#", ">"] {
         app.run(winc_editor::Command::Insert(marker.into()));
-        paint(&mut app);
+        settle(&mut app);
         assert!(
             shown(&app).contains(&format!("前文\n{marker}\n")),
             "{}",
@@ -1092,7 +1119,7 @@ fn block_markers_take_effect_after_a_space() {
         );
         let y = caret_screen_y(&app);
         app.run(winc_editor::Command::Insert(" ".into()));
-        paint(&mut app);
+        settle(&mut app);
         // 成为列表项、引用之后记号不再按文字显示，光标仍在同一行上；标题在光标位于开头时
         // 显示 `#`，字号随之变大。
         if marker != "#" {

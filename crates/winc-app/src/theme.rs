@@ -55,8 +55,10 @@ pub struct Palette {
     pub shadow: Color,
     /// 相邻两个未选中标签之间的竖线。
     pub tab_divider: Color,
-    /// 设置等模态浮层后方覆盖整个窗口的半透明遮罩。
+    /// 模态浮层后方覆盖整个窗口的半透明遮罩。
     pub scrim: Color,
+    /// 设置浮层后方的遮罩：卡片占去大半个窗口，遮罩比 [`Self::scrim`] 深。
+    pub scrim_strong: Color,
 
     // 文字
     /// 界面正文：文件树、标签、按钮。
@@ -338,7 +340,7 @@ struct Tokens {
     /// 终端的 16 色（黑、红、绿、黄、蓝、品红、青、白，再是各自的亮色），与所在主题的语法色
     /// 同一色系。
     ///
-    /// 除了深色主题的黑、浅色主题的亮白（这两色本来就接近底色），其余 15 色在卡片底色上的
+    /// 除了深色主题的黑、浅色主题的亮白（这两色原本就接近底色），其余 15 色在卡片底色上的
     /// 对比度至少 3:1。
     ansi: [Color; 16],
 }
@@ -406,6 +408,7 @@ impl Palette {
             shadow: BLACK.alpha(if dark { 0.5 } else { 0.14 }),
             tab_divider: ink.alpha(if dark { 0.08 } else { 0.1 }),
             scrim: BLACK.alpha(if dark { 0.4 } else { 0.08 }),
+            scrim_strong: BLACK.alpha(if dark { 0.5 } else { 0.3 }),
             text: t.text,
             text_muted: t.text_muted,
             text_dim: t.text_dim,
@@ -562,6 +565,12 @@ impl Palette {
         let (glyph, [dark, light]) = file_kind(name);
         (glyph, Color::hex(if self.dark { dark } else { light }))
     }
+
+    /// 返回语言 `language` 的图标：这种语言的文件的图标（见 [`language_kind`]）。
+    pub fn language_icon(&self, language: &winc_syntax::Language) -> (FileGlyph, Color) {
+        let (glyph, [dark, light]) = language_kind(language);
+        (glyph, Color::hex(if self.dark { dark } else { light }))
+    }
 }
 
 // 字号与行高（逻辑像素，下同）。上方的常量是默认值；运行时以 `ViewFonts` 为准，
@@ -687,9 +696,9 @@ pub const TAB_HEIGHT: f32 = 26.0;
 pub const TAB_GAP: f32 = 4.0;
 /// 第一个文件标签离标签栏左边的距离（逻辑像素），与标签上下的留白相同。
 pub const TAB_INSET: f32 = (TOP_BAR - TAB_HEIGHT) / 2.0;
-/// 标签的最大宽度。
+/// 关掉「完整显示文件名」（`editor.fullTabNames`）时标签的最大宽度。
 ///
-/// 标签宽度贴合文件名，文件名更长时截短；所有标签放不下时横向滚动。
+/// 标签宽度贴合文件名，文件名更长时截短；开着这一项时不设这个上限。所有标签放不下时横向滚动。
 pub const TAB_WIDTH_MAX: f32 = 180.0;
 /// 标签的最小宽度：文件名很短时也不窄于该宽度，留出足够的点击范围。
 pub const TAB_WIDTH_MIN: f32 = 80.0;
@@ -762,19 +771,21 @@ pub const TOOLTIP_MAX_WIDTH: f32 = 700.0;
 // 分左右两栏：左侧是分类栏，
 // 右侧是一页，分几组，每行一项：名称在左，控件靠右。
 /// 设置卡片的宽度；换页时不变，窗口放不下时缩小，内容滚动。
-pub const SETTINGS_W: f32 = 720.0;
+pub const SETTINGS_W: f32 = 800.0;
 /// 设置卡片的高度；换页时不变，窗口放不下时缩小，内容滚动。
-pub const SETTINGS_H: f32 = 520.0;
+pub const SETTINGS_H: f32 = 560.0;
 /// 设置卡片与窗口四周至少保留的距离。
 pub const SETTINGS_MARGIN: f32 = 32.0;
 /// 左侧分类栏的宽度。
-pub const SETTINGS_NAV_W: f32 = 180.0;
+pub const SETTINGS_NAV_W: f32 = 240.0;
 /// 分类栏中每一项的高度。
-pub const SETTINGS_NAV_ROW: f32 = 30.0;
+pub const SETTINGS_NAV_ROW: f32 = 32.0;
+/// 分类栏中相邻两项之间的间距。
+pub const SETTINGS_NAV_GAP: f32 = 4.0;
 /// 右侧顶部标题行（「设置 › 外观」和关闭按钮）的高度。
 pub const SETTINGS_HEADER: f32 = 52.0;
 /// 组与右栏左右边缘的距离；行内的名称和控件再向内缩进 `SETTINGS_INSET`。
-pub const SETTINGS_PAD: f32 = 24.0;
+pub const SETTINGS_PAD: f32 = 20.0;
 /// 行内名称和控件相对组边缘的内缩距离。
 pub const SETTINGS_INSET: f32 = 14.0;
 /// 两组之间的间距。

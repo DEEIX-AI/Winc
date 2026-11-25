@@ -252,7 +252,10 @@ pub(super) fn draw_line(
                 });
                 if let Some(unit) = whole {
                     joined = offset - c.len_utf8() + unit.len();
-                } else if c != ' ' && !draw_block_element(frame, c, at, fg, clip) {
+                } else if c != ' '
+                    && !draw_block_element(frame, c, at, fg, clip)
+                    && !super::powerline::draw_powerline(frame, c, at, fg, clip)
+                {
                     frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
                     // 粗体：往右错开一个物理像素再绘制一次，笔画加粗、字宽不变（等宽的格子不乱）。
                     if bold {
@@ -436,7 +439,7 @@ fn draw_underline(
     }
 }
 
-/// 第 `col` 格上的字占几格（光标盖住宽字符时绘制成两格宽）。
+/// 第 `col` 格上的字占几格（光标遮住宽字符时绘制成两格宽）。
 pub(super) fn width_at(line: &Line, col: usize) -> usize {
     let mut at = 0;
     for (_, w) in cells(&line.text) {
@@ -620,7 +623,7 @@ pub(super) fn preedit_x(x: f32, text: &str, cell: f32, right: f32) -> f32 {
     x.min(right - cells.iter().sum::<usize>() as f32 * cell)
 }
 
-/// 输入法组字中的文字：绘制在 [`preedit_x`] 处，带强调色的下划线，盖住下面的格子。
+/// 输入法组字中的文字：绘制在 [`preedit_x`] 处，带强调色的下划线，遮住下面的格子。
 pub(super) fn draw_preedit(
     app: &App,
     frame: &mut Frame<'_>,

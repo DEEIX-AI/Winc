@@ -1,9 +1,10 @@
 //! 文本区的一行：行号栏中的部分（见 `gutter`）、缩进参考线、各类标注、文字、折叠标记和光标。
 
-use winc_config::RenderWhitespace;
+use winc_config::{RenderWhitespace, SmoothCaret};
 use winc_i18n::t;
 
 use super::*;
+use crate::app::animation::CaretTarget;
 use crate::app::vim::CaretShape;
 
 /// 查找光标所在词的其他出现时，在可见列两侧额外检查的字符数（字符）。
@@ -33,7 +34,9 @@ impl Screen<'_> {
             guide_indent,
             folded_hits,
             long_hits,
+            http_hits,
             ime_cursor,
+            caret,
         } = scratch;
         let (text_rect, lh) = (self.text_rect, self.lh);
         // 第一段的顶边和基线按 `f64` 计算（见 `Screen::line_y`），基线的算法同 `baseline_in`。
@@ -103,10 +106,9 @@ impl Screen<'_> {
             (&column_cells[..], &column_fields[..], c.separator)
         });
 
-        // 行号、书签、折叠箭头绘制在行号栏中该行的位置。断成多段的行滚动到只显示后续各段时，
-        // 第一段已超出编辑区上沿，因此下移到顶部绘制，使行号仍对应本行。下移量最多到最后一段：
-        // 只有一段的行仅上半部分滚出，最后一段只显示下半部分时同理，两种情况下行号都不得与
-        // 下一行的行号重叠。
+        // 行号、书签、折叠箭头绘制在行号栏中该行的位置。断成多段的行滚动到只显示后续各段时，第一段
+        // 已超出编辑区上沿，因此下移到顶部绘制，使行号仍对应本行。下移量最多到最后一段：只有一段的
+        // 行仅上半部分滚出，最后一段只显示下半部分时同理，两种情况下行号都不得与下一行的行号重叠。
         let gutter_rows = rows.max(first_part + breaks.rows());
         let gutter_room = (gutter_rows - 1) as f64 * f64::from(lh);
         let gutter_shift = (f64::from(text_rect.y) - y).clamp(0.0, gutter_room);
@@ -138,6 +140,7 @@ impl Screen<'_> {
         self.draw_change_marks(frame, &row);
         self.draw_blame(frame, &row);
         self.draw_bookmark(frame, &row);
+        self.draw_http_run(frame, &row, http_hits);
         self.draw_fold_arrow(frame, &row);
         self.draw_guides(frame, &row, guide_indent);
         self.draw_marks(frame, &row);
@@ -172,7 +175,7 @@ impl Screen<'_> {
         self.draw_whitespace(frame, &row);
         let cells = self.draw_content(frame, &row, tokens);
         self.draw_tail(frame, &row, cells, (folded_hits, long_hits));
-        self.draw_carets(frame, &row, ime_cursor);
+        self.draw_carets(frame, &row, ime_cursor, caret);
     }
 
     /// 返回位置 `pos` 在本行中的段号（从 0 起）和 x 坐标。
@@ -525,7 +528,16 @@ impl Screen<'_> {
     }
 
     /// 编辑区有焦点时绘制本行的光标；主光标的位置记录到 `ImeState::cursor`。
-    fn draw_carets(&self, frame: &mut Frame<'_>, row: &Row<'_>, ime_cursor: &mut Option<Rect>) {
+    ///
+    /// 播放移动动画时主光标不在这里画，而是把目标位置记入 `caret_motion`，由绘制文本区的
+    /// 代码在所有行画完之后按动画位置绘制。
+    fn draw_carets(
+        &self,
+        frame: &mut Frame<'_>,
+        row: &Row<'_>,
+        ime_cursor: &mut Option<Rect>,
+        caret: &mut CaretDraw,
+    ) {
         let (app, lh, text_rect) = (self.app, self.lh, self.text_rect);
         // 超出 `chars` 末尾的光标绘制在末尾；所在段不在 `chars` 内时不绘制。
         let end = row.line_start + row.chars.len();
@@ -540,6 +552,7 @@ impl Screen<'_> {
             && let Some(pos) = caret_pos(self.caret_col).filter(|_| row.line == self.caret_line)
             && shown
         {
+            *caret = CaretDraw::Static;
             self.draw_vim_caret(frame, row, pos, shape);
             return;
         }
@@ -548,14 +561,35 @@ impl Screen<'_> {
         {
             let (part, x) = self.place(row, pos);
             let shift = part as f32 * lh;
-            *ime_cursor = Some(draw_caret(
-                app,
-                frame,
-                x,
-                row.y + shift,
-                row.baseline + shift,
-                text_rect,
-            ));
+            let target = caret_rect(x, row.y + shift, lh);
+            if self.caret_animates() {
+                // 滑动中的光标可能位于其他行上，行都画完之后再画，不会被后面绘制的行遮住。
+                *caret = CaretDraw::Sliding(CaretTarget::new(
+                    self.doc.id,
+                    pos,
+                    target,
+                    self.app.caret_scrolls(),
+                ));
+                *ime_cursor = Some(target);
+            } else {
+                *caret = CaretDraw::Static;
+                *ime_cursor = Some(draw_caret(
+                    app,
+                    frame,
+                    x,
+                    row.y + shift,
+                    row.baseline + shift,
+                    text_rect,
+                ));
+            }
+        }
+        // 拖动文字时将放下的位置：一直显示，不随光标闪烁。
+        if let Some((_, col)) = self.text_drop.filter(|&(line, _)| line == row.line)
+            && let Some(pos) = caret_pos(col)
+        {
+            let (part, x) = self.place(row, pos);
+            let bar = caret_rect(x, row.y + part as f32 * lh, lh);
+            frame.rect_clipped(bar, app.palette.caret, 1.0, text_rect);
         }
         // 其余光标与主光标同步闪烁；输入法组字只显示在主光标处。
         if self.focused {
@@ -565,6 +599,24 @@ impl Screen<'_> {
                 caret_bar(app, frame, x, row.y + part as f32 * lh, text_rect);
             }
         }
+    }
+
+    /// 主光标是否播放移动动画。
+    ///
+    /// 开关打开、界面没有关闭动态效果时播放。有选区（拖动选择、Shift 单击、双击选词、行号栏
+    /// 选行）、有多个光标、输入法正在组字或正在播放折叠动画时不播放，直接画在目标处。多个
+    /// 光标一起移动时全部直接到位：只让主光标滑动会让其余光标显得不同步。单击留下的是点选区，
+    /// 按下期间也会播放。
+    fn caret_animates(&self) -> bool {
+        self.focused
+            && self.app.smooth_caret() != SmoothCaret::Off
+            && self.app.animations_on()
+            // 有选区时（拖动、Shift 单击、双击选词、行号栏选行）光标跟随指针；单击留下
+            // 点选区，仍从旧位置滑过去。
+            && self.doc.selection.is_empty()
+            && self.doc.extra_selections().is_empty()
+            && self.motion.is_none()
+            && self.app.preedit_at(Focus::Editor).is_empty()
     }
 }
 

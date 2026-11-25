@@ -1,12 +1,11 @@
 //! 并排差异标签的几何、命中区与交互。
 //!
-//! 负责标题栏按钮、折叠的未改动段、上一处与下一处改动之间的跳转，以及把左侧的一段内容
-//! 替换到右侧。绘制由 `view` 子模块完成；可点击区域在绘制时记录到 `DiffState::hits`，
-//! 悬停与点击均据此判定目标。
+//! 负责标题栏按钮、折叠的未改动段、上一处与下一处改动之间的跳转，以及把左侧的一段内容替换到右侧。
+//! 绘制由 `view` 子模块完成；可点击区域在绘制时记录到 `DiffState::hits`，悬停与点击均据此判定目标。
 //!
-//! 右侧对应工作区文件时可直接编辑：右侧即编辑器中该文件的文档，光标、选区与撤销记录都属于该
-//! 文档。在右侧点击放置光标后，按键与编辑命令转给该文档执行；文件未打开时先在后台打开一个
-//! 标签，执行后重新比较。左侧（`HEAD`）只读。
+//! 右侧对应工作区文件时可直接编辑：右侧即编辑器中该文件的文档，光标、选区与撤销记录都属于该文档。
+//! 在右侧点击放置光标后，按键与编辑命令转给该文档执行；文件未打开时先在后台打开一个标签，执行后重新
+//! 比较。左侧（`HEAD`）只读。
 
 mod caret;
 mod edit;
@@ -29,10 +28,10 @@ use winc_editor::diff_view::{Compared, DiffView, LEFT, RIGHT, ReadSelection, Sid
 use winc_editor::{Document, DocumentId, FoldCommand};
 use winc_i18n::t;
 use winc_render::Rect;
-use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
 use super::animation::{Clock, FOLD_ANIMATION};
+use super::git::DiffKind;
 use super::git::changes::replace_lines;
 use super::git::commit::stages_by_hunk;
 use super::lifecycle::notice::FLASH_DURATION;
@@ -64,7 +63,7 @@ pub(crate) const DIFF_GUTTER_PAD: f32 = 10.0;
 const DIFF_SIGN_CELLS: f32 = 1.5;
 /// 文字和文字区边缘之间的空白（逻辑像素）。
 pub(crate) const DIFF_TEXT_PAD: f32 = 10.0;
-/// 差异一侧逐行追溯一栏的宽度（逻辑像素，经验值）：色条、作者和时间，比编辑区的一栏窄一些，
+/// 差异一侧逐行追溯一栏的宽度（逻辑像素）：色条、作者和时间，比编辑区的一栏窄一些，
 /// 名字放不下时截短，完整的在悬停提示中。
 pub(crate) const DIFF_BLAME_W: f32 = 160.0;
 
@@ -122,6 +121,8 @@ const REDIFF_IN_PLACE: usize = 3000;
 pub(crate) struct Rediffed {
     /// 所属的差异标签。
     id: DocumentId,
+    /// 右侧的文件：「未提交的更改」标签里按它找到是哪一段。
+    path: std::path::PathBuf,
     /// 比较时的左侧；采用结果前据此确认左侧未变。
     old: ropey::Rope,
     /// 比较时的右侧，即工作区文件当时的内容。
@@ -169,6 +170,8 @@ pub(crate) struct DiffCross {
 /// 差异标签中的可点击目标。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffTarget {
+    /// 「合并差异视图」开关：打开后换成「未提交的更改」，停在这个文件。
+    Combined,
     /// 上一处改动。
     Previous,
     /// 下一处改动。
@@ -320,6 +323,8 @@ pub(crate) struct DiffParts {
 pub(crate) struct DiffFoldMotion {
     /// 过渡所属的文档。
     pub doc: DocumentId,
+    /// 过渡所属的「未提交的更改」中的一段（`Section::id`）；普通的差异标签为 `None`。
+    pub section: Option<u32>,
     /// 未改动内容的段号。
     pub gap: usize,
     /// 展开状态下，该段折叠后隐藏的行在左侧、右侧占用的显示行；两侧行数相同。
@@ -369,10 +374,9 @@ impl App {
             DiffTarget::FilesEdge => {}
             DiffTarget::BannerBack => self.git_show_log(),
             DiffTarget::Layout => self.settings_toggle(crate::layout::Setting::DiffInline),
-            DiffTarget::Collapse => self.refold_diff(|view, row| {
-                let on = !view.collapses();
-                view.set_collapse(on, row)
-            }),
+            DiffTarget::Combined => self.toggle_combined_diff(),
+            // 与设置中的「折叠未更改的内容」是同一项：所有差异一起折叠或展开。
+            DiffTarget::Collapse => self.settings_toggle(crate::layout::Setting::DiffCollapse),
             DiffTarget::Fold(gap) => {
                 self.finish_diff_fold(true);
                 if let Some(view) = self.editor.active_mut().and_then(|d| d.diff.as_deref_mut()) {
@@ -581,6 +585,11 @@ impl App {
             self.request_redraw();
             return;
         }
+        let kind = self.active_diff_kind();
+        if kind != DiffKind::Whole {
+            self.toggle_split_part(&entry, (target, line), kind);
+            return;
+        }
         let (head, work) = (view.old.text.to_string(), view.new.text.to_string());
         // 暂存区中没有内容时与上次提交相同；全部暂存、内容尚未读到时与工作区相同。
         let index = match self.git.commit.index_text(&entry.path) {
@@ -604,28 +613,61 @@ impl App {
         self.stage_part(&entry, [&head, &index, &work], (target, line), !staged);
     }
 
-    /// 返回右侧对应的文档下标；未打开且 `open` 为 `true` 时就地打开，但不切换当前标签。
+    /// 返回右侧对应的、已读好的文档下标；未打开且 `open` 为 `true` 时建一个不切换过去的标签。
+    ///
+    /// 本机文件就地读取；远端文件在后台读取，读好之前返回 `None`（见
+    /// [`App::diff_source_loaded`]）。读取失败的文档不作为右侧。
     fn diff_source(&mut self, path: &Path, open: bool) -> Option<usize> {
         let found = self
             .editor
             .documents
             .iter()
             .position(|d| d.path.as_deref() == Some(path));
-        if let Some(index) = found {
-            // 右侧随文档编辑，尚未读取的文档需要先读取。
+        let index = match found {
+            Some(index) => index,
+            None if open => self.editor.open_pending(path),
+            None => return None,
+        };
+        if winc_backend::is_remote(path) {
+            self.load_in_background(index);
+        } else {
             self.editor.load(index);
-            return Some(index);
         }
-        if !open {
+        let doc = &self.editor.documents[index];
+        if doc.is_pending() || doc.unsupported.is_some() {
             return None;
         }
-        let active = self.editor.active;
-        // 右侧随文档编辑，需要立即有内容，因此就地读取。
-        let index = self.editor.open(path);
-        self.editor.active = active;
-        self.editor.documents[index]
-            .text_editable()
-            .then_some(index)
+        (found.is_some() || doc.text_editable()).then_some(index)
+    }
+
+    /// 文档 `index` 在后台读好：右侧跟随它的差异标签重新比较，等它读好的替换随之执行。
+    pub(in crate::app) fn diff_source_loaded(&mut self, index: usize) {
+        let Some(path) = self
+            .editor
+            .documents
+            .get(index)
+            .and_then(|d| d.path.clone())
+        else {
+            return;
+        };
+        let tabs: Vec<DocumentId> = (self.editor.documents.iter())
+            .filter(|d| d.diff.as_deref().and_then(|v| v.new.path.as_deref()) == Some(&path))
+            .map(|d| d.id)
+            .collect();
+        for id in tabs {
+            if let Some(tab) = self.editor.index_of(id) {
+                self.sync_diff_source(tab);
+            }
+        }
+        match self.diff.revert_after_load.take() {
+            Some((tab, waiting, hunk)) if waiting == path => {
+                if self.editor.active().map(|d| d.id) == Some(tab) {
+                    self.revert_diff_hunk(hunk);
+                }
+            }
+            other => self.diff.revert_after_load = other,
+        }
+        self.request_redraw();
     }
 
     /// 使差异标签 `index` 的右侧与编辑器中的文档同步。
@@ -685,6 +727,7 @@ impl App {
             let compared = Compared::new(&old, &rope);
             let _ = sender.send(Rediffed {
                 id,
+                path,
                 old,
                 new: rope,
                 revision,
@@ -701,11 +744,14 @@ impl App {
     pub(super) fn poll_rediffs(&mut self) {
         while let Ok(done) = self.diff.rediff.results.1.try_recv() {
             self.diff.rediff.running.remove(&done.id);
-            let Some(view) = self
-                .editor
-                .document_mut(done.id)
-                .and_then(|d| d.diff.as_deref_mut())
-            else {
+            // 「未提交的更改」中一段的差异只在换进标签时才挂在文档上，平时按文件找到那一段。
+            let in_tab = (self.editor.document(done.id)).is_some_and(|d| d.diff.is_some());
+            let view = if in_tab {
+                (self.editor.document_mut(done.id)).and_then(|d| d.diff.as_deref_mut())
+            } else {
+                self.combined_view_mut(done.id, &done.path, &done.old)
+            };
+            let Some(view) = view else {
                 continue;
             };
             // 比较期间左侧已变化（`HEAD` 变化、标签内容被替换），或已应用更新的结果时，丢弃该结果。
@@ -728,7 +774,16 @@ impl App {
         let Some(index) = self.editor.active else {
             return;
         };
+        // 点击时看到的是重算之前的各段：重算后同一序号换成了另一段时不替换。
+        let drawn = |app: &Self| {
+            let view = app.editor.documents[index].diff.as_deref()?;
+            view.hunks.get(hunk).cloned()
+        };
+        let clicked = drawn(self);
         self.sync_diff(index, true);
+        if clicked.is_none() || drawn(self) != clicked {
+            return;
+        }
         let Some(view) = self.editor.documents[index].diff.as_deref() else {
             return;
         };
@@ -736,6 +791,8 @@ impl App {
             return;
         };
         let inserted = view.old_lines(hunk);
+        // 差异右侧显示的那份内容：行号是按它算的。
+        let shown = view.new.text.clone();
         // 记录该段改动首行与视图顶部的距离，替换后使该行停留在原位置。
         let offset = view.hunk_rows[RIGHT][hunk].start as f64
             - view.row_at(RIGHT, self.editor.documents[index].scroll_line);
@@ -757,10 +814,21 @@ impl App {
                 }
                 self.sync_diff(index, true);
             }
+            // 远端文件在后台读入文档，读好后经文档替换（见 `diff_source_loaded`）。
+            None if winc_backend::is_remote(&path) => {
+                self.diff.revert_after_load = Some((doc_id, path.clone(), hunk));
+                self.diff_source(&path, true);
+                return;
+            }
             None => {
+                // 磁盘上的文件在差异算出之后又变了时不写：否则替换的是别的行，而且没有打开的
+                // 文档可以撤销。
                 let written = Document::open(DocumentId(u64::MAX), path.clone())
                     .map_err(|e| e.to_string())
                     .and_then(|mut doc| {
+                        if doc.text().rope() != Some(&shown) {
+                            return Err(t!("editor-original-changed").to_owned());
+                        }
                         replace_lines(&mut doc, h.new, inserted).map_err(str::to_owned)?;
                         doc.save().map_err(|e| e.to_string())?;
                         Ok(doc.text().rope().cloned())
@@ -1065,7 +1133,7 @@ impl App {
     ///
     /// 滚动到使该段距视口顶部三行的位置，距离较远时平滑滚动；光标移到该段开头，
     /// 该段显示当前标记和一次短暂的高亮。
-    fn go_to_hunk(&mut self, hunk: usize) {
+    pub(in crate::app) fn go_to_hunk(&mut self, hunk: usize) {
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
@@ -1129,6 +1197,30 @@ impl App {
         }
     }
 
+    /// 使所有已打开和之后打开的差异按设置（`diffCollapseUnchanged`）折叠或展开未更改的内容：
+    /// 标题栏上的开关和设置是同一项。各标签顶部的行保持在顶部。
+    pub(in crate::app) fn apply_diff_collapse(&mut self) {
+        let on = self.config.diff_collapse_unchanged != Some(false);
+        self.finish_diff_fold(true);
+        self.editor.diff_collapse = on;
+        for doc in &mut self.editor.documents {
+            let Some(view) = doc.diff.as_deref_mut() else {
+                continue;
+            };
+            if view.collapses() == on {
+                continue;
+            }
+            let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
+            let row = view.set_collapse(on, row);
+            let scroll = view.pos_of(RIGHT, row as f64);
+            set_scroll_line(doc, scroll);
+        }
+        self.apply_combined_collapse(on);
+        self.relayout();
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
     /// 使所有已打开和之后打开的差异按设置（`diffInline`）显示。
     ///
     /// 各标签顶部的行保持在顶部；已跳转到的改动仍为当前段。
@@ -1148,6 +1240,7 @@ impl App {
             }
             set_scroll_line(doc, scroll);
         }
+        self.apply_combined_layout(on);
         self.relayout();
         self.clamp_scroll();
         self.request_redraw();
@@ -1393,6 +1486,8 @@ pub struct DiffState {
     pub(crate) cross: Option<(Instant, crate::app::diff::DiffCross)>,
     /// 大文件的差异在后台重新比较。
     pub(crate) rediff: RediffState,
+    /// 等右侧的远端文档读好后再替换的改动：差异标签、文件路径和改动的序号。
+    pub(crate) revert_after_load: Option<(DocumentId, std::path::PathBuf, usize)>,
 }
 
 /// 返回差异 `view` 中各处改动的键和在左侧的行区间，按块勾选时据此识别各处改动。

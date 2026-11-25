@@ -1,4 +1,4 @@
-// Assemble all four verified targets, write SHA256SUMS, then upload once into one draft release.
+// Assemble all verified targets, write SHA256SUMS, then upload once into one draft release.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, createReadStream, readdirSync, writeFileSync } from "node:fs";
@@ -75,6 +75,7 @@ function releaseNotes(version) {
 | macOS · Apple silicon | \`${stem}-macos-arm64.dmg\` |
 | macOS · Intel | \`${stem}-macos-x64.dmg\` |
 | Linux · x86_64 | \`${stem}-linux-x64.AppImage\`, \`.deb\` or \`.rpm\` |
+| Linux · ARM64 | \`${stem}-linux-arm64.AppImage\`, \`.deb\` or \`.rpm\` |
 ${arch ? `| Arch Linux · x86_64 | \`${arch.name}\` |\n` : ""}| Windows · x86_64 | \`${stem}-windows-x64-setup.exe\` |
 | Windows · x86_64 · MSI | \`${stem}-windows-x64.msi\` |
 | Windows · x86_64 · Portable | \`${stem}-windows-x64-portable.zip\` |

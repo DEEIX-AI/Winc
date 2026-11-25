@@ -18,6 +18,7 @@ use super::*;
 mod blame;
 mod branch;
 mod changes;
+mod combined;
 mod commit;
 mod commit_selection;
 mod diff;
@@ -31,6 +32,18 @@ mod rebase;
 mod repository;
 mod rewrite;
 mod worktree;
+
+/// 在 `at` 处双击：第二次按下紧接着第一次，与两次之间过了多久无关。
+///
+/// 第一次单击可能在当前线程上运行 `git`（测试中后台任务就地执行），负载高时耗时超过连击的
+/// 间隔，第二次按下会被当作单击。
+fn double_click(app: &mut App, at: (f32, f32)) {
+    click(app, at);
+    if let Some(last) = &mut app.pointer.last_click {
+        last.at = std::time::Instant::now();
+    }
+    click(app, at);
+}
 
 /// 机器上没有可用的 git 时跳过该测试并返回 `true`。
 ///

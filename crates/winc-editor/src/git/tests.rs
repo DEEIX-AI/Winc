@@ -5,8 +5,10 @@
 
 use super::*;
 
+mod commit;
 mod history;
 mod locate;
+mod pathspec;
 
 fn root() -> PathBuf {
     PathBuf::from("/repo")
@@ -673,7 +675,7 @@ fn reading_scopes_one_by_one_finds_the_same_risks() {
     );
     assert_eq!(found, expected);
 
-    // 不认识 `--show-scope` 的 `git`（按 2.25 的样子以 129 退出）：检查照常得出同样的结果。
+    // 不认识 `--show-scope` 的 `git`（按 2.25 的样子以 129 退出）：检查仍然得出同样的结果。
     #[cfg(unix)]
     {
         let fake = dir.join("old-git");
@@ -740,7 +742,7 @@ fn risks_follow_the_configured_hooks_path() {
 }
 
 /// 仓库的配置里有过滤器和 fsmonitor 命令、hooks 目录里有钩子：信任之前读状态、取内容都
-/// 不运行它们，提交被拒绝；信任之后照常运行。
+/// 不运行它们，提交被拒绝；信任之后仍然运行。
 ///
 /// 找不到 `git` 时跳过。
 #[test]
@@ -1019,7 +1021,7 @@ fn unset_wsl_variables_do_not_select_an_empty_index() {
 fn pathspecs_separate_with_forward_slashes() {
     let root = Path::new("/repo");
     let paths = [root.join("src").join("main.rs"), root.join("README.md")];
-    let specs: Vec<OsString> = relative_all(root, &paths).collect();
+    let specs: Vec<OsString> = crate::git::pathspec::relative_all(root, &paths).collect();
     assert_eq!(specs, [":(literal)src/main.rs", ":(literal)README.md"]);
     assert_eq!(slash_path(root, &paths[0]).unwrap(), "src/main.rs");
 }

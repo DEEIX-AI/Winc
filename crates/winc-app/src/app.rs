@@ -50,13 +50,15 @@ pub(crate) use git::commit::{
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
-    folder_rows,
+    folder_level,
 };
 pub use input::context_menu::{ContextMenu, MenuButton, MenuCommand};
 pub use input::palette::palette;
 pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts, InAppAlert};
 use lifecycle::appearance::{forced_theme, unusable_font};
-pub(crate) use lifecycle::backup::{restore_at_launch, restore_tabs};
+pub(crate) use lifecycle::backup::{
+    Prepared, prepare_restore, restore_at_launch, restore_prepared,
+};
 pub use lifecycle::closing::{CloseRequest, SaveChoice, SavePrompt};
 pub use lifecycle::notice::{NoticeAction, NoticeGhost, NoticeKind};
 pub use lifecycle::title_bar::WindowControl;
@@ -177,6 +179,9 @@ pub enum UserEvent {
     /// 应用内更新的状态发生变化。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     UpdateState(crate::winc::UpdateState),
+    /// X11、Wayland 上系统的深浅色外观变了，交给每个窗口（见 `crate::color_scheme`）。
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    SystemThemeChanged(Theme),
     /// 右键菜单中选中一项，参数是 `AppKit` 菜单项的编号（`tag`）。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     MenuCommand(isize),
@@ -192,10 +197,14 @@ pub enum UserEvent {
     Move(Vec<PathBuf>, PathBuf, bool),
     /// 「要在哪里打开」提示框中做了选择：目录、是否在新窗口打开、是否勾选了「不再询问」。
     OpenFolderIn(PathBuf, bool, bool),
+    /// 「要在哪里打开」提示框中选择了「添加到此项目」：该目录加入当前项目。
+    AttachFolder(PathBuf),
     /// 后台格式化已有结果。
     Formatted,
+    /// 后台发送的 `.http` 请求已有结果。
+    HttpDone,
     /// 提示框中回答了是否允许运行项目自带的格式化工具。
-    ToolChoice(ToolAnswer),
+    ToolChoice(Box<ToolAnswer>),
     /// 确认框中同意运行参数所指的运行配置。
     RunApproved(Box<winc_config::RunConfig>),
     /// 提示框中回答了是否信任 Git 仓库（第一个参数）指纹为第二个参数的配置。
@@ -234,8 +243,11 @@ pub enum UserEvent {
     /// 粘贴到文件树中的文件已在后台复制完成：复制好的新路径、失败的原因（没有失败时为 `None`），
     /// 以及这次复制。
     Pasted(Vec<PathBuf>, Option<String>, Arc<winc_editor::Copying>),
-    /// 远端的各项已下载到本机：下载好的路径、失败的原因（没有失败时为 `None`），以及这次复制。
-    Downloaded(Vec<PathBuf>, Option<String>, Arc<winc_editor::Copying>),
+    /// 远端的各项已下载到本机：下载的结果，以及这次复制。
+    Downloaded(
+        winc_editor::paste::DownloadOutcome,
+        Arc<winc_editor::Copying>,
+    ),
     /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径、复制失败的说明，以及这次复制。
     Copied(Vec<PathBuf>, Vec<String>, Arc<winc_editor::Copying>),
     /// 窗口已关闭时点击了程序坞中的图标（macOS）：重新显示窗口。
@@ -245,14 +257,16 @@ pub enum UserEvent {
     GitStatus,
     /// 后台已取得某个文件在 Git 中的版本，可以打开差异。
     GitContent,
+    /// 后台比较完了「未提交的更改」标签中的一段。
+    GitCombined,
     /// 后台已重新比较完一个差异标签。
     Rediffed,
     /// 后台已提取完大纲的符号。
     Outline,
     /// 后台的提交、回滚已完成，或已取得上一次提交的信息。
     GitCommit,
-    /// 确认框中确认回滚参数中的文件。
-    GitRollback(Vec<PathBuf>),
+    /// 确认框中已确认的回滚：要回滚的文件和回滚的目标。
+    GitRollback(Vec<PathBuf>, crate::app::git::commit::RollbackTo),
     /// 确认框中确认中止进行中的合并、变基等操作。
     GitAbort,
     /// 确认框里选了跳过：跳过变基、拣选等操作停着的这个提交。
@@ -267,7 +281,7 @@ pub enum UserEvent {
     GitPushConfirmed(crate::app::git::commit::PushIntent, bool),
     /// 推送的确认框里选了「查看提交」：打开 Git 日志。
     GitShowLog,
-    /// Git 输出有了新的内容：开着的输出标签接着显示。
+    /// Git 输出有了新的内容：开着的输出标签继续显示。
     GitOutput,
     /// 提示框中确认提交已勾选的文件并推送。
     GitCommitAndPush,
@@ -285,10 +299,14 @@ pub enum UserEvent {
     RemoteConnected,
     /// 远程选择面板在后台读好了一个目录。
     RemoteListed,
-    /// 后台对远端目录的监视已经启动。
-    RemoteWatching,
+    /// 后台为目录菜单读好了一个远端目录。
+    FolderListed,
+    /// 后台启动好了对一个目录的监视，或者没能启动。
+    WatcherStarted,
     /// 到远端主机的连接意外中断。
     RemoteClosed(winc_backend::Target),
+    /// 一台远端主机的集成脚本和 shell 列表已经准备完；各窗口都收到。
+    RemoteShells,
     /// 后台的文件操作（新建、改名、移动、删除）已完成。
     FileWorked,
     /// 后台为远端文件的格式化选好了工具。
@@ -339,6 +357,14 @@ pub enum UserEvent {
     GitBlame,
     /// 后台已编译完一个 LaTeX 文档。
     Latex,
+    /// 确认框中同意运行项目的 `latexmkrc`：要重新编译的文档，文件所在的目录和内容。
+    LatexRc(Box<(DocumentId, PathBuf, String)>),
+    /// 后台读好了运行配置。
+    RunConfigsLoaded,
+    /// 后台读好了恢复标签要用的备份和文件信息。
+    TabsPrepared,
+    /// 后台读写完了状态文件：第几次请求，和文件里现在的状态。
+    StateStored(u64, Box<State>),
     /// 后台已检查或重读被其他程序修改的文件。
     Reread,
     /// 后台已重读文件树中被其他程序修改的目录。
@@ -424,6 +450,12 @@ pub enum Focus {
     TerminalRename,
     /// 快速打开的输入框（⌘P）。
     Picker,
+    /// 在文件中查找的对话框的查询输入框。
+    SearchDialog,
+    /// 在文件中查找的对话框的文件掩码输入框。
+    SearchMask,
+    /// 底部面板「搜索」标签中的结果列表。
+    SearchDock,
     /// 设置浮层中正在编辑的字体名输入框。
     Setting,
     /// 设置浮层已打开且没有输入框在编辑：方向键在设置项之间移动并修改值。
@@ -495,6 +527,10 @@ pub enum Hover {
     Merge(git::merge::MergeTarget),
     /// 快速打开面板或位置浮窗中的一行，参数为结果的序号（从 0 起）。
     PickerRow(usize),
+    /// 在文件中查找的对话框中的部位。
+    SearchDialog(workspace::search_dialog::DialogPart),
+    /// 底部面板「搜索」标签中的部位。
+    SearchDock(workspace::search_dialog::DialogPart),
     /// 选择面板里的一个按钮。
     PickerPart(PickerPart),
     ProjectName,
@@ -537,6 +573,12 @@ pub enum Hover {
     SplitDivider,
     /// 编辑区窗格之间的第几道分隔线（拖动可调整两侧的大小）。
     PaneDivider(usize),
+    /// 拆分的终端标签中第几条分隔线（见 `App::terminal_split_at`）。
+    TerminalSplit(usize),
+    /// 终端分栏之间第几条分隔线（见 `App::terminal_group_split_at`）。
+    TerminalGroupSplit(usize),
+    /// 「未提交的更改」标签上的段头、按钮。
+    Combined(git::combined::CombinedHit),
     /// 终端面板标签栏上的标签、关闭按钮、「+」和位置按钮。
     TerminalHeader(terminal::HeaderHit),
     /// 终端中命令块的色带与吸顶的命令行。
@@ -566,6 +608,8 @@ pub enum Hover {
     Gutter,
     /// 已折叠行末尾的 `⋯`，参数是行号（从 0 起）。
     Folded(usize),
+    /// `.http` 文件行号栏中发送请求的按钮，参数是请求行的行号（从 0 起）。
+    HttpRun(usize),
     /// 超长行截断说明中的「显示整行」，参数是行号（从 0 起）。
     LongLine(usize),
     /// 滚动条的可点击区域。
@@ -598,7 +642,9 @@ impl Hover {
             Hover::TreeTool(_)
                 | Hover::TerminalHeader(
                     terminal::HeaderHit::Position
+                        | terminal::HeaderHit::SearchDialog
                         | terminal::HeaderHit::Maximize
+                        | terminal::HeaderHit::Split
                         | terminal::HeaderHit::ShellMenu
                         | terminal::HeaderHit::Find(_)
                         | terminal::HeaderHit::Hide
@@ -627,6 +673,14 @@ impl Hover {
                         | PanelButton::ReplaceAll
                 )
                 | Hover::RowAction(..)
+                | Hover::SearchDialog(
+                    workspace::search_dialog::DialogPart::Option(_)
+                        | workspace::search_dialog::DialogPart::MaskToggle
+                        | workspace::search_dialog::DialogPart::Dock
+                        | workspace::search_dialog::DialogPart::Close
+                        | workspace::search_dialog::DialogPart::Scope(1)
+                )
+                | Hover::SearchDock(workspace::search_dialog::DialogPart::Option(_))
                 | Hover::Change(_)
                 | Hover::RulerChange(_)
                 | Hover::Log(
@@ -640,6 +694,15 @@ impl Hover {
                 )
                 | Hover::Blame(_)
                 | Hover::PickerPart(PickerPart::Pull | PickerPart::Push | PickerPart::Fetch)
+                | Hover::Combined(
+                    git::combined::CombinedHit::OpenFile(_)
+                        | git::combined::CombinedHit::OpenDiff(_)
+                        | git::combined::CombinedHit::Previous
+                        | git::combined::CombinedHit::Next
+                        | git::combined::CombinedHit::Collapse
+                        | git::combined::CombinedHit::Layout
+                        | git::combined::CombinedHit::View
+                )
                 | Hover::Commit(
                     CommitTarget::Log
                         | CommitTarget::Sync
@@ -659,7 +722,8 @@ impl Hover {
                         | CommitTarget::DirStage(..)
                 )
                 | Hover::Diff(
-                    DiffTarget::Previous
+                    DiffTarget::Combined
+                        | DiffTarget::Previous
                         | DiffTarget::Next
                         | DiffTarget::PreviousFile
                         | DiffTarget::NextFile
@@ -689,6 +753,16 @@ enum Drag {
     SettingsCard {
         grab: (f32, f32),
     },
+    /// 拖动在文件中查找的对话框的标题行；`grab` 是按下处相对对话框左上角的位置。
+    SearchDialog {
+        grab: (f32, f32),
+    },
+    /// 拖动在文件中查找的对话框的边缘：拖动的边、按下的位置和按下时对话框的位置。
+    SearchDialogEdge {
+        edge: (i8, i8),
+        from: (f32, f32),
+        rect: Rect,
+    },
     /// 拖选文字。
     ///
     /// `by_word` 表示双击后按词扩展；`origin` 是起点（按词时是起始词的范围）。
@@ -704,9 +778,21 @@ enum Drag {
     Columns {
         anchor: (usize, usize),
     },
+    /// `⇧⌥` 单击已框出列，若继续拖动则转为从按下处 `anchor` 开始框选一列。
+    ColumnClick {
+        origin: (f32, f32),
+        anchor: (usize, usize),
+    },
     /// `⌥` 拖动：添加一个选区；`origin` 是按下处的位置（字符偏移）。
     AddSelect {
         origin: usize,
+    },
+    /// 在选中的文字上按下（见 `App::press_on_selection`）：`press` 是按下处的窗口坐标，`at` 是
+    /// 没有拖动就松开时放置光标的位置（字符偏移），`moving` 表示已越过阈值、正在拖动文字。
+    MoveText {
+        press: (f32, f32),
+        at: usize,
+        moving: bool,
     },
     Splitter {
         start_x: f32,
@@ -749,6 +835,14 @@ enum Drag {
     },
     /// 拖动编辑区窗格之间的第 `index` 道分隔线。
     PaneDivider {
+        index: usize,
+    },
+    /// 拖动拆分的终端标签中的第 `index` 条分隔线（见 `App::drag_terminal_split`）。
+    TerminalSplit {
+        index: usize,
+    },
+    /// 拖动终端分栏之间的第 `index` 条分隔线（见 `App::drag_terminal_group_split`）。
+    TerminalGroupSplit {
         index: usize,
     },
     /// 拖动日志标签中列表与详情之间的分隔线：按下时的横坐标、详情栏当时的宽度。
@@ -909,6 +1003,8 @@ pub struct App {
     pub layout: Layout,
     /// 标签栏的标签和滚动状态。
     pub tabs: TabBar,
+    /// 按最近使用切换标签页的列表和记录。
+    pub(crate) tab_switch: workspace::tab_switch::TabSwitch,
     /// 编辑区的各个窗格在界面上的位置和状态。
     pub(crate) panes: workspace::panes::PaneUi,
     /// 差异视图的界面状态。
@@ -941,6 +1037,8 @@ pub struct App {
     pub text_content_w: f32,
     /// 预览标签的文档；是否仍是预览标签见 [`App::preview_index`]。
     preview_tab: Option<winc_editor::DocumentId>,
+    /// 启动时新建的未命名文件；是否仍可替换见 [`App::startup_file_index`]。
+    startup_file: Option<winc_editor::DocumentId>,
 
     // 编辑区
     /// 剪贴板。
@@ -953,6 +1051,8 @@ pub struct App {
     pub(crate) bars: editor::InputBars,
     /// 阅读时固定的词或短选区及其颜色编号，按标记时间从早到晚排列。
     pub(crate) word_highlights: Vec<(usize, WordHighlight)>,
+    /// 在文件中查找的对话框。
+    pub(crate) search_dialog: workspace::search_dialog::SearchDialog,
 
     // 快速打开
     /// 与磁盘的同步：目录的监视，以及文件在后台的读取、保存和改动。
@@ -960,7 +1060,7 @@ pub struct App {
     /// 本窗口最近关闭的标签、最近切换到的文件和最近使用的命令。
     pub(crate) history: workspace::History,
     /// 两段组合键（如 `⌘K ⌘S`）的第一段，正在等待第二段。
-    pub(crate) pending_chord: Option<crate::keymap::Stroke>,
+    pub(crate) pending_chord: Option<input::keyboard::PendingChord>,
     /// 单按修饰键的状态，用于连按两下修饰键的快捷键。
     pub(crate) taps: input::tap::Taps,
     /// 「首次设置」中快捷键一页的状态。
@@ -971,6 +1071,8 @@ pub struct App {
 
     /// 保存时格式化和修复的状态。
     pub format: FormatState,
+    /// `.http` 请求文件中正在发送的请求和各文档的请求行。
+    pub(crate) http: editor::http::HttpState,
     /// Git 模块：仓库状态、文件树装饰，以及提交、日志、追溯、分支、合并各视图的状态。
     ///
     /// 模块关闭时为空。
@@ -1098,12 +1200,14 @@ impl App {
         match done {
             UserEvent::GitStatus => self.poll_git(),
             UserEvent::GitContent => self.poll_git_content(),
+            UserEvent::GitCombined => self.poll_combined(),
             UserEvent::GitCommit => self.poll_commit(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
             UserEvent::RemoteConnected => self.poll_remote(),
             UserEvent::RemoteListed => self.poll_remote_listings(),
-            UserEvent::RemoteWatching => self.poll_remote_watcher(),
+            UserEvent::FolderListed => self.poll_folder_levels(),
+            UserEvent::WatcherStarted => self.poll_watchers(),
             UserEvent::FormatPlanned => self.poll_formatting(),
             UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
@@ -1112,6 +1216,8 @@ impl App {
             UserEvent::Latex => self.poll_latex(),
             UserEvent::Reread => self.poll_rereads(),
             UserEvent::TreeScanned => self.poll_tree_scans(),
+            UserEvent::RunConfigsLoaded => self.poll_run_configs(),
+            UserEvent::TabsPrepared => self.poll_prepared_tabs(),
             UserEvent::Saved => self.poll_saves(),
             UserEvent::Loaded => self.poll_loads(),
             UserEvent::Counted => self.poll_words(),
@@ -1150,8 +1256,8 @@ impl App {
     ///
     /// 目标是带提示的按钮时记录悬停开始的时刻，悬停足够久后才显示提示。
     pub(super) fn set_hover(&mut self, hover: Hover) {
-        // 窗口内的菜单覆盖在上方时，下方的部件均不视为悬停（`hover_at` 同样如此）。
-        let hover = if self.popup().is_some() {
+        // 窗口内的提示框或菜单覆盖在上方时，下方的部件均不视为悬停（`hover_at` 同样如此）。
+        let hover = if self.modal_open() {
             Hover::None
         } else {
             hover
@@ -1193,6 +1299,7 @@ impl App {
     fn drop_drags(&mut self) {
         self.cancel_tree_drag();
         self.cancel_tab_drag();
+        self.cancel_terminal_tab_drag();
         self.pointer.drag = Drag::None;
         self.pointer.close_pressed = None;
         self.pointer.control_pressed = None;

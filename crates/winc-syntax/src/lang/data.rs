@@ -327,6 +327,8 @@ pub(super) static JSON: Language = Language {
         "geojson",
         "webmanifest",
         "code-workspace",
+        "winc-project",
+        "sublime-project",
     ],
     file_names: &[
         ".babelrc",
@@ -342,6 +344,33 @@ pub(super) static JSON: Language = Language {
     block_comments: C_COMMENTS,
     key_separators: &[':'],
     quoted_keys: true,
+    indent_after: &['{', '['],
+    indent_unit: "  ",
+    ..CODE
+};
+
+/// HTTP 请求文件（`.http`、`.rest`）的规则。
+///
+/// 请求行以方法开头，方法按关键字着色；行首的 `名字:` 是请求头，`@名字 =` 是变量定义，按键着色；
+/// `{{名字}}` 是变量引用，按字符串着色。`#`、`//` 开始注释，`###` 分隔请求。正文多为 JSON。
+pub(super) static HTTP: Language = Language {
+    id: "http",
+    name: "HTTP",
+    extensions: &["http", "rest"],
+    keywords: &[
+        "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT", "HTTP",
+    ],
+    builtins: &["true", "false", "null"],
+    // 前面必须是空白：网址中的 `#片段` 和 `https://` 不是注释。
+    line_comments: &["#", "//"],
+    comment_needs_space: true,
+    key_separators: &[':', '='],
+    quoted_keys: true,
+    block_strings: &[BlockString {
+        open: "{{",
+        close: "}}",
+        interpolate: false,
+    }],
     indent_after: &['{', '['],
     indent_unit: "  ",
     ..CODE
@@ -422,6 +451,58 @@ pub(super) static SVELTE: Language = Language {
     name: "Svelte",
     extensions: &["svelte"],
     ..HTML
+};
+
+/// Astro 组件的规则，其余字段沿用 HTML；文件开头的 `---` 之间是 TypeScript。
+pub(super) static ASTRO: Language = Language {
+    id: "astro",
+    name: "Astro",
+    extensions: &["astro"],
+    frontmatter: true,
+    ..HTML
+};
+
+/// Liquid 模板的规则，其余字段沿用 HTML：`{{ … }}` 与 `{% … %}` 是模板标签，
+/// `{% comment %}` 与 `{% endcomment %}` 之间是注释。
+///
+/// 注释的写法只识别不带去除空白标记（`{%-`）的形式；切换注释使用这一种。
+pub(super) static LIQUID: Language = Language {
+    id: "liquid",
+    name: "Liquid",
+    extensions: &["liquid"],
+    block_comments: &[("{% comment %}", "{% endcomment %}"), ("<!--", "-->")],
+    template_tags: true,
+    ..HTML
+};
+
+/// Nunjucks 模板的规则，其余字段沿用 HTML：`{{ … }}` 与 `{% … %}` 是模板标签，`{# … #}` 是
+/// 注释，切换注释使用这一种。
+pub(super) static NUNJUCKS: Language = Language {
+    id: "nunjucks",
+    name: "Nunjucks",
+    extensions: &["njk", "nunjucks"],
+    block_comments: &[("{#", "#}"), ("<!--", "-->")],
+    template_tags: true,
+    ..HTML
+};
+
+/// Liquid 与 Nunjucks 模板标签内部表达式的规则；不在语言表中，不按文件识别。
+///
+/// 两种模板共用一份：关键字是表达式中的运算符与修饰词，标签名（`if`、`for`、`assign`）由模板
+/// 标签的规则按关键字着色；`#` 开始 Liquid 的行内注释（`{% # 说明 %}`）。
+pub(super) static TEMPLATE_EXPRESSIONS: Language = Language {
+    id: "template-expression",
+    name: "Template Expression",
+    keywords: &[
+        "and", "or", "not", "in", "is", "if", "else", "as", "with", "without", "contains",
+        "context", "only", "ignore", "missing",
+    ],
+    builtins: &[
+        "true", "false", "nil", "null", "none", "True", "False", "None", "empty", "blank",
+    ],
+    line_comments: &["#"],
+    single_quote_string: true,
+    ..CODE
 };
 
 /// 微信小程序的 WXML 的规则，其余字段沿用 HTML；`<wxs>` 中的 WXS 按脚本着色。

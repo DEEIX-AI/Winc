@@ -300,12 +300,11 @@ fn draw_pick_row(app: &App, frame: &mut Frame<'_>, row: Rect, i: usize, clip: Re
     frame.rect_clipped(row.inset(6.0, 1.0), color, RADIUS_ROW, clip);
 }
 
-/// 绘制快速打开卡片（⌘P）：上方是输入框，下方是结果列表，整体是一张带阴影的圆角卡片。
+/// 绘制快速打开卡片（⌘P）：上方是输入框，下方是结果列表。
 ///
-/// 文件列表中每条是「文件名 + 淡色的所在目录」，选中项底色高亮，输入框右端显示文件总数。
-/// 输入框以 `>` 开头时是命令面板（⇧⌘P），每条是「命令 + 淡色的英文名」，右侧是快捷键；
-/// 以 `@` 开头时列出当前文档的符号。列出最近的目录（⌃R）时，每条是「目录名 + 淡色的上级
-/// 目录」，输入框右端是在新窗口打开的按键。
+/// 文件列表中每条是「文件名 + 淡色的所在目录」，输入框右端显示文件总数。输入框以 `>` 开头时是命令
+/// 面板（⇧⌘P），每条是「命令 + 淡色的英文名」，右侧是快捷键；以 `@` 开头时列出当前文档的符号。列出
+/// 最近的目录（⌃R）时，每条是「目录名 + 淡色的上级目录」。
 ///
 /// 文件索引尚未建好时，列表区显示「正在索引文件…」。
 pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
@@ -491,6 +490,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
             });
         let message = match goto {
             Some(goto) if app.editor.active.is_some() => goto,
+            _ if app.overlays.picker.index.failed() => t!("workspace-picker-unlisted").to_owned(),
             _ if app.overlays.picker.index.quick_open_len() == 0 => {
                 t!("workspace-picker-folder-empty").to_owned()
             }
@@ -780,7 +780,8 @@ fn draw_palette_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
     }
 }
 
-/// 绘制语言列表：当前文档的语言前面打勾，名字中命中查询的字标出，右侧淡色写出扩展名。
+/// 绘制语言列表：每行开头是这种语言的文件的图标，名字中命中查询的字标出，右侧淡色写出
+/// 扩展名；当前文档的语言在最右边打勾。
 fn draw_language_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
     use crate::app::LanguageRow;
     let p = app.palette;
@@ -808,16 +809,18 @@ fn draw_language_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
         let row = parts.row(i, scroll);
         let clip = row.intersect(list);
         draw_pick_row(app, frame, row, i, clip);
-        let checked = match language {
-            LanguageRow::Language(k) => winc_syntax::languages().get(k).map(|l| l.id) == current,
-            _ => false,
-        };
-        if checked {
-            let cy = icon_center_y(app, row, app.fonts.ui);
-            let x = row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0;
-            icons::check(frame, (x, cy), 9.0, p.accent, clip);
+        let listed = language.language();
+        let cy = icon_center_y(app, row, app.fonts.ui);
+        if let Some(listed) = listed {
+            let (glyph, color) = p.language_icon(listed);
+            icons::file(frame, (row.x + PICKER_ICON_X, cy - 7.5), glyph, color, clip);
         }
         let mut right = row.right() - 14.0;
+        if listed.is_some_and(|l| Some(l.id) == current) {
+            right -= 9.0;
+            icons::check(frame, (right + 4.5, cy), 9.0, p.accent, clip);
+            right -= 12.0;
+        }
         let extensions = language.extensions();
         if !extensions.is_empty() {
             right -= frame.measure(FontKind::Ui, app.fonts.ui_small, &extensions);
@@ -972,7 +975,14 @@ fn draw_folder_rows(
         // 查询命中的字用强调色标出；截短了的文字下标对不上，不标。上级目录放不下时截短，同名
         // 目录保留区分彼此的部分（见 `fit_parent`）。
         let (in_name, in_parent) = app.folder_matched(i);
-        let room = (close.x - 8.0 - (row.x + PICKER_TEXT_X)).max(0.0);
+        let tag = match entry {
+            Recent::Folder(folder) => app.recent_tag(folder),
+            Recent::File(_) => None,
+        };
+        let tag_w = tag.map_or(0.0, |tag| {
+            6.0 + frame.measure(FontKind::Ui, app.fonts.ui, tag)
+        });
+        let room = (close.x - 8.0 - tag_w - (row.x + PICKER_TEXT_X)).max(0.0);
         let shown = ellipsize(frame, &name, app.fonts.ui, room);
         let marks = if shown.len() == name.len() {
             in_name
@@ -980,7 +990,10 @@ fn draw_folder_rows(
             Vec::new()
         };
         let at = (row.x + PICKER_TEXT_X, row);
-        let x = marked_label(frame, app, app.fonts.ui, at, &shown, &marks, p.text, clip);
+        let mut x = marked_label(frame, app, app.fonts.ui, at, &shown, &marks, p.text, clip);
+        if let Some(tag) = tag {
+            x = ui_text(frame, app, x + 6.0, row, tag, p.text_muted, clip);
+        }
         let room = close.x - 8.0 - (x + 8.0);
         if !parent.text.is_empty() && room > 20.0 {
             let shown = fit_parent(frame, parent, app.fonts.ui_small, room);
@@ -1113,11 +1126,10 @@ pub(super) fn draw_notice_ghost(app: &App, frame: &mut Frame<'_>, ghost: &Notice
     });
 }
 
-/// 绘制提示条：靠在所在区域（[`App::overlay_area`]）的右上角，上边和右边留同样的距离；查找条
-/// 打开时排在查找条下方。
+/// 绘制提示条：靠在所在区域（[`App::overlay_area`]）的右上角；查找条打开时排在查找条下方。
 ///
-/// `dy` 是动画中相对停靠位置的竖直偏移。左侧是提示种类 `mark` 的图标；为 `None` 时是转动的
-/// 图标，表示事情正在进行。
+/// `dy` 是动画中相对停靠位置的竖直偏移。左侧是提示种类 `mark` 的图标；为 `None` 时是转动的图标，
+/// 表示事情正在进行。
 ///
 /// 消息放不下时从中间截短，使提示条不超出所在区域。带按钮的提示（如「查看输出」）把按钮放在右侧。
 /// 返回提示条和按钮的矩形，没有按钮时后者为 `None`。

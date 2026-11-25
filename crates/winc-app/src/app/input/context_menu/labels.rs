@@ -96,6 +96,21 @@ impl App {
                     tooltip: None,
                 }
             }
+            MenuCommand::FontDefault
+                if matches!(
+                    &self.overlays.context_menu,
+                    Some(ContextMenu {
+                        target: MenuTarget::Font(Setting::MarkdownFont),
+                        ..
+                    })
+                ) =>
+            {
+                MenuLabel {
+                    title: t!("settings-markdown-font-default").to_owned(),
+                    subtitle: None,
+                    tooltip: None,
+                }
+            }
             MenuCommand::OpenRecentInNewWindow(i) => {
                 let label = self.recent_label(i);
                 MenuLabel {
@@ -162,7 +177,7 @@ impl App {
                 Some(branch) => MenuLabel::plain(&t!("menu-log-checkout-branch", branch = branch)),
                 None => MenuLabel::plain(command.label()),
             },
-            // 有能签出的本地分支指着它时签出那个分支，否则游离地签出提交；建在哪儿写在悬停提示里。
+            // 有能签出的本地分支指着它时签出那个分支，否则游离地签出提交；建在哪里写在悬停提示里。
             MenuCommand::LogNewWorktree => {
                 let branch = self.log_checkout_branch(oid);
                 let branch = branch.and_then(|b| self.log_worktree_branch(&b));
@@ -266,7 +281,7 @@ impl App {
             ) => Some(t!("menu-git-pull-no-upstream").to_owned()),
             _ => None,
         };
-        // 新工作树建在哪儿写在悬停提示里，与日志菜单相同。
+        // 新工作树建在哪里写在悬停提示里，与日志菜单相同。
         let tooltip = match command {
             MenuCommand::GitBranch(BranchOp::NewWorktree, i) => (self.git.branches.get(i))
                 .map(|b| self.worktree_dir_hint(crate::app::git::branch::local_name(b))),
@@ -279,8 +294,8 @@ impl App {
         }
     }
 
-    /// 返回格式化（修复）工具菜单中一项的文字：「自动」下方写着当前自动选中的工具；
-    /// 预设下方写着该预设的命令，没装的在名字后面注明「（未安装）」。
+    /// 返回格式化（修复）工具菜单中一项的文字：「自动」下方显示当前自动选中的工具；
+    /// 预设下方显示该预设的命令，没装的在名字后面注明「（未安装）」。
     fn tool_label(&self, command: MenuCommand) -> MenuLabel {
         let preset = match command {
             MenuCommand::ToolPreset(i) => PRESETS.get(i),
@@ -326,7 +341,7 @@ impl App {
     /// 标题为标签上的名字；存在同名标签时，标题下方以小字显示标签栏所标的上级目录，
     /// 用于区分同名文件。完整路径显示在悬停提示中（主目录显示为 `~`）。
     fn tab_list_label(&self, i: usize) -> MenuLabel {
-        let docs = &self.editor.documents;
+        let docs = self.editor.tabs();
         let Some(doc) = docs.get(i) else {
             return MenuLabel::plain("");
         };

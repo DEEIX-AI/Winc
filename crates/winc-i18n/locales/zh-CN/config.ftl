@@ -21,10 +21,12 @@ config-run-template-note = 每项需要 name 和 command；args、cwd、env 为�
 
 config-theme-invalid = { $name } 的值只能是 auto、dark 或 light，已忽略
 config-render-whitespace-invalid = { $name } 的值只能是 none、selection、trailing 或 all，已忽略
+config-smooth-caret-invalid = { $name } 的值只能是 off、snappy 或 gliding，已忽略
 config-open-worktree-invalid = { $name } 的值只能是 ask、newWindow 或 currentWindow，已忽略
 config-pull-invalid = { $name } 的值只能是 config、merge 或 rebase，已忽略
 config-auto-save-invalid = { $name } 的值只能是 off、onFocusChange 或 afterDelay，已忽略
 config-drop-folder-invalid = { $name } 的值只能是 ask、add 或 open，已忽略
+config-find-in-files-invalid = { $name } 的值只能是 sidebar 或 dialog，已忽略
 config-keymap-invalid = { $name } 的值只能是 idea 或 vscode，已忽略
 config-shortcuts-invalid = { $name } 应为对象，各项的值为按键写法的数组，已忽略
 config-shortcut-unknown-command = keyboard.shortcuts 中的命令「{ $name }」不存在，已忽略

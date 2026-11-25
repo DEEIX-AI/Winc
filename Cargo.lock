@@ -3162,6 +3162,7 @@ dependencies = [
  "ropey",
  "roxmltree",
  "security-framework",
+ "sha2",
  "unicode-segmentation",
  "wayland-backend",
  "wayland-client",
@@ -3175,6 +3176,7 @@ dependencies = [
  "winc-preview",
  "winc-pty",
  "winc-render",
+ "winc-search",
  "winc-syntax",
  "winc-typeset",
  "winc-version",
@@ -3226,13 +3228,13 @@ dependencies = [
  "notify",
  "png",
  "regex",
- "regex-syntax",
  "ropey",
  "winc-backend",
  "winc-config",
  "winc-core",
  "winc-i18n",
  "winc-preview",
+ "winc-search",
  "winc-syntax",
 ]
 
@@ -3302,10 +3304,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "winc-search"
+version = "0.0.0"
+dependencies = [
+ "chardetng",
+ "encoding_rs",
+ "fancy-regex",
+ "ignore",
+ "memchr",
+ "regex",
+ "winc-backend",
+ "winc-core",
+]
+
+[[package]]
 name = "winc-server"
 version = "0.0.0"
 dependencies = [
  "winc-backend",
+ "winc-search",
  "winc-watch",
 ]
 

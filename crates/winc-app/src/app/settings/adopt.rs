@@ -21,6 +21,7 @@ impl App {
         let fonts = (old.editor_font != new.editor_font || old.ui_font != new.ui_font)
             || (old.editor_size != new.editor_size || old.ui_size != new.ui_size)
             || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size)
+            || (old.markdown_font != new.markdown_font || old.markdown_size != new.markdown_size)
             || (old.ui_font_weight != new.ui_font_weight
                 || old.terminal_font_weight != new.terminal_font_weight);
         let theme = (old.theme != new.theme || old.dark_theme != new.dark_theme)
@@ -40,7 +41,9 @@ impl App {
             || old.status_bar != new.status_bar;
         let compact = old.compact_folders != new.compact_folders;
         let diff_layout = old.diff_inline != new.diff_inline;
+        let diff_collapse = old.diff_collapse_unchanged != new.diff_collapse_unchanged;
         let staging_view = old.git_staging_area != new.git_staging_area;
+        let combined_view = old.git_combined_diff != new.git_combined_diff;
         // 窗口字体同步。
         let glyph_language = old.language != new.language
             && crate::set_locale(new.language.unwrap_or_default().resolve());
@@ -82,11 +85,17 @@ impl App {
         if compact {
             self.apply_compact_folders();
         }
+        if diff_collapse {
+            self.apply_diff_collapse();
+        }
         if diff_layout {
             self.apply_diff_layout();
         }
         if staging_view {
             self.apply_staging_view();
+        }
+        if combined_view {
+            self.apply_combined_view();
         }
         winc_editor::proxy::follow_system_proxy(self.config.system_proxy != Some(false));
         if images {
@@ -116,6 +125,9 @@ impl App {
             self.sync_title_bar();
         }
         self.vim_apply_config();
+        if self.settings.open {
+            self.refresh_changed_settings();
+        }
         self.relayout();
         self.request_redraw();
     }

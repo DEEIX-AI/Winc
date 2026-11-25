@@ -305,6 +305,42 @@ fn the_heading_list_stays_open_over_a_table_scrollbar() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：预览中鼠标在表格的水平滚动条和标题指示条上时显示箭头，在表格的文字上显示文本光标。
+#[test]
+fn the_text_cursor_leaves_the_table_scrollbar_and_heading_bars() {
+    use crate::app::preview::markdown::TocTarget;
+    use winit::window::CursorIcon;
+
+    let head = format!("|{}", " 很长的列标题 |".repeat(24));
+    let rule = format!("|{}", "---|".repeat(24));
+    let row = format!("|{}", " 单元格 |".repeat(24));
+    let (mut app, dir) = live_doc(
+        "md-cursor-bars",
+        &format!("# 标题\n\n{head}\n{rule}\n{row}\n\n## 第二节\n\n正文\n"),
+    );
+    let cursor = |app: &mut App, (x, y): (f32, f32)| {
+        app.on_mouse_move(x, y);
+        paint(app);
+        app.pointer.cursor_icon
+    };
+    // 鼠标经过表格之后，表格的滚动条才响应。
+    let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
+    let cell = point_of(&app, shown[..shown.find("单元格").unwrap()].chars().count());
+    assert_eq!(cursor(&mut app, cell), CursorIcon::Text);
+    let bar = app.hits.markdown_table_bar.expect("表格有滚动条");
+    let edge = (bar.track.x + 4.0, bar.track.bottom() - 4.0);
+    assert_eq!(cursor(&mut app, edge), CursorIcon::Default);
+    let bars = (app.hits.markdown_toc.iter())
+        .find(|(_, t)| *t == TocTarget::Bars)
+        .unwrap()
+        .0;
+    assert_eq!(
+        cursor(&mut app, (bars.x + 4.0, bars.y + 10.0)),
+        CursorIcon::Default
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 回归：列很多的表格不把各列压窄到逐字换行，而是按自然宽度排版、超出正文的部分横向滚动；横向
 /// 滚动后点击仍落在对应的字上；编辑表格时光标移到看不见的列，表格横向滚动使光标可见。
 #[test]
@@ -390,5 +426,48 @@ fn wide_tables_keep_their_columns_and_scroll_sideways() {
         app.preview.markdown.area.contains(last.0, last.1),
         "{last:?}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：光标所在的表格横向滚开后，窗口大小改变引起的重排不把表格滚回光标处。
+#[test]
+fn relayouts_leave_a_wide_table_where_it_was_scrolled() {
+    use winit::dpi::PhysicalPosition;
+    use winit::event::MouseScrollDelta;
+
+    let columns = 16;
+    let line = |cell: &str| {
+        let cells: Vec<String> = (1..=columns).map(|n| format!("{cell}{n}")).collect();
+        format!("| {} |", cells.join(" | "))
+    };
+    let (head, rule, row) = (
+        line("第几列"),
+        format!("|{}", "---|".repeat(columns)),
+        line("数值"),
+    );
+    let (mut app, dir) = live_doc(
+        "md-wide-table-relayout",
+        &format!("前文\n\n{head}\n{rule}\n{row}\n\n后文\n"),
+    );
+    let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
+    let cell = point_of(&app, shown[..shown.find("数值1").unwrap()].chars().count());
+
+    // 光标放进第一列，再把表格横向滚开：光标所在的一列滚出显示区域。
+    click(&mut app, cell);
+    settle(&mut app);
+    app.on_mouse_move(cell.0, cell.1);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        -400.0, 0.0,
+    )));
+    paint(&mut app);
+    let key = app.hits.markdown_table_bar.expect("表格有滚动条").key;
+    let scrolled = app.markdown_table_scroll(key);
+    assert!(scrolled > 0.0);
+
+    let narrow = Renderer::offscreen(1000.0, SIZE.1, SCALE, app.palette.frame_bg, None, None);
+    app.frame.renderer = Some(narrow.unwrap());
+    app.measure_fonts();
+    settle(&mut app);
+    assert_eq!(app.markdown_table_scroll(key), scrolled);
     let _ = std::fs::remove_dir_all(&dir);
 }

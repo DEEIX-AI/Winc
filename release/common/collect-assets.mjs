@@ -13,6 +13,10 @@ const specifications = {
     ["appimage", ".AppImage", "update"], ["deb", ".deb", "download"], ["rpm", ".rpm", "download"],
     ["updates", "appcast-linux.xml", "feed"],
   ],
+  "linux-arm64": [
+    ["appimage", ".AppImage", "update"], ["deb", ".deb", "download"], ["rpm", ".rpm", "download"],
+    ["updates", "appcast-linux-arm64.xml", "feed"],
+  ],
   "windows-x64": [
     ["nsis", "-setup.exe", "update"], ["msi", ".msi", "update"], ["portable", "-portable.zip", "download"],
     ["updates", "appcast-windows.xml", "feed"],

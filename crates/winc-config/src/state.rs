@@ -36,6 +36,16 @@ impl State {
         self.commit_messages.insert(0, message.to_owned());
         self.commit_messages.truncate(MAX_COMMIT_MESSAGES);
     }
+
+    /// 语言菜单开头列出的最近使用的语言数（种）：菜单开头的一小组，不必滚动即可看到。
+    pub const RECENT_LANGUAGES: usize = 5;
+
+    /// 把语言 `id` 记为最近选择的一种：已有的移到最前，超过上限时丢掉最旧的。
+    pub fn remember_language(&mut self, id: &str) {
+        self.recent_languages.retain(|known| known != id);
+        self.recent_languages.insert(0, id.to_owned());
+        self.recent_languages.truncate(Self::RECENT_LANGUAGES);
+    }
 }
 
 /// 由程序维护的运行状态：最近目录、各目录的现场和项目工具选择。
@@ -45,6 +55,9 @@ pub struct State {
     pub recent: Vec<PathBuf>,
     /// 最近打开的文件，最新的在前，不重复；所有窗口共用。
     pub recent_files: Vec<PathBuf>,
+    /// 各文件上次的位置，最近用到的在前，每个文件一条，最多 [`MAX_PLACES`] 条；所有窗口共用，
+    /// 与文件是否在打开的目录里无关。
+    pub places: Vec<(PathBuf, FilePlace)>,
     /// 每个目录上次的现场，最近的在前，每个目录一条，最多 [`MAX_SESSIONS`] 条。
     pub sessions: Vec<Session>,
     /// 上次退出时开着的目录；退出时没有打开目录则为 `None`，下次启动显示开始页。
@@ -73,6 +86,10 @@ pub struct State {
     pub log_files_tree: Option<bool>,
     /// 从 Git 日志打开的差异左侧文件栏是否按目录分组，规则同 `log_files_tree`。
     pub diff_files_tree: Option<bool>,
+    /// 侧栏搜索的结果是否按目录排成树显示。
+    ///
+    /// `false`（默认）时平铺，每个文件一行。所有窗口共用，下次启动沿用。
+    pub search_tree: bool,
     /// Git 日志列表右边显示的列（`author`、`date`、`hash`）；`None`（没有选过）时显示作者和
     /// 日期。所有窗口共用，下次启动沿用。
     pub log_columns: Option<Vec<String>>,
@@ -92,6 +109,8 @@ pub struct State {
     /// Markdown 预览左侧的标题列表是否钉住、一直展开；默认只在鼠标停留时展开。所有窗口共用，
     /// 下次启动沿用。
     pub markdown_toc_pinned: bool,
+    /// 用户最近选择的语言（语言的标识），最近的在前，至多 [`State::RECENT_LANGUAGES`] 种。
+    pub recent_languages: Vec<String>,
     /// 侧栏宽度（逻辑像素）；`None` 表示没有调整过。所有视图、窗口和仓库共用，下次启动沿用。
     pub panel_width: Option<f32>,
     /// 各类能预览的文件打开时的显示方式：键为种类（`markdown`、`svg`、`table`），值为
@@ -120,6 +139,11 @@ pub struct State {
     /// 每项为（工具所在目录，是否运行该目录中的程序）；`false` 表示改用系统安装的程序。
     /// 最多 [`MAX_TOOL_CHOICES`] 项。
     tool_choices: Vec<(PathBuf, bool)>,
+    /// 用户同意运行的来自项目的命令，最近的在前，最多 [`MAX_TOOL_CHOICES`] 项。
+    ///
+    /// 每项为（所在的目录，原文）：项目设置（`.winc/config.json`）中的命令记在项目的 `.winc`
+    /// 目录下，`latexmkrc` 记在它所在的目录下。同意只对这份原文有效，改写后重新询问。
+    approved_commands: Vec<(PathBuf, String)>,
     /// 用户信任了配置的 Git 仓库（根目录）和当时配置的指纹，最近的在前，最多
     /// [`MAX_TOOL_CHOICES`] 项。
     ///
@@ -144,7 +168,7 @@ const MAX_VIM_HISTORY: usize = 100;
 
 /// 最多记录的项目自带工具选择数量（个）。
 ///
-/// 取 50（经验值），作用于工具选择和已信任仓库两项列表。
+/// 上限 50 取自调参，作用于工具选择和已信任仓库两项列表。
 const MAX_TOOL_CHOICES: usize = 50;
 
 /// 窗口没有最大化、全屏时的大小和位置，以及关闭时是否最大化。
@@ -179,14 +203,6 @@ pub struct Session {
     pub outline: Vec<(PathBuf, Vec<String>)>,
     /// 各文件中折叠的块（开头行，末尾行；行号从 0 起），包括当前未打开的文件。
     pub folds: Vec<(PathBuf, Vec<(usize, usize)>)>,
-    /// 各 PDF 文件的阅读位置，包括当前未打开的文件；位于文档开头的文件不记录。
-    ///
-    /// 位置记为视口顶边所在的页（页号从 0 起），以及视口顶边到该页顶边的距离与页高之比。
-    pub pdf_places: Vec<(PathBuf, (usize, f32))>,
-    /// 各 EPUB 文件的阅读位置，包括当前未打开的文件；位于书的开头的文件不记录。
-    ///
-    /// 位置记为视口顶边所在的顶层块（从 0 起），以及视口顶边到该块上边缘的距离与块高之比。
-    pub book_places: Vec<(PathBuf, (usize, f32))>,
     /// 终端面板；终端里没有标签时为 `None`。
     pub terminal: Option<TerminalSession>,
     /// 选中的运行配置的名字。
@@ -195,6 +211,8 @@ pub struct Session {
     pub folders: Vec<PathBuf>,
     /// 用户给这组目录起的名字；没有起名时为 `None`。
     pub name: Option<String>,
+    /// 这组目录所属的项目文件（见 [`crate::read_project`]）；不是从项目文件打开的为 `None`。
+    pub project: Option<PathBuf>,
     /// 打开着的标签中用户设为只读的文件。
     pub readonly: Vec<PathBuf>,
     /// 窗口是否把全部标签设为只读。
@@ -229,6 +247,8 @@ pub struct TerminalSession {
     pub width: f32,
     /// 面板是否最大化（铺满编辑区）。
     pub maximized: bool,
+    /// 面板分成的各栏，按排列顺序；各栏的标签在 `tabs` 中依次接在一起。没有分栏时为空。
+    pub groups: Vec<TerminalGroup>,
 }
 
 /// 现场里的一个标签：已保存的文件，或未保存文档的备份。
@@ -243,22 +263,46 @@ pub enum Tab {
 impl State {
     /// 读取指定文件中的状态；文件不存在、无法读取或格式不对时返回空状态。
     pub fn load_from(path: &Path) -> State {
-        std::fs::read_to_string(path)
-            .ok()
-            .map(|text| State::parse(&text))
-            .unwrap_or_default()
+        State::read(path).ok().flatten().unwrap_or_default()
+    }
+
+    /// 读取指定文件中的状态；文件不存在或没有内容时返回 `Ok(None)`。
+    ///
+    /// 与 [`State::load_from`] 不同，读不出来与没有文件分开报告：调用方据此决定是否保留内存中的
+    /// 状态、是否可以写回。
+    ///
+    /// # Errors
+    ///
+    /// 读取失败时返回对应的 `std::io::Error`；内容不是 UTF-8 文本，或顶层不是 JSON 对象时返回
+    /// [`std::io::ErrorKind::InvalidData`]。
+    pub fn read(path: &Path) -> std::io::Result<Option<State>> {
+        use std::io::{Error, ErrorKind};
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let text =
+            std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        State::try_parse(text)
+            .map(Some)
+            .ok_or_else(|| Error::from(ErrorKind::InvalidData))
     }
 
     /// 解析状态文件内容；格式错误或顶层不是对象时返回空状态。
     ///
     /// 类型不符或越界的项被丢弃，其余仍然读取。
     pub fn parse(text: &str) -> State {
-        let Some(root) = Json::parse(text) else {
-            return State::default();
-        };
-        let Some(root) = root.as_object() else {
-            return State::default();
-        };
+        State::try_parse(text).unwrap_or_default()
+    }
+
+    /// 解析状态文件内容；格式错误或顶层不是对象时返回 `None`。
+    fn try_parse(text: &str) -> Option<State> {
+        let root = Json::parse(text)?;
+        let root = root.as_object()?;
 
         let paths = |value: Option<&Json>| -> Vec<PathBuf> {
             value
@@ -287,6 +331,7 @@ impl State {
             }
         }
 
+        let earlier = std::cell::RefCell::new(Vec::new());
         // 已保存的文件写成路径字符串，未保存过的新文件写成 `{"untitled": 备份文件名}`。
         let tab = |value: &Json| -> Option<Tab> {
             if let Some(path) = value.as_str() {
@@ -379,8 +424,10 @@ impl State {
                         .collect()
                 })
                 .unwrap_or_default();
-            let pdf_places = read_places(s.get("pdfPlaces"));
-            let book_places = read_places(s.get("bookPlaces"));
+            // 早先各目录的现场里记的阅读位置：并入 `places`。
+            for key in ["pdfPlaces", "bookPlaces"] {
+                earlier.borrow_mut().extend(read_views(s.get(key)));
+            }
             let terminal = s.get("terminal").and_then(Json::as_object).and_then(|t| {
                 let number = |key| {
                     t.get(key)
@@ -402,6 +449,7 @@ impl State {
                     let names = names.iter().map(|n| n.as_str().unwrap_or_default());
                     names.map(str::to_owned).collect()
                 });
+                let groups = read_terminal_groups(t, tabs.len());
                 (!tabs.is_empty()).then(|| TerminalSession {
                     active: number("active").map_or(0, |n| (n as usize).min(tabs.len() - 1)),
                     tabs,
@@ -411,6 +459,7 @@ impl State {
                     height: number("height").unwrap_or(0.0) as f32,
                     width: number("width").unwrap_or(0.0) as f32,
                     maximized: t.get("maximized").and_then(Json::as_bool).unwrap_or(false),
+                    groups,
                 })
             });
             let folders = (s
@@ -436,14 +485,13 @@ impl State {
                 bookmarks,
                 outline,
                 folds,
-                pdf_places,
-                book_places,
                 terminal,
                 run: s.get("run").and_then(Json::as_str).map(str::to_owned),
                 folders,
                 readonly,
                 readonly_all: s.get("readOnlyAll").and_then(Json::as_bool) == Some(true),
                 name: s.get("name").and_then(Json::as_str).map(str::to_owned),
+                project: s.get("project").and_then(Json::as_str).map(PathBuf::from),
                 sidebar_hidden: (s.get("sidebarHidden").and_then(Json::as_bool)).unwrap_or(false),
                 window: (s.get("window").and_then(Json::as_object)).and_then(window_frame),
                 panes: s.get("panes").and_then(read_panes),
@@ -473,6 +521,20 @@ impl State {
                 let item = item.as_object()?;
                 let folder = item.get("folder")?.as_str().filter(|f| !f.is_empty())?;
                 Some((PathBuf::from(folder), item.get("run")?.as_bool()?))
+            })
+            .take(MAX_TOOL_CHOICES)
+            .collect();
+
+        let approved_commands = root
+            .get("approvedCommands")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                let item = item.as_object()?;
+                let folder = item.get("folder")?.as_str().filter(|f| !f.is_empty())?;
+                let command = item.get("command")?.as_str()?;
+                Some((PathBuf::from(folder), command.to_owned()))
             })
             .take(MAX_TOOL_CHOICES)
             .collect();
@@ -513,6 +575,7 @@ impl State {
             recent_files,
             badges,
             tool_choices,
+            approved_commands,
             trusted_repos,
             remote_keys,
             vim_marks,
@@ -554,6 +617,7 @@ impl State {
         state.log_branches = root.get("logBranches").and_then(Json::as_bool);
         state.log_files_tree = root.get("logFilesTree").and_then(Json::as_bool);
         state.diff_files_tree = root.get("diffFilesTree").and_then(Json::as_bool);
+        state.search_tree = (root.get("searchTree").and_then(Json::as_bool)).unwrap_or(false);
         state.log_columns = (root.get("logColumns").and_then(Json::as_array)).map(|columns| {
             let names = columns.iter().filter_map(Json::as_str);
             names.map(str::to_owned).collect()
@@ -574,6 +638,13 @@ impl State {
             .unwrap_or(false);
         state.markdown_toc_pinned =
             root.get("markdownTocPinned").and_then(Json::as_bool) == Some(true);
+        state.recent_languages = (root.get("recentLanguages").and_then(Json::as_array))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(Json::as_str)
+            .take(Self::RECENT_LANGUAGES)
+            .map(str::to_owned)
+            .collect();
         state.stay_outside_applications = root
             .get("stayOutsideApplications")
             .and_then(Json::as_bool)
@@ -612,7 +683,16 @@ impl State {
             state.sessions.push(old);
         }
 
-        state
+        // 早先记在现场里的阅读位置排在后面：已有记录的文件以新的为准。
+        state.places = read_file_places(root.get("places"));
+        for (path, view) in earlier.take() {
+            let known = state.places.iter().any(|(file, _)| *file == path);
+            if !known && state.places.len() < MAX_PLACES {
+                let view = Some(view);
+                state.places.push((path, FilePlace { text: None, view }));
+            }
+        }
+        Some(state)
     }
 
     /// 返回上次退出时开着的目录的现场，启动时据此恢复；没有时返回 `None`。
@@ -652,10 +732,10 @@ impl State {
 
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
-    /// `last` 没有值，`previewMode` 为空，`recentFiles`、`otherWindows`、`signOffRepos`、`toolChoices`、
-    /// `trustedRepos`、`vimMarks`、`vimCommands`、`vimSearches` 为空，`commitTree`、
-    /// `commitAllRepositories`、`pdfThumbnailsHidden`、`stayOutsideApplications` 为假时省略
-    /// 对应的键。
+    /// `last` 没有值，`previewMode` 为空，`recentFiles`、`otherWindows`、`signOffRepos`、
+    /// `toolChoices`、`approvedCommands`、`trustedRepos`、`vimMarks`、`vimCommands`、`vimSearches`
+    /// 为空，`commitTree`、`commitAllRepositories`、`pdfThumbnailsHidden`、
+    /// `stayOutsideApplications` 为假时省略对应的键。
     pub fn to_json(&self) -> String {
         let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
         let mut fields = vec![(
@@ -666,6 +746,9 @@ impl State {
         if !self.recent_files.is_empty() {
             let files = self.recent_files.iter().map(path).collect();
             fields.push(("recentFiles", Json::Array(files)));
+        }
+        if !self.places.is_empty() {
+            fields.push(("places", write_file_places(&self.places)));
         }
         if let Some(last) = &self.last {
             fields.push(("last", path(last)));
@@ -701,6 +784,9 @@ impl State {
         if let Some(tree) = self.diff_files_tree {
             fields.push(("diffFilesTree", Json::Bool(tree)));
         }
+        if self.search_tree {
+            fields.push(("searchTree", Json::Bool(true)));
+        }
         if let Some(columns) = &self.log_columns {
             let names = columns.iter().map(|c| Json::String(c.clone()));
             fields.push(("logColumns", Json::Array(names.collect())));
@@ -720,6 +806,10 @@ impl State {
         }
         if self.markdown_toc_pinned {
             fields.push(("markdownTocPinned", Json::Bool(true)));
+        }
+        if !self.recent_languages.is_empty() {
+            let recent = self.recent_languages.iter().cloned().map(Json::String);
+            fields.push(("recentLanguages", Json::Array(recent.collect())));
         }
         if self.stay_outside_applications {
             fields.push(("stayOutsideApplications", Json::Bool(true)));
@@ -784,12 +874,6 @@ impl State {
                 });
                 items.push(("outline", Json::Object(files.collect())));
             }
-            if !session.pdf_places.is_empty() {
-                items.push(("pdfPlaces", write_places(&session.pdf_places)));
-            }
-            if !session.book_places.is_empty() {
-                items.push(("bookPlaces", write_places(&session.book_places)));
-            }
             if let Some(t) = &session.terminal {
                 let number = |n: f32| Json::Number(f64::from(n));
                 let mut fields = vec![
@@ -813,6 +897,9 @@ impl State {
                     let shells = t.shells.iter().map(|s| Json::String(s.clone()));
                     fields.push(("shells", Json::Array(shells.collect())));
                 }
+                if let Some(groups) = terminal_groups_json(&t.groups) {
+                    fields.push(("groups", groups));
+                }
                 items.push(("terminal", Json::object(fields)));
             }
             if let Some(run) = &session.run {
@@ -831,6 +918,9 @@ impl State {
             }
             if let Some(name) = &session.name {
                 items.push(("name", Json::String(name.clone())));
+            }
+            if let Some(project) = &session.project {
+                items.push(("project", path(project)));
             }
             // 展开是默认状态，不写。
             if session.sidebar_hidden {
@@ -856,6 +946,15 @@ impl State {
                 Json::object(vec![("folder", path(folder)), ("run", Json::Bool(*run))])
             });
             fields.push(("toolChoices", Json::Array(choices.collect())));
+        }
+        if !self.approved_commands.is_empty() {
+            let commands = self.approved_commands.iter().map(|(folder, command)| {
+                Json::object(vec![
+                    ("folder", path(folder)),
+                    ("command", Json::String(command.clone())),
+                ])
+            });
+            fields.push(("approvedCommands", Json::Array(commands.collect())));
         }
         if !self.trusted_repos.is_empty() {
             let repos = self.trusted_repos.iter().map(|(folder, fingerprint)| {
@@ -887,14 +986,20 @@ impl State {
 
     /// 读出 `path` 中现在的状态，用 `change` 修改后写回，返回修改后的状态和写入的结果。
     ///
-    /// 多个 winc 进程（各开一个目录）共用一个状态文件，每次写都重新读一遍再改，避免旧副本
-    /// 覆盖其他进程写入的最近列表、现场和书签；读改写期间锁住旁边的 `<文件>.lock`（建议锁），
-    /// 两个进程不会交错。锁文件打不开时仍然读改写。
+    /// 每次写都重新读一遍再改，避免多个 winc 进程共用状态文件时旧副本覆盖其他进程写入的内容；
+    /// 读改写期间锁住旁边的 `<文件>.lock`（建议锁），锁文件打不开时仍然读改写。
+    ///
+    /// `current` 是调用方内存中的状态，文件读不出来时在它之上修改：读取失败时不写回；内容损坏时
+    /// 把文件留存为同名、扩展名为 `damaged` 的文件，再写入修改后的 `current`。
     ///
     /// # Errors
     ///
-    /// 写回失败时返回对应的 `std::io::Error`。
-    pub fn update(path: &Path, change: impl FnOnce(&mut State)) -> (State, std::io::Result<()>) {
+    /// 读取或写回失败时返回对应的 `std::io::Error`。
+    pub fn update(
+        path: &Path,
+        current: &State,
+        change: impl FnOnce(&mut State),
+    ) -> (State, std::io::Result<()>) {
         let lock = path.parent().and_then(|dir| {
             std::fs::create_dir_all(dir).ok()?;
             let file = std::fs::OpenOptions::new()
@@ -906,7 +1011,18 @@ impl State {
             file.lock().ok()?;
             Some(file)
         });
-        let mut state = State::load_from(path);
+        let mut state = match State::read(path) {
+            Ok(stored) => stored.unwrap_or_default(),
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                let _ = std::fs::rename(path, path.with_extension("damaged"));
+                current.clone()
+            }
+            Err(error) => {
+                let mut state = current.clone();
+                change(&mut state);
+                return (state, Err(error));
+            }
+        };
         change(&mut state);
         let result = state.save_to(path);
         drop(lock);
@@ -978,6 +1094,35 @@ impl State {
         self.tool_choices.retain(|(p, _)| p != folder);
         self.tool_choices.insert(0, (folder.to_path_buf(), run));
         self.tool_choices.truncate(MAX_TOOL_CHOICES);
+    }
+
+    /// 是否用户同意过运行 `folder`（项目的 `.winc` 目录）的项目设置中的命令 `command`。
+    ///
+    /// 按命令的原文比较：项目设置改写命令后不再算同意过。
+    pub fn command_approved(&self, folder: &Path, command: &str) -> bool {
+        (self.approved_commands.iter()).any(|(p, c)| p == folder && c == command)
+    }
+
+    /// 返回用户同意过运行的全部命令：（所在的目录，命令的原文），供后台线程核对。
+    pub fn approved_commands(&self) -> &[(PathBuf, String)] {
+        &self.approved_commands
+    }
+
+    /// 记录用户同意运行 `folder` 的项目设置中的命令 `command`，移到最前面，超出
+    /// `MAX_TOOL_CHOICES` 的从末尾移除。
+    pub fn approve_command(&mut self, folder: &Path, command: &str) {
+        self.approved_commands
+            .retain(|(p, c)| !(p == folder && c == command));
+        self.approved_commands
+            .insert(0, (folder.to_path_buf(), command.to_owned()));
+        self.approved_commands.truncate(MAX_TOOL_CHOICES);
+    }
+
+    /// 记录用户同意运行 `folder` 名下内容为 `command` 的那一项，取代它此前同意过的内容：
+    /// 用于一个键只对应一项的情形（运行配置按名字各记一项）。
+    pub fn approve_command_only(&mut self, folder: &Path, command: &str) {
+        self.approved_commands.retain(|(p, _)| p != folder);
+        self.approve_command(folder, command);
     }
 
     /// 返回用户信任 Git 仓库 `root` 的配置时记下的指纹；没有信任过时返回 `None`。
@@ -1321,36 +1466,13 @@ fn window_frame(json: &std::collections::BTreeMap<String, Json>) -> Option<Windo
     })
 }
 
-/// 读出各文件的阅读位置（`pdfPlaces`、`bookPlaces`）：每项是文件路径到 `[序号, 比例]`，序号
-/// 为负数或小数、比例不是有限的数、缺少一项的记录跳过。
-fn read_places(value: Option<&Json>) -> Vec<(PathBuf, (usize, f32))> {
-    let place = |place: &Json| match place.as_array()? {
-        [index, at] => {
-            let index = index.as_number()?;
-            let at = at.as_number().filter(|n| n.is_finite())?;
-            (index >= 0.0 && index.fract() == 0.0).then_some((index as usize, at as f32))
-        }
-        _ => None,
-    };
-    (value.and_then(Json::as_object))
-        .map(|files| {
-            (files.iter())
-                .filter(|(path, _)| !path.is_empty())
-                .filter_map(|(path, at)| Some((PathBuf::from(path), place(at)?)))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// 写出各文件的阅读位置；比例保留四位小数：一页（一块）高 10000 逻辑像素时误差为 1 逻辑像素。
-fn write_places(places: &[(PathBuf, (usize, f32))]) -> Json {
-    let files = places.iter().map(|(file, (index, at))| {
-        let at = (f64::from(*at) * 1e4).round() / 1e4;
-        let place = vec![Json::Number(*index as f64), Json::Number(at)];
-        (file.to_string_lossy().into_owned(), Json::Array(place))
-    });
-    Json::Object(files.collect())
-}
+mod places;
+mod terminal;
+pub mod writer;
+pub use places::{FilePlace, MAX_PLACES};
+use places::{read_file_places, read_views, write_file_places};
+pub use terminal::TerminalGroup;
+use terminal::{read_terminal_groups, terminal_groups_json};
 
 #[cfg(test)]
 mod tests;

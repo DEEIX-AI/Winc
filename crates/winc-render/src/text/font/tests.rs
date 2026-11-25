@@ -167,6 +167,30 @@ fn ascii_comments_take_the_fast_path_without_an_italic() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn the_preview_body_uses_its_own_font_or_the_interface_font() {
+    // 没有单独的预览正文字体：与界面字体相同。
+    let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
+    let ui = fonts.resolve(FontKind::Ui, 'a');
+    assert_eq!(fonts.resolve(FontKind::Prose, 'a'), ui);
+    let missing = FontSpec::Path("/nonexistent/font.ttf".into());
+    fonts.set_prose(&[missing]);
+    assert_eq!(fonts.resolve(FontKind::Prose, 'a'), ui);
+
+    // 单独设置后用自己的槽位，缺的字仍从界面字体和后备字体中找；界面字体不变。
+    let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
+    let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
+    fonts.set_prose(&[monaco]);
+    let (slot, glyph) = fonts.resolve(FontKind::Prose, 'a');
+    assert_eq!(slot, PROSE);
+    assert_ne!(glyph, 0);
+    assert_eq!(fonts.resolve(FontKind::Ui, 'a'), ui);
+    let (slot, glyph) = fonts.resolve(FontKind::Prose, '字');
+    assert_ne!((slot, glyph), (PROSE, 0));
+    assert_ne!(slot, PROSE);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn the_terminal_uses_its_own_font_or_the_editor_font() {
     // 没有单独的终端字体：终端的正体、斜体与编辑区的相同。
     let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
@@ -271,7 +295,7 @@ fn files_of_other_accounts_are_not_modifiable() {
     // 组或其他用户有写权限时，属主是谁都可能被修改。
     assert!(is_modifiable(service, 0o664, user));
     assert!(is_modifiable(0, 0o646, user));
-    // 以 root 运行：root 的文件照常映射，其他账号的文件可能被其属主修改。
+    // 以 root 运行：root 的文件仍然映射，其他账号的文件可能被其属主修改。
     assert!(!is_modifiable(0, 0o644, 0));
     assert!(is_modifiable(user, 0o644, 0));
 }

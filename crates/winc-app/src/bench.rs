@@ -1,11 +1,10 @@
 //! 测量钩子：设置环境变量 `WINC_BENCH` 后启用，供 `cargo xtask bench` 使用。
 //!
 //! 环境变量的值决定测量模式：`startup` 在首帧呈现后退出；`scroll`、`preview`、`terminal:<命令>`
-//! 分别在滚动文本、滚动预览、终端输出期间统计帧耗时；`vim`、`typing`、`live-typing` 逐帧执行
-//! Vim 模式的按键、键入字符或在可编辑的预览中键入字符，统计按键处理加出帧的耗时；`wheel` 按
-//! 固定间隔送出鼠标滚轮滚动并统计帧间隔和画面的跟随情况；`search:<内容>`、`picker` 完成后保持
-//! 运行；`find:<内容>`、`highlight` 输出耗时、帧数和 CPU 时间后退出；其他值只输出时间戳并保持
-//! 运行。保持运行的模式由外部进程采样内存；未设置时不测量。
+//! 分别在滚动文本、滚动预览、终端输出期间统计帧耗时；`vim`、`typing`、`live-typing` 逐帧执行 Vim
+//! 按键、键入字符或在可编辑的预览中键入字符，统计按键到出帧的耗时；`wheel` 送出鼠标滚轮滚动并统计
+//! 帧间隔和画面的跟随情况；`search:<内容>`、`picker` 完成后保持运行，由外部进程采样内存；
+//! `find:<内容>`、`highlight` 输出耗时、帧数和 CPU 时间后退出；其他值只输出时间戳并保持运行。
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -112,6 +111,8 @@ pub struct Bench {
     key_time: Duration,
     /// 查找、高亮测量开始的时刻，当时进程已用的 CPU 时间，以及此后绘制的帧数。
     progress: Option<(Instant, Duration, usize)>,
+    /// 当前标签读好之前呈现的帧数（帧）。
+    waiting: usize,
     /// 滚轮测量的进度；只在 [`Mode::Wheel`] 下、首帧呈现之后存在。
     wheel: Option<WheelRun>,
     /// 终端测量中尚未写给终端的命令，见 [`Bench::terminal_command`]。
@@ -144,6 +145,7 @@ impl Bench {
             frame_times: Vec::new(),
             key_time: Duration::ZERO,
             progress: None,
+            waiting: 0,
             wheel: None,
             command: None,
         }
@@ -178,6 +180,7 @@ impl Bench {
             frame_times: Vec::new(),
             key_time: Duration::ZERO,
             progress: None,
+            waiting: 0,
             wheel: None,
             command: None,
         }
@@ -204,10 +207,20 @@ impl Bench {
     ///
     /// `presented` 是包括当前帧在内的累计呈现次数，从 1 起；第 1 帧绘制在尚未显示的窗口上，
     /// 因此以第 2 帧作为首次呈现，滚动测量也从第 3 帧起采样。`elapsed` 是当前帧的绘制与呈现耗时。
-    pub fn on_present(&mut self, presented: usize, elapsed: Duration) -> Next {
+    /// `loading` 为当前标签是否还在读取：这样的帧没有内容，不计入，只输出窗口出现的时间戳。
+    pub fn on_present(&mut self, presented: usize, elapsed: Duration, loading: bool) -> Next {
         if self.mode == Mode::Off {
             return Next::Continue;
         }
+        if loading {
+            self.waiting += 1;
+            if presented == 2 {
+                println!("WINC first_window_epoch_ms={:.3}", epoch_ms());
+            }
+            return Next::Continue;
+        }
+        // 读取期间有过呈现时窗口已经显示，读好后的第一帧就是首次呈现。
+        let presented = presented - self.waiting + self.waiting.min(1);
 
         if presented == 2 {
             println!("WINC first_present_epoch_ms={:.3}", epoch_ms());
