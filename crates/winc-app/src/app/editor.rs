@@ -7,9 +7,11 @@ use super::*;
 
 pub(super) mod bookmarks;
 pub(crate) mod clipboard;
+pub(crate) mod completion;
 pub(super) mod conflict;
 pub(super) mod cursors;
 pub(crate) mod definition;
+pub(crate) mod diagnostics;
 pub(super) mod editing;
 pub(super) mod find;
 pub(super) mod folding;

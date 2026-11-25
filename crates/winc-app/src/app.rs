@@ -21,6 +21,7 @@ pub(crate) mod setup;
 #[cfg(test)]
 mod snapshot;
 mod status;
+pub(crate) mod lsp;
 pub(crate) mod terminal;
 pub(crate) mod tickets;
 pub(crate) mod vim;
@@ -323,6 +324,8 @@ pub enum UserEvent {
     GitLog,
     /// 终端的辅助进程发来了消息。
     Terminal,
+    /// 语言服务器发来了报文，或连接断开（连接的读线程唤醒）。
+    Lsp,
     /// 确认框中确认关闭参数所指的终端（其中仍有程序在运行）：为真时关掉它所在的整个标签。
     TerminalClose(u16, bool),
     /// 确认框中确认重新启动参数所指的终端标签（伪终端已断开，其中的程序可能仍在运行）。
@@ -546,6 +549,8 @@ pub enum Hover {
     MarkdownLink(usize),
     /// 链接地址补全列表的第几行。
     Suggest(usize),
+    /// 语义补全列表的第几行。
+    Completion(usize),
     /// 格式工具栏中的按钮。
     SelectionTool(crate::app::preview::markdown::toolbar::Tool),
     /// 可编辑的 Markdown 预览中鼠标下的链接（单击放置光标，`⌘` 单击才打开）。
@@ -957,6 +962,12 @@ pub struct App {
     pub editor: Editor,
     /// 终端面板（终端模块）。
     pub(crate) terminal: terminal::TerminalPanel,
+    /// 语言服务器的连接与会话状态（LSP 模块）。
+    pub(crate) lsp: lsp::LspState,
+    /// 语义补全的会话状态（补全模块）。
+    pub(crate) completion: editor::completion::Completion,
+    /// 各文档的 LSP 诊断，按字符偏移存放（诊断模块）。
+    pub(crate) diagnostics: editor::diagnostics::Diagnostics,
     /// 当前目录的运行配置。
     pub(crate) run: terminal::run::RunConfigs,
     /// 当前生效的配置。

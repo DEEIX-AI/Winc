@@ -26,6 +26,7 @@ use crate::layout::{SearchParts, drawn_scroll, drawn_scroll_line, scrollbar_thum
 use crate::theme::*;
 
 mod alert;
+mod completion;
 mod controls;
 mod dialog;
 mod diff;
@@ -218,6 +219,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_notices(app, frame);
 
     suggest::draw_suggest(app, frame);
+    completion::draw_completion(app, frame);
     draw_tree_drag(app, frame);
     draw_tab_drag(app, frame);
 

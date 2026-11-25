@@ -7,7 +7,6 @@
 mod config;
 pub mod files;
 mod font;
-mod json;
 mod project;
 mod run;
 mod state;
@@ -19,7 +18,7 @@ pub use config::{
     WorktreeOpen, config_path,
 };
 pub use font::{FontRequest, font_list, resolve_font, resolve_font_list};
-pub use json::Json;
+pub use winc_json::Json;
 pub use project::{
     PROJECT_EXTENSION, PROJECT_EXTENSIONS, ProjectError, ProjectFolder, ProjectKind, idea_folders,
     is_project_file, parse_project, project_kind, read_project, write_project,

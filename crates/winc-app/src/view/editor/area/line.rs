@@ -144,6 +144,7 @@ impl Screen<'_> {
         self.draw_fold_arrow(frame, &row);
         self.draw_guides(frame, &row, guide_indent);
         self.draw_marks(frame, &row);
+        self.draw_diagnostics(frame, &row);
 
         // 只为前 `MAX_LINE_CHARS` 个字符着色，其后按普通文本绘制。超长行不改变下一行的高亮状态，
         // 与高亮状态推算的规则相同（截断处可能位于字符串中间）；不换行时只需着色到编辑区右边缘。
@@ -326,6 +327,51 @@ impl Screen<'_> {
             let (part, x) = self.place(row, pos);
             let rect = Rect::new(x, row.y + part as f32 * lh + 1.0, self.cell, lh - 2.0);
             frame.rect_clipped(rect, p.match_brace, 3.0, text_rect);
+        }
+    }
+
+    /// 绘制诊断的波浪线：沿行内范围的底部画锯齿折线，错误与警告各用自己的颜色。
+    ///
+    /// 只画与可见范围相交的字符；本行没有任何诊断时什么也不做（每行一次二分查找）。
+    fn draw_diagnostics(&self, frame: &mut Frame<'_>, row: &Row<'_>) {
+        if self.diagnostics.is_empty() {
+            return;
+        }
+        let Ok(index) = self
+            .diagnostics
+            .binary_search_by_key(&row.line, |(line, _)| *line)
+        else {
+            return;
+        };
+        let shown = row.shown_cols();
+        let (line_start, lh, cell) = (row.line_start, self.lh, self.cell);
+        for underline in &self.diagnostics[index].1 {
+            let start = underline.start.max(shown.start);
+            let end = underline.end.min(shown.end);
+            if start >= end {
+                continue;
+            }
+            self.spans(row, line_start + start, line_start + end, &mut |top, x0, x1| {
+                let width = (x1 - x0).max(2.0);
+                let y = top + lh - 2.0;
+                // 锯齿：每 2 个逻辑像素一个折点，幅度 1 像素；线段太密时按整段画一条
+                // 略粗的线，保证短小的范围也看得见。
+                // 每段 2 个逻辑像素一个折点，但一条范围最多 256 段：几千像素的长范围画成
+                // 更疏的锯齿，单帧的线段数有上界。
+                let steps = ((width / 2.0) as usize).clamp(2, 256);
+                let dy = (cell.min(4.0) * 0.25).min(1.2);
+                let mut points = Vec::with_capacity(steps + 1);
+                for i in 0..=steps {
+                    let x = x0 + width * i as f32 / steps as f32;
+                    let y = if i % 2 == 0 { y } else { y + dy };
+                    points.push((x, y));
+                }
+                let lines: Vec<winc_render::Stroke> = points
+                    .windows(2)
+                    .map(|pair| winc_render::Stroke::Line(pair[0].0, pair[0].1, pair[1].0, pair[1].1))
+                    .collect();
+                frame.stroke(&lines, 1.0, underline.color, self.text_rect);
+            });
         }
     }
 

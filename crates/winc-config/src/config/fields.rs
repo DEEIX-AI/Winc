@@ -75,6 +75,7 @@ pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("remote", REMOTE),
     ("keyboard", KEYBOARD),
     ("format", FORMAT),
+    ("lsp", LSP),
 ];
 
 /// 顶层的单值设置，写在各节之后。
@@ -970,6 +971,57 @@ pub(super) const FORMAT: &[Field] = &[
         write: |config| commands_json(&config.fix_commands),
     },
 ];
+
+/// `lsp` 一节，用户配置专用：语言服务器的启动命令。
+///
+/// 语言可以写 id 或状态栏上显示的名字（如 `go`、`Go`），统一存成 id。与
+/// `format.commands` 不同，空字符串不是「没写」，而是显式禁用该语言的服务器。
+pub(super) const LSP: &[Field] = &[
+    Field {
+        key: "servers",
+        read: |config, value, name, problems| {
+            read_language_servers(value, name, &mut config.language_servers, problems)
+        },
+        write: |config| language_servers_json(&config.language_servers),
+    },
+];
+
+/// 把「语言 → 服务器命令」的对象（`lsp.servers`）读入 `out`，无法理解的地方记入
+/// `problems`，文案中用 `name` 指代这一项。
+///
+/// 命令去掉首尾空白；空字符串保留，表示显式禁用。两个键指向同一种语言时（如 `Go` 和
+/// `go`），按键名排序后靠后的一条生效。
+fn read_language_servers(
+    value: &Json,
+    name: &str,
+    out: &mut BTreeMap<String, String>,
+    problems: &mut Vec<String>,
+) {
+    let Some(servers) = value.as_object() else {
+        problems.push(t!("config-not-object", name = name));
+        return;
+    };
+    for (language, command) in servers {
+        let Some(id) = language_id(language, name, problems) else {
+            continue;
+        };
+        let Some(command) = command.as_str().map(str::trim) else {
+            problems.push(t!("config-not-string", name = format!("{name}.{language}")));
+            continue;
+        };
+        if out.insert(id, command.to_owned()).is_some() {
+            problems.push(t!("config-duplicate-language", name = name, language = language.as_str()));
+        }
+    }
+}
+
+/// 把「语言 → 服务器命令」写成 JSON 对象，空串（禁用）也要写回；没有写过时返回 `None`。
+fn language_servers_json(servers: &BTreeMap<String, String>) -> Option<Json> {
+    let pairs = servers
+        .iter()
+        .map(|(id, command)| (id.as_str(), Json::String(command.clone())));
+    (!servers.is_empty()).then(|| Json::object(pairs))
+}
 
 /// 在 `fields` 中找键名为 `key` 的一项。
 pub(super) fn find<'a>(fields: &'a [Field], key: &str) -> Option<&'a Field> {

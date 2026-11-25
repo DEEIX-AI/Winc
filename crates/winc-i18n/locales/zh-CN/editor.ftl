@@ -249,3 +249,17 @@ editor-http-binary-body = （二进制内容，{ $size } 字节）
 editor-http-body-truncated = （仅显示前 { $shown } 字节，共 { $size } 字节）
 editor-http-curl-missing = 未找到 curl
 editor-http-too-large = 响应过大
+
+
+## 语言服务器（LSP）。
+
+editor-lsp-not-installed = 未找到 { $command }：请运行 go install golang.org/x/tools/gopls@latest 安装，之后重新打开窗口
+editor-lsp-start-failed = 无法启动语言服务器：{ $error }
+editor-lsp-crashed = 语言服务器已退出，补全与诊断暂不可用
+
+editor-lsp-kind-function = 函数
+editor-lsp-kind-field = 字段
+editor-lsp-kind-variable = 变量
+editor-lsp-kind-type = 类型
+editor-lsp-kind-module = 包
+editor-lsp-kind-other = 其他

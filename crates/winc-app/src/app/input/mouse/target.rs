@@ -253,6 +253,7 @@ impl App {
             Target::Browser => Hover::Browser,
             Target::MarkdownLink(link) => Hover::MarkdownLink(link),
             Target::Suggest(row) => Hover::Suggest(row),
+            Target::Completion(row) => Hover::Completion(row),
             Target::SelectionTool(tool) => Hover::SelectionTool(tool),
             Target::MarkdownToc(target) => Hover::MarkdownToc(target),
             Target::MarkdownText(Some(link)) => Hover::MarkdownLinkText(link),
@@ -340,6 +341,11 @@ impl App {
             && card.contains(x, y)
         {
             return hit(&self.hits.suggest, x, y).map_or(Target::Blocked, Target::Suggest);
+        }
+        if let Some(card) = self.hits.completion_card
+            && card.contains(x, y)
+        {
+            return hit(&self.hits.completion, x, y).map_or(Target::Blocked, Target::Completion);
         }
         if let Some(card) = self.hits.selection_card
             && card.contains(x, y)
@@ -1170,6 +1176,8 @@ pub(super) enum Target {
     MarkdownLink(usize),
     /// 链接地址补全列表的一行，参数为行号。
     Suggest(usize),
+    /// 语义补全列表的第几行。
+    Completion(usize),
     /// 格式工具栏中的按钮。
     SelectionTool(crate::app::preview::markdown::toolbar::Tool),
     MarkdownToc(crate::app::preview::markdown::TocTarget),

@@ -55,8 +55,7 @@ fn wrapped_spans_end_where_each_row_ends() {
 }
 
 #[test]
-fn occurrences_of_the_word_under_the_caret() {
-    let mut doc = Document::from_text(DocumentId(1), "let id = width + id_x + id;\n");
+fn occurrences_of_the_word_under_the_caret() {    let mut doc = Document::from_text(DocumentId(1), "let id = width + id_x + id;\n");
     // 光标在 `id` 的末尾（右边是空格）时也算在词上。
     doc.selection = Selection::point(6);
     let line = "let id = width + id_x + id;";
@@ -136,4 +135,81 @@ fn visible_selections_match_a_linear_filter() {
             "{all:?} {shown:?}"
         );
     }
+}
+
+/// 锚定诊断文字的气泡：默认在诊断文字所在行上方；上方放不下翻到下方；横向不越出编辑区；
+/// 多行卡片按实际高度参与摆放。
+#[test]
+fn the_diagnostic_bubble_sits_above_the_error() {
+    let editor = Rect::new(100.0, 40.0, 600.0, 400.0);
+    let line_h = 20.0;
+    // 空间充足：气泡在错误行上方，底边与锚点留出间隙。
+    let (x, y, above) = hint::place_above_name(300.0, 200.0, line_h, editor, 200.0, hint::HEIGHT);
+    assert!(above, "空间充足时在错误行上方");
+    assert!(y + hint::HEIGHT < 200.0, "气泡底边在锚点之上");
+    assert_eq!(x, 280.0, "卡片左缘相对锚点略偏左");
+    assert!(x >= editor.x + 8.0 && x + 200.0 <= editor.right());
+
+    // 靠近编辑区顶部：翻到错误行下方。
+    let (_, y, above) = hint::place_above_name(300.0, 60.0, line_h, editor, 200.0, hint::HEIGHT);
+    assert!(!above, "上方放不下时翻到下方");
+    assert!(y > 60.0, "气泡上沿在锚点之下");
+
+    // 多行消息的卡片更高：同样的位置上方放不下，改到下方。
+    let tall = 120.0;
+    let (_, y, above) = hint::place_above_name(300.0, 160.0, line_h, editor, 200.0, tall);
+    assert!(!above, "高卡片在上方放不下");
+    assert!(y >= 160.0);
+
+    // 靠近右边缘：卡片夹在编辑区内，不越出右界。
+    let (x, _, _) = hint::place_above_name(690.0, 200.0, line_h, editor, 200.0, hint::HEIGHT);
+    assert!(x + 200.0 <= editor.right(), "{x}");
+
+    // 靠近左边缘：不越出左界。
+    let (x, _, _) = hint::place_above_name(90.0, 200.0, line_h, editor, 200.0, hint::HEIGHT);
+    assert_eq!(x, editor.x + 8.0);
+}
+
+/// 诊断气泡的折行：按宽度切行、保留原文的空格断点，超出行数时截断并在末行加省略号。
+#[test]
+fn diagnostic_messages_wrap_into_bounded_lines() {
+    // 每 10 逻辑像素算 1 个字符宽：40 宽 → 4 字符一行。
+    let measure = |s: &str| s.chars().count() as f32 * 10.0;
+    let lines = hint::wrap_message("aaaa bbbb cccc", measure, 40.0, 4);
+    assert_eq!(lines, vec!["aaaa", "bbbb", "cccc"]);
+
+    // 单词比行宽还长：硬切。
+    let lines = hint::wrap_message("aaaaaaaaaaaa", measure, 40.0, 4);
+    assert_eq!(lines, vec!["aaaa", "aaaa", "aaaa"]);
+
+    // 超出行数：末行加省略号。
+    let lines = hint::wrap_message("aaaa bbbb cccc dddd eeee", measure, 40.0, 2);
+    assert_eq!(lines.len(), 2);
+    assert!(lines[1].ends_with('…'), "{lines:?}");
+
+    // 原有的换行（多条诊断以 \n 连接）各自成段。
+    let lines = hint::wrap_message("aaaa\nbbbb", measure, 40.0, 4);
+    assert_eq!(lines, vec!["aaaa", "bbbb"]);
+
+    // 空消息给出一行空串，不留空卡片。
+    assert_eq!(hint::wrap_message("", measure, 40.0, 4), vec![""]);
+}
+
+/// 气泡宽度：不窄于最小可用宽度，不长于编辑区 60%；短消息取两者中能容纳内容的较窄者。
+#[test]
+fn the_bubble_width_is_bounded() {
+    let measure = |s: &str| s.chars().count() as f32 * 10.0;
+    let wide = Rect::new(0.0, 0.0, 1000.0, 800.0);
+    let room = hint::PAD * 2.0 + hint::ICON_ROOM;
+    // 短消息：至少 180 宽（含留白与图标列）。
+    let w = hint::bubble_width(measure("错误"), room, wide);
+    assert_eq!(w, 180.0);
+    // 长消息：不超过编辑区的 60%。
+    let w = hint::bubble_width(measure(&"x".repeat(500)), room, wide);
+    assert_eq!(w, 600.0);
+    // 编辑区很窄：不窄于最小可用宽度，也不超过编辑区宽度。
+    let narrow = Rect::new(0.0, 0.0, 250.0, 800.0);
+    let w = hint::bubble_width(measure(&"x".repeat(500)), room, narrow);
+    assert!(w <= 250.0, "{w}");
+    assert!(w >= 180.0, "{w}");
 }

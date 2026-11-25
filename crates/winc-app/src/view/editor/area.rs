@@ -17,6 +17,7 @@ use winc_syntax::{Language, Token};
 
 use super::*;
 use crate::app::FoldMotion;
+use crate::app::editor::diagnostics::Underline;
 use crate::app::animation::CaretTarget;
 use crate::app::git::merge::MergeTarget;
 
@@ -214,6 +215,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             blame_hover,
             line_blame,
             problems: app.latex_problem_lines(id),
+            diagnostics: app.diagnostic_lines(id),
             http_requests: app.http_request_lines(doc),
             http_mark: app.http_mark(id),
         };
@@ -372,6 +374,8 @@ struct Screen<'a> {
     line_blame: Option<(usize, String)>,
     /// LaTeX 编译出错的行（从 0 起，从小到大）。
     problems: Vec<usize>,
+    /// 文档的诊断，按行分组（行号从小到大）：每行的若干个范围（行内起止字符与颜色）。
+    diagnostics: Vec<(usize, Vec<Underline>)>,
     /// `.http` 文件中请求行的行号（从 0 起，从小到大）；不是 `.http` 文件时为 `None`。
     http_requests: Option<std::rc::Rc<[usize]>>,
     /// 正在发送或刚结束的请求：（请求行的行号，按钮的样子）。

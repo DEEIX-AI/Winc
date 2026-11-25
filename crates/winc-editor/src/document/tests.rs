@@ -1268,3 +1268,80 @@ fn only_local_files_over_the_limit_open_as_large() {
     assert!(!opens_as_large(&dir.join("missing")));
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `changes_since`：连续编辑按应用顺序累积，撤销与重做记录逆向修改，编辑以外的版本变化
+/// 与超出日志容量的旧版本都返回 `None`（调用方走全量）。
+#[test]
+fn changes_since_tracks_edits_undo_and_other_revisions() {
+    let mut doc = Document::from_text(DocumentId(1), "ab");
+    doc.set_language("x.go");
+    doc.selection = Selection::point(2);
+    let base = doc.revision;
+    assert_eq!(doc.changes_since(base), Some(Vec::new()), "当前版本没有修改");
+
+    // 连续编辑：两次插入累积成两条修改，后面一条的偏移在前面应用之后的文本上。
+    doc.execute(Command::Insert("c".to_string()), 10, 4);
+    doc.execute(Command::Insert("d".to_string()), 10, 4);
+    assert_eq!(text_of(&doc), "abcd");
+    assert_eq!(
+        doc.changes_since(base),
+        Some(vec![
+            Change { start: 2, removed: String::new(), inserted: "c".to_string() },
+            Change { start: 3, removed: String::new(), inserted: "d".to_string() },
+        ])
+    );
+    // 从中间版本起只取后半。
+    let middle = doc.revision - 1;
+    assert_eq!(
+        doc.changes_since(middle),
+        Some(vec![Change { start: 3, removed: String::new(), inserted: "d".to_string() }])
+    );
+
+    // 撤销：连续键入合并成一个撤销单元，一次撤回「cd」，记录的逆向修改与之对应。
+    let before_undo = doc.revision;
+    doc.execute(Command::Undo, 10, 4);
+    assert_eq!(text_of(&doc), "ab");
+    assert_eq!(
+        doc.changes_since(before_undo),
+        Some(vec![Change { start: 2, removed: "cd".to_string(), inserted: String::new() }])
+    );
+    // 重做：恢复原修改。
+    doc.execute(Command::Redo, 10, 4);
+    assert_eq!(text_of(&doc), "abcd");
+    assert_eq!(
+        doc.changes_since(before_undo),
+        Some(vec![
+            Change { start: 2, removed: "cd".to_string(), inserted: String::new() },
+            Change { start: 2, removed: String::new(), inserted: "cd".to_string() },
+        ])
+    );
+
+    // 编辑以外的版本变化（更换语言）让日志与版本号对不上：返回 `None`。
+    let before = doc.revision;
+    doc.set_language("x.rs");
+    assert_eq!(doc.revision, before + 1, "换语言递增版本使缓存失效");
+    assert_eq!(doc.changes_since(before), None);
+}
+
+/// 日志容量之外的旧版本返回 `None`，最近的版本照常。
+#[test]
+fn changes_since_beyond_the_log_falls_back_to_none() {
+    let mut doc = Document::from_text(DocumentId(2), "");
+    doc.set_language("x.go");
+    doc.selection = Selection::point(0);
+    let old = doc.revision;
+    for c in "0123456789abcdef".chars().cycle().take(EDIT_LOG + 6) {
+        doc.execute(Command::Insert(c.to_string()), 10, 4);
+    }
+    assert!(doc.changes_since(old).is_none(), "超过日志条数的版本不可追溯");
+    let recent = doc.revision - 1;
+    assert!(
+        doc.changes_since(recent).is_some_and(|changes| changes.len() == 1),
+        "最近一次修改仍在"
+    );
+}
+
+/// 取整个文本的辅助函数。
+fn text_of(doc: &Document) -> String {
+    doc.text_range(0, usize::MAX).unwrap()
+}

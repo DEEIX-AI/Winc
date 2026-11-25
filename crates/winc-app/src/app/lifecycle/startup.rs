@@ -50,6 +50,9 @@ impl App {
         Self {
             editor,
             terminal: terminal::TerminalPanel::default(),
+            lsp: lsp::LspState::default(),
+            completion: editor::completion::Completion::default(),
+            diagnostics: editor::diagnostics::Diagnostics::default(),
             run: terminal::run::RunConfigs::default(),
             store: crate::app::settings::Store {
                 saved_config: config.clone(),

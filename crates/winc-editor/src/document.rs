@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use winc_backend::fs::Stamp;
 
 use ropey::Rope;
-use winc_core::edit::{EditKind, Transaction};
+use winc_core::edit::{Change, EditKind, Transaction};
 use winc_core::selection::merge;
 use winc_core::text::{Aligned, CellLayout, ColumnWidths, Columns};
 use winc_core::{History, Indent, LineEnding, Lines, Selection, diff, indent, transform};
@@ -401,6 +401,12 @@ fn changed_lines(old: &ropey::Rope, new: &ropey::Rope) -> (usize, usize, usize) 
 /// 一次连续输入与随后的滚动查询通常只涉及几十次改动，64 条足以覆盖；记录更多只会增加内存开销。
 const EDIT_LOG: usize = 64;
 
+/// 增量变更日志最多保留的文本字节数（1 MiB），供 `Document::changes_since` 向前追溯。
+///
+/// 超出时丢最旧的条目，更早的版本返回 `None`，调用方走全量同步。一条超大的改动（整段
+/// 粘贴）本身可以超限，但它总是最新的，保留到下一条到来。
+const CHANGE_LOG_BYTES: usize = 1 << 20;
+
 /// 可打开的文件大小上限（字节，4 GiB）。
 ///
 /// 超过该大小的文件不打开。上限取自调参：`rope` 把全文放在内存中并额外维护树的节点，内存占用
@@ -569,6 +575,9 @@ pub struct Document {
     /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行），供
     /// `Document::unchanged_lines_since` 判断哪些行没有变。
     edits: std::collections::VecDeque<(u64, usize)>,
+    /// 最近的若干次改动的完整内容：（改动后的版本号，实际执行的修改），供
+    /// `Document::changes_since` 取「自某版本以来的增量」（语言服务器的文档同步用）。
+    change_log: std::collections::VecDeque<(u64, Vec<Change>)>,
     /// 文档的文本：`rope`，或按需读取磁盘的大文件。
     pub(crate) text: Content,
     /// 最近一次读写时磁盘文件的修改时间。
@@ -668,6 +677,7 @@ impl Document {
             windows: Mutex::new(Vec::new()),
             whole: WholeLines::default(),
             edits: std::collections::VecDeque::new(),
+            change_log: std::collections::VecDeque::new(),
             text,
             disk_mtime: None,
             disk_len: 0,
@@ -1294,12 +1304,14 @@ impl Document {
 
         if !transaction.changes.is_empty() {
             let first = transaction.first_offset();
+            let changes = transaction.changes.clone();
             if amend {
                 self.history.amend(transaction);
             } else {
                 self.history.push(transaction);
             }
             self.after_change(first);
+            self.note_change(changes);
         }
         // 事务不含其余选区时，文本改动后其余选区随版本号变化自动失效；含其余选区时按事务恢复。
         if !extra.is_empty() {
@@ -1313,6 +1325,53 @@ impl Document {
         if self.edits.len() > EDIT_LOG {
             self.edits.pop_front();
         }
+    }
+
+    /// 记录最近一次改动（`revision` 已递增）实际执行的修改，供 [`Document::changes_since`]
+    /// 查询；修改为空（编辑以外的版本变化，如从磁盘重新读取、更换语言）时不记录，
+    /// 版本号与日志条数从此对不上，查询返回 `None`，调用方走全量同步。
+    pub(crate) fn note_change(&mut self, changes: Vec<Change>) {
+        if changes.is_empty() {
+            return;
+        }
+        self.change_log.push_back((self.revision, changes));
+        while self.change_log.len() > EDIT_LOG {
+            self.change_log.pop_front();
+        }
+        while self.change_log.len() > 1 {
+            let total: usize = self
+                .change_log
+                .iter()
+                .flat_map(|(_, changes)| changes)
+                .map(|c| c.removed.len() + c.inserted.len())
+                .sum();
+            if total <= CHANGE_LOG_BYTES {
+                break;
+            }
+            self.change_log.pop_front();
+        }
+    }
+
+    /// 返回自版本 `revision`（不含）以来的全部修改，按应用顺序：后面的修改在前面修改应用
+    /// 之后的文本上生效——与增量文档同步的事件语义一致。期间的撤销与重做同样记录
+    /// （逆向修改）。
+    ///
+    /// 与 `unchanged_lines_since` 一样只保留最近 [`EDIT_LOG`] 次改动且总字节有限；版本更早，
+    /// 或期间发生了编辑以外的变化（从磁盘重新读取、更换语言）时返回 `None`，调用方按全量
+    /// 处理。当前版本及之后的版本返回空表。
+    pub fn changes_since(&self, revision: u64) -> Option<Vec<Change>> {
+        if revision >= self.revision {
+            return Some(Vec::new());
+        }
+        let mut changes = Vec::new();
+        let mut logged = 0u64;
+        for (at, entry) in &self.change_log {
+            if *at > revision {
+                changes.extend(entry.iter().cloned());
+                logged += 1;
+            }
+        }
+        (self.revision - revision == logged).then_some(changes)
     }
 
     /// 返回从版本 `revision` 至今始终未变的开头行数：此后的每次改动都位于这些行之下。

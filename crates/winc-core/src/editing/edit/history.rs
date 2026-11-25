@@ -208,6 +208,17 @@ impl History {
     /// 撤销栈顶的事务，返回撤销后的选区和修改涉及的最小位置；撤销栈为空时返回 `None`。
     pub fn undo(&mut self, text: &mut impl EditBuffer) -> Option<Restored> {
         let transaction = self.undo.pop()?;
+        // 实际执行的修改：原修改倒序、删除与插入互换。
+        let changes: Vec<Change> = transaction
+            .changes
+            .iter()
+            .rev()
+            .map(|c| Change {
+                start: c.start,
+                removed: c.inserted.clone(),
+                inserted: c.removed.clone(),
+            })
+            .collect();
         if let [change] = &transaction.changes[..] {
             change.revert(text);
         } else {
@@ -220,6 +231,7 @@ impl History {
             first: transaction.first_offset(),
             selection: transaction.before,
             extra: transaction.extra_before.clone(),
+            changes,
         };
         self.undo_bytes -= transaction.bytes;
         self.redo.push(transaction);
@@ -235,11 +247,13 @@ impl History {
     /// 重做最近撤销的事务；返回值含义同 [`Self::undo`]，重做栈为空时返回 `None`。
     pub fn redo(&mut self, text: &mut impl EditBuffer) -> Option<Restored> {
         let transaction = self.redo.pop()?;
+        let changes = transaction.changes.clone();
         transaction.apply(text);
         let result = Restored {
             selection: transaction.after,
             extra: transaction.extra_after.clone(),
             first: transaction.first_offset(),
+            changes,
         };
         self.undo_bytes += transaction.bytes;
         self.undo.push(transaction);
@@ -265,7 +279,7 @@ fn heap(text: &String) -> usize {
     text.capacity().next_multiple_of(16)
 }
 
-/// 撤销或重做之后的状态：选区和修改涉及的最小位置。
+/// 撤销或重做之后的状态：选区、修改涉及的最小位置，以及实际执行的修改。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Restored {
     /// 主选区。
@@ -274,6 +288,9 @@ pub struct Restored {
     pub extra: Vec<Selection>,
     /// 修改涉及的最小位置（`char` 偏移），从这一行起重新高亮。
     pub first: usize,
+    /// 本次实际执行的修改，按应用顺序：撤销时是原修改的倒序且删除与插入互换，重做时是原修改。
+    /// 供文档侧记录「自某版本以来的修改」（语言服务器的增量同步按同样的顺序应用）。
+    pub changes: Vec<Change>,
 }
 
 /// 是否可以把 `next` 插入的文本追加到 `prev.inserted` 末尾：`next` 是纯插入，且紧接在 `prev`

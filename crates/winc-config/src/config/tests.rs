@@ -442,6 +442,10 @@ fn round_trips_through_json() {
         )]),
         fix_on_save: Some(true),
         fix_commands: BTreeMap::from([("python".to_string(), "ruff check --fix -".to_string())]),
+        language_servers: BTreeMap::from([
+            ("go".to_string(), "/opt/gopls-nightly".to_string()),
+            ("python".to_string(), String::new()),
+        ]),
     };
 
     let (parsed, problems) = Config::parse(&config.to_json());
@@ -867,4 +871,39 @@ fn a_setting_can_be_checked_and_unset_by_name() {
     let mut same = config.clone();
     same.unset("editor.wordWrap");
     assert_eq!(same, config);
+}
+
+/// `lsp.servers` 读「语言 → 命令」：空串是显式禁用（不是没写），查表时用户配置优先于
+/// 内置默认。
+#[test]
+fn language_servers_read_and_lookup() {
+    // 默认：Go 开箱即用，其他语言没有。
+    let config = Config::default();
+    assert_eq!(config.language_server("go"), Some("gopls"));
+    assert_eq!(config.language_server("python"), None);
+
+    // 覆盖命令；状态栏的名字（Go）与 id（go）等价。
+    let (config, problems) = Config::parse(r#"{"lsp":{"servers":{"Go":"/opt/gopls"}}}"#);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(config.language_server("go"), Some("/opt/gopls"));
+
+    // 空串是显式禁用（不是没写）。
+    let (config, problems) = Config::parse(r#"{"lsp":{"servers":{"go":""}}}"#);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(config.language_server("go"), None);
+    // 禁用写回时保留，不能丢。
+    assert!(config.to_json().contains("\"go\": \"\""), "{}", config.to_json());
+
+    // 命令两端的空白去掉。
+    let (config, _) = Config::parse(r#"{"lsp":{"servers":{"go":"  gopls  "}}}"#);
+    assert_eq!(config.language_server("go"), Some("gopls"));
+
+    // 不认识的语言与不是字符串的值各报告一条问题，好的一条照常生效。
+    let (config, problems) = Config::parse(r#"{"lsp":{"servers":{"klingon":"gopls","go":7}}}"#);
+    assert_eq!(config.language_servers.get("go"), None);
+    assert_eq!(problems.len(), 2, "{problems:?}");
+
+    // 一节不是对象时报告问题。
+    let (_, problems) = Config::parse(r#"{"lsp":[]}"#);
+    assert_eq!(problems.len(), 1, "{problems:?}");
 }

@@ -3173,6 +3173,8 @@ dependencies = [
  "winc-editor",
  "winc-emoji",
  "winc-i18n",
+ "winc-json",
+ "winc-lsp",
  "winc-preview",
  "winc-pty",
  "winc-render",
@@ -3201,6 +3203,7 @@ version = "0.0.0"
 dependencies = [
  "winc-backend",
  "winc-i18n",
+ "winc-json",
  "winc-syntax",
 ]
 
@@ -3249,6 +3252,17 @@ dependencies = [
  "fluent-syntax",
  "sys-locale",
  "unic-langid",
+]
+
+[[package]]
+name = "winc-json"
+version = "0.0.0"
+
+[[package]]
+name = "winc-lsp"
+version = "0.0.0"
+dependencies = [
+ "winc-json",
 ]
 
 [[package]]

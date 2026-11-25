@@ -285,3 +285,17 @@ editor-http-body-truncated = { $size ->
 }
 editor-http-curl-missing = curl wasn’t found
 editor-http-too-large = The response is too large
+
+
+## Language servers (LSP).
+
+editor-lsp-not-installed = { $command } wasn’t found. Run go install golang.org/x/tools/gopls@latest to install it, then reopen the window
+editor-lsp-start-failed = Couldn’t start the language server: { $error }
+editor-lsp-crashed = The language server exited. Completion and diagnostics are unavailable
+
+editor-lsp-kind-function = Function
+editor-lsp-kind-field = Field
+editor-lsp-kind-variable = Variable
+editor-lsp-kind-type = Type
+editor-lsp-kind-module = Package
+editor-lsp-kind-other = Other

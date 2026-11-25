@@ -1,0 +1,85 @@
+{
+ "jsonrpc": "2.0",
+ "result": {
+  "isIncomplete": true,
+  "items": [
+   {
+    "label": "Print",
+    "kind": 3,
+    "detail": "func(a ...any) (n int, err error)",
+    "documentation": {
+     "kind": "markdown",
+     "value": "Print formats using the default formats for its operands and writes to standard output. Spaces are added between operands when neither is a string. It returns the number of bytes written and any write error encountered.\n"
+    },
+    "preselect": true,
+    "sortText": "00000",
+    "filterText": "Print",
+    "insertTextFormat": 1,
+    "textEdit": {
+     "range": {
+      "start": {
+       "line": 5,
+       "character": 5
+      },
+      "end": {
+       "line": 5,
+       "character": 8
+      }
+     },
+     "newText": "Print"
+    }
+   },
+   {
+    "label": "Printf",
+    "kind": 3,
+    "detail": "func(format string, a ...any) (n int, err error)",
+    "documentation": {
+     "kind": "markdown",
+     "value": "Printf formats according to a format specifier and writes to standard output. It returns the number of bytes written and any write error encountered.\n"
+    },
+    "sortText": "00001",
+    "filterText": "Printf",
+    "insertTextFormat": 1,
+    "textEdit": {
+     "range": {
+      "start": {
+       "line": 5,
+       "character": 5
+      },
+      "end": {
+       "line": 5,
+       "character": 8
+      }
+     },
+     "newText": "Printf"
+    }
+   },
+   {
+    "label": "Println",
+    "kind": 3,
+    "detail": "func(a ...any) (n int, err error)",
+    "documentation": {
+     "kind": "markdown",
+     "value": "Println formats using the default formats for its operands and writes to standard output. Spaces are always added between operands and a newline is appended. It returns the number of bytes written and any write error encountered.\n"
+    },
+    "sortText": "00002",
+    "filterText": "Println",
+    "insertTextFormat": 1,
+    "textEdit": {
+     "range": {
+      "start": {
+       "line": 5,
+       "character": 5
+      },
+      "end": {
+       "line": 5,
+       "character": 8
+      }
+     },
+     "newText": "Println"
+    }
+   }
+  ]
+ },
+ "id": 2
+}

@@ -714,6 +714,9 @@ impl App {
         self.track_search_rows();
         self.track_words();
         self.track_suggest();
+        self.track_lsp();
+        self.track_completion();
+        self.track_diagnostic_hint(Instant::now());
         self.git_follow_active();
         self.relayout();
         self.run_when_loaded();
@@ -803,6 +806,8 @@ impl App {
         self.update_ime_area();
         self.after_terminal_frame();
         self.frame.presented += 1;
+        // 启动时打开着 Go 文档：首帧呈现之后再画一帧，在那一帧里启动服务器。
+        self.frame.dirty |= self.lsp_start_after_first_frame();
 
         let loading = self.editor.active().is_some_and(|d| d.is_pending());
         let next = (self.frame.bench).on_present(self.frame.presented, elapsed, loading);

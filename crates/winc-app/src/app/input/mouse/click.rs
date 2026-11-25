@@ -281,6 +281,7 @@ impl App {
             Target::Tree(_) => self.click_tree(x, y),
             Target::Placeholder(action) => self.run_placeholder_action(action),
             Target::Suggest(row) => self.accept_suggest(row),
+            Target::Completion(row) => self.click_completion(row),
             Target::SelectionTool(tool) => self.run_selection_tool(tool),
             // 文件栏的右边缘：双击恢复默认宽度，否则开始拖动。
             Target::Diff(crate::app::DiffTarget::FilesEdge) => {

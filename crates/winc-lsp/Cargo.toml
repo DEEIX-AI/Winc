@@ -1,0 +1,15 @@
+[package]
+name = "winc-lsp"
+description = "LSP 客户端：JSON-RPC 分帧、gopls 进程管理、消息子集与位置换算。无 GUI 依赖。"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+winc-json.workspace = true
+
+[lints]
+workspace = true

@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::json::Json;
+use winc_json::Json;
 
 /// 一个来源最多列出的脚本或目标数（个）：下拉菜单一屏放得下，其余由用户写进配置文件。
 const MAX_SCRIPTS: usize = 6;

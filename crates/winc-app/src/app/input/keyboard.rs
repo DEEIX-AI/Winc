@@ -90,9 +90,11 @@ impl App {
             event.logical_key,
             Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
         );
-        // 名字旁边的提示气泡在按下任意键（单独按修饰键除外）时淡出。
+        // 名字旁边的提示气泡在按下任意键（单独按修饰键除外）时淡出；同时作废诊断气泡的
+        // 悬停待发——打字停顿后出现在静止鼠标下的波浪线不弹气泡，要等鼠标再移动。
         if !modifier {
             self.dismiss_hint();
+            self.lsp.disarm_diagnostic_hint();
         }
         // 窗口内的提示框、菜单打开时，按键只给它们。
         if self.alert_key(&event.logical_key, cmd) || self.popup_key(event) {
@@ -119,6 +121,10 @@ impl App {
         }
         // 链接地址的补全列表开着时，选择、写入和关掉列表的键先给它。
         if self.suggest_key(&event.logical_key) {
+            return;
+        }
+        // 语义补全的列表开着时，同理先给它。
+        if self.completion_key(&event.logical_key) {
             return;
         }
 

@@ -349,9 +349,11 @@ impl Document {
             selection,
             extra,
             first,
+            changes,
         }) = result
         {
             self.after_change(first);
+            self.note_change(changes);
             self.redetect_line_ending();
             self.selection = selection.clamped(self.text.end_pos());
             self.restore_extra(extra);

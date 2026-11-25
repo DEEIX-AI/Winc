@@ -1,0 +1,128 @@
+{
+ "jsonrpc": "2.0",
+ "result": {
+  "capabilities": {
+   "textDocumentSync": {
+    "openClose": true,
+    "change": 2,
+    "save": {}
+   },
+   "completionProvider": {
+    "triggerCharacters": [
+     "."
+    ]
+   },
+   "hoverProvider": true,
+   "signatureHelpProvider": {
+    "triggerCharacters": [
+     "(",
+     ","
+    ],
+    "retriggerCharacters": [
+     ")"
+    ]
+   },
+   "definitionProvider": true,
+   "typeDefinitionProvider": true,
+   "implementationProvider": true,
+   "referencesProvider": true,
+   "documentHighlightProvider": true,
+   "documentSymbolProvider": true,
+   "codeActionProvider": true,
+   "codeLensProvider": {},
+   "documentLinkProvider": {},
+   "workspaceSymbolProvider": true,
+   "documentFormattingProvider": true,
+   "renameProvider": true,
+   "foldingRangeProvider": true,
+   "selectionRangeProvider": true,
+   "executeCommandProvider": {
+    "commands": [
+     "gopls.add_dependency",
+     "gopls.add_import",
+     "gopls.add_telemetry_counters",
+     "gopls.add_test",
+     "gopls.apply_fix",
+     "gopls.assembly",
+     "gopls.change_signature",
+     "gopls.check_upgrades",
+     "gopls.client_open_url",
+     "gopls.diagnose_files",
+     "gopls.doc",
+     "gopls.dragon_slayer",
+     "gopls.edit_go_directive",
+     "gopls.extract_to_new_file",
+     "gopls.fetch_vulncheck_result",
+     "gopls.free_symbols",
+     "gopls.gc_details",
+     "gopls.generate",
+     "gopls.go_get_package",
+     "gopls.implement_interface",
+     "gopls.list_imports",
+     "gopls.list_known_packages",
+     "gopls.lsp",
+     "gopls.maybe_prompt_for_telemetry",
+     "gopls.mem_stats",
+     "gopls.modify_tags",
+     "gopls.modules",
+     "gopls.move_declaration",
+     "gopls.move_type",
+     "gopls.package_symbols",
+     "gopls.packages",
+     "gopls.regenerate_cgo",
+     "gopls.remove_dependency",
+     "gopls.reset_go_mod_diagnostics",
+     "gopls.resolve_target",
+     "gopls.run_go_work_command",
+     "gopls.run_govulncheck",
+     "gopls.run_tests",
+     "gopls.scan_imports",
+     "gopls.split_package",
+     "gopls.start_debugging",
+     "gopls.start_profile",
+     "gopls.stop_profile",
+     "gopls.tidy",
+     "gopls.update_go_sum",
+     "gopls.upgrade_dependency",
+     "gopls.vendor",
+     "gopls.views",
+     "gopls.vulncheck",
+     "gopls.workspace_stats"
+    ]
+   },
+   "callHierarchyProvider": true,
+   "typeHierarchyProvider": true,
+   "inlayHintProvider": {},
+   "workspace": {
+    "workspaceFolders": {
+     "supported": true,
+     "changeNotifications": "workspace/didChangeWorkspaceFolders"
+    },
+    "fileOperations": {
+     "didCreate": {
+      "filters": [
+       {
+        "scheme": "file",
+        "pattern": {
+         "glob": "**/*.go"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "experimental": {
+    "interactiveResolveProvider": {
+     "kinds": [
+      "command"
+     ]
+    }
+   }
+  },
+  "serverInfo": {
+   "name": "gopls",
+   "version": "{\"GoVersion\":\"go1.27.2\",\"Path\":\"golang.org/x/tools/gopls\",\"Main\":{\"Path\":\"golang.org/x/tools/gopls\",\"Version\":\"v0.24.0\",\"Sum\":\"h1:nPO/LffYa4sP62Ueuema5PPnZPGaZjGl+vZGvbTek4g=\"},\"Deps\":[{\"Path\":\"github.com/BurntSushi/toml\",\"Version\":\"v1.6.0\",\"Sum\":\"h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=\"},{\"Path\":\"github.com/fatih/camelcase\",\"Version\":\"v1.0.0\",\"Sum\":\"h1:hxNvNX/xYBp0ovncs8WyWZrOrpBNub/JfaMvbURyft8=\"},{\"Path\":\"github.com/fatih/gomodifytags\",\"Version\":\"v1.17.1-0.20250423142747-f3939df9aa3c\",\"Sum\":\"h1:dDSgAjoOMp8da3egfz0t2S+t8RGOpEmEXZubcGuc0Bg=\"},{\"Path\":\"github.com/fatih/structtag\",\"Version\":\"v1.2.0\",\"Sum\":\"h1:/OdNE99OxoI/PqaW/SuSK9uxxT3f/tcSZgon/ssNSx4=\"},{\"Path\":\"github.com/fsnotify/fsnotify\",\"Version\":\"v1.9.0\",\"Sum\":\"h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=\"},{\"Path\":\"github.com/google/jsonschema-go\",\"Version\":\"v0.4.3\",\"Sum\":\"h1:/DBOLZTfDow7pe2GmaJNhltueGTtDKICi8V8p+DQPd0=\"},{\"Path\":\"github.com/modelcontextprotocol/go-sdk\",\"Version\":\"v1.8.0\",\"Sum\":\"h1:KIvahhYqwtbeniWVPs3TcXEA7b8jEtwfBpOTAI+Urx4=\"},{\"Path\":\"github.com/segmentio/asm\",\"Version\":\"v1.2.1\",\"Sum\":\"h1:DTNbBqs57ioxAD4PrArqftgypG4/qNpXoJx8TVXxPR0=\"},{\"Path\":\"github.com/segmentio/encoding\",\"Version\":\"v0.5.4\",\"Sum\":\"h1:OW1VRern8Nw6ITAtwSZ7Idrl3MXCFwXHPgqESYfvNt0=\"},{\"Path\":\"github.com/yosida95/uritemplate/v3\",\"Version\":\"v3.0.2\",\"Sum\":\"h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=\"},{\"Path\":\"golang.org/x/exp/typeparams\",\"Version\":\"v0.0.0-20260908205506-85c1c2202aba\",\"Sum\":\"h1:ZoZmFkcuQ289xJilBm9Ck3W+/okrhXc4LUpbtKFQE4k=\"},{\"Path\":\"golang.org/x/mod\",\"Version\":\"v0.41.0\",\"Sum\":\"h1:qJmnOUb4YB+FsEuM3HcWucdZASCPGhsX6uljO6pog0c=\"},{\"Path\":\"golang.org/x/oauth2\",\"Version\":\"v0.37.0\",\"Sum\":\"h1:JUlcxA8oAtauLfiH8FX2/FkAWHAdi0QtGCGc+hofE98=\"},{\"Path\":\"golang.org/x/sync\",\"Version\":\"v0.23.0\",\"Sum\":\"h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=\"},{\"Path\":\"golang.org/x/sys\",\"Version\":\"v0.48.0\",\"Sum\":\"h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=\"},{\"Path\":\"golang.org/x/telemetry\",\"Version\":\"v0.0.0-20260924152758-ed294f943157\",\"Sum\":\"h1:DftxASHKl6JolFPqoN+2WrFO53JvkHwRXvFqf8gsivA=\"},{\"Path\":\"golang.org/x/text\",\"Version\":\"v0.42.0\",\"Sum\":\"h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=\"},{\"Path\":\"golang.org/x/time\",\"Version\":\"v0.16.0\",\"Sum\":\"h1:vMb6ptszcQMkcwiRTAuNNU50gom6++Q/6gY2hDM6VDE=\"},{\"Path\":\"golang.org/x/tools\",\"Version\":\"v0.51.1-0.20261014163302-24a65270771e\",\"Sum\":\"h1:OKD783ebWgqIZn7EAQNP944SpADpjJ8k4XI3nJAeB4o=\"},{\"Path\":\"golang.org/x/vuln\",\"Version\":\"v1.8.0\",\"Sum\":\"h1:clG4qBU6zH5VKjti8n5j8BBuYzoSha392xXMkXS351U=\"},{\"Path\":\"honnef.co/go/tools\",\"Version\":\"v0.8.1\",\"Sum\":\"h1:+JKf3xJ1ni4CwrhVg4/pqsfPGP6vNAXcKbMXJodYx3w=\"},{\"Path\":\"mvdan.cc/gofumpt\",\"Version\":\"v0.12.0\",\"Sum\":\"h1:1Lbudkz2kpM9Cjz2pL4M19u7q+GaEhCTNf7N9mfpcho=\"},{\"Path\":\"mvdan.cc/xurls/v2\",\"Version\":\"v2.6.0\",\"Sum\":\"h1:3NTZpeTxYVWNSokW3MKeyVkz/j7uYXYiMtXRUfmjbgI=\"}],\"Settings\":[{\"Key\":\"-buildmode\",\"Value\":\"exe\"},{\"Key\":\"-compiler\",\"Value\":\"gc\"},{\"Key\":\"CGO_ENABLED\",\"Value\":\"1\"},{\"Key\":\"CGO_CFLAGS\"},{\"Key\":\"CGO_CPPFLAGS\"},{\"Key\":\"CGO_CXXFLAGS\"},{\"Key\":\"CGO_LDFLAGS\"},{\"Key\":\"GOARCH\",\"Value\":\"amd64\"},{\"Key\":\"GOOS\",\"Value\":\"windows\"},{\"Key\":\"GOAMD64\",\"Value\":\"v1\"}],\"Version\":\"v0.24.0\"}"
+  }
+ },
+ "id": 1
+}

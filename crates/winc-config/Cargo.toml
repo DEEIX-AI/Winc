@@ -10,6 +10,7 @@ homepage.workspace = true
 
 [dependencies]
 winc-backend.workspace = true
+winc-json.workspace = true
 winc-syntax.workspace = true
 winc-i18n.workspace = true
 

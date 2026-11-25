@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::json::Json;
+use winc_json::Json;
 
 /// 最近打开的目录的最大数量（个），全部列在「打开最近的项目」中。
 pub const MAX_RECENT: usize = 50;

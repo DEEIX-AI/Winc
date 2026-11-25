@@ -724,8 +724,10 @@ impl Document {
         );
         transaction.extra_before = extra_before;
         transaction.extra_after = others(&merged, primary);
+        let changes = transaction.changes.clone();
         self.history.push(transaction);
         self.after_change(first);
+        self.note_change(changes);
         self.set_selections(merged, primary);
     }
 

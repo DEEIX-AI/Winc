@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::files::{config_dir, write_atomic};
-use crate::json::{self, Json};
+use winc_json::{self as json, Json};
 use fields::*;
 use winc_i18n::{LocaleChoice, t};
 
@@ -308,6 +308,11 @@ pub struct Config {
     ///
     /// 没写的语言自动选择工具。
     pub fix_commands: BTreeMap<String, String>,
+    /// 各语言的语言服务器命令，键是语言的 id。
+    ///
+    /// 没写的语言用 [`Config::DEFAULT_LANGUAGE_SERVERS`] 里的内置默认（Go → `gopls`）；
+    /// 空字符串表示显式禁用该语言的服务器。只用于本机的本地工作区，远端不启动。
+    pub language_servers: BTreeMap<String, String>,
 }
 
 /// 终端里哪一边的 ⌥ 当 Meta 用；另一边仍然输入 `å`、`∑` 这类字符。
@@ -652,6 +657,23 @@ impl Config {
     ///
     /// 上限 21 是 WCAG 对比度的最大值，即黑底白字之比。
     pub const CONTRAST_RANGE: std::ops::RangeInclusive<f32> = 0.0..=21.0;
+    /// 内置的语言服务器默认表：语言 id → 服务器命令。
+    ///
+    /// 用户没写 [`Config::language_servers`] 的语言用这张表；想在 `PATH` 外用别的版本，
+    /// 写完整路径覆盖即可。每支持一种新语言在这里加一行（后续变更扩展）。
+    pub const DEFAULT_LANGUAGE_SERVERS: &[(&str, &str)] = &[("go", "gopls")];
+
+    /// 语言的语言服务器命令：用户配置优先（空字符串表示禁用，返回 `None`），否则查内置
+    /// 默认表；没有服务器的语言（包括被禁用的）返回 `None`。
+    pub fn language_server(&self, language: &str) -> Option<&str> {
+        if let Some(command) = self.language_servers.get(language) {
+            return (!command.is_empty()).then_some(command.as_str());
+        }
+        Config::DEFAULT_LANGUAGE_SERVERS
+            .iter()
+            .find(|(id, _)| *id == language)
+            .map(|(_, command)| *command)
+    }
 
     /// 读取用户级配置，返回配置和读取过程中发现的问题（可能有多条）。
     ///

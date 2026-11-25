@@ -94,6 +94,10 @@ pub struct Hits {
     pub(crate) suggest_card: Option<Rect>,
     /// 上一帧绘制的链接地址补全列表的各行：位置和行号。
     pub(crate) suggest: Vec<(Rect, usize)>,
+    /// 上一帧绘制的语义补全列表的卡片；没有画出列表时为 `None`。
+    pub(crate) completion_card: Option<Rect>,
+    /// 上一帧绘制的语义补全列表的各行：位置和行号。
+    pub(crate) completion: Vec<(Rect, usize)>,
     /// 上一帧绘制的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
     pub(crate) markdown_toc: Vec<(winc_render::Rect, crate::app::preview::markdown::TocTarget)>,
     /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
@@ -167,6 +171,8 @@ impl Hits {
             markdown_toc_blocks,
             suggest_card,
             suggest,
+            completion_card,
+            completion,
             selection_card,
             selection_tools,
             pdf_thumbs,
@@ -180,9 +186,11 @@ impl Hits {
         } = self;
         start.clear();
         *suggest_card = None;
+        *completion_card = None;
         *selection_card = None;
         selection_tools.clear();
         suggest.clear();
+        completion.clear();
         placeholder.clear();
         folded.clear();
         long_lines.clear();

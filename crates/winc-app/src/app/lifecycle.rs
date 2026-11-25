@@ -38,8 +38,8 @@ pub(crate) struct FrameState {
     pub(in crate::app) bench: Bench,
     /// 帧日志（`WINC_FRAME_LOG`）。
     frame_log: crate::frame_log::FrameLog,
-    /// 已呈现的帧数，供测量钩子使用。
-    presented: usize,
+    /// 已呈现的帧数，供测量钩子和 LSP 的启动时机使用。
+    pub(in crate::app) presented: usize,
     /// 是否需要重新绘制。
     pub(in crate::app) dirty: bool,
 }

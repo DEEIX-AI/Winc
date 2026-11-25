@@ -73,7 +73,7 @@ impl Json {
     }
 
     /// 把键值对转成对象；键重复时后出现的值覆盖先出现的。
-    pub(crate) fn object<K: Into<String>>(items: impl IntoIterator<Item = (K, Json)>) -> Json {
+    pub fn object<K: Into<String>>(items: impl IntoIterator<Item = (K, Json)>) -> Json {
         Json::Object(items.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
 
@@ -88,7 +88,7 @@ impl Json {
     /// 返回多行缩进的 JSON 文本，缩进到 `indent` 层（每层 2 个空格）。
     ///
     /// 空数组和空对象写成 `[]`、`{}`。
-    pub(crate) fn write(&self, indent: usize) -> String {
+    pub fn write(&self, indent: usize) -> String {
         let mut out = String::new();
         self.write_into(&mut out, indent);
         out
@@ -97,7 +97,7 @@ impl Json {
     /// 同 [`Json::write`]，写到 `out` 末尾。
     ///
     /// 整棵树共用一个缓冲区，各层不必各自拼出字符串再复制一遍。
-    pub(crate) fn write_into(&self, out: &mut String, indent: usize) {
+    pub fn write_into(&self, out: &mut String, indent: usize) {
         match self {
             Json::Array(items) => write_block(out, indent, ['[', ']'], items, |out, item| {
                 item.write_into(out, indent + 1)
@@ -175,7 +175,7 @@ impl Json {
 ///
 /// 值由 `value` 写出，传给它的缩进为 `indent + 1`。值不必是 [`Json`]：配置文件按固定顺序写出各节，
 /// 而 [`Json::Object`] 总按键的字典序排列。
-pub(crate) fn write_object<'k, V>(
+pub fn write_object<'k, V>(
     out: &mut String,
     indent: usize,
     pairs: impl IntoIterator<Item = (&'k str, V)>,

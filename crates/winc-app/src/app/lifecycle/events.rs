@@ -672,6 +672,7 @@ impl App {
             UserEvent::ShowHex(id) => self.show_hex_now(id),
             UserEvent::ImageReady => self.poll_images(),
             UserEvent::Terminal => self.poll_terminal(),
+            UserEvent::Lsp => self.poll_lsp(),
         }
     }
 
@@ -747,6 +748,10 @@ impl App {
             }
         }
         earliest(&mut wake, self.reading_tick(now));
+        earliest(&mut wake, self.lsp_tick(now));
+        // 悬停待发的到期时刻：鼠标移到波浪线上停稳后按时评估，不依赖下一次鼠标事件
+        // （鼠标不动就没有新事件，气泡会迟迟不弹）。
+        earliest(&mut wake, self.hover_tick(now));
         earliest(&mut wake, self.terminal_settle_tick(now));
         earliest(&mut wake, self.auto_save_tick(now));
         let copying = self.copy_tick(now);

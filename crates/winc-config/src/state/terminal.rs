@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::json::Json;
+use winc_json::Json;
 
 /// 现场里终端面板的一栏。
 #[derive(Debug, Clone, Copy, PartialEq)]
