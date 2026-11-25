@@ -3,6 +3,8 @@
 use std::time::{Duration, SystemTime};
 
 use winc_editor::Changes;
+use winc_editor::git::Git;
+use winc_editor::shell::Shell;
 
 use crate::app::workspace::watch::DiskBack;
 use crate::keymap::Action;
@@ -494,6 +496,16 @@ fn git_watch_app(name: &str) -> Option<(App, PathBuf)> {
         return None;
     }
     let mut app = app_with(&dir, false);
+    // 测试中 formatter 的 `PATH` 只有 Unix 系统目录（见 `startup::formatter`），Windows 上
+    // 不含 `git`；改用测试进程自身的环境找到 `git` 后注入，状态读取照常进行。
+    let found = Git::find(&Shell::with_vars(std::env::vars_os().collect()));
+    let Some(git) = found.ok() else {
+        assert!(std::env::var_os("CI").is_none(), "CI 上必须能运行 git");
+        eprintln!("跳过：测试环境中没有可用的 git");
+        let _ = std::fs::remove_dir_all(&dir);
+        return None;
+    };
+    app.git.tool.keep(git);
     app.settings_toggle(Setting::GitModule);
     assert!(app.git.status.is_some(), "{:?}", app.git.problem);
     let root = app.editor.root().unwrap().to_path_buf();
