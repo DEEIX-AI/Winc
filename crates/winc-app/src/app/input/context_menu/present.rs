@@ -349,18 +349,21 @@ impl App {
         let entries = match &target {
             &MenuTarget::AddLanguage(task) => {
                 let listed = match task {
-                    Task::Format => &self.settings.languages.format,
-                    Task::Fix => &self.settings.languages.fix,
+                    Task::Format => &self.settings.listed.format,
+                    Task::Fix => &self.settings.listed.fix,
                 };
                 language_menu(task, listed)
             }
-            MenuTarget::SkipOnSave => skip_menu(&self.settings.languages.format),
+            MenuTarget::SkipOnSave => skip_menu(&self.settings.listed.format),
             MenuTarget::Locale => locale_menu(),
             MenuTarget::NamedTheme(dark) => (0..crate::theme::themes(*dark).len())
                 .map(|i| MenuEntry::Item(MenuCommand::NamedTheme(*dark, i), true))
                 .collect(),
             MenuTarget::Whitespace => whitespace_menu(),
             MenuTarget::VimClipboard => vim_clipboard_menu(),
+            MenuTarget::VimKey(_) => [true, false]
+                .map(|vim| MenuEntry::Item(MenuCommand::VimKeyOwner(vim), true))
+                .to_vec(),
             MenuTarget::OpenWorktree => open_worktree_menu(),
             MenuTarget::PullMode => (0..winc_config::PullMode::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::PullMode(i), true))
@@ -874,6 +877,7 @@ impl App {
                 | MenuTarget::NamedTheme(_)
                 | MenuTarget::Whitespace
                 | MenuTarget::VimClipboard
+                | MenuTarget::VimKey(_)
                 | MenuTarget::OpenWorktree
                 | MenuTarget::PullMode
                 | MenuTarget::DropFolder
@@ -895,6 +899,7 @@ impl App {
             MenuTarget::Locale => Some(Setting::Language),
             MenuTarget::Whitespace => Some(Setting::RenderWhitespace),
             MenuTarget::VimClipboard => Some(Setting::VimClipboard),
+            MenuTarget::VimKey(c) => Some(Setting::VimKey(c)),
             MenuTarget::OpenWorktree => Some(Setting::GitOpenWorktree),
             MenuTarget::PullMode => Some(Setting::GitPullMode),
             MenuTarget::DropFolder => Some(Setting::DropFolder),
@@ -1167,6 +1172,13 @@ impl App {
             _ => None,
         };
         let language = tool.map(|(_, id)| id);
+        let vim_key = match &self.overlays.context_menu {
+            Some(ContextMenu {
+                target: MenuTarget::VimKey(c),
+                ..
+            }) => Some(*c),
+            _ => None,
+        };
         let configured = tool.and_then(|(task, id)| {
             crate::app::editor::format::task_commands(&self.config, task).get(id)
         });
@@ -1191,6 +1203,7 @@ impl App {
                 winc_config::VimClipboard::ALL.get(i)
                     == Some(&self.config.vim_clipboard.unwrap_or_default())
             }
+            MenuCommand::VimKeyOwner(vim) => vim_key.is_some_and(|c| self.vim_owns_key(c) == vim),
             MenuCommand::OpenWorktree(i) => {
                 winc_config::WorktreeOpen::ALL.get(i)
                     == Some(&self.config.git_open_worktree.unwrap_or_default())

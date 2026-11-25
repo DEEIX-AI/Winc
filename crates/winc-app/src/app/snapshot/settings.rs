@@ -7,6 +7,7 @@ mod format;
 mod search;
 mod shortcuts;
 mod terminal;
+mod vim;
 
 use super::*;
 use winc_config::SmoothCaret;
@@ -286,7 +287,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     // 到达末尾后不再移动。越过一页的末项时自动换页，右侧显示该页内容。格式化页列出的语言随机器上装
     // 了哪些工具而变，步数按全部设置项计算。
     let mut seen = vec![app.settings.selected];
-    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() + 2 {
+    for _ in 0..Setting::all(&app.settings.listed, app.settings_modules()).len() + 2 {
         app.settings_move(true);
         if seen.last() != Some(&app.settings.selected) {
             seen.push(app.settings.selected);
@@ -294,7 +295,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     }
     assert_eq!(
         seen,
-        Setting::all(&app.settings.languages, app.settings_modules())
+        Setting::all(&app.settings.listed, app.settings_modules())
     );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
@@ -323,7 +324,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, last);
 
     // 回到第一项；步数按全部设置项计算，原因同上。
-    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() {
+    for _ in 0..Setting::all(&app.settings.listed, app.settings_modules()).len() {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::Language);
@@ -465,7 +466,7 @@ fn settings_pages_are_listed_on_the_left() {
         let view = crate::layout::SettingsView {
             page,
             query: "",
-            languages: &app.settings.languages,
+            listed: &app.settings.listed,
             terminal: 1.0,
             git: 1.0,
             editing: None,
@@ -491,7 +492,7 @@ fn settings_pages_are_listed_on_the_left() {
     }
     assert_eq!(
         listed,
-        Setting::all(&app.settings.languages, app.settings_modules())
+        Setting::all(&app.settings.listed, app.settings_modules())
     );
 
     // 悬停在分类栏的一项上时记录该项；点击后换页，选中该页的第一项，滚动位置回到顶部。

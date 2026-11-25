@@ -203,6 +203,7 @@ editor-vim-help-supported = 支持
 editor-vim-help-unsupported = 不支持
 editor-vim-help-ex = 命令行的命令（方括号中的部分可省略）
 editor-vim-help-options = :set 的选项（括号中是缩写）
+editor-vim-key-notice = { $key } 已由 Vim 处理，未执行「{ $action }」
 
 ## 复制和粘贴。
 

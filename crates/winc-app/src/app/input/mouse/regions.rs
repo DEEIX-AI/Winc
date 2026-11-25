@@ -186,6 +186,7 @@ impl App {
                 part @ (SettingsPart::KeyRow(_)
                 | SettingsPart::KeyEdit(_)
                 | SettingsPart::KeyReset(_)
+                | SettingsPart::KeyVim(..)
                 | SettingsPart::KeyRemove(_)
                 | SettingsPart::KeySave
                 | SettingsPart::KeyCancel),

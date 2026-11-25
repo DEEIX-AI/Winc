@@ -338,6 +338,7 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
         // 按钮、链接和 × 的位置在绘制时才确定，调用前需要先绘制一帧。
         SettingsPart::KeyEdit(_)
         | SettingsPart::KeyReset(_)
+        | SettingsPart::KeyVim(..)
         | SettingsPart::KeyRemove(_)
         | SettingsPart::KeySave
         | SettingsPart::KeyCancel => {

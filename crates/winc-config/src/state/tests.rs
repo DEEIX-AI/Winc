@@ -191,6 +191,7 @@ fn sample() -> State {
         vim_marks: vec![('A', PathBuf::from("/a/项目/x.rs"), 12, 3)],
         vim_commands: vec!["%s/a/b/g".into(), "w".into()],
         vim_searches: vec!["\\<词\\>".into()],
+        vim_keys_noticed: true,
         stay_outside_applications: true,
         panel_width: Some(360.0),
         preview_modes: [

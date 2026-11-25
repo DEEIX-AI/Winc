@@ -247,6 +247,8 @@ pub enum MenuCommand {
     /// 设置中「Vim 剪贴板」菜单的一项，参数为
     /// [`VimClipboard::ALL`](winc_config::VimClipboard::ALL) 中的序号（从 0 起）。
     VimClipboard(usize),
+    /// 设置中「快捷键冲突」一行的菜单项：交给 Vim（`true`）或编辑器。
+    VimKeyOwner(bool),
     /// 设置中「打开工作树」菜单的一项，参数为
     /// [`WorktreeOpen::ALL`](winc_config::WorktreeOpen::ALL) 中的序号（从 0 起）。
     OpenWorktree(usize),
@@ -779,6 +781,7 @@ impl MenuCommand {
             MenuCommand::VimClipboard(i) => winc_config::VimClipboard::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::vim_clipboard_label(choice)),
+            MenuCommand::VimKeyOwner(vim) => crate::layout::vim_key_owner_label(vim),
             MenuCommand::OpenWorktree(i) => winc_config::WorktreeOpen::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::open_worktree_label(choice)),
@@ -998,6 +1001,8 @@ pub enum MenuTarget {
     Whitespace,
     /// 设置的编辑器页中的「Vim 剪贴板」。
     VimClipboard,
+    /// 设置的编辑器页中「快捷键冲突」的一行：`Ctrl` 与这个字符的组合。
+    VimKey(char),
     /// 设置的 Git 页中的「打开工作树」。
     OpenWorktree,
     /// 设置的 Git 页中的「拉取方式」。

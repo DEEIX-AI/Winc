@@ -159,6 +159,8 @@ pub struct State {
     pub vim_commands: Vec<String>,
     /// Vim 模式的查找历史，从旧到新，最多 `MAX_VIM_HISTORY` 条。
     pub vim_searches: Vec<String>,
+    /// 是否已经提示过 Vim 模式接管了编辑区也在用的 `Ctrl` 键：只在第一次遇到时提示。
+    pub vim_keys_noticed: bool,
 }
 
 /// Vim 模式的两种历史各自记录的条数上限（条）。
@@ -638,6 +640,7 @@ impl State {
             .unwrap_or(false);
         state.markdown_toc_pinned =
             root.get("markdownTocPinned").and_then(Json::as_bool) == Some(true);
+        state.vim_keys_noticed = root.get("vimKeysNoticed").and_then(Json::as_bool) == Some(true);
         state.recent_languages = (root.get("recentLanguages").and_then(Json::as_array))
             .unwrap_or_default()
             .iter()
@@ -806,6 +809,9 @@ impl State {
         }
         if self.markdown_toc_pinned {
             fields.push(("markdownTocPinned", Json::Bool(true)));
+        }
+        if self.vim_keys_noticed {
+            fields.push(("vimKeysNoticed", Json::Bool(true)));
         }
         if !self.recent_languages.is_empty() {
             let recent = self.recent_languages.iter().cloned().map(Json::String);

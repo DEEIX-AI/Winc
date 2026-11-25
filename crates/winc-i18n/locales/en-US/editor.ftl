@@ -227,6 +227,7 @@ editor-vim-help-supported = supported
 editor-vim-help-unsupported = unsupported
 editor-vim-help-ex = Command-line commands (the bracketed part is optional)
 editor-vim-help-options = Options for :set (abbreviation in parentheses)
+editor-vim-key-notice = { $key } was handled by Vim, so { $action } didn’t run
 
 ## Copy and paste.
 

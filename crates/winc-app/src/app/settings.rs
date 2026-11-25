@@ -23,7 +23,7 @@ use super::editor::format::{task_commands, task_commands_mut};
 use super::input::context_menu::{MenuTarget, menu_below, tool_setting as tool_setting_of};
 use super::*;
 use crate::keymap::{self, Os, Stroke};
-use crate::layout::{KeyRows, KeysLayout, SettingsView, ToolLanguages};
+use crate::layout::{KeyRows, KeysLayout, Listed, SettingsView};
 
 /// 设置浮层的状态。
 #[derive(Debug, Default)]
@@ -54,10 +54,11 @@ pub struct SettingsState {
     pub(crate) integration: crate::shell_integration::Integration,
     /// 取值与默认不同的设置项：名称后面有「恢复默认」。打开设置和配置变化时重新算。
     pub changed: Vec<Setting>,
-    /// 格式化页列出的语言。
+    /// 随状态列出的行。
     ///
-    /// 打开设置时确定，打开期间只会增加，不会减少，已列出的语言也不换位置。
-    pub languages: ToolLanguages,
+    /// 格式化页的语言在打开设置时确定，打开期间只会增加，不会减少，已列出的语言也不换位置；
+    /// Vim 的冲突键随 Vim 模式和键位表的变化重新算。
+    pub listed: Listed,
     /// 格式化页每一行（格式化工具、修复工具）上显示的内容。
     pub tool_rows: Vec<(Setting, FormatRow)>,
     /// 正在后台查询 WSL 发行版中装了哪些工具，查完后重新计算各行。
@@ -141,7 +142,7 @@ pub struct FormatRow {
     pub removable: bool,
 }
 
-impl ToolLanguages {
+impl Listed {
     /// 返回 `task`（格式化或修复）那一组列出的语言。
     fn of(&mut self, task: Task) -> &mut Vec<&'static str> {
         match task {
@@ -215,7 +216,8 @@ impl App {
         self.settings.error = self.broken_font(self.settings.selected.page());
         self.settings.keyboard = false;
         self.settings.hover = None;
-        self.settings.languages = ToolLanguages::default();
+        self.settings.listed = Listed::default();
+        self.refresh_vim_key_rows();
         // 每次打开设置重新查询发行版中的工具：其间新安装的能列出来。
         self.format.formatter.forget_wsl();
         self.refresh_format_rows(true);
@@ -416,7 +418,7 @@ impl App {
         let view = SettingsView {
             page: self.settings.selected.page(),
             query: self.settings.search.text(),
-            languages: &self.settings.languages,
+            listed: &self.settings.listed,
             terminal: self
                 .motion
                 .module_fx
@@ -445,11 +447,11 @@ impl App {
 
     /// 返回键盘上下移动经过的设置项：搜索时为搜索结果，否则为各页的全部设置项。
     fn settings_items(&self) -> Vec<Setting> {
-        let (languages, modules) = (&self.settings.languages, self.settings_modules());
+        let (listed, modules) = (&self.settings.listed, self.settings_modules());
         if self.settings_searching() {
-            Setting::found(self.settings.search.text(), languages, modules)
+            Setting::found(self.settings.search.text(), listed, modules)
         } else {
-            Setting::all(languages, modules)
+            Setting::all(listed, modules)
         }
     }
 
@@ -637,6 +639,16 @@ impl App {
         } else {
             Focus::Settings
         };
+        self.settings_scroll_into_view();
+        self.request_redraw();
+    }
+
+    /// 打开设置，切到 `setting` 所在的页，选中并滚动到这一项；选中的一行铺上底色，便于找到。
+    pub(in crate::app) fn show_setting(&mut self, setting: Setting) {
+        self.open_settings();
+        self.settings_show_page(setting.page());
+        self.settings.selected = setting;
+        self.settings.keyboard = true;
         self.settings_scroll_into_view();
         self.request_redraw();
     }

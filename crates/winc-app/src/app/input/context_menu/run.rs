@@ -285,6 +285,11 @@ impl App {
                     self.set_pull_mode(choice);
                 }
             }
+            MenuTarget::VimKey(c) => {
+                if let MenuCommand::VimKeyOwner(vim) = command {
+                    self.set_vim_key_owner(c, vim);
+                }
+            }
             MenuTarget::VimClipboard => {
                 if let MenuCommand::VimClipboard(i) = command
                     && let Some(&choice) = winc_config::VimClipboard::ALL.get(i)
