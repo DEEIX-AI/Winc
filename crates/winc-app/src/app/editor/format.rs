@@ -66,8 +66,9 @@ pub struct FormatState {
     /// 关闭标签或退出时选择了「保存」，正在为其中一个文件格式化：保存完成后继续处理其余文件。
     pub then_close: Option<SavePrompt>,
     running: Vec<Running>,
-    /// 正在后台查找工具的文档，以及完成后是否继续保存：选工具要逐级检查项目中的文件（远端的
-    /// 文件要读那台主机上的文件），不能在界面线程上进行。
+    /// 正在后台选择工具的文档，以及完成后是否继续保存。
+    ///
+    /// 选择工具要逐级检查项目中的文件（远端的文件要读取那台主机上的文件），不能在界面线程上进行。
     planning: Vec<(DocumentId, bool)>,
     /// 后台查好的工具送回的通道。
     planned: (Sender<Planned>, Receiver<Planned>),
@@ -129,10 +130,9 @@ pub(in crate::app) struct CommitTool {
 }
 
 impl CommitTool {
-    /// 选择提交前格式化文件 `path` 的工具；不能不经询问就格式化时返回 `None`，这个文件照原样
-    /// 提交。
+    /// 选择提交前格式化文件 `path` 的工具；需要先征得用户同意时返回 `None`，该文件按原样提交。
     ///
-    /// 还没有允许运行的项目工具或项目命令跳过，提交途中不弹出询问；用户此前的选择取自 `state`。
+    /// 尚未允许运行的项目工具或项目命令跳过，提交途中不弹出询问；用户此前的选择取自 `state`。
     /// `root` 是打开的目录。逐级检查项目中的文件，应在后台线程调用。
     pub(in crate::app) fn plan(
         &self,
@@ -273,7 +273,7 @@ impl App {
         }
     }
 
-    /// 返回提交前格式化磁盘上的文件 `path` 所用工具的设置；这个文件不格式化时返回 `None`。
+    /// 返回提交前格式化磁盘上的文件 `path` 所用工具的设置；该文件不格式化时返回 `None`。
     ///
     /// 工具的选法与手动格式化相同（项目设置 `project` 优先于用户设置）。保存时不格式化的语言、
     /// 远端的文件都跳过。不访问磁盘，工具由 [`CommitTool::plan`] 在后台选择。
@@ -406,7 +406,7 @@ impl App {
     /// # Errors
     ///
     /// 未能开始时返回 [`FormatError`]：文档不可格式化、用户不允许保存时执行，或无法弹出询问。
-    /// 选工具时的问题（没有可用的工具、命令引用的程序不存在等）由 [`App::poll_formatting`] 处理。
+    /// 选择工具时的问题（没有可用的工具、命令引用的程序不存在等）由 [`App::poll_formatting`] 处理。
     fn start(
         &mut self,
         task: Task,
@@ -486,7 +486,7 @@ impl App {
             root,
             project,
         };
-        // 选工具要逐级检查项目中的文件，在后台进行，选好后由 [`App::poll_formatting`] 继续处理。
+        // 选择工具要逐级检查项目中的文件，在后台进行，选好后由 [`App::poll_formatting`] 继续处理。
         self.format.planning.push((id, save));
         let sender = self.format.planned.0.clone();
         let formatter = self.format.formatter.clone();
@@ -499,8 +499,7 @@ impl App {
         Ok(())
     }
 
-    /// 用后台选好并检查过（见 [`fit`]）的工具 `plan` 开始格式化：必要时先询问用户能否运行，
-    /// 再交给后台。
+    /// 用后台选好、经过 [`fit`] 检查的工具 `plan` 开始格式化，必要时先询问用户能否运行。
     ///
     /// # Errors
     ///
@@ -669,7 +668,7 @@ impl App {
         // 后台选好了工具：随后询问、运行；期间又要求保存的一并保存。
         while let Ok((mut launch, plan)) = self.format.planned.1.try_recv() {
             let (task, id) = (launch.task, launch.id);
-            // 选工具期间标签已关闭（见 [`App::cancel_format`]）：丢弃，不再运行。
+            // 选择工具期间标签已关闭（见 [`App::cancel_format`]）：丢弃结果，不运行工具。
             let Some(at) = self.format.planning.iter().position(|p| p.0 == id) else {
                 continue;
             };
@@ -894,7 +893,7 @@ impl App {
         true
     }
 
-    /// 标签关闭时停止该标签的格式化，并丢弃结果；正在后台选工具的，选好后不再运行。
+    /// 标签关闭时停止该标签的格式化并丢弃结果；正在后台选择工具的，选好后也不运行。
     pub(in crate::app) fn cancel_format(&mut self, id: DocumentId) {
         if let Some(index) = self.format.running.iter().position(|r| r.id == id) {
             self.format.running.remove(index).cancel.cancel();
@@ -914,7 +913,7 @@ impl App {
         self.format.notes.clear();
     }
 
-    /// 文档 `id` 是否正在格式化（修复），包括正在后台选工具。
+    /// 文档 `id` 是否正在格式化（修复），包括正在后台选择工具。
     pub(in crate::app) fn is_formatting(&self, id: DocumentId) -> bool {
         self.format.running.iter().any(|r| r.id == id)
             || self.format.planning.iter().any(|(d, _)| *d == id)
@@ -997,8 +996,9 @@ fn approval(plan: &Plan, root: Option<&Path>, project: Option<&str>) -> Option<A
     })
 }
 
-/// 检查为 `launch` 选好的工具 `plan` 能否使用，返回限定了区段的计划；需检查文件，应在后台
-/// 线程调用。
+/// 检查为 `launch` 选好的工具 `plan` 能否使用，返回限定了区段的计划。
+///
+/// 需要检查文件是否存在，应在后台线程调用。
 ///
 /// # Errors
 ///
@@ -1007,8 +1007,8 @@ fn fit(mut plan: Plan, launch: &Launch, formatter: &Formatter) -> Result<Plan, F
     if let Some(range) = &launch.range {
         plan.restrict(range)?;
     }
-    // 命令中写的相对路径指向不存在的程序时，无需询问能否运行，直接报错。远端的程序在运行时
-    // 找不到再报错。
+    // 命令中的相对路径指向不存在的程序时直接报错，无需询问能否运行。
+    // 远端的程序不在此检查，运行时找不到程序同样报错。
     if matches!(plan.program, Program::Project { .. })
         && !launch.remote
         && formatter.installed(&plan.program) == Some(false)

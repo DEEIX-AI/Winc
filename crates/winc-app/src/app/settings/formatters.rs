@@ -56,8 +56,9 @@ impl ToolPlans {
         self.plans.keys().any(|(_, _, command)| command.is_none())
     }
 
-    /// 返回 `language_id` 的 `task` 使用命令 `command`（`None` 为自动选择）时的选择；尚未算出时
-    /// 返回 `None`。
+    /// 返回 `language_id` 的 `task` 使用命令 `command` 时的选择；尚未算出时返回 `None`。
+    ///
+    /// `command` 为 `None` 表示自动选择。
     fn get(&self, task: Task, language_id: &'static str, command: Option<&str>) -> Option<&Chosen> {
         let key = (task, language_id, command.map(str::to_owned));
         self.plans.get(&key)
@@ -66,7 +67,7 @@ impl ToolPlans {
 
 #[cfg(test)]
 impl ToolPlans {
-    /// 标记为有一次计算正在后台进行，之后缺少的选择不再交给后台（测试用：模拟结果尚未送回）。
+    /// 标记为有一次计算正在后台进行，使缺少的选择暂不交给后台（测试用：模拟结果尚未送回）。
     #[cfg_attr(not(unix), allow(dead_code))] // 只有 Unix 上的格式化测试用到
     pub(in crate::app) fn hold(&mut self) {
         self.running = true;
@@ -84,8 +85,7 @@ struct Chosen {
 }
 
 impl App {
-    /// 重新计算格式化页每一行上显示的内容；打开设置、修改命令、取到用户 shell 的环境、后台算出
-    /// 工具选择之后调用。
+    /// 重新计算格式化页每一行上显示的内容；打开设置、修改命令和后台送回结果之后调用。
     ///
     /// `list_new` 为 `true` 时先把应列出的新语言补到列表中（见 [`App::list_new_languages`]）。
     /// 项目设置只读一次，两步共用。工具选择取自后台计算的结果，缺少的交给后台补算。
@@ -176,8 +176,8 @@ impl App {
 
     /// 接收后台算出的工具选择，并重新计算格式化页的各行；属于已作废的轮次的结果丢弃。
     ///
-    /// 第一次算出自动选择之前，列表中只有写过命令的语言；算出后补上项目在用的语言，并按语言表
-    /// 的顺序排列一次。
+    /// 第一次算出自动选择之前，列表中只有写过命令的语言；算出后补上项目在用的语言，
+    /// 并按语言表的顺序排列一次。
     pub(in crate::app) fn poll_tool_plans(&mut self) {
         let plans = &mut self.settings.tool_plans;
         let first = !plans.has_auto();
@@ -201,8 +201,8 @@ impl App {
 
     /// 打开的目录位于 WSL 发行版中时，在后台查询还不知道是否安装的工具，查完后重新计算各行。
     ///
-    /// 查询发行版要启动进程，不能在界面线程上等待；同时只进行一轮。`dir` 是选择工具所依据的
-    /// 目录。
+    /// 查询发行版要启动进程，不能在界面线程上等待；同时只进行一轮。
+    /// `dir` 是选择工具所依据的目录。
     fn probe_wsl_tools(&mut self, dir: &Path) {
         if self.settings.probing || winc_editor::wsl::locate_here(dir).is_none() {
             return;
@@ -259,8 +259,8 @@ impl App {
 
     /// 返回不写命令时 `language` 的 `task` 自动选用的工具。
     ///
-    /// 项目中看不出用什么工具时，看装了哪个工具。尚不能确定（后台还没有算出选择，或还没取到用户
-    /// shell 的环境）时返回 `None`，算出之后再计算一遍。不访问磁盘。
+    /// 项目中没有迹象时按已安装的工具选择。后台尚未算出选择或尚未取得用户 shell 的环境时
+    /// 无法确定，返回 `None`，结果送回后重新计算。不访问磁盘。
     fn auto_plan(&self, task: Task, language: &Language) -> Option<Result<Plan, FormatError>> {
         match &self.settings.tool_plans.get(task, language.id, None)?.plan {
             Ok(plan) if plan.is_guess() => self.format.formatter.peek(plan),

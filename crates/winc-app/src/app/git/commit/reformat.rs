@@ -73,8 +73,8 @@ impl App {
         }
         let formatter = self.format.formatter.clone();
         let sender = self.git.commit.results.0.clone();
-        // 选工具要逐级检查项目中的文件，与格式化一起在后台进行；用户对项目工具的选择取自此刻
-        // 的状态。
+        // 选择工具要逐级检查项目中的文件，与格式化一起在后台进行。
+        // 后台核对用户对项目工具的选择时，使用开始整理时状态的副本。
         let workspace = self.editor.root().map(Path::to_path_buf);
         let state = self.state.clone();
         self.git.commit.busy = true;

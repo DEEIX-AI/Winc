@@ -722,7 +722,7 @@ fn one_survey_for_every_language_chooses_what_separate_lookups_choose() {
     let package = r#"{"devDependencies": {"eslint": "^9"}}"#;
     std::fs::write(root.join("packages/package.json"), package).unwrap();
     std::fs::write(root.join("packages/app/.clang-format"), "").unwrap();
-    // 有存放程序的目录，其中没有程序。
+    // 存放程序的目录存在、其中没有程序：覆盖先检查目录、再检查程序的情形。
     std::fs::create_dir_all(root.join("node_modules/.bin")).unwrap();
     let file = deep.join("_");
     let separately =
@@ -733,7 +733,7 @@ fn one_survey_for_every_language_chooses_what_separate_lookups_choose() {
         plan_everything(|task, language| survey.plan(task, language, &file, Some(&root), None));
     assert_eq!(shared, plan_everything(separately));
 
-    // 一轮选择的结果不再更新，其间新建、删除的文件由下一轮反映。
+    // 同一轮选择沿用已查询的结果，其间新建、删除的文件由下一轮反映。
     let typescript = language("typescript");
     std::fs::write(deep.join(".prettierrc.json"), "{}").unwrap();
     std::fs::remove_file(root.join("pyproject.toml")).unwrap();

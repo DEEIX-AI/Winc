@@ -5,12 +5,12 @@ use super::*;
 use crate::test_util::scratch;
 use crate::tools::format::tests::fake_tool;
 
-/// 用单独的一次查询从 `dir` 向上查找项目在用哪个工具。
+/// 查找项目在用哪个工具：从 `dir` 向上，每次使用新的 [`Survey`]。
 fn detected(task: Task, language: &str, dir: &Path) -> Detected {
     detect(&mut Survey::default(), task, language, dir)
 }
 
-/// 用单独的一次查询查找项目自带的程序 `name`。
+/// 查找项目自带的程序 `name`：从 `dir` 向上，每次使用新的 [`Survey`]。
 #[cfg(unix)] // 只有 Unix 上的测试用到
 fn found(name: &str, dir: &Path) -> Option<(PathBuf, PathBuf)> {
     find_in_project(&mut Survey::default(), name, dir)

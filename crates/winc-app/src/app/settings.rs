@@ -58,7 +58,7 @@ pub struct SettingsState {
     pub changed: Vec<Setting>,
     /// 随状态列出的行。
     ///
-    /// 格式化页的语言在打开设置后、后台第一次算出工具选择时按语言表的顺序排好，此后只会增加，
+    /// 格式化页的语言在打开设置后、后台第一次算出工具选择时按语言表的顺序排列，此后只会增加，
     /// 不会减少，已列出的语言也不换位置；Vim 的冲突键随 Vim 模式和键位表的变化重新算。
     pub listed: Listed,
     /// 格式化页每一行（格式化工具、修复工具）上显示的内容。
@@ -222,8 +222,7 @@ impl App {
         self.settings.hover = None;
         self.settings.listed = Listed::default();
         self.refresh_vim_key_rows();
-        // 每次打开设置重新检查项目中的文件、查询发行版中的工具：其间新增的配置和新安装的工具
-        // 能列出来。
+        // 每次打开设置重新检查项目中的文件和发行版中的工具，其间新增的配置、新安装的工具随之列出。
         self.format.formatter.forget_wsl();
         self.settings.tool_plans.restart(self.format_dir());
         self.refresh_format_rows(true);
