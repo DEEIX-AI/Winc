@@ -8,6 +8,14 @@ fn paths_are_quoted_only_when_needed() {
     assert_eq!(shell_quote(Path::new("/a b/c")), "'/a b/c'");
     assert_eq!(shell_quote(Path::new("it's")), r"'it'\''s'");
     assert_eq!(shell_quote(Path::new("$HOME;rm")), "'$HOME;rm'");
+    // Windows 的路径：反斜杠和盘符不需要引号，空格、括号、`&` 需要，用双引号。
+    assert_eq!(windows_quote(r"C:\a\b-c_d.png"), r"C:\a\b-c_d.png");
+    assert_eq!(
+        windows_quote(r"C:\Users\A B\x.png"),
+        r#""C:\Users\A B\x.png""#
+    );
+    assert_eq!(windows_quote(r"C:\a&b (1)\x"), r#""C:\a&b (1)\x""#);
+    assert_eq!(windows_quote("截图.png"), "截图.png");
 }
 
 /// 远端的文件插入在远端主机上的路径，不是本机的虚拟路径。

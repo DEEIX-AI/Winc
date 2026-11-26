@@ -37,6 +37,52 @@ fn pasting_without_text_sends_an_empty_bracketed_paste() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 剪贴板中的图片存为本机文件后粘贴：程序收到一次括号粘贴，内容是文件的路径（按需加引号），
+/// 文件是剪贴板中的 PNG；粘贴期间换了标签时不粘贴，提示存到了哪里。只在 Windows 上由粘贴触发，
+/// 其他平台上粘贴仍是一次空的括号粘贴，由程序自己读取剪贴板。
+#[test]
+fn clipboard_images_saved_as_files_paste_their_path() {
+    let dir = sample_folder("terminal image paste");
+    *crate::app::terminal::local_paste::DIR.lock().unwrap() = Some(dir.join("saved"));
+    let mut app = blank_app(true);
+    show_terminal(&mut app, "\x1b[?2004h");
+    let log = app.attach_recording_helper(&dir);
+    let id = app.terminal.tab().unwrap().id;
+    let png = winc_editor::paste::encode_png(1, 1, &[255, 0, 0, 255]).unwrap();
+    app.clipboard.copied = None;
+    app.clipboard.copied_image = Some(png.clone());
+
+    if !cfg!(windows) {
+        app.terminal_paste();
+        assert_eq!(sent_input(&app, &log), b"\x1b[200~\x1b[201~");
+    }
+    let before = sent_input(&app, &log).len();
+    assert!(app.save_clipboard_image(id));
+    let sent = String::from_utf8(sent_input(&app, &log)[before..].to_vec()).unwrap();
+    let quoted = (sent.strip_prefix("\x1b[200~"))
+        .and_then(|text| text.strip_suffix("\x1b[201~"))
+        .unwrap_or_else(|| panic!("{sent:?}"));
+    // 存放目录的名字里有空格，路径加了引号。
+    let path = quoted.trim_matches(['\'', '"']);
+    assert_ne!(path, quoted);
+    assert!(
+        path.starts_with(dir.join("saved").to_str().unwrap()),
+        "{path}"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), png);
+
+    let before = sent_input(&app, &log).len();
+    app.terminal_image_saved(id + 1, Ok(path.into()));
+    assert_eq!(sent_input(&app, &log).len(), before);
+    let notice = app.notice.text.take().unwrap();
+    assert!(notice.contains("已存为"), "{notice}");
+    app.clipboard.copied_image = None;
+    assert!(!app.save_clipboard_image(id));
+
+    *crate::app::terminal::local_paste::DIR.lock().unwrap() = None;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Alt 是否视为 Meta：macOS 上按 `terminal.optionAsMeta` 判断，其他平台一律视为 Meta。
 ///
 /// winit 的 `KeyEvent` 无法在其 crate 之外构造，因此通过 SGR 鼠标上报检查：Meta 对应按钮编号

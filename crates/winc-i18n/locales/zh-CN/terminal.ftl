@@ -76,9 +76,10 @@ terminal-upload-failed = 无法把剪贴板中的内容传到远端主机：{ $e
 terminal-upload-folder = 不能把文件夹粘贴到远端终端：{ $name }
 terminal-upload-too-large = { $size } 太大，没有传到远端主机（每次最多 { $limit }）
 terminal-upload-no-image = 剪贴板中的图片无法读取
-terminal-image-paste-failed = 无法粘贴剪贴板中的图片：{ $error }
 terminal-upload-no-folder = 无法在远端主机上创建存放目录
 terminal-upload-elsewhere = 已传到远端主机：{ $path }
+terminal-image-paste-failed = 无法粘贴剪贴板中的图片：{ $error }
+terminal-image-saved-elsewhere = 剪贴板中的图片已存为：{ $path }
 
 ## 运行配置。
 
