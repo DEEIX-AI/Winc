@@ -25,6 +25,7 @@ mod git;
 mod git_layout;
 mod git_overflow;
 mod input;
+mod lsp;
 #[cfg(target_os = "macos")]
 mod memory;
 mod pictures;

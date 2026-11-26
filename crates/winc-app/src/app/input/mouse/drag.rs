@@ -22,6 +22,9 @@ impl App {
     /// 处理鼠标移动到窗口坐标 (`x`, `y`)（逻辑像素）：更新悬停、指针样式和进行中的拖动。
     pub(in crate::app) fn on_mouse_move(&mut self, x: f32, y: f32) {
         self.pointer.mouse = (x, y);
+        // 悬停计时按鼠标事件起算：普通移动不一定触发重绘，只靠每帧的 `prepare_frame` 会漏掉
+        // 最后的移动，气泡就时有时无。到期的唤醒由 `tick` 的 `hover_tick` 负责。
+        self.track_diagnostic_hint(Instant::now());
         self.update_scrollbar_hover(x, y);
         self.track_pdf_tools(x, y);
 
@@ -467,6 +470,7 @@ impl App {
             } => {}
             Drag::Minimap { from, scroll } => self.drag_minimap(y, from, scroll),
             Drag::LogText => self.drag_log_text(x, y),
+            Drag::HintText => self.drag_hint_text(x, y),
             Drag::Hex => self.drag_hex(x, y),
             Drag::MarkdownText => self.drag_markdown(x, y),
             Drag::ImageResize => self.drag_image_resize(x),

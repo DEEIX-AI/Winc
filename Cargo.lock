@@ -3182,6 +3182,7 @@ dependencies = [
  "winc-editor",
  "winc-emoji",
  "winc-i18n",
+ "winc-lsp",
  "winc-preview",
  "winc-pty",
  "winc-render",
@@ -3259,6 +3260,13 @@ dependencies = [
  "fluent-syntax",
  "sys-locale",
  "unic-langid",
+]
+
+[[package]]
+name = "winc-lsp"
+version = "0.0.0"
+dependencies = [
+ "winc-config",
 ]
 
 [[package]]

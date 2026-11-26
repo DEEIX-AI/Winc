@@ -52,6 +52,9 @@ impl App {
         Self {
             editor,
             terminal: terminal::TerminalPanel::default(),
+            lsp: lsp::LspState::default(),
+            completion: editor::completion::Completion::default(),
+            diagnostics: editor::diagnostics::Diagnostics::default(),
             run: terminal::run::RunConfigs::default(),
             store: crate::app::settings::Store {
                 saved_config: config.clone(),
@@ -165,6 +168,7 @@ impl App {
             },
             jumps: crate::app::editor::Jumps {
                 name_hint: None,
+                hint_selection: None,
                 navigation: Default::default(),
                 definitions: None,
             },

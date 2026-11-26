@@ -18,7 +18,15 @@ impl App {
         // 跳转过渡期间绘制的是插值位置，而命中测试按滚动位置换算：过渡停在屏幕上显示的位置。
         self.settle_glides();
         self.scroll.fling = None;
-        self.dismiss_hint();
+        // 按在诊断气泡上时气泡要留着（选中消息文字、复制），其余位置的按下照旧收起气泡。
+        let on_hint = self.jumps.name_hint.is_some()
+            && self
+                .hits
+                .hint_hover
+                .is_some_and(|hover| hover.contains(x, y));
+        if !on_hint {
+            self.dismiss_hint();
+        }
 
         // 窗口内的提示框、菜单打开时，这次按下只交给它们：点在菜单外面即关掉菜单。
         if (button == MouseButton::Left && self.alert_mouse_down())
@@ -303,6 +311,7 @@ impl App {
             Target::Tree(_) => self.click_tree(x, y),
             Target::Placeholder(action) => self.run_placeholder_action(action),
             Target::Suggest(row) => self.accept_suggest(row),
+            Target::Completion(row) => self.click_completion(row),
             Target::SelectionTool(tool) => self.run_selection_tool(tool),
             // 文件栏的右边缘：双击恢复默认宽度，否则开始拖动。
             Target::Diff(crate::app::DiffTarget::FilesEdge) => {
@@ -398,6 +407,13 @@ impl App {
                 let count = self.click_count(x, y);
                 if self.press_log_text(x, y, count) {
                     self.pointer.drag = Drag::LogText;
+                }
+            }
+            Target::HintText => {
+                // 诊断气泡里：选字（双击选一整行），按在空白处清掉选中。
+                let count = self.click_count(x, y);
+                if self.press_hint_text(x, y, count) {
+                    self.pointer.drag = Drag::HintText;
                 }
             }
             Target::Editor => self.click_editor(x, y),

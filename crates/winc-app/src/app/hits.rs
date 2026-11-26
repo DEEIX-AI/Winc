@@ -99,6 +99,10 @@ pub struct Hits {
     pub(crate) suggest_card: Option<Rect>,
     /// 上一帧绘制的链接地址补全列表的各行：位置和行号。
     pub(crate) suggest: Vec<(Rect, usize)>,
+    /// 上一帧绘制的语义补全列表的卡片；没有画出列表时为 `None`。
+    pub(crate) completion_card: Option<Rect>,
+    /// 上一帧绘制的语义补全列表的各行：位置和行号。
+    pub(crate) completion: Vec<(Rect, usize)>,
     /// 上一帧绘制的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
     pub(crate) markdown_toc: Vec<(winc_render::Rect, crate::app::preview::markdown::TocTarget)>,
     /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
@@ -125,6 +129,12 @@ pub struct Hits {
     pub(crate) tab_switch: Vec<(Rect, usize)>,
     /// `.http` 文件行号栏中发送请求的按钮的位置和请求行的行号（从 0 起）。
     pub(crate) http_runs: Vec<(Rect, usize)>,
+    /// 上一帧绘制的诊断气泡卡片；没有气泡时为 `None`。
+    pub(crate) hint_card: Option<Rect>,
+    /// 上一帧诊断气泡连同指向文字的小三角所占的区域；鼠标在这里时气泡保持显示。
+    pub(crate) hint_hover: Option<Rect>,
+    /// 上一帧诊断气泡中可选中复制的各行文字（位置与每个字符的右边界）。
+    pub(crate) hint_lines: Vec<crate::app::editor::hint::HintLine>,
 }
 
 impl Hits {
@@ -174,6 +184,8 @@ impl Hits {
             markdown_toc_blocks,
             suggest_card,
             suggest,
+            completion_card,
+            completion,
             selection_card,
             selection_tools,
             pdf_thumbs,
@@ -184,12 +196,20 @@ impl Hits {
             keys_parts,
             tab_switch,
             http_runs,
+            hint_card,
+            hint_hover,
+            hint_lines,
         } = self;
+        *hint_card = None;
+        *hint_hover = None;
+        hint_lines.clear();
         start.clear();
         *suggest_card = None;
+        *completion_card = None;
         *selection_card = None;
         selection_tools.clear();
         suggest.clear();
+        completion.clear();
         placeholder.clear();
         folded.clear();
         long_lines.clear();
