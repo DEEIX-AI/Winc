@@ -2,7 +2,7 @@
 //!
 //! 快捷键和命令面板都经由 [`App::run_action`] 执行，每个命令只有一处实现。
 
-use winc_core::transform::Case;
+use winc_core::transform::{Case, JsonLayout};
 use winc_editor::panes::Axis;
 use winc_editor::{Command, EntryKind, FoldCommand};
 use winc_preview::markdown::paragraph::Kind;
@@ -358,6 +358,8 @@ impl App {
                     },
                 );
             }
+            PrettyPrintJson => self.reformat_json(JsonLayout::Pretty),
+            MinifyJson => self.reformat_json(JsonLayout::Compact),
             IndentUsingSpaces => self.use_indent(false),
             IndentUsingTabs => self.use_indent(true),
             ConvertIndentationToSpaces => self.convert_indentation(false),

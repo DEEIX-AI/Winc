@@ -149,6 +149,8 @@ impl Action {
             TrimTrailingWhitespace => "Trim Trailing Whitespace",
             UnescapeUnicode => "Convert Unicode Escapes to Characters",
             EscapeUnicode => "Convert Characters to Unicode Escapes",
+            PrettyPrintJson => "Pretty-Print JSON",
+            MinifyJson => "Minify JSON",
             IndentUsingSpaces => "Indent Using Spaces",
             IndentUsingTabs => "Indent Using Tabs",
             ConvertIndentationToSpaces => "Convert Indentation to Spaces",

@@ -17,6 +17,7 @@ use ropey::Rope;
 use winc_core::edit::{EditKind, Transaction};
 use winc_core::selection::merge;
 use winc_core::text::{Aligned, CellLayout, ColumnWidths, Columns};
+use winc_core::transform::{JsonError, JsonLayout};
 use winc_core::{History, Indent, LineEnding, Lines, Selection, diff, indent, transform};
 use winc_i18n::t;
 use winc_syntax::{Highlighter, LineState};
@@ -1131,6 +1132,23 @@ impl Document {
             }
         }
         None
+    }
+
+    /// 返回按 `layout` 美化或压缩 JSON（[`Command::ReformatJson`]）时第一个无法转换的选区的原因，
+    /// 先看主选区；都能转换时返回 `None`。
+    pub fn json_problem(&self, layout: JsonLayout) -> Option<JsonError> {
+        let (unit, line_ending) = (self.indent().unit(), self.line_ending.as_str());
+        let whole = self.json_whole_file();
+        self.all_selections().find_map(|selection| {
+            transform::reformat_json(&self.text, selection, layout, unit, line_ending, whole).err()
+        })
+    }
+
+    /// 没有选区时美化、压缩 JSON 是否检查整个文件。
+    ///
+    /// 大文件和超过 [`EDIT_LIMIT`] 的文件不检查，只看光标所在的行。
+    pub(crate) fn json_whole_file(&self) -> bool {
+        !self.is_large() && self.text.byte_len(0, self.text.end_pos()) <= EDIT_LIMIT
     }
 
     /// 返回第 `line` 行（从 0 起）开头的高亮状态。
