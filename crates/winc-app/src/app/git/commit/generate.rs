@@ -135,10 +135,10 @@ impl App {
         }
         generating.running = None;
         match result {
+            // 只换掉提交信息、不移动焦点：生成期间可能已经在别处输入。
             Ok(message) => {
                 self.git.commit.message.set_text(&message);
                 self.git.commit.message.set_caret(message.len(), false);
-                self.focus = Focus::CommitMessage;
                 self.reset_blink();
             }
             Err(e) => self.notify(NoticeKind::Error, t!("git-generate-failed", error = e)),

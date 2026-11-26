@@ -43,9 +43,15 @@ impl Endpoint {
     pub fn from_config(config: &Config) -> Option<Endpoint> {
         let protocol = config.ai_protocol.unwrap_or_default();
         let base_url = (config.ai_base_url.as_deref()).unwrap_or(protocol.default_base_url());
+        let base_url = base_url.trim().trim_end_matches('/');
+        // 没写协议时按 HTTPS：`curl` 对没有协议的地址默认用 HTTP，密钥会以明文发送。
+        let base_url = match base_url.contains("://") {
+            true => base_url.to_owned(),
+            false => format!("https://{base_url}"),
+        };
         Some(Endpoint {
             protocol,
-            base_url: base_url.trim().trim_end_matches('/').to_owned(),
+            base_url,
             model: config.ai_model.as_deref()?.trim().to_owned(),
             api_key: (config.ai_api_key.as_deref()).map(|key| key.trim().to_owned()),
             timeout: config.ai_timeout.unwrap_or(Config::AI_TIMEOUT),
@@ -91,6 +97,7 @@ pub fn complete(
 
     curl.args(["--silent", "--show-error", "--include"])
         .args(["--max-time", &endpoint.timeout.to_string()])
+        .args(["--proto", "=http,https"])
         .args(["--config", "-"])
         .stderr(Stdio::piped());
     let timeout = Duration::from_secs(endpoint.timeout) + TIMEOUT_GRACE;
@@ -193,9 +200,16 @@ fn headers(endpoint: &Endpoint) -> Vec<(&'static str, String)> {
 /// 从成功的响应中取出生成的文本；分为多段时按顺序拼接。
 fn reply_text(protocol: AiProtocol, reply: &Json) -> Option<String> {
     let parts: Vec<&str> = match protocol {
+        // 内容通常是字符串，部分兼容接口以分段的数组返回。
         AiProtocol::ChatCompletions => {
             let choice = reply.get("choices")?.as_array()?.first()?;
-            vec![choice.get("message")?.get("content")?.as_str()?]
+            let content = choice.get("message")?.get("content")?;
+            match content.as_str() {
+                Some(text) => vec![text],
+                None => items(choice.get("message")?, "content", "text")
+                    .filter_map(|part| part.get("text")?.as_str())
+                    .collect(),
+            }
         }
         AiProtocol::Responses => items(reply, "output", "message")
             .flat_map(|message| items(message, "content", "output_text"))

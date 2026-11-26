@@ -21,7 +21,7 @@ impl App {
                 | CommitTarget::StashFile(_)
                 | CommitTarget::StashApply(_)
                 | CommitTarget::StashMenu(_)
-                | CommitTarget::History(HistoryTarget::Commit(_) | HistoryTarget::File(_))
+                | CommitTarget::History(HistoryTarget::Commit(_))
         );
         let history = matches!(target, CommitTarget::History(_));
         let stale = self.git.commit.hits_generation != self.git.generation

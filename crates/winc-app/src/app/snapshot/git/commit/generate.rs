@@ -39,8 +39,8 @@ fn the_button_follows_the_switch() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 改动、未跟踪的文件和最近的提交发送给模型；回答填入信息框，撤销后恢复原有内容。没有 `curl`
-/// 或配置了代理（请求无法到达本机的临时服务端）时跳过。
+/// 改动、未跟踪的文件和最近的提交发送给模型；回答填入信息框、焦点不动，撤销后恢复原有内容。
+/// 没有 `curl` 或配置了代理（请求无法到达本机的临时服务端）时跳过。
 #[test]
 fn the_generated_message_fills_the_box_and_can_be_undone() {
     use std::io::{BufRead, BufReader, Read, Write};
@@ -90,12 +90,14 @@ fn the_generated_message_fills_the_box_and_can_be_undone() {
         .collect();
     app.set_commit_checked(&paths, true);
     app.git.commit.message.set_text("草稿");
+    app.focus = Focus::Editor;
 
     app.run_action(Action::GitGenerateCommitMessage);
     app.poll_commit();
     assert!(!app.git.commit.generating.running());
     assert_eq!(app.git.commit.message.text(), "feat: 加入入口\n\n说明");
-    assert_eq!(app.focus, Focus::CommitMessage);
+    // 结果到达时不移动焦点：生成期间可能已经在别处输入。
+    assert_eq!(app.focus, Focus::Editor);
     assert!(app.git.commit.message.undo());
     assert_eq!(app.git.commit.message.text(), "草稿");
 

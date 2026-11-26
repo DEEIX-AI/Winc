@@ -41,6 +41,7 @@ mod stash;
 mod worktrees;
 
 use header::*;
+pub(in crate::view) use history::draw_history_card;
 use history::*;
 use names::*;
 pub(in crate::view::git) use names::{dir_parts, draw_name, file_parts, parts_width};

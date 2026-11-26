@@ -46,6 +46,22 @@ git-branch-force-delete-confirm-button = Delete Anyway
 git-branch-compare-with-current = Compare with Current Branch
 git-history-group = Commit History
 git-history-more = View Earlier Commits in Log
+git-history-card-time = { $relative } ({ $absolute })
+git-history-card-byline = { ", " }{ $time }
+git-history-card-files = { $count ->
+    [one] { $count } file changed
+   *[other] { $count } files changed
+}
+git-history-card-added = { $count ->
+    [one] { $count } insertion(+)
+   *[other] { $count } insertions(+)
+}
+git-history-card-removed = { $count ->
+    [one] { $count } deletion(−)
+   *[other] { $count } deletions(−)
+}
+git-history-card-separator = { ", " }
+git-history-card-failed = Couldn’t read the changed files
 git-stash-group = Stashes
 git-peek-more-files = { $count ->
     [one] { $count } more file

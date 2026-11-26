@@ -23,6 +23,10 @@ fn the_endpoint_falls_back_to_the_official_address_and_needs_a_model() {
     config.ai_base_url = Some("http://localhost:11434/v1/".into());
     let endpoint = Endpoint::from_config(&config).unwrap();
     assert_eq!(endpoint.base_url, "http://localhost:11434/v1");
+    config.ai_base_url = Some("api.example.com/v1".into());
+    let endpoint = Endpoint::from_config(&config).unwrap();
+    assert_eq!(endpoint.base_url, "https://api.example.com/v1");
+    config.ai_base_url = None;
     assert_eq!(endpoint.timeout, Config::AI_TIMEOUT);
     config.ai_timeout = Some(90);
     assert_eq!(Endpoint::from_config(&config).unwrap().timeout, 90);
@@ -80,6 +84,12 @@ fn the_text_is_read_from_each_protocol_reply() {
     let chat = r#"{"choices":[{"message":{"role":"assistant","content":"fix: a"}}]}"#;
     assert_eq!(
         text(AiProtocol::ChatCompletions, chat).as_deref(),
+        Some("fix: a")
+    );
+    let parts = r#"{"choices":[{"message":{"content":[{"type":"text","text":"fix: "},
+        {"type":"text","text":"a"}]}}]}"#;
+    assert_eq!(
+        text(AiProtocol::ChatCompletions, parts).as_deref(),
         Some("fix: a")
     );
     let responses = r#"{"output":[{"type":"reasoning","summary":[]},

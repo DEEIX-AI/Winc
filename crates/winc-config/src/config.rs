@@ -988,10 +988,12 @@ impl Config {
         if original.is_none() || comments {
             let path = path.with_extension("json.bak");
             std::fs::write(&path, &old)?;
+            private_if(base.ai_api_key.is_some(), &path)?;
             backup = Some(Backup { path, comments });
         }
         let text = self.render(original.map(|root| (root, base)));
         write_atomic(path, &text)?;
+        private_if(self.ai_api_key.is_some(), path)?;
         Ok(Saved {
             config: Config::parse(&text).0,
             backup,
@@ -1017,6 +1019,23 @@ pub struct Backup {
     pub path: PathBuf,
     /// 原文件可以解析但含有注释（写出的文件不保留注释）时为真；原文件无法解析时为假。
     pub comments: bool,
+}
+
+/// `secret` 为真（写有接口密钥）时把文件 `path` 设为只有本人可以读写，同一台机器上的其他用户
+/// 读不到；其他平台上不做处理。
+///
+/// # Errors
+///
+/// 修改权限失败时返回 `std::io::Error`。
+fn private_if(secret: bool, path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if secret {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (secret, path);
+    Ok(())
 }
 
 /// 返回用户级配置文件的路径；无法确定用户目录时返回 `None`。
