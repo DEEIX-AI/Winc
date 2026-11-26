@@ -995,3 +995,65 @@ fn the_split_preview_shows_the_source_caret_in_its_text() {
     assert!(shown(&app, target));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 回归：超过 `SHED_BLOCKS` 的长文档跨出 `Near` 缓冲滚动时就地刷新可见块与释放远端块，
+/// 单块实时输入时就地修补并平移后续块坐标，转为标题（外边距变化）时正常回退完整排版。
+#[test]
+fn long_document_refreshes_near_and_patches_single_block_edits_in_place() {
+    let mut text = String::new();
+    for i in 0..600 {
+        text.push_str(&format!(
+            "第 {i} 段正文内容用于测试长文档滚动与单块就地修补。\n\n"
+        ));
+    }
+    let (mut app, dir) = live_doc("md-near-patch", &text);
+
+    // 确认已启用远端块释放，顶部块已排好、末尾块已释放。
+    let initial_height = {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        assert!(laid.near.is_some());
+        assert!(!laid.blocks[0].1.is_shed());
+        assert!(laid.blocks[599].1.is_shed());
+        laid.height
+    };
+
+    // 滚动到文档中部（远超 `Near` 缓冲）：触发 `refresh_near`，中部块被水合，顶部块被释放。
+    let mid_top = app.preview.markdown.layout.as_ref().unwrap().tops[300];
+    app.preview.markdown.scroll_to(mid_top);
+    paint(&mut app);
+    {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        assert!(!laid.blocks[300].1.is_shed(), "视口附近块应已就地水合");
+        assert!(laid.blocks[0].1.is_shed(), "远离视口的旧块应已释放");
+        assert!((laid.height - initial_height).abs() < 0.5);
+    }
+
+    // 在第 300 段输入多段文字导致折行增高：触发 `patch_edited`，后续块纵坐标精确平移。
+    put_caret(
+        &mut app,
+        "第 300 段正文内容用于测试长文档滚动与单块就地修补。",
+        true,
+    );
+    let before_next_top = app.preview.markdown.layout.as_ref().unwrap().tops[301];
+    let before_height = app.preview.markdown.layout.as_ref().unwrap().height;
+    let extra = "补充一长段新内容以确保当前段落在标准宽度下产生折行高度变化。".repeat(4);
+    app.run(winc_editor::Command::Insert(extra));
+    settle(&mut app);
+    let (after_next_top, after_height) = {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        (laid.tops[301], laid.height)
+    };
+    let dy = after_next_top - before_next_top;
+    assert!(dy > 10.0, "折行增高后下一块应下移: dy={dy}");
+    assert!((after_height - before_height - dy).abs() < 0.5);
+
+    // 在第 301 段开头键入 `# ` 转为一级标题：外边距改变，回退完整排版且与目录一致。
+    put_caret(&mut app, "第 301 段", false);
+    let h_before = app.preview.markdown.layout.as_ref().unwrap().height;
+    app.run(winc_editor::Command::Insert("# ".into()));
+    settle(&mut app);
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
+    assert!(laid.height > h_before + 10.0);
+    assert!(laid.sections[301].is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}

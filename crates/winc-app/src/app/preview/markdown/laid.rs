@@ -8,11 +8,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use winc_render::{Color, Frame, Rect};
-use winc_typeset::{Colors, Cx, Env, Item, LaidBlock, Out, Raw, Span, margins};
+use winc_typeset::{Colors, Cx, Env, Item, LaidBlock, Span, margins};
 
 pub(crate) use winc_typeset::{DETAILS, Memo};
 
 use crate::app::{App, Focus};
+
+mod incremental;
+use incremental::{block_has_toggle, layout_one_block, live_raw, prepare_memo};
 
 /// 没有设置 `markdown.size` 时正文字号与编辑器字号之比：编辑器字号 13 逻辑像素时，正文为
 /// 16 逻辑像素。
@@ -125,7 +128,7 @@ impl Near {
     }
 
     /// 上边缘在 `top`、高 `height` 的第 `i` 块是否在范围内。
-    fn holds(&self, i: usize, top: f32, height: f32) -> bool {
+    pub(super) fn holds(&self, i: usize, top: f32, height: f32) -> bool {
         (top < self.rows.1 && top + height > self.rows.0)
             || self.blocks.iter().any(|blocks| blocks.contains(&i))
     }
@@ -424,37 +427,10 @@ pub(crate) fn lay_out(
 ) -> Laid {
     let reuse: HashMap<u64, Arc<LaidBlock>> = reuse.into_iter().collect();
     // 光标所在顶层块现在的原文，和叶子块在其中的范围。
-    let raw = live.and_then(|live| {
-        let rope = app.editor.active()?.text().rope()?;
-        let snap = |b: usize| rope.char_to_byte(rope.byte_to_char(b.min(rope.len_bytes())));
-        let (start, end) = (snap(live.range.start), snap(live.range.end));
-        let text: Arc<str> = rope.byte_slice(start..end).to_string().into();
-        let leaf =
-            snap(live.leaf.start).saturating_sub(start)..snap(live.leaf.end).saturating_sub(start);
-        let caret = snap(live.at).saturating_sub(start);
-        let preedit = app.preedit_at(Focus::Editor);
-        let preedit =
-            ((live.prose || live.table) && !preedit.is_empty()).then(|| Arc::from(preedit));
-        let parsed_end = live.parsed_end.saturating_sub(start);
-        Some((
-            live.block, text, leaf, parsed_end, caret, live.prose, preedit,
-        ))
-    });
+    let raw = live_raw(app, live);
+    let live_key_for_hash = live.map(|l| live_key(l, app.preedit_at(Focus::Editor)));
     let p = app.palette;
-    app.preview
-        .markdown
-        .memo
-        .prepare(winc_typeset::memo_key(|h| {
-            use std::hash::Hash;
-            for v in [key.width, key.base, key.tall] {
-                v.to_bits().hash(h);
-            }
-            for c in [key.text, key.background] {
-                [c.r, c.g, c.b, c.a].map(f32::to_bits).hash(h);
-            }
-            key.images.hash(h);
-            key.numbers.hash(h);
-        }));
+    prepare_memo(&mut app.preview.markdown.memo, key);
     let doc = app.editor.active().and_then(|d| d.path.clone());
     let remote = app.config.markdown_remote_images != Some(false);
     let image_path =
@@ -498,10 +474,14 @@ pub(crate) fn lay_out(
     let mut stale = Vec::new();
     let near = near.filter(|_| parsed.blocks.len() > SHED_BLOCKS);
     let mut fresh = 0usize;
-    // 内容相同的块从第二个起使用不同的键，并带上序号，各自记录开合状态。
+    // 仅含 `<details>` 或 Mermaid 图的块按重复序号区分开合状态，避免对无折叠块的长文档构造整表 HashMap。
     let mut repeats: HashMap<u64, u32> = HashMap::new();
     for (i, (block, &hash)) in parsed.blocks.iter().zip(&parsed.hashes).enumerate() {
-        let repeat = *repeats.entry(hash).and_modify(|n| *n += 1).or_insert(0);
+        let repeat = if block_has_toggle(block) {
+            *repeats.entry(hash).and_modify(|n| *n += 1).or_insert(0)
+        } else {
+            0
+        };
         let hash = match repeat {
             0 => hash,
             n => winc_typeset::memo_key(|h| std::hash::Hash::hash(&(hash, n), h)),
@@ -517,15 +497,13 @@ pub(crate) fn lay_out(
             continue;
         }
         let raw = raw.as_ref().filter(|r| r.0 == i);
-        // 显示原文的块换一个键存：光标离开后同样内容的块要重新按排版显示。
-        let hash = match raw {
-            Some((_, text, leaf, parsed_end, caret, prose, preedit)) => {
-                winc_typeset::memo_key(|h| {
-                    use std::hash::Hash;
-                    (hash, &**text, leaf, parsed_end, caret, prose, preedit).hash(h);
-                })
-            }
-            None => hash,
+        // 显示原文的块用 O(1) 的 `live_key` 区分缓存键，避免对大块原文做全量哈希。
+        let hash = match (raw, &live_key_for_hash) {
+            (Some(_), Some(lk)) => winc_typeset::memo_key(|h| {
+                use std::hash::Hash;
+                (hash, lk).hash(h);
+            }),
+            _ => hash,
         };
         let kept = later.as_ref().and_then(|later| {
             let (old, block) = later.old.get(i)?;
@@ -556,47 +534,7 @@ pub(crate) fn lay_out(
             if near.is_some() && fresh.is_multiple_of(SHED_BLOCKS) {
                 cx.memo.keep_only(std::iter::empty());
             }
-            let mut out = Out::default();
-            cx.text.clear();
-            cx.chars = 0;
-            cx.memo.take_touched();
-            cx.raw = raw.map(|(_, text, leaf, parsed_end, caret, prose, preedit)| {
-                Raw::new(
-                    Arc::clone(text),
-                    leaf.clone(),
-                    *parsed_end,
-                    *caret,
-                    *prose,
-                    preedit.clone(),
-                )
-            });
-            cx.preedit = false;
-            cx.cell = None;
-            let mut flow = cx.block(block, 0.0, 0.0, key.width, env, &mut out);
-            // 光标所在的叶子块在块里没有找到（写在列表里的公式这类没有原文对照的块）：整个
-            // 顶层块显示原文。
-            if let Some(raw) = cx.raw.as_mut().filter(|r| !r.done) {
-                raw.leaf = 0..raw.block.len();
-                raw.parsed_end = raw.block.len();
-                raw.kind = raw.guess();
-                out = Out::default();
-                cx.text.clear();
-                cx.chars = 0;
-                flow = cx.raw_with_preview(block, 0.0, 0.0, key.width, env, &mut out);
-            }
-            cx.raw = None;
-            let mut laid = LaidBlock::new(
-                flow.height,
-                out.items,
-                out.anchors,
-                cx.text.as_str().into(),
-                cx.chars,
-                cx.memo.take_touched(),
-            );
-            laid.preedit = cx.preedit;
-            laid.scrolls = out.scrolls;
-            laid.preview = out.preview;
-            Arc::new(laid)
+            Arc::new(layout_one_block(&mut cx, block, key.width, env, raw))
         });
         // 不在需要保留的范围内的块释放要画的项；显示原文的块（光标所在）总是保留。
         let far = near
