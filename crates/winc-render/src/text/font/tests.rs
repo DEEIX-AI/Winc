@@ -432,7 +432,7 @@ fn the_cjk_slot_skips_fonts_without_chinese() {
         files: vec![latin.clone(), chinese.clone()],
         probe: Some('中'),
     };
-    let face = choices.open(0).unwrap();
+    let (face, _) = choices.open(0).unwrap();
     assert_ne!(face.font().charmap().map('中'), 0);
 
     // 查询结果本身也是如此，无论 fontconfig 把什么字体排在第一个。
@@ -441,7 +441,7 @@ fn the_cjk_slot_skips_fonts_without_chinese() {
         files: Vec::new(),
         probe: Some('中'),
     };
-    assert_ne!(choices.open(0).unwrap().font().charmap().map('中'), 0);
+    assert_ne!(choices.open(0).unwrap().0.font().charmap().map('中'), 0);
 
     // 都不含时仍用第一个能打开的字体。
     let choices = Choices {
@@ -648,4 +648,85 @@ fn emoji_use_the_color_font_before_symbol_fonts() {
             }
         }
     }
+}
+
+#[test]
+fn sibling_files_share_the_name_up_to_the_first_hyphen() {
+    use std::path::Path;
+
+    let prefix = |name: &str| weight::name_prefix(Path::new(name));
+    assert_eq!(
+        prefix("JetBrainsMono-Regular.ttf").as_deref(),
+        Some("jetbrainsmono-")
+    );
+    // 同一目录中前缀更长的其他字族不算同族，不必逐个打开。
+    assert!(!"notosansmono-bold.ttf".starts_with(&prefix("NotoSans-Regular.ttf").unwrap()));
+    // 没有 `-` 时取前三个字符：同族各字重的文件名常只有开头相同。
+    assert_eq!(prefix("segoeui.ttf").as_deref(), Some("seg"));
+    assert!("dejavusansmono-bold.ttf".starts_with(&prefix("DejaVuSansMono.ttf").unwrap()));
+    assert_eq!(prefix("ab"), None);
+}
+
+/// 有字重轴、同族粗体或系统字体的粗体实例时，粗体使用派生的槽位，字体自身提供字重；没有时仍用
+/// 原槽位，由绘制时加宽笔画。
+#[cfg(target_os = "macos")]
+#[test]
+fn bold_uses_the_weight_the_font_provides() {
+    let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
+    // 界面的西文来自 SF（字重轴），中文来自苹方（命名实例，最粗的 Semibold 为 600）。
+    for (c, gained) in [('A', 300.0), ('中', 200.0)] {
+        let (regular, _) = fonts.resolve(FontKind::Ui, c);
+        let (slot, glyph, faux) = fonts.resolve_bold(FontKind::Ui, c);
+        assert!(!faux, "{c}");
+        assert_ne!(slot, regular, "{c}");
+        assert_ne!(glyph, 0, "{c}");
+        assert_eq!(fonts.face(slot).unwrap().gained, gained, "{c}");
+    }
+    let (regular, _) = fonts.resolve(FontKind::Terminal, 'A');
+    let (slot, _, faux) = fonts.resolve_bold(FontKind::Terminal, 'A');
+    assert!(!faux);
+    assert_ne!(slot, regular);
+
+    // Monaco 没有同族的其他字体：粗体仍用原槽位。字重调细时同样如此，调细达不到不算变粗。
+    let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
+    for weight in [400, 300] {
+        let mut fonts = Fonts::load(std::slice::from_ref(&monaco), &[], &[], weight).unwrap();
+        let (slot, glyph) = fonts.resolve(FontKind::Mono, 'A');
+        assert_eq!(
+            fonts.resolve_bold(FontKind::Mono, 'A'),
+            (slot, glyph, true),
+            "{weight}"
+        );
+    }
+}
+
+/// 由系统提供轮廓的苹方没有字重轴可调：字重设置改用同族的命名实例。
+#[cfg(target_os = "macos")]
+#[test]
+fn system_outlined_fonts_follow_the_weight_with_named_instances() {
+    let mut fonts = Fonts::load(&[], &[], &[], 600).expect("系统里有等宽字体");
+    let (slot, _) = fonts.resolve(FontKind::Ui, '中');
+    let face = fonts.face(slot).unwrap();
+    if face.system.is_none() {
+        return;
+    }
+    assert_eq!((face.gained, face.embolden), (200.0, 0.0));
+}
+
+/// Linux 上没有字重轴的字体改用同目录中的粗体文件；系统中没有 `DejaVuSansMono.ttf` 时跳过。
+#[cfg(target_os = "linux")]
+#[test]
+fn bold_uses_the_bold_file_next_to_the_regular_one() {
+    let dir = std::path::Path::new("/usr/share/fonts/truetype/dejavu");
+    let regular = dir.join("DejaVuSansMono.ttf");
+    if !regular.is_file() || !dir.join("DejaVuSansMono-Bold.ttf").is_file() {
+        return;
+    }
+    let mut fonts = Fonts::load(&[FontSpec::Path(regular)], &[], &[], 400).unwrap();
+    let (regular, _) = fonts.resolve(FontKind::Mono, 'A');
+    let (slot, _, faux) = fonts.resolve_bold(FontKind::Mono, 'A');
+    assert!(!faux);
+    assert_ne!(slot, regular);
+    let face = fonts.face(slot).unwrap();
+    assert_eq!((face.gained, face.embolden), (300.0, 0.0));
 }

@@ -2,8 +2,8 @@
 //!
 //! 槽位依次是等宽字体、界面字体、等宽字体的斜体、数学字体、终端字体及其斜体、预览正文字体，
 //! 其后是按优先级排列的后备字体；终端的字重与其余文字不同时，之后是按终端字重打开的另一份
-//! 后备字体（彩色 emoji 除外）。最后是用户在字体列表中写在主字体之后的字体。斜体和后备字体
-//! 在首次需要时才映射文件。候选路径按平台给出，用户配置的字体排在最前面。
+//! 后备字体（彩色 emoji 除外）。最后是用户在字体列表中写在主字体之后的字体，以及按需派生的
+//! 粗体。斜体、后备字体和粗体在首次需要时才映射文件。候选路径按平台给出，用户配置的字体排在最前面。
 
 use std::fs::{File, Metadata};
 use std::ops::Range;
@@ -72,6 +72,9 @@ pub(crate) struct Face {
     pub(crate) system: Option<SystemOutlines>,
     /// 笔画加宽的量与字号之比，补足字体自身达不到的字重。
     pub(crate) embolden: f32,
+    /// 字体自身提供的字重偏移（字重单位）：沿 `wght` 轴调整、改用同族字体或命名实例得到的
+    /// 部分，不含加宽笔画补足的部分；调细时为负。
+    pub(crate) gained: f32,
 }
 
 impl Face {
@@ -94,8 +97,9 @@ impl Face {
 
     /// 同 [`Self::open`]，字重在字体自身的基础上加 `shift`（正数更粗）。
     ///
-    /// 依次采用：沿 `wght` 轴调整、改用同目录中同族的字体（见 `sibling`）、加宽笔画
-    /// （[`Self::embolden`]）。笔画只能加宽，调细时达不到的部分不处理。
+    /// 依次采用：沿 `wght` 轴调整、改用同目录中同族的字体（见 `weight::sibling`）或同族的
+    /// 命名实例（由系统提供轮廓的字体）、加宽笔画（[`Self::embolden`]）。笔画只能加宽，调细时
+    /// 达不到的部分不处理。
     pub(crate) fn open_at(file: &FontFile, shift: i16) -> Option<Face> {
         Self::open_as(file, Some(shift))
     }
@@ -117,11 +121,36 @@ impl Face {
         if wanted != 0.0
             && !selected.system
             && weight_range(&font).is_none()
-            && let Some((sibling, reached)) = sibling(file, &font, wanted)
+            && let Some((sibling, reached)) = weight::sibling(file, &font, wanted)
             && let Some(mut face) = Self::open_as(&sibling, Some(0))
         {
-            face.embolden = (wanted - reached).max(0.0) / BOLD_STEP * crate::BOLD_RATIO;
+            face.embolden = embolden(wanted, reached);
+            face.gained = reached;
             return Some(face);
+        }
+        let name = file.postscript.clone().or_else(|| postscript_name(&font));
+        // 系统提供轮廓的字体不能沿字重轴调整：改用同族中字重更接近的命名实例。
+        if wanted != 0.0
+            && selected.system
+            && let Some(name) = &name
+        {
+            let own = selected
+                .instance
+                .as_ref()
+                .map_or(REGULAR, |i| i.weight(&font));
+            if let Some(found) = weight::system_instance(&data, name, own, wanted) {
+                let system = SystemOutlines::new(&file.path, &found.postscript, &found.font)?;
+                let (offset, key) = (found.font.offset, found.font.key);
+                return Some(Face {
+                    data: data.clone(),
+                    offset,
+                    key,
+                    coords: found.coords,
+                    system: Some(system),
+                    embolden: embolden(wanted, found.gained),
+                    gained: found.gained,
+                });
+            }
         }
         // 系统提供轮廓时，CoreText 字体就是所请求的实例（或默认实例），字宽要与之一致，
         // 不再固定字重，也不沿字重轴调整。
@@ -140,12 +169,8 @@ impl Face {
             }
             (None, _) => (Vec::new(), 0.0),
         };
-        let embolden = (wanted - reached).max(0.0) / BOLD_STEP * crate::BOLD_RATIO;
         let system = match selected.system {
-            true => {
-                let name = file.postscript.clone().or_else(|| postscript_name(&font))?;
-                Some(SystemOutlines::new(&file.path, &name, &font)?)
-            }
+            true => Some(SystemOutlines::new(&file.path, &name?, &font)?),
             false => None,
         };
 
@@ -155,7 +180,8 @@ impl Face {
             key,
             coords,
             system,
-            embolden,
+            embolden: embolden(wanted, reached),
+            gained: reached,
         })
     }
 
@@ -178,78 +204,9 @@ fn weight_range(font: &FontRef) -> Option<(f32, f32)> {
     Some((axis.min_value(), axis.max_value()))
 }
 
-/// 在 `file` 所在的目录中找与 `font` 同族、同样式的字体：字重介于自身与「自身加 `shift`」
-/// 之间，且最接近后者。返回该字体和实际得到的字重差。
-///
-/// 只打开文件名前 [`SIBLING_PREFIX`] 个字符与 `file` 相同的字体文件，包括 `file` 自身。
-fn sibling(file: &FontFile, font: &FontRef, shift: f32) -> Option<(FontFile, f32)> {
-    let family = weight_family(font)?;
-    let (stretch, own, style) = font.attributes().parts();
-    let own = f32::from(own.0);
-    let wanted = own + shift;
-    let prefix = name_prefix(&file.path)?;
-    let mut best: Option<(FontFile, f32)> = None;
-    for entry in std::fs::read_dir(file.path.parent()?).ok()?.flatten() {
-        let path = entry.path();
-        let is_font = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-            ["ttf", "otf", "ttc", "otc"]
-                .iter()
-                .any(|known| e.eq_ignore_ascii_case(known))
-        });
-        if !is_font || name_prefix(&path).as_ref() != Some(&prefix) {
-            continue;
-        }
-        let Some(data) = load(&path) else {
-            continue;
-        };
-        let count = swash::FontDataRef::new(&data).map_or(1, |d| d.len());
-        for (index, other) in
-            (0..count).filter_map(|i| FontRef::from_index(&data, i).map(|font| (i, font)))
-        {
-            let (other_stretch, weight, other_style) = other.attributes().parts();
-            let weight = f32::from(weight.0);
-            let between = weight != own && weight >= own.min(wanted) && weight <= own.max(wanted);
-            let closer = best
-                .as_ref()
-                .is_none_or(|(_, reached)| (wanted - weight).abs() < (shift - reached).abs());
-            if between
-                && closer
-                && (other_stretch, other_style) == (stretch, style)
-                && weight_range(&other).is_none()
-                && weight_family(&other).as_deref() == Some(family.as_str())
-            {
-                let found = FontFile {
-                    path: path.clone(),
-                    postscript: postscript_name(&other),
-                    index: (count > 1).then_some(index as u32),
-                };
-                best = Some((found, weight - own));
-            }
-        }
-    }
-    best
-}
-
-/// 查找同族字体时比较的文件名前缀的长度（字符）。
-///
-/// 同族各字重的文件名开头相同（如 `segoeui.ttf` 与 `seguisb.ttf`），据此不必打开目录中的
-/// 每个字体文件。
-const SIBLING_PREFIX: usize = 3;
-
-/// 返回文件名的前 [`SIBLING_PREFIX`] 个字符（小写）；不足该长度时返回 `None`。
-fn name_prefix(path: &std::path::Path) -> Option<String> {
-    let name = path.file_name()?.to_string_lossy().to_lowercase();
-    let prefix: String = name.chars().take(SIBLING_PREFIX).collect();
-    (prefix.chars().count() == SIBLING_PREFIX).then_some(prefix)
-}
-
-/// 返回字族名，优先取把各字重归为一族的排版字族名。
-fn weight_family(font: &FontRef) -> Option<String> {
-    let strings = font.localized_strings();
-    let name = strings
-        .find_by_id(StringId::TypographicFamily, None)
-        .or_else(|| strings.find_by_id(StringId::Family, None))?;
-    Some(name.to_string())
+/// 返回补足字重差所需的笔画加宽量（与字号之比）：请求偏移 `wanted`，字体自身达到 `reached`。
+fn embolden(wanted: f32, reached: f32) -> f32 {
+    (wanted - reached).max(0.0) / BOLD_STEP * crate::BOLD_RATIO
 }
 
 /// `wght` 轴的标签。
@@ -572,9 +529,44 @@ enum Slot {
     /// 尚未映射，值是候选字体和字重偏移。
     Pending(Choices, i16),
     /// 已映射。
-    Ready(Face),
+    Ready(Loaded),
     /// 候选文件都无法打开。
     Missing,
+}
+
+impl Slot {
+    /// 创建从文件 `file` 按字重偏移 `shift` 打开的槽位，粗体在首次用到时派生。
+    fn opened(face: Face, file: FontFile, shift: i16) -> Slot {
+        Slot::Ready(Loaded {
+            face,
+            origin: Some((file, shift)),
+            bold: Bold::Untried,
+            slanted: false,
+        })
+    }
+}
+
+/// 已映射的字体槽位。
+struct Loaded {
+    /// 槽位中的字体。
+    face: Face,
+    /// 打开该字体的文件和字重偏移，用于派生粗体；本身是派生出的粗体时为 `None`。
+    origin: Option<(FontFile, i16)>,
+    /// 派生的粗体，见 [`Fonts::resolve_bold`]。
+    bold: Bold,
+    /// 是否派生自斜体槽位：字形本身是斜体，绘制时不再斜切。
+    slanted: bool,
+}
+
+/// 字体槽位派生的粗体。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bold {
+    /// 尚未尝试派生。
+    Untried,
+    /// 粗体所在的槽位。
+    Slot(u8),
+    /// 字体自身无法变粗，粗体改为加宽笔画。
+    Unavailable,
 }
 
 /// 等宽字体所在的槽位；各槽位的顺序见模块文档。
@@ -598,8 +590,8 @@ const FALLBACK: u8 = 7;
 /// 不能超过 256 个槽位；常见的写法只有两三个字体。
 const LISTED_FONTS: usize = 16;
 
-/// 槽位 `slot` 中是否为斜体字体：要斜体的字落到其他槽位时斜切。
-pub(crate) fn italic_slot(slot: u8) -> bool {
+/// 槽位 `slot` 是否为斜体槽位。
+fn italic_slot(slot: u8) -> bool {
     matches!(slot, MONO_ITALIC | TERMINAL_ITALIC)
 }
 
@@ -618,10 +610,14 @@ pub(crate) struct Fonts {
     terminal_shift: i16,
     /// 字符解析结果缓存：（字体种类，字符）→（槽位，字形 id）。
     resolved: FastMap<(FontKind, char), (u8, u16)>,
+    /// 粗体字符的解析结果缓存：（字体种类，字符）→（槽位，字形 id，是否加宽笔画模拟粗体）。
+    resolved_bold: FastMap<(FontKind, char), (u8, u16, bool)>,
     /// ASCII 的快速路径：`[字体种类][码点]` →（槽位，字形 id），字体里没有该字符时为 `None`。
     ///
     /// 用于避免每个字符都查哈希表。
     ascii: [[Option<(u8, u16)>; 128]; FontKind::COUNT],
+    /// 粗体 ASCII 的快速路径，含义同 `resolved_bold`；尚未解析时为 `None`。
+    ascii_bold: [[Option<(u8, u16, bool)>; 128]; FontKind::COUNT],
     /// 平台后备字体的槽位范围。
     fallbacks: Range<u8>,
     /// 终端字重与其余文字不同时终端依次尝试的后备字体槽位：按终端字重另开的一份，彩色 emoji
@@ -699,7 +695,9 @@ impl Fonts {
         let ui_configured = listed[1].contains(&ui_file);
         let italic = italic_candidates(&mono_file, &mono);
         // 数学字体一开始就映射（只是映射文件，很快）：度量要用到它，`metrics` 不能再去加载。
-        let math = first_existing(&candidates.math, shift).map_or(Slot::Missing, Slot::Ready);
+        let math = first_opened(&candidates.math, shift).map_or(Slot::Missing, |(face, file)| {
+            Slot::opened(face, file, shift)
+        });
         // 终端字重与其余文字不同时不能借用等宽、界面字体的槽位：按与字重相同时一样的顺序（终端的
         // 列表，再是选定的等宽字体及其列表、界面字体）列出，全部按终端的字重打开；界面字体来自
         // 用户配置时略去，相同的文件只列一次。
@@ -719,7 +717,7 @@ impl Fonts {
                 Some((face, file)) => {
                     let italic = italic_candidates(&file, &face);
                     (
-                        Slot::Ready(face),
+                        Slot::opened(face, file.clone(), terminal_shift),
                         Slot::Pending(Choices::files(italic), terminal_shift),
                         Some(file),
                     )
@@ -727,8 +725,8 @@ impl Fonts {
                 None => (Slot::Missing, Slot::Missing, None),
             };
         let mut slots = vec![
-            Slot::Ready(mono),
-            Slot::Ready(ui),
+            Slot::opened(mono, mono_file.clone(), shift),
+            Slot::opened(ui, ui_file.clone(), shift),
             Slot::Pending(Choices::files(italic), shift),
             math,
             terminal,
@@ -779,7 +777,9 @@ impl Fonts {
             shift,
             terminal_shift,
             resolved: FastMap::default(),
+            resolved_bold: FastMap::default(),
             ascii: [[None; 128]; FontKind::COUNT],
+            ascii_bold: [[None; 128]; FontKind::COUNT],
             fallbacks,
             terminal_fallbacks,
             emoji,
@@ -818,7 +818,7 @@ impl Fonts {
         let Some((face, chosen)) = first_opened(&files, self.shift) else {
             return;
         };
-        self.slots[PROSE as usize] = Slot::Ready(face);
+        self.slots[PROSE as usize] = Slot::opened(face, chosen.clone(), self.shift);
         for file in files.into_iter().filter(|file| *file != chosen) {
             self.prose_listed.push(self.slots.len() as u8);
             let choices = Choices::files(vec![file]);
@@ -848,10 +848,10 @@ impl Fonts {
             (FontKind::Math, Slot::Missing) => UI,
             _ => primary,
         };
-        let Some(Slot::Ready(face)) = self.slots.get(slot as usize) else {
+        let Some(Slot::Ready(loaded)) = self.slots.get(slot as usize) else {
             return;
         };
-        let charmap = face.font().charmap();
+        let charmap = loaded.face.font().charmap();
 
         for (c, entry) in self.ascii[kind as usize].iter_mut().enumerate() {
             let glyph = charmap.map(c as u32);
@@ -906,9 +906,19 @@ impl Fonts {
     /// 返回槽位 `slot` 中已映射的字体；尚未映射或不存在时返回 `None`。
     pub(crate) fn face(&self, slot: u8) -> Option<&Face> {
         match self.slots.get(slot as usize) {
-            Some(Slot::Ready(face)) => Some(face),
+            Some(Slot::Ready(loaded)) => Some(&loaded.face),
             _ => None,
         }
+    }
+
+    /// 槽位 `slot` 中是否为斜体字体：斜体槽位，或从斜体派生出的粗体。要斜体的字落到其他槽位时
+    /// 斜切。
+    pub(crate) fn is_italic_slot(&self, slot: u8) -> bool {
+        italic_slot(slot)
+            || matches!(
+                self.slots.get(slot as usize),
+                Some(Slot::Ready(Loaded { slanted: true, .. }))
+            )
     }
 
     /// 槽位 `slot` 是否是彩色 emoji 字体的槽位。
@@ -1040,7 +1050,7 @@ impl Fonts {
 
         if let Slot::Pending(choices, shift) = entry {
             *entry = match choices.open(*shift) {
-                Some(face) => Slot::Ready(face),
+                Some((face, file)) => Slot::opened(face, file, *shift),
                 None => Slot::Missing,
             };
         }
@@ -1061,10 +1071,6 @@ fn resolve_list(specs: &[FontSpec]) -> Vec<FontFile> {
         }
     }
     files
-}
-/// 返回 `files` 中第一个能打开的字体；都打不开时返回 `None`。
-fn first_existing(files: &[FontFile], shift: i16) -> Option<Face> {
-    files.iter().find_map(|file| Face::open_at(file, shift))
 }
 
 /// 返回 `files` 中第一个能打开的字体及其文件；都打不开时返回 `None`。
@@ -1178,24 +1184,26 @@ impl Choices {
         }
     }
 
-    /// 打开第一个含有 [`Self::probe`] 的候选字体；没有 `probe` 时打开第一个能打开的。
+    /// 打开第一个含有 [`Self::probe`] 的候选字体及其文件；没有 `probe` 时打开第一个能打开的。
     ///
     /// 都不含 `probe` 时返回第一个能打开的字体，都打不开时返回 `None`。`shift` 是字重的偏移。
-    fn open(&self, shift: i16) -> Option<Face> {
+    fn open(&self, shift: i16) -> Option<(Face, FontFile)> {
         let asked = self
             .query
             .as_deref()
             .map_or_else(Vec::new, fontconfig::sorted);
         let mut first = None;
         let faces = asked.iter().chain(&self.files);
-        for face in faces.filter_map(|file| Face::open_at(file, shift)) {
+        for (face, file) in
+            faces.filter_map(|file| Face::open_at(file, shift).map(|f| (f, file.clone())))
+        {
             let Some(probe) = self.probe else {
-                return Some(face);
+                return Some((face, file));
             };
             if face.font().charmap().map(probe) != 0 {
-                return Some(face);
+                return Some((face, file));
             }
-            first.get_or_insert(face);
+            first.get_or_insert((face, file));
         }
         first
     }
@@ -1416,6 +1424,8 @@ fn cjk_language_of(locale: &str) -> String {
         "zh-cn".to_owned()
     }
 }
+
+mod weight;
 
 #[cfg(test)]
 pub(crate) mod tests;
