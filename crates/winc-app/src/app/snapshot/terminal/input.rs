@@ -106,3 +106,21 @@ fn alt_is_meta_unless_the_platform_types_with_it() {
     assert_eq!(String::from_utf8_lossy(&sent_input(&app, &log)), report);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// 终端中组字时候选框随输入法报告的光标移动；输入法要求隐藏光标时对齐组字文字的左边。
+#[test]
+fn the_terminal_composition_caret_follows_the_input_method() {
+    use winit::event::Ime;
+
+    let mut app = blank_app(true);
+    show_terminal(&mut app, "");
+    let at = |app: &mut App, cursor: Option<(usize, usize)>| {
+        app.on_ime(Ime::Preedit("abc".into(), cursor));
+        paint(app);
+        app.ime.cursor.unwrap().x
+    };
+    let (start, end) = (at(&mut app, Some((0, 0))), at(&mut app, Some((3, 3))));
+    let cell = app.metrics.terminal_cell;
+    assert!((end - start - 3.0 * cell).abs() < 0.5, "{start} {end}");
+    assert!((at(&mut app, None) - start).abs() < 0.5);
+}

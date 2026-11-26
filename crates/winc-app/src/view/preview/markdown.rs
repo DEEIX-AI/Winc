@@ -271,6 +271,12 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         .filter(|(a, b)| a < b);
     let focus = app.markdown_focus() && app.focus == crate::app::Focus::Editor;
     let resizable = app.markdown_live();
+    // 组字中输入法光标之前的字数和组字的字数，用于定位正文中的组字光标。
+    let composing = {
+        let preedit = app.preedit_at(Focus::Editor);
+        let at = app.preedit_cursor(preedit);
+        at.map(|at| (preedit[..at].chars().count(), preedit.chars().count()))
+    };
     let md = &mut app.preview.markdown;
     let selection = md
         .selection
@@ -615,12 +621,18 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     }
     // 画在标题的折叠箭头之后（见 `draw_heading_folds`）。
     let caret_bar = caret.map(|(_, y, h)| caret_bar(&laid, (y, h), area.y - scroll));
+    // 正文中的组字已排入所在的行：光标绘制在其中输入法的光标处，没有光标时不绘制。
+    let inline = laid.blocks.iter().any(|(_, b)| b.preedit);
+    let composing = composing.filter(|_| inline);
     // 光标的绘制位置：找不到时（空文档、光标在第一块之前）位于内容左上角。
     // 滑动过程中随所在的块移动。
     let live_point = live_caret.map(|source| {
-        let (x, y, h) =
-            laid.caret_point(source)
-                .unwrap_or((0.0, pad, (key.base * 0.85 * 1.4).round()));
+        let in_preedit = composing.and_then(|(k, count)| preedit_point(&laid, source, k, count));
+        let (x, y, h) = (in_preedit.or_else(|| laid.caret_point(source))).unwrap_or((
+            0.0,
+            pad,
+            (key.base * 0.85 * 1.4).round(),
+        ));
         let block = laid
             .ranges
             .iter()
@@ -637,23 +649,25 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             m.offset(b) + inner.map_or(0.0, |(_, d)| d)
         });
         let point = (x, y + shift, h);
-        // 正文中的组字文字已排入所在的行，不再在其上重复绘制。
-        let inline = laid.blocks.iter().any(|(_, b)| b.preedit);
         // 段落之后的空行上组字使用正文的字体，不沿用上方标题的字体。
         let body = (winc_render::FontKind::Prose, Default::default(), key.base);
         let font = match blank {
             true => Some(body),
             false => font_at(&laid, source),
         };
-        (point, (!inline).then_some(font))
+        let shape = match inline {
+            true => Composing::Inline(in_preedit.is_some()),
+            false => Composing::Over(font),
+        };
+        (point, shape)
     });
     md.layout = Some(laid);
     md.motion = motion;
     // 与源代码的光标相同，只在编辑区持有焦点时绘制；焦点在终端、查找条等处时不显示，
     // 也不占用输入法候选窗的位置。
-    if let Some(((x, y, h), font)) = live_point.filter(|_| app.focus == Focus::Editor) {
+    if let Some(((x, y, h), shape)) = live_point.filter(|_| app.focus == Focus::Editor) {
         let (x, y) = (left + x, area.y - scroll + y);
-        app.ime.cursor = Some(draw_live_caret(app, frame, (x, y, h), font, area));
+        app.ime.cursor = Some(draw_live_caret(app, frame, (x, y, h), shape, area));
     }
     let missing: Vec<_> = wanted.iter().map(|(path, _)| path.clone()).collect();
     for (path, size) in wanted {
@@ -1281,29 +1295,44 @@ fn heading_title(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// 画可编辑预览中的文字光标（左边缘 `x`、所在那一行的上边缘 `y` 和高度 `h`，窗口坐标），
-/// 或输入法正在组字的文字；返回输入法候选框应对齐的矩形。
-///
-/// 正文中的组字文字已排入所在的行（`font` 为 `None`），只返回候选框位置；代码块和表格中组字覆盖在
-/// 光标处绘制，字体字号同光标处的文字（`Some(None)`：无文字时用等宽字体，字号见 [`line_box`]）。
+/// 可编辑预览中光标处组字的绘制方式，见 [`draw_live_caret`]。
+enum Composing {
+    /// 正文中的组字已排入所在的行，只绘制光标；值为假时输入法要求隐藏光标，不绘制。
+    Inline(bool),
+    /// 代码块和表格中组字覆盖在光标处绘制，字体字号同光标处的文字（`None`：无文字时用等宽
+    /// 字体，字号见 [`line_box`]）。
+    Over(Option<(winc_render::FontKind, winc_render::Faux, f32)>),
+}
+
+/// 绘制可编辑预览中的文字光标（左边缘 `x`、所在那一行的上边缘 `y` 和高度 `h`，窗口坐标），
+/// 或输入法正在组字的文字及其中的光标；返回输入法候选框应对齐的矩形。
 fn draw_live_caret(
     app: &App,
     frame: &mut Frame<'_>,
     (x, y, h): Point,
-    font: Option<Option<(winc_render::FontKind, winc_render::Faux, f32)>>,
+    shape: Composing,
     clip: Rect,
 ) -> Rect {
     let p = app.palette;
     let preedit = app.preedit_at(Focus::Editor);
-    let Some(font) = font.filter(|_| !preedit.is_empty()) else {
-        if !preedit.is_empty() {
-            return Rect::new(x, y, 2.0, h);
-        }
+    let bar = |frame: &mut Frame<'_>, x: f32| {
         if app.blink.visible {
             let bar = Rect::new(x.round() - 1.0, y + 1.0, 2.0, h - 2.0);
             frame.rect_clipped(bar, p.caret, 1.0, clip);
         }
-        return Rect::new(x, y, 2.0, h);
+    };
+    let font = match shape {
+        _ if preedit.is_empty() => {
+            bar(frame, x);
+            return Rect::new(x, y, 2.0, h);
+        }
+        Composing::Inline(caret) => {
+            if caret {
+                bar(frame, x);
+            }
+            return Rect::new(x, y, 2.0, h);
+        }
+        Composing::Over(font) => font,
     };
     let (font, faux, size) = font.unwrap_or((
         winc_render::FontKind::Mono,
@@ -1321,7 +1350,12 @@ fn draw_live_caret(
         0.0,
         clip,
     );
-    Rect::new(x + width, y, 2.0, h)
+    let Some(at) = app.preedit_cursor(preedit) else {
+        return Rect::new(x + width, y, 2.0, h);
+    };
+    let at = x + frame.measure_faux(font, faux, size, &preedit[..at]);
+    bar(frame, at);
+    Rect::new(at, y, 2.0, h)
 }
 
 /// 绘制代码块或图右上角的一个按钮：不透明底色遮住下方内容，中间绘制图标 `icon`。

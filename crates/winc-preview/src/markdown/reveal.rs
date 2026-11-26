@@ -14,7 +14,8 @@ use super::{Block, Inline, Run, SourceMap, Style, options, parse};
 /// 返回光标所在的段落或标题按原文 `text` 生成的块。
 ///
 /// `text` 是叶子块的原文，续行带有引用的 `>` 和列表的缩进；`caret` 是光标相对 `text` 的
-/// 字节偏移，为 `None` 时不显示标记；`insert` 是输入法组字，排在光标处并加下划线，没有原文位置。
+/// 字节偏移，为 `None` 时不显示标记；`insert` 是输入法组字，排在光标处并加下划线，每个字都对应
+/// 光标的原文位置。
 /// 对照以 `text` 的开头为准（`Inline::source` 为 0）；原文已不是段落时逐字显示，不带样式。
 pub fn reveal(text: &str, caret: Option<usize>, insert: Option<&str>) -> Block {
     let lines = Lines::strip(text);
@@ -40,8 +41,6 @@ pub fn reveal(text: &str, caret: Option<usize>, insert: Option<&str>) -> Block {
             insert: Some((0, insert.to_owned())),
             ..Out::default()
         };
-        // 组字的文字对应段落的起点，光标和候选框排在组字之后。
-        out.map.push(0, 0, 0);
         out.flush();
         return Block::Paragraph(Inline {
             text: out.text,
@@ -269,9 +268,10 @@ impl Out {
         }
     }
 
-    /// 写入输入法组字（加下划线，没有原文位置）。
+    /// 写入输入法组字（加下划线）。组字的字都对应光标的原文位置，排版后据此找到组字。
     fn flush(&mut self) {
-        if let Some((_, text)) = self.insert.take() {
+        if let Some((at, text)) = self.insert.take() {
+            self.map.push(self.text.len(), at, 0);
             let style = Style {
                 flags: Style::UNDERLINE,
                 link: 0,
