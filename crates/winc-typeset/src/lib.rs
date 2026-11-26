@@ -763,6 +763,16 @@ fn is_fence(line: &str) -> bool {
     ["```", "~~~", "$$"].iter().any(|f| line.starts_with(f))
 }
 
+/// 返回围栏代码块原文 `text` 中两行围栏之间的代码；还没有结尾围栏时到末尾为止。
+fn fenced_code(text: &str) -> &str {
+    let body = text.split_once('\n').map_or("", |(_, body)| body);
+    match body.rsplit_once('\n') {
+        Some((code, last)) if is_fence(last) => code,
+        None if is_fence(body) => "",
+        _ => body,
+    }
+}
+
 /// 返回光标位于叶子块内容之后的空行上时需要排版的空行（原文起点，相对顶层块）。
 ///
 /// 范围从内容之后的第一行到光标所在的行；在块末尾按回车后，光标位于这些行上。

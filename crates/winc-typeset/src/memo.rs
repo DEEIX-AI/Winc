@@ -21,13 +21,6 @@ use super::{Cx, Flow, Item, Para, Span};
 /// 最多占用约 0.6 MB。
 const SLACK: usize = 1024;
 
-/// 大表格各列宽度的极值缓存：每列记录 `(最大宽度, 所在行, 次大宽度)`，
-/// 单格编辑时只需 O(1) 结合当前格的宽度即可得到精确的列宽上下界，无需重扫全表。
-pub(crate) struct TableCols {
-    pub(crate) min: Vec<(f32, usize, f32)>,
-    pub(crate) max: Vec<(f32, usize, f32)>,
-}
-
 /// 跨次排版留着的排版缓存，见模块说明。
 #[derive(Default)]
 pub struct Memo {
@@ -39,28 +32,14 @@ pub struct Memo {
     pub(crate) lines: HashMap<u64, (Arc<Piece>, winc_syntax::LineState)>,
     /// 量出的（最长词宽，整段宽），都是逻辑像素。
     pub(crate) measures: HashMap<u64, (f32, f32)>,
-    /// 大表格各列宽度的极值摘要（按表格内容、列数与样式哈希缓存）。
-    table_cols: HashMap<u64, Arc<TableCols>>,
     /// 上次调用 [`Memo::take_touched`] 之后读取或写入的条目。
     touched: Vec<u64>,
 }
 
 impl Memo {
-    /// 返回缓存的条目总数。
+    /// 返回三项缓存的条目总数。
     pub fn len(&self) -> usize {
-        self.flows.len() + self.lines.len() + self.measures.len() + self.table_cols.len()
-    }
-
-    /// 查找大表格列宽缓存并记为本块已使用。
-    pub(crate) fn get_table_cols(&mut self, key: u64) -> Option<Arc<TableCols>> {
-        self.touch(key);
-        self.table_cols.get(&key).cloned()
-    }
-
-    /// 写入大表格列宽缓存并记为本块已使用。
-    pub(crate) fn insert_table_cols(&mut self, key: u64, cols: Arc<TableCols>) {
-        self.touch(key);
-        self.table_cols.insert(key, cols);
+        self.flows.len() + self.lines.len() + self.measures.len()
     }
 
     /// 是否没有任何缓存条目。
@@ -111,11 +90,9 @@ impl Memo {
         self.flows.retain(|k, _| live.contains(k));
         self.lines.retain(|k, _| live.contains(k));
         self.measures.retain(|k, _| live.contains(k));
-        self.table_cols.retain(|k, _| live.contains(k));
         self.flows.shrink_to_fit();
         self.lines.shrink_to_fit();
         self.measures.shrink_to_fit();
-        self.table_cols.shrink_to_fit();
     }
 }
 
@@ -140,7 +117,7 @@ pub fn key(f: impl FnOnce(&mut DefaultHasher)) -> u64 {
 }
 
 impl Para {
-    pub(crate) fn hash_into(&self, h: &mut DefaultHasher) {
+    fn hash_into(&self, h: &mut DefaultHasher) {
         let c = self.color;
         for v in [self.size, self.line, c.r, c.g, c.b, c.a] {
             v.to_bits().hash(h);

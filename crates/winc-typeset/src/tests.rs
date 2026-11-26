@@ -229,6 +229,19 @@ fn code_blocks_keep_their_text_and_are_highlighted() {
 }
 
 #[test]
+fn the_code_of_a_fenced_block_is_the_text_between_its_fences() {
+    assert_eq!(
+        fenced_code("```rust\nfn a() {}\n\nfn b() {}\n```"),
+        "fn a() {}\n\nfn b() {}"
+    );
+    // 还没有结尾围栏：到末尾为止。
+    assert_eq!(fenced_code("```\nlet x = 1;"), "let x = 1;");
+    for empty in ["```", "```\n```", "```\n"] {
+        assert_eq!(fenced_code(empty), "", "{empty:?}");
+    }
+}
+
+#[test]
 fn links_cover_their_text() {
     let laid = lay("see [the site](https://example.com) for more\n", 600.0);
     let link = laid[0].0.items.iter().find_map(|item| match item {
@@ -386,137 +399,4 @@ fn inline_code_moves_to_the_next_line_with_its_padding() {
             assert!(rect.w > 8.0, "宽 {width} 时有一块空的代码底色：{rect:?}");
         }
     }
-}
-
-/// 大表格列宽极值缓存：缓存命中后重新排版以及正在编辑最宽单元格时，列宽与冷缓存一致。
-#[test]
-fn large_table_column_bounds_cache_matches_live_edits() {
-    let mut md = String::from("| ColA | ColB |\n| --- | --- |\n");
-    for r in 0..40 {
-        if r == 5 {
-            md.push_str("| longest-cell-content-here | b |\n");
-        } else {
-            md.push_str(&format!("| r{r} | v{r} |\n"));
-        }
-    }
-    let parsed = winc_preview::markdown::parse(&md);
-    let block = &parsed.blocks[0];
-    let mut renderer =
-        Renderer::offscreen(800.0, 600.0, 1.0, Color::hex(0xffffff), None, None).unwrap();
-    let toggled = HashSet::new();
-    let images = HashMap::new();
-    let accent = Color::hex(0x3574f0);
-    let env = Env {
-        color: TEXT,
-        depth: 0,
-    };
-
-    let cols_of = |out: &Out| -> Vec<f32> {
-        out.items
-            .iter()
-            .find_map(|item| match item {
-                Item::Table { cols, .. } => Some(cols.to_vec()),
-                _ => None,
-            })
-            .unwrap()
-    };
-
-    let mut memo = Memo::default();
-    let mut cold = Vec::new();
-    let mut warm = Vec::new();
-    let mut edited_warm = Vec::new();
-    let mut edited_cold = Vec::new();
-
-    // 在第 5 行（最宽单元格）末尾追加字符后的原文。
-    let needle = "longest-cell-content-here";
-    let at = md.find(needle).unwrap() + needle.len();
-    let mut edited_md = md.clone();
-    edited_md.insert_str(at, "-extra");
-    let edited_caret = at + "-extra".len();
-
-    renderer.draw(|frame| {
-        let mut run = |memo: &mut Memo, raw: Option<Raw>| {
-            let mut cx = Cx {
-                frame,
-                base: 16.0,
-                token: &|_| TOKEN,
-                surface: Color::hex(0xffffff),
-                accent,
-                colors: Colors::new(TEXT, Color::hex(0x808080), accent, false),
-                dark: false,
-                images: &images,
-                image_path: &|_| None,
-                wanted: Vec::new(),
-                memo,
-                toggled: &toggled,
-                text: String::new(),
-                chars: 0,
-                raw,
-                cell: None,
-                preedit: false,
-                line_numbers: false,
-                tall: f32::INFINITY,
-                repeat: 0,
-                toggles: HashMap::new(),
-                bleed: (0.0, 0.0),
-            };
-            let mut out = Out::default();
-            cx.block(block, 0.0, 0.0, 600.0, env, &mut out);
-            cols_of(&out)
-        };
-        cold = run(&mut memo, None);
-        warm = run(&mut memo, None);
-        let mk_raw = || {
-            Raw::new(
-                Arc::from(edited_md.as_str()),
-                0..edited_md.len(),
-                md.len(),
-                edited_caret,
-                false,
-                None,
-            )
-        };
-        edited_warm = run(&mut memo, Some(mk_raw()));
-        let mut fresh = Memo::default();
-        edited_cold = run(&mut fresh, Some(mk_raw()));
-    });
-
-    assert_eq!(cold, warm);
-    assert_eq!(edited_warm, edited_cold);
-    assert!(edited_warm[0] > cold[0]);
-
-    // 重新解析修改了中间行的表格（首尾行和行数均不变）后，不应误命中旧缓存。
-    let reparsed_doc = winc_preview::markdown::parse(&edited_md);
-    let reparsed_block = &reparsed_doc.blocks[0];
-    let mut reparsed_cols = Vec::new();
-    renderer.draw(|frame| {
-        let mut cx = Cx {
-            frame,
-            base: 16.0,
-            token: &|_| TOKEN,
-            surface: Color::hex(0xffffff),
-            accent,
-            colors: Colors::new(TEXT, Color::hex(0x808080), accent, false),
-            dark: false,
-            images: &images,
-            image_path: &|_| None,
-            wanted: Vec::new(),
-            memo: &mut memo,
-            toggled: &toggled,
-            text: String::new(),
-            chars: 0,
-            raw: None,
-            cell: None,
-            preedit: false,
-            line_numbers: false,
-            tall: f32::INFINITY,
-            repeat: 0,
-            toggles: HashMap::new(),
-            bleed: (0.0, 0.0),
-        };
-        let mut out = Out::default();
-        cx.block(reparsed_block, 0.0, 0.0, 600.0, env, &mut out);
-        reparsed_cols = cols_of(&out);
-    });
-    assert_eq!(reparsed_cols, edited_cold);
 }

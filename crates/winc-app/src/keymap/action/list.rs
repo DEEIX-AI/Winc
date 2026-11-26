@@ -242,6 +242,7 @@ pub const ACTIONS: &[Action] = {
         GitGoToChildCommit,
         GitGoToParentCommit,
         GitShowOutput,
+        GitGenerateCommitMessage,
         GitClone,
         GitInit,
         GitSwitchRepository,
