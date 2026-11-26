@@ -880,7 +880,7 @@ impl App {
                     Err(e) => {
                         let what = done.what;
                         let message = t!("git-op-failed-in", name = name, what = &what, error = e);
-                        self.report_git_failure(&what, message);
+                        self.report_git_failure(Some(&root), &what, message);
                     }
                 }
                 continue;
@@ -916,7 +916,7 @@ impl App {
                 Err(e) => {
                     let what = done.what;
                     let message = t!("git-op-failed", what = &what, error = e);
-                    self.report_git_failure(&what, message);
+                    self.report_git_failure(done.root.as_deref(), &what, message);
                 }
             }
             // 切换分支、拉取、合并都会改工作区里的文件。
