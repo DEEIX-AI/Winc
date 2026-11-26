@@ -37,16 +37,18 @@ impl App {
     ///
     /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先弹出确认框（[`input::paste_needs_confirm`]）。
     ///
-    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴：程序开启了括号粘贴时收到一次空的括号粘贴，未开
-    /// 启时不发送任何内容。远端主机上的标签例外：复制的文件和图片先传过去，再粘贴那里的路径
-    /// （[`App::upload_paste`]）。
+    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴，只有开启了括号粘贴的程序收到一次空的粘贴。
+    /// 例外是远端的标签先传复制的文件和图片、再粘贴那里的路径（[`App::upload_paste`]），以及
+    /// Windows 上本机的标签把图片存为文件后粘贴其路径（[`App::paste_image_file`]）。
     pub(in crate::app) fn terminal_paste(&mut self) {
         let text = self.clipboard_text().unwrap_or_default();
         let Some(tab) = self.terminal.tab().map(|t| (t.id, t.modes, t.cwd.clone())) else {
             return;
         };
         let (id, modes, cwd) = tab;
-        if self.upload_paste(id, &cwd, text.is_empty()) {
+        if self.upload_paste(id, &cwd, text.is_empty())
+            || self.paste_image_file(id, &cwd, text.is_empty())
+        {
             return;
         }
         if input::paste_needs_confirm(&text, modes) {
