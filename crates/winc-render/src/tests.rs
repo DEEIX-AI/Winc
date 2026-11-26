@@ -110,7 +110,12 @@ fn faux_bold_is_heavier_and_wider() {
             bold as f32 > regular as f32 * 1.15,
             "{c}：{regular} → {bold}"
         );
-        assert!(bold_advance > regular_advance, "{c}");
+        // 比例西文真粗体与模拟粗体前进宽度增大；全角汉字真粗体（如苹方 Semibold）保持方块 1em 等宽。
+        if c.is_ascii() {
+            assert!(bold_advance > regular_advance, "{c}");
+        } else {
+            assert!(bold_advance >= regular_advance, "{c}");
+        }
     }
 }
 

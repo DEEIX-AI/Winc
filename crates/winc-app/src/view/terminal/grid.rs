@@ -256,11 +256,25 @@ pub(super) fn draw_line(
                     && !draw_block_element(frame, c, at, fg, clip)
                     && !super::powerline::draw_powerline(frame, c, at, fg, clip)
                 {
-                    frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
-                    // 粗体：往右错开一个物理像素再绘制一次，笔画加粗、字宽不变（等宽的格子不乱）。
                     if bold {
-                        let x = x_of(col) + nudge;
-                        frame.cell_char(kind, size, x, baseline, cell, w, c, fg, clip);
+                        if !frame.cell_char_bold(
+                            kind,
+                            size,
+                            x_of(col),
+                            baseline,
+                            cell,
+                            w,
+                            c,
+                            fg,
+                            clip,
+                        ) {
+                            frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
+                            // 无真粗体可用时回退：往右错开一个物理像素再绘制一次，保持等宽格子不变。
+                            let x = x_of(col) + nudge;
+                            frame.cell_char(kind, size, x, baseline, cell, w, c, fg, clip);
+                        }
+                    } else {
+                        frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
                     }
                 }
                 col += w;

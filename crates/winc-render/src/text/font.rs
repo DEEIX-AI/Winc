@@ -531,10 +531,21 @@ pub(crate) const WEIGHT_MAX: u16 = 900;
 enum Slot {
     /// 尚未映射，值是候选字体和字重偏移。
     Pending(Choices, i16),
-    /// 已映射。
-    Ready(Face),
+    /// 已映射，附带打开该槽位的字体文件与基准字重偏移（用于按需加载同族真粗体）。
+    Ready(Face, Option<FontFile>, i16),
     /// 候选文件都无法打开。
     Missing,
+}
+
+/// 常规槽位对应的真粗体槽位状态。
+#[derive(Clone, Copy)]
+enum BoldSlot {
+    /// 尚未尝试加载真粗体。
+    Pending,
+    /// 已加载真粗体到指定槽位。
+    Ready(u8),
+    /// 该字体无可用真粗体，回退到模拟加粗。
+    Unavailable,
 }
 
 /// 等宽字体所在的槽位；各槽位的顺序见模块文档。
@@ -572,16 +583,24 @@ const RESOLVED_ENTRIES: usize = 1 << 16;
 pub(crate) struct Fonts {
     /// 字体槽位，顺序见模块文档。
     slots: Vec<Slot>,
+    /// 各槽位对应的真粗体槽位状态，与 `slots` 一一对应。
+    bold_of: Vec<BoldSlot>,
+    /// 由斜体槽位派生出的真粗斜体槽位集合（绘制时不再重复斜切）。
+    italic_bold_slots: Vec<u8>,
     /// 界面和编辑区字体的字重偏移（见 [`Face::open_at`]）。
     shift: i16,
     /// 终端字体的字重偏移；与 `shift` 相同时终端与编辑区共用字体。
     terminal_shift: i16,
     /// 字符解析结果缓存：（字体种类，字符）→（槽位，字形 id）。
     resolved: FastMap<(FontKind, char), (u8, u16)>,
+    /// 粗体字符解析结果缓存：（字体种类，字符）→（槽位，字形 id，是否需要模拟加粗）。
+    resolved_bold: FastMap<(FontKind, char), (u8, u16, bool)>,
     /// ASCII 的快速路径：`[字体种类][码点]` →（槽位，字形 id），字体里没有该字符时为 `None`。
     ///
     /// 用于避免每个字符都查哈希表。
     ascii: [[Option<(u8, u16)>; 128]; FontKind::COUNT],
+    /// 粗体 ASCII 的快速路径：`[字体种类][码点]` →（槽位，字形 id，是否需要模拟加粗）。
+    ascii_bold: [[Option<(u8, u16, bool)>; 128]; FontKind::COUNT],
     /// 平台后备字体的槽位范围。
     fallbacks: Range<u8>,
     /// 终端字重与其余文字不同时终端依次尝试的后备字体槽位：按终端字重另开的一份，彩色 emoji
@@ -659,7 +678,9 @@ impl Fonts {
         let ui_configured = listed[1].contains(&ui_file);
         let italic = italic_candidates(&mono_file, &mono);
         // 数学字体一开始就映射（只是映射文件，很快）：度量要用到它，`metrics` 不能再去加载。
-        let math = first_existing(&candidates.math, shift).map_or(Slot::Missing, Slot::Ready);
+        let math = first_opened(&candidates.math, shift).map_or(Slot::Missing, |(face, file)| {
+            Slot::Ready(face, Some(file), shift)
+        });
         // 终端字重与其余文字不同时不能借用等宽、界面字体的槽位：按与字重相同时一样的顺序（终端的
         // 列表，再是选定的等宽字体及其列表、界面字体）列出，全部按终端的字重打开；界面字体来自
         // 用户配置时略去，相同的文件只列一次。
@@ -679,7 +700,7 @@ impl Fonts {
                 Some((face, file)) => {
                     let italic = italic_candidates(&file, &face);
                     (
-                        Slot::Ready(face),
+                        Slot::Ready(face, Some(file.clone()), terminal_shift),
                         Slot::Pending(Choices::files(italic), terminal_shift),
                         Some(file),
                     )
@@ -687,8 +708,8 @@ impl Fonts {
                 None => (Slot::Missing, Slot::Missing, None),
             };
         let mut slots = vec![
-            Slot::Ready(mono),
-            Slot::Ready(ui),
+            Slot::Ready(mono, Some(mono_file.clone()), shift),
+            Slot::Ready(ui, Some(ui_file.clone()), shift),
             Slot::Pending(Choices::files(italic), shift),
             math,
             terminal,
@@ -734,12 +755,17 @@ impl Fonts {
             start..slots.len() as u8
         });
 
+        let bold_of = vec![BoldSlot::Pending; slots.len()];
         let mut fonts = Fonts {
             slots,
+            bold_of,
+            italic_bold_slots: Vec::new(),
             shift,
             terminal_shift,
             resolved: FastMap::default(),
+            resolved_bold: FastMap::default(),
             ascii: [[None; 128]; FontKind::COUNT],
+            ascii_bold: [[None; 128]; FontKind::COUNT],
             fallbacks,
             terminal_fallbacks,
             emoji,
@@ -778,11 +804,13 @@ impl Fonts {
         let Some((face, chosen)) = first_opened(&files, self.shift) else {
             return;
         };
-        self.slots[PROSE as usize] = Slot::Ready(face);
+        self.slots[PROSE as usize] = Slot::Ready(face, Some(chosen.clone()), self.shift);
+        self.bold_of[PROSE as usize] = BoldSlot::Pending;
         for file in files.into_iter().filter(|file| *file != chosen) {
             self.prose_listed.push(self.slots.len() as u8);
             let choices = Choices::files(vec![file]);
             self.slots.push(Slot::Pending(choices, self.shift));
+            self.bold_of.push(BoldSlot::Pending);
         }
         self.fill_ascii(FontKind::Prose);
     }
@@ -808,7 +836,7 @@ impl Fonts {
             (FontKind::Math, Slot::Missing) => UI,
             _ => primary,
         };
-        let Some(Slot::Ready(face)) = self.slots.get(slot as usize) else {
+        let Some(Slot::Ready(face, ..)) = self.slots.get(slot as usize) else {
             return;
         };
         let charmap = face.font().charmap();
@@ -866,9 +894,14 @@ impl Fonts {
     /// 返回槽位 `slot` 中已映射的字体；尚未映射或不存在时返回 `None`。
     pub(crate) fn face(&self, slot: u8) -> Option<&Face> {
         match self.slots.get(slot as usize) {
-            Some(Slot::Ready(face)) => Some(face),
+            Some(Slot::Ready(face, ..)) => Some(face),
             _ => None,
         }
+    }
+
+    /// 槽位 `slot` 是否是斜体字体（包括从斜体槽位派生出的真粗斜体槽位）。
+    pub(crate) fn is_italic_slot(&self, slot: u8) -> bool {
+        italic_slot(slot) || self.italic_bold_slots.contains(&slot)
     }
 
     /// 槽位 `slot` 是否是彩色 emoji 字体的槽位。
@@ -999,8 +1032,9 @@ impl Fonts {
         };
 
         if let Slot::Pending(choices, shift) = entry {
-            *entry = match choices.open(*shift) {
-                Some(face) => Slot::Ready(face),
+            let base_shift = *shift;
+            *entry = match choices.open(base_shift) {
+                Some((face, file)) => Slot::Ready(face, Some(file), base_shift),
                 None => Slot::Missing,
             };
         }
@@ -1022,11 +1056,6 @@ fn resolve_list(specs: &[FontSpec]) -> Vec<FontFile> {
     }
     files
 }
-/// 返回 `files` 中第一个能打开的字体；都打不开时返回 `None`。
-fn first_existing(files: &[FontFile], shift: i16) -> Option<Face> {
-    files.iter().find_map(|file| Face::open_at(file, shift))
-}
-
 /// 返回 `files` 中第一个能打开的字体及其文件；都打不开时返回 `None`。
 fn first_opened(files: &[FontFile], shift: i16) -> Option<(Face, FontFile)> {
     files
@@ -1225,24 +1254,26 @@ impl Choices {
         }
     }
 
-    /// 打开第一个含有 [`Self::probe`] 的候选字体；没有 `probe` 时打开第一个能打开的。
+    /// 打开第一个含有 [`Self::probe`] 的候选字体及其文件；没有 `probe` 时打开第一个能打开的。
     ///
     /// 都不含 `probe` 时返回第一个能打开的字体，都打不开时返回 `None`。`shift` 是字重的偏移。
-    fn open(&self, shift: i16) -> Option<Face> {
+    fn open(&self, shift: i16) -> Option<(Face, FontFile)> {
         let asked = self
             .query
             .as_deref()
             .map_or_else(Vec::new, fontconfig_sorted);
         let mut first = None;
         let faces = asked.iter().chain(&self.files);
-        for face in faces.filter_map(|file| Face::open_at(file, shift)) {
+        for (face, file) in
+            faces.filter_map(|file| Face::open_at(file, shift).map(|f| (f, file.clone())))
+        {
             let Some(probe) = self.probe else {
-                return Some(face);
+                return Some((face, file));
             };
             if face.font().charmap().map(probe) != 0 {
-                return Some(face);
+                return Some((face, file));
             }
-            first.get_or_insert(face);
+            first.get_or_insert((face, file));
         }
         first
     }
@@ -1452,6 +1483,8 @@ fn cjk_language_of(locale: &str) -> String {
         "zh-cn".to_owned()
     }
 }
+
+mod bold;
 
 #[cfg(test)]
 pub(crate) mod tests;

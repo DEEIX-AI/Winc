@@ -414,7 +414,7 @@ fn the_cjk_slot_skips_fonts_without_chinese() {
         files: vec![latin.clone(), chinese.clone()],
         probe: Some('中'),
     };
-    let face = choices.open(0).unwrap();
+    let (face, _) = choices.open(0).unwrap();
     assert_ne!(face.font().charmap().map('中'), 0);
 
     // 查询结果本身也是如此，无论 fontconfig 把什么字体排在第一个。
@@ -423,7 +423,7 @@ fn the_cjk_slot_skips_fonts_without_chinese() {
         files: Vec::new(),
         probe: Some('中'),
     };
-    assert_ne!(choices.open(0).unwrap().font().charmap().map('中'), 0);
+    assert_ne!(choices.open(0).unwrap().0.font().charmap().map('中'), 0);
 
     // 都不含时仍用第一个能打开的字体。
     let choices = Choices {
@@ -629,4 +629,39 @@ fn emoji_use_the_color_font_before_symbol_fonts() {
             }
         }
     }
+}
+
+/// 粗体在对应字体存在真实粗体字重（可变 `wght` 轴、系统命名实例或同族 Bold 文件）时解析到独立槽位，
+/// 无真实粗体时返回 `faux_bold = true` 交由上层退回合成描边。
+#[cfg(target_os = "macos")]
+#[test]
+fn real_bold_resolves_for_variable_and_family_fonts_and_falls_back_when_absent() {
+    let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
+
+    // 界面拉丁与中文（SF Pro / PingFangSC）均可解析到真实粗体槽位，且不启用合成描边。
+    for ch in ['A', '中'] {
+        let regular = fonts.resolve(FontKind::Ui, ch);
+        let (slot, glyph, faux) = fonts.resolve_bold(FontKind::Ui, ch);
+        assert!(!faux, "{ch} 应命中真实粗体");
+        assert_ne!(slot, regular.0, "{ch}");
+        assert_ne!(glyph, 0, "{ch}");
+        let face = fonts.face(slot).expect("粗体槽位已加载");
+        assert_eq!(face.embolden, 0.0, "{ch}");
+    }
+
+    // 终端与等宽字体（SF Mono / Menlo）同样能解析出真实粗体。
+    let regular_mono = fonts.resolve(FontKind::Terminal, 'A');
+    let (slot_mono, glyph_mono, faux_mono) = fonts.resolve_bold(FontKind::Terminal, 'A');
+    assert!(!faux_mono);
+    assert_ne!(slot_mono, regular_mono.0);
+    assert_ne!(glyph_mono, 0);
+
+    // Monaco 没有粗体变体：`resolve_bold` 退回原槽位并置 `faux_bold = true`。
+    let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
+    let mut monaco_fonts = Fonts::load(&[monaco], &[], &[], 400).expect("Monaco 是 macOS 自带字体");
+    let regular_monaco = monaco_fonts.resolve(FontKind::Mono, 'A');
+    assert_eq!(
+        monaco_fonts.resolve_bold(FontKind::Mono, 'A'),
+        (regular_monaco.0, regular_monaco.1, true)
+    );
 }
