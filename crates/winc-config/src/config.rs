@@ -315,6 +315,9 @@ pub struct Config {
     pub ai_model: Option<String>,
     /// 接口的密钥；不需要认证的接口（如本地部署的模型）不设置。
     pub ai_api_key: Option<String>,
+    /// 等待模型响应的最长时间（秒），默认 [`Config::AI_TIMEOUT`]，可用范围见
+    /// [`Config::AI_TIMEOUT_RANGE`]。
+    pub ai_timeout: Option<u64>,
     /// 保存时先格式化，默认为否。
     pub format_on_save: Option<bool>,
     /// 保存时不格式化的语言（语言的 id）；手动格式化（`⇧⌥F`）仍然生效。
@@ -726,6 +729,14 @@ impl Config {
     ///
     /// 超出范围的值在读入时忽略并报告；上限取自调参，更长的等待与不超时无异。
     pub const VIM_TIMEOUT_LEN_RANGE: std::ops::RangeInclusive<f32> = 0.0..=60_000.0;
+    /// 等待模型响应的默认最长时间（秒）。
+    ///
+    /// 取自调参：提交信息的回答很短，响应时间通常远短于 30 秒；推理较慢的模型可在设置中调大。
+    pub const AI_TIMEOUT: u64 = 30;
+    /// 等待模型响应的最长时间的合法范围（秒）。
+    ///
+    /// 超出范围的值在读入时忽略并报告；上限取自调参，更长的等待与服务失去响应无异。
+    pub const AI_TIMEOUT_RANGE: std::ops::RangeInclusive<f32> = 10.0..=600.0;
     /// 查找仓库的默认层数：覆盖「目录 / 分组 / 项目」这样的常见结构；扫描在后台进行，有目录项总数
     /// 的上限，较深的层数不会拖慢界面。
     pub const REPOSITORY_SCAN_DEPTH: usize = 3;

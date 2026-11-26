@@ -252,8 +252,8 @@ fn the_terminal_page_is_listed_only_when_the_module_is_on() {
     app.adopt_config(config);
     assert!(!listed(&app));
     assert_eq!(app.settings_layout().page, SettingsPage::Modules);
-    // 键盘移动同样跳过该页：从模块页第一项往回走过 AI 页的四项，再往回是格式化页。
-    for _ in 0..5 {
+    // 键盘移动同样跳过该页：从模块页第一项往回走过 AI 页的五项，再往回是格式化页。
+    for _ in 0..6 {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected.page(), SettingsPage::Format);

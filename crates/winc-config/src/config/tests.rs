@@ -443,6 +443,7 @@ fn round_trips_through_json() {
         ai_base_url: Some("http://localhost:11434/v1".to_string()),
         ai_model: Some("qwen3".to_string()),
         ai_api_key: Some("sk-test".to_string()),
+        ai_timeout: Some(120),
         format_on_save: Some(false),
         format_on_save_exclude: vec!["markdown".to_string(), "yaml".to_string()],
         format_commands: BTreeMap::from([(

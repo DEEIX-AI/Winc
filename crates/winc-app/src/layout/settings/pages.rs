@@ -22,7 +22,7 @@ pub enum SettingsPage {
     Git,
     /// 终端：默认 shell、面板位置、字体、字号、字重和终端行为。
     Terminal,
-    /// AI：调用模型的接口、模型和密钥。
+    /// AI：模型服务的地址、密钥、接口协议、调用的模型和超时时间。
     Ai,
     /// 模块：可选模块的开关。
     Modules,
@@ -294,7 +294,13 @@ impl SettingsPage {
             ],
             SettingsPage::Ai => vec![group(
                 t!("settings-group-api"),
-                vec![S::AiProtocol, S::AiBaseUrl, S::AiModel, S::AiApiKey],
+                vec![
+                    S::AiBaseUrl,
+                    S::AiApiKey,
+                    S::AiProtocol,
+                    S::AiModel,
+                    S::AiTimeout,
+                ],
             )],
             SettingsPage::Modules => vec![group(
                 t!("settings-page-modules"),

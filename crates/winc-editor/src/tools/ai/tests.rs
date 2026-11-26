@@ -8,6 +8,7 @@ fn endpoint(protocol: AiProtocol) -> Endpoint {
         base_url: "https://example.com/v1".into(),
         model: "m".into(),
         api_key: Some("k".into()),
+        timeout: 30,
     }
 }
 
@@ -22,6 +23,9 @@ fn the_endpoint_falls_back_to_the_official_address_and_needs_a_model() {
     config.ai_base_url = Some("http://localhost:11434/v1/".into());
     let endpoint = Endpoint::from_config(&config).unwrap();
     assert_eq!(endpoint.base_url, "http://localhost:11434/v1");
+    assert_eq!(endpoint.timeout, Config::AI_TIMEOUT);
+    config.ai_timeout = Some(90);
+    assert_eq!(Endpoint::from_config(&config).unwrap().timeout, 90);
 }
 
 #[test]
@@ -167,6 +171,7 @@ fn a_request_is_sent_with_curl() {
         base_url: format!("http://127.0.0.1:{port}/v1"),
         model: "m".into(),
         api_key: Some("sk-secret".into()),
+        timeout: 30,
     };
     let mut curl = Command::new("curl");
     curl.args(["--noproxy", "*"]);

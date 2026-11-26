@@ -66,5 +66,6 @@ config-label-vim-scroll-off = 光标与窗口边缘之间保留的行数
 config-label-vim-timeout-len = 映射等待后续按键的毫秒数
 config-label-vim-yank-highlight = 复制后高亮的毫秒数
 config-label-repository-scan-depth = 仓库扫描深度
+config-label-ai-timeout = 等待模型响应的秒数
 config-label-lines = 行数
 config-label-contrast = 对比度

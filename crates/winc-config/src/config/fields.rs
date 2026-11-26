@@ -805,6 +805,8 @@ const GIT: &[Field] = &[
 
 /// `ai` 一节。
 const AI: &[Field] = &[
+    string_field!("baseUrl", ai_base_url),
+    string_field!("apiKey", ai_api_key),
     Field {
         key: "protocol",
         read: |config, value, name, problems| {
@@ -816,9 +818,25 @@ const AI: &[Field] = &[
         },
         write: |config| Some(Json::String(config.ai_protocol?.key().into())),
     },
-    string_field!("baseUrl", ai_base_url),
     string_field!("model", ai_model),
-    string_field!("apiKey", ai_api_key),
+    Field {
+        key: "timeout",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-ai-timeout");
+            let range = Config::AI_TIMEOUT_RANGE;
+            config.ai_timeout = read_number(value, name, range, label, problems)
+                .filter(|v| {
+                    let whole = v.fract() == 0.0;
+                    if !whole {
+                        let value = v.to_string();
+                        problems.push(t!("config-not-integer", name = name, value = value));
+                    }
+                    whole
+                })
+                .map(|v| v as u64)
+        },
+        write: |config| config.ai_timeout.map(|secs| Json::Number(secs as f64)),
+    },
 ];
 
 /// `network` 一节。

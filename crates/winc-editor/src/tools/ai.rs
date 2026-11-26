@@ -12,11 +12,6 @@ use super::http::{SendError, parse_response};
 use super::shell::Cancel;
 use super::shell::process::{self, RunError};
 
-/// 一次请求最长的等待时间（秒），同时作为 `curl` 的 `--max-time`。
-///
-/// 取自调参：推理模型先推理再作答，耗时长于一般接口，取 `.http` 请求时限的两倍。
-pub const TIMEOUT_SECS: u64 = 120;
-
 /// 进程超时比 `curl` 自身时限多出的时间：`curl` 先按自身时限退出并给出原因。
 const TIMEOUT_GRACE: Duration = Duration::from_secs(5);
 
@@ -39,6 +34,8 @@ pub struct Endpoint {
     pub model: String,
     /// 密钥；为 `None` 时不发送认证请求头。
     pub api_key: Option<String>,
+    /// 一次请求最长的等待时间（秒），同时作为 `curl` 的 `--max-time`。
+    pub timeout: u64,
 }
 
 impl Endpoint {
@@ -51,6 +48,7 @@ impl Endpoint {
             base_url: base_url.trim().trim_end_matches('/').to_owned(),
             model: config.ai_model.as_deref()?.trim().to_owned(),
             api_key: (config.ai_api_key.as_deref()).map(|key| key.trim().to_owned()),
+            timeout: config.ai_timeout.unwrap_or(Config::AI_TIMEOUT),
         })
     }
 }
@@ -69,8 +67,8 @@ pub enum AiError {
 /// 以 `system` 为指示、`input` 为用户消息请求一次回答，返回生成的文本，去掉首尾空白和推理
 /// 模型写在正文开头的 `<think>` 段。
 ///
-/// `curl` 是已设好代理等选项的命令。会等待网络，应在后台线程调用；最长等待 [`TIMEOUT_SECS`]
-/// 秒，可经 `cancel` 取消。
+/// `curl` 是已设好代理等选项的命令。会等待网络，应在后台线程调用；最长等待
+/// [`Endpoint::timeout`] 秒，可经 `cancel` 取消。
 ///
 /// # Errors
 ///
@@ -92,10 +90,10 @@ pub fn complete(
     option(&mut config, "data-binary", &body.compact());
 
     curl.args(["--silent", "--show-error", "--include"])
-        .args(["--max-time", &TIMEOUT_SECS.to_string()])
+        .args(["--max-time", &endpoint.timeout.to_string()])
         .args(["--config", "-"])
         .stderr(Stdio::piped());
-    let timeout = Duration::from_secs(TIMEOUT_SECS) + TIMEOUT_GRACE;
+    let timeout = Duration::from_secs(endpoint.timeout) + TIMEOUT_GRACE;
     let output = process::run(&mut curl, config.into_bytes(), timeout, cancel).map_err(|e| {
         AiError::Send(match e {
             RunError::Spawn(e) => SendError::Spawn(e),

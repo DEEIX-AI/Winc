@@ -674,6 +674,7 @@ impl Hover {
                         | git::panel::PanelHit::Maximize
                         | git::panel::PanelHit::Hide
                 )
+                | Hover::Commit(CommitTarget::Generate)
                 | Hover::SidebarButton
                 | Hover::Tab(..)
                 | Hover::TabList

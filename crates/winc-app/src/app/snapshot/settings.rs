@@ -308,7 +308,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
     // 向回走一步，回到模块页最后的远程开关，焦点回到浮层；再往回是终端开关和 Git 开关；再走
-    // 一步是 AI 页的最后一项，走过该页的四项后是终端页的最后一项（macOS 上是「Meta 键」，
+    // 一步是 AI 页的最后一项，走过该页的五项后是终端页的最后一项（macOS 上是「Meta 键」，
     // 其他平台是「终端应用优先」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::RemoteModule);
@@ -318,8 +318,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
-    assert_eq!(app.settings.selected, Setting::AiApiKey);
-    for _ in 0..4 {
+    assert_eq!(app.settings.selected, Setting::AiTimeout);
+    for _ in 0..5 {
         app.settings_move(false);
     }
     let last = if cfg!(target_os = "macos") {
@@ -1233,10 +1233,11 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         .map(|row| row.setting)
         .collect();
     let expected = [
-        Setting::AiProtocol,
         Setting::AiBaseUrl,
-        Setting::AiModel,
         Setting::AiApiKey,
+        Setting::AiProtocol,
+        Setting::AiModel,
+        Setting::AiTimeout,
     ];
     assert_eq!(rows, expected);
     assert!(!app.switch_on(Setting::GitGenerateCommitMessage));

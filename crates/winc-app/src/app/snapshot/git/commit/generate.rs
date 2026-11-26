@@ -1,5 +1,5 @@
 //! 生成提交信息的测试：按钮随开关显示；未开启或未设置模型时的提示；结果填入信息框并可撤销；
-//! 发送给模型的内容包含改动和未跟踪的文件；失败时的提示；设置中的密钥不显示明文。
+//! 发送给模型的内容包含改动和未跟踪的文件；失败时的提示；密钥不显示明文；超时时间的调整。
 
 use super::*;
 
@@ -34,6 +34,7 @@ fn the_button_follows_the_switch() {
     paint(&mut app);
     let parts = app.commit_parts();
     let button = parts.generate.expect("开启后出现按钮");
+    assert!(Hover::Commit(CommitTarget::Generate).has_tooltip());
     assert!(button.right() < parts.commit_menu.x && button.x > parts.commit.right());
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -155,6 +156,21 @@ fn the_api_key_is_masked_in_settings() {
     assert!(app.settings.editing.is_none());
 }
 
+/// 等待模型响应的时间默认 30 秒，每档调整 10 秒，不超出合法范围。
+#[test]
+fn the_timeout_steps_by_ten_seconds_within_range() {
+    let mut app = blank_app(false);
+    assert_eq!(app.setting_value(Setting::AiTimeout).0, "30");
+    app.settings_adjust(Setting::AiTimeout, true);
+    assert_eq!(app.config.ai_timeout, Some(40));
+    for _ in 0..10 {
+        app.settings_adjust(Setting::AiTimeout, false);
+    }
+    assert_eq!(app.config.ai_timeout, Some(10));
+    let (_, at_min, _) = app.setting_value(Setting::AiTimeout);
+    assert!(at_min);
+}
+
 /// 截图：提交卡片底行的「生成提交信息」（`commit-generate`）、设置的 AI 页（`settings-ai`），
 /// 以及 Git 页的开关（`settings-git-generate`）。
 #[test]
@@ -173,6 +189,8 @@ fn shoot_commit_generate() {
     paint(&mut app);
     let button = app.commit_parts().generate.unwrap();
     app.on_mouse_move(button.x + 4.0, button.y + 4.0);
+    paint(&mut app);
+    std::thread::sleep(std::time::Duration::from_millis(700));
     paint(&mut app);
     shoot(&mut app, "commit-generate");
     app.show_setting(Setting::AiModel);
