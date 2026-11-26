@@ -427,7 +427,7 @@ pub(crate) fn lay_out(
 ) -> Laid {
     let reuse: HashMap<u64, Arc<LaidBlock>> = reuse.into_iter().collect();
     // 光标所在顶层块现在的原文，和叶子块在其中的范围。
-    let raw = live_raw(app, live);
+    let raw = live_raw(app, parsed, live);
     let sections = parsed.sections();
     let folded = (app.editor.active()).and_then(|d| app.preview.markdown.folds.get(&d.id));
     let hidden = hidden_blocks(&sections, folded, live.map(|l| l.block));
@@ -534,23 +534,15 @@ pub(crate) fn lay_out(
         chars,
         lines: parsed.lines.clone(),
         ranges: {
-            // 解析之后打的字都在光标所在的块里：这一块换成现在的范围，原文在它后面的块按文字
-            // 长度的变化挪。
-            let mut ranges = parsed.ranges.clone();
+            // 解析结果中的范围换算为当前文字中的位置；光标所在的块换成现在的范围。
+            let drift = live.map_or(winc_typeset::Drift::NONE, |live| live.drift);
+            let mut ranges: Vec<_> = (parsed.ranges.iter())
+                .map(|r| drift.moved_start(r.start)..drift.moved(r.end))
+                .collect();
             if let Some(live) = live
-                && let Some(start) = ranges.get(live.block).map(|r| r.start)
+                && let Some(range) = ranges.get_mut(live.block)
             {
-                let len = app
-                    .editor
-                    .active()
-                    .and_then(|d| d.text().rope())
-                    .map(|r| r.len_bytes());
-                let delta = len.map_or(0, |len| len as i64 - parsed.len as i64);
-                let shift = |at: usize| usize::try_from(at as i64 + delta).unwrap_or(0);
-                for range in ranges.iter_mut().filter(|r| r.start > start) {
-                    *range = shift(range.start)..shift(range.end);
-                }
-                ranges[live.block] = live.range.clone();
+                *range = live.range.clone();
             }
             ranges
         },

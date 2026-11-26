@@ -204,7 +204,6 @@ pub(super) fn draw_line(
         frame.rect_clipped(rect, color, 0.0, clip);
     }
 
-    let nudge = 1.0 / frame.scale().max(1.0);
     for (part, &Paint { fg, shape, .. }) in parts.iter().zip(&styles) {
         let attrs = part.style.attrs;
         let bold = attrs.has(Attrs::BOLD);
@@ -256,11 +255,10 @@ pub(super) fn draw_line(
                     && !draw_block_element(frame, c, at, fg, clip)
                     && !super::powerline::draw_powerline(frame, c, at, fg, clip)
                 {
-                    frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
-                    // 粗体：往右错开一个物理像素再绘制一次，笔画加粗、字宽不变（等宽的格子不乱）。
                     if bold {
-                        let x = x_of(col) + nudge;
-                        frame.cell_char(kind, size, x, baseline, cell, w, c, fg, clip);
+                        frame.cell_char_bold(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
+                    } else {
+                        frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
                     }
                 }
                 col += w;

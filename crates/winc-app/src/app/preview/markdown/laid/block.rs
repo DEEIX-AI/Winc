@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use winc_preview::markdown::Block;
+use winc_preview::markdown::{Block, Markdown};
 use winc_render::Frame;
-use winc_typeset::{Colors, Cx, Env, LaidBlock, Out, Raw};
+use winc_typeset::{Colors, Cx, Drift, Env, LaidBlock, Out, Raw};
 
 use super::Key;
 use crate::app::preview::markdown::LiveLeaf;
@@ -26,6 +26,8 @@ pub(super) struct LiveRaw {
     leaf: Range<usize>,
     /// 叶子块在解析结果中的终点，见 [`Raw::parsed_end`]。
     parsed_end: usize,
+    /// 顶层块内解析之后的改动，见 [`Raw::drift`]。
+    drift: Drift,
     /// 光标在 `text` 中的位置。
     caret: usize,
     /// 叶子块是否为正文（段落、标题）。
@@ -35,18 +37,23 @@ pub(super) struct LiveRaw {
 }
 
 /// 读取光标所在叶子块 `live` 的顶层块现在的原文；没有光标或文档不是文本时返回 `None`。
-pub(super) fn live_raw(app: &App, live: Option<&LiveLeaf>) -> Option<LiveRaw> {
+///
+/// `parsed` 是排版依据的解析结果。
+pub(super) fn live_raw(app: &App, parsed: &Markdown, live: Option<&LiveLeaf>) -> Option<LiveRaw> {
     let live = live?;
     let rope = app.editor.active()?.text().rope()?;
     let snap = |b: usize| rope.char_to_byte(rope.byte_to_char(b.min(rope.len_bytes())));
     let (start, end) = (snap(live.range.start), snap(live.range.end));
     let preedit = app.preedit_at(Focus::Editor);
+    // 光标所在的顶层块位于改动之后时，块的起点已换算，块内的相对位置不变。
+    let parsed_start = parsed.ranges.get(live.block).map_or(start, |r| r.start);
     Some(LiveRaw {
         block: live.block,
         text: rope.byte_slice(start..end).to_string().into(),
         leaf: snap(live.leaf.start).saturating_sub(start)
             ..snap(live.leaf.end).saturating_sub(start),
         parsed_end: live.parsed_end.saturating_sub(start),
+        drift: live.drift.within(parsed_start),
         caret: snap(live.at).saturating_sub(start),
         prose: live.prose,
         preedit: ((live.prose || live.table) && !preedit.is_empty()).then(|| Arc::from(preedit)),
@@ -145,6 +152,7 @@ pub(super) fn lay_block(
             text,
             r.leaf.clone(),
             r.parsed_end,
+            r.drift,
             r.caret,
             r.prose,
             preedit,
