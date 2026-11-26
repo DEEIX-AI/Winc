@@ -143,14 +143,18 @@ impl SourceMap {
     }
 
     /// 记下文字从 `text` 起的 `len` 个字节与原文从 `source` 起的字节相同；与前一段首尾相接时
-    /// 合并。
+    /// 合并。`len` 为 0 时是一个对应点，不并入前一段：其后的生成文字据此对应原文位置。
     fn push(&mut self, text: usize, source: usize, len: usize) {
         let (Some(text), Some(source), Some(len)) = (offset(text), offset(source), offset(len))
         else {
             return;
         };
         if let Some(last) = self.0.last_mut() {
-            if last.len > 0 && last.text + last.len == text && last.source + last.len == source {
+            if len > 0
+                && last.len > 0
+                && last.text + last.len == text
+                && last.source + last.len == source
+            {
                 last.len += len;
                 return;
             }

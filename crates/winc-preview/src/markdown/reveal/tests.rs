@@ -59,6 +59,9 @@ fn continuation_lines_drop_container_markers() {
         panic!();
     };
     assert_eq!(inline.text, "甲丙乙");
+    // 组字的字都对应光标的原文位置，其后的文字仍按原文对照。
+    assert_eq!(inline.char_source_of("甲".len()), Some(3));
+    assert_eq!(inline.char_source_of("甲丙".len()), Some(3));
     // 已输入为其他种类的块（尚未重新解析）时逐字显示。
     let Block::Paragraph(inline) = reveal("- 一\n- 二", Some(0), None) else {
         panic!();

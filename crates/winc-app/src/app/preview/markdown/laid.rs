@@ -1162,6 +1162,35 @@ pub(crate) fn point_of(laid: &Laid, source: usize) -> Option<Point> {
     Some((x, laid.pad + y, h))
 }
 
+/// 返回排入正文的输入法组字中第 `k` 个字之前的位置（`k` 等于组字的字数 `count` 时是末尾），
+/// 量法同 [`point_of`]；找不到组字时为 `None`。
+///
+/// 组字的字都对应光标的原文位置 `source`（见 `reveal`）；折行时组字分在几段中，按先后逐字查找。
+pub(crate) fn preedit_point(laid: &Laid, source: usize, k: usize, count: usize) -> Option<Point> {
+    let block = (laid.ranges.iter()).rposition(|r| r.start <= source && source <= r.end)?;
+    let at = source - laid.ranges[block].start;
+    let mut seen = 0;
+    for (top, _, x, baseline, size, span, _, text) in laid.spans(block..block + 1) {
+        let mut left = x;
+        for (j, advance) in span.advances.iter().enumerate() {
+            if span.source_of(text, j) == Some(at) {
+                // 第 `k` 个字之前，或末尾的字之后。
+                let x = match seen == k {
+                    true => Some(left),
+                    false => (seen + 1 == count && k == count).then_some(left + advance),
+                };
+                if let Some(x) = x {
+                    let (y, h) = line_box(top + baseline, size);
+                    return Some((x, laid.pad + y, h));
+                }
+                seen += 1;
+            }
+            left += advance;
+        }
+    }
+    None
+}
+
 /// 返回原文位置 `source` 处（取法同 [`point_of`]）文字的字体、模拟粗斜体和字号。
 ///
 /// 输入法组字的文字按此样式绘制。
