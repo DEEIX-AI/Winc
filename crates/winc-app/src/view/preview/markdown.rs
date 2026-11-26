@@ -5,8 +5,6 @@
 //! 时进行，结果按顶层块缓存（[`Laid`]）：文字改了只重排变了的块，宽度、字号、配色或图片大小
 //! 变了才整份重排。换行时不在「，。」这类标点前面、「（“」这类标点后面断。
 
-use std::sync::Arc;
-
 use winc_i18n::t;
 use winc_render::{Color, FontKind, Frame, Rect, Stroke};
 
@@ -161,7 +159,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         tall: (area.h * TALL_SHARE).round().max(TALL_MIN),
         bleed,
     };
-    let source = Arc::as_ptr(&parsed) as usize;
+    let source = app.preview.markdown.parse_serial;
     let live = app.live_editing().then(|| app.live_leaf()).flatten();
     let live_key = (live.as_ref()).map(|l| live_key(l, app.preedit_at(Focus::Editor)));
     let blank = live.as_ref().is_some_and(|l| l.blank);

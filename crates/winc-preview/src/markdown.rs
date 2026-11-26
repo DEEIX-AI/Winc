@@ -67,6 +67,12 @@ pub struct Markdown {
     pub leaves: Vec<LeafRange>,
     /// 原文的字节数：与当前文档的长度相比，得出解析之后又改了多少。
     pub len: usize,
+    /// 原文是否包含链接引用定义（`[id]: url`）：存在时局部重解析回退全文解析。
+    has_link_defs: bool,
+    /// 文档是否包含 `[TOC]` / `[[TOC]]` 目录占位：存在时编辑标题回退全文解析。
+    has_toc: bool,
+    /// 是否已通过 [`Markdown::with_blank_lines`] 插入块间空行段落。
+    blank_lines: bool,
 }
 
 /// 文字与原文的对照：文字中的字节偏移对应原文中的哪个字节偏移。
@@ -1284,7 +1290,7 @@ impl Builder<'_> {
                 self.ranges.push(range);
             }
         }
-        toc::contents(&mut self.root[..main]);
+        let has_toc = toc::contents(&mut self.root[..main]);
         for (block, range) in self.root.iter_mut().zip(&self.ranges) {
             rebase(block, range.start);
         }
@@ -1335,6 +1341,9 @@ impl Builder<'_> {
             ranges: self.ranges,
             leaves,
             len: source.len(),
+            has_link_defs: incremental::has_link_ref_defs(source),
+            has_toc,
+            blank_lines: false,
         }
     }
 
@@ -1449,6 +1458,7 @@ pub mod format;
 pub mod from_html;
 mod front;
 mod html;
+mod incremental;
 mod mark;
 mod shrink;
 pub mod syntax;
