@@ -117,8 +117,18 @@ pub(crate) struct LiveLeaf {
 /// 可编辑的预览在界面线程上解析的时间预算：60 Hz 下一帧（约 16.7 ms）的四分之一。
 ///
 /// 上一次解析不超过该预算时，输入后在绘制之前直接解析，同一帧即按最新的结构排版；超过时
-/// 在后台解析，解析完成之前按上一版的结构显示。
-const INLINE_PARSE: std::time::Duration = std::time::Duration::from_millis(4);
+/// 只重新解析改动所在的块（估算的耗时同样不超过该预算），做不到时在后台解析全文，解析完成
+/// 之前按上一版的结构显示。
+pub(in crate::app) const INLINE_PARSE: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// 返回在 [`INLINE_PARSE`] 内能重新解析的字节数：按上一次解析全文的用时 `cost` 与原文长度
+/// `len`（字节）成比例估算。
+fn inline_bytes(len: usize, cost: std::time::Duration) -> usize {
+    if cost.is_zero() {
+        return usize::MAX;
+    }
+    (len as f64 * INLINE_PARSE.as_secs_f64() / cost.as_secs_f64()) as usize
+}
 
 /// 一张图片最多保留的已绘制尺寸数（种）；超出时移除最早绘制的尺寸。
 const SIZES: usize = 4;
@@ -153,6 +163,9 @@ pub(crate) struct MarkdownPreview {
     pub doc: Option<DocumentId>,
     /// 最近一次解析的结果。
     pub parsed: Option<Arc<Markdown>>,
+    /// `parsed` 的序号：每次换上新的解析结果或就地重新解析其中的块都加 1，排版据此判断结果
+    /// 是否变了（见 [`laid::Laid::source`]）。
+    pub(crate) parse_serial: usize,
     /// LaTeX 原文各行在转换出的 Markdown 中的位置；Markdown 为 `None`。
     pub lines: Option<Arc<LineMap>>,
     /// 最新解析过的文档版本号（`revision`）。
@@ -384,6 +397,7 @@ impl Default for MarkdownPreview {
         Self {
             doc: None,
             parsed: None,
+            parse_serial: 0,
             lines: None,
             checked: None,
             pending: None,
@@ -508,6 +522,7 @@ impl MarkdownPreview {
         self.leave_book();
         self.doc = doc;
         self.parsed = None;
+        self.parse_serial = self.parse_serial.wrapping_add(1);
         self.lines = None;
         self.checked = None;
         self.pending = None;
@@ -697,10 +712,11 @@ impl App {
 
     /// 可编辑的预览中解析结果落后于文字时，在界面线程上解析最新的文字，返回是否已解析。
     ///
-    /// 只在上一次解析不超过 [`INLINE_PARSE`] 时进行：输入、点击、移动光标之后的排版和按键
-    /// 处理都依据当前文字的结构，不显示按上一版结构推算的中间帧。正在后台解析的旧版本作废。
+    /// 只在耗时不超过 [`INLINE_PARSE`] 时进行：改动只涉及几个块时只重新解析这些块，否则在上一次
+    /// 解析不超过该预算时解析全文。输入、点击、移动光标之后的排版和按键处理都依据当前文字的
+    /// 结构，不显示按上一版结构推算的中间帧。正在后台解析的旧版本作废。
     pub(crate) fn parse_markdown_inline(&mut self) -> bool {
-        if !self.markdown_live() || self.preview.markdown.cost.is_none_or(|c| c > INLINE_PARSE) {
+        if !self.markdown_live() {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -717,6 +733,24 @@ impl App {
         let Some(rope) = doc.text().rope() else {
             return false;
         };
+        // 只重新解析改动所在的块。绘制之前没有其他地方持有 `parsed`，就地修改不复制。
+        if let (Some(parsed), Some(checked), Some(cost)) = (md.parsed.as_mut(), md.checked, md.cost)
+            && let Some(edit) = doc.byte_edit_since(checked)
+            && Arc::make_mut(parsed).reparse_local(
+                (edit.old, edit.new),
+                (rope.len_bytes(), inline_bytes(rope.len_bytes(), cost)),
+                |at| rope.byte_to_line(at),
+                |range| rope.byte_slice(range).to_string(),
+            )
+        {
+            md.parse_serial = md.parse_serial.wrapping_add(1);
+            md.pending = None;
+            md.checked = Some(revision);
+            return true;
+        }
+        if md.cost.is_none_or(|c| c > INLINE_PARSE) {
+            return false;
+        }
         let started = std::time::Instant::now();
         let text = rope.to_string();
         let parsed = markdown::parse(&text).with_blank_lines(&text);
@@ -724,6 +758,7 @@ impl App {
         md.pending = None;
         md.checked = Some(revision);
         md.parsed = Some(Arc::new(parsed));
+        md.parse_serial = md.parse_serial.wrapping_add(1);
         true
     }
 
@@ -743,6 +778,7 @@ impl App {
                     md.pending = None;
                     md.checked = Some(revision);
                     md.parsed = Some(Arc::new(parsed));
+                    md.parse_serial = md.parse_serial.wrapping_add(1);
                     md.lines = lines.map(Arc::new);
                 }
                 Done::Converted(id, revision, result) => {
@@ -771,10 +807,12 @@ impl App {
                                 .collect();
                             md.failed = None;
                             md.parsed = Some(Arc::new(parsed));
+                            md.parse_serial = md.parse_serial.wrapping_add(1);
                         }
                         Err(reason) => {
                             md.failed = Some(reason);
                             md.parsed = None;
+                            md.parse_serial = md.parse_serial.wrapping_add(1);
                         }
                     }
                 }
