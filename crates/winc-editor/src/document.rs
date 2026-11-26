@@ -397,7 +397,8 @@ fn changed_lines(old: &ropey::Rope, new: &ropey::Rope) -> (usize, usize, usize) 
     (head, old_n - tail, new_n - tail)
 }
 
-/// 改动日志保留的最近改动条数（条，64），供 `Document::unchanged_lines_since` 向前追溯。
+/// 改动日志保留的最近改动条数（条，64），供 `Document::unchanged_lines_since` 和
+/// `Document::unchanged_chars_since` 向前追溯。
 ///
 /// 一次连续输入与随后的滚动查询通常只涉及几十次改动，64 条足以覆盖；记录更多只会增加内存开销。
 const EDIT_LOG: usize = 64;
@@ -570,9 +571,9 @@ pub struct Document {
     pub(crate) windows: Mutex<Vec<(WindowKey, Arc<LineWindow>)>>,
     /// 显示整行的行及其列索引，见 [`Document::shows_whole_line`]。
     pub(crate) whole: WholeLines,
-    /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行），供
-    /// `Document::unchanged_lines_since` 判断哪些行没有变。
-    edits: std::collections::VecDeque<(u64, usize)>,
+    /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行，第一处改动的字符偏移），供
+    /// `Document::unchanged_lines_since` 和 `Document::unchanged_chars_since` 判断哪些内容没有变。
+    edits: std::collections::VecDeque<(u64, usize, usize)>,
     /// 文档的文本：`rope`，或按需读取磁盘的大文件。
     pub(crate) text: Content,
     /// 最近一次读写时磁盘文件的修改时间。
@@ -1010,7 +1011,7 @@ impl Document {
         rope.insert(end, text);
         self.highlighter.invalidate_from(line);
         self.revision += 1;
-        self.note_edit(line);
+        self.note_edit(line, end);
         self.appended(line);
     }
 
@@ -1364,9 +1365,9 @@ impl Document {
         }
     }
 
-    /// 记录最近一次改动（`revision` 已递增）的起始行 `line`。
-    fn note_edit(&mut self, line: usize) {
-        self.edits.push_back((self.revision, line));
+    /// 记录最近一次改动（`revision` 已递增）的起始行 `line` 和起始位置 `offset`（字符偏移）。
+    fn note_edit(&mut self, line: usize, offset: usize) {
+        self.edits.push_back((self.revision, line, offset));
         if self.edits.len() > EDIT_LOG {
             self.edits.pop_front();
         }
@@ -1377,17 +1378,34 @@ impl Document {
     /// 只记录最近 `EDIT_LOG` 次改动；版本更早，或期间发生了编辑以外的变化（从磁盘重新读取、
     /// 更换语言）时返回 0。版本未变时返回 `usize::MAX`。
     pub fn unchanged_lines_since(&self, revision: u64) -> usize {
-        let mut unchanged = usize::MAX;
+        self.unchanged_since(revision).0
+    }
+
+    /// 返回从版本 `revision` 至今始终未变的开头字符数：此后的每次改动都从这些字符之后开始。
+    ///
+    /// 无法确定与版本未变时的返回值同 [`Document::unchanged_lines_since`]。
+    pub fn unchanged_chars_since(&self, revision: u64) -> usize {
+        self.unchanged_since(revision).1
+    }
+
+    /// 返回从版本 `revision` 至今始终未变的（开头行数，开头字符数）。
+    fn unchanged_since(&self, revision: u64) -> (usize, usize) {
+        let mut unchanged = (usize::MAX, usize::MAX);
         let mut count = 0;
-        for &(at, line) in self.edits.iter().rev().take_while(|(at, _)| *at > revision) {
+        let edits = self
+            .edits
+            .iter()
+            .rev()
+            .take_while(|(at, ..)| *at > revision);
+        for &(at, line, offset) in edits {
             debug_assert!(at <= self.revision);
-            unchanged = unchanged.min(line);
+            unchanged = (unchanged.0.min(line), unchanged.1.min(offset));
             count += 1;
         }
         if self.revision.checked_sub(revision) == Some(count) {
             unchanged
         } else {
-            0
+            (0, 0)
         }
     }
 
@@ -1399,7 +1417,7 @@ impl Document {
         self.highlighter.invalidate_from(line);
         self.sticky_memo.edited(self.revision, line);
         self.revision += 1;
-        self.note_edit(line);
+        self.note_edit(line, first_offset);
         self.refresh_folds();
         // 正在预览的 SVG 内容变化（例如文件被外部修改后重新读取）时，按新内容重新绘制。
         if self.picture.is_some() {
