@@ -44,10 +44,10 @@ pub(crate) use editor::sticky::{place_sticky_rows, sticky_limit};
 pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
-    ActionStrip, COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts,
-    CommitRow, CommitRows, CommitScope, CommitSort, CommitTarget, DRAWER_TOP, HistoryLine,
-    HistoryTarget, MESSAGE_LINE, MESSAGE_PAD, OtherGroup, OtherRow, PeekView, StashLine, SyncState,
-    WorktreeLine,
+    ActionStrip, COMMIT_ROW, CardState, CommitGroup, CommitLabels, CommitName, CommitOverflow,
+    CommitParts, CommitRow, CommitRows, CommitScope, CommitSort, CommitTarget, DRAWER_TOP,
+    HistoryLine, HistoryTarget, MESSAGE_LINE, MESSAGE_PAD, OtherGroup, OtherRow, PeekView,
+    StashLine, SyncState, WorktreeLine,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -674,6 +674,7 @@ impl Hover {
                         | git::panel::PanelHit::Maximize
                         | git::panel::PanelHit::Hide
                 )
+                | Hover::Commit(CommitTarget::Generate)
                 | Hover::SidebarButton
                 | Hover::Tab(..)
                 | Hover::TabList

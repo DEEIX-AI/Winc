@@ -310,6 +310,7 @@ impl App {
             | Setting::GitOpenWorktree
             | Setting::GitLogPlacement
             | Setting::GitPullMode
+            | Setting::AiProtocol
             | Setting::DropFolder
             | Setting::FindInFiles
             | Setting::AutoSave
@@ -333,6 +334,7 @@ impl App {
                     Setting::VimKey(c) => MenuTarget::VimKey(c),
                     Setting::GitOpenWorktree => MenuTarget::OpenWorktree,
                     Setting::GitPullMode => MenuTarget::PullMode,
+                    Setting::AiProtocol => MenuTarget::AiProtocol,
                     Setting::GitLogPlacement => MenuTarget::LogPlacement,
                     Setting::DropFolder => MenuTarget::DropFolder,
                     Setting::FindInFiles => MenuTarget::SearchStyle,
@@ -355,7 +357,7 @@ impl App {
             Setting::FormatCommand(id) => (MenuTarget::Tool(Task::Format, id), row.control),
             Setting::FixCommand(id) => (MenuTarget::Tool(Task::Fix, id), row.control),
             Setting::TerminalShell => (MenuTarget::DefaultShell, row.control),
-            Setting::GitPath | Setting::LatexPath => return self.settings_start_editing(setting),
+            _ if setting.is_text_field() => return self.settings_start_editing(setting),
             Setting::Updates => return self.settings_check_updates(),
             Setting::ExportSettings => return self.pick(Pick::ExportSettings),
             Setting::ImportSettings => return self.pick(Pick::ImportSettings),

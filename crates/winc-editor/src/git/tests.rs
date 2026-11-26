@@ -10,6 +10,7 @@ mod discover;
 mod history;
 mod locate;
 mod pathspec;
+mod pending;
 
 fn root() -> PathBuf {
     PathBuf::from("/repo")
