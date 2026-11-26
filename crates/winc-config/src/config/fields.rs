@@ -255,6 +255,7 @@ const EDITOR: &[Field] = &[
     bool_field!("alignColumns", align_columns),
     bool_field!("wholeLines", whole_lines),
     bool_field!("minimap", minimap),
+    bool_field!("renderLineEndings", render_line_endings),
     bool_field!("smoothScrolling", smooth_scrolling),
     Field {
         key: "smoothCaretMovement",

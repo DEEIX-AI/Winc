@@ -174,6 +174,7 @@ impl Screen<'_> {
         }
         self.draw_whitespace(frame, &row);
         let cells = self.draw_content(frame, &row, tokens);
+        self.draw_line_ending(frame, &row);
         self.draw_tail(frame, &row, cells, (folded_hits, long_hits));
         self.draw_carets(frame, &row, ime_cursor, caret);
     }
@@ -446,6 +447,37 @@ impl Screen<'_> {
             let y = row.y + part as f32 * self.lh;
             draw_whitespace_mark(self.app, frame, c, (x, y), width, self.text_rect);
         }
+    }
+
+    /// 按 `editor.renderLineEndings` 在行尾绘制本行的换行符：↓ 为 LF，↵ 为 CRLF，← 为 CR。
+    ///
+    /// 最后一行没有换行符；截断、折叠的行和按列对齐的表格中行尾另有内容，不绘制。
+    fn draw_line_ending(&self, frame: &mut Frame<'_>, row: &Row<'_>) {
+        let shown = self.app.config.render_line_endings == Some(true);
+        if !shown || !row.ends || row.truncated || row.collapsed || row.aligned.is_some() {
+            return;
+        }
+        let text = self.doc.text();
+        let end = text.line_span(row.line).end;
+        let mark = match text.substring(row.line_end, end).as_str() {
+            "\r\n" => "↵",
+            "\n" => "↓",
+            "\r" => "←",
+            _ => return,
+        };
+        let (part, x) = self.place(row, row.line_end);
+        let baseline = row.baseline + part as f32 * self.lh;
+        let color = self.app.palette.indent_guide_active;
+        let size = self.app.fonts.code;
+        frame.text(
+            FontKind::Mono,
+            size,
+            x,
+            baseline,
+            mark,
+            color,
+            self.text_rect,
+        );
     }
 
     /// 在最后一段之后绘制截断说明和「显示整行」，以及折叠行的小块；两者的点击区域分别记录到

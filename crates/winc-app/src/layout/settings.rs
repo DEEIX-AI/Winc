@@ -96,6 +96,8 @@ pub enum Setting {
     WordWrap,
     /// 长行参考线所在的列（`editor.rulers`）。
     EditorRulers,
+    /// 在行尾标出换行符（`editor.renderLineEndings`）。
+    RenderLineEndings,
     /// CSV、TSV 按列对齐显示。
     AlignColumns,
     /// 超长行显示全部内容（`wholeLines`）。
@@ -345,10 +347,12 @@ impl Setting {
             }
             S::LineNumbers | S::WordWrap | S::EditorRulers => SettingsPage::Editor,
             S::AlignColumns => SettingsPage::Editor,
-            S::Minimap | S::StickyScroll | S::RenderWhitespace | S::WholeLines => {
+            S::Minimap | S::StickyScroll | S::RenderWhitespace | S::RenderLineEndings => {
                 SettingsPage::Editor
             }
-            S::SmoothCaret | S::DragAndDrop | S::FullTabNames => SettingsPage::Editor,
+            S::WholeLines | S::SmoothCaret | S::DragAndDrop | S::FullTabNames => {
+                SettingsPage::Editor
+            }
             S::DefaultLanguage | S::DetectLanguageOnPaste | S::VimMode | S::VimClipboard => {
                 SettingsPage::Editor
             }
@@ -435,6 +439,7 @@ impl Setting {
             S::AlignColumns => "editor.alignColumns",
             S::WholeLines => "editor.wholeLines",
             S::Minimap => "editor.minimap",
+            S::RenderLineEndings => "editor.renderLineEndings",
             S::Outline => "editor.outline",
             S::LineNumbers => "editor.lineNumbers",
             S::DiffInline => "editor.diffInline",
@@ -558,6 +563,7 @@ impl Setting {
             Setting::AlignColumns => t!("settings-align-columns"),
             Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
+            Setting::RenderLineEndings => t!("settings-render-line-endings"),
             Setting::LineNumbers => t!("settings-line-numbers"),
             Setting::DiffInline => t!("settings-diff-inline"),
             Setting::DiffCollapse => t!("settings-diff-collapse"),
@@ -695,6 +701,7 @@ impl Setting {
             Setting::AutoReveal => Some(t!("settings-auto-reveal-desc")),
             Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
+            Setting::RenderLineEndings => Some(t!("settings-render-line-endings-desc")),
             Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
             Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
             Setting::DiffCollapse => Some(t!("settings-diff-collapse-desc")),
@@ -810,6 +817,7 @@ impl Setting {
             | Setting::AlignColumns
             | Setting::WholeLines
             | Setting::Minimap
+            | Setting::RenderLineEndings
             | Setting::Outline
             | Setting::LineNumbers
             | Setting::DiffInline

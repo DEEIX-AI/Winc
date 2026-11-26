@@ -114,6 +114,8 @@ pub struct Config {
     pub outline: Option<bool>,
     /// 何时显示空格和制表符，默认为选中时。
     pub render_whitespace: Option<RenderWhitespace>,
+    /// 在行尾标出该行的换行符（LF、CRLF 或 CR），默认为否。
+    pub render_line_endings: Option<bool>,
     /// 显示长行参考线的列：每一项 N 在第 N 列之后（距行首 N 个字符宽处）画一条竖线；为空时不显示。
     ///
     /// 各项的可用范围见 [`Config::RULER_RANGE`]。

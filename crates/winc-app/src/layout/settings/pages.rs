@@ -171,6 +171,7 @@ impl SettingsPage {
                         S::StickyScroll,
                         S::SmoothCaret,
                         S::RenderWhitespace,
+                        S::RenderLineEndings,
                         S::WholeLines,
                         S::FullTabNames,
                     ],

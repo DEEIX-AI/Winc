@@ -1,4 +1,4 @@
-//! 「编辑器」页设置的测试：字重与长行参考线。
+//! 「编辑器」页设置的测试：字重、长行参考线与换行符。
 
 use super::*;
 
@@ -67,5 +67,37 @@ fn rulers_are_typed_as_columns_and_drawn_after_them() {
     let x = (text.x + crate::theme::TEXT_PAD + 4.0 * app.metrics.cell).round();
     let y = text.bottom() - 4.0;
     assert_ne!(pixel(&app, (x + 0.5, y)), pixel(&app, (x + 3.5, y)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 换行符：打开设置后各行行尾（第一个字符之后的一格）画出该行的换行符，CRLF 与 LF 的标记
+/// 不同；最后一行没有换行符，不画。
+#[test]
+fn line_endings_are_marked_after_each_line() {
+    let dir = sample_folder("settings-line-endings");
+    let path = dir.join("mixed.txt");
+    std::fs::write(&path, "a\r\nb\nc\rd").unwrap();
+    let mut app = app_with(&path, false);
+    // 第 `line` 行行尾那一格中与同一行右侧空白处不同的像素数（光标所在行另有底色）。
+    let ink = |app: &mut App, line: usize| -> usize {
+        paint(app);
+        let (text, cell, lh) = (app.layout.text, app.metrics.cell, app.fonts.line_height);
+        let x0 = text.x + crate::theme::TEXT_PAD + cell;
+        let y0 = text.y + line as f32 * lh;
+        let blank = pixel(app, (x0 + 4.0 * cell + 0.5, y0 + lh / 2.0));
+        let (columns, rows) = (cell.ceil() as usize, lh.floor() as usize);
+        let points = (0..columns).flat_map(|dx| (0..rows).map(move |dy| (dx, dy)));
+        let at = |(dx, dy): (usize, usize)| (x0 + dx as f32 + 0.5, y0 + dy as f32 + 0.5);
+        points.filter(|&p| pixel(app, at(p)) != blank).count()
+    };
+    let off: Vec<usize> = (0..4).map(|line| ink(&mut app, line)).collect();
+    assert!(off.iter().all(|&n| n == 0), "{off:?}");
+
+    app.settings_toggle(Setting::RenderLineEndings);
+    assert_eq!(app.config.render_line_endings, Some(true));
+    let marks: Vec<usize> = (0..4).map(|line| ink(&mut app, line)).collect();
+    assert!(marks[..3].iter().all(|&n| n > 0), "{marks:?}");
+    assert_ne!(marks[0], marks[1], "CRLF 与 LF 的标记不同");
+    assert_eq!(marks[3], 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
