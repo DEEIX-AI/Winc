@@ -569,3 +569,26 @@ fn long_crumbs_fold_to_keep_the_message() {
     assert_eq!(shown(&app), (before, edge));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 点击状态栏上的光标位置打开转到行的输入条，悬停时提示命令名。
+#[test]
+fn clicking_the_position_opens_go_to_line() {
+    let dir = sample_folder("status-position");
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    paint(&mut app);
+    let hit = app
+        .hits
+        .status
+        .iter()
+        .find(|(_, i)| *i == StatusItem::Position);
+    let rect = hit.map(|(rect, _)| *rect).expect("光标位置可以点击");
+    let at = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    app.on_mouse_move(at.0, at.1);
+    assert_eq!(app.pointer.hover, Hover::Status(StatusItem::Position));
+    assert!(app.pointer.hover.has_tooltip());
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(app.bars.goto_input.is_some());
+    assert_eq!(app.bars.prompt_kind, crate::app::PromptKind::GoTo);
+    let _ = std::fs::remove_dir_all(&dir);
+}

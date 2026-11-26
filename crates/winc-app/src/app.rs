@@ -666,7 +666,8 @@ impl Hover {
                         | terminal::HeaderHit::Run(_),
                 )
                 | Hover::Status(
-                    StatusItem::Terminal
+                    StatusItem::Position
+                        | StatusItem::Terminal
                         | StatusItem::GitPanel
                         | StatusItem::Remote
                         | StatusItem::Settings

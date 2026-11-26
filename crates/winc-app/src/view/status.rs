@@ -573,7 +573,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         // 仅供查看的标签（格式化输出）没有可修改的缩进、行尾和编码。
         let clickable = |item| doc.title.is_none().then_some(item);
 
-        items = vec![(StatusKey::Position, position, None)];
+        items = vec![(StatusKey::Position, position, Some(StatusItem::Position))];
         if let Some((total, selected)) = app.word_count() {
             let words = match selected {
                 0 => t!("workspace-status-words", count = total),
@@ -613,7 +613,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         };
         let hex = t!("editor-encoding-hex").to_owned();
         items = vec![
-            (StatusKey::Position, position, None),
+            (StatusKey::Position, position, Some(StatusItem::Position)),
             (StatusKey::Encoding, hex, Some(StatusItem::Encoding)),
         ];
     }
