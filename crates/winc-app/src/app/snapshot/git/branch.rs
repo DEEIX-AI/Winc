@@ -1310,3 +1310,44 @@ fn publishing_asks_with_the_target_remote_until_told_not_to() {
     let _ = std::fs::remove_dir_all(&origin);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 回归（#515）：仓库的钩子未经信任时切换分支被拒绝，关掉询问信任的提示框后无处再信任。失败
+/// 提示提供「信任此仓库…」，信任后可以切换。
+#[cfg(unix)]
+#[test]
+fn a_refused_switch_offers_to_trust_the_repository() {
+    use crate::app::NoticeAction;
+    use crate::app::git::branch::BranchOp;
+    use crate::app::input::context_menu::MenuCommand;
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some((mut app, root)) = git_app("git-trust-refused", false) else {
+        return;
+    };
+    git_in(&root, &["add", "."]);
+    git_in(&root, &["commit", "-q", "-m", "second"]);
+    git_in(&root, &["branch", "side"]);
+    let hook = root.join(".git/hooks/post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    app.git_refresh();
+    let side = (app.git.branches.iter()).position(|b| b.name == "side");
+    let checkout = MenuCommand::GitBranch(BranchOp::Checkout, side.unwrap());
+    choose_in_branch_menu(&mut app, checkout);
+    app.poll_branch_ops();
+    assert_eq!(head_name(&app).as_deref(), Some("main"));
+    let action = Some(NoticeAction::TrustGitRepository(root.clone()));
+    assert_eq!(app.notice.action, action, "{:?}", app.notice.text);
+
+    let git = app.git.tool.get().unwrap();
+    let fingerprint = git.known_untrusted(&root).unwrap().fingerprint;
+    app.answer_git_trust(&root, fingerprint, true);
+    let side = (app.git.branches.iter()).position(|b| b.name == "side");
+    choose_in_branch_menu(
+        &mut app,
+        MenuCommand::GitBranch(BranchOp::Checkout, side.unwrap()),
+    );
+    app.poll_branch_ops();
+    assert_eq!(head_name(&app).as_deref(), Some("side"));
+    let _ = std::fs::remove_dir_all(&root);
+}

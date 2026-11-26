@@ -341,7 +341,11 @@ impl App {
             self.git.commit.commit_queued = false;
             self.git.commit.drop_push_intent();
             self.git.commit.index.clear();
-            self.notify(NoticeKind::Error, t!("git-stage-failed", error = e));
+            let message = t!("git-stage-failed", error = e);
+            match self.git_trust_action(Some(root)) {
+                Some(action) => self.notify_with(NoticeKind::Error, message, action),
+                None => self.notify(NoticeKind::Error, message),
+            }
         }
         if !self.git.commit.staging_queue.is_empty() {
             self.pump_staging();

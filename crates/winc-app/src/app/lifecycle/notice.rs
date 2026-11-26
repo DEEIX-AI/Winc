@@ -17,6 +17,8 @@ pub enum NoticeAction {
     FormatSettings,
     /// 「查看输出」：在只读标签中打开 Git 操作的输出。
     GitOutput,
+    /// 「信任此仓库…」：操作因这个仓库的配置不可信而被拒绝，再次询问是否信任。
+    TrustGitRepository(PathBuf),
     /// 「重新连接」：重新连接远端主机并回到其上的目录。
     Reconnect(PathBuf),
     /// 「取消」：取消正在进行的到远端主机的连接。
@@ -89,6 +91,7 @@ impl NoticeAction {
             NoticeAction::Reveal(_) => crate::system::reveal_label(),
             NoticeAction::SaveAsAdmin(_) => t!("workspace-save-admin"),
             NoticeAction::OpenProject(_) => t!("workspace-notice-open-project"),
+            NoticeAction::TrustGitRepository(_) => t!("workspace-notice-trust-repository"),
         }
     }
 }
@@ -215,6 +218,7 @@ impl App {
                 self.settings_show_page(SettingsPage::Format);
             }
             NoticeAction::GitOutput => self.show_git_output(),
+            NoticeAction::TrustGitRepository(root) => self.review_git_trust(&root),
             NoticeAction::Reconnect(folder) => {
                 self.reopen_remote(&folder);
             }

@@ -848,11 +848,12 @@ impl App {
                         let name = winc_editor::display_name(&root);
                         match result {
                             Ok(oid) => self.flash(t!("git-commit-done-in", name = name, oid = oid)),
-                            Err(e) => self.notify_with(
-                                NoticeKind::Error,
-                                t!("git-commit-failed-in", name = name, error = e),
-                                NoticeAction::GitOutput,
-                            ),
+                            Err(e) => {
+                                let message = t!("git-commit-failed-in", name = name, error = e);
+                                let action = self.git_trust_action(Some(&root));
+                                let action = action.unwrap_or(NoticeAction::GitOutput);
+                                self.notify_with(NoticeKind::Error, message, action);
+                            }
                         }
                         continue;
                     }
@@ -909,10 +910,12 @@ impl App {
                             self.git.commit.drop_push_intent();
                             self.git.commit.committed_with.clear();
                             self.git.commit.others_left = 0;
+                            let action = self.git_trust_action(Some(&root));
+                            let action = action.unwrap_or(NoticeAction::GitOutput);
                             self.notify_with(
                                 NoticeKind::Error,
                                 t!("git-commit-failed", error = e),
-                                NoticeAction::GitOutput,
+                                action,
                             );
                             // 失败前可能已经提交了其他仓库：重读它们的状态。
                             if self.commit_shows_others() {
