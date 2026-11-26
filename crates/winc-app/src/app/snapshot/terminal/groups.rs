@@ -120,7 +120,8 @@ fn moving_a_tab_to_a_new_group_keeps_the_terminal() {
     assert!(group_hit(&app, 1, HeaderHit::Hide).is_some());
     assert!(group_hit(&app, 0, HeaderHit::Split).is_some());
 
-    // 没有新开终端；两个终端都按自己那一栏变窄，告诉了辅助进程。
+    // 没有新开终端；大小稳定后两个终端都按自己那一栏变窄，告诉了辅助进程。
+    settle_terminal_size(&mut app);
     let sent = app.sent_to_helper(&log);
     assert!(
         !sent.iter().any(|m| matches!(m, ToHelper::Spawn { .. })),

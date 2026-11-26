@@ -79,6 +79,11 @@ pub(crate) const BAND_X: f32 = 5.0;
 ///
 /// 超过这个时间不再等待，新的尺寸仍然会发：程序开着同步输出时，辅助进程会先不发帧。
 const RESIZE_WAIT: Duration = Duration::from_millis(100);
+/// 终端的大小稳定多久后才发出新尺寸（150 ms，取自调参）。
+///
+/// 拖动分隔条、调整窗口时大小每帧都在变：每发一次，辅助进程重排回滚缓冲、shell 重画提示符，
+/// 中途的画面会闪烁。期间不发，停下后只重排一次；时长长于拖动中两次移动的间隔，停手后不显得迟缓。
+pub(in crate::app) const RESIZE_SETTLE: Duration = Duration::from_millis(150);
 /// 换位置的动画总时长（360 ms）：前一半在原来的位置收起，后一半在新位置出来。
 const MOVE_ANIMATION: Duration = Duration::from_millis(360);
 /// 一次向辅助进程要多少行历史（行）：整份回滚缓冲可以设到一百万行，一次要会超出单条消息的

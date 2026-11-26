@@ -423,6 +423,16 @@ impl App {
         }
     }
 
+    /// 终端的大小是否正随拖动分隔条或侧栏、面板的动画持续变化。
+    fn terminal_layout_moving(&self) -> bool {
+        self.text_width_changing()
+            || matches!(
+                self.pointer.drag,
+                crate::app::Drag::TerminalSplit { .. }
+                    | crate::app::Drag::TerminalGroupSplit { .. }
+            )
+    }
+
     /// 正在用的一栏的网格放不下一整行的零头（见 [`grid_slack`]）。
     fn terminal_slack(&self) -> f32 {
         let card = self.terminal_group_card_in(self.layout.terminal);
@@ -432,9 +442,9 @@ impl App {
     /// 按正在用的一栏的大小记下各标签显示几行，并把新尺寸告诉正在看的标签；返回下一次要补发
     /// 尺寸的时刻（见 `TerminalPanel::resize_due`）。
     ///
-    /// 每个标签同时只有一个尺寸在路上：上一个尺寸重排好的一帧回来后发下一个（中间的跳过），
-    /// 辅助进程和 shell 不会积压；只改正在看的标签，改宽度要重排整个回滚缓冲（一万行约 11 ms），
-    /// 后台标签一起排会阻塞几十毫秒，切过来时再改。
+    /// 布局在动或大小连续变化时先不发，稳定满 `RESIZE_SETTLE` 后发一次，静止后的单次变化立即发；
+    /// 每个标签同时只有一个尺寸在路上。只改正在看的标签：改宽度要重排整个回滚缓冲（一万行约
+    /// 11 ms）。
     fn size_terminal_group(&mut self, now: Instant) -> Option<Instant> {
         let size = self.terminal_size();
         let slack = self.terminal_slack();
@@ -455,6 +465,7 @@ impl App {
                 })
             })
             .collect();
+        let moving = self.terminal_layout_moving();
         let t = &mut self.terminal;
         let client = t.client.as_ref()?;
         let tab = t.tabs.get_mut(t.active)?;
@@ -464,7 +475,22 @@ impl App {
                 .find(|(id, _)| *id == tab.id)
                 .map_or(size, |(_, size)| *size);
             tab.shown = usize::from(size.rows);
+            let last = tab.settling;
+            let changed = last.is_none_or(|(seen, _)| seen != size);
+            if changed {
+                tab.settling = Some((size, now));
+            }
             if tab.size == size || tab.ended.is_some() {
+                return;
+            }
+            // 静止之后的单次变化（例如收起侧栏）立即发；仍在变化、或刚变化过时等它稳定。
+            let quiet = last.is_none_or(|(_, at)| now >= at + RESIZE_SETTLE);
+            let settled = tab
+                .settling
+                .is_some_and(|(_, at)| now >= at + RESIZE_SETTLE);
+            if moving || !(changed && quiet || settled) {
+                let at = tab.settling.map_or(now, |(_, at)| at);
+                due = earliest(due, Some(at + RESIZE_SETTLE));
                 return;
             }
             match tab.resizing {

@@ -592,3 +592,41 @@ fn clicking_the_position_opens_go_to_line() {
     assert_eq!(app.bars.prompt_kind, crate::app::PromptKind::GoTo);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 状态栏右端的图标按墨迹排开：宽窄不同的锁、终端框和齿轮之间的空隙相同（按半个逻辑像素测量，
+/// 误差不超过一次测量的步长）。
+#[test]
+fn status_icons_keep_equal_gaps_between_their_ink() {
+    let dir = sample_folder("status-icon-gaps");
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.config.terminal_enabled = Some(true);
+    paint(&mut app);
+    let pill = |item| {
+        let hit = app.hits.status.iter().find(|(_, i)| *i == item);
+        hit.map(|(rect, _)| *rect).expect("图标在状态栏上")
+    };
+    let (from, to) = (pill(StatusItem::ReadOnly), pill(StatusItem::Settings));
+    let bar = app.layout.status;
+    let (cy, blank) = (
+        bar.y + bar.h / 2.0,
+        pixel(&app, (from.x + 1.0, bar.y + bar.h / 2.0)),
+    );
+    // 每半个逻辑像素一列：该列上下 7 逻辑像素内有一处不是底色即有墨迹。
+    let inked = |x: f32| (-14..=14).any(|dy| pixel(&app, (x, cy + dy as f32 / 2.0)) != blank);
+    let columns: Vec<f32> = (0..((to.right() - from.x) * 2.0) as usize)
+        .map(|i| from.x + i as f32 / 2.0)
+        .filter(|&x| inked(x))
+        .collect();
+    // 相距超过 3 逻辑像素的空白分开两个图标。
+    let mut spans: Vec<(f32, f32)> = Vec::new();
+    for x in columns {
+        match spans.last_mut() {
+            Some(span) if x - span.1 <= 3.0 => span.1 = x,
+            _ => spans.push((x, x)),
+        }
+    }
+    let gaps: Vec<f32> = spans.windows(2).map(|w| w[1].0 - w[0].1).collect();
+    assert_eq!(gaps.len(), 2, "{spans:?}");
+    assert!((gaps[0] - gaps[1]).abs() <= 0.5, "{gaps:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
