@@ -17,6 +17,11 @@ fn rows_split_into_cells() {
     assert_eq!(cells("|  | x |")[0].content, 2..2);
     assert!(is_delimiter("|---|:-:|"));
     assert!(is_delimiter("--- | ---"));
+    assert!(is_delimiter("  | :--- | ---: |  "));
+    assert!(!is_delimiter(""));
+    assert!(!is_delimiter("|   |"));
+    assert!(!is_delimiter("| : |"));
+    assert!(!is_delimiter("| --- \\| --- |"));
     assert!(!is_delimiter("| a | b |"));
 }
 

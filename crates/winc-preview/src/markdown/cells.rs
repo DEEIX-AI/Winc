@@ -62,14 +62,55 @@ pub fn cells(line: &str) -> Vec<Cell> {
 
 /// 是否为表头下面那一行（`|---|:--:|`）。
 pub fn is_delimiter(line: &str) -> bool {
-    let cells = cells(line);
-    !cells.is_empty()
-        && cells.iter().all(|c| {
-            let t = line[c.segment.clone()].trim();
-            let t = t.strip_prefix(':').unwrap_or(t);
-            let t = t.strip_suffix(':').unwrap_or(t);
-            !t.is_empty() && t.bytes().all(|b| b == b'-')
-        })
+    let bytes = line.trim().as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let start = usize::from(bytes[0] == b'|');
+    let end = if bytes.len() > start
+        && bytes[bytes.len() - 1] == b'|'
+        && (bytes.len() < 2 || bytes[bytes.len() - 2] != b'\\')
+    {
+        bytes.len() - 1
+    } else {
+        bytes.len()
+    };
+    let mut seg_start = start;
+    let mut count = 0usize;
+    let mut i = start;
+    let mut escaped = false;
+    loop {
+        let at_end = i >= end;
+        if at_end || (bytes[i] == b'|' && !escaped) {
+            let mut s = seg_start;
+            let mut e = i;
+            while s < e && bytes[s].is_ascii_whitespace() {
+                s += 1;
+            }
+            while e > s && bytes[e - 1].is_ascii_whitespace() {
+                e -= 1;
+            }
+            if s < e && bytes[s] == b':' {
+                s += 1;
+            }
+            if e > s && bytes[e - 1] == b':' {
+                e -= 1;
+            }
+            if s >= e || !bytes[s..e].iter().all(|&b| b == b'-') {
+                return false;
+            }
+            count += 1;
+            if at_end {
+                break;
+            }
+            seg_start = i + 1;
+            escaped = false;
+        } else {
+            escaped = bytes[i] == b'\\' && !escaped;
+        }
+        i += 1;
+    }
+    count > 0
 }
 
 /// 光标在单元格之间移动的一步。

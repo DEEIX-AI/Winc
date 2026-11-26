@@ -208,6 +208,8 @@ impl Cx<'_, '_> {
     /// 返回 `cols` 列各自最窄的宽度和不换行时的宽度（逻辑像素），都含左右各 `pad_x` 的内边距。
     ///
     /// `live` 所指的单元格按其显示的内容度量；`para` 给出第 `r` 行、第 `c` 列的段落样式。
+    /// 行数较多的大表格缓存每列的最大与次大宽度，编辑单个单元格时只需 O(1) 结合该格更新，
+    /// 不必重扫整张表。
     fn column_bounds(
         &mut self,
         rows: &[Vec<Inline>],
@@ -216,6 +218,70 @@ impl Cx<'_, '_> {
         pad_x: f32,
         para: impl Fn(usize, usize) -> Para,
     ) -> (Vec<f32>, Vec<f32>) {
+        if rows.len() >= 32
+            && !rows
+                .iter()
+                .flat_map(|row| row.iter())
+                .any(|cell| !cell.images.is_empty())
+        {
+            let cache_key = memo::key(|h| {
+                rows.hash(h);
+                cols.hash(h);
+                pad_x.to_bits().hash(h);
+                para(0, 0).hash_into(h);
+                para(1, 0).hash_into(h);
+            });
+            let cached = match self.memo.get_table_cols(cache_key) {
+                Some(hit) => hit,
+                None => {
+                    let mut min = vec![(0.0f32, usize::MAX, 0.0f32); cols];
+                    let mut max = vec![(0.0f32, usize::MAX, 0.0f32); cols];
+                    for (r, row) in rows.iter().enumerate() {
+                        for (c, cell) in row.iter().enumerate() {
+                            let (lo, hi) = self.measure(cell, para(r, c));
+                            let (lo, hi) = (lo + pad_x * 2.0, hi + pad_x * 2.0);
+                            if lo >= min[c].0 {
+                                min[c] = (lo, r, min[c].0);
+                            } else if lo > min[c].2 {
+                                min[c].2 = lo;
+                            }
+                            if hi >= max[c].0 {
+                                max[c] = (hi, r, max[c].0);
+                            } else if hi > max[c].2 {
+                                max[c].2 = hi;
+                            }
+                        }
+                    }
+                    let built = Arc::new(memo::TableCols { min, max });
+                    self.memo.insert_table_cols(cache_key, Arc::clone(&built));
+                    built
+                }
+            };
+            let mut min: Vec<f32> = cached.min.iter().map(|&(m1, _, _)| m1).collect();
+            let mut max: Vec<f32> = cached.max.iter().map(|&(m1, _, _)| m1).collect();
+            if let Some((lr, lc, _, live_cell)) = live
+                && *lc < cols
+            {
+                let (lo, hi) = match live_cell {
+                    Some(cell) => self.measure(cell, para(*lr, *lc)),
+                    None => (0.0, 0.0),
+                };
+                let (lo, hi) = (lo + pad_x * 2.0, hi + pad_x * 2.0);
+                let base_min = if cached.min[*lc].1 == *lr {
+                    cached.min[*lc].2
+                } else {
+                    cached.min[*lc].0
+                };
+                let base_max = if cached.max[*lc].1 == *lr {
+                    cached.max[*lc].2
+                } else {
+                    cached.max[*lc].0
+                };
+                min[*lc] = base_min.max(lo);
+                max[*lc] = base_max.max(hi);
+            }
+            return (min, max);
+        }
         let (mut min, mut max) = (vec![0f32; cols], vec![0f32; cols]);
         for (r, row) in rows.iter().enumerate() {
             for (c, cell) in row.iter().enumerate() {
