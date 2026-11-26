@@ -204,7 +204,6 @@ pub(super) fn draw_line(
         frame.rect_clipped(rect, color, 0.0, clip);
     }
 
-    let nudge = 1.0 / frame.scale().max(1.0);
     for (part, &Paint { fg, shape, .. }) in parts.iter().zip(&styles) {
         let attrs = part.style.attrs;
         let bold = attrs.has(Attrs::BOLD);
@@ -257,22 +256,7 @@ pub(super) fn draw_line(
                     && !super::powerline::draw_powerline(frame, c, at, fg, clip)
                 {
                     if bold {
-                        if !frame.cell_char_bold(
-                            kind,
-                            size,
-                            x_of(col),
-                            baseline,
-                            cell,
-                            w,
-                            c,
-                            fg,
-                            clip,
-                        ) {
-                            frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
-                            // 无真粗体可用时回退：往右错开一个物理像素再绘制一次，保持等宽格子不变。
-                            let x = x_of(col) + nudge;
-                            frame.cell_char(kind, size, x, baseline, cell, w, c, fg, clip);
-                        }
+                        frame.cell_char_bold(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
                     } else {
                         frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
                     }

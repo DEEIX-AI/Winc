@@ -611,23 +611,12 @@ impl Frame<'_> {
         color: Color,
         clip: Rect,
     ) {
-        let resolved = self.glyphs.lookup(kind, size, c);
-        let offset = ((cell * cells as f32 - resolved.advance) / 2.0).max(0.0);
         let faux = Faux::default();
-        self.draw_glyph(
-            kind,
-            faux,
-            size,
-            (x + offset, baseline),
-            c,
-            resolved,
-            color,
-            clip,
-        );
+        let at = (x, baseline);
+        self.cell_char_faux(kind, faux, size, at, cell * cells as f32, c, color, clip);
     }
 
-    /// 尝试使用真实粗体字形在等宽网格上绘制字符 `c`；命中真粗体并已绘制时返回 `true`，
-    /// 无真粗体可用时返回 `false` 交由调用方回退到错位叠画。
+    /// 同 [`Self::cell_char`]，绘制粗体：字体能变粗时使用字体自身的粗体字形，否则加宽笔画。
     #[allow(clippy::too_many_arguments)]
     pub fn cell_char_bold(
         &mut self,
@@ -640,27 +629,32 @@ impl Frame<'_> {
         c: char,
         color: Color,
         clip: Rect,
-    ) -> bool {
+    ) {
         let faux = Faux {
             bold: true,
             italic: false,
         };
+        let at = (x, baseline);
+        self.cell_char_faux(kind, faux, size, at, cell * cells as f32, c, color, clip);
+    }
+
+    /// 在宽 `width`（逻辑像素）的格子中水平居中绘制字符 `c`，`at` 是格子左端和基线。
+    #[allow(clippy::too_many_arguments)]
+    fn cell_char_faux(
+        &mut self,
+        kind: FontKind,
+        faux: Faux,
+        size: f32,
+        (x, baseline): (f32, f32),
+        width: f32,
+        c: char,
+        color: Color,
+        clip: Rect,
+    ) {
         let resolved = self.glyphs.lookup_faux(kind, faux, size, c);
-        if resolved.faux_bold {
-            return false;
-        }
-        let offset = ((cell * cells as f32 - resolved.advance) / 2.0).max(0.0);
-        self.draw_glyph(
-            kind,
-            faux,
-            size,
-            (x + offset, baseline),
-            c,
-            resolved,
-            color,
-            clip,
-        );
-        true
+        let offset = ((width - resolved.advance) / 2.0).max(0.0);
+        let at = (x + offset, baseline);
+        self.draw_glyph(kind, faux, size, at, c, resolved, color, clip);
     }
 
     /// 返回一段文字的宽度（逻辑像素）。
@@ -698,7 +692,7 @@ impl Frame<'_> {
         self.glyphs.metrics(kind, size)
     }
 
-    /// 在笔位置 `(x, baseline)` 绘制已经解析好（[`GlyphCache::lookup`]）的字符 `c`。
+    /// 在笔位置 `(x, baseline)` 绘制已经解析好（[`GlyphCache::lookup_faux`]）的字符 `c`。
     ///
     /// 空白、控制字符和完全透明的颜色不光栅化。
     #[allow(clippy::too_many_arguments)]

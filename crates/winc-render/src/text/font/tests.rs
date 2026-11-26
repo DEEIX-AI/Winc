@@ -631,37 +631,83 @@ fn emoji_use_the_color_font_before_symbol_fonts() {
     }
 }
 
-/// 粗体在对应字体存在真实粗体字重（可变 `wght` 轴、系统命名实例或同族 Bold 文件）时解析到独立槽位，
-/// 无真实粗体时返回 `faux_bold = true` 交由上层退回合成描边。
+#[test]
+fn sibling_files_share_the_name_up_to_the_first_hyphen() {
+    use std::path::Path;
+
+    let prefix = |name: &str| weight::name_prefix(Path::new(name));
+    assert_eq!(
+        prefix("JetBrainsMono-Regular.ttf").as_deref(),
+        Some("jetbrainsmono-")
+    );
+    // 同一目录中前缀更长的其他字族不算同族，不必逐个打开。
+    assert!(!"notosansmono-bold.ttf".starts_with(&prefix("NotoSans-Regular.ttf").unwrap()));
+    // 没有 `-` 时取前三个字符：同族各字重的文件名常只有开头相同。
+    assert_eq!(prefix("segoeui.ttf").as_deref(), Some("seg"));
+    assert!("dejavusansmono-bold.ttf".starts_with(&prefix("DejaVuSansMono.ttf").unwrap()));
+    assert_eq!(prefix("ab"), None);
+}
+
+/// 有字重轴、同族粗体或系统字体的粗体实例时，粗体使用派生的槽位，字体自身提供字重；没有时仍用
+/// 原槽位，由绘制时加宽笔画。
 #[cfg(target_os = "macos")]
 #[test]
-fn real_bold_resolves_for_variable_and_family_fonts_and_falls_back_when_absent() {
+fn bold_uses_the_weight_the_font_provides() {
     let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
-
-    // 界面拉丁与中文（SF Pro / PingFangSC）均可解析到真实粗体槽位，且不启用合成描边。
-    for ch in ['A', '中'] {
-        let regular = fonts.resolve(FontKind::Ui, ch);
-        let (slot, glyph, faux) = fonts.resolve_bold(FontKind::Ui, ch);
-        assert!(!faux, "{ch} 应命中真实粗体");
-        assert_ne!(slot, regular.0, "{ch}");
-        assert_ne!(glyph, 0, "{ch}");
-        let face = fonts.face(slot).expect("粗体槽位已加载");
-        assert_eq!(face.embolden, 0.0, "{ch}");
+    // 界面的西文来自 SF（字重轴），中文来自苹方（命名实例，最粗的 Semibold 为 600）。
+    for (c, gained) in [('A', 300.0), ('中', 200.0)] {
+        let (regular, _) = fonts.resolve(FontKind::Ui, c);
+        let (slot, glyph, faux) = fonts.resolve_bold(FontKind::Ui, c);
+        assert!(!faux, "{c}");
+        assert_ne!(slot, regular, "{c}");
+        assert_ne!(glyph, 0, "{c}");
+        assert_eq!(fonts.face(slot).unwrap().gained, gained, "{c}");
     }
+    let (regular, _) = fonts.resolve(FontKind::Terminal, 'A');
+    let (slot, _, faux) = fonts.resolve_bold(FontKind::Terminal, 'A');
+    assert!(!faux);
+    assert_ne!(slot, regular);
 
-    // 终端与等宽字体（SF Mono / Menlo）同样能解析出真实粗体。
-    let regular_mono = fonts.resolve(FontKind::Terminal, 'A');
-    let (slot_mono, glyph_mono, faux_mono) = fonts.resolve_bold(FontKind::Terminal, 'A');
-    assert!(!faux_mono);
-    assert_ne!(slot_mono, regular_mono.0);
-    assert_ne!(glyph_mono, 0);
-
-    // Monaco 没有粗体变体：`resolve_bold` 退回原槽位并置 `faux_bold = true`。
+    // Monaco 没有同族的其他字体：粗体仍用原槽位。字重调细时同样如此，调细达不到不算变粗。
     let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
-    let mut monaco_fonts = Fonts::load(&[monaco], &[], &[], 400).expect("Monaco 是 macOS 自带字体");
-    let regular_monaco = monaco_fonts.resolve(FontKind::Mono, 'A');
-    assert_eq!(
-        monaco_fonts.resolve_bold(FontKind::Mono, 'A'),
-        (regular_monaco.0, regular_monaco.1, true)
-    );
+    for weight in [400, 300] {
+        let mut fonts = Fonts::load(std::slice::from_ref(&monaco), &[], &[], weight).unwrap();
+        let (slot, glyph) = fonts.resolve(FontKind::Mono, 'A');
+        assert_eq!(
+            fonts.resolve_bold(FontKind::Mono, 'A'),
+            (slot, glyph, true),
+            "{weight}"
+        );
+    }
+}
+
+/// 由系统提供轮廓的苹方没有字重轴可调：字重设置改用同族的命名实例。
+#[cfg(target_os = "macos")]
+#[test]
+fn system_outlined_fonts_follow_the_weight_with_named_instances() {
+    let mut fonts = Fonts::load(&[], &[], &[], 600).expect("系统里有等宽字体");
+    let (slot, _) = fonts.resolve(FontKind::Ui, '中');
+    let face = fonts.face(slot).unwrap();
+    if face.system.is_none() {
+        return;
+    }
+    assert_eq!((face.gained, face.embolden), (200.0, 0.0));
+}
+
+/// Linux 上没有字重轴的字体改用同目录中的粗体文件；系统中没有 `DejaVuSansMono.ttf` 时跳过。
+#[cfg(target_os = "linux")]
+#[test]
+fn bold_uses_the_bold_file_next_to_the_regular_one() {
+    let dir = std::path::Path::new("/usr/share/fonts/truetype/dejavu");
+    let regular = dir.join("DejaVuSansMono.ttf");
+    if !regular.is_file() || !dir.join("DejaVuSansMono-Bold.ttf").is_file() {
+        return;
+    }
+    let mut fonts = Fonts::load(&[FontSpec::Path(regular)], &[], &[], 400).unwrap();
+    let (regular, _) = fonts.resolve(FontKind::Mono, 'A');
+    let (slot, _, faux) = fonts.resolve_bold(FontKind::Mono, 'A');
+    assert!(!faux);
+    assert_ne!(slot, regular);
+    let face = fonts.face(slot).unwrap();
+    assert_eq!((face.gained, face.embolden), (300.0, 0.0));
 }
