@@ -41,6 +41,14 @@ fn select(app: &mut App, needle: &str) {
     doc.selection = winc_core::Selection::new(a, b);
 }
 
+/// 在可编辑的预览中选中第一处 `needle`，显示格式工具栏并重绘。
+fn select_with_toolbar(app: &mut App, needle: &str) {
+    select(app, needle);
+    app.start_live_editing();
+    app.offer_selection_toolbar();
+    paint(app);
+}
+
 #[test]
 fn writing_commands_edit_the_markdown_source() {
     let (mut app, dir) = source_doc("md-writing", "标题\n\n一\n二\n\n正文\n");
@@ -821,18 +829,7 @@ fn right_clicks_on_the_slash_list_reach_no_menu() {
 fn selecting_text_shows_the_format_toolbar() {
     use crate::app::preview::markdown::toolbar::Tool;
     let (mut app, dir) = live_doc("md-toolbar", "前文\n\n这是一段要强调的文字。\n");
-    let select = |app: &mut App, needle: &str| {
-        let text = doc_text(app);
-        let at = text.find(needle).unwrap();
-        let doc = app.editor.active_mut().unwrap();
-        let rope = doc.text().rope().unwrap();
-        let (a, b) = (rope.byte_to_char(at), rope.byte_to_char(at + needle.len()));
-        doc.selection = winc_core::Selection::new(a, b);
-        app.start_live_editing();
-        app.offer_selection_toolbar();
-        paint(app);
-    };
-    select(&mut app, "强调");
+    select_with_toolbar(&mut app, "强调");
     assert!(app.hits.selection_card.is_some());
     shoot(&mut app, "md-toolbar");
     let bold = (app.hits.selection_tools.iter())
@@ -854,8 +851,48 @@ fn selecting_text_shows_the_format_toolbar() {
     assert!(app.hits.selection_card.is_none());
     // 关闭设置后不显示。
     app.config.markdown_selection_toolbar = Some(false);
-    select(&mut app, "前文");
+    select_with_toolbar(&mut app, "前文");
     assert!(app.hits.selection_card.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：连续点击格式工具栏的按钮时，选区随标记的增删和字形的变化改变宽度，工具栏跟着选区的
+/// 中点左右移动。
+#[test]
+fn the_format_toolbar_stays_put_while_its_buttons_are_clicked() {
+    use crate::app::preview::markdown::toolbar::Tool;
+    let (mut app, dir) = live_doc("md-toolbar-steady", "前文\n\n这是一段要强调的文字。\n");
+    select_with_toolbar(&mut app, "强调");
+    let card = app.hits.selection_card.unwrap();
+    let tools = [
+        Tool::Bold,
+        Tool::Bold,
+        Tool::Code,
+        Tool::Highlight,
+        Tool::Bold,
+    ];
+    for tool in tools {
+        let (button, _) = *(app.hits.selection_tools.iter())
+            .find(|(_, t)| *t == tool)
+            .unwrap();
+        super::click(
+            &mut app,
+            (button.x + button.w / 2.0, button.y + button.h / 2.0),
+        );
+        paint(&mut app);
+        let now = app.hits.selection_card.expect("点击后仍显示工具栏");
+        assert_eq!(
+            now.x,
+            card.x,
+            "点击 {tool:?} 后工具栏移动：{}",
+            doc_text(&app)
+        );
+    }
+    // 重新选中文字后不再沿用固定的位置，按新的选区放置。
+    select_with_toolbar(&mut app, "前文");
+    assert!(app.hits.selection_card.is_some());
+    let toolbar = app.preview.markdown.toolbar.unwrap();
+    assert_eq!(toolbar.left, None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -345,6 +345,8 @@ pub enum UserEvent {
     TerminalPaste(u16, String),
     /// 要粘贴到远端终端标签的图片或文件已在后台传到那台主机：标签，那里的路径或失败的原因。
     TerminalUploaded(u16, Result<Vec<String>, String>),
+    /// 要粘贴到本机终端标签的图片已在后台存为文件：标签，文件的路径或失败的原因。
+    TerminalImageSaved(u16, Result<PathBuf, String>),
     /// 确认框中确认日志中对一个提交的操作（签出该提交、硬重置）。
     GitLogConfirmed(git::log::LogConfirmed),
     /// 确认框中确认移除参数所指的工作树；第二个参数是一并删除的分支（勾选「同时删除分支」时）。
