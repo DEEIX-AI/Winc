@@ -996,26 +996,33 @@ fn the_split_preview_shows_the_source_caret_in_its_text() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 回归：即便全文解析耗时超过 `INLINE_PARSE` 预算，常规局部输入仍可通过块级增量重解析在
-/// 当帧同步完成，且结果与全文解析一致。
+/// 全文解析超过 `INLINE_PARSE` 时，只涉及一个段落的输入仍在当帧解析，结果与全文解析相同；
+/// 窗口超出预算时改为在后台解析全文。
 #[test]
-fn large_document_edits_reparse_incrementally_in_a_single_frame() {
-    let text = "# 标题\n\n第一段正文。\n\n第二段正文。\n\n第三段正文。\n";
-    let (mut app, dir) = live_doc("md-incremental-sync", text);
-    put_caret(&mut app, "第二段正文", true);
-    // 模拟超长文档：全文解析耗时远超内联预算。
-    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
-    let before_serial = app.preview.markdown.parse_serial;
+fn edits_to_one_block_are_parsed_in_the_same_frame() {
+    use crate::app::preview::markdown::INLINE_PARSE;
 
-    app.run(winc_editor::Command::Insert("（增量同步）".into()));
+    let text = "# 标题\n\n第一段正文。\n\n第二段正文。\n\n第三段正文。\n";
+    let (mut app, dir) = live_doc("md-local-parse", text);
+    put_caret(&mut app, "第二段正文", true);
+    // 全文解析略超过预算：按比例只能当帧重新解析约八成的文字，足够解析一个段落。
+    app.preview.markdown.cost = Some(INLINE_PARSE * 5 / 4);
+    let serial = app.preview.markdown.parse_serial;
+    app.run(winc_editor::Command::Insert("（续写）".into()));
     paint(&mut app);
 
-    assert_ne!(app.preview.markdown.parse_serial, before_serial);
+    assert_ne!(app.preview.markdown.parse_serial, serial);
     let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
-    assert!(shown.contains("第二段正文（增量同步）。"), "{shown:?}");
-
+    assert!(shown.contains("第二段正文（续写）。"), "{shown:?}");
     let current = doc_text(&app);
     let expected = winc_preview::markdown::parse(&current).with_blank_lines(&current);
     assert_eq!(app.preview.markdown.parsed.as_deref(), Some(&expected));
+
+    // 全文解析远超预算：一个段落也超出当帧能解析的字节数，不在界面线程上解析。
+    app.preview.markdown.cost = Some(INLINE_PARSE * 1000);
+    let serial = app.preview.markdown.parse_serial;
+    app.run(winc_editor::Command::Insert("又".into()));
+    assert!(!app.parse_markdown_inline());
+    assert_eq!(app.preview.markdown.parse_serial, serial);
     let _ = std::fs::remove_dir_all(&dir);
 }

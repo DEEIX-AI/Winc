@@ -41,7 +41,7 @@ pub(crate) const PAD_NARROW: f32 = 20.0;
 /// 排版完成的文档。
 pub(crate) struct Laid {
     pub(crate) key: Key,
-    /// 排版依据的解析结果（`Arc` 的地址），换了说明文字改了。
+    /// 排版依据的解析结果的序号（`MarkdownPreview::parse_serial`），变了说明文字改了。
     pub(crate) source: usize,
     /// 各顶层块：内容哈希和排版结果。
     pub(crate) blocks: Vec<(u64, Arc<LaidBlock>)>,

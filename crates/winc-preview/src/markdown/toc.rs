@@ -5,7 +5,8 @@ use super::{Block, Inline, Item, Style, slug, syntax};
 /// 把只有 `[TOC]`（或 `[[TOC]]`，不分大小写）的段落换成目录：按文中标题的层级嵌套的列表，每一项
 /// 链接到对应的标题（锚点见 [`slug`]）。`blocks` 是正文的顶层块，不含脚注。
 ///
-/// 目录随标题生成，标题改变时所在块的内容随之改变；没有标题时保留原段落。
+/// 目录随标题生成，标题改变时所在块的内容随之改变；没有标题时保留原段落。返回是否有这样的
+/// 段落，有时改动标题须重新解析全文。
 pub(super) fn contents(blocks: &mut [Block]) -> bool {
     // `[[TOC]]` 解析为名字是 `toc` 的维基链接。
     let is_marker = |block: &Block| {
