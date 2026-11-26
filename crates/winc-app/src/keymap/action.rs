@@ -313,6 +313,8 @@ pub enum Action {
     GitGoToParentCommit,
     /// 在只读标签中打开 Git 操作的输出。
     GitShowOutput,
+    /// 用设置的模型生成提交信息；正在生成时取消。
+    GitGenerateCommitMessage,
     /// 克隆仓库。
     GitClone,
     /// 在当前目录中初始化仓库。
@@ -710,6 +712,7 @@ impl Action {
             GitGoToChildCommit => t!("cmd-git-go-to-child-commit"),
             GitGoToParentCommit => t!("cmd-git-go-to-parent-commit"),
             GitShowOutput => t!("cmd-git-show-output"),
+            GitGenerateCommitMessage => t!("cmd-git-generate-commit-message"),
             GitClone => t!("cmd-git-clone"),
             GitInit => t!("cmd-git-init"),
             GitSwitchRepository => t!("cmd-git-switch-repository"),
@@ -986,6 +989,7 @@ impl Action {
             | GitGoToChildCommit
             | GitGoToParentCommit
             | GitShowOutput
+            | GitGenerateCommitMessage
             | GitClone
             | GitInit
             | GitSwitchRepository
@@ -1201,6 +1205,7 @@ impl Action {
             | Action::GitGoToChildCommit
             | Action::GitGoToParentCommit
             | Action::GitShowOutput
+            | Action::GitGenerateCommitMessage
             | Action::GitClone
             | Action::GitInit
             | Action::GitSwitchRepository

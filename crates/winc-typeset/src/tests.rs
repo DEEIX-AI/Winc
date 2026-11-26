@@ -229,6 +229,19 @@ fn code_blocks_keep_their_text_and_are_highlighted() {
 }
 
 #[test]
+fn the_code_of_a_fenced_block_is_the_text_between_its_fences() {
+    assert_eq!(
+        fenced_code("```rust\nfn a() {}\n\nfn b() {}\n```"),
+        "fn a() {}\n\nfn b() {}"
+    );
+    // 还没有结尾围栏：到末尾为止。
+    assert_eq!(fenced_code("```\nlet x = 1;"), "let x = 1;");
+    for empty in ["```", "```\n```", "```\n"] {
+        assert_eq!(fenced_code(empty), "", "{empty:?}");
+    }
+}
+
+#[test]
 fn links_cover_their_text() {
     let laid = lay("see [the site](https://example.com) for more\n", 600.0);
     let link = laid[0].0.items.iter().find_map(|item| match item {

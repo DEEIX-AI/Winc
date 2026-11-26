@@ -996,64 +996,74 @@ fn the_split_preview_shows_the_source_caret_in_its_text() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 回归：超过 `SHED_BLOCKS` 的长文档跨出 `Near` 缓冲滚动时就地刷新可见块与释放远端块，
-/// 单块实时输入时就地修补并平移后续块坐标，转为标题（外边距变化）时正常回退完整排版。
+/// 返回预览现在的排版结果。
+fn laid(app: &App) -> &crate::app::preview::markdown::laid::Laid {
+    app.preview.markdown.layout.as_ref().unwrap()
+}
+
+/// 很长的文档滚动到保留的范围之外时就地刷新：视口附近的块重新排好，远处的块释放要画的项，
+/// 各块的位置不变；之后输入文字，后面的块随这一块的高度变化移动。
 #[test]
-fn long_document_refreshes_near_and_patches_single_block_edits_in_place() {
+fn a_long_document_refreshes_the_kept_range_when_scrolled_far() {
     let mut text = String::new();
     for i in 0..600 {
-        text.push_str(&format!(
-            "第 {i} 段正文内容用于测试长文档滚动与单块就地修补。\n\n"
-        ));
+        text.push_str(&format!("第 {i} 段正文，用于测试长文档的滚动和输入。\n\n"));
     }
-    let (mut app, dir) = live_doc("md-near-patch", &text);
+    let (mut app, dir) = live_doc("md-near-refresh", &text);
+    assert!(laid(&app).near.is_some());
+    assert!(!laid(&app).blocks[0].1.is_shed());
+    assert!(laid(&app).blocks[599].1.is_shed());
+    let (tops, height) = (laid(&app).tops.clone(), laid(&app).height);
 
-    // 确认已启用远端块释放，顶部块已排好、末尾块已释放。
-    let initial_height = {
-        let laid = app.preview.markdown.layout.as_ref().unwrap();
-        assert!(laid.near.is_some());
-        assert!(!laid.blocks[0].1.is_shed());
-        assert!(laid.blocks[599].1.is_shed());
-        laid.height
-    };
-
-    // 滚动到文档中部（远超 `Near` 缓冲）：触发 `refresh_near`，中部块被水合，顶部块被释放。
-    let mid_top = app.preview.markdown.layout.as_ref().unwrap().tops[300];
-    app.preview.markdown.scroll_to(mid_top);
+    app.preview.markdown.scroll_to(tops[300]);
     paint(&mut app);
-    {
-        let laid = app.preview.markdown.layout.as_ref().unwrap();
-        assert!(!laid.blocks[300].1.is_shed(), "视口附近块应已就地水合");
-        assert!(laid.blocks[0].1.is_shed(), "远离视口的旧块应已释放");
-        assert!((laid.height - initial_height).abs() < 0.5);
-    }
+    assert!(!laid(&app).blocks[300].1.is_shed());
+    assert!(laid(&app).blocks[599].1.is_shed());
+    assert!(laid(&app).blocks[0].1.is_shed());
+    assert_eq!((&laid(&app).tops, laid(&app).height), (&tops, height));
 
-    // 在第 300 段输入多段文字导致折行增高：触发 `patch_edited`，后续块纵坐标精确平移。
     put_caret(
         &mut app,
-        "第 300 段正文内容用于测试长文档滚动与单块就地修补。",
+        "第 300 段正文，用于测试长文档的滚动和输入。",
         true,
     );
-    let before_next_top = app.preview.markdown.layout.as_ref().unwrap().tops[301];
-    let before_height = app.preview.markdown.layout.as_ref().unwrap().height;
-    let extra = "补充一长段新内容以确保当前段落在标准宽度下产生折行高度变化。".repeat(4);
+    let next = laid(&app).tops[301];
+    let extra = "补充一段较长的文字，使这一段在当前宽度下多折几行。".repeat(4);
     app.run(winc_editor::Command::Insert(extra));
     settle(&mut app);
-    let (after_next_top, after_height) = {
-        let laid = app.preview.markdown.layout.as_ref().unwrap();
-        (laid.tops[301], laid.height)
-    };
-    let dy = after_next_top - before_next_top;
-    assert!(dy > 10.0, "折行增高后下一块应下移: dy={dy}");
-    assert!((after_height - before_height - dy).abs() < 0.5);
+    let dy = laid(&app).tops[301] - next;
+    assert!(dy > 10.0, "{dy}");
+    assert!((laid(&app).height - height - dy).abs() < 0.5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
-    // 在第 301 段开头键入 `# ` 转为一级标题：外边距改变，回退完整排版且与目录一致。
-    put_caret(&mut app, "第 301 段", false);
-    let h_before = app.preview.markdown.layout.as_ref().unwrap().height;
-    app.run(winc_editor::Command::Insert("# ".into()));
+/// 回归：很长的文档中收起一节后滚动到远处再滚回来，这一节里的块仍不显示。
+#[test]
+fn folded_blocks_stay_hidden_after_scrolling_far_and_back() {
+    let mut text = String::from("# 甲\n\n");
+    for i in 0..20 {
+        text.push_str(&format!("甲节第 {i} 段。\n\n"));
+    }
+    text.push_str("# 乙\n\n");
+    for i in 0..700 {
+        text.push_str(&format!("乙节第 {i} 段。\n\n"));
+    }
+    let (mut app, dir) = live_doc("md-near-folded", &text);
+    put_caret(&mut app, "乙节第 650 段", false);
+    app.toggle_heading_fold("甲");
     settle(&mut app);
-    let laid = app.preview.markdown.layout.as_ref().unwrap();
-    assert!(laid.height > h_before + 10.0);
-    assert!(laid.sections[301].is_some());
+    let hidden = |app: &App| (1..=20).map(|i| laid(app).blocks[i].1.height).sum::<f32>();
+    app.preview.markdown.scroll_to(0.0);
+    settle(&mut app);
+    let after_fold = laid(&app).tops[21];
+    assert_eq!(hidden(&app), 0.0);
+
+    let middle = laid(&app).tops[350];
+    app.preview.markdown.scroll_to(middle);
+    settle(&mut app);
+    app.preview.markdown.scroll_to(0.0);
+    settle(&mut app);
+    assert_eq!(hidden(&app), 0.0);
+    assert_eq!(laid(&app).tops[21], after_fold);
     let _ = std::fs::remove_dir_all(&dir);
 }

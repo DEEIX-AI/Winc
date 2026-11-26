@@ -224,6 +224,8 @@ pub enum Setting {
     GitRememberCredentials,
     /// 光标所在行末尾的追溯提示（`git.inlineBlame`）。
     GitInlineBlame,
+    /// 提交视图中的提交历史（`git.commitHistory`）。
+    GitCommitHistory,
     /// 定时在后台获取（`git.autoFetch`）。
     GitAutoFetch,
     /// 提交视图的更改列表按目录排成树；记在状态文件里，与「⋯」菜单中的是同一个开关。
@@ -235,6 +237,8 @@ pub enum Setting {
     GitCombinedDiff,
     /// 点击工作树时在哪个窗口打开它（`git.openWorktree`）。
     GitOpenWorktree,
+    /// 日志和文件历史显示在 Git 面板中还是编辑区的标签中（`git.logPlacement`）。
+    GitLogPlacement,
     /// 在打开的目录下查找仓库的层数（`git.repositoryScanDepth`）。
     GitScanDepth,
     /// 拉取、同步时合并还是变基（`git.pull`）。
@@ -245,6 +249,18 @@ pub enum Setting {
     FindInFiles,
     /// `git` 程序的路径（`git.path`）；未设置时在 `PATH` 里查找。
     GitPath,
+    /// 是否在提交视图中用模型生成提交信息（`git.generateCommitMessage`）。
+    GitGenerateCommitMessage,
+    /// 模型服务的地址（`ai.baseUrl`）；未设置时使用协议的官方地址。
+    AiBaseUrl,
+    /// 模型服务的密钥（`ai.apiKey`）。
+    AiApiKey,
+    /// 模型服务的接口协议（`ai.protocol`）。
+    AiProtocol,
+    /// 调用的模型（`ai.model`）；未设置时无法调用模型。
+    AiModel,
+    /// 等待模型响应的最长时间（`ai.timeout`，秒）。
+    AiTimeout,
     /// 终端模块的开关。
     TerminalModule,
     /// 远程模块的开关。
@@ -359,6 +375,7 @@ impl Setting {
             S::TerminalApplicationPriority | S::TerminalOptionAsMeta => SettingsPage::Terminal,
             S::GitPath
             | S::GitOpenWorktree
+            | S::GitLogPlacement
             | S::GitStagingArea
             | S::GitTree
             | S::DiffInline
@@ -367,7 +384,12 @@ impl Setting {
             S::GitInlineBlame | S::GitPullMode | S::GitConfirmPush | S::GitAutoFetch => {
                 SettingsPage::Git
             }
+            S::GitCommitHistory => SettingsPage::Git,
             S::GitRememberCredentials => SettingsPage::Git,
+            S::GitGenerateCommitMessage => SettingsPage::Git,
+            S::AiBaseUrl | S::AiApiKey | S::AiProtocol | S::AiModel | S::AiTimeout => {
+                SettingsPage::Ai
+            }
             S::ExplorerMenu | S::FileAssociations => SettingsPage::General,
             S::ExportSettings | S::ImportSettings => SettingsPage::General,
             S::GitModule | S::TerminalModule | S::RemoteModule => SettingsPage::Modules,
@@ -464,13 +486,21 @@ impl Setting {
             S::GitConfirmPush => "git.confirmPush",
             S::GitRememberCredentials => "git.rememberCredentials",
             S::GitInlineBlame => "git.inlineBlame",
+            S::GitCommitHistory => "git.commitHistory",
             S::GitAutoFetch => "git.autoFetch",
             S::GitStagingArea => "git.stagingArea",
             S::GitCombinedDiff => "git.combinedDiff",
             S::GitOpenWorktree => "git.openWorktree",
+            S::GitLogPlacement => "git.logPlacement",
             S::GitScanDepth => "git.repositoryScanDepth",
             S::GitPullMode => "git.pull",
             S::GitPath => "git.path",
+            S::GitGenerateCommitMessage => "git.generateCommitMessage",
+            S::AiBaseUrl => "ai.baseUrl",
+            S::AiApiKey => "ai.apiKey",
+            S::AiProtocol => "ai.protocol",
+            S::AiModel => "ai.model",
+            S::AiTimeout => "ai.timeout",
             S::TerminalModule => "terminal.enabled",
             S::RemoteModule => "remote.enabled",
             S::GitTree | S::FormatCommand(_) | S::FixCommand(_) | S::AddLanguage => return None,
@@ -578,14 +608,22 @@ impl Setting {
             Setting::GitRememberCredentials => t!("settings-git-remember-credentials"),
             Setting::SystemProxy => t!("settings-system-proxy"),
             Setting::GitInlineBlame => t!("settings-git-inline-blame"),
+            Setting::GitCommitHistory => t!("settings-git-commit-history"),
             Setting::GitAutoFetch => t!("settings-git-auto-fetch"),
             Setting::GitTree => t!("settings-git-tree"),
             Setting::GitStagingArea => t!("settings-git-staging-area"),
             Setting::GitCombinedDiff => t!("settings-git-combined-diff"),
             Setting::GitOpenWorktree => t!("settings-git-open-worktree"),
+            Setting::GitLogPlacement => t!("settings-git-log-placement"),
             Setting::GitScanDepth => t!("settings-git-scan-depth"),
             Setting::GitPullMode => t!("settings-git-pull"),
             Setting::GitPath => t!("settings-git-path"),
+            Setting::GitGenerateCommitMessage => t!("settings-git-generate-commit-message"),
+            Setting::AiBaseUrl => t!("settings-ai-base-url"),
+            Setting::AiApiKey => t!("settings-ai-api-key"),
+            Setting::AiProtocol => t!("settings-ai-protocol"),
+            Setting::AiModel => t!("settings-ai-model"),
+            Setting::AiTimeout => t!("settings-ai-timeout"),
             Setting::LatexPath => t!("settings-latex-path"),
             Setting::TerminalModule => t!("settings-terminal-module"),
             Setting::RemoteModule => t!("settings-remote-module"),
@@ -688,14 +726,24 @@ impl Setting {
             Setting::GitRememberCredentials => Some(t!("settings-git-remember-credentials-desc")),
             Setting::SystemProxy => Some(t!("settings-system-proxy-desc")),
             Setting::GitInlineBlame => Some(t!("settings-git-inline-blame-desc")),
+            Setting::GitCommitHistory => Some(t!("settings-git-commit-history-desc")),
             Setting::GitAutoFetch => Some(t!("settings-git-auto-fetch-desc")),
             Setting::GitTree => Some(t!("settings-git-tree-desc")),
             Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
             Setting::GitCombinedDiff => Some(t!("settings-git-combined-diff-desc")),
             Setting::GitOpenWorktree => Some(t!("settings-git-open-worktree-desc")),
+            Setting::GitLogPlacement => Some(t!("settings-git-log-placement-desc")),
             Setting::GitScanDepth => Some(t!("settings-git-scan-depth-desc")),
             Setting::GitPullMode => Some(t!("settings-git-pull-desc")),
             Setting::GitPath => Some(t!("settings-git-path-desc")),
+            Setting::GitGenerateCommitMessage => {
+                Some(t!("settings-git-generate-commit-message-desc"))
+            }
+            Setting::AiBaseUrl => Some(t!("settings-ai-base-url-desc")),
+            Setting::AiApiKey => Some(t!("settings-ai-api-key-desc")),
+            Setting::AiProtocol => Some(t!("settings-ai-protocol-desc")),
+            Setting::AiModel => Some(t!("settings-ai-model-desc")),
+            Setting::AiTimeout => Some(t!("settings-ai-timeout-desc")),
             Setting::LatexPath => Some(t!("settings-latex-path-desc")),
             Setting::TerminalShell => Some(t!("settings-terminal-shell-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
@@ -728,7 +776,8 @@ impl Setting {
             | Setting::TerminalFontWeight
             | Setting::MarkdownSize
             | Setting::TabWidth
-            | Setting::GitScanDepth => SettingControl::Stepper,
+            | Setting::GitScanDepth
+            | Setting::AiTimeout => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar
@@ -773,10 +822,12 @@ impl Setting {
             | Setting::GitRememberCredentials
             | Setting::SystemProxy
             | Setting::GitInlineBlame
+            | Setting::GitCommitHistory
             | Setting::GitAutoFetch
             | Setting::GitTree
             | Setting::GitStagingArea
             | Setting::GitCombinedDiff
+            | Setting::GitGenerateCommitMessage
             | Setting::ExplorerMenu
             | Setting::FileAssociations
             | Setting::TerminalModule
@@ -790,7 +841,10 @@ impl Setting {
             | Setting::FixCommand(_)
             | Setting::TerminalShell
             | Setting::GitPath
-            | Setting::LatexPath => SettingControl::Command,
+            | Setting::LatexPath
+            | Setting::AiBaseUrl
+            | Setting::AiModel
+            | Setting::AiApiKey => SettingControl::Command,
             Setting::SkipOnSave
             | Setting::Language
             | Setting::BackgroundImage
@@ -809,7 +863,9 @@ impl Setting {
             | Setting::AutoSave
             | Setting::SmoothCaret
             | Setting::GitOpenWorktree
+            | Setting::GitLogPlacement
             | Setting::GitPullMode
+            | Setting::AiProtocol
             | Setting::Keymap => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
@@ -822,6 +878,21 @@ impl Setting {
             Setting::Updates | Setting::KeyMatches => SettingControl::Button,
             Setting::ExportSettings | Setting::ImportSettings => SettingControl::Button,
         }
+    }
+}
+
+impl Setting {
+    /// 是否为填写的文本（程序路径、接口地址、模型名、密钥）：没有可选的菜单，始终绘制为输入框。
+    pub fn is_text_field(self) -> bool {
+        matches!(self, Setting::GitPath | Setting::LatexPath) || self.is_ai_text()
+    }
+
+    /// 是否为调用模型的一项文本设置：接口地址、模型名或密钥。
+    pub fn is_ai_text(self) -> bool {
+        matches!(
+            self,
+            Setting::AiBaseUrl | Setting::AiModel | Setting::AiApiKey
+        )
     }
 }
 
@@ -1302,10 +1373,7 @@ fn row_height(
             rows * tile.1 + (rows - 1.0) * THEME_GRID_GAP + THEME_GRID_PAD * 2.0
         }
         SettingControl::Command
-            if !matches!(
-                setting,
-                Setting::TerminalShell | Setting::GitPath | Setting::LatexPath
-            ) =>
+            if setting != Setting::TerminalShell && !setting.is_text_field() =>
         {
             SETTINGS_ROW_TALL
         }

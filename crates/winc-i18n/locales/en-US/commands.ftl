@@ -242,6 +242,7 @@ cmd-git-reword-commit = Git: Edit Commit Message…
 cmd-git-go-to-child-commit = Git: Go to Child Commit
 cmd-git-go-to-parent-commit = Git: Go to Parent Commit
 cmd-git-show-output = Git: Show Output
+cmd-git-generate-commit-message = Git: Generate Commit Message
 cmd-git-clone = Git: Clone Repository…
 cmd-git-init = Git: Initialize Repository
 cmd-git-switch-repository = Git: Switch Repository

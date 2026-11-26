@@ -8,14 +8,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use winc_render::{Color, Frame, Rect};
-use winc_typeset::{Colors, Cx, Env, Item, LaidBlock, Span, margins};
+use winc_typeset::{Item, LaidBlock, Span, margins};
 
 pub(crate) use winc_typeset::{DETAILS, Memo};
 
 use crate::app::{App, Focus};
 
-mod incremental;
-use incremental::{block_has_toggle, layout_one_block, live_raw, prepare_memo};
+mod block;
+use block::{has_toggles, lay_block, live_raw, with_cx};
 
 /// 没有设置 `markdown.size` 时正文字号与编辑器字号之比：编辑器字号 13 逻辑像素时，正文为
 /// 16 逻辑像素。
@@ -128,7 +128,7 @@ impl Near {
     }
 
     /// 上边缘在 `top`、高 `height` 的第 `i` 块是否在范围内。
-    pub(super) fn holds(&self, i: usize, top: f32, height: f32) -> bool {
+    fn holds(&self, i: usize, top: f32, height: f32) -> bool {
         (top < self.rows.1 && top + height > self.rows.0)
             || self.blocks.iter().any(|blocks| blocks.contains(&i))
     }
@@ -428,136 +428,100 @@ pub(crate) fn lay_out(
     let reuse: HashMap<u64, Arc<LaidBlock>> = reuse.into_iter().collect();
     // 光标所在顶层块现在的原文，和叶子块在其中的范围。
     let raw = live_raw(app, live);
-    let live_key_for_hash = live.map(|l| live_key(l, app.preedit_at(Focus::Editor)));
-    let p = app.palette;
-    prepare_memo(&mut app.preview.markdown.memo, key);
-    let doc = app.editor.active().and_then(|d| d.path.clone());
-    let remote = app.config.markdown_remote_images != Some(false);
-    let image_path =
-        |url: &str| crate::app::preview::markdown::image_path(doc.as_deref(), url, remote);
-    let token = |kind| p.token(kind);
-    let mut cx = Cx {
-        frame,
-        base: key.base,
-        token: &token,
-        surface: p.editor_bg,
-        accent: p.accent,
-        colors: Colors::new(p.text, p.text_muted, p.accent, p.dark),
-        dark: p.dark,
-        images: &app.preview.markdown.images,
-        image_path: &image_path,
-        wanted: Vec::new(),
-        memo: &mut app.preview.markdown.memo,
-        toggled: &app.preview.markdown.toggled,
-        text: String::new(),
-        chars: 0,
-        raw: None,
-        cell: None,
-        preedit: false,
-        line_numbers: key.numbers,
-        tall: key.tall,
-        repeat: 0,
-        toggles: HashMap::new(),
-        bleed: key.bleed,
-    };
-    let env = Env {
-        color: cx.colors.text,
-        depth: 0,
-    };
     let sections = parsed.sections();
     let folded = (app.editor.active()).and_then(|d| app.preview.markdown.folds.get(&d.id));
     let hidden = hidden_blocks(&sections, folded, live.map(|l| l.block));
-    let mut blocks = Vec::with_capacity(parsed.blocks.len());
-    let mut tops = Vec::with_capacity(parsed.blocks.len());
-    let mut starts = Vec::with_capacity(parsed.blocks.len());
-    let (mut y, mut below, mut chars) = (0.0, None, 0);
-    let mut stale = Vec::new();
     let near = near.filter(|_| parsed.blocks.len() > SHED_BLOCKS);
-    let mut fresh = 0usize;
-    // 仅含 `<details>` 或 Mermaid 图的块按重复序号区分开合状态，避免对无折叠块的长文档构造整表 HashMap。
-    let mut repeats: HashMap<u64, u32> = HashMap::new();
-    for (i, (block, &hash)) in parsed.blocks.iter().zip(&parsed.hashes).enumerate() {
-        let repeat = if block_has_toggle(block) {
-            *repeats.entry(hash).and_modify(|n| *n += 1).or_insert(0)
-        } else {
-            0
-        };
-        let hash = match repeat {
-            0 => hash,
-            n => winc_typeset::memo_key(|h| std::hash::Hash::hash(&(hash, n), h)),
-        };
-        cx.repeat = repeat;
-        cx.toggles.clear();
-        // 收起的一节里的块不排版，占一个高度为 0 的空块，换一个键存：展开时重新排。
-        if hidden[i] {
-            starts.push(chars);
-            tops.push(y);
-            let empty = LaidBlock::new(0.0, Vec::new(), Vec::new(), "".into(), 0, Box::default());
-            blocks.push((!hash, Arc::new(empty)));
-            continue;
-        }
-        let raw = raw.as_ref().filter(|r| r.0 == i);
-        // 显示原文的块用 O(1) 的 `live_key` 区分缓存键，避免对大块原文做全量哈希。
-        let hash = match (raw, &live_key_for_hash) {
-            (Some(_), Some(lk)) => winc_typeset::memo_key(|h| {
-                use std::hash::Hash;
-                (hash, lk).hash(h);
-            }),
-            _ => hash,
-        };
-        let kept = later.as_ref().and_then(|later| {
-            let (old, block) = later.old.get(i)?;
-            let keep = *old == hash
-                && !later.window.contains(&i)
-                && !reuse.contains_key(&hash)
-                && std::time::Instant::now() >= later.deadline;
-            keep.then(|| Arc::clone(block))
-        });
-        if kept.is_some() {
-            stale.resize(parsed.blocks.len(), false);
-            stale[i] = true;
-        }
-        // 沿用的结果已经释放了要画的项，而这一块在需要保留的范围内：重新排版。
-        let (margin, _) = margins(block, key.base, false);
-        let top = y + below.map_or(0.0, |below: f32| below.max(margin));
-        let wanted = |laid: &LaidBlock| {
-            let needed = near
-                .as_ref()
-                .is_none_or(|near| near.holds(i, top, laid.height));
-            !(needed && laid.is_shed())
-        };
-        let reused = reuse.get(&hash).filter(|laid| wanted(laid)).cloned();
-        let kept = kept.filter(|laid| wanted(laid));
-        let laid = reused.or(kept).unwrap_or_else(|| {
-            // 很长的文档每排完 [`SHED_BLOCKS`] 块清空一次排版缓存，排版期间缓存不随文档增长。
-            fresh += 1;
-            if near.is_some() && fresh.is_multiple_of(SHED_BLOCKS) {
-                cx.memo.keep_only(std::iter::empty());
+    let (blocks, tops, starts, chars, y, stale, wanted) = with_cx(app, frame, key, |cx, env| {
+        let mut blocks = Vec::with_capacity(parsed.blocks.len());
+        let mut tops = Vec::with_capacity(parsed.blocks.len());
+        let mut starts = Vec::with_capacity(parsed.blocks.len());
+        let (mut y, mut below, mut chars) = (0.0, None, 0);
+        let mut stale = Vec::new();
+        let mut fresh = 0usize;
+        // 内容相同、有开合状态的块从第二个起使用不同的键，并带上序号，各自记录开合状态；其余
+        // 的块内容相同时共用排版结果。
+        let mut repeats: HashMap<u64, u32> = HashMap::new();
+        for (i, (block, &hash)) in parsed.blocks.iter().zip(&parsed.hashes).enumerate() {
+            let repeat = match has_toggles(block) {
+                true => *repeats.entry(hash).and_modify(|n| *n += 1).or_insert(0),
+                false => 0,
+            };
+            let hash = match repeat {
+                0 => hash,
+                n => winc_typeset::memo_key(|h| std::hash::Hash::hash(&(hash, n), h)),
+            };
+            cx.repeat = repeat;
+            // 收起的一节里的块不排版，占一个高度为 0 的空块，换一个键存：展开时重新排。
+            if hidden[i] {
+                starts.push(chars);
+                tops.push(y);
+                let empty =
+                    LaidBlock::new(0.0, Vec::new(), Vec::new(), "".into(), 0, Box::default());
+                blocks.push((!hash, Arc::new(empty)));
+                continue;
             }
-            Arc::new(layout_one_block(&mut cx, block, key.width, env, raw))
-        });
-        // 不在需要保留的范围内的块释放要画的项；显示原文的块（光标所在）总是保留。
-        let far = near
-            .as_ref()
-            .is_some_and(|near| !near.holds(i, top, laid.height));
-        let laid = if far && raw.is_none() && !laid.is_shed() {
-            Arc::new(laid.shed())
-        } else {
-            laid
-        };
-        starts.push(chars);
-        chars += laid.chars;
-        let (margin_top, margin_bottom) = margins(block, key.base, false);
-        if let Some(below) = below {
-            y += f32::max(below, margin_top);
+            let raw = raw.as_ref().filter(|r| r.block == i);
+            // 显示原文的块换一个键存：光标离开后同样内容的块要重新按排版显示。
+            let hash = match raw {
+                Some(raw) => winc_typeset::memo_key(|h| std::hash::Hash::hash(&(hash, raw), h)),
+                None => hash,
+            };
+            let kept = later.as_ref().and_then(|later| {
+                let (old, block) = later.old.get(i)?;
+                let keep = *old == hash
+                    && !later.window.contains(&i)
+                    && !reuse.contains_key(&hash)
+                    && std::time::Instant::now() >= later.deadline;
+                keep.then(|| Arc::clone(block))
+            });
+            if kept.is_some() {
+                stale.resize(parsed.blocks.len(), false);
+                stale[i] = true;
+            }
+            // 沿用的结果已经释放了要画的项，而这一块在需要保留的范围内：重新排版。
+            let (margin, _) = margins(block, key.base, false);
+            let top = y + below.map_or(0.0, |below: f32| below.max(margin));
+            let wanted = |laid: &LaidBlock| {
+                let needed = near
+                    .as_ref()
+                    .is_none_or(|near| near.holds(i, top, laid.height));
+                !(needed && laid.is_shed())
+            };
+            let reused = reuse.get(&hash).filter(|laid| wanted(laid)).cloned();
+            let kept = kept.filter(|laid| wanted(laid));
+            let laid = reused.or(kept).unwrap_or_else(|| {
+                // 很长的文档每排完 [`SHED_BLOCKS`] 块清空一次排版缓存，排版期间缓存不随文档增长。
+                fresh += 1;
+                if near.is_some() && fresh.is_multiple_of(SHED_BLOCKS) {
+                    cx.memo.keep_only(std::iter::empty());
+                }
+                Arc::new(lay_block(cx, block, key.width, env, raw))
+            });
+            // 不在需要保留的范围内的块释放要画的项；显示原文的块（光标所在）总是保留。
+            let far = near
+                .as_ref()
+                .is_some_and(|near| !near.holds(i, top, laid.height));
+            let laid = if far && raw.is_none() && !laid.is_shed() {
+                Arc::new(laid.shed())
+            } else {
+                laid
+            };
+            starts.push(chars);
+            chars += laid.chars;
+            let (margin_top, margin_bottom) = margins(block, key.base, false);
+            if let Some(below) = below {
+                y += f32::max(below, margin_top);
+            }
+            tops.push(y);
+            y += laid.height;
+            below = Some(margin_bottom);
+            blocks.push((hash, laid));
         }
-        tops.push(y);
-        y += laid.height;
-        below = Some(margin_bottom);
-        blocks.push((hash, laid));
-    }
-    cx.memo.sweep(blocks.iter().map(|(_, b)| &*b.memo));
-    let wanted = std::mem::take(&mut cx.wanted);
+        cx.memo.sweep(blocks.iter().map(|(_, b)| &*b.memo));
+        let wanted = std::mem::take(&mut cx.wanted);
+        (blocks, tops, starts, chars, y, stale, wanted)
+    });
     for (path, url) in wanted {
         app.request_markdown_image(&path, &url);
     }
@@ -613,6 +577,73 @@ pub(crate) fn line_box(baseline: f32, size: f32) -> (f32, f32) {
 }
 
 impl Laid {
+    /// 只滚动、跳转到保留的范围（[`Near`]）之外时就地刷新：离开新范围 `near` 的块释放要画的
+    /// 项，进入新范围的已释放的块重新排版，其余的块和各块的位置不变。
+    ///
+    /// 排版条件和文字都未变，重新排出的块高度与释放前相同。光标所在的块（`live`）总是保留；
+    /// 收起的一节里的块不排版，仍是高度为 0 的空块。`parsed` 是本次排版所依据的解析结果。
+    pub(crate) fn refresh_near(
+        &mut self,
+        app: &mut App,
+        frame: &mut Frame<'_>,
+        parsed: &winc_preview::markdown::Markdown,
+        live: Option<&crate::app::preview::markdown::LiveLeaf>,
+        near: Near,
+    ) {
+        let caret = live.map(|l| l.block);
+        let folded = (app.editor.active()).and_then(|d| app.preview.markdown.folds.get(&d.id));
+        let hidden = hidden_blocks(&self.sections, folded, caret);
+        if let Some(kept) = self.near.take() {
+            for i in self.near_blocks(&kept) {
+                let (_, laid) = &self.blocks[i];
+                let keep = hidden[i]
+                    || caret == Some(i)
+                    || laid.is_shed()
+                    || near.holds(i, self.tops[i], laid.height);
+                if !keep {
+                    self.blocks[i].1 = Arc::new(laid.shed());
+                }
+            }
+        }
+        let entering: Vec<usize> = (self.near_blocks(&near).into_iter())
+            .filter(|&i| !hidden[i] && self.blocks[i].1.is_shed())
+            .collect();
+        if !entering.is_empty() {
+            let key = self.key;
+            let wanted = with_cx(app, frame, key, |cx, env| {
+                for i in entering {
+                    let (block, hash) = (&parsed.blocks[i], parsed.hashes[i]);
+                    // 与整篇排版相同：有开合状态的块取它在内容相同的块中的序号。
+                    cx.repeat = match has_toggles(block) {
+                        true => parsed.hashes[..i].iter().filter(|&&h| h == hash).count() as u32,
+                        false => 0,
+                    };
+                    self.blocks[i].1 = Arc::new(lay_block(cx, block, key.width, env, None));
+                }
+                std::mem::take(&mut cx.wanted)
+            });
+            for (path, url) in wanted {
+                app.request_markdown_image(&path, &url);
+            }
+        }
+        // 释放了要画的项的块不再使用排版缓存，缓存只保留其余的块用到的条目。
+        let used = self.blocks.iter().map(|(_, laid)| &*laid.memo);
+        app.preview.markdown.memo.keep_only(used);
+        self.near = Some(near);
+        self.caret.set(None);
+    }
+
+    /// 返回内容坐标在 `near.rows` 中、或序号在 `near.blocks` 中的块，按序号从小到大排列。
+    fn near_blocks(&self, near: &Near) -> Vec<usize> {
+        let len = self.blocks.len();
+        let rows = self.blocks_in(near.rows.0, near.rows.1);
+        let picked = (near.blocks.iter()).flat_map(|r| r.start.min(len)..r.end.min(len));
+        let mut blocks: Vec<usize> = rows.chain(picked).collect();
+        blocks.sort_unstable();
+        blocks.dedup();
+        blocks
+    }
+
     /// 是否仍有沿用旧结果的块。
     pub(crate) fn pending(&self) -> bool {
         !self.stale.is_empty()
