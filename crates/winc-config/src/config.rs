@@ -110,6 +110,8 @@ pub struct Config {
     pub smooth_scrolling: Option<bool>,
     /// 光标移动时滑到新位置的方式，默认为不播放动画。
     pub smooth_caret_movement: Option<SmoothCaret>,
+    /// 编辑区和差异视图中光标的形状，默认为竖线；开启 Vim 模式时只用于插入模式。
+    pub cursor_style: Option<CursorStyle>,
     /// 在侧栏文件视图的底部显示大纲（当前文件的函数、类型、标题），默认为是。
     pub outline: Option<bool>,
     /// 何时显示空格和制表符，默认为选中时。
@@ -609,6 +611,27 @@ impl RenderWhitespace {
         RenderWhitespace::Selection,
         RenderWhitespace::Trailing,
         RenderWhitespace::All,
+    ];
+}
+
+/// 编辑区光标的形状；开启 Vim 模式时只用于插入模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorStyle {
+    /// 字符之间的竖线。
+    #[default]
+    Line,
+    /// 覆盖光标处字符的实心块。
+    Block,
+    /// 光标处字符下方的横线。
+    Underline,
+}
+
+impl CursorStyle {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [CursorStyle; 3] = [
+        CursorStyle::Line,
+        CursorStyle::Block,
+        CursorStyle::Underline,
     ];
 }
 

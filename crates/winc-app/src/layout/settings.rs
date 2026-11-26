@@ -79,6 +79,8 @@ pub enum Setting {
     DragAndDrop,
     /// 粘滞滚动：滚动时在编辑区顶部钉住当前所在的函数、类和标题。
     StickyScroll,
+    /// 编辑区光标的形状（`editor.cursorStyle`）。
+    CursorStyle,
     /// 光标移动时滑到新位置的方式。
     SmoothCaret,
     /// Vim 模式。
@@ -350,9 +352,8 @@ impl Setting {
             S::Minimap | S::StickyScroll | S::RenderWhitespace | S::RenderLineEndings => {
                 SettingsPage::Editor
             }
-            S::WholeLines | S::SmoothCaret | S::DragAndDrop | S::FullTabNames => {
-                SettingsPage::Editor
-            }
+            S::WholeLines | S::CursorStyle | S::SmoothCaret => SettingsPage::Editor,
+            S::DragAndDrop | S::FullTabNames => SettingsPage::Editor,
             S::DefaultLanguage | S::DetectLanguageOnPaste | S::VimMode | S::VimClipboard => {
                 SettingsPage::Editor
             }
@@ -433,6 +434,7 @@ impl Setting {
             S::DetectLanguageOnPaste => "editor.detectLanguageOnPaste",
             S::DragAndDrop => "editor.dragAndDrop",
             S::StickyScroll => "editor.stickyScroll",
+            S::CursorStyle => "editor.cursorStyle",
             S::SmoothCaret => "editor.smoothCaretMovement",
             S::WordWrap => "editor.wordWrap",
             S::EditorRulers => "editor.rulers",
@@ -554,6 +556,7 @@ impl Setting {
             Setting::DropFolder => t!("settings-drop-folder"),
             Setting::FindInFiles => t!("settings-find-in-files"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
+            Setting::CursorStyle => t!("settings-cursor-style"),
             Setting::SmoothCaret => t!("settings-smooth-caret"),
             Setting::VimMode => t!("settings-vim-mode"),
             Setting::VimClipboard => t!("settings-vim-clipboard"),
@@ -716,6 +719,7 @@ impl Setting {
             Setting::BackgroundFit => Some(t!("settings-background-fit-desc")),
             Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
+            Setting::CursorStyle => Some(t!("settings-cursor-style-desc")),
             Setting::SmoothCaret => Some(t!("settings-smooth-caret-desc")),
             Setting::TextWidth => Some(t!("settings-text-width-desc")),
             Setting::MarkdownLineNumbers => Some(t!("settings-markdown-line-numbers-desc")),
@@ -881,6 +885,7 @@ impl Setting {
             | Setting::DropFolder
             | Setting::FindInFiles
             | Setting::AutoSave
+            | Setting::CursorStyle
             | Setting::SmoothCaret
             | Setting::GitOpenWorktree
             | Setting::GitLogPlacement

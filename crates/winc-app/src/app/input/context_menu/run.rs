@@ -272,6 +272,15 @@ impl App {
                     self.set_auto_save(choice);
                 }
             }
+            MenuTarget::CursorStyle => {
+                if let MenuCommand::CursorStyle(i) = command
+                    && let Some(&choice) = winc_config::CursorStyle::ALL.get(i)
+                {
+                    self.config.cursor_style = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
+                }
+            }
             MenuTarget::SmoothCaret => {
                 if let MenuCommand::SmoothCaret(i) = command
                     && let Some(&choice) = winc_config::SmoothCaret::ALL.get(i)

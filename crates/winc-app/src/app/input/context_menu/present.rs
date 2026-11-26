@@ -374,6 +374,9 @@ impl App {
             MenuTarget::AutoSave => (0..winc_config::AutoSave::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::AutoSave(i), true))
                 .collect(),
+            MenuTarget::CursorStyle => (0..winc_config::CursorStyle::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::CursorStyle(i), true))
+                .collect(),
             MenuTarget::SmoothCaret => (0..winc_config::SmoothCaret::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::SmoothCaret(i), true))
                 .collect(),
@@ -913,6 +916,7 @@ impl App {
                 | MenuTarget::DropFolder
                 | MenuTarget::SearchStyle
                 | MenuTarget::AutoSave
+                | MenuTarget::CursorStyle
                 | MenuTarget::SmoothCaret
                 | MenuTarget::Zoom
                 | MenuTarget::BackgroundImage
@@ -937,6 +941,7 @@ impl App {
             MenuTarget::DropFolder => Some(Setting::DropFolder),
             MenuTarget::SearchStyle => Some(Setting::FindInFiles),
             MenuTarget::AutoSave => Some(Setting::AutoSave),
+            MenuTarget::CursorStyle => Some(Setting::CursorStyle),
             MenuTarget::SmoothCaret => Some(Setting::SmoothCaret),
             MenuTarget::Zoom => Some(Setting::Zoom),
             MenuTarget::BackgroundImage => Some(Setting::BackgroundImage),
@@ -1259,6 +1264,10 @@ impl App {
             MenuCommand::AutoSave(i) => {
                 winc_config::AutoSave::ALL.get(i)
                     == Some(&self.config.auto_save.unwrap_or_default())
+            }
+            MenuCommand::CursorStyle(i) => {
+                winc_config::CursorStyle::ALL.get(i)
+                    == Some(&self.config.cursor_style.unwrap_or_default())
             }
             MenuCommand::SmoothCaret(i) => {
                 winc_config::SmoothCaret::ALL.get(i)

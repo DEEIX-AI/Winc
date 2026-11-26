@@ -1,4 +1,4 @@
-//! 「编辑器」页设置的测试：字重、长行参考线与换行符。
+//! 「编辑器」页设置的测试：字重、长行参考线、换行符与光标样式。
 
 use super::*;
 
@@ -99,5 +99,60 @@ fn line_endings_are_marked_after_each_line() {
     assert!(marks[..3].iter().all(|&n| n > 0), "{marks:?}");
     assert_ne!(marks[0], marks[1], "CRLF 与 LF 的标记不同");
     assert_eq!(marks[3], 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 返回光标占用的像素数：光标亮、灭、再亮三帧中，随光标亮灭而变化的像素。
+fn caret_pixels(app: &mut App) -> usize {
+    let mut frame = |visible: bool| {
+        app.blink.visible = visible;
+        paint(app);
+        let renderer = app.frame.renderer.as_ref().unwrap();
+        renderer.image().unwrap().pixels.clone()
+    };
+    let (lit, dark, again) = (frame(true), frame(false), frame(true));
+    (lit.iter().zip(&dark).zip(&again))
+        .filter(|((lit, dark), again)| lit != dark && lit == again)
+        .count()
+}
+
+/// 光标样式是编辑器页的下拉选项，默认为竖线；选中后写回配置，光标改画成覆盖字符的方块或
+/// 字符下方的横线。
+#[test]
+fn the_cursor_style_shapes_the_editor_caret() {
+    use winc_config::CursorStyle;
+    let dir = sample_folder("settings-cursor-style");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    assert_eq!(Setting::CursorStyle.page(), SettingsPage::Editor);
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Editor);
+    app.settings_open_menu(Setting::CursorStyle);
+    let listed: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
+    let all: Vec<_> = (0..CursorStyle::ALL.len())
+        .map(MenuCommand::CursorStyle)
+        .collect();
+    assert_eq!(listed, all);
+    assert!(app.menu_checked(MenuCommand::CursorStyle(0)));
+    app.run_menu_command(MenuCommand::CursorStyle(1));
+    assert_eq!(app.config.cursor_style, Some(CursorStyle::Block));
+    let label = crate::layout::cursor_style_label(CursorStyle::Block);
+    assert_eq!(app.choice_text(Setting::CursorStyle).0, label);
+
+    // 块覆盖一个字符格，竖线宽 2 逻辑像素，横线高 2 逻辑像素、宽一个字符格。
+    app.close_settings();
+    app.window.focused = true;
+    let block = caret_pixels(&mut app);
+    app.config.cursor_style = Some(CursorStyle::Underline);
+    let underline = caret_pixels(&mut app);
+    app.config.cursor_style = None;
+    let bar = caret_pixels(&mut app);
+    let scale = (SCALE * SCALE) as usize;
+    let (cell, line) = (
+        app.metrics.cell.round() as usize,
+        app.fonts.line_height as usize,
+    );
+    assert_eq!(bar, 2 * (line - 2) * scale);
+    assert_eq!(underline, cell * 2 * scale);
+    assert!(block > bar * 2 && block <= cell * line * scale, "{block}");
     let _ = std::fs::remove_dir_all(&dir);
 }

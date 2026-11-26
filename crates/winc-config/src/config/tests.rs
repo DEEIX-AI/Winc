@@ -324,6 +324,7 @@ fn round_trips_through_json() {
         editor_font_weight: Some(500),
         editor_rulers: vec![80, 120],
         render_line_endings: Some(true),
+        cursor_style: Some(CursorStyle::Underline),
         ui_font: Some("「带引号」的字体".to_string()),
         ui_size: Some(12.5),
         ui_zoom: Some(150),

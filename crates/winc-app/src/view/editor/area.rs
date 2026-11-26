@@ -199,6 +199,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             relative: app.vim_relative(),
             yanked: app.vim_yanked(id),
             vim_caret: vim_caret.map(|(_, shape)| shape),
+            styled_caret: app.styled_caret(),
             extra_carets: &extra_carets,
             hunks,
             open: app
@@ -358,6 +359,8 @@ struct Screen<'a> {
     yanked: Option<Selection>,
     /// Vim 模式下光标的形状；使用竖线光标时为 `None`。
     vim_caret: Option<crate::app::vim::CaretShape>,
+    /// `editor.cursorStyle` 设定的光标形状，见 [`App::styled_caret`]；竖线为 `None`。
+    styled_caret: Option<crate::app::vim::CaretShape>,
     extra_carets: &'a [(usize, usize)],
     /// 与 `HEAD` 比较得到的改动，以及改动卡片打开的一处。
     hunks: &'a [LineHunk],

@@ -296,6 +296,28 @@ const EDITOR: &[Field] = &[
             Some(Json::String(value.to_owned()))
         },
     },
+    Field {
+        key: "cursorStyle",
+        read: |config, value, name, problems| {
+            config.cursor_style = match value.as_str() {
+                Some("line") => Some(CursorStyle::Line),
+                Some("block") => Some(CursorStyle::Block),
+                Some("underline") => Some(CursorStyle::Underline),
+                _ => {
+                    problems.push(t!("config-cursor-style-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| {
+            let value = match config.cursor_style? {
+                CursorStyle::Line => "line",
+                CursorStyle::Block => "block",
+                CursorStyle::Underline => "underline",
+            };
+            Some(Json::String(value.to_owned()))
+        },
+    },
     bool_field!("diffInline", diff_inline),
     bool_field!("diffCollapseUnchanged", diff_collapse_unchanged),
     bool_field!("lineNumbers", line_numbers),

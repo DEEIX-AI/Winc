@@ -483,6 +483,7 @@ impl App {
             | Setting::DropFolder
             | Setting::FindInFiles
             | Setting::AutoSave
+            | Setting::CursorStyle
             | Setting::SmoothCaret
             | Setting::Zoom
             | Setting::BackgroundImage
@@ -508,6 +509,7 @@ impl App {
                     Setting::DropFolder => MenuTarget::DropFolder,
                     Setting::FindInFiles => MenuTarget::SearchStyle,
                     Setting::AutoSave => MenuTarget::AutoSave,
+                    Setting::CursorStyle => MenuTarget::CursorStyle,
                     Setting::SmoothCaret => MenuTarget::SmoothCaret,
                     Setting::Zoom => MenuTarget::Zoom,
                     Setting::BackgroundImage => MenuTarget::BackgroundImage,

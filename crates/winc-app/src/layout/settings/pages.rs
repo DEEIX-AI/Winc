@@ -169,6 +169,7 @@ impl SettingsPage {
                         S::AlignColumns,
                         S::Minimap,
                         S::StickyScroll,
+                        S::CursorStyle,
                         S::SmoothCaret,
                         S::RenderWhitespace,
                         S::RenderLineEndings,
