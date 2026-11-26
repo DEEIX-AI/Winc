@@ -80,8 +80,7 @@ pub(crate) use winc_typeset::ImageSlot;
 
 /// 可编辑的预览中光标所在的叶子块（见 [`Markdown::leaves`]），该块显示原文。
 ///
-/// 原文位置均按当前文字计算：解析之后输入的文字都位于该块内（光标在该块中），块的末尾
-/// 按文字长度的变化移动。
+/// 原文位置均按当前文字计算：解析结果中的位置按 [`LiveLeaf::drift`] 换算。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LiveLeaf {
     /// 所在的顶层块（`Markdown::blocks` 的序号）。
@@ -91,8 +90,11 @@ pub(crate) struct LiveLeaf {
     /// 叶子块当前的范围（字节偏移）；光标位于其后的空行上时延伸到光标所在行，位于其前的
     /// 块标记上时从光标所在行起算。
     pub leaf: std::ops::Range<usize>,
-    /// 叶子块在解析结果中的终点（字节偏移）：输入之后、重新解析之前与 `leaf` 的终点不同。
+    /// 叶子块不含其后空行时的终点（字节偏移）：光标位于叶子块之后的空行上时与 `leaf` 的终点
+    /// 不同。
     pub parsed_end: usize,
+    /// 解析之后的改动，见 [`App::markdown_drift`]。
+    pub drift: winc_typeset::Drift,
     /// 文档版本号：输入文字后该块需要重排。
     pub revision: u64,
     /// 是否为正文（段落、标题），见 `LeafRange::prose`。

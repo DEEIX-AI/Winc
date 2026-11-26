@@ -33,6 +33,8 @@ pub enum NoticeAction {
     OpenProject(PathBuf),
     /// 「打开设置」：在设置中显示 `Ctrl` 与这个字符的组合归 Vim 还是编辑器的一行。
     VimKey(char),
+    /// 「打开设置」：在设置中定位到该设置项。
+    ShowSetting(Setting),
 }
 
 /// 提示的种类，决定提示条左侧的图标和颜色。
@@ -74,7 +76,9 @@ impl NoticeAction {
                 t!("workspace-notice-show-output")
             }
             NoticeAction::Install { .. } => t!("workspace-notice-install"),
-            NoticeAction::FormatSettings | NoticeAction::VimKey(_) => {
+            NoticeAction::FormatSettings
+            | NoticeAction::VimKey(_)
+            | NoticeAction::ShowSetting(_) => {
                 t!("workspace-notice-open-settings")
             }
             NoticeAction::Reconnect(_) => t!("workspace-notice-reconnect"),
@@ -223,6 +227,7 @@ impl App {
             }
             NoticeAction::OpenProject(file) => self.open_project_file(&file),
             NoticeAction::VimKey(c) => self.show_setting(Setting::VimKey(c)),
+            NoticeAction::ShowSetting(setting) => self.show_setting(setting),
         }
         self.request_redraw();
     }

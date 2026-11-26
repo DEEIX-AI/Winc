@@ -50,7 +50,7 @@ fn merged_edits_cover_every_edit_in_between() {
 #[test]
 fn a_gap_in_the_log_means_nothing_is_known() {
     let mut log = EditLog::default();
-    log.push(1, 4);
+    log.push(1, 4, 9);
     log.set_bytes(
         1,
         ByteEdit {
@@ -58,7 +58,7 @@ fn a_gap_in_the_log_means_nothing_is_known() {
             new: 2..3,
         },
     );
-    log.push(2, 2);
+    log.push(2, 2, 3);
     log.set_bytes(
         2,
         ByteEdit {
@@ -66,7 +66,7 @@ fn a_gap_in_the_log_means_nothing_is_known() {
             new: 3..4,
         },
     );
-    assert_eq!(log.unchanged_lines_since(0, 2), 2);
+    assert_eq!(log.unchanged_since(0, 2), (2, 3));
     assert_eq!(
         log.bytes_since(0, 2),
         Some(ByteEdit {
@@ -74,14 +74,14 @@ fn a_gap_in_the_log_means_nothing_is_known() {
             new: 2..4
         })
     );
-    assert_eq!(log.unchanged_lines_since(2, 2), usize::MAX);
+    assert_eq!(log.unchanged_since(2, 2), (usize::MAX, usize::MAX));
     assert_eq!(log.bytes_since(2, 2), None);
     // 版本 3 不在日志中（例如从磁盘重新读取）。
-    assert_eq!(log.unchanged_lines_since(0, 3), 0);
+    assert_eq!(log.unchanged_since(0, 3), (0, 0));
     assert_eq!(log.bytes_since(0, 3), None);
     // 有多处改动的版本没有字节范围。
-    log.push(3, 0);
-    assert_eq!(log.unchanged_lines_since(0, 3), 0);
+    log.push(3, 0, 0);
+    assert_eq!(log.unchanged_since(0, 3), (0, 0));
     assert_eq!(log.bytes_since(0, 3), None);
     assert_eq!(log.bytes_since(3, 3), None);
 }

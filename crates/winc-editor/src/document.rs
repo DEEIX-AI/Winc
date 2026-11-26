@@ -1007,7 +1007,7 @@ impl Document {
         rope.insert(end, text);
         self.highlighter.invalidate_from(line);
         self.revision += 1;
-        self.note_edit(line);
+        self.note_edit(line, end);
         self.appended(line);
     }
 
@@ -1384,9 +1384,9 @@ impl Document {
         self.edits.bytes_since(revision, self.revision)
     }
 
-    /// 记录最近一次改动（`revision` 已递增）的起始行 `line`。
-    fn note_edit(&mut self, line: usize) {
-        self.edits.push(self.revision, line);
+    /// 记录最近一次改动（`revision` 已递增）的起始行 `line` 和起始位置 `offset`（字符偏移）。
+    fn note_edit(&mut self, line: usize, offset: usize) {
+        self.edits.push(self.revision, line, offset);
     }
 
     /// 返回从版本 `revision` 至今始终未变的开头行数：此后的每次改动都位于这些行之下。
@@ -1394,7 +1394,14 @@ impl Document {
     /// 只记录最近 64 次改动；版本更早，或期间发生了编辑以外的变化（从磁盘重新读取、
     /// 更换语言）时返回 0。版本未变时返回 `usize::MAX`。
     pub fn unchanged_lines_since(&self, revision: u64) -> usize {
-        self.edits.unchanged_lines_since(revision, self.revision)
+        self.edits.unchanged_since(revision, self.revision).0
+    }
+
+    /// 返回从版本 `revision` 至今始终未变的开头字符数：此后的每次改动都从这些字符之后开始。
+    ///
+    /// 无法确定与版本未变时的返回值同 [`Document::unchanged_lines_since`]。
+    pub fn unchanged_chars_since(&self, revision: u64) -> usize {
+        self.edits.unchanged_since(revision, self.revision).1
     }
 
     /// 处理文本变化的后续工作：让变化所在行起的高亮失效，递增 `revision`，刷新折叠。
@@ -1405,7 +1412,7 @@ impl Document {
         self.highlighter.invalidate_from(line);
         self.sticky_memo.edited(self.revision, line);
         self.revision += 1;
-        self.note_edit(line);
+        self.note_edit(line, first_offset);
         self.refresh_folds();
         // 正在预览的 SVG 内容变化（例如文件被外部修改后重新读取）时，按新内容重新绘制。
         if self.picture.is_some() {

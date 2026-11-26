@@ -77,8 +77,9 @@ pub struct Markdown {
 
 /// 文字与原文的对照：文字中的字节偏移对应原文中的哪个字节偏移。
 ///
-/// 按文字的先后记下若干段：每段文字与原文逐字节相同；不在任何一段里的文字（软换行换成的
-/// 空格、emoji、脚注编号这类由原文生成的文字）对应前一段的末尾。
+/// 按文字的先后记下若干段：每段文字与原文逐字节相同；由原文生成的文字（软换行换成的空格、
+/// emoji、脚注编号）记一个对应点。[`SourceMap::source`] 中不在任何一段里的文字对应前一段的
+/// 末尾，[`SourceMap::char_source`] 中只有对应点之后的文字有位置。
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SourceMap(Vec<Anchor>);
 
@@ -107,6 +108,23 @@ impl SourceMap {
             .checked_sub(1)?;
         let a = self.0[i];
         Some(a.source as usize + (at - a.text as usize).min(a.len as usize))
+    }
+
+    /// 返回文字中第 `at` 个字节对应的原文位置；不在任何一段里、也不在对应点之后时为 `None`。
+    ///
+    /// 排版时据此记下每个字的原文位置：没有对应点的生成文字（脚注末尾的 ` ↩`）不计入正文。
+    pub fn char_source(&self, at: usize) -> Option<usize> {
+        let i = self
+            .0
+            .partition_point(|a| a.text as usize <= at)
+            .checked_sub(1)?;
+        let a = self.0[i];
+        let off = at - a.text as usize;
+        if a.len == 0 {
+            Some(a.source as usize)
+        } else {
+            (off < a.len as usize).then_some(a.source as usize + off)
+        }
     }
 
     /// 占用的堆内存（字节，按容量计算），用于内存测量。
@@ -494,6 +512,11 @@ impl Inline {
         self.map.source(at).map(|s| s + self.source)
     }
 
+    /// 返回文字中第 `at` 个字节在所在顶层块原文中的位置，见 [`SourceMap::char_source`]。
+    pub fn char_source_of(&self, at: usize) -> Option<usize> {
+        self.map.char_source(at).map(|s| s + self.source)
+    }
+
     /// 是否没有可显示的内容（只有空白）。
     pub fn is_blank(&self) -> bool {
         self.text.trim().is_empty()
@@ -548,6 +571,23 @@ pub fn parse(text: &str) -> Markdown {
     // `\(…\)`、`\[…\]` 和公式环境换成等长的 `$$` 后解析，位置仍按原文。
     let masked = delims::mask(text);
     for (event, range) in Parser::new_ext(&masked, options).into_offset_iter() {
+        // 顶层段落开头的 1–3 个空格不属于段落（CommonMark 4.8）；段落的范围从行首算起，段首
+        // 输入的空格仍属于该段落，光标在其中有位置。
+        let block_start =
+            if matches!(event, Event::Start(Tag::Paragraph)) && builder.stack.is_empty() {
+                let line_start = text[..range.start].rfind('\n').map_or(0, |n| n + 1);
+                if line_start < range.start
+                    && text[line_start..range.start]
+                        .bytes()
+                        .all(|b| matches!(b, b' ' | b'\t'))
+                {
+                    line_start
+                } else {
+                    range.start
+                }
+            } else {
+                range.start
+            };
         // 顶层块开始的地方：不在任何容器、段落、代码块、HTML 块里。分隔线没有开始、结束两个
         // 事件，只有一个。
         if matches!(event, Event::Start(_) | Event::Rule)
@@ -556,13 +596,13 @@ pub fn parse(text: &str) -> Markdown {
             && builder.code.is_none()
             && builder.html.is_none()
         {
-            builder.start_at = range.start;
+            builder.start_at = block_start;
         }
-        (builder.start, builder.cursor, builder.end) = (range.start, range.start, range.end);
+        (builder.start, builder.cursor, builder.end) = (block_start, range.start, range.end);
         builder.event(event);
         if builder.inline.is_some() {
-            let leaf = builder.leaf.get_or_insert(range.clone());
-            *leaf = leaf.start.min(range.start)..leaf.end.max(range.end);
+            let leaf = builder.leaf.get_or_insert(block_start..range.end);
+            *leaf = leaf.start.min(block_start)..leaf.end.max(range.end);
         }
     }
     builder.finish(text)

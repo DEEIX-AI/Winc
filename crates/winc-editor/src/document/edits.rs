@@ -1,8 +1,8 @@
-//! 改动日志：最近若干次改动的版本号、第一处改动所在的行和字节范围。
+//! 改动日志：最近若干次改动的版本号、第一处改动所在的行和位置，以及字节范围。
 //!
-//! 调用方据此判断某个版本之后哪些内容没有变：高亮、排版从未变的行之后重算，Markdown 预览只重新
-//! 解析改动所在的块。日志只记录经过编辑的改动；从磁盘重新读取这类变化不记录，查询时按「无法
-//! 判断」处理。
+//! 调用方据此判断某个版本之后哪些内容没有变：高亮、排版从未变的行之后重算，Markdown 预览换算
+//! 解析之后的位置，并只重新解析改动所在的块。日志只记录经过编辑的改动；从磁盘重新读取这类
+//! 变化不记录，查询时按「无法判断」处理。
 
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -56,6 +56,8 @@ struct Entry {
     revision: u64,
     /// 第一处改动所在的行（从 0 起）。
     line: usize,
+    /// 第一处改动的位置（字符偏移）。
+    offset: usize,
     /// 改动只有一处时的字节范围；有多处，或文本不是 `rope` 时为 `None`。
     bytes: Option<ByteEdit>,
 }
@@ -65,11 +67,12 @@ struct Entry {
 pub(crate) struct EditLog(VecDeque<Entry>);
 
 impl EditLog {
-    /// 记录版本 `revision` 的改动，第一处改动在第 `line` 行。
-    pub(crate) fn push(&mut self, revision: u64, line: usize) {
+    /// 记录版本 `revision` 的改动，第一处改动在第 `line` 行、位置 `offset`（字符偏移）。
+    pub(crate) fn push(&mut self, revision: u64, line: usize, offset: usize) {
         self.0.push_back(Entry {
             revision,
             line,
+            offset,
             bytes: None,
         });
         if self.0.len() > EDIT_LOG {
@@ -98,11 +101,15 @@ impl EditLog {
             .then(|| self.0.iter().skip(self.0.len() - count))
     }
 
-    /// 返回从版本 `revision` 至今（当前版本 `current`）始终未变的开头行数；版本未变时返回
-    /// `usize::MAX`，无法判断时返回 0。
-    pub(crate) fn unchanged_lines_since(&self, revision: u64, current: u64) -> usize {
-        self.since(revision, current)
-            .map_or(0, |edits| edits.map(|e| e.line).min().unwrap_or(usize::MAX))
+    /// 返回从版本 `revision` 至今（当前版本 `current`）始终未变的（开头行数，开头字符数）；
+    /// 版本未变时两者都是 `usize::MAX`，无法判断时都是 0。
+    pub(crate) fn unchanged_since(&self, revision: u64, current: u64) -> (usize, usize) {
+        let Some(edits) = self.since(revision, current) else {
+            return (0, 0);
+        };
+        edits.fold((usize::MAX, usize::MAX), |(line, offset), e| {
+            (line.min(e.line), offset.min(e.offset))
+        })
     }
 
     /// 返回从版本 `revision` 至今（当前版本 `current`）的改动合并成的一处字节改动。

@@ -1,4 +1,4 @@
-//! `[TOC]` / `[[TOC]]` 目录生成。
+//! 目录：只有 `[TOC]`（或 `[[TOC]]`）的段落换成按标题层级嵌套的列表。
 
 use super::{Block, Inline, Item, Style, slug, syntax};
 

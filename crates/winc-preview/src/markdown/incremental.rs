@@ -59,6 +59,14 @@ fn indent(gap: &str) -> usize {
     gap.rfind('\n').map_or(0, |at| gap.len() - at - 1)
 }
 
+/// 返回块 `block` 的第一行是否可能缩进：顶层段落的范围从行首算起，缩进在范围之内，段落的
+/// 文字因而不从范围的起点开始。
+///
+/// 以 `**` 这类标记开头的段落同样命中；误判时只是不做局部解析。
+fn starts_indented(block: &Block) -> bool {
+    matches!(block, Block::Paragraph(inline) if inline.source > 0)
+}
+
 /// 返回原文 `text` 的开头能否接在前面的列表之后：缩进（列表项的后续内容），或可能是列表标记。
 ///
 /// 列表能跨空行延续：`- a\n\n- b` 是同一个列表，`- a\n\n  b` 中的 `b` 属于第一项。只看第一个
@@ -253,6 +261,7 @@ impl Markdown {
             && last.is_some_and(list)
             && (list(&self.blocks[end])
                 || matches!(self.blocks[end], Block::Code { .. })
+                || starts_indented(&self.blocks[end])
                 || indent(&gap_after) > 0)
         {
             return None;

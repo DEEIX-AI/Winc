@@ -7,12 +7,14 @@
 
 pub mod log;
 pub mod merge;
+pub mod recent;
 
 mod branch;
 mod commit;
 mod output;
 mod parse;
 mod pathspec;
+mod pending;
 mod rebase;
 mod remote;
 mod sync;
@@ -20,6 +22,7 @@ mod sync;
 pub use branch::BranchDeleted;
 pub use commit::RecentHistory;
 pub use output::{on_output, output_since, output_snapshot, output_text};
+pub use pending::{FilePatch, PatchLimits, PendingPatch};
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};
 pub use remote::{Remote, TagTarget, repository_dir_name};
 pub use sync::{Carried, MINIMUM_VERSION, Outgoing, Synced};
