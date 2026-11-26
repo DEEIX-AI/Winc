@@ -77,6 +77,11 @@ impl Json {
         Json::Object(items.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
 
+    /// 是对象且有键 `key` 时返回该键的值，否则返回 `None`。
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        self.as_object()?.get(key)
+    }
+
     /// 是对象时返回键值表，否则返回 `None`。
     pub fn as_object(&self) -> Option<&BTreeMap<String, Json>> {
         match self {

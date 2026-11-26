@@ -2,7 +2,7 @@
 //!
 //! 快捷键和命令面板都经由 [`App::run_action`] 执行，每个命令只有一处实现。
 
-use winc_core::transform::Case;
+use winc_core::transform::{Case, JsonLayout};
 use winc_editor::panes::Axis;
 use winc_editor::{Command, EntryKind, FoldCommand};
 use winc_preview::markdown::paragraph::Kind;
@@ -10,7 +10,7 @@ use winit::keyboard::NamedKey;
 
 use super::*;
 use crate::field::TextField;
-use crate::keymap::{Action, Context};
+use crate::keymap::{Action, Context, Group};
 use crate::layout::{PanelButton, SearchButton, SettingsPage, SidebarView};
 
 impl App {
@@ -141,6 +141,10 @@ impl App {
                 {
                     self.pick(Pick::SaveAs(id));
                 }
+            }
+            // Git 面板（日志或筛选输入框）获得焦点时关闭面板中显示的日志，不关闭编辑区的标签。
+            CloseTab if self.git_panel_focused() => {
+                self.close_panel_log(self.git.panel.at);
             }
             CloseTab => {
                 if let Some(index) = self.editor.active {
@@ -354,6 +358,8 @@ impl App {
                     },
                 );
             }
+            PrettyPrintJson => self.reformat_json(JsonLayout::Pretty),
+            MinifyJson => self.reformat_json(JsonLayout::Compact),
             IndentUsingSpaces => self.use_indent(false),
             IndentUsingTabs => self.use_indent(true),
             ConvertIndentationToSpaces => self.convert_indentation(false),
@@ -392,8 +398,8 @@ impl App {
             CompareWithClipboard => self.compare_with_clipboard(),
             CompareWithSaved => self.compare_with_saved(),
 
-            // 日志标签里 `⌘F` 是筛选输入框。
-            Find if self.log_active() => {
+            // 日志里 `⌘F` 是筛选输入框。
+            Find if self.log_focused() => {
                 self.focus = Focus::LogFilter;
                 self.git.log.filter.select_all();
                 self.request_redraw();
@@ -531,12 +537,21 @@ impl App {
             ChangesShowDiff | ChangesOpenSource | ChangesRollback => {
                 return self.run_changes_action(action);
             }
+            // 面板模式下显示、隐藏 Git 面板，编辑区模式下打开日志标签。
+            GitShowLog if self.git.panel.docked => self.toggle_git_panel(),
             GitShowLog => self.git_show_log(),
             GitGoToRevision => self.open_go_to_revision(),
             GitRewordCommit => self.reword_selected_commit(),
             GitGoToChildCommit => self.go_to_log_relative(false),
             GitGoToParentCommit => self.go_to_log_relative(true),
             GitShowOutput => self.show_git_output(),
+            GitGenerateCommitMessage => {
+                // 生成的信息填入提交视图的信息框，提交视图未显示时先打开。
+                if !self.commit_shown() {
+                    self.show_commit();
+                }
+                self.generate_commit_message();
+            }
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
             GitSwitchRepository => self.switch_location(true),
@@ -648,7 +663,23 @@ impl App {
                 return false;
             }
             // 编辑提交说明只在日志里可用；其余位置同一个键执行其他命令。
-            Action::GitRewordCommit if !self.log_active() => return false,
+            Action::GitRewordCommit if !self.log_focused() => return false,
+            // Git 面板中的日志获得焦点时，编辑、查找文字的命令不作用于编辑区的文档；复制和查找
+            // 按日志处理（复制提交号、筛选），日志自己的命令照常执行。
+            _ if self.focus == Focus::GitPanel
+                && matches!(action.group(), Group::Edit | Group::Find)
+                && !matches!(
+                    action,
+                    Action::Copy
+                        | Action::Find
+                        | Action::GitRewordCommit
+                        | Action::GitGoToChildCommit
+                        | Action::GitGoToParentCommit
+                        | Action::GitGoToRevision
+                ) =>
+            {
+                return false;
+            }
             // 转到子提交、父提交只在日志的提交列表上可用：文件列表里 `←` 是返回。
             Action::GitGoToChildCommit | Action::GitGoToParentCommit
                 if !self.log_list_focused() =>

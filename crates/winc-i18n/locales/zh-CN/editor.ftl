@@ -279,3 +279,19 @@ editor-lsp-kind-variable = 变量
 editor-lsp-kind-type = 类型
 editor-lsp-kind-module = 包
 editor-lsp-kind-other = 其他
+
+## 美化与压缩 JSON。
+
+editor-json-not-found = 未找到 JSON
+editor-json-invalid = 无法{ $action ->
+        [compact] 压缩
+       *[pretty] 美化
+    } JSON：第 { $line } 行第 { $column } 列不符合 JSON 语法
+editor-json-incomplete = 无法{ $action ->
+        [compact] 压缩
+       *[pretty] 美化
+    } JSON：内容不完整
+editor-json-too-deep = 无法{ $action ->
+        [compact] 压缩
+       *[pretty] 美化
+    } JSON：嵌套超过 { $depth } 层

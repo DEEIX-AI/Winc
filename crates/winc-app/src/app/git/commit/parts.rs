@@ -2,11 +2,15 @@
 
 use super::*;
 
+/// 提交卡片底行的按钮：提交、下拉箭头、并排的「提交并推送…」和「生成提交信息」（后两项没有时
+/// 为 `None`）。
+type CardButtons = (Rect, Rect, Option<Rect>, Option<Rect>);
+
 impl App {
     /// 计算提交视图的布局。
     ///
-    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、工作树、储藏、提交
-    /// 卡片和尚未推送的上一次提交。
+    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、提交历史、工作树、
+    /// 储藏、提交卡片和尚未推送的上一次提交。
     pub(crate) fn commit_parts(&self) -> CommitParts {
         let s = self.layout.sidebar;
         let panel = Rect::new(s.x, TOP_BAR_END, s.w, (s.bottom() - TOP_BAR_END).max(0.0));
@@ -58,7 +62,7 @@ impl App {
         } else {
             Default::default()
         };
-        let (commit, commit_menu, push) = buttons;
+        let (commit, commit_menu, push, generate) = buttons;
         let top = banner.map_or(branch.bottom(), |(rect, _)| rect.bottom());
         let list_y = top + SIDEBAR_LIST_GAP;
         let above = match (card, undo) {
@@ -75,7 +79,14 @@ impl App {
         let h = self.worktree_section_height();
         let bottom = stashes.map_or(stash_bottom, |rect| rect.y);
         let worktrees = (h > 0.0).then(|| Rect::new(panel.x, bottom - h, panel.w, h));
-        let list_end = worktrees.or(stashes).map_or(above, |rect| rect.y);
+        // 提交历史一组在工作树上面，同样没有间隔。侧栏较矮时它先让出高度：给改动列表留足
+        // `HISTORY_LIST_KEEP`，组内露出的行变少（可以滚动）；连标题都放不下时不显示。
+        let bottom = worktrees.or(stashes).map_or(stash_bottom, |rect| rect.y);
+        let room = bottom - list_y - HISTORY_LIST_KEEP;
+        let h = self.history_section_height().min(room);
+        let history =
+            (h > 0.0 && room >= DRAWER_CLOSED).then(|| Rect::new(panel.x, bottom - h, panel.w, h));
+        let list_end = (history.or(worktrees).or(stashes)).map_or(above, |rect| rect.y);
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
             header,
@@ -90,9 +101,11 @@ impl App {
             commit,
             commit_menu,
             push,
+            generate,
             undo,
             stashes,
             worktrees,
+            history,
             list,
         }
     }
@@ -146,7 +159,8 @@ impl App {
     }
 
     /// 勾选式下提交卡片底行 `footer` 的各个按钮：「提交」「提交并推送…」靠左并排，下拉箭头在
-    /// 最右。放不下时「提交并推送…」收进下拉菜单。
+    /// 最右，开启「AI 生成提交信息」时生成按钮在箭头左侧。空间不足时先将「提交并推送…」移入下拉
+    /// 菜单，仍然不足时不显示生成按钮。
     fn classic_card_buttons(&self, footer: Rect) -> CardButtons {
         let labels = self.git.commit.labels;
         let menu_w = BUTTON_MENU_W.min(footer.w);
@@ -156,11 +170,15 @@ impl App {
         let width = (self.git.commit.button_motion)
             .map_or(natural, |(from, clock)| clock.between(from, natural));
         let commit = Rect::new(footer.x, footer.y, width.min(room), FOOTER_H);
+        let generate_x = commit_menu.x - PUSH_GAP - BUTTON_MENU_W;
+        let generate = (self.commit_generation_on() && commit.right() + PUSH_GAP <= generate_x)
+            .then(|| Rect::new(generate_x, footer.y, BUTTON_MENU_W, FOOTER_H));
+        let end = generate.map_or(commit_menu.x, |rect| rect.x);
         let push_w = labels.push + 2.0 * BUTTON_PAD;
-        let fits = commit.right() + PUSH_GAP + push_w + PUSH_GAP <= commit_menu.x;
+        let fits = commit.right() + PUSH_GAP + push_w + PUSH_GAP <= end;
         let push = (self.commit_push_beside() && fits)
             .then(|| Rect::new(commit.right() + PUSH_GAP, footer.y, push_w, FOOTER_H));
-        (commit, commit_menu, push)
+        (commit, commit_menu, push, generate)
     }
 
     /// 这时是否把「提交并推送…」排在提交按钮旁边：有文字宽度可用，没有进行中的合并、变基，

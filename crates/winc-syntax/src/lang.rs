@@ -101,6 +101,10 @@ pub struct Language {
     ///
     /// [`Interpolation::single_quotes`] 为真时单引号字符串中也识别，为假时只在双引号字符串中识别。
     pub interpolation: Option<Interpolation>,
+    /// 可跨行的插值字符串中，没有在本行闭合的插值是否延续到下一行（Nix）。
+    ///
+    /// 跨行的插值内部识别注释，并保留外层字符串的状态。
+    pub multiline_interpolation: bool,
     /// 使紧随其后的字符串成为原始字符串的前缀（Python 的 `r`、Dart 的 `r`、Scala 的 `raw`）。
     ///
     /// 原始字符串中不识别转义序列、插值和变量；反斜杠仍使紧随的引号不收尾（Python 的规则）。
@@ -120,6 +124,12 @@ pub struct Language {
     /// 否则正则中的引号或反引号会开始字符串，反引号还会把文件剩下的部分都当作字符串。斜杠之前
     /// 是值（标识符、数字、右括号、字符串）时是除号。
     pub regex_literals: bool,
+    /// 是否识别 `/` 引出的裸路径字面量片段（Nix 的 `./a`、`dir/file.nix`、`/etc/a`），
+    /// 并将 `//` 作为运算符跳过。
+    ///
+    /// 路径片段只含 ASCII 字母、数字、`_`、`+`、`-`、`.`，避免紧跟在路径之后的 `''` 被连同
+    /// 路径名一起当成标识符。
+    pub path_literals: bool,
     /// 是否按 Markdown（CommonMark 与 GFM）着色：代码块、行内代码、标题、引用、列表标记、强调、
     /// 链接和行内 HTML 标签。
     ///
@@ -526,11 +536,13 @@ const BASE: Language = Language {
     backtick_escapes: false,
     template_interpolation: false,
     interpolation: None,
+    multiline_interpolation: false,
     raw_prefixes: &[],
     block_strings: &[],
     long_brackets: None,
     line_string: None,
     regex_literals: false,
+    path_literals: false,
     markdown: false,
     code_tokens: false,
     surround: &[],

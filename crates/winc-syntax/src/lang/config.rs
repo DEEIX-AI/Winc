@@ -346,6 +346,8 @@ pub(super) static NIX: Language = Language {
     block_comments: C_COMMENTS,
     multiline_strings: true,
     interpolation: Some(DOLLAR_BRACE),
+    multiline_interpolation: true,
+    path_literals: true,
     block_strings: &[BlockString {
         open: "''",
         close: "''",

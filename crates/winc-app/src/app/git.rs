@@ -16,6 +16,7 @@ pub(crate) mod form;
 pub(crate) mod location_picker;
 pub(crate) mod log;
 pub(crate) mod merge;
+pub(crate) mod panel;
 pub(crate) mod question;
 pub(crate) mod rebase;
 mod refresh;
@@ -25,6 +26,7 @@ pub(super) mod rewrite;
 mod stepping;
 pub(crate) mod worktree;
 
+use crate::app::NoticeAction;
 use crate::app::scroll::set_scroll_line;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -263,6 +265,8 @@ pub(crate) struct GitState {
     pub context_row: commit::ContextRow,
     /// 日志标签的后台通道和点击区域。
     pub log: log::LogState,
+    /// 窗口底部的 Git 面板和其中的日志。
+    pub panel: panel::GitPanel,
     /// 逐行追溯（`git blame`）的状态。
     pub blame: blame::BlameState,
     /// 正在进行的分支操作。
@@ -352,6 +356,7 @@ impl Default for GitState {
             changes: Default::default(),
             context_row: Default::default(),
             log: Default::default(),
+            panel: Default::default(),
             blame: Default::default(),
             branch: Default::default(),
             merge: Default::default(),
@@ -641,7 +646,15 @@ impl App {
             Some(view) => view.root.as_deref(),
             None => doc.path.as_deref().and_then(Path::parent),
         };
-        let (Some(dir), Some(folder)) = (dir, self.editor.root()) else {
+        if let Some(dir) = dir.map(Path::to_path_buf) {
+            self.git_follow_dir(&dir);
+        }
+    }
+
+    /// 文档所在的目录 `dir` 在打开的目录（或附加的目录）中的仓库里时，把当前仓库换成它；提交
+    /// 视图开着、正在提交或有没写完的提交信息时不换，只把仓库加入列表。
+    pub(in crate::app) fn git_follow_dir(&mut self, dir: &Path) {
+        let Some(folder) = self.editor.root().filter(|_| self.git_enabled()) else {
             return;
         };
         // 打开的目录和附加的目录之外的文件不改变当前仓库。
@@ -1052,6 +1065,7 @@ impl App {
                     }
                     if moved {
                         self.reload_logs();
+                        self.git.commit.history.outdate();
                     }
                 }
                 Err(e) => {
@@ -1095,7 +1109,7 @@ impl App {
     /// 检查仓库配置是否会让 `git` 运行命令（[`Git::untrusted`]），必要时询问用户是否信任。
     ///
     /// 信任过相同配置时正常使用，否则询问用户一次。用户回答之前，读取状态时不运行这些命令，
-    /// 修改仓库的操作被拒绝。
+    /// 修改仓库的操作被拒绝；被拒绝的操作的失败提示上可以再次确认（[`App::review_git_trust`]）。
     fn check_git_trust(&mut self) {
         let (Some(root), Some(git)) = (self.git.root.clone(), self.git.tool.get()) else {
             return;
@@ -1114,37 +1128,66 @@ impl App {
         if self.git.asked_trust.contains(&risks.fingerprint) {
             return;
         }
+        // 窗口已有其他提示框时不显示，也不记录指纹，下次刷新时再询问。
+        if self.ask_git_trust(&root, &risks) {
+            self.git.asked_trust.push(risks.fingerprint);
+        }
+    }
 
-        if self.window.handle.is_some() {
-            use crate::app::AlertButton;
+    /// 询问用户是否信任仓库 `root` 检查出的配置 `risks`，返回是否显示了提示框。
+    ///
+    /// 没有窗口或窗口已有其他提示框时不显示。回答见 [`App::answer_git_trust`]。
+    fn ask_git_trust(&mut self, root: &Path, risks: &winc_editor::git::Risks) -> bool {
+        use crate::app::AlertButton;
 
-            let name = winc_editor::display_name(&root).into_owned();
-            let message = t!("git-trust-confirm", name = name);
-            let mut detail = t!("git-trust-confirm-detail").to_owned();
+        if self.window.handle.is_none() {
+            return false;
+        }
+        let name = winc_editor::display_name(root).into_owned();
+        let message = t!("git-trust-confirm", name = name);
+        let mut detail = t!("git-trust-confirm-detail").to_owned();
+        detail.push('\n');
+        // 详情中最多列出的配置项数（行）；取自调参：条目更多时详情的高度超出窗口。
+        const SHOWN: usize = 8;
+        for item in risks.items.iter().take(SHOWN) {
+            detail.push_str("\n· ");
+            detail.push_str(item);
+        }
+        if risks.items.len() > SHOWN {
             detail.push('\n');
-            // 详情中最多列出的配置项数（行）；取自调参：条目更多时详情的高度超出窗口。
-            const SHOWN: usize = 8;
-            for item in risks.items.iter().take(SHOWN) {
-                detail.push_str("\n· ");
-                detail.push_str(item);
-            }
-            if risks.items.len() > SHOWN {
-                detail.push('\n');
-                detail.push_str(&t!("git-trust-more", count = risks.items.len()));
-            }
-            let buttons = vec![
-                AlertButton::cancel(t!("git-trust-deny")),
-                AlertButton::new(t!("git-trust-allow")),
-            ];
-            let fingerprint = risks.fingerprint;
-            let asked = self.present_alert(&message, &detail, buttons, None, {
-                let root = root.clone();
-                move |i, _| Some(UserEvent::GitTrust(root.clone(), fingerprint, i == 1))
-            });
-            // 窗口已有其他提示框时不显示，也不记录指纹，下次刷新时再询问。
-            if asked {
-                self.git.asked_trust.push(fingerprint);
-            }
+            detail.push_str(&t!("git-trust-more", count = risks.items.len()));
+        }
+        let buttons = vec![
+            AlertButton::cancel(t!("git-trust-deny")),
+            AlertButton::new(t!("git-trust-allow")),
+        ];
+        let (root, fingerprint) = (root.to_path_buf(), risks.fingerprint);
+        self.present_alert(&message, &detail, buttons, None, move |i, _| {
+            Some(UserEvent::GitTrust(root.clone(), fingerprint, i == 1))
+        })
+    }
+
+    /// 操作因仓库 `root` 的配置不可信而被拒绝时，失败提示上的「信任此仓库…」按钮；否则为
+    /// `None`。
+    ///
+    /// 只读取后台检查的结果，不运行 `git`。
+    pub(in crate::app) fn git_trust_action(&self, root: Option<&Path>) -> Option<NoticeAction> {
+        let root = root?;
+        let git = self.git.tool.get()?;
+        git.known_untrusted(root)?;
+        Some(NoticeAction::TrustGitRepository(root.to_path_buf()))
+    }
+
+    /// 再次询问是否信任仓库 `root`：失败提示上的「信任此仓库…」按钮。之前回答过「不信任」时同样
+    /// 询问；配置已不需要信任时不询问。
+    pub(in crate::app) fn review_git_trust(&mut self, root: &Path) {
+        let risks = self
+            .git
+            .tool
+            .get()
+            .and_then(|git| git.known_untrusted(root));
+        if let Some(risks) = risks {
+            self.ask_git_trust(root, &risks);
         }
     }
 

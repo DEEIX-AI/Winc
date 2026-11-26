@@ -168,8 +168,10 @@ v1.2.3 --out target/winc-arch-v1.2.3` on an Arch machine with the signing key an
 
 On x86_64 Arch Linux or an Arch-based distribution (CachyOS, EndeavourOS, Omarchy and others that
 set `ID_LIKE=arch` or ship `/etc/arch-release`), download and run the installer to configure the
-signed repository and install Winc. The installer runs a full system upgrade and prompts for
-confirmation.
+signed repository and install Winc. The installer places the repository ahead of the others in
+`/etc/pacman.conf`, because pacman takes a package from the first repository that has it and Arch's
+`extra` repository also ships winc; running it again moves an existing entry there. It then runs a
+full system upgrade and prompts for confirmation.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fL -o install-arch.sh \

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use winc_core::transform::{JSON_MAX_DEPTH, JsonError, JsonLayout};
 use winc_i18n::t;
 
 use super::*;
@@ -300,8 +301,9 @@ impl App {
     /// 差异标签让出顶部的标题栏，滑块、概览标尺和点击范围都不延伸到标题栏中的按钮旁边。
     pub(crate) fn scroll_track(&self) -> Rect {
         let editor = self.layout.editor;
-        // 日志标签：滚动条位于左侧提交列表的右边缘，详情栏不使用该滚动条。
-        if self.log_active() {
+        // 日志标签：滚动条位于左侧提交列表的右边缘，详情栏不使用该滚动条。面板中的日志有自己的
+        // 滚动条（`Scrollbar::GitPanel`），不经过编辑区的滚动条。
+        if !self.git.panel.docked && self.log_active() {
             return self.log_parts().list;
         }
         if self.combined_active() {
@@ -513,7 +515,7 @@ impl App {
         }
         // 日志标签：详情中有选中文字时复制选中的文字，否则复制选中提交的完整提交号，
         // 效果同点击详情中的提交号。
-        if self.log_active() {
+        if self.log_focused() {
             if cut {
                 return;
             }
@@ -746,6 +748,27 @@ impl App {
         self.request_redraw();
     }
 
+    /// 按 `layout` 美化或压缩当前文档中的 JSON（见 [`Command::ReformatJson`]）。
+    ///
+    /// 任一选区无法转换时不修改文档，在状态栏说明原因。
+    pub(in crate::app) fn reformat_json(&mut self, layout: JsonLayout) {
+        let command = Command::ReformatJson(layout);
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        // 文档不可编辑时由 [`App::run`] 说明原因。
+        if doc.edits_text()
+            && doc.edit_blocked(&command).is_none()
+            && let Some(problem) = doc.json_problem(layout)
+        {
+            let message = json_problem_message(doc, layout, problem);
+            self.flash(message);
+            return;
+        }
+        self.focus = Focus::Editor;
+        self.run(command);
+    }
+
     /// 把当前文档的选区设为从 `from` 到 `to`（字符偏移），并滚动到光标。
     pub(in crate::app) fn select(&mut self, from: usize, to: usize) {
         if let Some(doc) = self.editor.active_mut() {
@@ -756,6 +779,37 @@ impl App {
         self.ensure_caret_visible();
         self.reset_blink();
         self.request_redraw();
+    }
+}
+
+/// 返回在文档 `doc` 中按 `layout` 转换 JSON 失败的提示，`problem` 是原因。
+fn json_problem_message(
+    doc: &winc_editor::Document,
+    layout: JsonLayout,
+    problem: JsonError,
+) -> String {
+    let action = match layout {
+        JsonLayout::Pretty => "pretty",
+        JsonLayout::Compact => "compact",
+    };
+    match problem {
+        JsonError::NotFound => t!("editor-json-not-found").to_owned(),
+        JsonError::Invalid(pos) => {
+            let (line, column) = doc.text().pos_to_line_col(pos);
+            let (line, column) = (line + 1, column + 1);
+            t!(
+                "editor-json-invalid",
+                action = action,
+                line = line,
+                column = column
+            )
+        }
+        JsonError::Incomplete => t!("editor-json-incomplete", action = action),
+        JsonError::TooDeep => t!(
+            "editor-json-too-deep",
+            action = action,
+            depth = JSON_MAX_DEPTH
+        ),
     }
 }
 
