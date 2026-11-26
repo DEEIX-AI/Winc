@@ -1027,6 +1027,78 @@ fn edits_to_one_block_are_parsed_in_the_same_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 返回预览现在的排版结果。
+fn laid(app: &App) -> &crate::app::preview::markdown::laid::Laid {
+    app.preview.markdown.layout.as_ref().unwrap()
+}
+
+/// 很长的文档滚动到保留的范围之外时就地刷新：视口附近的块重新排好，远处的块释放要画的项，
+/// 各块的位置不变；之后输入文字，后面的块随这一块的高度变化移动。
+#[test]
+fn a_long_document_refreshes_the_kept_range_when_scrolled_far() {
+    let mut text = String::new();
+    for i in 0..600 {
+        text.push_str(&format!("第 {i} 段正文，用于测试长文档的滚动和输入。\n\n"));
+    }
+    let (mut app, dir) = live_doc("md-near-refresh", &text);
+    assert!(laid(&app).near.is_some());
+    assert!(!laid(&app).blocks[0].1.is_shed());
+    assert!(laid(&app).blocks[599].1.is_shed());
+    let (tops, height) = (laid(&app).tops.clone(), laid(&app).height);
+
+    app.preview.markdown.scroll_to(tops[300]);
+    paint(&mut app);
+    assert!(!laid(&app).blocks[300].1.is_shed());
+    assert!(laid(&app).blocks[599].1.is_shed());
+    assert!(laid(&app).blocks[0].1.is_shed());
+    assert_eq!((&laid(&app).tops, laid(&app).height), (&tops, height));
+
+    put_caret(
+        &mut app,
+        "第 300 段正文，用于测试长文档的滚动和输入。",
+        true,
+    );
+    let next = laid(&app).tops[301];
+    let extra = "补充一段较长的文字，使这一段在当前宽度下多折几行。".repeat(4);
+    app.run(winc_editor::Command::Insert(extra));
+    settle(&mut app);
+    let dy = laid(&app).tops[301] - next;
+    assert!(dy > 10.0, "{dy}");
+    assert!((laid(&app).height - height - dy).abs() < 0.5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：很长的文档中收起一节后滚动到远处再滚回来，这一节里的块仍不显示。
+#[test]
+fn folded_blocks_stay_hidden_after_scrolling_far_and_back() {
+    let mut text = String::from("# 甲\n\n");
+    for i in 0..20 {
+        text.push_str(&format!("甲节第 {i} 段。\n\n"));
+    }
+    text.push_str("# 乙\n\n");
+    for i in 0..700 {
+        text.push_str(&format!("乙节第 {i} 段。\n\n"));
+    }
+    let (mut app, dir) = live_doc("md-near-folded", &text);
+    put_caret(&mut app, "乙节第 650 段", false);
+    app.toggle_heading_fold("甲");
+    settle(&mut app);
+    let hidden = |app: &App| (1..=20).map(|i| laid(app).blocks[i].1.height).sum::<f32>();
+    app.preview.markdown.scroll_to(0.0);
+    settle(&mut app);
+    let after_fold = laid(&app).tops[21];
+    assert_eq!(hidden(&app), 0.0);
+
+    let middle = laid(&app).tops[350];
+    app.preview.markdown.scroll_to(middle);
+    settle(&mut app);
+    app.preview.markdown.scroll_to(0.0);
+    settle(&mut app);
+    assert_eq!(hidden(&app), 0.0);
+    assert_eq!(laid(&app).tops[21], after_fold);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 回归：解析超过预算、在后台进行时连续输入汉字，光标越过下一块、下一项或下一格在解析结果
 /// 中的起点，跳到其中。
 #[test]

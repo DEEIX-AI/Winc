@@ -15,6 +15,7 @@ use crate::app::{App, Focus, ScrollArea};
 use crate::icons;
 use crate::theme::Palette;
 
+mod layout;
 mod resize;
 mod table;
 mod toolbar;
@@ -165,10 +166,6 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let loaded = std::mem::take(&mut app.preview.markdown.loaded);
     let toggled = app.preview.markdown.toggled_now.take();
     let refold = std::mem::take(&mut app.preview.markdown.refold);
-    // 重排之前光标在旧排版里的高度：重排后据此保持光标在屏幕上不动（见 [`keep_caret_still`]）。
-    let mut still = None;
-    // 记录重排之前各块的绘制位置，重排后各块从该位置滑动到新位置（见 `BlockMotion`）。
-    let mut before = None;
     // 很长的文档只保留这个范围内的块的排版结果：视口前后各两屏，以及光标、选区所在的块前后。
     let near = {
         let view = drawn_scroll(app.preview.markdown.scroll()) - pad;
@@ -184,122 +181,27 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             blocks: caret.into_iter().chain(picked).collect(),
         }
     };
-    let mut laid = match app.preview.markdown.layout.take() {
-        Some(laid)
-            if laid.key == key
-                && laid.source == source
-                && laid.live == live_key
-                && loaded.is_empty()
-                && toggled.is_none()
-                && !refold
-                && !laid.pending()
-                && (laid.near.as_ref()).is_none_or(|kept| kept.covers(&near, area.h)) =>
-        {
-            laid
-        }
-        old => {
-            let hscroll = old.as_ref().map(|l| l.hscroll.clone()).unwrap_or_default();
-            let followed = old
-                .as_ref()
-                .filter(|l| l.source == source && l.live == live_key)
-                .and_then(|l| l.followed);
-            // 继续上一帧未完成的排版，或视口移到了保留的范围之外：排版条件和文字都未变，选区、
-            // 查找结果和光标位置保留。
-            let resumed = old.as_ref().is_some_and(|l| {
-                l.key == key
-                    && l.source == source
-                    && l.live == live_key
-                    && loaded.is_empty()
-                    && toggled.is_none()
-                    && !refold
-            });
-            // 文字变了：选区、查找用的文字作废。只是重排（宽度、图片变了）时选区留着。
-            if old.as_ref().is_none_or(|l| l.source != source) {
-                app.preview.markdown.selection = None;
-            }
-            if !resumed {
-                app.preview.markdown.find_doc = None;
-                let clicked = app.preview.markdown.clicked.take();
-                still = old_caret(app, old.as_ref(), source, live_key.as_ref(), clicked);
-                let slide = std::mem::take(&mut app.preview.markdown.slide);
-                // 收起、展开标题时各块同样滑到新位置，不只在可编辑的预览中。
-                before = old
-                    .as_ref()
-                    .filter(|l| l.key == key && (app.markdown_live() || refold))
-                    .map(|l| (Before::of(app, l), slide));
-            }
-            // 文字未变时保留旧的各块供沿用，并记录视口顶边所在的块，排版期间保持其屏幕位置。
-            let same = (old.as_ref())
-                .filter(|l| l.source == source && l.blocks.len() == parsed.blocks.len());
-            let top = drawn_scroll(app.preview.markdown.scroll());
-            // 顶边在该块里所占的比例：块的高度变了，顶边仍在同一块的相同比例处。
-            let held = same.and_then(|l| {
-                let (i, off) = l.place_at(top - l.pad)?;
-                Some((i, off / room_below(l, i).max(1.0)))
-            });
-            let mut window = same.map(|l| l.blocks_in(top - l.pad - area.h, top + area.h * 2.0));
-            let mut kept = same.map(|l| l.blocks.clone());
-            let was_pending = same.is_some_and(Laid::pending);
-            // 有图片刚读好时，用到它的块大小变了，需要重排；折叠块开合时，它所在的块需要
-            // 重排；其余块沿用上次的结果。
-            let mut reuse = old.filter(|l| l.key == key).map(|l| {
-                l.fresh()
-                    .into_iter()
-                    .filter(|(_, block)| {
-                        !block.uses_any(&loaded)
-                            && toggled.as_deref().is_none_or(|url| !block.links_to(url))
-                    })
-                    .collect()
-            });
-            let deadline = app.preview.markdown.catch_up.deadline();
-            // 视口上方的块高度变化后，视口内的块可能与排版前估计的不同：仍有未排的块时再排一轮。
-            let mut laid = loop {
-                let later = (kept.as_deref().zip(window.clone())).map(|(old, window)| Later {
-                    old,
-                    window,
-                    deadline,
-                });
-                let fresh = reuse.take().unwrap_or_default();
-                let laid = lay_out(
-                    app,
-                    frame,
-                    &parsed,
-                    key,
-                    source,
-                    live.as_ref(),
-                    fresh,
-                    later,
-                    Some(near.clone()),
-                );
-                let y = held.map_or(top - pad, |(i, share)| {
-                    laid.tops[i] + share.min(1.0) * room_below(&laid, i)
-                });
-                let seen = laid.blocks_in(y, y + area.h);
-                let waits = |i: usize| laid.stale.get(i).copied().unwrap_or(false);
-                if window.as_ref() == Some(&seen) || !seen.clone().any(waits) {
-                    break laid;
-                }
-                (reuse, window) = (Some(laid.fresh()), Some(seen));
-                kept = Some(laid.blocks);
-            };
-            // 分帧排版、图片加载完成、收起或展开标题后，视口顶边所在块的屏幕位置不变。
-            let anchored = was_pending || laid.pending() || !loaded.is_empty() || refold;
-            if let Some((i, share)) = held.filter(|_| anchored) {
-                let y = laid.tops[i] + share.min(1.0) * room_below(&laid, i) + pad;
-                app.preview.markdown.set_scroll(y);
-                still = None;
-            }
-            app.preview.markdown.catch_up.pending = laid.pending();
-            // 释放了要画的项的块不再使用排版缓存，缓存只保留其余的块用到的条目。
-            if laid.near.is_some() {
-                let used = laid.blocks.iter().map(|(_, block)| &*block.memo);
-                app.preview.markdown.memo.keep_only(used);
-            }
-            laid.hscroll = hscroll;
-            laid.followed = followed;
-            laid
-        }
-    };
+    let layout::LayoutOutput {
+        mut laid,
+        still,
+        before,
+    } = layout::resolve_layout(
+        app,
+        frame,
+        layout::LayoutInput {
+            parsed: &parsed,
+            key,
+            source,
+            live: live.as_ref(),
+            live_key: live_key.as_ref(),
+            near,
+            area,
+            pad,
+            loaded,
+            toggled,
+            refold,
+        },
+    );
     laid.left = left;
     laid.pad = pad;
     laid.set_upstream(app.live_upstream());
