@@ -153,7 +153,12 @@ impl SettingsPage {
             SettingsPage::Editor => vec![
                 group(
                     t!("settings-group-font-indent"),
-                    vec![S::EditorFont, S::EditorSize, S::TabWidth],
+                    vec![
+                        S::EditorFont,
+                        S::EditorSize,
+                        S::EditorFontWeight,
+                        S::TabWidth,
+                    ],
                 ),
                 group(
                     t!("settings-group-display"),

@@ -105,17 +105,20 @@ fn the_terminal_font_size_and_switches_write_the_config() {
     assert_eq!((app.fonts.terminal, app.fonts.code), (code + 1.0, code));
     assert_eq!(app.config.editor_size, None);
 
-    // 字重：调整前随全局字重；调整后只改终端，调回与全局相同的值也不再随全局字重变化。
-    app.config.ui_font_weight = Some(500);
+    // 字重：调整前随编辑区字重，不随界面字重；调整后只改终端，调回与编辑区相同的值也不再随
+    // 编辑区字重变化。
+    app.config.editor_font_weight = Some(500);
+    app.config.ui_font_weight = Some(700);
     assert_eq!(app.setting_value(Setting::TerminalFontWeight).0, "500");
     app.settings_adjust(Setting::TerminalFontWeight, false);
     assert_eq!(app.config.terminal_font_weight, Some(400));
-    assert_eq!(app.config.ui_font_weight, Some(500));
+    assert_eq!(app.config.editor_font_weight, Some(500));
     app.settings_adjust(Setting::TerminalFontWeight, true);
     assert_eq!(app.config.terminal_font_weight, Some(500));
-    app.settings_adjust(Setting::FontWeight, true);
+    app.settings_adjust(Setting::EditorFontWeight, true);
     assert_eq!(app.setting_value(Setting::TerminalFontWeight).0, "500");
     app.config.ui_font_weight = None;
+    app.config.editor_font_weight = None;
     app.config.terminal_font_weight = None;
 
     // 字体：菜单的第一项是「跟随编辑器」，和编辑器字体一样先列出等宽字体。
@@ -363,9 +366,10 @@ fn a_font_weight_edited_in_the_config_file_reloads_the_fonts() {
         let image = renderer.image().unwrap();
         image.pixels.iter().map(|p| p & 0xff).sum::<u32>()
     };
-    let (terminal, mono) = (
+    let (terminal, mono, ui) = (
         ink(&mut app, FontKind::Terminal),
         ink(&mut app, FontKind::Mono),
+        ink(&mut app, FontKind::Ui),
     );
 
     let mut config = app.config.clone();
@@ -374,9 +378,14 @@ fn a_font_weight_edited_in_the_config_file_reloads_the_fonts() {
     assert!(ink(&mut app, FontKind::Terminal) > terminal);
     assert_eq!(ink(&mut app, FontKind::Mono), mono);
 
-    // 全局字重同样生效：终端已单独设置，不随之变化。
+    // 界面字重只作用于界面文字；编辑区字重只作用于编辑区。
     let mut config = app.config.clone();
     config.ui_font_weight = Some(800);
+    app.adopt_config(config);
+    assert!(ink(&mut app, FontKind::Ui) > ui);
+    assert_eq!(ink(&mut app, FontKind::Mono), mono);
+    let mut config = app.config.clone();
+    config.editor_font_weight = Some(800);
     app.adopt_config(config);
     assert!(ink(&mut app, FontKind::Mono) > mono);
     let _ = std::fs::remove_dir_all(&dir);

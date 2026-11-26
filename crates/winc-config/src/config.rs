@@ -26,6 +26,11 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::EDITOR_SIZE_RANGE`]。
     pub editor_size: Option<f32>,
+    /// 编辑区等宽文字的字重，默认为 400，与界面字重无关；终端未设置 `terminal.fontWeight` 时
+    /// 同样使用该字重。
+    ///
+    /// 可用范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    pub editor_font_weight: Option<u16>,
     /// 界面字体（文件树、标签、状态栏）。
     pub ui_font: Option<String>,
     /// 界面字号（点）。
@@ -37,8 +42,8 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::ZOOM_RANGE`]。
     pub ui_zoom: Option<u16>,
-    /// 界面和编辑区文字的字重，默认为 400（各字体自身的字重）；范围见
-    /// [`Config::FONT_WEIGHT_RANGE`]。终端没有设置 `terminal.fontWeight` 时也用它。
+    /// 界面文字的字重，默认为 400（各字体自身的字重）；范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    /// 编辑区和终端的字重分别由 `editor.fontWeight`、`terminal.fontWeight` 设置。
     pub ui_font_weight: Option<u16>,
     /// 窗口背景图片的路径；没写时没有背景图。
     pub ui_background_image: Option<String>,
@@ -215,7 +220,7 @@ pub struct Config {
     ///
     /// 可用范围同 [`Config::EDITOR_SIZE_RANGE`]。
     pub terminal_size: Option<f32>,
-    /// 终端文字的字重；未设置时跟随全局字重（[`Config::ui_font_weight`]）。
+    /// 终端文字的字重；未设置时跟随编辑区字重（[`Config::editor_font_weight`]）。
     ///
     /// 可用范围见 [`Config::FONT_WEIGHT_RANGE`]。
     pub terminal_font_weight: Option<u16>,

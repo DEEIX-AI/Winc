@@ -2,6 +2,7 @@
 
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 mod appearance;
+mod editor;
 #[cfg(unix)]
 mod format;
 mod search;

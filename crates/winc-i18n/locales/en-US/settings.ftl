@@ -77,6 +77,7 @@ settings-font-weight = Font Weight
 settings-ui-zoom = Zoom
 settings-editor-font = Font
 settings-editor-size = Font Size
+settings-editor-font-weight = Font Weight
 settings-tab-width = Tab Width
 settings-auto-save = Auto Save
 settings-auto-save-off = Off

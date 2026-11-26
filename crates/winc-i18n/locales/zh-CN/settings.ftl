@@ -77,6 +77,7 @@ settings-font-weight = 字重
 settings-ui-zoom = 缩放
 settings-editor-font = 字体
 settings-editor-size = 字号
+settings-editor-font-weight = 字重
 settings-tab-width = 制表符长度
 settings-auto-save = 自动保存
 settings-auto-save-off = 关闭

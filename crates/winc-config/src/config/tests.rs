@@ -321,6 +321,7 @@ fn round_trips_through_json() {
     let config = Config {
         editor_font: Some("Menlo".to_string()),
         editor_size: Some(14.0),
+        editor_font_weight: Some(500),
         ui_font: Some("「带引号」的字体".to_string()),
         ui_size: Some(12.5),
         ui_zoom: Some(150),

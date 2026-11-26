@@ -128,6 +128,7 @@ const EDITOR: &[Field] = &[
         },
         write: |config| config.editor_size.map(number),
     },
+    weight_field!(editor_font_weight),
     Field {
         key: "tabWidth",
         read: |config, value, name, problems| {

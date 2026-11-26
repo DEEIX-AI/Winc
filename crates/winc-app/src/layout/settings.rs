@@ -55,6 +55,8 @@ pub enum Setting {
     EditorFont,
     /// 编辑区字号。
     EditorSize,
+    /// 编辑区字重（`editor.fontWeight`）。
+    EditorFontWeight,
     /// Tab 宽度。
     TabWidth,
     /// 自动保存。
@@ -336,9 +338,10 @@ impl Setting {
             S::BackgroundImage | S::BackgroundFit | S::BackgroundOpacity => {
                 SettingsPage::Appearance
             }
-            S::EditorFont | S::EditorSize | S::TabWidth | S::LineNumbers | S::WordWrap => {
+            S::EditorFont | S::EditorSize | S::EditorFontWeight | S::TabWidth => {
                 SettingsPage::Editor
             }
+            S::LineNumbers | S::WordWrap => SettingsPage::Editor,
             S::AlignColumns => SettingsPage::Editor,
             S::Minimap | S::StickyScroll | S::RenderWhitespace | S::WholeLines => {
                 SettingsPage::Editor
@@ -412,6 +415,7 @@ impl Setting {
             S::Language => "language",
             S::EditorFont => "editor.font",
             S::EditorSize => "editor.size",
+            S::EditorFontWeight => "editor.fontWeight",
             S::TabWidth => "editor.tabWidth",
             S::AutoSave => "editor.autoSave",
             S::HotExit => "editor.hotExit",
@@ -528,6 +532,7 @@ impl Setting {
             Setting::SystemTitleBar => t!("settings-system-title-bar"),
             Setting::EditorFont => t!("settings-editor-font"),
             Setting::EditorSize => t!("settings-editor-size"),
+            Setting::EditorFontWeight => t!("settings-editor-font-weight"),
             Setting::TabWidth => t!("settings-tab-width"),
             Setting::AutoSave => t!("settings-auto-save"),
             Setting::HotExit => t!("settings-hot-exit"),
@@ -769,6 +774,7 @@ impl Setting {
             | Setting::TerminalFont
             | Setting::MarkdownFont => SettingControl::Font,
             Setting::EditorSize
+            | Setting::EditorFontWeight
             | Setting::UiSize
             | Setting::FontWeight
             | Setting::BackgroundOpacity
