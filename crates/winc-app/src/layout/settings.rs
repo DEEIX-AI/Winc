@@ -94,6 +94,8 @@ pub enum Setting {
     VimKey(char),
     /// 自动换行。
     WordWrap,
+    /// 长行参考线所在的列（`editor.rulers`）。
+    EditorRulers,
     /// CSV、TSV 按列对齐显示。
     AlignColumns,
     /// 超长行显示全部内容（`wholeLines`）。
@@ -341,7 +343,7 @@ impl Setting {
             S::EditorFont | S::EditorSize | S::EditorFontWeight | S::TabWidth => {
                 SettingsPage::Editor
             }
-            S::LineNumbers | S::WordWrap => SettingsPage::Editor,
+            S::LineNumbers | S::WordWrap | S::EditorRulers => SettingsPage::Editor,
             S::AlignColumns => SettingsPage::Editor,
             S::Minimap | S::StickyScroll | S::RenderWhitespace | S::WholeLines => {
                 SettingsPage::Editor
@@ -429,6 +431,7 @@ impl Setting {
             S::StickyScroll => "editor.stickyScroll",
             S::SmoothCaret => "editor.smoothCaretMovement",
             S::WordWrap => "editor.wordWrap",
+            S::EditorRulers => "editor.rulers",
             S::AlignColumns => "editor.alignColumns",
             S::WholeLines => "editor.wholeLines",
             S::Minimap => "editor.minimap",
@@ -559,6 +562,7 @@ impl Setting {
             Setting::DiffInline => t!("settings-diff-inline"),
             Setting::DiffCollapse => t!("settings-diff-collapse"),
             Setting::RenderWhitespace => t!("settings-render-whitespace"),
+            Setting::EditorRulers => t!("settings-editor-rulers"),
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::FullTabNames => t!("settings-full-tab-names"),
             Setting::RestoreWindow => t!("settings-restore-window"),
@@ -695,6 +699,7 @@ impl Setting {
             Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
             Setting::DiffCollapse => Some(t!("settings-diff-collapse-desc")),
             Setting::RenderWhitespace => Some(t!("settings-render-whitespace-desc")),
+            Setting::EditorRulers => Some(t!("settings-editor-rulers-desc")),
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::FullTabNames => Some(t!("settings-full-tab-names-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
@@ -848,6 +853,7 @@ impl Setting {
             | Setting::TerminalShell
             | Setting::GitPath
             | Setting::LatexPath
+            | Setting::EditorRulers
             | Setting::AiBaseUrl
             | Setting::AiModel
             | Setting::AiApiKey => SettingControl::Command,
@@ -890,7 +896,10 @@ impl Setting {
 impl Setting {
     /// 是否为填写的文本（程序路径、接口地址、模型名、密钥）：没有可选的菜单，始终绘制为输入框。
     pub fn is_text_field(self) -> bool {
-        matches!(self, Setting::GitPath | Setting::LatexPath) || self.is_ai_text()
+        matches!(
+            self,
+            Setting::GitPath | Setting::LatexPath | Setting::EditorRulers
+        ) || self.is_ai_text()
     }
 
     /// 是否为调用模型的一项文本设置：接口地址、模型名或密钥。

@@ -47,6 +47,7 @@ config-title-bar-style-invalid = { $name } should be "custom" or "native"; ignor
 config-option-as-meta-invalid = { $name } should be "left", "right", "both", or "none"; ignored
 config-not-array = { $name } should be an array; ignored
 config-item-not-non-empty-string = Items in { $name } should be non-empty strings; ignored
+config-item-not-column = Items in { $name } should be whole numbers from 1 to { $max }; ignored
 config-item-not-string = Items in { $name } should be strings; ignored
 config-not-object = { $name } should be an object; ignored
 config-remote-folder-invalid = { $name }: the key should be written as host:/remote/folder, such as devbox:/home/me; ignored

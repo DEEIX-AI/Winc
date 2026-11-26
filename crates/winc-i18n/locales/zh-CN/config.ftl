@@ -47,6 +47,7 @@ config-title-bar-style-invalid = { $name } 应为 "custom" 或 "native"，已忽
 config-option-as-meta-invalid = { $name } 应为 "left"、"right"、"both" 或 "none"，已忽略
 config-not-array = { $name } 应为数组，已忽略
 config-item-not-non-empty-string = { $name } 中的项应为非空字符串，已忽略
+config-item-not-column = { $name } 中的项应为 1 至 { $max } 的整数，已忽略
 config-item-not-string = { $name } 中的项应为字符串，已忽略
 config-not-object = { $name } 应为对象，已忽略
 config-remote-folder-invalid = { $name }：键应写成「主机:/远端目录」，如 devbox:/home/me，已忽略

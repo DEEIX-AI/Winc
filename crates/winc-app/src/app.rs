@@ -67,6 +67,7 @@ pub(crate) use lifecycle::title_bar::resize_cursor;
 pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
 pub(crate) use scroll::ScrollTarget;
+pub(crate) use settings::rulers_text;
 pub(crate) use settings::shortcuts::KeyEdit;
 pub use settings::{DialogCache, SettingsState};
 pub(crate) use status::language_picker::LanguageRow;

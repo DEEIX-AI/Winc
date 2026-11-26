@@ -165,6 +165,7 @@ impl SettingsPage {
                     vec![
                         S::LineNumbers,
                         S::WordWrap,
+                        S::EditorRulers,
                         S::AlignColumns,
                         S::Minimap,
                         S::StickyScroll,

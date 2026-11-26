@@ -114,6 +114,10 @@ pub struct Config {
     pub outline: Option<bool>,
     /// 何时显示空格和制表符，默认为选中时。
     pub render_whitespace: Option<RenderWhitespace>,
+    /// 显示长行参考线的列：每一项 N 在第 N 列之后（距行首 N 个字符宽处）画一条竖线；为空时不显示。
+    ///
+    /// 各项的可用范围见 [`Config::RULER_RANGE`]。
+    pub editor_rulers: Vec<usize>,
     /// 差异单栏显示：新旧内容上下排列，默认为否（左右并排）。
     pub diff_inline: Option<bool>,
     /// 差异中较长的未更改内容折叠为一行，默认为是；关闭后差异打开时就是全部展开的。
@@ -712,6 +716,10 @@ impl Config {
     pub const FONT_WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 100.0..=900.0;
     /// 默认的字重。
     pub const FONT_WEIGHT: u16 = 400;
+    /// 长行参考线所在列的可用范围（列）；超出的项在读入时忽略并报告。
+    ///
+    /// 下限 1；上限取自调参，比常见的行宽约定（80、100、120 列）大一个数量级，用于排除写错的值。
+    pub const RULER_RANGE: std::ops::RangeInclusive<usize> = 1..=1000;
     /// 背景图片不透明度的合法范围（百分比）：0 时不显示图片，100 时图片完全遮住底色。
     ///
     /// 超出范围的值在读入时忽略并报告。

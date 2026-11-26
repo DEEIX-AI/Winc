@@ -130,6 +130,36 @@ const EDITOR: &[Field] = &[
     },
     weight_field!(editor_font_weight),
     Field {
+        key: "rulers",
+        read: |config, value, name, problems| {
+            let Some(items) = value.as_array() else {
+                problems.push(t!("config-not-array", name = name));
+                return;
+            };
+            let range = Config::RULER_RANGE;
+            for item in items {
+                let column = item
+                    .as_number()
+                    .filter(|n| n.fract() == 0.0)
+                    .map(|n| n as usize);
+                match column.filter(|column| range.contains(column)) {
+                    Some(column) if !config.editor_rulers.contains(&column) => {
+                        config.editor_rulers.push(column);
+                    }
+                    Some(_) => {}
+                    None => {
+                        let max = *range.end();
+                        problems.push(t!("config-item-not-column", name = name, max = max));
+                    }
+                }
+            }
+        },
+        write: |config| {
+            let columns = config.editor_rulers.iter().map(|&c| number(c as f32));
+            (!config.editor_rulers.is_empty()).then(|| Json::Array(columns.collect()))
+        },
+    },
+    Field {
         key: "tabWidth",
         read: |config, value, name, problems| {
             let label = t!("config-label-tab-width");
