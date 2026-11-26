@@ -92,6 +92,7 @@ terminal-upload-failed = Couldn’t send the clipboard to the remote host: { $er
 terminal-upload-folder = Folders can’t be pasted into a remote terminal: { $name }
 terminal-upload-too-large = { $size } is too large to send to the remote host ({ $limit } at most)
 terminal-upload-no-image = Couldn’t read the image on the clipboard
+terminal-image-paste-failed = Couldn’t paste the clipboard image: { $error }
 terminal-upload-no-folder = Couldn’t create a folder for it on the remote host
 terminal-upload-elsewhere = Sent to the remote host: { $path }
 

@@ -37,10 +37,14 @@ impl App {
     ///
     /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先弹出确认框（[`input::paste_needs_confirm`]）。
     ///
-    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴：程序开启了括号粘贴时收到一次空的括号粘贴，未开
-    /// 启时不发送任何内容。远端主机上的标签例外：复制的文件和图片先传过去，再粘贴那里的路径
-    /// （[`App::upload_paste`]）。
+    /// Windows 本机程序开启括号粘贴时，可以粘贴剪贴板图片的 PNG 路径。远端标签粘贴复制的
+    /// 文件或图片时先传到远端（[`App::upload_paste`]）。
     pub(in crate::app) fn terminal_paste(&mut self) {
+        self.terminal_paste_with_image(true);
+    }
+
+    /// Windows 预设的 Ctrl+V 沿用原有的本机粘贴行为，不生成图片路径。
+    pub(super) fn terminal_paste_with_image(&mut self, allow_local_image: bool) {
         let text = self.clipboard_text().unwrap_or_default();
         let Some(tab) = self.terminal.tab().map(|t| (t.id, t.modes, t.cwd.clone())) else {
             return;
@@ -48,6 +52,12 @@ impl App {
         let (id, modes, cwd) = tab;
         if self.upload_paste(id, &cwd, text.is_empty()) {
             return;
+        }
+        if cfg!(windows) && allow_local_image && text.is_empty() {
+            #[cfg(windows)]
+            if self.paste_local_terminal_image(id, modes, &cwd) {
+                return;
+            }
         }
         if input::paste_needs_confirm(&text, modes) {
             let message = t!("terminal-paste-confirm", count = text.lines().count());

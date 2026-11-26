@@ -114,7 +114,7 @@ impl App {
     }
 
     /// 执行终端中按键 `stroke` 对应的命令 `actions`，返回是否已处理；单按 Ctrl 的复制键复制
-    /// 后清除选区，再按一次即发给程序。
+    /// 后清除选区，再按一次即发给程序。Windows 预设的 Ctrl+V 保留原有粘贴行为。
     pub(in crate::app) fn run_terminal_shortcut(
         &mut self,
         stroke: Stroke,
@@ -122,6 +122,15 @@ impl App {
     ) -> bool {
         if control_char(stroke) && actions.first() == Some(&Action::TerminalCopy) {
             self.terminal_copy(true);
+            return true;
+        }
+        if cfg!(windows)
+            && stroke.mods == Mods::CTRL
+            && stroke.key == KeyCode::Char('v')
+            && actions.first() == Some(&Action::TerminalPaste)
+            && !self.shortcut_customized(Action::TerminalPaste)
+        {
+            self.terminal_paste_with_image(false);
             return true;
         }
         false
@@ -176,4 +185,53 @@ fn terminal_content(action: Action) -> bool {
             | Action::NextError
             | Action::PreviousError
     )
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_preset_ctrl_v_uses_legacy_local_paste() {
+        let mut app = App::new(
+            winc_editor::Editor::default(),
+            None,
+            crate::bench::Bench::from_env(),
+            winc_config::Config::default(),
+        );
+        app.focus = Focus::Terminal;
+        assert!(keymap::install_from(&app.config).is_empty());
+        let ctrl_v = Stroke {
+            key: KeyCode::Char('v'),
+            mods: Mods::CTRL,
+        };
+        let paste = [Action::TerminalPaste];
+        assert_eq!(
+            app.lookup_shortcut(ctrl_v, None),
+            Lookup::Run(paste.to_vec())
+        );
+        assert!(app.run_terminal_shortcut(ctrl_v, &paste));
+
+        let ctrl_shift_v = Stroke {
+            mods: Mods::CTRL | Mods::SHIFT,
+            ..ctrl_v
+        };
+        assert_eq!(
+            app.lookup_shortcut(ctrl_shift_v, None),
+            Lookup::Run(paste.to_vec())
+        );
+        assert!(!app.run_terminal_shortcut(ctrl_shift_v, &paste));
+
+        app.config.shortcuts.insert(
+            Action::TerminalPaste.id(),
+            vec!["ctrl+v".into(), "ctrl+shift+v".into()],
+        );
+        assert!(keymap::install_from(&app.config).is_empty());
+        assert_eq!(
+            app.lookup_shortcut(ctrl_v, None),
+            Lookup::Run(paste.to_vec())
+        );
+        assert!(!app.run_terminal_shortcut(ctrl_v, &paste));
+        keymap::install(keymap::Preset::default(), &keymap::Custom::default());
+    }
 }
