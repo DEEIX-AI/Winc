@@ -37,9 +37,8 @@ impl App {
     ///
     /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先弹出确认框（[`input::paste_needs_confirm`]）。
     ///
-    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴：程序开启了括号粘贴时收到一次空的括号粘贴，未开
-    /// 启时不发送任何内容。远端主机上的标签例外：复制的文件和图片先传过去，再粘贴那里的路径
-    /// （[`App::upload_paste`]）。
+    /// Windows 上只有图片时向本机交互程序发送图片粘贴键。其他没有文字的情况按空文字粘贴。
+    /// 远端主机上的标签先传文件或图片，再粘贴那里的路径（[`App::upload_paste`]）。
     pub(in crate::app) fn terminal_paste(&mut self) {
         let text = self.clipboard_text().unwrap_or_default();
         let Some(tab) = self.terminal.tab().map(|t| (t.id, t.modes, t.cwd.clone())) else {
@@ -47,6 +46,10 @@ impl App {
         };
         let (id, modes, cwd) = tab;
         if self.upload_paste(id, &cwd, text.is_empty()) {
+            return;
+        }
+        if let Some(bytes) = self.terminal_image_paste_key(text.is_empty()) {
+            self.terminal_input(bytes);
             return;
         }
         if input::paste_needs_confirm(&text, modes) {
@@ -61,6 +64,31 @@ impl App {
             }
         }
         self.confirmed_terminal_paste(id, text);
+    }
+
+    /// Windows 上 Codex 和 Claude Code 都能用 Alt+V 从本机剪贴板读取图片。
+    fn terminal_image_paste_key(&mut self, text_empty: bool) -> Option<Vec<u8>> {
+        if !cfg!(windows) || !text_empty || self.terminal_at_prompt() {
+            return None;
+        }
+        let tab = self.terminal.tab().filter(|tab| {
+            tab.modes.has(Modes::BRACKETED_PASTE) && !winc_backend::is_remote(&bytes_path(&tab.cwd))
+        })?;
+        if !self.clipboard.has_image() {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        input::encode(
+            TermKey::Char('v'),
+            Mods {
+                alt: true,
+                ..Mods::default()
+            },
+            tab.modes,
+            tab.keyboard,
+            &mut bytes,
+        );
+        Some(bytes)
     }
 
     /// 把 `text` 粘贴到标签 `id`；该标签已不是当前标签（确认期间切换或关闭了）时不粘贴。
@@ -218,6 +246,13 @@ impl App {
                 if c.chars().next().is_some_and(|c| latin(c, event.physical_key) == 'v'));
         if ctrl_v && self.ctrl_v_uploads() {
             return;
+        }
+        if cfg!(windows) && ctrl_v {
+            let text_empty = self.clipboard_text().is_none_or(|text| text.is_empty());
+            if let Some(bytes) = self.terminal_image_paste_key(text_empty) {
+                self.terminal_input(bytes);
+                return;
+            }
         }
         if let Some(bytes) = self.encode_terminal_key(event, modes, keyboard) {
             // 输入文字时清除选区，否则 ⌘C 会复制旧内容；方向键和快捷键保留选区。
