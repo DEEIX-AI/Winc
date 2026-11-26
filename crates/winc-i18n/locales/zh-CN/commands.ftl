@@ -336,6 +336,8 @@ cmd-cli-usage =
       winc ssh://主机/目录 [ssh://主机/文件:行[:列]]
                             打开远端主机上的目录和其中的文件（需要启用远程模块）
       winc -                读取标准输入（例如 cargo build 2>&1 | winc -）
+      -d, --diff 文件1 文件2
+                            并排比较两个文件，可多次给出（例如 git difftool：winc -w -d "$LOCAL" "$REMOTE"）
       -w, --wait            文件的标签页全部关闭后再退出（例如 git config core.editor "winc -w"）
       -n, --new-instance    不复用正在运行的 Winc，启动新进程（例如在 Winc 的终端中运行开发版本）
       -h, --help            显示帮助
@@ -347,6 +349,8 @@ cmd-cli-ssh-mixed = ssh:// 参数必须指向同一台主机，且不能与本�
 cmd-cli-ssh-one-off = --wait 和 - 不能用于 ssh:// 参数
 cmd-cli-ssh-folders = ssh:// 参数中只能有一个目录，其余应为其中的文件
 cmd-cli-wait-needs-file = --wait 需要指定文件
+cmd-cli-diff-needs-files = --diff 需要指定两个文件
+cmd-cli-diff-not-file = 「{ $path }」不存在或不是文件，--diff 只能比较已有的文件
 cmd-cli-wsl-needs-name = --wsl 需要指定发行版名称
 cmd-cli-wait-needs-openable-file = --wait 需要至少一个可打开的文件
 cmd-cli-wait-folder = 「{ $path }」是目录，--wait 只能打开文件
