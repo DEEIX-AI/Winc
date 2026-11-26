@@ -358,7 +358,8 @@ impl Setting {
                 SettingsPage::Editor
             }
             S::WholeLines | S::CursorStyle | S::SmoothCaret => SettingsPage::Editor,
-            S::DragAndDrop | S::FullTabNames => SettingsPage::Editor,
+            S::DragAndDrop => SettingsPage::Editor,
+            S::FullTabNames => SettingsPage::Files,
             S::DefaultLanguage | S::DetectLanguageOnPaste | S::VimMode | S::VimClipboard => {
                 SettingsPage::Editor
             }

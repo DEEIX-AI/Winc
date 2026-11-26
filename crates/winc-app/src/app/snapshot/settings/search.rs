@@ -191,6 +191,20 @@ fn rows_of_a_group_are_all_described_or_none() {
     }
 }
 
+/// 一组固定列出的设置项不超过 `GROUP_MAX` 项：组太长时按用途拆开，一眼看得出每组管什么。
+/// 格式化工具等按语言列出、随用户添加增多的组不计。
+#[test]
+fn fixed_groups_stay_short() {
+    /// 一组最多的项数，取自调参：八项左右时整组仍在一屏内，用途一目了然。
+    const GROUP_MAX: usize = 8;
+    for page in SettingsPage::ALL {
+        for section in page.sections(&Default::default()) {
+            let len = section.items.len();
+            assert!(len <= GROUP_MAX, "{page:?} {:?} 有 {len} 项", section.title);
+        }
+    }
+}
+
 /// 每个开关在配置文件中的名字与它读写的是同一项：打开或关闭后，这个名字在配置里有值。
 #[test]
 fn every_switch_is_named_after_the_config_entry_it_writes() {
