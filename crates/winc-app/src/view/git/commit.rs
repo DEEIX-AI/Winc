@@ -19,7 +19,7 @@ use crate::app::git::log::display_local;
 use crate::app::{
     ActionStrip, COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts,
     CommitRow, CommitRows, CommitScope, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE,
-    MESSAGE_PAD, StashLine, StashView, SyncState, WorktreeLine,
+    MESSAGE_PAD, PeekView, StashLine, SyncState, WorktreeLine,
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
@@ -34,12 +34,15 @@ mod actions;
 mod header;
 mod names;
 use actions::*;
+mod history;
 mod overflow;
 mod row;
 mod stash;
 mod worktrees;
 
 use header::*;
+pub(in crate::view) use history::draw_history_card;
+use history::*;
 use names::*;
 pub(in crate::view::git) use names::{dir_parts, draw_name, file_parts, parts_width};
 pub(in crate::view) use overflow::commit_overflow;
@@ -75,6 +78,7 @@ const NEXT_PAD: f32 = 12.0;
 pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
     // 提交信息框随内容长高：先按框的宽度折好行（框的宽度和高度无关，卡片和分支行同宽，卡片
     // 收起时也仍然折），框的高度按行数定，绘制时继续使用折好的行。
+    app.track_history();
     app.track_stash_height();
     app.track_worktree_height();
     app.sections_tracked();
@@ -151,12 +155,29 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     let widths = app.track_context_row(widths);
     draw_context(app, frame, &parts, widths, &mut hits);
     draw_banner(app, frame, &parts, &mut hits);
+    draw_history(app, frame, &parts, &mut hits);
+    // 提交历史一组的滚动条贴在组内各行的右边，放得下时没有。
+    if let Some(rows) = app.history_rows_area() {
+        let scroll = drawn_scroll(app.git.commit.history.scroll);
+        let content = app.history_max_scroll() + rows.h;
+        let track = rows.intersect(app.layout.sidebar);
+        draw_scrollbar(
+            app,
+            frame,
+            ScrollArea::CommitHistory,
+            0,
+            track,
+            scroll,
+            content,
+        );
+    }
     draw_worktrees(app, frame, &parts, &mut hits);
     draw_stashes(app, frame, &parts, &mut hits);
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
     app.hits.commit = hits;
     app.git.commit.hits_generation = app.git.generation;
+    app.git.commit.history.hits_drawn();
     caret
 }
 
@@ -867,6 +888,10 @@ fn draw_card(
         draw_push_button(app, frame, push, ready, panel.intersect(card));
         hits.push((push, CommitTarget::CommitPush));
     }
+    if let Some(rect) = parts.generate {
+        draw_generate_button(app, frame, rect, panel.intersect(card));
+        hits.push((rect, CommitTarget::Generate));
+    }
     if !joined {
         draw_button(frame, p, menu, panel.intersect(card), menu_lit, open);
         let arrow = if menu_lit { p.text } else { p.text_muted };
@@ -899,7 +924,7 @@ fn draw_card(
         };
         let right = match parts.amend {
             Some(_) => menu.right() - 4.0,
-            None => menu.x - 8.0,
+            None => parts.generate.unwrap_or(menu).x - 8.0,
         };
         let hint_w = frame.measure(FontKind::Ui, size, &hint);
         if right - left >= hint_w {
@@ -925,6 +950,25 @@ fn draw_push_button(app: &App, frame: &mut Frame<'_>, rect: Rect, ready: bool, c
     let x = (rect.x + (rect.w - width) / 2.0).round();
     let ink = if ready { p.text } else { p.text_dim };
     ui_text_small(frame, app, x, rect, text, ink, clip.intersect(rect));
+}
+
+/// 绘制「生成提交信息」：无底色的图标按钮，悬停时铺底色；生成期间图标换为转动的圆弧，按钮保持
+/// 按下时的底色。
+fn draw_generate_button(app: &App, frame: &mut Frame<'_>, rect: Rect, clip: Rect) {
+    let p = app.palette;
+    let running = app.git.commit.generating.running();
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Generate);
+    draw_button(frame, p, rect, clip, hovered, running);
+    let color = if hovered || running {
+        p.text
+    } else {
+        p.text_muted
+    };
+    let clip = clip.intersect(rect);
+    match running {
+        true => icons::spinner(frame, center(rect), 5.0, icons::spin_turn(), color, clip),
+        false => icons::sparkle(frame, center(rect), color, clip),
+    }
 }
 
 /// 提交按钮上的文字；按钮上只有文字，没有图标。

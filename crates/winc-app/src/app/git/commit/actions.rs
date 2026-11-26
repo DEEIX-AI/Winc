@@ -827,8 +827,13 @@ impl App {
     pub(in crate::app) fn poll_commit(&mut self) {
         while let Ok(outcome) = self.git.commit.results.1.try_recv() {
             match outcome {
-                Outcome::StashFiles(oid, name, files) => self.stash_files_arrived(oid, name, files),
-                Outcome::StashDiff(title, view) => self.stash_diff_arrived(title, view),
+                Outcome::PeekFiles(request, oid, name, files) => {
+                    self.peek_files_arrived(request, oid, name, files);
+                }
+                Outcome::PeekDiff(request, title, view) => {
+                    self.peek_diff_arrived(request, title, view);
+                }
+                Outcome::History(outcome) => self.history_arrived(outcome),
                 Outcome::LastMessage(message) => {
                     // 等结果的时候用户已经关闭了「修改上一次提交」，就不填。
                     if self.git.commit.amend {
@@ -920,6 +925,7 @@ impl App {
                 Outcome::Staged(result, root) => self.staging_finished(result, &root),
                 Outcome::OtherStaged(result) => self.other_staging_finished(result),
                 Outcome::TodoChecked(count, root) => self.todo_checked(count, &root),
+                Outcome::Generated(id, result) => self.generated(id, result),
                 Outcome::Reformatted(count, failed, root) => self.reformatted(count, failed, &root),
                 Outcome::IndexText(root, path, version, text) => {
                     self.index_text_arrived(&root, path, version, text);
@@ -991,6 +997,8 @@ impl App {
     pub(in crate::app::git) fn reset_commit_view(&mut self) {
         let old = std::mem::take(&mut self.git.commit);
         self.git.commit.results = old.results;
+        // 查看储藏、提交的请求序号延续下去：此前仓库仍在进行的请求结束时按序号丢弃。
+        self.git.commit.peek_request = old.peek_request;
         self.git.commit.flat = old.flat;
         self.git.commit.sort = old.sort;
         self.git.commit.staging = old.staging;
@@ -1004,6 +1012,7 @@ impl App {
         self.git.commit.other_stage_running = old.other_stage_running;
         self.git.commit.collapsed = old.collapsed;
         self.git.commit.drafts = old.drafts;
+        self.git.commit.generating = old.generating.carried();
         // 保留底部各组的展开状态和高度、卡片和「上一次提交」的显示比例：切换仓库后从原状态过渡。
         self.git.commit.quiet_open = old.quiet_open;
         self.git.commit.stashes = Drawer {
@@ -1014,6 +1023,7 @@ impl App {
             motion: None,
             ..old.worktrees
         };
+        self.git.commit.history = old.history.switched();
         self.git.commit.card = old.card;
         self.git.commit.undo = old.undo;
         self.git.commit.undo_drawn = old.undo_drawn;

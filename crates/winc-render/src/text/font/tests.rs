@@ -21,11 +21,31 @@ pub(crate) fn bare_font(tags: &[&[u8; 4]]) -> Vec<u8> {
     data
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_collection_can_be_selected_by_index() {
+    use crate::text::fontconfig::test_fonts;
+    let data = test_fonts::collection(&[
+        (test_fonts::COLLECTION, "Regular", 400, false),
+        (test_fonts::COLLECTION, "Bold", 700, false),
+    ]);
+    let regular = select(&data, None, Some(0)).unwrap();
+    assert_eq!(
+        postscript_name(&regular.font).as_deref(),
+        Some("WincCollection-Regular")
+    );
+    let bold = select(&data, None, Some(1)).unwrap();
+    assert_eq!(
+        postscript_name(&bold.font).as_deref(),
+        Some("WincCollection-Bold")
+    );
+}
+
 #[test]
 fn only_fonts_with_drawable_glyphs_are_selected() {
     // 有任何一种 swash 能绘制的字形表即可选用；只有 `hvgl` 表时，macOS 上改由系统提供轮廓，
     // 其他平台上不能选用；一种字形表都没有时不能选用。
-    let system = |tags: &[&[u8; 4]]| select(&bare_font(tags), None).map(|s| s.system);
+    let system = |tags: &[&[u8; 4]]| select(&bare_font(tags), None, None).map(|s| s.system);
     for tag in GLYPH_TABLES {
         assert_eq!(system(&[b"cmap", tag]), Some(false), "{tag:?}");
     }
@@ -115,6 +135,7 @@ fn a_collection_opens_the_face_named_by_its_postscript_name() {
     let bold = FontFile {
         path: path.into(),
         postscript: Some("Menlo-Bold".into()),
+        index: None,
     };
     let face = Face::open(&bold).expect("Menlo 是 macOS 自带字体");
     assert_eq!(postscript(&face), "Menlo-Bold");
@@ -125,6 +146,7 @@ fn a_collection_opens_the_face_named_by_its_postscript_name() {
     let unknown = FontFile {
         path: path.into(),
         postscript: Some("Menlo-Nothing".into()),
+        index: None,
     };
     assert_eq!(postscript(&Face::open(&unknown).unwrap()), "Menlo-Regular");
 }
@@ -368,26 +390,22 @@ fn fonts_without_stated_heights_measure_their_letters() {
     assert!(measured.0 > 30.0 && measured.1 > measured.0, "{measured:?}");
 }
 
+/// 回归：找不到的名字不能让 fontconfig 的后备字体占住，否则后面的字体都不会被用到。
+#[cfg(target_os = "linux")]
 #[test]
-fn sorted_fontconfig_results_keep_order_and_skip_missing_files() {
-    let dir = std::env::temp_dir().join(format!("winc-sorted-fonts-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let (a, b) = (dir.join("a.ttf"), dir.join("b.ttc"));
-    std::fs::write(&a, "").unwrap();
-    std::fs::write(&b, "").unwrap();
-    let text = format!(
-        "{}\nFirst\n/no/such/file.ttf\nGone\n{}\n\n",
-        a.display(),
-        b.display()
-    );
+fn a_missing_font_does_not_take_the_place_of_the_next_one() {
+    use crate::text::fontconfig::test_fonts::{self, Isolated};
 
-    let fonts = parse_sorted_fonts(&text);
-    assert_eq!(fonts.len(), 2);
-    assert_eq!(fonts[0].path, a);
-    assert_eq!(fonts[0].postscript.as_deref(), Some("First"));
-    assert_eq!(fonts[1].path, b);
-    assert_eq!(fonts[1].postscript, None);
-    std::fs::remove_dir_all(&dir).unwrap();
+    let Some(isolated) = Isolated::new() else {
+        return;
+    };
+    let specs = [
+        FontSpec::Name("Winc Missing 7f3a".into()),
+        FontSpec::Name(test_fonts::DEFAULT.into()),
+    ];
+    let files = resolve_list(&specs);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, isolated.regular(test_fonts::DEFAULT));
 }
 
 /// 回归：fontconfig 把不含汉字的字体排在最前时，中文后备槽位继续往后找含汉字的字体。
@@ -397,7 +415,7 @@ fn the_cjk_slot_skips_fonts_without_chinese() {
     let query = "sans-serif:lang=zh-cn";
     let covers =
         |file: &FontFile| Face::open(file).is_some_and(|face| face.font().charmap().map('中') != 0);
-    let sorted = fontconfig_sorted(query);
+    let sorted = crate::text::fontconfig::sorted(query);
     let Some(chinese) = sorted.iter().find(|file| covers(file)) else {
         return;
     };
@@ -439,10 +457,11 @@ fn the_cjk_slot_skips_fonts_without_chinese() {
 #[cfg(target_os = "linux")]
 #[test]
 fn chinese_text_finds_a_font_on_linux() {
-    let has_chinese = std::process::Command::new("fc-list")
-        .arg(":lang=zh")
-        .output()
-        .is_ok_and(|output| !output.stdout.is_empty());
+    let files = crate::text::fontconfig::files().unwrap_or_default();
+    let has_chinese = files.iter().any(|path| {
+        Face::open(&FontFile::first(path.clone()))
+            .is_some_and(|face| face.font().charmap().map('中') != 0)
+    });
     if !has_chinese {
         return;
     }

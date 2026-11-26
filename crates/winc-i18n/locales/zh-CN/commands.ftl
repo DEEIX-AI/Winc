@@ -242,6 +242,7 @@ cmd-git-reword-commit = Git：编辑提交说明…
 cmd-git-go-to-child-commit = Git：转到子提交
 cmd-git-go-to-parent-commit = Git：转到父提交
 cmd-git-show-output = Git：显示输出
+cmd-git-generate-commit-message = Git：生成提交信息
 cmd-git-clone = Git：克隆仓库…
 cmd-git-init = Git：初始化仓库
 cmd-git-switch-repository = Git：切换仓库

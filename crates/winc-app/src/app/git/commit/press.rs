@@ -21,12 +21,17 @@ impl App {
                 | CommitTarget::StashFile(_)
                 | CommitTarget::StashApply(_)
                 | CommitTarget::StashMenu(_)
+                | CommitTarget::History(HistoryTarget::Commit(_))
         );
-        if indexed && self.git.commit.hits_generation != self.git.generation {
+        let history = matches!(target, CommitTarget::History(_));
+        let stale = self.git.commit.hits_generation != self.git.generation
+            || (history && !self.git.commit.history.hits_current());
+        if indexed && stale {
             self.request_redraw();
             return;
         }
         match target {
+            CommitTarget::History(target) => self.press_history(target),
             CommitTarget::Stashes
             | CommitTarget::Stash(_)
             | CommitTarget::StashFile(_)
@@ -142,6 +147,7 @@ impl App {
                 );
             }
             CommitTarget::CommitPush => self.confirm_commit_and_push(),
+            CommitTarget::Generate => self.generate_commit_message(),
             CommitTarget::CommitMenu => {
                 // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
                 // 避免菜单看起来与「⌄」无关。
@@ -307,7 +313,7 @@ impl App {
         match target {
             CommitTarget::Stashes => self.toggle_stashes(),
             CommitTarget::Stash(i) => self.show_stash(i),
-            CommitTarget::StashFile(at) => self.open_stash_file(at),
+            CommitTarget::StashFile(at) => self.open_peek_file(at),
             CommitTarget::StashApply(i) => {
                 if let Some(stash) = self.git.stashes.get(i).cloned() {
                     self.run_stash_op(super::super::branch::StashOp::Apply, stash);

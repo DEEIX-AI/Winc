@@ -35,7 +35,9 @@ pub(super) fn sibling(file: &FontFile, font: &FontRef, shift: f32) -> Option<(Fo
             continue;
         };
         let count = swash::FontDataRef::new(&data).map_or(1, |d| d.len());
-        for other in (0..count).filter_map(|i| FontRef::from_index(&data, i)) {
+        for (index, other) in
+            (0..count).filter_map(|i| FontRef::from_index(&data, i).map(|font| (i, font)))
+        {
             let (other_stretch, weight, other_style) = other.attributes().parts();
             let weight = f32::from(weight.0);
             let between = weight != own && weight >= own.min(wanted) && weight <= own.max(wanted);
@@ -51,6 +53,7 @@ pub(super) fn sibling(file: &FontFile, font: &FontRef, shift: f32) -> Option<(Fo
                 let found = FontFile {
                     path: path.clone(),
                     postscript: postscript_name(&other),
+                    index: (count > 1).then_some(index as u32),
                 };
                 best = Some((found, weight - own));
             }
