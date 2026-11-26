@@ -920,6 +920,7 @@ impl App {
                 Outcome::Staged(result, root) => self.staging_finished(result, &root),
                 Outcome::OtherStaged(result) => self.other_staging_finished(result),
                 Outcome::TodoChecked(count, root) => self.todo_checked(count, &root),
+                Outcome::Generated(id, result) => self.generated(id, result),
                 Outcome::Reformatted(count, failed, root) => self.reformatted(count, failed, &root),
                 Outcome::IndexText(root, path, version, text) => {
                     self.index_text_arrived(&root, path, version, text);
@@ -1004,6 +1005,7 @@ impl App {
         self.git.commit.other_stage_running = old.other_stage_running;
         self.git.commit.collapsed = old.collapsed;
         self.git.commit.drafts = old.drafts;
+        self.git.commit.generating = old.generating.carried();
         // 保留底部各组的展开状态和高度、卡片和「上一次提交」的显示比例：切换仓库后从原状态过渡。
         self.git.commit.quiet_open = old.quiet_open;
         self.git.commit.stashes = Drawer {

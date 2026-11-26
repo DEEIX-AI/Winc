@@ -372,6 +372,9 @@ impl App {
             MenuTarget::PullMode => (0..winc_config::PullMode::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::PullMode(i), true))
                 .collect(),
+            MenuTarget::AiProtocol => (0..winc_config::AiProtocol::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::AiProtocol(i), true))
+                .collect(),
             MenuTarget::SearchStyle => (0..winc_config::SearchStyle::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::SearchStyle(i), true))
                 .collect(),
@@ -914,6 +917,7 @@ impl App {
                 | MenuTarget::VimKey(_)
                 | MenuTarget::OpenWorktree
                 | MenuTarget::PullMode
+                | MenuTarget::AiProtocol
                 | MenuTarget::DropFolder
                 | MenuTarget::SearchStyle
                 | MenuTarget::AutoSave
@@ -936,6 +940,7 @@ impl App {
             MenuTarget::VimKey(c) => Some(Setting::VimKey(c)),
             MenuTarget::OpenWorktree => Some(Setting::GitOpenWorktree),
             MenuTarget::PullMode => Some(Setting::GitPullMode),
+            MenuTarget::AiProtocol => Some(Setting::AiProtocol),
             MenuTarget::DropFolder => Some(Setting::DropFolder),
             MenuTarget::SearchStyle => Some(Setting::FindInFiles),
             MenuTarget::AutoSave => Some(Setting::AutoSave),
@@ -1244,6 +1249,10 @@ impl App {
             }
             MenuCommand::PullMode(i) => {
                 winc_config::PullMode::ALL.get(i) == Some(&self.config.git_pull.unwrap_or_default())
+            }
+            MenuCommand::AiProtocol(i) => {
+                let current = self.config.ai_protocol.unwrap_or_default();
+                winc_config::AiProtocol::ALL.get(i) == Some(&current)
             }
             MenuCommand::SearchStyle(i) => {
                 winc_config::SearchStyle::ALL.get(i) == Some(&self.search_style())

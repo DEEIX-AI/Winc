@@ -537,6 +537,13 @@ impl App {
             GitGoToChildCommit => self.go_to_log_relative(false),
             GitGoToParentCommit => self.go_to_log_relative(true),
             GitShowOutput => self.show_git_output(),
+            GitGenerateCommitMessage => {
+                // 生成的信息填入提交视图的信息框，提交视图未显示时先打开。
+                if !self.commit_shown() {
+                    self.show_commit();
+                }
+                self.generate_commit_message();
+            }
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
             GitSwitchRepository => self.switch_location(true),

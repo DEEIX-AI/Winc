@@ -290,6 +290,13 @@ impl App {
                     self.set_pull_mode(choice);
                 }
             }
+            MenuTarget::AiProtocol => {
+                if let MenuCommand::AiProtocol(i) = command
+                    && let Some(&choice) = winc_config::AiProtocol::ALL.get(i)
+                {
+                    self.set_ai_protocol(choice);
+                }
+            }
             MenuTarget::VimKey(c) => {
                 if let MenuCommand::VimKeyOwner(vim) = command {
                     self.set_vim_key_owner(c, vim);

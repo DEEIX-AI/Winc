@@ -41,6 +41,19 @@ pub(super) fn draw_tooltip(app: &App, frame: &mut Frame<'_>) {
                 crate::layout::with_key(t!("cmd-toggle-sidebar"), Some(Action::ToggleSidebar)),
             ),
             Hover::Browser => (app.layout.browser, t!("preview-browser-open").to_owned()),
+            Hover::Commit(crate::app::CommitTarget::Generate) => {
+                match app.commit_parts().generate {
+                    Some(button) => (
+                        button,
+                        match app.git.commit.generating.running() {
+                            true => t!("git-generate-stop"),
+                            false => t!("git-generate"),
+                        }
+                        .to_owned(),
+                    ),
+                    None => return,
+                }
+            }
             Hover::HttpRun(line) => match app.hits.http_runs.iter().find(|(_, l)| *l == line) {
                 Some(&(button, _)) => (
                     button,

@@ -823,9 +823,14 @@ impl App {
             None if setting == Setting::TerminalShell => self.config.terminal_shell.clone(),
             None if setting == Setting::GitPath => self.config.git_path.clone(),
             None if setting == Setting::LatexPath => self.config.latex_path.clone(),
+            None if setting.is_ai_text() => ai_text(&mut self.config, setting).clone(),
             None => self.font_setting(setting).clone(),
         };
-        let mut field = TextField::default();
+        // 输入密钥时同样以圆点代替明文。
+        let mut field = match setting {
+            Setting::AiApiKey => TextField::masked(),
+            _ => TextField::default(),
+        };
         field.set_text(current.as_deref().unwrap_or(""));
         field.select_all();
 
@@ -957,6 +962,18 @@ impl App {
                 self.settings.error = None;
                 self.focus = Focus::Settings;
                 self.set_latex_path(value);
+            }
+            None if setting.is_ai_text() => {
+                self.settings.editing = None;
+                self.settings.editing_original = None;
+                self.settings.error = None;
+                self.focus = Focus::Settings;
+                let field = ai_text(&mut self.config, setting);
+                if *field != value {
+                    *field = value;
+                    self.save_config();
+                }
+                self.request_redraw();
             }
             None => self.settings_commit_font(setting, value),
         }
@@ -1215,6 +1232,13 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置调用模型的接口协议。
+    pub(in crate::app) fn set_ai_protocol(&mut self, choice: winc_config::AiProtocol) {
+        self.config.ai_protocol = Some(choice);
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 设置 Vim 模式下无名寄存器与系统剪贴板的同步方式。
     pub(in crate::app) fn set_vim_clipboard(&mut self, choice: winc_config::VimClipboard) {
         self.config.vim_clipboard = Some(choice);
@@ -1336,6 +1360,16 @@ pub(crate) struct Store {
     pub(crate) state_requests: u64,
     /// 配置的版本号：本窗口每写入一次配置文件加 1，应用层据此把新配置发给其他窗口。
     pub(crate) config_rev: u64,
+}
+
+/// 返回调用模型的一项文本设置（接口地址、模型名或密钥）在配置中的值；`setting` 须满足
+/// [`Setting::is_ai_text`]。
+fn ai_text(config: &mut Config, setting: Setting) -> &mut Option<String> {
+    match setting {
+        Setting::AiBaseUrl => &mut config.ai_base_url,
+        Setting::AiModel => &mut config.ai_model,
+        _ => &mut config.ai_api_key,
+    }
 }
 
 #[cfg(test)]

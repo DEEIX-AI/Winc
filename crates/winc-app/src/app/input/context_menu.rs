@@ -265,6 +265,9 @@ pub enum MenuCommand {
     /// 设置中「拉取方式」菜单的一项，参数为 [`PullMode::ALL`](winc_config::PullMode::ALL) 中的
     /// 序号（从 0 起）。
     PullMode(usize),
+    /// 设置中「接口协议」菜单的一项，参数为 [`AiProtocol::ALL`](winc_config::AiProtocol::ALL)
+    /// 中的序号（从 0 起）。
+    AiProtocol(usize),
     /// 设置中「拖入目录」菜单的一项，参数为
     /// [`FolderDrop::ALL`](winc_config::FolderDrop::ALL) 中的序号（从 0 起）。
     DropFolder(usize),
@@ -806,6 +809,9 @@ impl MenuCommand {
             MenuCommand::PullMode(i) => winc_config::PullMode::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::pull_mode_label(choice)),
+            MenuCommand::AiProtocol(i) => {
+                (winc_config::AiProtocol::ALL.get(i)).map_or("", |&choice| choice.name())
+            }
             MenuCommand::SearchStyle(i) => winc_config::SearchStyle::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::search_style_label(choice)),
@@ -1036,6 +1042,8 @@ pub enum MenuTarget {
     OpenWorktree,
     /// 设置的 Git 页中的「拉取方式」。
     PullMode,
+    /// 设置的 AI 页中的「接口协议」。
+    AiProtocol,
     /// 设置的编辑器页中的「拖入目录」。
     DropFolder,
     /// 「在文件中查找」设置的选项菜单。

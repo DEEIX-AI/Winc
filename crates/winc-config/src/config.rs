@@ -301,6 +301,16 @@ pub struct Config {
     pub git_pull: Option<PullMode>,
     /// 新建工作树时复制过去的被忽略的文件（gitignore 写法的 glob，如 `.env*`），默认不复制。
     pub git_worktree_copy: Vec<String>,
+    /// 是否在提交视图中用模型生成提交信息，默认为否；模型在 `ai` 一节中设置。
+    pub git_generate_commit_message: Option<bool>,
+    /// 调用模型的接口协议，默认 [`AiProtocol::ChatCompletions`]。
+    pub ai_protocol: Option<AiProtocol>,
+    /// 接口地址，包含版本路径（如 `/v1`）；未设置时使用协议的官方地址。
+    pub ai_base_url: Option<String>,
+    /// 模型名；未设置时不调用模型。
+    pub ai_model: Option<String>,
+    /// 接口的密钥；不需要认证的接口（如本地部署的模型）不设置。
+    pub ai_api_key: Option<String>,
     /// 保存时先格式化，默认为否。
     pub format_on_save: Option<bool>,
     /// 保存时不格式化的语言（语言的 id）；手动格式化（`⇧⌥F`）仍然生效。
@@ -437,6 +447,59 @@ impl PullMode {
             Self::Config => None,
             Self::Merge => Some(false),
             Self::Rebase => Some(true),
+        }
+    }
+}
+
+/// 调用模型的接口协议：请求的路径、认证的请求头、请求和响应的写法都随协议而定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AiProtocol {
+    /// `POST /chat/completions`，`Authorization: Bearer` 认证。
+    #[default]
+    ChatCompletions,
+    /// `POST /responses`，`Authorization: Bearer` 认证。
+    Responses,
+    /// `POST /messages`，`x-api-key` 认证。
+    Messages,
+    /// `POST /interactions`，`x-goog-api-key` 认证。
+    Interactions,
+}
+
+impl AiProtocol {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 4] = [
+        Self::ChatCompletions,
+        Self::Responses,
+        Self::Messages,
+        Self::Interactions,
+    ];
+
+    /// 返回配置文件中的写法。
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "chatCompletions",
+            Self::Responses => "responses",
+            Self::Messages => "messages",
+            Self::Interactions => "interactions",
+        }
+    }
+
+    /// 返回协议的名称，用于设置中的显示。
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "Chat Completions",
+            Self::Responses => "Responses",
+            Self::Messages => "Messages",
+            Self::Interactions => "Interactions",
+        }
+    }
+
+    /// 返回未设置接口地址时使用的官方地址。
+    pub fn default_base_url(self) -> &'static str {
+        match self {
+            Self::ChatCompletions | Self::Responses => "https://api.openai.com/v1",
+            Self::Messages => "https://api.anthropic.com/v1",
+            Self::Interactions => "https://generativelanguage.googleapis.com/v1beta",
         }
     }
 }

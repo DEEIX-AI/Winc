@@ -142,6 +142,7 @@ impl App {
                 );
             }
             CommitTarget::CommitPush => self.confirm_commit_and_push(),
+            CommitTarget::Generate => self.generate_commit_message(),
             CommitTarget::CommitMenu => {
                 // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
                 // 避免菜单看起来与「⌄」无关。

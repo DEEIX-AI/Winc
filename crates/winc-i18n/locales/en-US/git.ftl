@@ -346,6 +346,13 @@ git-commit-others-left = Committed. { $count ->
 } not committed: amending, or a merge or rebase in that repository, commits the current repository only
 git-commit-hint-subject = Subject { $count }/{ $limit }
 git-commit-hint-blank-line = Blank line after subject
+git-generate = Generate Commit Message
+git-generate-stop = Stop Generating
+git-generate-off = Turn on “AI Commit Messages” in Settings first
+git-generate-unset = Enter a model on the AI page of Settings first
+git-generate-nothing = Select the changes to commit first
+git-generate-failed = Couldn’t generate the commit message: { $error }
+git-generate-empty = The model returned no commit message
 git-commit-todo-confirm = { $count ->
     [one] The new content has 1 TODO or FIXME
    *[other] The new content has { $count } TODOs or FIXMEs

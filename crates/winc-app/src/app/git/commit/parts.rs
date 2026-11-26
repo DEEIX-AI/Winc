@@ -58,7 +58,7 @@ impl App {
         } else {
             Default::default()
         };
-        let (commit, commit_menu, push) = buttons;
+        let (commit, commit_menu, push, generate) = buttons;
         let top = banner.map_or(branch.bottom(), |(rect, _)| rect.bottom());
         let list_y = top + SIDEBAR_LIST_GAP;
         let above = match (card, undo) {
@@ -90,6 +90,7 @@ impl App {
             commit,
             commit_menu,
             push,
+            generate,
             undo,
             stashes,
             worktrees,
@@ -146,7 +147,8 @@ impl App {
     }
 
     /// 勾选式下提交卡片底行 `footer` 的各个按钮：「提交」「提交并推送…」靠左并排，下拉箭头在
-    /// 最右。放不下时「提交并推送…」收进下拉菜单。
+    /// 最右，开启「AI 生成提交信息」时生成按钮在箭头左侧。空间不足时先将「提交并推送…」移入下拉
+    /// 菜单，仍然不足时不显示生成按钮。
     fn classic_card_buttons(&self, footer: Rect) -> CardButtons {
         let labels = self.git.commit.labels;
         let menu_w = BUTTON_MENU_W.min(footer.w);
@@ -156,11 +158,15 @@ impl App {
         let width = (self.git.commit.button_motion)
             .map_or(natural, |(from, clock)| clock.between(from, natural));
         let commit = Rect::new(footer.x, footer.y, width.min(room), FOOTER_H);
+        let generate_x = commit_menu.x - PUSH_GAP - BUTTON_MENU_W;
+        let generate = (self.commit_generation_on() && commit.right() + PUSH_GAP <= generate_x)
+            .then(|| Rect::new(generate_x, footer.y, BUTTON_MENU_W, FOOTER_H));
+        let end = generate.map_or(commit_menu.x, |rect| rect.x);
         let push_w = labels.push + 2.0 * BUTTON_PAD;
-        let fits = commit.right() + PUSH_GAP + push_w + PUSH_GAP <= commit_menu.x;
+        let fits = commit.right() + PUSH_GAP + push_w + PUSH_GAP <= end;
         let push = (self.commit_push_beside() && fits)
             .then(|| Rect::new(commit.right() + PUSH_GAP, footer.y, push_w, FOOTER_H));
-        (commit, commit_menu, push)
+        (commit, commit_menu, push, generate)
     }
 
     /// 这时是否把「提交并推送…」排在提交按钮旁边：有文字宽度可用，没有进行中的合并、变基，

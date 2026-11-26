@@ -436,6 +436,11 @@ fn round_trips_through_json() {
         ]
         .into(),
         git_worktree_copy: vec![".env*".to_string(), "config/local.toml".to_string()],
+        git_generate_commit_message: Some(true),
+        ai_protocol: Some(AiProtocol::Messages),
+        ai_base_url: Some("http://localhost:11434/v1".to_string()),
+        ai_model: Some("qwen3".to_string()),
+        ai_api_key: Some("sk-test".to_string()),
         format_on_save: Some(false),
         format_on_save_exclude: vec!["markdown".to_string(), "yaml".to_string()],
         format_commands: BTreeMap::from([(

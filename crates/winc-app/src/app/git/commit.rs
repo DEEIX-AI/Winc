@@ -9,6 +9,7 @@
 
 mod actions;
 mod compose;
+mod generate;
 mod ignore;
 mod reformat;
 mod strip;
@@ -110,8 +111,9 @@ const BUTTON_MENU_W: f32 = 26.0;
 /// 并排的「提交」「提交并推送…」和下拉箭头之间的间隔（逻辑像素）。
 const PUSH_GAP: f32 = 4.0;
 
-/// 提交卡片底行的按钮：提交、下拉箭头、并排的「提交并推送…」（没有时为 `None`）。
-type CardButtons = (Rect, Rect, Option<Rect>);
+/// 提交卡片底行的按钮：提交、下拉箭头、并排的「提交并推送…」和「生成提交信息」（后两项没有时
+/// 为 `None`）。
+type CardButtons = (Rect, Rect, Option<Rect>, Option<Rect>);
 /// 「上一次提交」那一栏里「撤销」文字两侧的留白（逻辑像素），与悬停底色的圆角相当。
 const UNDO_PAD: f32 = 6.0;
 /// 提交卡片、说明条左右的边距（逻辑像素），和标题行的项目名、右端按钮对齐；卡片离视图底边
@@ -589,6 +591,8 @@ pub enum CommitTarget {
     Branch,
     /// 分支行右端的同步控件：同步、发布或获取，见 [`App::git_sync`]。
     Sync,
+    /// 提交卡片底行的「生成提交信息」：用设置的模型生成；生成期间再次点击即取消。
+    Generate,
     /// 拆分按钮左边的「提交」。
     Commit,
     /// 拆分按钮右边的下拉箭头：弹「提交并推送」；卡片太窄、放不下勾选框时还有「修改上一次
@@ -668,6 +672,8 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
+    /// 下拉箭头左侧的「生成提交信息」；未开启「AI 生成提交信息」或底行空间不足时为 `None`。
+    pub generate: Option<Rect>,
     /// 与提交按钮并排的「提交并推送…」按钮；底行放不下、或者这时不能推送时为 `None`，推送在
     /// 下拉菜单中。
     pub push: Option<Rect>,
@@ -715,6 +721,8 @@ enum Outcome {
     /// 读到了文件在暂存区中的内容：仓库、文件、发出读取时暂存区的版本、内容（不是文本时为
     /// `None`）。
     IndexText(PathBuf, PathBuf, u64, Option<String>),
+    /// 生成提交信息的结果：生成的编号，以及生成的信息或失败的原因。
+    Generated(u64, Result<String, String>),
     /// 准备好了储藏里一个文件的差异（标签的标题），或者失败的原因。
     StashDiff(
         String,
@@ -919,6 +927,8 @@ pub(crate) struct CommitState {
     pub(crate) stash_preview: Option<DocumentId>,
     /// 正在询问新增的 TODO 要不要仍然提交：这次提交在等回答。
     todo_asked: bool,
+    /// 用模型生成提交信息的进度。
+    pub(crate) generating: generate::Generating,
     /// 提交成功以后继续推送（「提交并推送」）。
     push_after: bool,
     /// 与 `push_after` 一起：推送改为同步，先拉取上游的新提交再推送（「提交并同步」）。
@@ -1058,6 +1068,7 @@ impl Default for CommitState {
             stash_files_folded: false,
             stash_preview: None,
             todo_asked: false,
+            generating: Default::default(),
             push_after: false,
             sync_after: false,
             last: None,
