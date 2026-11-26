@@ -414,13 +414,12 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { .. } if !self.under_cursor() => self.cursor_left(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.frame.frame_log.pointer_moved();
-                self.pointer.cursor_inside = true;
                 let scale = self
                     .frame
                     .renderer
                     .as_ref()
                     .map_or(1.0, Renderer::scale_factor);
-                self.on_mouse_move(position.x as f32 / scale, position.y as f32 / scale);
+                self.cursor_moved(position.x as f32 / scale, position.y as f32 / scale);
             }
             WindowEvent::CursorLeft { .. } => self.cursor_left(),
             WindowEvent::MouseInput {

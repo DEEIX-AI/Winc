@@ -5,6 +5,16 @@ use super::*;
 use crate::app::scroll::set_scroll_line;
 
 impl App {
+    /// 系统鼠标重新进入窗口时，即使坐标与离开前相同也重新显示悬停的终端图片。
+    pub(in crate::app) fn cursor_moved(&mut self, x: f32, y: f32) {
+        let reentered = !self.pointer.cursor_inside;
+        self.pointer.cursor_inside = true;
+        self.on_mouse_move(x, y);
+        if reentered && self.hovered_terminal_image().is_some() {
+            self.request_redraw();
+        }
+    }
+
     /// 记录鼠标所在的 Markdown 预览代码块和图片。
     pub(in crate::app) fn track_code_hover(&mut self, x: f32, y: f32) {
         let code = (self.hits.markdown_codes.iter()).position(|r| r.contains(x, y));

@@ -27,6 +27,7 @@ pub(in crate::app) struct PastePreview {
 impl PastePreview {
     pub(in crate::app) fn queue(&mut self, pixels: Pixels, rows: &[Line], first: u64) {
         self.observe(rows, first);
+        self.discard_missing();
         if self.pending.is_empty() {
             self.marks = markers(rows, first);
         }
@@ -46,13 +47,15 @@ impl PastePreview {
             self.marks = marks;
             return;
         }
-        self.images.retain(|number, _| marks.contains_key(number));
         // 编号由程序决定。已有标记移动时出现次数不变；新出现的编号才消耗待匹配的图片。
+        // 重绘可能暂时不显示已有标记，恢复时沿用其图片。
         for (&number, occurrences) in &marks {
             let old = self.marks.get(&number).map_or(0, Vec::len);
             for _ in old..occurrences.len() {
                 let Some((_, pixels)) = self.pending.pop_front() else {
-                    self.images.remove(&number);
+                    if old > 0 {
+                        self.images.remove(&number);
+                    }
                     break;
                 };
                 self.images.insert(number, pixels);
@@ -62,6 +65,12 @@ impl PastePreview {
             }
         }
         self.marks = marks;
+    }
+
+    /// 开始编辑或粘贴时回收已不可见的附件，避免草稿复用编号后匹配到旧图片。
+    pub(super) fn discard_missing(&mut self) {
+        self.images
+            .retain(|number, _| self.marks.contains_key(number));
     }
 
     fn note_delete(&mut self, line: u64, col: usize, backwards: bool) {
@@ -314,6 +323,15 @@ mod tests {
         assert_eq!(preview.at(10, 0).unwrap().0.rgba[0], 1);
         assert_eq!(preview.at(10, 11).unwrap().0.rgba[0], 3);
         assert!(preview.at(10, 22).is_none());
+    }
+
+    #[test]
+    fn a_new_edit_does_not_reuse_a_preview_from_a_missing_marker() {
+        let mut preview = three_images();
+        preview.observe(&line(""), 10);
+        preview.discard_missing();
+        preview.observe(&line("[Image #1]"), 10);
+        assert!(preview.at(10, 0).is_none());
     }
 
     #[test]

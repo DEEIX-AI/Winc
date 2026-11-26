@@ -70,6 +70,65 @@ fn pasted_image_popover_only_appears_over_a_matching_marker() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn terminal_image_popover_recovers_after_window_focus_and_restore() {
+    let (mut app, dir, _) = terminal_app("terminal-image-window-restore");
+    let tab = app.terminal.tab_mut().unwrap();
+    let size = tab.size;
+    let line = Line {
+        text: "[Image #1]".into(),
+        ..Line::default()
+    };
+    let full_frame = |lines| winc_pty::protocol::Frame {
+        cols: size.cols,
+        rows: size.rows,
+        full: true,
+        lines,
+        ..Default::default()
+    };
+    tab.paste_preview.queue(
+        winc_preview::image::Pixels {
+            width: 1,
+            height: 1,
+            rgba: vec![21, 24, 32, 255],
+        },
+        &tab.rows,
+        tab.history.1,
+    );
+    tab.apply(full_frame(vec![(0, line.clone())]));
+    let grid = app.terminal_grid();
+    let (x, y) = (grid.x + 4.0, grid.y + app.fonts.terminal_line_height / 2.0);
+    app.cursor_moved(x, y);
+    assert!(app.hovered_terminal_image().is_some());
+
+    for minimized in [false, true] {
+        app.focus_changed(false);
+        app.cursor_left();
+        app.window.minimized = minimized;
+        app.terminal
+            .tab_mut()
+            .unwrap()
+            .apply(full_frame(Vec::new()));
+        assert!(app.terminal_image_hover((x, y)).is_none());
+
+        app.window.minimized = false;
+        app.focus_changed(true);
+        app.terminal
+            .tab_mut()
+            .unwrap()
+            .apply(full_frame(vec![(0, line.clone())]));
+        paint(&mut app);
+        app.frame.dirty = false;
+        app.cursor_moved(x, y);
+        assert!(app.frame.dirty);
+        assert_eq!(
+            app.hovered_terminal_image().unwrap().0.rgba,
+            [21, 24, 32, 255]
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 fn editor_tab(app: &App, document: DocumentId) -> Rect {
     app.hits
         .tabs

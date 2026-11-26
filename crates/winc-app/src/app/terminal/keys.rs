@@ -113,6 +113,9 @@ impl App {
     /// 输入法提交的文字。
     pub(in crate::app) fn terminal_commit(&mut self, text: &str) {
         self.clear_terminal_selection();
+        if let Some(tab) = self.terminal.tab_mut() {
+            tab.paste_preview.discard_missing();
+        }
         self.terminal_input(text.as_bytes().to_vec());
     }
 
@@ -231,6 +234,9 @@ impl App {
             });
             if typed {
                 self.clear_terminal_selection();
+            }
+            if let Some(tab) = self.terminal.tab_mut() {
+                tab.paste_preview.discard_missing();
             }
             self.terminal_input(bytes);
         }
