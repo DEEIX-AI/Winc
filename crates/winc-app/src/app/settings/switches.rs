@@ -50,6 +50,7 @@ impl App {
             Setting::GitRememberCredentials => self.config.git_remember_credentials != Some(false),
             Setting::SystemProxy => self.config.system_proxy != Some(false),
             Setting::GitInlineBlame => self.config.git_inline_blame != Some(false),
+            Setting::GitCommitHistory => self.config.git_commit_history == Some(true),
             Setting::GitAutoFetch => self.config.git_auto_fetch == Some(true),
             Setting::GitGenerateCommitMessage => {
                 self.config.git_generate_commit_message == Some(true)
@@ -150,6 +151,7 @@ impl App {
             Setting::GitStagingArea => self.config.git_staging_area = Some(on),
             Setting::GitCombinedDiff => self.config.git_combined_diff = Some(on),
             Setting::GitInlineBlame => self.config.git_inline_blame = Some(on),
+            Setting::GitCommitHistory => self.config.git_commit_history = Some(on),
             Setting::GitAutoFetch => self.config.git_auto_fetch = Some(on),
             Setting::GitGenerateCommitMessage => self.config.git_generate_commit_message = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),

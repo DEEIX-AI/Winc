@@ -308,6 +308,7 @@ impl App {
             | Setting::VimClipboard
             | Setting::VimKey(_)
             | Setting::GitOpenWorktree
+            | Setting::GitLogPlacement
             | Setting::GitPullMode
             | Setting::AiProtocol
             | Setting::DropFolder
@@ -334,6 +335,7 @@ impl App {
                     Setting::GitOpenWorktree => MenuTarget::OpenWorktree,
                     Setting::GitPullMode => MenuTarget::PullMode,
                     Setting::AiProtocol => MenuTarget::AiProtocol,
+                    Setting::GitLogPlacement => MenuTarget::LogPlacement,
                     Setting::DropFolder => MenuTarget::DropFolder,
                     Setting::FindInFiles => MenuTarget::SearchStyle,
                     Setting::AutoSave => MenuTarget::AutoSave,

@@ -2,11 +2,15 @@
 
 use super::*;
 
+/// 提交卡片底行的按钮：提交、下拉箭头、并排的「提交并推送…」和「生成提交信息」（后两项没有时
+/// 为 `None`）。
+type CardButtons = (Rect, Rect, Option<Rect>, Option<Rect>);
+
 impl App {
     /// 计算提交视图的布局。
     ///
-    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、工作树、储藏、提交
-    /// 卡片和尚未推送的上一次提交。
+    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、提交历史、工作树、
+    /// 储藏、提交卡片和尚未推送的上一次提交。
     pub(crate) fn commit_parts(&self) -> CommitParts {
         let s = self.layout.sidebar;
         let panel = Rect::new(s.x, TOP_BAR_END, s.w, (s.bottom() - TOP_BAR_END).max(0.0));
@@ -75,7 +79,14 @@ impl App {
         let h = self.worktree_section_height();
         let bottom = stashes.map_or(stash_bottom, |rect| rect.y);
         let worktrees = (h > 0.0).then(|| Rect::new(panel.x, bottom - h, panel.w, h));
-        let list_end = worktrees.or(stashes).map_or(above, |rect| rect.y);
+        // 提交历史一组在工作树上面，同样没有间隔。侧栏较矮时它先让出高度：给改动列表留足
+        // `HISTORY_LIST_KEEP`，组内露出的行变少（可以滚动）；连标题都放不下时不显示。
+        let bottom = worktrees.or(stashes).map_or(stash_bottom, |rect| rect.y);
+        let room = bottom - list_y - HISTORY_LIST_KEEP;
+        let h = self.history_section_height().min(room);
+        let history =
+            (h > 0.0 && room >= DRAWER_CLOSED).then(|| Rect::new(panel.x, bottom - h, panel.w, h));
+        let list_end = (history.or(worktrees).or(stashes)).map_or(above, |rect| rect.y);
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
             header,
@@ -94,6 +105,7 @@ impl App {
             undo,
             stashes,
             worktrees,
+            history,
             list,
         }
     }

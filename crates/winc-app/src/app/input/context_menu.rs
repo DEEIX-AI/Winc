@@ -21,6 +21,7 @@ use crate::keymap::{self, Action, Context, Stroke};
 use crate::layout::hit;
 
 mod labels;
+mod menu_icon;
 mod menus;
 mod popup;
 mod present;
@@ -28,12 +29,12 @@ mod run;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use menu_icon::MenuIcon;
 pub use menus::*;
 pub(crate) use popup::{
     CHECK_COLUMN, ICON_COLUMN, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
     folder_level,
 };
-pub(crate) use present::MenuIcon;
 
 /// 菜单项上显示的文字：标题、标题下方的一行小字，以及悬停提示。
 #[derive(Debug, Clone, PartialEq)]
@@ -268,6 +269,8 @@ pub enum MenuCommand {
     /// 设置中「接口协议」菜单的一项，参数为 [`AiProtocol::ALL`](winc_config::AiProtocol::ALL)
     /// 中的序号（从 0 起）。
     AiProtocol(usize),
+    /// 设置页「日志位置」菜单中的第几项（`winc_config::LogPlacement::ALL` 的下标）。
+    LogPlacement(usize),
     /// 设置中「拖入目录」菜单的一项，参数为
     /// [`FolderDrop::ALL`](winc_config::FolderDrop::ALL) 中的序号（从 0 起）。
     DropFolder(usize),
@@ -462,6 +465,8 @@ pub enum MenuCommand {
     LogGoTo,
     /// 日志里的提交：与输入的提交号、分支或标签比较。
     LogCompareRevision,
+    /// 提交历史里的提交：在日志中选中它。
+    LogShowInLog,
     /// 编辑区：开关逐行追溯（开着时打勾）。
     ToggleBlame,
     /// 提交视图「⋯」：储藏改动（输入说明）。
@@ -710,6 +715,7 @@ impl MenuCommand {
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogGoTo => t!("menu-log-go-to"),
             MenuCommand::LogCompareRevision => t!("menu-log-compare-revision"),
+            MenuCommand::LogShowInLog => t!("menu-log-show-in-log"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
             MenuCommand::LogCopyPatch => t!("menu-log-copy-patch"),
             MenuCommand::LogCompareWithLocal => t!("menu-log-compare-with-local"),
@@ -812,6 +818,9 @@ impl MenuCommand {
             MenuCommand::AiProtocol(i) => {
                 (winc_config::AiProtocol::ALL.get(i)).map_or("", |&choice| choice.name())
             }
+            MenuCommand::LogPlacement(i) => winc_config::LogPlacement::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::log_placement_label(choice)),
             MenuCommand::SearchStyle(i) => winc_config::SearchStyle::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::search_style_label(choice)),
@@ -1044,6 +1053,8 @@ pub enum MenuTarget {
     PullMode,
     /// 设置的 AI 页中的「接口协议」。
     AiProtocol,
+    /// 设置页的「日志位置」。
+    LogPlacement,
     /// 设置的编辑器页中的「拖入目录」。
     DropFolder,
     /// 「在文件中查找」设置的选项菜单。
@@ -1134,6 +1145,8 @@ pub enum MenuTarget {
     LogPath,
     /// 日志里的一个提交（完整的提交号）。
     LogCommit(String),
+    /// 提交视图中提交历史里的一个提交（完整的提交号）。
+    HistoryCommit(String),
     /// 日志详情（或比较）里改动的一个文件：文件列表里的下标和文件的路径。
     LogFile(usize, PathBuf),
     /// 终端标签栏上的一个标签（编号）。
