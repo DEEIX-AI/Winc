@@ -132,6 +132,10 @@ pub struct TableView {
     pub card_scroll: f32,
     /// 当前格的卡片是否已按 Esc 收起；切换到另一格时重新显示。
     pub card_closed: bool,
+    /// 底部工作表标签栏的横向滚动位置（逻辑像素）。
+    pub bar_scroll: f32,
+    /// 当前工作表的标签是否已滚入标签栏的可见范围。
+    pub bar_revealed: bool,
 }
 
 impl TableView {
@@ -145,6 +149,8 @@ impl TableView {
             selection: ((0, 0), (0, 0)),
             card_scroll: 0.0,
             card_closed: false,
+            bar_scroll: 0.0,
+            bar_revealed: false,
         })
     }
 
