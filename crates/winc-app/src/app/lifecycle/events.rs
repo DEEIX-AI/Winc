@@ -519,6 +519,7 @@ impl App {
             | UserEvent::FolderListed
             | UserEvent::WatcherStarted
             | UserEvent::FormatPlanned
+            | UserEvent::ToolsPlanned
             | UserEvent::FileWorked
             | UserEvent::GitMergeSides
             | UserEvent::GitLog

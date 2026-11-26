@@ -312,8 +312,10 @@ pub enum UserEvent {
     RemoteShells,
     /// 后台的文件操作（新建、改名、移动、删除）已完成。
     FileWorked,
-    /// 后台为远端文件的格式化选好了工具。
+    /// 后台为一次格式化选好了工具。
     FormatPlanned,
+    /// 后台为设置的格式化页算出了工具选择。
+    ToolsPlanned,
     /// 连接远端主机的 `ssh` 发来了输入请求。
     RemoteQuestion,
     /// 后台到远端主机的连接到达了新的阶段。
@@ -1248,6 +1250,7 @@ impl App {
             UserEvent::FolderListed => self.poll_folder_levels(),
             UserEvent::WatcherStarted => self.poll_watchers(),
             UserEvent::FormatPlanned => self.poll_formatting(),
+            UserEvent::ToolsPlanned => self.poll_tool_plans(),
             UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
