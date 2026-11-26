@@ -213,6 +213,9 @@ pub(crate) struct TerminalPanel {
     /// `want` 里各个拆分出的终端要加进的标签（前台终端的编号），和 `want` 一一对应；`None` 或
     /// 数量不足的部分各成一个标签。
     pub want_into: Vec<Option<u16>>,
+    /// `want` 里各标签建好以后移到编辑区的哪个位置、按多大启动（在编辑区新建的终端），和 `want`
+    /// 一一对应；`None` 或数量不足的部分留在面板。
+    want_editor: Vec<Option<(crate::app::workspace::panes::TabDrop, Size)>>,
     /// `want` 里各标签的名字（恢复现场、重新启动时带上用户起的名字），和 `want` 一一对应；
     /// 数量不足的部分视为没有名字。
     want_names: Vec<String>,
@@ -572,6 +575,7 @@ impl App {
         t.want_names.clear();
         t.want_shells.clear();
         t.want_into.clear();
+        t.want_editor.clear();
         t.want_active = None;
         t.active = 0;
         t.client = None;
@@ -860,6 +864,7 @@ impl App {
                 self.terminal.want_names.clear();
                 self.terminal.want_shells.clear();
                 self.terminal.want_into.clear();
+                self.terminal.want_editor.clear();
                 self.terminal.want_groups.clear();
             }
         }
@@ -868,6 +873,8 @@ impl App {
         t.want_shells.push(shell);
         t.want_into.resize(t.want.len(), None);
         t.want_into.push(t.split_into.take());
+        t.want_editor.resize(t.want.len(), None);
+        t.want_editor.push(None);
         t.want_groups.resize(t.want.len(), t.group_at);
         t.want_groups.push(t.group_at);
         t.want.push(cwd);

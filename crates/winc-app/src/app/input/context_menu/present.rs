@@ -806,6 +806,20 @@ impl App {
                     MenuEntry::Item(MenuCommand::RunEdit, true),
                 ])
                 .collect(),
+            MenuTarget::NewTab => {
+                let mut entries = vec![
+                    MenuEntry::Item(MenuCommand::NewUntitled, true),
+                    MenuEntry::Item(MenuCommand::NewEditorTerminal, true),
+                ];
+                // 能选的 shell 不止一个时在下面列出，选一个用它新建终端。
+                let shells = self.terminal_shell_list().len();
+                if shells > 1 {
+                    entries.push(MenuEntry::Separator);
+                    let each = (0..shells).map(MenuCommand::NewEditorTerminalShell);
+                    entries.extend(each.map(|command| MenuEntry::Item(command, true)));
+                }
+                entries
+            }
             MenuTarget::TerminalShells => (0..self.terminal_shell_list().len())
                 .map(|i| MenuEntry::Item(MenuCommand::NewTerminalShell(i), true))
                 .collect(),

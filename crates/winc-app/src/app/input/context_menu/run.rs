@@ -500,6 +500,17 @@ impl App {
                 MenuCommand::RunEdit => self.edit_run_configs(),
                 _ => {}
             },
+            MenuTarget::NewTab => match command {
+                MenuCommand::NewUntitled => self.new_file(),
+                MenuCommand::NewEditorTerminal => self.new_editor_terminal(None),
+                MenuCommand::NewEditorTerminalShell(i) => {
+                    let shell = self.terminal_shell_list().into_iter().nth(i);
+                    if let Some(shell) = shell {
+                        self.new_editor_terminal(Some(shell.command));
+                    }
+                }
+                _ => {}
+            },
             MenuTarget::TerminalShells => {
                 if let MenuCommand::NewTerminalShell(i) = command {
                     self.new_terminal_with_shell(i);

@@ -86,6 +86,8 @@ pub enum MenuButton {
     TreeMore,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。
     TabList,
+    /// 编辑区有终端时标签栏的「+」：新建文件或终端。
+    NewTab,
     /// 终端面板标签栏上的运行配置名。
     RunConfigs,
     /// 终端面板标签栏上「+」右边选 shell 的按钮。
@@ -548,6 +550,13 @@ pub enum MenuCommand {
     /// 把终端面板停靠到另一边。
     TerminalDock,
     NewTerminal,
+    /// 标签栏「+」菜单的「新建文件」：在当前窗格新建未命名文件。
+    NewUntitled,
+    /// 标签栏「+」菜单的「新建终端」：在当前窗格新建终端，使用默认 shell。
+    NewEditorTerminal,
+    /// 标签栏「+」菜单中的一个 shell（`App::terminal_shell_list` 中的序号）：用它在当前窗格
+    /// 新建终端。
+    NewEditorTerminalShell(usize),
     /// 终端：拆分标签，新终端在当前终端的目录里启动。
     SplitTerminal,
     /// 终端：向右分栏（面板在下方时）。
@@ -657,6 +666,7 @@ impl MenuCommand {
             | MenuCommand::LatexProblem(_)
             | MenuCommand::RunSelect(_)
             | MenuCommand::NewTerminalShell(_)
+            | MenuCommand::NewEditorTerminalShell(_)
             | MenuCommand::DefaultShell(Some(_))
             | MenuCommand::Zoom(_)
             | MenuCommand::TerminalDock
@@ -767,6 +777,8 @@ impl MenuCommand {
             MenuCommand::TerminalClear => t!("menu-terminal-clear"),
             MenuCommand::TerminalMaximize => t!("menu-terminal-maximize"),
             MenuCommand::NewTerminal => t!("cmd-new-terminal"),
+            MenuCommand::NewUntitled => t!("cmd-new-file"),
+            MenuCommand::NewEditorTerminal => t!("cmd-new-terminal"),
             MenuCommand::SplitTerminal => t!("cmd-split-terminal"),
             MenuCommand::MoveTerminalRight => t!("menu-terminal-move-right"),
             MenuCommand::MoveTerminalDown => t!("menu-terminal-move-down"),
@@ -969,6 +981,8 @@ impl MenuCommand {
             MenuCommand::TerminalMaximize => Action::MaximizeTerminal,
             MenuCommand::TerminalDock => Action::ToggleTerminalPosition,
             MenuCommand::NewTerminal => Action::NewTerminal,
+            MenuCommand::NewUntitled => Action::NewFile,
+            MenuCommand::NewEditorTerminal => Action::NewEditorTerminal,
             MenuCommand::SplitTerminal => Action::SplitTerminal,
             MenuCommand::MoveTerminalRight | MenuCommand::MoveTerminalDown => {
                 Action::MoveTerminalToGroup
@@ -1131,6 +1145,8 @@ pub enum MenuTarget {
     TreeTools,
     /// 标签栏最右端「⌄」弹出的标签列表。
     TabList,
+    /// 编辑区有终端时标签栏的「+」弹出的菜单：新建文件、新建终端。
+    NewTab,
     /// LaTeX 预览右上角的错误数弹出的错误列表。
     LatexProblems,
     /// 终端面板标签栏上的运行配置列表。

@@ -325,6 +325,9 @@ impl TerminalPanel {
             if i < self.want_into.len() {
                 self.want_into.remove(i);
             }
+            if i < self.want_editor.len() {
+                self.want_editor.remove(i);
+            }
             removed = true;
         }
         if removed {
