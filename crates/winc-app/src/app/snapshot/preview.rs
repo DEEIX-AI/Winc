@@ -1038,7 +1038,7 @@ fn sample_pdf(count: usize) -> Vec<u8> {
 /// 与 [`sample_pdf`] 相同，另带目录：`outline` 的各项为标题、层级（顶层为 0）、指向的页
 /// （从 0 起）和页内的高度（页面坐标，792 为上沿）。
 #[cfg(any(target_os = "macos", windows))]
-fn outlined_pdf(count: usize, outline: &[(&str, usize, usize, u32)]) -> Vec<u8> {
+pub(super) fn outlined_pdf(count: usize, outline: &[(&str, usize, usize, u32)]) -> Vec<u8> {
     let mut objects: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
         format!(
