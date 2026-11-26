@@ -29,6 +29,11 @@ pub(crate) mod fontconfig {
         Vec::new()
     }
 
+    /// 返回通用字族 `pattern` 的回退顺序；此平台总是返回空列表。
+    pub(crate) fn chain(_pattern: &str) -> Vec<FontFile> {
+        Vec::new()
+    }
+
     /// 返回 fontconfig 列出的全部字体文件；此平台总是返回 `None`。
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub(crate) fn files() -> Option<Vec<PathBuf>> {

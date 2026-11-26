@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use ::fontconfig::{
     FC_FAMILY, FC_SLANT, FC_SLANT_ITALIC, FC_WEIGHT, FC_WEIGHT_BOLD, Fontconfig, Pattern,
-    UnicodeCoverage, list_fonts,
+    list_fonts,
 };
 
 use super::font_path::FontFile;
@@ -29,6 +29,13 @@ pub(super) struct Match {
 ///
 /// 取自调参：系统里没有合适的字体时不逐个打开全部字体。
 const SORTED_FONTS: usize = 64;
+
+/// 通用字族的回退顺序（[`chain`]）中最多取的字体数（个），含最佳匹配。
+///
+/// 用户为通用字族配置的字体一般只有几个，发行版再追加几个覆盖各种文字的字体。回退顺序中的字体
+/// 在主字体缺字时才逐个打开，限制个数使一个各字体都没有的字最多多打开这么多文件；仍缺的字由
+/// 后备字体（中文、emoji）补上。
+const CHAIN_FONTS: usize = 8;
 
 /// 等待 [`sorted`] 查询结果的最长时间（2 秒）。
 ///
@@ -73,7 +80,8 @@ pub(super) fn best(pattern: &str) -> Option<Match> {
     Match::from_pattern(&raw::font_match(config, &mut pattern)?)
 }
 
-/// 返回 fontconfig 为 `pattern` 排序的字体，最匹配的在前，最多 [`SORTED_FONTS`] 个。
+/// 返回 fontconfig 为 `pattern` 排序的字体，最匹配的在前，最多 [`SORTED_FONTS`] 个；只保留能显示
+/// 前面的字体所缺字符的字体（见 [`covering`]）。
 ///
 /// 查询在另一个线程中进行，最多等待 [`SORT_TIMEOUT`]，超时返回空列表。
 pub(super) fn sorted(pattern: &str) -> Vec<FontFile> {
@@ -86,19 +94,28 @@ pub(super) fn sorted(pattern: &str) -> Vec<FontFile> {
 }
 
 fn sorted_files(pattern: &str) -> Vec<FontFile> {
+    covering(pattern, SORTED_FONTS)
+}
+
+/// 返回通用字族 `pattern`（模式写法，如 `monospace:lang=zh-cn`）的回退顺序：第一个是最佳匹配，
+/// 其后是用户和发行版为该字族配置的其余字体，最多 [`CHAIN_FONTS`] 个（见 [`covering`]）。
+/// fontconfig 不可用或没有匹配时返回空列表。
+///
+/// 主字体缺字时按这个顺序逐个尝试，用户在 fontconfig 中为该字族配置的字体因此都会用到。
+pub(super) fn chain(pattern: &str) -> Vec<FontFile> {
+    covering(pattern, CHAIN_FONTS)
+}
+
+/// 返回 fontconfig 为 `pattern` 排序的前 `limit` 个字体，只保留能显示前面的字体所缺字符的字体
+/// （`FcFontSort` 的 trim）。
+fn covering(pattern: &str, limit: usize) -> Vec<FontFile> {
     let Some(config) = current() else {
         return Vec::new();
     };
     let Some(mut pattern) = raw::parse(config, pattern) else {
         return Vec::new();
     };
-    let Ok(set) = pattern.sort_fonts(UnicodeCoverage::NoTrim) else {
-        return Vec::new();
-    };
-    set.iter()
-        .take(SORTED_FONTS)
-        .filter_map(|pattern| raw::file(&pattern))
-        .collect()
+    raw::sort(config, &mut pattern, limit)
 }
 
 /// 返回 fontconfig 列出的全部字体文件，已排序、去重；fontconfig 不可用或无法列出时返回 `None`。
@@ -286,6 +303,61 @@ mod raw {
         let raw = NonNull::new(raw)?;
         // SAFETY: `FcFontMatch` 返回新建的模式，调用方持有它的一次引用，之后不再使用 `raw`。
         Some(unsafe { adopt(config, raw) })
+    }
+
+    /// 对 `pattern` 应用配置替换和默认替换，返回 fontconfig 排序的前 `limit` 个字体，只保留能
+    /// 显示前面的字体所缺字符的字体。
+    ///
+    /// 安全接口的 `Pattern::sort_fonts` 把 `UnicodeCoverage` 的取值直接当作 `FcBool` 传入，
+    /// `Trim` 为假、`NoTrim` 为真，与名字相反，所以在这里调用 `FcFontSort`。
+    pub(super) fn sort(
+        config: &Fontconfig,
+        pattern: &mut Pattern<'_>,
+        limit: usize,
+    ) -> Vec<FontFile> {
+        if LIB_RESULT.is_err() {
+            return Vec::new();
+        }
+        if pattern.config_substitute().is_err() {
+            return Vec::new();
+        }
+        pattern.default_substitute();
+        let mut result = sys::FcResultNoMatch;
+        // SAFETY: libfontconfig 已加载，`pattern` 是有效的模式；配置为空指针表示当前配置，不需要
+        // 合并的字符集合传空指针，`result` 是可写的局部变量。返回值判空后才使用。
+        let set = unsafe {
+            (LIB.FcFontSort)(
+                ptr::null_mut(),
+                pattern.as_mut_ptr(),
+                1,
+                ptr::null_mut(),
+                &mut result,
+            )
+        };
+        let Some(set) = NonNull::new(set) else {
+            return Vec::new();
+        };
+        // SAFETY: `FcFontSort` 返回新建的字体集合，`fonts` 指向 `nfont` 个有效的模式，集合在下面
+        // 销毁之前一直有效。
+        let fonts = unsafe {
+            let set = set.as_ref();
+            let count = usize::try_from(set.nfont).unwrap_or(0);
+            match set.fonts.is_null() {
+                true => &[][..],
+                false => std::slice::from_raw_parts(set.fonts, count),
+            }
+        };
+        let files = (fonts.iter().take(limit))
+            .filter_map(|&raw| {
+                // SAFETY: `raw` 是集合中的有效模式；`from_pattern` 为它增加一次引用，`Pattern`
+                // 丢弃时释放这次引用，集合仍持有原来的引用。
+                let pattern = unsafe { Pattern::from_pattern(config, raw) };
+                file(&pattern)
+            })
+            .collect();
+        // SAFETY: 集合由 `FcFontSort` 新建、只在这里销毁一次，之后不再使用 `fonts`。
+        unsafe { (LIB.FcFontSetDestroy)(set.as_ptr()) };
+        files
     }
 
     /// 把 C 函数返回的新模式交给 [`Pattern`] 管理，返回的 `Pattern` 恰好持有一次引用。
