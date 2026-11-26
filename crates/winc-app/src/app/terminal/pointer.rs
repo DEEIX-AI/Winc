@@ -74,7 +74,8 @@ impl App {
     /// 窗口坐标对应的选区位置。
     ///
     /// `between` 为真时取两格之间的那条缝（按字选时用，鼠标过了一格的
-    /// 一半才算选上它），否则取所在的那一格。网格下面没有内容的地方算最后一行；吸顶的命令行
+    /// 一半才算选上它），并避开宽字符的中间：一个汉字要么整字选中，要么不选。
+    /// 否则取所在的那一格。网格下面没有内容的地方算最后一行；吸顶的命令行
     /// 盖着的那一行看不见，算它下面一行。
     pub(super) fn terminal_point(&self, x: f32, y: f32, between: bool) -> Option<Point> {
         let tab = self.terminal.tab()?;
@@ -93,10 +94,13 @@ impl App {
         let col = (col.max(0.0) as usize).min(usize::from(tab.size.cols));
         let last = tab.display_len().checked_sub(1)?;
         let row = tab.row_at(self.terminal_display_row(y).min(last))?;
-        Some(Point {
-            line: row.line(tab),
-            col,
-        })
+        let line = row.line(tab);
+        let col = if between {
+            tab.char_boundary(line, col, cells)
+        } else {
+            col
+        };
+        Some(Point { line, col })
     }
 
     /// 窗口坐标落在命令块的哪个可以点的地方：吸顶的命令行、色带（网格左边）、折起的那一行。

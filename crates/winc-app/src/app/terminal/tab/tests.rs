@@ -82,6 +82,24 @@ fn selections_expand_by_word_and_line_and_copy_across_rows() {
 }
 
 #[test]
+fn selection_edges_never_split_a_wide_character() {
+    let tab = tab_with(&["a中文b"], &[]);
+    let at = |col, frac| tab.char_boundary(100, col, frac as f32);
+    // 「中」占第 1、2 格，「文」占第 3、4 格：边界落在字中间时取近的那条边。
+    assert_eq!(at(2, 1.6), 1);
+    assert_eq!(at(2, 2.4), 3);
+    assert_eq!(at(4, 3.6), 3);
+    assert_eq!(at(4, 4.4), 5);
+    // 边界本来就在字的边上、落在窄字符里或超出这一行：不变。
+    assert_eq!(at(1, 0.6), 1);
+    assert_eq!(at(3, 2.6), 3);
+    assert_eq!(at(6, 5.6), 6);
+    assert_eq!(at(0, 0.0), 0);
+    // 行还没取回来：原样返回。
+    assert_eq!(tab.char_boundary(99, 2, 1.6), 2);
+}
+
+#[test]
 fn soft_wrapped_rows_copy_as_one_line() {
     let mut tab = tab_with(&["abcde", "fg"], &[]);
     tab.rows[0].wrapped = true;

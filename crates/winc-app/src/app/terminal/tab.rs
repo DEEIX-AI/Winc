@@ -988,6 +988,30 @@ impl TermTab {
         (start < end).then_some((start, end))
     }
 
+    /// 把选区的一端 `col` 吸附到整字的边界：落在占两格的字的中间时，按鼠标所在的格
+    /// `at`（带小数）取近的那条边——左半边取字的起点，右半边取终点，不选半个字。
+    ///
+    /// 行还没取回来时原样返回。
+    pub fn char_boundary(&self, line: u64, col: usize, at: f32) -> usize {
+        let Some(row) = self.line(line) else {
+            return col;
+        };
+        let mut start = 0;
+        for (_, w) in cells(&row.text) {
+            if w == 0 {
+                continue;
+            }
+            if col > start && col < start + w {
+                return if at < col as f32 { start } else { start + w };
+            }
+            start += w;
+            if start > col {
+                break;
+            }
+        }
+        col
+    }
+
     /// 选中的文字：软换行的行接起来不加换行，其余行去掉行尾空格、用换行分开。
     ///
     /// 没有选区时返回 `Ok(None)`。
