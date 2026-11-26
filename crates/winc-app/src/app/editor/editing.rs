@@ -500,8 +500,8 @@ impl App {
 
     /// 复制选区（`cut` 为 `true` 时剪切）；没有选区时操作光标所在的整行。
     pub(in crate::app) fn copy(&mut self, cut: bool) {
-        // 诊断气泡里有选中的文字：复制它（气泡只读，剪切也只复制）。
-        if !cut && let Some(text) = self.hint_selected_text() {
+        // 诊断气泡里有选中的文字：复制它（气泡只读，剪切也只复制，不落到编辑区）。
+        if let Some(text) = self.hint_selected_text() {
             self.set_clipboard(text, false);
             self.flash(t!("editor-selection-copied"));
             return;

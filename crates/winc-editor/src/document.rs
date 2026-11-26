@@ -33,7 +33,7 @@ use crate::navigation::bookmarks::Bookmarks;
 use content::Content;
 use editorconfig::FileConfig;
 pub use edits::ByteEdit;
-use edits::{EditLog, EDIT_LOG};
+use edits::{EDIT_LOG, EditLog};
 use encoding::{self as charset, Encoding, UTF8_BOM, utf16_text, utf16_unmarked};
 use large::LargeText;
 use winc_preview::image::Picture;

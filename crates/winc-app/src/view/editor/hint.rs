@@ -75,8 +75,9 @@ pub(in crate::view) fn wrap_message(
                     cut -= 1;
                 }
                 let cut = cut.max(1);
-                lines.push(rest.chars().take(cut).collect());
-                rest = rest.chars().skip(cut).collect::<String>().leak();
+                let mut chars = rest.chars();
+                lines.push(chars.by_ref().take(cut).collect());
+                rest = chars.as_str();
             }
             line = rest.to_owned();
         }

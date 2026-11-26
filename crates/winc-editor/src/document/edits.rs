@@ -10,7 +10,7 @@ use std::ops::Range;
 /// 改动日志保留的最近改动条数（条，64）。
 ///
 /// 一次连续输入与随后的滚动查询通常只涉及几十次改动，64 条足以覆盖；记录更多只会增加内存开销。
-const EDIT_LOG: usize = 64;
+pub(crate) const EDIT_LOG: usize = 64;
 
 /// 一处连续改动在 UTF-8 文本中的字节范围。
 #[derive(Debug, Clone, PartialEq, Eq)]

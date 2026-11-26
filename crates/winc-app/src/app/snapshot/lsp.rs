@@ -749,6 +749,72 @@ fn the_diagnostic_bubble_text_can_be_selected_and_copied() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 气泡里有选中的文字时按剪切：气泡只读，剪切也只复制选中的字——不落到编辑区
+/// 剪切光标所在行，也不把气泡连同选区一起收走。
+#[test]
+fn cutting_with_a_bubble_selection_copies_it_and_spares_the_editor() {
+    use crate::app::lsp::HOVER_STILL;
+    use crate::app::snapshot::editor::navigation::press;
+    use crate::keymap::KeyCode;
+    use std::time::Instant;
+    let (mut app, dir) = go_app(
+        "lsp-hint-cut",
+        "package main\n\nfunc main() {\n\tx := 1\n}\n",
+    );
+    let doc = app.editor.active().unwrap();
+    let line_start = doc.text().line_start(3);
+    let id = doc.id;
+    let text = doc.text().substring(0, doc.text().end_pos());
+    let revision = doc.revision;
+    app.editor.active_mut().unwrap().selection = Selection::point(line_start);
+    app.diagnostics.replace(
+        id,
+        vec![Problem {
+            start: line_start,
+            end: line_start + 1,
+            severity: Severity::Error,
+            message: "UNUSED".into(),
+        }],
+    );
+    paint(&mut app);
+    let caret = app.ime.cursor.expect("光标在屏幕上");
+    app.pointer.cursor_inside = true;
+    app.pointer.mouse = (caret.x + 2.0, caret.y + 2.0);
+    let t0 = Instant::now();
+    app.track_diagnostic_hint(t0);
+    app.track_diagnostic_hint(t0 + HOVER_STILL);
+    paint(&mut app);
+    let line = app.hits.hint_lines.first().cloned().expect("气泡里有文字");
+    let y = line.row.y + line.row.h / 2.0;
+    let from = line.x + 1.0;
+    let to = line.edges[1] + (line.edges[2] - line.edges[1]) * 0.25;
+    app.pointer.mouse = (from, y);
+    app.on_mouse_down(winit::event::MouseButton::Left);
+    app.pointer.mouse = (to, y);
+    app.on_mouse_move(to, y);
+    app.on_mouse_up(winit::event::MouseButton::Left);
+    assert_eq!(app.hint_selected_text().as_deref(), Some("UN"), "拖选的字");
+    // 按剪切（⌘X / Ctrl+X）：编辑区一根手指都不许动。
+    press(&mut app, &["cmd"], KeyCode::Char('x'));
+    assert_eq!(
+        app.clipboard.copied.as_deref(),
+        Some("UN"),
+        "剪切也只复制气泡里选中的字"
+    );
+    let doc = app.editor.active().unwrap();
+    assert_eq!(
+        doc.text().substring(0, doc.text().end_pos()),
+        text,
+        "编辑区的文字一根手指都不许动"
+    );
+    assert_eq!(doc.revision, revision, "编辑区没有发生改动");
+    assert!(
+        app.jumps.name_hint.is_some(),
+        "剪切键不把气泡连同选区一起收走"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 气泡里文字的上下留白足够，行高也比原先的 17 像素宽松（用户反馈框太小、上下边距太挤）。
 #[test]
 fn the_diagnostic_bubble_has_roomy_vertical_padding() {

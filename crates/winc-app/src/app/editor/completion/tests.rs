@@ -519,3 +519,65 @@ fn scrolling_clamps_to_the_last_page() {
     c.select(20, 8);
     assert_eq!(c.first(), 13);
 }
+
+/// 列表显示后继续输入再接受：接受用的上下文应是当前的（光标与版本随输入更新），
+/// 否则替换范围停在请求时的旧光标上，已输入的尾巴残留在插入文本之后。
+#[test]
+fn accepting_after_typing_takes_the_current_context() {
+    let mut c = Completion::default();
+    let now = Instant::now();
+    let ctx = trigger(&mut c, now);
+    let request = c.tick(now + DELAY).unwrap();
+    c.sent(7, request);
+    c.response(7, Some(&ctx), vec![item("Field")]);
+    // 继续输入：词从 fie 到 fiel。
+    let narrowed = Context {
+        revision: 4,
+        caret: 4,
+        prefix: "fiel".into(),
+        ..ctx
+    };
+    c.observe(Some(narrowed), now + Duration::from_millis(200));
+    assert!(c.shown());
+    // 接受：上下文应是当前的（光标在 4），而不是请求时的 3。
+    let (_, context) = c.take_selected().expect("有选中项");
+    assert_eq!(context.caret, 4, "接受时应按当前光标替换");
+    assert_eq!(context.revision, 4);
+}
+
+/// 有 `textEdit` 的候选在继续输入后接受：终点按当前光标取，不按请求时（文本已变旧）的
+/// 范围——否则已输入的尾巴残留在插入文本之后。
+#[test]
+fn a_text_edit_after_typing_ends_at_the_caret() {
+    use winc_lsp::message::{Position, Range, TextEdit};
+    let mut doc = Document::from_text(DocumentId(1), "r.fil");
+    doc.selection = winc_core::Selection::point(5);
+    let context = Completion::context(&doc).expect("有上下文");
+    assert_eq!(context.prefix, "fil");
+    let edited = CompletionItem {
+        kind: Some(5),
+        text_edit: Some(TextEdit {
+            range: Range {
+                // 请求发出时（r.fi）服务器给的范围，只到 4。
+                start: Position {
+                    line: 0,
+                    character: 2,
+                },
+                end: Position {
+                    line: 0,
+                    character: 4,
+                },
+            },
+            new_text: "Field".into(),
+        }),
+        ..item("Field")
+    };
+    let edit = edit_for(&doc, &context, &edited);
+    assert_eq!((edit.start, edit.end), (2, 5), "终点应到当前光标");
+    apply_edit(&mut doc, &edit);
+    assert_eq!(
+        doc.text().substring(0, doc.text().end_pos()),
+        "r.Field",
+        "整段替换，尾巴不残留"
+    );
+}

@@ -81,13 +81,21 @@ pub(in crate::app) enum SyncAction {
 /// 比较已同步的集合与当前打开的文档，返回本帧要发的动作。
 ///
 /// 先关闭、再打开、最后发变更：关闭的文档不再占着服务器内存，新文档的全文先到，之后才是增量。
+/// 另存为换路径（同一文档、新 URI）时按「旧 URI 关闭、新 URI 全文重开」处理——didChange 只
+/// 适用于服务器已按同一 URI 打开过的文档。
 pub(in crate::app) fn sync_actions(
     synced: &HashMap<u64, Synced>,
     docs: &[SyncDoc],
 ) -> Vec<SyncAction> {
     let mut actions = Vec::new();
     for (id, state) in synced {
-        if !docs.iter().any(|d| d.doc.0 == *id) {
+        let Some(doc) = docs.iter().find(|d| d.doc.0 == *id) else {
+            actions.push(SyncAction::Close {
+                uri: state.uri.clone(),
+            });
+            continue;
+        };
+        if state.uri != doc.uri {
             actions.push(SyncAction::Close {
                 uri: state.uri.clone(),
             });
@@ -95,18 +103,28 @@ pub(in crate::app) fn sync_actions(
     }
     actions.extend(
         docs.iter()
-            .filter(|doc| !synced.contains_key(&doc.doc.0))
+            .filter(|doc| {
+                synced
+                    .get(&doc.doc.0)
+                    .is_none_or(|state| state.uri != doc.uri)
+            })
             .cloned()
             .map(SyncAction::Open),
     );
     actions.extend(docs.iter().filter_map(|doc| {
         let state = synced.get(&doc.doc.0)?;
-        (state.revision != doc.revision).then(|| SyncAction::Change {
+        (state.revision != doc.revision && state.uri == doc.uri).then(|| SyncAction::Change {
             doc: doc.clone(),
             previous: state.revision,
         })
     }));
     actions
+}
+
+/// 单服务器窗口本帧要同步的语言：已有服务器（运行中、启动中或不可用会话）按它的语言
+/// 同步，绝不把另一种语言的文档喂给它；还没有服务器时以第一份文档的语言为准。
+pub(in crate::app) fn tracked_language(server: Option<&str>, first: &str) -> String {
+    server.unwrap_or(first).to_owned()
 }
 
 /// 服务器可执行文件名：Windows 带 `.exe`。
@@ -397,6 +415,11 @@ impl LspState {
     /// 服务器是否在运行。
     pub(in crate::app) fn running(&self) -> bool {
         self.connection.is_some()
+    }
+
+    /// 已启动（运行中、启动中或不可用会话）的服务器的语言；还没有时为 `None`。
+    pub(in crate::app) fn language(&self) -> Option<&str> {
+        self.language.as_deref()
     }
 
     /// 是否正在后台启动。
@@ -751,9 +774,10 @@ impl App {
         if self.lsp.closing() {
             return;
         }
-        // 首期一个窗口只跑一个服务器：以第一份文档的语言为准，其他语言的文档不启动也不
-        // 同步（多服务器留给后续变更）。
-        let language = docs[0].1.clone();
+        // 首期一个窗口只跑一个服务器：以正在运行（或正要启动）的服务器的语言为准，只同步
+        // 这一语言的文档——服务器已按另一种语言运行时，新语言的文档不启动新的服务器，
+        // 也不混着喂（多服务器与换语言重启动留给后续变更）。
+        let language = tracked_language(self.lsp.language(), &docs[0].1);
         // 还没启动：按配置找可执行文件，找不到就提示安装并放弃本次会话。
         if !self.lsp.running() && !self.lsp.starting() && self.lsp.unavailable().is_none() {
             let Some(command) = self.config.language_server(&language) else {
@@ -1214,6 +1238,42 @@ cd",
             uri: "u1".into(),
         }];
         assert!(sync_actions(&synced, &unchanged).is_empty());
+    }
+
+    /// 另存为换路径（同一文档、新 URI）：旧 URI 先关、新 URI 按新文档全文重开，不发增量
+    /// ——didChange 只适用于服务器已按同一 URI 打开过的文档。
+    #[test]
+    fn save_as_reopens_the_document_under_the_new_uri() {
+        let mut synced = HashMap::new();
+        synced.insert(
+            1,
+            Synced {
+                uri: "u1".into(),
+                revision: 5,
+            },
+        );
+        let moved = [SyncDoc {
+            doc: DocumentId(1),
+            revision: 6,
+            uri: "u2".into(),
+        }];
+        assert_eq!(
+            sync_actions(&synced, &moved),
+            vec![
+                SyncAction::Close { uri: "u1".into() },
+                SyncAction::Open(moved[0].clone()),
+            ]
+        );
+    }
+
+    /// 已有服务器（运行中、启动中或不可用会话）时按服务器的语言同步，绝不把另一种语言的
+    /// 文档喂给它；还没有服务器时以第一份文档的语言为准。
+    #[test]
+    fn the_synced_language_follows_the_running_server() {
+        assert_eq!(tracked_language(Some("go"), "rust"), "go");
+        assert_eq!(tracked_language(Some("go"), "go"), "go");
+        assert_eq!(tracked_language(None, "rust"), "rust");
+        assert_eq!(tracked_language(None, "go"), "go");
     }
 
     /// 只同步本机、有对应服务器的文本文档：没有路径的标签、没有服务器的语言都不算。

@@ -183,6 +183,13 @@ fn diagnostic_messages_wrap_into_bounded_lines() {
     let lines = hint::wrap_message("aaaaaaaaaaaa", measure, 40.0, 4);
     assert_eq!(lines, vec!["aaaa", "aaaa", "aaaa"]);
 
+    // 无空格的多字节文本（如中文消息、长标识符）同样硬切，且切点总在字符边界上。
+    let lines = hint::wrap_message("语法错误：未定义的标识符reader", measure, 40.0, 8);
+    assert_eq!(
+        lines,
+        vec!["语法错误", "：未定义", "的标识符", "read", "er"]
+    );
+
     // 超出行数：末行加省略号。
     let lines = hint::wrap_message("aaaa bbbb cccc dddd eeee", measure, 40.0, 2);
     assert_eq!(lines.len(), 2);

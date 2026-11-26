@@ -139,7 +139,11 @@ impl Completion {
                 shown.filter(&context.prefix);
                 if shown.rows.is_empty() {
                     self.shown = None;
+                    return;
                 }
+                // 接受时按当前光标替换：继续输入后请求时的光标已过时，尾巴会残留在
+                // 插入文本之后。
+                shown.context = context;
                 return;
             }
             self.shown = None;
@@ -333,9 +337,11 @@ pub(crate) struct Edit {
 /// 客户端声明 snippet 支持时才回带括号的插入文本，这里不解析 snippet，按种类补（与接受
 /// gopls 候选时 `VSCode` 的可见行为一致）；文本已带 `(` 的不重复加。
 pub(crate) fn edit_for(doc: &Document, context: &Context, item: &CompletionItem) -> Edit {
+    // 有 `textEdit` 时起点按它；终点按当前光标——继续输入后服务器按请求时文本给的终点
+    // 已过时，会留下尾巴（响应到达后立刻接受、没有继续输入时两者一致）。
     let mut edit = if let Some(edit) = &item.text_edit {
         let start = char_offset(doc, edit.range.start);
-        let end = char_offset(doc, edit.range.end).max(start);
+        let end = context.caret.max(start);
         Edit {
             start,
             end,
