@@ -30,7 +30,7 @@ fn terminal_app(name: &str) -> (App, PathBuf, DocumentId) {
 fn pasted_image_popover_only_appears_over_a_matching_marker() {
     let (mut app, dir, _) = terminal_app("terminal-paste-preview");
     let tab = app.terminal.tab_mut().unwrap();
-    for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
+    for rgba in [[21, 24, 32, 255], [0, 0, 255, 255]] {
         tab.paste_preview.queue(
             winc_preview::image::Pixels {
                 width: 2,
@@ -57,7 +57,7 @@ fn pasted_image_popover_only_appears_over_a_matching_marker() {
     app.pointer.cursor_inside = true;
     app.on_mouse_move(grid.x + cell * 4.5, y);
     paint(&mut app);
-    assert!(near(pixel(&app, point), Color::hex(0xff0000)));
+    assert!(near(pixel(&app, point), Color::hex(0x151820)));
     if screenshots {
         shoot(&mut app, "terminal-image-hover");
     }

@@ -465,29 +465,33 @@ pub(super) fn draw_paste_preview(app: &App, frame: &mut Frame<'_>) {
     let view = app.layout.window;
     let radius = RADIUS_POPUP;
     let gap = 10.0;
-    let margin = gap + radius;
-    let above = anchor.y - view.y - 2.0 * margin;
-    let below = view.bottom() - anchor.bottom() - 2.0 * margin;
+    let above = anchor.y - view.y - 2.0 * gap;
+    let below = view.bottom() - anchor.bottom() - 2.0 * gap;
     let scale = (240.0 / pixels.width.max(pixels.height) as f32)
-        .min((view.w - 2.0 * margin) / pixels.width as f32)
+        .min((view.w - 2.0 * gap) / pixels.width as f32)
         .min(above.max(below) / pixels.height as f32);
     if scale <= 0.0 {
         return;
     }
     let w = (pixels.width as f32 * scale).max(1.0);
     let h = (pixels.height as f32 * scale).max(1.0);
-    let x = anchor.x.max(view.x + margin).min(view.right() - margin - w);
+    let x = anchor.x.max(view.x + gap).min(view.right() - gap - w);
     let y = if above >= h {
-        anchor.y - margin - h
+        anchor.y - gap - h
     } else {
-        anchor.bottom() + margin
+        anchor.bottom() + gap
     };
     let image = Rect::new(x, y, w, h);
-    let card = image.inset(-radius, -radius);
-    let covered = frame.covered(card, radius);
-    frame.shadow(card, radius, 16.0, 4.0, p.shadow, Some(covered));
-    frame.rounded(card, p.popup_bg, radius);
-    frame.pixels_scaled(image, pixels.width, pixels.height, &pixels.rgba, view);
+    let covered = frame.covered(image, radius);
+    frame.shadow(image, radius, 16.0, 4.0, p.shadow, Some(covered));
+    frame.pixels_scaled_rounded(
+        image,
+        pixels.width,
+        pixels.height,
+        &pixels.rgba,
+        radius,
+        view,
+    );
 }
 
 /// 命令块的颜色：成功绿、失败红、还在运行灰；还没运行（在敲命令、空回车）的不绘制。

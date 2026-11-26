@@ -509,6 +509,25 @@ fn scaled_pixels_take_the_nearest_source_pixel() {
     assert_eq!((at(1, 2), at(10, 2), at(5, 9)), (0, 0, 0));
 }
 
+#[test]
+fn rounded_pixels_fill_the_straight_edges_and_clip_the_corners() {
+    let mut renderer =
+        Renderer::offscreen(20.0, 20.0, 1.0, Color::hex(0xffffff), None, None).unwrap();
+    renderer.draw(|frame| {
+        let rect = Rect::new(4.0, 4.0, 12.0, 12.0);
+        frame.pixels_scaled_rounded(rect, 1, 1, &[0, 0, 0, 255], 5.0, frame.bounds());
+    });
+    let image = renderer.image().unwrap();
+    let pixel = |x: usize, y: usize| image.pixels[y * image.width as usize + x] & 0xff_ffff;
+    for (x, y) in [(4, 4), (15, 4), (4, 15), (15, 15)] {
+        assert_eq!(pixel(x, y), 0xffffff);
+    }
+    for (x, y) in [(9, 4), (4, 9), (15, 9), (9, 15)] {
+        assert_eq!(pixel(x, y), 0);
+    }
+    assert!((1..0xffffff).contains(&pixel(6, 4)));
+}
+
 /// 放大到数万像素宽时，远离左端的源像素边界仍落在准确的位置：
 /// 横向步进的舍入误差不累积到可见的偏移。
 #[test]

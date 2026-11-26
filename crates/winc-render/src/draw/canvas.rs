@@ -1140,16 +1140,18 @@ impl Canvas<'_> {
     }
 
     /// 把 `size`（宽，高）的非预乘 RGBA 位图 `data` 缩放到 `area` 混合到画布上，取最近的像素。
+    /// `ROUNDED` 为真时，把四角裁到半径为 `radius` 的圆弧内。
     ///
     /// # Panics
     ///
     /// `data` 的长度小于 `size` 宽高之积的 4 倍时 panic。
-    pub fn rgba_scaled(
+    pub fn rgba_scaled<const ROUNDED: bool>(
         &mut self,
         area: IRect,
         (width, height): (usize, usize),
         data: &[u8],
         opacity: u32,
+        radius: f32,
         clip: IRect,
     ) {
         let Some(v) = self.visible(area, clip) else {
@@ -1159,6 +1161,8 @@ impl Canvas<'_> {
             return;
         }
         let (w, h) = (area.width(), (area.y1 - area.y0) as usize);
+        let radius = radius.clamp(0.0, w.min(h) as f32 / 2.0);
+        let inset = radius.ceil() as i32;
         // 横向按定点数步进，避免逐像素做除法。小数部分取 32 位：步进的舍入误差逐像素累积，
         // 16 位时放大到数万像素宽的位图在右端偏移可达一个源像素以上。步长向上取整：向下取整
         // 时，位于源像素边界上的目标像素会取到前一个源像素，与竖直方向的整数除法不一致。
@@ -1168,10 +1172,19 @@ impl Canvas<'_> {
             let row = ((y - area.y0) as usize * height / h).min(height - 1);
             let line = &data[row * width * 4..(row + 1) * width * 4];
             let mut at = first;
-            for p in self.row(y, v) {
+            let corner_row = ROUNDED && (y < area.y0 + inset || y >= area.y1 - inset);
+            for (column, p) in (v.x0..v.x1).zip(self.row(y, v)) {
                 let x = ((at >> 32) as usize).min(width - 1) * 4;
                 let [r, g, b, a] = [line[x], line[x + 1], line[x + 2], line[x + 3]].map(u32::from);
-                *p = blend(*p, (a << 24) | (r << 16) | (g << 8) | b, opacity);
+                let cover = if corner_row && (column < area.x0 + inset || column >= area.x1 - inset)
+                {
+                    let distance =
+                        rounded_distance(area, radius, column as f32 + 0.5, y as f32 + 0.5);
+                    ((0.5 - distance).clamp(0.0, 1.0) * opacity as f32) as u32
+                } else {
+                    opacity
+                };
+                *p = blend(*p, (a << 24) | (r << 16) | (g << 8) | b, cover);
                 at += step;
             }
         }

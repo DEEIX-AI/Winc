@@ -212,6 +212,19 @@ impl Frame<'_> {
     /// 用于暂时显示尺寸不符的图像（例如缩放过渡期间）。超出 `clip` 的部分不绘制；`rgba` 不足
     /// `width * height * 4` 字节时不绘制。
     pub fn pixels_scaled(&mut self, rect: Rect, width: u32, height: u32, rgba: &[u8], clip: Rect) {
+        self.pixels_scaled_rounded(rect, width, height, rgba, 0.0, clip);
+    }
+
+    /// 缩放绘制 RGBA 图像，并按 `radius`（逻辑像素）裁剪四角。
+    pub fn pixels_scaled_rounded(
+        &mut self,
+        rect: Rect,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        radius: f32,
+        clip: Rect,
+    ) {
         let opacity = self.pixel_opacity();
         let size = (width as usize, height as usize);
         if opacity == 0 || rgba.len() < size.0 * size.1 * 4 {
@@ -219,7 +232,13 @@ impl Frame<'_> {
         }
         let area = rect.to_pixels(self.scale);
         let clip = clip.intersect(self.limit).to_pixels_outer(self.scale);
-        self.canvas.rgba_scaled(area, size, rgba, opacity, clip);
+        if radius > 0.0 {
+            self.canvas
+                .rgba_scaled::<true>(area, size, rgba, opacity, radius * self.scale, clip);
+        } else {
+            self.canvas
+                .rgba_scaled::<false>(area, size, rgba, opacity, 0.0, clip);
+        }
     }
 
     /// 在 `rect` 中绘制棋盘格（透明图片的底色），超出 `clip` 的部分不绘制。
