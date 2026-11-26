@@ -463,26 +463,30 @@ pub(super) fn draw_paste_preview(app: &App, frame: &mut Frame<'_>) {
     };
     let p = app.palette;
     let view = app.layout.window;
+    let radius = RADIUS_POPUP;
     let gap = 10.0;
-    let above = anchor.y - view.y - 2.0 * gap;
-    let below = view.bottom() - anchor.bottom() - 2.0 * gap;
+    let margin = gap + radius;
+    let above = anchor.y - view.y - 2.0 * margin;
+    let below = view.bottom() - anchor.bottom() - 2.0 * margin;
     let scale = (240.0 / pixels.width.max(pixels.height) as f32)
-        .min((view.w - 2.0 * gap) / pixels.width as f32)
+        .min((view.w - 2.0 * margin) / pixels.width as f32)
         .min(above.max(below) / pixels.height as f32);
     if scale <= 0.0 {
         return;
     }
     let w = (pixels.width as f32 * scale).max(1.0);
     let h = (pixels.height as f32 * scale).max(1.0);
-    let x = anchor.x.max(view.x + gap).min(view.right() - gap - w);
+    let x = anchor.x.max(view.x + margin).min(view.right() - margin - w);
     let y = if above >= h {
-        anchor.y - gap - h
+        anchor.y - margin - h
     } else {
-        anchor.bottom() + gap
+        anchor.bottom() + margin
     };
     let image = Rect::new(x, y, w, h);
-    frame.rect_clipped(image.inset(-4.0, -4.0), p.border, 4.0, view);
-    frame.rect_clipped(image.inset(-3.0, -3.0), p.editor_bg, 3.0, view);
+    let card = image.inset(-radius, -radius);
+    let covered = frame.covered(card, radius);
+    frame.shadow(card, radius, 16.0, 4.0, p.shadow, Some(covered));
+    frame.rounded(card, p.popup_bg, radius);
     frame.pixels_scaled(image, pixels.width, pixels.height, &pixels.rgba, view);
 }
 
