@@ -8,17 +8,20 @@ use winc_preview::image::{self, Pixels};
 use winc_pty::{protocol::Line, width::cells};
 use winc_render::Rect;
 
-use super::{App, Focus};
+use super::{App, Focus, TermTab};
 use crate::app::editor::clipboard::ClipImage;
 
 const MAX_IMAGES: usize = 16;
 const PASTE_TIMEOUT: Duration = Duration::from_secs(5);
 
+type Marks = BTreeMap<u32, Vec<(u64, Range<usize>)>>;
+
 #[derive(Default)]
 pub(in crate::app) struct PastePreview {
     pending: VecDeque<(Instant, Pixels)>,
     images: BTreeMap<u32, Pixels>,
-    marks: BTreeMap<u32, Vec<(u64, Range<usize>)>>,
+    marks: Marks,
+    deletion: Option<(Instant, u32)>,
 }
 
 impl PastePreview {
@@ -39,10 +42,11 @@ impl PastePreview {
         }
         let marks = markers(rows, first);
         self.pending.retain(|(at, _)| at.elapsed() < PASTE_TIMEOUT);
-        // 程序删掉附件后可能重排其余编号，剩下的编号无法再可靠地对应到旧图片。
-        if self.images.keys().any(|number| !marks.contains_key(number)) {
-            self.images.clear();
+        if self.reconcile_deletion(&marks) {
+            self.marks = marks;
+            return;
         }
+        self.images.retain(|number, _| marks.contains_key(number));
         // 编号由程序决定。已有标记移动时出现次数不变；新出现的编号才消耗待匹配的图片。
         for (&number, occurrences) in &marks {
             let old = self.marks.get(&number).map_or(0, Vec::len);
@@ -60,6 +64,64 @@ impl PastePreview {
         self.marks = marks;
     }
 
+    fn note_delete(&mut self, line: u64, col: usize, backwards: bool) {
+        let number = self.marks.iter().find_map(|(&number, occurrences)| {
+            let (row, columns) = occurrences.last()?;
+            let cell = if backwards { col.checked_sub(1)? } else { col };
+            (*row == line && columns.contains(&cell)).then_some(number)
+        });
+        self.deletion = number.map(|number| (Instant::now(), number));
+    }
+
+    /// 用删除键所在的标记区分保留原编号和重排编号的程序。
+    fn reconcile_deletion(&mut self, marks: &Marks) -> bool {
+        let Some((at, removed)) = self.deletion else {
+            return false;
+        };
+        if at.elapsed() >= PASTE_TIMEOUT {
+            self.deletion = None;
+            return false;
+        }
+        let count = |marks: &Marks| marks.values().map(Vec::len).sum::<usize>();
+        if count(&self.marks).checked_sub(1) != Some(count(marks)) {
+            return false;
+        }
+        self.deletion = None;
+
+        // 旧输出中同编号的标记可能仍在屏幕上，只移除或重排每个编号的最后一次出现。
+        let numbers = |marks: &Marks| {
+            marks
+                .iter()
+                .flat_map(|(&n, hits)| std::iter::repeat_n(n, hits.len()))
+                .collect::<Vec<_>>()
+        };
+        let mut expected = numbers(&self.marks);
+        let actual = numbers(marks);
+        let Some(index) = expected.iter().rposition(|&n| n == removed) else {
+            return false;
+        };
+        expected.remove(index);
+        if expected == actual {
+            self.images.remove(&removed);
+            return true;
+        }
+        for (&number, _) in self.images.range(removed.saturating_add(1)..) {
+            if let Some(number) = expected.iter_mut().rfind(|n| **n == number) {
+                *number -= 1;
+            }
+        }
+        expected.sort_unstable();
+        if expected != actual {
+            return false;
+        }
+        self.images.remove(&removed);
+        self.images = std::mem::take(&mut self.images)
+            .into_iter()
+            .map(|(n, pixels)| (if n > removed { n - 1 } else { n }, pixels))
+            .collect();
+        true
+    }
+
     fn at(&self, line: u64, col: usize) -> Option<(&Pixels, &Range<usize>)> {
         self.images.iter().find_map(|(number, pixels)| {
             let (row, range) = self.marks.get(number)?.last()?;
@@ -68,7 +130,7 @@ impl PastePreview {
     }
 }
 
-fn markers(rows: &[Line], first: u64) -> BTreeMap<u32, Vec<(u64, Range<usize>)>> {
+fn markers(rows: &[Line], first: u64) -> Marks {
     let mut markers = BTreeMap::<_, Vec<_>>::new();
     for (row, line) in rows.iter().enumerate() {
         let text = &line.text;
@@ -94,8 +156,24 @@ fn markers(rows: &[Line], first: u64) -> BTreeMap<u32, Vec<(u64, Range<usize>)>>
 }
 
 impl App {
-    /// 观察终端已经选择发送的图片粘贴键或空括号粘贴；转发的字节由原来的输入路径处理。
-    pub(super) fn capture_terminal_image_paste(&mut self, bytes: &[u8]) {
+    /// 观察终端发送的图片粘贴和删除按键。
+    pub(super) fn track_terminal_image_input(&mut self, bytes: &[u8]) {
+        if matches!(bytes, b"\x08" | b"\x7f" | b"\x1b[3~") {
+            if let Some(TermTab {
+                paste_preview,
+                cursor,
+                history,
+                ..
+            }) = self.terminal.tab_mut()
+            {
+                paste_preview.note_delete(
+                    history.1 + u64::from(cursor.row),
+                    usize::from(cursor.col),
+                    bytes != b"\x1b[3~",
+                );
+            }
+            return;
+        }
         if !matches!(
             bytes,
             b"\x16"
@@ -204,6 +282,53 @@ fn paste_thumbnail(image: ClipImage) -> Option<Pixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn line(text: &str) -> [Line; 1] {
+        [Line {
+            text: text.into(),
+            ..Line::default()
+        }]
+    }
+
+    fn three_images() -> PastePreview {
+        let mut preview = PastePreview::default();
+        for value in [1, 2, 3] {
+            preview.queue(
+                Pixels {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![value, 0, 0, 255],
+                },
+                &line(""),
+                10,
+            );
+        }
+        preview.observe(&line("[Image #1] [Image #2] [Image #3]"), 10);
+        preview
+    }
+
+    #[test]
+    fn removing_an_image_keeps_previews_with_unchanged_numbers() {
+        let mut preview = three_images();
+        preview.observe(&line("[Image #1] [Image #3]"), 10);
+        assert_eq!(preview.at(10, 0).unwrap().0.rgba[0], 1);
+        assert_eq!(preview.at(10, 11).unwrap().0.rgba[0], 3);
+        assert!(preview.at(10, 22).is_none());
+    }
+
+    #[test]
+    fn removing_an_image_rebinds_renumbered_previews_to_the_same_pixels() {
+        for (col, backwards, expected) in
+            [(10, true, [2, 3]), (11, false, [1, 3]), (32, true, [1, 2])]
+        {
+            let mut preview = three_images();
+            preview.note_delete(10, col, backwards);
+            preview.observe(&line("[Image #1] [Image #2]"), 10);
+            assert_eq!(preview.at(10, 0).unwrap().0.rgba[0], expected[0]);
+            assert_eq!(preview.at(10, 11).unwrap().0.rgba[0], expected[1]);
+            assert!(preview.at(10, 22).is_none());
+        }
+    }
 
     #[test]
     fn paste_thumbnail_preserves_aspect_ratio_and_limits_retained_pixels() {

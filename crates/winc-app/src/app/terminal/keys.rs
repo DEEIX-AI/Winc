@@ -31,7 +31,7 @@ impl App {
             client.send(&ToHelper::Credit { tab: tab.id });
         }
         self.request_redraw();
-        self.capture_terminal_image_paste(&bytes);
+        self.track_terminal_image_input(&bytes);
     }
 
     /// 粘贴到终端（括号粘贴见 [`input::paste`]）。
