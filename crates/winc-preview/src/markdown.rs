@@ -67,6 +67,12 @@ pub struct Markdown {
     pub leaves: Vec<LeafRange>,
     /// 原文的字节数：与当前文档的长度相比，得出解析之后又改了多少。
     pub len: usize,
+    /// 原文是否包含链接引用定义（`[id]: url`）：存在时局部重解析回退全文解析。
+    has_link_defs: bool,
+    /// 文档是否包含 `[TOC]` / `[[TOC]]` 目录占位：存在时编辑标题回退全文解析。
+    has_toc: bool,
+    /// 是否已通过 [`Markdown::with_blank_lines`] 插入块间空行段落。
+    blank_lines: bool,
 }
 
 /// 文字与原文的对照：文字中的字节偏移对应原文中的哪个字节偏移。
@@ -1244,7 +1250,7 @@ impl Builder<'_> {
                 self.ranges.push(range);
             }
         }
-        contents(&mut self.root[..main]);
+        let has_toc = toc::contents(&mut self.root[..main]);
         for (block, range) in self.root.iter_mut().zip(&self.ranges) {
             rebase(block, range.start);
         }
@@ -1295,6 +1301,9 @@ impl Builder<'_> {
             ranges: self.ranges,
             leaves,
             len: source.len(),
+            has_link_defs: incremental::has_link_ref_defs(source),
+            has_toc,
+            blank_lines: false,
         }
     }
 
@@ -1326,77 +1335,6 @@ pub fn slug(text: &str) -> String {
         })
         .flat_map(char::to_lowercase)
         .collect()
-}
-
-/// 把只有 `[TOC]`（或 `[[TOC]]`，不分大小写）的段落换成目录：按文中标题的层级嵌套的列表，每一项
-/// 链接到对应的标题（锚点见 [`slug`]）。`blocks` 是正文的顶层块，不含脚注。
-///
-/// 目录随标题生成，标题改变时所在块的内容随之改变；没有标题时保留原段落。
-fn contents(blocks: &mut [Block]) {
-    // `[[TOC]]` 解析为名字是 `toc` 的维基链接。
-    let is_marker = |block: &Block| {
-        let Block::Paragraph(inline) = block else {
-            return false;
-        };
-        let wiki = matches!(&inline.links[..], [url] if url.strip_prefix(syntax::WIKI)
-            .is_some_and(|name| name.eq_ignore_ascii_case("toc")));
-        wiki || inline.text.trim().eq_ignore_ascii_case("[toc]")
-    };
-    if !blocks.iter().any(is_marker) {
-        return;
-    }
-    let headings: Vec<(u8, String)> = blocks
-        .iter()
-        .filter_map(|block| match block {
-            Block::Heading(level, inline) if !inline.text.trim().is_empty() => {
-                Some((*level, inline.text.clone()))
-            }
-            _ => None,
-        })
-        .collect();
-    if headings.is_empty() {
-        return;
-    }
-    let list = Block::List(None, contents_items(&headings));
-    for block in blocks.iter_mut().filter(|block| is_marker(block)) {
-        *block = list.clone();
-    }
-}
-
-/// 把按先后排列的（级别，标题）排成嵌套的列表项：级别比前一项高的标题排在前一项下面。
-fn contents_items(headings: &[(u8, String)]) -> Vec<Item> {
-    let mut items = Vec::new();
-    let mut i = 0;
-    while i < headings.len() {
-        let (level, text) = &headings[i];
-        // 级别更深的后续标题都是这一项的子项。
-        let end = headings[i + 1..]
-            .iter()
-            .position(|(l, _)| l <= level)
-            .map_or(headings.len(), |k| i + 1 + k);
-        let mut inline = Inline::default();
-        inline.links.push(format!("#{}", slug(text)));
-        let link = u16::try_from(inline.links.len()).unwrap_or(u16::MAX);
-        inline.push(
-            text,
-            Style {
-                link,
-                ..Style::default()
-            },
-        );
-        let mut blocks = vec![Block::Paragraph(inline)];
-        if end > i + 1 {
-            blocks.push(Block::List(None, contents_items(&headings[i + 1..end])));
-        }
-        items.push(Item {
-            task: None,
-            task_source: 0,
-            blocks,
-            bare: false,
-        });
-        i = end;
-    }
-    items
 }
 
 /// 把 `block` 里记下的原文位置改为相对于原文第 `start` 个字节（所在顶层块的起点）；
@@ -1480,9 +1418,11 @@ pub mod format;
 pub mod from_html;
 mod front;
 mod html;
+mod incremental;
 mod mark;
 mod shrink;
 pub mod syntax;
+mod toc;
 pub(crate) use html::named_entity;
 use syntax::{link_url, options};
 pub mod math;

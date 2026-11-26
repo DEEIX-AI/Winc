@@ -151,6 +151,8 @@ pub(crate) struct MarkdownPreview {
     pub doc: Option<DocumentId>,
     /// 最近一次解析的结果。
     pub parsed: Option<Arc<Markdown>>,
+    /// 解析结果的单调递增版本号（支持就地增量更新后仍唯一标识不同解析版本）。
+    pub(crate) parse_serial: usize,
     /// LaTeX 原文各行在转换出的 Markdown 中的位置；Markdown 为 `None`。
     pub lines: Option<Arc<LineMap>>,
     /// 最新解析过的文档版本号（`revision`）。
@@ -382,6 +384,7 @@ impl Default for MarkdownPreview {
         Self {
             doc: None,
             parsed: None,
+            parse_serial: 0,
             lines: None,
             checked: None,
             pending: None,
@@ -506,6 +509,7 @@ impl MarkdownPreview {
         self.leave_book();
         self.doc = doc;
         self.parsed = None;
+        self.parse_serial = self.parse_serial.wrapping_add(1);
         self.lines = None;
         self.checked = None;
         self.pending = None;
@@ -698,7 +702,7 @@ impl App {
     /// 只在上一次解析不超过 [`INLINE_PARSE`] 时进行：输入、点击、移动光标之后的排版和按键
     /// 处理都依据当前文字的结构，不显示按上一版结构推算的中间帧。正在后台解析的旧版本作废。
     pub(crate) fn parse_markdown_inline(&mut self) -> bool {
-        if !self.markdown_live() || self.preview.markdown.cost.is_none_or(|c| c > INLINE_PARSE) {
+        if !self.markdown_live() {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -715,6 +719,26 @@ impl App {
         let Some(rope) = doc.text().rope() else {
             return false;
         };
+        // 优先尝试就地块级局部增量重解析：直接复用未改动的全部顶层块（零深拷贝），
+        // 即便整篇文档很长（全文解析耗时超过 `INLINE_PARSE`），常规输入仍可在微秒级同步完成。
+        if let (Some(prev_arc), Some(prev_rev)) = (md.parsed.as_mut(), md.checked)
+            && let Some((old_edit, new_edit)) = doc.byte_edit_since(prev_rev)
+            && Arc::make_mut(prev_arc).reparse_local_in_place(
+                old_edit,
+                new_edit,
+                rope.len_bytes(),
+                |b| rope.byte_to_line(b.min(rope.len_bytes())),
+                |r| rope.byte_slice(r).to_string(),
+            )
+        {
+            md.parse_serial = md.parse_serial.wrapping_add(1);
+            md.pending = None;
+            md.checked = Some(revision);
+            return true;
+        }
+        if md.cost.is_none_or(|c| c > INLINE_PARSE) {
+            return false;
+        }
         let started = std::time::Instant::now();
         let text = rope.to_string();
         let parsed = markdown::parse(&text).with_blank_lines(&text);
@@ -722,6 +746,7 @@ impl App {
         md.pending = None;
         md.checked = Some(revision);
         md.parsed = Some(Arc::new(parsed));
+        md.parse_serial = md.parse_serial.wrapping_add(1);
         true
     }
 
@@ -741,6 +766,7 @@ impl App {
                     md.pending = None;
                     md.checked = Some(revision);
                     md.parsed = Some(Arc::new(parsed));
+                    md.parse_serial = md.parse_serial.wrapping_add(1);
                     md.lines = lines.map(Arc::new);
                 }
                 Done::Converted(id, revision, result) => {
@@ -769,10 +795,12 @@ impl App {
                                 .collect();
                             md.failed = None;
                             md.parsed = Some(Arc::new(parsed));
+                            md.parse_serial = md.parse_serial.wrapping_add(1);
                         }
                         Err(reason) => {
                             md.failed = Some(reason);
                             md.parsed = None;
+                            md.parse_serial = md.parse_serial.wrapping_add(1);
                         }
                     }
                 }

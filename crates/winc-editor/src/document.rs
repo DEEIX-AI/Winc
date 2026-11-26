@@ -573,6 +573,9 @@ pub struct Document {
     /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行），供
     /// `Document::unchanged_lines_since` 判断哪些行没有变。
     edits: std::collections::VecDeque<(u64, usize)>,
+    /// 最近的若干次单一连续字节改动：（改动后的版本号，旧字节范围，新字节范围），供
+    /// Markdown 预览在局部编辑时执行块级增量重解析。
+    byte_edits: std::collections::VecDeque<(u64, std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// 文档的文本：`rope`，或按需读取磁盘的大文件。
     pub(crate) text: Content,
     /// 最近一次读写时磁盘文件的修改时间。
@@ -677,6 +680,7 @@ impl Document {
             windows: Mutex::new(Vec::new()),
             whole: WholeLines::default(),
             edits: std::collections::VecDeque::new(),
+            byte_edits: std::collections::VecDeque::new(),
             text,
             disk_mtime: None,
             disk_len: 0,
@@ -1338,6 +1342,18 @@ impl Document {
             return;
         }
 
+        let byte_edit = if transaction.changes.len() == 1
+            && let Some(rope) = self.text.rope()
+        {
+            let change = &transaction.changes[0];
+            let start = rope.char_to_byte(change.start.min(rope.len_chars()));
+            let old_end = (start + change.removed.len()).min(rope.len_bytes());
+            let new_end = start + change.inserted.len();
+            Some((start..old_end, start..new_end))
+        } else {
+            None
+        };
+
         transaction.apply(&mut Tracked {
             text: &mut self.text,
             folds: &mut self.folds,
@@ -1357,11 +1373,65 @@ impl Document {
                 self.history.push(transaction);
             }
             self.after_change(first);
+            if let Some((old_range, new_range)) = byte_edit {
+                self.byte_edits
+                    .push_back((self.revision, old_range, new_range));
+                if self.byte_edits.len() > EDIT_LOG {
+                    self.byte_edits.pop_front();
+                }
+            }
         }
         // 事务不含其余选区时，文本改动后其余选区随版本号变化自动失效；含其余选区时按事务恢复。
         if !extra.is_empty() {
             self.restore_extra(extra);
         }
+    }
+
+    /// 返回自版本 `revision` 以来合并后的单一连续字节改动区间 `(old_range, new_range)`；
+    /// 若版本未变、间隔超过 `EDIT_LOG` 或期间存在多处非单一改动（如多光标、撤销、磁盘重载），返回 `None`。
+    pub fn byte_edit_since(
+        &self,
+        revision: u64,
+    ) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+        let wanted = self.revision.checked_sub(revision)?;
+        if wanted == 0 {
+            return None;
+        }
+        let mut steps: Vec<&(u64, std::ops::Range<usize>, std::ops::Range<usize>)> = self
+            .byte_edits
+            .iter()
+            .rev()
+            .take_while(|(at, _, _)| *at > revision)
+            .collect();
+        if steps.len() as u64 != wanted {
+            return None;
+        }
+        steps.reverse();
+        let (_, mut old, mut new) = steps[0].clone();
+        for (_, o2, n2) in &steps[1..] {
+            let d1 = new.end as isize - old.end as isize;
+            let d2 = n2.end as isize - o2.end as isize;
+            let back_start = if o2.start <= new.start {
+                o2.start
+            } else if o2.start >= new.end {
+                usize::try_from(o2.start as isize - d1).ok()?
+            } else {
+                old.start
+            };
+            let back_end = if o2.end <= new.start {
+                o2.end
+            } else if o2.end >= new.end {
+                usize::try_from(o2.end as isize - d1).ok()?
+            } else {
+                old.end
+            };
+            let merged_start = old.start.min(back_start);
+            let merged_old_end = old.end.max(back_end);
+            let merged_new_end = usize::try_from(merged_old_end as isize + d1 + d2).ok()?;
+            old = merged_start..merged_old_end;
+            new = merged_start..merged_new_end;
+        }
+        Some((old, new))
     }
 
     /// 记录最近一次改动（`revision` 已递增）的起始行 `line`。

@@ -995,3 +995,27 @@ fn the_split_preview_shows_the_source_caret_in_its_text() {
     assert!(shown(&app, target));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 回归：即便全文解析耗时超过 `INLINE_PARSE` 预算，常规局部输入仍可通过块级增量重解析在
+/// 当帧同步完成，且结果与全文解析一致。
+#[test]
+fn large_document_edits_reparse_incrementally_in_a_single_frame() {
+    let text = "# 标题\n\n第一段正文。\n\n第二段正文。\n\n第三段正文。\n";
+    let (mut app, dir) = live_doc("md-incremental-sync", text);
+    put_caret(&mut app, "第二段正文", true);
+    // 模拟超长文档：全文解析耗时远超内联预算。
+    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
+    let before_serial = app.preview.markdown.parse_serial;
+
+    app.run(winc_editor::Command::Insert("（增量同步）".into()));
+    paint(&mut app);
+
+    assert_ne!(app.preview.markdown.parse_serial, before_serial);
+    let shown = crate::app::preview::markdown::laid::full_text(&app).unwrap();
+    assert!(shown.contains("第二段正文（增量同步）。"), "{shown:?}");
+
+    let current = doc_text(&app);
+    let expected = winc_preview::markdown::parse(&current).with_blank_lines(&current);
+    assert_eq!(app.preview.markdown.parsed.as_deref(), Some(&expected));
+    let _ = std::fs::remove_dir_all(&dir);
+}
