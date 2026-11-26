@@ -193,6 +193,11 @@ pub enum Action {
     /// 把 `\uXXXX` 转义换成字符，或把 ASCII 以外的字符写成转义；没有选区时转换整个文件。
     UnescapeUnicode,
     EscapeUnicode,
+    /// 美化 JSON：转换选区；没有选区时转换整个文件（文件是一个 JSON 值时），
+    /// 或光标所在行中包住光标的 JSON。
+    PrettyPrintJson,
+    /// 压缩 JSON，转换的范围同 [`Action::PrettyPrintJson`]。
+    MinifyJson,
     IndentUsingSpaces,
     IndentUsingTabs,
     ConvertIndentationToSpaces,
@@ -619,6 +624,8 @@ impl Action {
             TrimTrailingWhitespace => t!("cmd-trim-trailing-whitespace"),
             UnescapeUnicode => t!("cmd-unescape-unicode"),
             EscapeUnicode => t!("cmd-escape-unicode"),
+            PrettyPrintJson => t!("cmd-pretty-print-json"),
+            MinifyJson => t!("cmd-minify-json"),
             IndentUsingSpaces => t!("cmd-indent-using-spaces"),
             IndentUsingTabs => t!("cmd-indent-using-tabs"),
             ConvertIndentationToSpaces => t!("cmd-convert-indentation-to-spaces"),
@@ -908,6 +915,8 @@ impl Action {
             | TrimTrailingWhitespace
             | UnescapeUnicode
             | EscapeUnicode
+            | PrettyPrintJson
+            | MinifyJson
             | IndentUsingSpaces
             | IndentUsingTabs
             | ConvertIndentationToSpaces
