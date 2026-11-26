@@ -21,7 +21,13 @@ impl App {
 
     /// 处理鼠标移动到窗口坐标 (`x`, `y`)（逻辑像素）：更新悬停、指针样式和进行中的拖动。
     pub(in crate::app) fn on_mouse_move(&mut self, x: f32, y: f32) {
+        let previous = self
+            .terminal_image_hover(self.pointer.mouse)
+            .map(|(_, at)| at);
         self.pointer.mouse = (x, y);
+        if previous != self.terminal_image_hover((x, y)).map(|(_, at)| at) {
+            self.request_redraw();
+        }
         self.update_scrollbar_hover(x, y);
         self.track_pdf_tools(x, y);
 

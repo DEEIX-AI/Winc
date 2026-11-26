@@ -266,6 +266,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     if modal {
         return;
     }
+    terminal::draw_paste_preview(app, frame);
     // 鼠标在其他窗格上时，提示按那个窗格的标签和按钮写。
     app.in_hovered_pane(|app| tooltip::draw_tooltip(app, frame));
 }

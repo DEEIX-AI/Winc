@@ -456,6 +456,36 @@ fn draw_content(app: &mut App, frame: &mut Frame<'_>, focused: bool) {
     }
 }
 
+/// 仅在鼠标指向附件标记时显示图片，优先放在标记上方。
+pub(super) fn draw_paste_preview(app: &App, frame: &mut Frame<'_>) {
+    let Some((pixels, anchor)) = app.hovered_terminal_image() else {
+        return;
+    };
+    let p = app.palette;
+    let view = app.layout.window;
+    let gap = 10.0;
+    let above = anchor.y - view.y - 2.0 * gap;
+    let below = view.bottom() - anchor.bottom() - 2.0 * gap;
+    let scale = (240.0 / pixels.width.max(pixels.height) as f32)
+        .min((view.w - 2.0 * gap) / pixels.width as f32)
+        .min(above.max(below) / pixels.height as f32);
+    if scale <= 0.0 {
+        return;
+    }
+    let w = (pixels.width as f32 * scale).max(1.0);
+    let h = (pixels.height as f32 * scale).max(1.0);
+    let x = anchor.x.max(view.x + gap).min(view.right() - gap - w);
+    let y = if above >= h {
+        anchor.y - gap - h
+    } else {
+        anchor.bottom() + gap
+    };
+    let image = Rect::new(x, y, w, h);
+    frame.rect_clipped(image.inset(-4.0, -4.0), p.border, 4.0, view);
+    frame.rect_clipped(image.inset(-3.0, -3.0), p.editor_bg, 3.0, view);
+    frame.pixels_scaled(image, pixels.width, pixels.height, &pixels.rgba, view);
+}
+
 /// 命令块的颜色：成功绿、失败红、还在运行灰；还没运行（在敲命令、空回车）的不绘制。
 fn band_color(p: &Palette, block: &Block) -> Option<Color> {
     block.output?;

@@ -26,6 +26,50 @@ fn terminal_app(name: &str) -> (App, PathBuf, DocumentId) {
     (app, dir, file)
 }
 
+#[test]
+fn pasted_image_popover_only_appears_over_a_matching_marker() {
+    let (mut app, dir, _) = terminal_app("terminal-paste-preview");
+    let tab = app.terminal.tab_mut().unwrap();
+    for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
+        tab.paste_preview.queue(
+            winc_preview::image::Pixels {
+                width: 2,
+                height: 1,
+                rgba: rgba.repeat(2),
+            },
+            &tab.rows,
+            tab.history.1,
+        );
+    }
+    tab.rows[0].text = "图 [Image #1] [Image #2]".into();
+    tab.paste_preview.observe(&tab.rows, tab.history.1);
+    paint(&mut app);
+
+    let grid = app.terminal_grid();
+    let cell = app.metrics.terminal_cell;
+    let y = grid.y + app.fonts.terminal_line_height / 2.0;
+    let point = (grid.x + 155.0, grid.y - 30.0);
+    let before = pixel(&app, point);
+    let screenshots = std::env::var_os("WINC_SNAPSHOT_DIR").is_some();
+    if screenshots {
+        shoot(&mut app, "terminal-image-idle");
+    }
+    app.pointer.cursor_inside = true;
+    app.on_mouse_move(grid.x + cell * 4.5, y);
+    paint(&mut app);
+    assert!(near(pixel(&app, point), Color::hex(0xff0000)));
+    if screenshots {
+        shoot(&mut app, "terminal-image-hover");
+    }
+    app.on_mouse_move(grid.x + cell * 15.5, y);
+    paint(&mut app);
+    assert!(near(pixel(&app, point), Color::hex(0x0000ff)));
+    app.on_mouse_move(grid.x + cell * 0.5, y);
+    paint(&mut app);
+    assert_eq!(pixel(&app, point), before);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 fn editor_tab(app: &App, document: DocumentId) -> Rect {
     app.hits
         .tabs

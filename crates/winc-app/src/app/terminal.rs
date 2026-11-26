@@ -14,6 +14,7 @@ mod helper;
 mod keys;
 pub(crate) mod link;
 mod locate;
+mod paste_preview;
 mod pointer;
 pub(crate) mod run;
 mod session;

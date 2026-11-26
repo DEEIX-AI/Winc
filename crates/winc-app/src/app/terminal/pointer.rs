@@ -35,7 +35,7 @@ impl App {
     }
 
     /// 窗口坐标 `y` 是否落在吸顶行上。
-    fn terminal_on_sticky(&self, y: f32) -> bool {
+    pub(super) fn terminal_on_sticky(&self, y: f32) -> bool {
         let band = self.terminal_sticky_band();
         let sticky = self.terminal.tab().is_some_and(|t| t.sticky().is_some());
         sticky && y < band.bottom()

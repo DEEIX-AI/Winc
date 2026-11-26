@@ -152,6 +152,8 @@ pub(crate) enum TabEnd {
 pub(crate) struct TermTab {
     /// 标签编号，辅助进程用它区分各标签；面板内唯一。
     pub id: u16,
+    /// 剪贴板图片与终端中显示的附件编号。
+    pub(in crate::app) paste_preview: super::paste_preview::PastePreview,
     /// 屏幕上的行。
     pub rows: Vec<Line>,
     /// 光标在屏幕上的位置。
@@ -295,6 +297,7 @@ impl TermTab {
     pub fn new(id: u16, size: Size) -> TermTab {
         TermTab {
             id,
+            paste_preview: Default::default(),
             rows: vec![Line::default(); usize::from(size.rows)],
             cursor: Cursor {
                 visible: true,
@@ -398,6 +401,7 @@ impl TermTab {
         self.modes = frame.modes;
         self.keyboard = frame.keyboard;
         self.history = frame.history;
+        self.paste_preview.observe(&self.rows, self.history.1);
         self.cleared = frame.cleared;
         self.clamp_scroll();
         self.prune();
