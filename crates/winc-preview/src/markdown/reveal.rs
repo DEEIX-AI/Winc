@@ -362,8 +362,11 @@ impl Out {
                 None => {
                     let p = piece(i);
                     let p = gap.start + p.start..gap.start + p.end;
-                    // 光标接触空白段（含段落首尾空格与多行段落行尾空格）或语法标记时显示。
-                    touches(&p, caret)
+                    // 空白只在段首或行尾且光标接触时显示：输入的空格使光标前进，续行的缩进不显示。
+                    let blank = plain[p.clone()].trim().is_empty();
+                    let edge =
+                        p.start == 0 || p.end == plain.len() || plain[p.end..].starts_with('\n');
+                    (!blank || edge) && touches(&p, caret)
                 }
             };
             if show {

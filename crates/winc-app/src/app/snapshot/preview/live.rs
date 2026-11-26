@@ -996,8 +996,8 @@ fn the_split_preview_shows_the_source_caret_in_its_text() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 回归：解析耗时超过预算、输入领先于后台解析时，连续键入多字节中文不会与下一块、下一列表项
-/// 或下一列单元格的旧原文起点撞车而导致光标跳块或跳列。
+/// 回归：解析超过预算、在后台进行时连续输入汉字，光标越过下一块、下一项或下一格在解析结果
+/// 中的起点，跳到其中。
 #[test]
 fn async_multibyte_typing_stays_in_current_block_and_table_cell() {
     let text = "甲\n\n乙\n\n- 项一\n- 项二\n\n| 左 | 右 |\n| --- | --- |\n| 一 | 二 |\n";
@@ -1052,7 +1052,7 @@ fn async_multibyte_typing_stays_in_current_block_and_table_cell() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 回归：段首空格与表格单元格首尾空格在实时编辑中都保留可见宽度并推动光标。
+/// 回归：在段首或单元格末尾输入空格，空格不显示，光标不前进。
 #[test]
 fn leading_spaces_in_paragraph_and_table_cell_advance_caret() {
     let text = "正文\n\n| 左 | 右 |\n| --- | --- |\n| 甲 | 乙 |\n";
@@ -1078,9 +1078,9 @@ fn leading_spaces_in_paragraph_and_table_cell_advance_caret() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 回归：脚注末尾自动生成的 ` ↩` 不污染正文的原文 `Span`，光标停在脚注正文末尾时不偏移到 ` ↩` 之后。
+/// 回归：脚注末尾生成的 ` ↩` 与正文排在同一段文字中，带有原文位置。
 #[test]
-fn footnote_backlink_does_not_pollute_source_span() {
+fn the_footnote_backlink_has_no_source_position() {
     let text = "正文[^1]\n\n[^1]: 脚注说明\n";
     let (app, dir) = live_doc("md-footnote-span", text);
     let laid = app.preview.markdown.layout.as_ref().unwrap();
@@ -1103,6 +1103,86 @@ fn footnote_backlink_does_not_pollute_source_span() {
                 span.source
             );
         }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 将光标放到第一处 `needle` 之后（`after` 为假时之前）并重绘，不等待后台解析。
+fn move_caret(app: &mut App, needle: &str, after: bool) {
+    let text = doc_text(app);
+    let byte = text.find(needle).unwrap() + if after { needle.len() } else { 0 };
+    let doc = app.editor.active_mut().unwrap();
+    let pos = doc.text().rope().unwrap().byte_to_char(byte);
+    doc.selection = winc_core::Selection::point(pos);
+    paint(app);
+}
+
+/// 回归：解析在后台进行时输入，之后把光标移回前面（行首、上一块），光标所在的块被识别为上一块。
+#[test]
+fn moving_back_before_the_parse_keeps_the_caret_block() {
+    let (mut app, dir) = live_doc("md-async-back", "甲\n\n乙\n\n丙\n");
+    put_caret(&mut app, "丙", true);
+    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
+    app.run(winc_editor::Command::Insert("一".into()));
+    paint(&mut app);
+    app.run(winc_editor::Command::LineStart { extend: false });
+    paint(&mut app);
+    let text = doc_text(&app);
+    let live = app.live_leaf().unwrap();
+    assert_eq!(live.leaf.start, text.find("丙").unwrap());
+    // 移到改动之前的块：该块与其后未改动的块位置不变，改动之后的块按新增的字节后移。
+    move_caret(&mut app, "甲", true);
+    let live = app.live_leaf().unwrap();
+    assert_eq!((live.block, live.leaf.start), (0, 0));
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
+    let starts: Vec<usize> = laid.ranges.iter().map(|r| r.start).collect();
+    assert!(starts.contains(&text.find("乙").unwrap()), "{starts:?}");
+    assert!(starts.contains(&text.find("丙").unwrap()), "{starts:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：光标在单元格的边距（`|` 与文字之间的空格）中移动时，单元格的文字左右移动。
+#[test]
+fn a_cell_keeps_its_text_still_when_the_caret_enters_the_padding() {
+    let text = "| 左 | 右 |\n| --- | --- |\n| 甲 | 乙 |\n";
+    let (mut app, dir) = live_doc("md-live-cell-padding", text);
+    let end = text.find("甲").unwrap() + "甲".len();
+    let x = |app: &App| {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        laid.caret_point(end).unwrap().0
+    };
+    put_caret(&mut app, "甲", false);
+    let inside = x(&app);
+    put_caret(&mut app, " 甲", false);
+    assert!((x(&app) - inside).abs() < 0.5);
+    put_caret(&mut app, "甲 ", true);
+    assert!((x(&app) - inside).abs() < 0.5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：解析在后台进行时在任务列表的一项中输入，其后各项的勾选框仍指向解析结果中的位置，
+/// 点击后修改的是其他文字。
+#[test]
+fn later_checkboxes_follow_text_typed_before_the_parse() {
+    let (mut app, dir) = live_doc("md-async-tasks", "- [ ] 一\n- [ ] 二\n");
+    put_caret(&mut app, "一", true);
+    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
+    for ch in ["甲", "乙"] {
+        app.run(winc_editor::Command::Insert(ch.into()));
+        paint(&mut app);
+    }
+    let text = doc_text(&app);
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
+    let start = laid.ranges[0].start;
+    let checks: Vec<usize> = (laid.blocks[0].1.items.iter())
+        .filter_map(|item| match item {
+            winc_typeset::Item::Check { source, .. } => Some(start + *source as usize),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(checks.len(), 2);
+    for at in checks {
+        assert_eq!(&text[at..at + 3], "[ ]", "{at} 处不是勾选框：{text:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -224,11 +224,11 @@ impl Cx<'_, '_> {
             }
             let start = range.start;
             for (i, c) in inline.text[range].char_indices() {
+                // 不对应原文的生成文字（脚注末尾的 ↩）没有原文位置，排出时与正文分为两段。
                 let source = inline
                     .char_source_of(start + i)
                     .and_then(|s| u32::try_from(s).ok());
                 if c == IMAGE_MARK {
-                    let source = source.or_else(|| source_of(inline, start + i));
                     let Some(image) = images.next() else { continue };
                     match self.image(image, room) {
                         Some((path, w, h)) => atoms.push(Atom {

@@ -436,8 +436,11 @@ pub(crate) fn lay_out(
         let preedit =
             ((live.prose || live.table) && !preedit.is_empty()).then(|| Arc::from(preedit));
         let parsed_end = live.parsed_end.saturating_sub(start);
+        // 光标所在的顶层块位于改动之后时，块的起点已换算，块内的相对位置不变。
+        let parsed_start = parsed.ranges.get(live.block).map_or(start, |r| r.start);
+        let drift = live.drift.within(parsed_start);
         Some((
-            live.block, text, leaf, parsed_end, caret, live.prose, preedit,
+            live.block, text, leaf, parsed_end, drift, caret, live.prose, preedit,
         ))
     });
     let p = app.palette;
@@ -519,10 +522,13 @@ pub(crate) fn lay_out(
         let raw = raw.as_ref().filter(|r| r.0 == i);
         // 显示原文的块换一个键存：光标离开后同样内容的块要重新按排版显示。
         let hash = match raw {
-            Some((_, text, leaf, parsed_end, caret, prose, preedit)) => {
+            Some((_, text, leaf, parsed_end, drift, caret, prose, preedit)) => {
                 winc_typeset::memo_key(|h| {
                     use std::hash::Hash;
-                    (hash, &**text, leaf, parsed_end, caret, prose, preedit).hash(h);
+                    (
+                        hash, &**text, leaf, parsed_end, drift, caret, prose, preedit,
+                    )
+                        .hash(h);
                 })
             }
             None => hash,
@@ -560,16 +566,19 @@ pub(crate) fn lay_out(
             cx.text.clear();
             cx.chars = 0;
             cx.memo.take_touched();
-            cx.raw = raw.map(|(_, text, leaf, parsed_end, caret, prose, preedit)| {
-                Raw::new(
-                    Arc::clone(text),
-                    leaf.clone(),
-                    *parsed_end,
-                    *caret,
-                    *prose,
-                    preedit.clone(),
-                )
-            });
+            cx.raw = raw.map(
+                |(_, text, leaf, parsed_end, drift, caret, prose, preedit)| {
+                    Raw::new(
+                        Arc::clone(text),
+                        leaf.clone(),
+                        *parsed_end,
+                        *drift,
+                        *caret,
+                        *prose,
+                        preedit.clone(),
+                    )
+                },
+            );
             cx.preedit = false;
             cx.cell = None;
             let mut flow = cx.block(block, 0.0, 0.0, key.width, env, &mut out);
@@ -632,23 +641,15 @@ pub(crate) fn lay_out(
         chars,
         lines: parsed.lines.clone(),
         ranges: {
-            // 解析之后打的字都在光标所在的块里：这一块换成现在的范围，原文在它后面的块按文字
-            // 长度的变化挪。
-            let mut ranges = parsed.ranges.clone();
+            // 解析结果中的范围换算为当前文字中的位置；光标所在的块换成现在的范围。
+            let drift = live.map_or(winc_typeset::Drift::NONE, |live| live.drift);
+            let mut ranges: Vec<_> = (parsed.ranges.iter())
+                .map(|r| drift.moved_start(r.start)..drift.moved(r.end))
+                .collect();
             if let Some(live) = live
-                && let Some(start) = ranges.get(live.block).map(|r| r.start)
+                && let Some(range) = ranges.get_mut(live.block)
             {
-                let len = app
-                    .editor
-                    .active()
-                    .and_then(|d| d.text().rope())
-                    .map(|r| r.len_bytes());
-                let delta = len.map_or(0, |len| len as i64 - parsed.len as i64);
-                let shift = |at: usize| usize::try_from(at as i64 + delta).unwrap_or(0);
-                for range in ranges.iter_mut().filter(|r| r.start > start) {
-                    *range = shift(range.start)..shift(range.end);
-                }
-                ranges[live.block] = live.range.clone();
+                *range = live.range.clone();
             }
             ranges
         },

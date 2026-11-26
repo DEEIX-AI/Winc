@@ -87,7 +87,9 @@ fn trailing_spaces_show_at_the_caret() {
     assert_eq!(shown("|风格 "), "风格");
     assert_eq!(shown("甲 |\n乙"), "甲‹ ›\n乙");
     assert_eq!(shown("|甲 \n乙"), "甲\n乙");
-    // 段首空格和紧贴行内标记的空格在光标接触时同样保留。
+    // 段首的空格和紧贴行内标记的行尾空格在光标接触时同样显示；续行的缩进不显示。
     assert_eq!(shown(" |风格"), "‹ ›风格");
     assert_eq!(shown("风格 **粗**| "), "风格 ‹**›粗‹** ›");
+    assert_eq!(shown("风格 **粗|** "), "风格 ‹**›粗‹**›");
+    assert_eq!(shown("甲\n  |乙"), "甲\n乙");
 }

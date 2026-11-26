@@ -40,11 +40,7 @@ impl Cx<'_, '_> {
             align: aligns.get(col).copied().unwrap_or(Align::None),
         };
         let live = self.caret_cell();
-        // 输入领先于异步解析时，将位于当前编辑单元格之后的静态单元格源码起点按当前长度差平移，
-        // 避免刚输入的多字节字符（如中文）与下一列未平移的旧起点撞车导致光标跳列。
-        let live_delta = self.raw.as_ref().map_or(0isize, |raw| {
-            raw.leaf.end as isize - raw.parsed_end as isize
-        });
+        let drift = self.drift();
         let mono = base * 0.85;
         let raw_row = |room: f32, cx: &mut Self| {
             let m = cx.frame.metrics(FontKind::Mono, mono);
@@ -70,28 +66,16 @@ impl Cx<'_, '_> {
             let mut row_h: f32 = 0.0;
             for (c, w) in widths.iter().enumerate() {
                 if let Some(cell) = row.get(c) {
-                    let after_live = live
+                    let first = out.len();
+                    let live_here = live
                         .as_ref()
-                        .is_some_and(|(lr, lc, ..)| (r, c) > (*lr, *lc));
-                    let shift = |src: usize| {
-                        if after_live && live_delta != 0 {
-                            src.saturating_add_signed(live_delta)
-                        } else {
-                            src
-                        }
-                    };
-                    let shifted_cell = (after_live && live_delta != 0 && !cell.text.is_empty())
-                        .then(|| {
-                            let mut cloned = cell.clone();
-                            cloned.source = shift(cloned.source);
-                            cloned
-                        });
+                        .is_some_and(|(lr, lc, ..)| (*lr, *lc) == (r, c));
                     let cell = match &live {
-                        Some((lr, lc, source, None)) if (*lr, *lc) == (r, c) => Err(*source),
-                        Some((lr, lc, _, Some(live))) if (*lr, *lc) == (r, c) => Ok(live),
+                        Some((_, _, source, None)) if live_here => Err(*source),
+                        Some((_, _, _, Some(live))) if live_here => Ok(live),
                         // 空单元格同样保留一段空的原文，使其可点击，光标也有绘制位置。
-                        _ if cell.text.is_empty() => Err(shift(cell.source)),
-                        _ => Ok(shifted_cell.as_ref().unwrap_or(cell)),
+                        _ if cell.text.is_empty() => Err(cell.source),
+                        _ => Ok(cell),
                     };
                     let flow = match cell {
                         Err(source) => {
@@ -115,6 +99,12 @@ impl Cx<'_, '_> {
                             out,
                         ),
                     };
+                    // 光标所在的单元格按当前文字排出；其余单元格按解析结果排出，原文位置需要换算。
+                    if !live_here && drift != Drift::NONE {
+                        for item in &mut out[first..] {
+                            item.shift_source(drift);
+                        }
+                    }
                     row_h = row_h.max(flow.height);
                     if r == 0 {
                         first_baseline = first_baseline.or(flow.first_baseline);
@@ -205,19 +195,11 @@ impl Cx<'_, '_> {
         let (r, c, range) = self.cell.take()?;
         let raw = self.raw.as_ref()?;
         let segment = raw.block.get(range.clone())?;
-        let trimmed = segment.trim();
-        let rel_caret = raw.caret.saturating_sub(range.start).min(segment.len());
-        // 空单元格的原文位置与解析结果一致（左侧 `|` 之后一个空格处），光标进出时不跳动；
-        // 有内容时保留光标所及的首尾空格，使在单元格末尾或开头输入空格都能实时推动光标。
-        let (start, content) = if trimmed.is_empty() {
-            let start = (range.start + 1).min(range.end);
-            (start, "")
-        } else {
-            let lead = segment.len() - segment.trim_start().len();
-            let trail = segment.trim_end().len();
-            let start_rel = lead.min(rel_caret);
-            let end_rel = trail.max(rel_caret);
-            (range.start + start_rel, &segment[start_rel..end_rel])
+        let caret = raw.caret.saturating_sub(range.start).min(segment.len());
+        // 空单元格的原文位置与解析结果一致（左侧 `|` 之后一个空格处），光标进出时不跳动。
+        let (start, content) = match cell_content(segment, caret) {
+            Some(shown) => (range.start + shown.start, &segment[shown]),
+            None => ((range.start + 1).min(range.end), ""),
         };
         let cell = (!content.is_empty()).then(|| {
             let caret = raw.caret.saturating_sub(start).min(content.len());
@@ -287,4 +269,21 @@ fn column_widths(min: &[f32], max: &[f32], width: f32) -> Vec<f32> {
             .map(|(lo, hi)| (lo + (hi - lo) * t).floor())
             .collect()
     }
+}
+
+/// 返回单元格原文 `segment`（两条 `|` 之间）中显示的范围，光标位于 `caret`；全为空白时为 `None`。
+///
+/// 紧贴 `|` 的各一个空格是边距，不显示。光标在开头的空白中时显示边距之后的空白，在末尾的空白
+/// 中时显示到光标为止：输入的空格使光标前进，光标只在边距中移动时显示的内容不变。
+pub(super) fn cell_content(segment: &str, caret: usize) -> Option<std::ops::Range<usize>> {
+    let lead = segment.len() - segment.trim_start().len();
+    let trail = segment.trim_end().len();
+    if trail <= lead {
+        return None;
+    }
+    let head = usize::from(segment.starts_with(' '));
+    let tail = segment.len() - usize::from(segment.ends_with(' '));
+    let at = caret.clamp(head, tail);
+    let start = if at <= lead { head } else { lead };
+    Some(start..trail.max(at))
 }

@@ -549,19 +549,13 @@ impl Item {
         }
     }
 
-    /// 按字节差值 `delta` 平移该项记录的原文位置（相对顶层块）。
+    /// 将该项记下的原文位置（相对顶层块，来自解析结果）按 `drift` 换算为当前文字中的位置。
     ///
-    /// 用于同一顶层容器（列表、引用、脚注等）中，当前正在编辑的叶子块已因输入增长或缩短，
-    /// 而后台重新解析尚未完成时，将排在其后的兄弟块的静态原文坐标同步平移，防止偏移撞车。
-    pub(crate) fn shift_source(&mut self, delta: isize) {
-        if delta == 0 {
-            return;
-        }
+    /// 一段文字只记起点，其中各字的位置按起点依次推算：改动位于一段文字中间时，改动之后的字
+    /// 有偏差，重新解析后恢复准确。
+    pub(crate) fn shift_source(&mut self, drift: Drift) {
         let shift = |at: &mut u32| {
-            *at = usize::try_from(*at as isize + delta)
-                .ok()
-                .and_then(|v| u32::try_from(v).ok())
-                .unwrap_or(0);
+            *at = u32::try_from(drift.moved(*at as usize)).unwrap_or(u32::MAX);
         };
         match self {
             Item::Text {
@@ -687,18 +681,69 @@ pub struct Cx<'a, 'f> {
     pub bleed: (f32, f32),
 }
 
+/// 解析之后的改动：解析结果中的原文位置换算为当前文字中的位置（字节偏移）。
+///
+/// 改动都从 `from` 起，其后的文字共移动 `delta` 个字节，之前的位置不变。重新解析之前在多处
+/// 输入时，两处之间的位置按全部改动换算，有偏差；重新解析后位置恢复准确。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Drift {
+    /// 第一处改动的位置。
+    pub from: usize,
+    /// 改动后文字长度的变化。
+    pub delta: isize,
+}
+
+impl Drift {
+    /// 解析之后没有改动。
+    pub const NONE: Drift = Drift {
+        from: usize::MAX,
+        delta: 0,
+    };
+
+    /// 返回解析结果中一个字或一段范围的终点 `at` 在当前文字中的位置。
+    ///
+    /// 位于 `from` 处的字排在插入的文字之后；删去的文字中的位置落在 `from`。
+    pub fn moved(self, at: usize) -> usize {
+        if at < self.from {
+            at
+        } else {
+            at.saturating_add_signed(self.delta).max(self.from)
+        }
+    }
+
+    /// 返回解析结果中一段范围的起点 `at` 在当前文字中的位置：在起点处插入的文字属于该范围。
+    pub fn moved_start(self, at: usize) -> usize {
+        if at <= self.from { at } else { self.moved(at) }
+    }
+
+    /// 返回相对起点为 `start` 的一段原文的改动。
+    ///
+    /// 起点位于改动之后时整段一起移动，段内的相对位置不变。
+    pub fn within(self, start: usize) -> Drift {
+        match self.from.checked_sub(start) {
+            Some(from) if self.delta != 0 => Drift {
+                from,
+                delta: self.delta,
+            },
+            _ => Drift::NONE,
+        }
+    }
+}
+
 /// 可编辑的预览中光标所在的叶子块：不排版，显示原文。
 pub struct Raw {
     /// 所在顶层块现在的原文（从块的起点起，含解析之后的修改）。
     pub block: Arc<str>,
     /// 叶子块在 `block` 中的范围。
     pub leaf: std::ops::Range<usize>,
-    /// 叶子块在解析结果中的终点（相对顶层块）。
+    /// 叶子块不含其后空行时的终点（相对顶层块，按当前文字）。
     ///
-    /// 块里记下的原文位置来自解析结果；输入之后、重新解析之前，`leaf` 的终点已按新增的字节
-    /// 后移，其后的块仍是旧的位置。判断块是否属于该叶子块时与这个终点比较，其后的块不会落入
-    /// 叶子块而被跳过。
+    /// 光标位于叶子块之后的空行上时，`leaf` 延伸到光标所在行；判断块是否属于该叶子块时与该
+    /// 终点比较，空行生成的空段落不落入叶子块。
     pub parsed_end: usize,
+    /// 顶层块内解析之后的改动（相对顶层块）：块里记下的原文位置来自解析结果，据此换算为当前
+    /// 文字中的位置。
+    pub drift: Drift,
     /// 已经显示过：同一个叶子块里排出的其余块（HTML 块里的几段、表格的其余单元格）不再显示。
     pub done: bool,
     /// 光标在 `block` 中的位置：表格只把光标所在的单元格显示为原文。
@@ -724,12 +769,13 @@ pub enum RawKind {
 }
 
 impl Raw {
-    /// 光标位于 `block` 的 `caret` 处，所在的叶子块为 `leaf`，在解析结果中的终点为
-    /// `parsed_end`；`prose` 表示正文。
+    /// 光标位于 `block` 的 `caret` 处，所在的叶子块为 `leaf`，不含其后空行时的终点为
+    /// `parsed_end`，解析之后的改动为 `drift`；`prose` 表示正文。
     pub fn new(
         block: Arc<str>,
         leaf: std::ops::Range<usize>,
         parsed_end: usize,
+        drift: Drift,
         caret: usize,
         prose: bool,
         preedit: Option<Arc<str>>,
@@ -737,6 +783,7 @@ impl Raw {
         let mut raw = Raw {
             block,
             parsed_end: parsed_end.max(leaf.start),
+            drift,
             leaf,
             done: false,
             caret,
@@ -943,22 +990,16 @@ impl Cx<'_, '_> {
             RawState::Rule => return self.raw_rule(x, y, width, out),
         }
         let para = self.body_para(env);
-        let shift_after = (!matches!(
-            block,
+        // 叶子块按解析结果排出，原文位置换算到当前文字中；容器中的各块在各自排版时换算，表格
+        // 逐格换算（光标所在的单元格按当前文字排出）。
+        let drift = match block {
             Block::Quote(..)
-                | Block::List(..)
-                | Block::Table(..)
-                | Block::Footnote(..)
-                | Block::Details { .. }
-        ))
-        .then(|| {
-            self.raw
-                .as_ref()
-                .filter(|r| r.done)
-                .map(|r| r.leaf.end as isize - r.parsed_end as isize)
-                .filter(|&d| d != 0)
-        })
-        .flatten();
+            | Block::List(..)
+            | Block::Table(..)
+            | Block::Footnote(..)
+            | Block::Details { .. } => Drift::NONE,
+            _ => self.drift(),
+        };
         let first_item = out.items.len();
         if let Block::Paragraph(inline) | Block::Heading(_, inline) = block {
             out.anchors
@@ -1038,9 +1079,9 @@ impl Cx<'_, '_> {
                 self.details(id, *open, summary, blocks, x, y, width, env, out)
             }
         };
-        if let Some(delta) = shift_after {
+        if drift != Drift::NONE {
             for item in &mut out.items[first_item..] {
-                item.shift_source(delta);
+                item.shift_source(drift);
             }
         }
         flow
@@ -1173,7 +1214,8 @@ impl Cx<'_, '_> {
                             size,
                         ),
                         checked,
-                        source: u32::try_from(item.task_source).unwrap_or(u32::MAX),
+                        source: u32::try_from(self.drift().moved(item.task_source))
+                            .unwrap_or(u32::MAX),
                     });
                 }
                 (None, Some(start)) => {
