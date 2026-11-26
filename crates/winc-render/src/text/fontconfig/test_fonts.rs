@@ -26,6 +26,15 @@ pub(crate) const EXCLUDED: &str = "Winc Excluded";
 /// 一个 `.ttc` 集合里的字族，集合中有常规体和粗体两个字体。
 pub(crate) const COLLECTION: &str = "Winc Collection";
 
+/// `monospace` 回退顺序中的字体：配置依次列出 [`CHAIN_FIRST`]、[`CHAIN_REPEAT`]、[`CHAIN_NEXT`]。
+pub(crate) const CHAIN_FIRST: &str = "Winc Chain First";
+/// 字符都已由 [`CHAIN_FIRST`] 覆盖的字体：回退顺序中略去。
+pub(crate) const CHAIN_REPEAT: &str = "Winc Chain Repeat";
+/// 含有 [`CHAIN_FIRST`] 所缺字符 [`CHAIN_SYMBOL`] 的字体。
+pub(crate) const CHAIN_NEXT: &str = "Winc Chain Next";
+/// 只有 [`CHAIN_NEXT`] 含有的字符（Nerd Font 图标所在的私用区）。
+pub(crate) const CHAIN_SYMBOL: char = '\u{e62b}';
+
 /// 指向未知名字的后备字体的别名：它的目标字体和任意替换得到的字体是同一个。
 pub(crate) const ALIAS: &str = "Winc Alias";
 /// 指向另一个字族的别名。
@@ -194,6 +203,17 @@ fn write_fonts(fonts: &Path) {
         )
         .unwrap();
     }
+    for (family, chars) in [
+        (CHAIN_FIRST, &['a', 'b'][..]),
+        (CHAIN_REPEAT, &['a'][..]),
+        (CHAIN_NEXT, &['a', CHAIN_SYMBOL][..]),
+    ] {
+        std::fs::write(
+            fonts.join(file_name(family, "Regular")),
+            font_covering(family, "Regular", 400, false, chars),
+        )
+        .unwrap();
+    }
     let excluded = fonts.join("excluded");
     std::fs::create_dir_all(&excluded).unwrap();
     std::fs::write(
@@ -228,6 +248,17 @@ fn write_config(path: &Path, dir: &Path, aliases: &[(&str, &str)]) -> std::io::R
             xml(target)
         ));
     }
+    // 用户常见的写法：`monospace` 依次列出几个字体，后面的字体补上前面的字体所缺的字符。
+    rules.push_str(&format!(
+        r#"  <alias>
+    <family>monospace</family>
+    <prefer><family>{}</family><family>{}</family><family>{}</family></prefer>
+  </alias>
+"#,
+        xml(CHAIN_FIRST),
+        xml(CHAIN_REPEAT),
+        xml(CHAIN_NEXT)
+    ));
     // 真实的 fontconfig 配置会给每个模式追加通用的后备字族；别名要和这些替换区分开。
     let fallback = xml(STYLE);
     std::fs::write(
@@ -294,16 +325,30 @@ pub(crate) fn write_font(path: &Path, family: &str) {
 
 /// 返回一个最小的 TrueType 字体：一个字族、一个字重，没有可显示的字符。
 fn font(family: &str, subfamily: &str, weight: u16, italic: bool) -> Vec<u8> {
+    font_covering(family, subfamily, weight, italic, &[])
+}
+
+/// 同 [`font`]，字体含有字符 `chars`：每个字符对应一个空白字形，fontconfig 的字符集合和字体的
+/// 字符映射表都包含这些字符。
+fn font_covering(
+    family: &str,
+    subfamily: &str,
+    weight: u16,
+    italic: bool,
+    chars: &[char],
+) -> Vec<u8> {
     let bold = weight >= 600;
+    // `.notdef` 之后每个字符一个字形。
+    let glyphs = chars.len() as u16 + 1;
     let mut tables: Vec<(&[u8; 4], Vec<u8>)> = vec![
         (b"OS/2", os2(weight, bold, italic)),
-        (b"cmap", cmap()),
+        (b"cmap", cmap(chars)),
         (b"glyf", Vec::new()),
         (b"head", head(bold, italic)),
-        (b"hhea", hhea()),
-        (b"hmtx", hmtx()),
-        (b"loca", loca()),
-        (b"maxp", maxp()),
+        (b"hhea", hhea(glyphs)),
+        (b"hmtx", hmtx(glyphs)),
+        (b"loca", loca(glyphs)),
+        (b"maxp", maxp(glyphs)),
         (b"name", name(family, subfamily)),
         (b"post", post()),
     ];
@@ -412,8 +457,8 @@ fn head(bold: bool, italic: bool) -> Vec<u8> {
     out
 }
 
-/// `hhea` 表：水平排版的整体参数。
-fn hhea() -> Vec<u8> {
+/// `hhea` 表：水平排版的整体参数，`glyphs` 个字形各有前进宽度。
+fn hhea(glyphs: u16) -> Vec<u8> {
     let mut out = Vec::with_capacity(36);
     be32(&mut out, 0x0001_0000);
     for value in [800i16, -200, 0] {
@@ -428,53 +473,79 @@ fn hhea() -> Vec<u8> {
     be16(&mut out, 0);
     out.extend_from_slice(&[0; 8]);
     be16(&mut out, 0);
-    be16(&mut out, 1);
+    be16(&mut out, glyphs);
     assert_eq!(out.len(), 36);
     out
 }
 
-/// `maxp` 表：只有一个字形（`.notdef`）。
-fn maxp() -> Vec<u8> {
+/// `maxp` 表：`glyphs` 个字形（第一个是 `.notdef`）。
+fn maxp(glyphs: u16) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
     be32(&mut out, 0x0001_0000);
-    be16(&mut out, 1);
+    be16(&mut out, glyphs);
     out.extend_from_slice(&[0; 26]);
     assert_eq!(out.len(), 32);
     out
 }
 
-/// `hmtx` 表：一个字形的前进宽度。
-fn hmtx() -> Vec<u8> {
-    let mut out = Vec::with_capacity(4);
-    be16(&mut out, 500);
-    be16(&mut out, 0);
+/// `hmtx` 表：`glyphs` 个字形的前进宽度。
+fn hmtx(glyphs: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 * usize::from(glyphs));
+    for _ in 0..glyphs {
+        be16(&mut out, 500);
+        be16(&mut out, 0);
+    }
     out
 }
 
-/// `loca` 表：一个空字形的偏移。
-fn loca() -> Vec<u8> {
-    let mut out = Vec::with_capacity(4);
-    be16(&mut out, 0);
-    be16(&mut out, 0);
+/// `loca` 表：`glyphs` 个空字形的偏移（短格式）。
+fn loca(glyphs: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 * usize::from(glyphs) + 2);
+    for _ in 0..=glyphs {
+        be16(&mut out, 0);
+    }
     out
 }
 
-/// `cmap` 表：格式 4、没有映射任何字符。
-fn cmap() -> Vec<u8> {
-    let mut out = Vec::with_capacity(24);
-    be16(&mut out, 4);
-    be16(&mut out, 24);
+/// `cmap` 表：一个 Windows Unicode BMP 编码的格式 4 子表，把 `chars` 依次映射到第 1 个起的字形。
+fn cmap(chars: &[char]) -> Vec<u8> {
+    let mut chars: Vec<u16> = chars.iter().map(|&c| c as u16).collect();
+    chars.sort_unstable();
+    // 每个字符一段，最后是格式要求的 0xFFFF 一段。
+    let segments = chars.len() as u16 + 1;
+    let search = 2 * (1u16 << (15 - segments.leading_zeros()));
+    let mut table = Vec::new();
+    be16(&mut table, 4);
+    be16(&mut table, 16 + 8 * segments);
+    be16(&mut table, 0);
+    be16(&mut table, 2 * segments);
+    be16(&mut table, search);
+    be16(&mut table, (search / 2).trailing_zeros() as u16);
+    be16(&mut table, 2 * segments - search);
+    for &c in &chars {
+        be16(&mut table, c);
+    }
+    be16(&mut table, 0xFFFF);
+    be16(&mut table, 0);
+    for &c in &chars {
+        be16(&mut table, c);
+    }
+    be16(&mut table, 0xFFFF);
+    for (glyph, &c) in (1u16..).zip(&chars) {
+        be16(&mut table, glyph.wrapping_sub(c));
+    }
+    be16(&mut table, 1);
+    for _ in 0..segments {
+        be16(&mut table, 0);
+    }
+
+    let mut out = Vec::with_capacity(12 + table.len());
     be16(&mut out, 0);
-    be16(&mut out, 2);
-    be16(&mut out, 2);
-    be16(&mut out, 0);
-    be16(&mut out, 0);
-    be16(&mut out, 0xFFFF);
-    be16(&mut out, 0);
-    be16(&mut out, 0xFFFF);
     be16(&mut out, 1);
-    be16(&mut out, 0);
-    assert_eq!(out.len(), 24);
+    be16(&mut out, 3);
+    be16(&mut out, 1);
+    be32(&mut out, 12);
+    out.extend_from_slice(&table);
     out
 }
 

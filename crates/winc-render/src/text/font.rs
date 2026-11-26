@@ -2,8 +2,9 @@
 //!
 //! 槽位依次是等宽字体、界面字体、等宽字体的斜体、数学字体、终端字体及其斜体、预览正文字体，
 //! 其后是按优先级排列的后备字体；终端的字重与其余文字不同时，之后是按终端字重打开的另一份
-//! 后备字体（彩色 emoji 除外）。最后是用户在字体列表中写在主字体之后的字体，以及按需派生的
-//! 粗体。斜体、后备字体和粗体在首次需要时才映射文件。候选路径按平台给出，用户配置的字体排在最前面。
+//! 后备字体（彩色 emoji 除外）。最后是字体列表中写在主字体之后的字体（没有配置字体时为系统为
+//! 该字族配置的其余字体），以及按需派生的粗体。斜体、后备字体和粗体在首次需要时才映射文件。
+//! 候选路径按平台给出，用户配置的字体排在最前面。
 
 use std::fs::{File, Metadata};
 use std::ops::Range;
@@ -639,7 +640,8 @@ pub(crate) struct Fonts {
 
 impl Fonts {
     /// 加载字体；`mono`、`ui` 和 `terminal` 是用户配置里指定的字体列表，为空时等宽字体和界面
-    /// 字体用内置候选，终端用等宽字体。
+    /// 字体用内置候选，系统为其字族配置的其余字体（Linux 上的 fontconfig）作为列表中的其余字体；
+    /// 终端用等宽字体。
     ///
     /// 列表中第一个能打开的字体是主字体，其余的字体在主字体缺字时依次尝试。指定的终端字体都打不
     /// 开时同样用等宽字体，不报错。`weight` 是全部文字的字重，超出 100 至 900 时取最接近的值。
@@ -676,8 +678,8 @@ impl Fonts {
         let terminal_shift = terminal_weight.clamp(WEIGHT_MIN, WEIGHT_MAX) as i16 - REGULAR as i16;
         let separate_terminal = terminal_shift != shift;
         // 指定的字体不可用时退回内置候选而不报错：字体配置有误时程序仍可启动。
-        let listed = [mono, ui, terminal].map(resolve_list);
-        let candidates = Candidates::for_platform(&listed[0], &listed[1]);
+        let mut listed = [mono, ui, terminal].map(resolve_list);
+        let mut candidates = Candidates::for_platform(&listed[0], &listed[1]);
         let (mono, mono_file) = first_opened(&candidates.mono, shift).ok_or_else(|| {
             format!(
                 "找不到等宽字体，尝试过：{:?}。可以用 WINC_FONT 指定字体文件，\
@@ -693,6 +695,14 @@ impl Fonts {
 
         let mono_configured = listed[0].contains(&mono_file);
         let ui_configured = listed[1].contains(&ui_file);
+        // 没有配置等宽、界面字体时，系统为其字族配置的其余字体（见 `Candidates::mono_rest`）
+        // 与用户写在列表中的字体一样，在主字体缺字时依次尝试。
+        if listed[0].is_empty() {
+            listed[0] = std::mem::take(&mut candidates.mono_rest);
+        }
+        if listed[1].is_empty() {
+            listed[1] = std::mem::take(&mut candidates.ui_rest);
+        }
         let italic = italic_candidates(&mono_file, &mono);
         // 数学字体一开始就映射（只是映射文件，很快）：度量要用到它，`metrics` 不能再去加载。
         let math = first_opened(&candidates.math, shift).map_or(Slot::Missing, |(face, file)| {
@@ -1154,6 +1164,11 @@ struct Candidates {
     ui: Vec<FontFile>,
     /// 数学字体的候选，按优先级排列。
     math: Vec<FontFile>,
+    /// 没有配置等宽字体时，系统为等宽字族配置的其余字体（Linux 上为 fontconfig 的回退顺序，
+    /// 见 [`fontconfig::chain`]），主字体缺字时依次尝试；配置了时为空。
+    mono_rest: Vec<FontFile>,
+    /// 没有配置界面字体时，系统为无衬线字族配置的其余字体，含义同 `mono_rest`。
+    ui_rest: Vec<FontFile>,
     /// 每一项是一个后备槽位的候选。
     fallbacks: Vec<Choices>,
     /// 彩色 emoji 字体在 `fallbacks` 中的下标（从 0 起）。
@@ -1274,6 +1289,8 @@ impl Candidates {
                 .map(Choices::files)
                 .collect(),
                 emoji: 3,
+                mono_rest: Vec::new(),
+                ui_rest: Vec::new(),
             }
         } else if cfg!(target_os = "windows") {
             let fonts = crate::text::font_path::windows_fonts();
@@ -1304,18 +1321,47 @@ impl Candidates {
                 .map(Choices::files)
                 .collect(),
                 emoji: 2,
+                mono_rest: Vec::new(),
+                ui_rest: Vec::new(),
             }
         } else {
             // Linux 向 fontconfig 查询：它记录发行版安装字体的位置，并按用户的配置选择。等宽字体和
             // 界面字体启动时就要用到，因此同时查询；应用指定了语言时按该语言选，否则按系统语言选。
+            // 没有配置字体时同时取该字族的回退顺序，主字体缺字时依次尝试。
             let language = app_language().map_or_else(String::new, |lang| format!(":lang={lang}"));
-            let best = |generic: &str| {
-                fontconfig::best(&format!("{generic}{language}")).map(|found| found.file)
+            let pattern = |generic: &str| format!("{generic}{language}");
+            let best = |generic: &str| fontconfig::best(&pattern(generic)).map(|found| found.file);
+            let chain = |generic: &str, configured: bool| {
+                if configured {
+                    Vec::new()
+                } else {
+                    fontconfig::chain(&pattern(generic))
+                }
             };
-            let (asked_mono, asked_ui) = std::thread::scope(|scope| {
+            let configured = (!mono.is_empty(), !ui_paths.is_empty());
+            let (asked_mono, asked_ui, mono_chain, ui_chain) = std::thread::scope(|scope| {
                 let ui = scope.spawn(|| best("sans-serif"));
-                (best("monospace"), ui.join().ok().flatten())
+                let mono_chain = scope.spawn(|| chain("monospace", configured.0));
+                let ui_chain = scope.spawn(|| chain("sans-serif", configured.1));
+                let asked_mono = best("monospace");
+                let asked_ui = ui.join().ok().flatten();
+                let mono_chain = mono_chain.join().unwrap_or_default();
+                (
+                    asked_mono,
+                    asked_ui,
+                    mono_chain,
+                    ui_chain.join().unwrap_or_default(),
+                )
             });
+            // 主字体仍按最佳匹配选：得分相同的字体在排序中的先后不确定，回退顺序的第一个不一定是
+            // 它。回退顺序中略去主字体。
+            let rest = |chain: Vec<FontFile>, first: &Option<FontFile>| -> Vec<FontFile> {
+                chain
+                    .into_iter()
+                    .filter(|file| Some(file) != first.as_ref())
+                    .collect()
+            };
+            let (mono_rest, ui_rest) = (rest(mono_chain, &asked_mono), rest(ui_chain, &asked_ui));
             mono.extend(asked_mono);
             ui_paths.extend(asked_ui);
             // 固定路径只用于没有 fontconfig 的系统；fontconfig 可用时只使用它列出的字体，否则会
@@ -1365,6 +1411,8 @@ impl Candidates {
                     },
                 ],
                 emoji: 1,
+                mono_rest,
+                ui_rest,
             }
         }
     }

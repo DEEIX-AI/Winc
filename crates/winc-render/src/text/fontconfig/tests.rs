@@ -221,6 +221,17 @@ fn sorted_fonts_are_usable_font_files() {
     assert!(fonts.iter().all(|font| font.path.is_file()));
 }
 
+/// `monospace` 的回退顺序按配置列出，只保留能显示前面的字体所缺字符的字体。
+#[test]
+fn the_monospace_chain_keeps_the_fonts_that_add_characters() {
+    let Some(isolated) = Isolated::new() else {
+        return;
+    };
+    let chain: Vec<_> = chain("monospace").into_iter().map(|f| f.path).collect();
+    let expected = [test_fonts::CHAIN_FIRST, test_fonts::CHAIN_NEXT].map(|f| isolated.regular(f));
+    assert_eq!(chain, expected);
+}
+
 #[test]
 fn the_font_list_contains_the_custom_directory() {
     let Some(isolated) = Isolated::new() else {

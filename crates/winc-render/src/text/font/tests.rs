@@ -247,9 +247,10 @@ fn a_separate_terminal_weight_uses_its_own_fallback_faces() {
     assert_eq!(fonts.terminal_fallbacks.len(), fonts.fallbacks.len());
     let (cjk, _) = fonts.resolve(FontKind::Terminal, '中');
     assert!(!fonts.fallbacks.contains(&cjk), "{cjk}");
-    // 缺字时的顺序同字重相同时：终端没有单独的字体列表时只多出界面字体一项，不列平台的其他
-    // 候选字体。
-    assert!(fonts.listed[2].len() <= 1, "{:?}", fonts.listed[2]);
+    // 缺字时的顺序同字重相同时：终端没有单独的字体列表时用等宽字体的列表（没有配置时为系统为
+    // 等宽字族配置的其余字体），再多出界面字体一项，不列平台的其他候选字体。
+    let most = fonts.listed[0].len() + 1;
+    assert!(fonts.listed[2].len() <= most, "{:?}", fonts.listed[2]);
     // 彩色 emoji 没有字重，终端与其余文字共用一个槽位。
     assert!(fonts.terminal_fallbacks.contains(&fonts.emoji));
     let (slot, _) = fonts.resolve(FontKind::Terminal, '😀');
@@ -729,4 +730,32 @@ fn bold_uses_the_bold_file_next_to_the_regular_one() {
     assert_ne!(slot, regular);
     let face = fonts.face(slot).unwrap();
     assert_eq!((face.gained, face.embolden), (300.0, 0.0));
+}
+
+/// 回归（#518）：没有配置等宽字体时，主字体缺的字（Nerd Font 图标）按 fontconfig 为 `monospace`
+/// 配置的回退顺序找，终端字重不同时同样如此；配置了等宽字体时只用配置的列表。
+#[cfg(target_os = "linux")]
+#[test]
+fn the_default_monospace_font_falls_back_in_the_configured_order() {
+    use crate::text::fontconfig::test_fonts::{self, CHAIN_SYMBOL, Isolated};
+    let Some(isolated) = Isolated::new() else {
+        return;
+    };
+    let file_of = |fonts: &Fonts, slot: u8| match &fonts.slots[usize::from(slot)] {
+        Slot::Ready(loaded) => loaded.origin.as_ref().map(|(file, _)| file.path.clone()),
+        _ => None,
+    };
+    let next = Some(isolated.regular(test_fonts::CHAIN_NEXT));
+    for terminal_weight in [400, 700] {
+        let mut fonts = Fonts::load_with(&[], &[], &[], 400, terminal_weight).unwrap();
+        for kind in [FontKind::Mono, FontKind::Terminal] {
+            let (slot, glyph) = fonts.resolve(kind, CHAIN_SYMBOL);
+            assert_ne!(glyph, 0, "{kind:?}");
+            assert_eq!(file_of(&fonts, slot), next, "{kind:?} {terminal_weight}");
+        }
+    }
+
+    let first = FontSpec::Name(test_fonts::CHAIN_FIRST.into());
+    let fonts = Fonts::load(&[first], &[], &[], 400).unwrap();
+    assert!(fonts.listed[0].is_empty());
 }
