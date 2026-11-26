@@ -1334,6 +1334,11 @@ impl App {
             let glow = self.clock(animation::TOC_GLOW);
             self.preview.markdown.toc_glow = glow.map(|clock| (toc(hover), clock));
         }
+        if self.move_history_card(self.pointer.hover, hover) {
+            self.pointer.hover = hover;
+            self.request_redraw();
+            return;
+        }
         if hover != self.pointer.hover {
             self.leave_tooltip();
         }

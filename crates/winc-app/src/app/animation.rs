@@ -47,6 +47,9 @@ pub(super) const TOC_FADE: Duration = TREE_ANIMATION;
 /// 鼠标进入、离开 Markdown 预览的标题指示条时指示条加深、变淡的时长，取 [`DETAILS_FADE`]：
 /// 只改变颜色深浅，短于展开标题列表的动画。
 pub(super) const TOC_GLOW: Duration = DETAILS_FADE;
+/// 提交历史的详情卡片换到另一个提交时滑动的时长，取 [`DETAILS_FADE`]：卡片跟随鼠标所在的行，
+/// 短于展开类的动画，连续移过几行时不落后于鼠标。
+pub(super) const HISTORY_CARD_SLIDE: Duration = DETAILS_FADE;
 /// Markdown 预览的标题列表钉住、取消钉住的过渡时长，取 [`TREE_ANIMATION`]。
 ///
 /// 列表在指示条处与正文左侧之间滑动，卡片的底色和边框随之淡出、淡入。
@@ -395,6 +398,7 @@ impl App {
         settle(&mut self.preview.markdown.toc_fade, |c| *c);
         settle(&mut self.preview.markdown.toc_close, |c| *c);
         settle(&mut self.preview.markdown.toc_glow, |g| g.1);
+        settle(&mut self.git.commit.history.card_slide, |s| s.1);
         settle(&mut self.preview.markdown.toc_pin, |p| p.1);
         settle(&mut self.preview.markdown.toc_flash, |f| f.1);
         settle(&mut self.preview.markdown.anchor_flash, |f| f.1);
@@ -530,6 +534,7 @@ impl App {
             || self.preview.markdown.toc_fade.is_some()
             || self.preview.markdown.toc_close.is_some()
             || self.preview.markdown.toc_glow.is_some()
+            || self.git.commit.history.card_slide.is_some()
             || self.preview.markdown.catch_up.pending
             || self.preview.markdown.toc_pin.is_some()
             || self.preview.markdown.toc_flash.is_some()
