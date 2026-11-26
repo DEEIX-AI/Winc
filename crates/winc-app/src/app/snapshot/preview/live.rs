@@ -995,3 +995,114 @@ fn the_split_preview_shows_the_source_caret_in_its_text() {
     assert!(shown(&app, target));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 回归：解析耗时超过预算、输入领先于后台解析时，连续键入多字节中文不会与下一块、下一列表项
+/// 或下一列单元格的旧原文起点撞车而导致光标跳块或跳列。
+#[test]
+fn async_multibyte_typing_stays_in_current_block_and_table_cell() {
+    let text = "甲\n\n乙\n\n- 项一\n- 项二\n\n| 左 | 右 |\n| --- | --- |\n| 一 | 二 |\n";
+    let (mut app, dir) = live_doc("md-async-cjk", text);
+    let caret = |app: &App| {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        laid.caret_point(app.live_caret_source().unwrap()).unwrap()
+    };
+
+    // 段落：落后于后台解析时输入多个汉字，光标仍停在第一段同一行并向右推进。
+    put_caret(&mut app, "甲", true);
+    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
+    let p0 = caret(&app);
+    for ch in ["一", "二", "三", "四"] {
+        app.run(winc_editor::Command::Insert(ch.into()));
+        paint(&mut app);
+        let p = caret(&app);
+        assert!((p.1 - p0.1).abs() < 1.0, "段落光标跳行: {p0:?} -> {p:?}");
+        assert!(p.0 > p0.0, "段落光标未前进: {p0:?} -> {p:?}");
+    }
+    settle(&mut app);
+
+    // 列表项：同一容器内的兄弟项同步平移，光标不跳到下一项。
+    put_caret(&mut app, "项一", true);
+    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
+    let l0 = caret(&app);
+    for ch in ["丙", "丁", "戊"] {
+        app.run(winc_editor::Command::Insert(ch.into()));
+        paint(&mut app);
+        let l = caret(&app);
+        assert!((l.1 - l0.1).abs() < 1.0, "列表光标跳项: {l0:?} -> {l:?}");
+        assert!(l.0 > l0.0, "列表光标未前进: {l0:?} -> {l:?}");
+    }
+    settle(&mut app);
+
+    // 表格单元格：后续列同步平移，输入多字节中文不跳列。
+    put_caret(&mut app, "| 一", true);
+    app.preview.markdown.cost = Some(std::time::Duration::from_secs(1));
+    let t0 = caret(&app);
+    let mut prev_x = t0.0;
+    for ch in ["天", "地", "玄", "黄"] {
+        app.run(winc_editor::Command::Insert(ch.into()));
+        paint(&mut app);
+        let t = caret(&app);
+        assert!(
+            (t.1 - t0.1).abs() < 1.0,
+            "表格光标换行/跳行: {t0:?} -> {t:?}"
+        );
+        assert!(t.0 > prev_x, "表格光标未前进: {prev_x} -> {t:?}");
+        prev_x = t.0;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：段首空格与表格单元格首尾空格在实时编辑中都保留可见宽度并推动光标。
+#[test]
+fn leading_spaces_in_paragraph_and_table_cell_advance_caret() {
+    let text = "正文\n\n| 左 | 右 |\n| --- | --- |\n| 甲 | 乙 |\n";
+    let (mut app, dir) = live_doc("md-live-spaces", text);
+    let caret_x = |app: &App| {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        laid.caret_point(app.live_caret_source().unwrap())
+            .unwrap()
+            .0
+    };
+
+    put_caret(&mut app, "正文", false);
+    let p0 = caret_x(&app);
+    app.run(winc_editor::Command::Insert(" ".into()));
+    settle(&mut app);
+    assert!(caret_x(&app) > p0 + 1.0, "段首空格未推动光标");
+
+    put_caret(&mut app, "| 甲", true);
+    let c0 = caret_x(&app);
+    app.run(winc_editor::Command::Insert(" ".into()));
+    settle(&mut app);
+    assert!(caret_x(&app) > c0 + 1.0, "单元格尾空格未推动光标");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：脚注末尾自动生成的 ` ↩` 不污染正文的原文 `Span`，光标停在脚注正文末尾时不偏移到 ` ↩` 之后。
+#[test]
+fn footnote_backlink_does_not_pollute_source_span() {
+    let text = "正文[^1]\n\n[^1]: 脚注说明\n";
+    let (app, dir) = live_doc("md-footnote-span", text);
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
+    let footnote_block = laid
+        .blocks
+        .iter()
+        .find(|(_, b)| b.text.contains("脚注说明"))
+        .expect("应存在脚注块");
+    for item in &footnote_block.1.items {
+        if let winc_typeset::Item::Text {
+            text,
+            span: Some(span),
+            ..
+        } = item
+            && text.contains('↩')
+        {
+            assert!(
+                span.source.is_none(),
+                "生成字符 `↩` 不应带原文起点: text={text:?} source={:?}",
+                span.source
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

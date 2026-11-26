@@ -331,11 +331,26 @@ impl Out {
     ) -> bool {
         let mut shown = false;
         let text = &plain[gap.clone()];
-        // 不属于任何元素的一段，截止到换行。
+        // 不属于任何元素的一段，截止到换行或相邻元素的边界。
         let piece = |i: usize| {
-            let from = text[..i].rfind('\n').map_or(0, |n| n + 1);
-            let to = text[i..].find('\n').map_or(text.len(), |n| i + n);
-            if own { 0..text.len() } else { from..to }
+            if own {
+                return 0..text.len();
+            }
+            let line_start = text[..i].rfind('\n').map_or(0, |n| n + 1);
+            let from = text[line_start..i]
+                .char_indices()
+                .rev()
+                .find_map(|(off, ch)| {
+                    innermost(elements, gap.start + line_start + off)
+                        .map(|_| line_start + off + ch.len_utf8())
+                })
+                .unwrap_or(line_start);
+            let line_end = text[i..].find('\n').map_or(text.len(), |n| i + n);
+            let to = text[i..line_end]
+                .char_indices()
+                .find_map(|(off, _)| innermost(elements, gap.start + i + off).map(|_| i + off))
+                .unwrap_or(line_end);
+            from..to
         };
         for (i, c) in text.char_indices() {
             if matches!(c, '\n' | '\r') {
@@ -347,10 +362,8 @@ impl Out {
                 None => {
                     let p = piece(i);
                     let p = gap.start + p.start..gap.start + p.end;
-                    // 空白只在行尾且光标接触时显示。
-                    let blank = plain[p.clone()].trim().is_empty();
-                    let end = p.end == plain.len() || plain[p.end..].starts_with('\n');
-                    (!blank || end) && touches(&p, caret)
+                    // 光标接触空白段（含段落首尾空格与多行段落行尾空格）或语法标记时显示。
+                    touches(&p, caret)
                 }
             };
             if show {

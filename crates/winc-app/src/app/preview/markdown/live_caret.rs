@@ -27,7 +27,16 @@ impl App {
         };
         let delta = len as i64 - parsed.len as i64;
         let shift = |at: usize| usize::try_from(at as i64 + delta).unwrap_or(0).min(len);
-        let i = parsed.leaves.partition_point(|l| l.range.start <= caret);
+        // 输入领先于异步解析时，先将当前光标还原到上一版解析坐标系，再在旧 `leaves` / `ranges`
+        // 中查找归属块，避免刚输入的多字节字符（如中文）越过未平移的下一块起点而跳块。
+        let parsed_caret = if delta > 0 {
+            caret.saturating_sub(delta as usize)
+        } else {
+            caret
+        };
+        let i = parsed
+            .leaves
+            .partition_point(|l| l.range.start <= parsed_caret);
         let line = rope.byte_to_line(caret);
         let line_start = rope.line_to_byte(line);
         let line_end = rope
@@ -53,7 +62,9 @@ impl App {
             (Some(p), _) if caret <= tail(p) => (p, p.start..tail(p), false),
             // 光标在块的标记上（引用的 `>`、提示块的 `[!NOTE]`、列表的序号），尚未到达其第一个
             // 叶子块：取该叶子块，从光标所在行显示原文。
-            (_, Some(n)) if block_of(n.start).is_some() && block_of(n.start) == block_of(caret) => {
+            (_, Some(n))
+                if block_of(n.start).is_some() && block_of(n.start) == block_of(parsed_caret) =>
+            {
                 (n, line_start.min(n.start)..shift(n.end).max(n.start), false)
             }
             // 光标在叶子块之后的空行上：范围延伸到光标所在行，使光标在原文的空行上有位置。

@@ -224,8 +224,11 @@ impl Cx<'_, '_> {
             }
             let start = range.start;
             for (i, c) in inline.text[range].char_indices() {
-                let source = source_of(inline, start + i);
+                let source = inline
+                    .char_source_of(start + i)
+                    .and_then(|s| u32::try_from(s).ok());
                 if c == IMAGE_MARK {
+                    let source = source.or_else(|| source_of(inline, start + i));
                     let Some(image) = images.next() else { continue };
                     match self.image(image, room) {
                         Some((path, w, h)) => atoms.push(Atom {
@@ -490,6 +493,9 @@ impl Cx<'_, '_> {
                 let atom = &atoms[j];
                 match &atom.kind {
                     AtomKind::Char(c) => {
+                        if !text.text.is_empty() && text.source.is_some() != atom.source.is_some() {
+                            flush_text(out, &mut text, at, st);
+                        }
                         if text.text.is_empty() {
                             text.x = *pen;
                             text.start = self.chars;

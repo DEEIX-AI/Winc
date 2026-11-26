@@ -548,6 +548,37 @@ impl Item {
             color,
         }
     }
+
+    /// 按字节差值 `delta` 平移该项记录的原文位置（相对顶层块）。
+    ///
+    /// 用于同一顶层容器（列表、引用、脚注等）中，当前正在编辑的叶子块已因输入增长或缩短，
+    /// 而后台重新解析尚未完成时，将排在其后的兄弟块的静态原文坐标同步平移，防止偏移撞车。
+    pub(crate) fn shift_source(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        let shift = |at: &mut u32| {
+            *at = usize::try_from(*at as isize + delta)
+                .ok()
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(0);
+        };
+        match self {
+            Item::Text {
+                span: Some(span), ..
+            } => {
+                if let Some(src) = &mut span.source {
+                    shift(src);
+                }
+            }
+            Item::Image {
+                at: Some((_, src)), ..
+            }
+            | Item::Spot { at: (_, src), .. } => shift(src),
+            Item::Check { source, .. } if *source != u32::MAX => shift(source),
+            _ => {}
+        }
+    }
 }
 
 /// 排版用到的颜色，由配色推出来，换主题时跟着变。
@@ -912,11 +943,28 @@ impl Cx<'_, '_> {
             RawState::Rule => return self.raw_rule(x, y, width, out),
         }
         let para = self.body_para(env);
+        let shift_after = (!matches!(
+            block,
+            Block::Quote(..)
+                | Block::List(..)
+                | Block::Table(..)
+                | Block::Footnote(..)
+                | Block::Details { .. }
+        ))
+        .then(|| {
+            self.raw
+                .as_ref()
+                .filter(|r| r.done)
+                .map(|r| r.leaf.end as isize - r.parsed_end as isize)
+                .filter(|&d| d != 0)
+        })
+        .flatten();
+        let first_item = out.items.len();
         if let Block::Paragraph(inline) | Block::Heading(_, inline) = block {
             out.anchors
                 .extend(inline.ids.iter().map(|id| (id.clone(), y)));
         }
-        match block {
+        let flow = match block {
             Block::Paragraph(inline) => self.flow(inline, x, y, width, para, &mut out.items),
             Block::Heading(level, inline) => self.heading(*level, inline, x, y, width, env, out),
             Block::Code { lang, text, map } => {
@@ -989,7 +1037,13 @@ impl Cx<'_, '_> {
                 let id = self.toggle_id(details_id(block));
                 self.details(id, *open, summary, blocks, x, y, width, env, out)
             }
+        };
+        if let Some(delta) = shift_after {
+            for item in &mut out.items[first_item..] {
+                item.shift_source(delta);
+            }
         }
+        flow
     }
 
     /// 块文字（[`Cx::text`]）里一段（段落、单元格、代码的一行）结束：接一个换行。
