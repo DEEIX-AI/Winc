@@ -351,12 +351,9 @@ impl Cx<'_, '_> {
         );
         // 代码块在编辑时同样显示复制按钮，复制围栏之间的代码。
         if fenced && !matches!(lang, "mermaid" | "latex") {
-            let lines: Vec<&str> = text.split('\n').collect();
-            let close = usize::from(lines.len() > 1 && lines.last().is_some_and(|l| is_fence(l)));
-            let code = lines[1.min(lines.len())..lines.len() - close].join("\n");
             out.push(Item::Code {
                 rect,
-                text: code.into(),
+                text: fenced_code(text).into(),
                 diagram: false,
             });
         }

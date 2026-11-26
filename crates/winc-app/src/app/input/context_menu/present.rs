@@ -48,36 +48,6 @@ impl Prepared {
     }
 }
 
-/// 标签列表菜单的图标边长（逻辑像素）。
-///
-/// 文件图标为 12 × 15，无法放入其他菜单 15 × 12 的图标位，因此改用 16 × 16 的图标位，
-/// 状态栏路径的目录菜单也使用该尺寸。
-const TAB_LIST_ICON: f32 = 16.0;
-
-/// 菜单项左边的图标。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MenuIcon {
-    /// 最近打开的目录：与文件树中的目录相同的图标和颜色。
-    Folder,
-    /// 最近打开的一组目录：两个叠放的目录。
-    Folders,
-    /// 标签列表的第几项：标签上的图标（文件类型图标，日志标签为 Git 图标）。
-    Tab(usize),
-    /// 目录菜单中的文件、语言菜单中的语言：文件类型的记号和它在深色、浅色配色下的颜色（同
-    /// 文件树）。
-    File(icons::FileGlyph, [u32; 2]),
-}
-
-impl MenuIcon {
-    /// 图标位的逻辑尺寸（宽，高）。
-    pub(crate) fn size(self) -> (f32, f32) {
-        match self {
-            MenuIcon::Tab(_) | MenuIcon::File(..) => (TAB_LIST_ICON, TAB_LIST_ICON),
-            MenuIcon::Folder | MenuIcon::Folders => MENU_ICON,
-        }
-    }
-}
-
 /// 子菜单 `items` 这一行用谁的图标：第一项打开整个目录组时用它的，其余子菜单没有图标。
 pub(super) fn submenu_lead(items: &[MenuEntry]) -> Option<MenuCommand> {
     match items.first() {
@@ -125,6 +95,21 @@ impl App {
             return;
         }
 
+        // Git 面板最大化时盖在侧栏、编辑区和终端上面：面板中只有日志的菜单。
+        if self.in_git_panel(x, y) {
+            let target = if let Some((i, path)) = self.log_file_context_target(x, y) {
+                MenuTarget::LogFile(i, path)
+            } else if let Some(index) = self.log_branch_context_target(x, y) {
+                MenuTarget::BranchOps(index)
+            } else if let Some(oid) = self.log_context_target(x, y) {
+                MenuTarget::LogCommit(oid)
+            } else {
+                return;
+            };
+            self.open_context_menu(target, (x, y));
+            return;
+        }
+
         let tab = self
             .tab_at(x, y)
             .and_then(|(index, _)| self.editor.tabs().get(index));
@@ -154,6 +139,8 @@ impl App {
             MenuTarget::SearchResult(path, m)
         } else if let Some(i) = self.stash_context_target(x, y) {
             MenuTarget::StashRow(i)
+        } else if let Some(oid) = self.history_context_target(x, y) {
+            MenuTarget::HistoryCommit(oid)
         } else if let Some(path) = self.commit_context_target(x, y) {
             MenuTarget::CommitFile(path)
         } else if self.in_commit_overflow(x, y) {
@@ -371,6 +358,12 @@ impl App {
             MenuTarget::OpenWorktree => open_worktree_menu(),
             MenuTarget::PullMode => (0..winc_config::PullMode::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::PullMode(i), true))
+                .collect(),
+            MenuTarget::AiProtocol => (0..winc_config::AiProtocol::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::AiProtocol(i), true))
+                .collect(),
+            MenuTarget::LogPlacement => (0..winc_config::LogPlacement::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::LogPlacement(i), true))
                 .collect(),
             MenuTarget::SearchStyle => (0..winc_config::SearchStyle::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::SearchStyle(i), true))
@@ -820,16 +813,17 @@ impl App {
             MenuTarget::LogFile(_, path) => {
                 log_file_menu(self.may_exist(path), self.relative_path(path).is_some())
             }
-            MenuTarget::LogCommit(oid) => {
-                let commit = self.log_commit(oid);
+            MenuTarget::LogCommit(oid) | MenuTarget::HistoryCommit(oid) => {
+                let in_log = matches!(target, MenuTarget::LogCommit(_));
+                let commit = self.log_commit(oid, in_log);
                 let tags: Vec<&str> = (commit.iter().flat_map(|c| &c.refs))
                     .filter_map(crate::app::git::log::menus::tag_name)
                     .collect();
                 // 指向这个提交的分支，各自的操作与分支面板中相同；分支列表属于提交视图所在的
-                // 仓库，还没换过去（日志没有仓库）时不列出。
+                // 仓库，还没换过去（日志没有仓库）时不列出；提交历史就在该仓库中。
                 let (held, stale) = (self.git.held_branches(), self.git.stale_branches());
                 let all = &self.git.branches;
-                let same = self.active_log_root() == self.git.root.as_deref();
+                let same = !in_log || self.active_log_root() == self.git.root.as_deref();
                 let branches = (commit.iter().filter(|_| same).flat_map(|c| &c.refs))
                     .filter_map(|r| match r {
                         Ref::Head(name) | Ref::Branch(name) => {
@@ -845,7 +839,7 @@ impl App {
                         (all[i].name.clone(), ops)
                     })
                     .collect();
-                let actions = self.log_commit_actions(oid);
+                let actions = self.log_commit_actions(oid, in_log);
                 log_commit_menu(actions, &self.current_branch_label(), branches, &tags)
             }
             MenuTarget::LogColumns => self.log_columns_menu(),
@@ -914,6 +908,8 @@ impl App {
                 | MenuTarget::VimKey(_)
                 | MenuTarget::OpenWorktree
                 | MenuTarget::PullMode
+                | MenuTarget::AiProtocol
+                | MenuTarget::LogPlacement
                 | MenuTarget::DropFolder
                 | MenuTarget::SearchStyle
                 | MenuTarget::AutoSave
@@ -936,6 +932,8 @@ impl App {
             MenuTarget::VimKey(c) => Some(Setting::VimKey(c)),
             MenuTarget::OpenWorktree => Some(Setting::GitOpenWorktree),
             MenuTarget::PullMode => Some(Setting::GitPullMode),
+            MenuTarget::AiProtocol => Some(Setting::AiProtocol),
+            MenuTarget::LogPlacement => Some(Setting::GitLogPlacement),
             MenuTarget::DropFolder => Some(Setting::DropFolder),
             MenuTarget::SearchStyle => Some(Setting::FindInFiles),
             MenuTarget::AutoSave => Some(Setting::AutoSave),
@@ -960,7 +958,9 @@ impl App {
             MenuTarget::BranchOps(_) | MenuTarget::CommitMore => {
                 (self.git.branches.clone(), self.git.stashes.clone())
             }
-            MenuTarget::LogCommit(_) => (self.git.branches.clone(), Vec::new()),
+            MenuTarget::LogCommit(_) | MenuTarget::HistoryCommit(_) => {
+                (self.git.branches.clone(), Vec::new())
+            }
             MenuTarget::StashRow(_) | MenuTarget::StashList => {
                 (Vec::new(), self.git.stashes.clone())
             }
@@ -1144,11 +1144,7 @@ impl App {
             return self.markdown_line_numbers_on();
         }
         // 日志的作者筛选：现在用着的那一项。
-        let query = self
-            .editor
-            .active()
-            .and_then(|d| d.log.as_deref())
-            .map(|v| &v.query);
+        let query = self.log_view().map(|v| &v.query);
         if let MenuCommand::FormBase(i) = command {
             return self.form_base_chosen(i);
         }
@@ -1245,6 +1241,14 @@ impl App {
             MenuCommand::PullMode(i) => {
                 winc_config::PullMode::ALL.get(i) == Some(&self.config.git_pull.unwrap_or_default())
             }
+            MenuCommand::AiProtocol(i) => {
+                let current = self.config.ai_protocol.unwrap_or_default();
+                winc_config::AiProtocol::ALL.get(i) == Some(&current)
+            }
+            MenuCommand::LogPlacement(i) => {
+                let current = self.config.git_log_placement.unwrap_or_default();
+                winc_config::LogPlacement::ALL.get(i) == Some(&current)
+            }
             MenuCommand::SearchStyle(i) => {
                 winc_config::SearchStyle::ALL.get(i) == Some(&self.search_style())
             }
@@ -1317,104 +1321,6 @@ impl App {
             }
             _ => false,
         }
-    }
-
-    /// 返回菜单项左边的图标：最近的目录用目录图标，工作树用分支图标，标签列表用标签上的图标，
-    /// 语言用这种语言的文件的图标；其他命令没有图标。
-    pub(in crate::app) fn menu_icon_kind(&self, command: MenuCommand) -> Option<MenuIcon> {
-        match command {
-            MenuCommand::OpenRecent(i) | MenuCommand::OpenRecentInNewWindow(i) => {
-                let group = (self.state.recent.get(i))
-                    .is_some_and(|folder| self.recent_group(folder).is_some());
-                Some(if group {
-                    MenuIcon::Folders
-                } else {
-                    MenuIcon::Folder
-                })
-            }
-            MenuCommand::OpenGroup(_) => Some(MenuIcon::Folders),
-            MenuCommand::GroupFolder(..) => Some(MenuIcon::Folder),
-            MenuCommand::ShowTab(i) => self.editor.documents.get(i).map(|_| MenuIcon::Tab(i)),
-            MenuCommand::UseLanguage(_) | MenuCommand::UsePlainText => {
-                let language = match command {
-                    MenuCommand::UseLanguage(i) => winc_syntax::languages().get(i).copied()?,
-                    _ => winc_syntax::detect(""),
-                };
-                let (glyph, colors) = crate::theme::language_kind(language);
-                Some(MenuIcon::File(glyph, colors))
-            }
-            _ => None,
-        }
-    }
-
-    /// 在 `(x, y)`（图标位的左上角）绘制菜单项图标 `icon`，图标位的尺寸见
-    /// [`MenuIcon::size`]。
-    ///
-    /// 窗口的深浅外观跟随主题，菜单跟随窗口，因此图标颜色与菜单的深浅外观一致。
-    pub(crate) fn draw_menu_icon(
-        &self,
-        frame: &mut winc_render::Frame<'_>,
-        icon: MenuIcon,
-        (x, y): (f32, f32),
-        clip: Rect,
-    ) {
-        let (w, h) = icon.size();
-        match icon {
-            MenuIcon::Folder => icons::folder(frame, (x, y), false, self.palette.folder, clip),
-            MenuIcon::Folders => icons::folders(frame, (x, y), self.palette.folder, clip),
-            MenuIcon::File(glyph, [dark, light]) => {
-                let color = winc_render::Color::hex(if self.palette.dark { dark } else { light });
-                // 文件图标 12 × 15。
-                icons::file(frame, (x + 2.0, y + 0.5), glyph, color, clip);
-            }
-            MenuIcon::Tab(i) => {
-                let Some(doc) = self.editor.documents.get(i) else {
-                    return;
-                };
-                if doc.log.is_some() {
-                    icons::git(
-                        frame,
-                        (x + w / 2.0, y + h / 2.0),
-                        1.0,
-                        self.palette.accent,
-                        clip,
-                    );
-                } else if doc.terminal {
-                    icons::terminal(
-                        frame,
-                        (x + w / 2.0, y + h / 2.0),
-                        self.palette.text_muted,
-                        clip,
-                    );
-                } else {
-                    let (glyph, color) = self
-                        .palette
-                        .file_icon(&crate::app::workspace::tab_names::tab_icon_name(doc));
-                    // 文件图标 12 × 15。
-                    icons::file(frame, (x + 2.0, y + 0.5), glyph, color, clip);
-                }
-            }
-        }
-    }
-
-    /// 返回菜单项 `command` 的图标的逻辑尺寸（宽，高）；没有图标时为 [`MENU_ICON`]。
-    #[cfg(any(target_os = "macos", test))]
-    pub(in crate::app) fn menu_icon_size(&self, command: MenuCommand) -> (f32, f32) {
-        (self.menu_icon_kind(command)).map_or(MENU_ICON, MenuIcon::size)
-    }
-
-    /// 把菜单项 `command` 的图标画成图片，交给系统菜单；没有图标或没有渲染器时为 `None`。
-    #[cfg(any(target_os = "macos", test))]
-    pub(in crate::app) fn menu_icon(&mut self, command: MenuCommand) -> Option<Image> {
-        let icon = self.menu_icon_kind(command)?;
-        let (w, h) = icon.size();
-        let clip = Rect::new(0.0, 0.0, w, h);
-        let mut renderer = self.frame.renderer.take()?;
-        let image = renderer.draw_transparent(w, h, |frame| {
-            self.draw_menu_icon(frame, icon, (0.0, 0.0), clip);
-        });
-        self.frame.renderer = Some(renderer);
-        Some(image)
     }
 
     /// 文件树工具栏「⋯」的菜单：列出收起的各个工具，按工具栏中的顺序排列。

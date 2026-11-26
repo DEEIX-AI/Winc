@@ -242,6 +242,7 @@ impl Action {
             GitGoToChildCommit => "Git: Go to Child Commit",
             GitGoToParentCommit => "Git: Go to Parent Commit",
             GitShowOutput => "Git: Show Output",
+            GitGenerateCommitMessage => "Git: Generate Commit Message",
             GitClone => "Git: Clone Repository…",
             GitInit => "Git: Initialize Repository",
             GitSwitchRepository => "Git: Switch Repository",
