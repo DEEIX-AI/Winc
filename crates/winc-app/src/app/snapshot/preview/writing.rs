@@ -382,6 +382,43 @@ fn focus_and_typewriter_modes_follow_the_caret() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：打字机模式下在文末编辑时，光标所在行居中的滚动位置超过普通的上限；自动保存后文件监视
+/// 报告变化，限制滚动范围时滚回上限，编辑区上下跳动。
+#[test]
+fn typewriter_scroll_past_the_end_survives_file_changes() {
+    let text: String = (0..80).map(|i| format!("第 {i} 段\n\n")).collect();
+    let (mut app, dir) = source_doc("md-typewriter-end", &text);
+    assert!(app.run_action(Action::MarkdownTypewriterMode));
+    app.scroll.keyed = true;
+    put_caret(&mut app, "第 79 段", true);
+    app.ensure_caret_visible();
+    app.scroll.glide = None;
+    let scroll = app.editor.active().unwrap().scroll_line;
+    assert!(scroll > app.max_scroll_line(), "文末的行居中");
+
+    let path = dir.join("NOTES.md");
+    app.apply_changes(winc_editor::Changes {
+        paths: vec![path],
+        rescan: false,
+        git: false,
+    });
+    assert_eq!(app.editor.active().unwrap().scroll_line, scroll);
+    // 滚轮向上滚一行同样不先滚回上限。
+    let id = app.editor.active().unwrap().id;
+    app.scroll_editor_by_pixels(id, 0.0, app.fonts.line_height);
+    let wheeled = app.editor.active().unwrap().scroll_line;
+    assert!((wheeled - (scroll - 1.0)).abs() < 1e-6, "{wheeled}");
+
+    // 关闭打字机模式后按普通的上限限制。
+    assert!(app.run_action(Action::MarkdownTypewriterMode));
+    app.clamp_scroll();
+    assert_eq!(
+        app.editor.active().unwrap().scroll_line,
+        app.max_scroll_line()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 点标题左边的箭头收起下面的一节，再点一次展开；收起时光标在这一节里的移到标题末尾。
 #[test]
 fn headings_fold_their_sections_in_the_preview() {
