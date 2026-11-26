@@ -171,6 +171,7 @@ impl SettingsPage {
                         S::StickyScroll,
                         S::CursorStyle,
                         S::SmoothCaret,
+                        S::EditorLigatures,
                         S::RenderWhitespace,
                         S::RenderLineEndings,
                         S::WholeLines,

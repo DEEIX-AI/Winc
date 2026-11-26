@@ -1,4 +1,4 @@
-//! 「编辑器」页设置的测试：字重、长行参考线、换行符与光标样式。
+//! 「编辑器」页设置的测试：字重、连字开关、长行参考线、换行符与光标样式。
 
 use super::*;
 
@@ -154,5 +154,20 @@ fn the_cursor_style_shapes_the_editor_caret() {
     assert_eq!(bar, 2 * (line - 2) * scale);
     assert_eq!(underline, cell * 2 * scale);
     assert!(block > bar * 2 && block <= cell * line * scale, "{block}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 连字是编辑器页的开关，默认关闭；打开、关闭都写回配置。字体是否真的连写取决于字体，这里只核对
+/// 开关本身。
+#[test]
+fn the_ligature_switch_writes_the_config() {
+    let dir = sample_folder("settings-editor-ligatures");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    assert_eq!(Setting::EditorLigatures.page(), SettingsPage::Editor);
+    assert!(!app.switch_on(Setting::EditorLigatures));
+    app.settings_toggle(Setting::EditorLigatures);
+    assert_eq!(app.config.editor_font_ligatures, Some(true));
+    app.settings_toggle(Setting::EditorLigatures);
+    assert_eq!(app.config.editor_font_ligatures, Some(false));
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -57,6 +57,8 @@ pub enum Setting {
     EditorSize,
     /// 编辑区字重（`editor.fontWeight`）。
     EditorFontWeight,
+    /// 编辑区的连字（`editor.fontLigatures`）。
+    EditorLigatures,
     /// Tab 宽度。
     TabWidth,
     /// 自动保存。
@@ -349,6 +351,7 @@ impl Setting {
             S::EditorFont | S::EditorSize | S::EditorFontWeight | S::TabWidth => {
                 SettingsPage::Editor
             }
+            S::EditorLigatures => SettingsPage::Editor,
             S::LineNumbers | S::WordWrap | S::EditorRulers => SettingsPage::Editor,
             S::AlignColumns => SettingsPage::Editor,
             S::Minimap | S::StickyScroll | S::RenderWhitespace | S::RenderLineEndings => {
@@ -426,6 +429,7 @@ impl Setting {
             S::EditorFont => "editor.font",
             S::EditorSize => "editor.size",
             S::EditorFontWeight => "editor.fontWeight",
+            S::EditorLigatures => "editor.fontLigatures",
             S::TabWidth => "editor.tabWidth",
             S::AutoSave => "editor.autoSave",
             S::HotExit => "editor.hotExit",
@@ -547,6 +551,7 @@ impl Setting {
             Setting::EditorFont => t!("settings-editor-font"),
             Setting::EditorSize => t!("settings-editor-size"),
             Setting::EditorFontWeight => t!("settings-editor-font-weight"),
+            Setting::EditorLigatures => t!("settings-editor-ligatures"),
             Setting::TabWidth => t!("settings-tab-width"),
             Setting::AutoSave => t!("settings-auto-save"),
             Setting::HotExit => t!("settings-hot-exit"),
@@ -710,6 +715,7 @@ impl Setting {
             Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
             Setting::RenderLineEndings => Some(t!("settings-render-line-endings-desc")),
+            Setting::EditorLigatures => Some(t!("settings-editor-ligatures-desc")),
             Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
             Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
             Setting::DiffCollapse => Some(t!("settings-diff-collapse-desc")),
@@ -828,6 +834,7 @@ impl Setting {
             | Setting::WholeLines
             | Setting::Minimap
             | Setting::RenderLineEndings
+            | Setting::EditorLigatures
             | Setting::Outline
             | Setting::LineNumbers
             | Setting::DiffInline

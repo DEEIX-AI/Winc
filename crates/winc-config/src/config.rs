@@ -31,6 +31,8 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::FONT_WEIGHT_RANGE`]。
     pub editor_font_weight: Option<u16>,
+    /// 字体支持时把 `->`、`===` 等相邻的符号画成连写的字形，默认为否。
+    pub editor_font_ligatures: Option<bool>,
     /// 界面字体（文件树、标签、状态栏）。
     pub ui_font: Option<String>,
     /// 界面字号（点）。

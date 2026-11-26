@@ -78,6 +78,7 @@ settings-ui-zoom = Zoom
 settings-editor-font = Font
 settings-editor-size = Font Size
 settings-editor-font-weight = Font Weight
+settings-editor-ligatures = Ligatures
 settings-tab-width = Tab Width
 settings-auto-save = Auto Save
 settings-auto-save-off = Off
@@ -257,6 +258,7 @@ settings-vim-clipboard-desc = When yanked or deleted text goes to the system cli
 settings-vim-relative-number-desc = Show the line number on the current line and distances on the others
 settings-vim-yank-highlight-desc = Briefly highlight the text that was just yanked
 settings-render-whitespace-desc = Mark spaces and tabs with dots and arrows
+settings-editor-ligatures-desc = Draw symbol sequences such as -> and === as joined glyphs when the font supports them, without changing the file
 settings-render-line-endings-desc = Mark the line ending at the end of each line: ↓ LF, ↵ CRLF, ← CR
 settings-whole-lines-desc = Don’t cut off lines over 10,000 characters; the rest isn’t highlighted
 settings-word-wrap-desc = Wrap long lines at the editor width without changing the file

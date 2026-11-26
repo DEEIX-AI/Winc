@@ -322,6 +322,7 @@ fn round_trips_through_json() {
         editor_font: Some("Menlo".to_string()),
         editor_size: Some(14.0),
         editor_font_weight: Some(500),
+        editor_font_ligatures: Some(true),
         editor_rulers: vec![80, 120],
         render_line_endings: Some(true),
         cursor_style: Some(CursorStyle::Underline),

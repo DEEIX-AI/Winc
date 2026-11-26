@@ -129,6 +129,7 @@ const EDITOR: &[Field] = &[
         write: |config| config.editor_size.map(number),
     },
     weight_field!(editor_font_weight),
+    bool_field!("fontLigatures", editor_font_ligatures),
     Field {
         key: "rulers",
         read: |config, value, name, problems| {

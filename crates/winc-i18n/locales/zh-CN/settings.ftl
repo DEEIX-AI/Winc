@@ -78,6 +78,7 @@ settings-ui-zoom = 缩放
 settings-editor-font = 字体
 settings-editor-size = 字号
 settings-editor-font-weight = 字重
+settings-editor-ligatures = 连字
 settings-tab-width = 制表符长度
 settings-auto-save = 自动保存
 settings-auto-save-off = 关闭
@@ -257,6 +258,7 @@ settings-vim-clipboard-desc = 复制、删除的文本何时写入系统剪贴�
 settings-vim-relative-number-desc = 当前行显示行号，其余各行显示与当前行的距离
 settings-vim-yank-highlight-desc = 复制后短暂高亮被复制的文本
 settings-render-whitespace-desc = 用圆点和箭头标出空格与制表符
+settings-editor-ligatures-desc = 字体支持时，把 ->、=== 等相邻的符号画成连写的字形，不修改文件
 settings-render-line-endings-desc = 在行尾用箭头标出换行符：↓ 为 LF，↵ 为 CRLF，← 为 CR
 settings-whole-lines-desc = 超过 10000 个字符的行不再截断，超出部分不做语法高亮
 settings-word-wrap-desc = 长行按编辑区宽度折行显示，不修改文件
