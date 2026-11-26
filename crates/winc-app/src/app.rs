@@ -1331,6 +1331,8 @@ impl App {
             }
             self.preview.markdown.toc_rest = toc(hover).then(Instant::now);
             self.preview.markdown.toc_shown = false;
+            let glow = self.clock(animation::TOC_GLOW);
+            self.preview.markdown.toc_glow = glow.map(|clock| (toc(hover), clock));
         }
         if hover != self.pointer.hover {
             self.leave_tooltip();
