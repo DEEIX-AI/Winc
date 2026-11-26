@@ -91,6 +91,9 @@ impl App {
                 t!("settings-terminal-tab-position-top")
             };
             (text.to_owned(), false)
+        } else if setting == Setting::TerminalRightClick {
+            let choice = self.config.terminal_right_click.unwrap_or_default();
+            (crate::layout::right_click_label(choice).to_owned(), false)
         } else if setting == Setting::TerminalOptionAsMeta {
             let choice = (self.config.option_as_meta).unwrap_or(winc_config::OptionAsMeta::Left);
             (

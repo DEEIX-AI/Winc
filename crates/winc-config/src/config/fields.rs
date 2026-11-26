@@ -677,6 +677,26 @@ const TERMINAL: &[Field] = &[
     bool_field!("confirmClose", terminal_confirm_close),
     bool_field!("prompt", terminal_prompt),
     bool_field!("copyOnSelect", terminal_copy_on_select),
+    Field {
+        key: "rightClick",
+        read: |config, value, name, problems| {
+            config.terminal_right_click = match value.as_str() {
+                Some("menu") => Some(TerminalRightClick::Menu),
+                Some("copyOrPaste") => Some(TerminalRightClick::CopyOrPaste),
+                _ => {
+                    problems.push(t!("config-right-click-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| {
+            let value = match config.terminal_right_click? {
+                TerminalRightClick::Menu => "menu",
+                TerminalRightClick::CopyOrPaste => "copyOrPaste",
+            };
+            Some(Json::String(value.to_owned()))
+        },
+    },
     bool_field!("boldIsBright", terminal_bold_is_bright),
     bool_field!("verticalTabs", terminal_vertical_tabs),
     bool_field!("applicationPriority", terminal_application_priority),

@@ -159,6 +159,9 @@ impl App {
         } else if let Some(id) = self.terminal_tab_context_target(x, y) {
             MenuTarget::TerminalTab(id)
         } else if let Some((id, block)) = self.terminal_context_target(x, y) {
+            if self.terminal_right_click_edits() {
+                return self.terminal_right_click();
+            }
             MenuTarget::Terminal(id, block)
         } else if self.markdown_context_target(x, y) {
             MenuTarget::Markdown
@@ -389,6 +392,9 @@ impl App {
             MenuTarget::TerminalPosition => terminal_position_menu(),
             MenuTarget::TerminalTabPosition => terminal_tab_position_menu(),
             MenuTarget::OptionAsMeta => option_as_meta_menu(),
+            MenuTarget::RightClick => (0..winc_config::TerminalRightClick::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::RightClick(i), true))
+                .collect(),
             &MenuTarget::Font(setting) => font_menu(setting, self.font_value(setting).as_deref()),
             &MenuTarget::Tool(task, id) => {
                 let row = self.settings.tool_row(tool_setting(task, id));
@@ -926,6 +932,7 @@ impl App {
                 | MenuTarget::TerminalPosition
                 | MenuTarget::TerminalTabPosition
                 | MenuTarget::OptionAsMeta
+                | MenuTarget::RightClick
                 | MenuTarget::Font(_)
         );
         // 设置中语言、字体等选项的菜单不窄于弹出它的控件。
@@ -951,6 +958,7 @@ impl App {
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
             MenuTarget::TerminalTabPosition => Some(Setting::TerminalTabPosition),
             MenuTarget::OptionAsMeta => Some(Setting::TerminalOptionAsMeta),
+            MenuTarget::RightClick => Some(Setting::TerminalRightClick),
             MenuTarget::Font(setting) => Some(setting),
             _ => None,
         };
@@ -1296,6 +1304,10 @@ impl App {
             MenuCommand::BackgroundFit(i) => {
                 winc_config::BackgroundFit::ALL.get(i)
                     == Some(&self.config.ui_background_fit.unwrap_or_default())
+            }
+            MenuCommand::RightClick(i) => {
+                winc_config::TerminalRightClick::ALL.get(i)
+                    == Some(&self.config.terminal_right_click.unwrap_or_default())
             }
             MenuCommand::OptionAsMeta(i) => {
                 let current =

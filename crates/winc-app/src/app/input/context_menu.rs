@@ -309,6 +309,9 @@ pub enum MenuCommand {
     /// 设置中「Meta 键」菜单的一项，参数为
     /// [`OptionAsMeta::ALL`](winc_config::OptionAsMeta::ALL) 中的序号（从 0 起）。
     OptionAsMeta(usize),
+    /// 设置中终端「右键单击」菜单的一项，参数为
+    /// [`TerminalRightClick::ALL`](winc_config::TerminalRightClick::ALL) 中的序号（从 0 起）。
+    RightClick(usize),
     /// 设置中字体菜单的「系统默认」（终端字体为「跟随编辑器」）。
     FontDefault,
     /// 设置中字体菜单的一项，参数为 [`winc_render::installed_fonts`] 中的序号（从 0 起）。
@@ -667,6 +670,9 @@ impl MenuCommand {
             MenuCommand::OptionAsMeta(i) => winc_config::OptionAsMeta::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::option_as_meta_label(choice)),
+            MenuCommand::RightClick(i) => winc_config::TerminalRightClick::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::right_click_label(choice)),
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
             MenuCommand::LocationThisWindow => t!("git-location-this-window"),
             MenuCommand::LocationNewWindow => t!("git-location-new-window"),
@@ -1089,6 +1095,8 @@ pub enum MenuTarget {
     TerminalTabPosition,
     /// 设置的终端页中的「Meta 键」。
     OptionAsMeta,
+    /// 设置的终端页中的「右键单击」。
+    RightClick,
     /// 设置中字体一行的下拉按钮。
     Font(Setting),
     /// 设置的格式化页中一种语言的格式化（修复）工具。

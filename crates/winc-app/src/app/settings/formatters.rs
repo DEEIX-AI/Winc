@@ -493,6 +493,7 @@ impl App {
             | Setting::TerminalPosition
             | Setting::TerminalTabPosition
             | Setting::TerminalOptionAsMeta
+            | Setting::TerminalRightClick
             | Setting::UiFont
             | Setting::EditorFont
             | Setting::TerminalFont
@@ -519,6 +520,7 @@ impl App {
                     Setting::TerminalPosition => MenuTarget::TerminalPosition,
                     Setting::TerminalTabPosition => MenuTarget::TerminalTabPosition,
                     Setting::TerminalOptionAsMeta => MenuTarget::OptionAsMeta,
+                    Setting::TerminalRightClick => MenuTarget::RightClick,
                     _ => MenuTarget::Font(setting),
                 };
                 self.settings.selected = setting;

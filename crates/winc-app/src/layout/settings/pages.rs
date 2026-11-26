@@ -233,6 +233,7 @@ impl SettingsPage {
             SettingsPage::Terminal => {
                 let mut behavior = vec![
                     S::TerminalCopyOnSelect,
+                    S::TerminalRightClick,
                     S::TerminalConfirmClose,
                     S::TerminalApplicationPriority,
                 ];

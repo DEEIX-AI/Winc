@@ -254,6 +254,8 @@ pub struct Config {
     pub terminal_prompt: Option<bool>,
     /// 终端里选中文字（拖选、双击、三击）松开时自动复制，默认为否。
     pub terminal_copy_on_select: Option<bool>,
+    /// 在终端里右键单击的作用，默认为弹出菜单。
+    pub terminal_right_click: Option<TerminalRightClick>,
     /// 终端里把粗体的前 8 种颜色画成对应的亮色，供依赖粗体表示亮色的程序使用，默认为否。
     pub terminal_bold_is_bright: Option<bool>,
     /// 终端面板是否放在编辑区右边（配置里的 `"position": "right"`）；否则（`"bottom"` 或
@@ -378,6 +380,22 @@ impl OptionAsMeta {
             OptionAsMeta::None => "none",
         }
     }
+}
+
+/// 在终端里右键单击的作用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TerminalRightClick {
+    /// 弹出终端的菜单。
+    #[default]
+    Menu,
+    /// 有所选内容时复制并取消选择，否则粘贴；按住 ⌥（Alt）时仍弹出菜单。
+    CopyOrPaste,
+}
+
+impl TerminalRightClick {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [TerminalRightClick; 2] =
+        [TerminalRightClick::Menu, TerminalRightClick::CopyOrPaste];
 }
 
 /// Vim 模式下无名寄存器与系统剪贴板的同步方式。

@@ -214,6 +214,8 @@ pub enum Setting {
     TerminalFontWeight,
     /// 终端中选中文字时自动复制。
     TerminalCopyOnSelect,
+    /// 在终端里右键单击的作用（`terminal.rightClick`）。
+    TerminalRightClick,
     /// 关闭仍有程序运行的终端标签前确认。
     TerminalConfirmClose,
     /// 用户未设置提示符时使用 winc 的提示符。
@@ -379,6 +381,7 @@ impl Setting {
             S::TerminalSize | S::TerminalFontWeight | S::TerminalCopyOnSelect => {
                 SettingsPage::Terminal
             }
+            S::TerminalRightClick => SettingsPage::Terminal,
             S::TerminalConfirmClose | S::TerminalPrompt | S::TerminalShellIntegration => {
                 SettingsPage::Terminal
             }
@@ -491,6 +494,7 @@ impl Setting {
             S::TerminalSize => "terminal.size",
             S::TerminalFontWeight => "terminal.fontWeight",
             S::TerminalCopyOnSelect => "terminal.copyOnSelect",
+            S::TerminalRightClick => "terminal.rightClick",
             S::TerminalConfirmClose => "terminal.confirmClose",
             S::TerminalPrompt => "terminal.prompt",
             S::TerminalShellIntegration => "terminal.shellIntegration",
@@ -616,6 +620,7 @@ impl Setting {
             Setting::TerminalSize => t!("settings-terminal-size"),
             Setting::TerminalFontWeight => t!("settings-terminal-font-weight"),
             Setting::TerminalCopyOnSelect => t!("settings-terminal-copy-on-select"),
+            Setting::TerminalRightClick => t!("settings-terminal-right-click"),
             Setting::TerminalConfirmClose => t!("settings-terminal-confirm-close"),
             Setting::TerminalPrompt => t!("settings-terminal-prompt"),
             Setting::TerminalShellIntegration => t!("settings-terminal-shell-integration"),
@@ -768,6 +773,7 @@ impl Setting {
             Setting::LatexPath => Some(t!("settings-latex-path-desc")),
             Setting::TerminalShell => Some(t!("settings-terminal-shell-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
+            Setting::TerminalRightClick => Some(t!("settings-terminal-right-click-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
             Setting::TerminalPrompt => Some(t!("settings-terminal-prompt-desc")),
             Setting::TerminalShellIntegration => {
@@ -887,6 +893,7 @@ impl Setting {
             | Setting::AutoSave
             | Setting::CursorStyle
             | Setting::SmoothCaret
+            | Setting::TerminalRightClick
             | Setting::GitOpenWorktree
             | Setting::GitLogPlacement
             | Setting::GitPullMode

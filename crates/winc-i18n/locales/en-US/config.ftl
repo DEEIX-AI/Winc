@@ -22,6 +22,7 @@ config-run-template-note = Each entry requires name and command; args, cwd, and 
 config-theme-invalid = { $name } must be auto, dark, or light; ignored
 config-render-whitespace-invalid = { $name } must be none, selection, trailing, or all; ignored
 config-cursor-style-invalid = { $name } must be line, block, or underline; ignored
+config-right-click-invalid = { $name } must be menu or copyOrPaste; ignored
 config-smooth-caret-invalid = { $name } must be off, snappy, or gliding; ignored
 config-open-worktree-invalid = { $name } must be ask, newWindow, or currentWindow; ignored
 config-pull-invalid = { $name } must be config, merge, or rebase; ignored

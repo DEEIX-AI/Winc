@@ -385,6 +385,15 @@ impl App {
                     self.set_terminal_tab_position(right);
                 }
             }
+            MenuTarget::RightClick => {
+                if let MenuCommand::RightClick(i) = command
+                    && let Some(&choice) = winc_config::TerminalRightClick::ALL.get(i)
+                {
+                    self.config.terminal_right_click = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
+                }
+            }
             MenuTarget::OptionAsMeta => {
                 if let MenuCommand::OptionAsMeta(i) = command
                     && let Some(&choice) = winc_config::OptionAsMeta::ALL.get(i)

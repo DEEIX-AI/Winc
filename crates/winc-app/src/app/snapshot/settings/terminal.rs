@@ -390,3 +390,32 @@ fn a_font_weight_edited_in_the_config_file_reloads_the_fonts() {
     assert!(ink(&mut app, FontKind::Mono) > mono);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// 「右键单击」是终端页的下拉选项：默认显示菜单，两个选项依次列出，选中「复制或粘贴」后写回
+/// 配置并打勾。
+#[test]
+fn the_right_click_action_is_chosen_from_a_menu() {
+    use winc_config::TerminalRightClick;
+    let dir = sample_folder("settings-terminal-right-click");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.terminal_enabled = Some(true);
+    assert_eq!(Setting::TerminalRightClick.page(), SettingsPage::Terminal);
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Terminal);
+    app.settings_open_menu(Setting::TerminalRightClick);
+    let listed: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
+    let all: Vec<_> = (0..TerminalRightClick::ALL.len())
+        .map(MenuCommand::RightClick)
+        .collect();
+    assert_eq!(listed, all);
+    assert!(app.menu_checked(MenuCommand::RightClick(0)));
+    app.run_menu_command(MenuCommand::RightClick(1));
+    assert_eq!(
+        app.config.terminal_right_click,
+        Some(TerminalRightClick::CopyOrPaste)
+    );
+    assert!(app.menu_checked(MenuCommand::RightClick(1)));
+    let label = crate::layout::right_click_label(TerminalRightClick::CopyOrPaste);
+    assert_eq!(app.choice_text(Setting::TerminalRightClick).0, label);
+    let _ = std::fs::remove_dir_all(&dir);
+}

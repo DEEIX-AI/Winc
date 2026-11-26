@@ -409,6 +409,7 @@ fn round_trips_through_json() {
         terminal_confirm_close: Some(false),
         terminal_prompt: Some(false),
         terminal_copy_on_select: Some(true),
+        terminal_right_click: Some(TerminalRightClick::CopyOrPaste),
         terminal_bold_is_bright: Some(true),
         terminal_right: Some(true),
         terminal_vertical_tabs: Some(true),
