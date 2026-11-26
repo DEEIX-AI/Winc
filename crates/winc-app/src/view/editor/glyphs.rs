@@ -180,9 +180,10 @@ pub(in crate::view) fn draw_glyphs(
 ) -> usize {
     let p = app.palette;
     let cell = app.metrics.cell;
+    let ligatures = app.config.editor_font_ligatures == Some(true);
     let mut cells = 0;
     let mut token = 0;
-    // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
+    // emoji 序列和连字的一段随首字符整体绘制；`joined` 之前的字符已经绘制。
     let mut joined = 0;
     let mut behind = text::Behind::default();
 
@@ -207,15 +208,41 @@ pub(in crate::view) fn draw_glyphs(
             token += 1;
         }
 
-        let kind = tokens
-            .get(token)
-            .filter(|t| t.start <= col)
-            .map_or(TokenKind::Text, |t| t.kind);
+        let current = tokens.get(token).filter(|t| t.start <= col);
+        let kind = current.map_or(TokenKind::Text, |t| t.kind);
         let font = (token_font(kind), app.fonts.code, cell);
         let (at, color) = ((x, baseline), p.token(kind));
+        // 连字只在同一种颜色之内：到所在记号的末尾，或到下一个记号的开头。
+        let limit = match current {
+            Some(t) => t.end,
+            None => tokens.get(token).map_or(chars.len(), |t| t.start),
+        };
+        if ligatures && let Some(end) = ligature_run(chars, col, limit) {
+            let run: String = chars[col..end].iter().collect();
+            if frame.cell_ligatures(font.0, font.1, at, cell, &run, color, clip) {
+                joined = end;
+                continue;
+            }
+        }
         joined = col + draw_grid_char(frame, font, at, (chars, col), color, clip);
     }
     cells
+}
+
+/// 一段连字最多的字符数（字符）：更长的连续符号（如分隔线）分段整形，缓存的键不至过长。
+///
+/// 取自调参：编程字体中最长的连字（如 `<!--`、`|||>`）远短于此。
+const LIGATURE_RUN: usize = 32;
+
+/// 返回从 `col` 起、在 `limit` 之前的一段相邻符号的末尾（不含）；不足两个字符时返回 `None`。
+///
+/// 只取 ASCII 标点：编程字体的连字都由标点组成，字母、数字和其他文字逐字符绘制，不必整形。
+fn ligature_run(chars: &[char], col: usize, limit: usize) -> Option<usize> {
+    let limit = limit.min(chars.len()).min(col + LIGATURE_RUN);
+    let len = (chars[col..limit].iter())
+        .take_while(|c| c.is_ascii_punctuation())
+        .count();
+    (len >= 2).then_some(col + len)
 }
 
 /// 绘制 CSV、TSV 的一行：每个字符绘制在对齐之后的单元格内，各列的颜色和分隔符的颜色与按原文
