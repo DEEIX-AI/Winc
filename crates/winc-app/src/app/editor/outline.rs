@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use super::*;
 use crate::app::animation::{self, Clock};
-use crate::app::preview::markdown::scroll::TocList;
+use crate::app::preview::markdown::TocList;
 
 /// 编辑区右上角大纲指示条与悬浮卡片上可以指向的位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -47,6 +47,7 @@ mod targets;
 pub(crate) mod toolbar;
 mod viewer;
 mod writing;
+pub(crate) use scroll::TocList;
 pub(crate) use viewer::{DiagramLaid, DiagramTool, DiagramView, MAX_ZOOM, MIN_ZOOM};
 pub(crate) use writing::paragraph_lines;
 
