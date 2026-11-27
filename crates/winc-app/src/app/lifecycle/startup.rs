@@ -305,6 +305,8 @@ impl App {
                 let _ = folder.send_event(UserEvent::FolderItem(path));
             });
 
+            // 「视图」菜单里的「进入全屏幕」：`⌃⌘F` 由 `AppKit` 按菜单项处理。
+            crate::macos::add_view_menu();
             let windows = proxy.clone();
             crate::macos::add_window_menus(move || {
                 let _ = windows.send_event(UserEvent::NewWindow);

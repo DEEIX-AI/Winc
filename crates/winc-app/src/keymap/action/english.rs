@@ -178,6 +178,7 @@ impl Action {
             ZoomIn => "Zoom In",
             ZoomOut => "Zoom Out",
             ResetZoom => "Reset Zoom",
+            ToggleFullScreen => "Toggle Full Screen",
             ThemeAuto => "Theme: Auto",
             ThemeLight => "Theme: Light",
             ThemeDark => "Theme: Dark",

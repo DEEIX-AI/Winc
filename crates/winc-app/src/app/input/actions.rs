@@ -404,6 +404,7 @@ impl App {
             ZoomIn => self.step_zoom(Some(true)),
             ZoomOut => self.step_zoom(Some(false)),
             ResetZoom => self.step_zoom(None),
+            ToggleFullScreen => self.toggle_fullscreen(),
             ThemeAuto => self.set_theme_choice(ThemeChoice::Auto),
             ThemeLight => self.set_theme_choice(ThemeChoice::Light),
             ThemeDark => self.set_theme_choice(ThemeChoice::Dark),

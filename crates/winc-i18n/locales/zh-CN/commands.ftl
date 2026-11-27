@@ -175,6 +175,7 @@ cmd-reset-font-size = 还原字号
 cmd-zoom-in = 放大界面
 cmd-zoom-out = 缩小界面
 cmd-reset-zoom = 还原界面缩放
+cmd-toggle-full-screen = 切换全屏
 cmd-theme-auto = 主题：跟随系统
 cmd-theme-light = 主题：浅色
 cmd-theme-dark = 主题：深色

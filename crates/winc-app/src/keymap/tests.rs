@@ -225,6 +225,29 @@ fn zoom_keys_are_separate_from_font_size_and_work_in_the_terminal() {
 }
 
 #[test]
+fn full_screen_is_on_ctrl_cmd_f_on_macos_and_f11_on_the_others() {
+    // macOS 上 ⌃⌘F 先由「视图」菜单的菜单项处理（见 `macos::view_menu`）；键位表里的同一条
+    // 绑定是菜单项不可用时的退路，提示和「快捷键」页也从这里读取。
+    for context in [Context::Editor, Context::Terminal] {
+        assert_eq!(
+            runs(
+                Os::Mac,
+                Mods::CTRL | Mods::META,
+                KeyCode::Char('f'),
+                context
+            ),
+            Some(Action::ToggleFullScreen)
+        );
+    }
+    for os in [Os::Windows, Os::Linux] {
+        assert_eq!(
+            runs(os, Mods::NONE, KeyCode::F(11), Context::Editor),
+            Some(Action::ToggleFullScreen)
+        );
+    }
+}
+
+#[test]
 fn vscode_key_labels_per_system() {
     let (cmd, ctrl, shift, alt) = (Mods::META, Mods::CTRL, Mods::SHIFT, Mods::ALT);
     let label = |os: Os, action: Action| {
@@ -265,6 +288,8 @@ fn vscode_key_labels_per_system() {
         label(Os::Windows, Action::ShowCommands),
         ["Ctrl+Shift+P", "F1"]
     );
+    assert_eq!(label(Os::Mac, Action::ToggleFullScreen), ["⌃⌘F"]);
+    assert_eq!(label(Os::Windows, Action::ToggleFullScreen), ["F11"]);
     assert_eq!(label(Os::Mac, Action::Settings), ["⌘,"]);
     assert_eq!(label(Os::Windows, Action::Settings), ["Ctrl+,"]);
     assert_eq!(label(Os::Linux, Action::Settings), ["Ctrl+,"]);

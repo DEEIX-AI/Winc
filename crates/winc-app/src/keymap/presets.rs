@@ -231,6 +231,9 @@ pub(super) const COMMON: &[PresetRow] = &[
         &["alt+shift+cmd+v"],
         &["ctrl+alt+shift+v"],
     ),
+    // 全屏与 macOS 的系统快捷键一致（菜单栏「视图」中也有这一项）；Windows、Linux 上只有
+    // VS Code 方案用 F11（IDEA 的 F11 是书签，见 `ToggleBookmark`）。
+    row(ToggleFullScreen, Global, &["ctrl+cmd+f"], &[]),
 ];
 
 /// 共用的键在 Linux 上与 Windows 不同的部分。
@@ -769,6 +772,8 @@ pub(super) const VSCODE: &[PresetRow] = &[
         &["ctrl+-", "ctrl+shift+-", "ctrl+numpad_subtract"],
     ),
     row(ResetZoom, Everywhere, &["cmd+numpad0"], &["ctrl+numpad0"]),
+    // VS Code 在其他系统上用 F11 进入全屏；macOS 上的 ⌃⌘F 见 `COMMON`。
+    row(ToggleFullScreen, Global, &[], &["f11"]),
     row(RunConfiguration, Global, &["ctrl+f5"], &["ctrl+f5"]),
 ];
 
