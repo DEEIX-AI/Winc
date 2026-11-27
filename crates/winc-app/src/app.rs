@@ -848,6 +848,8 @@ enum Drag {
     Hex,
     /// 在 Markdown 预览中拖选文字（`App::drag_markdown`）。
     MarkdownText,
+    /// 拖动 Markdown 预览中块的把手，调整块在原文中的先后（`App::drag_markdown_block`）。
+    MarkdownBlock,
     /// 拖动预览中图片的把手调整大小（`App::drag_image_resize`）。
     ImageResize,
     /// 在表格中拖选单元格（`App::drag_table`）。
@@ -1161,6 +1163,18 @@ impl App {
     pub(crate) fn request_redraw(&mut self) {
         self.frame.dirty = true;
         self.fetch_tree();
+    }
+
+    /// 测试用：本帧是否有重绘请求。
+    #[cfg(test)]
+    pub(crate) fn frame_dirty(&self) -> bool {
+        self.frame.dirty
+    }
+
+    /// 测试用：清除重绘请求，便于观察后续操作是否再次请求。
+    #[cfg(test)]
+    pub(crate) fn clear_frame_dirty(&mut self) {
+        self.frame.dirty = false;
     }
 
     /// 在后台线程上执行 `job`，完成后发送事件 `done` 唤醒界面线程处理结果（[`App::finished`]）。

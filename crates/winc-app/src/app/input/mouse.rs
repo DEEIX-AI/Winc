@@ -73,6 +73,10 @@ impl App {
 
         self.terminal_mouse_up();
         self.release_terminal_tab();
+        let was_block = matches!(self.pointer.drag, Drag::MarkdownBlock);
+        if button == MouseButton::Left && was_block {
+            self.finish_markdown_block_drag();
+        }
         let was_scrollbar = matches!(self.pointer.drag, Drag::Scrollbar { .. });
         let was_divider = matches!(
             self.pointer.drag,
@@ -107,7 +111,7 @@ impl App {
         if was_divider {
             self.request_redraw();
         }
-        if was_scrollbar || was_tab {
+        if was_scrollbar || was_tab || was_block {
             self.refresh_pointer_hover();
         }
         self.update_cursor_icon();

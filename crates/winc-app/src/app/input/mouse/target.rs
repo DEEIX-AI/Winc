@@ -219,6 +219,7 @@ impl App {
         matches!(
             self.target_at(x, y),
             Target::Scrollbar(..)
+                | Target::MarkdownHandle(_)
                 | Target::Minimap
                 | Target::Splitter
                 | Target::TerminalDivider
@@ -293,6 +294,7 @@ impl App {
             Target::MarkdownToc(target) => Hover::MarkdownToc(target),
             Target::MarkdownText(Some(link)) => Hover::MarkdownLinkText(link),
             Target::ImageHandle => Hover::ImageHandle,
+            Target::MarkdownHandle(_) => Hover::None,
             Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture | Target::Table => {
                 Hover::None
             }
@@ -655,6 +657,12 @@ impl App {
         }
         if self.log_active() && self.log_parts().details.contains(x, y) {
             return Target::LogText;
+        }
+        // 块的拖动把手位于正文左侧的留白中。展开的标题列表在
+        // `MarkdownPreview::element_at` 中已排除，把手优先于标题指示条的点击范围，窄窗口里
+        // 两者可能重叠。
+        if let Some(block) = self.markdown_handle_at(x, y) {
+            return Target::MarkdownHandle(block);
         }
         // 标题指示条和展开的标题列表覆盖在预览文字之上，先于文字判断。
         if let Some(target) = toc {
@@ -1183,6 +1191,10 @@ impl App {
         {
             // 提交图中的线可点击（沿线跳转）；终端中命令块的色带和吸顶的命令行同样可点击。
             CursorIcon::Pointer
+        } else if matches!(self.pointer.drag, Drag::MarkdownBlock) {
+            CursorIcon::Grabbing
+        } else if self.markdown_handle_at(x, y).is_some() {
+            CursorIcon::Grab
         } else if matches!(self.pointer.drag, Drag::Picture { .. }) {
             CursorIcon::Grabbing
         } else if self.picture_pannable() && matches!(target, Target::Picture) {
@@ -1264,6 +1276,8 @@ pub(super) enum Target {
     /// Markdown 预览中可以选择文字的区域；参数为鼠标下的链接（可编辑的预览中单击链接放置
     /// 光标，不打开它）。
     MarkdownText(Option<usize>),
+    /// Markdown 预览中可拖动单元的把手。
+    MarkdownHandle(crate::app::preview::markdown::drag::Element),
     /// 可编辑的预览中图片的把手。
     ImageHandle,
     /// 标签，参数为标签下标与是否位于关闭按钮上。

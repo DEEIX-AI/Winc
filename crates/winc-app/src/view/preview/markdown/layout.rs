@@ -44,7 +44,7 @@ pub(super) struct LayoutOutput {
     /// 重排之前光标在旧排版里的高度，见 [`old_caret`]。
     pub(super) still: Option<(usize, f32)>,
     /// 重排之前各块的绘制位置和是否滑动，见 [`Before`]。
-    pub(super) before: Option<(Before, bool)>,
+    pub(super) before: Option<(Before, bool, bool)>,
 }
 
 /// 按 `input` 排出本帧的 Markdown 文档。
@@ -109,27 +109,42 @@ pub(super) fn resolve_layout(
                     && !refold
             });
             // 文字变了：选区、查找用的文字作废。只是重排（宽度、图片变了）时选区留着。
-            if old.as_ref().is_none_or(|l| l.source != source) {
+            let source_changed = old.as_ref().is_none_or(|l| l.source != source);
+            if source_changed {
                 app.preview.markdown.selection = None;
+            }
+            // 拖动块放下后换成按新顺序排的版：各块从换序前的位置滑到新位置。解析在后台进行，
+            // 新的解析结果到达之前排版仍是旧的，这次过渡留到真正换版的那一帧。
+            let revision = app.editor.active().map(|doc| doc.revision);
+            let pending = app.preview.markdown.drag.slide_on_parse
+                && app.preview.markdown.drag.slide_revision == revision;
+            let reordered = pending && source_changed;
+            // 解析还没到（同一份 source 的普通重排）时保留标记，等真正换解析结果的那一帧
+            // 再做滑入；文档又改过则丢弃这次过期的过渡。
+            if app.preview.markdown.drag.slide_on_parse
+                && (reordered || app.preview.markdown.drag.slide_revision != revision)
+            {
+                app.preview.markdown.drag.slide_on_parse = false;
+                app.preview.markdown.drag.slide_revision = None;
             }
             if !resumed {
                 app.preview.markdown.find_doc = None;
                 let clicked = app.preview.markdown.clicked.take();
                 still = old_caret(app, old.as_ref(), source, live_key, clicked);
-                let slide = std::mem::take(&mut app.preview.markdown.slide);
+                let slide = std::mem::take(&mut app.preview.markdown.slide) || reordered;
                 // 在预览中输入了文字：各块直接到位（见 `Before::motion`），不记录各块的位置。
                 let revision = app.editor.active().map(|d| d.revision);
                 let typed = (old.as_ref())
                     .and_then(|l| l.live.as_ref())
                     .is_some_and(|k| Some(k.2) != revision);
-                if typed && !slide && !refold {
+                if typed && !slide && !refold && !reordered {
                     app.preview.markdown.motion = None;
                 } else {
-                    // 收起、展开标题时各块同样滑到新位置，不只在可编辑的预览中。
+                    // 收起、展开标题、拖动块之后，各块同样滑到新位置，不只在可编辑的预览中。
                     before = old
                         .as_ref()
-                        .filter(|l| l.key == key && (app.markdown_live() || refold))
-                        .map(|l| (Before::of(app, l), slide));
+                        .filter(|l| l.key == key && (app.markdown_live() || refold || reordered))
+                        .map(|l| (Before::of(app, l), slide, reordered));
                 }
             }
             // 文字未变时保留旧的各块供沿用，并记录视口顶边所在的块，排版期间保持其屏幕位置。
@@ -149,9 +164,11 @@ pub(super) fn resolve_layout(
             let mut reuse = old.filter(|l| l.key == key).map(|l| {
                 l.fresh()
                     .into_iter()
-                    .filter(|(_, block)| {
-                        !block.uses_any(&loaded)
-                            && toggled.as_deref().is_none_or(|url| !block.links_to(url))
+                    .filter(|entry| {
+                        !entry.block.uses_any(&loaded)
+                            && toggled
+                                .as_deref()
+                                .is_none_or(|url| !entry.block.links_to(url))
                     })
                     .collect()
             });
@@ -196,7 +213,7 @@ pub(super) fn resolve_layout(
             app.preview.markdown.catch_up.pending = laid.pending();
             // 释放了要画的项的块不再使用排版缓存，缓存只保留其余的块用到的条目。
             if laid.near.is_some() {
-                let used = laid.blocks.iter().map(|(_, block)| &*block.memo);
+                let used = laid.blocks.iter().map(|entry| &*entry.block.memo);
                 app.preview.markdown.memo.keep_only(used);
             }
             laid.hscroll = hscroll;

@@ -223,6 +223,7 @@ impl SettingsPage {
                         S::TextWidth,
                         S::SplitPreviewPosition,
                         S::MarkdownLineNumbers,
+                        S::MarkdownDrag,
                         S::RemoteImages,
                     ],
                 ),

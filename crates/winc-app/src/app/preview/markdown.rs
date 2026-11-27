@@ -2,8 +2,10 @@
 //!
 //! 同一时刻只在后台解析一个版本，输入快于解析时跳过中间的版本；可编辑的预览在解析足够快时
 //! 改为绘制之前直接解析（见 `INLINE_PARSE`）。排版在绘制时进行（需要测量字宽），
-//! 按块缓存，见 `view::preview::markdown`。图片读取本地文件（相对文档所在目录）；网址的图片
-//! （README 中的徽章、截图）在后台用系统的 `curl` 下载到临时目录缓存，关闭联网后显示替代文字。
+//! 按块缓存，见 `view::preview::markdown`。鼠标停在块或列表项上时左侧显示拖动把手，
+//! 按住上下拖动可调整先后（见 `drag`）；只看预览和分栏右栏都能拖。图片读取本地文件
+//! （相对文档所在目录）；网址的图片（README 中的徽章、截图）在后台用系统的 `curl`
+//! 下载到临时目录缓存，关闭联网后显示替代文字。
 
 use crate::app::ScrollTarget;
 use crate::app::scroll::set_scroll_line;
@@ -32,6 +34,7 @@ use crate::app::{App, Focus, UserEvent};
 use crate::system;
 
 mod book;
+pub(crate) mod drag;
 mod folds;
 mod images;
 pub(crate) mod laid;
@@ -326,6 +329,12 @@ pub(crate) struct MarkdownPreview {
     pub(crate) menu_image: Option<resize::ImageAt>,
     /// 正在拖动把手的图片。
     pub(crate) resizing: Option<resize::Resizing>,
+    /// 拖动：悬停的块或列表项、进行中的拖动、左侧留白的宽度和放下后的过渡。
+    pub(crate) drag: drag::DragState,
+    /// 列表项放下后的滑动。
+    pub(crate) item_motion: Option<drag::ItemMotion>,
+    /// 拖动结束时各块当前的视觉偏移，重排动画从这些位置继续，避免松手时跳回原位。
+    pub(crate) drag_release: Option<drag::ReleasedShift>,
 }
 
 /// 淡入的项：所在顶层块的序号及块内各项的序号，按块的序号排序。
@@ -335,6 +344,12 @@ pub(crate) type Fading = Vec<(usize, Box<[usize]>)>;
 pub(crate) struct Moves {
     /// 各块起始时的偏移，同 [`BlockMotion::from`]。
     pub from: Vec<f32>,
+    /// 新排版第 i 块对应的旧排版块序号，用于让拖动结束时的视觉偏移按同一匹配落到新块上。
+    pub matched: Vec<Option<usize>>,
+    /// 旧排版各块的上边缘（屏幕坐标，已减滚动）。
+    pub old_tops: Vec<f32>,
+    /// 新排版各块的上边缘（屏幕坐标，已减滚动）。
+    pub new_tops: Vec<f32>,
     /// 淡入的项。
     pub fading: Fading,
     /// 刚显示原文的块：（块序号，渲染结果的第一项，渲染结果的起始偏移），按块序号排序。
@@ -464,6 +479,9 @@ impl Default for MarkdownPreview {
             menu_picture: None,
             menu_image: None,
             resizing: None,
+            drag: drag::DragState::default(),
+            item_motion: None,
+            drag_release: None,
             folds: HashMap::new(),
             refold: false,
             clicked: None,
@@ -535,6 +553,9 @@ impl MarkdownPreview {
         self.memo = Default::default();
         self.find_doc = None;
         self.motion = None;
+        self.drag = drag::DragState::default();
+        self.item_motion = None;
+        self.drag_release = None;
         self.forget_images();
         self.embedded.clear();
         self.failed = None;
@@ -1003,6 +1024,9 @@ impl App {
     pub(crate) fn start_markdown_motion(&mut self, moves: Moves) {
         let Moves {
             from,
+            matched: _,
+            old_tops: _,
+            new_tops: _,
             fading,
             inner,
             leaving,

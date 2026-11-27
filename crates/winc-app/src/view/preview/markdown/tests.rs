@@ -13,7 +13,7 @@ pub(crate) fn overflow(app: &App) -> f32 {
     let right = laid
         .blocks
         .iter()
-        .flat_map(|block| block.1.items.iter())
+        .flat_map(|block| block.block.items.iter())
         .filter_map(|item| match item {
             Item::Fill { rect, .. } | Item::Path { rect, .. } | Item::Polygon { rect, .. } => {
                 Some(rect.right())
@@ -31,7 +31,7 @@ pub(crate) fn table_cells(app: &App) -> Vec<Vec<Rect>> {
     };
     let origin = app.preview.markdown.area.y + laid.pad - app.preview.markdown.scroll();
     for (block, top) in laid.blocks.iter().zip(&laid.tops) {
-        for item in block.1.items.iter() {
+        for item in block.block.items.iter() {
             if let Item::Table {
                 rect, cols, rows, ..
             } = item
@@ -70,4 +70,22 @@ pub(crate) fn mirrored_caret_bar(app: &App) -> Option<Rect> {
         (y, h),
         app.preview.markdown.area.y - scroll,
     ))
+}
+
+#[test]
+fn a_skipped_dragged_block_still_registers_its_images() {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    let path = PathBuf::from("assets/example.png");
+    let items = vec![Item::Image {
+        rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+        path: path.clone(),
+        at: None,
+    }];
+    let slots: HashMap<PathBuf, ImageSlot> = HashMap::new();
+    let (mut shown, mut wanted) = (Vec::new(), Vec::new());
+    note_images(&items, 2.0, &slots, &mut shown, &mut wanted);
+    assert_eq!(shown, std::slice::from_ref(&path));
+    assert_eq!(wanted, [(path.clone(), (20, 20))]);
 }

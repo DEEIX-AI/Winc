@@ -1463,6 +1463,7 @@ pub mod from_html;
 mod front;
 mod html;
 mod incremental;
+mod list;
 mod mark;
 mod shrink;
 pub mod syntax;
@@ -1474,6 +1475,7 @@ pub mod mermaid;
 pub mod paragraph;
 pub mod resize;
 mod sections;
+pub use list::{ListItems, OrderedList, split_list_items};
 pub use sections::Section;
 #[cfg(test)]
 mod corpus;

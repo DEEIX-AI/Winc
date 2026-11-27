@@ -202,7 +202,7 @@ impl App {
         if md.checked != Some(revision) {
             return None;
         }
-        let item = laid.blocks.get(image.block)?.1.items.get(image.item)?;
+        let item = laid.blocks.get(image.block)?.block.items.get(image.item)?;
         let Item::Image {
             at: Some((_, at)), ..
         } = item

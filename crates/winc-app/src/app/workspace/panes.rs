@@ -423,6 +423,7 @@ impl App {
         self.panes.hover = pane;
         let here = move |app: &mut App| {
             app.track_code_hover(x, y);
+            app.track_markdown_drag_hover(x, y);
             app.hover_at(x, y)
         };
         match pane {

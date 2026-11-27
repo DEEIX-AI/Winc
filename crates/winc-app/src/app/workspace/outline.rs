@@ -385,8 +385,8 @@ impl App {
         let mut cache = self.panels.outline.anchor_tops.borrow_mut();
         if cache.as_ref().is_none_or(|(k, _)| *k != key) {
             let mut found: HashMap<&str, f32> = HashMap::new();
-            for ((_, block), top) in laid.blocks.iter().zip(&laid.tops) {
-                for (id, y) in &block.anchors {
+            for (entry, top) in laid.blocks.iter().zip(&laid.tops) {
+                for (id, y) in &entry.block.anchors {
                     found.entry(id.as_str()).or_insert(top + y);
                 }
             }

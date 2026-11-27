@@ -6,6 +6,7 @@ use winc_editor::PreviewMode;
 use super::*;
 
 mod blank_lines;
+mod drag;
 mod epub;
 mod images;
 mod latex;

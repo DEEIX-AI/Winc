@@ -139,7 +139,7 @@ fn the_empty_line_keeps_its_height_under_the_caret() {
     let (mut app, dir) = live_doc("md-blank-height", "前文\n\n\n- 一\n");
     let shape = |app: &App| {
         let laid = app.preview.markdown.layout.as_ref().unwrap();
-        let heights: Vec<f32> = laid.blocks.iter().map(|b| b.1.height).collect();
+        let heights: Vec<f32> = laid.blocks.iter().map(|b| b.block.height).collect();
         (laid.tops.clone(), heights)
     };
     let away = shape(&app);

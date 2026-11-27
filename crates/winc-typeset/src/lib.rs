@@ -510,6 +510,35 @@ pub enum Item {
 }
 
 impl Item {
+    /// 把这一项整体纵向移动 `dy`（逻辑像素）；用于列表项重排时的过渡动画。
+    pub fn shift_y(&mut self, dy: f32) {
+        if dy == 0.0 {
+            return;
+        }
+        match self {
+            Item::Text { baseline, .. } => *baseline += dy,
+            Item::Fill { rect, .. }
+            | Item::Corners { rect, .. }
+            | Item::Image { rect, .. }
+            | Item::Link { rect, .. }
+            | Item::Spot { rect, .. }
+            | Item::Check { rect, .. }
+            | Item::Code { rect, .. }
+            | Item::Table { rect, .. } => rect.y += dy,
+            Item::Path { rect, strokes, .. } => {
+                rect.y += dy;
+                *strokes = strokes
+                    .iter()
+                    .map(|&stroke| crate::shift(stroke, 0.0, dy))
+                    .collect();
+            }
+            Item::Polygon { rect, points, .. } => {
+                rect.y += dy;
+                *points = points.iter().map(|&(x, y)| (x, y + dy)).collect();
+            }
+        }
+    }
+
     /// 返回宽 `width`（逻辑像素）的线 `strokes` 组成的一项；`rect` 取所有线段的包围盒，
     /// 四周加上一半线宽。
     pub fn path(strokes: Vec<Stroke>, width: f32, color: Color) -> Item {

@@ -13,7 +13,7 @@ use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winc_core::Selection;
 use winc_editor::{Command, EntryKind, segment_name};
 
-use crate::app::{App, Focus, ResultRow};
+use crate::app::{App, Drag, Focus, ResultRow};
 use crate::field::{TextField, Unit};
 use crate::keymap::{self, Action, Context, Lookup, Os, Stroke};
 use crate::theme::KEYS_ROW;
@@ -81,6 +81,12 @@ impl App {
             && self.tree_dragging().is_some()
         {
             self.cancel_tree_drag();
+            return;
+        }
+        if matches!(event.logical_key, Key::Named(NamedKey::Escape))
+            && self.pointer.drag == Drag::MarkdownBlock
+        {
+            self.cancel_markdown_block_drag();
             return;
         }
 

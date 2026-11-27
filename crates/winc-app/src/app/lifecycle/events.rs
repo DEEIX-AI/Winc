@@ -434,6 +434,7 @@ impl App {
         // 离开窗口时停止录制按键，菜单项的快捷键随之恢复，不影响别的窗口和应用。
         if !focused {
             self.cancel_touch();
+            self.cancel_markdown_block_drag();
             self.set_recording(false);
         }
 

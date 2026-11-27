@@ -504,10 +504,10 @@ fn wide_tables_spread_into_the_margins() {
         assert!(
             laid.blocks
                 .iter()
-                .all(|(_, block)| block.scrolls.is_empty())
+                .all(|entry| entry.block.scrolls.is_empty())
         );
         let rect = (laid.blocks.iter())
-            .flat_map(|(_, block)| &block.items)
+            .flat_map(|entry| &entry.block.items)
             .find_map(|item| match item {
                 Item::Table { rect, .. } => Some(*rect),
                 _ => None,

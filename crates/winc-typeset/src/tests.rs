@@ -506,3 +506,22 @@ fn thai_paragraphs_wrap_between_words() {
         );
     }
 }
+
+#[test]
+fn shifting_an_item_moves_its_geometry() {
+    let mut path = Item::path(vec![Stroke::Line(0.0, 2.0, 10.0, 2.0)], 2.0, TEXT);
+    path.shift_y(7.0);
+    let Item::Path { rect, strokes, .. } = &path else {
+        panic!("应保持为路径");
+    };
+    assert_eq!(rect.y, 8.0);
+    assert!(matches!(strokes.as_ref(), [Stroke::Line(_, 9.0, _, 9.0)]));
+
+    let mut polygon = Item::polygon(vec![(1.0, 2.0), (5.0, 6.0)], TEXT);
+    polygon.shift_y(-3.0);
+    let Item::Polygon { rect, points, .. } = &polygon else {
+        panic!("应保持为多边形");
+    };
+    assert_eq!(rect.y, -1.0);
+    assert_eq!(points.as_ref(), [(1.0, -1.0), (5.0, 3.0)]);
+}

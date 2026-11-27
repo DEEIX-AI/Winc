@@ -469,6 +469,7 @@ impl App {
             Drag::LogText => self.drag_log_text(x, y),
             Drag::Hex => self.drag_hex(x, y),
             Drag::MarkdownText => self.drag_markdown(x, y),
+            Drag::MarkdownBlock => self.drag_markdown_block(y),
             Drag::ImageResize => self.drag_image_resize(x),
             Drag::TableCells => self.drag_table(x, y),
             Drag::Field => {
