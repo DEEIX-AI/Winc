@@ -83,44 +83,126 @@ impl App {
         }
     }
 
-    /// 在差异标签中执行折叠命令 `command`，作用于未改动的长段；返回当前标签是否为差异标签。
+    /// 在差异标签中执行代码折叠命令 `command`；返回当前标签是否为差异标签。
     ///
-    /// 「全部折叠」「全部展开」作用于所有未改动的长段；折叠、展开和切换作用于只读光标所在的
-    /// 一段，没有只读光标时作用于编辑区顶部往下的第一段。按层级折叠在差异中没有对应的操作。
+    /// 光标在右侧工作区文件中时作用于右侧，否则作用于只读光标所在的一侧；尚未放置光标时作用于
+    /// 右侧窗口顶部的代码。未改动长段的折叠仍由标题栏开关和折叠行单独控制。
     pub(in crate::app) fn fold_diff(&mut self, command: FoldCommand) -> bool {
-        let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
+        let Some(index) = self.editor.active else {
             return false;
         };
-        let top = self.editor.active().map_or(0.0, |d| d.scroll_line.max(0.0));
-        let top = view.row_at(RIGHT, top) as usize;
-        let gap = match view.read_caret() {
-            Some((side, pos)) => {
-                let text = &view.side(side).text;
-                view.gap_of(side, text.char_to_line(pos.min(text.len_chars())))
-            }
-            None => view.rows[RIGHT].iter().skip(top).find_map(|row| match row {
-                SideRow::Fold { gap, .. } => Some(*gap),
-                SideRow::Line { line, hunk, .. } => {
-                    hunk.is_none().then(|| view.gap_of(RIGHT, *line)).flatten()
-                }
-            }),
+        let Some(view) = self.editor.documents[index].diff.as_deref() else {
+            return false;
         };
+        let top = view.row_at(RIGHT, self.editor.documents[index].scroll_line.max(0.0)) as usize;
+        let editing = view.editing;
+        let source = editing.then(|| {
+            let path = view.new.path.as_deref()?;
+            let source = self
+                .editor
+                .documents
+                .iter()
+                .position(|doc| doc.path.as_deref() == Some(path))?;
+            let doc = &self.editor.documents[source];
+            Some((source, doc.text().pos_to_line_col(doc.selection.head).0))
+        });
+        let caret = source
+            .flatten()
+            .map(|(source, line)| (RIGHT, line, Some(source)))
+            .or_else(|| {
+                view.read_caret().map(|(side, pos)| {
+                    let text = &view.side(side).text;
+                    (side, text.char_to_line(pos.min(text.len_chars())), None)
+                })
+            });
+        let (side, line, source) = caret.unwrap_or_else(|| {
+            let line = view.rows[RIGHT]
+                .iter()
+                .skip(top)
+                .map(|row| match row {
+                    SideRow::Line { line, .. } => *line,
+                    SideRow::Fold { lines, .. } => lines.start,
+                })
+                .next()
+                .unwrap_or(0);
+            (RIGHT, line, None)
+        });
+        let gap = view.gap_of(side, line);
         let open = gap.is_some_and(|gap| view.is_open(gap));
-        match (command, gap) {
-            (FoldCommand::FoldAll, _) => self.refold_diff(DiffView::fold_all),
-            (FoldCommand::UnfoldAll, _) => self.refold_diff(DiffView::unfold_all),
-            (FoldCommand::Fold | FoldCommand::FoldRecursively | FoldCommand::Toggle, Some(gap))
-                if open =>
-            {
-                self.press_diff(DiffTarget::Refold(gap))
+        if !self.fold_diff_code_at(side, line, source, command, top) {
+            // 兼容差异原有的快捷键行为：当前位置没有可执行的代码折叠时，操作未改动长段。
+            match (command, gap) {
+                (FoldCommand::FoldAll, _) => self.refold_diff(DiffView::fold_all),
+                (FoldCommand::UnfoldAll, _) => self.refold_diff(DiffView::unfold_all),
+                (
+                    FoldCommand::Fold | FoldCommand::FoldRecursively | FoldCommand::Toggle,
+                    Some(gap),
+                ) if open => self.press_diff(DiffTarget::Refold(gap)),
+                (
+                    FoldCommand::Unfold | FoldCommand::UnfoldRecursively | FoldCommand::Toggle,
+                    Some(gap),
+                ) => self.press_diff(DiffTarget::Fold(gap)),
+                _ => {}
             }
-            (
-                FoldCommand::Unfold | FoldCommand::UnfoldRecursively | FoldCommand::Toggle,
-                Some(gap),
-            ) => self.press_diff(DiffTarget::Fold(gap)),
-            _ => {}
         }
         true
+    }
+
+    /// 在差异一侧的指定行执行代码折叠，保持右侧顶部内容不动。
+    pub(super) fn fold_diff_code_at(
+        &mut self,
+        side: usize,
+        line: usize,
+        source: Option<usize>,
+        command: FoldCommand,
+        top: usize,
+    ) -> bool {
+        self.finish_diff_fold(true);
+        let tab_width = self.editor.active_tab_width();
+        let Some(doc) = self.editor.active_mut() else {
+            return false;
+        };
+        let Some(view) = doc.diff.as_deref_mut() else {
+            return false;
+        };
+        let (row, changed, visible) = view.run_code_fold(side, line, command, top, tab_width);
+        if !changed {
+            return false;
+        }
+        let row = view.pos_of(RIGHT, row as f64);
+        if source.is_none()
+            && view
+                .read_selection
+                .is_some_and(|selection| selection.side == side)
+        {
+            let pos = view.side(side).text.line_end(visible);
+            view.read_selection = Some(ReadSelection {
+                side,
+                range: (pos, pos),
+            });
+        }
+        set_scroll_line(doc, row);
+        if let Some(source) = source {
+            let source = &mut self.editor.documents[source];
+            let pos = source.text().line_end(visible);
+            source.collapse_selections();
+            source.selection = Selection::point(pos);
+        }
+        self.clamp_scroll();
+        self.request_redraw();
+        true
+    }
+
+    /// 点击差异行号栏的代码折叠箭头或行尾标记。
+    pub(super) fn toggle_diff_code_fold(&mut self, side: usize, line: usize) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        let Some(view) = doc.diff.as_deref() else {
+            return;
+        };
+        let top = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
+        self.fold_diff_code_at(side, line, None, FoldCommand::Toggle, top);
     }
 
     /// 以 `change` 修改当前差异标签的折叠状态，右侧顶部的行保持在顶部。

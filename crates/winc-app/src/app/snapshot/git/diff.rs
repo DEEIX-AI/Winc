@@ -7,6 +7,70 @@ mod open;
 mod side;
 
 #[test]
+fn readonly_diff_folds_code_and_jumps_between_brackets() {
+    use winc_editor::diff_view::{DiffSide, DiffView, ReadSelection};
+
+    let dir = sample_folder("diff-code-structure");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let old = "fn main() {\n    one();\n}\n";
+    let new = "fn main() {\n    changed();\n}\n";
+    let language = winc_syntax::detect("short.rs");
+    let mut view = DiffView::new(
+        DiffSide::new("old", old, None, language),
+        DiffSide::new("new", new, None, language),
+    );
+    view.set_collapse(false, 0);
+    let open = new.find('{').unwrap();
+    view.read_selection = Some(ReadSelection {
+        side: RIGHT,
+        range: (open + 1, open + 1),
+    });
+    app.editor.show_diff("short.rs", view);
+    app.focus = Focus::Editor;
+
+    assert!(app.run_action(Action::JumpToBracket));
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert_eq!(view.read_caret(), Some((RIGHT, new.rfind('}').unwrap())));
+
+    let inside = new.find("changed").unwrap();
+    app.editor
+        .active_mut()
+        .unwrap()
+        .diff
+        .as_deref_mut()
+        .unwrap()
+        .read_selection = Some(ReadSelection {
+        side: RIGHT,
+        range: (inside, inside),
+    });
+    assert!(app.run_action(Action::Fold));
+    paint(&mut app);
+    let view = app.editor.active().unwrap().diff.as_deref().unwrap();
+    assert!(view.collapsed_code_fold(RIGHT, 0).is_some());
+    assert_eq!(view.read_caret(), Some((RIGHT, new.find('\n').unwrap())));
+    assert!(
+        app.hits
+            .diff
+            .iter()
+            .any(|&(_, target)| target == DiffTarget::CodeFold(RIGHT, 0))
+    );
+
+    assert!(app.run_action(Action::Unfold));
+    assert!(
+        app.editor
+            .active()
+            .unwrap()
+            .diff
+            .as_deref()
+            .unwrap()
+            .collapsed_code_fold(RIGHT, 0)
+            .is_none()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn expanded_diff_pins_the_enclosing_scopes_for_each_version() {
     use winc_editor::diff_view::{DiffSide, DiffView, LEFT};
 

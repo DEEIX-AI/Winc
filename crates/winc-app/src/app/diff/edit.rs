@@ -70,6 +70,9 @@ impl App {
                 _ => {}
             }
         }
+        if action == Action::JumpToBracket && self.jump_diff_read_bracket() {
+            return Some(true);
+        }
         if !action.edits_in_diff() {
             return None;
         }

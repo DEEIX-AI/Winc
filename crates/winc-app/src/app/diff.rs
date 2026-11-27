@@ -192,6 +192,8 @@ pub enum DiffTarget {
     Fold(usize),
     /// 已展开的一段未改动内容的收起标记，参数为未改动段的序号；点击后重新折叠。
     Refold(usize),
+    /// 一侧代码块的折叠箭头或行尾标记：（侧，块首行）。
+    CodeFold(usize, usize),
     /// 提交说明条上展开、收起文件栏的按钮。
     FilesToggle,
     /// 文件栏的右边缘：左右拖动改变宽度，双击恢复默认宽度。
@@ -392,6 +394,7 @@ impl App {
                     self.refold_diff(|view, row| view.fold(gap, row));
                 }
             }
+            DiffTarget::CodeFold(side, line) => self.toggle_diff_code_fold(side, line),
             DiffTarget::Sticky(side, line) => self.click_diff_sticky(side, line),
             DiffTarget::Revert(hunk) => self.revert_diff_hunk(hunk),
             DiffTarget::Include(hunk) => self.toggle_diff_hunk(hunk),
