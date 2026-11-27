@@ -209,6 +209,23 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
 }
 
 #[test]
+fn clicking_the_empty_welcome_area_returns_focus_to_the_editor() {
+    use_vscode_keys();
+    let mut app = blank_app(false);
+    show_terminal(&mut app, "$ ");
+    paint(&mut app);
+
+    assert!(app.editor.active.is_none());
+    assert_eq!(app.focus, Focus::Terminal);
+
+    let editor = app.layout.editor;
+    click(&mut app, (editor.x + 40.0, editor.y + editor.h / 2.0));
+    assert_eq!(app.focus, Focus::Editor);
+    assert!(press(&mut app, &["cmd"], Char(',')));
+    assert!(app.settings.open);
+}
+
+#[test]
 fn clicks_move_the_focus_and_the_gap_resizes_the_panel() {
     let dir = sample_folder("terminal-mouse");
     let mut app = app_with(&dir.join("short.rs"), false);
