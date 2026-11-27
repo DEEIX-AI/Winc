@@ -268,6 +268,7 @@ impl App {
             Target::Browser => self.open_in_browser(),
             Target::MarkdownLink(link) => self.open_markdown_link(link),
             Target::MarkdownToc(target) => self.press_toc(target),
+            Target::EditorOutline(target) => self.press_editor_outline(target),
             Target::MarkdownText(_) => self.click_markdown(x, y),
             Target::ImageHandle => {
                 if let Some(image) = self.image_handle_at(x, y) {

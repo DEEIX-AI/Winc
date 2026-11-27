@@ -109,6 +109,9 @@ pub struct State {
     /// Markdown 预览左侧的标题列表是否钉住、一直展开；默认只在鼠标停留时展开。所有窗口共用，
     /// 下次启动沿用。
     pub markdown_toc_pinned: bool,
+    /// 编辑区右上角的大纲悬浮列表是否钉住、一直展开；默认只在鼠标停留时展开。所有窗口共用，
+    /// 下次启动沿用。
+    pub editor_outline_pinned: bool,
     /// 用户最近选择的语言（语言的标识），最近的在前，至多 [`State::RECENT_LANGUAGES`] 种。
     pub recent_languages: Vec<String>,
     /// 侧栏宽度（逻辑像素）；`None` 表示没有调整过。所有视图、窗口和仓库共用，下次启动沿用。
@@ -643,6 +646,8 @@ impl State {
             .unwrap_or(false);
         state.markdown_toc_pinned =
             root.get("markdownTocPinned").and_then(Json::as_bool) == Some(true);
+        state.editor_outline_pinned =
+            root.get("editorOutlinePinned").and_then(Json::as_bool) == Some(true);
         state.vim_keys_noticed = root.get("vimKeysNoticed").and_then(Json::as_bool) == Some(true);
         state.recent_languages = (root.get("recentLanguages").and_then(Json::as_array))
             .unwrap_or_default()
@@ -812,6 +817,9 @@ impl State {
         }
         if self.markdown_toc_pinned {
             fields.push(("markdownTocPinned", Json::Bool(true)));
+        }
+        if self.editor_outline_pinned {
+            fields.push(("editorOutlinePinned", Json::Bool(true)));
         }
         if self.vim_keys_noticed {
             fields.push(("vimKeysNoticed", Json::Bool(true)));

@@ -770,6 +770,20 @@ impl App {
                 earliest(&mut wake, Some(at));
             }
         }
+        // 鼠标在编辑区大纲指示条上停留满 `TOC_HOVER_DELAY`：展开大纲卡片。
+        if let Some(since) = self.caches.outline_toc.rest
+            && !self.caches.outline_toc.shown
+        {
+            let at = since + crate::theme::TOC_HOVER_DELAY;
+            if now >= at {
+                self.caches.outline_toc.shown = true;
+                self.caches.outline_toc.close = None;
+                self.caches.outline_toc.fade = self.clock(animation::TOC_FADE);
+                self.request_redraw();
+            } else {
+                earliest(&mut wake, Some(at));
+            }
+        }
 
         let tooltip_at = self
             .overlays

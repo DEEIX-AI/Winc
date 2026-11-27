@@ -106,6 +106,8 @@ pub struct Hits {
     pub(crate) markdown_toc_tops: Vec<f32>,
     /// 标题指示条列出的各标题所在的顶层块，与 `markdown_toc_tops` 对应。
     pub(crate) markdown_toc_blocks: Vec<usize>,
+    /// 上一帧编辑区右上角大纲指示条与悬浮卡片的可点击位置。
+    pub(crate) editor_outline: Vec<(Rect, crate::app::EditorOutlineTarget)>,
     /// PDF 预览缩略图栏中各页的位置，以及点击后正文滚动到的位置（逻辑像素）。
     pub(crate) pdf_thumbs: Vec<(Rect, f32)>,
     /// PDF 预览右下角工具栏上各按钮的位置。
@@ -172,6 +174,7 @@ impl Hits {
             markdown_toc,
             markdown_toc_tops,
             markdown_toc_blocks,
+            editor_outline,
             suggest_card,
             suggest,
             selection_card,
@@ -228,6 +231,7 @@ impl Hits {
         markdown_toc.clear();
         markdown_toc_tops.clear();
         markdown_toc_blocks.clear();
+        editor_outline.clear();
         pdf_thumbs.clear();
         pdf_tools.clear();
         *latex_status = Rect::default();

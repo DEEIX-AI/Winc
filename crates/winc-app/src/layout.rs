@@ -508,6 +508,8 @@ pub enum Scrollbar {
     PdfStrip,
     /// Markdown 预览左侧展开的标题列表的竖直滚动条。
     MarkdownToc,
+    /// 编辑区右上角展开的大纲悬浮卡片的竖直滚动条。
+    EditorOutline,
     /// 表格预览的竖直滚动条。
     Table,
     /// 表格预览的水平滚动条。

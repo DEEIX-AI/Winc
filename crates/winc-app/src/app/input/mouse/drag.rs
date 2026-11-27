@@ -390,6 +390,10 @@ impl App {
                 grab,
             } => self.drag_toc_scrollbar(y, grab),
             Drag::Scrollbar {
+                bar: Scrollbar::EditorOutline,
+                grab,
+            } => self.drag_editor_outline_scrollbar(y, grab),
+            Drag::Scrollbar {
                 bar: bar @ (Scrollbar::Table | Scrollbar::TableHorizontal),
                 grab,
             } => self.drag_table_scrollbar(bar == Scrollbar::TableHorizontal, (x, y), grab),

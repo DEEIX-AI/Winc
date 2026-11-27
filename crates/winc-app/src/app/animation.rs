@@ -398,6 +398,10 @@ impl App {
         settle(&mut self.preview.markdown.toc_fade, |c| *c);
         settle(&mut self.preview.markdown.toc_close, |c| *c);
         settle(&mut self.preview.markdown.toc_glow, |g| g.1);
+        settle(&mut self.caches.outline_toc.fade, |c| *c);
+        settle(&mut self.caches.outline_toc.close, |c| *c);
+        settle(&mut self.caches.outline_toc.glow, |g| g.1);
+        settle(&mut self.caches.outline_toc.pin, |p| p.1);
         settle(&mut self.git.commit.history.card_slide, |s| s.1);
         settle(&mut self.preview.markdown.toc_pin, |p| p.1);
         settle(&mut self.preview.markdown.toc_flash, |f| f.1);
@@ -534,6 +538,10 @@ impl App {
             || self.preview.markdown.toc_fade.is_some()
             || self.preview.markdown.toc_close.is_some()
             || self.preview.markdown.toc_glow.is_some()
+            || self.caches.outline_toc.fade.is_some()
+            || self.caches.outline_toc.close.is_some()
+            || self.caches.outline_toc.glow.is_some()
+            || self.caches.outline_toc.pin.is_some()
             || self.git.commit.history.card_slide.is_some()
             || self.preview.markdown.catch_up.pending
             || self.preview.markdown.toc_pin.is_some()

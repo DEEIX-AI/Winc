@@ -448,3 +448,62 @@ fn shoot_outline() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 编辑区右上角大纲指示条：悬停满 `TOC_HOVER_DELAY` 后展开悬浮卡片，点击符号跳转，点击图钉固定。
+#[test]
+fn editor_outline_quick_view_expands_jumps_and_pins() {
+    use crate::app::EditorOutlineTarget;
+
+    let dir = sample_folder("editor-outline-toc");
+    let file = dir.join("tool.py");
+    std::fs::write(&file, PYTHON).unwrap();
+    let mut app = app_with(&file, false);
+    paint(&mut app);
+
+    let find = |app: &App, target| {
+        app.hits
+            .editor_outline
+            .iter()
+            .find(|(_, t)| *t == target)
+            .map(|h| h.0)
+    };
+
+    // 平时只显示指示条，卡片未展开。
+    let bars = find(&app, EditorOutlineTarget::Bars).expect("应绘制指示条");
+    assert!(find(&app, EditorOutlineTarget::Item(0)).is_none());
+
+    // 鼠标移入指示条并停留满 `TOC_HOVER_DELAY`：展开悬浮卡片。
+    app.on_mouse_move(bars.x + bars.w / 2.0, bars.y + bars.h / 2.0);
+    app.caches.outline_toc.rest = Some(
+        Instant::now()
+            - crate::theme::TOC_HOVER_DELAY
+            - std::time::Duration::from_millis(10),
+    );
+    app.caches.outline_toc.shown = true;
+    paint(&mut app);
+
+    let item3 = find(&app, EditorOutlineTarget::Item(3)).expect("卡片应列出符号");
+    let pin = find(&app, EditorOutlineTarget::Pin).expect("卡片右上角应有图钉");
+
+    // 点击图钉固定：鼠标移到编辑区空白处后卡片仍保持展开。
+    click(&mut app, (pin.x + pin.w / 2.0, pin.y + pin.h / 2.0));
+    assert!(app.state.editor_outline_pinned);
+    app.on_mouse_move(app.layout.editor.x + 20.0, app.layout.editor.y + 20.0);
+    paint(&mut app);
+    assert!(find(&app, EditorOutlineTarget::Item(3)).is_some());
+
+    // 点击符号跳转到对应行。
+    click(&mut app, (item3.x + item3.w / 2.0, item3.y + item3.h / 2.0));
+    let line = app
+        .editor
+        .active()
+        .map(|d| d.text().pos_to_line_col(d.selection.head).0);
+    assert_eq!(line, Some(8));
+
+    // 再次点击图钉取消固定。
+    paint(&mut app);
+    let pin = find(&app, EditorOutlineTarget::Pin).unwrap();
+    click(&mut app, (pin.x + pin.w / 2.0, pin.y + pin.h / 2.0));
+    assert!(!app.state.editor_outline_pinned);
+    let _ = std::fs::remove_dir_all(&dir);
+}

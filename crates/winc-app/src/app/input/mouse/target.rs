@@ -291,6 +291,7 @@ impl App {
             Target::Suggest(row) => Hover::Suggest(row),
             Target::SelectionTool(tool) => Hover::SelectionTool(tool),
             Target::MarkdownToc(target) => Hover::MarkdownToc(target),
+            Target::EditorOutline(target) => Hover::EditorOutline(target),
             Target::MarkdownText(Some(link)) => Hover::MarkdownLinkText(link),
             Target::ImageHandle => Hover::ImageHandle,
             Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture | Target::Table => {
@@ -542,12 +543,20 @@ impl App {
             .then(|| hit(&self.hits.markdown_toc, x, y))
             .flatten();
         let over_toc = toc.is_some();
+        let editor_outline = (l.editor.contains(x, y) && self.editor_outline_active())
+            .then(|| hit(&self.hits.editor_outline, x, y))
+            .flatten();
+        let over_editor_outline = editor_outline.is_some();
         if let Some((bar, grab)) = self.scrollbar_at(x, y).filter(|(bar, _)| {
             !(over_row && *bar == Scrollbar::Tree
                 || over_commit_row && *bar == Scrollbar::Commit
-                || over_toc && *bar == Scrollbar::MarkdownTable)
+                || over_toc && *bar == Scrollbar::MarkdownTable
+                || over_editor_outline && *bar == Scrollbar::Editor)
         }) {
             return Target::Scrollbar(bar, grab);
+        }
+        if let Some(target) = editor_outline {
+            return Target::EditorOutline(target);
         }
         if l.minimap.contains(x, y) {
             return Target::Minimap;
@@ -827,6 +836,16 @@ impl App {
             let thumb = scrollbar_thumb(list.track, scroll, content)?;
             return Some((Scrollbar::MarkdownToc, grab(y, thumb.y, thumb.h)));
         }
+        let outline_list = &self.caches.outline_toc.list;
+        let outline_pin = crate::app::EditorOutlineTarget::Pin;
+        if outline_list.track.contains(x, y)
+            && x >= outline_list.track.right() - SCROLLBAR_HIT
+            && hit(&self.hits.editor_outline, x, y) != Some(outline_pin)
+            && let Some((scroll, content)) = outline_list.scrollbar()
+        {
+            let thumb = scrollbar_thumb(outline_list.track, scroll, content)?;
+            return Some((Scrollbar::EditorOutline, grab(y, thumb.y, thumb.h)));
+        }
         if preview.contains(x, y) {
             // 比正文宽的表格的水平滚动条：位于表格显示区域的底边。
             if let Some(bar) = self.hits.markdown_table_bar
@@ -977,6 +996,7 @@ impl App {
                 | Target::Suggest(_)
                 | Target::SelectionTool(_)
                 | Target::MarkdownToc(_)
+                | Target::EditorOutline(_)
                 | Target::SearchDialog(_)
                 | Target::SearchDock(_)
                 | Target::Prompt
@@ -1178,6 +1198,10 @@ impl App {
                     crate::app::preview::markdown::TocTarget::Heading(_)
                         | crate::app::preview::markdown::TocTarget::Pin
                 )
+                | Hover::EditorOutline(
+                    crate::app::EditorOutlineTarget::Item(_)
+                        | crate::app::EditorOutlineTarget::Pin
+                )
         ) || self.terminal.link.is_some()
             || self.pointer.link.is_some()
         {
@@ -1261,6 +1285,8 @@ pub(super) enum Target {
     /// 格式工具栏中的按钮。
     SelectionTool(crate::app::preview::markdown::toolbar::Tool),
     MarkdownToc(crate::app::preview::markdown::TocTarget),
+    /// 编辑区右上角的大纲指示条或悬浮卡片。
+    EditorOutline(crate::app::EditorOutlineTarget),
     /// Markdown 预览中可以选择文字的区域；参数为鼠标下的链接（可编辑的预览中单击链接放置
     /// 光标，不打开它）。
     MarkdownText(Option<usize>),
