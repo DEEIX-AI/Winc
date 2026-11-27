@@ -28,15 +28,15 @@ fn one_dark_diff_draws_old_rows_red_and_new_rows_green() {
     use winc_editor::diff_view::{DiffSide, LEFT, RIGHT};
 
     let mut app = blank_app(true);
-    app.config.dark_theme = Some("one-dark".to_owned());
-    app.set_theme(winit::window::Theme::Dark);
     let language = winc_syntax::detect("example.rs");
     let view = DiffView::new(
         DiffSide::new("old", "// first\nlet count = 1;\n// last\n", None, language),
         DiffSide::new("new", "// first\nlet count = 2;\n// last\n", None, language),
     );
     let index = app.editor.show_diff("example.rs", view);
-    for unified in [false, true] {
+    for (theme, unified) in [("one-dark", false), ("one-dark", true), ("dusk", false)] {
+        app.config.dark_theme = Some(theme.to_owned());
+        app.set_theme(winit::window::Theme::Dark);
         app.editor.documents[index]
             .diff
             .as_mut()
@@ -64,10 +64,15 @@ fn one_dark_diff_draws_old_rows_red_and_new_rows_green() {
             )
         };
         let [old, new] = [sample(LEFT), sample(RIGHT)];
-        let red = |px| (px >> 16) & 0xff_u32;
-        let green = |px| (px >> 8) & 0xff_u32;
-        assert!(red(old) > green(old) && near(old, app.palette.diff_deleted.line));
-        assert!(green(new) > red(new) && near(new, app.palette.diff_added.line));
+        if theme == "dusk" {
+            assert!(near(old, app.palette.diff_modified.line));
+            assert!(near(new, app.palette.diff_modified.line));
+        } else {
+            let red = |px| (px >> 16) & 0xff_u32;
+            let green = |px| (px >> 8) & 0xff_u32;
+            assert!(red(old) > green(old) && near(old, app.palette.diff_deleted.line));
+            assert!(green(new) > red(new) && near(new, app.palette.diff_added.line));
+        }
     }
 }
 

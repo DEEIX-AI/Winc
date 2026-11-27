@@ -1388,19 +1388,20 @@ pub(in crate::view) fn draw_ribbon(
     [old, new]: [DiffShade; 2],
     clip: Rect,
 ) {
-    let blend = |a: Color, b: Color, t: f32| {
-        let lerp = |from, to| from + (to - from) * t;
-        Color {
-            r: lerp(a.r, b.r),
-            g: lerp(a.g, b.g),
-            b: lerp(a.b, b.b),
-            a: lerp(a.a, b.a),
-        }
+    let uniform = old.line == new.line && old.edge == new.edge;
+    let lerp = |a, b, t| a + (b - a) * t;
+    let blend = |a: Color, b: Color, t| match uniform {
+        true => a,
+        false => Color {
+            r: lerp(a.r, b.r, t),
+            g: lerp(a.g, b.g, t),
+            b: lerp(a.b, b.b, t),
+            a: lerp(a.a, b.a, t),
+        },
     };
     let at = |t: f32| {
         let s = t * t * (3.0 - 2.0 * t);
-        let y = |from, to| from + (to - from) * s;
-        (y(left.0, right.0), y(left.1, right.1))
+        (lerp(left.0, right.0, s), lerp(left.1, right.1, s))
     };
     // 每列宽半个逻辑像素：缩放倍数为 2 时恰为一个物理像素，边线不出现可见的台阶。
     const STEP: f32 = 0.5;
