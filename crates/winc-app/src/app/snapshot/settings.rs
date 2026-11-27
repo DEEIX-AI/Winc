@@ -1344,11 +1344,13 @@ fn the_start_page_shows_only_first_time_setup_until_it_is_finished() {
         .collect();
     assert_eq!(listed, all);
     assert!(app.menu_checked(MenuCommand::NamedTheme(true, 0)));
-    app.run_menu_command(MenuCommand::NamedTheme(true, 2));
+    let one_dark = crate::theme::theme_index(true, Some("one-dark"));
+    assert_eq!(themes[one_dark].name(), "One Dark");
+    app.run_menu_command(MenuCommand::NamedTheme(true, one_dark));
     paint(&mut app);
-    assert_eq!(app.config.dark_theme.as_deref(), Some(themes[2].id));
+    assert_eq!(app.config.dark_theme.as_deref(), Some("one-dark"));
     assert_eq!(app.config.light_theme, None);
-    assert_eq!(app.palette.editor_bg, themes[2].palette.editor_bg);
+    assert!(std::ptr::eq(app.palette, themes[one_dark].palette));
 
     // 语言：弹出设置中同一个「语言」菜单。
     pick(&mut app, StartAction::Language);

@@ -2,6 +2,7 @@
 
 use winc_i18n::t;
 
+use super::one_dark::ONE_DARK;
 use super::*;
 
 pub(super) const fn hex(rgb: u32) -> Color {
@@ -452,6 +453,7 @@ impl ThemeEntry {
             "ember" => t!("settings-theme-name-ember"),
             "midnight" => t!("settings-theme-name-midnight"),
             "dusk" => t!("settings-theme-name-dusk"),
+            "one-dark" => t!("settings-theme-name-one-dark"),
             "veil-night" => t!("settings-theme-name-veil-night"),
             "veil-umber" => t!("settings-theme-name-veil-umber"),
             id => id,
@@ -475,8 +477,8 @@ pub static LIGHT_THEMES: [ThemeEntry; 8] = [
     entry("veil-linen", &VEIL_LINEN),
 ];
 
-/// 可选的深色主题，第一个是默认的：Winc 系列排在前面，为背景图设计的「幕」系列排在最后。
-pub static DARK_THEMES: [ThemeEntry; 8] = [
+/// 可选的深色主题，第一个是默认的。
+pub static DARK_THEMES: [ThemeEntry; 9] = [
     entry("winc-night", &WINC_NIGHT),
     entry("winc-slate", &WINC_SLATE),
     entry("ink", &DARK),
@@ -485,6 +487,7 @@ pub static DARK_THEMES: [ThemeEntry; 8] = [
     entry("dusk", &DUSK),
     entry("veil-night", &VEIL_NIGHT),
     entry("veil-umber", &VEIL_UMBER),
+    entry("one-dark", &ONE_DARK),
 ];
 
 /// 深色（`dark`）或浅色主题的列表。

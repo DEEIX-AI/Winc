@@ -449,7 +449,7 @@ fn draw_side_pane(
         } else {
             shade
         };
-        draw_ribbon(frame, ribbon, left, right, shade, clip);
+        draw_ribbon(frame, ribbon, left, right, [shade; 2], clip);
     }
 
     let first = top.floor().max(0.0) as usize;

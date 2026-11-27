@@ -362,6 +362,26 @@ fn only_a_theme_following_the_system_changes_with_it() {
     assert!(!app.palette.dark);
 }
 
+#[test]
+fn one_dark_does_not_replace_dusk() {
+    let mut app = blank_app(true);
+    app.config.dark_theme = Some("dusk".to_owned());
+    app.set_theme_choice(ThemeChoice::Dark);
+    assert!(std::ptr::eq(app.palette, &crate::theme::DUSK));
+    let dusk = app.theme_slot(true);
+    assert_ne!(crate::theme::themes(true)[dusk].name(), "One Dark");
+
+    let one_dark = crate::theme::theme_index(true, Some("one-dark"));
+    app.set_named_theme(true, one_dark);
+    assert_eq!(app.config.dark_theme.as_deref(), Some("one-dark"));
+    assert_ne!(app.palette.frame_bg, crate::theme::DUSK.frame_bg);
+    assert_ne!(app.palette.caret, crate::theme::DUSK.caret);
+
+    app.set_named_theme(true, dusk);
+    assert_eq!(app.config.dark_theme.as_deref(), Some("dusk"));
+    assert!(std::ptr::eq(app.palette, &crate::theme::DUSK));
+}
+
 /// 各档字重的截图：`cargo test -p winc-app shoot_font_weights -- --ignored`。
 #[test]
 #[ignore = "截图，手动运行"]

@@ -402,6 +402,7 @@ settings-theme-name-ink = 墨蓝
 settings-theme-name-ember = 炭火
 settings-theme-name-midnight = 深夜
 settings-theme-name-dusk = 暮紫
+settings-theme-name-one-dark = One Dark
 settings-theme-name-veil-night = 夜幕
 settings-theme-name-veil-umber = 檀幕
 

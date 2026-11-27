@@ -24,6 +24,54 @@ fn active_view(app: &App) -> &DiffView {
 }
 
 #[test]
+fn one_dark_diff_draws_old_rows_red_and_new_rows_green() {
+    use winc_editor::diff_view::{DiffSide, LEFT, RIGHT};
+
+    let mut app = blank_app(true);
+    app.config.dark_theme = Some("one-dark".to_owned());
+    app.set_theme(winit::window::Theme::Dark);
+    let language = winc_syntax::detect("example.rs");
+    let view = DiffView::new(
+        DiffSide::new("old", "// first\nlet count = 1;\n// last\n", None, language),
+        DiffSide::new("new", "// first\nlet count = 2;\n// last\n", None, language),
+    );
+    let index = app.editor.show_diff("example.rs", view);
+    for unified in [false, true] {
+        app.editor.documents[index]
+            .diff
+            .as_mut()
+            .unwrap()
+            .set_unified(unified);
+        paint(&mut app);
+        let view = active_view(&app);
+        let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);
+        let lh = app.fonts.line_height;
+        let sample = |side: usize| {
+            let row = view.row_of(side, 1) as f64;
+            let pos = if unified {
+                view.pos_of(side, row)
+            } else if view.aligned {
+                view.unified_map().aligned_pos(side, row)
+            } else {
+                row
+            };
+            pixel(
+                &app,
+                (
+                    parts.panes[side].text.right() - 32.0,
+                    parts.body.y + (pos as f32 + 0.5) * lh,
+                ),
+            )
+        };
+        let [old, new] = [sample(LEFT), sample(RIGHT)];
+        let red = |px| (px >> 16) & 0xff_u32;
+        let green = |px| (px >> 8) & 0xff_u32;
+        assert!(red(old) > green(old) && near(old, app.palette.diff_deleted.line));
+        assert!(green(new) > red(new) && near(new, app.palette.diff_added.line));
+    }
+}
+
+#[test]
 fn the_whole_file_is_compared_with_the_clipboard_and_stays_editable() {
     let (mut app, file) = main_open("compare-clipboard");
     let source = app.editor.active().unwrap().id;
