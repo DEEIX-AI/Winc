@@ -27,7 +27,7 @@ fn runs(stroke: Stroke) -> Option<Action> {
 }
 
 /// 把「快捷键」页中命令 `action` 的一行滚进列表中间，并把鼠标移到这一行上。
-fn show_row(app: &mut App, action: Action) {
+pub(super) fn show_row(app: &mut App, action: Action) {
     let keys = app.keys_layout();
     let (rect, _) = keys.rows().find(|(_, row)| row.action == action).unwrap();
     let to = app.settings.scroll + rect.y - keys.list.y - keys.list.h / 2.0;
@@ -253,4 +253,21 @@ fn shoot_setup_keys() {
         let theme = if dark { "dark" } else { "light" };
         shoot(&mut app, &format!("setup-keys-{theme}"));
     }
+}
+
+/// 回归：修改快捷键后保存或放弃，键盘焦点回到页内的搜索框，接着打字、`↓` 不跳去设置的搜索框
+/// 或别的页。
+#[test]
+fn finishing_a_key_edit_returns_to_the_search_box() {
+    let mut app = keys_page();
+    assert_eq!(app.focus, Focus::KeySearch);
+    app.start_key_edit(Action::GoToLine, true);
+    assert_eq!(app.focus, Focus::Settings);
+    app.key_edit_stroke(key(KeyCode::Escape, Mods::NONE));
+    assert_eq!(app.focus, Focus::KeySearch);
+
+    app.start_key_edit(Action::GoToLine, true);
+    app.key_edit_stroke(key(KeyCode::Enter, Mods::NONE));
+    assert_eq!(app.focus, Focus::KeySearch);
+    assert_eq!(app.settings_layout().page, SettingsPage::Keys);
 }

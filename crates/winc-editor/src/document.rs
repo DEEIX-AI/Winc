@@ -5,6 +5,7 @@
 //! 换行风格、BOM）和检查外部修改。
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::io::{self, BufReader, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use ropey::Rope;
 use winc_core::edit::{EditKind, Transaction};
 use winc_core::selection::merge;
 use winc_core::text::{Aligned, CellLayout, ColumnWidths, Columns};
+use winc_core::transform::{JsonError, JsonLayout};
 use winc_core::{History, Indent, LineEnding, Lines, Selection, diff, indent, transform};
 use winc_i18n::t;
 use winc_syntax::{Highlighter, LineState};
@@ -30,6 +32,8 @@ use crate::editing::scopes::{self, FoldRange, Scope, ScopeMemo};
 use crate::navigation::bookmarks::Bookmarks;
 use content::Content;
 use editorconfig::FileConfig;
+pub use edits::ByteEdit;
+use edits::EditLog;
 use encoding::{self as charset, Encoding, UTF8_BOM, utf16_text, utf16_unmarked};
 use large::LargeText;
 use winc_preview::image::Picture;
@@ -38,6 +42,7 @@ use winc_preview::table::Table;
 pub(crate) mod content;
 pub(crate) mod disk;
 pub mod editorconfig;
+mod edits;
 pub mod encoding;
 mod indentation;
 mod parked;
@@ -128,6 +133,10 @@ pub struct TableView {
     pub card_scroll: f32,
     /// 当前格的卡片是否已按 Esc 收起；切换到另一格时重新显示。
     pub card_closed: bool,
+    /// 底部工作表标签栏的横向滚动位置（逻辑像素）。
+    pub bar_scroll: f32,
+    /// 当前工作表的标签是否已滚入标签栏的可见范围。
+    pub bar_revealed: bool,
 }
 
 impl TableView {
@@ -141,6 +150,8 @@ impl TableView {
             selection: ((0, 0), (0, 0)),
             card_scroll: 0.0,
             card_closed: false,
+            bar_scroll: 0.0,
+            bar_revealed: false,
         })
     }
 
@@ -173,11 +184,23 @@ pub enum PreviewKind {
     Markdown,
     /// csv、tsv：预览为表格（`Document::table`）。
     Table,
+    /// LaTeX：预览只读。
+    Latex,
 }
 
 impl PreviewKind {
     /// 全部种类。
-    pub const ALL: [PreviewKind; 3] = [PreviewKind::Svg, PreviewKind::Markdown, PreviewKind::Table];
+    pub const ALL: [PreviewKind; 4] = [
+        PreviewKind::Svg,
+        PreviewKind::Markdown,
+        PreviewKind::Table,
+        PreviewKind::Latex,
+    ];
+
+    /// 是否按 Markdown 预览排版（Markdown，以及转换成 Markdown 的 LaTeX）。
+    pub fn typeset(self) -> bool {
+        matches!(self, PreviewKind::Markdown | PreviewKind::Latex)
+    }
 
     /// 返回语言 `language` 的文本可以预览成哪一种；不能预览的语言返回 `None`。
     pub fn of(language: &winc_syntax::Language) -> Option<PreviewKind> {
@@ -185,6 +208,7 @@ impl PreviewKind {
             "svg" => Some(PreviewKind::Svg),
             "markdown" => Some(PreviewKind::Markdown),
             "csv" | "tsv" => Some(PreviewKind::Table),
+            "latex" => Some(PreviewKind::Latex),
             _ => None,
         }
     }
@@ -383,22 +407,14 @@ fn changed_lines(old: &ropey::Rope, new: &ropey::Rope) -> (usize, usize, usize) 
     (head, old_n - tail, new_n - tail)
 }
 
-/// 改动日志保留的最近改动条数（条，64），供 `Document::unchanged_lines_since` 向前追溯。
-///
-/// 一次连续输入与随后的滚动查询通常只涉及几十次改动，64 条足以覆盖；记录更多只会增加内存开销。
-const EDIT_LOG: usize = 64;
+pub(crate) use winc_search::OPEN_LIMIT;
+pub use winc_search::{LARGE_FILE, looks_binary};
 
-/// 可打开的文件大小上限（字节，4 GiB）。
-///
-/// 超过该大小的文件不打开。上限取自调参：`rope` 把全文放在内存中并额外维护树的节点，内存占用
-/// 随文件大小线性增长，超过该值后占用达到可用内存的量级。该上限同时约束打开文件与全局搜索的扫描，
-/// 按需读取的方式见 [`LARGE_FILE`]。
-pub(crate) const OPEN_LIMIT: u64 = 4 << 30;
-/// 大文件的大小下限（字节，16 MiB）。
-///
-/// 超过该大小的文件按大文件打开：原文留在磁盘上按需读取，内存里只记录改动。下限取自调参：按大文件
-/// 打开后每次滚动都要读磁盘，只有当整个文件读入内存的占用和耗时不可忽略时，这一代价才值得承担。
-pub const LARGE_FILE: u64 = 16 << 20;
+/// 本机上的文件 `path` 是否超过 [`LARGE_FILE`]、按大文件打开；远端的文件不查询，返回 `false`。
+pub fn opens_as_large(path: &Path) -> bool {
+    !winc_backend::is_remote(path)
+        && winc_backend::fs::metadata(path).is_ok_and(|m| m.len > LARGE_FILE)
+}
 /// 一次复制的最大字节数（字节，64 MiB）。
 ///
 /// 大文件全选后复制会把整个文件读进内存，因此需要限制。
@@ -418,26 +434,32 @@ pub const EDIT_LIMIT: u64 = 16 << 20;
 /// 跨过这一距离，起始位置以上 256 行内没有未闭合的块注释或字符串时结果才与从头推算相同。
 const HIGHLIGHT_LOOKBACK: usize = 256;
 
+/// 返回文字 `text` 中各行 `lines`（从 0 起，从小到大）行首的高亮状态，按 `language` 推算；供
+/// 不打开文件、只显示其中几行的预览和搜索结果使用。
+///
+/// 从文件开头推算，结果与打开文件后相同，各行共用推算的结果；推算到某一行要再推算的行数超过
+/// `budget` 时，该行从上方 `HIGHLIGHT_LOOKBACK` 行处推算，与打开大文件时相同。
+pub fn line_highlight_states(
+    text: &ropey::Rope,
+    language: &'static winc_syntax::Language,
+    lines: &[usize],
+    budget: usize,
+) -> Vec<LineState> {
+    let mut highlighter = Highlighter::new(language);
+    (lines.iter())
+        .map(|&line| {
+            (highlighter.state_at(text, line, budget))
+                .unwrap_or_else(|| highlighter.state_near(text, line, HIGHLIGHT_LOOKBACK))
+        })
+        .collect()
+}
+
 /// 粘滞滚动每帧最多向后推算的高亮行数（行，4000）。
 ///
 /// 与编辑区绘制时的每帧预算取同一个值：推算不完时本次结果不缓存，下一帧重新计算。该值取自调参，
 /// 上限越大，跳到文件靠后位置时粘滞块能更早算出，单帧耗时也随之增长。
 pub(crate) const STICKY_HIGHLIGHT_BUDGET: usize = 4_000;
-/// 二进制检测读取的文件前缀长度（字节，8 KiB）。
-///
-/// 这段前缀中出现 NUL 即视为二进制文件；带 UTF-16 BOM 的文件除外。
-pub(crate) const BINARY_SNIFF: usize = 8 << 10;
-
-// 打开文件和全局搜索（project_search.rs）使用同一套判断：是否为二进制、如何去掉 BOM、
-// 非 UTF-8 时如何解码。两处判断一致，搜索结果的匹配位置才与打开后的文本和行号对应。
-
-/// 是否为二进制文件：开头 `BINARY_SNIFF` 字节内含 NUL。
-///
-/// UTF-16 文件含大量 NUL，因此是 UTF-16 的文字（带 BOM，或认得出的不带 BOM 的）时不算
-/// 二进制。`bytes` 应从文件开头起，超出 `BINARY_SNIFF` 的部分不检查。
-pub fn looks_binary(bytes: &[u8]) -> bool {
-    !utf16_text(bytes) && memchr::memchr(0, &bytes[..bytes.len().min(BINARY_SNIFF)]).is_some()
-}
+pub(crate) use winc_search::BINARY_SNIFF;
 
 /// 一个打开的文档：文本、选区、撤销历史、高亮状态，以及对应的磁盘文件。
 ///
@@ -496,6 +518,8 @@ pub struct Document {
     pub log: Option<Box<crate::git::log::LogView>>,
     /// 编辑区按十六进制显示文件的字节，而不是文本；只读，文本为空。
     pub hex: Option<Box<crate::hex::HexView>>,
+    /// 编辑区显示终端而不是文本；会话由界面层管理，没有对应的文件。
+    pub terminal: bool,
     /// 切换到预览之前的 `readonly`：SVG 的预览期间强制只读，切回源代码时恢复该值。
     readonly_before_preview: bool,
     /// 分栏预览（`PreviewMode::Split`）：文本仍然显示，右侧的预览由界面管理。
@@ -506,6 +530,9 @@ pub struct Document {
     rendered: bool,
     /// 不对应文件的只读标签（格式化工具的输出、安装说明）的标题。
     pub title: Option<String>,
+    /// 未命名文档在标签上显示的名字（见 [`Document::make_untitled`]）；为 `None` 时显示
+    /// `untitled`。有路径时不使用。
+    pub untitled_name: Option<String>,
     /// 阅读标签的内容：编辑区显示排版后的 Markdown，没有可切换的源代码，文本为空。
     pub reading: Option<Reading>,
     /// 文本每变化一次加 1，搜索结果等缓存据此判断是否失效。
@@ -528,6 +555,10 @@ pub struct Document {
     pub(crate) marks: Marks,
     /// 其他窗格里这个文档的视图状态；文本变化时随之移动。
     pub(crate) parked: Parked,
+    /// CSV、TSV 是否按列对齐显示（见 [`Editor::set_align_columns`](crate::Editor)）。
+    align_columns: bool,
+    /// 表格的分隔符（[`Document::delimiter`]），按（版本、语言）缓存。
+    delimiter_memo: Cell<Option<(u64, &'static str, Option<char>)>>,
     /// CSV、TSV 按列对齐时每一列的起始位置，按（版本、Tab 宽度）缓存。
     columns: Option<ColumnsCache>,
     /// 上一次测量列宽时的文字和各列宽度；文字变化时只重新测量改动的行。
@@ -544,9 +575,8 @@ pub struct Document {
     pub(crate) windows: Mutex<Vec<(WindowKey, Arc<LineWindow>)>>,
     /// 显示整行的行及其列索引，见 [`Document::shows_whole_line`]。
     pub(crate) whole: WholeLines,
-    /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行），供
-    /// `Document::unchanged_lines_since` 判断哪些行没有变。
-    edits: std::collections::VecDeque<(u64, usize)>,
+    /// 最近的若干次改动，见 [`Document::unchanged_lines_since`]、[`Document::byte_edit_since`]。
+    edits: EditLog,
     /// 文档的文本：`rope`，或按需读取磁盘的大文件。
     pub(crate) text: Content,
     /// 最近一次读写时磁盘文件的修改时间。
@@ -564,9 +594,13 @@ pub struct Document {
     pending_as_text: bool,
     /// 尚未读取的文档读取时是否打开成十六进制视图。
     pending_hex: bool,
+    /// 尚未读取的文档读取时文件不存在是否成为新文件（见 `Document::new_file`）。
+    pending_new: bool,
     /// 用户通过「通过编码重新打开」选的编码：之后从磁盘重新读取时按它解码，不再识别编码，也不
     /// 再判断是否二进制。
     chosen: Option<Encoding>,
+    /// 按 Unicode 转义读入时各行原来的写法：保存时未修改的行按它写回。
+    escape_origin: Option<std::sync::Arc<charset::EscapeOrigin>>,
 }
 
 /// 从磁盘读出的内容。
@@ -580,6 +614,8 @@ struct Loaded {
     mtime: Option<Stamp>,
     /// 读取时文件的大小（字节）。
     len: u64,
+    /// 按 Unicode 转义读入时各行原来的写法，见 [`charset::EscapeOrigin`]。
+    origin: Option<std::sync::Arc<charset::EscapeOrigin>>,
 }
 
 impl Document {
@@ -617,10 +653,12 @@ impl Document {
             diff: None,
             log: None,
             hex: None,
+            terminal: false,
             readonly_before_preview: false,
             split: false,
             rendered: false,
             title: None,
+            untitled_name: None,
             reading: None,
             revision: 0,
             scroll_line: 0.0,
@@ -632,6 +670,8 @@ impl Document {
             bookmarks: Bookmarks::default(),
             marks: Marks::default(),
             parked: Parked::default(),
+            align_columns: true,
+            delimiter_memo: Cell::new(None),
             columns: None,
             column_widths: None,
             fold_cache: None,
@@ -640,7 +680,7 @@ impl Document {
             wrap_pending: None,
             windows: Mutex::new(Vec::new()),
             whole: WholeLines::default(),
-            edits: std::collections::VecDeque::new(),
+            edits: EditLog::default(),
             text,
             disk_mtime: None,
             disk_len: 0,
@@ -648,7 +688,9 @@ impl Document {
             pending: false,
             pending_as_text: false,
             pending_hex: false,
+            pending_new: false,
             chosen: None,
+            escape_origin: None,
         }
     }
 
@@ -688,6 +730,29 @@ impl Document {
         document
     }
 
+    /// 把输出标签转为可编辑的未命名文档，标签上仍显示原来的标题。
+    ///
+    /// 当前内容作为保存基线：不修改时关闭不询问是否保存。不是输出标签时不做处理。
+    pub fn make_untitled(&mut self) {
+        if self.reading.is_some() || self.diff.is_some() || self.log.is_some() || self.terminal {
+            return;
+        }
+        if let Some(title) = self.title.take() {
+            self.untitled_name = Some(title);
+            self.readonly = false;
+        }
+    }
+
+    /// 把 [`Document::make_untitled`] 转出的未命名文档恢复为只读的输出标签。
+    pub fn make_output(&mut self) {
+        if self.path.is_none()
+            && let Some(name) = self.untitled_name.take()
+        {
+            self.title = Some(name);
+            self.readonly = true;
+        }
+    }
+
     /// 创建只读、不对应文件的阅读标签，标签上显示 `title`，内容为 `reading`。
     pub fn reading(id: DocumentId, title: &str, reading: Reading) -> Self {
         let mut document = Document::from_text(id, "");
@@ -724,6 +789,15 @@ impl Document {
         document.title = Some(title.to_owned());
         document.readonly = true;
         document.log = Some(Box::new(view));
+        document
+    }
+
+    /// 创建终端标签，标题为 `title`；没有文本和文件，会话由界面层管理。
+    pub fn terminal(id: DocumentId, title: &str) -> Self {
+        let mut document = Self::empty(id);
+        document.title = Some(title.to_owned());
+        document.readonly = true;
+        document.terminal = true;
         document
     }
 
@@ -854,9 +928,38 @@ impl Document {
         Some(Columns::measure(separator, rope.chunks(), tab_width))
     }
 
-    /// 按列对齐时的分隔符；不是表格、是大文件或超过 `ALIGN_MAX` 时为 `None`。
+    /// 按列对齐时的分隔符（[`Document::delimiter`]）；关闭了按列对齐、不是表格、是大文件或超过
+    /// `ALIGN_MAX` 时为 `None`。
     fn column_separator(&self) -> Option<char> {
-        let separator = match self.highlighter.language().id {
+        let Content::Rope(rope) = &self.text else {
+            return None;
+        };
+        if !self.align_columns || rope.len_bytes() > ALIGN_MAX {
+            return None;
+        }
+        self.delimiter()
+    }
+
+    /// 返回表格（CSV、TSV）分列的字符：TSV 为制表符，CSV 为逗号，第一行中分号多于逗号时为分号。
+    /// 不是表格或是大文件时返回 `None`。
+    ///
+    /// 按列着色和按列对齐都按该字符分列。绘制时每一行都要查询，结果按（版本、语言）缓存。
+    pub fn delimiter(&self) -> Option<char> {
+        let language = self.highlighter.language().id;
+        if let Some((revision, id, delimiter)) = self.delimiter_memo.get()
+            && revision == self.revision
+            && id == language
+        {
+            return delimiter;
+        }
+        let delimiter = self.find_delimiter(language);
+        (self.delimiter_memo).set(Some((self.revision, language, delimiter)));
+        delimiter
+    }
+
+    /// 按语言 `language` 和第一行的内容确定表格的分隔符，规则见 [`Document::delimiter`]。
+    fn find_delimiter(&self, language: &str) -> Option<char> {
+        let separator = match language {
             "csv" => ',',
             "tsv" => '\t',
             _ => return None,
@@ -864,18 +967,27 @@ impl Document {
         let Content::Rope(rope) = &self.text else {
             return None;
         };
-        if rope.len_bytes() > ALIGN_MAX {
-            return None;
-        }
-        // 第一行中分号多于逗号时，CSV 按分号分列。
         let first = rope.line(0);
         let count = |c: char| first.chars().filter(|&x| x == c).count();
-        let separator = if separator == ',' && count(';') > count(',') {
+        Some(if separator == ',' && count(';') > count(',') {
             ';'
         } else {
             separator
-        };
-        Some(separator)
+        })
+    }
+
+    /// CSV、TSV 是否按列对齐显示（见 [`Document::set_align_columns`]）。
+    pub(crate) fn aligns_columns(&self) -> bool {
+        self.align_columns
+    }
+
+    /// 设置 CSV、TSV 是否按列对齐显示；关闭时按原文排布，仍按列着色，可以自动换行。
+    pub(crate) fn set_align_columns(&mut self, align: bool) {
+        if self.align_columns != align {
+            self.align_columns = align;
+            self.columns = None;
+            self.column_widths = None;
+        }
     }
 
     /// 创建对应文件已不在磁盘上的文档：内容为空，未保存的内容只能从备份恢复
@@ -902,7 +1014,7 @@ impl Document {
         rope.insert(end, text);
         self.highlighter.invalidate_from(line);
         self.revision += 1;
-        self.note_edit(line);
+        self.note_edit(line, end);
         self.appended(line);
     }
 
@@ -997,6 +1109,7 @@ impl Document {
         // 作用于整个文件的命令需要读取并改写整个文件，大文件不支持。
         let whole_file = match command {
             Command::TrimTrailingWhitespace => true,
+            &Command::UnescapeUnicode { whole } | &Command::EscapeUnicode { whole } => whole,
             Command::SortLines { .. } => {
                 winc_core::transform::sorts_whole_file(&self.text, self.selection)
             }
@@ -1019,6 +1132,23 @@ impl Document {
             }
         }
         None
+    }
+
+    /// 返回按 `layout` 美化或压缩 JSON（[`Command::ReformatJson`]）时第一个无法转换的选区的原因，
+    /// 先看主选区；都能转换时返回 `None`。
+    pub fn json_problem(&self, layout: JsonLayout) -> Option<JsonError> {
+        let (unit, line_ending) = (self.indent().unit(), self.line_ending.as_str());
+        let whole = self.json_whole_file();
+        self.all_selections().find_map(|selection| {
+            transform::reformat_json(&self.text, selection, layout, unit, line_ending, whole).err()
+        })
+    }
+
+    /// 没有选区时美化、压缩 JSON 是否检查整个文件。
+    ///
+    /// 大文件和超过 [`EDIT_LIMIT`] 的文件不检查，只看光标所在的行。
+    pub(crate) fn json_whole_file(&self) -> bool {
+        !self.is_large() && self.text.byte_len(0, self.text.end_pos()) <= EDIT_LIMIT
     }
 
     /// 返回第 `line` 行（从 0 起）开头的高亮状态。
@@ -1149,17 +1279,19 @@ impl Document {
         // 扩展名（`a.txt` → `a.csv`）时文本不变，因此递增 `revision` 使缓存失效。
         self.revision += 1;
         self.columns = None;
+        self.follow_unicode_escapes();
     }
 
-    /// 标签上显示的名字：输出标签用 `title`，否则用文件名，没有文件名时是 `untitled`。
+    /// 标签上显示的名字：输出标签用 `title`，否则用文件名；未命名文档用 `untitled_name`，没有
+    /// 时是 `untitled`。
     pub fn name(&self) -> Cow<'_, str> {
         if let Some(title) = &self.title {
             return Cow::Borrowed(title);
         }
-        self.path
-            .as_deref()
-            .and_then(Path::file_name)
-            .map_or(Cow::Borrowed("untitled"), |n| n.to_string_lossy())
+        if let Some(name) = self.path.as_deref().and_then(Path::file_name) {
+            return name.to_string_lossy();
+        }
+        Cow::Borrowed(self.untitled_name.as_deref().unwrap_or("untitled"))
     }
 
     /// 是否有未保存的修改。
@@ -1211,9 +1343,33 @@ impl Document {
     ///
     /// 只读文档忽略。
     pub fn apply(&mut self, transaction: Transaction) {
+        self.apply_as(transaction, false);
+    }
+
+    /// 应用一个事务，并入撤销栈顶的撤销单元（见 `History::amend`）。
+    ///
+    /// 只读文档忽略。
+    pub fn amend(&mut self, transaction: Transaction) {
+        self.apply_as(transaction, true);
+    }
+
+    /// [`Document::apply`] 与 [`Document::amend`] 的实现。
+    fn apply_as(&mut self, transaction: Transaction, amend: bool) {
         if self.readonly || self.locked || self.all_locked {
             return;
         }
+
+        // 只有一处改动时记下字节范围，按改动前的文本换算。
+        let bytes = match (&transaction.changes[..], self.text.rope()) {
+            ([change], Some(rope)) => {
+                let start = rope.char_to_byte(change.start.min(rope.len_chars()));
+                Some(ByteEdit {
+                    old: start..start + change.removed.len(),
+                    new: start..start + change.inserted.len(),
+                })
+            }
+            _ => None,
+        };
 
         transaction.apply(&mut Tracked {
             text: &mut self.text,
@@ -1228,8 +1384,15 @@ impl Document {
 
         if !transaction.changes.is_empty() {
             let first = transaction.first_offset();
-            self.history.push(transaction);
+            if amend {
+                self.history.amend(transaction);
+            } else {
+                self.history.push(transaction);
+            }
             self.after_change(first);
+            if let Some(bytes) = bytes {
+                self.edits.set_bytes(self.revision, bytes);
+            }
         }
         // 事务不含其余选区时，文本改动后其余选区随版本号变化自动失效；含其余选区时按事务恢复。
         if !extra.is_empty() {
@@ -1237,31 +1400,32 @@ impl Document {
         }
     }
 
-    /// 记录最近一次改动（`revision` 已递增）的起始行 `line`。
-    fn note_edit(&mut self, line: usize) {
-        self.edits.push_back((self.revision, line));
-        if self.edits.len() > EDIT_LOG {
-            self.edits.pop_front();
-        }
+    /// 返回从版本 `revision` 至今的改动合并成的一处字节改动，范围覆盖其间的每次改动。
+    ///
+    /// 版本未变、早于最近 64 次改动、其间某次改动有多处（多个光标），或发生了编辑以外的变化
+    /// （从磁盘重新读取）时返回 `None`。
+    pub fn byte_edit_since(&self, revision: u64) -> Option<ByteEdit> {
+        self.edits.bytes_since(revision, self.revision)
+    }
+
+    /// 记录最近一次改动（`revision` 已递增）的起始行 `line` 和起始位置 `offset`（字符偏移）。
+    fn note_edit(&mut self, line: usize, offset: usize) {
+        self.edits.push(self.revision, line, offset);
     }
 
     /// 返回从版本 `revision` 至今始终未变的开头行数：此后的每次改动都位于这些行之下。
     ///
-    /// 只记录最近 `EDIT_LOG` 次改动；版本更早，或期间发生了编辑以外的变化（从磁盘重新读取、
+    /// 只记录最近 64 次改动；版本更早，或期间发生了编辑以外的变化（从磁盘重新读取、
     /// 更换语言）时返回 0。版本未变时返回 `usize::MAX`。
     pub fn unchanged_lines_since(&self, revision: u64) -> usize {
-        let mut unchanged = usize::MAX;
-        let mut count = 0;
-        for &(at, line) in self.edits.iter().rev().take_while(|(at, _)| *at > revision) {
-            debug_assert!(at <= self.revision);
-            unchanged = unchanged.min(line);
-            count += 1;
-        }
-        if self.revision.checked_sub(revision) == Some(count) {
-            unchanged
-        } else {
-            0
-        }
+        self.edits.unchanged_since(revision, self.revision).0
+    }
+
+    /// 返回从版本 `revision` 至今始终未变的开头字符数：此后的每次改动都从这些字符之后开始。
+    ///
+    /// 无法确定与版本未变时的返回值同 [`Document::unchanged_lines_since`]。
+    pub fn unchanged_chars_since(&self, revision: u64) -> usize {
+        self.edits.unchanged_since(revision, self.revision).1
     }
 
     /// 处理文本变化的后续工作：让变化所在行起的高亮失效，递增 `revision`，刷新折叠。
@@ -1272,7 +1436,7 @@ impl Document {
         self.highlighter.invalidate_from(line);
         self.sticky_memo.edited(self.revision, line);
         self.revision += 1;
-        self.note_edit(line);
+        self.note_edit(line, first_offset);
         self.refresh_folds();
         // 正在预览的 SVG 内容变化（例如文件被外部修改后重新读取）时，按新内容重新绘制。
         if self.picture.is_some() {
@@ -1281,16 +1445,17 @@ impl Document {
     }
 }
 
-/// 是否第 `line` 行（从 0 起）的开头处于多行字符串或块注释中。
+/// 是否第 `line` 行（从 0 起）的开头处于跨行的非普通代码结构中（见
+/// [`LineState::is_quoted`]）。
 ///
 /// 普通文档只使用已经推算好的高亮状态，不向后推算，尚未推算到的行视为不在其中；大文件按
 /// `HIGHLIGHT_LOOKBACK` 回看推算。
 pub(crate) fn starts_quoted(highlighter: &mut Highlighter, text: &Content, line: usize) -> bool {
     match text {
         Content::Rope(rope) => rope_starts_quoted(highlighter, rope, line),
-        Content::Large(large) => {
-            highlighter.state_near(&**large, line, HIGHLIGHT_LOOKBACK) != LineState::Normal
-        }
+        Content::Large(large) => highlighter
+            .state_near(&**large, line, HIGHLIGHT_LOOKBACK)
+            .is_quoted(),
     }
 }
 
@@ -1298,5 +1463,5 @@ pub(crate) fn starts_quoted(highlighter: &mut Highlighter, text: &Content, line:
 pub(crate) fn rope_starts_quoted(highlighter: &mut Highlighter, rope: &Rope, line: usize) -> bool {
     highlighter
         .state_at(rope, line, 0)
-        .is_some_and(|s| s != LineState::Normal)
+        .is_some_and(LineState::is_quoted)
 }

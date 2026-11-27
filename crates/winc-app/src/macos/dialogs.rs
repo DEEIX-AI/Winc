@@ -14,6 +14,8 @@ pub enum Panel<'a> {
         files: bool,
         /// 起始目录。
         dir: Option<&'a Path>,
+        /// 只能选这些扩展名（不含点）的文件，不能选目录；为空时不限。
+        types: &'a [&'a str],
     },
     /// 保存：默认文件名和起始目录。
     Save {
@@ -27,7 +29,7 @@ pub enum Panel<'a> {
 /// 在窗口上弹出打开或保存面板（从标题栏滑下的 sheet），选择完成或取消后在主线程上调用 `done`；
 /// 取消时参数为 `None`。
 ///
-/// 立即返回，不阻塞事件循环。返回是否弹出了面板：窗口上已挂着 sheet，或无法取得 `NSWindow`
+/// 立即返回，不阻塞事件循环。返回是否弹出了面板：窗口上已有 sheet，或无法取得 `NSWindow`
 /// 时返回 `false`。
 pub fn show_panel(
     window: &Window,
@@ -58,12 +60,24 @@ pub fn show_panel(
 
         // 程序不是 .app 包时，系统按英文显示按钮，因此显式设置当前界面语言的文字。
         match panel {
-            Panel::Open { files, dir } => {
+            Panel::Open { files, dir, types } => {
                 if let Some(url) = dir.and_then(|dir| file_url(dir, true)) {
                     let () = msg_send![&*object, setDirectoryURL: &*url];
                 }
                 let () = msg_send![&*object, setCanChooseFiles: files];
-                let () = msg_send![&*object, setCanChooseDirectories: true];
+                let () = msg_send![&*object, setCanChooseDirectories: types.is_empty()];
+                let names: Vec<Retained<AnyObject>> =
+                    types.iter().filter_map(|name| ns_string(name)).collect();
+                if !names.is_empty() {
+                    let objects: Vec<*const AnyObject> =
+                        names.iter().map(Retained::as_ptr).collect();
+                    let array: *mut AnyObject = msg_send![
+                        class!(NSArray),
+                        arrayWithObjects: objects.as_ptr(),
+                        count: objects.len()
+                    ];
+                    let () = msg_send![&*object, setAllowedFileTypes: array];
+                }
                 let () = msg_send![&*object, setAllowsMultipleSelection: false];
                 if let Some(prompt) = ns_string(winc_i18n::t!("common-open")) {
                     let () = msg_send![&*object, setPrompt: &*prompt];
@@ -438,7 +452,7 @@ pub struct AlertButton<'a> {
 /// `message` 是粗体的主句，`detail` 是下方的小字（空串不显示），按钮从右向左排列（第一个是默认
 /// 按钮，按 ↩ 触发）。`suppression` 是按钮上方勾选框的文字（例如「不再询问」）和一开始是否勾上，
 /// 为 `None` 时没有勾选框。立即返回；点击按钮后以按钮序号（从 0 起）和勾选框是否勾选调用 `done`。
-/// 窗口上已挂着面板或提示框时不弹出，返回 `false`。
+/// 窗口上已有面板或提示框时不弹出，返回 `false`。
 pub fn alert(
     window: &Window,
     message: &str,

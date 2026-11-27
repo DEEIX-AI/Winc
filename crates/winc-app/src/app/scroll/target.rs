@@ -28,6 +28,8 @@ pub(crate) enum ScrollTarget {
     CommitMessage,
     /// 提交视图的更改列表。
     Commit,
+    /// 提交视图中提交历史一组的各行。
+    CommitHistory,
     /// 文件视图底部的大纲列表。
     Outline,
     /// 全局搜索的结果列表。
@@ -38,6 +40,8 @@ pub(crate) enum ScrollTarget {
     LogDetails,
     /// 日志左侧的分支面板。
     LogBranches,
+    /// Git 面板中日志的提交列表（面板模式）；编辑区模式下提交列表按编辑区的文档滚动。
+    GitPanel,
     /// 从日志打开的差异左侧的文件栏。
     LogFiles,
     /// 终端面板的标签条。
@@ -68,11 +72,13 @@ impl ScrollTarget {
             Self::Picker
                 | Self::Tabs
                 | Self::Commit
+                | Self::CommitHistory
                 | Self::Outline
                 | Self::Results
                 | Self::Tree
                 | Self::TerminalStrip
                 | Self::LogFiles
+                | Self::GitPanel
         )
     }
 }
@@ -108,9 +114,26 @@ impl App {
         {
             return ScrollTarget::TerminalFind(self.field_at(x, y) == Some(Focus::TerminalFind));
         }
+        // Git 面板最大化时盖在侧栏、编辑区和终端上面：先于它们判断。
+        if self.in_git_panel(x, y) {
+            let parts = self.log_parts();
+            return if parts.details.contains(x, y) {
+                ScrollTarget::LogDetails
+            } else if parts.branches.contains(x, y) {
+                ScrollTarget::LogBranches
+            } else if parts.list.contains(x, y) {
+                ScrollTarget::GitPanel
+            } else {
+                ScrollTarget::Nothing
+            };
+        }
         let in_list =
             |app: &App| app.commit_parts().list.contains(x, y) || app.in_commit_overflow(x, y);
-        let terminal_header = l.terminal.y + crate::app::terminal::header_height(l.terminal);
+        // 分栏时按鼠标所在的那一栏的标签栏算。
+        let group = (self.terminal_group_at(x, y))
+            .and_then(|at| self.terminal_group_cards_in(l.terminal).get(at).copied())
+            .unwrap_or(l.terminal);
+        let terminal_header = group.y + crate::app::terminal::header_height(group);
         if self.overlays.picker.open && l.picker.contains(x, y) {
             ScrollTarget::Picker
         } else if l.tabs.contains(x, y) {
@@ -119,6 +142,10 @@ impl App {
             ScrollTarget::CommitMessage
         } else if self.commit_shown() && in_list(self) {
             ScrollTarget::Commit
+        } else if self.commit_shown()
+            && (self.history_rows_area()).is_some_and(|rows| rows.contains(x, y))
+        {
+            ScrollTarget::CommitHistory
         } else if self.outline_shown() && self.outline_list().contains(x, y) {
             ScrollTarget::Outline
         } else if self.panel_shown() && l.sidebar.contains(x, y) {
@@ -135,7 +162,7 @@ impl App {
             || (l.terminal.contains(x, y) && y < terminal_header)
         {
             ScrollTarget::TerminalStrip
-        } else if l.terminal.contains(x, y) {
+        } else if self.terminal_contains(x, y) {
             ScrollTarget::Terminal
         } else if self.preview.markdown.area.contains(x, y) {
             ScrollTarget::Markdown
@@ -171,6 +198,16 @@ impl App {
         (dx, dy): (f32, f32),
     ) {
         let (x, y) = origin;
+        // 滚在不在用的一栏上：把那一栏换进来滚，不改用它。
+        if matches!(target, ScrollTarget::Terminal | ScrollTarget::TerminalStrip)
+            && let Some(at) =
+                (self.terminal_group_at(x, y)).filter(|&at| at != self.terminal.group_at)
+        {
+            return self.with_terminal_group(at, |app| {
+                let target = app.scroll_target_at(x, y);
+                app.scroll_target_by(target, origin, shift, (dx, dy));
+            });
+        }
         // 补全列表浮在编辑区之上，滚轮落在列表上时滚动列表。
         if self.scroll_suggest(origin, dy) {
             return;
@@ -233,8 +270,10 @@ impl App {
             ScrollTarget::Picture => self.scroll_picture_by(sx, sy),
             ScrollTarget::Table => self.scroll_table(sx, sy, origin),
             ScrollTarget::Editor(id) => self.scroll_editor_by_pixels(id, sx, sy),
+            ScrollTarget::GitPanel => self.scroll_panel_log(dy),
             ScrollTarget::Picker
             | ScrollTarget::Commit
+            | ScrollTarget::CommitHistory
             | ScrollTarget::Outline
             | ScrollTarget::Results
             | ScrollTarget::LogDetails
@@ -273,11 +312,12 @@ impl App {
             ScrollTarget::Picker => Some(self.overlays.picker.scroll),
             ScrollTarget::Tabs => Some(self.tabs.scroll),
             ScrollTarget::Commit => Some(self.git.commit.scroll),
+            ScrollTarget::CommitHistory => Some(self.git.commit.history.scroll),
             ScrollTarget::Outline => Some(self.panels.outline.scroll),
             ScrollTarget::Results => Some(self.panels.global.scroll),
             ScrollTarget::Tree => Some(self.panels.tree.scroll),
             ScrollTarget::LogDetails => {
-                let view = self.editor.active().and_then(|d| d.log.as_deref());
+                let view = self.log_view();
                 view.map(|view| view.details_scroll)
             }
             ScrollTarget::LogBranches => Some(self.git.log.branches_scroll),
@@ -301,6 +341,7 @@ impl App {
             }
             ScrollTarget::Tabs => self.tabs.max_scroll(),
             ScrollTarget::Commit => self.commit_max_scroll(),
+            ScrollTarget::CommitHistory => self.history_max_scroll(),
             ScrollTarget::Outline => self.outline_max_scroll(),
             ScrollTarget::Results => self.results_max_scroll(),
             ScrollTarget::Tree => {
@@ -337,11 +378,12 @@ impl App {
             ScrollTarget::Picker => self.overlays.picker.scroll = scroll,
             ScrollTarget::Tabs => self.tabs.scroll = scroll,
             ScrollTarget::Commit => self.git.commit.scroll = scroll,
+            ScrollTarget::CommitHistory => self.git.commit.history.scroll = scroll,
             ScrollTarget::Outline => self.panels.outline.scroll = scroll,
             ScrollTarget::Results => self.panels.global.scroll = scroll,
             ScrollTarget::Tree => self.panels.tree.scroll = scroll,
             ScrollTarget::LogDetails => {
-                let view = self.editor.active_mut().and_then(|d| d.log.as_deref_mut());
+                let view = self.log_view_mut();
                 if let Some(view) = view {
                     view.details_scroll = scroll;
                 }

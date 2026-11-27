@@ -1,14 +1,17 @@
 //! 工作区：打开的目录与其中的文件。
 //!
-//! 这一组模块覆盖工作区的全部功能：目录的现场（`session`）、文件树与拖动（`tree`、`TreeState::drag`）、
-//! 工具栏收起（`tool_fold`）、两个文件的比较（`compare`）、监视磁盘变化（`watch`）、打开与保存
-//! （`loading`、`files`、`background_save`）、标签切换与拖动（`tab_drag`）、快速打开（`picker`）、
-//! 最近打开的目录（`recent`）、全局搜索（`global`）和拖入文件（`file_drop`）。
+//! 这一组模块覆盖工作区的全部功能：目录的现场（`session`）、文件树与拖动（`tree`、
+//! `TreeState::drag`）、工具栏收起（`tool_fold`）、两个文件的比较（`compare`）、
+//! 监视磁盘变化（`watch`）、打开与保存（`loading`、`files`、`background_save`）、
+//! 标签切换与拖动（`tab_drag`）、按最近使用切换标签页（`tab_switch`）、快速打开（`picker`）、
+//! 最近打开的目录（`recent`）、全局搜索（`global`）、在文件中查找的对话框（`search_dialog`）
+//! 和拖入文件（`file_drop`）。
 
 use super::*;
 
 pub(super) mod background_save;
 pub(super) mod compare;
+mod copy_prompt;
 pub(super) mod copying;
 pub(super) mod file_drop;
 pub(super) mod file_work;
@@ -19,10 +22,14 @@ pub(super) mod loading;
 pub(super) mod outline;
 pub(crate) mod panes;
 pub(crate) mod picker;
+pub(super) mod places;
+pub(crate) mod project;
 pub(super) mod recent;
+pub(crate) mod search_dialog;
 pub(super) mod session;
 pub(super) mod tab_drag;
 pub(crate) mod tab_names;
+pub(crate) mod tab_switch;
 pub(super) mod tool_fold;
 pub(super) mod tree;
 pub(super) mod tree_drag;
@@ -59,10 +66,18 @@ pub(crate) struct DiskState {
     pub(in crate::app) watcher: Option<winc_editor::Watcher>,
     /// 各个附加目录的文件监视器。
     pub(in crate::app) extra_watchers: Vec<winc_editor::Watcher>,
+    /// 正在后台读取备份、等着恢复标签的目录；读好的内容由 `App::poll_prepared_tabs` 取走。
+    pub(in crate::app) restoring: Option<PathBuf>,
+    pub(in crate::app) prepared: session::PreparedTabs,
+    /// 正在后台启动监视的目录，和启动的结果（失败时为 `None`），见 `App::poll_watchers`。
+    pub(in crate::app) starting: Vec<PathBuf>,
+    pub(in crate::app) started: watch::Started,
     /// 打开的目录属于一组目录，但这个窗口单独打开了它，没有恢复附加的目录。
     pub(in crate::app) solo: bool,
     /// 下一次打开这个目录时单独打开，不恢复它那一组附加的目录。
     pub(in crate::app) open_alone: Option<PathBuf>,
+    /// 正在提示可打开的项目文件（见 `App::sync_project_offer`）。
+    pub(in crate::app) project_offer: Option<PathBuf>,
     /// 已收到目录变化通知后，统一处理变化的时刻。
     pub(in crate::app) changes_due: Option<Instant>,
     /// 正在后台重读的、被其他程序修改的文件。
@@ -100,6 +115,10 @@ pub(crate) struct Panels {
     pub name_input: Option<NameInput>,
     /// 从文件管理器等来源拖动文件经过窗口时的放置位置；未在拖动时为 `None`。
     pub(in crate::app) file_hover: Option<DropZone>,
+    /// 另一个窗口的文件树中拖动、此刻经过本窗口的各项，以及是否按着 `⌥` 复制；没有时为 `None`。
+    ///
+    /// 这些项只能放进文件树中的目录或终端，落点仍记在 `file_hover` 中。
+    pub(in crate::app) dragged_in: Option<(Vec<PathBuf>, bool)>,
     /// 侧栏搜索面板的状态。
     pub global: GlobalSearch,
     /// 文件视图底部大纲的状态。

@@ -189,6 +189,18 @@ fn launching_a_bundle_passes_absolute_targets() {
     let out = open_arguments(bundle, &args);
     assert_eq!(&out[3..7], ["--args", "/p", "/a b.rs:12:5", "/c.rs:1"]);
     assert_eq!(out[7], cwd.as_os_str());
+
+    // 要比较的文件写成 `--diff` 和两个绝对路径。
+    let args = Args {
+        diffs: vec![crate::cli::Diff {
+            left: "/p/a.rs".into(),
+            right: "relative".into(),
+        }],
+        ..Args::default()
+    };
+    let out = open_arguments(bundle, &args);
+    assert_eq!(&out[3..6], ["--args", "--diff", "/p/a.rs"]);
+    assert_eq!(out[6], cwd.as_os_str());
 }
 
 #[test]
@@ -219,6 +231,13 @@ fn only_unreadable_targets_are_reported() {
     // root 不受文件权限限制（容器里的测试以 root 运行）。
     assert_eq!(failed, !readable_as_root);
     assert_eq!(args.targets.len(), if readable_as_root { 4 } else { 3 });
+
+    // 以分隔符结尾的不存在路径指目录：报告，不交出去新建同名的文件。
+    let mut folder = Args {
+        targets: vec![target(dir.join("missing/"))],
+        ..Args::default()
+    };
+    assert!(report_unreadable(&mut folder) && folder.targets.is_empty());
 
     // 临时打开留在前台，由后续流程报告。
     let mut wait = Args {

@@ -128,9 +128,16 @@ fn the_end_of_the_operation_forgets_the_password_and_closes_the_dialog() {
     let id = app.git.branch.started;
     app.end_git_questions(id + 1);
     assert!(app.overlays.form_dialog.is_some());
-    app.git.branch.password = Some(("s".into(), "p".into()));
+    use crate::app::git::question::Asker;
+    // 远端连接的询问结束时，只清除它自己填写的密码。
+    app.git.branch.password = Some((Asker::Git(id), "s".into(), "p".into()));
+    app.end_remote_questions();
+    assert!(app.git.branch.password.is_some());
     app.end_git_questions(id);
     assert!(app.overlays.form_dialog.is_none());
+    assert_eq!(app.git.branch.password, None);
+    app.git.branch.password = Some((Asker::Remote, "s".into(), "p".into()));
+    app.end_remote_questions();
     assert_eq!(app.git.branch.password, None);
     assert!(!app.git.branch.declined);
 }
@@ -146,7 +153,7 @@ fn escape_cancels_and_the_failure_is_not_reported_as_an_error() {
     let again = ask(&mut app, passphrase());
     assert!(app.overlays.form_dialog.is_none());
     assert!(again.recv().is_err());
-    app.report_git_failure("推送", "无法推送：could not read Password".into());
+    app.report_git_failure(None, "推送", "无法推送：could not read Password".into());
     assert!(app.notice.text.is_none());
     assert!(!app.git.branch.declined);
 }
@@ -155,7 +162,7 @@ fn escape_cancels_and_the_failure_is_not_reported_as_an_error() {
 fn a_real_failure_offers_the_full_output() {
     let (mut app, _answers) = asking("question-failure", passphrase());
     app.end_git_questions(app.git.branch.started);
-    app.report_git_failure("推送", "无法推送：denied".into());
+    app.report_git_failure(None, "推送", "无法推送：denied".into());
     assert_eq!(app.notice.text.as_deref(), Some("无法推送：denied"));
     assert_eq!(app.notice.action, Some(NoticeAction::GitOutput));
     app.run_notice_action();

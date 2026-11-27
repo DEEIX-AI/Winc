@@ -22,6 +22,8 @@ mod animation;
 mod editor;
 #[cfg(unix)]
 mod git;
+mod git_layout;
+mod git_overflow;
 mod input;
 #[cfg(target_os = "macos")]
 mod memory;
@@ -35,6 +37,7 @@ mod status;
 mod table;
 #[cfg(unix)]
 mod terminal;
+mod terminal_area;
 mod tiny;
 mod windows;
 mod workspace;
@@ -49,14 +52,15 @@ const SIZE: (f32, f32) = (1280.0, 820.0);
 /// 取 2：Retina 屏的默认缩放倍数，图片与滚动条的像素断言按这个倍数计算。
 const SCALE: f32 = 2.0;
 
-/// 创建测试用的目录并返回其路径。
+/// 创建测试用的目录并返回其真实路径（macOS 的临时目录 `/var` 是指向 `/private/var` 的链接）。
 ///
 /// 内容固定为一组覆盖常见情形的文件：普通文本、名字很长的文件（文件树里放不下，用于截短与
-/// 悬停展开）、几种按名字识别图标的文件、`src` 子目录，以及含 NUL 字节的 `data.bin`（按二进制
-/// 打开）。进程号放在上一级目录名中，`name` 对应的目录名不含进程号：该目录名会绘制到项目名和
-/// 状态栏里，不含进程号才能让不同次运行的截图逐像素一致。
+/// 悬停展开）、几种按名字识别图标的文件、`src` 子目录，以及含 NUL 字节的 `data.bin`。进程号
+/// 放在上一级目录名中：`name` 对应的目录名会绘制到界面上，不含进程号截图才能逐像素相同。
 fn sample_folder(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
+    let temp = std::env::temp_dir();
+    let dir = winc_config::files::canonicalize(&temp)
+        .unwrap_or(temp)
         .join(format!("winc-snapshot-{}", std::process::id()))
         .join(name);
     let _ = std::fs::remove_dir_all(&dir);
@@ -117,6 +121,9 @@ fn blank_app(dark: bool) -> App {
         Renderer::offscreen(SIZE.0, SIZE.1, SCALE, palette.frame_bg, None, None).unwrap();
     app.frame.renderer = Some(renderer);
     app.measure_fonts();
+    // 日志的测试按编辑区模式写：日志是编辑区的标签。Git 面板（默认的面板模式）由
+    // `git::panel` 的测试另外检查。配置不改：设置页的测试按全部取默认值检查。
+    app.git.panel.docked = false;
     app.relayout();
     app
 }
@@ -153,6 +160,24 @@ pub(super) fn paint(app: &mut App) {
     app.declare_base(&mut renderer);
     renderer.draw(|frame| view::draw(app, frame));
     app.frame.renderer = Some(renderer);
+}
+
+/// 返回画面上逻辑坐标 `(x, y)` 处的像素。
+fn pixel(app: &App, (x, y): (f32, f32)) -> u32 {
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
+    image.pixels[y * image.width as usize + x]
+}
+
+/// 像素是否接近颜色 `c`（每个通道相差不超过 2，容许舍入）。
+fn near(px: u32, c: Color) -> bool {
+    let ch = |shift: u32, v: f32| ((px >> shift) & 0xff).abs_diff((v * 255.0).round() as u32);
+    ch(16, c.r) <= 2 && ch(8, c.g) <= 2 && ch(0, c.b) <= 2
+}
+
+/// 返回光标竖线中心处的点：竖线从 `rect.x` 起宽 2，顶边从行顶下移 1。
+fn caret_point(app: &App, rect: Rect) -> (f32, f32) {
+    (rect.x.round() + 1.0, rect.y + app.fonts.line_height / 2.0)
 }
 
 /// 直接删除 `path`（文件或目录），不移入废纸篓，避免测试在用户的废纸篓中留下内容。
@@ -270,6 +295,10 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
         SettingsPart::Close => layout.close,
         SettingsPart::SearchField => layout.search,
         SettingsPart::Page(page) => layout.pages.iter().find(|(p, _)| *p == page).unwrap().1,
+        SettingsPart::Reset(s) => {
+            let links = app.hits.reset_links.iter();
+            links.clone().find(|(setting, _)| *setting == s).unwrap().1
+        }
         SettingsPart::Field(s) | SettingsPart::Switch(s) | SettingsPart::Action(s) => {
             layout.row(s).unwrap().control
         }
@@ -314,6 +343,7 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
         // 按钮、链接和 × 的位置在绘制时才确定，调用前需要先绘制一帧。
         SettingsPart::KeyEdit(_)
         | SettingsPart::KeyReset(_)
+        | SettingsPart::KeyVim(..)
         | SettingsPart::KeyRemove(_)
         | SettingsPart::KeySave
         | SettingsPart::KeyCancel => {

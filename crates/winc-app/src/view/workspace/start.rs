@@ -193,9 +193,17 @@ fn draw_start(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
             BUTTON_SMALL,
             BUTTON_SMALL,
         );
-        let room = (close.x - 8.0 - (row.x + 36.0)).max(0.0);
+        // 项目文件名称后加淡色标注，样式同侧栏的「未保存」。
+        let tag = app.recent_tag(&folder);
+        let tag_w = tag.map_or(0.0, |tag| {
+            6.0 + frame.measure(FontKind::Ui, app.fonts.ui, tag)
+        });
+        let room = (close.x - 8.0 - tag_w - (row.x + 36.0)).max(0.0);
         let name = ellipsize(frame, &name, app.fonts.ui, room);
-        let end = ui_text(frame, app, row.x + 36.0, row, &name, p.text, editor);
+        let mut end = ui_text(frame, app, row.x + 36.0, row, &name, p.text, editor);
+        if let Some(tag) = tag {
+            end = ui_text(frame, app, end + 6.0, row, tag, p.text_muted, editor);
+        }
 
         // 名称之后是淡色的上级目录（用户主目录缩写为 `~`），放不下时截短，同名目录保留区分
         // 彼此的部分（见 `fit_parent`）。
@@ -244,10 +252,10 @@ fn draw_setup_page(app: &mut App, frame: &mut Frame<'_>, keys: bool, rise: f32) 
 
 /// 绘制只有「首次设置」的开始页，整体下移 `rise`，并登记各控件的点击区域。
 ///
-/// 自上而下是应用名称、一句说明、六行设置（外观、主题、语言和三个模块）和右对齐的「完成」
-/// 按钮。每行左边是图标和名称，右边是一个控件，各控件的右端对齐：外观是分段控件，主题和语言
-/// 是点击后弹出菜单的值，三个模块各是一个开关。启动动画期间先是应用图标在编辑区中央逐层出现、停留、淡出，各项随后逐个
-/// 淡入；内容开始淡入之前各控件不响应点击。
+/// 自上而下是应用名称、一句说明、六行设置（外观、主题、语言和三个模块）和右对齐的「完成」按钮。
+/// 每行左边是图标和名称，右边是一个控件，各控件的右端对齐：外观是分段控件，
+/// 主题和语言是点击后弹出菜单的值，三个模块各是一个开关。启动动画期间先是应用图标在编辑区中央逐层出
+/// 现、停留、淡出，各项随后逐个淡入；内容开始淡入之前各控件不响应点击。
 fn draw_setup(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
     use crate::keymap::Module;
     use winc_config::ThemeChoice;

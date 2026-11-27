@@ -9,8 +9,31 @@ pub(crate) fn tooltip(app: &App) -> Option<(Rect, String)> {
     workspace::panel::tooltip(app)
 }
 
+pub(crate) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
+    super::draw_editor(app, frame);
+}
+
+pub(crate) fn draw_pane(app: &mut App, frame: &mut Frame<'_>) {
+    super::draw_pane(app, frame, true);
+}
+
+pub(crate) fn draw_notices(app: &mut App, frame: &mut Frame<'_>) {
+    super::draw_notices(app, frame);
+}
+
+pub(crate) fn draw_floating_bar(app: &mut App, frame: &mut Frame<'_>) {
+    let area = app.layout.editor;
+    let bar = Rect::new(area.right() - 80.0, area.y + 4.0, 160.0, 28.0);
+    super::draw_floating_bar(frame, app.palette, bar, area);
+}
+
 pub(crate) use super::settings::draw_cached as settings_draw_cached;
 pub(crate) use crate::app::workspace::tab_names::distinct_folder;
+
+/// 第 `index` 个标签的文件名颜色；见 `workspace::top_bar::file_name_color`。
+pub(crate) fn file_name_color(app: &App, index: usize, plain: Color) -> Color {
+    workspace::top_bar::file_name_color(app, &app.editor.documents[index], plain)
+}
 
 #[test]
 fn fit_keeps_as_many_characters_as_the_width_allows() {

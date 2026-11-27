@@ -524,3 +524,109 @@ fn shoot_notice_kinds() {
         }
     }
 }
+
+/// 回归：工作区内的长路径占满状态栏左侧，消息被截短或不显示。
+#[test]
+fn long_crumbs_fold_to_keep_the_message() {
+    // 目录名较短、层数较多：路径总长不超过 Windows 的 260 个字符。窗口取 800 宽，路径放不下。
+    let dir = sample_folder("crumbs-fold");
+    let deep: PathBuf = (1..=8).map(|n| format!("directory-{n}")).collect();
+    std::fs::create_dir_all(dir.join(&deep)).unwrap();
+    let file = dir.join(&deep).join("settings.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let mut app = app_with(&dir, false);
+    let narrow = Renderer::offscreen(800.0, 420.0, SCALE, app.palette.frame_bg, None, None);
+    app.frame.renderer = Some(narrow.unwrap());
+    app.measure_fonts();
+    let root = app.editor.workspace.as_ref().unwrap().root.clone();
+    app.open_path(&root.join(&deep).join("settings.rs"));
+    paint(&mut app);
+    assert_eq!(app.crumbs().len(), 10);
+    let last = app.crumbs().len() - 1;
+    // 显示的段（下标）和最后一段的右边缘。
+    let shown = |app: &App| {
+        let indices: Vec<usize> = app.hits.crumbs.iter().map(|&(_, i)| i).collect();
+        let (file, _) = *app.hits.crumbs.last().unwrap();
+        (indices, file.right())
+    };
+
+    // 放不下时折叠靠近第一段的目录：第一段、最近的几级目录和文件名仍可点击。
+    let (before, edge) = shown(&app);
+    assert!(before.len() < last + 1, "{before:?}");
+    assert_eq!((before[0], *before.last().unwrap()), (0, last));
+    assert!(before[1..].windows(2).all(|pair| pair[1] == pair[0] + 1));
+
+    // 很长的消息占左侧的一半：路径让到另一半以内，消息消失后恢复。
+    app.flash("无法保存：".repeat(40));
+    paint(&mut app);
+    let (during, moved) = shown(&app);
+    assert!(during.len() < before.len(), "{during:?}");
+    assert_eq!((during[0], *during.last().unwrap()), (0, last));
+    let right = (app.hits.status.iter()).fold(f32::MAX, |x, (rect, _)| x.min(rect.x));
+    assert!(moved <= right / 2.0, "{moved} {right}");
+    app.clear_flash();
+    paint(&mut app);
+    assert_eq!(shown(&app), (before, edge));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 点击状态栏上的光标位置打开转到行的输入条，悬停时提示命令名。
+#[test]
+fn clicking_the_position_opens_go_to_line() {
+    let dir = sample_folder("status-position");
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    paint(&mut app);
+    let hit = app
+        .hits
+        .status
+        .iter()
+        .find(|(_, i)| *i == StatusItem::Position);
+    let rect = hit.map(|(rect, _)| *rect).expect("光标位置可以点击");
+    let at = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    app.on_mouse_move(at.0, at.1);
+    assert_eq!(app.pointer.hover, Hover::Status(StatusItem::Position));
+    assert!(app.pointer.hover.has_tooltip());
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(app.bars.goto_input.is_some());
+    assert_eq!(app.bars.prompt_kind, crate::app::PromptKind::GoTo);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 状态栏右端的图标按墨迹排开：宽窄不同的锁、终端框和齿轮之间的空隙相同（按半个逻辑像素测量，
+/// 误差不超过一次测量的步长）。
+#[test]
+fn status_icons_keep_equal_gaps_between_their_ink() {
+    let dir = sample_folder("status-icon-gaps");
+    let mut app = app_with(&dir.join("src/main.rs"), false);
+    app.config.terminal_enabled = Some(true);
+    paint(&mut app);
+    let pill = |item| {
+        let hit = app.hits.status.iter().find(|(_, i)| *i == item);
+        hit.map(|(rect, _)| *rect).expect("图标在状态栏上")
+    };
+    let (from, to) = (pill(StatusItem::ReadOnly), pill(StatusItem::Settings));
+    let bar = app.layout.status;
+    let (cy, blank) = (
+        bar.y + bar.h / 2.0,
+        pixel(&app, (from.x + 1.0, bar.y + bar.h / 2.0)),
+    );
+    // 每半个逻辑像素一列：该列上下 7 逻辑像素内有一处不是底色即有墨迹。
+    let inked = |x: f32| (-14..=14).any(|dy| pixel(&app, (x, cy + dy as f32 / 2.0)) != blank);
+    let columns: Vec<f32> = (0..((to.right() - from.x) * 2.0) as usize)
+        .map(|i| from.x + i as f32 / 2.0)
+        .filter(|&x| inked(x))
+        .collect();
+    // 相距超过 3 逻辑像素的空白分开两个图标。
+    let mut spans: Vec<(f32, f32)> = Vec::new();
+    for x in columns {
+        match spans.last_mut() {
+            Some(span) if x - span.1 <= 3.0 => span.1 = x,
+            _ => spans.push((x, x)),
+        }
+    }
+    let gaps: Vec<f32> = spans.windows(2).map(|w| w[1].0 - w[0].1).collect();
+    assert_eq!(gaps.len(), 2, "{spans:?}");
+    assert!((gaps[0] - gaps[1]).abs() <= 0.5, "{gaps:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

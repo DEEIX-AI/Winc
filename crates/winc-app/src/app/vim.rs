@@ -5,13 +5,14 @@
 
 mod command;
 mod host;
+mod keys;
 mod side;
 mod workspace;
 
 use crate::app::scroll::set_scroll_line;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use winc_config::VimClipboard;
+use winc_config::{CursorStyle, VimClipboard};
 use winc_core::{Lines, Selection};
 use winc_editor::{Command, Document, DocumentId, ModalPattern};
 use winc_i18n::t;
@@ -255,6 +256,7 @@ impl App {
             shared.smart_case = self.config.vim_smart_case == Some(true);
             shared.set_mappings(self.vim_mappings());
         }
+        self.refresh_vim_key_rows();
     }
 
     /// 是否高亮 Vim 层最近一次查找的匹配：查找条没有打开，且查找内容仍是该模式。
@@ -287,22 +289,26 @@ impl App {
             && (self.vim_document().is_some_and(Document::shows_text) || self.vim_side().is_some())
     }
 
-    /// 「快捷键」页的一行中是否有被 Vim 层占用的键：`Ctrl` 加一个字符，归 Vim 层处理，且命令
-    /// 表中有以该键开头的命令。Vim 模式关闭时返回假。
+    /// 「快捷键」页的一行中是否有被 Vim 层占用的键，见 [`Self::vim_taken_key`]。
     pub(crate) fn vim_takes_keys(&self, labels: &[String]) -> bool {
-        if self.vim.is_none() {
-            return false;
-        }
+        self.vim_taken_key(labels).is_some()
+    }
+
+    /// 返回「快捷键」页的一行中第一个被 Vim 层占用的键：`Ctrl` 加一个字符，归 Vim 层处理，且命令
+    /// 表中有以该键开头的命令；返回其中的字符（小写）。Vim 模式关闭时返回 `None`。
+    pub(crate) fn vim_taken_key(&self, labels: &[String]) -> Option<char> {
+        self.vim.as_ref()?;
         let mac = cfg!(target_os = "macos");
-        labels.iter().any(|label| {
+        labels.iter().find_map(|label| {
             let rest = label
                 .strip_prefix('⌃')
                 .or_else(|| label.strip_prefix("Ctrl+"));
             let mut chars = rest.unwrap_or("").chars();
             let (Some(c), None) = (chars.next(), chars.next()) else {
-                return false;
+                return None;
             };
-            let key = winc_vim::Key::ctrl(c.to_ascii_lowercase());
+            let c = c.to_ascii_lowercase();
+            let key = winc_vim::Key::ctrl(c);
             let notation = winc_vim::notation::write(&[key]);
             // 普通或可视模式下有定义的键才会被占用。
             let defined = |entry: &winc_vim::Entry| {
@@ -310,8 +316,9 @@ impl App {
                 (modes.contains(Mode::Normal) || modes.contains(Mode::Visual))
                     && entry.keys.starts_with(&notation)
             };
-            claims(key, mac, &self.config.vim_handle_keys)
-                && winc_vim::command::ENTRIES.iter().any(defined)
+            let taken = claims(key, mac, &self.config.vim_handle_keys)
+                && winc_vim::command::ENTRIES.iter().any(defined);
+            taken.then_some(c)
         })
     }
 
@@ -337,6 +344,21 @@ impl App {
     pub(crate) fn vim_mode(&self) -> Option<Mode> {
         let state = self.vim.as_ref()?;
         self.vim_applies().then(|| state.vim.mode())
+    }
+
+    /// 返回 `editor.cursorStyle` 设定的光标形状；竖线为 `None`。
+    ///
+    /// 只用于未开启 Vim 模式时与 Vim 的插入模式；其余模式使用 Vim 自身的形状，返回 `None`。
+    pub(crate) fn styled_caret(&self) -> Option<CaretShape> {
+        let modal = self.vim.as_ref().is_some_and(|state| {
+            self.vim_applies() && (state.vim.mode() != Mode::Insert || state.vim.is_replace())
+        });
+        match self.config.cursor_style.unwrap_or_default() {
+            _ if modal => None,
+            CursorStyle::Line => None,
+            CursorStyle::Block => Some(CaretShape::Block),
+            CursorStyle::Underline => Some(CaretShape::Underline),
+        }
     }
 
     /// 返回 Vim 模式下光标的位置与形状；使用普通的竖线光标时（关闭、不适用、插入模式）返回
@@ -641,6 +663,9 @@ impl App {
             return true;
         }
         let handled = self.vim_press(key);
+        if handled {
+            self.vim_notice_key(key);
+        }
         // 普通模式下没有可取消的内容时，`Esc` 同时取消查找匹配的高亮。
         if !handled
             && escape

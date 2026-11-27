@@ -7,6 +7,7 @@
 //! [`PopupMenu::query`]），语言、编码这类长列表不必逐行移动。
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, PoisonError};
 
 use winit::event::{KeyEvent, MouseButton};
 use winit::keyboard::{Key, NamedKey};
@@ -14,6 +15,7 @@ use winit::keyboard::{Key, NamedKey};
 use winc_i18n::t;
 
 use super::*;
+use crate::app::status::breadcrumb::{FolderEntry, folder_entries};
 
 /// 菜单中的一行。
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +88,8 @@ pub(crate) struct PopupLevel {
     pub row_rects: Vec<Rect>,
     /// 内容的总高度（逻辑像素），绘制时记下，滚动时限制范围。
     pub content: f32,
+    /// 目录菜单：尚未读好的远端目录，以及是否已在后台读取；读好后换上各行。
+    pub loading: Option<(PathBuf, bool)>,
 }
 
 /// 窗口内绘制的菜单。
@@ -132,10 +136,11 @@ impl PopupMenu {
         }
     }
 
-    /// 是否可以键入文字筛选：只展开着第一级，且其中没有子菜单和目录项。
+    /// 是否可以键入文字筛选：不是目录菜单，只展开着第一级，且其中没有子菜单。
     fn filterable(&self) -> bool {
         let rows = self.all.as_ref().unwrap_or(&self.levels[0].rows);
-        self.levels.len() == 1
+        self.current.is_none()
+            && self.levels.len() == 1
             && !(rows.iter())
                 .any(|r| matches!(r, PopupRow::Submenu { .. } | PopupRow::Entry { .. }))
     }
@@ -224,17 +229,19 @@ impl PopupMenu {
         let Some(r) = current.hover else {
             return;
         };
-        let rows = match &current.rows[r] {
-            PopupRow::Submenu { rows, .. } => rows.clone(),
+        let level = match &current.rows[r] {
+            PopupRow::Submenu { rows, .. } => PopupLevel {
+                rows: rows.clone(),
+                ..PopupLevel::default()
+            },
             PopupRow::Entry {
                 path, dir: true, ..
-            } => folder_rows(path, self.current.as_deref().unwrap_or(path)),
+            } => folder_level(path),
             _ => return,
         };
         self.levels.push(PopupLevel {
-            rows,
             parent: Some(r),
-            ..PopupLevel::default()
+            ..level
         });
     }
 
@@ -277,7 +284,7 @@ impl PopupMenu {
     }
 }
 
-/// 菜单上下的内边距（逻辑像素，经验值）：菜单外框与第一行、最后一行之间各留出的空隙。
+/// 菜单上下的内边距（逻辑像素）：菜单外框与第一行、最后一行之间各留出的空隙。
 pub(crate) const POPUP_PAD: f32 = 5.0;
 /// 左边打勾那一列的宽度（逻辑像素）：勾选标记宽 9、中心距列首 13，其余是与菜单外框的空隙。
 pub(crate) const CHECK_COLUMN: f32 = 24.0;
@@ -286,14 +293,21 @@ pub(crate) const ICON_COLUMN: f32 = 22.0;
 /// 有图标的菜单中文字离菜单左边的距离（逻辑像素）。
 pub(crate) const POPUP_TEXT_X: f32 = CHECK_COLUMN + ICON_COLUMN;
 
-/// 返回目录菜单中目录 `dir` 的各行：文件和目录，目录与文件之间一条分隔线。
-///
-/// 读取失败、空目录或项数过多时有一行灰色的说明（`folder_entries`）。`current` 是当前文件，
-/// 它和它的各级上层目录打勾。
-pub(crate) fn folder_rows(dir: &Path, current: &Path) -> Vec<PopupRow> {
-    use crate::app::status::breadcrumb::{FolderEntry, folder_entries};
+/// 返回目录菜单中目录 `dir` 的一级菜单：先只有一行「正在读取…」，由
+/// [`App::load_folder_levels`] 在后台读取。
+pub(crate) fn folder_level(dir: &Path) -> PopupLevel {
+    let note = FolderEntry::Note(t!("workspace-picker-remote-loading").to_owned());
+    PopupLevel {
+        rows: entry_rows(vec![note]),
+        loading: Some((dir.to_path_buf(), false)),
+        ..PopupLevel::default()
+    }
+}
+
+/// 把目录菜单的菜单项 `entries` 换成窗口内菜单的各行。
+fn entry_rows(entries: Vec<FolderEntry>) -> Vec<PopupRow> {
     use winc_editor::EntryKind;
-    folder_entries(dir, current)
+    entries
         .into_iter()
         .map(|entry| match entry {
             FolderEntry::Item {
@@ -321,6 +335,51 @@ pub(crate) fn folder_rows(dir: &Path, current: &Path) -> Vec<PopupRow> {
 }
 
 impl App {
+    /// 在后台读取目录菜单中尚未读取的目录，读好后发送 [`UserEvent::FolderListed`]。
+    pub(in crate::app) fn load_folder_levels(&mut self) {
+        let Some(popup) = self.popup_mut() else {
+            return;
+        };
+        let Some(current) = popup.current.clone() else {
+            return;
+        };
+        let waiting = popup.levels.iter_mut().filter_map(|level| {
+            let (dir, asked) = level.loading.as_mut().filter(|(_, asked)| !asked)?;
+            *asked = true;
+            Some(dir.clone())
+        });
+        for dir in waiting.collect::<Vec<_>>() {
+            let (listed, current) = (Arc::clone(&self.status.folders), current.clone());
+            self.spawn_blocking_then(UserEvent::FolderListed, move || {
+                let entries = folder_entries(&dir, &current);
+                let mut listed = listed.lock().unwrap_or_else(PoisonError::into_inner);
+                listed.push((dir, entries));
+            });
+        }
+    }
+
+    /// 收下后台读好的目录，换上还在等它的那一级菜单的各行。
+    pub(in crate::app) fn poll_folder_levels(&mut self) {
+        let listed = std::mem::take(
+            &mut *(self.status.folders.lock()).unwrap_or_else(PoisonError::into_inner),
+        );
+        #[cfg(target_os = "macos")]
+        let listed = self.show_crumb_menu(listed);
+        let Some(popup) = self.popup_mut() else {
+            return;
+        };
+        for (dir, entries) in listed {
+            let waiting = |level: &&mut PopupLevel| {
+                level.loading.as_ref().is_some_and(|(path, _)| *path == dir)
+            };
+            if let Some(level) = popup.levels.iter_mut().find(waiting) {
+                level.rows = entry_rows(entries);
+                level.loading = None;
+            }
+        }
+        self.request_redraw();
+    }
+
     /// 把菜单项 `entries` 变成窗口内菜单的各行；`numbered` 是已经编到的号。
     ///
     /// 编号方式与 [`MenuEntry::command_at`] 相同，因此选中后按编号就能找回命令。
@@ -384,11 +443,14 @@ impl App {
     }
 
     /// 关掉窗口内的菜单，不执行任何命令。
+    ///
+    /// 菜单打开期间指针一律为箭头：关掉后按鼠标下方的部件重新选择，鼠标不动仍然恢复。
     pub(in crate::app) fn dismiss_popup(&mut self) {
         if self.popup().is_some() {
             self.overlays.context_menu = None;
             self.overlays.menu_button = None;
             self.refresh_pointer_hover();
+            self.update_cursor_icon();
             self.request_redraw();
         }
     }
@@ -408,6 +470,9 @@ impl App {
         }
         self.overlays.context_menu = None;
         self.overlays.menu_button = None;
+        // 同 `dismiss_popup`：按鼠标下方的部件恢复悬停和指针。
+        self.refresh_pointer_hover();
+        self.update_cursor_icon();
         self.request_redraw();
     }
 
@@ -428,6 +493,7 @@ impl App {
             // 移出菜单：最深一级的停留取消，已经展开的子菜单留着。
             last.hover = None;
         }
+        self.load_folder_levels();
         self.request_redraw();
         true
     }
@@ -468,6 +534,7 @@ impl App {
 
     /// 执行菜单上一次操作的结果。
     fn popup_outcome(&mut self, outcome: Outcome) {
+        self.load_folder_levels();
         match outcome {
             Outcome::Redraw => self.request_redraw(),
             Outcome::Choose(tag) => self.choose_popup(tag),

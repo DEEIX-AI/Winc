@@ -85,7 +85,7 @@ fn the_bundled_console_host_runs_when_it_is_present() {
     assert_eq!(c.until_exit_showing(|t| t.contains("found")), 0);
 }
 
-/// 停止结束程序，退出照常报告。
+/// 停止结束程序，退出仍然报告。
 #[test]
 fn stop_ends_the_program() {
     if skip_under_wine() {
@@ -170,13 +170,17 @@ fn a_native_shell_receives_the_project_python_environment() {
         integration: Some(root.join("shell").to_str().unwrap().as_bytes().to_vec()),
         banner: Vec::new(),
     });
+    // 只取 PATH 中第一个 `python.exe`（cmd 内置的 `%~$PATH:i`）：`where` 逐个搜索 PATH 中的
+    // 全部目录，在 PATH 很长的机器上耗时数秒，`exit` 可能晚于等待的时限。
     c.send(ToHelper::Input {
         tab: 1,
-        bytes: b"echo env=%VIRTUAL_ENV%& where python& exit\r".to_vec(),
+        bytes:
+            b"echo env=%VIRTUAL_ENV%& (for %i in (python.exe) do @echo python=%~$PATH:i)& exit\r"
+                .to_vec(),
         rest: 0,
     });
     let expected = format!("env={}", venv.display());
-    // 临时目录在环境变量中可以是 8.3 短名，`where` 输出的是长名：只比较与上级目录的写法无关的
+    // 临时目录在环境变量中可以是 8.3 短名，PATH 中可能是长名：只比较与上级目录的写法无关的
     // 末尾部分。
     let folder = root.file_name().unwrap().to_str().unwrap();
     let python = format!(r"{folder}\.venv\Scripts\python.exe");
@@ -240,7 +244,7 @@ fn losing_the_pseudo_console_is_reported_while_the_shell_runs() {
     });
     assert_eq!(ended, FromHelper::Disconnected { tab: 1 });
 
-    // 伪终端的进程已经不在，关闭它不能卡住：作业结束，辅助进程随后退出。
+    // 伪终端的进程已经不在，关闭它不能阻塞：作业结束，辅助进程随后退出。
     c.send(ToHelper::Close { tab: 1 });
     assert!(until_helper_exits(&mut c).success());
 }

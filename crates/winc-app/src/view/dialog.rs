@@ -27,7 +27,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
             let fade = dialog_curve(true, clock).0;
             frame.rect(app.layout.window, p.scrim.alpha(p.scrim.a * fade));
         }
-        // 卡片盖住的地方不用再铺遮罩。
+        // 卡片遮住的地方不用再铺遮罩。
         _ => {
             let covered = frame.covered(layout.card, RADIUS_CARD);
             frame.rect_except(app.layout.window, p.scrim, 0.0, covered);
@@ -108,7 +108,8 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         | FormKind::GoToRevision
         | FormKind::CompareRevision { .. }
         | FormKind::RenameGroup
-        | FormKind::LogPath => {
+        | FormKind::LogPath
+        | FormKind::AddRepository => {
             return draw_question(app, frame, layout);
         }
         FormKind::Clone => return draw_clone(app, frame, layout),

@@ -48,35 +48,6 @@ impl Prepared {
     }
 }
 
-/// 标签列表菜单的图标边长（逻辑像素）。
-///
-/// 文件图标为 12 × 15，无法放入其他菜单 15 × 12 的图标位，因此改用 16 × 16 的图标位，
-/// 状态栏路径的目录菜单也使用该尺寸。
-const TAB_LIST_ICON: f32 = 16.0;
-
-/// 菜单项左边的图标。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MenuIcon {
-    /// 最近打开的目录：与文件树中的目录相同的图标和颜色。
-    Folder,
-    /// 最近打开的一组目录：两个叠放的目录。
-    Folders,
-    /// 标签列表的第几项：标签上的图标（文件类型图标，日志标签为 Git 图标）。
-    Tab(usize),
-    /// 目录菜单中的文件：文件类型的记号和它在深色、浅色配色下的颜色（同文件树）。
-    File(icons::FileGlyph, [u32; 2]),
-}
-
-impl MenuIcon {
-    /// 图标位的逻辑尺寸（宽，高）。
-    pub(crate) fn size(self) -> (f32, f32) {
-        match self {
-            MenuIcon::Tab(_) | MenuIcon::File(..) => (TAB_LIST_ICON, TAB_LIST_ICON),
-            MenuIcon::Folder | MenuIcon::Folders => MENU_ICON,
-        }
-    }
-}
-
 /// 子菜单 `items` 这一行用谁的图标：第一项打开整个目录组时用它的，其余子菜单没有图标。
 pub(super) fn submenu_lead(items: &[MenuEntry]) -> Option<MenuCommand> {
     match items.first() {
@@ -85,21 +56,12 @@ pub(super) fn submenu_lead(items: &[MenuEntry]) -> Option<MenuCommand> {
     }
 }
 
-/// 命令 `command` 的菜单项图标的逻辑尺寸（宽，高）。
-#[cfg(target_os = "macos")]
-fn menu_icon_size(command: MenuCommand) -> (f32, f32) {
-    match command {
-        MenuCommand::ShowTab(_) => (TAB_LIST_ICON, TAB_LIST_ICON),
-        _ => MENU_ICON,
-    }
-}
-
 impl App {
     /// 处理右键点击（macOS 上也包括 `⌃` 单击）：点在标签上弹出标签菜单，点在文件树里弹出
     /// 文件树菜单，点在编辑区里弹出编辑区菜单。
     ///
     /// 文件树中点中的那一行先被选中，点在空白处表示根目录。其他位置没有菜单。设置浮层或
-    /// 快速打开面板打开时不处理。
+    /// 快速打开面板打开时不处理，点在卡片、补全列表等遮挡下方的部件上时也不处理。
     pub(in crate::app) fn context_click(&mut self, x: f32, y: f32) {
         if self.settings.open
             && let Some(SettingsPart::KeyRow(action)) = self.settings_part_at(x, y)
@@ -108,7 +70,11 @@ impl App {
             self.open_context_menu(MenuTarget::Shortcut(action), (x, y));
             return;
         }
-        if self.settings.open || self.overlays.form_dialog.is_some() || self.overlays.picker.open {
+        if self.settings.open
+            || self.overlays.form_dialog.is_some()
+            || self.overlays.picker.open
+            || self.blocks_context_menu(x, y)
+        {
             return;
         }
 
@@ -129,9 +95,24 @@ impl App {
             return;
         }
 
+        // Git 面板最大化时盖在侧栏、编辑区和终端上面：面板中只有日志的菜单。
+        if self.in_git_panel(x, y) {
+            let target = if let Some((i, path)) = self.log_file_context_target(x, y) {
+                MenuTarget::LogFile(i, path)
+            } else if let Some(index) = self.log_branch_context_target(x, y) {
+                MenuTarget::BranchOps(index)
+            } else if let Some(oid) = self.log_context_target(x, y) {
+                MenuTarget::LogCommit(oid)
+            } else {
+                return;
+            };
+            self.open_context_menu(target, (x, y));
+            return;
+        }
+
         let tab = self
             .tab_at(x, y)
-            .and_then(|(index, _)| self.editor.documents.get(index));
+            .and_then(|(index, _)| self.editor.tabs().get(index));
         let target = if let Some(doc) = tab {
             MenuTarget::Tab(doc.id)
         } else if self.panels.sidebar.visible
@@ -158,8 +139,13 @@ impl App {
             MenuTarget::SearchResult(path, m)
         } else if let Some(i) = self.stash_context_target(x, y) {
             MenuTarget::StashRow(i)
+        } else if let Some(oid) = self.history_context_target(x, y) {
+            MenuTarget::HistoryCommit(oid)
         } else if let Some(path) = self.commit_context_target(x, y) {
             MenuTarget::CommitFile(path)
+        } else if self.in_commit_overflow(x, y) {
+            // 改动行伸出侧栏的一段遮挡下方；其中的按钮没有菜单，右键点击不传给下方。
+            return;
         } else if let Some((i, path)) = self.log_file_context_target(x, y) {
             MenuTarget::LogFile(i, path)
         } else if let Some(index) = self.log_branch_context_target(x, y) {
@@ -172,10 +158,16 @@ impl App {
             MenuTarget::Diff(id, right)
         } else if let Some(id) = self.terminal_tab_context_target(x, y) {
             MenuTarget::TerminalTab(id)
-        } else if let Some(block) = self.terminal_context_target(x, y) {
-            MenuTarget::Terminal(block)
+        } else if let Some((id, block)) = self.terminal_context_target(x, y) {
+            if self.terminal_right_click_edits() {
+                return self.terminal_right_click();
+            }
+            MenuTarget::Terminal(id, block)
         } else if self.markdown_context_target(x, y) {
             MenuTarget::Markdown
+        } else if self.combined_active() && self.layout.editor.contains(x, y) {
+            // 「未提交的更改」中段头、工具栏上没有菜单；差异上的菜单由那一段弹出。
+            return;
         } else if let Some(id) = self.editor_context_target(x, y) {
             MenuTarget::Editor(id)
         } else {
@@ -185,13 +177,14 @@ impl App {
         self.open_context_menu(target, (x, y));
     }
 
-    /// 右键点在搜索面板的一个结果行上：选中这一行，焦点给结果列表，返回它（文件路径，第几处
-    /// 匹配）。
+    /// 右键点在搜索面板的一个结果行上（含写全名时伸出侧栏的一段）：选中这一行，焦点给结果
+    /// 列表，返回它（文件路径，第几处匹配）。
     fn search_context_target(&mut self, x: f32, y: f32) -> Option<(PathBuf, Option<usize>)> {
         if !self.panel_shown() {
             return None;
         }
-        if !self.panel_parts().results.contains(x, y) || !self.panel_rect().contains(x, y) {
+        let in_list = self.panel_parts().results.contains(x, y) && self.panel_rect().contains(x, y);
+        if !in_list && !self.in_result_overflow(x, y) {
             return None;
         }
         let index = self.result_row_at(y)?;
@@ -268,14 +261,11 @@ impl App {
 
     /// 返回右键点击处所在的编辑区文档；该位置不应弹出编辑区菜单时返回 `None`。
     ///
-    /// 点在选区外时光标先移到点击处；点在选区内时保留选区，菜单作用于该选区。查找条、
-    /// 跳转条、右上角的冲突卡片和提示条覆盖的区域，以及不显示文本的文档没有菜单。
+    /// 点在选区外时光标先移到点击处；点在选区内时保留选区，菜单作用于该选区。不显示文本的
+    /// 文档没有菜单。
     fn editor_context_target(&mut self, x: f32, y: f32) -> Option<DocumentId> {
         let l = self.layout;
-        let covered = l.search.contains(x, y)
-            || (self.bars.goto_input.is_some() && self.prompt_bar().contains(x, y))
-            || self.over_corner_card(x, y);
-        if covered || !l.editor.contains(x, y) {
+        if !l.editor.contains(x, y) {
             return None;
         }
 
@@ -308,8 +298,12 @@ impl App {
 
     /// 右键点在终端的标签上：它成为正在看的标签，返回它的编号。
     fn terminal_tab_context_target(&mut self, x: f32, y: f32) -> Option<u16> {
-        let index = match crate::layout::hit(&self.hits.terminal, x, y)? {
-            crate::app::terminal::HeaderHit::Tab(i) | crate::app::terminal::HeaderHit::Close(i) => {
+        use crate::app::terminal::HeaderHit;
+        let index = match crate::layout::hit(self.terminal_hits_at(x, y), x, y)? {
+            HeaderHit::Tab(i) | HeaderHit::Close(i) => i,
+            // 拆分出的终端：先换到前台，菜单作用于它。
+            HeaderHit::Pane(i, at) | HeaderHit::ClosePane(i, at) => {
+                self.select_terminal_pane(i, at);
                 i
             }
             _ => return None,
@@ -322,16 +316,15 @@ impl App {
     /// 右键点在终端面板的网格上（标签栏以下）：焦点给终端，弹终端的菜单；返回点着的命令块。
     ///
     /// 程序要了鼠标时右键已经上报给程序了，到不了这里（按着 `⇧` 时才到）。
-    fn terminal_context_target(&mut self, x: f32, y: f32) -> Option<Option<u32>> {
-        let card = self.layout.terminal;
-        let hit = card.contains(x, y)
-            && y >= card.y + crate::app::terminal::header_height(card)
+    fn terminal_context_target(&mut self, x: f32, y: f32) -> Option<(u16, Option<u32>)> {
+        let hit = self.terminal_contains(x, y)
+            && y >= self.terminal_view().y
             && self.terminal.tab().is_some();
         if !hit {
             return None;
         }
         self.focus = Focus::Terminal;
-        Some(self.terminal_block_under(x, y))
+        Some((self.terminal.tab()?.id, self.terminal_block_under(x, y)))
     }
 
     /// 为 `target` 生成菜单项，并在窗口坐标 `at`（逻辑像素）处弹出系统菜单。
@@ -342,24 +335,41 @@ impl App {
         if matches!(target, MenuTarget::LogCommit(_)) {
             self.follow_log_root();
         }
+        if let MenuTarget::Terminal(id, _) | MenuTarget::TerminalTab(id) = &target
+            && self.activate_terminal_menu_target(*id).is_none()
+        {
+            return;
+        }
         let entries = match &target {
             &MenuTarget::AddLanguage(task) => {
                 let listed = match task {
-                    Task::Format => &self.settings.languages.format,
-                    Task::Fix => &self.settings.languages.fix,
+                    Task::Format => &self.settings.listed.format,
+                    Task::Fix => &self.settings.listed.fix,
                 };
                 language_menu(task, listed)
             }
-            MenuTarget::SkipOnSave => skip_menu(&self.settings.languages.format),
+            MenuTarget::SkipOnSave => skip_menu(&self.settings.listed.format),
             MenuTarget::Locale => locale_menu(),
             MenuTarget::NamedTheme(dark) => (0..crate::theme::themes(*dark).len())
                 .map(|i| MenuEntry::Item(MenuCommand::NamedTheme(*dark, i), true))
                 .collect(),
             MenuTarget::Whitespace => whitespace_menu(),
             MenuTarget::VimClipboard => vim_clipboard_menu(),
+            MenuTarget::VimKey(_) => [true, false]
+                .map(|vim| MenuEntry::Item(MenuCommand::VimKeyOwner(vim), true))
+                .to_vec(),
             MenuTarget::OpenWorktree => open_worktree_menu(),
             MenuTarget::PullMode => (0..winc_config::PullMode::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::PullMode(i), true))
+                .collect(),
+            MenuTarget::AiProtocol => (0..winc_config::AiProtocol::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::AiProtocol(i), true))
+                .collect(),
+            MenuTarget::LogPlacement => (0..winc_config::LogPlacement::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::LogPlacement(i), true))
+                .collect(),
+            MenuTarget::SearchStyle => (0..winc_config::SearchStyle::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::SearchStyle(i), true))
                 .collect(),
             MenuTarget::DropFolder => (0..winc_config::FolderDrop::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::DropFolder(i), true))
@@ -367,14 +377,24 @@ impl App {
             MenuTarget::AutoSave => (0..winc_config::AutoSave::ALL.len())
                 .map(|i| MenuEntry::Item(MenuCommand::AutoSave(i), true))
                 .collect(),
+            MenuTarget::CursorStyle => (0..winc_config::CursorStyle::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::CursorStyle(i), true))
+                .collect(),
+            MenuTarget::SmoothCaret => (0..winc_config::SmoothCaret::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::SmoothCaret(i), true))
+                .collect(),
             MenuTarget::DefaultShell => default_shell_menu(self.terminal.shells.len()),
             MenuTarget::Zoom => zoom_menu(),
             MenuTarget::BackgroundImage => background_menu(),
             MenuTarget::BackgroundFit => background_fit_menu(),
             MenuTarget::TextWidth => text_width_menu(),
+            MenuTarget::DefaultLanguage => document_language_menu(false, &[]),
             MenuTarget::TerminalPosition => terminal_position_menu(),
             MenuTarget::TerminalTabPosition => terminal_tab_position_menu(),
             MenuTarget::OptionAsMeta => option_as_meta_menu(),
+            MenuTarget::RightClick => (0..winc_config::TerminalRightClick::ALL.len())
+                .map(|i| MenuEntry::Item(MenuCommand::RightClick(i), true))
+                .collect(),
             &MenuTarget::Font(setting) => font_menu(setting, self.font_value(setting).as_deref()),
             &MenuTarget::Tool(task, id) => {
                 let row = self.settings.tool_row(tool_setting(task, id));
@@ -425,6 +445,17 @@ impl App {
                 if kind.is_none() {
                     menu.extend(self.folder_items(folder));
                 }
+                // 脚本文件：「在终端中打开」之后加「在终端中运行」。
+                let opens = |entry: &MenuEntry| {
+                    matches!(entry, MenuEntry::Item(MenuCommand::OpenInTerminal, _))
+                };
+                if let Some(path) = path.as_deref()
+                    && kind == Some(EntryKind::File)
+                    && self.can_run_script(path)
+                    && let Some(at) = menu.iter().position(opens)
+                {
+                    menu.insert(at + 1, MenuEntry::Item(MenuCommand::RunScript, true));
+                }
                 // Git 模块开着、文件在仓库里：最后加「显示文件历史」，有更改的文件再加暂存与回滚。
                 if let Some(path) = path.as_deref()
                     && kind == Some(EntryKind::File)
@@ -449,11 +480,18 @@ impl App {
                     .bookmarks()
                     .lines()
                     .contains(&doc.text().line_of(doc.selection.head));
+                let markdown = doc.preview_kind() == Some(winc_editor::PreviewKind::Markdown);
                 let mut menu = editor_menu(
                     doc.readonly_reason().is_none(),
                     !doc.selection.is_empty(),
                     bookmarked,
+                    markdown,
+                    doc.path.is_some(),
                 );
+                // 光标在链接上时第一项是「打开链接」。
+                if self.link_at_caret().is_some() {
+                    menu.insert(0, MenuEntry::Item(MenuCommand::OpenLink, true));
+                }
                 // Git 模块开着、文件在仓库里：最后是所选代码的历史和「逐行追溯」开关。
                 if doc.path.as_deref().is_some_and(|p| self.in_repo(p)) {
                     let history = Action::GitSelectionHistory;
@@ -553,6 +591,11 @@ impl App {
             MenuTarget::TerminalTab(id) => vec![
                 MenuEntry::Item(MenuCommand::RenameTerminal, true),
                 MenuEntry::Item(MenuCommand::SplitTerminal, self.terminal_splittable(*id)),
+                MenuEntry::Item(
+                    move_group_command(self.terminal_right()),
+                    self.terminal_movable_to_group(),
+                ),
+                MenuEntry::Item(MenuCommand::MoveTerminalToEditor, true),
                 MenuEntry::Separator,
                 MenuEntry::Item(MenuCommand::CloseTerminal, true),
                 MenuEntry::Item(
@@ -560,7 +603,7 @@ impl App {
                     self.terminal.tabs.len() > 1,
                 ),
             ],
-            &MenuTarget::Terminal(block) => {
+            &MenuTarget::Terminal(_, block) => {
                 let Some(tab) = self.terminal.tab() else {
                     return;
                 };
@@ -569,7 +612,29 @@ impl App {
                     let b = tab.blocks.iter().find(|b| b.id == id)?;
                     Some((!b.text.is_empty(), self.terminal_can_rerun(id)))
                 });
-                terminal_menu(tab.selection_range().is_some(), running, block)
+                let group = (self.terminal_right(), self.terminal_movable_to_group());
+                let mut menu =
+                    terminal_menu(tab.selection_range().is_some(), running, block, group);
+                if self.terminal.editor_at(self.terminal.group_at).is_some() {
+                    menu.retain(|entry| {
+                        !matches!(
+                            entry,
+                            MenuEntry::Item(
+                                MenuCommand::TerminalMaximize | MenuCommand::TerminalDock,
+                                _
+                            )
+                        )
+                    });
+                    menu.dedup_by(|a, b| {
+                        matches!((a, b), (MenuEntry::Separator, MenuEntry::Separator))
+                    });
+                    for entry in &mut menu {
+                        if let MenuEntry::Item(MenuCommand::MoveTerminalToEditor, _) = entry {
+                            *entry = MenuEntry::Item(MenuCommand::MoveTerminalToPanel, true);
+                        }
+                    }
+                }
+                menu
             }
             &MenuTarget::Diff(id, right) => {
                 if self.editor.active().map(|d| d.id) != Some(id) {
@@ -585,10 +650,14 @@ impl App {
                 vec![MenuEntry::Item(MenuCommand::ToggleBlame, true)]
             }
             MenuTarget::Tab(id) => {
-                let Some(index) = self.editor.index_of(*id) else {
+                let Some(index) = self
+                    .editor
+                    .index_of(*id)
+                    .filter(|&i| i < self.editor.tab_count())
+                else {
                     return;
                 };
-                let docs = &self.editor.documents;
+                let docs = self.editor.tabs();
                 let path = docs[index].path.as_deref();
                 let span = self.tab_span(*id, index);
                 let selection = self.tab_selection();
@@ -606,6 +675,13 @@ impl App {
                     docs.iter().any(|d| !d.is_dirty()),
                 );
                 let doc = &docs[index];
+                if doc.terminal {
+                    menu.extend([
+                        MenuEntry::Separator,
+                        MenuEntry::Item(MenuCommand::RenameTerminal, true),
+                        MenuEntry::Item(MenuCommand::MoveTerminalToPanel, true),
+                    ]);
+                }
                 if doc.can_lock() && doc.shows_text() {
                     let command = MenuCommand::ReadOnly(!doc.is_locked());
                     menu.extend([MenuEntry::Separator, MenuEntry::Item(command, true)]);
@@ -641,12 +717,16 @@ impl App {
                 let large = doc.is_large()
                     || (doc.hex.as_deref()).is_some_and(|v| v.size() > winc_editor::LARGE_FILE);
                 let utf8_only = doc.hex.is_some() && large;
+                // 「Unicode 转义」只用于 `.properties` 文件。
+                let properties = (doc.path.as_deref())
+                    .and_then(std::path::Path::extension)
+                    .is_some_and(|e| e.eq_ignore_ascii_case("properties"));
                 let reopen = |encoding| {
                     doc.path.is_some()
                         && (!large || utf8_only && encoding == winc_editor::Encoding::Utf8)
                 };
                 let hex = doc.path.is_some() && doc.hex.is_none();
-                encoding_menu(reopen, hex, |encoding| {
+                encoding_menu(properties, reopen, hex, |encoding| {
                     doc.hex.is_none() && doc.encoding.writable() && doc.can_save_with(encoding)
                 })
             }
@@ -654,7 +734,7 @@ impl App {
                 let Some(doc) = self.editor.document(*id) else {
                     return;
                 };
-                document_language_menu(doc.path.is_some())
+                document_language_menu(doc.path.is_some(), &self.state.recent_languages)
             }
             MenuTarget::ReadOnly(id) => {
                 let own = self.editor.document(*id).is_some_and(|doc| doc.is_locked());
@@ -690,8 +770,10 @@ impl App {
                 }
                 menu
             }
-            MenuTarget::SearchResult(_, m) => {
-                search_result_menu(m.is_none(), self.panels.global.replace_open)
+            MenuTarget::SearchResult(path, m) => {
+                let g = &self.panels.global;
+                let dir = m.is_none() && !g.engine.results.iter().any(|f| &f.path == path);
+                search_result_menu(m.is_none(), dir, g.replace_open)
             }
             MenuTarget::CommitMore => self.commit_more_menu(),
             MenuTarget::StashRow(i) => {
@@ -707,6 +789,16 @@ impl App {
             MenuTarget::TabList => (0..self.editor.tab_count())
                 .map(|i| MenuEntry::Item(MenuCommand::ShowTab(i), true))
                 .collect(),
+            MenuTarget::LatexProblems => {
+                let rc = [
+                    MenuEntry::Separator,
+                    MenuEntry::Item(MenuCommand::LatexRunRc, true),
+                ];
+                (0..self.latex_problem_count())
+                    .map(|i| MenuEntry::Item(MenuCommand::LatexProblem(i), true))
+                    .chain(rc.into_iter().filter(|_| self.latex_rc_skipped()))
+                    .collect()
+            }
             MenuTarget::RunConfigs => (0..self.run.list.len())
                 .map(|i| MenuEntry::Item(MenuCommand::RunSelect(i), true))
                 .chain([
@@ -714,6 +806,20 @@ impl App {
                     MenuEntry::Item(MenuCommand::RunEdit, true),
                 ])
                 .collect(),
+            MenuTarget::NewTab => {
+                let mut entries = vec![
+                    MenuEntry::Item(MenuCommand::NewUntitled, true),
+                    MenuEntry::Item(MenuCommand::NewEditorTerminal, true),
+                ];
+                // 能选的 shell 不止一个时在下面列出，选一个用它新建终端。
+                let shells = self.terminal_shell_list().len();
+                if shells > 1 {
+                    entries.push(MenuEntry::Separator);
+                    let each = (0..shells).map(MenuCommand::NewEditorTerminalShell);
+                    entries.extend(each.map(|command| MenuEntry::Item(command, true)));
+                }
+                entries
+            }
             MenuTarget::TerminalShells => (0..self.terminal_shell_list().len())
                 .map(|i| MenuEntry::Item(MenuCommand::NewTerminalShell(i), true))
                 .collect(),
@@ -730,16 +836,17 @@ impl App {
             MenuTarget::LogFile(_, path) => {
                 log_file_menu(self.may_exist(path), self.relative_path(path).is_some())
             }
-            MenuTarget::LogCommit(oid) => {
-                let commit = self.log_commit(oid);
+            MenuTarget::LogCommit(oid) | MenuTarget::HistoryCommit(oid) => {
+                let in_log = matches!(target, MenuTarget::LogCommit(_));
+                let commit = self.log_commit(oid, in_log);
                 let tags: Vec<&str> = (commit.iter().flat_map(|c| &c.refs))
                     .filter_map(crate::app::git::log::menus::tag_name)
                     .collect();
                 // 指向这个提交的分支，各自的操作与分支面板中相同；分支列表属于提交视图所在的
-                // 仓库，还没换过去（日志没有仓库）时不列出。
+                // 仓库，还没换过去（日志没有仓库）时不列出；提交历史就在该仓库中。
                 let (held, stale) = (self.git.held_branches(), self.git.stale_branches());
                 let all = &self.git.branches;
-                let same = self.active_log_root() == self.git.root.as_deref();
+                let same = !in_log || self.active_log_root() == self.git.root.as_deref();
                 let branches = (commit.iter().filter(|_| same).flat_map(|c| &c.refs))
                     .filter_map(|r| match r {
                         Ref::Head(name) | Ref::Branch(name) => {
@@ -755,7 +862,7 @@ impl App {
                         (all[i].name.clone(), ops)
                     })
                     .collect();
-                let actions = self.log_commit_actions(oid);
+                let actions = self.log_commit_actions(oid, in_log);
                 log_commit_menu(actions, &self.current_branch_label(), branches, &tags)
             }
             MenuTarget::LogColumns => self.log_columns_menu(),
@@ -792,15 +899,19 @@ impl App {
             _ => entries,
         };
 
-        // 菜单上显示的快捷键按菜单弹出的位置取：文件树中取文件树的键位，编辑区中取编辑区的键位。
+        // 菜单上显示的快捷键按菜单弹出的位置取：文件树中取文件树的键位，编辑区中取编辑区的键位，
+        // 编辑 Markdown 时取 Markdown 的键位（「粘贴为纯文本」只在这里有键）。
         let context = match &target {
             MenuTarget::Tree(_) => Context::Tree,
+            MenuTarget::Editor(_) | MenuTarget::Markdown if self.markdown_keys() => {
+                Context::Markdown
+            }
             MenuTarget::Editor(_)
             | MenuTarget::Diff(..)
             | MenuTarget::DiffGutter(..)
             | MenuTarget::Markdown
             | MenuTarget::LogCommit(_) => Context::Editor,
-            MenuTarget::Terminal(_) | MenuTarget::TerminalTab(_) => Context::Terminal,
+            MenuTarget::Terminal(..) | MenuTarget::TerminalTab(_) => Context::Terminal,
             MenuTarget::SearchResult(..) => Context::Panel,
             MenuTarget::CommitFile(_) => Context::Changes,
             _ => Context::Other,
@@ -812,21 +923,30 @@ impl App {
             target,
             MenuTarget::CommitButton
                 | MenuTarget::TabList
+                | MenuTarget::LatexProblems
                 | MenuTarget::Locale
                 | MenuTarget::NamedTheme(_)
                 | MenuTarget::Whitespace
                 | MenuTarget::VimClipboard
+                | MenuTarget::VimKey(_)
                 | MenuTarget::OpenWorktree
                 | MenuTarget::PullMode
+                | MenuTarget::AiProtocol
+                | MenuTarget::LogPlacement
                 | MenuTarget::DropFolder
+                | MenuTarget::SearchStyle
                 | MenuTarget::AutoSave
+                | MenuTarget::CursorStyle
+                | MenuTarget::SmoothCaret
                 | MenuTarget::Zoom
                 | MenuTarget::BackgroundImage
                 | MenuTarget::BackgroundFit
                 | MenuTarget::TextWidth
+                | MenuTarget::DefaultLanguage
                 | MenuTarget::TerminalPosition
                 | MenuTarget::TerminalTabPosition
                 | MenuTarget::OptionAsMeta
+                | MenuTarget::RightClick
                 | MenuTarget::Font(_)
         );
         // 设置中语言、字体等选项的菜单不窄于弹出它的控件。
@@ -834,17 +954,25 @@ impl App {
             MenuTarget::Locale => Some(Setting::Language),
             MenuTarget::Whitespace => Some(Setting::RenderWhitespace),
             MenuTarget::VimClipboard => Some(Setting::VimClipboard),
+            MenuTarget::VimKey(c) => Some(Setting::VimKey(c)),
             MenuTarget::OpenWorktree => Some(Setting::GitOpenWorktree),
             MenuTarget::PullMode => Some(Setting::GitPullMode),
+            MenuTarget::AiProtocol => Some(Setting::AiProtocol),
+            MenuTarget::LogPlacement => Some(Setting::GitLogPlacement),
             MenuTarget::DropFolder => Some(Setting::DropFolder),
+            MenuTarget::SearchStyle => Some(Setting::FindInFiles),
             MenuTarget::AutoSave => Some(Setting::AutoSave),
+            MenuTarget::CursorStyle => Some(Setting::CursorStyle),
+            MenuTarget::SmoothCaret => Some(Setting::SmoothCaret),
             MenuTarget::Zoom => Some(Setting::Zoom),
             MenuTarget::BackgroundImage => Some(Setting::BackgroundImage),
             MenuTarget::BackgroundFit => Some(Setting::BackgroundFit),
             MenuTarget::TextWidth => Some(Setting::TextWidth),
+            MenuTarget::DefaultLanguage => Some(Setting::DefaultLanguage),
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
             MenuTarget::TerminalTabPosition => Some(Setting::TerminalTabPosition),
             MenuTarget::OptionAsMeta => Some(Setting::TerminalOptionAsMeta),
+            MenuTarget::RightClick => Some(Setting::TerminalRightClick),
             MenuTarget::Font(setting) => Some(setting),
             _ => None,
         };
@@ -857,7 +985,9 @@ impl App {
             MenuTarget::BranchOps(_) | MenuTarget::CommitMore => {
                 (self.git.branches.clone(), self.git.stashes.clone())
             }
-            MenuTarget::LogCommit(_) => (self.git.branches.clone(), Vec::new()),
+            MenuTarget::LogCommit(_) | MenuTarget::HistoryCommit(_) => {
+                (self.git.branches.clone(), Vec::new())
+            }
             MenuTarget::StashRow(_) | MenuTarget::StashList => {
                 (Vec::new(), self.git.stashes.clone())
             }
@@ -882,6 +1012,7 @@ impl App {
                 popup.min_width = min_width;
                 menu.popup = Some(popup);
             }
+            self.update_cursor_icon();
             self.request_redraw();
             return;
         }
@@ -940,7 +1071,7 @@ impl App {
                             .and_then(key_equivalent)
                             .unwrap_or_default(),
                         icon: self.menu_icon(*command),
-                        icon_size: menu_icon_size(*command),
+                        icon_size: self.menu_icon_size(*command),
                         enabled: *enabled,
                         checked: self.menu_checked(*command),
                         alternate: matches!(entry, MenuEntry::Alternate(..)),
@@ -951,7 +1082,7 @@ impl App {
                     label: MenuLabel::plain(title),
                     key: Default::default(),
                     icon: submenu_lead(items).and_then(|c| self.menu_icon(c)),
-                    icon_size: submenu_lead(items).map_or(MENU_ICON, menu_icon_size),
+                    icon_size: submenu_lead(items).map_or(MENU_ICON, |c| self.menu_icon_size(c)),
                     enabled: true,
                     checked: false,
                     alternate: false,
@@ -968,6 +1099,18 @@ impl App {
     /// 状态栏缩进、行尾、编码菜单中当前使用的那一项打勾；「排除的语言」菜单中已被排除的语言打勾；
     /// 格式化工具菜单中当前使用的那一项打勾。
     pub(in crate::app) fn menu_checked(&self, command: MenuCommand) -> bool {
+        // 设置中的默认语言：当前的设置打勾。
+        let target = self.overlays.context_menu.as_ref().map(|menu| &menu.target);
+        if let Some(MenuTarget::DefaultLanguage) = target {
+            let chosen = self.default_language().map(|language| language.id);
+            return match command {
+                MenuCommand::UsePlainText => chosen.is_none(),
+                MenuCommand::UseLanguage(i) => {
+                    chosen.is_some() && winc_syntax::languages().get(i).map(|l| l.id) == chosen
+                }
+                _ => false,
+            };
+        }
         if let MenuCommand::ShowTab(i) = command {
             return self.editor.active == Some(i);
         }
@@ -1028,11 +1171,7 @@ impl App {
             return self.markdown_line_numbers_on();
         }
         // 日志的作者筛选：现在用着的那一项。
-        let query = self
-            .editor
-            .active()
-            .and_then(|d| d.log.as_deref())
-            .map(|v| &v.query);
+        let query = self.log_view().map(|v| &v.query);
         if let MenuCommand::FormBase(i) = command {
             return self.form_base_chosen(i);
         }
@@ -1069,7 +1208,10 @@ impl App {
                 MenuCommand::IndentSize(n) => doc.indent_size(tab_width) == n,
                 MenuCommand::LineEnding(eol) => doc.line_ending == eol,
                 MenuCommand::ReopenEncoding(i) | MenuCommand::SaveEncoding(i) => {
-                    doc.hex.is_none() && CHOICES.get(i).is_some_and(|(e, _)| *e == doc.encoding)
+                    doc.hex.is_none()
+                        && CHOICES
+                            .get(i)
+                            .is_some_and(|(e, _)| *e == doc.encoding.choice())
                 }
                 MenuCommand::ReopenHex => doc.hex.is_some(),
                 MenuCommand::UseLanguage(i) => (winc_syntax::languages().get(i))
@@ -1087,6 +1229,13 @@ impl App {
             _ => None,
         };
         let language = tool.map(|(_, id)| id);
+        let vim_key = match &self.overlays.context_menu {
+            Some(ContextMenu {
+                target: MenuTarget::VimKey(c),
+                ..
+            }) => Some(*c),
+            _ => None,
+        };
         let configured = tool.and_then(|(task, id)| {
             crate::app::editor::format::task_commands(&self.config, task).get(id)
         });
@@ -1111,12 +1260,24 @@ impl App {
                 winc_config::VimClipboard::ALL.get(i)
                     == Some(&self.config.vim_clipboard.unwrap_or_default())
             }
+            MenuCommand::VimKeyOwner(vim) => vim_key.is_some_and(|c| self.vim_owns_key(c) == vim),
             MenuCommand::OpenWorktree(i) => {
                 winc_config::WorktreeOpen::ALL.get(i)
                     == Some(&self.config.git_open_worktree.unwrap_or_default())
             }
             MenuCommand::PullMode(i) => {
                 winc_config::PullMode::ALL.get(i) == Some(&self.config.git_pull.unwrap_or_default())
+            }
+            MenuCommand::AiProtocol(i) => {
+                let current = self.config.ai_protocol.unwrap_or_default();
+                winc_config::AiProtocol::ALL.get(i) == Some(&current)
+            }
+            MenuCommand::LogPlacement(i) => {
+                let current = self.config.git_log_placement.unwrap_or_default();
+                winc_config::LogPlacement::ALL.get(i) == Some(&current)
+            }
+            MenuCommand::SearchStyle(i) => {
+                winc_config::SearchStyle::ALL.get(i) == Some(&self.search_style())
             }
             MenuCommand::DropFolder(i) => {
                 winc_config::FolderDrop::ALL.get(i)
@@ -1125,6 +1286,14 @@ impl App {
             MenuCommand::AutoSave(i) => {
                 winc_config::AutoSave::ALL.get(i)
                     == Some(&self.config.auto_save.unwrap_or_default())
+            }
+            MenuCommand::CursorStyle(i) => {
+                winc_config::CursorStyle::ALL.get(i)
+                    == Some(&self.config.cursor_style.unwrap_or_default())
+            }
+            MenuCommand::SmoothCaret(i) => {
+                winc_config::SmoothCaret::ALL.get(i)
+                    == Some(&self.config.smooth_caret_movement.unwrap_or_default())
             }
             MenuCommand::DefaultShell(i) => {
                 let configured = self.configured_shell().map(|shell| shell.command);
@@ -1149,6 +1318,10 @@ impl App {
             MenuCommand::BackgroundFit(i) => {
                 winc_config::BackgroundFit::ALL.get(i)
                     == Some(&self.config.ui_background_fit.unwrap_or_default())
+            }
+            MenuCommand::RightClick(i) => {
+                winc_config::TerminalRightClick::ALL.get(i)
+                    == Some(&self.config.terminal_right_click.unwrap_or_default())
             }
             MenuCommand::OptionAsMeta(i) => {
                 let current =
@@ -1183,83 +1356,6 @@ impl App {
             }
             _ => false,
         }
-    }
-
-    /// 返回菜单项左边的图标：最近的目录用目录图标，工作树用分支图标，标签列表用标签上的图标；
-    /// 其他命令没有图标。
-    pub(in crate::app) fn menu_icon_kind(&self, command: MenuCommand) -> Option<MenuIcon> {
-        match command {
-            MenuCommand::OpenRecent(i) | MenuCommand::OpenRecentInNewWindow(i) => {
-                let group = (self.state.recent.get(i))
-                    .is_some_and(|folder| self.recent_group(folder).is_some());
-                Some(if group {
-                    MenuIcon::Folders
-                } else {
-                    MenuIcon::Folder
-                })
-            }
-            MenuCommand::OpenGroup(_) => Some(MenuIcon::Folders),
-            MenuCommand::GroupFolder(..) => Some(MenuIcon::Folder),
-            MenuCommand::ShowTab(i) => self.editor.documents.get(i).map(|_| MenuIcon::Tab(i)),
-            _ => None,
-        }
-    }
-
-    /// 在 `(x, y)`（图标位的左上角）绘制菜单项图标 `icon`，图标位的尺寸见
-    /// [`MenuIcon::size`]。
-    ///
-    /// 窗口的深浅外观跟随主题，菜单跟随窗口，因此图标颜色与菜单的深浅外观一致。
-    pub(crate) fn draw_menu_icon(
-        &self,
-        frame: &mut winc_render::Frame<'_>,
-        icon: MenuIcon,
-        (x, y): (f32, f32),
-        clip: Rect,
-    ) {
-        let (w, h) = icon.size();
-        match icon {
-            MenuIcon::Folder => icons::folder(frame, (x, y), false, self.palette.folder, clip),
-            MenuIcon::Folders => icons::folders(frame, (x, y), self.palette.folder, clip),
-            MenuIcon::File(glyph, [dark, light]) => {
-                let color = winc_render::Color::hex(if self.palette.dark { dark } else { light });
-                // 文件图标 12 × 15。
-                icons::file(frame, (x + 2.0, y + 0.5), glyph, color, clip);
-            }
-            MenuIcon::Tab(i) => {
-                let Some(doc) = self.editor.documents.get(i) else {
-                    return;
-                };
-                if doc.log.is_some() {
-                    icons::git(
-                        frame,
-                        (x + w / 2.0, y + h / 2.0),
-                        1.0,
-                        self.palette.accent,
-                        clip,
-                    );
-                } else {
-                    let (glyph, color) = self
-                        .palette
-                        .file_icon(&crate::app::workspace::tab_names::tab_icon_name(doc));
-                    // 文件图标 12 × 15。
-                    icons::file(frame, (x + 2.0, y + 0.5), glyph, color, clip);
-                }
-            }
-        }
-    }
-
-    /// 把菜单项 `command` 的图标画成图片，交给系统菜单；没有图标或没有渲染器时为 `None`。
-    #[cfg(any(target_os = "macos", test))]
-    pub(in crate::app) fn menu_icon(&mut self, command: MenuCommand) -> Option<Image> {
-        let icon = self.menu_icon_kind(command)?;
-        let (w, h) = icon.size();
-        let clip = Rect::new(0.0, 0.0, w, h);
-        let mut renderer = self.frame.renderer.take()?;
-        let image = renderer.draw_transparent(w, h, |frame| {
-            self.draw_menu_icon(frame, icon, (0.0, 0.0), clip);
-        });
-        self.frame.renderer = Some(renderer);
-        Some(image)
     }
 
     /// 文件树工具栏「⋯」的菜单：列出收起的各个工具，按工具栏中的顺序排列。
@@ -1304,12 +1400,12 @@ impl App {
         self.request_redraw();
     }
 
-    /// 立即同步绘制一帧，不等待下一轮事件循环。
+    /// 立即同步绘制一帧，不等待下一轮事件循环；画法与平常的一帧相同（见 `App::prepare_frame`）。
     pub(in crate::app) fn paint_now(&mut self) {
-        self.relayout();
+        self.prepare_frame();
         if let Some(mut renderer) = self.frame.renderer.take() {
             self.declare_base(&mut renderer);
-            renderer.draw(|frame| view::draw(self, frame));
+            self.draw_scrolled(&mut renderer);
             self.frame.renderer = Some(renderer);
         }
     }

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use winc_core::transform::{JSON_MAX_DEPTH, JsonError, JsonLayout};
 use winc_i18n::t;
 
 use super::*;
@@ -267,6 +268,10 @@ impl App {
 
     /// 返回当前文档的显示行数；已折叠的行不计入。
     pub(in crate::app) fn row_count(&self) -> usize {
+        // 「未提交的更改」标签的内容不在文档里，按各段的总长算。
+        if self.combined_active() {
+            return self.combined_rows();
+        }
         self.editor.active().map_or(0, |d| d.row_count())
     }
 
@@ -296,9 +301,13 @@ impl App {
     /// 差异标签让出顶部的标题栏，滑块、概览标尺和点击范围都不延伸到标题栏中的按钮旁边。
     pub(crate) fn scroll_track(&self) -> Rect {
         let editor = self.layout.editor;
-        // 日志标签：滚动条位于左侧提交列表的右边缘，详情栏不使用该滚动条。
-        if self.log_active() {
+        // 日志标签：滚动条位于左侧提交列表的右边缘，详情栏不使用该滚动条。面板中的日志有自己的
+        // 滚动条（`Scrollbar::GitPanel`），不经过编辑区的滚动条。
+        if !self.git.panel.docked && self.log_active() {
             return self.log_parts().list;
+        }
+        if self.combined_active() {
+            return self.combined_parts().body;
         }
         if self.hex_active() {
             return self.hex_parts().body;
@@ -468,6 +477,27 @@ impl App {
         self.clipboard.text()
     }
 
+    /// 剪切光标到行尾的文字，光标在行尾时剪切换行符；有选区时剪切选区。剪贴板里放的是主光标处
+    /// 剪下的文字。
+    pub(in crate::app) fn cut_to_line_end(&mut self) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        let removed = winc_core::edit::delete_to_line_end(doc.text(), doc.selection)
+            .and_then(|t| t.changes.into_iter().next())
+            .map(|change| change.removed);
+        let Some(removed) = removed else {
+            return;
+        };
+        let revision = doc.revision;
+        self.focus = Focus::Editor;
+        self.run(Command::DeleteToLineEnd);
+        // 只读的文档不会改动，剪贴板也不动。
+        if self.editor.active().is_some_and(|d| d.revision != revision) {
+            self.set_clipboard(removed, false);
+        }
+    }
+
     /// 复制选区（`cut` 为 `true` 时剪切）；没有选区时操作光标所在的整行。
     pub(in crate::app) fn copy(&mut self, cut: bool) {
         // 十六进制视图：复制选中的字节，写成十六进制；只读，不能剪切。
@@ -479,7 +509,7 @@ impl App {
         }
         // 日志标签：详情中有选中文字时复制选中的文字，否则复制选中提交的完整提交号，
         // 效果同点击详情中的提交号。
-        if self.log_active() {
+        if self.log_focused() {
             if cut {
                 return;
             }
@@ -528,8 +558,10 @@ impl App {
             return;
         };
 
-        // 整行复制到文件最后一行（末尾没有换行符）时补上行尾换行符，使粘贴时仍是完整的一行。
-        if whole_line && range.end == doc.text().end_pos() {
+        // 整行复制到文件最后一行（末尾没有换行符）时补上行尾换行符，使粘贴时仍是完整的一行；
+        // 文件以换行符结尾时最后一行已经带着它，不再补。
+        let ends_line = content.ends_with(['\n', '\r']);
+        if whole_line && range.end == doc.text().end_pos() && !ends_line {
             content.push_str(doc.line_ending.as_str());
         }
 
@@ -580,7 +612,7 @@ impl App {
                 ));
                 return;
             };
-            if whole_line && range.end == text.end_pos() {
+            if whole_line && range.end == text.end_pos() && !part.ends_with(['\n', '\r']) {
                 part.push_str(ending);
             }
             parts.push(part);
@@ -625,7 +657,24 @@ impl App {
     /// 没有选区且 `content` 等于最近一次整行复制的内容时，插入到当前行上方；否则在光标处插入。
     /// Markdown 中网址、图片网址和表格单元格按 [`App::markdown_paste`] 改写。
     pub(super) fn paste_text(&mut self, content: String) {
-        if let Some(text) = self.markdown_paste(&content) {
+        self.paste_text_as(content, true);
+    }
+
+    /// 同 [`Self::paste_text`]；`rewrite` 为假时（粘贴为纯文本）不改写成 Markdown 的写法，
+    /// 其余照常：整行复制的内容仍插入到当前行上方。
+    pub(in crate::app) fn paste_text_as(&mut self, content: String, rewrite: bool) {
+        // 空的未命名纯文本文档：按粘贴的内容识别语言（`editor.detectLanguageOnPaste`）。
+        let blank = self.editor.active().is_some_and(|doc| {
+            let untitled = doc.path.is_none() && doc.title.is_none();
+            untitled && doc.text().end_pos() == 0 && doc.highlighter.language().id == "text"
+        });
+        if blank
+            && self.config.detect_language_on_paste != Some(false)
+            && let Some(language) = winc_editor::paste::sniffed_language(&content)
+        {
+            self.use_language(language);
+        }
+        if let Some(text) = self.markdown_paste(&content).filter(|_| rewrite) {
             self.run(Command::Insert(text));
             return;
         }
@@ -670,9 +719,11 @@ impl App {
         }
         // Vim 的插入模式记录执行的输入，供次数与点重复重放。
         let input = self.vim_input(&command);
+        let history = matches!(command, Command::Undo | Command::Redo);
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
+        let revision = doc.revision;
         doc.execute(command, page, tab_width);
         if let Some(input) = input {
             self.vim_typed(input);
@@ -681,11 +732,35 @@ impl App {
         // 行数变化可能改变行号的位数，因此需要重新布局行号栏。
         if self.line_count() != lines_before {
             self.relayout();
+            if !history {
+                self.renumber_markdown_lists(revision);
+            }
         }
 
         self.ensure_caret_visible();
         self.reset_blink();
         self.request_redraw();
+    }
+
+    /// 按 `layout` 美化或压缩当前文档中的 JSON（见 [`Command::ReformatJson`]）。
+    ///
+    /// 任一选区无法转换时不修改文档，在状态栏说明原因。
+    pub(in crate::app) fn reformat_json(&mut self, layout: JsonLayout) {
+        let command = Command::ReformatJson(layout);
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        // 文档不可编辑时由 [`App::run`] 说明原因。
+        if doc.edits_text()
+            && doc.edit_blocked(&command).is_none()
+            && let Some(problem) = doc.json_problem(layout)
+        {
+            let message = json_problem_message(doc, layout, problem);
+            self.flash(message);
+            return;
+        }
+        self.focus = Focus::Editor;
+        self.run(command);
     }
 
     /// 把当前文档的选区设为从 `from` 到 `to`（字符偏移），并滚动到光标。
@@ -698,6 +773,37 @@ impl App {
         self.ensure_caret_visible();
         self.reset_blink();
         self.request_redraw();
+    }
+}
+
+/// 返回在文档 `doc` 中按 `layout` 转换 JSON 失败的提示，`problem` 是原因。
+fn json_problem_message(
+    doc: &winc_editor::Document,
+    layout: JsonLayout,
+    problem: JsonError,
+) -> String {
+    let action = match layout {
+        JsonLayout::Pretty => "pretty",
+        JsonLayout::Compact => "compact",
+    };
+    match problem {
+        JsonError::NotFound => t!("editor-json-not-found").to_owned(),
+        JsonError::Invalid(pos) => {
+            let (line, column) = doc.text().pos_to_line_col(pos);
+            let (line, column) = (line + 1, column + 1);
+            t!(
+                "editor-json-invalid",
+                action = action,
+                line = line,
+                column = column
+            )
+        }
+        JsonError::Incomplete => t!("editor-json-incomplete", action = action),
+        JsonError::TooDeep => t!(
+            "editor-json-too-deep",
+            action = action,
+            depth = JSON_MAX_DEPTH
+        ),
     }
 }
 

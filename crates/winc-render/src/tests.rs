@@ -5,6 +5,16 @@ use std::path::PathBuf;
 
 use super::*;
 
+/// 界面、编辑区和终端都用 `weight` 的字重。
+#[cfg(target_os = "macos")]
+fn same(weight: u16) -> FontWeights {
+    FontWeights {
+        ui: weight,
+        editor: weight,
+        terminal: weight,
+    }
+}
+
 /// 用字体 `font` 的 `kind` 字形画字符 `c`，返回字形上半部分与下半部分墨迹的平均横坐标
 /// （物理像素）。
 #[cfg(target_os = "macos")]
@@ -73,45 +83,61 @@ fn zoom_scales_drawing_without_resizing_the_image() {
     assert_eq!((image.width, lit), (80, 4));
 }
 
-#[test]
-fn faux_bold_is_heavier_and_wider() {
-    // 西文取自界面字体，中文落到后备字体（macOS 15 起苹方的轮廓由系统提供）：两种字形都加粗。
-    for c in ['H', '中'] {
-        let ink = |bold: bool| {
-            let mut renderer =
-                Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, None).unwrap();
-            let mut advance = 0.0;
-            renderer.draw(|frame| {
-                let all = frame.bounds();
-                let faux = Faux {
-                    bold,
-                    italic: false,
-                };
-                advance = frame.advance_faux(FontKind::Ui, faux, 30.0, c);
-                let text = c.to_string();
-                frame.text_faux(
-                    FontKind::Ui,
-                    faux,
-                    30.0,
-                    5.0,
-                    32.0,
-                    &text,
-                    Color::hex(0xffffff),
-                    all,
-                );
-            });
-            let image = renderer.image().unwrap();
-            let sum: u32 = image.pixels.iter().map(|p| p & 0xff).sum();
-            (sum, advance)
+/// 用界面字体 `ui`（为 `None` 时用平台默认字体）按 30 逻辑像素的字号画字符 `c`，返回墨迹的
+/// 总量和前进宽度（逻辑像素）。
+fn ink(ui: Option<&FontSpec>, c: char, bold: bool) -> (u32, f32) {
+    let mut renderer =
+        Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, ui).unwrap();
+    let mut advance = 0.0;
+    renderer.draw(|frame| {
+        let all = frame.bounds();
+        let faux = Faux {
+            bold,
+            italic: false,
         };
-        let (regular, regular_advance) = ink(false);
-        let (bold, bold_advance) = ink(true);
+        advance = frame.advance_faux(FontKind::Ui, faux, 30.0, c);
+        let text = c.to_string();
+        frame.text_faux(
+            FontKind::Ui,
+            faux,
+            30.0,
+            5.0,
+            32.0,
+            &text,
+            Color::hex(0xffffff),
+            all,
+        );
+    });
+    let image = renderer.image().unwrap();
+    let sum: u32 = image.pixels.iter().map(|p| p & 0xff).sum();
+    (sum, advance)
+}
+
+#[test]
+fn bold_is_heavier_and_never_narrower() {
+    // 西文取自界面字体，中文落到后备字体（macOS 15 起苹方的轮廓由系统提供）：两种字形都加粗。
+    // 字体自身的粗体使用字体给出的字宽（全角汉字仍为 1 em），加宽笔画时字宽随之增加。
+    for c in ['H', '中'] {
+        let (regular, regular_advance) = ink(None, c, false);
+        let (bold, bold_advance) = ink(None, c, true);
         assert!(
             bold as f32 > regular as f32 * 1.15,
             "{c}：{regular} → {bold}"
         );
-        assert!(bold_advance > regular_advance, "{c}");
+        assert!(bold_advance >= regular_advance, "{c}");
     }
+}
+
+/// 字体无法变粗时加宽笔画：字形更重，字宽增加笔画加宽的量。
+#[cfg(target_os = "macos")]
+#[test]
+fn faux_bold_is_heavier_and_wider() {
+    let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
+    let (regular, regular_advance) = ink(Some(&monaco), 'H', false);
+    let (bold, bold_advance) = ink(Some(&monaco), 'H', true);
+    assert!(bold as f32 > regular as f32 * 1.15, "{regular} → {bold}");
+    let widened = bold_advance - regular_advance;
+    assert!((widened - 30.0 * BOLD_RATIO).abs() < 1e-3, "{widened}");
 }
 
 /// 模拟的粗体不会把任何字母变细：组合字形（`i`、`j`）的轮廓方向不可靠，不能按它偏移。
@@ -401,7 +427,8 @@ fn declared_base_rects_are_painted_for_one_frame_only() {
     assert_eq!(colors(&renderer), (0x101010, 0x101010));
 }
 
-/// 字重对有字重轴的字体、没有字重轴的字体和轮廓由系统提供的字体都生效，字宽不变。
+/// 字重对有字重轴的字体、没有字重轴的字体和轮廓由系统提供的字体都生效，字宽不变；有字重轴或
+/// 命名实例时还能调细。
 #[cfg(target_os = "macos")]
 #[test]
 fn font_weight_changes_the_ink_of_every_kind_of_font() {
@@ -411,7 +438,7 @@ fn font_weight_changes_the_ink_of_every_kind_of_font() {
         let mut renderer =
             Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, None).unwrap();
         renderer
-            .set_fonts(std::slice::from_ref(spec), &[], &[], weight, weight)
+            .set_fonts(std::slice::from_ref(spec), &[], &[], same(weight))
             .unwrap();
         let mut advance = 0.0;
         renderer.draw(|frame| {
@@ -431,7 +458,8 @@ fn font_weight_changes_the_ink_of_every_kind_of_font() {
         let sum: u32 = image.pixels.iter().map(|p| p & 0xff).sum();
         (sum, advance)
     };
-    for (spec, c, has_axis) in [(&sf, 'H', true), (&monaco, 'H', false), (&sf, '中', false)] {
+    // 中文落到苹方：由系统提供轮廓，字重改用同族的命名实例。
+    for (spec, c, thinner) in [(&sf, 'H', true), (&monaco, 'H', false), (&sf, '中', true)] {
         let (regular, width) = ink(spec, FONT_WEIGHT_NORMAL, c);
         let (bold, bold_width) = ink(spec, 700, c);
         let (light, light_width) = ink(spec, 300, c);
@@ -440,7 +468,7 @@ fn font_weight_changes_the_ink_of_every_kind_of_font() {
             "{c}：{regular} → {bold}"
         );
         assert_eq!((bold_width, light_width), (width, width), "{c}");
-        if has_axis {
+        if thinner {
             assert!(
                 (light as f32) < regular as f32 * 0.95,
                 "{c}：{regular} → {light}"
@@ -451,17 +479,22 @@ fn font_weight_changes_the_ink_of_every_kind_of_font() {
     }
 }
 
-/// 终端的字重与其余文字分开：终端的文字（含后备字体中的汉字）按终端的字重画，编辑区不变；
-/// 两者相同时画出的完全一样。
+/// 界面、编辑区和终端的字重各自独立：每类文字（含后备字体中的汉字）按自己的字重画，其余不变；
+/// 字重相同时终端与编辑区画出的完全一样。
 #[cfg(target_os = "macos")]
 #[test]
-fn the_terminal_weight_changes_only_the_terminal_ink() {
+fn each_kind_of_text_keeps_its_own_weight() {
     let sf = FontSpec::Path("/System/Library/Fonts/SFNSMono.ttf".into());
-    let ink = |(weight, terminal): (u16, u16), kind: FontKind, c: char| {
+    let ink = |(ui, editor, terminal): (u16, u16, u16), kind: FontKind, c: char| {
         let mut renderer =
             Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, None).unwrap();
+        let weights = FontWeights {
+            ui,
+            editor,
+            terminal,
+        };
         renderer
-            .set_fonts(std::slice::from_ref(&sf), &[], &[], weight, terminal)
+            .set_fonts(std::slice::from_ref(&sf), &[], &[], weights)
             .unwrap();
         renderer.draw(|frame| {
             let all = frame.bounds();
@@ -471,17 +504,29 @@ fn the_terminal_weight_changes_only_the_terminal_ink() {
         let image = renderer.image().unwrap();
         image.pixels.iter().map(|p| p & 0xff).sum::<u32>()
     };
+    let bolder = |bold: u32, regular: u32| bold as f32 > regular as f32 * 1.15;
     for c in ['H', '中'] {
-        let regular = ink((400, 400), FontKind::Terminal, c);
-        assert_eq!(ink((400, 400), FontKind::Mono, c), regular, "{c}");
-        let bold = ink((400, 700), FontKind::Terminal, c);
-        assert!(
-            bold as f32 > regular as f32 * 1.15,
-            "{c}：{regular} → {bold}"
+        let regular = |kind| ink((400, 400, 400), kind, c);
+        let (mono, ui, terminal) = (
+            regular(FontKind::Mono),
+            regular(FontKind::Ui),
+            regular(FontKind::Terminal),
         );
-        assert_eq!(ink((400, 700), FontKind::Mono, c), regular, "{c}");
-        // 全局调粗、终端仍是常规字重：终端不随之变粗。
-        assert_eq!(ink((700, 400), FontKind::Terminal, c), regular, "{c}");
+        assert_eq!(terminal, mono, "{c}");
+        // 只调粗终端。
+        assert!(
+            bolder(ink((400, 400, 700), FontKind::Terminal, c), terminal),
+            "{c}"
+        );
+        assert_eq!(ink((400, 400, 700), FontKind::Mono, c), mono, "{c}");
+        // 只调粗编辑区：界面和终端不变。
+        assert!(bolder(ink((400, 700, 400), FontKind::Mono, c), mono), "{c}");
+        assert_eq!(ink((400, 700, 400), FontKind::Ui, c), ui, "{c}");
+        assert_eq!(ink((400, 700, 400), FontKind::Terminal, c), terminal, "{c}");
+        // 只调粗界面：编辑区和终端不变。
+        assert!(bolder(ink((700, 400, 400), FontKind::Ui, c), ui), "{c}");
+        assert_eq!(ink((700, 400, 400), FontKind::Mono, c), mono, "{c}");
+        assert_eq!(ink((700, 400, 400), FontKind::Terminal, c), terminal, "{c}");
     }
 }
 
@@ -559,7 +604,7 @@ fn translucent_checkers_draw_only_the_visible_cells() {
 }
 
 /// 背景图在窗口背景、声明的底色和之后以这些颜色填充的矩形之下透出，颜色为「图片 × 不透明度 +
-/// 底色 × (1 − 不透明度)」；其余颜色照常绘制。底色声明与否画面相同。
+/// 底色 × (1 − 不透明度)」；其余颜色仍然绘制。底色声明与否画面相同。
 #[test]
 fn the_wallpaper_shows_under_surface_colors_only() {
     let (bg, card, other) = (
@@ -603,7 +648,7 @@ fn the_wallpaper_shows_under_surface_colors_only() {
         (at(5, 2), at(7, 7), at(5, 7)),
         (0x108f10, 0x8f8f8f, 0x8f8f8f)
     );
-    // 不是底色的颜色照常绘制。
+    // 不是底色的颜色仍然绘制。
     assert_eq!(at(6, 0), 0x808080);
     // 圆角外侧的像素向背景色之下的图片过渡（弧线上的像素按覆盖比例混合）。
     let corner = at(0, 0);

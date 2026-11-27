@@ -4,13 +4,13 @@
 //! 卡片分标题行（名字、发起查找的文件、数量）、列表（文件图标、文件名、行号和该行代码，名字铺
 //! 查找结果的琥珀色底）和底栏（选中项的完整路径和行号）。
 //!
-//! 出现时从名字那一侧滑出并淡入，关掉时原地淡出（`Picker::places_in`、`Picker::places_out`）；选择、
-//! 筛选、滚动和键盘操作与快速打开面板共用（`picker_*`），这里只负责绘制。
+//! 出现时从名字那一侧滑出并淡入，关掉时原地淡出（`Picker::places_in`、`Picker::places_out`）；
+//! 选择、筛选、滚动和键盘操作与快速打开面板共用（`picker_*`），这里只负责绘制。
 
 use std::fmt::Write as _;
 
 use winc_i18n::t;
-use winc_syntax::{LineState, TokenKind, detect, highlight_line};
+use winc_syntax::{LineState, TokenKind, highlight_line};
 
 use super::*;
 use crate::app::editor::definition::{Place, Places, PlacesKind};
@@ -27,7 +27,7 @@ const CODE_ALPHA: f32 = 0.72;
 const SLIDE: f32 = 4.0;
 
 /// 绘制浮窗所需的内容：打开时取自快速打开面板的状态，淡出时取自关掉那一刻保存下来的状态。
-pub(super) struct PlacesView<'a> {
+pub(in crate::view) struct PlacesView<'a> {
     places: &'a Places,
     /// 筛选后留下的条目在 `places.items` 中的序号。
     hits: &'a [usize],
@@ -43,6 +43,25 @@ pub(super) struct PlacesView<'a> {
 }
 
 impl<'a> PlacesView<'a> {
+    /// 列出 `places` 中 `hits` 各条的列表，没有筛选文字。
+    pub(in crate::view) fn of(
+        places: &'a Places,
+        hits: &'a [usize],
+        selected: usize,
+        hovered: Option<usize>,
+        scroll: f32,
+    ) -> PlacesView<'a> {
+        PlacesView {
+            places,
+            hits,
+            selected,
+            hovered,
+            scroll,
+            filter: "",
+            caret: false,
+        }
+    }
+
     /// 打开中的浮窗。
     fn live(app: &'a App) -> Option<PlacesView<'a>> {
         Some(PlacesView {
@@ -207,6 +226,7 @@ fn draw_header(
         PlacesKind::Usages => (places.name.as_str(), t!("editor-places-usages-suffix")),
         PlacesKind::Definitions => (places.name.as_str(), t!("editor-places-definitions-suffix")),
         PlacesKind::Bookmarks => (t!("editor-places-bookmarks"), ""),
+        PlacesKind::Search => (places.name.as_str(), ""),
     };
     let title = ellipsize(frame, title, app.fonts.ui, (clip.right() - x) * 0.5);
     x = ui_text(frame, app, x, bar, &title, p.text, clip);
@@ -221,7 +241,12 @@ fn draw_header(
 }
 
 /// 绘制列表中可见的几行：文件图标、文件名与行号、那一行的代码。
-fn draw_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts, view: &PlacesView) {
+pub(in crate::view) fn draw_rows(
+    app: &App,
+    frame: &mut Frame<'_>,
+    parts: &PickerParts,
+    view: &PlacesView,
+) {
     let (p, list, scroll) = (app.palette, parts.list, drawn_scroll(view.scroll));
     let rows: Vec<(usize, &Place)> = parts
         .visible(scroll, view.hits.len())
@@ -289,8 +314,9 @@ fn draw_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts, view: &Place
         }
         ui_text_small(frame, app, x, row, line, p.text_dim, label_clip);
 
-        let code = Rect::new(code_x, row.y, row.right() - 12.0 - code_x, row.h).intersect(clip);
-        draw_code(app, frame, place, code);
+        // 按整行排版，再裁到可见的部分。
+        let code = Rect::new(code_x, row.y, row.right() - 12.0 - code_x, row.h);
+        frame.within(clip, |frame| draw_code(app, frame, place, code));
     }
 }
 
@@ -299,18 +325,39 @@ fn draw_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts, view: &Place
 ///
 /// 一行放不下时从左边截掉一些（前面加「…」），保证名字露在可见范围内。
 fn draw_code(app: &App, frame: &mut Frame<'_>, place: &Place, area: Rect) {
-    if area.w <= 0.0 {
-        return;
-    }
-    let p = app.palette;
+    draw_code_with(app, frame, place, area, CODE_ALPHA);
+}
+
+/// 与 [`draw_code`] 相同，语法颜色的不透明度为 `alpha`；语言和行首的高亮状态见
+/// [`App::place_highlight`]。
+pub(in crate::view) fn draw_code_with(
+    app: &App,
+    frame: &mut Frame<'_>,
+    place: &Place,
+    area: Rect,
+    alpha: f32,
+) {
+    let highlight = app.place_highlight(&place.path, place.line);
+    draw_code_from(app, frame, place, area, alpha, highlight);
+}
+
+/// 与 [`draw_code_with`] 相同，按语言 `language` 从行首状态 `state` 开始着色，返回下一行行首的
+/// 状态：连续绘制几行时依次传下去，跨行的结构（块注释、Vue 的 `<script>`）中的行也能着色。
+pub(in crate::view) fn draw_code_from(
+    app: &App,
+    frame: &mut Frame<'_>,
+    place: &Place,
+    area: Rect,
+    alpha: f32,
+    (language, state): (&'static winc_syntax::Language, LineState),
+) -> LineState {
     let chars: Vec<char> = place.preview.chars().collect();
     let mut tokens = Vec::new();
-    highlight_line(
-        detect(file_name(place)),
-        &chars,
-        LineState::Normal,
-        &mut tokens,
-    );
+    let next = highlight_line(language, &chars, state, &mut tokens);
+    if area.w <= 0.0 {
+        return next;
+    }
+    let p = app.palette;
 
     let cell = app.metrics.cell;
     let fit = (area.w / cell).floor() as usize;
@@ -386,7 +433,7 @@ fn draw_code(app: &App, frame: &mut Frame<'_>, place: &Place, area: Rect) {
             p.text
         } else {
             let c = p.token(kind);
-            c.alpha(c.a * CODE_ALPHA)
+            c.alpha(c.a * alpha)
         };
         let font = if kind == TokenKind::Comment {
             FontKind::MonoItalic
@@ -397,6 +444,7 @@ fn draw_code(app: &App, frame: &mut Frame<'_>, place: &Place, area: Rect) {
         let font = (font, size, cell);
         joined = col + draw_grid_char(frame, font, at, (&chars, col), color, area);
     }
+    next
 }
 
 fn file_name(place: &Place) -> &str {

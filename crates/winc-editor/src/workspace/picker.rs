@@ -9,34 +9,38 @@ mod scan;
 use fuzzy::*;
 use scan::*;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
+use winc_backend::remote::Exec;
+use winc_search::Probe;
+use winc_search::host::{self, Listing};
+
 use crate::background;
 use crate::workspace::tree::{HIDDEN, folder_prefixes, is_listed_file, walker};
 use crate::workspace::watch::Changes;
 
-/// 索引收录的最大文件数（个，经验值）。
+/// 索引收录的最大文件数（个，取自调参）。
 ///
 /// 文件再多用户也无法逐个浏览，而且打分要遍历整张文件表。
 pub const MAX_FILES: usize = 200_000;
 /// 结果列表显示的最大条数（条）。
 pub const MAX_RESULTS: usize = 200;
-/// 单个查询词的最大长度（字符，经验值）；超过时截去多余的部分，正常输入不会达到。
+/// 单个查询词的最大长度（字符，取自调参）；超过时截去多余的部分，正常输入不会达到。
 const MAX_QUERY_CHARS: usize = 128;
 /// 后台忙碌时最多暂存的变化路径数（个），与目录监视一批变化的上限（`watch::MAX_PATHS`）相同。
 ///
 /// 超过该值时不再逐个记录，改为后台完成后整个重新遍历。
 const MAX_QUEUED: usize = 4096;
-/// 并行打分的文件数下限（个，经验值）。
+/// 并行打分的文件数下限（个，取自调参）。
 ///
 /// 待打分的文件少于该值时用一个线程算完，因为启动线程的开销更大。
 const PARALLEL_MIN: usize = 16_384;
-/// 打分使用的最大线程数（个，经验值）。
+/// 打分使用的最大线程数（个，取自调参）。
 ///
 /// 查询的开销主要在遍历文件表上，线程再多也不会明显变快，反而增加每次查询的调度开销。
 const MAX_THREADS: usize = 8;
@@ -62,6 +66,8 @@ struct Files {
     names: Vec<u32>,
     /// 文件太多、只收录了浅层目录时，收录的层数（从 1 起）；全部收录时为 `None`。
     layers: Option<usize>,
+    /// 有远端的目录没能列出文件，其中的文件不在表中。
+    failed: bool,
     /// 遍历过的目录（相对路径，不含根目录）。
     ///
     /// 被忽略的、因太深而未收录的目录不在其中，
@@ -270,8 +276,11 @@ pub struct FileIndex {
     narrowing: Narrowing,
     /// 后台线程检查该标志，决定是否提前结束（换了工作区、关闭窗口、重新遍历时置位）。
     cancel: Option<Arc<AtomicBool>>,
-    /// 后台送回已建好、已更新的文件表的通道；表没有变化时送回 `None`。
-    receiver: Option<Receiver<Option<Files>>>,
+    /// 后台送回已建好、已更新的文件表的通道；没能更新（被取消、远端的目录没能查看）时送回
+    /// `None`。
+    receiver: Option<Receiver<Option<Patched>>>,
+    /// 后台更新时确认已不存在的文件和目录，由 [`Self::take_missing`] 取走。
+    missing: Vec<PathBuf>,
     /// 后台忙碌时收到的变化，后台完成后再处理。
     queued: Vec<PathBuf>,
     /// 后台忙碌时收到的变化超过 [`MAX_QUEUED`]：不再逐个记录，后台完成后整个重新遍历。
@@ -358,7 +367,10 @@ impl FileIndex {
         };
         spawn(Box::new(move || {
             let files = match job {
-                Job::Walk => Some(collect_all(&root, &extra, MAX_FILES, &worker_cancel)),
+                Job::Walk => Some(Patched {
+                    files: Some(collect_all(&root, &extra, MAX_FILES, &worker_cancel)),
+                    missing: Vec::new(),
+                }),
                 Job::Patch(paths) => patch(&root, &base, &paths, &worker_cancel),
             };
             // 发送失败说明界面一侧已不再需要结果，直接退出。
@@ -404,11 +416,18 @@ impl FileIndex {
         };
 
         let changed = match receiver.try_recv() {
-            Ok(Some(files)) => {
-                self.files = Arc::new(files);
-                self.opened.clear();
-                self.narrowing = Narrowing::default();
-                true
+            Ok(Some(patched)) => {
+                if let Some(root) = &self.root {
+                    let gone = patched.missing.iter().map(|rel| absolute_in(root, rel));
+                    self.missing.extend(gone);
+                }
+                let changed = patched.files.is_some();
+                if let Some(files) = patched.files {
+                    self.files = Arc::new(files);
+                    self.opened.clear();
+                    self.narrowing = Narrowing::default();
+                }
+                changed
             }
             Ok(None) => false,
             Err(TryRecvError::Empty) => return false,
@@ -440,7 +459,7 @@ impl FileIndex {
         let root = self.root.clone().unwrap_or_default();
         let outside = |path: &PathBuf| {
             (self.extra.iter()).any(|(label, folder)| {
-                path.starts_with(folder) || path.starts_with(root.join(label))
+                path.starts_with(folder) || path.starts_with(absolute_in(&root, label))
             })
         };
         if changes.rescan || changes.paths.iter().any(outside) {
@@ -473,7 +492,7 @@ impl FileIndex {
         }
     }
 
-    /// 索引是否已经就绪（要么建好了，要么本来就不需要建）。
+    /// 索引是否已经就绪（要么建好了，要么原本就不需要建）。
     pub fn is_ready(&self) -> bool {
         self.receiver.is_none()
     }
@@ -483,6 +502,17 @@ impl FileIndex {
         if let Some(cancel) = &self.cancel {
             cancel.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// 是否有远端的目录没能列出文件；此时文件表不全，[`Self::refresh`] 会重试。
+    pub fn failed(&self) -> bool {
+        self.files.failed
+    }
+
+    /// 取走后台更新时确认已不存在的文件和目录（绝对路径）：调用方据此清理别处记着的这些路径，
+    /// 例如最近打开的文件。
+    pub fn take_missing(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.missing)
     }
 
     /// 重新遍历目录。
@@ -593,13 +623,13 @@ impl FileIndex {
     /// 返回绝对路径在工作区文件表中的显示路径，附加目录带有各自的前缀。
     fn relative(&self, path: &Path) -> Option<String> {
         let inside = |(label, folder): &(String, PathBuf)| {
-            let relative = relative_path(path.strip_prefix(folder).ok()?)?;
+            let relative = relative_in(folder, path)?;
             Some(format!("{label}/{relative}"))
         };
         self.extra
             .iter()
             .find_map(inside)
-            .or_else(|| relative_path(path.strip_prefix(self.root.as_ref()?).ok()?))
+            .or_else(|| relative_in(self.root.as_ref()?, path))
     }
 
     /// 绝对路径 `path` 是否在后台文件表中：不在工作区里时为 `None`，在工作区里而未收录（被忽略、
@@ -636,12 +666,29 @@ impl FileIndex {
     pub fn absolute(&self, index: usize) -> Option<PathBuf> {
         let root = self.root.as_ref()?;
         let file = self.file(index)?;
-        let native = |path: &str| path.replace('/', std::path::MAIN_SEPARATOR_STR);
         let inside = |(label, folder): &(String, PathBuf)| {
             let rest = file.path.strip_prefix(label.as_str())?.strip_prefix('/')?;
-            Some(folder.join(native(rest)))
+            Some(absolute_in(folder, rest))
         };
-        Some((self.extra.iter().find_map(inside)).unwrap_or_else(|| root.join(native(file.path))))
+        Some((self.extra.iter().find_map(inside)).unwrap_or_else(|| absolute_in(root, file.path)))
+    }
+}
+
+/// 返回 `path` 在目录 `dir` 下的相对路径（以 `/` 分隔）；不在其下、就是它自己或含非 UTF-8 的
+/// 部分时返回 `None`。远端的路径用远端主机上的名字，与远端列出的文件表一致。
+fn relative_in(dir: &Path, path: &Path) -> Option<String> {
+    match winc_backend::is_remote(dir) {
+        true => winc_backend::relative_lossy(path, dir).filter(|relative| !relative.is_empty()),
+        false => winc_search::slashed(path.strip_prefix(dir).ok()?),
+    }
+}
+
+/// 返回目录 `dir` 下的相对路径 `relative`（以 `/` 分隔）的完整路径；远端的名字在需要转义的系统
+/// 上转义后才成为路径的一段。
+fn absolute_in(dir: &Path, relative: &str) -> PathBuf {
+    match winc_backend::is_remote(dir) {
+        true => winc_backend::join(dir, relative),
+        false => dir.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)),
     }
 }
 

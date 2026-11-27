@@ -17,9 +17,9 @@ use winc_i18n::t;
 use crate::app::animation::stage;
 use crate::app::git::log::display_local;
 use crate::app::{
-    COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitScope, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE, MESSAGE_PAD,
-    StashLine, StashView, SyncState, WorktreeLine,
+    ActionStrip, COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts,
+    CommitRow, CommitRows, CommitScope, CommitTarget, Focus, LabelCause, LabelView, MESSAGE_LINE,
+    MESSAGE_PAD, PeekView, StashLine, SyncState, WorktreeLine,
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
@@ -30,14 +30,19 @@ use crate::view::*;
 
 mod others;
 use others::{draw_other_rows, draw_sections};
+mod actions;
 mod header;
 mod names;
+use actions::*;
+mod history;
 mod overflow;
 mod row;
 mod stash;
 mod worktrees;
 
 use header::*;
+pub(in crate::view) use history::draw_history_card;
+use history::*;
 use names::*;
 pub(in crate::view::git) use names::{dir_parts, draw_name, file_parts, parts_width};
 pub(in crate::view) use overflow::commit_overflow;
@@ -72,7 +77,8 @@ const NEXT_PAD: f32 = 12.0;
 /// 绘制提交视图，返回提交信息里光标的矩形（窗口坐标，逻辑像素），供输入法定位候选框。
 pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Option<Rect> {
     // 提交信息框随内容长高：先按框的宽度折好行（框的宽度和高度无关，卡片和分支行同宽，卡片
-    // 收起时也照样折），框的高度按行数定，绘制时继续使用折好的行。
+    // 收起时也仍然折），框的高度按行数定，绘制时继续使用折好的行。
+    app.track_history();
     app.track_stash_height();
     app.track_worktree_height();
     app.sections_tracked();
@@ -149,12 +155,29 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     let widths = app.track_context_row(widths);
     draw_context(app, frame, &parts, widths, &mut hits);
     draw_banner(app, frame, &parts, &mut hits);
+    draw_history(app, frame, &parts, &mut hits);
+    // 提交历史一组的滚动条贴在组内各行的右边，放得下时没有。
+    if let Some(rows) = app.history_rows_area() {
+        let scroll = drawn_scroll(app.git.commit.history.scroll);
+        let content = app.history_max_scroll() + rows.h;
+        let track = rows.intersect(app.layout.sidebar);
+        draw_scrollbar(
+            app,
+            frame,
+            ScrollArea::CommitHistory,
+            0,
+            track,
+            scroll,
+            content,
+        );
+    }
     draw_worktrees(app, frame, &parts, &mut hits);
     draw_stashes(app, frame, &parts, &mut hits);
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
     app.hits.commit = hits;
     app.git.commit.hits_generation = app.git.generation;
+    app.git.commit.history.hits_drawn();
     caret
 }
 
@@ -580,11 +603,11 @@ fn row_id<'a>(status: &'a Status, row: &'a CommitRow) -> RowId<'a> {
     }
 }
 
-/// 固定在顶部的组、目录：盖住下面滚过去的行，下沿一道细线。
+/// 固定在顶部的组、目录：遮住下面滚过去的行，下沿一道细线。
 ///
 /// 点击时先滚到那一行再收起或展开，勾选框仍可点击；命中范围记在 `hits` 最前面，先于
 /// 下面的行判定。被下一个组、目录往上推的那一行只画在它自己那一格里，从上一层固定的行
-/// 下面滑走，不盖住上一层，否则滚动时上下两行会叠在一起。
+/// 下面滑走，不遮住上一层，否则滚动时上下两行会叠在一起。
 fn draw_sticky(
     app: &App,
     frame: &mut Frame<'_>,
@@ -606,7 +629,7 @@ fn draw_sticky(
         let mut row_hits = Vec::new();
         frame.within(slot, |frame| {
             frame.rect_clipped(s.rect, p.sidebar_bg, 0.0, list);
-            // 多仓库时固定的行也在当前仓库一节里：盖住卡片以后补上卡片的底色。
+            // 多仓库时固定的行也在当前仓库一节里：遮住卡片以后补上卡片的底色。
             if app.commit_base_level() > 0 {
                 let band = Rect::new(list.x + 8.0, s.rect.y, list.w - 16.0, COMMIT_ROW);
                 frame.rect_clipped(band, others::current_fill(app), 0.0, list);
@@ -638,7 +661,7 @@ fn draw_sticky(
     if let Some(bottom) = sticky.iter().map(|s| s.rect.bottom()).reduce(f32::max) {
         let line = Rect::new(list.x, bottom - 1.0, list.w, 1.0);
         frame.rect_clipped(line, p.separator, 0.0, list);
-        // 固定的各行下面被盖住的行点不到。
+        // 固定的各行下面被遮住的行点不到。
         let covered = Rect::new(list.x, list.y, list.w, bottom - list.y);
         hits.retain(|(rect, _)| !covered.contains(rect.x + 1.0, rect.y + rect.h / 2.0));
     }
@@ -710,7 +733,7 @@ fn chevron(
     icons::chevron_turned(frame, at, 6.0, turned * FRAC_PI_2, color, clip);
 }
 
-/// 改动行悬停时右端按钮的边长（逻辑像素，经验值）。
+/// 改动行悬停时右端按钮的边长（逻辑像素，取自调参）。
 const ACTION: f32 = 20.0;
 
 /// 行右端那一列的中心离行底色右边的距离（逻辑像素）：悬停的按钮、状态字母都以它为中心。
@@ -722,85 +745,11 @@ const END_CENTER: f32 = 12.0;
 /// 对齐。
 const END_PAD: f32 = END_CENTER - ACTION / 2.0;
 
-/// 返回改动行 `band` 悬停时右端「打开文件」「回滚」两个按钮的位置。
-fn file_actions(band: Rect) -> (Rect, Rect) {
-    let y = band.y + (band.h - ACTION) / 2.0;
-    let revert = Rect::new(band.right() - END_PAD - ACTION, y, ACTION, ACTION);
-    let open = Rect::new(revert.x - 2.0 - ACTION, y, ACTION, ACTION);
-    (open, revert)
-}
-
-/// 返回文件行行尾两个按钮各自的目标：`group` 是该行所在的组，`index` 是文件在状态中的下标。
-///
-/// 勾选式下和冲突的文件是「打开文件」「回滚」。暂存区视图中，已暂存的文件是「打开文件」
-/// 「取消暂存」，其余是「回滚」「暂存」。
-fn file_action_targets(app: &App, group: Option<CommitGroup>, index: usize) -> [CommitTarget; 2] {
-    let plain = [
-        CommitTarget::OpenFile(index),
-        CommitTarget::RevertFile(index),
-    ];
-    match group {
-        _ if !app.git.commit.staging() => plain,
-        Some(CommitGroup::Conflicts) => plain,
-        Some(CommitGroup::Staged) => [plain[0], CommitTarget::StageFile(index, false)],
-        _ => [plain[1], CommitTarget::StageFile(index, true)],
-    }
-}
-
-/// 返回目录行行尾的按钮：暂存区视图中暂存（「已暂存的更改」一组是取消暂存）这个目录下的全部
-/// 文件；勾选式下和冲突的一组没有。`row` 是目录行的下标。
-fn dir_action_target(app: &App, group: CommitGroup, row: usize) -> Option<CommitTarget> {
-    let shown = app.git.commit.staging();
-    (shown && group != CommitGroup::Conflicts)
-        .then(|| CommitTarget::DirStage(row, group != CommitGroup::Staged))
-}
-
-/// 绘制文件行行尾的两个按钮（位置为 `first`、`second`，目标见 [`file_action_targets`]），只绘制
-/// 在 `clip` 之内；悬停的按钮铺底色，图标用正文色。
-fn draw_file_actions(
-    app: &App,
-    frame: &mut Frame<'_>,
-    (first, second): (Rect, Rect),
-    targets: [CommitTarget; 2],
-    clip: Rect,
-) {
-    let p = app.palette;
-    for (rect, target) in [(first, targets[0]), (second, targets[1])] {
-        let on = app.pointer.hover == Hover::Commit(target);
-        draw_button(frame, p, rect, clip, on, false);
-        let color = if on { p.text } else { p.text_muted };
-        draw_action_icon(frame, target, center(rect), color, clip);
-    }
-}
-
-/// 画行尾按钮 `target` 的图标：打开文件、回滚，或者暂存（加号）、取消暂存（减号）。
-fn draw_action_icon(
-    frame: &mut Frame<'_>,
-    target: CommitTarget,
-    (cx, cy): (f32, f32),
-    color: Color,
-    clip: Rect,
-) {
-    match target {
-        CommitTarget::OpenFile(_) => icons::open_file(frame, (cx, cy), color, clip),
-        CommitTarget::StageFile(_, true) | CommitTarget::DirStage(_, true) => {
-            icons::plus(frame, (cx, cy), 8.0, color, clip);
-        }
-        CommitTarget::StageFile(_, false)
-        | CommitTarget::DirStage(_, false)
-        | CommitTarget::GroupStage(CommitGroup::Staged) => {
-            icons::minus(frame, (cx, cy), 8.0, color, clip);
-        }
-        CommitTarget::GroupStage(_) => icons::plus(frame, (cx, cy), 8.0, color, clip),
-        _ => icons::rollback(frame, (cx, cy), color, clip),
-    }
-}
-
 /// 改动列表里一行的各列（逻辑像素）：箭头的中心离底色左边 `ARROW`，每深一层往右缩进
 /// `INDENT`（与文件视图的树共用 `theme::TREE_INDENT`，16），图标和名字之间隔 `LABEL_GAP`。
 ///
 /// 箭头和图标之间多一列勾选框：勾选框的中心在箭头右边 `CHECK`，图标从勾选框中心往右
-/// `ICON` 开始。间距均为经验值。
+/// `ICON` 开始。间距均取自调参。
 const ARROW: f32 = 10.0;
 const INDENT: f32 = crate::theme::TREE_INDENT;
 const CHECK: f32 = 16.0;
@@ -816,14 +765,13 @@ fn message_area(app: &App, rect: Rect) -> Rect {
     rect.inset(side, MESSAGE_PAD)
 }
 
-/// 绘制底部的提交卡片：提交信息（折好的行是 `wrap`），底行左边是「修改上次提交」，右边是
-/// 「提交 ⌄」拆分按钮。不显示卡片时什么也不画。
+/// 绘制底部的提交卡片：提交信息（折好的行是 `wrap`），底行左边是「修改上次提交」，右边是「提交 ⌄」
+/// 拆分按钮。不显示卡片时什么也不画。
 ///
-/// 整张卡片就是提交信息的输入框：平时没有边框，铺一层比侧栏深一点的中性底色；有焦点时换成
-/// 编辑区的底色，外圈画强调色，和搜索框一样。
+/// 整张卡片就是提交信息的输入框：平时没有边框，铺一层比侧栏深一点的中性底色；有焦点时换成编辑区的底
+/// 色，外圈画强调色，和搜索框一样。
 ///
-/// 卡片滑进、滑出时有一部分在视图底部下面，整张裁在侧栏里；滑出途中已经不该再提交，不响应
-/// 点击。
+/// 卡片滑进、滑出时有一部分在视图底部下面，整张裁在侧栏里；滑出途中已经不该再提交，不响应点击。
 fn draw_compose(
     app: &mut App,
     frame: &mut Frame<'_>,
@@ -898,12 +846,9 @@ fn draw_card(
         hits.push((amend, CommitTarget::Amend));
     }
 
-    // 「提交 ⌄」：强调色的拆分按钮，左边「✓ 提交」，右边一道细竖线隔开下拉箭头。
-    // 无法提交（见 `CommitState::blocker`：未勾选文件、未填写说明、仍有冲突标记）时按钮整体
-    // 变淡且悬停不变色，表示按下不会生效；变基暂停时无需勾选即可继续。正在提交时保持强调色，
-    // 只是不响应悬停，按钮不在提交前后闪成灰色。
-    // 底行放得下时「提交并推送…」排在提交按钮旁边，下拉箭头成为单独的小按钮；放不下时推送在
-    // 下拉菜单里，提交按钮与箭头连成一个拆分按钮。
+    // 「提交 ⌄」：强调色的拆分按钮，左边「✓ 提交」，右边一道细竖线隔开下拉箭头。无法提交（见
+    // `CommitState::blocker`）时按钮整体变淡且悬停不变色；变基暂停时无需勾选即可继续；正在提交时保
+    // 持强调色、不响应悬停。底行放得下时「提交并推送…」排在提交按钮旁边，放不下时推送在下拉菜单里。
     let (main, menu) = (parts.commit, parts.commit_menu);
     // 下拉箭头紧贴提交按钮时两者连成一个拆分按钮，否则各自成块。
     let joined = parts.push.is_none() && (menu.x - main.right()).abs() < 0.5;
@@ -943,6 +888,10 @@ fn draw_card(
         draw_push_button(app, frame, push, ready, panel.intersect(card));
         hits.push((push, CommitTarget::CommitPush));
     }
+    if let Some(rect) = parts.generate {
+        draw_generate_button(app, frame, rect, panel.intersect(card));
+        hits.push((rect, CommitTarget::Generate));
+    }
     if !joined {
         draw_button(frame, p, menu, panel.intersect(card), menu_lit, open);
         let arrow = if menu_lit { p.text } else { p.text_muted };
@@ -975,7 +924,7 @@ fn draw_card(
         };
         let right = match parts.amend {
             Some(_) => menu.right() - 4.0,
-            None => menu.x - 8.0,
+            None => parts.generate.unwrap_or(menu).x - 8.0,
         };
         let hint_w = frame.measure(FontKind::Ui, size, &hint);
         if right - left >= hint_w {
@@ -1001,6 +950,25 @@ fn draw_push_button(app: &App, frame: &mut Frame<'_>, rect: Rect, ready: bool, c
     let x = (rect.x + (rect.w - width) / 2.0).round();
     let ink = if ready { p.text } else { p.text_dim };
     ui_text_small(frame, app, x, rect, text, ink, clip.intersect(rect));
+}
+
+/// 绘制「生成提交信息」：无底色的图标按钮，悬停时铺底色；生成期间图标换为转动的圆弧，按钮保持
+/// 按下时的底色。
+fn draw_generate_button(app: &App, frame: &mut Frame<'_>, rect: Rect, clip: Rect) {
+    let p = app.palette;
+    let running = app.git.commit.generating.running();
+    let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Generate);
+    draw_button(frame, p, rect, clip, hovered, running);
+    let color = if hovered || running {
+        p.text
+    } else {
+        p.text_muted
+    };
+    let clip = clip.intersect(rect);
+    match running {
+        true => icons::spinner(frame, center(rect), 5.0, icons::spin_turn(), color, clip),
+        false => icons::sparkle(frame, center(rect), color, clip),
+    }
 }
 
 /// 提交按钮上的文字；按钮上只有文字，没有图标。

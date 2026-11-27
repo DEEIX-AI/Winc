@@ -57,8 +57,8 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     assert_eq!(head(&app), "featurex");
     assert!(app.git.branches.iter().any(|b| b.name == "side"));
 
-    // 菜单里：当前分支只能从它新建分支和重命名，别的分支能检出、新建、比较、合并、变基、删除。
-    // 没有上游：分支选择器里的拉取灰显。
+    // 菜单里：当前分支只能从它新建分支、重命名和复制名字，别的分支另外还能检出、比较、合并、
+    // 变基、删除。没有上游：分支选择器里的拉取灰显。
     assert!(!app.picker_action_enabled(crate::app::PickerPart::Pull));
     let ops = |app: &App, name: &str| {
         branch_ops(index_of(app, name), &app.git.branches, &[], &[], false)
@@ -66,8 +66,8 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
             .filter(|entry| matches!(entry, MenuEntry::Item(..)))
             .count()
     };
-    assert_eq!(ops(&app, "featurex"), 2);
-    assert_eq!(ops(&app, "main"), 8);
+    assert_eq!(ops(&app, "featurex"), 3);
+    assert_eq!(ops(&app, "main"), 9);
 
     // 检出 main，再删除 featurex。
     let main = index_of(&app, "main");
@@ -155,6 +155,13 @@ fn branch_menu_creates_switches_pushes_and_deletes() {
     git_in(&root, &["push", "-q", "origin", "main:topic"]);
     app.run_branch_command(MenuCommand::GitFetch);
     let topic = index_of(&app, "origin/topic");
+    // 复制远程分支的名字时带着远程名，和列表里显示的一致。
+    choose_in_branch_menu(&mut app, MenuCommand::GitBranch(BranchOp::CopyName, topic));
+    assert_eq!(app.clipboard_text().as_deref(), Some("origin/topic"));
+    assert_eq!(
+        app.status.message.as_deref(),
+        Some("已复制分支名「origin/topic」")
+    );
     choose_in_branch_menu(&mut app, MenuCommand::GitBranch(BranchOp::Checkout, topic));
     assert_eq!(head(&app), "topic");
     paint(&mut app);
@@ -284,7 +291,7 @@ fn the_branch_row_opens_the_picker_below_it_and_enter_switches() {
     let row = app.commit_parts().branch;
     assert_eq!(app.layout.picker.x, row.x);
     assert!(app.layout.picker.y >= row.bottom());
-    // 当前分支在最前；其余目录默认收起，当前分支不在目录里时目录都收着。
+    // 当前分支在最前；其余目录默认收起，当前分支不在目录里时目录都保存。
     assert_eq!(picker_labels(&app), ["main", "feature", "fix"]);
 
     // 搜索展开目录，回车切换并关闭。
@@ -731,6 +738,29 @@ fn a_failed_switch_restores_the_stashed_changes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 储藏并签出时没有可储藏的内容、签出又失败：原有的储藏不动。
+#[test]
+fn a_failed_switch_with_nothing_to_stash_keeps_old_stashes() {
+    let Some((mut app, root)) = picker_repo("git-stash-clean", false) else {
+        return;
+    };
+    let file = root.join("a.txt");
+    let committed = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, "kept\n").unwrap();
+    git_in(&root, &["stash", "push", "-q", "--include-untracked"]);
+    app.git_refresh();
+    let mut missing = (app.git.branches.iter())
+        .find(|b| b.name == "fix/one")
+        .unwrap()
+        .clone();
+    missing.name = "no-such-branch".to_owned();
+    app.stash_then_checkout(missing);
+    app.git_refresh();
+    assert_eq!(app.git.stashes.len(), 1);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), committed);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 拉取能处理分叉的分支，和同步一样；不在分支上时分支选择器里的推送灰显。
 #[test]
 fn the_status_menu_pulls_diverged_branches_and_needs_a_branch_to_push() {
@@ -819,7 +849,7 @@ fn pulling_keeps_uncommitted_changes_and_reports_a_conflicting_restore() {
     let _ = std::fs::remove_dir_all(&remote);
 }
 
-/// 侧栏收着时也能从状态栏打开分支选择器：面板在状态栏上方、窗口之内，搜索框下面是拉取、推送、
+/// 侧栏保存时也能从状态栏打开分支选择器：面板在状态栏上方、窗口之内，搜索框下面是拉取、推送、
 /// 获取一行，列表从它下面开始；按住 ⌥ 时拉取换成拉取并变基。
 #[test]
 fn the_status_bar_opens_the_branch_picker_with_the_sync_actions() {
@@ -892,7 +922,7 @@ fn the_switch_branch_command_opens_the_picker_where_it_can_be_seen() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 截图：从状态栏打开的分支选择器（侧栏收着），搜索框下面是拉取、推送、获取
+/// 截图：从状态栏打开的分支选择器（侧栏保存），搜索框下面是拉取、推送、获取
 /// （`branch-picker-status`）。
 #[test]
 #[ignore = "截图，手动运行"]
@@ -1030,7 +1060,7 @@ fn folding_animates_the_rows_and_the_height() {
     assert!(app.layout.picker.h > closed && app.layout.picker.h < opened);
     shoot(&mut app, "branch-picker-fold");
 
-    // 再按一下鼠标：动画取消，直接到位。
+    // 再按一次鼠标：动画取消，直接到位。
     let inside = app.layout.picker;
     app.on_mouse_move(inside.x + 40.0, inside.y + 12.0);
     app.on_mouse_down(MouseButton::Left);
@@ -1278,5 +1308,46 @@ fn publishing_asks_with_the_target_remote_until_told_not_to() {
 
     let _ = std::fs::remove_dir_all(&fork);
     let _ = std::fs::remove_dir_all(&origin);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 回归（#515）：仓库的钩子未经信任时切换分支被拒绝，关掉询问信任的提示框后无处再信任。失败
+/// 提示提供「信任此仓库…」，信任后可以切换。
+#[cfg(unix)]
+#[test]
+fn a_refused_switch_offers_to_trust_the_repository() {
+    use crate::app::NoticeAction;
+    use crate::app::git::branch::BranchOp;
+    use crate::app::input::context_menu::MenuCommand;
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some((mut app, root)) = git_app("git-trust-refused", false) else {
+        return;
+    };
+    git_in(&root, &["add", "."]);
+    git_in(&root, &["commit", "-q", "-m", "second"]);
+    git_in(&root, &["branch", "side"]);
+    let hook = root.join(".git/hooks/post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    app.git_refresh();
+    let side = (app.git.branches.iter()).position(|b| b.name == "side");
+    let checkout = MenuCommand::GitBranch(BranchOp::Checkout, side.unwrap());
+    choose_in_branch_menu(&mut app, checkout);
+    app.poll_branch_ops();
+    assert_eq!(head_name(&app).as_deref(), Some("main"));
+    let action = Some(NoticeAction::TrustGitRepository(root.clone()));
+    assert_eq!(app.notice.action, action, "{:?}", app.notice.text);
+
+    let git = app.git.tool.get().unwrap();
+    let fingerprint = git.known_untrusted(&root).unwrap().fingerprint;
+    app.answer_git_trust(&root, fingerprint, true);
+    let side = (app.git.branches.iter()).position(|b| b.name == "side");
+    choose_in_branch_menu(
+        &mut app,
+        MenuCommand::GitBranch(BranchOp::Checkout, side.unwrap()),
+    );
+    app.poll_branch_ops();
+    assert_eq!(head_name(&app).as_deref(), Some("side"));
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -1,5 +1,6 @@
 //! 顶栏绘制：标签栏和新建标签按钮，由应用绘制标题栏时右端还有窗口按钮。
 
+use super::sidebar::git_color;
 use super::*;
 use crate::app::TabHit;
 
@@ -75,9 +76,12 @@ const TAB_DIVIDER: f32 = 14.0;
 
 /// 计算每个标签的宽度和显示文本，顺序与文档列表一致。
 ///
-/// 宽度贴合文本，介于 [`TAB_WIDTH_MIN`] 和 [`TAB_WIDTH_MAX`] 之间，取整到整像素，文本更长时
-/// 截短；用鼠标关闭标签后，移到关掉的位置上的标签暂用锁定的宽度（见 `TabBar::width_lock`）。
+/// 宽度贴合文本，不窄于 [`TAB_WIDTH_MIN`]，取整到整像素。开着「完整显示文件名」
+/// （`editor.fullTabNames`，默认）时不设上限，只在一个标签比标签栏放得下的还宽时截短；关着时
+/// 最宽 [`TAB_WIDTH_MAX`]，文本更长时截短。用鼠标关闭标签后，移到关掉的位置上的标签暂用锁定的
+/// 宽度（见 `TabBar::width_lock`）。
 fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
+    let widest = tab_width_limit(app);
     let docs = app.editor.tabs();
     // 只有同名的标签需要标注上级目录：先数出各名字的标签数，名字唯一的标签不再与其余全部标签
     // 逐一比较（每帧都要计算，标签多时是标签数的平方）。
@@ -101,9 +105,7 @@ fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
             }
             let width = match app.tabs.width_lock {
                 Some((locked, width)) if locked == index => width,
-                _ => (TAB_CHROME + text)
-                    .ceil()
-                    .clamp(TAB_WIDTH_MIN, TAB_WIDTH_MAX),
+                _ => (TAB_CHROME + text).ceil().clamp(TAB_WIDTH_MIN, widest),
             };
             let room = width - TAB_CHROME;
 
@@ -142,8 +144,21 @@ fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
 /// 标签放不下时，新建按钮和最右端「⌄」之间的间距（逻辑像素）。
 const TAB_LIST_GAP: f32 = 2.0;
 
+/// 一个标签最宽多少（逻辑像素）。
+///
+/// 显示完整文件名时是标签栏在标签放不下时露出标签的宽度（右端让出新建按钮和「⌄」）：一个标签
+/// 总能整个看见，文件名比这还长才截短；标签栏比 [`TAB_WIDTH_MAX`] 还窄时按它。不显示完整文件名
+/// 时就是 [`TAB_WIDTH_MAX`]。
+fn tab_width_limit(app: &App) -> f32 {
+    if app.config.full_tab_names == Some(false) {
+        return TAB_WIDTH_MAX;
+    }
+    let view = app.layout.tabs.w - TAB_INSET - 2.0 * BUTTON - TAB_LIST_GAP - 6.0;
+    view.floor().max(TAB_WIDTH_MAX)
+}
+
 /// 绘制标签栏：当前标签是实心胶囊，相邻两个未选中标签之间绘制一条竖线；有未保存修改的标签
-/// 显示圆点，悬停时变成关闭按钮。
+/// 显示圆点，悬停时变成关闭按钮。有 Git 状态的文件名用该状态的颜色。
 ///
 /// 放不下时可以横向滚动，被裁掉的一端渐隐，新建按钮和列出全部标签的「⌄」固定在右端。
 /// 同时更新 `app.tabs` 中的几何信息和各标签的命中区域。
@@ -279,6 +294,14 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
                 let c = (icon.0 + icons::FILE_WIDTH / 2.0, icon.1);
                 icons::git(frame, c, 1.0, p.accent, clip);
                 icon.0 + icons::FILE_WIDTH + 7.0
+            } else if ghost.terminal {
+                icons::terminal(
+                    frame,
+                    (icon.0 + icons::FILE_WIDTH / 2.0, icon.1),
+                    p.text_muted,
+                    clip,
+                );
+                icon.0 + icons::FILE_WIDTH + 7.0
             } else {
                 draw_file_icon(frame, p, icon, &ghost.icon, clip) + 7.0
             };
@@ -356,7 +379,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
         new_tab,
         area,
         app.pointer.hover == Hover::NewTab,
-        false,
+        app.overlays.menu_button == Some(MenuButton::NewTab),
     );
     icons::plus(frame, center(new_tab), 9.0, p.text_muted, area);
     if let Some(list) = list {
@@ -381,6 +404,36 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
     app.hits.tabs = hits;
     draw_preview_button(app, frame);
     draw_browser_button(app, frame);
+    draw_terminal_return(app, frame);
+}
+
+/// 当前标签是终端或日志时，绘制标签栏右端的「移至面板」按钮（`Layout::terminal_return`）。
+fn draw_terminal_return(app: &App, frame: &mut Frame<'_>) {
+    let button = app.layout.terminal_return;
+    if button.w <= 0.0 || button.h <= 0.0 {
+        return;
+    }
+    let p = app.palette;
+    if app.editor.active().is_some_and(|doc| doc.log.is_some()) {
+        let hit = crate::app::git::panel::PanelHit::ToPanel;
+        let hover = app.pointer.hover == Hover::GitPanel(hit);
+        draw_button(frame, p, button, app.layout.top_bar, hover, false);
+        let color = if hover { p.text } else { p.text_muted };
+        icons::panel(frame, center(button), false, color, app.layout.top_bar);
+        return;
+    }
+    if !app.editor.active().is_some_and(|doc| doc.terminal) {
+        return;
+    }
+    let hover = app.pointer.hover == Hover::TerminalHeader(crate::app::terminal::HeaderHit::Panel);
+    draw_button(frame, p, button, app.layout.top_bar, hover, false);
+    icons::panel(
+        frame,
+        center(button),
+        app.terminal_right(),
+        p.text_muted,
+        app.layout.top_bar,
+    );
 }
 
 /// 绘制标签栏右端的「在浏览器中打开」按钮（`Layout::browser`）：出现、消失时随按钮宽度淡入
@@ -468,21 +521,29 @@ fn draw_tab(
     }
 
     // 图标按 `tab_icon_name` 取；日志标签绘制 Git 的图标。
-    let icon_name = tab_icon_name(doc);
     let icon = (tab.x + 10.0, icon_center_y(app, tab, app.fonts.ui));
     let cx = if doc.log.is_some() {
         let c = (icon.0 + icons::FILE_WIDTH / 2.0, icon.1);
         // 实色的强调色，与文件标签的彩色图标同样醒目。
         icons::git(frame, c, 1.0, p.accent, view);
         icon.0 + icons::FILE_WIDTH + 7.0
+    } else if doc.terminal {
+        icons::terminal(
+            frame,
+            (icon.0 + icons::FILE_WIDTH / 2.0, icon.1),
+            p.text_muted,
+            view,
+        );
+        icon.0 + icons::FILE_WIDTH + 7.0
     } else {
-        draw_file_icon(frame, p, icon, &icon_name, view) + 7.0
+        draw_file_icon(frame, p, icon, &tab_icon_name(doc), view) + 7.0
     };
-    let color = if (active && !behind) || marked {
+    let plain = if (active && !behind) || marked {
         p.text
     } else {
         p.text_muted
     };
+    let color = file_name_color(app, doc, plain);
     // 预览标签（见 `App::preview_index`）的名称倾斜，与普通标签区分。
     let cx = if app.preview_index() == Some(index) {
         ui_text_italic(frame, app, cx, tab, &label.name, color, view)
@@ -514,6 +575,17 @@ fn draw_tab(
         close,
         elided: label.elided,
     }
+}
+
+/// 标签和标签页切换列表中文件名的颜色：文件有 Git 状态时用该状态的颜色（与文件树相同），否则
+/// 用 `plain`。被 Git 忽略的文件不变淡；终端、日志和差异标签没有文件，用 `plain`。
+pub(in crate::view) fn file_name_color(
+    app: &App,
+    doc: &winc_editor::Document,
+    plain: Color,
+) -> Color {
+    let change = doc.path.as_deref().and_then(|path| app.git.change_of(path));
+    change.map_or(plain, |change| git_color(app.palette, change))
 }
 
 /// 标签的底（编辑区和终端面板的标签共用），都不带边：当前的是一块实底，颜色由主题定，带一点

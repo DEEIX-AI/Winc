@@ -8,6 +8,23 @@ use super::*;
 impl App {
     /// 处理菜单中选中的命令 `command`：作用于弹出菜单时记录的目标。
     pub(in crate::app) fn run_menu_command(&mut self, command: MenuCommand) {
+        // 「未提交的更改」中的逐行追溯作用于所有文件，同命令「Git：逐行追溯」。
+        if command == MenuCommand::ToggleBlame && self.combined_active() {
+            self.overlays.context_menu = None;
+            self.overlays.menu_button = None;
+            self.toggle_combined_blame();
+            return;
+        }
+        // 「未提交的更改」中差异的菜单是在当前段里弹出的：命令同样交给它。
+        let in_diff = (self.overlays.context_menu.as_ref())
+            .is_some_and(|m| matches!(m.target, MenuTarget::Diff(..) | MenuTarget::DiffGutter(_)));
+        if in_diff
+            && self
+                .in_combined_current(|app| app.run_menu_command(command))
+                .is_some()
+        {
+            return;
+        }
         let Some(menu) = self.overlays.context_menu.take() else {
             return;
         };
@@ -32,12 +49,15 @@ impl App {
             MenuTarget::Tab(id) => self.run_tab_command(command, id),
             MenuTarget::CommitFile(path) => self.run_commit_file_command(command, path),
             // 提交上的分支子菜单：分支按弹出菜单时的列表解释。
-            MenuTarget::LogCommit(_) if let MenuCommand::GitBranch(op, i) = command => {
+            MenuTarget::LogCommit(_) | MenuTarget::HistoryCommit(_)
+                if let MenuCommand::GitBranch(op, i) = command =>
+            {
                 if let Some(branch) = menu.branches.get(i).cloned() {
                     self.run_branch_op(op, branch);
                 }
             }
-            MenuTarget::LogCommit(oid) => self.run_log_commit_command(command, &oid),
+            MenuTarget::LogCommit(oid) => self.run_log_commit_command(command, &oid, true),
+            MenuTarget::HistoryCommit(oid) => self.run_log_commit_command(command, &oid, false),
             MenuTarget::LogFile(i, path) => self.run_log_file_command(command, i, path),
             MenuTarget::SearchResult(path, m) => self.run_search_result_command(command, path, m),
             // 分支、储藏的下标按弹出菜单时的列表解释：菜单打开期间状态刷新后，
@@ -129,9 +149,13 @@ impl App {
                 }
                 _ => {}
             },
-            MenuTarget::Terminal(block) => self.run_terminal_command(command, block),
+            MenuTarget::Terminal(id, block) => {
+                if self.activate_terminal_menu_target(id).is_some() {
+                    self.run_terminal_command(command, block);
+                }
+            }
             MenuTarget::TerminalTab(id) => {
-                let Some(index) = self.terminal.tabs.iter().position(|t| t.id == id) else {
+                let Some(index) = self.activate_terminal_menu_target(id) else {
                     return;
                 };
                 match command {
@@ -140,6 +164,11 @@ impl App {
                         self.activate_terminal_tab(index);
                         self.split_terminal();
                     }
+                    MenuCommand::MoveTerminalRight | MenuCommand::MoveTerminalDown => {
+                        self.activate_terminal_tab(index);
+                        self.move_terminal_to_new_group();
+                    }
+                    MenuCommand::MoveTerminalToEditor => self.move_terminal_to_editor(),
                     MenuCommand::CloseTerminal => self.close_terminal_tab(index),
                     MenuCommand::CloseOtherTerminals => self.close_other_terminal_tabs(id),
                     _ => {}
@@ -166,6 +195,8 @@ impl App {
                 MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
                 MenuCommand::AddFolder => self.ask_add_folder(),
                 MenuCommand::RenameGroup => self.ask_rename_group(),
+                MenuCommand::SaveProjectAs | MenuCommand::SaveProject => self.ask_save_project(),
+                MenuCommand::OpenProject => self.pick(Pick::OpenProject),
                 MenuCommand::OpenGroup(i) => self.open_group(i),
                 MenuCommand::GroupFolder(i, j) => self.open_group_folder(i, j),
                 MenuCommand::OpenWslFolder(i) => {
@@ -180,7 +211,7 @@ impl App {
                         self.browse_remote_host(host);
                     }
                 }
-                MenuCommand::CloseFolder => self.close_folder(),
+                MenuCommand::CloseFolder | MenuCommand::CloseProject => self.close_folder(),
                 _ => {}
             },
             MenuTarget::AddLanguage(task) => {
@@ -218,6 +249,15 @@ impl App {
                     self.set_render_whitespace(choice);
                 }
             }
+            MenuTarget::SearchStyle => {
+                if let MenuCommand::SearchStyle(i) = command
+                    && let Some(&choice) = winc_config::SearchStyle::ALL.get(i)
+                {
+                    self.config.find_in_files = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
+                }
+            }
             MenuTarget::DropFolder => {
                 if let MenuCommand::DropFolder(i) = command
                     && let Some(&choice) = winc_config::FolderDrop::ALL.get(i)
@@ -232,6 +272,22 @@ impl App {
                     self.set_auto_save(choice);
                 }
             }
+            MenuTarget::CursorStyle => {
+                if let MenuCommand::CursorStyle(i) = command
+                    && let Some(&choice) = winc_config::CursorStyle::ALL.get(i)
+                {
+                    self.config.cursor_style = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
+                }
+            }
+            MenuTarget::SmoothCaret => {
+                if let MenuCommand::SmoothCaret(i) = command
+                    && let Some(&choice) = winc_config::SmoothCaret::ALL.get(i)
+                {
+                    self.set_smooth_caret(choice);
+                }
+            }
             MenuTarget::OpenWorktree => {
                 if let MenuCommand::OpenWorktree(i) = command
                     && let Some(&choice) = winc_config::WorktreeOpen::ALL.get(i)
@@ -239,11 +295,30 @@ impl App {
                     self.set_open_worktree(choice);
                 }
             }
+            MenuTarget::LogPlacement => {
+                if let MenuCommand::LogPlacement(i) = command
+                    && let Some(&choice) = winc_config::LogPlacement::ALL.get(i)
+                {
+                    self.set_log_placement(choice);
+                }
+            }
             MenuTarget::PullMode => {
                 if let MenuCommand::PullMode(i) = command
                     && let Some(&choice) = winc_config::PullMode::ALL.get(i)
                 {
                     self.set_pull_mode(choice);
+                }
+            }
+            MenuTarget::AiProtocol => {
+                if let MenuCommand::AiProtocol(i) = command
+                    && let Some(&choice) = winc_config::AiProtocol::ALL.get(i)
+                {
+                    self.set_ai_protocol(choice);
+                }
+            }
+            MenuTarget::VimKey(c) => {
+                if let MenuCommand::VimKeyOwner(vim) = command {
+                    self.set_vim_key_owner(c, vim);
                 }
             }
             MenuTarget::VimClipboard => {
@@ -265,6 +340,15 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::DefaultLanguage => {
+                let language = match command {
+                    MenuCommand::UseLanguage(i) => winc_syntax::languages().get(i).copied(),
+                    _ => None,
+                };
+                self.config.default_language = language.map(|language| language.id.to_owned());
+                self.save_config();
+                self.request_redraw();
+            }
             MenuTarget::TextWidth => {
                 if let MenuCommand::TextWidth(i) = command
                     && let Some(&width) = winc_config::TextWidth::ALL.get(i)
@@ -299,6 +383,15 @@ impl App {
             MenuTarget::TerminalTabPosition => {
                 if let MenuCommand::TerminalTabPosition(right) = command {
                     self.set_terminal_tab_position(right);
+                }
+            }
+            MenuTarget::RightClick => {
+                if let MenuCommand::RightClick(i) = command
+                    && let Some(&choice) = winc_config::TerminalRightClick::ALL.get(i)
+                {
+                    self.config.terminal_right_click = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
                 }
             }
             MenuTarget::OptionAsMeta => {
@@ -366,6 +459,7 @@ impl App {
                     self.close_picker();
                     self.prune_worktrees();
                 }
+                MenuCommand::LocationForget => self.remove_repository(&path),
                 MenuCommand::LocationMerge => {
                     let tree = worktree.and_then(|i| self.git.worktrees.get(i));
                     if let Some(name) = tree.and_then(|w| w.branch()).map(str::to_owned) {
@@ -396,9 +490,25 @@ impl App {
                     self.activate_tab(i);
                 }
             }
+            MenuTarget::LatexProblems => match command {
+                MenuCommand::LatexProblem(i) => self.show_latex_problem(i),
+                MenuCommand::LatexRunRc => self.ask_skipped_latex_rc(),
+                _ => {}
+            },
             MenuTarget::RunConfigs => match command {
                 MenuCommand::RunSelect(i) => self.select_run_config(i),
                 MenuCommand::RunEdit => self.edit_run_configs(),
+                _ => {}
+            },
+            MenuTarget::NewTab => match command {
+                MenuCommand::NewUntitled => self.new_file(),
+                MenuCommand::NewEditorTerminal => self.new_editor_terminal(None),
+                MenuCommand::NewEditorTerminalShell(i) => {
+                    let shell = self.terminal_shell_list().into_iter().nth(i);
+                    if let Some(shell) = shell {
+                        self.new_editor_terminal(Some(shell.command));
+                    }
+                }
                 _ => {}
             },
             MenuTarget::TerminalShells => {
@@ -450,6 +560,7 @@ impl App {
                 MenuCommand::Download => self.pick(Pick::Download(self.tree_targets())),
                 MenuCommand::CopyPath => self.copy_paths(&selection, false),
                 MenuCommand::CopyRelativePath => self.copy_paths(&selection, true),
+                MenuCommand::CopyAsPrompt => self.copy_as_prompt(self.tree_selected_files()),
                 _ => {}
             }
             return;
@@ -462,7 +573,7 @@ impl App {
                 }
             }
             MenuCommand::CommitCheck(on) => self.stage_paths(&[target], on),
-            MenuCommand::GitRollbackFile => self.confirm_rollback(vec![target]),
+            MenuCommand::GitRollbackFile => self.confirm_commit_rollback(vec![target]),
             MenuCommand::NewFile | MenuCommand::NewFolder => {
                 // 右键时已选中了那一行（空白处则取消选中），新建的位置由选中的行决定。
                 self.start_new_entry(command == MenuCommand::NewFolder);
@@ -471,9 +582,11 @@ impl App {
             MenuCommand::RemoveFolder => self.remove_folder(&target),
             MenuCommand::Reveal => self.reveal_in_file_manager(&target),
             MenuCommand::OpenInTerminal => self.open_in_terminal(Some(&target)),
+            MenuCommand::RunScript => self.run_script(&target),
             MenuCommand::FindInFolder => self.find_in_folder(&target),
             MenuCommand::CopyPath => self.copy_path(&target, false),
             MenuCommand::CopyRelativePath => self.copy_path(&target, true),
+            MenuCommand::CopyAsPrompt if path.is_some() => self.copy_as_prompt(vec![target]),
             MenuCommand::Rename => self.start_rename(&target),
             MenuCommand::Delete => self.ask_delete(&target),
             MenuCommand::Cut => self.cut_entries(std::slice::from_ref(&target)),
@@ -483,6 +596,25 @@ impl App {
             MenuCommand::Download => self.pick(Pick::Download(vec![target])),
             _ => {}
         }
+    }
+
+    /// 菜单目标编号优先于当前焦点，包括其他栏和拆分出的终端。
+    pub(super) fn activate_terminal_menu_target(&mut self, id: u16) -> Option<usize> {
+        let group = self.terminal.group_of(id)?;
+        self.focus_terminal_group(group);
+        let index = self
+            .terminal
+            .tabs
+            .iter()
+            .position(|tab| tab.panes().any(|pane| pane.id == id))?;
+        let tab = &self.terminal.tabs[index];
+        let offset = tab.panes().position(|pane| pane.id == id)?;
+        let pane = match offset {
+            0 => tab.pane_at(),
+            n => n - 1 + usize::from(n > tab.pane_at()),
+        };
+        self.select_terminal_pane(index, pane);
+        Some(index)
     }
 
     fn run_terminal_command(&mut self, command: MenuCommand, block: Option<u32>) {
@@ -502,6 +634,11 @@ impl App {
             MenuCommand::TerminalDock => self.toggle_terminal_position(),
             MenuCommand::NewTerminal => self.new_terminal_tab(),
             MenuCommand::SplitTerminal => self.split_terminal(),
+            MenuCommand::MoveTerminalRight | MenuCommand::MoveTerminalDown => {
+                self.move_terminal_to_new_group();
+            }
+            MenuCommand::MoveTerminalToEditor => self.move_terminal_to_editor(),
+            MenuCommand::MoveTerminalToPanel => self.move_terminal_to_panel(),
             MenuCommand::CloseTerminal => self.close_terminal_pane(),
             _ => {}
         }
@@ -522,10 +659,16 @@ impl App {
             MenuCommand::SelectAll if self.hex_active() => self.select_all_hex(),
             MenuCommand::HexGoTo => self.open_goto(),
             MenuCommand::Paste => self.paste(),
+            MenuCommand::PastePlain => self.paste_plain(),
             MenuCommand::Format => self.format_active(),
             MenuCommand::FormatSelection => self.format_selection(),
             MenuCommand::Fix => self.fix_active(),
+            MenuCommand::CompareWithClipboard | MenuCommand::CompareSelectionWithClipboard => {
+                self.compare_with_clipboard()
+            }
+            MenuCommand::CompareWithSaved => self.compare_with_saved(),
             MenuCommand::GoToDefinition => self.go_to_definition(),
+            MenuCommand::OpenLink => self.open_caret_link(),
             MenuCommand::FindReferences => self.find_references(),
             MenuCommand::AddBookmark => self.set_bookmark(true),
             MenuCommand::RemoveBookmark => self.set_bookmark(false),
@@ -536,6 +679,22 @@ impl App {
     }
 
     fn run_tab_command(&mut self, command: MenuCommand, id: DocumentId) {
+        if self.editor.document(id).is_some_and(|doc| doc.terminal) {
+            match command {
+                MenuCommand::MoveTerminalToPanel => {
+                    self.move_editor_terminal_to_panel(id);
+                    return;
+                }
+                MenuCommand::RenameTerminal => {
+                    self.focus_editor_terminal_document(id);
+                    if self.activate_editor_terminal() {
+                        self.open_terminal_rename(self.terminal.active);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         let Some(index) = self
             .editor
             .index_of(id)
@@ -578,7 +737,7 @@ impl App {
             }
             MenuCommand::GitRollbackFile => {
                 if let Some(path) = path {
-                    self.confirm_rollback(vec![path]);
+                    self.confirm_commit_rollback(vec![path]);
                 }
             }
             MenuCommand::Close => self.close_tab(index),
@@ -679,12 +838,9 @@ impl App {
         self.focus = Focus::Tree;
     }
 
-    /// Git 模块开着、`path` 在仓库里。
+    /// Git 模块开着、`path` 在某个已知仓库里（见 [`App::repo_of`]），不一定是当前仓库。
     pub(super) fn in_repo(&self, path: &Path) -> bool {
-        self.git.root.as_deref().is_some_and(|root| {
-            path.starts_with(root)
-                || winc_config::files::canonicalize(path).is_ok_and(|real| real.starts_with(root))
-        })
+        self.repo_of(path).is_some()
     }
 
     /// 返回 `path` 相对于它所在的目录（打开的目录或附加的目录）的路径；不在这些目录内或就是
@@ -758,12 +914,16 @@ impl App {
 
     /// 让全局搜索只搜索 `path` 所在的目录（`path` 是文件时取该文件所在的目录）。
     ///
-    /// 把「包含」填成 `./相对路径`，并展开过滤条件。
+    /// 把「包含」填成 `./相对路径`，并展开过滤条件。Windows 上路径中的 `\` 换成 `/`：规则按 glob
+    /// 解析，各系统上填入的写法相同。
     pub(in crate::app) fn find_in_folder(&mut self, path: &Path) {
         let dir = self.folder_of(path);
         let include = self
             .relative_path(&dir)
-            .map(|relative| format!("./{relative}"))
+            .map(|relative| match cfg!(windows) {
+                true => format!("./{}", relative.replace('\\', "/")),
+                false => format!("./{relative}"),
+            })
             .unwrap_or_default();
 
         if include != self.panels.global.include.text() {
@@ -1009,15 +1169,19 @@ impl App {
         self.close_documents(&ids);
 
         // 选中原位置上的下一行，便于继续用 `⌘⌫` 连续删除。
-        if let Some(ws) = &mut self.editor.workspace {
+        if let Some(ws) = &self.editor.workspace {
             let was = ws.rows().iter().position(|e| {
                 deleted.contains(&e.path) || e.chain().iter().any(|p| deleted.contains(p))
             });
-            ws.refresh();
-            let count = ws.rows().len();
-            ws.select(was.filter(|_| count > 0).map(|i| i.min(count - 1)));
-            self.panels.tree.motion = None;
-            self.clamp_tree_scroll();
+            self.rescan_tree(move |app| {
+                if let Some(ws) = &mut app.editor.workspace {
+                    let count = ws.rows().len();
+                    ws.select(was.filter(|_| count > 0).map(|i| i.min(count - 1)));
+                }
+                app.panels.tree.motion = None;
+                app.clamp_tree_scroll();
+                app.request_redraw();
+            });
         }
 
         let message = match deleted.as_slice() {
@@ -1032,6 +1196,7 @@ impl App {
             many if permanent => t!("common-deleted-items", count = many.len()),
             many => t!("common-trash-moved-items", count = many.len()),
         };
+        self.forget_recent(&deleted);
         self.picker_touched(deleted);
         self.files_changed_under_results();
         self.flash(message);

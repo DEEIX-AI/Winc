@@ -74,39 +74,71 @@ impl App {
         [editor, configured_fonts(&self.config.ui_font), terminal]
     }
 
-    /// 返回界面和编辑区文字的字重（`ui.fontWeight`），未配置时为 400。
+    /// 返回界面文字的字重（`ui.fontWeight`），未配置时为 400。
     pub(in crate::app) fn font_weight(&self) -> u16 {
         self.config.ui_font_weight.unwrap_or(Config::FONT_WEIGHT)
     }
 
-    /// 返回终端文字的字重（`terminal.fontWeight`）；没有调整过时同全局字重。
+    /// 返回编辑区等宽文字的字重（`editor.fontWeight`），未配置时为 400。
+    pub(in crate::app) fn editor_font_weight(&self) -> u16 {
+        self.config
+            .editor_font_weight
+            .unwrap_or(Config::FONT_WEIGHT)
+    }
+
+    /// 返回界面、编辑区和终端文字的字重。
+    pub(in crate::app) fn font_weights(&self) -> winc_render::FontWeights {
+        winc_render::FontWeights {
+            ui: self.font_weight(),
+            editor: self.editor_font_weight(),
+            terminal: self.terminal_font_weight(),
+        }
+    }
+
+    /// 返回终端文字的字重（`terminal.fontWeight`）；未设置时同编辑区字重，因为终端默认使用
+    /// 编辑区的字体。
     pub(in crate::app) fn terminal_font_weight(&self) -> u16 {
         self.config
             .terminal_font_weight
-            .unwrap_or_else(|| self.font_weight())
+            .unwrap_or_else(|| self.editor_font_weight())
     }
 
     /// 应用主题选择：`Auto` 交由系统决定，`Dark`、`Light` 固定为指定外观。
     pub(in crate::app) fn apply_theme(&mut self, choice: ThemeChoice) {
         self.theme_choice = choice;
-        // 同步窗口外观：系统菜单、提示框和面板按窗口外观显示深浅，需与界面配色一致。
+        // 系统菜单、提示框和面板按窗口外观显示深浅。
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         if let Some(window) = &self.window.handle {
             window.set_theme(forced_theme(&choice));
         }
 
-        match choice {
-            ThemeChoice::Auto => {
-                // 改为跟随系统：先查询一次当前外观，此后系统切换外观时会收到 `ThemeChanged`。
-                let dark = self
-                    .window
-                    .handle
-                    .as_ref()
-                    .and_then(|w| w.theme())
-                    .map_or(self.palette.dark, |theme| theme != Theme::Light);
-                self.set_theme(if dark { Theme::Dark } else { Theme::Light });
-            }
-            ThemeChoice::Dark => self.set_theme(Theme::Dark),
-            ThemeChoice::Light => self.set_theme(Theme::Light),
+        let current = if self.palette.dark {
+            Theme::Dark
+        } else {
+            Theme::Light
+        };
+        let theme = forced_theme(&choice).or_else(|| self.system_theme());
+        self.set_theme(theme.unwrap_or(current));
+    }
+
+    /// 系统当前的外观，取不到时为深色；还没有窗口时返回 `None`。
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    pub(in crate::app) fn system_theme(&self) -> Option<Theme> {
+        let window = self.window.handle.as_ref()?;
+        Some(window.theme().unwrap_or(Theme::Dark))
+    }
+
+    /// 门户报告的系统外观（见 `crate::color_scheme`），取不到时为深色。
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub(in crate::app) fn system_theme(&self) -> Option<Theme> {
+        Some(crate::color_scheme::current().unwrap_or(Theme::Dark))
+    }
+
+    /// 系统的外观变成了 `theme`：没有固定主题且深浅不同时跟随。
+    pub(crate) fn system_theme_changed(&mut self, theme: Theme) {
+        if forced_theme(&self.theme_choice).is_none() && self.palette.dark != (theme == Theme::Dark)
+        {
+            self.set_theme(theme);
         }
     }
 
@@ -128,6 +160,11 @@ impl App {
     /// 切到 `theme`：换成对应的主题，终端跟着换配色，并重新摆放标题栏按钮。
     pub(in crate::app) fn set_theme(&mut self, theme: Theme) {
         self.palette = self.theme_palette(theme == Theme::Dark);
+        // 系统标题栏的深浅。
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(window) = &self.window.handle {
+            window.set_theme(Some(theme));
+        }
         self.terminal_theme_changed();
 
         if let Some(renderer) = &mut self.frame.renderer {
@@ -145,16 +182,18 @@ impl App {
     /// 渲染层无法使用配置的字体时，返回面向用户的错误说明。
     pub(in crate::app) fn apply_fonts(&mut self) -> Result<(), String> {
         let [mono, ui, terminal] = self.font_specs();
-        let weight = self.font_weight();
-        let terminal_weight = self.terminal_font_weight();
+        let weights = self.font_weights();
 
-        if let Some(renderer) = &mut self.frame.renderer
-            && renderer
-                .set_fonts(&mono, &ui, &terminal, weight, terminal_weight)
-                .is_err()
-        {
-            return Err(winc_i18n::t!("workspace-font-unusable").to_owned());
+        let prose = configured_fonts(&self.config.markdown_font);
+        if let Some(renderer) = &mut self.frame.renderer {
+            if renderer.set_fonts(&mono, &ui, &terminal, weights).is_err() {
+                return Err(winc_i18n::t!("workspace-font-unusable").to_owned());
+            }
+            renderer.set_prose_fonts(&prose);
         }
+        // 预览的排版和测量结果按旧字体算出，全部重排。
+        self.preview.markdown.layout = None;
+        self.preview.markdown.memo = Default::default();
 
         self.apply_font_sizes();
         Ok(())
@@ -190,7 +229,7 @@ pub(in crate::app) fn unusable_font(
 /// 返回启动时固定给窗口的主题。
 ///
 /// 配置中的设置优先，其次读取环境变量 `WINC_THEME=dark|light`；都没有时返回 `None`，由系统
-/// 决定（窗口跟随系统外观，切换时会收到 `ThemeChanged`）。
+/// 决定（界面跟随系统外观，见 [`App::system_theme_changed`]）。
 pub(in crate::app) fn forced_theme(choice: &ThemeChoice) -> Option<Theme> {
     match choice {
         ThemeChoice::Dark => Some(Theme::Dark),

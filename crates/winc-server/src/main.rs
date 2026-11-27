@@ -1,14 +1,12 @@
 //! 运行在远端主机上的服务进程。
 //!
 //! 由本机的 winc 经 `ssh` 启动，从标准输入读取请求，把应答写到标准输出（见
-//! `winc_backend::remote::serve`）。不监听端口，不写任何文件；标准输入结束（连接断开）时
-//! 退出。目前只支持 Unix 主机。
-//!
-//! 以 `watch <目录>` 为参数时改为监视该目录，把变化写到标准输出（见 `winc_watch`）：由服务
-//! 进程在需要监视时再次运行自身，连接断开或不再需要时结束它。
-//!
-//! 环境中有 `WINC_ASKPASS_SOCKET` 时是被 `git` 或 `ssh` 当作 askpass 程序运行：把参数中的
-//! 提示交给启动那条命令的服务进程，由它转给本机的 winc 询问用户，再把答复写到标准输出。
+//! `winc_backend::remote::serve`）；不监听端口，不写任何文件，标准输入结束时退出，目前只支持
+//! Unix 主机。以 `watch <目录>` 为参数时监视该目录，把变化写到标准输出（见 `winc_watch`），由
+//! 服务进程在需要监视时再次运行自身。环境中有 `WINC_ASKPASS_SOCKET` 时作为 `git` 或 `ssh` 的
+//! askpass 程序运行：把提示交给启动那条命令的服务进程，由它转给本机询问用户，答复写到标准输出。
+//! 以 `search` 或 `files` 为参数时在本机搜索或列出文件：条件从标准输入读入，结果写到标准输出
+//! （见 `winc_search::host`）。
 
 use std::process::ExitCode;
 
@@ -18,7 +16,14 @@ fn main() -> ExitCode {
         return answer();
     }
     let mut args = std::env::args_os().skip(1);
-    if args.next().is_some_and(|arg| arg == "watch") {
+    let command = args.next();
+    #[cfg(unix)]
+    if let Some(&(_, run)) = (winc_search::host::COMMANDS.iter())
+        .find(|(name, _)| command.as_deref() == Some(name.as_ref()))
+    {
+        return from_stdin(run);
+    }
+    if command.is_some_and(|arg| arg == "watch") {
         let Some(root) = args.next().map(std::path::PathBuf::from) else {
             return ExitCode::FAILURE;
         };
@@ -63,5 +68,23 @@ fn answer() -> ExitCode {
     match std::io::stdout().write_all(&reply) {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
+    }
+}
+
+/// 读入标准输入中的条件交给 `run`，结果写到标准输出。
+#[cfg(unix)]
+fn from_stdin(run: winc_search::host::Command) -> ExitCode {
+    use std::io::Read;
+
+    let mut request = Vec::new();
+    let done = std::io::stdin()
+        .read_to_end(&mut request)
+        .and_then(|_| run(&request, &mut std::io::stdout()));
+    match done {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("winc-server: {error}");
+            ExitCode::FAILURE
+        }
     }
 }

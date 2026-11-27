@@ -162,6 +162,24 @@ pub struct Opened {
     content: OpenedContent,
 }
 
+impl Opened {
+    /// 文件是否已不存在（其他读取错误不算）。
+    pub(crate) fn missing(&self) -> bool {
+        matches!(
+            &self.content,
+            OpenedContent::Text(Err(OpenError::Io(error))) if winc_backend::fs::is_absent(error)
+        )
+    }
+
+    /// 文件不存在、可以在该路径新建：路径中间的一段不是目录时建不出来，不算。
+    pub(crate) fn creatable(&self) -> bool {
+        let OpenedContent::Text(Err(OpenError::Io(error))) = &self.content else {
+            return false;
+        };
+        error.kind() == io::ErrorKind::NotFound
+    }
+}
+
 /// 打开时读到了什么。
 enum OpenedContent {
     /// 图片：只有修改时间，解码另外做。
@@ -243,7 +261,9 @@ impl Document {
         let bom = self.encoding == Encoding::Utf8Bom;
 
         let written = match &self.text {
-            Content::Rope(rope) => write_rope(target, rope, self.encoding)?,
+            Content::Rope(rope) => {
+                write_rope(target, rope, self.encoding, self.escape_origin.as_deref())?
+            }
             Content::Large(large) => {
                 // 改动表中的片段引用原文件的字节范围；原文件被其他程序原地修改后，按这些范围
                 // 写出的内容是错误的。
@@ -363,15 +383,7 @@ impl Document {
             .path
             .as_deref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, t!("editor-file-no-path")))?;
-        let too_large = || io::Error::other(t!("editor-large-cannot-compare")).into();
-        // 大文件读入时要先把整个文件扫一遍建索引，无法逐行比较，因此先按大小排除。
-        if winc_backend::fs::metadata(path)?.len > LARGE_FILE {
-            return Err(too_large());
-        }
-        match load_with(path, false, self.encoding, None)?.text {
-            Content::Rope(rope) => Ok(rope.to_string()),
-            Content::Large(_) => Err(too_large()),
-        }
+        saved_text(path, self.encoding)
     }
 
     /// 解决冲突：换成磁盘上的内容，放弃未保存的修改。
@@ -443,6 +455,7 @@ impl Document {
             self.selection = after.clamped(self.text.end_pos());
         }
         self.encoding = loaded.encoding;
+        self.escape_origin = loaded.origin;
         self.line_ending = loaded.line_ending;
         self.disk_mtime = loaded.mtime;
         self.disk_len = loaded.len;
@@ -648,6 +661,19 @@ impl Document {
         if !self.can_save_with(encoding) {
             return false;
         }
+        // 菜单中的 Unicode 转义只有一项：已按转义保存的沿用原来的写法，ISO-8859-1 的文件仍按它存。
+        let encoding = match (encoding, self.encoding) {
+            (Encoding::UnicodeEscapes { .. }, current @ Encoding::UnicodeEscapes { .. }) => current,
+            (Encoding::UnicodeEscapes { lowercase, .. }, Encoding::Legacy(codec))
+                if codec == encoding_rs::WINDOWS_1252 =>
+            {
+                Encoding::UnicodeEscapes {
+                    lowercase,
+                    latin1: true,
+                }
+            }
+            _ => encoding,
+        };
         self.encoding = encoding;
         self.chosen = self.chosen.map(|_| encoding);
         true
@@ -671,8 +697,9 @@ impl Document {
 
     /// 创建尚未读取的文档：只记录路径，文本为空，文档只读，不检查磁盘。
     ///
-    /// 恢复现场时当前标签以外的文档先按本方法占位，切换到该标签时再读取（[`crate::Editor::load`]），
-    /// 几十个标签的启动不必逐个读文件。占位的文档不会被保存、不随磁盘同步，也不备份。
+    /// 恢复现场时当前标签以外的文档先按本方法占位，切换到该标签时再读取
+    /// （[`crate::Editor::load`]），几十个标签的启动不必逐个读文件。占位的文档不会被保存、不随
+    /// 磁盘同步，也不备份。
     pub fn pending(id: DocumentId, path: PathBuf) -> Self {
         let mut document = Document::empty(id);
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -708,6 +735,33 @@ impl Document {
     /// 尚未读取的文档读取时是否打开成十六进制视图（见 [`Document::pending_hex`]）。
     pub(crate) fn reads_as_hex(&self) -> bool {
         self.pending_hex
+    }
+
+    /// 尚未读取的文档读取时文件不存在则成为新文件（见 [`Document::new_file`]）。
+    pub(crate) fn read_as_new(&mut self) {
+        self.pending_new = true;
+    }
+
+    /// 尚未读取的文档读取时文件不存在是否成为新文件（见 [`Document::read_as_new`]）。
+    pub(crate) fn reads_as_new(&self) -> bool {
+        self.pending_new
+    }
+
+    /// 用后台读到文件不存在的 `opened` 建一个对应 `path` 的空文档：新文件，保存时才写入磁盘。
+    ///
+    /// 语言按文件名识别，`.editorconfig` 取自 `opened`，自身不访问磁盘。
+    pub(crate) fn new_file(id: DocumentId, path: PathBuf, opened: Opened) -> Self {
+        let mut document = Document::empty(id);
+        document.set_path_with(path, opened.config);
+        if let Some(eol) = document.editorconfig.end_of_line {
+            document.line_ending = eol;
+        }
+        document
+    }
+
+    /// 是否是还没写入过磁盘的新文件：有路径、显示的是文本，但从未读写过磁盘上的文件。
+    pub fn is_new_file(&self) -> bool {
+        self.path.is_some() && self.disk_mtime.is_none() && self.holds_file_text()
     }
 
     /// 文本是否就是文件的内容：已经读取，不是十六进制视图，也不是打不开的文件的占位标签。
@@ -798,7 +852,7 @@ impl Document {
             } else if let Some(encoding) = encoding.filter(|e| *e != Encoding::Utf8) {
                 OpenedContent::Text(load_as(path, encoding))
             } else {
-                OpenedContent::Text(load_with(path, as_text, Encoding::Utf8, progress))
+                OpenedContent::Text(load_auto(path, as_text, Encoding::Utf8, progress))
             }
         };
         // 远端的文件：内容和 `.editorconfig` 各要一次往返，互不依赖，同时进行。
@@ -858,15 +912,19 @@ impl Document {
     pub(super) fn set_content(&mut self, loaded: Loaded) {
         let overlong = matches!(&loaded.text, Content::Large(large) if large.has_overlong_lines());
         self.readonly = matches!(loaded.encoding, Encoding::Lossy | Encoding::Binary) || overlong;
-        // 正在预览时仍保持只读；切回源代码时恢复为新读取内容对应的 `readonly`。
+        // 正在预览时与进入预览时一样（见 `Document::set_preview_mode`）：Markdown 的预览可以直接
+        // 编辑，不改只读状态，其余预览仍保持只读。种类只按语言判断，不受换入前后的文本是否为
+        // 大文件影响。切回源代码时恢复为新读取内容对应的 `readonly`。
         if self.previewing() {
             self.readonly_before_preview = self.readonly;
-            self.readonly = true;
+            let kind = PreviewKind::of(self.highlighter.language());
+            self.readonly |= kind != Some(PreviewKind::Markdown);
         }
         self.text = loaded.text;
         self.whole.forget();
         self.clear_folds();
         self.encoding = loaded.encoding;
+        self.escape_origin = loaded.origin;
         self.line_ending = loaded.line_ending;
         self.disk_mtime = loaded.mtime;
         self.disk_len = loaded.len;
@@ -900,18 +958,36 @@ fn load_as(path: &Path, encoding: Encoding) -> Result<Loaded, OpenError> {
             "editor-large-utf8-only"
         ))));
     }
-    let (text, damaged) = charset::decode_as(&bytes, encoding);
+    // 按 Unicode 转义读：先按文件的编码解码，再把转义换成字符并记录各行原来的写法。依据
+    // `java.util.PropertyResourceBundle`，不是合法的 UTF-8 时按 ISO-8859-1 读。
+    let escapes = matches!(encoding, Encoding::UnicodeEscapes { .. });
+    let base = match encoding {
+        Encoding::UnicodeEscapes { latin1, .. }
+            if latin1 || std::str::from_utf8(&bytes).is_err() =>
+        {
+            Encoding::Legacy(encoding_rs::WINDOWS_1252)
+        }
+        Encoding::UnicodeEscapes { .. } => Encoding::Utf8,
+        other => other,
+    };
+    let (text, damaged) = charset::decode_as(&bytes, base);
     let rope = Rope::from_str(&text);
-    Ok(Loaded {
+    let loaded = Loaded {
         line_ending: LineEnding::detect(&rope),
         text: Content::Rope(rope),
-        encoding: if damaged { Encoding::Lossy } else { encoding },
+        encoding: if damaged { Encoding::Lossy } else { base },
         mtime,
         len: bytes.len() as u64,
+        origin: None,
+    };
+    Ok(if escapes && !damaged {
+        unicode_escapes(loaded, path, encoding)
+    } else {
+        loaded
     })
 }
 
-/// 按用户选的编码 `chosen` 重新读文件：选的是 UTF-8 时照常读（大文件也能读），不再判断是否
+/// 按用户选的编码 `chosen` 重新读文件：选的是 UTF-8 时仍然读（大文件也能读），不再判断是否
 /// 二进制；选的是其他编码时按它解码；没有选时同 [`load_with`]。
 fn load_chosen(
     path: &Path,
@@ -922,14 +998,120 @@ fn load_chosen(
     match chosen {
         Some(Encoding::Utf8) => load_with(path, true, Encoding::Utf8, None),
         Some(chosen) => load_as(path, chosen),
-        None => load_with(path, allow_binary, encoding, None),
+        None => load_auto(path, allow_binary, encoding, None),
     }
 }
 
 /// 读入文件；开头 `BINARY_SNIFF` 字节内含 NUL 时视为二进制文件，`allow_binary` 为 `true` 时
 /// 仍然读入，编码记为 `Binary`。
 pub(super) fn load(path: &Path, allow_binary: bool) -> Result<Loaded, OpenError> {
-    load_with(path, allow_binary, Encoding::Utf8, None)
+    load_auto(path, allow_binary, Encoding::Utf8, None)
+}
+
+/// 读出磁盘上文件 `path` 的内容（按编码 `encoding` 解码，换行统一为 `\n`），用于和编辑器中的
+/// 内容比较。耗时与文件大小成正比，应在后台线程调用。
+///
+/// # Errors
+///
+/// 读取失败、文件变成二进制、超过大小上限，或是按需读取的大文件时返回 [`OpenError`]。
+pub fn saved_text(path: &Path, encoding: Encoding) -> Result<String, OpenError> {
+    let too_large = || io::Error::other(t!("editor-large-cannot-compare")).into();
+    // 大文件读入时要先把整个文件扫一遍建索引，无法逐行比较，因此先按大小排除。
+    if winc_backend::fs::metadata(path)?.len > LARGE_FILE {
+        return Err(too_large());
+    }
+    match load_auto(path, false, encoding, None)?.text {
+        Content::Rope(rope) => Ok(rope.to_string()),
+        Content::Large(_) => Err(too_large()),
+    }
+}
+
+/// 与 [`load_with`] 相同，读好后再按 [`unicode_escapes`] 判断是否改按 Unicode 转义显示。
+fn load_auto(
+    path: &Path,
+    allow_binary: bool,
+    prefer: Encoding,
+    progress: Option<&ReadProgress>,
+) -> Result<Loaded, OpenError> {
+    // 按 ISO-8859-1 存放的转义文件重读时直接按它解码，不再识别编码。
+    let base = match prefer {
+        Encoding::UnicodeEscapes { latin1: true, .. } => {
+            Encoding::Legacy(encoding_rs::WINDOWS_1252)
+        }
+        other => other,
+    };
+    load_with(path, allow_binary, base, progress)
+        .map(|loaded| unicode_escapes(loaded, path, prefer))
+}
+
+/// `.properties` 文件中有 `\uXXXX` 转义时，改按 [`Encoding::UnicodeEscapes`] 读入：编辑区中显示
+/// 字符，保存时写回转义，见 [`charset::unicode_escapes_view`]。
+///
+/// 文档已按 Unicode 转义显示（`prefer`）时，重读后没有转义也转换。
+fn unicode_escapes(loaded: Loaded, path: &Path, prefer: Encoding) -> Loaded {
+    let forced = matches!(prefer, Encoding::UnicodeEscapes { .. }).then_some(prefer);
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    let properties = name.is_some_and(|n| winc_syntax::detect(&n).id == "properties");
+    let Content::Rope(rope) = &loaded.text else {
+        return loaded;
+    };
+    if !properties && forced.is_none() {
+        return loaded;
+    }
+    match charset::unicode_escapes_view(&rope.to_string(), loaded.encoding, forced) {
+        Some((shown, encoding, origin)) => Loaded {
+            text: Content::Rope(Rope::from_str(&shown)),
+            encoding,
+            origin: Some(std::sync::Arc::new(origin)),
+            ..loaded
+        },
+        None => loaded,
+    }
+}
+
+impl Document {
+    /// 换了语言以后按新的语言决定是否按 Unicode 转义显示：换成 Properties 时转换（见
+    /// [`charset::unicode_escapes_view`]），换成其他语言时恢复原文的转义。
+    ///
+    /// 有未保存的修改，或用户选过编码时不变，下次打开时再按语言决定。
+    pub(super) fn follow_unicode_escapes(&mut self) {
+        if self.is_dirty() || self.chosen.is_some() || self.path.is_none() {
+            return;
+        }
+        let Content::Rope(rope) = &self.text else {
+            return;
+        };
+        let properties = self.highlighter.language().id == "properties";
+        let converted = match self.encoding {
+            Encoding::UnicodeEscapes { .. } if !properties => {
+                let origin = self.escape_origin.as_deref();
+                let Ok(bytes) = charset::encode_with(&rope.to_string(), self.encoding, origin)
+                else {
+                    return;
+                };
+                let decoded = charset::decode(&bytes);
+                (decoded.text.into_owned(), decoded.encoding, None)
+            }
+            Encoding::UnicodeEscapes { .. } => return,
+            encoding if properties => {
+                match charset::unicode_escapes_view(&rope.to_string(), encoding, None) {
+                    Some((shown, encoding, origin)) => {
+                        (shown, encoding, Some(std::sync::Arc::new(origin)))
+                    }
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        self.replace_content(Loaded {
+            text: Content::Rope(Rope::from_str(&converted.0)),
+            encoding: converted.1,
+            line_ending: self.line_ending,
+            mtime: self.disk_mtime,
+            len: self.disk_len,
+            origin: converted.2,
+        });
+    }
 }
 
 /// 与 [`load`] 相同，但非 UTF-8 的文件优先按 `prefer`（用户通过「通过编码重新打开」选择的编码）
@@ -980,6 +1162,7 @@ fn load_with(
             line_ending,
             mtime,
             len: size,
+            origin: None,
         });
     }
 
@@ -1041,6 +1224,7 @@ fn load_with(
         line_ending,
         mtime,
         len: size,
+        origin: None,
     })
 }
 
@@ -1083,15 +1267,22 @@ pub(super) fn write_atomic(
 ///
 /// 非 UTF-8 编码（GBK、UTF-16 等）按原编码写回；遇到该编码无法表示的字符时不写入，并在错误
 /// 信息中指出该字符。
-fn write_rope(target: &Path, rope: &Rope, encoding: Encoding) -> io::Result<Metadata> {
+///
+/// 按 Unicode 转义保存时未修改的行按 `origin` 中原来的写法写回。
+fn write_rope(
+    target: &Path,
+    rope: &Rope,
+    encoding: Encoding,
+    origin: Option<&charset::EscapeOrigin>,
+) -> io::Result<Metadata> {
     if matches!(encoding, Encoding::Utf8 | Encoding::Utf8Bom) {
         return write_atomic(target, encoding == Encoding::Utf8Bom, true, |out| {
             rope.chunks()
                 .try_for_each(|chunk| out.write_all(chunk.as_bytes()))
         });
     }
-    let bytes = charset::encode(&rope.to_string(), encoding).map_err(|c| {
-        let (char, encoding) = (c.to_string(), encoding.label());
+    let bytes = charset::encode_with(&rope.to_string(), encoding, origin).map_err(|c| {
+        let (char, encoding) = (c.to_string(), charset::label(encoding));
         let message = t!(
             "editor-encoding-unencodable",
             char = char,

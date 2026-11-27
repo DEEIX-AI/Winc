@@ -1,7 +1,7 @@
 # Releasing winc
 
 Every merge into `main` is a release. It creates the annotated tag `v<version>`, explicitly
-dispatches the Release workflow on that tag, builds four native targets, and assembles one
+dispatches the Release workflow on that tag, builds five native targets, and assembles one
 **draft** GitHub Release. A maintainer reviews and publishes the draft. No platform job uploads
 directly to a Release.
 
@@ -14,12 +14,13 @@ of releasing it again. To retry a failed build, rerun the Release workflow on th
 | Path | Contents |
 | --- | --- |
 | `.github/workflows/release-tag.yml` | Tags each merge into `main` and starts the Release workflow |
-| `.github/workflows/release.yml` | Entry point: prepare, the four platform builds, and the draft |
+| `.github/workflows/release.yml` | Entry point: prepare, the five platform builds, and the draft |
 | `.github/workflows/release-arch-repo.yml` | Stages the signed Arch repository after a stable release is published |
+| `.github/workflows/release-winget.yml` | Opens the winget-pkgs pull request after a stable release is published |
 | `.github/workflows/release-{prepare,macos,linux,windows}.yml` | Reusable jobs called by `release.yml` |
 | `.github/actions/build-setup/` | Shared source check and toolchain setup; pins the release Rust version |
 | `release/macos/` | `package.sh` (app, dmg, appcast), `verify.sh`, and Apple signing setup |
-| `release/linux/` | `package.sh` (AppImage and deb), pinned packaging tools, desktop entry and AppRun |
+| `release/linux/` | `package.sh` (AppImage and deb), the glibc baseline (`baseline.*`), pinned packaging tools, desktop entry and AppRun |
 | `release/linux/arch/` | Arch package recipe, repository staging and installer template |
 | `release/windows/` | `package.ps1` (NSIS, MSI, portable zip), `sign.ps1`, `verify.ps1`, installer templates |
 | `release/common/` | Shared by all platforms: version, build config, update signing, asset staging, publication |
@@ -77,23 +78,45 @@ version (see below). Neither needs a repository Variable.
 | macOS Apple silicon | `macos-arm64.dmg` |
 | macOS Intel | `macos-x64.dmg` |
 | Linux x86_64 | `linux-x64.AppImage`, `linux-x64.deb`, `linux-x64.rpm` |
+| Linux ARM64 | `linux-arm64.AppImage`, `linux-arm64.deb`, `linux-arm64.rpm` |
 | Windows x86_64 | `windows-x64-setup.exe`, `windows-x64.msi`, `windows-x64-portable.zip` |
 
 All packages include the terminal helper. macOS containers use the same final app and retain the
-macOS 11 minimum. Linux packages are built on Ubuntu 24.04; the deb declares glibc 2.39 or newer.
-The rpm wraps the same binaries in a Fedora container: rpmbuild derives the glibc requirement, and
-the window system libraries loaded at run time are required by soname, so it installs on Fedora 40
-or newer, RHEL 10 and openSUSE Tumbleweed. Debian and RPM prerelease versions use `~` so the final
-release sorts after its betas.
-Stable `X.Y.Z` releases also include `winc-<version>-1-x86_64.pkg.tar.zst` built from the same Linux
-binaries. The Arch package uses pacman for updates.
+macOS 11 minimum. Linux programs are compiled in a manylinux_2_28 image (`release/linux/baseline.sh`),
+so they need glibc 2.28 or newer whatever the runner has; `verify-baseline.sh` fails the build when
+a program needs a newer one, and the deb declares the same version. Each architecture is compiled
+and packaged on a runner of its own kind. The rpm wraps the same binaries in a Fedora container:
+rpmbuild derives the glibc requirement, and the window system libraries loaded at run time are
+required by soname, so it installs on Fedora 40 or newer, RHEL 8 or newer and openSUSE Tumbleweed;
+it is installed into AlmaLinux 8, which has glibc 2.28, as part of the build. Debian and RPM
+prerelease versions use `~` so the final release sorts after its betas.
+Stable `X.Y.Z` releases also include `winc-<version>-1-x86_64.pkg.tar.zst` built from the same
+x86_64 Linux binaries. The Arch package uses pacman for updates.
 
-Each release also has four signed appcasts for the in-app updater: `appcast-macos-arm64.xml`,
-`appcast-macos-x86_64.xml`, `appcast-linux.xml`, and `appcast-windows.xml`. They list the dmg, the
+Each release also has five signed appcasts for the in-app updater: `appcast-macos-arm64.xml`,
+`appcast-macos-x86_64.xml`, `appcast-linux.xml` (x86_64), `appcast-linux-arm64.xml`, and
+`appcast-windows.xml`. They list the dmg, the
 AppImage, and the NSIS and MSI installers, each with its EdDSA signature; the deb, the rpm and the
 portable zip are downloads only. Installs that cannot update themselves (deb, rpm, the Arch
 package, the portable zip) still read their platform's appcast and only notify: the update button
 opens the downloads page, or suggests `pacman -Syu` for the Arch package. `SHA256SUMS` covers the assets assembled before publication.
+
+### Windows package managers
+
+Both read the published GitHub Release; neither is built here.
+
+- **winget** (`DEEIX-AI.Winc`): `release-winget.yml` runs `release/windows/winget.sh` when a stable
+  release is published. It hands the `-setup.exe` and `.msi` URLs to a pinned Komac, which opens the
+  pull request in microsoft/winget-pkgs. It needs the `WINGET_TOKEN` Secret: a classic token with
+  the `public_repo` scope. That scope can write to every public repository the account can, so use
+  an account that has nothing but a fork of winget-pkgs. Without the Secret the job does nothing.
+  The installers update themselves, so winget only sees the newer version.
+- **Scoop** (`winc`, in the Extras bucket): the manifest lives in ScoopInstaller/Extras and its bot
+  follows new releases. It depends on these names staying as they are: the tag `v<version>`, the
+  asset `Winc-<version>-windows-x64-portable.zip`, `SHA256SUMS`, and `winc.exe`, `bin\winc.cmd` and
+  the `data` folder inside the zip. Scoop keeps `data` across versions. A Scoop install does not
+  update itself: it finds Scoop's record beside `winc.exe` and tells the user to run
+  `scoop update winc`.
 
 ### Update channel (winc.si)
 
@@ -143,8 +166,12 @@ the first deployment.
 For local signing, set the same fingerprint and run `bash release/linux/arch/prepare-repo.sh --tag
 v1.2.3 --out target/winc-arch-v1.2.3` on an Arch machine with the signing key and an authenticated `gh`.
 
-On x86_64 Arch Linux or CachyOS, download and run the installer to configure the signed repository
-and install Winc. The installer runs a full system upgrade and prompts for confirmation.
+On x86_64 Arch Linux or an Arch-based distribution (CachyOS, EndeavourOS, Omarchy and others that
+set `ID_LIKE=arch` or ship `/etc/arch-release`), download and run the installer to configure the
+signed repository and install Winc. The installer places the repository ahead of the others in
+`/etc/pacman.conf`, because pacman takes a package from the first repository that has it and Arch's
+`extra` repository also ships winc; running it again moves an existing entry there. It then runs a
+full system upgrade and prompts for confirmation.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fL -o install-arch.sh \
@@ -158,11 +185,12 @@ Once the repository is configured, install with `sudo pacman -Syu winc` and upda
 ## Verification and publication
 
 Before uploading, macOS checks both container contents, architectures, minimum system versions,
-signatures and notarization where configured. Linux checks the AppImage for bundled Wayland
-libraries, inspects the deb, and installs the stable Arch package in a clean container. Windows checks
+signatures and notarization where configured. Linux checks the newest glibc symbol the programs
+need, the AppImage for bundled Wayland libraries, inspects the deb, installs the rpm in clean
+containers, and installs the stable Arch package in a clean container. Windows checks
 signatures and exercises NSIS/MSI installation and the update launcher using paths containing spaces.
 
-The single publication job requires all four verified target artifacts. It refuses missing,
+The single publication job requires all five verified target artifacts. It refuses missing,
 duplicate or unexpected assets, multiple drafts for the tag, and replacing an already published
 Release. Retrying a draft replaces the same expected asset names. Publishing remains a manual
 action after reviewing the draft, release notes and checksums.

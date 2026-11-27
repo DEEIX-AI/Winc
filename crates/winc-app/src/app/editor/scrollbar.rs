@@ -11,13 +11,13 @@ use winc_render::Color;
 
 use super::*;
 
-/// 滚动停止（或鼠标离开滚动条）后，滚动条保持完全显示的时长（经验值）。
+/// 滚动停止（或鼠标离开滚动条）后，滚动条保持完全显示的时长（取自调参）。
 const SCROLLBAR_HOLD: Duration = Duration::from_millis(800);
-/// 滚动条淡入的时长（经验值）：比淡出短，滚动时马上有反馈。
+/// 滚动条淡入的时长：比淡出短，滚动时马上有反馈。
 const SCROLLBAR_SHOW: Duration = Duration::from_millis(150);
-/// 滚动条淡出的时长（经验值）。
+/// 滚动条淡出的时长（取自调参）。
 const SCROLLBAR_HIDE: Duration = Duration::from_millis(300);
-/// 鼠标移上、移开滚动条时，滑块颜色加深、变回的时长（经验值）。
+/// 鼠标移上、移开滚动条时，滑块颜色加深、变回的时长（取自调参）。
 const SCROLLBAR_HEAT: Duration = Duration::from_millis(150);
 
 /// 带滚动条的区域。
@@ -39,6 +39,10 @@ pub(crate) enum ScrollArea {
     Panel,
     /// 提交视图的改动列表。
     Commit,
+    /// 提交视图中提交历史一组的各行。
+    CommitHistory,
+    /// Git 面板中日志的提交列表。
+    GitPanel,
     /// 文件视图底部大纲的符号列表。
     Outline,
     /// Git 日志左侧的分支面板。
@@ -67,7 +71,7 @@ pub(crate) enum ScrollArea {
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 20] = [
+    const ALL: [ScrollArea; 22] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::DiffLeftHorizontal,
@@ -76,6 +80,8 @@ impl ScrollArea {
         ScrollArea::TreeHorizontal,
         ScrollArea::Panel,
         ScrollArea::Commit,
+        ScrollArea::CommitHistory,
+        ScrollArea::GitPanel,
         ScrollArea::Outline,
         ScrollArea::LogBranches,
         ScrollArea::Settings,
@@ -101,6 +107,8 @@ impl ScrollArea {
             ScrollArea::TreeHorizontal => Some(Scrollbar::TreeHorizontal),
             ScrollArea::Panel => Some(Scrollbar::Panel),
             ScrollArea::Commit => Some(Scrollbar::Commit),
+            ScrollArea::CommitHistory => Some(Scrollbar::CommitHistory),
+            ScrollArea::GitPanel => Some(Scrollbar::GitPanel),
             ScrollArea::Outline => Some(Scrollbar::Outline),
             ScrollArea::LogBranches => Some(Scrollbar::LogBranches),
             ScrollArea::Settings => Some(Scrollbar::Settings),
@@ -306,9 +314,9 @@ impl App {
     /// 设置浮层打开时只认设置页的滚动条，浮层下方的区域不响应。
     pub(in crate::app) fn update_scrollbar_hover(&mut self, x: f32, y: f32) {
         let settings = self.settings.open;
-        let dialog = self.overlays.form_dialog.is_some();
+        let covered = self.overlays.form_dialog.is_some() || self.modal_open();
         let hovered = ScrollArea::ALL.into_iter().find(|&area| {
-            if dialog || settings != (area == ScrollArea::Settings) {
+            if covered || settings != (area == ScrollArea::Settings) {
                 return false;
             }
             // 鼠标在展开了完整名称的一行上：不唤出文件树的滚动条。

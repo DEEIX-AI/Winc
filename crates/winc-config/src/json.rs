@@ -73,8 +73,13 @@ impl Json {
     }
 
     /// 把键值对转成对象；键重复时后出现的值覆盖先出现的。
-    pub(crate) fn object<K: Into<String>>(items: impl IntoIterator<Item = (K, Json)>) -> Json {
+    pub fn object<K: Into<String>>(items: impl IntoIterator<Item = (K, Json)>) -> Json {
         Json::Object(items.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    }
+
+    /// 是对象且有键 `key` 时返回该键的值，否则返回 `None`。
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        self.as_object()?.get(key)
     }
 
     /// 是对象时返回键值表，否则返回 `None`。
@@ -246,8 +251,8 @@ fn quote_into(out: &mut String, text: &str) {
 /// 解析允许的最大嵌套层数（层）。
 ///
 /// 超过时按格式错误处理：解析是递归的，一长串 `[` 会耗尽调用栈，导致进程中止，使未保存的内容丢失。
-/// `.winc/config.json` 和 `package.json` 来自项目仓库，内容不可信。该值是经验值，
-/// 高于常见配置文件的嵌套深度。
+/// `.winc/config.json` 和 `package.json` 来自项目仓库，内容不可信。该值高于常见配置文件的
+/// 嵌套深度。
 const MAX_DEPTH: usize = 256;
 
 /// 递归下降的 JSON 解析器。

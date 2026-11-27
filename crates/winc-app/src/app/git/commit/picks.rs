@@ -85,8 +85,9 @@ impl App {
                 Some(skipped) => plan.partial.push((entry.path.clone(), skipped.to_vec())),
                 None => {
                     plan.whole.push(entry.path.clone());
-                    // 改名的文件，原来的路径一并提交，否则提交里同时留着新旧两个文件。
-                    plan.whole.extend(entry.from.clone());
+                    // 改名的文件，原来的路径一并提交，否则提交里同时留着新旧两个文件；改名已经
+                    // 暂存时原来的路径已移出暂存区，不再暂存。
+                    plan.whole.extend(entry.unstaged_from().cloned());
                 }
             }
             if entry.untracked() {
@@ -187,7 +188,7 @@ impl App {
                     plan.partial.push((entry.path.clone(), partial.clone()));
                 } else if checked {
                     plan.whole.push(entry.path.clone());
-                    plan.whole.extend(entry.from.clone());
+                    plan.whole.extend(entry.unstaged_from().cloned());
                     if entry.untracked() {
                         plan.added.push(entry.path.clone());
                     }
@@ -522,12 +523,11 @@ impl Skip {
     }
 }
 
-/// 把勾掉的记录 `skips` 对应到现在的各段改动 `all`（键、在 `HEAD` 中的行区间）上，返回每段
-/// 改动对应的记录，下标同 `all`；一条记录最多对应一段改动。
+/// 把勾掉的记录 `skips` 对应到现在的各段改动 `all`（键、在 `HEAD` 中的行区间）上，返回每段改动对应
+/// 的记录，下标同 `all`；一条记录最多对应一段改动。
 ///
-/// 内容相同的改动可能有几处（例如两处加入了同一行），键相同，只按键对应会把一条记录同时算到这
-/// 几处上：勾掉一处时几处一起显示为勾掉，再勾上时只去掉其中一份，无法勾回。因此依次按三种条件
-/// 对应，每次只用还没对应上的记录：键和位置都相同；键相同、位置最近（上方增删了行时位置会变）；
+/// 内容相同的改动可能有几处，键相同，只按键对应会把一条记录同时算到这几处上，勾掉一处时几处一起
+/// 显示为勾掉。因此依次按三种条件对应，每次只用还没对应上的记录：键和位置都相同；键相同、位置最近；
 /// 内容变了、位置重叠（见 [`Skip::overlaps`]）。
 pub(super) fn assign<'a>(skips: &'a [Skip], all: &[(u64, Range<usize>)]) -> Vec<Option<&'a Skip>> {
     let mut taken = vec![false; skips.len()];

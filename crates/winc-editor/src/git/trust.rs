@@ -54,13 +54,11 @@ fn risky_key(key: &str) -> bool {
 
 /// 从 `git config --list --show-scope -z` 的输出和 git 实际使用的 hooks 目录里找出 [`Risks`]。
 ///
-/// 只看仓库自己的配置（`local`、`worktree` 范围，含它们 `include` 进来的文件）：系统和用户
-/// 范围的配置由用户自己维护，视为用户的选择。`core.fsmonitor` 是布尔值时运行的是
-/// `git` 自带的监视进程，不计入。
-///
-/// 钩子目录由 [`hooks_dir`] 确定，其中可执行的普通文件都计入，`.sample` 示例除外。
-/// `root` 是工作树的根目录，`default` 是共用的 git 目录下的 `hooks`，
-/// `home` 是 `root` 所在系统中用户的主目录。
+/// 只看仓库自己的配置（`local`、`worktree` 范围，含 `include` 进来的文件），系统和用户范围的
+/// 视为用户的选择；`core.fsmonitor` 是布尔值时运行的是 `git` 自带的监视进程，不计入。钩子目录
+/// 由 [`hooks_dir`] 确定，其中 `git` 会作为钩子运行的可执行文件都计入（见 [`hook_name`]）。
+/// `root` 是工作树的根目录，`default` 是共用的 git 目录下的 `hooks`，`home` 是 `root` 所在系统
+/// 中用户的主目录。
 pub(super) fn parse_risks(
     stdout: &[u8],
     root: &Path,
@@ -104,14 +102,15 @@ pub(super) fn parse_risks(
 
     // 先只列出名字排好序，再逐个读内容喂进指纹：同一时刻只有一个 hook 的内容在内存里。
     let (dir, label) = hooks_dir(stdout, root, default, home).unzip();
-    // 示例文件按名字就能排除；其余各项的文件信息一次取回（远端的仓库只需一次往返）。
+    // 不是钩子名的文件（示例、备份）按名字就能排除；其余各项的文件信息一次取回（远端的仓库只需
+    // 一次往返）。
     let candidates: Vec<(String, PathBuf)> = dir
         .and_then(|dir| winc_backend::fs::read_dir(dir).ok())
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| (entry.name.to_string_lossy().into_owned(), entry.path()))
-        .filter(|(name, _)| !name.ends_with(".sample"))
+        .filter(|(name, _)| hook_name(name))
         .collect();
     let paths: Vec<&Path> = candidates.iter().map(|(_, path)| path.as_path()).collect();
     let found = winc_backend::fs::metadata_many(&paths);
@@ -135,13 +134,26 @@ pub(super) fn parse_risks(
     risks
 }
 
+/// 名为 `name` 的文件是否可能被 `git` 作为钩子运行。
+///
+/// `git` 只运行与钩子同名的文件，钩子名中没有 `.`（见 githooks(5)）；Windows 上的 `git` 还会
+/// 运行加上 `.exe` 的同名文件。`pre-commit.sample`、`pre-push.bak` 这类文件不会运行。不按已知
+/// 钩子名的列表判断，以免 `git` 新增的钩子不被计入。
+fn hook_name(name: &str) -> bool {
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    !name.is_empty() && !name.contains('.')
+}
+
 /// 返回 `git` 实际运行钩子的目录，以及列出钩子时写在名字前面的路径。
 ///
 /// 目录取最后一个 `core.hooksPath`（各范围都算，后出现的覆盖先出现的），列出时写配置里的原文；
 /// 没有设置时是 `default`，写作 `hooks`。相对路径从工作树的根目录 `root` 算起；`~/` 开头的路径
 /// 从 `home` 算起，`git` 同样按仓库所在系统中用户的主目录展开。系统和用户自己的配置里写的
 /// 绝对路径是用户自己的钩子目录，不属于仓库，返回 `None`。
-fn hooks_dir(
+///
+/// 路径按仓库所在系统的写法解析：`/` 开头的是绝对路径（Windows 上同样如此，远端主机和 WSL
+/// 发行版里的路径都是这种写法）；远端主机上的路径换算为同一主机上的虚拟路径。
+pub(super) fn hooks_dir(
     stdout: &[u8],
     root: &Path,
     default: Option<&Path>,
@@ -162,11 +174,12 @@ fn hooks_dir(
         .strip_prefix("~/")
         .and_then(|rest| Some(home?.join(rest)));
     let own = scope != b"local" && scope != b"worktree";
+    let absolute = value.starts_with('/') || Path::new(&value).is_absolute();
     let dir = match home {
         Some(_) if own => return None,
         Some(dir) => dir,
-        None if Path::new(&value).is_absolute() && own => return None,
-        None => root.join(&value),
+        None if absolute && own => return None,
+        None => winc_backend::resolve(root, &value).unwrap_or_else(|| root.join(&value)),
     };
     let label = value.trim_end_matches('/').to_owned();
     Some((dir, label))
@@ -328,16 +341,16 @@ impl Git {
 
     /// 记下用户信任了仓库 `root` 的 `fingerprint` 所对应的配置。
     ///
-    /// 之后的命令在检查出的指纹与它相同时照常运行；配置变化后指纹不同，需要重新确认。
+    /// 之后的命令在检查出的指纹与它相同时仍然运行；配置变化后指纹不同，需要重新确认。
     pub fn trust(&self, root: &Path, fingerprint: u64) {
         self.lock().trusted.insert(root.to_path_buf(), fingerprint);
     }
 
-    /// 仓库 `root` 的配置是否可以照常使用：没有会运行命令的设置，或者用户信任了现在的设置。
+    /// 仓库 `root` 的配置是否可以继续使用：没有会运行命令的设置，或者用户信任了现在的设置。
     ///
     /// 还没检查过时先检查；检查失败时按不可信处理。
     ///
-    /// 返回不可信时检查出的 [`Risks`]，可以照常使用时返回 `None`。
+    /// 返回不可信时检查出的 [`Risks`]，可以继续使用时返回 `None`。
     pub fn untrusted(&self, root: &Path) -> Option<Arc<Risks>> {
         let cached = self.lock().risks.get(root).cloned();
         let risks = match cached {
@@ -351,6 +364,17 @@ impl Git {
         };
         let trusted = self.lock().trusted.get(root) == Some(&risks.fingerprint);
         (!risks.is_empty() && !trusted).then_some(risks)
+    }
+
+    /// 已检查过的仓库 `root` 是否不可信：检查出会运行命令的设置且用户没有信任现在的设置时返回
+    /// 检查结果。
+    ///
+    /// 只读取检查结果，不运行 `git`，界面线程可以调用；还没检查过时返回 `None`。
+    pub fn known_untrusted(&self, root: &Path) -> Option<Arc<Risks>> {
+        let trust = self.lock();
+        let risks = trust.risks.get(root)?;
+        let trusted = trust.trusted.get(root) == Some(&risks.fingerprint);
+        (!risks.is_empty() && !trusted).then(|| Arc::clone(risks))
     }
 
     /// 在会改动仓库的操作之前调用，仓库的配置不可信时拒绝。

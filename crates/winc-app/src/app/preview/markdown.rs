@@ -16,10 +16,16 @@ use winc_editor::{DocumentId, PreviewKind, PreviewMode};
 use winc_i18n::t;
 use winc_preview::epub::TocEntry;
 use winc_preview::image::{self, Picture, Pixels};
+use winc_preview::latex::LineMap;
 use winc_preview::markdown::{self, Markdown};
 use winc_preview::svg;
 
 use super::images::system_glyphs;
+// 缓存的清理只有测试直接调用。
+#[cfg(test)]
+pub(in crate::app) use targets::{CACHE_AGE, clean_cache};
+use targets::{download, is_remote, load_downloaded};
+pub(crate) use targets::{image_path, local_target, percent_decode};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::app::{App, Focus, UserEvent};
@@ -37,6 +43,7 @@ pub(crate) mod resize;
 mod scroll;
 pub(crate) mod slash;
 pub(crate) mod suggest;
+mod targets;
 pub(crate) mod toolbar;
 mod viewer;
 mod writing;
@@ -51,8 +58,14 @@ type Converted = (Markdown, Media, Option<Arc<[TocEntry]>>);
 
 /// 后台任务的结果。
 enum Done {
-    /// 文档、所依据的文档版本、解析结果、解析所用的时间。
-    Parsed(DocumentId, u64, Markdown, std::time::Duration),
+    /// 文档、文档版本、解析结果、解析耗时，以及 LaTeX 原文各行的位置。
+    Parsed(
+        DocumentId,
+        u64,
+        Markdown,
+        std::time::Duration,
+        Option<LineMap>,
+    ),
     /// docx、EPUB 文档、所依据的文档版本、转换并解析的结果或失败的原因。
     Converted(DocumentId, u64, Result<Converted, String>),
     /// 图片（解析后的本地路径）、读取结果。
@@ -67,8 +80,7 @@ pub(crate) use winc_typeset::ImageSlot;
 
 /// 可编辑的预览中光标所在的叶子块（见 [`Markdown::leaves`]），该块显示原文。
 ///
-/// 原文位置均按当前文字计算：解析之后输入的文字都位于该块内（光标在该块中），块的末尾
-/// 按文字长度的变化移动。
+/// 原文位置均按当前文字计算：解析结果中的位置按 [`LiveLeaf::drift`] 换算。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LiveLeaf {
     /// 所在的顶层块（`Markdown::blocks` 的序号）。
@@ -78,8 +90,11 @@ pub(crate) struct LiveLeaf {
     /// 叶子块当前的范围（字节偏移）；光标位于其后的空行上时延伸到光标所在行，位于其前的
     /// 块标记上时从光标所在行起算。
     pub leaf: std::ops::Range<usize>,
-    /// 叶子块在解析结果中的终点（字节偏移）：输入之后、重新解析之前与 `leaf` 的终点不同。
+    /// 叶子块不含其后空行时的终点（字节偏移）：光标位于叶子块之后的空行上时与 `leaf` 的终点
+    /// 不同。
     pub parsed_end: usize,
+    /// 解析之后的改动，见 [`App::markdown_drift`]。
+    pub drift: winc_typeset::Drift,
     /// 文档版本号：输入文字后该块需要重排。
     pub revision: u64,
     /// 是否为正文（段落、标题），见 `LeafRange::prose`。
@@ -102,8 +117,18 @@ pub(crate) struct LiveLeaf {
 /// 可编辑的预览在界面线程上解析的时间预算：60 Hz 下一帧（约 16.7 ms）的四分之一。
 ///
 /// 上一次解析不超过该预算时，输入后在绘制之前直接解析，同一帧即按最新的结构排版；超过时
-/// 在后台解析，解析完成之前按上一版的结构显示。
-const INLINE_PARSE: std::time::Duration = std::time::Duration::from_millis(4);
+/// 只重新解析改动所在的块（估算的耗时同样不超过该预算），做不到时在后台解析全文，解析完成
+/// 之前按上一版的结构显示。
+pub(in crate::app) const INLINE_PARSE: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// 返回在 [`INLINE_PARSE`] 内能重新解析的字节数：按上一次解析全文的用时 `cost` 与原文长度
+/// `len`（字节）成比例估算。
+fn inline_bytes(len: usize, cost: std::time::Duration) -> usize {
+    if cost.is_zero() {
+        return usize::MAX;
+    }
+    (len as f64 * INLINE_PARSE.as_secs_f64() / cost.as_secs_f64()) as usize
+}
 
 /// 一张图片最多保留的已绘制尺寸数（种）；超出时移除最早绘制的尺寸。
 const SIZES: usize = 4;
@@ -138,6 +163,11 @@ pub(crate) struct MarkdownPreview {
     pub doc: Option<DocumentId>,
     /// 最近一次解析的结果。
     pub parsed: Option<Arc<Markdown>>,
+    /// `parsed` 的序号：每次换上新的解析结果或就地重新解析其中的块都加 1，排版据此判断结果
+    /// 是否变了（见 [`laid::Laid::source`]）。
+    pub(crate) parse_serial: usize,
+    /// LaTeX 原文各行在转换出的 Markdown 中的位置；Markdown 为 `None`。
+    pub lines: Option<Arc<LineMap>>,
     /// 最新解析过的文档版本号（`revision`）。
     checked: Option<u64>,
     /// 正在后台解析的版本号（`revision`）。
@@ -187,6 +217,9 @@ pub(crate) struct MarkdownPreview {
     pub toc_rest: Option<std::time::Instant>,
     /// 本次停留是否已展开标题列表。
     pub toc_shown: bool,
+    /// 鼠标进入（`true`）或离开（`false`）标题指示条时指示条加深、变淡的时钟；不在过渡中时为
+    /// `None`。
+    pub toc_glow: Option<(bool, crate::app::animation::Clock)>,
     /// 正文左边缘在钉住过渡结束后的位置（窗口坐标，逻辑像素）。
     pub toc_left: f32,
     /// 钉住过渡开始时正文左边缘的位置（窗口坐标，逻辑像素），终点是
@@ -283,8 +316,8 @@ pub(crate) struct MarkdownPreview {
     /// 最近一次单击放下的光标（原文字节偏移）：因此重新排版时不为保持光标不动而滚动（见
     /// `laid::old_caret`）。
     pub(crate) clicked: Option<usize>,
-    /// 鼠标选中文字后的选区，选区不变时显示格式工具栏。
-    pub(crate) toolbar: Option<(DocumentId, winc_core::Selection)>,
+    /// 鼠标选中文字后显示的格式工具栏，见 [`toolbar::SelectionToolbar`]。
+    pub(crate) toolbar: Option<toolbar::SelectionToolbar>,
     /// 正文链接的检查结果。
     pub(crate) links: links::LinkChecks,
     /// 右键点击的本地图片文件，供菜单「在新标签中打开图片」使用。
@@ -367,6 +400,8 @@ impl Default for MarkdownPreview {
         Self {
             doc: None,
             parsed: None,
+            parse_serial: 0,
+            lines: None,
             checked: None,
             pending: None,
             cost: None,
@@ -388,6 +423,7 @@ impl Default for MarkdownPreview {
             toc_fade: None,
             toc_rest: None,
             toc_shown: false,
+            toc_glow: None,
             toc_left: 0.0,
             toc_slide: None,
             toc_close: None,
@@ -490,6 +526,8 @@ impl MarkdownPreview {
         self.leave_book();
         self.doc = doc;
         self.parsed = None;
+        self.parse_serial = self.parse_serial.wrapping_add(1);
+        self.lines = None;
         self.checked = None;
         self.pending = None;
         self.cost = None;
@@ -578,7 +616,9 @@ pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
     if converted || reading {
         return Some(app.layout.editor);
     }
-    if doc.preview_kind() != Some(PreviewKind::Markdown) {
+    // 编译出 PDF、正在第一次编译的 LaTeX 不显示阅读视图。
+    let compiled = app.latex_pdf().is_some() || app.latex_waiting();
+    if !doc.preview_kind().is_some_and(PreviewKind::typeset) || compiled {
         return None;
     }
     match doc.preview_mode() {
@@ -649,13 +689,23 @@ impl App {
             Some(winc_editor::Reading::Ready(text)) => Some(Arc::clone(text)),
             _ => None,
         };
+        let latex = doc.preview_kind() == Some(PreviewKind::Latex);
+        let edited = reading.is_none();
         md.pending = Some(revision);
         let (sender, proxy) = (md.sender.clone(), self.link.proxy.clone());
         winc_editor::background::spawn(move || {
             let started = std::time::Instant::now();
             let text = reading.map_or_else(|| rope.to_string(), |text| text.to_string());
-            let parsed = markdown::parse(&text);
-            let done = Done::Parsed(id, revision, parsed, started.elapsed());
+            let (parsed, lines) = if latex {
+                let converted = winc_preview::latex::to_markdown(&text);
+                (markdown::parse(&converted.markdown), Some(converted.map))
+            } else if edited {
+                // 块之间多出的空行显示为空段落，与可编辑的预览在界面线程上的解析一致。
+                (markdown::parse(&text).with_blank_lines(&text), None)
+            } else {
+                (markdown::parse(&text), None)
+            };
+            let done = Done::Parsed(id, revision, parsed, started.elapsed(), lines);
             if sender.send(done).is_ok()
                 && let Some(proxy) = proxy
             {
@@ -666,10 +716,11 @@ impl App {
 
     /// 可编辑的预览中解析结果落后于文字时，在界面线程上解析最新的文字，返回是否已解析。
     ///
-    /// 只在上一次解析不超过 [`INLINE_PARSE`] 时进行：输入、点击、移动光标之后的排版和按键
-    /// 处理都依据当前文字的结构，不显示按上一版结构推算的中间帧。正在后台解析的旧版本作废。
+    /// 只在耗时不超过 [`INLINE_PARSE`] 时进行：改动只涉及几个块时只重新解析这些块，否则在上一次
+    /// 解析不超过该预算时解析全文。输入、点击、移动光标之后的排版和按键处理都依据当前文字的
+    /// 结构，不显示按上一版结构推算的中间帧。正在后台解析的旧版本作废。
     pub(crate) fn parse_markdown_inline(&mut self) -> bool {
-        if !self.markdown_live() || self.preview.markdown.cost.is_none_or(|c| c > INLINE_PARSE) {
+        if !self.markdown_live() {
             return false;
         }
         let Some(doc) = self.editor.active() else {
@@ -686,12 +737,32 @@ impl App {
         let Some(rope) = doc.text().rope() else {
             return false;
         };
+        // 只重新解析改动所在的块。绘制之前没有其他地方持有 `parsed`，就地修改不复制。
+        if let (Some(parsed), Some(checked), Some(cost)) = (md.parsed.as_mut(), md.checked, md.cost)
+            && let Some(edit) = doc.byte_edit_since(checked)
+            && Arc::make_mut(parsed).reparse_local(
+                (edit.old, edit.new),
+                (rope.len_bytes(), inline_bytes(rope.len_bytes(), cost)),
+                |at| rope.byte_to_line(at),
+                |range| rope.byte_slice(range).to_string(),
+            )
+        {
+            md.parse_serial = md.parse_serial.wrapping_add(1);
+            md.pending = None;
+            md.checked = Some(revision);
+            return true;
+        }
+        if md.cost.is_none_or(|c| c > INLINE_PARSE) {
+            return false;
+        }
         let started = std::time::Instant::now();
-        let parsed = markdown::parse(&rope.to_string());
+        let text = rope.to_string();
+        let parsed = markdown::parse(&text).with_blank_lines(&text);
         md.cost = Some(started.elapsed());
         md.pending = None;
         md.checked = Some(revision);
         md.parsed = Some(Arc::new(parsed));
+        md.parse_serial = md.parse_serial.wrapping_add(1);
         true
     }
 
@@ -703,7 +774,7 @@ impl App {
         while let Ok(done) = self.preview.markdown.receiver.try_recv() {
             let md = &mut self.preview.markdown;
             match done {
-                Done::Parsed(id, revision, parsed, cost) => {
+                Done::Parsed(id, revision, parsed, cost, lines) => {
                     if md.doc != Some(id) || md.pending != Some(revision) {
                         continue;
                     }
@@ -711,6 +782,8 @@ impl App {
                     md.pending = None;
                     md.checked = Some(revision);
                     md.parsed = Some(Arc::new(parsed));
+                    md.parse_serial = md.parse_serial.wrapping_add(1);
+                    md.lines = lines.map(Arc::new);
                 }
                 Done::Converted(id, revision, result) => {
                     if md.doc != Some(id) || md.pending != Some(revision) {
@@ -738,10 +811,12 @@ impl App {
                                 .collect();
                             md.failed = None;
                             md.parsed = Some(Arc::new(parsed));
+                            md.parse_serial = md.parse_serial.wrapping_add(1);
                         }
                         Err(reason) => {
                             md.failed = Some(reason);
                             md.parsed = None;
+                            md.parse_serial = md.parse_serial.wrapping_add(1);
                         }
                     }
                 }
@@ -820,8 +895,10 @@ impl App {
             {
                 app.set_preview_mode(mode);
             }
-            if let Some(anchor) = anchor {
-                app.preview.markdown.pending_anchor = Some((id, anchor));
+            match anchor {
+                Some(anchor) if shown_area(app).is_none() => drop(app.go_to_heading(&anchor)),
+                Some(anchor) => app.preview.markdown.pending_anchor = Some((id, anchor)),
+                None => {}
             }
         });
     }
@@ -959,7 +1036,7 @@ impl App {
     pub(in crate::app) fn click_markdown(&mut self, x: f32, y: f32) {
         self.focus = crate::app::Focus::Editor;
         // 内容一栏两侧的空白：分栏时将键盘焦点交给预览，但不放置光标、不开始选择，保留已有选区。
-        if !crate::app::preview::markdown::laid::in_content(self, x) {
+        if !crate::app::preview::markdown::laid::in_content(self, x, y) {
             if !self.markdown_live() {
                 self.preview.markdown.focused = true;
                 self.request_redraw();
@@ -1015,8 +1092,9 @@ impl App {
     /// （刚输入的文字尚未解析，位置可能已错开）。
     fn current_source_at(&self, x: f32, y: f32) -> Option<usize> {
         let doc = self.editor.active()?;
-        // docx 的预览由转换得到，位置不对应文档中的文字。
-        if doc.unsupported.is_some() || self.preview.markdown.checked != Some(doc.revision) {
+        // docx、LaTeX 的预览由转换得到，位置不对应文档中的文字。
+        let converted = doc.unsupported.is_some() || self.preview.markdown.lines.is_some();
+        if converted || self.preview.markdown.checked != Some(doc.revision) {
             return None;
         }
         crate::app::preview::markdown::laid::source_at(self, x, y)
@@ -1221,7 +1299,7 @@ impl App {
         let old = doc.preview_mode();
         self.preview.markdown.followed = None;
         self.preview.markdown.editing = None;
-        if old == mode || doc.preview_kind() != Some(PreviewKind::Markdown) {
+        if old == mode || !doc.preview_kind().is_some_and(PreviewKind::typeset) {
             return None;
         }
         if mode == PreviewMode::Preview {
@@ -1229,15 +1307,32 @@ impl App {
             return None;
         }
         let laid = self.preview.markdown.layout.as_ref()?;
-        (old == PreviewMode::Preview && self.preview.markdown.doc == Some(doc.id))
-            .then(|| laid.line_of_y(self.preview.markdown.scroll(), doc.text().line_count()))
+        (old == PreviewMode::Preview && self.preview.markdown.doc == Some(doc.id)).then(|| {
+            let (scroll, lines) = (self.preview.markdown.scroll(), &self.preview.markdown.lines);
+            match lines {
+                Some(map) => map.source_of(f64::from(laid.line_of_y(scroll, map.count))) as f32,
+                None => laid.line_of_y(scroll, doc.text().line_count()),
+            }
+        })
     }
 }
 
-/// 返回文字滚动位置的第一个显示行 `doc.scroll_line` 对应的原文行号（小数：自动换行折成
-/// 多段的行按段数等分）。
-fn text_line(doc: &winc_editor::Document) -> f32 {
-    let row = doc.scroll_line.max(0.0);
+/// 返回文字滚到显示行 `row` 时顶端那一行在预览所排文字中的行（小数）和那段文字的行数。
+pub(super) fn preview_line(
+    doc: &winc_editor::Document,
+    lines: Option<&LineMap>,
+    row: f64,
+) -> (f32, usize) {
+    let line = text_line(doc, row);
+    match lines {
+        Some(map) => (map.line_of(f64::from(line)) as f32, map.count),
+        None => (line, doc.text().line_count()),
+    }
+}
+
+/// 返回显示行 `row` 对应的原文行号（小数：自动换行折成多段的行按段数等分）。
+pub(super) fn text_line(doc: &winc_editor::Document, row: f64) -> f32 {
+    let row = row.max(0.0);
     let (line, part) = doc.line_and_part(row as usize);
     let rows = doc.rows_of(line).max(1) as f64;
     line as f32 + ((part as f64 + row.fract()) / rows) as f32
@@ -1249,205 +1344,6 @@ fn text_row(doc: &winc_editor::Document, line: f32) -> f64 {
     let whole = (line.max(0.0) as usize).min(last);
     let rows = doc.rows_of(whole).max(1) as f64;
     doc.row_of(whole) as f64 + f64::from((line - whole as f32).clamp(0.0, 1.0)) * rows
-}
-
-/// 网址图片的下载缓存目录，文件名为网址的哈希。
-const REMOTE_CACHE: &str = "winc-markdown-images";
-
-/// 下载一张图片的最长等待时间（秒），传给 `curl` 的 `--max-time`。
-const REMOTE_TIMEOUT: &str = "20";
-
-/// 单张图片的最大下载大小（字节，20 MB），传给 `curl` 的 `--max-filesize`。
-const REMOTE_MAX: &str = "20000000";
-
-/// `url` 是否为需要联网的地址。
-fn is_remote(url: &str) -> bool {
-    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
-    lower.starts_with("https://") || lower.starts_with("http://")
-}
-
-/// 返回文档 `doc`（未保存过的文档为 `None`）中图片地址 `url` 对应的文件：本地图片见
-/// [`local_target`]；网址的图片为下载的缓存文件，`remote` 为假（不允许联网）时返回 `None`。
-pub(crate) fn image_path(doc: Option<&Path>, url: &str, remote: bool) -> Option<PathBuf> {
-    if is_remote(url) {
-        // FNV-1a：同一网址在每次启动时都映射到同一个文件，已下载的图片无需重新下载。
-        let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-        });
-        // 扩展名统一按位图写，读取时按内容判断真实格式。
-        return remote.then(|| {
-            std::env::temp_dir()
-                .join(REMOTE_CACHE)
-                .join(format!("{hash:016x}.png"))
-        });
-    }
-    local_target(doc?, url)
-}
-
-/// 缓存图片的最长未使用时间（30 天），超过时删除。
-pub(in crate::app) const CACHE_AGE: std::time::Duration =
-    std::time::Duration::from_secs(30 * 24 * 3600);
-
-/// 缓存目录占用的磁盘上限（字节），200 MB。
-const CACHE_MAX: u64 = 200 * 1024 * 1024;
-
-/// 把 `url` 下载到 `path`。
-///
-/// 已下载过时只更新修改时间（清理缓存时据此判断最久未使用的文件）。先写入同目录的临时
-/// 文件，下载完成后再改名，中途失败不会留下不完整的文件。每次启动后首次下载前清理一次缓存
-/// （[`clean_cache`]）。
-#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
-fn download(url: &str, path: &Path) -> Result<(), String> {
-    let dir = path
-        .parent()
-        .ok_or(t!("preview-markdown-cache-folder-invalid"))?;
-    static CLEANED: std::sync::Once = std::sync::Once::new();
-    CLEANED.call_once(|| clean_cache(dir, std::time::SystemTime::now()));
-    if path.is_file() {
-        if let Ok(file) = std::fs::File::options().write(true).open(path) {
-            let _ = file.set_modified(std::time::SystemTime::now());
-        }
-        return Ok(());
-    }
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let part = path.with_extension(format!("part{}", std::process::id()));
-    let mut command = crate::web::curl();
-    command
-        .args([
-            "-fsSL",
-            "--max-time",
-            REMOTE_TIMEOUT,
-            "--max-filesize",
-            REMOTE_MAX,
-            "-o",
-        ])
-        .arg(&part)
-        .arg(url)
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let status = command.status().map_err(|e| e.to_string())?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&part);
-        return Err(t!("preview-markdown-download-failed").to_owned());
-    }
-    winc_config::files::replace_file(&part, path).map_err(|e| e.to_string())
-}
-
-/// 删除 `dir` 中超过 [`CACHE_AGE`] 未使用的图片，以及超过一小时未下载完成的临时文件；
-/// 剩余文件超过 [`CACHE_MAX`] 时从最久未使用的开始删除。
-#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
-pub(in crate::app) fn clean_cache(dir: &Path, now: std::time::SystemTime) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut kept = Vec::new();
-    for entry in entries.flatten() {
-        let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        let path = entry.path();
-        let age = meta
-            .modified()
-            .ok()
-            .and_then(|t| now.duration_since(t).ok())
-            .unwrap_or_default();
-        let partial = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.starts_with("part"));
-        let stale = if partial {
-            age > std::time::Duration::from_secs(3600)
-        } else {
-            age > CACHE_AGE
-        };
-        if stale {
-            let _ = std::fs::remove_file(&path);
-        } else if !partial {
-            kept.push((age, meta.len(), path));
-        }
-    }
-    let mut total: u64 = kept.iter().map(|k| k.1).sum();
-    // 最久未使用的排在前面。
-    kept.sort_by_key(|k| std::cmp::Reverse(k.0));
-    for (_, len, path) in kept {
-        if total <= CACHE_MAX {
-            break;
-        }
-        if std::fs::remove_file(&path).is_ok() {
-            total -= len;
-        }
-    }
-}
-
-/// 读取下载的图片：内容为 SVG（徽章多为 SVG）时按 SVG 读取，否则按位图读取。
-///
-/// SVG 中的文字（徽章上的字）用系统字体绘制，与直接预览 SVG 文件时相同。
-#[allow(clippy::disallowed_methods, reason = "只访问本机：图片缓存在本机")]
-fn load_downloaded(path: &Path) -> Result<Picture, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let head = &bytes[..bytes.len().min(1024)];
-    if head.windows(4).any(|w| w == b"<svg") {
-        let text = String::from_utf8_lossy(&bytes);
-        return svg::load(&text, None, Some(system_glyphs()));
-    }
-    image::load(path)
-}
-
-/// 返回文档 `doc` 中地址 `url` 指向的本地文件；网址、`mailto:` 等返回 `None`。
-///
-/// 去掉 `#…`、`?…`，相对路径按文档所在目录解析，并还原 `%20` 等转义。`file://主机/路径`
-/// 取其中的路径：本地文件都在编辑区中打开，不交给系统，因为系统打开 `.app`、`.command`
-/// 时会运行这些文件。
-pub(crate) fn local_target(doc: &Path, url: &str) -> Option<PathBuf> {
-    let url = match url.strip_prefix("file://") {
-        Some(rest) => &rest[rest.find('/')?..],
-        None if url.is_empty()
-            || url.contains("://")
-            || url.starts_with("mailto:")
-            || url.starts_with("data:") =>
-        {
-            return None;
-        }
-        None => url,
-    };
-    let path = url.split(['#', '?']).next().unwrap_or_default();
-    if path.is_empty() {
-        return None;
-    }
-    let path = percent_decode(path);
-    let path = Path::new(&path);
-    Some(if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        doc.parent()?.join(path)
-    })
-}
-
-/// 还原网址里 `%xx` 形式的转义；不是合法 UTF-8 时原样返回。
-pub(crate) fn percent_decode(text: &str) -> String {
-    if !text.contains('%') {
-        return text.to_owned();
-    }
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = |b: u8| (b as char).to_digit(16);
-        if bytes[i] == b'%'
-            && let (Some(hi), Some(lo)) = (
-                bytes.get(i + 1).copied().and_then(hex),
-                bytes.get(i + 2).copied().and_then(hex),
-            )
-        {
-            out.push((hi * 16 + lo) as u8);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).unwrap_or_else(|_| text.to_owned())
 }
 
 #[cfg(test)]

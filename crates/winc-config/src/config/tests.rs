@@ -22,6 +22,44 @@ fn auto_save_reads_its_values_and_the_old_switch() {
     assert!(!problems.is_empty());
 }
 
+/// `editor.smoothCaretMovement` 读三个取值，其他值报告问题并忽略。
+#[test]
+fn smooth_caret_movement_reads_its_values() {
+    assert_eq!(Config::default().smooth_caret_movement, None);
+    for (value, expected) in [
+        ("off", SmoothCaret::Off),
+        ("snappy", SmoothCaret::Snappy),
+        ("gliding", SmoothCaret::Gliding),
+    ] {
+        let text = format!(r#"{{"editor":{{"smoothCaretMovement":"{value}"}}}}"#);
+        let (config, problems) = Config::parse(&text);
+        assert!(problems.is_empty(), "{value}");
+        assert_eq!(config.smooth_caret_movement, Some(expected));
+        assert_eq!(Config::parse(&config.to_json()).0, config);
+    }
+    let (config, problems) = Config::parse(r#"{"editor":{"smoothCaretMovement":"smooth"}}"#);
+    assert_eq!(config.smooth_caret_movement, None);
+    assert!(!problems.is_empty());
+}
+
+/// `editor.findInFiles` 读 `sidebar` 和 `dialog`，其他值报告问题并忽略。
+#[test]
+fn find_in_files_reads_its_values() {
+    for (value, expected) in [
+        ("sidebar", SearchStyle::Sidebar),
+        ("dialog", SearchStyle::Dialog),
+    ] {
+        let text = format!(r#"{{"editor":{{"findInFiles":"{value}"}}}}"#);
+        let (config, problems) = Config::parse(&text);
+        assert!(problems.is_empty(), "{value}");
+        assert_eq!(config.find_in_files, Some(expected));
+        assert_eq!(Config::parse(&config.to_json()).0, config);
+    }
+    let (config, problems) = Config::parse(r#"{"editor":{"findInFiles":"popup"}}"#);
+    assert_eq!(config.find_in_files, None);
+    assert!(!problems.is_empty());
+}
+
 #[test]
 fn terminal_application_priority_is_optional_and_round_trips() {
     assert_eq!(Config::default().terminal_application_priority, None);
@@ -283,12 +321,18 @@ fn round_trips_through_json() {
     let config = Config {
         editor_font: Some("Menlo".to_string()),
         editor_size: Some(14.0),
+        editor_font_weight: Some(500),
+        editor_font_ligatures: Some(true),
+        editor_rulers: vec![80, 120],
+        render_line_endings: Some(true),
+        cursor_style: Some(CursorStyle::Underline),
         ui_font: Some("「带引号」的字体".to_string()),
         ui_size: Some(12.5),
         ui_zoom: Some(150),
         ui_native_title_bar: Some(true),
         ui_animations: Some(false),
         smooth_scrolling: Some(false),
+        smooth_caret_movement: Some(SmoothCaret::Gliding),
         ui_font_weight: Some(500),
         ui_background_image: Some("/图片/壁纸.jpg".to_string()),
         ui_background_opacity: Some(20.0),
@@ -297,17 +341,25 @@ fn round_trips_through_json() {
         auto_save: Some(AutoSave::AfterDelay),
         hot_exit: Some(false),
         confirm_close: Some(true),
+        quit_on_last_window_close: Some(true),
         restore_folder: Some(false),
+        new_file_on_startup: Some(true),
+        default_language: Some("markdown".to_string()),
+        detect_language_on_paste: Some(false),
+        drag_and_drop: Some(false),
         open_folder_in_new_window: Some(true),
         sticky_scroll: Some(false),
         word_wrap: Some(true),
+        align_columns: Some(false),
         whole_lines: Some(true),
         minimap: Some(true),
         outline: Some(false),
         render_whitespace: Some(RenderWhitespace::Trailing),
         diff_inline: Some(true),
+        diff_collapse_unchanged: Some(false),
         line_numbers: Some(false),
         status_bar: Some(false),
+        full_tab_names: Some(false),
         restore_window: Some(false),
         theme: Some(ThemeChoice::Dark),
         light_theme: Some("paper".to_string()),
@@ -315,6 +367,8 @@ fn round_trips_through_json() {
         language: Some(LocaleChoice::Fixed(winc_i18n::Locale::EnUs)),
         markdown_remote_images: Some(false),
         markdown_text_width: Some(TextWidth::Wide),
+        markdown_font: Some("LXGW Neo XiHei".to_string()),
+        markdown_size: Some(14.0),
         markdown_line_numbers: Some(false),
         markdown_shortcuts: Some(false),
         markdown_focus: Some(true),
@@ -322,10 +376,12 @@ fn round_trips_through_json() {
         markdown_selection_toolbar: Some(false),
         markdown_image_folder: Some("${filename}.assets".to_string()),
         markdown_image_name: Some("${date}".to_string()),
+        latex_path: Some("/Library/TeX/texbin/latexmk".to_string()),
         update_auto_check: Some(false),
         confirm_drag_and_drop: Some(false),
         compact_folders: Some(false),
         preview_on_click: Some(true),
+        tree_auto_reveal: Some(false),
         external_terminal: Some("test-terminal".to_string()),
         vim_enabled: Some(true),
         vim_clipboard: Some(VimClipboard::Always),
@@ -354,6 +410,7 @@ fn round_trips_through_json() {
         terminal_confirm_close: Some(false),
         terminal_prompt: Some(false),
         terminal_copy_on_select: Some(true),
+        terminal_right_click: Some(TerminalRightClick::CopyOrPaste),
         terminal_bold_is_bright: Some(true),
         terminal_right: Some(true),
         terminal_vertical_tabs: Some(true),
@@ -361,15 +418,19 @@ fn round_trips_through_json() {
         git_enabled: Some(true),
         git_confirm_push: Some(false),
         drop_folder: Some(FolderDrop::Add),
+        find_in_files: Some(SearchStyle::Dialog),
         git_remember_credentials: Some(false),
         system_proxy: Some(false),
         git_inline_blame: Some(false),
+        git_commit_history: Some(true),
         git_auto_fetch: Some(true),
         git_staging_area: Some(true),
+        git_combined_diff: Some(true),
         repository_scan_depth: Some(4),
         git_worktree_root: Some("~/worktrees".to_string()),
         git_open_worktree: Some(WorktreeOpen::NewWindow),
         git_pull: Some(PullMode::Rebase),
+        git_log_placement: Some(LogPlacement::Editor),
         git_path: Some("C:\\Tools\\wslgit.exe".to_string()),
         remote_enabled: Some(true),
         remote_local_folders: BTreeMap::from([
@@ -383,6 +444,12 @@ fn round_trips_through_json() {
         ]
         .into(),
         git_worktree_copy: vec![".env*".to_string(), "config/local.toml".to_string()],
+        git_generate_commit_message: Some(true),
+        ai_protocol: Some(AiProtocol::Messages),
+        ai_base_url: Some("http://localhost:11434/v1".to_string()),
+        ai_model: Some("qwen3".to_string()),
+        ai_api_key: Some("sk-test".to_string()),
+        ai_timeout: Some(120),
         format_on_save: Some(false),
         format_on_save_exclude: vec!["markdown".to_string(), "yaml".to_string()],
         format_commands: BTreeMap::from([(
@@ -469,7 +536,7 @@ fn to_json_writes_sections_in_a_fixed_order() {
     assert_eq!(Config::default().to_json(), "{}\n");
 }
 
-/// 挪过位置的设置：旧的位置照样读入，写回时只写新的位置。
+/// 挪过位置的设置：旧的位置仍然读入，写回时只写新的位置。
 #[test]
 fn moved_settings_are_read_from_the_old_place_and_written_to_the_new_one() {
     let (config, problems) = Config::parse(r#"{"git":{"systemProxy":false,"enabled":true}}"#);
@@ -798,4 +865,80 @@ fn pull_reads_its_three_values_and_rejects_others() {
     let (config, problems) = Config::parse(r#"{ "git": { "pull": "ff" } }"#);
     assert_eq!(config.git_pull, None);
     assert_eq!(problems.len(), 1);
+}
+
+#[test]
+fn log_placement_reads_panel_or_editor_and_rejects_others() {
+    for (text, expected) in [
+        ("panel", LogPlacement::Panel),
+        ("editor", LogPlacement::Editor),
+    ] {
+        let json = format!(r#"{{ "git": {{ "logPlacement": "{text}" }} }}"#);
+        let (config, problems) = Config::parse(&json);
+        assert_eq!(config.git_log_placement, Some(expected));
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let (config, problems) = Config::parse(r#"{ "git": { "logPlacement": "tab" } }"#);
+    assert_eq!(config.git_log_placement, None);
+    assert_eq!(problems.len(), 1);
+}
+
+#[test]
+fn a_setting_can_be_checked_and_unset_by_name() {
+    let text = r#"{"editor": {"size": 15, "minimap": true}, "theme": "dark"}"#;
+    let (mut config, problems) = Config::parse(text);
+    assert!(problems.is_empty());
+    assert!(config.is_set("editor.size") && config.is_set("editor.minimap"));
+    assert!(config.is_set("theme"));
+    assert!(!config.is_set("editor.wordWrap") && !config.is_set("editor.unknown"));
+    config.unset("editor.size");
+    config.unset("theme");
+    assert_eq!((config.editor_size, config.theme), (None, None));
+    assert_eq!(config.minimap, Some(true));
+    // 写出再读入不改变内容。
+    let mut same = config.clone();
+    same.unset("editor.wordWrap");
+    assert_eq!(same, config);
+}
+
+/// 写有接口密钥的配置文件只有本人可以读写；没有密钥时保持原有的权限。
+#[cfg(unix)]
+#[test]
+fn a_config_with_an_api_key_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("winc-config-key-{}", std::process::id()));
+    let path = dir.join("config.json");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&path, "{}").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+    let plain = Config {
+        tab_width: Some(2),
+        ..Config::default()
+    };
+    plain.save_to(&path, &Config::default()).unwrap();
+    assert_eq!(mode(&path), 0o644);
+    let keyed = Config {
+        ai_api_key: Some("sk-test".into()),
+        ..plain.clone()
+    };
+    keyed.save_to(&path, &plain).unwrap();
+    assert_eq!(mode(&path), 0o600);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 长行参考线的列：整数且在范围内的项按出现的顺序保留，重复的只留一个，其余的项忽略并逐项报告。
+#[test]
+fn rulers_keep_valid_columns_in_order() {
+    let (config, problems) =
+        Config::parse(r#"{"editor": {"rulers": [120, 0, "80", 80.5, 80, 1001, 120]}}"#);
+    assert_eq!(config.editor_rulers, [120, 80]);
+    assert_eq!(problems.len(), 4, "{problems:?}");
+    assert!(problems[0].contains("editor.rulers"), "{problems:?}");
+    let (config, problems) = Config::parse(r#"{"editor": {"rulers": 80}}"#);
+    assert!(config.editor_rulers.is_empty());
+    assert_eq!(problems.len(), 1, "{problems:?}");
 }

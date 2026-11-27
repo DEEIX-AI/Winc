@@ -11,6 +11,8 @@ use winc_editor::Document;
 ///
 /// 键入或上下移动光标通常只滚动一两行，此时直接到达；否则连续按方向键时画面会滞后于光标。
 pub(crate) const GLIDE_MIN_ROWS: f64 = 2.0;
+/// 打字机模式中平滑滚动的最短距离（行）：更近时直接到达，几乎不可见的移动不启动过渡。
+pub(crate) const TYPEWRITER_MIN: f64 = 0.05;
 
 /// 编辑区平滑滚动的状态。
 ///
@@ -81,6 +83,18 @@ impl App {
         )
     }
 
+    /// 返回当前文档纵向滚动位置的上限（显示行）。
+    ///
+    /// 打字机模式下文末的行同样居中：上限放宽到光标所在行居中时的位置。
+    fn scroll_limit(&self) -> f64 {
+        let max = self.max_scroll_line();
+        let Some(doc) = self.editor.active().filter(|_| self.markdown_typewriter()) else {
+            return max;
+        };
+        let row = doc.row_at(doc.selection.head) as f64;
+        max.max(row + 0.5 - self.visible_lines() as f64 / 2.0)
+    }
+
     /// 把当前文档的滚动位置设为 `row`（显示行），不限制范围，不做平滑滚动。
     ///
     /// 进行中的平滑滚动继续滚向新的目标。
@@ -116,12 +130,25 @@ impl App {
         }
     }
 
+    /// 视口以上的内容变高、变矮，文档 `doc` 的滚动位置随之移动了 `delta` 行后调用：正在进行的
+    /// 平滑滚动的起点一起移动，屏幕上的内容不跳。
+    pub(in crate::app) fn shift_scroll_glide(&mut self, doc: DocumentId, delta: f64) {
+        if let Some(glide) = self.scroll.glide.as_mut().filter(|g| g.doc == doc) {
+            glide.from += delta;
+        }
+    }
+
     /// 在编辑区纵向滚动位置从 `from` 变为当前值后调用，距离较远时启动平滑滚动。
     ///
     /// 距离不小于 [`GLIDE_MIN_ROWS`] 行时按 [`ScrollGlide`] 平滑滚动，否则直接到达目标。
     /// 已在滚动时从屏幕上的当前位置继续滚动，不跳回起点。
     /// 动态效果关闭或没有窗口时不播放动画。
     pub(in crate::app) fn glide_scroll(&mut self, from: f64) {
+        self.glide_scroll_over(from, GLIDE_MIN_ROWS);
+    }
+
+    /// 同 [`Self::glide_scroll`]，距离不小于 `min` 行时平滑滚动。
+    fn glide_scroll_over(&mut self, from: f64, min: f64) {
         let Some(doc) = self.editor.active() else {
             return;
         };
@@ -130,7 +157,7 @@ impl App {
             Some(g) if g.doc == id => g.shown(from),
             _ => from,
         };
-        if (to - shown).abs() < GLIDE_MIN_ROWS {
+        if (to - shown).abs() < min {
             // 距离较近时直接到达；同一文档正在进行的平滑滚动保留，继续滚向新目标。
             if self.scroll.glide.as_ref().is_some_and(|g| g.doc != id) {
                 self.scroll.glide = None;
@@ -144,6 +171,17 @@ impl App {
                 from: shown,
                 clock,
             });
+    }
+
+    /// 视口是否正在平滑滚动到当前文档的某一位置（跳转、居中光标）。
+    ///
+    /// 这种滚动由移动光标引起，光标的目标会随之一帧帧移动；光标动画应跟着目标走，而不是把
+    /// 它当成滚轮滚动而直接跳到目标。
+    pub(crate) fn caret_scrolls(&self) -> bool {
+        self.scroll
+            .glide
+            .as_ref()
+            .is_some_and(|glide| self.editor.active().is_some_and(|doc| doc.id == glide.doc))
     }
 
     /// 结束编辑区的平滑滚动，滚动位置停在此刻屏幕上显示的位置。
@@ -164,17 +202,23 @@ impl App {
     ///
     /// 上下各留一行余量（顶部有固定行时，留出固定行占用的行数），左右各留 4 个单元格。
     /// 选区的任一端处在折叠的块内（查找、转到行、撤销都可能把光标移到折叠处）时，先展开。
+    ///
+    /// 打字机模式下光标所在行停在中间，每换一行都平滑滚动，不论距离远近。
     pub(in crate::app) fn ensure_caret_visible(&mut self) {
         let before = self.editor.active().map(|d| d.scroll_line);
+        let typewriter = self.markdown_typewriter() && self.scroll.keyed;
         self.reveal_caret();
         if let Some(before) = before {
-            self.glide_scroll(before);
+            let min = if typewriter {
+                TYPEWRITER_MIN
+            } else {
+                GLIDE_MIN_ROWS
+            };
+            self.glide_scroll_over(before, min);
         }
     }
 
-    /// 把光标所在行滚动到编辑区视图的中间（`⌃L`，macOS）。
-    ///
-    /// 与 [`Self::ensure_caret_visible`] 一样，光标在折叠的块内时先展开；光标位置不变。
+    /// 把光标所在行滚到编辑区的中间，光标位置不变；光标在折叠的块内时先展开。
     pub(in crate::app) fn recenter_caret(&mut self) {
         let before = self.editor.active().map(|d| d.scroll_line);
         self.reveal_caret();
@@ -188,11 +232,7 @@ impl App {
         let Some(doc) = self.editor.active_mut() else {
             return;
         };
-        // 居中的算法与 Markdown 的打字机模式相同（见 `Self::reveal_caret`）。
-        set_scroll_line(
-            doc,
-            (row + 0.5 - visible / 2.0).clamp(0.0, max_scroll.max(row)),
-        );
+        set_scroll_line(doc, (row + 0.5 - visible / 2.0).clamp(0.0, max_scroll));
         self.clamp_scroll();
         if let Some(before) = before {
             self.glide_scroll(before);
@@ -256,9 +296,9 @@ impl App {
         }
     }
 
-    /// 把当前文档的纵向和横向滚动位置限制在有效范围内。
+    /// 把当前文档的纵向和横向滚动位置限制在有效范围内；纵向上限见 [`Self::scroll_limit`]。
     pub(in crate::app) fn clamp_scroll(&mut self) {
-        let max_scroll = self.max_scroll_line();
+        let max_scroll = self.scroll_limit();
 
         let Some(doc) = self.editor.active_mut() else {
             return;

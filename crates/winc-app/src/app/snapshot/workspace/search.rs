@@ -315,6 +315,32 @@ fn hover_and_click_agree_on_what_is_under_the_mouse() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 在文件中查找只在焦点在编辑区时取光标处的词：焦点在文件树上按 `⇧⌘F`（在文件夹中查找）只
+/// 限定范围，点击侧栏的搜索按钮只切到这一页，查询都沿用上一次的。
+#[test]
+fn only_the_editor_seeds_find_in_files() {
+    let dir = winc_config::files::canonicalize(search_folder("global-seed")).unwrap();
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("src/main.rs"));
+    app.panels.global.query.set_text("earlier");
+
+    app.focus = Focus::Tree;
+    app.find_in_folder(&dir.join("src/main.rs"));
+    assert_eq!(app.panels.global.query.text(), "earlier");
+    assert_eq!(app.panels.global.include.text(), "./src");
+
+    app.focus = Focus::Editor;
+    app.show_global_search(false, None);
+    assert_eq!(app.panels.global.query.text(), "earlier");
+
+    // 快捷键从编辑区打开：取光标所在的词。
+    app.focus = Focus::Editor;
+    app.open_global_search(false);
+    assert_eq!(app.panels.global.query.text(), "fn");
+    finish_search(&mut app);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn global_search_replaces_one_match_and_filters() {
     let dir = search_folder("global-one");
@@ -865,6 +891,50 @@ fn result_keys_jump_to_the_ends_and_page() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `⌘↓` 从查找框进入结果列表并打开第一处匹配；方向键逐条打开匹配，焦点留在列表，连续按键时
+/// 防抖到期后才打开最后选中的一处；`⌘↑` 回到查找框。
+#[test]
+fn arrow_keys_browse_the_results() {
+    let dir = search_folder("global-browse");
+    let mut app = app_with(&dir, false);
+    app.panels.sidebar.view = SidebarView::Search;
+    app.relayout();
+    paint(&mut app);
+    app.focus = Focus::GlobalQuery;
+    app.edit_field(|f| f.insert("config"));
+    app.run_global_search();
+    finish_search(&mut app);
+    let name = |app: &App| app.editor.active().map(|d| d.name().to_string());
+    let selected = |app: &App| app.panels.global.rows()[app.panels.global.selected_row().unwrap()];
+    let key = |app: &mut App, key: NamedKey| {
+        app.results_key(&Key::Named(key));
+        paint(app);
+    };
+
+    app.step_panel_focus(false);
+    paint(&mut app);
+    assert_eq!(app.focus, Focus::Results);
+    assert_eq!(selected(&app), ResultRow::Match(0, 0));
+    assert_eq!(name(&app).as_deref(), Some("Cargo.toml"));
+
+    key(&mut app, NamedKey::ArrowDown);
+    key(&mut app, NamedKey::ArrowDown);
+    assert_eq!(selected(&app), ResultRow::Match(1, 0));
+    assert_eq!(name(&app).as_deref(), Some("Cargo.toml"));
+    app.poll_browse(Instant::now() + crate::app::workspace::global::BROWSE_DELAY);
+    paint(&mut app);
+    assert_eq!(name(&app).as_deref(), Some("config.rs"));
+    assert_eq!(app.focus, Focus::Results);
+
+    app.pointer.modifiers = command_modifiers();
+    key(&mut app, NamedKey::ArrowUp);
+    app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
+    assert_eq!(app.focus, Focus::GlobalQuery);
+    app.step_panel_focus(true);
+    assert_eq!(app.focus, Focus::GlobalQuery);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn replace_and_filter_rows_slide_open() {
     use crate::app::Clock;
@@ -1149,7 +1219,7 @@ fn long_result_files_unfold_under_the_mouse() {
     assert!(dismiss.x > results.right());
     assert_eq!(app.result_actions(long), overflow.actions);
 
-    // 这一行右端的滚动条属于这一行；伸出的那一段同样是这一行，按钮照常响应。
+    // 这一行右端的滚动条属于这一行；伸出的那一段同样是这一行，按钮仍然响应。
     let y = row.y + row.h / 2.0;
     app.on_mouse_move(results.right() - 3.0, y);
     assert_eq!(app.pointer.hover, Hover::Result(long));
@@ -1160,6 +1230,13 @@ fn long_result_files_unfold_under_the_mouse() {
         app.pointer.hover,
         Hover::RowAction(long, RowAction::Dismiss)
     );
+
+    // 这一行画在分隔条上：鼠标停在上面时仍在这一行上，全名保持展开。
+    let splitter = app.layout.splitter;
+    app.on_mouse_move(splitter.x + splitter.w / 2.0, y);
+    paint(&mut app);
+    assert_eq!(app.pointer.hover, Hover::Result(long));
+    assert_eq!(app.panels.global.overflow.map(|o| o.index), Some(long));
 
     // 鼠标移到伸出部分之外的编辑区：收起。
     app.on_mouse_move(spill.right() + 20.0, y);

@@ -1,4 +1,4 @@
-# RPM package for Fedora, RHEL 10 and openSUSE Tumbleweed: wraps the binaries already built on the
+# RPM package for Fedora, RHEL 8 and newer, and openSUSE Tumbleweed: wraps the binaries already built on the
 # release runner, it does not compile. `package.sh` passes `winc_version` and `winc_files`.
 Name:           winc
 Version:        %{winc_version}
@@ -6,7 +6,7 @@ Release:        1
 Summary:        A lighter, faster desktop code editor
 License:        Apache-2.0
 URL:            https://winc.si
-ExclusiveArch:  x86_64
+ExclusiveArch:  x86_64 aarch64
 
 # Libraries linked at build time (glibc and its symbol versions, libgcc) are found by rpmbuild. The
 # window system libraries are loaded at run time and are named here by soname, which Fedora and
@@ -43,6 +43,9 @@ install -Dm755 "$src"/winc-server-Linux-* -t %{buildroot}%{_prefix}/lib/winc
 install -Dm644 "$src/winc.desktop" "$src/winc-url-handler.desktop" \
   -t %{buildroot}%{_datadir}/applications
 install -Dm644 "$src/winc.png" %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/winc.png
+install -Dm644 "$src/winc.xml" %{buildroot}%{_datadir}/mime/packages/winc.xml
+install -Dm644 "$src/project.svg" \
+  %{buildroot}%{_datadir}/icons/hicolor/scalable/mimetypes/application-x-winc-project.svg
 install -Dm644 "$src/winc-open-file.desktop" "$src/winc-open-folder.desktop" \
   -t %{buildroot}%{_datadir}/kio/servicemenus
 install -Dm644 "$src"/winc-open-*.nemo_action -t %{buildroot}%{_datadir}/nemo/actions
@@ -55,6 +58,8 @@ install -Dm644 "$src/LICENSE" "$src/NOTICE" -t %{buildroot}%{_datadir}/licenses/
 %{_datadir}/applications/winc.desktop
 %{_datadir}/applications/winc-url-handler.desktop
 %{_datadir}/icons/hicolor/256x256/apps/winc.png
+%{_datadir}/mime/packages/winc.xml
+%{_datadir}/icons/hicolor/scalable/mimetypes/application-x-winc-project.svg
 %{_datadir}/kio/servicemenus/winc-open-file.desktop
 %{_datadir}/kio/servicemenus/winc-open-folder.desktop
 %{_datadir}/nemo/actions/winc-open-*.nemo_action

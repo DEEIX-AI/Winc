@@ -18,11 +18,34 @@ use crate::field::{TextField, Unit};
 use crate::keymap::{self, Action, Context, Lookup, Os, Stroke};
 use crate::theme::KEYS_ROW;
 
-/// 文件树键入跳转的重置间隔（毫秒，经验值）。
+/// 文件树键入跳转的重置间隔（毫秒，取自调参）。
 ///
 /// 两次键入相隔超过该值时，重新从第一个字符开始匹配。该间隔足以连续键入文件名的前几个字符，
 /// 停顿后的新一次查找也不会接在旧字符之后。
 const TYPE_RESET: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// 两段组合键的第一段按下后等待第二段的最长时间（5 秒）。
+///
+/// 超过后等待作废，按键恢复原来的含义：否则离开键盘一段时间后的第一次按键会被当作第二段
+/// 吞掉。取自调参：长于看一眼状态栏提示再按第二段所需的时间。
+const CHORD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// 等待第二段的两段组合键。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingChord {
+    /// 已按下的第一段。
+    first: Stroke,
+    /// 等待作废的时刻。
+    until: Instant,
+}
+
+impl PendingChord {
+    /// 创建从现在起等待第二段的组合键，第一段为 `first`。
+    pub(crate) fn new(first: Stroke) -> Self {
+        let until = Instant::now() + CHORD_TIMEOUT;
+        Self { first, until }
+    }
+}
 
 impl App {
     /// 处理键盘按下事件 `event`。
@@ -75,6 +98,10 @@ impl App {
         if self.alert_key(&event.logical_key, cmd) || self.popup_key(event) {
             return;
         }
+        // 标签页切换列表打开时，选择用的按键先给它。
+        if self.tab_switch_key(event) {
+            return;
+        }
         // 设置浮层是模态的：打开期间只处理它自己的按键，其他快捷键不会传到下层。
         if self.settings.open {
             self.on_key_settings(event, &base, cmd);
@@ -125,10 +152,12 @@ impl App {
         }
 
         match self.focus {
-            Focus::Editor => self.on_key_editor(event, cmd),
+            Focus::Editor => self.on_key_editor(&EditorKey::of(event), cmd),
             Focus::Search | Focus::Replace => self.on_key_search(event, &base, cmd),
             Focus::Prompt => self.on_key_prompt(event, &base, cmd),
             Focus::Picker => self.on_key_picker(event, &base, cmd),
+            Focus::SearchDialog | Focus::SearchMask => self.on_key_search_dialog(event, &base, cmd),
+            Focus::SearchDock => self.on_key_search_dock(&event.logical_key),
             // 设置浮层打开时已在上方处理，不会执行到这里。
             Focus::Setting
             | Focus::Settings
@@ -145,6 +174,8 @@ impl App {
             Focus::CommitList => self.on_key_commit_list(event),
             Focus::Outline => self.outline_key(&event.logical_key),
             Focus::LogFilter => self.on_key_log_filter(event, &base, cmd),
+            Focus::GitPanel if self.log_active() => self.log_key(&event.logical_key),
+            Focus::GitPanel => {}
             Focus::Terminal => self.on_key_terminal(event),
             // 这两个输入框使用终端的键位表，Windows、Linux 的 Ctrl+V 不在表中，在此处理。
             Focus::TerminalFind | Focus::TerminalRename if cmd && base == "v" => self.paste(),
@@ -157,11 +188,15 @@ impl App {
     pub(in crate::app) fn key_context(&self) -> Context {
         match self.focus {
             Focus::Editor if self.markdown_keys() => Context::Markdown,
-            Focus::Editor => Context::Editor,
+            // Git 面板中的日志沿用编辑区的键位：日志的命令（如 `F2` 编辑说明）绑定在编辑区上。
+            // 编辑文字的命令在面板中不可用，见 `App::action_available`。
+            Focus::Editor | Focus::GitPanel => Context::Editor,
             Focus::Search => Context::Find,
             Focus::Replace => Context::Replace,
             Focus::Tree => Context::Tree,
             Focus::CommitList => Context::Changes,
+            // 对话框用搜索面板的键位：切换大小写、全字、正则。
+            Focus::SearchDialog | Focus::SearchMask => Context::Panel,
             // 终端的查找框、标签上改名字的输入框也按终端的键位：`⌘W` 关的是终端标签，`⌘F` 回到
             // 终端的查找，不进入编辑区（编辑用的快捷键见 `run_action`，留给输入框）。
             Focus::Terminal | Focus::TerminalFind | Focus::TerminalRename => Context::Terminal,
@@ -206,6 +241,16 @@ impl App {
     ///
     /// 是快捷键则执行并返回 `true`；是两步组合键的第一步则等待第二步，同样返回 `true`。
     /// 不是快捷键时返回 `false`，按键交给焦点所在的部件。
+    /// 放弃等待中的两段组合键，撤下状态栏的提示；没有在等待时不做任何事。
+    ///
+    /// 窗口失去焦点时调用：第二段不会再来，等待留到回来以后会吞掉第一次按键。
+    pub(in crate::app) fn cancel_chord(&mut self) {
+        if self.pending_chord.take().is_some() {
+            self.status.message = None;
+            self.request_redraw();
+        }
+    }
+
     pub(in crate::app) fn on_shortcut(&mut self, stroke: Stroke) -> bool {
         let table = keymap::current();
 
@@ -215,12 +260,16 @@ impl App {
             && (!self.terminal_at_prompt()
                 || self.config.terminal_application_priority == Some(true))
         {
-            self.pending_chord = None;
-            self.status.message = None;
+            self.cancel_chord();
         }
 
-        if let Some(first) = self.pending_chord.take() {
+        if let Some(chord) = self.pending_chord.take() {
             self.status.message = None;
+            // 等待已经作废：这次按键按原来的含义处理。
+            let first = chord.first;
+            if Instant::now() >= chord.until {
+                return self.on_shortcut(stroke);
+            }
             if stroke.key == keymap::KeyCode::Escape {
                 return true;
             }
@@ -259,11 +308,13 @@ impl App {
                 .into_iter()
                 .any(|a| self.run_action(self.keyboard_action(a))),
             Lookup::Chord => {
-                self.pending_chord = Some(stroke);
+                let chord = PendingChord::new(stroke);
+                let until = chord.until;
+                self.pending_chord = Some(chord);
                 let key = stroke.label(Os::CURRENT);
-                // 状态栏提示在第二步到来之前一直保留，不自动消失（`StatusState::until` 为 `None`）。
+                // 状态栏的提示保留到第二段到来或等待作废。
                 self.status.message = Some(winc_i18n::t!("cmd-chord-pending", key = key));
-                self.status.until = None;
+                self.status.until = Some(until);
                 self.request_redraw();
                 true
             }
@@ -274,11 +325,13 @@ impl App {
     /// 返回按键触发 `action` 时实际执行的命令。
     ///
     /// macOS 上没有打开的标签时，「关闭标签页」的快捷键改为关闭窗口：关掉最后一个标签后再按
-    /// 一次 `⌘W` 关闭窗口。只对按键生效，在命令面板里选「关闭标签页」不会关闭窗口。
-    pub(super) fn keyboard_action(&self, action: Action) -> Action {
+    /// 一次 `⌘W` 关闭窗口。只对按键生效，在命令面板里选「关闭标签页」不会关闭窗口。焦点在 Git
+    /// 面板中时关闭的是面板中的日志。
+    pub(in crate::app) fn keyboard_action(&self, action: Action) -> Action {
         if cfg!(target_os = "macos")
             && action == Action::CloseTab
             && self.editor.documents.is_empty()
+            && !self.git_panel_focused()
         {
             Action::CloseWindow
         } else {
@@ -287,35 +340,48 @@ impl App {
     }
 
     /// 处理焦点在编辑区时的按键：移动光标、翻页、换行、缩进、删除和键入。
-    pub(in crate::app) fn on_key_editor(&mut self, event: &KeyEvent, cmd: bool) {
+    pub(in crate::app) fn on_key_editor(&mut self, event: &EditorKey, cmd: bool) {
         if self.editor.active.is_none() {
             if !event.repeat {
-                self.setup_key(&event.logical_key);
+                self.setup_key(event.key);
             }
             return;
         }
-        if self.log_active() {
-            self.log_key(&event.logical_key);
+        // 面板模式下日志在 Git 面板中，按键经 `Focus::GitPanel` 交给它。
+        if !self.git.panel.docked && self.log_active() {
+            self.log_key(event.key);
+            return;
+        }
+        // 「未提交的更改」：当前段里有光标或选区时按键交给它，否则滚动整个标签。
+        if self.combined_active() {
+            if self.combined_caret()
+                && self
+                    .in_combined_current(|app| app.on_key_editor(event, cmd))
+                    .is_some()
+            {
+                return;
+            }
+            self.diff_key(event.key, cmd);
             return;
         }
         if self.hex_active() {
-            self.hex_key(&event.logical_key, cmd);
+            self.hex_key(event.key, cmd);
             return;
         }
         if self.editor.active().is_some_and(|d| d.diff.is_some()) {
             if !self.diff_edit_key(event, cmd) {
-                self.diff_key(&event.logical_key, cmd);
+                self.diff_key(event.key, cmd);
             }
             return;
         }
-        if self.markdown_key(&event.logical_key, cmd)
-            || self.table_key(&event.logical_key, cmd)
-            || self.pdf_key(&event.logical_key)
+        if self.markdown_key(event.key, cmd)
+            || self.table_key(event.key, cmd)
+            || self.pdf_key(event.key)
         {
             return;
         }
         // 改动卡片开着时 `Esc` 先关卡片。
-        if self.git.changes.popup.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
+        if self.git.changes.popup.is_some() && *event.key == Key::Named(NamedKey::Escape) {
             self.git.changes.popup = None;
             self.request_redraw();
             return;
@@ -335,7 +401,7 @@ impl App {
         };
         let jump = cfg!(target_os = "macos") && cmd;
 
-        let command = match &event.logical_key {
+        let command = match event.key {
             Key::Named(NamedKey::ArrowLeft) if jump => Command::LineStart { extend },
             Key::Named(NamedKey::ArrowRight) if jump => Command::LineEnd { extend },
             Key::Named(NamedKey::ArrowUp) if jump => Command::DocStart { extend },
@@ -356,27 +422,9 @@ impl App {
             Key::Named(NamedKey::End) if cmd => Command::DocEnd { extend },
             Key::Named(NamedKey::Home) => Command::LineStart { extend },
             Key::Named(NamedKey::End) => Command::LineEnd { extend },
-            // macOS 的文本输入约定：`⌃A` `⌃E` 到行首、行尾，`⌃F` `⌃B` 前后移动一个字素，
-            // `⌃N` `⌃P` 下移、上移一行，`⌃D` `⌃H` 删除后一个、前一个字素，`⌃K` 删除到行尾，
-            // `⌃T` 交换前后两个字素，`⌃V` 翻到下一页；与输入框中的按键相同（见
-            // `App::on_key_field`）。`Shift` 扩展选区，其余组合不处理。`⌃L` 把光标所在行滚到
-            // 视图中间，不是单个编辑命令，在此直接处理。
-            Key::Character(c)
-                if cfg!(target_os = "macos")
-                    && !cmd
-                    && self.pointer.modifiers.control_key()
-                    && !self.pointer.modifiers.alt_key() =>
-            {
-                if c.eq_ignore_ascii_case("l") {
-                    self.recenter_caret();
-                    return;
-                }
-                match emacs_command(c, extend) {
-                    Some(command) => command,
-                    None => return,
-                }
-            }
             Key::Named(NamedKey::Enter | NamedKey::Tab) if control => return,
+            // Markdown 源代码中列表项、引用续写记号（`App::source_markdown_enter`）。
+            Key::Named(NamedKey::Enter) if !shift && self.source_markdown_enter() => return,
             Key::Named(NamedKey::Enter) => Command::Newline,
             Key::Named(NamedKey::Tab) if shift => Command::Outdent,
             Key::Named(NamedKey::Tab) => Command::Indent,
@@ -393,7 +441,7 @@ impl App {
             _ => {
                 // 普通字符输入；输入法提交的文字由 `Ime::Commit` 处理。
                 if !control
-                    && let Some(text) = &event.text
+                    && let Some(text) = event.text
                     && !text.chars().any(char::is_control)
                 {
                     self.run(Command::Insert(text.to_string()));
@@ -402,6 +450,11 @@ impl App {
             }
         };
 
+        self.run_key_command(command);
+    }
+
+    /// 在编辑区执行按键或快捷键对应的命令 `command`。
+    pub(in crate::app) fn run_key_command(&mut self, command: Command) {
         let head = self.editor.active().map(|d| (d.selection.head, d.revision));
         self.run(command);
         // 可编辑的 Markdown 预览：只移动了光标时，不停留在预览中不显示的块标记里。
@@ -410,6 +463,26 @@ impl App {
         {
             self.live_settle_caret(head);
         }
+    }
+
+    /// 像在编辑区按下 `key` 一样处理：只带 `⇧`（`shift` 为真且按着 `⇧` 时），其余修饰键不算。
+    ///
+    /// 键位表中等同于方向键、删除键的命令（macOS 的 `⌃N`、`⌃H` 等）由此执行，Markdown 预览、
+    /// 表格、差异和十六进制视图都按真的按下这个键处理。
+    pub(in crate::app) fn press_editor_key(&mut self, key: NamedKey) {
+        if self.focus != Focus::Editor {
+            return;
+        }
+        let held = self.pointer.modifiers;
+        self.pointer.modifiers = held & winit::keyboard::ModifiersState::SHIFT;
+        let key = Key::Named(key);
+        let event = EditorKey {
+            key: &key,
+            text: None,
+            repeat: false,
+        };
+        self.on_key_editor(&event, false);
+        self.pointer.modifiers = held;
     }
 
     /// 处理查找条（查找、替换输入框）中的按键。
@@ -457,6 +530,8 @@ impl App {
                     _ => self.step_from_field(shift),
                 }
             }
+            Key::Named(NamedKey::ArrowUp) if cmd => self.step_panel_focus(true),
+            Key::Named(NamedKey::ArrowDown) if cmd => self.step_panel_focus(false),
             Key::Named(NamedKey::ArrowUp) if !shift => self.edit_field(|f| f.recall(true)),
             Key::Named(NamedKey::ArrowDown) if !shift => self.edit_field(|f| f.recall(false)),
             Key::Named(NamedKey::Tab) => self.cycle_panel_focus(shift),
@@ -464,10 +539,73 @@ impl App {
         }
     }
 
+    /// 处理在文件中查找的对话框中的按键：`↑` `↓` `PageUp` `PageDown` 移动选中项，回车打开，
+    /// `Esc` 关闭，其余交给输入框，内容变化后重新搜索。
+    fn on_key_search_dialog(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
+        let selected = self.search_dialog.selected;
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => self.close_search_dialog(),
+            Key::Named(NamedKey::Enter) if cmd => self.dock_search_results(),
+            Key::Named(NamedKey::Enter) => self.search_dialog_accept(),
+            Key::Named(NamedKey::ArrowDown) => self.search_dialog_select(selected + 1),
+            Key::Named(NamedKey::ArrowUp) => self.search_dialog_select(selected.saturating_sub(1)),
+            Key::Named(NamedKey::PageDown) => {
+                self.search_dialog_select(selected + self.search_dialog_page());
+            }
+            Key::Named(NamedKey::PageUp) => {
+                let page = self.search_dialog_page();
+                self.search_dialog_select(selected.saturating_sub(page));
+            }
+            // `Tab` 在查询和文件掩码之间切换；掩码隐藏时先显示出来。
+            Key::Named(NamedKey::Tab) => {
+                if !self.search_dialog.open {
+                    return;
+                }
+                if !self.search_dialog.mask_on {
+                    return self.toggle_search_mask();
+                }
+                self.focus = match self.focus {
+                    Focus::SearchDialog => Focus::SearchMask,
+                    _ => Focus::SearchDialog,
+                };
+                self.reset_blink();
+            }
+            _ => {
+                let d = &self.search_dialog;
+                let before = (d.query.text().to_owned(), d.mask.text().to_owned());
+                self.on_key_field(event, base, cmd);
+                let d = &self.search_dialog;
+                if d.query.text() != before.0 || d.mask.text() != before.1 {
+                    self.search_dialog_changed(false);
+                }
+            }
+        }
+    }
+
+    /// 处理底部面板「搜索」标签中的按键：`↑` `↓` `PageUp` `PageDown` 移动选中项，回车打开，
+    /// `Esc` 回到编辑区。
+    fn on_key_search_dock(&mut self, key: &Key) {
+        let selected = self.search_dialog.selected;
+        let page = self.search_dialog_page();
+        match key {
+            Key::Named(NamedKey::Escape) => self.focus = Focus::Editor,
+            Key::Named(NamedKey::Enter) => self.search_dialog_accept(),
+            Key::Named(NamedKey::ArrowDown) => self.search_dialog_select(selected + 1),
+            Key::Named(NamedKey::ArrowUp) => self.search_dialog_select(selected.saturating_sub(1)),
+            Key::Named(NamedKey::PageDown) => self.search_dialog_select(selected + page),
+            Key::Named(NamedKey::PageUp) => {
+                self.search_dialog_select(selected.saturating_sub(page))
+            }
+            _ => {}
+        }
+    }
+
     /// 处理搜索结果列表中的按键。
     ///
-    /// `↑` `↓` 移动选中项，`Home` `End` 选中第一行、最后一行，`PageUp` `PageDown` 翻一页，
-    /// `←` `→` 折叠或展开文件，回车打开并将焦点移到编辑区，
+    /// `↑` `↓` 移动选中项并显示选中的匹配，`⌘↑` 回到输入框，`Home` `End` 选中第一行、
+    /// 最后一行，`PageUp` `PageDown` 翻一页，
+    /// `←` `→` 折叠或展开目录、文件（已经折叠、展开时回到上一级、进到第一行），回车打开并将焦点
+    /// 移到编辑区，
     /// 空格打开但焦点留在列表，`⌫` 从结果中移除。
     fn on_key_results(&mut self, event: &KeyEvent) {
         self.results_key(&event.logical_key);
@@ -481,8 +619,15 @@ impl App {
 
         match key {
             Key::Named(NamedKey::Escape) => self.focus = Focus::GlobalQuery,
-            Key::Named(NamedKey::ArrowUp) => self.step_result(-1, false),
-            Key::Named(NamedKey::ArrowDown) => self.step_result(1, false),
+            Key::Named(NamedKey::ArrowUp) if self.command_held() => self.step_panel_focus(true),
+            Key::Named(NamedKey::ArrowUp) => {
+                self.step_result(-1, false);
+                self.browse_result();
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                self.step_result(1, false);
+                self.browse_result();
+            }
             Key::Named(NamedKey::Home) => self.jump_result(0),
             Key::Named(NamedKey::End) => self.jump_result(usize::MAX),
             Key::Named(NamedKey::PageDown) => {
@@ -493,22 +638,40 @@ impl App {
                 let page = self.result_page();
                 self.jump_result(selected.map_or(0, |i| i.saturating_sub(page)));
             }
-            Key::Named(NamedKey::ArrowLeft) => match row {
-                Some(ResultRow::File(f)) => self.set_result_collapsed(f, true),
-                // 在匹配上按 `←` 回到该匹配所在文件的那一行。
-                Some(ResultRow::Match(f, _)) => {
-                    let path = self.panels.global.engine.results[f].path.clone();
-                    self.panels.global.selected = Some((path, None));
+            // 同文件树：展开着的目录、文件先折叠，已经折叠（或是匹配）时回到上一级。
+            Key::Named(NamedKey::ArrowLeft) => match (row, selected) {
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i))
+                    if !self.result_row_collapsed(i) && self.result_row_has_children(i) =>
+                {
+                    self.fold_result_row(i, true, false);
                 }
-                None => {}
+                (Some(_), Some(i)) => {
+                    if let Some(parent) = self.panels.global.parent_row(i) {
+                        self.panels.global.select_row(parent);
+                        self.scroll_result_into_view(parent);
+                    }
+                }
+                _ => {}
             },
-            Key::Named(NamedKey::ArrowRight) => {
-                if let Some(ResultRow::File(f)) = row {
-                    self.set_result_collapsed(f, false);
+            // 折叠着的先展开，已经展开时进到第一行。
+            Key::Named(NamedKey::ArrowRight) => match (row, selected) {
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i))
+                    if self.result_row_collapsed(i) =>
+                {
+                    self.fold_result_row(i, false, false);
                 }
-            }
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i))
+                    if self.result_row_has_children(i) =>
+                {
+                    self.step_result(1, false);
+                    self.browse_result();
+                }
+                _ => {}
+            },
             Key::Named(NamedKey::Enter | NamedKey::Space) => match (row, selected) {
-                (Some(ResultRow::File(_)), Some(i)) => self.click_result(i, false),
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i)) => {
+                    self.click_result(i, false);
+                }
                 (Some(ResultRow::Match(..)), Some(i)) => {
                     // 回车在普通标签中打开并进入编辑区；空格留在结果列表，按预览标签的设置打开。
                     let enter = matches!(key, Key::Named(NamedKey::Enter));
@@ -623,6 +786,15 @@ impl App {
             return;
         }
 
+        // 「快捷键」页没有设置行：按键交给页内的搜索框。
+        if self.settings.selected.page() == crate::layout::SettingsPage::Keys
+            && !self.settings_searching()
+        {
+            self.focus = Focus::KeySearch;
+            self.on_key_search_keys(event, base, cmd);
+            return;
+        }
+
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => self.close_settings(),
             Key::Named(NamedKey::ArrowDown) => self.settings_move(true),
@@ -731,6 +903,11 @@ impl App {
             Key::Named(NamedKey::Tab) => {}
             _ if cmd && matches!(base, "," | "w") => self.close_settings(),
             _ if cmd && base == "v" => self.paste(),
+            _ if cmd && base == "f" => {
+                self.settings.keys_query.select_all();
+                self.reset_blink();
+                self.request_redraw();
+            }
             _ => self.on_key_field(event, base, cmd),
         }
     }
@@ -1103,12 +1280,19 @@ impl App {
 
     /// 处理输入法事件 `ime`。
     ///
-    /// 组字中的文本（`Preedit`）暂存起来用于显示；提交的文本（`Commit`）插入焦点所在的
-    /// 编辑区或输入框。
+    /// 组字中的文本（`Preedit`）和其中的光标暂存起来用于显示；提交的文本（`Commit`）插入焦点
+    /// 所在的编辑区或输入框。
     pub(in crate::app) fn on_ime(&mut self, ime: Ime) {
+        // 窗口内的提示框拦截按键时，输入法的文字同样不交给它下面的编辑区和输入框。
+        if self.overlays.alert.is_some() {
+            self.ime.preedit.clear();
+            self.ime.field_preedit.clear();
+            return;
+        }
         match ime {
             // 组字文字只属于焦点所在的一处，另一处的清空。
-            Ime::Preedit(text, _) => {
+            Ime::Preedit(text, cursor) => {
+                self.ime.preedit_cursor = cursor.map(|(_, end)| end);
                 if self.focus.is_field() {
                     self.ime.field_preedit = text;
                     self.ime.preedit.clear();
@@ -1143,6 +1327,14 @@ impl App {
         }
 
         self.request_redraw();
+    }
+
+    /// 返回输入法在组字文字 `text` 中的光标（字节偏移）；输入法要求隐藏光标，或位置不在 `text`
+    /// 的字符边界上时为 `None`。
+    pub(crate) fn preedit_cursor(&self, text: &str) -> Option<usize> {
+        self.ime
+            .preedit_cursor
+            .filter(|&at| text.is_char_boundary(at))
     }
 
     /// 输入法正在组字的文字，只在焦点位于 `focus` 时返回。
@@ -1219,6 +1411,9 @@ pub struct ImeState {
     pub preedit: String,
     /// 输入框中输入法正在组字的文字。
     pub field_preedit: String,
+    /// 输入法在组字文字中的光标（字节偏移），报告的是一段范围时取其终点；输入法要求隐藏光标时
+    /// 为 `None`。
+    pub(crate) preedit_cursor: Option<usize>,
     /// 输入法候选框应出现的位置。
     pub(crate) cursor: Option<winc_render::Rect>,
     pub(in crate::app) last_area: Option<winc_render::Rect>,
@@ -1226,34 +1421,22 @@ pub struct ImeState {
     pub(in crate::app) allowed: Option<bool>,
 }
 
-/// macOS 编辑区的 Emacs 风格按键映射成的命令；不是 Emacs 按键时返回 `None`。
+/// 交给编辑区的一次按键：键、键入的文字，以及是否为按住不放时的重复。
 ///
-/// 与输入框中的按键一致（见 [`App::on_key_field`]）：`⌃A` `⌃E` 到行首、行尾，`⌃F` `⌃B`
-/// 前后移动一个字素，`⌃N` `⌃P` 下移、上移一行，`⌃D` `⌃H` 删除后一个、前一个字素，
-/// `⌃K` 删除到行尾，`⌃T` 交换前后两个字素，`⌃V` 翻到下一页；`extend` 扩展选区。
-fn emacs_command(key: &str, extend: bool) -> Option<Command> {
-    let command = match key.to_lowercase().as_str() {
-        "a" => Command::LineStart { extend },
-        "e" => Command::LineEnd { extend },
-        "f" => Command::MoveRight {
-            word: false,
-            extend,
-        },
-        "b" => Command::MoveLeft {
-            word: false,
-            extend,
-        },
-        "n" => Command::MoveDown { extend },
-        "p" => Command::MoveUp { extend },
-        "d" => Command::Delete { word: false },
-        "h" => Command::Backspace { word: false },
-        "k" => Command::DeleteToLineEnd,
-        "t" => Command::TransposeChars,
-        "v" => Command::PageDown { extend },
-        _ => return None,
-    };
-    Some(command)
+/// 键位表中等同于方向键、删除键的命令（见 [`App::press_editor_key`]）也以这种形式交给编辑区。
+pub(in crate::app) struct EditorKey<'a> {
+    pub key: &'a Key,
+    pub text: Option<&'a str>,
+    pub repeat: bool,
 }
 
-#[cfg(test)]
-mod tests;
+impl<'a> EditorKey<'a> {
+    /// 返回窗口送来的按键 `event` 对应的编辑区按键。
+    pub(in crate::app) fn of(event: &'a KeyEvent) -> Self {
+        EditorKey {
+            key: &event.logical_key,
+            text: event.text.as_deref(),
+            repeat: event.repeat,
+        }
+    }
+}

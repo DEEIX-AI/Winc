@@ -21,7 +21,7 @@ use winit::window::Window;
 
 pub use draw::canvas::{Covered, Stroke, rounded_outline};
 pub use draw::frame::Frame;
-pub use text::font::{FontKind, set_cjk_language};
+pub use text::font::{FontKind, FontWeights, set_cjk_language};
 pub use text::font_list::{FontFamily, installed_fonts};
 pub use text::font_path::{FontError, FontSpec};
 pub use text::outline::{OutlineFonts, OutlineGlyph, OutlineMetrics};
@@ -449,8 +449,8 @@ impl Renderer {
     /// 创建渲染器，呈现到 `window`。
     ///
     /// `mono` 和 `ui` 是用户配置的字体列表，为空时使用平台默认字体；`terminal` 是终端字体列表，
-    /// 为空时终端使用 `mono`。列表中的第一个字体缺字时依次用后面的字体。`weight` 是界面和编辑区
-    /// 文字的字重，`terminal_weight` 是终端文字的字重。
+    /// 为空时终端使用 `mono`。列表中的第一个字体缺字时依次用后面的字体。`weights` 是界面、编辑区
+    /// 和终端文字的字重。
     ///
     /// # Errors
     ///
@@ -462,10 +462,9 @@ impl Renderer {
         mono: &[FontSpec],
         ui: &[FontSpec],
         terminal: &[FontSpec],
-        weight: u16,
-        terminal_weight: u16,
+        weights: FontWeights,
     ) -> Result<Renderer, String> {
-        let fonts = Fonts::load_with(mono, ui, terminal, weight, terminal_weight)?;
+        let fonts = Fonts::load_with(mono, ui, terminal, weights)?;
         Self::with_glyphs(window, background, SharedGlyphs(new_glyphs(fonts)))
     }
 
@@ -574,7 +573,7 @@ impl Renderer {
         self.dark = is_dark(background);
     }
 
-    /// 设置或取消窗口背景图；`surfaces` 是透出背景图的底色，其余颜色照常绘制。
+    /// 设置或取消窗口背景图；`surfaces` 是透出背景图的底色，其余颜色仍然绘制。
     ///
     /// 以这些颜色填充的不透明矩形（包括窗口背景和 [`Self::base_next_frame`] 声明的底色）改为
     /// 写入「背景图 + 底色」。
@@ -620,16 +619,25 @@ impl Renderer {
         mono: &[FontSpec],
         ui: &[FontSpec],
         terminal: &[FontSpec],
-        weight: u16,
-        terminal_weight: u16,
+        weights: FontWeights,
     ) -> Result<(), String> {
-        let fonts = Fonts::load_with(mono, ui, terminal, weight, terminal_weight)?;
+        let fonts = Fonts::load_with(mono, ui, terminal, weights)?;
         let mut glyphs = self.glyphs.borrow_mut();
         glyphs.fonts = fonts;
         glyphs.clear();
         glyphs.advances.clear();
         Ok(())
     }
+
+    /// 设置预览正文的字体列表；在 [`Self::new`]、[`Self::set_fonts`] 之后调用，为空时预览
+    /// 正文用界面字体。
+    pub fn set_prose_fonts(&mut self, prose: &[FontSpec]) {
+        let mut glyphs = self.glyphs.borrow_mut();
+        glyphs.fonts.set_prose(prose);
+        glyphs.clear();
+        glyphs.advances.clear();
+    }
+
     /// 返回逻辑像素到物理像素的倍数：系统的缩放系数乘以界面缩放倍数。
     pub fn scale_factor(&self) -> f32 {
         self.scale
@@ -809,7 +817,7 @@ impl Renderer {
                 .zip(tint(background))
                 .filter(|_| wall_rects.len() == based.len());
             if let Some((wall, k)) = layered {
-                // 整个窗口随后会被不透明的内容盖住时（见 `cover_next_frame`），跳过这些像素。
+                // 整个窗口随后被不透明的内容覆盖时（见 `cover_next_frame`），跳过这些像素。
                 let plain = background | 0xff00_0000;
                 if based.is_empty() && cover.is_some() {
                     canvas.rect(all, k, all, cover, Some(Tinted { wall, k, plain }));

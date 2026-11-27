@@ -54,6 +54,16 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         &["ReformatCode"],
         &["editor.action.formatSelection"],
     ),
+    (
+        CompareWithClipboard,
+        &["CompareClipboardWithSelection"],
+        &["workbench.files.action.compareWithClipboard"],
+    ),
+    (
+        CompareWithSaved,
+        &[],
+        &["workbench.files.action.compareWithSaved"],
+    ),
     (Fix, &["ShowIntentionActions"], &["editor.action.quickFix"]),
     (Find, &["Find"], &["actions.find"]),
     (
@@ -163,6 +173,26 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         &["PreviousTab"],
         &["workbench.action.previousEditor"],
     ),
+    (FocusTab1, &[], &["workbench.action.openEditorAtIndex1"]),
+    (FocusTab2, &[], &["workbench.action.openEditorAtIndex2"]),
+    (FocusTab3, &[], &["workbench.action.openEditorAtIndex3"]),
+    (FocusTab4, &[], &["workbench.action.openEditorAtIndex4"]),
+    (FocusTab5, &[], &["workbench.action.openEditorAtIndex5"]),
+    (FocusTab6, &[], &["workbench.action.openEditorAtIndex6"]),
+    (FocusTab7, &[], &["workbench.action.openEditorAtIndex7"]),
+    (FocusTab8, &[], &["workbench.action.openEditorAtIndex8"]),
+    (FocusTab9, &[], &["workbench.action.openEditorAtIndex9"]),
+    (SendHttpRequest, &[], &["rest-client.request"]),
+    (
+        SwitchTab,
+        &["Switcher"],
+        &["workbench.action.quickOpenPreviousRecentlyUsedEditorInGroup"],
+    ),
+    (
+        SwitchTabBack,
+        &[],
+        &["workbench.action.quickOpenLeastRecentlyUsedEditorInGroup"],
+    ),
     (
         CloseFolder,
         &["CloseProject"],
@@ -195,6 +225,11 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         RevealActiveFile,
         &["RevealIn"],
         &["workbench.action.files.revealActiveFileInWindows"],
+    ),
+    (
+        RevealActiveInTree,
+        &["SelectInProjectView"],
+        &["workbench.files.action.showActiveFileInExplorer"],
     ),
     (
         OpenInTerminal,
@@ -243,6 +278,25 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         &["EditorDeleteToLineStart"],
         &["deleteAllLeft"],
     ),
+    (
+        CursorLineStart,
+        &[],
+        &["cursorLineStart", "cursorLineStartSelect"],
+    ),
+    (
+        CursorLineEnd,
+        &[],
+        &["cursorLineEnd", "cursorLineEndSelect"],
+    ),
+    (
+        DeleteAllRight,
+        &["EditorDeleteToLineEnd"],
+        &["deleteAllRight"],
+    ),
+    (CutToLineEnd, &["EditorCutLineEnd"], &[]),
+    (TransposeLetters, &[], &["editor.action.transposeLetters"]),
+    (InsertLineBreak, &["EditorSplitLine"], &["lineBreakInsert"]),
+    (ScrollToCenter, &["EditorScrollToCenter"], &[]),
     (
         IndentLines,
         &["EditorIndentSelection"],
@@ -532,6 +586,16 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         MaximizeTerminal,
         &["MaximizeToolWindow"],
         &["workbench.action.toggleMaximizedPanel"],
+    ),
+    (
+        MoveTerminalToEditor,
+        &[],
+        &["workbench.action.terminal.moveToEditor"],
+    ),
+    (
+        MoveTerminalToPanel,
+        &[],
+        &["workbench.action.terminal.moveToTerminalPanel"],
     ),
     (
         ScrollTerminalTop,

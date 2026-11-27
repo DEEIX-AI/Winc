@@ -119,8 +119,23 @@ preview-pdf-page = 第 { $page } / { $total } 页
 preview-picture-zoom = 图片缩放 { $zoom }%
 preview-pdf-encrypted = 不支持预览加密的 PDF
 preview-pdf-empty = PDF 中无页面
+preview-pdf-too-large = 文件过大
+preview-pdf-not-regular-file = 不是普通文件
 preview-pdf-render-failed = 无法渲染此页
 preview-pdf-render-failed-code = 无法渲染此页（错误代码 { $code }）
+latex-compiling = 正在编译…
+latex-progress-download = 正在编译 · 下载宏包 { $name }
+latex-progress-pass = 正在编译 · 第 { $pass } 遍
+latex-progress-page = 正在编译 · 排到第 { $page } 页
+latex-failed = 编译失败
+latex-problems = { $count } 个错误
+latex-problems-tip = 点击查看各处错误
+latex-rc-confirm = 要运行项目中的 latexmkrc 吗？
+latex-rc-confirm-detail = 「{ $path }」中的 latexmkrc 是一段程序，编译时由 latexmk 执行。不运行时文档仍然编译，其中的设置不生效。
+latex-rc-confirm-button = 运行
+latex-rc-skipped = 未运行 latexmkrc
+latex-rc-skipped-tip = 项目中的 latexmkrc 没有运行，其中的设置未生效；点击选择是否运行
+latex-rc-run = 运行项目中的 latexmkrc…
 
 ## 输入 / 呼出的写作命令
 

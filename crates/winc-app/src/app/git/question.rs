@@ -125,6 +125,21 @@ impl QuestionView {
         }
     }
 
+    /// 返回手动添加仓库的对话框内容：一个路径输入框。
+    pub(super) fn add_repository() -> Self {
+        Self {
+            title: t!("git-repository-add-title").to_owned(),
+            message: None,
+            message_lines: 0,
+            values: Vec::new(),
+            inputs: vec![QuestionInput {
+                label: t!("git-repository-add-label"),
+                placeholder: t!("git-repository-add-placeholder"),
+            }],
+            confirm: t!("git-repository-add-button"),
+        }
+    }
+
     /// 返回添加远程仓库（`editing` 为 `None`）或修改其地址的对话框内容。
     pub(crate) fn remote(editing: Option<&str>) -> QuestionView {
         let input = |label, placeholder| QuestionInput { label, placeholder };
@@ -370,10 +385,11 @@ impl App {
             reply,
             remember,
         } = question;
-        if let Prompt::Password { server, .. } = &prompt
-            && let Some((known, password)) = self.git.branch.password.take()
-            && known == *server
-        {
+        // 只答复填写它的那个来源：Git 操作和远端连接各问各的，提示的文字来自对方的服务器。
+        let stored = |(from, known, _): &mut (Asker, String, String)| {
+            *from == asker && matches!(&prompt, Prompt::Password { server, .. } if known == server)
+        };
+        if let Some((_, _, password)) = self.git.branch.password.take_if(stored) {
             let _ = reply.send(password);
             return;
         }
@@ -443,7 +459,8 @@ impl App {
                 return;
             }
             let password = dialog.second.text().replace(['\r', '\n'], "");
-            self.git.branch.password = Some((server.clone(), password));
+            let asker = self.git.branch.asking.as_ref().map(|(asker, _)| *asker);
+            self.git.branch.password = asker.map(|asker| (asker, server.clone(), password));
         }
         if let Some(flag) = self.git.branch.remember.take() {
             flag.store(dialog.checkout, std::sync::atomic::Ordering::Relaxed);
@@ -482,6 +499,7 @@ impl App {
 
     /// 连接结束时调用：关闭未答复的对话框，不按用户取消处理。
     pub(in crate::app) fn end_remote_questions(&mut self) {
+        (self.git.branch.password).take_if(|(asker, ..)| *asker == Asker::Remote);
         self.end_questions(Asker::Remote);
     }
 
@@ -499,12 +517,21 @@ impl App {
         }
     }
 
-    /// 报告操作失败：用户取消输入时提示已取消，否则显示 `message` 并提供查看完整输出的按钮。
-    pub(in crate::app) fn report_git_failure(&mut self, what: &str, message: String) {
+    /// 报告在仓库 `root` 中的操作失败：用户取消输入时提示已取消，否则显示 `message` 并提供查看
+    /// 完整输出的按钮；因仓库的配置不可信而被拒绝时改为提供信任的按钮。
+    pub(in crate::app) fn report_git_failure(
+        &mut self,
+        root: Option<&Path>,
+        what: &str,
+        message: String,
+    ) {
         if mem::take(&mut self.git.branch.declined) {
             self.flash(t!("git-op-canceled", what = what));
         } else {
-            self.notify_with(NoticeKind::Error, message, NoticeAction::GitOutput);
+            let action = self
+                .git_trust_action(root)
+                .unwrap_or(NoticeAction::GitOutput);
+            self.notify_with(NoticeKind::Error, message, action);
         }
     }
 

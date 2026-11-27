@@ -44,12 +44,12 @@ fn only_the_touched_element_shows_its_markers() {
 
 #[test]
 fn continuation_lines_drop_container_markers() {
-    // 续行的 `>` 和缩进不显示，软换行按通常规则处理（中文之间不加空格）；文字与原文逐字对照。
+    // 续行的 `>` 和缩进不显示，软换行照原文换行；文字与原文逐字对照。
     let text = "一 **二**\n> 三";
     let Block::Paragraph(inline) = reveal(text, Some(0), None) else {
         panic!();
     };
-    assert_eq!(inline.text, "一 二三");
+    assert_eq!(inline.text, "一 二\n三");
     let three = inline.text.find('三').unwrap();
     assert_eq!(inline.source_of(three), text.find('三'));
     let two = inline.text.find('二').unwrap();
@@ -59,6 +59,9 @@ fn continuation_lines_drop_container_markers() {
         panic!();
     };
     assert_eq!(inline.text, "甲丙乙");
+    // 组字的字都对应光标的原文位置，其后的文字仍按原文对照。
+    assert_eq!(inline.char_source_of("甲".len()), Some(3));
+    assert_eq!(inline.char_source_of("甲丙".len()), Some(3));
     // 已输入为其他种类的块（尚未重新解析）时逐字显示。
     let Block::Paragraph(inline) = reveal("- 一\n- 二", Some(0), None) else {
         panic!();
@@ -78,4 +81,18 @@ fn highlight_markers_show_when_touched() {
     assert_eq!(shown("前面 == 高|亮 后面"), "前面 == 高亮 后面");
     // 转义的 `\==` 是文字，不随光标显示为标记。
     assert_eq!(shown("前面 \\==高|亮== 后面"), "前面 ==高亮== 后面");
+}
+
+#[test]
+fn trailing_spaces_show_at_the_caret() {
+    assert_eq!(shown("风格 |"), "风格‹ ›");
+    assert_eq!(shown("风格|  "), "风格‹  ›");
+    assert_eq!(shown("|风格 "), "风格");
+    assert_eq!(shown("甲 |\n乙"), "甲‹ ›\n乙");
+    assert_eq!(shown("|甲 \n乙"), "甲\n乙");
+    // 段首的空格和紧贴行内标记的行尾空格在光标接触时同样显示；续行的缩进不显示。
+    assert_eq!(shown(" |风格"), "‹ ›风格");
+    assert_eq!(shown("风格 **粗**| "), "风格 ‹**›粗‹** ›");
+    assert_eq!(shown("风格 **粗|** "), "风格 ‹**›粗‹**›");
+    assert_eq!(shown("甲\n  |乙"), "甲\n乙");
 }

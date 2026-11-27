@@ -18,6 +18,7 @@ use super::*;
 mod blame;
 mod branch;
 mod changes;
+mod combined;
 mod commit;
 mod commit_selection;
 mod diff;
@@ -26,11 +27,25 @@ mod log_details;
 mod log_filters;
 mod merge;
 mod module;
+mod panel;
 mod question;
 mod rebase;
+mod repo_list;
 mod repository;
 mod rewrite;
 mod worktree;
+
+/// 在 `at` 处双击：第二次按下紧接着第一次，与两次之间过了多久无关。
+///
+/// 第一次单击可能在当前线程上运行 `git`（测试中后台任务就地执行），负载高时耗时超过连击的
+/// 间隔，第二次按下会被当作单击。
+fn double_click(app: &mut App, at: (f32, f32)) {
+    click(app, at);
+    if let Some(last) = &mut app.pointer.last_click {
+        last.at = std::time::Instant::now();
+    }
+    click(app, at);
+}
 
 /// 机器上没有可用的 git 时跳过该测试并返回 `true`。
 ///
@@ -45,7 +60,7 @@ fn skip_without_git(reason: &str) -> bool {
 }
 
 /// 打开模块后 git 不可用（未安装 git 或缺开发者工具）时跳过，跳过规则见 [`skip_without_git`]。
-fn git_unusable(app: &App) -> bool {
+pub(super) fn git_unusable(app: &App) -> bool {
     match &app.git.problem {
         Some(problem) => skip_without_git(problem),
         None => false,
@@ -55,7 +70,7 @@ fn git_unusable(app: &App) -> bool {
 /// 在 `dir` 中创建只有一次提交的仓库，再修改 `src/main.rs` 并新增 `src/new.rs`。
 ///
 /// 机器上没有可用的 git 时返回 `false`。
-fn make_repo(dir: &Path) -> bool {
+pub(super) fn make_repo(dir: &Path) -> bool {
     let made = make_repo_inner(dir);
     if !made {
         skip_without_git("无法用 git 建测试仓库");
@@ -146,7 +161,7 @@ fn press_alert(app: &mut App, button: usize) {
 }
 
 /// 在测试仓库 `dir` 中运行 `git` 命令，失败时 panic。
-fn git_in(dir: &Path, args: &[&str]) {
+pub(super) fn git_in(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
         .arg("-C")
         .arg(dir)

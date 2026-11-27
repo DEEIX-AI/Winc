@@ -119,8 +119,27 @@ preview-pdf-page = Page { $page } of { $total }
 preview-picture-zoom = Image zoom { $zoom }%
 preview-pdf-encrypted = Encrypted PDFs can’t be previewed
 preview-pdf-empty = The PDF has no pages
+preview-pdf-too-large = The file is too large
+preview-pdf-not-regular-file = Not a regular file
 preview-pdf-render-failed = The page couldn’t be rendered
 preview-pdf-render-failed-code = The page couldn’t be rendered (error { $code })
+latex-compiling = Compiling…
+latex-progress-download = Compiling · downloading { $name }
+latex-progress-pass = Compiling · pass { $pass }
+latex-progress-page = Compiling · page { $page }
+latex-failed = Compile failed
+latex-problems =
+    { $count ->
+        [one] 1 error
+       *[other] { $count } errors
+    }
+latex-problems-tip = Click to list the errors
+latex-rc-confirm = Run the project’s latexmkrc?
+latex-rc-confirm-detail = The latexmkrc in “{ $path }” is a program that latexmk executes when compiling. Without it the document still compiles, but its settings do not apply.
+latex-rc-confirm-button = Run
+latex-rc-skipped = latexmkrc Not Run
+latex-rc-skipped-tip = The project’s latexmkrc wasn’t run, so its settings don’t apply; click to choose whether to run it
+latex-rc-run = Run the Project’s latexmkrc…
 
 ## Writing commands opened with /
 

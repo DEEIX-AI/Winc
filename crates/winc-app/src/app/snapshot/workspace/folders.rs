@@ -55,7 +55,8 @@ fn a_folder_can_be_added_to_the_window_and_removed() {
         .iter()
         .position(|c| *c == MenuCommand::OpenFolder)
         .unwrap();
-    assert_eq!(menu.get(open + 1), Some(&MenuCommand::AddFolder));
+    assert_eq!(menu.get(open + 1), Some(&MenuCommand::OpenProject));
+    assert_eq!(menu.get(open + 2), Some(&MenuCommand::AddFolder));
     assert!(!project(&mut blank_app(false)).contains(&MenuCommand::AddFolder));
 
     app.add_folder(&other);
@@ -80,7 +81,7 @@ fn a_folder_can_be_added_to_the_window_and_removed() {
     }
     assert!(!on_main.contains(&MenuCommand::RemoveFolder));
     assert!(on_other.contains(&MenuCommand::RemoveFolder));
-    // 其中的文件照常：可以改名、删除，没有移除。
+    // 其中的文件仍然：可以改名、删除，没有移除。
     let inside = other.join("src/main.rs");
     app.editor.workspace.as_mut().unwrap().reveal(&inside);
     let file = listed(&mut app, Some(inside));
@@ -261,7 +262,7 @@ fn a_folder_can_be_added_to_the_window_and_removed() {
     let notice = later.notice.text.take().unwrap_or_default();
     assert!(notice.contains("folders-gone"), "{notice}");
 
-    // 移除：只从窗口中拿掉，磁盘上的内容不动，文件树回到只列打开的目录。
+    // 移除：只从窗口中移除，磁盘上的内容不动，文件树回到只列打开的目录。
     app.run_tree_command(MenuCommand::RemoveFolder, Some(other.clone()));
     paint(&mut app);
     assert!(app.extra_folders().is_empty() && other.join("src/main.rs").is_file());
@@ -393,8 +394,8 @@ fn a_dropped_folder_is_added_or_opened_as_configured() {
     assert_eq!(app.editor.root(), Some(third.as_path()));
     assert!(app.extra_folders().is_empty());
 
-    // 设置页的编辑器一页列出这一项，菜单里打勾的是当前的取值。
-    assert_eq!(Setting::DropFolder.page(), SettingsPage::Editor);
+    // 设置页的文件一页列出这一项，菜单里打勾的是当前的取值。
+    assert_eq!(Setting::DropFolder.page(), SettingsPage::Files);
     assert_eq!(
         crate::layout::drop_folder_label(FolderDrop::Open),
         winc_i18n::t!("settings-drop-folder-open")
@@ -402,4 +403,41 @@ fn a_dropped_folder_is_added_or_opened_as_configured() {
     for dir in [&main, &other, &third] {
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+/// 回归：不带参数启动时恢复上次打开的目录，现场中附加的目录同样加回来；退出时记下的现场仍有这些
+/// 目录，不会在下一次启动后丢失。
+#[test]
+fn added_folders_come_back_when_the_last_folder_is_restored_at_launch() {
+    let main = sample_folder("folders-launch-main");
+    let other = sample_folder("folders-launch-other");
+    let (main, other) = (
+        winc_config::files::canonicalize(&main).unwrap(),
+        winc_config::files::canonicalize(&other).unwrap(),
+    );
+    let mut state = winc_config::State::default();
+    state.set_session(winc_config::Session {
+        folder: main.clone(),
+        folders: vec![other.clone()],
+        ..winc_config::Session::default()
+    });
+    state.last = Some(main.clone());
+
+    // 与启动时相同：事件循环建立之前打开目录、恢复标签，再建窗口的 `App`。
+    let mut editor = Editor::default();
+    let session = state.last_session().unwrap();
+    assert!(crate::open_session_folder(&mut editor, session));
+    crate::app::restore_at_launch(&mut editor, Some(session), None);
+    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    app.state = state;
+    app.restore_launch_group();
+    assert_eq!(app.editor.root(), Some(main.as_path()));
+    assert_eq!(app.extra_folders(), std::slice::from_ref(&other));
+
+    app.remember_session();
+    let saved = app.state.session_for(&main).unwrap();
+    assert_eq!(saved.folders, std::slice::from_ref(&other));
+
+    let _ = std::fs::remove_dir_all(&main);
+    let _ = std::fs::remove_dir_all(&other);
 }

@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use pulldown_cmark::{
-    Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
+    Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd,
 };
 
 /// 行内图片在 [`Inline::text`] 里占的字符；第 n 个此字符对应 [`Inline::images`] 的第 n 项。
@@ -67,12 +67,19 @@ pub struct Markdown {
     pub leaves: Vec<LeafRange>,
     /// 原文的字节数：与当前文档的长度相比，得出解析之后又改了多少。
     pub len: usize,
+    /// 原文是否包含链接引用定义（`[id]: url`）：存在时局部重解析回退全文解析。
+    has_link_defs: bool,
+    /// 文档是否包含 `[TOC]` / `[[TOC]]` 目录占位：存在时编辑标题回退全文解析。
+    has_toc: bool,
+    /// 是否已通过 [`Markdown::with_blank_lines`] 插入块间空行段落。
+    blank_lines: bool,
 }
 
 /// 文字与原文的对照：文字中的字节偏移对应原文中的哪个字节偏移。
 ///
-/// 按文字的先后记下若干段：每段文字与原文逐字节相同；不在任何一段里的文字（软换行换成的
-/// 空格、emoji、脚注编号这类由原文生成的文字）对应前一段的末尾。
+/// 按文字的先后记下若干段：每段文字与原文逐字节相同；由原文生成的文字（软换行换成的空格、
+/// emoji、脚注编号）记一个对应点。[`SourceMap::source`] 中不在任何一段里的文字对应前一段的
+/// 末尾，[`SourceMap::char_source`] 中只有对应点之后的文字有位置。
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SourceMap(Vec<Anchor>);
 
@@ -103,6 +110,23 @@ impl SourceMap {
         Some(a.source as usize + (at - a.text as usize).min(a.len as usize))
     }
 
+    /// 返回文字中第 `at` 个字节对应的原文位置；不在任何一段里、也不在对应点之后时为 `None`。
+    ///
+    /// 排版时据此记下每个字的原文位置：没有对应点的生成文字（脚注末尾的 ` ↩`）不计入正文。
+    pub fn char_source(&self, at: usize) -> Option<usize> {
+        let i = self
+            .0
+            .partition_point(|a| a.text as usize <= at)
+            .checked_sub(1)?;
+        let a = self.0[i];
+        let off = at - a.text as usize;
+        if a.len == 0 {
+            Some(a.source as usize)
+        } else {
+            (off < a.len as usize).then_some(a.source as usize + off)
+        }
+    }
+
     /// 占用的堆内存（字节，按容量计算），用于内存测量。
     pub fn heap_bytes(&self) -> usize {
         self.0.capacity() * std::mem::size_of::<Anchor>()
@@ -119,14 +143,18 @@ impl SourceMap {
     }
 
     /// 记下文字从 `text` 起的 `len` 个字节与原文从 `source` 起的字节相同；与前一段首尾相接时
-    /// 合并。
+    /// 合并。`len` 为 0 时是一个对应点，不并入前一段：其后的生成文字据此对应原文位置。
     fn push(&mut self, text: usize, source: usize, len: usize) {
         let (Some(text), Some(source), Some(len)) = (offset(text), offset(source), offset(len))
         else {
             return;
         };
         if let Some(last) = self.0.last_mut() {
-            if last.len > 0 && last.text + last.len == text && last.source + last.len == source {
+            if len > 0
+                && last.len > 0
+                && last.text + last.len == text
+                && last.source + last.len == source
+            {
                 last.len += len;
                 return;
             }
@@ -233,7 +261,7 @@ fn locate(
     }
 }
 
-/// 在原文中查找下一个字时往后找的最远距离（字节，经验值）。
+/// 在原文中查找下一个字时往后找的最远距离（字节，取自调参）。
 ///
 /// 该值明显超过常见 HTML 标签（带长网址的 `<img>`、`<a>`）的长度，并避免在长 HTML 块中
 /// 每次查找都扫到块尾。
@@ -488,6 +516,11 @@ impl Inline {
         self.map.source(at).map(|s| s + self.source)
     }
 
+    /// 返回文字中第 `at` 个字节在所在顶层块原文中的位置，见 [`SourceMap::char_source`]。
+    pub fn char_source_of(&self, at: usize) -> Option<usize> {
+        self.map.char_source(at).map(|s| s + self.source)
+    }
+
     /// 是否没有可显示的内容（只有空白）。
     pub fn is_blank(&self) -> bool {
         self.text.trim().is_empty()
@@ -532,17 +565,6 @@ impl Inline {
     }
 }
 
-/// 解析时启用的扩展：GFM 的表格、删除线、任务列表、提示块，以及脚注、文首的 YAML 和公式。
-fn options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_GFM
-        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | Options::ENABLE_MATH
-}
-
 /// 解析 `text`。
 pub fn parse(text: &str) -> Markdown {
     let options = options();
@@ -550,7 +572,26 @@ pub fn parse(text: &str) -> Markdown {
         source: text,
         ..Builder::default()
     };
-    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+    // `\(…\)`、`\[…\]` 和公式环境换成等长的 `$$` 后解析，位置仍按原文。
+    let masked = delims::mask(text);
+    for (event, range) in Parser::new_ext(&masked, options).into_offset_iter() {
+        // 顶层段落开头的 1–3 个空格不属于段落（CommonMark 4.8）；段落的范围从行首算起，段首
+        // 输入的空格仍属于该段落，光标在其中有位置。
+        let block_start =
+            if matches!(event, Event::Start(Tag::Paragraph)) && builder.stack.is_empty() {
+                let line_start = text[..range.start].rfind('\n').map_or(0, |n| n + 1);
+                if line_start < range.start
+                    && text[line_start..range.start]
+                        .bytes()
+                        .all(|b| matches!(b, b' ' | b'\t'))
+                {
+                    line_start
+                } else {
+                    range.start
+                }
+            } else {
+                range.start
+            };
         // 顶层块开始的地方：不在任何容器、段落、代码块、HTML 块里。分隔线没有开始、结束两个
         // 事件，只有一个。
         if matches!(event, Event::Start(_) | Event::Rule)
@@ -559,13 +600,13 @@ pub fn parse(text: &str) -> Markdown {
             && builder.code.is_none()
             && builder.html.is_none()
         {
-            builder.start_at = range.start;
+            builder.start_at = block_start;
         }
-        (builder.start, builder.cursor, builder.end) = (range.start, range.start, range.end);
+        (builder.start, builder.cursor, builder.end) = (block_start, range.start, range.end);
         builder.event(event);
         if builder.inline.is_some() {
-            let leaf = builder.leaf.get_or_insert(range.clone());
-            *leaf = leaf.start.min(range.start)..leaf.end.max(range.end);
+            let leaf = builder.leaf.get_or_insert(block_start..range.end);
+            *leaf = leaf.start.min(block_start)..leaf.end.max(range.end);
         }
     }
     builder.finish(text)
@@ -607,7 +648,7 @@ struct Builder<'s> {
     start: usize,
     cursor: usize,
     end: usize,
-    /// 最近一个软换行在原文中的位置：换成的空格对应这里。
+    /// 最近一个软换行在原文中的位置：换成的换行或空格对应这里。
     soft_at: usize,
     /// 正在收集的代码块与原文的对照。
     code_map: SourceMap,
@@ -630,8 +671,8 @@ struct Builder<'s> {
     footnotes: Vec<(String, Vec<Block>, Range<usize>)>,
     /// 包着当前内容的 HTML 标签（`<p>`、`<div>`、`<center>`、`<h1>`……）各自的对齐，一层一层。
     aligns: Vec<Align>,
-    /// 刚才有一个软换行，还没决定要不要换成空格：两边都是中日韩文字时不加（中文段落里折行处
-    /// 不会多出一个空格），否则加一个空格。
+    /// 刚才有一个软换行，还没写入：段落里照原文换行；标题等处两边都是中日韩文字时不加，否则加
+    /// 一个空格。
     soft: bool,
     /// `<picture>` 里浅色、深色外观的 `<source>` 写的地址，留给后面的 `<img>`。
     sources: (Option<String>, Option<String>),
@@ -715,20 +756,24 @@ impl Builder<'_> {
         }
     }
 
-    /// 前面有软换行时，按下一个字 `next` 决定加不加空格（见 [`Builder::soft`]）。
+    /// 写入前面的软换行，`next` 是其后的第一个字（见 [`Builder::soft`]）。
     fn resolve_soft(&mut self, next: Option<char>) {
         if !std::mem::take(&mut self.soft) {
             return;
         }
         let style = self.style();
         let soft_at = self.soft_at;
+        let lines = matches!(self.inline, Some((Leaf::Paragraph | Leaf::Loose, _)));
         let inline = self.inline();
         let joined =
             inline.text.chars().next_back().is_some_and(is_cjk) && next.is_some_and(is_cjk);
-        if !joined {
-            inline.map.push(inline.text.len(), soft_at, 0);
-            inline.push(" ", style);
-        }
+        let text = match (lines, joined) {
+            (true, _) => "\n",
+            (false, true) => return,
+            (false, false) => " ",
+        };
+        inline.map.push(inline.text.len(), soft_at, 0);
+        inline.push(text, style);
     }
 
     /// 结束一个容器块（引用、列表、`<details>`）。
@@ -936,11 +981,16 @@ impl Builder<'_> {
             Event::Text(text) => self.text(&text, 0),
             Event::Code(text) => self.text(&text, Style::CODE),
             Event::InlineMath(text) => self.text(&text, Style::MATH),
-            // `$$…$$` 单独成一块居中显示；写在表格里的只能留在格子里。
-            Event::DisplayMath(text) if self.in_cell() => self.text(&text, Style::MATH),
+            // `$$…$$` 单独成一块居中显示；写在表格里的、写成 `\(…\)` 的留在行内。
             Event::DisplayMath(text) => {
-                self.finish_inline();
-                self.push_block(Block::Math(text.trim().to_owned(), self.start));
+                let source = self.source.get(self.start..self.end).unwrap_or_default();
+                let (inline, text) = delims::restore(source, &text);
+                if inline || self.in_cell() {
+                    self.text(&text, Style::MATH);
+                } else {
+                    self.finish_inline();
+                    self.push_block(Block::Math(text.trim().to_owned(), self.start));
+                }
             }
             Event::Html(html) | Event::InlineHtml(html) => match &mut self.html {
                 Some(block) => block.push_str(&html),
@@ -964,7 +1014,9 @@ impl Builder<'_> {
                 self.soft = true;
                 self.soft_at = self.start;
             }
-            Event::SoftBreak => self.text(" ", 0),
+            Event::SoftBreak if self.image.is_some() => self.text(" ", 0),
+            // 段落被单独成行的公式分开后，后半段不以空格开头。
+            Event::SoftBreak => {}
             Event::HardBreak => self.text("\n", 0),
             Event::Rule => {
                 self.finish_inline();
@@ -1052,7 +1104,11 @@ impl Builder<'_> {
             Tag::Emphasis => self.push_style(Style::EMPHASIS, None),
             Tag::Strong => self.push_style(Style::STRONG, None),
             Tag::Strikethrough => self.push_style(Style::STRIKE, None),
-            Tag::Link { dest_url, .. } => self.start_link(dest_url.to_string()),
+            Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            } => self.start_link(link_url(link_type, &dest_url)),
             Tag::Image { dest_url, .. } => {
                 self.image = Some(Image {
                     url: dest_url.to_string(),
@@ -1238,7 +1294,7 @@ impl Builder<'_> {
                 self.ranges.push(range);
             }
         }
-        contents(&mut self.root[..main]);
+        let has_toc = toc::contents(&mut self.root[..main]);
         for (block, range) in self.root.iter_mut().zip(&self.ranges) {
             rebase(block, range.start);
         }
@@ -1289,6 +1345,9 @@ impl Builder<'_> {
             ranges: self.ranges,
             leaves,
             len: source.len(),
+            has_link_defs: incremental::has_link_ref_defs(source),
+            has_toc,
+            blank_lines: false,
         }
     }
 
@@ -1320,72 +1379,6 @@ pub fn slug(text: &str) -> String {
         })
         .flat_map(char::to_lowercase)
         .collect()
-}
-
-/// 把只有 `[TOC]`（或 `[[TOC]]`，不分大小写）的段落换成目录：按文中标题的层级嵌套的列表，每一项
-/// 链接到对应的标题（锚点见 [`slug`]）。`blocks` 是正文的顶层块，不含脚注。
-///
-/// 目录随标题生成，标题改变时所在块的内容随之改变；没有标题时保留原段落。
-fn contents(blocks: &mut [Block]) {
-    let is_marker = |block: &Block| {
-        matches!(block, Block::Paragraph(inline)
-            if matches!(inline.text.trim().to_ascii_lowercase().as_str(), "[toc]" | "[[toc]]"))
-    };
-    if !blocks.iter().any(is_marker) {
-        return;
-    }
-    let headings: Vec<(u8, String)> = blocks
-        .iter()
-        .filter_map(|block| match block {
-            Block::Heading(level, inline) if !inline.text.trim().is_empty() => {
-                Some((*level, inline.text.clone()))
-            }
-            _ => None,
-        })
-        .collect();
-    if headings.is_empty() {
-        return;
-    }
-    let list = Block::List(None, contents_items(&headings));
-    for block in blocks.iter_mut().filter(|block| is_marker(block)) {
-        *block = list.clone();
-    }
-}
-
-/// 把按先后排列的（级别，标题）排成嵌套的列表项：级别比前一项高的标题排在前一项下面。
-fn contents_items(headings: &[(u8, String)]) -> Vec<Item> {
-    let mut items = Vec::new();
-    let mut i = 0;
-    while i < headings.len() {
-        let (level, text) = &headings[i];
-        // 级别更深的后续标题都是这一项的子项。
-        let end = headings[i + 1..]
-            .iter()
-            .position(|(l, _)| l <= level)
-            .map_or(headings.len(), |k| i + 1 + k);
-        let mut inline = Inline::default();
-        inline.links.push(format!("#{}", slug(text)));
-        let link = u16::try_from(inline.links.len()).unwrap_or(u16::MAX);
-        inline.push(
-            text,
-            Style {
-                link,
-                ..Style::default()
-            },
-        );
-        let mut blocks = vec![Block::Paragraph(inline)];
-        if end > i + 1 {
-            blocks.push(Block::List(None, contents_items(&headings[i + 1..end])));
-        }
-        items.push(Item {
-            task: None,
-            task_source: 0,
-            blocks,
-            bare: false,
-        });
-        i = end;
-    }
-    items
 }
 
 /// 把 `block` 里记下的原文位置改为相对于原文第 `start` 个字节（所在顶层块的起点）；
@@ -1460,16 +1453,22 @@ fn align(align: Alignment) -> Align {
 }
 
 mod autolink;
+mod blank;
 pub mod cells;
+mod delims;
 mod emoji;
 pub mod enter;
 pub mod format;
 pub mod from_html;
 mod front;
 mod html;
+mod incremental;
 mod mark;
 mod shrink;
+pub mod syntax;
+mod toc;
 pub(crate) use html::named_entity;
+use syntax::{link_url, options};
 pub mod math;
 pub mod mermaid;
 pub mod paragraph;

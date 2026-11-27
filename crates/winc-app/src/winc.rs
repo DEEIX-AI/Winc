@@ -8,14 +8,14 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopClosed, EventLoopProxy};
-use winit::window::WindowId;
+use winit::window::{Window, WindowId};
 
 use winc_config::State;
 use winc_editor::Editor;
@@ -93,6 +93,12 @@ pub enum Request {
     /// 文件或目录从 `.0` 移到了 `.1`（在一个窗口剪切、到另一个窗口粘贴）：各窗口里打开的
     /// 文件、最近的文件、文件树跟着更新。
     Moved(PathBuf, PathBuf),
+    /// 文件树中拖动的各项 `.1` 此刻经过窗口 `.0`，`.2` 为是否按着 `⌥` 复制：该窗口标出落点。
+    /// `.0` 为 `None` 时不在任何其他窗口上，之前经过的窗口不再标出落点。
+    DragOver(Option<WindowKey>, Vec<PathBuf>, bool),
+    /// 在窗口 `.0` 上松开了文件树中拖动的各项 `.1`，`.2` 为是否按着 `⌥` 复制：由该窗口按落点
+    /// 放下（见 [`App::drop_dragged_in`]）。
+    DropOn(WindowKey, Vec<PathBuf>, bool),
 }
 
 /// 应用内更新的状态，设置的「关于」页显示。
@@ -168,6 +174,11 @@ pub struct Shared {
     ///
     /// 在一个窗口里复制、到另一个窗口里粘贴也要认得，所以各窗口共用。
     pub remote_copy: RefCell<Option<RemoteCopy>>,
+    /// 最近一次连接时在后台读好的远端项目文件；界面线程上不读取远端文件（见
+    /// `App::folder_target`）。
+    ///
+    /// 项目可能在新窗口中打开，新窗口同样要用，所以各窗口共用。
+    pub(crate) remote_project: RefCell<Option<crate::app::workspace::project::ProjectFolders>>,
     /// 退出前是否需要询问用户：有窗口存在未保存的文档，或者终端中有程序在运行。
     ///
     /// `AppKit` 的 `⌘Q` 回调读取该值，决定直接退出还是回到事件
@@ -179,17 +190,36 @@ pub struct Shared {
     pub update_state: RefCell<UpdateState>,
     /// 最近生成的窗口背景图层：各窗口共用同一张，没有窗口使用时释放。
     pub wallpaper: RefCell<std::rc::Weak<crate::app::WallpaperLayer>>,
+    /// 各窗口的系统窗口；窗口增减时刷新。查询光标下是哪个窗口时用。
+    windows: RefCell<Vec<(WindowKey, Weak<Window>)>>,
+    /// 测试中代替系统的查询：光标下最上层的窗口；为 `None` 时照常查询（测试中没有系统窗口）。
+    #[cfg(test)]
+    pub cursor_window: Cell<Option<WindowKey>>,
+}
+
+/// 返回 `path` 解开符号链接后的路径。路径不存在时（例如 `winc 新目录/新文件.txt`）解开最近
+/// 一个存在的上级目录，再拼上其余部分；都无法解开时原样返回。
+fn real_path(path: &Path) -> PathBuf {
+    let real = |path: &Path| winc_config::files::canonicalize(path).ok();
+    let found = path
+        .ancestors()
+        .find_map(|up| Some(real(up)?.join(path.strip_prefix(up).ok()?)));
+    found.unwrap_or_else(|| path.to_path_buf())
 }
 
 impl Shared {
-    /// 除 `except` 以外开着目录 `folder`（规范化过的路径）的窗口。
+    /// 除 `except` 以外开着目录 `folder` 的窗口。
     ///
-    /// 窗口记着的是打开时给的路径，比较时也规范化（经过符号链接打开的、macOS 上 `/var` 和
-    /// `/private/var`）。
+    /// 窗口记着的是打开时给的路径；写法不同时按真实路径比较（经过符号链接打开的、macOS 上
+    /// `/var` 和 `/private/var`），见 [`winc_editor::same_folder`]。
     pub fn window_with(&self, folder: &Path, except: Option<WindowKey>) -> Option<WindowKey> {
         let roots = self.roots.borrow();
+        let real = winc_config::files::canonicalize(folder).ok();
         let same = |root: &Path| {
-            root == folder || winc_config::files::canonicalize(root).is_ok_and(|r| r == folder)
+            root == folder
+                || real.as_ref().is_some_and(|real| {
+                    winc_config::files::canonicalize(root).is_ok_and(|r| r == *real)
+                })
         };
         let found = roots
             .iter()
@@ -197,15 +227,50 @@ impl Shared {
         found.map(|(key, _)| *key)
     }
 
+    /// 各窗口开着的目录，连同它们规范化后的路径：[`Self::window_with`] 认作同一个目录的写法。
+    pub fn open_roots(&self) -> Vec<PathBuf> {
+        let roots = self.roots.borrow();
+        let real = |root: &PathBuf| winc_config::files::canonicalize(root).ok();
+        let roots = roots
+            .iter()
+            .flat_map(|(_, root)| [Some(root.clone()), real(root)]);
+        roots.flatten().collect()
+    }
+
     /// 开着包含 `path` 的目录的窗口；有几个时（嵌套的目录）取最里面的一个。
     pub fn window_containing(&self, path: &Path) -> Option<WindowKey> {
         let roots = self.roots.borrow();
+        // 写法不同时按真实路径比较。
+        let real = real_path(path);
         let inside = roots.iter().filter(|(_, root)| {
             path.starts_with(root)
-                || winc_config::files::canonicalize(root).is_ok_and(|r| path.starts_with(r))
+                || winc_config::files::canonicalize(root).is_ok_and(|r| real.starts_with(r))
         });
         let deepest = inside.max_by_key(|(_, root)| root.components().count());
         deepest.map(|(key, _)| *key)
+    }
+
+    /// 返回光标所在位置最上层的、`except` 以外的本进程窗口；光标下是其他应用的窗口、桌面，或
+    /// 平台不支持查询时返回 `None`。
+    ///
+    /// 只在 macOS 和 Windows 上查询：X11 上光标下的顶层窗口是窗口管理器的外框，Wayland 不提供
+    /// 光标的全局位置。耗时与窗口数成正比，每个窗口一次系统调用。
+    pub fn window_at_cursor(&self, except: Option<WindowKey>) -> Option<WindowKey> {
+        #[cfg(test)]
+        if let Some(key) = self.cursor_window.get() {
+            return (Some(key) != except).then_some(key);
+        }
+        #[cfg(target_os = "macos")]
+        let topmost = crate::macos::topmost_at_cursor;
+        #[cfg(windows)]
+        let topmost = crate::windows::topmost_at_cursor;
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let topmost = |_: &Window| false;
+        let windows = self.windows.borrow();
+        let found = windows.iter().find(|(key, window)| {
+            Some(*key) != except && window.upgrade().is_some_and(|window| topmost(&window))
+        });
+        found.map(|(key, _)| *key)
     }
 
     /// 是否还有别的窗口。
@@ -238,6 +303,8 @@ struct Slot {
     app: App,
     /// 上次看到的配置版本（[`App::config_rev`]）：变了就是这个窗口改了设置，发给其他窗口。
     config_rev: u64,
+    /// 最近一次成为当前窗口时的序号（见 [`Winc::activate`]）；从未成为当前窗口时为 0。
+    active_at: u64,
 }
 
 /// ⌘Q 退出全部窗口的进度：正在问的窗口，和还没问的。
@@ -245,6 +312,11 @@ struct Slot {
 struct Quitting {
     asking: Option<Asking>,
     rest: Vec<WindowKey>,
+    /// 已同意退出的各窗口同意时会丢失的修改（[`App::unsaved_on_quit`]）。
+    ///
+    /// 别的窗口还在询问时，已同意退出的窗口仍可编辑；全部同意后与当时比较，又有修改的窗口
+    /// 重新询问。
+    agreed: Vec<(WindowKey, Vec<(winc_editor::DocumentId, u64)>)>,
 }
 
 /// 正在请其退出的窗口。
@@ -264,6 +336,8 @@ pub struct Winc {
     windows: Vec<Slot>,
     /// 最近一个获得焦点或按下鼠标的窗口；属于整个应用的事件交给它。
     active: Option<WindowKey>,
+    /// 窗口成为当前窗口的次数，用作 [`Slot::active_at`] 的序号。
+    activations: u64,
     /// 下一个窗口的编号（[`WindowKey`] 的序号，从 0 起递增）。
     next_key: u32,
     /// 各窗口共用的状态，每个 [`App`] 都持有同一个副本的引用。
@@ -275,6 +349,8 @@ pub struct Winc {
     /// 在整个应用的套接字上等之后启动的 `winc` 交来的目录和文件（见 `instance`）；另一个
     /// winc 已经在等、或者不能新建窗口时没有。
     launches: Option<(Listener, AppLock)>,
+    /// 文件树中拖动的各项此刻经过的其他窗口（见 [`Request::DragOver`]）；没有时为 `None`。
+    dragged_over: Option<WindowKey>,
 }
 
 impl Winc {
@@ -285,11 +361,13 @@ impl Winc {
             proxy,
             windows: Vec::new(),
             active: None,
+            activations: 0,
             next_key: 0,
             shared: Rc::default(),
             template,
             quitting: None,
             launches: None,
+            dragged_over: None,
         }
     }
 
@@ -327,7 +405,11 @@ impl Winc {
         let root = slot.app.editor.root().map(Path::to_path_buf);
         let mut folders = folders
             .iter()
-            .filter(|f| winc_backend::fs::is_dir(f) && Some(*f) != root.as_ref())
+            .filter(|f| {
+                let opens =
+                    winc_backend::fs::is_dir(f) || crate::app::workspace::project::is_project(f);
+                opens && Some(*f) != root.as_ref()
+            })
             .peekable();
         if root.is_none()
             && let Some(folder) = folders.next()
@@ -367,6 +449,7 @@ impl Winc {
             key,
             app,
             config_rev,
+            active_at: 0,
         });
         self.refresh_shared();
     }
@@ -395,6 +478,15 @@ impl Winc {
         self.by_key(key)
     }
 
+    /// 把 `key` 设为当前窗口，并记下这次成为当前窗口的序号。
+    fn activate(&mut self, key: WindowKey) {
+        self.active = Some(key);
+        self.activations += 1;
+        if let Some(slot) = self.windows.iter_mut().find(|slot| slot.key == key) {
+            slot.active_at = self.activations;
+        }
+    }
+
     /// 当前窗口；已经关掉时取第一个窗口。
     fn active_key(&self) -> Option<WindowKey> {
         let alive = |key: &WindowKey| self.windows.iter().any(|slot| slot.key == *key);
@@ -416,7 +508,9 @@ impl Winc {
         let exit = self.advance_quit();
         self.refresh_shared();
         let mut requests = std::mem::take(&mut *self.shared.requests.borrow_mut());
-        // 移动不用事件循环，在这里就告诉各窗口；发起的窗口已经更新过，再做一次没有变化。
+        // 移动、拖动不用事件循环，在这里就告诉各窗口；发起移动的窗口已经更新过，再做一次没有
+        // 变化。放下之后切到放下的窗口：移动前的确认、之后的操作都在那里进行。
+        let mut dropped = None;
         requests.retain(|request| match request {
             Request::Moved(from, to) => {
                 for slot in &mut self.windows {
@@ -424,9 +518,36 @@ impl Winc {
                 }
                 false
             }
+            Request::DragOver(to, paths, copy) => {
+                self.drag_over(*to, paths, *copy);
+                false
+            }
+            Request::DropOn(to, paths, copy) => {
+                self.drag_over(None, &[], false);
+                if let Some(app) = self.by_key(*to) {
+                    app.drop_dragged_in(paths.clone(), *copy);
+                    dropped = Some(*to);
+                }
+                false
+            }
             _ => true,
         });
+        requests.extend(dropped.map(Request::Focus));
         (requests, exit)
+    }
+
+    /// 文件树中拖动的各项 `paths` 此刻经过的窗口变为 `to`（`copy` 为是否按着 `⌥`）：之前经过的
+    /// 窗口不再标出落点，`to` 按光标此刻的位置标出。
+    fn drag_over(&mut self, to: Option<WindowKey>, paths: &[PathBuf], copy: bool) {
+        if let Some(left) = self.dragged_over.filter(|key| Some(*key) != to)
+            && let Some(app) = self.by_key(left)
+        {
+            app.drag_left();
+        }
+        self.dragged_over = to;
+        if let Some(app) = to.and_then(|key| self.by_key(key)) {
+            app.drag_over(paths, copy);
+        }
     }
 
     /// 某个窗口改了设置（[`App::config_rev`] 变了）：把它的配置发给其他窗口。
@@ -483,12 +604,23 @@ impl Winc {
                 .map(|slot| slot.key)
                 .collect();
             rest.sort_by_key(|key| Some(*key) != active);
-            self.quitting = Some(Quitting { asking: None, rest });
+            let (asking, agreed) = (None, Vec::new());
+            self.quitting = Some(Quitting {
+                asking,
+                rest,
+                agreed,
+            });
         }
         loop {
             let Some(quitting) = &mut self.quitting else {
                 return false;
             };
+            for slot in &self.windows {
+                let known = quitting.agreed.iter().any(|(key, _)| *key == slot.key);
+                if slot.app.closing.quit_requested && !known {
+                    (quitting.agreed).push((slot.key, slot.app.unsaved_on_quit()));
+                }
+            }
             if let Some(asking) = quitting.asking {
                 let Some(app) = self.windows.iter().find(|s| s.key == asking.key) else {
                     quitting.asking = None;
@@ -511,7 +643,20 @@ impl Winc {
                 continue;
             }
             let Some(key) = quitting.rest.pop() else {
-                return true;
+                // 同意之后又有修改的窗口：撤回它的同意，重新询问。
+                let edited = quitting.agreed.iter().position(|(key, unsaved)| {
+                    let slot = self.windows.iter().find(|slot| slot.key == *key);
+                    slot.is_some_and(|slot| slot.app.unsaved_on_quit() != *unsaved)
+                });
+                let Some(edited) = edited else {
+                    return true;
+                };
+                let (key, _) = quitting.agreed.remove(edited);
+                if let Some(slot) = self.windows.iter_mut().find(|slot| slot.key == key) {
+                    slot.app.closing.quit_requested = false;
+                }
+                self.ask_to_quit(key);
+                continue;
             };
             self.ask_to_quit(key);
         }
@@ -547,6 +692,18 @@ impl Winc {
     /// 每个事件之后都调用（包括鼠标移动），目录没变时不重建列表。
     fn refresh_shared(&mut self) {
         self.shared.count.set(self.windows.len());
+        let windows =
+            || (self.windows.iter()).filter_map(|slot| Some((slot.key, slot.app.system_window()?)));
+        let same = {
+            let known = self.shared.windows.borrow();
+            known.len() == windows().count()
+                && (known.iter().zip(windows()))
+                    .all(|((k, w), (key, window))| *k == key && w.as_ptr() == Arc::as_ptr(window))
+        };
+        if !same {
+            let fresh = windows().map(|(key, window)| (key, Arc::downgrade(window)));
+            *self.shared.windows.borrow_mut() = fresh.collect();
+        }
         let roots = || {
             self.windows.iter().filter_map(|slot| {
                 let root = slot.app.editor.root()?;
@@ -592,10 +749,10 @@ impl Winc {
                         if let Some(app) = self.by_key(key) {
                             app.raise();
                         }
-                        self.active = Some(key);
+                        self.activate(key);
                     }
                     // 已在 `settle` 里处理。
-                    Request::Moved(..) => {}
+                    Request::Moved(..) | Request::DragOver(..) | Request::DropOn(..) => {}
                 }
             }
         }
@@ -616,14 +773,15 @@ impl Winc {
             return;
         }
         // 不带目标再次启动：macOS 上切到当前窗口，与点击程序坞图标相同；其他系统上新建窗口。
-        if launch.targets.is_empty() && !cfg!(target_os = "macos") {
+        let empty = launch.targets.is_empty() && launch.diffs.is_empty();
+        if empty && !cfg!(target_os = "macos") {
             self.new_window(event_loop, None, launch.token, true);
             if let Some(app) = self.active_key().and_then(|key| self.by_key(key)) {
                 app.raise();
             }
             return;
         }
-        self.open_targets(event_loop, &launch.targets, launch.token);
+        self.open_targets(event_loop, &launch.targets, &launch.diffs, launch.token);
     }
 
     /// 系统交来了要打开的 `targets`（拖到程序坞的图标上、文件管理器里的「打开方式」、`winc://`
@@ -638,23 +796,31 @@ impl Winc {
             path: crate::instance::absolute(&target.path),
             ..target.clone()
         });
-        self.open_targets(event_loop, &targets.collect::<Vec<_>>(), None);
+        self.open_targets(event_loop, &targets.collect::<Vec<_>>(), &[], None);
     }
 
-    /// 把 `targets` 开在合适的窗口里（窗口见 [`Self::window_for`]），并把它切到前台。
+    /// 把 `targets` 和要比较的文件 `diffs` 开在合适的窗口里（窗口见 [`Self::window_for`]，要比较
+    /// 的文件按右侧的文件选窗口），并把该窗口切到前台。
     ///
     /// `token` 是新启动的 winc 交来的激活令牌（见 [`App::set_activation`]）。
     fn open_targets(
         &mut self,
         event_loop: &ActiveEventLoop,
         targets: &[Target],
+        diffs: &[crate::cli::Diff],
         mut token: Option<String>,
     ) {
         if let Some(open) = crate::cli::remote_open(targets) {
             self.open_remote(event_loop, open, token);
             return;
         }
-        let key = match self.window_for(targets) {
+        let rights = diffs.iter().map(|diff| Target {
+            path: diff.right.clone(),
+            line: None,
+            col: None,
+        });
+        let chosen: Vec<Target> = targets.iter().cloned().chain(rights).collect();
+        let key = match self.window_for(&chosen) {
             Ok(key) => key,
             Err(folder) => {
                 self.new_window(event_loop, folder, token.take(), true);
@@ -664,10 +830,11 @@ impl Winc {
                 key
             }
         };
-        self.active = Some(key);
+        self.activate(key);
         if let Some(app) = self.by_key(key) {
             app.set_activation(token);
             app.open_files(targets);
+            app.open_diffs(diffs);
         }
     }
 
@@ -692,29 +859,46 @@ impl Winc {
                 key
             }
         };
-        self.active = Some(key);
+        self.activate(key);
         if let Some(app) = self.by_key(key) {
             app.set_activation(token);
             app.open_remote(open);
         }
     }
 
-    /// 选出打开 `targets` 的窗口：有目录的切到开着它的窗口；只有文件的，交给开着它所在目录的
-    /// 窗口，没有时交给当前窗口，不打开文件所在的目录；没有目标时是当前窗口。
+    /// 选出打开 `targets` 的窗口；返回 `Err(目录)` 时由调用方新建窗口，在其中打开该目录。
     ///
-    /// 都没有时，有停在开始页上的空窗口就用它，在里面打开目录；否则返回 `Err(目录)`，由调用方
-    /// 新建窗口。
+    /// - 有目录：开着它的窗口；没有时用停在开始页上的空窗口，在其中打开目录。
+    /// - 只有本机的文件：开着其所在目录的窗口，其次是本机窗口（见 [`Self::local_window`]），
+    ///   不打开文件所在的目录；没有本机窗口时返回 `Err(None)`。
+    /// - 只有远端主机上的文件：开着其所在目录的窗口，其次是当前窗口。
+    /// - 没有目标：当前窗口。
     fn window_for(&mut self, targets: &[Target]) -> Result<WindowKey, Option<PathBuf>> {
+        use crate::app::workspace::project::{is_project, project_folders};
+        // 项目文件与目录一样独占窗口，按其第一个目录查找窗口。
+        let opens_folder = |path: &Path| winc_backend::fs::is_dir(path) || is_project(path);
         let folder = targets
             .iter()
-            .find(|t| winc_backend::fs::is_dir(&t.path))
+            .find(|t| opens_folder(&t.path))
             .map(|t| t.path.clone());
         let file = targets
             .iter()
-            .find(|t| !winc_backend::fs::is_dir(&t.path))
+            .find(|t| !opens_folder(&t.path))
             .map(|t| t.path.clone());
+        let root = |folder: &Path| match project_folders(folder) {
+            Ok(project) if is_project(folder) => project.root,
+            _ => folder.to_path_buf(),
+        };
+        // 本机的文件在远端主机的窗口中打开时，标题和文件树都指向远端，保存却写到本机。
+        let local = file
+            .as_deref()
+            .filter(|file| !winc_backend::is_remote(file));
+        if let (None, Some(file)) = (&folder, local) {
+            let inside = self.shared.window_containing(file);
+            return inside.or_else(|| self.local_window()).ok_or(None);
+        }
         let key = match (&folder, &file) {
-            (Some(folder), _) => self.shared.window_with(folder, None),
+            (Some(folder), _) => self.shared.window_with(&root(folder), None),
             (None, Some(file)) => (self.shared.window_containing(file)).or(self.active_key()),
             (None, None) => self.active_key(),
         };
@@ -730,11 +914,22 @@ impl Winc {
         Ok(key)
     }
 
-    /// 停在开始页上、什么都没开（没有目录也没有标签）的窗口，当前窗口优先；没有时返回 `None`。
+    /// 本机的窗口（不是 [`App::is_remote_window`]），当前窗口优先，其次是最近成为当前窗口的；
+    /// 没有时返回 `None`。
+    fn local_window(&self) -> Option<WindowKey> {
+        let active = self.active_key();
+        let local = self
+            .windows
+            .iter()
+            .filter(|slot| !slot.app.is_remote_window());
+        let recent = local.max_by_key(|slot| (Some(slot.key) == active, slot.active_at));
+        recent.map(|slot| slot.key)
+    }
+
+    /// 什么都没开（见 [`App::is_blank`]）的窗口，当前窗口优先；没有时返回 `None`。
     fn blank_window(&self) -> Option<WindowKey> {
         let active = self.active_key();
-        let blank =
-            |slot: &&Slot| slot.app.editor.root().is_none() && slot.app.editor.documents.is_empty();
+        let blank = |slot: &&Slot| slot.app.is_blank();
         let blanks = self.windows.iter().filter(blank);
         blanks
             .min_by_key(|slot| Some(slot.key) != active)
@@ -753,7 +948,7 @@ impl Winc {
         token: Option<String>,
         cascade: bool,
     ) {
-        let folder = folder.map(|f| winc_config::files::canonicalize(&f).unwrap_or(f));
+        let folder = folder.map(|f| winc_editor::given_path(&f));
         if let Some(key) = folder
             .as_ref()
             .and_then(|f| self.shared.window_with(f, None))
@@ -782,8 +977,9 @@ impl Winc {
             .map(|s| s.key);
         if let Some(key) = hidden {
             if let Some(app) = self.by_key(key) {
-                if let Some(folder) = &folder {
-                    app.open_folder_now(folder);
+                match &folder {
+                    Some(folder) => app.open_folder_now(folder),
+                    None => app.start_with_new_file(),
                 }
                 app.set_activation(token);
                 app.raise();
@@ -791,7 +987,7 @@ impl Winc {
                     app.enter_fullscreen();
                 }
             }
-            self.active = Some(key);
+            self.activate(key);
             self.refresh_shared();
             return;
         }
@@ -810,17 +1006,18 @@ impl Winc {
         let mut app = App::new(editor, proxy, Bench::off(), config);
         app.watch_git_output();
         app.store.config_path = template.config_path;
+        // 新窗口从文件读状态：先等其他窗口提交的修改写完。
+        winc_config::state_writer::flush();
         app.state = (template.state_path.as_deref())
             .map(State::load_from)
             .unwrap_or_default();
         app.git.commit.set_flat(!app.state.commit_tree);
         let sort = crate::app::CommitSort::from_key(&app.state.commit_sort);
         app.git.commit.set_sort(sort);
-        app.git
-            .commit
-            .set_staging(app.config.git_staging_area == Some(true));
         app.restore_panel_width();
         app.editor.diff_unified = app.config.diff_inline == Some(true);
+        (app.editor).set_align_columns(app.config.align_columns != Some(false));
+        app.editor.diff_collapse = app.config.diff_collapse_unchanged != Some(false);
         app.apply_preview_state();
         app.store.state_path = template.state_path;
         app.backup.root = template.backup_root;
@@ -828,12 +1025,13 @@ impl Winc {
         app.opening.fullscreen = fullscreen;
         app.opening.glyphs_from = glyphs;
         self.add(key, app);
-        self.active = Some(key);
+        self.activate(key);
         let Some(app) = self.by_key(key) else {
             return;
         };
-        if let Some(folder) = &folder {
-            app.open_folder_now(folder);
+        match &folder {
+            Some(folder) => app.open_folder_now(folder),
+            None => app.start_with_new_file(),
         }
         app.set_activation(token);
         app.resumed(event_loop);
@@ -854,9 +1052,9 @@ impl Winc {
             .is_none_or(|slot| slot.app.config.restore_folder != Some(false));
         let others: Vec<PathBuf> = (self.windows.iter())
             .filter(|slot| reopen && Some(slot.key) != active)
-            .filter_map(|slot| slot.app.editor.root().map(Path::to_path_buf))
+            .filter_map(|slot| slot.app.session_key())
             .collect();
-        let (_, result) = State::update(&path, |state| state.others = others);
+        let (_, result) = State::update(&path, &State::default(), |state| state.others = others);
         if let Err(e) = result {
             eprintln!("winc: 无法记下开着的窗口：{e}");
         }
@@ -891,6 +1089,17 @@ impl ApplicationHandler<Envelope> for Winc {
                 *self.shared.update_state.borrow_mut() = state;
                 for slot in &mut self.windows {
                     slot.app.request_redraw();
+                }
+            }
+            UserEvent::SystemThemeChanged(theme) => {
+                for slot in &mut self.windows {
+                    slot.app.system_theme_changed(theme);
+                }
+            }
+            // 连接由各窗口共用，每个窗口都处理。
+            UserEvent::RemoteShells => {
+                for slot in &mut self.windows {
+                    slot.app.user_event(event_loop, UserEvent::RemoteShells);
                 }
             }
             // 设置是各窗口同步的，看哪个窗口都一样。
@@ -932,7 +1141,7 @@ impl ApplicationHandler<Envelope> for Winc {
                     ..
                 }
         ) {
-            self.active = Some(key);
+            self.activate(key);
         }
         // 光标同一时刻只位于一个窗口上：某个窗口在光标处位于最上层并收到移动时，其余仍认为光标
         // 在内的窗口按光标离开处理。被遮挡的窗口不一定再收到移动或离开事件。
@@ -965,6 +1174,8 @@ impl ApplicationHandler<Envelope> for Winc {
         for slot in &mut self.windows {
             slot.app.exiting(event_loop);
         }
+        // 各窗口退出时提交的现场先写完：进程结束前文件里是全的，下面的写入也排在它们之后。
+        winc_config::state_writer::flush();
         self.remember_windows();
     }
 }

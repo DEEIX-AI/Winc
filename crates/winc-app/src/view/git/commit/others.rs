@@ -6,8 +6,8 @@ use crate::app::{OtherGroup, OtherRow};
 /// 绘制多仓库时当前仓库改动列表以外的各行，记下可点击的位置。
 ///
 /// 各行按 `App::commit_other_rows` 的顺序排，随列表一起滚动。当前仓库标题行之后的各行让出
-/// 当前仓库改动列表的高度 `block`（逻辑像素）。仓库标题在最外一层，组、文件缩进一层，与当前
-/// 仓库改动列表的组、平铺的文件同列。
+/// 当前仓库改动列表的高度 `block`（逻辑像素）。仓库标题在最外一层，组、平铺的文件缩进一层，
+/// 树形模式中的目录和文件再按层级缩进，与当前仓库的排法相同。
 pub(super) fn draw_other_rows(
     app: &App,
     frame: &mut Frame<'_>,
@@ -29,6 +29,17 @@ pub(super) fn draw_other_rows(
         let mut row_hits = Vec::new();
         frame.within(clip, |frame| {
             let hits = &mut row_hits;
+            if let OtherRow::Dir(.., depth) | OtherRow::TreeFile(.., depth) = row {
+                for level in 1..=*depth {
+                    let x = (band.x + ARROW + (level + 1) as f32 * INDENT).round();
+                    frame.rect_clipped(
+                        Rect::new(x, band.y, 1.0, COMMIT_ROW),
+                        app.palette.indent_guide,
+                        0.0,
+                        list,
+                    );
+                }
+            }
             match *row {
                 OtherRow::Current => draw_current_row(app, frame, (list, band), hits),
                 OtherRow::Repository(repo) => {
@@ -42,11 +53,59 @@ pub(super) fn draw_other_rows(
                     draw_other_group(app, frame, (list, band), (repo, group), hits);
                 }
                 OtherRow::Staged(repo, entry) => {
-                    draw_other_file(app, frame, (list, band), (repo, entry, Some(true)), hits);
+                    draw_other_file(app, frame, (list, band), (repo, entry, Some(true), 0), hits);
                 }
                 OtherRow::File(repo, entry) => {
                     let side = app.git.commit.staging().then_some(false);
-                    draw_other_file(app, frame, (list, band), (repo, entry, side), hits);
+                    draw_other_file(app, frame, (list, band), (repo, entry, side, 0), hits);
+                }
+                OtherRow::Dir(repo, group, ref dir, ref label, depth) => {
+                    let target = CommitTarget::OtherDir(i);
+                    let staged = (app.git.commit.staging()).then_some(group == OtherGroup::Staged);
+                    let actions = other_dir_actions(i, staged);
+                    let hovered = app.pointer.hover == Hover::Commit(target)
+                        || matches!(app.pointer.hover, Hover::Commit(t) if actions.holds(t));
+                    if hovered {
+                        let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
+                        frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
+                    }
+                    let cy = band.y + COMMIT_ROW / 2.0;
+                    let arrow = band.x + ARROW + (depth + 1) as f32 * INDENT;
+                    let open = !app.other_dir_folded(repo, group, dir);
+                    icons::chevron_turned(
+                        frame,
+                        (arrow, cy),
+                        6.0,
+                        f32::from(u8::from(open)) * std::f32::consts::FRAC_PI_2,
+                        app.palette.text_dim,
+                        list,
+                    );
+                    let icon_x = arrow + check_gap(app) + ICON;
+                    icons::folder(
+                        frame,
+                        (icon_x, (cy - 6.0).round()),
+                        open,
+                        app.palette.folder,
+                        list,
+                    );
+                    let text_x = icon_x + icons::FOLDER_WIDTH + LABEL_GAP;
+                    let strip = hovered.then(|| actions_home(band, actions.len(), 0.0));
+                    let end = strip.map_or(band.right() - 6.0, |s| s.first.x - 4.0);
+                    let room = (end - text_x).max(0.0);
+                    let parts = dir_parts(app, frame, label, Some(room));
+                    draw_dir_parts(app, frame, (text_x, band), &parts, |_| 1.0, list);
+                    if let Some(strip) = strip {
+                        draw_row_actions(app, frame, (strip, actions), (list, false), Some(hits));
+                    }
+                    hits.push((band.intersect(list), target));
+                }
+                OtherRow::TreeFile(repo, entry, group, depth) => {
+                    let side = app
+                        .git
+                        .commit
+                        .staging()
+                        .then_some(group == OtherGroup::Staged);
+                    draw_other_file(app, frame, (list, band), (repo, entry, side, depth), hits);
                 }
             }
         });
@@ -166,8 +225,9 @@ fn header_columns(app: &App, band: Rect, quiet: bool) -> (f32, f32, f32, f32) {
     (arrow, check, icon, icon + 6.0 + ICON)
 }
 
-/// 绘制当前仓库的标题行：折叠箭头、勾选框（勾选式下）、文件夹图标、仓库名和「当前」标记，
-/// 右端是更改数。点击箭头收起或展开整节，点击其余部分不做任何操作。底色由 [`draw_sections`] 绘制。
+/// 绘制当前仓库的标题行：折叠箭头、勾选框（勾选式下）、文件夹图标、仓库名、所在的分支和与上游
+/// 的差异，右端是更改数；与其他仓库的标题行排法相同，以强调色的图标和整节的底色（见
+/// [`draw_sections`]）区分。点击箭头收起或展开整节，点击分支展开分支选择面板。
 ///
 /// 没有更改时排在「没有更改的仓库」一组里：没有箭头和勾选框，右端不写更改数。
 fn draw_current_row(
@@ -213,8 +273,10 @@ fn draw_current_row(
     // 仓库名用正文字号，比下面小号淡色的组名高一级。
     let name = app.git_current_repository_name();
     let end = ui_text(frame, app, name_x, band, &name, p.text, clip);
-    let mark = t!("git-commit-repository-current");
-    ui_text_small(frame, app, end + 8.0, band, mark, p.accent, clip);
+    let state = (app.git.root.as_deref()).map(|root| app.place_state(root));
+    let state = state.unwrap_or_default();
+    let branch = CommitTarget::CurrentBranch;
+    draw_branch_sync(app, frame, (band, clip), end, (&state, branch), hits);
     if !quiet {
         draw_count_pill(app, frame, band, &count, list);
     }
@@ -330,11 +392,32 @@ fn draw_repository_row(
     icons::folder_small(frame, (icon + 6.0, cy), p.text_muted, clip);
     // 仓库名用正文字号，比下面小号淡色的组名高一级。
     let name = app.git_repository_name(repo);
-    let mut x = ui_text(frame, app, name_x, band, &name, ink, clip);
+    let end = ui_text(frame, app, name_x, band, &name, ink, clip);
+    let branch = CommitTarget::OtherBranch(repo);
+    draw_branch_sync(app, frame, (band, clip), end, (&state, branch), hits);
+    if !quiet {
+        draw_count_pill(app, frame, band, &count, list);
+    }
+    // 箭头、勾选框的点击区域先记，整行的后记：点在它们上面只折叠、勾选，不切换仓库。
+    hits.push((band.intersect(list), target));
+}
+
+/// 在仓库标题行 `band` 中仓库名之后（名字结束于 `x`）画所在的分支和与上游的差异，只画在
+/// `clip` 之内。
+///
+/// 分支是一个可以点的小块，命中目标为 `target`；有提交可推送或拉取时差异用强调色。
+fn draw_branch_sync(
+    app: &App,
+    frame: &mut Frame<'_>,
+    (band, clip): (Rect, Rect),
+    mut x: f32,
+    (state, target): (&crate::app::git::location_picker::PlaceState, CommitTarget),
+    hits: &mut Vec<(Rect, CommitTarget)>,
+) {
+    let p = app.palette;
+    let cy = band.y + COMMIT_ROW / 2.0;
     if let Some(head) = &state.head {
-        // 分支是一个可以点的小块：点了切换到这个仓库并展开它的分支选择面板。
-        let branch = CommitTarget::OtherBranch(repo);
-        let on = app.pointer.hover == Hover::Commit(branch);
+        let on = app.pointer.hover == Hover::Commit(target);
         let ink = if on { p.text } else { p.text_dim };
         let left = x + BRANCH_LEAD - 8.0;
         let size = app.fonts.ui_small;
@@ -344,23 +427,15 @@ fn draw_repository_row(
         x += BRANCH_LEAD;
         icons::branch_small(frame, (x, cy), ink, clip);
         x = ui_text_small(frame, app, x + BRANCH_TEXT, band, head, ink, clip);
-        hits.push((chip.intersect(clip), branch));
+        hits.push((chip.intersect(clip), target));
     }
-    // 与上游的差异跟在分支名后面：有提交可推送或拉取时用强调色。
     let sync = match (state.behind, state.ahead) {
-        (0, 0) => String::new(),
+        (0, 0) => return,
         (0, ahead) => format!("↑{ahead}"),
         (behind, 0) => format!("↓{behind}"),
         (behind, ahead) => format!("↓{behind} ↑{ahead}"),
     };
-    if !sync.is_empty() {
-        ui_text_small(frame, app, x + 8.0, band, &sync, p.accent, clip);
-    }
-    if !quiet {
-        draw_count_pill(app, frame, band, &count, list);
-    }
-    // 箭头、勾选框的点击区域先记，整行的后记：点在它们上面只折叠、勾选，不切换仓库。
-    hits.push((band.intersect(list), target));
+    ui_text_small(frame, app, x + 8.0, band, &sync, p.accent, clip);
 }
 
 /// 画「没有更改的仓库」一组的标题行：折叠箭头、组名，右端是仓库数。点这一行展开或收起。
@@ -403,31 +478,8 @@ const BRANCH_LEAD: f32 = 14.0;
 /// 分支图标的中心到分支名的距离（逻辑像素）：图标宽约 10，与文字相隔 3。
 const BRANCH_TEXT: f32 = 8.0;
 
-/// 画行尾的暂存（`on` 为真，加号）或取消暂存（减号）按钮，位置与当前仓库各行悬停时的按钮相同；
-/// 返回它的左边缘。
-fn draw_stage_button(
-    app: &App,
-    frame: &mut Frame<'_>,
-    (list, band): (Rect, Rect),
-    target: CommitTarget,
-    on: bool,
-    hits: &mut Vec<(Rect, CommitTarget)>,
-) -> f32 {
-    let p = app.palette;
-    let rect = file_actions(band).1;
-    let hovered = app.pointer.hover == Hover::Commit(target);
-    draw_button(frame, p, rect, list, hovered, false);
-    let color = if hovered { p.text } else { p.text_muted };
-    match on {
-        true => icons::plus(frame, center(rect), 8.0, color, list),
-        false => icons::minus(frame, center(rect), 8.0, color, list),
-    }
-    hits.push((rect.intersect(list), target));
-    rect.x
-}
-
-/// 画另一个仓库里一组的标题行：折叠箭头、勾选框（勾选式下）、组名，右端是文件数；暂存区视图
-/// 中悬停时文件数换成暂存或取消暂存整组的按钮。与当前仓库改动列表的组标题同列。
+/// 画另一个仓库里一组的标题行：折叠箭头、勾选框（勾选式下）、组名，右端是文件数；悬停时文件数
+/// 左边是按钮（见 [`other_group_actions`]）。与当前仓库改动列表的组标题同列。
 fn draw_other_group(
     app: &App,
     frame: &mut Frame<'_>,
@@ -443,15 +495,18 @@ fn draw_other_group(
     };
     let count = app.other_status(repo, |_, status| count(status));
     let row = CommitTarget::OtherGroup(repo, group);
-    let staged = group == OtherGroup::Staged;
-    let stage = CommitTarget::OtherGroupStage(repo, !staged);
-    let hover = app.pointer.hover;
-    let hovered = hover == Hover::Commit(row) || hover == Hover::Commit(stage);
-    shade_hovered(app, frame, (list, band), row);
-    if staging && hovered {
-        draw_stage_button(app, frame, (list, band), stage, !staged, hits);
-    } else {
-        draw_count_pill(app, frame, band, &count.unwrap_or(0).to_string(), list);
+    let actions = other_group_actions(repo, group, staging);
+    let hovered = app.pointer.hover == Hover::Commit(row)
+        || matches!(app.pointer.hover, Hover::Commit(t) if actions.holds(t));
+    if hovered {
+        let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
+        frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
+    }
+    let count = count.unwrap_or(0).to_string();
+    draw_count_pill(app, frame, band, &count, list);
+    if hovered {
+        let strip = actions_home(band, actions.len(), count_tail(app, frame, &count));
+        draw_row_actions(app, frame, (strip, actions), (list, false), Some(hits));
     }
     let cy = band.y + COMMIT_ROW / 2.0;
     let arrow = band.x + ARROW + INDENT;
@@ -481,15 +536,16 @@ fn draw_other_group(
     hits.push((band.intersect(list), row));
 }
 
-/// 画另一个仓库中的一个文件：图标、名字、淡色的所在目录，右端是状态字母。
+/// 画另一个仓库中的一个文件：图标、名字，平铺时加淡色的所在目录，右端是状态字母；悬停时状态
+/// 字母左边是按钮（见 [`other_file_actions`]），选中时铺选中的底色。
 ///
-/// `side` 是暂存区视图中这一行所在的部分：`Some(true)` 为已暂存，`Some(false)` 为未暂存；
-/// 此时行尾是取消暂存或暂存的按钮，状态字母在按钮左边。勾选式下为 `None`。
+/// `side` 是暂存区视图中这一行所在的部分：`Some(true)` 为已暂存，`Some(false)` 为未暂存；勾选式
+/// 下为 `None`。
 fn draw_other_file(
     app: &App,
     frame: &mut Frame<'_>,
     (list, band): (Rect, Rect),
-    (repo, entry, side): (usize, usize, Option<bool>),
+    (repo, entry, side, depth): (usize, usize, Option<bool>, usize),
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
     let p = app.palette;
@@ -504,35 +560,42 @@ fn draw_other_file(
             None => entry.shown(),
         };
         let fixed = entry.conflicted();
-        Some((name, dir.unwrap_or_default(), change, entry.is_dir, fixed))
+        let selected = (app.git.commit.other_selected.as_ref())
+            .is_some_and(|(r, path)| r == root && *path == entry.path);
+        Some((
+            name,
+            dir.unwrap_or_default(),
+            change,
+            entry.is_dir,
+            fixed,
+            selected,
+        ))
     };
-    let Some((name, dir, change, is_dir, fixed)) = app.other_status(repo, read).flatten() else {
+    let Some((name, dir, change, is_dir, fixed, selected)) = app.other_status(repo, read).flatten()
+    else {
         return;
     };
     let target = match side {
         Some(true) => CommitTarget::OtherStagedFile(repo, entry),
         _ => CommitTarget::OtherFile(repo, entry),
     };
-    shade_hovered(app, frame, (list, band), target);
-    // 悬停时右端的状态字母换成暂存或取消暂存的按钮。冲突中的文件在这里不能暂存：切换到该
-    // 仓库解决。
-    let stage = side
-        .filter(|_| !fixed)
-        .map(|staged| (CommitTarget::OtherStage(repo, entry, !staged), !staged));
+    let actions = other_file_actions((repo, entry), side, fixed);
     let hover = app.pointer.hover;
-    let stage =
-        stage.filter(|(stage, _)| hover == Hover::Commit(target) || hover == Hover::Commit(*stage));
-    let button = stage.map(|(stage, on)| {
-        // 悬停在按钮上时整行同样铺底色。
-        if hover == Hover::Commit(stage) {
-            let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-            frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
-        }
-        draw_stage_button(app, frame, (list, band), stage, on, hits)
-    });
+    let hovered =
+        hover == Hover::Commit(target) || matches!(hover, Hover::Commit(t) if actions.holds(t));
+    let focused = app.focus == Focus::CommitList;
+    let shade_color = row_color(p, selected, focused, hovered);
+    if let Some(color) = shade_color {
+        let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
+        frame.rect_clipped(shade, color, RADIUS_ROW, list);
+    }
+    let strip = hovered.then(|| actions_home(band, actions.len(), 0.0));
+    if let Some(strip) = strip {
+        draw_row_actions(app, frame, (strip, actions), (list, false), Some(hits));
+    }
     let cy = band.y + COMMIT_ROW / 2.0;
     // 缩进一层，与当前仓库平铺时的文件行同列：勾选式下前面是勾选框，暂存区视图中那一列没有。
-    let check = band.x + ARROW + INDENT + check_gap(app);
+    let check = band.x + ARROW + (depth + 1) as f32 * INDENT + check_gap(app);
     if check_gap(app) > 0.0 {
         let state = app.other_status(repo, |_, status| {
             (status.entries.get(entry)).and_then(|e| app.other_pick_state(e))
@@ -553,15 +616,37 @@ fn draw_other_file(
     let letter = change.letter().to_string();
     let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
     let letter_x = band.right() - END_CENTER - letter_w / 2.0;
-    if button.is_none() {
-        let color = git_color(p, change);
-        ui_text_small(frame, app, letter_x, band, &letter, color, list);
-    }
-    let text_end = button.map_or(letter_x - 8.0, |x| x - 4.0);
+    ui_text_small(
+        frame,
+        app,
+        letter_x,
+        band,
+        &letter,
+        git_color(p, change),
+        list,
+    );
+    let text_end = strip.map_or(letter_x - 8.0, |s| s.first.x - 4.0);
     let clip = Rect::new(list.x, band.y, text_end - list.x, COMMIT_ROW).intersect(list);
-    let end = ui_text(frame, app, text_x, band, &name, file_color(change, p), clip);
-    if !dir.is_empty() {
-        ui_text_small(frame, app, end + 8.0, band, &dir, p.text_dim, clip);
+    let room = (text_end - text_x).max(0.0);
+    let dir = (app.git.commit.flat() && !dir.is_empty()).then_some(dir.as_str());
+    let parts = file_parts(app, frame, (&name, dir), Some(room));
+    let end = draw_file_parts(
+        app,
+        frame,
+        (text_x, band),
+        &parts,
+        (file_color(change, p), |_| 1.0),
+        clip,
+    );
+    // 和当前仓库使用相同的名称排版与截断渐隐，底色随这一行的悬停状态变化。
+    if end > text_end + 0.5 {
+        let solid = match shade_color {
+            Some(color) => crate::view::workspace::panel::over(p.sidebar_bg, color),
+            None => p.sidebar_bg,
+        };
+        let reach = NAME_FADE.min(room);
+        let edge = Rect::new(text_end - reach, band.y, reach, COMMIT_ROW);
+        frame.within(clip, |frame| fade(frame, edge, solid, false));
     }
     hits.push((band.intersect(list), target));
 }

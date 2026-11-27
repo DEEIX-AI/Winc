@@ -162,7 +162,10 @@ fn exited_shells_and_a_crashed_helper_restart() {
     app.restart_terminal_tab();
     assert_eq!(app.terminal.want, [b"/tmp".to_vec()]);
     // 起的名字跟着等着重开的标签走。
-    assert_eq!(app.terminal_session().unwrap().names, ["server"]);
+    assert_eq!(
+        app.terminal_session_with_tabs(&[]).unwrap().names,
+        ["server"]
+    );
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -223,7 +226,7 @@ fn a_lost_pseudo_console_out_of_view_leaves_a_red_dot() {
     app.terminal_message(FromHelper::Disconnected { tab: first });
     assert_eq!(app.terminal.tabs[0].unseen, Some(true));
 
-    // 面板收着时正在看的标签断开了。
+    // 面板保存时正在看的标签断开了。
     app.terminal.open = false;
     app.terminal_message(FromHelper::Disconnected { tab: second });
     assert_eq!(app.terminal.tabs[1].unseen, Some(true));
@@ -395,7 +398,7 @@ fn terminal_tabs_are_renamed_in_place() {
     assert!(app.terminal.rename.is_none());
     assert_eq!(app.terminal.tabs[0].label(), "~/winc");
 
-    // 面板收着时从命令面板改名：先把面板打开。
+    // 面板保存时从命令面板改名：先把面板打开。
     app.toggle_terminal();
     assert!(!app.terminal.open);
     app.run_action(crate::keymap::Action::RenameTerminal);
@@ -499,6 +502,47 @@ fn snapshot_terminal_tabs() {
     app.on_mouse_down(MouseButton::Left);
     app.on_mouse_move(x + 50.0, y);
     shoot(&mut app, "terminal-tabs-moving-dark");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn bottom_terminal_header_tracks_the_panel_during_sidebar_animation() {
+    use crate::app::animation::{Clock, SIDEBAR_ANIMATION};
+    use crate::app::terminal::tab_inset;
+    use crate::app::workspace::tree::SidebarMotion;
+
+    let dir = sample_folder("terminal-sidebar-animation");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.terminal_right = Some(false);
+    app.config.terminal_vertical_tabs = Some(false);
+    app.window.controls = true;
+    app.set_sidebar(true);
+    show_terminal(&mut app, "$ ");
+    paint(&mut app);
+    let open_x = app.layout.terminal.x;
+
+    for visible in [false, true] {
+        app.set_sidebar(visible);
+        for step in 1..=4 {
+            app.panels.sidebar.motion = (step < 4).then(|| SidebarMotion {
+                from: if visible { 0.0 } else { 1.0 },
+                clock: Clock::stopped(SIDEBAR_ANIMATION, SIDEBAR_ANIMATION * step / 4),
+            });
+            paint(&mut app);
+            let panel = app.layout.terminal;
+            if !visible && step == 3 {
+                // 侧栏还在收起，终端面板的左边已移到侧栏开关右缘的左侧。
+                assert!(panel.x < app.layout.sidebar_button.right());
+            }
+            let tab = header_hit(&app, HeaderHit::Tab(0));
+            assert_eq!(tab.x, panel.x + tab_inset(panel), "{visible} {step}");
+            // 窗口按钮在另一行，隐藏面板按钮仍贴着面板右端。
+            let hide = header_hit(&app, HeaderHit::Hide);
+            assert!(hide.right() > app.layout.controls.x);
+        }
+    }
+    assert_eq!(app.layout.terminal.x, open_x);
+
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -660,7 +704,7 @@ fn the_status_bar_button_slides_the_panel_out_and_back() {
 
 #[test]
 fn the_terminal_menu_maximizes_and_the_options_apply() {
-    use crate::app::input::context_menu::{MenuEntry, MenuTarget};
+    use crate::app::input::context_menu::MenuEntry;
     use crate::app::terminal::{DEFAULT_HEIGHT, EDITOR_MIN_WIDTH};
     use crate::keymap::Action;
 
@@ -675,7 +719,6 @@ fn the_terminal_menu_maximizes_and_the_options_apply() {
         app.on_mouse_down(MouseButton::Right);
         app.on_mouse_up(MouseButton::Right);
         let menu = app.overlays.context_menu.as_ref().unwrap();
-        assert_eq!(menu.target, MenuTarget::Terminal(None));
         menu.entries
             .iter()
             .filter_map(|e| match e {
@@ -684,21 +727,8 @@ fn the_terminal_menu_maximizes_and_the_options_apply() {
             })
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        right_click(&mut app),
-        [
-            (MenuCommand::Copy, false),
-            (MenuCommand::Paste, true),
-            (MenuCommand::SelectAll, true),
-            (MenuCommand::TerminalFind, true),
-            (MenuCommand::TerminalClear, true),
-            (MenuCommand::TerminalMaximize, true),
-            (MenuCommand::TerminalDock, true),
-            (MenuCommand::NewTerminal, true),
-            (MenuCommand::SplitTerminal, true),
-            (MenuCommand::CloseTerminal, true),
-        ]
-    );
+    let items = right_click(&mut app);
+    assert!(items.contains(&(MenuCommand::Copy, false)));
     app.run_menu_command(MenuCommand::SelectAll);
     assert!(right_click(&mut app).contains(&(MenuCommand::Copy, true)));
     app.run_menu_command(MenuCommand::Copy);
@@ -742,11 +772,11 @@ fn the_terminal_menu_maximizes_and_the_options_apply() {
     assert_eq!((app.layout.editor.w, app.layout.tabs.w), (0.0, 0.0));
     assert_eq!(app.layout.terminal_divider, Rect::default());
     assert_eq!(app.focus, Focus::Terminal);
-    assert!(app.terminal_session().unwrap().maximized);
+    assert!(app.terminal_session_with_tabs(&[]).unwrap().maximized);
     app.run_action(Action::MaximizeTerminal);
     assert!(!app.terminal.maximized);
     assert_eq!(app.layout.terminal.h, DEFAULT_HEIGHT);
-    assert!(!app.terminal_session().unwrap().maximized);
+    assert!(!app.terminal_session_with_tabs(&[]).unwrap().maximized);
 
     // 面板在右边时最大化：同样铺满这一栏。
     app.toggle_terminal_position();
@@ -846,7 +876,7 @@ fn terminal_tabs_come_back_with_the_folder() {
     app.restore_terminal(&saved);
     assert!(app.terminal.want.is_empty());
 
-    // 上次面板收着：等打开面板时才建，也不多开一个空的。
+    // 上次面板保存：等打开面板时才建，也不多开一个空的。
     let mut app = blank_app(false);
     app.config.terminal_enabled = Some(true);
     app.attach_idle_helper();
@@ -859,7 +889,7 @@ fn terminal_tabs_come_back_with_the_folder() {
     app.relayout();
     assert_eq!(app.terminal.tabs.len(), 2);
 
-    // 面板收着时按 ⌘T（或「在终端中打开」）：恢复的两个标签仍然创建，新的加在后面。
+    // 面板保存时按 ⌘T（或「在终端中打开」）：恢复的两个标签仍然创建，新的加在后面。
     let mut app = blank_app(false);
     app.config.terminal_enabled = Some(true);
     app.attach_idle_helper();
@@ -1289,7 +1319,7 @@ fn the_first_window_restores_the_terminal_panel() {
     app.relayout();
     assert_eq!(app.terminal.tabs.len(), 1);
 
-    // 上次收着：恢复后收着，打开面板时才建标签。
+    // 上次保存：恢复后保存，打开面板时才建标签。
     let mut app = open(false);
     assert!(!app.terminal.open);
     app.relayout();

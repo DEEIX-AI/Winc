@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use ropey::Rope;
 use winc_core::Change;
 use winc_editor::format::{
-    Cancel, FormatError, FormatRange, Formatted, Formatter, Job, Plan, Program, Task,
+    Cancel, FormatError, FormatRange, Formatted, Formatter, Job, Plan, Program, Survey, Task,
 };
 use winc_i18n::t;
 
@@ -66,8 +66,9 @@ pub struct FormatState {
     /// 关闭标签或退出时选择了「保存」，正在为其中一个文件格式化：保存完成后继续处理其余文件。
     pub then_close: Option<SavePrompt>,
     running: Vec<Running>,
-    /// 正在后台查找工具的文档，以及完成后是否继续保存：远端的文件要读那台主机上的项目文件
-    /// 才知道用哪个工具，不能在界面线程上进行。
+    /// 正在后台选择工具的文档，以及完成后是否继续保存。
+    ///
+    /// 选择工具要逐级检查项目中的文件（远端的文件要读取那台主机上的文件），不能在界面线程上进行。
     planning: Vec<(DocumentId, bool)>,
     /// 后台查好的工具送回的通道。
     planned: (Sender<Planned>, Receiver<Planned>),
@@ -118,6 +119,43 @@ impl FormatState {
     }
 }
 
+/// 提交前格式化一个文件所用工具的设置（见 [`App::commit_tool`]）。
+pub(in crate::app) struct CommitTool {
+    /// 文件的语言。
+    language: &'static winc_syntax::Language,
+    /// 设置中写的命令：项目设置优先于用户设置。
+    configured: Option<String>,
+    /// 项目设置中写的命令。
+    project: Option<String>,
+}
+
+impl CommitTool {
+    /// 选择提交前格式化文件 `path` 的工具；需要先征得用户同意时返回 `None`，该文件按原样提交。
+    ///
+    /// 尚未允许运行的项目工具或项目命令跳过，提交途中不弹出询问；用户此前的选择取自 `state`。
+    /// `root` 是打开的目录。逐级检查项目中的文件，应在后台线程调用。
+    pub(in crate::app) fn plan(
+        &self,
+        survey: &mut Survey,
+        path: &Path,
+        root: Option<&Path>,
+        state: &winc_config::State,
+    ) -> Option<(Plan, Duration)> {
+        let configured = self.configured.as_deref();
+        let mut plan = survey
+            .plan(Task::Format, self.language, path, root, configured)
+            .ok()?;
+        if let Some(approval) = approval(&plan, root, self.project.as_deref()) {
+            match approval.choice(state) {
+                Some(true) => {}
+                Some(false) if approval.searchable => plan.use_system(),
+                _ => return None,
+            }
+        }
+        Some((plan, TIMEOUT))
+    }
+}
+
 /// 一次格式化在选好工具之后要用到的内容。
 struct Launch {
     task: Task,
@@ -146,6 +184,8 @@ type Planned = (Launch, Result<Plan, FormatError>);
 struct Approval {
     /// 用户的选择按此目录记录：项目自带程序所在的目录，或项目的 `.winc` 目录。
     folder: PathBuf,
+    /// 询问的是项目设置中的命令时，命令的原文；用户的同意只对这条命令有效。
+    command: Option<String>,
     /// 提示框中对象的描述，例如「项目中的「prettier」」「项目设置中的修复命令」。
     what: String,
     /// 提示框主句下方的说明小字。
@@ -158,6 +198,21 @@ struct Approval {
     ///
     /// 此时按钮为「允许」「不允许」；选择「不允许」同样记录，之后保存时不再询问，也不执行。
     on_save: bool,
+}
+
+impl Approval {
+    /// 返回用户上次的选择：运行（`true`）、改用系统中安装的程序或不允许（`false`）；没有记录时
+    /// 返回 `None`。
+    ///
+    /// 项目设置中的命令按原文核对：项目设置改写命令后没有记录，需要重新询问。
+    fn choice(&self, state: &winc_config::State) -> Option<bool> {
+        match &self.command {
+            Some(command) => state
+                .command_approved(&self.folder, command)
+                .then_some(true),
+            None => state.tool_choice(&self.folder),
+        }
+    }
 }
 
 /// 提示框上对项目自带工具的回答。
@@ -176,6 +231,8 @@ pub struct ToolAnswer {
     pub range: Option<FormatRange>,
     /// 记录用户选择的目录（见 `Approval::folder`）。
     pub folder: PathBuf,
+    /// 询问的是项目设置中的命令时，命令的原文（见 `Approval::command`）。
+    pub command: Option<String>,
     /// 用户的回答。
     pub run: Option<bool>,
 }
@@ -216,41 +273,37 @@ impl App {
         }
     }
 
-    /// 提交前格式化磁盘上的文件 `path` 所用的工具；不能不经询问就格式化时为 `None`，这个文件
-    /// 照原样提交。
+    /// 返回提交前格式化磁盘上的文件 `path` 所用工具的设置；该文件不格式化时返回 `None`。
     ///
-    /// 工具的选法与手动格式化相同（项目设置优先于用户设置）。保存时不格式化的语言、远端的文件、
-    /// 还没有允许运行的项目工具或项目命令都跳过：提交途中不弹出询问。
-    pub(in crate::app) fn commit_format_plan(&self, path: &Path) -> Option<(Plan, Duration)> {
+    /// 工具的选法与手动格式化相同（项目设置 `project` 优先于用户设置）。保存时不格式化的语言、
+    /// 远端的文件都跳过。不访问磁盘，工具由 [`CommitTool::plan`] 在后台选择。
+    pub(in crate::app) fn commit_tool(
+        &self,
+        path: &Path,
+        project: Option<&Config>,
+    ) -> Option<CommitTool> {
         if winc_backend::is_remote(path) {
             return None;
         }
         let name = path.file_name()?.to_string_lossy();
         let language = winc_syntax::detect(&name);
-        let project = self.project_format();
         let excluded =
             |config: &Config| (config.format_on_save_exclude.iter()).any(|l| l == language.id);
-        if excluded(&self.config) || project.as_ref().is_some_and(excluded) {
+        if excluded(&self.config) || project.is_some_and(excluded) {
             return None;
         }
-        let root = self.editor.root();
         let command = |config: &Config| {
             task_commands(config, Task::Format)
                 .get(language.id)
                 .cloned()
         };
-        let project = project.as_ref().and_then(command);
+        let project = project.and_then(command);
         let configured = project.clone().or_else(|| command(&self.config));
-        let task = Task::Format;
-        let mut plan = Plan::for_task(task, language, path, root, configured.as_deref()).ok()?;
-        if let Some(approval) = approval(&plan, root, project.as_deref()) {
-            match self.state.tool_choice(&approval.folder) {
-                Some(true) => {}
-                Some(false) if approval.searchable => plan.use_system(),
-                _ => return None,
-            }
-        }
-        Some((plan, TIMEOUT))
+        Some(CommitTool {
+            language,
+            configured,
+            project,
+        })
     }
 
     /// 是否需要在保存（`⌘S`）前先修复或格式化文档 `id`。
@@ -352,8 +405,8 @@ impl App {
     ///
     /// # Errors
     ///
-    /// 未能开始时返回 [`FormatError`]：文档不可格式化、没有可用的工具、命令引用的程序不存在，
-    /// 或用户选择不运行项目自带的工具。
+    /// 未能开始时返回 [`FormatError`]：文档不可格式化、用户不允许保存时执行，或无法弹出询问。
+    /// 选择工具时的问题（没有可用的工具、命令引用的程序不存在等）由 [`App::poll_formatting`] 处理。
     fn start(
         &mut self,
         task: Task,
@@ -379,6 +432,7 @@ impl App {
                 None => {
                     let approval = Approval {
                         folder,
+                        command: None,
                         what: t!("format-approval-on-save-what", task = task.key()),
                         detail: t!("format-approval-on-save-detail", task = task.key()),
                         searchable: false,
@@ -432,28 +486,24 @@ impl App {
             root,
             project,
         };
-        // 远端的文件：选工具要读那台主机上的项目文件，在后台进行，选好后由
-        // [`App::poll_formatting`] 接着处理。
-        if launch.remote {
-            self.format.planning.push((id, save));
-            let sender = self.format.planned.0.clone();
-            self.spawn_blocking_then(UserEvent::FormatPlanned, move || {
-                let root = launch.root.as_deref();
-                let plan = Plan::for_task(task, language, &path, root, configured.as_deref());
-                let _ = sender.send((launch, plan));
-            });
-            return Ok(());
-        }
-        let root = launch.root.as_deref();
-        let plan = Plan::for_task(task, language, &path, root, configured.as_deref())?;
-        self.launch(launch, plan)
+        // 选择工具要逐级检查项目中的文件，在后台进行，选好后由 [`App::poll_formatting`] 继续处理。
+        self.format.planning.push((id, save));
+        let sender = self.format.planned.0.clone();
+        let formatter = self.format.formatter.clone();
+        self.spawn_blocking_then(UserEvent::FormatPlanned, move || {
+            let root = launch.root.as_deref();
+            let plan = Plan::for_task(task, language, &path, root, configured.as_deref())
+                .and_then(|plan| fit(plan, &launch, &formatter));
+            let _ = sender.send((launch, plan));
+        });
+        Ok(())
     }
 
-    /// 用选好的工具 `plan` 开始格式化：必要时先询问用户能否运行，再交给后台。
+    /// 用后台选好、经过 [`fit`] 检查的工具 `plan` 开始格式化，必要时先询问用户能否运行。
     ///
     /// # Errors
     ///
-    /// 同 [`App::start`]。
+    /// 用户不允许运行项目自带的工具或项目设置中的命令，或无法弹出询问时返回 [`FormatError`]。
     fn launch(&mut self, launch: Launch, mut plan: Plan) -> Result<(), FormatError> {
         let Launch {
             task,
@@ -462,27 +512,12 @@ impl App {
             range,
             sent,
             line_ending,
-            remote,
             root,
             project,
+            ..
         } = launch;
-        if let Some(range) = &range {
-            plan.restrict(range)?;
-        }
-
-        // 命令中写的相对路径指向不存在的程序时，无需询问能否运行，直接报错。远端的程序不能在
-        // 界面线程上查看，运行时找不到再报错。
-        if matches!(plan.program, Program::Project { .. })
-            && !remote
-            && self.format.formatter.installed(&plan.program) == Some(false)
-        {
-            return Err(FormatError::Missing {
-                message: t!("format-tool-not-found", tool = plan.tool().into_owned()),
-                tools: Vec::new(),
-            });
-        }
         if let Some(approval) = approval(&plan, root.as_deref(), project.as_deref()) {
-            match self.state.tool_choice(&approval.folder) {
+            match approval.choice(&self.state) {
                 Some(true) => {}
                 Some(false) if approval.searchable => plan.use_system(),
                 Some(false) => {
@@ -576,6 +611,7 @@ impl App {
             };
             let detail = &approval.detail;
             let folder = approval.folder.clone();
+            let command = approval.command.clone();
             let asked = self.present_alert(&message, detail, buttons, None, move |i, _| {
                 let answer = ToolAnswer {
                     id,
@@ -583,9 +619,10 @@ impl App {
                     save,
                     range: range.clone(),
                     folder: folder.clone(),
+                    command: command.clone(),
                     run: (i != cancel).then_some(i == 0),
                 };
-                Some(UserEvent::ToolChoice(answer))
+                Some(UserEvent::ToolChoice(Box::new(answer)))
             });
             // 窗口上已有其他提示框或面板时无法弹出，视为本次不格式化。
             if asked {
@@ -612,7 +649,11 @@ impl App {
             return;
         };
 
-        self.update_state(|state| state.set_tool_choice(&answer.folder, run));
+        self.update_state(move |state| match &answer.command {
+            // 项目设置中的命令只有「运行」和「取消」两个回答，到这里的都是同意。
+            Some(command) => state.approve_command(&answer.folder, command),
+            None => state.set_tool_choice(&answer.folder, run),
+        });
         if let Err(e) = self.start(task, id, save, answer.range) {
             if save {
                 self.save_step_done(task, id, note_for(task, e));
@@ -624,11 +665,14 @@ impl App {
 
     /// 接收后台线程送回的格式化结果。
     pub(in crate::app) fn poll_formatting(&mut self) {
-        // 后台选好了工具：接着询问、运行；期间又要求保存的一并保存。
+        // 后台选好了工具：随后询问、运行；期间又要求保存的一并保存。
         while let Ok((mut launch, plan)) = self.format.planned.1.try_recv() {
             let (task, id) = (launch.task, launch.id);
-            let waiting = self.format.planning.iter().position(|p| p.0 == id);
-            launch.save |= waiting.is_some_and(|at| self.format.planning.swap_remove(at).1);
+            // 选择工具期间标签已关闭（见 [`App::cancel_format`]）：丢弃结果，不运行工具。
+            let Some(at) = self.format.planning.iter().position(|p| p.0 == id) else {
+                continue;
+            };
+            launch.save |= self.format.planning.swap_remove(at).1;
             let save = launch.save;
             if let Err(e) = plan.and_then(|plan| self.launch(launch, plan)) {
                 if save {
@@ -788,7 +832,9 @@ impl App {
     /// 保存失败时只提示保存的错误。关闭标签或退出的流程正在等待本次保存时，保存成功后继续关闭，
     /// 保存失败则放弃整个关闭流程（处理方式同直接保存失败）。
     fn save_with_notes(&mut self, id: DocumentId) {
-        let closing = self.format.then_close.take();
+        // 等待的是哪个文档由提示记着：另一个文档的保存不能取走它。
+        let awaited = |prompt: &mut SavePrompt| prompt.dirty.first() == Some(&id);
+        let closing = self.format.then_close.take_if(awaited);
         let (notes, others) = std::mem::take(&mut self.format.notes)
             .into_iter()
             .partition::<Vec<_>, _>(|(d, _)| *d == id);
@@ -847,12 +893,15 @@ impl App {
         true
     }
 
-    /// 标签关闭时停止该标签的格式化，并丢弃结果。
+    /// 标签关闭时停止该标签的格式化并丢弃结果；正在后台选择工具的，选好后也不运行。
     pub(in crate::app) fn cancel_format(&mut self, id: DocumentId) {
         if let Some(index) = self.format.running.iter().position(|r| r.id == id) {
             self.format.running.remove(index).cancel.cancel();
         }
+        self.format.planning.retain(|(d, _)| *d != id);
         self.format.notes.retain(|(d, _)| *d != id);
+        // 等着这个文档保存的关闭流程一并放弃，否则之后的关闭请求都会被当作仍在进行。
+        (self.format.then_close).take_if(|prompt| prompt.dirty.first() == Some(&id));
     }
 
     /// 退出前停止所有格式化，避免工具进程残留。
@@ -860,12 +909,14 @@ impl App {
         for running in self.format.running.drain(..) {
             running.cancel.cancel();
         }
+        self.format.planning.clear();
         self.format.notes.clear();
     }
 
-    /// 文档 `id` 是否正在格式化（修复）。
+    /// 文档 `id` 是否正在格式化（修复），包括正在后台选择工具。
     pub(in crate::app) fn is_formatting(&self, id: DocumentId) -> bool {
         self.format.running.iter().any(|r| r.id == id)
+            || self.format.planning.iter().any(|(d, _)| *d == id)
     }
 
     /// 返回状态栏应显示进度的任务种类（「正在格式化…」或「正在修复…」）；
@@ -901,22 +952,19 @@ impl App {
 /// 路径形如打开的目录（没有时为临时目录）中的 `untitled.json`。工具只把该路径用作提示
 /// （`--stdin-filepath`），并在其所在目录查找配置，不会读取该文件。
 fn unsaved_path(language: &winc_syntax::Language, root: Option<&Path>) -> PathBuf {
-    let name = match (language.extensions.first(), language.file_names.first()) {
-        (Some(ext), _) => format!("untitled.{ext}"),
-        (None, Some(name)) => (*name).to_owned(),
-        (None, None) => "untitled".to_owned(),
-    };
+    let name = (language.file_name("untitled")).unwrap_or_else(|| "untitled".to_owned());
     root.map_or_else(std::env::temp_dir, Path::to_path_buf)
         .join(name)
 }
 
 /// 返回本次格式化需要先向用户询问的内容；无需询问时返回 `None`。
 ///
-/// 项目设置中的命令只询问一次，该命令用到的项目自带程序不再另外询问。
+/// 项目设置中的命令每条只询问一次，该命令用到的项目自带程序不再另外询问。
 fn approval(plan: &Plan, root: Option<&Path>, project: Option<&str>) -> Option<Approval> {
     if let (Some(command), Some(root)) = (project, root) {
         return Some(Approval {
             folder: root.join(".winc"),
+            command: Some(command.to_owned()),
             what: t!("format-approval-project-command", task = plan.task().key()),
             detail: t!("format-approval-project-command-detail", command = command),
             searchable: false,
@@ -934,6 +982,7 @@ fn approval(plan: &Plan, root: Option<&Path>, project: Option<&str>) -> Option<A
     let shown = path.strip_prefix(folder).unwrap_or(path);
     Some(Approval {
         folder: folder.clone(),
+        command: None,
         what: t!(
             "format-approval-project-tool",
             tool = plan.tool().into_owned()
@@ -945,6 +994,31 @@ fn approval(plan: &Plan, root: Option<&Path>, project: Option<&str>) -> Option<A
         searchable: *searchable,
         on_save: false,
     })
+}
+
+/// 检查为 `launch` 选好的工具 `plan` 能否使用，返回限定了区段的计划。
+///
+/// 需要检查文件是否存在，应在后台线程调用。
+///
+/// # Errors
+///
+/// 工具不支持只处理所选内容，或命令中以相对路径写的程序不存在时返回 [`FormatError`]。
+fn fit(mut plan: Plan, launch: &Launch, formatter: &Formatter) -> Result<Plan, FormatError> {
+    if let Some(range) = &launch.range {
+        plan.restrict(range)?;
+    }
+    // 命令中的相对路径指向不存在的程序时直接报错，无需询问能否运行。
+    // 远端的程序不在此检查，运行时找不到程序同样报错。
+    if matches!(plan.program, Program::Project { .. })
+        && !launch.remote
+        && formatter.installed(&plan.program) == Some(false)
+    {
+        return Err(FormatError::Missing {
+            message: t!("format-tool-not-found", tool = plan.tool().into_owned()),
+            tools: Vec::new(),
+        });
+    }
+    Ok(plan)
 }
 
 /// 返回保存前的修复或格式化没有开始、或失败时，保存后应显示的提示。

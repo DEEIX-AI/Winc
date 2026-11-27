@@ -125,7 +125,7 @@ fn the_heading_list_can_be_pinned_open() {
 }
 
 /// 可编辑的预览按原文编行号：从原文一行的开头排起的显示行写该行的行号，空行和代码块的围栏
-/// 没有；段落里连成一段的几行原文只写第一行。代码块里不再另编行号。
+/// 没有。代码块里不再另编行号。
 #[test]
 fn the_editable_preview_numbers_source_lines() {
     let (app, dir) = notes("md-numbers", PreviewMode::Preview);
@@ -136,7 +136,7 @@ fn the_editable_preview_numbers_source_lines() {
         let found = source_lines(laid, rope, 0.0..laid.height);
         found.into_iter().map(|(line, _)| line).collect::<Vec<_>>()
     };
-    assert_eq!(lines(), [0, 2, 4, 8, 9, 10, 13, 15]);
+    assert_eq!(lines(), [0, 2, 4, 5, 8, 9, 10, 13, 15]);
     // 可编辑的预览在左侧编行号，代码块里不再另编。
     assert!(!app.preview.markdown.layout.as_ref().unwrap().key.numbers);
     let _ = std::fs::remove_dir_all(&dir);
@@ -485,5 +485,23 @@ fn a_long_document_keeps_layout_only_near_the_viewport() {
     let (shed, drawn, _, seen) = state(&app);
     assert!(shed > 1000 && drawn && seen.start == 0, "{shed} {seen:?}");
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 启动时恢复的标签和命令行打开的文件按记下的显示方式打开。
+#[test]
+fn files_opened_at_launch_use_the_remembered_mode() {
+    let dir = sample_folder("preview-at-launch");
+    std::fs::write(dir.join("a.md"), "# 标题\n").unwrap();
+    let mut state = winc_config::State::default();
+    state
+        .preview_modes
+        .insert("markdown".into(), "preview".into());
+    let mut editor = winc_editor::Editor::default();
+    editor.preview_defaults = crate::app::preview::images::preview_defaults(&state);
+    let index = editor.open(&dir.join("a.md"));
+    assert_eq!(editor.documents[index].preview_mode(), PreviewMode::Preview);
+    let index = editor.open(&dir.join("short.rs"));
+    assert_eq!(editor.documents[index].preview_mode(), PreviewMode::Source);
     let _ = std::fs::remove_dir_all(&dir);
 }

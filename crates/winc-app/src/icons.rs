@@ -453,7 +453,7 @@ pub fn download(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip:
 }
 
 /// 绘制进度环，直径 11，和「刷新」图标的圆一样大：淡色 `track` 的整圆上，从 12 点钟起顺时针
-/// 画出 `fraction`（0 到 1）那么长的一段 `color`。
+/// 画出占整圈 `fraction`（0 到 1）的一段 `color`。
 pub fn progress_ring(
     frame: &mut Frame<'_>,
     (cx, cy): (f32, f32),
@@ -481,6 +481,35 @@ pub fn spin_turn() -> f32 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let start = START.get_or_init(std::time::Instant::now);
     start.elapsed().as_secs_f32() * crate::theme::SPIN_SPEED
+}
+
+/// 运行（实心三角形，宽 7、高 8）：行号栏这类窄处的运行按钮，描边的 [`play`] 在其中显得拥挤。
+///
+/// 三角形的重心在宽度的三分之一处，整体右移宽度的六分之一，看起来位于 `(cx, cy)` 的正中。
+pub fn play_solid(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (w, h) = (7.0, 8.0);
+    let left = cx - w / 2.0 + w / 6.0;
+    let points = [(left, cy - h / 2.0), (left + w, cy), (left, cy + h / 2.0)];
+    frame.polygon(&points, color, clip);
+}
+
+/// 绘制按 `turn`（圈数，可为任意实数）顺时针转动的四分之三圆弧，表示操作正在进行，半径为
+/// `radius`（逻辑像素）。
+pub fn spinner(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    radius: f32,
+    turn: f32,
+    color: Color,
+    clip: Rect,
+) {
+    // 起点映射到 -π 至 π 之间，原因见 [`refresh_turned`]。
+    let mut angle = turn.rem_euclid(1.0) * 2.0 * PI;
+    if angle >= PI {
+        angle -= 2.0 * PI;
+    }
+    let arc = Stroke::Arc(cx, cy, radius, angle, angle + 1.5 * PI);
+    frame.stroke(&[arc], RING_STROKE, color, clip);
 }
 
 /// 绘制按 `turn`（圈数，可为任意实数）顺时针旋转后的「刷新」图标，表示操作正在进行。
@@ -622,12 +651,9 @@ pub fn more(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rec
     frame.stroke(&dots, 2.0, color, clip);
 }
 
-/// 绘制侧栏「文件」视图图标，约 13×14：线条风格（笔宽 `STROKE`，与顶栏其他图标一致），图形为
-/// 前后叠放的两张纸。前面一张是完整的圆角框，内部两道较短的水平线表示文字行；后面一张错开在
-/// 左上方，只露出上边和左边一段，两端为圆头。
-///
-/// 两张纸相距 2 逻辑像素，文字行短于纸边，因此该图标与笔画数同为两三笔的 `search`、`git` 并排
-/// 时视觉重量相当。
+/// 绘制侧栏「文件」视图图标，约 13×14：线条风格（笔宽 `STROKE`，与顶栏其他图标一致），图形为前后叠
+/// 放的两张纸。前面一张是完整的圆角框，内部两道较短的水平线表示文字行；后面一张错开在左上方，只露出
+/// 上边和左边一段，两端为圆头。两张纸相距 2 逻辑像素。
 ///
 /// `scale` 是相对原大小的缩放倍数（视图切换中的小号图标传入小于 1 的值），笔宽不变。
 pub fn files(frame: &mut Frame<'_>, (cx, cy): (f32, f32), scale: f32, color: Color, clip: Rect) {
@@ -759,6 +785,23 @@ pub fn history(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: 
         Stroke::Line(cx, cy, cx + r * 0.45, cy + r * 0.3),
     ];
     frame.stroke(&shapes, RING_STROKE, color, clip);
+}
+
+/// 绘制「生成」图标，约 13×13：左下一个大的四角星，右上一个小的；星的四条边是向内凹的四分之一
+/// 圆弧。
+pub fn sparkle(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let star = |x: f32, y: f32, r: f32| {
+        // 每条边以相邻两个角所夹的外侧顶点为圆心，从一个角画到另一个角。
+        [
+            Stroke::Arc(x + r, y - r, r, 0.5 * PI, PI),
+            Stroke::Arc(x - r, y - r, r, 0.0, 0.5 * PI),
+            Stroke::Arc(x - r, y + r, r, -0.5 * PI, 0.0),
+            Stroke::Arc(x + r, y + r, r, PI, 1.5 * PI),
+        ]
+    };
+    let mut shapes = star(cx - 1.0, cy + 1.0, 5.5).to_vec();
+    shapes.extend(star(cx + 4.0, cy - 4.0, 2.5));
+    frame.stroke(&shapes, STROKE, color, clip);
 }
 
 /// 绘制「并排比较」图标，约 12×11：一个圆角框，中央一道竖线分成左右两栏，两栏内各一道短横。
@@ -949,6 +992,17 @@ pub fn sidebar(frame: &mut Frame<'_>, (cx, cy): (f32, f32), open: bool, color: C
     frame.stroke(shapes.as_slice(), STROKE, color, clip);
 }
 
+/// 绘制「在对话框中打开」图标，约 13×11，与侧栏标题行上的「刷新」「全部折叠」等同高、同笔宽、
+/// 同样只用线条：一个圆角窗口，正中浮着一张小卡片，表示浮在窗口上的对话框。与 [`panel`]（窗口
+/// 底部隔出一条，表示放到底部面板）是一对。
+pub fn float_window(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let (w, h) = (13.0, 11.0);
+    let window = rounded_outline(cx - w / 2.0, cy - h / 2.0, w, h, 2.5);
+    let card = rounded_outline(cx - 3.5, cy - 2.0, 7.0, 4.5, 1.25);
+    frame.stroke(&window, RING_STROKE, color, clip);
+    frame.stroke(&card, RING_STROKE, color, clip);
+}
+
 /// 绘制终端面板位置按钮的图标：与侧栏开关尺寸相同的圆角框；`right` 为 `true` 时在右侧隔出一
 /// 栏，否则在下方隔出一条。
 ///
@@ -965,6 +1019,45 @@ pub fn panel(frame: &mut Frame<'_>, (cx, cy): (f32, f32), right: bool, color: Co
         Stroke::Line(x, y + h - 4.0, x + w, y + h - 4.0)
     };
     let shapes: Strokes<9> = joined(&[&rounded_outline(x, y, w, h, 3.0), &[bar]]);
+    frame.stroke(shapes.as_slice(), STROKE, color, clip);
+}
+
+/// 绘制「移到编辑器标签」图标：与 [`panel`] 相同的圆角框和隔出的面板，一个箭头从面板的分隔线
+/// 指向框中其余的部分，表示终端从面板移到编辑区。`right` 为 `true` 时面板在右侧，箭头朝左；
+/// 否则面板在下方，箭头朝上。
+pub fn to_editor(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    right: bool,
+    color: Color,
+    clip: Rect,
+) {
+    let (x, y) = (
+        (cx - SIDEBAR_WIDTH / 2.0).round() + 0.75,
+        (cy - 7.0).round() + 1.0,
+    );
+    let (w, h) = (SIDEBAR_WIDTH - 1.5, 12.0);
+    let head = 2.5;
+    let lines: [Stroke; 4] = if right {
+        let (edge, mid) = (x + w - 5.0, (y + h / 2.0).round() - 0.25);
+        let tip = x + 3.0;
+        [
+            Stroke::Line(edge, y, edge, y + h),
+            Stroke::Line(edge, mid, tip, mid),
+            Stroke::Line(tip + head, mid - head, tip, mid),
+            Stroke::Line(tip, mid, tip + head, mid + head),
+        ]
+    } else {
+        let (edge, mid) = (y + h - 4.0, (x + w / 2.0).round() - 0.25);
+        let tip = y + 2.5;
+        [
+            Stroke::Line(x, edge, x + w, edge),
+            Stroke::Line(mid, edge, mid, tip),
+            Stroke::Line(mid - head, tip + head, mid, tip),
+            Stroke::Line(mid, tip, mid + head, tip + head),
+        ]
+    };
+    let shapes: Strokes<12> = joined(&[&rounded_outline(x, y, w, h, 3.0), &lines]);
     frame.stroke(shapes.as_slice(), STROKE, color, clip);
 }
 

@@ -65,6 +65,51 @@ fn bad_options_explain_themselves() {
     assert!(usage().starts_with("用法"));
 }
 
+/// `-d`、`--diff` 之后的两个参数是要比较的文件（不拆出行号，不当作选项），可以多次给出，可与
+/// 其他目标和 `--wait` 一起使用；不足两个文件时说明原因，不能与 `ssh://` 参数一起使用。
+#[test]
+fn diffs_take_two_files_each() {
+    let diff = |left: &str, right: &str| Diff {
+        left: PathBuf::from(left),
+        right: PathBuf::from(right),
+    };
+    let parsed = args(&["-d", "a.rs", "-b.rs:3", "c.rs", "--diff", "x", "y"]).unwrap();
+    assert_eq!(parsed.diffs, [diff("a.rs", "-b.rs:3"), diff("x", "y")]);
+    assert_eq!(parsed.targets, [at("c.rs", None, None)]);
+    let parsed = args(&["-w", "-d", "a", "b"]).unwrap();
+    assert!(parsed.wait && parsed.targets.is_empty());
+    for list in [&["-d"][..], &["--diff", "a"]] {
+        assert!(args(list).unwrap_err().contains("--diff"), "{list:?}");
+    }
+    let mixed = args(&["ssh://host/srv/a.rs", "-d", "a", "b"]).unwrap_err();
+    assert!(mixed.contains("ssh://"), "{mixed}");
+}
+
+/// 要比较的文件都存在且是文件时才通过检查；目录和不存在的路径说明原因。
+#[test]
+fn diffs_must_name_existing_files() {
+    let dir = std::env::temp_dir().join(format!("winc-cli-diff-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "a").unwrap();
+    let check = |right: &std::path::Path| {
+        let diffs = vec![Diff {
+            left: file.clone(),
+            right: right.to_path_buf(),
+        }];
+        check_diffs(&Args {
+            diffs,
+            ..Args::default()
+        })
+    };
+    assert_eq!(check(&file), Ok(()));
+    for bad in [dir.clone(), dir.join("missing.txt")] {
+        let error = check(&bad).unwrap_err();
+        assert!(error.contains(&*bad.to_string_lossy()), "{error}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn wsl_resolves_absolute_paths_inside_the_distribution() {
     let parsed =
@@ -140,6 +185,10 @@ fn winc_links_open_files_at_a_line() {
         format!("{url}/%e4"),
         format!("{url}/%zz"),
         "vscode://file/no/such/a.rs".to_owned(),
+        // 网络路径和设备路径：链接可以来自网页，不能让本机去连接别的主机。
+        "winc://file//host/share/a.rs".to_owned(),
+        "winc://file/%5C%5Chost%5Cshare%5Ca.rs".to_owned(),
+        "winc://file/%2F%2Fhost/share/a.rs".to_owned(),
     ] {
         assert_eq!(link(&bad), None, "{bad}");
     }
@@ -182,6 +231,15 @@ fn ssh_arguments_name_a_remote_folder_and_files() {
         assert_eq!(again.targets, std::slice::from_ref(target));
     }
 
+    // IPv6 地址。
+    let scoped = winc_backend::Target::new("me@[fe80::1%eth0]:2222").unwrap();
+    let parsed = args(&["ssh://me@[fe80::1%25eth0]:2222/srv/app/a.rs:3"]).unwrap();
+    assert_eq!(
+        parsed.targets[0].path,
+        winc_backend::virtual_path(&scoped, b"/srv/app/a.rs")
+    );
+    assert_eq!(parsed.targets[0].line, Some(2));
+
     // 只有一个不带行号的参数是目录；只给出文件时项目是它所在的目录；`%3A` 不当作行号。
     let one = |text: &str| remote_open(&args(&[text]).unwrap().targets).unwrap();
     let open = one("ssh://me@devbox:2222/srv/app");
@@ -223,4 +281,14 @@ fn ssh_arguments_name_a_remote_folder_and_files() {
     ] {
         assert!(args(list).is_err(), "{list:?}");
     }
+}
+
+/// 资源管理器在盘符根目录传入的 `"C:\"` 到程序里是 `C:"`：补回结尾的反斜杠。
+#[test]
+fn a_path_that_lost_its_trailing_backslash_gets_it_back() {
+    assert_eq!(unquoted("C:\""), Some("C:\\".to_owned()));
+    assert_eq!(unquoted("D:\\work\""), Some("D:\\work\\".to_owned()));
+    assert_eq!(unquoted("C:\\work"), None);
+    assert_eq!(unquoted("\""), None);
+    assert_eq!(unquoted("a\"b\""), None);
 }

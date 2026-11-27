@@ -6,6 +6,8 @@ terminal-maximize-panel = Maximize panel
 terminal-restore-panel = Restore panel
 terminal-hide-panel = Hide terminal panel
 terminal-show-panel = Show terminal panel
+terminal-move-to-editor = Move terminal to editor area
+terminal-move-to-panel = Move terminal to panel
 terminal-tab-default-name = Terminal
 terminal-new = New Terminal
 terminal-module-disabled = The terminal module isn’t enabled
@@ -14,11 +16,14 @@ terminal-module-disabled = The terminal module isn’t enabled
 
 terminal-helper-missing = Couldn’t find the terminal helper; reinstall Winc
 terminal-helper-start-failed = Couldn’t start the terminal helper: { $error }
+terminal-start-not-found = Couldn’t find the program “{ $program }”
+terminal-start-failed = Couldn’t start “{ $program }”: { $error }
 terminal-needs-conpty = The terminal needs Windows 10 version 1809 or later
 terminal-helper-exited = The terminal helper exited
 terminal-helper-version-mismatch = The terminal helper’s version doesn’t match Winc; reinstall Winc
 terminal-process-exited = Process exited (exit code { $code })
 terminal-disconnected = Terminal connection lost
+terminal-preparing = Preparing the terminal on { $host }…
 terminal-restart = Restart
 terminal-restart-confirm = Restart this terminal?
 terminal-restart-confirm-detail = The connection to this terminal was lost. Restarting ends any programs still running in it.
@@ -89,6 +94,8 @@ terminal-upload-too-large = { $size } is too large to send to the remote host ({
 terminal-upload-no-image = Couldn’t read the image on the clipboard
 terminal-upload-no-folder = Couldn’t create a folder for it on the remote host
 terminal-upload-elsewhere = Sent to the remote host: { $path }
+terminal-image-paste-failed = Couldn’t paste the clipboard image: { $error }
+terminal-image-saved-elsewhere = Saved the clipboard image to { $path }
 
 ## 运行配置。
 
@@ -114,3 +121,7 @@ terminal-run-stopped = Stopped
 terminal-run-finished = Completed
 terminal-run-failed = “{ $name }” failed (exit code { $code })
 terminal-run-menu-running = Running · { $command }
+terminal-split-group = { $count ->
+    [one] { $count } terminal
+   *[other] { $count } terminals
+}

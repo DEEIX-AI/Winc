@@ -2,13 +2,17 @@
 
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 mod appearance;
+mod editor;
 #[cfg(unix)]
 mod format;
 mod search;
 mod shortcuts;
 mod terminal;
+mod transfer;
+mod vim;
 
 use super::*;
+use winc_config::SmoothCaret;
 #[cfg(unix)]
 use winc_editor::format::{PRESETS, Task};
 
@@ -29,11 +33,11 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
     let (x, y) = (header.x + header.w / 2.0, header.y + header.h / 2.0);
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
-    app.on_mouse_move(x - 100.0, y + 40.0);
+    app.on_mouse_move(x - 100.0, y + 10.0);
     let moved = app.settings_layout();
     assert_eq!(
         (moved.card.x, moved.card.y),
-        (before.card.x - 100.0, before.card.y + 40.0)
+        (before.card.x - 100.0, before.card.y + 10.0)
     );
     let close = moved.close;
     let at = (close.x + close.w / 2.0, close.y + close.h / 2.0);
@@ -80,7 +84,7 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
     assert!(!app.settings_dragging());
     app.on_mouse_up(MouseButton::Left);
 
-    // 关闭后再打开，卡片仍在原处；点在卡片外照常关闭。
+    // 关闭后再打开，卡片仍在原处；点在卡片外仍然关闭。
     app.open_settings();
     assert_eq!(app.settings_layout().card, card);
     app.on_mouse_move(window.right() - 5.0, window.bottom() - 5.0);
@@ -191,6 +195,9 @@ fn zoom_scales_the_whole_window_in_steps() {
 
     // 设置中的菜单列出各档位，当前的打勾；选中后写入配置。
     app.open_settings();
+    app.settings_show_page(SettingsPage::Appearance);
+    let layout = app.settings_layout();
+    app.settings.scroll = layout.row(Setting::Zoom).unwrap().row.y - layout.body.y;
     app.settings_open_menu(Setting::Zoom);
     assert_eq!(
         app.overlays.context_menu.as_ref().map(|m| &m.target),
@@ -211,23 +218,28 @@ fn long_descriptions_wrap_and_make_the_row_taller() {
     let dir = search_folder("settings-wrap");
     let mut app = app_with(&dir, false);
     app.open_settings();
-    app.settings_show_page(SettingsPage::Format);
+    app.settings_show_page(SettingsPage::Editor);
     let row = |app: &App, setting| app.settings_layout().row(setting).unwrap().row;
+    // 这一页说明最长的一项，不依赖具体的文案。
+    let sections = SettingsPage::Editor.sections(&Default::default());
+    let items = sections
+        .iter()
+        .flat_map(|section| section.items.iter().copied());
+    let longest = items
+        .max_by_key(|s| s.description().map_or(0, |d| d.chars().count()))
+        .unwrap();
 
     // 默认大小的窗口中各项说明都放得下一行。
-    assert_eq!(row(&app, Setting::SkipOnSave).h, SETTINGS_ROW_TALL);
-    assert_eq!(row(&app, Setting::FormatOnSave).h, SETTINGS_ROW_TALL);
+    assert_eq!(row(&app, longest).h, SETTINGS_ROW_TALL);
 
-    // 放大界面后可用宽度变小：较长的说明折成两行，该行加高一行的行距，不超过上限；短说明仍是
-    // 一行。
+    // 放大界面后可用宽度变小：较长的说明折成两行，该行加高一行的行距，不超过上限。
     app.set_zoom(200);
-    let h = row(&app, Setting::SkipOnSave).h;
+    let h = row(&app, longest).h;
     let most = SETTINGS_ROW_TALL + (SETTINGS_DESC_LINES - 1) as f32 * SETTINGS_DESC_LINE;
     assert!(
         h >= SETTINGS_ROW_TALL + SETTINGS_DESC_LINE && h <= most,
         "{h}"
     );
-    assert_eq!(row(&app, Setting::FormatOnSave).h, SETTINGS_ROW_TALL);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -280,12 +292,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.config.terminal_enabled = Some(true);
     app.open_settings();
 
-    // 从第一页走到最后一页：依次经过外观、编辑器、格式化、终端、模块各页的每一行、快捷键页的
-    // 搜索框，最后是关于页的各行，到达末尾后不再移动。越过一页的末项时自动换页，右侧显示该页
-    // 内容。
-    // 格式化页列出的语言随机器上装了哪些工具而变，步数按全部设置项计算。
+    // 从第一页走到最后一页：依次经过通用到模块各页的每一行、快捷键页的搜索框，最后是关于页的各行，
+    // 到达末尾后不再移动。越过一页的末项时自动换页，右侧显示该页内容。格式化页列出的语言随机器上装
+    // 了哪些工具而变，步数按全部设置项计算。
     let mut seen = vec![app.settings.selected];
-    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() + 2 {
+    for _ in 0..Setting::all(&app.settings.listed, app.settings_modules()).len() + 2 {
         app.settings_move(true);
         if seen.last() != Some(&app.settings.selected) {
             seen.push(app.settings.selected);
@@ -293,19 +304,20 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     }
     assert_eq!(
         seen,
-        Setting::all(&app.settings.languages, app.settings_modules())
+        Setting::all(&app.settings.listed, app.settings_modules())
     );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
-    // 往回走过关于页的九行（版本、更新三行、更新日志和四个链接），回到快捷键页的搜索框。
-    for _ in 0..9 {
+    // 往回走过关于页的七行（版本、更新、更新日志和四个链接），回到快捷键页的搜索框。
+    for _ in 0..7 {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::KeySearch);
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
     // 向回走一步，回到模块页最后的远程开关，焦点回到浮层；再往回是终端开关和 Git 开关；再走
-    // 一步，回到终端页的最后一项（macOS 上是「Meta 键」，其他平台是「关闭前确认」）。
+    // 一步是 AI 页的最后一项，走过该页的五项后是终端页的最后一项（macOS 上是「Meta 键」，
+    // 其他平台是「终端应用优先」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::RemoteModule);
     assert_eq!(app.focus, Focus::Settings);
@@ -314,17 +326,24 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
+    assert_eq!(app.settings.selected, Setting::AiTimeout);
+    for _ in 0..5 {
+        app.settings_move(false);
+    }
     let last = if cfg!(target_os = "macos") {
         Setting::TerminalOptionAsMeta
     } else {
-        Setting::TerminalConfirmClose
+        Setting::TerminalApplicationPriority
     };
     assert_eq!(app.settings.selected, last);
 
-    // 主题：← → 在三个选项之间切换，到头后不再变化。步数按全部设置项计算，原因同上。
-    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() {
+    // 回到第一项；步数按全部设置项计算，原因同上。
+    for _ in 0..Setting::all(&app.settings.listed, app.settings_modules()).len() {
         app.settings_move(false);
     }
+    assert_eq!(app.settings.selected, Setting::Language);
+    // 主题：← → 在三个选项之间切换，到头后不再变化。
+    app.settings_show_page(SettingsPage::Appearance);
     assert_eq!(app.settings.selected, Setting::Theme);
     app.set_theme_choice(ThemeChoice::Auto);
     app.settings_step(true);
@@ -337,18 +356,15 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.theme_choice, ThemeChoice::Dark);
 
     // 语言：← → 不改变选择。
-    app.settings_move(true);
+    app.settings_show_page(SettingsPage::General);
     assert_eq!(app.settings.selected, Setting::Language);
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，然后是状态栏、动态效果、记住窗口三个
-    // 开关和各平台多出的一个（macOS 上是平滑滚动，其他平台上是使用系统标题栏），以及背景的图片、
-    // 显示方式、不透明度，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：
-    // → 换到下一个，外观回到深色；到头后不再变化。
-    for _ in 0..12 {
-        app.settings_move(true);
-    }
+    // 浅色主题（「外观」页中模式的下一项）：外观为深色时选一个浅色主题，外观随之切换。深色
+    // 主题：→ 换到下一个，外观回到深色；到头后不再变化。
+    app.settings_show_page(SettingsPage::Appearance);
+    app.settings_move(true);
     assert_eq!(app.settings.selected, Setting::LightTheme);
     app.settings_step(true);
     assert_eq!(app.config.light_theme.as_deref(), Some("winc-paper"));
@@ -375,10 +391,9 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     }
     assert!(std::ptr::eq(app.palette, &crate::theme::WINC_NIGHT));
 
-    // 编辑器字号：→ 加 1；到达上限后不再变化，对应一侧的按钮变淡。
-    for _ in 0..2 {
-        app.settings_move(true);
-    }
+    // 编辑器字号（「编辑器」页的第二项）：→ 加 1；到达上限后不再变化，对应一侧的按钮变淡。
+    app.settings_show_page(SettingsPage::Editor);
+    app.settings_move(true);
     assert_eq!(app.settings.selected, Setting::EditorSize);
     let before = app.fonts.code;
     app.settings_step(true);
@@ -426,7 +441,9 @@ fn settings_mouse_controls_use_the_same_geometry_as_drawing() {
     click_part(&mut app, SettingsPart::Theme(ThemeChoice::Dark));
     assert_eq!(app.theme_choice, ThemeChoice::Dark);
 
-    // 点击界面字体的输入框进入编辑，焦点交给该输入框。
+    // 点击界面字体的输入框进入编辑，焦点交给该输入框；它在两排主题之下，先滚到那里。
+    let layout = app.settings_layout();
+    app.settings.scroll = layout.row(Setting::UiFont).unwrap().row.y - layout.body.y;
     click_part(&mut app, SettingsPart::Field(Setting::UiFont));
     assert_eq!(app.focus, Focus::Setting);
     assert!(matches!(&app.settings.editing, Some((Setting::UiFont, _))));
@@ -463,7 +480,7 @@ fn settings_pages_are_listed_on_the_left() {
         let view = crate::layout::SettingsView {
             page,
             query: "",
-            languages: &app.settings.languages,
+            listed: &app.settings.listed,
             terminal: 1.0,
             git: 1.0,
             editing: None,
@@ -489,7 +506,7 @@ fn settings_pages_are_listed_on_the_left() {
     }
     assert_eq!(
         listed,
-        Setting::all(&app.settings.languages, app.settings_modules())
+        Setting::all(&app.settings.listed, app.settings_modules())
     );
 
     // 悬停在分类栏的一项上时记录该项；点击后换页，选中该页的第一项，滚动位置回到顶部。
@@ -799,7 +816,7 @@ fn settings_scales_in_and_fades_out() {
     app.open_settings();
     let rest = app.settings_layout().card;
 
-    // 出现途中：卡片整张淡入、放大（缩放只作用于绘制），点击仍按原位置命中。第一帧照常绘制
+    // 出现途中：卡片整张淡入、放大（缩放只作用于绘制），点击仍按原位置命中。第一帧仍然绘制
     // 并保存快照，之后的帧直接使用快照。
     app.settings.motion = Some((true, Clock::frozen(DIALOG_IN / 3, DIALOG_IN)));
     app.settings.cache = None;
@@ -882,16 +899,16 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     let mut app = app_with(&dir.join("short.rs"), false);
     app.open_settings();
     paint(&mut app);
-    // 最后一页是「关于」：版本号、更新状态和「检查更新」、定时检查的开关（从「编辑器」页移过来）。
+    // 最后一页是「关于」：版本号、更新状态和「检查更新」；定时检查的开关在「通用」页。
     assert_eq!(SettingsPage::ALL.last(), Some(&SettingsPage::About));
     click_part(&mut app, SettingsPart::Page(SettingsPage::About));
     paint(&mut app);
     let layout = app.settings_layout();
-    for setting in [Setting::Version, Setting::Updates, Setting::CheckUpdates] {
+    for setting in [Setting::Version, Setting::Updates] {
         assert!(layout.row(setting).is_some(), "{setting:?}");
     }
-    assert_eq!(Setting::CheckUpdates.page(), SettingsPage::About);
-    // 顶部是产品信息：图标、名称和版本号；点击版本号复制到剪贴板，点击图标没有反应。
+    assert_eq!(Setting::CheckUpdates.page(), SettingsPage::General);
+    // 顶部是产品信息：图标、名称和版本号；点击版本号复制版本信息，点击图标没有反应。
     let row = layout.row(Setting::Version).unwrap().row;
     let parts = crate::layout::ProductParts::new(row);
     let center = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -903,13 +920,14 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     let (x, y) = center(parts.logo);
     assert_eq!(layout.part_at(x, y), None);
     click_part(&mut app, SettingsPart::Copy(Setting::Version));
-    assert_eq!(
-        app.clipboard.copied.as_deref(),
-        Some(&*crate::layout::version_label())
-    );
+    let copied = app.clipboard.copied.clone().unwrap();
+    let first = format!("Winc {}", crate::layout::version_label());
+    assert_eq!(copied.lines().next(), Some(first.as_str()));
+    assert_eq!(copied.lines().count(), 2, "第二行是系统");
+    assert_eq!(app.status.message.as_deref(), Some("已复制版本信息"));
     assert_eq!(app.settings.selected, Setting::Version);
 
-    // 当前版本不检查更新时按钮点了没有反应；能检查时点了交给 Sparkle（测试里不启用）。
+    // 当前版本不检查更新时按钮点击没有反应；能检查时点击交给 Sparkle（测试里不启用）。
     assert!(!app.can_check_updates());
     click_part(&mut app, SettingsPart::Action(Setting::Updates));
     assert_eq!(app.settings.selected, Setting::Updates);
@@ -919,6 +937,60 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     *app.link.shared.update_state.borrow_mut() = UpdateState::Checking;
     assert!(!app.can_check_updates());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 「关于」页每次显示出来时图标逐层出现一次：离开该页或重新打开设置后再播放，搜索时不播放。
+#[test]
+fn the_about_logo_builds_up_each_time_the_page_is_shown() {
+    use crate::app::animation::Clock;
+    use crate::app::setup::LOGO_BUILD;
+    use std::time::Duration;
+
+    let mut app = blank_app(false);
+    app.open_settings();
+    app.track_about_logo();
+    assert!(!app.settings.logo_played);
+    app.settings_show_page(SettingsPage::About);
+    app.track_about_logo();
+    // 测试里没有窗口，也就没有时钟：图标直接是完整的。
+    assert!(app.settings.logo_played);
+    assert_eq!(app.about_logo_build(), None);
+
+    // 进度按时钟走，开头等待的那一段里保持在 0。
+    let half = Clock::stopped(LOGO_BUILD, Duration::from_millis(550));
+    app.motion.about_logo = Some((half, 0.0));
+    assert_eq!(app.about_logo_build(), Some(0.5));
+    app.motion.about_logo = Some((half, 0.5));
+    assert_eq!(app.about_logo_build(), Some(0.0));
+    app.motion.about_logo = Some((half, 0.25));
+    paint(&mut app);
+    // 播完就停，不再重新开始。
+    app.motion.about_logo = Some((Clock::stopped(LOGO_BUILD, LOGO_BUILD), 0.0));
+    app.settle_animations();
+    app.track_about_logo();
+    assert!(app.motion.about_logo.is_none());
+
+    // 换到别的页：动画停下，回来时再播放一次。
+    app.motion.about_logo = Some((half, 0.0));
+    app.settings_show_page(SettingsPage::General);
+    app.track_about_logo();
+    assert!(!app.settings.logo_played);
+    assert!(app.motion.about_logo.is_none());
+    app.settings_show_page(SettingsPage::About);
+    app.track_about_logo();
+    assert!(app.settings.logo_played);
+    // 搜索时正文是搜索结果，不算显示着「关于」页。
+    app.settings.search.set_text("font");
+    app.track_about_logo();
+    assert!(!app.settings.logo_played);
+    // 关闭期间保持原样，重新打开后再播放。
+    app.settings.search.set_text("");
+    app.track_about_logo();
+    app.close_settings();
+    app.track_about_logo();
+    assert!(app.settings.logo_played);
+    app.open_settings();
+    assert!(!app.settings.logo_played);
 }
 
 #[test]
@@ -1078,6 +1150,52 @@ fn smooth_scrolling_switches_off_on_its_own() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 平滑光标是编辑器页的下拉选项：默认关闭，两个模式列出当前的选择并写回配置。
+#[test]
+fn smooth_caret_movement_lists_its_modes() {
+    let dir = sample_folder("settings-smooth-caret");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.smooth_caret_movement = None;
+    assert_eq!(app.smooth_caret(), SmoothCaret::Off);
+    assert_eq!(Setting::SmoothCaret.page(), SettingsPage::Editor);
+    assert_eq!(
+        Setting::SmoothCaret.control(),
+        crate::layout::SettingControl::Choice
+    );
+
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Editor);
+    app.settings_open_menu(Setting::SmoothCaret);
+    assert_eq!(
+        app.overlays.context_menu.as_ref().map(|m| &m.target),
+        Some(&MenuTarget::SmoothCaret)
+    );
+    let listed: Vec<_> = menu_commands(&app)
+        .into_iter()
+        .map(|(command, _)| command)
+        .collect();
+    assert_eq!(
+        listed,
+        (0..SmoothCaret::ALL.len())
+            .map(MenuCommand::SmoothCaret)
+            .collect::<Vec<_>>()
+    );
+    assert!(app.menu_checked(MenuCommand::SmoothCaret(0)));
+    assert_eq!(
+        app.menu_label(MenuCommand::SmoothCaret(2)).title,
+        crate::layout::smooth_caret_label(SmoothCaret::Gliding)
+    );
+
+    // 选中「滑行」后写入配置，再次打开菜单时该项打勾。
+    app.run_menu_command(MenuCommand::SmoothCaret(2));
+    assert_eq!(app.config.smooth_caret_movement, Some(SmoothCaret::Gliding));
+    assert_eq!(app.smooth_caret(), SmoothCaret::Gliding);
+    app.settings_open_menu(Setting::SmoothCaret);
+    assert!(app.menu_checked(MenuCommand::SmoothCaret(2)));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 「Git」页只在 Git 模块开启时列出，放着 Git 的选项；停在该页时关闭模块，改到模块页。
 #[test]
 fn the_git_page_is_listed_only_when_the_module_is_on() {
@@ -1101,9 +1219,15 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     let expected = [
         Setting::GitPath,
         Setting::GitOpenWorktree,
+        Setting::GitLogPlacement,
+        Setting::GitScanDepth,
         Setting::GitStagingArea,
         Setting::GitTree,
+        Setting::GitCommitHistory,
+        Setting::GitGenerateCommitMessage,
+        Setting::GitCombinedDiff,
         Setting::DiffInline,
+        Setting::DiffCollapse,
         Setting::GitInlineBlame,
         Setting::GitPullMode,
         Setting::GitConfirmPush,
@@ -1111,8 +1235,23 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         Setting::GitAutoFetch,
     ];
     assert_eq!(rows, expected);
-    // 代理不只管 Git：放在「关于」页的更新旁边，关掉 Git 模块也找得到。
-    assert_eq!(Setting::SystemProxy.page(), SettingsPage::About);
+    // 调用模型的设置在单独的 AI 页，「AI 生成提交信息」的开关在 Git 页。
+    app.settings_show_page(SettingsPage::Ai);
+    let rows: Vec<Setting> = (app.settings_layout().rows.iter())
+        .map(|row| row.setting)
+        .collect();
+    let expected = [
+        Setting::AiBaseUrl,
+        Setting::AiApiKey,
+        Setting::AiProtocol,
+        Setting::AiModel,
+        Setting::AiTimeout,
+    ];
+    assert_eq!(rows, expected);
+    assert!(!app.switch_on(Setting::GitGenerateCommitMessage));
+    app.settings_show_page(SettingsPage::Git);
+    // 代理不只管 Git：放在「通用」页的更新旁边，关掉 Git 模块也找得到。
+    assert_eq!(Setting::SystemProxy.page(), SettingsPage::General);
     // 「树形显示更改」与提交视图「⋯」菜单里的是同一个开关，记在状态文件里。
     assert!(app.git.commit.flat() && !app.switch_on(Setting::GitTree));
     app.settings_toggle(Setting::GitTree);
@@ -1120,7 +1259,7 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     assert!(app.switch_on(Setting::GitTree));
     app.settings_toggle(Setting::GitTree);
     assert!(app.git.commit.flat() && !app.state.commit_tree);
-    // 配置文件中打开「显示暂存区」：提交视图随之换成暂存区视图。
+    // 配置文件中打开「暂存区布局」后，提交视图随之切换。
     assert!(!app.git.commit.staging());
     let mut config = app.config.clone();
     config.git_staging_area = Some(true);

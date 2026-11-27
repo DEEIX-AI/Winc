@@ -185,7 +185,8 @@ fn application_priority_keeps_management_and_does_not_change_winc_fields() {
 fn terminal_priority_does_not_leave_a_pending_editor_chord() {
     let mut app = blank_app(false);
     show_terminal(&mut app, "output");
-    app.pending_chord = Some(key(cmd(), KeyCode::Char('k')));
+    let chord = crate::app::input::keyboard::PendingChord::new(key(cmd(), KeyCode::Char('k')));
+    app.pending_chord = Some(chord);
     assert!(!app.on_shortcut(key(Mods::NONE, KeyCode::Char('x'))));
     assert_eq!(app.pending_chord, None);
 }
@@ -249,7 +250,13 @@ fn the_panel_toggle_closes_in_one_press_wherever_the_focus_is() {
     assert_eq!(app.focus, Focus::Terminal);
     assert_eq!(app.terminal.tabs.len(), 1);
 
-    // 终端应用优先时仍保留面板开关；macOS 以外的系统上 Ctrl+J 在终端里交给 shell。
+    // 焦点在终端里再按一次就收起（#319：其他系统上的 Ctrl+J 也是），再按又打开。
+    assert!(app.on_shortcut(toggle));
+    assert!(!app.terminal.open);
+    assert!(app.on_shortcut(toggle));
+    assert_eq!(app.focus, Focus::Terminal);
+
+    // 终端应用优先时：⌘J 仍开关面板；其他系统上的 Ctrl+J 交给程序（换行），面板开关命令不受影响。
     app.config.terminal_application_priority = Some(true);
     assert_eq!(app.binds(toggle), Os::CURRENT == Os::Mac);
     assert!(app.run_action(Action::ToggleTerminalPanel));

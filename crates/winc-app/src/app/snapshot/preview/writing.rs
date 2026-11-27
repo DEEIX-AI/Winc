@@ -41,6 +41,14 @@ fn select(app: &mut App, needle: &str) {
     doc.selection = winc_core::Selection::new(a, b);
 }
 
+/// 在可编辑的预览中选中第一处 `needle`，显示格式工具栏并重绘。
+fn select_with_toolbar(app: &mut App, needle: &str) {
+    select(app, needle);
+    app.start_live_editing();
+    app.offer_selection_toolbar();
+    paint(app);
+}
+
 #[test]
 fn writing_commands_edit_the_markdown_source() {
     let (mut app, dir) = source_doc("md-writing", "标题\n\n一\n二\n\n正文\n");
@@ -62,7 +70,7 @@ fn writing_commands_edit_the_markdown_source() {
     assert!(app.run_action(Action::MarkdownQuote));
     assert_eq!(marked(&app), "标题\n\n[> 1. 一\n> 2. 二]\n\n正文\n");
 
-    // 有字的一行上插入代码块和表格：插在下面，光标在可以接着写的地方。
+    // 有字的一行上插入代码块和表格：插在下面，光标在可以继续写的地方。
     put_caret(&mut app, "正文", true);
     assert!(app.run_action(Action::MarkdownCodeBlock));
     assert!(marked(&app).ends_with("正文\n\n```|\n\n```\n"));
@@ -371,6 +379,43 @@ fn focus_and_typewriter_modes_follow_the_caret() {
     app.start_live_editing();
     settle(&mut app);
     shoot(&mut app, "md-focus-preview");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：打字机模式下在文末编辑时，光标所在行居中的滚动位置超过普通的上限；自动保存后文件监视
+/// 报告变化，限制滚动范围时滚回上限，编辑区上下跳动。
+#[test]
+fn typewriter_scroll_past_the_end_survives_file_changes() {
+    let text: String = (0..80).map(|i| format!("第 {i} 段\n\n")).collect();
+    let (mut app, dir) = source_doc("md-typewriter-end", &text);
+    assert!(app.run_action(Action::MarkdownTypewriterMode));
+    app.scroll.keyed = true;
+    put_caret(&mut app, "第 79 段", true);
+    app.ensure_caret_visible();
+    app.scroll.glide = None;
+    let scroll = app.editor.active().unwrap().scroll_line;
+    assert!(scroll > app.max_scroll_line(), "文末的行居中");
+
+    let path = dir.join("NOTES.md");
+    app.apply_changes(winc_editor::Changes {
+        paths: vec![path],
+        rescan: false,
+        git: false,
+    });
+    assert_eq!(app.editor.active().unwrap().scroll_line, scroll);
+    // 滚轮向上滚一行同样不先滚回上限。
+    let id = app.editor.active().unwrap().id;
+    app.scroll_editor_by_pixels(id, 0.0, app.fonts.line_height);
+    let wheeled = app.editor.active().unwrap().scroll_line;
+    assert!((wheeled - (scroll - 1.0)).abs() < 1e-6, "{wheeled}");
+
+    // 关闭打字机模式后按普通的上限限制。
+    assert!(app.run_action(Action::MarkdownTypewriterMode));
+    app.clamp_scroll();
+    assert_eq!(
+        app.editor.active().unwrap().scroll_line,
+        app.max_scroll_line()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -782,23 +827,46 @@ fn slash_lists_writing_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：源代码中写作命令的列表覆盖在文字上方，鼠标位于列表上时显示箭头。
+#[test]
+fn the_text_cursor_leaves_the_slash_list_in_the_source() {
+    use winit::window::CursorIcon;
+    let (mut app, dir) = source_doc("md-slash-cursor", "");
+    app.track_suggest();
+    app.run(winc_editor::Command::Insert("/".into()));
+    app.track_suggest();
+    paint(&mut app);
+    let card = app.hits.suggest_card.expect("列出写作命令");
+    app.on_mouse_move(card.x + card.w / 2.0, card.y + card.h / 2.0);
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Default);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：源代码中写作命令的列表覆盖在文字上方，在列表上右键不弹出编辑区的菜单，光标不动，
+/// 列表保持打开。
+#[test]
+fn right_clicks_on_the_slash_list_reach_no_menu() {
+    let (mut app, dir) = source_doc("md-slash-menu", "");
+    app.track_suggest();
+    app.run(winc_editor::Command::Insert("/".into()));
+    app.track_suggest();
+    paint(&mut app);
+    let card = app.hits.suggest_card.expect("列出写作命令");
+    let caret = app.editor.active().unwrap().selection;
+    right_click(&mut app, (card.x + card.w / 2.0, card.y + card.h / 2.0));
+    assert!(app.overlays.context_menu.is_none());
+    assert_eq!(app.editor.active().unwrap().selection, caret);
+    paint(&mut app);
+    assert!(app.hits.suggest_card.is_some(), "列表保持打开");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 可编辑的预览中选中文字后显示格式工具栏，按钮执行写作命令；选区改变或关闭设置后不显示。
 #[test]
 fn selecting_text_shows_the_format_toolbar() {
     use crate::app::preview::markdown::toolbar::Tool;
     let (mut app, dir) = live_doc("md-toolbar", "前文\n\n这是一段要强调的文字。\n");
-    let select = |app: &mut App, needle: &str| {
-        let text = doc_text(app);
-        let at = text.find(needle).unwrap();
-        let doc = app.editor.active_mut().unwrap();
-        let rope = doc.text().rope().unwrap();
-        let (a, b) = (rope.byte_to_char(at), rope.byte_to_char(at + needle.len()));
-        doc.selection = winc_core::Selection::new(a, b);
-        app.start_live_editing();
-        app.offer_selection_toolbar();
-        paint(app);
-    };
-    select(&mut app, "强调");
+    select_with_toolbar(&mut app, "强调");
     assert!(app.hits.selection_card.is_some());
     shoot(&mut app, "md-toolbar");
     let bold = (app.hits.selection_tools.iter())
@@ -820,8 +888,48 @@ fn selecting_text_shows_the_format_toolbar() {
     assert!(app.hits.selection_card.is_none());
     // 关闭设置后不显示。
     app.config.markdown_selection_toolbar = Some(false);
-    select(&mut app, "前文");
+    select_with_toolbar(&mut app, "前文");
     assert!(app.hits.selection_card.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：连续点击格式工具栏的按钮时，选区随标记的增删和字形的变化改变宽度，工具栏跟着选区的
+/// 中点左右移动。
+#[test]
+fn the_format_toolbar_stays_put_while_its_buttons_are_clicked() {
+    use crate::app::preview::markdown::toolbar::Tool;
+    let (mut app, dir) = live_doc("md-toolbar-steady", "前文\n\n这是一段要强调的文字。\n");
+    select_with_toolbar(&mut app, "强调");
+    let card = app.hits.selection_card.unwrap();
+    let tools = [
+        Tool::Bold,
+        Tool::Bold,
+        Tool::Code,
+        Tool::Highlight,
+        Tool::Bold,
+    ];
+    for tool in tools {
+        let (button, _) = *(app.hits.selection_tools.iter())
+            .find(|(_, t)| *t == tool)
+            .unwrap();
+        super::click(
+            &mut app,
+            (button.x + button.w / 2.0, button.y + button.h / 2.0),
+        );
+        paint(&mut app);
+        let now = app.hits.selection_card.expect("点击后仍显示工具栏");
+        assert_eq!(
+            now.x,
+            card.x,
+            "点击 {tool:?} 后工具栏移动：{}",
+            doc_text(&app)
+        );
+    }
+    // 重新选中文字后不再沿用固定的位置，按新的选区放置。
+    select_with_toolbar(&mut app, "前文");
+    assert!(app.hits.selection_card.is_some());
+    let toolbar = app.preview.markdown.toolbar.unwrap();
+    assert_eq!(toolbar.left, None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -893,5 +1001,47 @@ fn slash_list_scrolls_and_remembers_recent_commands() {
     typed(&mut app, "\n\n/");
     let hits = &app.preview.markdown.suggest.hits;
     assert_eq!(hits[0], Hit::Command(Slash::Heading(1)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 粘贴为纯文本：选中文字后粘贴网址不写成链接，原样插入；整行复制的内容仍插入到当前行上方，
+/// 同普通的粘贴。源代码的右键菜单里「粘贴」下面就是它，写着它的快捷键。
+///
+/// 回归：整行复制以换行符结尾的文件的最后一行，曾多带一个换行符，粘贴后多出一个空行。
+#[test]
+fn pasting_as_plain_text_skips_the_markdown_rewriting() {
+    use crate::app::PopupRow;
+    use crate::app::input::context_menu::MenuCommand;
+
+    let (mut app, dir) = source_doc("md-paste-plain", "说明\n甲\n乙\n");
+    select(&mut app, "说明");
+    app.clipboard.copied = Some("https://winc.si".into());
+    assert!(app.run_action(Action::MarkdownPastePlain));
+    assert_eq!(doc_text(&app), "https://winc.si\n甲\n乙\n");
+
+    // 整行复制「乙」，光标放到「甲」上：插入到「甲」上方。
+    put_caret(&mut app, "乙", false);
+    app.copy(false);
+    // 「乙」是最后一行、文件以换行符结尾：复制的就是「乙」一行，不多一个空行。
+    assert_eq!(app.clipboard.copied.as_deref(), Some("乙\n"));
+    put_caret(&mut app, "甲", false);
+    assert!(app.run_action(Action::MarkdownPastePlain));
+    assert_eq!(doc_text(&app), "https://winc.si\n乙\n甲\n乙\n");
+
+    // 右键菜单：「粘贴」之后是「粘贴为纯文本」，带快捷键。
+    let (text, lh) = (app.layout.text, app.fonts.line_height);
+    right_click(&mut app, (text.x + 20.0, text.y + lh / 2.0));
+    let commands: Vec<MenuCommand> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
+    let paste = commands
+        .iter()
+        .position(|&c| c == MenuCommand::Paste)
+        .unwrap();
+    assert_eq!(commands.get(paste + 1), Some(&MenuCommand::PastePlain));
+    let plain = app.menu_label(MenuCommand::PastePlain).title;
+    let key = (app.popup().unwrap().levels[0].rows.iter()).find_map(|r| match r {
+        PopupRow::Item { label, key, .. } if label.title == plain => Some(key.clone()),
+        _ => None,
+    });
+    assert!(key.is_some_and(|k| !k.is_empty()), "菜单上没有写快捷键");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -2,6 +2,7 @@
 
 use super::super::touch;
 use super::*;
+use crate::app::git::panel::PanelHit;
 
 impl App {
     /// 处理鼠标按键 `button` 在当前鼠标位置按下。
@@ -23,7 +24,13 @@ impl App {
         if (button == MouseButton::Left && self.alert_mouse_down())
             || self.overlays.alert.is_some()
             || self.popup_mouse_down(button)
+            || self.tab_switch_mouse_down()
         {
+            return;
+        }
+
+        // 「未提交的更改」中点在某一段的差异上：交给那一段，按差异标签处理。
+        if self.combined_takes_pointer(x, y) && self.combined_mouse_down(button) {
             return;
         }
 
@@ -33,14 +40,18 @@ impl App {
         {
             self.focus_pane(pane);
         }
-        // 点在终端标签里不在前台的终端上：同样先换到前台。
-        self.focus_terminal_pane_at(x, y);
+        // 点在终端不在用的一栏上：先改用那一栏；按在分栏的分隔线上是调整大小，不换。
+        self.focus_terminal_group_at(x, y);
+        // 点在终端标签里不在前台的终端上：同样先换到前台。按在分隔线上是调整大小，不换。
+        if self.terminal_split_at(x, y).is_none() {
+            self.focus_terminal_pane_at(x, y);
+        }
         let l = self.layout;
 
         // 鼠标侧面的两个键：后退、前进。
         if matches!(button, MouseButton::Back | MouseButton::Forward) {
             if !self.settings.open && self.overlays.form_dialog.is_none() {
-                self.navigate(button == MouseButton::Forward);
+                self.navigate_history(button == MouseButton::Forward);
             }
             return;
         }
@@ -50,7 +61,8 @@ impl App {
             self.finish_terminal_rename(true);
         }
 
-        // 终端网格上的中键、右键：程序要了鼠标时上报给它（左键在下面按部件分发时处理）。
+        // 终端网格上的中键、右键：程序要了鼠标时上报给它（左键在下面按部件分发时处理）。网格被
+        // 底部面板的「搜索」标签、在文件中查找的对话框等部件遮挡时不上报。
         if matches!(button, MouseButton::Middle | MouseButton::Right)
             && !self.settings.open
             && self.overlays.form_dialog.is_none()
@@ -58,6 +70,7 @@ impl App {
             && !self
                 .terminal_find_bar()
                 .is_some_and(|bar| bar.contains(x, y))
+            && !self.blocks_context_menu(x, y)
             && self
                 .terminal
                 .tab()
@@ -95,11 +108,20 @@ impl App {
         if button == MouseButton::Middle
             && let Some(&(_, hit)) =
                 (self.hits.terminal.iter()).find(|(rect, _)| rect.contains(x, y))
-            && let crate::app::terminal::HeaderHit::Tab(index)
-            | crate::app::terminal::HeaderHit::Close(index) = hit
         {
-            self.close_terminal_tab(index);
-            return;
+            use crate::app::terminal::HeaderHit;
+            match hit {
+                HeaderHit::Tab(index) | HeaderHit::Close(index) => {
+                    self.close_terminal_tab(index);
+                    return;
+                }
+                // 列表里拆分出的一个终端：只关掉它。
+                HeaderHit::Pane(index, at) | HeaderHit::ClosePane(index, at) => {
+                    self.close_terminal_pane_at(index, at);
+                    return;
+                }
+                _ => {}
+            }
         }
 
         if button == MouseButton::Middle {
@@ -177,6 +199,14 @@ impl App {
             self.preview.markdown.focused = false;
             self.preview.markdown.selection = None;
         }
+        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘交回左侧。
+        let keeps_table = matches!(
+            target,
+            Target::Table | Target::Scrollbar(Scrollbar::Table | Scrollbar::TableHorizontal, _)
+        );
+        if !keeps_table {
+            self.preview.table_layout.focused = false;
+        }
 
         // 点击的目标由 `target_at` 决定（与悬停同一个顺序）；只有点击才有的规则写成前面的
         // 分支：快速打开面板开着时点其他位置关掉快速打开面板，正在输入名字时点其他位置
@@ -190,11 +220,15 @@ impl App {
             Target::Picker => {
                 self.click_picker(x, y);
             }
+            Target::SearchDialog(part) => self.press_search_dialog(part, x, y),
+            Target::SearchDock(part) => self.press_docked_search(part, x, y),
             _ if self.overlays.picker.open => self.close_picker(),
             Target::Scrollbar(
                 bar @ (Scrollbar::Panel
                 | Scrollbar::Commit
                 | Scrollbar::Outline
+                | Scrollbar::CommitHistory
+                | Scrollbar::GitPanel
                 | Scrollbar::LogBranches),
                 grab,
             ) => {
@@ -228,7 +262,7 @@ impl App {
             Target::TreeMore => self.open_tree_tools_menu(),
             Target::ProjectName => self.open_project_menu(),
             Target::SidebarButton => self.toggle_sidebar(),
-            Target::NewTab => self.new_file(),
+            Target::NewTab => self.press_new_tab(),
             Target::TabList => self.open_tab_list_menu(),
             Target::Preview(mode) => self.choose_preview_mode(mode),
             Target::Browser => self.open_in_browser(),
@@ -242,6 +276,11 @@ impl App {
             }
             Target::PdfThumb(to) => self.scroll_pdf_to(to),
             Target::PdfTool(tool) => self.press_pdf_tool(tool),
+            Target::LatexStatus => self.open_latex_problems(),
+            Target::LatexProblem(line) => self.go_to_latex_problem_line(line),
+            Target::LatexSource => {
+                self.latex_source_at(x, y);
+            }
             Target::Tab(index, true) => {
                 self.pointer.close_pressed = self.editor.documents.get(index).map(|d| d.id);
             }
@@ -277,6 +316,8 @@ impl App {
                 }
             }
             Target::Diff(target) => self.press_diff(target),
+            Target::Combined(target) => self.press_combined(target),
+            Target::CombinedBody => {}
             Target::Log(crate::app::git::log::LogTarget::AuthorEdge) => {
                 let double = self.click_count(x, y) == 2;
                 self.press_log_author_edge(x, double);
@@ -305,7 +346,8 @@ impl App {
                     };
                 }
             }
-            // 分支面板里的分支：单击筛选，双击签出（第一下已经按它筛选了），再连着点不做别的。
+            // 分支面板里的分支：单击筛选，双击签出（第一次点击已经按它筛选了），
+            // 再连续点击不做别的。
             Target::Log(target @ crate::app::git::log::LogTarget::BranchRow(i)) => {
                 match self.click_count(x, y) {
                     1 => self.press_log(target),
@@ -335,6 +377,9 @@ impl App {
             Target::Start(action) => self.run_start_action(action),
             Target::Sticky(row) => self.click_sticky(row, x),
             Target::Folded(line) => self.click_folded(line),
+            Target::HttpRun(line) => {
+                self.send_http_request(Some(line));
+            }
             Target::LongLine(line) => {
                 self.focus = Focus::Editor;
                 self.show_whole_line(line);
@@ -357,6 +402,11 @@ impl App {
             }
             Target::Editor => self.click_editor(x, y),
             Target::Picture => self.click_picture(x, y),
+            Target::Table => {
+                self.focus = Focus::Editor;
+                self.preview.table_layout.focused = true;
+                self.click_table(x, y);
+            }
             Target::Terminal => {
                 if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
@@ -386,8 +436,14 @@ impl App {
             }
             Target::TerminalHeader(hit) => {
                 use crate::app::terminal::HeaderHit;
+                if matches!(hit, HeaderHit::Tab(_) | HeaderHit::New) {
+                    self.search_dialog.in_panel = false;
+                }
                 self.focus = Focus::Terminal;
                 match hit {
+                    HeaderHit::SearchTab => self.show_docked_search(),
+                    HeaderHit::SearchClose => self.close_docked_search(),
+                    HeaderHit::SearchDialog => self.open_search_dialog_with(None),
                     // 双击标签重命名。
                     HeaderHit::Tab(i) if self.click_count(x, y) == 2 => {
                         self.activate_terminal_tab(i);
@@ -398,14 +454,36 @@ impl App {
                         self.press_terminal_tab(i, at);
                     }
                     HeaderHit::Close(i) => self.close_terminal_tab(i),
+                    // 双击列表里拆分出的终端：换到前台并重命名它。
+                    HeaderHit::Pane(i, at) if self.click_count(x, y) == 2 => {
+                        self.select_terminal_pane(i, at);
+                        self.open_terminal_rename(i);
+                    }
+                    HeaderHit::Pane(i, at) => self.select_terminal_pane(i, at),
+                    HeaderHit::ClosePane(i, at) => self.close_terminal_pane_at(i, at),
                     HeaderHit::New => self.new_terminal_tab(),
                     HeaderHit::ShellMenu => self.open_terminal_shell_menu(),
                     HeaderHit::Restart => self.request_terminal_restart(),
                     HeaderHit::Position => self.toggle_terminal_position(),
                     HeaderHit::Maximize => self.toggle_terminal_maximized(),
+                    HeaderHit::Split => self.split_terminal(),
                     HeaderHit::Hide => self.click_terminal_button(),
+                    HeaderHit::Editor => self.move_terminal_to_editor(),
+                    HeaderHit::Panel => self.move_terminal_to_panel(),
                     HeaderHit::Run(_) | HeaderHit::Find(_) => {}
                 }
+            }
+            Target::TerminalGroupSplit(index) if self.click_count(x, y) >= 2 => {
+                self.reset_terminal_group_split(index);
+            }
+            Target::TerminalGroupSplit(index) => {
+                self.pointer.drag = Drag::TerminalGroupSplit { index };
+            }
+            Target::TerminalSplit(index) if self.click_count(x, y) >= 2 => {
+                self.reset_terminal_split(index);
+            }
+            Target::TerminalSplit(index) => {
+                self.pointer.drag = Drag::TerminalSplit { index };
             }
             Target::PaneDivider(index) if self.click_count(x, y) >= 2 => {
                 self.reset_pane_divider(index);
@@ -429,6 +507,14 @@ impl App {
                 let size = self.outline_list().h;
                 self.pointer.drag = Drag::OutlineDivider { start: y, size };
             }
+            Target::GitPanel(PanelHit::Divider) if self.click_count(x, y) == 2 => {
+                self.reset_git_panel_height();
+            }
+            Target::GitPanel(PanelHit::Divider) => {
+                let size = self.layout.git_panel.h;
+                self.pointer.drag = Drag::GitPanelDivider { start: y, size };
+            }
+            Target::GitPanel(hit) => self.press_git_panel(hit),
             Target::TerminalDivider => {
                 // 最大化、还原途中按下时停在终点，从当前大小开始拖。
                 self.terminal.grow = None;
@@ -487,7 +573,7 @@ impl App {
     ///
     /// 当前点击由触摸点按产生时取 [`touch::TAP_SLOP`]，容纳两次落指之间的位置偏差；
     /// 鼠标点击取 4 逻辑像素，容纳按下与松开之间指针的轻微移动。
-    fn repeat_slop(&self) -> f32 {
+    pub(super) fn repeat_slop(&self) -> f32 {
         if self.touch.tapping {
             touch::TAP_SLOP
         } else {

@@ -12,8 +12,8 @@ impl Document {
         }
     }
 
-    /// 是否在编辑区显示文本：不是图片、差异、日志、阅读标签或无法打开的文件，且 SVG 没有切换
-    /// 到预览。
+    /// 是否在编辑区显示文本：不是图片、差异、日志、阅读、终端标签或无法打开的文件，且 SVG
+    /// 没有切换到预览。
     ///
     /// 光标、查找、折叠等只对文本有意义。
     pub fn shows_text(&self) -> bool {
@@ -25,6 +25,7 @@ impl Document {
             && self.log.is_none()
             && self.hex.is_none()
             && self.reading.is_none()
+            && !self.terminal
     }
 
     /// 是否能编辑文本：显示文本（见 [`Document::shows_text`]），或者是 Markdown 的预览（预览
@@ -36,7 +37,7 @@ impl Document {
         self.shows_text() || self.rendered
     }
 
-    /// 是否可以切换到预览：语言是 SVG、Markdown、CSV 或 TSV 的文本，且不是大文件。
+    /// 是否可以切换到预览：语言是 SVG、Markdown、LaTeX、CSV 或 TSV 的文本，且不是大文件。
     pub fn can_preview(&self) -> bool {
         self.preview_kind().is_some()
     }
@@ -85,8 +86,9 @@ impl Document {
 
     /// 换成 `mode` 显示。
     ///
-    /// 只看 SVG、表格的预览期间文档只读（看不到文字），离开时恢复原来的只读状态；Markdown 的
-    /// 预览可以直接编辑，不改只读状态。不满足 [`Document::can_preview`] 时不切换，返回 `false`。
+    /// 只看 SVG、表格、LaTeX 的预览期间文档只读（看不到文字），离开时恢复原来的只读状态；
+    /// Markdown 的预览可以直接编辑，不改只读状态。不满足 [`Document::can_preview`] 时不切换，
+    /// 返回 `false`。
     pub fn set_preview_mode(&mut self, mode: PreviewMode) -> bool {
         let Some(kind) = self.preview_kind() else {
             return false;
@@ -109,7 +111,7 @@ impl Document {
             }
             match kind {
                 PreviewKind::Svg => self.picture = Some(PictureState::Loading),
-                PreviewKind::Markdown => self.rendered = true,
+                PreviewKind::Markdown | PreviewKind::Latex => self.rendered = true,
                 PreviewKind::Table => self.table = Some(TableView::loading(self.revision)),
             }
         }

@@ -1,8 +1,7 @@
-//! 拖动标签调整顺序：被拖动的标签跟随鼠标横向移动，其边缘越过相邻标签的中线时与该标签交换位置，
-//! 被换位的标签滑向新位置。
+//! 拖动标签调整顺序：被拖动的标签跟随鼠标横向移动，其边缘越过相邻标签的中线时与该标签交换位置，被换
+//! 位的标签滑向新位置。
 //!
-//! 按在多选的标签上拖动时，选中的各个标签先靠拢到它两边，再作为一块
-//! 一起移动。
+//! 按在多选的标签上拖动时，选中的各个标签先靠拢到它两边，再作为一块一起移动。
 //!
 //! 标签栏放不下全部标签时，拖到两端会自动滚动。
 //!
@@ -14,13 +13,13 @@ use std::time::Instant;
 use super::*;
 use crate::app::workspace::files::TabGhost;
 
-/// 判定为拖动的移动距离（逻辑像素，经验值）：按下后移动不足此距离时仍视为单击。
+/// 判定为拖动的移动距离（逻辑像素）：按下后移动不足此距离时仍视为单击。
 const THRESHOLD: f32 = 4.0;
-/// 触发自动滚动的区域宽度（逻辑像素，经验值）：鼠标距标签栏左右两端不足此距离时开始滚动。
+/// 触发自动滚动的区域宽度（逻辑像素）：鼠标距标签栏左右两端不足此距离时开始滚动。
 const EDGE: f32 = 32.0;
-/// 鼠标离开标签栏这么远才算拖出了标签栏（逻辑像素，经验值）。
+/// 鼠标离开标签栏超过该距离才算拖出了标签栏（逻辑像素，取自调参）。
 const OUTSIDE: f32 = 8.0;
-/// 鼠标贴着标签栏边缘（或在其外）时每帧的滚动量（逻辑像素，经验值）。
+/// 鼠标贴着标签栏边缘（或在其外）时每帧的滚动量（逻辑像素，取自调参）。
 ///
 /// 滚动量随鼠标向 [`EDGE`] 区域内侧移动而线性减小，到区域内侧边界时为 0。
 const EDGE_SPEED: f32 = 10.0;
@@ -136,8 +135,13 @@ impl App {
         let drag = *drag;
         self.panes.drop = None;
         if outside {
-            let copy = self.pointer.modifiers.alt_key();
-            self.panes.drop = self.tab_drop_at(&self.dragged_block(drag), (x, y), copy);
+            let docs = self.dragged_block(drag);
+            self.reveal_terminal_drag_panel(&docs);
+            let copy = self.pointer.modifiers.alt_key()
+                && docs
+                    .iter()
+                    .any(|id| self.editor.document(*id).is_some_and(|doc| !doc.terminal));
+            self.panes.drop = self.tab_drop_at(&docs, (x, y), copy);
         } else {
             self.reorder_dragged_tab();
         }
@@ -170,7 +174,9 @@ impl App {
     /// 结束拖动但不放到其他窗格（切到其他应用时收不到松开）。
     pub(in crate::app) fn cancel_tab_drag(&mut self) {
         self.panes.drop = None;
-        self.release_tab();
+        self.tabs.drag = None;
+        self.finish_terminal_drag_panel();
+        self.request_redraw();
     }
 
     /// 处理鼠标松开：拖动中的标签从松开处滑回它在标签栏中的位置。
@@ -191,11 +197,23 @@ impl App {
         if drag.outside {
             // 松开前才按下或放开 `⌥` 时，放置目标按松开时的重新计算。
             let docs = self.dragged_block(drag);
-            let copy = self.pointer.modifiers.alt_key();
+            let copy = self.pointer.modifiers.alt_key()
+                && docs
+                    .iter()
+                    .any(|id| self.editor.document(*id).is_some_and(|doc| !doc.terminal));
             self.panes.drop = None;
-            if let Some((drop, _)) = self.tab_drop_at(&docs, self.pointer.mouse, copy) {
+            if let Some((mut drop, _)) = self.editor_terminal_panel_drop(&docs) {
+                for document in docs {
+                    self.move_editor_terminal_tab_to_panel(document, drop);
+                    drop = crate::app::terminal::groups::GroupDrop::Into {
+                        group: self.terminal.group_at,
+                        at: None,
+                    };
+                }
+            } else if let Some((drop, _)) = self.tab_drop_at(&docs, self.pointer.mouse, copy) {
                 self.drop_tabs(&docs, drag.id, drop, copy);
             }
+            self.finish_terminal_drag_panel();
             self.request_redraw();
             return;
         }
@@ -398,7 +416,7 @@ impl App {
     /// 在真正从文档列表里删掉之前调用。
     ///
     /// 新位置按关掉以后的宽度计算：用鼠标关闭时，紧邻的标签暂用被关标签的宽度（`width_lock`），
-    /// 该标签不动，再往右的标签照常滑过来。没有窗口、动态效果关闭时不做动画。
+    /// 该标签不动，再往右的标签仍然滑过来。没有窗口、动态效果关闭时不做动画。
     pub(in crate::app) fn animate_tab_close(&mut self, index: usize) {
         if let Some(fade) = self.clock(EXIT_FADE) {
             self.animate_tab_close_with(index, fade);
@@ -432,6 +450,7 @@ impl App {
             name,
             icon,
             log: doc.log.is_some(),
+            terminal: doc.terminal,
             active: self.editor.active == Some(index),
             fade,
             clock,

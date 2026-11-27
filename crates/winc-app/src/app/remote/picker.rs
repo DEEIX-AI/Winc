@@ -6,14 +6,14 @@
 //!   直接写 `用户@主机` 或 `主机:目录`。选中最近的目录直接打开，选中主机则连接后进入下一阶段；
 //!   `⇥` 在连接对话框中修改选中主机的地址和端口。最近的目录、只来自最近目录的主机可以用行尾
 //!   的「✕」移除；配置中的主机在最后一行「编辑 SSH 配置文件」打开的文件里修改。
-//! - **目录**：列出当前目录的子目录，第一行是「打开此目录」。输入用来筛选；输入 `/` 进入
-//!   匹配的目录，也可以写绝对路径、`~/…` 或 `../`。`⇥` 进入选中的目录，输入为空时 `⌫` 回到
+//! - **目录**：列出当前目录的子目录和项目文件，第一行是「打开此目录」。输入用来筛选；输入 `/`
+//!   进入匹配的目录，也可以写绝对路径、`~/…` 或 `../`。`⇥` 进入选中的目录，输入为空时 `⌫` 回到
 //!   上级，`↩` 执行选中的一行，按住 `⌘`（其他系统是 `Ctrl`）的 `↩` 直接打开选中的目录。
 //!
 //! 目录内容在后台读取并按目录缓存，选中的子目录提前读取，进入时通常不必等待。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use winc_backend::Target;
@@ -22,6 +22,7 @@ use winit::keyboard::{Key, NamedKey};
 
 use super::{After, parse_destination};
 use crate::app::animation::Card;
+use crate::app::workspace::project::opens_on_host;
 use crate::app::{App, Focus, UserEvent};
 
 /// 面板的内容。
@@ -31,6 +32,8 @@ pub(crate) struct RemoteList {
     pub(crate) rows: Vec<Row>,
     /// 读过的目录，按主机和路径。
     listings: HashMap<(Target, String), Listing>,
+    /// 用于向项目添加目录（见 [`App::browse_remote_to_add`]）：选中的目录加入项目，不打开。
+    adding: bool,
 }
 
 /// 面板所处的阶段。
@@ -48,9 +51,16 @@ pub(crate) enum Stage {
 /// 一个目录的读取状态。
 enum Listing {
     Loading,
-    /// 其中的子目录名，已排序。
-    Ready(Vec<String>),
+    Ready(Entries),
     Failed(String),
+}
+
+/// 一个目录中可以选择的项。
+struct Entries {
+    /// 子目录名，已排序。
+    folders: Vec<String>,
+    /// 可以在远端打开的项目文件名（见 [`opens_on_host`]），已排序。
+    projects: Vec<String>,
 }
 
 /// 面板中的一行。
@@ -69,7 +79,10 @@ impl Row {
     /// 这一行选中时在右端提示的按键；没有特别的按键时为 `None`。
     pub(crate) fn hint(&self) -> Option<&'static str> {
         match self.action {
-            RowAction::OpenHere => Some(t!("workspace-picker-remote-hint-open")),
+            RowAction::OpenHere | RowAction::Project(_) => {
+                Some(t!("workspace-picker-remote-hint-open"))
+            }
+            RowAction::AddHere => Some(t!("workspace-picker-remote-hint-add")),
             RowAction::Enter(_) => Some(t!("workspace-picker-remote-hint-enter")),
             RowAction::Host(_) => Some(t!("workspace-picker-remote-hint-edit")),
             _ => None,
@@ -77,8 +90,12 @@ impl Row {
     }
 }
 
-/// 把目录 `dir` 写成便于阅读的样子：主目录 `home` 以内的部分以 `~` 开头。
+/// 把目录 `dir` 写成便于阅读的样子：主目录 `home` 以内的部分以 `~` 开头；`home` 为空时原样
+/// 返回。
 fn shorten(dir: &str, home: &str) -> String {
+    if home.is_empty() {
+        return dir.to_owned();
+    }
     match dir.strip_prefix(home) {
         Some("") => "~".to_owned(),
         Some(rest) if rest.starts_with('/') && home != "/" => format!("~{rest}"),
@@ -91,6 +108,8 @@ fn shorten(dir: &str, home: &str) -> String {
 pub(crate) enum RowIcon {
     Host,
     Folder,
+    /// 项目文件，按文件名绘制图标。
+    Project,
     /// 打开着的目录：「打开此目录」一行。
     Open,
     /// 「编辑 SSH 配置文件」一行。
@@ -112,14 +131,18 @@ enum RowAction {
     Destination(Target, String),
     /// 打开正在浏览的目录。
     OpenHere,
+    /// 将正在浏览的目录加入项目。
+    AddHere,
     /// 进入名为该值的子目录。
     Enter(String),
+    /// 打开名为该值的项目文件。
+    Project(String),
     /// 回到上级目录。
     Up,
 }
 
-/// 后台读好的目录：主机、路径，以及其中的子目录名或失败的原因。
-type Listed = (Target, String, Result<Vec<String>, String>);
+/// 后台读好的目录：主机、路径，以及其中可以选择的项或失败的原因。
+type Listed = (Target, String, Result<Entries, String>);
 
 /// 后台读取目录的结果，由 [`App::poll_remote_listings`] 取走。
 #[derive(Default)]
@@ -180,21 +203,36 @@ fn matching<'a>(names: &'a [String], typed: &str) -> Vec<&'a str> {
     leading
 }
 
-/// 读取主机 `target` 上目录 `dir` 的子目录名，按文件树的顺序排列（在后台线程上调用）。
+/// 读取主机 `target` 上目录 `dir` 中的子目录和项目文件，各自按文件树的顺序排列（在后台线程上
+/// 调用）。
 ///
-/// 指向目录的符号链接也列出；名字不是有效 UTF-8 的目录无法在输入框中表示，不列出。
-fn subfolders(target: &Target, dir: &str) -> Result<Vec<String>, String> {
+/// 指向目录或项目文件的符号链接也列出；名字不是有效 UTF-8 的项无法在输入框中表示，不列出。
+fn entries(target: &Target, dir: &str) -> Result<Entries, String> {
     let path = winc_backend::virtual_path(target, dir.as_bytes());
-    let entries = winc_backend::fs::read_dir(&path).map_err(|e| e.to_string())?;
-    let mut names: Vec<String> = entries
-        .flatten()
-        .filter(|entry| {
-            entry.kind.is_dir() || entry.kind.is_symlink() && winc_backend::fs::is_dir(entry.path())
-        })
-        .filter_map(|entry| entry.name.into_string().ok())
-        .collect();
-    names.sort_by(|a, b| winc_editor::natural_cmp(a, b));
-    Ok(names)
+    let listed = winc_backend::fs::read_dir(&path).map_err(|e| e.to_string())?;
+    let mut found = Entries {
+        folders: Vec::new(),
+        projects: Vec::new(),
+    };
+    for entry in listed.flatten() {
+        let link = entry.kind.is_symlink();
+        let names = if entry.kind.is_dir() || link && winc_backend::fs::is_dir(entry.path()) {
+            &mut found.folders
+        } else if opens_on_host(Path::new(&entry.name))
+            && (entry.kind.is_file() || link && winc_backend::fs::is_file(entry.path()))
+        {
+            &mut found.projects
+        } else {
+            continue;
+        };
+        if let Ok(name) = entry.name.into_string() {
+            names.push(name);
+        }
+    }
+    for names in [&mut found.folders, &mut found.projects] {
+        names.sort_by(|a, b| winc_editor::natural_cmp(a, b));
+    }
+    Ok(found)
 }
 
 impl App {
@@ -220,6 +258,16 @@ impl App {
         self.show_remote_picker(Stage::Browse { target, home, dir });
     }
 
+    /// 从主机 `target` 上的目录 `dir` 开始浏览，选中的目录加入项目。
+    pub(in crate::app) fn browse_remote_to_add(&mut self, target: Target, dir: String) {
+        let home = String::new();
+        self.show_remote_picker(Stage::Browse { target, home, dir });
+        if let Some(list) = &mut self.overlays.picker.remote {
+            list.adding = true;
+        }
+        self.picker_refresh();
+    }
+
     fn show_remote_picker(&mut self, stage: Stage) {
         self.finish_name_input();
         self.overlays.picker.places = None;
@@ -239,6 +287,7 @@ impl App {
             stage,
             rows: Vec::new(),
             listings,
+            adding: false,
         });
         self.overlays.picker.open = true;
         self.overlays.picker.doc = self.editor.active().map(|doc| doc.id);
@@ -268,12 +317,13 @@ impl App {
             self.overlays.picker.input.insert(&rest);
             return self.remote_picker_refresh();
         }
+        let adding = list.adding;
         let rows = match &list.stage {
             Stage::Hosts => self.host_rows(&typed),
             Stage::Browse { target, home, dir } => {
                 let (target, home, dir) = (target.clone(), home.clone(), dir.clone());
                 self.fetch_remote_listing(&target, &dir);
-                self.folder_rows(&target, &home, &dir, &typed)
+                self.folder_rows(&target, (&home, &dir), &typed, adding)
             }
         };
         self.overlays.picker.hits = (0..rows.len()).collect();
@@ -389,17 +439,31 @@ impl App {
         rows
     }
 
-    /// 目录阶段的各行：没有输入时是「打开此目录」、上级目录和各个子目录，有输入时是匹配的
-    /// 子目录。目录尚未读好或读取失败时没有子目录的行，原因见 [`App::remote_picker_message`]。
-    fn folder_rows(&self, target: &Target, home: &str, dir: &str, typed: &str) -> Vec<Row> {
+    /// 目录阶段的各行：没有输入时是「打开此目录」、上级目录、各个子目录和项目文件，有输入时是
+    /// 匹配的子目录和项目文件。目录尚未读好或读取失败时只有前两行，原因见
+    /// [`App::remote_picker_message`]。
+    ///
+    /// `adding` 为真时第一行为「添加此目录」，不列出项目文件。
+    fn folder_rows(
+        &self,
+        target: &Target,
+        (home, dir): (&str, &str),
+        typed: &str,
+        adding: bool,
+    ) -> Vec<Row> {
         let mut rows = Vec::new();
         if typed.is_empty() {
+            let (title, action) = if adding {
+                (t!("workspace-picker-remote-add-here"), RowAction::AddHere)
+            } else {
+                (t!("workspace-picker-remote-open-here"), RowAction::OpenHere)
+            };
             rows.push(Row {
-                title: t!("workspace-picker-remote-open-here").to_owned(),
+                title: title.to_owned(),
                 detail: shorten(dir, home),
                 icon: RowIcon::Open,
                 removable: false,
-                action: RowAction::OpenHere,
+                action,
             });
             if dir != "/" {
                 rows.push(Row {
@@ -413,14 +477,23 @@ impl App {
         }
         let listing = (self.overlays.picker.remote.as_ref())
             .and_then(|list| list.listings.get(&(target.clone(), dir.to_owned())));
-        if let Some(Listing::Ready(names)) = listing {
-            rows.extend(matching(names, typed).into_iter().map(|name| Row {
-                title: name.to_owned(),
-                detail: String::new(),
-                icon: RowIcon::Folder,
-                removable: false,
-                action: RowAction::Enter(name.to_owned()),
-            }));
+        let Some(Listing::Ready(entries)) = listing else {
+            return rows;
+        };
+        let row = |name: &str, icon, action| Row {
+            title: name.to_owned(),
+            detail: String::new(),
+            icon,
+            removable: false,
+            action,
+        };
+        let folders = matching(&entries.folders, typed).into_iter();
+        rows.extend(folders.map(|name| row(name, RowIcon::Folder, RowAction::Enter(name.into()))));
+        // 向项目添加的是目录，不列出项目文件。
+        if !adding {
+            let projects = matching(&entries.projects, typed).into_iter();
+            let open = |name: &str| row(name, RowIcon::Project, RowAction::Project(name.into()));
+            rows.extend(projects.map(open));
         }
         rows
     }
@@ -445,8 +518,9 @@ impl App {
                     Some(Listing::Failed(error)) => {
                         Some(t!("workspace-picker-remote-failed", error = error.as_str()))
                     }
-                    Some(Listing::Ready(names)) => {
-                        let none = matching(names, typed).is_empty();
+                    Some(Listing::Ready(entries)) => {
+                        let none = matching(&entries.folders, typed).is_empty()
+                            && (list.adding || matching(&entries.projects, typed).is_empty());
                         (none && !typed.is_empty())
                             .then(|| t!("workspace-picker-remote-no-folders").to_owned())
                     }
@@ -482,6 +556,7 @@ impl App {
             Stage::Browse { target, dir, .. } => Some((target.clone(), dir.clone())),
             Stage::Hosts => None,
         };
+        let adding = list.adding;
         match (action, browsing) {
             (RowAction::Recent(folder), _) => {
                 self.close_picker();
@@ -505,13 +580,33 @@ impl App {
                 self.close_picker();
                 self.remote_open(target, dir, After::Open);
             }
+            (RowAction::AddHere, Some((target, dir))) => {
+                self.close_picker();
+                self.add_folder(&winc_backend::virtual_path(&target, dir.as_bytes()));
+            }
+            (RowAction::Enter(name), Some((target, dir))) if directly && adding => {
+                self.close_picker();
+                let path = child(&dir, &name);
+                self.add_folder(&winc_backend::virtual_path(&target, path.as_bytes()));
+            }
             (RowAction::Enter(name), Some((target, dir))) if directly => {
                 self.close_picker();
                 self.remote_open(target, child(&dir, &name), After::Open);
             }
             (RowAction::Enter(name), Some((_, dir))) => self.remote_picker_go(child(&dir, &name)),
+            (RowAction::Project(name), Some((target, dir))) => {
+                self.close_picker();
+                self.remote_open(target, child(&dir, &name), After::Open);
+            }
             (RowAction::Up, Some((_, dir))) => self.remote_picker_go(parent(&dir)),
-            (RowAction::OpenHere | RowAction::Enter(_) | RowAction::Up, None) => {}
+            (
+                RowAction::OpenHere
+                | RowAction::AddHere
+                | RowAction::Enter(_)
+                | RowAction::Project(_)
+                | RowAction::Up,
+                None,
+            ) => {}
         }
     }
 
@@ -522,10 +617,10 @@ impl App {
             .port()
             .map(|port| port.to_string())
             .unwrap_or_default();
-        self.open_connect_dialog(target.host(), &port, start);
+        self.open_connect_dialog(&target.host(), &port, start);
     }
 
-    /// 点了第 `row` 行行尾的「✕」：从最近的记录中移除这个目录；移除主机时移除其上的所有
+    /// 点击第 `row` 行行尾的「✕」：从最近的记录中移除这个目录；移除主机时移除其上的所有
     /// 目录。选中的位置保持不变。
     pub(in crate::app) fn forget_remote_row(&mut self, row: usize) {
         let list = self.overlays.picker.remote.as_ref();
@@ -548,9 +643,10 @@ impl App {
             _ => None,
         };
         let selected = self.overlays.picker.selected;
-        self.update_state(|state| {
+        let removed = host.clone();
+        self.update_state(move |state| {
             folders.iter().for_each(|folder| state.forget(folder));
-            if let Some(host) = &host {
+            if let Some(host) = &removed {
                 state.set_remote_key(host.as_str(), "");
             }
         });
@@ -635,9 +731,9 @@ impl App {
         let results = Arc::clone(&self.remote.listed.0);
         let (target, dir) = (target.clone(), dir.to_owned());
         self.spawn_blocking_then(UserEvent::RemoteListed, move || {
-            let names = subfolders(&target, &dir);
+            let listed = entries(&target, &dir);
             let mut results = results.lock().unwrap_or_else(PoisonError::into_inner);
-            results.push((target, dir, names));
+            results.push((target, dir, listed));
         });
     }
 
@@ -670,7 +766,7 @@ impl App {
             return;
         };
         let mut shown = false;
-        for (target, dir, names) in listed {
+        for (target, dir, entries) in listed {
             if let Stage::Browse {
                 target: at,
                 dir: here,
@@ -679,8 +775,8 @@ impl App {
             {
                 shown |= *at == target && *here == dir;
             }
-            let listing = match names {
-                Ok(names) => Listing::Ready(names),
+            let listing = match entries {
+                Ok(entries) => Listing::Ready(entries),
                 Err(error) => Listing::Failed(error),
             };
             list.listings.insert((target, dir), listing);

@@ -8,7 +8,7 @@ use crate::icons::RefMark;
 
 /// 一个引用徽章。
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Badge {
+pub(in crate::view::git) struct Badge {
     /// 徽章上的文字。
     pub text: String,
     /// 底色。
@@ -40,7 +40,7 @@ const BADGE_MARK: f32 = 12.0;
 ///
 /// 当前分支铺强调色；和远程分支在同一个提交上（已经同步）的本地分支只画一个，后面写
 /// 远程名；远程分支、标签各一种淡色。每个徽章前面有表明种类的图标。
-pub(super) fn badges(p: &Palette, commit: &Commit) -> Vec<Badge> {
+pub(in crate::view::git) fn badges(p: &Palette, commit: &Commit) -> Vec<Badge> {
     let local: Vec<&str> = commit
         .refs
         .iter()
@@ -108,7 +108,7 @@ pub(super) fn badges(p: &Palette, commit: &Commit) -> Vec<Badge> {
 ///
 /// 每个徽章最宽 [`BADGE_MAX`]，放不下的从末尾截短；余下的连截短到 [`BADGE_MIN`] 都放不下
 /// 时，收成一个淡色的「+N」。第一个徽章总要排上。
-pub(super) fn fit_badges(
+pub(in crate::view::git) fn fit_badges(
     app: &App,
     frame: &mut Frame<'_>,
     badges: &[Badge],
@@ -158,7 +158,11 @@ pub(super) fn fit_badges(
 }
 
 /// [`fit_badges`] 排好的一行徽章的总宽（逻辑像素），不含最后一个后面的间隔。
-pub(super) fn badges_width(app: &App, frame: &mut Frame<'_>, badges: &[Badge]) -> f32 {
+pub(in crate::view::git) fn badges_width(
+    app: &App,
+    frame: &mut Frame<'_>,
+    badges: &[Badge],
+) -> f32 {
     let size = app.fonts.ui_small;
     let total: f32 = badges
         .iter()
@@ -168,7 +172,7 @@ pub(super) fn badges_width(app: &App, frame: &mut Frame<'_>, badges: &[Badge]) -
 }
 
 /// 从 `x` 起画 [`fit_badges`] 排好的一行徽章。
-pub(super) fn draw_badges(
+pub(in crate::view::git) fn draw_badges(
     app: &App,
     frame: &mut Frame<'_>,
     (x, row): (f32, Rect),
@@ -181,7 +185,7 @@ pub(super) fn draw_badges(
     }
 }
 
-/// 画一个圆角小徽章，高为行高减 6 逻辑像素、最多 18 逻辑像素（经验值）；返回右边缘的 x
+/// 画一个圆角小徽章，高为行高减 6 逻辑像素、最多 18 逻辑像素（取自调参）；返回右边缘的 x
 /// 坐标。
 pub(super) fn draw_badge(
     app: &App,
@@ -220,7 +224,7 @@ pub(super) fn draw_avatar(
         .bytes()
         .fold(5381u32, |h, b| h.wrapping_mul(33) ^ u32::from(b));
     let (fill, ink) = p.badges[hash as usize % p.badges.len()];
-    // 头像的半径（逻辑像素，经验值）。
+    // 头像的半径（逻辑像素，取自调参）。
     let r = 7.0;
     frame.rect_clipped(Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r), fill, r, clip);
     let initial: String = commit

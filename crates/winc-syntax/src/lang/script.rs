@@ -11,6 +11,7 @@ const DOLLAR_BRACE_ANY_QUOTE: Interpolation = Interpolation {
     close: '}',
     prefixes: &[],
     single_quotes: true,
+    doubled: false,
 };
 
 /// `#{…}` 是插值的写法（Ruby 只在双引号字符串中，Elixir 单双引号字符串都支持）。
@@ -19,6 +20,7 @@ const HASH_BRACE: Interpolation = Interpolation {
     close: '}',
     prefixes: &[],
     single_quotes: false,
+    doubled: false,
 };
 
 /// C# 的规则。
@@ -121,22 +123,26 @@ pub(super) static CSHARP: Language = Language {
         close: '}',
         prefixes: &["$", "$$"],
         single_quotes: false,
+        doubled: true,
     }),
     block_strings: &[
         BlockString {
             open: "$@\"",
             close: "\"",
             interpolate: true,
+            escapes: BlockEscapes::None,
         },
         BlockString {
             open: "@$\"",
             close: "\"",
             interpolate: true,
+            escapes: BlockEscapes::None,
         },
         BlockString {
             open: "@\"",
             close: "\"",
             interpolate: false,
+            escapes: BlockEscapes::None,
         },
     ],
     hash_lines: true,
@@ -402,6 +408,8 @@ pub(super) static PERL: Language = Language {
     id: "perl",
     name: "Perl",
     extensions: &["pl", "pm", "t", "psgi", "pod"],
+    // `latexmk` 的配置文件是 Perl 程序：`latexmkrc`、`.latexmkrc`，以及系统级的 `LatexMk`。
+    file_names: &["latexmkrc", ".latexmkrc", "LatexMk"],
     interpreters: &["perl"],
     keywords: &[
         "my", "our", "local", "state", "sub", "package", "use", "no", "require", "if", "elsif",
@@ -806,6 +814,7 @@ pub(super) static ELIXIR: Language = Language {
     single_quote_string: true,
     interpolation: Some(Interpolation {
         single_quotes: true,
+        doubled: false,
         ..HASH_BRACE
     }),
     colon_symbols: true,
@@ -891,6 +900,7 @@ pub(super) static JULIA: Language = Language {
         close: ')',
         prefixes: &[],
         single_quotes: false,
+        doubled: false,
     }),
     variables: Variables::InStrings,
     decorators: true,
@@ -1103,6 +1113,7 @@ pub(super) static FSHARP: Language = Language {
         close: '}',
         prefixes: &["$"],
         single_quotes: false,
+        doubled: true,
     }),
     hash_lines: true,
     capitalized_types: true,

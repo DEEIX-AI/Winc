@@ -46,7 +46,7 @@ fn shoot_commit_stashes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 改动列表下面的储藏一组：默认收起；展开后每条一行。点一下在储藏的预览标签里打开它的第一个文件，
+/// 改动列表下面的储藏一组：默认收起；展开后每条一行。单击在储藏的预览标签里打开它的第一个文件，
 /// 差异里的下一个文件在这条储藏的文件之间切换，一起收进去的未跟踪文件排在后面；悬停时的「应用」
 /// 把改动放回工作区。
 #[test]
@@ -66,7 +66,7 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     assert_eq!(stash.branch(), Some("main"));
     assert_eq!(stash.parents.len(), 3);
 
-    // 收着时只有标题一行，在列表下面。
+    // 保存时只有标题一行，在列表下面。
     let parts = app.commit_parts();
     let section = parts.stashes.unwrap();
     assert_eq!(section.h, crate::app::git::commit::DRAWER_CLOSED);
@@ -76,9 +76,9 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     paint(&mut app);
     assert!((app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::Stash(0)));
 
-    // 点一下：两个文件，已跟踪的在前；预览标签里是第一个，标题写着储藏的名字。
+    // 单击：两个文件，已跟踪的在前；预览标签里是第一个，标题显示储藏的名字。
     app.press_commit(CommitTarget::Stash(0));
-    let view = app.git.commit.stash_view.clone().unwrap();
+    let view = app.git.commit.peek.clone().unwrap();
     let names: Vec<String> = (view.files.iter())
         .map(|(f, ..)| winc_editor::display_name(&f.path).into_owned())
         .collect();
@@ -86,14 +86,14 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     assert!(view.files[1].1.is_none());
     let doc = app.editor.active().unwrap();
     assert!(doc.diff.is_some());
-    assert_eq!(app.git.commit.stash_preview, Some(doc.id));
+    assert_eq!(app.git.commit.peek_preview, Some(doc.id));
     assert!(doc.name().contains("stash@{0}"));
     assert!(app.diff_steps_files());
     // 下一个文件是一起收进去的未跟踪文件。
     app.step_diff_file(true);
-    assert_eq!(app.git.commit.stash_view.as_ref().unwrap().at, 1);
+    assert_eq!(app.git.commit.peek.as_ref().unwrap().at, 1);
     assert!(app.editor.active().unwrap().name().contains("notes.txt"));
-    assert_eq!(app.next_stash_file(true), None);
+    assert_eq!(app.next_peek_file(true), None);
 
     // 储藏那一行下面列出它的两个文件，点击第一个时预览标签切回该文件。
     use crate::app::StashLine;
@@ -107,7 +107,7 @@ fn stashes_are_listed_below_the_changes_and_open_their_files() {
     );
     assert!((app.hits.commit.iter()).any(|(_, t)| *t == CommitTarget::StashFile(1)));
     app.press_commit(CommitTarget::StashFile(0));
-    assert_eq!(app.git.commit.stash_view.as_ref().unwrap().at, 0);
+    assert_eq!(app.git.commit.peek.as_ref().unwrap().at, 0);
     assert!(app.editor.active().unwrap().name().contains("main.rs"));
 
     // 再次点击这条储藏：文件收起，预览标签保留；再次点击时重新展开。

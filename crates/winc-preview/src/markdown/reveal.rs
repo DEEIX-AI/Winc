@@ -14,7 +14,8 @@ use super::{Block, Inline, Run, SourceMap, Style, options, parse};
 /// 返回光标所在的段落或标题按原文 `text` 生成的块。
 ///
 /// `text` 是叶子块的原文，续行带有引用的 `>` 和列表的缩进；`caret` 是光标相对 `text` 的
-/// 字节偏移，为 `None` 时不显示标记；`insert` 是输入法组字，排在光标处并加下划线，没有原文位置。
+/// 字节偏移，为 `None` 时不显示标记；`insert` 是输入法组字，排在光标处并加下划线，每个字都对应
+/// 光标的原文位置。
 /// 对照以 `text` 的开头为准（`Inline::source` 为 0）；原文已不是段落时逐字显示，不带样式。
 pub fn reveal(text: &str, caret: Option<usize>, insert: Option<&str>) -> Block {
     let lines = Lines::strip(text);
@@ -25,6 +26,22 @@ pub fn reveal(text: &str, caret: Option<usize>, insert: Option<&str>) -> Block {
         for (i, c) in text.trim_end_matches(['\n', '\r']).char_indices() {
             out.push(c, Style::default(), Some(i));
         }
+        return Block::Paragraph(Inline {
+            text: out.text,
+            runs: out.runs,
+            map: out.map,
+            ..Inline::default()
+        });
+    }
+    // 空段落（块之间多出的空行）上组字：只有组字的文字。
+    if text.trim().is_empty()
+        && let (Some(_), Some(insert)) = (caret, insert)
+    {
+        let mut out = Out {
+            insert: Some((0, insert.to_owned())),
+            ..Out::default()
+        };
+        out.flush();
         return Block::Paragraph(Inline {
             text: out.text,
             runs: out.runs,
@@ -67,6 +84,7 @@ pub fn reveal(text: &str, caret: Option<usize>, insert: Option<&str>) -> Block {
         let (at, src, len) = (a.text as usize, base + a.source as usize, a.len as usize);
         emit(&mut out, s..src.max(s), t..at.max(t));
         t = t.max(at);
+        s = s.max(src);
         if len > 0 {
             out.copy(inline, at..at + len, Some((src, &lines)), &elements, caret);
             t = at + len;
@@ -98,7 +116,8 @@ fn elements(plain: &str) -> Vec<Range<usize>> {
     let mut elements = Vec::new();
     // 行内代码和公式里的 `==` 是文字，不高亮。
     let mut code = Vec::new();
-    for (event, range) in Parser::new_ext(plain, options()).into_offset_iter() {
+    let masked = super::delims::mask(plain);
+    for (event, range) in Parser::new_ext(&masked, options()).into_offset_iter() {
         match &event {
             Event::Code(_) | Event::InlineMath(_) | Event::DisplayMath(_) => {
                 code.push(range.clone());
@@ -249,9 +268,10 @@ impl Out {
         }
     }
 
-    /// 写入输入法组字（加下划线，没有原文位置）。
+    /// 写入输入法组字（加下划线）。组字的字都对应光标的原文位置，排版后据此找到组字。
     fn flush(&mut self) {
-        if let Some((_, text)) = self.insert.take() {
+        if let Some((at, text)) = self.insert.take() {
+            self.map.push(self.text.len(), at, 0);
             let style = Style {
                 flags: Style::UNDERLINE,
                 link: 0,
@@ -297,7 +317,7 @@ impl Out {
 
     /// 处理原文中未显示为文字的一段 `gap`（相对 `plain`），返回其中是否显示了内容。
     ///
-    /// 光标接触的元素显示其标记，其余标记和换行不显示（软换行生成的空格已在文字中）。`own` 为真时，
+    /// 光标接触的元素显示其标记，其余标记和换行不显示（软换行已在文字中）。`own` 为真时，
     /// 不属于任何元素的标记单独成为一处（emoji 短码）；否则按行拆分，每段单独成为一处
     /// （标题的 `#`、转义的 `\`）。
     fn gap(
@@ -311,11 +331,26 @@ impl Out {
     ) -> bool {
         let mut shown = false;
         let text = &plain[gap.clone()];
-        // 不属于任何元素的一段，截止到换行。
+        // 不属于任何元素的一段，截止到换行或相邻元素的边界。
         let piece = |i: usize| {
-            let from = text[..i].rfind('\n').map_or(0, |n| n + 1);
-            let to = text[i..].find('\n').map_or(text.len(), |n| i + n);
-            if own { 0..text.len() } else { from..to }
+            if own {
+                return 0..text.len();
+            }
+            let line_start = text[..i].rfind('\n').map_or(0, |n| n + 1);
+            let from = text[line_start..i]
+                .char_indices()
+                .rev()
+                .find_map(|(off, ch)| {
+                    innermost(elements, gap.start + line_start + off)
+                        .map(|_| line_start + off + ch.len_utf8())
+                })
+                .unwrap_or(line_start);
+            let line_end = text[i..].find('\n').map_or(text.len(), |n| i + n);
+            let to = text[i..line_end]
+                .char_indices()
+                .find_map(|(off, _)| innermost(elements, gap.start + i + off).map(|_| i + off))
+                .unwrap_or(line_end);
+            from..to
         };
         for (i, c) in text.char_indices() {
             if matches!(c, '\n' | '\r') {
@@ -327,8 +362,11 @@ impl Out {
                 None => {
                     let p = piece(i);
                     let p = gap.start + p.start..gap.start + p.end;
-                    // 行首、行尾的空白（续行的缩进、硬换行的两个空格）不视为标记。
-                    !plain[p.clone()].trim().is_empty() && touches(&p, caret)
+                    // 空白只在段首或行尾且光标接触时显示：输入的空格使光标前进，续行的缩进不显示。
+                    let blank = plain[p.clone()].trim().is_empty();
+                    let edge =
+                        p.start == 0 || p.end == plain.len() || plain[p.end..].starts_with('\n');
+                    (!blank || edge) && touches(&p, caret)
                 }
             };
             if show {

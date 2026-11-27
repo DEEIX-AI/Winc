@@ -18,7 +18,9 @@ function signUpdates({ platform, version, bundle, key }) {
     const file = join(bundle, spec.directory, spec.name);
     const signature = signBytes(readFileSync(file), key);
     const os = platform.startsWith("macos") ? "macos" : platform.split("-")[0];
-    const arch = platform === "macos-arm64" ? "arm64" : "x86_64";
+    // The value the application compares with its own architecture: Sparkle's name on macOS,
+    // Rust's (`std::env::consts::ARCH`) elsewhere.
+    const arch = { "macos-arm64": "arm64", "linux-arm64": "aarch64" }[platform] ?? "x86_64";
     const installer = os === "windows" ? ` installer="${spec.directory}"` : "";
     const url = `${channelBase(version)}/${encodeURIComponent(spec.name)}`;
     items.push(`    <item>\n      <title>${escape(version)}</title>\n      <sparkle:version>${escape(version)}</sparkle:version>\n      <sparkle:shortVersionString>${escape(version)}</sparkle:shortVersionString>\n${os === "macos" ? "      <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>\n" : ""}      <enclosure url="${escape(url)}" length="${statSync(file).size}" type="application/octet-stream" sparkle:os="${os}" arch="${arch}"${installer} sparkle:edSignature="${signature}"/>\n    </item>\n`);

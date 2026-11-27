@@ -50,7 +50,7 @@ impl App {
         let Some(root) = self.log_root(id) else {
             return;
         };
-        let view = self.editor.document(id).and_then(|d| d.log.as_deref());
+        let view = self.log_document(id).and_then(|d| d.log.as_deref());
         let Some(details) = view.and_then(|v| v.details.as_ref()) else {
             return;
         };
@@ -76,7 +76,11 @@ impl App {
     /// 选中了日志标签 `id` 里的一个提交：停下 [`BRANCHES_DELAY`] 以后再查包含它的分支（见
     /// [`App::log_tick`]）。上次没查出来的这次重新查。
     pub(super) fn schedule_log_branches(&mut self, id: DocumentId) {
-        let view = self.editor.document(id).and_then(|d| d.log.as_deref());
+        let view = self
+            .git
+            .panel
+            .doc(&self.editor, id)
+            .and_then(|d| d.log.as_deref());
         if let Some(oid) = view.and_then(|v| v.details.as_ref()).map(|d| &d.oid) {
             self.git.log.branches_failed.remove(oid);
         }
@@ -164,13 +168,13 @@ impl App {
     pub(super) fn toggle_log_branches(&mut self) {
         let from = self.log_branches_shown();
         let shown = !self.state.log_branches.unwrap_or(true);
-        self.update_state(|state| state.log_branches = Some(shown));
+        self.update_state(move |state| state.log_branches = Some(shown));
         let clock = self.clock(crate::app::animation::SIDEBAR_ANIMATION);
         self.git.log.branches_motion = clock.map(|clock| (from, clock));
         self.relayout();
     }
 
-    /// 点了分支面板的第 `i` 行：「全部分支」不再按分支筛选；分支、标签只看它的提交，已经在看它
+    /// 点击分支面板的第 `i` 行：「全部分支」不再按分支筛选；分支、标签只看它的提交，已经在看它
     /// 时改回全部，按住 `⌘` 点时加上或去掉它；组、目录收起或展开（和分支选择器共用）。
     pub(super) fn press_log_branch_row(&mut self, i: usize) {
         let Some(row) = self.log_branch_rows().into_iter().nth(i) else {

@@ -168,10 +168,15 @@ fn file_kinds_cover_each_ecosystem() {
     assert_eq!(glyph("main.cpp"), Letters("C++"));
     assert_eq!(glyph("Main.java"), Java);
     assert_eq!(glyph("App.vue"), Code);
+    // LaTeX 的源文件和宏包是 TEX，参考文献库仍是文档。
+    assert_eq!(glyph("paper.tex"), Letters("TEX"));
+    assert_eq!(glyph("thesis.cls"), Letters("TEX"));
+    assert_eq!(glyph("refs.bib"), Text);
     // `file_kind` 给出的每种记号都在 `FileGlyph::ALL` 里：目录菜单按它事先画图标。
     let samples = [
         "a.ts",
         "a.ets",
+        "a.tex",
         "a.js",
         "a.py",
         "a.go",
@@ -275,7 +280,7 @@ fn terminal_colors_stand_out_from_the_card() {
     for theme in LIGHT_THEMES.iter().chain(&DARK_THEMES) {
         let p = theme.palette;
         for (i, &color) in p.ansi.iter().enumerate() {
-            // 深色主题的黑、浅色主题的亮白本来就接近底色（程序拿它们铺底），不要求。
+            // 深色主题的黑、浅色主题的亮白原本就接近底色（程序拿它们铺底），不要求。
             if (p.dark && i == 0) || (!p.dark && i == 15) {
                 continue;
             }
@@ -293,7 +298,7 @@ fn unreadable_colors_get_just_enough_contrast() {
     let fixed = readable(navy, dark_bg, 3.0);
     assert!((contrast(fixed, dark_bg) - 3.0).abs() < 0.1);
     assert!(fixed.b > fixed.r && fixed.b > fixed.g);
-    // 本来就够的不动；同色（用来藏字）不动；最低对比度为 0 时不动。
+    // 原本就够的不动；同色（用来藏字）不动；最低对比度为 0 时不动。
     let white = Color::hex(0xFFFFFF);
     assert_eq!(readable(white, dark_bg, 3.0), white);
     assert_eq!(readable(dark_bg, dark_bg, 3.0), dark_bg);

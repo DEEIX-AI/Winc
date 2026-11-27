@@ -6,6 +6,8 @@ terminal-maximize-panel = 最大化面板
 terminal-restore-panel = 还原面板
 terminal-hide-panel = 隐藏终端面板
 terminal-show-panel = 显示终端面板
+terminal-move-to-editor = 将终端移到编辑区
+terminal-move-to-panel = 将终端移到面板
 terminal-tab-default-name = 终端
 terminal-new = 新建终端
 terminal-module-disabled = 终端模块未启用
@@ -14,11 +16,14 @@ terminal-module-disabled = 终端模块未启用
 
 terminal-helper-missing = 未找到终端组件，请重新安装 Winc
 terminal-helper-start-failed = 无法启动终端组件：{ $error }
+terminal-start-not-found = 未找到程序「{ $program }」
+terminal-start-failed = 无法启动「{ $program }」：{ $error }
 terminal-needs-conpty = 终端需要 Windows 10 1809 或更高版本
 terminal-helper-exited = 终端组件已退出
 terminal-helper-version-mismatch = 终端组件的版本与 Winc 不一致，请重新安装 Winc
 terminal-process-exited = 进程已退出（退出码 { $code }）
 terminal-disconnected = 终端连接已断开
+terminal-preparing = 正在准备 { $host } 上的终端…
 terminal-restart = 重新启动
 terminal-restart-confirm = 要重新启动此终端吗？
 terminal-restart-confirm-detail = 此终端的连接已断开，重新启动将结束其中仍在运行的程序。
@@ -73,6 +78,8 @@ terminal-upload-too-large = { $size } 太大，没有传到远端主机（每次
 terminal-upload-no-image = 剪贴板中的图片无法读取
 terminal-upload-no-folder = 无法在远端主机上创建存放目录
 terminal-upload-elsewhere = 已传到远端主机：{ $path }
+terminal-image-paste-failed = 无法粘贴剪贴板中的图片：{ $error }
+terminal-image-saved-elsewhere = 剪贴板中的图片已存为：{ $path }
 
 ## 运行配置。
 
@@ -98,3 +105,4 @@ terminal-run-stopped = 已停止
 terminal-run-finished = 已完成
 terminal-run-failed = 「{ $name }」运行失败（退出码 { $code }）
 terminal-run-menu-running = 运行中 · { $command }
+terminal-split-group = { $count } 个终端

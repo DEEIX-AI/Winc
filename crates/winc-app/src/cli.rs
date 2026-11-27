@@ -3,8 +3,8 @@
 //! 不带参数时恢复上次的现场；给出目录或文件时打开它们，多个文件以第一个文件所在的目录作为项目。
 //! 命令行上的 `文件:行[:列]` 跳到指定位置，行号和列号从 1 起。`ssh://主机/路径` 打开远端主机上
 //! 的目录和文件（见 [`remote_open`]）。`-w`、`--wait` 在给出的文件的标签
-//! 全部关闭后退出，供 `git` 等程序作为编辑器调用；`-` 读取标准输入；`-n`、`--new-instance` 不交给
-//! 正在运行的 winc，由当前进程新建实例。
+//! 全部关闭后退出，供 `git` 等程序作为编辑器调用；`-d`、`--diff` 并排比较两个文件；`-` 读取标准
+//! 输入；`-n`、`--new-instance` 不转交正在运行的 winc，由当前进程新建实例。
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -22,11 +22,22 @@ pub struct Target {
     pub col: Option<usize>,
 }
 
+/// 命令行上要比较的两个文件（`-d`、`--diff`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diff {
+    /// 左侧的文件（原来的版本）。
+    pub left: PathBuf,
+    /// 右侧的文件（修改后的版本）。
+    pub right: PathBuf,
+}
+
 /// 解析后的命令行参数。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Args {
     /// 要打开的目录和文件，顺序与命令行一致。
     pub targets: Vec<Target>,
+    /// 要比较的文件，每对各开一个差异标签，顺序与命令行一致。
+    pub diffs: Vec<Diff>,
     /// `-w`、`--wait`：所有给出的文件的标签关闭后才退出。
     pub wait: bool,
     /// 是否读取标准输入（`-`）。
@@ -58,8 +69,8 @@ impl Args {
 ///
 /// # Errors
 ///
-/// 出现无法识别的选项，或使用 `--wait` 但没有给出文件、也没有读取标准输入时，返回面向用户的
-/// 错误说明（含用法）。
+/// 出现无法识别的选项、`--diff` 之后不足两个文件，或使用 `--wait` 但没有给出文件、也没有读取
+/// 标准输入时，返回面向用户的错误说明（含用法）。
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
     let mut parsed = Args::default();
     let mut options = true;
@@ -74,6 +85,16 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 }
                 Some("-w" | "--wait") => {
                     parsed.wait = true;
+                    continue;
+                }
+                // 其后的两个参数是要比较的文件：不拆出行号，以 `-` 开头也不当作选项。
+                Some("-d" | "--diff") => {
+                    let (Some(left), Some(right)) = (args.next(), args.next()) else {
+                        let message = t!("cmd-cli-diff-needs-files");
+                        return Err(format!("{message}\n\n{}", usage()));
+                    };
+                    let (left, right) = (PathBuf::from(left), PathBuf::from(right));
+                    parsed.diffs.push(Diff { left, right });
                     continue;
                 }
                 Some("-n" | "--new-instance") => {
@@ -138,9 +159,17 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             let path = std::mem::take(&mut target.path);
             target.path = winc_editor::wsl::from_distro(distro, path);
         }
+        for path in parsed
+            .diffs
+            .iter_mut()
+            .flat_map(|d| [&mut d.left, &mut d.right])
+        {
+            *path = winc_editor::wsl::from_distro(distro, std::mem::take(path));
+        }
     }
     check_remote(&parsed)?;
-    if parsed.wait && parsed.targets.is_empty() && !parsed.stdin {
+    let waits_for = !parsed.targets.is_empty() || !parsed.diffs.is_empty();
+    if parsed.wait && !waits_for && !parsed.stdin {
         return Err(format!("{}\n\n{}", t!("cmd-cli-wait-needs-file"), usage()));
     }
     Ok(parsed)
@@ -165,9 +194,30 @@ pub fn without_launcher_flag(args: impl IntoIterator<Item = OsString>) -> Vec<Os
         .collect()
 }
 
+/// 检查 `--diff` 给出的路径都是本机上存在的文件。
+///
+/// # Errors
+///
+/// 有路径不存在或不是文件时，返回面向用户的说明。
+pub fn check_diffs(args: &Args) -> Result<(), String> {
+    for path in args.diffs.iter().flat_map(|d| [&d.left, &d.right]) {
+        if !winc_backend::fs::metadata(path).is_ok_and(|meta| meta.is_file()) {
+            let path = path.display().to_string();
+            return Err(t!("cmd-cli-diff-not-file", path = path).to_owned());
+        }
+    }
+    Ok(())
+}
+
 /// 返回命令行用法说明。
 pub fn usage() -> String {
     t!("cmd-cli-usage").to_owned()
+}
+
+/// 路径 `path` 是否以分隔符结尾（`新目录/`）：这样写的是目录，不存在时不新建同名的文件。
+pub(crate) fn names_folder(path: &std::path::Path) -> bool {
+    let text = path.as_os_str().to_string_lossy();
+    text.ends_with('/') || (cfg!(windows) && text.ends_with('\\'))
 }
 
 /// 打开文件或目录的链接的前缀，链接为 `winc://file/<绝对路径>[:行[:列]]`。
@@ -176,7 +226,8 @@ pub const LINK_SCHEME: &str = "winc";
 /// 把 `winc://file/<绝对路径>[:行[:列]]` 链接解析为要打开的 [`Target`]，行号和列号从 1 起。
 ///
 /// 路径按百分号编码解码；查询和片段（`?`、`#` 之后）忽略。Windows 路径写作
-/// `winc://file/C:/目录/文件`。不是这种链接、路径不是绝对路径或解码后不是 UTF-8 时返回 `None`。
+/// `winc://file/C:/目录/文件`。不是这种链接、路径不是绝对路径、是网络路径或解码后不是 UTF-8 时
+/// 返回 `None`。
 pub fn link(url: &str) -> Option<Target> {
     let (scheme, rest) = url.split_once("://")?;
     let rest = rest.strip_prefix("file")?;
@@ -190,6 +241,11 @@ pub fn link(url: &str) -> Option<Target> {
         [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => path[1..].to_owned(),
         _ => path,
     };
+    // 链接可以来自网页：不接受以两个分隔符开头的网络路径和设备路径（`//主机/共享`、
+    // `\\?\…`），在 Windows 上查看它们是否存在就会向那台主机发起连接和身份验证。
+    if winc_backend::names_host(&path) {
+        return None;
+    }
     let target = target(OsString::from(path));
     target.path.is_absolute().then_some(target)
 }
@@ -217,16 +273,16 @@ pub const SSH_SCHEME: &str = "ssh";
 /// 把 `ssh://[用户@]主机[:端口]/绝对路径[:行[:列]]` 解析为 [`Target`]，路径是该主机的虚拟路径，
 /// 行号和列号从 1 起。
 ///
-/// 主机按 [`winc_backend::Target`] 校验，可以是 `~/.ssh/config` 中的别名。路径末尾的 `:正整数`
-/// 总是作为行号和列号，路径中的 `:` 写作 `%3A`；之后路径按百分号编码解码，查询和片段忽略。
-/// 不符合时返回 `None`。
+/// 主机按 [`winc_backend::Target`] 校验，可以是 `~/.ssh/config` 中的别名；IPv6 地址写在方括号
+/// 中，`%` 写作 `%25`（RFC 6874）。路径末尾的 `:正整数` 总是作为行号和列号，路径中的 `:` 写作
+/// `%3A`；之后路径按百分号编码解码，查询和片段忽略。不符合时返回 `None`。
 fn ssh(url: &str) -> Option<Target> {
     let (scheme, rest) = url.split_once("://")?;
     if !scheme.eq_ignore_ascii_case(SSH_SCHEME) {
         return None;
     }
     let slash = rest.find('/')?;
-    let host = winc_backend::Target::new(&rest[..slash])?;
+    let host = winc_backend::Target::new(&rest[..slash].replace("%25", "%"))?;
     let rest = &rest[slash..];
     let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
     let (path, line, col) = position(rest).unwrap_or((rest, None, None));
@@ -273,8 +329,8 @@ fn remote_file(target: &Target, targets: &[Target]) -> bool {
         || (targets.iter()).any(|t| t.path != target.path && target.path.starts_with(&t.path))
 }
 
-/// 检查 `ssh://` 参数：都指向同一个连接目标，不与本机路径、`--wait` 和 `-` 一起使用，其中至多
-/// 一个是目录。
+/// 检查 `ssh://` 参数：都指向同一个连接目标，不与本机路径（含 `--diff` 的文件）、`--wait` 和 `-`
+/// 一起使用，其中至多一个是目录。
 fn check_remote(parsed: &Args) -> Result<(), String> {
     let mut remote = parsed.targets.iter().map(|t| winc_backend::locate(&t.path));
     let Some(first) = remote.next().flatten() else {
@@ -283,7 +339,7 @@ fn check_remote(parsed: &Args) -> Result<(), String> {
             None => Ok(()),
         };
     };
-    if remote.any(|at| at.is_none_or(|at| at.target != first.target)) {
+    if !parsed.diffs.is_empty() || remote.any(|at| at.is_none_or(|at| at.target != first.target)) {
         return Err(t!("cmd-cli-ssh-mixed").to_owned());
     }
     if parsed.wait || parsed.stdin {
@@ -364,6 +420,10 @@ fn position(text: &str) -> Option<(&str, Option<usize>, Option<usize>)> {
     reason = "只访问本机：命令行参数是本机路径"
 )]
 fn target(arg: OsString) -> Target {
+    let arg = match arg.to_str().and_then(unquoted).filter(|_| cfg!(windows)) {
+        Some(path) => OsString::from(path),
+        None => arg,
+    };
     let whole = Target {
         path: PathBuf::from(&arg),
         line: None,
@@ -383,6 +443,17 @@ fn target(arg: OsString) -> Target {
         },
         None => whole,
     }
+}
+
+/// 返回被 Windows 的命令行规则吃掉结尾反斜杠的路径 `text` 原来的写法；不是这种情况时返回
+/// `None`。
+///
+/// 资源管理器把 `%V` 换成路径放在引号里传入；路径是盘符根目录时写成 `"C:\"`，其中的 `\"`
+/// 按规则是一个引号，程序收到的是 `C:"`。引号不能出现在 Windows 的文件名里，结尾有引号的
+/// 只能是这种情况。
+fn unquoted(text: &str) -> Option<String> {
+    let path = text.strip_suffix('"')?;
+    (!path.is_empty() && !path.contains('"')).then(|| format!("{path}\\"))
 }
 
 #[cfg(test)]

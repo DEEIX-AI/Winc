@@ -118,7 +118,7 @@ fn find_centres_far_matches_and_keeps_near_ones_still() {
     assert_eq!(scroll(&app), before);
 
     // 首个可见位置设成第 328 行：下一处 `-> usize`（在 `item_41` 的开头）正好贴到编辑区顶部、
-    // 被查找条盖住，视为不可见，编辑区向下滚一行使其露出。光标放在上一块（`item_40`）内，
+    // 被查找条遮住，视为不可见，编辑区向下滚一行使其露出。光标放在上一块（`item_40`）内，
     // 命中位置因此与光标分开。
     let doc = app.editor.active_mut().unwrap();
     doc.scroll_line = (41 * 8) as f64;
@@ -187,6 +187,21 @@ fn selections_dim_without_focus_and_hide_the_current_line() {
     app.window.focused = true;
     let p = app.palette;
     assert_ne!(p.selection_inactive, p.selection);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：从外部打开文件后窗口持有焦点，但最后收到的焦点事件是失去焦点，按键时不显示光标。
+#[test]
+fn input_to_an_unfocused_window_brings_back_the_caret() {
+    let dir = sample_folder("focus-from-input");
+    let path = dir.join("a.txt");
+    std::fs::write(&path, "one\ntwo\n").unwrap();
+    let mut app = app_with(&path, false);
+    app.focus = Focus::Editor;
+    app.window.focused = false;
+    assert!(!app.editor_focused());
+    app.notice_focus_from_input();
+    assert!(app.window.focused && app.editor_focused());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -355,7 +370,7 @@ fn the_wheel_with_the_command_key_steps_the_font_size() {
     notch(&mut app, -1.0);
     assert_eq!(size(&app), start);
     assert_eq!(app.editor.active().unwrap().scroll_line, top);
-    // 同时按着其他修饰键、鼠标不在编辑区或终端上时照常滚动。
+    // 同时按着其他修饰键、鼠标不在编辑区或终端上时仍然滚动。
     app.pointer.modifiers = command_key() | ModifiersState::SHIFT;
     notch(&mut app, 1.0);
     app.pointer.modifiers = command_key();

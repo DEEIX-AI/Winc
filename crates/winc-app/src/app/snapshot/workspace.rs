@@ -4,12 +4,19 @@
 use super::*;
 
 pub(super) mod folders;
+#[cfg(unix)]
+mod links;
 pub(super) mod loading;
+mod new_files;
 pub(super) mod outline;
 mod panes;
 pub(super) mod picker;
+mod places;
+mod project;
 pub(super) mod recent;
 pub(super) mod search;
+mod search_dialog;
+mod search_tree;
 pub(super) mod selection;
 pub(super) mod session;
 pub(super) mod tab_selection;

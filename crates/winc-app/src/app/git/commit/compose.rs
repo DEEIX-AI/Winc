@@ -61,7 +61,8 @@ impl App {
 
     /// 提交成功后记下这次的信息：所有窗口共用，下次启动沿用。
     pub(super) fn remember_commit_message(&mut self, message: &str) {
-        self.update_state(|state| state.remember_commit_message(message));
+        let message = message.to_owned();
+        self.update_state(move |state| state.remember_commit_message(&message));
     }
 
     /// 首行的格式提示：首行过长（见 [`SUBJECT_LIMIT`]），或者首行后面紧接着正文、没有空一行；
@@ -89,32 +90,9 @@ impl App {
         if std::mem::take(&mut self.git.commit.todo_passed) || !self.state.commit_check_todo {
             return false;
         }
-        let Some(status) = self.git.status.as_ref() else {
+        let Some(scopes) = self.commit_scopes() else {
             return false;
         };
-        let staged = self.git.commit.staging();
-        let (mut tracked, mut untracked) = (Vec::new(), Vec::new());
-        if !staged {
-            for entry in self.git.commit.picked_entries(status) {
-                match entry.untracked() {
-                    true => untracked.push(entry.path.clone()),
-                    false => tracked.push(entry.path.clone()),
-                }
-            }
-        }
-        // 当前仓库，然后是一并提交的其他仓库：各自取新增的行。
-        let current = TodoScope {
-            repo: None,
-            staged,
-            tracked,
-            untracked,
-        };
-        let mut scopes = vec![current];
-        scopes.extend(self.other_todo_scopes());
-        let empty = |s: &TodoScope| !s.staged && s.tracked.is_empty() && s.untracked.is_empty();
-        if scopes.iter().all(empty) {
-            return false;
-        }
         let sender = self.git.commit.results.0.clone();
         self.git.commit.busy = true;
         self.run_git_job(move |git, root| {
@@ -140,16 +118,16 @@ impl App {
         true
     }
 
-    /// 收到提交前检查的结果：没有新增的 TODO 时接着提交；有时先确认。
+    /// 收到提交前检查的结果：没有新增的 TODO 时随后提交；有时先确认。
     pub(super) fn todo_checked(&mut self, count: usize, root: &Path) {
         self.git.commit.busy = false;
         if self.git.root.as_deref() != Some(root) {
-            self.git.commit.push_after = false;
+            self.git.commit.drop_push_intent();
             return;
         }
         if count == 0 {
             self.git.commit.todo_passed = true;
-            self.git_commit();
+            self.git_commit_resumed();
             return;
         }
         let message = t!("git-commit-todo-confirm", count = count);
@@ -158,24 +136,26 @@ impl App {
         let shown = self.show_confirm(&message, detail, button, |ok| {
             Some(UserEvent::GitCommitTodo(ok))
         });
+        self.git.commit.todo_asked = shown;
         if !shown {
-            self.git.commit.push_after = false;
+            self.git.commit.drop_push_intent();
         }
     }
 
     /// 新增 TODO 的确认框选了 `ok`（仍然提交）或取消。
     pub(in crate::app) fn todo_confirmed(&mut self, ok: bool) {
+        self.git.commit.todo_asked = false;
         if ok {
             self.git.commit.todo_passed = true;
-            self.git_commit();
+            self.git_commit_resumed();
         } else {
-            self.git.commit.push_after = false;
+            self.git.commit.drop_push_intent();
         }
     }
 
     /// 打开或关闭提交前检查新增的 TODO（提交按钮的菜单）。
     pub(super) fn toggle_check_todo(&mut self) {
-        self.update_state(|state| state.commit_check_todo = !state.commit_check_todo);
+        self.update_state(move |state| state.commit_check_todo = !state.commit_check_todo);
     }
 
     /// 提交按钮菜单的最后几项：「提交检查」子菜单（格式化代码、检查 TODO 两个开关），以及最近的
@@ -249,7 +229,7 @@ impl App {
         let message = with_co_author(self.git.commit.message.text(), &author);
         let subject_end = message.find('\n').unwrap_or(message.len());
         self.git.commit.message.set_text(&message);
-        // 还没写首行时光标留在首行，接着写。
+        // 还没写首行时光标留在首行，继续写。
         let caret = if subject_end == 0 { 0 } else { message.len() };
         self.git.commit.message.set_caret(caret, false);
         self.focus = Focus::CommitMessage;
@@ -294,29 +274,55 @@ pub(super) fn has_todo(line: &str) -> bool {
     })
 }
 
-/// 提交前的 TODO 检查在一个仓库里查的范围。
-struct TodoScope {
+/// 一个仓库中将要提交的范围：提交前检查新增的 TODO 和生成提交信息都按此范围读取改动。
+pub(super) struct PendingScope {
     /// 仓库的根目录；`None` 是当前仓库。
-    repo: Option<PathBuf>,
-    /// 查暂存区相对 `HEAD` 新增的行（暂存区视图）；否则查 `tracked` 在工作区里新增的行。
-    staged: bool,
-    /// 勾上的已跟踪文件。
-    tracked: Vec<PathBuf>,
-    /// 勾上的未跟踪文件：整个文件都是新增的。
-    untracked: Vec<PathBuf>,
+    pub(super) repo: Option<PathBuf>,
+    /// 提交暂存区相对 `HEAD` 的改动（暂存区视图）；否则提交 `tracked` 在工作区中的改动。
+    pub(super) staged: bool,
+    /// 勾选的已跟踪文件。
+    pub(super) tracked: Vec<PathBuf>,
+    /// 勾选的未跟踪文件：整个文件都是新增内容。
+    pub(super) untracked: Vec<PathBuf>,
 }
 
 impl App {
-    /// 一并提交的其他仓库各自的 TODO 检查范围：勾选式下勾上的文件，暂存区视图中暂存区里的内容。
-    /// 修改上一次提交、有合并或变基进行中的仓库不一并提交，也不查。
-    fn other_todo_scopes(&self) -> Vec<TodoScope> {
+    /// 返回将要提交的范围：当前仓库在前，其后是一并提交的其他仓库。尚未读取状态或没有要提交的
+    /// 内容时返回 `None`。
+    pub(super) fn commit_scopes(&self) -> Option<Vec<PendingScope>> {
+        let status = self.git.status.as_ref()?;
+        let staged = self.git.commit.staging();
+        let (mut tracked, mut untracked) = (Vec::new(), Vec::new());
+        if !staged {
+            for entry in self.git.commit.picked_entries(status) {
+                match entry.untracked() {
+                    true => untracked.push(entry.path.clone()),
+                    false => tracked.push(entry.path.clone()),
+                }
+            }
+        }
+        let current = PendingScope {
+            repo: None,
+            staged,
+            tracked,
+            untracked,
+        };
+        let mut scopes = vec![current];
+        scopes.extend(self.other_scopes());
+        let empty = |s: &PendingScope| !s.staged && s.tracked.is_empty() && s.untracked.is_empty();
+        (!scopes.iter().all(empty)).then_some(scopes)
+    }
+
+    /// 返回一并提交的其他仓库各自的范围：勾选式下为勾选的文件，暂存区视图中为暂存区的内容。修改
+    /// 上一次提交时，以及正在合并或变基的仓库，不一并提交。
+    fn other_scopes(&self) -> Vec<PendingScope> {
         if !self.commit_shows_others() || self.git.commit.amend {
             return Vec::new();
         }
         if self.git.commit.staging() {
             let roots = self.other_staged_roots().into_iter();
             return roots
-                .map(|(repo, _)| TodoScope {
+                .map(|(repo, _)| PendingScope {
                     repo: Some(repo),
                     staged: true,
                     tracked: Vec::new(),
@@ -342,7 +348,7 @@ impl App {
                 continue;
             }
             let paths = |list: Vec<&Entry>| list.into_iter().map(|e| e.path.clone()).collect();
-            scopes.push(TodoScope {
+            scopes.push(PendingScope {
                 repo: Some(repo.clone()),
                 staged: false,
                 tracked: paths(tracked),

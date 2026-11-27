@@ -1,19 +1,24 @@
-//! Windows 上交由系统的操作，读取的系统设置，任务栏的跳转列表，按屏幕刷新绘制动画的显示链接，
-//! 以及文件拖进拖出时的鼠标位置和系统拖放。
+//! Windows 上交由系统的操作，读取的系统设置，任务栏的跳转列表，在文件管理器中显示文件，
+//! 文件对话框的拥有者，按屏幕刷新绘制动画的显示链接，以及文件拖进拖出时的鼠标位置、鼠标下的
+//! 窗口和系统拖放。
 
 mod display_link;
 // 测试中以 `TreeState::dragged_out` 代替系统的拖放。
 #[cfg_attr(test, allow(dead_code))]
 mod drag;
+mod file_dialog;
 mod jump_list;
 mod pointer;
+mod reveal;
 mod touch;
 
 pub use display_link::DisplayLink;
 #[cfg_attr(test, allow(unused_imports))]
 pub use drag::drag_files;
+pub use file_dialog::{DialogOwner, MainWindow, raise_file_dialog};
 pub use jump_list::sync_jump_list;
-pub use pointer::mouse_location;
+pub use pointer::{mouse_location, topmost_at_cursor};
+pub use reveal::reveal_in_file_manager;
 pub use touch::{WindowHitTest, WindowInput};
 
 use std::io;
@@ -121,6 +126,24 @@ pub fn allow_foreground(pid: u32) {
     use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
     // SAFETY: 只传入进程编号；调用失败时没有其他影响。
     unsafe { AllowSetForegroundWindow(pid) };
+}
+
+/// 请系统把窗口 `window` 切到前台；本进程没有前台权限时系统拒绝，改为闪烁任务栏按钮。
+///
+/// 不模拟按键：系统把模拟的按键当作用户输入，输入不是发给本进程时，其他进程转让来的前台权限
+/// （见 [`allow_foreground`]）随之失效。
+#[allow(unsafe_code)] // SetForegroundWindow
+pub fn focus_window(window: &winit::window::Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: 句柄属于仍然存活的 `window`；系统拒绝时返回 0，没有其他影响。
+    unsafe { SetForegroundWindow(handle.hwnd.get() as _) };
 }
 
 /// 从命令行启动时接上该命令行的控制台，之后的 `println!`、`eprintln!` 输出到该控制台；从图形

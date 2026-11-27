@@ -10,10 +10,29 @@ const TOKEN: Color = Color::hex(0x0000ff);
 
 /// 以宽 `width`（逻辑像素）、正文字号 16 排版 `markdown`，返回各顶层块排出的内容和高度。
 fn lay(markdown: &str, width: f32) -> Vec<(Out, f32)> {
+    lay_with(markdown, width, &HashMap::new())
+}
+
+/// 同 [`lay`]，图片按网址在 `images` 中查找。
+fn lay_with(markdown: &str, width: f32, images: &HashMap<PathBuf, ImageSlot>) -> Vec<(Out, f32)> {
+    lay_in(markdown, width, images, (0.0, 0.0))
+}
+
+/// 同 [`lay`]，比一栏宽的表格可以占用两侧的留白 `bleed`（见 [`Cx::bleed`]）。
+fn lay_bled(markdown: &str, width: f32, bleed: (f32, f32)) -> Vec<(Out, f32)> {
+    lay_in(markdown, width, &HashMap::new(), bleed)
+}
+
+fn lay_in(
+    markdown: &str,
+    width: f32,
+    images: &HashMap<PathBuf, ImageSlot>,
+    bleed: (f32, f32),
+) -> Vec<(Out, f32)> {
     let parsed = winc_preview::markdown::parse(markdown);
     let mut renderer =
         Renderer::offscreen(800.0, 600.0, 1.0, Color::hex(0xffffff), None, None).unwrap();
-    let (images, toggled) = (HashMap::new(), HashSet::new());
+    let toggled = HashSet::new();
     let mut memo = Memo::default();
     let mut laid = Vec::new();
     renderer.draw(|frame| {
@@ -26,8 +45,8 @@ fn lay(markdown: &str, width: f32) -> Vec<(Out, f32)> {
             accent,
             colors: Colors::new(TEXT, Color::hex(0x808080), accent, false),
             dark: false,
-            images: &images,
-            image_path: &|_| None,
+            images,
+            image_path: &|url| (!images.is_empty()).then(|| PathBuf::from(url)),
             wanted: Vec::new(),
             memo: &mut memo,
             toggled: &toggled,
@@ -40,6 +59,7 @@ fn lay(markdown: &str, width: f32) -> Vec<(Out, f32)> {
             tall: f32::INFINITY,
             repeat: 0,
             toggles: HashMap::new(),
+            bleed,
         };
         let env = Env {
             color: TEXT,
@@ -131,6 +151,53 @@ fn tables_wider_than_the_text_scroll_sideways() {
     assert!(laid[0].0.scrolls[0].max() > 0.0);
 }
 
+/// 返回各块中表格的外框（块里的坐标）。
+fn tables(laid: &[(Out, f32)]) -> Vec<Rect> {
+    (laid.iter().flat_map(|(out, _)| &out.items))
+        .filter_map(|item| match item {
+            Item::Table { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 比一栏宽的表格占用两侧留白：放得下时以一栏为中心展开，一侧不够时移到另一侧；放不下时
+/// 占满留白横向滚动；缩进的表格只向右展开。
+#[test]
+fn wide_tables_spread_into_the_margins() {
+    let cell = "a-long-unbreakable-cell-value";
+    let table = |cols: usize| {
+        let row = format!("| {} |\n", vec![cell; cols].join(" | "));
+        format!("{row}|{}\n{row}", "---|".repeat(cols))
+    };
+    let width = tables(&lay(&table(3), 10_000.0))[0].w;
+    let column = (width - 200.0).round();
+
+    let laid = lay_bled(&table(3), column, (300.0, 300.0));
+    let rect = tables(&laid)[0];
+    assert!(laid[0].0.scrolls.is_empty());
+    assert!(
+        (rect.x + ((rect.w - column) / 2.0).round()).abs() <= 1.0,
+        "{rect:?}"
+    );
+    let laid = lay_bled(&table(3), column, (300.0, 40.0));
+    let rect = tables(&laid)[0];
+    assert!(laid[0].0.scrolls.is_empty());
+    assert!((rect.right() - (column + 40.0)).abs() <= 1.0, "{rect:?}");
+    // 超出的宽度只比两侧留白之和多不到半个像素：仍然放下，不横向滚动。
+    let total = lay_bled(&table(3), column, (0.0, 0.0))[0].0.scrolls[0].content;
+    let laid = lay_bled(&table(3), column, (100.0, total - column - 100.3));
+    assert!(laid[0].0.scrolls.is_empty());
+
+    let laid = lay_bled(&table(8), column, (100.0, 50.0));
+    let strip = laid[0].0.scrolls[0].rect;
+    assert_eq!((strip.x, strip.w), (-100.0, column + 150.0));
+
+    let nested = format!("- item\n\n  {}", table(3).replace('\n', "\n  "));
+    let rect = tables(&lay_bled(&nested, column, (300.0, 300.0)))[0];
+    assert!(rect.x > 0.0, "{rect:?}");
+}
+
 #[test]
 fn task_list_items_have_checkboxes() {
     let laid = lay("- [x] done\n- [ ] todo\n", 600.0);
@@ -159,6 +226,19 @@ fn code_blocks_keep_their_text_and_are_highlighted() {
     assert!(!diagram);
     // 关键字按语法标记的颜色绘制。
     assert!(texts(out).iter().any(|t| t.2 == TOKEN));
+}
+
+#[test]
+fn the_code_of_a_fenced_block_is_the_text_between_its_fences() {
+    assert_eq!(
+        fenced_code("```rust\nfn a() {}\n\nfn b() {}\n```"),
+        "fn a() {}\n\nfn b() {}"
+    );
+    // 还没有结尾围栏：到末尾为止。
+    assert_eq!(fenced_code("```\nlet x = 1;"), "let x = 1;");
+    for empty in ["```", "```\n```", "```\n"] {
+        assert_eq!(fenced_code(empty), "", "{empty:?}");
+    }
 }
 
 #[test]
@@ -260,4 +340,104 @@ fn edge_labels_do_not_overlap() {
             assert!(r.w <= 0.0 || r.h <= 0.0, "「{a}」和「{b}」重叠");
         }
     }
+}
+
+#[test]
+fn list_markers_align_with_the_top_of_an_image_line() {
+    let slot = |width| ImageSlot::Ready {
+        width,
+        height: 400,
+        density: 1,
+        picture: None,
+        pixels: Vec::new(),
+        drawing: Vec::new(),
+    };
+    let images = HashMap::from([
+        (PathBuf::from("wide.png"), slot(2000)),
+        (PathBuf::from("dot.png"), slot(400)),
+    ]);
+    let marker_and_image = |markdown: &str| {
+        let laid = lay_with(markdown, 600.0, &images);
+        let out = &laid[0].0;
+        let image = out
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Image { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .unwrap();
+        let texts = texts(out);
+        let marker = texts.iter().find(|t| t.3 == "1.").unwrap().0;
+        let text = texts.iter().find(|t| t.3.contains("文字")).unwrap().0;
+        (marker, image, text)
+    };
+    // 图片独占首行：记号的顶端与图片的顶端对齐。
+    let (marker, image, text) = marker_and_image("1. ![a](wide.png) 文字\n");
+    assert!(
+        marker > image.y && marker < image.y + 16.0,
+        "{marker} {image:?}"
+    );
+    assert!(text > image.y + image.h);
+    // 图片与文字同行：记号与文字同一基线。
+    let (marker, _, text) = marker_and_image("1. ![a](dot.png) 文字\n");
+    assert_eq!(marker, text);
+}
+
+/// 回归：行内代码排在行尾、整段换到下一行时，开头的留白留在上一行，画成一块空的底色。
+#[test]
+fn inline_code_moves_to_the_next_line_with_its_padding() {
+    let markdown =
+        "修复分支：`fix/review-findings`（自 `perf/large-file-loading` 拉出，十个提交，未推送）";
+    for width in (160..520).step_by(4) {
+        let laid = lay(markdown, width as f32);
+        let fills = laid[0].0.items.iter().filter_map(|item| match item {
+            Item::Fill { rect, .. } => Some(*rect),
+            _ => None,
+        });
+        for rect in fills {
+            assert!(rect.w > 8.0, "宽 {width} 时有一块空的代码底色：{rect:?}");
+        }
+    }
+}
+
+#[test]
+fn drift_moves_positions_after_the_first_edit() {
+    // 在第 10 个字节处插入 3 个字节。
+    let drift = Drift { from: 10, delta: 3 };
+    assert_eq!(drift.moved(9), 9);
+    assert_eq!(drift.moved(10), 13);
+    assert_eq!(drift.moved_start(10), 10);
+    assert_eq!(drift.moved_start(11), 14);
+    // 删去第 10 至 15 个字节：其中的位置落在改动处。
+    let drift = Drift {
+        from: 10,
+        delta: -5,
+    };
+    assert_eq!(drift.moved(12), 10);
+    assert_eq!(drift.moved(20), 15);
+    // 顶层块的起点在改动之后时整块移动，块内的相对位置不变。
+    assert_eq!(drift.within(4), Drift { from: 6, delta: -5 });
+    assert_eq!(drift.within(11), Drift::NONE);
+    assert_eq!(Drift::NONE.moved(usize::MAX - 1), usize::MAX - 1);
+}
+
+#[test]
+fn a_live_cell_hides_its_padding_and_shows_typed_spaces() {
+    fn shown(segment: &str, caret: usize) -> Option<&str> {
+        table::cell_content(segment, caret).map(|range| &segment[range])
+    }
+    // 光标在边距中或文字中：只显示文字。
+    assert_eq!(shown(" 甲 ", 0), Some("甲"));
+    assert_eq!(shown(" 甲 ", 1), Some("甲"));
+    assert_eq!(shown(" 甲 ", 5), Some("甲"));
+    // 在末尾输入的空格显示到光标为止。
+    assert_eq!(shown(" 甲   ", 5), Some("甲 "));
+    assert_eq!(shown(" 甲   ", 4), Some("甲"));
+    // 在开头输入的空格在光标位于开头的空白中时显示。
+    assert_eq!(shown("   甲 ", 3), Some("  甲"));
+    assert_eq!(shown("   甲 ", 6), Some("甲"));
+    // 没有边距、全为空白。
+    assert_eq!(shown("甲", 0), Some("甲"));
+    assert_eq!(shown("   ", 1), None);
 }

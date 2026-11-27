@@ -1,12 +1,11 @@
 //! PDF 预览的状态：渲染线程、各页大小、渲染好的页和滚动位置。
 //!
-//! 每个正在显示的 PDF 有一个渲染线程：文档在该线程中打开（系统的 PDF 对象不能跨线程使用），按
-//! 请求逐页渲染。绘制时只请求视口内和视口附近的页（`App::request_pdf_pages`）：不再需要的页从
-//! 缓存中移除，线程中排队但已不需要的请求跳过，内存只占这几页的位图。切换标签或文件被修改时
-//! 结束线程。左侧缩略图栏中的页同样按需渲染，排在正文的页之后。
+//! 每个正在显示的 PDF 有一个渲染线程：文档在该线程中打开，按请求逐页渲染。绘制时只请求视口内和视口
+//! 附近的页（`App::request_pdf_pages`）：不再需要的页从缓存中移除，排队但已不需要的请求跳过。切换标
+//! 签或文件被修改时结束线程。缩略图栏中的页同样按需渲染，排在正文的页之后。
 //!
-//! 各文件的阅读位置（[`Place`]）在切换标签、关闭标签后保留，并随目录的现场
-//! （`Session::pdf_places`）保存，再次打开时回到原处。
+//! 各文件的阅读位置（[`Place`]）在切换标签、关闭标签后保留，并记入 `State::places`，再次打开时回到
+//! 原处。
 
 use crate::app::ScrollTarget;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -83,6 +82,40 @@ fn place_at(rects: &[Rect], scroll: f32) -> Option<Place> {
 /// 阅读位置 `place` 是否位于文档开头：此时与未记录位置相同，不必保存。
 fn at_start((page, at): Place) -> bool {
     page == 0 && at <= 0.0
+}
+
+/// 在渲染线程上打开 PDF 文件 `path`，目录在另一个线程上读出后传入 `outline`。
+///
+/// 远端主机上的文件只读一次（[`winc_preview::pdf::read`]），文档和目录共用；读取失败时目录为空。
+fn open_document(
+    path: &Path,
+    outline: impl FnOnce(Vec<OutlineItem>) + Send + 'static,
+) -> Result<Document, String> {
+    let spawn = |task: Box<dyn FnOnce() + Send>| {
+        let _ = (std::thread::Builder::new())
+            .name("winc-pdf-outline".to_owned())
+            .spawn(task);
+    };
+    if !winc_backend::is_remote(path) {
+        let file = path.to_owned();
+        spawn(Box::new(move || {
+            outline(winc_preview::pdf::read_outline(&file))
+        }));
+        return Document::open(path);
+    }
+    // 转为 `Arc<[u8]>` 会复制一份。
+    let bytes = match winc_preview::pdf::read(path) {
+        Ok(bytes) => Arc::new(bytes),
+        Err(reason) => {
+            outline(Vec::new());
+            return Err(reason);
+        }
+    };
+    let shared = Arc::clone(&bytes);
+    spawn(Box::new(move || {
+        outline(winc_preview::pdf::outline(&shared))
+    }));
+    Document::from_bytes(&bytes)
 }
 
 /// 右下角工具栏上的按钮。
@@ -284,6 +317,21 @@ impl PdfPreview {
         Some(page_rects(pages, self.body().w, self.zoom).0)
     }
 
+    /// 第 `page` 页（从 0 起）内比例 `top` 处的滚动位置，上方留出页间距；还没排版时为 `None`。
+    pub(crate) fn place_y(&self, page: usize, top: f32) -> Option<f32> {
+        let rect = *self.current_rects()?.get(page)?;
+        Some((rect.y + top * rect.h - GAP).max(0.0))
+    }
+
+    /// 窗口坐标 (`x`, `y`) 落在哪一页（从 0 起）的哪里（横、纵占页宽、页高的比例）。
+    pub(crate) fn page_at(&self, x: f32, y: f32) -> Option<(usize, f32, f32)> {
+        let body = self.body();
+        let (cx, cy) = (x - body.x + self.scroll_x, y - body.y + self.scroll);
+        let rects = self.current_rects()?;
+        let (page, rect) = (rects.iter().enumerate()).find(|(_, r)| r.contains(cx, cy))?;
+        Some((page, (cx - rect.x) / rect.w, (cy - rect.y) / rect.h))
+    }
+
     /// 最大滚动位置（逻辑像素）。
     pub(crate) fn max_scroll(&self) -> f32 {
         (self.height - self.area.h).max(0.0)
@@ -340,11 +388,13 @@ impl App {
     ///
     /// 每次绘制前调用。
     pub(crate) fn advance_pdf(&mut self) {
+        // 打开的 PDF 文件按文档的版本，LaTeX 编译出的 PDF 按编译的序号重新打开。
         let active = self
             .editor
             .active()
             .filter(|d| d.unsupported == Some(Unsupported::Pdf))
-            .map(|d| (d.id, d.revision, d.path.clone()));
+            .map(|d| (d.id, d.revision, d.path.clone()))
+            .or_else(|| (self.latex_pdf()).map(|(id, path, serial)| (id, serial, Some(path))));
         let pdf = &mut self.preview.pdf;
         let Some((id, revision, Some(path))) = active else {
             if pdf.doc.is_some() {
@@ -356,7 +406,7 @@ impl App {
             return;
         }
         // 同一文档的版本改变（磁盘上的文件被修改）时保留滚动位置；换文档时回到该文件上次的
-        // 阅读位置，本次运行中没有预览过的文件取目录的现场中的记录。
+        // 阅读位置，本次运行中没有预览过的文件取上次记下的位置。
         let scroll = (pdf.doc.map(|(d, _)| d) == Some(id)).then_some(pdf.scroll);
         let saved = match scroll {
             Some(_) => None,
@@ -385,25 +435,20 @@ impl App {
                 let _ = proxy.send_event(UserEvent::ImageReady);
             }
         };
-        // 目录直接读文件，与系统的渲染器无关：另开一个线程，不耽误第一页的渲染。
-        let (outline_path, outline_sender, outline_notify) =
-            (path.clone(), pdf.sender.clone(), notify.clone());
-        let _ = std::thread::Builder::new()
-            .name("winc-pdf-outline".to_owned())
-            .spawn(move || {
-                let items = winc_preview::pdf::read_outline(&outline_path);
-                if outline_sender
-                    .send(Done::Outline(generation, items))
-                    .is_ok()
-                {
-                    outline_notify();
-                }
-            });
+        let (outline_sender, outline_notify) = (pdf.sender.clone(), notify.clone());
+        let outline = move |items| {
+            if outline_sender
+                .send(Done::Outline(generation, items))
+                .is_ok()
+            {
+                outline_notify();
+            }
+        };
         // 系统的 PDF 对象只能在打开它的线程上使用：文档在线程里打开，请求通道关闭时线程结束。
         let spawned = std::thread::Builder::new()
             .name("winc-pdf".to_owned())
             .spawn(move || {
-                let document = match Document::open(&path) {
+                let document = match open_document(&path, outline) {
                     Ok(document) => document,
                     Err(reason) => {
                         let _ = sender.send(Done::Opened(generation, Err(reason)));
@@ -451,38 +496,22 @@ impl App {
         }
     }
 
-    /// 返回目录的现场中记录的、文件 `path` 的阅读位置。
+    /// 返回上次记下的、文件 `path` 的阅读位置。
     fn saved_pdf_place(&self, path: &Path) -> Option<Place> {
-        let session = self.state.session_for(self.editor.root()?)?;
-        let (_, place) = session.pdf_places.iter().find(|(file, _)| file == path)?;
-        Some(*place)
+        self.state.place_of(path)?.view
     }
 
-    /// 返回目录 `root` 中各 PDF 文件的阅读位置，按路径排序，用于保存现场。
-    ///
-    /// 以现场中已有的记录为基础，本次运行中预览过的文件改用当前的位置；位于文档开头的文件
-    /// 不记录。
-    pub(in crate::app) fn pdf_session(&self, root: &Path) -> Vec<(PathBuf, Place)> {
-        let mut files: BTreeMap<PathBuf, Place> = self
-            .state
-            .session_for(root)
-            .map(|s| s.pdf_places.iter().cloned().collect())
-            .unwrap_or_default();
+    /// 返回本次运行中预览过的各 PDF 文件此刻的阅读位置；位于文档开头的为 `None`，不必记。
+    pub(in crate::app) fn pdf_places_now(&self) -> Vec<(PathBuf, Option<Place>)> {
         let pdf = &self.preview.pdf;
         // 其他窗格里正在预览的文件同样记它此刻的位置。
         let others = self.parked_previews().filter_map(|p| p.pdf_place());
         let current = pdf.current_place().into_iter().chain(others);
-        for (path, place) in pdf.places.iter().chain(current) {
-            if !path.starts_with(root) {
-                continue;
-            }
-            if at_start(*place) {
-                files.remove(path);
-            } else {
-                files.insert(path.clone(), *place);
-            }
-        }
-        files.into_iter().collect()
+        let places = pdf.places.iter().chain(current);
+        let places: BTreeMap<&PathBuf, Place> = places.map(|(path, at)| (path, *at)).collect();
+        (places.into_iter())
+            .map(|(path, at)| (path.clone(), Some(at).filter(|at| !at_start(*at))))
+            .collect()
     }
 
     /// 收下渲染线程送回的结果。
@@ -583,7 +612,12 @@ impl App {
     /// 处理 PDF 预览中的按键：上下方向键滚动一小段，`PageUp`、`PageDown`、空格滚动一屏，
     /// `Home`、`End` 到开头、结尾。返回是否处理；当前标签不是 PDF 时返回 `false`。
     pub(in crate::app) fn pdf_key(&mut self, key: &Key) -> bool {
-        if self.preview.pdf.doc.is_none() {
+        // 分栏时键盘编辑左侧的源码。
+        let whole = (self.editor.active()).is_some_and(|d| {
+            d.unsupported == Some(Unsupported::Pdf)
+                || d.preview_mode() == winc_editor::PreviewMode::Preview
+        });
+        if self.preview.pdf.doc.is_none() || !whole {
             return false;
         }
         // 翻一屏时与上一屏重叠一段，翻页后仍能看到上一屏末尾的内容。
@@ -752,7 +786,7 @@ impl App {
 
     /// 显示或隐藏缩略图栏（带滑入、滑出的过渡），并记入状态文件。
     pub(in crate::app) fn toggle_pdf_thumbnails(&mut self) {
-        self.update_state(|state| state.pdf_thumbnails_hidden = !state.pdf_thumbnails_hidden);
+        self.update_state(move |state| state.pdf_thumbnails_hidden = !state.pdf_thumbnails_hidden);
         let shown = !self.state.pdf_thumbnails_hidden;
         self.preview.pdf.strip_motion = self.clock(PDF_MOTION).map(|clock| (shown, clock));
         self.request_redraw();

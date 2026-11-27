@@ -44,6 +44,25 @@ fn closing_one_of_two_windows_drops_it_and_the_last_one_stays_hidden() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 开了「关闭窗口后退出」：macOS 上关闭最后一个窗口也退出应用，与其他系统相同；还有
+/// 别的窗口时仍只关闭当前窗口。
+#[test]
+fn the_last_window_quits_when_set_to() {
+    let (mut winc, a, b, dir) = two_windows("windows-close-quits");
+    for key in [a, b] {
+        winc.app(key).config.quit_on_last_window_close = Some(true);
+    }
+    winc.app(b).request_close_window();
+    assert!(winc.app(b).window.hidden && !winc.app(b).closing.quit_requested);
+    winc.settle_for_test();
+
+    winc.app(a).request_close_window();
+    assert!(winc.app(a).closing.quit_requested);
+    let (_, exit) = winc.settle_for_test();
+    assert!(exit, "最后一个窗口退出后结束事件循环");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn closing_a_window_without_a_folder_asks_about_unsaved_files() {
     let (mut winc, a, b, dir) = two_windows("windows-close-untitled");
@@ -109,6 +128,37 @@ fn cancelling_in_one_window_calls_the_whole_quit_off() {
     winc.app(a).request_quit();
     winc.settle_for_test();
     winc.app(b).answer_save_prompt(SaveChoice::Discard);
+    let (_, exit) = winc.settle_for_test();
+    assert!(exit);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 一个窗口同意退出以后、另一个窗口还在询问时又做了修改：全部同意后重新询问它，不直接退出。
+#[test]
+fn a_window_edited_after_agreeing_to_quit_is_asked_again() {
+    let (mut winc, a, b, dir) = two_windows("windows-quit-edited");
+    for key in [a, b] {
+        winc.app(key).config.hot_exit = Some(false);
+    }
+    winc.app(b).new_file();
+    winc.app(b).run(Command::Insert("x".into()));
+    winc.set_active(b);
+
+    winc.app(a).request_quit();
+    let (_, exit) = winc.settle_for_test();
+    assert!(!exit && winc.app(a).closing.quit_requested);
+    assert!(winc.app(b).closing.prompt.is_some());
+
+    // 第二个窗口的询问是窗口内的，第一个窗口仍可编辑。
+    winc.app(a).new_file();
+    winc.app(a).run(Command::Insert("后来写的".into()));
+    winc.app(b).answer_save_prompt(SaveChoice::Discard);
+    let (_, exit) = winc.settle_for_test();
+    assert!(!exit, "第一个窗口有了新的修改，不能直接退出");
+    assert!(winc.app(a).closing.prompt.is_some());
+
+    // 选了不保存、之后没有再修改：这次退出。
+    winc.app(a).answer_save_prompt(SaveChoice::Discard);
     let (_, exit) = winc.settle_for_test();
     assert!(exit);
     let _ = std::fs::remove_dir_all(&dir);
@@ -204,6 +254,42 @@ fn dropped_on_the_dock_icon_open_in_the_window_that_has_them_or_the_current_one(
     let _ = std::fs::remove_dir_all(&other);
 }
 
+/// 本机的文件不交给远端主机的窗口：交给最近成为当前窗口的本机窗口，没有本机窗口时新建窗口。
+#[cfg(unix)]
+#[test]
+fn local_files_skip_windows_on_a_remote_host() {
+    let (mut winc, a, b, dir) = two_windows("windows-local-files");
+    let mut remote = blank_app(false);
+    let _abort = remote.begin_connection_for_test();
+    let c = winc.add_detached(remote);
+    winc.settle_for_test();
+    let target = |path: &Path| crate::cli::Target {
+        path: path.to_path_buf(),
+        line: None,
+        col: None,
+    };
+    let file = winc_config::files::canonicalize(&dir)
+        .unwrap()
+        .join("a.txt");
+
+    for local in [b, a] {
+        winc.set_active(local);
+        winc.set_active(c);
+        assert_eq!(winc.window_for_test(&[target(&file)]), Ok(local));
+    }
+    // 开着文件所在目录的窗口仍然优先。
+    winc.set_active(b);
+    let src = winc_config::files::canonicalize(dir.join("src")).unwrap();
+    assert_eq!(winc.window_for_test(&[target(&src.join("main.rs"))]), Ok(a));
+
+    let mut only_remote = Winc::new(None, None);
+    let mut remote = blank_app(false);
+    let _abort = remote.begin_connection_for_test();
+    only_remote.add_detached(remote);
+    assert_eq!(only_remote.window_for_test(&[target(&file)]), Err(None));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn settings_changed_in_one_window_reach_the_others() {
     let (mut winc, a, b, dir) = two_windows("windows-config");
@@ -246,11 +332,53 @@ fn settings_written_back_keep_what_was_edited_in_the_file_meanwhile() {
 }
 
 #[test]
+fn settings_imported_in_one_window_reach_the_others() {
+    let (mut winc, a, b, dir) = two_windows("windows-config-import");
+    let path = dir.join("config.json");
+    for key in [a, b] {
+        winc.app(key).store.config_path = Some(path.clone());
+    }
+    let from = dir.join("settings.json");
+    std::fs::write(&from, r#"{"editor": {"size": 17}}"#).unwrap();
+    let pick = crate::app::workspace::files::Pick::ImportSettings;
+    winc.app(a).on_picked(pick, Some(from));
+    winc.settle_for_test();
+    assert_eq!(winc.app(b).config.editor_size, Some(17.0));
+    assert_eq!(winc.app(b).fonts.code, 17.0);
+    let config = winc.app(a).config.clone();
+    assert_eq!(winc.app(b).store.saved_config, config);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn files_cut_in_one_window_are_moved_when_pasted_in_another() {
     let (mut winc, a, b, dir) = two_windows("windows-cut");
     let file = dir.join("a.txt");
     winc.app(a).cut_entries(std::slice::from_ref(&file));
     assert_eq!(*winc.app(b).link.shared.cut_files.borrow(), [file]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 经符号链接打开的目录：按真实路径找同一个目录、其中的文件（包括尚不存在的），都找到该窗口。
+#[cfg(unix)]
+#[test]
+fn a_window_opened_through_a_link_is_found_by_the_real_path() {
+    let (mut winc, a, b, dir) = two_windows("windows-link");
+    let link = dir.with_file_name("windows-link-alias");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&dir, &link).unwrap();
+    winc.app(b).open_path(&link);
+    winc.settle_for_test();
+    assert_eq!(winc.app(b).editor.root(), Some(link.as_path()));
+    let shared = std::rc::Rc::clone(&winc.app(a).link.shared);
+    assert_eq!(shared.window_with(&dir, None), Some(b));
+    assert_eq!(shared.window_with(&link, None), Some(b));
+    assert_eq!(
+        shared.window_containing(&dir.join("new/deeper.txt")),
+        Some(b)
+    );
+    assert_eq!(shared.window_containing(&link.join("src/main.rs")), Some(a));
+    let _ = std::fs::remove_file(&link);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -561,4 +689,136 @@ fn windows_share_one_background_layer() {
     }
     assert_eq!(std::sync::Arc::strong_count(&first), 1);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 两个各开一个目录的窗口（目录内容见 `search_folder`）：返回应用、两个窗口和各自的目录。
+fn two_folders(
+    name: &str,
+) -> (
+    Winc,
+    crate::winc::WindowKey,
+    crate::winc::WindowKey,
+    PathBuf,
+    PathBuf,
+) {
+    let from = search_folder(&format!("{name}-from"));
+    let into = search_folder(&format!("{name}-into"));
+    let mut winc = Winc::new(None, None);
+    let a = winc.add_detached(app_with(&from, false));
+    let b = winc.add_detached(app_with(&into, false));
+    paint(winc.app(a));
+    paint(winc.app(b));
+    (winc, a, b, from, into)
+}
+
+/// 返回窗口 `app` 的文件树中名字以 `name` 开头的一行的路径。
+fn tree_path(app: &App, name: &str) -> PathBuf {
+    let rows = app.editor.workspace.as_ref().unwrap().rows();
+    rows[row_of(app, name)].path.clone()
+}
+
+/// 返回窗口 `app` 的文件树中名字以 `name` 开头的一行的中心（逻辑像素）。
+fn row_center(app: &App, name: &str) -> (f32, f32) {
+    tree_row_center(app, row_of(app, name))
+}
+
+/// 在窗口 `app` 的文件树中按住名字以 `name` 开头的一行，拖到窗口右边之外，不松开鼠标。
+fn drag_out_right(app: &mut App, name: &str) {
+    let (x, y) = tree_row_center(app, row_of(app, name));
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(x + 10.0, y);
+    app.on_mouse_move(app.layout.window.right() + 40.0, y);
+}
+
+/// 拖到另一个窗口的文件树上：由目标窗口标出落点，不交给系统的拖放；松开时移进落点所在的
+/// 目录（同一台主机上），并切到目标窗口。
+#[test]
+fn tree_items_dragged_onto_another_window_land_where_it_marks() {
+    let (mut winc, a, b, from, into) = two_folders("windows-tree-drag");
+    let file = tree_path(winc.app(a), "a.txt");
+    let dir = tree_path(winc.app(b), "src");
+    let (x, y) = row_center(winc.app(b), "src");
+    winc.app(b).on_mouse_move(x, y);
+    winc.app(a).link.shared.cursor_window.set(Some(b));
+
+    drag_out_right(winc.app(a), "a.txt");
+    assert!(winc.app(a).panels.tree.dragged_out.is_empty());
+    winc.settle_for_test();
+    assert_eq!(winc.app(b).file_hover(), Some(&DropZone::Tree(dir.clone())));
+
+    winc.app(a).on_mouse_up(MouseButton::Left);
+    let (requests, _) = winc.settle_for_test();
+    assert_eq!(requests, [Request::Focus(b)]);
+    assert_eq!(winc.app(b).file_hover(), None);
+    assert!(dir.join("a.txt").is_file());
+    assert!(!file.exists());
+    let _ = std::fs::remove_dir_all(&from);
+    let _ = std::fs::remove_dir_all(&into);
+}
+
+/// 光标回到发起的窗口、按 Esc 取消时，另一个窗口不再标出落点，什么都不放下；按着 `⌥` 松开时
+/// 复制，原处保留。
+#[test]
+fn tree_items_dragged_to_another_window_are_copied_with_alt_and_kept_when_cancelled() {
+    let (mut winc, a, b, from, into) = two_folders("windows-tree-drag-copy");
+    let file = tree_path(winc.app(a), "a.txt");
+    let dir = tree_path(winc.app(b), "src");
+    let (x, y) = row_center(winc.app(b), "src");
+    winc.app(b).on_mouse_move(x, y);
+    let shared = winc.app(a).link.shared.clone();
+
+    shared.cursor_window.set(Some(b));
+    drag_out_right(winc.app(a), "a.txt");
+    winc.settle_for_test();
+    assert!(winc.app(b).file_hover().is_some());
+    shared.cursor_window.set(None);
+    let (ax, ay) = row_center(winc.app(a), "src");
+    winc.app(a).on_mouse_move(ax, ay);
+    winc.settle_for_test();
+    assert_eq!(winc.app(b).file_hover(), None, "回到发起的窗口");
+
+    shared.cursor_window.set(Some(b));
+    let right = winc.app(a).layout.window.right();
+    winc.app(a).on_mouse_move(right + 40.0, ay);
+    winc.settle_for_test();
+    assert!(winc.app(b).file_hover().is_some());
+    winc.app(a).cancel_tree_drag();
+    winc.app(a).on_mouse_up(MouseButton::Left);
+    winc.settle_for_test();
+    assert_eq!(winc.app(b).file_hover(), None, "取消");
+    assert!(file.is_file() && !dir.join("a.txt").exists());
+
+    drag_out_right(winc.app(a), "a.txt");
+    winc.app(a).pointer.modifiers = winit::keyboard::ModifiersState::ALT;
+    winc.app(a).on_mouse_up(MouseButton::Left);
+    winc.app(a).pointer.modifiers = winit::keyboard::ModifiersState::empty();
+    winc.settle_for_test();
+    assert!(file.is_file() && dir.join("a.txt").is_file());
+    let _ = std::fs::remove_dir_all(&from);
+    let _ = std::fs::remove_dir_all(&into);
+}
+
+/// 另一个窗口中文件树和终端以外的位置不接收文件树中拖动的项：不标出落点，松开时不处理。
+#[test]
+fn tree_items_dragged_onto_another_window_s_editor_are_not_dropped() {
+    let (mut winc, a, b, from, into) = two_folders("windows-tree-drag-editor");
+    let file = tree_path(winc.app(a), "a.txt");
+    let editor = winc.app(b).layout.editor;
+    winc.app(b)
+        .on_mouse_move(editor.x + editor.w / 2.0, editor.y + editor.h / 2.0);
+    winc.app(a).link.shared.cursor_window.set(Some(b));
+
+    drag_out_right(winc.app(a), "a.txt");
+    winc.settle_for_test();
+    assert_eq!(winc.app(b).file_hover(), None);
+    winc.app(a).on_mouse_up(MouseButton::Left);
+    winc.settle_for_test();
+    assert!(file.is_file());
+    assert_eq!(
+        winc.app(b).editor.active().and_then(|d| d.path.clone()),
+        None
+    );
+    let _ = std::fs::remove_dir_all(&from);
+    let _ = std::fs::remove_dir_all(&into);
 }

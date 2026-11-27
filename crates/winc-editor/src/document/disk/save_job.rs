@@ -1,11 +1,8 @@
-//! 在后台保存：大文件按片段整个写出需要数秒，远端主机上的文件要等待网络，在界面线程上写
-//! 会阻塞事件循环。
+//! 在后台保存：大文件按片段整个写出需要数秒，远端文件要等待网络，不能在界面线程上写。
 //!
-//! 大文件：
-//! 发起时复制片段表（[`LargeText::try_clone`]，与原文件共用，不复制内容），后台按这份片段表写出
-//! 并替换原文件，界面线程上可以继续编辑。写完时期间没有再改就改为引用刚写好的文件，旧文件占的
-//! 磁盘空间随之释放；期间又改过则继续引用原文件，原文件已被改名替换，但打开着的文件句柄仍指向
-//! 原来的内容。
+//! 大文件：发起时复制片段表（[`LargeText::try_clone`]，与原文件共用，不复制内容），后台按这份
+//! 片段表写出并替换原文件，界面线程上可以继续编辑。写完时期间没有再改就改为引用刚写好的文件；
+//! 期间又改过则继续引用原文件（已被改名替换，打开着的文件句柄仍指向原来的内容）。
 //!
 //! 远端主机上的普通文档：发起时复制文本（与文档共用，不复制内容），后台先确认远端的文件自上次
 //! 读写后没有被其他程序修改，再写出。界面线程上不能等待远端的应答，这项检查因此放在这里。
@@ -37,6 +34,8 @@ enum Snapshot {
         rope: Rope,
         encoding: Encoding,
         known: (Option<Stamp>, u64),
+        /// 按 Unicode 转义保存时各行原来的写法。
+        origin: Option<std::sync::Arc<super::charset::EscapeOrigin>>,
     },
 }
 
@@ -115,6 +114,7 @@ impl SaveJob {
                 rope,
                 encoding,
                 known,
+                origin,
             } => {
                 let found = winc_backend::fs::metadata(&self.target).ok();
                 let found = found.map(|metadata| (metadata.modified, metadata.len));
@@ -122,7 +122,8 @@ impl SaveJob {
                     changed = found;
                     Err(io::Error::other(t!("editor-original-changed")))
                 } else {
-                    write_rope(&self.target, rope, *encoding).map(|written| Written {
+                    let origin = origin.as_deref();
+                    write_rope(&self.target, rope, *encoding, origin).map(|written| Written {
                         fresh: None,
                         mtime: written.modified,
                         len: written.len,
@@ -166,6 +167,7 @@ impl Document {
                 rope: rope.clone(),
                 encoding: self.encoding,
                 known: (self.disk_mtime, self.disk_len),
+                origin: self.escape_origin.clone(),
             },
             Content::Large(large) if large.original_changed() => {
                 return Err(io::Error::other(t!("editor-original-changed")));

@@ -77,6 +77,27 @@ pub fn virtual_path(target: &Target, remote: &[u8]) -> PathBuf {
     path
 }
 
+/// 返回从虚拟路径 `dir` 出发按 `path` 走到的同一主机上的路径；`dir` 不是虚拟路径时返回 `None`。
+///
+/// `path` 按 POSIX 的写法：以 `/` 开头的是绝对路径，其余相对于 `dir`；`.` 忽略，`..` 回到上级，
+/// 按字面处理，不经过符号链接。
+pub fn resolve(dir: &Path, path: &str) -> Option<PathBuf> {
+    let at = locate(dir)?;
+    let base: &[u8] = if path.starts_with('/') { b"" } else { &at.path };
+    let mut parts: Vec<&[u8]> = Vec::new();
+    for segment in base
+        .split(|&b| b == b'/')
+        .chain(path.as_bytes().split(|&b| b == b'/'))
+    {
+        match segment {
+            b"" | b"." => {}
+            b".." => _ = parts.pop(),
+            name => parts.push(name),
+        }
+    }
+    Some(virtual_path(&at.target, &parts.join(&b'/')))
+}
+
 /// 返回目录 `dir` 下的相对路径 `relative`（以 `/` 分段，例如用户输入的 `a/b.rs`）。
 ///
 /// `dir` 是本机路径时与 `Path::join` 相同。`dir` 是虚拟路径时 `relative` 按远端的名字处理：
@@ -117,6 +138,15 @@ pub fn locate(path: &Path) -> Option<Location> {
         path.push(b'/');
     }
     Some(Location { target, path })
+}
+
+/// 是否 `path` 以两个路径分隔符开头：Windows 的网络路径（`\\主机\共享`）和设备路径（`\\?\…`）。
+///
+/// 来自链接、文档内容的路径是这种形式时不应访问：Windows 上查看它是否存在就会向那台主机发起
+/// 连接和身份验证。
+pub fn names_host(path: &str) -> bool {
+    let separator = |c: char| c == '/' || c == '\\';
+    path.chars().take(2).filter(|c| separator(*c)).count() == 2
 }
 
 /// 是否为虚拟路径，即指向远端主机上的文件。
@@ -179,7 +209,7 @@ pub fn relative_lossy(path: &Path, root: &Path) -> Option<String> {
 fn root(target: &Target) -> PathBuf {
     #[cfg(unix)]
     let text = format!("/{}/{}/{PREFIX}{}", BASE[0], BASE[1], target.as_str());
-    // Windows 的设备名中不能有 `:`：端口之前的 `:` 写成 `+`（连接目标中没有这个字符）。
+    // Windows 的设备名中不能有 `:`：连接目标中的 `:` 写成 `+`（连接目标中没有这个字符）。
     #[cfg(windows)]
     let text = format!(r"\\.\{PREFIX}{}\", target.as_str().replace(':', "+"));
     PathBuf::from(text)

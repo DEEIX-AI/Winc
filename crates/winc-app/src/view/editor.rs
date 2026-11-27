@@ -21,6 +21,7 @@ pub(super) use caret::*;
 pub(super) use glyphs::*;
 pub(crate) use minimap::MinimapRows;
 pub(in crate::view) use picture::*;
+pub(in crate::view) use placeholder::draw_waiting;
 use placeholder::*;
 pub(crate) use ruler::*;
 use sticky::*;
@@ -60,6 +61,16 @@ const BRACE_SCAN_LIMIT: usize = 20_000;
 /// 当前标签是图片、SVG、Markdown 的预览或无法显示的文件时，改为绘制相应的预览或说明；
 /// 没有标签时绘制开始页或欢迎页。
 pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
+    // 文字区自己裁剪，悬停卡片等可以伸出编辑区；其余视图（开始页、预览、差异、日志、十六进制）
+    // 都裁剪在编辑区内，终端最大化后编辑区为零宽、零高时一点也不画。
+    let area = app.layout.editor;
+    if let Some(index) = frame.within(area, |frame| draw_surface(app, frame)) {
+        draw_text_area(app, frame, index);
+    }
+}
+
+/// 绘制编辑区中文字区以外的视图；当前标签显示文字时不绘制，返回它的下标。
+fn draw_surface(app: &mut App, frame: &mut Frame<'_>) -> Option<usize> {
     // Markdown、PDF 预览绘制时重新填充；预览不显示时若仍保留，滚轮和点击事件会被预览接收。
     app.preview.markdown.area = Rect::default();
     app.preview.pdf.area = Rect::default();
@@ -73,10 +84,13 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
         // 欢迎页（常用操作及其快捷键）。
         if app.editor.workspace.is_none() {
             workspace::start::draw(app, frame);
+        } else if app.restoring_tabs() {
+            let area = app.layout.editor;
+            draw_waiting(app, frame, area, t!("workspace-restoring-tabs"));
         } else {
             draw_welcome(app, frame);
         }
-        return;
+        return None;
     };
 
     match app.editor.documents[index].picture.clone() {
@@ -84,10 +98,10 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
             let id = app.editor.documents[index].id;
             let area = app.layout.editor;
             draw_picture(app, frame, id, &picture, area);
-            return;
+            return None;
         }
         // 仍在后台解码时留空，解码完成后重新绘制。
-        Some(PictureState::Loading) => return,
+        Some(PictureState::Loading) => return None,
         Some(PictureState::Failed(reason)) => {
             app.preview.picture_cache = None;
             let message = t!("editor-preview-failed", reason = reason);
@@ -97,7 +111,7 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
                 message,
                 &[(PlaceholderAction::ShowSource, t!("editor-show-source"))],
             );
-            return;
+            return None;
         }
         None => {}
     }
@@ -120,7 +134,7 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
                 super::preview::markdown::draw(app, frame, area);
             }
         }
-        return;
+        return None;
     }
     // 阅读标签：内容取回之前提示正在读取，未能取回时说明并给出重试和在浏览器中查看的按钮，
     // 取回后显示排版后的 Markdown。
@@ -149,7 +163,7 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
                 super::preview::markdown::draw(app, frame, area);
             }
         }
-        return;
+        return None;
     }
     // PDF：逐页显示；打开失败时说明原因。
     if app.editor.documents[index].unsupported == Some(Unsupported::Pdf) {
@@ -168,7 +182,7 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
                 super::preview::pdf::draw(app, frame, area);
             }
         }
-        return;
+        return None;
     }
     let doc = &app.editor.documents[index];
     if let Some(view) = doc.table.as_deref().filter(|_| !doc.shows_text()) {
@@ -194,15 +208,21 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
                 draw_placeholder(app, frame, message, actions);
             }
         }
-        return;
+        return None;
     }
     let doc = &app.editor.documents[index];
-    if doc.preview_kind() == Some(winc_editor::PreviewKind::Markdown)
+    if doc
+        .preview_kind()
+        .is_some_and(winc_editor::PreviewKind::typeset)
         && doc.preview_mode() == winc_editor::PreviewMode::Preview
     {
         let area = app.layout.editor;
-        super::preview::markdown::draw(app, frame, area);
-        return;
+        if doc.preview_kind() == Some(winc_editor::PreviewKind::Latex) {
+            super::preview::latex::draw(app, frame, area);
+        } else {
+            super::preview::markdown::draw(app, frame, area);
+        }
+        return None;
     }
     // 分栏预览时缓存中保存的是右半部分的图片（`draw_split`），不清除。
     if app.layout.split.w <= 0.0 {
@@ -210,15 +230,20 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
     }
     if app.editor.documents[index].diff.is_some() {
         diff::draw_diff(app, frame, index);
-        return;
+        return None;
     }
     if app.editor.documents[index].log.is_some() {
-        super::git::log::draw_log(app, frame, index);
-        return;
+        let id = app.editor.documents[index].id;
+        super::git::log::draw_log(app, frame, id);
+        return None;
+    }
+    if app.combined_active() {
+        diff::combined::draw_combined(app, frame, index);
+        return None;
     }
     if app.editor.documents[index].hex.is_some() {
         hex::draw_hex(app, frame, index);
-        return;
+        return None;
     }
     // 文件仍在读取（仅读取耗时较长时执行到此处）：提示正在读取的文件名和读了多少。
     if app.editor.documents[index].is_pending() {
@@ -227,7 +252,7 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
             Some(fraction) => draw_reading(app, frame, &name, fraction),
             None => draw_placeholder(app, frame, t!("editor-reading", name = name), &[]),
         }
-        return;
+        return None;
     }
     if let Some(reason) = app.editor.documents[index].unsupported.clone() {
         use PlaceholderAction::*;
@@ -254,10 +279,10 @@ pub(super) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
             ],
         };
         draw_placeholder(app, frame, reason.to_string(), actions);
-        return;
+        return None;
     }
 
-    draw_text_area(app, frame, index);
+    Some(index)
 }
 
 #[cfg(test)]

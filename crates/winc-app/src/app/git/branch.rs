@@ -2,7 +2,7 @@
 //!
 //! 提交视图标题行的「⋯」里有获取、拉取、推送、新建分支、新建工作树和储藏；每个分支另有操作菜单：
 //! 签出、在新工作树中签出、从这里新建分支、合并到当前分支、变基、删除。操作都在后台运行，同一时刻
-//! 只做一件，运行期间状态栏的分支名后面写着在做什么；做完在状态栏说结论（失败时右上角说原因）、
+//! 只做一件，运行期间状态栏的分支名后面显示在做什么；做完在状态栏说结论（失败时右上角说原因）、
 //! 刷新仓库状态，并重新读被改动过的文件。
 
 use std::path::{Path, PathBuf};
@@ -38,6 +38,8 @@ pub enum BranchOp {
     Rebase,
     /// 重命名（输入新名字），只用于本地分支。
     Rename,
+    /// 把分支名复制到剪贴板；当前分支和远程分支同样可用。
+    CopyName,
     /// 删除（先确认；未合并的再确认一次才强制删除）。
     Delete,
     /// 和当前分支比较：打开日志，列出从当前分支到它改了的文件。
@@ -45,12 +47,12 @@ pub enum BranchOp {
 }
 
 impl BranchOp {
-    /// 操作菜单的各组，顺序就是菜单里的顺序：切换和新建、比较、合到当前分支、删除。
+    /// 操作菜单的各组，顺序就是菜单里的顺序：切换和新建、比较、合到当前分支、重命名和复制、删除。
     const GROUPS: [&[BranchOp]; 4] = [
         &[BranchOp::Checkout, BranchOp::NewWorktree, BranchOp::NewFrom],
         &[BranchOp::Compare],
         &[BranchOp::Merge, BranchOp::Rebase],
-        &[BranchOp::Rename, BranchOp::Delete],
+        &[BranchOp::Rename, BranchOp::CopyName, BranchOp::Delete],
     ];
 
     /// 菜单里的文字：不写分支名。菜单是从这个分支的那一行弹出来的，另一边总是当前分支。
@@ -62,6 +64,7 @@ impl BranchOp {
             BranchOp::Merge => t!("git-branch-merge-into-current"),
             BranchOp::Rebase => t!("git-branch-rebase-current-onto"),
             BranchOp::Rename => t!("git-branch-rename"),
+            BranchOp::CopyName => t!("git-branch-copy-name"),
             BranchOp::Delete => t!("git-branch-delete"),
             BranchOp::Compare => t!("git-branch-compare-with-current"),
         }
@@ -77,6 +80,8 @@ pub enum TagOp {
     Merge,
     /// 推送到远程仓库。
     Push,
+    /// 把标签名复制到剪贴板。
+    CopyName,
     /// 删除本地标签（先确认）。
     Delete,
     /// 从远程仓库删除（先确认）。
@@ -85,10 +90,11 @@ pub enum TagOp {
 
 impl TagOp {
     /// 全部操作，顺序就是子菜单里的顺序。
-    pub const ALL: [TagOp; 5] = [
+    pub const ALL: [TagOp; 6] = [
         TagOp::NewBranch,
         TagOp::Merge,
         TagOp::Push,
+        TagOp::CopyName,
         TagOp::Delete,
         TagOp::DeleteRemote,
     ];
@@ -99,9 +105,15 @@ impl TagOp {
             TagOp::NewBranch => t!("git-tag-new-branch"),
             TagOp::Merge => t!("git-branch-merge-into-current"),
             TagOp::Push => t!("git-tag-push"),
+            TagOp::CopyName => t!("git-tag-copy-name"),
             TagOp::Delete => t!("git-tag-delete"),
             TagOp::DeleteRemote => t!("git-tag-delete-remote"),
         }
+    }
+
+    /// 是否修改仓库；修改仓库的操作在另一个 Git 操作运行时不可用。
+    pub fn changes_repository(self) -> bool {
+        self != TagOp::CopyName
     }
 }
 
@@ -191,7 +203,7 @@ type QuestionChannel = (Sender<(u64, Question)>, Receiver<(u64, Question)>);
 
 /// 分支操作的状态。
 pub(crate) struct BranchState {
-    /// 正在做的事；状态栏的分支名后面写着它。
+    /// 正在做的事；状态栏的分支名后面显示它。
     pub running: Option<String>,
     /// 上一个操作成功后，同步控件显示对勾的时钟。
     pub finished: Option<Clock>,
@@ -206,8 +218,9 @@ pub(crate) struct BranchState {
     pub(in crate::app) remember: Option<Arc<AtomicBool>>,
     /// 用户是否取消了当前操作的输入请求；为真时该操作的失败不按错误提示。
     pub(in crate::app) declined: bool,
-    /// 登录对话框中填写的密码及其远程地址，用于答复随后的密码请求，操作结束时清除。
-    pub(in crate::app) password: Option<(String, String)>,
+    /// 登录对话框中填写的密码、提问的来源及其远程地址，用于答复同一来源随后的密码请求，
+    /// 该来源结束时清除。
+    pub(in crate::app) password: Option<(super::question::Asker, String, String)>,
 }
 
 impl Default for BranchState {
@@ -278,9 +291,12 @@ pub(crate) fn branch_menu(
 }
 
 /// 分支选择器里第 `index` 个标签的操作菜单，和分支的菜单同样分组：签出和新建、合并到当前
-/// 分支、推送、删除，组之间有分隔线。
+/// 分支、推送、复制名字和删除，组之间有分隔线。
 pub(crate) fn tag_ops(index: usize, busy: bool) -> Vec<MenuEntry> {
-    let item = |op: Option<TagOp>| MenuEntry::Item(MenuCommand::PickerTag(op, index), !busy);
+    let item = |op: Option<TagOp>| {
+        let enabled = !busy || op.is_some_and(|op| !op.changes_repository());
+        MenuEntry::Item(MenuCommand::PickerTag(op, index), enabled)
+    };
     vec![
         item(None),
         item(Some(TagOp::NewBranch)),
@@ -289,6 +305,7 @@ pub(crate) fn tag_ops(index: usize, busy: bool) -> Vec<MenuEntry> {
         MenuEntry::Separator,
         item(Some(TagOp::Push)),
         MenuEntry::Separator,
+        item(Some(TagOp::CopyName)),
         item(Some(TagOp::Delete)),
         item(Some(TagOp::DeleteRemote)),
     ]
@@ -312,10 +329,9 @@ pub(crate) fn stash_menu(stashes: &[Stash], busy: bool) -> Vec<MenuEntry> {
 
 /// 分支选择器里第 `index` 个分支的操作菜单：按 `BranchOp::GROUPS` 分组，组之间有分隔线。
 ///
-/// `branches` 是本地分支在前、远程分支在后的列表，当前分支只能从它新建分支和重命名；`held` 是
-/// 被别的工作树
-/// 签出的本地分支，它们的「签出」是切到那个工作树，不能删除；`stale` 是被目录已经不在的工作树
-/// 占着的分支，git 仍然不允许签出、删除，要先清理。
+/// `branches` 是本地分支在前、远程分支在后的列表，当前分支只能从它新建分支、重命名和
+/// 复制名字；`held` 是被别的工作树签出的本地分支，它们的「签出」是切到那个工作树，不能
+/// 删除；`stale` 是被目录已经不在的工作树占着的分支，git 仍然不允许签出、删除，要先清理。
 pub(crate) fn branch_ops(
     index: usize,
     branches: &[Branch],
@@ -333,8 +349,11 @@ pub(crate) fn branch_ops(
             .iter()
             .copied()
             .filter(|op| match op {
-                // 当前分支不能签出、合并、变基、删除自己。
-                _ if branch.current => matches!(op, BranchOp::NewFrom | BranchOp::Rename),
+                // 当前分支只能从它新建分支、重命名和复制名字，不能签出、合并、变基、删除自己。
+                _ if branch.current => matches!(
+                    op,
+                    BranchOp::NewFrom | BranchOp::Rename | BranchOp::CopyName
+                ),
                 // 已经在其他工作树里签出着、又是当前分支（`origin/main` 在 `main` 上）：
                 // 不能再签出该分支。
                 BranchOp::NewWorktree => {
@@ -352,6 +371,8 @@ pub(crate) fn branch_ops(
                 let gone = stale.contains(&local_name(branch));
                 let enabled = match op {
                     BranchOp::Delete => !busy && !elsewhere && !gone,
+                    // 复制名字不改仓库，忙的时候也能点。
+                    BranchOp::CopyName => true,
                     BranchOp::Checkout if elsewhere => true,
                     BranchOp::Checkout if gone => false,
                     _ => !busy,
@@ -385,7 +406,7 @@ pub(crate) fn local_name(branch: &Branch) -> &str {
 
 /// 储藏在菜单里的名字：git 记下的说明去掉「On main: 」这样的开头。
 ///
-/// 超过 40 个字符的截短并加省略号（经验值：菜单一行放得下的长度）。
+/// 超过 40 个字符的截短并加省略号（菜单一行放得下的长度）。
 pub(crate) fn stash_title(stash: &Stash) -> String {
     let message = stash
         .message
@@ -557,6 +578,10 @@ impl App {
                 move |git, root| git.operate(root, &["rebase", "--end-of-options", &name]),
             ),
             BranchOp::Rename => self.open_rename_prompt(name),
+            BranchOp::CopyName => {
+                self.flash(t!("git-branch-copied", name = name.as_str()));
+                self.set_clipboard(name, false);
+            }
             BranchOp::Delete => self.confirm_delete_branch(name),
             BranchOp::Compare => self.git_compare_branch(&name),
         }
@@ -570,9 +595,14 @@ impl App {
         self.git_operate(
             t!("git-op-checkout", name = local.as_str()),
             move |git, root| {
-                git.operate(root, &stash_args(&message))?;
-                run_switch(git, root, &branch.name, &local, track)
-                    .map_err(|error| restored_error(git, root, &error))
+                let stashed = stash_changes(git, root, &message)?;
+                run_switch(git, root, &branch.name, &local, track).map_err(|error| {
+                    if stashed {
+                        restored_error(git, root, &error)
+                    } else {
+                        error
+                    }
+                })
             },
         );
     }
@@ -588,11 +618,8 @@ impl App {
             let Err(refused) = run_switch(git, root, &branch.name, &local, track) else {
                 return Ok((String::new(), Then::Nothing));
             };
-            // 没有可储藏的内容时 `stash push` 同样成功：比较储藏的顶端，避免恢复无关的旧储藏。
-            let tip = |git: &Git| git.operate(root, &["rev-parse", "-q", "--verify", "refs/stash"]);
-            let before = tip(git).ok();
-            // 储藏失败时（例如合并未完成）报告的仍是切换失败的原因。
-            if git.operate(root, &stash_args(&message)).is_err() || tip(git).ok() == before {
+            // 储藏失败（例如合并未完成）或没有可储藏的内容时，报告的仍是切换失败的原因。
+            if !stash_changes(git, root, &message).unwrap_or(false) {
                 return Err(refused);
             }
             run_switch(git, root, &branch.name, &local, track)
@@ -601,8 +628,7 @@ impl App {
                 return Ok((String::new(), Then::Nothing));
             };
             // 恢复失败不一定有冲突：未跟踪的文件在新分支上已存在时，git 不写冲突标记。
-            let unmerged = ["diff", "--name-only", "--diff-filter=U"];
-            let conflicted = git.operate(root, &unmerged).is_ok_and(|f| !f.is_empty());
+            let conflicted = git.has_unmerged(root);
             let branch = local.as_str();
             let warning = if conflicted {
                 t!("git-switch-carry-conflict", branch = branch)
@@ -854,7 +880,7 @@ impl App {
                     Err(e) => {
                         let what = done.what;
                         let message = t!("git-op-failed-in", name = name, what = &what, error = e);
-                        self.report_git_failure(&what, message);
+                        self.report_git_failure(Some(&root), &what, message);
                     }
                 }
                 continue;
@@ -890,7 +916,7 @@ impl App {
                 Err(e) => {
                     let what = done.what;
                     let message = t!("git-op-failed", what = &what, error = e);
-                    self.report_git_failure(&what, message);
+                    self.report_git_failure(done.root.as_deref(), &what, message);
                 }
             }
             // 切换分支、拉取、合并都会改工作区里的文件。
@@ -903,6 +929,16 @@ impl App {
 /// 返回储藏工作区和暂存区改动（含未跟踪的文件）的 git 参数。
 fn stash_args(message: &str) -> [&str; 5] {
     ["stash", "push", "--include-untracked", "--message", message]
+}
+
+/// 储藏工作区和暂存区里的改动（含未跟踪的文件），返回是否新建了储藏。
+///
+/// 没有可储藏的内容时 `stash push` 同样成功，因此比较储藏的顶端：没有新建储藏时，调用方不能
+/// 执行 `stash pop`，否则恢复的是无关的旧储藏。
+fn stash_changes(git: &Git, root: &Path, message: &str) -> Result<bool, String> {
+    let before = git.stash_tip(root);
+    git.operate(root, &stash_args(message))?;
+    Ok(git.stash_tip(root) != before)
 }
 
 /// 切换到本地分支 `local`；`track` 时新建跟踪远程分支 `name` 的本地分支。

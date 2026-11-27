@@ -147,11 +147,15 @@ impl App {
     pub(crate) fn advance_previews(&mut self) {
         self.poll_markdown();
         self.poll_pdf();
+        self.poll_latex();
         self.advance_split();
+        self.advance_latex();
         self.advance_markdown();
         self.advance_pdf();
+        self.sync_latex_pdf();
         self.advance_picture_view();
         self.advance_tables();
+        self.sync_table_split();
         let Some(doc) = self.editor.active() else {
             return;
         };
@@ -168,13 +172,14 @@ impl App {
             let Some(rope) = doc.text().rope() else {
                 return;
             };
-            let text = rope.to_string();
+            // 文本在后台线程上取出：rope 的克隆共享内容，取出全文的耗时与文档大小成正比。
+            let rope = rope.clone();
             let base = doc
                 .path
                 .as_deref()
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf());
-            Box::new(move || svg::load(&text, base.as_deref(), Some(system_glyphs())))
+            Box::new(move || svg::load(&rope.to_string(), base.as_deref(), Some(system_glyphs())))
         } else {
             let Some(path) = doc.path.clone() else {
                 return;
@@ -216,7 +221,7 @@ impl App {
         let Some(rope) = doc.text().rope() else {
             return;
         };
-        let text = rope.to_string();
+        let rope = rope.clone();
         let base = doc.path.as_deref().and_then(|p| p.parent()).map(Into::into);
         self.preview.split.pending = Some(revision);
         let (sender, proxy) = (
@@ -225,7 +230,7 @@ impl App {
         );
         winc_editor::background::spawn(move || {
             let base: Option<std::path::PathBuf> = base;
-            let result = svg::load(&text, base.as_deref(), Some(system_glyphs()));
+            let result = svg::load(&rope.to_string(), base.as_deref(), Some(system_glyphs()));
             if sender.send((id, revision, result)).is_ok()
                 && let Some(proxy) = proxy
             {
@@ -255,13 +260,12 @@ impl App {
         None
     }
 
-    /// 提交后台任务，绘制 SVG `picture` 的一部分：整张图为 `size`（宽、高）时的 `region`
-    /// （左上角的横、纵坐标和宽、高），单位为物理像素。`base` 表示结果用作整张图的低分辨率
-    /// 位图。`picture` 不是 SVG 时不提交。
+    /// 提交后台任务，绘制 SVG `picture` 的一部分：整张图为 `size`（宽、高）时的 `region`（左上角的
+    /// 横、纵坐标和宽、高），单位为物理像素。`base` 表示结果用作整张图的低分辨率位图。`picture`
+    /// 不是 SVG 时不提交。
     ///
-    /// 拖动窗口边缘时 `size` 每帧都在变化。同一时刻只在后台绘制一张：已有绘制在进行时不提交，
-    /// 那一张完成后界面重绘，届时仍不符合的尺寸再提交。否则每帧一张，过时的绘制挤在共用的
-    /// 线程池里，排在 ⌘P、全局搜索之前。
+    /// 拖动窗口边缘时 `size` 每帧都在变化，因此同一时刻只在后台绘制一张：已有绘制在进行时不提交，
+    /// 那一张完成后界面重绘，届时仍不符合的尺寸再提交，避免过时的绘制挤满共用的线程池。
     pub(crate) fn render_picture(
         &mut self,
         id: DocumentId,
@@ -420,28 +424,22 @@ impl App {
             PreviewMode::Preview => Some("preview"),
         };
         let key = preview_key(kind).to_owned();
-        self.update_state(|state| match saved {
+        self.update_state(move |state| match saved {
             Some(mode) => _ = state.preview_modes.insert(key, mode.to_owned()),
             None => _ = state.preview_modes.remove(&key),
         });
     }
 
-    /// 按 `state.json` 记下的方式设定之后打开的各类能预览的文件的显示方式（启动、新开窗口时）。
+    /// 按 `state.json` 记下的方式设定之后打开的各类能预览的文件的显示方式（新开窗口时）。
     pub(crate) fn apply_preview_state(&mut self) {
-        for kind in PreviewKind::ALL {
-            let saved = self.state.preview_modes.get(preview_key(kind));
-            self.editor.preview_defaults[kind as usize] = match saved.map(String::as_str) {
-                Some("split") => PreviewMode::Split,
-                Some("preview") => PreviewMode::Preview,
-                _ => PreviewMode::Source,
-            };
-        }
+        self.editor.preview_defaults = preview_defaults(&self.state);
     }
 
     /// 当前标签换成 `mode` 显示（标签栏右端的三段切换）。
     pub(in crate::app) fn set_preview_mode(&mut self, mode: PreviewMode) {
-        // 换了显示方式，键盘先回到文字（只看预览时本来就对着预览）。
+        // 换了显示方式，键盘先回到文字（只看预览时原本就对着预览）。
         self.preview.markdown.focused = false;
+        self.preview.table_layout.focused = false;
         let top = self.leave_markdown_mode(mode);
         let Some(doc) = self.editor.active_mut() else {
             return;
@@ -517,12 +515,30 @@ pub(crate) struct PictureCache {
     pub(crate) base: Option<Pixels>,
 }
 
+/// 返回 `state` 中记下的各类能预览的文件的显示方式，按 [`PreviewKind::ALL`] 的顺序。
+pub(crate) fn preview_defaults(
+    state: &winc_config::State,
+) -> [PreviewMode; PreviewKind::ALL.len()] {
+    PreviewKind::ALL.map(|kind| {
+        match state
+            .preview_modes
+            .get(preview_key(kind))
+            .map(String::as_str)
+        {
+            Some("split") => PreviewMode::Split,
+            Some("preview") => PreviewMode::Preview,
+            _ => PreviewMode::Source,
+        }
+    })
+}
+
 /// 返回 `state.json` 中记录种类 `kind` 显示方式的键。
 fn preview_key(kind: PreviewKind) -> &'static str {
     match kind {
         PreviewKind::Svg => "svg",
         PreviewKind::Markdown => "markdown",
         PreviewKind::Table => "table",
+        PreviewKind::Latex => "latex",
     }
 }
 

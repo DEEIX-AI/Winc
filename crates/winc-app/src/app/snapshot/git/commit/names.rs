@@ -415,8 +415,10 @@ fn hovering_a_long_change_name_shows_it_in_full_with_its_buttons_after_it() {
     assert_eq!(overflow.row, i);
     let spill = overflow.spill.expect("past the sidebar");
     assert_eq!(spill.x, list.right());
-    let (open, revert) = overflow.actions.expect("buttons after the name");
-    assert!(open.x > list.right() && revert.right() <= spill.right());
+    // 勾选式下是「回滚」「打开文件」。
+    let strip = overflow.actions.expect("buttons after the name");
+    let (revert, open) = (strip.rect(0), strip.rect(1));
+    assert!(revert.x > list.right() && open.right() <= spill.right());
     let open_hit = app
         .hits
         .commit
@@ -497,7 +499,7 @@ fn a_long_change_name_slides_out_and_back_like_the_file_tree() {
     app.on_mouse_move(list.x + 120.0, y);
     paint(&mut app);
     let overflow = app.git.commit.overflow.expect("long name spills");
-    let (_, revert) = overflow.actions.unwrap();
+    let revert = overflow.actions.unwrap().first;
     let view = app.git.commit.names.peek(&key).unwrap();
     assert!(app.git.commit.names.moving());
     assert!(view.width < revert.x - list.x, "{}", view.width);
@@ -585,7 +587,7 @@ fn names_that_only_make_room_for_the_buttons_slide_the_buttons_out() {
         let Some(overflow) = app.git.commit.overflow else {
             continue;
         };
-        let (end, _) = overflow.actions.unwrap();
+        let end = overflow.actions.unwrap().rect(1);
         let start = (app.hits.commit.iter())
             .find(|(_, t)| matches!(t, CommitTarget::OpenFile(_)))
             .unwrap()
@@ -911,11 +913,10 @@ fn the_full_name_row_covers_the_scrollbar_like_the_file_tree() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 显示全名的改动行覆盖在侧栏与编辑区之间的分隔条之上，与文件树的处理相同：鼠标从名字经分隔条
-/// 移到伸出侧栏的部分时，始终悬停在这一行上，全名不收回；在此处按下选中这一行，不拖动分隔条。
-/// 其他行仍可拖动分隔条。
+/// 写全名的改动行画在分隔条之上：在这一行的高度内，鼠标经过分隔条时仍悬停在这一行，按下选中
+/// 这一行，不拖动分隔条。其他行的高度、以及从编辑区一侧移来时，分隔条照常可以拖动。
 #[test]
-fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
+fn the_full_name_row_covers_the_splitter() {
     let Some((dir, long)) = long_name_repo("git-commit-overflow-splitter") else {
         return;
     };
@@ -943,7 +944,6 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
     assert!(app.git.commit.overflow.is_some_and(|o| o.row == i));
 
     let splitter = app.layout.splitter;
-    let row = Hover::Commit(CommitTarget::File(index));
     for x in [
         splitter.x + 1.0,
         splitter.x + splitter.w / 2.0,
@@ -951,22 +951,32 @@ fn the_full_name_row_covers_the_splitter_like_the_file_tree() {
     ] {
         app.on_mouse_move(x, y);
         paint(&mut app);
-        assert_eq!(app.pointer.hover, row, "x = {x}");
+        assert_ne!(app.pointer.hover, Hover::Splitter, "x = {x}");
         assert!(
             app.git.commit.overflow.is_some_and(|o| o.row == i),
             "x = {x}"
         );
     }
-    click(&mut app, (splitter.x + splitter.w / 2.0, y));
-    assert_eq!(
-        app.git.commit.selected.as_deref(),
-        Some(status.entries[index].path.as_path())
-    );
+    app.on_mouse_move(splitter.x + splitter.w / 2.0, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(!matches!(
+        app.pointer.drag,
+        crate::app::Drag::Splitter { .. }
+    ));
     assert_eq!(app.layout.splitter, splitter);
+    let path = status.entries[index].path.clone();
+    assert_eq!(app.git.commit.selected, Some(path));
 
     // 其他行：分隔条正常响应。
     let other = y + 3.0 * COMMIT_ROW;
     app.on_mouse_move(splitter.x + splitter.w / 2.0, other);
+    paint(&mut app);
+    assert_eq!(app.pointer.hover, Hover::Splitter);
+    // 从编辑区一侧移到这一行高度的分隔条上：没有行在写全名，分隔条可以拖动。
+    app.on_mouse_move(splitter.right() + 40.0, y);
+    paint(&mut app);
+    app.on_mouse_move(splitter.x + splitter.w / 2.0, y);
     paint(&mut app);
     assert_eq!(app.pointer.hover, Hover::Splitter);
     let _ = std::fs::remove_dir_all(&dir);

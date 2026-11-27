@@ -5,6 +5,8 @@
 
 use winc_editor::panes::{Axis, Node, PaneId};
 
+mod motion;
+
 use super::*;
 use crate::app::Scrollbars;
 use crate::app::TabHit;
@@ -13,12 +15,26 @@ use crate::app::preview::PanePreview;
 
 /// 分隔线的粗细（逻辑像素）。
 pub(crate) const DIVIDER: f32 = 1.0;
-/// 分隔线两侧各放宽的可拖动范围（逻辑像素，经验值）。
-const GRIP: f32 = 3.0;
-/// 拆分后每一侧的最小宽度或高度（逻辑像素，经验值）。
+/// 分隔线两侧各放宽的可拖动范围（逻辑像素，取自调参）。
+pub(crate) const GRIP: f32 = 3.0;
+/// 拆分后每一侧的最小宽度或高度（逻辑像素，取自调参）。
 const PANE_MIN: f32 = 160.0;
-/// 拖动标签时，鼠标离窗格边缘不足窗格宽或高的这一比例就拆分，否则放进窗格。
-const DROP_EDGE: f32 = 1.0 / 3.0;
+/// 拖动标签或文件时贴着窗格边缘、放下会拆分的一条的宽度：窗格宽或高的这一比例，限制在
+/// [`DROP_EDGE_MIN`] 至 [`DROP_EDGE_MAX`] 之间。
+///
+/// 取自调参：大窗格中只有贴边的窄条拆分，其余位置都在窗格中打开；窄窗格的边缘仍便于拖中。
+const DROP_EDGE: f32 = 0.1;
+/// 拆分边缘的最小宽度（逻辑像素），见 [`DROP_EDGE`]。
+const DROP_EDGE_MIN: f32 = 32.0;
+/// 拆分边缘的最大宽度（逻辑像素），见 [`DROP_EDGE`]。
+const DROP_EDGE_MAX: f32 = 96.0;
+
+/// 返回宽或高为 `len`（逻辑像素）的窗格贴边拆分的一条的宽度（见 [`DROP_EDGE`]），不超过一半。
+pub(crate) fn drop_edge(len: f32) -> f32 {
+    (len * DROP_EDGE)
+        .clamp(DROP_EDGE_MIN, DROP_EDGE_MAX)
+        .min(len / 2.0)
+}
 
 /// 一个窗格的位置。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,7 +102,12 @@ pub(crate) struct PaneUi {
     pub drawing_background: bool,
     /// 这一次从系统拖进来的文件拆出的窗格：同一次拖进来的其余文件也开在这里。
     pub dropped_into: Option<PaneId>,
-    /// 前台以外各窗格的标签栏和滚动条。
+    /// 窗格增减后的过渡：变化之前的编辑区卡片在新布局上淡出（见 `motion.rs`）。
+    pub(crate) motion: Option<motion::PaneMotion>,
+    /// 测试中没有窗口时仍播放过渡。
+    #[cfg(test)]
+    pub(crate) animate_without_window: bool,
+    /// 前台以外各窗格的标签栏、滚动条、预览和日志视图的状态。
     parked: Vec<ParkedPane>,
 }
 
@@ -99,6 +120,10 @@ struct ParkedPane {
     /// 只用其中 [`PANE_AREAS`] 的部分。
     scrollbars: Scrollbars,
     preview: PanePreview,
+    /// 日志视图在绘制时更新的状态。
+    log: crate::app::git::log::LogFrame,
+    /// 上一次画出的标签栏控件：标签、新建和列表按钮、预览切换与浏览器按钮。
+    controls: Vec<Rect>,
 }
 
 impl ParkedPane {
@@ -110,6 +135,8 @@ impl ParkedPane {
             hits: Vec::new(),
             scrollbars: Scrollbars::default(),
             preview: PanePreview::default(),
+            log: Default::default(),
+            controls: Vec::new(),
         }
     }
 }
@@ -243,7 +270,7 @@ impl App {
         if !self.editor.focus_pane(pane) {
             return false;
         }
-        // 前台的标签栏、滚动条和预览与窗格 `pane` 收着的直接交换，交换下来的收给 `old`。
+        // 前台的标签栏、滚动条和预览与窗格 `pane` 保存的直接交换，交换下来的存入 `old`。
         let at = self.panes.parked.iter().position(|p| p.id == pane);
         let mut parked = match at {
             Some(at) => self.panes.parked.remove(at),
@@ -262,9 +289,11 @@ impl App {
         std::mem::swap(&mut self.hits.tabs, &mut parked.hits);
         (self.scroll.bars).exchange(&mut parked.scrollbars, &PANE_AREAS);
         self.preview.exchange(&mut parked.preview);
+        self.git.log.exchange_frame(&mut parked.log);
+        parked.controls.clear();
     }
 
-    /// 把前台窗格的标签栏、滚动条和预览收给窗格 `id`，前台换上空白的。
+    /// 把前台窗格的标签栏、滚动条和预览存入窗格 `id`，前台换上空白的。
     fn park_pane_ui(&mut self, id: PaneId) {
         let mut parked = ParkedPane::new(id);
         self.exchange_pane_ui(&mut parked);
@@ -272,7 +301,7 @@ impl App {
         self.panes.parked.push(parked);
     }
 
-    /// 前台换上窗格 `id` 收着的标签栏、滚动条和预览；没有收着时换上空白的。
+    /// 前台换上窗格 `id` 保存的标签栏、滚动条和预览；没有保存时换上空白的。
     fn unpark_pane_ui(&mut self, id: PaneId) {
         let at = self.panes.parked.iter().position(|p| p.id == id);
         let mut parked = match at {
@@ -282,12 +311,12 @@ impl App {
         self.exchange_pane_ui(&mut parked);
     }
 
-    /// 前台以外的各窗格收着的预览状态。
+    /// 前台以外的各窗格保存的预览状态。
     pub(crate) fn parked_previews(&self) -> impl Iterator<Item = &PanePreview> {
         self.panes.parked.iter().map(|p| &p.preview)
     }
 
-    /// 丢掉已经合并掉的窗格收着的标签栏、滚动条和预览。
+    /// 丢掉已经合并掉的窗格保存的标签栏、滚动条和预览。
     pub(in crate::app) fn forget_closed_panes(&mut self) {
         let alive = self.editor.panes.tree.panes();
         self.panes.parked.retain(|p| alive.contains(&p.id));
@@ -297,6 +326,7 @@ impl App {
     pub(in crate::app) fn focus_pane(&mut self, pane: PaneId) {
         if self.switch_pane(pane) {
             self.focus = Focus::Editor;
+            self.activate_editor_terminal();
             self.relayout();
             self.request_redraw();
         }
@@ -306,7 +336,7 @@ impl App {
     pub(crate) fn with_pane<T>(&mut self, pane: PaneId, f: impl FnOnce(&mut App) -> T) -> T {
         let back = self.editor.panes.focused;
         let rects = self.panes.rects.iter().find(|r| r.id == pane).copied();
-        // 前台窗格的平滑滚动留到换回来以后接着走。
+        // 前台窗格的平滑滚动留到换回来以后继续走。
         let glide = self.scroll.glide.take();
         let switched = rects.is_some() && self.switch_pane(pane);
         let Some(rects) = rects.filter(|_| switched) else {
@@ -314,12 +344,23 @@ impl App {
             return f(self);
         };
         let saved = (self.layout, self.git.merge.geometry());
+        let terminal = (self.terminal.group_at, self.terminal.panel_at);
+        if let Some(at) = self
+            .editor
+            .active()
+            .filter(|doc| doc.terminal)
+            .and_then(|doc| self.editor_terminal_group(doc.id))
+        {
+            self.rotate_terminal_group(at);
+        }
         self.use_pane_rects(rects);
         self.place_editor_parts();
         self.sync_wrap();
         let result = f(self);
         self.switch_pane(back);
         self.layout = saved.0;
+        self.rotate_terminal_group(terminal.0);
+        self.terminal.panel_at = terminal.1;
         self.git.merge.set_geometry(saved.1);
         self.sync_wrap();
         self.scroll.glide = glide;
@@ -347,7 +388,7 @@ impl App {
         for pane in self.background_panes() {
             self.focus = Focus::Tree;
             let inside = !dragging && under == Some(pane);
-            self.with_pane(pane, |app| {
+            let controls = self.with_pane(pane, |app| {
                 elsewhere |= inside;
                 app.pointer.hover = if inside {
                     app.hover_at(x, y)
@@ -358,7 +399,11 @@ impl App {
                 app.panes.drawing_background = true;
                 draw(app, false);
                 app.panes.drawing_background = false;
+                (app.editor.panes.focused == pane).then(|| app.tab_bar_controls())
             });
+            if let Some(parked) = self.panes.parked.iter_mut().find(|p| p.id == pane) {
+                parked.controls = controls.unwrap_or_default();
+            }
         }
         let fx = &mut self.motion.module_fx;
         (fx.preview, fx.browser, fx.preview_mode) = buttons;
@@ -415,7 +460,7 @@ impl App {
             .collect()
     }
 
-    /// `(x, y)` 是否被浮在窗格上面的提示框、菜单、对话框、设置或 `⌘P` 面板盖住：盖住时点击、
+    /// `(x, y)` 是否被浮在窗格上面的提示框、菜单、对话框、设置或 `⌘P` 面板遮住：遮住时点击、
     /// 滚动和悬停都交给它们。
     pub(in crate::app) fn overlay_covers(&self, x: f32, y: f32) -> bool {
         self.overlays.alert.is_some()
@@ -425,7 +470,7 @@ impl App {
             || (self.overlays.picker.open && self.layout.picker.contains(x, y))
     }
 
-    /// `(x, y)` 所在的前台以外的窗格；被浮层盖住时为 `None`。
+    /// `(x, y)` 所在的前台以外的窗格；被浮层遮住时为 `None`。
     pub(in crate::app) fn background_pane_at(&self, x: f32, y: f32) -> Option<PaneId> {
         if self.overlay_covers(x, y) {
             return None;
@@ -442,6 +487,11 @@ impl App {
             return self.panes.rects.clone();
         }
         vec![self.pane_rects(self.editor.panes.focused, self.panes.area)]
+    }
+
+    /// 整张编辑区卡片（含顶栏那一行）：拆分、分栏预览和三栏合并都在它以内。
+    pub(crate) fn editor_card(&self) -> Rect {
+        self.panes.area
     }
 
     /// `(x, y)` 所在的窗格（含它的标签栏）；没有拆分时为 `None`。
@@ -462,18 +512,19 @@ impl App {
         if y < body.y {
             return Some((pane, None));
         }
-        let rx = (x - body.x) / body.w.max(1.0);
-        let ry = (y - body.y) / body.h.max(1.0);
+        // 离各边的距离与该方向拆分的一条的宽度；落在几条里时取最近的边。
+        let (across, down) = (drop_edge(body.w), drop_edge(body.h));
         let edges = [
-            (rx, Axis::Row, true),
-            (1.0 - rx, Axis::Row, false),
-            (ry, Axis::Column, true),
-            (1.0 - ry, Axis::Column, false),
+            (x - body.x, across, Axis::Row, true),
+            (body.right() - x, across, Axis::Row, false),
+            (y - body.y, down, Axis::Column, true),
+            (body.bottom() - y, down, Axis::Column, false),
         ];
-        let (near, axis, before) = (edges.into_iter())
+        let edge = (edges.into_iter())
+            .filter(|&(distance, band, ..)| distance < band)
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .unwrap_or((1.0, Axis::Row, false));
-        Some((pane, (near < DROP_EDGE).then_some((axis, before))))
+            .map(|(.., axis, before)| (axis, before));
+        Some((pane, edge))
     }
 
     /// 放下时标出的区域：窗格 `pane` 整个（含标签栏那一行），拆分时是新窗格那一半。
@@ -553,8 +604,9 @@ impl App {
             self.open_path(path);
             return;
         }
+        self.capture_panes();
         self.focus_pane(pane);
-        let canonical = winc_config::files::canonicalize(path).unwrap_or_else(|_| path.into());
+        let canonical = self.editor.document_path(path);
         let had = (self.editor.tabs().iter()).any(|d| d.path.as_deref() == Some(&*canonical));
         self.open_path(path);
         // 没打开（读不了、被拒绝）时当前标签还是原来的，不拆。
@@ -581,7 +633,7 @@ impl App {
 
     /// 在窗格 `pane` 的标签栏上横坐标 `x` 处插入标签：插在第几个标签的位置，以及标出插入处的
     /// 竖线。
-    fn tab_slot_at(&self, pane: PaneRects, x: f32) -> (usize, Rect) {
+    pub(in crate::app) fn tab_slot_at(&self, pane: PaneRects, x: f32) -> (usize, Rect) {
         let hits = match self.panes.parked.iter().find(|p| p.id == pane.id) {
             Some(parked) => &parked.hits[..],
             None => &self.hits.tabs[..],
@@ -608,6 +660,7 @@ impl App {
         let Some(&first) = docs.first() else {
             return;
         };
+        self.capture_panes();
         let source = self.editor.panes.focused;
         self.settle_editor_glide();
         self.tabs.marked.clear();
@@ -643,8 +696,8 @@ impl App {
                     .move_document(index, to.min(self.editor.tab_count() - 1));
             }
         }
-        if !copy {
-            for doc in docs {
+        for doc in docs {
+            if !copy || self.editor.document(*doc).is_some_and(|doc| doc.terminal) {
                 self.editor.remove_from_pane(source, *doc);
             }
         }
@@ -653,6 +706,7 @@ impl App {
             self.activate_tab(index);
         }
         self.focus = Focus::Editor;
+        self.activate_editor_terminal();
         self.relayout();
         self.request_redraw();
     }
@@ -662,6 +716,16 @@ impl App {
         (self.panes.dividers.iter())
             .find(|d| grip(d).contains(x, y))
             .map(|d| d.index)
+    }
+
+    /// 前台以外各窗格上一次画出的标签栏控件。
+    pub(in crate::app) fn background_tab_controls(&self) -> impl Iterator<Item = Rect> + '_ {
+        (self.panes.parked.iter()).flat_map(|p| p.controls.iter().copied())
+    }
+
+    /// 各窗格分隔线的拖动范围。
+    pub(in crate::app) fn pane_divider_grips(&self) -> impl Iterator<Item = Rect> + '_ {
+        self.panes.dividers.iter().map(grip)
     }
 
     /// 正被悬停或拖动的窗格分隔线。
@@ -719,6 +783,7 @@ impl App {
 
     /// 向右（`Axis::Row`）或向下拆分前台窗格，新窗格打开当前标签。
     pub(in crate::app) fn split_editor(&mut self, axis: Axis) {
+        self.capture_panes();
         let old = self.editor.panes.focused;
         self.settle_editor_glide();
         if self.editor.split(axis).is_none() {
@@ -733,6 +798,7 @@ impl App {
 
     /// 把当前标签移到新拆出的窗格，原窗格里不再有它；窗格里只有这一个标签时不动。
     pub(in crate::app) fn move_to_split(&mut self, axis: Axis) {
+        self.capture_panes();
         let old = self.editor.panes.focused;
         let Some(doc) = self.editor.active().map(|d| d.id) else {
             return;
@@ -747,6 +813,7 @@ impl App {
 
     /// 合并全部窗格，标签都回到前台窗格。
     pub(in crate::app) fn unsplit_editor(&mut self) {
+        self.capture_panes();
         if !self.editor.panes.is_split() {
             return;
         }
@@ -884,3 +951,6 @@ fn grip(divider: &Divider) -> Rect {
         Axis::Column => Rect::new(line.x, line.y - GRIP, line.w, line.h + 2.0 * GRIP),
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -10,6 +10,29 @@ impl App {
         Some(rope.char_to_byte(head.min(rope.len_chars())))
     }
 
+    /// 返回解析之后的改动：解析结果中的原文位置据此换算为当前文字中的位置（字节偏移）。
+    ///
+    /// 改动的起点取自文档的改动记录；记录不足以确定时从文档开头算起。
+    pub(crate) fn markdown_drift(&self) -> winc_typeset::Drift {
+        use winc_typeset::Drift;
+        let md = &self.preview.markdown;
+        let (Some(doc), Some(parsed), Some(revision)) =
+            (self.editor.active(), &md.parsed, md.checked)
+        else {
+            return Drift::NONE;
+        };
+        let Some(rope) = doc.text().rope() else {
+            return Drift::NONE;
+        };
+        let delta = rope.len_bytes() as isize - parsed.len as isize;
+        let from = doc.unchanged_chars_since(revision);
+        if delta == 0 || from == usize::MAX {
+            return Drift::NONE;
+        }
+        let from = rope.char_to_byte(from.min(rope.len_chars()));
+        Drift { from, delta }
+    }
+
     /// 返回可编辑的预览中光标所在的叶子块，见 [`LiveLeaf`]；尚未解析或没有叶子块时为 `None`。
     ///
     /// 光标在第一个叶子块之前时取第一个。拖动选择文字时取按下处（选区的起点）所在的块：
@@ -25,9 +48,13 @@ impl App {
             Some((.., before)) if self.live_dragging() => before?,
             _ => self.live_caret_source()?,
         };
-        let delta = len as i64 - parsed.len as i64;
-        let shift = |at: usize| usize::try_from(at as i64 + delta).unwrap_or(0).min(len);
-        let i = parsed.leaves.partition_point(|l| l.range.start <= caret);
+        // 解析结果中的范围先换算为当前文字中的位置，再与光标比较。
+        let drift = self.markdown_drift();
+        let start = |at: usize| drift.moved_start(at).min(len);
+        let end = |at: usize| drift.moved(at).min(len);
+        let i = parsed
+            .leaves
+            .partition_point(|l| start(l.range.start) <= caret);
         let line = rope.byte_to_line(caret);
         let line_start = rope.line_to_byte(line);
         let line_end = rope
@@ -35,38 +62,46 @@ impl App {
             .map_or(len, |b| b.saturating_sub(1).max(caret))
             .min(len);
         let block_of = |at: usize| {
-            parsed
-                .ranges
-                .iter()
-                .rposition(|r| r.start <= at && at < r.end.max(r.start + 1))
+            parsed.ranges.iter().rposition(|r| {
+                let r = start(r.start)..end(r.end);
+                r.start <= at && at < r.end.max(r.start + 1)
+            })
         };
+        // 叶子块的终点，含同一行末尾的空格。
+        let tail = |p: &std::ops::Range<usize>| {
+            let open = p.end > p.start && rope.byte(p.end - 1) != b'\n';
+            let spaces = rope
+                .bytes_at(p.end)
+                .take_while(|b| matches!(b, b' ' | b'\t'));
+            p.end + if open { spaces.count() } else { 0 }
+        };
+        let current = |r: &std::ops::Range<usize>| start(r.start)..end(r.end).max(start(r.start));
         let prev = i.checked_sub(1).map(|k| &parsed.leaves[k]);
-        let next = parsed.leaves.get(i);
-        let (found, leaf, gap) = match (prev.map(|l| &l.range), next.map(|l| &l.range)) {
-            (Some(p), _) if caret <= shift(p.end).max(p.start) => (p, p.start..shift(p.end), false),
+        let prev = prev.map(|l| (l, current(&l.range)));
+        let next = parsed.leaves.get(i).map(|l| (l, current(&l.range)));
+        let (kind, found, leaf, gap) = match (prev, next) {
+            (Some((l, p)), _) if caret <= tail(&p) => (l, p.clone(), p.start..tail(&p), false),
             // 光标在块的标记上（引用的 `>`、提示块的 `[!NOTE]`、列表的序号），尚未到达其第一个
             // 叶子块：取该叶子块，从光标所在行显示原文。
-            (_, Some(n)) if block_of(n.start).is_some() && block_of(n.start) == block_of(caret) => {
-                (n, line_start.min(n.start)..shift(n.end).max(n.start), false)
+            (_, Some((l, n)))
+                if block_of(n.start).is_some() && block_of(n.start) == block_of(caret) =>
+            {
+                (l, n.clone(), line_start.min(n.start)..n.end, false)
             }
             // 光标在叶子块之后的空行上：范围延伸到光标所在行，使光标在原文的空行上有位置。
-            (Some(p), _) => (p, p.start..line_end, true),
-            (None, Some(n)) => (n, n.start..shift(n.end).max(n.start), false),
+            (Some((l, p)), _) => (l, p.clone(), p.start..line_end, true),
+            (None, Some((l, n))) => (l, n.clone(), n, false),
             (None, None) => return None,
         };
-        let kind = prev
-            .into_iter()
-            .chain(next)
-            .find(|l| std::ptr::eq(&l.range, found));
         // 块之间的空行视为正文：回车另起一段。
-        let prose = gap || kind.is_some_and(|l| l.prose);
-        let table = !gap && kind.is_some_and(|l| l.table);
+        let prose = gap || kind.prose;
+        let table = !gap && kind.table;
         let before = rope.byte_slice(line_start..caret.max(line_start));
-        let blank = line_start > found.start
-            && kind.is_some_and(|l| l.prose)
-            && before.chars().all(char::is_whitespace);
+        let blank =
+            line_start > found.start && kind.prose && before.chars().all(char::is_whitespace);
         let block = block_of(found.start)?;
-        let range = parsed.ranges[block].start..shift(parsed.ranges[block].end).max(leaf.end);
+        let range = &parsed.ranges[block];
+        let range = start(range.start)..end(range.end).max(leaf.end);
         // 输入之后、重新解析之前，范围来自上一版文档：起点可能已超出文档，也可能不在字符边界上；
         // 先将范围限制在当前文档内，之后才能按范围截取原文。
         let snap = |at: usize| rope.char_to_byte(rope.byte_to_char(at.min(len)));
@@ -81,6 +116,7 @@ impl App {
             range,
             leaf,
             parsed_end: found.end,
+            drift,
             revision: doc.revision,
             prose,
             table,
@@ -130,7 +166,10 @@ impl App {
             } else {
                 byte < live.leaf.start
             };
-        let blank = |line: usize| rope.line(line).chars().all(char::is_whitespace);
+        // 显示为空段落的空行（见 `Markdown::with_blank_lines`）是光标可以停留的一行。
+        let blank = |line: usize| {
+            rope.line(line).chars().all(char::is_whitespace) && !self.live_blank_line(line)
+        };
         let mut line = rope.char_to_line(next);
         let mut target = next;
         if outside && blank(line) {
@@ -145,7 +184,9 @@ impl App {
                 while blank(line) && line > 0 {
                     line -= 1;
                 }
-                if !blank(line) {
+                if self.live_blank_line(line) {
+                    target = rope.line_to_char(line);
+                } else if !blank(line) {
                     target = line_end(rope, line);
                 }
             }
@@ -165,6 +206,27 @@ impl App {
         self.reset_blink();
         self.request_redraw();
         true
+    }
+
+    /// 第 `line` 行是否为显示成空段落的空行（见 `Markdown::with_blank_lines`）；解析结果不是
+    /// 当前版本时为 `false`。
+    pub(super) fn live_blank_line(&self, line: usize) -> bool {
+        let Some(doc) = self.editor.active() else {
+            return false;
+        };
+        let (Some(parsed), Some(rope)) = (self.preview.markdown.parsed.as_ref(), doc.text().rope())
+        else {
+            return false;
+        };
+        if self.preview.markdown.checked != Some(doc.revision) || line >= rope.len_lines() {
+            return false;
+        }
+        let start = rope.line_to_byte(line);
+        let i = parsed.leaves.partition_point(|l| l.range.start < start);
+        parsed
+            .leaves
+            .get(i)
+            .is_some_and(|l| l.range.start == start && l.range.is_empty())
     }
 
     /// 原文第 `at` 个字节所在的叶子块是否为正文（段落、标题）；不在任何叶子块中时为
@@ -604,8 +666,12 @@ impl App {
             // 打字机模式：平滑地滚到光标所在的行停在中间。
             let view = self.preview.markdown.area.h;
             let to = (y + h / 2.0 - view / 2.0).max(0.0);
-            if (to - self.preview.markdown.scroll()).abs() >= 1.0 {
-                self.glide_pane_to(ScrollTarget::Markdown, to);
+            let before = self.preview.markdown.scroll();
+            if (to - before).abs() >= 1.0 {
+                // 每换一行都平滑滚动，不论距离远近。
+                self.set_pane_scroll(ScrollTarget::Markdown, to);
+                let min = crate::app::scroll::editor::TYPEWRITER_MIN as f32;
+                self.glide_pane_over(ScrollTarget::Markdown, before, min);
             }
             return;
         }

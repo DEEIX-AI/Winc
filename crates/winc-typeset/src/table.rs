@@ -40,6 +40,7 @@ impl Cx<'_, '_> {
             align: aligns.get(col).copied().unwrap_or(Align::None),
         };
         let live = self.caret_cell();
+        let drift = self.drift();
         let mono = base * 0.85;
         let raw_row = |room: f32, cx: &mut Self| {
             let m = cx.frame.metrics(FontKind::Mono, mono);
@@ -55,6 +56,7 @@ impl Cx<'_, '_> {
             self.column_bounds(rows, cols, &live, pad_x, |r, c| para(head && r == 0, c));
         let widths = column_widths(&min, &max, width);
         let total: f32 = widths.iter().sum::<f32>() + 1.0;
+        let (x, view) = self.table_place(x, width, total);
         let mut top = y;
         let mut first_baseline = None;
         let mut lines = vec![top];
@@ -64,9 +66,13 @@ impl Cx<'_, '_> {
             let mut row_h: f32 = 0.0;
             for (c, w) in widths.iter().enumerate() {
                 if let Some(cell) = row.get(c) {
+                    let first = out.len();
+                    let live_here = live
+                        .as_ref()
+                        .is_some_and(|(lr, lc, ..)| (*lr, *lc) == (r, c));
                     let cell = match &live {
-                        Some((lr, lc, source, None)) if (*lr, *lc) == (r, c) => Err(*source),
-                        Some((lr, lc, _, Some(live))) if (*lr, *lc) == (r, c) => Ok(live),
+                        Some((_, _, source, None)) if live_here => Err(*source),
+                        Some((_, _, _, Some(live))) if live_here => Ok(live),
                         // 空单元格同样保留一段空的原文，使其可点击，光标也有绘制位置。
                         _ if cell.text.is_empty() => Err(cell.source),
                         _ => Ok(cell),
@@ -93,6 +99,12 @@ impl Cx<'_, '_> {
                             out,
                         ),
                     };
+                    // 光标所在的单元格按当前文字排出；其余单元格按解析结果排出，原文位置需要换算。
+                    if !live_here && drift != Drift::NONE {
+                        for item in &mut out[first..] {
+                            item.shift_source(drift);
+                        }
+                    }
                     row_h = row_h.max(flow.height);
                     if r == 0 {
                         first_baseline = first_baseline.or(flow.first_baseline);
@@ -137,13 +149,13 @@ impl Cx<'_, '_> {
             rows: lines.windows(2).map(|w| w[1] - w[0]).collect(),
         });
         let mut height = top - y + 1.0;
-        // 比正文宽：记下表格的各项，绘制时横向平移；下方留出滚动条的位置。
-        if total > width + 0.5 {
+        // 比显示区域宽：记下表格的各项，绘制时横向平移；下方留出滚动条的位置。
+        if let Some(view) = view {
             height += SCROLL_BAR_ROOM;
             scrolls.push(Scroller {
                 items: u32::try_from(first_item).unwrap_or(u32::MAX)
                     ..u32::try_from(out.len()).unwrap_or(u32::MAX),
-                rect: Rect::new(x, y, width, height),
+                rect: Rect::new(x, y, view, height),
                 content: total,
             });
         }
@@ -151,6 +163,28 @@ impl Cx<'_, '_> {
             height,
             first_baseline,
         }
+    }
+
+    /// 返回总宽 `total` 的表格的左边缘，以及需要横向滚动时的显示宽度；`x`、`width` 是所在
+    /// 一栏的左边缘和宽度。
+    ///
+    /// 不比一栏宽时靠左摆放。更宽时占用两侧留白（[`Cx::bleed`]），以一栏为中心向两侧展开，一侧
+    /// 不够时多出的部分移到另一侧；留白也放不下时占满留白，横向滚动。
+    fn table_place(&self, x: f32, width: f32, total: f32) -> (f32, Option<f32>) {
+        if total <= width + 0.5 {
+            return (x, None);
+        }
+        // 缩进的表格（列表、引用中）左边缘不动，只向右展开。
+        let left = if x <= 0.0 { self.bleed.0 } else { 0.0 };
+        let right = self.bleed.1;
+        let extra = total - width;
+        if extra <= left + right + 0.5 {
+            // 右侧不够时左移得更多；超出不到半个像素的部分不计，下限不超过 `left`。
+            let least = (extra - right).clamp(0.0, left);
+            let shift = (extra / 2.0).clamp(least, left).round();
+            return (x - shift, None);
+        }
+        (x - left, Some(width + left + right))
     }
 
     /// 取走并返回光标所在的单元格：（行，列，内容在原文中的起点，按排版显示的内容）。
@@ -161,12 +195,11 @@ impl Cx<'_, '_> {
         let (r, c, range) = self.cell.take()?;
         let raw = self.raw.as_ref()?;
         let segment = raw.block.get(range.clone())?;
-        let content = segment.trim();
+        let caret = raw.caret.saturating_sub(range.start).min(segment.len());
         // 空单元格的原文位置与解析结果一致（左侧 `|` 之后一个空格处），光标进出时不跳动。
-        let start = if content.is_empty() {
-            (range.start + 1).min(range.end)
-        } else {
-            range.start + segment.len() - segment.trim_start().len()
+        let (start, content) = match cell_content(segment, caret) {
+            Some(shown) => (range.start + shown.start, &segment[shown]),
+            None => ((range.start + 1).min(range.end), ""),
         };
         let cell = (!content.is_empty()).then(|| {
             let caret = raw.caret.saturating_sub(start).min(content.len());
@@ -236,4 +269,21 @@ fn column_widths(min: &[f32], max: &[f32], width: f32) -> Vec<f32> {
             .map(|(lo, hi)| (lo + (hi - lo) * t).floor())
             .collect()
     }
+}
+
+/// 返回单元格原文 `segment`（两条 `|` 之间）中显示的范围，光标位于 `caret`；全为空白时为 `None`。
+///
+/// 紧贴 `|` 的各一个空格是边距，不显示。光标在开头的空白中时显示边距之后的空白，在末尾的空白
+/// 中时显示到光标为止：输入的空格使光标前进，光标只在边距中移动时显示的内容不变。
+pub(super) fn cell_content(segment: &str, caret: usize) -> Option<std::ops::Range<usize>> {
+    let lead = segment.len() - segment.trim_start().len();
+    let trail = segment.trim_end().len();
+    if trail <= lead {
+        return None;
+    }
+    let head = usize::from(segment.starts_with(' '));
+    let tail = segment.len() - usize::from(segment.ends_with(' '));
+    let at = caret.clamp(head, tail);
+    let start = if at <= lead { head } else { lead };
+    Some(start..trail.max(at))
 }

@@ -1,7 +1,7 @@
 //! 窗口外观与系统偏好的读取。
 //!
 //! - 红绿灯按钮在顶栏中垂直居中；顶栏中的标签可以拖动；双击顶栏的行为跟随系统偏好。
-//! - 读取「减弱动态效果」和首选语言；查询鼠标此刻在窗口中的位置（拖文件进来时用）。
+//! - 读取「减弱动态效果」、首选语言和系统版本；查询鼠标此刻在窗口中的位置（拖文件进来时用）。
 //! - 测量时窗口静默（透明、点击穿透、不抢占焦点）。
 
 use super::files::{ns_string, rust_string};
@@ -35,18 +35,25 @@ pub fn mouse_location(window: &Window) -> Option<(f32, f32)> {
 /// 鼠标移动事件不保证只发给光标下最上层的窗口：窗口在被其他窗口遮挡的位置仍可能收到。
 /// 按住按键拖动时光标可以移到其他窗口上方，移动事件仍属于按下时的窗口。
 pub fn under_cursor(window: &Window) -> bool {
-    let Some(ns_window) = ns_window(window) else {
+    if ns_window(window).is_none() {
         return true;
-    };
+    }
+    // SAFETY: 调用方在主线程调用；`pressedMouseButtons` 是公开的类方法，返回整数。
+    let pressed: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+    pressed != 0 || topmost_at_cursor(window)
+}
 
-    // SAFETY: `ns_window` 来自仍然存活的 winit 窗口，调用方在主线程调用。`pressedMouseButtons`、
-    // `mouseLocation` 和 `windowNumberAtPoint:belowWindowWithWindowNumber:` 是公开的类方法，
-    // `windowNumber` 是公开的只读属性；参数和返回值都是整数或值类型的点，不涉及指针所有权。
+/// 是否为光标所在位置最上层的窗口（不论是否按着鼠标按键）；取不到窗口时为否。
+///
+/// 范围包括其他应用的窗口：被其他应用的窗口挡住时为否。
+pub fn topmost_at_cursor(window: &Window) -> bool {
+    let Some(ns_window) = ns_window(window) else {
+        return false;
+    };
+    // SAFETY: `ns_window` 来自仍然存活的 winit 窗口，调用方在主线程调用。`mouseLocation` 和
+    // `windowNumberAtPoint:belowWindowWithWindowNumber:` 是公开的类方法，`windowNumber` 是公开的
+    // 只读属性；参数和返回值都是整数或值类型的点，不涉及指针所有权。
     unsafe {
-        let pressed: usize = msg_send![class!(NSEvent), pressedMouseButtons];
-        if pressed != 0 {
-            return true;
-        }
         let point: CGPoint = msg_send![class!(NSEvent), mouseLocation];
         // 第二个参数为 0 时从最上层的窗口开始查找，范围包括其他应用的窗口。
         let top: isize = msg_send![
@@ -113,13 +120,10 @@ const STYLE_FULL_SCREEN: usize = 1 << 14;
 
 /// 窗口的红绿灯：窗口模式下放进顶栏并垂直居中，全屏时交还给 `AppKit`。
 ///
-/// 全屏时 `AppKit` 在屏幕顶部显示的标题栏中绘制红绿灯，并按其默认位置排列。因此进入全屏的过渡
-/// 开始时，按钮恢复到 `AppKit` 原来的位置。退出全屏的过渡期间，`AppKit` 重新排布标题栏，按钮回到
-/// 默认位置，此时摆放的位置不会保留：过渡开始时隐藏标题栏容器，过渡结束后按窗口模式摆放并重新
-/// 显示，过渡期间按钮的位置不会变化。
-///
-/// 上述处理在通知发出时同步完成：监听不指定队列，通知中心在发出通知的线程（主线程）上直接调用
-/// 回调。若经事件循环处理，过渡的前几帧仍使用原来的位置。释放时注销监听。
+/// 全屏时 `AppKit` 在屏幕顶部显示的标题栏中绘制红绿灯，并按其默认位置排列：进入全屏的过渡开始时
+/// 按钮恢复到原来的位置；退出全屏的过渡期间 `AppKit` 重新排布标题栏，此时摆放的位置不会保留，因此
+/// 过渡开始时隐藏标题栏容器，结束后按窗口模式摆放并重新显示。上述处理在通知发出时同步完成：监听不
+/// 指定队列，通知中心在主线程上直接调用回调。释放时注销监听。
 pub struct TrafficLights {
     shared: std::rc::Rc<Lights>,
     tokens: Vec<Retained<AnyObject>>,
@@ -139,6 +143,8 @@ struct Lights {
     native: std::cell::Cell<Option<(CGRect, [CGPoint; 3])>>,
     /// 窗口是否处于全屏或正在进入全屏；在全屏过渡开始时更新，早于 winit 报告的状态。
     fullscreen: std::cell::Cell<bool>,
+    /// 是否正在退出全屏：退出的过渡开始时为真，结束时为假。
+    exiting: std::cell::Cell<bool>,
     /// 按钮位置改变后调用，由应用重新计算布局并重画。
     moved: Box<dyn Fn()>,
 }
@@ -168,6 +174,7 @@ impl TrafficLights {
             zoom: std::cell::Cell::new(1.0),
             native: std::cell::Cell::new(None),
             fullscreen: std::cell::Cell::new(style & STYLE_FULL_SCREEN != 0),
+            exiting: std::cell::Cell::new(false),
             moved: Box::new(moved),
         });
         let mut tokens = Vec::new();
@@ -202,6 +209,11 @@ impl TrafficLights {
     /// 红绿灯右侧留出空间；见 [`Lights::place`]。
     pub fn place(&self) -> Option<f64> {
         self.shared.place()
+    }
+
+    /// 窗口是否处于窗口模式：不在全屏中，也不在进入或退出全屏的过渡中。
+    pub fn windowed(&self) -> bool {
+        !self.shared.fullscreen.get() && !self.shared.exiting.get()
     }
 
     /// 设置界面缩放倍数 `zoom`，之后的 [`Self::place`] 按缩放后的顶栏摆放。
@@ -241,17 +253,20 @@ impl Lights {
         let end = match step {
             Step::WillEnter => {
                 self.fullscreen.set(true);
+                self.exiting.set(false);
                 self.set_hidden(false);
                 self.restore();
                 Some(0.0)
             }
             Step::WillExit => {
                 self.fullscreen.set(false);
+                self.exiting.set(true);
                 self.set_hidden(true);
                 self.place()
             }
             Step::DidExit => {
                 self.fullscreen.set(false);
+                self.exiting.set(false);
                 let end = self.place();
                 self.set_hidden(false);
                 end
@@ -398,14 +413,12 @@ fn add_cannot_move_window(class: &AnyClass) -> bool {
     }
 }
 
-/// 处理双击顶栏：按系统的「连按窗口标题栏」偏好（`AppleActionOnDoubleClick`）缩放或最小化窗口，
-/// 偏好为「无操作」时不处理。
+/// 处理双击顶栏：按系统的「连按窗口标题栏」偏好缩放或最小化窗口，偏好为「无操作」时不处理。
 ///
-/// 缩放、最小化在当前事件处理完毕后开始（`performSelector:withObject:afterDelay:`，延迟为 0）。
-/// 双击由应用的鼠标处理识别；若在 winit 的事件回调中同步调用 `zoom:`，`AppKit` 在这次调用内执行
-/// 完整个缩放动画，winit 将其间所有窗口大小变化推迟到回调返回后派发，动画期间界面不重画，结束时
-/// 直接显示新的大小。由运行循环开始动画时，每一帧的大小变化都同步派发，界面随窗口逐帧重新布局
-/// （见 `WindowEvent::Resized` 的处理）。
+/// 缩放、最小化在当前事件处理完毕后开始（`performSelector:withObject:afterDelay:`，延迟为 0）：若在
+/// winit 的事件回调中同步调用 `zoom:`，`AppKit` 在这次调用内执行完整个缩放动画，winit 将其间所有窗
+/// 口大小变化推迟到回调返回后派发，动画期间界面不重画。由运行循环开始动画时，每一帧的大小变化都同步
+/// 派发，界面随窗口逐帧重新布局（见 `WindowEvent::Resized` 的处理）。
 pub fn title_bar_double_click(window: &Window) {
     let action = match action_on_double_click().as_deref() {
         Some("Minimize") => sel!(miniaturize:),
@@ -452,6 +465,44 @@ pub fn preferred_language() -> Option<String> {
         let first: *mut AnyObject = msg_send![languages.as_ref()?, firstObject];
         rust_string(first.as_ref()?)
     }
+}
+
+/// 返回系统的版本和内部版本号，例如「15.1 (24B83)」；无法取得时返回 `None`。可以在任何线程调用。
+pub fn os_version() -> Option<String> {
+    let version = sysctl_string(c"kern.osproductversion")?;
+    Some(match sysctl_string(c"kern.osversion") {
+        Some(build) => format!("{version} ({build})"),
+        None => version,
+    })
+}
+
+/// 读取字符串类型的内核参数 `name`；不存在或不是 UTF-8 时返回 `None`。
+fn sysctl_string(name: &std::ffi::CStr) -> Option<String> {
+    let mut size = 0;
+    // SAFETY: `name` 以 NUL 结尾；输出缓冲区为空，只取回长度写入 `size`。
+    let status = unsafe {
+        let null = std::ptr::null_mut();
+        libc::sysctlbyname(name.as_ptr(), null, &mut size, null, 0)
+    };
+    if status != 0 || size == 0 {
+        return None;
+    }
+    let mut bytes = vec![0u8; size];
+    // SAFETY: `bytes` 有 `size` 字节，与 `size` 描述同一个缓冲区；不写入参数。
+    let status = unsafe {
+        let out = bytes.as_mut_ptr().cast();
+        libc::sysctlbyname(name.as_ptr(), out, &mut size, std::ptr::null_mut(), 0)
+    };
+    if status != 0 {
+        return None;
+    }
+    // 返回的长度含结尾的 NUL。
+    bytes.truncate(size);
+    let text = std::ffi::CStr::from_bytes_until_nul(&bytes).ok()?;
+    text.to_str()
+        .ok()
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
 }
 
 /// 读取全局偏好 `AppleActionOnDoubleClick`，没有设置过时返回 `None`。

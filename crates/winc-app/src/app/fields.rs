@@ -25,6 +25,8 @@ impl App {
             Focus::GlobalInclude => Some(&mut self.panels.global.include),
             Focus::GlobalExclude => Some(&mut self.panels.global.exclude),
             Focus::Picker => Some(&mut self.overlays.picker.input),
+            Focus::SearchDialog => Some(&mut self.search_dialog.query),
+            Focus::SearchMask => Some(&mut self.search_dialog.mask),
             Focus::Setting => self.settings.editing.as_mut().map(|(_, field)| field),
             Focus::KeySearch => Some(&mut self.settings.keys_query),
             Focus::SettingsSearch => Some(&mut self.settings.search),
@@ -37,8 +39,10 @@ impl App {
             Focus::TerminalFind => self.terminal.find.as_mut().map(|f| &mut f.field),
             Focus::TerminalRename => self.terminal.rename.as_mut().map(|(_, field)| field),
             Focus::Editor
+            | Focus::GitPanel
             | Focus::Tree
             | Focus::Results
+            | Focus::SearchDock
             | Focus::Settings
             | Focus::CommitList
             | Focus::Outline

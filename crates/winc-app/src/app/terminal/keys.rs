@@ -1,6 +1,7 @@
 //! 键盘和剪贴板：按键编码、输入法提交的文字、粘贴、复制、全选，滚动和滚动条。
 
 use super::*;
+use winc_config::TerminalRightClick;
 use winit::keyboard::PhysicalKey;
 
 impl App {
@@ -35,20 +36,20 @@ impl App {
 
     /// 粘贴到终端（括号粘贴见 [`input::paste`]）。
     ///
-    /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先确认（[`input::paste_needs_confirm`]）：
-    /// 弹出确认框（macOS 上是系统的，其他平台画在窗口里）。
+    /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先弹出确认框（[`input::paste_needs_confirm`]）。
     ///
-    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴：程序开启了括号粘贴时收到一次空的括号
-    /// 粘贴，可据此自行读取剪贴板中的图片；未开启时不发送任何内容。远端主机上的标签例外：
-    /// 那里的程序读不到本机的剪贴板，复制的文件和图片先传过去，再粘贴那里的路径
-    /// （[`App::upload_paste`]）。
+    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴，只有开启了括号粘贴的程序收到一次空的粘贴。
+    /// 例外是远端的标签先传复制的文件和图片、再粘贴那里的路径（[`App::upload_paste`]），以及
+    /// Windows 上本机的标签把图片存为文件后粘贴其路径（[`App::paste_image_file`]）。
     pub(in crate::app) fn terminal_paste(&mut self) {
         let text = self.clipboard_text().unwrap_or_default();
         let Some(tab) = self.terminal.tab().map(|t| (t.id, t.modes, t.cwd.clone())) else {
             return;
         };
         let (id, modes, cwd) = tab;
-        if self.upload_paste(id, &cwd, text.is_empty()) {
+        if self.upload_paste(id, &cwd, text.is_empty())
+            || self.paste_image_file(id, &cwd, text.is_empty())
+        {
             return;
         }
         if input::paste_needs_confirm(&text, modes) {
@@ -101,6 +102,27 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// 右键单击终端是否复制或粘贴、而不弹出菜单：设置为「复制或粘贴」且没有按住 `⌥`（Alt）。
+    pub(in crate::app) fn terminal_right_click_edits(&self) -> bool {
+        self.config.terminal_right_click == Some(TerminalRightClick::CopyOrPaste)
+            && !self.pointer.modifiers.alt_key()
+    }
+
+    /// 右键单击终端（设置为「复制或粘贴」时）：有所选内容时复制并取消选择，否则粘贴。
+    ///
+    /// 开启了选中时复制（`terminal.copyOnSelect`）时，所选内容已经复制过，直接粘贴。
+    pub(in crate::app) fn terminal_right_click(&mut self) {
+        let selected = self
+            .terminal
+            .tab()
+            .is_some_and(|t| t.selection_range().is_some());
+        if selected && self.config.terminal_copy_on_select != Some(true) {
+            self.terminal_copy(true);
+        } else {
+            self.terminal_paste();
+        }
     }
 
     /// 选中全部（⌘A）：回滚缓冲加屏幕。
@@ -240,9 +262,9 @@ impl App {
     /// 在正在看的标签里按了 ⌃V：标签在远端主机上、本机剪贴板里有复制的文件或只有图片时，传到
     /// 那台主机再粘贴路径（见 [`App::upload_paste`]），返回 `true`，不再把 ⌃V 发给程序。
     ///
-    /// 用 ⌃V 粘贴图片的程序读的是远端的剪贴板，按了也读不到本机的截图；这里让这个习惯的键照样
+    /// 用 ⌃V 粘贴图片的程序读的是远端的剪贴板，按了也读不到本机的截图；这里让这个习惯的键仍然
     /// 可用。只在有程序运行（[`TermTab::busy`]）、在主屏上、开启了括号粘贴时这样做：shell 的
-    /// 提示符下 ⌃V 是逐字输入下一个键，备用屏上的 vim 是列选择，这些时候照常发给程序。
+    /// 提示符下 ⌃V 是逐字输入下一个键，备用屏上的 vim 是列选择，这些时候仍然发给程序。
     pub(in crate::app) fn ctrl_v_uploads(&mut self) -> bool {
         let Some(tab) = self.terminal.tab() else {
             return false;
