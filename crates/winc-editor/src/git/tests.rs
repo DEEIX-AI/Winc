@@ -45,6 +45,99 @@ fn commit_files_read_names_renames_and_line_counts() {
 }
 
 #[test]
+fn parse_numstat_reads_renames_and_skips_binary_and_zero() {
+    let raw = b"12\t3\tsrc/main.rs\0\
+        5\t0\t\0old/a.rs\0new/b.rs\0\
+        -\t-\timg.png\0\
+        0\t0\tpure-rename.rs\0\
+        0\t4\t\xe4\xb8\xad\xe6\x96\x87 file.md\0";
+    let stats = parse_numstat(raw, &root());
+    assert_eq!(stats.len(), 3);
+    assert_eq!(stats.get(&root().join("src/main.rs")), Some(&(12, 3)));
+    assert_eq!(stats.get(&root().join("new/b.rs")), Some(&(5, 0)));
+    assert_eq!(stats.get(&root().join("中文 file.md")), Some(&(0, 4)));
+    assert!(!stats.contains_key(&root().join("img.png")));
+    assert!(!stats.contains_key(&root().join("pure-rename.rs")));
+}
+
+#[test]
+fn status_collects_diff_stats_for_staged_unstaged_partial_and_unborn() {
+    let Some(git) = real_git() else {
+        return;
+    };
+    let dir = crate::test_util::scratch("git-status-diff-stats");
+    let root = winc_config::files::canonicalize(&dir).unwrap();
+    let sh = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{:?}: {:?}", args, out.stderr);
+    };
+    sh(&["init", "-q", "-b", "main"]);
+    sh(&["config", "user.name", "Test"]);
+    sh(&["config", "user.email", "test@example.com"]);
+    sh(&["config", "commit.gpgsign", "false"]);
+    sh(&["config", "core.autocrlf", "false"]);
+
+    // 首次提交前（无 HEAD）：暂存新增后又在工作区追加一行。
+    let unborn = root.join("unborn.txt");
+    std::fs::write(&unborn, "a\nb\n").unwrap();
+    sh(&["add", "unborn.txt"]);
+    std::fs::write(&unborn, "a\nb\nc\n").unwrap();
+    let status = git.status(&root, &Cancel::default()).unwrap();
+    let e = status.entries.iter().find(|e| e.path == unborn).unwrap();
+    assert_eq!(status.diff_stats.staged_of(e), Some((2, 0)));
+    assert_eq!(status.diff_stats.unstaged_of(e), Some((1, 0)));
+    assert_eq!(status.diff_stats.whole_of(e), Some((3, 0)));
+
+    // 建立基线提交。
+    let modified = root.join("mod.txt");
+    let partial = root.join("partial.txt");
+    let reverted = root.join("reverted.txt");
+    let binary = root.join("bin.dat");
+    std::fs::write(&modified, "1\n2\n3\n").unwrap();
+    std::fs::write(&partial, "p1\np2\n").unwrap();
+    std::fs::write(&reverted, "r1\nr2\n").unwrap();
+    std::fs::write(&binary, b"\x00\x01\x02\x03").unwrap();
+    sh(&["add", "."]);
+    sh(&["commit", "-q", "-m", "init"]);
+
+    // 仅工作区修改：+2 -1
+    std::fs::write(&modified, "1\n2b\n3\n4\n").unwrap();
+    // 部分暂存：暂存 +1 -0，工作区再 +2 -0，净变更 +3 -0
+    std::fs::write(&partial, "p1\np2\np3\n").unwrap();
+    sh(&["add", "partial.txt"]);
+    std::fs::write(&partial, "p1\np2\np3\np4\np5\n").unwrap();
+    // 暂存 +1 后工作区撤回：暂存 +1 -0，未暂存 +0 -1，相对 HEAD 净变更为 0（None）
+    std::fs::write(&reverted, "r1\nr2\nr3\n").unwrap();
+    sh(&["add", "reverted.txt"]);
+    std::fs::write(&reverted, "r1\nr2\n").unwrap();
+    // 二进制与未跟踪：均为 None
+    std::fs::write(&binary, b"\x00\x01\x02\x04\x05").unwrap();
+    let untracked = root.join("new.txt");
+    std::fs::write(&untracked, "u1\nu2\n").unwrap();
+
+    let status = git.status(&root, &Cancel::default()).unwrap();
+    let find = |p: &Path| status.entries.iter().find(|e| e.path == p).unwrap();
+    assert_eq!(status.diff_stats.unstaged_of(find(&modified)), Some((2, 1)));
+    assert_eq!(status.diff_stats.whole_of(find(&modified)), Some((2, 1)));
+    assert_eq!(status.diff_stats.staged_of(find(&partial)), Some((1, 0)));
+    assert_eq!(status.diff_stats.unstaged_of(find(&partial)), Some((2, 0)));
+    assert_eq!(status.diff_stats.whole_of(find(&partial)), Some((3, 0)));
+    assert_eq!(status.diff_stats.staged_of(find(&reverted)), Some((1, 0)));
+    assert_eq!(status.diff_stats.unstaged_of(find(&reverted)), Some((0, 1)));
+    assert_eq!(status.diff_stats.whole_of(find(&reverted)), None);
+    assert_eq!(status.diff_stats.whole_of(find(&binary)), None);
+    assert_eq!(status.diff_stats.unstaged_of(find(&untracked)), None);
+    assert_eq!(status.diff_stats.whole_of(find(&untracked)), None);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn parses_branch_and_every_kind_of_entry() {
     let output = [
         "# branch.oid 1234567890abcdef",

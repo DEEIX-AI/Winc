@@ -489,11 +489,24 @@ fn draw_other_group(
 ) {
     let p = app.palette;
     let staging = app.git.commit.staging();
-    let count = |status: &Status| {
-        let entries = status.entries.iter();
-        entries.filter(|e| group.holds(e, staging)).count()
-    };
-    let count = app.other_status(repo, |_, status| count(status));
+    let summary = app.other_status(repo, |_, status| {
+        let mut count = 0usize;
+        let (mut added, mut removed) = (0usize, 0usize);
+        let check_stats = group != OtherGroup::Untracked;
+        for entry in status.entries.iter().filter(|e| group.holds(e, staging)) {
+            count += 1;
+            if check_stats
+                && let Some((a, r)) =
+                    file_line_stats(status, entry, staging, group == OtherGroup::Staged)
+            {
+                added += a;
+                removed += r;
+            }
+        }
+        let stats = (added > 0 || removed > 0).then_some((added, removed));
+        (count, stats)
+    });
+    let (count, stats) = summary.unwrap_or((0, None));
     let row = CommitTarget::OtherGroup(repo, group);
     let actions = other_group_actions(repo, group, staging);
     let hovered = app.pointer.hover == Hover::Commit(row)
@@ -502,12 +515,9 @@ fn draw_other_group(
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
         frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
     }
-    let count = count.unwrap_or(0).to_string();
+    let count = count.to_string();
+    let tail = count_tail(app, frame, &count);
     draw_count_pill(app, frame, band, &count, list);
-    if hovered {
-        let strip = actions_home(band, actions.len(), count_tail(app, frame, &count));
-        draw_row_actions(app, frame, (strip, actions), (list, false), Some(hits));
-    }
     let cy = band.y + COMMIT_ROW / 2.0;
     let arrow = band.x + ARROW + INDENT;
     let open = !app.other_folded(repo, Some(group));
@@ -524,15 +534,23 @@ fn draw_other_group(
             CommitTarget::OtherGroupFiles(repo, group),
         ));
     }
-    ui_text_small(
-        frame,
-        app,
-        check + ICON,
-        band,
-        group.title(),
-        p.text_muted,
-        list,
-    );
+    let title = group.title();
+    let title_x = check + ICON;
+    ui_text_small(frame, app, title_x, band, title, p.text_muted, list);
+    if hovered {
+        let strip = actions_home(band, actions.len(), tail);
+        draw_row_actions(app, frame, (strip, actions), (list, false), Some(hits));
+    } else {
+        let title_w = frame.measure(FontKind::Ui, app.fonts.ui_small, title);
+        if let Some(stat) = LineStatLayout::place(
+            app,
+            frame,
+            stats,
+            (title_x, title_w, stat_right(band, tail)),
+        ) {
+            stat.draw(app, frame, band, 1.0, list);
+        }
+    }
     hits.push((band.intersect(list), row));
 }
 
@@ -559,6 +577,7 @@ fn draw_other_file(
             Some(false) => entry.unstaged.unwrap_or(entry.shown()),
             None => entry.shown(),
         };
+        let stats = file_line_stats(status, entry, side.is_some(), side == Some(true));
         let fixed = entry.conflicted();
         let selected = (app.git.commit.other_selected.as_ref())
             .is_some_and(|(r, path)| r == root && *path == entry.path);
@@ -566,12 +585,14 @@ fn draw_other_file(
             name,
             dir.unwrap_or_default(),
             change,
+            stats,
             entry.is_dir,
             fixed,
             selected,
         ))
     };
-    let Some((name, dir, change, is_dir, fixed, selected)) = app.other_status(repo, read).flatten()
+    let Some((name, dir, change, stats, is_dir, fixed, selected)) =
+        app.other_status(repo, read).flatten()
     else {
         return;
     };
@@ -616,6 +637,18 @@ fn draw_other_file(
     let letter = change.letter().to_string();
     let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
     let letter_x = band.right() - END_CENTER - letter_w / 2.0;
+    let stat = strip
+        .is_none()
+        .then(|| {
+            let min_room = frame
+                .measure(FontKind::Ui, app.fonts.ui, &name)
+                .min(STAT_NAME_MIN);
+            LineStatLayout::place(app, frame, stats, (text_x, min_room, stat_right(band, 0.0)))
+        })
+        .flatten();
+    if let Some(stat) = &stat {
+        stat.draw(app, frame, band, 1.0, list);
+    }
     ui_text_small(
         frame,
         app,
@@ -625,7 +658,11 @@ fn draw_other_file(
         git_color(p, change),
         list,
     );
-    let text_end = strip.map_or(letter_x - 8.0, |s| s.first.x - 4.0);
+    let text_end = match (strip, &stat) {
+        (Some(s), _) => s.first.x - 4.0,
+        (None, Some(stat)) => stat.text_end(),
+        (None, None) => letter_x - 8.0,
+    };
     let clip = Rect::new(list.x, band.y, text_end - list.x, COMMIT_ROW).intersect(list);
     let room = (text_end - text_x).max(0.0);
     let dir = (app.git.commit.flat() && !dir.is_empty()).then_some(dir.as_str());

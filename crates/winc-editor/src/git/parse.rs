@@ -402,6 +402,41 @@ pub(super) fn parse_diff_tree(output: &[u8], root: &Path) -> Vec<CommitFile> {
     files
 }
 
+/// 解析 `git diff --numstat -z` 的输出，返回各文件的文本增删行数。
+///
+/// 每条记录为 `加\t删\t路径\0`；改名或复制时路径为空，其后紧跟 `旧路径\0新路径\0`，以新路径为键。
+/// 二进制文件（`-`）与无文本行变更（`0\t0`）跳过。路径相对于 `root`，返回绝对路径。
+pub(super) fn parse_numstat(output: &[u8], root: &Path) -> HashMap<PathBuf, (usize, usize)> {
+    let mut stats = HashMap::new();
+    let mut fields = output.split(|b| *b == 0);
+    let path = |bytes: &[u8]| root.join(bytes_to_path(bytes));
+    while let Some(record) = fields.next() {
+        if record.is_empty() {
+            break;
+        }
+        let mut parts = record.splitn(3, |b| *b == b'\t');
+        let number = |part: Option<&[u8]>| std::str::from_utf8(part?).ok()?.parse::<usize>().ok();
+        let (added, removed) = (number(parts.next()), number(parts.next()));
+        let Some(rest) = parts.next() else {
+            continue;
+        };
+        let target = if rest.is_empty() {
+            // 改名或复制：后面依次是旧路径、新路径。
+            let Some(_old) = fields.next() else { break };
+            let Some(new) = fields.next() else { break };
+            new
+        } else {
+            rest
+        };
+        if let (Some(added), Some(removed)) = (added, removed)
+            && (added > 0 || removed > 0)
+        {
+            stats.insert(path(target), (added, removed));
+        }
+    }
+    stats
+}
+
 /// 解析 `git status --porcelain=v2 -z --branch` 的输出。
 ///
 /// 路径相对于 `root`，返回的是绝对路径。

@@ -257,3 +257,126 @@ fn staging_groups_partition_index_and_worktree_changes() {
 
     std::fs::remove_dir_all(&folder).unwrap();
 }
+
+/// 统计某个矩形区域内呈 `target` 色相的像素数量（用于验证 `+N −M` 绘制与隐藏，排除中性灰按钮图标）。
+fn tinted_pixels(app: &App, rect: Rect, target: Color) -> usize {
+    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let x0 = (rect.x * SCALE).floor().max(0.0) as usize;
+    let x1 = (rect.right() * SCALE).ceil().min(image.width as f32) as usize;
+    let y0 = (rect.y * SCALE).floor().max(0.0) as usize;
+    let y1 = (rect.bottom() * SCALE).ceil().min(image.height as f32) as usize;
+    let (tr, tg, tb) = (
+        (target.r * 255.0) as i32,
+        (target.g * 255.0) as i32,
+        (target.b * 255.0) as i32,
+    );
+    let mut hits = 0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let px = image.pixels[y * image.width as usize + x];
+            let (r, g, b) = (
+                ((px >> 16) & 0xff) as i32,
+                ((px >> 8) & 0xff) as i32,
+                (px & 0xff) as i32,
+            );
+            let chroma = r.max(g).max(b) - r.min(g).min(b);
+            if chroma >= 25 && (r - tr).abs() + (g - tg).abs() + (b - tb).abs() < 120 {
+                hits += 1;
+            }
+        }
+    }
+    hits
+}
+
+/// 提交面板文件行与分组标题行显示 `+N −M`，悬停时由操作按钮替代，窄侧栏时自动隐藏。
+#[test]
+fn commit_rows_draw_diff_stats_and_swap_on_hover_or_narrow_sidebar() {
+    use crate::app::CommitGroup;
+    use winc_editor::git::DiffStats;
+
+    let folder = sample_folder("git-commit-diff-stats");
+    let mut app = app_with(&folder, true);
+    let root = app.editor.root().unwrap().to_path_buf();
+    let mod_path = root.join("a/b/c/d/main.rs");
+    let untracked_path = root.join("notes.txt");
+    let mut diff_stats = DiffStats::default();
+    diff_stats.unstaged.insert(mod_path.clone(), (1234, 567));
+    app.git.root = Some(root);
+    app.git.status = Some(Status {
+        head: Some(Head::Branch("dev".into())),
+        entries: vec![
+            Entry {
+                path: mod_path,
+                from: None,
+                staged: None,
+                unstaged: Some(Change::Modified),
+                is_dir: false,
+            },
+            Entry {
+                path: untracked_path,
+                from: None,
+                staged: None,
+                unstaged: Some(Change::Untracked),
+                is_dir: false,
+            },
+        ],
+        diff_stats,
+        ..Status::default()
+    });
+    app.panels.sidebar.width = 280.0;
+    app.panels.sidebar.view = SidebarView::Commit;
+    paint(&mut app);
+
+    let hit = |app: &App, target: CommitTarget| {
+        app.hits
+            .commit
+            .iter()
+            .find(|(_, t)| *t == target)
+            .map(|(r, _)| *r)
+    };
+    let group_row = hit(&app, CommitTarget::Group(CommitGroup::Changes)).unwrap();
+    let file_row = hit(&app, CommitTarget::File(0)).unwrap();
+    let untracked_row = hit(&app, CommitTarget::File(1)).unwrap();
+
+    // 状态字母与文件数徽标占最右 ~24px，统计文字位于其左侧一段。
+    let stat_band = |row: Rect| Rect::new(row.right() - 110.0, row.y, 84.0, row.h);
+    let added_color = app.palette.git_added;
+    let deleted_color = app.palette.git_deleted;
+
+    assert!(tinted_pixels(&app, stat_band(file_row), added_color) > 0);
+    assert!(tinted_pixels(&app, stat_band(file_row), deleted_color) > 0);
+    assert!(tinted_pixels(&app, stat_band(group_row), added_color) > 0);
+    assert!(tinted_pixels(&app, stat_band(group_row), deleted_color) > 0);
+    assert_eq!(
+        tinted_pixels(&app, stat_band(untracked_row), added_color),
+        0
+    );
+
+    // 悬停文件行：按钮替代 `+N −M`，统计色像素消失。
+    app.on_mouse_move(file_row.x + 50.0, file_row.y + file_row.h / 2.0);
+    paint(&mut app);
+    assert!(hit(&app, CommitTarget::OpenFile(0)).is_some());
+    assert_eq!(tinted_pixels(&app, stat_band(file_row), added_color), 0);
+    assert_eq!(tinted_pixels(&app, stat_band(file_row), deleted_color), 0);
+
+    // 悬停分组行：整组按钮替代汇总 `+A −D`。
+    app.on_mouse_move(group_row.x + 50.0, group_row.y + group_row.h / 2.0);
+    paint(&mut app);
+    assert!(hit(&app, CommitTarget::GroupRevert(CommitGroup::Changes)).is_some());
+    assert_eq!(tinted_pixels(&app, stat_band(group_row), added_color), 0);
+    assert_eq!(tinted_pixels(&app, stat_band(group_row), deleted_color), 0);
+
+    // 移开鼠标、切树形并收窄到最小宽度：留给文件名的空间不足时自动隐藏 `+N −M`。
+    app.on_mouse_move(app.layout.window.right() - 20.0, 20.0);
+    app.git.commit.set_flat(false);
+    app.panels.sidebar.width = crate::theme::MIN_PANEL_WIDTH;
+    paint(&mut app);
+    let narrow_file = hit(&app, CommitTarget::File(0)).unwrap();
+    assert_eq!(tinted_pixels(&app, stat_band(narrow_file), added_color), 0);
+    assert_eq!(
+        tinted_pixels(&app, stat_band(narrow_file), deleted_color),
+        0
+    );
+
+    let _ = std::fs::remove_dir_all(&folder);
+}
