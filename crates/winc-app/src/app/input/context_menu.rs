@@ -130,6 +130,7 @@ pub enum MenuCommand {
     FindInFolder,
     CopyPath,
     CopyRelativePath,
+    CopyFileName,
     /// 将文件树中选中的文件复制为 Markdown 提示词。
     CopyAsPrompt,
     /// 编辑区：复制 `路径:行`。
@@ -628,6 +629,7 @@ impl MenuCommand {
             MenuCommand::FindInFolder => t!("cmd-find-in-folder"),
             MenuCommand::CopyPath => t!("cmd-copy-path"),
             MenuCommand::CopyRelativePath => t!("cmd-copy-relative-path"),
+            MenuCommand::CopyFileName => t!("cmd-copy-file-name"),
             MenuCommand::CopyAsPrompt => t!("menu-copy-as-prompt"),
             MenuCommand::CopyReference => t!("cmd-copy-reference"),
             MenuCommand::Rename => t!("cmd-rename-file"),

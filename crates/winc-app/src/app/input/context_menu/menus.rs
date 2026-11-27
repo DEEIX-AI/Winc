@@ -181,7 +181,7 @@ pub fn tree_menu(kind: Option<EntryKind>, can_paste: bool, remote: bool) -> Vec<
     menu.push(Separator);
     menu.push(Item(CopyPath, true));
     if kind.is_some() {
-        menu.push(Item(CopyRelativePath, true));
+        menu.extend([Item(CopyRelativePath, true), Item(CopyFileName, true)]);
         if kind == Some(EntryKind::File) {
             menu.push(Item(CopyAsPrompt, true));
         }
@@ -212,6 +212,7 @@ pub fn tree_selection_menu(files: usize, remote: bool) -> Vec<MenuEntry> {
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, true),
+        Item(CopyFileName, true),
     ]);
     if files > 0 {
         menu.push(Item(CopyAsPrompt, true));
@@ -252,6 +253,7 @@ pub fn tab_menu(
         Separator,
         Item(CopyPath, has_path),
         Item(CopyRelativePath, in_workspace),
+        Item(CopyFileName, has_path),
         Separator,
         Item(Reveal, has_path),
         Item(RevealInTree, in_workspace),

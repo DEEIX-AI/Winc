@@ -158,6 +158,41 @@ fn tree_menu_copies_selected_files_as_prompt() {
 }
 
 #[test]
+fn tree_menu_copies_file_and_folder_names() {
+    let dir = sample_folder("tree-copy-file-name");
+    let mut app = app_with(&dir, false);
+    paint(&mut app);
+
+    let src = row_of(&app, "src");
+    click_row_with(&mut app, src, ModifiersState::empty());
+    let main = row_of(&app, "main.rs");
+    for (row, name) in [(main, "main.rs"), (src, "src")] {
+        let at = tree_row_center(&app, row);
+        right_click(&mut app, at);
+        assert!(menu_commands(&app).windows(2).any(|items| items
+            == [
+                (MenuCommand::CopyRelativePath, true),
+                (MenuCommand::CopyFileName, true),
+            ]));
+        app.run_menu_command(MenuCommand::CopyFileName);
+        assert_eq!(app.clipboard.copied.as_deref(), Some(name));
+        assert_eq!(
+            app.status.message.as_deref(),
+            Some(winc_i18n::t!("menu-copied-file-name"))
+        );
+    }
+
+    click_row_with(&mut app, main, command_modifiers());
+    assert_eq!(selected_names(&app), ["src", "main.rs"]);
+    let at = tree_row_center(&app, main);
+    right_click(&mut app, at);
+    app.run_menu_command(MenuCommand::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("src\nmain.rs"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn the_menu_on_a_selection_copies_and_deletes_every_selected_item() {
     let dir = sample_folder("tree-multi-menu");
     let mut app = app_with(&dir, false);
@@ -187,6 +222,7 @@ fn the_menu_on_a_selection_copies_and_deletes_every_selected_item() {
             MenuCommand::Copy,
             MenuCommand::CopyPath,
             MenuCommand::CopyRelativePath,
+            MenuCommand::CopyFileName,
             MenuCommand::CopyAsPrompt,
             MenuCommand::Delete,
         ]
