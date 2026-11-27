@@ -255,8 +255,9 @@ impl App {
         }
     }
 
-    /// 进入或退出全屏；macOS 上另有 `⌃⌘F` 的菜单项（见 `crate::macos::add_view_menu`），
-    /// 按键先由 `AppKit` 按菜单处理，这个命令供命令面板、快捷键和全屏项不可用时使用。
+    /// 进入或退出全屏；macOS 上「窗口」菜单里另有 `⌃⌘F` 的「进入全屏幕」（见
+    /// `crate::macos::add_window_menus`），按键先由 `AppKit` 按菜单处理，这个命令供命令面板、
+    /// 快捷键和全屏项不可用时使用。
     pub(in crate::app) fn toggle_fullscreen(&self) {
         let Some(window) = &self.window.handle else {
             return;

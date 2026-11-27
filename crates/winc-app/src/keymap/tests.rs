@@ -272,8 +272,8 @@ fn zoom_keys_are_separate_from_font_size_and_work_in_the_terminal() {
 
 #[test]
 fn full_screen_is_on_ctrl_cmd_f_on_macos_and_f11_on_the_others() {
-    // macOS 上 ⌃⌘F 先由「视图」菜单的菜单项处理（见 `macos::view_menu`）；键位表里的同一条
-    // 绑定是菜单项不可用时的退路，提示和「快捷键」页也从这里读取。
+    // macOS 上 ⌃⌘F 先由「窗口」菜单的「进入全屏幕」处理（见 `macos::window_menu`）；键位表
+    // 里的同一条绑定是菜单项不可用时的退路，提示和「快捷键」页也从这里读取。
     for context in [Context::Editor, Context::Terminal] {
         assert_eq!(
             runs(

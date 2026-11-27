@@ -20,7 +20,6 @@ mod pasteboard;
 mod recent_documents;
 mod text_input;
 mod updates;
-mod view_menu;
 mod window;
 mod window_menu;
 
@@ -44,7 +43,6 @@ pub use pasteboard::{pasteboard_has_image, pasteboard_png};
 pub use recent_documents::sync_recent_documents;
 pub use text_input::{capture_inserted_text, with_inserted_text};
 pub use updates::{check as check_for_updates, start as start_updates};
-pub use view_menu::add_view_menu;
 pub use window::{
     TrafficLights, has_sheet, keep_title_bar_drags, make_invisible, mouse_location, os_version,
     preferred_language, reduce_motion, show_without_focus, title_bar_double_click,
