@@ -213,7 +213,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     keep_caret_still(app, still, &laid);
     app.preview.markdown.layout = Some(laid);
     app.follow_live_caret();
-    // 分栏时右边跟着左边滚；刚换成只看预览时对齐一次。
+    // 分栏时预览跟着源码滚动；刚换成只看预览时对齐一次。
     if area != app.layout.editor {
         app.sync_markdown_scroll();
     } else {

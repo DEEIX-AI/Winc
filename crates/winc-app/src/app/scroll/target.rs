@@ -361,7 +361,7 @@ impl App {
     /// 把区域 `target` 的竖直滚动位置设为 `scroll`（逻辑像素），限制在 0 到 [`Self::pane_max`]
     /// 之间。
     ///
-    /// Markdown 预览分栏显示时，左侧文字随之滚动到对应的位置（见 `App::scroll_markdown_to`）。
+    /// Markdown 预览分栏显示时，源码随之滚动到对应的位置（见 `App::scroll_markdown_to`）。
     pub(crate) fn set_pane_scroll(&mut self, target: ScrollTarget, scroll: f32) {
         let scroll = scroll.clamp(0.0, self.pane_max(target));
         match target {

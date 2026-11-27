@@ -263,7 +263,7 @@ impl App {
         self.preview.markdown.scroll_to(y);
     }
 
-    /// 分栏时左侧文字滚动或预览重排后，将右侧滚动到对应位置。
+    /// 分栏时源码滚动或预览重排后，将预览滚动到对应位置。
     ///
     /// 绘制预览之前调用。
     pub(crate) fn sync_markdown_scroll(&mut self) {

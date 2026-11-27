@@ -73,7 +73,7 @@ pub(crate) struct PreviewState {
     pub(crate) pdf: pdf::PdfPreview,
     /// LaTeX 文档的编译，各窗格共用。
     pub(crate) latex: latex::LatexBuilds,
-    /// 分栏预览时源代码一侧占编辑区宽度的比例，取值 0 到 1；`None` 表示各占一半。
+    /// 分栏预览时左栏占编辑区宽度的比例，取值 0 到 1；`None` 表示各占一半。
     ///
     /// 拖动中间的分隔线时改变，所有分栏预览的标签共用该值。
     pub(in crate::app) split_share: Option<f32>,

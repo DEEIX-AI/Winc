@@ -790,6 +790,7 @@ fn svg_split_preview_follows_the_text() {
         |w: u32| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="10"/>"#);
     std::fs::write(&path, svg(20)).unwrap();
     let mut app = app_with(&path, false);
+    app.settings_toggle(crate::layout::Setting::MarkdownSwapPreviewEditor);
     paint(&mut app);
     let [_, split, preview] = crate::layout::preview_segments(app.layout.preview);
 

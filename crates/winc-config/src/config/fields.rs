@@ -422,6 +422,7 @@ const MARKDOWN: &[Field] = &[
         write: |config| config.markdown_size.map(number),
     },
     bool_field!("lineNumbers", markdown_line_numbers),
+    bool_field!("swapPreviewEditor", markdown_swap_preview_editor),
     bool_field!("shortcuts", markdown_shortcuts),
     bool_field!("focusMode", markdown_focus),
     bool_field!("typewriterMode", markdown_typewriter),

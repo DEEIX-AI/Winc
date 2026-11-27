@@ -5,6 +5,8 @@ use super::*;
 #[test]
 fn split_preview_follows_edits_and_scrolls() {
     let (mut app, dir) = readme("md-edit", false, PreviewMode::Split);
+    app.settings_toggle(crate::layout::Setting::MarkdownSwapPreviewEditor);
+    settle(&mut app);
     let before = app.preview.markdown.height;
     // 在文末追加两段：预览变高。
     app.run(winc_editor::Command::DocEnd { extend: false });

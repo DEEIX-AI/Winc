@@ -484,10 +484,6 @@ impl App {
             || matches!(self.pointer.drag, Drag::SplitDivider { .. })
     }
 
-    /// 分栏预览：编辑区左右分开，左边是行号栏和文字，右边画预览，中间一道分隔线。
-    ///
-    /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`；编辑区太窄、
-    /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
     fn place_minimap(&mut self) {
         // 编辑区窄于该宽度时不显示（逻辑像素）：优先留给代码。
         const MINIMAP_MIN: f32 = 480.0;
@@ -513,6 +509,7 @@ impl App {
         );
     }
 
+    /// 按左栏比例分配宽度。Markdown 可按设置交换两栏。
     fn place_split(&mut self) {
         // 分栏时每一半的最小宽度（逻辑像素，取自调参）。
         const SPLIT_MIN: f32 = 240.0;
@@ -535,17 +532,27 @@ impl App {
             2.0 * GRIP + 1.0,
             l.editor.h,
         );
-        let shrink = l.editor.w - left;
-        l.split = Rect::new(
-            l.editor.x + left + 1.0,
-            l.editor.y,
-            shrink - 1.0,
-            l.editor.h,
+        let whole = l.editor;
+        let left_pane = Rect::new(whole.x, whole.y, left, whole.h);
+        let right_pane = Rect::new(
+            left_pane.right() + 1.0,
+            whole.y,
+            whole.w - left - 1.0,
+            whole.h,
         );
-        l.editor.w = left;
-        l.text.w = (l.text.w - shrink).max(0.0);
-        // 查找条贴着编辑区右边。
-        l.search.x -= shrink;
+        let preview_first = self.config.markdown_swap_preview_editor == Some(true)
+            && self.editor.active().and_then(|d| d.preview_kind())
+                == Some(winc_editor::PreviewKind::Markdown);
+        (l.editor, l.split) = if preview_first {
+            (right_pane, left_pane)
+        } else {
+            (left_pane, right_pane)
+        };
+        let offset = l.editor.x - whole.x;
+        l.gutter.x += offset;
+        l.text.x += offset;
+        l.text.w = (l.text.w - (whole.w - l.editor.w)).max(0.0);
+        l.search.x += l.editor.right() - whole.right();
     }
 
     /// 终端面板开着时从编辑区卡片下面切出一张卡片：编辑区变矮，两张卡片之间留间距，间距里可以上下拖

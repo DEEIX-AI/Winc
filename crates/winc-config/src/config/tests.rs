@@ -370,6 +370,7 @@ fn round_trips_through_json() {
         markdown_font: Some("LXGW Neo XiHei".to_string()),
         markdown_size: Some(14.0),
         markdown_line_numbers: Some(false),
+        markdown_swap_preview_editor: Some(true),
         markdown_shortcuts: Some(false),
         markdown_focus: Some(true),
         markdown_typewriter: Some(true),

@@ -219,7 +219,12 @@ impl SettingsPage {
                 ),
                 group(
                     t!("settings-group-preview"),
-                    vec![S::TextWidth, S::MarkdownLineNumbers, S::RemoteImages],
+                    vec![
+                        S::TextWidth,
+                        S::MarkdownLineNumbers,
+                        S::MarkdownSwapPreviewEditor,
+                        S::RemoteImages,
+                    ],
                 ),
                 group(
                     t!("settings-group-writing"),

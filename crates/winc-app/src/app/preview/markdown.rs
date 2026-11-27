@@ -258,7 +258,7 @@ pub(crate) struct MarkdownPreview {
     pub height: f32,
     /// 选中的文字：起点和终点（整份文字里的字符偏移，见 `laid::Laid::text`）。
     pub selection: Option<(usize, usize)>,
-    /// 最近一次点击是否在预览上：为真时分栏中的 ⌘C、⌘A、⌘F 作用于预览；点击左侧文字后
+    /// 最近一次点击是否在预览上：为真时分栏中的 ⌘C、⌘A、⌘F 作用于预览；点击源码后
     /// 恢复为作用于文字。
     pub focused: bool,
     /// 右键点中的字在原文中的位置（字节偏移），供「在源代码中显示」使用；点在没有对应原文的
@@ -270,7 +270,7 @@ pub(crate) struct MarkdownPreview {
     pub find_doc: Option<winc_editor::Document>,
     /// `find_doc` 的装入次数：每次装入使用新的文档标识，原有的查找结果随之作废。
     find_serial: u64,
-    /// 分栏时上一次两侧对齐的状态：文档、左侧文字的滚动行、预览的总高度。
+    /// 分栏时上一次两侧对齐的状态：文档、源码的滚动行、预览的总高度。
     ///
     /// 左侧滚动（滚轮、光标移出屏幕、输入）或预览重排后，下一帧按左侧重新对齐右侧；
     /// 在右侧滚动时直接对齐左侧，并记录该状态。

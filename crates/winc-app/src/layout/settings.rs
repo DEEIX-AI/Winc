@@ -150,6 +150,8 @@ pub enum Setting {
     MarkdownSize,
     /// Markdown 预览显示行号（`markdown.lineNumbers`）。
     MarkdownLineNumbers,
+    /// 交换 Markdown 分栏中的预览和编辑区。
+    MarkdownSwapPreviewEditor,
     /// Markdown 文件的源代码也使用写作快捷键（`markdown.shortcuts`）。
     MarkdownShortcuts,
     /// 编辑 Markdown 时淡化光标所在段落以外的文字（`markdown.focusMode`）。
@@ -374,7 +376,9 @@ impl Setting {
             S::RemoteImages | S::MarkdownShortcuts | S::MarkdownFocus | S::MarkdownTypewriter => {
                 SettingsPage::Markdown
             }
-            S::MarkdownSelectionToolbar | S::LatexPath => SettingsPage::Markdown,
+            S::MarkdownSwapPreviewEditor | S::MarkdownSelectionToolbar | S::LatexPath => {
+                SettingsPage::Markdown
+            }
             S::FormatOnSave | S::FixOnSave | S::SkipOnSave | S::FormatCommand(_) => {
                 SettingsPage::Format
             }
@@ -482,6 +486,7 @@ impl Setting {
             S::MarkdownFont => "markdown.font",
             S::MarkdownSize => "markdown.size",
             S::MarkdownLineNumbers => "markdown.lineNumbers",
+            S::MarkdownSwapPreviewEditor => "markdown.swapPreviewEditor",
             S::MarkdownShortcuts => "markdown.shortcuts",
             S::MarkdownFocus => "markdown.focusMode",
             S::MarkdownTypewriter => "markdown.typewriterMode",
@@ -599,6 +604,7 @@ impl Setting {
             Setting::MarkdownFont => t!("settings-markdown-font"),
             Setting::MarkdownSize => t!("settings-markdown-size"),
             Setting::MarkdownLineNumbers => t!("settings-markdown-line-numbers"),
+            Setting::MarkdownSwapPreviewEditor => t!("settings-markdown-swap-preview-editor"),
             Setting::MarkdownShortcuts => t!("settings-markdown-shortcuts"),
             Setting::MarkdownFocus => t!("settings-markdown-focus"),
             Setting::MarkdownTypewriter => t!("settings-markdown-typewriter"),
@@ -735,6 +741,9 @@ impl Setting {
             Setting::SmoothCaret => Some(t!("settings-smooth-caret-desc")),
             Setting::TextWidth => Some(t!("settings-text-width-desc")),
             Setting::MarkdownLineNumbers => Some(t!("settings-markdown-line-numbers-desc")),
+            Setting::MarkdownSwapPreviewEditor => {
+                Some(t!("settings-markdown-swap-preview-editor-desc"))
+            }
             Setting::MarkdownShortcuts => Some(t!("settings-markdown-shortcuts-desc")),
             Setting::MarkdownFocus => Some(t!("settings-markdown-focus-desc")),
             Setting::MarkdownTypewriter => Some(t!("settings-markdown-typewriter-desc")),
@@ -847,6 +856,7 @@ impl Setting {
             | Setting::SmoothScrolling
             | Setting::RemoteImages
             | Setting::MarkdownLineNumbers
+            | Setting::MarkdownSwapPreviewEditor
             | Setting::MarkdownShortcuts
             | Setting::MarkdownFocus
             | Setting::MarkdownTypewriter

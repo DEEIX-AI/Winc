@@ -137,45 +137,57 @@ fn dragging_the_split_divider_resizes_both_halves() {
     let dir = sample_folder("split-divider-drag");
     let path = dir.join("a.md");
     std::fs::write(&path, "# 标题\n\n正文\n").unwrap();
-    let mut app = app_with(&path, false);
-    app.choose_preview_mode(PreviewMode::Split);
-    paint(&mut app);
-    let (left, divider) = (app.layout.editor.w, app.layout.split_divider);
-    assert!(divider.w > 0.0);
-    let total = left + app.layout.split.w + 1.0;
+    for swapped in [false, true] {
+        let mut app = app_with(&path, false);
+        app.choose_preview_mode(PreviewMode::Split);
+        paint(&mut app);
+        if swapped {
+            app.settings_toggle(crate::layout::Setting::MarkdownSwapPreviewEditor);
+        }
+        let left_width = |app: &App| {
+            if swapped {
+                app.layout.split.w
+            } else {
+                app.layout.editor.w
+            }
+        };
+        let (left, divider) = (left_width(&app), app.layout.split_divider);
+        assert!(divider.w > 0.0);
+        let total = app.layout.split.w + app.layout.editor.w + 1.0;
 
-    // 按住分隔线向右拖 100：源代码一侧变宽，预览一侧变窄，总宽度不变。
-    let (x, y) = (divider.x + divider.w / 2.0, divider.y + divider.h / 2.0);
-    app.on_mouse_move(x, y);
-    assert_eq!(app.pointer.hover, Hover::SplitDivider);
-    app.on_mouse_down(MouseButton::Left);
-    app.on_mouse_move(x + 100.0, y);
-    app.on_mouse_up(MouseButton::Left);
-    paint(&mut app);
-    assert!((app.layout.editor.w - (left + 100.0)).abs() <= 1.0);
-    assert_eq!(app.layout.editor.w + app.layout.split.w + 1.0, total);
-
-    // 拖到最左边：源代码一侧停在最小宽度，不再变窄。
-    let divider = app.layout.split_divider;
-    let x = divider.x + divider.w / 2.0;
-    app.on_mouse_move(x, y);
-    app.on_mouse_down(MouseButton::Left);
-    app.on_mouse_move(0.0, y);
-    app.on_mouse_up(MouseButton::Left);
-    paint(&mut app);
-    assert_eq!(app.layout.editor.w, 240.0);
-
-    // 双击分隔线：恢复为左右各占一半。
-    let divider = app.layout.split_divider;
-    let x = divider.x + divider.w / 2.0;
-    app.on_mouse_move(x, y);
-    for _ in 0..2 {
+        // 按住分隔线向右拖 100：左栏变宽，右栏变窄，总宽度不变。
+        let (x, y) = (divider.x + divider.w / 2.0, divider.y + divider.h / 2.0);
+        app.on_mouse_move(x, y);
+        assert_eq!(app.pointer.hover, Hover::SplitDivider);
         app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_move(x + 100.0, y);
         app.on_mouse_up(MouseButton::Left);
+        paint(&mut app);
+        assert!((left_width(&app) - (left + 100.0)).abs() <= 1.0);
+        assert_eq!(app.layout.editor.w + app.layout.split.w + 1.0, total);
+
+        // 拖到最左边：左栏停在最小宽度，不再变窄。
+        let divider = app.layout.split_divider;
+        let x = divider.x + divider.w / 2.0;
+        app.on_mouse_move(x, y);
+        app.on_mouse_down(MouseButton::Left);
+        app.on_mouse_move(0.0, y);
+        app.on_mouse_up(MouseButton::Left);
+        paint(&mut app);
+        assert_eq!(left_width(&app), 240.0);
+
+        // 双击分隔线：恢复为左右各占一半。
+        let divider = app.layout.split_divider;
+        let x = divider.x + divider.w / 2.0;
+        app.on_mouse_move(x, y);
+        for _ in 0..2 {
+            app.on_mouse_down(MouseButton::Left);
+            app.on_mouse_up(MouseButton::Left);
+        }
+        paint(&mut app);
+        assert_eq!(app.preview.split_share, None);
+        assert_eq!(left_width(&app), left);
     }
-    paint(&mut app);
-    assert_eq!(app.preview.split_share, None);
-    assert_eq!(app.layout.editor.w, left);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

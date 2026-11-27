@@ -9,7 +9,19 @@ fn markdown_files_get_the_three_way_switch() {
     assert_eq!(doc.preview_mode(), PreviewMode::Split);
     assert!(doc.shows_text() && !doc.readonly);
     assert!(app.layout.preview.w > 0.0);
-    // 右边是预览：绘制在分栏的右半边，已完成排版并记录链接。
+    let original = app.layout;
+    let setting = crate::layout::Setting::MarkdownSwapPreviewEditor;
+    let config_path = dir.join("config.json");
+    app.store.config_path = Some(config_path.clone());
+    assert!(!app.switch_on(setting));
+    assert_eq!(original.editor.right() + 1.0, original.split.x);
+    app.settings_toggle(setting);
+    paint(&mut app);
+    let (saved, problems) = winc_config::Config::load_from(&config_path);
+    assert!(problems.is_empty());
+    assert_eq!(saved.markdown_swap_preview_editor, Some(true));
+    assert_eq!(app.layout.split.right() + 1.0, app.layout.editor.x);
+    assert_eq!(app.layout.gutter.x, app.layout.editor.x);
     assert_eq!(app.preview.markdown.area, app.layout.split);
     assert!(app.preview.markdown.height > app.preview.markdown.area.h);
     assert!(app.hits.markdown_links.len() >= 2);
@@ -18,6 +30,14 @@ fn markdown_files_get_the_three_way_switch() {
         app.preview.markdown.images.values().next(),
         Some(crate::app::preview::markdown::ImageSlot::Ready { pixels, .. }) if !pixels.is_empty()
     ));
+
+    app.settings_toggle(setting);
+    paint(&mut app);
+    assert_eq!(app.layout.editor, original.editor);
+    assert_eq!(app.preview.markdown.area, original.split);
+
+    app.adopt_config(saved);
+    assert_eq!(app.layout.split.right() + 1.0, app.layout.editor.x);
 
     // 只看预览：整个编辑区，不显示源代码，但可以直接编辑；切回源代码后仍可正常编辑。
     app.set_preview_mode(PreviewMode::Preview);
@@ -30,6 +50,17 @@ fn markdown_files_get_the_three_way_switch() {
     paint(&mut app);
     assert!(!app.editor.active().unwrap().readonly);
     assert_eq!(app.preview.markdown.area, Rect::default());
+
+    app.set_preview_mode(PreviewMode::Split);
+    app.frame.renderer = Some(
+        winc_render::Renderer::offscreen(420.0, 300.0, SCALE, app.palette.frame_bg, None, None)
+            .unwrap(),
+    );
+    app.relayout();
+    paint(&mut app);
+    assert_eq!(app.layout.split, Rect::default());
+    assert_eq!(app.preview.markdown.area, Rect::default());
+    assert!(app.layout.text.w > 0.0);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -420,7 +451,7 @@ fn headings_get_github_anchors() {
     assert_eq!(slug("a_b-c"), "a_b-c");
 }
 
-/// 截图：分栏（左侧源代码、右侧预览）和只看预览，浅色、深色各一张。
+/// 截图：两种分栏顺序和只看预览，分别使用浅色和深色主题。
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_markdown_preview() {
@@ -433,6 +464,10 @@ fn shoot_markdown_preview() {
             let name = format!("md-{name}-{theme}");
             let (mut app, dir) = readme(&name, dark, mode);
             shoot(&mut app, &name);
+            if mode == PreviewMode::Split {
+                app.settings_toggle(crate::layout::Setting::MarkdownSwapPreviewEditor);
+                shoot(&mut app, &format!("{name}-swapped"));
+            }
             if mode == PreviewMode::Preview {
                 let area = app.preview.markdown.area;
                 app.pointer.mouse = (area.x + 50.0, area.y + 50.0);
@@ -637,6 +672,13 @@ fn diagrams_open_full_screen_and_zoom() {
     click(&mut app, at);
     assert!(app.preview.markdown.diagram.is_none());
     let (mut app, dir3) = diagram_view_app("md-diagram-view-source", 0, false);
+    let full = app.layout.editor;
+    app.set_preview_mode(PreviewMode::Split);
+    for _ in 0..2 {
+        paint(&mut app);
+        assert_eq!(app.preview.markdown.diagram.as_ref().unwrap().area, full);
+        app.settings_toggle(crate::layout::Setting::MarkdownSwapPreviewEditor);
+    }
     app.set_preview_mode(PreviewMode::Source);
     paint(&mut app);
     assert!(app.preview.markdown.diagram.is_none());
@@ -840,7 +882,7 @@ fn time_large_markdown() {
     let started = std::time::Instant::now();
     paint(&mut app);
     eprintln!("读好一张图片后重排加两帧 {:?}", started.elapsed());
-    // 分栏时滚动左侧文字（右侧随之滚动）、滚动右侧预览（左侧随之滚动），每次一帧。
+    // 分栏时分别滚动源码和预览，两侧同步，每次一帧。
     let started = std::time::Instant::now();
     for i in 0..100 {
         app.editor.active_mut().unwrap().scroll_line = (i * 37) as f64;

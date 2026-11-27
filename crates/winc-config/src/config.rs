@@ -158,6 +158,8 @@ pub struct Config {
     /// Markdown 预览是否显示行号，默认为是：可编辑的预览在左侧写原文行号，其余预览在代码块中
     /// 写从 1 起的行号。
     pub markdown_line_numbers: Option<bool>,
+    /// 开启后，Markdown 分栏在左侧显示预览。
+    pub markdown_swap_preview_editor: Option<bool>,
     /// Markdown 文件的源代码是否也使用写作快捷键（标题、列表、链接等），默认为是；可编辑的
     /// 预览总是使用。
     pub markdown_shortcuts: Option<bool>,

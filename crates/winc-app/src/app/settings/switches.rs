@@ -39,6 +39,9 @@ impl App {
             Setting::PreviewOnClick => self.config.preview_on_click == Some(true),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers != Some(false),
+            Setting::MarkdownSwapPreviewEditor => {
+                self.config.markdown_swap_preview_editor == Some(true)
+            }
             Setting::MarkdownShortcuts => self.config.markdown_shortcuts != Some(false),
             Setting::MarkdownFocus => self.config.markdown_focus == Some(true),
             Setting::MarkdownTypewriter => self.config.markdown_typewriter == Some(true),
@@ -132,6 +135,9 @@ impl App {
             Setting::PreviewOnClick => self.config.preview_on_click = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers = Some(on),
+            Setting::MarkdownSwapPreviewEditor => {
+                self.config.markdown_swap_preview_editor = Some(on)
+            }
             Setting::MarkdownShortcuts => self.config.markdown_shortcuts = Some(on),
             Setting::MarkdownFocus => self.config.markdown_focus = Some(on),
             Setting::MarkdownTypewriter => self.config.markdown_typewriter = Some(on),
@@ -189,7 +195,11 @@ impl App {
         }
         if matches!(
             setting,
-            Setting::Minimap | Setting::LineNumbers | Setting::StatusBar | Setting::Outline
+            Setting::Minimap
+                | Setting::LineNumbers
+                | Setting::StatusBar
+                | Setting::Outline
+                | Setting::MarkdownSwapPreviewEditor
         ) {
             self.relayout();
         }

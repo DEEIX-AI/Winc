@@ -500,7 +500,11 @@ impl App {
             Target::SplitDivider => {
                 self.pointer.drag = Drag::SplitDivider {
                     start_x: x,
-                    start_left: self.layout.editor.w,
+                    start_left: if self.layout.split.x < self.layout.editor.x {
+                        self.layout.split.w
+                    } else {
+                        self.layout.editor.w
+                    },
                 };
             }
             Target::OutlineDivider => {

@@ -42,12 +42,12 @@ fn keys_scroll_the_full_preview() {
     assert!(app.preview.markdown.selection.is_none());
     assert!(!app.markdown_key(&Key::Named(NamedKey::Escape), false));
 
-    // 分栏时焦点在左侧文字上：方向键仍然移动光标，不滚动预览。
+    // 分栏时焦点在源码上：方向键仍然移动光标，不滚动预览。
     app.editor.active_mut().unwrap().readonly = false;
     app.set_preview_mode(PreviewMode::Split);
     settle(&mut app);
     assert!(!app.markdown_key(&Key::Named(NamedKey::PageDown), false));
-    // 点击右侧预览：键盘滚动预览（左侧同步滚动）；按键输入时焦点回到左侧。
+    // 点击预览后，键盘滚动预览，源码同步滚动。输入文字时焦点回到源码。
     let area = app.preview.markdown.area;
     super::click(&mut app, (area.x + area.w / 2.0, area.y + area.h / 2.0));
     let before = app.preview.markdown.scroll();
@@ -294,7 +294,7 @@ fn command_f_searches_the_rendered_preview() {
     assert!(!app.bars.find.replace_open);
     app.close_search();
 
-    // 点击左侧文字后查找文字。
+    // 点击源码后查找文字。
     let text = app.layout.text;
     super::click(&mut app, (text.x + 40.0, text.y + 5.0));
     assert!(!app.markdown_focused());
