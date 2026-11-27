@@ -144,6 +144,8 @@ pub enum Setting {
     RemoteImages,
     /// Markdown 预览正文的最大宽度（`markdown.textWidth`）。
     TextWidth,
+    /// 分栏模式下预览所在的一侧。
+    SplitPreviewPosition,
     /// Markdown 预览正文的字体（`markdown.font`）。
     MarkdownFont,
     /// Markdown 预览正文的字号（`markdown.size`）。
@@ -374,7 +376,9 @@ impl Setting {
             S::RemoteImages | S::MarkdownShortcuts | S::MarkdownFocus | S::MarkdownTypewriter => {
                 SettingsPage::Markdown
             }
-            S::MarkdownSelectionToolbar | S::LatexPath => SettingsPage::Markdown,
+            S::MarkdownSelectionToolbar | S::LatexPath | S::SplitPreviewPosition => {
+                SettingsPage::Markdown
+            }
             S::FormatOnSave | S::FixOnSave | S::SkipOnSave | S::FormatCommand(_) => {
                 SettingsPage::Format
             }
@@ -479,6 +483,7 @@ impl Setting {
             S::PreviewOnClick => "tree.previewOnClick",
             S::RemoteImages => "markdown.remoteImages",
             S::TextWidth => "markdown.textWidth",
+            S::SplitPreviewPosition => "markdown.splitPreviewPosition",
             S::MarkdownFont => "markdown.font",
             S::MarkdownSize => "markdown.size",
             S::MarkdownLineNumbers => "markdown.lineNumbers",
@@ -596,6 +601,7 @@ impl Setting {
             Setting::PreviewOnClick => t!("settings-preview-on-click"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::TextWidth => t!("settings-text-width"),
+            Setting::SplitPreviewPosition => t!("settings-split-preview-position"),
             Setting::MarkdownFont => t!("settings-markdown-font"),
             Setting::MarkdownSize => t!("settings-markdown-size"),
             Setting::MarkdownLineNumbers => t!("settings-markdown-line-numbers"),
@@ -734,6 +740,7 @@ impl Setting {
             Setting::CursorStyle => Some(t!("settings-cursor-style-desc")),
             Setting::SmoothCaret => Some(t!("settings-smooth-caret-desc")),
             Setting::TextWidth => Some(t!("settings-text-width-desc")),
+            Setting::SplitPreviewPosition => Some(t!("settings-split-preview-position-desc")),
             Setting::MarkdownLineNumbers => Some(t!("settings-markdown-line-numbers-desc")),
             Setting::MarkdownShortcuts => Some(t!("settings-markdown-shortcuts-desc")),
             Setting::MarkdownFocus => Some(t!("settings-markdown-focus-desc")),
@@ -888,6 +895,7 @@ impl Setting {
             | Setting::BackgroundImage
             | Setting::BackgroundFit
             | Setting::TextWidth
+            | Setting::SplitPreviewPosition
             | Setting::DefaultLanguage
             | Setting::Zoom
             | Setting::RenderWhitespace

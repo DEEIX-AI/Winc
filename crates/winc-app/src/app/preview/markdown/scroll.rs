@@ -214,7 +214,7 @@ impl App {
         self.preview.markdown.anchor_flash = clock.map(|clock| ((top, height), clock));
     }
 
-    /// 将预览滚动到 `y`；分栏时左侧的文字随之滚动到对应位置。
+    /// 将预览滚动到 `y`，分栏时源代码随之滚动到对应位置。
     pub(crate) fn scroll_markdown_to(&mut self, y: f32) {
         self.preview.markdown.scroll_to(y);
         self.request_redraw();
@@ -263,7 +263,7 @@ impl App {
         self.preview.markdown.scroll_to(y);
     }
 
-    /// 分栏时左侧文字滚动或预览重排后，将右侧滚动到对应位置。
+    /// 分栏时源代码滚动或预览重排后，将预览滚动到对应位置。
     ///
     /// 绘制预览之前调用。
     pub(crate) fn sync_markdown_scroll(&mut self) {

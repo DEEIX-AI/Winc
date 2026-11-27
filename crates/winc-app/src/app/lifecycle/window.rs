@@ -484,10 +484,6 @@ impl App {
             || matches!(self.pointer.drag, Drag::SplitDivider { .. })
     }
 
-    /// 分栏预览：编辑区左右分开，左边是行号栏和文字，右边画预览，中间一道分隔线。
-    ///
-    /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`；编辑区太窄、
-    /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
     fn place_minimap(&mut self) {
         // 编辑区窄于该宽度时不显示（逻辑像素）：优先留给代码。
         const MINIMAP_MIN: f32 = 480.0;
@@ -513,6 +509,11 @@ impl App {
         );
     }
 
+    /// 分栏预览：编辑区左右分开，一边是行号栏和文字，另一边画预览，中间一道分隔线。预览默认在
+    /// 右边，`split_preview_left` 为真时在左边。
+    ///
+    /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`。编辑区太窄、
+    /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
     fn place_split(&mut self) {
         // 分栏时每一半的最小宽度（逻辑像素，取自调参）。
         const SPLIT_MIN: f32 = 240.0;
@@ -535,17 +536,33 @@ impl App {
             2.0 * GRIP + 1.0,
             l.editor.h,
         );
-        let shrink = l.editor.w - left;
-        l.split = Rect::new(
-            l.editor.x + left + 1.0,
-            l.editor.y,
-            shrink - 1.0,
-            l.editor.h,
-        );
-        l.editor.w = left;
+        let (editor_width, shrink) = if self.config.split_preview_left == Some(true) {
+            l.split = Rect::new(l.editor.x, l.editor.y, left, l.editor.h);
+            let shift = left + 1.0;
+            let width = l.editor.w - shift;
+            l.editor.x += shift;
+            l.gutter.x += shift;
+            l.text.x += shift;
+            if l.search.h > 0.0 {
+                // 编辑区右边缘不变，横向空间不足时收窄查找条。
+                let search_width = l.search.w.min(width - SCROLLBAR_HIT - 16.0);
+                l.search.x += l.search.w - search_width;
+                l.search.w = search_width;
+            }
+            (width, shift)
+        } else {
+            let shrink = l.editor.w - left;
+            l.split = Rect::new(
+                l.editor.x + left + 1.0,
+                l.editor.y,
+                shrink - 1.0,
+                l.editor.h,
+            );
+            l.search.x -= shrink;
+            (left, shrink)
+        };
+        l.editor.w = editor_width;
         l.text.w = (l.text.w - shrink).max(0.0);
-        // 查找条贴着编辑区右边。
-        l.search.x -= shrink;
     }
 
     /// 终端面板开着时从编辑区卡片下面切出一张卡片：编辑区变矮，两张卡片之间留间距，间距里可以上下拖

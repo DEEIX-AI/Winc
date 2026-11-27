@@ -1,6 +1,6 @@
 //! 全屏查看 mermaid 图的绘制。
 //!
-//! 图覆盖编辑区（分栏时包括右侧的预览）并居中显示。每个缩放倍数都重新排版而不是缩放位图，
+//! 图覆盖编辑区（分栏时包括预览）并居中显示。每个缩放倍数都重新排版而不是缩放位图，
 //! 文字和线条在任何倍数下都保持清晰。右上角是缩放和关闭的工具栏；交互见
 //! `app::preview::markdown`。
 
@@ -32,16 +32,13 @@ const MARGIN: f32 = INSET + BUTTON + PAD * 2.0;
 /// 距离，不再提高可读性。
 const FIT_MAX: f32 = 2.0;
 
-/// 返回全屏查看的查看区域：编辑区，分栏时包括右侧的预览。
+/// 返回全屏查看的查看区域：编辑区，分栏时包括预览。
 fn view_area(app: &App) -> Rect {
     let l = app.layout;
     if l.split.w > 0.0 {
-        Rect::new(
-            l.editor.x,
-            l.editor.y,
-            l.split.right() - l.editor.x,
-            l.editor.h,
-        )
+        let left = l.editor.x.min(l.split.x);
+        let right = l.editor.right().max(l.split.right());
+        Rect::new(left, l.editor.y, right - left, l.editor.h)
     } else {
         l.editor
     }
