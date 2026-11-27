@@ -70,7 +70,8 @@ pub(super) fn draw_editor_outline(app: &mut App, frame: &mut Frame<'_>) {
     let all_rows: Vec<usize> = (0..total).collect();
     let current = app.outline_current(&all_rows);
 
-    let right_edge = (app.layout.text.right() - EDGE_RIGHT).min(editor.right() - SCROLLBAR_HIT - 4.0);
+    let right_edge =
+        (app.layout.text.right() - EDGE_RIGHT).min(editor.right() - SCROLLBAR_HIT - 4.0);
     let top_edge = app.overlay_top().max(editor.y) + EDGE_TOP;
     let avail_h = (editor.bottom() - 8.0 - top_edge).max(0.0);
     if avail_h < ROW {
@@ -258,13 +259,7 @@ pub(super) fn draw_editor_outline(app: &mut App, frame: &mut Frame<'_>) {
 
         let track = Rect::new(card.x, card.y + PAD, card.w, rows as f32 * ROW);
         app.caches.outline_toc.list.track = track;
-        if let Some((scroll, content)) = app
-            .caches
-            .outline_toc
-            .list
-            .scrollbar()
-            .filter(|_| live)
-        {
+        if let Some((scroll, content)) = app.caches.outline_toc.list.scrollbar().filter(|_| live) {
             let owner = app.editor.active().map_or(0, |doc| doc.id.0);
             crate::view::draw_scrollbar(
                 app,

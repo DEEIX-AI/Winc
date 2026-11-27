@@ -474,11 +474,8 @@ fn editor_outline_quick_view_expands_jumps_and_pins() {
 
     // 鼠标移入指示条并停留满 `TOC_HOVER_DELAY`：展开悬浮卡片。
     app.on_mouse_move(bars.x + bars.w / 2.0, bars.y + bars.h / 2.0);
-    app.caches.outline_toc.rest = Some(
-        Instant::now()
-            - crate::theme::TOC_HOVER_DELAY
-            - std::time::Duration::from_millis(10),
-    );
+    app.caches.outline_toc.rest =
+        Some(Instant::now() - crate::theme::TOC_HOVER_DELAY - std::time::Duration::from_millis(10));
     app.caches.outline_toc.shown = true;
     paint(&mut app);
 
