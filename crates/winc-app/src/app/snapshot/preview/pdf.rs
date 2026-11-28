@@ -190,6 +190,32 @@ fn pdf_files_render_only_the_pages_in_view() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 预览中的 PDF 可以被其他程序改写，例如 LaTeX、Typst 重新编译：预览不占用文件，改写后按新的
+/// 内容重新打开。回归：Windows 上按路径打开时系统映射着整个文件，改写失败（#609）。
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn a_previewed_pdf_can_be_rewritten_by_other_programs() {
+    let dir = sample_folder("pdf-rewrite");
+    let path = dir.join("论文.pdf");
+    std::fs::write(&path, sample_pdf(3)).unwrap();
+    let mut app = open_pdf(&path, false);
+    let count = |app: &App| {
+        let pages = app.preview.pdf.pages.as_ref().unwrap();
+        pages.as_ref().unwrap().len()
+    };
+    assert_eq!(count(&app), 3);
+
+    // 渲染线程仍持有文档时改写文件。
+    std::fs::write(&path, sample_pdf(5)).unwrap();
+    app.check_disk();
+    for _ in 0..3 {
+        paint(&mut app);
+        app.wait_for_pdf();
+    }
+    assert_eq!(count(&app), 5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// PDF 预览有可以拖动的滚动条：滚动后显示，按住滑块拖到底即滚到结尾，途中不选中任何内容。
 #[cfg(any(target_os = "macos", windows))]
 #[test]

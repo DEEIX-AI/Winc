@@ -87,6 +87,8 @@ fn at_start((page, at): Place) -> bool {
 /// 在渲染线程上打开 PDF 文件 `path`，目录在另一个线程上读出后传入 `outline`。
 ///
 /// 远端主机上的文件只读一次（[`winc_preview::pdf::read`]），文档和目录共用；读取失败时目录为空。
+/// Windows 上本机的文件同样读进内存再打开：按路径打开时系统占用文件，预览期间 LaTeX、Typst
+/// 无法重新生成它。读不进内存（超过大小上限等）时仍按路径打开，打不开的原因由系统给出。
 fn open_document(
     path: &Path,
     outline: impl FnOnce(Vec<OutlineItem>) + Send + 'static,
@@ -96,26 +98,30 @@ fn open_document(
             .name("winc-pdf-outline".to_owned())
             .spawn(task);
     };
-    if !winc_backend::is_remote(path) {
-        let file = path.to_owned();
-        spawn(Box::new(move || {
-            outline(winc_preview::pdf::read_outline(&file))
-        }));
-        return Document::open(path);
-    }
-    // 转为 `Arc<[u8]>` 会复制一份。
-    let bytes = match winc_preview::pdf::read(path) {
-        Ok(bytes) => Arc::new(bytes),
-        Err(reason) => {
-            outline(Vec::new());
-            return Err(reason);
+    let remote = winc_backend::is_remote(path);
+    if remote || cfg!(windows) {
+        match winc_preview::pdf::read(path) {
+            Ok(bytes) => {
+                // 转为 `Arc<[u8]>` 会复制一份。
+                let bytes = Arc::new(bytes);
+                let shared = Arc::clone(&bytes);
+                spawn(Box::new(move || {
+                    outline(winc_preview::pdf::outline(&shared))
+                }));
+                return Document::from_bytes(&bytes);
+            }
+            Err(reason) if remote => {
+                outline(Vec::new());
+                return Err(reason);
+            }
+            Err(_) => {}
         }
-    };
-    let shared = Arc::clone(&bytes);
+    }
+    let file = path.to_owned();
     spawn(Box::new(move || {
-        outline(winc_preview::pdf::outline(&shared))
+        outline(winc_preview::pdf::read_outline(&file))
     }));
-    Document::from_bytes(&bytes)
+    Document::open(path)
 }
 
 /// 右下角工具栏上的按钮。
