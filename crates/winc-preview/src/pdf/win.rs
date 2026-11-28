@@ -41,7 +41,15 @@ pub(super) struct Document {
 
 impl Document {
     /// 打开 `path`，返回文档和各页大小。
+    ///
+    /// 文件先整份读进内存（[`super::read`]）再交给系统：按路径打开时，系统在文档存续期间映射着
+    /// 整个文件，其他程序无法截断或改写它（`ERROR_USER_MAPPED_FILE`），例如重新编译 LaTeX、
+    /// Typst 时写不出 PDF，预览也就不会随之刷新。读不进内存的文件（超过大小上限等）仍按路径
+    /// 打开，打不开时由系统给出原因。
     pub(super) fn open(path: &Path) -> Result<(Document, Vec<PageSize>), String> {
+        if let Ok(bytes) = super::read(path) {
+            return Self::from_bytes(&bytes);
+        }
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path))
             .and_then(|op| op.join())
             .map_err(|e| e.message())?;
