@@ -66,6 +66,7 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} ASH script
   !insertmacro ${Action} ASTRO markup
   !insertmacro ${Action} ATOM markup
+  !insertmacro ${Action} AXAML markup
   !insertmacro ${Action} BASH script
   !insertmacro ${Action} BB code
   !insertmacro ${Action} BZL python

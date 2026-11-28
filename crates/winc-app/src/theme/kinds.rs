@@ -221,7 +221,7 @@ fn by_extension(ext: &str) -> Option<(FileGlyph, [u32; 2])> {
         | "liquid" | "twig" | "j2" | "jinja" | "jinja2" | "haml" | "slim" | "tmpl" | "tpl"
         | "gohtml" | "cshtml" | "razor" => (Code, ORANGE),
         "xml" | "xsd" | "xsl" | "xslt" | "plist" | "props" | "targets" | "xib" | "storyboard"
-        | "wsdl" | "xaml" | "rss" | "atom" | "kml" | "gpx" | "manifest" | "xcscheme"
+        | "wsdl" | "xaml" | "axaml" | "rss" | "atom" | "kml" | "gpx" | "manifest" | "xcscheme"
         | "xcworkspacedata" => (Code, ORANGE),
         // 各生态中写成文件扩展名的项目与包的清单。
         "sln" | "csproj" | "fsproj" | "vbproj" | "nuspec" => (Package, DOTNET),

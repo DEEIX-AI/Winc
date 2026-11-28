@@ -176,6 +176,7 @@ fn detects_common_languages_and_names() {
         ("kernel.cu", "C++"),
         ("tsconfig.json", "JSON"),
         ("App.xaml", "XML"),
+        ("App.axaml", "XML"),
     ] {
         assert_eq!(detect(file).name, name, "{file}");
     }

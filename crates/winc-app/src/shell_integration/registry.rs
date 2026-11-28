@@ -8,6 +8,7 @@ pub(super) const FILE_TYPES: &[&str] = &[
     "ASH",
     "ASTRO",
     "ATOM",
+    "AXAML",
     "BASH",
     "BB",
     "BZL",
