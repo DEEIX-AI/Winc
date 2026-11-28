@@ -65,7 +65,7 @@ fn draw_list(
         return long;
     };
     let p = app.palette;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
     // 右边缘可以左右拖动，悬停或拖动时改为较粗的强调色线条（与日志里的分隔线相同）。
     if app.log_files_resizing() || app.pointer.hover == Hover::Diff(DiffTarget::FilesEdge) {
         frame.rect(Rect::new(area.right() - 1.5, area.y, 2.0, area.h), p.accent);

@@ -13,7 +13,7 @@ pub(in crate::app::snapshot) fn pixels_with(app: &mut App, mode: RenderWhitespac
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone()

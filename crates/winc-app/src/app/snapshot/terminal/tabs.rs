@@ -369,8 +369,8 @@ fn the_new_terminal_and_shell_menu_share_a_control_with_separate_actions() {
     assert_eq!((new.x, menu.right()), (row.x, row.right()));
     let pixel = |app: &App, x: f32, y: f32| {
         let renderer = app.frame.renderer.as_ref().unwrap();
-        let scale = renderer.scale_factor();
-        let image = renderer.image().unwrap();
+        let scale = renderer.scale();
+        let image = renderer.snapshot().unwrap();
         image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
     };
     let sample = (new.right() - 6.0, new.y + new.h / 2.0);
@@ -446,8 +446,8 @@ fn a_partially_visible_rename_is_clipped_and_does_not_cover_the_new_entry() {
         assert_eq!(tab_hit(&app, 0).h, 5.0);
         let pixels = |app: &App| {
             let renderer = app.frame.renderer.as_ref().unwrap();
-            let scale = renderer.scale_factor();
-            let image = renderer.image().unwrap();
+            let scale = renderer.scale();
+            let image = renderer.snapshot().unwrap();
             let mut pixels = Vec::new();
             for y in ((rows.y - crate::theme::TREE_ROW) * scale) as usize..(rows.y * scale) as usize
             {

@@ -56,7 +56,11 @@ pub(crate) use input::context_menu::{
 pub use input::context_menu::{ContextMenu, MenuButton, MenuCommand};
 pub use input::palette::palette;
 pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts, InAppAlert};
-use lifecycle::appearance::{forced_theme, unusable_font};
+pub(crate) use lifecycle::appearance::font_set;
+use lifecycle::appearance::{
+    editor_font_weight, font_specs, forced_theme, terminal_font_weight, ui_font_weight,
+    unusable_font,
+};
 pub(crate) use lifecycle::backup::{
     Prepared, prepare_restore, restore_at_launch, restore_prepared,
 };
@@ -111,10 +115,12 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Theme, Window, WindowId};
 
+use cpui_render::{
+    Font, FontError, FontSet, FontSpec, FontStack, FontSystem, FontWeight, Metrics, Rect, Renderer,
+};
 use winc_core::text::{self, MAX_LINE_BYTES, MAX_LINE_CHARS};
 use winc_core::{Lines, Selection};
 use winc_editor::{COPY_LIMIT, Command, DocumentId, Editor, Entry, EntryKind, FileIndex, Search};
-use winc_render::{FontError, FontKind, FontSpec, Metrics, Rect, Renderer};
 
 use winc_config::{Config, Session, State, ThemeChoice, resolve_font_list};
 

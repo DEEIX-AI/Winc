@@ -125,7 +125,7 @@ fn draw_actions(
         let enabled = app.picker_part_enabled(part);
         let hovered = enabled && app.pointer.hover == Hover::PickerPart(part);
         if hovered {
-            frame.rect_clipped(rect, p.hover, RADIUS_ROW, area);
+            frame.rect_clipped(rect, RADIUS_ROW, p.hover, area);
         }
         let color = match (enabled, hovered) {
             (false, _) => p.text_dim,
@@ -165,7 +165,7 @@ fn draw_actions(
                 '↑'
             };
             let count = format!("{arrow}{count}");
-            let w = frame.measure(FontKind::Ui, size, &count);
+            let w = frame.measure(Font::ui(size), &count);
             let x = band.right() - NAME_GAP - w;
             ui_text_small(frame, app, x, band, &count, p.accent, area);
         }
@@ -266,13 +266,13 @@ impl Line {
                 Hover::PickerRow(r) | Hover::PickerPart(PickerPart::More(r)) if r == i);
         let band = row.inset(GUTTER, 1.0);
         let (text, dim) = if selected {
-            frame.rect_clipped(band, p.accent_fill, RADIUS_ROW, clip);
+            frame.rect_clipped(band, RADIUS_ROW, p.accent_fill, clip);
             band_ink(p)
         } else {
             if default {
-                frame.rect_clipped(band, p.selected_inactive, RADIUS_ROW, clip);
+                frame.rect_clipped(band, RADIUS_ROW, p.selected_inactive, clip);
             } else if hovered {
-                frame.rect_clipped(band, p.hover, RADIUS_ROW, clip);
+                frame.rect_clipped(band, RADIUS_ROW, p.hover, clip);
             }
             (p.text, p.text_dim)
         };
@@ -381,22 +381,20 @@ impl Line {
         }
         let room = (right - NAME_DOT_ROOM).max(x);
         self.draw_name(app, frame, (x, room), name, color);
-        let width = frame
-            .measure(FontKind::Ui, app.fonts.ui, name)
-            .min(room - x);
+        let width = frame.measure(Font::ui(app.fonts.ui), name).min(room - x);
         let ink = if self.selected {
             self.text
         } else {
             app.palette.accent
         };
         let dot = Rect::new(x + width + 6.0, self.cy - 2.5, 5.0, 5.0);
-        frame.rect_clipped(dot, ink, 2.5, self.clip);
+        frame.rect_clipped(dot, 2.5, ink, self.clip);
     }
 
     /// 在 `right` 左边绘制次要文字，把 `right` 移到文字左边。
     fn draw_meta(&self, app: &App, frame: &mut Frame<'_>, right: &mut f32, text: &str) {
         let size = app.fonts.ui_small;
-        *right -= frame.measure(FontKind::Ui, size, text);
+        *right -= frame.measure(Font::ui(size), text);
         ui_text_small(frame, app, *right, self.row, text, self.dim, self.clip);
     }
 
@@ -413,7 +411,7 @@ impl Line {
         // 徽标右边和「⋯」按钮的右边缘对齐（`draw_count_pill_in` 留 4）。
         let band = Rect::new(row.x, row.y, self.end() + 4.0 - row.x, row.h);
         draw_count_pill_in(app, frame, band, &text, colors, self.clip);
-        *right = self.end() - frame.measure(FontKind::Ui, app.fonts.ui_small, &text) - 12.0 - 6.0;
+        *right = self.end() - frame.measure(Font::ui(app.fonts.ui_small), &text) - 12.0 - 6.0;
     }
 
     /// 绘制第 `i` 行行尾的「⋯」，记下它的位置，返回按钮左边可以写名字的右边；选中的行（含自动
@@ -449,7 +447,7 @@ impl Line {
         let hovered = app.pointer.hover == Hover::PickerPart(part);
         if hovered && self.selected {
             let fill = p.text_on_accent.alpha(ON_BAND);
-            frame.rect_clipped(button, fill, RADIUS_ROW, self.clip);
+            frame.rect_clipped(button, RADIUS_ROW, fill, self.clip);
         } else {
             draw_button(frame, p, button, self.clip, hovered, false);
         }
@@ -673,7 +671,7 @@ fn draw_log_branch_row(
 /// 在纵坐标 `y` 画一条分隔线，两端对着 `GUTTER`。
 fn draw_divider(frame: &mut Frame<'_>, p: &Palette, rect: Rect, y: f32, clip: Rect) {
     let line = Rect::new(rect.x + GUTTER, y, rect.w - 2.0 * GUTTER, 1.0);
-    frame.rect_clipped(line, p.separator, 0.0, clip);
+    frame.rect_clipped(line, 0.0, p.separator, clip);
 }
 
 /// 一个分支行的内容。
@@ -738,13 +736,13 @@ fn draw_branch_row(
     let size = app.fonts.ui_small;
     let track_w = match track.is_empty() {
         true => 0.0,
-        false => NAME_GAP + frame.measure(FontKind::Ui, size, &track),
+        false => NAME_GAP + frame.measure(Font::ui(size), &track),
     };
     match (more, meta) {
         (Some(at), _) => right = at + NAME_GAP,
         // 名字优先：右端的文字使用名字和提交数之外的宽度，放不下时截短，过窄时不显示。
         (None, Some(meta)) => {
-            let name = frame.measure(FontKind::Ui, app.fonts.ui, row.label);
+            let name = frame.measure(Font::ui(app.fonts.ui), row.label);
             if let Some(room) = meta_room(right - text, name + NAME_GAP + track_w) {
                 let shown = ellipsize(frame, &meta, size, room);
                 line.draw_meta(app, frame, &mut right, &shown);
@@ -753,7 +751,7 @@ fn draw_branch_row(
         (None, None) => {}
     }
     if !track.is_empty() {
-        right -= NAME_GAP + frame.measure(FontKind::Ui, size, &track);
+        right -= NAME_GAP + frame.measure(Font::ui(size), &track);
         let ink = if line.selected {
             line.text
         } else {
@@ -800,7 +798,7 @@ fn draw_footer(
     for (part, text) in entries {
         let room = foot.w - 2.0 * GUTTER - (TEXT_LEFT - GUTTER) - 8.0;
         let text = fit(frame, text, size, room, false);
-        let w = TEXT_LEFT - GUTTER + frame.measure(FontKind::Ui, size, &text) + 8.0;
+        let w = TEXT_LEFT - GUTTER + frame.measure(Font::ui(size), &text) + 8.0;
         let button = Rect::new(x, y, w, BUTTON_SMALL);
         let hovered = app.pointer.hover == Hover::PickerPart(part);
         draw_button(frame, p, button, foot, hovered, false);

@@ -57,7 +57,7 @@ pub(super) fn actions_home(band: Rect, count: usize, tail: f32) -> ActionStrip {
 
 /// 返回行尾写着文件数 `count` 时占的宽度（逻辑像素），见 [`draw_count_pill`]。
 pub(super) fn count_tail(app: &App, frame: &mut Frame<'_>, count: &str) -> f32 {
-    frame.measure(FontKind::Ui, app.fonts.ui_small, count) + 12.0
+    frame.measure(Font::ui(app.fonts.ui_small), count) + 12.0
 }
 
 /// 当前仓库文件行的按钮：`group` 是所在的组，`index` 是文件在状态中的下标。

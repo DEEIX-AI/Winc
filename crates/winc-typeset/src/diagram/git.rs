@@ -3,8 +3,8 @@
 //! 布局先在「时间、泳道」坐标中进行，再按图的方向换成屏幕坐标：从左往右时时间为横坐标，从上
 //! 往下（或从下往上）时时间为纵坐标。坐标和尺寸都是逻辑像素，`s` 是排版用的字号。
 
+use cpui_render::{Color, Rect, Stroke};
 use winc_preview::markdown::mermaid::{CommitKind, Dir, Git};
-use winc_render::{Color, Rect, Stroke};
 
 use super::super::math::polyline;
 use super::super::{Cx, Item};

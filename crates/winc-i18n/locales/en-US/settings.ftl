@@ -297,6 +297,7 @@ settings-check-updates-desc = Check on launch and daily, and show new versions i
 settings-system-title-bar-desc = Let the desktop draw the title bar and window frame
 settings-version = Version
 settings-version-line = Version { $version }
+settings-legal = © 2026 Chenyme and DEEIX AI · Licensed under { $license }, without warranty
 settings-website = Website
 settings-license = License
 settings-link-open-failed = Couldn’t open link: { $error }

@@ -90,12 +90,12 @@ pub(in crate::view) fn draw_marker(
         )
     } else {
         // `>>>>>>>`：覆盖标记文字，只绘制一道收尾的细线。
-        frame.rect_clipped(band, p.editor_bg, 0.0, band);
+        frame.surface_clipped(band, 0.0, p.editor_bg, band);
         let rule = Rect::new(band.x, (band.y + band.h / 2.0 - 1.0).round(), band.w, 2.0);
-        frame.rect_clipped(rule, p.diff_added.word, 0.0, band);
+        frame.rect_clipped(rule, 0.0, p.diff_added.word, band);
         return;
     };
-    frame.rect_clipped(band, color, 0.0, band);
+    frame.rect_clipped(band, 0.0, color, band);
     let mut x = ui_text_small(frame, app, band.x + TEXT_PAD, band, &title, p.text, band) + 14.0;
     if line != conflict.start {
         return;
@@ -106,10 +106,10 @@ pub(in crate::view) fn draw_marker(
     for action in ACTIONS {
         let target = for_conflict(action, i);
         let text = label(target);
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + 12.0;
+        let w = frame.measure(Font::ui(app.fonts.ui_small), text) + 12.0;
         let rect = Rect::new(x, band.y + (band.h - h) / 2.0, w, h);
         if app.pointer.hover == Hover::Merge(target) {
-            frame.rect_clipped(rect, p.hover, RADIUS_ROW, band);
+            frame.rect_clipped(rect, RADIUS_ROW, p.hover, band);
         }
         ui_text_small(frame, app, rect.x + 6.0, band, text, p.accent, band);
         hits.push((rect.intersect(band), target));
@@ -118,7 +118,7 @@ pub(in crate::view) fn draw_marker(
 
     // 右端显示冲突序号。
     let counter = format!("{} / {count}", i + 1);
-    let w = frame.measure(FontKind::Ui, app.fonts.ui_small, &counter);
+    let w = frame.measure(Font::ui(app.fonts.ui_small), &counter);
     let right = band.right() - 14.0 - w;
     if right > x + 8.0 {
         ui_text_small(frame, app, right, band, &counter, p.text_muted, band);
@@ -165,11 +165,11 @@ pub(in crate::view) fn draw_merge_card(
         .iter()
         .map(|&b| match b {
             MergeTarget::Previous | MergeTarget::Next => BUTTON_SMALL,
-            b => frame.measure(FontKind::Ui, font, all_label(b)) + 16.0,
+            b => frame.measure(Font::ui(font), all_label(b)) + 16.0,
         })
         .collect();
     let buttons_w: f32 = widths.iter().sum::<f32>() + 4.0 * (widths.len() - 1) as f32;
-    let text_w = frame.measure(FontKind::Ui, font, &message);
+    let text_w = frame.measure(Font::ui(font), &message);
     let width = 34.0 + text_w + 16.0 + buttons_w + 8.0;
     // 卡片高 36 逻辑像素：高于一行文字，按钮上下各留出少量间隙。
     let card = Rect::new(area.right() - 8.0 - width, top, width, 36.0);
@@ -292,8 +292,8 @@ fn draw_folded_conflict(
 ) {
     let p = app.palette;
     // 覆盖折叠行原有的文字，再铺上与行号栏、连接带相同的底色。
-    frame.rect_clipped(band, p.editor_bg, 0.0, band);
-    frame.rect_clipped(band, conflict_shade(p).line, 0.0, band);
+    frame.surface_clipped(band, 0.0, p.editor_bg, band);
+    frame.rect_clipped(band, 0.0, conflict_shade(p).line, band);
     let title = t!("git-merge-conflict-title", index = i + 1, count = count);
     let mut x = ui_text_small(frame, app, band.x + TEXT_PAD, band, &title, p.text, band) + 14.0;
     let h = (band.h - 4.0).max(12.0);
@@ -302,10 +302,10 @@ fn draw_folded_conflict(
         MergeTarget::EditConflict(i),
     ] {
         let text = label(target);
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + 12.0;
+        let w = frame.measure(Font::ui(app.fonts.ui_small), text) + 12.0;
         let rect = Rect::new(x, band.y + (band.h - h) / 2.0, w, h);
         if app.pointer.hover == Hover::Merge(target) {
-            frame.rect_clipped(rect, p.hover, RADIUS_ROW, band);
+            frame.rect_clipped(rect, RADIUS_ROW, p.hover, band);
         }
         ui_text_small(frame, app, rect.x + 6.0, band, text, p.accent, band);
         hits.push((rect.intersect(band), target));
@@ -394,8 +394,8 @@ fn draw_side_pane(
     let p = app.palette;
     let rect = app.git.merge.pane_rects[side];
     let ribbon = app.git.merge.ribbons[side];
-    frame.rect(rect, p.editor_bg);
-    frame.rect(ribbon, p.editor_bg);
+    frame.surface(rect, p.editor_bg);
+    frame.surface(ribbon, p.editor_bg);
     let body_y = rect.y + PANE_HEADER;
     let body = Rect::new(rect.x, body_y, rect.w, (rect.h - PANE_HEADER).max(0.0));
     let clip = Rect::new(ribbon.x, body_y, ribbon.w, body.h);
@@ -429,10 +429,10 @@ fn draw_side_pane(
         let this = (row_y(segment.side.start), row_y(segment.side.end));
         if segment.side.is_empty() {
             let mark = Rect::new(rect.x, this.0 - 1.0, rect.w, 2.0);
-            frame.rect_clipped(mark, shade.edge, 0.0, body);
+            frame.rect_clipped(mark, 0.0, shade.edge, body);
         } else {
             let band = Rect::new(rect.x, this.0, rect.w, this.1 - this.0);
-            frame.rect_clipped(band, shade.line, 0.0, body);
+            frame.rect_clipped(band, 0.0, shade.line, body);
         }
         let (left, right) = if side == 0 {
             (this, *file)
@@ -462,10 +462,8 @@ fn draw_side_pane(
         let number = (line + 1).to_string();
         let number_x = gutter.right() - PANE_PAD - number.chars().count() as f32 * app.metrics.cell;
         frame.text(
-            FontKind::Mono,
-            app.fonts.code,
-            number_x,
-            baseline,
+            Font::mono(app.fonts.code),
+            (number_x, baseline),
             &number,
             p.gutter_text,
             gutter,
@@ -549,7 +547,7 @@ fn draw_merge_chrome(
     let p = app.palette;
     let [left, right] = app.git.merge.pane_rects;
     let whole = Rect::new(left.x, left.y, right.right() - left.x, PANE_HEADER);
-    frame.rect(whole, p.editor_bg);
+    frame.surface(whole, p.editor_bg);
     frame.rect(
         Rect::new(whole.x, whole.bottom() - 1.0, whole.w, 1.0),
         p.separator,
@@ -604,16 +602,16 @@ fn draw_merge_chrome(
         t!("git-merge-card-resolved").to_owned()
     };
     let color = if count > 0 { p.error } else { p.git_added };
-    let w = frame.measure(FontKind::Ui, app.fonts.ui_small, &status);
+    let w = frame.measure(Font::ui(app.fonts.ui_small), &status);
     ui_text_small(frame, app, x - 6.0 - w, bar, &status, color, bar);
 
     // 底部操作栏：左侧为整个文件采用一侧的按钮，右侧为退出和完成。
     let footer = app.git.merge.footer;
-    frame.rect(footer, p.editor_bg);
+    frame.surface(footer, p.editor_bg);
     frame.rect(Rect::new(footer.x, footer.y, footer.w, 1.0), p.separator);
     let y = footer.y + (footer.h - SETTINGS_CONTROL_H) / 2.0;
     let width = |frame: &mut Frame<'_>, text: &str| {
-        frame.measure(FontKind::Ui, app.fonts.ui, text) + FOOTER_BUTTON_PAD * 2.0
+        frame.measure(Font::ui(app.fonts.ui), text) + FOOTER_BUTTON_PAD * 2.0
     };
     let mut button =
         |frame: &mut Frame<'_>, x: f32, text: &str, role, enabled, target: MergeTarget| {

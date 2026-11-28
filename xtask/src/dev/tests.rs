@@ -12,22 +12,19 @@ fn member(name: &str, dir: &str, deps: &[&str]) -> Member {
 
 #[test]
 fn changes_pull_in_the_crates_that_depend_on_them() {
-    // 依赖链为 `winc-core` ← `winc-editor` ← {`winc-app`, `xtask`}；`winc-render` 不依赖任何包。
+    // 依赖链为 `winc-core` ← `winc-editor` ← {`winc-app`, `xtask`}；`winc-vim` 不依赖任何包。
     let members = [
         member("winc-app", "crates/winc-app", &["winc-editor", "winc-core"]),
         member("winc-core", "crates/winc-core", &[]),
         member("winc-editor", "crates/winc-editor", &["winc-core"]),
-        member("winc-render", "crates/winc-render", &[]),
+        member("winc-vim", "crates/winc-vim", &[]),
         member("xtask", "xtask", &["winc-editor"]),
     ];
     let affected = |files: &[&str]| {
         let files: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
         affected(&members, &files)
     };
-    assert_eq!(
-        affected(&["crates/winc-render/src/lib.rs"]),
-        ["winc-render"]
-    );
+    assert_eq!(affected(&["crates/winc-vim/src/lib.rs"]), ["winc-vim"]);
     assert_eq!(affected(&["crates/winc-app/src/app.rs"]), ["winc-app"]);
     assert_eq!(
         affected(&["crates/winc-core/src/text.rs"]),
@@ -44,8 +41,8 @@ fn workspace_dependencies_follow_the_layers() {
     let members = members(&root()).unwrap();
     assert_eq!(layer_violations(&members), Vec::<String>::new());
     // 未登记的依赖会被报告。
-    let extra = [member("winc-core", "crates/winc-core", &["winc-render"])];
-    assert_eq!(layer_violations(&extra), ["winc-core → winc-render"]);
+    let extra = [member("winc-core", "crates/winc-core", &["winc-editor"])];
+    assert_eq!(layer_violations(&extra), ["winc-core → winc-editor"]);
 }
 
 #[test]

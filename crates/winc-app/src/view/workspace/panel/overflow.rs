@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use winc_render::Color;
+use cpui_render::{Color, Font};
 
 use super::*;
 use crate::app::{LabelCause, LabelView, ResultOverflow};
@@ -38,11 +38,11 @@ pub(super) fn file_text(app: &App, f: usize) -> Option<FileText<'_>> {
 
 /// 返回文件名连同其后的目录完整绘制时的宽度（逻辑像素）。
 pub(super) fn text_width(app: &App, frame: &mut Frame<'_>, text: &FileText<'_>) -> f32 {
-    let name = frame.measure(FontKind::Ui, app.fonts.ui, text.name);
+    let name = frame.measure(Font::ui(app.fonts.ui), text.name);
     if text.note.is_empty() {
         return name;
     }
-    name + 8.0 + frame.measure(FontKind::Ui, app.fonts.ui_small, text.note)
+    name + 8.0 + frame.measure(Font::ui(app.fonts.ui_small), text.note)
 }
 
 /// 从 `x` 起完整绘制文件名和其后的目录，裁剪在 `clip` 内。
@@ -182,9 +182,9 @@ pub(in crate::view) fn draw_result_overflow(app: &App, frame: &mut Frame<'_>) {
     let selected = app.panels.global.selected_row().map(|i| rows[i]) == Some(ResultRow::File(f));
     let focused = app.focus == Focus::Results;
     // 先垫一层侧栏底色，再叠半透明的悬停色，与列表里那一行的底色相同。
-    frame.rect_corners(band, p.sidebar_bg, radii, band);
+    frame.rect_corners(band, radii, p.sidebar_bg, band);
     if let Some(color) = row_color(p, selected, focused, true) {
-        frame.rect_corners(band, color, radii, band);
+        frame.rect_corners(band, radii, color, band);
     }
     let clip = Rect::new(band.x, row.y, band.w, row.h);
     let first = replace.unwrap_or(dismiss);
@@ -237,10 +237,10 @@ pub(in crate::view) fn draw_result_overflow_closing(app: &App, frame: &mut Frame
         let left = area.right() - SCROLLBAR_HIT;
         let rect = Rect::new(left, row.y + 1.0, right - left, row.h - 2.0);
         let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
-        frame.rect_corners(rect, p.sidebar_bg, radii, rect);
+        frame.rect_corners(rect, radii, p.sidebar_bg, rect);
         let chosen = selected == Some(ResultRow::File(f));
         if let Some(color) = retracting_color(p, chosen, focused, view.progress) {
-            frame.rect_corners(rect, color, radii, rect);
+            frame.rect_corners(rect, radii, color, rect);
         }
         let clip = Rect::new(rect.x, row.y, rect.w, row.h);
         draw_text(app, frame, (x, row), &text, clip);

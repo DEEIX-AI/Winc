@@ -193,7 +193,7 @@ fn the_find_bar_has_a_full_border_and_no_shadow() {
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
     let bar = app.terminal_find_bar().unwrap();
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]
@@ -414,7 +414,7 @@ fn the_current_match_shows_above_the_selection() {
         // 第一格左下角：字形碰不到的地方，只有底色。
         let grid = app.terminal_grid();
         let (x, y) = (grid.x + 0.5, grid.y + app.fonts.terminal_line_height - 1.0);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
     };
     app.edit_field(|field| {
@@ -443,7 +443,7 @@ fn find_results_are_marked_on_the_scrollbar_track() {
         });
         paint(&mut app);
         let renderer = app.frame.renderer.as_ref().unwrap();
-        let image = renderer.image().unwrap();
+        let image = renderer.snapshot().unwrap();
         let (w, h) = (image.width as usize, image.height as usize);
         // 只看窗口右边一条（滚动条轨道），下半部分（内容区）。
         let right = |row: usize| image.pixels[row * w + w - 20..row * w + w].to_vec();
@@ -508,7 +508,7 @@ fn the_find_bar_leaves_the_tab_bar_alone() {
             .find(|(_, hit)| *hit == terminal::HeaderHit::New)
             .unwrap()
             .0;
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let row = |y: f32| {
             let start = (y * scale) as usize * image.width as usize;
             let end = start + (new.right() * scale) as usize;

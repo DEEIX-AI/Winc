@@ -16,8 +16,8 @@ use std::time::Instant;
 use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 use winit::window::CursorIcon;
 
+use cpui_render::Renderer;
 use winc_core::{Lines, Selection, movement};
-use winc_render::Renderer;
 
 use crate::app::{
     App, Click, DOUBLE_CLICK, Drag, Focus, Hover, MenuCommand, TreeDrag, WindowControl,
@@ -137,7 +137,7 @@ impl App {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, lines) => -lines * 3.0 * crate::app::PICKER_ROW,
                 MouseScrollDelta::PixelDelta(p) => {
-                    let scale = (self.frame.renderer.as_ref()).map_or(1.0, Renderer::scale_factor);
+                    let scale = (self.frame.renderer.as_ref()).map_or(1.0, Renderer::scale);
                     -(p.y as f32) / scale
                 }
             };
@@ -211,11 +211,7 @@ impl App {
                 if !held {
                     return true;
                 }
-                let scale = self
-                    .frame
-                    .renderer
-                    .as_ref()
-                    .map_or(1.0, Renderer::scale_factor);
+                let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
                 delta.y as f32 / scale / ZOOM_WHEEL_PIXELS
             }
         };

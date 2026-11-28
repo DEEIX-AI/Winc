@@ -30,7 +30,7 @@ pub(super) fn draw_guides(
     for level in 0..g.row_depth(kind) {
         let x = (row.x + PANEL_CHEVRON + level as f32 * TREE_INDENT).round();
         let guide = Rect::new(x, row.y, 1.0, row.h);
-        frame.rect_clipped(guide, app.palette.indent_guide, 0.0, clip);
+        frame.rect_clipped(guide, 0.0, app.palette.indent_guide, clip);
     }
 }
 
@@ -86,12 +86,12 @@ pub(super) fn draw_count(
     let p = app.palette;
     let count = count.to_string();
     let size = app.fonts.ui_small;
-    let count_w = frame.measure(FontKind::Ui, size, &count);
+    let count_w = frame.measure(Font::ui(size), &count);
     let slot = end.slot;
     let badge_w = (count_w + 2.0 * end.pad).max(slot.w);
     let badge = Rect::new(slot.right() - badge_w, slot.y, badge_w, slot.h);
     if !end.covered {
-        frame.rect_clipped(badge, p.hover, slot.h / 2.0, clip);
+        frame.rect_clipped(badge, slot.h / 2.0, p.hover, clip);
         let x = badge.right() - end.pad - count_w;
         caps_label(frame, app, size, (x, badge), &count, p.text_muted, clip);
     }

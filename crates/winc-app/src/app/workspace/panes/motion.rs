@@ -3,12 +3,12 @@
 
 use super::*;
 use crate::app::animation::{Clock, SIDEBAR_ANIMATION};
-use winc_render::Snapshot;
+use cpui_render::Capture;
 
 /// 窗格增减后的过渡：变化之前的编辑区卡片和时钟。
 #[derive(Debug)]
 pub(crate) struct PaneMotion {
-    before: Snapshot,
+    before: Capture,
     clock: Clock,
 }
 
@@ -35,7 +35,7 @@ impl App {
         let mut before = None;
         renderer.draw(|frame| {
             crate::view::draw(self, frame);
-            before = Some(frame.snapshot(card));
+            before = Some(frame.capture(card));
         });
         self.end_scroll_frame(scrolled);
         self.frame.renderer = Some(renderer);
@@ -44,10 +44,10 @@ impl App {
     }
 
     /// 在已画好的新布局上叠加过渡中的旧画面。
-    pub(crate) fn draw_pane_motion(&self, frame: &mut winc_render::Frame<'_>) {
+    pub(crate) fn draw_pane_motion(&self, frame: &mut cpui_render::Frame<'_>) {
         if let Some(motion) = self.panes.motion.as_ref().filter(|m| !m.done()) {
             let opacity = 1.0 - motion.clock.progress();
-            frame.blend_snapshot(&motion.before, 0.0, opacity, 1.0);
+            frame.blend(&motion.before, 0.0, opacity, 1.0);
         }
     }
 

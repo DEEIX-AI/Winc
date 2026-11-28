@@ -133,11 +133,11 @@ pub(super) fn name_end(app: &App, frame: &mut Frame<'_>, text: &RowText, band: R
     let name_w = if text.folder {
         dir_label_width(app, frame, &text.name)
     } else {
-        frame.measure(FontKind::Ui, app.fonts.ui, &text.name)
+        frame.measure(Font::ui(app.fonts.ui), &text.name)
     };
     let mut end = band.x + text.offset + name_w;
     if let Some(dir) = &text.dir {
-        end += 8.0 + frame.measure(FontKind::Ui, app.fonts.ui_small, dir);
+        end += 8.0 + frame.measure(Font::ui(app.fonts.ui_small), dir);
     }
     end
 }
@@ -192,9 +192,9 @@ pub(in crate::view) fn draw_commit_overflow(app: &App, frame: &mut Frame<'_>) {
     let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
     // 先垫一层侧栏底色，再叠当前仓库一节的底色（多仓库时）和半透明的悬停色，与列表里那一行的
     // 底色相同。
-    frame.rect_corners(spill, row_base(app), radii, spill);
+    frame.rect_corners(spill, radii, row_base(app), spill);
     if let Some(color) = text.shade {
-        frame.rect_corners(spill, color, radii, spill);
+        frame.rect_corners(spill, radii, color, spill);
     }
     let clip = Rect::new(spill.x, y, spill.w, COMMIT_ROW);
     // 有按钮时名字在按钮之前截断。
@@ -257,13 +257,13 @@ pub(in crate::view) fn draw_commit_overflow_closing(app: &App, frame: &mut Frame
         let left = list.right() - SCROLLBAR_HIT;
         let rect = Rect::new(left, y + 1.0, right - left, COMMIT_ROW - 2.0);
         let radii = [0.0, RADIUS_ROW, RADIUS_ROW, 0.0];
-        frame.rect_corners(rect, row_base(app), radii, rect);
+        frame.rect_corners(rect, radii, row_base(app), rect);
         let selected = match &rows[row] {
             CommitRow::File { index, .. } => app.commit_is_selected(&status.entries[*index].path),
             _ => false,
         };
         if let Some(color) = retracting_color(p, selected, focused, view.progress) {
-            frame.rect_corners(rect, color, radii, rect);
+            frame.rect_corners(rect, radii, color, rect);
         }
         let clip = Rect::new(rect.x, y, rect.w, COMMIT_ROW);
         // 收回前的全名：相同的前缀不淡，其余随过渡淡出。内容没变（只是宽度在收）时照写全名。

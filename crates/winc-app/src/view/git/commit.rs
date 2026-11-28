@@ -93,10 +93,10 @@ pub(in crate::view) fn draw_commit(app: &mut App, frame: &mut Frame<'_>) -> Opti
     let size = app.fonts.ui_small;
     let text = commit_button_text(app);
     app.set_commit_labels(CommitLabels {
-        amend: AMEND_TEXT + frame.measure(FontKind::Ui, size, &amend_text(app)) + AMEND_END,
-        button: frame.measure(FontKind::Ui, size, &text),
-        undo: frame.measure(FontKind::Ui, size, t!("git-commit-undo")),
-        push: frame.measure(FontKind::Ui, size, t!("git-commit-push-button")),
+        amend: AMEND_TEXT + frame.measure(Font::ui(size), &amend_text(app)) + AMEND_END,
+        button: frame.measure(Font::ui(size), &text),
+        undo: frame.measure(Font::ui(size), t!("git-commit-undo")),
+        push: frame.measure(Font::ui(size), t!("git-commit-push-button")),
     });
     let parts = app.commit_parts();
     // 改动变少（提交、外部的 `git` 操作）或列表变高后，滚动位置可能超出内容，所有行都画不出来。
@@ -217,7 +217,7 @@ fn draw_empty(
         let row = Rect::new(list.x, bottom, list.w, 22.0);
         // 两边和上面的说明一样各留 16，放不下时从中间截短，两端的远程名和分支名都留着。
         let shown = fit(frame, upstream, size, (list.w - 32.0).max(0.0), true);
-        let w = frame.measure(FontKind::Ui, size, &shown);
+        let w = frame.measure(Font::ui(size), &shown);
         let x = list.x + ((list.w - w) / 2.0).max(16.0);
         ui_text_small(frame, app, x, row, &shown, p.text_dim, list);
         bottom = row.bottom();
@@ -225,7 +225,7 @@ fn draw_empty(
     let Some(label) = label else {
         return;
     };
-    let w = (frame.measure(FontKind::Ui, app.fonts.ui, &label) + 2.0 * NEXT_PAD).min(list.w);
+    let w = (frame.measure(Font::ui(app.fonts.ui), &label) + 2.0 * NEXT_PAD).min(list.w);
     let rect = Rect::new(
         (list.x + (list.w - w) / 2.0).round(),
         bottom + NEXT_GAP,
@@ -277,7 +277,7 @@ fn draw_no_repository(
     ];
     let enabled = app.git.branch.running.is_none();
     for (target, label, role) in buttons {
-        let w = (frame.measure(FontKind::Ui, app.fonts.ui, label) + 2.0 * NEXT_PAD).min(list.w);
+        let w = (frame.measure(Font::ui(app.fonts.ui), label) + 2.0 * NEXT_PAD).min(list.w);
         let x = (list.x + (list.w - w) / 2.0).round();
         let rect = Rect::new(x, top + NEXT_GAP, w, SETTINGS_CONTROL_H);
         if rect.bottom() > list.bottom() {
@@ -335,7 +335,7 @@ fn draw_note(app: &App, frame: &mut Frame<'_>, parts: &CommitParts, text: &str, 
     let mut lines = vec![String::new()];
     let mut width = 0.0;
     for c in text.chars() {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, c.encode_utf8(&mut [0; 4]));
+        let w = frame.measure(Font::ui(app.fonts.ui_small), c.encode_utf8(&mut [0; 4]));
         if width + w > room && !lines.last().is_some_and(String::is_empty) {
             lines.push(String::new());
             width = 0.0;
@@ -628,11 +628,11 @@ fn draw_sticky(
         .intersect(list);
         let mut row_hits = Vec::new();
         frame.within(slot, |frame| {
-            frame.rect_clipped(s.rect, p.sidebar_bg, 0.0, list);
+            frame.surface_clipped(s.rect, 0.0, p.sidebar_bg, list);
             // 多仓库时固定的行也在当前仓库一节里：遮住卡片以后补上卡片的底色。
             if app.commit_base_level() > 0 {
                 let band = Rect::new(list.x + 8.0, s.rect.y, list.w - 16.0, COMMIT_ROW);
-                frame.rect_clipped(band, others::current_fill(app), 0.0, list);
+                frame.rect_clipped(band, 0.0, others::current_fill(app), list);
             }
             if app.pointer.hover == Hover::Commit(CommitTarget::Sticky(s.row, s.level)) {
                 let band = Rect::new(
@@ -641,7 +641,7 @@ fn draw_sticky(
                     list.w - 16.0,
                     COMMIT_ROW - 2.0,
                 );
-                frame.rect_clipped(band, p.hover, RADIUS_ROW, list);
+                frame.rect_clipped(band, RADIUS_ROW, p.hover, list);
             }
             draw_row(app, frame, cx, s.row, s.rect.y, &mut row_hits);
         });
@@ -660,7 +660,7 @@ fn draw_sticky(
     }
     if let Some(bottom) = sticky.iter().map(|s| s.rect.bottom()).reduce(f32::max) {
         let line = Rect::new(list.x, bottom - 1.0, list.w, 1.0);
-        frame.rect_clipped(line, p.separator, 0.0, list);
+        frame.rect_clipped(line, 0.0, p.separator, list);
         // 固定的各行下面被遮住的行点不到。
         let covered = Rect::new(list.x, list.y, list.w, bottom - list.y);
         hits.retain(|(rect, _)| !covered.contains(rect.x + 1.0, rect.y + rect.h / 2.0));
@@ -710,9 +710,9 @@ pub(in crate::view) fn draw_count_pill_in(
     clip: Rect,
 ) {
     let size = app.fonts.ui_small;
-    let w = frame.measure(FontKind::Ui, size, count) + 12.0;
+    let w = frame.measure(Font::ui(size), count) + 12.0;
     let pill = Rect::new(row.right() - 4.0 - w, row.y + 5.0, w, row.h - 10.0);
-    frame.rect_clipped(pill, fill, pill.h / 2.0, clip);
+    frame.rect_clipped(pill, pill.h / 2.0, fill, clip);
     caps_label(frame, app, size, (pill.x + 6.0, pill), count, ink, clip);
 }
 
@@ -876,11 +876,11 @@ fn draw_card(
     } else {
         (p.accent.alpha(0.12), p.accent.alpha(0.6), p.hover)
     };
-    frame.rounded(whole, fill, RADIUS_ROW);
+    frame.rounded(whole, RADIUS_ROW, fill);
     let open = app.overlays.menu_button == Some(crate::app::MenuButton::CommitButton);
     let hover = |target: CommitTarget| !busy && app.pointer.hover == Hover::Commit(target);
     if hover(CommitTarget::Commit) && ready {
-        frame.rect_clipped(main, shade, RADIUS_ROW, whole);
+        frame.rect_clipped(main, RADIUS_ROW, shade, whole);
     }
     hits.push((main, CommitTarget::Commit));
     let menu_lit = hover(CommitTarget::CommitMenu) || open;
@@ -898,16 +898,16 @@ fn draw_card(
         icons::chevron(frame, center(menu), 6.0, Direction::Down, arrow, menu);
     } else {
         if menu_lit {
-            frame.rect_clipped(menu, shade, RADIUS_ROW, whole);
+            frame.rect_clipped(menu, RADIUS_ROW, shade, whole);
         }
         let divider = Rect::new(menu.x, menu.y + 6.0, 1.0, menu.h - 12.0);
-        frame.rect_clipped(divider, ink.alpha(ink.a * 0.3), 0.0, whole);
+        frame.rect_clipped(divider, 0.0, ink.alpha(ink.a * 0.3), whole);
         icons::chevron(frame, center(menu), 6.0, Direction::Down, ink, whole);
     }
     hits.push((menu, CommitTarget::CommitMenu));
     let size = app.fonts.ui_small;
     let text = commit_button_text(app);
-    let text_w = frame.measure(FontKind::Ui, size, &text);
+    let text_w = frame.measure(Font::ui(size), &text);
     let x = (main.x + (main.w - text_w) / 2.0).round();
     let clip = panel.intersect(main);
     ui_text_small(frame, app, x, main, &text, ink, clip);
@@ -926,7 +926,7 @@ fn draw_card(
             Some(_) => menu.right() - 4.0,
             None => parts.generate.unwrap_or(menu).x - 8.0,
         };
-        let hint_w = frame.measure(FontKind::Ui, size, &hint);
+        let hint_w = frame.measure(Font::ui(size), &hint);
         if right - left >= hint_w {
             let room = Rect::new(left, row.y, right - left, row.h);
             let clip = panel.intersect(card).intersect(room);
@@ -941,12 +941,12 @@ fn draw_card(
 /// 提交）时字变淡，悬停不变色。
 fn draw_push_button(app: &App, frame: &mut Frame<'_>, rect: Rect, ready: bool, clip: Rect) {
     let p = app.palette;
-    frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+    frame.rect_clipped(rect, RADIUS_ROW, p.hover, clip);
     if ready && app.pointer.hover == Hover::Commit(CommitTarget::CommitPush) {
-        frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.hover, clip);
     }
     let text = t!("git-commit-push-button");
-    let width = frame.measure(FontKind::Ui, app.fonts.ui_small, text);
+    let width = frame.measure(Font::ui(app.fonts.ui_small), text);
     let x = (rect.x + (rect.w - width) / 2.0).round();
     let ink = if ready { p.text } else { p.text_dim };
     ui_text_small(frame, app, x, rect, text, ink, clip.intersect(rect));

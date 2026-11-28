@@ -16,12 +16,7 @@ fn mixed_positions_skip_ephemeral_tabs_and_shell_entries_stay_grouped() {
     let b = editor.documents[b].id;
     let second = editor.new_terminal("second");
     let second = editor.documents[second].id;
-    let mut app = App::new(
-        editor,
-        None,
-        crate::bench::Bench::from_env(),
-        winc_config::Config::default(),
-    );
+    let mut app = App::for_test(editor, winc_config::Config::default());
     let mut second_group = groups::TermGroup::empty(0.4);
     second_group.editor = Some(second);
     let mut first_group = groups::TermGroup::empty(0.7);
