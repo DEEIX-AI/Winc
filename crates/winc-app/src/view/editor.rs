@@ -8,6 +8,7 @@ mod glyphs;
 mod hex;
 pub(super) mod hint;
 mod minimap;
+mod outline;
 mod picture;
 mod placeholder;
 pub(super) mod places;

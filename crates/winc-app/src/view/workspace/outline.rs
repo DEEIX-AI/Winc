@@ -232,7 +232,7 @@ fn draw_rows(
 ///
 /// 颜色取语法高亮的颜色（函数用函数色、类型用内建类型色……），与编辑区里同类名字的颜色一致；
 /// 标题和小节不是代码里的名字，用次要色。
-fn symbol_look(p: &Palette, kind: SymbolKind) -> (SymbolGlyph, Color) {
+pub(in crate::view) fn symbol_look(p: &Palette, kind: SymbolKind) -> (SymbolGlyph, Color) {
     match kind {
         SymbolKind::Function | SymbolKind::Method => (SymbolGlyph::Cube, p.syntax_function),
         SymbolKind::Type => (SymbolGlyph::Card, p.syntax_builtin),

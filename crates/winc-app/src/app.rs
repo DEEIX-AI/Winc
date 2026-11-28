@@ -84,6 +84,7 @@ pub use workspace::global::{GlobalSearch, ResultRow};
 pub(crate) use workspace::outline::{
     OUTLINE_GAP, OUTLINE_TOP, has_children as outline_has_children,
 };
+pub use editor::outline::EditorOutlineTarget;
 pub use workspace::outline::{OutlineEmpty, OutlineKind, OutlineState, OutlineTarget};
 pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
@@ -572,6 +573,8 @@ pub enum Hover {
     ImageHandle,
     /// Markdown 预览左侧的标题指示条或展开的标题列表。
     MarkdownToc(crate::app::preview::markdown::TocTarget),
+    /// 编辑区右上角的大纲指示条或展开的悬浮卡片。
+    EditorOutline(EditorOutlineTarget),
     /// PDF 预览右下角工具栏上的按钮。
     PdfTool(crate::app::preview::pdf::PdfTool),
     /// LaTeX 预览右上角的编译状态（有错误时）。
@@ -695,6 +698,7 @@ impl Hover {
                 | Hover::ViewTab(_)
                 | Hover::Outline(OutlineTarget::FoldAll)
                 | Hover::MarkdownToc(preview::markdown::TocTarget::Pin)
+                | Hover::EditorOutline(EditorOutlineTarget::Pin)
                 | Hover::MarkdownLink(_)
                 | Hover::MarkdownLinkText(_)
                 | Hover::Search(_)
@@ -1339,6 +1343,21 @@ impl App {
             self.preview.markdown.toc_shown = false;
             let glow = self.clock(animation::TOC_GLOW);
             self.preview.markdown.toc_glow = glow.map(|clock| (toc(hover), clock));
+        }
+        let outline_toc = |h: Hover| {
+            matches!(
+                h,
+                Hover::EditorOutline(_) | Hover::Scrollbar(Scrollbar::EditorOutline)
+            )
+        };
+        if outline_toc(hover) != outline_toc(self.pointer.hover) {
+            if self.caches.outline_toc.shown {
+                self.caches.outline_toc.close = self.clock(animation::TOC_FADE);
+            }
+            self.caches.outline_toc.rest = outline_toc(hover).then(Instant::now);
+            self.caches.outline_toc.shown = false;
+            let glow = self.clock(animation::TOC_GLOW);
+            self.caches.outline_toc.glow = glow.map(|clock| (outline_toc(hover), clock));
         }
         if self.move_history_card(self.pointer.hover, hover) {
             self.pointer.hover = hover;

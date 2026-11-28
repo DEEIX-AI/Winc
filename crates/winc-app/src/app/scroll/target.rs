@@ -269,7 +269,11 @@ impl App {
             ScrollTarget::Pdf => self.scroll_pdf_by(sx, sy),
             ScrollTarget::Picture => self.scroll_picture_by(sx, sy),
             ScrollTarget::Table => self.scroll_table(sx, sy, origin),
-            ScrollTarget::Editor(id) => self.scroll_editor_by_pixels(id, sx, sy),
+            ScrollTarget::Editor(id) => {
+                if !self.scroll_editor_outline((x, y), dy) {
+                    self.scroll_editor_by_pixels(id, sx, sy);
+                }
+            }
             ScrollTarget::GitPanel => self.scroll_panel_log(dy),
             ScrollTarget::Picker
             | ScrollTarget::Commit

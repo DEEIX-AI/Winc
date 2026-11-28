@@ -20,6 +20,7 @@ pub(super) mod hint;
 pub(crate) mod http;
 pub(crate) mod links;
 pub(super) mod navigation;
+pub(crate) mod outline;
 pub(super) mod paste;
 pub(super) mod scrollbar;
 pub(super) mod sticky;
@@ -47,6 +48,8 @@ pub(crate) struct EditorCaches {
     pub highlight_pending: bool,
     /// 光标旁括号的配对结果缓存。
     pub brace_cache: Option<(BraceKey, Option<(usize, usize)>)>,
+    /// 编辑区右上角大纲指示条与悬浮卡片的状态。
+    pub(crate) outline_toc: editor::outline::EditorOutlineState,
 }
 
 /// 编辑区顶部的输入条：查找条与跳转条。

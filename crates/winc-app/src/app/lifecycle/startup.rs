@@ -102,6 +102,7 @@ impl App {
                 ruler_cache: None,
                 highlight_pending: false,
                 brace_cache: None,
+                outline_toc: Default::default(),
             },
             preview: crate::app::preview::PreviewState {
                 picture_cache: None,

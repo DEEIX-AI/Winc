@@ -344,7 +344,7 @@ impl App {
     /// 文档切换后立即提取；同一文档的版本号变化后，等 [`OUTLINE_DELAY`] 内不再变化时提取。大纲
     /// 不显示时不提取，再次显示时按当时的文档更新。
     pub(crate) fn sync_outline(&mut self, now: Instant) -> Option<Instant> {
-        if !self.outline_shown() {
+        if !self.outline_shown() && !self.editor_outline_active() {
             return None;
         }
         // 尚未读取完的文档内容为空，读完后版本号不变：等读完再提取，否则读完后不再更新。

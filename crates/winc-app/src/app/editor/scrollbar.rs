@@ -61,6 +61,8 @@ pub(crate) enum ScrollArea {
     PdfStrip,
     /// Markdown 预览左侧展开的标题列表。
     MarkdownToc,
+    /// 编辑区右上角展开的大纲悬浮卡片。
+    EditorOutline,
     /// 表格预览的竖直滚动条。
     Table,
     /// 表格预览的水平滚动条。
@@ -71,7 +73,7 @@ pub(crate) enum ScrollArea {
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 22] = [
+    const ALL: [ScrollArea; 23] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::DiffLeftHorizontal,
@@ -91,6 +93,7 @@ impl ScrollArea {
         ScrollArea::Pdf,
         ScrollArea::PdfStrip,
         ScrollArea::MarkdownToc,
+        ScrollArea::EditorOutline,
         ScrollArea::Table,
         ScrollArea::TableHorizontal,
         ScrollArea::Suggest,
@@ -118,6 +121,7 @@ impl ScrollArea {
             ScrollArea::Pdf => Some(Scrollbar::Pdf),
             ScrollArea::PdfStrip => Some(Scrollbar::PdfStrip),
             ScrollArea::MarkdownToc => Some(Scrollbar::MarkdownToc),
+            ScrollArea::EditorOutline => Some(Scrollbar::EditorOutline),
             ScrollArea::Table => Some(Scrollbar::Table),
             ScrollArea::TableHorizontal => Some(Scrollbar::TableHorizontal),
             ScrollArea::Suggest => None,
@@ -177,7 +181,7 @@ struct Reveal {
 }
 
 /// 编辑区窗格里的滚动条：拆分后每个窗格各有一份显示状态。
-pub(crate) const PANE_AREAS: [ScrollArea; 11] = [
+pub(crate) const PANE_AREAS: [ScrollArea; 12] = [
     ScrollArea::Editor,
     ScrollArea::EditorHorizontal,
     ScrollArea::DiffLeftHorizontal,
@@ -187,6 +191,7 @@ pub(crate) const PANE_AREAS: [ScrollArea; 11] = [
     ScrollArea::Pdf,
     ScrollArea::PdfStrip,
     ScrollArea::MarkdownToc,
+    ScrollArea::EditorOutline,
     ScrollArea::Table,
     ScrollArea::TableHorizontal,
 ];

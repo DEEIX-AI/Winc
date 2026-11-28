@@ -291,6 +291,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     minimap::draw_minimap(app, frame, index);
     // 滚动条绘制在固定行的上层，使滚动条从上到下是完整的一条。
     draw_editor_scrollbar(app, frame, index);
+    outline::draw_editor_outline(app, frame);
 
     if let Some(mut m) = motion {
         let doc = &mut app.editor.documents[index];

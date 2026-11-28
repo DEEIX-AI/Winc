@@ -194,6 +194,7 @@ fn sample() -> State {
         sign_off_repos: vec![PathBuf::from("/a/项目")],
         pdf_thumbnails_hidden: true,
         markdown_toc_pinned: true,
+        editor_outline_pinned: true,
         recent_languages: vec!["markdown".to_owned(), "json".to_owned()],
         vim_marks: vec![('A', PathBuf::from("/a/项目/x.rs"), 12, 3)],
         vim_commands: vec!["%s/a/b/g".into(), "w".into()],

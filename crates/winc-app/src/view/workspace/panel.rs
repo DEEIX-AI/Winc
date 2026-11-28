@@ -1149,6 +1149,14 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
+        Hover::EditorOutline(target @ crate::app::EditorOutlineTarget::Pin) => {
+            let rect = app.hits.editor_outline.iter().find(|(_, t)| *t == target)?.0;
+            let label = match app.state.editor_outline_pinned {
+                true => t!("workspace-outline-toc-unpin"),
+                false => t!("workspace-outline-toc-pin"),
+            };
+            Some((rect, label.to_owned()))
+        }
         Hover::Outline(target @ OutlineTarget::FoldAll) => {
             let rect = app.hits.outline.iter().find(|(_, t)| *t == target)?.0;
             let label = if app.outline_any_expanded() {
