@@ -105,8 +105,14 @@ fn slash_opens_the_command_list_at_a_word_start() {
     assert_eq!(slash("/"), Some(0));
     assert_eq!(slash("- /标题"), Some(2));
     assert_eq!(slash("文字 /h"), Some(7));
+    // 中文输入法的全角斜杠和顿号同样呼出。
+    assert_eq!(slash("／"), Some(0));
+    assert_eq!(slash("、"), Some(0));
+    assert_eq!(slash("文字 、h"), Some(7));
     // 词中、路径、网址、链接地址和行内代码中的 `/` 不呼出。
     assert_eq!(slash("a/b"), None);
+    assert_eq!(slash("a／b"), None);
+    assert_eq!(slash("甲、乙"), None);
     assert_eq!(slash("见 /usr/bin"), None);
     assert_eq!(slash("https://"), None);
     assert_eq!(slash("[a](/"), None);

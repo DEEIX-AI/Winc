@@ -154,9 +154,9 @@ impl Slash {
     /// 返回筛选用的别名（英文、拼音和拼音首字母），以空格分隔。
     fn words(self) -> &'static str {
         match self {
-            Slash::Heading(1) => "h1 heading title biaoti bt",
-            Slash::Heading(2) => "h2 heading title biaoti bt",
-            Slash::Heading(_) => "h3 heading title biaoti bt",
+            Slash::Heading(1) => "1 h1 heading title biaoti bt",
+            Slash::Heading(2) => "2 h2 heading title biaoti bt",
+            Slash::Heading(_) => "3 h3 heading title biaoti bt",
             Slash::Bullet => "ul bullet list liebiao lb",
             Slash::Ordered => "ol ordered numbered list liebiao lb",
             Slash::Task => "todo task checkbox renwu rw",
@@ -254,12 +254,22 @@ fn today() -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// 输入法全角状态下输入的 ASCII 字母和数字按半角处理：`／ｈ１` 与 `/h1` 相同。
+fn folded_ascii(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+            _ => c,
+        })
+        .collect()
+}
+
 impl App {
     /// 返回与 `query` 相符的命令：名字含有 `query`（不区分大小写），或名字、别名中有以 `query`
     /// 开头的词；英文、拼音的 `query` 只按词首匹配。开头相符的排在前面；`query` 为空时最近
     /// 使用的命令排在最前。
     pub(super) fn command_hits(&self, query: &str) -> Vec<Hit> {
-        let query = query.to_lowercase();
+        let query = folded_ascii(query).to_lowercase();
         let starts = |c: &Slash| {
             let label = c.label().to_lowercase();
             let words = label.split(' ').chain(c.words().split(' '));

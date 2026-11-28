@@ -827,6 +827,34 @@ fn slash_lists_writing_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 输入 `/1`、`/2`、`/3` 直接筛出对应级别的标题；中文输入法的顿号和全角数字同样可用。
+#[test]
+fn slash_numbers_filter_headings_and_fullwidth_input_works() {
+    use crate::app::preview::markdown::slash::Slash;
+    use crate::app::preview::markdown::suggest::Hit;
+    use winit::keyboard::{Key, NamedKey};
+    let (mut app, dir) = source_doc("md-slash-numbers", "");
+    app.track_suggest();
+    let typed = |app: &mut App, text: &str| {
+        app.run(winc_editor::Command::Insert(text.into()));
+        app.track_suggest();
+    };
+    let first = |app: &App| app.preview.markdown.suggest.hits.first().cloned();
+    let enter = |app: &mut App| {
+        paint(app);
+        assert!(app.suggest_key(&Key::Named(NamedKey::Enter)));
+    };
+    typed(&mut app, "/1");
+    assert_eq!(first(&app), Some(Hit::Command(Slash::Heading(1))));
+    enter(&mut app);
+    assert_eq!(marked(&app), "# |");
+    typed(&mut app, "\n\n、２");
+    assert_eq!(first(&app), Some(Hit::Command(Slash::Heading(2))));
+    enter(&mut app);
+    assert_eq!(marked(&app), "# \n\n## |");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 回归：源代码中写作命令的列表覆盖在文字上方，鼠标位于列表上时显示箭头。
 #[test]
 fn the_text_cursor_leaves_the_slash_list_in_the_source() {
