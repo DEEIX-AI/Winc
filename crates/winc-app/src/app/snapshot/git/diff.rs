@@ -70,6 +70,57 @@ fn readonly_diff_folds_code_and_jumps_between_brackets() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 差异中的折叠命令作用于代码块，未改动的长段只由「全部折叠」「全部展开」一并处理。
+#[test]
+fn diff_fold_commands_act_on_code_and_fold_all_also_on_unchanged_runs() {
+    use winc_editor::diff_view::{DiffSide, DiffView, ReadSelection, SideRow};
+
+    let dir = sample_folder("diff-fold-commands");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    let mut old = String::from("fn a() {\n");
+    for i in 0..30 {
+        old.push_str(&format!("    s{i}();\n"));
+    }
+    old.push_str("}\nfn b() {\n    old();\n}\n");
+    let new = old.replace("old();", "new();");
+    let language = winc_syntax::detect("short.rs");
+    let mut view = DiffView::new(
+        DiffSide::new("old", &old, None, language),
+        DiffSide::new("new", &new, None, language),
+    );
+    view.set_collapse(true, 0);
+    let inside = new.find("new();").unwrap();
+    view.read_selection = Some(ReadSelection {
+        side: RIGHT,
+        range: (inside, inside),
+    });
+    app.editor.show_diff("short.rs", view);
+    app.focus = Focus::Editor;
+    fn diff(app: &App) -> &DiffView {
+        app.editor.active().unwrap().diff.as_deref().unwrap()
+    }
+    let runs = |app: &App| {
+        (diff(app).rows[RIGHT].iter())
+            .filter(|row| matches!(row, SideRow::Fold { .. }))
+            .count()
+    };
+    assert_eq!(runs(&app), 1);
+
+    // 「折叠」收起光标所在的函数，未改动的长段保持原样。
+    assert!(app.run_action(Action::Fold));
+    assert!(diff(&app).collapsed_code_fold(RIGHT, 32).is_some());
+    assert_eq!(runs(&app), 1);
+
+    // 「全部展开」展开代码块和未改动的长段，「全部折叠」把两者都收起。
+    assert!(app.run_action(Action::UnfoldAll));
+    assert!(diff(&app).collapsed_code_fold(RIGHT, 32).is_none());
+    assert_eq!(runs(&app), 0);
+    assert!(app.run_action(Action::FoldAll));
+    assert!(diff(&app).collapsed_code_fold(RIGHT, 32).is_some());
+    assert_eq!(runs(&app), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn expanded_diff_pins_the_enclosing_scopes_for_each_version() {
     use winc_editor::diff_view::{DiffSide, DiffView, LEFT};

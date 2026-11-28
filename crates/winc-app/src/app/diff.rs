@@ -1200,30 +1200,6 @@ impl App {
         }
     }
 
-    /// 使所有已打开和之后打开的差异按设置（`diffCollapseUnchanged`）折叠或展开未更改的内容：
-    /// 标题栏上的开关和设置是同一项。各标签顶部的行保持在顶部。
-    pub(in crate::app) fn apply_diff_collapse(&mut self) {
-        let on = self.config.diff_collapse_unchanged != Some(false);
-        self.finish_diff_fold(true);
-        self.editor.diff_collapse = on;
-        for doc in &mut self.editor.documents {
-            let Some(view) = doc.diff.as_deref_mut() else {
-                continue;
-            };
-            if view.collapses() == on {
-                continue;
-            }
-            let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
-            let row = view.set_collapse(on, row);
-            let scroll = view.pos_of(RIGHT, row as f64);
-            set_scroll_line(doc, scroll);
-        }
-        self.apply_combined_collapse(on);
-        self.relayout();
-        self.clamp_scroll();
-        self.request_redraw();
-    }
-
     /// 使所有已打开和之后打开的差异按设置（`diffInline`）显示。
     ///
     /// 各标签顶部的行保持在顶部；已跳转到的改动仍为当前段。

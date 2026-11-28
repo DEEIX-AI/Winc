@@ -165,46 +165,6 @@ fn expanded_runs_fold_again_one_by_one_or_all_at_once() {
 }
 
 #[test]
-fn code_blocks_fold_inside_a_diff_and_reveal_on_navigation() {
-    let text =
-        "fn main() {\n    if ready {\n        one();\n        two();\n    }\n    tail();\n}\n";
-    let mut v = view(text, &text.replace("two();", "changed();"));
-    v.set_collapse(false, 0);
-
-    let (row, changed, visible) = v.run_code_fold(RIGHT, 2, FoldCommand::Fold, 0, 4);
-    assert!(changed);
-    assert_eq!(row, 0);
-    assert_eq!(visible, 1);
-    assert_eq!(v.collapsed_code_fold(RIGHT, 1), Some(1..4));
-    assert_eq!(v.visible_code_line(RIGHT, 3), 1);
-    assert_eq!(v.line_at(RIGHT, v.row_of(RIGHT, 1)), Some(1));
-    assert!(
-        !v.rows[RIGHT]
-            .iter()
-            .any(|row| matches!(row, SideRow::Line { line: 2..=3, .. }))
-    );
-
-    // 查找、跳转等定位到折叠内部时只展开包住目标的块。
-    v.reveal_line(RIGHT, 3);
-    assert_eq!(v.collapsed_code_fold(RIGHT, 1), None);
-    assert_eq!(v.line_at(RIGHT, v.row_of(RIGHT, 3)), Some(3));
-}
-
-#[test]
-fn code_fold_all_and_unfold_all_are_per_side() {
-    let text = "fn main() {\n    if ready {\n        one();\n    }\n}\n";
-    let mut v = view(text, text);
-    let (_, changed, _) = v.run_code_fold(LEFT, 0, FoldCommand::FoldAll, 0, 4);
-    assert!(changed);
-    assert!(v.collapsed_code_fold(LEFT, 0).is_some());
-    assert!(v.collapsed_code_fold(RIGHT, 0).is_none());
-
-    let (_, changed, _) = v.run_code_fold(LEFT, 0, FoldCommand::UnfoldAll, 0, 4);
-    assert!(changed);
-    assert!(v.collapsed_code_fold(LEFT, 0).is_none());
-}
-
-#[test]
 fn navigation_walks_hunks_in_order() {
     let old = numbered(30);
     let new = old

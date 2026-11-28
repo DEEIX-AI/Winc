@@ -15,7 +15,6 @@ use winc_core::text::{self, MAX_LINE_CHARS};
 use winc_core::wrap::Breaks;
 use winc_syntax::{Highlighter, Language};
 
-use crate::FoldCommand;
 use crate::document::{STICKY_HIGHLIGHT_BUDGET, rope_starts_quoted};
 use crate::editing::folding::line_breaks;
 use crate::editing::scopes::{self, FoldRange, Scope, ScopeMemo};
@@ -153,44 +152,6 @@ impl DiffSide {
         let mut quoted = |line| rope_starts_quoted(highlighter, text, line);
         let memo = self.sticky_memo.get(self.revision, tab_width);
         scopes::depth(text, language, line, tab_width, &mut quoted, memo)
-    }
-
-    /// 返回这一侧全部可折叠的代码块，按（文字版本号，Tab 宽度）缓存。
-    fn fold_ranges(&mut self, tab_width: usize) -> Arc<[FoldRange]> {
-        let key = (self.revision, tab_width);
-        if let Some((revision, tab, ranges)) = &self.fold_cache
-            && (*revision, *tab) == key
-        {
-            return Arc::clone(ranges);
-        }
-        let last = self.text.len_lines().saturating_sub(1);
-        self.highlighter.state_at(&self.text, last, usize::MAX);
-        let language = self.highlighter.language();
-        let (text, highlighter) = (&self.text, &mut self.highlighter);
-        let mut quoted = |line| rope_starts_quoted(highlighter, text, line);
-        let ranges: Arc<[FoldRange]> =
-            scopes::fold_ranges(text, language, tab_width, &mut quoted).into();
-        self.fold_cache = Some((key.0, key.1, Arc::clone(&ranges)));
-        ranges
-    }
-
-    /// 返回 `lines` 中是代码块开头的行，只检查屏幕附近的内容。
-    fn block_starts(
-        &mut self,
-        lines: impl IntoIterator<Item = usize>,
-        tab_width: usize,
-    ) -> Vec<usize> {
-        let count = self.text.len_lines();
-        let language = self.highlighter.language();
-        let (text, highlighter) = (&self.text, &mut self.highlighter);
-        let mut quoted = |line| rope_starts_quoted(highlighter, text, line);
-        scopes::block_starts(
-            text,
-            language,
-            lines.into_iter().take_while(|&line| line < count),
-            tab_width,
-            &mut quoted,
-        )
     }
 }
 
@@ -387,8 +348,10 @@ pub struct DiffView {
     pub focus: Option<(usize, f64)>,
     /// 已展开的未改动内容，元素是各段的段号。
     expanded: Vec<usize>,
-    /// 两侧已经收起的代码块。块的首行仍显示，其后到末行隐藏。
-    code_folds: [Vec<FoldRange>; 2],
+    /// 收起的代码块，见 `code_folds` 模块。
+    code_folds: Vec<code_folds::CodeFold>,
+    /// 两侧被代码折叠隐藏的行，按开头排序、互不相交；排列显示行时由 `code_folds` 算出。
+    code_hidden: [Vec<Range<usize>>; 2],
     /// 右侧需要保持显示的行；所在的未改动内容中只显示这些行，其余部分仍然折叠。
     ///
     /// 用「»」还原一段改动后，还原的行不再有改动，不应立即被折叠，也不应因此展开整段内容。
@@ -468,7 +431,8 @@ impl DiffView {
             wrap: None,
             focus: None,
             expanded: Vec::new(),
-            code_folds: [Vec::new(), Vec::new()],
+            code_folds: Vec::new(),
+            code_hidden: [Vec::new(), Vec::new()],
             pinned: None,
             widest: std::cell::Cell::new(None),
             source: None,
@@ -502,11 +466,11 @@ impl DiffView {
         self.new.sticky_memo.edited(self.new.revision, first);
         self.new.revision += 1;
         self.new.fold_cache = None;
-        self.code_folds[RIGHT].clear();
+        let delta = text.len_lines() as isize - self.new.text.len_lines() as isize;
+        self.follow_code_edit(RIGHT, first, delta);
         // 固定显示的行随上方增删的行移动：改动始于其上方时整体移动，始于其中间时只移动下边界。
         // 按一处连续的修改估算（输入、粘贴、撤销均属此类），足以使这些行保持在原来的内容上。
         if let Some(pinned) = &mut self.pinned {
-            let delta = text.len_lines() as isize - self.new.text.len_lines() as isize;
             let shift = |line: usize| line.saturating_add_signed(delta).max(first);
             if first < pinned.start {
                 *pinned = shift(pinned.start)..shift(pinned.end);
@@ -528,7 +492,8 @@ impl DiffView {
         self.old.sticky_memo.edited(self.old.revision, first);
         self.old.revision += 1;
         self.old.fold_cache = None;
-        self.code_folds[LEFT].clear();
+        let delta = text.len_lines() as isize - self.old.text.len_lines() as isize;
+        self.follow_code_edit(LEFT, first, delta);
         self.old.text = text;
         self.old.missing = false;
         self.take_compared(compared);
@@ -567,12 +532,7 @@ impl DiffView {
         if old.hunks.len() == self.hunks.len() {
             self.expanded = old.expanded.clone();
         }
-        if self.old.text == old.old.text {
-            self.code_folds[LEFT].clone_from(&old.code_folds[LEFT]);
-        }
-        if self.new.text == old.new.text {
-            self.code_folds[RIGHT].clone_from(&old.code_folds[RIGHT]);
-        }
+        self.keep_code_folds(old);
         self.layout();
     }
 
@@ -905,9 +865,7 @@ impl DiffView {
 
     /// 展开第 `side` 侧第 `line` 行所在的折叠；该行未被折叠时不做改动。
     pub fn reveal_line(&mut self, side: usize, line: usize) {
-        let before = self.code_folds[side].len();
-        self.code_folds[side].retain(|fold| !(fold.start < line && line <= fold.end));
-        if self.code_folds[side].len() != before {
+        if self.reveal_code_line(side, line) {
             self.layout();
         }
         let row = self.row_of(side, line);
@@ -1065,122 +1023,6 @@ impl DiffView {
         self.open_folds.iter().any(|(g, _)| *g == gap)
     }
 
-    /// 返回第 `side` 侧以 `line` 开头、当前已收起的代码块。
-    pub fn collapsed_code_fold(&self, side: usize, line: usize) -> Option<Range<usize>> {
-        self.code_folds[side]
-            .iter()
-            .find(|fold| fold.start == line)
-            .map(|fold| fold.start..fold.end + 1)
-    }
-
-    /// 返回第 `side` 侧 `lines` 中是可折叠代码块开头的行。
-    pub fn code_fold_starts(
-        &mut self,
-        side: usize,
-        lines: impl IntoIterator<Item = usize>,
-        tab_width: usize,
-    ) -> Vec<usize> {
-        self.side_mut(side).block_starts(lines, tab_width)
-    }
-
-    /// 在第 `side` 侧的 `line` 行执行代码折叠命令。
-    ///
-    /// `row` 是修改前右侧顶部的显示行。返回（该内容修改后的右侧显示行、状态是否改变、光标应停留
-    /// 的可见行）。
-    pub fn run_code_fold(
-        &mut self,
-        side: usize,
-        line: usize,
-        command: FoldCommand,
-        row: usize,
-        tab_width: usize,
-    ) -> (usize, bool, usize) {
-        let anchor = match self.rows[RIGHT].get(row) {
-            Some(SideRow::Line { line, .. }) => *line,
-            Some(SideRow::Fold { lines, .. }) => lines.start,
-            None => usize::MAX,
-        };
-        let ranges = self.side_mut(side).fold_ranges(tab_width);
-        let collapsed = |folds: &[FoldRange], range: &FoldRange| {
-            folds.iter().any(|fold| fold.start == range.start)
-        };
-        // 包住光标所在行的块，从内到外。
-        let around: Vec<FoldRange> = ranges
-            .iter()
-            .rev()
-            .filter(|range| range.start <= line && line <= range.end)
-            .copied()
-            .collect();
-        let inside = |outer: FoldRange| -> Vec<FoldRange> {
-            ranges
-                .iter()
-                .filter(|range| outer.start <= range.start && range.end <= outer.end)
-                .copied()
-                .collect()
-        };
-        let folds = &mut self.code_folds[side];
-        let mut add = Vec::new();
-        let mut remove = Vec::new();
-        match command {
-            FoldCommand::Fold => add.extend(around.iter().find(|r| !collapsed(folds, r))),
-            FoldCommand::Unfold => remove.extend(around.iter().find(|r| collapsed(folds, r))),
-            FoldCommand::Toggle => {
-                if let Some(range) = around.first() {
-                    if collapsed(folds, range) {
-                        remove.push(*range);
-                    } else {
-                        add.push(*range);
-                    }
-                }
-            }
-            FoldCommand::FoldRecursively => {
-                if let Some(&range) = around.first() {
-                    add.extend(inside(range));
-                }
-            }
-            FoldCommand::UnfoldRecursively => {
-                if let Some(&range) = around.first() {
-                    remove.extend(inside(range));
-                }
-            }
-            FoldCommand::FoldAll => add.extend_from_slice(&ranges),
-            FoldCommand::UnfoldAll => remove.extend_from_slice(folds),
-            FoldCommand::FoldLevel(level) => add.extend(
-                ranges
-                    .iter()
-                    .filter(|range| {
-                        range.level == level && !(range.start <= line && line <= range.end)
-                    })
-                    .copied(),
-            ),
-        }
-        let before = folds.clone();
-        folds.retain(|fold| !remove.iter().any(|range| range.start == fold.start));
-        for range in add {
-            if !folds.iter().any(|fold| fold.start == range.start) {
-                folds.push(range);
-            }
-        }
-        folds.sort_by_key(|fold| fold.start);
-        let changed = *folds != before;
-        if changed {
-            self.layout();
-        }
-        let visible = self.visible_code_line(side, line);
-        let row = self
-            .row_of_new(anchor)
-            .min(self.row_count().saturating_sub(1));
-        (row, changed, visible)
-    }
-
-    /// 返回 `line` 被代码块收起后实际显示的行；没有被收起时仍返回 `line`。
-    pub fn visible_code_line(&self, side: usize, line: usize) -> usize {
-        self.code_folds[side]
-            .iter()
-            .find(|fold| fold.start < line && line <= fold.end)
-            .map_or(line, |fold| fold.start)
-    }
-
     /// 返回第 `side` 侧第 `line` 行所在的未改动内容的段号；该行位于某段改动中时返回 `None`。
     pub fn gap_of(&self, side: usize, line: usize) -> Option<usize> {
         let lines = |h: &LineHunk| {
@@ -1298,7 +1140,7 @@ impl DiffView {
 
     /// 把第 `side` 侧第 `line` 行的各段追加到 `rows`。
     fn push_line(&self, rows: &mut Vec<SideRow>, side: usize, line: usize, hunk: Option<usize>) {
-        if self.visible_code_line(side, line) != line {
+        if self.code_hidden(side, line) {
             return;
         }
         let parts = self.breaks(side, line).rows();
@@ -1307,6 +1149,7 @@ impl DiffView {
 
     /// 按改动和折叠状态重新排列两侧的显示行。
     fn layout(&mut self) {
+        self.update_code_hidden();
         let mut rows = [Vec::new(), Vec::new()];
         let mut hunk_rows = [
             Vec::with_capacity(self.hunks.len()),
@@ -1543,6 +1386,8 @@ fn content_len(line: ropey::RopeSlice<'_>) -> usize {
     }
     len
 }
+
+mod code_folds;
 
 #[cfg(test)]
 mod tests;
