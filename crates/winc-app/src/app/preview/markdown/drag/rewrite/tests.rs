@@ -1,4 +1,5 @@
 use super::*;
+use winc_preview::markdown::split_list_items;
 
 /// 按空行切出各顶层块的字节范围（块的范围到下一块开始为止，含其后的空行）。
 fn ranges(text: &str) -> Vec<Range<usize>> {
