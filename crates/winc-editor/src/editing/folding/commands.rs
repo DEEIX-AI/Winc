@@ -107,54 +107,7 @@ impl Document {
 
         let ranges = self.fold_ranges(tab_width);
         let line = self.text.line_of(self.selection.head);
-        let collapsed = |folds: &Folds, r: &FoldRange| folds.has(r.start);
-        // 包住光标所在行的块，从内层到外层。
-        let around: Vec<FoldRange> = ranges
-            .iter()
-            .rev()
-            .filter(|r| r.start <= line && line <= r.end)
-            .copied()
-            .collect();
-        let inside = |outer: FoldRange| -> Vec<FoldRange> {
-            ranges
-                .iter()
-                .filter(|r| outer.start <= r.start && r.end <= outer.end)
-                .copied()
-                .collect()
-        };
-
-        let mut fold = Vec::new();
-        let mut unfold = Vec::new();
-        match command {
-            FoldCommand::Fold => fold.extend(around.iter().find(|r| !collapsed(&self.folds, r))),
-            FoldCommand::Unfold => unfold.extend(around.iter().find(|r| collapsed(&self.folds, r))),
-            FoldCommand::Toggle => {
-                if let Some(r) = around.first() {
-                    if collapsed(&self.folds, r) {
-                        unfold.push(*r);
-                    } else {
-                        fold.push(*r);
-                    }
-                }
-            }
-            FoldCommand::FoldRecursively => {
-                if let Some(&r) = around.first() {
-                    fold.extend(inside(r));
-                }
-            }
-            FoldCommand::UnfoldRecursively => {
-                if let Some(&r) = around.first() {
-                    unfold.extend(inside(r));
-                }
-            }
-            FoldCommand::FoldAll => fold.extend_from_slice(&ranges),
-            FoldCommand::FoldLevel(level) => fold.extend(
-                ranges
-                    .iter()
-                    .filter(|r| r.level == level && !(r.start <= line && line <= r.end)),
-            ),
-            FoldCommand::UnfoldAll => {}
-        }
+        let (fold, unfold) = command.plan(&ranges, line, |start| self.folds.has(start));
 
         // `unfold` 与 `ranges` 一样按开头行排序。
         let starts: Vec<usize> = unfold.iter().map(|r| r.start).collect();

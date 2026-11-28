@@ -47,6 +47,13 @@ pub(crate) struct Pointer {
     pub(in crate::app) cursor_inside: bool,
 }
 
+impl App {
+    /// 当前鼠标位置（逻辑像素），供绘制按悬停区域延迟计算的控件。
+    pub(crate) fn mouse_position(&self) -> (f32, f32) {
+        self.pointer.mouse
+    }
+}
+
 /// 覆盖在界面之上的浮层：右键菜单、快速打开、对话框、提示框和悬停提示。
 pub(crate) struct Overlays {
     /// 新建工作树对话框；未打开时为 `None`。

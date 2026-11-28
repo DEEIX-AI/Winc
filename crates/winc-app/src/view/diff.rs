@@ -7,6 +7,7 @@
 //! 文字的一侧。折叠的一段同样用带子连接。
 
 mod blame;
+mod code_fold;
 pub(super) mod combined;
 mod files;
 mod sticky;
@@ -750,6 +751,7 @@ fn draw_body(
     let body = parts.body;
     let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     let tab_width = app.editor.tab_width;
+    let brace = code_fold::matching_brace(view, edit);
     // 光标只在编辑区有焦点时绘制。
     let carets_shown = edit.editing && app.focus == Focus::Editor;
     // Vim 模式的光标所在的一侧不画竖线光标；空心的光标在编辑区没有焦点时仍然绘制。
@@ -783,6 +785,7 @@ fn draw_body(
         (unified || aligned).then(|| body.y + (view.hunk_pos(h) - pos) as f32 * lh - lift)
     };
     let drawn = drawn_rows(view, body, (scroll, shift), pos, lh);
+    let foldable = code_fold::foldable_lines(app, view, parts, &drawn);
     // 各段改动的暂存状态；文件不在提交视图里、只能按文件暂存时为空，不绘制任何勾选框。
     let kind = app.active_diff_kind();
     let inclusions: Vec<Pick> = (app.diff_entry(view)).map_or_else(Vec::new, |entry| {
@@ -894,6 +897,9 @@ fn draw_body(
                 draw_line_number(app, frame, &parts.panes[LEFT], line, baseline, &mut number);
             }
             draw_line_number(app, frame, &pane, line, baseline, &mut number);
+
+            let fold = (side, line, foldable[side].binary_search(&line).is_ok());
+            code_fold::draw_arrow(app, frame, view, (&pane, body), fold, y, hits);
         }
         // 已展开的未改动段：在重新折叠后第一个隐藏的行上绘制收起标记，位于右侧行号左边的留白
         // 中；悬停时颜色加深，点击后重新折叠该段。
@@ -938,6 +944,7 @@ fn draw_body(
         } else {
             &mut view.new
         };
+        let line_start = text_side.text.line_to_char(line);
         if loaded != Some((side, line)) {
             loaded = Some((side, line));
             line_chars(text_side, line, &mut chars);
@@ -1077,6 +1084,20 @@ fn draw_body(
             frame.rect_clipped(rect, 3.0, color, pane.text);
         }
 
+        // 光标旁的括号和配对括号使用与普通编辑器相同的底色。
+        for pos in brace
+            .filter(|(brace_side, _)| *brace_side == side)
+            .into_iter()
+            .flat_map(|(_, (a, b))| [a, b])
+        {
+            let col = pos.saturating_sub(line_start);
+            if pos >= line_start && col < chars.len() && range.contains(&col) {
+                let x = origin_x + at(col) * app.metrics.cell;
+                let rect = Rect::new(x, y + 1.0, app.metrics.cell, lh - 2.0);
+                frame.rect_clipped(rect, 3.0, p.match_brace, pane.text);
+            }
+        }
+
         // 整行从行首绘制（制表符的宽度取决于其在行内的位置），只显示本段的范围。
         let clip = if breaks.starts.is_empty() {
             pane.text
@@ -1109,7 +1130,7 @@ fn draw_body(
             }
         }
 
-        draw_glyphs(
+        let cells = draw_glyphs(
             app,
             frame,
             &chars,
@@ -1120,12 +1141,18 @@ fn draw_body(
             clip,
         );
 
+        if last && view.collapsed_code_fold(side, line).is_some() {
+            let x = (origin_x + (cells + 1) as f32 * app.metrics.cell).round();
+            code_fold::draw_ellipsis(app, frame, (side, line), (x, y), pane.text, hits);
+        }
+
         // 光标处字符的位置与宽度；行尾与空行上的光标占一格。
         let place = |col: usize| {
             let width = Some((at(col + 1) - at(col)) * app.metrics.cell).filter(|w| *w > 0.0);
             let x = origin_x + at(col) * app.metrics.cell;
             (x, y, width.unwrap_or(app.metrics.cell))
         };
+
         // 其余光标与主光标同步闪烁；输入法组字只显示在主光标处，候选窗同样跟随主光标。
         if side == RIGHT && carets_shown {
             let skip = edit.carets.partition_point(|c| c.0 < line);
