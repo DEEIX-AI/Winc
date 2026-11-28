@@ -1,8 +1,8 @@
 //! 并排差异标签的绘制：标题栏（两侧标题、改动处数、增删行数和导航按钮），左右两栏的代码和行号，
 //! 中间连接对应改动的带子，以及滚动条上每处改动的位置。
 //!
-//! 两侧分别绘制各自的行，行号靠近中间的带子。每段改动按类型使用主题中的柔和色；主题也可对
-//! 修改段的旧行、新行分别着色。一侧没有行时，在该侧的插入位置绘制一道线；改动的字符再加深
+//! 两侧分别绘制各自的行，行号靠近中间的带子。每段改动按类型使用主题中的柔和色（新增为绿、删除为灰、
+//! 修改为蓝），两侧底色与带子同色；一侧没有行时，在该侧的插入位置绘制一道线；改动的字符再加深
 //! 一层。并排时「»」和改动勾选框位于带子上，「»」用左侧的一段替换右侧；行勾选框位于行号栏靠近
 //! 文字的一侧。折叠的一段同样用带子连接。
 
@@ -41,7 +41,7 @@ const LINE_CHECK_SIZE: f32 = 11.0;
 const SKIPPED_LINE_ALPHA: f32 = 0.35;
 /// 工具栏按钮的边长（逻辑像素）。
 const BUTTON: f32 = 24.0;
-/// 返回一处改动的整体颜色，用于概览标尺等不区分左右侧的地方。
+/// 返回一处改动使用的颜色：仅右侧有的新增为绿，仅左侧有的删除为灰，两侧都有的修改为蓝。
 pub(super) fn hunk_shade(p: &Palette, hunk: &winc_core::diff::LineHunk) -> DiffShade {
     kind_shade(p, HunkKind::of(hunk))
 }
@@ -51,18 +51,6 @@ fn kind_shade(p: &Palette, kind: HunkKind) -> DiffShade {
         HunkKind::Added => p.diff_added,
         HunkKind::Deleted => p.diff_deleted,
         HunkKind::Modified => p.diff_modified,
-    }
-}
-
-fn side_shade(p: &Palette, kind: HunkKind, side: usize, unified: bool) -> DiffShade {
-    if unified || (p.diff_split_modified && kind == HunkKind::Modified) {
-        if side == LEFT {
-            p.diff_deleted
-        } else {
-            p.diff_added
-        }
-    } else {
-        kind_shade(p, kind)
     }
 }
 
@@ -85,14 +73,13 @@ fn draw_fade(
     }
     let left = 1.0 - fade.clock.linear();
     let alpha = left * left;
-    let shades = [LEFT, RIGHT].map(|side| {
-        let shade = side_shade(app.palette, fade.kind, side, false);
-        DiffShade {
-            line: shade.line.alpha(alpha),
-            edge: shade.edge.alpha(alpha),
-            ..shade
-        }
-    });
+    let shade = kind_shade(app.palette, fade.kind);
+    let shade = DiffShade {
+        line: shade.line.alpha(alpha),
+        word: shade.word.alpha(alpha),
+        edge: shade.edge.alpha(alpha),
+        mark: shade.mark.alpha(alpha),
+    };
     let span = |side: usize, lines: &Range<usize>| {
         (
             row_y(side, view.row_of(side, lines.start)),
@@ -102,7 +89,6 @@ fn draw_fade(
     let spans = [span(LEFT, &fade.left), span(RIGHT, &fade.right)];
     for (side, &(y0, y1)) in spans.iter().enumerate() {
         let pane = parts.panes[side].rect;
-        let shade = shades[side];
         if y1 > y0 {
             frame.rect_clipped(
                 Rect::new(pane.x, y0, pane.w, y1 - y0),
@@ -115,7 +101,7 @@ fn draw_fade(
             frame.rect_clipped(line, shade.edge, 0.0, parts.body);
         }
     }
-    draw_ribbon(frame, parts.ribbon, spans[0], spans[1], shades, parts.body);
+    draw_ribbon(frame, parts.ribbon, spans[0], spans[1], shade, parts.body);
 }
 
 /// 标出跳转到的改动：在该侧边缘绘制强调色竖线，该侧没有行时在插入位置绘制横线；刚跳转时
@@ -865,7 +851,22 @@ fn draw_body(
             SideRow::Line { line, hunk, part } => (line, hunk, part),
         };
 
-        let shade = hunk.map(|h| side_shade(p, HunkKind::of(&view.hunks[h]), side, unified));
+        // 单栏时左右两侧的行上下排列，需要以颜色区分：删除行与新增行使用不同的颜色。
+        let row_shade = |view: &DiffView, h: usize| {
+            if unified {
+                kind_shade(
+                    p,
+                    if side == LEFT {
+                        HunkKind::Deleted
+                    } else {
+                        HunkKind::Added
+                    },
+                )
+            } else {
+                hunk_shade(p, &view.hunks[h])
+            }
+        };
+        let shade = hunk.map(|h| row_shade(view, h));
         // 只提交部分行的改动中，不提交的行底色变淡。
         let line_skipped = hunk.is_some_and(|h| {
             let start = if side == LEFT {
@@ -1242,14 +1243,7 @@ fn draw_body(
             if (l0 + lh).max(r0 + lh) < body.y || l0.min(r0) > body.bottom() {
                 continue;
             }
-            draw_ribbon(
-                frame,
-                ribbon,
-                (l0, l0 + lh),
-                (r0, r0 + lh),
-                [shade; 2],
-                body,
-            );
+            draw_ribbon(frame, ribbon, (l0, l0 + lh), (r0, r0 + lh), shade, body);
         }
     }
     let hunks = if view.one_side_empty() {
@@ -1273,17 +1267,15 @@ fn draw_body(
         if l1.max(r1) < body.y || l0.min(r0) > body.bottom() {
             continue;
         }
-        let kind = HunkKind::of(hunk);
-        let shades = [LEFT, RIGHT].map(|side| side_shade(p, kind, side, false));
+        let shade = hunk_shade(p, hunk);
         // 两侧按改动对齐时整段等高：带子是一块矩形，较短的一侧在下面留空处铺一层淡色。
         let end = l1.max(r1);
         if !unified && aligned {
-            draw_ribbon(frame, ribbon, (l0, end), (r0, end), shades, body);
+            draw_ribbon(frame, ribbon, (l0, end), (r0, end), shade, body);
         } else if !unified {
-            draw_ribbon(frame, ribbon, (l0, l1), (r0, r1), shades, body);
+            draw_ribbon(frame, ribbon, (l0, l1), (r0, r1), shade, body);
         }
         for (side, (y0, y1)) in [(LEFT, (l0, l1)), (RIGHT, (r0, r1))] {
-            let shade = shades[side];
             if !unified && aligned && y1 < end {
                 let pane = parts.panes[side];
                 let pad = Rect::new(pane.rect.x, y1, pane.rect.w, end - y1);
@@ -1378,30 +1370,23 @@ fn draw_body(
 /// 在 `area` 内绘制一条带子：左端为 `left` 的上下沿，右端为 `right` 的上下沿，中间按 S 形曲线
 /// 过渡。
 ///
-/// 逐列绘制：每列一段底色，上下沿各一段与前一列相连的边线；两端颜色不同时沿带子过渡。
-/// 抗锯齿笔画按像素计算距离，大块曲线每帧需要一到两毫秒；逐列矩形在滚动时开销较小。
+/// 逐列绘制：每列一段底色，上下沿各一段与前一列相连的边线。抗锯齿笔画按像素计算距离，
+/// 大块曲线每帧需要一到两毫秒；逐列矩形在滚动时每帧的绘制开销较小。
 pub(in crate::view) fn draw_ribbon(
     frame: &mut Frame<'_>,
     area: Rect,
     left: (f32, f32),
     right: (f32, f32),
-    [old, new]: [DiffShade; 2],
+    shade: DiffShade,
     clip: Rect,
 ) {
-    let uniform = old.line == new.line && old.edge == new.edge;
-    let lerp = |a, b, t| a + (b - a) * t;
-    let blend = |a: Color, b: Color, t| match uniform {
-        true => a,
-        false => Color {
-            r: lerp(a.r, b.r, t),
-            g: lerp(a.g, b.g, t),
-            b: lerp(a.b, b.b, t),
-            a: lerp(a.a, b.a, t),
-        },
-    };
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
     let at = |t: f32| {
-        let s = t * t * (3.0 - 2.0 * t);
-        (lerp(left.0, right.0, s), lerp(left.1, right.1, s))
+        let s = ease(t);
+        (
+            left.0 + (right.0 - left.0) * s,
+            left.1 + (right.1 - left.1) * s,
+        )
     };
     // 每列宽半个逻辑像素：缩放倍数为 2 时恰为一个物理像素，边线不出现可见的台阶。
     const STEP: f32 = 0.5;
@@ -1409,18 +1394,15 @@ pub(in crate::view) fn draw_ribbon(
     let mut previous = at(0.0);
     for k in 0..columns {
         let x = area.x + k as f32 * STEP;
-        let t = (k as f32 + 1.0) / columns as f32;
-        let (top, bottom) = at(t);
+        let (top, bottom) = at((k as f32 + 1.0) / columns as f32);
         if bottom > top {
-            let fill = blend(old.line, new.line, t);
-            frame.rect_clipped(Rect::new(x, top, STEP, bottom - top), fill, 0.0, clip);
+            frame.rect_clipped(Rect::new(x, top, STEP, bottom - top), shade.line, 0.0, clip);
         }
         // 边线：从前一列的位置连接到本列，高度至少 1 逻辑像素。
-        let edge = blend(old.edge, new.edge, t);
         for (from, to) in [(previous.0, top), (previous.1, bottom)] {
             let (y0, y1) = (from.min(to), from.max(to));
             let rect = Rect::new(x, y0 - 0.5, STEP, (y1 - y0).max(1.0));
-            frame.rect_clipped(rect, edge, 0.0, clip);
+            frame.rect_clipped(rect, shade.edge, 0.0, clip);
         }
         previous = (top, bottom);
     }

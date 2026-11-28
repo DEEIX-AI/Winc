@@ -4,7 +4,6 @@
 //! 文件类型图标的记号和颜色由 [`file_kind`] 按文件名给出。
 
 mod kinds;
-mod one_dark;
 mod palettes;
 mod veil;
 mod winc;
@@ -156,8 +155,6 @@ pub struct Palette {
     pub git_conflict: Color,
     /// 差异里修改的一段（两侧都有行）。
     pub diff_modified: DiffShade,
-    /// 并排差异的修改行是否按左删、右增分别着色。
-    pub diff_split_modified: bool,
     /// 差异里新增的一段（只有右侧有行）。
     pub diff_added: DiffShade,
     /// 差异里删掉的一段（只有左侧有行）。
@@ -467,9 +464,8 @@ impl Palette {
             git_deleted: t.git[2],
             git_conflict: t.git[3],
             diff_modified: shade(t.git[0], t.card, dark),
-            diff_split_modified: false,
             diff_added: shade(t.git[1], t.card, dark),
-            // 默认用中性灰标记删除：红色留给合并冲突。
+            // 删除用中性灰，不随主题的 Git 状态色变红：红色留给合并冲突。
             diff_deleted: shade(
                 if dark { DELETED_DARK } else { DELETED_LIGHT },
                 t.card,

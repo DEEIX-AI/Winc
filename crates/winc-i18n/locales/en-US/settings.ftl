@@ -402,7 +402,6 @@ settings-theme-name-ink = Ink Blue
 settings-theme-name-ember = Ember
 settings-theme-name-midnight = Midnight
 settings-theme-name-dusk = Dusk
-settings-theme-name-one-dark = One Dark
 settings-theme-name-veil-night = Night Veil
 settings-theme-name-veil-umber = Umber Veil
 
