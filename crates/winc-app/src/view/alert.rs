@@ -108,8 +108,8 @@ fn draw_contents(
     let mut right = card.right() - PAD;
     let mut buttons = Vec::with_capacity(alert.buttons.len());
     for (i, button) in alert.buttons.iter().enumerate() {
-        let w = (frame.measure(FontKind::Ui, size, &button.title) + 2.0 * BUTTON_PAD)
-            .max(DIALOG_BUTTON_W);
+        let w =
+            (frame.measure(Font::ui(size), &button.title) + 2.0 * BUTTON_PAD).max(DIALOG_BUTTON_W);
         let rect = Rect::new(right - w, row_y, w, BUTTON_H);
         right = rect.x - BUTTON_GAP;
         let hovered = alert.hover == Some(AlertPart::Button(i));
@@ -126,7 +126,7 @@ fn draw_contents(
 
     // 勾选框在按钮那一行的左边。
     let checkbox = alert.suppression.as_ref().map(|text| {
-        let w = frame.measure(FontKind::Ui, size, text);
+        let w = frame.measure(Font::ui(size), text);
         let row = Rect::new(
             card.x + PAD,
             row_y,
@@ -146,18 +146,16 @@ fn draw_contents(
 fn natural_width(frame: &mut Frame<'_>, (size, small): (f32, f32), alert: &InAppAlert) -> f32 {
     let mut widest = |size: f32, text: &str| {
         (text.split('\n'))
-            .map(|line| frame.measure(FontKind::Ui, size, line))
+            .map(|line| frame.measure(Font::ui(size), line))
             .fold(0.0, f32::max)
     };
     let text = widest(size, &alert.message).max(widest(small, &alert.detail));
     let buttons: f32 = (alert.buttons.iter())
-        .map(|b| {
-            (frame.measure(FontKind::Ui, size, &b.title) + 2.0 * BUTTON_PAD).max(DIALOG_BUTTON_W)
-        })
+        .map(|b| (frame.measure(Font::ui(size), &b.title) + 2.0 * BUTTON_PAD).max(DIALOG_BUTTON_W))
         .sum::<f32>()
         + BUTTON_GAP * alert.buttons.len().saturating_sub(1) as f32;
     let checkbox = (alert.suppression.as_deref()).map_or(0.0, |text| {
-        frame.measure(FontKind::Ui, size, text) + 20.0 + 2.0 * BUTTON_GAP
+        frame.measure(Font::ui(size), text) + 20.0 + 2.0 * BUTTON_GAP
     });
     text.max(buttons + checkbox)
 }

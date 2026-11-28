@@ -3,8 +3,8 @@
 //! 每个第一层分支取一种颜色（见 [`super::PALETTE`]），分支内的连线与节点按该颜色着色。坐标和
 //! 尺寸都是逻辑像素，`s` 是排版用的字号。
 
+use cpui_render::{Color, Rect, Stroke};
 use winc_preview::markdown::mermaid::{MindShape, Mindmap, Shape};
-use winc_render::{Color, Rect, Stroke};
 
 use super::super::math::polyline;
 use super::super::{Cx, Item};

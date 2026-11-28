@@ -8,9 +8,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use cpui_render::Rect;
 use winc_editor::git::{Branch, Status};
 use winc_i18n::t;
-use winc_render::Rect;
 
 use super::{TagOp, local_name};
 use crate::app::animation::TREE_ANIMATION;

@@ -17,10 +17,10 @@ use crate::app::diff::{DIFF_HEADER, DiffTarget};
 use crate::app::git::blame::{BlameKey, blame_label};
 use crate::app::git::commit::CommitGroup;
 use crate::app::{DIFF_TEXT_PAD, diff_parts};
+use cpui_render::Rect;
 use winc_core::Selection;
 use winc_editor::diff_view::{LEFT, RIGHT};
 use winc_editor::git::BlameCommit;
-use winc_render::Rect;
 use winit::event::MouseButton;
 
 mod blame;

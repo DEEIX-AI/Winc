@@ -289,7 +289,7 @@ fn find_in_a_commit_diff_follows_the_editor_rules() {
     paint(&mut app);
     let row = |app: &App| {
         let renderer = app.frame.renderer.as_ref().unwrap();
-        let (scale, image) = (renderer.scale_factor(), renderer.image().unwrap());
+        let (scale, image) = (renderer.scale(), renderer.snapshot().unwrap());
         let doc = app.editor.active().unwrap();
         let view = doc.diff.as_deref().unwrap();
         let parts = crate::app::diff_parts(app.layout.editor, view, app.metrics.cell);

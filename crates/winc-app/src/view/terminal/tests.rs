@@ -1,4 +1,5 @@
-//! 终端绘制的测试：粗体亮色的开关、样式段按格切分、折叠行数的分组、方块元素的形状、组字文字的位置。
+//! 终端绘制的测试：粗体亮色的开关、样式段按格切分、折叠行数的分组、方块元素的形状、组字文字的位置、
+//! 需要整形的文字所占的格子。
 
 use super::*;
 
@@ -148,4 +149,30 @@ fn the_preedit_moves_left_only_when_it_would_overflow() {
     assert_eq!(preedit_x(80.0, "中文", 10.0, 100.0), 60.0);
     // 比可用宽度还长时保留结尾。
     assert_eq!(preedit_x(0.0, &"a".repeat(30), 10.0, 100.0), -200.0);
+}
+
+#[test]
+fn shaped_text_stays_in_the_cells_of_its_characters() {
+    let mut renderer = cpui_render::Renderer::offscreen(40.0, 20.0, 2.0, Color::hex(0xffffff))
+        .expect("测试机上有系统字体");
+    let font = Font::mono(13.0);
+    let (mut marked, mut plain, mut cell) = (None, None, 0.0);
+    renderer.draw(|frame| {
+        let clip = frame.bounds();
+        cell = frame.metrics(font).cell;
+        let at = (2.0, 15.0);
+        let ink = Color::hex(0x000000);
+        marked = draw_shaped(frame, (font, cell), at, "e\u{301}x", true, ink, clip);
+        plain = draw_shaped(frame, (font, cell), at, "ab", true, ink, clip);
+    });
+    // 组合符号与 `e` 一起整形，`x` 不在其中；不需要整形的字由调用方逐字绘制。
+    assert_eq!((marked, plain), (Some(3), None));
+    let image = renderer.snapshot().unwrap();
+    let width = image.width as usize;
+    let right = ((2.0 + cell) * 2.0).ceil() as usize;
+    let outside = (0..image.height as usize)
+        .flat_map(|y| (right..width).map(move |x| y * width + x))
+        .filter(|&i| image.pixels[i] != image.pixels[0])
+        .count();
+    assert_eq!(outside, 0, "墨迹超出第一格");
 }

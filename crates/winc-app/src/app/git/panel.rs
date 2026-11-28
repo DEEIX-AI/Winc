@@ -5,10 +5,10 @@
 //! 的标签。两种模式之间整体移动，同一时刻只绘制一个日志，日志视图的状态（`LogState`）因此共用一份。
 //! 日志的各个功能经 [`App::log_view`]、[`App::log_area`] 等取得所在的文档和区域，不区分模式。
 
+use cpui_render::Rect;
 use winc_config::LogPlacement;
 use winc_editor::git::log::LogView;
 use winc_editor::{Document, DocumentId, Editor};
-use winc_render::Rect;
 
 use crate::app::scroll::set_scroll_line;
 use crate::app::{App, Clock, Focus};

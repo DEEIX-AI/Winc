@@ -6,9 +6,9 @@ use super::*;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TocList {
     /// 上一帧卡片的矩形；列表收起时为空。
-    pub card: winc_render::Rect,
+    pub card: cpui_render::Rect,
     /// 上一帧各行所占的矩形，即滚动条的轨道。
-    pub track: winc_render::Rect,
+    pub track: cpui_render::Rect,
     /// 列出的第一行、行数和标题的总数。
     pub first: usize,
     pub rows: usize,

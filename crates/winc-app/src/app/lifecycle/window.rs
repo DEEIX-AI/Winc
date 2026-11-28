@@ -169,9 +169,9 @@ impl App {
         }
     }
 
-    /// 本窗口的字体和字形缓存，给之后新开的窗口共用；还没有渲染器时为 `None`。
-    pub(crate) fn shared_glyphs(&self) -> Option<winc_render::SharedGlyphs> {
-        self.frame.renderer.as_ref().map(Renderer::shared_glyphs)
+    /// 本窗口的字体和字形缓存，给之后新开的窗口共用。
+    pub(crate) fn fonts(&self) -> FontSystem {
+        self.frame.fonts.clone()
     }
 
     /// 把窗口切到前台：关着的重新显示，最小化的还原。
@@ -716,9 +716,9 @@ impl App {
     /// 向渲染器声明下一帧的底色矩形（`view::base`），使其随窗口背景色一趟绘制。
     ///
     /// 同时让渲染器的背景图与配置一致（见 `App::sync_wallpaper`）。
-    pub(in crate::app) fn declare_base(&mut self, renderer: &mut winc_render::Renderer) {
+    pub(in crate::app) fn declare_base(&mut self, renderer: &mut cpui_render::Renderer) {
         self.sync_wallpaper(renderer);
-        let (window, scale) = (self.layout.window, renderer.scale_factor());
+        let (window, scale) = (self.layout.window, renderer.scale());
         if self.settings_reuses_base(window, scale) {
             // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。
             renderer.cover_next_frame(window);

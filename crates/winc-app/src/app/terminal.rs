@@ -34,12 +34,12 @@ use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
+use cpui_render::{Color, Rect};
 use winc_config::{OptionAsMeta, TerminalGroup, TerminalSession};
 use winc_i18n::t;
 use winc_pty::client::{Client, Poll};
 use winc_pty::input::{self, Key as TermKey, Mods};
 use winc_pty::protocol::{Event, FromHelper, MAGIC, Modes, Size, Theme, ToHelper, VERSION};
-use winc_render::{Color, Rect};
 
 use super::animation::{Clock, SIDEBAR_ANIMATION};
 use super::{App, CloseRequest, Focus, UserEvent};

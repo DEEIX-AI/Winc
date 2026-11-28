@@ -1,19 +1,13 @@
 //! 临时打开模式的测试：标准输入标签的读取、读完后的编辑和另存为。
 
 use super::*;
-use crate::bench::Bench;
 
 /// 测试中标准输入标签的标题：测试以源语言运行，与 [`stdin_title`] 的结果相同。
 const STDIN_TITLE: &str = "标准输入";
 
 /// 返回打开了空的标准输入标签、正在接收的应用，以及标签和向它发送内容的通道。
 fn reading_app() -> (App, DocumentId, mpsc::Sender<Piece>) {
-    let mut app = App::new(
-        Editor::default(),
-        None,
-        Bench::from_env(),
-        Config::default(),
-    );
+    let mut app = App::for_test(Editor::default(), Config::default());
     let index = app.editor.show_output(STDIN_TITLE, "");
     let id = app.editor.documents[index].id;
     let (send, receive) = mpsc::channel();

@@ -1,8 +1,8 @@
 //! 可编辑的预览中调整图片大小：拖动图片右侧的把手，或使用右键菜单「图片大小」。改写图片的
 //! 原文（见 `winc_preview::markdown::resize`），占一步撤销，光标位置不变。
 
+use cpui_render::Rect;
 use winc_preview::markdown::resize::{self, Width};
-use winc_render::Rect;
 use winc_typeset::Item;
 
 use crate::app::App;

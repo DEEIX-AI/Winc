@@ -54,9 +54,9 @@ pub(super) fn draw_suggest(app: &mut App, frame: &mut Frame<'_>) {
             let dir = if dir.is_empty() {
                 0.0
             } else {
-                DIR_GAP + frame.measure(FontKind::Ui, small, dir)
+                DIR_GAP + frame.measure(Font::ui(small), dir)
             };
-            frame.measure(FontKind::Ui, size, name) + dir
+            frame.measure(Font::ui(size), name) + dir
         })
         .fold(0.0, f32::max);
     let area = app.layout.editor;
@@ -91,14 +91,14 @@ pub(super) fn draw_suggest(app: &mut App, frame: &mut Frame<'_>) {
         // 不同类的命令之间画一道分隔线，位于两行之间，不占高度。
         if i > first && group_of(app, i) != group_of(app, i - 1) {
             let line = Rect::new(band.x + PAD, row.y - 0.5, band.w - PAD * 2.0, 1.0);
-            frame.rect_clipped(line, p.separator, 0.0, clip);
+            frame.rect_clipped(line, 0.0, p.separator, clip);
         }
         let (ink, dim) = if i == selected {
-            frame.rect_clipped(band, p.accent_fill, RADIUS_ROW, clip);
+            frame.rect_clipped(band, RADIUS_ROW, p.accent_fill, clip);
             band_ink(p)
         } else {
             if app.pointer.hover == Hover::Suggest(i) {
-                frame.rect_clipped(band, p.hover, RADIUS_ROW, clip);
+                frame.rect_clipped(band, RADIUS_ROW, p.hover, clip);
             }
             (p.text, p.text_dim)
         };
@@ -129,7 +129,7 @@ pub(super) fn draw_suggest(app: &mut App, frame: &mut Frame<'_>) {
             let dir = ellipsize(frame, dir, small, rest);
             // 命令的快捷键靠右对齐。
             let at = match commands {
-                true => right - frame.measure(FontKind::Ui, small, &dir),
+                true => right - frame.measure(Font::ui(small), &dir),
                 false => end + DIR_GAP,
             };
             ui_text_small(frame, app, at, row, &dir, dim, clip);

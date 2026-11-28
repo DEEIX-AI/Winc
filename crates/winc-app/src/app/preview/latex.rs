@@ -599,7 +599,7 @@ impl App {
     }
 
     /// 返回第 `line` 行（从 0 起）错误红点的位置和说明。
-    pub(crate) fn latex_problem_tip(&self, line: usize) -> Option<(winc_render::Rect, String)> {
+    pub(crate) fn latex_problem_tip(&self, line: usize) -> Option<(cpui_render::Rect, String)> {
         let doc = self.editor.active()?;
         let path = doc.path.as_deref()?;
         let messages: Vec<&str> = (self.preview.latex.builds.values())
@@ -613,7 +613,7 @@ impl App {
         let (l, lh) = (self.layout, self.fonts.line_height);
         let center = l.gutter.x + self.blame_width() + crate::theme::GUTTER_PADDING / 2.0 + 1.0;
         let y = l.text.y + (doc.row_of(line) as f64 - doc.scroll_line) as f32 * lh;
-        let rect = winc_render::Rect::new(center - PROBLEM_HIT, y, PROBLEM_HIT * 2.0, lh);
+        let rect = cpui_render::Rect::new(center - PROBLEM_HIT, y, PROBLEM_HIT * 2.0, lh);
         let mut unique: Vec<&str> = Vec::new();
         for message in messages {
             if !unique.contains(&message) {

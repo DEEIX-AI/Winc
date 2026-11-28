@@ -129,7 +129,7 @@ impl ApplicationHandler<UserEvent> for App {
         let theme = theme.or_else(|| window.theme()).unwrap_or(Theme::Dark);
         self.palette = self.theme_palette(theme == Theme::Dark);
 
-        let [mono, ui, terminal] = self.font_specs();
+        let [_, _, terminal] = font_specs(&self.config);
 
         // 配置中的字体找不到或无法绘制时仍使用默认字体启动，并提示用户；否则手动修改配置时写错
         // 字体名，用户只能看到设置未生效而不知道原因。仅在配置了字体时才解析字体。
@@ -156,34 +156,18 @@ impl ApplicationHandler<UserEvent> for App {
         })
         .collect();
 
-        // 同一进程中新开的窗口复用来源窗口的字体和字形缓存，两者配置相同，无需重新加载。
-        let renderer = match self.opening.glyphs_from.take() {
-            Some(glyphs) => Renderer::with_glyphs(window.clone(), self.palette.frame_bg, glyphs),
-            None => Renderer::new(
-                window.clone(),
-                self.palette.frame_bg,
-                &mono,
-                &ui,
-                &terminal,
-                self.font_weights(),
-            )
-            .map(|mut renderer| {
-                let prose = super::appearance::configured_fonts(&self.config.markdown_font);
-                renderer.set_prose_fonts(&prose);
-                renderer
-            }),
-        };
-        let renderer = match renderer {
-            Ok(renderer) => renderer,
-            Err(e) => {
-                eprintln!("winc: 无法初始化渲染：{e}");
-                self.give_up_window(event_loop);
-                return;
-            }
-        };
+        let fonts = self.frame.fonts.clone();
+        let renderer =
+            match Renderer::with_font_system(window.clone(), self.palette.frame_bg, fonts) {
+                Ok(renderer) => renderer,
+                Err(e) => {
+                    eprintln!("winc: 无法初始化渲染：{e}");
+                    self.give_up_window(event_loop);
+                    return;
+                }
+            };
 
         self.frame.renderer = Some(renderer);
-        self.measure_fonts();
         self.window.handle = Some(window.clone());
         self.start_setup_intro();
         #[cfg(windows)]
@@ -414,11 +398,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.frame.frame_log.pointer_moved();
                 self.pointer.cursor_inside = true;
-                let scale = self
-                    .frame
-                    .renderer
-                    .as_ref()
-                    .map_or(1.0, Renderer::scale_factor);
+                let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
                 self.on_mouse_move(position.x as f32 / scale, position.y as f32 / scale);
             }
             WindowEvent::CursorLeft { .. } => self.cursor_left(),

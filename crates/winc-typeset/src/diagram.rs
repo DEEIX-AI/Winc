@@ -4,14 +4,13 @@
 //! 路径分层，跨层的连线插入虚节点，连线文字占用其中一个虚节点；逐层按邻居的平均位置排序以减少
 //! 交叉，再按邻居对齐确定横坐标。时序图、饼图见子模块。坐标单位均为逻辑像素。
 
+use cpui_render::{Color, Font, Rect, Stroke};
 use winc_preview::markdown::mermaid::{self, Diagram, Dir, Edge, Flow, Head, Line, Shape};
 use winc_preview::markdown::{Align, Inline, Run, Style};
-use winc_render::{Color, FontKind, Rect, Stroke};
 
 use super::math::polyline;
 use super::memo::Piece;
 use super::{Cx, Env, Flow as Laid, Item, Para};
-use winc_render::rounded_outline;
 
 mod class;
 mod gantt;
@@ -271,7 +270,7 @@ impl Cx<'_, '_> {
             };
             // 开合按钮：文字和指向展开方向的箭头。
             let size = self.base * 0.8125;
-            let text_w = self.frame.measure(FontKind::Prose, size, label);
+            let text_w = self.frame.measure(Font::new(self.prose, size), label);
             let (arrow, gap, pad) = (size * 0.32, size * 0.4, size * 0.9);
             let pill_w = (pad * 2.0 + text_w + gap + arrow * 2.0).round();
             let pill_h = (size * 1.9).round();
@@ -292,9 +291,7 @@ impl Cx<'_, '_> {
                 x: pill.x + pad,
                 baseline: pill.y + pill_h / 2.0 + size * 0.35,
                 text: label.into(),
-                font: FontKind::Prose,
-                faux: Default::default(),
-                size,
+                font: Font::new(self.prose, size),
                 color,
                 span: None,
             });
@@ -844,12 +841,12 @@ fn bounds(items: &mut [Item], w: f32, h: f32) -> (f32, f32) {
             Item::Text {
                 x,
                 baseline,
-                size,
+                font,
                 span,
                 ..
             } => {
                 let w = span.as_ref().map_or(0.0, |s| s.advances.iter().sum());
-                Rect::new(*x, baseline - size, w, size * 1.3)
+                Rect::new(*x, baseline - font.size, w, font.size * 1.3)
             }
             _ => continue,
         };
@@ -908,7 +905,7 @@ fn cylinder_ry(w: f32) -> f32 {
 /// 矩形 `r` 的四条边（`radius` 为圆角）。
 fn outline(r: Rect, radius: f32) -> Vec<Stroke> {
     if radius > 0.0 {
-        rounded_outline(r.x, r.y, r.w, r.h, radius).to_vec()
+        Stroke::rounded_rect(Rect::new(r.x, r.y, r.w, r.h), radius).to_vec()
     } else {
         closed(&[
             (r.x, r.y),

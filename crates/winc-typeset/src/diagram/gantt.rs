@@ -3,8 +3,8 @@
 //! 时间轴的刻度间隔按图的宽度和刻度文字的宽度自动选取。任务名能放进横条时写在条内，否则写在
 //! 条的右侧（靠近右边缘时写在左侧）。坐标和尺寸都是逻辑像素，`s` 是排版用的字号。
 
+use cpui_render::{Color, Rect, Stroke};
 use winc_preview::markdown::mermaid::{Gantt, Task, format_time, month_start};
-use winc_render::{Color, Rect, Stroke};
 
 use super::super::{Cx, Item};
 use super::{Look, bounds, mix, outline};

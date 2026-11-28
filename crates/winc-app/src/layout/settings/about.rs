@@ -4,7 +4,7 @@ use winc_i18n::t;
 
 use super::Setting;
 use crate::layout::{SETTINGS_GLYPH_PAD, SETTINGS_LOGO};
-use winc_render::Rect;
+use cpui_render::Rect;
 
 /// 社区群组（Telegram）的地址。
 const COMMUNITY_URL: &str = "https://t.me/deeix_chat";
@@ -53,6 +53,13 @@ impl ProductParts {
 /// 返回「关于」页顶部版本号一行的文字，例如「版本 0.1.368 (arm64)」。
 pub fn version_line() -> String {
     t!("settings-version-line", version = version_label())
+}
+
+/// 返回「关于」页最下方的版权与许可声明，许可证取自 `Cargo.toml` 的 `license`。
+///
+/// 与「开源许可」一行的全文链接一起，构成交互界面应显示的法律声明（GPL 第 0 条）。
+pub fn legal_line() -> String {
+    t!("settings-legal", license = env!("CARGO_PKG_LICENSE"))
 }
 
 /// 返回「关于」页中链接的显示名（如「winc.si」）；不是链接时返回 `None`。

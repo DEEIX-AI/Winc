@@ -37,7 +37,7 @@ fn draw_split_content(app: &mut App, frame: &mut Frame<'_>) {
     };
     let (id, kind) = (doc.id, doc.preview_kind());
     let p = app.palette;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
     // 悬停、拖动分隔线时用强调色，表示可以左右拖动。
     let active = app.split_divider_active();
     let line = if active { p.accent } else { p.border };

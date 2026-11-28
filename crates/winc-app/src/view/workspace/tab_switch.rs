@@ -40,7 +40,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         );
         hits.push((row, row_index));
         if row_index == list.selected {
-            frame.rect_clipped(row.inset(6.0, 1.0), p.selected_inactive, RADIUS_ROW, card);
+            frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, p.selected_inactive, card);
         }
         let cy = icon_center_y(app, row, app.fonts.ui);
         if doc.terminal {
@@ -67,7 +67,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
             Some(root) => dir.strip_prefix(root).unwrap_or(dir).display().to_string(),
             None => dir.display().to_string(),
         });
-        let name_w = frame.measure(FontKind::Ui, app.fonts.ui, &shown_name);
+        let name_w = frame.measure(Font::ui(app.fonts.ui), &shown_name);
         let dir_x = name_x + name_w + 8.0;
         if let Some(folder) = folder.filter(|f: &String| !f.is_empty())
             && right - dir_x > 20.0
