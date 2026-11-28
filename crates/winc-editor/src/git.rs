@@ -428,6 +428,53 @@ pub enum Head {
 /// 没被忽略的数据目录、虚拟环境可以有数十万个文件，每次刷新都重建全部条目会占用数百 MB 内存。
 pub const STATUS_LIMIT: usize = 10_000;
 
+/// 工作区与暂存区各文件的文本增删行数（`git diff --numstat`）。
+///
+/// 按文件绝对路径索引；二进制文件、冲突文件、未跟踪文件与无文本行变更（`+0 −0`）不记入。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiffStats {
+    /// 已暂存的变更行数：暂存区相对 `HEAD`（尚无提交时相对空树）。
+    pub staged: HashMap<PathBuf, (usize, usize)>,
+    /// 未暂存的变更行数：工作区相对暂存区。
+    pub unstaged: HashMap<PathBuf, (usize, usize)>,
+    /// 部分暂存文件相对 `HEAD`（尚无提交时相对空树）的净变更行数；仅暂存或仅未暂存的
+    /// 文件在勾选式视图下直接取 `staged` 或 `unstaged`。
+    pub combined: HashMap<PathBuf, (usize, usize)>,
+}
+
+impl DiffStats {
+    /// 返回文件 `entry` 在暂存区中的变更行数（`HEAD → 暂存区`）；无文本行变更时为 `None`。
+    pub fn staged_of(&self, entry: &Entry) -> Option<(usize, usize)> {
+        if entry.conflicted() || entry.staged.is_none() {
+            return None;
+        }
+        self.staged.get(&entry.path).copied()
+    }
+
+    /// 返回文件 `entry` 在工作区中未暂存的变更行数（`暂存区 → 工作区`）；未跟踪、冲突或无
+    /// 文本行变更时为 `None`。
+    pub fn unstaged_of(&self, entry: &Entry) -> Option<(usize, usize)> {
+        if entry.conflicted() || entry.untracked() || entry.unstaged.is_none() {
+            return None;
+        }
+        self.unstaged.get(&entry.path).copied()
+    }
+
+    /// 返回文件 `entry` 相对 `HEAD` 的净变更行数（勾选式视图）；未跟踪、冲突或无文本行
+    /// 变更时为 `None`。
+    pub fn whole_of(&self, entry: &Entry) -> Option<(usize, usize)> {
+        if entry.conflicted() || entry.untracked() {
+            return None;
+        }
+        match (entry.staged.is_some(), entry.unstaged.is_some()) {
+            (true, true) => self.combined.get(&entry.path).copied(),
+            (true, false) => self.staged.get(&entry.path).copied(),
+            (false, true) => self.unstaged.get(&entry.path).copied(),
+            (false, false) => None,
+        }
+    }
+}
+
 /// 一次 `git status` 的结果。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Status {
@@ -444,6 +491,8 @@ pub struct Status {
     pub behind: u32,
     /// 有变化的文件，按 `git` 输出的顺序（路径排序）。
     pub entries: Vec<Entry>,
+    /// 各已跟踪文件的文本增删行数。
+    pub diff_stats: DiffStats,
     /// 被忽略规则（各级 `.gitignore`、`.git/info/exclude`、全局忽略文件）忽略且未跟踪的文件和目录。
     ///
     /// 整个目录被忽略时只包含目录本身，不列出其中的文件（`--ignored=matching`）。
@@ -713,7 +762,129 @@ impl Git {
             .filter(|e| e.conflicted() && merge::file_has_conflicts(&e.path))
             .map(|e| e.path.clone())
             .collect();
+        status.diff_stats = self.status_diff_stats(root, &status, cancel);
         Ok(status)
+    }
+
+    /// 读取 `status` 中已跟踪文件的文本增删行数（`git diff --numstat -z`）。
+    ///
+    /// 失败或取消时忽略错误返回已有结果，不影响状态读取本身。
+    fn status_diff_stats(&self, root: &Path, status: &Status, cancel: &Cancel) -> DiffStats {
+        let mut has_staged = false;
+        let mut has_unstaged = false;
+        let mut partial = Vec::new();
+        for entry in &status.entries {
+            if entry.conflicted() || entry.untracked() {
+                continue;
+            }
+            let staged = entry.staged.is_some();
+            let unstaged = entry.unstaged.is_some();
+            has_staged |= staged;
+            has_unstaged |= unstaged;
+            if staged && unstaged {
+                partial.push(entry.path.clone());
+                if let Some(from) = &entry.from {
+                    partial.push(from.clone());
+                }
+            }
+        }
+        if !has_staged && !has_unstaged {
+            return DiffStats::default();
+        }
+        let head = status.oid.is_some();
+        let (staged, unstaged, mut combined) = std::thread::scope(|scope| {
+            let staged =
+                has_staged.then(|| scope.spawn(|| self.numstat(root, &["--cached"], &[], cancel)));
+            let unstaged =
+                has_unstaged.then(|| scope.spawn(|| self.numstat(root, &[], &[], cancel)));
+            let combined = (!partial.is_empty()).then(|| {
+                let paths = &partial;
+                scope.spawn(move || self.numstat_against_head(root, head, paths, cancel))
+            });
+            let take = |h: Option<
+                std::thread::ScopedJoinHandle<'_, HashMap<PathBuf, (usize, usize)>>,
+            >| { h.and_then(|h| h.join().ok()).unwrap_or_default() };
+            (take(staged), take(unstaged), take(combined))
+        });
+        // 暂存区改名并在工作区删除（RD）时，`git diff HEAD` 报旧路径的删除行数；映射到条目路径。
+        for entry in &status.entries {
+            if entry.staged == Some(Change::Renamed)
+                && entry.unstaged == Some(Change::Deleted)
+                && !combined.contains_key(&entry.path)
+                && let Some(from) = &entry.from
+                && !status.entries.iter().any(|e| &e.path == from)
+                && let Some(&counts) = combined.get(from)
+            {
+                combined.insert(entry.path.clone(), counts);
+            }
+        }
+        DiffStats {
+            staged,
+            unstaged,
+            combined,
+        }
+    }
+
+    /// 运行 `git diff <extra> --numstat -z` 并解析各文件增删行数；`paths` 非空时分批按字面路径过滤。
+    fn numstat(
+        &self,
+        root: &Path,
+        extra: &[&str],
+        paths: &[PathBuf],
+        cancel: &Cancel,
+    ) -> HashMap<PathBuf, (usize, usize)> {
+        let mut stats = HashMap::new();
+        let batches = if paths.is_empty() {
+            vec![Vec::new()]
+        } else {
+            path_batches(root, paths)
+        };
+        for batch in batches {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let mut command = self.command(root);
+            command.args([
+                "diff",
+                "--numstat",
+                "-z",
+                "-M",
+                "--no-textconv",
+                "--no-ext-diff",
+                "--ignore-submodules=dirty",
+            ]);
+            command.args(extra);
+            if !batch.is_empty() {
+                command.arg("--").args(batch);
+            }
+            if let Ok(stdout) = self.run(&mut command, STATUS_TIMEOUT, cancel) {
+                stats.extend(parse_numstat(&stdout, root));
+            }
+        }
+        stats
+    }
+
+    /// 读取 `paths` 相对 `HEAD`（尚无提交时相对空树）的文本增删行数。
+    fn numstat_against_head(
+        &self,
+        root: &Path,
+        has_head: bool,
+        paths: &[PathBuf],
+        cancel: &Cancel,
+    ) -> HashMap<PathBuf, (usize, usize)> {
+        if has_head {
+            return self.numstat(root, &["HEAD"], paths, cancel);
+        }
+        let mut command = self.command(root);
+        command.args(["hash-object", "-t", "tree", "--stdin"]);
+        let Ok(stdout) = self.run(&mut command, SHOW_TIMEOUT, cancel) else {
+            return HashMap::new();
+        };
+        let empty = String::from_utf8_lossy(&stdout).trim().to_owned();
+        if empty.is_empty() {
+            return HashMap::new();
+        }
+        self.numstat(root, &[empty.as_str()], paths, cancel)
     }
 
     /// 处理完冲突以后继续 `operation`（例如 `git rebase --continue`）。

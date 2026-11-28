@@ -178,21 +178,36 @@ fn draw_group_row(
         app.git.commit.members_state(status, members)
     });
     r.checkbox(app, frame, group_check, cy, state);
-    // 组标题：小一号的次要色字，右端一个写文件数的小圆角徽标。
+    // 组标题：小一号的次要色字，右端一个写文件数的小圆角徽标；常态下徽标左侧汇总该组的 `+A −D`。
+    let title = group.title();
+    let title_x = group_check + ICON;
     label(
         frame,
         app,
         app.fonts.ui_small,
-        (group_check + ICON, band),
-        group.title(),
+        (title_x, band),
+        title,
         p.text_muted,
         list,
     );
     let count = members.len().to_string();
+    let tail = count_tail(app, frame, &count);
     draw_count_pill(app, frame, band, &count, list);
     if let Some(actions) = group_row_actions(group, r.staging).filter(|_| hovered) {
-        let strip = actions_home(band, actions.len(), count_tail(app, frame, &count));
+        let strip = actions_home(band, actions.len(), tail);
         draw_row_actions(app, frame, (strip, actions), (list, false), Some(hits));
+    } else if !matches!(group, CommitGroup::Untracked | CommitGroup::Conflicts) {
+        let entries = members.iter().filter_map(|&idx| status.entries.get(idx));
+        let stats = group_line_stats(status, entries, r.staging, group == CommitGroup::Staged);
+        let title_w = frame.measure(FontKind::Ui, app.fonts.ui_small, title);
+        if let Some(stat) = LineStatLayout::place(
+            app,
+            frame,
+            stats,
+            (title_x, title_w, stat_right(band, tail)),
+        ) {
+            stat.draw(app, frame, band, 1.0, list);
+        }
     }
     let check = Rect::new(group_check - 8.0, y + 4.0, 16.0, 16.0);
     r.check_hit(hits, check, CommitTarget::GroupCheck(group));
@@ -403,8 +418,22 @@ fn draw_file_row(
     let letter = change.letter().to_string();
     let letter_w = frame.measure(Font::ui(app.fonts.ui_small), &letter);
     let letter_x = band.right() - END_CENTER - letter_w / 2.0;
+    let stat = (actions.is_none() && !wanted)
+        .then(|| {
+            let stats =
+                file_line_stats(status, entry, r.staging, group == Some(CommitGroup::Staged));
+            let min_room = frame
+                .measure(FontKind::Ui, app.fonts.ui, &name)
+                .min(STAT_NAME_MIN);
+            LineStatLayout::place(app, frame, stats, (text_x, min_room, stat_right(band, 0.0)))
+        })
+        .flatten();
     // 文件名及平铺时的目录截短到 `text_end` 为止。写全名时按钮跟着名字展开的宽度移动。
-    let text_end = actions.map_or(letter_x - 8.0, |strip| strip.first.x - 4.0);
+    let text_end = match (actions, &stat) {
+        (Some(strip), _) => strip.first.x - 4.0,
+        (None, Some(stat)) => stat.text_end(),
+        (None, None) => letter_x - 8.0,
+    };
     let room = (!wanted).then(|| (text_end - text_x).max(0.0));
     let parts = file_parts(app, frame, (&name, dir.as_deref()), room);
     let width = parts_width(app, frame, &parts, false);
@@ -445,13 +474,13 @@ fn draw_file_row(
         draw_row_actions(app, frame, (strip, targets), (list, spill), Some(hits));
     }
     if full.is_none() {
-        // 收回途中名字还盖着状态字母那一块：字母随过渡淡入，不和名字叠在一起。
+        // 收回途中名字还盖着状态字母和行数那一块：随过渡淡入，不和名字叠在一起。
+        let opacity = if retracting { view.progress } else { 1.0 };
+        if let Some(stat) = &stat {
+            stat.draw(app, frame, band, opacity, list);
+        }
         let ink = git_color(p, change);
-        let ink = if retracting {
-            ink.alpha(ink.a * view.progress)
-        } else {
-            ink
-        };
+        let ink = ink.alpha(ink.a * opacity);
         ui_text_small(frame, app, letter_x, band, &letter, ink, list);
     }
     let color = file_color(change, p);

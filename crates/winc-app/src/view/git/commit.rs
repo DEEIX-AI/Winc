@@ -3,7 +3,8 @@
 //! 范围的「提交 ⌄」拆分按钮）；没有更改时空状态下面是下一步，底部是还没推送的上一次提交。
 //!
 //! 每个文件占一行：勾选框、文件图标、文件名（平铺时其后以淡色显示所在目录）、右端着色的
-//! 状态字母；悬停时状态字母替换为「打开文件」「回滚」两个按钮。改动行不显示行数。
+//! 状态字母及其左侧的文本增删行数（`+N −M`）；悬停时增删行数替换为操作按钮。分组标题行常态
+//! 下在文件数徽标左侧汇总该组的 `+A −D`，悬停时替换为整组操作按钮。
 //! 坐标均为逻辑像素。
 
 use std::borrow::Cow;
@@ -11,7 +12,7 @@ use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::path::Path;
 
-use winc_editor::git::{Change, Head, Operation, Status};
+use winc_editor::git::{Change, Entry, Head, Operation, Status};
 use winc_i18n::t;
 
 use crate::app::animation::stage;
@@ -744,6 +745,120 @@ const END_CENTER: f32 = 12.0;
 /// 行右端靠右排的东西（数量徽标、储藏的时间）离行底色右边的距离（逻辑像素）：和悬停按钮的右边缘
 /// 对齐。
 const END_PAD: f32 = END_CENTER - ACTION / 2.0;
+
+/// `+N −M` 增删两段之间的空隙（逻辑像素）。
+const STAT_PAIR_GAP: f32 = 4.0;
+/// 行尾 `+N −M` 左侧与文件名、组标题之间的空隙（逻辑像素）。
+const STAT_NAME_GAP: f32 = 8.0;
+/// 为文件名或组标题保留的最小宽度（逻辑像素）：剩余空间不足时隐藏 `+N −M`。
+const STAT_NAME_MIN: f32 = 60.0;
+
+/// 返回文件 `entry` 在当前视图模式与分组下应显示的文本增删行数。
+///
+/// 暂存区视图下「暂存的更改」取暂存区相对 `HEAD`、「更改」取工作区相对暂存区；勾选式视图取
+/// 工作区相对 `HEAD` 的净变更。未跟踪、冲突、二进制与无文本行变更返回 `None`。
+pub(super) fn file_line_stats(
+    status: &Status,
+    entry: &Entry,
+    staging: bool,
+    staged_group: bool,
+) -> Option<(usize, usize)> {
+    match (staging, staged_group) {
+        (true, true) => status.diff_stats.staged_of(entry),
+        (true, false) => status.diff_stats.unstaged_of(entry),
+        (false, _) => status.diff_stats.whole_of(entry),
+    }
+}
+
+/// 汇总一组文件的文本增删行数；全部无文本行变更时返回 `None`。
+pub(super) fn group_line_stats<'a>(
+    status: &Status,
+    entries: impl IntoIterator<Item = &'a Entry>,
+    staging: bool,
+    staged_group: bool,
+) -> Option<(usize, usize)> {
+    let (mut added, mut removed) = (0usize, 0usize);
+    for entry in entries {
+        if let Some((a, r)) = file_line_stats(status, entry, staging, staged_group) {
+            added += a;
+            removed += r;
+        }
+    }
+    (added > 0 || removed > 0).then_some((added, removed))
+}
+
+/// 返回行尾 `+N −M` 的右边缘横坐标（逻辑像素），与 [`actions_home`] 中悬停按钮的右边缘对齐。
+pub(super) fn stat_right(band: Rect, tail: f32) -> f32 {
+    end_slot(band).x.min(band.right() - END_PAD - tail) - ActionStrip::GAP
+}
+
+/// 行尾 `+N −M` 的排版结果，供名称截断与绘制共用。
+pub(super) struct LineStatLayout {
+    added: String,
+    removed: String,
+    added_x: f32,
+    removed_x: f32,
+}
+
+impl LineStatLayout {
+    /// 计算 `stats` 靠 `right` 右对齐时的位置；无文本变更、或留给 `text_x` 起的名称宽度不足
+    /// `min_room` 时返回 `None`。
+    pub(super) fn place(
+        app: &App,
+        frame: &mut Frame<'_>,
+        stats: Option<(usize, usize)>,
+        (text_x, min_room, right): (f32, f32, f32),
+    ) -> Option<Self> {
+        let (added, removed) = stats?;
+        if added == 0 && removed == 0 {
+            return None;
+        }
+        let added = format!("+{added}");
+        let removed = format!("−{removed}");
+        let size = app.fonts.ui_small;
+        let added_w = frame.measure(FontKind::Ui, size, &added);
+        let removed_w = frame.measure(FontKind::Ui, size, &removed);
+        let added_x = right - (added_w + STAT_PAIR_GAP + removed_w);
+        if added_x - STAT_NAME_GAP - text_x < min_room {
+            return None;
+        }
+        Some(Self {
+            added,
+            removed,
+            added_x,
+            removed_x: added_x + added_w + STAT_PAIR_GAP,
+        })
+    }
+
+    /// 左侧名称允许绘制到的最右横坐标（逻辑像素）。
+    pub(super) fn text_end(&self) -> f32 {
+        self.added_x - STAT_NAME_GAP
+    }
+
+    /// 在行 `band` 中绘制 `+N −M`；`opacity` 用于名称收回时的淡入。
+    pub(super) fn draw(
+        &self,
+        app: &App,
+        frame: &mut Frame<'_>,
+        band: Rect,
+        opacity: f32,
+        clip: Rect,
+    ) {
+        let p = app.palette;
+        let added_ink = p.git_added.alpha(p.git_added.a * opacity);
+        let removed_ink = p.git_deleted.alpha(p.git_deleted.a * opacity);
+        ui_text_small(frame, app, self.added_x, band, &self.added, added_ink, clip);
+        ui_text_small(
+            frame,
+            app,
+            self.removed_x,
+            band,
+            &self.removed,
+            removed_ink,
+            clip,
+        );
+    }
+}
 
 /// 改动列表里一行的各列（逻辑像素）：箭头的中心离底色左边 `ARROW`，每深一层往右缩进
 /// `INDENT`（与文件视图的树共用 `theme::TREE_INDENT`，16），图标和名字之间隔 `LABEL_GAP`。
