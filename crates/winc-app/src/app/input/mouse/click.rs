@@ -189,7 +189,13 @@ impl App {
         }
 
         // 点在预览以外：预览的选区和焦点不要了（`click_markdown` 再拿回来）。拖预览的滚动条不算。
-        let target = self.target_at(x, y);
+        let target = match self.target_at(x, y) {
+            // 无文档时仅将编辑区的空白点击交给编辑区，以便移回键盘焦点。
+            Target::None if self.editor.active.is_none() && l.editor.contains(x, y) => {
+                Target::Editor
+            }
+            target => target,
+        };
         let keeps_preview = matches!(
             target,
             Target::MarkdownText(_)

@@ -4,7 +4,7 @@ Name:           winc
 Version:        %{winc_version}
 Release:        1
 Summary:        A lighter, faster desktop code editor
-License:        Apache-2.0
+License:        GPL-3.0-or-later
 URL:            https://winc.si
 ExclusiveArch:  x86_64 aarch64
 

@@ -17,7 +17,7 @@ impl Cx<'_, '_> {
         let pad = self.base;
         let size = self.base * 0.85;
         let line_h = (size * 1.45).round();
-        let m = self.frame.metrics(FontKind::Mono, size);
+        let m = self.frame.metrics(Font::mono(size));
         // 行号栏：容得下最大行号的位数，与代码之间隔一个字宽。
         let count = text.split('\n').count();
         let gutter = match self.line_numbers {
@@ -53,9 +53,7 @@ impl Cx<'_, '_> {
                     x: x + pad + gutter - m.cell - w,
                     baseline,
                     text: number.into(),
-                    font: FontKind::Mono,
-                    faux: Faux::default(),
-                    size,
+                    font: Font::mono(size),
                     // 行号只作定位参考：不透明度取次要色的 60%（取自调参：浅色、深色主题下都能
                     // 看清，又明显淡于代码）。
                     color: self.colors.muted.alpha(self.colors.muted.a * 0.6),
@@ -164,9 +162,7 @@ impl Cx<'_, '_> {
                     x: run.3,
                     baseline: baseline(top),
                     text: std::mem::take(&mut run.0).into(),
-                    font: FontKind::Mono,
-                    faux: Faux::default(),
-                    size,
+                    font: Font::mono(size),
                     color: run.4.unwrap_or(text_color),
                     span: Some(Span {
                         start: run.2,
@@ -182,9 +178,7 @@ impl Cx<'_, '_> {
         let mut run = (String::new(), Vec::new(), 0, 0.0, None, None);
         let mut byte = 0;
         // emoji 序列的宽度记在第一个字符上，其余字符为 0，不会在序列中间折行。
-        let widths = self
-            .frame
-            .advances_faux(FontKind::Mono, Faux::default(), size, &chars);
+        let widths = self.frame.advances(Font::mono(size), &chars);
         for (i, &c) in chars.iter().enumerate() {
             let w = widths[i];
             if pen + w > row.room && pen > 0.0 {
@@ -215,9 +209,7 @@ impl Cx<'_, '_> {
                 x: 0.0,
                 baseline: baseline(0.0),
                 text: "".into(),
-                font: FontKind::Mono,
-                faux: Faux::default(),
-                size,
+                font: Font::mono(size),
                 color: text_color,
                 span: Some(Span {
                     start: self.chars,

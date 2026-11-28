@@ -214,7 +214,7 @@ pub(super) fn draw_wrapped_selection(
     for (i, &(y, span)) in rows.iter().enumerate() {
         let Some((x0, x1)) = span else { continue };
         if let Some(color) = underline {
-            frame.rect_clipped(underline_rect(x0, x1, y, lh), color, 0.0, clip);
+            frame.rect_clipped(underline_rect(x0, x1, y, lh), 0.0, color, clip);
             continue;
         }
         let above = i.checked_sub(1).and_then(|j| rows[j].1);
@@ -226,7 +226,7 @@ pub(super) fn draw_wrapped_selection(
             radius(covers(below, x1 - 1.0)),
             radius(covers(below, x0 + 1.0)),
         ];
-        frame.rect_corners(Rect::new(x0, y, x1 - x0, lh), color, radii, clip);
+        frame.rect_corners(Rect::new(x0, y, x1 - x0, lh), radii, color, clip);
     }
 }
 
@@ -351,7 +351,7 @@ pub(super) fn draw_selection(
         }
         if let Some(color) = underline {
             let rect = underline_rect(x0, x1, row_y(line), app.fonts.line_height);
-            frame.rect_clipped(rect, color, 0.0, clip);
+            frame.rect_clipped(rect, 0.0, color, clip);
             continue;
         }
 
@@ -365,7 +365,7 @@ pub(super) fn draw_selection(
             radius(covers(below, x0 + 1.0)),
         ];
         let rect = Rect::new(x0, row_y(line), x1 - x0, app.fonts.line_height);
-        frame.rect_corners(rect, color, radii, clip);
+        frame.rect_corners(rect, radii, color, clip);
     }
 }
 
@@ -390,14 +390,14 @@ pub(in crate::view) fn draw_caret(
     let chars: Vec<char> = preedit.chars().collect();
     let cells = loose_cells(&chars, tab_width);
     let width = cells.iter().sum::<usize>() as f32 * cell;
-    frame.rect_clipped(
+    frame.surface_clipped(
         Rect::new(x, y, width, app.fonts.line_height),
-        p.editor_bg,
         0.0,
+        p.editor_bg,
         clip,
     );
     let mut px = x;
-    let font = (FontKind::Mono, app.fonts.code, cell);
+    let font = (Font::mono(app.fonts.code), cell);
     // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
     let mut joined = 0;
 
@@ -411,8 +411,8 @@ pub(in crate::view) fn draw_caret(
 
     frame.rect_clipped(
         Rect::new(x, baseline + 3.0, width, 1.0),
-        p.accent,
         0.0,
+        p.accent,
         clip,
     );
     let at = preedit_cursor_x(app, preedit, &cells, x, cell);
@@ -471,19 +471,19 @@ pub(in crate::view) fn draw_modal_caret(
                 Rect::new(block.x, block.y, 1.0, block.h),
                 Rect::new(block.right() - 1.0, block.y, 1.0, block.h),
             ] {
-                frame.rect_clipped(edge, p.caret, 0.0, clip);
+                frame.rect_clipped(edge, 0.0, p.caret, clip);
             }
         }
         CaretShape::Underline if app.blink.visible => {
             let line = Rect::new(block.x, block.bottom() - 2.0, block.w, 2.0);
-            frame.rect_clipped(line, p.caret, 0.0, clip);
+            frame.rect_clipped(line, 0.0, p.caret, clip);
         }
         CaretShape::Block if app.blink.visible => {
-            frame.rect_clipped(block, p.caret, 1.0, clip);
+            frame.rect_clipped(block, 1.0, p.caret, clip);
             if let Some((chars, col)) = under.filter(|&(chars, col)| !chars[col].is_whitespace()) {
-                let font = (FontKind::Mono, app.fonts.code, cell);
+                let font = (Font::mono(app.fonts.code), cell);
                 let at = (x, baseline);
-                draw_grid_char(frame, font, at, (chars, col), p.editor_bg, clip);
+                draw_grid_cluster(frame, font, at, (chars, col), p.editor_bg, clip);
             }
         }
         CaretShape::Underline | CaretShape::Block => {}
@@ -529,7 +529,7 @@ pub(in crate::view) fn draw_extra_caret(
 pub(in crate::view) fn caret_bar(app: &App, frame: &mut Frame<'_>, x: f32, y: f32, clip: Rect) {
     if app.blink.visible {
         let bar = Rect::new(x.round(), y + 1.0, 2.0, app.fonts.line_height - 2.0);
-        frame.rect_clipped(bar, app.palette.caret, 1.0, clip);
+        frame.rect_clipped(bar, 1.0, app.palette.caret, clip);
     }
 }
 

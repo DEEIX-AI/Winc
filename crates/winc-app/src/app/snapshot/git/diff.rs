@@ -1088,7 +1088,7 @@ fn word_wrap_applies_to_the_diff_view() {
         let scroll = view.side_scroll(RIGHT, 0.0, f64::from(parts.body.h / lh));
         let x = parts.panes[RIGHT].text.x + DIFF_TEXT_PAD + indent * app.metrics.cell;
         let y = parts.body.y + (row as f64 - scroll) as f32 * lh + 3.0;
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let pixel = |x: f32, y: f32| {
             let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
             image.pixels[y * image.width as usize + x]

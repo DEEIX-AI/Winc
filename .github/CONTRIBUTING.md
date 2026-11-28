@@ -126,4 +126,4 @@ project's direction.
 ## License
 
 By contributing, you agree to the [Contributor License Agreement](CLA.md), and your contributions
-are licensed under the [Apache License, Version 2.0](../LICENSE).
+are licensed under the [GNU General Public License, version 3 or later](../LICENSE).

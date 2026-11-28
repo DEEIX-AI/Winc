@@ -56,12 +56,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use block2::RcBlock;
+use cpui_render::Snapshot;
 use objc2::ffi;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{class, msg_send, sel};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use winc_render::Image;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 

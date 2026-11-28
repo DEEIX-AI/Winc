@@ -43,7 +43,7 @@ impl Cx<'_, '_> {
         let drift = self.drift();
         let mono = base * 0.85;
         let raw_row = |room: f32, cx: &mut Self| {
-            let m = cx.frame.metrics(FontKind::Mono, mono);
+            let m = cx.frame.metrics(Font::mono(mono));
             Row {
                 room: room.max(mono),
                 size: mono,

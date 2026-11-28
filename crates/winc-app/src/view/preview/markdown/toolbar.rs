@@ -1,6 +1,6 @@
 //! 格式工具栏的绘制：选区上方（放不下时在下方）的一行按钮。
 
-use winc_render::{Frame, Rect};
+use cpui_render::{Frame, Rect};
 
 use crate::app::App;
 use crate::app::Hover;
@@ -68,7 +68,7 @@ pub(in crate::view) fn draw_selection_toolbar(app: &mut App, frame: &mut Frame<'
     for tool in Tool::ALL {
         if tool.starts_group() {
             let line = Rect::new(x + GAP / 2.0 - 0.5, card.y + h / 2.0 - 8.0, 1.0, 16.0);
-            frame.rect_clipped(line, p.separator, 0.0, card);
+            frame.rect_clipped(line, 0.0, p.separator, card);
             x += SEPARATOR + GAP;
         }
         let button = Rect::new(x, card.y + GAP, BUTTON, BUTTON);
@@ -76,9 +76,9 @@ pub(in crate::view) fn draw_selection_toolbar(app: &mut App, frame: &mut Frame<'
         let on = active.contains(&tool);
         // 选区已有的格式：按钮铺强调色的淡底，图标用强调色。
         if on {
-            frame.rect_clipped(button, p.accent.alpha(p.accent.a * 0.14), 6.0, card);
+            frame.rect_clipped(button, 6.0, p.accent.alpha(p.accent.a * 0.14), card);
         } else if hovered {
-            frame.rect_clipped(button, p.hover, 6.0, card);
+            frame.rect_clipped(button, 6.0, p.hover, card);
         }
         let color = match (on, hovered) {
             (true, _) => p.accent,

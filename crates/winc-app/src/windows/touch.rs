@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use winc_render::Rect;
+use cpui_render::Rect;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;

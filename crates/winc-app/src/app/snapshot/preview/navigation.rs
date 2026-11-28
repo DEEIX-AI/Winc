@@ -375,12 +375,16 @@ fn the_split_preview_reaches_its_end_with_the_text() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_preview_font_setting_changes_only_the_preview_body() {
-    use winc_render::FontKind;
+    use cpui_render::FontKind;
     let (mut app, dir) = readme("md-font", false, PreviewMode::Split);
     let widths = |app: &App| {
         let renderer = app.frame.renderer.as_ref().unwrap();
-        let width = |kind| renderer.measure(kind, 13.0, "winc 编辑器 Preview");
-        (width(FontKind::Prose), width(FontKind::Ui))
+        let width = |kind| {
+            renderer
+                .font_system()
+                .measure(Font::new(kind, 13.0), "winc 编辑器 Preview")
+        };
+        (width(PROSE_FONT), width(FontKind::Ui))
     };
     let (body, ui) = widths(&app);
     assert_eq!(body, ui);

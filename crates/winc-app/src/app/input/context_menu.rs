@@ -7,12 +7,12 @@
 use std::path::{Path, PathBuf};
 use winc_editor::encoding::CHOICES;
 
+#[cfg(any(target_os = "macos", test))]
+use cpui_render::Snapshot;
 use winc_core::{Indent, LineEnding};
 use winc_editor::format::{Auto, PRESETS, Task};
 use winc_editor::{DocumentId, EntryKind};
 use winc_i18n::t;
-#[cfg(any(target_os = "macos", test))]
-use winc_render::Image;
 
 use super::*;
 use crate::app::git::location_picker::Place;
@@ -316,7 +316,7 @@ pub enum MenuCommand {
     RightClick(usize),
     /// 设置中字体菜单的「系统默认」（终端字体为「跟随编辑器」）。
     FontDefault,
-    /// 设置中字体菜单的一项，参数为 [`winc_render::installed_fonts`] 中的序号（从 0 起）。
+    /// 设置中字体菜单的一项，参数为 [`cpui_render::installed_fonts`] 中的序号（从 0 起）。
     Font(usize),
     /// 设置中字体菜单「后备字体」中的一项，参数同 [`MenuCommand::Font`]：加入或移出字体列表。
     FallbackFont(usize),
@@ -864,7 +864,7 @@ impl MenuCommand {
                 .get(i)
                 .map_or("", |theme| theme.name()),
             MenuCommand::FontDefault => t!("settings-font-default"),
-            MenuCommand::Font(i) | MenuCommand::FallbackFont(i) => winc_render::installed_fonts()
+            MenuCommand::Font(i) | MenuCommand::FallbackFont(i) => cpui_render::installed_fonts()
                 .get(i)
                 .map_or("", |family| family.name.as_str()),
             MenuCommand::NewWindow => t!("cmd-new-window"),

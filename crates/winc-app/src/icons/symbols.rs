@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// 符号图标传给 [`draw`] 的外形尺寸（逻辑像素）。文件图标里与符号同形的记号（JSON 的花括号、包的
+/// 立方体）也用它，两处画出来一样大。
+pub(super) const SYMBOL: f32 = 11.0;
+
 /// 符号图标的图形。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolGlyph {
@@ -20,7 +24,7 @@ pub enum SymbolGlyph {
 }
 
 /// 绘制符号图标：左上角在 `(x, y)`，占 `FILE_WIDTH` × 15 的位置，与 [`file()`] 相同，文件树和
-/// 大纲里同一列的图标上下、左右都对齐。
+/// 大纲里同一列的图标上下、左右都对齐；图形约 11 逻辑像素见方，与文件图标纸面上的记号同大。
 pub fn symbol(
     frame: &mut Frame<'_>,
     (x, y): (f32, f32),
@@ -28,73 +32,15 @@ pub fn symbol(
     color: Color,
     clip: Rect,
 ) {
-    let (cx, cy) = (x + FILE_WIDTH / 2.0, y + 7.5);
-    let k = MARK_SCALE;
-    let line = |x0: f32, y0: f32, x1: f32, y1: f32| {
-        Stroke::Line(cx + x0 * k, cy + y0 * k, cx + x1 * k, cy + y1 * k)
+    let icon = match glyph {
+        SymbolGlyph::Cube => Icon::Cube,
+        SymbolGlyph::Card => Icon::Card,
+        SymbolGlyph::Braces => Icon::Braces,
+        SymbolGlyph::Field => Icon::SymbolField,
+        // 标题文字前已写出 `#`，图标不再重复井号，只表示这是一段文字。
+        SymbolGlyph::Text => Icon::Text,
+        SymbolGlyph::Brackets => Icon::Brackets,
     };
-    match glyph {
-        SymbolGlyph::Cube => {
-            // 正六边形的外框，加上从中心伸向左上、右上和正下方的三条棱。
-            let (w, h) = (3.0, 1.75);
-            let marks = [
-                line(0.0, -2.0 * h, w, -h),
-                line(w, -h, w, h),
-                line(w, h, 0.0, 2.0 * h),
-                line(0.0, 2.0 * h, -w, h),
-                line(-w, h, -w, -h),
-                line(-w, -h, 0.0, -2.0 * h),
-                line(-w, -h, 0.0, 0.0),
-                line(0.0, 0.0, w, -h),
-                line(0.0, 0.0, 0.0, 2.0 * h),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        SymbolGlyph::Card => {
-            let (w, h) = (6.0 * k, 6.0 * k);
-            let card = rounded_outline(cx - w / 2.0, cy - h / 2.0, w, h, 1.5);
-            frame.stroke(&card, STROKE, color, clip);
-            frame.stroke(&[line(-3.0, -1.0, 3.0, -1.0)], STROKE, color, clip);
-        }
-        SymbolGlyph::Braces => {
-            // 两个花括号：竖着的一笔中间向外顶出一个尖，与 JSON 文件的图标相同。
-            let brace = |s: f32| {
-                [
-                    line(s * 1.0, -3.5, s * 2.0, -3.0),
-                    line(s * 2.0, -3.0, s * 2.0, -0.75),
-                    line(s * 2.0, -0.75, s * 3.0, 0.0),
-                    line(s * 3.0, 0.0, s * 2.0, 0.75),
-                    line(s * 2.0, 0.75, s * 2.0, 3.0),
-                    line(s * 2.0, 3.0, s * 1.0, 3.5),
-                ]
-            };
-            frame.stroke(&brace(-1.0), STROKE, color, clip);
-            frame.stroke(&brace(1.0), STROKE, color, clip);
-        }
-        SymbolGlyph::Field => {
-            frame.stroke(&[Stroke::Circle(cx, cy, 3.0 * k)], STROKE, color, clip);
-            // 零长度的线段描边后呈圆点，直径等于笔宽。
-            frame.stroke(&[Stroke::Line(cx, cy, cx, cy)], DOT, color, clip);
-        }
-        SymbolGlyph::Text => {
-            // 标题文字前已写出 `#`，图标不再重复井号，只表示这是一段文字。
-            let marks = [
-                line(-3.25, -2.5, 3.25, -2.5),
-                line(-3.25, 0.0, 3.25, 0.0),
-                line(-3.25, 2.5, 1.0, 2.5),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        SymbolGlyph::Brackets => {
-            let bracket = |s: f32| {
-                [
-                    line(s * 1.25, -3.25, s * 3.0, -3.25),
-                    line(s * 3.0, -3.25, s * 3.0, 3.25),
-                    line(s * 3.0, 3.25, s * 1.25, 3.25),
-                ]
-            };
-            frame.stroke(&bracket(-1.0), STROKE, color, clip);
-            frame.stroke(&bracket(1.0), STROKE, color, clip);
-        }
-    }
+    let center = (x + FILE_WIDTH / 2.0, y + 7.5);
+    draw(frame, icon, center, SYMBOL, STROKE, color, clip);
 }

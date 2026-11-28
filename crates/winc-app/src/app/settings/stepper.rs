@@ -44,9 +44,12 @@ impl App {
                 self.config.ui_size.unwrap_or(UI_FONT),
                 Config::UI_SIZE_RANGE,
             ),
-            Setting::FontWeight => (f32::from(self.font_weight()), Config::FONT_WEIGHT_RANGE),
+            Setting::FontWeight => (
+                f32::from(ui_font_weight(&self.config)),
+                Config::FONT_WEIGHT_RANGE,
+            ),
             Setting::EditorFontWeight => (
-                f32::from(self.editor_font_weight()),
+                f32::from(editor_font_weight(&self.config)),
                 Config::FONT_WEIGHT_RANGE,
             ),
             Setting::BackgroundOpacity => (
@@ -58,7 +61,7 @@ impl App {
                 Config::EDITOR_SIZE_RANGE,
             ),
             Setting::TerminalFontWeight => (
-                f32::from(self.terminal_font_weight()),
+                f32::from(terminal_font_weight(&self.config)),
                 Config::FONT_WEIGHT_RANGE,
             ),
             Setting::MarkdownSize => (
@@ -102,20 +105,20 @@ impl App {
             }
             // 配置中的值不在档位上时，移到该方向上最近的一档。
             Setting::FontWeight => {
-                let current = self.font_weight();
+                let current = ui_font_weight(&self.config);
                 let next = step_weight(current, up, Config::FONT_WEIGHT_RANGE);
                 self.config.ui_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
                 self.apply_fonts().ok();
             }
             Setting::EditorFontWeight => {
-                let current = self.editor_font_weight();
+                let current = editor_font_weight(&self.config);
                 let next = step_weight(current, up, Config::FONT_WEIGHT_RANGE);
                 self.config.editor_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
                 self.apply_fonts().ok();
             }
             // 与终端字号相同：调整后写入配置，不再随编辑区字重变化。
             Setting::TerminalFontWeight => {
-                let current = self.terminal_font_weight();
+                let current = terminal_font_weight(&self.config);
                 let next = step_weight(current, up, Config::FONT_WEIGHT_RANGE);
                 self.config.terminal_font_weight = Some(next);
                 self.apply_fonts().ok();

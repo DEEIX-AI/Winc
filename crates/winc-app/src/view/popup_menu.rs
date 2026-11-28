@@ -112,26 +112,26 @@ fn measure(app: &App, frame: &mut Frame<'_>, rows: &[PopupRow]) -> (f32, f32) {
         let text = match row {
             PopupRow::Separator => continue,
             PopupRow::Item { label, key, .. } => {
-                let title = frame.measure(FontKind::Ui, size, &label.title);
+                let title = frame.measure(Font::ui(size), &label.title);
                 let subtitle = label
                     .subtitle
                     .as_deref()
-                    .map_or(0.0, |s| frame.measure(FontKind::Ui, small, s));
+                    .map_or(0.0, |s| frame.measure(Font::ui(small), s));
                 let key = if key.is_empty() {
                     0.0
                 } else {
-                    KEY_GAP + frame.measure(FontKind::Ui, small, key)
+                    KEY_GAP + frame.measure(Font::ui(small), key)
                 };
                 title.max(subtitle) + key
             }
             PopupRow::Submenu { label, .. } => {
-                frame.measure(FontKind::Ui, size, &label.title) + KEY_GAP
+                frame.measure(Font::ui(size), &label.title) + KEY_GAP
             }
             PopupRow::Entry { name, dir, .. } => {
                 let arrow = if *dir { KEY_GAP } else { 0.0 };
-                frame.measure(FontKind::Ui, size, name) + arrow
+                frame.measure(Font::ui(size), name) + arrow
             }
-            PopupRow::Query(query) => frame.measure(FontKind::Ui, size, query),
+            PopupRow::Query(query) => frame.measure(Font::ui(size), query),
         };
         w = w.max(lead + text + RIGHT_PAD);
     }
@@ -195,7 +195,7 @@ fn draw_level(app: &App, frame: &mut Frame<'_>, level: &PopupLevel) {
                     rect.w - 2.0 * ROW_INSET - 12.0,
                     1.0,
                 );
-                frame.rect_clipped(line, p.separator, 0.0, clip);
+                frame.rect_clipped(line, 0.0, p.separator, clip);
                 continue;
             }
             PopupRow::Item {
@@ -244,14 +244,14 @@ fn draw_level(app: &App, frame: &mut Frame<'_>, level: &PopupLevel) {
                     rect.w - 2.0 * ROW_INSET - 12.0,
                     1.0,
                 );
-                frame.rect_clipped(line, p.separator, 0.0, clip);
+                frame.rect_clipped(line, 0.0, p.separator, clip);
                 continue;
             }
         };
         let hovered = level.hover == Some(i);
         if hovered {
             let band = rect.inset(ROW_INSET, 1.0);
-            frame.rect_clipped(band, p.accent_fill, RADIUS_ROW, clip);
+            frame.rect_clipped(band, RADIUS_ROW, p.accent_fill, clip);
         }
         let (ink, dim) = if hovered {
             band_ink(p)
@@ -278,7 +278,7 @@ fn draw_level(app: &App, frame: &mut Frame<'_>, level: &PopupLevel) {
         let right = rect.right() - RIGHT_PAD;
         let mut room = right - text_x;
         if !key.is_empty() {
-            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, key);
+            let w = frame.measure(Font::ui(app.fonts.ui_small), key);
             ui_text_small(frame, app, right - w, title_row, key, dim, clip);
             room -= w + KEY_GAP / 2.0;
         }

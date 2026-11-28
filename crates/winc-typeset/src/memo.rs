@@ -10,8 +10,8 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use cpui_render::{Rect, Stroke};
 use winc_preview::markdown::Inline;
-use winc_render::{Rect, Stroke};
 
 use super::{Cx, Flow, Item, Para, Span};
 
@@ -137,8 +137,6 @@ impl Item {
                 baseline,
                 text,
                 font,
-                faux,
-                size,
                 color,
                 span,
             } => Item::Text {
@@ -146,8 +144,6 @@ impl Item {
                 baseline: baseline + dy,
                 text: Arc::clone(text),
                 font: *font,
-                faux: *faux,
-                size: *size,
                 color: *color,
                 span: span.as_ref().map(|s| Span {
                     start: s.start + dc,
@@ -246,6 +242,8 @@ pub fn shift(s: Stroke, dx: f32, dy: f32) -> Stroke {
         Stroke::Line(ax, ay, bx, by) => Stroke::Line(ax + dx, ay + dy, bx + dx, by + dy),
         Stroke::Circle(cx, cy, r) => Stroke::Circle(cx + dx, cy + dy, r),
         Stroke::Arc(cx, cy, r, from, to) => Stroke::Arc(cx + dx, cy + dy, r, from, to),
+        // 排版只产生上面三种线。
+        other => other,
     }
 }
 

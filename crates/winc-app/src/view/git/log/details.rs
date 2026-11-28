@@ -145,7 +145,7 @@ pub(super) fn draw_details(
         let mut bx = x;
         for badge in &refs {
             let size = app.fonts.ui_small;
-            let w = frame.measure(FontKind::Ui, size, &badge.text) + badge.pad();
+            let w = frame.measure(Font::ui(size), &badge.text) + badge.pad();
             if bx > x && bx + w > x + width {
                 bx = x;
                 y += 24.0;
@@ -239,7 +239,7 @@ pub(super) fn draw_details(
 
     // 改动的文件。
     y += 12.0;
-    frame.rect_clipped(Rect::new(x, y, width, 1.0), p.separator, 0.0, area);
+    frame.rect_clipped(Rect::new(x, y, width, 1.0), 0.0, p.separator, area);
     y += 10.0;
     let Some(details) = details else {
         return y;
@@ -295,10 +295,10 @@ fn draw_branches(
         return y + 22.0;
     }
     let local = |name: &str| (app.git.branches.iter()).any(|b| !b.remote && b.name == name);
-    let gap = frame.measure(FontKind::Ui, size, "  ");
+    let gap = frame.measure(Font::ui(size), "  ");
     let (mut bx, mut line) = (start, 1);
     for (i, name) in branches.iter().enumerate() {
-        let w = frame.measure(FontKind::Ui, size, name);
+        let w = frame.measure(Font::ui(size), name);
         if bx > start && bx + w > x + width {
             // 最后一行放不下：剩下的收成「+N」。
             if line == BRANCH_LINES {
@@ -391,7 +391,7 @@ fn draw_compare(
     };
     draw_hints(app, frame, row, &items, area);
     y += 30.0;
-    frame.rect_clipped(Rect::new(x, y, width, 1.0), p.separator, 0.0, area);
+    frame.rect_clipped(Rect::new(x, y, width, 1.0), 0.0, p.separator, area);
     y += 10.0;
     if let Some(error) = &compare.error {
         let row = Rect::new(x, y, width, 22.0);
@@ -500,8 +500,8 @@ pub(super) fn draw_hints(
     let widths: Vec<(f32, f32)> = items
         .iter()
         .map(|(key, label)| {
-            let cap = frame.measure(FontKind::Ui, size, key) + 2.0 * CAP_PAD;
-            (cap, frame.measure(FontKind::Ui, size, label))
+            let cap = frame.measure(Font::ui(size), key) + 2.0 * CAP_PAD;
+            (cap, frame.measure(Font::ui(size), label))
         })
         .collect();
     let mut count = items.len();
@@ -514,7 +514,7 @@ pub(super) fn draw_hints(
     let mut x = row.x;
     for ((key, label), (cap_w, _)) in items.iter().zip(&widths).take(count) {
         let cap = Rect::new(x, (row.y + (row.h - CAP_H) / 2.0).round(), *cap_w, CAP_H);
-        frame.rect_clipped(cap, p.selected_inactive, 4.0, clip);
+        frame.rect_clipped(cap, 4.0, p.selected_inactive, clip);
         caps_label(
             frame,
             app,
@@ -570,13 +570,13 @@ fn selectable(
     let mut edges = Vec::with_capacity(text.len());
     let (mut right, mut buf) = (x, [0u8; 4]);
     for c in text.chars() {
-        right += frame.measure(FontKind::Ui, size, c.encode_utf8(&mut buf));
+        right += frame.measure(Font::ui(size), c.encode_utf8(&mut buf));
         edges.push(right);
     }
     if let Some((from, to)) = app.log_selected_chars(runs.len(), edges.len()) {
         let left = if from == 0 { x } else { edges[from - 1] };
         let band = Rect::new(left, row.y + 1.0, edges[to - 1] - left, row.h - 2.0);
-        frame.rect_clipped(band, app.palette.selection, 2.0, clip);
+        frame.rect_clipped(band, 2.0, app.palette.selection, clip);
     }
     runs.push(TextRun {
         row,

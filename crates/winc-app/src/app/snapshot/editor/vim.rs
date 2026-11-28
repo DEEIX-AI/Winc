@@ -59,7 +59,7 @@ fn head(app: &App) -> usize {
 fn pixels(app: &mut App) -> Vec<u32> {
     paint(app);
     let renderer = app.frame.renderer.as_ref().unwrap();
-    renderer.image().unwrap().pixels.clone()
+    renderer.snapshot().unwrap().pixels.clone()
 }
 
 /// 返回光标占用的像素数：光标亮、灭、再亮三帧中，随光标亮灭而变化的像素。

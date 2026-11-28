@@ -37,7 +37,7 @@ pub(super) fn draw_worktrees(
     let p = app.palette;
     let clip = app.layout.sidebar.intersect(area);
     let line = Rect::new(area.x, area.y, area.w, 1.0);
-    frame.rect_clipped(line, p.separator, 0.0, clip);
+    frame.rect_clipped(line, 0.0, p.separator, clip);
     let size = app.fonts.ui_small;
     let band = |row: usize| {
         let y = area.y + crate::app::DRAWER_TOP + row as f32 * COMMIT_ROW;
@@ -52,7 +52,7 @@ pub(super) fn draw_worktrees(
         Hover::Commit(CommitTarget::Worktrees | CommitTarget::WorktreeNew)
     );
     if on_title {
-        frame.rect_clipped(shade(head), p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(shade(head), RADIUS_ROW, p.hover, clip);
     }
     let cy = head.y + head.h / 2.0;
     let turned = app.worktree_chevron() * FRAC_PI_2;
@@ -64,7 +64,7 @@ pub(super) fn draw_worktrees(
     let open = app.git.commit.worktrees.open;
     if !open && !moving && app.git_other_changes() > 0 {
         let dot = Rect::new(end + 6.0, cy - 2.5, 5.0, 5.0);
-        frame.rect_clipped(dot, p.accent, 2.5, clip);
+        frame.rect_clipped(dot, 2.5, p.accent, clip);
     }
     if on_title {
         let add = end_slot(head);
@@ -90,7 +90,7 @@ pub(super) fn draw_worktrees(
             WorktreeLine::Place(i) => i,
             WorktreeLine::More(rest) => {
                 if app.pointer.hover == Hover::Commit(CommitTarget::WorktreeMore) {
-                    frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
+                    frame.rect_clipped(shade(row), RADIUS_ROW, p.hover, clip);
                 }
                 let text = t!("git-worktree-more", count = rest);
                 let x = row.x + STASH_TITLE;
@@ -107,7 +107,7 @@ pub(super) fn draw_worktrees(
             Hover::Commit(CommitTarget::WorktreeRow(h) | CommitTarget::WorktreeMenu(h)) if h == i
         );
         if hovered {
-            frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(shade(row), RADIUS_ROW, p.hover, clip);
         }
         let cy = row.y + row.h / 2.0;
         let state = app.place_state(&place.path);
@@ -141,7 +141,7 @@ pub(super) fn draw_worktrees(
             if text.is_empty() {
                 continue;
             }
-            let w = frame.measure(FontKind::Ui, size, &text);
+            let w = frame.measure(Font::ui(size), &text);
             ui_text_small(frame, app, right - w, row, &text, ink, clip);
             right -= w + 8.0;
         }

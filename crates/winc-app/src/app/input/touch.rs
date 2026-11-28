@@ -252,11 +252,7 @@ impl TouchState {
 impl App {
     /// 处理一个触摸事件：坐标换算为逻辑像素后识别手势，转换为鼠标点击、滚动或拖动。
     pub(in crate::app) fn on_touch(&mut self, touch: Touch) {
-        let scale = self
-            .frame
-            .renderer
-            .as_ref()
-            .map_or(1.0, Renderer::scale_factor);
+        let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
         let point = (
             touch.location.x as f32 / scale,
             touch.location.y as f32 / scale,
@@ -385,11 +381,7 @@ impl App {
                 // 始终滚动落指处的区域：手指越过侧栏、终端等区域的边界时不切换滚动对象。
                 let mouse = self.pointer.mouse;
                 self.pointer.mouse = origin;
-                let scale = self
-                    .frame
-                    .renderer
-                    .as_ref()
-                    .map_or(1.0, Renderer::scale_factor);
+                let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
                 self.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
                     f64::from(delta.0 * scale),
                     f64::from(delta.1 * scale),

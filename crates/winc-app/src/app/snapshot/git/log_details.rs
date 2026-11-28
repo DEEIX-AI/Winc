@@ -392,8 +392,7 @@ fn the_log_details_stop_scrolling_at_their_end() {
     assert!(app.git.log.runs[0].row.y >= details.y);
 
     // 窗口矮、详情放不下：最多滚到最后一行可见为止。
-    app.frame.renderer =
-        Some(Renderer::offscreen(1280.0, 260.0, SCALE, app.palette.frame_bg, None, None).unwrap());
+    app.frame.renderer = Some(offscreen(&app, (1280.0, 260.0), SCALE));
     app.relayout();
     paint(&mut app);
     let details = app.log_parts().details;
@@ -432,7 +431,7 @@ fn the_details_footer_does_not_fade_with_the_commit() {
     let footer = Rect::new(details.x, details.bottom() - 30.0, details.w, 30.0);
     let content = Rect::new(details.x, details.y, details.w, 120.0);
     let pixels = |app: &App, area: Rect| -> Vec<u32> {
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let w = image.width as usize;
         let (x0, x1) = ((area.x * SCALE) as usize, (area.right() * SCALE) as usize);
         let (y0, y1) = ((area.y * SCALE) as usize, (area.bottom() * SCALE) as usize);

@@ -5,13 +5,14 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use cpui_render::Frame;
 use winc_preview::markdown::{Block, Markdown};
-use winc_render::Frame;
 use winc_typeset::{Colors, Cx, Drift, Env, LaidBlock, Out, Raw};
 
 use super::Key;
 use crate::app::preview::markdown::LiveLeaf;
 use crate::app::{App, Focus};
+use crate::theme::PROSE_FONT;
 
 /// 光标所在顶层块现在的原文，以及叶子块、光标在其中的位置（字节偏移，相对顶层块）。
 ///
@@ -103,6 +104,7 @@ pub(super) fn with_cx<R>(
     let mut cx = Cx {
         frame,
         base: key.base,
+        prose: PROSE_FONT,
         token: &token,
         surface: p.editor_bg,
         accent: p.accent,

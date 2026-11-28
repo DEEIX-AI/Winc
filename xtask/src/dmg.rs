@@ -87,6 +87,10 @@ pub fn app(target: Option<&str>, prebuilt: bool) -> Result<(PathBuf, String), St
             servers += 1;
         }
     }
+    // 许可证和版权声明随程序分发，其中包括所用 CPUI 的声明。
+    for name in ["LICENSE", "NOTICE"] {
+        std::fs::copy(root().join(name), contents.join("Resources").join(name)).map_err(io)?;
+    }
     // 图标必须在签名之前放进去：签名会封存 Resources 里的全部文件。
     let icon = contents.join("Resources").join(format!("{ICON_NAME}.icns"));
     app_icon(&bundle, &icon)?;

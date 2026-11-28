@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use cpui_render::Rect;
 use winc_core::text::line_slice;
 use winc_editor::{
     Document, LineMatch, ProjectSearch, Query, ReplacePreview, replace_in_document, replace_in_file,
 };
 use winc_i18n::t;
-use winc_render::Rect;
 
 use super::*;
 use crate::app::animation::Presence;

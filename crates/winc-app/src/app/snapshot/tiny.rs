@@ -1,14 +1,13 @@
 //! 很小的窗口的测试：窗口比界面的各部分还小时仍然布局、绘制和处理输入，不因几何退化而 panic。
 
-use winc_render::Renderer;
+use cpui_render::Renderer;
 
 use super::*;
 use crate::keymap::Action;
 
 /// 把离屏界面的窗口改为 `size`（逻辑像素）并重新布局。
 fn resize(app: &mut App, size: (f32, f32)) {
-    let background = app.palette.frame_bg;
-    let renderer = Renderer::offscreen(size.0, size.1, SCALE, background, None, None).unwrap();
+    let renderer = offscreen(app, size, SCALE);
     app.frame.renderer = Some(renderer);
     app.relayout();
     app.clamp_scroll();
@@ -28,7 +27,7 @@ fn log_stays_inside_the_editor() {
             paint(&mut app);
             let toolbar = app.commit_parts().header;
             let pixels = |app: &App| {
-                let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+                let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
                 let width = image.width as usize;
                 let mut pixels = Vec::new();
                 for y in (toolbar.y * SCALE) as usize..(toolbar.bottom() * SCALE) as usize {
@@ -49,13 +48,13 @@ fn log_stays_inside_the_editor() {
 
 /// 单独绘制一个区域，检查它不会改动画布上区域以外的像素。
 fn assert_contained(app: &mut App, area: Rect, scale: f32, draw: fn(&mut App, &mut Frame<'_>)) {
-    let mut renderer =
-        Renderer::offscreen(SIZE.0, SIZE.1, scale, Color::hex(0x7f2359), None, None).unwrap();
+    let mut renderer = Renderer::offscreen(SIZE.0, SIZE.1, scale, Color::hex(0x7f2359)).unwrap();
+    renderer.set_font_system(app.frame.fonts.clone());
     renderer.draw(|_| {});
-    let background = renderer.image().unwrap().pixels[0];
+    let background = renderer.snapshot().unwrap().pixels[0];
     app.hits.clear();
     renderer.draw(|frame| draw(app, frame));
-    let image = renderer.image().unwrap();
+    let image = renderer.snapshot().unwrap();
     for (i, &pixel) in image.pixels.iter().enumerate() {
         let (x, y) = (i % image.width as usize, i / image.width as usize);
         let inside = area.w > 0.0

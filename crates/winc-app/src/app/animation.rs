@@ -102,17 +102,17 @@ pub struct CardFx {
     /// 出现（`true`）或消失的动画；不在动画中时为 `None`。
     pub motion: Option<(bool, Clock)>,
     /// 最近一帧绘制的卡片（位置为逻辑像素，不含阴影），用于关闭后的淡出。
-    pub shot: Option<(winc_render::Rect, winc_render::Snapshot)>,
+    pub shot: Option<(cpui_render::Rect, cpui_render::Capture)>,
     /// 淡入途中存放卡片下方内容（连同阴影）的缓冲，每帧复用；淡入结束后释放。
-    pub base: Option<winc_render::Snapshot>,
+    pub base: Option<cpui_render::Capture>,
     /// 卡片开着换了一页（见 [`App::turn_card`]）时，换页之前的画面及其淡出的时钟；保留到新
     /// 的一页淡入结束。
-    pub turning: Option<(Clock, winc_render::Rect, winc_render::Snapshot)>,
+    pub turning: Option<(Clock, cpui_render::Rect, cpui_render::Capture)>,
 }
 
 impl CardFx {
     /// 卡片已关闭且正在淡出时，返回动画时钟、卡片位置和最后一帧的卡片画面。
-    pub fn closing(&self) -> Option<(Clock, winc_render::Rect, &winc_render::Snapshot)> {
+    pub fn closing(&self) -> Option<(Clock, cpui_render::Rect, &cpui_render::Capture)> {
         match (self.motion, &self.shot) {
             (Some((false, clock)), Some((rect, shot))) if !self.shown => Some((clock, *rect, shot)),
             _ => None,

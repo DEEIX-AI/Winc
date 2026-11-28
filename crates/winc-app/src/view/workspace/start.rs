@@ -2,8 +2,8 @@
 //! 只显示「首次设置」：语言、外观、主题和可选模块，点击后立即生效，点击「完成」后换回开始操作
 //! 和最近目录。
 
+use cpui_render::{Font, Frame, Rect};
 use winc_i18n::t;
-use winc_render::{Frame, Rect};
 
 use super::*;
 use crate::app::StartAction;
@@ -195,9 +195,7 @@ fn draw_start(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
         );
         // 项目文件名称后加淡色标注，样式同侧栏的「未保存」。
         let tag = app.recent_tag(&folder);
-        let tag_w = tag.map_or(0.0, |tag| {
-            6.0 + frame.measure(FontKind::Ui, app.fonts.ui, tag)
-        });
+        let tag_w = tag.map_or(0.0, |tag| 6.0 + frame.measure(Font::ui(app.fonts.ui), tag));
         let room = (close.x - 8.0 - tag_w - (row.x + 36.0)).max(0.0);
         let name = ellipsize(frame, &name, app.fonts.ui, room);
         let mut end = ui_text(frame, app, row.x + 36.0, row, &name, p.text, editor);
@@ -377,7 +375,7 @@ fn draw_setup(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
 
     let (alpha, rise) = staging(intro, 8);
     let label = t!("workspace-start-setup-next");
-    let width = (frame.measure(FontKind::Ui, app.fonts.ui, label) + 32.0).round();
+    let width = (frame.measure(Font::ui(app.fonts.ui), label) + 32.0).round();
     let top = y + rows + GAP + rise;
     let button = Rect::new(x + w - 6.0 - width, top, width, SETUP_BUTTON_H);
     let action = StartAction::SetupNext;
@@ -477,7 +475,7 @@ fn draw_setup_keys(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
             StartAction::SetupBack,
         ),
     ] {
-        let width = (frame.measure(FontKind::Ui, app.fonts.ui, label) + 32.0).round();
+        let width = (frame.measure(Font::ui(app.fonts.ui), label) + 32.0).round();
         let button = Rect::new(right - width, top, width, SETUP_BUTTON_H);
         let hovered = app.pointer.hover == Hover::Start(action);
         draw_action_button(app, frame, button, label, role, true, hovered);
@@ -493,7 +491,7 @@ fn draw_setup_keys(app: &mut App, frame: &mut Frame<'_>, rise: f32) {
 fn draw_dropdown(app: &mut App, frame: &mut Frame<'_>, row: Rect, text: &str, action: StartAction) {
     use crate::theme::SETTINGS_GLYPH_PAD;
     let clip = app.layout.editor;
-    let text_w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+    let text_w = frame.measure(Font::ui(app.fonts.ui), text);
     // 文字左边留 10，文字之后的 16 是箭头和间隔，再加右边的边距。
     let width = (10.0 + text_w + 16.0 + SETTINGS_GLYPH_PAD).round();
     let control = Rect::new(
@@ -522,7 +520,7 @@ fn draw_segments(
     let clip = app.layout.editor;
     let size = app.fonts.ui_small;
     let widest = (options.iter())
-        .map(|(label, ..)| frame.measure(FontKind::Ui, size, label))
+        .map(|(label, ..)| frame.measure(Font::ui(size), label))
         .fold(0.0, f32::max);
     let segment_w = (widest + SEGMENT_PAD * 2.0).round();
     let width = segment_w * options.len() as f32 + 4.0;
@@ -550,14 +548,14 @@ fn draw_segments(
         let segment = segment(index);
         let hovered = app.pointer.hover == Hover::Start(action);
         if hovered && !selected {
-            frame.rect_clipped(segment, p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(segment, RADIUS_ROW, p.hover, clip);
         }
         let color = if selected || hovered {
             p.text
         } else {
             p.text_muted
         };
-        let text_w = frame.measure(FontKind::Ui, size, label);
+        let text_w = frame.measure(Font::ui(size), label);
         let at = (segment.x + (segment.w - text_w) / 2.0).round();
         ui_text_small(frame, app, at, segment, label, color, clip);
         app.hits.start.push((segment, action));
@@ -625,7 +623,7 @@ fn draw_row_bg(app: &App, frame: &mut Frame<'_>, row: Rect, action: StartAction)
         _ => false,
     };
     if hovered {
-        frame.rounded(row, app.palette.hover, RADIUS_ROW);
+        frame.rounded(row, RADIUS_ROW, app.palette.hover);
     }
 }
 

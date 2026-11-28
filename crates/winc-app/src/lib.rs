@@ -273,7 +273,15 @@ pub fn run() {
     });
     let mut winc = Winc::new(Some(event_loop.create_proxy()), template);
     let (key, proxy) = winc.reserve();
-    let mut app = App::new(editor, proxy, bench, config);
+    // 字体在建窗口之前加载，界面状态一开始就按真实的字体度量排版。
+    let fonts = match cpui_render::FontSystem::new(&app::font_set(&config)) {
+        Ok(fonts) => fonts,
+        Err(e) => {
+            eprintln!("winc: 无法初始化渲染：{e}");
+            std::process::exit(1);
+        }
+    };
+    let mut app = App::new(editor, proxy, bench, config, fonts);
     // 第一个窗口出示启动本进程时给出的激活令牌，合成器随之结束启动通知。
     app.set_activation(tokens.for_window(is_wayland(&event_loop)));
     app.watch_git_output();
@@ -466,17 +474,24 @@ fn is_wayland<T>(_event_loop: &EventLoop<T>) -> bool {
     false
 }
 
-/// 设置界面语言，并让汉字按界面语言的字形显示，返回字形所用的语言是否发生变化。
+/// 设置界面语言，返回汉字字形所用的语言（[`cjk_language`]）是否随之变化。
+///
+/// 返回值为 `true` 时已有的渲染器需要重新加载字体。
+pub(crate) fn set_locale(locale: winc_i18n::Locale) -> bool {
+    let before = cjk_language();
+    winc_i18n::set_locale(locale);
+    cjk_language() != before
+}
+
+/// 返回汉字字形所用的语言，按界面语言决定。
 ///
 /// 界面为中文时使用简体中文字形，界面文字与字形一致；界面为英文时界面上没有汉字，文件中的
-/// 汉字按系统语言选择字形（繁体中文、日文、韩文的地区各用本地字形）。返回值为 `true` 时
-/// 已有的渲染器需要重新加载字体。
-pub(crate) fn set_locale(locale: winc_i18n::Locale) -> bool {
-    winc_i18n::set_locale(locale);
-    winc_render::set_cjk_language(match locale {
+/// 汉字按系统语言选择字形（繁体中文、日文、韩文的地区各用本地字形），返回 `None`。
+pub(crate) fn cjk_language() -> Option<&'static str> {
+    match winc_i18n::locale() {
         winc_i18n::Locale::ZhCn => Some("zh-cn"),
         winc_i18n::Locale::EnUs => None,
-    })
+    }
 }
 
 /// 按系统语言设置推测编码时参考的地区。

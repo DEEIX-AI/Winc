@@ -1155,6 +1155,8 @@ pub struct SettingsLayout {
     pub separators: Vec<Rect>,
     /// 各设置行。
     pub rows: Vec<SettingRow>,
+    /// 「关于」页最下方版权与许可声明所在的行；其他页和搜索时为 `None`。
+    pub footer: Option<Rect>,
     /// 内容的总高度（像素），用于计算最大滚动量。
     pub content_h: f32,
 }
@@ -1306,6 +1308,14 @@ impl SettingsLayout {
             }
         }
 
+        // 「关于」页最下方：版权与许可声明，不可点击。
+        let footer = (page == SettingsPage::About && !searching).then(|| {
+            y += SETTINGS_FOOTER_GAP;
+            let line = Rect::new(x, y, group_w, SETTINGS_DESC_LINE);
+            y += SETTINGS_DESC_LINE;
+            line
+        });
+
         SettingsLayout {
             card,
             nav,
@@ -1320,6 +1330,7 @@ impl SettingsLayout {
             headings,
             separators,
             rows,
+            footer,
             content_h: y + scroll - body.y + SETTINGS_BOTTOM,
         }
     }

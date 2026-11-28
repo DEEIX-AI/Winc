@@ -1,6 +1,7 @@
 //! 「编辑器」页设置的测试：字重、连字开关、长行参考线、换行符与光标样式。
 
 use super::*;
+use crate::app::lifecycle::appearance::font_weights;
 
 /// 编辑区的字重在「编辑器」页中单独设置，默认 400：与界面字重互不影响，回到 400 时从配置中
 /// 去掉该项。
@@ -11,13 +12,16 @@ fn the_editor_font_weight_is_set_apart_from_the_interface() {
     assert_eq!(Setting::EditorFontWeight.page(), SettingsPage::Editor);
     app.config.ui_font_weight = Some(600);
     assert_eq!(app.setting_value(Setting::EditorFontWeight).0, "400");
-    assert_eq!(app.font_weights().editor, 400);
+    assert_eq!(font_weights(&app.config).mono, FontWeight(400));
 
     app.settings_adjust(Setting::EditorFontWeight, true);
     assert_eq!(app.config.editor_font_weight, Some(500));
     assert_eq!(app.config.ui_font_weight, Some(600));
-    let weights = app.font_weights();
-    assert_eq!((weights.ui, weights.editor), (600, 500));
+    let weights = font_weights(&app.config);
+    assert_eq!(
+        (weights.ui, weights.mono),
+        (FontWeight(600), FontWeight(500))
+    );
     app.settings_adjust(Setting::FontWeight, true);
     assert_eq!(app.setting_value(Setting::EditorFontWeight).0, "500");
     app.settings_adjust(Setting::EditorFontWeight, false);
@@ -108,7 +112,7 @@ fn caret_pixels(app: &mut App) -> usize {
         app.blink.visible = visible;
         paint(app);
         let renderer = app.frame.renderer.as_ref().unwrap();
-        renderer.image().unwrap().pixels.clone()
+        renderer.snapshot().unwrap().pixels.clone()
     };
     let (lit, dark, again) = (frame(true), frame(false), frame(true));
     (lit.iter().zip(&dark).zip(&again))

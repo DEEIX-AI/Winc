@@ -69,7 +69,7 @@ fn clicking_the_editor_closes_the_go_to_bar() {
 }
 
 fn pixel(app: &App, (x, y): (f32, f32)) -> u32 {
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
     image.pixels[y * image.width as usize + x]
 }
