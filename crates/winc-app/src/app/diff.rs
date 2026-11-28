@@ -192,6 +192,8 @@ pub enum DiffTarget {
     Fold(usize),
     /// 已展开的一段未改动内容的收起标记，参数为未改动段的序号；点击后重新折叠。
     Refold(usize),
+    /// 一侧代码块的折叠箭头或行尾标记：（侧，块首行）。
+    CodeFold(usize, usize),
     /// 提交说明条上展开、收起文件栏的按钮。
     FilesToggle,
     /// 文件栏的右边缘：左右拖动改变宽度，双击恢复默认宽度。
@@ -392,6 +394,7 @@ impl App {
                     self.refold_diff(|view, row| view.fold(gap, row));
                 }
             }
+            DiffTarget::CodeFold(side, line) => self.toggle_diff_code_fold(side, line),
             DiffTarget::Sticky(side, line) => self.click_diff_sticky(side, line),
             DiffTarget::Revert(hunk) => self.revert_diff_hunk(hunk),
             DiffTarget::Include(hunk) => self.toggle_diff_hunk(hunk),
@@ -1195,30 +1198,6 @@ impl App {
             let range = (pos, pos);
             view.read_selection = Some(ReadSelection { side, range });
         }
-    }
-
-    /// 使所有已打开和之后打开的差异按设置（`diffCollapseUnchanged`）折叠或展开未更改的内容：
-    /// 标题栏上的开关和设置是同一项。各标签顶部的行保持在顶部。
-    pub(in crate::app) fn apply_diff_collapse(&mut self) {
-        let on = self.config.diff_collapse_unchanged != Some(false);
-        self.finish_diff_fold(true);
-        self.editor.diff_collapse = on;
-        for doc in &mut self.editor.documents {
-            let Some(view) = doc.diff.as_deref_mut() else {
-                continue;
-            };
-            if view.collapses() == on {
-                continue;
-            }
-            let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
-            let row = view.set_collapse(on, row);
-            let scroll = view.pos_of(RIGHT, row as f64);
-            set_scroll_line(doc, scroll);
-        }
-        self.apply_combined_collapse(on);
-        self.relayout();
-        self.clamp_scroll();
-        self.request_redraw();
     }
 
     /// 使所有已打开和之后打开的差异按设置（`diffInline`）显示。

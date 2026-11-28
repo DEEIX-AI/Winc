@@ -811,6 +811,56 @@ pub enum FoldCommand {
     FoldLevel(usize),
 }
 
+impl FoldCommand {
+    /// 光标在第 `line` 行时，命令要收起和要展开的块：（收起，展开）。
+    ///
+    /// `ranges` 是全部可折叠的块，按开头行排序；`folded` 判断以某行开头的块是否已收起。
+    /// [`FoldCommand::UnfoldAll`] 与已收起的块有关而与 `ranges` 无关，由调用方处理。
+    pub(crate) fn plan(
+        self,
+        ranges: &[crate::editing::scopes::FoldRange],
+        line: usize,
+        folded: impl Fn(usize) -> bool,
+    ) -> (
+        Vec<crate::editing::scopes::FoldRange>,
+        Vec<crate::editing::scopes::FoldRange>,
+    ) {
+        // 包住光标所在行的块，从内层到外层。
+        let around: Vec<_> = (ranges.iter().rev())
+            .filter(|r| r.start <= line && line <= r.end)
+            .copied()
+            .collect();
+        let inside = |outer: &crate::editing::scopes::FoldRange| {
+            (ranges.iter())
+                .filter(|r| outer.start <= r.start && r.end <= outer.end)
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let (mut fold, mut unfold) = (Vec::new(), Vec::new());
+        match self {
+            FoldCommand::Fold => fold.extend(around.iter().find(|r| !folded(r.start))),
+            FoldCommand::Unfold => unfold.extend(around.iter().find(|r| folded(r.start))),
+            FoldCommand::Toggle => match around.first() {
+                Some(r) if folded(r.start) => unfold.push(*r),
+                Some(r) => fold.push(*r),
+                None => {}
+            },
+            FoldCommand::FoldRecursively => {
+                fold.extend(around.first().map(inside).unwrap_or_default())
+            }
+            FoldCommand::UnfoldRecursively => {
+                unfold.extend(around.first().map(inside).unwrap_or_default());
+            }
+            FoldCommand::FoldAll => fold.extend_from_slice(ranges),
+            FoldCommand::FoldLevel(level) => fold.extend(
+                (ranges.iter()).filter(|r| r.level == level && !(r.start <= line && line <= r.end)),
+            ),
+            FoldCommand::UnfoldAll => {}
+        }
+        (fold, unfold)
+    }
+}
+
 impl Document {}
 
 #[cfg(test)]
