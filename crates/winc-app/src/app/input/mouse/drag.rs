@@ -469,6 +469,7 @@ impl App {
             Drag::LogText => self.drag_log_text(x, y),
             Drag::Hex => self.drag_hex(x, y),
             Drag::MarkdownText => self.drag_markdown(x, y),
+            Drag::MarkdownBlock => self.drag_markdown_block(y),
             Drag::ImageResize => self.drag_image_resize(x),
             Drag::TableCells => self.drag_table(x, y),
             Drag::Field => {
@@ -578,8 +579,11 @@ impl App {
     }
 
     /// 是否需要逐帧自动滚动：正在拖选、列选择或拖动文字，鼠标位于编辑区边缘之外，且该方向仍可
-    /// 滚动。
+    /// 滚动；拖动预览中的块时见 [`App::markdown_drag_autoscrolling`]。
     pub(in crate::app) fn drag_autoscrolling(&self) -> bool {
+        if self.pointer.drag == Drag::MarkdownBlock {
+            return self.markdown_drag_autoscrolling();
+        }
         if self.pointer.drag == Drag::TerminalSelect {
             let view = self.terminal_view();
             let y = self.pointer.mouse.1;

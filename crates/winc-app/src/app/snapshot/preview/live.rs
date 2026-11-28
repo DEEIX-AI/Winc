@@ -1042,15 +1042,15 @@ fn a_long_document_refreshes_the_kept_range_when_scrolled_far() {
     }
     let (mut app, dir) = live_doc("md-near-refresh", &text);
     assert!(laid(&app).near.is_some());
-    assert!(!laid(&app).blocks[0].1.is_shed());
-    assert!(laid(&app).blocks[599].1.is_shed());
+    assert!(!laid(&app).blocks[0].block.is_shed());
+    assert!(laid(&app).blocks[599].block.is_shed());
     let (tops, height) = (laid(&app).tops.clone(), laid(&app).height);
 
     app.preview.markdown.scroll_to(tops[300]);
     paint(&mut app);
-    assert!(!laid(&app).blocks[300].1.is_shed());
-    assert!(laid(&app).blocks[599].1.is_shed());
-    assert!(laid(&app).blocks[0].1.is_shed());
+    assert!(!laid(&app).blocks[300].block.is_shed());
+    assert!(laid(&app).blocks[599].block.is_shed());
+    assert!(laid(&app).blocks[0].block.is_shed());
     assert_eq!((&laid(&app).tops, laid(&app).height), (&tops, height));
 
     put_caret(
@@ -1083,7 +1083,11 @@ fn folded_blocks_stay_hidden_after_scrolling_far_and_back() {
     put_caret(&mut app, "乙节第 650 段", false);
     app.toggle_heading_fold("甲");
     settle(&mut app);
-    let hidden = |app: &App| (1..=20).map(|i| laid(app).blocks[i].1.height).sum::<f32>();
+    let hidden = |app: &App| {
+        (1..=20)
+            .map(|i| laid(app).blocks[i].block.height)
+            .sum::<f32>()
+    };
     app.preview.markdown.scroll_to(0.0);
     settle(&mut app);
     let after_fold = laid(&app).tops[21];
@@ -1190,9 +1194,9 @@ fn the_footnote_backlink_has_no_source_position() {
     let footnote_block = laid
         .blocks
         .iter()
-        .find(|(_, b)| b.text.contains("脚注说明"))
+        .find(|entry| entry.block.text.contains("脚注说明"))
         .expect("应存在脚注块");
-    for item in &footnote_block.1.items {
+    for item in &footnote_block.block.items {
         if let winc_typeset::Item::Text {
             text,
             span: Some(span),
@@ -1277,7 +1281,7 @@ fn later_checkboxes_follow_text_typed_before_the_parse() {
     let text = doc_text(&app);
     let laid = app.preview.markdown.layout.as_ref().unwrap();
     let start = laid.ranges[0].start;
-    let checks: Vec<usize> = (laid.blocks[0].1.items.iter())
+    let checks: Vec<usize> = (laid.blocks[0].block.items.iter())
         .filter_map(|item| match item {
             winc_typeset::Item::Check { source, .. } => Some(start + *source as usize),
             _ => None,

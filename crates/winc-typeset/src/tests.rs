@@ -506,3 +506,33 @@ fn thai_paragraphs_wrap_between_words() {
         );
     }
 }
+
+#[test]
+fn content_right_skips_column_wide_fills() {
+    let font = Font::ui(10.0);
+    let text = |x: f32, text: &str, span: Option<Span>| Item::Text {
+        x,
+        baseline: 12.0,
+        text: text.into(),
+        font,
+        color: TEXT,
+        span,
+    };
+    let measured = Span {
+        start: 0,
+        advances: Arc::from([6.0, 7.0]),
+        source: None,
+        jumps: None,
+    };
+    let fill = Item::Fill {
+        rect: Rect::new(0.0, 0.0, 500.0, 20.0),
+        color: TEXT,
+        radius: 0.0,
+    };
+    let block = |items| LaidBlock::new(20.0, items, Vec::new(), "".into(), 0, Box::default());
+    let spanned = block(vec![fill.clone(), text(4.0, "ab", Some(measured))]);
+    assert_eq!(spanned.content_right(), 17.0);
+    // 没有字宽记录的四个字按每字 0.6 倍字号估计。
+    let unmeasured = block(vec![fill, text(0.0, "abcd", None)]);
+    assert_eq!(unmeasured.content_right(), 24.0);
+}

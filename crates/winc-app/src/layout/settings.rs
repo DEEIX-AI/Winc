@@ -152,6 +152,8 @@ pub enum Setting {
     MarkdownSize,
     /// Markdown 预览显示行号（`markdown.lineNumbers`）。
     MarkdownLineNumbers,
+    /// Markdown 预览允许拖动排序（`markdown.drag`）。
+    MarkdownDrag,
     /// Markdown 文件的源代码也使用写作快捷键（`markdown.shortcuts`）。
     MarkdownShortcuts,
     /// 编辑 Markdown 时淡化光标所在段落以外的文字（`markdown.focusMode`）。
@@ -370,9 +372,11 @@ impl Setting {
                 SettingsPage::Files
             }
             S::AutoReveal => SettingsPage::Files,
-            S::MarkdownFont | S::MarkdownSize | S::TextWidth | S::MarkdownLineNumbers => {
-                SettingsPage::Markdown
-            }
+            S::MarkdownFont
+            | S::MarkdownSize
+            | S::TextWidth
+            | S::MarkdownLineNumbers
+            | S::MarkdownDrag => SettingsPage::Markdown,
             S::RemoteImages | S::MarkdownShortcuts | S::MarkdownFocus | S::MarkdownTypewriter => {
                 SettingsPage::Markdown
             }
@@ -487,6 +491,7 @@ impl Setting {
             S::MarkdownFont => "markdown.font",
             S::MarkdownSize => "markdown.size",
             S::MarkdownLineNumbers => "markdown.lineNumbers",
+            S::MarkdownDrag => "markdown.drag",
             S::MarkdownShortcuts => "markdown.shortcuts",
             S::MarkdownFocus => "markdown.focusMode",
             S::MarkdownTypewriter => "markdown.typewriterMode",
@@ -605,6 +610,7 @@ impl Setting {
             Setting::MarkdownFont => t!("settings-markdown-font"),
             Setting::MarkdownSize => t!("settings-markdown-size"),
             Setting::MarkdownLineNumbers => t!("settings-markdown-line-numbers"),
+            Setting::MarkdownDrag => t!("settings-markdown-drag"),
             Setting::MarkdownShortcuts => t!("settings-markdown-shortcuts"),
             Setting::MarkdownFocus => t!("settings-markdown-focus"),
             Setting::MarkdownTypewriter => t!("settings-markdown-typewriter"),
@@ -742,6 +748,7 @@ impl Setting {
             Setting::TextWidth => Some(t!("settings-text-width-desc")),
             Setting::SplitPreviewPosition => Some(t!("settings-split-preview-position-desc")),
             Setting::MarkdownLineNumbers => Some(t!("settings-markdown-line-numbers-desc")),
+            Setting::MarkdownDrag => Some(t!("settings-markdown-drag-desc")),
             Setting::MarkdownShortcuts => Some(t!("settings-markdown-shortcuts-desc")),
             Setting::MarkdownFocus => Some(t!("settings-markdown-focus-desc")),
             Setting::MarkdownTypewriter => Some(t!("settings-markdown-typewriter-desc")),
@@ -854,6 +861,7 @@ impl Setting {
             | Setting::SmoothScrolling
             | Setting::RemoteImages
             | Setting::MarkdownLineNumbers
+            | Setting::MarkdownDrag
             | Setting::MarkdownShortcuts
             | Setting::MarkdownFocus
             | Setting::MarkdownTypewriter

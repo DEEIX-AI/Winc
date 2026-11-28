@@ -199,6 +199,7 @@ impl App {
         let keeps_preview = matches!(
             target,
             Target::MarkdownText(_)
+                | Target::MarkdownHandle(_)
                 | Target::Scrollbar(Scrollbar::Markdown | Scrollbar::MarkdownTable, _)
         );
         if !keeps_preview && self.preview.markdown.focused {
@@ -275,6 +276,7 @@ impl App {
             Target::MarkdownLink(link) => self.open_markdown_link(link),
             Target::MarkdownToc(target) => self.press_toc(target),
             Target::MarkdownText(_) => self.click_markdown(x, y),
+            Target::MarkdownHandle(element) => self.start_markdown_drag(element, y),
             Target::ImageHandle => {
                 if let Some(image) = self.image_handle_at(x, y) {
                     self.start_image_resize(image, x);

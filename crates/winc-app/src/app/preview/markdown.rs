@@ -32,6 +32,7 @@ use crate::app::{App, Focus, UserEvent};
 use crate::system;
 
 mod book;
+pub(crate) mod drag;
 mod folds;
 mod images;
 pub(crate) mod laid;
@@ -326,6 +327,8 @@ pub(crate) struct MarkdownPreview {
     pub(crate) menu_image: Option<resize::ImageAt>,
     /// 正在拖动把手的图片。
     pub(crate) resizing: Option<resize::Resizing>,
+    /// 拖动：悬停的块或列表项、进行中的拖动和放下后的过渡。
+    pub(crate) drag: drag::DragState,
 }
 
 /// 淡入的项：所在顶层块的序号及块内各项的序号，按块的序号排序。
@@ -335,6 +338,8 @@ pub(crate) type Fading = Vec<(usize, Box<[usize]>)>;
 pub(crate) struct Moves {
     /// 各块起始时的偏移，同 [`BlockMotion::from`]。
     pub from: Vec<f32>,
+    /// 新排版第 i 块对应的旧排版块序号；拖动结束时的视觉偏移按同一对应关系叠加到新块上。
+    pub matched: Vec<Option<usize>>,
     /// 淡入的项。
     pub fading: Fading,
     /// 刚显示原文的块：（块序号，渲染结果的第一项，渲染结果的起始偏移），按块序号排序。
@@ -464,6 +469,7 @@ impl Default for MarkdownPreview {
             menu_picture: None,
             menu_image: None,
             resizing: None,
+            drag: drag::DragState::default(),
             folds: HashMap::new(),
             refold: false,
             clicked: None,
@@ -535,6 +541,9 @@ impl MarkdownPreview {
         self.memo = Default::default();
         self.find_doc = None;
         self.motion = None;
+        self.drag = drag::DragState::default();
+        self.drag.item_motion = None;
+        self.drag.release = None;
         self.forget_images();
         self.embedded.clear();
         self.failed = None;
@@ -1000,9 +1009,10 @@ impl App {
     /// 各块从偏移 `from` 处滑动到新位置，`fading` 中的项淡入。
     ///
     /// 没有需要移动或淡入的内容、或动态效果关闭时不开始动画，直接绘制新的排版。
-    pub(crate) fn start_markdown_motion(&mut self, moves: Moves) {
+    pub(crate) fn start_markdown_motion(&mut self, moves: Moves, duration: std::time::Duration) {
         let Moves {
             from,
+            matched: _,
             fading,
             inner,
             leaving,
@@ -1021,13 +1031,11 @@ impl App {
         };
         #[cfg(test)]
         if let Some(at) = self.preview.markdown.frozen {
-            let clock = crate::app::Clock::frozen(at, crate::app::animation::MARKDOWN_MOTION);
+            let clock = crate::app::Clock::frozen(at, duration);
             self.preview.markdown.motion = Some(motion(clock));
             return;
         }
-        self.preview.markdown.motion = self
-            .clock(crate::app::animation::MARKDOWN_MOTION)
-            .map(motion);
+        self.preview.markdown.motion = self.clock(duration).map(motion);
     }
 
     /// 处理预览上的鼠标按下：获取焦点并从该处开始选择文字；双击选中一个词，按住 ⇧ 时扩展选区。

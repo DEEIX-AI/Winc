@@ -39,6 +39,7 @@ impl App {
             Setting::PreviewOnClick => self.config.preview_on_click == Some(true),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers != Some(false),
+            Setting::MarkdownDrag => self.config.markdown_drag == Some(true),
             Setting::MarkdownShortcuts => self.config.markdown_shortcuts != Some(false),
             Setting::MarkdownFocus => self.config.markdown_focus == Some(true),
             Setting::MarkdownTypewriter => self.config.markdown_typewriter == Some(true),
@@ -132,6 +133,15 @@ impl App {
             Setting::PreviewOnClick => self.config.preview_on_click = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers = Some(on),
+            Setting::MarkdownDrag => {
+                self.config.markdown_drag = Some(on);
+                if !on {
+                    self.cancel_markdown_block_drag();
+                    self.preview.markdown.drag.hover = None;
+                }
+                self.refresh_pointer_hover();
+                self.relayout();
+            }
             Setting::MarkdownShortcuts => self.config.markdown_shortcuts = Some(on),
             Setting::MarkdownFocus => self.config.markdown_focus = Some(on),
             Setting::MarkdownTypewriter => self.config.markdown_typewriter = Some(on),

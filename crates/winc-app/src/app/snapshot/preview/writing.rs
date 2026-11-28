@@ -491,7 +491,7 @@ fn clicking_back_and_forth_does_not_drift() {
         // 每次都点那一块现在所在的位置，和来回点击时一样。
         let laid = app.preview.markdown.layout.as_ref().unwrap();
         let block = if k % 2 == 0 { 1 } else { 5 };
-        let h = laid.blocks[block].1.height;
+        let h = laid.blocks[block].block.height;
         let y = area.y - app.preview.markdown.scroll() + laid.pad + laid.tops[block] + h - 10.0;
         super::click(&mut app, (area.x + area.w / 2.0, y));
         settle(&mut app);
@@ -512,7 +512,7 @@ fn tall_diagrams_shrink_then_fold_until_expanded() {
     let (mut app, dir) = live_doc("md-tall", &text);
     let height = |app: &App| {
         app.preview.markdown.layout.as_ref().unwrap().blocks[1]
-            .1
+            .block
             .height
     };
     let cap = (app.preview.markdown.area.h * 0.66).round().max(320.0);
@@ -770,7 +770,7 @@ fn identical_tall_diagrams_expand_separately() {
     let (mut app, dir) = live_doc("md-tall-twins", &text);
     let height = |app: &App, i: usize| {
         app.preview.markdown.layout.as_ref().unwrap().blocks[i]
-            .1
+            .block
             .height
     };
     let folded = height(&app, 1);

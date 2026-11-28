@@ -9,6 +9,7 @@ use cpui_render::{Color, Font, Frame, Rect, Stroke};
 use winc_i18n::t;
 
 use crate::app::Hover;
+use crate::app::preview::markdown::drag;
 use crate::app::preview::markdown::resize::ImageAt;
 use crate::app::preview::markdown::{ImageSlot, TableBar, TocTarget};
 use crate::app::{App, Focus, ScrollArea};
@@ -24,10 +25,39 @@ mod viewer;
 use table::{draw_table_fades, draw_table_scrollbar, table_toolbar};
 
 pub(in crate::view) use viewer::draw_diagram_view;
+
+mod drag_view;
+mod overlay;
+use overlay::{caret_bar, draw_heading_folds, draw_source_numbers, room_below};
 use winc_typeset::Item;
 
 use crate::app::preview::markdown::laid::*;
 use crate::layout::drawn_scroll;
+
+/// 为这一帧登记 `items` 中的图片：被拖动的块原位置不绘制，浮动卡片仍使用图片的像素。
+fn note_images(
+    items: &[Item],
+    scale: f32,
+    slots: &std::collections::HashMap<std::path::PathBuf, ImageSlot>,
+    shown: &mut Vec<std::path::PathBuf>,
+    wanted: &mut Vec<(std::path::PathBuf, (u32, u32))>,
+) {
+    for item in items {
+        let Item::Image { rect, path, .. } = item else {
+            continue;
+        };
+        let size = (
+            (rect.w * scale).round() as u32,
+            (rect.h * scale).round() as u32,
+        );
+        let ready = matches!(slots.get(path), Some(ImageSlot::Ready { pixels, .. })
+            if pixels.iter().any(|px| (px.width, px.height) == size));
+        if !ready {
+            wanted.push((path.clone(), size));
+        }
+        shown.push(path.clone());
+    }
+}
 
 /// 以 `(left, top)` 为块的左上角绘制 `items` 中的底色和文字，裁剪到 `clip`。
 fn draw_plain(frame: &mut Frame<'_>, items: &[Item], (left, top): (f32, f32), clip: Rect) {
@@ -108,15 +138,22 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let bars = area.x + TOC_ROOM + numbers;
     let pushed = area.x + TOC_PINNED_EDGE + TOC_PINNED_COLUMN + numbers;
     let pinned = app.state.markdown_toc_pinned && narrowed(pushed) >= TOC_PINNED_BODY;
-    let (left, width) = match (outline, pinned) {
+    let (mut left, mut width) = match (outline, pinned) {
         (true, true) if left < pushed => (pushed, width.min(narrowed(pushed))),
         (true, _) if left < bars => (bars, width.min(narrowed(bars)).max(1.0)),
         _ => (left, width),
     };
-    // 比正文宽的表格占用两侧留白，左侧让出行号和钉住的标题列表；标题指示条浮在表格之上。
+    // 可以拖动块时，正文左侧依次预留把手、折叠箭头和行号栏的位置，右边缘不变。
+    let handles = drag::shows_handles(app);
+    if handles {
+        (left, width) = drag_view::make_room(numbers, (left, width), area.right() - pad);
+    }
+    app.hits.markdown_numbers = numbers;
+    // 比正文宽的表格占用两侧留白，左侧让出行号、拖动把手和钉住的标题列表；标题指示条浮在
+    // 表格之上。
     let bleed = match has_tables(&parsed) {
         true => {
-            let floor = match (numbers > 0.0, pinned) {
+            let floor = match (numbers > 0.0 || handles, pinned) {
                 (true, _) => left,
                 (false, true) => pushed.min(left),
                 (false, false) => area.x + pad,
@@ -209,16 +246,23 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     }
     app.scroll_to_pending_anchor();
     app.hold_book_place();
+    // 拖动的状态在取出 `layout` 之前推进：列表项的形状按当前排版计算。
+    let dragging = drag_view::prepare(app);
     // `layout` 刚在上面放进去，取出时一定存在。
     let mut laid = app.preview.markdown.layout.take().expect("刚放进去");
 
     let max = (app.preview.markdown.height - area.h).max(0.0);
     let scroll = app.preview.markdown.scroll().min(max);
     let origin_y = area.y + pad - scroll;
-    if let Some((before, slide)) = before {
+    if let Some((before, slide, reordered)) = before {
         let muted = p.text_muted;
-        let moves = before.motion(&laid, scroll, muted, slide);
-        app.start_markdown_motion(moves);
+        let mut moves = before.motion(&laid, scroll, muted, slide, reordered);
+        app.carry_drag_release(&before, &laid, scroll, &mut moves);
+        let duration = match reordered {
+            true => crate::app::animation::DROP_SLIDE,
+            false => crate::app::animation::MARKDOWN_MOTION,
+        };
+        app.start_markdown_motion(moves, duration);
     }
     let motion = app.preview.markdown.motion.take();
     // 拖着选文字时不出复制按钮。
@@ -302,12 +346,29 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             .checked_sub(1)?;
         (source <= laid.ranges[i].end).then_some(i)
     });
-    for (i, (_, block)) in laid.blocks.iter().enumerate().skip(first) {
+    for (i, entry) in laid.blocks.iter().enumerate().skip(first) {
+        let block = &entry.block;
+        // 被拖动的块由浮动卡片代替，原位置不绘制，让位的兄弟块滑入原位置。
+        if dragging.as_ref().is_some_and(|drag| drag.hides(i)) {
+            note_images(
+                &block.items,
+                frame.scale(),
+                &md.images,
+                &mut images,
+                &mut wanted,
+            );
+            continue;
+        }
         let opacity = match focused {
             Some(b) if b != i => crate::theme::FOCUS_DIM,
             _ => 1.0,
         };
-        let offset = |i: usize| motion.as_ref().map_or(0.0, |m| m.offset(i));
+        let offset = |i: usize| {
+            let shift = dragging
+                .as_ref()
+                .map_or(0.0, |drag| drag.block_shift(md, i));
+            motion.as_ref().map_or(0.0, |m| m.offset(i)) + shift
+        };
         let top = origin_y + laid.tops[i] + offset(i);
         if top > area.bottom() {
             break;
@@ -352,6 +413,13 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 .iter()
                 .map(|&k| (k as usize, &block.items[k as usize]))
             {
+                // 列表项拖动中和放下后按项平移；被拖动的项由浮动卡片代替，不绘制。
+                let drag = dragging.as_ref();
+                let Some(dy) = drag.map_or(Some(0.0), |d| d.item_offset(md, i, laid.tops[i], item))
+                else {
+                    continue;
+                };
+                let top = top + dy;
                 let (top, area) = match inner {
                     Some((first, d)) if k >= first => (top + d, area),
                     Some((_, d)) => {
@@ -573,7 +641,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     // 显示滚动条的表格：鼠标所在的表格，其次是最近一次横向滚动的表格。
     let mut chosen = None;
     for &(i, s, strip, off) in &bars {
-        let scroller = &laid.blocks[i].1.scrolls[s];
+        let scroller = &laid.blocks[i].block.scrolls[s];
         draw_table_fades(frame, p, scroller, strip, off, area);
         let bar = TableBar {
             key: (i, s),
@@ -613,7 +681,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     // 画在标题的折叠箭头之后（见 `draw_heading_folds`）。
     let caret_bar = caret.map(|(_, y, h)| caret_bar(&laid, (y, h), area.y - scroll));
     // 正文中的组字已排入所在的行：光标绘制在其中输入法的光标处，没有光标时不绘制。
-    let inline = laid.blocks.iter().any(|(_, b)| b.preedit);
+    let inline = laid.blocks.iter().any(|entry| entry.block.preedit);
     let composing = composing.filter(|_| inline);
     // 光标的绘制位置：找不到时（空文档、光标在第一块之前）位于内容左上角。
     // 滑动过程中随所在的块移动。
@@ -631,7 +699,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         let shift = motion.as_ref().zip(block).map_or(0.0, |(m, b)| {
             // 光标位于刚显示原文的块的渲染结果中时，加上渲染结果的偏移。
             let below = laid.blocks[b]
-                .1
+                .block
                 .preview
                 .map(|(_, top)| top + laid.tops[b] + pad);
             let inner = m
@@ -682,6 +750,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     }
     draw_source_numbers(app, frame, area, &arrows);
     draw_broken_links(app, frame, area);
+    // 拖动把手和浮动卡片画在选区工具栏和展开的标题列表之下。
+    drag_view::draw(app, frame, area);
     toolbar::draw_selection_toolbar(app, frame, area);
     draw_toc(app, frame, area, pad);
 
@@ -702,182 +772,10 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
 /// 表格被裁掉的一侧渐隐的宽度（逻辑像素），与标签栏两端的渐隐（`TAB_FADE`）相同。
 const TABLE_FADE: f32 = 24.0;
 
-/// 原文行号的右边离正文左边的距离（逻辑像素）：与编辑区行号栏和文字之间的间距相近。
-const NUMBER_GAP: f32 = 12.0;
-
-/// 在可编辑预览的左侧留白里写原文行号（见 `laid::source_lines`），光标所在的行颜色深一些。
-///
-/// 关闭行号设置时、只读的预览中不写；留白放不下最大的行号时也不写。
-///
-/// `skip` 是画了折叠箭头的行，不再写行号。
-fn draw_source_numbers(app: &App, frame: &mut Frame<'_>, area: Rect, skip: &[usize]) {
-    if !app.markdown_line_numbers_on() || !app.markdown_live() {
-        return;
-    }
-    let (Some(laid), Some(doc)) = (app.preview.markdown.layout.as_ref(), app.editor.active())
-    else {
-        return;
-    };
-    let Some(rope) = doc.text().rope() else {
-        return;
-    };
-    let p = app.palette;
-    let size = app.fonts.code;
-    let cell = frame.measure(Font::mono(size), "0");
-    let right = laid.left - NUMBER_GAP;
-    if laid.left - number_room(app, frame) < area.x + 4.0 {
-        return;
-    }
-    let lit = selected_rows(laid, rope, &doc.selection);
-    let top = drawn_scroll(app.preview.markdown.scroll()) - laid.pad;
-    let lines = crate::app::preview::markdown::laid::source_lines(laid, rope, top..top + area.h);
-    for (line, y) in lines {
-        if skip.contains(&line) {
-            continue;
-        }
-        let number = (line + 1).to_string();
-        let x = right - number.len() as f32 * cell;
-        // 行号只作定位参考，比正文的次要色更淡；光标或选区所在显示行的行号用次要色。
-        let color = match lit.contains(line, y) {
-            true => p.text_muted,
-            false => p.text_dim,
-        };
-        let baseline = area.y + y - top;
-        frame.text(Font::mono(size), (x, baseline), &number, color, area);
-    }
-}
-
-/// 分栏时标出编辑区光标所在行的竖条（窗口坐标）：宽 2 逻辑像素，在内容左边的留白正中。
-///
-/// `(y, h)` 是光标的上边缘（内容坐标，含上边距）和高度，`top` 是内容坐标原点的窗口纵坐标。所在
-/// 行是向左展开的表格时，竖条随表格的左边缘左移，不压在表格上。
-pub(crate) fn caret_bar(laid: &Laid, (y, h): (f32, f32), top: f32) -> Rect {
-    let spread = (laid.table_span(y + h / 2.0 - laid.pad)).map_or(0.0, |(x, _)| x.min(0.0));
-    Rect::new(laid.left + spread - laid.pad / 2.0 - 1.0, top + y, 2.0, h)
-}
-
-/// 在标题左边画收起、展开下面一节的箭头：鼠标在标题上时显示，收起的标题一直显示，朝右；
-/// 点击的范围记成链接（[`FOLD`]）。
-///
-/// 有行号时箭头画在这一行的行号上；没有行号时画在留白正中，与分栏时标出光标所在行的竖条
-/// `bar` 同一列，竖条落在画了箭头的标题上时箭头改用强调色、不再画竖条。返回画了箭头的行，
-/// 以及竖条是否被箭头代替。
-fn draw_heading_folds(
-    app: &mut App,
-    frame: &mut Frame<'_>,
-    area: Rect,
-    bar: Option<Rect>,
-) -> (Vec<usize>, bool) {
-    let (mut lines, mut covered) = (Vec::new(), false);
-    let Some(laid) = app.preview.markdown.layout.as_ref() else {
-        return (lines, covered);
-    };
-    let folds = (app.editor.active()).and_then(|d| app.preview.markdown.folds.get(&d.id));
-    let scroll = drawn_scroll(app.preview.markdown.scroll());
-    let (mx, my) = app.mouse();
-    let p = app.palette;
-    let numbers = app.markdown_line_numbers_on() && app.markdown_live();
-    let x = match numbers {
-        true => laid.left - NUMBER_GAP - ARROW / 2.0,
-        false => laid.left - laid.pad / 2.0,
-    };
-    let view = scroll - laid.pad;
-    for i in laid.blocks_in(view, view + area.h) {
-        let Some(section) = laid.sections.get(i).and_then(Option::as_ref) else {
-            continue;
-        };
-        let top = area.y - scroll + laid.pad + laid.tops[i];
-        let height = laid.blocks[i].1.height;
-        let folded = folds.is_some_and(|f| f.contains(&section.key));
-        let over = area.contains(mx, my) && (top..top + height).contains(&my);
-        if !(folded || over) {
-            continue;
-        }
-        let start = laid.ranges[i].start;
-        let cy = laid
-            .caret_point(start)
-            .map_or(top + height / 2.0, |(_, y, h)| {
-                area.y - scroll + y + h / 2.0
-            });
-        let hovered = app.pointer.hover == Hover::MarkdownLink(app.hits.markdown_links.len());
-        let marked = bar.is_some_and(|b| (b.y..b.bottom()).contains(&cy));
-        covered |= marked;
-        let color = match (marked, hovered) {
-            (true, _) => p.accent,
-            (false, true) => p.text,
-            (false, false) => p.text_dim,
-        };
-        let turned = if folded {
-            0.0
-        } else {
-            std::f32::consts::FRAC_PI_2
-        };
-        icons::chevron_turned(frame, (x, cy), ARROW, turned, color, area);
-        let hit = Rect::new(x - ARROW - 2.0, cy - 10.0, 2.0 * ARROW + 4.0, 20.0);
-        let url = format!("{FOLD}{}", section.key);
-        app.hits.markdown_links.push((hit, url));
-        if let Some(&line) = laid.lines.get(i) {
-            lines.push(line);
-        }
-    }
-    (lines, covered)
-}
-
-/// 返回第 `i` 块的上沿到下一块上沿的距离（逻辑像素）。
-fn room_below(laid: &Laid, i: usize) -> f32 {
-    let top = laid.tops[i];
-    laid.tops
-        .get(i + 1)
-        .map_or(laid.blocks[i].1.height, |next| next - top)
-}
-
 /// mermaid 图的高度上限占预览区高度的比例。
 const TALL_SHARE: f32 = 0.66;
 /// mermaid 图高度上限的最小值（逻辑像素）。
 const TALL_MIN: f32 = 320.0;
-
-/// 标题折叠箭头的大小（逻辑像素）。
-const ARROW: f32 = 8.0;
-
-/// 光标或选区占据的范围，决定哪些行号显示为当前行（见 [`draw_source_numbers`]）。
-enum Lit {
-    /// 显示行的上下范围（相对内容顶部，与 `laid::source_lines` 的基线同一量法）。
-    Rows(f32, f32),
-    /// 光标或选区的一端落在没有显示文字的位置（空行、分隔线）：按原文行号的范围判断。
-    Lines(usize, usize),
-}
-
-impl Lit {
-    /// 写在基线 `y` 处的原文第 `line` 行的行号是否在光标或选区所在的显示行上。
-    fn contains(&self, line: usize, y: f32) -> bool {
-        match *self {
-            Lit::Rows(top, bottom) => (top..=bottom).contains(&y),
-            Lit::Lines(first, last) => (first..=last).contains(&line),
-        }
-    }
-}
-
-/// 选区 `selection` 在排版结果 `laid` 中占据的显示行；一行原文可能折成几个显示行，几行原文也
-/// 可能排在同一显示行，因此按显示行判断，不按原文行号判断。
-fn selected_rows(
-    laid: &crate::app::preview::markdown::laid::Laid,
-    rope: &ropey::Rope,
-    selection: &winc_core::Selection,
-) -> Lit {
-    use crate::app::preview::markdown::laid::point_of;
-    let (from, to) = (
-        selection.anchor.min(selection.head),
-        selection.anchor.max(selection.head),
-    );
-    let byte = |c: usize| rope.char_to_byte(c.min(rope.len_chars()));
-    match (point_of(laid, byte(from)), point_of(laid, byte(to))) {
-        (Some((_, a, _)), Some((_, b, h))) => Lit::Rows(a - laid.pad, b + h - laid.pad),
-        _ => {
-            let line = |c: usize| rope.char_to_line(c.min(rope.len_chars()));
-            Lit::Lines(line(from), line(to))
-        }
-    }
-}
 
 /// 原文行号在正文左侧占用的宽度（逻辑像素）：最大行号的宽度加上与正文的间距；不写行号时为 0。
 fn number_room(app: &App, frame: &mut Frame<'_>) -> f32 {
@@ -888,7 +786,7 @@ fn number_room(app: &App, frame: &mut Frame<'_>) -> f32 {
         return 0.0;
     };
     let cell = frame.measure(Font::mono(app.fonts.code), "0");
-    rope.len_lines().to_string().len() as f32 * cell + NUMBER_GAP
+    rope.len_lines().to_string().len() as f32 * cell + drag::NUMBER_GAP
 }
 
 /// 标题指示条左边离预览区域左边至少的距离（逻辑像素）。
@@ -1005,10 +903,14 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
         .iter()
         .zip(laid.tops.iter().zip(&laid.blocks))
         .enumerate()
-        .filter_map(|(i, (block, (&top, (_, laid))))| match block {
-            winc_preview::markdown::Block::Heading(level, inline) => {
-                Some((*level, heading_title(&inline.text), top, laid.height, i))
-            }
+        .filter_map(|(i, (block, (&top, entry)))| match block {
+            winc_preview::markdown::Block::Heading(level, inline) => Some((
+                *level,
+                heading_title(&inline.text),
+                top,
+                entry.block.height,
+                i,
+            )),
             _ => None,
         })
         .filter(|(_, title, ..)| !title.is_empty())
@@ -1046,7 +948,14 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
     let room = (area.h - pad * 2.0).max(0.0);
     let step = (room / headings.len() as f32).clamp(TOC_BAR + 2.0, TOC_STEP);
     let shown = ((room / step).floor() as usize).min(headings.len());
-    let x0 = (laid.left - numbers - TOC_GAP - TOC_CURRENT).max(area.x + TOC_X);
+    // 把手向左偏出预留槽位，指示条再向左让出把手左偏距离的 2 倍，窄窗口中不与把手、折叠箭头
+    // 重叠。
+    let handle_room = if drag::shows_handles(app) {
+        2.0 * drag::HANDLE_LEFT_OFFSET
+    } else {
+        0.0
+    };
+    let x0 = (laid.left - numbers - TOC_GAP - TOC_CURRENT - handle_room).max(area.x + TOC_X);
     let y0 = area.y + pad;
     let left = laid.left;
     let width = laid.key.width;

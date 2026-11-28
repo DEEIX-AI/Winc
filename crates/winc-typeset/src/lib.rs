@@ -264,7 +264,32 @@ impl LaidBlock {
         );
         out.sort_unstable();
     }
+
+    /// 返回块中文字、图片和图形到达的最右处（块里的坐标，逻辑像素）。
+    ///
+    /// 底色、边框、表格和代码块的外框不计入：这些项铺满一栏，不反映内容本身的宽度。没有字宽
+    /// 记录的文字（图中的标注）按每字 `UNMEASURED_ADVANCE` 倍字号估计。
+    pub fn content_right(&self) -> f32 {
+        let right = |item: &Item| match item {
+            Item::Text {
+                x,
+                text,
+                font,
+                span: None,
+                ..
+            } => x + font.size * UNMEASURED_ADVANCE * text.chars().count() as f32,
+            Item::Text { .. } | Item::Image { .. } | Item::Path { .. } | Item::Polygon { .. } => {
+                item.span_x().1
+            }
+            _ => 0.0,
+        };
+        self.items.iter().map(right).fold(0.0, f32::max)
+    }
 }
+
+/// 没有字宽记录的文字每个字的估计宽度（字号的倍数，取自调参）：介于拉丁字母与汉字的字宽
+/// 之间，只用于 [`LaidBlock::content_right`] 这类不要求精确的估计。
+const UNMEASURED_ADVANCE: f32 = 0.6;
 
 impl Item {
     /// 上下边缘（块里的坐标）；文字算上选中时铺底色的范围。

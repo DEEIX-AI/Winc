@@ -428,14 +428,14 @@ fn a_long_document_keeps_layout_only_near_the_viewport() {
         let laid = app.preview.markdown.layout.as_ref().unwrap();
         let y = app.preview.markdown.scroll() - laid.pad;
         let seen = laid.blocks_in(y, y + app.preview.markdown.area.h);
-        let shed = laid.blocks.iter().filter(|b| b.1.is_shed()).count();
-        let drawn = seen.clone().all(|i| !laid.blocks[i].1.is_shed());
+        let shed = laid.blocks.iter().filter(|b| b.block.is_shed()).count();
+        let drawn = seen.clone().all(|i| !laid.blocks[i].block.is_shed());
         (shed, drawn, laid.height, seen)
     };
     let (shed, drawn, height, seen) = state(&app);
     assert!(shed > 1000 && drawn && seen.start == 0, "{shed} {seen:?}");
     let laid = app.preview.markdown.layout.as_ref().unwrap();
-    assert!(laid.blocks[1400].1.is_shed() && laid.blocks[1400].1.links_to("#p1400"));
+    assert!(laid.blocks[1400].block.is_shed() && laid.blocks[1400].block.links_to("#p1400"));
     assert!(app.preview.markdown.memo.len() < 600);
 
     // 滚到中间：视口内的块重新排好，开头的块释放，总高度不变。
@@ -446,7 +446,7 @@ fn a_long_document_keeps_layout_only_near_the_viewport() {
     assert_eq!(now, height);
     assert!(
         app.preview.markdown.layout.as_ref().unwrap().blocks[0]
-            .1
+            .block
             .is_shed()
     );
 
@@ -462,7 +462,7 @@ fn a_long_document_keeps_layout_only_near_the_viewport() {
     assert!(drawn && seen.contains(&1450), "{seen:?}");
     assert_eq!(now, height);
     let laid = app.preview.markdown.layout.as_ref().unwrap();
-    assert!(!laid.blocks[1450].1.is_shed());
+    assert!(!laid.blocks[1450].block.is_shed());
 
     // 改变宽度后分帧重排，排完后离视口远的块仍然释放。
     app.set_text_width(winc_config::TextWidth::Full);
@@ -479,7 +479,7 @@ fn a_long_document_keeps_layout_only_near_the_viewport() {
     let (_, drawn, _, seen) = state(&app);
     assert!(drawn && seen.end >= 1499, "{seen:?}");
     let laid = app.preview.markdown.layout.as_ref().unwrap();
-    assert!(!laid.blocks[1499].1.is_shed() && laid.blocks[0].1.is_shed());
+    assert!(!laid.blocks[1499].block.is_shed() && laid.blocks[0].block.is_shed());
     app.run(winc_editor::Command::DocStart { extend: false });
     settle(&mut app);
     let (shed, drawn, _, seen) = state(&app);
