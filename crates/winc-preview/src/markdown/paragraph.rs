@@ -227,12 +227,14 @@ pub fn link_target(before: &str) -> Option<(usize, Target)> {
     Some((start, kind))
 }
 
-/// 返回光标之前的一行文字 `before` 中呼出命令列表的 `/` 的位置（字节偏移）。
+/// 返回光标之前的一行文字 `before` 中呼出命令列表的 `/`、全角 `／` 或中文顿号 `、` 的位置
+/// （字节偏移）。
 ///
-/// `/` 位于行首或空白之后，其后到光标之间没有空白；位于链接地址或行内代码中时为 `None`。
+/// 触发符位于行首或空白之后，其后到光标之间没有空白；位于链接地址或行内代码中时为 `None`。
 pub fn slash(before: &str) -> Option<usize> {
-    let at = before.rfind('/')?;
-    let query = &before[at + 1..];
+    let at = before.rfind(['/', '／', '、'])?;
+    let mark = before[at..].chars().next()?;
+    let query = &before[at + mark.len_utf8()..];
     let head = &before[..at];
     if query.contains(char::is_whitespace) || query.chars().count() > SLASH_QUERY {
         return None;

@@ -181,7 +181,8 @@ impl App {
             None => {
                 let at = winc_preview::markdown::paragraph::slash(&before)?;
                 self.prose_spot()?;
-                (at + 1, Kind::Command)
+                let mark = before[at..].chars().next()?;
+                (at + mark.len_utf8(), Kind::Command)
             }
         };
         // 补全文件需要打开的目录；没有时只补全本文的标题。
