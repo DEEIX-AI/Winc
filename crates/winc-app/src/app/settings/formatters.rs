@@ -489,6 +489,7 @@ impl App {
             | Setting::BackgroundImage
             | Setting::BackgroundFit
             | Setting::TextWidth
+            | Setting::SplitPreviewPosition
             | Setting::DefaultLanguage
             | Setting::TerminalPosition
             | Setting::TerminalTabPosition
@@ -516,6 +517,7 @@ impl App {
                     Setting::BackgroundImage => MenuTarget::BackgroundImage,
                     Setting::BackgroundFit => MenuTarget::BackgroundFit,
                     Setting::TextWidth => MenuTarget::TextWidth,
+                    Setting::SplitPreviewPosition => MenuTarget::SplitPreviewPosition,
                     Setting::DefaultLanguage => MenuTarget::DefaultLanguage,
                     Setting::TerminalPosition => MenuTarget::TerminalPosition,
                     Setting::TerminalTabPosition => MenuTarget::TerminalTabPosition,

@@ -17,6 +17,7 @@ mod pdf;
 #[cfg(any(target_os = "macos", windows))]
 mod pdf_places;
 mod reading;
+mod split_position;
 mod tables;
 mod writing;
 

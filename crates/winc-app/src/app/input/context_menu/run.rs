@@ -349,6 +349,11 @@ impl App {
                 self.save_config();
                 self.request_redraw();
             }
+            MenuTarget::SplitPreviewPosition => {
+                if let MenuCommand::SplitPreviewPosition(left) = command {
+                    self.set_split_preview_position(left);
+                }
+            }
             MenuTarget::TextWidth => {
                 if let MenuCommand::TextWidth(i) = command
                     && let Some(&width) = winc_config::TextWidth::ALL.get(i)

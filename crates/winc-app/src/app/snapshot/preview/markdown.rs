@@ -646,6 +646,19 @@ fn diagrams_open_full_screen_and_zoom() {
 }
 
 #[test]
+fn diagram_view_covers_both_halves_with_left_preview() {
+    let (mut app, dir) = diagram_view_app("md-diagram-view-left-split", 0, false);
+    let whole = app.layout.editor;
+    app.config.split_preview_left = Some(true);
+    app.set_preview_mode(PreviewMode::Split);
+    paint(&mut app);
+    assert!(app.layout.split.x < app.layout.editor.x);
+    let view = app.preview.markdown.diagram.as_ref().unwrap();
+    assert_eq!(view.area, whole);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 #[ignore = "截图，手动运行"]
 fn shoot_diagram_view() {
     for dark in [false, true] {

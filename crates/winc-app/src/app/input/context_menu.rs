@@ -304,6 +304,8 @@ pub enum MenuCommand {
     BackgroundFit(usize),
     /// [`TextWidth::ALL`](winc_config::TextWidth::ALL) 中的序号（从 0 起）。
     TextWidth(usize),
+    /// 分栏时预览是否位于左侧。
+    SplitPreviewPosition(bool),
     /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
     TerminalPosition(bool),
     /// 设置中终端「标签位置」菜单的一项：`true` 为右侧，`false` 为顶部。
@@ -673,6 +675,9 @@ impl MenuCommand {
             | MenuCommand::OpenRecentInNewWindow(_) => "",
             MenuCommand::DefaultShell(None) => t!("settings-terminal-shell-default"),
             MenuCommand::DefaultShellCustom => t!("settings-terminal-shell-custom"),
+            MenuCommand::SplitPreviewPosition(left) => {
+                crate::layout::split_preview_position_label(left)
+            }
             MenuCommand::TerminalPosition(false) => t!("settings-terminal-position-bottom"),
             MenuCommand::TerminalPosition(true) => t!("settings-terminal-position-right"),
             MenuCommand::TerminalTabPosition(false) => t!("settings-terminal-tab-position-top"),
@@ -1099,6 +1104,8 @@ pub enum MenuTarget {
     BackgroundFit,
     /// 设置中「Markdown 预览正文宽度」的选项菜单。
     TextWidth,
+    /// 选择分栏时预览所在的一侧。
+    SplitPreviewPosition,
     /// 设置中「新建文件的默认语言」的选项菜单：纯文本和全部语言。
     DefaultLanguage,
     /// 设置的终端页中的「默认 Shell」。

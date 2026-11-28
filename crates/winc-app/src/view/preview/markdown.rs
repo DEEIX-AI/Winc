@@ -78,8 +78,7 @@ fn draw_broken_links(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     app.hits.markdown_links = links;
 }
 
-/// 在 `area`（窗口坐标，逻辑像素）里画当前文档的 Markdown 预览，分栏时是右半边，只看预览时
-/// 是整个编辑区。
+/// 在 `area`（窗口坐标，逻辑像素）里画当前文档的 Markdown 预览。
 ///
 /// 排版结果和光标位置写回 `app.preview.markdown`，可点击范围记入 `app.hits`；
 /// 需要读取的图片记进请求，下一帧再画。
@@ -202,7 +201,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     keep_caret_still(app, still, &laid);
     app.preview.markdown.layout = Some(laid);
     app.follow_live_caret();
-    // 分栏时右边跟着左边滚；刚换成只看预览时对齐一次。
+    // 分栏时预览跟随源代码滚动，切到仅预览时对齐一次。
     if area != app.layout.editor {
         app.sync_markdown_scroll();
     } else {
