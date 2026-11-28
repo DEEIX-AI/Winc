@@ -24,6 +24,8 @@ pub(super) mod window;
 pub(crate) struct FrameState {
     /// 渲染器；尚未创建时为 `None`。
     pub(in crate::app) renderer: Option<Renderer>,
+    /// 加载好的字体和字形缓存：量字无需渲染器，渲染器与本进程中新开的窗口共用这一份。
+    pub(in crate::app) fonts: FontSystem,
     /// 动画下一帧的绘制时刻（没有显示链接时按计时器安排）。
     pub(in crate::app) next_frame: Option<Instant>,
     /// 显示器每刷新一次触发一次回调；有动画时据此绘制下一帧（macOS 14 起、Windows）。
@@ -58,7 +60,22 @@ pub(crate) struct TextMetrics {
     pub terminal_cell: f32,
 }
 
-/// 创建窗口时使用一次的参数：位置、是否全屏、共用的字形缓存和激活令牌。
+impl TextMetrics {
+    /// 返回字体 `fonts` 按字号 `sizes` 的度量。
+    pub(in crate::app) fn of(fonts: &FontSystem, sizes: &ViewFonts) -> Self {
+        let mono = fonts.metrics(Font::mono(sizes.code));
+        let terminal = fonts.metrics(Font::new(TERMINAL_FONT, sizes.terminal));
+        Self {
+            ui: fonts.metrics(Font::ui(sizes.ui)),
+            mono,
+            cell: mono.cell,
+            terminal,
+            terminal_cell: terminal.cell,
+        }
+    }
+}
+
+/// 创建窗口时使用一次的参数：位置、是否全屏和激活令牌。
 pub(crate) struct Opening {
     /// 新窗口的位置（外框左上角，物理像素）与来源窗口的缩放比例；新窗口相对来源窗口向右下错开。
     ///
@@ -66,8 +83,6 @@ pub(crate) struct Opening {
     pub(crate) cascade: Option<((f64, f64), f64)>,
     /// 窗口创建并显示后是否进入全屏（来源窗口处于全屏时），使用一次。
     pub(crate) fullscreen: bool,
-    /// 新窗口与来源窗口共用的字体和字形缓存（创建渲染器时使用一次）。
-    pub(crate) glyphs_from: Option<winc_render::SharedGlyphs>,
     /// 待使用的激活令牌（见 [`App::set_activation`]）。
     #[cfg(all(unix, not(target_os = "macos")))]
     activation: Option<winit::window::ActivationToken>,

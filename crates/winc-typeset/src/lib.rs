@@ -9,9 +9,9 @@ use std::hash::Hash;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use cpui_render::{Color, Font, FontKind, Frame, Rect, Stroke};
 use winc_preview::image::{Picture, Pixels};
 use winc_preview::markdown::{Alert, Align, Block, Inline, Item as ListItem, SourceMap, Style};
-use winc_render::{Color, Faux, FontKind, Frame, Rect, Stroke};
 use winc_syntax::TokenKind;
 
 /// 一张图片的状态。
@@ -46,6 +46,7 @@ mod math;
 mod memo;
 mod raw;
 mod table;
+mod words;
 
 pub use memo::Memo;
 pub use memo::{key as memo_key, shift};
@@ -269,7 +270,9 @@ impl Item {
     /// 上下边缘（块里的坐标）；文字算上选中时铺底色的范围。
     pub fn span_y(&self) -> (f32, f32) {
         match self {
-            Item::Text { baseline, size, .. } => (baseline - size * 1.2, baseline + size * 0.5),
+            Item::Text { baseline, font, .. } => {
+                (baseline - font.size * 1.2, baseline + font.size * 0.5)
+            }
             Item::Fill { rect, .. }
             | Item::Corners { rect, .. }
             | Item::Image { rect, .. }
@@ -397,12 +400,8 @@ pub enum Item {
         baseline: f32,
         /// 文字内容。
         text: Arc<str>,
-        /// 字体。
-        font: FontKind,
-        /// 模拟的粗体与斜体。
-        faux: Faux,
-        /// 字号（逻辑像素）。
-        size: f32,
+        /// 字体：种类、字号（逻辑像素）与粗体、斜体。
+        font: Font,
         /// 颜色。
         color: Color,
         /// 能选中时在块文字里的位置；列表记号这类不算文字的为 `None`。
@@ -525,6 +524,8 @@ impl Item {
                     grow(bx, by, 0.0);
                 }
                 Stroke::Circle(cx, cy, r) | Stroke::Arc(cx, cy, r, ..) => grow(cx, cy, r),
+                // 排版只产生上面三种线。
+                _ => {}
             }
         }
         let half = width / 2.0;
@@ -637,6 +638,8 @@ pub struct Cx<'a, 'f> {
     pub frame: &'a mut Frame<'f>,
     /// 正文字号（逻辑像素），标题、代码按它缩放。
     pub base: f32,
+    /// 正文的字体种类：应用用 `FontSet::add` 注册的正文字体。
+    pub prose: FontKind,
     /// 返回语法标记对应的颜色，用于代码的高亮。
     pub token: &'a dyn Fn(TokenKind) -> Color,
     /// 编辑区的底色，图的填充色由它与强调色混合得到。
@@ -1117,17 +1120,15 @@ impl Cx<'_, '_> {
     ) {
         let size = self.base;
         let baseline = baseline.unwrap_or_else(|| {
-            let m = self.frame.metrics(FontKind::Prose, size);
+            let m = self.frame.metrics(Font::new(self.prose, size));
             y + (size * 1.5 - m.ascent - m.descent) / 2.0 + m.ascent
         });
-        let w = self.frame.measure(FontKind::Prose, size, marker);
+        let w = self.frame.measure(Font::new(self.prose, size), marker);
         out.push(Item::Text {
             x: content_x - size * 0.4 - w,
             baseline,
             text: marker.into(),
-            font: FontKind::Prose,
-            faux: Faux::default(),
-            size,
+            font: Font::new(self.prose, size),
             color,
             span: None,
         });
@@ -1254,7 +1255,7 @@ impl Cx<'_, '_> {
     /// 文字后新段落的位置相同，输入第一个字时内容不移动。
     fn blank_lines(&mut self, blanks: &[usize], x: f32, y: f32, width: f32, out: &mut Out) -> f32 {
         let size = self.base;
-        let m = self.frame.metrics(FontKind::Prose, size);
+        let m = self.frame.metrics(Font::new(self.prose, size));
         let row = Row {
             room: width.max(size),
             size,

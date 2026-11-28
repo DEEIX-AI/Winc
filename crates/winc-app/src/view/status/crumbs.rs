@@ -13,7 +13,7 @@ pub(super) struct Shown<'a> {
 /// 返回 `shown` 各段连同段间箭头的总宽度（逻辑像素）。
 pub(super) fn width(frame: &mut Frame<'_>, shown: &[Shown<'_>], size: f32) -> f32 {
     let names: f32 = (shown.iter())
-        .map(|part| frame.measure(FontKind::Ui, size, &part.name))
+        .map(|part| frame.measure(Font::ui(size), &part.name))
         .sum();
     names + CRUMB_GAP * shown.len().saturating_sub(1) as f32
 }
@@ -69,7 +69,7 @@ pub(super) fn fit<'a>(
         };
         return vec![root, mark, file];
     }
-    let mark_w = frame.measure(FontKind::Ui, size, &mark.name) + CRUMB_GAP;
+    let mark_w = frame.measure(Font::ui(size), &mark.name) + CRUMB_GAP;
     let file = Shown {
         index: Some(last),
         name: ellipsize(frame, names[last], size, (max - mark_w).max(0.0)),

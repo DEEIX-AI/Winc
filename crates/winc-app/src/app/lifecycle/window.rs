@@ -169,9 +169,9 @@ impl App {
         }
     }
 
-    /// 本窗口的字体和字形缓存，给之后新开的窗口共用；还没有渲染器时为 `None`。
-    pub(crate) fn shared_glyphs(&self) -> Option<winc_render::SharedGlyphs> {
-        self.frame.renderer.as_ref().map(Renderer::shared_glyphs)
+    /// 本窗口的字体和字形缓存，给之后新开的窗口共用。
+    pub(crate) fn fonts(&self) -> FontSystem {
+        self.frame.fonts.clone()
     }
 
     /// 把窗口切到前台：关着的重新显示，最小化的还原。
@@ -498,10 +498,6 @@ impl App {
             || matches!(self.pointer.drag, Drag::SplitDivider { .. })
     }
 
-    /// 分栏预览：编辑区左右分开，左边是行号栏和文字，右边画预览，中间一道分隔线。
-    ///
-    /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`；编辑区太窄、
-    /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
     fn place_minimap(&mut self) {
         // 编辑区窄于该宽度时不显示（逻辑像素）：优先留给代码。
         const MINIMAP_MIN: f32 = 480.0;
@@ -527,6 +523,11 @@ impl App {
         );
     }
 
+    /// 分栏预览：编辑区左右分开，一边是行号栏和文字，另一边画预览，中间一道分隔线。预览默认在
+    /// 右边，`split_preview_left` 为真时在左边。
+    ///
+    /// 左边占的比例按 `split_share`（默认各占一半），两边都至少留 `SPLIT_MIN`。编辑区太窄、
+    /// 两边都放不下 `SPLIT_MIN` 时不分，只显示源代码。
     fn place_split(&mut self) {
         // 分栏时每一半的最小宽度（逻辑像素，取自调参）。
         const SPLIT_MIN: f32 = 240.0;
@@ -549,17 +550,33 @@ impl App {
             2.0 * GRIP + 1.0,
             l.editor.h,
         );
-        let shrink = l.editor.w - left;
-        l.split = Rect::new(
-            l.editor.x + left + 1.0,
-            l.editor.y,
-            shrink - 1.0,
-            l.editor.h,
-        );
-        l.editor.w = left;
+        let (editor_width, shrink) = if self.config.split_preview_left == Some(true) {
+            l.split = Rect::new(l.editor.x, l.editor.y, left, l.editor.h);
+            let shift = left + 1.0;
+            let width = l.editor.w - shift;
+            l.editor.x += shift;
+            l.gutter.x += shift;
+            l.text.x += shift;
+            if l.search.h > 0.0 {
+                // 编辑区右边缘不变，横向空间不足时收窄查找条。
+                let search_width = l.search.w.min(width - SCROLLBAR_HIT - 16.0);
+                l.search.x += l.search.w - search_width;
+                l.search.w = search_width;
+            }
+            (width, shift)
+        } else {
+            let shrink = l.editor.w - left;
+            l.split = Rect::new(
+                l.editor.x + left + 1.0,
+                l.editor.y,
+                shrink - 1.0,
+                l.editor.h,
+            );
+            l.search.x -= shrink;
+            (left, shrink)
+        };
+        l.editor.w = editor_width;
         l.text.w = (l.text.w - shrink).max(0.0);
-        // 查找条贴着编辑区右边。
-        l.search.x -= shrink;
     }
 
     /// 终端面板开着时从编辑区卡片下面切出一张卡片：编辑区变矮，两张卡片之间留间距，间距里可以上下拖
@@ -730,9 +747,9 @@ impl App {
     /// 向渲染器声明下一帧的底色矩形（`view::base`），使其随窗口背景色一趟绘制。
     ///
     /// 同时让渲染器的背景图与配置一致（见 `App::sync_wallpaper`）。
-    pub(in crate::app) fn declare_base(&mut self, renderer: &mut winc_render::Renderer) {
+    pub(in crate::app) fn declare_base(&mut self, renderer: &mut cpui_render::Renderer) {
         self.sync_wallpaper(renderer);
-        let (window, scale) = (self.layout.window, renderer.scale_factor());
+        let (window, scale) = (self.layout.window, renderer.scale());
         if self.settings_reuses_base(window, scale) {
             // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。
             renderer.cover_next_frame(window);

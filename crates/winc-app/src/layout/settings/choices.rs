@@ -23,6 +23,15 @@ pub fn text_width_label(choice: winc_config::TextWidth) -> &'static str {
     }
 }
 
+/// 返回「分栏预览位置」中选项 `left` 对应的名称。
+pub fn split_preview_position_label(left: bool) -> &'static str {
+    if left {
+        t!("settings-split-preview-position-left")
+    } else {
+        t!("settings-split-preview-position-right")
+    }
+}
+
 /// 返回「光标样式」设置中选项 `choice` 的名字。
 pub fn cursor_style_label(choice: winc_config::CursorStyle) -> &'static str {
     use winc_config::CursorStyle::{Block, Line, Underline};

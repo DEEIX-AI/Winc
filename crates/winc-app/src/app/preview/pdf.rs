@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
+use cpui_render::{Rect, Renderer};
 use winc_editor::{DocumentId, Unsupported};
 use winc_preview::image::Pixels;
 use winc_preview::pdf::{Document, OutlineItem, PageSize};
-use winc_render::{Rect, Renderer};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::app::animation::{Clock, PDF_MOTION};
@@ -672,11 +672,7 @@ impl App {
             return self.preview.pdf.doc.is_some();
         };
         let body = self.preview.pdf.body();
-        let scale = self
-            .frame
-            .renderer
-            .as_ref()
-            .map_or(1.0, Renderer::scale_factor);
+        let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
         let old = self.preview.pdf.zoom;
         let fits = |zoom: &f32| {
             let (rects, ..) = page_rects(&pages, body.w, *zoom);

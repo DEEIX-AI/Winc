@@ -63,6 +63,7 @@ cmd-close-folder = 关闭目录
 cmd-close-window = 关闭窗口
 cmd-copy-path = 复制路径
 cmd-copy-relative-path = 复制相对路径
+cmd-copy-file-name = 复制文件名
 cmd-copy-reference = 复制代码引用
 cmd-copy-absolute-reference = 复制代码引用（绝对路径）
 cmd-copy-active-path = 复制当前文件的路径

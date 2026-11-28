@@ -63,6 +63,7 @@ cmd-close-folder = Close Folder
 cmd-close-window = Close Window
 cmd-copy-path = Copy Path
 cmd-copy-relative-path = Copy Relative Path
+cmd-copy-file-name = Copy File Name
 cmd-copy-reference = Copy Code Reference
 cmd-copy-absolute-reference = Copy Code Reference (Absolute Path)
 cmd-copy-active-path = Copy Path of Current File

@@ -480,7 +480,7 @@ fn switching_folders_keeps_each_folders_tabs() {
         [Some(folder_icon), None, None, None, None, None, None]
     );
     let row = popup.row_rects[0];
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let scale = image.width as f32 / app.layout.window.w;
     let (x0, x1) = ((row.x + 24.0) * scale, (row.x + 46.0) * scale);
     let (y0, y1) = (row.y * scale, row.bottom() * scale);
@@ -654,7 +654,7 @@ fn quitting_keeps_unsaved_changes_for_next_time() {
     let mut editor = Editor::default();
     assert!(crate::open_session_folder(&mut editor, &session));
     let restored = crate::app::restore_at_launch(&mut editor, Some(&session), Some(&root));
-    let mut next = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut next = App::for_test(editor, Config::default());
     next.backup.root = Some(root.clone());
     next.adopt_restored(restored);
     let docs: Vec<(String, bool)> = next
@@ -728,7 +728,7 @@ fn edits_made_after_agreeing_to_quit_are_backed_up_too() {
     let mut editor = Editor::default();
     assert!(crate::open_session_folder(&mut editor, &session));
     let restored = crate::app::restore_at_launch(&mut editor, Some(&session), Some(&root));
-    let mut next = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut next = App::for_test(editor, Config::default());
     next.backup.root = Some(root.clone());
     next.adopt_restored(restored);
     let text = next
@@ -873,7 +873,7 @@ fn a_second_winc_on_the_same_folder_leaves_the_first_ones_backups_alone() {
     assert!(crate::open_session_folder(&mut editor, &session));
     let restored = crate::app::restore_at_launch(&mut editor, Some(&session), Some(&root));
     assert!(editor.documents.iter().all(|d| !d.is_dirty()));
-    let mut second = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut second = App::for_test(editor, Config::default());
     second.backup.root = Some(root.clone());
     second.adopt_restored(restored);
     assert!(
@@ -1038,7 +1038,7 @@ fn a_large_file_from_the_command_line_is_read_after_the_window_opens() {
     assert_eq!(editor.active, Some(0));
 
     // 窗口在后台读好以后跳到命令行给的行和列。
-    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut app = App::for_test(editor, Config::default());
     app.load_at_launch(opened.jumps);
     app.poll_loads();
     app.run_when_loaded();
@@ -1092,7 +1092,7 @@ fn waiting_quits_once_the_files_are_closed_and_leaves_no_trace() {
     assert!(crate::open_targets(&mut editor, &args).problems.is_empty());
     // 临时打开模式不打开项目。
     assert!(editor.workspace.is_none());
-    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut app = App::for_test(editor, Config::default());
     app.start_one_off(&args);
     let mut winc = crate::winc::Winc::new(None, None);
     let key = winc.add_detached(app);
@@ -1124,7 +1124,7 @@ fn waiting_asks_about_other_unsaved_files_before_quitting() {
     let args = crate::cli::Args { wait: true, ..args };
     let mut editor = Editor::default();
     assert!(crate::open_targets(&mut editor, &args).problems.is_empty());
-    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut app = App::for_test(editor, Config::default());
     app.start_one_off(&args);
     let mut winc = crate::winc::Winc::new(None, None);
     let key = winc.add_detached(app);

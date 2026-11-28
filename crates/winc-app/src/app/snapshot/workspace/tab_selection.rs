@@ -39,6 +39,39 @@ fn selected(app: &App) -> Vec<String> {
 }
 
 #[test]
+fn tab_menu_copies_file_names_and_disables_copy_for_an_untitled_tab() {
+    let dir = sample_folder("tabs-copy-file-name");
+    let mut app = app_with(&dir, false);
+    app.open_path(&dir.join("src/main.rs"));
+    app.open_path(&dir.join("Cargo.toml"));
+    app.new_file();
+    paint(&mut app);
+
+    let first = tab_point(&app, 0);
+    right_click(&mut app, first);
+    assert!(menu_commands(&app).windows(2).any(|items| items
+        == [
+            (MenuCommand::CopyRelativePath, true),
+            (MenuCommand::CopyFileName, true),
+        ]));
+    app.run_menu_command(MenuCommand::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("main.rs"));
+
+    let second = tab_point(&app, 1);
+    right_click(&mut app, second);
+    app.run_menu_command(MenuCommand::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("Cargo.toml"));
+
+    let untitled = tab_point(&app, 2);
+    right_click(&mut app, untitled);
+    assert!(menu_commands(&app).contains(&(MenuCommand::CopyFileName, false)));
+    app.run_menu_command(MenuCommand::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("Cargo.toml"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn dragging_a_selected_tab_moves_the_whole_selection() {
     let dir = search_folder("tabs-multi-drag");
     let mut app = app_with(&dir, false);

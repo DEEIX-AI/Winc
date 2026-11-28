@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
+use cpui_render::Rect;
 use winc_editor::TextSearch;
 use winc_pty::protocol::Line;
-use winc_render::Rect;
 
 use super::tab::{Point, Selection, Unit, col_at, logical_text};
 use super::{App, Focus, Request, header_height};

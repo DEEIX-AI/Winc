@@ -62,6 +62,7 @@ impl Action {
             CloseWindow => "Close Window",
             CopyPath => "Copy Path",
             CopyRelativePath => "Copy Relative Path",
+            CopyFileName => "Copy File Name",
             CopyReference => "Copy Reference",
             CopyAbsoluteReference => "Copy Absolute Reference",
             RevealInFinder => "Reveal in File Explorer",

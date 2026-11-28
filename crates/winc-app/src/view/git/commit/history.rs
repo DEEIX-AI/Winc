@@ -46,8 +46,8 @@ pub(super) fn draw_history(
     let clip = app.layout.sidebar.intersect(area);
     frame.rect_clipped(
         Rect::new(area.x, area.y, area.w, 1.0),
-        p.separator,
         0.0,
+        p.separator,
         clip,
     );
     let band = |y: f32| Rect::new(area.x + 8.0, y, area.w - 16.0, COMMIT_ROW);
@@ -61,7 +61,7 @@ pub(super) fn draw_history(
         Hover::Commit(t) if t == title_target || t == log_target
     );
     if on_title {
-        frame.rect_clipped(shade(head), p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(shade(head), RADIUS_ROW, p.hover, clip);
     }
     let cy = head.y + head.h / 2.0;
     let turned = app.history_chevron() * FRAC_PI_2;
@@ -125,7 +125,7 @@ pub(super) fn draw_history(
                 let selected = viewing == Some(recent.commits[i].oid.as_str());
                 let fill = row_color(p, selected, false, hovered);
                 if let Some(color) = fill {
-                    frame.rect_clipped(shade(row), color, RADIUS_ROW, rows_clip);
+                    frame.rect_clipped(shade(row), RADIUS_ROW, color, rows_clip);
                 }
                 let lanes = recent.graph.get(i).map_or(1, |g| g.width);
                 let cells = (graph_x, text_x(lanes), marks, now);
@@ -142,7 +142,7 @@ pub(super) fn draw_history(
             HistoryLine::More => {
                 let target = CommitTarget::History(HistoryTarget::More);
                 if app.pointer.hover == Hover::Commit(target) {
-                    frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, rows_clip);
+                    frame.rect_clipped(shade(row), RADIUS_ROW, p.hover, rows_clip);
                 }
                 let text = t!("git-history-more");
                 ui_text_small(frame, app, text_x(1), row, text, p.text_muted, rows_clip);
@@ -219,7 +219,7 @@ fn draw_commit_row(
     let size = app.fonts.ui_small;
     if right - text_x >= TIME_MIN_ROOM {
         let time = display_local(&commit.local, commit.time, now);
-        let w = frame.measure(FontKind::Ui, size, &time);
+        let w = frame.measure(Font::ui(size), &time);
         ui_text_small(frame, app, right - w, row, &time, p.text_dim, clip);
         right -= w + TIME_GAP;
     }
@@ -301,7 +301,7 @@ pub(in crate::view) fn draw_history_card(app: &App, frame: &mut Frame<'_>, i: us
     let lines = card_lines(frame, size, message, room);
     let stats = card_stats(app, state);
     let short = crate::app::git::log::short(&commit.oid);
-    let mut measure = |text: &str| frame.measure(FontKind::Ui, size, text);
+    let mut measure = |text: &str| frame.measure(Font::ui(size), text);
     let short_w = measure(short);
     let header = measure(&commit.author) + measure(&byline) + 2.0 * CARD_GAP + short_w;
     let stats_w = stats.iter().map(|(text, _)| measure(text)).sum::<f32>()
@@ -378,7 +378,7 @@ pub(in crate::view) fn draw_history_card(app: &App, frame: &mut Frame<'_>, i: us
             y += h;
         }
         y += CARD_GAP;
-        frame.rect_clipped(Rect::new(left, y, inner, 1.0), p.separator, 0.0, rect);
+        frame.rect_clipped(Rect::new(left, y, inner, 1.0), 0.0, p.separator, rect);
         y += 1.0 + CARD_GAP;
         let mut x = left;
         for (text, color) in &stats {
@@ -400,7 +400,7 @@ fn card_lines<'a>(
 ) -> Vec<Cow<'a, str>> {
     let mut lines: Vec<Cow<'a, str>> = Vec::new();
     for paragraph in message.lines() {
-        let measure = |text: &str| frame.measure(FontKind::Ui, size, text);
+        let measure = |text: &str| frame.measure(Font::ui(size), text);
         let wrapped = crate::layout::wrap_text(paragraph, room, measure);
         match wrapped.is_empty() {
             true => lines.push(Cow::Borrowed("")),

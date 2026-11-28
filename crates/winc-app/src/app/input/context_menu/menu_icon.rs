@@ -67,7 +67,7 @@ impl App {
     /// 窗口的深浅外观跟随主题，菜单跟随窗口，因此图标颜色与菜单的深浅外观一致。
     pub(crate) fn draw_menu_icon(
         &self,
-        frame: &mut winc_render::Frame<'_>,
+        frame: &mut cpui_render::Frame<'_>,
         icon: MenuIcon,
         (x, y): (f32, f32),
         clip: Rect,
@@ -77,7 +77,7 @@ impl App {
             MenuIcon::Folder => icons::folder(frame, (x, y), false, self.palette.folder, clip),
             MenuIcon::Folders => icons::folders(frame, (x, y), self.palette.folder, clip),
             MenuIcon::File(glyph, [dark, light]) => {
-                let color = winc_render::Color::hex(if self.palette.dark { dark } else { light });
+                let color = cpui_render::Color::hex(if self.palette.dark { dark } else { light });
                 // 文件图标 12 × 15。
                 icons::file(frame, (x + 2.0, y + 0.5), glyph, color, clip);
             }
@@ -119,7 +119,7 @@ impl App {
 
     /// 把菜单项 `command` 的图标画成图片，交给系统菜单；没有图标或没有渲染器时为 `None`。
     #[cfg(any(target_os = "macos", test))]
-    pub(in crate::app) fn menu_icon(&mut self, command: MenuCommand) -> Option<Image> {
+    pub(in crate::app) fn menu_icon(&mut self, command: MenuCommand) -> Option<Snapshot> {
         let icon = self.menu_icon_kind(command)?;
         let (w, h) = icon.size();
         let clip = Rect::new(0.0, 0.0, w, h);

@@ -39,7 +39,7 @@ impl App {
             client: self
                 .caption_controls()
                 .into_iter()
-                .map(|r| winc_render::Rect::new(r.x * zoom, r.y * zoom, r.w * zoom, r.h * zoom))
+                .map(|r| cpui_render::Rect::new(r.x * zoom, r.y * zoom, r.w * zoom, r.h * zoom))
                 .collect(),
         }
     }
@@ -95,7 +95,7 @@ impl App {
     /// 顶栏中其余部分由系统按标题栏处理。结果必须覆盖 `target_at` 在顶栏内返回的全部
     /// 控件目标（顶栏空白与窗口边缘除外），由测试 `caption_controls_cover_top_bar_targets`
     /// 检查。
-    pub(in crate::app) fn caption_controls(&self) -> Vec<winc_render::Rect> {
+    pub(in crate::app) fn caption_controls(&self) -> Vec<cpui_render::Rect> {
         let l = &self.layout;
         let mut client = vec![
             l.sidebar_button,
@@ -139,7 +139,7 @@ impl App {
     }
 
     /// 前台窗格标签栏中的控件：标签、新建和列表按钮、预览切换与浏览器按钮。
-    pub(in crate::app) fn tab_bar_controls(&self) -> Vec<winc_render::Rect> {
+    pub(in crate::app) fn tab_bar_controls(&self) -> Vec<cpui_render::Rect> {
         let l = &self.layout;
         let mut controls = vec![self.tabs.new_tab];
         controls.extend(self.tabs.list);
@@ -502,7 +502,7 @@ impl App {
             use winc_editor::PreviewMode::*;
             let segments = crate::layout::preview_segments(l.preview);
             // 按钮之间的空隙归属于距离较近的一段，否则点击空隙时没有响应。
-            let gap = |s: &winc_render::Rect| (s.x - x).max(x - s.right()).max(0.0);
+            let gap = |s: &cpui_render::Rect| (s.x - x).max(x - s.right()).max(0.0);
             let at = (0..3)
                 .min_by(|&a, &b| gap(&segments[a]).total_cmp(&gap(&segments[b])))
                 .unwrap_or(0);
@@ -814,7 +814,7 @@ impl App {
             return Some((Scrollbar::Terminal, grab(y, thumb.y, thumb.h)));
         }
 
-        // 预览（分栏时位于右侧，仅预览时占满编辑区）先于编辑区判断，仅预览时两者重叠。
+        // 预览先于编辑区判断，因为仅预览时两者重叠。
         let preview = self.preview.markdown.area;
         // 标题列表覆盖在预览之上，先于预览判断；图钉按钮所在的位置不属于滚动条。
         let list = &self.preview.markdown.toc_list;
@@ -1304,7 +1304,7 @@ pub(super) enum Target {
     Editor,
     /// 图片或 SVG 的预览区域。
     Picture,
-    /// 分栏时右侧的表格：点击后键盘作用于表格。只看预览时表格位于编辑区，属于 [`Target::Editor`]。
+    /// 分栏时的表格：点击后键盘作用于表格。只看预览时表格位于编辑区，属于 [`Target::Editor`]。
     Table,
     /// 终端面板。
     Terminal,

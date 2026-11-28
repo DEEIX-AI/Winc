@@ -53,7 +53,7 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone();
@@ -62,7 +62,14 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
             .is_none()
     );
     paint(&mut app);
-    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "拖动时使用快照的画面与完整绘制不同");
 
@@ -111,7 +118,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     paint(&mut app);
     assert!(app.settings.scroll_base.is_some());
     let window = app.layout.window;
-    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = app.frame.renderer.as_ref().unwrap().scale();
     assert!(app.settings_reuses_base(window, scale));
 
     // 之后的帧使用快照，画面与完整绘制相同。
@@ -122,7 +129,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone();
@@ -135,7 +142,14 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     assert!(app.settings.scroll_base.is_none());
     assert!(!app.settings_reuses_base(window, scale));
     paint(&mut app);
-    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
 
@@ -157,7 +171,7 @@ fn zoom_scales_the_whole_window_in_steps() {
     let mut app = app_with(&dir, false);
     paint(&mut app);
     let window = app.layout.window;
-    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale();
     let base = scale(&app);
 
     // 放大一档：渲染倍数变大，窗口的逻辑尺寸按比例变小；字号不变。
@@ -647,8 +661,7 @@ pub(super) fn format_settings_app(name: &str, dark: bool) -> (App, PathBuf) {
 #[test]
 fn scrolled_rows_stay_under_the_header() {
     let (mut app, dir) = format_settings_app("settings-scroll-clip", false);
-    app.frame.renderer =
-        Some(Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap());
+    app.frame.renderer = Some(offscreen(&app, (820.0, 420.0), SCALE));
     app.config.format_commands.insert(
         "python".to_owned(),
         "black --quiet --stdin-filename {file} -".to_owned(),
@@ -667,7 +680,7 @@ fn scrolled_rows_stay_under_the_header() {
 
     // 标题下沿的一条像素带（标题文字和关闭按钮下方）只应有底色。
     let layout = app.settings_layout();
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let px = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as u32, (y * SCALE) as u32);
         image.pixels[(y * image.width + x) as usize]
@@ -901,6 +914,11 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     paint(&mut app);
     // 最后一页是「关于」：版本号、更新状态和「检查更新」；定时检查的开关在「通用」页。
     assert_eq!(SettingsPage::ALL.last(), Some(&SettingsPage::About));
+    assert_eq!(
+        app.settings_layout().footer,
+        None,
+        "只有「关于」页有版权声明"
+    );
     click_part(&mut app, SettingsPart::Page(SettingsPage::About));
     paint(&mut app);
     let layout = app.settings_layout();
@@ -919,6 +937,15 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     );
     let (x, y) = center(parts.logo);
     assert_eq!(layout.part_at(x, y), None);
+    // 页面最下方是版权与许可声明，在最后一组之下，不可点击。
+    let footer = layout.footer.unwrap();
+    assert!(footer.y > layout.groups.last().unwrap().bottom());
+    let (x, y) = center(footer);
+    assert_eq!(layout.part_at(x, y), None);
+    assert_eq!(
+        crate::layout::legal_line(),
+        "© 2026 Chenyme 和 DEEIX AI · 以 GPL-3.0-or-later 发布，不提供任何担保"
+    );
     click_part(&mut app, SettingsPart::Copy(Setting::Version));
     let copied = app.clipboard.copied.clone().unwrap();
     let first = format!("Winc {}", crate::layout::version_label());
@@ -1008,7 +1035,7 @@ fn the_about_page_links_out_and_hides_unavailable_updates() {
     assert_eq!(value(Setting::Website), "winc.si");
     assert_eq!(value(Setting::Repository), "DEEIX-AI/Winc");
     assert_eq!(value(Setting::Community), "t.me/deeix_chat");
-    assert_eq!(value(Setting::License), "Apache-2.0");
+    assert_eq!(value(Setting::License), "GPL-3.0-or-later");
     assert_eq!(
         about_link(Setting::License).as_deref(),
         Some("https://github.com/DEEIX-AI/Winc/blob/HEAD/LICENSE")
