@@ -26,6 +26,28 @@ struct PickedCommit {
     added: Vec<PathBuf>,
     /// 暂存区中已有内容而没有勾上的文件：提交前移出暂存区。
     dropped: Vec<PathBuf>,
+    /// 是否有已经暂存、无需再交给 `git add` 的勾上文件（例如已暂存删除的文件）。
+    already_staged: bool,
+}
+
+impl PickedCommit {
+    /// 记录一个整个提交的勾上文件：已暂存删除的条目删除已在暂存区中，不再交给 `git add`，否则
+    /// 工作区也不存在该文件时暂存失败，仅取消跟踪（`git rm --cached`）时也会被重新暂存。
+    fn push_whole(&mut self, entry: &Entry) {
+        if entry.staged_deletion() {
+            self.already_staged = true;
+            return;
+        }
+        self.whole.push(entry.path.clone());
+        // 改名的文件，原来的路径一并提交，否则提交里同时留着新旧两个文件；改名已经暂存时原来的
+        // 路径已移出暂存区，不再暂存。
+        self.whole.extend(entry.unstaged_from().cloned());
+    }
+
+    /// 是否没有任何要提交的勾上文件。
+    fn is_empty(&self) -> bool {
+        self.whole.is_empty() && self.partial.is_empty() && !self.already_staged
+    }
 }
 
 impl App {
@@ -83,12 +105,7 @@ impl App {
         for entry in state.picked_entries(status) {
             match Some(state.picks.skips(&entry.path)).filter(|s| !s.is_empty()) {
                 Some(skipped) => plan.partial.push((entry.path.clone(), skipped.to_vec())),
-                None => {
-                    plan.whole.push(entry.path.clone());
-                    // 改名的文件，原来的路径一并提交，否则提交里同时留着新旧两个文件；改名已经
-                    // 暂存时原来的路径已移出暂存区，不再暂存。
-                    plan.whole.extend(entry.unstaged_from().cloned());
-                }
+                None => plan.push_whole(entry),
             }
             if entry.untracked() {
                 plan.added.push(entry.path.clone());
@@ -106,7 +123,7 @@ impl App {
         } else {
             self.other_plans()
         };
-        let own = !(plan.whole.is_empty() && plan.partial.is_empty());
+        let own = !plan.is_empty();
         if !own && others.is_empty() && !amend && !rebasing {
             self.flash(t!("git-commit-nothing-checked"));
             return;
@@ -187,8 +204,7 @@ impl App {
                 if let Some(partial) = partial.filter(|_| checked) {
                     plan.partial.push((entry.path.clone(), partial.clone()));
                 } else if checked {
-                    plan.whole.push(entry.path.clone());
-                    plan.whole.extend(entry.unstaged_from().cloned());
+                    plan.push_whole(entry);
                     if entry.untracked() {
                         plan.added.push(entry.path.clone());
                     }
@@ -197,7 +213,7 @@ impl App {
                     plan.dropped.extend(entry.from.clone());
                 }
             }
-            if !(plan.whole.is_empty() && plan.partial.is_empty()) {
+            if !plan.is_empty() {
                 let sign_off = self.state.sign_off_repos.contains(repo);
                 plans.push((repo.clone(), plan, sign_off));
             }
