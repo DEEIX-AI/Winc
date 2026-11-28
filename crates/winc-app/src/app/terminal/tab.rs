@@ -1002,7 +1002,7 @@ impl TermTab {
     ///
     /// 落在字符的左半边取起点、右半边取终点：窄字符在半格处切换，宽字符在两格
     /// 之间切换，不会停在宽字符中间；行还没取回来或超出内容末尾时按单格四舍五入。
-    pub fn char_boundary(&self, line: u64, at: f32) -> usize {
+    pub(super) fn char_boundary(&self, line: u64, at: f32) -> usize {
         if at <= 0.0 {
             return 0;
         }
@@ -1018,18 +1018,9 @@ impl TermTab {
     /// 行还没取回来或 `col` 超出内容末尾时返回 `None`。
     fn char_span(&self, line: u64, col: usize) -> Option<(usize, usize)> {
         let row = self.line(line)?;
-        let mut start = 0;
-        for (_, w) in cells(&row.text) {
-            if w == 0 {
-                continue;
-            }
-            let end = start + w;
-            if col < end {
-                return Some((start, end));
-            }
-            start = end;
-        }
-        None
+        let cells = cell_chars(&row.text);
+        let &(start, width, _) = cells.iter().find(|&&(start, w, _)| col < start + w)?;
+        Some((start, start + width))
     }
 
     /// 选中的文字：软换行的行接起来不加换行，其余行去掉行尾空格、用换行分开。
