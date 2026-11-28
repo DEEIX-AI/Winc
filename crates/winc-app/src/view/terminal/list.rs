@@ -14,8 +14,8 @@ pub(super) fn draw_list(app: &mut App, frame: &mut Frame<'_>) {
     let clip = list.intersect(app.layout.terminal);
     frame.rect_clipped(
         Rect::new(list.x, list.y, 1.0, list.h),
-        p.separator,
         0.0,
+        p.separator,
         clip,
     );
     draw_new(app, frame, list, clip);
@@ -71,7 +71,7 @@ pub(super) fn draw_list(app: &mut App, frame: &mut Frame<'_>) {
     }
     if let Some((i, y)) = lifted {
         let group = Rect::new(area.x, y, area.w, sizes[i]);
-        frame.rect_clipped(group, p.editor_bg, RADIUS_ROW, clip);
+        frame.surface_clipped(group, RADIUS_ROW, p.editor_bg, clip);
         draw_entry(app, frame, i, (area, y), clip, rename.as_mut());
     }
     app.terminal.rename = rename;
@@ -103,7 +103,7 @@ fn draw_new(app: &mut App, frame: &mut Frame<'_>, list: Rect, clip: Rect) {
     );
     let open = app.overlays.menu_button == Some(MenuButton::TerminalShells);
     if hovered || open {
-        frame.rect_clipped(group, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(group, RADIUS_ROW, p.hover, clip);
     }
     icons::plus(
         frame,
@@ -135,8 +135,8 @@ fn draw_new(app: &mut App, frame: &mut Frame<'_>, list: Rect, clip: Rect) {
         if hovered || open {
             frame.rect_clipped(
                 Rect::new(menu.x, menu.y + TAB_GAP, 1.0, menu.h - TAB_GAP * 2.0),
-                p.separator,
                 0.0,
+                p.separator,
                 clip,
             );
         }
@@ -207,7 +207,7 @@ fn draw_group_head(app: &mut App, frame: &mut Frame<'_>, i: usize, row: Rect, cl
     let active = i == app.terminal.active;
     let hovered = matches!(app.pointer.hover, Hover::TerminalHeader(HeaderHit::Tab(j) | HeaderHit::Close(j)) if i == j);
     if hovered {
-        frame.rect_clipped(row, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(row, RADIUS_ROW, p.hover, clip);
     }
     let cy = row.y + row.h / 2.0;
     let color = if active { p.text } else { p.text_muted };
@@ -275,15 +275,15 @@ fn draw_pane_row(
     let guide = p.indent_guide;
     frame.rect_clipped(
         Rect::new(trunk, row.y, 1.0, bottom - row.y),
-        guide,
         0.0,
+        guide,
         clip,
     );
-    frame.rect_clipped(Rect::new(trunk, cy, 6.0, 1.0), guide, 0.0, clip);
+    frame.rect_clipped(Rect::new(trunk, cy, 6.0, 1.0), 0.0, guide, clip);
     let body = Rect::new(row.x + 22.0, row.y, (row.w - 22.0).max(0.0), row.h);
     if focused || hovered {
         let color = if focused { p.selected } else { p.hover };
-        frame.rect_clipped(body, color, RADIUS_ROW, clip);
+        frame.rect_clipped(body, RADIUS_ROW, color, clip);
     }
     if let Some((_, field)) = rename.filter(|(rid, _)| *rid == id) {
         let field_rect = body.inset(2.0, 2.0);
@@ -302,7 +302,7 @@ fn draw_pane_row(
     }
     let number = (at + 1).to_string();
     let size = app.fonts.ui_small;
-    let number_w = frame.measure(FontKind::Ui, size, &number);
+    let number_w = frame.measure(Font::ui(size), &number);
     let x = body.x + 8.0;
     ui_text_small(
         frame,
@@ -343,9 +343,9 @@ fn draw_pane_row(
         None => pane.busy().map(|_| p.text_dim),
     };
     if let Some(color) = dot.filter(|_| !hovered) {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, &label);
+        let w = frame.measure(Font::ui(app.fonts.ui), &label);
         let dot = Rect::new(text.x + w + 6.0, cy - 2.0, 4.0, 4.0);
-        frame.rect_clipped(dot, color, 2.0, text.intersect(clip));
+        frame.rect_clipped(dot, 2.0, color, text.intersect(clip));
     }
     if hovered {
         let close = Rect::new(
@@ -382,8 +382,8 @@ fn draw_row(
     if active || hovered {
         frame.rect_clipped(
             row,
-            if active { p.selected } else { p.hover },
             RADIUS_ROW,
+            if active { p.selected } else { p.hover },
             clip,
         );
     }
@@ -432,8 +432,8 @@ fn draw_row(
         if let Some(color) = dot {
             frame.rect_clipped(
                 Rect::new(row.x + 5.0, row.y + row.h / 2.0 - 2.0, 4.0, 4.0),
-                color,
                 2.0,
+                color,
                 clip,
             );
         }

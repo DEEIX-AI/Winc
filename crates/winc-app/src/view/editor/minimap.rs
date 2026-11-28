@@ -79,14 +79,14 @@ pub(super) fn draw_minimap(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let language = doc.highlighter.language();
 
     let color = if active { p.selected_inactive } else { p.hover };
-    frame.rect_clipped(slider, color, SLIDER_RADIUS, area);
+    frame.rect_clipped(slider, SLIDER_RADIUS, color, area);
 
     // 光标所在行的底色绘制在代码下方，标出光标的位置。
     let caret = doc.row_of(doc.text().line_of(doc.selection.head));
     // 行号先相减再转为 `f32`：超过 2²⁴ 的行号 `f32` 无法逐一表示。
     let row_y = |row: usize| area.y + (row as f64 - first as f64) as f32 * MINIMAP_ROW;
     let caret = Rect::new(area.x, row_y(caret), area.w, STROKE);
-    frame.rect_clipped(caret, p.accent.alpha(p.accent.a * 0.5), 0.0, area);
+    frame.rect_clipped(caret, 0.0, p.accent.alpha(p.accent.a * 0.5), area);
 
     let columns = ((area.w - PAD) / CELL) as usize;
     // 大文件不换行时每行只读取 `columns` 列所需的字节（每个字符至少 1 列、最多 4 字节）。
@@ -111,7 +111,7 @@ pub(super) fn draw_minimap(app: &mut App, frame: &mut Frame<'_>, index: usize) {
         } else {
             OPACITY
         };
-        frame.rect_clipped(rect, color.alpha(color.a * opacity), 0.0, area);
+        frame.rect_clipped(rect, 0.0, color.alpha(color.a * opacity), area);
     };
 
     // 不换行时每行一道，按行缓存。

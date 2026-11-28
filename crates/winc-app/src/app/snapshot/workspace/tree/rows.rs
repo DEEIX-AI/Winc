@@ -852,7 +852,7 @@ fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
     assert!(app.panels.tree.overflow.is_some());
     assert!(app.scrollbar_shown(ScrollArea::Tree) > 0.0);
     let pixel = |app: &App, x: f32, y: f32| {
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
     };
@@ -886,7 +886,7 @@ fn a_retracting_name_shares_one_background_across_the_sidebar_edge() {
     );
     paint(&mut app);
     assert!(app.panels.tree.labels.moving());
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
@@ -925,7 +925,7 @@ fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
     // 切到搜索视图：编辑区上方恢复背景色，不留下收回中的名字。
     app.panels.sidebar.view = SidebarView::Search;
     paint(&mut app);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
@@ -945,7 +945,7 @@ fn symbolic_links_carry_a_badge_on_the_icon() {
     paint(&mut app);
     let (plain, link) = (row_of(&app, "a.txt"), row_of(&app, "b.txt"));
     assert!(app.editor.workspace.as_ref().unwrap().rows()[link].symlink);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]

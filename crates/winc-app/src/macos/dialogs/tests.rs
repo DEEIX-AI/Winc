@@ -7,7 +7,7 @@ use crate::macos::tests::method_encoding;
 #[test]
 fn icon_images_keep_the_pixels_and_the_size() {
     // 2×1 像素当成 1×0.5 点：左边不透明的绿，右边全透明。
-    let pixels = Image {
+    let pixels = Snapshot {
         pixels: vec![0xff2e_9e5b, 0x0000_0000],
         width: 2,
         height: 1,

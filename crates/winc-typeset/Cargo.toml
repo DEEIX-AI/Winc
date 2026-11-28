@@ -11,8 +11,10 @@ homepage.workspace = true
 [dependencies]
 winc-emoji.workspace = true
 winc-preview.workspace = true
-winc-render.workspace = true
+cpui-render.workspace = true
 winc-syntax.workspace = true
+winc-core.workspace = true
+icu_segmenter.workspace = true
 winc-i18n.workspace = true
 
 [lints]

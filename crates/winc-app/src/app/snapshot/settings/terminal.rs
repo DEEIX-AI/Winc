@@ -352,22 +352,29 @@ fn shoot_terminal_page_slide() {
 /// 配置文件里只改了字重（另一个窗口或手动修改）：重新加载字体，终端的文字按新的字重画。
 #[test]
 fn a_font_weight_edited_in_the_config_file_reloads_the_fonts() {
-    use winc_render::{Color, FontKind};
+    use cpui_render::{Color, FontKind};
     let (mut app, dir) = terminal_settings("settings-terminal-weight-adopt");
-    app.frame.renderer =
-        Some(Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, None).unwrap());
+    let mut renderer = Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000)).unwrap();
+    renderer.set_font_system(app.frame.fonts.clone());
+    app.frame.renderer = Some(renderer);
     app.apply_fonts().unwrap();
     let ink = |app: &mut App, kind: FontKind| {
         let renderer = app.frame.renderer.as_mut().unwrap();
         renderer.draw(|frame| {
             let all = frame.bounds();
-            frame.text(kind, 30.0, 5.0, 32.0, "H", Color::hex(0xffffff), all);
+            frame.text(
+                Font::new(kind, 30.0),
+                (5.0, 32.0),
+                "H",
+                Color::hex(0xffffff),
+                all,
+            );
         });
-        let image = renderer.image().unwrap();
+        let image = renderer.snapshot().unwrap();
         image.pixels.iter().map(|p| p & 0xff).sum::<u32>()
     };
     let (terminal, mono, ui) = (
-        ink(&mut app, FontKind::Terminal),
+        ink(&mut app, TERMINAL_FONT),
         ink(&mut app, FontKind::Mono),
         ink(&mut app, FontKind::Ui),
     );
@@ -375,7 +382,7 @@ fn a_font_weight_edited_in_the_config_file_reloads_the_fonts() {
     let mut config = app.config.clone();
     config.terminal_font_weight = Some(800);
     app.adopt_config(config);
-    assert!(ink(&mut app, FontKind::Terminal) > terminal);
+    assert!(ink(&mut app, TERMINAL_FONT) > terminal);
     assert_eq!(ink(&mut app, FontKind::Mono), mono);
 
     // 界面字重只作用于界面文字；编辑区字重只作用于编辑区。

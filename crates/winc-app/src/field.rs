@@ -6,8 +6,8 @@
 //! 光标按字素（grapheme）移动。接受位置的接口先把 `pos` 限制在文字长度以内，再退到最近的有效边界，
 //! 越界时不会 panic。
 
+use cpui_render::Rect;
 use unicode_segmentation::UnicodeSegmentation;
-use winc_render::Rect;
 
 /// 撤销栈最多保留的步数（步）。
 ///

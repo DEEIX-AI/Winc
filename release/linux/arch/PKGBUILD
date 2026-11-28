@@ -4,7 +4,7 @@ pkgrel=1
 pkgdesc='A lighter, faster desktop code editor'
 arch=('x86_64')
 url='https://winc.si'
-license=('Apache-2.0')
+license=('GPL-3.0-or-later')
 depends=('glibc>=2.28' 'libgcc' 'fontconfig' 'ttf-font' 'libxkbcommon'
          'libxkbcommon-x11' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr' 'wayland')
 options=('!strip' '!debug')

@@ -431,7 +431,7 @@ impl App {
                 let estimate = text.chars().count() as f32 * size;
                 let measured = renderer
                     .as_ref()
-                    .map(|r| r.measure(FontKind::Ui, size, &text));
+                    .map(|r| r.font_system().measure(Font::ui(size), &text));
                 ((measured.unwrap_or(estimate) + 24.0) / cell).ceil() as usize
             })
         };

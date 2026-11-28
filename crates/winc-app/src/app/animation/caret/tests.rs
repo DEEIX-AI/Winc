@@ -2,20 +2,15 @@
 
 use std::time::Duration;
 
+use cpui_render::Rect;
 use winc_config::SmoothCaret;
 use winc_editor::DocumentId;
-use winc_render::Rect;
 
 use super::*;
 
 /// 创建一个不绘制界面的应用，并使用 `style`。
 fn app(style: SmoothCaret) -> App {
-    let mut app = App::new(
-        Editor::default(),
-        None,
-        Bench::from_env(),
-        Config::default(),
-    );
+    let mut app = App::for_test(Editor::default(), Config::default());
     app.config.smooth_caret_movement = Some(style);
     app
 }

@@ -891,14 +891,14 @@ pub fn font_menu(setting: Setting, current: Option<&str>) -> Vec<MenuEntry> {
     use MenuEntry::{Item, Separator, Submenu};
 
     let item = |(i, _)| Item(MenuCommand::Font(i), true);
-    let fonts = winc_render::installed_fonts().iter().enumerate();
+    let fonts = cpui_render::installed_fonts().iter().enumerate();
     let primary = winc_config::font_list(current).first().copied();
     let ui = matches!(setting, Setting::UiFont | Setting::MarkdownFont);
     let common = if ui { COMMON_UI_FONTS } else { COMMON_FONTS };
     let (first, rest): (Vec<_>, Vec<_>) = fonts.partition(|(_, family)| {
         common.contains(&family.name.as_str()) || primary == Some(family.name.as_str())
     });
-    let (mono, other): (Vec<_>, Vec<_>) = rest.into_iter().partition(|(_, f)| !ui && f.monospace);
+    let (mono, other): (Vec<_>, Vec<_>) = rest.into_iter().partition(|(_, f)| !ui && f.monospaced);
     let mut menu = vec![Item(MenuCommand::FontDefault, true)];
     if !first.is_empty() {
         menu.push(Separator);
@@ -932,7 +932,7 @@ pub fn fallback_font_menu(current: Option<&str>) -> Vec<MenuEntry> {
     let (first, listed) = list
         .split_first()
         .map_or((None, &[][..]), |(f, l)| (Some(*f), l));
-    let fonts = winc_render::installed_fonts();
+    let fonts = cpui_render::installed_fonts();
     let index = |name: &str| fonts.iter().position(|family| family.name == name);
     let chosen: Vec<usize> = listed.iter().filter_map(|&name| index(name)).collect();
     let item = |i| Item(MenuCommand::FallbackFont(i), first.is_some());

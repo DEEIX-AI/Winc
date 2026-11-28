@@ -22,7 +22,7 @@ pub(super) fn draw_hex(app: &mut App, frame: &mut Frame<'_>, index: usize) {
     let Some(view) = doc.hex.as_deref() else {
         return;
     };
-    frame.rect(app.layout.editor, p.editor_bg);
+    frame.surface(app.layout.editor, p.editor_bg);
     if let Some(error) = view.error.clone() {
         draw_placeholder(app, frame, error, &[]);
         return;
@@ -60,17 +60,15 @@ pub(super) fn draw_hex(app: &mut App, frame: &mut Frame<'_>, index: usize) {
                 parts.hex_at(b) + 2.0 * parts.cell + half - (parts.hex_at(a) - half),
                 lh,
             );
-            frame.rect_clipped(hex, shade, 3.0, body);
+            frame.rect_clipped(hex, 3.0, shade, body);
             let ascii = Rect::new(parts.ascii_at(a), y, (b - a + 1) as f32 * parts.cell, lh);
-            frame.rect_clipped(ascii, shade, 2.0, body);
+            frame.rect_clipped(ascii, 2.0, shade, body);
         }
 
         let offset = format!("{start:0width$X}", width = parts.digits);
         frame.text(
-            FontKind::Mono,
-            size,
-            parts.offset_x,
-            baseline,
+            Font::mono(size),
+            (parts.offset_x, baseline),
             &offset,
             p.gutter_text,
             body,
@@ -136,7 +134,7 @@ fn draw_row(
                 true => parts.ascii_at(start as u64),
                 false => parts.hex_at(start as u64),
             };
-            frame.text(FontKind::Mono, size, x, baseline, run, shade, clip);
+            frame.text(Font::mono(size), (x, baseline), run, shade, clip);
         }
     }
 }
@@ -161,10 +159,8 @@ fn draw_header(app: &App, frame: &mut Frame<'_>, parts: &HexParts) {
         let text = format!("{i:02X}");
         let x = parts.hex_at(i);
         frame.text(
-            FontKind::Mono,
-            app.fonts.code,
-            x,
-            baseline,
+            Font::mono(app.fonts.code),
+            (x, baseline),
             &text,
             p.text_dim,
             header,

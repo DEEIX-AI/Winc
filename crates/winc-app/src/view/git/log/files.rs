@@ -383,14 +383,14 @@ pub(super) fn row_base(
             Some(_) => {
                 let pill = Rect::new(row.x, row.y, right - row.x, row.h);
                 let color = over(p.editor_bg, color);
-                frame.rect_clipped(pill, color, RADIUS_ROW, label_clip(lane, clip));
+                frame.rect_clipped(pill, RADIUS_ROW, color, label_clip(lane, clip));
             }
-            None => frame.rect_clipped(row, color, RADIUS_ROW, clip),
+            None => frame.rect_clipped(row, RADIUS_ROW, color, clip),
         }
     }
     for level in 0..depth {
         let guide = Rect::new(arrow_x(x, level).round(), row.y, 1.0, row.h);
-        frame.rect_clipped(guide, p.indent_guide, 0.0, clip);
+        frame.rect_clipped(guide, 0.0, p.indent_guide, clip);
     }
     spill
 }
@@ -551,7 +551,7 @@ fn draw_stat(
         return;
     };
     let text = format!("+{added} −{removed}");
-    let w = frame.measure(FontKind::Ui, app.fonts.ui_small, &text);
+    let w = frame.measure(Font::ui(app.fonts.ui_small), &text);
     let blocks_x = row.right() - BLOCKS_INSET - 5.0 * 7.0 + 1.0;
     let end = ui_text_small(
         frame,
@@ -588,6 +588,6 @@ fn draw_stat(
             p.separator
         };
         let block = Rect::new(blocks_x + k as f32 * 7.0, cy - 3.0, 6.0, 6.0);
-        frame.rect_clipped(block, color, 1.5, clip);
+        frame.rect_clipped(block, 1.5, color, clip);
     }
 }

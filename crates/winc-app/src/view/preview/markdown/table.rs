@@ -104,7 +104,7 @@ pub(super) fn table_toolbar(
             if label.is_empty() {
                 h - pad * 2.0
             } else {
-                frame.measure(winc_render::FontKind::Ui, size, label) + 16.0
+                frame.measure(Font::ui(size), label) + 16.0
             }
         })
         .collect();
@@ -114,12 +114,12 @@ pub(super) fn table_toolbar(
     let y = (table.y - h - 6.0).max(area.y + 2.0);
     let bar = Rect::new(table.x, y, w, h);
     frame.shadow(bar, 6.0, 8.0, 2.0, p.shadow, None);
-    frame.rect_clipped(bar, p.popup_bg, 6.0, area);
+    frame.rect_clipped(bar, 6.0, p.popup_bg, area);
     let mut x = bar.x + pad;
     for (i, ((op, label), bw)) in tools.iter().zip(&widths).enumerate() {
         if gaps.contains(&i) {
             let line = Rect::new(x + 4.0, y + 7.0, 1.0, h - 14.0);
-            frame.rect_clipped(line, p.border, 0.0, area);
+            frame.rect_clipped(line, 0.0, p.border, area);
             x += 9.0;
         }
         let button = Rect::new(x, y + pad, *bw, h - pad * 2.0);
@@ -130,9 +130,9 @@ pub(super) fn table_toolbar(
             _ => false,
         };
         if on {
-            frame.rect_clipped(button, p.accent.alpha(0.18), 4.0, area);
+            frame.rect_clipped(button, 4.0, p.accent.alpha(0.18), area);
         } else if button.contains(mouse.0, mouse.1) {
-            frame.rect_clipped(button, p.text.alpha(0.08), 4.0, area);
+            frame.rect_clipped(button, 4.0, p.text.alpha(0.08), area);
         }
         let color = if on { p.accent } else { p.text_muted };
         if label.is_empty() {
@@ -145,19 +145,11 @@ pub(super) fn table_toolbar(
                     _ => cx + 6.0 - len,
                 };
                 let ly = cy - 5.5 + k as f32 * 3.5;
-                frame.rect_clipped(Rect::new(lx, ly, len, 1.5), color, 0.0, area);
+                frame.rect_clipped(Rect::new(lx, ly, len, 1.5), 0.0, color, area);
             }
         } else {
             let baseline = button.y + button.h / 2.0 + size * 0.35;
-            frame.text(
-                winc_render::FontKind::Ui,
-                size,
-                x + 8.0,
-                baseline,
-                label,
-                color,
-                area,
-            );
+            frame.text(Font::ui(size), (x + 8.0, baseline), label, color, area);
         }
         // 再次点击已选中的对齐方式时取消对齐，使对齐按钮可以切换开关。
         let op = if on { "none" } else { op };

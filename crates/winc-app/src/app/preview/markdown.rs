@@ -151,14 +151,14 @@ pub(crate) struct TableBar {
     /// 表格：（顶层块序号，块中表格的序号）。
     pub key: (usize, usize),
     /// 滚动条的轨道（窗口坐标）：表格的显示区域，滑块位于其底部。
-    pub track: winc_render::Rect,
+    pub track: cpui_render::Rect,
     /// 表格的总宽度（逻辑像素）。
     pub content: f32,
 }
 
 pub(crate) struct MarkdownPreview {
     /// 上一帧的绘制区域（分栏的右半边或整个编辑区）；不显示时为空矩形。
-    pub area: winc_render::Rect,
+    pub area: cpui_render::Rect,
     /// 预览的文档；当前标签改变时重新开始。
     pub doc: Option<DocumentId>,
     /// 最近一次解析的结果。
@@ -253,7 +253,7 @@ pub(crate) struct MarkdownPreview {
     /// 鼠标所在代码块在 `codes` 中的序号。
     pub code_hover: Option<usize>,
     /// 鼠标所在图片的范围（窗口坐标）。
-    pub(crate) image_hover: Option<winc_render::Rect>,
+    pub(crate) image_hover: Option<cpui_render::Rect>,
     /// 上一帧排版的总高度（逻辑像素），滚动时据此限制范围。
     pub height: f32,
     /// 选中的文字：起点和终点（整份文字里的字符偏移，见 `laid::Laid::text`）。
@@ -438,7 +438,7 @@ impl Default for MarkdownPreview {
             diagram: None,
             code_hover: None,
             image_hover: None,
-            area: winc_render::Rect::default(),
+            area: cpui_render::Rect::default(),
             height: 0.0,
             selection: None,
             focused: false,
@@ -607,7 +607,7 @@ fn in_fence<'a>(lines: impl Iterator<Item = ropey::RopeSlice<'a>>) -> bool {
 }
 
 /// 返回当前标签显示 Markdown 预览的区域（分栏的右半边或整个编辑区）；不显示时返回 `None`。
-pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
+pub(crate) fn shown_area(app: &App) -> Option<cpui_render::Rect> {
     let doc = app.editor.active()?;
     // docx、EPUB 和内容已取回的阅读标签没有源代码可切换，总是以整个编辑区显示阅读视图。
     let reading = matches!(doc.reading, Some(winc_editor::Reading::Ready(_)));

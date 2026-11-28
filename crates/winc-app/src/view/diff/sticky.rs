@@ -49,7 +49,7 @@ pub(super) fn draw(
     let height = pinned_height(app, deepest).unwrap_or(0.0);
     draw_pinned_shadow(app, frame, body, deepest);
     let band = Rect::new(body.x, body.y, body.w, height);
-    frame.rect_clipped(band, app.palette.editor_bg, 0.0, body);
+    frame.surface_clipped(band, 0.0, app.palette.editor_bg, body);
 
     let lh = app.fonts.line_height;
     let mut pinned = Vec::new();
