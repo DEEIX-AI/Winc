@@ -890,17 +890,23 @@ fn replace_document(slot: &mut Document, mut fresh: Document) {
     *slot = fresh;
 }
 
-/// 返回用于显示的名称：路径的最后一段；没有最后一段（如根目录）时返回整个路径。
-pub fn display_name(path: &Path) -> Cow<'_, str> {
-    // 远端路径：名字按远端的写法显示，根目录显示为 `目标:/`。
+/// 返回路径的最后一段（文件名或目录名），远端路径按远端的写法；没有最后一段（如根目录）时
+/// 返回 `None`。
+pub fn file_name(path: &Path) -> Option<Cow<'_, str>> {
     if let Some(remote) = winc_backend::locate(path) {
-        return match remote.name() {
-            [] => winc_backend::display(path).unwrap_or_default().into(),
-            name => String::from_utf8_lossy(name).into_owned().into(),
-        };
+        let name = remote.name();
+        return (!name.is_empty()).then(|| String::from_utf8_lossy(name).into_owned().into());
     }
-    path.file_name()
-        .map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy())
+    path.file_name().map(|name| name.to_string_lossy())
+}
+
+/// 返回用于显示的名称：路径的最后一段（见 [`file_name`]）；没有最后一段时返回整个路径，
+/// 远端的根目录显示为 `目标:/`。
+pub fn display_name(path: &Path) -> Cow<'_, str> {
+    file_name(path).unwrap_or_else(|| match winc_backend::locate(path) {
+        Some(_) => winc_backend::display(path).unwrap_or_default().into(),
+        None => path.to_string_lossy(),
+    })
 }
 
 /// 返回用于显示的路径。
