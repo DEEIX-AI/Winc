@@ -25,7 +25,7 @@ pub(in crate::view) fn draw_git_panel(app: &mut App, frame: &mut Frame<'_>) {
     }
     let card = app.layout.git_panel;
     let p = app.palette;
-    frame.rect(card, p.editor_bg);
+    frame.surface(card, p.editor_bg);
     let header = Rect::new(card.x, card.y, card.w, PANEL_HEADER);
     let mut hits = Vec::new();
     let buttons = draw_buttons(app, frame, header, &mut hits);
@@ -98,7 +98,7 @@ fn draw_tabs(app: &App, frame: &mut Frame<'_>, area: Rect, hits: &mut Vec<(Rect,
         .map(|doc| {
             let title = doc.title.as_deref().unwrap_or_default();
             let text = ellipsize(frame, title, size, TAB_MAX - chrome);
-            let w = frame.measure(FontKind::Ui, size, &text) + chrome;
+            let w = frame.measure(Font::ui(size), &text) + chrome;
             (text, w)
         })
         .collect();
@@ -130,14 +130,14 @@ fn draw_tabs(app: &App, frame: &mut Frame<'_>, area: Rect, hits: &mut Vec<(Rect,
             None
         };
         if let Some(fill) = fill {
-            frame.rect_clipped(tab, fill, RADIUS_ROW, area);
+            frame.rect_clipped(tab, RADIUS_ROW, fill, area);
         }
         let color = if i == shown { p.text } else { p.text_muted };
         ui_text_small(frame, app, tab.x + TAB_PAD, tab, text, color, area);
         if hovered || i == shown {
             let on = app.pointer.hover == Hover::GitPanel(PanelHit::Close(i));
             if on {
-                frame.rect_clipped(close, p.hover, RADIUS_ROW, area);
+                frame.rect_clipped(close, RADIUS_ROW, p.hover, area);
             }
             let color = if on { p.text } else { p.text_dim };
             icons::close(frame, center(close), 6.0, color, area);

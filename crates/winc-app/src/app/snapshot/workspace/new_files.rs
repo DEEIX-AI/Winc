@@ -85,7 +85,7 @@ fn missing_files_on_the_command_line_open_as_new_files_at_launch() {
     assert_eq!(editor.documents.len(), 1);
     assert!(editor.active().unwrap().is_new_file());
 
-    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut app = App::for_test(editor, Config::default());
     app.start_one_off(&args);
     let mut winc = crate::winc::Winc::new(None, None);
     let key = winc.add_detached(app);

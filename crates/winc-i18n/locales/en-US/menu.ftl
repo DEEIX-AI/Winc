@@ -26,6 +26,7 @@ menu-open-image = Open Image in New Tab
 menu-open-recent-in-new-window = Open “{ $name }” in New Window
 menu-copied-path = Copied path
 menu-copied-relative-path = Copied relative path
+menu-copied-file-name = Copied file name
 menu-copy-as-prompt = Copy as Prompt
 menu-copied-as-prompt = Copied as prompt
 menu-copied-as-prompt-skipped =

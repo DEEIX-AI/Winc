@@ -26,6 +26,7 @@ menu-open-image = 在新标签中打开图片
 menu-open-recent-in-new-window = 在新窗口中打开「{ $name }」
 menu-copied-path = 已复制路径
 menu-copied-relative-path = 已复制相对路径
+menu-copied-file-name = 已复制文件名
 menu-copy-as-prompt = 复制为提示词
 menu-copied-as-prompt = 已复制为提示词
 menu-copied-as-prompt-skipped = 已复制为提示词，跳过 { $count } 个文件

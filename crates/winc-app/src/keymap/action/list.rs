@@ -87,6 +87,7 @@ pub const ACTIONS: &[Action] = {
         CloseWindow,
         CopyPath,
         CopyRelativePath,
+        CopyFileName,
         CopyReference,
         CopyAbsoluteReference,
         RevealInFinder,

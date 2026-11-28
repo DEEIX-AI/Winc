@@ -4,7 +4,7 @@
 //! `App::request_pdf_pages`），尚未渲染的页显示白色底，渲染失败的页在页面中央显示原因。缩放后
 //! 新尺寸的位图渲染完成之前，先把旧位图缩放显示。左侧是缩略图栏，右下角是自动隐藏的工具栏。
 
-use winc_render::{FontKind, Frame, Rect};
+use cpui_render::{Font, Frame, Rect};
 
 use crate::app::preview::pdf::{GAP, PdfTool, ZOOM_RANGE};
 use crate::app::{App, Hover};
@@ -24,7 +24,7 @@ const STRIP_MIN_AREA: f32 = 560.0;
 /// 在 `area`（窗口坐标）里画当前标签的 PDF。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let p = app.palette;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
     app.preview.pdf.area = area;
     let Some(Ok(pages)) = app.preview.pdf.pages.clone() else {
         return;
@@ -84,8 +84,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             dh as f32 / scale,
         );
         // 页面四周一圈细边框与背景区分，裁剪到正文区域内：滚出顶部的页不画到标签栏上。
-        frame.rect_clipped(page.inset(-1.0, -1.0), p.border, 0.0, body);
-        frame.rect_clipped(page, winc_render::Color::hex(0xffffff), 0.0, body);
+        frame.rect_clipped(page.inset(-1.0, -1.0), 0.0, p.border, body);
+        frame.rect_clipped(page, 0.0, cpui_render::Color::hex(0xffffff), body);
         match app.preview.pdf.rendered.get(&i) {
             Some(pixels) if (pixels.width, pixels.height) == (dw, dh) => {
                 frame.pixels((page.x, page.y), dw, dh, &pixels.rgba, body);
@@ -128,9 +128,9 @@ fn draw_strip(
     current: usize,
 ) -> Vec<(usize, u32, u32)> {
     let p = app.palette;
-    frame.rect_clipped(strip, p.sidebar_bg, 0.0, visible);
+    frame.surface_clipped(strip, 0.0, p.sidebar_bg, visible);
     let edge = Rect::new(strip.right() - 1.0, strip.y, 1.0, strip.h);
-    frame.rect_clipped(edge, p.border, 0.0, visible);
+    frame.rect_clipped(edge, 0.0, p.border, visible);
 
     // 各项在栏内的位置（顶部，缩略图高度），相对内容顶部。
     let mut y = THUMB_GAP;
@@ -179,19 +179,19 @@ fn draw_strip(
             true => (2.0, p.accent, p.text),
             false => (1.0, p.border, p.text_muted),
         };
-        frame.rect_clipped(thumb.inset(-line, -line), color, 0.0, visible);
-        frame.rect_clipped(thumb, winc_render::Color::hex(0xffffff), 0.0, visible);
+        frame.rect_clipped(thumb.inset(-line, -line), 0.0, color, visible);
+        frame.rect_clipped(thumb, 0.0, cpui_render::Color::hex(0xffffff), visible);
         let ready =
             |px: &&std::sync::Arc<winc_preview::image::Pixels>| px.width == w && px.height == h;
         if let Some(pixels) = app.preview.pdf.thumbs.get(&i).filter(ready) {
             frame.pixels((thumb.x, thumb.y), w, h, &pixels.rgba, visible);
         }
         let text = (i + 1).to_string();
-        let tw = frame.measure(FontKind::Ui, size, &text);
+        let tw = frame.measure(Font::ui(size), &text);
         let row = Rect::new(strip.x, thumb.bottom(), strip.w, THUMB_LABEL);
         let baseline = crate::view::ui_baseline(app, row, size);
         let at = (strip.x + (strip.w - tw) / 2.0).round();
-        frame.text(FontKind::Ui, size, at, baseline, &text, label, visible);
+        frame.text(Font::ui(size), (at, baseline), &text, label, visible);
         let hit = Rect::new(thumb.x, thumb.y, thumb.w, thumb.h + THUMB_LABEL).intersect(visible);
         let to = rects.get(i).map_or(0.0, |rect| (rect.y - GAP).max(0.0));
         app.hits.pdf_thumbs.push((hit, to));
@@ -216,16 +216,14 @@ fn draw_failure(app: &App, frame: &mut Frame<'_>, page: Rect, reason: &str) {
     let size = app.fonts.ui_small;
     let room = (page.w - 32.0).max(0.0);
     let text = crate::view::ellipsize(frame, reason, size, room);
-    let tw = frame.measure(FontKind::Ui, size, &text);
+    let tw = frame.measure(Font::ui(size), &text);
     let row = Rect::new(page.x, page.y + page.h / 2.0 - 12.0, page.w, 24.0);
     let baseline = crate::view::ui_baseline(app, row, size);
     frame.text(
-        FontKind::Ui,
-        size,
-        (page.x + (page.w - tw) / 2.0).round(),
-        baseline,
+        Font::ui(size),
+        ((page.x + (page.w - tw) / 2.0).round(), baseline),
         &text,
-        winc_render::Color::hex(FAILURE_TEXT),
+        cpui_render::Color::hex(FAILURE_TEXT),
         page,
     );
 }
@@ -283,7 +281,7 @@ fn paint_toolbar(
             1.0,
             bar.h - TOOL_PAD * 4.0,
         );
-        frame.rect_clipped(line, p.separator, 0.0, body);
+        frame.rect_clipped(line, 0.0, p.separator, body);
     };
     let zoom = app.preview.pdf.zoom;
     let tools = [
@@ -298,7 +296,7 @@ fn paint_toolbar(
         }
         let r = Rect::new(x, bar.y + TOOL_PAD, w, BUTTON);
         if app.pointer.hover == Hover::PdfTool(tool) {
-            frame.rect_clipped(r, p.hover, RADIUS_POPUP - TOOL_PAD, body);
+            frame.rect_clipped(r, RADIUS_POPUP - TOOL_PAD, p.hover, body);
         }
         let center = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         // 已到最小、最大倍数的按钮变淡。
@@ -317,10 +315,10 @@ fn paint_toolbar(
             PdfTool::ZoomIn => crate::icons::plus(frame, center, 10.0, faded(ZOOM_RANGE.1), body),
             PdfTool::ZoomReset => {
                 let text = format!("{:.0}%", zoom * 100.0);
-                let tw = frame.measure(FontKind::Ui, size, &text);
+                let tw = frame.measure(Font::ui(size), &text);
                 let baseline = crate::view::ui_baseline(app, r, size);
                 let at = (center.0 - tw / 2.0).round();
-                frame.text(FontKind::Ui, size, at, baseline, &text, p.text, body);
+                frame.text(Font::ui(size), (at, baseline), &text, p.text, body);
             }
         }
         if shown {

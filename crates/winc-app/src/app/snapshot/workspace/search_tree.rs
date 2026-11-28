@@ -227,6 +227,7 @@ fn directory_rows_dismiss_replace_and_offer_a_menu() {
         [
             MenuCommand::CopyPath,
             MenuCommand::CopyRelativePath,
+            MenuCommand::CopyFileName,
             MenuCommand::RevealInTree,
             MenuCommand::DismissResult,
         ]

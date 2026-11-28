@@ -7,12 +7,12 @@
 use std::path::{Path, PathBuf};
 use winc_editor::encoding::CHOICES;
 
+#[cfg(any(target_os = "macos", test))]
+use cpui_render::Snapshot;
 use winc_core::{Indent, LineEnding};
 use winc_editor::format::{Auto, PRESETS, Task};
 use winc_editor::{DocumentId, EntryKind};
 use winc_i18n::t;
-#[cfg(any(target_os = "macos", test))]
-use winc_render::Image;
 
 use super::*;
 use crate::app::git::location_picker::Place;
@@ -130,6 +130,7 @@ pub enum MenuCommand {
     FindInFolder,
     CopyPath,
     CopyRelativePath,
+    CopyFileName,
     /// 将文件树中选中的文件复制为 Markdown 提示词。
     CopyAsPrompt,
     /// 编辑区：复制 `路径:行`。
@@ -304,6 +305,8 @@ pub enum MenuCommand {
     BackgroundFit(usize),
     /// [`TextWidth::ALL`](winc_config::TextWidth::ALL) 中的序号（从 0 起）。
     TextWidth(usize),
+    /// 分栏时预览是否位于左侧。
+    SplitPreviewPosition(bool),
     /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
     TerminalPosition(bool),
     /// 设置中终端「标签位置」菜单的一项：`true` 为右侧，`false` 为顶部。
@@ -316,7 +319,7 @@ pub enum MenuCommand {
     RightClick(usize),
     /// 设置中字体菜单的「系统默认」（终端字体为「跟随编辑器」）。
     FontDefault,
-    /// 设置中字体菜单的一项，参数为 [`winc_render::installed_fonts`] 中的序号（从 0 起）。
+    /// 设置中字体菜单的一项，参数为 [`cpui_render::installed_fonts`] 中的序号（从 0 起）。
     Font(usize),
     /// 设置中字体菜单「后备字体」中的一项，参数同 [`MenuCommand::Font`]：加入或移出字体列表。
     FallbackFont(usize),
@@ -628,6 +631,7 @@ impl MenuCommand {
             MenuCommand::FindInFolder => t!("cmd-find-in-folder"),
             MenuCommand::CopyPath => t!("cmd-copy-path"),
             MenuCommand::CopyRelativePath => t!("cmd-copy-relative-path"),
+            MenuCommand::CopyFileName => t!("cmd-copy-file-name"),
             MenuCommand::CopyAsPrompt => t!("menu-copy-as-prompt"),
             MenuCommand::CopyReference => t!("cmd-copy-reference"),
             MenuCommand::Rename => t!("cmd-rename-file"),
@@ -673,6 +677,9 @@ impl MenuCommand {
             | MenuCommand::OpenRecentInNewWindow(_) => "",
             MenuCommand::DefaultShell(None) => t!("settings-terminal-shell-default"),
             MenuCommand::DefaultShellCustom => t!("settings-terminal-shell-custom"),
+            MenuCommand::SplitPreviewPosition(left) => {
+                crate::layout::split_preview_position_label(left)
+            }
             MenuCommand::TerminalPosition(false) => t!("settings-terminal-position-bottom"),
             MenuCommand::TerminalPosition(true) => t!("settings-terminal-position-right"),
             MenuCommand::TerminalTabPosition(false) => t!("settings-terminal-tab-position-top"),
@@ -864,7 +871,7 @@ impl MenuCommand {
                 .get(i)
                 .map_or("", |theme| theme.name()),
             MenuCommand::FontDefault => t!("settings-font-default"),
-            MenuCommand::Font(i) | MenuCommand::FallbackFont(i) => winc_render::installed_fonts()
+            MenuCommand::Font(i) | MenuCommand::FallbackFont(i) => cpui_render::installed_fonts()
                 .get(i)
                 .map_or("", |family| family.name.as_str()),
             MenuCommand::NewWindow => t!("cmd-new-window"),
@@ -1099,6 +1106,8 @@ pub enum MenuTarget {
     BackgroundFit,
     /// 设置中「Markdown 预览正文宽度」的选项菜单。
     TextWidth,
+    /// 选择分栏时预览所在的一侧。
+    SplitPreviewPosition,
     /// 设置中「新建文件的默认语言」的选项菜单：纯文本和全部语言。
     DefaultLanguage,
     /// 设置的终端页中的「默认 Shell」。

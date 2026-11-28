@@ -654,7 +654,8 @@ fn shoot_search_no_results() {
 fn right_clicking_a_search_result_offers_its_menu() {
     crate::app::snapshot::use_vscode_keys();
     use MenuCommand::{
-        Copy, CopyPath, CopyRelativePath, DismissResult, OpenFiles, ReplaceResult, RevealInTree,
+        Copy, CopyFileName, CopyPath, CopyRelativePath, DismissResult, OpenFiles, ReplaceResult,
+        RevealInTree,
     };
 
     let dir = search_folder("result-menu");
@@ -691,6 +692,7 @@ fn right_clicking_a_search_result_offers_its_menu() {
             OpenFiles,
             CopyPath,
             CopyRelativePath,
+            CopyFileName,
             RevealInTree,
             DismissResult
         ]
@@ -714,6 +716,9 @@ fn right_clicking_a_search_result_offers_its_menu() {
         app.clipboard.copied.as_deref().map(Path::new),
         Some(main.as_path())
     );
+    // 命令面板的「复制文件名」同样作用于选中的结果。
+    app.run_action(Action::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("main.rs"));
 
     // 匹配行：复制的是原来的整行（预览去掉了行首空白），不带行尾。
     let found = row_of(&app, ResultRow::Match(2, 0)).unwrap();
@@ -766,6 +771,7 @@ fn right_clicking_a_search_result_offers_its_menu() {
             OpenFiles,
             CopyPath,
             CopyRelativePath,
+            CopyFileName,
             RevealInTree,
             ReplaceResult(true),
             DismissResult
@@ -1075,14 +1081,12 @@ fn the_focus_ring_has_even_sides_at_any_scale() {
     app.press_panel_button(PanelButton::Expand);
     app.focus = Focus::GlobalReplace;
     for scale in [0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.2] {
-        let bg = app.palette.frame_bg;
-        let renderer = winc_render::Renderer::offscreen(SIZE.0, SIZE.1, scale, bg, None, None);
-        app.frame.renderer = Some(renderer.unwrap());
+        app.frame.renderer = Some(offscreen(&app, SIZE, scale));
         // 每轮加宽侧栏 0.3 逻辑像素，使输入框的边落在非整数的物理像素上。
         app.panels.sidebar.width += 0.3;
         paint(&mut app);
         let field = app.panel_parts().replace;
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let accent = app.palette.accent;
         let target = [accent.r, accent.g, accent.b].map(|c| (c * 255.0).round() as i32);
         let lit = |x: i32, y: i32| {

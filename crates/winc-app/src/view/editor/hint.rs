@@ -3,7 +3,7 @@
 //! 气泡在名字所在行的上方，上方放不下时在下方；出现时向名字那一侧滑出并淡入，消失时原地淡出，
 //! 与位置浮窗的过渡一致。
 
-use winc_render::Stroke;
+use cpui_render::{Font, Stroke};
 
 use super::*;
 
@@ -40,7 +40,7 @@ pub(in crate::view) fn draw_name_hint(app: &App, frame: &mut Frame<'_>) {
     };
 
     let p = app.palette;
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, &hint.text) + 2.0 * PAD;
+    let w = frame.measure(Font::ui(app.fonts.ui), &hint.text) + 2.0 * PAD;
     let right = editor.right() - SCROLLBAR_HIT - 8.0;
     let x = (name_x - 20.0).min(right - w).max(editor.x + 8.0).round();
     let above = top - GAP - POINTER - HEIGHT >= editor.y + 4.0;

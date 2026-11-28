@@ -406,8 +406,8 @@ fn word_highlights_keep_distinct_colors_in_the_editor_and_both_diff_panes() {
     };
     let pixel = |app: &App, x: f32, y: f32| {
         let renderer = app.frame.renderer.as_ref().unwrap();
-        let image = renderer.image().unwrap();
-        let scale = renderer.scale_factor();
+        let image = renderer.snapshot().unwrap();
+        let scale = renderer.scale();
         image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
     };
     let editor_colors = |app: &App| {

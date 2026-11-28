@@ -102,7 +102,7 @@ pub struct SettingsState {
     /// 出现、消失动画用的快照，动画开头画一次存下来，动画结束就释放。
     pub cache: Option<DialogCache>,
     /// 设置页滚动或拖动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
-    pub scroll_base: Option<winc_render::Snapshot>,
+    pub scroll_base: Option<cpui_render::Capture>,
     /// 最近一次滚动或拖动的时刻；两者都未进行时为 `None`。
     pub scrolled_at: Option<Instant>,
     /// 卡片相对窗口中央的偏移（逻辑像素），拖动标题行时改变；窗口存在期间保留，再次打开时
@@ -114,9 +114,9 @@ pub struct SettingsState {
 #[derive(Debug)]
 pub struct DialogCache {
     /// 浮层底下的整个窗口（主界面，不含浮层）。
-    pub base: winc_render::Snapshot,
+    pub base: cpui_render::Capture,
     /// 画好的卡片：原大、不透明，不含阴影。
-    pub card: winc_render::Snapshot,
+    pub card: cpui_render::Capture,
 }
 
 /// 格式化页中一种语言的一行（格式化工具或修复工具）：右侧显示工具，名称下方显示来源和提醒。
@@ -182,7 +182,8 @@ fn font_error(value: &Option<String>) -> Option<String> {
     Some(match (error, spec) {
         (FontError::NotFound, FontSpec::Name(_)) => t!("settings-font-not-installed", name = name),
         (FontError::NotFound, FontSpec::Path(_)) => t!("settings-font-file-not-found", name = name),
-        (FontError::Unsupported, _) => t!("settings-font-unsupported", name = name),
+        // 渲染层以后可能加入新的原因，都按无法使用处理。
+        _ => t!("settings-font-unsupported", name = name),
     })
 }
 
@@ -230,7 +231,7 @@ impl App {
         self.refresh_changed_settings();
         // 列出字体要读取字体文件，先在后台读好，打开字体菜单时不必等待；「默认 Shell」菜单中的
         // shell 同样在后台检测。
-        std::thread::spawn(winc_render::installed_fonts);
+        std::thread::spawn(cpui_render::installed_fonts);
         self.detect_terminal_shells();
         // 能否找到工具取决于用户 shell 中的 `PATH`，因此在后台获取该环境，取到之后再补上提醒。
         if let Some(proxy) = self.link.proxy.clone() {
@@ -327,8 +328,9 @@ impl App {
     ) -> Option<Rect> {
         let row = layout.row(setting)?;
         let measure = |text: &str| {
-            (self.frame.renderer.as_ref())
-                .map_or(0.0, |r| r.measure(FontKind::Ui, self.fonts.ui, text))
+            (self.frame.renderer.as_ref()).map_or(0.0, |r| {
+                r.font_system().measure(Font::ui(self.fonts.ui), text)
+            })
         };
         Some(if setting == Setting::Version {
             let text_w = measure(&crate::layout::version_line());
@@ -411,7 +413,7 @@ impl App {
         let size = self.fonts.ui_small;
         let renderer = self.frame.renderer.as_ref();
         self.settings_layout_with(&mut |text: &str| {
-            renderer.map_or(0.0, |r| r.measure(FontKind::Ui, size, text))
+            renderer.map_or(0.0, |r| r.font_system().measure(Font::ui(size), text))
         })
     }
 
@@ -1294,6 +1296,14 @@ impl App {
     pub(in crate::app) fn set_terminal_shell(&mut self, command: Option<String>) {
         self.settings.selected = Setting::TerminalShell;
         self.config.terminal_shell = command;
+        self.save_config();
+        self.request_redraw();
+    }
+
+    /// 设置分栏时预览所在的一侧，并更新布局及配置文件。
+    pub(in crate::app) fn set_split_preview_position(&mut self, left: bool) {
+        self.config.split_preview_left = Some(left);
+        self.relayout();
         self.save_config();
         self.request_redraw();
     }

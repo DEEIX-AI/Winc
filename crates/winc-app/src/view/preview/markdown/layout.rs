@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use winc_render::{Frame, Rect};
+use cpui_render::{Frame, Rect};
 
 use crate::app::App;
 use crate::app::preview::markdown::LiveLeaf;

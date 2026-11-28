@@ -82,7 +82,8 @@ pub(crate) fn wrap_area_field(
     // 当前行中最近一个可折行的边界在 `all` 中的下标，以及上一个字素的最后一个字符。
     let mut opportunity: Option<usize> = None;
     let mut previous: Option<char> = None;
-    for (start, grapheme) in display.grapheme_indices(true) {
+    let widths = grapheme_widths(frame, app.fonts.ui, &display);
+    for ((start, grapheme), &w) in display.grapheme_indices(true).zip(&widths) {
         let end = start + grapheme.len();
         if grapheme == "\n" {
             row += 1;
@@ -98,7 +99,6 @@ pub(crate) fn wrap_area_field(
             opportunity = Some(all.len() - 1);
         }
         previous = grapheme.chars().next_back();
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, grapheme);
         // 放不下：从最近的可折行处起换到下一行；该行没有可折行处时只把这个字素换到下一行。
         // 折行处的边界归入下一行的开头，上一行末尾的位置另记在 `ends` 中。
         while x > 0.0 && x + w > width {
@@ -252,7 +252,7 @@ pub(crate) fn draw_area_field(
             let tail = if to > last.0 { 6.0 } else { 0.0 };
             let (x0, x1) = (area.x + x_at(a), area.x + x_at(b) + tail);
             let rect = Rect::new(x0, band(r).y + 1.0, (x1 - x0).max(2.0), AREA_LINE - 2.0);
-            frame.rect_clipped(rect, color, 3.0, area);
+            frame.rect_clipped(rect, 3.0, color, area);
         }
     }
 
@@ -274,7 +274,7 @@ pub(crate) fn draw_area_field(
             let x1 = if r == pre_end.0 { pre_end.1 } else { area.w };
             let line = band(r);
             let underline = Rect::new(area.x + x0, line.y + line.h / 2.0 + 8.0, x1 - x0, 1.0);
-            frame.rect_clipped(underline, p.accent, 0.0, area);
+            frame.rect_clipped(underline, 0.0, p.accent, area);
         }
     }
 
@@ -295,8 +295,8 @@ fn draw_field_caret(frame: &mut Frame<'_>, p: &Palette, x: f32, row: Rect, clip:
     let x = (x - CARET_W / 2.0).min(clip.right() - CARET_W);
     frame.rect_clipped(
         Rect::new(x, row.y + (row.h - 16.0) / 2.0, CARET_W, 16.0),
-        p.caret,
         0.0,
+        p.caret,
         clip,
     );
 }
@@ -312,7 +312,7 @@ fn draw_mask(frame: &mut Frame<'_>, x: f32, area: Rect, count: usize, color: Col
     for i in 0..count {
         let dot_x = x + i as f32 * MASK_W + (MASK_W - MASK_DOT) / 2.0;
         let dot = Rect::new(dot_x, y, MASK_DOT, MASK_DOT);
-        frame.rect_clipped(dot, color, MASK_DOT / 2.0, area);
+        frame.rect_clipped(dot, MASK_DOT / 2.0, color, area);
     }
     x + count as f32 * MASK_W
 }
@@ -341,9 +341,8 @@ pub(super) fn draw_bar_field(
     let masked = field.is_masked();
     let count = |text: &str| text.graphemes(true).count();
 
-    // 记录每个字素簇（grapheme）边界相对文本起点的 x 偏移（逻辑像素）。界面字体不做字距调整，
-    // 逐个字素量出的宽度之和与整段文本的宽度相同。文字和字号都没变时沿用上一帧量好的结果
-    // （`FieldView::measured`）：输入框每帧都画，文字很长时逐个量是主要开销。
+    // 记录每个字素簇（grapheme）边界相对文本起点的 x 偏移（逻辑像素）。文字和字号都没变时沿用
+    // 上一帧量好的结果（`FieldView::measured`）：输入框每帧都画，文字很长时测量是主要开销。
     let mut stops = std::mem::take(&mut field.view.stops);
     let size = app.fonts.ui;
     let fresh = field
@@ -355,12 +354,12 @@ pub(super) fn draw_bar_field(
         stops.clear();
         let mut width = 0.0;
         stops.push((0, 0.0));
-        for (start, grapheme) in field.text().grapheme_indices(true) {
-            width += if masked {
-                MASK_W
-            } else {
-                frame.measure(FontKind::Ui, size, grapheme)
-            };
+        let widths = match masked {
+            true => Vec::new(),
+            false => grapheme_widths(frame, size, field.text()),
+        };
+        for (k, (start, grapheme)) in field.text().grapheme_indices(true).enumerate() {
+            width += widths.get(k).copied().unwrap_or(MASK_W);
             stops.push((start + grapheme.len(), width));
         }
         field.view.measured = Some((field.text().to_owned(), size));
@@ -372,7 +371,7 @@ pub(super) fn draw_bar_field(
     let preedit_w = if masked {
         count(preedit) as f32 * MASK_W
     } else {
-        frame.measure(FontKind::Ui, app.fonts.ui, preedit)
+        frame.measure(Font::ui(app.fonts.ui), preedit)
     };
     let room = area.w - 4.0;
     let mut scroll = field.view.scroll;
@@ -426,7 +425,7 @@ pub(super) fn draw_bar_field(
         } else {
             p.selected_inactive
         };
-        frame.rect_clipped(rect, color, 3.0, area);
+        frame.rect_clipped(rect, 3.0, color, area);
     }
 
     // 输入法组字中的文本插在光标处，绘制在光标前后两段文本之间。
@@ -448,12 +447,12 @@ pub(super) fn draw_bar_field(
             ui_text(frame, app, x, area, preedit, p.text, area)
         };
         let underline = Rect::new(start, area.y + area.h / 2.0 + 8.0, x - start, 1.0);
-        frame.rect_clipped(underline, p.accent, 0.0, area);
+        frame.rect_clipped(underline, 0.0, p.accent, area);
         caret = app.preedit_cursor(preedit).map(|at| {
             let head = &preedit[..at];
             match masked {
                 true => start + count(head) as f32 * MASK_W,
-                false => start + frame.measure(FontKind::Ui, app.fonts.ui, head),
+                false => start + frame.measure(Font::ui(app.fonts.ui), head),
             }
         });
     }
@@ -470,4 +469,26 @@ pub(super) fn draw_bar_field(
     }
 
     focused.then(|| caret_rect(caret.unwrap_or(x)))
+}
+
+/// 返回 `text` 中每个字素按界面字体、字号 `size` 绘制时所占的宽度（逻辑像素），换行符为 0。
+///
+/// 界面文字整行排版，有字距调整和连字：单独量每个字素再相加，会与绘制出的位置错开。每段（两个
+/// 换行符之间）各按一行排版。
+fn grapheme_widths(frame: &mut Frame<'_>, size: f32, text: &str) -> Vec<f32> {
+    let mut widths = Vec::new();
+    for (k, paragraph) in text.split('\n').enumerate() {
+        if k > 0 {
+            widths.push(0.0);
+        }
+        let chars: Vec<char> = paragraph.chars().collect();
+        let advances = frame.advances(Font::ui(size), &chars);
+        let mut at = 0;
+        for grapheme in paragraph.graphemes(true) {
+            let n = grapheme.chars().count();
+            widths.push(advances[at..at + n].iter().sum());
+            at += n;
+        }
+    }
+    widths
 }

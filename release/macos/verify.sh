@@ -109,6 +109,11 @@ verify_app() {
     [[ -f "$app/Contents/Resources/$binary" ]] || fail "$binary is missing from Resources"
   done
 
+  # The license and the copyright notices, which include those of CPUI.
+  for notice in LICENSE NOTICE; do
+    [[ -f "$app/Contents/Resources/$notice" ]] || fail "$notice is missing from Resources"
+  done
+
   codesign --verify --deep --strict --verbose=2 "$app"
   if $signed; then
     check_team "$app"

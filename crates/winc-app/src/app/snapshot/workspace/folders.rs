@@ -428,7 +428,7 @@ fn added_folders_come_back_when_the_last_folder_is_restored_at_launch() {
     let session = state.last_session().unwrap();
     assert!(crate::open_session_folder(&mut editor, session));
     crate::app::restore_at_launch(&mut editor, Some(session), None);
-    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut app = App::for_test(editor, Config::default());
     app.state = state;
     app.restore_launch_group();
     assert_eq!(app.editor.root(), Some(main.as_path()));

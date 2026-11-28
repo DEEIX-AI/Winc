@@ -268,14 +268,9 @@ fn the_log_placement_setting_moves_the_logs_and_is_remembered() {
         git_log_placement: Some(LogPlacement::Editor),
         ..Config::default()
     };
-    let fresh = App::new(Editor::default(), None, Bench::from_env(), config);
+    let fresh = App::for_test(Editor::default(), config);
     assert!(!fresh.git.panel.docked);
-    let fresh = App::new(
-        Editor::default(),
-        None,
-        Bench::from_env(),
-        Config::default(),
-    );
+    let fresh = App::for_test(Editor::default(), Config::default());
     assert!(fresh.git.panel.docked);
     let _ = std::fs::remove_dir_all(&root);
 }

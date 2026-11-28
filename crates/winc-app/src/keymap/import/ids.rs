@@ -213,6 +213,7 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         &["CopyContentRootPath", "CopySourceRootPath"],
         &["copyRelativeFilePath"],
     ),
+    (CopyFileName, &["CopyFileName"], &[]),
     (CopyReference, &["CopyReference"], &[]),
     (CopyAbsoluteReference, &["CopyReference"], &[]),
     (RevealInFinder, &["RevealIn"], &["revealFileInOS"]),

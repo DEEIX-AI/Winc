@@ -661,7 +661,7 @@ fn the_title_bar_setting_applies_at_once() {
 fn windows_share_one_background_layer() {
     let (mut winc, a, b, dir) = two_windows("windows-wallpaper");
     let image = dir.join("bg.png");
-    let red = winc_render::Image {
+    let red = cpui_render::Snapshot {
         pixels: vec![0xffff_0000; 64 * 48],
         width: 64,
         height: 48,

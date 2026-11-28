@@ -463,7 +463,7 @@ fn the_compact_setting_also_applies_to_the_folder_opened_at_startup() {
         compact_folders: Some(false),
         ..Config::default()
     };
-    let mut app = App::new(editor, None, Bench::from_env(), config);
+    let mut app = App::for_test(editor, config);
     let ws = app.editor.workspace.as_mut().unwrap();
     ws.toggle(0);
     assert_eq!(ws.rows()[0].label(), "src");

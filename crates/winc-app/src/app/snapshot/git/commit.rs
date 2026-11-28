@@ -98,11 +98,15 @@ fn right_clicking_a_changed_file_offers_diff_open_and_rollback() {
             MenuCommand::Reveal,
             MenuCommand::CopyPath,
             MenuCommand::CopyRelativePath,
+            MenuCommand::CopyFileName,
         ]
     );
+    app.run_menu_command(MenuCommand::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("main.rs"));
 
     // 「回滚」只作用于该文件（没有窗口时不弹确认框）。
     let before = std::fs::read_to_string(&main).unwrap();
+    right_click(&mut app, (row.x + 120.0, row.y + row.h / 2.0));
     app.run_menu_command(MenuCommand::GitRollbackFile);
     for _ in 0..200 {
         app.poll_commit();

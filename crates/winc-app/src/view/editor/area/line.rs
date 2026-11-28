@@ -254,7 +254,7 @@ impl Screen<'_> {
             } else {
                 p.indent_guide
             };
-            frame.rect_clipped(guide, color, 0.0, self.text_rect);
+            frame.rect_clipped(guide, 0.0, color, self.text_rect);
         }
     }
 
@@ -284,7 +284,7 @@ impl Screen<'_> {
                     end.min(line_end),
                     &mut |top, x0, x1| {
                         let rect = Rect::new(x0, top + 1.0, (x1 - x0).max(2.0), lh - 2.0);
-                        frame.rect_clipped(rect, color, 3.0, text_rect);
+                        frame.rect_clipped(rect, 3.0, color, text_rect);
                     },
                 );
             }
@@ -305,7 +305,7 @@ impl Screen<'_> {
                 }
                 self.spans(row, start, end, &mut |top, x0, x1| {
                     let rect = Rect::new(x0, top + 1.0, x1 - x0, lh - 2.0);
-                    frame.rect_clipped(rect, p.occurrence, 3.0, text_rect);
+                    frame.rect_clipped(rect, 3.0, p.occurrence, text_rect);
                 });
             }
         }
@@ -314,7 +314,7 @@ impl Screen<'_> {
         for (a, b, color) in marked_occurrences(app, row.chars, shown) {
             self.spans(row, line_start + a, line_start + b, &mut |top, x0, x1| {
                 let rect = Rect::new(x0, top + 1.0, x1 - x0, lh - 2.0);
-                frame.rect_clipped(rect, color, 3.0, text_rect);
+                frame.rect_clipped(rect, 3.0, color, text_rect);
             });
         }
 
@@ -326,7 +326,7 @@ impl Screen<'_> {
         {
             let (part, x) = self.place(row, pos);
             let rect = Rect::new(x, row.y + part as f32 * lh + 1.0, self.cell, lh - 2.0);
-            frame.rect_clipped(rect, p.match_brace, 3.0, text_rect);
+            frame.rect_clipped(rect, 3.0, p.match_brace, text_rect);
         }
     }
 
@@ -469,15 +469,7 @@ impl Screen<'_> {
         let baseline = row.baseline + part as f32 * self.lh;
         let color = self.app.palette.indent_guide_active;
         let size = self.app.fonts.code;
-        frame.text(
-            FontKind::Mono,
-            size,
-            x,
-            baseline,
-            mark,
-            color,
-            self.text_rect,
-        );
+        frame.text(Font::mono(size), (x, baseline), mark, color, self.text_rect);
     }
 
     /// 在最后一段之后绘制截断说明和「显示整行」，以及折叠行的小块；两者的点击区域分别记录到
@@ -502,10 +494,8 @@ impl Screen<'_> {
             let size = app.fonts.ui_small;
             let note = t!("editor-line-truncated", count = MAX_LINE_CHARS);
             let x = frame.text(
-                FontKind::Ui,
-                size,
-                x,
-                tail_baseline,
+                Font::ui(size),
+                (x, tail_baseline),
                 &note,
                 p.text_dim,
                 text_rect,
@@ -516,7 +506,7 @@ impl Screen<'_> {
                 let color = if hovered { p.text } else { p.accent };
                 let show = t!("editor-line-show-whole");
                 let (from, clip) = (x + 8.0, text_rect);
-                let to = frame.text(FontKind::Ui, size, from, tail_baseline, show, color, clip);
+                let to = frame.text(Font::ui(size), (from, tail_baseline), show, color, clip);
                 long_hits.push((Rect::new(from, tail_y, to - from, self.lh), row.line));
             }
         }
@@ -532,10 +522,8 @@ impl Screen<'_> {
             let x = origin_x + (cells + 2) as f32 * self.cell;
             let size = app.fonts.ui_small;
             frame.text(
-                FontKind::Ui,
-                size,
-                x,
-                tail_baseline,
+                Font::ui(size),
+                (x, tail_baseline),
                 text,
                 p.text_dim,
                 text_rect,
@@ -546,14 +534,14 @@ impl Screen<'_> {
         if row.collapsed && row.ends {
             let x = (origin_x + (cells + 1) as f32 * self.cell).round();
             let chip = Rect::new(x, tail_y + 3.0, 22.0, app.fonts.line_height - 6.0);
-            frame.rect_clipped(chip, p.selected_inactive, 4.0, text_rect);
+            frame.rect_clipped(chip, 4.0, p.selected_inactive, text_rect);
             if app.pointer.hover == Hover::Folded(row.line) {
-                frame.rect_clipped(chip, p.hover, 4.0, text_rect);
+                frame.rect_clipped(chip, 4.0, p.hover, text_rect);
             }
             let cy = (chip.y + chip.h / 2.0 - 1.0).round();
             for i in 0..3 {
                 let dot = Rect::new(chip.x + 6.0 + i as f32 * 4.0, cy, 2.0, 2.0);
-                frame.rect_clipped(dot, p.text_muted, 1.0, text_rect);
+                frame.rect_clipped(dot, 1.0, p.text_muted, text_rect);
             }
             folded_hits.push((chip, row.line));
         }
@@ -627,7 +615,7 @@ impl Screen<'_> {
         {
             let (part, x) = self.place(row, pos);
             let bar = caret_rect(x, row.y + part as f32 * lh, lh);
-            frame.rect_clipped(bar, app.palette.caret, 1.0, text_rect);
+            frame.rect_clipped(bar, 1.0, app.palette.caret, text_rect);
         }
         // 其余光标与主光标同步闪烁；输入法组字只显示在主光标处。
         if self.focused {

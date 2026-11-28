@@ -209,6 +209,23 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
 }
 
 #[test]
+fn clicking_the_empty_welcome_area_returns_focus_to_the_editor() {
+    use_vscode_keys();
+    let mut app = blank_app(false);
+    show_terminal(&mut app, "$ ");
+    paint(&mut app);
+
+    assert!(app.editor.active.is_none());
+    assert_eq!(app.focus, Focus::Terminal);
+
+    let editor = app.layout.editor;
+    click(&mut app, (editor.x + 40.0, editor.y + editor.h / 2.0));
+    assert_eq!(app.focus, Focus::Editor);
+    assert!(press(&mut app, &["cmd"], Char(',')));
+    assert!(app.settings.open);
+}
+
+#[test]
 fn clicks_move_the_focus_and_the_gap_resizes_the_panel() {
     let dir = sample_folder("terminal-mouse");
     let mut app = app_with(&dir.join("short.rs"), false);
@@ -981,7 +998,7 @@ fn reverse_video_keeps_default_text_visible() {
         show_terminal(&mut app, bytes);
         paint(&mut app);
         let renderer = app.frame.renderer.as_ref().unwrap();
-        renderer.image().unwrap().pixels.clone()
+        renderer.snapshot().unwrap().pixels.clone()
     };
     let reversed = "\x1b[?25l\x1b[?5h";
     assert_ne!(image(&format!("{reversed}text")), image(reversed));
@@ -998,7 +1015,7 @@ fn block_elements_leave_no_gap_between_rows() {
     paint(&mut app);
     let (x, y) = cell_center(&app, 0, 0);
     let lh = app.fonts.terminal_line_height;
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]
@@ -1024,7 +1041,7 @@ fn contrast_protection_keeps_shape_characters_seamless() {
     let renderer = app.frame.renderer.as_mut().unwrap();
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |col: usize| {
         let (x, y) = cell_center(&app, 0, col);
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
@@ -1053,7 +1070,7 @@ fn powerline_separators_fill_the_cell_height() {
         let renderer = app.frame.renderer.as_mut().unwrap();
         renderer.draw(|frame| scale = frame.scale());
         paint(&mut app);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let yellow = |x: usize, y: usize| {
             image.pixels[y * image.width as usize + x] & 0x00ff_ffff == 0x00d7_9921
         };
@@ -1126,7 +1143,7 @@ fn restored_remote_tabs_wait_for_the_shell_setup() {
     let shot = |app: &mut App| {
         paint(app);
         let renderer = app.frame.renderer.as_ref().unwrap();
-        renderer.image().unwrap().pixels.clone()
+        renderer.snapshot().unwrap().pixels.clone()
     };
     let waiting = shot(&mut app);
     let want = std::mem::take(&mut app.terminal.want);
@@ -1424,7 +1441,7 @@ fn combining_marks_and_underline_styles_are_drawn() {
             .renderer
             .as_ref()
             .unwrap()
-            .image()
+            .snapshot()
             .unwrap()
             .pixels
             .clone()

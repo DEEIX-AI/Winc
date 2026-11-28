@@ -117,7 +117,7 @@ pub(in crate::view::git) fn fit_badges(
     let p = app.palette;
     let size = app.fonts.ui_small;
     let more_w = |frame: &mut Frame<'_>, n: usize| {
-        frame.measure(FontKind::Ui, size, &format!("+{n}")) + BADGE_PAD
+        frame.measure(Font::ui(size), &format!("+{n}")) + BADGE_PAD
     };
     let mut out = Vec::new();
     let mut used = 0.0;
@@ -130,7 +130,7 @@ pub(in crate::view::git) fn fit_badges(
             0.0
         };
         let fits = (room - used - reserve).min(BADGE_MAX);
-        let full = badge.width(frame.measure(FontKind::Ui, size, &badge.text));
+        let full = badge.width(frame.measure(Font::ui(size), &badge.text));
         if i > 0 && full.min(BADGE_MAX) > fits && fits < BADGE_MIN {
             let soft = p.text_muted.alpha(p.text_muted.a * 0.16);
             out.push(Badge {
@@ -148,7 +148,7 @@ pub(in crate::view::git) fn fit_badges(
         };
         let room = (fits - badge.pad()).max(0.0);
         let text = truncate_end(frame, &badge.text, size, room).into_owned();
-        used += badge.width(frame.measure(FontKind::Ui, size, &text)) + BADGE_GAP;
+        used += badge.width(frame.measure(Font::ui(size), &text)) + BADGE_GAP;
         out.push(Badge {
             text,
             ..badge.clone()
@@ -166,7 +166,7 @@ pub(in crate::view::git) fn badges_width(
     let size = app.fonts.ui_small;
     let total: f32 = badges
         .iter()
-        .map(|b| b.width(frame.measure(FontKind::Ui, size, &b.text)) + BADGE_GAP)
+        .map(|b| b.width(frame.measure(Font::ui(size), &b.text)) + BADGE_GAP)
         .sum();
     (total - BADGE_GAP).max(0.0)
 }
@@ -194,10 +194,10 @@ pub(super) fn draw_badge(
     badge: &Badge,
     clip: Rect,
 ) -> f32 {
-    let w = badge.width(frame.measure(FontKind::Ui, app.fonts.ui_small, &badge.text));
+    let w = badge.width(frame.measure(Font::ui(app.fonts.ui_small), &badge.text));
     let h = (row.h - 6.0).min(18.0);
     let rect = Rect::new(x, (row.y + (row.h - h) / 2.0).round(), w, h);
-    frame.rect_clipped(rect, badge.fill, 4.0, clip);
+    frame.rect_clipped(rect, 4.0, badge.fill, clip);
     let mut text_x = x + BADGE_PAD / 2.0;
     if let Some(mark) = badge.mark {
         let center = (text_x + 4.5, rect.y + rect.h / 2.0);
@@ -226,7 +226,7 @@ pub(super) fn draw_avatar(
     let (fill, ink) = p.badges[hash as usize % p.badges.len()];
     // 头像的半径（逻辑像素，取自调参）。
     let r = 7.0;
-    frame.rect_clipped(Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r), fill, r, clip);
+    frame.rect_clipped(Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r), r, fill, clip);
     let initial: String = commit
         .author
         .chars()
@@ -234,7 +234,7 @@ pub(super) fn draw_avatar(
         .map(|c| c.to_uppercase().collect())
         .unwrap_or_default();
     let size = app.fonts.ui_small * 0.8;
-    let w = frame.measure(FontKind::Ui, size, &initial);
+    let w = frame.measure(Font::ui(size), &initial);
     let rect = Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r);
     caps_label(frame, app, size, (cx - w / 2.0, rect), &initial, ink, clip);
 }
