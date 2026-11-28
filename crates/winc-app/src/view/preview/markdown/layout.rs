@@ -113,19 +113,15 @@ pub(super) fn resolve_layout(
             if source_changed {
                 app.preview.markdown.selection = None;
             }
-            // 拖动块放下后换成按新顺序排的版：各块从换序前的位置滑到新位置。解析在后台进行，
-            // 新的解析结果到达之前排版仍是旧的，这次过渡留到真正换版的那一帧。
+            // 拖动块放下后按新顺序排版时，各块从换序前的位置滑到新位置。解析在后台进行时，
+            // 新的解析结果到达之前排版仍是旧的，过渡在按新解析结果排版的那一帧开始。
             let revision = app.editor.active().map(|doc| doc.revision);
-            let pending = app.preview.markdown.drag.slide_on_parse
-                && app.preview.markdown.drag.slide_revision == revision;
+            let slide = app.preview.markdown.drag.slide;
+            let pending = slide.is_some() && slide == revision;
             let reordered = pending && source_changed;
-            // 解析还没到（同一份 source 的普通重排）时保留标记，等真正换解析结果的那一帧
-            // 再做滑入；文档又改过则丢弃这次过期的过渡。
-            if app.preview.markdown.drag.slide_on_parse
-                && (reordered || app.preview.markdown.drag.slide_revision != revision)
-            {
-                app.preview.markdown.drag.slide_on_parse = false;
-                app.preview.markdown.drag.slide_revision = None;
+            // 新解析尚未到达（同一份解析结果的重排）时保留标记；文档再次修改时放弃这次过渡。
+            if slide.is_some() && (reordered || slide != revision) {
+                app.preview.markdown.drag.slide = None;
             }
             if !resumed {
                 app.preview.markdown.find_doc = None;

@@ -106,6 +106,8 @@ pub struct Hits {
     pub(crate) markdown_toc_tops: Vec<f32>,
     /// 标题指示条列出的各标题所在的顶层块，与 `markdown_toc_tops` 对应。
     pub(crate) markdown_toc_blocks: Vec<usize>,
+    /// 上一帧 Markdown 预览左侧行号栏（含与正文的间距）的宽度，拖动把手据此定位。
+    pub(crate) markdown_numbers: f32,
     /// PDF 预览缩略图栏中各页的位置，以及点击后正文滚动到的位置（逻辑像素）。
     pub(crate) pdf_thumbs: Vec<(Rect, f32)>,
     /// PDF 预览右下角工具栏上各按钮的位置。
@@ -172,6 +174,7 @@ impl Hits {
             markdown_toc,
             markdown_toc_tops,
             markdown_toc_blocks,
+            markdown_numbers,
             suggest_card,
             suggest,
             selection_card,
@@ -185,6 +188,7 @@ impl Hits {
             tab_switch,
             http_runs,
         } = self;
+        *markdown_numbers = 0.0;
         start.clear();
         *suggest_card = None;
         *selection_card = None;

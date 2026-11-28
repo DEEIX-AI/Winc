@@ -1377,6 +1377,7 @@ impl App {
         self.cancel_tree_drag();
         self.cancel_tab_drag();
         self.cancel_terminal_tab_drag();
+        self.cancel_markdown_block_drag();
         self.pointer.drag = Drag::None;
         self.pointer.close_pressed = None;
         self.pointer.control_pressed = None;

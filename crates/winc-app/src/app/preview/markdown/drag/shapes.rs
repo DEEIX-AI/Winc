@@ -1,6 +1,6 @@
 //! 列表项的纵向几何：每一项的第一行、上下边缘和浮层宽度。
 
-use super::*;
+use super::{CENTER_RISE, Laid, ListItems, MIN_CARD};
 
 /// 列表项在预览中的纵向位置和宽度（内容坐标，逻辑像素）。
 #[derive(Clone, Copy)]
@@ -51,11 +51,11 @@ pub(super) fn item_shapes(laid: &Laid, block: usize, items: &ListItems) -> Optio
         let shape = &mut shapes[item];
         shape.top = shape.top.min(line_top);
         if shape.center.is_nan() {
-            shape.center = top + baseline - size * 0.35;
+            shape.center = top + baseline - size * CENTER_RISE;
         }
         shape.width = shape.width.max(x + span.advances.iter().sum::<f32>());
     }
-    // 图片没有文字宽度可量，按它自己的外框补上项宽。
+    // 图片没有字宽记录，按图片的外框计入项宽。
     for item in &laid.blocks.get(block)?.block.items {
         if let winc_typeset::Item::Image {
             rect,
@@ -91,7 +91,7 @@ pub(super) fn item_shapes(laid: &Laid, block: usize, items: &ListItems) -> Optio
         if shape.center.is_nan() {
             shape.center = top + (bottom - top) * 0.5;
         }
-        shape.width = shape.width.clamp(64.0, width);
+        shape.width = shape.width.clamp(MIN_CARD, width);
     }
     Some(shapes)
 }

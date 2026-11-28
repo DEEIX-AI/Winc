@@ -68,18 +68,17 @@ pub(super) const SWITCH_SLIDE: Duration = TAB_SLIDE;
 pub(super) const POPUP_IN: Duration = Duration::from_millis(150);
 /// 位置浮窗消失的动画时长（取自调参）：短于 [`POPUP_IN`]，浮窗在原位置淡出。
 pub(super) const POPUP_OUT: Duration = Duration::from_millis(110);
-/// 可编辑的预览中拖动块的把手时，浮层抬起（阴影和上移）的时长（取自调参）。
-///
-/// 短于 [`MARKDOWN_MOTION`]：抬起只用来把按下处的块和浮层分开，拖动的响应要跟手。
+/// 拖动预览中的块时浮层抬起（阴影加深、上移）的时长（取自调参）：短于 [`TREE_ANIMATION`]，
+/// 按下后浮层立即与原位置分开，不推迟拖动的反馈。
 pub(crate) const BLOCK_LIFT: Duration = Duration::from_millis(120);
-/// 拖动块时插入位置指示线滑到新位置的时长（取自调参）。
+/// 拖动预览中的块时插入位置指示线滑到新位置的时长（取自调参）：指针连续越过几个块时，
+/// 指示线在下一次换位置之前到位。
 pub(crate) const BLOCK_SLIDE: Duration = Duration::from_millis(110);
-/// 列表项放下后滑到新位置的时长：比插入线长，让各项有足够时间看清去向。
-pub(crate) const ITEM_SLIDE: Duration = Duration::from_millis(200);
-/// 可编辑的预览重排后各块滑到新位置、新显示的标记淡入的时长（取自调参）。
-///
-/// 比 [`TREE_ANIMATION`] 长，拖动放下后的重排有足够时间看清去向。
-pub(crate) const MARKDOWN_MOTION: Duration = Duration::from_millis(200);
+/// 拖动放下后各块、各列表项滑到新位置的时长（取自调参）：长于 [`MARKDOWN_MOTION`]，
+/// 移动距离可达数屏，过短时难以分辨被移动的内容去了哪里。
+pub(crate) const DROP_SLIDE: Duration = Duration::from_millis(200);
+/// 可编辑的预览重排后各块滑到新位置、新显示的标记淡入的时长，取 [`TREE_ANIMATION`]。
+pub(crate) const MARKDOWN_MOTION: Duration = TREE_ANIMATION;
 /// PDF 预览与图片预览缩放、PDF 缩略图栏滑入滑出的时长，取 [`TREE_ANIMATION`]。
 pub(crate) const PDF_MOTION: Duration = TREE_ANIMATION;
 /// LaTeX 预览右上角编译状态随文字变宽、变窄的时长，取 [`TREE_ANIMATION`]。
@@ -604,7 +603,7 @@ impl App {
             || self.motion.tool_fold.moving()
             || self.scrollbars_animating()
             || self.preview.markdown.motion.is_some()
-            || self.preview.markdown.item_motion.is_some()
+            || self.preview.markdown.drag.item_motion.is_some()
             || self
                 .preview
                 .markdown

@@ -658,9 +658,8 @@ impl App {
         if self.log_active() && self.log_parts().details.contains(x, y) {
             return Target::LogText;
         }
-        // 块的拖动把手位于正文左侧的留白中。展开的标题列表在
-        // `MarkdownPreview::element_at` 中已排除，把手优先于标题指示条的点击范围，窄窗口里
-        // 两者可能重叠。
+        // 块的拖动把手位于正文左侧的留白中，先于标题指示条判断：窄窗口中两者的点击范围可能
+        // 重叠。展开的标题列表已在 `MarkdownPreview::element_at` 中排除。
         if let Some(block) = self.markdown_handle_at(x, y) {
             return Target::MarkdownHandle(block);
         }

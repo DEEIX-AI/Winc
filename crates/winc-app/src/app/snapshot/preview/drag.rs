@@ -39,7 +39,7 @@ fn hover_element(app: &mut App, element: Element) -> (f32, f32) {
     (hx, hy)
 }
 
-/// 把鼠标移到第 `block` 块上并绘制，再移到它的把手上，返回把手中心。
+/// 把鼠标移到第 `block` 块上并绘制，再移到该块的把手上，返回把手中心。
 fn hover_block(app: &mut App, block: usize) -> (f32, f32) {
     let (x, y) = block_center(app, block);
     app.on_mouse_move(x, y);
@@ -57,7 +57,7 @@ fn markdown_drag_is_off_by_default_and_enabled_by_the_setting() {
     paint(&mut app);
     assert_eq!(app.preview.markdown.drag.hover, None);
 
-    app.settings_set_switch(crate::layout::Setting::MarkdownDrag, true);
+    app.settings_toggle(crate::layout::Setting::MarkdownDrag);
     settle(&mut app);
     assert!(crate::app::preview::markdown::drag::shows_handles(&app));
     assert!(
@@ -68,7 +68,7 @@ fn markdown_drag_is_off_by_default_and_enabled_by_the_setting() {
     assert_eq!(app.preview.markdown.drag.hover, Some(Element::Block(0)));
     assert_eq!(app.markdown_handle_at(hx, hy), Some(Element::Block(0)));
 
-    app.settings_set_switch(crate::layout::Setting::MarkdownDrag, false);
+    app.settings_toggle(crate::layout::Setting::MarkdownDrag);
     settle(&mut app);
     assert!(!crate::app::preview::markdown::drag::shows_handles(&app));
     assert_eq!(app.preview.markdown.drag.hover, None);
@@ -108,14 +108,14 @@ fn hovering_a_block_shows_a_handle_to_its_left() {
     // 把手和折叠箭头之间至少留出一整块间距，左移后不能又贴回去。
     let fold = crate::app::preview::markdown::drag::fold_center(
         laid.left,
-        app.preview.markdown.drag.numbers > 0.0,
+        app.hits.markdown_numbers > 0.0,
         laid.pad,
     );
     assert!(
         fold - handle.right() >= 12.0,
         "把手 {handle:?} 与折叠箭头 {fold} 太近"
     );
-    let numbers = app.preview.markdown.drag.numbers;
+    let numbers = app.hits.markdown_numbers;
     assert_eq!(
         handle.x,
         laid.left
@@ -181,7 +181,7 @@ fn dragging_the_last_block_up_adds_the_separator() {
     assert_eq!(doc_text(&app), "甲\n\n乙\n\n丙\n");
     app.on_mouse_up(MouseButton::Left);
     settle(&mut app);
-    assert_eq!(doc_text(&app), "丙\n\n甲\n\n乙\n\n");
+    assert_eq!(doc_text(&app), "丙\n\n甲\n\n乙\n");
     assert_eq!(app.pointer.drag, Drag::None);
     assert!(app.preview.markdown.drag.session.is_none());
     let _ = std::fs::remove_dir_all(&dir);
@@ -379,10 +379,10 @@ fn dropping_a_list_item_slides_items_to_new_positions() {
         .item_slide(&app, 1)
         .expect("列表项放下后滑动");
     // 各列表项从松手时的视觉位置开始滑动，至少有一项有偏移。
+    let offsets = slide.offsets(&app.preview.markdown);
     assert!(
-        slide.offsets().iter().any(|offset| offset.abs() > 5.0),
-        "{:?}",
-        slide.offsets()
+        offsets.iter().any(|offset| offset.abs() > 5.0),
+        "{offsets:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -542,8 +542,10 @@ fn dropping_one_of_two_identical_blocks_moves_that_block() {
         app.preview.markdown.frozen = Some(std::time::Duration::from_millis(1));
         let (hx, _) = hover_block(&mut app, 1);
         app.on_mouse_down(MouseButton::Left);
-        let top = app.preview.markdown.block_top(0).unwrap();
-        app.on_mouse_move(hx, top - 8.0);
+        let area = app.preview.markdown.area;
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        let bottom = area.y - app.preview.markdown.scroll() + laid.pad + laid.height + 8.0;
+        app.on_mouse_move(hx, bottom.min(area.bottom() - 4.0));
         app.on_mouse_up(MouseButton::Left);
         app.wait_for_markdown();
         paint(&mut app);
@@ -558,7 +560,7 @@ fn dropping_one_of_two_identical_blocks_moves_that_block() {
         let _ = std::fs::remove_dir_all(&dir);
         from
     };
-    // 相同的两块与不同的两块，几何相同；拖动结束时的视觉偏移也应相同。
+    // 第二块移到文末。相同的两块与不同的两块几何相同，拖动结束时的视觉偏移也应相同。
     let duplicate = run("md-block-duplicate", "相同\n\n相同\n\n乙\n");
     let distinct = run("md-block-distinct", "相同\n\n丙\n\n乙\n");
     assert_eq!(duplicate.len(), distinct.len());
@@ -660,7 +662,7 @@ fn dragging_a_list_item_over_another_makes_it_move_before_release() {
 #[test]
 fn dropping_a_block_slides_each_block_to_its_new_place() {
     let (mut app, dir) = drag_doc("md-block-drag-motion", "甲\n\n乙\n\n丙\n");
-    // 固定动画进度：抬起和重排都停在开头，能看清起始偏移。
+    // 固定动画进度：抬起和重排均停在开头，以便检查起始偏移。
     app.preview.markdown.frozen = Some(std::time::Duration::from_millis(1));
     let (hx, _) = hover_block(&mut app, 0);
     app.on_mouse_down(MouseButton::Left);
@@ -697,7 +699,7 @@ fn the_handle_keeps_clear_of_two_digit_line_numbers() {
         .handle_rect(&app, Element::Block(5))
         .expect("标题应显示把手");
     let laid = app.preview.markdown.layout.as_ref().unwrap();
-    let numbers = app.preview.markdown.drag.numbers;
+    let numbers = app.hits.markdown_numbers;
     assert!(numbers > 0.0, "应显示行号");
     // 行号栏的文字左边缘 = 正文左边 - 行号栏总宽；把手右缘还要再留出至少 12px。
     assert!(
@@ -888,7 +890,7 @@ fn a_list_item_can_be_dragged_within_its_list() {
         Some(Element::Item { block: 0, item: 0 })
     );
     app.on_mouse_down(MouseButton::Left);
-    // 移到第三项上：向下拖越过它的上边界，插到它后面。
+    // 移到第三项上：向下拖越过该项的上边界，插到该项之后。
     let (_, third_y) = element_handle(&app, Element::Item { block: 0, item: 2 });
     app.on_mouse_move(hx, third_y - 2.0);
     assert_eq!(
@@ -972,7 +974,12 @@ fn ordered_lists_keep_their_start_and_delimiter() {
 #[test]
 fn ordered_items_growing_to_two_digits_keep_their_continuation_indent() {
     let text: String = (1..=10)
-        .map(|i| format!("1. 第{i}项\n   续{i}\n"))
+        .map(|i| {
+            format!(
+                "{i}. 第{i}项\n{}续{i}\n",
+                " ".repeat(format!("{i}. ").len())
+            )
+        })
         .collect();
     let (mut app, dir) = drag_doc("md-list-ordered-grow", &text);
     let (hx, _) = hover_element(&mut app, Element::Item { block: 0, item: 0 });
@@ -1031,5 +1038,135 @@ fn task_list_items_move_with_their_checkboxes() {
     app.on_mouse_up(MouseButton::Left);
     settle(&mut app);
     assert_eq!(doc_text(&app), "- [x] 乙\n- [ ] 丙\n- [ ] 甲\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 按下第一块的把手并拖到第三块之前，返回把手的横坐标。
+fn drag_first_over_third(app: &mut App) -> f32 {
+    let (hx, _) = hover_block(app, 0);
+    app.on_mouse_down(MouseButton::Left);
+    let top = app.preview.markdown.block_top(2).unwrap();
+    app.on_mouse_move(hx, top - 4.0);
+    assert!(app.preview.markdown.drag.session.is_some());
+    hx
+}
+
+#[test]
+fn releasing_another_button_cancels_the_block_drag() {
+    let (mut app, dir) = drag_doc("md-drag-other-button", "甲\n\n乙\n\n丙\n");
+    drag_first_over_third(&mut app);
+    app.on_mouse_up(MouseButton::Right);
+    assert!(app.preview.markdown.drag.session.is_none());
+    assert_eq!(app.pointer.drag, Drag::None);
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    assert_eq!(doc_text(&app), "甲\n\n乙\n\n丙\n");
+    // 取消后可以重新开始拖动。
+    drag_first_over_third(&mut app);
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    assert_eq!(doc_text(&app), "乙\n\n甲\n\n丙\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ending_all_drags_cancels_the_block_drag() {
+    let (mut app, dir) = drag_doc("md-drag-dropped", "甲\n\n乙\n\n丙\n");
+    drag_first_over_third(&mut app);
+    // 落指、窗口失去焦点时结束全部拖动。
+    app.drop_drags();
+    assert!(app.preview.markdown.drag.session.is_none());
+    assert_eq!(app.pointer.drag, Drag::None);
+    paint(&mut app);
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    assert_eq!(doc_text(&app), "甲\n\n乙\n\n丙\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_document_change_mid_drag_cancels_the_drag() {
+    let (mut app, dir) = drag_doc("md-drag-doc-changed", "甲\n\n乙\n\n丙\n");
+    drag_first_over_third(&mut app);
+    // 拖动期间文档在别处被修改，例如在另一个窗格中输入。
+    app.editor.active_mut().unwrap().selection = winc_core::Selection::new(0, 0);
+    app.run(winc_editor::Command::Insert("丁".into()));
+    paint(&mut app);
+    assert!(app.preview.markdown.drag.session.is_none());
+    assert_eq!(app.pointer.drag, Drag::None);
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    assert_eq!(doc_text(&app), "丁甲\n\n乙\n\n丙\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn holding_still_at_the_edge_keeps_scrolling() {
+    let text: String = (1..=40).map(|i| format!("第{i}段\n\n")).collect();
+    let (mut app, dir) = drag_doc("md-drag-autoscroll", &text);
+    let (hx, _) = hover_block(&mut app, 0);
+    app.on_mouse_down(MouseButton::Left);
+    let area = app.preview.markdown.area;
+    app.on_mouse_move(hx, area.bottom() - 4.0);
+    assert!(app.drag_autoscrolling());
+    // 指针不动：每帧按经过的时间继续滚动。
+    for _ in 0..3 {
+        let before = app.preview.markdown.scroll();
+        app.pointer.drag_scrolled_at =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+        app.continue_drag_scroll();
+        assert!(app.preview.markdown.scroll() > before);
+    }
+    app.on_mouse_move(hx, area.y + area.h / 2.0);
+    assert!(!app.drag_autoscrolling());
+    assert!(app.pointer.drag_scrolled_at.is_none());
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn siblings_make_way_at_once_without_animations() {
+    let (mut app, dir) = drag_doc("md-drag-reduced-motion", "甲\n\n乙\n\n丙\n");
+    app.config.ui_animations = Some(false);
+    drag_first_over_third(&mut app);
+    paint(&mut app);
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
+    let step = laid.tops[1] - laid.tops[0];
+    let drag = app.preview.markdown.drag.session.as_ref().unwrap();
+    assert_eq!(drag.shift.at(1), -step);
+    assert!(!drag.animating());
+    app.on_mouse_up(MouseButton::Left);
+    settle(&mut app);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn wide_tables_keep_out_of_the_handle_gutter() {
+    let line = |cell: &str| {
+        let cells: Vec<String> = (1..=13).map(|n| format!("{cell}{n}")).collect();
+        format!("| {} |\n", cells.join(" | "))
+    };
+    let table = format!("{}|{}\n{}", line("第几列"), "---|".repeat(13), line("数值"));
+    let (mut app, dir) = drag_doc("md-drag-table-gutter", &format!("段落\n\n{table}"));
+    app.config.markdown_line_numbers = Some(false);
+    settle(&mut app);
+    let laid = app.preview.markdown.layout.as_ref().unwrap();
+    let rect = (laid.blocks[1].block.items.iter())
+        .find_map(|item| match item {
+            winc_typeset::Item::Table { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .unwrap();
+    assert!(rect.w > laid.key.width, "表格应比正文宽：{rect:?}");
+    assert!(rect.x >= 0.0, "表格不应伸进把手所在的留白：{rect:?}");
+    let left = laid.left;
+    let (x, y) = block_center(&app, 1);
+    app.on_mouse_move(x, y);
+    paint(&mut app);
+    let handle = (app.preview.markdown)
+        .handle_rect(&app, Element::Block(1))
+        .unwrap();
+    assert!(handle.right() <= left + rect.x, "{handle:?} {rect:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

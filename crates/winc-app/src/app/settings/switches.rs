@@ -86,7 +86,7 @@ impl App {
         self.settings_set_switch(setting, !self.switch_on(setting));
     }
 
-    pub(in crate::app) fn settings_set_switch(&mut self, setting: Setting, on: bool) {
+    pub(super) fn settings_set_switch(&mut self, setting: Setting, on: bool) {
         if self.switch_on(setting) == on {
             return;
         }

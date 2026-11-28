@@ -218,12 +218,9 @@ impl Before {
 
     /// 计算重排为 `laid`（滚动位置 `scroll`）后各块的起始偏移（见 `BlockMotion::from`）和淡入的项。
     ///
-    /// 拖动块换序时（`reordered`）按各块的内容找到同一块；块数不变时按序号对应；块数变化
-    /// （删除了一块、解析出新的块）时，按开头和末尾哈希相同的块对应，中间新增的块随前一块移动。
-    /// 仅移动光标时，外观变化的块中新增的标记（次要色 `muted` 的文字中比原来多出的段）淡入。
-    ///
-    /// 文字已修改时各块直接到位、偏移全为 0，输入的结果在同一帧显示在最终位置；`slide` 为真
-    /// （表格工具增删行列、拖动块）时仍然滑动。
+    /// 拖动换序后（`reordered`）按内容哈希对应各块；块数不变时按序号对应，块数变化时按首尾哈希
+    /// 相同的块对应，中间新增的块随前一块移动。仅移动光标时，次要色 `muted` 中新增的标记淡入；
+    /// 文字已修改时偏移全为 0，`slide` 为真（表格工具增删行列、拖动块）时仍然滑动。
     pub(crate) fn motion(
         &self,
         laid: &Laid,
@@ -234,7 +231,7 @@ impl Before {
     ) -> crate::app::preview::markdown::Moves {
         let (old, new) = (&self.blocks, &laid.blocks);
         let matched: Vec<Option<usize>> = if reordered && old.len() == new.len() {
-            // 拖动块之后文字只是换了顺序：按各块的内容找到它们原来的位置，被拖的块从原处滑到
+            // 拖动块之后文字只是换了顺序：按内容找到各块原来的位置，被拖的块从原处滑到
             // 新位置，其余的块让位。内容相同的块按原来的先后取用，重复的段落不会互换位置。
             let mut old_by_content: HashMap<u64, Vec<usize>> = HashMap::new();
             for (j, block) in old.iter().enumerate() {
@@ -357,8 +354,6 @@ impl Before {
         crate::app::preview::markdown::Moves {
             from,
             matched,
-            old_tops: old.iter().map(|block| block.top).collect(),
-            new_tops: (0..new.len()).map(|i| laid.tops[i] - scroll).collect(),
             fading,
             inner,
             leaving,
@@ -598,19 +593,7 @@ pub(crate) fn lay_out(
         starts,
         chars,
         lines: parsed.lines.clone(),
-        ranges: {
-            // 解析结果中的范围换算为当前文字中的位置；光标所在的块换成现在的范围。
-            let drift = live.map_or(winc_typeset::Drift::NONE, |live| live.drift);
-            let mut ranges: Vec<_> = (parsed.ranges.iter())
-                .map(|r| drift.moved_start(r.start)..drift.moved(r.end))
-                .collect();
-            if let Some(live) = live
-                && let Some(range) = ranges.get_mut(live.block)
-            {
-                *range = live.range.clone();
-            }
-            ranges
-        },
+        ranges: current_ranges(parsed, live),
         live: live.map(|l| live_key(l, app.preedit_at(Focus::Editor))),
         caret: std::cell::Cell::new(None),
         upstream: std::cell::Cell::new(None),
@@ -623,6 +606,24 @@ pub(crate) fn lay_out(
         near,
         sections,
     }
+}
+
+/// 返回各顶层块在当前文字中的范围：解析结果中的范围按光标所在块的增减换算，该块换成现在的
+/// 范围。
+fn current_ranges(
+    parsed: &winc_preview::markdown::Markdown,
+    live: Option<&crate::app::preview::markdown::LiveLeaf>,
+) -> Vec<std::ops::Range<usize>> {
+    let drift = live.map_or(winc_typeset::Drift::NONE, |live| live.drift);
+    let mut ranges: Vec<_> = (parsed.ranges.iter())
+        .map(|r| drift.moved_start(r.start)..drift.moved(r.end))
+        .collect();
+    if let Some(live) = live
+        && let Some(range) = ranges.get_mut(live.block)
+    {
+        *range = live.range.clone();
+    }
+    ranges
 }
 
 /// 返回基线在 `baseline`、字号 `size` 的一行字在选中、查找时铺底色的范围：上边缘和高度

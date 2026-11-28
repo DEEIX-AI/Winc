@@ -7,6 +7,7 @@ use super::*;
 
 mod blank_lines;
 mod drag;
+mod drag_drop;
 mod epub;
 mod images;
 mod latex;

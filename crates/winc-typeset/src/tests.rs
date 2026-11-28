@@ -508,20 +508,31 @@ fn thai_paragraphs_wrap_between_words() {
 }
 
 #[test]
-fn shifting_an_item_moves_its_geometry() {
-    let mut path = Item::path(vec![Stroke::Line(0.0, 2.0, 10.0, 2.0)], 2.0, TEXT);
-    path.shift_y(7.0);
-    let Item::Path { rect, strokes, .. } = &path else {
-        panic!("应保持为路径");
+fn content_right_skips_column_wide_fills() {
+    let font = Font::ui(10.0);
+    let text = |x: f32, text: &str, span: Option<Span>| Item::Text {
+        x,
+        baseline: 12.0,
+        text: text.into(),
+        font,
+        color: TEXT,
+        span,
     };
-    assert_eq!(rect.y, 8.0);
-    assert!(matches!(strokes.as_ref(), [Stroke::Line(_, 9.0, _, 9.0)]));
-
-    let mut polygon = Item::polygon(vec![(1.0, 2.0), (5.0, 6.0)], TEXT);
-    polygon.shift_y(-3.0);
-    let Item::Polygon { rect, points, .. } = &polygon else {
-        panic!("应保持为多边形");
+    let measured = Span {
+        start: 0,
+        advances: Arc::from([6.0, 7.0]),
+        source: None,
+        jumps: None,
     };
-    assert_eq!(rect.y, -1.0);
-    assert_eq!(points.as_ref(), [(1.0, -1.0), (5.0, 3.0)]);
+    let fill = Item::Fill {
+        rect: Rect::new(0.0, 0.0, 500.0, 20.0),
+        color: TEXT,
+        radius: 0.0,
+    };
+    let block = |items| LaidBlock::new(20.0, items, Vec::new(), "".into(), 0, Box::default());
+    let spanned = block(vec![fill.clone(), text(4.0, "ab", Some(measured))]);
+    assert_eq!(spanned.content_right(), 17.0);
+    // 没有字宽记录的四个字按每字 0.6 倍字号估计。
+    let unmeasured = block(vec![fill, text(0.0, "abcd", None)]);
+    assert_eq!(unmeasured.content_right(), 24.0);
 }
