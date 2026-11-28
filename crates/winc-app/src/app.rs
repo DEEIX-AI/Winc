@@ -164,6 +164,9 @@ pub enum UserEvent {
     /// 需要重新计算布局并重绘。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     TrafficLightsMoved,
+    /// 窗口外观变化后重新摆放红绿灯。
+    #[cfg(target_os = "macos")]
+    RepositionTrafficLights,
     /// 询问是否将应用移到「应用程序」文件夹（见 `crate::macos::install`）；在窗口显示后处理，
     /// 提示框依附于窗口。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

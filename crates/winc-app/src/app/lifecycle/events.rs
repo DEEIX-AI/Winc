@@ -615,6 +615,14 @@ impl App {
             // 只有 macOS 发出这两个事件。
             #[cfg(not(target_os = "macos"))]
             UserEvent::OfferMoveToApplications | UserEvent::MoveToApplications(..) => {}
+            #[cfg(target_os = "macos")]
+            UserEvent::RepositionTrafficLights => {
+                if let Some(lights) = &self.link.traffic_lights
+                    && lights.windowed()
+                {
+                    self.place_traffic_lights();
+                }
+            }
             UserEvent::TrafficLightsMoved => {
                 #[cfg(target_os = "macos")]
                 self.finish_hiding();
