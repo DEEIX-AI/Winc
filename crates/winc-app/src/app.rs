@@ -44,9 +44,10 @@ pub(crate) use editor::sticky::{place_sticky_rows, sticky_limit};
 pub(crate) use git::branch::picker::{GitAnchor, PickerPart};
 pub(crate) use git::changes::{ChangeTarget, MARK_W, mark_x, ruler_rows};
 pub(crate) use git::commit::{
-    COMMIT_ROW, CommitGroup, CommitLabels, CommitName, CommitOverflow, CommitParts, CommitRow,
-    CommitRows, CommitScope, CommitSort, CommitTarget, DRAWER_TOP, MESSAGE_LINE, MESSAGE_PAD,
-    OtherGroup, OtherRow, StashLine, StashView, SyncState, WorktreeLine,
+    ActionStrip, COMMIT_ROW, CardState, CommitGroup, CommitLabels, CommitName, CommitOverflow,
+    CommitParts, CommitRow, CommitRows, CommitScope, CommitSort, CommitTarget, DRAWER_TOP,
+    HistoryLine, HistoryTarget, MESSAGE_LINE, MESSAGE_PAD, OtherGroup, OtherRow, PeekView,
+    StashLine, SyncState, WorktreeLine,
 };
 pub(crate) use input::context_menu::{
     CHECK_COLUMN, ICON_COLUMN, MenuIcon, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
@@ -55,7 +56,11 @@ pub(crate) use input::context_menu::{
 pub use input::context_menu::{ContextMenu, MenuButton, MenuCommand};
 pub use input::palette::palette;
 pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts, InAppAlert};
-use lifecycle::appearance::{forced_theme, unusable_font};
+pub(crate) use lifecycle::appearance::font_set;
+use lifecycle::appearance::{
+    editor_font_weight, font_specs, forced_theme, terminal_font_weight, ui_font_weight,
+    unusable_font,
+};
 pub(crate) use lifecycle::backup::{
     Prepared, prepare_restore, restore_at_launch, restore_prepared,
 };
@@ -66,6 +71,7 @@ pub(crate) use lifecycle::title_bar::resize_cursor;
 pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
 pub(crate) use scroll::ScrollTarget;
+pub(crate) use settings::rulers_text;
 pub(crate) use settings::shortcuts::KeyEdit;
 pub use settings::{DialogCache, SettingsState};
 pub(crate) use status::language_picker::LanguageRow;
@@ -109,10 +115,12 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Theme, Window, WindowId};
 
+use cpui_render::{
+    Font, FontError, FontSet, FontSpec, FontStack, FontSystem, FontWeight, Metrics, Rect, Renderer,
+};
 use winc_core::text::{self, MAX_LINE_BYTES, MAX_LINE_CHARS};
 use winc_core::{Lines, Selection};
 use winc_editor::{COPY_LIMIT, Command, DocumentId, Editor, Entry, EntryKind, FileIndex, Search};
-use winc_render::{FontError, FontKind, FontSpec, Metrics, Rect, Renderer};
 
 use winc_config::{Config, Session, State, ThemeChoice, resolve_font_list};
 
@@ -250,6 +258,8 @@ pub enum UserEvent {
     ),
     /// 拖进文件树的文件和目录已在后台复制完成：各个副本的路径、复制失败的说明，以及这次复制。
     Copied(Vec<PathBuf>, Vec<String>, Arc<winc_editor::Copying>),
+    /// 文件树中选中的文件已在后台整理成提示词，待写入剪贴板。
+    PromptCopied(winc_editor::Prompt),
     /// 窗口已关闭时点击了程序坞中的图标（macOS）：重新显示窗口。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Reopen,
@@ -309,8 +319,10 @@ pub enum UserEvent {
     RemoteShells,
     /// 后台的文件操作（新建、改名、移动、删除）已完成。
     FileWorked,
-    /// 后台为远端文件的格式化选好了工具。
+    /// 后台为一次格式化选好了工具。
     FormatPlanned,
+    /// 后台为设置的格式化页算出了工具选择。
+    ToolsPlanned,
     /// 连接远端主机的 `ssh` 发来了输入请求。
     RemoteQuestion,
     /// 后台到远端主机的连接到达了新的阶段。
@@ -342,6 +354,8 @@ pub enum UserEvent {
     TerminalPaste(u16, String),
     /// 要粘贴到远端终端标签的图片或文件已在后台传到那台主机：标签，那里的路径或失败的原因。
     TerminalUploaded(u16, Result<Vec<String>, String>),
+    /// 要粘贴到本机终端标签的图片已在后台存为文件：标签，文件的路径或失败的原因。
+    TerminalImageSaved(u16, Result<PathBuf, String>),
     /// 确认框中确认日志中对一个提交的操作（签出该提交、硬重置）。
     GitLogConfirmed(git::log::LogConfirmed),
     /// 确认框中确认移除参数所指的工作树；第二个参数是一并删除的分支（勾选「同时删除分支」时）。
@@ -381,6 +395,8 @@ pub enum UserEvent {
     Replaced,
     /// 大文件的后台断行已完成。
     Wrapped,
+    /// 当前文档与剪贴板、已保存的版本的比较已在后台完成。
+    Compared,
     /// 确认框上确认了全部替换；参数为弹出确认框时结果列表中的匹配总数。
     ReplaceAllConfirmed(usize),
 }
@@ -472,6 +488,8 @@ pub enum Focus {
     Outline,
     /// 日志标签标题栏的筛选输入框。
     LogFilter,
+    /// Git 面板中的日志（面板模式下日志获得焦点时）。
+    GitPanel,
     /// 功能对话框（新建工作树）里的输入框。
     Dialog,
 }
@@ -567,6 +585,8 @@ pub enum Hover {
     Splitter,
     /// 编辑区和终端面板之间的间距（拖动可调整面板大小）。
     TerminalDivider,
+    /// Git 面板中可点击的位置：标题行的标签和按钮、上沿的间距。
+    GitPanel(git::panel::PanelHit),
     /// 文件视图中大纲标题行的上沿（上下拖动可调整大纲的高度）。
     OutlineDivider,
     /// 分栏预览中间的分隔线（左右拖动可调整两侧的宽度）。
@@ -644,14 +664,29 @@ impl Hover {
                     terminal::HeaderHit::Position
                         | terminal::HeaderHit::SearchDialog
                         | terminal::HeaderHit::Maximize
+                        | terminal::HeaderHit::Editor
+                        | terminal::HeaderHit::Panel
                         | terminal::HeaderHit::Split
                         | terminal::HeaderHit::ShellMenu
                         | terminal::HeaderHit::Find(_)
                         | terminal::HeaderHit::Hide
                         | terminal::HeaderHit::Run(_),
                 )
-                | Hover::Status(StatusItem::Terminal | StatusItem::Remote | StatusItem::Settings)
+                | Hover::Status(
+                    StatusItem::Position
+                        | StatusItem::Terminal
+                        | StatusItem::GitPanel
+                        | StatusItem::Remote
+                        | StatusItem::Settings
+                )
                 | Hover::TreeMore
+                | Hover::GitPanel(
+                    git::panel::PanelHit::ToEditor
+                        | git::panel::PanelHit::ToPanel
+                        | git::panel::PanelHit::Maximize
+                        | git::panel::PanelHit::Hide
+                )
+                | Hover::Commit(CommitTarget::Generate)
                 | Hover::SidebarButton
                 | Hover::Tab(..)
                 | Hover::TabList
@@ -705,6 +740,7 @@ impl Hover {
                 )
                 | Hover::Commit(
                     CommitTarget::Log
+                        | CommitTarget::History(HistoryTarget::Log | HistoryTarget::Commit(_))
                         | CommitTarget::Sync
                         | CommitTarget::Location
                         | CommitTarget::WorktreeNew
@@ -720,6 +756,14 @@ impl Hover {
                         | CommitTarget::StageFile(..)
                         | CommitTarget::GroupStage(_)
                         | CommitTarget::DirStage(..)
+                        | CommitTarget::DirRevert(_)
+                        | CommitTarget::OtherOpen(..)
+                        | CommitTarget::OtherRevert(..)
+                        | CommitTarget::OtherStage(..)
+                        | CommitTarget::OtherGroupStage(..)
+                        | CommitTarget::OtherGroupRevert(..)
+                        | CommitTarget::OtherDirRevert(_)
+                        | CommitTarget::OtherDirStage(..)
                 )
                 | Hover::Diff(
                     DiffTarget::Combined
@@ -820,6 +864,11 @@ enum Drag {
     ///
     /// 面板位于下方时为纵坐标和高度，位于右侧时为横坐标和宽度。
     TerminalDivider {
+        start: f32,
+        size: f32,
+    },
+    /// 拖动 Git 面板的上沿：按下时的纵坐标、面板当时的高度（逻辑像素）。
+    GitPanelDivider {
         start: f32,
         size: f32,
     },
@@ -1209,6 +1258,7 @@ impl App {
             UserEvent::FolderListed => self.poll_folder_levels(),
             UserEvent::WatcherStarted => self.poll_watchers(),
             UserEvent::FormatPlanned => self.poll_formatting(),
+            UserEvent::ToolsPlanned => self.poll_tool_plans(),
             UserEvent::FileWorked => self.poll_file_work(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),
             UserEvent::GitLog => self.poll_log(),
@@ -1224,6 +1274,7 @@ impl App {
             UserEvent::BackedUp => self.collect_backups(false),
             UserEvent::Replaced => self.poll_replace_all(),
             UserEvent::Wrapped => self.poll_wraps(),
+            UserEvent::Compared => self.poll_compares(),
             other => debug_assert!(false, "{other:?} 不是后台任务做完的事件"),
         }
     }
@@ -1231,6 +1282,11 @@ impl App {
     /// 返回本窗口的系统窗口编号；窗口尚未创建时为 `None`。
     pub(crate) fn window_id(&self) -> Option<winit::window::WindowId> {
         self.window.handle.as_ref().map(|w| w.id())
+    }
+
+    /// 返回系统窗口；还没有创建（测试中）时返回 `None`。
+    pub(crate) fn system_window(&self) -> Option<&Arc<winit::window::Window>> {
+        self.window.handle.as_ref()
     }
 
     /// 返回鼠标位置（逻辑像素）。
@@ -1281,6 +1337,13 @@ impl App {
             }
             self.preview.markdown.toc_rest = toc(hover).then(Instant::now);
             self.preview.markdown.toc_shown = false;
+            let glow = self.clock(animation::TOC_GLOW);
+            self.preview.markdown.toc_glow = glow.map(|clock| (toc(hover), clock));
+        }
+        if self.move_history_card(self.pointer.hover, hover) {
+            self.pointer.hover = hover;
+            self.request_redraw();
+            return;
         }
         if hover != self.pointer.hover {
             self.leave_tooltip();

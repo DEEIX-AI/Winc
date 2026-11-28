@@ -160,6 +160,10 @@ pub fn run() {
     // 闭或读标准输入，总是自己打开；测量时、指定了 `--new-instance` 时也不交出去。读不了的目标现在
     // 就报告：之后可能交给其他进程，错误不再回到这个终端。
     let mut args = args;
+    if let Err(message) = cli::check_diffs(&args) {
+        eprintln!("winc: {message}");
+        std::process::exit(1);
+    }
     let failed = shell_command::report_unreadable(&mut args);
     if failed && args.targets.is_empty() {
         std::process::exit(1);
@@ -178,7 +182,7 @@ pub fn run() {
     }
     // `--wait` 给的全是打不开的目标（例如目录）时没有标签可等，窗口在命令行目标处理完之后
     // 不会自行退出，调用 winc 的程序（如 `git`）会一直等待。此时直接以失败状态退出。
-    if args.wait && !args.stdin && editor.documents.is_empty() {
+    if args.wait && !args.stdin && args.diffs.is_empty() && editor.documents.is_empty() {
         eprintln!(
             "winc: {}",
             winc_i18n::t!("cmd-cli-wait-needs-openable-file")
@@ -194,6 +198,7 @@ pub fn run() {
         .then(|| state.last_session())
         .flatten()
         .filter(|session| open_session_folder(&mut editor, session));
+    let restored_folder = session.is_some();
     // 从命令行打开的目录没有现场，只恢复其未保存的内容；临时打开时不恢复任何内容。
     let restored = if args.one_off() {
         Default::default()
@@ -268,7 +273,15 @@ pub fn run() {
     });
     let mut winc = Winc::new(Some(event_loop.create_proxy()), template);
     let (key, proxy) = winc.reserve();
-    let mut app = App::new(editor, proxy, bench, config);
+    // 字体在建窗口之前加载，界面状态一开始就按真实的字体度量排版。
+    let fonts = match cpui_render::FontSystem::new(&app::font_set(&config)) {
+        Ok(fonts) => fonts,
+        Err(e) => {
+            eprintln!("winc: 无法初始化渲染：{e}");
+            std::process::exit(1);
+        }
+    };
+    let mut app = App::new(editor, proxy, bench, config, fonts);
     // 第一个窗口出示启动本进程时给出的激活令牌，合成器随之结束启动通知。
     app.set_activation(tokens.for_window(is_wayland(&event_loop)));
     app.watch_git_output();
@@ -278,18 +291,33 @@ pub fn run() {
     let sort = crate::app::CommitSort::from_key(&state.commit_sort);
     app.git.commit.set_sort(sort);
     app.editor.diff_unified = app.config.diff_inline == Some(true);
+    (app.editor).set_align_columns(app.config.align_columns != Some(false));
     app.editor.diff_collapse = app.config.diff_collapse_unchanged != Some(false);
     app.state = state;
+    if restored_folder {
+        app.restore_launch_group();
+    }
     app.restore_text_places();
     app.restore_panel_width();
     app.load_at_launch(opened.jumps);
+    if !args.targets.is_empty() {
+        app.announce_new_file();
+    }
     // 临时打开（`--wait`、`-`）时不记录现场、不加入最近列表、不备份，下次启动的状态不受影响。
     if args.one_off() {
+        app.open_diffs(&args.diffs);
+        // 要比较的文件都打不开（二进制文件、过大）时同样没有标签可等，直接以失败状态退出。
+        if args.wait && !args.stdin && app.editor.documents.is_empty() {
+            let reason = winc_i18n::t!("cmd-cli-wait-needs-openable-file");
+            eprintln!("winc: {reason}");
+            std::process::exit(1);
+        }
         app.start_one_off(&args);
     } else {
         app.store.state_path = state_path;
         app.backup.root = backup_root;
         app.adopt_restored(restored);
+        app.reveal_restored();
         if let Some(file) = opened.project.as_deref().or(last_project.as_deref())
             && app.editor.root().is_none()
         {
@@ -307,12 +335,13 @@ pub fn run() {
             Some(open) => app.open_remote(open),
             None if args.targets.is_empty() => {
                 let reconnecting = app.restore_remote_folder();
-                if !reconnecting {
+                if !reconnecting && args.diffs.is_empty() {
                     app.start_with_new_file();
                 }
             }
             None => {}
         }
+        app.open_diffs(&args.diffs);
     }
 
     winc.add(key, app);
@@ -344,6 +373,7 @@ pub(crate) struct Opened {
 /// 按命令行参数打开目录和文件。
 ///
 /// 只给出文件时不打开其所在的目录；`文件:行` 形式的目标会跳到对应行（行号和列号从 0 起）。
+/// 不存在的文件打开为新文件，保存时才写入磁盘（见 [`Editor::open_tab_or_new`]）。
 /// 大文件只开标签不读取，留给窗口在后台读取（见 [`App::load_at_launch`]）。临时打开（`--wait`、
 /// `-`）时不接受目录。远端的目标（`ssh://`）跳过：连接之后才能打开，见 [`cli::remote_open`]。
 pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Opened {
@@ -374,7 +404,17 @@ pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Opened {
             }
             continue;
         }
-        let index = editor.open_tab(&target.path);
+        if cli::names_folder(&target.path) && !winc_backend::fs::exists(&target.path) {
+            let path = target.path.display().to_string();
+            let error = winc_i18n::t!("cmd-cli-no-such-folder");
+            problems.push(winc_i18n::t!(
+                "cmd-cli-open-failed",
+                path = path,
+                error = error
+            ));
+            continue;
+        }
+        let index = editor.open_tab_or_new(&target.path);
         if winc_editor::opens_as_large(&target.path) {
             if let Some(line) = target.line {
                 jumps.push((editor.documents[index].id, line, target.col.unwrap_or(0)));
@@ -406,15 +446,19 @@ pub(crate) fn open_targets(editor: &mut Editor, args: &cli::Args) -> Opened {
 /// 是否已将要打开的目录和文件交给正在运行的 winc，由该进程切到打开该目录的窗口、新建窗口或
 /// 切到前台。
 fn hand_over(args: &cli::Args, tokens: &instance::LaunchTokens) -> bool {
-    let targets: Vec<cli::Target> = args
-        .targets
-        .iter()
-        .map(|t| cli::Target {
-            path: instance::absolute(&t.path),
-            ..t.clone()
-        })
-        .collect();
-    instance::forward_to_app(&targets, tokens.forwarded())
+    let targets = args.targets.iter().map(|t| cli::Target {
+        path: instance::absolute(&t.path),
+        ..t.clone()
+    });
+    let diffs = args.diffs.iter().map(|d| cli::Diff {
+        left: instance::absolute(&d.left),
+        right: instance::absolute(&d.right),
+    });
+    instance::forward_to_app(&instance::Launch {
+        targets: targets.collect(),
+        diffs: diffs.collect(),
+        token: tokens.forwarded().map(str::to_owned),
+    })
 }
 
 /// 事件循环是否使用 Wayland。
@@ -430,17 +474,24 @@ fn is_wayland<T>(_event_loop: &EventLoop<T>) -> bool {
     false
 }
 
-/// 设置界面语言，并让汉字按界面语言的字形显示，返回字形所用的语言是否发生变化。
+/// 设置界面语言，返回汉字字形所用的语言（[`cjk_language`]）是否随之变化。
+///
+/// 返回值为 `true` 时已有的渲染器需要重新加载字体。
+pub(crate) fn set_locale(locale: winc_i18n::Locale) -> bool {
+    let before = cjk_language();
+    winc_i18n::set_locale(locale);
+    cjk_language() != before
+}
+
+/// 返回汉字字形所用的语言，按界面语言决定。
 ///
 /// 界面为中文时使用简体中文字形，界面文字与字形一致；界面为英文时界面上没有汉字，文件中的
-/// 汉字按系统语言选择字形（繁体中文、日文、韩文的地区各用本地字形）。返回值为 `true` 时
-/// 已有的渲染器需要重新加载字体。
-pub(crate) fn set_locale(locale: winc_i18n::Locale) -> bool {
-    winc_i18n::set_locale(locale);
-    winc_render::set_cjk_language(match locale {
+/// 汉字按系统语言选择字形（繁体中文、日文、韩文的地区各用本地字形），返回 `None`。
+pub(crate) fn cjk_language() -> Option<&'static str> {
+    match winc_i18n::locale() {
         winc_i18n::Locale::ZhCn => Some("zh-cn"),
         winc_i18n::Locale::EnUs => None,
-    })
+    }
 }
 
 /// 按系统语言设置推测编码时参考的地区。

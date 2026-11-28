@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
+use cpui_render::Rect;
 use winc_editor::TextSearch;
 use winc_pty::protocol::Line;
-use winc_render::Rect;
 
 use super::tab::{Point, Selection, Unit, col_at, logical_text};
 use super::{App, Focus, Request, header_height};
@@ -103,7 +103,10 @@ pub(crate) struct TermFind {
 impl App {
     /// 查找条的位置：和内容区第一行垂直居中，高度与标签相同；没有打开时为 `None`。
     pub(crate) fn terminal_find_bar(&self) -> Option<Rect> {
-        self.terminal.find.as_ref()?;
+        let find = self.terminal.find.as_ref()?;
+        if self.terminal.index_of(find.tab) != Some(self.terminal.active) {
+            return None;
+        }
         let card = self.terminal_content_card();
         if card.w <= 0.0 || card.h <= 0.0 {
             return None;

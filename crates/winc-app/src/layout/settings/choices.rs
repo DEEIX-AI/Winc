@@ -23,6 +23,25 @@ pub fn text_width_label(choice: winc_config::TextWidth) -> &'static str {
     }
 }
 
+/// 返回「光标样式」设置中选项 `choice` 的名字。
+pub fn cursor_style_label(choice: winc_config::CursorStyle) -> &'static str {
+    use winc_config::CursorStyle::{Block, Line, Underline};
+    match choice {
+        Line => t!("settings-cursor-style-line"),
+        Block => t!("settings-cursor-style-block"),
+        Underline => t!("settings-cursor-style-underline"),
+    }
+}
+
+/// 返回终端「右键单击」设置中选项 `choice` 的名字。
+pub fn right_click_label(choice: winc_config::TerminalRightClick) -> &'static str {
+    use winc_config::TerminalRightClick::{CopyOrPaste, Menu};
+    match choice {
+        Menu => t!("settings-terminal-right-click-menu"),
+        CopyOrPaste => t!("settings-terminal-right-click-copy-or-paste"),
+    }
+}
+
 /// 返回「光标移动」设置中选项 `choice` 的名字。
 pub fn smooth_caret_label(choice: winc_config::SmoothCaret) -> &'static str {
     use winc_config::SmoothCaret::{Gliding, Off, Snappy};
@@ -70,6 +89,14 @@ pub fn open_worktree_label(choice: winc_config::WorktreeOpen) -> &'static str {
         Ask => t!("settings-git-open-worktree-ask"),
         NewWindow => t!("settings-git-open-worktree-new"),
         CurrentWindow => t!("settings-git-open-worktree-current"),
+    }
+}
+
+/// 返回日志位置 `choice` 在设置中显示的名称。
+pub fn log_placement_label(choice: winc_config::LogPlacement) -> &'static str {
+    match choice {
+        winc_config::LogPlacement::Panel => t!("settings-git-log-placement-panel"),
+        winc_config::LogPlacement::Editor => t!("settings-git-log-placement-editor"),
     }
 }
 

@@ -792,6 +792,28 @@ fn aligned_columns_follow_edits_without_drifting() {
     }
 }
 
+/// 关闭按列对齐后按原文排布，可以自动换行；分隔符仍按第一行判断（分号多于逗号时按分号）。
+#[test]
+fn columns_can_be_shown_as_written_and_then_wrap() {
+    let mut d = Document::from_text(DocumentId(1), "a;b;c,d\nlonger value;x;y\n");
+    d.set_language("a.csv");
+    assert_eq!(d.delimiter(), Some(';'));
+    assert!(d.columns(4).is_some());
+    assert!(!d.ensure_wrap(Some(8), 4), "按列对齐时不换行");
+
+    d.set_align_columns(false);
+    assert!(d.columns(4).is_none());
+    assert_eq!(d.delimiter(), Some(';'), "仍按列着色");
+    assert!(d.ensure_wrap(Some(8), 4));
+
+    d.set_align_columns(true);
+    assert!(d.columns(4).is_some());
+    assert!(!d.ensure_wrap(Some(8), 4));
+
+    d.set_language("a.txt");
+    assert_eq!(d.delimiter(), None);
+}
+
 #[test]
 fn sticky_scopes_keep_their_memo_across_edits_far_below() {
     let mut text = String::from("class A:\n    def f(self):\n");
@@ -835,11 +857,15 @@ fn unchanged_lines_are_only_known_across_plain_edits() {
     }
     assert_eq!(d.unchanged_lines_since(start), 1);
     assert_eq!(d.unchanged_lines_since(d.revision - 1), 2);
+    // 第 1 行的开头是第 2 个字符；之后在第 2 行输入，开头未变的字符仍按最靠前的一处计算。
+    assert_eq!(d.unchanged_chars_since(start), 2);
+    assert_eq!(d.unchanged_chars_since(d.revision), usize::MAX);
     // 切换语言同样使版本号递增，但不属于编辑，无法确定哪些行未改变。
     let before = d.revision;
     d.set_language("a.py");
     assert_eq!(d.unchanged_lines_since(before), 0);
     assert_eq!(d.unchanged_lines_since(start), 0);
+    assert_eq!(d.unchanged_chars_since(start), 0);
 }
 
 #[test]

@@ -126,7 +126,7 @@ impl App {
                 self.open_folder(&target.path);
                 continue;
             }
-            self.open_path(&target.path);
+            self.open_path_or_new(&target.path);
             self.note_opened_file(&target.path);
             if let Some(line) = target.line {
                 self.jump_to(line, target.col.unwrap_or(0), 0);
@@ -169,9 +169,9 @@ impl App {
         }
     }
 
-    /// 本窗口的字体和字形缓存，给之后新开的窗口共用；还没有渲染器时为 `None`。
-    pub(crate) fn shared_glyphs(&self) -> Option<winc_render::SharedGlyphs> {
-        self.frame.renderer.as_ref().map(Renderer::shared_glyphs)
+    /// 本窗口的字体和字形缓存，给之后新开的窗口共用。
+    pub(crate) fn fonts(&self) -> FontSystem {
+        self.frame.fonts.clone()
     }
 
     /// 把窗口切到前台：关着的重新显示，最小化的还原。
@@ -188,7 +188,7 @@ impl App {
             #[cfg(not(all(unix, not(target_os = "macos"))))]
             let activated = false;
             if !activated {
-                window.focus_window();
+                focus_window(window);
             }
         }
         self.request_redraw();
@@ -274,7 +274,7 @@ impl App {
         self.redraw();
         if let Some(window) = &self.window.handle {
             window.set_visible(true);
-            window.focus_window();
+            focus_window(window);
         }
     }
 
@@ -298,6 +298,7 @@ impl App {
     ///
     /// 窗口尺寸、面板宽度、标签或预览状态变化后调用；面板跟着焦点关闭也在这一步完成。
     pub(crate) fn relayout(&mut self) {
+        self.sync_editor_terminal_focus();
         self.track_recent_tabs();
         self.note_terminal_tab_position();
         self.sync_project_offer();
@@ -373,6 +374,7 @@ impl App {
             self.layout.search.y += crate::app::diff::diff_top(view);
         }
 
+        self.place_git_panel();
         self.place_terminal();
         self.place_window_controls();
         self.place_panes();
@@ -393,16 +395,40 @@ impl App {
         }
         self.sync_wrap();
         self.sync_terminal();
+        // 新建、重开的终端标签此时才有名字。
+        self.sync_terminal_editor_titles();
         self.prepare_combined();
     }
 
     /// 在编辑区里放置随当前标签变化的部分：标签栏右端的按钮、分栏预览、合并的两侧、缩略图。
     pub(in crate::app) fn place_editor_parts(&mut self) {
+        self.place_terminal_return();
         self.place_preview_button();
         self.place_browser_button();
         self.place_split();
         self.place_merge_panes();
         self.place_minimap();
+    }
+
+    /// 当前标签是终端或日志时，在标签栏右端留出「移至面板」按钮；终端自己的标签栏不绘制。
+    fn place_terminal_return(&mut self) {
+        let l = &mut self.layout;
+        l.terminal_return = Rect::default();
+        let movable = self
+            .editor
+            .active()
+            .is_some_and(|doc| doc.terminal || doc.log.is_some());
+        if !movable || l.tabs.w < BUTTON * 3.0 {
+            return;
+        }
+        let bar = l.tabs;
+        l.terminal_return = Rect::new(
+            bar.right() - BUTTON,
+            bar.y + (bar.h - BUTTON) / 2.0,
+            BUTTON,
+            BUTTON,
+        );
+        l.tabs.w -= BUTTON + TAB_GAP;
     }
 
     /// 当前文件能预览（SVG）时，在标签栏右端留出「源代码 / 分栏 / 预览」三个按钮，标签栏
@@ -690,9 +716,9 @@ impl App {
     /// 向渲染器声明下一帧的底色矩形（`view::base`），使其随窗口背景色一趟绘制。
     ///
     /// 同时让渲染器的背景图与配置一致（见 `App::sync_wallpaper`）。
-    pub(in crate::app) fn declare_base(&mut self, renderer: &mut winc_render::Renderer) {
+    pub(in crate::app) fn declare_base(&mut self, renderer: &mut cpui_render::Renderer) {
         self.sync_wallpaper(renderer);
-        let (window, scale) = (self.layout.window, renderer.scale_factor());
+        let (window, scale) = (self.layout.window, renderer.scale());
         if self.settings_reuses_base(window, scale) {
             // 滚动设置页时由保存的快照覆盖整个窗口，无需先填充背景。
             renderer.cover_next_frame(window);
@@ -928,6 +954,17 @@ pub(in crate::app) fn frame_interval(window: &Window) -> Duration {
         .filter(|&mhz| mhz >= 30_000)
         .unwrap_or(60_000);
     Duration::from_micros(1_000_000_000 / u64::from(millihertz))
+}
+
+/// 请系统把窗口 `window` 切到前台。
+///
+/// Windows 上不使用 `Window::focus_window`：该方法先模拟按下 Alt 键，会使其他进程转让来的前台
+/// 权限失效（见 `crate::windows::focus_window`）。
+fn focus_window(window: &Window) {
+    #[cfg(windows)]
+    crate::windows::focus_window(window);
+    #[cfg(not(windows))]
+    window.focus_window();
 }
 
 /// 系统窗口及其状态：窗口句柄、是否有焦点、是否隐藏、是否由应用绘制窗口按钮、保存的位置。

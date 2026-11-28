@@ -1,7 +1,7 @@
 //! 排版的测试：折行、标题、表格、任务列表、代码块和链接排出的项。
 
 use super::*;
-use winc_render::Renderer;
+use cpui_render::Renderer;
 
 /// 正文颜色。
 const TEXT: Color = Color::hex(0x202020);
@@ -15,9 +15,22 @@ fn lay(markdown: &str, width: f32) -> Vec<(Out, f32)> {
 
 /// 同 [`lay`]，图片按网址在 `images` 中查找。
 fn lay_with(markdown: &str, width: f32, images: &HashMap<PathBuf, ImageSlot>) -> Vec<(Out, f32)> {
+    lay_in(markdown, width, images, (0.0, 0.0))
+}
+
+/// 同 [`lay`]，比一栏宽的表格可以占用两侧的留白 `bleed`（见 [`Cx::bleed`]）。
+fn lay_bled(markdown: &str, width: f32, bleed: (f32, f32)) -> Vec<(Out, f32)> {
+    lay_in(markdown, width, &HashMap::new(), bleed)
+}
+
+fn lay_in(
+    markdown: &str,
+    width: f32,
+    images: &HashMap<PathBuf, ImageSlot>,
+    bleed: (f32, f32),
+) -> Vec<(Out, f32)> {
     let parsed = winc_preview::markdown::parse(markdown);
-    let mut renderer =
-        Renderer::offscreen(800.0, 600.0, 1.0, Color::hex(0xffffff), None, None).unwrap();
+    let mut renderer = Renderer::offscreen(800.0, 600.0, 1.0, Color::hex(0xffffff)).unwrap();
     let toggled = HashSet::new();
     let mut memo = Memo::default();
     let mut laid = Vec::new();
@@ -26,6 +39,7 @@ fn lay_with(markdown: &str, width: f32, images: &HashMap<PathBuf, ImageSlot>) ->
         let mut cx = Cx {
             frame,
             base: 16.0,
+            prose: FontKind::Ui,
             token: &|_| TOKEN,
             surface: Color::hex(0xffffff),
             accent,
@@ -45,6 +59,7 @@ fn lay_with(markdown: &str, width: f32, images: &HashMap<PathBuf, ImageSlot>) ->
             tall: f32::INFINITY,
             repeat: 0,
             toggles: HashMap::new(),
+            bleed,
         };
         let env = Env {
             color: TEXT,
@@ -66,11 +81,11 @@ fn texts(out: &Out) -> Vec<(f32, f32, Color, String)> {
         .filter_map(|item| match item {
             Item::Text {
                 baseline,
-                size,
+                font,
                 color,
                 text,
                 ..
-            } => Some((*baseline, *size, *color, text.to_string())),
+            } => Some((*baseline, font.size, *color, text.to_string())),
             _ => None,
         })
         .collect()
@@ -136,6 +151,53 @@ fn tables_wider_than_the_text_scroll_sideways() {
     assert!(laid[0].0.scrolls[0].max() > 0.0);
 }
 
+/// 返回各块中表格的外框（块里的坐标）。
+fn tables(laid: &[(Out, f32)]) -> Vec<Rect> {
+    (laid.iter().flat_map(|(out, _)| &out.items))
+        .filter_map(|item| match item {
+            Item::Table { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 比一栏宽的表格占用两侧留白：放得下时以一栏为中心展开，一侧不够时移到另一侧；放不下时
+/// 占满留白横向滚动；缩进的表格只向右展开。
+#[test]
+fn wide_tables_spread_into_the_margins() {
+    let cell = "a-long-unbreakable-cell-value";
+    let table = |cols: usize| {
+        let row = format!("| {} |\n", vec![cell; cols].join(" | "));
+        format!("{row}|{}\n{row}", "---|".repeat(cols))
+    };
+    let width = tables(&lay(&table(3), 10_000.0))[0].w;
+    let column = (width - 200.0).round();
+
+    let laid = lay_bled(&table(3), column, (300.0, 300.0));
+    let rect = tables(&laid)[0];
+    assert!(laid[0].0.scrolls.is_empty());
+    assert!(
+        (rect.x + ((rect.w - column) / 2.0).round()).abs() <= 1.0,
+        "{rect:?}"
+    );
+    let laid = lay_bled(&table(3), column, (300.0, 40.0));
+    let rect = tables(&laid)[0];
+    assert!(laid[0].0.scrolls.is_empty());
+    assert!((rect.right() - (column + 40.0)).abs() <= 1.0, "{rect:?}");
+    // 超出的宽度只比两侧留白之和多不到半个像素：仍然放下，不横向滚动。
+    let total = lay_bled(&table(3), column, (0.0, 0.0))[0].0.scrolls[0].content;
+    let laid = lay_bled(&table(3), column, (100.0, total - column - 100.3));
+    assert!(laid[0].0.scrolls.is_empty());
+
+    let laid = lay_bled(&table(8), column, (100.0, 50.0));
+    let strip = laid[0].0.scrolls[0].rect;
+    assert_eq!((strip.x, strip.w), (-100.0, column + 150.0));
+
+    let nested = format!("- item\n\n  {}", table(3).replace('\n', "\n  "));
+    let rect = tables(&lay_bled(&nested, column, (300.0, 300.0)))[0];
+    assert!(rect.x > 0.0, "{rect:?}");
+}
+
 #[test]
 fn task_list_items_have_checkboxes() {
     let laid = lay("- [x] done\n- [ ] todo\n", 600.0);
@@ -164,6 +226,19 @@ fn code_blocks_keep_their_text_and_are_highlighted() {
     assert!(!diagram);
     // 关键字按语法标记的颜色绘制。
     assert!(texts(out).iter().any(|t| t.2 == TOKEN));
+}
+
+#[test]
+fn the_code_of_a_fenced_block_is_the_text_between_its_fences() {
+    assert_eq!(
+        fenced_code("```rust\nfn a() {}\n\nfn b() {}\n```"),
+        "fn a() {}\n\nfn b() {}"
+    );
+    // 还没有结尾围栏：到末尾为止。
+    assert_eq!(fenced_code("```\nlet x = 1;"), "let x = 1;");
+    for empty in ["```", "```\n```", "```\n"] {
+        assert_eq!(fenced_code(empty), "", "{empty:?}");
+    }
 }
 
 #[test]
@@ -243,16 +318,17 @@ fn edge_labels_do_not_overlap() {
                 x,
                 baseline,
                 text,
-                size,
+                font,
                 ..
             } => {
+                let size = font.size;
                 let w: f32 = text
                     .chars()
-                    .map(|c| if c.is_ascii() { size * 0.5 } else { *size })
+                    .map(|c| if c.is_ascii() { size * 0.5 } else { size })
                     .sum();
                 Some((
                     text.to_string(),
-                    Rect::new(*x, baseline - size * 0.8, w, *size),
+                    Rect::new(*x, baseline - size * 0.8, w, size),
                 ))
             }
             _ => None,
@@ -323,5 +399,110 @@ fn inline_code_moves_to_the_next_line_with_its_padding() {
         for rect in fills {
             assert!(rect.w > 8.0, "宽 {width} 时有一块空的代码底色：{rect:?}");
         }
+    }
+}
+
+#[test]
+fn drift_moves_positions_after_the_first_edit() {
+    // 在第 10 个字节处插入 3 个字节。
+    let drift = Drift { from: 10, delta: 3 };
+    assert_eq!(drift.moved(9), 9);
+    assert_eq!(drift.moved(10), 13);
+    assert_eq!(drift.moved_start(10), 10);
+    assert_eq!(drift.moved_start(11), 14);
+    // 删去第 10 至 15 个字节：其中的位置落在改动处。
+    let drift = Drift {
+        from: 10,
+        delta: -5,
+    };
+    assert_eq!(drift.moved(12), 10);
+    assert_eq!(drift.moved(20), 15);
+    // 顶层块的起点在改动之后时整块移动，块内的相对位置不变。
+    assert_eq!(drift.within(4), Drift { from: 6, delta: -5 });
+    assert_eq!(drift.within(11), Drift::NONE);
+    assert_eq!(Drift::NONE.moved(usize::MAX - 1), usize::MAX - 1);
+}
+
+#[test]
+fn a_live_cell_hides_its_padding_and_shows_typed_spaces() {
+    fn shown(segment: &str, caret: usize) -> Option<&str> {
+        table::cell_content(segment, caret).map(|range| &segment[range])
+    }
+    // 光标在边距中或文字中：只显示文字。
+    assert_eq!(shown(" 甲 ", 0), Some("甲"));
+    assert_eq!(shown(" 甲 ", 1), Some("甲"));
+    assert_eq!(shown(" 甲 ", 5), Some("甲"));
+    // 在末尾输入的空格显示到光标为止。
+    assert_eq!(shown(" 甲   ", 5), Some("甲 "));
+    assert_eq!(shown(" 甲   ", 4), Some("甲"));
+    // 在开头输入的空格在光标位于开头的空白中时显示。
+    assert_eq!(shown("   甲 ", 3), Some("  甲"));
+    assert_eq!(shown("   甲 ", 6), Some("甲"));
+    // 没有边距、全为空白。
+    assert_eq!(shown("甲", 0), Some("甲"));
+    assert_eq!(shown("   ", 1), None);
+}
+
+/// 返回 `out` 中文字项的（左端，文字）。
+fn placed(out: &Out) -> Vec<(f32, String)> {
+    out.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Text { x, text, .. } => Some((*x, text.to_string())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn text_after_shaped_scripts_starts_where_the_shaped_text_ends() {
+    let mut renderer = Renderer::offscreen(10.0, 10.0, 1.0, Color::hex(0xffffff)).unwrap();
+    for lead in ["किताब पढ़ो ", "สวัสดีครับ ", "e\u{301}te\u{301} "]
+    {
+        let laid = lay(&format!("{lead}**x**"), 800.0);
+        let items = placed(&laid[0].0);
+        let bold = items
+            .iter()
+            .find(|(_, text)| text == "x")
+            .expect("粗体的 x");
+        let mut width = 0.0;
+        renderer.draw(|frame| width = frame.measure(Font::ui(16.0), lead));
+        assert!(
+            (bold.0 - width).abs() < 0.01,
+            "{lead}：{} ≠ {width}",
+            bold.0
+        );
+    }
+}
+
+#[test]
+fn wrapped_thai_lines_start_on_a_consonant() {
+    // 泰文的词之间不写空格，只能强制断行；元音符号和声调符号不放在行首。
+    let laid = lay(&"กี่ที่นี่".repeat(30), 120.0);
+    let lines: Vec<String> = placed(&laid[0].0)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(lines.len() > 3, "{lines:?}");
+    for line in &lines {
+        let first = line.chars().next().unwrap();
+        assert!(matches!(first, 'ก' | 'ท' | 'น'), "{line}");
+    }
+    assert_eq!(lines.concat(), "กี่ที่นี่".repeat(30));
+}
+
+#[test]
+fn thai_paragraphs_wrap_between_words() {
+    let laid = lay(&"สวัสดีครับ".repeat(20), 150.0);
+    let lines: Vec<String> = placed(&laid[0].0)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(lines.len() > 3, "{lines:?}");
+    for line in &lines {
+        assert!(
+            line.starts_with("สวัสดี") || line.starts_with("ครับ"),
+            "{line}"
+        );
     }
 }

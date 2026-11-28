@@ -108,10 +108,7 @@ impl App {
 
     /// 日期、路径菜单里的一项是否打勾（是当前日志的筛选条件）；不是这两种菜单项时为 `None`。
     pub(in crate::app) fn log_filter_checked(&self, command: MenuCommand) -> Option<bool> {
-        let query = self
-            .editor
-            .active()
-            .and_then(|d| Some(&d.log.as_deref()?.query));
+        let query = self.log_doc().and_then(|d| Some(&d.log.as_deref()?.query));
         match command {
             MenuCommand::LogSince(days) => {
                 Some(query.is_some_and(|q| q.since_days.unwrap_or(0) == days))
@@ -140,7 +137,7 @@ impl App {
                 .filter(|e| e.kind == winc_editor::EntryKind::Dir);
             paths.extend(dirs.map(|e| e.name).filter(|n| !n.starts_with('.')));
         }
-        let chosen = self.editor.active().and_then(|d| d.log.as_deref());
+        let chosen = self.log_view();
         for path in chosen.iter().flat_map(|v| &v.query.paths) {
             if !paths.contains(path) {
                 paths.push(path.clone());
@@ -177,15 +174,7 @@ impl App {
 
     /// 当前日志只按一个分支筛选时的那个分支；没按分支筛选、或选了几个分支时为 `None`。
     pub(crate) fn log_branch_filter(&self) -> Option<&str> {
-        match self
-            .editor
-            .active()?
-            .log
-            .as_ref()?
-            .query
-            .branches
-            .as_slice()
-        {
+        match self.log_doc()?.log.as_ref()?.query.branches.as_slice() {
             [one] => Some(one.as_str()),
             _ => None,
         }
@@ -226,18 +215,13 @@ impl App {
 
     /// 打开文件 `path` 的历史标签；`lines` 是只看的行范围（见 [`LogQuery::lines`]）。
     fn open_history(&mut self, path: &Path, lines: Option<(usize, usize)>) {
-        let Some(root) = self.git.root.clone() else {
-            self.flash(t!("git-not-a-repository"));
+        // 文件所在的仓库，不一定是当前仓库；切到历史标签时当前仓库跟过去（`git_follow_active`）。
+        let Some((root, path)) = self.repo_of(path) else {
+            self.flash(match self.git.root {
+                Some(_) => t!("git-file-outside-repository"),
+                None => t!("git-not-a-repository"),
+            });
             return;
-        };
-        // 路径可能经过符号链接（macOS 的 `/var` 就是 `/private/var`）。
-        let path = match winc_config::files::canonicalize(path) {
-            Ok(real) if real.starts_with(&root) => real,
-            _ if path.starts_with(&root) => path.to_path_buf(),
-            _ => {
-                self.flash(t!("git-file-outside-repository"));
-                return;
-            }
         };
         let title = match lines {
             Some((start, end)) => {
@@ -252,9 +236,10 @@ impl App {
             }
             None => history_title(&path),
         };
-        let (index, _) = self.editor.show_log(&title);
-        let doc = &mut self.editor.documents[index];
-        let id = doc.id;
+        let (id, _) = self.open_log_document(&title);
+        let Some(doc) = self.git.panel.doc_mut(&mut self.editor, id) else {
+            return;
+        };
         // 同名的另一个文件的历史占着这个标签时换成这个文件的。
         if let Some(view) = doc.log.as_deref_mut()
             && (view.root.as_ref() != Some(&root) || view.query.path.as_ref() != Some(&path))
@@ -266,8 +251,11 @@ impl App {
             self.git.log.forget(id);
             self.load_log(id);
         }
-        self.focus = Focus::Editor;
+        self.sync_log_filter();
+        self.focus = self.log_focus();
+        self.follow_panel_history();
         self.relayout();
+        self.leave_unshown_panel();
         self.request_redraw();
     }
 
@@ -291,7 +279,7 @@ impl App {
 
     /// 改当前日志的筛选条件，从头再取。
     pub(in crate::app) fn change_log_query(&mut self, change: impl FnOnce(&mut LogQuery)) {
-        let Some(doc) = self.editor.active_mut() else {
+        let Some(doc) = self.log_doc_mut() else {
             return;
         };
         let id = doc.id;
@@ -303,7 +291,7 @@ impl App {
         if view.query != before {
             // 选着的提交留着：新的结果里还有它就继续选它，详情一栏不在每次输入时先清空。
             view.reset();
-            if let Some(doc) = self.editor.active_mut() {
+            if let Some(doc) = self.log_doc_mut() {
                 set_scroll_line(doc, 0.0);
             }
             self.load_log(id);
@@ -317,8 +305,7 @@ impl App {
             return;
         }
         let text = self
-            .editor
-            .active()
+            .log_doc()
             .and_then(|d| d.log.as_deref())
             .map(|v| v.query.text.clone());
         if let Some(text) = text
@@ -344,7 +331,7 @@ impl App {
                 });
             }
             Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::ArrowDown) => {
-                self.focus = Focus::Editor;
+                self.focus = self.log_focus();
                 self.request_redraw();
             }
             _ => self.on_key_field(event, base, cmd),
@@ -357,7 +344,7 @@ impl App {
     /// 已经按作者筛选时取回来的只剩这几位的提交：沿用这个标签上次弹出时的名单，才能再加别的
     /// 作者。
     pub(super) fn log_authors(&self) -> Vec<String> {
-        let Some(doc) = self.editor.active() else {
+        let Some(doc) = self.log_doc() else {
             return Vec::new();
         };
         let Some(view) = doc.log.as_deref() else {

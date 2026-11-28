@@ -9,9 +9,11 @@ mod formatters;
 pub(super) mod shortcuts;
 mod stepper;
 mod switches;
+mod transfer;
 mod values;
 
 use stepper::step;
+pub(in crate::app) use transfer::{EXPORTED_SETTINGS, SETTINGS_EXTENSIONS};
 
 use winc_editor::format::{
     Auto, FormatError, PRESETS, Plan, Program, Task, knows_how_to_install, presets,
@@ -56,11 +58,13 @@ pub struct SettingsState {
     pub changed: Vec<Setting>,
     /// 随状态列出的行。
     ///
-    /// 格式化页的语言在打开设置时确定，打开期间只会增加，不会减少，已列出的语言也不换位置；
-    /// Vim 的冲突键随 Vim 模式和键位表的变化重新算。
+    /// 格式化页的语言在打开设置后、后台第一次算出工具选择时按语言表的顺序排列，此后只会增加，
+    /// 不会减少，已列出的语言也不换位置；Vim 的冲突键随 Vim 模式和键位表的变化重新算。
     pub listed: Listed,
     /// 格式化页每一行（格式化工具、修复工具）上显示的内容。
     pub tool_rows: Vec<(Setting, FormatRow)>,
+    /// 格式化页各行所用的工具选择，在后台计算。
+    pub tool_plans: formatters::ToolPlans,
     /// 正在后台查询 WSL 发行版中装了哪些工具，查完后重新计算各行。
     pub probing: bool,
     /// 分类栏顶部的搜索框：按设置项的名称和说明搜索，不为空白时正文换成搜索结果。
@@ -98,7 +102,7 @@ pub struct SettingsState {
     /// 出现、消失动画用的快照，动画开头画一次存下来，动画结束就释放。
     pub cache: Option<DialogCache>,
     /// 设置页滚动或拖动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
-    pub scroll_base: Option<winc_render::Snapshot>,
+    pub scroll_base: Option<cpui_render::Capture>,
     /// 最近一次滚动或拖动的时刻；两者都未进行时为 `None`。
     pub scrolled_at: Option<Instant>,
     /// 卡片相对窗口中央的偏移（逻辑像素），拖动标题行时改变；窗口存在期间保留，再次打开时
@@ -110,9 +114,9 @@ pub struct SettingsState {
 #[derive(Debug)]
 pub struct DialogCache {
     /// 浮层底下的整个窗口（主界面，不含浮层）。
-    pub base: winc_render::Snapshot,
+    pub base: cpui_render::Capture,
     /// 画好的卡片：原大、不透明，不含阴影。
-    pub card: winc_render::Snapshot,
+    pub card: cpui_render::Capture,
 }
 
 /// 格式化页中一种语言的一行（格式化工具或修复工具）：右侧显示工具，名称下方显示来源和提醒。
@@ -178,7 +182,8 @@ fn font_error(value: &Option<String>) -> Option<String> {
     Some(match (error, spec) {
         (FontError::NotFound, FontSpec::Name(_)) => t!("settings-font-not-installed", name = name),
         (FontError::NotFound, FontSpec::Path(_)) => t!("settings-font-file-not-found", name = name),
-        (FontError::Unsupported, _) => t!("settings-font-unsupported", name = name),
+        // 渲染层以后可能加入新的原因，都按无法使用处理。
+        _ => t!("settings-font-unsupported", name = name),
     })
 }
 
@@ -218,14 +223,15 @@ impl App {
         self.settings.hover = None;
         self.settings.listed = Listed::default();
         self.refresh_vim_key_rows();
-        // 每次打开设置重新查询发行版中的工具：其间新安装的能列出来。
+        // 每次打开设置重新检查项目中的文件和发行版中的工具，其间新增的配置、新安装的工具随之列出。
         self.format.formatter.forget_wsl();
+        self.settings.tool_plans.restart(self.format_dir());
         self.refresh_format_rows(true);
         self.settings.integration = crate::shell_integration::read();
         self.refresh_changed_settings();
         // 列出字体要读取字体文件，先在后台读好，打开字体菜单时不必等待；「默认 Shell」菜单中的
         // shell 同样在后台检测。
-        std::thread::spawn(winc_render::installed_fonts);
+        std::thread::spawn(cpui_render::installed_fonts);
         self.detect_terminal_shells();
         // 能否找到工具取决于用户 shell 中的 `PATH`，因此在后台获取该环境，取到之后再补上提醒。
         if let Some(proxy) = self.link.proxy.clone() {
@@ -322,8 +328,9 @@ impl App {
     ) -> Option<Rect> {
         let row = layout.row(setting)?;
         let measure = |text: &str| {
-            (self.frame.renderer.as_ref())
-                .map_or(0.0, |r| r.measure(FontKind::Ui, self.fonts.ui, text))
+            (self.frame.renderer.as_ref()).map_or(0.0, |r| {
+                r.font_system().measure(Font::ui(self.fonts.ui), text)
+            })
         };
         Some(if setting == Setting::Version {
             let text_w = measure(&crate::layout::version_line());
@@ -406,7 +413,7 @@ impl App {
         let size = self.fonts.ui_small;
         let renderer = self.frame.renderer.as_ref();
         self.settings_layout_with(&mut |text: &str| {
-            renderer.map_or(0.0, |r| r.measure(FontKind::Ui, size, text))
+            renderer.map_or(0.0, |r| r.font_system().measure(Font::ui(size), text))
         })
     }
 
@@ -759,12 +766,29 @@ impl App {
         )
     }
 
-    /// 将值 `setting`（版本号）复制到剪贴板，并在状态栏提示。
+    /// 把版本信息（[`crate::system::info::report`]：版本、架构和系统）复制到剪贴板，供问题反馈
+    /// 使用，并在状态栏提示；`setting` 是「关于」页的版本号一行。
     pub(in crate::app) fn settings_copy_value(&mut self, setting: Setting) {
         self.settings.selected = setting;
-        let version = crate::layout::version_label();
-        self.set_clipboard(version.clone(), false);
-        self.flash(t!("settings-version-copied", version = version));
+        let report = crate::system::info::report(self.display_protocol());
+        self.set_clipboard(report, false);
+        self.flash(t!("settings-version-info-copied"));
+    }
+
+    /// 窗口所用的显示协议：Linux 上为 `Wayland` 或 `X11`，其他平台和没有窗口时为 `None`。
+    fn display_protocol(&self) -> Option<&'static str> {
+        #[cfg(target_os = "linux")]
+        {
+            use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+            let window = self.window.handle.as_ref()?;
+            match window.display_handle().ok()?.as_raw() {
+                RawDisplayHandle::Wayland(_) => Some("Wayland"),
+                RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_) => Some("X11"),
+                _ => None,
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        None
     }
 
     /// 处理 `↩` 或空格：输入框进入编辑，开关切换，格式化命令、「添加语言…」「排除的语言」弹出菜单，
@@ -804,9 +828,15 @@ impl App {
             None if setting == Setting::TerminalShell => self.config.terminal_shell.clone(),
             None if setting == Setting::GitPath => self.config.git_path.clone(),
             None if setting == Setting::LatexPath => self.config.latex_path.clone(),
+            None if setting == Setting::EditorRulers => rulers_text(&self.config.editor_rulers),
+            None if setting.is_ai_text() => ai_text(&mut self.config, setting).clone(),
             None => self.font_setting(setting).clone(),
         };
-        let mut field = TextField::default();
+        // 输入密钥时同样以圆点代替明文。
+        let mut field = match setting {
+            Setting::AiApiKey => TextField::masked(),
+            _ => TextField::default(),
+        };
         field.set_text(current.as_deref().unwrap_or(""));
         field.select_all();
 
@@ -939,8 +969,43 @@ impl App {
                 self.focus = Focus::Settings;
                 self.set_latex_path(value);
             }
+            None if setting == Setting::EditorRulers => self.settings_commit_rulers(value),
+            None if setting.is_ai_text() => {
+                self.settings.editing = None;
+                self.settings.editing_original = None;
+                self.settings.error = None;
+                self.focus = Focus::Settings;
+                let field = ai_text(&mut self.config, setting);
+                if *field != value {
+                    *field = value;
+                    self.save_config();
+                }
+                self.request_redraw();
+            }
             None => self.settings_commit_font(setting, value),
         }
+    }
+
+    /// 提交长行参考线的列号并写回配置；清空表示不显示。
+    ///
+    /// 无法识别时留在输入框中并说明原因，配置不变。
+    fn settings_commit_rulers(&mut self, value: Option<String>) {
+        let Some(columns) = parse_rulers(value.as_deref().unwrap_or("")) else {
+            let max = *Config::RULER_RANGE.end();
+            let message = t!("settings-editor-rulers-invalid", max = max);
+            self.settings.error = Some((Setting::EditorRulers, message));
+            self.request_redraw();
+            return;
+        };
+        self.settings.editing = None;
+        self.settings.editing_original = None;
+        self.settings.error = None;
+        self.focus = Focus::Settings;
+        if self.config.editor_rulers != columns {
+            self.config.editor_rulers = columns;
+            self.save_config();
+        }
+        self.request_redraw();
     }
 
     /// 提交格式化（修复）命令并写回配置；`command` 为 `None`（清空）表示自动选择。
@@ -1189,9 +1254,24 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置日志和文件历史显示的位置，已打开的日志随之移过去。
+    pub(in crate::app) fn set_log_placement(&mut self, choice: winc_config::LogPlacement) {
+        self.config.git_log_placement = Some(choice);
+        self.save_config();
+        self.apply_log_placement(true);
+        self.request_redraw();
+    }
+
     /// 设置拉取、同步时合并还是变基。
     pub(in crate::app) fn set_pull_mode(&mut self, choice: winc_config::PullMode) {
         self.config.git_pull = Some(choice);
+        self.save_config();
+        self.request_redraw();
+    }
+
+    /// 设置调用模型的接口协议。
+    pub(in crate::app) fn set_ai_protocol(&mut self, choice: winc_config::AiProtocol) {
+        self.config.ai_protocol = Some(choice);
         self.save_config();
         self.request_redraw();
     }
@@ -1317,6 +1397,39 @@ pub(crate) struct Store {
     pub(crate) state_requests: u64,
     /// 配置的版本号：本窗口每写入一次配置文件加 1，应用层据此把新配置发给其他窗口。
     pub(crate) config_rev: u64,
+}
+
+/// 返回调用模型的一项文本设置（接口地址、模型名或密钥）在配置中的值；`setting` 须满足
+/// [`Setting::is_ai_text`]。
+fn ai_text(config: &mut Config, setting: Setting) -> &mut Option<String> {
+    match setting {
+        Setting::AiBaseUrl => &mut config.ai_base_url,
+        Setting::AiModel => &mut config.ai_model,
+        _ => &mut config.ai_api_key,
+    }
+}
+
+/// 返回设置中显示的长行参考线的列号，例如「80, 120」；未设置参考线时返回 `None`。
+pub(crate) fn rulers_text(columns: &[usize]) -> Option<String> {
+    let text: Vec<String> = columns.iter().map(usize::to_string).collect();
+    (!text.is_empty()).then(|| text.join(", "))
+}
+
+/// 解析设置中输入的长行参考线列号，按从小到大排列并去掉重复的列。
+///
+/// 各项以逗号、顿号或空白分隔；任一项不是 [`Config::RULER_RANGE`] 内的整数时返回 `None`。
+fn parse_rulers(text: &str) -> Option<Vec<usize>> {
+    let separator = |c: char| matches!(c, ',' | '，' | '、') || c.is_whitespace();
+    let mut columns = (text.split(separator).filter(|part| !part.is_empty()))
+        .map(|part| {
+            part.parse()
+                .ok()
+                .filter(|c| Config::RULER_RANGE.contains(c))
+        })
+        .collect::<Option<Vec<usize>>>()?;
+    columns.sort_unstable();
+    columns.dedup();
+    Some(columns)
 }
 
 #[cfg(test)]

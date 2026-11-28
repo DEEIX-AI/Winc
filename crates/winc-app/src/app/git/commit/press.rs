@@ -16,16 +16,22 @@ impl App {
                 | CommitTarget::Dir(_)
                 | CommitTarget::DirCheck(_)
                 | CommitTarget::DirStage(..)
+                | CommitTarget::DirRevert(_)
                 | CommitTarget::Stash(_)
                 | CommitTarget::StashFile(_)
                 | CommitTarget::StashApply(_)
                 | CommitTarget::StashMenu(_)
+                | CommitTarget::History(HistoryTarget::Commit(_))
         );
-        if indexed && self.git.commit.hits_generation != self.git.generation {
+        let history = matches!(target, CommitTarget::History(_));
+        let stale = self.git.commit.hits_generation != self.git.generation
+            || (history && !self.git.commit.history.hits_current());
+        if indexed && stale {
             self.request_redraw();
             return;
         }
         match target {
+            CommitTarget::History(target) => self.press_history(target),
             CommitTarget::Stashes
             | CommitTarget::Stash(_)
             | CommitTarget::StashFile(_)
@@ -49,7 +55,8 @@ impl App {
             | CommitTarget::RevertFile(_)
             | CommitTarget::StageFile(..)
             | CommitTarget::GroupStage(_)
-            | CommitTarget::DirStage(..) => self.press_commit_row(target),
+            | CommitTarget::DirStage(..)
+            | CommitTarget::DirRevert(_) => self.press_commit_row(target),
             CommitTarget::OtherRepository(_)
             | CommitTarget::OtherFile(..)
             | CommitTarget::OtherStagedFile(..) => self.press_other(target),
@@ -73,6 +80,11 @@ impl App {
             CommitTarget::OtherStage(..) | CommitTarget::OtherGroupStage(..) => {
                 self.press_other_stage(target);
             }
+            CommitTarget::OtherOpen(..)
+            | CommitTarget::OtherRevert(..)
+            | CommitTarget::OtherGroupRevert(..)
+            | CommitTarget::OtherDirRevert(_)
+            | CommitTarget::OtherDirStage(..) => self.press_other_action(target),
             CommitTarget::OtherBranch(repo) => {
                 self.press_other(CommitTarget::OtherRepository(repo));
                 self.paint_now();
@@ -106,7 +118,9 @@ impl App {
                 );
             }
             CommitTarget::Location => self.open_places(true),
-            CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
+            CommitTarget::Branch | CommitTarget::CurrentBranch => {
+                self.open_branch_picker(GitAnchor::Branch);
+            }
             CommitTarget::Sync => self.git_sync(),
             // 按住 ⌥ 时按钮写的是「提交并推送」（见 `App::commit_pushes`）。
             CommitTarget::Commit if self.commit_pushes() => self.confirm_commit_and_push(),
@@ -133,6 +147,7 @@ impl App {
                 );
             }
             CommitTarget::CommitPush => self.confirm_commit_and_push(),
+            CommitTarget::Generate => self.generate_commit_message(),
             CommitTarget::CommitMenu => {
                 // 菜单挂在「⌄」那一段下方，右端与按钮右端对齐、向左展开，不从整个按钮的左端弹出，
                 // 避免菜单看起来与「⌄」无关。
@@ -260,6 +275,12 @@ impl App {
                     self.stage_paths(&[path], on);
                 }
             }
+            CommitTarget::DirRevert(row) => {
+                let paths = self.commit_dir_files(row);
+                if !paths.is_empty() {
+                    self.confirm_commit_rollback(paths);
+                }
+            }
             CommitTarget::DirStage(row, on) => {
                 let rows = self.commit_rows();
                 let (Some(CommitRow::Dir { group, dir, .. }), Some(status)) =
@@ -292,7 +313,7 @@ impl App {
         match target {
             CommitTarget::Stashes => self.toggle_stashes(),
             CommitTarget::Stash(i) => self.show_stash(i),
-            CommitTarget::StashFile(at) => self.open_stash_file(at),
+            CommitTarget::StashFile(at) => self.open_peek_file(at),
             CommitTarget::StashApply(i) => {
                 if let Some(stash) = self.git.stashes.get(i).cloned() {
                     self.run_stash_op(super::super::branch::StashOp::Apply, stash);

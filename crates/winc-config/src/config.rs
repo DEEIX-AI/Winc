@@ -3,6 +3,7 @@
 //! 每一项设置的键名和读写规则由 `fields` 模块给出。
 
 mod fields;
+mod transfer;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,8 @@ use crate::files::{config_dir, write_atomic};
 use crate::json::{self, Json};
 use fields::*;
 use winc_i18n::{LocaleChoice, t};
+
+pub use transfer::{Imported, export_config, import_config};
 
 /// 用户配置。
 ///
@@ -23,6 +26,13 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::EDITOR_SIZE_RANGE`]。
     pub editor_size: Option<f32>,
+    /// 编辑区等宽文字的字重，默认为 400，与界面字重无关；终端未设置 `terminal.fontWeight` 时
+    /// 同样使用该字重。
+    ///
+    /// 可用范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    pub editor_font_weight: Option<u16>,
+    /// 字体支持时把 `->`、`===` 等相邻的符号画成连写的字形，默认为否。
+    pub editor_font_ligatures: Option<bool>,
     /// 界面字体（文件树、标签、状态栏）。
     pub ui_font: Option<String>,
     /// 界面字号（点）。
@@ -34,8 +44,8 @@ pub struct Config {
     ///
     /// 可用范围见 [`Config::ZOOM_RANGE`]。
     pub ui_zoom: Option<u16>,
-    /// 界面和编辑区文字的字重，默认为 400（各字体自身的字重）；范围见
-    /// [`Config::FONT_WEIGHT_RANGE`]。终端没有设置 `terminal.fontWeight` 时也用它。
+    /// 界面文字的字重，默认为 400（各字体自身的字重）；范围见 [`Config::FONT_WEIGHT_RANGE`]。
+    /// 编辑区和终端的字重分别由 `editor.fontWeight`、`terminal.fontWeight` 设置。
     pub ui_font_weight: Option<u16>,
     /// 窗口背景图片的路径；没写时没有背景图。
     pub ui_background_image: Option<String>,
@@ -92,6 +102,8 @@ pub struct Config {
     pub sticky_scroll: Option<bool>,
     /// 自动换行：按编辑区宽度把长行断开显示（不修改文件），默认为否。
     pub word_wrap: Option<bool>,
+    /// CSV、TSV 按列对齐显示（不修改文件），默认为开；关闭时按原文排布，仍按列着色。
+    pub align_columns: Option<bool>,
     /// 超长行显示全部内容，而不是只显示开头的一部分，默认为否。
     pub whole_lines: Option<bool>,
     /// 在编辑区右侧显示缩略图，默认为否。
@@ -100,10 +112,18 @@ pub struct Config {
     pub smooth_scrolling: Option<bool>,
     /// 光标移动时滑到新位置的方式，默认为不播放动画。
     pub smooth_caret_movement: Option<SmoothCaret>,
+    /// 编辑区和差异视图中光标的形状，默认为竖线；开启 Vim 模式时只用于插入模式。
+    pub cursor_style: Option<CursorStyle>,
     /// 在侧栏文件视图的底部显示大纲（当前文件的函数、类型、标题），默认为是。
     pub outline: Option<bool>,
     /// 何时显示空格和制表符，默认为选中时。
     pub render_whitespace: Option<RenderWhitespace>,
+    /// 在行尾标出该行的换行符（LF、CRLF 或 CR），默认为否。
+    pub render_line_endings: Option<bool>,
+    /// 显示长行参考线的列：每一项 N 在第 N 列之后（距行首 N 个字符宽处）画一条竖线；为空时不显示。
+    ///
+    /// 各项的可用范围见 [`Config::RULER_RANGE`]。
+    pub editor_rulers: Vec<usize>,
     /// 差异单栏显示：新旧内容上下排列，默认为否（左右并排）。
     pub diff_inline: Option<bool>,
     /// 差异中较长的未更改内容折叠为一行，默认为是；关闭后差异打开时就是全部展开的。
@@ -168,6 +188,8 @@ pub struct Config {
     pub compact_folders: Option<bool>,
     /// 在文件树中单击文件时是否在预览标签中打开；未设置时为否。
     pub preview_on_click: Option<bool>,
+    /// 切换、打开文件时是否在文件树中展开并选中该文件；未设置时为是。
+    pub tree_auto_reveal: Option<bool>,
     /// 「在外部终端中打开」使用的终端程序；未设置时使用系统默认的终端程序。
     pub external_terminal: Option<String>,
     /// 是否开启 Vim 模式，默认为否。
@@ -208,7 +230,7 @@ pub struct Config {
     ///
     /// 可用范围同 [`Config::EDITOR_SIZE_RANGE`]。
     pub terminal_size: Option<f32>,
-    /// 终端文字的字重；未设置时跟随全局字重（[`Config::ui_font_weight`]）。
+    /// 终端文字的字重；未设置时跟随编辑区字重（[`Config::editor_font_weight`]）。
     ///
     /// 可用范围见 [`Config::FONT_WEIGHT_RANGE`]。
     pub terminal_font_weight: Option<u16>,
@@ -234,6 +256,8 @@ pub struct Config {
     pub terminal_prompt: Option<bool>,
     /// 终端里选中文字（拖选、双击、三击）松开时自动复制，默认为否。
     pub terminal_copy_on_select: Option<bool>,
+    /// 在终端里右键单击的作用，默认为弹出菜单。
+    pub terminal_right_click: Option<TerminalRightClick>,
     /// 终端里把粗体的前 8 种颜色画成对应的亮色，供依赖粗体表示亮色的程序使用，默认为否。
     pub terminal_bold_is_bright: Option<bool>,
     /// 终端面板是否放在编辑区右边（配置里的 `"position": "right"`）；否则（`"bottom"` 或
@@ -268,6 +292,8 @@ pub struct Config {
     pub system_proxy: Option<bool>,
     /// 是否在光标所在行的末尾淡淡地显示最后修改这一行的作者、时间和提交说明，默认为是。
     pub git_inline_blame: Option<bool>,
+    /// 是否在提交视图的更改下方列出最近的提交和提交图，默认为否。
+    pub git_commit_history: Option<bool>,
     /// 是否定时在后台获取远程仓库的更新，默认为否：获取会连接远程，需要认证的远程可能每次都
     /// 要求操作。
     pub git_auto_fetch: Option<bool>,
@@ -292,8 +318,23 @@ pub struct Config {
     pub git_open_worktree: Option<WorktreeOpen>,
     /// 拉取、同步时怎样并入上游的提交，默认按 Git 的配置。
     pub git_pull: Option<PullMode>,
+    /// 日志和文件历史显示在哪里，默认在窗口底部的 Git 面板中。
+    pub git_log_placement: Option<LogPlacement>,
     /// 新建工作树时复制过去的被忽略的文件（gitignore 写法的 glob，如 `.env*`），默认不复制。
     pub git_worktree_copy: Vec<String>,
+    /// 是否在提交视图中用模型生成提交信息，默认为否；模型在 `ai` 一节中设置。
+    pub git_generate_commit_message: Option<bool>,
+    /// 调用模型的接口协议，默认 [`AiProtocol::ChatCompletions`]。
+    pub ai_protocol: Option<AiProtocol>,
+    /// 接口地址，包含版本路径（如 `/v1`）；未设置时使用协议的官方地址。
+    pub ai_base_url: Option<String>,
+    /// 模型名；未设置时不调用模型。
+    pub ai_model: Option<String>,
+    /// 接口的密钥；不需要认证的接口（如本地部署的模型）不设置。
+    pub ai_api_key: Option<String>,
+    /// 等待模型响应的最长时间（秒），默认 [`Config::AI_TIMEOUT`]，可用范围见
+    /// [`Config::AI_TIMEOUT_RANGE`]。
+    pub ai_timeout: Option<u64>,
     /// 保存时先格式化，默认为否。
     pub format_on_save: Option<bool>,
     /// 保存时不格式化的语言（语言的 id）；手动格式化（`⇧⌥F`）仍然生效。
@@ -341,6 +382,22 @@ impl OptionAsMeta {
             OptionAsMeta::None => "none",
         }
     }
+}
+
+/// 在终端里右键单击的作用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TerminalRightClick {
+    /// 弹出终端的菜单。
+    #[default]
+    Menu,
+    /// 有所选内容时复制并取消选择，否则粘贴；按住 ⌥（Alt）时仍弹出菜单。
+    CopyOrPaste,
+}
+
+impl TerminalRightClick {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [TerminalRightClick; 2] =
+        [TerminalRightClick::Menu, TerminalRightClick::CopyOrPaste];
 }
 
 /// Vim 模式下无名寄存器与系统剪贴板的同步方式。
@@ -434,6 +491,74 @@ impl PullMode {
     }
 }
 
+/// 调用模型的接口协议：请求的路径、认证的请求头、请求和响应的写法都随协议而定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AiProtocol {
+    /// `POST /chat/completions`，`Authorization: Bearer` 认证。
+    #[default]
+    ChatCompletions,
+    /// `POST /responses`，`Authorization: Bearer` 认证。
+    Responses,
+    /// `POST /messages`，`x-api-key` 认证。
+    Messages,
+    /// `POST /interactions`，`x-goog-api-key` 认证。
+    Interactions,
+}
+
+impl AiProtocol {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 4] = [
+        Self::ChatCompletions,
+        Self::Responses,
+        Self::Messages,
+        Self::Interactions,
+    ];
+
+    /// 返回配置文件中的写法。
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "chatCompletions",
+            Self::Responses => "responses",
+            Self::Messages => "messages",
+            Self::Interactions => "interactions",
+        }
+    }
+
+    /// 返回协议的名称，用于设置中的显示。
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "Chat Completions",
+            Self::Responses => "Responses",
+            Self::Messages => "Messages",
+            Self::Interactions => "Interactions",
+        }
+    }
+
+    /// 返回未设置接口地址时使用的官方地址。
+    pub fn default_base_url(self) -> &'static str {
+        match self {
+            Self::ChatCompletions | Self::Responses => "https://api.openai.com/v1",
+            Self::Messages => "https://api.anthropic.com/v1",
+            Self::Interactions => "https://generativelanguage.googleapis.com/v1beta",
+        }
+    }
+}
+
+/// 日志和文件历史显示在哪里。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogPlacement {
+    /// 窗口底部、侧栏和编辑区下方的 Git 面板。
+    #[default]
+    Panel,
+    /// 编辑区的标签。
+    Editor,
+}
+
+impl LogPlacement {
+    /// 全部取值，按设置菜单中的顺序排列。
+    pub const ALL: [Self; 2] = [Self::Panel, Self::Editor];
+}
+
 /// 点击工作树时在哪个窗口打开它。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WorktreeOpen {
@@ -506,6 +631,27 @@ impl RenderWhitespace {
         RenderWhitespace::Selection,
         RenderWhitespace::Trailing,
         RenderWhitespace::All,
+    ];
+}
+
+/// 编辑区光标的形状；开启 Vim 模式时只用于插入模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorStyle {
+    /// 字符之间的竖线。
+    #[default]
+    Line,
+    /// 覆盖光标处字符的实心块。
+    Block,
+    /// 光标处字符下方的横线。
+    Underline,
+}
+
+impl CursorStyle {
+    /// 全部选项，顺序与设置中菜单的顺序一致。
+    pub const ALL: [CursorStyle; 3] = [
+        CursorStyle::Line,
+        CursorStyle::Block,
+        CursorStyle::Underline,
     ];
 }
 
@@ -615,6 +761,10 @@ impl Config {
     pub const FONT_WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 100.0..=900.0;
     /// 默认的字重。
     pub const FONT_WEIGHT: u16 = 400;
+    /// 长行参考线所在列的可用范围（列）；超出的项在读入时忽略并报告。
+    ///
+    /// 下限 1；上限取自调参，比常见的行宽约定（80、100、120 列）大一个数量级，用于排除写错的值。
+    pub const RULER_RANGE: std::ops::RangeInclusive<usize> = 1..=1000;
     /// 背景图片不透明度的合法范围（百分比）：0 时不显示图片，100 时图片完全遮住底色。
     ///
     /// 超出范围的值在读入时忽略并报告。
@@ -637,6 +787,14 @@ impl Config {
     ///
     /// 超出范围的值在读入时忽略并报告；上限取自调参，更长的等待与不超时无异。
     pub const VIM_TIMEOUT_LEN_RANGE: std::ops::RangeInclusive<f32> = 0.0..=60_000.0;
+    /// 等待模型响应的默认最长时间（秒）。
+    ///
+    /// 取自调参：提交信息的回答很短，响应时间通常远短于 30 秒；推理较慢的模型可在设置中调大。
+    pub const AI_TIMEOUT: u64 = 30;
+    /// 等待模型响应的最长时间的合法范围（秒）。
+    ///
+    /// 超出范围的值在读入时忽略并报告；上限取自调参，更长的等待与服务失去响应无异。
+    pub const AI_TIMEOUT_RANGE: std::ops::RangeInclusive<f32> = 10.0..=600.0;
     /// 查找仓库的默认层数：覆盖「目录 / 分组 / 项目」这样的常见结构；扫描在后台进行，有目录项总数
     /// 的上限，较深的层数不会拖慢界面。
     pub const REPOSITORY_SCAN_DEPTH: usize = 3;
@@ -888,10 +1046,12 @@ impl Config {
         if original.is_none() || comments {
             let path = path.with_extension("json.bak");
             std::fs::write(&path, &old)?;
+            private_if(base.ai_api_key.is_some(), &path)?;
             backup = Some(Backup { path, comments });
         }
         let text = self.render(original.map(|root| (root, base)));
         write_atomic(path, &text)?;
+        private_if(self.ai_api_key.is_some(), path)?;
         Ok(Saved {
             config: Config::parse(&text).0,
             backup,
@@ -917,6 +1077,23 @@ pub struct Backup {
     pub path: PathBuf,
     /// 原文件可以解析但含有注释（写出的文件不保留注释）时为真；原文件无法解析时为假。
     pub comments: bool,
+}
+
+/// `secret` 为真（写有接口密钥）时把文件 `path` 设为只有本人可以读写，同一台机器上的其他用户
+/// 读不到；其他平台上不做处理。
+///
+/// # Errors
+///
+/// 修改权限失败时返回 `std::io::Error`。
+fn private_if(secret: bool, path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if secret {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (secret, path);
+    Ok(())
 }
 
 /// 返回用户级配置文件的路径；无法确定用户目录时返回 `None`。

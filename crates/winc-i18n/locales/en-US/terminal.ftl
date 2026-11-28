@@ -6,6 +6,8 @@ terminal-maximize-panel = Maximize panel
 terminal-restore-panel = Restore panel
 terminal-hide-panel = Hide terminal panel
 terminal-show-panel = Show terminal panel
+terminal-move-to-editor = Move terminal to editor area
+terminal-move-to-panel = Move terminal to panel
 terminal-tab-default-name = Terminal
 terminal-new = New Terminal
 terminal-module-disabled = The terminal module isn’t enabled
@@ -92,6 +94,8 @@ terminal-upload-too-large = { $size } is too large to send to the remote host ({
 terminal-upload-no-image = Couldn’t read the image on the clipboard
 terminal-upload-no-folder = Couldn’t create a folder for it on the remote host
 terminal-upload-elsewhere = Sent to the remote host: { $path }
+terminal-image-paste-failed = Couldn’t paste the clipboard image: { $error }
+terminal-image-saved-elsewhere = Saved the clipboard image to { $path }
 
 ## 运行配置。
 

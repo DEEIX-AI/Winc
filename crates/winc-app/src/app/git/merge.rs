@@ -12,13 +12,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use cpui_render::Rect;
 use winc_core::Lines;
 use winc_editor::diff_view::{DiffSide, DiffView};
 use winc_editor::git::Change;
 use winc_editor::git::merge::{self, Conflict, Pick, SideAlign};
 use winc_editor::{Document, DocumentId};
 use winc_i18n::t;
-use winc_render::Rect;
 
 use super::changes::replace_lines;
 use crate::app::NoticeKind;
@@ -161,7 +161,7 @@ impl App {
         };
         self.git.status.as_ref().is_some_and(|s| {
             s.entries.iter().any(|e| {
-                e.shown() == Change::Conflicted && winc_editor::canonical_path(&e.path) == path
+                e.shown() == Change::Conflicted && self.editor.document_path(&e.path) == path
             })
         })
     }

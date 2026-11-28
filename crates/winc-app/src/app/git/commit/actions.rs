@@ -590,7 +590,7 @@ impl App {
     /// 有一个保存失败就停下；失败的原因保存时已经说明了。
     pub(in crate::app) fn save_dirty_documents(&mut self, paths: &[PathBuf]) -> bool {
         for path in paths {
-            let canonical = winc_editor::canonical_path(path);
+            let canonical = self.editor.document_path(path);
             let dirty = self
                 .editor
                 .documents
@@ -648,7 +648,8 @@ impl App {
         self.run_branch_command(crate::app::input::context_menu::MenuCommand::GitSkip);
     }
 
-    /// 确认后回滚组 `group`：暂存区视图中为组内全部文件，勾选式下为勾选的文件。
+    /// 确认后回滚组 `group` 的全部文件（暂存区视图中回滚到暂存区，见
+    /// [`App::confirm_commit_rollback`]）。
     pub(super) fn ask_rollback(&mut self, group: CommitGroup) {
         let Some(status) = self.git.status.as_ref() else {
             return;
@@ -658,29 +659,54 @@ impl App {
             .entries
             .iter()
             .filter(|e| group.holds(e, staging))
-            .filter(|e| staging || self.git.commit.checked(e))
             .map(|e| e.path.clone())
             .collect();
-        if paths.is_empty() && !staging {
-            self.flash(t!("git-rollback-nothing-checked"));
-        } else if !paths.is_empty() {
+        if !paths.is_empty() {
             self.confirm_commit_rollback(paths);
         }
     }
 
-    /// 确认后回滚提交视图中的 `paths`。
+    /// 读取仓库 `root` 的状态：当前仓库读 `GitState::status`，其他仓库读最近一次读到的状态；
+    /// 还没有读到时返回 `None`。
+    pub(in crate::app) fn status_in<R>(
+        &self,
+        root: &Path,
+        read: impl FnOnce(&Status) -> R,
+    ) -> Option<R> {
+        if self.git.root.as_deref() == Some(root) {
+            return self.git.status.as_ref().map(read);
+        }
+        let summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
+        summaries.get(root).map(read)
+    }
+
+    /// 确认后回滚 `paths`：都在第一项所在的仓库中，可以不是当前仓库。
     ///
-    /// 暂存区视图中回滚到暂存区，略过没有未暂存更改的文件；勾选式下回滚到 `HEAD`。
+    /// 暂存区视图中回滚到暂存区，略过没有未暂存更改的文件；只选了冲突的文件时回滚到 `HEAD`，冲突的
+    /// 文件在暂存区中没有可还原的版本。勾选式下回滚到 `HEAD`。
     pub(in crate::app) fn confirm_commit_rollback(&mut self, paths: Vec<PathBuf>) {
         if !self.git.commit.staging() {
             self.confirm_rollback(paths);
             return;
         }
-        let entries = self.git.status.iter().flat_map(|s| &s.entries);
-        let unstaged: Vec<PathBuf> = entries
-            .filter(|e| e.unstaged.is_some() && !e.conflicted() && paths.contains(&e.path))
-            .map(|e| e.path.clone())
-            .collect();
+        let Some((root, _)) = paths.first().and_then(|path| self.repo_of(path)) else {
+            return;
+        };
+        let pick = |status: &Status| {
+            let paths_where = |keep: fn(&Entry) -> bool| -> Vec<PathBuf> {
+                (status.entries.iter())
+                    .filter(|e| keep(e) && paths.contains(&e.path))
+                    .map(|e| e.path.clone())
+                    .collect()
+            };
+            let unstaged = paths_where(|e| e.unstaged.is_some() && !e.conflicted());
+            (unstaged, paths_where(Entry::conflicted))
+        };
+        let (unstaged, conflicts) = self.status_in(&root, pick).unwrap_or_default();
+        if unstaged.is_empty() && !conflicts.is_empty() {
+            self.confirm_rollback(conflicts);
+            return;
+        }
         if unstaged.is_empty() {
             self.flash(t!("git-rollback-nothing-unstaged"));
             return;
@@ -689,7 +715,7 @@ impl App {
     }
 
     /// 确认后把 `paths` 回滚到 `HEAD`。
-    pub(in crate::app) fn confirm_rollback(&mut self, paths: Vec<PathBuf>) {
+    fn confirm_rollback(&mut self, paths: Vec<PathBuf>) {
         self.confirm_rollback_to(paths, RollbackTo::Head);
     }
 
@@ -721,30 +747,36 @@ impl App {
         self.git_rollback(paths, to);
     }
 
-    /// 把 `paths` 回滚到 `to`，未跟踪的文件移到废纸篓。
+    /// 把 `paths` 回滚到 `to`，未跟踪的文件移到废纸篓。各项都在第一项所在的仓库中，可以不是
+    /// 当前仓库。
     ///
     /// 回滚到 `HEAD` 时，新加入版本管理的文件从暂存区移除并移到废纸篓。已打开的文档由目录监视
     /// 重新读取。
     pub(in crate::app) fn git_rollback(&mut self, paths: Vec<PathBuf>, to: RollbackTo) {
-        let Some(status) = self.git.status.as_ref() else {
+        let Some((root, _)) = paths.first().and_then(|path| self.repo_of(path)) else {
             return;
         };
-        let mut restore = Vec::new();
-        let mut added = Vec::new();
-        let mut trash = Vec::new();
-        for entry in status.entries.iter().filter(|e| paths.contains(&e.path)) {
-            if entry.untracked() {
-                trash.push(entry.path.clone());
-            } else if to == RollbackTo::Index {
-                restore.push(entry.path.clone());
-            } else if entry.staged == Some(winc_editor::git::Change::Added) {
-                added.push(entry.path.clone());
-                trash.push(entry.path.clone());
-            } else {
-                restore.push(entry.path.clone());
-                restore.extend(entry.from.clone());
+        let sort = |status: &Status| {
+            let (mut restore, mut added, mut trash) = (Vec::new(), Vec::new(), Vec::new());
+            for entry in status.entries.iter().filter(|e| paths.contains(&e.path)) {
+                if entry.untracked() {
+                    trash.push(entry.path.clone());
+                } else if to == RollbackTo::Index {
+                    restore.push(entry.path.clone());
+                } else if entry.staged == Some(winc_editor::git::Change::Added) {
+                    added.push(entry.path.clone());
+                    trash.push(entry.path.clone());
+                } else {
+                    restore.push(entry.path.clone());
+                    restore.extend(entry.from.clone());
+                }
             }
-        }
+            (restore, added, trash)
+        };
+        let Some((restore, added, trash)) = self.status_in(&root, sort) else {
+            return;
+        };
+        let current = self.git.root.as_deref() == Some(root.as_path());
         let count = paths.len();
         // 本机的文件在界面线程上移到废纸篓（和文件树的删除同一个入口）；远端主机上的文件在后台
         // 直接删除，删完后再刷新一次状态。git 在后台。
@@ -773,24 +805,30 @@ impl App {
                 }
                 if remote {
                     app.git_refresh();
+                    app.git_read_summaries();
                 }
             });
         }
         if restore.is_empty() && added.is_empty() {
             self.flash(t!("git-rollback-done", count = count));
-            self.git_refresh();
+            match current {
+                true => self.git_refresh(),
+                false => self.git_read_summaries(),
+            }
             return;
         }
         let sender = self.git.commit.results.0.clone();
-        self.git.commit.busy = true;
-        self.run_git_job(move |git, root| {
-            let result = git
+        self.git.commit.busy |= current;
+        self.spawn_git(UserEvent::GitCommit, move |tool| {
+            let result = tool
+                .as_ref()
+                .map_err(unusable)
                 .and_then(|git| match to {
-                    RollbackTo::Head => git.rollback(root, &restore, &added),
-                    RollbackTo::Index => git.discard_unstaged(root, &restore),
+                    RollbackTo::Head => git.rollback(&root, &restore, &added),
+                    RollbackTo::Index => git.discard_unstaged(&root, &restore),
                 })
                 .map(|()| count);
-            let _ = sender.send(Outcome::RolledBack(result, root.to_path_buf()));
+            let _ = sender.send(Outcome::RolledBack(result, root));
         });
     }
 
@@ -798,8 +836,13 @@ impl App {
     pub(in crate::app) fn poll_commit(&mut self) {
         while let Ok(outcome) = self.git.commit.results.1.try_recv() {
             match outcome {
-                Outcome::StashFiles(oid, name, files) => self.stash_files_arrived(oid, name, files),
-                Outcome::StashDiff(title, view) => self.stash_diff_arrived(title, view),
+                Outcome::PeekFiles(request, oid, name, files) => {
+                    self.peek_files_arrived(request, oid, name, files);
+                }
+                Outcome::PeekDiff(request, title, view) => {
+                    self.peek_diff_arrived(request, title, view);
+                }
+                Outcome::History(outcome) => self.history_arrived(outcome),
                 Outcome::LastMessage(message) => {
                     // 等结果的时候用户已经关闭了「修改上一次提交」，就不填。
                     if self.git.commit.amend {
@@ -814,11 +857,12 @@ impl App {
                         let name = winc_editor::display_name(&root);
                         match result {
                             Ok(oid) => self.flash(t!("git-commit-done-in", name = name, oid = oid)),
-                            Err(e) => self.notify_with(
-                                NoticeKind::Error,
-                                t!("git-commit-failed-in", name = name, error = e),
-                                NoticeAction::GitOutput,
-                            ),
+                            Err(e) => {
+                                let message = t!("git-commit-failed-in", name = name, error = e);
+                                let action = self.git_trust_action(Some(&root));
+                                let action = action.unwrap_or(NoticeAction::GitOutput);
+                                self.notify_with(NoticeKind::Error, message, action);
+                            }
                         }
                         continue;
                     }
@@ -875,10 +919,12 @@ impl App {
                             self.git.commit.drop_push_intent();
                             self.git.commit.committed_with.clear();
                             self.git.commit.others_left = 0;
+                            let action = self.git_trust_action(Some(&root));
+                            let action = action.unwrap_or(NoticeAction::GitOutput);
                             self.notify_with(
                                 NoticeKind::Error,
                                 t!("git-commit-failed", error = e),
-                                NoticeAction::GitOutput,
+                                action,
                             );
                             // 失败前可能已经提交了其他仓库：重读它们的状态。
                             if self.commit_shows_others() {
@@ -891,6 +937,7 @@ impl App {
                 Outcome::Staged(result, root) => self.staging_finished(result, &root),
                 Outcome::OtherStaged(result) => self.other_staging_finished(result),
                 Outcome::TodoChecked(count, root) => self.todo_checked(count, &root),
+                Outcome::Generated(id, result) => self.generated(id, result),
                 Outcome::Reformatted(count, failed, root) => self.reformatted(count, failed, &root),
                 Outcome::IndexText(root, path, version, text) => {
                     self.index_text_arrived(&root, path, version, text);
@@ -928,6 +975,8 @@ impl App {
                 }
                 Outcome::RolledBack(result, root) => {
                     if self.git.root.as_deref() != Some(root.as_path()) {
+                        // 另一个仓库：重读该仓库的状态，打开着的文档由目录监视重新读取。
+                        self.git_read_summaries();
                         let name = winc_editor::display_name(&root);
                         match result {
                             Ok(count) => {
@@ -960,6 +1009,8 @@ impl App {
     pub(in crate::app::git) fn reset_commit_view(&mut self) {
         let old = std::mem::take(&mut self.git.commit);
         self.git.commit.results = old.results;
+        // 查看储藏、提交的请求序号延续下去：此前仓库仍在进行的请求结束时按序号丢弃。
+        self.git.commit.peek_request = old.peek_request;
         self.git.commit.flat = old.flat;
         self.git.commit.sort = old.sort;
         self.git.commit.staging = old.staging;
@@ -973,6 +1024,7 @@ impl App {
         self.git.commit.other_stage_running = old.other_stage_running;
         self.git.commit.collapsed = old.collapsed;
         self.git.commit.drafts = old.drafts;
+        self.git.commit.generating = old.generating.carried();
         // 保留底部各组的展开状态和高度、卡片和「上一次提交」的显示比例：切换仓库后从原状态过渡。
         self.git.commit.quiet_open = old.quiet_open;
         self.git.commit.stashes = Drawer {
@@ -983,6 +1035,7 @@ impl App {
             motion: None,
             ..old.worktrees
         };
+        self.git.commit.history = old.history.switched();
         self.git.commit.card = old.card;
         self.git.commit.undo = old.undo;
         self.git.commit.undo_drawn = old.undo_drawn;

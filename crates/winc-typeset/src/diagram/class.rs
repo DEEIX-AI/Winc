@@ -3,8 +3,8 @@
 //!
 //! 坐标和尺寸都是逻辑像素，`s` 是排版用的字号。
 
+use cpui_render::{Rect, Stroke};
 use winc_preview::markdown::mermaid::{Card, Class, Edge, End, Er, Flow, Head, Line, Node, Shape};
-use winc_render::{Rect, Stroke};
 
 use super::super::math::polyline;
 use super::super::{Cx, Item};

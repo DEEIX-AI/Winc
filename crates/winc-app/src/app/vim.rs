@@ -12,7 +12,7 @@ mod workspace;
 use crate::app::scroll::set_scroll_line;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use winc_config::VimClipboard;
+use winc_config::{CursorStyle, VimClipboard};
 use winc_core::{Lines, Selection};
 use winc_editor::{Command, Document, DocumentId, ModalPattern};
 use winc_i18n::t;
@@ -25,7 +25,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::app::{App, Focus, PromptKind};
-use winc_render::Rect;
+use cpui_render::Rect;
 
 /// 返回各窗口共用的 Vim 状态，首次调用时创建。
 fn shared() -> MutexGuard<'static, Shared> {
@@ -344,6 +344,21 @@ impl App {
     pub(crate) fn vim_mode(&self) -> Option<Mode> {
         let state = self.vim.as_ref()?;
         self.vim_applies().then(|| state.vim.mode())
+    }
+
+    /// 返回 `editor.cursorStyle` 设定的光标形状；竖线为 `None`。
+    ///
+    /// 只用于未开启 Vim 模式时与 Vim 的插入模式；其余模式使用 Vim 自身的形状，返回 `None`。
+    pub(crate) fn styled_caret(&self) -> Option<CaretShape> {
+        let modal = self.vim.as_ref().is_some_and(|state| {
+            self.vim_applies() && (state.vim.mode() != Mode::Insert || state.vim.is_replace())
+        });
+        match self.config.cursor_style.unwrap_or_default() {
+            _ if modal => None,
+            CursorStyle::Line => None,
+            CursorStyle::Block => Some(CaretShape::Block),
+            CursorStyle::Underline => Some(CaretShape::Underline),
+        }
     }
 
     /// 返回 Vim 模式下光标的位置与形状；使用普通的竖线光标时（关闭、不适用、插入模式）返回

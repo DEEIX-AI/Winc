@@ -45,6 +45,8 @@ pub struct Hits {
     pub(crate) outline: Vec<(Rect, OutlineTarget)>,
     /// 可点击的区域，绘制时更新。
     pub(crate) log: Vec<(Rect, crate::app::git::log::LogTarget)>,
+    /// Git 面板标题行中可点击的区域（日志的标签和按钮），绘制时更新。
+    pub(crate) git_panel: Vec<(Rect, crate::app::git::panel::PanelHit)>,
     /// 可点击的区域，绘制时更新。
     pub(crate) merge: Vec<(Rect, crate::app::git::merge::MergeTarget)>,
     /// 右上角的卡片；没有时为 `None`。
@@ -67,13 +69,13 @@ pub struct Hits {
     /// 自身的编辑区推算它的位置。
     pub(crate) prompt_bar: Option<Rect>,
     /// 上一帧绘制的链接（区域和地址），点击时据此查找。
-    pub(crate) markdown_links: Vec<(winc_render::Rect, String)>,
+    pub(crate) markdown_links: Vec<(cpui_render::Rect, String)>,
     /// 上一帧在可编辑的预览中绘制的、原文可以改写的图片。
     pub(crate) markdown_images: Vec<crate::app::preview::markdown::resize::ImageAt>,
     /// 上一帧绘制的本地图片及其文件。
-    pub(crate) markdown_pictures: Vec<(winc_render::Rect, std::path::PathBuf)>,
+    pub(crate) markdown_pictures: Vec<(cpui_render::Rect, std::path::PathBuf)>,
     /// 上一帧绘制的代码块（屏幕坐标）：鼠标移入、移出时重绘，以显示或隐藏复制按钮。
-    pub(crate) markdown_codes: Vec<winc_render::Rect>,
+    pub(crate) markdown_codes: Vec<cpui_render::Rect>,
     /// 编辑区顶部钉住的各行，绘制时记录，点击和悬停时使用。
     pub(crate) sticky: Vec<StickyRow>,
     /// 上一帧绘制了复制按钮的代码块的内容；按钮在 `links` 中只记录 `COPY`，点击时才取这里的
@@ -98,7 +100,7 @@ pub struct Hits {
     /// 上一帧绘制的链接地址补全列表的各行：位置和行号。
     pub(crate) suggest: Vec<(Rect, usize)>,
     /// 上一帧绘制的标题指示条和标题列表的可点击位置，见 `view::markdown` 的 `draw_toc`。
-    pub(crate) markdown_toc: Vec<(winc_render::Rect, crate::app::preview::markdown::TocTarget)>,
+    pub(crate) markdown_toc: Vec<(cpui_render::Rect, crate::app::preview::markdown::TocTarget)>,
     /// 上一帧标题指示条列出的各标题在内容里的高度（逻辑像素），与 [`TocTarget::Heading`] 的
     /// 序号对应；点击标题时滚动到该处。
     pub(crate) markdown_toc_tops: Vec<f32>,
@@ -148,6 +150,7 @@ impl Hits {
             tabs,
             outline,
             log,
+            git_panel,
             merge,
             merge_card,
             terminal,
@@ -203,6 +206,7 @@ impl Hits {
         tabs.clear();
         outline.clear();
         log.clear();
+        git_panel.clear();
         merge.clear();
         *merge_card = None;
         terminal.clear();

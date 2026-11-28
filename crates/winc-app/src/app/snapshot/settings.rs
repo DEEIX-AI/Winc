@@ -2,11 +2,13 @@
 
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 mod appearance;
+mod editor;
 #[cfg(unix)]
 mod format;
 mod search;
 mod shortcuts;
 mod terminal;
+mod transfer;
 mod vim;
 
 use super::*;
@@ -51,7 +53,7 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone();
@@ -60,7 +62,14 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
             .is_none()
     );
     paint(&mut app);
-    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "拖动时使用快照的画面与完整绘制不同");
 
@@ -109,7 +118,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     paint(&mut app);
     assert!(app.settings.scroll_base.is_some());
     let window = app.layout.window;
-    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = app.frame.renderer.as_ref().unwrap().scale();
     assert!(app.settings_reuses_base(window, scale));
 
     // 之后的帧使用快照，画面与完整绘制相同。
@@ -120,7 +129,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone();
@@ -133,7 +142,14 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     assert!(app.settings.scroll_base.is_none());
     assert!(!app.settings_reuses_base(window, scale));
     paint(&mut app);
-    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
 
@@ -155,7 +171,7 @@ fn zoom_scales_the_whole_window_in_steps() {
     let mut app = app_with(&dir, false);
     paint(&mut app);
     let window = app.layout.window;
-    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale();
     let base = scale(&app);
 
     // 放大一档：渲染倍数变大，窗口的逻辑尺寸按比例变小；字号不变。
@@ -216,16 +232,23 @@ fn long_descriptions_wrap_and_make_the_row_taller() {
     let dir = search_folder("settings-wrap");
     let mut app = app_with(&dir, false);
     app.open_settings();
-    app.settings_show_page(SettingsPage::Files);
+    app.settings_show_page(SettingsPage::Editor);
     let row = |app: &App, setting| app.settings_layout().row(setting).unwrap().row;
+    // 这一页说明最长的一项，不依赖具体的文案。
+    let sections = SettingsPage::Editor.sections(&Default::default());
+    let items = sections
+        .iter()
+        .flat_map(|section| section.items.iter().copied());
+    let longest = items
+        .max_by_key(|s| s.description().map_or(0, |d| d.chars().count()))
+        .unwrap();
 
     // 默认大小的窗口中各项说明都放得下一行。
-    assert_eq!(row(&app, Setting::PreviewOnClick).h, SETTINGS_ROW_TALL);
-    assert_eq!(row(&app, Setting::Outline).h, SETTINGS_ROW_TALL);
+    assert_eq!(row(&app, longest).h, SETTINGS_ROW_TALL);
 
     // 放大界面后可用宽度变小：较长的说明折成两行，该行加高一行的行距，不超过上限。
     app.set_zoom(200);
-    let h = row(&app, Setting::PreviewOnClick).h;
+    let h = row(&app, longest).h;
     let most = SETTINGS_ROW_TALL + (SETTINGS_DESC_LINES - 1) as f32 * SETTINGS_DESC_LINE;
     assert!(
         h >= SETTINGS_ROW_TALL + SETTINGS_DESC_LINE && h <= most,
@@ -307,7 +330,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
     // 向回走一步，回到模块页最后的远程开关，焦点回到浮层；再往回是终端开关和 Git 开关；再走
-    // 一步，回到终端页的最后一项（macOS 上是「Meta 键」，其他平台是「终端应用优先」）。
+    // 一步是 AI 页的最后一项，走过该页的五项后是终端页的最后一项（macOS 上是「Meta 键」，
+    // 其他平台是「终端应用优先」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::RemoteModule);
     assert_eq!(app.focus, Focus::Settings);
@@ -316,6 +340,10 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
+    assert_eq!(app.settings.selected, Setting::AiTimeout);
+    for _ in 0..5 {
+        app.settings_move(false);
+    }
     let last = if cfg!(target_os = "macos") {
         Setting::TerminalOptionAsMeta
     } else {
@@ -633,8 +661,7 @@ pub(super) fn format_settings_app(name: &str, dark: bool) -> (App, PathBuf) {
 #[test]
 fn scrolled_rows_stay_under_the_header() {
     let (mut app, dir) = format_settings_app("settings-scroll-clip", false);
-    app.frame.renderer =
-        Some(Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap());
+    app.frame.renderer = Some(offscreen(&app, (820.0, 420.0), SCALE));
     app.config.format_commands.insert(
         "python".to_owned(),
         "black --quiet --stdin-filename {file} -".to_owned(),
@@ -653,7 +680,7 @@ fn scrolled_rows_stay_under_the_header() {
 
     // 标题下沿的一条像素带（标题文字和关闭按钮下方）只应有底色。
     let layout = app.settings_layout();
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let px = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as u32, (y * SCALE) as u32);
         image.pixels[(y * image.width + x) as usize]
@@ -887,6 +914,11 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     paint(&mut app);
     // 最后一页是「关于」：版本号、更新状态和「检查更新」；定时检查的开关在「通用」页。
     assert_eq!(SettingsPage::ALL.last(), Some(&SettingsPage::About));
+    assert_eq!(
+        app.settings_layout().footer,
+        None,
+        "只有「关于」页有版权声明"
+    );
     click_part(&mut app, SettingsPart::Page(SettingsPage::About));
     paint(&mut app);
     let layout = app.settings_layout();
@@ -894,7 +926,7 @@ fn the_about_page_shows_the_version_and_the_update_state() {
         assert!(layout.row(setting).is_some(), "{setting:?}");
     }
     assert_eq!(Setting::CheckUpdates.page(), SettingsPage::General);
-    // 顶部是产品信息：图标、名称和版本号；点击版本号复制到剪贴板，点击图标没有反应。
+    // 顶部是产品信息：图标、名称和版本号；点击版本号复制版本信息，点击图标没有反应。
     let row = layout.row(Setting::Version).unwrap().row;
     let parts = crate::layout::ProductParts::new(row);
     let center = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -905,11 +937,21 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     );
     let (x, y) = center(parts.logo);
     assert_eq!(layout.part_at(x, y), None);
-    click_part(&mut app, SettingsPart::Copy(Setting::Version));
+    // 页面最下方是版权与许可声明，在最后一组之下，不可点击。
+    let footer = layout.footer.unwrap();
+    assert!(footer.y > layout.groups.last().unwrap().bottom());
+    let (x, y) = center(footer);
+    assert_eq!(layout.part_at(x, y), None);
     assert_eq!(
-        app.clipboard.copied.as_deref(),
-        Some(&*crate::layout::version_label())
+        crate::layout::legal_line(),
+        "© 2026 Chenyme 和 DEEIX AI · 以 GPL-3.0-or-later 发布，不提供任何担保"
     );
+    click_part(&mut app, SettingsPart::Copy(Setting::Version));
+    let copied = app.clipboard.copied.clone().unwrap();
+    let first = format!("Winc {}", crate::layout::version_label());
+    assert_eq!(copied.lines().next(), Some(first.as_str()));
+    assert_eq!(copied.lines().count(), 2, "第二行是系统");
+    assert_eq!(app.status.message.as_deref(), Some("已复制版本信息"));
     assert_eq!(app.settings.selected, Setting::Version);
 
     // 当前版本不检查更新时按钮点击没有反应；能检查时点击交给 Sparkle（测试里不启用）。
@@ -993,7 +1035,7 @@ fn the_about_page_links_out_and_hides_unavailable_updates() {
     assert_eq!(value(Setting::Website), "winc.si");
     assert_eq!(value(Setting::Repository), "DEEIX-AI/Winc");
     assert_eq!(value(Setting::Community), "t.me/deeix_chat");
-    assert_eq!(value(Setting::License), "Apache-2.0");
+    assert_eq!(value(Setting::License), "GPL-3.0-or-later");
     assert_eq!(
         about_link(Setting::License).as_deref(),
         Some("https://github.com/DEEIX-AI/Winc/blob/HEAD/LICENSE")
@@ -1204,8 +1246,12 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     let expected = [
         Setting::GitPath,
         Setting::GitOpenWorktree,
+        Setting::GitLogPlacement,
+        Setting::GitScanDepth,
         Setting::GitStagingArea,
         Setting::GitTree,
+        Setting::GitCommitHistory,
+        Setting::GitGenerateCommitMessage,
         Setting::GitCombinedDiff,
         Setting::DiffInline,
         Setting::DiffCollapse,
@@ -1216,6 +1262,21 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         Setting::GitAutoFetch,
     ];
     assert_eq!(rows, expected);
+    // 调用模型的设置在单独的 AI 页，「AI 生成提交信息」的开关在 Git 页。
+    app.settings_show_page(SettingsPage::Ai);
+    let rows: Vec<Setting> = (app.settings_layout().rows.iter())
+        .map(|row| row.setting)
+        .collect();
+    let expected = [
+        Setting::AiBaseUrl,
+        Setting::AiApiKey,
+        Setting::AiProtocol,
+        Setting::AiModel,
+        Setting::AiTimeout,
+    ];
+    assert_eq!(rows, expected);
+    assert!(!app.switch_on(Setting::GitGenerateCommitMessage));
+    app.settings_show_page(SettingsPage::Git);
     // 代理不只管 Git：放在「通用」页的更新旁边，关掉 Git 模块也找得到。
     assert_eq!(Setting::SystemProxy.page(), SettingsPage::General);
     // 「树形显示更改」与提交视图「⋯」菜单里的是同一个开关，记在状态文件里。

@@ -174,6 +174,8 @@ impl App {
             Focus::CommitList => self.on_key_commit_list(event),
             Focus::Outline => self.outline_key(&event.logical_key),
             Focus::LogFilter => self.on_key_log_filter(event, &base, cmd),
+            Focus::GitPanel if self.log_active() => self.log_key(&event.logical_key),
+            Focus::GitPanel => {}
             Focus::Terminal => self.on_key_terminal(event),
             // 这两个输入框使用终端的键位表，Windows、Linux 的 Ctrl+V 不在表中，在此处理。
             Focus::TerminalFind | Focus::TerminalRename if cmd && base == "v" => self.paste(),
@@ -186,7 +188,9 @@ impl App {
     pub(in crate::app) fn key_context(&self) -> Context {
         match self.focus {
             Focus::Editor if self.markdown_keys() => Context::Markdown,
-            Focus::Editor => Context::Editor,
+            // Git 面板中的日志沿用编辑区的键位：日志的命令（如 `F2` 编辑说明）绑定在编辑区上。
+            // 编辑文字的命令在面板中不可用，见 `App::action_available`。
+            Focus::Editor | Focus::GitPanel => Context::Editor,
             Focus::Search => Context::Find,
             Focus::Replace => Context::Replace,
             Focus::Tree => Context::Tree,
@@ -321,11 +325,13 @@ impl App {
     /// 返回按键触发 `action` 时实际执行的命令。
     ///
     /// macOS 上没有打开的标签时，「关闭标签页」的快捷键改为关闭窗口：关掉最后一个标签后再按
-    /// 一次 `⌘W` 关闭窗口。只对按键生效，在命令面板里选「关闭标签页」不会关闭窗口。
-    pub(super) fn keyboard_action(&self, action: Action) -> Action {
+    /// 一次 `⌘W` 关闭窗口。只对按键生效，在命令面板里选「关闭标签页」不会关闭窗口。焦点在 Git
+    /// 面板中时关闭的是面板中的日志。
+    pub(in crate::app) fn keyboard_action(&self, action: Action) -> Action {
         if cfg!(target_os = "macos")
             && action == Action::CloseTab
             && self.editor.documents.is_empty()
+            && !self.git_panel_focused()
         {
             Action::CloseWindow
         } else {
@@ -341,7 +347,8 @@ impl App {
             }
             return;
         }
-        if self.log_active() {
+        // 面板模式下日志在 Git 面板中，按键经 `Focus::GitPanel` 交给它。
+        if !self.git.panel.docked && self.log_active() {
             self.log_key(event.key);
             return;
         }
@@ -1273,8 +1280,8 @@ impl App {
 
     /// 处理输入法事件 `ime`。
     ///
-    /// 组字中的文本（`Preedit`）暂存起来用于显示；提交的文本（`Commit`）插入焦点所在的
-    /// 编辑区或输入框。
+    /// 组字中的文本（`Preedit`）和其中的光标暂存起来用于显示；提交的文本（`Commit`）插入焦点
+    /// 所在的编辑区或输入框。
     pub(in crate::app) fn on_ime(&mut self, ime: Ime) {
         // 窗口内的提示框拦截按键时，输入法的文字同样不交给它下面的编辑区和输入框。
         if self.overlays.alert.is_some() {
@@ -1284,7 +1291,8 @@ impl App {
         }
         match ime {
             // 组字文字只属于焦点所在的一处，另一处的清空。
-            Ime::Preedit(text, _) => {
+            Ime::Preedit(text, cursor) => {
+                self.ime.preedit_cursor = cursor.map(|(_, end)| end);
                 if self.focus.is_field() {
                     self.ime.field_preedit = text;
                     self.ime.preedit.clear();
@@ -1319,6 +1327,14 @@ impl App {
         }
 
         self.request_redraw();
+    }
+
+    /// 返回输入法在组字文字 `text` 中的光标（字节偏移）；输入法要求隐藏光标，或位置不在 `text`
+    /// 的字符边界上时为 `None`。
+    pub(crate) fn preedit_cursor(&self, text: &str) -> Option<usize> {
+        self.ime
+            .preedit_cursor
+            .filter(|&at| text.is_char_boundary(at))
     }
 
     /// 输入法正在组字的文字，只在焦点位于 `focus` 时返回。
@@ -1395,9 +1411,12 @@ pub struct ImeState {
     pub preedit: String,
     /// 输入框中输入法正在组字的文字。
     pub field_preedit: String,
+    /// 输入法在组字文字中的光标（字节偏移），报告的是一段范围时取其终点；输入法要求隐藏光标时
+    /// 为 `None`。
+    pub(crate) preedit_cursor: Option<usize>,
     /// 输入法候选框应出现的位置。
-    pub(crate) cursor: Option<winc_render::Rect>,
-    pub(in crate::app) last_area: Option<winc_render::Rect>,
+    pub(crate) cursor: Option<cpui_render::Rect>,
+    pub(in crate::app) last_area: Option<cpui_render::Rect>,
     /// 上一次告知窗口的输入法是否启用；尚未告知时为 `None`。
     pub(in crate::app) allowed: Option<bool>,
 }

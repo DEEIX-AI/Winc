@@ -44,6 +44,12 @@ pub(super) const DETAILS_FADE: Duration = Duration::from_millis(120);
 ///
 /// 展开时卡片从指示条处展开并淡入，横线从指示条移到各行；收起时相反，时长相同。
 pub(super) const TOC_FADE: Duration = TREE_ANIMATION;
+/// 鼠标进入、离开 Markdown 预览的标题指示条时指示条加深、变淡的时长，取 [`DETAILS_FADE`]：
+/// 只改变颜色深浅，短于展开标题列表的动画。
+pub(super) const TOC_GLOW: Duration = DETAILS_FADE;
+/// 提交历史的详情卡片换到另一个提交时滑动的时长，取 [`DETAILS_FADE`]：卡片跟随鼠标所在的行，
+/// 短于展开类的动画，连续移过几行时不落后于鼠标。
+pub(super) const HISTORY_CARD_SLIDE: Duration = DETAILS_FADE;
 /// Markdown 预览的标题列表钉住、取消钉住的过渡时长，取 [`TREE_ANIMATION`]。
 ///
 /// 列表在指示条处与正文左侧之间滑动，卡片的底色和边框随之淡出、淡入。
@@ -96,17 +102,17 @@ pub struct CardFx {
     /// 出现（`true`）或消失的动画；不在动画中时为 `None`。
     pub motion: Option<(bool, Clock)>,
     /// 最近一帧绘制的卡片（位置为逻辑像素，不含阴影），用于关闭后的淡出。
-    pub shot: Option<(winc_render::Rect, winc_render::Snapshot)>,
+    pub shot: Option<(cpui_render::Rect, cpui_render::Capture)>,
     /// 淡入途中存放卡片下方内容（连同阴影）的缓冲，每帧复用；淡入结束后释放。
-    pub base: Option<winc_render::Snapshot>,
+    pub base: Option<cpui_render::Capture>,
     /// 卡片开着换了一页（见 [`App::turn_card`]）时，换页之前的画面及其淡出的时钟；保留到新
     /// 的一页淡入结束。
-    pub turning: Option<(Clock, winc_render::Rect, winc_render::Snapshot)>,
+    pub turning: Option<(Clock, cpui_render::Rect, cpui_render::Capture)>,
 }
 
 impl CardFx {
     /// 卡片已关闭且正在淡出时，返回动画时钟、卡片位置和最后一帧的卡片画面。
-    pub fn closing(&self) -> Option<(Clock, winc_render::Rect, &winc_render::Snapshot)> {
+    pub fn closing(&self) -> Option<(Clock, cpui_render::Rect, &cpui_render::Capture)> {
         match (self.motion, &self.shot) {
             (Some((false, clock)), Some((rect, shot))) if !self.shown => Some((clock, *rect, shot)),
             _ => None,
@@ -385,10 +391,14 @@ impl App {
         settle(&mut self.git.commit.button_motion, |m| m.1);
         settle(&mut self.git.commit.stashes.motion, |m| m.1);
         settle(&mut self.git.commit.worktrees.motion, |m| m.1);
+        settle(&mut self.git.commit.history.drawer.motion, |m| m.1);
+        settle(&mut self.git.panel.motion, |m| m.1);
         settle(&mut self.panels.outline.motion, |m| m.1);
         settle(&mut self.panels.outline.fold, |f| f.clock);
         settle(&mut self.preview.markdown.toc_fade, |c| *c);
         settle(&mut self.preview.markdown.toc_close, |c| *c);
+        settle(&mut self.preview.markdown.toc_glow, |g| g.1);
+        settle(&mut self.git.commit.history.card_slide, |s| s.1);
         settle(&mut self.preview.markdown.toc_pin, |p| p.1);
         settle(&mut self.preview.markdown.toc_flash, |f| f.1);
         settle(&mut self.preview.markdown.anchor_flash, |f| f.1);
@@ -517,10 +527,14 @@ impl App {
             || self.git.context_row.motion.is_some()
             || self.git.commit.stashes.motion.is_some()
             || self.git.commit.worktrees.motion.is_some()
+            || self.git.commit.history.drawer.motion.is_some()
+            || self.git.panel.motion.is_some()
             || self.panels.outline.motion.is_some()
             || self.panels.outline.fold.is_some()
             || self.preview.markdown.toc_fade.is_some()
             || self.preview.markdown.toc_close.is_some()
+            || self.preview.markdown.toc_glow.is_some()
+            || self.git.commit.history.card_slide.is_some()
             || self.preview.markdown.catch_up.pending
             || self.preview.markdown.toc_pin.is_some()
             || self.preview.markdown.toc_flash.is_some()
@@ -587,7 +601,8 @@ impl App {
             || self.http_animating()
             || ((self.git.branch.running.is_some()
                 || self.git.branch.finished.is_some()
-                || self.commit_refreshing())
+                || self.commit_refreshing()
+                || self.git.commit.generating.running())
                 && self.commit_shown())
     }
 }

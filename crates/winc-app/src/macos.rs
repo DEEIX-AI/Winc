@@ -44,8 +44,9 @@ pub use recent_documents::sync_recent_documents;
 pub use text_input::{capture_inserted_text, with_inserted_text};
 pub use updates::{check as check_for_updates, start as start_updates};
 pub use window::{
-    TrafficLights, has_sheet, keep_title_bar_drags, make_invisible, mouse_location,
-    preferred_language, reduce_motion, show_without_focus, title_bar_double_click, under_cursor,
+    TrafficLights, has_sheet, keep_title_bar_drags, make_invisible, mouse_location, os_version,
+    preferred_language, reduce_motion, show_without_focus, title_bar_double_click,
+    topmost_at_cursor, under_cursor,
 };
 pub use window_menu::add_window_menus;
 
@@ -55,12 +56,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use block2::RcBlock;
+use cpui_render::Snapshot;
 use objc2::ffi;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{class, msg_send, sel};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use winc_render::Image;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 

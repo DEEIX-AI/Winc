@@ -71,6 +71,7 @@ pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("terminal", TERMINAL),
     ("vim", VIM),
     ("git", GIT),
+    ("ai", AI),
     ("network", NETWORK),
     ("remote", REMOTE),
     ("keyboard", KEYBOARD),
@@ -126,6 +127,38 @@ const EDITOR: &[Field] = &[
                 read_number(value, name, Config::EDITOR_SIZE_RANGE, label, problems)
         },
         write: |config| config.editor_size.map(number),
+    },
+    weight_field!(editor_font_weight),
+    bool_field!("fontLigatures", editor_font_ligatures),
+    Field {
+        key: "rulers",
+        read: |config, value, name, problems| {
+            let Some(items) = value.as_array() else {
+                problems.push(t!("config-not-array", name = name));
+                return;
+            };
+            let range = Config::RULER_RANGE;
+            for item in items {
+                let column = item
+                    .as_number()
+                    .filter(|n| n.fract() == 0.0)
+                    .map(|n| n as usize);
+                match column.filter(|column| range.contains(column)) {
+                    Some(column) if !config.editor_rulers.contains(&column) => {
+                        config.editor_rulers.push(column);
+                    }
+                    Some(_) => {}
+                    None => {
+                        let max = *range.end();
+                        problems.push(t!("config-item-not-column", name = name, max = max));
+                    }
+                }
+            }
+        },
+        write: |config| {
+            let columns = config.editor_rulers.iter().map(|&c| number(c as f32));
+            (!config.editor_rulers.is_empty()).then(|| Json::Array(columns.collect()))
+        },
     },
     Field {
         key: "tabWidth",
@@ -220,8 +253,10 @@ const EDITOR: &[Field] = &[
     bool_field!("stickyScroll", sticky_scroll),
     bool_field!("dragAndDrop", drag_and_drop),
     bool_field!("wordWrap", word_wrap),
+    bool_field!("alignColumns", align_columns),
     bool_field!("wholeLines", whole_lines),
     bool_field!("minimap", minimap),
+    bool_field!("renderLineEndings", render_line_endings),
     bool_field!("smoothScrolling", smooth_scrolling),
     Field {
         key: "smoothCaretMovement",
@@ -258,6 +293,28 @@ const EDITOR: &[Field] = &[
                 RenderWhitespace::Selection => "selection",
                 RenderWhitespace::Trailing => "trailing",
                 RenderWhitespace::All => "all",
+            };
+            Some(Json::String(value.to_owned()))
+        },
+    },
+    Field {
+        key: "cursorStyle",
+        read: |config, value, name, problems| {
+            config.cursor_style = match value.as_str() {
+                Some("line") => Some(CursorStyle::Line),
+                Some("block") => Some(CursorStyle::Block),
+                Some("underline") => Some(CursorStyle::Underline),
+                _ => {
+                    problems.push(t!("config-cursor-style-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| {
+            let value = match config.cursor_style? {
+                CursorStyle::Line => "line",
+                CursorStyle::Block => "block",
+                CursorStyle::Underline => "underline",
             };
             Some(Json::String(value.to_owned()))
         },
@@ -348,6 +405,7 @@ const TREE: &[Field] = &[
     bool_field!("confirmDragAndDrop", confirm_drag_and_drop),
     bool_field!("compactFolders", compact_folders),
     bool_field!("previewOnClick", preview_on_click),
+    bool_field!("autoReveal", tree_auto_reveal),
 ];
 
 /// `markdown` 一节。
@@ -620,6 +678,26 @@ const TERMINAL: &[Field] = &[
     bool_field!("confirmClose", terminal_confirm_close),
     bool_field!("prompt", terminal_prompt),
     bool_field!("copyOnSelect", terminal_copy_on_select),
+    Field {
+        key: "rightClick",
+        read: |config, value, name, problems| {
+            config.terminal_right_click = match value.as_str() {
+                Some("menu") => Some(TerminalRightClick::Menu),
+                Some("copyOrPaste") => Some(TerminalRightClick::CopyOrPaste),
+                _ => {
+                    problems.push(t!("config-right-click-invalid", name = name));
+                    None
+                }
+            }
+        },
+        write: |config| {
+            let value = match config.terminal_right_click? {
+                TerminalRightClick::Menu => "menu",
+                TerminalRightClick::CopyOrPaste => "copyOrPaste",
+            };
+            Some(Json::String(value.to_owned()))
+        },
+    },
     bool_field!("boldIsBright", terminal_bold_is_bright),
     bool_field!("verticalTabs", terminal_vertical_tabs),
     bool_field!("applicationPriority", terminal_application_priority),
@@ -683,9 +761,11 @@ const GIT: &[Field] = &[
     bool_field!("confirmPush", git_confirm_push),
     bool_field!("rememberCredentials", git_remember_credentials),
     bool_field!("inlineBlame", git_inline_blame),
+    bool_field!("commitHistory", git_commit_history),
     bool_field!("autoFetch", git_auto_fetch),
     bool_field!("stagingArea", git_staging_area),
     bool_field!("combinedDiff", git_combined_diff),
+    bool_field!("generateCommitMessage", git_generate_commit_message),
     Field {
         key: "repositoryScanDepth",
         read: |config, value, name, problems| {
@@ -755,6 +835,26 @@ const GIT: &[Field] = &[
         },
     },
     Field {
+        key: "logPlacement",
+        read: |config, value, name, problems| {
+            config.git_log_placement = match value.as_str() {
+                Some("panel") => Some(LogPlacement::Panel),
+                Some("editor") => Some(LogPlacement::Editor),
+                _ => {
+                    problems.push(t!("config-log-placement-invalid", name = name));
+                    None
+                }
+            };
+        },
+        write: |config| {
+            let value = match config.git_log_placement? {
+                LogPlacement::Panel => "panel",
+                LogPlacement::Editor => "editor",
+            };
+            Some(Json::String(value.into()))
+        },
+    },
+    Field {
         key: "worktreeCopy",
         read: |config, value, name, problems| {
             let Some(items) = value.as_array() else {
@@ -775,6 +875,42 @@ const GIT: &[Field] = &[
             (!globs.is_empty())
                 .then(|| Json::Array(globs.iter().cloned().map(Json::String).collect()))
         },
+    },
+];
+
+/// `ai` 一节。
+const AI: &[Field] = &[
+    string_field!("baseUrl", ai_base_url),
+    string_field!("apiKey", ai_api_key),
+    Field {
+        key: "protocol",
+        read: |config, value, name, problems| {
+            config.ai_protocol = (value.as_str())
+                .and_then(|key| AiProtocol::ALL.into_iter().find(|p| p.key() == key));
+            if config.ai_protocol.is_none() {
+                problems.push(t!("config-ai-protocol-invalid", name = name));
+            }
+        },
+        write: |config| Some(Json::String(config.ai_protocol?.key().into())),
+    },
+    string_field!("model", ai_model),
+    Field {
+        key: "timeout",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-ai-timeout");
+            let range = Config::AI_TIMEOUT_RANGE;
+            config.ai_timeout = read_number(value, name, range, label, problems)
+                .filter(|v| {
+                    let whole = v.fract() == 0.0;
+                    if !whole {
+                        let value = v.to_string();
+                        problems.push(t!("config-not-integer", name = name, value = value));
+                    }
+                    whole
+                })
+                .map(|v| v as u64)
+        },
+        write: |config| config.ai_timeout.map(|secs| Json::Number(secs as f64)),
     },
 ];
 

@@ -3,22 +3,23 @@
 //! 表格的读取（xlsx 包、数字格式、单元格文字）在 `winc_preview::table`，这一层只负责排版、
 //! 绘制和命中测试。列名和行号滚动时固定；单元格只显示第一行，放不下时截短，数字靠右；
 //! 合并的单元格画成一格，选中的区域有底色和边框，单选一格时浮出卡片显示完整文字；
-//! 多张工作表或表格被截断时，底部一栏列出各张工作表。
+//! 多张工作表或表格被截断时，底部一栏列出各张工作表，超出宽度时可以横向滚动。
 
 use std::borrow::Cow;
 use std::sync::Arc;
 
 use unicode_segmentation::UnicodeSegmentation;
 
+use cpui_render::{Font, Frame, Rect};
 use winc_editor::DocumentId;
 use winc_i18n::t;
 use winc_preview::table::{Area, Sheet, Table, column_name};
-use winc_render::{FontKind, Frame, Rect};
 
 use crate::app::App;
 use crate::layout::drawn_scroll;
 use crate::theme::RADIUS_ROW;
-use crate::view::{ScrollArea, fit, ui_baseline};
+use crate::view::workspace::top_bar::TAB_FADE;
+use crate::view::{ScrollArea, fade, fit, ui_baseline};
 
 /// 单元格左右的留白（逻辑像素，取自调参）。
 const PAD: f32 = 8.0;
@@ -67,7 +68,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
 
     let p = app.palette;
     app.preview.table_layout.area = area;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
     let bar = (table.sheets.len() > 1 || sheet.truncated)
         .then(|| Rect::new(area.x, area.bottom() - BAR, area.w, BAR));
 
@@ -77,7 +78,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
     let size = app.fonts.ui;
     let row_h = (size * 2.0).round();
     let numbers_w =
-        frame.measure(FontKind::Ui, size, &sheet.row_count().max(1).to_string()) + 2.0 * PAD;
+        frame.measure(Font::ui(size), &sheet.row_count().max(1).to_string()) + 2.0 * PAD;
     let numbers_w = numbers_w.max(40.0).round();
     let widths = column_widths(
         app,
@@ -182,8 +183,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
     if let Some(rect) = selected_rect
         && selected != current
     {
-        frame.rect_clipped(rect, p.selection, 0.0, body);
-        frame.rect_clipped(area_rect(&current), p.editor_bg, 0.0, body);
+        frame.rect_clipped(rect, 0.0, p.selection, body);
+        frame.surface_clipped(area_rect(&current), 0.0, p.editor_bg, body);
     }
 
     // 单元格和格线；合并区域中的格之后整个画。
@@ -199,8 +200,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
         }
         frame.rect_clipped(
             Rect::new(body.x, y + row_h - 1.0, body.w, 1.0),
-            p.separator,
             0.0,
+            p.separator,
             body,
         );
     }
@@ -209,8 +210,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
         let line = Rect::new(x + w - 1.0, grid.y, 1.0, row_h + below);
         frame.rect_clipped(
             line,
-            p.separator,
             0.0,
+            p.separator,
             Rect::new(body.x, grid.y, body.w, grid.h),
         );
     }
@@ -219,8 +220,11 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
         let rect = area_rect(merge);
         let inner = Rect::new(rect.x, rect.y, rect.w - 1.0, rect.h - 1.0);
         let picked = selected != current && *merge != current && selected.overlaps(merge);
-        let fill = if picked { p.selection } else { p.editor_bg };
-        frame.rect_clipped(inner, fill, 0.0, body);
+        if picked {
+            frame.rect_clipped(inner, 0.0, p.selection, body);
+        } else {
+            frame.surface_clipped(inner, 0.0, p.editor_bg, body);
+        }
         let text = sheet.cell(merge.top, merge.left);
         if !text.is_empty() {
             draw_cell(app, frame, rect, text, rect.intersect(body));
@@ -236,18 +240,18 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
             Rect::new(rect.x - 1.0, rect.y - 1.0, edge, rect.h + 1.0),
             Rect::new(rect.right() - 1.0, rect.y - 1.0, edge, rect.h + 2.0),
         ] {
-            frame.rect_clipped(side, p.accent, 0.0, body);
+            frame.rect_clipped(side, 0.0, p.accent, body);
         }
     }
 
     // 列名一行和行号一列：底色遮住滚到下面的单元格，选中的列、行加底色。
-    frame.rect(header, p.sidebar_bg);
+    frame.surface(header, p.sidebar_bg);
     for &(column, x, w) in &columns {
         let cell = Rect::new(x, grid.y, w, row_h);
         let picked = (selected.left..=selected.right).contains(&column);
         draw_label(app, frame, cell, header, &column_name(column), picked, true);
     }
-    frame.rect(numbers, p.sidebar_bg);
+    frame.surface(numbers, p.sidebar_bg);
     for row in first..last {
         let y = row_y(row);
         let cell = Rect::new(grid.x, y, numbers_w, row_h);
@@ -262,25 +266,17 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
             false,
         );
     }
-    frame.rect(Rect::new(grid.x, grid.y, numbers_w, row_h), p.sidebar_bg);
+    frame.surface(Rect::new(grid.x, grid.y, numbers_w, row_h), p.sidebar_bg);
     frame.rect(Rect::new(grid.x, body.y - 1.0, grid.w, 1.0), p.border);
     frame.rect(Rect::new(body.x - 1.0, grid.y, 1.0, grid.h), p.border);
 
     if sheet.columns == 0 {
         let message = t!("preview-table-empty");
-        let text_w = frame.measure(FontKind::Ui, size, message);
+        let text_w = frame.measure(Font::ui(size), message);
         let row = Rect::new(body.x, body.y + 24.0, body.w, row_h);
         let left = (body.x + (body.w - text_w) / 2.0).round();
         let baseline = ui_baseline(app, row, size);
-        frame.text(
-            FontKind::Ui,
-            size,
-            left,
-            baseline,
-            message,
-            p.text_dim,
-            body,
-        );
+        frame.text(Font::ui(size), (left, baseline), message, p.text_dim, body);
     }
 
     // 当前格的卡片：只选了一格（或一个合并区域）、文字没有显示全时浮在格子旁边；拖着选的
@@ -319,10 +315,12 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, index: usize, 
         crate::view::draw_thumb(frame, app.palette, thumb, look);
     }
 
-    app.preview.table_layout.edges = edges;
-    app.preview.table_layout.sheets.clear();
+    let layout = &mut app.preview.table_layout;
+    layout.edges = edges;
+    layout.sheets.clear();
+    (layout.bar, layout.bar_max) = (Rect::default(), 0.0);
     if let Some(bar) = bar {
-        draw_bar(app, frame, bar, &table, sheet_index);
+        draw_bar(app, frame, bar, index, &table);
     }
 }
 
@@ -340,9 +338,9 @@ fn draw_label(
     let size = app.fonts.ui_small;
     let clip = cell.intersect(clip);
     if picked {
-        frame.rect_clipped(cell, p.selected, 0.0, clip);
+        frame.rect_clipped(cell, 0.0, p.selected, clip);
     }
-    let text_w = frame.measure(FontKind::Ui, size, label);
+    let text_w = frame.measure(Font::ui(size), label);
     let left = if centered {
         (cell.x + (cell.w - text_w) / 2.0).round()
     } else {
@@ -350,10 +348,10 @@ fn draw_label(
     };
     let baseline = ui_baseline(app, cell, size);
     let color = if picked { p.text } else { p.text_muted };
-    frame.text(FontKind::Ui, size, left, baseline, label, color, clip);
+    frame.text(Font::ui(size), (left, baseline), label, color, clip);
     if centered {
         let line = Rect::new(cell.right() - 1.0, cell.y, 1.0, cell.h);
-        frame.rect_clipped(line, p.border, 0.0, clip);
+        frame.rect_clipped(line, 0.0, p.border, clip);
     }
 }
 
@@ -411,7 +409,7 @@ fn draw_cell_card(
         }
         let row = Rect::new(card.x + CARD_PAD, top, w - 2.0 * CARD_PAD, line_h);
         let baseline = ui_baseline(app, row, size);
-        frame.text(FontKind::Ui, size, row.x, baseline, line, p.text, clip);
+        frame.text(Font::ui(size), (row.x, baseline), line, p.text, clip);
     }
     // 文字比卡片高时，右边一条细的滑块表示还能滚动、滚动到的位置。
     if max_scroll > 0.0 {
@@ -419,7 +417,7 @@ fn draw_cell_card(
         let thumb_h = (track.h * (h - 2.0 * CARD_PAD) / content).max(16.0);
         let y = track.y + (track.h - thumb_h) * scroll / max_scroll;
         let thumb = Rect::new(track.right() - 3.0, y, 3.0, thumb_h);
-        frame.rect_clipped(thumb, p.scrollbar, 1.5, card);
+        frame.rect_clipped(thumb, 1.5, p.scrollbar, card);
     }
     app.preview.table_layout.card_lines = Some((key, lines));
 }
@@ -447,7 +445,7 @@ fn visible<'a>(
             let more = !text[i..].trim_start().is_empty();
             return (&text[..i], false, more);
         }
-        width += frame.measure(FontKind::Ui, size, g);
+        width += frame.measure(Font::ui(size), g);
         if width > room {
             return (&text[..i + g.len()], true, false);
         }
@@ -466,14 +464,14 @@ fn wrap(frame: &mut Frame<'_>, text: &str, size: f32, max: f32) -> Vec<String> {
         let mut line = String::new();
         let mut width = 0.0;
         for c in paragraph.chars() {
-            let w = frame.measure(FontKind::Ui, size, c.encode_utf8(&mut [0; 4]));
+            let w = frame.measure(Font::ui(size), c.encode_utf8(&mut [0; 4]));
             if width + w > max && !line.is_empty() && !NO_LINE_START.contains(c) {
                 let rest = match line.rfind(' ') {
                     Some(at) if at > 0 && !c.is_whitespace() => line.split_off(at + 1),
                     _ => String::new(),
                 };
                 lines.push(std::mem::replace(&mut line, rest));
-                width = frame.measure(FontKind::Ui, size, &line);
+                width = frame.measure(Font::ui(size), &line);
                 // 断在空格处时，空格不留到下一行的开头。
                 if c == ' ' {
                     continue;
@@ -503,69 +501,119 @@ fn draw_cell(app: &App, frame: &mut Frame<'_>, cell: Rect, text: &str, clip: Rec
     let fitted = fit(frame, &shown, size, room, false);
     let baseline = ui_baseline(app, cell, size);
     let left = if !over && is_numeric(first) {
-        cell.right() - PAD - frame.measure(FontKind::Ui, size, &fitted)
+        cell.right() - PAD - frame.measure(Font::ui(size), &fitted)
     } else {
         cell.x + PAD
     };
     frame.text(
-        FontKind::Ui,
-        size,
-        left,
-        baseline,
+        Font::ui(size),
+        (left, baseline),
         &fitted,
         app.palette.text,
         clip,
     );
 }
 
-/// 绘制底部一栏：左边各张工作表的标签（当前的一张有底色），右边说明表格是否被截断。
-fn draw_bar(app: &mut App, frame: &mut Frame<'_>, bar: Rect, table: &Table, current: usize) {
+/// 绘制第 `index` 个文档底部的一栏：左边各张工作表的标签（当前的一张有底色），右边说明表格
+/// 是否被截断。标签超出宽度时横向滚动，滚出的一侧渐隐。
+fn draw_bar(app: &mut App, frame: &mut Frame<'_>, bar: Rect, index: usize, table: &Table) {
     let p = app.palette;
     let size = app.fonts.ui_small;
-    frame.rect(bar, p.sidebar_bg);
+    frame.surface(bar, p.sidebar_bg);
     frame.rect(Rect::new(bar.x, bar.y, bar.w, 1.0), p.border);
+    let Some(view) = app.editor.documents[index].table.as_deref() else {
+        return;
+    };
+    let (current, mut bar_scroll, revealed) = (view.sheet, view.bar_scroll, view.bar_revealed);
 
     let mut right = bar.right() - 12.0;
     if table.sheets.get(current).is_some_and(|s| s.truncated) {
         let note = t!("preview-table-truncated");
-        let w = frame.measure(FontKind::Ui, size, note);
+        let w = frame.measure(Font::ui(size), note);
         right -= w;
         let baseline = ui_baseline(app, bar, size);
-        frame.text(FontKind::Ui, size, right, baseline, note, p.text_dim, bar);
+        frame.text(Font::ui(size), (right, baseline), note, p.text_dim, bar);
         right -= 16.0;
     }
+    let strip = Rect::new(bar.x + 8.0, bar.y, (right - bar.x - 8.0).max(0.0), bar.h);
 
-    let mut x = bar.x + 8.0;
-    let mut tabs = Vec::new();
-    for (index, sheet) in table.sheets.iter().enumerate() {
-        let name = if sheet.name.is_empty() {
-            t!("preview-table-sheet", number = index + 1)
-        } else {
-            sheet.name.clone()
-        };
-        let name = fit(frame, &name, size, 200.0, false).into_owned();
-        let w = frame.measure(FontKind::Ui, size, &name) + 2.0 * 10.0;
-        let tab = Rect::new(x, bar.y + 6.0, w, bar.h - 12.0);
-        let clip = Rect::new(bar.x, bar.y, (right - bar.x).max(0.0), bar.h);
-        let selected = index == current;
+    // 各标签的名字、宽度和相对第一个标签的偏移。
+    let names: Vec<(String, f32)> = (table.sheets.iter().enumerate())
+        .map(|(i, sheet)| {
+            let name = if sheet.name.is_empty() {
+                t!("preview-table-sheet", number = i + 1)
+            } else {
+                sheet.name.clone()
+            };
+            let name = fit(frame, &name, size, 200.0, false).into_owned();
+            let w = frame.measure(Font::ui(size), &name) + 2.0 * 10.0;
+            (name, w)
+        })
+        .collect();
+    let offsets: Vec<f32> = (names.iter())
+        .scan(0.0, |x, (_, w)| {
+            let left = *x;
+            *x += w + 4.0;
+            Some(left)
+        })
+        .collect();
+    let content = offsets
+        .last()
+        .zip(names.last())
+        .map_or(0.0, |(x, (_, w))| x + w);
+    let max = (content - strip.w).max(0.0);
+
+    // 当前的标签滚入可见范围，两侧留出渐隐的宽度。
+    if !revealed && let (Some(&start), Some((_, w))) = (offsets.get(current), names.get(current)) {
+        let margin = if max > 0.0 { TAB_FADE } else { 0.0 };
+        if start - margin < bar_scroll {
+            bar_scroll = start - margin;
+        } else if start + w + margin > bar_scroll + strip.w {
+            bar_scroll = start + w + margin - strip.w;
+        }
+    }
+    let bar_scroll = bar_scroll.clamp(0.0, max);
+    if let Some(view) = app.editor.documents[index].table.as_deref_mut() {
+        (view.bar_scroll, view.bar_revealed) = (bar_scroll, true);
+    }
+    // 取整到物理像素：小数位移下文字逐帧按不同的亚像素位置光栅化，表现为闪烁。
+    let scroll = (bar_scroll * frame.scale()).round() / frame.scale();
+
+    let mut tabs = Vec::with_capacity(names.len());
+    for (i, ((name, w), left)) in names.iter().zip(&offsets).enumerate() {
+        let tab = Rect::new(strip.x - scroll + left, bar.y + 6.0, *w, bar.h - 12.0);
+        let visible = tab.intersect(strip);
+        if visible.w <= 0.0 {
+            tabs.push(Rect::default());
+            continue;
+        }
+        tabs.push(visible);
+        let selected = i == current;
         if selected {
-            frame.rect_corners(tab, p.selected, [RADIUS_ROW; 4], clip);
+            frame.rect_corners(tab, [RADIUS_ROW; 4], p.selected, strip);
         }
         let color = if selected { p.text } else { p.text_muted };
         let baseline = ui_baseline(app, tab, size);
-        frame.text(
-            FontKind::Ui,
-            size,
-            tab.x + 10.0,
-            baseline,
-            &name,
-            color,
-            clip,
-        );
-        tabs.push(tab);
-        x += w + 4.0;
+        frame.text(Font::ui(size), (tab.x + 10.0, baseline), name, color, strip);
     }
-    app.preview.table_layout.sheets = tabs;
+
+    // 渐隐强度在离两端 `TAB_FADE` 内线性变化，滚到两端时不突然出现或消失。
+    let fade_h = bar.h - 1.0;
+    let left = (scroll / TAB_FADE).min(1.0);
+    if left > 0.0 {
+        let rect = Rect::new(strip.x, bar.y + 1.0, TAB_FADE, fade_h);
+        frame.with_opacity(left, |frame| fade(frame, rect, p.sidebar_bg, true));
+    }
+    let rest = ((max - scroll) / TAB_FADE).min(1.0);
+    if rest > 0.0 {
+        let rect = Rect::new(strip.right() - TAB_FADE, bar.y + 1.0, TAB_FADE, fade_h);
+        frame.with_opacity(rest, |frame| fade(frame, rect, p.sidebar_bg, false));
+    }
+
+    let layout = &mut app.preview.table_layout;
+    layout.sheets = tabs;
+    layout.bar = strip;
+    layout.bar_max = max;
 }
 
 /// 返回各列的宽度（逻辑像素），按前 [`MEASURED_ROWS`] 行中最宽的文字确定。
@@ -592,7 +640,7 @@ fn column_widths(
             if first.is_empty() || spans {
                 continue;
             }
-            let w = frame.measure(FontKind::Ui, size, first) + 2.0 * PAD;
+            let w = frame.measure(Font::ui(size), first) + 2.0 * PAD;
             widths[column] = widths[column].max(w.min(COLUMN_MAX).ceil());
         }
     }

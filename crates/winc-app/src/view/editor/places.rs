@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 
 use winc_i18n::t;
-use winc_syntax::{LineState, TokenKind, detect, highlight_line};
+use winc_syntax::{LineState, TokenKind, highlight_line};
 
 use super::*;
 use crate::app::editor::definition::{Place, Places, PlacesKind};
@@ -135,7 +135,7 @@ fn draw_places(app: &App, frame: &mut Frame<'_>, rect: Rect, view: &PlacesView) 
         return caret;
     }
     let line = |y: f32| Rect::new(rect.x + 1.0, y, rect.w - 2.0, 1.0);
-    frame.rect_clipped(line(parts.bar.bottom()), p.separator, 0.0, rect);
+    frame.rect_clipped(line(parts.bar.bottom()), 0.0, p.separator, rect);
 
     let list = parts.list;
     if view.hits.is_empty() {
@@ -148,7 +148,7 @@ fn draw_places(app: &App, frame: &mut Frame<'_>, rect: Rect, view: &PlacesView) 
     }
 
     if parts.footer.h > 0.0 {
-        frame.rect_clipped(line(parts.footer.y), p.separator, 0.0, rect);
+        frame.rect_clipped(line(parts.footer.y), 0.0, p.separator, rect);
         let selected = view
             .hits
             .get(view.selected)
@@ -191,7 +191,7 @@ fn draw_header(
             .sum();
         format!("{shown} / {}", places.kind.count(total))
     };
-    let count_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &count);
+    let count_w = frame.measure(Font::ui(app.fonts.ui_small), &count);
     let count_x = bar.right() - PICKER_ICON_X - count_w;
     ui_text_small(frame, app, count_x, bar, &count, p.text_dim, bar);
 
@@ -202,16 +202,16 @@ fn draw_header(
     } else {
         let max = (bar.w * 0.3).max(60.0);
         let text = ellipsize(frame, view.filter, app.fonts.ui, max);
-        let text_w = frame.measure(FontKind::Ui, app.fonts.ui, &text);
+        let text_w = frame.measure(Font::ui(app.fonts.ui), &text);
         let pill_w = 26.0 + text_w + 10.0;
         let pill = Rect::new(count_x - 12.0 - pill_w, bar.y + 7.0, pill_w, bar.h - 14.0);
-        frame.rect_clipped(pill, p.selected_inactive, pill.h / 2.0, bar);
+        frame.rect_clipped(pill, pill.h / 2.0, p.selected_inactive, bar);
         let glass = (pill.x + 13.0, pill.y + pill.h / 2.0);
         icons::magnifier(frame, glass, p.text_dim, bar);
         let end = ui_text(frame, app, pill.x + 22.0, pill, &text, p.text, bar);
         let cursor = Rect::new(end + 1.0, pill.y + 4.0, 1.5, pill.h - 8.0);
         if view.caret {
-            frame.rect_clipped(cursor, p.caret, 0.0, bar);
+            frame.rect_clipped(cursor, 0.0, p.caret, bar);
         }
         if app.focus == Focus::Picker {
             caret = Some(cursor);
@@ -267,10 +267,10 @@ pub(in crate::view) fn draw_rows(
     let widest = view.places.widest_label(sizes, |items| {
         items.iter().fold(0.0, |widest: f32, place| {
             let name = if bookmarks { "" } else { file_name(place) };
-            let name_w = frame.measure(FontKind::Ui, app.fonts.ui, name);
+            let name_w = frame.measure(Font::ui(app.fonts.ui), name);
             let gap = if name.is_empty() { 0.0 } else { 6.0 };
             line_of(&mut number, place);
-            let line_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &number);
+            let line_w = frame.measure(Font::ui(app.fonts.ui_small), &number);
             widest.max(name_w + gap + line_w)
         })
     });
@@ -281,9 +281,9 @@ pub(in crate::view) fn draw_rows(
         let clip = row.intersect(list);
         let selected = i == view.selected;
         if selected {
-            frame.rect_clipped(row.inset(6.0, 1.0), p.selected, RADIUS_ROW, clip);
+            frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, p.selected, clip);
         } else if view.hovered == Some(i) {
-            frame.rect_clipped(row.inset(6.0, 1.0), p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, p.hover, clip);
         }
 
         let cy = icon_center_y(app, row, app.fonts.ui);
@@ -297,7 +297,7 @@ pub(in crate::view) fn draw_rows(
         let label_clip =
             Rect::new(row.x, row.y, code_x - CODE_GAP / 2.0 - row.x, row.h).intersect(clip);
         let room = label_clip.right() - (row.x + PICKER_TEXT_X);
-        let line_w = frame.measure(FontKind::Ui, app.fonts.ui_small, line);
+        let line_w = frame.measure(Font::ui(app.fonts.ui_small), line);
         let name = ellipsize(frame, name, app.fonts.ui, (room - line_w - 6.0).max(0.0));
         let color = if selected { p.text } else { p.text_muted };
         let mut x = ui_text(
@@ -328,7 +328,8 @@ fn draw_code(app: &App, frame: &mut Frame<'_>, place: &Place, area: Rect) {
     draw_code_with(app, frame, place, area, CODE_ALPHA);
 }
 
-/// 与 [`draw_code`] 相同，语法颜色的不透明度为 `alpha`。
+/// 与 [`draw_code`] 相同，语法颜色的不透明度为 `alpha`；语言和行首的高亮状态见
+/// [`App::place_highlight`]。
 pub(in crate::view) fn draw_code_with(
     app: &App,
     frame: &mut Frame<'_>,
@@ -336,18 +337,27 @@ pub(in crate::view) fn draw_code_with(
     area: Rect,
     alpha: f32,
 ) {
-    if area.w <= 0.0 {
-        return;
-    }
-    let p = app.palette;
+    let highlight = app.place_highlight(&place.path, place.line);
+    draw_code_from(app, frame, place, area, alpha, highlight);
+}
+
+/// 与 [`draw_code_with`] 相同，按语言 `language` 从行首状态 `state` 开始着色，返回下一行行首的
+/// 状态：连续绘制几行时依次传下去，跨行的结构（块注释、Vue 的 `<script>`）中的行也能着色。
+pub(in crate::view) fn draw_code_from(
+    app: &App,
+    frame: &mut Frame<'_>,
+    place: &Place,
+    area: Rect,
+    alpha: f32,
+    (language, state): (&'static winc_syntax::Language, LineState),
+) -> LineState {
     let chars: Vec<char> = place.preview.chars().collect();
     let mut tokens = Vec::new();
-    highlight_line(
-        detect(file_name(place)),
-        &chars,
-        LineState::Normal,
-        &mut tokens,
-    );
+    let next = highlight_line(language, &chars, state, &mut tokens);
+    if area.w <= 0.0 {
+        return next;
+    }
+    let p = app.palette;
 
     let cell = app.metrics.cell;
     let fit = (area.w / cell).floor() as usize;
@@ -386,17 +396,15 @@ pub(in crate::view) fn draw_code_with(
             let x0 = x_of(first.2) - 2.0;
             let x1 = x_of(last.2 + last.3) + 2.0;
             let back = Rect::new(x0, area.y + 3.0, x1 - x0, area.h - 6.0);
-            frame.rect_clipped(back, p.search_match, 3.0, area);
+            frame.rect_clipped(back, 3.0, p.search_match, area);
         }
     }
 
     if skip > 0 {
         let x = area.x;
         frame.cell_char(
-            FontKind::Mono,
-            size,
-            x,
-            baseline,
+            Font::mono(size),
+            (x, baseline),
             cell,
             1,
             '…',
@@ -425,15 +433,11 @@ pub(in crate::view) fn draw_code_with(
             let c = p.token(kind);
             c.alpha(c.a * alpha)
         };
-        let font = if kind == TokenKind::Comment {
-            FontKind::MonoItalic
-        } else {
-            FontKind::Mono
-        };
         let at = (x_of(at), baseline);
-        let font = (font, size, cell);
+        let font = (token_font(kind, size), cell);
         joined = col + draw_grid_char(frame, font, at, (&chars, col), color, area);
     }
+    next
 }
 
 fn file_name(place: &Place) -> &str {

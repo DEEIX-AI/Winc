@@ -1,8 +1,10 @@
 //! 网格的绘制：终端颜色换算、按样式分段绘制一行、光标、输入法组字。
 
 use super::*;
-use winc_pty::width::is_emoji_tail;
-use winc_render::Stroke;
+use cpui_render::Stroke;
+use winc_pty::width::{char_width, is_emoji_tail};
+
+use crate::view::shaped::{self, SHAPED_RUN};
 
 /// 一段文字绘制用的颜色（见 [`Colors::style`]）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -193,7 +195,7 @@ pub(super) fn draw_line(
                 (part.end - part.start) as f32 * cell,
                 row.h,
             );
-            frame.rect_clipped(rect, bg, 0.0, clip);
+            frame.rect_clipped(rect, 0.0, bg, clip);
         }
     }
     for &(start, end, color) in marks {
@@ -201,18 +203,16 @@ pub(super) fn draw_line(
         // 屏幕宽度远小于这个上限，异常的值不会画到屏幕外。
         let end = end.min(start + 10_000).max(start);
         let rect = Rect::new(x_of(start), row.y, (end - start) as f32 * cell, row.h);
-        frame.rect_clipped(rect, color, 0.0, clip);
+        frame.rect_clipped(rect, 0.0, color, clip);
     }
 
-    let nudge = 1.0 / frame.scale().max(1.0);
     for (part, &Paint { fg, shape, .. }) in parts.iter().zip(&styles) {
         let attrs = part.style.attrs;
-        let bold = attrs.has(Attrs::BOLD);
-        let kind = if attrs.has(Attrs::ITALIC) {
-            FontKind::TerminalItalic
-        } else {
-            FontKind::Terminal
-        };
+        let mut font = Font::new(TERMINAL_FONT, size);
+        if attrs.has(Attrs::BOLD) {
+            font = font.bold();
+        }
+        font.italic = attrs.has(Attrs::ITALIC);
         let mut col = part.start;
         // 前一个占格子的字：所在列和占几格，组合字符画在它上面。
         let mut base: Option<(usize, usize)> = None;
@@ -230,25 +230,24 @@ pub(super) fn draw_line(
                 if w == 0 {
                     if !is_emoji_tail(c) {
                         let at = base.map(|(at, cells)| (x_of(at), cells));
-                        draw_mark(
-                            frame,
-                            (kind, size, cell),
-                            (at, x_of(col), baseline),
-                            c,
-                            fg,
-                            clip,
-                        );
+                        draw_mark(frame, (font, cell), (at, x_of(col), baseline), c, fg, clip);
                     }
                     continue;
                 }
                 base = Some((col, w));
                 let at = Rect::new(x_of(col), row.y, w as f32 * cell, row.h);
                 let fg = if is_shape(c) { shape } else { fg };
+                let start = (x_of(col), baseline);
+                if let Some(drawn) = draw_shaped(frame, (font, cell), start, rest, true, fg, clip) {
+                    joined = offset - c.len_utf8() + drawn;
+                    col += w;
+                    continue;
+                }
                 // 序列占其中各字符的格数之和：国旗的两个区域指示符各占一格。
                 let whole = sequence_prefix(rest).filter(|unit| {
                     let span = cells(unit).map(|(_, w)| w).sum();
                     let x = x_of(col);
-                    frame.cell_sequence(kind, size, x, baseline, cell, span, unit, fg, clip)
+                    frame.cell_sequence(size, (x, baseline), cell, span, unit, fg, clip)
                 });
                 if let Some(unit) = whole {
                     joined = offset - c.len_utf8() + unit.len();
@@ -256,12 +255,8 @@ pub(super) fn draw_line(
                     && !draw_block_element(frame, c, at, fg, clip)
                     && !super::powerline::draw_powerline(frame, c, at, fg, clip)
                 {
-                    frame.cell_char(kind, size, x_of(col), baseline, cell, w, c, fg, clip);
-                    // 粗体：往右错开一个物理像素再绘制一次，笔画加粗、字宽不变（等宽的格子不乱）。
-                    if bold {
-                        let x = x_of(col) + nudge;
-                        frame.cell_char(kind, size, x, baseline, cell, w, c, fg, clip);
-                    }
+                    let at = (x_of(col), baseline);
+                    frame.cell_char(font, at, cell, w, c, fg, clip);
                 }
                 col += w;
             }
@@ -285,9 +280,39 @@ pub(super) fn draw_line(
         }
         if attrs.has(Attrs::STRIKE) && part.end > part.start {
             let y = (baseline - app.metrics.terminal.x_height / 2.0).round();
-            frame.rect_clipped(span(y, 1.0), fg, 0.0, clip);
+            frame.rect_clipped(span(y, 1.0), 0.0, fg, clip);
         }
     }
+}
+
+/// 整形绘制 `text` 开头需要整形的一段文字（见 [`shaped::draw_shaped_run`]），返回绘制的字节数；
+/// 开头只有一个不需要整形的字符时不绘制，返回 `None`。`whole` 为假时只画第一个字形簇。
+pub(super) fn draw_shaped(
+    frame: &mut Frame<'_>,
+    font: (Font, f32),
+    at: (f32, f32),
+    text: &str,
+    whole: bool,
+    color: Color,
+    clip: Rect,
+) -> Option<usize> {
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    let (mut end, mut count, mut more) = (first.len_utf8(), 1, false);
+    for (at, c) in chars.take_while(|&(_, c)| shaped::joins(c)) {
+        if count == SHAPED_RUN {
+            more = true;
+            break;
+        }
+        (end, count) = (at + c.len_utf8(), count + 1);
+    }
+    if count == 1 && !winc_core::text::shaping::needs_shaping(first) {
+        return None;
+    }
+    let run = &text[..end];
+    let drawn =
+        shaped::draw_shaped_run(frame, font, at, run, char_width, (whole, more), color, clip);
+    (drawn > 0).then_some(drawn)
 }
 
 /// `text` 以多字符的 emoji 序列开头时返回该序列，否则返回 `None`。
@@ -312,20 +337,19 @@ fn sequence_prefix(text: &str) -> Option<&str> {
 /// 前一个字（`base`：左边和占几格）画在同一格里。
 fn draw_mark(
     frame: &mut Frame<'_>,
-    (kind, size, cell): (FontKind, f32, f32),
+    (font, cell): (Font, f32),
     (base, end, baseline): (Option<(f32, usize)>, f32, f32),
     c: char,
     color: Color,
     clip: Rect,
 ) {
     let mut buf = [0; 4];
-    let advance = frame.measure(kind, size, c.encode_utf8(&mut buf));
-    match base {
-        Some((x, cells)) if advance > 0.0 => {
-            frame.cell_char(kind, size, x, baseline, cell, cells, c, color, clip);
-        }
-        _ => frame.cell_char(kind, size, end, baseline, cell, 0, c, color, clip),
-    }
+    let advance = frame.measure(font, c.encode_utf8(&mut buf));
+    let (x, cells) = match base {
+        Some(base) if advance > 0.0 => base,
+        _ => (end, 0),
+    };
+    frame.cell_char(font, (x, baseline), cell, cells, c, color, clip);
 }
 
 /// 把方块元素（U+2580–259F）拆成矩形，依次交给 `part`；其他字符返回假。
@@ -386,7 +410,7 @@ fn draw_block_element(frame: &mut Frame<'_>, c: char, at: Rect, color: Color, cl
             (right - left) * at.w,
             (bottom - top) * at.h,
         );
-        frame.rect_clipped(rect, color.alpha(opacity), 0.0, clip);
+        frame.rect_clipped(rect, 0.0, color.alpha(opacity), clip);
     })
 }
 
@@ -402,7 +426,7 @@ fn draw_underline(
     clip: Rect,
 ) {
     let line = |frame: &mut Frame<'_>, from: f32, to: f32, y: f32| {
-        frame.rect_clipped(Rect::new(from, y, to.min(x1) - from, 1.0), color, 0.0, clip);
+        frame.rect_clipped(Rect::new(from, y, to.min(x1) - from, 1.0), 0.0, color, clip);
     };
     // 只画落在裁剪范围内的部分：一行可能很宽，点线、虚线逐段绘制。
     let start = x0.max(clip.x);
@@ -477,7 +501,7 @@ pub(super) fn draw_cursor(
         (app.palette.caret, app.palette.editor_bg)
     };
     if !focused {
-        let mut edge = |r: Rect| frame.rect_clipped(r, caret, 0.0, clip);
+        let mut edge = |r: Rect| frame.rect_clipped(r, 0.0, caret, clip);
         edge(Rect::new(at.x, at.y, at.w, 1.0));
         edge(Rect::new(at.x, at.bottom() - 1.0, at.w, 1.0));
         edge(Rect::new(at.x, at.y, 1.0, at.h));
@@ -489,15 +513,15 @@ pub(super) fn draw_cursor(
         return;
     }
     match tab.cursor.shape {
-        CursorShape::Bar => frame.rect_clipped(Rect::new(at.x, at.y, 2.0, at.h), caret, 0.0, clip),
+        CursorShape::Bar => frame.rect_clipped(Rect::new(at.x, at.y, 2.0, at.h), 0.0, caret, clip),
         CursorShape::Underline => frame.rect_clipped(
             Rect::new(at.x, at.bottom() - 2.0, at.w, 2.0),
-            caret,
             0.0,
+            caret,
             clip,
         ),
         CursorShape::Block => {
-            frame.rect_clipped(at, caret, 0.0, clip);
+            frame.rect_clipped(at, 0.0, caret, clip);
             // 方块内的字用底色重绘，样式和组合字符与网格相同，被光标覆盖后仍然可见。
             let row = tab.rows.get(usize::from(tab.cursor.row));
             if let Some(cluster) =
@@ -561,11 +585,8 @@ fn draw_cluster(
         return;
     }
     let (cell, size) = (app.metrics.terminal_cell, app.fonts.terminal);
-    let kind = if attrs.has(Attrs::ITALIC) {
-        FontKind::TerminalItalic
-    } else {
-        FontKind::Terminal
-    };
+    let mut font = Font::new(TERMINAL_FONT, size);
+    font.italic = attrs.has(Attrs::ITALIC);
     let cells = ((at.w / cell).round() as usize).max(1);
     let baseline = baseline_in(
         at,
@@ -573,15 +594,29 @@ fn draw_cluster(
         app.metrics.terminal.descent,
     );
     if let Some(unit) = sequence_prefix(&cluster.text)
-        && frame.cell_sequence(kind, size, at.x, baseline, cell, cells, unit, color, clip)
+        && frame.cell_sequence(size, (at.x, baseline), cell, cells, unit, color, clip)
+    {
+        return;
+    }
+    let text: String = std::iter::once(cluster.base)
+        .chain(cluster.marks.iter().copied())
+        .collect();
+    if draw_shaped(
+        frame,
+        (font, cell),
+        (at.x, baseline),
+        &text,
+        true,
+        color,
+        clip,
+    )
+    .is_some()
     {
         return;
     }
     frame.cell_char(
-        kind,
-        size,
-        at.x,
-        baseline,
+        font,
+        (at.x, baseline),
         cell,
         cells,
         cluster.base,
@@ -590,22 +625,12 @@ fn draw_cluster(
     );
     if attrs.has(Attrs::BOLD) {
         let x = at.x + 1.0 / frame.scale().max(1.0);
-        frame.cell_char(
-            kind,
-            size,
-            x,
-            baseline,
-            cell,
-            cells,
-            cluster.base,
-            color,
-            clip,
-        );
+        frame.cell_char(font, (x, baseline), cell, cells, cluster.base, color, clip);
     }
     for &mark in &cluster.marks {
         draw_mark(
             frame,
-            (kind, size, cell),
+            (font, cell),
             (Some((at.x, cells)), at.right(), baseline),
             mark,
             color,
@@ -623,28 +648,29 @@ pub(super) fn preedit_x(x: f32, text: &str, cell: f32, right: f32) -> f32 {
     x.min(right - cells.iter().sum::<usize>() as f32 * cell)
 }
 
-/// 输入法组字中的文字：绘制在 [`preedit_x`] 处，带强调色的下划线，遮住下面的格子。
+/// 输入法组字中的文字：绘制在 [`preedit_x`] 处，带强调色的下划线，遮住下面的格子；其中有
+/// 输入法的光标时一并绘制，返回光标的横坐标。
 pub(super) fn draw_preedit(
     app: &App,
     frame: &mut Frame<'_>,
     (x, y): (f32, f32),
     baseline: f32,
     clip: Rect,
-) {
+) -> Option<f32> {
     let p = app.palette;
     let cell = app.metrics.terminal_cell;
     let preedit = app.preedit_at(Focus::Terminal);
     let chars: Vec<char> = preedit.chars().collect();
     let cells = crate::view::editor::loose_cells(&chars, 1);
     let width = cells.iter().sum::<usize>() as f32 * cell;
-    frame.rect_clipped(
+    frame.surface_clipped(
         Rect::new(x, y, width, app.fonts.terminal_line_height),
-        p.editor_bg,
         0.0,
+        p.editor_bg,
         clip,
     );
     let mut px = x;
-    let font = (FontKind::Terminal, app.fonts.terminal, cell);
+    let font = (Font::new(TERMINAL_FONT, app.fonts.terminal), cell);
     // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
     let mut joined = 0;
     for (col, &width) in cells.iter().enumerate() {
@@ -657,8 +683,15 @@ pub(super) fn draw_preedit(
     }
     frame.rect_clipped(
         Rect::new(x, baseline + 3.0, width, 1.0),
-        p.accent,
         0.0,
+        p.accent,
         clip,
     );
+    let at = crate::view::editor::preedit_cursor_x(app, preedit, &cells, x, cell)?;
+    if app.blink.visible {
+        let lh = app.fonts.terminal_line_height;
+        let bar = Rect::new(at.round(), y + 1.0, 2.0, lh - 2.0);
+        frame.rect_clipped(bar, 1.0, p.caret, clip);
+    }
+    Some(at)
 }

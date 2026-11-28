@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use cpui_render::Rect;
 use winc_core::text::line_slice;
 use winc_editor::{
     Document, LineMatch, ProjectSearch, Query, ReplacePreview, replace_in_document, replace_in_file,
 };
 use winc_i18n::t;
-use winc_render::Rect;
 
 use super::*;
 use crate::app::animation::Presence;
@@ -449,10 +449,10 @@ impl App {
         self.finish_name_input();
         self.relayout();
 
-        // 切回文件树时，在搜索中打开过的文件已在树中展开并选中，滚动文件树使其可见。
+        // 切回文件树时，按设置定位从搜索中打开的当前文件，滚动文件树使其可见。
         if view == SidebarView::Files {
             self.clamp_tree_scroll();
-            self.reveal_active();
+            self.auto_reveal_active();
         }
         // 其他位置的状态只在提交视图里看得见，看不见的时候没有读。
         if view == SidebarView::Commit {
@@ -951,7 +951,7 @@ impl App {
     }
 
     /// 返回路径为 `path`、有未保存修改的文档的当前内容；没有这样的文档时返回 `None`。
-    fn dirty_rope(&self, path: &Path) -> Option<ropey::Rope> {
+    pub(in crate::app) fn dirty_rope(&self, path: &Path) -> Option<ropey::Rope> {
         self.editor
             .documents
             .iter()

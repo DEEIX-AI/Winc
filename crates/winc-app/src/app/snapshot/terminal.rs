@@ -597,51 +597,6 @@ fn the_wheel_moves_rows_by_pixels_and_clicks_follow_them() {
 }
 
 #[test]
-fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
-    let dir = sample_folder("terminal-tab-bar-gaps");
-    let mut app = app_with(&dir.join("short.rs"), false);
-    show_terminal(&mut app, "");
-    for _ in 0..20 {
-        add_tab(&mut app, "zsh", "");
-    }
-    app.terminal.active = 0;
-    paint(&mut app);
-    let card = app.layout.terminal;
-    let hit = |app: &App, wanted: terminal::HeaderHit| {
-        (app.hits.terminal.iter())
-            .find(|(_, hit)| *hit == wanted)
-            .map(|(rect, _)| *rect)
-            .unwrap()
-    };
-
-    // 标签放不下：第一个标签上、下、左的留白相同。
-    let tab = hit(&app, terminal::HeaderHit::Tab(0));
-    assert_eq!(tab.x - card.x, tab.y - card.y);
-    assert_eq!(tab.x - card.x, app.terminal_view().y - tab.bottom());
-    assert_eq!(tab.x - card.x, 5.0);
-
-    // 「+」、运行、拆分、最大化、切换位置、收起六个按钮间距相同，尺寸和间距与编辑区标签栏一致。
-    let new = hit(&app, terminal::HeaderHit::New);
-    let run = hit(
-        &app,
-        terminal::HeaderHit::Run(terminal::run::RunButton::Start),
-    );
-    let split = hit(&app, terminal::HeaderHit::Split);
-    let maximize = hit(&app, terminal::HeaderHit::Maximize);
-    let position = hit(&app, terminal::HeaderHit::Position);
-    let hide = hit(&app, terminal::HeaderHit::Hide);
-    assert_eq!(run.x - new.right(), crate::theme::TAB_GAP);
-    assert_eq!(split.x - run.right(), crate::theme::TAB_GAP);
-    assert_eq!(maximize.x - split.right(), crate::theme::TAB_GAP);
-    assert_eq!(position.x - maximize.right(), crate::theme::TAB_GAP);
-    assert_eq!(hide.x - position.right(), crate::theme::TAB_GAP);
-    assert_eq!(new.w, crate::theme::BUTTON);
-    assert_eq!(card.right() - hide.right(), 8.0);
-
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
 #[ignore = "截图，手动运行"]
 fn snapshot_terminal() {
     let dir = sample_folder("terminal-shot");
@@ -766,8 +721,33 @@ fn terminal_runs_a_command_in_the_login_shell() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 把各终端按面板算出的最新尺寸记为已稳定满 `RESIZE_SETTLE`，并重新同步：代替等待。
+pub(super) fn settle_terminal_size(app: &mut App) {
+    // 先同步一次，记下按面板算出的最新尺寸。
+    app.sync_terminal();
+    let settle = crate::app::terminal::RESIZE_SETTLE;
+    let mut backdate = |tab: &mut terminal::TermTab| {
+        if let Some((_, at)) = &mut tab.settling {
+            *at = at.checked_sub(settle).unwrap_or(*at);
+        }
+    };
+    let groups = app.terminal.groups.iter_mut().map(|group| &mut group.tabs);
+    for tabs in std::iter::once(&mut app.terminal.tabs).chain(groups) {
+        for tab in tabs {
+            backdate(tab);
+            if let Some(split) = &mut tab.split {
+                split.others.iter_mut().for_each(&mut backdate);
+            }
+        }
+    }
+    app.sync_terminal();
+}
+
+/// 拖动分隔条改面板高度：拖动期间不发新尺寸，辅助进程不重排、shell 不重画提示符，画面不闪；
+/// 网格贴着面板下边，上面露出的历史行取来后不留空。松开并稳定后只发一次最终的尺寸，重排好的
+/// 一帧回来时光标那一行不跳。
 #[test]
-fn dragging_the_divider_resizes_live_without_jumping() {
+fn dragging_the_divider_resizes_once_it_settles() {
     let dir = sample_folder("terminal-drag-resize");
     let mut app = app_with(&dir.join("short.rs"), false);
     let mut screen = String::new();
@@ -797,68 +777,56 @@ fn dragging_the_divider_resizes_live_without_jumping() {
             .expect("光标那一行在网格上")
     };
 
-    // 辅助进程回答在路上的尺寸：重排好的一帧。回答前后光标那一行在网格的同一行。
-    let answer = |app: &mut App, term: &mut winc_pty::Terminal| {
-        let (size, id) = {
-            let tab = app.terminal.tab().unwrap();
-            tab.resizing.map(|_| (tab.size, tab.id))
-        }?;
-        serve(app, term);
-        let before = cursor_row(app);
-        term.resize(size);
-        let frame = term.take_frame().unwrap();
-        app.terminal_message(winc_pty::protocol::FromHelper::Frame { tab: id, frame });
-        serve(app, term);
-        assert!(app.terminal.tab().unwrap().resizing.is_none());
-        assert_eq!(cursor_row(app), before, "帧回来时不跳");
-        // 面板这期间又变了：马上发下一个。
-        app.terminal_resize_tick(std::time::Instant::now());
-        Some(size)
-    };
-
-    // 往上拖高：每移动一次就发送新的尺寸，同时只有一个在途中，返回后才发下一个。
+    // 往上拖高：网格贴着面板下边，最后一行的位置不动（零头留在上面）；尺寸一直不发。
     let gap = app.layout.terminal_divider;
     let (x, y) = (gap.x + 200.0, gap.y + gap.h / 2.0);
     app.on_mouse_move(x, y);
     app.on_mouse_down(MouseButton::Left);
     serve(&mut app, &term);
     let lh = app.fonts.terminal_line_height;
-    // 网格贴着面板下边：拖的时候最后一行的位置不动（零头留在上面）。
     let bottom = |app: &App| {
         let grid = terminal::grid_rect(app.layout.terminal, lh);
         grid.y + (grid.h / lh).floor() * lh
     };
-    let fixed = bottom(&app);
-    let mut answered = 0;
-    // 有尺寸在路上时又动了几次。
-    let mut held = 0;
+    let (fixed, size) = (bottom(&app), app.terminal.tab().unwrap().size);
     for step in 1..=8 {
         app.on_mouse_move(x, y - 1.5 * lh * step as f32);
         assert!((bottom(&app) - fixed).abs() < 0.05, "第 {step} 步网格动了");
-        // 拖高时上面露出来的历史行已经取来了。
+        serve(&mut app, &term);
         cursor_row(&app);
-        let sent = app.terminal.tab().unwrap().size;
-        let waiting = app.terminal.tab().unwrap().resizing.is_some();
-        app.on_mouse_move(x, y - 1.5 * lh * step as f32 - 0.7 * lh);
-        if waiting {
-            assert_eq!(app.terminal.tab().unwrap().size, sent, "同时只有一个在路上");
-            held += 1;
-        }
-        while answer(&mut app, &mut term).is_some() {
-            answered += 1;
-        }
+        let tab = app.terminal.tab().unwrap();
+        assert_eq!(tab.size, size, "第 {step} 步就发了新尺寸");
+        assert!(tab.resizing.is_none());
         paint(&mut app);
     }
-    assert!(answered >= 8, "拖着的时候就改了 {answered} 次");
-    assert!(held >= 4, "有尺寸在路上时只动了 {held} 次");
+    // 按住不动也不发：松开以前大小随时可能再变。
+    settle_terminal_size(&mut app);
+    assert_eq!(app.terminal.tab().unwrap().size, size);
+
+    // 松开并稳定：发出最终的尺寸，只发一次。
+    app.on_mouse_up(MouseButton::Left);
+    settle_terminal_size(&mut app);
+    let (id, sent) = {
+        let tab = app.terminal.tab().unwrap();
+        assert!(tab.resizing.is_some());
+        assert_eq!(usize::from(tab.size.rows), tab.grid_rows());
+        (tab.id, tab.size)
+    };
+    serve(&mut app, &term);
+    let before = cursor_row(&app);
+    term.resize(sent);
+    let frame = term.take_frame().unwrap();
+    app.terminal_message(winc_pty::protocol::FromHelper::Frame { tab: id, frame });
+    serve(&mut app, &term);
+    app.terminal_resize_tick(std::time::Instant::now());
     let tab = app.terminal.tab().unwrap();
-    assert_eq!(usize::from(tab.size.rows), tab.grid_rows());
+    assert!(tab.resizing.is_none() && tab.size == sent, "只发一次");
+    assert_eq!(cursor_row(&app), before, "帧回来时不跳");
     assert_eq!(
         cursor_row(&app),
         tab.grid_rows() - 1,
         "空行去掉了，提示符在最下面"
     );
-    app.on_mouse_up(MouseButton::Left);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -964,6 +932,48 @@ fn only_the_tab_in_view_reflows_when_the_width_changes() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 大小连续变化时（例如拖着窗口边缘）：静止之后的第一次变化立即发，紧接着的变化等大小稳定后
+/// 只发最后的尺寸；中途回到已发出的尺寸时不发。
+#[test]
+fn rapid_size_changes_send_only_the_final_size() {
+    let dir = sample_folder("terminal-resize-burst");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "$ ");
+    let log = app.attach_recording_helper(&dir);
+    let resized = |app: &App| {
+        (app.sent_to_helper(&log).iter())
+            .filter_map(|m| match m {
+                winc_pty::protocol::ToHelper::Resize { size, .. } => Some(size.cols),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    settle_terminal_size(&mut app);
+    let start = app.terminal_size().cols;
+    let toggle = |app: &mut App| {
+        app.toggle_sidebar();
+        app.relayout();
+        // 上一个尺寸重排好的一帧已经回来。
+        app.terminal.tabs[0].resizing = None;
+    };
+    toggle(&mut app);
+    let wide = app.terminal_size().cols;
+    assert_ne!(wide, start);
+    assert_eq!(resized(&app), [wide]);
+    // 紧接着的几次变化：调试构建中两次之间可能超过 `RESIZE_SETTLE`，先把上一次变化记为刚刚发生。
+    for _ in 0..3 {
+        let tab = &mut app.terminal.tabs[0];
+        tab.settling = tab
+            .settling
+            .map(|(size, _)| (size, std::time::Instant::now()));
+        toggle(&mut app);
+    }
+    assert_eq!(resized(&app), [wide], "仍在变化时不发");
+    settle_terminal_size(&mut app);
+    assert_eq!(resized(&app), [wide, start]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn reverse_video_keeps_default_text_visible() {
     let image = |bytes: &str| {
@@ -971,7 +981,7 @@ fn reverse_video_keeps_default_text_visible() {
         show_terminal(&mut app, bytes);
         paint(&mut app);
         let renderer = app.frame.renderer.as_ref().unwrap();
-        renderer.image().unwrap().pixels.clone()
+        renderer.snapshot().unwrap().pixels.clone()
     };
     let reversed = "\x1b[?25l\x1b[?5h";
     assert_ne!(image(&format!("{reversed}text")), image(reversed));
@@ -988,7 +998,7 @@ fn block_elements_leave_no_gap_between_rows() {
     paint(&mut app);
     let (x, y) = cell_center(&app, 0, 0);
     let lh = app.fonts.terminal_line_height;
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]
@@ -1014,7 +1024,7 @@ fn contrast_protection_keeps_shape_characters_seamless() {
     let renderer = app.frame.renderer.as_mut().unwrap();
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |col: usize| {
         let (x, y) = cell_center(&app, 0, col);
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
@@ -1043,7 +1053,7 @@ fn powerline_separators_fill_the_cell_height() {
         let renderer = app.frame.renderer.as_mut().unwrap();
         renderer.draw(|frame| scale = frame.scale());
         paint(&mut app);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let yellow = |x: usize, y: usize| {
             image.pixels[y * image.width as usize + x] & 0x00ff_ffff == 0x00d7_9921
         };
@@ -1116,7 +1126,7 @@ fn restored_remote_tabs_wait_for_the_shell_setup() {
     let shot = |app: &mut App| {
         paint(app);
         let renderer = app.frame.renderer.as_ref().unwrap();
-        renderer.image().unwrap().pixels.clone()
+        renderer.snapshot().unwrap().pixels.clone()
     };
     let waiting = shot(&mut app);
     let want = std::mem::take(&mut app.terminal.want);
@@ -1225,7 +1235,7 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     );
 
     // 现场记下：默认 shell 的是空的。
-    let session = app.terminal_session().unwrap();
+    let session = app.terminal_session_with_tabs(&[]).unwrap();
     assert_eq!(session.shells, ["", "/bin/bash"]);
 
     // 异常退出的标签留着，重新启动后还是这个 shell（正常退出的标签直接关闭）。
@@ -1414,7 +1424,7 @@ fn combining_marks_and_underline_styles_are_drawn() {
             .renderer
             .as_ref()
             .unwrap()
-            .image()
+            .snapshot()
             .unwrap()
             .pixels
             .clone()

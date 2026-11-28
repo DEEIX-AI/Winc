@@ -93,7 +93,7 @@ fn draw_page(
     let max = editor.w - 48.0;
     let message = ellipsize(frame, message, app.fonts.ui, max);
     let anchor = ellipsize(frame, anchor, app.fonts.ui, max);
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, &anchor);
+    let w = frame.measure(Font::ui(app.fonts.ui), &anchor);
     let row = Rect::new(editor.x, y, editor.w, MESSAGE_H);
     ui_text(
         frame,
@@ -110,7 +110,7 @@ fn draw_page(
         let w = BAR.0.min(max);
         let track = Rect::new((cx - w / 2.0).round(), y, w.round(), BAR.1);
         let radius = BAR.1 / 2.0;
-        frame.rect_clipped(track, p.accent.alpha(p.accent.a * 0.3), radius, editor);
+        frame.rect_clipped(track, radius, p.accent.alpha(p.accent.a * 0.3), editor);
         let filled = Rect::new(
             track.x,
             y,
@@ -118,13 +118,13 @@ fn draw_page(
             BAR.1,
         );
         if filled.w > 0.0 {
-            frame.rect_clipped(filled, p.accent, radius, editor);
+            frame.rect_clipped(filled, radius, p.accent, editor);
         }
     }
 
     let widths: Vec<f32> = actions
         .iter()
-        .map(|(_, label)| frame.measure(FontKind::Ui, app.fonts.ui_small, label) + 24.0)
+        .map(|(_, label)| frame.measure(Font::ui(app.fonts.ui_small), label) + 24.0)
         .collect();
     let row_w = widths.iter().sum::<f32>() + GAP * widths.len().saturating_sub(1) as f32;
     let mut x = (cx - row_w / 2.0).round();
@@ -137,10 +137,10 @@ fn draw_page(
         } else {
             (p.selected_inactive, p.text)
         };
-        frame.rect_clipped(rect, background, RADIUS_ROW, editor);
+        frame.rect_clipped(rect, RADIUS_ROW, background, editor);
 
         if app.pointer.hover == Hover::Placeholder(action) {
-            frame.rect_clipped(rect, p.hover, RADIUS_ROW, editor);
+            frame.rect_clipped(rect, RADIUS_ROW, p.hover, editor);
         }
 
         ui_text_small(frame, app, rect.x + 12.0, rect, label, color, editor);

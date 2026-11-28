@@ -164,11 +164,7 @@ impl App {
     /// （[`WheelGlide`]），触控板的滚动量立即生效。
     pub(in crate::app) fn scroll_by_wheel(&mut self, delta: MouseScrollDelta, gesture: bool) {
         self.dismiss_hint();
-        let scale = self
-            .frame
-            .renderer
-            .as_ref()
-            .map_or(1.0, Renderer::scale_factor);
+        let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
         let (dx, dy) = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
                 let (step_x, step_y) = self.wheel_step();

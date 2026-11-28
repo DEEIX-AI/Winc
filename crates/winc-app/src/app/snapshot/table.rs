@@ -1,7 +1,9 @@
 //! 表格预览的测试：xlsx 以表格打开、切换工作表、滚动、磁盘上改动后重新读、损坏的文件，
-//! 以及 csv 的预览和分栏。
+//! csv 的预览和分栏，以及 csv 按文本显示时是否按列对齐。
 
 use winc_editor::{PreviewMode, TableState};
+
+mod split;
 
 use super::*;
 
@@ -185,6 +187,133 @@ fn workbooks_open_as_tables_with_sheet_tabs() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 构造有 `count` 张工作表的 `.xlsx` 字节内容；名字较长，几张即排满底部的标签栏。
+fn many_sheets(count: usize) -> Vec<u8> {
+    const NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let rels = |items: String| {
+        format!(
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+             {items}</Relationships>"
+        )
+    };
+    let sheets: String = (1..=count)
+        .map(|i| {
+            format!("<sheet name=\"第 {i} 张很长的工作表名称\" sheetId=\"{i}\" r:id=\"r{i}\"/>")
+        })
+        .collect();
+    let targets: String = (1..=count)
+        .map(|i| {
+            format!(
+                "<Relationship Id=\"r{i}\" Type=\"{REL}/worksheet\" Target=\"worksheets/{i}.xml\"/>"
+            )
+        })
+        .collect();
+    let mut files = vec![
+        (
+            "_rels/.rels".to_owned(),
+            rels(format!(
+                "<Relationship Id=\"r\" Type=\"{REL}/officeDocument\" Target=\"xl/workbook.xml\"/>"
+            )),
+        ),
+        (
+            "xl/workbook.xml".to_owned(),
+            format!(
+                "<workbook xmlns=\"{NS}\" xmlns:r=\"{REL}\"><sheets>{sheets}</sheets></workbook>"
+            ),
+        ),
+        ("xl/_rels/workbook.xml.rels".to_owned(), rels(targets)),
+    ];
+    for i in 1..=count {
+        files.push((
+            format!("xl/worksheets/{i}.xml"),
+            format!(
+                "<worksheet xmlns=\"{NS}\"><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\">\
+                 <is><t>{i}</t></is></c></row></sheetData></worksheet>"
+            ),
+        ));
+    }
+    let files: Vec<(&str, String)> = (files.iter())
+        .map(|(name, content)| (name.as_str(), content.clone()))
+        .collect();
+    stored_zip(&files)
+}
+
+/// 回归：工作表标签超出底部标签栏时，后面的标签无法显示和切换，超出部分仍响应点击。
+#[test]
+fn sheet_tabs_that_do_not_fit_scroll_sideways() {
+    let dir = search_folder("table-many-sheets");
+    let path = dir.join("多表.xlsx");
+    std::fs::write(&path, many_sheets(20)).unwrap();
+    let mut app = app_with(&path, false);
+    app.wait_for_tables();
+    let bar_scroll = |app: &App| {
+        let view = app.editor.active().unwrap().table.as_deref().unwrap();
+        view.bar_scroll
+    };
+    let layout = &app.preview.table_layout;
+    let (bar, max) = (layout.bar, layout.bar_max);
+    assert_eq!(layout.sheets.len(), 20);
+    assert!(max > 0.0, "20 张工作表的标签超出标签栏");
+    // 不可见的标签不响应点击，也不压在右边的说明上。
+    let last = layout.sheets[19];
+    assert_eq!(last.w, 0.0);
+    assert!(layout.sheets.iter().all(|tab| tab.right() <= bar.right()));
+    shoot(&mut app, "table-many-sheets");
+
+    // 竖直滚轮在标签栏上横向滚动标签，表格不动，不滚过最右端。
+    app.pointer.mouse = (bar.x + bar.w / 2.0, bar.y + bar.h / 2.0);
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        0.0, -120.0,
+    )));
+    paint(&mut app);
+    assert!(bar_scroll(&app) > 0.0);
+    let table = app.editor.active().unwrap().table.as_deref().unwrap();
+    assert_eq!(table.scroll, (0.0, 0.0));
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        0.0,
+        -1_000_000.0,
+    )));
+    paint(&mut app);
+    assert_eq!(bar_scroll(&app), max);
+
+    // 最右端露出最后一张，点中后切换过去并完整显示。
+    let last = app.preview.table_layout.sheets[19];
+    assert!(last.w > 0.0);
+    click(&mut app, (last.x + last.w / 2.0, last.y + last.h / 2.0));
+    paint(&mut app);
+    assert_eq!(
+        app.editor.active().unwrap().table.as_ref().unwrap().sheet,
+        19
+    );
+    let bar = app.preview.table_layout.bar;
+    let last = app.preview.table_layout.sheets[19];
+    assert!(last.w > 0.0 && last.right() <= bar.right());
+
+    // 回到最左端，点中右端只露出一部分的标签：该标签完整滚入可见范围。
+    app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+        0.0,
+        1_000_000.0,
+    )));
+    paint(&mut app);
+    assert_eq!(bar_scroll(&app), 0.0);
+    let layout = &app.preview.table_layout;
+    let (bar, sheets) = (layout.bar, &layout.sheets);
+    let cut = (sheets.iter())
+        .position(|tab| tab.w > 0.0 && tab.right() >= bar.right())
+        .expect("右端有只露出一部分的标签");
+    let tab = sheets[cut];
+    click(&mut app, (tab.x + tab.w / 2.0, tab.y + tab.h / 2.0));
+    paint(&mut app);
+    assert!(bar_scroll(&app) > 0.0);
+    let tab = app.preview.table_layout.sheets[cut];
+    assert!(
+        tab.right() < app.preview.table_layout.bar.right(),
+        "{tab:?}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn damaged_workbooks_say_why() {
     let dir = search_folder("table-damaged");
@@ -194,6 +323,60 @@ fn damaged_workbooks_say_why() {
     app.wait_for_tables();
     let view = app.editor.active().unwrap().table.as_deref().unwrap();
     assert!(matches!(&view.state, TableState::Failed(reason) if !reason.is_empty()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 关闭「CSV、TSV 按列对齐」：已打开的和之后打开的表格都按原文排布，可以自动换行；重新打开后
+/// 恢复对齐，不再换行。
+#[test]
+fn csv_text_can_be_shown_as_written_and_wrapped() {
+    let dir = search_folder("table-as-written");
+    let (path, other) = (dir.join("data.csv"), dir.join("other.tsv"));
+    let long = "x".repeat(300);
+    std::fs::write(&path, format!("id,note,count\n1,{long},3\n")).unwrap();
+    std::fs::write(&other, "a\tb\n").unwrap();
+    let mut app = app_with(&path, false);
+    let columns = |app: &mut App| {
+        let tab = app.editor.active_tab_width();
+        app.editor.active_mut().unwrap().columns(tab).is_some()
+    };
+    paint(&mut app);
+    assert!(columns(&mut app));
+
+    app.settings_toggle(Setting::AlignColumns);
+    assert_eq!(app.config.align_columns, Some(false));
+    assert!(!columns(&mut app));
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    assert!(app.editor.active().unwrap().is_wrapping());
+    app.open_path(&other);
+    assert!(!columns(&mut app), "之后打开的表格也按原文排布");
+
+    app.settings_toggle(Setting::AlignColumns);
+    app.open_path(&path);
+    paint(&mut app);
+    assert!(columns(&mut app));
+    assert!(!app.editor.active().unwrap().is_wrapping());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 截图：关闭按列对齐后的 csv，按原文排布并按列着色，长行自动换行。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_csv_as_written() {
+    let dir = search_folder("table-as-written-shot");
+    let path = dir.join("data.csv");
+    let rows = "1,Alice,\"Paris, France\",3.5\n2,Bob,Berlin,4\n3,Chen,北京,12\n";
+    let note = "a long note that runs past the width of a narrow window ".repeat(3);
+    let text = format!("id,name,city,score,note\n{rows}4,Dana,Oslo,7,{note}\n");
+    std::fs::write(&path, text).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+    shoot(&mut app, "csv-aligned");
+    app.settings_toggle(Setting::AlignColumns);
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    shoot(&mut app, "csv-as-written");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

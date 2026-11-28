@@ -53,7 +53,7 @@ impl App {
         // 连接成功后远端模块打开的是项目的第一个目录，此处改为打开项目。
         if project.is_none()
             && let Some(file) = self.remote.project.take()
-            && super::project::project_folders(&file).is_ok_and(|p| p.root == root)
+            && self.project_of(&file).is_ok_and(|p| p.root == root)
         {
             self.open_folder(&file);
             return;
@@ -165,7 +165,7 @@ impl App {
         }
 
         match self.editor.root().map(Path::to_path_buf) {
-            Some(root) if root == folder => {
+            Some(root) if winc_editor::same_folder(&root, &folder) => {
                 if let Some(project) = &project {
                     self.apply_project(project);
                 }
@@ -224,6 +224,14 @@ impl App {
         if let Some(project) = &project {
             self.load_project(project);
         }
+        // 同一目录以前按真实路径记下的现场和最近列表中的位置，改到打开时的写法下；须在记下
+        // 这次打开（`folder_opened`）之前，否则新写法已有一份空现场。
+        let links = self.editor.folder_links();
+        if let Some((root, real)) = (self.editor.root())
+            .and_then(|root| Some((root.to_path_buf(), links.real_of(root)?.to_path_buf())))
+        {
+            self.update_state(move |state| state.rename_folder(&real, &root));
+        }
         self.folder_opened();
         self.focus = match self.panels.sidebar.view {
             SidebarView::Files => Focus::Tree,
@@ -266,6 +274,18 @@ impl App {
         self.request_redraw();
     }
 
+    /// 启动时恢复的目录（在事件循环建立之前打开，见 `open_session_folder`）补上现场中附加的目录，
+    /// 没有时加入项目文件列出的模块（[`App::add_idea_modules`]），规则同 [`App::open_folder_now`]。
+    /// 在读取状态文件之后、建窗口之前调用，这些目录的监视在窗口建好后开始。
+    pub(crate) fn restore_launch_group(&mut self) {
+        let Some(root) = self.editor.root().map(Path::to_path_buf) else {
+            return;
+        };
+        let session = self.state.session_for(&root).cloned();
+        self.restore_group(session.as_ref());
+        self.add_idea_modules(&root);
+    }
+
     /// 是否正在后台读取备份、还没有恢复打开的目录的标签；这时编辑区显示正在恢复。
     pub(crate) fn restoring_tabs(&self) -> bool {
         self.disk.restoring.is_some()
@@ -288,11 +308,9 @@ impl App {
             return;
         };
         self.disk.restoring = None;
-        let opened = self.editor.active().map(|doc| doc.id);
+        // 恢复期间打开的文件排在恢复的标签之后，仍是当前标签（见 `restore_prepared`）。
         let restored = restore_prepared(&mut self.editor, session.as_ref(), prepared);
-        if let Some(index) = opened.and_then(|id| self.editor.index_of(id)) {
-            self.editor.active = Some(index);
-        }
+        self.reveal_restored();
         self.adopt_restored(restored);
         if session
             .as_ref()
@@ -378,6 +396,8 @@ impl App {
         self.panels.global.selected = None;
         self.panels.global.due = None;
         self.panels.global.rebuild_rows();
+        // Git 面板中的日志属于旧目录，与编辑区的标签一同关闭。
+        self.close_panel_logs();
         // 提交视图的滚动位置、选中的文件、收起的目录是旧仓库的。
         self.git.commit.scroll = 0.0;
         self.git.commit.clear_selection();
@@ -478,7 +498,7 @@ impl App {
         }
         let panes = self.session_panes(&slots);
 
-        let terminal = self.terminal_session();
+        let terminal = self.terminal_session_with_tabs(&slots);
         let run = self.run.selected.clone();
         let mut folders = self.extra_folders();
         let workspace = self.editor.workspace.as_ref();
@@ -509,6 +529,10 @@ impl App {
         let window = self.window_frame_now().or(earlier);
         self.update_state(move |state| {
             places::record(state, &places);
+            // 仓库列表的调整在做出时已写入（`App::change_repository_edits`），可能来自其他窗口：
+            // 沿用状态文件中的记录。
+            let repositories = (state.session_for(&folder)).map(|s| s.repositories.clone());
+            let repositories = repositories.unwrap_or_default();
             state.set_session(Session {
                 folder,
                 tabs,
@@ -526,6 +550,7 @@ impl App {
                 sidebar_hidden,
                 window,
                 panes,
+                repositories,
             });
         });
     }

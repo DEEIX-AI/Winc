@@ -1,6 +1,6 @@
 //! LaTeX 的预览：编译出的 PDF、第一次编译的说明页或阅读视图，右上角是编译状态。
 
-use winc_render::{FontKind, Frame, Rect};
+use cpui_render::{Font, Frame, Rect};
 
 use crate::app::{App, Hover};
 use crate::theme::RADIUS_POPUP;
@@ -18,7 +18,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     } else if app.latex_waiting() {
         app.hits.latex_status = Rect::default();
         app.hide_latex_status();
-        frame.rect(area, app.palette.editor_bg);
+        frame.surface(area, app.palette.editor_bg);
         let message = app
             .latex_status()
             .map_or_else(String::new, |(text, _)| text);
@@ -38,14 +38,14 @@ fn draw_status(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         return;
     };
     let p = app.palette;
-    let target = frame.measure(FontKind::Ui, app.fonts.ui_small, &text) + PAD * 2.0;
+    let target = frame.measure(Font::ui(app.fonts.ui_small), &text) + PAD * 2.0;
     let w = app.latex_status_width(target).round();
     let bar = Rect::new(area.right() - MARGIN - w, area.y + MARGIN, w, HEIGHT);
     crate::view::draw_floating_bar(frame, p, bar, area);
     let active = error || app.latex_rc_skipped();
     if active && app.pointer.hover == Hover::LatexStatus {
         let inset = Rect::new(bar.x + 2.0, bar.y + 2.0, bar.w - 4.0, bar.h - 4.0);
-        frame.rect_clipped(inset, p.hover, RADIUS_POPUP - 2.0, area);
+        frame.rect_clipped(inset, RADIUS_POPUP - 2.0, p.hover, area);
     }
     let color = if error { p.error } else { p.text_muted };
     let clip = bar.intersect(area);

@@ -7,8 +7,8 @@
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
+use cpui_render::{Font, Frame, Rect, Stroke};
 use winc_i18n::t;
-use winc_render::{FontKind, Frame, Rect, Stroke};
 
 use super::*;
 use crate::app::git::form::{Direction, FormKind, FormPlan};
@@ -30,7 +30,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         // 卡片遮住的地方不用再铺遮罩。
         _ => {
             let covered = frame.covered(layout.card, RADIUS_CARD);
-            frame.rect_except(app.layout.window, p.scrim, 0.0, covered);
+            frame.rect_except(app.layout.window, 0.0, p.scrim, covered);
         }
     }
     let card = layout.card;
@@ -108,7 +108,8 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         | FormKind::GoToRevision
         | FormKind::CompareRevision { .. }
         | FormKind::RenameGroup
-        | FormKind::LogPath => {
+        | FormKind::LogPath
+        | FormKind::AddRepository => {
             return draw_question(app, frame, layout);
         }
         FormKind::Clone => return draw_clone(app, frame, layout),
@@ -116,7 +117,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         FormKind::Rebase(_) => return draw_rebase(app, frame, layout),
     };
     let card = layout.card;
-    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    frame.rounded(card, RADIUS_CARD, p.editor_bg);
 
     let header = layout.header;
     let x = header.x + SETTINGS_PAD;
@@ -134,7 +135,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
 
     // 标签在名称列里右对齐，紧挨着输入框。
     for (rect, text) in layout.labels.iter().zip(labels) {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        let w = frame.measure(Font::ui(app.fonts.ui), text);
         ui_text(
             frame,
             app,
@@ -161,7 +162,7 @@ fn draw_card(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     let area = base.inset(DIALOG_FIELD_INSET, 0.0);
     let color = if plan.base_enabled {
         if hover == Some(DialogPart::Base) {
-            frame.rounded(base, p.hover, RADIUS_ROW);
+            frame.rounded(base, RADIUS_ROW, p.hover);
         }
         let arrows = (area.right() - 3.0, base.y + base.h / 2.0);
         icons::up_down(frame, arrows, p.text_dim, card);
@@ -285,7 +286,7 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     let (running, error) = (dialog.running.is_some(), dialog.error.clone());
     let remember = dialog.checkout;
     let card = layout.card;
-    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    frame.rounded(card, RADIUS_CARD, p.editor_bg);
 
     let header = layout.header;
     ui_text(
@@ -317,7 +318,7 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
 
     let labels = (view.values.iter().map(|v| v.label)).chain(view.inputs.iter().map(|i| i.label));
     for (rect, text) in layout.labels.iter().zip(labels) {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        let w = frame.measure(Font::ui(app.fonts.ui), text);
         ui_text(
             frame,
             app,
@@ -352,7 +353,7 @@ fn draw_question(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     // 密钥文件右端选文件的按钮，样子同「位置」右端的目录按钮。
     if let Some(choose) = layout.choose {
         if hover == Some(DialogPart::Change) {
-            frame.rounded(choose, p.hover, RADIUS_ROW - 2.0);
+            frame.rounded(choose, RADIUS_ROW - 2.0, p.hover);
         }
         let (cx, cy) = center(choose);
         let at = ((cx - 7.5).round(), (cy - 6.0).round());
@@ -416,7 +417,7 @@ fn draw_reword(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     let pushed = form.pushed > 0;
     let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
     let card = layout.card;
-    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    frame.rounded(card, RADIUS_CARD, p.editor_bg);
     let header = layout.header;
     let title = t!("git-reword-title");
     ui_text(
@@ -441,7 +442,7 @@ fn draw_reword(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
 
     let labels = [t!("git-reword-commit"), t!("git-reword-message")];
     for (rect, text) in layout.labels.iter().zip(labels) {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        let w = frame.measure(Font::ui(app.fonts.ui), text);
         ui_text(
             frame,
             app,
@@ -538,7 +539,7 @@ fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     let form = form.clone();
     let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
     let card = layout.card;
-    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    frame.rounded(card, RADIUS_CARD, p.editor_bg);
     let header = layout.header;
     let title = t!("git-rebase-title");
     ui_text(
@@ -578,15 +579,15 @@ fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         }
         if i == form.selected {
             let fill = if focused_list { p.selection } else { p.hover };
-            frame.rect_clipped(band, fill, RADIUS_ROW, list);
+            frame.rect_clipped(band, RADIUS_ROW, fill, list);
         } else if hover == Some(DialogPart::RebaseRow(i)) {
-            frame.rect_clipped(band, p.hover, RADIUS_ROW, list);
+            frame.rect_clipped(band, RADIUS_ROW, p.hover, list);
         }
         let dropped = row.action == winc_editor::git::RebaseAction::Drop;
         let color = if dropped { p.text_dim } else { p.text };
         let pill = Rect::new(band.x, band.y, REBASE_PILL_W, band.h);
         if hover == Some(DialogPart::RebaseAction(i)) {
-            frame.rect_clipped(pill, p.hover, RADIUS_ROW, list);
+            frame.rect_clipped(pill, RADIUS_ROW, p.hover, list);
         }
         let label = crate::app::git::rebase::action_label(row.action);
         let accent = row.action != winc_editor::git::RebaseAction::Pick && !dropped;
@@ -615,7 +616,7 @@ fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         let end = ui_text(frame, app, text_x, band, &subject, subject_color, list);
         if dropped {
             let strike = Rect::new(text_x, band.y + band.h / 2.0, (end - text_x).max(0.0), 1.0);
-            frame.rect_clipped(strike, p.text_dim, 0.0, list);
+            frame.rect_clipped(strike, 0.0, p.text_dim, list);
         }
     }
 
@@ -657,7 +658,7 @@ fn draw_rebase(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
         let h = (list.h * list.h / content).max(16.0);
         let y = list.y + (list.h - h) * (form.scroll / (content - list.h)).clamp(0.0, 1.0);
         let thumb = Rect::new(list.right() - 3.0, y, 3.0, h);
-        frame.rect_clipped(thumb, p.text_dim.alpha(0.5), 1.5, list);
+        frame.rect_clipped(thumb, 1.5, p.text_dim.alpha(0.5), list);
     }
 
     // 上移、下移：选中的行已在首尾时变淡。
@@ -748,7 +749,7 @@ fn draw_clone(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     let (hover, focus, plan) = (dialog.hover, dialog.focus, app.form_plan(dialog));
     let (running, error) = (dialog.running.is_some(), dialog.error.clone());
     let card = layout.card;
-    frame.rounded(card, p.editor_bg, RADIUS_CARD);
+    frame.rounded(card, RADIUS_CARD, p.editor_bg);
     let header = layout.header;
     let title = t!("git-clone-title");
     ui_text(
@@ -766,7 +767,7 @@ fn draw_clone(app: &mut App, frame: &mut Frame<'_>, layout: &DialogLayout) {
     icons::close(frame, center(close), 7.0, p.text_muted, close);
     let labels = [t!("git-clone-url"), t!("common-dialog-location")];
     for (rect, text) in layout.labels.iter().zip(labels) {
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        let w = frame.measure(Font::ui(app.fonts.ui), text);
         ui_text(
             frame,
             app,
@@ -853,7 +854,7 @@ fn draw_error(app: &App, frame: &mut Frame<'_>, layout: &DialogLayout, error: &s
     let mut lines = vec![String::new()];
     let mut width = 0.0;
     for c in text.chars() {
-        let w = frame.measure(FontKind::Ui, size, c.encode_utf8(&mut [0; 4]));
+        let w = frame.measure(Font::ui(size), c.encode_utf8(&mut [0; 4]));
         if width + w > room && lines.len() < 2 {
             lines.push(String::new());
             width = 0.0;
@@ -912,7 +913,7 @@ fn draw_field(
     if let Some(problem) = plan.problem.as_ref().filter(|_| part == DialogPart::Branch) {
         let size = app.fonts.ui_small;
         let text = ellipsize(frame, problem, size, (area.w * 0.6).round());
-        let w = frame.measure(FontKind::Ui, size, &text);
+        let w = frame.measure(Font::ui(size), &text);
         ui_text_small(frame, app, area.right() - w, rect, &text, p.error, rect);
         area.w = (area.w - w - 12.0).max(0.0);
     }
@@ -950,7 +951,7 @@ fn draw_location(
             let parent = dir.parent().unwrap_or(dir);
             let head = format!("{}/", winc_editor::display_path(parent, None));
             let tail = t!("common-dialog-branch-name");
-            let room = area.w - frame.measure(FontKind::Ui, size, tail);
+            let room = area.w - frame.measure(Font::ui(size), tail);
             let head = ellipsize(frame, &head, size, room.max(0.0));
             let end = ui_text(frame, app, area.x, rect, &head, p.text_muted, area);
             ui_text(frame, app, end, rect, tail, p.text_dim, area);
@@ -971,7 +972,7 @@ fn draw_location(
         .as_ref()
         .is_some_and(|d| d.hover == Some(DialogPart::Change));
     if hovered {
-        frame.rounded(change, p.hover, RADIUS_ROW - 2.0);
+        frame.rounded(change, RADIUS_ROW - 2.0, p.hover);
     }
     let (cx, cy) = center(change);
     let at = ((cx - 7.5).round(), (cy - 6.0).round());

@@ -14,6 +14,9 @@ impl App {
         } else if setting == Setting::AutoSave {
             let choice = self.config.auto_save.unwrap_or_default();
             (crate::layout::auto_save_label(choice).to_owned(), false)
+        } else if setting == Setting::CursorStyle {
+            let choice = self.config.cursor_style.unwrap_or_default();
+            (crate::layout::cursor_style_label(choice).to_owned(), false)
         } else if setting == Setting::SmoothCaret {
             let choice = self.config.smooth_caret_movement.unwrap_or_default();
             (crate::layout::smooth_caret_label(choice).to_owned(), false)
@@ -26,9 +29,21 @@ impl App {
         } else if setting == Setting::GitOpenWorktree {
             let choice = self.config.git_open_worktree.unwrap_or_default();
             (crate::layout::open_worktree_label(choice).to_owned(), false)
+        } else if setting == Setting::GitLogPlacement {
+            let choice = self.config.git_log_placement.unwrap_or_default();
+            (crate::layout::log_placement_label(choice).to_owned(), false)
         } else if setting == Setting::GitPullMode {
             let choice = self.config.git_pull.unwrap_or_default();
             (crate::layout::pull_mode_label(choice).to_owned(), false)
+        } else if setting == Setting::AiProtocol {
+            (
+                self.config
+                    .ai_protocol
+                    .unwrap_or_default()
+                    .name()
+                    .to_owned(),
+                false,
+            )
         } else if setting == Setting::VimClipboard {
             let choice = self.config.vim_clipboard.unwrap_or_default();
             (crate::layout::vim_clipboard_label(choice).to_owned(), false)
@@ -76,6 +91,9 @@ impl App {
                 t!("settings-terminal-tab-position-top")
             };
             (text.to_owned(), false)
+        } else if setting == Setting::TerminalRightClick {
+            let choice = self.config.terminal_right_click.unwrap_or_default();
+            (crate::layout::right_click_label(choice).to_owned(), false)
         } else if setting == Setting::TerminalOptionAsMeta {
             let choice = (self.config.option_as_meta).unwrap_or(winc_config::OptionAsMeta::Left);
             (

@@ -1,8 +1,8 @@
 //! 可编辑的预览中调整图片大小：拖动图片右侧的把手，或使用右键菜单「图片大小」。改写图片的
 //! 原文（见 `winc_preview::markdown::resize`），占一步撤销，光标位置不变。
 
+use cpui_render::Rect;
 use winc_preview::markdown::resize::{self, Width};
-use winc_render::Rect;
 use winc_typeset::Item;
 
 use crate::app::App;
@@ -195,11 +195,10 @@ impl App {
     fn image_source(&self, image: ImageAt) -> Option<(usize, usize, bool)> {
         let md = &self.preview.markdown;
         let revision = self.editor.active()?.revision;
-        let parsed = md
-            .parsed
+        let laid = md
+            .layout
             .as_ref()
-            .map(|p| std::sync::Arc::as_ptr(p) as usize);
-        let laid = md.layout.as_ref().filter(|l| Some(l.source) == parsed)?;
+            .filter(|l| md.parsed.is_some() && l.source == md.parse_serial)?;
         if md.checked != Some(revision) {
             return None;
         }

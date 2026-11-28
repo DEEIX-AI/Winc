@@ -54,6 +54,16 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         &["ReformatCode"],
         &["editor.action.formatSelection"],
     ),
+    (
+        CompareWithClipboard,
+        &["CompareClipboardWithSelection"],
+        &["workbench.files.action.compareWithClipboard"],
+    ),
+    (
+        CompareWithSaved,
+        &[],
+        &["workbench.files.action.compareWithSaved"],
+    ),
     (Fix, &["ShowIntentionActions"], &["editor.action.quickFix"]),
     (Find, &["Find"], &["actions.find"]),
     (
@@ -215,6 +225,11 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         RevealActiveFile,
         &["RevealIn"],
         &["workbench.action.files.revealActiveFileInWindows"],
+    ),
+    (
+        RevealActiveInTree,
+        &["SelectInProjectView"],
+        &["workbench.files.action.showActiveFileInExplorer"],
     ),
     (
         OpenInTerminal,
@@ -566,6 +581,16 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         MaximizeTerminal,
         &["MaximizeToolWindow"],
         &["workbench.action.toggleMaximizedPanel"],
+    ),
+    (
+        MoveTerminalToEditor,
+        &[],
+        &["workbench.action.terminal.moveToEditor"],
+    ),
+    (
+        MoveTerminalToPanel,
+        &[],
+        &["workbench.action.terminal.moveToTerminalPanel"],
     ),
     (
         ScrollTerminalTop,

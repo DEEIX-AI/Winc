@@ -2,6 +2,7 @@
 
 use super::super::touch;
 use super::*;
+use crate::app::git::panel::PanelHit;
 
 impl App {
     /// 处理鼠标按键 `button` 在当前鼠标位置按下。
@@ -198,6 +199,14 @@ impl App {
             self.preview.markdown.focused = false;
             self.preview.markdown.selection = None;
         }
+        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘交回左侧。
+        let keeps_table = matches!(
+            target,
+            Target::Table | Target::Scrollbar(Scrollbar::Table | Scrollbar::TableHorizontal, _)
+        );
+        if !keeps_table {
+            self.preview.table_layout.focused = false;
+        }
 
         // 点击的目标由 `target_at` 决定（与悬停同一个顺序）；只有点击才有的规则写成前面的
         // 分支：快速打开面板开着时点其他位置关掉快速打开面板，正在输入名字时点其他位置
@@ -218,6 +227,8 @@ impl App {
                 bar @ (Scrollbar::Panel
                 | Scrollbar::Commit
                 | Scrollbar::Outline
+                | Scrollbar::CommitHistory
+                | Scrollbar::GitPanel
                 | Scrollbar::LogBranches),
                 grab,
             ) => {
@@ -251,7 +262,7 @@ impl App {
             Target::TreeMore => self.open_tree_tools_menu(),
             Target::ProjectName => self.open_project_menu(),
             Target::SidebarButton => self.toggle_sidebar(),
-            Target::NewTab => self.new_file(),
+            Target::NewTab => self.press_new_tab(),
             Target::TabList => self.open_tab_list_menu(),
             Target::Preview(mode) => self.choose_preview_mode(mode),
             Target::Browser => self.open_in_browser(),
@@ -391,6 +402,11 @@ impl App {
             }
             Target::Editor => self.click_editor(x, y),
             Target::Picture => self.click_picture(x, y),
+            Target::Table => {
+                self.focus = Focus::Editor;
+                self.preview.table_layout.focused = true;
+                self.click_table(x, y);
+            }
             Target::Terminal => {
                 if self.terminal_view().contains(x, y) {
                     self.terminal_mouse_down(x, y, MouseButton::Left);
@@ -452,6 +468,8 @@ impl App {
                     HeaderHit::Maximize => self.toggle_terminal_maximized(),
                     HeaderHit::Split => self.split_terminal(),
                     HeaderHit::Hide => self.click_terminal_button(),
+                    HeaderHit::Editor => self.move_terminal_to_editor(),
+                    HeaderHit::Panel => self.move_terminal_to_panel(),
                     HeaderHit::Run(_) | HeaderHit::Find(_) => {}
                 }
             }
@@ -489,6 +507,14 @@ impl App {
                 let size = self.outline_list().h;
                 self.pointer.drag = Drag::OutlineDivider { start: y, size };
             }
+            Target::GitPanel(PanelHit::Divider) if self.click_count(x, y) == 2 => {
+                self.reset_git_panel_height();
+            }
+            Target::GitPanel(PanelHit::Divider) => {
+                let size = self.layout.git_panel.h;
+                self.pointer.drag = Drag::GitPanelDivider { start: y, size };
+            }
+            Target::GitPanel(hit) => self.press_git_panel(hit),
             Target::TerminalDivider => {
                 // 最大化、还原途中按下时停在终点，从当前大小开始拖。
                 self.terminal.grow = None;

@@ -14,9 +14,22 @@ pub(super) const LONG_EDGE: usize = 30;
 /// 长连线两头各画几行（行）：连着提交的那一截看得出线往哪去，末端画箭头。
 pub(super) const LONG_STUB: usize = 2;
 
+/// 提交图一行的画法：行高、底色和最多画的车道数。
+#[derive(Debug, Clone, Copy)]
+pub(in crate::view::git) struct GraphStyle {
+    /// 行高（逻辑像素）。
+    pub height: f32,
+    /// 行的底色；淡化的线与它混色，`HEAD` 空心圆的内部也是它。
+    pub bg: Color,
+    /// 最多画的车道数（条）：超出的车道压在最右边一条上。
+    pub lanes: usize,
+    /// 相邻两条车道的间距（逻辑像素）。
+    pub lane: f32,
+}
+
 /// 一行里一条车道上的长连线怎么画（见 [`long_cuts`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Cut {
+pub(in crate::view::git) enum Cut {
     /// 在中间：不画。
     Hidden,
     /// 上面那一截的最后一行：下半行画成朝下的箭头。
@@ -123,21 +136,22 @@ fn straight_through(g: &GraphRow) -> Vec<(usize, u32)> {
 /// 半透明的线每行各画一截，圆头会在行的交界处叠出深色。
 ///
 /// 坐标都是逻辑像素。圆点和线都可以点击，命中范围进 `hits` 时排在整行前面。
-pub(super) fn draw_graph_row(
+pub(in crate::view::git) fn draw_graph_row(
     app: &App,
     frame: &mut Frame<'_>,
     (graph, line, cuts): (&GraphRow, Option<u32>, &[(usize, Cut)]),
     (commit, row): (&Commit, usize),
-    (x0, y, band): (f32, f32, Option<Color>),
+    (style, x0, y, band): (GraphStyle, f32, f32, Option<Color>),
     clip: Rect,
     hits: &mut Vec<(Rect, LogTarget)>,
 ) {
     let p = app.palette;
-    let lh = app.fonts.line_height;
-    let lane_x = |lane: usize| x0 + lane.min(MAX_LANES - 1) as f32 * LANE + LANE / 2.0;
+    let lh = style.height;
+    let step = style.lane;
+    let lane_x = |lane: usize| x0 + lane.min(style.lanes - 1) as f32 * step + step / 2.0;
     let faded = |l: u32| line.is_some_and(|f| f != l);
-    let row_bg = band.map_or(p.editor_bg, |band| {
-        crate::view::workspace::panel::over(p.editor_bg, band)
+    let row_bg = band.map_or(style.bg, |band| {
+        crate::view::workspace::panel::over(style.bg, band)
     });
     let color = |c: u8, l: u32| {
         let ink = lane_color(p, c);
@@ -149,7 +163,7 @@ pub(super) fn draw_graph_row(
     };
     let mid = y + lh / 2.0;
     // 两头都在最右边那条车道以外的线挤在一起看不出来，不画：车道很多的仓库每行少画几十笔。
-    let beyond = |s: &&winc_core::graph::Segment| s.from >= MAX_LANES && s.to >= MAX_LANES;
+    let beyond = |s: &&winc_core::graph::Segment| s.from >= style.lanes && s.to >= style.lanes;
     let halves = [(&graph.up, y, mid), (&graph.down, mid, y + lh)];
     let c = (lane_x(graph.lane), mid);
     let row_rect = Rect::new(clip.x, y, clip.w, lh).intersect(clip);
@@ -200,7 +214,7 @@ pub(super) fn draw_graph_row(
         .iter()
         .any(|r| matches!(r, Ref::Head(_) | Ref::Detached));
     let dot = |frame: &mut Frame<'_>, r: f32, fill| {
-        frame.rect_clipped(Rect::new(c.0 - r, c.1 - r, 2.0 * r, 2.0 * r), fill, r, clip);
+        frame.rect_clipped(Rect::new(c.0 - r, c.1 - r, 2.0 * r, 2.0 * r), r, fill, clip);
     };
     let ink = color(graph.color, graph.line);
     // 圆点的半径（逻辑像素）：`HEAD` 最大，合并提交小一圈，普通提交居中。
@@ -215,7 +229,9 @@ pub(super) fn draw_graph_row(
     // `HEAD` 是空心圆，圆环与线条同样粗细。
     if head {
         let hole = r - GRAPH_LINE;
-        dot(frame, hole, p.editor_bg);
+        // 圆内露出行的底面，再铺上行的高亮。
+        let inner = Rect::new(c.0 - hole, c.1 - hole, 2.0 * hole, 2.0 * hole);
+        frame.surface_clipped(inner, hole, style.bg, clip);
         if let Some(band) = band {
             dot(frame, hole, band);
         }

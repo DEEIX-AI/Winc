@@ -1,5 +1,6 @@
 //! 顶栏绘制：标签栏和新建标签按钮，由应用绘制标题栏时右端还有窗口按钮。
 
+use super::sidebar::git_color;
 use super::*;
 use crate::app::TabHit;
 
@@ -25,7 +26,7 @@ pub(in crate::view) fn draw_window_controls(app: &App, frame: &mut Frame<'_>) {
         let hovered = app.pointer.hover == Hover::WindowControl(control);
         let close = control == WindowControl::Close;
         let color = if close && hovered {
-            frame.rect_clipped(button, p.error, RADIUS_ROW, window);
+            frame.rect_clipped(button, RADIUS_ROW, p.error, window);
             p.text_on_accent
         } else {
             draw_button(frame, p, button, window, hovered, false);
@@ -98,9 +99,9 @@ fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
                 .then(|| tab_folder(docs, index))
                 .flatten();
 
-            let mut text = frame.measure(FontKind::Ui, app.fonts.ui, name);
+            let mut text = frame.measure(Font::ui(app.fonts.ui), name);
             if let Some(folder) = &folder {
-                text += 6.0 + frame.measure(FontKind::Ui, app.fonts.ui_small, folder);
+                text += 6.0 + frame.measure(Font::ui(app.fonts.ui_small), folder);
             }
             let width = match app.tabs.width_lock {
                 Some((locked, width)) if locked == index => width,
@@ -121,13 +122,13 @@ fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
             // 目录名最多占文本区的 `TAB_FOLDER_SHARE`，剩下的给文件名；文件名截短后若有余量，
             // 目录名用满余量。
             let folder_w = frame
-                .measure(FontKind::Ui, app.fonts.ui_small, &folder)
+                .measure(Font::ui(app.fonts.ui_small), &folder)
                 .min(room * TAB_FOLDER_SHARE);
             let shown = ellipsize(frame, name, app.fonts.ui, room - 6.0 - folder_w).into_owned();
-            let left = room - 6.0 - frame.measure(FontKind::Ui, app.fonts.ui, &shown);
+            let left = room - 6.0 - frame.measure(Font::ui(app.fonts.ui), &shown);
             // 放得下完整目录名时直接显示（`src`、`api` 等短名比 `TAB_FOLDER_MIN` 还窄）；
             // 须截短时至少保留 `TAB_FOLDER_MIN`。
-            let full = frame.measure(FontKind::Ui, app.fonts.ui_small, &folder);
+            let full = frame.measure(Font::ui(app.fonts.ui_small), &folder);
             let folder = (left >= full.min(TAB_FOLDER_MIN))
                 .then(|| ellipsize(frame, &folder, app.fonts.ui_small, left).into_owned());
             TabLabel {
@@ -157,7 +158,7 @@ fn tab_width_limit(app: &App) -> f32 {
 }
 
 /// 绘制标签栏：当前标签是实心胶囊，相邻两个未选中标签之间绘制一条竖线；有未保存修改的标签
-/// 显示圆点，悬停时变成关闭按钮。
+/// 显示圆点，悬停时变成关闭按钮。有 Git 状态的文件名用该状态的颜色。
 ///
 /// 放不下时可以横向滚动，被裁掉的一端渐隐，新建按钮和列出全部标签的「⌄」固定在右端。
 /// 同时更新 `app.tabs` 中的几何信息和各标签的命中区域。
@@ -293,6 +294,14 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
                 let c = (icon.0 + icons::FILE_WIDTH / 2.0, icon.1);
                 icons::git(frame, c, 1.0, p.accent, clip);
                 icon.0 + icons::FILE_WIDTH + 7.0
+            } else if ghost.terminal {
+                icons::terminal(
+                    frame,
+                    (icon.0 + icons::FILE_WIDTH / 2.0, icon.1),
+                    p.text_muted,
+                    clip,
+                );
+                icon.0 + icons::FILE_WIDTH + 7.0
             } else {
                 draw_file_icon(frame, p, icon, &ghost.icon, clip) + 7.0
             };
@@ -326,7 +335,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
                 1.0,
                 TAB_DIVIDER,
             );
-            frame.rect_clipped(line, p.tab_divider, 0.0, view);
+            frame.rect_clipped(line, 0.0, p.tab_divider, view);
         }
 
         // 展开途中按最终宽度排列图标、名字和关闭按钮，裁剪到当前宽度；内容在宽度展开大部分后才
@@ -370,7 +379,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
         new_tab,
         area,
         app.pointer.hover == Hover::NewTab,
-        false,
+        app.overlays.menu_button == Some(MenuButton::NewTab),
     );
     icons::plus(frame, center(new_tab), 9.0, p.text_muted, area);
     if let Some(list) = list {
@@ -395,6 +404,36 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
     app.hits.tabs = hits;
     draw_preview_button(app, frame);
     draw_browser_button(app, frame);
+    draw_terminal_return(app, frame);
+}
+
+/// 当前标签是终端或日志时，绘制标签栏右端的「移至面板」按钮（`Layout::terminal_return`）。
+fn draw_terminal_return(app: &App, frame: &mut Frame<'_>) {
+    let button = app.layout.terminal_return;
+    if button.w <= 0.0 || button.h <= 0.0 {
+        return;
+    }
+    let p = app.palette;
+    if app.editor.active().is_some_and(|doc| doc.log.is_some()) {
+        let hit = crate::app::git::panel::PanelHit::ToPanel;
+        let hover = app.pointer.hover == Hover::GitPanel(hit);
+        draw_button(frame, p, button, app.layout.top_bar, hover, false);
+        let color = if hover { p.text } else { p.text_muted };
+        icons::panel(frame, center(button), false, color, app.layout.top_bar);
+        return;
+    }
+    if !app.editor.active().is_some_and(|doc| doc.terminal) {
+        return;
+    }
+    let hover = app.pointer.hover == Hover::TerminalHeader(crate::app::terminal::HeaderHit::Panel);
+    draw_button(frame, p, button, app.layout.top_bar, hover, false);
+    icons::panel(
+        frame,
+        center(button),
+        app.terminal_right(),
+        p.text_muted,
+        app.layout.top_bar,
+    );
 }
 
 /// 绘制标签栏右端的「在浏览器中打开」按钮（`Layout::browser`）：出现、消失时随按钮宽度淡入
@@ -476,27 +515,35 @@ fn draw_tab(
 
     // 当前的是一块带细边的底（颜色由主题定：带一点强调色，其余是凸起的一块灰），悬停只铺浅色。
     if marked || behind {
-        frame.rect_clipped(tab, p.tab_fill.alpha(p.tab_fill.a * 0.5), RADIUS_TAB, view);
+        frame.rect_clipped(tab, RADIUS_TAB, p.tab_fill.alpha(p.tab_fill.a * 0.5), view);
     } else {
         draw_tab_fill(frame, p, tab, active, hovered, view);
     }
 
     // 图标按 `tab_icon_name` 取；日志标签绘制 Git 的图标。
-    let icon_name = tab_icon_name(doc);
     let icon = (tab.x + 10.0, icon_center_y(app, tab, app.fonts.ui));
     let cx = if doc.log.is_some() {
         let c = (icon.0 + icons::FILE_WIDTH / 2.0, icon.1);
         // 实色的强调色，与文件标签的彩色图标同样醒目。
         icons::git(frame, c, 1.0, p.accent, view);
         icon.0 + icons::FILE_WIDTH + 7.0
+    } else if doc.terminal {
+        icons::terminal(
+            frame,
+            (icon.0 + icons::FILE_WIDTH / 2.0, icon.1),
+            p.text_muted,
+            view,
+        );
+        icon.0 + icons::FILE_WIDTH + 7.0
     } else {
-        draw_file_icon(frame, p, icon, &icon_name, view) + 7.0
+        draw_file_icon(frame, p, icon, &tab_icon_name(doc), view) + 7.0
     };
-    let color = if (active && !behind) || marked {
+    let plain = if (active && !behind) || marked {
         p.text
     } else {
         p.text_muted
     };
+    let color = file_name_color(app, doc, plain);
     // 预览标签（见 `App::preview_index`）的名称倾斜，与普通标签区分。
     let cx = if app.preview_index() == Some(index) {
         ui_text_italic(frame, app, cx, tab, &label.name, color, view)
@@ -511,7 +558,7 @@ fn draw_tab(
     let close = tab_close(tab);
     if doc.is_dirty() && !hovered {
         let dot = Rect::new(close.x + 5.0, close.y + 5.0, 6.0, 6.0);
-        frame.rect_clipped(dot, p.modified_dot, 3.0, view);
+        frame.rect_clipped(dot, 3.0, p.modified_dot, view);
     } else if hovered || active {
         draw_tab_close(
             frame,
@@ -530,6 +577,17 @@ fn draw_tab(
     }
 }
 
+/// 标签和标签页切换列表中文件名的颜色：文件有 Git 状态时用该状态的颜色（与文件树相同），否则
+/// 用 `plain`。被 Git 忽略的文件不变淡；终端、日志和差异标签没有文件，用 `plain`。
+pub(in crate::view) fn file_name_color(
+    app: &App,
+    doc: &winc_editor::Document,
+    plain: Color,
+) -> Color {
+    let change = doc.path.as_deref().and_then(|path| app.git.change_of(path));
+    change.map_or(plain, |change| git_color(app.palette, change))
+}
+
 /// 标签的底（编辑区和终端面板的标签共用），都不带边：当前的是一块实底，颜色由主题定，带一点
 /// 强调色；悬停只铺浅色。
 ///
@@ -543,9 +601,9 @@ pub(in crate::view) fn draw_tab_fill(
     clip: Rect,
 ) {
     if active {
-        frame.rect_clipped(tab, p.tab_fill, RADIUS_TAB, clip);
+        frame.rect_clipped(tab, RADIUS_TAB, p.tab_fill, clip);
     } else if hovered {
-        frame.rect_clipped(tab, p.hover, RADIUS_TAB, clip);
+        frame.rect_clipped(tab, RADIUS_TAB, p.hover, clip);
     }
 }
 
@@ -566,7 +624,7 @@ pub(in crate::view) fn draw_tab_close(
     clip: Rect,
 ) {
     if on {
-        frame.rect_clipped(close, p.hover, close.h / 2.0, clip);
+        frame.rect_clipped(close, close.h / 2.0, p.hover, clip);
     }
     let color = if on { p.text_muted } else { p.text_dim };
     icons::close(frame, center(close), 6.5, color, clip);

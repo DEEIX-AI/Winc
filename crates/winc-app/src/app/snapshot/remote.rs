@@ -64,6 +64,8 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     crumb_menus_on_a_remote_host_list_the_folder();
     features::features_work_in_a_remote_workspace();
     clipboard_images_pasted_into_a_remote_terminal_are_sent_there_first();
+    #[cfg(target_os = "macos")]
+    pdfs_on_a_remote_host_open_in_the_preview();
     ssh_arguments_open_the_project_and_file();
 
     // 模块默认关闭：状态栏上没有连接的按钮，命令不可用，按下也不打开面板。
@@ -538,6 +540,7 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     files_copied_in_a_remote_tree_are_pasted_there();
     remote_items_download_to_this_computer();
     project::remote_folders_are_added_and_saved_as_a_project();
+    project::remote_project_files_open_over_the_connection();
 }
 
 /// 截图：开始页、主机面板、目录面板（浏览与筛选）和打开远端目录后的窗口。
@@ -987,7 +990,7 @@ fn folders_on_a_remote_host_are_not_taken_for_files() {
         tab: id,
         event: winc_pty::protocol::Event::Cwd(reported),
     });
-    let saved = app.terminal_session().expect("有终端标签");
+    let saved = app.terminal_session_with_tabs(&[]).expect("有终端标签");
     assert_eq!(saved.tabs, [root.join("src")]);
     app.terminal = Default::default();
 
@@ -1120,6 +1123,37 @@ fn clipboard_images_pasted_into_a_remote_terminal_are_sent_there_first() {
     assert!(!app.ctrl_v_uploads());
 
     *crate::app::terminal::upload::CACHE.lock().unwrap() = None;
+    remote::disconnect(&target);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 远端主机上的 PDF 读进内存后打开，读出各页和目录。由
+/// [`a_folder_on_a_connected_host_opens_as_the_workspace`] 调用，原因同
+/// [`folders_on_a_remote_host_are_not_taken_for_files`]。
+///
+/// 回归：远端主机上的 PDF 提示「不是有效的 PDF 文件」。
+#[cfg(target_os = "macos")]
+fn pdfs_on_a_remote_host_open_in_the_preview() {
+    let dir = sample_folder("remote-pdf").canonicalize().unwrap();
+    let pdf = super::preview::outlined_pdf(3, &[("第一章", 0, 1, 700)]);
+    std::fs::write(dir.join("手册.pdf"), pdf).unwrap();
+    let target = loopback("app-remote-pdf");
+    let root = winc_backend::virtual_path(&target, dir.as_os_str().as_bytes());
+    let mut app = blank_app(false);
+    app.config.remote_enabled = Some(true);
+    app.open_folder(&root);
+    app.open_path(&root.join("手册.pdf"));
+    for _ in 0..3 {
+        paint(&mut app);
+        app.wait_for_pdf();
+    }
+    let pages = app.preview.pdf.pages.clone().expect("已打开");
+    assert_eq!(pages.map(|pages| pages.len()), Ok(3));
+    let outline = app.preview.pdf.outline.clone().expect("已读出目录");
+    assert_eq!(
+        outline.first().map(|item| item.title.as_str()),
+        Some("第一章")
+    );
     remote::disconnect(&target);
     let _ = std::fs::remove_dir_all(&dir);
 }

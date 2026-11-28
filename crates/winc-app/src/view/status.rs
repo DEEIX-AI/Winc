@@ -17,6 +17,18 @@ const CRUMB_GAP: f32 = 22.0;
 
 /// 状态栏右侧相邻两项之间的距离（逻辑像素）。
 const STATUS_GAP: f32 = 15.0;
+/// 状态栏右端相邻两个图标的墨迹之间的距离（逻辑像素）；图标按墨迹宽度排开，宽窄不同的图标
+/// 间隙一致。取自调参：略宽于图标本身，各图标清楚分开，与文字项之间的 `STATUS_GAP` 相近。
+const ICON_GAP: f32 = 16.0;
+/// 状态栏各图标墨迹的宽度（逻辑像素），按 2 倍缩放渲染实测：设置的齿轮、锁、查看提交记录的
+/// 时钟，以及终端和远端主机共用的圆角框。
+const GEAR_INK: f32 = 14.0;
+/// 见 [`GEAR_INK`]。
+const LOCK_INK: f32 = 12.0;
+/// 见 [`GEAR_INK`]。
+const HISTORY_INK: f32 = 13.0;
+/// 见 [`GEAR_INK`]。
+const BOX_INK: f32 = 16.0;
 
 /// 路径中一段的底色在文字两侧各超出的宽度（逻辑像素）。
 ///
@@ -90,7 +102,7 @@ fn draw_group(
     let widest = ('0'..='9')
         .map(|digit| {
             (
-                frame.measure(FontKind::Ui, size, digit.encode_utf8(&mut [0; 4])),
+                frame.measure(Font::ui(size), digit.encode_utf8(&mut [0; 4])),
                 digit,
             )
         })
@@ -114,8 +126,8 @@ fn draw_group(
             };
             StatusEntry {
                 key,
-                content: frame.measure(FontKind::Ui, size, &text) + extra,
-                width: frame.measure(FontKind::Ui, size, &stable) + extra,
+                content: frame.measure(Font::ui(size), &text) + extra,
+                width: frame.measure(Font::ui(size), &stable) + extra,
                 text,
                 item,
             }
@@ -140,7 +152,7 @@ fn draw_group(
                 row.item.is_some() && app.pointer.hover == Hover::Status(StatusItem::Update);
             let (fill, ink) = button.colors(p, hovered);
             let alpha = row.alpha.max(row.previous.as_ref().map_or(0.0, |f| f.2)) * opacity;
-            frame.rect_clipped(pill, fill.alpha(fill.a * alpha), RADIUS_ROW, bar);
+            frame.rect_clipped(pill, RADIUS_ROW, fill.alpha(fill.a * alpha), bar);
             let clip = bar.intersect(pill);
             let center = (*right + UPDATE_ICON / 2.0 - 2.5, bar.y + bar.h / 2.0);
             button.draw_icon(frame, center, ink.alpha(ink.a * row.alpha * opacity), clip);
@@ -222,7 +234,7 @@ fn draw_content(
     };
     if picker {
         let cy = icon_center_y(app, bar, app.fonts.ui_small);
-        let text_w = frame.measure(FontKind::Ui, app.fonts.ui_small, text);
+        let text_w = frame.measure(Font::ui(app.fonts.ui_small), text);
         if key == StatusKey::Branch {
             icons::branch_small(frame, (x + 4.0, cy), fade(p.text_muted), clip);
         } else {
@@ -333,7 +345,7 @@ pub(in crate::view) fn update_tooltip(app: &App) -> Option<String> {
 pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let bar = app.layout.status;
-    frame.rect(bar, p.frame_bg);
+    frame.surface(bar, p.frame_bg);
     // Vim 模式的命令行与查找占用整行。
     if app.vim_prompt_open() {
         draw_command_line(app, frame);
@@ -357,17 +369,9 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
 
     // 最右边始终是设置按钮，不随模块和当前文档变化：悬停时与其他可点击项一样铺按钮底色。
     let item = StatusItem::Settings;
-    let slot = right - icons::SIDEBAR_WIDTH;
-    right -= icons::SIDEBAR_WIDTH + STATUS_GAP;
-    let pill = Rect::new(
-        slot - CRUMB_PAD,
-        bar.y + 4.0,
-        icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD,
-        bar.h - 8.0,
-    );
+    let (pill, center) = icon_slot(bar, &mut right, GEAR_INK, 1.0);
     let hovered = app.pointer.hover == Hover::Status(item);
     draw_button(frame, p, pill, bar, hovered, false);
-    let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
     let color = if hovered { p.text } else { p.text_muted };
     icons::gear(frame, center, color, bar);
     status_hits.push((pill, item));
@@ -380,20 +384,12 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let opacity = app.motion.module_fx.terminal.opacity(enabled);
     if share > 0.0 {
         let item = StatusItem::Terminal;
-        let slot = right - icons::SIDEBAR_WIDTH;
-        right -= (icons::SIDEBAR_WIDTH + STATUS_GAP) * share;
-        let pill = Rect::new(
-            slot - CRUMB_PAD,
-            bar.y + 4.0,
-            icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD,
-            bar.h - 8.0,
-        );
+        let (pill, center) = icon_slot(bar, &mut right, BOX_INK, share);
         let open = app.terminal.open;
         let hovered = enabled && app.pointer.hover == Hover::Status(item);
         frame.with_opacity(opacity, |frame| {
             draw_button(frame, p, pill, bar, hovered, false);
         });
-        let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
         let color = if open || hovered {
             p.text
         } else {
@@ -404,12 +400,14 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         if !open && let Some(failed) = unseen.reduce(|a, b| a || b) {
             let dot = if failed { p.error } else { p.accent };
             let at = Rect::new(pill.right() - 7.0, pill.y + 2.0, 5.0, 5.0);
-            frame.rect_clipped(at, dot.alpha(opacity), 2.5, bar);
+            frame.rect_clipped(at, 2.5, dot.alpha(opacity), bar);
         }
         if app.terminal_enabled() {
             status_hits.push((pill, item));
         }
     }
+
+    draw_git_panel_toggle(app, frame, bar, &mut right, &mut status_hits);
 
     // 远程模块开着时终端开关左边是连接远端主机的按钮：点击打开主机面板。打开的目录在远端
     // 主机上时图标亮，否则灰。出现、消失的方式与终端开关相同。
@@ -418,20 +416,12 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let opacity = app.motion.module_fx.remote.opacity(enabled);
     if share > 0.0 {
         let item = StatusItem::Remote;
-        let slot = right - icons::SIDEBAR_WIDTH;
-        right -= (icons::SIDEBAR_WIDTH + STATUS_GAP) * share;
-        let pill = Rect::new(
-            slot - CRUMB_PAD,
-            bar.y + 4.0,
-            icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD,
-            bar.h - 8.0,
-        );
+        let (pill, center) = icon_slot(bar, &mut right, BOX_INK, share);
         let connected = app.editor.root().is_some_and(winc_backend::is_remote);
         let hovered = enabled && app.pointer.hover == Hover::Status(item);
         frame.with_opacity(opacity, |frame| {
             draw_button(frame, p, pill, bar, hovered, false);
         });
-        let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
         // 打开着远端目录而连接已断开、或对端迟迟没有响应时用提醒色。
         let troubled = (app.editor.root().and_then(winc_backend::locate)).is_some_and(|at| {
             !winc_backend::remote::is_connected(&at.target)
@@ -453,19 +443,11 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     // 只读开关位于远程按钮左侧；文档因自身的状态而只读时不显示。
     if let Some(doc) = shown.filter(|doc| doc.can_lock()) {
         let item = StatusItem::ReadOnly;
-        let slot = right - icons::SIDEBAR_WIDTH;
-        right -= icons::SIDEBAR_WIDTH + STATUS_GAP;
-        let pill = Rect::new(
-            slot - CRUMB_PAD,
-            bar.y + 4.0,
-            icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD,
-            bar.h - 8.0,
-        );
+        let (pill, center) = icon_slot(bar, &mut right, LOCK_INK, 1.0);
         let locked = doc.readonly_reason().is_some();
         let hovered = app.pointer.hover == Hover::Status(item);
         let pressed = app.overlays.menu_button == Some(MenuButton::Status(item));
         draw_button(frame, p, pill, bar, hovered || locked, pressed);
-        let center = (slot + icons::SIDEBAR_WIDTH / 2.0, bar.y + bar.h / 2.0);
         let color = if locked || hovered {
             p.text
         } else {
@@ -571,7 +553,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         // 仅供查看的标签（格式化输出）没有可修改的缩进、行尾和编码。
         let clickable = |item| doc.title.is_none().then_some(item);
 
-        items = vec![(StatusKey::Position, position, None)];
+        items = vec![(StatusKey::Position, position, Some(StatusItem::Position))];
         if let Some((total, selected)) = app.word_count() {
             let words = match selected {
                 0 => t!("workspace-status-words", count = total),
@@ -611,7 +593,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         };
         let hex = t!("editor-encoding-hex").to_owned();
         items = vec![
-            (StatusKey::Position, position, None),
+            (StatusKey::Position, position, Some(StatusItem::Position)),
             (StatusKey::Encoding, hex, Some(StatusItem::Encoding)),
         ];
     }
@@ -637,9 +619,9 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
 
         for (_, text, locked) in flags.into_iter().filter(|(on, ..)| *on) {
             let icon_w = if locked { 13.0 } else { 0.0 };
-            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + icon_w + 16.0;
+            let w = frame.measure(Font::ui(app.fonts.ui_small), text) + icon_w + 16.0;
             let chip = Rect::new(right + 8.0 - w, bar.y + 4.0, w, bar.h - 8.0);
-            frame.rounded(chip, p.selected_inactive, chip.h / 2.0);
+            frame.rounded(chip, chip.h / 2.0, p.selected_inactive);
 
             if locked {
                 let cy = icon_center_y(app, chip, app.fonts.ui_small);
@@ -724,10 +706,10 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let message = message.as_deref().or(progress);
     let mut reserved = 0.0;
     if let Some(vim) = &vim {
-        reserved += frame.measure(FontKind::Ui, size, vim) + 16.0;
+        reserved += frame.measure(Font::ui(size), vim) + 16.0;
     }
     if let Some(message) = message {
-        reserved += frame.measure(FontKind::Ui, size, message).min(half);
+        reserved += frame.measure(Font::ui(size), message).min(half);
     }
 
     if doc.is_some() {
@@ -758,7 +740,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
 
             // 有路径的段可点击：悬停时铺按钮底色，其目录菜单打开时显示为按下状态。
             if let Some(i) = i.filter(|_| crumb.is_some_and(|crumb| crumb.path.is_some())) {
-                let w = frame.measure(FontKind::Ui, app.fonts.ui_small, name);
+                let w = frame.measure(Font::ui(app.fonts.ui_small), name);
                 let pill = Rect::new(x - CRUMB_PAD, bar.y + 4.0, w + 2.0 * CRUMB_PAD, bar.h - 8.0);
                 let hovered = app.pointer.hover == Hover::Crumb(i);
                 draw_button(
@@ -858,4 +840,44 @@ fn branch_label(status: &winc_editor::git::Status) -> Option<String> {
         label.push_str(&format!(" ↓{}", status.behind));
     }
     Some(label)
+}
+
+/// 在 `right` 左边排一个墨迹宽 `ink` 的图标按钮，`right` 左移该宽度与 [`ICON_GAP`]（乘以
+/// `share`：开关模块时左边各项跟着滑动）；返回按钮底色的范围和图标的中心。
+fn icon_slot(bar: Rect, right: &mut f32, ink: f32, share: f32) -> (Rect, (f32, f32)) {
+    let cx = *right - ink / 2.0;
+    *right -= (ink + ICON_GAP) * share;
+    let w = icons::SIDEBAR_WIDTH + 2.0 * CRUMB_PAD;
+    let pill = Rect::new(cx - w / 2.0, bar.y + 4.0, w, bar.h - 8.0);
+    (pill, (cx, bar.y + bar.h / 2.0))
+}
+
+/// 绘制状态栏上 Git 面板的开关：日志在 Git 面板中时位于终端开关左边，面板显示着时图标亮，否则
+/// 灰；出现、消失的方式与终端开关相同。`right` 是左边剩下的右沿，画完后左移；位置记入 `hits`。
+fn draw_git_panel_toggle(
+    app: &App,
+    frame: &mut Frame<'_>,
+    bar: Rect,
+    right: &mut f32,
+    hits: &mut Vec<(Rect, StatusItem)>,
+) {
+    let p = app.palette;
+    let enabled = app.git_panel_button();
+    let share = app.motion.module_fx.git_panel.share(enabled);
+    if share <= 0.0 {
+        return;
+    }
+    let opacity = app.motion.module_fx.git_panel.opacity(enabled);
+    let item = StatusItem::GitPanel;
+    let (pill, center) = icon_slot(bar, right, HISTORY_INK, share);
+    let hovered = enabled && app.pointer.hover == Hover::Status(item);
+    frame.with_opacity(opacity, |frame| {
+        draw_button(frame, p, pill, bar, hovered, false);
+    });
+    let lit = app.git_panel_shown() || hovered;
+    let color = if lit { p.text } else { p.text_muted };
+    icons::history(frame, center, color.alpha(opacity), bar);
+    if enabled {
+        hits.push((pill, item));
+    }
 }

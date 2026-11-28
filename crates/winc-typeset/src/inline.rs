@@ -6,10 +6,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use cpui_render::{Color, Direction, Font, FontKind, Rect};
+use winc_core::text::shaping::needs_shaping;
 use winc_preview::markdown::{Align, IMAGE_MARK, Inline, Length, Style};
-use winc_render::{Color, Faux, FontKind, Rect};
 
 use super::math::MathBox;
+use super::words;
 use super::{Cx, Flow, Item, Para, Span};
 use crate::ImageSlot;
 
@@ -44,6 +46,9 @@ struct Atom {
     run: usize,
     /// 这一个前面能不能换行。
     brk: bool,
+    /// 是否与前一个原子同属一个字素簇（带组合符号的字、emoji 序列）：两者之间不断行，
+    /// 强制断行时同样不断开。
+    joined: bool,
     /// 是否空格：折行时行首的空格去掉，行尾的空格不算进底色和链接范围。
     space: bool,
     /// 在原文中的位置（字节偏移，相对顶层块）；由原文生成的文字为 `None`。
@@ -71,12 +76,8 @@ enum AtomKind {
 /// 一段样式解析好以后的字体、字号和颜色。
 #[derive(Clone, Copy)]
 struct RunStyle {
-    /// 字体（正文用界面字体，行内代码用等宽字体）。
-    font: FontKind,
-    /// 模拟粗体、斜体。
-    faux: Faux,
-    /// 字号（逻辑像素）。
-    size: f32,
+    /// 字体：正文用正文字体，行内代码用等宽字体；字号以逻辑像素计。
+    font: Font,
     /// 文字颜色。
     color: Color,
     /// 样式位（`Style` 的位或）：决定底色、下划线、删除线、链接。
@@ -101,17 +102,13 @@ impl Cx<'_, '_> {
         } else {
             para.size
         };
+        let mut font = Font::new(if code { FontKind::Mono } else { self.prose }, size);
+        if !code && (para.bold || style.has(Style::STRONG)) {
+            font = font.bold();
+        }
+        font.italic = style.has(Style::EMPHASIS);
         RunStyle {
-            font: if code {
-                FontKind::Mono
-            } else {
-                FontKind::Prose
-            },
-            faux: Faux {
-                bold: !code && (para.bold || style.has(Style::STRONG)),
-                italic: style.has(Style::EMPHASIS),
-            },
-            size,
+            font,
             color: if style.has(Style::SYNTAX) {
                 self.colors.muted
             } else if style.link != 0 || note {
@@ -194,7 +191,7 @@ impl Cx<'_, '_> {
             runs.push(st);
             if style.has(Style::MATH) {
                 let tex = &inline.text[range.clone()];
-                let b = self.math(tex, st.size, false, st.color);
+                let b = self.math(tex, st.font.size, false, st.color);
                 let width = b.w;
                 atoms.push(Atom {
                     kind: AtomKind::Math {
@@ -204,13 +201,14 @@ impl Cx<'_, '_> {
                     width,
                     run,
                     brk: true,
+                    joined: false,
                     space: false,
                     source: source_of(inline, range.start),
                 });
                 continue;
             }
             let code = style.has(Style::CODE);
-            let pad = st.size * 0.4;
+            let pad = st.font.size * 0.4;
             let lead = atoms.len();
             if code {
                 atoms.push(Atom {
@@ -218,13 +216,17 @@ impl Cx<'_, '_> {
                     width: pad,
                     run,
                     brk: true,
+                    joined: false,
                     space: false,
                     source: None,
                 });
             }
             let start = range.start;
             for (i, c) in inline.text[range].char_indices() {
-                let source = source_of(inline, start + i);
+                // 不对应原文的生成文字（脚注末尾的 ↩）没有原文位置，排出时与正文分为两段。
+                let source = inline
+                    .char_source_of(start + i)
+                    .and_then(|s| u32::try_from(s).ok());
                 if c == IMAGE_MARK {
                     let Some(image) = images.next() else { continue };
                     match self.image(image, room) {
@@ -233,6 +235,7 @@ impl Cx<'_, '_> {
                             width: w,
                             run,
                             brk: true,
+                            joined: false,
                             space: false,
                             source,
                         }),
@@ -256,6 +259,7 @@ impl Cx<'_, '_> {
                         width: 0.0,
                         run,
                         brk: true,
+                        joined: false,
                         space: false,
                         source,
                     });
@@ -273,11 +277,14 @@ impl Cx<'_, '_> {
                     width: pad,
                     run,
                     brk: false,
+                    joined: false,
                     space: false,
                     source: None,
                 });
             }
         }
+        self.shape_clusters(&mut atoms, &runs);
+        mark_word_breaks(&mut atoms);
         // 图片后面可以换行。
         for i in 1..atoms.len() {
             if matches!(
@@ -288,6 +295,49 @@ impl Cx<'_, '_> {
             }
         }
         (atoms, runs)
+    }
+
+    /// 按整形结果重新计算需要整形的文字的宽度，并标出字形簇。
+    ///
+    /// 同一样式连着的字中有需要整形的字符（见 [`needs_shaping`]）时，整段按绘制时的整形量宽，
+    /// 字形簇（见 [`cpui_render::TextCluster`]）的宽度记在第一个字上，簇内的字之间不断行。逐字
+    /// 量出的宽度与整形后绘制的宽度不同，不按整形结果计算时后面的文字错位。
+    fn shape_clusters(&mut self, atoms: &mut [Atom], runs: &[RunStyle]) {
+        let mut i = 0;
+        while i < atoms.len() {
+            let run = atoms[i].run;
+            let char_of = |a: &Atom| match a.kind {
+                AtomKind::Char(c) if a.run == run => Some(c),
+                _ => None,
+            };
+            let len = atoms[i..].iter().map_while(char_of).count();
+            let end = i + len.max(1);
+            if !atoms[i..end].iter().filter_map(char_of).any(needs_shaping) {
+                i = end;
+                continue;
+            }
+            let chars: Vec<char> = atoms[i..end].iter().filter_map(char_of).collect();
+            let widths = self.frame.advances(runs[run].font, &chars);
+            for (atom, width) in atoms[i..end].iter_mut().zip(widths) {
+                atom.width = width;
+            }
+            let text: String = chars.iter().collect();
+            // 字节偏移对应的字符序号：簇以字节范围给出。
+            let starts: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+            let index = |byte: usize| starts.partition_point(|&at| at < byte);
+            let mut inner = Vec::new();
+            let dir = Direction::of(&text);
+            self.frame.clusters(runs[run].font, &text, dir, |cluster| {
+                inner.push(index(cluster.range.start) + 1..index(cluster.range.end));
+            });
+            for range in inner {
+                for atom in &mut atoms[i + range.start.min(len)..i + range.end.min(len)] {
+                    atom.brk = false;
+                    atom.joined = true;
+                }
+            }
+            i = end;
+        }
     }
 
     fn push_char(
@@ -315,24 +365,26 @@ impl Cx<'_, '_> {
                 })
                 .chain([c])
                 .collect();
-            let widths = self.frame.advances_faux(st.font, st.faux, st.size, &chars);
+            let widths = self.frame.advances(st.font, &chars);
             for (atom, &width) in atoms[start..].iter_mut().zip(&widths) {
                 atom.width = width;
             }
             for atom in &mut atoms[start + 1..] {
                 atom.brk = false;
+                atom.joined = true;
             }
             atoms.push(Atom {
                 kind: AtomKind::Char(c),
                 width: 0.0,
                 run,
                 brk: false,
+                joined: true,
                 space: false,
                 source,
             });
             return;
         }
-        let width = self.frame.advance_faux(st.font, st.faux, st.size, c);
+        let width = self.frame.advance(st.font, c);
         let brk = match prev {
             Some(p) => can_break(p, c),
             None => !atoms.is_empty(),
@@ -342,6 +394,7 @@ impl Cx<'_, '_> {
             width,
             run,
             brk,
+            joined: false,
             space: is_space(c),
             source,
         });
@@ -369,7 +422,7 @@ impl Cx<'_, '_> {
             .flatten();
         let mut top = y;
         let mut first_baseline = None;
-        let main = self.frame.metrics(FontKind::Prose, para.size);
+        let main = self.frame.metrics(Font::new(self.prose, para.size));
         let mut prev_end = 0;
         for line in lines {
             // 块文字里：`<br>`、硬换行处换行，自动折行处不插入字符。
@@ -397,11 +450,11 @@ impl Cx<'_, '_> {
                     }
                     AtomKind::Char(_) => {
                         let st = runs[atom.run];
-                        if st.size > para.size {
-                            let m = self.frame.metrics(st.font, st.size);
+                        if st.font.size > para.size {
+                            let m = self.frame.metrics(st.font);
                             ascent = ascent.max(m.ascent);
                             descent = descent.max(m.descent);
-                            line_h = line_h.max(st.size * para.line);
+                            line_h = line_h.max(st.font.size * para.line);
                         }
                     }
                     _ => {}
@@ -444,9 +497,7 @@ impl Cx<'_, '_> {
                     x: pen,
                     baseline,
                     text: "".into(),
-                    font: FontKind::Prose,
-                    faux: Faux::default(),
-                    size: para.size,
+                    font: Font::new(self.prose, para.size),
                     color: para.color,
                     span: Some(Span {
                         start: self.chars,
@@ -490,6 +541,9 @@ impl Cx<'_, '_> {
                 let atom = &atoms[j];
                 match &atom.kind {
                     AtomKind::Char(c) => {
+                        if !text.text.is_empty() && text.source.is_some() != atom.source.is_some() {
+                            flush_text(out, &mut text, at, st);
+                        }
                         if text.text.is_empty() {
                             text.x = *pen;
                             text.start = self.chars;
@@ -543,8 +597,8 @@ impl Cx<'_, '_> {
                 .sum();
             let end = *pen - trailing;
             if st.flags & Style::CODE != 0 && end > start {
-                let m = self.frame.metrics(st.font, st.size);
-                let pad = st.size * 0.2;
+                let m = self.frame.metrics(st.font);
+                let pad = st.font.size * 0.2;
                 let rect = Rect::new(
                     start,
                     baseline - m.ascent - pad,
@@ -560,8 +614,8 @@ impl Cx<'_, '_> {
                 out.insert(group, fill);
             }
             if st.flags & Style::MARK != 0 && end > start {
-                let m = self.frame.metrics(st.font, st.size);
-                let pad = st.size * 0.1;
+                let m = self.frame.metrics(st.font);
+                let pad = st.font.size * 0.1;
                 let rect = Rect::new(
                     start,
                     baseline - m.ascent - pad,
@@ -584,17 +638,17 @@ impl Cx<'_, '_> {
                 );
             }
             if st.flags & Style::UNDERLINE != 0 && end > start {
-                let thick = (st.size / 16.0).max(1.0);
+                let thick = (st.font.size / 16.0).max(1.0);
                 out.push(Item::Fill {
-                    rect: Rect::new(start, baseline + st.size * 0.12, end - start, thick),
+                    rect: Rect::new(start, baseline + st.font.size * 0.12, end - start, thick),
                     color: st.color,
                     radius: 0.0,
                 });
             }
             if st.flags & Style::STRIKE != 0 && end > start {
-                let thick = (st.size / 16.0).max(1.0);
+                let thick = (st.font.size / 16.0).max(1.0);
                 out.push(Item::Fill {
-                    rect: Rect::new(start, baseline - st.size * 0.3, end - start, thick),
+                    rect: Rect::new(start, baseline - st.font.size * 0.3, end - start, thick),
                     color: st.color,
                     radius: 0.0,
                 });
@@ -661,8 +715,6 @@ fn flush_text(out: &mut Vec<Item>, text: &mut Pending, baseline: f32, st: RunSty
         baseline,
         text: pending.text.into(),
         font: st.font,
-        faux: st.faux,
-        size: st.size,
         color: st.color,
         span: Some(Span {
             start: pending.start,
@@ -706,11 +758,12 @@ fn break_lines(atoms: &[Atom], width: f32) -> Vec<std::ops::Range<usize>> {
             // 行尾。
             let forced = |mut at: usize| {
                 while at > start + 1
-                    && match atoms[at].kind {
-                        AtomKind::Char(c) => no_break_before(c),
-                        AtomKind::Pad => !atoms[at].brk,
-                        _ => false,
-                    }
+                    && (atoms[at].joined
+                        || match atoms[at].kind {
+                            AtomKind::Char(c) => no_break_before(c),
+                            AtomKind::Pad => !atoms[at].brk,
+                            _ => false,
+                        })
                 {
                     at -= 1;
                 }
@@ -719,6 +772,10 @@ fn break_lines(atoms: &[Atom], width: f32) -> Vec<std::ops::Range<usize>> {
                     && atoms[at - 1].brk
                 {
                     at -= 1;
+                }
+                // 一个字素簇比整行还宽时，整个簇留在这一行。
+                while at < atoms.len() && atoms[at].joined {
+                    at += 1;
                 }
                 at
             };
@@ -742,6 +799,31 @@ fn break_lines(atoms: &[Atom], width: f32) -> Vec<std::ops::Range<usize>> {
         lines.push(start..atoms.len());
     }
     lines
+}
+
+/// 在词与词之间不写空格的文字中标出词边界（见 [`words::word_breaks`]），这些位置可以换行。
+fn mark_word_breaks(atoms: &mut [Atom]) {
+    let spaceless = |a: &Atom| matches!(a.kind, AtomKind::Char(c) if words::spaceless(c));
+    if !atoms.iter().any(spaceless) {
+        return;
+    }
+    // 图片、公式、留白和换行记作对象替换符（U+FFFC），词不跨过这些原子。
+    let mut text = String::new();
+    let mut starts = Vec::with_capacity(atoms.len());
+    for atom in atoms.iter() {
+        starts.push(text.len());
+        text.push(match atom.kind {
+            AtomKind::Char(c) => c,
+            _ => '\u{fffc}',
+        });
+    }
+    for at in words::word_breaks(&text) {
+        if let Ok(i) = starts.binary_search(&at)
+            && !atoms[i].joined
+        {
+            atoms[i].brk = true;
+        }
+    }
 }
 
 fn is_space(c: char) -> bool {

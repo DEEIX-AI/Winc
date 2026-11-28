@@ -10,6 +10,8 @@ cmd-find-references = 查找引用
 cmd-go-back = 后退
 cmd-go-forward = 前进
 cmd-settings = 设置
+cmd-export-settings = 导出设置…
+cmd-import-settings = 导入设置…
 cmd-release-notes = 更新日志
 cmd-keyboard-shortcuts = 快捷键
 cmd-record-keys = 录制按键
@@ -39,6 +41,9 @@ cmd-next-pane = 下一个窗格
 cmd-previous-pane = 上一个窗格
 cmd-split-terminal = 拆分终端
 cmd-move-terminal-to-group = 终端：移到新分栏
+cmd-move-terminal-to-editor = 终端：移到编辑区
+cmd-new-editor-terminal = 终端：在编辑区新建
+cmd-move-terminal-to-panel = 终端：移到面板
 cmd-next-terminal-pane = 终端中的下一个窗格
 cmd-previous-terminal-pane = 终端中的上一个窗格
 cmd-next-tab = 下一个标签页
@@ -64,6 +69,7 @@ cmd-copy-active-path = 复制当前文件的路径
 cmd-copy-key-path = 复制键路径
 cmd-reveal-active-file-in-finder = 在访达中显示当前文件
 cmd-reveal-active-file-in-folder = 在目录中显示当前文件
+cmd-reveal-active-file-in-tree = 在文件树中定位当前文件
 cmd-open-in-terminal = 在外部终端中打开
 cmd-quit = 退出
 cmd-undo = 撤销
@@ -144,6 +150,8 @@ cmd-sort-lines-descending = 按降序排列行
 cmd-trim-trailing-whitespace = 裁剪尾随空格
 cmd-unescape-unicode = Unicode 转义转为字符
 cmd-escape-unicode = 字符转为 Unicode 转义
+cmd-pretty-print-json = 美化 JSON
+cmd-minify-json = 压缩 JSON
 cmd-indent-using-spaces = 使用空格缩进
 cmd-indent-using-tabs = 使用制表符缩进
 cmd-convert-indentation-to-spaces = 将缩进转换为空格
@@ -173,6 +181,8 @@ cmd-clear-bookmarks = 清除所有书签
 cmd-format = 格式化文档
 cmd-format-selection = 格式化所选内容
 cmd-fix = 修复问题
+cmd-compare-with-clipboard = 与剪贴板比较
+cmd-compare-with-saved = 与已保存的版本比较
 cmd-find = 查找
 cmd-replace = 替换
 cmd-find-next = 查找下一个
@@ -235,9 +245,11 @@ cmd-git-reword-commit = Git：编辑提交说明…
 cmd-git-go-to-child-commit = Git：转到子提交
 cmd-git-go-to-parent-commit = Git：转到父提交
 cmd-git-show-output = Git：显示输出
+cmd-git-generate-commit-message = Git：生成提交信息
 cmd-git-clone = Git：克隆仓库…
 cmd-git-init = Git：初始化仓库
 cmd-git-switch-repository = Git：切换仓库
+cmd-git-add-repository = Git：添加仓库…
 cmd-git-switch-worktree = Git：切换工作树…
 cmd-git-new-worktree = Git：新建工作树…
 cmd-git-switch-branch = Git：切换分支…
@@ -323,9 +335,12 @@ cmd-cli-usage =
       winc                  恢复上次打开的目录
       winc .                打开当前目录
       winc 文件:行[:列]     打开文件并转到指定行
+      winc 新文件           打开尚不存在的文件，保存时创建
       winc ssh://主机/目录 [ssh://主机/文件:行[:列]]
                             打开远端主机上的目录和其中的文件（需要启用远程模块）
       winc -                读取标准输入（例如 cargo build 2>&1 | winc -）
+      -d, --diff 文件1 文件2
+                            并排比较两个文件，可多次给出（例如 git difftool：winc -w -d "$LOCAL" "$REMOTE"）
       -w, --wait            文件的标签页全部关闭后再退出（例如 git config core.editor "winc -w"）
       -n, --new-instance    不复用正在运行的 Winc，启动新进程（例如在 Winc 的终端中运行开发版本）
       -h, --help            显示帮助
@@ -337,10 +352,13 @@ cmd-cli-ssh-mixed = ssh:// 参数必须指向同一台主机，且不能与本�
 cmd-cli-ssh-one-off = --wait 和 - 不能用于 ssh:// 参数
 cmd-cli-ssh-folders = ssh:// 参数中只能有一个目录，其余应为其中的文件
 cmd-cli-wait-needs-file = --wait 需要指定文件
+cmd-cli-diff-needs-files = --diff 需要指定两个文件
+cmd-cli-diff-not-file = 「{ $path }」不存在或不是文件，--diff 只能比较已有的文件
 cmd-cli-wsl-needs-name = --wsl 需要指定发行版名称
 cmd-cli-wait-needs-openable-file = --wait 需要至少一个可打开的文件
 cmd-cli-wait-folder = 「{ $path }」是目录，--wait 只能打开文件
 cmd-cli-open-failed = 无法打开「{ $path }」：{ $error }
+cmd-cli-no-such-folder = 目录不存在
 cmd-cli-event-loop-failed = 无法创建事件循环：{ $error }
 
 ## 「快捷键」页：命令的生效范围和分组

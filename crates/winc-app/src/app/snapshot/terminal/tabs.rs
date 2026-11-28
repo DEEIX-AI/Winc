@@ -369,8 +369,8 @@ fn the_new_terminal_and_shell_menu_share_a_control_with_separate_actions() {
     assert_eq!((new.x, menu.right()), (row.x, row.right()));
     let pixel = |app: &App, x: f32, y: f32| {
         let renderer = app.frame.renderer.as_ref().unwrap();
-        let scale = renderer.scale_factor();
-        let image = renderer.image().unwrap();
+        let scale = renderer.scale();
+        let image = renderer.snapshot().unwrap();
         image.pixels[(y * scale) as usize * image.width as usize + (x * scale) as usize]
     };
     let sample = (new.right() - 6.0, new.y + new.h / 2.0);
@@ -446,8 +446,8 @@ fn a_partially_visible_rename_is_clipped_and_does_not_cover_the_new_entry() {
         assert_eq!(tab_hit(&app, 0).h, 5.0);
         let pixels = |app: &App| {
             let renderer = app.frame.renderer.as_ref().unwrap();
-            let scale = renderer.scale_factor();
-            let image = renderer.image().unwrap();
+            let scale = renderer.scale();
+            let image = renderer.snapshot().unwrap();
             let mut pixels = Vec::new();
             for y in ((rows.y - crate::theme::TREE_ROW) * scale) as usize..(rows.y * scale) as usize
             {
@@ -769,7 +769,10 @@ fn a_split_terminal_tab_shows_its_terminals_side_by_side() {
     let first = app.terminal.tab().unwrap().id;
 
     // 标签和终端里的右键菜单都能拆分：新终端排进这个标签。
-    for target in [MenuTarget::TerminalTab(first), MenuTarget::Terminal(None)] {
+    for target in [
+        MenuTarget::TerminalTab(first),
+        MenuTarget::Terminal(first, None),
+    ] {
         app.open_context_menu(target, (whole.x + 20.0, whole.y + 20.0));
         assert!(menu_commands(&app).contains(&(MenuCommand::SplitTerminal, true)));
         app.overlays.context_menu = None;
@@ -928,5 +931,29 @@ fn shoot_terminal_split_list() {
         let theme = if dark { "dark" } else { "light" };
         shoot(&mut app, &format!("terminal-split-list-{theme}"));
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 面板在右侧且较窄时，横向标签栏右端的按钮依次省去拆分、移到编辑器标签和最大化，先保证
+/// 一个标准宽度的标签；换位置和收起始终显示。面板变宽后按钮回来。
+#[test]
+fn a_narrow_panel_drops_the_optional_header_buttons() {
+    let dir = sample_folder("terminal-narrow-header");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.terminal_right = Some(true);
+    show_terminal(&mut app, "$ ");
+    let shown = |app: &App, want| app.hits.terminal.iter().any(|(_, hit)| *hit == want);
+    app.terminal.width = crate::app::terminal::MIN_WIDTH;
+    app.relayout();
+    paint(&mut app);
+    assert!(!shown(&app, HeaderHit::Split) && !shown(&app, HeaderHit::Editor));
+    assert!(shown(&app, HeaderHit::Position) && shown(&app, HeaderHit::Hide));
+    assert!(tab_hit(&app, 0).w >= crate::app::terminal::strip::TAB_MIN);
+
+    app.terminal.width = 640.0;
+    app.relayout();
+    paint(&mut app);
+    let optional = [HeaderHit::Split, HeaderHit::Editor, HeaderHit::Maximize];
+    assert!(optional.iter().all(|&hit| shown(&app, hit)));
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -3,8 +3,8 @@
 //! 列之间的距离由跨过它的消息、旁边的注释的文字宽度撑开。坐标和尺寸都是逻辑像素，`s` 是
 //! 排版用的字号，图中的距离和粗细都按字号的比例确定。
 
+use cpui_render::{Color, Rect, Stroke};
 use winc_preview::markdown::mermaid::{Arrow, Event, Head, Sequence, Side};
-use winc_render::{Color, Rect, Stroke};
 
 use super::super::math::polyline;
 use super::super::{Cx, Item};

@@ -1075,14 +1075,12 @@ fn the_focus_ring_has_even_sides_at_any_scale() {
     app.press_panel_button(PanelButton::Expand);
     app.focus = Focus::GlobalReplace;
     for scale in [0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.2] {
-        let bg = app.palette.frame_bg;
-        let renderer = winc_render::Renderer::offscreen(SIZE.0, SIZE.1, scale, bg, None, None);
-        app.frame.renderer = Some(renderer.unwrap());
+        app.frame.renderer = Some(offscreen(&app, SIZE, scale));
         // 每轮加宽侧栏 0.3 逻辑像素，使输入框的边落在非整数的物理像素上。
         app.panels.sidebar.width += 0.3;
         paint(&mut app);
         let field = app.panel_parts().replace;
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let accent = app.palette.accent;
         let target = [accent.r, accent.g, accent.b].map(|c| (c * 255.0).round() as i32);
         let lit = |x: i32, y: i32| {
@@ -1231,11 +1229,11 @@ fn long_result_files_unfold_under_the_mouse() {
         Hover::RowAction(long, RowAction::Dismiss)
     );
 
-    // 这一行上的分隔条仍然可以拖动，鼠标停在上面时全名保持展开。
+    // 这一行画在分隔条上：鼠标停在上面时仍在这一行上，全名保持展开。
     let splitter = app.layout.splitter;
     app.on_mouse_move(splitter.x + splitter.w / 2.0, y);
     paint(&mut app);
-    assert_eq!(app.pointer.hover, Hover::Splitter);
+    assert_eq!(app.pointer.hover, Hover::Result(long));
     assert_eq!(app.panels.global.overflow.map(|o| o.index), Some(long));
 
     // 鼠标移到伸出部分之外的编辑区：收起。

@@ -32,10 +32,8 @@ impl Screen<'_> {
                 p.gutter_text
             };
         frame.text(
-            FontKind::Mono,
-            self.app.fonts.code,
-            number_x,
-            row.gutter_baseline,
+            Font::mono(self.app.fonts.code),
+            (number_x, row.gutter_baseline),
             number,
             number_color,
             gutter,
@@ -71,7 +69,7 @@ impl Screen<'_> {
                 let bottom = if line + 1 == h.new.end { 1.0 } else { 0.0 };
                 let w = if lit { MARK_W + 1.0 } else { MARK_W };
                 let bar = Rect::new(mark_x, y + top, w, height - top - bottom);
-                frame.rect_clipped(bar, shade.mark, 0.0, gutter);
+                frame.rect_clipped(bar, 0.0, shade.mark, gutter);
             }
         }
         // 删掉的是文件末尾的几行：三角绘制在最后一行的底下。
@@ -119,7 +117,7 @@ impl Screen<'_> {
         } else if self.problems.binary_search(&row.line).is_ok() {
             let r = PROBLEM_DOT / 2.0;
             let dot = Rect::new(center.0 - r, center.1 - r, PROBLEM_DOT, PROBLEM_DOT);
-            frame.rect_clipped(dot, self.app.palette.error, r, gutter);
+            frame.rect_clipped(dot, r, self.app.palette.error, gutter);
         }
     }
 
@@ -144,7 +142,7 @@ impl Screen<'_> {
             self.lh,
         );
         if app.pointer.hover == Hover::HttpRun(row.line) {
-            frame.rect_clipped(button.inset(1.0, 1.0), p.hover, RADIUS_ROW, gutter);
+            frame.rect_clipped(button.inset(1.0, 1.0), RADIUS_ROW, p.hover, gutter);
         }
         let center = (button.x + button.w / 2.0, button.y + button.h / 2.0);
         let mark = (self.http_mark)
@@ -156,7 +154,7 @@ impl Screen<'_> {
             }
             Some(RunMark::Running) => {
                 let stop = Rect::new(center.0 - 3.5, center.1 - 3.5, 7.0, 7.0);
-                frame.rect_clipped(stop, p.git_added, 1.0, gutter);
+                frame.rect_clipped(stop, 1.0, p.git_added, gutter);
             }
             Some(RunMark::Done { ok, shown }) => {
                 frame.with_opacity(1.0 - shown, |frame| {
@@ -232,7 +230,7 @@ pub(in crate::view) fn draw_blame_cell(
     // 鼠标指着的那一次提交：它的每一行都铺一层底色。
     if hover == Some(index) {
         let band = Rect::new(x, bar_y, w, bar_h);
-        frame.rect_clipped(band, p.hover, 0.0, column);
+        frame.rect_clipped(band, 0.0, p.hover, column);
     }
     let bar_color = if commit.uncommitted {
         p.diff_modified.mark
@@ -241,8 +239,8 @@ pub(in crate::view) fn draw_blame_cell(
     };
     frame.rect_clipped(
         Rect::new(x + 6.0, bar_y, 3.0, bar_h),
-        bar_color,
         0.0,
+        bar_color,
         column,
     );
     let Some((label_y, above)) = label else {
@@ -266,7 +264,7 @@ pub(in crate::view) fn draw_blame_cell(
     } else {
         crate::app::git::blame::blame_time(commit, now)
     };
-    let when_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &when);
+    let when_w = frame.measure(Font::ui(app.fonts.ui_small), &when);
     let when_x = x + w - 10.0 - when_w;
     let who_clip = Rect::new(clip.x, clip.y, (when_x - 8.0 - clip.x).max(0.0), lh);
     ui_text_small(

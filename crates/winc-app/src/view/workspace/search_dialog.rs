@@ -1,6 +1,7 @@
 //! 绘制在文件中查找的对话框（标题行、查询、各处匹配和选中处的上下文）和底部面板的「搜索」标签。
 
 use winc_i18n::t;
+use winc_syntax::LineState;
 
 use super::*;
 use crate::app::editor::definition::Place;
@@ -8,7 +9,7 @@ use crate::app::workspace::search_dialog::{
     CLOSE_MARK, DialogPart, DialogParts, PREVIEW_PAD, SIDE,
 };
 use crate::app::{Focus, Hover, PICKER_ICON_X, PICKER_TEXT_X};
-use crate::view::editor::places::{PlacesView, draw_code_with, draw_rows};
+use crate::view::editor::places::{PlacesView, draw_code_from, draw_rows};
 
 /// 新的搜索还没有结果时，上一次的结果的不透明度。
 const STALE_ALPHA: f32 = 0.45;
@@ -130,7 +131,7 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>) {
 
     // 各处匹配：与跳转到定义的列表相同；没有结果时在列表和预览的位置居中显示提示。
     let top = parts.list.bar.y;
-    frame.rect_clipped(line(top), p.separator, 0.0, card);
+    frame.rect_clipped(line(top), 0.0, p.separator, card);
     let Some(places) = d.places.as_ref().filter(|_| !d.hits.is_empty()) else {
         let body = Rect::new(card.x, top, card.w, parts.preview.bottom() - top);
         return draw_empty(app, frame, body, true);
@@ -147,7 +148,7 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>) {
 
         // 预览：标题行与列表的行对齐，是文件图标、文件名和所在目录；下面是选中处周围的代码。
         let head = parts.preview_head;
-        frame.rect_clipped(line(head.y), p.separator, 0.0, card);
+        frame.rect_clipped(line(head.y), 0.0, p.separator, card);
         let Some(place) = places.items.get(d.selected) else {
             return;
         };
@@ -165,7 +166,7 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>) {
         let room = (head.right() - PICKER_ICON_X - end - 8.0).max(0.0);
         let dir = ellipsize(frame, dir, app.fonts.ui_small, room);
         ui_text_small(frame, app, end + 8.0, head, &dir, p.text_dim, card);
-        if let Some((at, first, lines)) = &context {
+        if let Some((at, first, lines, state)) = &context {
             frame.within(parts.preview, |frame| {
                 let len = d.lens.get(d.selected).copied();
                 draw_context(
@@ -173,7 +174,7 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>) {
                     frame,
                     parts.preview,
                     (*at, *first),
-                    lines,
+                    (lines, *state),
                     (place, len),
                 );
             });
@@ -196,14 +197,14 @@ fn draw_scopes(app: &App, frame: &mut Frame<'_>, parts: &DialogParts) {
         let enabled = i == 0 || d.dir.is_some();
         let hover = enabled && app.pointer.hover == Hover::SearchDialog(DialogPart::Scope(i));
         if hover && i != selected {
-            frame.rect_clipped(*rect, p.hover, RADIUS_ROW, card);
+            frame.rect_clipped(*rect, RADIUS_ROW, p.hover, card);
         }
         let color = match (enabled, i == selected || hover) {
             (false, _) => p.text_dim,
             (true, true) => p.text,
             (true, false) => p.text_muted,
         };
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, label);
+        let w = frame.measure(Font::ui(app.fonts.ui_small), label);
         let at = (rect.x + (rect.w - w) / 2.0).round();
         ui_text_small(frame, app, at, *rect, label, color, card);
     }
@@ -282,7 +283,7 @@ pub(in crate::view) fn draw_dock(app: &mut App, frame: &mut Frame<'_>) {
     );
     icons::magnifier(frame, glass, p.text_dim, card);
     let (summary, color) = summary(app);
-    let summary_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &summary);
+    let summary_w = frame.measure(Font::ui(app.fonts.ui_small), &summary);
     let room = (dock.query.w - summary_w - 16.0).max(0.0);
     let area = Rect::new(dock.query.x, row.y, room, row.h);
     let focused = app.docked_query_focused();
@@ -302,7 +303,7 @@ pub(in crate::view) fn draw_dock(app: &mut App, frame: &mut Frame<'_>) {
     let toggles = [0, 1, 2].map(|i| (dock.options[i], on[i], hovered(i)));
     draw_search_options(app, frame, toggles, card);
     let line = Rect::new(card.x, row.bottom(), card.w, 1.0);
-    frame.rect_clipped(line, p.separator, 0.0, card);
+    frame.rect_clipped(line, 0.0, p.separator, card);
 
     // 没有结果时在列表和预览的位置居中显示提示。
     let top = dock.summary.bottom();
@@ -320,8 +321,9 @@ pub(in crate::view) fn draw_dock(app: &mut App, frame: &mut Frame<'_>) {
         let list = dock.list.list;
         frame.within(list, |frame| draw_rows(app, frame, &dock.list, &view));
         let divider = Rect::new(dock.preview.x, dock.preview.y, 1.0, dock.preview.h);
-        frame.rect_clipped(divider, p.separator, 0.0, card);
-        let (Some(place), Some((at, first, lines))) = (places.items.get(d.selected), &context)
+        frame.rect_clipped(divider, 0.0, p.separator, card);
+        let (Some(place), Some((at, first, lines, state))) =
+            (places.items.get(d.selected), &context)
         else {
             return;
         };
@@ -335,7 +337,14 @@ pub(in crate::view) fn draw_dock(app: &mut App, frame: &mut Frame<'_>) {
         );
         frame.within(dock.preview, |frame| {
             let len = d.lens.get(d.selected).copied();
-            draw_context(app, frame, area, (*at, *first), lines, (place, len));
+            draw_context(
+                app,
+                frame,
+                area,
+                (*at, *first),
+                (lines, *state),
+                (place, len),
+            );
         });
     });
 }
@@ -363,7 +372,7 @@ fn draw_empty(app: &App, frame: &mut Frame<'_>, area: Rect, dialog: bool) {
     let block_h = if hints { line_h * 2.0 + 8.0 } else { line_h };
     let top = (area.y + (area.h - block_h) / 2.0).round();
     let row = Rect::new(area.x, top, area.w, line_h);
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, message);
+    let w = frame.measure(Font::ui(app.fonts.ui), message);
     ui_text(
         frame,
         app,
@@ -406,8 +415,8 @@ fn draw_empty(app: &App, frame: &mut Frame<'_>, area: Rect, dialog: bool) {
     let widths: Vec<(f32, f32)> = (items.iter())
         .map(|(k, label)| {
             (
-                frame.measure(FontKind::Ui, size, k) + 12.0,
-                frame.measure(FontKind::Ui, size, label),
+                frame.measure(Font::ui(size), k) + 12.0,
+                frame.measure(Font::ui(size), label),
             )
         })
         .collect();
@@ -417,7 +426,7 @@ fn draw_empty(app: &App, frame: &mut Frame<'_>, area: Rect, dialog: bool) {
     let mut x = (area.x + (area.w - total) / 2.0).round();
     for ((k, label), (key_w, label_w)) in items.iter().zip(widths) {
         let chip = Rect::new(x, (row.y + (row.h - 20.0) / 2.0).round(), key_w, 20.0);
-        frame.rect_clipped(chip, p.selected_inactive, RADIUS_ROW, area);
+        frame.rect_clipped(chip, RADIUS_ROW, p.selected_inactive, area);
         caps_label(
             frame,
             app,
@@ -475,14 +484,14 @@ fn summary(app: &App) -> (String, Color) {
 
 /// 在预览区 `area` 中绘制选中处周围的几行：左侧是行号，选中的一行铺底色、匹配铺琥珀色底。
 ///
-/// `at` 是（选中的行号，首行的行号），均从 0 起；`len` 是匹配的长度（字符数），与 `place.col`
-/// 一起给出匹配在整行里的位置。
+/// `at` 是（选中的行号，首行的行号），均从 0 起；`state` 是首行行首的高亮状态，各行依次传下去
+/// 着色。`len` 是匹配的长度（字符数），与 `place.col` 一起给出匹配在整行里的位置。
 fn draw_context(
     app: &App,
     frame: &mut Frame<'_>,
     area: Rect,
     (at, first): (usize, usize),
-    lines: &[String],
+    (lines, state): (&[String], LineState),
     (place, len): (&Place, Option<usize>),
 ) {
     let p = app.palette;
@@ -499,6 +508,12 @@ fn draw_context(
         .saturating_sub(whole / 2)
         .min(lines.len().saturating_sub(whole));
     let lines = &lines[..lines.len().min(skip + fit)];
+    // 跳过的几行也要着色一遍，得到第一行显示的行首状态。
+    let (language, _) = app.place_highlight(&place.path, place.line);
+    let mut state = (lines[..skip].iter()).fold(state, |state, text| {
+        let chars: Vec<char> = text.replace('\t', "    ").chars().collect();
+        winc_syntax::highlight_line(language, &chars, state, &mut Vec::new())
+    });
     let (first, lines) = (first + skip, &lines[skip..]);
     let (size, cell) = (app.fonts.code, app.metrics.cell);
     let digits = (first + lines.len()).max(1).to_string().len();
@@ -511,13 +526,13 @@ fn draw_context(
         let row = Rect::new(area.x, top + k as f32 * line_h, area.w, line_h);
         let current = n == at;
         if current {
-            frame.rect_clipped(row.inset(6.0, 0.0), p.selected_inactive, RADIUS_ROW, area);
+            frame.rect_clipped(row.inset(6.0, 0.0), RADIUS_ROW, p.selected_inactive, area);
         }
         let number = (n + 1).to_string();
         let x = gutter - number.len() as f32 * cell;
         let baseline = (row.y + (row.h - (ascent + descent)) / 2.0 + ascent).round();
         let color = if current { p.text_muted } else { p.text_dim };
-        frame.text(FontKind::Mono, size, x, baseline, &number, color, area);
+        frame.text(Font::mono(size), (x, baseline), &number, color, area);
         let marks = if current {
             line_marks(text, place, len)
         } else {
@@ -532,7 +547,9 @@ fn draw_context(
             marks,
         };
         let code = Rect::new(code_x, row.y, row.right() - 12.0 - code_x, row.h);
-        frame.within(area, |frame| draw_code_with(app, frame, &line, code, 1.0));
+        frame.within(area, |frame| {
+            state = draw_code_from(app, frame, &line, code, 1.0, (language, state));
+        });
     }
 }
 

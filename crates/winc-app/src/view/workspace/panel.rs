@@ -2,8 +2,8 @@
 
 use std::f32::consts::FRAC_PI_2;
 
+use cpui_render::{Font, Frame, Rect};
 use winc_i18n::t;
-use winc_render::{Frame, Rect};
 
 use super::*;
 use crate::app::{Focus, OutlineTarget, ResultRow, SyncState};
@@ -47,7 +47,7 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
         last.0.right() - first.0.x + 4.0,
         first.0.h + 4.0,
     );
-    frame.rect_clipped(track, p.hover, RADIUS_TAB, clip);
+    frame.rect_clipped(track, RADIUS_TAB, p.hover, clip);
     let track_bg = over(p.sidebar_bg, p.hover);
     let (raised, edge) = segment_colors(p, track_bg);
 
@@ -64,8 +64,8 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
             Some((from, clock)) => Rect::new(clock.between(from.x, to.x), to.y, to.w, to.h),
             None => to,
         };
-        frame.rect_clipped(slot, edge, RADIUS_ROW, clip);
-        frame.rect_clipped(slot.inset(0.5, 0.5), raised, RADIUS_ROW - 0.5, clip);
+        frame.rect_clipped(slot, RADIUS_ROW, edge, clip);
+        frame.rect_clipped(slot.inset(0.5, 0.5), RADIUS_ROW - 0.5, raised, clip);
     }
 
     for &(rect, view) in &tabs {
@@ -75,7 +75,7 @@ pub(super) fn draw_view_tabs(app: &App, frame: &mut Frame<'_>) {
         let base = if on {
             raised
         } else if hovered {
-            frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(rect, RADIUS_ROW, p.hover, clip);
             over(track_bg, p.hover)
         } else {
             track_bg
@@ -131,8 +131,8 @@ fn draw_change_dot(frame: &mut Frame<'_>, p: &Palette, button: Rect, ring: Color
     // 段是横着的长方形：圆点放在图标右上、段里面，不伸到底槽外。
     let (x, y) = (cx + 11.5, cy - 6.5);
     let dot = Rect::new(x - r, y - r, 2.0 * r, 2.0 * r);
-    frame.rect_clipped(dot.inset(-1.5, -1.5), ring, r + 1.5, clip);
-    frame.rect_clipped(dot, p.accent, r, clip);
+    frame.rect_clipped(dot.inset(-1.5, -1.5), r + 1.5, ring, clip);
+    frame.rect_clipped(dot, r, p.accent, clip);
 }
 
 /// 绘制全局搜索面板，返回有焦点的输入框的光标矩形（供输入法候选框定位）。
@@ -510,7 +510,7 @@ fn draw_results(app: &mut App, frame: &mut Frame<'_>, parts: &PanelParts) {
         .map(|m| m.line + 1)
         .max()
         .unwrap_or(1);
-    let digit = frame.measure(FontKind::Ui, app.fonts.ui_small, "0");
+    let digit = frame.measure(Font::ui(app.fonts.ui_small), "0");
     let cx = ResultContext {
         area,
         selected: app
@@ -596,7 +596,7 @@ fn draw_result_row(
 
     let background = row_color(p, is_selected, cx.focused, hovered);
     if let Some(color) = background {
-        frame.rect_clipped(pill, color, RADIUS_ROW, area);
+        frame.rect_clipped(pill, RADIUS_ROW, color, area);
     }
 
     // 写全名的那一行：按钮跟在全名之后，随名字展开滑出；名字在按钮之前截断，不用遮盖。
@@ -634,7 +634,7 @@ fn draw_result_row(
             let solid = over(p.sidebar_bg, background);
             let cover = Rect::new(left, pill.y, pill.right() - left, pill.h);
             let r = RADIUS_ROW;
-            frame.rect_corners(cover, solid, [0.0, r, r, 0.0], area);
+            frame.rect_corners(cover, [0.0, r, r, 0.0], solid, area);
             fade(
                 frame,
                 Rect::new(left - COVER_FADE, pill.y, COVER_FADE, pill.h),
@@ -758,7 +758,7 @@ fn draw_match_row(
     if !end.covered {
         let number = (found.line + 1).to_string();
         let size = app.fonts.ui_small;
-        let x = numbers_right - frame.measure(FontKind::Ui, size, &number);
+        let x = numbers_right - frame.measure(Font::ui(size), &number);
         caps_label(frame, app, size, (x, end.slot), &number, p.text_muted, clip);
     }
     let right = numbers_right - end.numbers - end.pad;
@@ -781,12 +781,12 @@ fn draw_match_row(
 
     // 匹配位置离行首太远、整段放不下时，匹配之前的文本从左侧截去并换成「…」，使匹配的文本完整露出。
     let room = right - x0;
-    let before_w = frame.measure(FontKind::Ui, app.fonts.ui, before);
-    let matched_w = frame.measure(FontKind::Ui, app.fonts.ui, matched);
+    let before_w = frame.measure(Font::ui(app.fonts.ui), before);
+    let matched_w = frame.measure(Font::ui(app.fonts.ui), matched);
     // 展开替换时，替换后的文本也要露出来，因此计入宽度。
     let replaced_w = replaced
         .as_deref()
-        .map_or(0.0, |r| frame.measure(FontKind::Ui, app.fonts.ui, r) + 3.0);
+        .map_or(0.0, |r| frame.measure(Font::ui(app.fonts.ui), r) + 3.0);
     let overflow = before_w + matched_w + replaced_w + 8.0 - room;
     let mut x = x0;
     let mut before = before;
@@ -803,7 +803,7 @@ fn draw_match_row(
                 break;
             }
 
-            dropped += frame.measure(FontKind::Ui, app.fonts.ui, c.encode_utf8(&mut [0; 4]));
+            dropped += frame.measure(Font::ui(app.fonts.ui), c.encode_utf8(&mut [0; 4]));
 
             if i + c.len_utf8() == before.len() {
                 before = "";
@@ -820,16 +820,16 @@ fn draw_match_row(
     } else {
         p.search_match
     };
-    frame.rect_clipped(mark, mark_color, 3.0, clip);
+    frame.rect_clipped(mark, 3.0, mark_color, clip);
     let end = ui_text(frame, app, x, row, matched, p.text, clip);
 
     if let Some(new) = &replaced {
         // 被替换的文本划一道删除线，其后是替换后的文本，底色为绿色调。
         let strike = Rect::new(x, row.y + row.h / 2.0, end - x, 1.0);
-        frame.rect_clipped(strike, p.text_muted, 0.0, clip);
-        let new_w = frame.measure(FontKind::Ui, app.fonts.ui, new);
+        frame.rect_clipped(strike, 0.0, p.text_muted, clip);
+        let new_w = frame.measure(Font::ui(app.fonts.ui), new);
         let added = Rect::new(end + 1.0, row.y + 5.0, new_w + 2.0, row.h - 10.0);
-        frame.rect_clipped(added, p.syntax_string.alpha(0.20), 3.0, clip);
+        frame.rect_clipped(added, 3.0, p.syntax_string.alpha(0.20), clip);
         x = ui_text(frame, app, end + 2.0, row, new, p.text, clip) + 1.0;
     } else {
         x = end;
@@ -885,6 +885,23 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let rect = app.terminal_hovered_hit(hit)?;
             Some((rect, label.to_owned()))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Editor) => {
+            let rect = app.terminal_hovered_hit(hit)?;
+            Some((
+                rect,
+                with_key(
+                    t!("terminal-move-to-editor"),
+                    Some(Action::MoveTerminalToEditor),
+                ),
+            ))
+        }
+        Hover::TerminalHeader(crate::app::terminal::HeaderHit::Panel) => Some((
+            app.layout.terminal_return,
+            with_key(
+                t!("terminal-move-to-panel"),
+                Some(Action::MoveTerminalToPanel),
+            ),
+        )),
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Maximize) => {
             let rect = app.terminal_hovered_hit(hit)?;
             let label = if app.terminal.maximized {
@@ -948,6 +965,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, with_key(label, Some(Action::ToggleTerminalPanel))))
         }
+        Hover::Status(item @ crate::app::StatusItem::GitPanel) => {
+            let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
+            let label = if app.git_panel_shown() {
+                t!("git-panel-hide")
+            } else {
+                t!("git-panel-show")
+            };
+            Some((rect, with_key(label, Some(Action::GitShowLog))))
+        }
         Hover::Status(item @ crate::app::StatusItem::Remote) => {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
             // 已打开远端目录时说明连着哪台主机。
@@ -965,6 +991,14 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 None => t!("workspace-start-remote").to_owned(),
             };
             Some((rect, with_key(&label, Some(Action::RemoteConnect))))
+        }
+        Hover::Status(item @ crate::app::StatusItem::Position) => {
+            let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
+            let label = match app.hex_active() {
+                true => t!("menu-hex-go-to"),
+                false => t!("cmd-go-to-line"),
+            };
+            Some((rect, with_key(label, Some(Action::GoToLine))))
         }
         Hover::Status(item @ crate::app::StatusItem::ReadOnly) => {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
@@ -1029,16 +1063,30 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         }
         Hover::Commit(
             target @ (CommitTarget::OpenFile(_)
+            | CommitTarget::OtherOpen(..)
             | CommitTarget::RevertFile(_)
-            | CommitTarget::GroupRevert(_)),
+            | CommitTarget::OtherRevert(..)
+            | CommitTarget::DirRevert(_)
+            | CommitTarget::OtherDirRevert(_)
+            | CommitTarget::GroupRevert(_)
+            | CommitTarget::OtherGroupRevert(..)),
         ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
-                CommitTarget::OpenFile(_) => t!("workspace-tip-open-file"),
-                CommitTarget::GroupRevert(_) if app.git.commit.staging() => {
+                CommitTarget::OpenFile(_) | CommitTarget::OtherOpen(..) => {
+                    t!("workspace-tip-open-file")
+                }
+                CommitTarget::DirRevert(_) | CommitTarget::OtherDirRevert(_) => {
+                    t!("git-commit-revert-folder")
+                }
+                CommitTarget::GroupRevert(_) | CommitTarget::OtherGroupRevert(..)
+                    if app.git.commit.staging() =>
+                {
                     t!("git-commit-revert-group")
                 }
-                CommitTarget::GroupRevert(_) => t!("menu-commit-roll-back"),
+                CommitTarget::GroupRevert(_) | CommitTarget::OtherGroupRevert(..) => {
+                    t!("git-commit-revert-all")
+                }
                 _ => t!("workspace-tip-revert-change"),
             };
             Some((rect, label.to_owned()))
@@ -1046,17 +1094,22 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         Hover::Commit(
             target @ (CommitTarget::StageFile(..)
             | CommitTarget::GroupStage(_)
-            | CommitTarget::DirStage(..)),
+            | CommitTarget::DirStage(..)
+            | CommitTarget::OtherStage(..)
+            | CommitTarget::OtherGroupStage(..)
+            | CommitTarget::OtherDirStage(..)),
         ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let label = match target {
-                CommitTarget::GroupStage(crate::app::CommitGroup::Staged) => {
-                    t!("git-commit-unstage-group")
+                CommitTarget::GroupStage(crate::app::CommitGroup::Staged)
+                | CommitTarget::OtherGroupStage(_, false) => t!("git-commit-unstage-group"),
+                CommitTarget::GroupStage(_) | CommitTarget::OtherGroupStage(_, true) => {
+                    t!("git-commit-stage-group")
                 }
-                CommitTarget::GroupStage(_) => t!("git-commit-stage-group"),
-                CommitTarget::StageFile(_, false) | CommitTarget::DirStage(_, false) => {
-                    t!("menu-git-unstage")
-                }
+                CommitTarget::StageFile(_, false)
+                | CommitTarget::DirStage(_, false)
+                | CommitTarget::OtherStage(_, _, false)
+                | CommitTarget::OtherDirStage(_, false) => t!("menu-git-unstage"),
                 _ => t!("menu-git-stage"),
             };
             Some((rect, label.to_owned()))

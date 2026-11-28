@@ -9,9 +9,9 @@ use std::hash::Hash;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use cpui_render::{Color, Font, FontKind, Frame, Rect, Stroke};
 use winc_preview::image::{Picture, Pixels};
 use winc_preview::markdown::{Alert, Align, Block, Inline, Item as ListItem, SourceMap, Style};
-use winc_render::{Color, Faux, FontKind, Frame, Rect, Stroke};
 use winc_syntax::TokenKind;
 
 /// 一张图片的状态。
@@ -46,6 +46,7 @@ mod math;
 mod memo;
 mod raw;
 mod table;
+mod words;
 
 pub use memo::Memo;
 pub use memo::{key as memo_key, shift};
@@ -92,12 +93,13 @@ struct Shed {
     links: Box<[(Arc<str>, f32, f32)]>,
 }
 
-/// 比正文宽的表格：表格的各项按自然宽度排版，绘制时横向平移、裁剪到正文一栏内。
+/// 比显示区域宽的表格：表格的各项按自然宽度排版，绘制时横向平移、裁剪到显示区域内。
 #[derive(Debug, Clone)]
 pub struct Scroller {
     /// 属于该表格的项（[`LaidBlock::items`] 的序号）。
     pub items: std::ops::Range<u32>,
-    /// 显示表格的区域（块里的坐标）：正文一栏宽，高度含表格下方的滚动条。
+    /// 显示表格的区域（块里的坐标）：正文一栏及两侧可占用的留白（见 [`Cx::bleed`]），
+    /// 高度含表格下方的滚动条。
     pub rect: Rect,
     /// 表格的总宽度（逻辑像素）。
     pub content: f32,
@@ -268,7 +270,9 @@ impl Item {
     /// 上下边缘（块里的坐标）；文字算上选中时铺底色的范围。
     pub fn span_y(&self) -> (f32, f32) {
         match self {
-            Item::Text { baseline, size, .. } => (baseline - size * 1.2, baseline + size * 0.5),
+            Item::Text { baseline, font, .. } => {
+                (baseline - font.size * 1.2, baseline + font.size * 0.5)
+            }
             Item::Fill { rect, .. }
             | Item::Corners { rect, .. }
             | Item::Image { rect, .. }
@@ -396,12 +400,8 @@ pub enum Item {
         baseline: f32,
         /// 文字内容。
         text: Arc<str>,
-        /// 字体。
-        font: FontKind,
-        /// 模拟的粗体与斜体。
-        faux: Faux,
-        /// 字号（逻辑像素）。
-        size: f32,
+        /// 字体：种类、字号（逻辑像素）与粗体、斜体。
+        font: Font,
         /// 颜色。
         color: Color,
         /// 能选中时在块文字里的位置；列表记号这类不算文字的为 `None`。
@@ -524,6 +524,8 @@ impl Item {
                     grow(bx, by, 0.0);
                 }
                 Stroke::Circle(cx, cy, r) | Stroke::Arc(cx, cy, r, ..) => grow(cx, cy, r),
+                // 排版只产生上面三种线。
+                _ => {}
             }
         }
         let half = width / 2.0;
@@ -545,6 +547,31 @@ impl Item {
             rect: Rect::new(x0, y0, x1 - x0, y1 - y0),
             points: points.into(),
             color,
+        }
+    }
+
+    /// 将该项记下的原文位置（相对顶层块，来自解析结果）按 `drift` 换算为当前文字中的位置。
+    ///
+    /// 一段文字只记起点，其中各字的位置按起点依次推算：改动位于一段文字中间时，改动之后的字
+    /// 有偏差，重新解析后恢复准确。
+    pub(crate) fn shift_source(&mut self, drift: Drift) {
+        let shift = |at: &mut u32| {
+            *at = u32::try_from(drift.moved(*at as usize)).unwrap_or(u32::MAX);
+        };
+        match self {
+            Item::Text {
+                span: Some(span), ..
+            } => {
+                if let Some(src) = &mut span.source {
+                    shift(src);
+                }
+            }
+            Item::Image {
+                at: Some((_, src)), ..
+            }
+            | Item::Spot { at: (_, src), .. } => shift(src),
+            Item::Check { source, .. } if *source != u32::MAX => shift(source),
+            _ => {}
         }
     }
 }
@@ -611,6 +638,8 @@ pub struct Cx<'a, 'f> {
     pub frame: &'a mut Frame<'f>,
     /// 正文字号（逻辑像素），标题、代码按它缩放。
     pub base: f32,
+    /// 正文的字体种类：应用用 `FontSet::add` 注册的正文字体。
+    pub prose: FontKind,
     /// 返回语法标记对应的颜色，用于代码的高亮。
     pub token: &'a dyn Fn(TokenKind) -> Color,
     /// 编辑区的底色，图的填充色由它与强调色混合得到。
@@ -649,6 +678,59 @@ pub struct Cx<'a, 'f> {
     pub repeat: u32,
     /// 当前顶层块中各开合标识出现的次数，见 `Cx::toggle_id`。
     pub toggles: HashMap<u64, u32>,
+    /// 比正文一栏宽的表格可以占用的两侧留白（左，右）（逻辑像素），不占用时为 0。
+    ///
+    /// 列宽不受影响，只决定表格摆在哪里、超出多少才横向滚动；左侧只用于不缩进的表格。
+    pub bleed: (f32, f32),
+}
+
+/// 解析之后的改动：解析结果中的原文位置换算为当前文字中的位置（字节偏移）。
+///
+/// 改动都从 `from` 起，其后的文字共移动 `delta` 个字节，之前的位置不变。重新解析之前在多处
+/// 输入时，两处之间的位置按全部改动换算，有偏差；重新解析后位置恢复准确。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Drift {
+    /// 第一处改动的位置。
+    pub from: usize,
+    /// 改动后文字长度的变化。
+    pub delta: isize,
+}
+
+impl Drift {
+    /// 解析之后没有改动。
+    pub const NONE: Drift = Drift {
+        from: usize::MAX,
+        delta: 0,
+    };
+
+    /// 返回解析结果中一个字或一段范围的终点 `at` 在当前文字中的位置。
+    ///
+    /// 位于 `from` 处的字排在插入的文字之后；删去的文字中的位置落在 `from`。
+    pub fn moved(self, at: usize) -> usize {
+        if at < self.from {
+            at
+        } else {
+            at.saturating_add_signed(self.delta).max(self.from)
+        }
+    }
+
+    /// 返回解析结果中一段范围的起点 `at` 在当前文字中的位置：在起点处插入的文字属于该范围。
+    pub fn moved_start(self, at: usize) -> usize {
+        if at <= self.from { at } else { self.moved(at) }
+    }
+
+    /// 返回相对起点为 `start` 的一段原文的改动。
+    ///
+    /// 起点位于改动之后时整段一起移动，段内的相对位置不变。
+    pub fn within(self, start: usize) -> Drift {
+        match self.from.checked_sub(start) {
+            Some(from) if self.delta != 0 => Drift {
+                from,
+                delta: self.delta,
+            },
+            _ => Drift::NONE,
+        }
+    }
 }
 
 /// 可编辑的预览中光标所在的叶子块：不排版，显示原文。
@@ -657,12 +739,14 @@ pub struct Raw {
     pub block: Arc<str>,
     /// 叶子块在 `block` 中的范围。
     pub leaf: std::ops::Range<usize>,
-    /// 叶子块在解析结果中的终点（相对顶层块）。
+    /// 叶子块不含其后空行时的终点（相对顶层块，按当前文字）。
     ///
-    /// 块里记下的原文位置来自解析结果；输入之后、重新解析之前，`leaf` 的终点已按新增的字节
-    /// 后移，其后的块仍是旧的位置。判断块是否属于该叶子块时与这个终点比较，其后的块不会落入
-    /// 叶子块而被跳过。
+    /// 光标位于叶子块之后的空行上时，`leaf` 延伸到光标所在行；判断块是否属于该叶子块时与该
+    /// 终点比较，空行生成的空段落不落入叶子块。
     pub parsed_end: usize,
+    /// 顶层块内解析之后的改动（相对顶层块）：块里记下的原文位置来自解析结果，据此换算为当前
+    /// 文字中的位置。
+    pub drift: Drift,
     /// 已经显示过：同一个叶子块里排出的其余块（HTML 块里的几段、表格的其余单元格）不再显示。
     pub done: bool,
     /// 光标在 `block` 中的位置：表格只把光标所在的单元格显示为原文。
@@ -688,12 +772,13 @@ pub enum RawKind {
 }
 
 impl Raw {
-    /// 光标位于 `block` 的 `caret` 处，所在的叶子块为 `leaf`，在解析结果中的终点为
-    /// `parsed_end`；`prose` 表示正文。
+    /// 光标位于 `block` 的 `caret` 处，所在的叶子块为 `leaf`，不含其后空行时的终点为
+    /// `parsed_end`，解析之后的改动为 `drift`；`prose` 表示正文。
     pub fn new(
         block: Arc<str>,
         leaf: std::ops::Range<usize>,
         parsed_end: usize,
+        drift: Drift,
         caret: usize,
         prose: bool,
         preedit: Option<Arc<str>>,
@@ -701,6 +786,7 @@ impl Raw {
         let mut raw = Raw {
             block,
             parsed_end: parsed_end.max(leaf.start),
+            drift,
             leaf,
             done: false,
             caret,
@@ -756,6 +842,16 @@ enum RawState {
 fn is_fence(line: &str) -> bool {
     let line = line.trim();
     ["```", "~~~", "$$"].iter().any(|f| line.starts_with(f))
+}
+
+/// 返回围栏代码块原文 `text` 中两行围栏之间的代码；还没有结尾围栏时到末尾为止。
+fn fenced_code(text: &str) -> &str {
+    let body = text.split_once('\n').map_or("", |(_, body)| body);
+    match body.rsplit_once('\n') {
+        Some((code, last)) if is_fence(last) => code,
+        None if is_fence(body) => "",
+        _ => body,
+    }
 }
 
 /// 返回光标位于叶子块内容之后的空行上时需要排版的空行（原文起点，相对顶层块）。
@@ -907,11 +1003,22 @@ impl Cx<'_, '_> {
             RawState::Rule => return self.raw_rule(x, y, width, out),
         }
         let para = self.body_para(env);
+        // 叶子块按解析结果排出，原文位置换算到当前文字中；容器中的各块在各自排版时换算，表格
+        // 逐格换算（光标所在的单元格按当前文字排出）。
+        let drift = match block {
+            Block::Quote(..)
+            | Block::List(..)
+            | Block::Table(..)
+            | Block::Footnote(..)
+            | Block::Details { .. } => Drift::NONE,
+            _ => self.drift(),
+        };
+        let first_item = out.items.len();
         if let Block::Paragraph(inline) | Block::Heading(_, inline) = block {
             out.anchors
                 .extend(inline.ids.iter().map(|id| (id.clone(), y)));
         }
-        match block {
+        let flow = match block {
             Block::Paragraph(inline) => self.flow(inline, x, y, width, para, &mut out.items),
             Block::Heading(level, inline) => self.heading(*level, inline, x, y, width, env, out),
             Block::Code { lang, text, map } => {
@@ -984,7 +1091,13 @@ impl Cx<'_, '_> {
                 let id = self.toggle_id(details_id(block));
                 self.details(id, *open, summary, blocks, x, y, width, env, out)
             }
+        };
+        if drift != Drift::NONE {
+            for item in &mut out.items[first_item..] {
+                item.shift_source(drift);
+            }
         }
+        flow
     }
 
     /// 块文字（[`Cx::text`]）里一段（段落、单元格、代码的一行）结束：接一个换行。
@@ -1007,17 +1120,15 @@ impl Cx<'_, '_> {
     ) {
         let size = self.base;
         let baseline = baseline.unwrap_or_else(|| {
-            let m = self.frame.metrics(FontKind::Prose, size);
+            let m = self.frame.metrics(Font::new(self.prose, size));
             y + (size * 1.5 - m.ascent - m.descent) / 2.0 + m.ascent
         });
-        let w = self.frame.measure(FontKind::Prose, size, marker);
+        let w = self.frame.measure(Font::new(self.prose, size), marker);
         out.push(Item::Text {
             x: content_x - size * 0.4 - w,
             baseline,
             text: marker.into(),
-            font: FontKind::Prose,
-            faux: Faux::default(),
-            size,
+            font: Font::new(self.prose, size),
             color,
             span: None,
         });
@@ -1114,7 +1225,8 @@ impl Cx<'_, '_> {
                             size,
                         ),
                         checked,
-                        source: u32::try_from(item.task_source).unwrap_or(u32::MAX),
+                        source: u32::try_from(self.drift().moved(item.task_source))
+                            .unwrap_or(u32::MAX),
                     });
                 }
                 (None, Some(start)) => {
@@ -1143,7 +1255,7 @@ impl Cx<'_, '_> {
     /// 文字后新段落的位置相同，输入第一个字时内容不移动。
     fn blank_lines(&mut self, blanks: &[usize], x: f32, y: f32, width: f32, out: &mut Out) -> f32 {
         let size = self.base;
-        let m = self.frame.metrics(FontKind::Prose, size);
+        let m = self.frame.metrics(Font::new(self.prose, size));
         let row = Row {
             room: width.max(size),
             size,

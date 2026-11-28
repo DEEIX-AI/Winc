@@ -306,8 +306,8 @@ fn wrapped_lines_fill_their_rows_in_the_minimap() {
     let map = app.layout.minimap;
     paint(&mut app);
     let renderer = app.frame.renderer.take().unwrap();
-    let scale = renderer.scale_factor();
-    let image = renderer.image().unwrap();
+    let scale = renderer.scale();
+    let image = renderer.snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]
@@ -348,8 +348,8 @@ fn the_minimap_shows_the_later_rows_of_long_wrapped_lines() {
 
     let map = app.layout.minimap;
     let renderer = app.frame.renderer.take().unwrap();
-    let scale = renderer.scale_factor();
-    let image = renderer.image().unwrap();
+    let scale = renderer.scale();
+    let image = renderer.snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * scale) as usize, (y * scale) as usize);
         image.pixels[y * image.width as usize + x]

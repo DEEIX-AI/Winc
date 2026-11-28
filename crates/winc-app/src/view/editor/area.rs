@@ -199,6 +199,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             relative: app.vim_relative(),
             yanked: app.vim_yanked(id),
             vim_caret: vim_caret.map(|(_, shape)| shape),
+            styled_caret: app.styled_caret(),
             extra_carets: &extra_carets,
             hunks,
             open: app
@@ -223,6 +224,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         screen.draw_open_hunk(frame);
         screen.draw_current_lines(frame);
         screen.draw_selections(frame);
+        screen.draw_rulers(frame);
 
         // 动画中变化的行：位置不变，只显示动画已展开的部分；起始行的箭头随进度旋转。
         let curtain = motion_ref.map(|m| {
@@ -357,6 +359,8 @@ struct Screen<'a> {
     yanked: Option<Selection>,
     /// Vim 模式下光标的形状；使用竖线光标时为 `None`。
     vim_caret: Option<crate::app::vim::CaretShape>,
+    /// `editor.cursorStyle` 设定的光标形状，见 [`App::styled_caret`]；竖线为 `None`。
+    styled_caret: Option<crate::app::vim::CaretShape>,
     extra_carets: &'a [(usize, usize)],
     /// 与 `HEAD` 比较得到的改动，以及改动卡片打开的一处。
     hunks: &'a [LineHunk],
@@ -576,7 +580,7 @@ impl Screen<'_> {
                 let line = segment.file.start;
                 if self.visible.contains(&line) && self.shown(line) {
                     let mark = Rect::new(editor.x, self.row_y(line) - 1.0, editor.w, 2.0);
-                    frame.rect_clipped(mark, edge, 0.0, clip);
+                    frame.rect_clipped(mark, 0.0, edge, clip);
                 }
                 continue;
             }
@@ -585,7 +589,7 @@ impl Screen<'_> {
                 if self.shown(line) {
                     let h = self.doc.rows_of(line) as f32 * self.lh;
                     let band = Rect::new(editor.x, self.row_y(line), editor.w, h);
-                    frame.rect_clipped(band, color, 0.0, clip);
+                    frame.rect_clipped(band, 0.0, color, clip);
                 }
             }
         }
@@ -603,7 +607,7 @@ impl Screen<'_> {
                 {
                     let h = self.doc.rows_of(line) as f32 * self.lh;
                     let band = Rect::new(text_rect.x, self.row_y(line), text_rect.w, h);
-                    frame.rect_clipped(band, color, 0.0, text_rect);
+                    frame.rect_clipped(band, 0.0, color, text_rect);
                 }
             }
         }
@@ -626,16 +630,27 @@ impl Screen<'_> {
                     self.row_y(line)
                 };
                 let mark = Rect::new(text_rect.x, y - 1.0, text_rect.w, 2.0);
-                frame.rect_clipped(mark, shade.edge, 0.0, text_rect);
+                frame.rect_clipped(mark, 0.0, shade.edge, text_rect);
             }
         } else {
             for line in h.new.start.max(self.visible.start)..h.new.end.min(self.visible.end) {
                 if self.shown(line) {
                     let h = self.doc.rows_of(line) as f32 * self.lh;
                     let band = Rect::new(text_rect.x, self.row_y(line), text_rect.w, h);
-                    frame.rect_clipped(band, shade.line.alpha(0.6), 0.0, text_rect);
+                    frame.rect_clipped(band, 0.0, shade.line.alpha(0.6), text_rect);
                 }
             }
+        }
+    }
+
+    /// 绘制长行参考线（`editor.rulers`）：第 N 列之后的竖线，位于文字的下层，颜色同光标所在
+    /// 代码块的缩进参考线。
+    fn draw_rulers(&self, frame: &mut Frame<'_>) {
+        let color = self.app.palette.indent_guide_active;
+        for &column in &self.app.config.editor_rulers {
+            let x = (self.origin_x + column as f32 * self.cell).round();
+            let line = Rect::new(x, self.text_rect.y, 1.0, self.text_rect.h);
+            frame.rect_clipped(line, 0.0, color, self.text_rect);
         }
     }
 
@@ -686,7 +701,7 @@ impl Screen<'_> {
         let editor = self.editor;
         let y = self.part_y(line, part);
         let row = Rect::new(editor.x + 6.0, y, editor.w - 12.0, self.lh);
-        frame.rect_clipped(row, self.app.palette.current_line, RADIUS_ROW, editor);
+        frame.rect_clipped(row, RADIUS_ROW, self.app.palette.current_line, editor);
     }
 
     /// 绘制主选区和其余选区。

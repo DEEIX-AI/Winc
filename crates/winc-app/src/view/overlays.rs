@@ -101,7 +101,7 @@ fn draw_search_bar(
 
     // 匹配计数靠查找区域右端，查找输入框使用剩余的宽度。
     let field = parts.field;
-    let count_x = field.right() - frame.measure(FontKind::Ui, app.fonts.ui_small, &count);
+    let count_x = field.right() - frame.measure(Font::ui(app.fonts.ui_small), &count);
     ui_text_small(frame, app, count_x, field, &count, count_color, field);
 
     let text_right = if count.is_empty() {
@@ -270,7 +270,7 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
         // 右侧的说明最多占一半宽度，保证输入框留有空间。
         let (size, max) = (app.fonts.ui_small, bar.w / 2.0);
         let hint = super::ellipsize(frame, &hint, size, max).into_owned();
-        let hint_x = bar.right() - 14.0 - frame.measure(FontKind::Ui, app.fonts.ui_small, &hint);
+        let hint_x = bar.right() - 14.0 - frame.measure(Font::ui(app.fonts.ui_small), &hint);
         ui_text_small(frame, app, hint_x, bar, &hint, p.text_dim, bar);
 
         let start = ui_text(frame, app, bar.x + 14.0, bar, title, p.text_muted, bar) + 10.0;
@@ -297,7 +297,7 @@ fn draw_pick_row(app: &App, frame: &mut Frame<'_>, row: Rect, i: usize, clip: Re
     } else {
         return;
     };
-    frame.rect_clipped(row.inset(6.0, 1.0), color, RADIUS_ROW, clip);
+    frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, color, clip);
 }
 
 /// 绘制快速打开卡片（⌘P）：上方是输入框，下方是结果列表。
@@ -367,7 +367,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
                 None => t!("workspace-picker-files", count = total),
             }
         };
-        let hint_w = frame.measure(FontKind::Ui, app_mut.fonts.ui_small, &total);
+        let hint_w = frame.measure(Font::ui(app_mut.fonts.ui_small), &total);
         let hint_x = bar.right() - 14.0 - hint_w;
         ui_text_small(frame, app_mut, hint_x, bar, &total, p.text_dim, bar);
         hint_x
@@ -416,8 +416,8 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     frame.rect_clipped(
         Rect::new(bar.x + 1.0, bar.bottom(), bar.w - 2.0, 1.0),
-        p.border,
         0.0,
+        p.border,
         rect,
     );
 
@@ -544,7 +544,7 @@ pub(super) fn draw_picker(app: &mut App, frame: &mut Frame<'_>) {
         let mut right = row.right() - 12.0;
         if i == 0 && app.overlays.picker.recent > 0 {
             let label = t!("workspace-picker-recently-opened");
-            right -= frame.measure(FontKind::Ui, app.fonts.ui_small, label);
+            right -= frame.measure(Font::ui(app.fonts.ui_small), label);
             ui_text_small(frame, app, right, row, label, p.text_dim, clip);
             right -= 12.0;
         }
@@ -596,7 +596,7 @@ fn draw_remote_rows(
         let selected = i == app.overlays.picker.selected;
         draw_pick_row(app, frame, row, i, clip);
         if !selected && app.pointer.hover == Hover::PickerPart(forget) {
-            frame.rect_clipped(row.inset(6.0, 1.0), p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, p.hover, clip);
         }
         let cy = icon_center_y(app, row, app.fonts.ui);
         // 各种图标的中心与文件图标的中心对齐。
@@ -604,6 +604,9 @@ fn draw_remote_rows(
         match item.icon {
             RowIcon::Host => icons::server(frame, (middle, cy), p.text_muted, clip),
             RowIcon::Config => icons::gear(frame, (middle, cy), p.text_muted, clip),
+            RowIcon::Project => {
+                draw_file_icon(frame, p, (row.x + PICKER_ICON_X, cy), &item.title, clip);
+            }
             RowIcon::Folder | RowIcon::Open => {
                 let x = middle - icons::FOLDER_WIDTH / 2.0;
                 let open = item.icon == RowIcon::Open;
@@ -640,7 +643,7 @@ fn draw_remote_rows(
         }
         // 选中的一行在右端提示可用的按键，说明文字让出相应的位置。
         if let Some(hint) = item.hint().filter(|_| selected) {
-            right -= frame.measure(FontKind::Ui, app.fonts.ui_small, hint);
+            right -= frame.measure(Font::ui(app.fonts.ui_small), hint);
             ui_text_small(frame, app, right, row, hint, p.text_dim, clip);
             right -= 12.0;
         }
@@ -750,13 +753,13 @@ fn draw_palette_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
 
         let mut right = row.right() - 14.0;
         if let Some(shortcut) = keymap::shortcut(action) {
-            right -= frame.measure(FontKind::Ui, app.fonts.ui_small, &shortcut);
+            right -= frame.measure(Font::ui(app.fonts.ui_small), &shortcut);
             ui_text_small(frame, app, right, row, &shortcut, p.text_dim, clip);
             right -= 16.0;
         }
         if i == 0 && app.overlays.picker.recent > 0 {
             let label = t!("workspace-picker-recently-used");
-            right -= frame.measure(FontKind::Ui, app.fonts.ui_small, label);
+            right -= frame.measure(Font::ui(app.fonts.ui_small), label);
             ui_text_small(frame, app, right, row, label, p.text_dim, clip);
             right -= 16.0;
         }
@@ -823,7 +826,7 @@ fn draw_language_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
         }
         let extensions = language.extensions();
         if !extensions.is_empty() {
-            right -= frame.measure(FontKind::Ui, app.fonts.ui_small, &extensions);
+            right -= frame.measure(Font::ui(app.fonts.ui_small), &extensions);
             ui_text_small(frame, app, right, row, &extensions, p.text_dim, clip);
             right -= 16.0;
         }
@@ -875,7 +878,7 @@ fn draw_symbol_rows(app: &App, frame: &mut Frame<'_>, parts: &PickerParts) {
         draw_pick_row(app, frame, row, i, clip);
 
         let label = symbol.kind.label();
-        let right = row.right() - 14.0 - frame.measure(FontKind::Ui, app.fonts.ui_small, label);
+        let right = row.right() - 14.0 - frame.measure(Font::ui(app.fonts.ui_small), label);
         ui_text_small(frame, app, right, row, label, p.text_dim, clip);
 
         let room = (right - row.x - PICKER_TEXT_X - 16.0).max(0.0);
@@ -936,7 +939,7 @@ fn draw_folder_rows(
             Hover::PickerRow(r) | Hover::PickerPart(PickerPart::ForgetFolder(r)) if r == i);
         draw_pick_row(app, frame, row, i, clip);
         if !selected && app.pointer.hover == Hover::PickerPart(forget) {
-            frame.rect_clipped(row.inset(6.0, 1.0), p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, p.hover, clip);
         }
 
         // 目录图标与文件列表的文件图标、输入框的放大镜在同一条竖直轴线上。
@@ -979,9 +982,7 @@ fn draw_folder_rows(
             Recent::Folder(folder) => app.recent_tag(folder),
             Recent::File(_) => None,
         };
-        let tag_w = tag.map_or(0.0, |tag| {
-            6.0 + frame.measure(FontKind::Ui, app.fonts.ui, tag)
-        });
+        let tag_w = tag.map_or(0.0, |tag| 6.0 + frame.measure(Font::ui(app.fonts.ui), tag));
         let room = (close.x - 8.0 - tag_w - (row.x + PICKER_TEXT_X)).max(0.0);
         let shown = ellipsize(frame, &name, app.fonts.ui, room);
         let marks = if shown.len() == name.len() {
@@ -1053,12 +1054,11 @@ pub(super) fn draw_conflict(
 
     let labels: Vec<f32> = ConflictAction::ALL
         .iter()
-        .map(|a| frame.measure(FontKind::Ui, font, a.label()) + 16.0)
+        .map(|a| frame.measure(Font::ui(font), a.label()) + 16.0)
         .collect();
     let buttons_w: f32 = labels.iter().sum::<f32>() + BUTTON_GAP * (labels.len() - 1) as f32;
     let fixed = frame.measure(
-        FontKind::Ui,
-        font,
+        Font::ui(font),
         &t!("workspace-conflict-modified", name = ""),
     );
     // 文字与按钮之间留 16，按钮右边留 8。
@@ -1067,7 +1067,7 @@ pub(super) fn draw_conflict(
             .max(24.0);
     let name = ellipsize(frame, &name, font, room).into_owned();
     let message = t!("workspace-conflict-modified", name = name);
-    let text_w = frame.measure(FontKind::Ui, font, &message);
+    let text_w = frame.measure(Font::ui(font), &message);
     let width = NOTICE_TEXT_X + text_w + 16.0 + buttons_w + 8.0;
     let top = app.overlay_top() + NOTICE_MARGIN;
     let card = Rect::new(area.right() - NOTICE_MARGIN - width, top, width, 36.0);
@@ -1144,13 +1144,13 @@ fn draw_notice(
     let p = app.palette;
     let area = app.overlay_area();
     let button_w = label.map_or(0.0, |label| {
-        frame.measure(FontKind::Ui, app.fonts.ui, label) + 16.0 + 8.0
+        frame.measure(Font::ui(app.fonts.ui), label) + 16.0 + 8.0
     });
     // 左侧留给图标，文字右边留 16。
     let pad = NOTICE_TEXT_X + 16.0;
     let room = (area.w - 2.0 * NOTICE_MARGIN - 20.0 - pad - button_w).max(0.0);
     let message = ellipsize(frame, message, app.fonts.ui, room);
-    let width = frame.measure(FontKind::Ui, app.fonts.ui, &message) + pad + button_w;
+    let width = frame.measure(Font::ui(app.fonts.ui), &message) + pad + button_w;
     // 冲突卡片、合并冲突卡片打开时排在其下方。
     let disk = app.hits.conflict_card.as_ref().map(|(card, _)| *card);
     let top = match app.hits.merge_card.or(disk) {

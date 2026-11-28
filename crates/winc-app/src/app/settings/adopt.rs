@@ -23,6 +23,7 @@ impl App {
             || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size)
             || (old.markdown_font != new.markdown_font || old.markdown_size != new.markdown_size)
             || (old.ui_font_weight != new.ui_font_weight
+                || old.editor_font_weight != new.editor_font_weight
                 || old.terminal_font_weight != new.terminal_font_weight);
         let theme = (old.theme != new.theme || old.dark_theme != new.dark_theme)
             || old.light_theme != new.light_theme;
@@ -35,6 +36,7 @@ impl App {
             old.word_wrap != new.word_wrap,
             old.sticky_scroll != new.sticky_scroll,
         );
+        let align = (old.align_columns != new.align_columns).then_some(new.align_columns);
         let images = old.markdown_remote_images != new.markdown_remote_images;
         let minimap = old.minimap != new.minimap
             || old.line_numbers != new.line_numbers
@@ -49,6 +51,7 @@ impl App {
             && crate::set_locale(new.language.unwrap_or_default().resolve());
         let git = old.git_enabled != new.git_enabled;
         let git_program = old.git_path != new.git_path;
+        let scan_depth = old.repository_scan_depth != new.repository_scan_depth;
         let forget_credentials = old.git_remember_credentials != Some(false)
             && new.git_remember_credentials == Some(false);
         let title_bar = old.ui_native_title_bar != new.ui_native_title_bar;
@@ -79,6 +82,9 @@ impl App {
         if wrap {
             self.word_wrap_changed();
         }
+        if let Some(align) = align {
+            self.editor.set_align_columns(align != Some(false));
+        }
         if minimap {
             self.relayout();
         }
@@ -97,6 +103,9 @@ impl App {
         if combined_view {
             self.apply_combined_view();
         }
+        if old.git_log_placement != self.config.git_log_placement {
+            self.apply_log_placement(false);
+        }
         winc_editor::proxy::follow_system_proxy(self.config.system_proxy != Some(false));
         if images {
             self.preview.markdown.forget_images();
@@ -105,6 +114,8 @@ impl App {
             self.git_folder_changed();
         } else if git_program {
             self.git_program_changed();
+        } else if scan_depth {
+            self.git_scan_repositories();
         }
         if forget_credentials {
             crate::app::git::question::forget_credentials();

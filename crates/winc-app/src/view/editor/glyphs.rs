@@ -3,6 +3,7 @@
 use winc_config::RenderWhitespace;
 
 use super::*;
+use crate::view::shaped::{self, SHAPED_RUN};
 
 /// 标出删除位置：在 `(x, y)` 所在的行间分界上绘制一个朝右的小三角，`lit` 为真时尺寸大一号。
 pub(super) fn draw_deleted_mark(
@@ -16,16 +17,15 @@ pub(super) fn draw_deleted_mark(
     for i in 0..half as usize {
         let h = (half - i as f32) * 2.0;
         let column = Rect::new(x + i as f32, y - h / 2.0, 1.0, h);
-        frame.rect_clipped(column, color, 0.0, clip);
+        frame.rect_clipped(column, 0.0, color, clip);
     }
 }
 
-/// 返回代码中 `kind` 类文字使用的字体：注释用斜体，其余用正体。
-fn token_font(kind: TokenKind) -> FontKind {
-    match kind {
-        TokenKind::Comment => FontKind::MonoItalic,
-        _ => FontKind::Mono,
-    }
+/// 返回代码中 `kind` 类文字的字体：字号为 `size` 的等宽字体，注释用斜体。
+pub(in crate::view) fn token_font(kind: TokenKind, size: f32) -> Font {
+    let mut font = Font::mono(size);
+    font.italic = kind == TokenKind::Comment;
+    font
 }
 
 /// 绘制自动换行时一行中的一段（`range` 范围内的字符），从第 `start` 格开始（后续各段先留出缩进），
@@ -46,6 +46,8 @@ pub(super) fn draw_glyph_run(
     // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
     let mut joined = range.start;
     let mut behind = text::Behind::before(chars, range.start);
+    // 需要整形的一段文字绘制到本段末尾为止，下一段从断开处接着绘制。
+    let segment = &chars[..range.end];
     for col in range {
         let c = chars[col];
         let width = behind.cells(c, cells, tab_width);
@@ -61,9 +63,9 @@ pub(super) fn draw_glyph_run(
             .get(token)
             .filter(|t| t.start <= col)
             .map_or(TokenKind::Text, |t| t.kind);
-        let font = (token_font(kind), app.fonts.code, cell);
+        let font = (token_font(kind, app.fonts.code), cell);
         let (at, color) = ((x, baseline), p.token(kind));
-        joined = col + draw_grid_char(frame, font, at, (chars, col), color, clip);
+        joined = col + draw_grid_char(frame, font, at, (segment, col), color, clip);
     }
     cells
 }
@@ -145,7 +147,7 @@ pub(in crate::view) fn draw_whitespace_mark(
     let mid = y + app.fonts.line_height / 2.0;
     if c == ' ' {
         let dot = Rect::new(x + width / 2.0 - DOT / 2.0, mid - DOT / 2.0, DOT, DOT);
-        frame.rect_clipped(dot, color, DOT / 2.0, clip);
+        frame.rect_clipped(dot, DOT / 2.0, color, clip);
     } else {
         let shaft = Rect::new(
             x + TAB_PAD,
@@ -153,7 +155,7 @@ pub(in crate::view) fn draw_whitespace_mark(
             (width - 2.0 * TAB_PAD).max(1.0),
             1.0,
         );
-        frame.rect_clipped(shaft, color, 0.0, clip);
+        frame.rect_clipped(shaft, 0.0, color, clip);
         let head = (shaft.right() - app.metrics.cell / 4.0, mid);
         crate::icons::chevron(
             frame,
@@ -180,9 +182,10 @@ pub(in crate::view) fn draw_glyphs(
 ) -> usize {
     let p = app.palette;
     let cell = app.metrics.cell;
+    let ligatures = app.config.editor_font_ligatures == Some(true);
     let mut cells = 0;
     let mut token = 0;
-    // emoji 序列随首字符整体绘制；`joined` 之前的字符已经绘制。
+    // emoji 序列和连字的一段随首字符整体绘制；`joined` 之前的字符已经绘制。
     let mut joined = 0;
     let mut behind = text::Behind::default();
 
@@ -198,8 +201,9 @@ pub(in crate::view) fn draw_glyphs(
         if c == ' ' || c == '\t' || col < joined {
             continue;
         }
-        // 序列的首字符在裁剪框左侧时仍需绘制：合成的图形可能延伸到裁剪框内。
-        if x + width as f32 * cell < clip.x && chars.get(col + 1).is_none_or(|&n| n < '\u{200d}') {
+        // 序列和字素簇的首字符在裁剪框左侧时仍需绘制：合成的图形可能延伸到裁剪框内。
+        let joins = |n: char| n >= '\u{200d}' || text::shaping::needs_shaping(n);
+        if x + width as f32 * cell < clip.x && !chars.get(col + 1).is_some_and(|&n| joins(n)) {
             continue;
         }
 
@@ -207,19 +211,45 @@ pub(in crate::view) fn draw_glyphs(
             token += 1;
         }
 
-        let kind = tokens
-            .get(token)
-            .filter(|t| t.start <= col)
-            .map_or(TokenKind::Text, |t| t.kind);
-        let font = (token_font(kind), app.fonts.code, cell);
+        let current = tokens.get(token).filter(|t| t.start <= col);
+        let kind = current.map_or(TokenKind::Text, |t| t.kind);
+        let font = (token_font(kind, app.fonts.code), cell);
         let (at, color) = ((x, baseline), p.token(kind));
+        // 连字只在同一种颜色之内：到所在记号的末尾，或到下一个记号的开头。
+        let limit = match current {
+            Some(t) => t.end,
+            None => tokens.get(token).map_or(chars.len(), |t| t.start),
+        };
+        if ligatures && let Some(end) = ligature_run(chars, col, limit) {
+            let run: String = chars[col..end].iter().collect();
+            if frame.cell_ligatures(font.0, at, cell, &run, color, clip) {
+                joined = end;
+                continue;
+            }
+        }
         joined = col + draw_grid_char(frame, font, at, (chars, col), color, clip);
     }
     cells
 }
 
-/// 绘制 CSV、TSV 的一行：每个字符绘制在对齐之后的单元格内，每一列使用一种颜色（循环使用
-/// `COLORS`），分隔符颜色较淡。
+/// 一段连字最多的字符数（字符）：更长的连续符号（如分隔线）分段整形，缓存的键不至过长。
+///
+/// 取自调参：编程字体中最长的连字（如 `<!--`、`|||>`）远短于此。
+const LIGATURE_RUN: usize = 32;
+
+/// 返回从 `col` 起、在 `limit` 之前的一段相邻符号的末尾（不含）；不足两个字符时返回 `None`。
+///
+/// 只取 ASCII 标点：编程字体的连字都由标点组成，字母、数字和其他文字逐字符绘制，不必整形。
+fn ligature_run(chars: &[char], col: usize, limit: usize) -> Option<usize> {
+    let limit = limit.min(chars.len()).min(col + LIGATURE_RUN);
+    let len = (chars[col..limit].iter())
+        .take_while(|c| c.is_ascii_punctuation())
+        .count();
+    (len >= 2).then_some(col + len)
+}
+
+/// 绘制 CSV、TSV 的一行：每个字符绘制在对齐之后的单元格内，各列的颜色和分隔符的颜色与按原文
+/// 排布时相同（见 [`winc_syntax::columns`]）。
 ///
 /// 返回绘制结束时的格数。
 pub(super) fn draw_columns(
@@ -230,14 +260,7 @@ pub(super) fn draw_columns(
     baseline: f32,
     clip: Rect,
 ) -> usize {
-    const COLORS: [TokenKind; 6] = [
-        TokenKind::Text,
-        TokenKind::Keyword,
-        TokenKind::String,
-        TokenKind::Function,
-        TokenKind::Number,
-        TokenKind::Builtin,
-    ];
+    use winc_syntax::columns::COLUMN_KINDS;
     let p = app.palette;
     let cell = app.metrics.cell;
     let mut joined = 0;
@@ -254,12 +277,12 @@ pub(super) fn draw_columns(
         // 分隔符：其后的字符属于下一列（分隔符是行内最后一个字符时，其后没有字符）。
         let is_separator = c == separator && fields.get(col + 1).is_none_or(|&next| next != field);
         let color = if is_separator {
-            p.text_dim
+            p.token(TokenKind::Separator)
         } else {
-            p.token(COLORS[field % COLORS.len()])
+            p.token(COLUMN_KINDS[field % COLUMN_KINDS.len()])
         };
         // 按字符自身的宽度绘制，不计入为对齐而留出的空白。
-        let font = (FontKind::Mono, app.fonts.code, cell);
+        let font = (Font::mono(app.fonts.code), cell);
         joined = col + draw_grid_char(frame, font, (x, baseline), (chars, col), color, clip);
     }
     positions.last().copied().unwrap_or(0)
@@ -280,6 +303,11 @@ impl App {
         state: LineState,
         tokens: &mut Vec<winc_syntax::Token>,
     ) -> LineState {
+        // 表格不做语法着色，按列着色；按列对齐时由 `draw_columns` 逐字符着色，颜色相同。
+        if let Some(separator) = doc.delimiter() {
+            winc_syntax::columns::column_tokens(chars, separator, tokens);
+            return state;
+        }
         if chars.len() < LONG_TOKENS_MIN {
             return winc_syntax::highlight_line(language, chars, state, tokens);
         }
@@ -302,32 +330,105 @@ impl App {
     }
 }
 
-/// 在等宽网格上绘制 `chars[col]`，返回已处理的字符数：该字符及其后属于同一 emoji 序列的字符。
+/// 在等宽网格上绘制从 `chars[col]` 起的一个单位，返回已处理的字符数，见 [`draw_grid_unit`]。
 ///
-/// 序列由 emoji 字体合成一个图形，占 [`text::sequence_cells`] 给出的列数；无法合成时只绘制首字符。
-/// `(font, size, cell)` 是字体、字号和一格的宽度，`(x, baseline)` 是该字符所在格的左边缘和基线。
+/// emoji 序列占 [`text::sequence_cells`] 给出的列数，无法合成时只绘制首字符。`chars` 截止到
+/// 本段末尾（自动换行时一行中的一段）；`(font, cell)` 是字体和一格的宽度，`(x, baseline)` 是该
+/// 字符所在格的左边缘和基线。
 pub(in crate::view) fn draw_grid_char(
     frame: &mut Frame<'_>,
-    (font, size, cell): (FontKind, f32, f32),
-    (x, baseline): (f32, f32),
+    font: (Font, f32),
+    at: (f32, f32),
     (chars, col): (&[char], usize),
     color: Color,
     clip: Rect,
 ) -> usize {
-    let c = chars[col];
-    let next = chars.get(col + 1).copied();
+    draw_grid_unit(frame, font, at, &chars[col..], true, color, clip)
+}
+
+/// 与 [`draw_grid_char`] 相同，需要整形的一段文字只画开头的一个字形簇：块状光标下的字。
+pub(in crate::view) fn draw_grid_cluster(
+    frame: &mut Frame<'_>,
+    font: (Font, f32),
+    at: (f32, f32),
+    (chars, col): (&[char], usize),
+    color: Color,
+    clip: Rect,
+) -> usize {
+    draw_grid_unit(frame, font, at, &chars[col..], false, color, clip)
+}
+
+/// 绘制 `chars` 开头的一个单位：emoji 序列、需要整形的一段文字（`whole` 为假时只画其中第一个
+/// 字形簇）或单个字符，返回绘制的字符数（至少为 1）。
+fn draw_grid_unit(
+    frame: &mut Frame<'_>,
+    (font, cell): (Font, f32),
+    (x, baseline): (f32, f32),
+    chars: &[char],
+    whole: bool,
+    color: Color,
+    clip: Rect,
+) -> usize {
+    let c = chars[0];
+    let next = chars.get(1).copied();
     if !next.is_some_and(|next| winc_emoji::may_join(c, next)) {
+        let shaped = text::shaping::needs_shaping;
+        if (shaped(c) || next.is_some_and(shaped))
+            && let Some(len) = draw_shaped(
+                frame,
+                (font, cell),
+                (x, baseline),
+                chars,
+                whole,
+                color,
+                clip,
+            )
+        {
+            return len;
+        }
         let cells = text::char_cells(c, 0, 1).max(1);
-        frame.cell_char(font, size, x, baseline, cell, cells, c, color, clip);
+        frame.cell_char(font, (x, baseline), cell, cells, c, color, clip);
         return 1;
     }
-    let len = winc_emoji::sequence_len(chars[col..].iter().copied());
-    let span = text::sequence_cells(chars[col..col + len].iter().copied(), 0, 1).max(1);
-    let unit: String = chars[col..col + len].iter().collect();
-    if len == 1 || !frame.cell_sequence(font, size, x, baseline, cell, span, &unit, color, clip) {
-        frame.cell_char(font, size, x, baseline, cell, span, c, color, clip);
+    let len = winc_emoji::sequence_len(chars.iter().copied());
+    let span = text::sequence_cells(chars[..len].iter().copied(), 0, 1).max(1);
+    let unit: String = chars[..len].iter().collect();
+    if len == 1 || !frame.cell_sequence(font.size, (x, baseline), cell, span, &unit, color, clip) {
+        frame.cell_char(font, (x, baseline), cell, span, c, color, clip);
     }
     len
+}
+
+/// 整形绘制 `chars` 开头需要整形的一段文字（见 [`shaped::draw_shaped_run`]），返回绘制的字符数；
+/// 开头只有一个不需要整形的字符时不绘制，返回 `None`。`whole` 为假时只画第一个字形簇。
+fn draw_shaped(
+    frame: &mut Frame<'_>,
+    font: (Font, f32),
+    at: (f32, f32),
+    chars: &[char],
+    whole: bool,
+    color: Color,
+    clip: Rect,
+) -> Option<usize> {
+    let run = SHAPED_RUN.min(chars.len());
+    let len = 1 + chars[1..run]
+        .iter()
+        .take_while(|&&c| shaped::joins(c))
+        .count();
+    if len == 1 && !text::shaping::needs_shaping(chars[0]) {
+        return None;
+    }
+    let mut buf = [0; SHAPED_RUN * 4];
+    let mut bytes = 0;
+    for &c in &chars[..len] {
+        bytes += c.encode_utf8(&mut buf[bytes..]).len();
+    }
+    let run = std::str::from_utf8(&buf[..bytes]).unwrap_or_default();
+    let more = chars.get(len).is_some_and(|&c| shaped::joins(c));
+    let cells_of = |c| text::char_cells(c, 0, 1);
+    let drawn = shaped::draw_shaped_run(frame, font, at, run, cells_of, (whole, more), color, clip);
+    let count = run[..drawn].chars().count();
+    (count > 0).then_some(count)
 }
 
 /// 返回 `chars` 中各字符在等宽网格上占的格数，制表符按 `tab_width` 计。

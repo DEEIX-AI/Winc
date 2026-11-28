@@ -16,6 +16,8 @@ use crate::app::workspace::watch::DiskBack;
 /// 状态栏右侧可点击的项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusItem {
+    /// 光标位置（十六进制视图中是偏移）：点击打开转到行（偏移）的输入条。
+    Position,
     /// 缩进：空格还是制表符，以及缩进宽度。
     Indent,
     /// 换行符：`LF` 或 `CRLF`。
@@ -30,6 +32,8 @@ pub enum StatusItem {
     Branch,
     /// 终端面板的开关（终端模块开着时在设置按钮左边）。
     Terminal,
+    /// Git 面板的开关（日志在 Git 面板中时在终端开关左边）。
+    GitPanel,
     /// 连接远端主机的按钮（远程模块开着时在终端开关左边）：点击打开主机面板。
     Remote,
     /// 设置按钮（始终在最右边）：点击打开设置。
@@ -59,6 +63,9 @@ impl App {
         if item == StatusItem::Terminal {
             return self.click_terminal_button();
         }
+        if item == StatusItem::GitPanel {
+            return self.click_git_panel_button();
+        }
         if item == StatusItem::Remote {
             return self.open_remote_picker();
         }
@@ -68,6 +75,9 @@ impl App {
         }
         if item == StatusItem::Settings {
             return self.open_settings();
+        }
+        if item == StatusItem::Position {
+            return self.open_goto();
         }
         if item == StatusItem::Update {
             #[cfg(target_os = "macos")]
@@ -89,8 +99,10 @@ impl App {
             (StatusItem::Language, Some(id)) => MenuTarget::Language(id),
             (StatusItem::ReadOnly, Some(id)) => MenuTarget::ReadOnly(id),
             (
-                StatusItem::Branch
+                StatusItem::Position
+                | StatusItem::Branch
                 | StatusItem::Terminal
+                | StatusItem::GitPanel
                 | StatusItem::Remote
                 | StatusItem::Settings
                 | StatusItem::Update,

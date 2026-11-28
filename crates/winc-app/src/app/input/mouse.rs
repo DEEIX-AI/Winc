@@ -16,8 +16,8 @@ use std::time::Instant;
 use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 use winit::window::CursorIcon;
 
+use cpui_render::Renderer;
 use winc_core::{Lines, Selection, movement};
-use winc_render::Renderer;
 
 use crate::app::{
     App, Click, DOUBLE_CLICK, Drag, Focus, Hover, MenuCommand, TreeDrag, WindowControl,
@@ -78,6 +78,7 @@ impl App {
             self.pointer.drag,
             Drag::Splitter { .. }
                 | Drag::TerminalDivider { .. }
+                | Drag::GitPanelDivider { .. }
                 | Drag::SplitDivider { .. }
                 | Drag::PaneDivider { .. }
                 | Drag::TerminalSplit { .. }
@@ -136,7 +137,7 @@ impl App {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, lines) => -lines * 3.0 * crate::app::PICKER_ROW,
                 MouseScrollDelta::PixelDelta(p) => {
-                    let scale = (self.frame.renderer.as_ref()).map_or(1.0, Renderer::scale_factor);
+                    let scale = (self.frame.renderer.as_ref()).map_or(1.0, Renderer::scale);
                     -(p.y as f32) / scale
                 }
             };
@@ -154,8 +155,14 @@ impl App {
             self.with_pane(pane, wheel);
             self.refresh_pointer_hover();
             self.request_redraw();
-        } else if let Some(at) = self.terminal_pane_at(x, y) {
-            self.with_terminal_pane(at, wheel);
+        } else if let Some(group) = self.terminal_group_at(x, y) {
+            self.with_terminal_group(group, |app| {
+                if let Some(at) = app.terminal_pane_at(x, y) {
+                    app.with_terminal_pane(at, wheel);
+                } else {
+                    wheel(app);
+                }
+            });
             self.request_redraw();
         } else {
             wheel(self);
@@ -204,11 +211,7 @@ impl App {
                 if !held {
                     return true;
                 }
-                let scale = self
-                    .frame
-                    .renderer
-                    .as_ref()
-                    .map_or(1.0, Renderer::scale_factor);
+                let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
                 delta.y as f32 / scale / ZOOM_WHEEL_PIXELS
             }
         };

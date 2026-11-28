@@ -14,9 +14,10 @@ mod state;
 mod version;
 
 pub use config::{
-    AutoSave, BackgroundFit, Backup, Config, FolderDrop, OptionAsMeta, PullMode, RenderWhitespace,
-    Saved, SearchStyle, SmoothCaret, TextWidth, ThemeChoice, VimClipboard, VimMapMode, VimMapping,
-    WorktreeOpen, config_path,
+    AiProtocol, AutoSave, BackgroundFit, Backup, Config, CursorStyle, FolderDrop, Imported,
+    LogPlacement, OptionAsMeta, PullMode, RenderWhitespace, Saved, SearchStyle, SmoothCaret,
+    TerminalRightClick, TextWidth, ThemeChoice, VimClipboard, VimMapMode, VimMapping, WorktreeOpen,
+    config_path, export_config, import_config,
 };
 pub use font::{FontRequest, font_list, resolve_font, resolve_font_list};
 pub use json::Json;
@@ -31,7 +32,8 @@ pub use run::{
 pub use state::writer as state_writer;
 pub use state::{
     BADGE_COLORS, FilePlace, MAX_COMMIT_MESSAGES, MAX_PLACES, MAX_RECENT, MAX_RECENT_FILES,
-    MAX_SESSIONS, PaneNode, RECENT_IN_MENU, Session, SessionPane, SessionPanes, State, Tab,
-    TerminalGroup, TerminalSession, WindowFrame, state_path,
+    MAX_SESSIONS, PaneNode, RECENT_IN_MENU, Session, SessionPane, SessionPanes,
+    SessionRepositories, State, Tab, TerminalEditor, TerminalGroup, TerminalSession, WindowFrame,
+    state_path,
 };
 pub use version::compare_versions;

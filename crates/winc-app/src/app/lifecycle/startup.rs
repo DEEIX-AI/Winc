@@ -3,7 +3,8 @@
 use super::*;
 
 impl App {
-    /// 创建应用状态：窗口、渲染器和字体度量在窗口创建后才会填入。
+    /// 创建应用状态：字体为按 `config` 加载的 `fonts`（见 [`font_set`]），窗口和渲染器在窗口
+    /// 创建后才会填入。
     ///
     /// `proxy` 为事件循环的代理，测试中传 `None`。
     pub fn new(
@@ -11,10 +12,13 @@ impl App {
         proxy: Option<crate::winc::WindowProxy>,
         bench: Bench,
         config: Config,
+        fonts: FontSystem,
     ) -> Self {
         // 启动时打开的目录在界面创建之前读入，此处补充设置文件树的显示方式。
         let compact = config.compact_folders != Some(false);
         let staging = config.git_staging_area == Some(true);
+        let docked =
+            config.git_log_placement.unwrap_or_default() == winc_config::LogPlacement::Panel;
         if let Some(ws) = &mut editor.workspace {
             ws.set_compact(compact);
         }
@@ -33,15 +37,9 @@ impl App {
             }
             files
         };
+        let font_system = fonts;
         let fonts = ViewFonts::of(&config);
-        // 实际度量值（逻辑像素）要在创建窗口、加载字体之后才能得到，此前使用占位值。
-        let placeholder = Metrics {
-            ascent: 12.0,
-            descent: 3.0,
-            cell: 8.0,
-            x_height: 6.5,
-            cap_height: 9.0,
-        };
+        let metrics = crate::app::lifecycle::TextMetrics::of(&font_system, &fonts);
         let panel_visible = editor.workspace.is_some();
         // 主题以配置为准；配置中没有时参考环境变量 `WINC_THEME`（见 `forced_theme`）。
         let theme_choice = config.theme.unwrap_or(ThemeChoice::Auto);
@@ -66,13 +64,7 @@ impl App {
             one_off: Default::default(),
             palette: DARK_THEMES[0].palette,
             fonts,
-            metrics: crate::app::lifecycle::TextMetrics {
-                ui: placeholder,
-                mono: placeholder,
-                cell: placeholder.cell,
-                terminal: placeholder,
-                terminal_cell: placeholder.cell,
-            },
+            metrics,
             focus: Focus::Editor,
             pointer: crate::app::input::Pointer {
                 hover: Hover::None,
@@ -102,6 +94,7 @@ impl App {
             caches: crate::app::editor::EditorCaches {
                 sticky_cache: None,
                 wraps: Arc::default(),
+                compares: Default::default(),
                 line_tokens: Default::default(),
                 minimap_rows: Default::default(),
                 max_scroll_x: None,
@@ -147,6 +140,7 @@ impl App {
                     ..Default::default()
                 },
                 file_hover: None,
+                dragged_in: None,
                 name_input: None,
                 global: GlobalSearch::default(),
                 outline: OutlineState::default(),
@@ -218,6 +212,7 @@ impl App {
                 let mut git = git::GitState::default();
                 git.commit.set_compact(compact);
                 git.commit.set_staging(staging);
+                git.panel.docked = docked;
                 git
             },
             remote: Default::default(),
@@ -229,6 +224,7 @@ impl App {
             notice: Default::default(),
             frame: crate::app::lifecycle::FrameState {
                 renderer: None,
+                fonts: font_system,
                 next_frame: None,
                 #[cfg(any(target_os = "macos", windows))]
                 display_link: None,
@@ -248,7 +244,6 @@ impl App {
             opening: crate::app::lifecycle::Opening {
                 cascade: None,
                 fullscreen: false,
-                glyphs_from: None,
                 #[cfg(all(unix, not(target_os = "macos")))]
                 activation: None,
             },
@@ -372,5 +367,14 @@ fn formatter() -> winc_editor::format::Formatter {
         winc_editor::format::Formatter::with_vars(vars)
     } else {
         winc_editor::format::Formatter::default()
+    }
+}
+
+#[cfg(test)]
+impl App {
+    /// 创建测试用的应用状态：没有事件循环，字体按 `config` 加载。
+    pub(crate) fn for_test(editor: Editor, config: Config) -> Self {
+        let fonts = FontSystem::new(&font_set(&config)).unwrap();
+        Self::new(editor, None, Bench::from_env(), config, fonts)
     }
 }

@@ -9,16 +9,25 @@
 
 mod actions;
 mod compose;
+mod generate;
 mod ignore;
 mod reformat;
+mod strip;
 pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::{PUSH_PREVIEW, PushIntent, RollbackTo, SyncState};
 pub(crate) use compose::{AUTHOR_COMMITS, OWN_MESSAGES};
 pub use ignore::IgnoreKind;
+mod history;
 mod list;
+pub(crate) use history::HISTORY_LIST_KEEP;
+pub use history::HistoryTarget;
+pub(crate) use history::{CardState, HistoryLine};
+mod peek;
+pub(crate) use peek::PeekView;
 mod stash;
 use stash::STASH_GAP;
-pub(crate) use stash::{StashLine, StashView};
+pub(crate) use stash::StashLine;
+pub(crate) use strip::ActionStrip;
 mod drawer;
 pub(crate) use drawer::{DRAWER_CLOSED, DRAWER_TOP, Drawer};
 mod worktrees;
@@ -50,10 +59,10 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+use cpui_render::Rect;
 use winc_editor::DocumentId;
 use winc_editor::git::{Entry, Git, Head, LastCommit, Operation, Status};
 use winc_i18n::t;
-use winc_render::Rect;
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 
@@ -108,8 +117,6 @@ const BUTTON_MENU_W: f32 = 26.0;
 /// 并排的「提交」「提交并推送…」和下拉箭头之间的间隔（逻辑像素）。
 const PUSH_GAP: f32 = 4.0;
 
-/// 提交卡片底行的按钮：提交、下拉箭头、并排的「提交并推送…」（没有时为 `None`）。
-type CardButtons = (Rect, Rect, Option<Rect>);
 /// 「上一次提交」那一栏里「撤销」文字两侧的留白（逻辑像素），与悬停底色的圆角相当。
 const UNDO_PAD: f32 = 6.0;
 /// 提交卡片、说明条左右的边距（逻辑像素），和标题行的项目名、右端按钮对齐；卡片离视图底边
@@ -158,9 +165,8 @@ pub(crate) struct CommitOverflow {
     pub y: f32,
     /// 伸出侧栏的那一段；全名在侧栏里写得下（只是要让开状态字母）时为 `None`。
     pub spill: Option<Rect>,
-    /// 跟在全名后面的两个按钮位置：文件行是「打开文件」「回滚」等，目录行只用第二个（暂存、
-    /// 取消暂存）；没有按钮时为 `None`。
-    pub actions: Option<(Rect, Rect)>,
+    /// 跟在全名后面的行尾按钮；这一行没有按钮时为 `None`。
+    pub actions: Option<ActionStrip>,
 }
 
 /// 改动列表里一行名字的过渡状态的键（见 `TreeLabels`）：滚动、展开收起前后不变。
@@ -517,6 +523,8 @@ pub enum CommitTarget {
     CurrentRepository,
     /// 多仓库时当前仓库标题行左端的折叠箭头：折叠或展开它的一节。
     CurrentFold,
+    /// 多仓库时当前仓库标题行上的分支：展开分支选择面板。
+    CurrentBranch,
     /// 多仓库时「没有更改的仓库」一组的标题行：展开或收起这一组。
     QuietRepositories,
     /// 勾选式下当前仓库标题行的勾选框：勾上或取消当前仓库的全部文件。
@@ -527,13 +535,15 @@ pub enum CommitTarget {
     Group(CommitGroup),
     /// 组标题的勾选框：整组勾上或取消。
     GroupCheck(CommitGroup),
-    /// 组标题上的回滚按钮：暂存区视图中回滚「更改」到暂存区，勾选式下回滚勾选的文件。
+    /// 组标题上的回滚按钮：回滚这一组的全部文件，暂存区视图中回滚到暂存区。
     GroupRevert(CommitGroup),
+    /// 提交历史一组中的位置。
+    History(HistoryTarget),
     /// 储藏一组的标题：收起或展开。
     Stashes,
     /// 第几条储藏（`GitState::stashes` 的下标）那一行：在预览标签里看它的改动。
     Stash(usize),
-    /// 正在看的储藏下面列出的一个文件（`StashView::files` 的下标）：在预览标签里看它。
+    /// 正在查看的储藏下面列出的一个文件（`PeekView::files` 的下标）：在预览标签里看它。
     StashFile(usize),
     /// 悬停储藏那一行时右端的「应用」。
     StashApply(usize),
@@ -567,12 +577,27 @@ pub enum CommitTarget {
     OpenFile(usize),
     /// 悬停文件行时右端的「回滚」按钮，参数同 [`CommitTarget::File`]。
     RevertFile(usize),
+    /// 悬停目录行时右端的「回滚」：回滚该目录下的全部文件；参数同 [`CommitTarget::Dir`]。
+    DirRevert(usize),
+    /// 另一个仓库中文件行右端的「打开文件」（仓库的下标，文件在其状态各项中的下标）。
+    OtherOpen(usize, usize),
+    /// 另一个仓库中文件行右端的「回滚」，参数同 [`CommitTarget::OtherOpen`]。
+    OtherRevert(usize, usize),
+    /// 另一个仓库里一组的标题行右端的「回滚」：回滚这一组的全部文件。
+    OtherGroupRevert(usize, others::OtherGroup),
+    /// 其他仓库更改树的目录行右端的「回滚」，参数同 [`CommitTarget::OtherDir`]。
+    OtherDirRevert(usize),
+    /// 其他仓库更改树的目录行右端的「＋」（第二项为真）或「−」：暂存或取消暂存目录下的全部
+    /// 文件；第一项同 [`CommitTarget::OtherDir`]。
+    OtherDirStage(usize, bool),
     /// Git 上下文一行的仓库按钮（打开的目录中有多个仓库时才有）：展开仓库选择器。
     Location,
     /// Git 上下文的分支行：展开分支选择器。
     Branch,
     /// 分支行右端的同步控件：同步、发布或获取，见 [`App::git_sync`]。
     Sync,
+    /// 提交卡片底行的「生成提交信息」：用设置的模型生成；生成期间再次点击即取消。
+    Generate,
     /// 拆分按钮左边的「提交」。
     Commit,
     /// 拆分按钮右边的下拉箭头：弹「提交并推送」；卡片太窄、放不下勾选框时还有「修改上一次
@@ -652,6 +677,8 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
+    /// 下拉箭头左侧的「生成提交信息」；未开启「AI 生成提交信息」或底行空间不足时为 `None`。
+    pub generate: Option<Rect>,
     /// 与提交按钮并排的「提交并推送…」按钮；底行放不下、或者这时不能推送时为 `None`，推送在
     /// 下拉菜单中。
     pub push: Option<Rect>,
@@ -668,6 +695,8 @@ pub(crate) struct CommitParts {
     pub stashes: Option<Rect>,
     /// 工作树一组，在改动列表和储藏之间；当前仓库只有一个工作树时为 `None`。
     pub worktrees: Option<Rect>,
+    /// 提交历史一组，在改动列表和工作树之间；仓库没有提交时为 `None`。
+    pub history: Option<Rect>,
     /// 改动列表。
     pub list: Rect,
 }
@@ -686,8 +715,8 @@ enum Outcome {
     Undone(Result<(), String>, LastCommit, PathBuf),
     /// 回滚完成：回滚的文件数，或者失败的原因；在哪个仓库里回滚的。
     RolledBack(Result<usize, String>, PathBuf),
-    /// 取回了一条储藏（提交号、名字）改动的文件。
-    StashFiles(String, String, stash::StashFiles),
+    /// 取回了一条储藏或一个提交改动的文件：请求序号（`peek_request`）、提交号、名字。
+    PeekFiles(u64, String, String, peek::PeekFiles),
     /// 写入暂存区的一步操作完成，或者失败的原因；在哪个仓库里进行的。
     Staged(Result<(), String>, PathBuf),
     /// 提交前检查完了新增的内容：其中 TODO、FIXME 的处数，在哪个仓库里检查的。
@@ -699,8 +728,13 @@ enum Outcome {
     /// 读到了文件在暂存区中的内容：仓库、文件、发出读取时暂存区的版本、内容（不是文本时为
     /// `None`）。
     IndexText(PathBuf, PathBuf, u64, Option<String>),
-    /// 准备好了储藏里一个文件的差异（标签的标题），或者失败的原因。
-    StashDiff(
+    /// 生成提交信息的结果：生成的编号，以及生成的信息或失败的原因。
+    Generated(u64, Result<String, String>),
+    /// 提交历史读取完成。
+    History(history::HistoryOutcome),
+    /// 准备好了储藏或提交里一个文件的差异：请求序号、标签的标题，或者失败的原因。
+    PeekDiff(
+        u64,
         String,
         Result<Box<winc_editor::diff_view::DiffView>, String>,
     ),
@@ -869,6 +903,9 @@ pub(crate) struct CommitState {
     pub selected: Option<PathBuf>,
     /// 多选时选中的各个文件；为空时只有 `selected` 算选中。
     marked: HashSet<PathBuf>,
+    /// 选中的另一个仓库中的文件（仓库的根目录，文件）：预览该文件的差异，不切换当前仓库；与
+    /// `selected` 只有一个有值。
+    pub(crate) other_selected: Option<(PathBuf, PathBuf)>,
     /// 按 ⇧ 扩展选区的起点。
     anchor: Option<PathBuf>,
     /// 上次用键盘选中的行（各行的下标）：同一个文件有两行时据此确定当前在哪一行。
@@ -890,16 +927,22 @@ pub(crate) struct CommitState {
     pub(crate) stashes: Drawer,
     /// 工作树一组的展开状态和高度的过渡，默认展开。
     pub(crate) worktrees: Drawer,
+    /// 提交历史一组。
+    pub(crate) history: history::History,
     /// 上一帧绘制时是否已读到仓库的状态：读到之后底部各组的高度变化才过渡。
     pub(crate) sections_known: bool,
-    /// 正在储藏的预览标签里看的一条储藏。
-    pub(crate) stash_view: Option<StashView>,
-    /// 正在查看的储藏下面的文件是否已收起：再次点击该储藏时在收起与展开之间切换。
-    pub(crate) stash_files_folded: bool,
-    /// 储藏的预览标签：和改动列表的预览标签分开，那个标签跟着工作区里的文件刷新。
-    pub(crate) stash_preview: Option<DocumentId>,
+    /// 在预览标签 `peek_preview` 里查看的一条储藏或一个提交。
+    pub(crate) peek: Option<PeekView>,
+    /// `peek` 下面的文件是否已收起：再次点击同一行时在收起与展开之间切换。
+    pub(crate) peek_folded: bool,
+    /// 储藏和提交历史的预览标签：和改动列表的预览标签分开，那个标签跟着工作区里的文件刷新。
+    pub(crate) peek_preview: Option<DocumentId>,
+    /// 最近一次查看储藏、提交或其中文件的请求序号；结果到达时不是最近的请求即丢弃。
+    pub(crate) peek_request: u64,
     /// 正在询问新增的 TODO 要不要仍然提交：这次提交在等回答。
     todo_asked: bool,
+    /// 用模型生成提交信息的进度。
+    pub(crate) generating: generate::Generating,
     /// 提交成功以后继续推送（「提交并推送」）。
     push_after: bool,
     /// 与 `push_after` 一起：推送改为同步，先拉取上游的新提交再推送（「提交并同步」）。
@@ -1024,6 +1067,7 @@ impl Default for CommitState {
             shift: None,
             selected: None,
             marked: HashSet::new(),
+            other_selected: None,
             anchor: None,
             cursor: None,
             preview: None,
@@ -1033,11 +1077,14 @@ impl Default for CommitState {
             labels: CommitLabels::default(),
             stashes: Drawer::new(false),
             worktrees: Drawer::new(true),
+            history: Default::default(),
             sections_known: false,
-            stash_view: None,
-            stash_files_folded: false,
-            stash_preview: None,
+            peek: None,
+            peek_folded: false,
+            peek_preview: None,
+            peek_request: 0,
             todo_asked: false,
+            generating: Default::default(),
             push_after: false,
             sync_after: false,
             last: None,

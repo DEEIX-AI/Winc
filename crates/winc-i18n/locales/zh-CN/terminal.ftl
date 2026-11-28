@@ -6,6 +6,8 @@ terminal-maximize-panel = 最大化面板
 terminal-restore-panel = 还原面板
 terminal-hide-panel = 隐藏终端面板
 terminal-show-panel = 显示终端面板
+terminal-move-to-editor = 将终端移到编辑区
+terminal-move-to-panel = 将终端移到面板
 terminal-tab-default-name = 终端
 terminal-new = 新建终端
 terminal-module-disabled = 终端模块未启用
@@ -76,6 +78,8 @@ terminal-upload-too-large = { $size } 太大，没有传到远端主机（每次
 terminal-upload-no-image = 剪贴板中的图片无法读取
 terminal-upload-no-folder = 无法在远端主机上创建存放目录
 terminal-upload-elsewhere = 已传到远端主机：{ $path }
+terminal-image-paste-failed = 无法粘贴剪贴板中的图片：{ $error }
+terminal-image-saved-elsewhere = 剪贴板中的图片已存为：{ $path }
 
 ## 运行配置。
 

@@ -1,6 +1,6 @@
 //! 文本截短的测试：`fit` 保留的字数与宽度上限，以及路径截短后保留文件名。
 
-use winc_render::Renderer;
+use cpui_render::{Font, Renderer};
 
 use super::*;
 
@@ -30,16 +30,21 @@ pub(crate) fn draw_floating_bar(app: &mut App, frame: &mut Frame<'_>) {
 pub(crate) use super::settings::draw_cached as settings_draw_cached;
 pub(crate) use crate::app::workspace::tab_names::distinct_folder;
 
+/// 第 `index` 个标签的文件名颜色；见 `workspace::top_bar::file_name_color`。
+pub(crate) fn file_name_color(app: &App, index: usize, plain: Color) -> Color {
+    workspace::top_bar::file_name_color(app, &app.editor.documents[index], plain)
+}
+
 #[test]
 fn fit_keeps_as_many_characters_as_the_width_allows() {
-    let mut renderer = Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0), None, None)
-        .expect("测试机上有系统字体");
+    let mut renderer =
+        Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0)).expect("测试机上有系统字体");
     renderer.draw(|frame| {
         let size = 13.0;
         let text = "a-very-long-file-name_中文.rs";
         let chars: Vec<char> = text.chars().collect();
-        let full = frame.measure(FontKind::Ui, size, text);
-        let ellipsis = frame.measure(FontKind::Ui, size, "…");
+        let full = frame.measure(Font::ui(size), text);
+        let ellipsis = frame.measure(Font::ui(size), "…");
         for max in [
             0.0,
             ellipsis,
@@ -56,7 +61,7 @@ fn fit_keeps_as_many_characters_as_the_width_allows() {
                 let (head, tail) = (head.chars().count(), tail.chars().count());
                 assert!(if middle { head - tail <= 1 } else { tail == 0 }, "{out}");
                 // 只剩「…」以外都放得进去，再多留一个字就放不下。
-                let width = frame.measure(FontKind::Ui, size, &out);
+                let width = frame.measure(Font::ui(size), &out);
                 assert!(head == 0 || width <= max + 1e-3, "{out} {max}");
                 let keep = head + tail + 1;
                 if middle && keep >= chars.len() {
@@ -72,7 +77,7 @@ fn fit_keeps_as_many_characters_as_the_width_allows() {
                     .chain(['…'].iter())
                     .chain(&chars[chars.len() - tail..])
                     .collect();
-                let width = frame.measure(FontKind::Ui, size, &longer);
+                let width = frame.measure(Font::ui(size), &longer);
                 assert!(width > max - 1e-3, "{out} {longer} {max}");
             }
         }
@@ -90,12 +95,12 @@ fn fit_keeps_as_many_characters_as_the_width_allows() {
 
 #[test]
 fn shortened_paths_keep_the_file_name() {
-    let mut renderer = Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0), None, None)
-        .expect("测试机上有系统字体");
+    let mut renderer =
+        Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0)).expect("测试机上有系统字体");
     renderer.draw(|frame| {
         let size = 13.0;
         let path = "/private/var/folders/xy/abcdefgh/T/sample/Cargo.toml";
-        let full = frame.measure(FontKind::Ui, size, path);
+        let full = frame.measure(Font::ui(size), path);
         assert!(matches!(
             shorten_path(frame, path, size, full),
             Cow::Borrowed(_)
@@ -109,13 +114,10 @@ fn shortened_paths_keep_the_file_name() {
             "{out}"
         );
         assert!(out.contains('…'), "{out}");
-        assert!(
-            frame.measure(FontKind::Ui, size, &out) <= max + 1e-3,
-            "{out}"
-        );
+        assert!(frame.measure(Font::ui(size), &out) <= max + 1e-3, "{out}");
 
         // 连文件名都放不下：整个从中间截。
-        let max = frame.measure(FontKind::Ui, size, "Cargo.toml");
+        let max = frame.measure(Font::ui(size), "Cargo.toml");
         let out = shorten_path(frame, path, size, max);
         assert!(
             out.starts_with('/') && !out.ends_with("/Cargo.toml"),
@@ -127,12 +129,12 @@ fn shortened_paths_keep_the_file_name() {
 /// 回归：`fit` 按字符截，带肤色的 emoji、旗帜会被切开，留下半个。
 #[test]
 fn fit_never_splits_a_grapheme() {
-    let mut renderer = Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0), None, None)
-        .expect("测试机上有系统字体");
+    let mut renderer =
+        Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0)).expect("测试机上有系统字体");
     renderer.draw(|frame| {
         let size = 13.0;
         let text = "👍🏽👍🏽👍🏽👍🏽e\u{301}e\u{301}e\u{301}";
-        let full = frame.measure(FontKind::Ui, size, text);
+        let full = frame.measure(Font::ui(size), text);
         for step in 1..20 {
             let max = full * step as f32 / 20.0;
             for middle in [false, true] {
@@ -189,13 +191,13 @@ fn tooltip_lines_wrap_to_the_room_and_keep_continuations_in_the_body() {
 /// 目录时仍从中间截短。
 #[test]
 fn same_named_recent_folders_keep_the_part_that_tells_them_apart() {
-    let mut renderer = Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0), None, None)
-        .expect("测试机上有系统字体");
+    let mut renderer =
+        Renderer::offscreen(10.0, 10.0, 2.0, Color::hex(0)).expect("测试机上有系统字体");
     renderer.draw(|frame| {
         let size = 11.0;
         let text = "~/work/clients/companyA/projects".to_owned();
         let keep = text.find("companyA");
-        let width = |frame: &mut Frame<'_>, s: &str| frame.measure(FontKind::Ui, size, s);
+        let width = |frame: &mut Frame<'_>, s: &str| frame.measure(Font::ui(size), s);
         let full = width(frame, &text);
         let parent = Parent { text, keep };
         assert_eq!(fit_parent(frame, &parent, size, full), parent.text);

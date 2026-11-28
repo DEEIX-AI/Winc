@@ -1,6 +1,7 @@
 //! 键盘和剪贴板：按键编码、输入法提交的文字、粘贴、复制、全选，滚动和滚动条。
 
 use super::*;
+use winc_config::TerminalRightClick;
 use winit::keyboard::PhysicalKey;
 
 impl App {
@@ -37,16 +38,18 @@ impl App {
     ///
     /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先弹出确认框（[`input::paste_needs_confirm`]）。
     ///
-    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴：程序开启了括号粘贴时收到一次空的括号粘贴，未开
-    /// 启时不发送任何内容。远端主机上的标签例外：复制的文件和图片先传过去，再粘贴那里的路径
-    /// （[`App::upload_paste`]）。
+    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴，只有开启了括号粘贴的程序收到一次空的粘贴。
+    /// 例外是远端的标签先传复制的文件和图片、再粘贴那里的路径（[`App::upload_paste`]），以及
+    /// Windows 上本机的标签把图片存为文件后粘贴其路径（[`App::paste_image_file`]）。
     pub(in crate::app) fn terminal_paste(&mut self) {
         let text = self.clipboard_text().unwrap_or_default();
         let Some(tab) = self.terminal.tab().map(|t| (t.id, t.modes, t.cwd.clone())) else {
             return;
         };
         let (id, modes, cwd) = tab;
-        if self.upload_paste(id, &cwd, text.is_empty()) {
+        if self.upload_paste(id, &cwd, text.is_empty())
+            || self.paste_image_file(id, &cwd, text.is_empty())
+        {
             return;
         }
         if input::paste_needs_confirm(&text, modes) {
@@ -99,6 +102,27 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// 右键单击终端是否复制或粘贴、而不弹出菜单：设置为「复制或粘贴」且没有按住 `⌥`（Alt）。
+    pub(in crate::app) fn terminal_right_click_edits(&self) -> bool {
+        self.config.terminal_right_click == Some(TerminalRightClick::CopyOrPaste)
+            && !self.pointer.modifiers.alt_key()
+    }
+
+    /// 右键单击终端（设置为「复制或粘贴」时）：有所选内容时复制并取消选择，否则粘贴。
+    ///
+    /// 开启了选中时复制（`terminal.copyOnSelect`）时，所选内容已经复制过，直接粘贴。
+    pub(in crate::app) fn terminal_right_click(&mut self) {
+        let selected = self
+            .terminal
+            .tab()
+            .is_some_and(|t| t.selection_range().is_some());
+        if selected && self.config.terminal_copy_on_select != Some(true) {
+            self.terminal_copy(true);
+        } else {
+            self.terminal_paste();
+        }
     }
 
     /// 选中全部（⌘A）：回滚缓冲加屏幕。

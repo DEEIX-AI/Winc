@@ -558,9 +558,10 @@ fn dragging_past_the_sidebar_reaches_merged_folders_that_do_not_fit() {
     app.on_mouse_up(MouseButton::Left);
 }
 
-/// 放不下名称的一行展开后画在分隔条上，分隔条仍然可以拖动；鼠标停在分隔条上时全名保持展开。
+/// 放不下名称的一行展开后画在分隔条上：在这一行的高度内鼠标经过分隔条时仍悬停在这一行，全名
+/// 保持展开，按下作用于这一行。其他行、以及从编辑区一侧移来时，分隔条照常可以拖动。
 #[test]
-fn a_row_that_does_not_fit_keeps_the_sidebar_splitter() {
+fn a_row_that_does_not_fit_covers_the_sidebar_splitter() {
     let dir = sample_folder("compact-splitter");
     let root = dir.join("project");
     let names = [
@@ -584,14 +585,21 @@ fn a_row_that_does_not_fit_keeps_the_sidebar_splitter() {
     paint(&mut app);
     assert_eq!(app.pointer.hover, Hover::Splitter);
 
-    // 从左边移到放不下名称的一行：经过分隔条时可以拖动，全名仍然展开。
+    // 从左边移到放不下名称的一行：经过分隔条时仍在这一行上，全名仍然展开。
     app.on_mouse_move(x - 20.0, top);
     paint(&mut app);
     assert!(app.panels.tree.overflow.is_some());
     app.on_mouse_move(x, top);
     paint(&mut app);
-    assert_eq!(app.pointer.hover, Hover::Splitter);
+    assert_ne!(app.pointer.hover, Hover::Splitter);
     assert!(app.panels.tree.overflow.is_some_and(|(_, i)| i == row));
+
+    // 从编辑区一侧（伸出的全名之外）移来：这一行没有展开，分隔条可以拖动。
+    app.on_mouse_move(app.layout.editor.right() - 20.0, top);
+    paint(&mut app);
+    app.on_mouse_move(x, top);
+    paint(&mut app);
+    assert_eq!(app.pointer.hover, Hover::Splitter);
 }
 
 #[test]
@@ -844,7 +852,7 @@ fn a_row_that_does_not_fit_stays_above_the_tree_scrollbar() {
     assert!(app.panels.tree.overflow.is_some());
     assert!(app.scrollbar_shown(ScrollArea::Tree) > 0.0);
     let pixel = |app: &App, x: f32, y: f32| {
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
     };
@@ -878,7 +886,7 @@ fn a_retracting_name_shares_one_background_across_the_sidebar_edge() {
     );
     paint(&mut app);
     assert!(app.panels.tree.labels.moving());
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
@@ -917,7 +925,7 @@ fn a_retracting_name_is_not_drawn_once_the_tree_is_hidden() {
     // 切到搜索视图：编辑区上方恢复背景色，不留下收回中的名字。
     app.panels.sidebar.view = SidebarView::Search;
     paint(&mut app);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]
@@ -937,7 +945,7 @@ fn symbolic_links_carry_a_badge_on_the_icon() {
     paint(&mut app);
     let (plain, link) = (row_of(&app, "a.txt"), row_of(&app, "b.txt"));
     assert!(app.editor.workspace.as_ref().unwrap().rows()[link].symlink);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
         image.pixels[y * image.width as usize + x]

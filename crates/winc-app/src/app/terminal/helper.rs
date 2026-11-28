@@ -11,6 +11,9 @@ impl App {
 
     /// 一栏在 `card` 时竖向终端列表的区域。
     fn terminal_tab_list_in(&self, card: Rect) -> Option<Rect> {
+        if self.terminal_in_editor() {
+            return None;
+        }
         let shown = self
             .terminal
             .strip
@@ -106,7 +109,7 @@ impl App {
         let Some((first, cut)) = self.terminal.tab().map(TermTab::viewport) else {
             return (0, top);
         };
-        let scale = (self.frame.renderer.as_ref()).map_or(1.0, winc_render::Renderer::scale_factor);
+        let scale = (self.frame.renderer.as_ref()).map_or(1.0, cpui_render::Renderer::scale);
         let y = top - cut * self.fonts.terminal_line_height;
         (first, (y * scale).round() / scale)
     }
@@ -180,14 +183,39 @@ impl App {
 
     /// 光标在空行行首藏够了（见 [`TermTab::settle`]）：画出来；返回下一次要醒来的时刻。
     pub(crate) fn terminal_settle_tick(&mut self, now: Instant) -> Option<Instant> {
-        let tab = self.terminal.tab_mut()?;
-        let due = tab.settle? + SETTLE;
-        if now < due {
-            return Some(due);
+        let mut due = None;
+        let mut redraw = false;
+        let t = &mut self.terminal;
+        for at in 0..t.group_count() {
+            if !t.group_shown(at) {
+                continue;
+            }
+            let tab = if at == t.group_at {
+                t.tabs.get_mut(t.active)
+            } else {
+                let group = &mut t.groups[at];
+                group.tabs.get_mut(group.active)
+            };
+            let Some(tab) = tab else { continue };
+            let mut settle = |tab: &mut TermTab| {
+                if let Some(at) = tab.settle.map(|at| at + SETTLE) {
+                    if now < at {
+                        due = earliest(due, Some(at));
+                    } else {
+                        tab.settle = None;
+                        redraw = true;
+                    }
+                }
+            };
+            settle(tab);
+            if let Some(split) = &mut tab.split {
+                split.others.iter_mut().for_each(settle);
+            }
         }
-        tab.settle = None;
-        self.request_redraw();
-        None
+        if redraw {
+            self.request_redraw();
+        }
+        due
     }
 
     /// 开始、停止拖分隔条：拖的时候正在看的标签先把网格上面一屏的历史行取来（`TermTab::ahead`）。
@@ -215,7 +243,7 @@ impl App {
             self.focus = Focus::Terminal;
         }
         let t = &mut self.terminal;
-        t.crashed = !t.tabs.is_empty();
+        t.crashed = t.tab_count() > 0;
         if !t.crashed {
             t.error = Some(winc_i18n::t!("terminal-helper-exited").into());
         }
@@ -251,10 +279,15 @@ impl App {
 
     /// 确认框上确认了重新开始编号是 `id` 的标签。
     pub(crate) fn confirmed_terminal_restart(&mut self, id: u16) {
-        if let Some(index) = self.terminal.index_of(id) {
-            self.terminal.active = index;
-            self.restart_terminal_tab();
-        }
+        let Some(at) = self.terminal.group_of(id) else {
+            return;
+        };
+        self.with_terminal_group(at, |app| {
+            if let Some(index) = app.terminal.index_of(id) {
+                app.terminal.active = index;
+                app.restart_terminal_tab();
+            }
+        });
     }
 
     /// 重新开始：辅助进程退出了时所有标签在各自最后的目录里重开；shell 退出了或者伪终端断开了时
@@ -289,6 +322,7 @@ impl App {
             t.want_names = wanted.iter().map(|tab| tab.name.clone()).collect();
             t.want_shells = wanted.iter().map(|tab| tab.shell.clone()).collect();
             t.want_into.clear();
+            t.want_editor.clear();
             t.want_groups = if t.groups.is_empty() {
                 Vec::new()
             } else {
@@ -315,6 +349,9 @@ impl App {
         }
         let (cwd, name, old, shell) =
             (tab.cwd.clone(), tab.name.clone(), tab.id, tab.shell.clone());
+        if t.editor_document().is_some() {
+            t.split_into = Some(old);
+        }
         // 先建新的再关旧的：关掉最后一个标签时辅助进程跟着退出（见 `close_terminal_tab_now`），
         // 只有这一个标签时不必为了重开换一个辅助进程。
         self.new_terminal_tab_with(cwd, shell);
@@ -337,12 +374,21 @@ impl App {
     ///
     /// 保留面板高度和检测到的 shell；后者与面板无关，设置中的「默认 Shell」菜单仍需列出。
     pub(crate) fn stop_terminal(&mut self) {
+        let documents: Vec<_> = self
+            .terminal
+            .groups
+            .iter()
+            .filter_map(|group| group.editor)
+            .collect();
         self.terminal = TerminalPanel {
             height: self.terminal.height,
             shells: std::mem::take(&mut self.terminal.shells),
             shells_detected: self.terminal.shells_detected,
             ..TerminalPanel::default()
         };
+        for document in documents {
+            self.detach_terminal_editor_document(document);
+        }
         if self.focus.in_terminal() {
             self.focus = Focus::Editor;
         }
@@ -359,23 +405,35 @@ impl App {
 
     /// 网格放得下几列几行，以及像素尺寸（物理像素，程序查询时回答它）。
     pub(in crate::app) fn terminal_size(&self) -> Size {
-        let grid = grid_rect(
-            self.terminal_content_card(),
-            self.fonts.terminal_line_height,
-        );
+        self.grid_size(self.terminal_content_card())
+    }
+
+    /// 内容范围为 `card` 的终端网格放得下几列几行，以及像素尺寸（见 [`Self::terminal_size`]）。
+    pub(in crate::app) fn grid_size(&self, card: Rect) -> Size {
+        let grid = grid_rect(card, self.fonts.terminal_line_height);
         let cols = (grid.w / self.metrics.terminal_cell).floor().max(2.0);
         let rows = (grid.h / self.fonts.terminal_line_height).floor().max(1.0);
         let scale = self
             .frame
             .renderer
             .as_ref()
-            .map_or(1.0, winc_render::Renderer::scale_factor);
+            .map_or(1.0, cpui_render::Renderer::scale);
         Size {
             cols: cols.min(f32::from(u16::MAX)) as u16,
             rows: rows.min(f32::from(u16::MAX)) as u16,
             width: (cols * self.metrics.terminal_cell * scale) as u16,
             height: (rows * self.fonts.terminal_line_height * scale) as u16,
         }
+    }
+
+    /// 终端的大小是否正随拖动分隔条或侧栏、面板的动画持续变化。
+    fn terminal_layout_moving(&self) -> bool {
+        self.text_width_changing()
+            || matches!(
+                self.pointer.drag,
+                crate::app::Drag::TerminalSplit { .. }
+                    | crate::app::Drag::TerminalGroupSplit { .. }
+            )
     }
 
     /// 正在用的一栏的网格放不下一整行的零头（见 [`grid_slack`]）。
@@ -387,9 +445,9 @@ impl App {
     /// 按正在用的一栏的大小记下各标签显示几行，并把新尺寸告诉正在看的标签；返回下一次要补发
     /// 尺寸的时刻（见 `TerminalPanel::resize_due`）。
     ///
-    /// 每个标签同时只有一个尺寸在路上：上一个尺寸重排好的一帧回来后发下一个（中间的跳过），
-    /// 辅助进程和 shell 不会积压；只改正在看的标签，改宽度要重排整个回滚缓冲（一万行约 11 ms），
-    /// 后台标签一起排会阻塞几十毫秒，切过来时再改。
+    /// 布局在动或大小连续变化时先不发，稳定满 `RESIZE_SETTLE` 后发一次，静止后的单次变化立即发；
+    /// 每个标签同时只有一个尺寸在路上。只改正在看的标签：改宽度要重排整个回滚缓冲（一万行约
+    /// 11 ms）。
     fn size_terminal_group(&mut self, now: Instant) -> Option<Instant> {
         let size = self.terminal_size();
         let slack = self.terminal_slack();
@@ -410,6 +468,7 @@ impl App {
                 })
             })
             .collect();
+        let moving = self.terminal_layout_moving();
         let t = &mut self.terminal;
         let client = t.client.as_ref()?;
         let tab = t.tabs.get_mut(t.active)?;
@@ -419,7 +478,22 @@ impl App {
                 .find(|(id, _)| *id == tab.id)
                 .map_or(size, |(_, size)| *size);
             tab.shown = usize::from(size.rows);
+            let last = tab.settling;
+            let changed = last.is_none_or(|(seen, _)| seen != size);
+            if changed {
+                tab.settling = Some((size, now));
+            }
             if tab.size == size || tab.ended.is_some() {
+                return;
+            }
+            // 静止之后的单次变化（例如收起侧栏）立即发；仍在变化、或刚变化过时等它稳定。
+            let quiet = last.is_none_or(|(_, at)| now >= at + RESIZE_SETTLE);
+            let settled = tab
+                .settling
+                .is_some_and(|(_, at)| now >= at + RESIZE_SETTLE);
+            if moving || !(changed && quiet || settled) {
+                let at = tab.settling.map_or(now, |(_, at)| at);
+                due = earliest(due, Some(at + RESIZE_SETTLE));
                 return;
             }
             match tab.resizing {
@@ -442,7 +516,16 @@ impl App {
 
     /// 排版之后：要新建标签时建；尺寸变了告诉每个标签；往上翻着缺历史行时取回来。
     pub(in crate::app) fn sync_terminal(&mut self) {
-        if !self.terminal.open || self.layout.terminal.h <= 0.0 {
+        let shown = (0..self.terminal.group_count()).any(|at| self.terminal.group_shown(at));
+        // 编辑区有终端、或要在编辑区新建终端时，面板收起也要建标签。
+        let editor_waiting = !self.terminal.want.is_empty()
+            && (self
+                .terminal
+                .groups
+                .iter()
+                .any(|group| group.editor.is_some())
+                || self.terminal.want_editor.iter().any(Option::is_some));
+        if !shown && !editor_waiting {
             return;
         }
         // 临时换进了别的栏：标签要建在正在用的一栏里，换回来以后再排。
@@ -455,10 +538,15 @@ impl App {
         let focused = self.terminal.group_at;
         let mut due = None;
         for at in (0..self.terminal.group_count()).filter(|&at| at != focused) {
+            if !self.terminal.group_shown(at) {
+                continue;
+            }
             let next = self.with_terminal_group(at, |app| app.size_terminal_group(now));
             due = earliest(due, next);
         }
-        due = earliest(due, self.size_terminal_group(now));
+        if self.terminal.group_shown(focused) {
+            due = earliest(due, self.size_terminal_group(now));
+        }
         self.terminal.resize_due = due;
         if !self.terminal.ready {
             return;
@@ -491,10 +579,13 @@ impl App {
             return;
         };
         let client = &owned;
+        // 在编辑区新建的终端：先建在面板的栏里，客户端放回后移到编辑区。
+        let mut to_editor = Vec::new();
         if let Some((cwd, shell, integration, python)) = spawn.filter(|_| t.error.is_none()) {
             let names = std::mem::take(&mut t.want_names);
             let shells = std::mem::take(&mut t.want_shells);
             let intos = std::mem::take(&mut t.want_into);
+            let editors = std::mem::take(&mut t.want_editor);
             let columns = std::mem::take(&mut t.want_groups);
             // 等着送的输入给建好以后要看的那个标签：新建的（排在最后），或者重开时原来看的那个。
             let target = t
@@ -527,6 +618,12 @@ impl App {
                     None => Integration::Off,
                 };
                 let shell = chosen.as_deref().or(shell.as_deref());
+                // 在编辑区新建的终端按它将要所在的窗格的大小启动，shell 的第一屏不必重排。
+                let size = editors
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map_or(size, |(_, size)| size);
                 let launch = launch(shell, dir.clone(), cfg!(windows), integrated);
                 client.send(&ToHelper::Spawn {
                     tab: id,
@@ -557,11 +654,26 @@ impl App {
                 // 远端的终端不会因目录为空而换成本机的 shell。
                 tab.cwd = dir;
                 // 拆分出的终端加进原来的标签，排在前台终端的后面并成为前台。
-                let into = (intos.get(i).copied().flatten()).and_then(|into| t.index_of(into));
+                let into = intos
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .and_then(|id| t.group_of(id).map(|at| (at, id)));
                 match into {
-                    Some(index) => {
-                        super::insert_pane(&mut t.tabs, index, tab);
-                        t.active = index;
+                    Some((at, into)) => {
+                        let (tabs, active) = if at == t.group_at {
+                            (&mut t.tabs, &mut t.active)
+                        } else {
+                            let group = &mut t.groups[at];
+                            (&mut group.tabs, &mut group.active)
+                        };
+                        if let Some(index) = tabs
+                            .iter()
+                            .position(|tab| tab.panes().any(|pane| pane.id == into))
+                        {
+                            super::insert_pane(tabs, index, tab);
+                            *active = index;
+                        }
                     }
                     // 恢复现场时放进它原来的那一栏。
                     None => match columns.get(i) {
@@ -573,9 +685,12 @@ impl App {
                     },
                 }
                 t.focus_sent = false;
+                if let Some((drop, _)) = editors.get(i).copied().flatten() {
+                    to_editor.push((id, drop));
+                }
             }
             if let Some(active) = t.want_active.take() {
-                t.focus_flat(active.min(t.tab_count().saturating_sub(1)));
+                t.focus_shell(active);
             }
             t.drop_empty_groups();
         }
@@ -600,13 +715,15 @@ impl App {
                 tab.slack = slack;
                 tab.name.clone_from(&start.config.name);
                 tab.run = Some(start.config);
-                t.tabs.push(tab);
-                t.active = t.tabs.len() - 1;
+                t.place_tab(t.panel_at, tab, None);
                 t.focus_sent = false;
                 replaced.extend(start.replaces.map(|old| (id, old)));
             }
         }
         t.client = Some(owned);
+        for (id, drop) in to_editor {
+            self.move_terminal_tab_to_editor(id, drop);
+        }
         self.retire_run_tabs(replaced);
         self.drop_other_tab_state();
         self.fetch_terminal_history();
@@ -766,6 +883,8 @@ impl App {
                 }
             }
         }
+        // 标题和前台进程随消息变化，编辑区中的终端标签跟着改名。
+        shown |= self.sync_terminal_editor_titles();
         if shown || self.terminal.visible_state() != before {
             self.request_redraw();
         }
@@ -885,7 +1004,7 @@ impl App {
                 }
                 // 只接受正在看的标签写剪贴板：看不见的标签里的输出不能在用户不知情时改写它。
                 Event::Clipboard(text) => {
-                    if t.open && t.index_of(id) == Some(t.active) {
+                    if t.group_shown(t.group_at) && t.index_of(id) == Some(t.active) {
                         self.set_clipboard(text, false);
                     }
                 }
@@ -950,7 +1069,7 @@ impl App {
             }
             FromHelper::Disconnected { tab: id } => {
                 // 面板保存、在看别的标签时看不到标签栏上的说明：提示一声，标签上留红点。
-                let seen = t.open && t.index_of(id) == Some(t.active);
+                let seen = t.group_shown(t.group_at) && t.index_of(id) == Some(t.active);
                 if let Some(tab) = t.by_id(id) {
                     tab.ended = Some(TabEnd::Disconnected);
                     if !seen {

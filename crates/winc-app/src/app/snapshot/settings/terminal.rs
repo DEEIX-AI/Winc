@@ -105,17 +105,20 @@ fn the_terminal_font_size_and_switches_write_the_config() {
     assert_eq!((app.fonts.terminal, app.fonts.code), (code + 1.0, code));
     assert_eq!(app.config.editor_size, None);
 
-    // 字重：调整前随全局字重；调整后只改终端，调回与全局相同的值也不再随全局字重变化。
-    app.config.ui_font_weight = Some(500);
+    // 字重：调整前随编辑区字重，不随界面字重；调整后只改终端，调回与编辑区相同的值也不再随
+    // 编辑区字重变化。
+    app.config.editor_font_weight = Some(500);
+    app.config.ui_font_weight = Some(700);
     assert_eq!(app.setting_value(Setting::TerminalFontWeight).0, "500");
     app.settings_adjust(Setting::TerminalFontWeight, false);
     assert_eq!(app.config.terminal_font_weight, Some(400));
-    assert_eq!(app.config.ui_font_weight, Some(500));
+    assert_eq!(app.config.editor_font_weight, Some(500));
     app.settings_adjust(Setting::TerminalFontWeight, true);
     assert_eq!(app.config.terminal_font_weight, Some(500));
-    app.settings_adjust(Setting::FontWeight, true);
+    app.settings_adjust(Setting::EditorFontWeight, true);
     assert_eq!(app.setting_value(Setting::TerminalFontWeight).0, "500");
     app.config.ui_font_weight = None;
+    app.config.editor_font_weight = None;
     app.config.terminal_font_weight = None;
 
     // 字体：菜单的第一项是「跟随编辑器」，和编辑器字体一样先列出等宽字体。
@@ -252,8 +255,10 @@ fn the_terminal_page_is_listed_only_when_the_module_is_on() {
     app.adopt_config(config);
     assert!(!listed(&app));
     assert_eq!(app.settings_layout().page, SettingsPage::Modules);
-    // 键盘移动同样跳过该页：模块页第一项的上一项在格式化页。
-    app.settings_move(false);
+    // 键盘移动同样跳过该页：从模块页第一项往回走过 AI 页的五项，再往回是格式化页。
+    for _ in 0..6 {
+        app.settings_move(false);
+    }
     assert_eq!(app.settings.selected.page(), SettingsPage::Format);
 
     // 在模块页重新开启后立即列出。
@@ -347,35 +352,77 @@ fn shoot_terminal_page_slide() {
 /// 配置文件里只改了字重（另一个窗口或手动修改）：重新加载字体，终端的文字按新的字重画。
 #[test]
 fn a_font_weight_edited_in_the_config_file_reloads_the_fonts() {
-    use winc_render::{Color, FontKind};
+    use cpui_render::{Color, FontKind};
     let (mut app, dir) = terminal_settings("settings-terminal-weight-adopt");
-    app.frame.renderer =
-        Some(Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000), None, None).unwrap());
+    let mut renderer = Renderer::offscreen(60.0, 40.0, 1.0, Color::hex(0x000000)).unwrap();
+    renderer.set_font_system(app.frame.fonts.clone());
+    app.frame.renderer = Some(renderer);
     app.apply_fonts().unwrap();
     let ink = |app: &mut App, kind: FontKind| {
         let renderer = app.frame.renderer.as_mut().unwrap();
         renderer.draw(|frame| {
             let all = frame.bounds();
-            frame.text(kind, 30.0, 5.0, 32.0, "H", Color::hex(0xffffff), all);
+            frame.text(
+                Font::new(kind, 30.0),
+                (5.0, 32.0),
+                "H",
+                Color::hex(0xffffff),
+                all,
+            );
         });
-        let image = renderer.image().unwrap();
+        let image = renderer.snapshot().unwrap();
         image.pixels.iter().map(|p| p & 0xff).sum::<u32>()
     };
-    let (terminal, mono) = (
-        ink(&mut app, FontKind::Terminal),
+    let (terminal, mono, ui) = (
+        ink(&mut app, TERMINAL_FONT),
         ink(&mut app, FontKind::Mono),
+        ink(&mut app, FontKind::Ui),
     );
 
     let mut config = app.config.clone();
     config.terminal_font_weight = Some(800);
     app.adopt_config(config);
-    assert!(ink(&mut app, FontKind::Terminal) > terminal);
+    assert!(ink(&mut app, TERMINAL_FONT) > terminal);
     assert_eq!(ink(&mut app, FontKind::Mono), mono);
 
-    // 全局字重同样生效：终端已单独设置，不随之变化。
+    // 界面字重只作用于界面文字；编辑区字重只作用于编辑区。
     let mut config = app.config.clone();
     config.ui_font_weight = Some(800);
     app.adopt_config(config);
+    assert!(ink(&mut app, FontKind::Ui) > ui);
+    assert_eq!(ink(&mut app, FontKind::Mono), mono);
+    let mut config = app.config.clone();
+    config.editor_font_weight = Some(800);
+    app.adopt_config(config);
     assert!(ink(&mut app, FontKind::Mono) > mono);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「右键单击」是终端页的下拉选项：默认显示菜单，两个选项依次列出，选中「复制或粘贴」后写回
+/// 配置并打勾。
+#[test]
+fn the_right_click_action_is_chosen_from_a_menu() {
+    use winc_config::TerminalRightClick;
+    let dir = sample_folder("settings-terminal-right-click");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.config.terminal_enabled = Some(true);
+    assert_eq!(Setting::TerminalRightClick.page(), SettingsPage::Terminal);
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Terminal);
+    app.settings_open_menu(Setting::TerminalRightClick);
+    let listed: Vec<_> = menu_commands(&app).into_iter().map(|(c, _)| c).collect();
+    let all: Vec<_> = (0..TerminalRightClick::ALL.len())
+        .map(MenuCommand::RightClick)
+        .collect();
+    assert_eq!(listed, all);
+    assert!(app.menu_checked(MenuCommand::RightClick(0)));
+    app.run_menu_command(MenuCommand::RightClick(1));
+    assert_eq!(
+        app.config.terminal_right_click,
+        Some(TerminalRightClick::CopyOrPaste)
+    );
+    assert!(app.menu_checked(MenuCommand::RightClick(1)));
+    let label = crate::layout::right_click_label(TerminalRightClick::CopyOrPaste);
+    assert_eq!(app.choice_text(Setting::TerminalRightClick).0, label);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1,5 +1,5 @@
-//! 编辑区行为的测试：剪贴板、右键菜单、自动保存、`.editorconfig`、状态栏的缩进与编码、
-//! 滚动条标记、书签、CSV 列对齐、自动换行。
+//! 编辑区行为的测试：剪贴板、自动保存、`.editorconfig`、状态栏的缩进与编码、滚动条标记、
+//! 书签、CSV 列对齐、自动换行。
 
 use super::*;
 use crate::keymap::Action;
@@ -161,117 +161,6 @@ fn copying_without_a_selection_copies_and_pastes_whole_lines() {
     app.select(0, 0);
     app.paste();
     assert!(line(&app, 0).starts_with("let    let"));
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn right_clicking_the_text_offers_format_cut_copy_paste() {
-    use MenuCommand::{
-        AddBookmark, Copy, CopyReference, Cut, FindReferences, Fix, Format, FormatSelection,
-        GoToDefinition, ListBookmarks, Paste, RemoveBookmark,
-    };
-
-    let dir = search_folder("editor-menu");
-    let mut app = app_with(&dir, false);
-    app.open_path(&dir.join("src/main.rs"));
-    paint(&mut app);
-    // 在第 `line` 行第 `col` 列（均从 0 起）处按右键。
-    let right_click_text = |app: &mut App, line: usize, col: usize| {
-        let t = app.layout.text;
-        let x = t.x + TEXT_PAD + col as f32 * app.metrics.cell;
-        right_click(app, (x, t.y + (line as f32 + 0.5) * app.fonts.line_height));
-    };
-    let selection = |app: &App| {
-        let s = app.editor.active().unwrap().selection;
-        (s.from(), s.to())
-    };
-    let line = |app: &App, n: usize| {
-        let text = app.editor.active().unwrap().text();
-        text.line_content(n).slice().to_string()
-    };
-
-    // 在选区内右键：保留选区，菜单命令作用于该选区。
-    app.select(20, 26);
-    right_click_text(&mut app, 1, 10);
-    let menu = app.overlays.context_menu.as_ref().unwrap();
-    assert!(matches!(menu.target, MenuTarget::Editor(_)));
-    assert_eq!(
-        menu_commands(&app),
-        [
-            (GoToDefinition, true),
-            (FindReferences, true),
-            (AddBookmark, true),
-            (RemoveBookmark, false),
-            (ListBookmarks, true),
-            (Format, true),
-            (FormatSelection, true),
-            (Fix, true),
-            (Cut, true),
-            (Copy, true),
-            (Paste, true),
-            (CopyReference, true)
-        ]
-    );
-    assert_eq!(selection(&app), (20, 26));
-    app.run_menu_command(Copy);
-    assert_eq!(app.clipboard.copied.as_deref(), Some("config"));
-
-    // 该行添加书签后，菜单项变为「删除书签」。
-    right_click_text(&mut app, 1, 10);
-    app.run_menu_command(AddBookmark);
-    right_click_text(&mut app, 1, 10);
-    let enabled = |app: &App, command| {
-        menu_commands(app)
-            .into_iter()
-            .find(|(c, _)| *c == command)
-            .map(|(_, on)| on)
-    };
-    assert_eq!(enabled(&app, AddBookmark), Some(false));
-    assert_eq!(enabled(&app, RemoveBookmark), Some(true));
-    app.run_menu_command(RemoveBookmark);
-    right_click_text(&mut app, 1, 10);
-    assert_eq!(enabled(&app, AddBookmark), Some(true));
-
-    // 在选区外右键：光标移到点击处。没有选区时，剪切的是整行。
-    right_click_text(&mut app, 0, 3);
-    assert_eq!(selection(&app), (3, 3));
-    app.run_menu_command(Cut);
-    assert_eq!(app.clipboard.copied.as_deref(), Some("fn main() {\n"));
-    assert_eq!(line(&app, 0), "    let config = load_config();");
-
-    // 粘贴整行：插入到光标所在行的上方。
-    right_click_text(&mut app, 0, 0);
-    app.run_menu_command(Paste);
-    assert_eq!(line(&app, 0), "fn main() {");
-    assert_eq!(line(&app, 1), "    let config = load_config();");
-
-    // 查找条覆盖的区域不弹出编辑区菜单，右键事件由查找条处理。
-    app.open_search(false);
-    paint(&mut app);
-    let bar = app.layout.search;
-    right_click(&mut app, (bar.x + bar.w / 2.0, bar.y + bar.h / 2.0));
-    assert!(app.overlays.context_menu.is_none());
-
-    // 只读文档：格式化、修复、剪切、粘贴不可用，转到定义、查找引用和复制仍可用。
-    app.editor.active_mut().unwrap().readonly = true;
-    right_click_text(&mut app, 0, 0);
-    assert_eq!(
-        menu_commands(&app),
-        [
-            (GoToDefinition, true),
-            (FindReferences, true),
-            (AddBookmark, true),
-            (RemoveBookmark, false),
-            (ListBookmarks, true),
-            (Format, false),
-            (Fix, false),
-            (Cut, false),
-            (Copy, true),
-            (Paste, false),
-            (CopyReference, true),
-        ]
-    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -710,11 +599,11 @@ fn status_bar_changes_indentation_and_line_endings() {
     ));
     app.overlays.context_menu = None;
 
-    // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮。
+    // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮和光标位置（转到行）。
     app.editor.show_output("格式化输出", "x\n");
     paint(&mut app);
     let items: Vec<StatusItem> = app.hits.status.iter().map(|&(_, item)| item).collect();
-    assert_eq!(items, [StatusItem::Settings]);
+    assert_eq!(items, [StatusItem::Settings, StatusItem::Position]);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1148,8 +1037,8 @@ fn lines_read_up_to_the_right_edge_keep_the_highlight_state() {
         assert!(app.editor.active().unwrap().is_large());
         let (text, lh) = (app.layout.text, app.fonts.line_height);
         let renderer = app.frame.renderer.take().unwrap();
-        let scale = renderer.scale_factor();
-        let image = renderer.image().unwrap();
+        let scale = renderer.scale();
+        let image = renderer.snapshot().unwrap();
         let (x0, x1) = (
             (text.x * scale) as usize,
             ((text.x + 240.0) * scale) as usize,
@@ -1269,7 +1158,7 @@ fn lines_past_sixteen_million_rows_each_take_their_own_row() {
     paint(&mut app);
 
     let (gutter, text, lh) = (app.layout.gutter, app.layout.text, app.fonts.line_height);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let width = image.width as usize;
     let px = |v: f32| (v * SCALE) as usize;
     // 行号栏中每一行都画有行号。
@@ -1303,7 +1192,7 @@ fn long_lines_expand_by_clicking_or_by_the_setting() {
     // 文本区第 `row` 行右半边是否画有内容。
     let inked = |app: &App, row: usize| {
         let (t, lh) = (app.layout.text, app.fonts.line_height);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let px = |v: f32| (v * SCALE) as usize;
         let (y0, y1) = (
             px(t.y + row as f32 * lh + 2.0),
@@ -1386,7 +1275,7 @@ fn the_far_end_of_a_whole_line_is_drawn_in_place() {
     let (t, lh, cell) = (app.layout.text, app.fonts.line_height, app.metrics.cell);
     let scroll = f64::from(app.editor.active().unwrap().scroll_x);
     let expected = f64::from(t.x + TEXT_PAD) + col as f64 * f64::from(cell) - scroll;
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let px = |v: f32| (v * SCALE) as usize;
     let (y0, y1) = (px(t.y + 2.0), px(t.y + lh - 2.0));
     let width = image.width as usize;
@@ -1468,6 +1357,51 @@ fn wrapped_long_lines_expand_by_clicking_or_by_the_setting() {
 }
 
 /// 「字符转为 Unicode 转义」「Unicode 转义转为字符」：没有选区时转换整个文件，可以撤销。
+#[test]
+fn json_in_a_log_line_is_pretty_printed_and_minified_at_the_caret() {
+    let dir = sample_folder("json-in-log");
+    let file = dir.join("server.log");
+    let line = r#"12:00 INFO request={"id":7,"tags":["a"]} took 3ms"#;
+    std::fs::write(&file, format!("{line}\n")).unwrap();
+    let mut app = app_with(&file, false);
+    let text = |app: &App| {
+        app.editor
+            .active()
+            .unwrap()
+            .text()
+            .rope()
+            .unwrap()
+            .to_string()
+    };
+    let caret = line.find("\"id").unwrap();
+    app.select(caret, caret);
+
+    // 缩进跟随文档（4 个空格）；转换后选中新的内容，压缩后还原为原文。
+    assert!(app.run_action(Action::PrettyPrintJson));
+    let pretty =
+        "12:00 INFO request={\n    \"id\": 7,\n    \"tags\": [\n        \"a\"\n    ]\n} took 3ms\n";
+    assert_eq!(text(&app), pretty);
+    assert!(app.run_action(Action::MinifyJson));
+    assert_eq!(text(&app), format!("{line}\n"));
+    assert!(app.run_action(Action::Undo));
+    assert_eq!(text(&app), pretty);
+
+    // 无效的 JSON 不修改，在状态栏说明位置；光标处没有 JSON 时同样提示。
+    std::fs::write(&file, "x = {\"a\":1,}\n").unwrap();
+    let mut app = app_with(&file, false);
+    app.select(5, 5);
+    assert!(app.run_action(Action::PrettyPrintJson));
+    assert_eq!(text(&app), "x = {\"a\":1,}\n");
+    assert_eq!(
+        app.status.message.as_deref(),
+        Some("无法美化 JSON：第 1 行第 12 列不符合 JSON 语法")
+    );
+    app.select(0, 0);
+    assert!(app.run_action(Action::MinifyJson));
+    assert_eq!(app.status.message.as_deref(), Some("未找到 JSON"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn unicode_escapes_convert_both_ways() {
     let dir = sample_folder("unicode-escapes");

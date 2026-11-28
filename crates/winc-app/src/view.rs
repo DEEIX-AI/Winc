@@ -8,10 +8,10 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
+use cpui_render::{Color, Font, Frame, Rect};
 use unicode_segmentation::UnicodeSegmentation;
 use winc_editor::EntryKind;
 use winc_i18n::t;
-use winc_render::{Color, Faux, FontKind, Frame, Rect};
 
 use crate::app::animation::{Card, dialog_curve, reveal};
 use crate::app::workspace::picker::picker_parts;
@@ -38,6 +38,7 @@ pub(crate) use overlays::NOTICE_TEXT_X;
 mod popup_menu;
 pub(crate) mod preview;
 mod settings;
+mod shaped;
 mod status;
 mod suggest;
 mod terminal;
@@ -72,7 +73,11 @@ pub(crate) fn base(app: &App) -> [(Rect, Color); 3] {
 
 /// 绘制编辑区；差异和日志的点击区域裁剪在编辑区内，包括终端最大化后的零宽、零高区域。
 fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
-    editor::draw_editor(app, frame);
+    if app.editor.active().is_some_and(|doc| doc.terminal) {
+        terminal::draw_editor_terminal(app, frame);
+    } else {
+        editor::draw_editor(app, frame);
+    }
     for (rect, _) in &mut app.hits.diff {
         *rect = rect.intersect(app.layout.editor);
     }
@@ -108,13 +113,25 @@ fn draw_pane_dividers(app: &App, frame: &mut Frame<'_>) {
 /// 标签栏上时画出插入处的竖线。
 fn draw_tab_drop(app: &App, frame: &mut Frame<'_>) {
     use crate::app::workspace::panes::TabDrop;
+    if let Some((drop, area)) = app.editor_terminal_panel_drop(&app.tabs_dragged_out()) {
+        if matches!(
+            drop,
+            crate::app::terminal::groups::GroupDrop::Into { at: Some(_), .. }
+        ) {
+            frame.rect(area, app.palette.accent);
+        } else {
+            let area = area.inset(6.0, 6.0);
+            frame.rect_clipped(area, RADIUS_ISLAND - 4.0, app.palette.drop_target, area);
+        }
+        return;
+    }
     match app.panes.drop {
         Some((TabDrop::Into { at: Some(_), .. }, line)) => {
             frame.rect(line, app.palette.accent);
         }
         Some((_, area)) => {
             let area = area.inset(6.0, 6.0);
-            frame.rect_clipped(area, app.palette.drop_target, RADIUS_ISLAND - 4.0, area);
+            frame.rect_clipped(area, RADIUS_ISLAND - 4.0, app.palette.drop_target, area);
         }
         None => {}
     }
@@ -170,13 +187,20 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         round_editor_corners(app, frame);
     }
     terminal::draw_terminal(app, frame);
+    // 最大化的 Git 面板盖在侧栏和编辑区上面：两者的圆角先修整好，面板再画在上面。
+    let git_full = app.git.panel.full && app.git_panel_shown();
+    if git_full {
+        round_editor_corners(app, frame);
+        if layout.sidebar.right() > 0.0 {
+            frame.round_surface_corners(layout.sidebar, RADIUS_ISLAND, app.palette.frame_bg);
+        }
+    }
+    git::panel::draw_git_panel(app, frame);
     // 侧栏开关和窗口按钮画在终端之上：面板在右边、最大化且侧栏收起时伸到它们下面。
     draw_sidebar_button(app, frame);
     draw_window_controls(app, frame);
     draw_status(app, frame);
-    draw_island_corners(app, frame, !covered);
-    // 以下都是浮在内容之上的面板、菜单和提示，底色保持不透明。
-    frame.end_wallpaper();
+    draw_island_corners(app, frame, !covered && !git_full, !git_full);
     draw_file_drop(app, frame);
     draw_tree_overflow_closing(app, frame);
     draw_tree_overflow(app, frame);
@@ -303,25 +327,29 @@ fn draw_modal(app: &mut App, frame: &mut Frame<'_>) {
 /// 把侧栏、编辑区（以及终端面板）的四角改为圆角。
 ///
 /// 卡片内容按直角矩形绘制，最后用窗口底色覆盖四角圆弧外侧的部分；之后绘制的浮层不受影响。
-/// `editor` 为假时不修整编辑区：终端面板正盖在它上面，它的圆角已在面板之前修整过。
-fn draw_island_corners(app: &App, frame: &mut Frame<'_>, editor: bool) {
+/// `editor`、`sidebar` 为假时不修整编辑区、侧栏：最大化的面板正盖在它上面，它的圆角已在面板
+/// 之前修整过。
+fn draw_island_corners(app: &App, frame: &mut Frame<'_>, editor: bool, sidebar: bool) {
     let l = &app.layout;
     let p = app.palette;
 
-    if l.sidebar.right() > 0.0 {
-        frame.round_corners(l.sidebar, RADIUS_ISLAND, p.frame_bg);
+    if sidebar && l.sidebar.right() > 0.0 {
+        frame.round_surface_corners(l.sidebar, RADIUS_ISLAND, p.frame_bg);
     }
     if editor {
         round_editor_corners(app, frame);
     }
     if l.terminal.h > 0.0 {
-        frame.round_corners(l.terminal, RADIUS_ISLAND, p.frame_bg);
+        frame.round_surface_corners(l.terminal, RADIUS_ISLAND, p.frame_bg);
+    }
+    if l.git_panel.h > 0.0 {
+        frame.round_surface_corners(l.git_panel, RADIUS_ISLAND, p.frame_bg);
     }
 }
 
 /// 修整编辑区卡片（顶栏那一行连同下面的编辑区）的四角，见 [`draw_island_corners`]。
 fn round_editor_corners(app: &App, frame: &mut Frame<'_>) {
-    frame.round_corners(app.editor_card(), RADIUS_ISLAND, app.palette.frame_bg);
+    frame.round_surface_corners(app.editor_card(), RADIUS_ISLAND, app.palette.frame_bg);
 }
 
 /// 拖动文件经过窗口时，为松手后接收该文件的终端面板或编辑区（含标签栏）绘制放置目标底色。
@@ -341,7 +369,7 @@ fn draw_file_drop(app: &App, frame: &mut Frame<'_>) {
         Some(DropZone::Tree(_)) | None => return,
     };
     let area = area.inset(6.0, 6.0);
-    frame.rect_clipped(area, app.palette.drop_target, RADIUS_ISLAND - 4.0, area);
+    frame.rect_clipped(area, RADIUS_ISLAND - 4.0, app.palette.drop_target, area);
 }
 
 /// 绘制拖动文件树条目时跟随鼠标的小卡片，位于鼠标右下方，内容为被拖动条目的图标和名称。
@@ -377,8 +405,16 @@ fn draw_tab_drag(app: &App, frame: &mut Frame<'_>) {
         1 => ellipsize(frame, &file, app.fonts.ui, 240.0),
         n => Cow::Owned(t!("workspace-tree-drag-items", count = n)),
     };
-    let (card, icon_x, cy) = draw_drag_card(app, frame, name);
-    draw_file_icon(frame, app.palette, (icon_x + 1.5, cy), &file, card);
+    let (card, icon_x, cy) = if doc.terminal {
+        draw_move_card(app, frame, &name)
+    } else {
+        draw_drag_card(app, frame, name)
+    };
+    if doc.terminal {
+        icons::terminal(frame, (icon_x + 6.0, cy), app.palette.text_muted, card);
+    } else {
+        draw_file_icon(frame, app.palette, (icon_x + 1.5, cy), &file, card);
+    }
 }
 
 /// 在鼠标右下方画拖动时的卡片和名称 `name`（按住 `⌥` 时注明复制），返回卡片、图标的横坐标和
@@ -398,7 +434,7 @@ fn draw_move_card(app: &App, frame: &mut Frame<'_>, name: &str) -> (Rect, f32, f
     let p = app.palette;
     let window = app.layout.window;
     let (x, y) = app.mouse();
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, name) + 40.0;
+    let w = frame.measure(Font::ui(app.fonts.ui), name) + 40.0;
     let card = Rect::new(
         (x + 14.0).min(window.right() - w - 4.0),
         (y + 10.0).min(window.bottom() - TREE_ROW - 4.0),
@@ -466,7 +502,7 @@ fn label(
     clip: Rect,
 ) -> f32 {
     let baseline = ui_baseline(app, row, size);
-    frame.text(FontKind::Ui, size, x, baseline, text, color, clip)
+    frame.text(Font::ui(size), (x, baseline), text, color, clip)
 }
 
 /// 与 [`label`] 相同，但把 `marked` 中的字符（字符下标，升序）用强调色绘制。
@@ -528,10 +564,10 @@ fn field_box(
             let (x, y) = (snap(rect.x), snap(rect.y));
             let inner = Rect::new(x, y, snap(rect.right()) - x, snap(rect.bottom()) - y);
             let ring = scale.round().max(1.0) / scale;
-            frame.rounded(inner.inset(-ring, -ring), color, RADIUS_ROW + ring);
-            frame.rounded(inner, p.editor_bg, RADIUS_ROW);
+            frame.rounded(inner.inset(-ring, -ring), RADIUS_ROW + ring, color);
+            frame.rounded(inner, RADIUS_ROW, p.editor_bg);
         }
-        None => frame.rounded(rect, workspace::panel::over(base, p.hover), RADIUS_ROW),
+        None => frame.rounded(rect, RADIUS_ROW, workspace::panel::over(base, p.hover)),
     }
 }
 
@@ -565,7 +601,7 @@ fn draw_empty_state(
         // 逐字累加宽度（界面字体不做字距调整），超出可用宽度时换行；每行至少一个字。
         let (mut start, mut width) = (0, 0.0);
         for (i, c) in detail.char_indices() {
-            let w = frame.measure(FontKind::Ui, size, c.encode_utf8(&mut [0; 4]));
+            let w = frame.measure(Font::ui(size), c.encode_utf8(&mut [0; 4]));
             if width + w > room && i > start {
                 lines.push((&detail[start..i], size, p.text_dim));
                 (start, width) = (i, 0.0);
@@ -578,7 +614,7 @@ fn draw_empty_state(
     let top = (span.y + span.h * 0.45 - block / 2.0).max(area.y + 16.0);
     for (i, (text, size, color)) in lines.iter().enumerate() {
         let row = Rect::new(area.x, top + i as f32 * ROW, area.w, ROW);
-        let w = frame.measure(FontKind::Ui, *size, text);
+        let w = frame.measure(Font::ui(*size), text);
         let x = area.x + ((area.w - w) / 2.0).max(16.0);
         label(frame, app, *size, (x, row), text, *color, area);
     }
@@ -606,7 +642,7 @@ fn caps_label(
         let cap = app.metrics.ui.cap_height * size / app.fonts.ui;
         (rect.y + rect.h / 2.0 + cap / 2.0).round()
     };
-    frame.text(FontKind::Ui, size, x, baseline, text, color, clip)
+    frame.text(Font::ui(size), (x, baseline), text, color, clip)
 }
 
 /// 在 `row` 内按正文字号垂直居中绘制一段界面文本，返回文本末尾的 x 坐标。
@@ -634,11 +670,7 @@ fn ui_text_italic(
 ) -> f32 {
     let size = app.fonts.ui;
     let baseline = ui_baseline(app, row, size);
-    let italic = Faux {
-        italic: true,
-        ..Faux::default()
-    };
-    frame.text_faux(FontKind::Ui, italic, size, x, baseline, text, color, clip)
+    frame.text(Font::ui(size).italic(), (x, baseline), text, color, clip)
 }
 
 /// 在 `row` 内按小字号垂直居中绘制一段界面文本，返回文本末尾的 x 坐标。
@@ -724,8 +756,8 @@ fn draw_action_button(
         (false, _, false) => (p.hover, ink),
         (false, _, true) => (p.selected_inactive, ink),
     };
-    frame.rounded(rect, fill, RADIUS_ROW);
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+    frame.rounded(rect, RADIUS_ROW, fill);
+    let w = frame.measure(Font::ui(app.fonts.ui), text);
     let at = (center(rect).0 - w / 2.0).round();
     ui_text(frame, app, at, rect, text, color, rect);
 }
@@ -759,10 +791,10 @@ fn draw_button(
     on: bool,
 ) {
     if on {
-        frame.rect_clipped(rect, p.selected_inactive, RADIUS_ROW, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.selected_inactive, clip);
     }
     if hovered {
-        frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.hover, clip);
     }
 }
 
@@ -776,7 +808,7 @@ fn draw_toggle(
     on: bool,
 ) {
     if on {
-        frame.rect_clipped(rect, p.selected, RADIUS_ROW, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.selected, clip);
     }
     draw_button(frame, p, rect, clip, hovered, false);
 }
@@ -799,11 +831,11 @@ fn draw_search_options(
 
         match i {
             0 => {
-                let w = frame.measure(FontKind::Ui, app.fonts.ui_small, "Aa");
+                let w = frame.measure(Font::ui(app.fonts.ui_small), "Aa");
                 ui_text_small(frame, app, cx - w / 2.0, rect, "Aa", color, clip);
             }
             1 => {
-                let w = frame.measure(FontKind::Ui, app.fonts.ui_small, "ab");
+                let w = frame.measure(Font::ui(app.fonts.ui_small), "ab");
                 let raised = Rect::new(rect.x, rect.y - 2.0, rect.w, rect.h);
                 ui_text_small(frame, app, cx - w / 2.0, raised, "ab", color, clip);
                 icons::word_bracket(frame, (cx, cy + 6.0), 13.0, color, clip);
@@ -823,7 +855,7 @@ fn draw_search_options(
 fn draw_card(frame: &mut Frame<'_>, p: &Palette, rect: Rect, radius: f32, background: Color) {
     debug_assert!(background.a >= 1.0, "卡片的底色要不透明");
     draw_card_frame(frame, p, rect, radius);
-    frame.rounded(rect, background, radius);
+    frame.rounded(rect, radius, background);
 }
 
 /// 绘制卡片外侧的阴影与细边框（`rect` 内部不绘制）；细边框画在一圈卡片底色上，不透出下方的
@@ -832,8 +864,8 @@ fn draw_card_frame(frame: &mut Frame<'_>, p: &Palette, rect: Rect, radius: f32) 
     let covered = frame.covered(rect, radius);
     frame.shadow(rect, radius, 16.0, 4.0, p.shadow, Some(covered));
     let edge = rect.inset(-1.0, -1.0);
-    frame.rect_except(edge, p.popup_bg, radius + 1.0, covered);
-    frame.rect_except(edge, p.popup_border, radius + 1.0, covered);
+    frame.rect_except(edge, radius + 1.0, p.popup_bg, covered);
+    frame.rect_except(edge, radius + 1.0, p.popup_border, covered);
 }
 
 /// 绘制浮在预览内容上的工具栏或卡片 `rect`（含细边框）：阴影、细边框和底色，裁剪到 `clip`；
@@ -842,10 +874,10 @@ fn draw_floating_bar(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect)
     frame.within(clip, |frame| {
         let covered = frame.covered(rect, RADIUS_POPUP);
         frame.shadow(rect, RADIUS_POPUP, 12.0, 4.0, p.shadow, Some(covered));
-        frame.rect_clipped(rect, p.popup_bg, RADIUS_POPUP, clip);
-        frame.rect_clipped(rect, p.popup_border, RADIUS_POPUP, clip);
+        frame.rect_clipped(rect, RADIUS_POPUP, p.popup_bg, clip);
+        frame.rect_clipped(rect, RADIUS_POPUP, p.popup_border, clip);
         let inner = rect.inset(1.0, 1.0);
-        frame.rect_clipped(inner, p.popup_bg, RADIUS_POPUP - 1.0, clip);
+        frame.rect_clipped(inner, RADIUS_POPUP - 1.0, p.popup_bg, clip);
     });
 }
 
@@ -862,7 +894,7 @@ const CARD_SHADOW: f32 = 24.0;
 fn blend_card(
     frame: &mut Frame<'_>,
     p: &Palette,
-    (rect, shot): (Rect, &winc_render::Snapshot),
+    (rect, shot): (Rect, &cpui_render::Capture),
     radius: f32,
     (fade, scale): (f32, f32),
 ) {
@@ -875,7 +907,7 @@ fn blend_card(
     frame.with_opacity(fade, |frame| {
         draw_card_frame(frame, p, shown, radius * scale)
     });
-    frame.blend_snapshot(shot, radius, fade, scale);
+    frame.blend(shot, radius, fade, scale);
 }
 
 /// 绘制一张带出现、消失动画的浮层卡片（`⌘P` 面板、输入条）。
@@ -901,7 +933,7 @@ fn draw_moving_card(
         .unwrap_or_default();
     let Some((true, clock)) = app.card_fx(card).motion else {
         draw(app, frame);
-        frame.snapshot_into(rect, &mut shot);
+        frame.capture_into(rect, &mut shot);
         app.card_fx(card).shot = Some((rect, shot));
         return;
     };
@@ -916,10 +948,10 @@ fn draw_moving_card(
         blend_card(frame, p, (*at, old), card.radius(), curve);
     }
     let mut base = app.card_fx(card).base.take().unwrap_or_default();
-    frame.snapshot_into(rect.inset(-CARD_SHADOW, -CARD_SHADOW), &mut base);
+    frame.capture_into(rect.inset(-CARD_SHADOW, -CARD_SHADOW), &mut base);
     draw(app, frame);
-    frame.snapshot_into(rect, &mut shot);
-    frame.restore_tinted(&base, Color::hex(0).alpha(0.0));
+    frame.capture_into(rect, &mut shot);
+    frame.restore(&base, Color::hex(0).alpha(0.0));
     let curve = dialog_curve(true, clock);
     blend_card(frame, app.palette, (rect, &shot), card.radius(), curve);
     let fx = app.card_fx(card);
@@ -969,7 +1001,7 @@ fn draw_scrollbar(
 /// 滑块宽度保持一致。
 fn draw_thumb(frame: &mut Frame<'_>, p: &Palette, thumb: Rect, look: ThumbLook) {
     if look.opacity > 0.0 {
-        frame.rounded(thumb, look.color(p.scrollbar, p.scrollbar_active), 3.0);
+        frame.rounded(thumb, 3.0, look.color(p.scrollbar, p.scrollbar_active));
     }
 }
 
@@ -992,7 +1024,7 @@ fn ellipsize<'a>(frame: &mut Frame<'_>, text: &'a str, size: f32, max: f32) -> C
 /// 写成 `…/a/src`；这一段也放不下时截去它的末尾。其余情况从中间截短。
 fn fit_parent<'a>(frame: &mut Frame<'_>, parent: &'a Parent, size: f32, max: f32) -> Cow<'a, str> {
     let text = parent.text.as_str();
-    if frame.measure(FontKind::Ui, size, text) <= max {
+    if frame.measure(Font::ui(size), text) <= max {
         return Cow::Borrowed(text);
     }
     let Some(keep) = parent.keep.filter(|&keep| keep > 0) else {
@@ -1001,7 +1033,7 @@ fn fit_parent<'a>(frame: &mut Frame<'_>, parent: &'a Parent, size: f32, max: f32
     let cuts = text.match_indices(['/', '\\']).map(|(i, _)| i);
     for cut in cuts.take_while(|&cut| cut < keep) {
         let short = format!("…{}", &text[cut..]);
-        if frame.measure(FontKind::Ui, size, &short) <= max {
+        if frame.measure(Font::ui(size), &short) <= max {
             return Cow::Owned(short);
         }
     }
@@ -1013,16 +1045,16 @@ fn fit_parent<'a>(frame: &mut Frame<'_>, parent: &'a Parent, size: f32, max: f32
 ///
 /// 先截短目录部分（从中间截），文件名保持完整；文件名本身放不下时对整个路径从中间截短。
 fn shorten_path<'a>(frame: &mut Frame<'_>, path: &'a str, size: f32, max: f32) -> Cow<'a, str> {
-    if frame.measure(FontKind::Ui, size, path) <= max {
+    if frame.measure(Font::ui(size), path) <= max {
         return Cow::Borrowed(path);
     }
     let Some(slash) = path.rfind('/') else {
         return ellipsize(frame, path, size, max);
     };
     let (dir, file) = path.split_at(slash + 1);
-    let room = max - frame.measure(FontKind::Ui, size, file);
+    let room = max - frame.measure(Font::ui(size), file);
     // 目录部分至少需要显示开头两个字和「…」；可用宽度更小时无法辨认目录，改为截短整个路径。
-    if room < frame.measure(FontKind::Ui, size, "/…") * 2.0 {
+    if room < frame.measure(Font::ui(size), "/…") * 2.0 {
         return ellipsize(frame, path, size, max);
     }
     Cow::Owned(format!("{}{file}", ellipsize(frame, dir, size, room)))
@@ -1031,8 +1063,9 @@ fn shorten_path<'a>(frame: &mut Frame<'_>, path: &'a str, size: f32, max: f32) -
 /// 把文本截短到 `max`（逻辑像素）宽以内并接上「…」；[`truncate_end`] 与 [`ellipsize`] 的实现。
 ///
 /// `middle` 为真时从中间截短（开头比结尾多留一个字素），否则从末尾截短。截短按字素进行
-/// （带肤色修饰或组合字符的 emoji、带声调的字母各算一个字素），不会切开字素。每个字素只测量
-/// 一次宽度，结果只拼接一次。从中间截短时至少截掉一个字素，避免原文完整却多出「…」。
+/// （带肤色修饰或组合字符的 emoji、带声调的字母各算一个字素），不会切开字素。先按各字素的宽度
+/// 之和估出保留几个，再量整段结果校正：整段排版有字距调整，与逐个相加略有出入。从中间截短时
+/// 至少截掉一个字素，避免原文完整却多出「…」。
 fn fit<'a>(
     frame: &mut Frame<'_>,
     text: &'a str,
@@ -1040,13 +1073,13 @@ fn fit<'a>(
     max: f32,
     middle: bool,
 ) -> Cow<'a, str> {
-    if text.is_empty() || frame.measure(FontKind::Ui, size, text) <= max {
+    if text.is_empty() || frame.measure(Font::ui(size), text) <= max {
         return Cow::Borrowed(text);
     }
     // 每个字素在 `text` 里的字节偏移和宽度。
     let chars: Vec<(usize, f32)> = text
         .grapheme_indices(true)
-        .map(|(i, g)| (i, frame.measure(FontKind::Ui, size, g)))
+        .map(|(i, g)| (i, frame.measure(Font::ui(size), g)))
         .collect();
     let n = chars.len();
     // 保留 `keep` 个字素时，开头留 `keep - keep / 2` 个、结尾留 `keep / 2` 个；`keep` 每增加 1，
@@ -1057,23 +1090,35 @@ fn fit<'a>(
         (false, _) => chars[keep].1,
     };
     let limit = if middle { n - 1 } else { n };
-    let (mut keep, mut width) = (0, frame.measure(FontKind::Ui, size, "…"));
+    let (mut keep, mut width) = (0, frame.measure(Font::ui(size), "…"));
     while keep < limit && width + added(keep) <= max {
         width += added(keep);
         keep += 1;
     }
     let byte = |i: usize| chars.get(i).map_or(text.len(), |c| c.0);
-    let (head, tail) = if middle {
-        (keep - keep / 2, keep / 2)
-    } else {
-        (keep, 0)
+    let shortened = |keep: usize| {
+        let (head, tail) = if middle {
+            (keep - keep / 2, keep / 2)
+        } else {
+            (keep, 0)
+        };
+        // 「…」前面不留空白（截在两个词之间时开头会以空格结尾）。
+        let (head, tail) = (text[..byte(head)].trim_end(), &text[byte(n - tail)..]);
+        format!("{head}…{tail}")
     };
-    // 「…」前面不留空白（截在两个词之间时开头会以空格结尾）。
-    Cow::Owned(format!(
-        "{}…{}",
-        text[..byte(head)].trim_end(),
-        &text[byte(n - tail)..]
-    ))
+    let mut out = shortened(keep);
+    while keep > 0 && frame.measure(Font::ui(size), &out) > max {
+        keep -= 1;
+        out = shortened(keep);
+    }
+    while keep < limit {
+        let longer = shortened(keep + 1);
+        if frame.measure(Font::ui(size), &longer) > max {
+            break;
+        }
+        (keep, out) = (keep + 1, longer);
+    }
+    Cow::Owned(out)
 }
 
 /// 绘制横向渐隐：从 `rect` 一端的 `color` 渐变到另一端的透明。
@@ -1102,10 +1147,21 @@ fn fade_up(frame: &mut Frame<'_>, rect: Rect, color: Color) {
     }
 }
 
+/// 绘制纵向渐隐：从 `rect` 上端的 `color` 渐变到下端的透明，与 [`fade_up`] 方向相反。
+fn fade_down(frame: &mut Frame<'_>, rect: Rect, color: Color) {
+    let steps = rect.h.round().max(1.0) as usize;
+
+    for i in 0..steps {
+        let t = 1.0 - (i as f32 + 0.5) / steps as f32;
+        let strip = Rect::new(rect.x, rect.y + i as f32, rect.w, 1.0);
+        frame.rect(strip, color.alpha(color.a * t * t));
+    }
+}
+
 /// 在 `row` 的右端垂直居中绘制快捷键的圆角键帽。
 fn draw_keycap(app: &App, frame: &mut Frame<'_>, row: Rect, key: &str, clip: Rect) {
     let p = app.palette;
-    let key_w = frame.measure(FontKind::Ui, app.fonts.ui_small, key);
+    let key_w = frame.measure(Font::ui(app.fonts.ui_small), key);
     let h = 20.0;
     let chip = Rect::new(
         row.right() - key_w - 14.0,
@@ -1113,7 +1169,7 @@ fn draw_keycap(app: &App, frame: &mut Frame<'_>, row: Rect, key: &str, clip: Rec
         key_w + 14.0,
         h,
     );
-    frame.rect_clipped(chip, p.selected_inactive, RADIUS_ROW, clip);
+    frame.rect_clipped(chip, RADIUS_ROW, p.selected_inactive, clip);
     let size = app.fonts.ui_small;
     caps_label(
         frame,

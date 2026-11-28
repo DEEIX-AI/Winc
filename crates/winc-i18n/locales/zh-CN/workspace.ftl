@@ -2,6 +2,7 @@
 
 workspace-open-folder-first = 请先打开一个目录
 workspace-no-open-file = 未打开文件
+workspace-file-outside-folders = 当前文件不在打开的目录中
 workspace-list-separator = 、
 workspace-quoted-name = 「{ $name }」
 
@@ -231,6 +232,7 @@ workspace-remote-installing = 正在向 { $host } 安装服务程序…
 workspace-remote-starting = 正在启动 { $host } 上的服务程序…
 workspace-remote-canceled = 已取消连接
 workspace-remote-failed = 无法连接 { $host }：{ $error }
+workspace-remote-not-project = 「{ $name }」不是目录或项目文件
 workspace-remote-no-server = 安装包中缺少远端服务程序，请重新安装 Winc
 workspace-remote-unsupported-system = 不支持该主机的系统（{ $system }）
 workspace-remote-disabled = 无法打开：SSH 远程模块未启用
@@ -391,6 +393,7 @@ workspace-recent-project-tag = 项目
 workspace-recent-project = { $name }（项目）
 workspace-project-file-opened = 「{ $name }」是项目文件
 workspace-notice-open-project = 打开项目
+workspace-notice-trust-repository = 信任此仓库…
 workspace-title-unsaved = { $name }（未保存）
 workspace-project-read-failed = 无法打开项目「{ $name }」：{ $error }
 workspace-project-invalid = 「{ $name }」不是有效的项目文件

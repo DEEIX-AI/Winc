@@ -7,12 +7,12 @@
 use std::path::{Path, PathBuf};
 use winc_editor::encoding::CHOICES;
 
+#[cfg(any(target_os = "macos", test))]
+use cpui_render::Snapshot;
 use winc_core::{Indent, LineEnding};
 use winc_editor::format::{Auto, PRESETS, Task};
 use winc_editor::{DocumentId, EntryKind};
 use winc_i18n::t;
-#[cfg(any(target_os = "macos", test))]
-use winc_render::Image;
 
 use super::*;
 use crate::app::git::location_picker::Place;
@@ -21,6 +21,7 @@ use crate::keymap::{self, Action, Context, Stroke};
 use crate::layout::hit;
 
 mod labels;
+mod menu_icon;
 mod menus;
 mod popup;
 mod present;
@@ -28,12 +29,12 @@ mod run;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use menu_icon::MenuIcon;
 pub use menus::*;
 pub(crate) use popup::{
     CHECK_COLUMN, ICON_COLUMN, POPUP_PAD, POPUP_TEXT_X, PopupLevel, PopupMenu, PopupRow,
     folder_level,
 };
-pub(crate) use present::MenuIcon;
 
 /// 菜单项上显示的文字：标题、标题下方的一行小字，以及悬停提示。
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +86,8 @@ pub enum MenuButton {
     TreeMore,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。
     TabList,
+    /// 编辑区有终端时标签栏的「+」：新建文件或终端。
+    NewTab,
     /// 终端面板标签栏上的运行配置名。
     RunConfigs,
     /// 终端面板标签栏上「+」右边选 shell 的按钮。
@@ -127,6 +130,8 @@ pub enum MenuCommand {
     FindInFolder,
     CopyPath,
     CopyRelativePath,
+    /// 将文件树中选中的文件复制为 Markdown 提示词。
+    CopyAsPrompt,
     /// 编辑区：复制 `路径:行`。
     CopyReference,
     Rename,
@@ -213,6 +218,8 @@ pub enum MenuCommand {
     LocationRemove,
     /// 位置选择器的操作菜单：清理目录已不存在的工作树。
     LocationPrune,
+    /// 位置选择器的操作菜单：把仓库从列表中移除（不删除文件），再次手动添加前不再列出。
+    LocationForget,
     Cut,
     Copy,
     Paste,
@@ -231,6 +238,12 @@ pub enum MenuCommand {
     Format,
     FormatSelection,
     Fix,
+    /// 编辑区菜单「比较」中的一项：把整篇文档与剪贴板中的文字比较。
+    CompareWithClipboard,
+    /// 同 [`MenuCommand::CompareWithClipboard`]，有选区时比较选中部分。
+    CompareSelectionWithClipboard,
+    /// 编辑区菜单「比较」中的一项：把文档与磁盘上已保存的版本比较。
+    CompareWithSaved,
     /// 设置中「添加语言…」菜单的一项，参数为语言在 `winc_syntax::languages()` 中的序号（从 0 起）。
     Language(usize),
     /// 设置中「排除的语言」菜单的一项：切换某种语言保存时是否跳过格式化和修复，
@@ -255,6 +268,11 @@ pub enum MenuCommand {
     /// 设置中「拉取方式」菜单的一项，参数为 [`PullMode::ALL`](winc_config::PullMode::ALL) 中的
     /// 序号（从 0 起）。
     PullMode(usize),
+    /// 设置中「接口协议」菜单的一项，参数为 [`AiProtocol::ALL`](winc_config::AiProtocol::ALL)
+    /// 中的序号（从 0 起）。
+    AiProtocol(usize),
+    /// 设置页「日志位置」菜单中的第几项（`winc_config::LogPlacement::ALL` 的下标）。
+    LogPlacement(usize),
     /// 设置中「拖入目录」菜单的一项，参数为
     /// [`FolderDrop::ALL`](winc_config::FolderDrop::ALL) 中的序号（从 0 起）。
     DropFolder(usize),
@@ -263,6 +281,9 @@ pub enum MenuCommand {
     /// 设置中「自动保存」菜单的一项，参数为
     /// [`AutoSave::ALL`](winc_config::AutoSave::ALL) 中的序号（从 0 起）。
     AutoSave(usize),
+    /// 设置中「光标样式」菜单的一项，参数为
+    /// [`CursorStyle::ALL`](winc_config::CursorStyle::ALL) 中的序号（从 0 起）。
+    CursorStyle(usize),
     /// 设置中「光标移动」菜单的一项，参数为
     /// [`SmoothCaret::ALL`](winc_config::SmoothCaret::ALL) 中的序号（从 0 起）。
     SmoothCaret(usize),
@@ -290,9 +311,12 @@ pub enum MenuCommand {
     /// 设置中「Meta 键」菜单的一项，参数为
     /// [`OptionAsMeta::ALL`](winc_config::OptionAsMeta::ALL) 中的序号（从 0 起）。
     OptionAsMeta(usize),
+    /// 设置中终端「右键单击」菜单的一项，参数为
+    /// [`TerminalRightClick::ALL`](winc_config::TerminalRightClick::ALL) 中的序号（从 0 起）。
+    RightClick(usize),
     /// 设置中字体菜单的「系统默认」（终端字体为「跟随编辑器」）。
     FontDefault,
-    /// 设置中字体菜单的一项，参数为 [`winc_render::installed_fonts`] 中的序号（从 0 起）。
+    /// 设置中字体菜单的一项，参数为 [`cpui_render::installed_fonts`] 中的序号（从 0 起）。
     Font(usize),
     /// 设置中字体菜单「后备字体」中的一项，参数同 [`MenuCommand::Font`]：加入或移出字体列表。
     FallbackFont(usize),
@@ -449,6 +473,8 @@ pub enum MenuCommand {
     LogGoTo,
     /// 日志里的提交：与输入的提交号、分支或标签比较。
     LogCompareRevision,
+    /// 提交历史里的提交：在日志中选中它。
+    LogShowInLog,
     /// 编辑区：开关逐行追溯（开着时打勾）。
     ToggleBlame,
     /// 提交视图「⋯」：储藏改动（输入说明）。
@@ -524,12 +550,23 @@ pub enum MenuCommand {
     /// 把终端面板停靠到另一边。
     TerminalDock,
     NewTerminal,
+    /// 标签栏「+」菜单的「新建文件」：在当前窗格新建未命名文件。
+    NewUntitled,
+    /// 标签栏「+」菜单的「新建终端」：在当前窗格新建终端，使用默认 shell。
+    NewEditorTerminal,
+    /// 标签栏「+」菜单中的一个 shell（`App::terminal_shell_list` 中的序号）：用它在当前窗格
+    /// 新建终端。
+    NewEditorTerminalShell(usize),
     /// 终端：拆分标签，新终端在当前终端的目录里启动。
     SplitTerminal,
     /// 终端：向右分栏（面板在下方时）。
     MoveTerminalRight,
     /// 终端：向下分栏（面板在右侧时）。
     MoveTerminalDown,
+    /// 把终端标签移到编辑区。
+    MoveTerminalToEditor,
+    /// 把编辑区里的终端标签移回终端面板。
+    MoveTerminalToPanel,
     /// 终端标签：改名字。
     RenameTerminal,
     CloseTerminal,
@@ -591,6 +628,7 @@ impl MenuCommand {
             MenuCommand::FindInFolder => t!("cmd-find-in-folder"),
             MenuCommand::CopyPath => t!("cmd-copy-path"),
             MenuCommand::CopyRelativePath => t!("cmd-copy-relative-path"),
+            MenuCommand::CopyAsPrompt => t!("menu-copy-as-prompt"),
             MenuCommand::CopyReference => t!("cmd-copy-reference"),
             MenuCommand::Rename => t!("cmd-rename-file"),
             MenuCommand::Delete => t!("cmd-delete-file"),
@@ -628,6 +666,7 @@ impl MenuCommand {
             | MenuCommand::LatexProblem(_)
             | MenuCommand::RunSelect(_)
             | MenuCommand::NewTerminalShell(_)
+            | MenuCommand::NewEditorTerminalShell(_)
             | MenuCommand::DefaultShell(Some(_))
             | MenuCommand::Zoom(_)
             | MenuCommand::TerminalDock
@@ -641,6 +680,9 @@ impl MenuCommand {
             MenuCommand::OptionAsMeta(i) => winc_config::OptionAsMeta::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::option_as_meta_label(choice)),
+            MenuCommand::RightClick(i) => winc_config::TerminalRightClick::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::right_click_label(choice)),
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
             MenuCommand::LocationThisWindow => t!("git-location-this-window"),
             MenuCommand::LocationNewWindow => t!("git-location-new-window"),
@@ -649,6 +691,7 @@ impl MenuCommand {
             // 文字来自当时的分支和位置（`App::menu_label`）。
             MenuCommand::StatusPlace(_) => "",
             MenuCommand::LocationPrune => t!("git-location-prune"),
+            MenuCommand::LocationForget => t!("git-location-forget"),
             MenuCommand::GitFetch => t!("menu-git-fetch"),
             MenuCommand::GitPull => t!("menu-git-pull"),
             MenuCommand::GitPush => t!("menu-git-push"),
@@ -691,6 +734,7 @@ impl MenuCommand {
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogGoTo => t!("menu-log-go-to"),
             MenuCommand::LogCompareRevision => t!("menu-log-compare-revision"),
+            MenuCommand::LogShowInLog => t!("menu-log-show-in-log"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
             MenuCommand::LogCopyPatch => t!("menu-log-copy-patch"),
             MenuCommand::LogCompareWithLocal => t!("menu-log-compare-with-local"),
@@ -733,9 +777,13 @@ impl MenuCommand {
             MenuCommand::TerminalClear => t!("menu-terminal-clear"),
             MenuCommand::TerminalMaximize => t!("menu-terminal-maximize"),
             MenuCommand::NewTerminal => t!("cmd-new-terminal"),
+            MenuCommand::NewUntitled => t!("cmd-new-file"),
+            MenuCommand::NewEditorTerminal => t!("cmd-new-terminal"),
             MenuCommand::SplitTerminal => t!("cmd-split-terminal"),
             MenuCommand::MoveTerminalRight => t!("menu-terminal-move-right"),
             MenuCommand::MoveTerminalDown => t!("menu-terminal-move-down"),
+            MenuCommand::MoveTerminalToEditor => t!("terminal-move-to-editor"),
+            MenuCommand::MoveTerminalToPanel => t!("terminal-move-to-panel"),
             MenuCommand::RenameTerminal => t!("cmd-rename-file"),
             MenuCommand::CloseTerminal => t!("menu-terminal-close"),
             MenuCommand::CloseOtherTerminals => t!("cmd-close-other-tabs"),
@@ -788,6 +836,12 @@ impl MenuCommand {
             MenuCommand::PullMode(i) => winc_config::PullMode::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::pull_mode_label(choice)),
+            MenuCommand::AiProtocol(i) => {
+                (winc_config::AiProtocol::ALL.get(i)).map_or("", |&choice| choice.name())
+            }
+            MenuCommand::LogPlacement(i) => winc_config::LogPlacement::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::log_placement_label(choice)),
             MenuCommand::SearchStyle(i) => winc_config::SearchStyle::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::search_style_label(choice)),
@@ -797,6 +851,9 @@ impl MenuCommand {
             MenuCommand::AutoSave(i) => winc_config::AutoSave::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::auto_save_label(choice)),
+            MenuCommand::CursorStyle(i) => winc_config::CursorStyle::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::cursor_style_label(choice)),
             MenuCommand::SmoothCaret(i) => winc_config::SmoothCaret::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::smooth_caret_label(choice)),
@@ -807,7 +864,7 @@ impl MenuCommand {
                 .get(i)
                 .map_or("", |theme| theme.name()),
             MenuCommand::FontDefault => t!("settings-font-default"),
-            MenuCommand::Font(i) | MenuCommand::FallbackFont(i) => winc_render::installed_fonts()
+            MenuCommand::Font(i) | MenuCommand::FallbackFont(i) => cpui_render::installed_fonts()
                 .get(i)
                 .map_or("", |family| family.name.as_str()),
             MenuCommand::NewWindow => t!("cmd-new-window"),
@@ -850,6 +907,11 @@ impl MenuCommand {
             MenuCommand::RemoveBookmark => t!("menu-remove-bookmark"),
             MenuCommand::ListBookmarks => t!("cmd-list-bookmarks"),
             MenuCommand::Format => t!("cmd-format"),
+            MenuCommand::CompareWithClipboard => t!("menu-compare-with-clipboard"),
+            MenuCommand::CompareSelectionWithClipboard => {
+                t!("menu-compare-selection-with-clipboard")
+            }
+            MenuCommand::CompareWithSaved => t!("menu-compare-with-saved"),
             MenuCommand::FormatSelection => t!("cmd-format-selection"),
             MenuCommand::Fix => t!("cmd-fix"),
             MenuCommand::ToolAuto => t!("format-tool-auto"),
@@ -919,10 +981,14 @@ impl MenuCommand {
             MenuCommand::TerminalMaximize => Action::MaximizeTerminal,
             MenuCommand::TerminalDock => Action::ToggleTerminalPosition,
             MenuCommand::NewTerminal => Action::NewTerminal,
+            MenuCommand::NewUntitled => Action::NewFile,
+            MenuCommand::NewEditorTerminal => Action::NewEditorTerminal,
             MenuCommand::SplitTerminal => Action::SplitTerminal,
             MenuCommand::MoveTerminalRight | MenuCommand::MoveTerminalDown => {
                 Action::MoveTerminalToGroup
             }
+            MenuCommand::MoveTerminalToEditor => Action::MoveTerminalToEditor,
+            MenuCommand::MoveTerminalToPanel => Action::MoveTerminalToPanel,
             MenuCommand::RenameTerminal => Action::RenameTerminal,
             MenuCommand::CloseTerminal => Action::CloseTerminal,
             MenuCommand::GitRevertHunk => Action::GitRevertChange,
@@ -938,6 +1004,10 @@ impl MenuCommand {
             MenuCommand::Format => Action::Format,
             MenuCommand::FormatSelection => Action::FormatSelection,
             MenuCommand::Fix => Action::Fix,
+            MenuCommand::CompareWithClipboard | MenuCommand::CompareSelectionWithClipboard => {
+                Action::CompareWithClipboard
+            }
+            MenuCommand::CompareWithSaved => Action::CompareWithSaved,
             MenuCommand::NewFile => Action::NewFile,
             MenuCommand::IndentUsingSpaces => Action::IndentUsingSpaces,
             MenuCommand::IndentUsingTabs => Action::IndentUsingTabs,
@@ -1007,12 +1077,18 @@ pub enum MenuTarget {
     OpenWorktree,
     /// 设置的 Git 页中的「拉取方式」。
     PullMode,
+    /// 设置的 AI 页中的「接口协议」。
+    AiProtocol,
+    /// 设置页的「日志位置」。
+    LogPlacement,
     /// 设置的编辑器页中的「拖入目录」。
     DropFolder,
     /// 「在文件中查找」设置的选项菜单。
     SearchStyle,
     /// 设置的编辑器页中的「自动保存」。
     AutoSave,
+    /// 设置的编辑器页中的「光标样式」。
+    CursorStyle,
     /// 设置的编辑器页中的「光标移动」。
     SmoothCaret,
     /// 设置的外观页中的「界面缩放」。
@@ -1033,6 +1109,8 @@ pub enum MenuTarget {
     TerminalTabPosition,
     /// 设置的终端页中的「Meta 键」。
     OptionAsMeta,
+    /// 设置的终端页中的「右键单击」。
+    RightClick,
     /// 设置中字体一行的下拉按钮。
     Font(Setting),
     /// 设置的格式化页中一种语言的格式化（修复）工具。
@@ -1067,6 +1145,8 @@ pub enum MenuTarget {
     TreeTools,
     /// 标签栏最右端「⌄」弹出的标签列表。
     TabList,
+    /// 编辑区有终端时标签栏的「+」弹出的菜单：新建文件、新建终端。
+    NewTab,
     /// LaTeX 预览右上角的错误数弹出的错误列表。
     LatexProblems,
     /// 终端面板标签栏上的运行配置列表。
@@ -1097,12 +1177,14 @@ pub enum MenuTarget {
     LogPath,
     /// 日志里的一个提交（完整的提交号）。
     LogCommit(String),
+    /// 提交视图中提交历史里的一个提交（完整的提交号）。
+    HistoryCommit(String),
     /// 日志详情（或比较）里改动的一个文件：文件列表里的下标和文件的路径。
     LogFile(usize, PathBuf),
     /// 终端标签栏上的一个标签（编号）。
     TerminalTab(u16),
-    /// 终端面板里正在看的标签，以及右键点着的命令块（编号；没点在运行过的块上时为 `None`）。
-    Terminal(Option<u32>),
+    /// 右键点着的终端编号和命令块编号，菜单打开后不随当前焦点改变。
+    Terminal(u16, Option<u32>),
     /// 全局搜索结果里的一行：文件的路径和该文件中第几处匹配（`None` 是文件行），和
     /// `GlobalSearch::selected` 的记法相同。
     SearchResult(PathBuf, Option<usize>),

@@ -174,6 +174,7 @@ impl Screen<'_> {
         }
         self.draw_whitespace(frame, &row);
         let cells = self.draw_content(frame, &row, tokens);
+        self.draw_line_ending(frame, &row);
         self.draw_tail(frame, &row, cells, (folded_hits, long_hits));
         self.draw_carets(frame, &row, ime_cursor, caret);
     }
@@ -253,7 +254,7 @@ impl Screen<'_> {
             } else {
                 p.indent_guide
             };
-            frame.rect_clipped(guide, color, 0.0, self.text_rect);
+            frame.rect_clipped(guide, 0.0, color, self.text_rect);
         }
     }
 
@@ -283,7 +284,7 @@ impl Screen<'_> {
                     end.min(line_end),
                     &mut |top, x0, x1| {
                         let rect = Rect::new(x0, top + 1.0, (x1 - x0).max(2.0), lh - 2.0);
-                        frame.rect_clipped(rect, color, 3.0, text_rect);
+                        frame.rect_clipped(rect, 3.0, color, text_rect);
                     },
                 );
             }
@@ -304,7 +305,7 @@ impl Screen<'_> {
                 }
                 self.spans(row, start, end, &mut |top, x0, x1| {
                     let rect = Rect::new(x0, top + 1.0, x1 - x0, lh - 2.0);
-                    frame.rect_clipped(rect, p.occurrence, 3.0, text_rect);
+                    frame.rect_clipped(rect, 3.0, p.occurrence, text_rect);
                 });
             }
         }
@@ -313,7 +314,7 @@ impl Screen<'_> {
         for (a, b, color) in marked_occurrences(app, row.chars, shown) {
             self.spans(row, line_start + a, line_start + b, &mut |top, x0, x1| {
                 let rect = Rect::new(x0, top + 1.0, x1 - x0, lh - 2.0);
-                frame.rect_clipped(rect, color, 3.0, text_rect);
+                frame.rect_clipped(rect, 3.0, color, text_rect);
             });
         }
 
@@ -325,7 +326,7 @@ impl Screen<'_> {
         {
             let (part, x) = self.place(row, pos);
             let rect = Rect::new(x, row.y + part as f32 * lh + 1.0, self.cell, lh - 2.0);
-            frame.rect_clipped(rect, p.match_brace, 3.0, text_rect);
+            frame.rect_clipped(rect, 3.0, p.match_brace, text_rect);
         }
     }
 
@@ -448,6 +449,29 @@ impl Screen<'_> {
         }
     }
 
+    /// 按 `editor.renderLineEndings` 在行尾绘制本行的换行符：↓ 为 LF，↵ 为 CRLF，← 为 CR。
+    ///
+    /// 最后一行没有换行符；截断、折叠的行和按列对齐的表格中行尾另有内容，不绘制。
+    fn draw_line_ending(&self, frame: &mut Frame<'_>, row: &Row<'_>) {
+        let shown = self.app.config.render_line_endings == Some(true);
+        if !shown || !row.ends || row.truncated || row.collapsed || row.aligned.is_some() {
+            return;
+        }
+        let text = self.doc.text();
+        let end = text.line_span(row.line).end;
+        let mark = match text.substring(row.line_end, end).as_str() {
+            "\r\n" => "↵",
+            "\n" => "↓",
+            "\r" => "←",
+            _ => return,
+        };
+        let (part, x) = self.place(row, row.line_end);
+        let baseline = row.baseline + part as f32 * self.lh;
+        let color = self.app.palette.indent_guide_active;
+        let size = self.app.fonts.code;
+        frame.text(Font::mono(size), (x, baseline), mark, color, self.text_rect);
+    }
+
     /// 在最后一段之后绘制截断说明和「显示整行」，以及折叠行的小块；两者的点击区域分别记录到
     /// `long_hits`、`folded_hits`。
     ///
@@ -470,10 +494,8 @@ impl Screen<'_> {
             let size = app.fonts.ui_small;
             let note = t!("editor-line-truncated", count = MAX_LINE_CHARS);
             let x = frame.text(
-                FontKind::Ui,
-                size,
-                x,
-                tail_baseline,
+                Font::ui(size),
+                (x, tail_baseline),
                 &note,
                 p.text_dim,
                 text_rect,
@@ -484,7 +506,7 @@ impl Screen<'_> {
                 let color = if hovered { p.text } else { p.accent };
                 let show = t!("editor-line-show-whole");
                 let (from, clip) = (x + 8.0, text_rect);
-                let to = frame.text(FontKind::Ui, size, from, tail_baseline, show, color, clip);
+                let to = frame.text(Font::ui(size), (from, tail_baseline), show, color, clip);
                 long_hits.push((Rect::new(from, tail_y, to - from, self.lh), row.line));
             }
         }
@@ -500,10 +522,8 @@ impl Screen<'_> {
             let x = origin_x + (cells + 2) as f32 * self.cell;
             let size = app.fonts.ui_small;
             frame.text(
-                FontKind::Ui,
-                size,
-                x,
-                tail_baseline,
+                Font::ui(size),
+                (x, tail_baseline),
                 text,
                 p.text_dim,
                 text_rect,
@@ -514,14 +534,14 @@ impl Screen<'_> {
         if row.collapsed && row.ends {
             let x = (origin_x + (cells + 1) as f32 * self.cell).round();
             let chip = Rect::new(x, tail_y + 3.0, 22.0, app.fonts.line_height - 6.0);
-            frame.rect_clipped(chip, p.selected_inactive, 4.0, text_rect);
+            frame.rect_clipped(chip, 4.0, p.selected_inactive, text_rect);
             if app.pointer.hover == Hover::Folded(row.line) {
-                frame.rect_clipped(chip, p.hover, 4.0, text_rect);
+                frame.rect_clipped(chip, 4.0, p.hover, text_rect);
             }
             let cy = (chip.y + chip.h / 2.0 - 1.0).round();
             for i in 0..3 {
                 let dot = Rect::new(chip.x + 6.0 + i as f32 * 4.0, cy, 2.0, 2.0);
-                frame.rect_clipped(dot, p.text_muted, 1.0, text_rect);
+                frame.rect_clipped(dot, 1.0, p.text_muted, text_rect);
             }
             folded_hits.push((chip, row.line));
         }
@@ -553,16 +573,22 @@ impl Screen<'_> {
             && shown
         {
             *caret = CaretDraw::Static;
-            self.draw_vim_caret(frame, row, pos, shape);
+            self.draw_shaped_caret(frame, row, pos, shape);
             return;
         }
+        // 方块与下划线光标不播放移动动画；组字时改画竖线光标，标出输入法的光标位置。
+        let styled = (self.styled_caret).filter(|_| self.app.preedit_at(Focus::Editor).is_empty());
         if let Some(pos) =
             caret_pos(self.caret_col).filter(|_| row.line == self.caret_line && self.focused)
         {
             let (part, x) = self.place(row, pos);
             let shift = part as f32 * lh;
             let target = caret_rect(x, row.y + shift, lh);
-            if self.caret_animates() {
+            if let Some(shape) = styled {
+                *caret = CaretDraw::Static;
+                *ime_cursor = Some(target);
+                self.draw_shaped_caret(frame, row, pos, shape);
+            } else if self.caret_animates() {
                 // 滑动中的光标可能位于其他行上，行都画完之后再画，不会被后面绘制的行遮住。
                 *caret = CaretDraw::Sliding(CaretTarget::new(
                     self.doc.id,
@@ -589,12 +615,16 @@ impl Screen<'_> {
         {
             let (part, x) = self.place(row, pos);
             let bar = caret_rect(x, row.y + part as f32 * lh, lh);
-            frame.rect_clipped(bar, app.palette.caret, 1.0, text_rect);
+            frame.rect_clipped(bar, 1.0, app.palette.caret, text_rect);
         }
         // 其余光标与主光标同步闪烁；输入法组字只显示在主光标处。
         if self.focused {
             let carets = self.extra_carets.iter().filter(|c| c.0 == row.line);
             for pos in carets.filter_map(|&(_, col)| caret_pos(col)) {
+                if let Some(shape) = self.styled_caret {
+                    self.draw_shaped_caret(frame, row, pos, shape);
+                    continue;
+                }
                 let (part, x) = self.place(row, pos);
                 caret_bar(app, frame, x, row.y + part as f32 * lh, text_rect);
             }
@@ -621,11 +651,18 @@ impl Screen<'_> {
 }
 
 impl Screen<'_> {
-    /// 绘制 Vim 模式的光标：覆盖位置 `pos` 上字符的块、字符下方的横线，或空心的块。
+    /// 绘制 Vim 模式或 `editor.cursorStyle` 设定的光标：覆盖位置 `pos` 上字符的块、字符下方的
+    /// 横线，或空心的块。
     ///
     /// 块的宽度是字符的显示宽度（宽字符两格，行尾与空行一格）；实心块之下的字符用背景色重画。
     /// 实心块与横线随光标闪烁，空心块不闪烁。
-    fn draw_vim_caret(&self, frame: &mut Frame<'_>, row: &Row<'_>, pos: usize, shape: CaretShape) {
+    fn draw_shaped_caret(
+        &self,
+        frame: &mut Frame<'_>,
+        row: &Row<'_>,
+        pos: usize,
+        shape: CaretShape,
+    ) {
         let (app, lh, clip) = (self.app, self.lh, self.text_rect);
         let (part, x) = self.place(row, pos);
         let y = row.y + part as f32 * lh;

@@ -55,6 +55,10 @@ pub enum Setting {
     EditorFont,
     /// 编辑区字号。
     EditorSize,
+    /// 编辑区字重（`editor.fontWeight`）。
+    EditorFontWeight,
+    /// 编辑区的连字（`editor.fontLigatures`）。
+    EditorLigatures,
     /// Tab 宽度。
     TabWidth,
     /// 自动保存。
@@ -77,6 +81,8 @@ pub enum Setting {
     DragAndDrop,
     /// 粘滞滚动：滚动时在编辑区顶部钉住当前所在的函数、类和标题。
     StickyScroll,
+    /// 编辑区光标的形状（`editor.cursorStyle`）。
+    CursorStyle,
     /// 光标移动时滑到新位置的方式。
     SmoothCaret,
     /// Vim 模式。
@@ -92,6 +98,12 @@ pub enum Setting {
     VimKey(char),
     /// 自动换行。
     WordWrap,
+    /// 长行参考线所在的列（`editor.rulers`）。
+    EditorRulers,
+    /// 在行尾标出换行符（`editor.renderLineEndings`）。
+    RenderLineEndings,
+    /// CSV、TSV 按列对齐显示。
+    AlignColumns,
     /// 超长行显示全部内容（`wholeLines`）。
     WholeLines,
     /// 编辑区右侧的缩略图。
@@ -124,6 +136,8 @@ pub enum Setting {
     BackgroundOpacity,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
+    /// 切换、打开文件时在文件树中定位该文件。
+    AutoReveal,
     /// 预览标签：在文件树中单击文件时在预览标签中打开。
     PreviewOnClick,
     /// Markdown 预览联网加载网址的图片。
@@ -202,6 +216,8 @@ pub enum Setting {
     TerminalFontWeight,
     /// 终端中选中文字时自动复制。
     TerminalCopyOnSelect,
+    /// 在终端里右键单击的作用（`terminal.rightClick`）。
+    TerminalRightClick,
     /// 关闭仍有程序运行的终端标签前确认。
     TerminalConfirmClose,
     /// 用户未设置提示符时使用 winc 的提示符。
@@ -220,6 +236,8 @@ pub enum Setting {
     GitRememberCredentials,
     /// 光标所在行末尾的追溯提示（`git.inlineBlame`）。
     GitInlineBlame,
+    /// 提交视图中的提交历史（`git.commitHistory`）。
+    GitCommitHistory,
     /// 定时在后台获取（`git.autoFetch`）。
     GitAutoFetch,
     /// 提交视图的更改列表按目录排成树；记在状态文件里，与「⋯」菜单中的是同一个开关。
@@ -231,6 +249,10 @@ pub enum Setting {
     GitCombinedDiff,
     /// 点击工作树时在哪个窗口打开它（`git.openWorktree`）。
     GitOpenWorktree,
+    /// 日志和文件历史显示在 Git 面板中还是编辑区的标签中（`git.logPlacement`）。
+    GitLogPlacement,
+    /// 在打开的目录下查找仓库的层数（`git.repositoryScanDepth`）。
+    GitScanDepth,
     /// 拉取、同步时合并还是变基（`git.pull`）。
     GitPullMode,
     /// 把目录拖进已打开目录的窗口时怎样处理（`dropFolder`）。
@@ -239,6 +261,18 @@ pub enum Setting {
     FindInFiles,
     /// `git` 程序的路径（`git.path`）；未设置时在 `PATH` 里查找。
     GitPath,
+    /// 是否在提交视图中用模型生成提交信息（`git.generateCommitMessage`）。
+    GitGenerateCommitMessage,
+    /// 模型服务的地址（`ai.baseUrl`）；未设置时使用协议的官方地址。
+    AiBaseUrl,
+    /// 模型服务的密钥（`ai.apiKey`）。
+    AiApiKey,
+    /// 模型服务的接口协议（`ai.protocol`）。
+    AiProtocol,
+    /// 调用的模型（`ai.model`）；未设置时无法调用模型。
+    AiModel,
+    /// 等待模型响应的最长时间（`ai.timeout`，秒）。
+    AiTimeout,
     /// 终端模块的开关。
     TerminalModule,
     /// 远程模块的开关。
@@ -247,6 +281,10 @@ pub enum Setting {
     ExplorerMenu,
     /// 把 Winc 列为各文件类型的候选程序（Windows 上由安装程序装在当前用户之下时）。
     FileAssociations,
+    /// 把配置文件导出为一个文件。
+    ExportSettings,
+    /// 用导出的文件替换当前的配置。
+    ImportSettings,
     /// 键位方案；只在搜索结果中作为一行列出，「快捷键」页顶部另有一份。
     Keymap,
     /// 搜索结果中名称或按键与搜索内容相符的命令：点击后在「快捷键」页中查看。
@@ -310,13 +348,18 @@ impl Setting {
             S::BackgroundImage | S::BackgroundFit | S::BackgroundOpacity => {
                 SettingsPage::Appearance
             }
-            S::EditorFont | S::EditorSize | S::TabWidth | S::LineNumbers | S::WordWrap => {
+            S::EditorFont | S::EditorSize | S::EditorFontWeight | S::TabWidth => {
                 SettingsPage::Editor
             }
-            S::Minimap | S::StickyScroll | S::RenderWhitespace | S::WholeLines => {
+            S::EditorLigatures => SettingsPage::Editor,
+            S::LineNumbers | S::WordWrap | S::EditorRulers => SettingsPage::Editor,
+            S::AlignColumns => SettingsPage::Editor,
+            S::Minimap | S::StickyScroll | S::RenderWhitespace | S::RenderLineEndings => {
                 SettingsPage::Editor
             }
-            S::SmoothCaret | S::DragAndDrop | S::FullTabNames => SettingsPage::Editor,
+            S::WholeLines | S::CursorStyle | S::SmoothCaret => SettingsPage::Editor,
+            S::DragAndDrop => SettingsPage::Editor,
+            S::FullTabNames => SettingsPage::Files,
             S::DefaultLanguage | S::DetectLanguageOnPaste | S::VimMode | S::VimClipboard => {
                 SettingsPage::Editor
             }
@@ -324,6 +367,7 @@ impl Setting {
             S::PreviewOnClick | S::DropFolder | S::CompactFolders | S::Outline | S::FindInFiles => {
                 SettingsPage::Files
             }
+            S::AutoReveal => SettingsPage::Files,
             S::MarkdownFont | S::MarkdownSize | S::TextWidth | S::MarkdownLineNumbers => {
                 SettingsPage::Markdown
             }
@@ -341,22 +385,30 @@ impl Setting {
             S::TerminalSize | S::TerminalFontWeight | S::TerminalCopyOnSelect => {
                 SettingsPage::Terminal
             }
+            S::TerminalRightClick => SettingsPage::Terminal,
             S::TerminalConfirmClose | S::TerminalPrompt | S::TerminalShellIntegration => {
                 SettingsPage::Terminal
             }
             S::TerminalApplicationPriority | S::TerminalOptionAsMeta => SettingsPage::Terminal,
             S::GitPath
             | S::GitOpenWorktree
+            | S::GitLogPlacement
             | S::GitStagingArea
             | S::GitTree
             | S::DiffInline
             | S::DiffCollapse => SettingsPage::Git,
-            S::GitCombinedDiff => SettingsPage::Git,
+            S::GitCombinedDiff | S::GitScanDepth => SettingsPage::Git,
             S::GitInlineBlame | S::GitPullMode | S::GitConfirmPush | S::GitAutoFetch => {
                 SettingsPage::Git
             }
+            S::GitCommitHistory => SettingsPage::Git,
             S::GitRememberCredentials => SettingsPage::Git,
+            S::GitGenerateCommitMessage => SettingsPage::Git,
+            S::AiBaseUrl | S::AiApiKey | S::AiProtocol | S::AiModel | S::AiTimeout => {
+                SettingsPage::Ai
+            }
             S::ExplorerMenu | S::FileAssociations => SettingsPage::General,
+            S::ExportSettings | S::ImportSettings => SettingsPage::General,
             S::GitModule | S::TerminalModule | S::RemoteModule => SettingsPage::Modules,
             S::Version | S::Updates | S::ReleaseNotes | S::Website | S::Repository => {
                 SettingsPage::About
@@ -377,6 +429,8 @@ impl Setting {
             S::Language => "language",
             S::EditorFont => "editor.font",
             S::EditorSize => "editor.size",
+            S::EditorFontWeight => "editor.fontWeight",
+            S::EditorLigatures => "editor.fontLigatures",
             S::TabWidth => "editor.tabWidth",
             S::AutoSave => "editor.autoSave",
             S::HotExit => "editor.hotExit",
@@ -388,10 +442,14 @@ impl Setting {
             S::DetectLanguageOnPaste => "editor.detectLanguageOnPaste",
             S::DragAndDrop => "editor.dragAndDrop",
             S::StickyScroll => "editor.stickyScroll",
+            S::CursorStyle => "editor.cursorStyle",
             S::SmoothCaret => "editor.smoothCaretMovement",
             S::WordWrap => "editor.wordWrap",
+            S::EditorRulers => "editor.rulers",
+            S::AlignColumns => "editor.alignColumns",
             S::WholeLines => "editor.wholeLines",
             S::Minimap => "editor.minimap",
+            S::RenderLineEndings => "editor.renderLineEndings",
             S::Outline => "editor.outline",
             S::LineNumbers => "editor.lineNumbers",
             S::DiffInline => "editor.diffInline",
@@ -417,6 +475,7 @@ impl Setting {
             S::BackgroundFit => "ui.backgroundFit",
             S::BackgroundOpacity => "ui.backgroundOpacity",
             S::CompactFolders => "tree.compactFolders",
+            S::AutoReveal => "tree.autoReveal",
             S::PreviewOnClick => "tree.previewOnClick",
             S::RemoteImages => "markdown.remoteImages",
             S::TextWidth => "markdown.textWidth",
@@ -440,6 +499,7 @@ impl Setting {
             S::TerminalSize => "terminal.size",
             S::TerminalFontWeight => "terminal.fontWeight",
             S::TerminalCopyOnSelect => "terminal.copyOnSelect",
+            S::TerminalRightClick => "terminal.rightClick",
             S::TerminalConfirmClose => "terminal.confirmClose",
             S::TerminalPrompt => "terminal.prompt",
             S::TerminalShellIntegration => "terminal.shellIntegration",
@@ -449,12 +509,21 @@ impl Setting {
             S::GitConfirmPush => "git.confirmPush",
             S::GitRememberCredentials => "git.rememberCredentials",
             S::GitInlineBlame => "git.inlineBlame",
+            S::GitCommitHistory => "git.commitHistory",
             S::GitAutoFetch => "git.autoFetch",
             S::GitStagingArea => "git.stagingArea",
             S::GitCombinedDiff => "git.combinedDiff",
             S::GitOpenWorktree => "git.openWorktree",
+            S::GitLogPlacement => "git.logPlacement",
+            S::GitScanDepth => "git.repositoryScanDepth",
             S::GitPullMode => "git.pull",
             S::GitPath => "git.path",
+            S::GitGenerateCommitMessage => "git.generateCommitMessage",
+            S::AiBaseUrl => "ai.baseUrl",
+            S::AiApiKey => "ai.apiKey",
+            S::AiProtocol => "ai.protocol",
+            S::AiModel => "ai.model",
+            S::AiTimeout => "ai.timeout",
             S::TerminalModule => "terminal.enabled",
             S::RemoteModule => "remote.enabled",
             S::GitTree | S::FormatCommand(_) | S::FixCommand(_) | S::AddLanguage => return None,
@@ -464,6 +533,7 @@ impl Setting {
             S::Website | S::Repository | S::Community | S::License | S::KeySearch => return None,
             S::Keymap | S::KeyMatches => return None,
             S::ExplorerMenu | S::FileAssociations => return None,
+            S::ExportSettings | S::ImportSettings => return None,
         })
     }
 
@@ -481,6 +551,8 @@ impl Setting {
             Setting::SystemTitleBar => t!("settings-system-title-bar"),
             Setting::EditorFont => t!("settings-editor-font"),
             Setting::EditorSize => t!("settings-editor-size"),
+            Setting::EditorFontWeight => t!("settings-editor-font-weight"),
+            Setting::EditorLigatures => t!("settings-editor-ligatures"),
             Setting::TabWidth => t!("settings-tab-width"),
             Setting::AutoSave => t!("settings-auto-save"),
             Setting::HotExit => t!("settings-hot-exit"),
@@ -494,18 +566,22 @@ impl Setting {
             Setting::DropFolder => t!("settings-drop-folder"),
             Setting::FindInFiles => t!("settings-find-in-files"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
+            Setting::CursorStyle => t!("settings-cursor-style"),
             Setting::SmoothCaret => t!("settings-smooth-caret"),
             Setting::VimMode => t!("settings-vim-mode"),
             Setting::VimClipboard => t!("settings-vim-clipboard"),
             Setting::VimRelativeNumber => t!("settings-vim-relative-number"),
             Setting::VimYankHighlight => t!("settings-vim-yank-highlight"),
             Setting::WordWrap => t!("settings-word-wrap"),
+            Setting::AlignColumns => t!("settings-align-columns"),
             Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
+            Setting::RenderLineEndings => t!("settings-render-line-endings"),
             Setting::LineNumbers => t!("settings-line-numbers"),
             Setting::DiffInline => t!("settings-diff-inline"),
             Setting::DiffCollapse => t!("settings-diff-collapse"),
             Setting::RenderWhitespace => t!("settings-render-whitespace"),
+            Setting::EditorRulers => t!("settings-editor-rulers"),
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::FullTabNames => t!("settings-full-tab-names"),
             Setting::RestoreWindow => t!("settings-restore-window"),
@@ -516,6 +592,7 @@ impl Setting {
             Setting::BackgroundOpacity => t!("settings-background-opacity"),
             Setting::Outline => t!("settings-outline"),
             Setting::CompactFolders => t!("settings-compact-folders"),
+            Setting::AutoReveal => t!("settings-auto-reveal"),
             Setting::PreviewOnClick => t!("settings-preview-on-click"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::TextWidth => t!("settings-text-width"),
@@ -549,6 +626,7 @@ impl Setting {
             Setting::TerminalSize => t!("settings-terminal-size"),
             Setting::TerminalFontWeight => t!("settings-terminal-font-weight"),
             Setting::TerminalCopyOnSelect => t!("settings-terminal-copy-on-select"),
+            Setting::TerminalRightClick => t!("settings-terminal-right-click"),
             Setting::TerminalConfirmClose => t!("settings-terminal-confirm-close"),
             Setting::TerminalPrompt => t!("settings-terminal-prompt"),
             Setting::TerminalShellIntegration => t!("settings-terminal-shell-integration"),
@@ -559,18 +637,29 @@ impl Setting {
             Setting::GitRememberCredentials => t!("settings-git-remember-credentials"),
             Setting::SystemProxy => t!("settings-system-proxy"),
             Setting::GitInlineBlame => t!("settings-git-inline-blame"),
+            Setting::GitCommitHistory => t!("settings-git-commit-history"),
             Setting::GitAutoFetch => t!("settings-git-auto-fetch"),
             Setting::GitTree => t!("settings-git-tree"),
             Setting::GitStagingArea => t!("settings-git-staging-area"),
             Setting::GitCombinedDiff => t!("settings-git-combined-diff"),
             Setting::GitOpenWorktree => t!("settings-git-open-worktree"),
+            Setting::GitLogPlacement => t!("settings-git-log-placement"),
+            Setting::GitScanDepth => t!("settings-git-scan-depth"),
             Setting::GitPullMode => t!("settings-git-pull"),
             Setting::GitPath => t!("settings-git-path"),
+            Setting::GitGenerateCommitMessage => t!("settings-git-generate-commit-message"),
+            Setting::AiBaseUrl => t!("settings-ai-base-url"),
+            Setting::AiApiKey => t!("settings-ai-api-key"),
+            Setting::AiProtocol => t!("settings-ai-protocol"),
+            Setting::AiModel => t!("settings-ai-model"),
+            Setting::AiTimeout => t!("settings-ai-timeout"),
             Setting::LatexPath => t!("settings-latex-path"),
             Setting::TerminalModule => t!("settings-terminal-module"),
             Setting::RemoteModule => t!("settings-remote-module"),
             Setting::ExplorerMenu => t!("settings-explorer-menu"),
             Setting::FileAssociations => t!("settings-file-associations"),
+            Setting::ExportSettings => t!("settings-export"),
+            Setting::ImportSettings => t!("settings-import"),
             Setting::KeySearch => t!("settings-key-search"),
             Setting::Keymap => t!("settings-keys-keymap"),
             Setting::KeyMatches => t!("settings-key-matches"),
@@ -619,15 +708,20 @@ impl Setting {
             Setting::VimRelativeNumber => Some(t!("settings-vim-relative-number-desc")),
             Setting::VimYankHighlight => Some(t!("settings-vim-yank-highlight-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
+            Setting::AlignColumns => Some(t!("settings-align-columns-desc")),
             Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
+            Setting::AutoReveal => Some(t!("settings-auto-reveal-desc")),
             Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
+            Setting::RenderLineEndings => Some(t!("settings-render-line-endings-desc")),
+            Setting::EditorLigatures => Some(t!("settings-editor-ligatures-desc")),
             Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
             Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
             Setting::DiffCollapse => Some(t!("settings-diff-collapse-desc")),
             Setting::RenderWhitespace => Some(t!("settings-render-whitespace-desc")),
+            Setting::EditorRulers => Some(t!("settings-editor-rulers-desc")),
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::FullTabNames => Some(t!("settings-full-tab-names-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
@@ -637,6 +731,7 @@ impl Setting {
             Setting::BackgroundFit => Some(t!("settings-background-fit-desc")),
             Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
+            Setting::CursorStyle => Some(t!("settings-cursor-style-desc")),
             Setting::SmoothCaret => Some(t!("settings-smooth-caret-desc")),
             Setting::TextWidth => Some(t!("settings-text-width-desc")),
             Setting::MarkdownLineNumbers => Some(t!("settings-markdown-line-numbers-desc")),
@@ -658,20 +753,34 @@ impl Setting {
             Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::ExplorerMenu => Some(t!("settings-explorer-menu-desc")),
             Setting::FileAssociations => Some(t!("settings-file-associations-desc")),
+            Setting::ExportSettings => Some(t!("settings-export-desc")),
+            Setting::ImportSettings => Some(t!("settings-import-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
             Setting::GitRememberCredentials => Some(t!("settings-git-remember-credentials-desc")),
             Setting::SystemProxy => Some(t!("settings-system-proxy-desc")),
             Setting::GitInlineBlame => Some(t!("settings-git-inline-blame-desc")),
+            Setting::GitCommitHistory => Some(t!("settings-git-commit-history-desc")),
             Setting::GitAutoFetch => Some(t!("settings-git-auto-fetch-desc")),
             Setting::GitTree => Some(t!("settings-git-tree-desc")),
             Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
             Setting::GitCombinedDiff => Some(t!("settings-git-combined-diff-desc")),
             Setting::GitOpenWorktree => Some(t!("settings-git-open-worktree-desc")),
+            Setting::GitLogPlacement => Some(t!("settings-git-log-placement-desc")),
+            Setting::GitScanDepth => Some(t!("settings-git-scan-depth-desc")),
             Setting::GitPullMode => Some(t!("settings-git-pull-desc")),
             Setting::GitPath => Some(t!("settings-git-path-desc")),
+            Setting::GitGenerateCommitMessage => {
+                Some(t!("settings-git-generate-commit-message-desc"))
+            }
+            Setting::AiBaseUrl => Some(t!("settings-ai-base-url-desc")),
+            Setting::AiApiKey => Some(t!("settings-ai-api-key-desc")),
+            Setting::AiProtocol => Some(t!("settings-ai-protocol-desc")),
+            Setting::AiModel => Some(t!("settings-ai-model-desc")),
+            Setting::AiTimeout => Some(t!("settings-ai-timeout-desc")),
             Setting::LatexPath => Some(t!("settings-latex-path-desc")),
             Setting::TerminalShell => Some(t!("settings-terminal-shell-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
+            Setting::TerminalRightClick => Some(t!("settings-terminal-right-click-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
             Setting::TerminalPrompt => Some(t!("settings-terminal-prompt-desc")),
             Setting::TerminalShellIntegration => {
@@ -694,13 +803,16 @@ impl Setting {
             | Setting::TerminalFont
             | Setting::MarkdownFont => SettingControl::Font,
             Setting::EditorSize
+            | Setting::EditorFontWeight
             | Setting::UiSize
             | Setting::FontWeight
             | Setting::BackgroundOpacity
             | Setting::TerminalSize
             | Setting::TerminalFontWeight
             | Setting::MarkdownSize
-            | Setting::TabWidth => SettingControl::Stepper,
+            | Setting::TabWidth
+            | Setting::GitScanDepth
+            | Setting::AiTimeout => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar
@@ -712,14 +824,18 @@ impl Setting {
             | Setting::DetectLanguageOnPaste
             | Setting::DragAndDrop
             | Setting::CompactFolders
+            | Setting::AutoReveal
             | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::VimMode
             | Setting::VimRelativeNumber
             | Setting::VimYankHighlight
             | Setting::WordWrap
+            | Setting::AlignColumns
             | Setting::WholeLines
             | Setting::Minimap
+            | Setting::RenderLineEndings
+            | Setting::EditorLigatures
             | Setting::Outline
             | Setting::LineNumbers
             | Setting::DiffInline
@@ -743,10 +859,12 @@ impl Setting {
             | Setting::GitRememberCredentials
             | Setting::SystemProxy
             | Setting::GitInlineBlame
+            | Setting::GitCommitHistory
             | Setting::GitAutoFetch
             | Setting::GitTree
             | Setting::GitStagingArea
             | Setting::GitCombinedDiff
+            | Setting::GitGenerateCommitMessage
             | Setting::ExplorerMenu
             | Setting::FileAssociations
             | Setting::TerminalModule
@@ -760,7 +878,11 @@ impl Setting {
             | Setting::FixCommand(_)
             | Setting::TerminalShell
             | Setting::GitPath
-            | Setting::LatexPath => SettingControl::Command,
+            | Setting::LatexPath
+            | Setting::EditorRulers
+            | Setting::AiBaseUrl
+            | Setting::AiModel
+            | Setting::AiApiKey => SettingControl::Command,
             Setting::SkipOnSave
             | Setting::Language
             | Setting::BackgroundImage
@@ -777,9 +899,13 @@ impl Setting {
             | Setting::DropFolder
             | Setting::FindInFiles
             | Setting::AutoSave
+            | Setting::CursorStyle
             | Setting::SmoothCaret
+            | Setting::TerminalRightClick
             | Setting::GitOpenWorktree
+            | Setting::GitLogPlacement
             | Setting::GitPullMode
+            | Setting::AiProtocol
             | Setting::Keymap => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
@@ -790,7 +916,26 @@ impl Setting {
             | Setting::Community
             | Setting::License => SettingControl::Link,
             Setting::Updates | Setting::KeyMatches => SettingControl::Button,
+            Setting::ExportSettings | Setting::ImportSettings => SettingControl::Button,
         }
+    }
+}
+
+impl Setting {
+    /// 是否为填写的文本（程序路径、接口地址、模型名、密钥）：没有可选的菜单，始终绘制为输入框。
+    pub fn is_text_field(self) -> bool {
+        matches!(
+            self,
+            Setting::GitPath | Setting::LatexPath | Setting::EditorRulers
+        ) || self.is_ai_text()
+    }
+
+    /// 是否为调用模型的一项文本设置：接口地址、模型名或密钥。
+    pub fn is_ai_text(self) -> bool {
+        matches!(
+            self,
+            Setting::AiBaseUrl | Setting::AiModel | Setting::AiApiKey
+        )
     }
 }
 
@@ -1010,6 +1155,8 @@ pub struct SettingsLayout {
     pub separators: Vec<Rect>,
     /// 各设置行。
     pub rows: Vec<SettingRow>,
+    /// 「关于」页最下方版权与许可声明所在的行；其他页和搜索时为 `None`。
+    pub footer: Option<Rect>,
     /// 内容的总高度（像素），用于计算最大滚动量。
     pub content_h: f32,
 }
@@ -1161,6 +1308,14 @@ impl SettingsLayout {
             }
         }
 
+        // 「关于」页最下方：版权与许可声明，不可点击。
+        let footer = (page == SettingsPage::About && !searching).then(|| {
+            y += SETTINGS_FOOTER_GAP;
+            let line = Rect::new(x, y, group_w, SETTINGS_DESC_LINE);
+            y += SETTINGS_DESC_LINE;
+            line
+        });
+
         SettingsLayout {
             card,
             nav,
@@ -1175,6 +1330,7 @@ impl SettingsLayout {
             headings,
             separators,
             rows,
+            footer,
             content_h: y + scroll - body.y + SETTINGS_BOTTOM,
         }
     }
@@ -1271,10 +1427,7 @@ fn row_height(
             rows * tile.1 + (rows - 1.0) * THEME_GRID_GAP + THEME_GRID_PAD * 2.0
         }
         SettingControl::Command
-            if !matches!(
-                setting,
-                Setting::TerminalShell | Setting::GitPath | Setting::LatexPath
-            ) =>
+            if setting != Setting::TerminalShell && !setting.is_text_field() =>
         {
             SETTINGS_ROW_TALL
         }

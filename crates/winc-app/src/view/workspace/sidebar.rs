@@ -131,10 +131,10 @@ impl ContextBar {
         let project = app
             .project_name()
             .unwrap_or_else(|| t!("workspace-sidebar-no-folder").to_owned());
-        let project_w = frame.measure(FontKind::Ui, app.fonts.ui, &project);
+        let project_w = frame.measure(Font::ui(app.fonts.ui), &project);
         let unsaved = app.project_unsaved().then(|| {
             let tag = t!("workspace-project-unsaved").to_owned();
-            let width = frame.measure(FontKind::Ui, app.fonts.ui, &tag);
+            let width = frame.measure(Font::ui(app.fonts.ui), &tag);
             (tag, width)
         });
         ContextBar {
@@ -190,7 +190,7 @@ pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &Conte
         (bar.left + project_w - 18.0 - bar.unsaved_w() - name_x).max(0.0)
     };
     let name = truncate_end(frame, &bar.project, app.fonts.ui, name_max);
-    let name_end = name_x + frame.measure(FontKind::Ui, app.fonts.ui, &name) + bar.unsaved_w();
+    let name_end = name_x + frame.measure(Font::ui(app.fonts.ui), &name) + bar.unsaved_w();
     let hit = Rect::new(
         bar.left,
         header.y + (header.h - BUTTON_SMALL) / 2.0,
@@ -234,7 +234,7 @@ fn draw_badge(app: &App, frame: &mut Frame<'_>, rect: Rect, project: &str, heade
             .map_or(0, |root| app.state.badge_color(root)),
     };
     let badge = app.palette.project_badge(project, color);
-    frame.rect_clipped(rect, badge.background, 6.0, header);
+    frame.rect_clipped(rect, 6.0, badge.background, header);
 
     let group = (app.editor.workspace.as_ref()).is_some_and(|ws| !ws.extra_folders().is_empty());
     if group {
@@ -245,7 +245,7 @@ fn draw_badge(app: &App, frame: &mut Frame<'_>, rect: Rect, project: &str, heade
         );
         icons::folders(frame, at, badge.text, header);
     } else {
-        let w = frame.measure(FontKind::Ui, app.fonts.initials, &badge.initials);
+        let w = frame.measure(Font::ui(app.fonts.initials), &badge.initials);
         caps_label(
             frame,
             app,
@@ -452,7 +452,7 @@ fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
                 })
         };
         if let Some(area) = area {
-            frame.rect_clipped(area, p.drop_target, RADIUS_ROW, tree);
+            frame.rect_clipped(area, RADIUS_ROW, p.drop_target, tree);
         }
     }
 
@@ -595,7 +595,7 @@ fn draw_tree_entry(
         row_color(p, selected, focused, hovered)
     };
     if let Some(color) = background {
-        frame.rect_corners(pill.0, color, pill.1, clip);
+        frame.rect_corners(pill.0, pill.1, color, clip);
     }
 
     let indent = row.x + 14.0 + shift;
@@ -604,7 +604,7 @@ fn draw_tree_entry(
     // 缩进参考线：每级一条，位于父目录箭头的正下方，相邻行的参考线连成竖线。
     for level in 0..entry.depth {
         let x = (indent + level as f32 * TREE_INDENT + 4.0).round();
-        frame.rect_clipped(Rect::new(x, row.y, 1.0, row.h), p.indent_guide, 0.0, clip);
+        frame.rect_clipped(Rect::new(x, row.y, 1.0, row.h), 0.0, p.indent_guide, clip);
     }
 
     let mut x = indent + entry.depth as f32 * TREE_INDENT;
@@ -623,8 +623,8 @@ fn draw_tree_entry(
         draw_file_icon(frame, p, (x + 1.5, cy), &entry.name, clip);
     }
     if entry.symlink {
-        let bg = background.map_or(p.sidebar_bg, |c| panel::over(p.sidebar_bg, c));
-        icons::link_badge(frame, (x + 2.5, cy + 4.0), bg, p.text_muted, clip);
+        let backdrop = (p.sidebar_bg, background);
+        icons::link_badge(frame, (x + 2.5, cy + 4.0), backdrop, p.text_muted, clip);
     }
 
     // 右端的 Git 状态与提交视图相同：文件显示带颜色的字母（M、U、A……），目录中有改动时
@@ -635,7 +635,7 @@ fn draw_tree_entry(
         .filter(|_| entry.kind != EntryKind::Dir)
         .map(|c| c.letter().to_string());
     let mark_w = match (&letter, change) {
-        (Some(letter), _) => frame.measure(FontKind::Ui, app.fonts.ui_small, letter),
+        (Some(letter), _) => frame.measure(Font::ui(app.fonts.ui_small), letter),
         (None, Some(_)) => GIT_DOT,
         (None, None) => 0.0,
     };
@@ -704,7 +704,7 @@ fn draw_tree_entry(
             }
             None => {
                 let dot = Rect::new(mark_x, cy - GIT_DOT / 2.0, GIT_DOT, GIT_DOT);
-                frame.rect_clipped(dot, color, GIT_DOT / 2.0, clip);
+                frame.rect_clipped(dot, GIT_DOT / 2.0, color, clip);
             }
         }
     }
@@ -746,7 +746,7 @@ fn draw_sticky(
         frame.shadow(header, 0.0, 6.0, 0.0, p.shadow, Some(covered));
 
         for s in sticky.iter().rev() {
-            frame.rect_clipped(s.rect, p.sidebar_bg, 0.0, tree);
+            frame.surface_clipped(s.rect, 0.0, p.sidebar_bg, tree);
             draw_tree_entry(
                 app,
                 frame,
@@ -784,12 +784,12 @@ fn draw_name_input(
     let (pill, radii) = tree_row_pill(row, false);
     if error.is_some() {
         let ring = radii.map(|r| r + 1.0);
-        frame.rect_corners(pill.inset(-1.0, -1.0), p.error, ring, row_clip);
+        frame.rect_corners(pill.inset(-1.0, -1.0), ring, p.error, row_clip);
     }
     // 用悬停的浅色而不是选中色：重命名时文件名主干是选中的，选中色底上看不出文字的选区。
     // 先和侧栏底色混合成不透明的颜色，遮住底下的红线。
     let fill = super::panel::over(p.sidebar_bg, p.hover);
-    frame.rect_corners(pill, fill, radii, row_clip);
+    frame.rect_corners(pill, radii, fill, row_clip);
 
     // 缩进和图标按普通行的位置放置，与上下相邻的条目对齐。
     let indent = row.x + 14.0 + shift;
@@ -800,8 +800,8 @@ fn draw_name_input(
         let guide = (indent + level as f32 * TREE_INDENT + 4.0).round();
         frame.rect_clipped(
             Rect::new(guide, row.y, 1.0, row.h),
-            p.indent_guide,
             0.0,
+            p.indent_guide,
             row_clip,
         );
     }
@@ -827,7 +827,7 @@ fn draw_name_input(
 
     // 出错时底色里右侧留出显示原因的位置，文字只使用剩余宽度。
     let error_room = error.as_ref().map_or(0.0, |e| {
-        frame.measure(FontKind::Ui, app.fonts.ui_small, e) + 16.0
+        frame.measure(Font::ui(app.fonts.ui_small), e) + 16.0
     });
     let width = (pill.right() - 4.0 - error_room - text_x).max(0.0);
     let area = Rect::new(text_x, row.y, width, row.h);
@@ -845,7 +845,7 @@ fn draw_name_input(
     );
 
     if let Some(error) = &error {
-        let x = pill.right() - 8.0 - frame.measure(FontKind::Ui, app.fonts.ui_small, error);
+        let x = pill.right() - 8.0 - frame.measure(Font::ui(app.fonts.ui_small), error);
         ui_text_small(frame, app, x, row, error, p.error, row_clip);
     }
 
@@ -1038,7 +1038,7 @@ fn draw_overflow_band(
     let focused = app.focus == Focus::Tree;
 
     // 底层先垫一层侧栏底色，再叠半透明的选中色，使颜色与文件树中的那一段一致。
-    frame.rect_corners(rect, p.sidebar_bg, radii, clip);
+    frame.rect_corners(rect, radii, p.sidebar_bg, clip);
 
     // 收回时与侧栏内的那一段用同一个底色，一起淡出，两段不割裂。
     let tint = match view.filter(|_| closing) {
@@ -1046,7 +1046,7 @@ fn draw_overflow_band(
         None => row_color(p, selected, focused, true),
     };
     if let Some(color) = tint {
-        frame.rect_corners(rect, color, radii, clip);
+        frame.rect_corners(rect, radii, color, clip);
     }
 
     let color = tree_entry_color(app, entry, selected);
@@ -1057,7 +1057,7 @@ fn draw_overflow_band(
         let mut at = x;
         for (k, name) in view.old.iter().enumerate() {
             let alpha = if k < view.common { 1.0 } else { view.old_alpha };
-            let width = frame.measure(FontKind::Ui, app.fonts.ui, name);
+            let width = frame.measure(Font::ui(app.fonts.ui), name);
             ui_text(
                 frame,
                 app,
@@ -1130,7 +1130,7 @@ fn part_name<'a>(entry: &'a Entry, part: Option<usize>) -> Cow<'a, str> {
 
 /// 返回相邻两部分的间距：分隔符和两侧的留白。
 fn chain_step(app: &App, frame: &mut Frame<'_>) -> f32 {
-    frame.measure(FontKind::Ui, app.fonts.ui, "/") + CHAIN_GAP * 2.0
+    frame.measure(Font::ui(app.fonts.ui), "/") + CHAIN_GAP * 2.0
 }
 
 /// 绘制过渡中淡出的旧内容，相同的前缀由新内容绘制，这里跳过。
@@ -1150,7 +1150,7 @@ fn draw_old_label(
     let separator = color.alpha(color.a * CHAIN_SEPARATOR * view.old_alpha);
     let mut x = start;
     for (k, name) in view.old.iter().enumerate() {
-        let width = frame.measure(FontKind::Ui, app.fonts.ui, name);
+        let width = frame.measure(Font::ui(app.fonts.ui), name);
         if k >= view.common {
             ui_text(frame, app, x, row, name, text, clip);
         }
@@ -1166,13 +1166,13 @@ fn label_width(app: &App, frame: &mut Frame<'_>, entry: &Entry) -> f32 {
     let size = app.fonts.ui;
     let chain = entry.chain();
     if chain.is_empty() {
-        return frame.measure(FontKind::Ui, size, &entry.name);
+        return frame.measure(Font::ui(size), &entry.name);
     }
     let names: f32 = chain
         .iter()
-        .map(|path| frame.measure(FontKind::Ui, size, &winc_editor::segment_name(path)))
+        .map(|path| frame.measure(Font::ui(size), &winc_editor::segment_name(path)))
         .sum();
-    let slash = frame.measure(FontKind::Ui, size, "/") + CHAIN_GAP * 2.0;
+    let slash = frame.measure(Font::ui(size), "/") + CHAIN_GAP * 2.0;
     names + slash * (chain.len() - 1) as f32
 }
 
@@ -1204,7 +1204,7 @@ fn draw_chain(
     let emphasize = dropping.is_some() || selected && ws.is_some_and(|w| !w.multi_selected());
     let faded = color.alpha(color.a * CHAIN_DIM);
     let separator = color.alpha(color.a * CHAIN_SEPARATOR);
-    let slash = frame.measure(FontKind::Ui, app.fonts.ui, "/");
+    let slash = frame.measure(Font::ui(app.fonts.ui), "/");
     let step = slash + CHAIN_GAP * 2.0;
     let every: Vec<Option<usize>>;
     let parts = match parts {
@@ -1223,7 +1223,7 @@ fn draw_chain(
             Some(i) => {
                 let path = &chain[*i];
                 let name = winc_editor::segment_name(path);
-                let width = frame.measure(FontKind::Ui, app.fonts.ui, &name);
+                let width = frame.measure(Font::ui(app.fonts.ui), &name);
                 let hovered = dropping.is_none()
                     && matches!(app.pointer.hover, Hover::TreeRow(_))
                     && app.panels.tree.hover_segment.as_ref() == Some(path);
@@ -1234,7 +1234,7 @@ fn draw_chain(
                         width + CHAIN_GAP * 2.0,
                         row.h - 6.0,
                     );
-                    frame.rect_clipped(area, app.palette.drop_target, RADIUS_ROW, clip);
+                    frame.rect_clipped(area, RADIUS_ROW, app.palette.drop_target, clip);
                 }
                 let text = if emphasize && path != current && !hovered {
                     faded
@@ -1255,7 +1255,7 @@ fn draw_chain(
             None => {
                 let mark = separator.alpha(separator.a * fade);
                 ui_text(frame, app, x, row, CHAIN_FOLD, mark, clip);
-                frame.measure(FontKind::Ui, app.fonts.ui, CHAIN_FOLD)
+                frame.measure(Font::ui(app.fonts.ui), CHAIN_FOLD)
             }
         };
         if k + 1 < parts.len() {
@@ -1281,10 +1281,10 @@ fn chain_folded(
     let size = app.fonts.ui;
     let widths: Vec<f32> = chain
         .iter()
-        .map(|path| frame.measure(FontKind::Ui, size, &winc_editor::segment_name(path)))
+        .map(|path| frame.measure(Font::ui(size), &winc_editor::segment_name(path)))
         .collect();
-    let step = frame.measure(FontKind::Ui, size, "/") + CHAIN_GAP * 2.0;
-    let fold = frame.measure(FontKind::Ui, size, CHAIN_FOLD);
+    let step = frame.measure(Font::ui(size), "/") + CHAIN_GAP * 2.0;
+    let fold = frame.measure(Font::ui(size), CHAIN_FOLD);
     Some(fold_chain(
         &widths,
         step,

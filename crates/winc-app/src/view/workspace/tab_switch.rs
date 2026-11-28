@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use super::top_bar::file_name_color;
 use super::*;
 use crate::app::{PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X};
 
@@ -39,16 +40,26 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         );
         hits.push((row, row_index));
         if row_index == list.selected {
-            frame.rect_clipped(row.inset(6.0, 1.0), p.selected_inactive, RADIUS_ROW, card);
+            frame.rect_clipped(row.inset(6.0, 1.0), RADIUS_ROW, p.selected_inactive, card);
         }
         let cy = icon_center_y(app, row, app.fonts.ui);
-        let icon = tab_icon_name(doc);
-        draw_file_icon(frame, p, (row.x + PICKER_ICON_X, cy), &icon, card);
+        if doc.terminal {
+            icons::terminal(
+                frame,
+                (row.x + PICKER_ICON_X + icons::FILE_WIDTH / 2.0, cy),
+                p.text_muted,
+                card,
+            );
+        } else {
+            let icon = tab_icon_name(doc);
+            draw_file_icon(frame, p, (row.x + PICKER_ICON_X, cy), &icon, card);
+        }
         let name = doc.name();
         let right = row.right() - 12.0;
         let name_x = row.x + PICKER_TEXT_X;
         let shown_name = ellipsize(frame, &name, app.fonts.ui, (right - name_x).max(0.0));
-        ui_text(frame, app, name_x, row, &shown_name, p.text, card);
+        let color = file_name_color(app, doc, p.text);
+        ui_text(frame, app, name_x, row, &shown_name, color, card);
 
         // 所在目录：工作区内的写相对路径，工作区外的写完整路径。
         let parent = doc.path.as_deref().and_then(Path::parent);
@@ -56,7 +67,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
             Some(root) => dir.strip_prefix(root).unwrap_or(dir).display().to_string(),
             None => dir.display().to_string(),
         });
-        let name_w = frame.measure(FontKind::Ui, app.fonts.ui, &shown_name);
+        let name_w = frame.measure(Font::ui(app.fonts.ui), &shown_name);
         let dir_x = name_x + name_w + 8.0;
         if let Some(folder) = folder.filter(|f: &String| !f.is_empty())
             && right - dir_x > 20.0

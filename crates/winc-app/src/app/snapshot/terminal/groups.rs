@@ -120,7 +120,8 @@ fn moving_a_tab_to_a_new_group_keeps_the_terminal() {
     assert!(group_hit(&app, 1, HeaderHit::Hide).is_some());
     assert!(group_hit(&app, 0, HeaderHit::Split).is_some());
 
-    // 没有新开终端；两个终端都按自己那一栏变窄，告诉了辅助进程。
+    // 没有新开终端；大小稳定后两个终端都按自己那一栏变窄，告诉了辅助进程。
+    settle_terminal_size(&mut app);
     let sent = app.sent_to_helper(&log);
     assert!(
         !sent.iter().any(|m| matches!(m, ToHelper::Spawn { .. })),
@@ -155,15 +156,24 @@ fn tabs_dragged_out_of_the_strip_split_or_join_groups() {
     let (mut app, dir, _log) = grouped("terminal-groups-drag");
     let card = app.terminal_group_cards_in(app.layout.terminal)[0];
     let body = |card: Rect, r: f32| (card.x + card.w * r, card.y + card.h * 0.6);
+    // 贴着一栏左边或右边的一处（离边 16 逻辑像素，在拆分的一条之内）。
+    let edge = |card: Rect, right: bool| {
+        let x = if right {
+            card.right() - 16.0
+        } else {
+            card.x + 16.0
+        };
+        (x, card.y + card.h * 0.6)
+    };
 
     // 拖到右边：拆出新的一栏。
-    drag_tab(&mut app, 0, 1, body(card, 0.9));
+    drag_tab(&mut app, 0, 1, edge(card, true));
     assert_eq!(tab_ids(&app), [vec![1], vec![2]]);
     assert_eq!(app.terminal.group_at, 1);
 
     // 第一栏唯一的标签拖到它自己的左边：不变。
     let cards = app.terminal_group_cards_in(app.layout.terminal);
-    drag_tab(&mut app, 0, 0, body(cards[0], 0.05));
+    drag_tab(&mut app, 0, 0, edge(cards[0], false));
     assert_eq!(tab_ids(&app), [vec![1], vec![2]]);
 
     // 拖到第一栏的标签栏上、第一个标签前面：插在那里，第二栏空了就去掉。
@@ -173,7 +183,7 @@ fn tabs_dragged_out_of_the_strip_split_or_join_groups() {
     assert_eq!(app.terminal.tab().map(|t| t.id), Some(2));
 
     // 再拆开，然后拖到另一栏中部：放进那一栏的最后。
-    drag_tab(&mut app, 0, 0, body(card, 0.95));
+    drag_tab(&mut app, 0, 0, edge(card, true));
     assert_eq!(tab_ids(&app), [vec![1], vec![2]]);
     let cards = app.terminal_group_cards_in(app.layout.terminal);
     drag_tab(&mut app, 1, 0, body(cards[0], 0.5));
@@ -205,7 +215,7 @@ fn the_group_divider_resizes_groups() {
     app.pointer.last_click = None;
     click(&mut app, at);
     click(&mut app, at);
-    let shares = app.terminal.group_shares();
+    let shares = app.terminal.panel_shares();
     assert!((shares[0] - shares[1]).abs() < 1e-3, "{shares:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -228,7 +238,7 @@ fn a_shell_exiting_in_another_group_closes_it_there() {
 fn groups_are_kept_in_the_session() {
     let (mut app, dir, _log) = grouped("terminal-groups-session");
     move_to_group(&mut app);
-    let session = app.terminal_session().expect("有终端");
+    let session = app.terminal_session_with_tabs(&[]).expect("有终端");
     assert_eq!(session.tabs.len(), 2);
     assert_eq!(session.active, 1);
     let counts: Vec<usize> = session.groups.iter().map(|g| g.tabs).collect();

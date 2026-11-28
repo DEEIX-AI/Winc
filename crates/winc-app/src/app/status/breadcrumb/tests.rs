@@ -3,7 +3,10 @@
 use super::*;
 
 /// 测试用：按弹出目录菜单时的做法画好图标，取出 `names`（名字，是否目录）各项的图标。
-pub(in crate::app) fn menu_icons_for(app: &mut App, names: &[(&str, bool)]) -> Vec<Option<Image>> {
+pub(in crate::app) fn menu_icons_for(
+    app: &mut App,
+    names: &[(&str, bool)],
+) -> Vec<Option<Snapshot>> {
     let icons = app.folder_icons();
     FOLDER_ICONS.set(icons);
     let out = names.iter().map(|&(n, d)| folder_icon(n, d)).collect();
