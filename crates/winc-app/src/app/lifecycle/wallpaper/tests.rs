@@ -10,19 +10,19 @@ fn source(opacity: u8, fit: BackgroundFit) -> Source {
 
 #[test]
 fn layers_cover_the_window_without_upscaling() {
-    let size = |full, window| target(&source(30, Fill), full, (window, 2.0));
+    let size = |full, window| target(&source(30, Fill), full, (window, 1.0));
     // 3840 × 2160 的图铺满 1440 × 900 的窗口：按高度缩小。
     assert_eq!(size((3840, 2160), (1440.0, 900.0)), (1600, 900));
     // 长边不超过上限。
-    assert_eq!(size((3840, 2160), (3840.0, 2160.0)), (1920, 1080));
+    assert_eq!(size((3840, 2160), (3840.0, 2160.0)), (2560, 1440));
     // 图片比窗口小时不放大。
     assert_eq!(size((640, 480), (1440.0, 900.0)), (640, 480));
 }
 
 #[test]
-fn layers_follow_the_fit_and_sharpen_with_the_opacity() {
+fn layers_follow_the_fit_in_physical_pixels() {
     let full = (3840, 2160);
-    let window = ((1440.0, 900.0), 2.0);
+    let window = ((1440.0, 900.0), 1.0);
     let size = |opacity, fit| target(&source(opacity, fit), full, window);
     // 适应：整张可见，按宽度缩小。
     assert_eq!(size(30, Fit), (1440, 810));
@@ -34,14 +34,21 @@ fn layers_follow_the_fit_and_sharpen_with_the_opacity() {
         ((1920, 1080), (1920, 1080))
     );
     assert_eq!(target(&source(30, Tile), (64, 48), window), (64, 48));
-    // 不透明度超过一半：按物理像素生成，长边不超过上限。
-    assert_eq!(
-        (size(50, Fill), size(55, Fill)),
-        ((1600, 900), (2560, 1440))
-    );
-    // 缩放系数为 1 的屏幕上两者相同。
-    let plain = ((1440.0, 900.0), 1.0);
-    assert_eq!(target(&source(55, Fill), full, plain), (1600, 900));
+    // 缩放系数为 2 的屏幕上按物理像素生成，长边不超过上限。
+    let dense = ((1440.0, 900.0), 2.0);
+    assert_eq!(target(&source(30, Fill), full, dense), (2560, 1440));
+}
+
+/// 回归（#608）：不透明度不超过一半时图层也按物理像素生成。按逻辑像素生成的图层在缩放系数
+/// 大于 1 的屏幕上要放大才能铺满窗口，渲染器取最近的像素，斜线和细线呈阶梯状。
+#[test]
+fn faint_layers_are_made_in_physical_pixels_too() {
+    // 缩放 125% 的屏幕上 987.2 × 1090.4 的窗口（物理 1234 × 1363），3200 × 1800 的图铺满。
+    let window = ((987.2, 1090.4), 1.25);
+    for opacity in [15, 30, 50, 55, 100] {
+        let size = target(&source(opacity, Fill), (3200, 1800), window);
+        assert_eq!(size, (2423, 1363), "{opacity}");
+    }
 }
 
 #[test]

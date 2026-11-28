@@ -17,11 +17,8 @@ use winc_render::{Color, Renderer, Wallpaper, WallpaperFit};
 use crate::app::NoticeKind;
 use crate::app::{App, UserEvent};
 
-/// 图层长边的像素数上限：图片在底色之下只透出一部分，更高的分辨率看不出差别。
+/// 平铺的图层（按逻辑像素生成）长边的像素数上限。
 const MAX_SIDE: f32 = 1920.0;
-
-/// 不透明度（百分比）超过该值时图片的细节清晰可见，图层改按物理像素生成。
-const SHARP_AT: u8 = 50;
 
 /// 按物理像素生成的图层长边的像素数上限。
 const SHARP_SIDE: f32 = 2560.0;
@@ -106,12 +103,13 @@ impl WallpaperState {
 
 /// 返回 `source` 在窗口 `window` 中所需的图层大小；`full` 是原图解码后的大小。
 ///
-/// 图片按显示方式缩小到在窗口中显示的大小，不放大；平铺时保持原来的大小。不透明度不超过
-/// [`SHARP_AT`] 时按逻辑像素计，长边不超过 [`MAX_SIDE`]；超过时按物理像素计，长边不超过
-/// [`SHARP_SIDE`]。
+/// 图片按显示方式缩小到在窗口中显示的大小，不放大；平铺时保持原来的大小。图层按物理像素计，
+/// 长边不超过 [`SHARP_SIDE`]，与不透明度无关：渲染器取最近的像素，按逻辑像素生成的图层在缩放
+/// 系数大于 1 的屏幕上放大显示，即使不透明度很低，斜线和细线也明显呈阶梯状。平铺时图层的一个
+/// 像素对应一个逻辑像素，按逻辑像素计，长边不超过 [`MAX_SIDE`]。
 fn target(source: &Source, full: (u32, u32), (window, scale): Window) -> (u32, u32) {
     let (w, h) = (full.0.max(1) as f32, full.1.max(1) as f32);
-    let sharp = source.opacity > SHARP_AT && source.fit != BackgroundFit::Tile;
+    let sharp = source.fit != BackgroundFit::Tile;
     let (density, limit) = if sharp {
         (scale.max(1.0), SHARP_SIDE)
     } else {

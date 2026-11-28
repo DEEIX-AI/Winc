@@ -377,7 +377,7 @@ fn shoot_font_weights() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 背景图片：配置后在后台生成铺满窗口（按逻辑像素）的图层，底色之下透出图片；不透明度、配色
+/// 背景图片：配置后在后台生成铺满窗口（按物理像素）的图层，底色之下透出图片；不透明度、配色
 /// 改变后随之更新，取消后恢复纯色；无法加载的图片提示一次，不反复重试。生成好的图层写入磁盘
 /// 缓存，之后直接读取，不再解码原图。
 #[test]
@@ -430,16 +430,17 @@ fn the_background_image_shows_under_the_base_colors() {
 
     app.set_background_image(Some(image.clone()));
     assert_eq!(sample(&mut app), mixed(plain, 0.15));
-    // 图层保持图片的宽高比，缩小到刚好铺满窗口（按逻辑像素，不是物理像素）。
+    // 图层按物理像素生成，不论不透明度：铺满窗口需要 2560 × 1920，比图片大，图层保持图片原来的
+    // 大小，不放大。
     let size = app.frame.renderer.as_ref().unwrap().wallpaper_size();
-    assert_eq!((SIZE.0, SIZE.1), (1280.0, 820.0));
-    assert_eq!(size, Some((1280, 960)));
+    assert_eq!((SIZE.0, SIZE.1, SCALE), (1280.0, 820.0, 2.0));
+    assert_eq!(size, Some((2000, 1500)));
     // 浮在内容之上的设置卡片不透出背景图。
     assert_eq!(card(&mut app), plain_card);
 
     // 图层已写入缓存。把缓存中的像素改成绿色后调整不透明度：读的是缓存，不再解码原图。
     let mut bytes = std::fs::read(&cache).unwrap();
-    let pixels = bytes.len() - 1280 * 960 * 4;
+    let pixels = bytes.len() - 2000 * 1500 * 4;
     for px in bytes[pixels..].as_chunks_mut::<4>().0 {
         *px = [0, 255, 0, 255];
     }
@@ -472,7 +473,7 @@ fn the_background_image_shows_under_the_base_colors() {
     app.settings_adjust(Setting::BackgroundOpacity, true);
     assert_eq!(app.config.ui_background_opacity, Some(100.0));
     assert_eq!(sample(&mut app), (255, 0, 0));
-    // 不透明度超过一半：图层按物理像素生成，这里即图片原来的大小。
+    // 不透明度不影响图层的大小。
     let size = |app: &App| app.frame.renderer.as_ref().unwrap().wallpaper_size();
     assert_eq!(size(&app), Some((2000, 1500)));
     app.config.ui_background_opacity = Some(20.0);
@@ -483,7 +484,7 @@ fn the_background_image_shows_under_the_base_colors() {
     assert_eq!(Setting::BackgroundFit.page(), SettingsPage::Appearance);
     app.set_background_fit(BackgroundFit::Fit);
     assert_eq!(sample(&mut app), plain);
-    assert_eq!(size(&app), Some((1093, 820)));
+    assert_eq!(size(&app), Some((2000, 1500)));
     let middle = (SIZE.0 / 2.0, app.layout.editor.bottom() - 40.0);
     assert_eq!(pixel(&mut app, middle), mixed(plain, 0.2));
     // 拉伸：铺满窗口。
