@@ -199,7 +199,12 @@ pub(crate) fn font_set(config: &Config) -> FontSet {
     let mut fonts = FontSet::default();
     (fonts.mono, fonts.ui) = (mono, ui);
     fonts.weights = font_weights(config);
-    fonts.cjk_language = crate::cjk_language().map(str::to_owned);
+    // 测试不按界面语言选字体：Linux 上带语言查询的等宽字体可能是所装的中文字体，度量随机器
+    // 变化。测试的界面语言默认是中文，不设语言时各平台都用拉丁等宽字体，结果可以复现。
+    fonts.cjk_language = (!cfg!(test))
+        .then(crate::cjk_language)
+        .flatten()
+        .map(str::to_owned);
     // 终端未单独配置字体时字体组为空，使用编辑区的字体。
     let terminal = FontStack::monospaced(terminal).weight(FontWeight(terminal_font_weight(config)));
     let terminal = fonts.add(terminal);
