@@ -1,6 +1,7 @@
 //! 应用自己绘制的标题栏（macOS 以外的平台，配置 `ui.titleBarStyle` 不是 `native` 时）：窗口
 //! 不要系统的边框和标题栏，顶栏右端放最小化、最大化（还原）、关闭三个按钮，顶栏空白处仍然可以
-//! 拖动窗口、双击最大化；窗口没有最大化时，四边和四角各留一条细边，按下拖动改变窗口大小。
+//! 拖动窗口、双击最大化；窗口没有最大化时，四边和四角各留一条细边，按下拖动改变窗口大小。全屏时
+//! 窗口占满屏幕：不显示窗口按钮，顶栏不拖动窗口，四边也不改变窗口大小。
 
 use winit::window::ResizeDirection;
 
@@ -58,11 +59,11 @@ impl App {
 
     /// 在顶栏右端放置窗口按钮，标签栏让出这一块；终端面板在右边时它的标签栏也让出。
     ///
-    /// 不由应用绘制标题栏时为空矩形。
+    /// 不由应用绘制标题栏或窗口全屏时为空矩形。
     pub(in crate::app) fn place_window_controls(&mut self) {
         let l = &mut self.layout;
         l.controls = Rect::default();
-        if !self.window.controls {
+        if !self.window.controls || self.window.fullscreen {
             return;
         }
         let top = ISLAND_MARGIN + (TOP_BAR - BUTTON) / 2.0;
@@ -91,9 +92,10 @@ impl App {
         crate::layout::hit(&self.window_control_rects(), x, y)
     }
 
-    /// `(x, y)` 处可以拖动改变窗口大小的方向：只在应用绘制标题栏、窗口没有最大化时有。
+    /// `(x, y)` 处可以拖动改变窗口大小的方向：只在应用绘制标题栏、窗口没有最大化或全屏时有。
     pub(in crate::app) fn resize_edge_at(&self, x: f32, y: f32) -> Option<ResizeDirection> {
         if !self.window.controls
+            || self.window.fullscreen
             || self
                 .window
                 .handle

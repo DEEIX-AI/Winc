@@ -317,6 +317,10 @@ impl App {
     }
 
     fn start_touch_window(&mut self, (x, y): Point, operation: WindowTouch) {
+        // 全屏的窗口不能移动、改变大小，也不响应顶栏的双击。
+        if self.window.fullscreen {
+            return;
+        }
         if operation == WindowTouch::Move
             && self.title_bar_pressed(x, y)
             && self.title_bar_zooms_at(x)

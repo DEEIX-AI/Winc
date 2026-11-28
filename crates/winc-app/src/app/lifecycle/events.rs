@@ -310,6 +310,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(renderer) = &mut self.frame.renderer {
                     renderer.resize();
                 }
+                self.sync_fullscreen();
 
                 // 先摆放窗口控制按钮，布局按其本次的位置计算。
                 self.place_traffic_lights();
