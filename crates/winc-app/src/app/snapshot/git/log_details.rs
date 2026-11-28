@@ -286,8 +286,19 @@ fn a_file_in_the_log_details_has_a_menu_and_a_full_path_tip() {
             MenuCommand::FileHistory
         ]
     );
+    assert_eq!(
+        commands[commands.len() - 3..],
+        [
+            MenuCommand::CopyPath,
+            MenuCommand::CopyRelativePath,
+            MenuCommand::CopyFileName
+        ]
+    );
+    app.run_menu_command(MenuCommand::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("retry.rs"));
 
     // 显示文件历史：打开只显示该文件历史的日志标签。
+    right_click(&mut app, (file.x + 40.0, file.y + file.h / 2.0));
     app.run_menu_command(MenuCommand::FileHistory);
     let title = app.editor.active().unwrap().title.clone().unwrap();
     assert!(title.starts_with("retry.rs"), "{title}");

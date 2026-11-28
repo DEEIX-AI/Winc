@@ -205,7 +205,7 @@ impl App {
             self.preview.markdown.focused = false;
             self.preview.markdown.selection = None;
         }
-        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘交回左侧。
+        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘焦点回到源代码。
         let keeps_table = matches!(
             target,
             Target::Table | Target::Scrollbar(Scrollbar::Table | Scrollbar::TableHorizontal, _)
@@ -506,7 +506,11 @@ impl App {
             Target::SplitDivider => {
                 self.pointer.drag = Drag::SplitDivider {
                     start_x: x,
-                    start_left: self.layout.editor.w,
+                    start_left: if self.layout.split.x < self.layout.editor.x {
+                        self.layout.split.w
+                    } else {
+                        self.layout.editor.w
+                    },
                 };
             }
             Target::OutlineDivider => {

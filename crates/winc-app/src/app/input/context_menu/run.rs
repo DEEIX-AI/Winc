@@ -349,6 +349,11 @@ impl App {
                 self.save_config();
                 self.request_redraw();
             }
+            MenuTarget::SplitPreviewPosition => {
+                if let MenuCommand::SplitPreviewPosition(left) = command {
+                    self.set_split_preview_position(left);
+                }
+            }
             MenuTarget::TextWidth => {
                 if let MenuCommand::TextWidth(i) = command
                     && let Some(&width) = winc_config::TextWidth::ALL.get(i)
@@ -560,6 +565,7 @@ impl App {
                 MenuCommand::Download => self.pick(Pick::Download(self.tree_targets())),
                 MenuCommand::CopyPath => self.copy_paths(&selection, false),
                 MenuCommand::CopyRelativePath => self.copy_paths(&selection, true),
+                MenuCommand::CopyFileName => self.copy_file_names(&selection),
                 MenuCommand::CopyAsPrompt => self.copy_as_prompt(self.tree_selected_files()),
                 _ => {}
             }
@@ -586,6 +592,7 @@ impl App {
             MenuCommand::FindInFolder => self.find_in_folder(&target),
             MenuCommand::CopyPath => self.copy_path(&target, false),
             MenuCommand::CopyRelativePath => self.copy_path(&target, true),
+            MenuCommand::CopyFileName => self.copy_file_names(&[target]),
             MenuCommand::CopyAsPrompt if path.is_some() => self.copy_as_prompt(vec![target]),
             MenuCommand::Rename => self.start_rename(&target),
             MenuCommand::Delete => self.ask_delete(&target),
@@ -781,6 +788,11 @@ impl App {
                     self.copy_path(&path, command == MenuCommand::CopyRelativePath);
                 }
             }
+            MenuCommand::CopyFileName => {
+                if let Some(path) = path {
+                    self.copy_file_names(&[path]);
+                }
+            }
             MenuCommand::Reveal => {
                 if let Some(path) = path {
                     self.reveal_in_file_manager(&path);
@@ -866,16 +878,30 @@ impl App {
         } else {
             paths.iter().map(|p| path_to_copy(p)).collect()
         };
+        let notice = if relative {
+            t!("menu-copied-relative-path")
+        } else {
+            t!("menu-copied-path")
+        };
+        self.copy_path_lines(lines, notice);
+    }
+
+    /// 复制 `paths` 里各项的文件名或目录名，一行一个。没有名字的项（如根目录）跳过，一个都不剩
+    /// 时不复制。
+    pub(in crate::app) fn copy_file_names(&mut self, paths: &[PathBuf]) {
+        let names = paths.iter().filter_map(|path| winc_editor::file_name(path));
+        let lines = names.map(std::borrow::Cow::into_owned).collect();
+        self.copy_path_lines(lines, t!("menu-copied-file-name"));
+    }
+
+    /// 把 `lines` 按行复制到剪贴板并显示提示 `notice`，`lines` 为空时不复制。
+    fn copy_path_lines(&mut self, lines: Vec<String>, notice: &str) {
         if lines.is_empty() {
             return;
         }
 
         self.set_clipboard(lines.join("\n"), false);
-        self.flash(if relative {
-            t!("menu-copied-relative-path")
-        } else {
-            t!("menu-copied-path")
-        });
+        self.flash(notice);
     }
 
     /// 复制代码引用：路径加行号，如 `src/app.rs:12`；选了几行时是 `src/app.rs:12-18`，选区停在

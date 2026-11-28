@@ -188,11 +188,14 @@ impl App {
             CloseFolder => self.close_folder(),
             // 只有一个窗口，关闭窗口就是退出，未保存的内容按退出的流程备份或询问。
             CloseWindow => self.request_close_window(),
-            CopyPath | CopyRelativePath | RevealInFinder => match self.shortcut_target() {
-                Some(path) if action == RevealInFinder => self.reveal_in_file_manager(&path),
-                Some(path) => self.copy_path(&path, action == CopyRelativePath),
-                None => self.flash(winc_i18n::t!("cmd-no-selected-file")),
-            },
+            CopyPath | CopyRelativePath | CopyFileName | RevealInFinder => {
+                match self.shortcut_target() {
+                    Some(path) if action == RevealInFinder => self.reveal_in_file_manager(&path),
+                    Some(path) if action == CopyFileName => self.copy_file_names(&[path]),
+                    Some(path) => self.copy_path(&path, action == CopyRelativePath),
+                    None => self.flash(winc_i18n::t!("cmd-no-selected-file")),
+                }
+            }
             CopyKeyPath => self.copy_key_path(),
             CopyReference => self.copy_reference(false),
             CopyAbsoluteReference => self.copy_reference(true),

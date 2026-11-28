@@ -447,6 +447,9 @@ Section "Winc" SEC_MAIN
   !insertmacro ForEachFileType RegisterFileType
   !insertmacro RegisterProjectType
   !insertmacro RegisterUrlScheme
+  ; App Paths lets Explorer's address bar and the Run dialog resolve winc to winc.exe.
+  ; Omit the Path value to preserve the launched process's PATH.
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\winc.exe" "" "$INSTDIR\winc.exe"
   ; The optional sections below record the choices again when they are selected.
   !insertmacro UnregisterContextMenu
   WriteRegDWORD HKCU "Software\DEEIX\winc" "ContextMenu" 0
@@ -541,5 +544,6 @@ Section "Uninstall"
   !insertmacro UnregisterContextMenu
   DeleteRegKey HKCU "Software\Classes\Applications\winc.exe"
   DeleteRegKey HKCU "Software\Classes\winc"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\App Paths\winc.exe"
   !insertmacro NotifyAssociationsChanged
 SectionEnd

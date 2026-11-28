@@ -1300,6 +1300,14 @@ impl App {
         self.request_redraw();
     }
 
+    /// 设置分栏时预览所在的一侧，并更新布局及配置文件。
+    pub(in crate::app) fn set_split_preview_position(&mut self, left: bool) {
+        self.config.split_preview_left = Some(left);
+        self.relayout();
+        self.save_config();
+        self.request_redraw();
+    }
+
     /// 设置终端面板的位置：`right` 为编辑区右侧，否则为下方。
     pub(in crate::app) fn set_terminal_position(&mut self, right: bool) {
         if right != self.terminal_right() {

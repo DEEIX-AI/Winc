@@ -388,6 +388,10 @@ impl App {
             MenuTarget::BackgroundImage => background_menu(),
             MenuTarget::BackgroundFit => background_fit_menu(),
             MenuTarget::TextWidth => text_width_menu(),
+            MenuTarget::SplitPreviewPosition => [false, true]
+                .into_iter()
+                .map(|left| MenuEntry::Item(MenuCommand::SplitPreviewPosition(left), true))
+                .collect(),
             MenuTarget::DefaultLanguage => document_language_menu(false, &[]),
             MenuTarget::TerminalPosition => terminal_position_menu(),
             MenuTarget::TerminalTabPosition => terminal_tab_position_menu(),
@@ -942,6 +946,7 @@ impl App {
                 | MenuTarget::BackgroundImage
                 | MenuTarget::BackgroundFit
                 | MenuTarget::TextWidth
+                | MenuTarget::SplitPreviewPosition
                 | MenuTarget::DefaultLanguage
                 | MenuTarget::TerminalPosition
                 | MenuTarget::TerminalTabPosition
@@ -968,6 +973,7 @@ impl App {
             MenuTarget::BackgroundImage => Some(Setting::BackgroundImage),
             MenuTarget::BackgroundFit => Some(Setting::BackgroundFit),
             MenuTarget::TextWidth => Some(Setting::TextWidth),
+            MenuTarget::SplitPreviewPosition => Some(Setting::SplitPreviewPosition),
             MenuTarget::DefaultLanguage => Some(Setting::DefaultLanguage),
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
             MenuTarget::TerminalTabPosition => Some(Setting::TerminalTabPosition),
@@ -1303,6 +1309,9 @@ impl App {
             MenuCommand::DefaultShellCustom => self.configured_shell().is_some_and(|configured| {
                 (self.terminal.shells.iter()).all(|shell| shell.command != configured.command)
             }),
+            MenuCommand::SplitPreviewPosition(left) => {
+                (self.config.split_preview_left == Some(true)) == left
+            }
             MenuCommand::TerminalPosition(right) => self.terminal_right() == right,
             MenuCommand::TerminalTabPosition(right) => {
                 (self.config.terminal_vertical_tabs == Some(true)) == right

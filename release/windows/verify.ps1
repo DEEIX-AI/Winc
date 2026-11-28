@@ -21,6 +21,7 @@ foreach ($kind in @('nsis', 'msi')) {
     # msiexec cannot open a package path written with forward slashes (error 1619).
     $setup = (Resolve-Path "$bundle/$kind/Winc-$version-windows-x64$suffix").Path
     $classes = if ($kind -eq 'nsis') { 'HKCU:\Software\Classes' } else { 'HKLM:\Software\Classes' }
+    $appPath = "$(if ($kind -eq 'nsis') { 'HKCU:' } else { 'HKLM:' })\Software\Microsoft\Windows\CurrentVersion\App Paths\winc.exe"
     # An earlier NSIS version listed winc in each type's OpenWithProgids; installing must remove it.
     # `New-Item -Force` also creates missing parent keys, but it would recreate an existing key and
     # drop other programs' entries, so it runs only when the key is missing.
@@ -69,6 +70,9 @@ foreach ($kind in @('nsis', 'msi')) {
         if ($null -eq (Get-ItemProperty -LiteralPath "$classes\winc").'URL Protocol') { throw "${kind}: winc is not a URL scheme" }
         $command = (Get-ItemProperty -LiteralPath "$classes\winc\shell\open\command").'(default)'
         if ($command -ne "`"$directory\winc.exe`" `"%1`"") { throw "${kind}: wrong URL scheme command: $command" }
+        $exe = (Get-ItemProperty -LiteralPath $appPath).'(default)'
+        if ($exe -ne "$directory\winc.exe") { throw "${kind}: wrong App Paths target: $exe" }
+        if ($null -ne (Get-ItemProperty -LiteralPath $appPath).Path) { throw "${kind}: App Paths sets Path" }
         $link = Get-ChildItem -LiteralPath $menu -Filter 'winc.lnk'
         if (@($link).Count -ne 1 -or $link.Name -cne 'Winc.lnk') { throw "${kind}: the Start menu shortcut is not named Winc" }
         if ($kind -eq 'msi' -and (Get-Item -LiteralPath $menu).Name -cne 'Winc') { throw 'msi: the Start menu folder is not named Winc' }
@@ -170,6 +174,7 @@ foreach ($kind in @('nsis', 'msi')) {
         if (Test-Path -LiteralPath "$classes\$key\shell\winc") { throw "${kind}: uninstall left the context menu under $key" }
     }
     if (Test-Path -LiteralPath "$classes\winc") { throw "${kind}: uninstall left the URL scheme behind" }
+    if (Test-Path -LiteralPath $appPath) { throw "${kind}: uninstall left the App Paths entry behind" }
     if (Test-Path -LiteralPath (Join-Path $menu 'Winc.lnk')) { throw "${kind}: uninstall left the Start menu shortcut behind" }
 }
 Expand-Archive "$bundle/portable/Winc-$version-windows-x64-portable.zip" "$work/portable" -Force

@@ -814,7 +814,7 @@ impl App {
             return Some((Scrollbar::Terminal, grab(y, thumb.y, thumb.h)));
         }
 
-        // 预览（分栏时位于右侧，仅预览时占满编辑区）先于编辑区判断，仅预览时两者重叠。
+        // 预览先于编辑区判断，因为仅预览时两者重叠。
         let preview = self.preview.markdown.area;
         // 标题列表覆盖在预览之上，先于预览判断；图钉按钮所在的位置不属于滚动条。
         let list = &self.preview.markdown.toc_list;
@@ -1304,7 +1304,7 @@ pub(super) enum Target {
     Editor,
     /// 图片或 SVG 的预览区域。
     Picture,
-    /// 分栏时右侧的表格：点击后键盘作用于表格。只看预览时表格位于编辑区，属于 [`Target::Editor`]。
+    /// 分栏时的表格：点击后键盘作用于表格。只看预览时表格位于编辑区，属于 [`Target::Editor`]。
     Table,
     /// 终端面板。
     Terminal,

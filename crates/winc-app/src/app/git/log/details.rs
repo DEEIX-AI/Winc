@@ -452,6 +452,7 @@ impl App {
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }
+            MenuCommand::CopyFileName => self.copy_file_names(&[path]),
             MenuCommand::Reveal => self.reveal_in_file_manager(&path),
             MenuCommand::RevealInTree => {
                 self.show_files();
