@@ -219,6 +219,7 @@ cmd-reset-font-size = Reset Font Size
 cmd-zoom-in = Zoom In
 cmd-zoom-out = Zoom Out
 cmd-reset-zoom = Reset Zoom
+cmd-toggle-full-screen = Toggle Full Screen
 cmd-theme-auto = Theme: Match System
 cmd-theme-light = Theme: Light
 cmd-theme-dark = Theme: Dark

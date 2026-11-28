@@ -219,6 +219,7 @@ pub const ACTIONS: &[Action] = {
         ZoomIn,
         ZoomOut,
         ResetZoom,
+        ToggleFullScreen,
         ThemeAuto,
         ThemeLight,
         ThemeDark,

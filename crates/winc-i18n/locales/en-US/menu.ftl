@@ -5,6 +5,7 @@ menu-install-command = Install winc Command…
 menu-release-notes = Release Notes
 menu-check-updates = Check for Updates
 menu-window = Window
+menu-window-enter-full-screen = Enter Full Screen
 menu-window-minimize = Minimize
 menu-window-zoom = Zoom
 menu-window-bring-all-to-front = Bring All to Front

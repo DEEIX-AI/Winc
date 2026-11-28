@@ -7,6 +7,12 @@
 use super::app_menu::{DELEGATE, add_method};
 use super::*;
 
+/// `NSEventModifierFlagControl`：`NSEventModifierFlags` 中的 ⌃。
+const MOD_CONTROL: usize = 1 << 18;
+
+/// `NSEventModifierFlagCommand`：`NSEventModifierFlags` 中的 ⌘。
+const MOD_COMMAND: usize = 1 << 20;
+
 /// 程序坞菜单里「新建窗口」被选中时调用的回调；只在主线程上设置和调用。
 type NewWindowHandler = Box<dyn Fn() + Send + Sync>;
 
@@ -28,8 +34,8 @@ static DOCK_MENU: OnceLock<DockMenu> = OnceLock::new();
 /// 程序坞菜单里「新建窗口」的动作名，添加在 `winit` 的应用委托上。
 const NEW_WINDOW_ACTION: &CStr = c"wincNewWindow:";
 
-/// 在菜单栏上加「窗口」菜单（最小化 ⌘M、缩放、全部前置，下面是 `AppKit` 列出的各窗口），并在
-/// 程序坞菜单里加「新建窗口」，选中时调用 `new_window`。
+/// 在菜单栏上加「窗口」菜单（进入全屏幕 ⌃⌘F、最小化 ⌘M、缩放、全部前置，下面是 `AppKit` 列出
+/// 的各窗口和窗口平铺项），并在程序坞菜单里加「新建窗口」，选中时调用 `new_window`。
 ///
 /// 必须在事件循环开始之后（`winit` 已建好菜单和应用委托）调用；只有第一次调用生效。
 pub fn add_window_menus(open: impl Fn() + Send + Sync + 'static) {
@@ -104,6 +110,21 @@ pub fn add_window_menus(open: impl Fn() + Send + Sync + 'static) {
         if let Some(main_menu) = main_menu.as_ref()
             && let Some(menu) = new_menu(winc_i18n::t!("menu-window"))
         {
+            // 全屏用 `AppKit` 的标准动作、目标为空：能否全屏、标题在「进入全屏幕」「退出
+            // 全屏幕」之间的切换都由系统按窗口状态处理。macOS 的 ⌃⌘F 也来自这一项。
+            let fullscreen = add_item(
+                menu,
+                winc_i18n::t!("menu-window-enter-full-screen"),
+                sel!(toggleFullScreen:),
+                "f",
+            );
+            if let Some(fullscreen) = fullscreen.as_ref() {
+                // 菜单项按键默认带 ⌘，再加上 ⌃ 即系统的 ⌃⌘F。
+                let () = msg_send![
+                    fullscreen,
+                    setKeyEquivalentModifierMask: MOD_CONTROL | MOD_COMMAND
+                ];
+            }
             add_item(
                 menu,
                 winc_i18n::t!("menu-window-minimize"),

@@ -271,6 +271,8 @@ pub enum Action {
     ZoomIn,
     ZoomOut,
     ResetZoom,
+    /// 进入或退出窗口全屏。
+    ToggleFullScreen,
     ThemeAuto,
     ThemeLight,
     ThemeDark,
@@ -697,6 +699,7 @@ impl Action {
             ZoomIn => t!("cmd-zoom-in"),
             ZoomOut => t!("cmd-zoom-out"),
             ResetZoom => t!("cmd-reset-zoom"),
+            ToggleFullScreen => t!("cmd-toggle-full-screen"),
             ThemeAuto => t!("cmd-theme-auto"),
             ThemeLight => t!("cmd-theme-light"),
             ThemeDark => t!("cmd-theme-dark"),
@@ -974,6 +977,7 @@ impl Action {
             | ZoomIn
             | ZoomOut
             | ResetZoom
+            | ToggleFullScreen
             | ThemeAuto
             | ThemeLight
             | ThemeDark

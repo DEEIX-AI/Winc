@@ -635,6 +635,53 @@ fn a_drawn_title_bar_has_window_buttons_and_resize_edges() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 全屏时应用绘制的标题栏不显示窗口按钮，标签栏占到右端；四边不再改变窗口大小。退出全屏后
+/// 恢复原样。
+#[test]
+fn a_full_screen_window_has_no_window_buttons_or_resize_edges() {
+    let (mut winc, a, _, dir) = two_windows("windows-full-screen");
+    let app = winc.app(a);
+    app.window.controls = true;
+    app.relayout();
+    paint(app);
+    let (controls, tabs) = (app.layout.controls, app.layout.tabs);
+    let window = app.layout.window;
+    assert!(controls.w > 0.0);
+    assert!(matches!(
+        app.hover_at(1.0, window.h / 2.0),
+        Hover::ResizeEdge(_)
+    ));
+
+    app.window.fullscreen = true;
+    app.relayout();
+    paint(app);
+    assert_eq!(app.layout.controls, Rect::default());
+    assert!(
+        app.layout.tabs.right() > tabs.right(),
+        "标签栏占用窗口按钮让出的位置"
+    );
+    for (x, y) in [
+        (1.0, window.h / 2.0),
+        (window.w - 1.0, window.h / 2.0),
+        (window.w / 2.0, 1.0),
+        (window.w / 2.0, window.h - 1.0),
+    ] {
+        assert!(!matches!(app.hover_at(x, y), Hover::ResizeEdge(_)));
+    }
+    let center = (controls.x + controls.w / 2.0, controls.y + controls.h / 2.0);
+    assert!(!matches!(
+        app.hover_at(center.0, center.1),
+        Hover::WindowControl(_)
+    ));
+
+    app.window.fullscreen = false;
+    app.relayout();
+    paint(app);
+    assert_eq!(app.layout.controls, controls);
+    assert_eq!(app.layout.tabs, tabs);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 「使用系统标题栏」（macOS 以外的平台）：开关马上生效，顶栏右端的窗口按钮随之去掉或回来。
 #[cfg(not(target_os = "macos"))]
 #[test]

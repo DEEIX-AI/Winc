@@ -494,6 +494,11 @@ const IDS: &[(Action, &[&str], &[&str])] = &[
         &["ResetIdeScaleAction"],
         &["workbench.action.zoomReset"],
     ),
+    (
+        ToggleFullScreen,
+        &["ToggleFullScreen"],
+        &["workbench.action.toggleFullScreen"],
+    ),
     (ToggleVimMode, &["VimPluginToggle"], &[]),
     (
         ToggleWordWrap,

@@ -244,14 +244,34 @@ impl App {
 
     /// 窗口是否处于全屏；隐藏的窗口不算。
     pub(crate) fn is_fullscreen(&self) -> bool {
-        let window = self.window.handle.as_ref().filter(|_| !self.window.hidden);
-        window.is_some_and(|window| window.fullscreen().is_some())
+        self.window.fullscreen && !self.window.hidden
+    }
+
+    /// 按系统窗口更新 [`WindowState::fullscreen`]；进入、退出全屏都会改变窗口大小，在窗口大小
+    /// 改变时调用。
+    pub(in crate::app) fn sync_fullscreen(&mut self) {
+        let window = self.window.handle.as_ref();
+        self.window.fullscreen = window.is_some_and(|window| window.fullscreen().is_some());
     }
 
     /// 让窗口进入全屏；macOS 上窗口独占一个桌面空间。
     pub(crate) fn enter_fullscreen(&self) {
         if let Some(window) = &self.window.handle {
             window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        }
+    }
+
+    /// 进入或退出全屏（命令「切换全屏」）。
+    ///
+    /// macOS 上「窗口」菜单的「进入全屏幕」（`⌃⌘F`）先于键位表收到按键，由 `AppKit` 切换，
+    /// 不经过这里；命令面板和自定义的快捷键经过这里。
+    pub(in crate::app) fn toggle_fullscreen(&self) {
+        if self.is_fullscreen() {
+            if let Some(window) = &self.window.handle {
+                window.set_fullscreen(None);
+            }
+        } else {
+            self.enter_fullscreen();
         }
     }
 
@@ -1008,6 +1028,9 @@ pub struct WindowState {
     /// 关闭时窗口处于全屏：退出全屏完成后再隐藏（见 `App::hide_window`）。
     #[cfg(target_os = "macos")]
     pub(in crate::app) hide_after_fullscreen: bool,
+    /// 窗口是否全屏，窗口大小改变时更新（见 `App::sync_fullscreen`）。全屏时应用绘制的标题栏
+    /// 不显示窗口按钮，也不能拖动窗口或改变窗口大小。
+    pub(in crate::app) fullscreen: bool,
 }
 
 impl Default for WindowState {
@@ -1023,6 +1046,7 @@ impl Default for WindowState {
             minimized: false,
             #[cfg(target_os = "macos")]
             hide_after_fullscreen: false,
+            fullscreen: false,
         }
     }
 }
