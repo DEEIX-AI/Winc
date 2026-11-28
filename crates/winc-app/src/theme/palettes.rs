@@ -325,19 +325,20 @@ pub static VERMILION: Palette = Palette::build(Tokens {
 
 /// 「暮紫」：深色主题，蓝灰底、比底色深一档的窗框。
 ///
-/// 紫色关键字、绿色字符串、蓝色函数、黄色类型；语法色明度都在正文附近，靠色相区分。
+/// 紫色关键字、绿色字符串、蓝色函数、黄色类型；语法色明度都在正文附近，靠色相区分；注释、
+/// 行号和次要文字的对比度与其他深色主题相当。
 pub static DUSK: Palette = Palette::build(Tokens {
     dark: true,
     frame: hex(0x1E2227),
     card: hex(0x282C34),
     popup: hex(0x2F343E),
     text: hex(0xABB2BF),
-    text_muted: hex(0x7F848E),
-    text_dim: hex(0x5C6370),
+    text_muted: hex(0x929BAB),
+    text_dim: hex(0x737D8F),
     accent: hex(0x61AFEF),
     accent_fill: hex(0x4D78CC),
     selection: hex(0x3E4451),
-    gutter: [hex(0x495162), hex(0xABB2BF)],
+    gutter: [hex(0x5C6370), hex(0xABB2BF)],
     error: hex(0xE06C75),
     warning: hex(0xE5C07B),
     git: [hex(0x61AFEF), hex(0x98C379), hex(0xE06C75), hex(0xD19A66)],
@@ -348,7 +349,7 @@ pub static DUSK: Palette = Palette::build(Tokens {
         hex(0xE5C07B),
         hex(0x98C379),
         hex(0xD19A66),
-        hex(0x7F848E),
+        hex(0x8993A5),
         hex(0x61AFEF),
         hex(0x56B6C2),
         hex(0xE06C75),
@@ -362,7 +363,7 @@ pub static DUSK: Palette = Palette::build(Tokens {
         hex(0xC678DD),
         hex(0x56B6C2),
         hex(0xABB2BF),
-        hex(0x7F848E),
+        hex(0x838C9D),
         hex(0xEF7B84),
         hex(0xA9D18D),
         hex(0xF0CD8E),
