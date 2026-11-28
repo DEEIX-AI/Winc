@@ -914,6 +914,11 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     paint(&mut app);
     // 最后一页是「关于」：版本号、更新状态和「检查更新」；定时检查的开关在「通用」页。
     assert_eq!(SettingsPage::ALL.last(), Some(&SettingsPage::About));
+    assert_eq!(
+        app.settings_layout().footer,
+        None,
+        "只有「关于」页有版权声明"
+    );
     click_part(&mut app, SettingsPart::Page(SettingsPage::About));
     paint(&mut app);
     let layout = app.settings_layout();
@@ -932,6 +937,15 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     );
     let (x, y) = center(parts.logo);
     assert_eq!(layout.part_at(x, y), None);
+    // 页面最下方是版权与许可声明，在最后一组之下，不可点击。
+    let footer = layout.footer.unwrap();
+    assert!(footer.y > layout.groups.last().unwrap().bottom());
+    let (x, y) = center(footer);
+    assert_eq!(layout.part_at(x, y), None);
+    assert_eq!(
+        crate::layout::legal_line(),
+        "© 2026 Chenyme 和 DEEIX AI · 以 GPL-3.0-or-later 发布，不提供任何担保"
+    );
     click_part(&mut app, SettingsPart::Copy(Setting::Version));
     let copied = app.clipboard.copied.clone().unwrap();
     let first = format!("Winc {}", crate::layout::version_label());
@@ -1021,7 +1035,7 @@ fn the_about_page_links_out_and_hides_unavailable_updates() {
     assert_eq!(value(Setting::Website), "winc.si");
     assert_eq!(value(Setting::Repository), "DEEIX-AI/Winc");
     assert_eq!(value(Setting::Community), "t.me/deeix_chat");
-    assert_eq!(value(Setting::License), "Apache-2.0");
+    assert_eq!(value(Setting::License), "GPL-3.0-or-later");
     assert_eq!(
         about_link(Setting::License).as_deref(),
         Some("https://github.com/DEEIX-AI/Winc/blob/HEAD/LICENSE")

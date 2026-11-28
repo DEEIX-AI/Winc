@@ -336,6 +336,11 @@ fn snapshot_about_page() {
         let (x, y) = settings_point(&app, SettingsPart::Link(Setting::Repository));
         app.on_mouse_move(x, y);
         shoot(&mut app, &format!("settings-about-off-{tag}"));
+
+        // 滚到底：最下方是版权与许可声明。
+        app.settings.scroll = app.settings_layout().max_scroll();
+        paint(&mut app);
+        shoot(&mut app, &format!("settings-about-bottom-{tag}"));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

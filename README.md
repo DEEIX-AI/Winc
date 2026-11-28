@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://winc.si"><img alt="Website" src="https://img.shields.io/badge/Website-winc.si-black" /></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue" /></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue" /></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-b7410e" />
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555" />
 </p>
@@ -185,4 +185,6 @@ vulnerability, see [SECURITY.md](.github/SECURITY.md).
 
 ## License
 
-winc is licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE).
+winc is licensed under the [GNU General Public License, version 3](LICENSE) or (at your option) any
+later version. Versions before 0.2.0 were released under the Apache License, Version 2.0. See
+[NOTICE](NOTICE).

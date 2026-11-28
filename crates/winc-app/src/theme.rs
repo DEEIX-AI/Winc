@@ -801,6 +801,8 @@ pub const SETTINGS_INSET: f32 = 14.0;
 pub const SETTINGS_GROUP_GAP: f32 = 16.0;
 /// 最后一组下方的留白。
 pub const SETTINGS_BOTTOM: f32 = 24.0;
+/// 「关于」页最后一组与下方版权声明之间的距离。
+pub const SETTINGS_FOOTER_GAP: f32 = 24.0;
 /// 一行的高度（名称下方没有说明文字时）。
 pub const SETTINGS_ROW: f32 = 40.0;
 /// 名称下方还有一行说明文字时的行高。

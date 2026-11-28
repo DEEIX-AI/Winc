@@ -287,6 +287,16 @@ fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> O
         caret = caret.or(draw_row(app, frame, row, body));
     }
 
+    // 「关于」页最下方的版权与许可声明：小号淡色，居中；放不下时在末尾截短。
+    if let Some(line) = layout.footer {
+        let size = app.fonts.ui_small;
+        let text = crate::layout::legal_line();
+        let text = ellipsize(frame, &text, size, line.w);
+        let w = frame.measure(Font::ui(size), &text);
+        let x = (line.x + (line.w - w) / 2.0).round();
+        ui_text_small(frame, app, x, line, &text, p.text_dim, body);
+    }
+
     // 窗口太矮、内容放不下时，右侧有一条细滚动条，滚动时或鼠标移到右边缘时显示。
     let page = app.settings.selected.page() as u64;
     let thumb = settings_thumb(body, app.settings.scroll, layout.max_scroll());

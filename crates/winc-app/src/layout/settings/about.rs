@@ -55,6 +55,13 @@ pub fn version_line() -> String {
     t!("settings-version-line", version = version_label())
 }
 
+/// 返回「关于」页最下方的版权与许可声明，许可证取自 `Cargo.toml` 的 `license`。
+///
+/// 与「开源许可」一行的全文链接一起，构成交互界面应显示的法律声明（GPL 第 0 条）。
+pub fn legal_line() -> String {
+    t!("settings-legal", license = env!("CARGO_PKG_LICENSE"))
+}
+
 /// 返回「关于」页中链接的显示名（如「winc.si」）；不是链接时返回 `None`。
 ///
 /// 官网、仓库和许可证取自 `Cargo.toml` 的 `homepage`、`repository` 和 `license`；更新日志在

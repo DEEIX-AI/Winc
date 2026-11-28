@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://winc.si"><img alt="Website" src="https://img.shields.io/badge/Website-winc.si-black" /></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue" /></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue" /></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-b7410e" />
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555" />
 </p>
@@ -178,4 +178,5 @@ cargo xtask bench                   # 测启动、内存、滚动，对照性能
 
 ## 许可证
 
-winc 以 [Apache License 2.0](LICENSE) 授权，另见 [NOTICE](NOTICE)。
+winc 以 [GNU 通用公共许可证第 3 版](LICENSE)或（由你选择）任何更新的版本授权；0.2.0 之前的版本以
+Apache License 2.0 发布。另见 [NOTICE](NOTICE)。
