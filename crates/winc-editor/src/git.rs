@@ -402,6 +402,14 @@ impl Entry {
             .filter(|_| self.staged != Some(Change::Renamed))
     }
 
+    /// 删除是否已经暂存，且工作区中没有该路径的其余变化。
+    ///
+    /// 此时删除已在暂存区中、路径不再在暂存区：再次交给 `git add` 会在工作区也不存在该文件时
+    /// 失败，或在仅取消跟踪（`git rm --cached`）时把磁盘上的文件重新暂存。
+    pub fn staged_deletion(&self) -> bool {
+        self.staged == Some(Change::Deleted) && self.unstaged.is_none()
+    }
+
     /// 在文件树里显示的状态：两项中优先级更高的一项。
     pub fn shown(&self) -> Change {
         match (self.staged, self.unstaged) {
