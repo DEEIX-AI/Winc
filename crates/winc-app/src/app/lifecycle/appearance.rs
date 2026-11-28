@@ -58,6 +58,8 @@ impl App {
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         if let Some(window) = &self.window.handle {
             window.set_theme(forced_theme(&choice));
+            #[cfg(target_os = "macos")]
+            self.defer_traffic_lights();
         }
 
         let current = if self.palette.dark {
@@ -84,9 +86,19 @@ impl App {
 
     /// 系统的外观变成了 `theme`：没有固定主题且深浅不同时跟随。
     pub(crate) fn system_theme_changed(&mut self, theme: Theme) {
+        #[cfg(target_os = "macos")]
+        self.defer_traffic_lights();
         if forced_theme(&self.theme_choice).is_none() && self.palette.dark != (theme == Theme::Dark)
         {
             self.set_theme(theme);
+        }
+    }
+
+    /// `AppKit` 可能在外观通知返回后重设标题栏高度，下一轮事件再摆放按钮。
+    #[cfg(target_os = "macos")]
+    fn defer_traffic_lights(&self) {
+        if let Some(proxy) = &self.link.proxy {
+            let _ = proxy.send_event(UserEvent::RepositionTrafficLights);
         }
     }
 
@@ -105,7 +117,7 @@ impl App {
         crate::theme::themes(dark)[self.theme_slot(dark)].palette
     }
 
-    /// 切到 `theme`：换成对应的主题，终端跟着换配色，并重新摆放标题栏按钮。
+    /// 切到 `theme` 对应的主题，终端跟着换配色。
     pub(in crate::app) fn set_theme(&mut self, theme: Theme) {
         self.palette = self.theme_palette(theme == Theme::Dark);
         // 系统标题栏的深浅。
@@ -119,7 +131,6 @@ impl App {
             renderer.set_background(self.palette.frame_bg);
         }
 
-        self.place_traffic_lights();
         self.request_redraw();
     }
 
