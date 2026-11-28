@@ -158,8 +158,8 @@ fn pdf_files_render_only_the_pages_in_view() {
     // 回归：页面滚出预览顶部时，超出预览区域的部分（包括边框）不绘制到标签栏上。
     let above = |app: &mut App| {
         paint(app);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
-        let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
+        let scale = app.frame.renderer.as_ref().unwrap().scale();
         let rows = (app.preview.pdf.area.y * scale).floor() as usize;
         image.pixels[..rows * image.width as usize].to_vec()
     };
@@ -457,7 +457,7 @@ fn the_pdf_toolbar_border_does_not_show_the_page_through() {
     renderer.draw(|frame| scale = frame.scale());
     paint(&mut app);
     let bar = app.preview.pdf.tools.rect;
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let pixel = |x: f32| {
         let (x, y) = (
             (x * scale) as usize,
@@ -650,8 +650,8 @@ fn a_page_that_fails_to_render_shows_why_instead_of_staying_blank() {
     assert!(!app.preview.pdf.rendered.contains_key(&0));
 
     // 页面可见部分不再全是白色：在中央画出了失败的原因（页面比视口高时画在可见部分的中央）。
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
-    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
+    let scale = app.frame.renderer.as_ref().unwrap().scale();
     let area = app.preview.pdf.area;
     let top = ((area.y + 32.0) * scale) as usize + 2;
     let bottom = ((area.bottom() * scale) as usize).min(top + height as usize) - 2;

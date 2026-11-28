@@ -952,10 +952,20 @@ impl TermTab {
         let range = match s.unit {
             Unit::Char => (from, to),
             Unit::Word => {
-                let start = self.word_at(from).map_or(from, |(start, _)| start);
-                let end = self.word_at(to).map_or(
-                    Point {
-                        col: to.col + 1,
+                let start = self.word_at(from).map_or_else(
+                    || Point {
+                        col: self
+                            .char_span(from.line, from.col)
+                            .map_or(from.col, |(s, _)| s),
+                        ..from
+                    },
+                    |(start, _)| start,
+                );
+                let end = self.word_at(to).map_or_else(
+                    || Point {
+                        col: self
+                            .char_span(to.line, to.col)
+                            .map_or_else(|| to.col.saturating_add(1), |(_, e)| e),
                         ..to
                     },
                     |(_, end)| end,
@@ -986,6 +996,31 @@ impl TermTab {
         let start = if line == from.line { from.col } else { 0 };
         let end = if line == to.line { to.col } else { usize::MAX };
         (start < end).then_some((start, end))
+    }
+
+    /// 鼠标所在位置 `at`（以格为单位，带小数）对应的整字边界。
+    ///
+    /// 落在字符的左半边取起点、右半边取终点：窄字符在半格处切换，宽字符在两格
+    /// 之间切换，不会停在宽字符中间；行还没取回来或超出内容末尾时按单格四舍五入。
+    pub(super) fn char_boundary(&self, line: u64, at: f32) -> usize {
+        if at <= 0.0 {
+            return 0;
+        }
+        match self.char_span(line, at.floor() as usize) {
+            Some((start, end)) if at < (start + end) as f32 * 0.5 => start,
+            Some((_, end)) => end,
+            None => at.round() as usize,
+        }
+    }
+
+    /// 第 `line` 行第 `col` 格所在字符的格范围（起点，终点），终点不含。
+    ///
+    /// 行还没取回来或 `col` 超出内容末尾时返回 `None`。
+    fn char_span(&self, line: u64, col: usize) -> Option<(usize, usize)> {
+        let row = self.line(line)?;
+        let cells = cell_chars(&row.text);
+        let &(start, width, _) = cells.iter().find(|&&(start, w, _)| col < start + w)?;
+        Some((start, start + width))
     }
 
     /// 选中的文字：软换行的行接起来不加换行，其余行去掉行尾空格、用换行分开。

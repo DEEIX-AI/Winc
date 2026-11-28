@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
+use cpui_render::FontSystem;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopClosed, EventLoopProxy};
@@ -20,7 +21,7 @@ use winit::window::{Window, WindowId};
 use winc_config::State;
 use winc_editor::Editor;
 
-use crate::app::{App, UserEvent};
+use crate::app::{App, UserEvent, font_set};
 use crate::bench::Bench;
 use crate::cli::Target;
 use crate::instance::{AppLock, Listener};
@@ -997,13 +998,21 @@ impl Winc {
             let slot = self.windows.iter().find(|s| s.key == key)?;
             let app = &slot.app;
             let from = app.cascade_from().filter(|_| cascade);
-            Some((app.config.clone(), from, app.shared_glyphs()))
+            Some((app.config.clone(), from, Some(app.fonts())))
         });
-        let (config, cascade, glyphs) = from.unwrap_or_default();
+        let (config, cascade, fonts) = from.unwrap_or_default();
+        // 同一进程中新开的窗口复用来源窗口的字体和字形缓存，两者配置相同，无需重新加载。
+        let fonts = match fonts.map_or_else(|| FontSystem::new(&font_set(&config)), Ok) {
+            Ok(fonts) => fonts,
+            Err(e) => {
+                eprintln!("winc: 无法初始化渲染：{e}");
+                return;
+            }
+        };
         let mut editor = Editor::default();
         editor.tab_width = config.tab_width.unwrap_or(editor.tab_width);
         let (key, proxy) = self.reserve();
-        let mut app = App::new(editor, proxy, Bench::off(), config);
+        let mut app = App::new(editor, proxy, Bench::off(), config, fonts);
         app.watch_git_output();
         app.store.config_path = template.config_path;
         // 新窗口从文件读状态：先等其他窗口提交的修改写完。
@@ -1023,7 +1032,6 @@ impl Winc {
         app.backup.root = template.backup_root;
         app.opening.cascade = cascade;
         app.opening.fullscreen = fullscreen;
-        app.opening.glyphs_from = glyphs;
         self.add(key, app);
         self.activate(key);
         let Some(app) = self.by_key(key) else {

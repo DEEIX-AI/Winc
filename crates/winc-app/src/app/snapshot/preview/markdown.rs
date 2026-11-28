@@ -242,7 +242,7 @@ fn a_cut_short_html_copy_pastes_the_whole_text() {
 fn clicking_a_task_box_toggles_it() {
     let (mut app, dir) = live_doc("md-task", "开头\n\n- [ ] 甲\n- [x] 乙\n");
     let task = crate::app::preview::markdown::laid::TASK;
-    let boxes = |app: &App| -> Vec<winc_render::Rect> {
+    let boxes = |app: &App| -> Vec<cpui_render::Rect> {
         app.hits
             .markdown_links
             .iter()
@@ -643,6 +643,19 @@ fn diagrams_open_full_screen_and_zoom() {
     for dir in [dir, dir2, dir3] {
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+#[test]
+fn diagram_view_covers_both_halves_with_left_preview() {
+    let (mut app, dir) = diagram_view_app("md-diagram-view-left-split", 0, false);
+    let whole = app.layout.editor;
+    app.config.split_preview_left = Some(true);
+    app.set_preview_mode(PreviewMode::Split);
+    paint(&mut app);
+    assert!(app.layout.split.x < app.layout.editor.x);
+    let view = app.preview.markdown.diagram.as_ref().unwrap();
+    assert_eq!(view.area, whole);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

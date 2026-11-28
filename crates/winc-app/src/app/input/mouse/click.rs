@@ -189,7 +189,13 @@ impl App {
         }
 
         // 点在预览以外：预览的选区和焦点不要了（`click_markdown` 再拿回来）。拖预览的滚动条不算。
-        let target = self.target_at(x, y);
+        let target = match self.target_at(x, y) {
+            // 无文档时仅将编辑区的空白点击交给编辑区，以便移回键盘焦点。
+            Target::None if self.editor.active.is_none() && l.editor.contains(x, y) => {
+                Target::Editor
+            }
+            target => target,
+        };
         let keeps_preview = matches!(
             target,
             Target::MarkdownText(_)
@@ -199,7 +205,7 @@ impl App {
             self.preview.markdown.focused = false;
             self.preview.markdown.selection = None;
         }
-        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘交回左侧。
+        // 分栏的表格同理：点在表格（含其滚动条）以外时键盘焦点回到源代码。
         let keeps_table = matches!(
             target,
             Target::Table | Target::Scrollbar(Scrollbar::Table | Scrollbar::TableHorizontal, _)
@@ -500,7 +506,11 @@ impl App {
             Target::SplitDivider => {
                 self.pointer.drag = Drag::SplitDivider {
                     start_x: x,
-                    start_left: self.layout.editor.w,
+                    start_left: if self.layout.split.x < self.layout.editor.x {
+                        self.layout.split.w
+                    } else {
+                        self.layout.editor.w
+                    },
                 };
             }
             Target::OutlineDivider => {

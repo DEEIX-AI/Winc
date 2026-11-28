@@ -34,8 +34,8 @@ pub(super) fn draw_other_rows(
                     let x = (band.x + ARROW + (level + 1) as f32 * INDENT).round();
                     frame.rect_clipped(
                         Rect::new(x, band.y, 1.0, COMMIT_ROW),
-                        app.palette.indent_guide,
                         0.0,
+                        app.palette.indent_guide,
                         list,
                     );
                 }
@@ -67,7 +67,7 @@ pub(super) fn draw_other_rows(
                         || matches!(app.pointer.hover, Hover::Commit(t) if actions.holds(t));
                     if hovered {
                         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-                        frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
+                        frame.rect_clipped(shade, RADIUS_ROW, app.palette.hover, list);
                     }
                     let cy = band.y + COMMIT_ROW / 2.0;
                     let arrow = band.x + ARROW + (depth + 1) as f32 * INDENT;
@@ -266,7 +266,7 @@ fn draw_current_row(
     } else {
         total.to_string()
     };
-    let count_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &count) + 2.0 * END_CENTER;
+    let count_w = frame.measure(Font::ui(app.fonts.ui_small), &count) + 2.0 * END_CENTER;
     let clip = Rect::new(list.x, band.y, band.right() - count_w - list.x, COMMIT_ROW);
     let clip = clip.intersect(list);
     icons::folder_small(frame, (icon + 6.0, cy), p.accent, clip);
@@ -304,7 +304,7 @@ pub(super) fn draw_sections(app: &App, frame: &mut Frame<'_>, list: Rect, block:
     if card.bottom() < clip.y || card.y > clip.bottom() || clip.h <= 0.0 {
         return;
     }
-    frame.rect_clipped(card, current_fill(app), RADIUS_ROW, clip);
+    frame.rect_clipped(card, RADIUS_ROW, current_fill(app), clip);
 }
 
 /// 当前仓库一节卡片的底色。
@@ -316,7 +316,7 @@ pub(super) fn current_fill(app: &App) -> Color {
 fn draw_header_band(app: &App, frame: &mut Frame<'_>, (list, band): (Rect, Rect), hovered: bool) {
     if hovered {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-        frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
+        frame.rect_clipped(shade, RADIUS_ROW, app.palette.hover, list);
     }
 }
 
@@ -329,7 +329,7 @@ fn shade_hovered(
 ) {
     if app.pointer.hover == Hover::Commit(target) {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-        frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
+        frame.rect_clipped(shade, RADIUS_ROW, app.palette.hover, list);
     }
 }
 
@@ -367,7 +367,7 @@ fn draw_repository_row(
     } else {
         state.changes.to_string()
     };
-    let count_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &count) + 2.0 * END_CENTER;
+    let count_w = frame.measure(Font::ui(app.fonts.ui_small), &count) + 2.0 * END_CENTER;
     let clip = Rect::new(list.x, band.y, band.right() - count_w - list.x, COMMIT_ROW);
     let clip = clip.intersect(list);
     let (arrow, check, icon, name_x) = header_columns(app, band, quiet);
@@ -421,7 +421,7 @@ fn draw_branch_sync(
         let ink = if on { p.text } else { p.text_dim };
         let left = x + BRANCH_LEAD - 8.0;
         let size = app.fonts.ui_small;
-        let end = x + BRANCH_LEAD + BRANCH_TEXT + frame.measure(FontKind::Ui, size, head);
+        let end = x + BRANCH_LEAD + BRANCH_TEXT + frame.measure(Font::ui(size), head);
         let chip = Rect::new(left, band.y + 3.0, end + 6.0 - left, band.h - 6.0);
         draw_button(frame, p, chip, clip, on, false);
         x += BRANCH_LEAD;
@@ -500,7 +500,7 @@ fn draw_other_group(
         || matches!(app.pointer.hover, Hover::Commit(t) if actions.holds(t));
     if hovered {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-        frame.rect_clipped(shade, app.palette.hover, RADIUS_ROW, list);
+        frame.rect_clipped(shade, RADIUS_ROW, app.palette.hover, list);
     }
     let count = count.unwrap_or(0).to_string();
     draw_count_pill(app, frame, band, &count, list);
@@ -587,7 +587,7 @@ fn draw_other_file(
     let shade_color = row_color(p, selected, focused, hovered);
     if let Some(color) = shade_color {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-        frame.rect_clipped(shade, color, RADIUS_ROW, list);
+        frame.rect_clipped(shade, RADIUS_ROW, color, list);
     }
     let strip = hovered.then(|| actions_home(band, actions.len(), 0.0));
     if let Some(strip) = strip {
@@ -614,7 +614,7 @@ fn draw_other_file(
         draw_file_icon(frame, p, (icon_x + inset, cy), &name, list);
     }
     let letter = change.letter().to_string();
-    let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
+    let letter_w = frame.measure(Font::ui(app.fonts.ui_small), &letter);
     let letter_x = band.right() - END_CENTER - letter_w / 2.0;
     ui_text_small(
         frame,

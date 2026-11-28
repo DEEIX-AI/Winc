@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
+use cpui_render::{Rect, Renderer};
 use winc_editor::{DocumentId, PreviewMode};
 use winc_i18n::t;
 use winc_preview::image::{Picture, Source};
 use winc_preview::svg;
-use winc_render::{Rect, Renderer};
 
 use crate::app::animation::{Clock, PDF_MOTION};
 use crate::app::preview::pdf::PINCH_STEP;
@@ -215,11 +215,7 @@ impl App {
         if !vector {
             return f32::INFINITY;
         }
-        let scale = self
-            .frame
-            .renderer
-            .as_ref()
-            .map_or(1.0, Renderer::scale_factor);
+        let scale = self.frame.renderer.as_ref().map_or(1.0, Renderer::scale);
         svg::MAX_EDGE as f32 / scale
     }
 

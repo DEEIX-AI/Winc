@@ -1,11 +1,31 @@
 winc
 Copyright 2026 Chenyme and DEEIX AI
 
-This product is licensed under the Apache License, Version 2.0.
-See the LICENSE file for the full license text.
+This product is licensed under the GNU General Public License, version 3 or (at
+your option) any later version. See the LICENSE file for the full license text.
+Versions before 0.2.0 were released under the Apache License, Version 2.0.
 
 Website: https://winc.si
 Source: https://github.com/DEEIX-AI/Winc
+
+CPUI
+
+Winc is built with CPUI (https://github.com/DEEIX-AI/cpui), used through the
+cpui-render and cpui-icons crates. CPUI is licensed under the Apache License,
+Version 2.0, and carries the following notice:
+
+    CPUI
+    Copyright 2026 Chenyme (https://github.com/chenyme) and DEEIX AI (https://deeix.com)
+
+    This product is licensed under the Apache License, Version 2.0.
+    See the LICENSE file for the full license text.
+
+    The rendering layer (crates/cpui-render) is derived from
+    Winc (https://github.com/DEEIX-AI/Winc), Copyright 2026 Chenyme and DEEIX AI,
+    licensed under the Apache License, Version 2.0.
+
+    The license does not grant permission to use the CPUI name or logo; see
+    https://github.com/DEEIX-AI/cpui/blob/main/TRADEMARKS.md.
 
 Third-party components
 
@@ -33,3 +53,29 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The Markdown preview includes the emoji shortcode names of gemoji
+(https://github.com/github/gemoji), used under the MIT License:
+
+Copyright (c) 2019 GitHub, Inc.
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.

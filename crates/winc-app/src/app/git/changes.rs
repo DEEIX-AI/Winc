@@ -14,6 +14,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use ropey::Rope;
 
+use cpui_render::Rect;
 use winc_core::diff::{self, LineHunk};
 use winc_core::{Change, EditKind, Lines, Transaction};
 use winc_editor::diff_view::inline_marks;
@@ -21,7 +22,6 @@ use winc_editor::encoding::decode_known;
 use winc_editor::format::Cancel;
 use winc_editor::{DocumentId, LARGE_FILE, looks_binary};
 use winc_i18n::t;
-use winc_render::Rect;
 
 use crate::layout::{GIT_LANE, Ruler};
 

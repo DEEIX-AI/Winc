@@ -254,7 +254,7 @@ fn a_mouse_wheel_notch_glides_and_a_trackpad_follows_directly() {
     assert!(!app.wheel_glides(PixelDelta(PhysicalPosition::new(0.0, -40.0))));
     app.layout.terminal = text;
     assert!(!app.wheel_glides(LineDelta(0.0, -1.0)));
-    app.layout.terminal = winc_render::Rect::default();
+    app.layout.terminal = cpui_render::Rect::default();
 
     // 向下滚动 30 行：时钟过半时位于缓出曲线的对应位置。
     let half = Clock::stopped(LENGTH, LENGTH / 2);

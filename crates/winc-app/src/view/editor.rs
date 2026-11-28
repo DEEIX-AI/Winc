@@ -224,7 +224,7 @@ fn draw_surface(app: &mut App, frame: &mut Frame<'_>) -> Option<usize> {
         }
         return None;
     }
-    // 分栏预览时缓存中保存的是右半部分的图片（`draw_split`），不清除。
+    // 分栏时保留预览图片的缓存供 `draw_split` 使用。
     if app.layout.split.w <= 0.0 {
         app.preview.picture_cache = None;
     }

@@ -149,6 +149,9 @@ pub struct Config {
     pub markdown_remote_images: Option<bool>,
     /// Markdown 预览正文的最大宽度，默认为 [`TextWidth::Standard`]。
     pub markdown_text_width: Option<TextWidth>,
+    /// 分栏时预览的位置。配置中写作 `markdown.splitPreviewPosition`，取值为 `left` 或
+    /// `right`，默认为右侧。
+    pub split_preview_left: Option<bool>,
     /// Markdown 预览正文的字体，写法同 [`Config::editor_font`]；未设置时与界面字体相同。
     pub markdown_font: Option<String>,
     /// Markdown 预览正文的字号（点）；未设置时随编辑区字号按比例变化。

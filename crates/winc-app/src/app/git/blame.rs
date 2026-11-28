@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 
 use ropey::Rope;
 
+use cpui_render::Rect;
 use winc_core::Lines;
 use winc_editor::DocumentId;
 use winc_editor::diff_view::{BlameSource, LEFT, RIGHT};
 use winc_editor::format::Cancel;
 use winc_editor::git::{Blame, BlameCommit};
 use winc_i18n::t;
-use winc_render::Rect;
 
 use super::log::{display_at, local_text, short};
 use super::unusable;

@@ -23,9 +23,10 @@ struct Member {
 
 /// 各 crate 允许依赖的 workspace 内的包；未列出的 crate 不允许依赖任何内部包。
 ///
-/// 依赖只能指向更底层的 crate：`winc-backend` 不依赖任何内部包，`winc-core`、`winc-render`
-/// 只依赖两者共用的 `winc-emoji`，彼此不依赖；`winc-editor` 不依赖窗口与渲染，只有 `winc-app`
-/// 同时依赖编辑器与渲染层。新增内部依赖时必须在此登记。
+/// 依赖只能指向更底层的 crate：`winc-backend`、`winc-emoji` 不依赖任何内部包，`winc-core` 只依赖
+/// `winc-emoji`；`winc-editor` 不依赖窗口与渲染，只有 `winc-app` 同时依赖编辑器与渲染层
+/// （`cpui-render`，不是内部包）。
+/// 新增内部依赖时必须在此登记。
 const LAYERS: &[(&str, &[&str])] = &[
     ("winc", &["winc-app"]),
     (
@@ -39,7 +40,6 @@ const LAYERS: &[(&str, &[&str])] = &[
             "winc-i18n",
             "winc-preview",
             "winc-pty",
-            "winc-render",
             "winc-search",
             "winc-syntax",
             "winc-typeset",
@@ -59,13 +59,14 @@ const LAYERS: &[(&str, &[&str])] = &[
             "winc-syntax",
         ],
     ),
+    // `winc-typeset` 用 `winc-core` 判断哪些文字需要整形，与编辑区相同。
     (
         "winc-typeset",
         &[
+            "winc-core",
             "winc-emoji",
             "winc-i18n",
             "winc-preview",
-            "winc-render",
             "winc-syntax",
         ],
     ),
@@ -74,9 +75,8 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("winc-syntax", &["winc-core"]),
     ("winc-vim", &["winc-core"]),
     ("winc-pty", &["winc-emoji", "winc-version"]),
-    ("winc-search", &["winc-backend", "winc-core"]),
     ("winc-core", &["winc-emoji"]),
-    ("winc-render", &["winc-emoji"]),
+    ("winc-search", &["winc-backend", "winc-core"]),
     (
         "winc-server",
         &["winc-backend", "winc-search", "winc-watch"],

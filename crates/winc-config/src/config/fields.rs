@@ -410,6 +410,18 @@ const TREE: &[Field] = &[
 
 /// `markdown` 一节。
 const MARKDOWN: &[Field] = &[
+    Field {
+        key: "splitPreviewPosition",
+        read: |config, value, name, problems| match value.as_str() {
+            Some("right") => config.split_preview_left = Some(false),
+            Some("left") => config.split_preview_left = Some(true),
+            _ => problems.push(t!("config-split-preview-position-invalid", name = name)),
+        },
+        write: |config| {
+            let left = config.split_preview_left?;
+            Some(Json::String(if left { "left" } else { "right" }.into()))
+        },
+    },
     bool_field!("remoteImages", markdown_remote_images),
     string_field!("font", markdown_font),
     Field {

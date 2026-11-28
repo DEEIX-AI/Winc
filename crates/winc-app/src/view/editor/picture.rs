@@ -20,28 +20,29 @@ const VECTOR_OVERSCAN: f32 = 64.0;
 /// 4 倍屏幕宽时每个像素约占 8 个物理像素，仍能辨认内容。
 const BASE_EDGE: u32 = 1024;
 
-/// 绘制分栏预览：编辑区右边那一半，左边一道分隔线，中间是跟着文字重绘的图（`App::split`）。
+/// 绘制分栏预览和预览与源代码之间的分隔线。
 ///
 /// 写到一半解析不了时仍然绘制上一张图，底下一行写出错在哪里；一张都还没绘制出来时只写原因。
 pub(in crate::view) fn draw_split(app: &mut App, frame: &mut Frame<'_>) {
     let area = app.layout.split;
-    // 包括预览左侧的一像素分隔线；预览中的浮动工具栏不能遮住源代码。
-    let clip = Rect::new(area.x - 1.0, area.y, area.w + 1.0, area.h);
-    frame.within(clip, |frame| draw_split_content(app, frame));
+    let divider_x = area.right().min(app.layout.editor.right());
+    // 裁剪范围包括一像素的分隔线，避免预览中的浮动工具栏遮住源代码。
+    let clip = Rect::new(area.x.min(divider_x), area.y, area.w + 1.0, area.h);
+    frame.within(clip, |frame| draw_split_content(app, frame, divider_x));
 }
 
-fn draw_split_content(app: &mut App, frame: &mut Frame<'_>) {
+fn draw_split_content(app: &mut App, frame: &mut Frame<'_>, divider_x: f32) {
     let area = app.layout.split;
     let Some(doc) = app.editor.active().filter(|_| area.w > 0.0) else {
         return;
     };
     let (id, kind) = (doc.id, doc.preview_kind());
     let p = app.palette;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
     // 悬停、拖动分隔线时用强调色，表示可以左右拖动。
     let active = app.split_divider_active();
     let line = if active { p.accent } else { p.border };
-    frame.rect(Rect::new(area.x - 1.0, area.y, 1.0, area.h), line);
+    frame.rect(Rect::new(divider_x, area.y, 1.0, area.h), line);
     if kind == Some(winc_editor::PreviewKind::Latex) {
         crate::view::preview::latex::draw(app, frame, area);
         return;

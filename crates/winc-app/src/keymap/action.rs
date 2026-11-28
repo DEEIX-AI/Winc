@@ -75,6 +75,8 @@ pub enum Action {
     CloseWindow,
     CopyPath,
     CopyRelativePath,
+    /// 复制当前文件（焦点在文件树、搜索结果时为选中的那一项）的文件名。
+    CopyFileName,
     CopyReference,
     CopyAbsoluteReference,
     RevealInFinder,
@@ -533,6 +535,7 @@ impl Action {
             CloseWindow => t!("cmd-close-window"),
             CopyPath => t!("cmd-copy-path"),
             CopyRelativePath => t!("cmd-copy-relative-path"),
+            CopyFileName => t!("cmd-copy-file-name"),
             CopyReference => t!("cmd-copy-reference"),
             CopyAbsoluteReference => t!("cmd-copy-absolute-reference"),
             RevealInFinder => crate::system::reveal_label(),
@@ -837,7 +840,7 @@ impl Action {
             | CloseAllTabs | ReopenClosed | NextTab | PreviousTab | FocusTab1 | FocusTab2
             | FocusTab3 | FocusTab4 | FocusTab5 | FocusTab6 | FocusTab7 | FocusTab8 | FocusTab9
             | SwitchTab | SwitchTabBack | CloseFolder | CloseWindow | CopyPath
-            | CopyRelativePath | RevealInFinder | CopyActivePath | CopyKeyPath
+            | CopyRelativePath | CopyFileName | RevealInFinder | CopyActivePath | CopyKeyPath
             | RevealActiveFile | RevealActiveInTree | OpenInTerminal | Quit => Group::File,
             NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo

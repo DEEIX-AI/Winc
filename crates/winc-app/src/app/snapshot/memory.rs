@@ -66,37 +66,21 @@ impl Steps {
     }
 }
 
-/// 建起一个窗口的全部状态并逐步记录内存：渲染器（字体、字形缓存、整窗大小的画面）、打开仓库、
+/// 建起一个窗口的全部状态并逐步记录内存：字体与字形缓存、渲染器（整窗大小的画面）、打开仓库、
 /// 打开文件、启用 Git 模块、绘制两帧。
 ///
-/// `glyphs` 是同一进程内已有窗口的字体与字形缓存：第二个窗口复用它，与真实新开窗口的行为相同。
-fn build_window(
-    steps: &mut Steps,
-    root: &Path,
-    file: &Path,
-    glyphs: Option<winc_render::SharedGlyphs>,
-) -> App {
-    let mut app = App::new(
-        Editor::default(),
-        None,
-        Bench::from_env(),
-        Config::default(),
-    );
+/// `fonts` 是同一进程内已有窗口的字体与字形缓存：第二个窗口复用这一份，与真实新开窗口的行为相同。
+fn build_window(steps: &mut Steps, root: &Path, file: &Path, fonts: Option<FontSystem>) -> App {
+    let config = Config::default();
+    let fonts = fonts.unwrap_or_else(|| FontSystem::new(&font_set(&config)).unwrap());
+    steps.mark("字体（第二个窗口复用第一个窗口的）");
+    let mut app = App::new(Editor::default(), None, Bench::from_env(), config, fonts);
     steps.mark("App::new（空的界面状态）");
 
-    // 先建 1×1 的离屏画面，只测量字体和空字形缓存；整窗画面单独测量：真实窗口的画面是
-    // IOSurface，显示中的一块 16 MB，不在窗口之间共用。
-    let renderer = Renderer::offscreen(1.0, 1.0, SCALE, app.palette.frame_bg, None, None).unwrap();
+    // 整窗画面单独测量：真实窗口的画面是 IOSurface，显示中的一块 16 MB，不在窗口之间共用。
+    let renderer = offscreen(&app, SIZE, SCALE);
     app.frame.renderer = Some(renderer);
-    app.measure_fonts();
-    app.frame.renderer = None;
-    let mut renderer =
-        Renderer::offscreen(SIZE.0, SIZE.1, SCALE, app.palette.frame_bg, None, None).unwrap();
-    if let Some(glyphs) = glyphs {
-        renderer.use_glyphs(glyphs);
-    }
-    app.frame.renderer = Some(renderer);
-    steps.mark("渲染器：字体 + 整窗画面（2560×1640）");
+    steps.mark("渲染器：整窗画面（2560×1640）");
 
     app.open_path(root);
     app.open_path(file);
@@ -158,8 +142,7 @@ fn measure_window_memory() {
 
     let first = build_window(&mut steps, &root, &file, None);
     steps.mark("—— 第一个窗口建好");
-    let glyphs = first.shared_glyphs();
-    let second = build_window(&mut steps, &root, &file, glyphs);
+    let second = build_window(&mut steps, &root, &file, Some(first.fonts()));
     steps.mark("—— 第二个窗口建好");
     drop(first);
     steps.mark("关掉第一个窗口");
