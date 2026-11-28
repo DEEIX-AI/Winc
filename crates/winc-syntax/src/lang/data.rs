@@ -412,6 +412,7 @@ pub(super) static XML: Language = Language {
         "xsl",
         "xslt",
         "xaml",
+        "axaml",
         "csproj",
         "fsproj",
         "vbproj",
