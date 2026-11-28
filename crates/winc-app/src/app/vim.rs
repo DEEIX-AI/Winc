@@ -25,7 +25,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::app::{App, Focus, PromptKind};
-use winc_render::Rect;
+use cpui_render::Rect;
 
 /// 返回各窗口共用的 Vim 状态，首次调用时创建。
 fn shared() -> MutexGuard<'static, Shared> {

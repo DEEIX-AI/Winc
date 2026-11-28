@@ -137,8 +137,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask bench                   # measure startup, memory, and scrolling against budgets
 ```
 
-The interface is written in Rust. Windows come from winit, and rendering is done by winc's own
-CPU rasterizer. On macOS, frames are written directly to an IOSurface.
+The interface is written in Rust. Windows come from winit, and rendering is done on the CPU by
+[CPUI](https://github.com/DEEIX-AI/cpui)'s renderer, `cpui-render`. On macOS, frames are written
+directly to an IOSurface.
 
 The workspace is split into crates by responsibility:
 
@@ -151,7 +152,6 @@ The workspace is split into crates by responsibility:
 | `winc-backend` | File system access for local paths and for paths on remote hosts |
 | `winc-server` | The server process that runs on a remote host and serves file operations over SSH |
 | `winc-watch` | Watches folders on the machine that holds them (WSL distributions, remote hosts) |
-| `winc-render` | Rendering: glyphs, rasterization, and presentation |
 | `winc-preview` | Previews for images, SVG, Markdown, PDF, Word documents, and spreadsheets |
 | `winc-typeset` | Layout for the Markdown preview |
 | `winc-pty` | Terminal emulation and the pseudo-terminal helper process |

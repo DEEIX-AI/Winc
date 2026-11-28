@@ -7,6 +7,25 @@ See the LICENSE file for the full license text.
 Website: https://winc.si
 Source: https://github.com/DEEIX-AI/Winc
 
+CPUI
+
+Winc is built with CPUI (https://github.com/DEEIX-AI/cpui), used through the
+cpui-render and cpui-icons crates. CPUI is licensed under the Apache License,
+Version 2.0, and carries the following notice:
+
+    CPUI
+    Copyright 2026 Chenyme (https://github.com/chenyme) and DEEIX AI (https://deeix.com)
+
+    This product is licensed under the Apache License, Version 2.0.
+    See the LICENSE file for the full license text.
+
+    The rendering layer (crates/cpui-render) is derived from
+    Winc (https://github.com/DEEIX-AI/Winc), Copyright 2026 Chenyme and DEEIX AI,
+    licensed under the Apache License, Version 2.0.
+
+    The license does not grant permission to use the CPUI name or logo; see
+    https://github.com/DEEIX-AI/cpui/blob/main/TRADEMARKS.md.
+
 Third-party components
 
 Windows builds include conpty.dll and OpenConsole.exe from Windows Terminal

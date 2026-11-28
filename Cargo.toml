@@ -16,7 +16,6 @@ winc-config = { path = "crates/winc-config" }
 winc-core = { path = "crates/winc-core" }
 winc-emoji = { path = "crates/winc-emoji" }
 winc-syntax = { path = "crates/winc-syntax" }
-winc-render = { path = "crates/winc-render" }
 winc-search = { path = "crates/winc-search" }
 winc-editor = { path = "crates/winc-editor" }
 winc-preview = { path = "crates/winc-preview" }
@@ -29,10 +28,17 @@ winc-typeset = { path = "crates/winc-typeset" }
 winc-vim = { path = "crates/winc-vim" }
 winc-watch = { path = "crates/winc-watch" }
 
+# CPUI 的渲染层：文字整形、字形光栅化和 CPU 合成。
+cpui-render = "0.1"
+# CPUI 的图标集：零依赖的线性图标几何数据。
+cpui-icons = "0.1"
+
 # 只把 LF、CR、CRLF 当换行。默认的 `unicode_lines` 还认 VT、FF、U+0085、U+2028、U+2029，
 # 行号会和编译器、git、grep 报的对不上（C 和 Python 源码里常见分页符 FF）。
 ropey = { version = "1.6", default-features = false, features = ["simd", "cr_lines"] }
 unicode-segmentation = "1"
+# 泰文、老挝文、高棉文、缅甸文的词边界（Markdown 预览按词折行）。词典随程序发布，约 1.1 MB。
+icu_segmenter = { version = "2", default-features = false, features = ["compiled_data"] }
 unicode-width = "0.2"
 winit = "0.30"
 swash = "0.2"
@@ -109,10 +115,6 @@ debug = "line-tables-only"
 opt-level = 2
 debug = false
 
-# 逐像素合成在未优化时耗时增加数十倍。
-[profile.dev.package.winc-render]
-opt-level = 2
-
 # 优化级别取 2：与 3 相比滚动、高亮、查找、终端吞吐都在测量误差以内，二进制小约 0.6 MB。
 # 整体按体积（`s`）优化更小，但链接时优化（fat LTO）按整体的级别重新优化全部代码，滚动慢
 # 约 80%、查找慢约 50%，对单个 crate 提高级别也无法弥补，因此不使用。
@@ -131,6 +133,10 @@ opt-level = "s"
 # 链接时优化的流程由可执行 crate 的级别决定，该 crate 设为 `"s"` 时二进制反而增大。
 [profile.release.package.winc-app]
 opt-level = "s"
+
+# 渲染层：逐像素合成、字形光栅化每帧都经过它。
+[profile.release.package.cpui-render]
+opt-level = 2
 
 # 文件内查找、全局搜索：按体积优化时纯文字查找慢约 7%。
 [profile.release.package.memchr]

@@ -131,7 +131,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask bench                   # 测启动、内存、滚动，对照性能预算
 ```
 
-界面由 Rust 编写，窗口用 winit，渲染由 winc 自己的 CPU 光栅化完成；在 macOS 上直接写入 IOSurface。
+界面由 Rust 编写，窗口用 winit，渲染由 [CPUI](https://github.com/DEEIX-AI/cpui) 的渲染层 `cpui-render` 在 CPU 上完成。
 
 代码按 crate 分层：
 
@@ -144,7 +144,6 @@ cargo xtask bench                   # 测启动、内存、滚动，对照性能
 | `winc-backend` | 文件系统的访问入口，区分本机路径与远端主机上的路径 |
 | `winc-server` | 运行在远端主机上的服务进程，经 SSH 为本机执行文件操作 |
 | `winc-watch` | 在文件所在的机器上监视目录（WSL 发行版内、远端主机上） |
-| `winc-render` | 渲染层：字形、光栅化、呈现 |
 | `winc-preview` | 图片、SVG、Markdown、PDF、Word 文档、表格预览 |
 | `winc-typeset` | Markdown 预览的排版 |
 | `winc-pty` | 终端仿真和伪终端的辅助进程 |

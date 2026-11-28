@@ -1,4 +1,4 @@
-//! `inline` 的测试：折行时不能出现在行首的标点不放在行首，以及图片显示大小的上限。
+//! `inline` 的测试：折行时不能出现在行首的标点不放在行首、不断开字素簇，以及图片显示大小的上限。
 
 use super::*;
 
@@ -12,6 +12,7 @@ fn atoms(text: &str) -> Vec<Atom> {
             width: 1.0,
             run: 0,
             brk: prev.is_some_and(|p| can_break(p, c)),
+            joined: false,
             space: is_space(c),
             source: None,
         });
@@ -46,6 +47,24 @@ fn middle_dots_stay_with_the_word_before_them() {
 fn forced_breaks_keep_closing_marks_off_the_line_start() {
     // 括号内的字母串没有可断处，只能在字与字之间强制断行；右括号随前一个字换到下一行。
     assert_eq!(lines("（abcdef）", 7.0), ["（abcde", "f）"]);
+}
+
+#[test]
+fn forced_breaks_keep_clusters_whole() {
+    // `é` 由 `e` 和组合符号 U+0301 组成：句点不放在行首时断点前移，不落在 `e` 与组合符号之间。
+    let mut atoms = atoms("ae\u{301}.");
+    (atoms[2].width, atoms[2].joined) = (0.0, true);
+    assert_eq!(break_lines(&atoms, 2.5), [0..1, 1..4]);
+}
+
+#[test]
+fn a_cluster_wider_than_the_line_stays_whole() {
+    let mut atoms = atoms("ab\u{301}\u{302}");
+    for atom in &mut atoms[2..] {
+        (atom.width, atom.joined) = (0.0, true);
+    }
+    atoms[1].width = 5.0;
+    assert_eq!(break_lines(&atoms, 2.0), [0..1, 1..4]);
 }
 
 #[test]

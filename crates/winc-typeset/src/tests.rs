@@ -1,7 +1,7 @@
 //! 排版的测试：折行、标题、表格、任务列表、代码块和链接排出的项。
 
 use super::*;
-use winc_render::Renderer;
+use cpui_render::Renderer;
 
 /// 正文颜色。
 const TEXT: Color = Color::hex(0x202020);
@@ -30,8 +30,7 @@ fn lay_in(
     bleed: (f32, f32),
 ) -> Vec<(Out, f32)> {
     let parsed = winc_preview::markdown::parse(markdown);
-    let mut renderer =
-        Renderer::offscreen(800.0, 600.0, 1.0, Color::hex(0xffffff), None, None).unwrap();
+    let mut renderer = Renderer::offscreen(800.0, 600.0, 1.0, Color::hex(0xffffff)).unwrap();
     let toggled = HashSet::new();
     let mut memo = Memo::default();
     let mut laid = Vec::new();
@@ -40,6 +39,7 @@ fn lay_in(
         let mut cx = Cx {
             frame,
             base: 16.0,
+            prose: FontKind::Ui,
             token: &|_| TOKEN,
             surface: Color::hex(0xffffff),
             accent,
@@ -81,11 +81,11 @@ fn texts(out: &Out) -> Vec<(f32, f32, Color, String)> {
         .filter_map(|item| match item {
             Item::Text {
                 baseline,
-                size,
+                font,
                 color,
                 text,
                 ..
-            } => Some((*baseline, *size, *color, text.to_string())),
+            } => Some((*baseline, font.size, *color, text.to_string())),
             _ => None,
         })
         .collect()
@@ -318,16 +318,17 @@ fn edge_labels_do_not_overlap() {
                 x,
                 baseline,
                 text,
-                size,
+                font,
                 ..
             } => {
+                let size = font.size;
                 let w: f32 = text
                     .chars()
-                    .map(|c| if c.is_ascii() { size * 0.5 } else { *size })
+                    .map(|c| if c.is_ascii() { size * 0.5 } else { size })
                     .sum();
                 Some((
                     text.to_string(),
-                    Rect::new(*x, baseline - size * 0.8, w, *size),
+                    Rect::new(*x, baseline - size * 0.8, w, size),
                 ))
             }
             _ => None,
@@ -440,4 +441,68 @@ fn a_live_cell_hides_its_padding_and_shows_typed_spaces() {
     // 没有边距、全为空白。
     assert_eq!(shown("甲", 0), Some("甲"));
     assert_eq!(shown("   ", 1), None);
+}
+
+/// 返回 `out` 中文字项的（左端，文字）。
+fn placed(out: &Out) -> Vec<(f32, String)> {
+    out.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Text { x, text, .. } => Some((*x, text.to_string())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn text_after_shaped_scripts_starts_where_the_shaped_text_ends() {
+    let mut renderer = Renderer::offscreen(10.0, 10.0, 1.0, Color::hex(0xffffff)).unwrap();
+    for lead in ["किताब पढ़ो ", "สวัสดีครับ ", "e\u{301}te\u{301} "]
+    {
+        let laid = lay(&format!("{lead}**x**"), 800.0);
+        let items = placed(&laid[0].0);
+        let bold = items
+            .iter()
+            .find(|(_, text)| text == "x")
+            .expect("粗体的 x");
+        let mut width = 0.0;
+        renderer.draw(|frame| width = frame.measure(Font::ui(16.0), lead));
+        assert!(
+            (bold.0 - width).abs() < 0.01,
+            "{lead}：{} ≠ {width}",
+            bold.0
+        );
+    }
+}
+
+#[test]
+fn wrapped_thai_lines_start_on_a_consonant() {
+    // 泰文的词之间不写空格，只能强制断行；元音符号和声调符号不放在行首。
+    let laid = lay(&"กี่ที่นี่".repeat(30), 120.0);
+    let lines: Vec<String> = placed(&laid[0].0)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(lines.len() > 3, "{lines:?}");
+    for line in &lines {
+        let first = line.chars().next().unwrap();
+        assert!(matches!(first, 'ก' | 'ท' | 'น'), "{line}");
+    }
+    assert_eq!(lines.concat(), "กี่ที่นี่".repeat(30));
+}
+
+#[test]
+fn thai_paragraphs_wrap_between_words() {
+    let laid = lay(&"สวัสดีครับ".repeat(20), 150.0);
+    let lines: Vec<String> = placed(&laid[0].0)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(lines.len() > 3, "{lines:?}");
+    for line in &lines {
+        assert!(
+            line.starts_with("สวัสดี") || line.starts_with("ครับ"),
+            "{line}"
+        );
+    }
 }

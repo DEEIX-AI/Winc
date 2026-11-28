@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use winc_render::Rect;
+use cpui_render::Rect;
 
 use crate::app::App;
 use crate::app::animation::{Clock, POPUP_IN, POPUP_OUT};

@@ -267,12 +267,7 @@ fn terminal_editor_disabled_module_does_not_leave_restored_empty_tabs() {
         ..Session::default()
     };
     let (editor, restored) = restored_session(&session, &[]);
-    let mut app = App::new(
-        editor,
-        None,
-        crate::bench::Bench::from_env(),
-        winc_config::Config::default(),
-    );
+    let mut app = App::for_test(editor, winc_config::Config::default());
     app.adopt_restored(restored);
     assert!(app.editor.documents.is_empty());
     assert!(!app.terminal_in_editor());

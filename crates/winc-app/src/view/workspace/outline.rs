@@ -40,11 +40,11 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let clip = app.layout.sidebar.intersect(section);
     // 文件树滚到底时最后几行延伸到大纲下方：先铺侧栏底色遮住它们，再画分隔线。
-    frame.rect_clipped(section, p.sidebar_bg, 0.0, clip);
+    frame.surface_clipped(section, 0.0, p.sidebar_bg, clip);
     frame.rect_clipped(
         Rect::new(section.x, section.y, section.w, 1.0),
-        p.separator,
         0.0,
+        p.separator,
         clip,
     );
     let mut hits = Vec::new();
@@ -67,7 +67,7 @@ pub(in crate::view) fn draw_outline(app: &mut App, frame: &mut Frame<'_>) {
     let hovered = app.pointer.hover == Hover::Outline(OutlineTarget::Header);
     if hovered {
         let shade = Rect::new(band.x, band.y + 1.0, band.w, band.h - 2.0);
-        frame.rect_clipped(shade, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(shade, RADIUS_ROW, p.hover, clip);
     }
     let cy = band.y + band.h / 2.0;
     // 箭头随展开的进度从朝右转到朝下。
@@ -174,7 +174,7 @@ fn draw_rows(
             row.h - 2.0,
         );
         if let Some(color) = row_color(p, highlight == Some(i), focused, hovered) {
-            frame.rect_clipped(pill, color, RADIUS_ROW, clip);
+            frame.rect_clipped(pill, RADIUS_ROW, color, clip);
         }
 
         let indent = row.x + INDENT;
@@ -182,7 +182,7 @@ fn draw_rows(
         // 缩进参考线：每级一条，位于上级箭头的正下方，相邻行的参考线连成竖线。
         for level in 0..symbol.depth {
             let x = (indent + level as f32 * TREE_INDENT + 4.0).round();
-            frame.rect_clipped(Rect::new(x, row.y, 1.0, row.h), p.indent_guide, 0.0, clip);
+            frame.rect_clipped(Rect::new(x, row.y, 1.0, row.h), 0.0, p.indent_guide, clip);
         }
         let x = indent + symbol.depth as f32 * TREE_INDENT;
         // 箭头在行内，先于整行记下：命中时按记下的先后取第一个。
@@ -208,7 +208,7 @@ fn draw_rows(
         if pages && symbol.line != usize::MAX {
             let number = (symbol.line + 1).to_string();
             let size = app.fonts.ui_small;
-            let x = right - frame.measure(FontKind::Ui, size, &number);
+            let x = right - frame.measure(Font::ui(size), &number);
             label(frame, app, size, (x, row), &number, p.text_muted, clip);
             right = x - 8.0;
         }

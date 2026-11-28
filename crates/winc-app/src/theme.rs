@@ -16,9 +16,9 @@ pub use winc::*;
 use std::borrow::Cow;
 use std::time::Duration;
 
+use cpui_render::{Color, FontKind};
 use winc_config::BADGE_COLORS;
 use winc_core::text;
-use winc_render::Color;
 use winc_syntax::TokenKind;
 
 use crate::icons::FileGlyph;
@@ -592,6 +592,12 @@ pub const CODE_FONT: f32 = 12.0;
 ///
 /// 编辑区的行高按字号等比缩放，使字号变化后行距的比例不变；默认 12 号字的行高是 18。
 pub const LINE_HEIGHT_RATIO: f32 = 20.0 / 13.0;
+
+/// 终端文字的字体种类：`App::font_set` 注册的第一组字体。
+pub const TERMINAL_FONT: FontKind = FontKind::Custom(0);
+
+/// Markdown 预览正文的字体种类：注册的第二组字体。
+pub const PROSE_FONT: FontKind = FontKind::Custom(1);
 
 /// 运行期的字号和行高（逻辑像素）。
 ///

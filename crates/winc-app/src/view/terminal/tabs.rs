@@ -32,7 +32,7 @@ fn draw_search_tab(
     }
     let p = app.palette;
     let label = winc_i18n::t!("workspace-search-dock-tab");
-    let w = (frame.measure(FontKind::Ui, app.fonts.ui, label) + 36.0)
+    let w = (frame.measure(Font::ui(app.fonts.ui), label) + 36.0)
         .clamp(TAB_SQUEEZED, (area.w * 0.4).max(TAB_SQUEEZED));
     let rect = Rect::new(area.x, y, w, TAB_H);
     let clip = rect.intersect(area);
@@ -74,7 +74,7 @@ fn draw_horizontal(
                 Some((id, field)) if *id == tab.id => field.text(),
                 _ => tab.label(),
             };
-            frame.measure(FontKind::Ui, app.fonts.ui, label) + 36.0
+            frame.measure(Font::ui(app.fonts.ui), label) + 36.0
         })
         .collect();
     let widths = fit_named_tabs(&names, room);
@@ -151,7 +151,7 @@ fn draw_horizontal(
                     if slot > 0 && plain(slot) && plain(slot - 1) {
                         let h = TAB_H / 2.0;
                         let line = Rect::new(rect.x - TAB_GAP / 2.0 - 0.5, y + h / 2.0, 1.0, h);
-                        frame.rect_clipped(line, p.tab_divider, 0.0, area);
+                        frame.rect_clipped(line, 0.0, p.tab_divider, area);
                     }
                     let field = rename.as_mut();
                     caret = caret.or(draw_terminal_tab(

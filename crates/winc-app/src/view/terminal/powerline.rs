@@ -1,7 +1,7 @@
 //! Powerline 分隔符（U+E0B0–E0BF）的绘制：按格子的大小绘制，边缘与相邻格子的色块对齐。
 
 use super::*;
-use winc_render::Stroke;
+use cpui_render::Stroke;
 
 /// 细线分隔符的线宽（逻辑像素），与下划线相同。
 const LINE: f32 = 1.0;
@@ -95,7 +95,7 @@ pub(super) fn draw_powerline(
         let mut fill = |from: f32, to: f32, opacity: f32| {
             if to > from && opacity > 0.0 {
                 let rect = Rect::new((x0 + from) / scale, y, (to - from) / scale, 1.0 / scale);
-                frame.rect_clipped(rect, color.alpha(opacity), 0.0, clip);
+                frame.rect_clipped(rect, 0.0, color.alpha(opacity), clip);
             }
         };
         let (inner_left, inner_right) = (left.ceil(), right.floor());

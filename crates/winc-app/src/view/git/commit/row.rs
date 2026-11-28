@@ -78,9 +78,9 @@ impl RowBox<'_> {
         if self.spill.is_some() || wide {
             let r = RADIUS_ROW;
             let wide = Rect::new(shade.x, shade.y, list.right() - shade.x, shade.h);
-            frame.rect_corners(wide, color, [r, 0.0, 0.0, r], list);
+            frame.rect_corners(wide, [r, 0.0, 0.0, r], color, list);
         } else {
-            frame.rect_clipped(shade, color, RADIUS_ROW, list);
+            frame.rect_clipped(shade, RADIUS_ROW, color, list);
         }
     }
 }
@@ -125,7 +125,7 @@ pub(super) fn draw_row(
         for level in 1..=*depth {
             let x = r.arrow_x(level).round();
             let guide = Rect::new(x, y, 1.0, COMMIT_ROW);
-            frame.rect_clipped(guide, app.palette.indent_guide, 0.0, list);
+            frame.rect_clipped(guide, 0.0, app.palette.indent_guide, list);
         }
     }
     match row {
@@ -167,7 +167,7 @@ fn draw_group_row(
         ) if g == group
     );
     if hovered {
-        frame.rect_clipped(shade, p.hover, RADIUS_ROW, list);
+        frame.rect_clipped(shade, RADIUS_ROW, p.hover, list);
     }
     let open = !app.git.commit.group_collapsed(group);
     chevron(app, frame, (r.arrow_x(0), cy), (i, open), p.text_dim, list);
@@ -401,7 +401,7 @@ fn draw_file_row(
         _ => entry.shown(),
     };
     let letter = change.letter().to_string();
-    let letter_w = frame.measure(FontKind::Ui, app.fonts.ui_small, &letter);
+    let letter_w = frame.measure(Font::ui(app.fonts.ui_small), &letter);
     let letter_x = band.right() - END_CENTER - letter_w / 2.0;
     // 文件名及平铺时的目录截短到 `text_end` 为止。写全名时按钮跟着名字展开的宽度移动。
     let text_end = actions.map_or(letter_x - 8.0, |strip| strip.first.x - 4.0);

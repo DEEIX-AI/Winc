@@ -46,10 +46,8 @@ pub(super) fn draw_sticky(app: &mut App, frame: &mut Frame<'_>, index: usize) {
             let number_x =
                 layout.gutter.right() - GUTTER_PADDING - number.len() as f32 * app.metrics.cell;
             frame.text(
-                FontKind::Mono,
-                app.fonts.code,
-                number_x,
-                baseline,
+                Font::mono(app.fonts.code),
+                (number_x, baseline),
                 &number,
                 p.gutter_text,
                 gutter,
@@ -117,10 +115,10 @@ pub(in crate::view) fn draw_pinned_rows(
     frame.within(area, |frame| {
         for (i, row) in rows.iter().enumerate().rev() {
             let band = Rect::new(area.x, area.y + row.y, area.w, line_height);
-            frame.rect_clipped(band, p.editor_bg, 0.0, area);
+            frame.surface_clipped(band, 0.0, p.editor_bg, area);
             if hovered(row) {
                 let hover = Rect::new(area.x + 6.0, band.y, area.w - 12.0, line_height);
-                frame.rect_clipped(hover, p.hover, RADIUS_ROW, area);
+                frame.rect_clipped(hover, RADIUS_ROW, p.hover, area);
             }
             content(frame, i, baseline_in(band, ascent, descent));
         }

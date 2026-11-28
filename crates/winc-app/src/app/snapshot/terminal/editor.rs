@@ -333,7 +333,7 @@ fn snapshot_terminal_prompt() {
 /// # Panics
 ///
 /// 最近一帧没有画出该按钮时 panic，调用前须先 [`paint`]。
-fn header_hit(app: &App, hit: HeaderHit) -> winc_render::Rect {
+fn header_hit(app: &App, hit: HeaderHit) -> cpui_render::Rect {
     app.hits
         .terminal
         .iter()
@@ -1061,7 +1061,7 @@ fn notices_and_cards_stay_in_the_maximized_terminal() {
     // 消息完整显示：提示条比图标和留白宽出整条消息。
     let mut text = 0.0;
     let renderer = app.frame.renderer.as_mut().unwrap();
-    renderer.draw(|frame| text = frame.measure(winc_render::FontKind::Ui, app.fonts.ui, message));
+    renderer.draw(|frame| text = frame.measure(Font::ui(app.fonts.ui), message));
     let pad = crate::view::NOTICE_TEXT_X;
     assert!(notice.w >= text + pad, "{} < {text}", notice.w);
 

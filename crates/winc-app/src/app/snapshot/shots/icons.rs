@@ -46,7 +46,7 @@ fn snapshot_icon_sheet() {
     let (w, h) = (cols * 32.0, 64.0);
     for (tag, dark) in [("light", false), ("dark", true)] {
         let p = Palette::for_dark(dark);
-        let mut renderer = Renderer::offscreen(w, h, 4.0, p.sidebar_bg, None, None).unwrap();
+        let mut renderer = Renderer::offscreen(w, h, 4.0, p.sidebar_bg).unwrap();
         renderer.draw(|frame| {
             frame.rect(Rect::new(0.0, 0.0, w, h), p.sidebar_bg);
             for (y, row) in [(0.0, &row1), (32.0, &row2)] {
@@ -67,7 +67,7 @@ fn snapshot_icon_sheet() {
         std::fs::create_dir_all(&dir).unwrap();
         write_png(
             &dir.join(format!("icon-sheet-{tag}.png")),
-            renderer.image().unwrap(),
+            renderer.snapshot().unwrap(),
         )
         .unwrap();
     }

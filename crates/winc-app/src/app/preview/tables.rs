@@ -7,9 +7,9 @@ mod split;
 use std::collections::HashSet;
 use std::sync::mpsc;
 
+use cpui_render::Rect;
 use winc_editor::DocumentId;
 use winc_preview::table::{self, Area, Table};
-use winc_render::Rect;
 use winit::keyboard::{Key, NamedKey};
 
 use crate::app::{App, Drag, Focus, UserEvent};

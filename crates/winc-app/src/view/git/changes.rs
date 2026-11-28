@@ -74,8 +74,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     };
     let mut counter = String::new();
     let _ = write!(counter, "{} / {count}", popup.hunk + 1);
-    let measure =
-        |frame: &mut Frame<'_>, s: &str| frame.measure(FontKind::Ui, app.fonts.ui_small, s);
+    let measure = |frame: &mut Frame<'_>, s: &str| frame.measure(Font::ui(app.fonts.ui_small), s);
     let (title_w, note_w, counter_w) = (
         measure(frame, &title),
         measure(frame, &note),
@@ -126,7 +125,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     let header = Rect::new(card.x, top, card.w, header_rows as f32 * lh);
     let (_, cy) = center(header);
     let chip = Rect::new(card.x + 12.0, cy - 6.0, 3.0, 12.0);
-    frame.rect_clipped(chip, shade.mark, 1.5, card);
+    frame.rect_clipped(chip, 1.5, shade.mark, card);
     let mut tx = chip.right() + 8.0;
     ui_text_small(frame, app, tx, header, &title, p.text, card);
     tx += title_w + 10.0;
@@ -167,7 +166,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
     };
     let divider = |frame: &mut Frame<'_>, right: &mut f32| {
         let line = Rect::new(*right - 4.0, cy - 7.0, 1.0, 14.0);
-        frame.rect_clipped(line, p.separator, 0.0, card);
+        frame.rect_clipped(line, 0.0, p.separator, card);
         *right -= 10.0;
     };
     button(frame, &mut right, ChangeTarget::Close);
@@ -194,11 +193,11 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
         let tint = Rect::new(body.x, body.y, body.w, shown as f32 * lh);
         if more == 0 {
             let tint = Rect::new(tint.x, tint.y, tint.w, card.bottom() - tint.y);
-            frame.rect_clipped(tint, removed.line, RADIUS_POPUP, card);
+            frame.rect_clipped(tint, RADIUS_POPUP, removed.line, card);
             let square = Rect::new(tint.x, tint.y, tint.w, RADIUS_POPUP.min(tint.h));
-            frame.rect_clipped(square, removed.line, 0.0, card);
+            frame.rect_clipped(square, 0.0, removed.line, card);
         } else {
-            frame.rect_clipped(tint, removed.line, 0.0, card);
+            frame.rect_clipped(tint, 0.0, removed.line, card);
         }
         let mut number = String::new();
         let clip = Rect::new(code_x, card.y, card.right() - 8.0 - code_x, card.h);
@@ -209,10 +208,8 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
             let _ = write!(number, "{}", hunk.old.start + i + 1);
             let nx = number_right - number.len() as f32 * cell;
             frame.text(
-                FontKind::Mono,
-                app.fonts.code,
-                nx,
-                baseline,
+                Font::mono(app.fonts.code),
+                (nx, baseline),
                 &number,
                 p.gutter_text,
                 card,
@@ -223,7 +220,7 @@ pub(in crate::view) fn draw_change_popup(app: &mut App, frame: &mut Frame<'_>) {
                 let x0 = code_x + cells(&line.chars, range.start, tab) as f32 * cell;
                 let x1 = code_x + cells(&line.chars, range.end, tab) as f32 * cell;
                 let word = Rect::new(x0, row.y + 2.0, (x1 - x0).max(2.0), lh - 4.0);
-                frame.rect_clipped(word, removed.word, 3.0, clip);
+                frame.rect_clipped(word, 3.0, removed.word, clip);
             }
             draw_glyphs(
                 app,

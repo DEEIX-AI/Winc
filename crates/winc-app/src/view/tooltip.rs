@@ -313,17 +313,17 @@ fn draw_tip_card(
         None => (label, None),
     };
     let size = app.fonts.ui_small;
-    let key_w = key.map_or(0.0, |k| 16.0 + frame.measure(FontKind::Ui, size, k));
+    let key_w = key.map_or(0.0, |k| 16.0 + frame.measure(Font::ui(size), k));
     // 提示宽度不超过 `TOOLTIP_MAX_WIDTH`，也不超出窗口（左右各留 4 逻辑像素边距）；
     // 文字区再减去左右各 10 逻辑像素的内边距。
     let max_width = TOOLTIP_MAX_WIDTH.min(app.layout.window.w - 8.0);
     let room = max_width - 20.0;
     let lines = tip_lines(name, room, key_w, |piece| {
-        frame.measure(FontKind::Ui, size, piece)
+        frame.measure(Font::ui(size), piece)
     });
     let name_w = lines
         .iter()
-        .map(|(line, _)| frame.measure(FontKind::Ui, size, line))
+        .map(|(line, _)| frame.measure(Font::ui(size), line))
         .fold(0.0, f32::max);
     let width = (name_w + key_w + 20.0).min(max_width);
     // 单行高 26 逻辑像素，每多一行增加 18。
@@ -359,7 +359,7 @@ fn draw_tip_card(
         ui_text_small(frame, app, rect.x + 10.0, row, line, color, rect);
     }
     if let Some(key) = key {
-        let w = frame.measure(FontKind::Ui, size, key);
+        let w = frame.measure(Font::ui(size), key);
         let row = Rect::new(rect.x, rect.y + 4.0, rect.w, LINE);
         ui_text_small(
             frame,

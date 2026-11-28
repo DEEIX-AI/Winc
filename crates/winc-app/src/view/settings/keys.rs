@@ -7,8 +7,8 @@
 
 use std::borrow::Cow;
 
+use cpui_render::{Font, Frame, Rect};
 use winc_i18n::t;
-use winc_render::{FontKind, Frame, Rect};
 
 use super::*;
 use crate::app::Focus;
@@ -40,9 +40,9 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, keys: &KeysLayout) -> Optio
     let search = keys.header.search;
     let focused = app.focus == Focus::KeySearch;
     if focused {
-        frame.rounded(search.inset(-1.5, -1.5), p.accent, RADIUS_ROW + 1.5);
+        frame.rounded(search.inset(-1.5, -1.5), RADIUS_ROW + 1.5, p.accent);
     }
-    frame.rounded(search, p.editor_bg, RADIUS_ROW);
+    frame.rounded(search, RADIUS_ROW, p.editor_bg);
     if !focused {
         outline(frame, p.border, search);
     }
@@ -53,9 +53,9 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, keys: &KeysLayout) -> Optio
     let record = keys.header.record;
     let hovered = app.settings.hover == Some(SettingsPart::Record);
     if recording {
-        frame.rounded(record, p.accent.alpha(0.18), RADIUS_ROW);
+        frame.rounded(record, RADIUS_ROW, p.accent.alpha(0.18));
     } else if hovered {
-        frame.rounded(record, p.hover, RADIUS_ROW);
+        frame.rounded(record, RADIUS_ROW, p.hover);
     }
     let color = if recording { p.accent } else { p.text_muted };
     icons::keyboard(frame, center(record), color, record);
@@ -78,7 +78,7 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, keys: &KeysLayout) -> Optio
 fn draw_keymap_row(app: &App, frame: &mut Frame<'_>, header: &KeysHeader) {
     let p = app.palette;
     let row = header.keymap;
-    frame.rect_clipped(row, p.group_bg, RADIUS_BAR, row);
+    frame.rect_clipped(row, RADIUS_BAR, p.group_bg, row);
     let x = row.x + SETTINGS_INSET;
     let (top, bottom) = super::two_lines(row);
     ui_text(frame, app, x, top, t!("settings-keys-keymap"), p.text, row);
@@ -98,7 +98,7 @@ fn draw_keymap_row(app: &App, frame: &mut Frame<'_>, header: &KeysHeader) {
 
 /// 绘制输入框外沿 1 逻辑像素的细边。
 pub(super) fn outline(frame: &mut Frame<'_>, color: Color, rect: Rect) {
-    let shapes = icons::rounded_outline(rect.x, rect.y, rect.w, rect.h, RADIUS_ROW);
+    let shapes = Stroke::rounded_rect(Rect::new(rect.x, rect.y, rect.w, rect.h), RADIUS_ROW);
     frame.stroke(&shapes, 1.0, color, rect.inset(-1.0, -1.0));
 }
 
@@ -135,10 +135,10 @@ fn draw_list(
         ui_text_small(frame, app, rect.x, rect, title, p.text_dim, list);
     }
     for &group in &keys.groups {
-        frame.rect_clipped(group, p.group_bg, RADIUS_BAR, list);
+        frame.rect_clipped(group, RADIUS_BAR, p.group_bg, list);
     }
     for &line in &keys.separators {
-        frame.rect_clipped(line, p.separator, 0.0, list);
+        frame.rect_clipped(line, 0.0, p.separator, list);
     }
 
     let editing = app.settings.key_edit.as_ref();
@@ -171,7 +171,7 @@ fn draw_list(
             ) if a == action
         );
         if hovered {
-            frame.rect_clipped(rect, p.hover, RADIUS_ROW, list);
+            frame.rect_clipped(rect, RADIUS_ROW, p.hover, list);
         }
         let top = Rect::new(rect.x, rect.y, rect.w, KEYS_ROW);
         let mut right = draw_keys(app, frame, top, &row.keys, hovered, list);
@@ -196,7 +196,7 @@ fn draw_list(
 
     if let Some(thumb) = settings_thumb(list, app.settings.scroll, keys.max_scroll()) {
         let color = look.color(p.scrollbar, p.scrollbar_active);
-        frame.rounded(thumb, color, 2.0);
+        frame.rounded(thumb, 2.0, color);
     }
 }
 
@@ -224,11 +224,11 @@ fn draw_keys(
     let size = app.fonts.ui_small;
     let mut right = rect.right() - SETTINGS_INSET;
     for key in keys.iter().rev() {
-        let w = frame.measure(FontKind::Ui, size, key) + 14.0;
+        let w = frame.measure(Font::ui(size), key) + 14.0;
         let chip = chip_rect(rect, right, w);
-        frame.rect_clipped(chip, p.selected_inactive, RADIUS_ROW, clip);
+        frame.rect_clipped(chip, RADIUS_ROW, p.selected_inactive, clip);
         if hovered {
-            frame.rect_clipped(chip, p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(chip, RADIUS_ROW, p.hover, clip);
         }
         caps_label(
             frame,
@@ -256,10 +256,10 @@ fn draw_link(
 ) -> Rect {
     let p = app.palette;
     let size = app.fonts.ui_small;
-    let w = frame.measure(FontKind::Ui, size, label) + 12.0;
+    let w = frame.measure(Font::ui(size), label) + 12.0;
     let link = chip_rect(row, right, w);
     if app.settings.hover == Some(part) {
-        frame.rect_clipped(link, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(link, RADIUS_ROW, p.hover, clip);
     }
     ui_text_small(frame, app, link.x + 6.0, link, label, p.accent, clip);
     link
@@ -305,7 +305,7 @@ fn draw_editing_row(
 ) {
     let p = app.palette;
     // 底色与悬停时的同一块，展开时只向下长，名称不动。
-    frame.rect_clipped(rect, p.selected_inactive, RADIUS_ROW, clip);
+    frame.rect_clipped(rect, RADIUS_ROW, p.selected_inactive, clip);
     let t = ((rect.h - KEYS_ROW) / (KEYS_EDIT_H - KEYS_ROW)).clamp(0.0, 1.0);
     let first = Rect::new(rect.x, rect.y, rect.w, KEYS_ROW);
     draw_name(app, frame, first, edit.action, note, rect.right(), clip);
@@ -337,9 +337,9 @@ fn draw_edit_controls(
     let mut x = left;
     for (i, &keys) in edit.keys.iter().enumerate() {
         let text = keys_label(edit.action, keys);
-        let w = frame.measure(FontKind::Ui, size, &text) + 14.0 + 18.0;
+        let w = frame.measure(Font::ui(size), &text) + 14.0 + 18.0;
         let chip = Rect::new(x, y, w, KEYS_FIELD_H);
-        frame.rect_clipped(chip, p.editor_bg, RADIUS_ROW, clip);
+        frame.rect_clipped(chip, RADIUS_ROW, p.editor_bg, clip);
         caps_label(
             frame,
             app,
@@ -352,7 +352,7 @@ fn draw_edit_controls(
         let remove = Rect::new(chip.right() - 20.0, chip.y + 3.0, 18.0, chip.h - 6.0);
         let part = SettingsPart::KeyRemove(i);
         if app.settings.hover == Some(part) {
-            frame.rect_clipped(remove, p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(remove, RADIUS_ROW, p.hover, clip);
         }
         icons::close(frame, center(remove), 7.0, p.text_dim, clip);
         parts.push((remove, part));
@@ -362,13 +362,13 @@ fn draw_edit_controls(
         Some(keys) => keys_label(edit.action, keys),
         None => t!("settings-keys-press").to_owned(),
     };
-    let w = (frame.measure(FontKind::Ui, size, &text) + 20.0).max(KEYS_FIELD_W);
+    let w = (frame.measure(Font::ui(size), &text) + 20.0).max(KEYS_FIELD_W);
     let field = Rect::new(x, y, w, KEYS_FIELD_H);
     // 外圈用描边而不是铺底后再遮住，淡入途中不透出强调色。
-    frame.rect_clipped(field, p.editor_bg, RADIUS_ROW, clip);
+    frame.rect_clipped(field, RADIUS_ROW, p.editor_bg, clip);
     let ring = field.inset(-0.75, -0.75);
     let r = RADIUS_ROW + 0.75;
-    let shapes = icons::rounded_outline(ring.x, ring.y, ring.w, ring.h, r);
+    let shapes = Stroke::rounded_rect(Rect::new(ring.x, ring.y, ring.w, ring.h), r);
     frame.stroke(&shapes, 1.5, p.accent, clip);
     let color = if edit.recorded.is_some() {
         p.text
@@ -398,7 +398,7 @@ fn draw_edit_controls(
             SettingsPart::KeyCancel,
         ),
     ] {
-        let w = (frame.measure(FontKind::Ui, app.fonts.ui, label) + 24.0).round();
+        let w = (frame.measure(Font::ui(app.fonts.ui), label) + 24.0).round();
         let button = Rect::new(right - w, y, w, KEYS_FIELD_H);
         let hovered = app.settings.hover == Some(part);
         draw_action_button(app, frame, button, label, role, true, hovered);

@@ -109,7 +109,7 @@ impl App {
         let Some((first, cut)) = self.terminal.tab().map(TermTab::viewport) else {
             return (0, top);
         };
-        let scale = (self.frame.renderer.as_ref()).map_or(1.0, winc_render::Renderer::scale_factor);
+        let scale = (self.frame.renderer.as_ref()).map_or(1.0, cpui_render::Renderer::scale);
         let y = top - cut * self.fonts.terminal_line_height;
         (first, (y * scale).round() / scale)
     }
@@ -417,7 +417,7 @@ impl App {
             .frame
             .renderer
             .as_ref()
-            .map_or(1.0, winc_render::Renderer::scale_factor);
+            .map_or(1.0, cpui_render::Renderer::scale);
         Size {
             cols: cols.min(f32::from(u16::MAX)) as u16,
             rows: rows.min(f32::from(u16::MAX)) as u16,

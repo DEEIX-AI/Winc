@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use winc_render::{Color, Frame, Rect};
+use cpui_render::{Color, Frame, Rect};
 
 use winc_config::ThemeChoice;
 
@@ -410,7 +410,7 @@ impl Ruler {
         rows: std::ops::Range<usize>,
         color: Color,
     ) {
-        frame.rect_clipped(self.rect(lane, rows), color, 0.0, self.clip);
+        frame.rect_clipped(self.rect(lane, rows), 0.0, color, self.clip);
     }
 
     /// 在第 `row` 个显示行的中间绘制横跨两列标记、高 2 逻辑像素的细线，标出光标所在行。
@@ -421,7 +421,7 @@ impl Ruler {
             self.right - MARK_LANE.0 + MARK_LANE.1,
         );
         let rect = Rect::new(left, (y - 1.0).round(), right - left, 2.0);
-        frame.rect_clipped(rect, color, 1.0, self.clip);
+        frame.rect_clipped(rect, 1.0, color, self.clip);
     }
 
     /// 在 `lane` 上为每个显示行绘制 [`RULER_MIN`] 高的标记；间隔不到 1 逻辑像素的相邻标记
@@ -438,7 +438,7 @@ impl Ruler {
         let mut run: Option<(f32, f32)> = None;
         let flush = |frame: &mut Frame<'_>, (y0, y1): (f32, f32)| {
             let rect = Rect::new(self.right - lane.0, y0.round(), lane.1, (y1 - y0).round());
-            frame.rect_clipped(rect, color, lane.1 / 2.0, self.clip);
+            frame.rect_clipped(rect, lane.1 / 2.0, color, self.clip);
         };
         for row in rows {
             let y = self.y(row);

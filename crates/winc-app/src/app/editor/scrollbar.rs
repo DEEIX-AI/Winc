@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use winc_render::Color;
+use cpui_render::Color;
 
 use super::*;
 

@@ -321,7 +321,7 @@ fn terminal_editor_alt_drag_moves_a_single_live_session_instead_of_duplicating_i
 }
 
 fn input_region_pixels(app: &App, rect: Rect) -> Vec<u32> {
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let left = (rect.x * SCALE).round() as usize;
     let top = (rect.y * SCALE).round() as usize;
     let width = (rect.w * SCALE).round() as usize;

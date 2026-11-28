@@ -4,7 +4,7 @@ use winc_i18n::t;
 
 use super::Setting;
 use crate::layout::{SETTINGS_GLYPH_PAD, SETTINGS_LOGO};
-use winc_render::Rect;
+use cpui_render::Rect;
 
 /// 社区群组（Telegram）的地址。
 const COMMUNITY_URL: &str = "https://t.me/deeix_chat";

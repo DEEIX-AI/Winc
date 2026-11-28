@@ -47,9 +47,7 @@ fn snapshot_settings() {
 
         // 窗口很矮时，卡片缩小到窗口以内，内容区域改为滚动。
         app.settings.error = None;
-        app.frame.renderer = Some(
-            Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
-        );
+        app.frame.renderer = Some(offscreen(&app, (820.0, 420.0), SCALE));
         app.relayout();
         shoot(&mut app, &format!("settings-small-{tag}"));
     }
@@ -116,9 +114,7 @@ fn snapshot_settings_format() {
         shoot(&mut app, &format!("settings-fix-{tag}"));
 
         // 窗口很矮且滚动到中间：压在标题下沿和卡片底边上的行被裁剪，不会画到这两个边界之外。
-        app.frame.renderer = Some(
-            Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
-        );
+        app.frame.renderer = Some(offscreen(&app, (820.0, 420.0), SCALE));
         app.relayout();
         app.settings.scroll = 0.0;
         app.settings_scroll_by(-150.0);
@@ -127,9 +123,7 @@ fn snapshot_settings_format() {
         // 装了 Prettier：它能格式化的语言都自动列出来；再手动加 TOML（只有 Taplo，未安装）和
         // Groovy（没有预设）。修复工具一组仍只有项目在用的 Python，不为每种语言列一行「无」。
         winc_backend::testing::write_script(&dir.join("bin/prettier"), "#!/bin/sh\ncat\n");
-        app.frame.renderer = Some(
-            Renderer::offscreen(SIZE.0, SIZE.1, SCALE, app.palette.frame_bg, None, None).unwrap(),
-        );
+        app.frame.renderer = Some(offscreen(&app, SIZE, SCALE));
         app.close_settings();
         app.open_settings();
         app.settings_show_page(SettingsPage::Format);
@@ -217,9 +211,7 @@ fn snapshot_format_error() {
         shoot(&mut app, &format!("format-error-{tag}"));
 
         // 窗口最窄时，提示文字从中间截短，不超出编辑区。
-        app.frame.renderer = Some(
-            Renderer::offscreen(640.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
-        );
+        app.frame.renderer = Some(offscreen(&app, (640.0, 420.0), SCALE));
         app.relayout();
         shoot(&mut app, &format!("format-error-small-{tag}"));
     }

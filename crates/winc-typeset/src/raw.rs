@@ -186,7 +186,7 @@ impl Cx<'_, '_> {
         let text = block.get(leaf.clone()).unwrap_or_default();
         let size = self.base * 0.85;
         let line_h = (size * 1.45).round();
-        let m = self.frame.metrics(FontKind::Mono, size);
+        let m = self.frame.metrics(Font::mono(size));
         let row = Row {
             room: width.max(size),
             size,
@@ -230,7 +230,7 @@ impl Cx<'_, '_> {
         let line = text.split('\n').next().unwrap_or_default();
         let line = line.trim_end_matches('\r');
         let size = self.base * 0.85;
-        let m = self.frame.metrics(FontKind::Mono, size);
+        let m = self.frame.metrics(Font::mono(size));
         let row = Row {
             room: width.max(size),
             size,
@@ -294,7 +294,7 @@ impl Cx<'_, '_> {
         let text = &text[..text.trim_end().len()];
         let pad = self.base;
         let size = self.base * 0.85;
-        let m = self.frame.metrics(FontKind::Mono, size);
+        let m = self.frame.metrics(Font::mono(size));
         let row = Row {
             room: (width - pad * 2.0).max(size),
             size,

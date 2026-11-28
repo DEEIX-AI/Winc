@@ -53,7 +53,7 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone();
@@ -62,7 +62,14 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
             .is_none()
     );
     paint(&mut app);
-    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "拖动时使用快照的画面与完整绘制不同");
 
@@ -111,7 +118,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     paint(&mut app);
     assert!(app.settings.scroll_base.is_some());
     let window = app.layout.window;
-    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = app.frame.renderer.as_ref().unwrap().scale();
     assert!(app.settings_reuses_base(window, scale));
 
     // 之后的帧使用快照，画面与完整绘制相同。
@@ -122,7 +129,7 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
         .renderer
         .as_ref()
         .unwrap()
-        .image()
+        .snapshot()
         .unwrap()
         .pixels
         .clone();
@@ -135,7 +142,14 @@ fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     assert!(app.settings.scroll_base.is_none());
     assert!(!app.settings_reuses_base(window, scale));
     paint(&mut app);
-    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let full = &app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels;
     let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "使用快照的画面与完整绘制不同");
 
@@ -157,7 +171,7 @@ fn zoom_scales_the_whole_window_in_steps() {
     let mut app = app_with(&dir, false);
     paint(&mut app);
     let window = app.layout.window;
-    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = |app: &App| app.frame.renderer.as_ref().unwrap().scale();
     let base = scale(&app);
 
     // 放大一档：渲染倍数变大，窗口的逻辑尺寸按比例变小；字号不变。
@@ -647,8 +661,7 @@ pub(super) fn format_settings_app(name: &str, dark: bool) -> (App, PathBuf) {
 #[test]
 fn scrolled_rows_stay_under_the_header() {
     let (mut app, dir) = format_settings_app("settings-scroll-clip", false);
-    app.frame.renderer =
-        Some(Renderer::offscreen(820.0, 420.0, SCALE, app.palette.frame_bg, None, None).unwrap());
+    app.frame.renderer = Some(offscreen(&app, (820.0, 420.0), SCALE));
     app.config.format_commands.insert(
         "python".to_owned(),
         "black --quiet --stdin-filename {file} -".to_owned(),
@@ -667,7 +680,7 @@ fn scrolled_rows_stay_under_the_header() {
 
     // 标题下沿的一条像素带（标题文字和关闭按钮下方）只应有底色。
     let layout = app.settings_layout();
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let px = |x: f32, y: f32| {
         let (x, y) = ((x * SCALE) as u32, (y * SCALE) as u32);
         image.pixels[(y * image.width + x) as usize]
