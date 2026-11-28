@@ -86,20 +86,15 @@ impl App {
             y
         };
         let cells = (x - grid.x) / self.metrics.terminal_cell;
-        let col = if between {
-            cells.round()
-        } else {
-            cells.floor()
-        };
-        let col = (col.max(0.0) as usize).min(usize::from(tab.size.cols));
         let last = tab.display_len().checked_sub(1)?;
         let row = tab.row_at(self.terminal_display_row(y).min(last))?;
         let line = row.line(tab);
         let col = if between {
-            tab.char_boundary(line, col, cells)
+            tab.char_boundary(line, cells)
         } else {
-            col
-        };
+            cells.floor().max(0.0) as usize
+        }
+        .min(usize::from(tab.size.cols));
         Some(Point { line, col })
     }
 

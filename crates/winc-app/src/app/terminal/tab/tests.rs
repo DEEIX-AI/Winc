@@ -83,20 +83,32 @@ fn selections_expand_by_word_and_line_and_copy_across_rows() {
 
 #[test]
 fn selection_edges_never_split_a_wide_character() {
-    let tab = tab_with(&["a中文b"], &[]);
-    let at = |col, frac| tab.char_boundary(100, col, frac as f32);
-    // 「中」占第 1、2 格，「文」占第 3、4 格：边界落在字中间时取近的那条边。
-    assert_eq!(at(2, 1.6), 1);
-    assert_eq!(at(2, 2.4), 3);
-    assert_eq!(at(4, 3.6), 3);
-    assert_eq!(at(4, 4.4), 5);
-    // 边界本来就在字的边上、落在窄字符里或超出这一行：不变。
-    assert_eq!(at(1, 0.6), 1);
-    assert_eq!(at(3, 2.6), 3);
-    assert_eq!(at(6, 5.6), 6);
-    assert_eq!(at(0, 0.0), 0);
-    // 行还没取回来：原样返回。
-    assert_eq!(tab.char_boundary(99, 2, 1.6), 2);
+    // 含组合字符和宽非词字符：组合字符不偏移列，宽字符按字、按词选都不会劈半。
+    let mut tab = tab_with(&["a\u{0301}中，b"], &[]);
+    let at = |x| tab.char_boundary(100, x);
+    // 窄字符在半格处切换，负坐标夹到 0。
+    assert_eq!(at(-0.5), 0);
+    assert_eq!(at(0.4), 0);
+    assert_eq!(at(0.6), 1);
+    // 「中」占第 1、2 格，「，」占第 3、4 格：左半取起点，中点及右半取终点。
+    assert_eq!(at(1.6), 1);
+    assert_eq!(at(2.0), 3);
+    assert_eq!(at(2.4), 3);
+    assert_eq!(at(3.6), 3);
+    assert_eq!(at(4.4), 5);
+    // 超出内容末尾或行还没取回来时按单格四舍五入。
+    assert_eq!(at(6.6), 7);
+    assert_eq!(tab.char_boundary(99, 1.6), 2);
+    // 双击落在宽非词字符「，」的任一半格都选中整字。
+    for col in [3, 4] {
+        let p = Point { line: 100, col };
+        tab.selection = Some(Selection {
+            anchor: p,
+            head: p,
+            unit: Unit::Word,
+        });
+        assert_eq!(tab.selected_cols(100), Some((3, 5)));
+    }
 }
 
 #[test]

@@ -952,10 +952,20 @@ impl TermTab {
         let range = match s.unit {
             Unit::Char => (from, to),
             Unit::Word => {
-                let start = self.word_at(from).map_or(from, |(start, _)| start);
-                let end = self.word_at(to).map_or(
-                    Point {
-                        col: to.col + 1,
+                let start = self.word_at(from).map_or_else(
+                    || Point {
+                        col: self
+                            .char_span(from.line, from.col)
+                            .map_or(from.col, |(s, _)| s),
+                        ..from
+                    },
+                    |(start, _)| start,
+                );
+                let end = self.word_at(to).map_or_else(
+                    || Point {
+                        col: self
+                            .char_span(to.line, to.col)
+                            .map_or_else(|| to.col.saturating_add(1), |(_, e)| e),
                         ..to
                     },
                     |(_, end)| end,
@@ -988,28 +998,38 @@ impl TermTab {
         (start < end).then_some((start, end))
     }
 
-    /// 把选区的一端 `col` 吸附到整字的边界：落在占两格的字的中间时，按鼠标所在的格
-    /// `at`（带小数）取近的那条边——左半边取字的起点，右半边取终点，不选半个字。
+    /// 鼠标所在位置 `at`（以格为单位，带小数）对应的整字边界。
     ///
-    /// 行还没取回来时原样返回。
-    pub fn char_boundary(&self, line: u64, col: usize, at: f32) -> usize {
-        let Some(row) = self.line(line) else {
-            return col;
-        };
+    /// 落在字符的左半边取起点、右半边取终点：窄字符在半格处切换，宽字符在两格
+    /// 之间切换，不会停在宽字符中间；行还没取回来或超出内容末尾时按单格四舍五入。
+    pub fn char_boundary(&self, line: u64, at: f32) -> usize {
+        if at <= 0.0 {
+            return 0;
+        }
+        match self.char_span(line, at.floor() as usize) {
+            Some((start, end)) if at < (start + end) as f32 * 0.5 => start,
+            Some((_, end)) => end,
+            None => at.round() as usize,
+        }
+    }
+
+    /// 第 `line` 行第 `col` 格所在字符的格范围（起点，终点），终点不含。
+    ///
+    /// 行还没取回来或 `col` 超出内容末尾时返回 `None`。
+    fn char_span(&self, line: u64, col: usize) -> Option<(usize, usize)> {
+        let row = self.line(line)?;
         let mut start = 0;
         for (_, w) in cells(&row.text) {
             if w == 0 {
                 continue;
             }
-            if col > start && col < start + w {
-                return if at < col as f32 { start } else { start + w };
+            let end = start + w;
+            if col < end {
+                return Some((start, end));
             }
-            start += w;
-            if start > col {
-                break;
-            }
+            start = end;
         }
-        col
+        None
     }
 
     /// 选中的文字：软换行的行接起来不加换行，其余行去掉行尾空格、用换行分开。
