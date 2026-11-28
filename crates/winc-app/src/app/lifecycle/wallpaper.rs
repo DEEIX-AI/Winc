@@ -1,7 +1,7 @@
 //! 窗口背景图：按配置在后台生成图层，交给渲染器。
 //!
-//! 图层由渲染器按显示方式映射到窗口，窗口大小改变时不必重新生成；只有图层相对窗口过小或
-//! 过大（见 [`GROW_AT`]、[`SHRINK_AT`]）时才重新生成。生成好的图层存在磁盘上（见 `cache`），
+//! 图层由渲染器按显示方式映射到窗口，窗口大小改变时不必重新生成；只有图层比窗口所需的小，
+//! 或大得过多（见 [`HEADROOM`]、[`SHRINK_AT`]）时才重新生成。生成好的图层存在磁盘上（见 `cache`），
 //! 下次启动、调整不透明度时直接读取，不再解码原图。同一张图层在各窗口之间共用。没有配置
 //! 背景图时不占内存，绘制也与原来相同。
 
@@ -17,20 +17,17 @@ use winc_config::{BackgroundFit, Config};
 use crate::app::NoticeKind;
 use crate::app::{App, UserEvent};
 
-/// 图层长边的像素数上限：图片在底色之下只透出一部分，更高的分辨率看不出差别。
-const MAX_SIDE: f32 = 1920.0;
+/// 平铺的图层（按逻辑像素生成）长边的像素数上限。
+const TILE_SIDE: f32 = 1920.0;
 
-/// 不透明度（百分比）超过该值时图片的细节清晰可见，图层改按物理像素生成。
-const SHARP_AT: u8 = 50;
-
-/// 按物理像素生成的图层长边的像素数上限。
-const SHARP_SIDE: f32 = 2560.0;
+/// 其他显示方式的图层（按物理像素生成）长边的像素数上限。
+const PHYSICAL_SIDE: f32 = 2560.0;
 
 /// 图片文件的大小上限（字节，64 MB）：更大的文件不读取。
 const MAX_FILE: u64 = 64 << 20;
 
-/// 窗口所需的图层比现有的大到该倍数以上时重新生成：再放大显示会明显发糊。
-const GROW_AT: f32 = 1.25;
+/// 生成图层时按窗口所需的大小再放大的倍数：窗口变大时不必每次都重新生成。
+const HEADROOM: f32 = 1.25;
 
 /// 窗口所需的图层比现有的小到该倍数以下时重新生成，释放多占的内存。
 const SHRINK_AT: f32 = 0.6;
@@ -102,16 +99,15 @@ impl WallpaperState {
 
 /// 返回 `source` 在窗口 `window` 中所需的图层大小；`full` 是原图解码后的大小。
 ///
-/// 图片按显示方式缩小到在窗口中显示的大小，不放大；平铺时保持原来的大小。不透明度不超过
-/// [`SHARP_AT`] 时按逻辑像素计，长边不超过 [`MAX_SIDE`]；超过时按物理像素计，长边不超过
-/// [`SHARP_SIDE`]。
+/// 图片按显示方式缩小到在窗口中显示的大小，不放大，按物理像素计，长边不超过 [`PHYSICAL_SIDE`]；
+/// 渲染器取最近的像素，图层小于显示大小时斜线呈阶梯状，不透明度低时同样明显。平铺时保持原来的
+/// 大小，一个像素对应一个逻辑像素，长边不超过 [`TILE_SIDE`]。
 fn target(source: &Source, full: (u32, u32), (window, scale): Window) -> (u32, u32) {
     let (w, h) = (full.0.max(1) as f32, full.1.max(1) as f32);
-    let sharp = source.opacity > SHARP_AT && source.fit != BackgroundFit::Tile;
-    let (density, limit) = if sharp {
-        (scale.max(1.0), SHARP_SIDE)
+    let (density, limit) = if source.fit == BackgroundFit::Tile {
+        (1.0, TILE_SIDE)
     } else {
-        (1.0, MAX_SIDE)
+        (scale.max(1.0), PHYSICAL_SIDE)
     };
     let (fx, fy) = (window.0 * density / w, window.1 * density / h);
     let (sx, sy) = match source.fit {
@@ -125,17 +121,22 @@ fn target(source: &Source, full: (u32, u32), (window, scale): Window) -> (u32, u
     (side(w, sx), side(h, sy))
 }
 
-/// `layer` 大小的图层是否已不合用：与所需的大小 `wanted` 相差过多（见 [`GROW_AT`]、
-/// [`SHRINK_AT`]）。
+/// `layer` 大小的图层是否已不合用：比所需的大小 `wanted` 小（渲染器取最近的像素，放大显示时
+/// 斜线呈阶梯状），或大得过多（见 [`SHRINK_AT`]）。`wanted` 已不超过原图和上限，没有更清晰的
+/// 图层可生成时不会大于现有的图层。
 fn stale(layer: (u32, u32), wanted: (u32, u32)) -> bool {
-    let off = |layer: u32, wanted: u32| {
-        !(SHRINK_AT..=GROW_AT).contains(&(wanted as f32 / layer.max(1) as f32))
-    };
+    let off =
+        |layer: u32, wanted: u32| wanted > layer || (wanted as f32) < layer as f32 * SHRINK_AT;
     off(layer.0, wanted.0) || off(layer.1, wanted.1)
 }
 
+/// 按窗口 `window` 生成图层时依据的大小：留出 [`HEADROOM`] 的余量。
+fn roomy(((w, h), scale): Window) -> Window {
+    ((w * HEADROOM, h * HEADROOM), scale)
+}
+
 /// `layer` 大小的图层能否用于窗口 `window`：平铺时图层的像素与逻辑像素一一对应，须与所需的
-/// 大小相同；其余方式由渲染器缩放，允许相差一些。
+/// 大小相同；其余方式由渲染器缩小显示，图层不小于所需的大小即可（见 [`stale`]）。
 fn usable(source: &Source, layer: (u32, u32), full: (u32, u32), window: Window) -> bool {
     let wanted = target(source, full, window);
     if source.fit == BackgroundFit::Tile {
@@ -342,7 +343,7 @@ fn make(source: &Source, window: Window, cache: Option<&Path>) -> Made {
     let image = winc_preview::image::decode_bytes(&bytes)?;
     drop(bytes);
     let full = (image.width, image.height);
-    let size = target(source, full, window);
+    let size = target(source, full, roomy(window));
     let rgba = if size == full {
         image.rgba
     } else {
