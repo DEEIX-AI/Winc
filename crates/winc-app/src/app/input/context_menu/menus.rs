@@ -397,7 +397,7 @@ fn ref_submenus(
 }
 
 /// 日志详情里一个改动文件的右键菜单：显示这次的差异、打开工作区里的文件、显示文件历史，
-/// 在文件树、文件管理器中显示，复制路径。
+/// 在文件树、文件管理器中显示，复制路径、相对路径和文件名。
 ///
 /// `exists` 为 `false`（文件已不在磁盘上）时，打开、定位的几项灰显。`in_workspace` 表示
 /// 文件在打开的目录里。
@@ -416,6 +416,7 @@ pub fn log_file_menu(exists: bool, in_workspace: bool) -> Vec<MenuEntry> {
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, in_workspace),
+        Item(CopyFileName, true),
     ]
 }
 
@@ -440,7 +441,7 @@ pub fn form_base_menu(branches: &[winc_editor::git::Branch]) -> Vec<MenuEntry> {
 }
 
 /// 返回提交视图里一个文件的菜单项：显示差异、打开文件，回滚、储藏、加入 `.gitignore`，在文件
-/// 树中显示、在文件管理器中显示，复制路径。
+/// 树中显示、在文件管理器中显示，复制路径、相对路径和文件名。
 ///
 /// `exists` 表示文件还在磁盘上，删掉的文件不能打开、不能在文件管理器中显示；`in_workspace`
 /// 表示它在打开的目录里。`ignore` 是可以加入 `.gitignore` 的各种范围，只有未跟踪的文件才有；
@@ -471,12 +472,13 @@ pub fn commit_file_menu(
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, in_workspace),
+        Item(CopyFileName, true),
     ]);
     menu
 }
 
 /// 返回提交视图里选中了多个文件、右键点在其中一个上时的菜单项：打开（`any_exists`：有还在
-/// 磁盘上的）、暂存、取消暂存、回滚、储藏、复制路径、复制相对路径，都作用于选中的各个文件。
+/// 磁盘上的）、暂存、取消暂存、回滚、储藏、复制路径、相对路径和文件名，都作用于选中的各个文件。
 pub fn commit_selection_menu(any_exists: bool) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
@@ -492,10 +494,11 @@ pub fn commit_selection_menu(any_exists: bool) -> Vec<MenuEntry> {
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, true),
+        Item(CopyFileName, true),
     ]
 }
 
-/// 返回全局搜索结果里一行的菜单项：打开（目录行没有）；目录、文件行是复制路径、复制相对路径、
+/// 返回全局搜索结果里一行的菜单项：打开（目录行没有）；目录、文件行是复制路径、相对路径、文件名和
 /// 在文件树中显示，匹配行是复制这一行的文字；最后是替换（`replace`：替换输入展开着）和从结果中
 /// 移除。
 ///
@@ -513,6 +516,7 @@ pub fn search_result_menu(file: bool, dir: bool, replace: bool) -> Vec<MenuEntry
         menu.extend([
             Item(CopyPath, true),
             Item(CopyRelativePath, true),
+            Item(CopyFileName, true),
             Separator,
             Item(RevealInTree, true),
         ]);

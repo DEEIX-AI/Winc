@@ -352,6 +352,11 @@ fn remote_paths_are_shown_in_the_remote_spelling() {
     assert_eq!(display_name(&odd), r"a\b%.txt");
     let top = winc_backend::virtual_path(&target, b"/");
     assert_eq!(display_name(&top), "alice@devbox:/");
+    // 文件名：根目录没有。
+    assert_eq!(file_name(&odd).as_deref(), Some(r"a\b%.txt"));
+    assert_eq!(file_name(&top), None);
+    assert_eq!(file_name(Path::new("/")), None);
+    assert_eq!(file_name(Path::new("dir/sub")).as_deref(), Some("sub"));
 
     // 本机路径的显示不变。
     assert_eq!(display_name(Path::new("dir/file.txt")), "file.txt");

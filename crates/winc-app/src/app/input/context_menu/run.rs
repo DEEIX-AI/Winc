@@ -883,17 +883,9 @@ impl App {
 
     /// 复制 `paths` 里各项的文件名或目录名，一行一个。没有名字的项（如根目录）跳过，一个都不剩
     /// 时不复制。
-    fn copy_file_names(&mut self, paths: &[PathBuf]) {
-        let lines = paths
-            .iter()
-            .filter_map(|path| {
-                if let Some(remote) = winc_backend::locate(path) {
-                    let name = remote.name();
-                    return (!name.is_empty()).then(|| String::from_utf8_lossy(name).into_owned());
-                }
-                Some(path.file_name()?.to_string_lossy().into_owned())
-            })
-            .collect();
+    pub(in crate::app) fn copy_file_names(&mut self, paths: &[PathBuf]) {
+        let names = paths.iter().filter_map(|path| winc_editor::file_name(path));
+        let lines = names.map(std::borrow::Cow::into_owned).collect();
         self.copy_path_lines(lines, t!("menu-copied-file-name"));
     }
 

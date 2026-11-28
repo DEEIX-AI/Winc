@@ -98,6 +98,7 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
             MenuCommand::GitStashFiles,
             MenuCommand::CopyPath,
             MenuCommand::CopyRelativePath,
+            MenuCommand::CopyFileName,
         ]
     );
     // 菜单里的勾选、取消勾选作用于选中的两个，没选中的不动。
@@ -123,6 +124,17 @@ fn command_and_shift_clicks_select_several_changes_for_one_check_and_rollback() 
     assert_eq!(
         app.clipboard.copied.as_deref(),
         Some(relative.join("\n").as_str())
+    );
+    // 文件名同样一行一个。
+    right_click(&mut app, (row.x + 120.0, row.y + row.h / 2.0));
+    app.run_menu_command(MenuCommand::CopyFileName);
+    let names: Vec<String> = files[2..]
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        app.clipboard.copied.as_deref(),
+        Some(names.join("\n").as_str())
     );
 
     // 回滚后已跟踪的文件恢复原内容，未跟踪的文件被移除；未选中的两个文件保持不变。

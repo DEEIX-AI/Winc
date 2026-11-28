@@ -654,7 +654,8 @@ fn shoot_search_no_results() {
 fn right_clicking_a_search_result_offers_its_menu() {
     crate::app::snapshot::use_vscode_keys();
     use MenuCommand::{
-        Copy, CopyPath, CopyRelativePath, DismissResult, OpenFiles, ReplaceResult, RevealInTree,
+        Copy, CopyFileName, CopyPath, CopyRelativePath, DismissResult, OpenFiles, ReplaceResult,
+        RevealInTree,
     };
 
     let dir = search_folder("result-menu");
@@ -691,6 +692,7 @@ fn right_clicking_a_search_result_offers_its_menu() {
             OpenFiles,
             CopyPath,
             CopyRelativePath,
+            CopyFileName,
             RevealInTree,
             DismissResult
         ]
@@ -714,6 +716,9 @@ fn right_clicking_a_search_result_offers_its_menu() {
         app.clipboard.copied.as_deref().map(Path::new),
         Some(main.as_path())
     );
+    // 命令面板的「复制文件名」同样作用于选中的结果。
+    app.run_action(Action::CopyFileName);
+    assert_eq!(app.clipboard.copied.as_deref(), Some("main.rs"));
 
     // 匹配行：复制的是原来的整行（预览去掉了行首空白），不带行尾。
     let found = row_of(&app, ResultRow::Match(2, 0)).unwrap();
@@ -766,6 +771,7 @@ fn right_clicking_a_search_result_offers_its_menu() {
             OpenFiles,
             CopyPath,
             CopyRelativePath,
+            CopyFileName,
             RevealInTree,
             ReplaceResult(true),
             DismissResult
